@@ -691,6 +691,21 @@ public partial class DocumentService : IDocumentService
     /// (รอบ 193 หลังฝ่ายค้าน C2: เช็คเอาต์ที่พักต้องรู้ยอดใบสุดท้ายก่อนประทับเลข §86/4) · ห้ามคัดลอกสูตรนี้ไปที่อื่น
     /// <para>รอบ 193 ฝ่ายค้านรอบสาม R3-1: รับส่วนลดการค้า (<paramref name="billDiscountAmount"/>) กับฐานมัดจำออกใบกำกับแล้ว
     /// (<paramref name="depositBaseDeducted"/>) แยกกัน แล้วคืนสองช่องที่จะถูกบันทึก — ตัวเดียวกับ <see cref="AllocateBillDeductions"/></para></summary>
+    /// <summary>ยอด<b>รายบรรทัด</b> (ก่อน VAT · VAT) ด้วยสูตรเดียวกับ CreateDocumentAsync/UpdateDocumentAsync — <c>AllocateBillDeductions</c> →
+    /// <c>ComputeLineAmounts</c> → <c>ReconcileTaxRounding</c> — สำหรับผู้เรียกที่ต้องเขียนบรรทัดให้ "เปิดแก้แล้วบันทึกไม่ขยับ" โดยไม่สร้างเอกสารผ่าน service
+    /// (ตัวสร้างบรรทัดจากสแกน <c>OcrService.BuildScanLinesAsync</c> เมื่อลงส่วนลดท้ายบิลตามกระดาษ · คำตัดสินเจ้าของข้อ 159 · ทีม T 2026-10-26) ·
+    /// ไม่มีสำเนาสูตรฝั่ง OCR — ตัวนี้คือตัวตั้งเดียว · ไม่มีมัดจำ/หัก ณ ที่จ่ายในผล (ผู้เรียกจัดการเอง)</summary>
+    internal static List<(decimal Net, decimal Vat)> PlanLineAmounts(
+        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount)
+    {
+        var (alloc, _, _) = AllocateBillDeductions(lines, pricesIncludeVat, 0m, billDiscountAmount, 0m);
+        var amts = new LineAmounts[lines.Count];
+        for (int i = 0; i < lines.Count; i++)
+            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
+        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+        return amts.Select(a => (a.NetAmount, a.VatAmount)).ToList();
+    }
+
     internal static (decimal Net, decimal Vat, decimal Total, decimal TradeDiscount, decimal DepositBase) PreviewTotals(
         IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount, decimal depositBaseDeducted = 0m)
     {

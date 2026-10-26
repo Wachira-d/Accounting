@@ -26,7 +26,7 @@ public class EtaxGoldenCorpusTests
     public sealed record GoldenLine(decimal Qty, decimal UnitPrice, decimal Discount, decimal Amount, decimal Vat);
 
     public sealed record GoldenInvoice(string Xml, bool PricesIncludeVat, decimal SubTotal, decimal Vat, decimal Total,
-        decimal RoundingAdjustment, GoldenLine[] Lines);
+        decimal RoundingAdjustment, GoldenLine[] Lines, decimal BillDiscount = 0m);
 
     /// <summary>ใบจริงทุกใบ → เอกสารที่ต้องได้ (ตัวเลขจากกระดาษ · สคริปต์อิสระ golden_gen ในบันทึกรอบ 7)</summary>
     public static readonly Dictionary<string, GoldenInvoice> Expected = new()
@@ -81,11 +81,14 @@ public class EtaxGoldenCorpusTests
         // (คิดมือจากกระดาษ): Σ 2,010 − 576 = 1,434 = ยอดรวม ⇒ ส่วนลดส่งต่อเป็นยอดก่อน VAT 538.32 (ฝ่ายค้านข้อ 4) ⇒ เคส F 28.66% (576/2,010) · กระจาย 1,434 × 1,840/2,010 = 1,312.72 · เศษ 121.28 ⇒ ส่วนลด 527.28 / 48.72 ·
         // ถอด VAT: 1,312.72 × 100/107 = 1,226.84 (VAT 85.88) · 121.28 ⇒ 113.35 (VAT 7.93) · Σ 1,340.19 + 93.81 = 1,434.00 ตรงหน้า PDF ทุกช่อง
         // (เดิม: 920/170 ราคาก่อน VAT ไม่มีส่วนลด · ยอดก่อน VAT 2,010 · VAT เฉลี่ย 85.88/7.93 · [Σ-GAP] Ambiguous)
+        // คำตัดสินข้อ 159 (ทีม T 2026-10-26): ส่วนลดท้ายบิลตามกระดาษ 538.32 ลง BillDiscountAmount ไม่กระจาย — บรรทัด 1,840/170 รวม VAT ไม่มีส่วนลด ·
+        // AllocateBillDiscount บนฐาน 1,719.63 + 158.88 = 1,878.51 ("จำนวนเงิน Amount" บนกระดาษ) ⇒ 492.79/45.53 ⇒ ฐาน 1,226.84/113.35 · VAT 85.88/7.93 — ยอดเท่าเดิมทุกสตางค์
+        // (ก่อนข้อ 159: กระจายเป็นส่วนลดบรรทัด 527.28/48.72 — ตัวเลขฐาน/VAT เท่ากัน)
         ["RapbizzSpIn00933"] = new(EtaxFixtures.RapbizzSpIn00933Xml, PricesIncludeVat: true, SubTotal: 1340.19m, Vat: 93.81m, Total: 1434.00m, RoundingAdjustment: 0m, Lines: new GoldenLine[]
         {
-            new(2.00m, 920.00m, 527.28m, 1226.84m, 85.88m),
-            new(1.00m, 170.00m, 48.72m, 113.35m, 7.93m),
-        }),
+            new(2.00m, 920.00m, 0m, 1226.84m, 85.88m),
+            new(1.00m, 170.00m, 0m, 113.35m, 7.93m),
+        }, BillDiscount: 538.32m),
     };
 
     public static IEnumerable<object[]> Names => Expected.Keys.Select(k => new object[] { k });
@@ -122,6 +125,7 @@ public class EtaxGoldenCorpusTests
                 $"{name} บรรทัดที่ {i + 1}: คาด {w} ได้ {g}");
         }
         Assert.Equal(want.RoundingAdjustment, doc.RoundingAdjustment);
+        Assert.Equal(want.BillDiscount, doc.BillDiscount);   // ข้อ 159: ส่วนลดท้ายบิลตามกระดาษ (0 = กระจาย/ไม่มี)
         Assert.Equal(want.SubTotal, doc.Lines.Sum(l => l.Amount) + doc.RoundingAdjustment);
         Assert.Equal(want.Vat, doc.Lines.Sum(l => l.Vat));
         Assert.Equal(want.Total, want.SubTotal + want.Vat);
@@ -140,7 +144,7 @@ internal static class ScanDocumentSimulator
 
     internal sealed record SimDoc(bool PricesIncludeVat, List<SimLine> Lines, decimal RoundingAdjustment,
         decimal HeaderSubTotal, decimal HeaderVat, decimal HeaderTotal, bool CanAutoApprove, string? BlockReason,
-        IReadOnlyList<string> Notes, decimal UnreconciledGap);
+        IReadOnlyList<string> Notes, decimal UnreconciledGap, decimal BillDiscount = 0m);
 
     private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
@@ -187,19 +191,25 @@ internal static class ScanDocumentSimulator
         var incl = recon.PricesIncludeVat
             || OcrEtaxLineNormalizer.AllLinesPriceIncludeVat(items.Select(x => (x.Amount ?? 0m, x.PriceIncludesVat)).ToList());
         var docPct = recon.DiscountPercent;
+        // ข้อ 159 (ตัวเดียวกับ BuildScanLinesAsync): เคส F/G ⇒ BillDiscountAmount ตามกระดาษ · ไม่กระจาย · ยอดบรรทัดจาก DocumentService.PlanLineAmounts หลังตั้งอัตรา
+        var billDiscount = recon.BillDiscountPreVat is decimal bpv && bpv > 0m ? bpv : 0m;
+        List<decimal>? plannerAmounts = null;
         if (docPct > 0m && recon.TargetLineSum is decimal target && items.Count > 0)
         {
             var grossTotal = lineGross.Sum();
             decimal assigned = 0m;
+            if (billDiscount > 0m) plannerAmounts = new List<decimal>(items.Count);
             for (var di = 0; di < items.Count; di++)
             {
                 var share = di == items.Count - 1 ? target - assigned : R2(target * lineGross[di] / grossTotal);
                 assigned += share;
-                items[di].Amount = share;
+                if (billDiscount > 0m) plannerAmounts!.Add(share);   // ข้อ 159: ให้ตัวพิสูจน์อัตราดูเท่านั้น (เหมือน service)
+                else items[di].Amount = share;
             }
         }
+        if (billDiscount > 0m) docPct = 0m;   // ข้อ 159: ไม่มีส่วนลดรายบรรทัด (LineDiscount ข้างล่างได้ 0)
         // อัตรารายบรรทัด: พิสูจน์ทั้งใบ 7% จากหัวใบ (OcrLineVatPlanner · VAT ของ e-Tax = Labelled) → เดาจากชื่อ (ThaiVatTypeRule) เฉพาะบรรทัดที่ยังว่าง
-        var vatPlan = OcrLineVatPlanner.PlanWholeInvoice(items.Select(x => x.Amount ?? 0m).ToList(), items.Select(x => x.VatRate).ToList(),
+        var vatPlan = OcrLineVatPlanner.PlanWholeInvoice(plannerAmounts ?? items.Select(x => x.Amount ?? 0m).ToList(), items.Select(x => x.VatRate).ToList(),
             hdrVat, netSub, hdrTotal, incl, paperExemptAmount: null, vatPrintedOnPaper: true);
         if (vatPlan.Decided)
             for (var vi = 0; vi < items.Count; vi++)
@@ -208,7 +218,17 @@ internal static class ScanDocumentSimulator
             it.VatRate ??= hdrVat > 0m
                 ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(it.Description, null, r.SellerTaxId, r.SellerName), 7m)
                 : 0m;
-        var spread = (incl
+        var preBill = items.Select(x => x.Amount).ToList();
+        decimal[]? billPlanVat = null;
+        if (billDiscount > 0m)
+        {
+            var plan = DocumentService.PlanLineAmounts(items.Select((x, bi) => new Accounting.Models.DTOs.Document.DocumentLineRequest(
+                    x.Description ?? "", x.Quantity ?? 1m, null, x.UnitPrice ?? x.Amount ?? 0m, 0m, x.VatRate ?? 0m, 0m, null,
+                    DiscountAmount: own[bi] > 0m ? own[bi] : null)).ToList(), incl, billDiscount);
+            for (var bi = 0; bi < items.Count; bi++) items[bi].Amount = incl ? plan[bi].Net + plan[bi].Vat : plan[bi].Net;
+            billPlanVat = plan.Select(p => p.Vat).ToArray();
+        }
+        var spread = billPlanVat ?? (incl
                 ? OcrEtaxLineNormalizer.InclusiveLineVats(items.Select(x => (x.Amount ?? 0m, x.VatRate ?? 0m, x.PriceIncludesVat)).ToList(), hdrVat)
                 : null)
             ?? ThaiVatTypeRule.SpreadHeaderVat(items.Select(x => (x.Amount ?? 0m, x.VatRate ?? 0m)).ToList(), hdrVat);
@@ -224,7 +244,7 @@ internal static class ScanDocumentSimulator
             // ตัวตัดสินตัวเดียวกับ service (OcrLineReconciler.LineDiscount) — SimLine เก็บแค่ส่วนลดบาท (Resave ใช้บาท)
             var ld = OcrLineReconciler.LineDiscount(docPct, lineGross[i], it.UnitPrice.HasValue, amount, it.Quantity);
             var disc = ld.Amount + own[i];
-            lines.Add(new SimLine(it.Quantity ?? 1m, ld.UnitPrice ?? it.UnitPrice ?? it.Amount ?? 0m, disc,
+            lines.Add(new SimLine(it.Quantity ?? 1m, ld.UnitPrice ?? it.UnitPrice ?? (billDiscount > 0m ? preBill[i] : it.Amount) ?? 0m, disc,
                 (incl ? R2(amount - spread[i]) : amount) + shifts[i], spread[i], it.VatRate ?? 0m));
         }
         var notes = inv.Notes.ToList();
@@ -242,13 +262,18 @@ internal static class ScanDocumentSimulator
         // ใบ SP-IN2026-10-00933 ประกาศ LineTotal = ฐานหลังส่วนลดแล้ว 1,340.19 — สูตรเดิมจะได้ 764.19 ซึ่ง service ไม่ได้ลง)
         return new SimDoc(incl, lines, -shifts.Sum(), OcrHeaderAmounts.NetSubTotal(hdrSub, hdrVat, hdrTotal, hdrDisc), hdrVat, hdrTotal,
             verdict.CanAutoApprove, verdict.Reason,
-            notes, recon.UnreconciledGap);
+            notes, recon.UnreconciledGap, billDiscount);
     }
 
     /// <summary>ผลของ DocumentService ตอนเปิดแก้แล้วบันทึก: ComputeLineAmounts (ส่วนลดเป็นจำนวนเงิน) + ขั้น VAT ของ ReconcileTaxRounding
     /// (ผ่าน <see cref="OcrEtaxLineNormalizer.ReplayTaxRounding"/> — สำเนาที่ล็อกกับต้นทางด้วย rcs)</summary>
     internal static List<(decimal Amount, decimal Vat)> Resave(SimDoc doc)
     {
+        // ข้อ 159: เอกสารที่มีส่วนลดท้ายบิล — ใช้สูตรจริงของ DocumentService (AllocateBillDeductions → ComputeLineAmounts → ReconcileTaxRounding) ตัวเดียว
+        if (doc.BillDiscount > 0m)
+            return DocumentService.PlanLineAmounts(doc.Lines.Select(l => new Accounting.Models.DTOs.Document.DocumentLineRequest(
+                    "", l.Qty, null, l.UnitPrice, 0m, l.VatRate, 0m, null, DiscountAmount: l.Discount > 0m ? l.Discount : null)).ToList(),
+                doc.PricesIncludeVat, doc.BillDiscount);
         var nets = new decimal[doc.Lines.Count];
         var vats = new decimal[doc.Lines.Count];
         var rates = new decimal[doc.Lines.Count];

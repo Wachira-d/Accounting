@@ -17,17 +17,18 @@ XML: NetLineTotal 1,840 / 170 · AllowanceTotal 576.00 · LineTotal = TaxBasis 1
 | 2 ตำแหน่งส่วนลด | `ScanBillDiscount` → `OcrTotalDecomposer.ForScan(RawText = XML)` | ไม่ใช่ PostInvoice ⇒ 538.32 คงเดิม · ไม่มี `[PAY≠TOTAL]` | ✅ (ตัวจำลองเดิมข้ามขั้นนี้ — เติมแล้ว) |
 | 3 Document.SubTotal | `ResolveHeaderSubTotal` = `OcrHeaderAmounts.NetSubTotal` | 1,434.00 − 93.81 = **1,340.19** | ✅ |
 | 4 กระทบยอด | `OcrVatCodeLines.Decide` → `OcrLineReconciler.Classify(2,010 · 1,340.19 · 93.81 · 1,434 · 538.32)` | เคส F `DiscountPreVatOnInclusivePrices` · 28.66% · เป้า Σ = 1,434.00 · gap 0 | ✅ |
-| 5 กระจายส่วนลด | `BuildScanLinesAsync` (สัดส่วน · เศษบรรทัดสุดท้าย) | 1,312.72 / 121.28 (รวม VAT) · ส่วนลดบาท `LineDiscount` 527.28 / 48.72 | ✅ (Σ ส่วนลด 576.00 = โลกราคารวม VAT) |
-| 6 VAT รายบรรทัด | `InclusiveLineVats` = `DocumentLineVatConvention.SplitLine` | 85.88 / 7.93 ⇒ Amount (ก่อน VAT) **1,226.84 / 113.35** | ✅ Σ 1,340.19 |
-| 7 ยอดหัวเอกสาร | `CreateDocumentFromScanCoreAsync` | SubTotal 1,340.19 · VAT 93.81 · Total **1,434.00** · RoundingAdjustment 0 · `Document.DiscountAmount` = Σ บรรทัด = **576.00** | ✅ ตัวเลข · ⚠️ หน้าตา (ดู §4) |
+| 5 ส่วนลดท้ายบิล (คำตัดสินข้อ 159) | `BuildScanLinesAsync`: `recon.BillDiscountPreVat` ⇒ `Document.BillDiscountAmount` | **538.32** (ก่อน VAT · ตามกระดาษ) · บรรทัด 1,840 / 170 **ไม่มีส่วนลด** · ไม่กระจาย | ✅ ตรงกระดาษทุกช่อง |
+| 6 ยอดบรรทัด | `DocumentService.PlanLineAmounts` (ตัวตั้งเดียว = AllocateBillDeductions → ComputeLineAmounts → ReconcileTaxRounding) | ฐานก่อนลด 1,719.63 + 158.88 = **1,878.51** (= "จำนวนเงิน Amount") · จัดสรร 492.79 / 45.53 ⇒ Amount **1,226.84 / 113.35** · VAT **85.88 / 7.93** | ✅ Σ 1,340.19 / 93.81 |
+| 7 ยอดหัวเอกสาร | `CreateDocumentFromScanCoreAsync` | SubTotal 1,340.19 · VAT 93.81 · Total **1,434.00** · RoundingAdjustment 0 · `DiscountAmount` 0 · `BillDiscountAmount` 538.32 | ✅ ตัวเลข + หน้าตา (ท้ายเอกสาร "ยอดรวมก่อนส่วนลดท้ายบิล 1,878.51 · ส่วนลดท้ายบิล −538.32 · ก่อน VAT 1,340.19") |
 | 8 อนุมัติเอง | `OcrPostingReadiness.Evaluate` | ไม่มีแท็กหยุด ⇒ อนุมัติเองได้ | ✅ |
-| 9 ฟอร์มแก้ไข | `documents.html` hydrate: `pricesIncludeVat` จาก entity · ส่วนลดบรรทัดโหมด ฿ เมื่อ `discountAmount > 0` · `billDiscountAmount` 0 | ส่ง `discountAmount` 527.28 / 48.72 · `discountPercent` 0 | ✅ |
-| 10 บันทึกซ้ำ | `DocumentService.ComputeLineAmounts` (บาทชนะ %) + `ReconcileTaxRounding` (เป้า round(1,340.19 × 7%) = 93.81 · diff 0) | 1,226.84 / 85.88 · 113.35 / 7.93 ⇒ 1,340.19 + 93.81 = 1,434.00 | ✅ ไม่ขยับ |
-| 10b ทิศตรงข้าม | ถ้าฟอร์มส่งแต่ % 28.66 (ส่วนลดบาทหาย) | 1,840 × 28.66% = 527.34 ⇒ ฐาน 1,340.13 · VAT 93.81 · สุทธิ **1,433.94** | ❌ — จุดที่เปลี่ยนกลับได้ · ล็อกด้วยเทสต์ว่าฟอร์มต้องส่งบาท |
+| 9 ฟอร์มแก้ไข | `documents.html` hydrate: `pricesIncludeVat` จาก entity · `billDiscountAmount` 538.32 โหมด ฿ · บรรทัดไม่มีส่วนลด | ส่ง `billDiscountAmount` 538.32 · `lines[].discountAmount` null | ✅ |
+| 10 บันทึกซ้ำ | `UpdateDocumentAsync`: AllocateBillDeductions → ComputeLineAmounts → ReconcileTaxRounding (สูตรเดียวกับ `PlanLineAmounts` ที่ตัวสร้างใช้) | 1,226.84 / 85.88 · 113.35 / 7.93 ⇒ 1,340.19 + 93.81 = 1,434.00 | ✅ ไม่ขยับ (โดยสร้าง — ไม่มีสำเนาสูตร) |
+| 10b ทิศตรงข้าม | ถ้า `billDiscountAmount` หาย (หน้าเว็บส่ง 0 เหมือนก่อนข้อ 159) | ฐาน **1,878.51** · VAT 131.50 · 2,010.01 ≠ 1,434 | ❌ — จุดที่เปลี่ยนกลับได้ · `OcrLinePreviewResponse.BillDiscountAmount` + หน้าเว็บส่งต่อ · ล็อกด้วยเทสต์ `ทีมT_ข้อ159_ทิศตรงข้าม_*` |
+| 10c รูปกระจายเดิม (เคส C/E) | ส่วนลดบาทต่อบรรทัดหาย ⇒ คิดจาก % | 1,840 × 28.66% = 527.34 ⇒ 1,433.94 | ❌ (ล็อกไว้ — ฟอร์มส่งบาทโหมด ฿) |
 
 เทสต์ที่ล็อก: `OcrRapbizzSpIn00933Tests.ทีมT_เส้นจริงทั้งสาย_*` · `ทีมT_ทิศตรงข้าม_ถ้าฟอร์มส่งแต่เปอร์เซ็นต์_*` · `ทีมT_เส้นกระดาษของใบเดียวกัน_ScanBillDiscount*` · `EtaxGoldenCorpusTests["RapbizzSpIn00933"]`
-**สรุปข้อ 1:** ตัวเลขที่บันทึก (ฐาน · VAT · สุทธิ · บรรทัด) หลังทีม R **ตรง** ทุกขั้นในโค้ด — ไม่พบขั้นที่เปลี่ยนกลับเมื่อผู้ใช้กด "ยืนยัน" หรือเปิดแก้แล้วบันทึก
-สิ่งที่ "ไม่ตรง" ที่ยืนยันได้จากหลักฐานที่มี = (ก) กล่องเหลือง "ระบบไม่แน่ใจ" ทั้งที่หัวใบพิสูจน์แล้ว (§2 · แก้แล้ว) (ข) หน้าตาเอกสารต่างจากกระดาษแม้ยอดเท่ากัน (§4 · รอเจ้าของ)
+**สรุปข้อ 1:** ตัวเลขที่บันทึก (ฐาน · VAT · สุทธิ) หลังทีม R **ตรง** ทุกขั้นในโค้ด — ไม่พบขั้นที่เปลี่ยนกลับเมื่อผู้ใช้กด "ยืนยัน" หรือเปิดแก้แล้วบันทึก
+สิ่งที่ "ไม่ตรง" ที่ยืนยันได้จากหลักฐานที่มี = (ก) กล่องเหลือง "ระบบไม่แน่ใจ" ทั้งที่หัวใบพิสูจน์แล้ว (§2 · แก้แล้ว) (ข) หน้าตาเอกสารต่างจากกระดาษแม้ยอดเท่ากัน (§4 · **ตัดสินแล้ว ข้อ 159 — ลงส่วนลดท้ายบิลตามกระดาษ**)
 สิ่งที่ตรวจไม่ได้จนกว่าจะเห็นตัวเลขที่บันทึกจริง: สแกน/ร่างที่สร้าง**ก่อน** deploy ทีม R ยังถือบรรทัดเดิม (920/170 ก่อน VAT · ไม่มีส่วนลด · [Σ-GAP]) — ต้องลบร่างแล้วอัปไฟล์เดิมใหม่ (ทีม R จดไว้แล้ว)
 
 ## §2 ระดับคำเตือนบนหน้าตรวจ
@@ -49,15 +50,15 @@ Confidence ของสแกน e-Tax = 1.0 ทุกช่อง (`MapEtaxToOc
 | 1 | ก่อน VAT | ไม่มี | 7% | — | B `LinesMatchSubTotal` | `OcrLineReconcilerTests.ราคาแยกVATมาตรฐาน` · replay telecom-* | ✅ จริง |
 | 2 | ก่อน VAT | ต่อบรรทัด | 7% | — | `ProvenLineDiscount` ⇒ Σ ยอดหลังลด → B | replay `pramie-line-discount-re111` / `pramie-re111-positional` | ✅ จริง |
 | 3 | ก่อน VAT | ท้ายบิล **ก่อน VAT** | 7% | — | C `DiscountOnSubTotal` | Hardware 69.75 · Lazada 216.82 (replay + unit) | ✅ จริง |
-| 4 | ก่อน VAT | ท้ายบิล **รวม VAT** | 7% | — | **G `DiscountInclVatOnExclusivePrices` (เพิ่มรอบนี้ · วางหลัง F · เข้าได้เฉพาะใบที่เดิม Ambiguous)** | `OcrLineReconcilerTests.เคสG_*` (+ทิศตรงข้าม) · baseline §baseline | 🧪 สังเคราะห์ |
+| 4 | ก่อน VAT | ท้ายบิล **รวม VAT** | 7% | — | **G `DiscountInclVatOnExclusivePrices` (เพิ่มรอบนี้ · วางหลัง F · เข้าได้เฉพาะใบที่เดิม Ambiguous) ⇒ BillDiscountAmount = ส่วนลด ÷ 1.07 (ข้อ 159)** | `OcrLineReconcilerTests.เคสG_*` (+ทิศตรงข้าม) · baseline §baseline | 🧪 สังเคราะห์ |
 | 5 | รวม VAT | ไม่มี | 7% | — | A `PricesIncludeVat` | WinePro · IKEA 1,396 | ✅ จริง |
 | 6 | รวม VAT | ต่อบรรทัด | 7% | — | Σ ยอดหลังลด → A | `crc-thaiwatsadu-srcie75384-positional` | ✅ จริง |
 | 7 | รวม VAT | ท้ายบิล **รวม VAT** | 7% | — | E `DiscountOnTotalInclVat` | Supermarket 38.70 · Makro p1p2 | ✅ จริง |
-| 8 | รวม VAT | ท้ายบิล **ก่อน VAT** | 7% | — | F `DiscountPreVatOnInclusivePrices` (ทีม R) | `OcrRapbizzSpIn00933Tests.กระดาษ_เคสF_*` | ✅ จริง (ข้อความ PDF · ยังไม่อยู่ใน `OcrPaperSamples` — §5) |
+| 8 | รวม VAT | ท้ายบิล **ก่อน VAT** | 7% | — | F `DiscountPreVatOnInclusivePrices` (ทีม R) ⇒ **BillDiscountAmount ตามกระดาษ (ข้อ 159)** | `OcrRapbizzSpIn00933Tests.กระดาษ_เคสF_*` | ✅ จริง (ข้อความ PDF · ยังไม่อยู่ใน `OcrPaperSamples` — §5) |
 | 9 | ใด ๆ | ท้ายบิล | **0% / ยกเว้นทั้งใบ** | — | ฐาน = สุทธิ ⇒ C · ไม่มีฐาน ⇒ C-legacy `DiscountOnTotal` | `OcrLineReconcilerTests` (500 · 0 · 0 · 450 · 50) · เคส G ทิศตรงข้าม VAT 0 | ✅ |
 | 10 | ใด ๆ | ท้ายบิล | **หลายอัตรา** | — | B/C/E ไม่พึ่งอัตรา (ใช้ Σ) · F/G ต้อง 7% ⇒ ไม่เดา → `OcrVatCodeLines` แบ่งส่วนลดต่อรหัส ภ.พ. (ตารางบนกระดาษ) · ไม่มีตาราง ⇒ Ambiguous `[Σ-GAP]` | Makro 2/2 · `OcrVatCodeLinesTests` · ทิศตรงข้าม F หลายอัตรา | ⚠️ ช่องว่าง: รูป F/G + หลายอัตรา + ไม่มีตาราง = คนตัดสิน (ถูกต้องตามหลัก "ไม่รู้ = บอกว่าไม่รู้") |
 | 11 | XML รวม VAT (NetIncl ≠ Net ต่อบรรทัด) | ต่อบรรทัด | 7% | ✓ | `ProveInclusive` ทุกบรรทัด + `TiesOutInclusive` ⇒ ค่าตามกระดาษ | `EtaxGoldenCorpusTests` CRC ×3 | ✅ จริง |
-| 12 | XML ดูก่อน VAT แต่หัวใบพิสูจน์รวม VAT | AllowanceTotal **รวม VAT** | 7% | ✓ | `HeaderProvenInclusive` ⇒ 538.32 ก่อน VAT ⇒ F | `EtaxGoldenCorpusTests["RapbizzSpIn00933"]` · `ETax_หลังแก้_*` | ✅ จริง |
+| 12 | XML ดูก่อน VAT แต่หัวใบพิสูจน์รวม VAT | AllowanceTotal **รวม VAT** | 7% | ✓ | `HeaderProvenInclusive` ⇒ 538.32 ก่อน VAT ⇒ F ⇒ BillDiscountAmount (ข้อ 159) | `EtaxGoldenCorpusTests["RapbizzSpIn00933"]` · `ETax_หลังแก้_*` | ✅ จริง |
 | 13 | XML ก่อน VAT (CII มาตรฐาน) | AllowanceTotal ก่อน VAT (= LineTotal − TaxBasis) | 7% | ✓ | `HeaderBillDiscount` = LineTotal − TaxBasis ⇒ C | `ETax_ทิศตรงข้าม_ใบมาตรฐานCII_*` | ✅ |
 | 14 | XML ก่อน VAT | AllowanceTotal | **0% / หลายอัตรา** | ✓ | `HeaderProvenInclusive` ไม่ตัดสิน (อ่านได้สองแบบ / หลายอัตรา) ⇒ ทางเดิม | `ETax_ทิศตรงข้าม_*` | ✅ |
 | 15 | XML รวม VAT ต่อบรรทัด (แบบ CRC) | AllowanceTotal **รวม VAT** (ท้ายบิล ไม่อยู่ในบรรทัด) | 7% | ✓ | `TiesOutInclusive` ไม่ลงตัว ⇒ `[ETAX-HEADER-GAP]` หยุดอนุมัติเอง (ลงตามกระดาษ · ให้คนตรวจ) | — | ⚠️ ช่องว่าง (สังเคราะห์ · ยังไม่มีใบจริง) — ไม่เพิ่มกติกาจนกว่าจะมีกระดาษ: ต้องรู้ว่าผู้ขายคิด VAT ก่อนหรือหลังส่วนลด |
@@ -69,15 +70,29 @@ Confidence ของสแกน e-Tax = 1.0 ทุกช่อง (`MapEtaxToOc
 (ก) vector ทุกตัวที่ไฟล์เทสต์เรียก `OcrLineReconciler.Classify(` ด้วย literal — 28 ตัว ⇒ **0 เปลี่ยน** (ข) เมทริกซ์สังเคราะห์ 24 ช่อง ⇒ เปลี่ยน 2 = ช่อง "ก่อน VAT × ส่วนลดพิมพ์รวม VAT" ทั้งสองป้าย (Ambiguous → G) เท่านั้น
 ขอบเขต: นี่คือการเทียบเท่าของ C# ด้วย Python ไม่ใช่การรัน C# · vector ที่ประกอบจากตัวแปร (replay harness · VatCodeLines · golden e-Tax) **ยังไม่ได้พิสูจน์ในเครื่องนี้** — ต้องรอ CI (`OcrReplayLineGoldenTests` · `EtaxGoldenCorpusTests` · `OcrVatCodeLinesTests`) · เชิงโครงสร้าง เคส G อยู่หลัง F และบังคับ Σ > ฐาน + 1 บาท จึงถึงได้เฉพาะเส้นที่เดิมคืน Ambiguous
 
-## §4 สิ่งที่ "ตรงตัวเลข แต่หน้าตาต่างจากกระดาษ" — รอเจ้าของตัดสิน
+## §4 "ตรงตัวเลข แต่หน้าตาต่างจากกระดาษ" — **ตัดสินแล้ว: คำตัดสินเจ้าของข้อ 159 (2026-10-26 · ตามหลักข้อ 158 "ข้อมูลที่ครบ/ตรงกระดาษที่สุด")**
 
-ปัจจุบันทุกเคสที่มีส่วนลดท้ายบิล (C/E/F/G) **กระจายส่วนลดลงบรรทัด** (`DocumentLine.DiscountAmount`) และ `Document.BillDiscountAmount = 0` ⇒ สำหรับใบนี้เอกสารแสดง:
+**กติกาตอนนี้:** กระดาษพิมพ์ "ส่วนลดท้ายบิล" เป็นยอดก่อน VAT (เคส F) หรือรวม VAT บนราคาก่อน VAT (เคส G) ⇒ `OcrLineReconcileResult.BillDiscountPreVat` ⇒ `BuildScanLinesAsync` ตั้ง `Document.BillDiscountAmount`
+ตามกระดาษ (538.32) · บรรทัด = จำนวน × ราคาตามกระดาษ ไม่มีส่วนลด · ยอดบรรทัด (ก่อน VAT · VAT) จาก `DocumentService.PlanLineAmounts` (ตัวตั้งเดียวของ Create/Update — ไม่มีสำเนาสูตรฝั่ง OCR) ⇒
+ฐาน/VAT/สุทธิ **เท่าเดิมทุกสตางค์** (1,340.19 / 93.81 / 1,434.00) และท้ายเอกสารพิมพ์ "ยอดรวมก่อนส่วนลดท้ายบิล 1,878.51 · ส่วนลดท้ายบิล −538.32 · ยอดรวมก่อน VAT 1,340.19" ตรงกระดาษทุกช่อง ·
+e-Tax XML ที่ Allowance ระดับเอกสาร (ใบนี้) เดินเส้นเดียวกัน (HeaderBillDiscount ⇒ เคส F) · เคส C (ส่วนลดก่อน VAT บนราคาก่อน VAT — ร้านวัสดุ/Lazada) และ E (ส่วนลดรวม VAT บนราคารวม VAT — ซูเปอร์) **ยังกระจายลงบรรทัดเหมือนเดิม**
+(เทสต์ทิศตรงข้าม `ทีมT_ข้อ159_ทิศตรงข้าม_*`: `BillDiscountPreVat` = null) · ใบเดิมที่สร้างไปแล้วไม่เปลี่ยน (ไม่มี migration — ดึงรายการซ้ำ/อัปใหม่จึงได้รูปใหม่) · หน้าตรวจ (`OcrLinePreviewResponse.BillDiscountAmount` → ฟอร์ม "แก้ในฟอร์มก่อน" + พรีวิว) ·
+ฟอร์มแก้ไข (hydrate `billDiscountAmount` โหมด ฿) · renderer HTML/QuestPDF (แสดง `BillDiscountAmount` อยู่แล้ว) — ไม่แตะ
+
+**ก่อน-หลัง (§H):** ใบใน replay corpus (`OcrReplayLineGoldenTests`) ไม่มีใบใดมี ReconCase F/G (golden ล็อก ReconCase ต่อใบ · F/G ไม่ปรากฏ) และ EtaxGoldenCorpus เข้าเคส F เฉพาะ Rapbizz ⇒ ใบที่เปลี่ยน = **Rapbizz ใบเดียว**
+(golden: ส่วนลดบรรทัด 527.28/48.72 → 0 + BillDiscount 538.32 · ฐาน/VAT ทุกบรรทัดเท่าเดิม) · ยืนยันด้วย CI (ไม่มี SDK ในเครื่อง)
+
+<details><summary>ข้อเสนอเดิม (ก่อนตัดสิน · เก็บไว้เป็นประวัติ)</summary>
+
+ก่อนข้อ 159 ทุกเคสที่มีส่วนลดท้ายบิล (C/E/F/G) **กระจายส่วนลดลงบรรทัด** (`DocumentLine.DiscountAmount`) และ `Document.BillDiscountAmount = 0` ⇒ สำหรับใบนี้เอกสารแสดง:
 บรรทัด 2 × 920.00 ส่วนลด 527.28 · 1 × 170.00 ส่วนลด 48.72 · "ส่วนลด 576.00" · ฐาน 1,340.19 · VAT 93.81 · 1,434.00 — ขณะที่กระดาษแสดง 1,840.00 / 170.00 (ส่วนลดบรรทัด 0.00) · จำนวนเงิน 1,878.51 · ส่วนลด 538.32 · 1,340.19 · 93.81 · 1,434.00
 นักบัญชีที่เทียบทีละช่องจะเห็น "ไม่ตรง" (576 ≠ 538.32 · 1,226.84 ≠ 1,840) แม้ยอดภาษีทุกตัวเท่ากัน
 
 ทางเลือกที่คำนวณไว้แล้ว (ยังไม่ทำ — เปลี่ยนรูปการบันทึกของทุกใบที่มีส่วนลดท้ายบิล ต้องให้เจ้าของตัดสิน): ลง `Document.BillDiscountAmount = 538.32` (ก่อน VAT) + บรรทัดราคารวม VAT ไม่มีส่วนลด
 `DocumentService.AllocateBillDiscount` จะได้ฐานก่อนลด 1,719.63 + 158.88 = **1,878.51** (= "จำนวนเงิน Amount" บนกระดาษ) · จัดสรร 492.79 / 45.53 · ฐาน 1,226.84 / 113.35 · VAT 85.88 / 7.93 ⇒ 1,340.19 · 93.81 · 1,434.00 **เท่าเดิมทุกสตางค์** และท้ายเอกสารพิมพ์ "ยอดรวมก่อนส่วนลดท้ายบิล 1,878.51 · ส่วนลดท้ายบิล −538.32 · ยอดรวมก่อน VAT 1,340.19" ตรงกระดาษทุกช่อง
 ผลกระทบ: `BuildScanLinesAsync` ต้องเลิกกระจายส่วนลดเองในเคส F (หรือทุกเคส C/E/F/G) และให้ `CreateDocumentFromScanCoreAsync` คำนวณบรรทัดด้วยสูตร `AllocateBillDiscount` (สำเนาสูตร = ต้องล็อก rcs) · harness/golden ระดับบรรทัดทุกใบที่มีส่วนลดจะเปลี่ยน (ยอดรวมไม่เปลี่ยน) ⇒ ต้องรัน §H ก่อน-หลังทั้งชุด
+
+</details>
 
 ## §5 กระดาษใบนี้ใน `OcrPaperSamples`
 

@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **641 ไฟล์ · 6,413 `[Fact]` + 1,041 `[Theory]` (4,864 `InlineData`)** ณ 2026-10-26 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **641 ไฟล์ · 6,414 `[Fact]` + 1,041 `[Theory]` (4,864 `InlineData`)** ณ 2026-10-26 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
@@ -1206,6 +1206,7 @@
 | OCR-U-46 | U | ✅ (เส้นกระดาษของใบเดียวกัน) ราคารวม VAT + ส่วนลดท้ายบิลพิมพ์เป็นยอดก่อน VAT 538.32 · PDF ต้นฉบับ+สำเนา | เคส F `OcrLineReconcileCase.DiscountPreVatOnInclusivePrices` (Σ ÷ 1.07 − ส่วนลด = ฐาน ±0.02 · ส่วนลดรวม VAT = Σ − ยอดรวม) · `OcrBillDiscount` นับแถวส่วนลดหน้าสำเนาครั้งเดียว (538.32 ไม่ใช่ 1,076.64) · ด่านแถวซ้ำรู้เคส F · ทิศตรงข้าม: เคส B/C/A/E เดิม + Ambiguous ที่ไม่เข้าสมการไม่เปลี่ยน |
 | OCR-U-47 | U | ✅ (ทีม T 2026-10-26 · ผู้ใช้: "ทำไมยังบันทึกได้ไม่ตรง" หลัง deploy ทีม R) เส้นจริงทั้งสาย XML → ExtractedDiscount 538.32 → `ForScan` (RawText = XML) → `NetSubTotal` 1,340.19 → เคส F → บรรทัด 1,226.84/85.88 · 113.35/7.93 → SubTotal/VAT/Total 1,340.19/93.81/1,434.00 → เปิดแก้แล้วบันทึก | ตัวเลขเท่าเดิมทุกขั้น (`OcrRapbizzSpIn00933Tests.ทีมT_เส้นจริงทั้งสาย_*` · ตัวจำลองเติมขั้น `ScanBillDiscount` ที่เดิมข้าม) · ทิศตรงข้าม: ฟอร์มส่งแต่ % 28.66 ⇒ 1,433.94 (ฟอร์มจึงต้องส่งส่วนลดบาท — `documents.html` โหมด ฿) · เส้นกระดาษ `ForScan` ไม่ใช่ PostInvoice ⇒ 538.32 คง · เมทริกซ์ `docs/OCR_TOTALS_MATRIX.md` |
 | OCR-U-48 | U | ✅ (ทีม T · สังเคราะห์ · เมทริกซ์ช่อง "ก่อน VAT × ท้ายบิลรวม VAT") Σ 2,010 ก่อน VAT · ส่วนลด 576 พิมพ์รวม VAT · ฐาน 1,471.68 · VAT 103.02 · รวม 1,574.70 | เคส G `OcrLineReconcileCase.DiscountInclVatOnExclusivePrices` (`InclVatDiscountOnExclusiveLines` ⇒ 538.32 ก่อน VAT · 26.78% · ส่วนลดบาท 492.79/45.53) · ป้ายสลับได้คำตอบเดียวกัน · ทิศตรงข้าม: ส่วนลดก่อน VAT ยัง C · ไม่เข้าสมการยัง Ambiguous (vector ทีม R ไม่เปลี่ยน) · VAT 0 → C · VAT ≠ 7% ไม่เข้า · Σ < ฐาน ยัง LinesShort · เคส F ไม่ถูกแย่ง · baseline: port Python ของ Classify บน vector literal 28 ตัว = 0 เปลี่ยน (ไม่ใช่ C# · harness จริงรอ CI — MATRIX §baseline) |
+| OCR-U-49 | U | ✅ (คำตัดสินข้อ 159 · ทีม T) ใบ SP-IN2026-10-00933: กระดาษพิมพ์ส่วนลดท้ายบิล 538.32 (เคส F) | `BillDiscountPreVat` 538.32 ⇒ `Document.BillDiscountAmount` 538.32 · บรรทัด 2×920 / 1×170 ไม่มีส่วนลด · `DocumentService.PlanLineAmounts` ⇒ 1,226.84/85.88 · 113.35/7.93 · ฐานก่อนลด 1,878.51 · `PreviewTotals` 1,340.19/93.81/1,434.00 · บันทึกซ้ำผ่านสูตรจริง = เท่าเดิม (`ทีมT_เส้นจริงทั้งสาย_*` · `EtaxGoldenCorpusTests["RapbizzSpIn00933"]` BillDiscount 538.32) · ทิศตรงข้าม: `billDiscountAmount` หาย ⇒ 1,878.51 + 131.50 ≠ 1,434 (`OcrLinePreviewResponse.BillDiscountAmount` ส่งต่อ) · เคส C/E `BillDiscountPreVat` = null (กระจายเหมือนเดิม) · เคส G ⇒ 538.32 |
 | OCR-E2E-12 | E2E | (ทีม T) หน้าตรวจสแกนใบ e-Tax ที่หัวใบพิสูจน์ราคารวม VAT (`[e-Tax]` อย่างเดียว ไม่มีแท็กหยุด) | กล่องน้ำเงิน "ℹ️ ระบบตรวจพบและปรับให้แล้ว" (`parseScanNotes.adjusted`) — **ไม่ใช่**กล่องเหลือง "ระบบไม่แน่ใจ" · `[ETAX-HEADER-GAP]`/`[ETAX-LINE-CHECK]`/`[Σ-GAP]` ยังเหลือง · ยังไม่มี E2E runner |
 | OCR-I-01 | I | สแกนใบเดิมซ้ำ 2 ครั้ง | ไม่สร้าง contact ซ้ำ, ไม่สร้างเอกสารซ้ำ (duplicate detection) |
 | OCR-I-02 | I | DTO ที่ส่งไป review modal | ทุก field §86/4 ไม่ null/empty (fallback chain เติมครบ) |
