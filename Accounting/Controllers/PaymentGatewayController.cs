@@ -143,6 +143,19 @@ public class PaymentGatewayController : ControllerBase
             rows.Where(r => r.SettlementBatchId != null && !r.SettledByJournal).Select(r => (r.Id, r.SettlementBatchId!.Value)).ToList(), ct);
         var nowUtc = DateTime.UtcNow;
 
+        // รอบ 205 ทีม W1 (R-01): "เงินเข้าแล้วแต่ยังไม่ได้บันทึกให้ต้นทาง" — ตัดสินจากประวัติด้วย PaymentRedispatchPolicy ตัวเดียว (หน้าเว็บแค่โชว์ปุ่ม)
+        var succeededIds = rows.Where(r => r.StatusValue == PaymentIntentStatus.Succeeded).Select(r => r.Id).ToList();
+        var redispatchNotes = succeededIds.Count == 0
+            ? new List<(Guid IntentId, DateTime At, string? Note)>()
+            : (await _db.PaymentIntentEvents.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && succeededIds.Contains(e.IntentId) && e.Note != null
+                    && (e.Note.StartsWith(PaymentRedispatchPolicy.UnfulfilledNotePrefix) || e.Note.StartsWith(PaymentRedispatchPolicy.FulfilledNotePrefix)))
+                .Select(e => new { e.IntentId, e.At, e.Note })
+                .ToListAsync(ct)).Select(e => (e.IntentId, e.At, e.Note)).ToList();
+        var redispatchPending = redispatchNotes.GroupBy(e => e.IntentId)
+            .Where(g => PaymentRedispatchPolicy.Evaluate(PaymentIntentStatus.Succeeded, g.OrderBy(e => e.At).Select(e => e.Note)) == PaymentRedispatchState.Pending)
+            .Select(g => g.Key).ToHashSet();
+
         // "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" (§86/10 · รอบ 198 G-1) — ตัดสินที่เซิร์ฟเวอร์ตัวเดียว หน้าเว็บแค่ติดป้าย
         var cn = await refunds.CreditNoteStatesAsync(companyId,
             rows.Where(r => r.RefundedAmount > 0m).Select(r => r.Id).ToList(), ct);
@@ -185,6 +198,9 @@ public class PaymentGatewayController : ControllerBase
                 // E2-3: ยอดของครั้งที่ผลไม่แน่ชัด — ค่าตั้งต้นของ "บันทึกผลด้วยมือ" (null = แถวเก่าที่ไม่รู้ยอด)
                 r.RefundOutcomeUnknownAmount,
                 refundOutcomeUnknownMessage = r.RefundOutcomeUnknownSince != null ? GatewayRefundMath.OutcomeUnknownMessage : null,
+                // R-01: ปุ่ม "ส่งต่อใหม่" เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง
+                redispatchPending = redispatchPending.Contains(r.Id),
+                redispatchPendingLabel = redispatchPending.Contains(r.Id) ? PaymentRedispatchPolicy.PendingLabel : null,
             };
         }).ToList();
         return Ok(new ApiResponse<object>(true, new
@@ -193,6 +209,7 @@ public class PaymentGatewayController : ControllerBase
             refundedAwaitingCreditNote = shaped.Count(x => x.needsCreditNote),
             refundUntracked = shaped.Count(x => x.refundUntracked),
             refundOutcomeUnknown = shaped.Count(x => x.refundOutcomeUnknown),
+            redispatchPending = shaped.Count(x => x.redispatchPending),
             stuck = shaped.Count(x => x.isStuck),
             stuckMinutes = (int)PaymentIntentPolicy.StuckThreshold.TotalMinutes,
             statusOptions = PaymentIntentPolicy.StatusOptions().Select(o => new { value = o.Value, label = o.Label }),
@@ -345,6 +362,27 @@ public class PaymentGatewayController : ControllerBase
         return Ok(new ApiResponse<IntentResponse>(true,
             Map(updated, await IsTestModeAsync(updated, ct)),
             "ยืนยันการรับเงินแล้ว — ระบบดำเนินการต่อให้ต้นทางเรียบร้อย"));
+    }
+
+    /// <summary>รอบ 205 ทีม W1 (R-01 · BOOKING_REVENUE_AUDIT G-2): <b>ส่งต่อใหม่</b> — เงินเข้าแล้ว (Succeeded) แต่ handler ของต้นทางล้ม/ไม่มี
+    /// ⇒ ใบ/JE/การจองไม่ถูกบันทึก · เดิมทางเดียวคือบันทึกรับเงินด้วยมือ (สองความจริง) · ตอนนี้กดส่งต่อให้ handler ตัวเดิม (idempotent — L-1/S-1) ·
+    /// ตัดสิน "ค้างไหม" ด้วย <see cref="PaymentRedispatchPolicy"/> จากประวัติ: ไม่ค้าง = 200 + <c>noOp</c> พร้อมข้อความ ไม่รัน handler ·
+    /// สิทธิ์เดียวกับยืนยันด้วยมือ (กระทบยอดบัญชี) · ห้ามคีย์ API · audit ผู้กด</summary>
+    [HttpPost("intents/{intentId:guid}/redispatch")]
+    [Accounting.Filters.RejectApiKey("ส่งต่อรายการรับเงินให้ต้นทางใหม่")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ConfirmManually)]
+    public async Task<ActionResult<ApiResponse<object>>> Redispatch(Guid companyId, Guid intentId, CancellationToken ct)
+    {
+        var intent = await _intents.FindAsync(companyId, intentId, ct);
+        if (intent == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระเงิน"));
+        var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
+        var result = await _intents.RedispatchAsync(companyId, intentId, actor, ct);
+        var body = new { ok = result.Ok, noOp = result.NoOp, state = result.State.ToString() };
+        // ล้มดัง 3 ที่ (F2 #7): คำตอบผู้เรียก (success=false) · ประวัติของรายการ (⚠️) · แจ้งเจ้าของ (NotifyUnfulfilledAsync) — ไม่ใช่ 200 กับของว่าง
+        if (!result.Ok && !result.NoOp)
+            return UnprocessableEntity(new ApiResponse<object>(false, body, result.Message));
+        return Ok(new ApiResponse<object>(result.Ok, body, result.Message));
     }
 
     /// <summary>คืนเงินผ่านผู้ให้บริการ — <b>ลงบัญชีคืนเงินเสมอ</b> (รอบ 198 G-1 · <see cref="IGatewayRefundService"/>)

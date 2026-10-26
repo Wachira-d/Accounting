@@ -994,7 +994,8 @@ public partial class DocumentService : IDocumentService
 
     public async Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
         string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null,
-        string? autoApproveBy = null, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null)
+        string? autoApproveBy = null, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null,
+        bool isDepositForfeitInvoice = false)
     {
         // ── ธง "ใบแจ้งหนี้/ใบกำกับภาษี ใบเดียว" ต้องมาคู่กับชนิด TaxInvoice ──
         // เดิมชนิดไม่ตรง = **ดรอปธงเงียบ ๆ** ⇒ integration/recurring ที่ส่ง
@@ -1032,13 +1033,29 @@ public partial class DocumentService : IDocumentService
         // เช็คเอาต์/ใบเสร็จของเงินที่รับมาแล้ว ออกไม่ได้กลางคัน = ลูกค้าผิด §86/4
         // และเราเป็นสาเหตุ (LODGING_LICENSING_PLAN §5 · ทีม CPA)
         // ตอนนี้: ใบที่กฎหมายบังคับ → ออกได้เสมอ แล้วคิด overage · ใบที่รอได้ → บล็อกตามเดิม
+        // รอบ 205 ทีม W1 (R-03 · BOOKING_REVENUE_AUDIT Q-2): ข้อเท็จจริงจากฐาน (ไม่ใช่จาก client) — ใบมัดจำใบที่ 2+ ของการจองเดียวกัน ·
+        // เงินประกันที่ต้องคืน (ลักษณะจากประเภทมัดจำของบริษัท) · ใบกำกับยอดริบ (ธงจากเส้นริบเท่านั้น) = การขายเดิม/ไม่ใช่รายได้ ⇒ ไม่นับซ้ำ
+        var quotaDepositNature = request.IsDeposit && request.DepositKindId is Guid quotaDepositKindId
+            ? await _db.DepositKinds.AsNoTracking()
+                .Where(k => k.Id == quotaDepositKindId && k.CompanyId == companyId)
+                .Select(k => (DepositNature?)k.Nature).FirstOrDefaultAsync()
+            : null;
+        var quotaBookingNumber = request.BookingNumber?.Trim();
+        var quotaHasPriorDeposit = request.IsDeposit && !string.IsNullOrWhiteSpace(quotaBookingNumber)
+            && await _db.Documents.AsNoTracking().AnyAsync(d => d.CompanyId == companyId && !d.IsDeleted
+                && d.IsDeposit && d.BookingNumber == quotaBookingNumber);
         var quotaClass = DocumentQuotaPolicy.Classify(
             request.DocumentType, request.IsDeposit, IsLodgingOrigin(originModule),
             // ใบกำกับที่ออก "แทน" ใบเสร็จ = การขายเดิมที่นับโควตาไปแล้ว —
             // นับอีกครั้งคือคิดเงินลูกค้าสองเด้งจากงานเดียว
-            isReplacement: isFullTaxInvoiceReplacement);
+            isReplacement: isFullTaxInvoiceReplacement,
+            hasPriorDepositForBooking: quotaHasPriorDeposit,
+            depositNature: quotaDepositNature,
+            isDepositForfeitInvoice: isDepositForfeitInvoice);
+        // R-04 ขั้น 1: ใบร่างจากเส้นอัตโนมัติ (จองนัดหมาย/คำสั่งซื้อหน้าเว็บ) ไม่นับ/ไม่บล็อกตอนสร้าง — นับ (และบล็อกใบที่รอได้) ตอนอนุมัติใน ApproveDocumentAsync
+        var quotaDeferred = DocumentQuotaPolicy.Counts(quotaClass) && DocumentQuotaPolicy.DefersCountUntilApproval(originModule);
         var withinQuota = await _subscriptionService.CheckUsageLimitAsync(companyId, "document");
-        if (!withinQuota && DocumentQuotaPolicy.CanRefuseWhenOverQuota(quotaClass))
+        if (!withinQuota && !quotaDeferred && DocumentQuotaPolicy.CanRefuseWhenOverQuota(quotaClass))
         {
             var (used, limit) = await GetDocumentQuotaAsync(companyId);
             throw new BusinessRuleException(
@@ -1357,6 +1374,7 @@ public partial class DocumentService : IDocumentService
                 DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
                 DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
                 OriginModule = string.IsNullOrWhiteSpace(originModule) ? null : originModule.Trim(),
+                QuotaCountDeferred = quotaDeferred,
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
                 BuyerDeclinedTaxInvoice = request.BuyerDeclinedTaxInvoice ?? false,
                 // รูปแบบกระดาษหลักฐานรับเงินที่ผู้ใช้เลือกรายใบ (รอบ 203) — เก็บเฉพาะชนิดที่ตัวตัดสินครอบ (ใบเสร็จ/ใบสำคัญรับ/ใบกำกับ)
@@ -1811,7 +1829,8 @@ public partial class DocumentService : IDocumentService
             // นับเข้าโควตาเฉพาะใบที่ "แทนการขาย 1 ครั้ง" — ใบลดหนี้/ใบเสร็จรับชำระ/
             // เอกสารฝั่งซื้อ ไม่นับซ้ำ · เอกสารที่โมดูลที่พักออกให้: ใบที่กฎหมายบังคับยังนับ
             // จนกว่าการแปลง stay → 2 หน่วยโควตา (§13.2) จะมีโค้ด — DocumentQuotaPolicy
-            if (DocumentQuotaPolicy.Counts(quotaClass))
+            // R-04: ใบที่เลื่อนนับ (QuotaCountDeferred) นับตอนอนุมัติแทน — ตัวนับเพิ่มทางเดียว ใบร่างที่ไม่เคยอนุมัติจึงไม่กินโควตา
+            if (DocumentQuotaPolicy.Counts(quotaClass) && !quotaDeferred)
             {
                 await _subscriptionService.IncrementUsageAsync(companyId, "document");
                 // เกินโควตาแต่เป็นใบที่ห้ามปฏิเสธ → เกิดหนี้แทนการบล็อก
@@ -1820,7 +1839,7 @@ public partial class DocumentService : IDocumentService
 
             await transaction.CommitAsync();
             // ฝ่ายค้านรอบ 205 ข้อ 3: แจ้งเตือนโควตา (80%/เต็ม) หลัง commit เท่านั้น — ใบถูกถอย = ไม่แจ้ง
-            if (DocumentQuotaPolicy.Counts(quotaClass)) await _subscriptionService.FlushPendingQuotaAlertsAsync();
+            if (DocumentQuotaPolicy.Counts(quotaClass) && !quotaDeferred) await _subscriptionService.FlushPendingQuotaAlertsAsync();
 
             // ใบสำคัญจ่าย (Cash) standalone — auto-approve ทันทีทุก channel
             // (UI/OCR/API). เงินจ่ายไปจริงแล้ว BalanceDue=0 ตั้งแต่ create
@@ -4944,7 +4963,9 @@ public partial class DocumentService : IDocumentService
                         ExchangeRate: deposit.ExchangeRate,
                         DocumentLanguage: deposit.DocumentLanguage,
                         BookingNumber: deposit.BookingNumber),
-                    actor, originModule: deposit.OriginModule);
+                    actor, originModule: deposit.OriginModule,
+                    // R-03: ใบกำกับยอดริบ = การขายเดิมของใบมัดจำที่นับโควตาไปแล้ว (LICENSING §4 "ยกเลิก = 1 หน่วย") — ธงจากเส้นนี้เท่านั้น
+                    isDepositForfeitInvoice: true);
                 invoiceId = created.Id;
                 invoiceNo = created.DocumentNumber;   // เลขร่างจนกว่าจะอนุมัติ — ข้อความล้มกลางทางต้องชี้ใบที่ผู้ใช้หาเจอ
                 // ติดป้ายกุญแจทันที (ช่องที่ระบบเขียนเท่านั้น) — รอบหน้าหาใบนี้เจอแม้ผู้ใช้แก้ใบร่าง
@@ -6376,6 +6397,21 @@ public partial class DocumentService : IDocumentService
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
 
+        // รอบ 205 ทีม W1 (R-04): ใบที่เลื่อนนับโควตามาจากตอนสร้าง (ใบร่างจากการจอง/คำสั่งซื้อหน้าเว็บ) — ตรวจ "บล็อกได้ไหม" ที่นี่ก่อนออกเลข
+        // (ใบเสนอราคาเกินโควตา ⇒ ปฏิเสธพร้อมทางไปต่อ เหมือนตอนสร้างของใบปกติ · ใบที่กฎหมายบังคับไม่มีวันถูกบล็อก) · ตัวนับเพิ่มในธุรกรรมด้านล่าง
+        var deferredQuotaWithin = true;
+        var deferredQuotaCounted = false;
+        if (doc.QuotaCountDeferred)
+        {
+            deferredQuotaWithin = await _subscriptionService.CheckUsageLimitAsync(companyId, "document");
+            if (!deferredQuotaWithin && DocumentQuotaPolicy.CanRefuseWhenOverQuota(
+                    DocumentQuotaPolicy.Classify(doc.DocumentType, doc.IsDeposit, IsLodgingOrigin(doc.OriginModule))))
+            {
+                var (quotaUsed, quotaLimit) = await GetDocumentQuotaAsync(companyId);
+                throw new BusinessRuleException(DocumentQuotaPolicy.BlockedMessage(quotaUsed, quotaLimit), "QUOTA-DOCUMENTS");
+            }
+        }
+
         // ทีม OCR 12 (ฝ่ายค้านรอบ 3 P1-4/P2-1 · คำตัดสินข้อ 150): เอกสารจากสแกนที่บรรทัดยังถือค่าที่ระบบรู้ว่าผิด (ผลแกะรุ่น 6–8 ลงสินค้าเป็น 1 × ยอด ·
         // เศษปัดราคาต่อหน่วยเกินเพดานในช่องส่วนลด) ⇒ บล็อกแม้คนกด (การอนุมัติ = ออกเลข + ลง GL) พร้อมทางไปต่อ · ก่อนทุกขั้นที่บันทึก · ทุกทางเข้าเดินผ่านเมธอดนี้
         if (await Accounting.Services.Implementations.Ocr.OcrLumpSumRepairService.ApprovalBlockAsync(_db, companyId, doc) is string ocrLineBlock)
@@ -7323,6 +7359,15 @@ public partial class DocumentService : IDocumentService
                 // ฝ่ายค้าน P2-6 (PP36): เคยอนุมัติอัตโนมัติไม่สำเร็จ แล้วอนุมัติสำเร็จรอบนี้ ⇒ ปิดหมายเหตุเดิมด้วย "แก้แล้ว" (ไม่ลบ — คงร่องรอย)
                 doc.InternalNotes = AutoApproveFailure.MarkResolved(doc.InternalNotes, DateTime.UtcNow, approvedBy);
 
+                // R-04: นับโควตาของใบที่เลื่อนนับ — ในธุรกรรมเดียวกับการอนุมัติ (อนุมัติล้ม = ไม่นับ) · ปลดธงกันนับซ้ำเมื่ออนุมัติใบเดิมอีกครั้งไม่ได้อยู่แล้ว
+                if (doc.QuotaCountDeferred)
+                {
+                    doc.QuotaCountDeferred = false;
+                    await _subscriptionService.IncrementUsageAsync(companyId, "document");
+                    if (!deferredQuotaWithin) await RecordDocumentOverageAsync(companyId, doc);
+                    deferredQuotaCounted = true;
+                }
+
                 await _db.SaveChangesAsync();
                 await transaction.CommitAsync();
             }
@@ -7334,6 +7379,8 @@ public partial class DocumentService : IDocumentService
                 throw;
             }
         });
+        // R-04: แจ้งเตือนโควตา (80%/เต็ม) ของใบที่นับตอนอนุมัติ — หลัง commit เท่านั้น (ฝ่ายค้านรอบ 205 ข้อ 3 · ตัวเดียวกับเส้นสร้าง)
+        if (deferredQuotaCounted) await _subscriptionService.FlushPendingQuotaAlertsAsync();
 
         // ปิดลูปการสอน — final choice ตอนอนุมัติ: ทุกบรรทัดที่มี FeedbackId
         // + AccountId → บันทึก choice (acceptedAi=true ถ้าตรง AI's answer,

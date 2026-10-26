@@ -165,4 +165,96 @@ public class DocumentQuotaPolicyTests
     [Fact]
     public void ยังไม่ใช้เลย_พยากรณ์ไม่ได้_ต้องคืนไม่รู้ไม่ใช่เดา()
         => Assert.Null(DocumentQuotaPolicy.ForecastExhaustionDay(0, 100, 5, 30));
+
+    // ── รอบ 205 ทีม W1 (R-03 · BOOKING_REVENUE_AUDIT Q-2): ข้อเท็จจริงใหม่ 3 ตัว + ทิศตรงข้าม ──
+
+    [Theory]
+    [InlineData(DocumentType.Receipt)]
+    [InlineData(DocumentType.TaxInvoice)]
+    public void R03_ใบมัดจำใบที่สองของการจองเดียวกัน_ไม่นับซ้ำ_และยังห้ามบล็อก(DocumentType type)
+    {
+        var e = DocumentQuotaPolicy.Classify(type, isDeposit: true, fromLodging: true, hasPriorDepositForBooking: true);
+        Assert.False(DocumentQuotaPolicy.Counts(e));
+        Assert.False(DocumentQuotaPolicy.CanRefuseWhenOverQuota(e));
+    }
+
+    [Fact]
+    public void R03_ทิศตรงข้าม_ใบมัดจำใบแรก_ยังนับเหมือนเดิม()
+    {
+        var e = DocumentQuotaPolicy.Classify(DocumentType.Receipt, isDeposit: true, fromLodging: true, hasPriorDepositForBooking: false);
+        Assert.Equal(QuotaEnforcement.CountedMustAllow, e);
+    }
+
+    [Fact]
+    public void R03_ทิศตรงข้าม_ใบที่ไม่ใช่มัดจำ_ธงมีมัดจำก่อนหน้าไม่มีผล()
+    {
+        // ใบกำกับเช็คเอาต์ของการจองที่มีใบมัดจำแล้ว = หน่วยที่ 2 ของ "1 การเข้าพัก = 2 หน่วย" — ต้องนับ
+        var e = DocumentQuotaPolicy.Classify(DocumentType.TaxInvoice, isDeposit: false, fromLodging: true, hasPriorDepositForBooking: true);
+        Assert.Equal(QuotaEnforcement.CountedMustAllow, e);
+    }
+
+    [Fact]
+    public void R03_เงินประกันที่ต้องคืน_ไม่ใช่รายได้_ไม่นับ_ไม่บล็อก()
+    {
+        var e = DocumentQuotaPolicy.Classify(DocumentType.Receipt, isDeposit: true, fromLodging: true, depositNature: DepositNature.RefundableSecurity);
+        Assert.False(DocumentQuotaPolicy.Counts(e));
+        Assert.False(DocumentQuotaPolicy.CanRefuseWhenOverQuota(e));
+    }
+
+    [Theory]
+    [InlineData(DepositNature.PartOfPrice)]
+    [InlineData(DepositNature.NonVatSupply)]
+    [InlineData(null)]
+    public void R03_ทิศตรงข้าม_มัดจำที่เป็นส่วนของราคา_หรือไม่ทราบลักษณะ_ยังนับ(DepositNature? nature)
+    {
+        var e = DocumentQuotaPolicy.Classify(DocumentType.Receipt, isDeposit: true, fromLodging: false, depositNature: nature);
+        Assert.Equal(QuotaEnforcement.CountedMustAllow, e);
+    }
+
+    [Fact]
+    public void R03_ลักษณะเงินประกัน_บนใบที่ไม่ใช่มัดจำ_ไม่มีผล()
+    {
+        var e = DocumentQuotaPolicy.Classify(DocumentType.TaxInvoice, isDeposit: false, fromLodging: false, depositNature: DepositNature.RefundableSecurity);
+        Assert.Equal(QuotaEnforcement.CountedMustAllow, e);
+    }
+
+    [Theory]
+    [InlineData(DocumentType.TaxInvoice)]
+    [InlineData(DocumentType.Invoice)]
+    public void R03_ใบกำกับยอดริบที่อ้างใบมัดจำ_การขายเดิม_ไม่นับ_ไม่บล็อก(DocumentType type)
+    {
+        var e = DocumentQuotaPolicy.Classify(type, isDeposit: false, fromLodging: true, isDepositForfeitInvoice: true);
+        Assert.False(DocumentQuotaPolicy.Counts(e));
+        Assert.False(DocumentQuotaPolicy.CanRefuseWhenOverQuota(e));
+    }
+
+    [Fact]
+    public void R03_ใบแทนใบที่ยกเลิก_ไม่นับซ้ำ_ใบปกติชนิดเดียวกันยังนับ()
+    {
+        Assert.False(DocumentQuotaPolicy.Counts(DocumentQuotaPolicy.Classify(DocumentType.TaxInvoice, false, true, isReplacement: true)));
+        Assert.True(DocumentQuotaPolicy.Counts(DocumentQuotaPolicy.Classify(DocumentType.TaxInvoice, false, true, isReplacement: false)));
+    }
+
+    // ── R-04 ขั้น 1: เลื่อนนับไปตอนอนุมัติเฉพาะเส้นอัตโนมัติหน้าเว็บ ──
+
+    [Theory]
+    [InlineData("CmsBooking")]
+    [InlineData("cmsbooking")]
+    [InlineData("site-order")]
+    public void R04_ต้นทางอัตโนมัติหน้าเว็บ_เลื่อนนับไปตอนอนุมัติ(string origin)
+        => Assert.True(DocumentQuotaPolicy.DefersCountUntilApproval(origin));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("Lodging")]
+    [InlineData("Pos")]
+    [InlineData("Ocr")]
+    [InlineData("Import")]
+    public void R04_ทิศตรงข้าม_ต้นทางอื่นยังนับตอนสร้างเหมือนเดิม(string? origin)
+        => Assert.False(DocumentQuotaPolicy.DefersCountUntilApproval(origin));
+
+    [Fact]
+    public void R04_ค่าคงที่ต้นทางตรงกับที่เส้นคำสั่งซื้อใช้()
+        => Assert.Equal("site-order", SiteOrderDepositInvoicing.OriginModule);
 }

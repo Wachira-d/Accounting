@@ -98,6 +98,9 @@ public static class DocumentCreationChannelRule
             case "lodging": return DocumentCreationChannel.Lodging;
             case "pos": return DocumentCreationChannel.Pos;
             case "ocr": return DocumentCreationChannel.Ocr;
+            // รอบ 205 ทีม W1 (R-04): เส้นอัตโนมัติหน้าเว็บประทับต้นทางแล้ว (เดิมแยกจาก marker ของ CreatedBy เท่านั้น)
+            case "cmsbooking": return DocumentCreationChannel.Storefront;
+            case "site-order": return DocumentCreationChannel.Storefront;
         }
         if (p.HasPosLink) return DocumentCreationChannel.Pos;
         if (p.HasOcrLink) return DocumentCreationChannel.Ocr;

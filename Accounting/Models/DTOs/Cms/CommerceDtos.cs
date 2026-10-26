@@ -372,6 +372,8 @@ public class OrderResponse
     public bool RequestTaxInvoice { get; set; }
     public string? BillingTaxId { get; set; }
     public Guid? ErpDocumentId { get; set; }
+    /// <summary>รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้วเมื่อ (null = ไม่เคย) — ยังต้องออกใบลดหนี้ที่เอกสารต้นทาง</summary>
+    public DateTime? RefundedAtGatewayAt { get; set; }
     public string? CouponCode { get; set; }
     public string? CustomerNotes { get; set; }
     public string? InternalNotes { get; set; }

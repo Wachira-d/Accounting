@@ -4,6 +4,7 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
@@ -1150,8 +1151,11 @@ public class SubscriptionService : ISubscriptionService
                     sub.CurrentMonthDocuments, sub.MaxDocumentsPerMonth, agg?.Documents ?? 0, agg?.MaxDocuments ?? 0);
                 var limitBefore = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(planLimit,
                     sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc, used: usedBefore);
-                sub.CurrentMonthDocuments++;
-                var usedAfter = usedBefore + 1;
+                // รอบ 205 ทีม W1 (R-05 · BOOKING_REVENUE_AUDIT Q-6): ตัวนับเพิ่มแบบ atomic ในฐาน (UPDATE … SET n = n + 1 RETURNING) —
+                // เดิมอ่าน-แก้-เขียนบน entity ⇒ สองใบที่สร้างพร้อมกันคนละคำขอเขียนทับกัน นับขาด 1 · อยู่ในธุรกรรมของผู้เรียก (ใบล้ม = rollback = ไม่นับ) ·
+                // ค่าที่อ่านกลับถูกตั้งเป็น "ค่าเดิม" ของ entity ⇒ SaveChanges ด้านล่างไม่เขียนทับคอลัมน์นี้ซ้ำ (ไม่งั้นค่าของคำขอที่ชนกันหายอีกรอบ)
+                var companyCounterAfter = await IncrementDocumentCounterAtomicAsync(sub);
+                var usedAfter = agg != null ? usedBefore + 1 : companyCounterAfter;
                 // โบนัสเอกสาร (top-up ที่ซื้อ · แอดมินให้ · ภารกิจแลกโควตา §12)
                 // **ต้องถูกใช้ให้หมดไป** ไม่ใช่แค่ยกเพดานค้างไว้ — ถ้าไม่หัก ผู้ที่
                 // ซื้อ +100 ใบครั้งเดียวจะได้ +100 ใบ **ทุกเดือน** จนโบนัสหมดอายุ
@@ -1187,6 +1191,39 @@ public class SubscriptionService : ISubscriptionService
             _pendingQuotaAlert = (sub.CompanyId, crossedLevel, sub.CurrentMonthDocuments, crossedUsed, crossedLimit);
             if (_db.Database.CurrentTransaction == null) await FlushPendingQuotaAlertsAsync();
         }
+    }
+
+    /// <summary>R-05: <c>UPDATE "Subscriptions" SET "CurrentMonthDocuments" = n + 1 … RETURNING</c> บนแถวของบริษัทนี้ แล้วซิงก์ค่ากลับเข้า entity
+    /// โดยไม่ทำให้คอลัมน์ถูกมองว่า "แก้" (OriginalValue = CurrentValue) · ต้องเรียกใน scope ที่ผู้เรียกจะ SaveChanges ต่อ (ธุรกรรมเดียวกับการสร้างใบ)
+    /// · ไม่มีธุรกรรม = autocommit ของคำสั่งเดียวก็ยัง atomic</summary>
+    private async Task<int> IncrementDocumentCounterAtomicAsync(Subscription sub)
+    {
+        // ADO.NET ตรง (แบบ ChatRateLimiter) — ไม่ผ่าน LINQ composer ที่อาจห่อ UPDATE…RETURNING เป็น subquery (PostgreSQL ไม่รับ) ·
+        // บนคอนเนกชัน/ธุรกรรมปัจจุบันของ DbContext ⇒ rollback ของผู้เรียกถอยตัวนับด้วย
+        const string sql = """
+            UPDATE "Subscriptions" SET "CurrentMonthDocuments" = "CurrentMonthDocuments" + 1
+            WHERE "Id" = @id
+            RETURNING "CurrentMonthDocuments";
+            """;
+        var conn = _db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open) await conn.OpenAsync();
+        int after;
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = sql;
+            cmd.Transaction = _db.Database.CurrentTransaction?.GetDbTransaction();
+            var pid = cmd.CreateParameter();
+            pid.ParameterName = "id";
+            pid.Value = sub.Id;
+            cmd.Parameters.Add(pid);
+            var result = await cmd.ExecuteScalarAsync();
+            after = result is int i ? i : (result == null ? sub.CurrentMonthDocuments + 1 : Convert.ToInt32(result));
+        }
+        var prop = _db.Entry(sub).Property(x => x.CurrentMonthDocuments);
+        prop.CurrentValue = after;
+        prop.OriginalValue = after;
+        prop.IsModified = false;
+        return after;
     }
 
     /// <summary>แจ้งเตือนโควตาที่ค้างจาก <see cref="IncrementUsageAsync"/> — เรียกหลัง commit ธุรกรรมที่นับใบ · ส่งเฉพาะเมื่อตัวนับในฐานถึงค่าที่นับไว้จริง

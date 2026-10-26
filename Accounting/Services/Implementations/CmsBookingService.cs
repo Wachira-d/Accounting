@@ -1447,7 +1447,9 @@ public class CmsBookingService : ICmsBookingService
             DepositKindId: bookingDepositKindId
         );
 
-        var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-booking");
+        // รอบ 205 ทีม W1 (R-04): ระบุต้นทาง ⇒ ใบร่างจากการจองไม่กินโควตาจนอนุมัติ (DocumentQuotaPolicy.DefersCountUntilApproval)
+        var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-booking",
+            originModule: Accounting.Helpers.DocumentQuotaPolicy.CmsBookingOrigin);
         booking.ErpDocumentId = created.Id;
         booking.ErpDocumentType = erpDocType;
         if (svc.BookingType == BookingType.Guaranteed && docType == DocumentType.Quotation)

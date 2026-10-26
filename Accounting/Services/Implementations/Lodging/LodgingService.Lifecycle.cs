@@ -465,7 +465,7 @@ public partial class LodgingService
             {
                 r.Id, r.ReservationNumber, r.Status, r.Source, r.GuestName, r.GuestPhone, r.CheckInDate, r.CheckOutDate, r.Nights,
                 r.TotalAmount, r.FolioTotal, r.PaidAmount, r.DepositRequired, r.HoldExpiresAt, r.SlipUploadedAt, r.CreatedAt,
-                r.RefundAmount, r.RefundPaidAmount, r.RefundPaidBy,
+                r.RefundAmount, r.RefundPaidAmount, r.RefundPaidBy, r.RefundedAtGatewayAt,
                 r.PaymentProblemAt, r.FinalDocumentId, r.CancellationReason, r.CancellationFee,
                 r.GuestConfirmMode, r.ConfirmedBy, r.DepositPaid, r.SlipUploadBlocked,
                 NotesHaveLegacyMarker = r.InternalNotes != null && r.InternalNotes.Contains(LodgingOverdueRule.LegacyAutoCheckoutMarker),
@@ -482,6 +482,8 @@ public partial class LodgingService
             BalanceDue = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount), DepositRequired = r.DepositRequired,
             HoldExpiresAt = r.HoldExpiresAt, HasSlip = r.SlipUploadedAt != null, CreatedAt = r.CreatedAt,
             RefundPending = LodgingDepositSettlement.RefundPendingOf(r.RefundAmount, r.RefundPaidAmount, r.RefundPaidBy),
+            GatewayRefundNote = LodgingDepositSettlement.GatewayRefundNote(r.RefundedAtGatewayAt,
+                LodgingDepositSettlement.RefundPendingOf(r.RefundAmount, r.RefundPaidAmount, r.RefundPaidBy)),
             OverdueLabel = LodgingOverdueRule.Label(LodgingOverdueRule.Classify(r.Status, r.CheckOutDate, today)),
             HasPaymentProblem = r.PaymentProblemAt != null,
             SlipStateLabel = LodgingGuestConfirmPolicy.StaffSlipLabel(new LodgingGuestFacts(r.GuestConfirmMode, r.Status, r.DepositRequired, r.DepositPaid,
@@ -1437,7 +1439,8 @@ public partial class LodgingService
 
     /// <summary>ใบร่างของใบสุดท้าย — ใช้ใบร่างที่ค้างของการจองนี้ (idempotent) หรือสร้างใหม่ · ตัวเดียวของเส้นเช็คเอาต์และเส้นออกใบใหม่ (A-IN5)</summary>
     private async Task<Guid> UpsertFinalDraftAsync(Guid companyId, LodgingReservation r, CreateDocumentRequest create,
-        DocumentType docType, string userId, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null)
+        DocumentType docType, string userId, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null,
+        bool isReplacementOfVoided = false)
     {
         // รอบ 194 R3 (P-1) — กดซ้ำหลังอนุมัติล้ม (ยังไม่ประทับ FinalDocumentId) ⇒ ใช้ใบร่างเดิม (idempotent) โดยเขียนเนื้อหาของรอบนี้ทับ
         // (ยอด/แผนมัดจำของรอบนี้คือความจริงล่าสุด) · เดิมสร้างใบร่างใหม่ทุกครั้ง ใบเก่าค้างเป็นขยะที่อนุมัติผิดใบได้
@@ -1468,8 +1471,9 @@ public partial class LodgingService
         }
         else
         {
+            // R-03: ใบเช็คเอาต์ที่ออก "แทน" ใบที่ยกเลิก = การขายเดิมที่นับโควตาไปแล้ว (void ไม่คืนโควตา · LICENSING §13.1) ⇒ ไม่นับซ้ำ
             var created = await _docService.CreateDocumentAsync(companyId, create, userId, LodgingOrigin,
-                carriedMoneyHeader: carriedMoneyHeader);
+                isFullTaxInvoiceReplacement: isReplacementOfVoided, carriedMoneyHeader: carriedMoneyHeader);
             return created.Id;
         }
     }
@@ -1576,7 +1580,7 @@ public partial class LodgingService
             ServiceUsedDate: r.CheckOutDate);
         // ฝ่ายค้านรอบ 1 P1: บัญชีรับเงินยกจากใบเดิมที่ยกเลิกแล้ว (แก้ไม่ได้) — บัญชีธนาคารที่ปิดใช้ทีหลังไม่ทำให้ออกใบแทนไม่ได้
         var draftId = await UpsertFinalDraftAsync(companyId, r, create, docType, userId,
-            new Accounting.Helpers.CarriedMoneyHeader(old.BankAccountId, null, null));
+            new Accounting.Helpers.CarriedMoneyHeader(old.BankAccountId, null, null), isReplacementOfVoided: true);
         // ฝ่ายค้านรอบ 201 รอบสาม P2-6: ไม่มีคนเห็นคำเตือนในเส้นนี้ ⇒ SystemWorkflow — ผ่านเหมือนเดิม (ไม่หยุดการออกเอกสาร) แต่ร่องรอยบอกตามจริงว่าไม่ใช่คนรับทราบ (เดิม acknowledgeWarnings: true = ประทับ AcknowledgedByPerson)
         var approved = await _docService.ApproveDocumentAsync(companyId, draftId, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
         r.FinalDocumentId = approved.Id;

@@ -1296,6 +1296,8 @@ const API = {
       // เดียวกับ webhook ⇒ ต้นทางถูกดำเนินการต่อครบเหมือนกัน · บังคับเหตุผล
       confirmPaymentIntentManually: (id, reason) =>
         API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason }),
+      // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ให้ handler ของต้นทาง — เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง (redispatchPending)
+      redispatchPaymentIntent: (id) => API.post(`${base}/pay/intents/${id}/redispatch`, {}),
       refundPaymentIntent: (id, amount, reason) =>
         API.post(`${base}/pay/intents/${id}/refund`, { amount, reason }),
       // แก้ค่าธรรมเนียมจริงรายรายการก่อนบันทึกรอบโอน (รอบ 198 G-6) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit

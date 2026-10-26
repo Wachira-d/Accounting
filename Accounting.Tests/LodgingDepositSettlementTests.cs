@@ -436,4 +436,23 @@ public class LodgingDepositSettlementTests
         Assert.Equal(500m, Assert.Single(plan.Apply).Gross);
         Assert.Empty(plan.Excess);
     }
+
+    // ── รอบ 205 ทีม W1 (R-02): ป้าย "คืนที่ gateway แล้ว" — เซิร์ฟเวอร์ตัดสิน ·ไม่ตัดสินแทนคน ──
+
+    [Fact]
+    public void R02_คืนที่gatewayแล้ว_ยังค้างคืน_ติดป้ายพร้อมทางไปต่อ()
+    {
+        var note = LodgingDepositSettlement.GatewayRefundNote(new DateTime(2026, 10, 25, 17, 0, 0, DateTimeKind.Utc), 1500m);
+        Assert.NotNull(note);
+        Assert.Contains("26/10/2026", note);          // เวลาไทย (+7) ข้ามวัน
+        Assert.Contains("ยืนยันคืนเงินแล้ว", note);  // ทางไปต่อ = ปุ่มเดิม
+    }
+
+    [Fact]
+    public void R02_ทิศตรงข้าม_ไม่เคยคืนทางgateway_ไม่ติดป้าย()
+        => Assert.Null(LodgingDepositSettlement.GatewayRefundNote(null, 1500m));
+
+    [Fact]
+    public void R02_ทิศตรงข้าม_ยืนยันคืนเงินแล้ว_ป้ายหาย()
+        => Assert.Null(LodgingDepositSettlement.GatewayRefundNote(DateTime.UtcNow, 0m));
 }

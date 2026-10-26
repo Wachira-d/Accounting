@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **641 ไฟล์ · 6,413 `[Fact]` + 1,041 `[Theory]` (4,864 `InlineData`)** ณ 2026-10-26 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **643 ไฟล์ · 6,430 `[Fact]` + 1,047 `[Theory]` (4,884 `InlineData`)** ณ 2026-10-26 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
@@ -6668,3 +6668,20 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CC-16 | กด "ยืนยันขาย" สองครั้ง (คีย์เดิม) / อนุมัติล้ม | ได้บัตรเดียว ใบเดียว / ใบร่างถูกลบ + ข้อความบอกเหตุ | ระบบ · จุดเรียกล็อกใน `required_call_site_check` |
 | CC-17 | Hold ref เดียวกันสองคำขอพร้อมกัน · จอง 1-on-1 ครูเดียวกันเวลาซ้อนพร้อมกัน | ได้การจองเดียว · รอบเดียว (อีกคำขอได้ "ครูติดสอน") | ระบบ · `required_call_site_check` (ล็อกก่อนตรวจ) |
 | CC-18 | งานหมดอายุ: บัตรหนึ่งใบล้ม (เช่นงวดปิดทั้งวันบริการและวันนี้) | ใบอื่นของบริษัทปิดต่อ · ผลลัพธ์ `Failed` = 1 + log Error | ระบบ |
+
+## W1 — Gateway & โควตาเอกสาร (ทีม W1 · 2026-10-26 · `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W1 · R-01..R-05)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| W1-01 | เงินเข้าแล้ว handler ล้ม (⚠️ ในประวัติ) → กด "ส่งต่อใหม่" | handler เดิมถูกเรียก (idempotent) · สำเร็จ ⇒ ✅ ในประวัติ + ปุ่มหาย · ล้มอีก ⇒ 422 + ⚠️ ใหม่ + แจ้งเจ้าของ | `PaymentRedispatchPolicyTests` (`เงินเข้าแล้ว_handlerล้ม_ค้าง…` · `ส่งต่อใหม่แล้วล้มอีก_ยังค้าง`) · manual: `payment-intents.html` |
+| W1-02 | **ทิศตรงข้าม** ส่งต่อครั้งแรกสำเร็จ / ส่งต่อใหม่สำเร็จแล้ว / เงินยังไม่เข้า → เรียก redispatch | 200 `noOp=true` พร้อมข้อความ · ไม่รัน handler · ไม่มีปุ่ม | `PaymentRedispatchPolicyTests` (`ทิศตรงข้าม_*`) |
+| W1-03 | หมายเหตุ ⚠️ ของการคืนเงินที่ลงบัญชีไม่สำเร็จ | ไม่ถูกนับว่า "ต้นทางค้าง" | `PaymentRedispatchPolicyTests.หมายเหตุคืนเงินที่ล้ม_ไม่ถูกนับเป็นต้นทางค้าง` |
+| W1-04 | คืนเงินผ่าน gateway สำเร็จของการจองที่พัก/ออเดอร์ | `RefundedAtGatewayAt` ประทับครั้งแรก · คิว "ต้องคืนเงินแขก" ติดป้าย · RefundPaid/ใบลดหนี้ไม่ถูกแตะ (คนตัดสิน) | `LodgingDepositSettlementTests.R02_*` · manual: `lodging.html` ตัวกรอง "ต้องคืนเงินแขก" |
+| W1-05 | **ทิศตรงข้าม** ยืนยันคืนเงินแล้ว / ไม่เคยคืนทาง gateway | ป้ายหาย / ไม่ติด | `LodgingDepositSettlementTests.R02_ทิศตรงข้าม_*` |
+| W1-06 | ใบมัดจำใบที่ 2+ ของ `BookingNumber` เดียวกัน · เงินประกัน `RefundableSecurity` · ใบกำกับยอดริบ · ใบเช็คเอาต์แทนใบที่ยกเลิก | `NotCounted` (ไม่นับ · ไม่บล็อก) | `DocumentQuotaPolicyTests.R03_*` |
+| W1-07 | **ทิศตรงข้าม** ใบมัดจำใบแรก + ใบกำกับเช็คเอาต์ · มัดจำ `PartOfPrice`/ไม่ทราบลักษณะ · ใบปกติชนิดเดียวกัน | ยังนับ 2 / `CountedMustAllow` เท่าเดิม · void ไม่คืนโควตา (ตัวนับไม่ลด) | `DocumentQuotaPolicyTests.R03_ทิศตรงข้าม_*` · `R03_ใบแทนใบที่ยกเลิก_ไม่นับซ้ำ_ใบปกติชนิดเดียวกันยังนับ` |
+| W1-08 | ใบร่างจากการจองนัดหมาย (`CmsBooking`) / คำสั่งซื้อหน้าเว็บ (`site-order`) | ไม่นับ/ไม่บล็อกตอนสร้าง (`QuotaCountDeferred=true`) · นับตอนอนุมัติ · ใบเสนอราคาเกินโควตา ⇒ `QUOTA-DOCUMENTS` ตอนอนุมัติ (ก่อนออกเลข) | `DocumentQuotaPolicyTests.R04_*` · service: `DocumentService.CreateDocumentAsync`/`ApproveDocumentAsync` (ยังไม่มีเทสต์ระดับ service — รอ job db-test รอบถัดไป) |
+| W1-09 | **ทิศตรงข้าม** ต้นทาง null/Lodging/Pos/Ocr/Import · ใบเก่าที่นับตอนสร้างไปแล้ว | นับตอนสร้างเหมือนเดิม · `QuotaCountDeferred=false` ⇒ ไม่นับซ้ำตอนอนุมัติ | `DocumentQuotaPolicyTests.R04_ทิศตรงข้าม_*` |
+| W1-10 | 8 คำขอ `IncrementUsageAsync("document")` พร้อมกัน (คนละ DbContext) | ตัวนับ +8 (เดิมนับขาด) | `Db/DocumentQuotaCounterDbTests.R05_แปดคำขอพร้อมกัน_ตัวนับเพิ่มครบแปด` (Category=Db) |
+| W1-11 | **ทิศตรงข้าม** นับในธุรกรรมแล้ว rollback (= สร้างใบล้ม) | ตัวนับในฐาน 0 · entity ตรงกับ RETURNING | `Db/DocumentQuotaCounterDbTests.R05_ทิศตรงข้าม_ธุรกรรมถูกถอย_ตัวนับไม่ขยับ` |
+| W1-12 | รายงานเทียบก่อน-หลังโควตาทุกบริษัท | ส่วนต่าง ≤ 0 ทุกแถว (กติกาใหม่ลดอย่างเดียว) — เงื่อนไขก่อน R-04 ขั้น 2 | `tools/quota_count_before_after.sql` (อ่านอย่างเดียว · **ยังไม่ได้รัน** — เครื่องนี้ไม่มี PostgreSQL · เจ้าของรันบน staging) |
