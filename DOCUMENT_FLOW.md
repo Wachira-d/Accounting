@@ -389,8 +389,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     ยอด**หลัง**ส่วนลด (`OcrHeaderAmounts.NetSubTotal` ทั้งสร้าง/พรีวิว/repopulate — เดิมก่อนลด ⇒ ฐานภาษีซื้อ §87 เกิน) ·
     `Document.DiscountAmount` = Σ ส่วนลดที่ลงบรรทัดจริง · `OcrLineReconciler` เคส E `DiscountOnTotalInclVat` (ราคารวม VAT + ส่วนลด) ·
     เคส F `DiscountPreVatOnInclusivePrices` (ราคารวม VAT + ส่วนลดพิมพ์ก่อน VAT · ทีม R) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT ·
-    ทีม T 2026-10-26 · สังเคราะห์ · วางหลัง F เข้าได้เฉพาะใบที่เดิม Ambiguous) · เมทริกซ์ทุกรูปแบบ + สถานะ `docs/OCR_TOTALS_MATRIX.md` · ส่วนลดท้ายบิลทุกเคสยัง**กระจายลงบรรทัด**
-    (`BillDiscountAmount = 0` — ข้อเสนอลงเป็นส่วนลดท้ายบิล 538.32 ให้หน้าตาตรงกระดาษ รอเจ้าของ · MATRIX §4) ·
+    ทีม T 2026-10-26 · สังเคราะห์ · วางหลัง F เข้าได้เฉพาะใบที่เดิม Ambiguous) · เมทริกซ์ทุกรูปแบบ + สถานะ `docs/OCR_TOTALS_MATRIX.md` ·
+    **คำตัดสินข้อ 159 (2026-10-26):** เคส F/G (กระดาษพิมพ์ "ส่วนลดท้ายบิล") ⇒ `OcrLineReconcileResult.BillDiscountPreVat` ⇒ `Document.BillDiscountAmount` ตามกระดาษ (538.32) ·
+    บรรทัดไม่มีส่วนลด · ยอดบรรทัดจาก `DocumentService.PlanLineAmounts` (ตัวตั้งเดียวของ Create/Update — ไม่มีสำเนาสูตร) ⇒ เปิดแก้แล้วบันทึกไม่ขยับ · `OcrLinePreviewResponse.BillDiscountAmount`
+    ส่งต่อให้ฟอร์ม "แก้ในฟอร์มก่อน" · เคส C/E ยัง**กระจายลงบรรทัด**เหมือนเดิม (`BillDiscountAmount = 0`) · `BuildScanLinesAsync` ตั้ง `BillDiscountAmount = 0` ใหม่ทุกครั้งเหมือน `RoundingAdjustment` ·
+    หลังฝ่ายค้าน: ในสาขานี้ไม่บวกเศษราคาต่อหน่วยซ้ำ (`PlanLineAmounts` คิดจาก จำนวน × ราคา แล้ว) · `RoundingAdjustment` = −(Σ ยอดบรรทัดจาก DocumentService − ฐานกระดาษ) ภายใต้เพดาน `DocumentRounding.CapShifts`
+    ⇒ `SubTotal = Σ บรรทัด + RA = ฐานกระดาษ` คงสัญญาเดิม · **ดึงรายการซ้ำ** บนเอกสารที่มี `BillDiscountAmount` ผู้ใช้กรอก (> 0 และ ≠ ค่าจากสแกน) ⇒ ล้มดัง `OCR-REPOP-BILL-DISCOUNT` (ค่าผู้ใช้ชนะ — ลบในฟอร์มก่อนจึงดึง) ·
+    replay harness เดินสาขาเดียวกัน (`Mode = Items+Bill:<x>` · rcs ล็อก `PlanLineAmounts(` ทั้ง service/harness) · `ResaveLineNets` เรียก `PlanLineAmounts` ตัวเดียว ·
     **ลำดับตั้งอัตรา VAT รายบรรทัด** (`OcrService.BuildScanLinesAsync` — ตัวสร้างเดียวของสร้าง/line-preview/ดึงรายการซ้ำ · เติมเฉพาะ
     บรรทัดที่ยังว่าง): (1) ค่าจาก engine/ผู้ใช้แก้ในหน้ารีวิว → (2) สัญลักษณ์บนกระดาษ (V/N · ตารางสรุป VAT) ที่ยอดพิสูจน์ได้
     (`Helpers/OcrLineVatMarks`) → (3) **ตัวเลขหัวใบพิสูจน์ทั้งใบ** (`Helpers/OcrLineVatPlanner.PlanWholeInvoice` · รอบ 195 — VAT หัวใบ =

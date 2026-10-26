@@ -41,13 +41,17 @@ public enum OcrLineReconcileCase
 /// <param name="TargetLineSum">ยอดที่ Σ บรรทัดหลังปรับควรเท่ากับ (null = ไม่ปรับ)</param>
 /// <param name="UnreconciledGap">ส่วนต่างที่ระบบ<b>ไม่</b>แต่งให้ (บวก = กระดาษมากกว่าบรรทัด) — 0 เมื่อลงตัว</param>
 /// <param name="Note">ข้อความสำหรับ ProcessingNotes / ป้ายเตือน (ภาษาไทย)</param>
+/// <param name="BillDiscountPreVat"><b>คำตัดสินเจ้าของข้อ 159 (2026-10-26):</b> กระดาษพิมพ์ "ส่วนลดท้ายบิล" ที่ลงเป็น <c>Document.BillDiscountAmount</c>
+/// (ยอดก่อน VAT · ตามกระดาษ) แทนการกระจายลงบรรทัด — เคส F (ส่วนลดที่พิมพ์) · เคส G (ส่วนลดที่พิมพ์ ÷ 1.07) · null = เคสอื่นกระจายลงบรรทัดเหมือนเดิม
+/// (<see cref="DiscountPercent"/>/<see cref="TargetLineSum"/> ยังคืนให้เพื่อผู้เรียกเดิม/เทสต์ แต่ตัวสร้างบรรทัดไม่ใช้เมื่อช่องนี้มีค่า)</param>
 public sealed record OcrLineReconcileResult(
     OcrLineReconcileCase Case,
     bool PricesIncludeVat,
     decimal DiscountPercent,
     decimal? TargetLineSum,
     decimal UnreconciledGap,
-    string Note);
+    string Note,
+    decimal? BillDiscountPreVat = null);
 
 /// <summary>
 /// ตัวจำแนกความสัมพันธ์ "ผลรวมบรรทัด ↔ หัวใบ" (pure, ไม่มี I/O) ใช้ตอนสร้าง
@@ -179,9 +183,11 @@ public static class OcrLineReconciler
             && PreVatDiscountOnInclusiveLines(grossSum, headerSubTotal, headerVat, headerTotal, headerDiscount) is decimal discIncl)
         {
             var pct = Math.Round(discIncl / grossSum * 100m, 2, MidpointRounding.AwayFromZero);
+            // คำตัดสินข้อ 159: ส่วนลดท้ายบิลที่กระดาษพิมพ์ (ก่อน VAT) ลง BillDiscountAmount ตามกระดาษ — ไม่กระจายลงบรรทัด
             return new(OcrLineReconcileCase.DiscountPreVatOnInclusivePrices, true, pct, headerTotal, 0m,
                 $"ราคาบนกระดาษรวม VAT แล้ว (Σ บรรทัด {grossSum:N2} ÷ 1.07 = {Math.Round(grossSum * 100m / 107m, 2, MidpointRounding.AwayFromZero):N2}) "
-                + $"+ ส่วนลดท้ายบิล {headerDiscount:N2} ก่อน VAT (= {discIncl:N2} รวม VAT · {pct:0.##}%) กระจายลงทุกบรรทัด — ฐาน {headerSubTotal:N2} ตรงกระดาษ");
+                + $"+ ส่วนลดท้ายบิล {headerDiscount:N2} ก่อน VAT (= {discIncl:N2} รวม VAT) ลงเป็นส่วนลดท้ายบิลของเอกสารตามกระดาษ — ฐาน {headerSubTotal:N2} ตรงกระดาษ",
+                BillDiscountPreVat: headerDiscount);
         }
 
         // (G) ทีม T 2026-10-26 (เมทริกซ์ docs/OCR_TOTALS_MATRIX.md · เคสสังเคราะห์ ภาพสะท้อนของ F): ราคาก่อน VAT + ส่วนลดท้ายบิลพิมพ์เป็นยอดรวม VAT
@@ -193,9 +199,11 @@ public static class OcrLineReconciler
             && InclVatDiscountOnExclusiveLines(grossSum, headerSubTotal, headerVat, headerTotal, headerDiscount) is decimal discEx)
         {
             var pct = Math.Round(discEx / grossSum * 100m, 2, MidpointRounding.AwayFromZero);
+            // คำตัดสินข้อ 159: ลง BillDiscountAmount = ส่วนลดถอด VAT (เอกสารเก็บส่วนลดท้ายบิลเป็นยอดก่อน VAT) — ไม่กระจายลงบรรทัด
             return new(OcrLineReconcileCase.DiscountInclVatOnExclusivePrices, false, pct, headerSubTotal, 0m,
-                $"ราคาบนกระดาษเป็นยอดก่อน VAT แต่ส่วนลดท้ายบิล {headerDiscount:N2} พิมพ์รวม VAT (= {discEx:N2} ก่อน VAT · {pct:0.##}%) "
-                + $"กระจายลงทุกบรรทัด — Σ บรรทัด {grossSum:N2} − {discEx:N2} = ฐาน {headerSubTotal:N2} ตรงกระดาษ");
+                $"ราคาบนกระดาษเป็นยอดก่อน VAT แต่ส่วนลดท้ายบิล {headerDiscount:N2} พิมพ์รวม VAT (= {discEx:N2} ก่อน VAT) "
+                + $"ลงเป็นส่วนลดท้ายบิลของเอกสาร {discEx:N2} — Σ บรรทัด {grossSum:N2} − {discEx:N2} = ฐาน {headerSubTotal:N2} ตรงกระดาษ",
+                BillDiscountPreVat: discEx);
         }
 
         // ใบไม่มียอดก่อน VAT (บิลเงินสด/ใบเสร็จไม่มี VAT): เทียบกับยอดรวมโดยตรง

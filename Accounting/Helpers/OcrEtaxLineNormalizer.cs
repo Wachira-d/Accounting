@@ -210,7 +210,7 @@ public static class OcrEtaxLineNormalizer
             exLines[i].Amount, true, PriceIncludesVat: true, VatStripResidual: null, VatRate: rate)).ToList();
         var note = $"{NoteTag} ราคาบรรทัดใน XML รวม VAT แล้ว — หัวใบพิสูจน์: Σ บรรทัด {sum:N2} − ส่วนลดท้ายบิล {a:N2} = ยอดรวมทั้งสิ้น {g:N2} "
             + $"และ VAT {v:N2} = {rate:0.##}/{100m + rate:0.##} ของ {g:N2} (ถ้าอ่านเป็นราคาก่อน VAT ยอดจะเป็น {afterAllowance + v:N2} ไม่ตรง) ⇒ ลงเป็นเอกสารราคารวม VAT "
-            + $"+ ส่วนลดท้ายบิล {a:N2} รวม VAT (= {R2(a * 100m / (100m + rate.Value)):N2} ก่อน VAT) กระจายลงบรรทัด";
+            + $"+ ส่วนลดท้ายบิล {a:N2} รวม VAT ลงเป็นส่วนลดท้ายบิลของเอกสาร {R2(a * 100m / (100m + rate.Value)):N2} ก่อน VAT ตามกระดาษ (คำตัดสินข้อ 159)";
         return new OcrEtaxInvoiceLines(true, lines, new[] { note }, a);
     }
 
