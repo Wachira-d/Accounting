@@ -95,4 +95,16 @@ public class BookingCancellationFeeTests
         Assert.Equal(0m, p.ForfeitFromDeposit);
         Assert.Equal(0m, p.RefundDue);
     }
+
+    [Fact]
+    public void เลื่อนนัดเอง_ได้เฉพาะในหน้าต่างฟรีหรือไม่ตั้งนโยบาย()
+    {
+        var free = BookingCancellationFee.Plan(BookingCancelKind.CustomerCancel, Start.AddHours(-30), Start, 24, 50m, 2000m, 500m);
+        var late = BookingCancellationFee.Plan(BookingCancelKind.CustomerCancel, Start.AddHours(-2), Start, 24, 50m, 2000m, 500m);
+        var undefined = BookingCancellationFee.Plan(BookingCancelKind.CustomerCancel, Start.AddHours(-2), Start, 24, null, 2000m, 500m);
+        Assert.True(BookingCancellationFee.CanCustomerReschedule(free));
+        Assert.False(BookingCancellationFee.CanCustomerReschedule(late));
+        Assert.True(BookingCancellationFee.CanCustomerReschedule(undefined));
+        Assert.Contains("24 ชม.", BookingCancellationFee.RescheduleBlockedNote(24));
+    }
 }

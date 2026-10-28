@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **668 ไฟล์ · 6,660 `[Fact]` + 1,077 `[Theory]` (5,019 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **670 ไฟล์ · 6,673 `[Fact]` + 1,079 `[Theory]` (5,028 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
@@ -6690,6 +6690,10 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | BKE-25 | **W2 R-10/R-11** ยกเลิกหลังหน้าต่างฟรี / ไม่มา · `CancellationFeePercent` 50 · มัดจำ 500 · ราคา 2,000 | ค่าธรรมเนียม 1,000 ⇒ ริบ 500 (เพดาน = มัดจำ ข้อ 126) ผ่าน `RealizeDepositAsync(ForfeitAs)` · ค้าง 500 เป็นหมายเหตุ CRM · ไม่ตั้ง % ⇒ ไม่ริบ ไม่คืน | `BookingCancellationFeeTests` |
 | BKE-26 | **W2 R-06** ออเดอร์มีสลิปรอตรวจ แล้วเปิดหน้าสั่งซื้อสำเร็จ | `onlinePaymentBlockedNote` แสดงแทนปุ่มจ่าย · `public-pay/orders/…/intents` ตอบ 400 พร้อมข้อความเดียวกัน · สลิปถูกปฏิเสธ ⇒ ปุ่มกลับมา | manual |
 | BKE-27 | **W2 R-07** ยกเลิกออเดอร์ที่ใบกำกับมีการชำระผูก | ไม่ void · ร่างใบลดหนี้เต็มใบอ้างใบเดิม (ไม่อนุมัติ) · หมายเหตุ `[ERP-CN-DRAFT]` ชี้รายการชำระ/ยอดโอนที่ต้องคืน · ออเดอร์ที่ยังไม่จ่าย void เหมือนเดิม | `SiteOrderCancelPlanTests` + manual |
+| BKE-28 | **รอบ 206 เลื่อนนัด** พนักงาน `PUT …/bookings/{id}/reschedule` ไปรอบที่ว่าง | แถวเดิมเปลี่ยนวัน/เวลา · `ErpDocumentId` เดิม · ใบมัดจำไม่เปลี่ยน มีหมายเหตุ · `ReminderSentAt` null · คิวสำรองของวันเดิมเลื่อนขึ้น | manual (Db) |
+| BKE-29 | **รอบ 206 เลื่อนนัด ทิศตรงข้าม** รอบใหม่เต็ม / ลูกค้าเลื่อนเองนอกหน้าต่างฟรี / สถานะ Completed | 409 พร้อมเหตุผล · ไม่มีอะไรเปลี่ยน · การจองที่มีบริการเดิมในรอบนั้นไม่ถูกนับซ้ำ (excludeBookingId) | `BookingCancellationFeeTests` + manual |
+| BKE-30 | **รอบ 206 R-32** ร้านตั้ง proportional · บิล 7% 700 + 0% 300 ค่าส่ง 100 | เอกสาร ERP มี 2 บรรทัดค่าจัดส่ง (70 @7% · 30 @0%) · VAT ออเดอร์ = VAT(70) · ร้าน max_rate = บรรทัดเดียว "ค่าจัดส่ง" 100 @7% เท่าเดิม | `ShippingVatAllocationTests` + manual |
+| BKE-31 | **รอบ 206 R-31** ร้านตั้งริบ 50% · ยกเลิกออเดอร์ที่มีใบมัดจำ 1,000 (ฐาน 934.58) | JE ริบ ฐาน 467.29 (ForfeitAs PriceOrFee) · หมายเหตุ `[CMS-ORDER-DEPOSIT-FORFEIT]` รอคืน 500 · ไม่ตั้ง % = ไม่มี JE (เดิม) · เงินประกันไม่ถูกริบ | `SiteOrderDepositForfeitTests` + manual |
 
 
 ## CC — คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md` · `Helpers/CourseCreditMath`)

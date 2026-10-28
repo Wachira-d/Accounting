@@ -73,6 +73,11 @@
           <!-- ทีม Q (คำตัดสินข้อ 156): วิธีออกเอกสารภาษีของมัดจำ — ตัวเลือก + คำอธิบายผลภาษีมาจากเซิร์ฟเวอร์ทั้งหมด -->
           <div class="form-group"><label class="form-label">ใบกำกับภาษีเมื่อลูกค้าจ่ายมัดจำ</label><select class="form-input" id="mtoDepositInvoicing" onchange="Page.onDepositInvoicingChange()"></select></div>
           <div id="mtoDepositInvoicingHelp" style="font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:8px;padding:8px 10px;margin-top:-6px;white-space:pre-wrap"></div>
+          <!-- รอบ 206 (คำตัดสินข้อ 165): VAT ค่าส่งบิลหลายอัตรา + ริบมัดจำเมื่อยกเลิก — ตัวเลือก/คำอธิบายจากเซิร์ฟเวอร์ (Helpers.ShippingVatAllocation · SiteOrderDepositForfeit) -->
+          <div class="form-group"><label class="form-label">VAT ค่าจัดส่งเมื่อสินค้าในบิลหลายอัตรา</label><select class="form-input" id="mtoShipVat" onchange="Page.onShipVatChange()"></select></div>
+          <div id="mtoShipVatHelp" style="font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:8px;padding:8px 10px;margin-top:-6px;white-space:pre-wrap"></div>
+          <div class="form-group"><label class="form-label">ยกเลิกออเดอร์หลังจ่ายมัดจำ — ริบมัดจำคงเหลือ (%)</label><input type="number" class="form-input" id="mtoForfeitPct" min="0" max="100" step="0.01" placeholder="ว่าง = ไม่ริบเอง (รอพนักงานตัดสินที่หน้าเงินมัดจำ)">
+            <div style="font-size:12px;color:var(--gray-500);margin-top:4px">ตั้งแล้วระบบริบส่วนนี้เข้ารายได้ค่าธรรมเนียมอัตโนมัติตอนยกเลิก (ใบมัดจำที่ออกแล้ว · ไม่รวมเงินประกัน) · ส่วนที่เหลือรอคืน — ระบบไม่คืนเงินเอง</div></div>
           <div style="font-size:12px;color:var(--gray-500);margin-top:-6px">มีผลกับออเดอร์ที่สั่งหลังบันทึก — ออเดอร์ที่ค้างอยู่ใช้วิธีที่ตรึงไว้ตอนสั่ง</div>
           <hr style="border:none;border-top:1px solid var(--gray-200)">
           <div class="form-group"><label class="form-label">วันปิดร้านประจำสัปดาห์ (ไม่นับเป็นวันผลิต/รับของ)</label><div id="mtoClosedDays" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
@@ -296,6 +301,10 @@
         this._depositInvoicingModes = c.depositInvoicingModes || [];
         document.getElementById('mtoDepositInvoicing').innerHTML = this._depositInvoicingModes.map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.mtoDepositInvoicing ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
         this.onDepositInvoicingChange();
+        this._shipVatModes = c.shippingVatAllocationOptions || [];
+        document.getElementById('mtoShipVat').innerHTML = this._shipVatModes.map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.shippingVatAllocation ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
+        this.onShipVatChange();
+        document.getElementById('mtoForfeitPct').value = c.depositForfeitOnCancelPercent ?? '';
         const closed = new Set((c.mtoClosedWeekdays || '').split(',').filter(Boolean));
         const names = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
         document.getElementById('mtoClosedDays').innerHTML = names.map((n, i) => `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-dow="${i}" ${closed.has(String(i)) ? 'checked' : ''}> ${n}</label>`).join('');
@@ -303,6 +312,11 @@
         document.getElementById('mtoHolidays').checked = c.mtoSkipCompanyHolidays !== false;
         this.onMtoTermChange();
         Layout.openModal('mtoModal');
+      },
+      onShipVatChange() {
+        const v = document.getElementById('mtoShipVat').value;
+        const m = (this._shipVatModes || []).find(x => x.value === v);
+        document.getElementById('mtoShipVatHelp').textContent = m?.description || '';
       },
       onDepositInvoicingChange() {
         const v = document.getElementById('mtoDepositInvoicing').value;
@@ -326,6 +340,9 @@
           mtoDepositPercent: Layout.numOrNull('mtoPct'),
           mtoDepositFixedAmount: Layout.numOrNull('mtoFixed'),
           mtoDepositInvoicing: document.getElementById('mtoDepositInvoicing').value || null,
+          shippingVatAllocation: document.getElementById('mtoShipVat').value || null,
+          depositForfeitOnCancelPercent: Layout.numOrNull('mtoForfeitPct'),
+          clearDepositForfeitOnCancelPercent: Layout.numOrNull('mtoForfeitPct') == null,
           mtoClosedWeekdays: closed,
           mtoCutoffHour: cutoff,
           clearMtoCutoffHour: cutoff == null,

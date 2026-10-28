@@ -116,6 +116,15 @@ public class CmsCommerceConfigController : ControllerBase
         if (request.MtoDepositFixedAmount.HasValue) config.MtoDepositFixedAmount = request.MtoDepositFixedAmount;
         // ทีม Q (คำตัดสินข้อ 156) — ไม่รู้จัก = 400 พร้อมรายการที่เลือกได้ (ห้ามเก็บค่าที่ไม่มีผู้อ่าน) · มีผลกับออเดอร์ที่สั่งหลังบันทึกเท่านั้น
         if (request.MtoDepositInvoicing != null) config.MtoDepositInvoicing = DepositInvoicingMode.Normalize(request.MtoDepositInvoicing);
+        // รอบ 206 (คำตัดสินข้อ 165): VAT ค่าส่งตามสัดส่วน · ริบมัดจำเมื่อยกเลิก — ตัวตัดสินใน Helpers (ค่าผิด = ปฏิเสธ ไม่บันทึกเงียบ)
+        if (request.ShippingVatAllocation != null) config.ShippingVatAllocation = ShippingVatAllocation.Normalize(request.ShippingVatAllocation);
+        if (request.ClearDepositForfeitOnCancelPercent == true) config.DepositForfeitOnCancelPercent = null;
+        else if (request.DepositForfeitOnCancelPercent.HasValue)
+        {
+            if (SiteOrderDepositForfeit.ValidatePercent(request.DepositForfeitOnCancelPercent) is string pctErr)
+                return BadRequest(new ApiResponse<CommerceConfigResponse>(false, null, pctErr));
+            config.DepositForfeitOnCancelPercent = request.DepositForfeitOnCancelPercent.Value;
+        }
         MtoPaymentTerms.ValidateConfig(PaymentTermMode.Normalize(config.MtoPaymentTermMode),
             config.MtoDepositPercent, config.MtoDepositFixedAmount);
         if (request.MtoClosedWeekdays != null) config.MtoClosedWeekdays = MtoLeadTime.NormalizeClosedWeekdays(request.MtoClosedWeekdays);
@@ -164,6 +173,9 @@ public class CmsCommerceConfigController : ControllerBase
         MtoSkipCompanyHolidays = c.MtoSkipCompanyHolidays,
         PaymentTermModes = PaymentTermMode.All.Select(a => new CommerceOptionValue { Value = a.Value, Label = a.Label }).ToList(),
         MtoDepositInvoicing = DepositInvoicingMode.OfOrder(c.MtoDepositInvoicing),
+        ShippingVatAllocation = ShippingVatAllocation.OfOrder(c.ShippingVatAllocation),
+        ShippingVatAllocationOptions = ShippingVatAllocation.All.ToList(),
+        DepositForfeitOnCancelPercent = c.DepositForfeitOnCancelPercent,
         DepositInvoicingModes = DepositInvoicingMode.All
             .Select(a => new CommerceOptionValue { Value = a.Value, Label = a.Label, Description = a.TaxEffect }).ToList(),
     };

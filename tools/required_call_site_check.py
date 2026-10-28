@@ -9659,6 +9659,34 @@ RULES += [
          why=_W2_WHY + "R-07 ใบลดหนี้อ้างใบเดิม เป็นร่างเท่านั้น — ไม่อนุมัติเอง (R1: เงินยังไม่คืน)"),
 ]
 
+# ── รอบ 206 (ผู้ประสานงาน 2026-10-28 · คำตัดสินข้อ 165): R-32 VAT ค่าส่งตามสัดส่วน · R-31 ริบมัดจำเมื่อยกเลิกออเดอร์ · เลื่อนนัดการจอง ──
+BOOK_RESCHEDULE = "Services/Implementations/CmsBookingService.Reschedule.cs"
+CMS_COMMERCE_CFG_CTRL = "Controllers/CmsCommerceConfigController.cs"
+_R206_WHY = "รอบ 206: "
+RULES += [
+    dict(file=CMS_COMMERCE_SVC, method="BuildOrderErpLines",
+         must=["ShippingVatAllocation.Split(", "ShippingVatAllocation.LineDescription("], forbid=["ShippingFeeRules.VatRateForShipping("],
+         why=_R206_WHY + "R-32 บรรทัดค่าจัดส่งมาจากตัวตัดสินเดียว (อัตราสูงสุด = ส่วนเดียวเดิม · สัดส่วน = หลายบรรทัด) — ห้ามคำนวณอัตราเองในตัวสร้างบรรทัด"),
+    dict(file=CMS_COMMERCE_SVC, method="CreateOrderAsync",
+         must=["order.ShippingVatAllocation = checkout.ShippingVatAllocation", "ShippingVatAllocation.VatIn("],
+         why=_R206_WHY + "R-32 ตรึงวิธีคิดตอนสั่ง + ยอด VAT ของออเดอร์ชุดเดียวกับบรรทัดเอกสาร"),
+    dict(file=CMS_COMMERCE_SVC, method="ForfeitDepositsOnCancelAsync",
+         must=["SiteOrderDepositForfeit.Enabled(", "SiteOrderDepositForfeit.Plan(", "ForfeitAs: DepositForfeitAs.PriceOrFee"],
+         forbid=["RefundDepositAsync("],
+         why=_R206_WHY + "R-31 ริบตาม % ของร้านผ่านแผนตัวเดียว · ริบด้วย RealizeDepositAsync(ForfeitAs) เดิม · ไม่คืนเงินเอง (R1)"),
+    dict(file=CMS_COMMERCE_SVC, method="UpdateOrderStatusAsync",
+         must=["ForfeitDepositsOnCancelAsync("], before=[("ForfeitDepositsOnCancelAsync(", "SiteOrderDepositInvoicing.CancelNotice(")],
+         why=_R206_WHY + "R-31 ริบก่อนสรุปมัดจำค้าง (ข้อความถึงพนักงานต้องเห็นยอดหลังริบ)"),
+    dict(file=CMS_COMMERCE_CFG_CTRL, method="UpdateConfig",
+         must=["ShippingVatAllocation.Normalize(", "SiteOrderDepositForfeit.ValidatePercent("],
+         why=_R206_WHY + "ค่าตั้งใหม่ผ่านด่านตรวจของตัวตัดสิน (ค่าผิด = ปฏิเสธ ไม่บันทึกเงียบ)"),
+    dict(file=BOOK_RESCHEDULE, method="RescheduleCoreAsync",
+         must=["LockSiteBookingsAsync(", "excludeBookingId: booking.Id", "BookingSlotEngine.Decide(", "BookingCancellationFee.CanCustomerReschedule(", "PromoteWaitlistAsync("],
+         before=[("LockSiteBookingsAsync(", "BookingSlotEngine.Decide("), ("BookingSlotEngine.Decide(", "booking.BookingDate = ")],
+         forbid=["booking.Status = ", "VoidDocumentAsync(", "RealizeDepositAsync("],
+         why=_R206_WHY + "เลื่อนนัด = แถวเดิม · ตัดสินรอบใหม่ใต้ล็อกไซต์โดยไม่นับตัวเอง · ลูกค้าเฉพาะหน้าต่างฟรี · ไม่แตะเอกสาร/เงิน · รอบเดิมว่าง ⇒ เลื่อนคิวสำรอง"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

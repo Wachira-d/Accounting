@@ -170,6 +170,10 @@ public class SiteCommerceConfig : TenantEntity
     public bool EnableOnlinePayment { get; set; } = true;
     public bool EnableCod { get; set; } = false;
     public bool EnableBankTransfer { get; set; } = true;
+    /// <summary>รอบ 206 (R-32 · คำตัดสินข้อ 165): วิธีคิด VAT ค่าจัดส่งบิลหลายอัตรา — <c>Helpers.ShippingVatAllocation</c> · ค่าเริ่มต้นอัตราสูงสุด (เดิม)</summary>
+    public string ShippingVatAllocation { get; set; } = global::Accounting.Helpers.ShippingVatAllocation.MaxRate;
+    /// <summary>รอบ 206 (R-31 · คำตัดสินข้อ 165): ยกเลิกออเดอร์หลังมัดจำ ริบ % ของมัดจำคงเหลือ · null/0 = ไม่ริบเอง (เดิม) — <c>Helpers.SiteOrderDepositForfeit</c></summary>
+    public decimal? DepositForfeitOnCancelPercent { get; set; }
 
     // ── Product Display ──
     public string DefaultProductSort { get; set; } = "newest";

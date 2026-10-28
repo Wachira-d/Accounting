@@ -724,6 +724,7 @@ public class CmsCommerceService : ICmsCommerceService
         order.DepositRequiredAmount = checkout.Due.DepositRequired;
         // ทีม Q (คำตัดสินข้อ 156) — ตรึงวิธีออกเอกสารของมัดจำตอนสั่ง: ร้านเปลี่ยนค่าตั้งทีหลัง ⇒ ออเดอร์ที่ค้างไม่เปลี่ยนวิธีกลางทาง
         order.DepositInvoicingMode = checkout.DepositInvoicing;
+        order.ShippingVatAllocation = checkout.ShippingVatAllocation;   // รอบ 206 R-32: ตรึงวิธีคิด VAT ค่าส่งตอนสั่ง (ข้อ 165)
 
         await _db.SaveChangesAsync();
 
@@ -731,8 +732,12 @@ public class CmsCommerceService : ICmsCommerceService
         var lines = await _db.SiteOrderLines.Where(l => l.OrderId == order.Id).ToListAsync();
         order.SubTotal = lines.Sum(l => l.TotalAmount - l.VatAmount);
         // ฝ่ายค้านทีม K ข้อ 5: VAT ของบรรทัดค่าส่ง (อัตราตามสินค้าในบิล — ตัวเดียวกับใบกำกับ) ต้องรวมอยู่ใน VatAmount ของออเดอร์
+        // รอบ 206 (R-32 · ข้อ 165): อัตราสูงสุด = สูตรเดิมทุกสตางค์ · แบ่งตามสัดส่วน = ตัวตัดสินเดียว ShippingVatAllocation (ชุดเดียวกับบรรทัดเอกสาร ERP)
         order.VatAmount = lines.Sum(l => l.VatAmount)
-            + ShippingFeeRules.VatInShipping(order.ShippingAmount, checkout.Quote.ShippingVatRate);
+            + (Accounting.Helpers.ShippingVatAllocation.OfOrder(order.ShippingVatAllocation) == Accounting.Helpers.ShippingVatAllocation.MaxRate
+                ? ShippingFeeRules.VatInShipping(order.ShippingAmount, checkout.Quote.ShippingVatRate)
+                : Accounting.Helpers.ShippingVatAllocation.VatIn(Accounting.Helpers.ShippingVatAllocation.Split(order.ShippingVatAllocation, true,
+                    order.ShippingAmount, lines.Select(l => (l.TotalAmount, l.VatRate)).ToList())));
         order.TotalAmount = lines.Sum(l => l.TotalAmount) + order.ShippingAmount - order.DiscountAmount;
         if (order.TotalAmount < 0) order.TotalAmount = 0;
         // มัดจำตรึงจากยอดสุดท้ายของใบ (ตัวคิดเดียว — ค่าเดียวกับที่หน้าเช็กเอาต์แสดง)
@@ -846,6 +851,9 @@ public class CmsCommerceService : ICmsCommerceService
         // ★ ทีม Q — ยกเลิก/คืนเงินออเดอร์ที่มีใบรับเงินมัดจำค้าง ⇒ มัดจำไม่ถูกยกเลิกเอง (เงินยังอยู่กับร้าน) · บอกทางไปต่อบนออเดอร์ (คืน/ริบที่ใบมัดจำ)
         if (request.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded)
         {
+            // รอบ 206 (R-31 · คำตัดสินข้อ 165): ร้านตั้ง % ริบมัดจำเมื่อยกเลิก ⇒ ริบจากฐานคงเหลือผ่าน RealizeDepositAsync(ForfeitAs) เดิม · ไม่ตั้ง = ไม่ริบ (เดิม) · คืนส่วนที่เหลือยังเป็นงานคน (R1)
+            if (request.Status == SiteOrderStatus.Cancelled && _docService != null)
+                await ForfeitDepositsOnCancelAsync(companyId, siteId, order, userId);
             var openDeposits = (await LoadOrderDepositSnapshotsAsync(companyId, order))
                 .Select(d => (d.Number, LodgingDepositSettlement.Remaining(d).Gross)).ToList();
             var depositNotice = Accounting.Helpers.SiteOrderDepositInvoicing.CancelNotice(openDeposits);
@@ -857,6 +865,36 @@ public class CmsCommerceService : ICmsCommerceService
         await _db.SaveChangesAsync();
 
         return await GetOrderAsync(companyId, siteId, orderId) ?? throw new InvalidOperationException("Failed.");
+    }
+
+    /// <summary>R-31 (ข้อ 165): ริบมัดจำตาม % ของร้าน — แผนจาก <see cref="SiteOrderDepositForfeit.Plan"/> ตัวเดียว · ล้มต่อใบ = ประทับ [CMS-ORDER-DEPOSIT-FORFEIT-FAILED] ไม่กลืน ไม่หยุดการยกเลิก</summary>
+    private async Task ForfeitDepositsOnCancelAsync(Guid companyId, Guid siteId, SiteOrder order, string userId)
+    {
+        var pct = await _db.SiteCommerceConfigs.AsNoTracking()
+            .Where(c => c.SiteId == siteId && c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => c.DepositForfeitOnCancelPercent).FirstOrDefaultAsync();
+        if (!SiteOrderDepositForfeit.Enabled(pct)) return;
+        var plan = SiteOrderDepositForfeit.Plan(pct, await LoadOrderDepositSnapshotsAsync(companyId, order));
+        if (plan.Count == 0) return;
+        var now = DateTime.UtcNow;
+        var done = new List<SiteOrderDepositForfeitLine>();
+        foreach (var line in plan)
+        {
+            try
+            {
+                await _docService!.RealizeDepositAsync(companyId, line.Id,
+                    new Models.DTOs.Document.RealizeDepositRequest(line.ForfeitBase, now, null, null, ForfeitAs: DepositForfeitAs.PriceOrFee), userId);
+                done.Add(line);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "ริบมัดจำ {Doc} ของออเดอร์ {Order} ตามเงื่อนไขร้านไม่สำเร็จ", line.Number, order.OrderNumber);
+                var why = ex is BusinessRuleException or InvalidOperationException ? ex.Message : "เกิดข้อผิดพลาดภายใน (ดูบันทึกระบบ)";
+                order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, SiteOrderDepositForfeit.FailureNote(line.Number, why, now));
+            }
+        }
+        if (done.Count > 0)
+            order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, SiteOrderDepositForfeit.Note(done, pct!.Value, now));
     }
 
     /// <summary>R-07: ตัดสินด้วย <see cref="Accounting.Helpers.SiteOrderCancelPlan.Decide"/> — ใบที่มีการชำระผูก ⇒ ร่างใบลดหนี้เต็มใบอ้างใบเดิม
@@ -1293,13 +1331,19 @@ public class CmsCommerceService : ICmsCommerceService
         {
             // ทีม K — ค่าส่งที่ผู้ขายเรียกเก็บรวมกับการขาย = ส่วนหนึ่งของมูลค่าฐานภาษี (§79) ⇒ อัตราตามสินค้าในบิล
             // (เดิมอัตรา 0 ⇒ ภ.พ.30 จัดเป็นยอดขายอัตรา 0 §80/1 ส่งออก) · ราคาค่าส่งเป็นยอดรวม VAT เหมือนสินค้า (PricesIncludeVat)
-            lines.Add(new Models.DTOs.Document.DocumentLineRequest(
-                Description: "ค่าจัดส่ง", Quantity: 1m, UnitPrice: order.ShippingAmount,
-                Unit: "ครั้ง", DiscountPercent: 0m,
-                VatRate: ShippingFeeRules.VatRateForShipping(vatRegistered, order.Lines.Select(x => x.VatRate)),
-                WithholdingTaxRate: 0m,
-                AccountId: null, ProjectId: null));
-            lineGross.Add(Math.Round(order.ShippingAmount, 2, R));
+            // รอบ 206 (R-32 · ข้อ 165): อัตราสูงสุด ⇒ ส่วนเดียว "ค่าจัดส่ง" (เดิมทุกตัวอักษร) · แบ่งตามสัดส่วน ⇒ บรรทัดต่ออัตรา — ตัวตัดสินเดียว ShippingVatAllocation
+            var shippingParts = ShippingVatAllocation.Split(order.ShippingVatAllocation, vatRegistered, order.ShippingAmount,
+                order.Lines.Select(x => (Math.Round(x.Quantity * x.UnitPrice, 2, R), x.VatRate)).ToList());
+            foreach (var part in shippingParts)
+            {
+                lines.Add(new Models.DTOs.Document.DocumentLineRequest(
+                    Description: ShippingVatAllocation.LineDescription(part, shippingParts.Count), Quantity: 1m, UnitPrice: part.Fee,
+                    Unit: "ครั้ง", DiscountPercent: 0m,
+                    VatRate: part.Rate,
+                    WithholdingTaxRate: 0m,
+                    AccountId: null, ProjectId: null));
+                lineGross.Add(Math.Round(part.Fee, 2, R));
+            }
         }
 
         if (order.DiscountAmount > 0m && lines.Count > 0)
@@ -2455,7 +2499,8 @@ public class CmsCommerceService : ICmsCommerceService
     private sealed record CheckoutLine(SiteProduct Sp, decimal Quantity, decimal TotalPrice, decimal VatRate, int ExtraLeadDays);
     private sealed record CheckoutComputation(CheckoutQuoteResponse Quote, PaymentDue Due, DateOnly? ReadyDate,
         decimal? DepositPercent, decimal? DepositFixed,
-        string DepositInvoicing = Accounting.Helpers.DepositInvoicingMode.FullAtFirstPayment);
+        string DepositInvoicing = Accounting.Helpers.DepositInvoicingMode.FullAtFirstPayment,
+        string ShippingVatAllocation = Accounting.Helpers.ShippingVatAllocation.MaxRate);   // รอบ 206 R-32
 
     /// <summary>เวลาไทยตอนนี้ (ไทยไม่มีเวลาออมแสง — +7 ตายตัว)</summary>
     private static DateTime BangkokNow() => DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
@@ -2669,7 +2714,8 @@ public class CmsCommerceService : ICmsCommerceService
         var depositInvoicing = Accounting.Helpers.DepositInvoicingMode.OfOrder(cfg?.MtoDepositInvoicing);
         quote.DepositInvoicingNote = Accounting.Helpers.SiteOrderDepositInvoicing.CustomerNote(depositInvoicing,
             paysInInstallments: due.DueNow < due.Balance);
-        return new CheckoutComputation(quote, due, ready, cfg?.MtoDepositPercent, cfg?.MtoDepositFixedAmount, depositInvoicing);
+        return new CheckoutComputation(quote, due, ready, cfg?.MtoDepositPercent, cfg?.MtoDepositFixedAmount, depositInvoicing,
+            Accounting.Helpers.ShippingVatAllocation.OfOrder(cfg?.ShippingVatAllocation));
     }
 
     public async Task<CheckoutQuoteResponse> CheckoutQuoteAsync(Guid companyId, Guid siteId, Guid cartId, CheckoutQuoteRequest request)

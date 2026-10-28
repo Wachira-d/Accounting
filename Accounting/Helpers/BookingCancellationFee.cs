@@ -76,6 +76,12 @@ public static class BookingCancellationFee
         return string.Join(" · ", parts);
     }
 
+    /// <summary>ลูกค้าเลื่อนนัดเองได้ไหม — หน้าต่างเดียวกับยกเลิกฟรี (ไม่ตั้งนโยบาย = ได้) · นอกหน้าต่าง ⇒ ติดต่อร้าน (รอบ 206 · ข้อ 165)</summary>
+    public static bool CanCustomerReschedule(BookingCancellationFeePlan plan) => plan.PolicyUndefined || plan.WithinFreeWindow;
+
+    public static string RescheduleBlockedNote(int? freeCancellationHours)
+        => $"เลื่อนนัดออนไลน์ได้เฉพาะก่อนเวลานัดอย่างน้อย {freeCancellationHours ?? 0} ชม. (ช่วงยกเลิกฟรี) — เลยกำหนดแล้ว กรุณาติดต่อร้านเพื่อเลื่อน";
+
     /// <summary>หมายเหตุภายในบนการจองเมื่อริบ/รอคืน</summary>
     public static string InternalNote(BookingCancellationFeePlan p, string? depositDocumentNumber, DateTime atUtc)
         => $"[{RuleCode}] {(p.Kind == BookingCancelKind.NoShow ? "ไม่มาตามนัด" : "ลูกค้ายกเลิกเอง")} {ThaiDate.CalendarDateUtc(atUtc):dd/MM/yyyy} — {Describe(p, null)}"

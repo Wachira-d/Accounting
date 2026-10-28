@@ -238,6 +238,8 @@ public partial class CmsBookingService
         var plan = BookingCancellationFee.Plan(BookingCancelKind.CustomerCancel, now, startUtc,
             policy.FreeCancellationHours, policy.CancellationFeePercent, resp.TotalAmount, resp.PaidAmount);
         resp.CancelPolicyNote = BookingCancellationFee.Describe(plan, policy.FreeCancellationHours);
+        // รอบ 206: เลื่อนนัดเองได้เฉพาะในหน้าต่างยกเลิกฟรี · คิวสำรองไม่มีรอบให้เลื่อน
+        resp.CanRescheduleOnline = resp.Status != BookingStatus.Waitlisted && BookingCancellationFee.CanCustomerReschedule(plan);
     }
 
     private static DateTime StartUtcOf(DateTime bookingDate, string startTime)
