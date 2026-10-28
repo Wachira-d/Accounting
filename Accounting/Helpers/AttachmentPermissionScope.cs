@@ -152,6 +152,9 @@ public static class AttachmentPermissionScope
             // รอบ 198 ทีม D: คีย์มาจาก Helpers/SettlementPermissionScope ตัวเดียวกับ SettlementController (เดิม Bank.Reconcile ชั่วคราว)
             ["SettlementBatch"] = Rule("SettlementBatch", AttachmentOwnerKind.KeyGated, SettlementPermissionScope.SourceFileWriters.ToArray(), SettlementPermissionScope.SourceFileReaders.ToArray(), false, "รอบโอนเงินจากแพลตฟอร์ม (settlement)"),
             ["SiteOrder"] = Rule("SiteOrder", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.CmsOrderManage }, new[] { PermissionKeys.CmsOrderManage }, false, "คำสั่งซื้อจากเว็บไซต์"),
+            // ทีม W4 R-43: สื่อของเว็บ CMS (ระบบแนบผ่าน CmsContentService · ไม่รับอัปโหลดผ่านหน้าไฟล์แนบ) — เขียน/ลบ = ผู้แก้หน้าเว็บ ·
+            // อ่าน = ทุกคนในบริษัท (สื่ออยู่บนหน้าเว็บสาธารณะอยู่แล้ว · storefront เสิร์ฟผ่าน endpoint ของตัวเองที่ตรวจ siteId)
+            ["SiteMedia"] = Rule("SiteMedia", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.CmsPageEdit }, None, false, "สื่อของเว็บไซต์"),
             ["OcrScan"] = ocr,
             // รอบ 205 T0: ไฟล์ต้นทางของศูนย์นำเข้าข้อมูล (ระบบแนบตอนสร้าง batch · ไม่รับอัปโหลดผ่านหน้าไฟล์แนบ) — คีย์ไม่คงที่ต่อชนิด
             // (ขึ้นกับชนิดข้อมูลของ batch) ⇒ WriteAnyOf/ReadAnyOf ว่าง แล้วด่าน (AttachmentAccessGate) ถาม ImportBatchKey(ชนิดของ batch)

@@ -62,9 +62,9 @@
 
 ## 6. backlog อื่นที่ควรมี (เรียงตามคุณค่า)
 
-1. SSR meta/OG (ข้อ 3) — แชร์ลิงก์ร้านใน LINE แล้วไม่มีรูป/ชื่อ = เสียยอดขายตรง ๆ
-2. ตัวเรนเดอร์บล็อกตัวเดียว (ย้าย Hero/Image/FAQ/Testimonials ไปแบบ `CmsGalleryBlock`) — ปิด defect class "สองตัวเรนเดอร์ drift"
-3. FAQ/Product/LocalBusiness JSON-LD อัตโนมัติจากบล็อก/ข้อมูลบริษัท
+1. ~~SSR meta/OG (ข้อ 3)~~ **ทำแล้ว (ทีม W4 R-44 · 2026-10-26)** — `CmsSiteRoutingMiddleware` ฝัง `Helpers/CmsSeoHead` แทน `<title>` ก่อนส่ง shell
+2. ~~ตัวเรนเดอร์บล็อกตัวเดียว~~ **ทำแล้ว (ทีม W4 R-46)** — `Helpers/CmsBasicBlocks` (Hero/Image/FAQ/Testimonials) · storefront ใช้ `renderedHtml`
+3. ~~FAQ/Product/LocalBusiness JSON-LD~~ **ทำแล้ว (ทีม W4 R-47)** — ประกอบฝั่งเซิร์ฟเวอร์ใน `BuildSeoHeadAsync` (ไม่มีสำเนาใน JS)
 4. Blog (โพสต์ · หมวด · RSS) — enum/PageType มีแล้ว ไม่มีตัวแก้ไขรายการโพสต์
 5. Popup/แบนเนอร์ประกาศ · ปุ่มแชท LINE/Messenger ลอย
 6. ปฏิทินกิจกรรม/อีเวนต์ · Before/After slider · Team/Staff block

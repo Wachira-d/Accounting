@@ -38,6 +38,8 @@ public interface ICmsBookingService
     /// <summary>พนักงานยืนยัน "รับเงินแล้ว" ⇒ ออกใบกำกับภาษีของการจอง Guaranteed (คำตัดสินข้อ 155 · <c>BookingInvoiceTimingPolicy</c>)</summary>
     Task<BookingResponse> IssueTaxInvoiceOnPaymentAsync(Guid companyId, Guid siteId, Guid bookingId, DateTime? receivedDate, string userId);
     Task<PagedResponse<BookingListResponse>> GetBookingsAsync(Guid companyId, Guid siteId, string? status = null, Guid? serviceId = null, DateTime? fromDate = null, DateTime? toDate = null, int page = 1, int pageSize = 20, string? search = null);
+    /// <summary>R-45 มุมมองทุกไซต์ — การจองของเว็บใน <paramref name="siteIds"/> (ผู้เรียกกรองสิทธิ์ด้วย <c>Helpers/CmsSiteScope</c> มาแล้ว · ว่าง = ไม่มีแถว) · แบ่งหน้าจริง</summary>
+    Task<PagedResponse<BookingListResponse>> GetBookingsAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, DateTime? fromDate, DateTime? toDate, string? search, int page, int pageSize);
 
     // ERP Sync (event-driven)
     Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId);

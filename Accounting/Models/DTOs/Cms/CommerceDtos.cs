@@ -470,6 +470,10 @@ public class CheckoutQuoteResponse
 public class OrderListResponse
 {
     public Guid Id { get; set; }
+    /// <summary>R-45 มุมมองทุกไซต์ — เว็บเจ้าของแถว (ปุ่ม action ต้องยิงไปเว็บนี้) · endpoint รายเว็บเดิมก็ใส่ให้ (ค่าเดียวกับ siteId ใน URL)</summary>
+    public Guid SiteId { get; set; }
+    /// <summary>ชื่อเว็บเจ้าของแถว — ใส่เฉพาะมุมมองทุกไซต์ (null = หน้ารายเว็บ ไม่ต้องโชว์)</summary>
+    public string? SiteName { get; set; }
     public string OrderNumber { get; set; } = "";
     public SiteOrderStatus Status { get; set; }
     public string? CustomerName { get; set; }
@@ -508,6 +512,10 @@ public class OrderPaymentResponse
     public Guid? DepositDocumentId { get; set; }
     /// <summary>ทีม Q (ฝ่ายค้านข้อ 2) — ป้ายปุ่ม "ทำขั้นที่ค้าง" ของรายการนี้ (เซิร์ฟเวอร์ตัดสิน · null = ไม่มีอะไรค้าง)</summary>
     public string? PendingAction { get; set; }
+    /// <summary>R-43 — URL สลิปที่ลูกค้าแนบ (null = รายการนี้ไม่มีสลิป เช่น จ่ายผ่าน gateway)</summary>
+    public string? SlipUrl { get; set; }
+    /// <summary>true = สลิปอยู่ในที่เก็บกลาง ต้องดึงผ่าน API พร้อม JWT (<c>API.fetchFile</c>) · false = URL เดิมเปิดตรงได้</summary>
+    public bool SlipRequiresAuth { get; set; }
 }
 
 // ==================== Payment Gateway ====================

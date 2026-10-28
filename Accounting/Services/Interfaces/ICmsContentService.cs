@@ -37,6 +37,9 @@ public interface ICmsContentService
     Task<PagedResponse<MediaResponse>> GetMediaAsync(Guid companyId, Guid siteId, string? folder = null, string? search = null, int page = 1, int pageSize = 20);
     Task<MediaResponse> UpdateMediaAsync(Guid companyId, Guid siteId, Guid mediaId, UpdateMediaRequest request, string userId);
     Task<bool> DeleteMediaAsync(Guid companyId, Guid siteId, Guid mediaId);
+    /// <summary>R-43 — ไบต์ของสื่อในที่เก็บกลางสำหรับ storefront (สาธารณะ): ต้องเป็นไฟล์ชนิด SiteMedia ของเว็บนี้ของบริษัทนี้ ·
+    /// ไม่ใช่/ไม่พบ/ถูกลบ ⇒ null (ไม่แยกให้ผู้เรียกเดา) · แถวมีแต่ไฟล์หาย ⇒ FileNotFoundException (ล้มดัง)</summary>
+    Task<CmsMediaFile?> ReadSiteMediaAsync(Guid companyId, Guid siteId, Guid attachmentId, CancellationToken ct = default);
 
     // SEO Redirects
     Task<SeoRedirectResponse> CreateSeoRedirectAsync(Guid companyId, Guid siteId, CreateSeoRedirectRequest request, string userId);

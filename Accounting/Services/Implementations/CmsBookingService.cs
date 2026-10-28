@@ -1295,7 +1295,7 @@ public class CmsBookingService : ICmsBookingService
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(b => new BookingListResponse
             {
-                Id = b.Id, BookingNumber = b.BookingNumber, Status = b.Status,
+                Id = b.Id, SiteId = b.SiteId, BookingNumber = b.BookingNumber, Status = b.Status,
                 ServiceName = b.BookingService.Name,
                 CustomerName = b.Customer != null ? b.Customer.FullName : b.GuestName,
                 BookingDate = b.BookingDate,
@@ -1315,6 +1315,56 @@ public class CmsBookingService : ICmsBookingService
             foreach (var i in items) if (pos.TryGetValue(i.Id, out var p)) i.WaitlistPosition = p;
         }
 
+        return new PagedResponse<BookingListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
+    }
+
+    public async Task<PagedResponse<BookingListResponse>> GetBookingsAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, DateTime? fromDate, DateTime? toDate, string? search, int page, int pageSize)
+    {
+        page = Accounting.Helpers.CmsSiteScope.ClampPage(page);
+        pageSize = Accounting.Helpers.CmsSiteScope.ClampPageSize(pageSize);
+        // รายการเว็บว่าง = ผู้ใช้ไม่มีสิทธิ์เว็บใด ⇒ ไม่มีแถว (ห้ามตีความเป็น "ทุกเว็บ")
+        if (siteIds.Count == 0) return new PagedResponse<BookingListResponse>(new List<BookingListResponse>(), 0, page, pageSize, 0);
+        var ids = siteIds.ToList();
+        var query = _db.SiteBookings.AsNoTracking().Where(b => b.CompanyId == companyId && ids.Contains(b.SiteId));
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var q = search.Trim();
+            query = query.Where(b => b.BookingNumber.Contains(q)
+                || (b.GuestName != null && b.GuestName.Contains(q))
+                || (b.GuestPhone != null && b.GuestPhone.Contains(q))
+                || (b.Customer != null && b.Customer.FullName != null && b.Customer.FullName.Contains(q)));
+        }
+        if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<BookingStatus>(status, out var st))
+            query = query.Where(b => b.Status == st);
+        if (fromDate.HasValue) query = query.Where(b => b.BookingDate >= fromDate);
+        if (toDate.HasValue) query = query.Where(b => b.BookingDate <= toDate);
+
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(b => b.BookingDate).ThenBy(b => b.StartTime)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(b => new BookingListResponse
+            {
+                Id = b.Id, SiteId = b.SiteId, SiteName = b.Site.Name,
+                BookingNumber = b.BookingNumber, Status = b.Status,
+                ServiceName = b.BookingService.Name,
+                CustomerName = b.Customer != null ? b.Customer.FullName : b.GuestName,
+                BookingDate = b.BookingDate,
+                StartTime = b.StartTime.ToString("HH:mm"),
+                EndTime = b.EndTime.ToString("HH:mm"),
+                GuestCount = b.GuestCount,
+                ResourceName = b.ResourceId == null ? null
+                    : _db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == companyId).Select(r => r.Name).FirstOrDefault(),
+                TotalAmount = b.TotalAmount, Currency = b.Currency,
+                CreatedAt = b.CreatedAt
+            })
+            .ToListAsync();
+        // ลำดับคิวสำรองคิดต่อเว็บ (ตัวเดิม WaitlistPositionsAsync รับ siteId เดียว)
+        foreach (var g in items.Where(i => i.Status == BookingStatus.Waitlisted).GroupBy(i => i.SiteId))
+        {
+            var pos = await WaitlistPositionsAsync(companyId, g.Key, g.Select(i => i.Id).ToList());
+            foreach (var i in g) if (pos.TryGetValue(i.Id, out var p)) i.WaitlistPosition = p;
+        }
         return new PagedResponse<BookingListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 

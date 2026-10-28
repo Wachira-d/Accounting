@@ -188,6 +188,9 @@ public class SiteMedia : TenantEntity
     public string ContentType { get; set; } = "";
     public long FileSize { get; set; }
     public string StoragePath { get; set; } = "";
+    /// <summary>R-43: ไฟล์อยู่ในที่เก็บไฟล์กลาง (<c>FileAttachment</c> ชนิด <c>SiteMedia</c>) — <c>null</c> = ไฟล์เดิมที่เขียน disk ตรง
+    /// (<c>uploads/cms/{companyId}/{siteId}</c>) ยังเปิดจาก URL เดิม · ตัวตัดสิน URL: <c>Helpers/CmsMediaUrl</c></summary>
+    public Guid? AttachmentId { get; set; }
 
     public SiteMediaType MediaType { get; set; } = SiteMediaType.Image;
 

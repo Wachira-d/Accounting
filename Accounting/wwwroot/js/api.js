@@ -1075,6 +1075,11 @@ const API = {
       cmsGetCommerceConfig: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/config`),
       cmsUpdateCommerceConfig: (siteId, d) => API.put(`${base}/cms/sites/${siteId}/commerce/config`, d),
       cmsListLeads: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/leads${q}`),
+      // มุมมอง "ทุกไซต์" (R-45) — endpoint ระดับบริษัท แบ่งหน้าจริง · เว็บที่เห็นต่อแถวตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
+      // แทนการวนยิง endpoint รายเว็บ 20 แถว/เว็บ (CmsSiteContext.collect เดิม) · ปุ่ม action ยังยิงไปเว็บเจ้าของแถว (row.siteId)
+      cmsOverviewOrders: (q = '') => API.get(`${base}/cms/overview/orders${q}`),
+      cmsOverviewBookings: (q = '') => API.get(`${base}/cms/overview/bookings${q}`),
+      cmsOverviewLeads: (q = '') => API.get(`${base}/cms/overview/leads${q}`),
       cmsGetLead: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/leads/${id}`),
       cmsUpdateLeadStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/leads/${id}/status`, d),
       cmsConvertLeadToQuotation: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/leads/${id}/convert-to-quotation`, d),

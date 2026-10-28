@@ -5835,8 +5835,11 @@ _GUEST_FILE_WHY = "ไฟล์จากคนนอกระบบ (ไม่�
 RULES += [
     dict(file="Services/Implementations/Lodging/LodgingService.Operations.cs", method="SaveSlipFileAsync",
          must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปแขกที่พัก"),
+    # ทีม W4 R-43: สลิปเข้าที่เก็บไฟล์กลางผ่าน UploadAnonymousBytesAsync (ตัวนั้นตั้ง UploadedByUserId = null เอง) — ห้ามกลับไป new FileAttachment เอง
+    # หรือเรียก UploadBytesAsync (ที่ต้องมีผู้ใช้) ในเส้นลูกค้าหน้าร้าน
     dict(file="Services/Implementations/CmsCommerceService.cs", method="RecordPaymentSlipAsync",
-         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปหน้าร้านออนไลน์"),
+         must=["UploadAnonymousBytesAsync"], forbid=["UploadedByUserId = Guid.Empty", "UploadBytesAsync(", "new FileAttachment"],
+         why=_GUEST_FILE_WHY + " · สลิปหน้าร้านออนไลน์ (ผ่าน IFileAttachmentService.UploadAnonymousBytesAsync)"),
     dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
          must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปพอร์ทัลลูกค้า"),
 ]

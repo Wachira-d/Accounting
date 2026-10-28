@@ -224,6 +224,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
+        list.AddRange(CmsMediaAttachmentStatements());   // ทีม W4 R-43 — สื่อ CMS ผ่านที่เก็บไฟล์กลาง (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7820,5 +7821,12 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PerLineWhtEnabled" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentThbBase" numeric(18,2) NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRateSource" character varying(16) NULL;""",
+    };
+
+    /// <summary>ทีม W4 (R-43 · <c>docs/BACKLOG_REGISTER_2026-10-26.md</c>) — สื่อ CMS ที่อัปโหลดใหม่เก็บผ่าน <c>IFileAttachmentService</c> ·
+    /// <c>SiteMediaItems.AttachmentId</c> NULL = ไฟล์เดิมบน disk (ไม่ย้ายไฟล์ · ไม่มี UPDATE — URL เดิมยังเปิดได้ · F2 #9) · รันทุกบูตได้</summary>
+    internal static IReadOnlyList<string> CmsMediaAttachmentStatements() => new List<string>
+    {
+        """ALTER TABLE "SiteMediaItems" ADD COLUMN IF NOT EXISTS "AttachmentId" uuid NULL;""",
     };
 }

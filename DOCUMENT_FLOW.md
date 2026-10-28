@@ -1628,7 +1628,27 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   - ไม่มีเส้นทางกู้คืนเว็บที่ลบแล้ว การปลดคีย์จึงไม่ต้องย้อนกลับ
 - **Order flow** (`CmsCommerceService.cs`):
   - Customer checkout → `SiteOrder` + upload สลิป → `RecordPaymentSlipAsync`
-    สร้าง `SiteOrderPayment` Status=`Pending`
+    สร้าง `SiteOrderPayment` Status=`Pending` · **(ทีม W4 R-43)** ไฟล์สลิปเข้า `IFileAttachmentService` (ชนิด `SiteOrder` · ผู้อัปโหลด null ·
+    ชนิดไฟล์จากไบต์จริง) — `SlipUrl` = `attachments/{id}/download` ที่มีด่าน `CmsOrderManage` (สลิป = PII · คำตัดสินเดียวกับที่พัก LDG-P2-06) ·
+    สลิปเดิมใต้ `/uploads/order-slips` ยังเปิดตรงได้ (ไม่ย้ายไฟล์) — `OrderPaymentResponse.SlipRequiresAuth` บอกหน้า cms-orders ว่าต้องดึงผ่าน `API.fetchFile`
+    (เดิม DTO ไม่มี `SlipUrl` เลย ⇒ ปุ่ม "ดูสลิป" ไม่เคยขึ้น)
+  - **สื่อของเว็บ (ทีม W4 R-43)** — `CmsContentService.UploadMediaAsync` ประมวลผลในหน่วยความจำ (`IImageProcessingService.ProcessToBytesAsync`) แล้วเก็บผ่าน
+    `IFileAttachmentService` (ชนิด `SiteMedia` · `EntityId = siteId`) · `SiteMedia.AttachmentId` · URL สาธารณะ `storefront/media/{attachmentId}` (ตรวจบริษัท+เว็บ+ชนิด) ·
+    แถวเดิม (`AttachmentId` null) ยังชี้ `/uploads/cms/{companyId}/{siteId}/…` — ตัวตัดสิน URL ตัวเดียว `Helpers/CmsMediaUrl` · ไม่มี `GetCurrentDirectory()` ใหม่ใน Services/Controllers
+    (`tools/local_disk_write_check.py` ratchet)
+  - **SSR `<head>` ของ storefront (ทีม W4 R-44/R-47)** — `CmsSiteRoutingMiddleware` เรียก `ICmsRenderingService.BuildSeoHeadAsync` แล้วฝังผล `Helpers/CmsSeoHead`
+    แทน `<title>กำลังโหลด...</title>` ก่อนส่ง `storefront.html` (title/description/canonical/robots/og:*/twitter + JSON-LD WebPage/FAQPage/Product/LocalBusiness จากข้อมูลจริง ·
+    ไม่มีรูป = ไม่ใส่แท็กว่าง · ทุกช่อง HtmlEncode · JSON ผ่าน `JsonSerializer`) · ล้ม/ไม่พบเว็บ ⇒ เสิร์ฟ static เดิม · JS เดิมยังตั้ง meta ตอนเปลี่ยนหน้า SPA
+  - **ตัวเรนเดอร์บล็อกเดียว (ทีม W4 R-46)** — Hero/Image/FAQ/Testimonials อ่าน+เรนเดอร์ที่ `Helpers/CmsBasicBlocks` (อ่านทั้งคีย์ตัวแก้ไข `headline/subheadline/backgroundUrl` ·
+    `q/a` · `testimonials[].quote/author` และคีย์เดิมของเซิร์ฟเวอร์ `title/subtitle/backgroundImage` · `question/answer` · `items[].name/text`) · storefront ใช้ `renderedHtml`
+    (Hero ผ่าน `rewriteInternalLinks` ให้ลิงก์ปุ่มตรงโหมด path-based) — ของเดิมที่ยังวาดฝั่ง client: บล็อกที่ต้องมีข้อมูลสด/ฟอร์ม (สินค้า · จอง · ฟอร์ม · แผนที่ · ราคา · ห้องพัก)
+  - **มุมมอง "ทุกไซต์" (ทีม W4 R-45)** — `GET api/companies/{cid}/cms/overview/{orders|bookings|leads}` (`CmsSiteController`) แบ่งหน้าจริง · เว็บที่เห็น =
+    `Helpers/CmsSiteScope.AllowedSiteIds` (เจ้าของ = ทุกเว็บ · คนอื่น = `SiteStaffAccess` ใช้งานอยู่ + บทบาทตรง endpoint รายเว็บ: ออเดอร์ Admin/OrderManager · จอง/Lead บทบาทใด) ·
+    service กรอง `CompanyId` + `siteIds.Contains` เสมอ (รายการว่าง = ไม่มีแถว) · ทุกแถวติด `SiteId/SiteName` — หน้า cms-orders/cms-leads/cms-bookings ใช้ endpoint นี้แทนวนยิงรายเว็บ ·
+    ปุ่ม action ยิงไปเว็บเจ้าของแถว (`actSiteId`)
+  - **ล้างรูปตะกร้าที่ไม่ได้สั่ง (ทีม W4 R-25)** — `Services/Implementations/Jobs/CartImageCleanupJob` ผ่าน `JobLock` · ลบ `FileAttachment` ชนิด `SiteOrder` ที่ `EntityId`
+    ไม่อยู่ใน `SiteOrders` (รวม soft-deleted) และอายุเกิน `Cms:CartImageRetentionDays` (ค่าเริ่มต้น 14 · `Helpers/CartImageRetention`) ผ่าน `IFileAttachmentService.DeleteAsync` ·
+    รูปของออเดอร์จริง/สลิปไม่ถูกลบ
   - Admin/webhook ยืนยันรับเงิน → `ConfirmPaymentAsync` (`POST /orders/{id}/confirm-payment`)
     · **จ่ายออนไลน์ (รอบ 205 ทีม E · `docs/BOOKING_REVENUE_AUDIT.md` S-1)**: `SiteOrderPaymentHandler` สร้าง/หาแถว `SiteOrderPayment` ของรายการชำระนั้น
     (Reference = `GatewayPaymentRecord.Reference` = `PAY-INTENT-{id}` · ยอด = ยอดของรายการ · วิธีชำระ `GatewayPaymentRecord.MethodOf`) แล้วยืนยัน**แถวนั้น**
@@ -6267,3 +6287,4 @@ _Last verified against codebase: 2026-10-16 (ทีม W1c ฝ่ายค้า
 _Last verified against codebase: 2026-10-16 (ทีม OCR 13 · ฝ่ายค้าน OCR 10 — §2.2 OCR: ข้อความ PDF ตามพิกัดคั่นคอลัมน์ด้วย tab · เลขช่องตีกรอบ · ชื่อนิติบุคคลเจ้าของเดียว `Helpers/ThaiCompanyName` · ป้ายฝั่งผู้ซื้อ · ผู้ออกบิลรัฐตามเลข 099 · ตาราง/กติกาท้ายบรรทัดเลือกด้วย Σ · หัก 0.00 · สาขาตามเลข · มัดจำต่อช่อง · `OcrExtractionVersion` 13 — เทสต์ `PdfTextOcr13Tests` · `OcrReplayGoldenTests` · ตัวเทียบ `OcrPdfTextHarness` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit a00c3b16 + 33939709)_
 _Last verified against codebase: 2026-10-16 (ทีม W1d ฝ่ายค้าน W1c P2-1..P2-6 — §5.3 ภ.ง.ด.1: พรีวิวไม่ถูกด่านไฟล์นำเข้ากั้น (`ImportFileBlocker` · คำเตือนในสรุป) · ไฟล์แนบรอบเงินเดือนที่สร้างไม่ได้ดัง 3 ที่ (`PayrollRun.FilingAttachmentWarning` · แจ้งเตือน · Notice) · TIS-620 ไม่มีไบต์ 0x80–0xA0 · รหัสไปรษณีย์ไม่หยิบเลขในเบอร์โทร/ท้ายด้วย (HQ)·สาขา·เลขผู้เสียภาษีได้ (ชุดเทียบ 99 ที่อยู่) · ตัวกรองเลขผู้เสียภาษีทุกจุด = `ThaiTaxId.Normalize` + migrate คีย์ตัวเรียนรู้เลขไทย — เทสต์ `ThaiAddressPostalHarnessTests` · `Pnd1FileFormatTests` · `PayrollFilingAttachmentNoticeTests` · `ThaiTaxIdSingleSourceTests` · `Db/Pnd1ExportReconcileDbTests` · `Db/ThaiDigitLearnerKeyMigrationDbTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว (รวม Db test บน PostgreSQL ในเครื่อง) — commit 9ac67415)_
 _Last verified against codebase: 2026-10-16 (ทีม OCR 15 · ฝ่ายค้าน OCR 13 — §2.2 OCR: คำท้ายจำกัดบนช่องเดียวกัน · ห้างหุ้นส่วนไม่ต่อคำท้าย · ชื่อผูกเลขผู้ขายในคอลัมน์เดียวกัน `Helpers/OcrVendorNameByTaxId` · วงเล็บชื่อจดทะเบียน · เลขตีกรอบต้องมีช่องกล่อง · มัดจำรูปเงิน · ที่อยู่ผู้ขายหยุดที่ป้ายผู้ซื้อ · ลายนิ้วมือโครงกระดาษสมมาตร · golden ช่องคู่สัญญา · `OcrExtractionVersion` 16 — เทสต์ `PdfTextOcr15Tests` · `OcrReplayPartyGoldenTests` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 926aacb9 + 6e8cbdcc)_
+_Last verified against codebase: 2026-10-26 (ทีม W4 — CMS แพลตฟอร์ม R-25/R-43/R-44/R-45/R-46/R-47: §2.5 สื่อ CMS + สลิปออเดอร์เข้า `IFileAttachmentService` (ชนิด `SiteMedia`/`SiteOrder` · URL ผ่าน `Helpers/CmsMediaUrl` · ไฟล์เดิมไม่ย้าย) · SSR `<head>` ที่ `CmsSiteRoutingMiddleware` จาก `Helpers/CmsSeoHead` + JSON-LD FAQ/Product/LocalBusiness · ตัวเรนเดอร์บล็อก Hero/Image/FAQ/Testimonials ตัวเดียว `Helpers/CmsBasicBlocks` · มุมมองทุกไซต์ผ่าน `cms/overview/{orders|bookings|leads}` + `Helpers/CmsSiteScope` · งาน `CartImageCleanupJob` ผ่าน `JobLock` · checker ratchet `tools/local_disk_write_check.py` — เทสต์ `CmsBasicBlocksTests` · `CmsSeoHeadTests` · `CmsMediaUrlTests` · `CmsSiteScopeTests` · `CartImageRetentionTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_

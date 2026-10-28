@@ -1,0 +1,13 @@
+# local_disk_write_check — ไฟล์:จำนวน GetCurrentDirectory() ที่มีอยู่ก่อน (ratchet · ลดได้ เพิ่มไม่ได้)
+Controllers/DocumentBrandController.cs:1
+Controllers/FileAttachmentController.cs:3
+Controllers/IntegrationController.cs:1
+Controllers/OcrController.cs:1
+Controllers/V1/OcrV1Controller.cs:1
+Services/Implementations/FileAttachmentService.cs:1
+Services/Implementations/KnowledgeBaseService.cs:1
+Services/Implementations/LineBotService.cs:1
+Services/Implementations/Lodging/LodgingService.Operations.cs:2
+Services/Implementations/PortalService.cs:1
+Services/Implementations/SaasBillingDocumentService.cs:2
+Services/Implementations/SettingsService.cs:2

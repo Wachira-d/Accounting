@@ -5,8 +5,9 @@
  * `?siteId=` และทุกหน้าแสดง breadcrumb "เว็บไซต์ของฉัน › <เว็บ> › <งาน>" จากตัวนี้ตัวเดียว
  * (เดิมแต่ละหน้าอ่าน ?siteId= เองแล้วเชื่อค่าใน URL ตรง ๆ — siteId ของบริษัทอื่น/เว็บที่ลบไปแล้ว = select ว่าง + ตารางว่างเงียบ)
  *
- * ตัวเลือก "ทุกไซต์" (`?siteId=all`) — ภาพรวมรวมทุกเว็บ ดึงผ่าน endpoint รายเว็บเดิม (สิทธิ์ CmsRbac รายเว็บยังบังคับครบ
- * ไม่มี endpoint ข้ามเว็บที่เลี่ยงด่านสิทธิ์) · เว็บที่โหลดไม่ได้ (ไม่มีสิทธิ์ ฯลฯ) ต้องแจ้งชื่อบนจอ ห้ามหายเงียบ
+ * ตัวเลือก "ทุกไซต์" (`?siteId=all`) — ภาพรวมรวมทุกเว็บ ดึงผ่าน endpoint ระดับบริษัท `cms/overview/{orders|bookings|leads}` ที่แบ่งหน้าจริง
+ * (R-45 · เดิมวนยิงรายเว็บ 20 แถว/เว็บ ฝั่ง client) · เว็บที่ผู้ใช้ไม่มีบทบาทถูกตัดฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope — กติกาเดียวกับ
+ * [RequireSiteRole] รายเว็บ) · ทุกแถวติด siteId/siteName จากเซิร์ฟเวอร์ — ปุ่ม action ต้องยิงไปเว็บเจ้าของแถว (actSiteId)
  *
  * ปุ่มโมดูลต่อเว็บ (MODULE_LINKS) อ่านจาก `site.modules` ที่เซิร์ฟเวอร์คำนวณ (CmsModuleResolver) — หน้าเว็บแค่วาด */
 (function () {
@@ -100,28 +101,21 @@
         </div>`;
     },
 
-    /** รวมผลจากทุกเว็บ — fn(site) คืน array · คืน { items (แต่ละแถวติด _siteId/_siteName), failed: [ชื่อเว็บ] } */
-    async collect(sites, fn) {
-      const results = await Promise.allSettled(sites.map(s => fn(s)));
-      const items = []; const failed = [];
-      results.forEach((r, i) => {
-        const s = sites[i];
-        if (r.status === 'fulfilled') (r.value || []).forEach(x => items.push(Object.assign({ _siteId: s.id, _siteName: s.name }, x)));
-        else failed.push(s.name);
-      });
-      return { items, failed };
-    },
-
-    /** ข้อความใต้ตารางเมื่อดูแบบทุกไซต์ — บอกขอบเขต + เว็บที่โหลดไม่ได้ (ห้ามหายเงียบ) */
+    /** แถบใต้ตัวกรองเมื่อดูแบบทุกไซต์ — ตัวเลขทั้งหมดมาจาก PagedResponse ของเซิร์ฟเวอร์ (totalCount/page/totalPages) · หน้าแค่วาดปุ่มเลื่อนหน้า
+     *  info = { totalCount, page, totalPages, pageSize, goPage: 'Page.goPage' } · null = ซ่อน */
     allNote(el, info) {
       if (typeof el === 'string') el = document.getElementById(el);
       if (!el) return;
       if (!info) { el.style.display = 'none'; el.innerHTML = ''; return; }
-      const fail = info.failed && info.failed.length
-        ? `<div style="color:#b91c1c;margin-top:4px">⚠️ โหลดไม่ได้ (อาจไม่มีสิทธิ์เว็บนี้): ${info.failed.map(esc).join(', ')}</div>` : '';
+      const page = Number(info.page) || 1;
+      const totalPages = Math.max(1, Number(info.totalPages) || 1);
+      const go = String(info.goPage || 'Page.goPage').replace(/[^A-Za-z0-9_.]/g, '');
+      const btn = (n, label, disabled) => `<button type="button" class="btn btn-sm btn-ghost" style="font-size:12px" ${disabled ? 'disabled' : ''} onclick="${go}(${n})">${label}</button>`;
       el.style.display = '';
-      el.innerHTML = `<div style="font-size:12px;color:var(--gray-600);background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:8px 12px;margin-bottom:12px">
-          ภาพรวม ${info.siteCount} เว็บไซต์ · แสดงรายการล่าสุดสูงสุด ${info.perSite} รายการต่อเว็บ — เลือกเว็บไซต์ด้านบนเพื่อดูครบทุกรายการ/ค้นหาย้อนหลัง${fail}</div>`;
+      el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--gray-600);background:var(--gray-50);border:1px solid var(--gray-200);border-radius:8px;padding:8px 12px;margin-bottom:12px">
+          <div>ภาพรวมทุกเว็บไซต์ที่คุณมีสิทธิ์ · ทั้งหมด ${Number(info.totalCount || 0).toLocaleString('th-TH')} รายการ · หน้า ${page}/${totalPages} — เลือกเว็บไซต์ด้านบนเพื่อดูเฉพาะเว็บ</div>
+          <div style="display:flex;gap:4px">${btn(page - 1, '‹ ก่อนหน้า', page <= 1)}${btn(page + 1, 'ถัดไป ›', page >= totalPages)}</div>
+        </div>`;
     },
   };
 

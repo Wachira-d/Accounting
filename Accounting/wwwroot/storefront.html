@@ -536,8 +536,8 @@
             const hideMobile = b.hideOnMobile ? 'sf-hide-mobile' : '';
             const hideDesktop = b.hideOnDesktop ? 'sf-hide-desktop' : '';
             const wrap = `<section class="${cssClasses} ${hideMobile} ${hideDesktop}">`;
-            // Server may provide rendered HTML, but we always re-render client-side
-            // for known types because server template may not handle every block.
+            // บล็อกพื้นฐาน (Hero/Image/Gallery/FAQ/Testimonials) ใช้ renderedHtml จากเซิร์ฟเวอร์ตัวเดียว (R-46) ·
+            // บล็อกที่ต้องมีข้อมูลสด/ฟอร์ม (สินค้า จอง ฟอร์ม แผนที่ ฯลฯ) ยังวาดฝั่งนี้แล้ว hydrate
             const html = this.renderBlock(b) || b.renderedHtml || '';
             return `${wrap}${html}</section>`;
           }).join('');
@@ -564,20 +564,15 @@
           ? ({Hero:1,RichText:2,Image:3,Gallery:4,Video:5,ProductGrid:6,BookingCalendar:8,ContactForm:9,Map:11,Testimonials:12,Faq:13,PricingTable:14,CallToAction:15,Newsletter:17,Divider:19,Html:20,CartSummary:23,LodgingRooms:27}[b.blockType] ?? b.blockType)
           : b.blockType;
         switch (t) {
-          case 1: { // Hero
-            const bg = cfg.backgroundUrl ? `style="background-image:url('${esc(cfg.backgroundUrl)}')"` : '';
-            const cls = cfg.backgroundUrl ? 'blk-hero with-bg' : 'blk-hero';
-            return `<div class="${cls}" ${bg}>
-              ${cfg.headline ? `<h1>${esc(cfg.headline)}</h1>` : ''}
-              ${cfg.subheadline ? `<p>${esc(cfg.subheadline)}</p>` : ''}
-              ${cfg.ctaText ? `<a href="${link(cfg.ctaUrl||'#')}" class="btn">${esc(cfg.ctaText)}</a>` : ''}
-            </div>`;
+          case 1: { // Hero — HTML จากเซิร์ฟเวอร์ตัวเดียว (Helpers/CmsBasicBlocks · R-46) · ที่นี่แค่แปลงลิงก์ปุ่มให้ตรงโหมด path-based
+            // ห้ามวาดซ้ำฝั่งนี้: เดิมเซิร์ฟเวอร์อ่าน title/subtitle/backgroundImage ส่วนตัวแก้ไขเขียน headline/subheadline/backgroundUrl ⇒ drift
+            return this.rewriteInternalLinks(b.renderedHtml || '');
           }
           case 2: { // RichText (HTML allowed — content authored by site owner)
             return `<div class="blk-richtext">${this.rewriteInternalLinks(cfg.content || '')}</div>`;
           }
-          case 3: { // Image
-            return `<figure class="blk-image"><img src="${esc(cfg.url||'')}" alt="${esc(cfg.alt||'')}">${cfg.caption?`<figcaption>${esc(cfg.caption)}</figcaption>`:''}</figure>`;
+          case 3: { // Image — HTML จากเซิร์ฟเวอร์ (CmsBasicBlocks · อ่านทั้ง url และ src เดิม · กรอง URL แล้ว)
+            return b.renderedHtml || '';
           }
           case 4: { // Gallery / Slider — เรนเดอร์ฝั่งเซิร์ฟเวอร์ตัวเดียว (Helpers/CmsGalleryBlock · escape + กรอง URL แล้ว)
             // ห้ามวาดซ้ำฝั่งนี้: เดิมสองตัววาดอ่านคีย์คนละชื่อ (url/src) จน drift · พฤติกรรมติดทีหลังใน initGalleries
@@ -657,18 +652,9 @@
             const q = encodeURIComponent(cfg.address || `${cfg.lat||'13.7563'},${cfg.lng||'100.5018'}`);
             return `<div class="blk-map sf-container"><iframe src="https://www.google.com/maps?q=${q}&output=embed" loading="lazy"></iframe></div>`;
           }
-          case 12: { // Testimonials
-            const items = (cfg.testimonials || cfg.items || []).map(t => `
-              <div class="testi-card">
-                <div class="quote">"${esc(t.quote||t.text||'')}"</div>
-                <div class="author">${esc(t.author||t.name||'')}${t.role?` <span style="color:var(--text-secondary)">— ${esc(t.role)}</span>`:''}</div>
-              </div>`).join('');
-            return `<div class="blk-testi">${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}<div class="testi-grid">${items||'<div style="color:var(--text-secondary)">ยังไม่มีรีวิว</div>'}</div></div>`;
-          }
-          case 13: { // FAQ
-            const items = (cfg.items || []).map(it => `
-              <details class="faq-item"><summary>${esc(it.q||'')}</summary><div class="a">${esc(it.a||'')}</div></details>`).join('');
-            return `<div class="blk-faq">${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}${items}</div>`;
+          case 12: // Testimonials — HTML จากเซิร์ฟเวอร์ (CmsBasicBlocks · testimonials[].quote/author และ items[].text/name เดิม)
+          case 13: { // FAQ — HTML จากเซิร์ฟเวอร์ (CmsBasicBlocks · items[].q/a และ question/answer เดิม) · FAQ JSON-LD ประกอบฝั่งเซิร์ฟเวอร์ (R-47)
+            return b.renderedHtml || '';
           }
           case 14: { // Pricing
             const cards = (cfg.plans || []).map(p => `
