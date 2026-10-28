@@ -162,7 +162,7 @@
   R-02 `RefundedAtGatewayAt` บน `LodgingReservation`/`SiteOrder` (ประทับใน `GatewayRefundService.BookRefundAsync` + legacy) + ป้าย `GatewayRefundNote` ในคิวที่พัก ·
   R-03 `Classify(hasPriorDepositForBooking, depositNature, isDepositForfeitInvoice)` + ใบแทนจาก `ReissueFinalDocumentAsync` · R-04 ขั้น 1 `Document.QuotaCountDeferred` (CmsBooking/site-order นับตอน Approve) +
   สคริปต์ `tools/quota_count_before_after.sql` (อ่านอย่างเดียว · **ยังไม่ได้รันกับฐานจริง** — เครื่องนี้ไม่มี PostgreSQL) · R-05 `UPDATE … RETURNING` + `Db/DocumentQuotaCounterDbTests` ·
-  ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน (แตะเงิน/โควตา)
+  ยังไม่ได้คอมไพล์ในเครื่องนี้ · **ฝ่ายค้าน W1 รอบ 1 (ไม่มี blocking · แก้แล้ว commit <sha>)**: (1) predicate `CountedDepositOfBooking` ไม่นับร่าง/ยกเลิก/เงินประกัน + เทสต์ล็อก query · (2) `GatewaySourceEvidence` + `SourceRecorded` — บันทึกมือหลัง ⚠️ = Fulfilled · handler Lodging/SiteOrder กันรับซ้ำ · (3) `RedispatchAsync` ใต้ `pg_advisory_xact_lock` ตรวจซ้ำ + `InProgress` · (4) R-05 check-then-act ทะลุเพดาน 1 ใบเฉพาะใบที่รอได้ — **รับได้** (จดใน DOCUMENT_FLOW §โควตา · ทิศเสียหายฝั่งผู้ให้บริการ · ไม่ทำสำเนาสูตรเพดานใน SQL)
 
 ### W2 — เส้นเงินการจองนัดหมาย + ยกเลิกออเดอร์ (R-06 R-07 R-08 R-09 R-10 R-11)
 - **ไฟล์**: `Services/Implementations/CmsBookingService.cs` (เส้นเงิน/ยกเลิก) · `Services/Payments/Handlers/SiteBookingPaymentHandler.cs` (ใหม่) · `Services/Payments/PublicPaymentResolver.cs` · `Helpers/CmsBookingErpPolicy.cs` · `Helpers/BookingCancellationFee.cs` (ใหม่) · `Helpers/SiteOrderCancelPlan.cs` (ใหม่) · `CmsCommerceService.cs` เฉพาะ `ResolveOrderAsync`/เส้นยกเลิก · storefront หน้าจอง/จัดการการจอง · `AllEnums.cs` (+`PaymentSourceKind.SiteBooking` ก้อนเดียว)

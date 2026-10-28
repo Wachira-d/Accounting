@@ -144,17 +144,10 @@ public class PaymentGatewayController : ControllerBase
         var nowUtc = DateTime.UtcNow;
 
         // รอบ 205 ทีม W1 (R-01): "เงินเข้าแล้วแต่ยังไม่ได้บันทึกให้ต้นทาง" — ตัดสินจากประวัติด้วย PaymentRedispatchPolicy ตัวเดียว (หน้าเว็บแค่โชว์ปุ่ม)
-        var succeededIds = rows.Where(r => r.StatusValue == PaymentIntentStatus.Succeeded).Select(r => r.Id).ToList();
-        var redispatchNotes = succeededIds.Count == 0
-            ? new List<(Guid IntentId, DateTime At, string? Note)>()
-            : (await _db.PaymentIntentEvents.AsNoTracking()
-                .Where(e => e.CompanyId == companyId && succeededIds.Contains(e.IntentId) && e.Note != null
-                    && (e.Note.StartsWith(PaymentRedispatchPolicy.UnfulfilledNotePrefix) || e.Note.StartsWith(PaymentRedispatchPolicy.FulfilledNotePrefix)))
-                .Select(e => new { e.IntentId, e.At, e.Note })
-                .ToListAsync(ct)).Select(e => (e.IntentId, e.At, e.Note)).ToList();
-        var redispatchPending = redispatchNotes.GroupBy(e => e.IntentId)
-            .Where(g => PaymentRedispatchPolicy.Evaluate(PaymentIntentStatus.Succeeded, g.OrderBy(e => e.At).Select(e => e.Note)) == PaymentRedispatchState.Pending)
-            .Select(g => g.Key).ToHashSet();
+        // ฝ่ายค้าน W1 ข้อ 2: รวมหลักฐานฝั่งต้นทาง (พนักงานบันทึกเองหลัง ⚠️ = ไม่ค้าง) — ตัวเดียวกับ RedispatchAsync
+        var redispatchStates = await _intents.RedispatchStatesAsync(companyId,
+            rows.Where(r => r.StatusValue == PaymentIntentStatus.Succeeded).Select(r => r.Id).ToList(), ct);
+        var redispatchPending = redispatchStates.Where(kv => kv.Value == PaymentRedispatchState.Pending).Select(kv => kv.Key).ToHashSet();
 
         // "คืนเงินแล้ว ยังไม่ออกใบลดหนี้" (§86/10 · รอบ 198 G-1) — ตัดสินที่เซิร์ฟเวอร์ตัวเดียว หน้าเว็บแค่ติดป้าย
         var cn = await refunds.CreditNoteStatesAsync(companyId,

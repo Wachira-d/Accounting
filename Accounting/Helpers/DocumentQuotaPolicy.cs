@@ -1,3 +1,4 @@
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
@@ -103,6 +104,15 @@ public static class DocumentQuotaPolicy
             _ => QuotaEnforcement.NotCounted,
         };
     }
+
+    /// <summary>R-03 (ฝ่ายค้าน W1 ข้อ 1): "การจองนี้มีใบมัดจำที่นับแล้ว" — ใบมัดจำที่<b>นับได้</b>เท่านั้น: ไม่ร่าง/ไม่ยกเลิก/ไม่ถูกปฏิเสธ และไม่ใช่เงินประกัน
+    /// (<see cref="DepositNature.RefundableSecurity"/> ไม่นับอยู่แล้ว) — เดิมนับทุกใบ IsDeposit ⇒ ใบรับเงินประกันหรือใบร่างทำให้มัดจำค่าห้องใบแรกถูกตีเป็น "ใบที่ 2+"
+    /// = การจองนับ 0 หน่วย · <paramref name="excludeDocumentId"/> = ใบตัวเอง (ตอน update/reissue)</summary>
+    public static System.Linq.Expressions.Expression<Func<Document, bool>> CountedDepositOfBooking(Guid companyId, string bookingNumber, Guid? excludeDocumentId = null)
+        => d => d.CompanyId == companyId && !d.IsDeleted && d.IsDeposit && d.BookingNumber == bookingNumber
+             && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+             && d.DepositNature != DepositNature.RefundableSecurity
+             && (excludeDocumentId == null || d.Id != excludeDocumentId);
 
     /// <summary>ต้นทางอัตโนมัติที่ออก<b>ใบร่าง</b>ก่อนรู้ว่าจะมีเงิน/ตกลงจริง (รอบ 205 ทีม W1 · R-04 · BOOKING_REVENUE_AUDIT Q-4 ขั้น 1) —
     /// การจองนัดหมายหน้าเว็บ (<see cref="CmsBookingOrigin"/> · PrePayment ที่ไม่เคยจ่ายค้างเป็นร่าง · Appointment ออกใบเสนอราคา) และ

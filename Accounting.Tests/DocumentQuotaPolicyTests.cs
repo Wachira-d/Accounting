@@ -257,4 +257,43 @@ public class DocumentQuotaPolicyTests
     [Fact]
     public void R04_ค่าคงที่ต้นทางตรงกับที่เส้นคำสั่งซื้อใช้()
         => Assert.Equal("site-order", SiteOrderDepositInvoicing.OriginModule);
+
+    // ── ฝ่ายค้าน W1 ข้อ 1: predicate "ใบมัดจำที่นับแล้วของการจอง" (ล็อก query ไม่ใช่แค่ helper) ──
+
+    private static Accounting.Models.Entities.Document Dep(Guid cid, string bn, DocumentStatus st = DocumentStatus.Approved,
+        DepositNature? nature = DepositNature.PartOfPrice, bool isDeposit = true, bool deleted = false)
+        => new() { CompanyId = cid, BookingNumber = bn, Status = st, DepositNature = nature, IsDeposit = isDeposit, IsDeleted = deleted };
+
+    [Fact]
+    public void R03_predicate_ใบมัดจำที่อนุมัติแล้วของการจองเดียวกัน_นับว่ามีแล้ว()
+    {
+        var cid = Guid.NewGuid();
+        var f = DocumentQuotaPolicy.CountedDepositOfBooking(cid, "RES-1").Compile();
+        Assert.True(f(Dep(cid, "RES-1")));
+        Assert.True(f(Dep(cid, "RES-1", DocumentStatus.Paid, nature: null)));   // ใบเดิมไม่ทราบลักษณะ = มัดจำปกติ
+    }
+
+    [Fact]
+    public void R03_predicate_ทิศตรงข้าม_ใบร่าง_ยกเลิก_ปฏิเสธ_เงินประกัน_ไม่ใช่มัดจำ_บริษัทอื่น_การจองอื่น_ไม่นับ()
+    {
+        var cid = Guid.NewGuid();
+        var f = DocumentQuotaPolicy.CountedDepositOfBooking(cid, "RES-1").Compile();
+        Assert.False(f(Dep(cid, "RES-1", DocumentStatus.Draft)));
+        Assert.False(f(Dep(cid, "RES-1", DocumentStatus.Voided)));
+        Assert.False(f(Dep(cid, "RES-1", DocumentStatus.Rejected)));
+        Assert.False(f(Dep(cid, "RES-1", nature: DepositNature.RefundableSecurity)));   // ใบรับเงินประกันไม่ทำให้มัดจำค่าห้องกลายเป็น "ใบที่ 2"
+        Assert.False(f(Dep(cid, "RES-1", isDeposit: false)));
+        Assert.False(f(Dep(cid, "RES-1", deleted: true)));
+        Assert.False(f(Dep(Guid.NewGuid(), "RES-1")));
+        Assert.False(f(Dep(cid, "RES-2")));
+    }
+
+    [Fact]
+    public void R03_predicate_ยกเว้นใบตัวเอง()
+    {
+        var cid = Guid.NewGuid();
+        var self = Dep(cid, "RES-1");
+        Assert.False(DocumentQuotaPolicy.CountedDepositOfBooking(cid, "RES-1", self.Id).Compile()(self));
+        Assert.True(DocumentQuotaPolicy.CountedDepositOfBooking(cid, "RES-1", Guid.NewGuid()).Compile()(self));
+    }
 }

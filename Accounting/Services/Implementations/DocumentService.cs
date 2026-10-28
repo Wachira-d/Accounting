@@ -1057,9 +1057,9 @@ public partial class DocumentService : IDocumentService
                 .Select(k => (DepositNature?)k.Nature).FirstOrDefaultAsync()
             : null;
         var quotaBookingNumber = request.BookingNumber?.Trim();
+        // ฝ่ายค้าน W1 ข้อ 1: นับเฉพาะใบมัดจำที่ "นับแล้ว" (ไม่ร่าง/ยกเลิก/ปฏิเสธ · ไม่ใช่เงินประกัน) — predicate ตัวเดียว DocumentQuotaPolicy.CountedDepositOfBooking
         var quotaHasPriorDeposit = request.IsDeposit && !string.IsNullOrWhiteSpace(quotaBookingNumber)
-            && await _db.Documents.AsNoTracking().AnyAsync(d => d.CompanyId == companyId && !d.IsDeleted
-                && d.IsDeposit && d.BookingNumber == quotaBookingNumber);
+            && await _db.Documents.AsNoTracking().AnyAsync(DocumentQuotaPolicy.CountedDepositOfBooking(companyId, quotaBookingNumber!));
         var quotaClass = DocumentQuotaPolicy.Classify(
             request.DocumentType, request.IsDeposit, IsLodgingOrigin(originModule),
             // ใบกำกับที่ออก "แทน" ใบเสร็จ = การขายเดิมที่นับโควตาไปแล้ว —
