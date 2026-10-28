@@ -5537,6 +5537,33 @@ warnings ⇒ กล่องเหลือง "ระบบไม่แน่�
 (16 ช่อง · ล็อกด้วยอะไร · ช่องว่างที่เหลือ) · เคส G `DiscountInclVatOnExclusivePrices` (ราคาก่อน VAT + ส่วนลดพิมพ์รวม VAT · สังเคราะห์ · วางหลัง F · baseline: 28 ตัว (+ สังเคราะห์ 24 ช่อง) ด้วย **port Python ของ `Classify`** (เทียบเท่า C# ณ 74a4796c — ไม่ใช่ตัว C# เอง) = 0 เปลี่ยนใน vector จริง · replay/golden harness ผ่าน C# จริง (`OcrReplay*GoldenTests` · `EtaxGoldenCorpusTests`) **ยังต้องรอ CI** (ไม่มี SDK)) +
 `OcrConfidenceGateway`/`OcrDuplicateLineGuard` รู้เคส G · ใบนี้ยังไม่เข้า `OcrPaperSamples` (golden คู่สัญญาต้องรัน dotnet — ขั้นตอนจดใน MATRIX §5) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
 
+_2026-10-26 ทีม T · คำตัดสินเจ้าของข้อ 159 (ตามหลักข้อ 158 "ข้อมูลที่ครบ/ตรงกระดาษที่สุด"): สแกนที่กระดาษพิมพ์ "ส่วนลดท้ายบิล" (เคส F/G · ใบ SP-IN2026-10-00933) ⇒ บันทึกเป็น `Document.BillDiscountAmount`
+ตามกระดาษ (538.32) · บรรทัด 1,840/170 ไม่มีส่วนลด · ฐานก่อนลด 1,878.51 = "จำนวนเงิน Amount" — ไม่กระจายลงบรรทัด · ยอดฐาน/VAT/สุทธิ 1,340.19/93.81/1,434.00 เท่าเดิมทุกสตางค์ ·
+`OcrLineReconcileResult.BillDiscountPreVat` (F = ส่วนลดที่พิมพ์ · G = ÷ 1.07) · ยอดบรรทัดจาก `DocumentService.PlanLineAmounts` ใหม่ (internal · AllocateBillDeductions → ComputeLineAmounts → ReconcileTaxRounding
+ตัวตั้งเดียว — ไม่มีสำเนาสูตรฝั่ง OCR ⇒ เปิดแก้แล้วบันทึกไม่ขยับโดยสร้าง) · `BuildScanLinesAsync` ตั้ง `BillDiscountAmount = 0` ใหม่ทุกครั้ง · ตัวพิสูจน์อัตราทั้งใบยังเห็นยอดหลังหัก (ไม่งั้นตก Unknown) ·
+`OcrLinePreviewResponse.BillDiscountAmount` + หน้าตรวจส่งต่อให้ฟอร์ม "แก้ในฟอร์มก่อน" (เดิมส่ง 0 เสมอ) + พรีวิวแสดง · เคส C/E กระจายเหมือนเดิม (ทิศตรงข้าม) · ใบเดิมไม่เปลี่ยน ·
+§H: replay corpus ไม่มีใบ ReconCase F/G (golden ล็อกไว้) · e-Tax golden เปลี่ยนเฉพาะ Rapbizz (ส่วนลดบรรทัด 527.28/48.72 → 0 + BillDiscount 538.32 · ฐาน/VAT เท่าเดิม) · DECISIONS ข้อ 159 · MATRIX §4 ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม T แก้ผลฝ่ายค้านข้อ 159 (ไม่มี blocking · 6 ข้อ): (1) สาขาส่วนลดท้ายบิลไม่บวกเศษราคาต่อหน่วยซ้ำ — RA = −(Σ ยอดจาก `PlanLineAmounts` − ฐานกระดาษ) ใต้เพดาน CapShifts (ในโหมดราคารวม VAT เศษถูกดูดในขั้นถอด VAT
+จึงไม่ใช่ −Σshift ตรง ๆ · เทสต์สังเคราะห์ 4 × 1,228.04 พิมพ์ 4,912.15) (2) replay harness เดินสาขา `BillDiscountPreVat`/`PlanLineAmounts` เดียวกับ service (`Mode = Items+Bill:<x>` · rcs ล็อกทั้งคู่)
+(3) `ResaveLineNets` เรียก `PlanLineAmounts` ตัวตั้งตัวเดียว (ผลเท่าเดิม · เทสต์) (4) Σ ยอดบรรทัดสำหรับสัดส่วน WHT คำนวณหลังสาขา 159 (5) doc-comment PreviewTotals/PlanLineAmounts แยกถูก
+(6) ดึงรายการซ้ำบนเอกสารที่มีส่วนลดท้ายบิลผู้ใช้กรอก (> 0 และ ≠ ค่าจากสแกน) ⇒ ล้มดัง `OCR-REPOP-BILL-DISCOUNT` ก่อนบันทึก (ค่าผู้ใช้ชนะ · ทางไปต่อในข้อความ) · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_2026-10-26 ทีม V (ผู้ใช้: "ตั้งทีมวิเคราะห์อีกว่ามีส่วนไหนที่ลงบันทึก JE ไม่ถูกต้องอีกไหม" หลังเคส PV-202610-0040 บีบฐาน 500.93→402.93):
+ตรวจตัวประกอบ JE อัตโนมัติทุกเส้น (AutoPost ขาย/ซื้อ/CN-DN/รับ-จ่าย/PV/CIL/GRN · CreatePaymentJournalAsync · multi-doc allocation · POS ·
+settlement/gateway · ค่าเสื่อม · ปิดปี · recurring · payroll · integration · course credit · lodging) เป็น matrix `docs/JE_POSTING_AUDIT.md`
+(52 เคส · ถูก 43 · ผิด 2 (แก้ครบ) · ⚠ backlog 5 · ❓ ให้เจ้าของตัดสิน 2) · บั๊กที่แก้: **V-DN-01** ใบเพิ่มหนี้ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติ (ยืมกติกา
+"ใบเดิมชำระครบ ⇒ เงินสด" ของใบลดหนี้) แล้วตอนรับชำระลง Dr เงินสดอีกรอบ ⇒ เงินสดเกินสองเท่า/ลูกหนี้ติดลบ — ตัวตัดสินเดียว
+`AdjustmentNoteAccount.CounterLegIsMoney` (DN ดูเทอมของตัวเอง · CN กติกาเดิม) · **V-CN-03** ขาเงินของ CN/DN เดิน `UseMoneyAccount()`
+แทน "111" ตายตัว · เทสต์สองทิศ `JePostingAuditTests` (13) · DOCUMENT_FLOW §6.2f · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+
+_2026-10-26 ทีม V แก้ตามฝ่ายค้าน (ไม่มี blocking · merge a80a4595 แล้ว): (1) `cnDnGrossWht` ตามตัวตัดสินใหม่ `AdjustmentNoteAccount.CounterLegIsGrossOfWht` —
+DN เงินเชื่อของใบชำระครบ + WHT เกณฑ์เงินสด ⇒ counter gross · ขา WHT ไปลงตอนรับชำระ (เทสต์สองทิศ) · (2) F2 ข้อ 9: ตาข่ายซ่อมข้อมูลเก่า V-DN-01 แบบ
+`RepairProductTotalsAsync` — หมวด "ใบเพิ่มหนี้ที่ลงขาเงินซ้ำ" ในหน้าตรวจข้อมูล (`Helpers/DebitNoteCashRepair` อ่านอย่างเดียว) + ปุ่ม "แก้" ต่อใบ
+`POST data-integrity/debit-note-cash/{id}/reverse-payment-journals` (เจ้าของบริษัท · `ReverseJournalEntryAsync` · audit `JE-DN-CASH-TWICE` · ห้ามอัตโนมัติ) ·
+คำตัดสินข้อ 160 ใน DECISIONS (รวม V-PAY-05 ⇒ reclass ตามสัดส่วน · V-CN-04 ⇒ ตัวเลือกเครดิตค้างคืน — แพ็กแยก) · (3) จดข้อควรรู้ UseMoneyAccount() ล้มดังใน
+ReclassifyCnDnSide/RepairMissingJournal + สมมติฐานสืบทอด BankAccountId (DOCUMENT_FLOW §6.2f · JE_POSTING_AUDIT §1b) · ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _2026-10-26 — **ทีม U: "หักหลัง VAT" + แยกยอดจ่ายจริงตามแหล่ง + ด่าน VAT ≠ ฐาน × อัตรา** (ผู้ใช้รายงานใบ Shopee INV2026090199 ลงผิดเป็น PV-202610-0040: Dr 52120 402.93 / Dr 11610 35.07 / Cr 21230 438 —
 ฐานถูกบีบตามยอดชำระ · JE ที่ถูก Dr 52120 500.93 / Dr 11640 35.07 / Cr 52120 98 / Cr 21230 438): ฟิลด์ระดับเอกสาร `Document.PostVatDeductionAmount` + `PostVatDeductionAccountId` + `PaymentSourceSplitJson`
 (migration `PostVatDeductionStatements` · ADD COLUMN IF NOT EXISTS) · ตัวตั้ง `Helpers/PostVatDeduction` (ยอดชำระ = รวม − หัก · `Resolve` ความจริงเดียวกับ `ActualPaidAmount` · `VatConsistencyError` ด่านกันปล่อยผ่าน ±฿1 ต่ออัตรา ·
@@ -5545,4 +5572,8 @@ _2026-10-26 — **ทีม U: "หักหลัง VAT" + แยกยอด�
 ให้เส้นฟอร์มยกไปได้) · `DocumentService.ApplyPostVatDeductionAsync` (สร้าง/แก้ไข) · `AutoPostToJournalAsync` ด่าน VAT + ขา Cr หัก/ขาย้ายแหล่ง · `CreatePaymentAsync` เติมบรรทัดปรับจากช่องหักให้ใบตั้งหนี้ ·
 ฟอร์ม `documents.html` (ช่องหัก + ผัง + แถว "ยอดชำระ (หลังหัก)" + ติ๊กแยกยอด · hydrate/reset/payload · หน้ารายละเอียด · หน้าชำระเติม `rpSettle`) · renderer ×2 + `DocumentLabels` 2 ป้าย ·
 รายงานตรวจข้อมูล `PurchaseVatInconsistentWithBase` (อ่านอย่างเดียว · 24 เดือน) · เทสต์ `PostVatDeductionTests`/`PaymentSourceSplitTests`/`OcrPostVatDeductionTests` (27 Fact + 3 Theory) · checker `required_call_site_check` 6 ด่านใหม่ ·
-DOCUMENT_FLOW §3.4 + §อนุมัติ · MATRIX ช่อง 17 + §5 · lessons · **ไม่ทำ**: ฝั่งขาย (→ Settlement · ปฏิเสธพร้อมทางไปต่อ) · pdftotext ของใบจริงไม่เป็นเทสต์ · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน_
+DOCUMENT_FLOW §3.4 + §อนุมัติ · MATRIX ช่อง 17 + §5 · lessons · **ไม่ทำ**: ฝั่งขาย (→ Settlement · ปฏิเสธพร้อมทางไปต่อ) · pdftotext ของใบจริงไม่เป็นเทสต์ · ยังไม่ได้คอมไพล์ในเครื่องนี้ ·
+**หลังฝ่ายค้านทีม U (6 ข้อ · คอมมิตตามหลัง ห้าม amend)**: (1) ด่าน VAT ข้ามบรรทัดที่ VAT เป็นค่าปัดของตัวเอง ±0.01 (`FindVatInconsistency` — เทียบเท่า override ที่ ReconcileTaxRounding ข้าม · Settlement PV 300 รายการผ่าน · ใบฐานบีบยังถูกจับ)
+(2) OCR ยุบเป็นช่องหักเฉพาะส่วนลดล้วน — แบบผสม (+37 ค่าส่ง/−135 voucher) คงเส้นรอบ 193 adjusting lines 51120/51150 (3) แยกยอดเงินล้วนลงขาย้ายแหล่งจริงแม้ส่วนต่างเงินสด 0
+(4) `ConvertCoreAsync` สืบทอด PI/Expense → PV ยกครบ (`PostVatDeduction.Inherit`) (5) ผังหักตัดสินตอนบันทึก (ChangeTracker lines) เก็บ AccountId · ข้อความไม่บอก "อนุมัติอีกครั้ง" กับใบที่อนุมัติแล้ว
+(6) ล็อกช่องหลังอนุมัติ · ลบ `PostVatDeductionAccountCode` ที่ไม่เคย map ออกจาก DocumentResponse · ImpliedBase ตามอัตราของกลุ่ม · merge tip c8bdfc8c (ทีม T/V) · ยังไม่ได้คอมไพล์ในเครื่องนี้_

@@ -686,6 +686,22 @@ public partial class DocumentService : IDocumentService
         return new LineAmounts(net, discountAmt, vatAmt, whtAmt);
     }
 
+    /// <summary>ยอด<b>รายบรรทัด</b> (ก่อน VAT · VAT) ด้วยสูตรเดียวกับ CreateDocumentAsync/UpdateDocumentAsync — <c>AllocateBillDeductions</c> →
+    /// <c>ComputeLineAmounts</c> → <c>ReconcileTaxRounding</c> — <b>ตัวตั้งเดียว</b>ของ "ถ้าบันทึกซ้ำจะได้เท่าไร": ตัวสร้างบรรทัดจากสแกน
+    /// <c>OcrService.BuildScanLinesAsync</c> (ส่วนลดท้ายบิลตามกระดาษ · คำตัดสินเจ้าของข้อ 159) · replay harness/ตัวจำลองในเทสต์ · <see cref="ResaveLineNets"/>
+    /// (รายงานตรวจส่วนลดบรรทัดจากสแกน) — ไม่มีสำเนาสูตรที่อื่น · ไม่มีหัก ณ ที่จ่ายในผล (ผู้เรียกจัดการเอง) · ทีม T 2026-10-26</summary>
+    internal static List<(decimal Net, decimal Vat)> PlanLineAmounts(
+        IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount,
+        decimal billDiscountPercent = 0m, decimal depositBaseDeducted = 0m)
+    {
+        var (alloc, _, _) = AllocateBillDeductions(lines, pricesIncludeVat, billDiscountPercent, billDiscountAmount, depositBaseDeducted);
+        var amts = new LineAmounts[lines.Count];
+        for (int i = 0; i < lines.Count; i++)
+            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
+        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+        return amts.Select(a => (a.NetAmount, a.VatAmount)).ToList();
+    }
+
     /// <summary>ยอดของเอกสาร (ฐาน · VAT · รวม) <b>ด้วยสูตรเดียวกับ CreateDocumentAsync</b> (ส่วนลดท้ายบิล →
     /// ComputeLineAmounts → ReconcileTaxRounding) โดยไม่สร้างเอกสาร — ให้ผู้เรียกวางแผนก่อนออกเลขใบ
     /// (รอบ 193 หลังฝ่ายค้าน C2: เช็คเอาต์ที่พักต้องรู้ยอดใบสุดท้ายก่อนประทับเลข §86/4) · ห้ามคัดลอกสูตรนี้ไปที่อื่น
@@ -3348,7 +3364,15 @@ public partial class DocumentService : IDocumentService
         }
 
         // ทีม U 2026-10-26: หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง — หลังยอดรวมถูกคิดใหม่ทุกกิ่ง (ส่งบรรทัด/ไม่ส่ง) · เส้นแก้ไขเดินด่านเดียวกับเส้นสร้าง
+        var postVatBefore = (doc.PostVatDeductionAmount, doc.PostVatDeductionAccountId, doc.PaymentSourceSplitJson, doc.ActualPaidAmount);
         await ApplyPostVatDeductionAsync(companyId, doc, request.PostVatDeductionAmount, request.PostVatDeductionAccountCode, request.PaymentSources, isCreate: false);
+        // ฝ่ายค้านทีม U ข้อ 6: หลังอนุมัติ JE ลงขาหักแล้ว — ช่องหักหลัง VAT/แยกยอดล็อก (เปลี่ยนค่า = ปฏิเสธพร้อมทางไปต่อ · ส่งค่าเดิมซ้ำ = ผ่าน)
+        if (doc.Status is not (DocumentStatus.Draft or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
+            && postVatBefore != (doc.PostVatDeductionAmount, doc.PostVatDeductionAccountId, doc.PaymentSourceSplitJson, doc.ActualPaidAmount))
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"เอกสาร {doc.DocumentNumber} อนุมัติแล้ว — ช่อง \"หักหลัง VAT\"/\"แยกยอดจ่ายจริง\" ล็อก (JE ลงขาหักไปแล้ว) · "
+                + "ถ้ายอดผิด ให้ยกเลิกใบแล้วออกใหม่ (§86/4 ห้ามแก้ย้อนหลัง) หรือบันทึกส่วนต่างด้วยสมุดรายวันทั่วไป",
+                Accounting.Helpers.PostVatDeduction.RuleCode);
 
         // ===== PO revision: ตรวจวงเงินงบประมาณซ้ำก่อนบันทึก =====
         // CheckBudgetCommitmentAsync เดิมรันเฉพาะตอน "อนุมัติ" — ถ้าไม่ตรวจซ้ำ
@@ -12793,9 +12817,19 @@ public partial class DocumentService : IDocumentService
             // รอบ 204 (ข้อ 143): ผู้ถูกหักรายบรรทัดสืบทอด (ใบแจ้งหนี้ซื้อ → ใบสำคัญจ่าย) · ปลายทางฝั่งอื่น = null
             WhtPayeeContactId: Accounting.Helpers.WhtPayeeSplit.InheritPayee(s.Line.WhtPayeeContactId, inheritPayeeLines, activePayees))).ToList();
 
+        // ทีม U (ฝ่ายค้านข้อ 4 — เอกสารลูกสืบทอด): หักหลัง VAT ของใบตั้งหนี้ตามไป PV ที่ยกครบทุกบรรทัด (null เป็น null) · ยอดชำระจริงคิดใหม่จากช่องนี้ตอนสร้าง
+        var (inheritedPostVat, inheritedPostVatAccountId) = Accounting.Helpers.PostVatDeduction.Inherit(
+            source.DocumentType, targetType, source.PostVatDeductionAmount, source.PostVatDeductionAccountId,
+            spec.Count == source.Lines.Count(l => !l.IsDeleted) && spec.All(s => s.Qty >= s.Line.Quantity));
+        var inheritedPostVatCode = inheritedPostVatAccountId is Guid inheritedPostVatId
+            ? await _db.ChartOfAccounts.AsNoTracking().Where(a => a.Id == inheritedPostVatId && a.CompanyId == companyId)
+                .Select(a => a.AccountCode).FirstOrDefaultAsync()
+            : null;
         var newDoc = await CreateDocumentAsync(companyId, new CreateDocumentRequest(
             targetType, documentDate ?? DateTime.UtcNow, dueDate ?? source.DueDate, source.ContactId,
             source.DocumentNumber, source.Notes, lines,
+            PostVatDeductionAmount: inheritedPostVat > 0m ? inheritedPostVat : null,
+            PostVatDeductionAccountCode: inheritedPostVatCode,
             ProjectId: source.ProjectId,
             BankAccountId: source.BankAccountId,
             PaymentAccountId: source.PaymentAccountId,
@@ -17537,6 +17571,18 @@ public partial class DocumentService : IDocumentService
             doc.PostVatDeductionAccountId = null;
             return;
         }
+        // ฝ่ายค้านทีม U ข้อ 5: ตัดสินผังตอนบันทึก (ไม่รอถึงตอนอนุมัติ/ชำระ ซึ่งเส้นชำระโหลดเอกสารโดยไม่มีบรรทัด) — 51150 ถ้ามี ไม่งั้นผังของบรรทัด
+        // ยอดสูงสุดจาก ChangeTracker (เส้นสร้างเพิ่มบรรทัดผ่าน DbSet ⇒ doc.Lines ยังว่าง) · ไม่พบเลย = ปล่อย null ให้ ResolvePostVatDeductionAccountAsync ล้มดังตอนใช้
+        if (doc.PostVatDeductionAccountId is null)
+        {
+            var trackedLines = _db.ChangeTracker.Entries<DocumentLine>()
+                .Where(e => e.State != EntityState.Deleted && e.State != EntityState.Detached && e.Entity.DocumentId == doc.Id)
+                .Select(e => (e.Entity.AccountId, e.Entity.Amount))
+                .Concat(doc.Lines.Where(l => !l.IsDeleted).Select(l => (l.AccountId, l.Amount)))
+                .ToList();
+            doc.PostVatDeductionAccountId = await AccountIdByCodeAsync(companyId, Accounting.Helpers.PostVatDeduction.DefaultAccountCode)
+                ?? Accounting.Helpers.PostVatDeduction.FallbackAccountIdFromLines(trackedLines);
+        }
 
         // ── 3) ยอดชำระจริง = รวมทั้งสิ้น − หัก (ความจริงเดียว) + ด่านข้อ 4 ──
         var resolved = Accounting.Helpers.PostVatDeduction.Resolve(doc.TotalAmount, deduction, doc.ActualPaidAmount);
@@ -17571,8 +17617,11 @@ public partial class DocumentService : IDocumentService
             : null;
         if (acc is null)
             throw new Accounting.Helpers.BusinessRuleException(
-                $"เอกสาร {doc.DocumentNumber}: ไม่พบผังสำหรับลงขาหักหลัง VAT {doc.PostVatDeductionAmount:N2} — เลือกผังในช่อง \"หักหลัง VAT\" "
-                + $"(เช่น {Accounting.Helpers.PostVatDeduction.DefaultAccountCode} ส่วนลดรับ หรือผังค่าใช้จ่ายของใบ) แล้วบันทึก/อนุมัติอีกครั้ง",
+                $"เอกสาร {doc.DocumentNumber}: ไม่พบผังสำหรับลงขาหักหลัง VAT {doc.PostVatDeductionAmount:N2} — "
+                + $"เพิ่ม/เปิดผัง {Accounting.Helpers.PostVatDeduction.DefaultAccountCode} ส่วนลดรับ ในผังบัญชี หรือ"
+                + (doc.Status is DocumentStatus.Draft or DocumentStatus.Rejected or DocumentStatus.WaitingApproval
+                    ? "เลือกผังในช่อง \"หักหลัง VAT\" ของใบร่างแล้วบันทึกอีกครั้ง"
+                    : "บันทึกการชำระพร้อมบรรทัดปรับที่ระบุผังเอง (ใบนี้อนุมัติแล้ว ช่องหักหลัง VAT ล็อก)"),
                 Accounting.Helpers.PostVatDeduction.RuleCode);
         return (acc.AccountCode, acc.Id);
     }
@@ -18082,8 +18131,12 @@ public partial class DocumentService : IDocumentService
                         doc.DocumentNumber);
                 }
             }
-            var isCashSettlement = source != null && source.BalanceDue <= 0.01m;
             var isCreditNote = doc.DocumentType == DocumentType.CreditNote;
+            // ทีม V ตรวจ JE 2026-10-26 (V-DN-01 · docs/JE_POSTING_AUDIT.md): ขา counter = เงิน เฉพาะ ใบลดหนี้ของใบที่ชำระครบ (คืนเงิน)
+            // หรือ ใบเพิ่มหนี้ที่ "จ่ายทันที" เอง — เดิมใบเพิ่มหนี้ยืมกติกาใบลดหนี้ ⇒ ใบเพิ่มหนี้ของใบที่ชำระครบลง Dr เงินสดตอนอนุมัติ
+            // แล้วตอนรับชำระ (ใบเพิ่มหนี้อยู่ใน PayableDocumentTypes) ลง Dr เงินสด/Cr ลูกหนี้อีกรอบ ⇒ เงินสดเกินสองเท่า + ลูกหนี้ติดลบ
+            var isCashSettlement = Accounting.Helpers.AdjustmentNoteAccount.CounterLegIsMoney(
+                isCreditNote, doc.PaymentType, source?.BalanceDue);
 
             // ── รอบ PP36 ทีม F2 (E-7 · คำตัดสินข้อ 131/134): ใบลด/เพิ่มหนี้ฝั่งซื้อของใบที่เป็นเจ้าของ ภ.พ.36 ──
             // ใบเดิม: Dr ค่าใช้จ่าย ฐาน · Dr 11640 VAT / Cr เจ้าหนี้ ฐาน · Cr 21912 VAT ⇒ ใบลดหนี้ต้องกลับ "ทรงเดียวกัน":
@@ -18116,12 +18169,16 @@ public partial class DocumentService : IDocumentService
             // ลงเข้าผังกลางแทน ⇒ ผังเฉพาะรายค้างยอดถาวรเพราะใบตั้งหนี้กับใบปรับปรุง
             // อยู่คนละบัญชี (ยอดคงเหลือรายคู่ค้าไม่มีวันเป็นศูนย์)
             // รอบ 206: ลด/เพิ่มหนี้ของใบต้นทาง ⇒ ผังลูกหนี้/เจ้าหนี้ที่ใบต้นทางตั้งไว้จริง (ไม่ใช่ผังที่ผู้ติดต่อปักตอนนี้)
-            var counterAcc = !isCashSettlement && source != null
-                ? await OriginalArApAccountAsync(companyId, source.Id, isPurchaseSide ? Accounting.Helpers.ArApSide.Payable : Accounting.Helpers.ArApSide.Receivable,
-                    doc, pinContact => FindAccountAsync(companyId, counterAccCode, pinContact))
-                : await FindAccountAsync(companyId, counterAccCode, doc.Contact);
+            // ทีม V (V-CN-03): ขาเงินของใบลด/เพิ่มหนี้เดินช่องทางเงินของเอกสาร (ธนาคาร/ผังที่เลือก → เงินสดตั้งต้น) ตัวเดียวกับทุกใบ —
+            // เดิมลง "111" ตายตัว ⇒ คืนเงินผ่านธนาคารไปโผล่เงินสดในมือ · ไม่มีช่องทาง = 111 เหมือนเดิมทุกประการ
+            var counterAcc = isCashSettlement
+                ? UseMoneyAccount()
+                : source != null
+                    ? await OriginalArApAccountAsync(companyId, source.Id, isPurchaseSide ? Accounting.Helpers.ArApSide.Payable : Accounting.Helpers.ArApSide.Receivable,
+                        doc, pinContact => FindAccountAsync(companyId, counterAccCode, pinContact))
+                    : await FindAccountAsync(companyId, counterAccCode, doc.Contact);
             var counterDesc = $"{typeLabel} - {doc.DocumentNumber}" +
-                (isCashSettlement ? " (เงินสด)" : "");
+                Accounting.Helpers.AdjustmentNoteAccount.CounterLegSuffix(isCashSettlement);
 
             // CN reduces the receivable/increases payable for purchase return; DN opposite.
             // Sales side:    CN→Cr counter, DN→Dr counter
@@ -18131,8 +18188,9 @@ public partial class DocumentService : IDocumentService
             // (Total + WHT) โดยไม่แตะ 11910/2191x จนกว่าจะรับ/จ่ายเงินจริง →
             // CN/DN โหมด AR/AP ต้อง mirror gross แบบเดียวกันและ "ไม่ลงขา WHT"
             // — เดิมลงแบบ accrual เสมอ → AR ค้าง +WHT ถาวร / 11910 ติดลบ
-            var cnDnGrossWht = whtBasis == Models.Enums.WhtRecognitionBasis.Cash
-                && !isCashSettlement && doc.WithholdingTaxAmount > 0;
+            // ทีม V (ฝ่ายค้านข้อ 1): ตัวตัดสินเดียวคู่กับ CounterLegIsMoney — DN เงินเชื่อของใบที่ชำระครบ + WHT ⇒ โหมดลูกหนี้ ⇒ ขา WHT ไปลงตอนรับชำระ
+            var cnDnGrossWht = Accounting.Helpers.AdjustmentNoteAccount.CounterLegIsGrossOfWht(
+                whtBasis == Models.Enums.WhtRecognitionBasis.Cash, isCashSettlement, doc.WithholdingTaxAmount);
             // E-7: ใบต้นทางเป็นเจ้าของ ภ.พ.36 ⇒ เจ้าหนี้/เงินสด = ยอดจ่ายผู้รับเงิน · ส่วน VAT ประเมินเองเข้า 21912 (ตัวแยกเดียวกับ AutoPost ใบเดิม)
             var cnDnSplit = ForeignServiceVat.SplitCredit(cnSrcOwnsPp36,
                 cnDnGrossWht ? doc.TotalAmount + doc.WithholdingTaxAmount : doc.TotalAmount,
@@ -19405,7 +19463,11 @@ public partial class DocumentService : IDocumentService
             doc.DocumentType, doc.PaymentType, doc.IsForeignService, settlesSource, doc.TotalAmount, doc.ActualPaidAmount);
         // ทีม U 2026-10-26: ขา "หักหลัง VAT" (Cr ผังที่เลือก/51150/ผังค่าใช้จ่ายหลัก) + ขาย้ายภาระจ่ายของ "แยกยอดตามแหล่ง" — เดินผ่าน adjusting-line
         // path เดิมตัวนี้ (ห้ามเขียน posting layer ใหม่) · นับรวมใน Dr/Cr ของบรรทัดปรับก่อนด่านสมดุล CheckDocumentLines ตัวเดิม
+        // ฝ่ายค้านทีม U ข้อ 3: ติ๊กแยกยอดที่ไม่มีบรรทัดหัก (เงินสด 300 + เจ้าหนี้กรรมการ 236 = ยอดรวม) ⇒ ส่วนต่างขาเงินสด 0 แต่ขา "ย้ายแหล่งจ่าย"
+        // ต้องลงจริง (ไม่ใช่เก็บแล้วเงียบ — กฎ #4 A) ⇒ สร้างขาเพิ่มเมื่อมีส่วนต่าง หรือมี split บนใบที่จ่ายในตัว (net-zero ⇒ ด่านสมดุลเดิมผ่าน)
         var postVatLines = settlementCashDelta != 0m
+            || (doc.PaymentSourceSplitJson is not null
+                && Accounting.Helpers.PaymentSettlementAdjustment.PostsCashAtApproval(doc.DocumentType, doc.PaymentType, doc.IsForeignService, settlesSource))
             ? await BuildPostVatDeductionJournalLinesAsync(companyId, doc, defaultExpense, UseMoneyAccount())
             : new List<(Guid AccountId, decimal Debit, decimal Credit, string Description)>();
         if (adjustingLines.Count == 0 && postVatLines.Count == 0 && settlementCashDelta != 0m

@@ -169,4 +169,51 @@ public class PostVatDeductionTests
         var chart = Accounting.Services.ChartOfAccountTemplates.GetCommonAccounts();
         Assert.Contains("ส่วนลดรับ", chart.Single(a => a.Code == PostVatDeduction.DefaultAccountCode).NameTh);
     }
+
+    // ── ฝ่ายค้านทีม U ──
+
+    /// <summary>ข้อ 1: PV ค่าธรรมเนียมแพลตฟอร์มจาก Settlement (SettlementPosting ส่ง VatAmountOverride = VAT ต่อรายการปัดแล้ว) 300 รายการ —
+    /// เศษปัดสะสมเกิน ฿1 ต่อกลุ่ม แต่ทุกบรรทัดถูกต้องในตัว ⇒ ต้องผ่าน (เดิมบล็อกผิด)</summary>
+    [Fact]
+    public void ฝ่ายค้าน1_SettlementPV_300รายการVATปัดต่อรายการ_ผ่าน()
+    {
+        // 12.34 × 7% = 0.8638 → 0.86 ต่อรายการ · Σ ฐาน 3,702.00 × 7% = 259.14 แต่ Σ VAT = 258.00 (ต่าง 1.14 > ฿1)
+        var lines = Enumerable.Range(0, 300).Select(_ => new VatLineFact(12.34m, 7m, 0.86m)).ToList();
+        Assert.True(Math.Abs(lines.Sum(l => l.Vat) - Math.Round(lines.Sum(l => l.Net) * 0.07m, 2)) > PostVatDeduction.VatTolerance);
+        Assert.Null(PostVatDeduction.VatConsistencyError(lines));
+        // ใบที่ฐานถูกบีบยังถูกจับเหมือนเดิม แม้ปนอยู่กับบรรทัดปัดต่อรายการ
+        lines.Add(new VatLineFact(402.93m, 7m, 35.07m));
+        var finding = PostVatDeduction.FindVatInconsistency(lines);
+        Assert.NotNull(finding);
+        Assert.Equal((7m, 402.93m, 35.07m, 501.00m), (finding!.Rate, finding.Net, finding.Vat, finding.ImpliedBase));
+    }
+
+    [Fact]
+    public void ฝ่ายค้าน1_บรรทัดรับเศษกลุ่มจากReconcileTaxRounding_ยังผ่าน()
+    {
+        // บรรทัดสุดท้ายรับเศษ +0.02 (เกิน 1 สตางค์ ⇒ ไม่นับว่า "ค่าปัดของตัวเอง") แต่กลุ่มต่างแค่ 0.02 ≤ ฿1
+        var lines = new[] { new VatLineFact(100.005m, 7m, 7.00m), new VatLineFact(100.005m, 7m, 7.00m), new VatLineFact(100.00m, 7m, 7.02m) };
+        Assert.Null(PostVatDeduction.VatConsistencyError(lines));
+    }
+
+    /// <summary>ข้อ 6: ฐานที่ VAT บอก ใช้อัตราของกลุ่มที่ไม่ผ่าน ไม่ hardcode 7%</summary>
+    [Fact]
+    public void ฝ่ายค้าน6_ImpliedBase_ตามอัตราของกลุ่ม()
+    {
+        var finding = PostVatDeduction.FindVatInconsistency(new[] { new VatLineFact(1000m, 10m, 150m) });
+        Assert.NotNull(finding);
+        Assert.Equal((10m, 1500.00m), (finding!.Rate, finding.ImpliedBase));
+    }
+
+    /// <summary>ข้อ 4: เอกสารลูกสืบทอด — PI/ค่าใช้จ่าย → PV ที่ยกครบทุกบรรทัด ⇒ ตามไป · บางส่วน/ชนิดอื่น/ไม่มีหัก ⇒ (0, null) — null เป็น null</summary>
+    [Fact]
+    public void ฝ่ายค้าน4_สืบทอด_PIไปPVยกครบ_ตามไป_บางส่วนไม่ตาม()
+    {
+        var acc = Guid.NewGuid();
+        Assert.Equal((98.00m, acc), PostVatDeduction.Inherit(DocumentType.PurchaseInvoice, DocumentType.PaymentVoucher, 98.00m, acc, fullConversion: true));
+        Assert.Equal((98.00m, (Guid?)null), PostVatDeduction.Inherit(DocumentType.Expense, DocumentType.PaymentVoucher, 98.00m, null, fullConversion: true));
+        Assert.Equal((0m, (Guid?)null), PostVatDeduction.Inherit(DocumentType.PurchaseInvoice, DocumentType.PaymentVoucher, 98.00m, acc, fullConversion: false));
+        Assert.Equal((0m, (Guid?)null), PostVatDeduction.Inherit(DocumentType.PurchaseOrder, DocumentType.PurchaseInvoice, 98.00m, acc, fullConversion: true));
+        Assert.Equal((0m, (Guid?)null), PostVatDeduction.Inherit(DocumentType.PurchaseInvoice, DocumentType.PaymentVoucher, 0m, acc, fullConversion: true));
+    }
 }

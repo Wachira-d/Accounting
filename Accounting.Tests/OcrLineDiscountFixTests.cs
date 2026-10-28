@@ -123,4 +123,21 @@ public class OcrLineDiscountFixTests
         Assert.True(Accounting.Helpers.OcrLineDiscountFixScope.IsOurSalesDocument(Accounting.Models.Enums.DocumentType.DebitNote, (false, true)));
         Assert.True(Accounting.Helpers.OcrLineDiscountFixScope.IsOurSalesDocument(Accounting.Models.Enums.DocumentType.CreditNote, null));
     }
+
+    // ── ฝ่ายค้านข้อ 159 ข้อ 3 (ทีม T 2026-10-26): ResaveLineNets เรียก PlanLineAmounts ตัวตั้งตัวเดียว — ผลต้องเท่าเดิม ──
+    [Fact]
+    public void ResaveLineNets_เท่ากับ_PlanLineAmounts_ทั้งโหมดส่วนลดท้ายบิลบาทและเปอร์เซ็นต์()
+    {
+        var lines = new List<DocumentLine> { Line(1, 2m, 500m, 5m, 0m, 950m), Line(2, 1m, 475m, 0m, 25m, 450m) };
+        var reqs = lines.Select(l => DocumentService.ResaveRequest(l)).ToList();
+        foreach (var incl in new[] { false, true })
+        {
+            Assert.Equal(DocumentService.PlanLineAmounts(reqs, incl, 100m).Select(a => a.Net).ToArray(),
+                DocumentService.ResaveLineNets(reqs, incl, 0m, 100m, 0m));
+            Assert.Equal(DocumentService.PlanLineAmounts(reqs, incl, 0m, billDiscountPercent: 10m).Select(a => a.Net).ToArray(),
+                DocumentService.ResaveLineNets(reqs, incl, 10m, 0m, 0m));
+        }
+        // ตัวเลขล็อก (ราคาก่อน VAT · ส่วนลดท้ายบิล 100 บนฐาน 950 + 450 = 1,400 ⇒ 67.86/32.14): เท่าเดิมก่อนรวมตัวตั้ง
+        Assert.Equal(new[] { 882.14m, 417.86m }, DocumentService.ResaveLineNets(reqs, false, 0m, 100m, 0m));
+    }
 }

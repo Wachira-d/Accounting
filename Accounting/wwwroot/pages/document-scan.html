@@ -3171,7 +3171,10 @@
         const vat = Number(preview.headerVat) || 0;
         const tot = Number(preview.headerTotal) || 0;
         if (vat <= 0) { summaryEl.innerHTML = noItemsHtml; return; }
-        const math = `${Layout.money(sub)} + VAT ${Layout.money(vat)} = ${Layout.money(tot)}`;
+        // ข้อ 159: ส่วนลดท้ายบิลตามกระดาษ (เซิร์ฟเวอร์ตั้ง) — แสดงให้เห็นว่าฐานคือยอดหลังหัก
+        const billDisc = Number(preview.billDiscountAmount) || 0;
+        const math = (billDisc > 0 ? `ส่วนลดท้ายบิล −${Layout.money(billDisc)} ⇒ ` : '')
+          + `${Layout.money(sub)} + VAT ${Layout.money(vat)} = ${Layout.money(tot)}`;
         summaryEl.innerHTML = noItemsHtml + (incl
           ? `<div style="font-size:11.5px;background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46;border-radius:6px;padding:6px 10px">
                💡 <b>ราคาต่อหน่วยบนกระดาษรวม VAT แล้ว</b> (⊂ = VAT อยู่ในราคา) — ผลรวมบรรทัดตรงกับยอดรวมทั้งสิ้น
@@ -4498,7 +4501,8 @@
         const pricesIncludeVat = !!preview.pricesIncludeVat;
         // ส่วนลดท้ายบิลถูกกระจายลงบรรทัดโดยตัวสร้างแล้ว (Σ บรรทัด = ยอดก่อน VAT บนกระดาษ)
         // ช่องว่างที่กระทบไม่ได้ ([Σ-GAP]) เซิร์ฟเวอร์รายงานเป็นข้อความให้คนตัดสิน ไม่แต่งบรรทัด
-        const billDiscountAmount = 0;
+        // คำตัดสินข้อ 159 (ทีม T 2026-10-26): เคส F/G ตัวสร้างลงส่วนลดท้ายบิลตามกระดาษบน Document.BillDiscountAmount — หน้าเว็บส่งต่อค่าจากเซิร์ฟเวอร์ (ไม่คำนวณเอง)
+        const billDiscountAmount = Number(preview.billDiscountAmount) || 0;
         // ยอดไม่ตรงกระดาษ ([Σ-GAP]) ต้องเป็นคำเตือน ไม่ใช่ข้อมูลทั่วไป — ผู้ใช้กำลังจะแก้ในฟอร์มเอง
         if (preview.notes) Layout.toast(preview.notes,
           Page.parseScanNotes(preview.notes).gaps.length ? 'warning' : 'info', 12000);

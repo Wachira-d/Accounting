@@ -1082,9 +1082,8 @@ public record DocumentResponse(
     IReadOnlyList<WhtIncomeGroupDto>? WhtByIncomeType = null,
     /// <summary>ทีม U 2026-10-26 — หักหลัง VAT (ส่วนลด/คูปองหลังยอดรวม · ฐาน/VAT คงตามใบ) · 0 = ไม่มี · echo ให้ฟอร์ม hydrate (กฎ #4 A)</summary>
     decimal PostVatDeductionAmount = 0m,
-    /// <summary>ผังที่เลือกลงขาหักหลัง VAT (null = ค่าเริ่มต้นตอนอนุมัติ: 51150 ถ้ามี ไม่งั้นผังค่าใช้จ่ายหลักของใบ)</summary>
+    /// <summary>ผังที่ลงขาหักหลัง VAT (ตัดสินตอนบันทึก: ที่เลือก → 51150 ถ้ามี → ผังค่าใช้จ่ายหลักของใบ · null = ไม่พบผังเลย) — หน้าเว็บแปลงเป็นรหัสจากรายการผังที่โหลดไว้</summary>
     Guid? PostVatDeductionAccountId = null,
-    string? PostVatDeductionAccountCode = null,
     /// <summary>ยอดที่ต้องชำระ = ยอดรวมทั้งสิ้น − หักหลัง VAT (เซิร์ฟเวอร์คำนวณ — <c>PostVatDeduction.AmountDue</c>) · null เมื่อไม่มีหัก</summary>
     decimal? AmountDueAfterPostVatDeduction = null,
     /// <summary>ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง" ที่เก็บไว้ — null = ไม่ได้ติ๊ก</summary>

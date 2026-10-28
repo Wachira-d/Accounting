@@ -120,22 +120,56 @@ public static class PostVatDeduction
     /// <para>ใบ PV-202610-0040: ฐาน 402.93 × 7% = 28.21 แต่ VAT 35.07 ⇒ ต่าง 6.86 ⇒ บล็อก · ใบที่ถูก (500.93 · 35.07) ผ่าน</para>
     /// </summary>
     public static string? VatConsistencyError(IEnumerable<VatLineFact> lines)
+        => FindVatInconsistency(lines)?.Message;
+
+    /// <summary>บรรทัดที่ VAT เป็น "ค่าปัดของตัวเอง" (|VAT − round(ฐาน × อัตรา)| ≤ 1 สตางค์) = บรรทัดที่ถูกส่งมาแบบ <c>VatAmountOverride</c>
+    /// (Settlement: VAT ต่อรายการปัดแล้วหลายร้อยบรรทัด — <c>SettlementPosting</c>) หรือบรรทัดปกติ — <see cref="FindVatInconsistency"/> ข้ามบรรทัดเหล่านี้
+    /// เหมือนที่ <c>ReconcileTaxRounding</c> ข้ามบรรทัด override (ฝ่ายค้านทีม U ข้อ 1: เดิมรวมกลุ่มทั้งใบ ⇒ รอบโอน 300 รายการ เศษสะสม &gt; ฿1 ถูกบล็อกผิด)</summary>
+    public const decimal LineRoundingTol = 0.01m;
+
+    /// <summary>ผลตรวจความสอดคล้อง VAT ของกลุ่มอัตราที่ไม่ผ่าน (null = ผ่านทุกกลุ่ม)</summary>
+    /// <param name="Rate">อัตรา % ของกลุ่ม</param>
+    /// <param name="Net">Σ ฐานของบรรทัดที่ตรวจ</param>
+    /// <param name="Vat">Σ VAT ที่บันทึก</param>
+    /// <param name="Expected">round(Σ ฐาน × อัตรา)</param>
+    /// <param name="ImpliedBase">ฐานที่ VAT บอก = VAT ÷ อัตรา (ใช้ในรายงานตรวจข้อมูล — ไม่ hardcode 7)</param>
+    public sealed record VatConsistencyFinding(decimal Rate, decimal Net, decimal Vat, decimal Expected, decimal ImpliedBase, string Message);
+
+    /// <summary>ตัวตัดสินเดียวของ "VAT ที่บันทึกสอดคล้องกับฐาน × อัตราไหม" — ใช้ทั้งด่านอนุมัติและรายงานตรวจข้อมูล
+    /// <list type="bullet">
+    /// <item>บรรทัดที่อัตรา 0 / VAT 0 ไม่เกี่ยว · บรรทัดที่ VAT = ค่าปัดของตัวเอง (± <see cref="LineRoundingTol"/>) ถูกต้องในตัว — ข้าม (เทียบเท่า override)</item>
+    /// <item>ที่เหลือ (บรรทัดที่ VAT ไม่ใช่ค่าปัดของฐานตัวเอง เช่น บรรทัดที่รับเศษกลุ่มจาก ReconcileTaxRounding หรือฐานถูกบีบ) รวมตามอัตรา:
+    ///   |Σ VAT − round(Σ ฐาน × อัตรา)| &gt; <see cref="VatTolerance"/> ⇒ ไม่ผ่าน</item>
+    /// </list></summary>
+    public static VatConsistencyFinding? FindVatInconsistency(IEnumerable<VatLineFact> lines)
     {
-        foreach (var g in lines.Where(l => l.Rate > 0m && l.Vat > 0m).GroupBy(l => l.Rate))
+        var suspicious = lines.Where(l => l.Rate > 0m && l.Vat > 0m
+            && Math.Abs(l.Vat - Math.Round(l.Net * l.Rate / 100m, 2, MidpointRounding.AwayFromZero)) > LineRoundingTol);
+        foreach (var g in suspicious.GroupBy(l => l.Rate))
         {
             var net = g.Sum(l => l.Net);
             var vat = g.Sum(l => l.Vat);
             var expected = Math.Round(net * g.Key / 100m, 2, MidpointRounding.AwayFromZero);
             var gap = Math.Round(vat - expected, 2, MidpointRounding.AwayFromZero);
             if (Math.Abs(gap) <= VatTolerance) continue;
-            var impliedBase = g.Key > 0m ? Math.Round(vat * 100m / g.Key, 2, MidpointRounding.AwayFromZero) : 0m;
-            return $"⛔ ภาษีซื้อ {vat:N2} ไม่ตรงกับฐาน {net:N2} × {g.Key:0.##}% = {expected:N2} (ต่าง {Signed(gap)}) — "
+            var impliedBase = Math.Round(vat * 100m / g.Key, 2, MidpointRounding.AwayFromZero);
+            var message = $"⛔ ภาษีซื้อ {vat:N2} ไม่ตรงกับฐาน {net:N2} × {g.Key:0.##}% = {expected:N2} (ต่าง {Signed(gap)}) — "
                 + $"VAT {vat:N2} ที่ {g.Key:0.##}% ควรมาจากฐาน {impliedBase:N2} · ถ้ากระดาษมีส่วนลด/คูปอง/voucher พิมพ์หลัง \"รวมทั้งสิ้น\" "
                 + $"(ยอดชำระน้อยกว่ายอดใบ) ให้คงฐานและ VAT ตามใบกำกับ แล้วใส่ช่อง \"หักหลัง VAT\" = ส่วนลดนั้น (ยอดชำระ = รวมทั้งสิ้น − หักหลัง VAT) · "
                 + "หรือแก้ยอดบรรทัด/VAT ให้ตรงใบกำกับ — ระบบไม่ลงบัญชีฐานภาษีซื้อที่ไม่ตรงใบ (ภ.พ.30)";
+            return new VatConsistencyFinding(g.Key, net, vat, expected, impliedBase, message);
         }
         return null;
     }
+
+    /// <summary>เอกสารลูกสืบทอด (กฎ #4 A — null เป็น null): ใบตั้งหนี้ (PI/ค่าใช้จ่าย) → ใบสำคัญจ่ายที่ยก<b>ทุกบรรทัดเต็มจำนวน</b> ⇒ ช่องหักหลัง VAT
+    /// (+ ผัง) ตามไป เพราะส่วนลดหลังภาษีเป็นของ "การจ่ายใบนี้" · ยกบางส่วน/ชนิดอื่น ⇒ ไม่สืบทอด (0, null) — ตัวตัดสินเดียวของ <c>ConvertCoreAsync</c></summary>
+    public static (decimal Amount, Guid? AccountId) Inherit(
+        DocumentType sourceType, DocumentType targetType, decimal sourceAmount, Guid? sourceAccountId, bool fullConversion)
+        => sourceAmount > 0m && fullConversion && targetType == DocumentType.PaymentVoucher
+           && sourceType is DocumentType.PurchaseInvoice or DocumentType.Expense
+            ? (sourceAmount, sourceAccountId)
+            : (0m, null);
 
     private static string Signed(decimal v) => v >= 0m ? $"+{v:N2}" : $"−{Math.Abs(v):N2}";
 }

@@ -40,6 +40,8 @@ public sealed record DataIntegrityReport(
     List<DataIntegritySuspect>? BookingDepositOverdrawnJournals = null,
     // ทีม S 2026-10-26 ข้อ 3 — JE จาก API ที่มีภาษีขาย (21911) โดยไม่มีใบกำกับภาษีในระบบรองรับ · อ่านอย่างเดียว
     List<DataIntegritySuspect>? ApiJournalOutputVatWithoutInvoice = null,
+    // ทีม V 2026-10-26 (V-DN-01 · คำตัดสินข้อ 160) — ใบเพิ่มหนี้เงินเชื่อที่ JE อนุมัติรุ่นก่อนลงขาเงิน แล้วชำระซ้ำ · ปุ่มกลับ JE ชำระต่อใบที่เลือก
+    List<DataIntegritySuspect>? DebitNotesCashPostedTwice = null,
     // ทีม U 2026-10-26 (PV-202610-0040: ฐาน 402.93 · VAT 35.07) — เอกสารฝั่งซื้อที่ลงบัญชีแล้วซึ่ง VAT ไม่สอดคล้องกับฐาน × อัตรา (ฐานถูกบีบตามยอดชำระ) · อ่านอย่างเดียว
     List<DataIntegritySuspect>? PurchaseVatInconsistentWithBase = null)
 {
@@ -53,6 +55,7 @@ public sealed record DataIntegrityReport(
         + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count + TemplateLeafImportedChildren.Count
         + (ForeignCurrencyWhtCertsNotInBaht?.Count ?? 0)
         + (BookingDepositOverdrawnJournals?.Count ?? 0) + (ApiJournalOutputVatWithoutInvoice?.Count ?? 0)
+        + (DebitNotesCashPostedTwice?.Count ?? 0)
         + (PurchaseVatInconsistentWithBase?.Count ?? 0);
 }
 
@@ -181,9 +184,107 @@ public class DataIntegrityReportService
         var foreignCerts = await LoadForeignCurrencyWhtCertsAsync(companyId);
         var overdrawn = await LoadBookingDepositOverdrawnAsync(companyId);
         var apiVat = await LoadApiJournalOutputVatAsync(companyId);
+        var dnCashTwice = await LoadDebitNoteCashPostedTwiceAsync(companyId);
         var vatBase = await LoadPurchaseVatInconsistentAsync(companyId);
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
-            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, vatBase);
+            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, dnCashTwice, vatBase);
+    }
+
+    /// <summary>ทีม V 2026-10-26 (V-DN-01 · คำตัดสินข้อ 160) — ใบเพิ่มหนี้เงินเชื่อที่ JE อนุมัติ (รุ่นก่อน) ลงขาเงิน แล้วมี/จะมี JE ชำระลงขาเงินซ้ำ ·
+    /// ข้อเท็จจริงจากฐาน · ตัวตัดสิน <see cref="Accounting.Helpers.DebitNoteCashRepair"/> · <b>อ่านอย่างเดียว</b> — ปุ่มซ่อมแยกต่อใบที่ผู้ใช้เลือก</summary>
+    private async Task<List<DataIntegritySuspect>> LoadDebitNoteCashPostedTwiceAsync(Guid companyId)
+    {
+        var facts = await LoadDebitNoteCashFactsAsync(companyId, null);
+        return facts.Where(Accounting.Helpers.DebitNoteCashRepair.IsSuspect)
+            .Select(Accounting.Helpers.DebitNoteCashRepair.ToSuspect)
+            .Where(x => x != null).Select(x => x!)
+            .OrderBy(x => x.Date).ThenBy(x => x.Number)
+            .ToList();
+    }
+
+    /// <summary>ข้อเท็จจริงของใบเพิ่มหนี้ (ทุกใบ หรือใบเดียว) — ขาเงิน = ผัง 111xx หรือผังที่ผูกบัญชีธนาคาร · นับเฉพาะ JE ที่ยังมีผล
+    /// (Posted · ไม่ใช่ตัวกลับ · ยังไม่ถูกกลับ) · JE อนุมัติ = สมุดขาย/ซื้อ · JE ชำระ = สมุดรับ/จ่าย ของเอกสารนี้</summary>
+    private async Task<List<Accounting.Helpers.DebitNoteCashFacts>> LoadDebitNoteCashFactsAsync(Guid companyId, Guid? onlyDocumentId)
+    {
+        var dns = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DocumentType == DocumentType.DebitNote
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && (onlyDocumentId == null || d.Id == onlyDocumentId))
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.PaymentType, d.TotalAmount })
+            .ToListAsync();
+        if (dns.Count == 0) return new List<Accounting.Helpers.DebitNoteCashFacts>();
+        var dnIds = dns.Select(d => d.Id).ToList();
+        var bankGl = _db.BankAccounts.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.LinkedAccountId != null)
+            .Select(b => b.LinkedAccountId!.Value);
+        var legs = await (
+                from l in _db.JournalEntryLines.AsNoTracking()
+                join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                where j.CompanyId == companyId && a.CompanyId == companyId && !j.IsDeleted && !l.IsDeleted
+                    && j.SourceDocumentId != null && dnIds.Contains(j.SourceDocumentId.Value)
+                    && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                    && (a.AccountCode.StartsWith("111") || bankGl.Contains(a.Id))
+                group l by new { DocId = j.SourceDocumentId!.Value, j.Id, j.EntryNumber, j.JournalType } into g
+                select new { g.Key.DocId, g.Key.Id, g.Key.EntryNumber, g.Key.JournalType,
+                    Dr = g.Sum(x => x.DebitAmount), Cr = g.Sum(x => x.CreditAmount) })
+            .ToListAsync();
+        var result = new List<Accounting.Helpers.DebitNoteCashFacts>();
+        foreach (var d in dns)
+        {
+            var mine = legs.Where(x => x.DocId == d.Id).ToList();
+            var approval = mine.Where(x => x.JournalType == JournalType.Sales || x.JournalType == JournalType.Purchase).ToList();
+            if (approval.Count == 0) continue;   // ไม่มี JE อนุมัติที่มีขาเงินและยังมีผล ⇒ ไม่เข้าข่าย
+            var isPurchase = approval.Any(x => x.JournalType == JournalType.Purchase);
+            var approvalMoney = isPurchase ? approval.Sum(x => x.Cr - x.Dr) : approval.Sum(x => x.Dr - x.Cr);
+            var payments = mine.Where(x => x.JournalType == JournalType.CashReceipts || x.JournalType == JournalType.CashPayments)
+                .Select(x => new Accounting.Helpers.DebitNotePaymentJournal(x.Id, x.EntryNumber, isPurchase ? x.Cr - x.Dr : x.Dr - x.Cr))
+                .Where(x => x.MoneyLeg > Accounting.Helpers.DebitNoteCashRepair.Tolerance)
+                .ToList();
+            result.Add(new Accounting.Helpers.DebitNoteCashFacts(d.Id, d.DocumentNumber, d.DocumentDate, isPurchase, d.PaymentType,
+                d.TotalAmount, approvalMoney, payments));
+        }
+        return result;
+    }
+
+    /// <summary>ปุ่ม "แก้" ของ V-DN-01 (คำตัดสินข้อ 160): กลับรายการ JE ชำระที่ลงขาเงินซ้ำของใบเพิ่มหนี้<b>ใบเดียวที่ผู้ใช้เลือก</b> ด้วย
+    /// <c>ReverseJournalEntryAsync</c> เดิม (systemTriggered — JE ผูกเอกสาร) + audit ต่อ JE · ห้ามเรียกอัตโนมัติ · คืนข้อความผลลัพธ์</summary>
+    public async Task<(int Reversed, string Message)> ReverseDebitNoteDuplicatePaymentJournalsAsync(Guid companyId, Guid documentId, Guid? actorUserId)
+    {
+        var accounting = _accounting ?? throw new InvalidOperationException("บริการบัญชีไม่พร้อมใช้งาน — กลับรายการไม่ได้");
+        var facts = (await LoadDebitNoteCashFactsAsync(companyId, documentId)).FirstOrDefault()
+            ?? throw new KeyNotFoundException("ไม่พบใบเพิ่มหนี้ หรือใบนี้ไม่มี JE อนุมัติที่มีขาเงินและยังมีผล");
+        var targets = Accounting.Helpers.DebitNoteCashRepair.JournalsToReverse(facts);
+        if (targets.Count == 0)
+            return (0, $"{facts.DocumentNumber} ไม่มี JE ชำระที่ลงขาเงินซ้ำให้กลับ (ยังไม่ชำระ · กลับไปแล้ว · หรือใบจ่ายทันทีที่ขาเงินตอนอนุมัติถูกต้อง)");
+        var reversed = 0;
+        foreach (var pj in facts.LivePaymentJournals.Where(p => targets.Contains(p.JournalEntryId)))
+        {
+            var rev = await accounting.ReverseJournalEntryAsync(companyId, pj.JournalEntryId, null,
+                Accounting.Helpers.DebitNoteCashRepair.ReversalDescription(facts.DocumentNumber, pj.EntryNumber), systemTriggered: true);
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = actorUserId,
+                Action = AuditAction.Update,
+                EntityType = "JournalEntry",
+                EntityId = pj.JournalEntryId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    RuleCode = Accounting.Helpers.DebitNoteCashRepair.RuleCode,
+                    Decision = "DECISIONS ข้อ 159",
+                    DocumentNumber = facts.DocumentNumber,
+                    ReversedEntry = pj.EntryNumber,
+                    ReversalEntry = rev.EntryNumber,
+                    MoneyLeg = pj.MoneyLeg,
+                    ApprovalMoneyLeg = facts.ApprovalMoneyLeg,
+                }),
+            });
+            reversed++;
+        }
+        await _db.SaveChangesAsync();
+        return (reversed, $"กลับรายการ JE ชำระซ้ำ {reversed} รายการของ {facts.DocumentNumber} แล้ว — เงินใน GL ลดลง {Accounting.Helpers.DebitNoteCashRepair.DuplicatedMoney(facts):N2} เหลือครั้งเดียวตาม JE อนุมัติ");
     }
 
     /// <summary>ทีม U 2026-10-26 (ผู้ใช้รายงาน PV-202610-0040: Dr 52120 402.93 / Dr 11610 35.07 — ฐานถูกบีบเป็น 438 − 35.07 ทั้งที่ใบกำกับ 500.93/35.07) —
@@ -208,10 +309,11 @@ public class DataIntegrityReportService
         var rows = new List<DataIntegritySuspect>();
         foreach (var d in docs)
         {
-            var err = Accounting.Helpers.PostVatDeduction.VatConsistencyError(
+            var finding = Accounting.Helpers.PostVatDeduction.FindVatInconsistency(
                 d.Lines.Select(l => new Accounting.Helpers.VatLineFact(l.Amount, l.VatRate, l.VatAmount)));
-            if (err is null) continue;
-            var impliedBase = Math.Round(d.VatAmount * 100m / 7m, 2, MidpointRounding.AwayFromZero);
+            if (finding is null) continue;
+            var err = finding.Message;
+            var impliedBase = finding.ImpliedBase;   // VAT ÷ อัตราของกลุ่มที่ไม่ผ่าน (ไม่ hardcode 7%) — ตัวตัดสินเดียวกับด่านอนุมัติ
             rows.Add(new DataIntegritySuspect("PurchaseVatInconsistentWithBase", d.Id, d.DocumentNumber, d.DocumentDate,
                 $"ฐานที่บันทึก {d.SubTotal:N2} · VAT {d.VatAmount:N2} · ยอดเอกสาร {d.TotalAmount:N2}"
                 + (d.ActualPaidAmount is decimal ap ? $" · ยอดชำระจริง {ap:N2}" : "")

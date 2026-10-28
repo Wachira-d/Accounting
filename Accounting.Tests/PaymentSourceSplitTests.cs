@@ -58,6 +58,28 @@ public class PaymentSourceSplitTests
         Assert.Null(PaymentSettlementAdjustment.CheckDocumentLines(cashDelta, lines.Sum(l => l.Debit), lines.Sum(l => l.Credit), 536.00m, 438.00m));
     }
 
+    /// <summary>ฝ่ายค้านข้อ 3: แยกยอดที่ไม่มีบรรทัดหัก (เงินสด 300 + เจ้าหนี้กรรมการ 236 = 536) — ส่วนต่างขาเงินสด 0 แต่ขา "ย้ายแหล่งจ่าย" ต้องลงจริง
+    /// (Dr แหล่งหลัก 236 / Cr 21230 236 · net-zero ⇒ ด่านสมดุลเดิมผ่าน) ไม่ใช่เก็บแล้วเงียบ</summary>
+    [Fact]
+    public void ฝ่ายค้าน3_แยกยอดเงินล้วนสองแหล่ง_ขาย้ายแหล่งลงจริง_netZero()
+    {
+        var split = new[]
+        {
+            new PaymentSourceLine(PaymentSourceKind.Money, "11110", 300.00m),
+            new PaymentSourceLine(PaymentSourceKind.Money, "21230", 236.00m, "กรรมการจ่ายแทน"),
+        };
+        var c = PaymentSourceSplit.Check(536.00m, split);
+        Assert.True(c.Ok);
+        Assert.Equal((536.00m, 0m), (c.MoneyTotal, c.DeductionTotal));   // เงิน = ยอดรวม ⇒ ActualPaidAmount null · ส่วนต่างขาเงินสด 0
+        var lines = PaymentSourceSplit.JournalLines(split, "11110", "PV-TEST");
+        Assert.Equal(2, lines.Count);
+        Assert.Contains(lines, l => l.AccountCode == "11110" && l.Debit == 236.00m && l.Credit == 0m);
+        Assert.Contains(lines, l => l.AccountCode == "21230" && l.Credit == 236.00m && l.Debit == 0m);
+        Assert.Null(PaymentSettlementAdjustment.CheckDocumentLines(0m, lines.Sum(l => l.Debit), lines.Sum(l => l.Credit), 536.00m, null));
+        // ติ๊กแยกยอดที่ทุกบรรทัดคือแหล่งหลักเอง = ไม่มีขาเพิ่ม (พฤติกรรมเดิม)
+        Assert.Empty(PaymentSourceSplit.JournalLines(new[] { new PaymentSourceLine(PaymentSourceKind.Money, "11110", 536.00m) }, "11110", "PV-TEST"));
+    }
+
     [Fact]
     public void ผลรวมไม่ตรง_ปฏิเสธ_บอกส่วนต่าง()
     {
