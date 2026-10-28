@@ -9496,6 +9496,39 @@ RULES += [
          why=_W10_WHY + "G3: JE จาก API ที่ตัดผังมัดจำแต่ไม่อ้างการจองรูปที่รู้จัก — รายงานอ่านอย่างเดียว · tenant ทุก query"),
 ]
 
+# ── รอบ 205 แพ็ก W3 (ทีม W · R-12 R-13 R-14 R-16): งานเบื้องหลังเครื่องจอง + เวลาทำการระดับเว็บ + เลือกผู้ให้บริการ ──
+#    หลัก: ประทับ "ส่งแล้ว" หลังส่งถึงจริงเท่านั้น (F2 #3) · job ผ่าน JobLock (F4 #6) · ปล่อยรอบผ่านเส้นสถานะปกติ (ไม่เขียนสถานะตรง) ·
+#    ตารางเวลาผ่าน ScheduleOf ตัวเดียว (กฎ #4 A) · เปลี่ยนผู้ให้บริการผ่าน Decide ใต้ล็อกไซต์ (ไม่ข้ามด่าน)
+BOOK_JOB = "Services/Background/BookingReminderJob.cs"
+BOOK_NOTIFY = "Services/Implementations/CmsBookingService.Notify.cs"
+_W3_WHY = "รอบ 205 W3: "
+RULES += [
+    dict(file=BOOK_JOB, method="RunGuardedAsync", must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.BackgroundJob"],
+         why=_W3_WHY + "job ที่ส่งข้อความถึงลูกค้าต้องเดินทีละเครื่อง (F4 #6) — ไม่งั้นลูกค้าได้อีเมล N ฉบับตามจำนวนเครื่อง"),
+    dict(file=BOOK_JOB, method="ProcessAsync",
+         must=["BookingReminderPlan.DueStage(", "BookingReminderPlan.MayAttempt(", "notifier.SendAsync(", "ReminderSentAt = nowUtc",
+               "BookingReminderPlan.HoldExpired(", "UpdateBookingStatusAsync(", "NotifyWaitlistPromotedAsync("],
+         before=[("notifier.SendAsync(", "ReminderSentAt = nowUtc"), ("BookingReminderPlan.DueStage(", "notifier.SendAsync(")],
+         forbid=[".Status = BookingStatus.Cancelled", "ReminderSentAt = DateTime.UtcNow"],
+         why=_W3_WHY + "ประทับ ReminderSentAt หลังส่งถึงจริง (F2 #3) · ตัดสินขั้นเตือนด้วย BookingReminderPlan ตัวเดียว · ปล่อยรอบผ่าน UpdateBookingStatusAsync (เอกสาร ERP/คิวถัดไปเดินด่านเดียวกับคน)"),
+    dict(file=BOOK_NOTIFY, method="NotifyWaitlistPromotedAsync", must=["_notifier.SendAsync(", "WaitlistNotifiedAt = DateTime.UtcNow", "NotifyLastError = result.Error"],
+         before=[("_notifier.SendAsync(", "WaitlistNotifiedAt = DateTime.UtcNow")],
+         why=_W3_WHY + "แจ้งได้คิว: ประทับ WaitlistNotifiedAt หลังส่งถึงจริง + ร่องรอยส่งล้มต่อแถว (job ลองซ้ำจาก null)"),
+    dict(file=BOOK_NOTIFY, method="AssignResourceAsync",
+         must=["LockSiteBookingsAsync(", "BookingSlotEngine.Decide(", "excludeBookingId: booking.Id", "ignoreAdvance: true"],
+         before=[("LockSiteBookingsAsync(", "BookingSlotEngine.Decide("), ("BookingSlotEngine.Decide(", "booking.ResourceId = decision.Slot.ResourceId")],
+         forbid=["booking.ResourceId = resourceId"],
+         why=_W3_WHY + "เลือก/เปลี่ยนผู้ให้บริการต้องผ่าน Decide/PickResource ตัวเดียวใต้ล็อกไซต์ (ไม่นับใบตัวเอง) — ห้ามเขียน ResourceId ที่พนักงานเลือกลงตรง"),
+    dict(file=CMS_BOOK, method="LoadDayAsync", must=["BookingSlotEngine.ScheduleOf("], forbid=["ownRows.Count == 0", "Hours.Count == 0 ?"],
+         why=_W3_WHY + "เวลาทำการของบริการ vs ของเว็บ ตัดสินที่ ScheduleOf ตัวเดียว (กฎ #4 A) — ห้าม ?? / ternary เอง"),
+    dict(file=CMS_BOOK, method="MapService", must=["BookingSlotEngine.ScheduleOf(", "UsesSiteHours = usesSiteHours"],
+         why=_W3_WHY + "ป้าย 'ยังไม่ตั้งเวลาทำการ' ต้องดูตารางที่มีผลจริง (รวมของเว็บ) + echo ว่ารับจากเว็บ"),
+    dict(file=CMS_BOOK, method="PromoteWaitlistAsync", must=["BookingReminderPlan.HoldUntil(", "WaitlistPromotedAt = DateTime.UtcNow"],
+         why=_W3_WHY + "ถือรอบคิวสำรองคิดจาก BookingReminderPlan.HoldUntil ตัวเดียว (ค่าตั้ง WaitlistHoldMinutes ต้องมีผู้อ่าน — F2 #2)"),
+    dict(file=CMS_BOOK, method="UpdateSiteSettingsAsync", must=["BookingReminderPlan.Validate(", "BookingSiteHours.Serialize(", "ParseSchedule("],
+         why=_W3_WHY + "ค่าตั้งใหม่ของเว็บผ่านด่านตรวจเดียวกับของบริการก่อนเขียน (ค่าเสียต้องไม่ถูกบันทึกเงียบ)"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

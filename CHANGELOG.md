@@ -5597,3 +5597,11 @@ migration backfill ใบเดิมจาก Reference "LINE-bot" ตรงต
 (R-62) `AdminCompanyUsageController.Audit` ส่ง `ocrPagesMetered` (เฉพาะเดือนปัจจุบัน · เดือนก่อน = null "ไม่รู้") แยกจาก `ocrScans` (ครั้ง) · หน้าแอดมิน 2 คอลัมน์แยก · กราฟ OCR ไม่มีเส้นเพดานหน้า · CSV/หน้ารวมทุกบริษัทป้าย "(ครั้ง)" ·
 (R-63) Db `CompanyOwnershipDbTests` (assign-owner พร้อมกัน · LastOwnerGuard · Candidates) ·
 เทสต์ `W9HygieneRuleTests` · Db `W9HygieneBackfillDbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี SDK) — CI บน branch เป็น compiler ตัวแรก_
+
+_2026-10-26 ทีม W3 (แพ็ก W3 ทะเบียน `docs/BACKLOG_REGISTER_2026-10-26.md` R-12…R-16 — เจ้าของมอบให้ตัดสิน): `ReminderSent/ReminderSentAt` มีมา 0 ผู้เขียน ⇒ `Services/Background/BookingReminderJob`
+(5 นาที · `JobLock` · หน้าต่างวันที่แทน watermark) + ตัวตัดสิน pure `Helpers/BookingReminderPlan` (ขั้น 24/2 ชม. จากคอลัมน์เดียว · job ดับนานส่งขั้นเดียว · เพิ่งจองไม่เตือนทันที · เว้นระยะ 30 นาที) ·
+ช่องส่ง `IBookingNotifier` (อีเมล→LINE) บน `IEmailService.TrySendAsync`/`ILineNotifyService.TryPushToUserAsync` ที่**บอกผลจริง** (ตัวเดิมกลืนผล ⇒ ประทับ "ส่งแล้ว" ไม่ได้) · ประทับหลังส่งถึงจริง ·
+ร่องรอย `NotifyAttemptedAt/NotifyLastError` ต่อแถว · คิวสำรองได้คิว ⇒ แจ้งลูกค้า (`CmsBookingService.Notify.cs` · job ส่งซ้ำ) + ถือรอบ `WaitlistHoldMinutes` (หมดเวลา ⇒ job ยกเลิกผ่านเส้นสถานะปกติ ⇒ คิวถัดไป) ·
+เวลาทำการระดับเว็บ `BookingHoursJson` + resolver `BookingSlotEngine.ScheduleOf` (บริการที่ตั้งเองไม่ถูกแตะ) + UI ตัวแก้ตาราง `ss` · เลือก/เปลี่ยนผู้ให้บริการ `PUT …/bookings/{id}/resource` ผ่าน `Decide` ใต้ล็อกไซต์
+(ตั้ง `ResourceId` ไม่ใช่ `AssignedStaffId` ของ POS — คนละตัวตน) · Db test `Db/CmsBookingDoubleBookingDbTests` 6 เทสต์ (BKE-10/16 ⏳→✅) · เทสต์ pure 2 ไฟล์ · ล็อกจุดเรียก 9 กติกา ·
+ไม่แตะ `CmsCommerceService`/ฟอร์มชำระ/เส้นเงินการจอง · ยังไม่ได้คอมไพล์ในเครื่องนี้ · Db test รอ job db-test_

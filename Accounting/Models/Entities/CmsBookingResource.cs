@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.Entities;
@@ -14,6 +15,19 @@ public class SiteBookingSettings : TenantEntity
     public int MaxAdvanceDays { get; set; } = 30;
     /// <summary>จังหวะออกใบกำกับภาษีของบริการแบบ Guaranteed (คำตัดสินข้อ 155 · ตัวตัดสิน <c>Helpers/BookingInvoiceTimingPolicy</c>) · 0 = เดิม (ใบกำกับตอนจอง)</summary>
     public BookingInvoiceTiming GuaranteedInvoiceTiming { get; set; } = BookingInvoiceTiming.TaxInvoiceAtBooking;
+
+    // ── รอบ 205 แพ็ก W3 (R-12 R-13 R-14) ──
+    /// <summary>เวลาทำการระดับเว็บ (JSON รูป <c>BookingScheduleDto</c> · ตัวแปลง <c>Helpers/BookingSiteHours</c>) — ค่าตั้งต้นของบริการที่ไม่ตั้งเวลาเอง
+    /// (ตัวตัดสิน <c>BookingSlotEngine.ScheduleOf</c>) · null = ไม่ตั้ง</summary>
+    public string? BookingHoursJson { get; set; }
+    /// <summary>คิวสำรองได้คิวแล้ว "ถือรอบ" ให้ยืนยันกี่นาที (0 = ไม่ถือ) · หมดเวลาแล้วยังรอยืนยัน ⇒ job ปล่อยรอบ (<c>BookingReminderPlan.HoldExpired</c>)</summary>
+    public int WaitlistHoldMinutes { get; set; }
+    /// <summary>เปิดเตือนลูกค้าก่อนนัด (อีเมล/LINE) ผ่าน <c>BookingReminderJob</c></summary>
+    public bool ReminderEnabled { get; set; } = true;
+    /// <summary>กี่ชั่วโมงก่อนนัด คั่นด้วยจุลภาค เช่น "24,2" (<c>BookingReminderPlan.ParseHours</c>)</summary>
+    public string ReminderHoursBefore { get; set; } = BookingReminderPlan.DefaultHoursCsv;
+    /// <summary>เทมเพลตข้อความเตือน (ตัวแทน <c>BookingReminderPlan.Placeholders</c>) · null = ข้อความเริ่มต้นของระบบ</summary>
+    public string? ReminderTemplate { get; set; }
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>

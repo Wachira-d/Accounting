@@ -191,6 +191,22 @@
           const res = await api.cmsGetBooking(this.siteId, id);
           const b = res?.data || res;
           if (!b) return;
+          // รอบ 205 W3 R-16: ช่องเลือกผู้ให้บริการ — server ตัดสินว่าเปลี่ยนได้ไหม (canAssignResource) · รายชื่อ = ผู้ให้บริการที่รับบริการนี้และเปิดใช้
+          let resourcePicker = '';
+          if (b.canAssignResource) {
+            const rr = await api.cmsListBookingResources(this.siteId);
+            const pool = (rr?.data || []).filter(r => r.isActive !== false && Array.isArray(r.serviceIds) && r.serviceIds.includes(b.bookingServiceId));
+            resourcePicker = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+              <label style="font-size:12px">ผู้ให้บริการ
+                <select id="bkResource" class="form-input" style="width:auto;display:inline-block">
+                  <option value="">ให้ระบบจัดให้ (ว่าง · งานน้อยสุด)</option>
+                  ${pool.map(r => `<option value="${Layout.esc(r.id)}" ${r.id === b.resourceId ? 'selected' : ''}>${Layout.esc(r.name)}</option>`).join('')}
+                </select></label>
+              <button class="btn btn-secondary btn-sm" onclick="Page.assignResource('${b.id}')">บันทึกผู้ให้บริการ</button>
+              <span style="font-size:11px;color:var(--gray-500)">ระบบตรวจว่าว่าง/เข้างาน/รับบริการนี้ก่อนบันทึก</span>
+            </div>`;
+          }
+          const fmtUtc = v => v ? new Date(v).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'short' }) : '';
           document.getElementById('bkTitle').textContent = `จอง #${b.bookingNumber} — ${STATUS_LABEL[b.status]||b.status}`;
           const workflow = (NEXT_STATUS[b.status] || []).map(([next, label, cls]) =>
             `<button class="btn ${cls}" onclick="Page.advance('${b.id}', '${next}')">${label}</button>`).join('');
@@ -210,9 +226,13 @@
             <div style="background:var(--gray-50);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
               <div style="font-weight:600;margin-bottom:6px">📅 ${Layout.date(b.bookingDate)} เวลา <strong>${Layout.esc(b.startTime)}</strong> — ${Layout.esc(b.endTime||'?')}</div>
               <div>บริการ: <strong>${Layout.esc(b.serviceName)}</strong> · ${b.durationMinutes||0} นาที</div>
-              ${b.resourceName ? `<div>ผู้ให้บริการ: <strong>${Layout.esc(b.resourceName)}</strong></div>` : ''}
+              ${b.resourceName ? `<div>ผู้ให้บริการ: <strong>${Layout.esc(b.resourceName)}</strong></div>` : (b.resourceMode && b.resourceMode !== 'None' ? '<div style="color:#b45309">ยังไม่ได้จัดผู้ให้บริการ</div>' : '')}
+              ${resourcePicker}
               ${b.waitlistPosition ? `<div style="color:#6b21a8">คิวสำรองลำดับที่ ${b.waitlistPosition} — ระบบเลื่อนขึ้นเองเมื่อมีที่ว่าง</div>` : ''}
               <div>จำนวนคน: ${b.guestCount||1}${(b.units||1) > 1 ? ` · ${b.units} ช่วงติดกัน` : ''}</div>
+              ${b.waitlistPromotedAt ? `<div style="color:#6b21a8;margin-top:4px">ได้คิวจากคิวสำรอง ${fmtUtc(b.waitlistPromotedAt)} · ${b.waitlistNotifiedAt ? 'แจ้งลูกค้าแล้ว ' + fmtUtc(b.waitlistNotifiedAt) : 'ยังแจ้งลูกค้าไม่ถึง — ระบบจะลองซ้ำ'}${b.waitlistHoldUntil ? ` · ถือรอบถึง ${fmtUtc(b.waitlistHoldUntil)} (ไม่ยืนยัน = ปล่อยรอบ)` : ''}</div>` : ''}
+              ${b.reminderSentAt ? `<div style="color:#059669;margin-top:4px">🔔 เตือนลูกค้าก่อนนัดแล้ว ${fmtUtc(b.reminderSentAt)}</div>` : ''}
+              ${b.notifyLastError ? `<div style="color:#b91c1c;margin-top:4px">⚠️ ส่งข้อความถึงลูกค้าไม่สำเร็จ: ${Layout.esc(b.notifyLastError)} — กรุณาติดต่อลูกค้าเอง</div>` : ''}
             </div>
             <div style="background:var(--gray-50);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
               <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><span>฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
@@ -247,6 +267,18 @@
           Layout.closeModal('bkModal');
           await this.load();
         } catch (e) { Layout.toast('ออกใบกำกับไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      // รอบ 205 W3 R-16: เลือก/เปลี่ยนผู้ให้บริการ — ค่าว่าง = ให้ระบบจัดให้ · server ตัดสินผ่าน BookingSlotEngine ตัวเดียว (ไม่ว่าง/ไม่เข้างาน ⇒ ข้อความไทยจาก server)
+      async assignResource(id) {
+        const api = Layout.api(); if (!api) return;
+        const sel = document.getElementById('bkResource');
+        const resourceId = sel && sel.value ? sel.value : null;
+        try {
+          await api.cmsAssignBookingResource(this.siteId, id, { resourceId });
+          Layout.toast('บันทึกผู้ให้บริการแล้ว');
+          await this.viewBooking(id);
+          await this.load();
+        } catch (e) { Layout.toast('เปลี่ยนผู้ให้บริการไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async advance(id, nextStatus) {
         const api = Layout.api(); if (!api) return;

@@ -94,7 +94,21 @@ public class EmailService : IEmailService
         await SendInternalAsync(cfg, to, subject, htmlBody, null, null);
     }
 
-    private async Task SendInternalAsync(SystemEmailConfig cfg, string to, string subject,
+    /// <summary>รอบ 205 W3: ส่งแล้วบอกผลจริง (ไม่ตั้งค่า SMTP / ส่งล้ม ⇒ false) — ผู้เรียกประทับ "ส่งแล้ว" ได้เฉพาะเมื่อ true</summary>
+    public async Task<bool> TrySendAsync(string to, string subject, string htmlBody)
+    {
+        if (string.IsNullOrWhiteSpace(to)) return false;
+        var cfg = await ResolveConfigAsync();
+        if (string.IsNullOrEmpty(cfg.SmtpHost))
+        {
+            _logger.LogWarning("System email not configured. Skipping send to {To}: {Subject}", to, subject);
+            return false;
+        }
+        return await SendInternalAsync(cfg, to, subject, htmlBody, null, null);
+    }
+
+    /// <returns>true = SMTP รับข้อความแล้ว · false = ส่งล้ม (log + ErrorLog แล้ว · ไม่โยน — ผู้เรียกเดิมทุกจุดคาดว่าไม่โยน)</returns>
+    private async Task<bool> SendInternalAsync(SystemEmailConfig cfg, string to, string subject,
         string htmlBody, byte[]? attachmentData, string? attachmentName)
     {
         try
@@ -123,11 +137,13 @@ public class EmailService : IEmailService
 
             await client.SendMailAsync(msg);
             _logger.LogInformation("System email sent ({Source}) to {To}: {Subject}", cfg.Source, to, subject);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to send system email to {To}: {Subject}", to, subject);
             await _errorLogService.LogErrorAsync(ex, $"EmailService.Send/{to}");
+            return false;
         }
     }
 

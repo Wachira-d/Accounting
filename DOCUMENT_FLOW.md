@@ -1680,6 +1680,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   เวลาจบ/ระยะ/ยอด/มัดจำ (ปัด AwayFromZero · ไม่เกินยอด) มาจาก server · บรรทัด ERP: Quantity = `Units` (ใบมัดจำยังเป็น 1 × มัดจำ) ·
   สวิตช์คุม Slot (ปิด = จองซ้อนได้ถึงเพดาน) · คิวสำรอง (`BookingStatus.Waitlisted` ไม่ออกเอกสาร ERP · ยกเลิก/ไม่มา ⇒ `PromoteWaitlistAsync`
   เลื่อนขึ้นแล้วจึงออกเอกสาร) · ผู้ให้บริการ (`ResourceMode` · `PickResource` deterministic · ตารางงานรายบุคคล) · ค่าตั้งระดับไซต์ (`UseSiteDefaults`) ·
+  **รอบ 205 แพ็ก W3 (ทีม W 2026-10-26 · R-12…R-16):** เวลาทำการระดับเว็บ `SiteBookingSettings.BookingHoursJson` (ตัวตัดสินเดียว `BookingSlotEngine.ScheduleOf` — บริการที่ตั้งเวลาเองใช้ของตัวเองทั้งชุด · ไม่ตั้ง ⇒ ของเว็บ · `UsesSiteHours` echo) ·
+  เตือนก่อนนัด `Services/Background/BookingReminderJob` (5 นาที · `JobLock` · ขั้นเตือนจาก `Helpers/BookingReminderPlan.DueStage` บน `ReminderSentAt` คอลัมน์เดียว · ค่าตั้งต่อไซต์ `ReminderEnabled/ReminderHoursBefore/ReminderTemplate` ·
+  ช่องส่ง `IBookingNotifier` อีเมล→LINE บอกผลจริง (`IEmailService.TrySendAsync` · `ILineNotifyService.TryPushToUserAsync`) · ประทับ `ReminderSentAt` **หลังส่งถึงจริง** · ส่งล้ม ⇒ `NotifyLastError`/`NotifyAttemptedAt` + ลองใหม่ 30 นาที) ·
+  คิวสำรองได้คิว ⇒ `CmsBookingService.Notify.cs::NotifyWaitlistPromotedAsync` (ประทับ `WaitlistNotifiedAt` หลังส่งถึง · job ส่งซ้ำ) + ถือรอบ `WaitlistHoldMinutes` → `WaitlistHoldUntil` (เฉพาะรอยืนยัน · ยืนยัน = เลิกถือ · หมดเวลา ⇒ job ยกเลิกผ่าน `UpdateBookingStatusAsync` เหตุ `HoldExpiredReason` ⇒ คิวถัดไปเลื่อนขึ้น) ·
+  พนักงานเลือก/เปลี่ยนผู้ให้บริการ `PUT …/bookings/{id}/resource` → `AssignResourceAsync` (Decide ใต้ล็อกไซต์ ไม่นับใบตัวเอง · null = `PickResource` · ตั้ง `ResourceId` ไม่ใช่ `AssignedStaffId` ของ POS) · Db test `Db/CmsBookingDoubleBookingDbTests` ·
   ข้อมูลเดิม: คอลัมน์ใหม่ DEFAULT = พฤติกรรมเดิม (`Helpers/BookingEngineMigration`) · รายละเอียด + backlog + API ให้ทีมอื่น: `docs/BOOKING_ENGINE_DESIGN.md`
 - **Booking flow** (`CmsBookingService.SyncBookingToErpAsync`):
   - Map `BookingType` → DocumentType:
