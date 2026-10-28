@@ -7035,6 +7035,8 @@ public static class DatabaseMigrationHelper
             // โมดูลต้นทางของเอกสาร — เอกสารจากโมดูลที่พักห้ามบล็อกเมื่อโควตาเต็ม (การนับ: Helpers/DocumentQuotaPolicy ·
             // ยังนับใบที่กฎหมายบังคับจนกว่า stay → 2 หน่วยโควตาตาม LODGING_LICENSING_PLAN §13.2 จะมีโค้ด)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OriginModule" varchar(40) NULL;""",
+            // รอบ 205 ทีม W1 (R-04): ใบร่างจากเส้นอัตโนมัติเลื่อนนับโควตาไปตอนอนุมัติ — ใบเก่า false = นับตอนสร้างไปแล้ว ไม่นับซ้ำ
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotaCountDeferred" boolean NOT NULL DEFAULT false;""",
 
             // รอบ 193 (เจ้าของข้อ 8): ผังผลต่างจากการปัดเศษ 54960 — ขา JE ของ Document.RoundingAdjustment (Helpers/DocumentRounding)
             // ใส่ให้ทุกบริษัทที่มีผังแล้ว (ไม่ผูกกับชุดผังสินค้าข้างบน — ใบบริการก็มีเศษปัดได้) · ไม่เคลมภาษีซื้อ ·
@@ -7157,6 +7159,8 @@ public static class DatabaseMigrationHelper
             // แถวที่ job รุ่นเดิมประทับ CheckedOut/NoShow ไปแล้ว **ไม่ย้ายสถานะกลับ** (ไม่เดาว่าแขกออกจริงเมื่อไร) — เปิดทางปิดผ่านเส้นปกติแทน (LodgingOverdueRule)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "OverdueFlaggedAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemAt" timestamptz NULL;""",
+            // รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้ว (หลักฐานจากผู้ให้บริการ) แต่คนยังไม่ยืนยันคืนเงิน/ออกใบลดหนี้ — คิว "ต้องคืนเงินแขก" ติดป้าย
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundedAtGatewayAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemNote" text NULL;""",
             // ฝ่ายค้านรอบ 202 P1-3ค — รายการชำระที่เงินเข้าแต่ยืนยันไม่ได้ (บัญชีขาเงินเข้าของใบมัดจำที่ออกภายหลังมาจากรายการนี้)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemIntentId" uuid NULL;""",
@@ -7775,6 +7779,8 @@ public static class DatabaseMigrationHelper
         // ทีม Q (คำตัดสินข้อ 156) — วิธีออกเอกสารของมัดจำ · DEFAULT = แบบเดิม (ร้านเดิมไม่เปลี่ยน) · ออเดอร์เดิม NULL = แบบเดิม
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoDepositInvoicing" varchar(32) NOT NULL DEFAULT 'full_at_first_payment';""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "DepositInvoicingMode" varchar(32) NULL;""",
+        // รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้ว แต่ยังไม่ออกใบลดหนี้ — ป้ายฝั่งออเดอร์
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "RefundedAtGatewayAt" timestamptz NULL;""",
         """ALTER TABLE "SiteOrderPayments" ADD COLUMN IF NOT EXISTS "DepositDocumentId" uuid NULL;""",
         """ALTER TABLE "SiteOrderPayments" ADD COLUMN IF NOT EXISTS "ErpPaymentId" uuid NULL;""",
     };

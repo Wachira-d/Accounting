@@ -55,6 +55,13 @@ public class SiteOrderPaymentHandler : IPaymentCompletionHandler
         var pay = await _db.SiteOrderPayments
             .FirstOrDefaultAsync(p => p.CompanyId == intent.CompanyId && p.OrderId == intent.SourceId
                 && p.Reference == reference && !p.IsDeleted, ct);
+        // ฝ่ายค้าน W1 ข้อ 2 (รอบ 205 ทีม W1): ไม่มีแถวของ gateway แต่พนักงานยืนยันรับเงินยอดนี้ที่ออเดอร์เองแล้ว (หลังเงินเข้า) ⇒ ส่งต่อใหม่ต้องไม่สร้างแถว/รับซ้ำ
+        if (pay == null && await GatewaySourceEvidence.AlreadyRecordedBySomeoneElseAsync(_db, intent, ct))
+        {
+            _logger.LogInformation("ออเดอร์ {Order} มีการรับเงินยอด {Amount:N2} หลังเงินเข้าอยู่แล้ว (บันทึกมือ) — ข้าม intent {Intent}",
+                intent.SourceId, intent.Amount, intent.Id);
+            return;
+        }
         if (pay == null)
         {
             pay = new SiteOrderPayment

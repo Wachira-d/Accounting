@@ -324,6 +324,14 @@ public static class LodgingDepositSettlement
     public static decimal RefundPendingOf(decimal refundDue, decimal refundPaid, string? refundPaidBy)
         => IsLegacyRefund(refundPaidBy) ? 0m : RefundPending(refundDue, refundPaid);
 
+    /// <summary>รอบ 205 ทีม W1 (R-02): ป้ายในคิว "ต้องคืนเงินแขก" เมื่อเงินคืนออกทาง gateway แล้ว (<paramref name="refundedAtGatewayAt"/> ประทับโดย
+    /// GatewayRefundService) แต่คนยังไม่ยืนยันคืนเงิน/ออกใบลดหนี้ (<paramref name="refundPending"/> &gt; 0) · null = ไม่ต้องติดป้าย
+    /// (ไม่เคยคืนทาง gateway · หรือยืนยันแล้ว) · <b>ไม่ตัดสินแทนคน</b> — ทางไปต่อ = ปุ่ม "ยืนยันคืนเงินแล้ว" เดิม + ใบลดหนี้ที่เอกสารต้นทาง</summary>
+    public static string? GatewayRefundNote(DateTime? refundedAtGatewayAt, decimal refundPending)
+        => refundedAtGatewayAt is DateTime at && refundPending > 0.005m
+            ? $"คืนที่ gateway แล้ว {at.AddHours(7):dd/MM/yyyy} · ยังไม่ยืนยันคืนเงิน/ออกใบลดหนี้ — กด “ยืนยันคืนเงินแล้ว” แล้วออกใบลดหนี้ที่ใบมัดจำ"
+            : null;
+
     /// <summary>ตรวจยอดที่ขอบันทึกว่า "คืนแล้ว" — null = ใช้ได้ · ข้อความไทย = เหตุผลที่ปฏิเสธ</summary>
     public static string? ValidateRefundPayment(decimal amount, decimal refundDue, decimal refundPaid)
     {

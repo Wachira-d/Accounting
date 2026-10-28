@@ -573,6 +573,11 @@ public class Document : TenantEntity
     /// จะมีโค้ด — แล้วค่อยเปลี่ยนเป็นไม่นับซ้ำ (ฝ่ายค้าน ภ.ง.ด.1/Tb P1-1)</summary>
     public string? OriginModule { get; set; }
 
+    /// <summary>รอบ 205 ทีม W1 (R-04): ใบนี้<b>ยังไม่ถูกนับโควตาเอกสาร</b> — ใบร่างจากเส้นอัตโนมัติ (จองนัดหมาย/คำสั่งซื้อหน้าเว็บ ·
+    /// <c>DocumentQuotaPolicy.DefersCountUntilApproval</c>) นับตอน <c>ApproveDocumentAsync</c> แล้วปลดธง · false = นับไปแล้วตอนสร้าง/ไม่นับ/ใบเก่า
+    /// (ใบก่อนรอบนี้นับตอนสร้างไปแล้ว ⇒ ไม่ถูกนับซ้ำตอนอนุมัติ)</summary>
+    public bool QuotaCountDeferred { get; set; }
+
     /// <summary>True when the operator has explicitly DISMISSED this document
     /// from the "waiting to issue WHT cert" list. The source doc still
     /// exists and is unchanged; we just don't pester the user about it any

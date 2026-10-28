@@ -650,6 +650,10 @@ public class LodgingReservationResponse
     public decimal RefundPending { get; set; }
     /// <summary>None · Pending · Paid (ชื่อ enum)</summary>
     public LodgingRefundState RefundState { get; set; }
+    /// <summary>รอบ 205 ทีม W1 (R-02): เงินคืนออกทาง gateway แล้วเมื่อ (null = ไม่เคย)</summary>
+    public DateTime? RefundedAtGatewayAt { get; set; }
+    /// <summary>ป้าย "คืนที่ gateway แล้ว · ยังไม่ยืนยัน/ออกใบลดหนี้" — เซิร์ฟเวอร์ตัดสิน (<c>LodgingDepositSettlement.GatewayRefundNote</c>) · null = ไม่ติด</summary>
+    public string? GatewayRefundNote { get; set; }
     /// <summary>วิธีบันทึกมัดจำของใบมัดจำใบแรก (อ่านย้อนจากช่องที่ตรึงบนเอกสาร) — null = ไม่มีใบมัดจำ</summary>
     public DepositVatTreatment? DepositVatTreatment { get; set; }
     public string? DepositVatTreatmentLabel { get; set; }
@@ -805,6 +809,8 @@ public class LodgingReservationListItem
     public bool HasSlip { get; set; }
     /// <summary>ยอดที่ยังต้องคืนแขก (ยกเลิกแล้วยังไม่ยืนยันว่าโอนคืน) — 0 = ไม่มี</summary>
     public decimal RefundPending { get; set; }
+    /// <summary>รอบ 205 ทีม W1 (R-02): ป้าย "คืนที่ gateway แล้ว · ยังไม่ยืนยัน/ออกใบลดหนี้" (null = ไม่ติด) — <c>LodgingDepositSettlement.GatewayRefundNote</c></summary>
+    public string? GatewayRefundNote { get; set; }
     /// <summary>รอบ 202: ป้าย "ค้างปิด" (null = ไม่ค้าง) — ตัวตัดสิน <c>LodgingOverdueRule</c></summary>
     public string? OverdueLabel { get; set; }
     /// <summary>รอบ 202: เงินออนไลน์เข้าแต่ยืนยันไม่ได้</summary>

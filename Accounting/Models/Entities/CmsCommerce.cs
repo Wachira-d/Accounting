@@ -211,6 +211,9 @@ public class SiteOrder : TenantEntity
     public string? PaymentReference { get; set; }
     public DateTime? PaidAt { get; set; }
 
+    /// <summary>รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้ว (ประทับโดย <c>GatewayRefundService</c>) แต่ยังไม่ออกใบลดหนี้ — ป้ายฝั่งออเดอร์ · null = ไม่เคย</summary>
+    public DateTime? RefundedAtGatewayAt { get; set; }
+
     // ERP Integration: linked document in ERP
     public Guid? ErpDocumentId { get; set; }
     public Document? ErpDocument { get; set; }

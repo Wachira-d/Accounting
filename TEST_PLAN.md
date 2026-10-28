@@ -14,7 +14,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **655 ไฟล์ · 6,532 `[Fact]` + 1,058 `[Theory]` (4,923 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **657 ไฟล์ · 6,559 `[Fact]` + 1,064 `[Theory]` (4,943 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 
@@ -6725,3 +6726,20 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CC-25 | **R-41 B2** สินค้าเว็บผูกแพ็กเกจคอร์ส สั่ง 1 / สั่ง 2 ชิ้นหรือ 2 คอร์สในออเดอร์ / ใบที่เปิดบัตรแล้ว hook รันซ้ำ | บรรทัดลง 21713 · อนุมัติแล้วเปิดบัตร Online / ไม่เปิดเอง + `[COURSE-PASS-FAILED]` บนใบ / ข้าม | ✅ `CreditBookingLinkTests.ออเดอร์คอร์ส1หน่วย*` · `สินค้าคอร์สสั่งได้ครั้งละ1*` · ระบบ |
 | POS-PKG-01 | **R-26** แพ็กเกจตั้งผังรายได้ 42000 แล้วเพิ่มบรรทัดบิลใหม่ / บิลเดิมที่ปิดแล้ว / ผังถูกปิดใช้ | บรรทัดใหม่ `RevenueAccountId` = 42000 ⇒ JE ขายแบ่งตาม `PosRevenueSplit` / บิลเดิมไม่เปลี่ยน / ปฏิเสธบอกให้แก้ที่หน้าแพ็คเกจ (ออฟไลน์ ⇒ ผังมาตรฐาน + log) | ระบบ · จุดเรียกล็อก `required_call_site_check` |
 | POS-COM-01 | **R-27** แท็บคอมมิชชันช่วงที่มีบิลระบุช่าง | แสดงยอดขายสุทธิก่อน VAT ต่อพนักงานจาก `reports/staff-sales` (ไม่ว่างเหมือนเดิม) · ดูรายละเอียดจากกิจกรรมจริง | ✅ `PosStaffAttributionTests` · ระบบ |
+
+## W1 — Gateway & โควตาเอกสาร (ทีม W1 · 2026-10-26 · `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W1 · R-01..R-05)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| W1-01 | เงินเข้าแล้ว handler ล้ม (⚠️ ในประวัติ) → กด "ส่งต่อใหม่" | handler เดิมถูกเรียก (idempotent) · สำเร็จ ⇒ ✅ ในประวัติ + ปุ่มหาย · ล้มอีก ⇒ 422 + ⚠️ ใหม่ + แจ้งเจ้าของ | `PaymentRedispatchPolicyTests` (`เงินเข้าแล้ว_handlerล้ม_ค้าง…` · `ส่งต่อใหม่แล้วล้มอีก_ยังค้าง`) · manual: `payment-intents.html` |
+| W1-02 | **ทิศตรงข้าม** ส่งต่อครั้งแรกสำเร็จ / ส่งต่อใหม่สำเร็จแล้ว / เงินยังไม่เข้า → เรียก redispatch | 200 `noOp=true` พร้อมข้อความ · ไม่รัน handler · ไม่มีปุ่ม | `PaymentRedispatchPolicyTests` (`ทิศตรงข้าม_*`) |
+| W1-03 | หมายเหตุ ⚠️ ของการคืนเงินที่ลงบัญชีไม่สำเร็จ | ไม่ถูกนับว่า "ต้นทางค้าง" | `PaymentRedispatchPolicyTests.หมายเหตุคืนเงินที่ล้ม_ไม่ถูกนับเป็นต้นทางค้าง` |
+| W1-04 | คืนเงินผ่าน gateway สำเร็จของการจองที่พัก/ออเดอร์ | `RefundedAtGatewayAt` ประทับครั้งแรก · คิว "ต้องคืนเงินแขก" ติดป้าย · RefundPaid/ใบลดหนี้ไม่ถูกแตะ (คนตัดสิน) | `LodgingDepositSettlementTests.R02_*` · manual: `lodging.html` ตัวกรอง "ต้องคืนเงินแขก" |
+| W1-05 | **ทิศตรงข้าม** ยืนยันคืนเงินแล้ว / ไม่เคยคืนทาง gateway | ป้ายหาย / ไม่ติด | `LodgingDepositSettlementTests.R02_ทิศตรงข้าม_*` |
+| W1-06 | ใบมัดจำใบที่ 2+ ของ `BookingNumber` เดียวกัน · เงินประกัน `RefundableSecurity` · ใบกำกับยอดริบ · ใบเช็คเอาต์แทนใบที่ยกเลิก | `NotCounted` (ไม่นับ · ไม่บล็อก) | `DocumentQuotaPolicyTests.R03_*` |
+| W1-07 | **ทิศตรงข้าม** ใบมัดจำใบแรก + ใบกำกับเช็คเอาต์ · มัดจำ `PartOfPrice`/ไม่ทราบลักษณะ · ใบปกติชนิดเดียวกัน | ยังนับ 2 / `CountedMustAllow` เท่าเดิม · void ไม่คืนโควตา (ตัวนับไม่ลด) | `DocumentQuotaPolicyTests.R03_ทิศตรงข้าม_*` · `R03_ใบแทนใบที่ยกเลิก_ไม่นับซ้ำ_ใบปกติชนิดเดียวกันยังนับ` |
+| W1-08 | ใบร่างจากการจองนัดหมาย (`CmsBooking`) / คำสั่งซื้อหน้าเว็บ (`site-order`) | ไม่นับ/ไม่บล็อกตอนสร้าง (`QuotaCountDeferred=true`) · นับตอนอนุมัติ · ใบเสนอราคาเกินโควตา ⇒ `QUOTA-DOCUMENTS` ตอนอนุมัติ (ก่อนออกเลข) | `DocumentQuotaPolicyTests.R04_*` · service: `DocumentService.CreateDocumentAsync`/`ApproveDocumentAsync` (ยังไม่มีเทสต์ระดับ service — รอ job db-test รอบถัดไป) |
+| W1-09 | **ทิศตรงข้าม** ต้นทาง null/Lodging/Pos/Ocr/Import · ใบเก่าที่นับตอนสร้างไปแล้ว | นับตอนสร้างเหมือนเดิม · `QuotaCountDeferred=false` ⇒ ไม่นับซ้ำตอนอนุมัติ | `DocumentQuotaPolicyTests.R04_ทิศตรงข้าม_*` |
+| W1-10 | 8 คำขอ `IncrementUsageAsync("document")` พร้อมกัน (คนละ DbContext) | ตัวนับ +8 (เดิมนับขาด) | `Db/DocumentQuotaCounterDbTests.R05_แปดคำขอพร้อมกัน_ตัวนับเพิ่มครบแปด` (Category=Db) |
+| W1-11 | **ทิศตรงข้าม** นับในธุรกรรมแล้ว rollback (= สร้างใบล้ม) | ตัวนับในฐาน 0 · entity ตรงกับ RETURNING | `Db/DocumentQuotaCounterDbTests.R05_ทิศตรงข้าม_ธุรกรรมถูกถอย_ตัวนับไม่ขยับ` |
+| W1-12 | รายงานเทียบก่อน-หลังโควตาทุกบริษัท | ส่วนต่าง ≤ 0 ทุกแถว (กติกาใหม่ลดอย่างเดียว) — เงื่อนไขก่อน R-04 ขั้น 2 | `tools/quota_count_before_after.sql` (อ่านอย่างเดียว · **ยังไม่ได้รัน** — เครื่องนี้ไม่มี PostgreSQL · เจ้าของรันบน staging) |

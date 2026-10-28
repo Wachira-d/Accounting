@@ -871,6 +871,7 @@ public class CmsCommerceService : ICmsCommerceService
                 ShippingMethod = o.ShippingMethod, TrackingNumber = o.TrackingNumber,
                 RequestTaxInvoice = o.RequestTaxInvoice, BillingTaxId = o.BillingTaxId,
                 ErpDocumentId = o.ErpDocumentId,
+                RefundedAtGatewayAt = o.RefundedAtGatewayAt,
                 CouponCode = o.CouponCode, CustomerNotes = o.CustomerNotes,
                 InternalNotes = o.InternalNotes,
                 PaidAt = o.PaidAt, ShippedAt = o.ShippedAt, DeliveredAt = o.DeliveredAt,
@@ -1112,7 +1113,9 @@ public class CmsCommerceService : ICmsCommerceService
             DepositBaseDeducted: deduction is { DepositBase: > 0m } ? deduction.DepositBase : null
         );
 
-        var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-customer");
+        // รอบ 205 ทีม W1 (R-04): ต้นทางเดียวกับใบมัดจำของออเดอร์ ⇒ ใบร่างไม่กินโควตาจนอนุมัติ (DocumentQuotaPolicy.DefersCountUntilApproval)
+        var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-customer",
+            originModule: Accounting.Helpers.SiteOrderDepositInvoicing.OriginModule);
         order.ErpDocumentId = created.Id;
 
         // Branch hint — ฝัง InternalNotes ของ Document ตามเดิม

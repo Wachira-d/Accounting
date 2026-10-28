@@ -1,3 +1,4 @@
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
@@ -42,10 +43,22 @@ public static class DocumentQuotaPolicy
     /// อย่างย่อ (§86/6 → §86/4) — <b>การขายครั้งเดียวกัน</b>กับใบที่นับไปแล้ว
     /// จึงไม่นับซ้ำ (หลักการข้อ 1 ของไฟล์นี้: นับ "การขาย 1 ครั้ง" ไม่ใช่นับใบ)
     /// และห้ามบล็อกเพราะ §86 บังคับให้ออกใบกำกับให้ผู้ซื้อ</param>
+    /// <param name="hasPriorDepositForBooking">รอบ 205 ทีม W1 (R-03 · BOOKING_REVENUE_AUDIT Q-2): การจอง (<c>BookingNumber</c>) นี้มีใบมัดจำ
+    /// อยู่แล้ว ⇒ ใบมัดจำใบที่ 2+ (รับมัดจำ/ชำระเพิ่มหลายครั้ง) = <b>การขายเดิม</b> ไม่นับซ้ำ (LODGING_LICENSING_PLAN §4 "1 การเข้าพัก = 2 หน่วย") ·
+    /// ใบมัดจำใบแรก + ใบกำกับเช็คเอาต์ยังนับเท่าเดิม</param>
+    /// <param name="depositNature">ลักษณะเงินของใบมัดจำ — <see cref="DepositNature.RefundableSecurity"/> (เงินประกันความเสียหาย) ไม่ใช่รายได้
+    /// ⇒ ไม่นับ (LICENSING §4 "นับเฉพาะเอกสารที่มีรายได้") · null = ไม่ทราบ/ไม่ใช่มัดจำ ⇒ กติกาเดิม</param>
+    /// <param name="isDepositForfeitInvoice">ใบกำกับของยอดริบที่อ้างใบมัดจำ (<c>IssueTaxInvoiceForForfeit</c>) — การขายเดิมที่นับไปแล้วตอนออกใบมัดจำ
+    /// (LICENSING §4 "ยกเลิก = 1 หน่วย") ⇒ ไม่นับ · ยังห้ามบล็อก (§86/4)</param>
     public static QuotaEnforcement Classify(DocumentType type, bool isDeposit, bool fromLodging,
-        bool isReplacement = false)
+        bool isReplacement = false, bool hasPriorDepositForBooking = false, DepositNature? depositNature = null,
+        bool isDepositForfeitInvoice = false)
     {
         if (isReplacement) return QuotaEnforcement.NotCounted;
+        // R-03: ใบที่ "ไม่ใช่การขายใหม่" — ไม่นับ (และจึงไม่มีวันถูกบล็อก · ใบพวกนี้เป็นใบที่กฎหมายบังคับทั้งหมด)
+        if (isDepositForfeitInvoice) return QuotaEnforcement.NotCounted;
+        if (isDeposit && depositNature == DepositNature.RefundableSecurity) return QuotaEnforcement.NotCounted;
+        if (isDeposit && hasPriorDepositForBooking) return QuotaEnforcement.NotCounted;
         // ⚠️ ที่พัก — คืนพฤติกรรมเดิม (ก่อน 058233b5): ใบที่กฎหมายบังคับ (ใบกำกับ/ใบเสร็จมัดจำ/…) นับโควตาเอกสาร + ห้ามบล็อก ·
         // ใบอื่นไม่นับ (และจึงไม่มีวันถูกบล็อก)
         //
@@ -91,6 +104,30 @@ public static class DocumentQuotaPolicy
             _ => QuotaEnforcement.NotCounted,
         };
     }
+
+    /// <summary>R-03 (ฝ่ายค้าน W1 ข้อ 1): "การจองนี้มีใบมัดจำที่นับแล้ว" — ใบมัดจำที่<b>นับได้</b>เท่านั้น: ไม่ร่าง/ไม่ยกเลิก/ไม่ถูกปฏิเสธ และไม่ใช่เงินประกัน
+    /// (<see cref="DepositNature.RefundableSecurity"/> ไม่นับอยู่แล้ว) — เดิมนับทุกใบ IsDeposit ⇒ ใบรับเงินประกันหรือใบร่างทำให้มัดจำค่าห้องใบแรกถูกตีเป็น "ใบที่ 2+"
+    /// = การจองนับ 0 หน่วย · <paramref name="excludeDocumentId"/> = ใบตัวเอง (ตอน update/reissue)</summary>
+    public static System.Linq.Expressions.Expression<Func<Document, bool>> CountedDepositOfBooking(Guid companyId, string bookingNumber, Guid? excludeDocumentId = null)
+        => d => d.CompanyId == companyId && !d.IsDeleted && d.IsDeposit && d.BookingNumber == bookingNumber
+             && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+             && d.DepositNature != DepositNature.RefundableSecurity
+             && (excludeDocumentId == null || d.Id != excludeDocumentId);
+
+    /// <summary>ต้นทางอัตโนมัติที่ออก<b>ใบร่าง</b>ก่อนรู้ว่าจะมีเงิน/ตกลงจริง (รอบ 205 ทีม W1 · R-04 · BOOKING_REVENUE_AUDIT Q-4 ขั้น 1) —
+    /// การจองนัดหมายหน้าเว็บ (<see cref="CmsBookingOrigin"/> · PrePayment ที่ไม่เคยจ่ายค้างเป็นร่าง · Appointment ออกใบเสนอราคา) และ
+    /// คำสั่งซื้อหน้าเว็บ (<see cref="SiteOrderDepositInvoicing.OriginModule"/>) ⇒ <b>ไม่นับตอนสร้าง นับตอนอนุมัติ</b> (ตรงหลัก "เลขเอกสารออกตอน Approve")
+    /// · ใบที่ผู้ใช้สร้างเอง/ที่พัก/POS/OCR/นำเข้า = นับตอนสร้างเหมือนเดิม (ขั้น 2 ย้ายทุกชนิดเฉพาะเมื่อรายงานเทียบก่อน-หลังไม่ทำให้บริษัทใดนับ*เพิ่ม* —
+    /// <c>tools/quota_count_before_after.sql</c>) · ใบที่เลื่อนนับประทับ <c>Document.QuotaCountDeferred</c> ⇒ ใบเก่าที่นับตอนสร้างไปแล้วไม่ถูกนับซ้ำตอนอนุมัติ</summary>
+    public static bool DefersCountUntilApproval(string? originModule)
+    {
+        var o = originModule?.Trim();
+        return string.Equals(o, CmsBookingOrigin, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(o, SiteOrderDepositInvoicing.OriginModule, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary><c>Document.OriginModule</c> ของเอกสารที่ <c>CmsBookingService.SyncBookingToErpAsync</c> ออกให้ (เดิม null ⇒ แยกจากใบที่ผู้ใช้สร้างเองไม่ได้)</summary>
+    public const string CmsBookingOrigin = "CmsBooking";
 
     /// <summary>ใบที่ "ห้ามค้าง" ตามกฎหมายไทย — ใช้ตัดสินเฉพาะเรื่องบล็อก/ไม่บล็อก
     /// (คนละคำถามกับการนับโควตา)</summary>
