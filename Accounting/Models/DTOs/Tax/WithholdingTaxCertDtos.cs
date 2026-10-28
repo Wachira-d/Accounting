@@ -70,6 +70,9 @@ public record WithholdingTaxCertResponse(
     string? FormCorrectionNotice = null,
     // รอบ 204 ทีม D (2f): บล็อก 4(ข) แบบแยกแถวย่อย (WhtCertFormText.DividendBlock — ตัวเดียวกับ PDF) · null = ไม่มีบรรทัดใดระบุแถวย่อย ⇒ หน้าพิมพ์บล็อกเดิม
     IReadOnlyList<WhtCertFormText.DividendBlockRow>? DividendBlock = null,
+    // คำตัดสินเจ้าของข้อ 162 (Q2 · รอบ 205 W7): ที่มาของอัตราแลกเปลี่ยนที่ใช้บนใบนี้ (ใบบาท = 1/"บาท" · ใบเก่า = null) — เก็บแล้วต้อง echo กลับ
+    decimal? ExchangeRateUsed = null,
+    string? ExchangeRateBasis = null,
     // 2026-10-14: บรรทัด "ชื่อ" บนแบบ 50 ทวิ (คำนำหน้า + ชื่อ + สาขาของนิติบุคคล) จากตัวตัดสินเดียว WhtCertFormText.PartyName —
     // ตัวเดียวกับ PDF ทั้งสอง · หน้าพิมพ์ wht.html แสดงอย่างเดียว (เดิมพิมพ์ PayerName/PayeeName ดิบ ⇒ ต่างจากไฟล์ PDF ที่ดาวน์โหลด)
     string? PayerNameLine = null,

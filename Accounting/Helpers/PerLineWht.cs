@@ -143,30 +143,44 @@ public static class PerLineWht
     public static decimal? UsablePrintedBase(Accounting.Models.Entities.Document doc)
         => PrintedBaseUsable(doc.DocumentThbBase, doc.SubTotal, doc.ExchangeRate) ? doc.DocumentThbBase : null;
 
-    /// <summary>ที่มาของฐานบาทของเอกสาร (ตามที่ <see cref="ForDocument"/> ใช้)</summary>
-    public static WhtBahtBasis BasisOf(Accounting.Models.Entities.Document doc)
-        => BasisOf(doc.ExchangeRate, UsablePrintedBase(doc));
+    /// <summary>ที่มาของฐานบาทของเอกสาร (ตามที่ <see cref="ForDocument"/> ใช้) · <paramref name="whtRateOverride"/> = อัตราฐานภาษีของงวด
+    /// (<see cref="DocumentFx.WhtRateFor"/> · คำตัดสินข้อ 162) — ต่างจากอัตราเอกสาร ⇒ ยอดบาทที่พิมพ์ (อัตราวันใบ) ไม่ใช่ฐานอีกต่อไป</summary>
+    public static WhtBahtBasis BasisOf(Accounting.Models.Entities.Document doc, decimal? whtRateOverride = null)
+        => BasisOf(EffectiveRate(doc, whtRateOverride), EffectivePrintedBase(doc, whtRateOverride));
+
+    /// <summary>อัตราที่ใช้จริง — override ที่ส่งมา (&gt; 0) ชนะอัตราเอกสาร · null/≤ 0 = อัตราเอกสาร (เดิม) · <b>ใบบาท (อัตรา 1/ไม่มี) ไม่รับ override</b>
+    /// (ใบบาทต้องคืนยอดที่เก็บไว้ตรงตัวเสมอ — กติกา 5)</summary>
+    private static decimal EffectiveRate(Accounting.Models.Entities.Document doc, decimal? whtRateOverride)
+        => doc.ExchangeRate <= 0m || doc.ExchangeRate == 1m ? doc.ExchangeRate
+            : whtRateOverride is decimal r && r > 0m ? r : doc.ExchangeRate;
+
+    /// <summary>ยอดบาทที่พิมพ์ใช้ได้เฉพาะเมื่อยังคิดด้วยอัตราเอกสาร (ยอดบนกระดาษเป็นอัตราวันใบ — อัตราวันจ่ายต้องคิดจากฐานสกุลเอกสาร × อัตรา)</summary>
+    private static decimal? EffectivePrintedBase(Accounting.Models.Entities.Document doc, decimal? whtRateOverride)
+        => EffectiveRate(doc, whtRateOverride) == doc.ExchangeRate ? UsablePrintedBase(doc) : null;
 
     /// <summary>
     /// <b>ทางเข้าเดียวของผู้อ่านระดับเอกสาร</b> (50 ทวิ · แถว ภ.ง.ด. · สรุปต่อประเภทบนฟอร์ม) — ทุกบรรทัดที่ยังไม่ลบ เรียงตาม <c>LineOrder</c> ·
     /// ส่วนที่ผู้จ่ายออกแทนคิดด้วย <see cref="WhtGrossUp.ForLines"/> (สูตรเดียวกับตอนบันทึก/ลงบัญชี) · คืนตาม <c>DocumentLine.Id</c>
     /// (ผู้เรียกเลือกบรรทัดของผู้ถูกหักรายนั้นเอง — ฐานบาทยังเฉลี่ยจากทั้งใบ)
     /// </summary>
-    public static IReadOnlyDictionary<Guid, PerLineWhtBaht> ForDocument(Accounting.Models.Entities.Document doc)
+    /// <param name="whtRateOverride">อัตราฐานภาษีของงวด (คำตัดสินข้อ 162 · <see cref="DocumentFx.WhtRateFor"/>) · null = อัตราเอกสาร (เดิมทุกสตางค์)</param>
+    public static IReadOnlyDictionary<Guid, PerLineWhtBaht> ForDocument(Accounting.Models.Entities.Document doc, decimal? whtRateOverride = null)
     {
+        var fxRate = EffectiveRate(doc, whtRateOverride);
+        var printedBase = EffectivePrintedBase(doc, whtRateOverride);
         var lines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).ToList();
         var borne = WhtGrossUp.IsPayerBorne(doc.WhtCertType)
             ? WhtGrossUp.ForLines(lines.Select(l => (l.Amount, l.WithholdingTaxRate)).ToList(), doc.WhtCertType).Select(p => p.PayerBorne).ToList()
             : lines.Select(_ => 0m).ToList();
         var inputs = lines.Select((l, i) => new PerLineWhtLine(l.Amount, l.WithholdingTaxRate, l.WithholdingTaxAmount, l.IncomeTypeCode, borne[i])).ToList();
-        var baht = ToBaht(inputs, doc.ExchangeRate, UsablePrintedBase(doc)).ToArray();
+        var baht = ToBaht(inputs, fxRate, printedBase).ToArray();
         // ใบต่างสกุล: Σ ภาษีบาทผูกกับยอด GL (เศษจากฐานบาท × อัตรา) — ทุกผู้อ่านเห็นตัวเลขชุดเดียวกับ 50 ทวิ (ฝ่ายค้านข้อ 5) · ใบบาท = ยอดที่เก็บไว้อยู่แล้ว
-        if (BasisOf(doc.ExchangeRate, UsablePrintedBase(doc)) != WhtBahtBasis.Thb)
+        if (BasisOf(fxRate, printedBase) != WhtBahtBasis.Thb)
         {
             var idx = Enumerable.Range(0, baht.Length).Where(i => baht[i].WhtThb != 0m).ToList();
             if (idx.Count > 0)
             {
-                var tied = TieOut(idx.Select(i => baht[i].WhtThb).ToList(), DocumentWhtThb(doc.WithholdingTaxAmount, doc.ExchangeRate));
+                var tied = TieOut(idx.Select(i => baht[i].WhtThb).ToList(), DocumentWhtThb(doc.WithholdingTaxAmount, fxRate));
                 for (var k = 0; k < idx.Count; k++) baht[idx[k]] = baht[idx[k]] with { WhtThb = tied[k] };
             }
         }

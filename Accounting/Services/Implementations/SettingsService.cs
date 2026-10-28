@@ -298,6 +298,11 @@ public class SettingsService : ISettingsService
         // ทีม F — หัก ณ ที่จ่ายตามรายการ (ผู้อ่านเดียว: OcrService.PerLineWhtEnabledAsync — แผนต่อบรรทัดตอนสร้างบรรทัด + ยอดบาทบนใบต่างสกุลตอนสร้างเอกสารจากสแกน)
         if (request.PerLineWhtEnabled.HasValue)
             settings.PerLineWhtEnabled = request.PerLineWhtEnabled.Value;
+        // คำตัดสินเจ้าของข้อ 162 (Q2) — ผู้อ่าน: DocumentFx.WhtRateFor (CreatePaymentJournalAsync + 50 ทวิ รายงวด) · DocumentFx.PickBotRate (ResolveExchangeRateAsync + OCR)
+        if (request.WhtFxRateBasis.HasValue)
+            settings.WhtFxRateBasis = request.WhtFxRateBasis.Value;
+        if (request.FxBotRateType.HasValue)
+            settings.FxBotRateType = request.FxBotRateType.Value;
         // กองทุนเงินทดแทน (กท.20ก)
         if (request.WorkersCompensationEnabled.HasValue)
             settings.WorkersCompensationEnabled = request.WorkersCompensationEnabled.Value;
@@ -766,6 +771,8 @@ public class SettingsService : ISettingsService
         // รูปแบบกระดาษหลักฐานรับเงินต่อกรณี (รอบ 203) — echo ค่าดิบ · ตาราง matrix เติมใน WithDepositVatInfoAsync (ต้องใช้ธงบริษัท)
         ReceiptFormPolicyJson = s.ReceiptFormPolicyJson,
         PerLineWhtEnabled = s.PerLineWhtEnabled,
+        WhtFxRateBasis = s.WhtFxRateBasis.ToString(),
+        FxBotRateType = s.FxBotRateType.ToString(),
     };
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(

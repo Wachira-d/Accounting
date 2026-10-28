@@ -7426,8 +7426,10 @@ RULES += [
          must_re=[r"WhtGrossUp\.Normalize\(source\.WhtCertType\)\s*!=\s*WhtGrossUp\.Normalize\(doc\.WhtCertType\)"],
          why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ซื้อกลับขาส่วนที่ออกแทน (ใบเพิ่มหนี้ Dr) + เงื่อนไขไม่ตรงใบต้นทาง = ล้มดัง · P1-1: ใบต่างประเทศ+ออกแทน (ข้อมูลเก่า) ไม่ลง JE"),
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AdjustCertsForCreditNoteAsync",
-         must=["WhtGrossUp.ForLines(", "cnBorneByLine.GetValueOrDefault(l.Id)", "cn.SubTotal + cn.WhtPayerBorneAmount"],
-         why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ลดเงินได้บน 50 ทวิ = ฐาน + ส่วนที่ออกแทน (ม.39) — ตรงกับเงินได้ของใบเดิม"),
+         # รอบ 205 W7 (R-18): เงินได้ที่ลด = Σ IncomeThb ของ PerLineWht.ForDocument(cn) (ฐาน + ส่วนออกแทน เป็นบาท — ใบบาทเท่า cn.SubTotal + cn.WhtPayerBorneAmount ทุกสตางค์)
+         must=["WhtGrossUp.ForLines(", "cnBorneByLine.GetValueOrDefault(l.Id)", "PerLineWht.ForDocument(cn)", "cnBaht.Values.Sum(v => v.IncomeThb)",
+               "PerLineWht.DocumentWhtThb(cn.WithholdingTaxAmount, cn.ExchangeRate)"],
+         why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ลดเงินได้บน 50 ทวิ = ฐาน + ส่วนที่ออกแทน (ม.39) — ตรงกับเงินได้ของใบเดิม · R-18: เป็นบาทผ่าน PerLineWht ตัวเดียว (ใบต่างสกุล)"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildDocumentHtml",
          must_lit=["{L.TotalWhtPayerBorne}", "doc.WhtPayerBorneAmount > 0"],
          why=_WHTBORNE_ADV + "P2-1: กระดาษบวกลงยอด — แถวผู้จ่ายออกแทน (+) (คู่กับ QuestPDF)"),
@@ -9234,8 +9236,10 @@ RULES += [
 _PLWHT = "ทีม F หัก ณ ที่จ่ายเป็นบาท: "
 RULES += [
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
-         must=["PerLineWht.ForDocument(doc)", "PerLineWht.DocumentWhtThb(", "PerLineWht.TieOut("],
-         why=_PLWHT + "50 ทวิ ของใบต่างสกุลเป็นบาทต่อบรรทัด + ผูก Σ กับยอด GL"),
+         # คำตัดสินข้อ 162 (รอบ 205 W7): อัตราฐานภาษีของงวดผ่าน DocumentFx.WhtRateFor ตัวเดียวกับขา 2191x — ForDocument/DocumentWhtThb ต้องรับอัตราตัวนั้น
+         must=["PerLineWht.ForDocument(doc, whtFxRate)", "PerLineWht.DocumentWhtThb(v, whtFxRate)", "PerLineWht.TieOut(",
+               "DocumentFx.WhtRateFor(whtFxBasis, doc.ExchangeRate, paymentFx)"],
+         why=_PLWHT + "50 ทวิ ของใบต่างสกุลเป็นบาทต่อบรรทัด + ผูก Σ กับยอด GL · ข้อ 162: อัตราฐานภาษีตัวเดียวกับ CreatePaymentJournalAsync"),
     dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
          must=["PerLineWht.ForDocument(doc)", "PerLineWht.DocumentWhtThb("],
          why=_PLWHT + "แถวเตือน \"ยังไม่ออกใบ\" ของ ภ.ง.ด. เป็นบาทเหมือน 50 ทวิ ที่จะออก"),
@@ -9252,8 +9256,10 @@ RULES += [
          forbid=["noCert.Sum(d => d.WithholdingTaxAmount)"],
          why=_PLWHT + "ตัวกระทบ GL: สาเหตุ \"ยังไม่ออก 50 ทวิ\" เป็นบาท"),
     dict(file=DOC, method="CreatePaymentJournalAsync",
-         must=["PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx)"],
-         why=_PLWHT + "JE ตอนจ่าย: ขา WHT ฐานเดียวกับ 50 ทวิ รายงวด (อัตราของเอกสาร)"),
+         # คำตัดสินข้อ 162 (รอบ 205 W7): อัตราฐานภาษีของงวด = DocumentFx.WhtRateFor (ตัวเดียวกับ 50 ทวิ) · ส่วนที่ AR/AP ถือยังเป็นอัตราเอกสาร
+         must=["PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, whtFx)", "PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx)",
+               "DocumentFx.WhtRateFor(", "thbWht - thbWhtAtDocRate"],
+         why=_PLWHT + "JE ตอนจ่าย: ขา WHT ฐานเดียวกับ 50 ทวิ รายงวด (อัตราตามค่าตั้งบริษัท · ค่าเริ่มต้น = อัตราของเอกสาร) · ผลต่างส่วนภาษีเข้า FX เส้นเดิม"),
     dict(file=DOC, method="CreateDocumentAsync",
          must=["ApplyDocumentFxDecisionAsync(companyId, doc, request)"],
          why=_PLWHT + "สร้างเอกสาร: อัตรา/ที่มา/ฐานบาทผ่าน DocumentFx.Decide ตัวเดียว"),

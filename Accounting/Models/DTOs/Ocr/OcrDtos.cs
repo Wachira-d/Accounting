@@ -205,7 +205,9 @@ public record OcrLinePreviewResponse(
     // ฟอร์ม "แก้ในฟอร์มก่อน" ต้องใส่ช่องส่วนลดท้ายบิลชุดเดียวกัน (เดิมหน้าเว็บส่ง 0 เสมอ) · 0 = กระจายลงบรรทัด/ไม่มี
     decimal BillDiscountAmount = 0m,
     // รอบ 200 ทีม K2 (C-02): คู่ค้าของฟอร์มตามฝั่งเอกสาร — เซิร์ฟเวอร์ตัดสิน (ฝั่งขาย = ผู้ซื้อบนกระดาษ · ฝั่งซื้อ = ผู้ขาย) · null = เซิร์ฟเวอร์รุ่นก่อน
-    OcrLinePreviewCounterparty? Counterparty = null);
+    OcrLinePreviewCounterparty? Counterparty = null,
+    // R-17 (B-1 · รอบ 205 W7): บริษัทเปิด "หัก ณ ที่จ่ายตามรายการ" ไหม — หน้ารีวิวแสดงคอลัมน์ WHT ต่อบรรทัดเฉพาะเมื่อ true · false ⇒ ไม่มีคอลัมน์ และบรรทัดไม่มีแผน/ข้อเสนอ
+    bool PerLineWhtEnabled = false);
 
 /// <summary>คู่ค้าที่ปุ่ม "แก้ในฟอร์มก่อน" ต้องเติมลงฟอร์ม (รอบ 200 ทีม K2 · ผลตรวจรอบ 189 C-02) — เดิมหน้าเว็บส่ง<b>ผู้ขาย</b>เสมอ
 /// ⇒ ใบฝั่งขายเปิดฟอร์มรายได้พร้อมชื่อบริษัทเราเอง และชื่อ/เลขผู้ซื้อที่ผู้ใช้เพิ่งตรวจไม่ถูกส่งไป</summary>
@@ -224,7 +226,11 @@ public record OcrLinePreviewLineDto(
     decimal DiscountPercent, decimal DiscountAmount, decimal Amount,
     decimal VatRate, decimal VatAmount, decimal WithholdingTaxRate,
     string? AccountCode, string? ProductCode, Guid? ProjectId, Guid? SourceLineId,
-    int SourceItemIndex = -1);
+    int SourceItemIndex = -1,
+    // R-17 (B-1): แผนหัก ณ ที่จ่ายต่อบรรทัดที่เซิร์ฟเวอร์จะใช้จริง (ค่าจาก OcrLineWhtPlan ผ่าน BuildScanLinesAsync — หน้าไม่คำนวณใหม่) · ส่งเฉพาะเมื่อค่าตั้งเปิด
+    string? WhtIncomeTypeCode = null, decimal? WhtAmount = null,
+    // R-20 (B-6): "⚙️ ระบบแนะนำ" เมื่อหัวใบไม่มีหัก — ข้อเสนอเท่านั้น (บรรทัดจริง WithholdingTaxRate = 0) · null = ไม่มีข้อเสนอ
+    decimal? SuggestedWhtRate = null, string? SuggestedWhtIncomeTypeCode = null, decimal? SuggestedWhtAmount = null);
 
 /// <summary>Body of POST /ocr/{scanId}/link-po — the chosen PO plus the
 /// per-OCR-line mapping (line index → PO line id). Unmapped indices are
@@ -297,7 +303,10 @@ public record OcrLineItemDto(
     /// "เศษจากการถอด VAT" ที่ไม่ใช่ส่วนลดบนเอกสาร · null = ไม่มีส่วนลด</summary>
     string? LineDiscountLabel = null,
     /// <summary>ป้ายช่องติ๊ก "กรอกราคาไม่รวม VAT" ของแถวราคารวม VAT (เซิร์ฟเวอร์เขียน · <c>OcrEtaxLineNormalizer.PriceBasisLabel</c>) · null = ไม่แสดง</summary>
-    string? PriceBasisLabel = null);
+    string? PriceBasisLabel = null,
+    /// <summary>R-17 (B-1): ประเภทเงินได้ที่ผู้ใช้เลือกเองในหน้ารีวิว (echo ค่าที่เก็บใน ExtractedItemsJson · round-trip) · null = ตามแผนระบบ ·
+    /// <c>OcrLineWhtPlan.NoWhtOverrideCode</c> ("0") = ไม่หักบรรทัดนี้ · อัตรา/ยอดที่จะใช้จริงดูที่ line-preview (<see cref="OcrLinePreviewLineDto"/>)</summary>
+    string? WhtIncomeTypeCode = null);
 
 public record OcrCreditPurchaseRequest(int Pages);
 

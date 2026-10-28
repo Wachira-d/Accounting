@@ -156,6 +156,7 @@ public class ExpenseClaimService : IExpenseClaimService
                 VatAmount = line.VatAmount,
                 WithholdingTaxRate = line.WithholdingTaxRate,
                 WithholdingTaxAmount = line.WithholdingTaxAmount,
+                IncomeTypeCode = NormalizeIncomeTypeCode(line.IncomeTypeCode),
                 NetAmount = line.NetAmount,
                 AccountId = line.AccountId,
                 Category = line.Category,
@@ -266,6 +267,7 @@ public class ExpenseClaimService : IExpenseClaimService
                     VatAmount = line.VatAmount,
                     WithholdingTaxRate = line.WithholdingTaxRate,
                     WithholdingTaxAmount = line.WithholdingTaxAmount,
+                    IncomeTypeCode = NormalizeIncomeTypeCode(line.IncomeTypeCode),
                     NetAmount = line.NetAmount,
                     AccountId = line.AccountId,
                     Category = line.Category,
@@ -418,7 +420,9 @@ public class ExpenseClaimService : IExpenseClaimService
             new DocumentLineRequest(
                 l.Description, 1m, null, l.Amount, 0m,
                 l.VatRate, l.WithholdingTaxRate, l.AccountId,
-                ProjectId: l.ProjectId ?? claim.ProjectId)).ToList();
+                ProjectId: l.ProjectId ?? claim.ProjectId,
+                // R-19: ประเภทเงินได้ต่อบรรทัดไหลเข้าใบสำคัญจ่าย ⇒ 50 ทวิ/ภ.ง.ด. อ่านผ่าน Helpers/PerLineWht ตัวเดียวกับเอกสารอื่น
+                IncomeTypeCode: l.IncomeTypeCode)).ToList();
 
         var approverName = approver != null
             ? (approver.FullName ?? approver.Email ?? "(ผู้อนุมัติ)")
@@ -520,7 +524,8 @@ public class ExpenseClaimService : IExpenseClaimService
                 new DocumentLineRequest(
                     l.Description, 1m, null, l.Amount, 0m,
                     l.VatRate, l.WithholdingTaxRate, l.AccountId,
-                    ProjectId: l.ProjectId ?? claim.ProjectId)).ToList();
+                    ProjectId: l.ProjectId ?? claim.ProjectId,
+                    IncomeTypeCode: l.IncomeTypeCode)).ToList();
 
             var createReq = new CreateDocumentRequest(
                 DocumentType.PaymentVoucher,
@@ -826,6 +831,17 @@ public class ExpenseClaimService : IExpenseClaimService
                 .FirstOrDefaultAsync();
     }
 
+    /// <summary>R-19 (B-5): ประเภทเงินได้ต่อบรรทัด — ว่าง = null (ตามหัวใบ) · รหัสต้องชี้ขาดได้ในตาราง ม.40 ตัวเดียว (<see cref="Accounting.Helpers.ThaiWhtRateTable.Resolve"/>)
+    /// ไม่งั้น 400 ข้อความไทย (รูปแบบเดียวกับ DocumentService.ValidateDocumentLinesAsync รอบ 203 — ไม่ปล่อยให้ตกแถว "อื่น ๆ" เงียบ ๆ บน 50 ทวิ)</summary>
+    private static string? NormalizeIncomeTypeCode(string? code)
+    {
+        var c = code?.Trim();
+        if (string.IsNullOrEmpty(c)) return null;
+        return Accounting.Helpers.ThaiWhtRateTable.Resolve(c)?.Code
+            ?? throw new Accounting.Helpers.BusinessRuleException(
+                $"ประเภทเงินได้ \"{c}\" ไม่อยู่ในตารางประเภทเงินได้ ม.40 — เลือกจากรายการ หรือเว้นว่าง (ตามหัวใบ)", Accounting.Helpers.PerLineWht.RuleCode);
+    }
+
     private static ExpenseClaimResponse MapToResponse(ExpenseClaim e) => new(
         e.Id, e.ClaimNumber, e.Title, e.Description, e.ExpenseDate, e.Status,
         e.SubTotal, e.VatAmount, e.WithholdingTaxAmount, e.TotalAmount,
@@ -835,7 +851,7 @@ public class ExpenseClaimService : IExpenseClaimService
         e.Lines.OrderBy(l => l.LineOrder).Select(l => new ExpenseClaimLineResponse(
             l.Id, l.Description, l.Amount, l.VatRate, l.VatAmount,
             l.WithholdingTaxRate, l.WithholdingTaxAmount, l.NetAmount,
-            l.AccountId, l.Account?.AccountName, l.Category, l.Reference)).ToList(),
+            l.AccountId, l.Account?.AccountName, l.Category, l.Reference, l.IncomeTypeCode)).ToList(),
         e.CreatedAt,
         e.PaymentVoucherDocumentId,
         e.NoReceipt,

@@ -3920,6 +3920,14 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   หยุดอนุมัติเอง · หลักฐานยอดบาทแหล่งเดียวต้องใกล้ ธปท. ≤ 3% · หน้านำส่ง/ปฏิทิน/ตัวกระทบ GL/JE ตอนจ่าย = `PerLineWht.DocumentWhtThb` (กติกา `_PLWHT`) ·
   50 ทวิ ใบต่างสกุลที่ออกก่อนแก้ ⇒ รายงานตรวจข้อมูล `ForeignCurrencyWhtCertsNotInBaht` (อ่านอย่างเดียว ไม่แก้ย้อนหลัง) ·
   ค่าตั้งคุมเฉพาะ OCR — การแปลงบาทของใบต่างสกุลทำงานเสมอ · เทสต์ `PerLineWhtTests` · backlog ในเอกสารออกแบบ
+- **รอบ 205 W7 (2026-10-26 · `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W7 · คำตัดสินข้อ 162 · commit 0a74e86b)** — (R-17) หน้ารีวิวสแกนมีคอลัมน์ "หัก ณ ที่จ่าย" ต่อบรรทัดเมื่อ `PerLineWhtEnabled`
+  (ค่าจาก `GET ocr/{id}/line-preview` → `OcrLinePreviewLineDto.WhtIncomeTypeCode/WhtAmount` ← `BuildScanLinesAsync` ตัวเดียวกับปุ่มสร้าง · หน้าไม่คำนวณ) · ผู้ใช้เลือกประเภทต่อบรรทัด →
+  `POST line-fields {whtIncomeTypeCode}` → `ExtractedItemsJson` → `OcrLineWhtPlan.WithUserChoice` (ค่าผู้ใช้ชนะแผน · Σ ยังต้องอธิบายยอดหัวใบ) · (R-20) หัวใบไม่มีหัก + เกณฑ์ 1,000 ผ่าน ⇒
+  `OcrLineWhtPlan.Suggest` → `[WHT-LINE-SUGGEST]` "⚙️ ระบบแนะนำ" (ไม่หักให้เอง · ไม่บล็อก) · (R-18) `AdjustCertsForCreditNoteAsync` ใบลดหนี้ต่างสกุลเทียบ 50 ทวิ เป็นบาทผ่าน `PerLineWht.ForDocument(cn)`/`DocumentWhtThb` ·
+  (R-19) `ExpenseClaimLine.IncomeTypeCode` → `DocumentLineRequest.IncomeTypeCode` ของ PV · (ข้อ 162) `CompanySettings.WhtFxRateBasis` (วันใบ [เดิม] / วันจ่าย) — ตัวตัดสินเดียว `DocumentFx.WhtRateFor`
+  ที่ `CreatePaymentJournalAsync` (ขา 2191x · AR/AP ตัดที่อัตราเอกสาร · ผลต่างส่วนภาษี → FX gain/loss เส้นเดิม) + 50 ทวิ รายงวด (`PerLineWht.ForDocument(doc, whtFxRate)`) ⇒ เท่ากันถึงสตางค์ ·
+  `CompanySettings.FxBotRateType` (กลาง [เดิม] / ซื้อถัวเฉลี่ย / ขายถัวเฉลี่ย) — `DocumentFx.PickBotRate` ที่ `ResolveExchangeRateAsync` + OCR · 50 ทวิ ทุกใบบันทึก `ExchangeRateUsed/ExchangeRateBasis` ·
+  R-21 (GL = Σ ฐานบาท × อัตรา) ตรวจแล้ว**ไม่ merge** (TieOut ทำให้เท่ากันอยู่แล้ว · ต้องฝ่ายค้าน) · ⚠️ แตะภาษี — ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ในเครื่องนี้
 - **รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)** (2026-10-14): `ThaiBahtText.Format(TotalTaxAmount)` ทั้ง HTML (`BuildWithholdingTaxCertHtml`) · QuestPDF
   (`BuildTotalInWords`) · หน้าพิมพ์ `wht.html` แสดง `TotalTaxAmountInWords` จาก DTO อย่างเดียว (เดิมมีสำเนาสูตร JS ของตัวเอง) — ดู §5.1
 - **Trigger (แก้ doc 2026-10-12 — บรรทัดเดิม "ตอน PV/Expense ถูก approve" ไม่ครบ)**: ทุกทางเข้าอัตโนมัติเดินทางเดียว

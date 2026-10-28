@@ -35,7 +35,10 @@ public record ExpenseClaimLineRequest(
     /// <summary>Per-line project override. Null = inherit claim
     /// header's ProjectId. Used when a single trip's lines split
     /// across multiple projects.</summary>
-    Guid? ProjectId = null);
+    Guid? ProjectId = null,
+    /// <summary>R-19 (B-5): ประเภทเงินได้ ม.40 ของบรรทัด (รหัสตาราง <c>ThaiWhtRateTable</c>) · null/ว่าง = ตามหัวใบ (ไม่บังคับ — เหมือน <c>DocumentLine</c>) ·
+    /// รหัสที่ตารางชี้ขาดไม่ได้ = 400</summary>
+    string? IncomeTypeCode = null);
 
 public record UpdateExpenseClaimRequest(
     string? Title,
@@ -92,7 +95,9 @@ public record ExpenseClaimLineResponse(
     Guid? AccountId,
     string? AccountName,
     string? Category,
-    string? Reference);
+    string? Reference,
+    /// <summary>R-19: ประเภทเงินได้ของบรรทัด (echo ค่าที่เก็บ — hydrate ฟอร์มตอนแก้ไข)</summary>
+    string? IncomeTypeCode = null);
 
 public record ApproveExpenseClaimRequest(
     string? Notes);

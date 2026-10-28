@@ -90,6 +90,9 @@ public class ExpenseClaimLine : BaseEntity
     public decimal VatAmount { get; set; }
     public decimal WithholdingTaxRate { get; set; }
     public decimal WithholdingTaxAmount { get; set; }
+    /// <summary>R-19 (B-5): ประเภทเงินได้ ม.40 ของบรรทัด (รหัสตาราง <c>ThaiWhtRateTable</c>) · null = ตามหัวใบ (เหมือน <c>DocumentLine.IncomeTypeCode</c>) ·
+    /// ไหลเข้า <c>DocumentLineRequest.IncomeTypeCode</c> ของใบสำคัญจ่ายที่สร้างตอนอนุมัติ/จ่าย ⇒ 50 ทวิ/ภ.ง.ด. อ่านผ่าน <c>Helpers/PerLineWht</c> ตัวเดียวกัน</summary>
+    public string? IncomeTypeCode { get; set; }
     public decimal NetAmount { get; set; }
 
     public Guid? AccountId { get; set; }

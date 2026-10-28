@@ -5605,3 +5605,11 @@ _2026-10-26 ทีม W3 (แพ็ก W3 ทะเบียน `docs/BACKLOG_RE
 เวลาทำการระดับเว็บ `BookingHoursJson` + resolver `BookingSlotEngine.ScheduleOf` (บริการที่ตั้งเองไม่ถูกแตะ) + UI ตัวแก้ตาราง `ss` · เลือก/เปลี่ยนผู้ให้บริการ `PUT …/bookings/{id}/resource` ผ่าน `Decide` ใต้ล็อกไซต์
 (ตั้ง `ResourceId` ไม่ใช่ `AssignedStaffId` ของ POS — คนละตัวตน) · Db test `Db/CmsBookingDoubleBookingDbTests` 6 เทสต์ (BKE-10/16 ⏳→✅) · เทสต์ pure 2 ไฟล์ · ล็อกจุดเรียก 9 กติกา ·
 ไม่แตะ `CmsCommerceService`/ฟอร์มชำระ/เส้นเงินการจอง · ยังไม่ได้คอมไพล์ในเครื่องนี้ · Db test รอ job db-test_
+
+_รอบ 205 ทีม W7 (หัก ณ ที่จ่ายตามรายการ + ใบต่างสกุล · `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W7 R-17..R-21 + คำตัดสินเจ้าของข้อ 162/Q2): (R-17) หน้ารีวิวสแกนเห็นแผน WHT ต่อบรรทัดจาก line-preview เมื่อค่าตั้งเปิด +
+เลือกประเภทเงินได้ต่อบรรทัด round-trip (`OcrExtractedLineItem.WhtIncomeTypeCode` → `OcrLineWhtPlan.WithUserChoice`) · (R-20) ข้อเสนอหักเมื่อหัวใบไม่มีหัก `OcrLineWhtPlan.Suggest` → `[WHT-LINE-SUGGEST]` (warn-only · เกณฑ์ 1,000 ระดับใบ · หัวมีหักแล้วไม่เสนอซ้ำ) ·
+(R-18) ใบลดหนี้ต่างสกุลเทียบ 50 ทวิ เป็นบาทผ่าน `PerLineWht.ForDocument(cn)`/`DocumentWhtThb` · (R-19) `ExpenseClaimLine.IncomeTypeCode` + migration + `expense.html` → `DocumentLineRequest.IncomeTypeCode` ·
+(ข้อ 162) `CompanySettings.WhtFxRateBasis` (วันใบ=เดิม/วันจ่าย ป.132/2548) ตัวตัดสินเดียว `DocumentFx.WhtRateFor` ใช้ทั้งขา 2191x (`CreatePaymentJournalAsync` — AR/AP ตัดที่อัตราเอกสาร · ผลต่างส่วนภาษี → FX gain/loss เส้นเดิม)
+และ 50 ทวิ รายงวด (`PerLineWht.ForDocument(doc, whtFxRate)` — ใบบาทไม่รับ override) ⇒ เท่ากันถึงสตางค์ · `CompanySettings.FxBotRateType` (กลาง=เดิม/ซื้อถัวเฉลี่ย/ขายถัวเฉลี่ย) `DocumentFx.PickBotRate` ที่ `ResolveExchangeRateAsync` + OCR ·
+50 ทวิ ทุกใบบันทึก `ExchangeRateUsed/ExchangeRateBasis` · หน้าตั้งค่าบอกผลทางภาษีของแต่ละตัวเลือก · R-21 วิเคราะห์แล้ว**ไม่ merge** (TieOut ทำให้ 50 ทวิ = GL อยู่แล้ว · ต้องฝ่ายค้าน) ·
+เทสต์ `PerLineWhtTests` +14 (ทิศตรงข้าม: ใบบาท/ค่าเริ่มต้นไม่ขยับ) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · แตะภาษี — ยังไม่ผ่านฝ่ายค้าน · commit 0a74e86b_

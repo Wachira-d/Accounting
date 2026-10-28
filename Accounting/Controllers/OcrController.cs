@@ -726,7 +726,9 @@ public class OcrController : ControllerBase
     /// ส่วนลดแปลงเฉพาะเมื่อต่างจากค่าที่เก็บ (ส่งธงเฉพาะคำขอที่ราคาถูกพิมพ์ใหม่)</param>
     public sealed record SetLineFieldsRequest(
         int LineIndex, string? Description, decimal? Quantity, decimal? UnitPrice,
-        string? AccountCode = null, decimal? LineDiscount = null, bool PriceEnteredExVat = false);
+        string? AccountCode = null, decimal? LineDiscount = null, bool PriceEnteredExVat = false,
+        // R-17 (B-1): ประเภทเงินได้ที่ผู้ใช้เลือกต่อบรรทัด (round-trip) — null = ไม่แตะ · "" = ตามระบบ · "0" = ไม่หัก · รหัส ม.40 = หักตามรหัส
+        string? WhtIncomeTypeCode = null);
 
     /// <summary>action = "add" | "delete" · LineIndex ใช้เฉพาะตอน delete</summary>
     public sealed record ModifyLineRequest(string Action, int LineIndex = -1);
@@ -741,7 +743,7 @@ public class OcrController : ControllerBase
         var deny = await ScanGateAsync(companyId, scanId, "แก้บรรทัดของสแกน", write: true);
         if (deny != null) return deny;
         var (amount, lineDiscount, discountDropped, unitPrice, conversionNote) = await _service.SetExtractedLineFieldsAsync(companyId, scanId,
-            req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode, req.LineDiscount, req.PriceEnteredExVat);
+            req.LineIndex, req.Description, req.Quantity, req.UnitPrice, req.AccountCode, req.LineDiscount, req.PriceEnteredExVat, req.WhtIncomeTypeCode);
         // ส่วนลดที่เกินยอดก่อนลดถูกทิ้ง — บอกผู้ใช้ตรง ๆ (ห้ามเงียบ · CLAUDE #4A) หน้าแสดงข้อความนี้เป็นคำเตือน
         return Ok(new ApiResponse<object>(true, new
         {
