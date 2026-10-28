@@ -224,7 +224,8 @@ public class CmsBookingDoubleBookingDbTests
         var b = await TryBookAsync(cid, sid, svcId, 2, "11:00");
         Assert.True(a.Ok && b.Ok);
         // "ตอนนี้" = 1.5 ชม. ก่อนนัด 10:00 (เวลาไทย) ⇒ ใบ 10:00 ถึงขั้น 2 ชม. · ใบ 11:00 เหลือ 2.5 ชม. ⇒ ถึงขั้น 24 ชม. (จองไว้ล่วงหน้า 10 วัน)
-        var nowLocal = TargetDate().ToDateTime(new TimeOnly(8, 30));
+        // รอบ 205 W2 แก้ตาม CI 475: เดิม 08:30 ⇒ รอบลองใหม่ 09:01 ใบ 11:00 เหลือ 1:59 กลายเป็นขั้น 2 ชม. ทั้งคู่ · 07:55 ⇒ ใบ 10:00 เหลือ 2:05 (ขั้น 24 ชม. ก่อน · ลองใหม่ 08:26 ถึงขั้น 2 ชม.) · ใบ 11:00 ยังขั้น 24 ชม. ("1 วัน")
+        var nowLocal = TargetDate().ToDateTime(new TimeOnly(7, 55));
         var nowUtc = DateTime.SpecifyKind(nowLocal.AddHours(-7), DateTimeKind.Utc);
 
         var failing = new FakeNotifier { Succeed = false };

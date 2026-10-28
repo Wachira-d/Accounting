@@ -107,12 +107,14 @@ Accounting/Controllers/ChequeController.cs	MarkBounced	1
 Accounting/Controllers/ChequeController.cs	MarkCleared	1
 Accounting/Controllers/ChequeController.cs	OpenBook	1
 Accounting/Controllers/ChequeController.cs	RecordInbound	1
+Accounting/Controllers/CmsBookingController.cs	CancelByToken	1
 Accounting/Controllers/CmsBookingController.cs	CreateBooking	1
 Accounting/Controllers/CmsBookingController.cs	CreateService	1
 Accounting/Controllers/CmsBookingController.cs	CreateSlot	1
 Accounting/Controllers/CmsBookingController.cs	DeleteService	1
 Accounting/Controllers/CmsBookingController.cs	DeleteSlot	1
 Accounting/Controllers/CmsBookingController.cs	GetAvailableSlots	1
+Accounting/Controllers/CmsBookingController.cs	RecordPayment	1
 Accounting/Controllers/CmsBookingController.cs	SyncBookingToErp	1
 Accounting/Controllers/CmsBookingController.cs	UpdateBookingStatus	1
 Accounting/Controllers/CmsBookingController.cs	UpdateService	1
@@ -402,6 +404,7 @@ Accounting/Controllers/PublicChatController.cs	Ask	1
 Accounting/Controllers/PublicChatController.cs	Rate	1
 Accounting/Controllers/PublicChatController.cs	RequestAgent	1
 Accounting/Controllers/PublicChatController.cs	Vote	1
+Accounting/Controllers/PublicPaymentController.cs	StartBooking	1
 Accounting/Controllers/PublicPaymentController.cs	StartLodging	1
 Accounting/Controllers/PublicPaymentController.cs	StartOrder	1
 Accounting/Controllers/PublicQuotationController.cs	Accept	1
