@@ -90,7 +90,7 @@ public class CmsLeadService
             .Select(l => new LeadListResponse(
                 l.Id, l.LeadNumber, l.LeadType, l.Status,
                 l.CustomerName, l.CustomerEmail, l.CustomerPhone,
-                l.SourceSlug, l.CreatedAt))
+                l.SourceSlug, l.CreatedAt, null, null))   // CS0854: expression tree ห้ามใช้ค่าตั้งต้นของ optional param — ส่งครบ (หน้ารายเว็บ = ไม่มีชื่อเว็บ)
             .ToListAsync();
 
         return new PagedResponse<LeadListResponse>(items, total, page, pageSize,
