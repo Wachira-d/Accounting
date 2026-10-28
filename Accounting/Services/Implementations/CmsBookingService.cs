@@ -383,11 +383,11 @@ public partial class CmsBookingService : ICmsBookingService
             ProviderStrategyOptions = BookingProviderAllocation.StrategyOptions().ToList(),
             FormFields = BookingFormFields.Parse(ctx.Row?.FormFieldsJson),
             FormFieldOptions = BookingFormFields.RequirementOptions().ToList(),
-            CompletionDocument = ctx.Row?.CompletionDocument ?? BookingCompletionDocument.Auto,
+            CompletionDocument = ctx.Row?.CompletionDocument ?? BookingCompletionDocument.None,
             CompletionDocumentOptions = BookingDocumentFlow.CompletionOptions().ToList(),
             DocumentFlow = BookingDocumentFlow.Describe(
                 ctx.Row?.GuaranteedInvoiceTiming ?? BookingInvoiceTiming.TaxInvoiceAtBooking,
-                ctx.Row?.CompletionDocument ?? BookingCompletionDocument.Auto,
+                ctx.Row?.CompletionDocument ?? BookingCompletionDocument.None,
                 (await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId)).Registered).ToList(),
         };
     }
@@ -793,9 +793,15 @@ public partial class CmsBookingService : ICmsBookingService
 
         // รอบ 207 (คำขอเจ้าของข้อ 7): ช่องบังคับของฟอร์มจอง — ด่านจริงอยู่ที่นี่ (หน้าเว็บแสดงตามค่าเดียวกัน) · ตัวตัดสินเดียว BookingFormFields ·
         // พนักงานของบริษัทสร้างเอง (walk-in) และลูกค้าที่ล็อกอิน (CustomerId — ข้อมูลอยู่ที่บัญชีลูกค้า) ไม่ผ่านด่านนี้
-        if (request.CustomerId == null && !await IsCompanyStaffAsync(companyId, userId))
+        // ฝ่ายค้านรอบ 207 ข้อ 9: CustomerId มาจาก body ของคำขอนิรนาม ⇒ ยกเว้นเฉพาะลูกค้าที่เป็นของเว็บนี้จริง
+        var knownCustomer = request.CustomerId is Guid custId
+            && await _db.SiteCustomers.AsNoTracking().AnyAsync(c => c.Id == custId && c.CompanyId == companyId && c.SiteId == siteId);
+        // ด่านทำงานเมื่อเว็บตั้งค่าฟอร์มแล้วเท่านั้น (FormFieldsJson ไม่ null) — เว็บที่ไม่เคยตั้ง = เซิร์ฟเวอร์ไม่บังคับเหมือนเดิม
+        // (ผู้เรียก API/ช่องทางอื่นที่ไม่ส่งเบอร์ไม่พังเงียบหลังอัปเดต · หน้าเว็บเดิมยังบังคับชื่อ+เบอร์ที่ฝั่งฟอร์ม)
+        var formJson = (await SiteContextAsync(companyId, siteId)).Row?.FormFieldsJson;
+        if (formJson != null && !knownCustomer && !await IsCompanyStaffAsync(companyId, userId))
         {
-            var formCfg = BookingFormFields.Parse((await SiteContextAsync(companyId, siteId)).Row?.FormFieldsJson);
+            var formCfg = BookingFormFields.Parse(formJson);
             var (formErrs, clean) = BookingFormFields.Check(formCfg, request.GuestName, request.GuestPhone, request.GuestEmail, request.CustomerNotes);
             if (formErrs.Count > 0) throw new BusinessRuleException(string.Join(" · ", formErrs), BookingFormFields.RuleCode);
             request.GuestName = clean.Name; request.GuestPhone = clean.Phone; request.GuestEmail = clean.Email; request.CustomerNotes = clean.Notes;
@@ -1008,10 +1014,14 @@ public partial class CmsBookingService : ICmsBookingService
             throw new BusinessRuleException("ย้ายการจองเข้าคิวสำรองเองไม่ได้ — คิวสำรองเกิดจากรอบเต็มเท่านั้น", "CMS-BOOKING-WAITLIST-MANUAL");
         var oldStatus = booking.Status;
         // รอบ 207 (คำขอเจ้าของข้อ 3): เริ่มให้บริการ — ไซต์เปิดจัดสรรผู้ให้บริการ + มีคนรับบริการนี้ ⇒ ต้องมีผู้ให้บริการ (เลือกจากหน้าต่าง หรือคนที่จัดไว้ตอนจอง)
-        if (request.Status == BookingStatus.InProgress && oldStatus != BookingStatus.InProgress)
+        // ฝ่ายค้านรอบ 207 ข้อ 9: ข้ามจากยืนยันแล้วไปเสร็จเลยก็ต้องมีผู้ให้บริการ (รายงานผู้ให้บริการไม่ตกหล่น)
+        if (request.Status is BookingStatus.InProgress or BookingStatus.Completed
+            && oldStatus is not (BookingStatus.InProgress or BookingStatus.Completed))
             await EnsureStartAssignmentsAsync(companyId, siteId, booking, userId);
         booking.Status = request.Status;
-        if (request.InternalNotes != null) booking.InternalNotes = request.InternalNotes;
+        // ฝ่ายค้านรอบ 207 ข้อ 6: ต่อท้าย ไม่ทับ — หมายเหตุภายในคือร่องรอยระบบ (ล้มดัง F2 #7) ห้ามหาย
+        if (!string.IsNullOrWhiteSpace(request.InternalNotes))
+            booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, request.InternalNotes.Trim());
         if (request.CancellationReason != null) booking.CancellationReason = request.CancellationReason;
 
         switch (request.Status)
@@ -1131,7 +1141,7 @@ public partial class CmsBookingService : ICmsBookingService
 
     /// <summary>ข้อเท็จจริงของเอกสารที่ผูกกับการจอง → <see cref="BookingInvoiceFacts"/> (ใช้ทั้งตอนตัดสินจริงและตอนตัดสินว่าจะแสดงปุ่มไหม)</summary>
     private async Task<BookingInvoiceContext?> LoadInvoiceFactsAsync(Guid companyId, Guid siteId, Guid bookingId, BookingInvoiceEvent ev,
-        bool paidInFullNow = false)
+        bool paidInFullNow = false, bool collectingPayment = false)
     {
         var b = await _db.SiteBookings.AsNoTracking()
             .Where(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId)
@@ -1171,10 +1181,12 @@ public partial class CmsBookingService : ICmsBookingService
         var posBill = posStatuses.Any(s => s is PosOrderStatus.Completed or PosOrderStatus.Refunded) ? BookingPosBillState.Closed
             : posStatuses.Count > 0 ? BookingPosBillState.Open : BookingPosBillState.None;
         var (vatRegistered, _) = await CompanyVatStatus.ProfileAsync(_db, companyId);
-        // รอบ 207: ค่าตั้ง "เอกสารตอนให้บริการเสร็จ" ของไซต์ (บริการแบบนัดหมาย) · ไม่มีแถวค่าตั้ง = อัตโนมัติ (ค่าเริ่มต้นของคอลัมน์)
-        var completionDoc = await _db.SiteBookingSettings.AsNoTracking()
-            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted)
-            .Select(x => (BookingCompletionDocument?)x.CompletionDocument).FirstOrDefaultAsync() ?? BookingCompletionDocument.Auto;
+        // รอบ 207: ค่าตั้ง "เอกสารตอนให้บริการเสร็จ" ของไซต์ (บริการแบบนัดหมาย) · ไม่มีแถว = ไม่ออก (เดิม) ·
+        // พนักงานกด "เสร็จสิ้น + รับชำระ" (collectingPayment) = ตั้งใจรับเงิน ⇒ ต้องมีเอกสารรับเงิน ⇒ อัตโนมัติเสมอ
+        var completionDoc = collectingPayment ? BookingCompletionDocument.Auto
+            : await _db.SiteBookingSettings.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted)
+                .Select(x => (BookingCompletionDocument?)x.CompletionDocument).FirstOrDefaultAsync() ?? BookingCompletionDocument.None;
         var facts = new BookingInvoiceFacts(b.BookingType, await InvoiceTimingAsync(companyId, siteId), ev,
             linkedType, linkedStatus, childId != null, vatRegistered,
             IssuedChildStatus: childStatus, PosBill: posBill, BookingStatus: b.Status,
@@ -1230,7 +1242,7 @@ public partial class CmsBookingService : ICmsBookingService
     private async Task ApplyInvoiceTimingLockedAsync(Guid companyId, Guid siteId, Guid bookingId, BookingInvoiceEvent ev, string userId,
         List<string> notices, List<string> bookingNotes, DateTime? paidOn, BookingCompletionMoney? money = null)
     {
-        var l = await LoadInvoiceFactsAsync(companyId, siteId, bookingId, ev, money?.PaidInFull ?? false);
+        var l = await LoadInvoiceFactsAsync(companyId, siteId, bookingId, ev, money?.PaidInFull ?? false, collectingPayment: money != null);
         if (l == null) return;
         var decision = BookingInvoiceTimingPolicy.Decide(l.Facts);
         switch (decision.Action)
@@ -1291,7 +1303,7 @@ public partial class CmsBookingService : ICmsBookingService
                         : null;
                     if (made != null && made.Status is not (DocumentStatus.Draft or DocumentStatus.WaitingApproval))
                     {
-                        var okMade = BookingInvoiceTimingPolicy.IssuedNotice(ev, made.DocumentNumber, made.DocumentType, ThaiDate.CalendarDateUtc(made.DocumentDate));
+                        var okMade = BookingInvoiceTimingPolicy.IssuedNotice(ev, made.DocumentNumber, made.DocumentType, ThaiDate.CalendarDateUtc(made.DocumentDate), paidOn != null);
                         notices.Add(okMade); bookingNotes.Add(okMade);
                     }
                     else
@@ -1316,7 +1328,8 @@ public partial class CmsBookingService : ICmsBookingService
                 {
                     // เส้นแปลงเดิม: ด่าน §90/2 · ด่านแปลงซ้ำ/ยอดเกินใบต้นทาง · สืบทอดผู้ซื้อ/สาขา/ราคา — ไม่ประกอบใบเอง ·
                     // รับเงิน ⇒ แปลงทุกบรรทัดเต็มจำนวนลงวันที่รับเงินที่ผู้ใช้ระบุ (ฝ่ายค้าน ข้อ 5) · ให้บริการเสร็จ ⇒ วันนี้
-                    if (paidOn is DateTime docDate)
+                    // ฝ่ายค้านรอบ 207 ข้อ 1: แปลงบางบรรทัดไปใบเสร็จไม่ได้ (Receipt ไม่มีแกนส่งมอบ) ⇒ ใบเสร็จแปลงเต็มใบ แล้วตั้งวันที่ด้านล่าง
+                    if (paidOn is DateTime docDate && decision.DocumentType != DocumentType.Receipt)
                     {
                         var qtLines = await _db.Documents.AsNoTracking()
                             .Where(d => d.Id == l.LinkedId!.Value && d.CompanyId == companyId)
@@ -1343,6 +1356,7 @@ public partial class CmsBookingService : ICmsBookingService
                     var draft = await _db.Documents.FirstOrDefaultAsync(d => d.Id == converted.Id && d.CompanyId == companyId);
                     if (draft != null && draft.Status is DocumentStatus.Draft or DocumentStatus.WaitingApproval)
                     {
+                        draft.DocumentDate = money.PaidAt;   // ใบเสร็จ = หลักฐานรับเงิน ⇒ ลงวันที่รับเงิน (§78/1)
                         if (money.MoneyAccountId != null) draft.PaymentAccountId = money.MoneyAccountId;
                         if (money.BankAccountId != null) draft.BankAccountId = money.BankAccountId;
                         await _db.SaveChangesAsync();
@@ -1350,7 +1364,7 @@ public partial class CmsBookingService : ICmsBookingService
                 }
                 // ผูกใบใหม่ก่อนอนุมัติ — อนุมัติล้ม ⇒ ครั้งถัดไปเห็นใบร่างที่ผูกอยู่ ⇒ ApprovePendingTaxInvoice (ไม่แปลงซ้ำ)
                 await RelinkBookingAsync(companyId, siteId, bookingId, converted.Id, decision.DocumentType!.Value, userId);
-                await ApproveBookingTaxDocumentAsync(companyId, converted.Id, converted.DocumentNumber, ev, userId, notices, bookingNotes);
+                await ApproveBookingTaxDocumentAsync(companyId, converted.Id, converted.DocumentNumber, ev, userId, notices, bookingNotes, paidOn != null);
                 return;
 
             default:
@@ -1370,13 +1384,13 @@ public partial class CmsBookingService : ICmsBookingService
 
     /// <summary>อนุมัติใบกำกับ/ใบแจ้งหนี้ของการจองด้วยเส้นอนุมัติเดิม (SystemWorkflow — ไม่มีคนเห็นคำเตือนในเส้นนี้) · ล้ม ⇒ ถอยของครึ่งทาง + ล้มดัง</summary>
     private async Task ApproveBookingTaxDocumentAsync(Guid companyId, Guid documentId, string? documentNumber, BookingInvoiceEvent ev,
-        string userId, List<string> notices, List<string> bookingNotes)
+        string userId, List<string> notices, List<string> bookingNotes, bool datedOnPayment = false)
     {
         var baseline = new HashSet<object>(_db.ChangeTracker.Entries().Select(e => e.Entity), ReferenceEqualityComparer.Instance);
         try
         {
             var approved = await _docService!.ApproveDocumentAsync(companyId, documentId, userId, ApprovalAckSource.SystemWorkflow, withAiHints: false);
-            var ok = BookingInvoiceTimingPolicy.IssuedNotice(ev, approved.DocumentNumber, approved.DocumentType, ThaiDate.CalendarDateUtc(approved.DocumentDate));
+            var ok = BookingInvoiceTimingPolicy.IssuedNotice(ev, approved.DocumentNumber, approved.DocumentType, ThaiDate.CalendarDateUtc(approved.DocumentDate), datedOnPayment);
             notices.Add(ok); bookingNotes.Add(ok);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

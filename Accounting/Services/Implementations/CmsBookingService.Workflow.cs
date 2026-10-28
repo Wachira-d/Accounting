@@ -123,8 +123,10 @@ public partial class CmsBookingService
         }
         var primary = BookingProviderShare.Primary(parts);
         booking.ResourceId = primary;
+        // ช่างที่ POS เติมให้ = พนักงานที่ผูกกับคนหลัก · คนหลักไม่ผูกพนักงาน ⇒ ล้าง (ไม่ค้างช่างคนเก่า · ฝ่ายค้านรอบ 207 ข้อ 11)
         var primaryRes = capable.FirstOrDefault(c => c.Id == primary);
-        if (primaryRes?.StaffUserId is Guid staff) { booking.AssignedStaffId = staff; booking.AssignedStaffName = primaryRes.Name; }
+        booking.AssignedStaffId = primaryRes?.StaffUserId;
+        booking.AssignedStaffName = primaryRes?.StaffUserId != null ? primaryRes.Name : null;
         var desc = BookingProviderShare.Describe(parts.Select(p => (capable.FirstOrDefault(c => c.Id == p.ResourceId)?.Name ?? "?", p.SharePercent)));
         booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes,
             $"[{BookingProviderShare.RuleCode}] ผู้ให้บริการ: {desc} ({BookingSlotEngine.BangkokNow(DateTime.UtcNow):dd/MM HH:mm})");
@@ -281,8 +283,17 @@ public partial class CmsBookingService
             plan.AmountDue = 0m; plan.CollectBlockedNote = plan.Explanation;
             return plan;
         }
-        var facts = await LoadInvoiceFactsAsync(companyId, siteId, b.Id, BookingInvoiceEvent.ServiceCompleted, paidInFullNow: due > 0m);
+        // รับชำระตอนเสร็จ = ออกเอกสารรับเงินเสมอ (collectingPayment) · กดเสร็จไม่รับชำระ = ตามค่าตั้งของเว็บ (ป้ายแยก)
+        var facts = await LoadInvoiceFactsAsync(companyId, siteId, b.Id, BookingInvoiceEvent.ServiceCompleted,
+            paidInFullNow: due > 0m && b.PaidAmount <= 0.005m, collectingPayment: true);
         if (facts == null) return plan;
+        var factsNoPay = await LoadInvoiceFactsAsync(companyId, siteId, b.Id, BookingInvoiceEvent.ServiceCompleted);
+        if (factsNoPay != null)
+        {
+            var np = BookingInvoiceTimingPolicy.Decide(factsNoPay.Facts);
+            plan.DocumentLabelNoPayment = BookingDocumentFlow.Label(np)
+                ?? (np.Action == BookingInvoiceAction.AlreadyIssued ? "ใช้เอกสารที่ออกไว้แล้ว" : "ไม่ออกเอกสาร (ตามค่าตั้งของเว็บ)");
+        }
         if (facts.Facts.PosBill != BookingPosBillState.None)
         {
             plan.Explanation = "การจองนี้มีบิล POS — เก็บเงินและออกเอกสารที่ POS";
@@ -305,15 +316,18 @@ public partial class CmsBookingService
         plan.CanCollectPayment = due > 0m && (plan.DocumentLabel != null || hasIssued);
         plan.Explanation = decision.Notice;
         if (due > 0m && !plan.CanCollectPayment)
-            plan.CollectBlockedNote = b.BookingType == BookingType.Appointment
-                ? "ตั้งค่าไว้ \"ไม่ออกเอกสารตอนเสร็จ\" — บันทึกรับเงินที่หน้าเอกสาร/POS หรือเปลี่ยนค่าตั้งที่ เว็บไซต์ → การจอง → เอกสาร"
-                : "ไม่มีเอกสารให้ลงรับชำระ — ออกเอกสารที่หน้าเอกสารก่อน";
+            plan.CollectBlockedNote = decision.Notice ?? "ไม่มีเอกสารให้ลงรับชำระ — ออกเอกสารที่หน้าเอกสารก่อน";
         return plan;
     }
 
-    /// <summary>เสร็จสิ้น (+ รับชำระ) — เอกสารเดินเส้นเดิม (ใบกำกับ/ใบแจ้งหนี้/ใบเสร็จขายสด ตามสถานะ VAT + ค่าตั้งไซต์) แล้วลงรับชำระที่ใบที่ค้าง ·
+    /// <summary>เสร็จสิ้น (+ รับชำระ) — เอกสารเดินเส้นเดิม (ใบกำกับ/ใบแจ้งหนี้/ใบเสร็จขายสด ตามสถานะ VAT) แล้วลงรับชำระที่ใบที่ค้าง ·
     /// ลงเงินไม่สำเร็จ ⇒ ล้มดัง (ข้อความถึงผู้กด + หมายเหตุบนการจอง) และไม่เพิ่มยอดรับบนการจอง</summary>
-    public async Task<BookingResponse> CompleteBookingAsync(Guid companyId, Guid siteId, Guid bookingId, CompleteBookingRequest request, string userId)
+    public Task<BookingResponse> CompleteBookingAsync(Guid companyId, Guid siteId, Guid bookingId, CompleteBookingRequest request, string userId)
+        // ฝ่ายค้านรอบ 207 ข้อ 4: กดซ้ำ/สองแท็บ ⇒ คำขอที่สองรอล็อกแล้วเห็นสถานะเสร็จแล้ว (ปฏิเสธ) — ไม่ลงเงินซ้ำ
+        => WithBookingSessionLockAsync(companyId, "complete:" + bookingId.ToString("N"),
+            () => CompleteBookingLockedAsync(companyId, siteId, bookingId, request, userId));
+
+    private async Task<BookingResponse> CompleteBookingLockedAsync(Guid companyId, Guid siteId, Guid bookingId, CompleteBookingRequest request, string userId)
     {
         var now = DateTime.UtcNow;
         var current = await GetBookingAsync(companyId, siteId, bookingId) ?? throw new KeyNotFoundException("Booking not found.");
@@ -331,47 +345,97 @@ public partial class CmsBookingService
             if (amount > plan.AmountDue + 0.005m)
                 throw new BusinessRuleException($"ยอดรับชำระ {amount:N2} เกินยอดค้าง {plan.AmountDue:N2}", WorkflowRuleCode);
             if (CmsBookingOnlinePayment.ValidatePaidAt(request.PaidAt, now) is string dateErr) throw new BusinessRuleException(dateErr, WorkflowRuleCode);
+            var paidAt = request.PaidAt ?? now;
+            // ฝ่ายค้านรอบ 207 ข้อ 7: วันรับเงิน = วันที่ใบกำกับ/ใบเสร็จ ⇒ ห้ามก่อนวันที่มีการจอง (กันลงย้อนเข้างวดภาษีที่ยื่นแล้ว)
+            if (ThaiDate.CalendarDateUtc(paidAt) < ThaiDate.CalendarDateUtc(current.CreatedAt))
+                throw new BusinessRuleException($"วันที่รับเงินต้องไม่ก่อนวันที่จอง ({ThaiDate.CalendarDateUtc(current.CreatedAt):dd/MM/yyyy})", WorkflowRuleCode);
             if (LodgingPaymentBank.Problem(request.PaymentMethod, amount, request.BankAccountId) is string bankErr)
                 throw new BusinessRuleException(bankErr, LodgingPaymentBank.RuleCode);
             if (request.BankAccountId is Guid bankId) await _db.ResolveBankGlAsync(companyId, bankId);   // บัญชีธนาคารของบริษัทนี้เท่านั้น
-            money = new BookingCompletionMoney(amount + 0.005m >= plan.AmountDue, request.PaidAt ?? now, null, request.BankAccountId);
+            // ฝ่ายค้านรอบ 207 ข้อ 5: ใบเสร็จขายสด (ไม่จด VAT) เฉพาะเมื่อรับครบครั้งนี้ และไม่มีเงินที่บันทึกบนการจองไว้ก่อน (ใบเสร็จต้องเท่ายอดที่รับจริง)
+            var paidInFull = amount + 0.005m >= plan.AmountDue && current.PaidAmount <= 0.005m;
+            money = new BookingCompletionMoney(paidInFull, paidAt, null, request.BankAccountId);
         }
 
-        var since = DateTime.UtcNow.AddSeconds(-5);
         var result = await UpdateBookingStatusCoreAsync(companyId, siteId, bookingId,
             new UpdateBookingStatusRequest { Status = BookingStatus.Completed, InternalNotes = request.InternalNotes }, userId, money);
         if (money == null) return result;
 
         var notices = result.ErpNotices.ToList();
-        var note = await ApplyCompletionPaymentAsync(companyId, siteId, bookingId, amount, money, request, userId, since);
+        var note = await ApplyCompletionPaymentAsync(companyId, siteId, bookingId, amount, money, request, userId);
         var after = await GetBookingAsync(companyId, siteId, bookingId) ?? result;
         if (note != null) notices.Add(note);
         after.ErpNotices = notices;
         return after;
     }
 
-    /// <summary>ลงรับชำระของการเสร็จสิ้น: ใบเสร็จขายสดที่เพิ่งออก = รับครบในตัว · ใบกำกับ/ใบแจ้งหนี้ที่ค้าง ⇒ <c>CreatePaymentAsync</c> ·
+    /// <summary>ล็อกระดับ session ต่อการจอง (แบบ ApplyInvoiceTimingAsync) — งานที่เปิดธุรกรรมของตัวเองหลายช่วงใช้ล็อก xact ไม่ได้</summary>
+    private async Task<T> WithBookingSessionLockAsync<T>(Guid companyId, string part, Func<Task<T>> body)
+    {
+        var key = AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsBookingInvoice, part);
+        var conn = _db.Database.GetDbConnection();
+        var openedHere = conn.State != System.Data.ConnectionState.Open;
+        if (openedHere) await conn.OpenAsync();
+        var acquired = false;
+        try
+        {
+            for (var attempt = 0; attempt < 20 && !acquired; attempt++)
+            {
+                await using (var cmd = conn.CreateCommand())
+                {
+                    cmd.CommandText = $"SELECT pg_try_advisory_lock({key})";
+                    acquired = Convert.ToBoolean(await cmd.ExecuteScalarAsync());
+                }
+                if (!acquired) await Task.Delay(500);
+            }
+            if (!acquired)
+                throw new BusinessRuleException("มีการบันทึกของการจองนี้กำลังทำงานอยู่ — รอสักครู่แล้วเปิดดูใหม่", WorkflowRuleCode, 409);
+            return await body();
+        }
+        finally
+        {
+            if (acquired)
+            {
+                await using var unlock = conn.CreateCommand();
+                unlock.CommandText = $"SELECT pg_advisory_unlock({key})";
+                await unlock.ExecuteScalarAsync();
+            }
+            if (openedHere) await conn.CloseAsync();
+        }
+    }
+
+    /// <summary>เอกสารของ "การจองนี้" — เลขการจองนับต่อเว็บ (สองเว็บในบริษัทเดียวกันมี BK-… ซ้ำได้ · ฝ่ายค้านรอบ 207 ข้อ 3) ⇒
+    /// เลขตรง + (ใบที่ผูกกับการจอง หรือผู้ติดต่อเดียวกับใบที่ผูก) · ยังไม่มีใบผูก = ไม่มีเอกสาร</summary>
+    private IQueryable<Document> BookingDocumentsQuery(Guid companyId, string bookingNumber, Guid? erpDocumentId)
+    {
+        if (erpDocumentId is not Guid linked) return _db.Documents.AsNoTracking().Where(d => false);
+        var contact = _db.Documents.Where(x => x.Id == linked && x.CompanyId == companyId).Select(x => x.ContactId);
+        return _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == bookingNumber
+                && (d.Id == linked || contact.Contains(d.ContactId)));
+    }
+
+    /// <summary>ลงรับชำระของการเสร็จสิ้น: ใบเสร็จขายสดที่ผูกกับการจองหลังขั้นเอกสาร = รับครบในตัว · ใบกำกับ/ใบแจ้งหนี้ที่ค้าง ⇒ <c>CreatePaymentAsync</c> ·
     /// ไม่มีใบให้ลง ⇒ ล้มดัง (ไม่แต่งยอดรับบนการจอง)</summary>
     private async Task<string?> ApplyCompletionPaymentAsync(Guid companyId, Guid siteId, Guid bookingId, decimal amount, BookingCompletionMoney money,
-        CompleteBookingRequest request, string userId, DateTime since)
+        CompleteBookingRequest request, string userId)
     {
-        var number = await _db.SiteBookings.AsNoTracking().Where(b => b.Id == bookingId && b.CompanyId == companyId)
-            .Select(b => b.BookingNumber).FirstAsync();
+        var b0 = await _db.SiteBookings.AsNoTracking().Where(b => b.Id == bookingId && b.CompanyId == companyId)
+            .Select(b => new { b.BookingNumber, b.ErpDocumentId }).FirstAsync();
+        var number = b0.BookingNumber;
         var revenueTypes = new[] { DocumentType.TaxInvoice, DocumentType.Invoice, DocumentType.Receipt };
-        var docs = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == number && !d.IsDeposit
-                && revenueTypes.Contains(d.DocumentType)
+        var docs = await BookingDocumentsQuery(companyId, number, b0.ErpDocumentId)
+            .Where(d => !d.IsDeposit && revenueTypes.Contains(d.DocumentType)
                 && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
                 && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
             .OrderByDescending(d => d.CreatedAt)
-            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.TotalAmount, d.BalanceDue, d.RelatedDocumentId, d.CreatedAt })
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.TotalAmount, d.BalanceDue })
             .ToListAsync();
         decimal collected = 0m;
         string? docNo = null;
         string? failure = null;
-        // ใบเสร็จขายสดที่ขั้นเอกสารของการกดครั้งนี้เพิ่งออก (ไม่ใช่ใบเสร็จรับชำระของใบแจ้งหนี้ในรายการ)
-        var cashReceipt = docs.FirstOrDefault(d => d.DocumentType == DocumentType.Receipt && d.CreatedAt >= since
-            && !docs.Any(x => x.Id == d.RelatedDocumentId));
+        // ใบเสร็จขายสด = ใบที่ขั้นเอกสารของการกดครั้งนี้ผูกกับการจอง (relink) — ไม่เดาจากช่วงเวลา
+        var cashReceipt = docs.FirstOrDefault(d => d.Id == b0.ErpDocumentId && d.DocumentType == DocumentType.Receipt);
         var open = docs.FirstOrDefault(d => d.DocumentType != DocumentType.Receipt && d.BalanceDue > 0.005m);
         if (money.PaidInFull && cashReceipt != null && open == null)
         {
@@ -440,8 +504,8 @@ public partial class CmsBookingService
     /// <summary>เอกสารทุกใบ (เลขการจองบนเอกสาร) · ประวัติรับเงิน · ไทม์ไลน์ · แผนตอนเสร็จ</summary>
     private async Task FillWorkspaceAsync(Guid companyId, Guid siteId, BookingResponse resp)
     {
-        var docs = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == resp.BookingNumber)
+        // ฝ่ายค้านรอบ 207 ข้อ 3: เลขการจองซ้ำข้ามเว็บได้ ⇒ ขอบเขตเดียวกับตอนลงรับชำระ
+        var docs = await BookingDocumentsQuery(companyId, resp.BookingNumber, resp.ErpDocumentId)
             .OrderBy(d => d.CreatedAt)
             .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.TotalAmount, d.BalanceDue, d.IsDeposit })
             .ToListAsync();

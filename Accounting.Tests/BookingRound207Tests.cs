@@ -50,7 +50,8 @@ public class BookingRound207Tests
     public void ค่าเริ่มต้นของ_enum_ใหม่_เท่ากับพฤติกรรมเดิม()
     {
         Assert.Equal(BookingRecommendStrategy.LeastLoadedDay, default(BookingRecommendStrategy));
-        Assert.Equal(BookingCompletionDocument.Auto, default(BookingCompletionDocument));
+        // ฝ่ายค้านรอบ 207 ข้อ 2: ค่าเริ่มต้น = ไม่ออกเอกสารตอนเสร็จ (เดิม) — ไซต์เดิม (DEFAULT 0) ไม่เปลี่ยนพฤติกรรม
+        Assert.Equal(BookingCompletionDocument.None, default(BookingCompletionDocument));
         Assert.Equal(BookingFieldRequirement.Optional, default(BookingFieldRequirement));
     }
 
@@ -301,8 +302,22 @@ public class BookingRound207Tests
         Assert.Contains("ใบเสร็จรับเงิน", appt.OnComplete);
         Assert.Contains("ใบแจ้งหนี้", appt.OnComplete);
         var none = BookingDocumentFlow.Describe(BookingInvoiceTiming.TaxInvoiceAtBooking, BookingCompletionDocument.None, vatRegistered: true);
-        Assert.Equal("ไม่ออกเอกสาร", none.Single(r => r.BookingType == nameof(BookingType.Appointment)).OnComplete);
+        var noneAppt = none.Single(r => r.BookingType == nameof(BookingType.Appointment)).OnComplete;
+        Assert.Contains("ไม่รับชำระ ⇒ ไม่ออกเอกสาร", noneAppt);   // ค่าเดิม: ปุ่มเสร็จเฉย ๆ ไม่ออก
+        Assert.Contains("รับชำระครบ ⇒ ใบกำกับภาษี", noneAppt);     // รับชำระตอนเสร็จ = ออกเอกสารรับเงินเสมอ
         Assert.Equal(Enum.GetNames<BookingCompletionDocument>().OrderBy(x => x), BookingDocumentFlow.CompletionOptions().Select(o => o.Value).OrderBy(x => x));
+    }
+
+    [Fact]
+    public void ข้อความออกเอกสาร_ใบเสร็จขายสดไม่บอกว่ายังไม่รับชำระ_ใบกำกับคงข้อความเดิม()
+    {
+        var r = BookingInvoiceTimingPolicy.IssuedNotice(BookingInvoiceEvent.ServiceCompleted, "RC-1", DocumentType.Receipt, new DateTime(2026, 11, 2));
+        Assert.Contains("ใบเสร็จรับเงิน", r);
+        Assert.DoesNotContain("ยังไม่ได้บันทึกรับชำระ", r);
+        var t = BookingInvoiceTimingPolicy.IssuedNotice(BookingInvoiceEvent.ServiceCompleted, "TIV-1", DocumentType.TaxInvoice, new DateTime(2026, 11, 2), datedOnPayment: true);
+        Assert.Contains("ยังไม่ได้บันทึกรับชำระ", t);
+        Assert.Contains("วันที่รับเงิน", t);
+        Assert.Contains("วันที่บันทึกให้บริการเสร็จ", BookingInvoiceTimingPolicy.IssuedNotice(BookingInvoiceEvent.ServiceCompleted, "TIV-1", DocumentType.TaxInvoice, new DateTime(2026, 11, 2)));
     }
 
     // ═════════ BookingProviderReport (ข้อ 4) ═════════
@@ -343,7 +358,7 @@ public class BookingRound207Tests
     [InlineData(false, 7, null, 0)]      // ไม่จด VAT ⇒ 0 เสมอ
     [InlineData(true, 7, null, 7)]       // ไม่ผูกสินค้า ⇒ อัตราบริษัท (เดิม)
     [InlineData(true, 7, 7, 7)]
-    [InlineData(true, 7, 0, 0)]          // สินค้า 0% ⇒ 0
+    [InlineData(true, 7, 0, 7)]          // ฝ่ายค้านข้อ 8: 0 บนสินค้ากำกวม (สร้างตอนยังไม่จด VAT) ⇒ อัตราบริษัท ไม่ใช่ 0%
     [InlineData(true, 7, -1, -1)]        // สินค้ายกเว้น VAT ⇒ ยกเว้น
     public void อัตราVATบรรทัดการจอง_ตามสินค้าที่ผูก(bool vat, double company, double? product, double expected)
         => Assert.Equal((decimal)expected, BookingProductLink.VatRate(vat, (decimal)company, product is null ? null : (decimal)product.Value));

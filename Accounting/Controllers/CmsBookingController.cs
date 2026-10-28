@@ -43,6 +43,8 @@ public class CmsBookingController : ControllerBase
         // all=true (บริการที่ปิดไว้ด้วย) เฉพาะผู้เรียกที่ล็อกอิน (หน้า CMS — TenantAccessMiddleware ตรวจสิทธิ์บริษัทแล้ว) · ผู้เยี่ยมชมเห็นเฉพาะที่เปิด
         var includeInactive = all && User.Identity?.IsAuthenticated == true;
         var result = await _bookingService.GetServicesAsync(companyId, siteId, includeInactive);
+        // รอบ 207 (ฝ่ายค้านข้อ 10): ผู้เยี่ยมชมไม่เห็นรหัสสินค้า/คำเตือนราคาภายใน
+        if (User.Identity?.IsAuthenticated != true) result = BookingServicePublicView.Strip(result);
         return Ok(new ApiResponse<List<BookingServiceResponse>>(true, result));
     }
 

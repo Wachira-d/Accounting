@@ -562,7 +562,7 @@
               <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><strong>${money(b.totalAmount)}</strong></div>
               <div style="display:flex;justify-content:space-between"><span>รับแล้ว</span><span>${money(b.paidAmount)}</span></div>
               <div style="display:flex;justify-content:space-between"><span>ยอดค้าง</span><strong style="color:#b45309">${money(p.amountDue)}</strong></div>
-              <div style="margin-top:6px">🧾 เอกสารที่จะออก: <strong>${Layout.esc(p.documentLabel || 'ไม่ออกเอกสาร')}</strong></div>
+              <div style="margin-top:6px">🧾 เอกสารที่จะออก: <strong id="cpDocLabel">${Layout.esc((p.canCollectPayment ? p.documentLabel : p.documentLabelNoPayment) || 'ไม่ออกเอกสาร')}</strong></div>
               ${p.explanation ? `<div style="font-size:12px;color:var(--gray-600)">${Layout.esc(p.explanation)}</div>` : ''}
             </div>
             ${p.canCollectPayment ? `
@@ -600,6 +600,10 @@
         const f = document.getElementById('cpFields');
         if (!on || !f) return;
         f.style.display = on.checked ? '' : 'none';
+        // ป้ายเอกสารสองกรณีมาจากเซิร์ฟเวอร์ (CompletionPlan) — รับชำระ = ออกเอกสารรับเงินเสมอ · ไม่รับ = ตามค่าตั้งของเว็บ
+        const p = (this._complete || {}).plan || {};
+        const lbl = document.getElementById('cpDocLabel');
+        if (lbl) lbl.textContent = (on.checked ? p.documentLabel : p.documentLabelNoPayment) || 'ไม่ออกเอกสาร';
         const m = document.getElementById('cpMethod').value;
         document.getElementById('cpBankWrap').style.display = m === 'Cash' ? 'none' : '';
       },

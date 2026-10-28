@@ -276,9 +276,12 @@ public static class BookingInvoiceTimingPolicy
     }
 
     /// <summary>ข้อความหลังออกใบสำเร็จ (ตอบผู้กด + ประทับบนการจอง) — บอกเฉพาะสิ่งที่ระบบทำจริง (ยังไม่ได้บันทึกรับชำระ)</summary>
-    public static string IssuedNotice(BookingInvoiceEvent ev, string documentNumber, DocumentType type, DateTime documentDate)
-        => $"ออก{(type == DocumentType.TaxInvoice ? "ใบกำกับภาษี" : "ใบแจ้งหนี้")} {documentNumber} ลงวันที่ {documentDate:dd/MM/yyyy} "
-           + (ev == BookingInvoiceEvent.PaymentReceived ? "(วันที่รับเงินที่ระบุ)" : "(วันที่บันทึกให้บริการเสร็จ)")
+    public static string IssuedNotice(BookingInvoiceEvent ev, string documentNumber, DocumentType type, DateTime documentDate, bool datedOnPayment = false)
+        => type == DocumentType.Receipt
+            // รอบ 207 (ฝ่ายค้านข้อ 7): ใบเสร็จรับเงินขายสด = รับเงินครบในตัว — ข้อความเดิม "ยังไม่ได้บันทึกรับชำระ" ไม่จริงสำหรับใบนี้
+            ? $"ออกใบเสร็จรับเงิน {documentNumber} ลงวันที่ {documentDate:dd/MM/yyyy} (วันที่รับเงิน) · รับเงินครบในตัว (ขายสด)"
+            : $"ออก{(type == DocumentType.TaxInvoice ? "ใบกำกับภาษี" : "ใบแจ้งหนี้")} {documentNumber} ลงวันที่ {documentDate:dd/MM/yyyy} "
+           + (ev == BookingInvoiceEvent.PaymentReceived || datedOnPayment ? "(วันที่รับเงินที่ระบุ)" : "(วันที่บันทึกให้บริการเสร็จ)")
            + " · ยังไม่ได้บันทึกรับชำระ — บันทึกรับชำระที่หน้าเอกสารนั้นเมื่อได้รับเงิน";
 
     /// <summary>หมายเหตุบนการจอง/ใบยืนยันการจอง เมื่อโหมด (ข) ออกใบเสนอราคาแทนใบกำกับตอนจอง</summary>

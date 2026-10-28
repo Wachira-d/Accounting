@@ -69,7 +69,7 @@ public static class BookingEngineMigration
         """CREATE INDEX IF NOT EXISTS "IX_SiteBookingResourceSlots_ResourceId" ON "SiteBookingResourceSlots" ("ResourceId");""",
 
         // รอบ 207: ผู้ให้บริการ (เปิด/ปิด · ตรรกะแนะนำ · คนหลัก/ลำดับ · ผูกพนักงาน) · ฟอร์มจอง · เอกสารตอนเสร็จ ·
-        // ผู้ให้บริการหลายคนต่อการจอง — NULL/DEFAULT = พฤติกรรมเดิมทุกตัว (ProviderAllocationEnabled NULL ⇒ ตัดสินจากข้อมูลเดิม)
+        // ผู้ให้บริการหลายคนต่อการจอง — NULL/DEFAULT = พฤติกรรมเดิมทุกตัว (ProviderAllocationEnabled NULL ⇒ ตัดสินจากข้อมูลเดิม · CompletionDocument 0 = ไม่ออก)
         """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "ProviderAllocationEnabled" boolean NULL;""",
         """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "ProviderRecommendStrategy" integer NOT NULL DEFAULT 0;""",
         """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "FormFieldsJson" text NULL;""",

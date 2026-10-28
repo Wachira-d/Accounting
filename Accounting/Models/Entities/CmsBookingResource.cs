@@ -39,8 +39,8 @@ public class SiteBookingSettings : TenantEntity
     public BookingRecommendStrategy ProviderRecommendStrategy { get; set; } = BookingRecommendStrategy.LeastLoadedDay;
     /// <summary>ช่องบังคับ/ไม่บังคับ/ซ่อนของฟอร์มจอง (JSON · <c>Helpers/BookingFormFields</c>) · null = ค่าเดิม (ชื่อ+เบอร์บังคับ · อีเมล/หมายเหตุไม่บังคับ)</summary>
     public string? FormFieldsJson { get; set; }
-    /// <summary>เอกสารตอนให้บริการเสร็จของบริการแบบนัดหมาย (<c>BookingInvoiceTimingPolicy</c>) · 0 = อัตโนมัติตามสถานะ VAT</summary>
-    public BookingCompletionDocument CompletionDocument { get; set; } = BookingCompletionDocument.Auto;
+    /// <summary>เอกสารตอนกดเสร็จ (ไม่รับชำระ) ของบริการแบบนัดหมาย (<c>BookingInvoiceTimingPolicy</c>) · 0 = ไม่ออก (เดิม) · เจ้าของเปิด Auto เอง</summary>
+    public BookingCompletionDocument CompletionDocument { get; set; } = BookingCompletionDocument.None;
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>

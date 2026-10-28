@@ -32,12 +32,12 @@ public partial class CmsBookingService
             if (_productService == null)
                 throw new BusinessRuleException("สร้างสินค้า/บริการจากหน้านี้ไม่ได้ — สร้างที่หน้าสินค้าแล้วเลือกผูก", BookingProductLink.RuleCode);
             var codes = await _db.Products.AsNoTracking().Where(p => p.CompanyId == companyId).Select(p => p.Code).ToListAsync();
-            var (vatRegistered, defaultRate) = await CompanyVatStatus.ProfileAsync(_db, companyId);
+            var (_, defaultRate) = await CompanyVatStatus.ProfileAsync(_db, companyId);
             var created = await _productService.CreateAsync(companyId, new CreateProductRequest(
                 Code: BookingProductLink.NextCode(codes), Name: svc.Name, NameEn: svc.NameEn, Description: svc.Description,
                 ProductType: ProductType.Service, SKU: null, Barcode: null, Category: svc.Category, Unit: "ครั้ง",
                 SellingPrice: svc.Price, CostPrice: 0m,
-                VatRate: OutputVatRate.ForCompany(vatRegistered, defaultRate) > 0m ? defaultRate : 0m,
+                VatRate: defaultRate > 0m ? defaultRate : 7m,   // อัตราปกติเสมอ — บริษัทไม่จด VAT ได้ 0 ที่ด่านบริษัท (BookingProductLink) ไม่ใช่ที่สินค้า
                 IsVatIncluded: true));   // ราคาบนเว็บเป็นราคารวม VAT (PricesIncludeVat ของเอกสารการจอง)
             productId = created.Id;
         }

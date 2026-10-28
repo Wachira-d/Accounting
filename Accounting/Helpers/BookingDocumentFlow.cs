@@ -15,10 +15,10 @@ public static class BookingDocumentFlow
 
     public static IReadOnlyList<Option> CompletionOptions() => new[]
     {
-        new Option(nameof(BookingCompletionDocument.Auto), "ออกเอกสารอัตโนมัติตอนให้บริการเสร็จ (แนะนำ)",
-            "บริการแบบนัดหมาย: จด VAT ⇒ ใบกำกับภาษี (รับเงินแล้ว = ใบกำกับภาษี/ใบเสร็จรับเงิน) · ไม่จด VAT ⇒ รับเงินครบตอนเสร็จ = ใบเสร็จรับเงิน · ยังไม่รับ = ใบแจ้งหนี้"),
-        new Option(nameof(BookingCompletionDocument.None), "ไม่ออกเอกสารตอนเสร็จ (ออกเองที่หน้าเอกสาร/POS)",
-            "ใบยืนยันการจองยังคงเดิม · ตอนเสร็จไม่ออกเอกสารและบันทึกรับเงินจากหน้านี้ไม่ได้"),
+        new Option(nameof(BookingCompletionDocument.None), "ไม่ออกเอกสารเมื่อกดเสร็จโดยไม่รับชำระ (ค่าเริ่มต้น · เหมาะกับร้านที่เก็บเงินที่ POS)",
+            "ใบยืนยันการจองคงเดิม · ถ้ากด \"เสร็จสิ้น + รับชำระ\" ระบบยังออกเอกสารรับเงินให้ (จด VAT ⇒ ใบกำกับภาษี · ไม่จด VAT รับครบ ⇒ ใบเสร็จรับเงิน)"),
+        new Option(nameof(BookingCompletionDocument.Auto), "ออกเอกสารทุกครั้งที่ให้บริการเสร็จ",
+            "แม้ยังไม่รับชำระ: จด VAT ⇒ ใบกำกับภาษี (ตั้งลูกหนี้) · ไม่จด VAT ⇒ ใบแจ้งหนี้ · รับเงินครบตอนเสร็จ (ไม่จด VAT) ⇒ ใบเสร็จรับเงิน"),
     };
 
     public static string TypeLabel(BookingType t) => t switch
@@ -73,12 +73,13 @@ public static class BookingDocumentFlow
                 var linked = booked.DocumentType;
                 var done = BookingInvoiceTimingPolicy.Decide(new BookingInvoiceFacts(type, timing, BookingInvoiceEvent.ServiceCompleted,
                     linked, linked == null ? null : DocumentStatus.Approved, false, vatRegistered, Completion: completion));
+                // "เสร็จสิ้น + รับชำระ" = ตั้งใจรับเงิน ⇒ ออกเอกสารรับเงินเสมอ (ตัวเดียวกับ LoadInvoiceFactsAsync collectingPayment)
                 var paidNow = BookingInvoiceTimingPolicy.Decide(new BookingInvoiceFacts(type, timing, BookingInvoiceEvent.ServiceCompleted,
-                    linked, linked == null ? null : DocumentStatus.Approved, false, vatRegistered, Completion: completion, PaidInFullNow: true));
+                    linked, linked == null ? null : DocumentStatus.Approved, false, vatRegistered, Completion: BookingCompletionDocument.Auto, PaidInFullNow: true));
                 var a = Label(done); var b = Label(paidNow);
-                onComplete = a == null
-                    ? (done.Action == BookingInvoiceAction.AlreadyIssued ? "ใช้เอกสารที่ออกไว้แล้ว + รับชำระได้" : "ไม่ออกเอกสาร")
-                    : a == b ? a + " + รับชำระได้" : $"รับเงินครบตอนเสร็จ ⇒ {b} · ยังไม่รับ/รับบางส่วน ⇒ {a}";
+                var noPay = a ?? (done.Action == BookingInvoiceAction.AlreadyIssued ? "ใช้เอกสารที่ออกไว้แล้ว" : "ไม่ออกเอกสาร");
+                var withPay = b ?? (paidNow.Action == BookingInvoiceAction.AlreadyIssued ? "ใช้เอกสารที่ออกไว้แล้ว" : "ไม่ออกเอกสาร");
+                onComplete = $"เสร็จ + รับชำระครบ ⇒ {withPay} · เสร็จโดยไม่รับชำระ ⇒ {noPay}";
             }
             var onCancel = type switch
             {

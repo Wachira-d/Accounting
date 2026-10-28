@@ -507,8 +507,10 @@ public class BookingProviderReportResponse
 /// <summary>รอบ 207: แผนตอนเสร็จสิ้น (server ประกอบจาก BookingInvoiceTimingPolicy + ยอดค้าง)</summary>
 public class BookingCompletionPlanDto
 {
-    /// <summary>เอกสารที่จะออกตอนกดเสร็จ (ป้ายไทย) · null = ไม่ออก</summary>
+    /// <summary>เอกสารที่จะออกตอนกดเสร็จ + รับชำระ (ป้ายไทย) · null = ไม่ออก</summary>
     public string? DocumentLabel { get; set; }
+    /// <summary>เอกสารที่จะออกถ้ากดเสร็จโดยไม่รับชำระ (ตามค่าตั้ง CompletionDocument ของเว็บ)</summary>
+    public string? DocumentLabelNoPayment { get; set; }
     public string? Explanation { get; set; }
     /// <summary>ยอดที่ยังต้องเก็บ (ราคาเต็ม − ที่รับแล้ว) — ค่าเริ่มต้นของช่องยอดในหน้าต่างชำระเงิน</summary>
     public decimal AmountDue { get; set; }
