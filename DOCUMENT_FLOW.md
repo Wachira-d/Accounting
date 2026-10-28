@@ -5811,7 +5811,7 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 - **ออเดอร์หน้าเว็บ (รอบ 206 · ข้อ 165 ก/ข)**: VAT ค่าจัดส่งบิลหลายอัตราตามค่าตั้งร้าน `ShippingVatAllocation` (ตรึงบนออเดอร์ · `BuildOrderErpLines` แบ่งบรรทัดต่ออัตรา · ค่าเริ่มต้นอัตราสูงสุดเดิม) · ยกเลิกออเดอร์หลังมัดจำ ⇒ ริบตาม `DepositForfeitOnCancelPercent` ผ่าน `RealizeDepositAsync(ForfeitAs)` ก่อน `CancelNotice` (null = ไม่ริบ เดิม · คืนยังเป็นงานคน)
 - **ออเดอร์หน้าเว็บ**: (R-06) สลิปรอตรวจ ⇒ ช่องจ่ายออนไลน์ปิดชั่วคราวพร้อมเหตุผล (`GatewayPaymentRecord.PendingSlipBlocksOnlineNote` · resolver + `OrderResponse.OnlinePaymentBlockedNote`) · (R-07) ยกเลิกออเดอร์ที่ใบกำกับมีการชำระผูก ⇒ `Helpers/SiteOrderCancelPlan` ⇒ ร่างใบลดหนี้เต็มใบอ้างใบเดิม (Adjustment · ไม่อนุมัติ — คืนเงินแล้วจึงอนุมัติ) + `[ERP-CN-DRAFT]` ชี้รายการชำระที่ต้องคืน · ใบไม่มีชำระ ⇒ void เส้นเดิม
 
-_Last verified against codebase: 2026-10-28 (รอบ 205 แพ็ก W2 — ผู้ประสานงาน · ยังไม่ผ่านฝ่ายค้าน · commit 05fe77ff (+แก้ CI 42c03a86 · 4bd84ebc — CI 40708272765 เขียว) · รอบ 206 เลื่อนนัด/R-31/R-32 commit 02aa14da (+แก้คอมไพล์ 4327916f · 6dda57d6))_
+_Last verified against codebase: 2026-10-28 (รอบ 205 แพ็ก W2 — ผู้ประสานงาน · ยังไม่ผ่านฝ่ายค้าน · commit 05fe77ff (+แก้ CI 42c03a86 · 4bd84ebc — CI 40708272765 เขียว) · รอบ 206 เลื่อนนัด/R-31/R-32 commit 02aa14da (+แก้คอมไพล์ 4327916f · 6dda57d6 — CI 40723321274 เขียว · PR #5 merge 9c5680d7))_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
