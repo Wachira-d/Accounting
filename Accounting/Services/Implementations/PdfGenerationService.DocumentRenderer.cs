@@ -949,6 +949,13 @@ public partial class PdfGenerationService
             }
             else
                 Row(printTotals.NetLabel, printTotals.Grand.ToString("N2"), total: true);
+            // ทีม U 2026-10-26: หักหลัง VAT → แถวหัก + "ยอดชำระ" (ตัวตั้งเดียวกับ HTML renderer ใน PdfGenerationService — ห้าม drift)
+            if (doc.PostVatDeductionAmount > 0m)
+            {
+                Row(L.TotalPostVatDeduction, $"({doc.PostVatDeductionAmount:N2})");
+                Row(L.TotalAmountDueAfterDeduction,
+                    Accounting.Helpers.PostVatDeduction.AmountDue(printTotals.Grand - doc.DepositAppliedAmount, doc.PostVatDeductionAmount).ToString("N2"), total: true);
+            }
         });
 
         // มัดจำ VAT พักรอ — แจ้งชัดว่าไม่ใช่ใบกำกับภาษี (ใบกำกับออกตอนใช้บริการ)

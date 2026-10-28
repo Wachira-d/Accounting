@@ -2356,6 +2356,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         }
         else
             sb.AppendLine($"<div class='sum-row total'><span>{printTotals.NetLabel}</span><span>{printTotals.Grand:N2}</span></div>");
+        // ทีม U 2026-10-26: หักหลัง VAT (ส่วนลด/คูปองหลังยอดรวม — ฐาน/VAT คงตามใบ) → แถวหัก + "ยอดชำระ" ใต้ยอดสุทธิ · ตัวตั้ง Helpers/PostVatDeduction.AmountDue ·
+        // คู่กับ QuestPDF renderer (PdfGenerationService.DocumentRenderer) ห้าม drift
+        if (doc.PostVatDeductionAmount > 0m)
+        {
+            sb.AppendLine($"<div class='sum-row'><span>{L.TotalPostVatDeduction}</span><span>({doc.PostVatDeductionAmount:N2})</span></div>");
+            sb.AppendLine($"<div class='sum-row total'><span>{L.TotalAmountDueAfterDeduction}</span><span>{Accounting.Helpers.PostVatDeduction.AmountDue(printTotals.Grand - doc.DepositAppliedAmount, doc.PostVatDeductionAmount):N2}</span></div>");
+        }
 
         if (template.ShowAmountInWords)
         {

@@ -2631,6 +2631,13 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
      (net = −ส่วนต่าง · `PaymentSettlementAdjustment.MatchTolerance` 0.005) + ขาเงินสดตามส่วนต่างที่ `moneyAccount` เดียวกับขาเงินสดหลัก ·
      ไม่มีบรรทัดปรับ = `BusinessRuleException` พร้อมทางไปต่อ · ใบที่ช่องนี้ไม่มีผล (ไม่จ่ายในตัว) = ปฏิเสธตั้งแต่บันทึก
      (`ActualPaidNotApplicableReason` · PV ที่มี RelatedDocumentId ลงเงินสดเสมอแม้ PaymentType=Credit — `PostsCashAtApproval(settlesSourceDocument)`) (§3.4)
+   - **หักหลัง VAT** (`PostVatDeductionAmount` > 0 · ทีม U 2026-10-26 — ใบ Shopee 536 · "ส่วนลดพิเศษ 98" หลัง VAT · ชำระ 438) → ขา **Cr ผังที่เลือก**
+     (`PostVatDeductionAccountId` → 51150 ส่วนลดรับ ถ้าบริษัทมี → ผังค่าใช้จ่ายของบรรทัดยอดสูงสุด (ตัวอย่างผู้ใช้ Cr 52120) — `ResolvePostVatDeductionAccountAsync`) ·
+     ฐาน/VAT คงตามใบ · เดินผ่าน adjusting-line path เดิม: นับรวมใน Dr/Cr ก่อน `CheckDocumentLines` (ส่วนต่างขาเงินสด = หัก ⇒ สมดุล) ·
+     ติ๊ก **แยกยอดจ่ายจริงตามแหล่ง** (`PaymentSourceSplitJson` · `Helpers/PaymentSourceSplit.JournalLines`): หัก = Cr ผังนั้น · เงินจากแหล่งอื่นที่ไม่ใช่ "จ่ายจาก" = Dr แหล่งหลัก / Cr แหล่งนั้น (net-zero) ·
+     **ด่านกันปล่อยผ่าน** (คำสั่งผู้ใช้ "ระบบไม่ควรปล่อยให้ยอดภาษีไม่ตรง"): ต้นทาง `AutoPostToJournalAsync` — เอกสารฝั่งซื้อ (PV/PI/Expense · ไม่ใช่บริการต่างประเทศ) ที่
+     Σ VAT ต่ออัตรา ≠ round(Σ ฐาน × อัตรา) เกิน ฿1 (`PostVatDeduction.VatConsistencyError` · PV-202610-0040: ฐาน 402.93 / VAT 35.07 ⇒ บล็อก) = `BusinessRuleException POST-VAT-DEDUCTION`
+     พร้อมทางไปต่อ (ใส่ช่องหักหลัง VAT / แก้ยอดบรรทัด) · ใบปกติ/เศษปัดสตางค์/หลายอัตรา/ยกเว้น/ชำระบางส่วน ผ่านเหมือนเดิม (`PostVatDeductionTests` ครึ่งที่ 2)
    - **ผลต่างปัดเศษ** (`RoundingAdjustment` ≠ 0) → ขา **54960** เฉพาะเมื่อความไม่สมดุลเท่ากับผลต่างที่ประกาศ**พอดี** (ไม่งั้นด่านสมดุลเดิมฟ้อง) ·
      ทิศตามเครื่องหมายผลต่างและฝั่งเอกสาร (ใบซื้อ −0.01 = Cr · ใบขาย −0.01 = Dr) · ไม่มีผัง 54960 = `BusinessRuleException` บอกทางไปต่อ (§6.2j)
 8. **Stock movements** (`:1794` → `ApplyStockMovementsAsync`) —
@@ -2858,6 +2865,25 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   DOM ล้วน) · ⚠️ ตัวจับคู่ statement ธนาคารยังเทียบยอดเอกสาร (536 ≠ 438) · พรีวิว JE ก่อนอนุมัติยังไม่รวมบรรทัดปรับ/ขาส่วนต่าง/ขาปัดเศษ (backlog) ·
   `RoundingAdjustment`/`ActualPaidAmount` ไม่สืบทอดไป PV ที่แปลงจาก PI (เป็นของเหตุการณ์จ่าย) · ผัง 51150 มีเฉพาะบริษัทที่มี 11500 + บริษัทใหม่
   (บริษัทเก่าที่ไม่มี = ข้อความ "ไม่พบผังบัญชี 51150")
+- **หักหลัง VAT — ช่องระดับเอกสาร (ทีม U 2026-10-26 · ผู้ใช้รายงานใบ Shopee INV2026090199 / PV-202610-0040)**: ส่วนลด/คูปอง/voucher ที่ลดจาก
+  "รวมทั้งสิ้น" **หลัง**คิด VAT ⇒ `Document.PostVatDeductionAmount` + `PostVatDeductionAccountId` (ตัวตั้ง `Helpers/PostVatDeduction`) · ยอดชำระ = TotalAmount − หัก ·
+  **ความจริงเดียวกับ `ActualPaidAmount`**: ไม่ส่งยอดชำระจริง ⇒ ตั้งให้ = ยอดชำระ · ส่งมาไม่ตรง ⇒ 400 (`Resolve` — ด่านข้อ 4) ⇒ ขาเงินสด/บรรทัดปรับใช้กลไกรอบ 193 เดิมทั้งหมด ·
+  ฝั่งขาย/เงินเชื่อ PV/บริการต่างประเทศ = ปฏิเสธพร้อมทางไปต่อ (ไม่ใช่ silent no-op) · ผัง: รหัส → id · ห้ามผังเงินสด · null = 51150/ผังค่าใช้จ่ายหลักตอนอนุมัติ ·
+  เส้นสร้าง/แก้ไข `ApplyPostVatDeductionAsync` ตัวเดียว (หลัง TotalAmount) · echo `PostVatDeductionAmount/AccountId/AmountDueAfterPostVatDeduction/PaymentSources` ·
+  ฟอร์ม `fPostVatDeductionAmount` + `fPostVatDeductionAccountCode` (datalist ผัง) + แถว "ยอดชำระ (หลังหัก)" (แสดงผล) · hydrate/reset ครบ · renderer ×2 แถว "หัก ส่วนลด/คูปองหลังภาษี" + "ยอดชำระ"
+  (`DocumentLabels.TotalPostVatDeduction/TotalAmountDueAfterDeduction`) · สืบทอด PI/Expense → PV ที่ยกครบทุกบรรทัดเท่านั้น (`PostVatDeduction.Inherit` — ดูข้างล่าง) ·
+  **ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง"** (`fPaySplitEnabled` → `PaymentSources[]` {Kind Money|PostVatDeduction · AccountCode · Amount · Note} → `PaymentSourceSplitJson`):
+  Σ = ยอดรวมทั้งสิ้น (±0.005) · ต้องมีเงิน ≥ 1 บรรทัด · ย่อยเป็น ActualPaid = Σ เงิน / หัก = Σ หัก (`PaymentSourceSplit.Check`) · ผู้ใช้: 21230 เงิน 438 + 52120 หัก 98 = 536 ·
+  **ใบตั้งหนี้** (PI/Expense): ช่องเก็บไว้ · `CreatePaymentAsync` เติมบรรทัดปรับ Cr ผังหักให้เองเมื่อผู้เรียกไม่ส่งบรรทัดปรับและ เงิน + หัก = ยอดค้างพอดี (ยอดอื่น = พฤติกรรมเดิม) ·
+  หน้าบันทึกการชำระเติมเงิน = ยอดชำระหลังหัก + แถว `rpSettle` ให้ล่วงหน้า ·
+  **OCR**: `OcrTotalDecomposer` PostInvoice (ตัวตัดสินเดิม) → `Helpers/OcrPostVatDeduction.FromPlan/FromDecomposition` ⇒ เติมช่องหัก (ยอดใบ − ยอดชำระ · ผัง 51150 ถ้ามี) + แท็ก `[POST-VAT-DEDUCTION]`
+  (ปลด `[PAY≠TOTAL]` ใน `OcrPostingReadiness`) — **แทน** adjusting lines 51120/51150 ของรอบ 193 **เฉพาะ "ส่วนลดล้วน"** (ทุกรายการปรับเป็นลบ · ยอดชำระ < ยอดใบ) ·
+  **ข้อยกเว้น (ฝ่ายค้านทีม U ข้อ 2)**: รายการปรับผสม (ใบ U จริง: ค่าจัดส่ง +37 / voucher −135) ไม่ยุบ — ค่าส่งต้องอยู่ 51120 ⇒ คงเส้นรอบ 193 (adjusting lines) · จ่ายมากกว่าใบ (ค่าส่งล้วน) = ทางเดิม ·
+  **ด่าน VAT ข้ามบรรทัดที่ VAT เป็นค่าปัดของตัวเอง** (±0.01 — เทียบเท่า `VatAmountOverride` ที่ `ReconcileTaxRounding` ข้าม · Settlement PV 300 รายการผ่าน — `FindVatInconsistency`) ·
+  **แยกยอดเงินล้วน** (ไม่มีหัก · Σ เงิน = ยอดรวม) ⇒ ขาย้ายแหล่งจ่ายยังลงจริง (net-zero) ไม่ใช่เก็บแล้วเงียบ · ผังหักตัดสิน**ตอนบันทึก** (ChangeTracker lines) เก็บ `PostVatDeductionAccountId` ไว้ ·
+  **สืบทอด** PI/Expense → PV ที่ยกครบทุกบรรทัด (`PostVatDeduction.Inherit` · ยอดชำระจริงคิดใหม่จากช่อง) · **ล็อกหลังอนุมัติ** (เปลี่ยนค่า = 400 · ส่งค่าเดิม = ผ่าน) · พรีวิว `OcrLinePreviewResponse.PostVatDeductionAmount/AccountCode` ⇒ เส้น "แก้ในฟอร์มก่อน" ยกช่องนี้ไปได้ (เดิมใบสำคัญจ่ายผ่านฟอร์มไม่มีขาส่วนต่างเลย) ·
+  ส่วนลดก่อน VAT (Rapbizz/Lazada เคส C/F/G) ไม่ถูกจับ (`OcrPostVatDeductionTests` ทิศตรงข้าม) ·
+  **ข้อมูลเก่าที่ลงผิดแล้ว**: รายงานตรวจข้อมูล §"เอกสารฝั่งซื้อที่ภาษีซื้อไม่ตรงกับฐาน × อัตรา" (`DataIntegrityReport.PurchaseVatInconsistentWithBase` · อ่านอย่างเดียว · 24 เดือน · ตัวตัดสินเดียวกับด่านอนุมัติ)
 - WHT cert auto-issue (`WithholdingTaxCertService` — ถ้ามี WHT บนใบ)
 - **ภาษีหัก ณ ที่จ่ายของงวด = ยอดแนะนำหลังหักใบลดหนี้ซื้อ (ทีม A · 2a · 2026-10-13 · คำสั่งเจ้าของ "ไม่ล็อคตายตัว แนะนำให้ได้มากที่สุด")** —
   ตัวคิดเดียว `Helpers/WhtPaymentSuggestion.Compute` (pure) เรียกผ่าน `SuggestPaymentWhtAsync` จาก `CreatePaymentAsync` · `CreateMultiDocPaymentAsync` (ต่อแถวจัดสรร) ·

@@ -14,7 +14,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **657 ไฟล์ · 6,559 `[Fact]` + 1,064 `[Theory]` (4,943 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **660 ไฟล์ · 6,591 `[Fact]` + 1,067 `[Theory]` (4,952 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 
@@ -4945,6 +4946,7 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | `DepositBaseSplitMigrationTests` (4) · `DepositPolicyResolverTests` (+1 Theory 10 เคส) | L2 (c3820dce) | คำสั่งที่แตะ `DepositBaseDeducted` มีคำสั่งเดียว · ลำดับ ล็อก → ตรวจคอลัมน์ → ออก → สร้าง → ย้าย · ไม่มี `IF NOT EXISTS` ของช่องนี้ · มีหมายเหตุ `[DEPOSIT-BASE-SPLIT]` · ชนิดเอกสาร ขาย/CN/ใบซื้อ + ทิศตรงข้าม "ไม่มีฐาน = ไม่ตรวจ" |
 | `ContactTaxBranchKeyTests` (+ Exact/Fuzzy ตามรูปนิติบุคคล · `TaxIdChecksumWarning_*`) · `AuditHashChainTests` (ข้อความขาดตอน) | C3 (cb552889) · W (960e98cd) | บจก.↔บริษัท…จำกัด = Exact · บจก.↔บมจ./หจก.↔บริษัท/ไม่มีคำบอกรูป = Fuzzy · เลขผิดติดป้ายครั้งเดียว · เลขถูกเงียบ · แก้แล้วประทับใหม่ = ขาดตอน ไม่ฟันธง "ถูกลบ" |
 | `PaymentSettlementAdjustmentTests` · `OcrSettlementProposalTests` · `DocumentRoundingTests` · `OcrBuyerOnPaperTests` · `OcrApprovalGapWarningTests` · `OcrStoredAmountAuditTests` · `EtaxPdfXmlExtractorTests` + `EtaxFixtures` (XML จริง) · `OcrNoItemsNoteTests` · `ApprovalAcknowledgementTests` · `DocumentSignedContentTests` | O1 | Shopee 536/438 · Lazada −0.01 · §82/5(1) · XML จริง Shopee · [Σ-GAP] · รายงานข้อมูลเก่า · แหล่งการรับทราบ · ลายเซ็นลูกค้าใช้ซ้ำเฉพาะเนื้อหาเดิม |
+| `PostVatDeductionTests` (13 + 3 theory) · `PaymentSourceSplitTests` (9) · `OcrPostVatDeductionTests` (5) | U (2026-10-26) | หักหลัง VAT: 536 − 98 = 438 · ยอดชำระจริงไม่ตรง = ปฏิเสธ (ด่านข้อ 4) · ขา Cr 98 + DocumentCashDelta 98 สมดุลผ่าน `CheckDocumentLines` เดิม · **ด่าน VAT ≠ ฐาน × อัตรา**: PV-202610-0040 (402.93 / 35.07) บล็อก พร้อมฐานที่ VAT บอก 501.00 · ทิศตรงข้าม: ฐานถูก 500.93 · เศษปัดสตางค์ · หลายอัตรา/ยกเว้น/0% · ชำระบางส่วนไม่มีหัก ผ่าน · ฝั่งขายปฏิเสธ (→ Settlement) · แยกยอด 21230 438 + 52120 98 = 536 ผ่าน / ไม่ตรง-ไม่มีเงิน-ผังเงินสด ปฏิเสธ / แหล่งอื่น Dr หลัก-Cr แหล่ง net-zero / JSON round-trip · OCR: ใบ U PostInvoice ⇒ หัก 98 ผัง 51150 + รายละเอียด +37/−135 · Lazada ก่อน VAT ⇒ null · จ่ายเกินใบ ⇒ null |
 | `AttachmentPermissionScopeTests` · `AttachmentStorageNoticeTests` · `ClosedPeriodRangesTests` | U2 | สิทธิ์ต่อชนิดไฟล์แนบ · เพดาน = เตือน · คิวงวดที่ยังไม่ปิด |
 | `AttachmentGateOtherEntriesTests` · `AttachmentGateRound2Tests` · `ExpenseClaimEvidencePolicyTests` · `ExpenseClaimActionPolicyTests` · `OcrScanFileDisposalTests` · `OcrScanPostingKeysTests` | S2 | สแกนใช้ด่านเจ้าของไฟล์ · ถัง 50 ทวิ · ใบเบิก SoD · ลบสแกน/ระยะเก็บ · คีย์โมดูลของ register-asset/import-stock |
 | `CompanyVatStatusTests` · `InputVatVehicleRuleTests` · `EtaxAutoIssueScopeTests` · `EtaxAutoFailedNoteTests` · `EtaxSkipIntentAndZeroRatedTests` · `ManualInputVatLineRuleTests` (regex baseline จาก git) · `IntegrationVatSplitTests` · `ProhibitedInputVatScreenerTests`/`ProhibitedInputVatScopeTests` (แก้ wrapper) | V | ธง VAT แถวใหม่ไม่ขัดบริษัท · dealer เคลมได้ · e-Tax ข้ามเฉพาะเจตนา · ใบ 0% = ใบกำกับ · อัตรา −1 ไม่ได้ VAT ติดลบ |
