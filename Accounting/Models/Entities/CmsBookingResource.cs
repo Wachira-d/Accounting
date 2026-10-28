@@ -30,6 +30,17 @@ public class SiteBookingSettings : TenantEntity
     public string? ReminderTemplate { get; set; }
     /// <summary>เปิดให้ลูกค้าจ่ายมัดจำออนไลน์ผ่าน gateway (คำตัดสินเจ้าของ Q5 = ข: ปิดเป็นค่าเริ่มต้น ไซต์เปิดเอง · รอบ 205 W2 R-08)</summary>
     public bool OnlineDepositEnabled { get; set; }
+
+    // ── รอบ 207 (ผู้ให้บริการ · ฟอร์มจอง · เอกสารตอนเสร็จ) ──
+    /// <summary>เปิด "จัดสรรผู้ให้บริการ" ของไซต์ · null = แถวก่อนรอบ 207 ⇒ ตัดสินจากข้อมูลเดิม (มีผู้ให้บริการ/บริการที่ใช้ผู้ให้บริการ = เปิด)
+    /// — ตัวตัดสินเดียว <c>Helpers/BookingProviderAllocation.Enabled</c></summary>
+    public bool? ProviderAllocationEnabled { get; set; }
+    /// <summary>ตรรกะแนะนำ/จัดผู้ให้บริการ (<c>BookingSlotEngine.RankResources</c>) · 0 = งานน้อยสุดของวัน (เดิม)</summary>
+    public BookingRecommendStrategy ProviderRecommendStrategy { get; set; } = BookingRecommendStrategy.LeastLoadedDay;
+    /// <summary>ช่องบังคับ/ไม่บังคับ/ซ่อนของฟอร์มจอง (JSON · <c>Helpers/BookingFormFields</c>) · null = ค่าเดิม (ชื่อ+เบอร์บังคับ · อีเมล/หมายเหตุไม่บังคับ)</summary>
+    public string? FormFieldsJson { get; set; }
+    /// <summary>เอกสารตอนให้บริการเสร็จของบริการแบบนัดหมาย (<c>BookingInvoiceTimingPolicy</c>) · 0 = อัตโนมัติตามสถานะ VAT</summary>
+    public BookingCompletionDocument CompletionDocument { get; set; } = BookingCompletionDocument.Auto;
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>
@@ -44,6 +55,8 @@ public class SiteBookingResource : TenantEntity
     public int Capacity { get; set; } = 1;
     public int SortOrder { get; set; }
     public bool IsActive { get; set; } = true;
+    /// <summary>รอบ 207: ผู้ใช้ระบบ (พนักงาน) ของผู้ให้บริการคนนี้ — POS เติมช่างให้บรรทัด/ค่าคอม · null = ไม่ผูก</summary>
+    public Guid? StaffUserId { get; set; }
 
     public ICollection<SiteBookingResourceService> Services { get; set; } = new List<SiteBookingResourceService>();
     public ICollection<SiteBookingResourceSlot> Slots { get; set; } = new List<SiteBookingResourceSlot>();
@@ -55,6 +68,23 @@ public class SiteBookingResourceService : TenantEntity
     public Guid ResourceId { get; set; }
     public SiteBookingResource Resource { get; set; } = null!;
     public Guid BookingServiceId { get; set; }
+    /// <summary>รอบ 207: คนหลักของบริการนี้ (โหมดแนะนำ "คนหลักก่อน")</summary>
+    public bool IsPrimary { get; set; }
+    /// <summary>รอบ 207: ลำดับความสำคัญต่อบริการ (เลขน้อย = ก่อน · โหมด "ตามลำดับความสำคัญ")</summary>
+    public int Priority { get; set; }
+}
+
+/// <summary>รอบ 207: ผู้ให้บริการที่ลงมือทำการจองนี้จริง (ได้มากกว่า 1 คน) + สัดส่วนงาน % — ตั้งตอน "เริ่มให้บริการ" ·
+/// ผลรวม = 100 (ตัวตรวจเดียว <c>Helpers/BookingProviderShare</c>) · ผู้ให้บริการหลัก (สัดส่วนมากสุด) = <c>SiteBooking.ResourceId</c> ·
+/// คนอื่นกินเวลาว่างของตัวเองด้วย (<c>LoadDayAsync</c>) · รายงาน <c>Helpers/BookingProviderReport</c></summary>
+public class SiteBookingAssignment : TenantEntity
+{
+    public Guid SiteId { get; set; }
+    public Guid BookingId { get; set; }
+    public Guid ResourceId { get; set; }
+    /// <summary>ชื่อ ณ ตอนมอบหมาย (รายงานย้อนหลังยังอ่านได้แม้ลบผู้ให้บริการ)</summary>
+    public string ResourceName { get; set; } = "";
+    public decimal SharePercent { get; set; }
 }
 
 /// <summary>ตารางงานรายบุคคล — เวลาเข้า-ออกงานรายสัปดาห์ · วันหยุด/วันลา (SpecificDate + IsBlocked) · ไม่มีแถว = ว่างตลอดเวลาทำการของบริการ</summary>

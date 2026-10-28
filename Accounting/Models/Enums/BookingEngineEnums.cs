@@ -43,3 +43,38 @@ public enum BookingResourceKind
     Room = 1,
     Equipment = 2,
 }
+
+/// <summary>ตรรกะ "แนะนำ/จัดผู้ให้บริการ" ของไซต์ (รอบ 207 · ตัวตัดสินเดียว <c>Helpers/BookingSlotEngine.RankResources</c>) ·
+/// ทุกโหมดเลือกเฉพาะคนที่ <b>รับบริการนี้ได้ + เข้างาน + ว่าง</b> ก่อนเสมอ แล้วจึงเรียงตามโหมด · ค่า 0 = พฤติกรรมเดิม</summary>
+public enum BookingRecommendStrategy
+{
+    /// <summary>งานน้อยสุดของวันนั้น (นาที) → ลำดับที่ตั้ง — พฤติกรรมเดิม</summary>
+    LeastLoadedDay = 0,
+    /// <summary>กระจายเท่าเทียมสะสมทั้งเดือน (นาทีงานเดือนนี้ + วันนี้) → ลำดับที่ตั้ง</summary>
+    FairShareMonth = 1,
+    /// <summary>หมุนเวียน — คนที่ได้งานล่าสุดนานที่สุดได้ก่อน</summary>
+    RoundRobin = 2,
+    /// <summary>คนหลักของบริการได้ก่อนถ้าว่าง (ติ๊ก "หลัก" ที่ผู้ให้บริการ) → ลำดับความสำคัญ → งานน้อยสุดของวัน</summary>
+    PrimaryFirst = 3,
+    /// <summary>ตามลำดับความสำคัญที่ตั้งต่อบริการ (เลขน้อย = ก่อน) → งานน้อยสุดของวัน</summary>
+    PriorityOrder = 4,
+}
+
+/// <summary>ช่องข้อมูลในฟอร์มจองของลูกค้า (รอบ 207 · ตัวตัดสินเดียว <c>Helpers/BookingFormFields</c>)</summary>
+public enum BookingFieldRequirement
+{
+    Optional = 0,
+    Required = 1,
+    Hidden = 2,
+}
+
+/// <summary>เอกสารที่ออกตอน "ให้บริการเสร็จ" (รอบ 207 · ตัวตัดสินเดียว <c>Helpers/BookingInvoiceTimingPolicy</c>) ·
+/// มีผลกับบริการแบบนัดหมาย (Appointment) และ Lead ที่มียอด — แบบการันตี/ชำระล่วงหน้าเดินเส้นเดิมของตัวเอง</summary>
+public enum BookingCompletionDocument
+{
+    /// <summary>ออกให้อัตโนมัติตามสถานะ VAT: จด VAT ⇒ ใบกำกับภาษี (รับเงินแล้ว = ใบกำกับภาษี/ใบเสร็จรับเงิน) ·
+    /// ไม่จด VAT ⇒ รับเงินตอนเสร็จ = ใบเสร็จรับเงิน · ยังไม่รับ = ใบแจ้งหนี้</summary>
+    Auto = 0,
+    /// <summary>ไม่ออกเอกสารตอนเสร็จ (ออกเองที่หน้าเอกสาร/POS) — พฤติกรรมก่อนรอบ 207 ของบริการแบบนัดหมาย</summary>
+    None = 1,
+}

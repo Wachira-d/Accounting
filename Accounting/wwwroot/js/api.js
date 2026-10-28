@@ -1009,6 +1009,13 @@ const API = {
       cmsRescheduleBooking: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/reschedule`, d || {}),   // รอบ 206
       // รอบ 205 W3 R-16 — เลือก/เปลี่ยนผู้ให้บริการ (resourceId null = ระบบจัดให้)
       cmsAssignBookingResource: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/resource`, d || {}),
+      // รอบ 207 — หน้าทำงานผู้ให้บริการ (เริ่ม/เสร็จ/ผู้ให้บริการหลายคน) · รายงาน · ผูกสินค้าให้บริการจอง
+      cmsBookingProviderCandidates: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/booking/bookings/${id}/provider-candidates`),
+      cmsStartBooking: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/start`, d || {}),
+      cmsSetBookingAssignments: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/assignments`, d || {}),
+      cmsCompleteBooking: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/complete`, d || {}),
+      cmsBookingProviderReport: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/booking/provider-report${q}`),
+      cmsLinkBookingProduct: (siteId, serviceId, d) => API.put(`${base}/cms/sites/${siteId}/booking/services/${serviceId}/product`, d || {}),
 
       // Lodging — ธุรกิจที่พัก (ตั้งค่า + front desk) — ทุก endpoint ใต้ /lodging
       lodgingProperties: () => API.get(`${base}/lodging/properties`),

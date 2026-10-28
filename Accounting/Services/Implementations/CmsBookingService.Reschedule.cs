@@ -63,7 +63,7 @@ public partial class CmsBookingService
                 throw new BusinessRuleException("วันและเวลาเดิม — ไม่มีอะไรเปลี่ยน", RescheduleRuleCode);
 
             var ctx = await LoadDayAsync(companyId, siteId, svc, newDate, excludeBookingId: booking.Id);
-            var requested = svc.ResourceMode == BookingResourceMode.Auto ? null : booking.ResourceId;
+            var requested = ctx.Rules.ResourceMode == BookingResourceMode.Auto ? null : booking.ResourceId;
             var decision = BookingSlotEngine.Decide(ctx.Rules, newDate, start, ctx.Rows, ctx.Occupied,
                 BookingSlotEngine.BangkokNow(now), booking.GuestCount, Math.Max(1, booking.Units), ctx.Resources, requested,
                 ignoreAdvance: !byCustomer);
@@ -78,7 +78,7 @@ public partial class CmsBookingService
                 + (string.IsNullOrWhiteSpace(request.Reason) ? "" : $" · เหตุผล: {request.Reason.Trim()}");
             booking.BookingDate = newDate.ToDateTime(TimeOnly.MinValue);
             booking.StartTime = slot.Start; booking.EndTime = slot.BookedEnd; booking.DurationMinutes = slot.BookedMinutes;
-            booking.ResourceId = slot.ResourceId ?? (svc.ResourceMode == BookingResourceMode.None ? null : booking.ResourceId);
+            booking.ResourceId = slot.ResourceId ?? (ctx.Rules.ResourceMode == BookingResourceMode.None ? null : booking.ResourceId);
             // เตือนก่อนนัดรอบเดิมไม่มีความหมายแล้ว ⇒ ให้ job เตือนรอบใหม่ (BookingReminderPlan อ่าน ReminderSentAt)
             booking.ReminderSent = false; booking.ReminderSentAt = null; booking.NotifyAttemptedAt = null; booking.NotifyLastError = null;
             booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, changeNote);

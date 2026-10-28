@@ -169,6 +169,8 @@ public class SiteBooking : TenantEntity
     public DateTime? ConfirmedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public DateTime? CancelledAt { get; set; }
+    /// <summary>รอบ 207: เวลาเริ่มให้บริการ (กด "เริ่มให้บริการ") · null = การจองก่อนรอบ 207/ยังไม่เริ่ม</summary>
+    public DateTime? StartedAt { get; set; }
 
     // Reminders — ผู้เขียน: Services/Background/BookingReminderJob (รอบ 205 W3 R-12) · ประทับหลังส่งถึงจริงเท่านั้น (F2 #3)
     public bool ReminderSent { get; set; } = false;

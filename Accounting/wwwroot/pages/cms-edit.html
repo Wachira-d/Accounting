@@ -222,7 +222,17 @@
 
     <!-- ====================== BOOKING SERVICES TAB ====================== -->
     <div class="tab-pane" id="tab-booking">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <!-- รอบ 207 (คำขอเจ้าของข้อ 2): เมนูย่อยของแท็บการจอง — เดิมผู้ให้บริการอยู่ท้ายรายการบริการ หาไม่เจอ -->
+      <div class="bs-subnav" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;padding:8px;background:var(--gray-50);border-radius:8px">
+        <a class="btn btn-sm btn-secondary" href="#bkSecServices">🛎️ บริการ</a>
+        <a class="btn btn-sm btn-secondary" href="#bkSecProviders">👥 จัดสรรผู้ให้บริการ</a>
+        <a class="btn btn-sm btn-secondary" href="#bkSecForm">📝 ข้อมูลที่ลูกค้าต้องกรอก</a>
+        <a class="btn btn-sm btn-secondary" href="#bkSecDocs">🧾 เอกสารแต่ละขั้น</a>
+        <a class="btn btn-sm btn-secondary" href="#bkSecSite">⚙️ เวลา/แจ้งเตือน</a>
+        <a class="btn btn-sm btn-primary" id="bkLinkWork" href="/pages/cms-bookings.html">📋 หน้าทำงานการจอง</a>
+        <a class="btn btn-sm btn-primary" id="bkLinkReport" href="/pages/cms-booking-providers.html" style="display:none">📊 สรุปงานผู้ให้บริการ</a>
+      </div>
+      <div id="bkSecServices" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
         <h3 style="font-size:16px;font-weight:600">บริการที่เปิดให้จอง</h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-secondary btn-sm" onclick="Page.openBookingPresets()">เพิ่มจากแม่แบบ (สปา · คลินิก · สนาม · ห้องประชุม · รถเช่า …)</button>
@@ -231,14 +241,56 @@
       </div>
       <div id="bookingServicesList"><div class="text-center text-gray-400" style="padding:30px">กำลังโหลด...</div></div>
 
-      <div style="display:flex;justify-content:space-between;align-items:center;margin:24px 0 10px">
-        <h3 style="font-size:16px;font-weight:600">ผู้ให้บริการ / ห้อง / อุปกรณ์</h3>
-        <button class="btn btn-secondary btn-sm" onclick="Page.openBookingResource()">+ เพิ่ม</button>
-      </div>
+      <!-- รอบ 207 (ข้อ 2/8): สวิตช์จัดสรรผู้ให้บริการของเว็บ + ตรรกะแนะนำ · ตัวตัดสิน BookingProviderAllocation / BookingSlotEngine.RankResources -->
+      <div id="bkSecProviders" style="border:1px solid var(--gray-200);border-radius:10px;padding:14px 16px;margin:24px 0 10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <h3 style="font-size:16px;font-weight:600;margin:0">👥 จัดสรรผู้ให้บริการ / ห้อง / อุปกรณ์</h3>
+          <label style="font-size:14px;font-weight:600"><input type="checkbox" id="bssProvidersEnabled" onchange="Page.bssProvidersToggle()"> เปิดใช้การจัดสรรผู้ให้บริการ</label>
+        </div>
+        <div class="bs-hint" style="margin-top:4px">เปิดแล้ว: กด "เริ่มให้บริการ" ที่หน้าทำงานจะให้เลือกผู้ให้บริการที่ว่าง (ได้หลายคน + แบ่ง % งาน) · มีหน้าสรุปงาน/รายงานผู้ให้บริการ ·
+          บริการแต่ละอันเลือกโหมด "ลูกค้าเลือก / ระบบจัดให้ / บังคับระบุ" ได้ในหน้าแก้ไขบริการ · ปิด = ทุกบริการนับความจุของบริการ (ค่าตั้งรายบริการยังเก็บไว้)</div>
+        <div id="bssProvidersBody" style="display:none;margin-top:10px">
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">ตรรกะแนะนำ / จัดผู้ให้บริการ</label>
+              <select class="form-input" id="bssStrategy" onchange="Page.bssStrategyHint()"></select>
+              <div class="bs-hint" id="bssStrategyHint" style="margin-top:4px"></div></div>
+            <div class="form-group" style="align-self:end"><button class="btn btn-primary btn-sm" onclick="Page.saveBookingSiteSettings()">บันทึกการจัดสรร</button></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0">
+            <strong style="font-size:14px">รายชื่อผู้ให้บริการ</strong>
+            <button class="btn btn-secondary btn-sm" onclick="Page.openBookingResource()">+ เพิ่มผู้ให้บริการ</button>
+          </div>
       <div class="bs-hint" style="margin-bottom:8px">ตารางงานรายบุคคล (เวลาเข้า-ออก · วันหยุด/ลา) + บริการที่รับได้ — ใช้คำนวณรอบว่างของบริการที่ตั้ง "จัดสรรผู้ให้บริการ"</div>
       <div id="bookingResourcesList"></div>
+        </div>
+      </div>
 
-      <h3 style="font-size:16px;font-weight:600;margin:24px 0 6px">ค่าตั้งการจองของเว็บไซต์ (ค่าเริ่มต้น)</h3>
+      <!-- รอบ 207 (ข้อ 7): ช่องที่ลูกค้าต้องกรอกตอนจอง — ด่านจริงที่เซิร์ฟเวอร์ (Helpers/BookingFormFields) · ตัวเลือกจากเซิร์ฟเวอร์ -->
+      <div id="bkSecForm" style="border:1px solid var(--gray-200);border-radius:10px;padding:14px 16px;margin:16px 0">
+        <h3 style="font-size:16px;font-weight:600;margin:0 0 6px">📝 ข้อมูลที่ลูกค้าต้องกรอกตอนจอง</h3>
+        <div class="bs-hint">ชื่อ-นามสกุล บังคับเสมอ (ใช้ออกเอกสาร/เรียกคิว) · ซ่อนทั้งเบอร์และอีเมลพร้อมกันไม่ได้ · พนักงานสร้างการจองเองไม่ผ่านด่านนี้</div>
+        <div class="form-row-3" style="margin-top:8px">
+          <div class="form-group"><label class="form-label">เบอร์โทร</label><select class="form-input" id="bssFfPhone"></select></div>
+          <div class="form-group"><label class="form-label">อีเมล</label><select class="form-input" id="bssFfEmail"></select></div>
+          <div class="form-group"><label class="form-label">หมายเหตุ / รายละเอียดเพิ่มเติม</label><select class="form-input" id="bssFfNotes"></select></div>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="Page.saveBookingSiteSettings()">บันทึกฟอร์มจอง</button>
+      </div>
+
+      <!-- รอบ 207 (ข้อ 5): เอกสารแต่ละขั้น — ตารางจากเซิร์ฟเวอร์ (Helpers/BookingDocumentFlow ถาม BookingInvoiceTimingPolicy ตัวเดียวกับเส้นจริง) -->
+      <div id="bkSecDocs" style="border:1px solid var(--gray-200);border-radius:10px;padding:14px 16px;margin:16px 0">
+        <h3 style="font-size:16px;font-weight:600;margin:0 0 6px">🧾 เอกสารที่ออกในแต่ละขั้น</h3>
+        <label class="form-label">ตอนให้บริการเสร็จ (บริการแบบนัดหมาย)</label>
+        <div id="bssCompletionDoc" class="bs-hint">กำลังโหลด…</div>
+        <div style="overflow-x:auto;margin-top:10px"><table class="table" style="font-size:12px">
+          <thead><tr><th>ชนิดบริการ</th><th>ตอนจอง</th><th>ตอนรับเงิน</th><th>ตอนให้บริการเสร็จ</th><th>ตอนยกเลิก</th></tr></thead>
+          <tbody id="bssDocFlow"><tr><td colspan="5" class="text-gray-400">กำลังโหลด…</td></tr></tbody>
+        </table></div>
+        <div class="bs-hint">ตารางนี้สรุปตามค่าตั้งปัจจุบัน + สถานะจด VAT ของบริษัท (บันทึกแล้วตารางเปลี่ยนตาม) · จังหวะใบกำกับของบริการแบบการันตีตั้งที่หัวข้อ "เวลา/แจ้งเตือน"</div>
+        <button class="btn btn-primary btn-sm" style="margin-top:6px" onclick="Page.saveBookingSiteSettings()">บันทึกค่าตั้งเอกสาร</button>
+      </div>
+
+      <h3 id="bkSecSite" style="font-size:16px;font-weight:600;margin:24px 0 6px">ค่าตั้งการจองของเว็บไซต์ (ค่าเริ่มต้น)</h3>
       <div class="bs-hint" style="margin-bottom:8px">บริการที่ติ๊ก "ใช้ค่าของเว็บไซต์" ใช้ค่าเหล่านี้ · บริการอื่นใช้ค่าของตัวเอง (override)</div>
       <div class="form-row-3">
         <div class="form-group"><label class="form-label">ระยะเวลาต่อครั้ง (นาที)</label><input type="number" class="form-input" id="bssDuration" min="5" max="1440"></div>
@@ -716,6 +768,15 @@
               <select class="form-input" id="bsBookingType"></select>
             </div>
           </div>
+          <!-- รอบ 207 (ข้อ 1): ผูกสินค้า/บริการในระบบ ⇒ เอกสารได้รหัสสินค้า + บัญชีรายได้ + อัตรา VAT ของสินค้า · POS เปิดบิลด้วยสินค้านี้ -->
+          <div class="form-group">
+            <label class="form-label">สินค้า/บริการในระบบบัญชี (ใช้กับ POS · เอกสาร · รายงานขาย)</label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+              <select class="form-input" id="bsProduct" style="flex:1;min-width:220px"><option value="">— ยังไม่ผูก —</option></select>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="Page.bsCreateProduct()">+ สร้างสินค้าบริการจากบริการนี้</button>
+            </div>
+            <div class="bs-hint" id="bsProductHint" style="margin-top:4px"></div>
+          </div>
           <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px;font-size:13px">
             <label><input type="checkbox" id="bsAutoConfirm"> ยืนยันการจองอัตโนมัติ</label>
             <label><input type="checkbox" id="bsActive" checked> เปิดให้จอง</label>
@@ -801,7 +862,7 @@
               <div class="bs-hint">มีคนยกเลิก ⇒ ระบบเลื่อนคิวแรกที่ลงได้ขึ้นอัตโนมัติ</div>
             </div>
           </div>
-          <div class="form-group">
+          <div class="form-group" id="bsResourceModeWrap">
             <label class="form-label">จัดสรรผู้ให้บริการ / ห้อง / อุปกรณ์</label>
             <select class="form-input" id="bsResourceMode"></select>
             <div class="bs-hint">ใช้ผู้ให้บริการที่ผูกกับบริการนี้ (ส่วน "ผู้ให้บริการ" ใต้รายการบริการ) · ระบบจัดให้ = คนที่ว่าง + รับงานนี้ได้ + งานน้อยสุดของวัน · ยังไม่ผูกใคร = นับ "รับพร้อมกันต่อรอบ" · คลาสกลุ่ม: นับเป็น "จำนวนคน" + รับพร้อมกัน = ที่นั่งต่อรอบ</div>
@@ -877,8 +938,11 @@
             <div class="form-group"><label class="form-label">ลำดับ (จัดสรรเมื่องานเท่ากัน)</label><input type="number" class="form-input" id="rsSort" value="0"></div>
             <div class="form-group" style="align-self:end"><label><input type="checkbox" id="rsActive" checked> เปิดใช้</label></div>
           </div>
-          <div class="form-group"><label class="form-label">รายละเอียด</label><input type="text" class="form-input" id="rsDesc"></div>
-          <h4 class="bs-sec">บริการที่รับได้</h4>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label">รายละเอียด</label><input type="text" class="form-input" id="rsDesc"></div>
+            <div class="form-group"><label class="form-label">ผูกพนักงานในระบบ (POS เติมช่าง/ค่าคอม)</label><select class="form-input" id="rsStaffUser"><option value="">— ไม่ผูก —</option></select></div>
+          </div>
+          <h4 class="bs-sec">บริการที่รับได้ <span class="bs-hint">(ติ๊ก "หลัก" = คนหลักของบริการนั้น · ลำดับเลขน้อยได้ก่อน — ใช้กับตรรกะแนะนำ "คนหลักก่อน"/"ตามลำดับ")</span></h4>
           <div id="rsServices"></div>
           <h4 class="bs-sec">เวลาเข้า-ออกงานรายสัปดาห์ <span class="bs-hint">(ไม่ตั้งเลย = ว่างตลอดเวลาทำการของบริการ)</span></h4>
           <div id="rsWeekly"></div>
@@ -2675,6 +2739,8 @@
                   ${s.capacityGroup ? `<span class="block-type-badge" title="ทรัพยากรร่วม">🔗 ${Layout.esc(s.capacityGroup)}</span>` : ''}</div>
                 <div style="font-size:12px;color:var(--gray-500)">฿${Number(s.price||0).toLocaleString('th-TH')} · ${Layout.esc(s.slotSummary||'')}</div>
                 ${s.policySummary ? `<div style="font-size:12px;color:var(--gray-500)">${Layout.esc(s.policySummary)}</div>` : ''}
+                ${s.productCode ? `<div style="font-size:12px;color:var(--gray-500)">📦 ${Layout.esc(s.productCode)} ${Layout.esc(s.productName || '')}</div>` : ''}
+                ${s.productWarning ? `<div style="font-size:12px;color:#b45309">⚠️ ${Layout.esc(s.productWarning)}</div>` : ''}
                 ${s.usesSiteHours ? '<div style="font-size:12px;color:var(--gray-500);margin-top:2px">🕒 ใช้เวลาทำการของเว็บไซต์ (ตั้งเวลาเองในบริการได้ที่ "แก้ไข" → ข้อ 4)</div>' : ''}
                 ${s.hasOpeningHours ? '' : '<div style="font-size:12px;color:#b45309;margin-top:2px">⚠️ ยังไม่ได้ตั้งเวลาทำการ (ทั้งของบริการและของเว็บไซต์) — ลูกค้าจะไม่เห็นเวลาว่างเลย (กด "แก้ไข" → ข้อ 4 หรือตั้ง "เวลาทำการของเว็บไซต์" ด้านล่าง)</div>'}
               </div>
@@ -2719,6 +2785,10 @@
         document.getElementById('bsActive').checked = s.isActive !== false;
         this._bsSlug = s.slug || null;
         this._bsProductId = s.productId || null;
+        this._bsLoadProducts(s);
+        // รอบ 207: ไซต์ปิดจัดสรรผู้ให้บริการ ⇒ ซ่อนโหมดรายบริการ (ค่าเดิมยังส่งกลับไปตามเดิม — ไม่รีเซ็ตเงียบ)
+        const provOn = !this._bssSettings || this._bssSettings.providerAllocationEnabled === true;
+        document.getElementById('bsResourceModeWrap').style.display = provOn ? '' : 'none';
         document.getElementById('bsUseSite').checked = !!s.useSiteDefaults;
         document.getElementById('bsEnforce').checked = s.enforceSlotCapacity !== false;
         v('bsOverlap', s.overlapLimit);
@@ -2728,6 +2798,37 @@
         this.bsModeChanged();
         this.bsSiteDefaultsChanged();
         this.bsEnforceChanged();
+      },
+
+      // รอบ 207 (ข้อ 1): รายการสินค้า/บริการของบริษัท (ประเภทบริการขึ้นก่อน) + คำเตือนจากเซิร์ฟเวอร์ (ยังไม่ผูก/ราคาไม่ตรง)
+      async _bsLoadProducts(s) {
+        const sel = document.getElementById('bsProduct');
+        const hint = document.getElementById('bsProductHint');
+        hint.textContent = s && s.id ? (s.productWarning || (s.productCode ? `ผูกกับ ${s.productCode} ${s.productName || ''}` : '')) : 'บันทึกบริการก่อน แล้วกด "สร้างสินค้าบริการ" หรือเลือกสินค้าที่มีอยู่';
+        if (!this._productsCache) {
+          const api = Layout.api(); if (!api) return;
+          try { const r = await api.getProducts('?pageSize=500'); this._productsCache = r.data?.items || r.data || []; }
+          catch (_) { this._productsCache = []; }
+        }
+        const list = this._productsCache.slice().sort((a, b) => (a.productType === 'Service' ? 0 : 1) - (b.productType === 'Service' ? 0 : 1));
+        sel.innerHTML = '<option value="">— ยังไม่ผูก —</option>' + list.map(p =>
+          `<option value="${Layout.esc(p.id)}">${Layout.esc(p.code)} · ${Layout.esc(p.name)}${p.productType === 'Service' ? ' (บริการ)' : ''}</option>`).join('');
+        if (s && s.productId && !list.some(p => p.id === s.productId))
+          sel.insertAdjacentHTML('beforeend', `<option value="${Layout.esc(s.productId)}">${Layout.esc(s.productCode || 'สินค้าที่ผูกไว้')}</option>`);
+        sel.value = (s && s.productId) || '';
+      },
+      async bsCreateProduct() {
+        const id = document.getElementById('bsId').value;
+        if (!id) { Layout.toast('บันทึกบริการก่อน แล้วค่อยสร้างสินค้าบริการ', 'warning'); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.cmsLinkBookingProduct(this.siteId, id, { createNew: true });
+          const s = r.data || {};
+          this._productsCache = null;
+          await this._bsLoadProducts(s);
+          this._bsProductId = s.productId || null;
+          Layout.toast('สร้างและผูกสินค้าบริการแล้ว' + (s.productCode ? ' — ' + s.productCode : ''), 'success');
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       _bsDayIndex(d) { if (typeof d === 'number') return d; const i = this._bsDayNames.indexOf(d); return i < 0 ? 1 : i; },
@@ -2858,6 +2959,7 @@
           const ph = Array.isArray(d.reminderPlaceholders) ? d.reminderPlaceholders : [];
           document.getElementById('bssReminderHint').textContent = ph.length ? 'ตัวแทนที่ใช้ได้: ' + ph.join(' ') : '';
           this._bssAuxLoaded = true;
+          this._bss207Render(d);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async saveBookingSiteSettings() {
@@ -2878,11 +2980,66 @@
           body.waitlistHoldMinutes = this._bsNum('bssHoldMinutes', 0);
           body.reminderTemplate = document.getElementById('bssReminderTemplate').value;
         }
+        // รอบ 207 — ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จ (ไม่งั้น server คงค่าเดิม · ไม่รีเซ็ตเงียบ)
+        if (this._bss207Loaded) {
+          body.providerAllocationEnabled = document.getElementById('bssProvidersEnabled').checked;
+          body.providerRecommendStrategy = document.getElementById('bssStrategy').value;
+          body.formFields = { phone: document.getElementById('bssFfPhone').value, email: document.getElementById('bssFfEmail').value, notes: document.getElementById('bssFfNotes').value };
+          const cd = document.querySelector('input[name="bssCompletionDoc"]:checked');
+          if (cd) body.completionDocument = cd.value;
+        }
         try {
           await api.cmsUpdateBookingSiteSettings(this.siteId, body);
           Layout.toast('บันทึกค่าตั้งของเว็บไซต์แล้ว', 'success');
           await this.loadBookingServices();
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // รอบ 207: ค่าตั้งผู้ให้บริการ · ฟอร์มจอง · เอกสารแต่ละขั้น — ตัวเลือก/ป้าย/ตารางมาจากเซิร์ฟเวอร์ทั้งหมด (หน้าแสดงตรง)
+      _bss207Render(d) {
+        this._bssSettings = d;
+        const on = d.providerAllocationEnabled === true;
+        document.getElementById('bssProvidersEnabled').checked = on;
+        const strat = document.getElementById('bssStrategy');
+        strat.innerHTML = (d.providerStrategyOptions || []).map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+        strat.value = d.providerRecommendStrategy || 'LeastLoadedDay';
+        this.bssStrategyHint();
+        this.bssProvidersToggle();
+        const ffOpts = (d.formFieldOptions || []).map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+        const ff = d.formFields || {};
+        [['bssFfPhone', ff.phone || 'Required'], ['bssFfEmail', ff.email || 'Optional'], ['bssFfNotes', ff.notes || 'Optional']].forEach(([id, v]) => {
+          const el = document.getElementById(id); el.innerHTML = ffOpts; el.value = v;
+        });
+        const cur = d.completionDocument || 'Auto';
+        document.getElementById('bssCompletionDoc').innerHTML = (d.completionDocumentOptions || []).map(o => `
+          <label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;cursor:pointer;color:inherit">
+            <input type="radio" name="bssCompletionDoc" value="${Layout.esc(o.value)}" ${o.value === cur ? 'checked' : ''} style="margin-top:3px">
+            <span><strong>${Layout.esc(o.label)}</strong><br><span style="font-size:12px;color:var(--gray-600)">${Layout.esc(o.description)}</span></span>
+          </label>`).join('') || 'โหลดตัวเลือกไม่สำเร็จ';
+        document.getElementById('bssDocFlow').innerHTML = (d.documentFlow || []).map(r => `<tr>
+          <td><strong>${Layout.esc(r.bookingTypeLabel)}</strong></td><td>${Layout.esc(r.atBooking)}</td><td>${Layout.esc(r.onPayment)}</td>
+          <td>${Layout.esc(r.onComplete)}</td><td>${Layout.esc(r.onCancel)}</td></tr>`).join('');
+        this._bss207Loaded = (d.providerStrategyOptions || []).length > 0 && (d.formFieldOptions || []).length > 0;
+      },
+      bssProvidersToggle() {
+        const on = document.getElementById('bssProvidersEnabled').checked;
+        document.getElementById('bssProvidersBody').style.display = on ? '' : 'none';
+        const rep = document.getElementById('bkLinkReport');
+        if (rep) { rep.style.display = on ? '' : 'none'; rep.href = '/pages/cms-booking-providers.html?siteId=' + encodeURIComponent(this.siteId || ''); }
+        const work = document.getElementById('bkLinkWork');
+        if (work) work.href = '/pages/cms-bookings.html?siteId=' + encodeURIComponent(this.siteId || '');
+      },
+      bssStrategyHint() {
+        const v = document.getElementById('bssStrategy').value;
+        const o = ((this._bssSettings || {}).providerStrategyOptions || []).find(x => x.value === v);
+        document.getElementById('bssStrategyHint').textContent = o ? o.description : '';
+      },
+      async _bsMembers() {
+        if (this._members) return this._members;
+        const api = Layout.api(); if (!api) return [];
+        try { const r = await api.getMembers(); this._members = (r && (r.data?.items || r.data)) || []; }
+        catch (_) { this._members = []; }
+        return this._members;
       },
 
       // ── ผู้ให้บริการ / ห้อง / อุปกรณ์ ──
@@ -2897,7 +3054,7 @@
             <div class="page-row">
               <div style="flex:1;min-width:0">
                 <div style="font-weight:600">${Layout.esc(r.name)} <span class="block-type-badge">${Layout.esc(Layout.enumLabel('bookingResourceKind', r.kind))}</span> ${r.isActive ? '' : '<span class="block-type-badge">ปิดอยู่</span>'}</div>
-                <div style="font-size:12px;color:var(--gray-500)">รับ: ${r.serviceIds.length ? r.serviceIds.map(id => Layout.esc(svcName(id))).join(', ') : '<span style="color:#b45309">ยังไม่ได้เลือกบริการ</span>'}
+                <div style="font-size:12px;color:var(--gray-500)">รับ: ${r.serviceIds.length ? (r.serviceLinks || r.serviceIds.map(id => ({ serviceId: id }))).map(l => Layout.esc(svcName(l.serviceId)) + (l.isPrimary ? ' ⭐หลัก' : '') + (l.priority ? ` (ลำดับ ${Number(l.priority)})` : '')).join(', ') : '<span style="color:#b45309">ยังไม่ได้เลือกบริการ</span>'}
                   · ${(r.schedule.weekly || []).length ? 'มีตารางงาน' : 'ว่างตามเวลาทำการของบริการ'}${(r.schedule.exceptions || []).length ? ` · วันหยุด/ลา ${r.schedule.exceptions.length} วัน` : ''}</div>
               </div>
               <button class="btn btn-sm btn-primary" onclick="Page.openBookingResource('${Layout.jsArg(r.id)}')">แก้ไข</button>
@@ -2905,7 +3062,7 @@
             </div>`).join('');
         } catch (e) { list.innerHTML = `<div style="color:#dc2626">${Layout.esc(e.message)}</div>`; }
       },
-      openBookingResource(id) {
+      async openBookingResource(id) {
         const r = id ? (this.bookingResources || []).find(x => x.id === id) : null;
         document.getElementById('bookingResourceModalTitle').textContent = r ? 'แก้ไขผู้ให้บริการ' : 'เพิ่มผู้ให้บริการ / ห้อง / อุปกรณ์';
         const kind = document.getElementById('rsKind');
@@ -2917,10 +3074,21 @@
         document.getElementById('rsSort').value = r ? r.sortOrder : 0;
         document.getElementById('rsActive').checked = r ? r.isActive : true;
         document.getElementById('rsDesc').value = r ? (r.description || '') : '';
-        const chosen = new Set(r ? r.serviceIds : []);
-        document.getElementById('rsServices').innerHTML = (this.bookingServices || []).map(s =>
-          `<label style="display:inline-flex;gap:4px;margin:0 12px 6px 0;font-size:13px"><input type="checkbox" value="${Layout.esc(s.id)}" ${chosen.has(s.id) ? 'checked' : ''}> ${Layout.esc(s.name)}</label>`).join('')
-          || '<span class="bs-hint">ยังไม่มีบริการ</span>';
+        // รอบ 207 (ข้อ 8): บริการที่รับได้ + คนหลัก + ลำดับความสำคัญต่อบริการ
+        const links = new Map(((r && r.serviceLinks) || (r ? r.serviceIds.map(x => ({ serviceId: x })) : [])).map(l => [l.serviceId, l]));
+        document.getElementById('rsServices').innerHTML = (this.bookingServices || []).length ? `<table class="table" style="font-size:13px"><thead><tr><th>รับบริการนี้</th><th>คนหลัก</th><th>ลำดับ</th></tr></thead><tbody>${
+          (this.bookingServices || []).map(s => { const l = links.get(s.id); return `<tr data-svc="${Layout.esc(s.id)}">
+            <td><label style="display:inline-flex;gap:6px"><input type="checkbox" class="rs-svc" ${l ? 'checked' : ''}> ${Layout.esc(s.name)}</label></td>
+            <td><input type="checkbox" class="rs-primary" ${l && l.isPrimary ? 'checked' : ''}></td>
+            <td><input type="number" class="form-input rs-priority" min="0" max="999" style="width:80px" value="${l ? Number(l.priority || 0) : 0}"></td></tr>`; }).join('')}</tbody></table>`
+          : '<span class="bs-hint">ยังไม่มีบริการ</span>';
+        const staffSel = document.getElementById('rsStaffUser');
+        const members = await this._bsMembers();
+        staffSel.innerHTML = '<option value="">— ไม่ผูก —</option>' + members.map(m => {
+          const uid = m.userId || m.id; const nm = m.fullName || m.name || m.email || uid;
+          return `<option value="${Layout.esc(uid)}">${Layout.esc(nm)}${m.email && m.email !== nm ? ' · ' + Layout.esc(m.email) : ''}</option>`;
+        }).join('');
+        staffSel.value = r && r.staffUserId ? r.staffUserId : '';
         this.schedLoad('rs', r ? r.schedule : null);
         Layout.openModal('bookingResourceModal');
       },
@@ -2933,9 +3101,13 @@
           capacity: this._bsNum('rsCapacity', 1), sortOrder: this._bsNum('rsSort', 0),
           isActive: document.getElementById('rsActive').checked,
           description: document.getElementById('rsDesc').value.trim() || null,
-          serviceIds: Array.from(document.querySelectorAll('#rsServices input[type=checkbox]:checked')).map(x => x.value),
+          // รอบ 207: ส่ง serviceLinks (คนหลัก/ลำดับ) — server ใช้แทน serviceIds · serviceIds ส่งคู่ไว้ให้ผู้อ่านเดิม
+          serviceLinks: Array.from(document.querySelectorAll('#rsServices tr[data-svc]')).filter(tr => tr.querySelector('.rs-svc').checked)
+            .map(tr => ({ serviceId: tr.dataset.svc, isPrimary: tr.querySelector('.rs-primary').checked, priority: Math.max(0, parseInt(tr.querySelector('.rs-priority').value, 10) || 0) })),
+          staffUserId: document.getElementById('rsStaffUser').value || null,
           schedule: this.schedPayload('rs')
         };
+        body.serviceIds = body.serviceLinks.map(l => l.serviceId);
         if (!body.name) { Layout.toast('กรุณากรอกชื่อ', 'error'); return; }
         try {
           if (id) await api.cmsUpdateBookingResource(this.siteId, id, body);
@@ -3010,7 +3182,7 @@
         const body = {
           name: document.getElementById('bsName').value.trim(),
           nameEn: str('bsNameEn'), description: str('bsDesc'), imageUrl: str('bsImage'), category: str('bsCategory'),
-          slug: this._bsSlug, productId: this._bsProductId,
+          slug: this._bsSlug, productId: document.getElementById('bsProduct').value || null,   // รอบ 207: เลือกจากรายการสินค้า
           price: this._bsNum('bsPrice', 0),
           bookingType: document.getElementById('bsBookingType').value,
           autoConfirm: document.getElementById('bsAutoConfirm').checked,

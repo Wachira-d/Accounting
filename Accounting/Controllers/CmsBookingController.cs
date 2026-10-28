@@ -182,9 +182,12 @@ public class CmsBookingController : ControllerBase
         Guid companyId, Guid siteId,
         [FromQuery] string? status = null, [FromQuery] Guid? serviceId = null,
         [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
-        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null)
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? search = null,
+        [FromQuery] Guid? resourceId = null, [FromQuery] string? sort = null)
     {
-        var result = await _bookingService.GetBookingsAsync(companyId, siteId, status, serviceId, fromDate, toDate, page, pageSize, search);
+        // รอบ 207: กรองผู้ให้บริการ + เรียงตามเวลานัด (หน้าทำงานรายวัน) · pageSize สูงสุด 200
+        var result = await _bookingService.GetBookingsAsync(companyId, siteId, status, serviceId, fromDate, toDate, page, Math.Clamp(pageSize, 1, 200), search,
+            resourceId, sort);
         return Ok(new ApiResponse<PagedResponse<BookingListResponse>>(true, result));
     }
 
@@ -283,6 +286,74 @@ public class CmsBookingController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _bookingService.IssueTaxInvoiceOnPaymentAsync(companyId, siteId, bookingId, request?.ReceivedDate, userId);
         return Ok(new ApiResponse<BookingResponse>(true, result));
+    }
+
+    // ── รอบ 207: หน้าทำงานผู้ให้บริการ ──
+
+    /// <summary>ผู้ให้บริการที่เลือกได้ตอนเริ่มให้บริการ (ว่าง/ไม่ว่าง + คำแนะนำตามตรรกะของไซต์)</summary>
+    [HttpGet("bookings/{bookingId:guid}/provider-candidates")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    public async Task<ActionResult<ApiResponse<BookingProviderCandidatesResponse>>> GetProviderCandidates(Guid companyId, Guid siteId, Guid bookingId)
+        => Ok(new ApiResponse<BookingProviderCandidatesResponse>(true, await _bookingService.GetProviderCandidatesAsync(companyId, siteId, bookingId)));
+
+    /// <summary>เริ่มให้บริการ + ผู้ให้บริการ (หลายคน · แบ่ง %)</summary>
+    [HttpPost("bookings/{bookingId:guid}/start")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    [RequirePermission(PermissionKeys.CmsOrderManage)]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> StartService(Guid companyId, Guid siteId, Guid bookingId,
+        [FromBody] StartBookingServiceRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.StartServiceAsync(companyId, siteId, bookingId, request ?? new StartBookingServiceRequest(), userId);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "เริ่มให้บริการแล้ว"));
+    }
+
+    /// <summary>แก้ผู้ให้บริการ/สัดส่วน % หลังเริ่มให้บริการ</summary>
+    [HttpPut("bookings/{bookingId:guid}/assignments")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    [RequirePermission(PermissionKeys.CmsOrderManage)]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> SetAssignments(Guid companyId, Guid siteId, Guid bookingId,
+        [FromBody] StartBookingServiceRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.SetAssignmentsAsync(companyId, siteId, bookingId, request, userId);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "บันทึกผู้ให้บริการแล้ว"));
+    }
+
+    /// <summary>เสร็จสิ้น (+ รับชำระ) — ออกใบกำกับ/ใบเสร็จตามค่าตั้งไซต์และสถานะ VAT ผ่านเส้นเดียวกับปุ่มสถานะ "เสร็จสิ้น" เดิม
+    /// (ซึ่งออกเอกสารอัตโนมัติด้วยสิทธิ์ระดับไซต์อยู่แล้ว) ⇒ ด่านสิทธิ์เดียวกับการจัดการการจอง ไม่เข้มกว่าเส้นเดิม</summary>
+    [HttpPost("bookings/{bookingId:guid}/complete")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    [RequirePermission(PermissionKeys.CmsOrderManage)]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> CompleteBooking(Guid companyId, Guid siteId, Guid bookingId,
+        [FromBody] CompleteBookingRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.CompleteBookingAsync(companyId, siteId, bookingId, request ?? new CompleteBookingRequest(), userId);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "บันทึกให้บริการเสร็จแล้ว"));
+    }
+
+    /// <summary>ผูก/สร้างสินค้า/บริการในระบบให้บริการจอง (เอกสาร/POS ได้รหัสสินค้า · บัญชีรายได้ · อัตรา VAT ของสินค้า)</summary>
+    [HttpPut("services/{serviceId:guid}/product")]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<BookingServiceResponse>>> LinkProduct(Guid companyId, Guid siteId, Guid serviceId,
+        [FromBody] LinkBookingProductRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.LinkProductAsync(companyId, siteId, serviceId, request ?? new LinkBookingProductRequest(), userId);
+        return Ok(new ApiResponse<BookingServiceResponse>(true, result, "บันทึกการผูกสินค้า/บริการแล้ว"));
+    }
+
+    /// <summary>สรุปการทำงาน/รายงานผู้ให้บริการของช่วงวันที่ (ค่าเริ่มต้น = เดือนนี้)</summary>
+    [HttpGet("provider-report")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    public async Task<ActionResult<ApiResponse<BookingProviderReportResponse>>> GetProviderReport(Guid companyId, Guid siteId,
+        [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+    {
+        var today = BookingSlotEngine.BangkokNow(DateTime.UtcNow).Date;
+        var from = fromDate ?? new DateTime(today.Year, today.Month, 1);
+        var to = toDate ?? today;
+        return Ok(new ApiResponse<BookingProviderReportResponse>(true, await _bookingService.GetProviderReportAsync(companyId, siteId, from, to)));
     }
 
     [HttpPost("bookings/{bookingId:guid}/sync-erp")]

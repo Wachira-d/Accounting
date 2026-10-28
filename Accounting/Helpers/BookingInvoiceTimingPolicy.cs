@@ -65,7 +65,9 @@ public readonly record struct BookingInvoiceFacts(
     bool VatRegistered,
     DocumentStatus? IssuedChildStatus = null,
     BookingPosBillState PosBill = BookingPosBillState.None,
-    BookingStatus BookingStatus = BookingStatus.Confirmed);
+    BookingStatus BookingStatus = BookingStatus.Confirmed,
+    BookingCompletionDocument Completion = BookingCompletionDocument.None,
+    bool PaidInFullNow = false);
 
 public sealed record BookingInvoiceDecision(
     BookingInvoiceAction Action,
@@ -125,12 +127,14 @@ public static class BookingInvoiceTimingPolicy
         _ => (DocumentType.Quotation, ErpBookingDocumentType.DraftServiceOrder),
     };
 
-    /// <summary>ชนิดใบกำกับเมื่อถึง tax point — ไม่จด VAT ⇒ ใบแจ้งหนี้ (ออกใบกำกับไม่ได้ §90/2 · ด่านเดียวกับเส้นแปลง)</summary>
-    private static DocumentType TaxDocumentFor(bool vatRegistered) => vatRegistered ? DocumentType.TaxInvoice : DocumentType.Invoice;
+    /// <summary>รอบ 207: ไม่จด VAT + รับเงินครบตอนนั้น ⇒ ใบเสร็จรับเงิน (ขายสด) · ไม่จด VAT ยังไม่รับครบ ⇒ ใบแจ้งหนี้ · จด VAT ⇒ ใบกำกับภาษีเสมอ (§86/4 —
+    /// รับเงินแล้วหัวเป็น "ใบกำกับภาษี/ใบเสร็จรับเงิน" ตามโหมดใบเสร็จของบริษัท)</summary>
+    public static DocumentType TaxDocumentFor(bool vatRegistered, bool paidInFullNow = false)
+        => vatRegistered ? DocumentType.TaxInvoice : paidInFullNow ? DocumentType.Receipt : DocumentType.Invoice;
 
-    private static BookingInvoiceDecision Issue(BookingInvoiceAction action, bool vatRegistered)
+    private static BookingInvoiceDecision Issue(BookingInvoiceAction action, bool vatRegistered, bool paidInFullNow = false)
     {
-        var t = TaxDocumentFor(vatRegistered);
+        var t = TaxDocumentFor(vatRegistered, paidInFullNow);
         return new(action, t, CmsBookingErpPolicy.ErpTypeOf(t));
     }
 
@@ -153,6 +157,10 @@ public static class BookingInvoiceTimingPolicy
             return new(BookingInvoiceAction.CreateAtBooking, doc, erp);
         }
 
+        // รอบ 207 (คำขอเจ้าของข้อ 5): บริการแบบนัดหมาย + ค่าตั้งไซต์ "ออกเอกสารตอนเสร็จอัตโนมัติ" ⇒ ตอนให้บริการเสร็จเดินเส้นเดียวกับ
+        // Guaranteed โหมด "ตอนรับเงิน/ให้บริการ" (แปลงใบยืนยันการจอง → ใบกำกับ/ใบเสร็จ · ไม่มีใบ ⇒ สร้างใหม่) · เหตุการณ์อื่นของนัดหมายคงเดิม
+        if (f.Type == BookingType.Appointment && f.Event == BookingInvoiceEvent.ServiceCompleted && f.Completion == BookingCompletionDocument.Auto)
+            f = f with { Type = BookingType.Guaranteed, Timing = BookingInvoiceTiming.TaxInvoiceOnPaymentOrService };
         // จังหวะออกใบภายหลังมีเฉพาะ Guaranteed — ชนิดอื่นคงเส้นเดิม (มัดจำ = CmsBookingCancelPolicy.DecideOnComplete · ใบเสนอราคานัดหมาย = พนักงานแปลงเอง)
         if (f.Type != BookingType.Guaranteed)
             return f.Event == BookingInvoiceEvent.PaymentReceived
@@ -185,7 +193,7 @@ public static class BookingInvoiceTimingPolicy
             // ไม่มีเอกสารผูก (ขั้น ERP ตอนจองล้ม — เช่น โควตาใบเสนอราคาเต็ม B-3) แต่ถึง tax point แล้ว ⇒ ออกใบกำกับตรงด้วยเส้นสร้างเอกสารเดิม ·
             // ให้บริการเสร็จในโหมด (ก) คงพฤติกรรมเดิม (หมายเหตุ "ออกเอกสารเองที่หน้าเอกสาร" จากตอนจองยังอยู่บนการจอง)
             if (isPayment || (f.Event == BookingInvoiceEvent.ServiceCompleted && f.Timing == BookingInvoiceTiming.TaxInvoiceOnPaymentOrService))
-                return Issue(BookingInvoiceAction.CreateTaxInvoiceNow, f.VatRegistered);
+                return Issue(BookingInvoiceAction.CreateTaxInvoiceNow, f.VatRegistered, f.PaidInFullNow);
             return new(BookingInvoiceAction.None);
         }
 
@@ -227,7 +235,7 @@ public static class BookingInvoiceTimingPolicy
                 "ลูกค้าไม่มาใช้บริการ — ยังไม่ได้ออกใบกำกับภาษี (ยังไม่รับเงิน/ไม่ได้ให้บริการ = ยังไม่มีจุดความรับผิด §78/1) · "
                 + "ถ้าเรียกเก็บค่าการันตี ออกใบกำกับเองที่หน้าเอกสาร (แปลงใบยืนยันการจอง) ลงวันที่รับเงิน");
 
-        return Issue(BookingInvoiceAction.IssueTaxInvoiceFromConfirmation, f.VatRegistered);
+        return Issue(BookingInvoiceAction.IssueTaxInvoiceFromConfirmation, f.VatRegistered, f.PaidInFullNow);
     }
 
     /// <summary><b>เอกสารรายได้ของการจองที่ POS ต้องนับ</b> (เปิดบิล POS ซ้ำ = รายได้/ภาษีขายซ้ำ) — ตัวตัดสินเดียวที่ <c>PosService.Bookings</c> เรียก ·

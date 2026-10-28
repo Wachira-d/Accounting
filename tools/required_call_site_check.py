@@ -470,7 +470,7 @@ RULES += [
          must=["PrepareCreditBookingAsync(", "HoldCreditForBookingAsync(", "CreditBookingLink.ShouldSyncErp("],
          before=[("PrepareCreditBookingAsync(", "_db.SiteBookings.Add("), ("HoldCreditForBookingAsync(", "tx.CommitAsync(")],
          why="R-39 จองด้วยบัตร: กันเครดิตในธุรกรรมเดียวกับ Decide · ไม่ออกเอกสาร ERP ซ้ำ"),
-    dict(file="Services/Implementations/CmsBookingService.cs", method="UpdateBookingStatusAsync",
+    dict(file="Services/Implementations/CmsBookingService.cs", method="UpdateBookingStatusCoreAsync",
          must=["IsPaidWithCreditAsync(", "SettleCreditOnStatusAsync("],
          before=[("IsPaidWithCreditAsync(", "SettleCreditOnStatusAsync("), ("SettleCreditOnStatusAsync(", "ApplyInvoiceTimingAsync(")],
          why="R-39 เสร็จ/ไม่มา/ยกเลิก ⇒ Settle/Release ในสมุดเครดิต · การจองใช้บัตรไม่เดิน tax point ของบริการ"),
@@ -1353,7 +1353,7 @@ RULES += [
     # ยกเลิก: ตัดสินก่อน void · ตัวเมธอดสถานะห้ามเรียก void/realize ตรง (ต้องผ่านเมธอดที่ตัดสินแล้ว)
     dict(file=CMS_BOOK, method="SettleErpDocumentOnCancelAsync", must=["CmsBookingCancelPolicy.DecideOnCancel("],
          before=[("CmsBookingCancelPolicy.DecideOnCancel(", "VoidDocumentAsync(")], why=_CMS_C1_WHY),
-    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync", must=["SettleErpDocumentOnCancelAsync(", "SettleDepositOnCompleteAsync("],   # รอบ 205 W2: ตัวห่อ RealizeDepositOnCompleteAsync (R-09 ใบส่วนที่เหลือ)
+    dict(file=CMS_BOOK, method="UpdateBookingStatusCoreAsync", must=["SettleErpDocumentOnCancelAsync(", "SettleDepositOnCompleteAsync("],   # รอบ 205 W2: ตัวห่อ RealizeDepositOnCompleteAsync (R-09 ใบส่วนที่เหลือ)
          forbid=["VoidDocumentAsync(", "RealizeDepositAsync("], why=_CMS_C1_WHY),
     dict(file=CMS_BOOK, method="RealizeDepositOnCompleteAsync", must=["CmsBookingCancelPolicy.DecideOnComplete("],
          before=[("CmsBookingCancelPolicy.DecideOnComplete(", "RealizeDepositAsync(")],
@@ -9121,7 +9121,7 @@ RULES += [
          before=[("BookingInvoiceTimingPolicy.Decide(", "CreateDocumentAsync(")],
          forbid=["BookingType.Guaranteed => (DocumentType.TaxInvoice"],
          why="ข้อ 155: ชนิดเอกสารตอนจองตัดสินที่ BookingInvoiceTimingPolicy ตัวเดียว (ห้าม switch ชนิดเอกสารเองซ้ำ — ค่าตั้งไซต์จะไม่มีผล)"),
-    dict(file="Services/Implementations/CmsBookingService.cs", method="UpdateBookingStatusAsync",
+    dict(file="Services/Implementations/CmsBookingService.cs", method="UpdateBookingStatusCoreAsync",
          must=["ApplyInvoiceTimingAsync(", "BookingInvoiceEvent.ServiceCompleted", "BookingInvoiceEvent.NoShow"],
          why="ข้อ 155: ให้บริการเสร็จ = tax point §78/1 ของ Guaranteed ที่ยังมีแค่ใบยืนยันการจอง — ถอดการเรียก = ใบกำกับไม่เคยออก"),
     dict(file="Services/Implementations/CmsBookingService.cs", method="IssueTaxInvoiceOnPaymentAsync",
@@ -9636,7 +9636,7 @@ RULES += [
     dict(file=BOOK_PAY, method="SettleDepositOnCompleteAsync",
          must=["CmsBookingCancelPolicy.DecideOnComplete(", "DepositAppliedRef: erpDoc.DocumentNumber", "DepositBaseDeducted: deductBase", "RealizeDepositOnCompleteAsync("],
          why=_W2_WHY + "R-09 ใบส่วนที่เหลือหักฐานมัดจำผ่านช่องเดียวกับที่พัก/MTO (ข้อ 156) · กรณีอื่นเส้นเดิม"),
-    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync",
+    dict(file=CMS_BOOK, method="UpdateBookingStatusCoreAsync",
          must=["SettleDepositOnCompleteAsync(", "ForfeitOnNoShowAsync("],
          why=_W2_WHY + "R-09/R-11 ให้บริการเสร็จ ⇒ ใบส่วนที่เหลือ · ไม่มา ⇒ ริบตามนโยบาย — ต่อสายในเส้นสถานะเดียว"),
     dict(file=BOOK_PAY_HANDLER, method="HandleSucceededAsync",
@@ -9685,6 +9685,56 @@ RULES += [
          before=[("LockSiteBookingsAsync(", "BookingSlotEngine.Decide("), ("BookingSlotEngine.Decide(", "booking.BookingDate = ")],
          forbid=["booking.Status = ", "VoidDocumentAsync(", "RealizeDepositAsync("],
          why=_R206_WHY + "เลื่อนนัด = แถวเดิม · ตัดสินรอบใหม่ใต้ล็อกไซต์โดยไม่นับตัวเอง · ลูกค้าเฉพาะหน้าต่างฟรี · ไม่แตะเอกสาร/เงิน · รอบเดิมว่าง ⇒ เลื่อนคิวสำรอง"),
+]
+
+# ── รอบ 207 (คำขอเจ้าของ 9 ข้อ: ผู้ให้บริการ · ฟอร์มจอง · เอกสารตอนเสร็จ · หน้าทำงาน · ผูกสินค้า) ──
+BOOK_SVC207 = "Services/Implementations/CmsBookingService.cs"
+BOOK_WORKFLOW = "Services/Implementations/CmsBookingService.Workflow.cs"
+BOOK_PRODUCTS = "Services/Implementations/CmsBookingService.Products.cs"
+BOOK_ENGINE = "Helpers/BookingSlotEngine.cs"
+_R207_WHY = "รอบ 207: "
+RULES += [
+    dict(file=BOOK_SVC207, method="CreateBookingAsync",
+         must=["BookingFormFields.Check(", "IsCompanyStaffAsync(", "ForCustomer(created)"],
+         before=[("BookingFormFields.Check(", "LockSiteBookingsAsync(")],
+         why=_R207_WHY + "ข้อ 7 ช่องบังคับของฟอร์มจองตรวจที่เซิร์ฟเวอร์ก่อนกันรอบ · ลูกค้าหน้าเว็บได้มุมมองลูกค้า (ไม่มีเอกสาร/หมายเหตุภายใน)"),
+    dict(file=BOOK_SVC207, method="SyncBookingToErpAsync",
+         must=["ThenInclude(s => s.Product)", "BookingProductLink.VatRate(", "VatRate: lineVatRate", "AccountId: isDeposit ? null : product?.SalesAccountId"],
+         why=_R207_WHY + "ข้อ 1 สินค้าที่ผูกต้องถึงเอกสารจริง (เดิมไม่ Include ⇒ null เสมอ) · อัตรา VAT ผ่านตัวตัดสินเดียว · ใบมัดจำไม่ใช้บัญชีรายได้"),
+    dict(file=BOOK_SVC207, method="UpdateBookingStatusCoreAsync",
+         must=["EnsureStartAssignmentsAsync(", "money?.PaidAt, money"],
+         before=[("EnsureStartAssignmentsAsync(", "booking.Status = request.Status")],
+         why=_R207_WHY + "ข้อ 3 เริ่มให้บริการทุกเส้น (ปุ่มเดิม/API) ผ่านด่านผู้ให้บริการก่อนเปลี่ยนสถานะ · รับเงินตอนเสร็จส่งถึงเส้นเอกสาร"),
+    dict(file=BOOK_SVC207, method="LoadDayAsync",
+         must=["SiteBookingAssignments", "Guid.Empty, b.ResourceId", "ResourceStatsAsync("],
+         why=_R207_WHY + "ข้อ 3 ผู้ให้บริการคนที่ 2+ ไม่ว่างช่วงงานของตัวเอง (ไม่กินความจุของบริการ) · สถิติของตรรกะแนะนำมาจากที่เดียว"),
+    dict(file=BOOK_WORKFLOW, method="StartServiceAsync",
+         must=["LockSiteBookingsAsync(", "ValidateAssignmentsAsync(", "checkAvailability: true", "UpdateBookingStatusCoreAsync("],
+         before=[("LockSiteBookingsAsync(", "ValidateAssignmentsAsync("), ("tx.CommitAsync(", "UpdateBookingStatusCoreAsync(")],
+         forbid=["booking.Status = "],
+         why=_R207_WHY + "ข้อ 3 ตรวจว่าง/รับบริการได้ใต้ล็อกไซต์ · เปลี่ยนสถานะผ่านเส้นเดิมเท่านั้น (ไม่ประทับเอง)"),
+    dict(file=BOOK_WORKFLOW, method="ValidateAssignmentsAsync",
+         must=["BookingProviderShare.Normalize(", "CapableResourcesAsync(", "RankForBookingAsync("],
+         why=_R207_WHY + "ข้อ 3/8 สัดส่วนผ่านตัวตรวจเดียว · คนที่เลือกต้องรับบริการนี้ได้ · ว่างตามตัวจัดอันดับเดียวกับที่ระบบจัดให้"),
+    dict(file=BOOK_WORKFLOW, method="CompleteBookingAsync",
+         must=["CmsBookingOnlinePayment.ValidatePaidAt(", "LodgingPaymentBank.Problem(", "ResolveBankGlAsync(", "UpdateBookingStatusCoreAsync(", "ApplyCompletionPaymentAsync("],
+         before=[("LodgingPaymentBank.Problem(", "UpdateBookingStatusCoreAsync("), ("UpdateBookingStatusCoreAsync(", "ApplyCompletionPaymentAsync(")],
+         forbid=["booking.Status = ", "PaidAmount = "],
+         why=_R207_WHY + "ข้อ 5 ตรวจยอด/วันที่/บัญชีรับเงินก่อนเปลี่ยนสถานะ · เอกสารเดินเส้นเดิม แล้วค่อยลงรับชำระ"),
+    dict(file=BOOK_WORKFLOW, method="ApplyCompletionPaymentAsync",
+         must=["CreatePaymentAsync(", "if (collected > 0m)", "CmsBookingCancelPolicy.FailureNote("],
+         forbid=["catch { }", "catch {}"],
+         why=_R207_WHY + "ข้อ 5 เงินลงที่เอกสารจริง · ยอดรับบนการจองเพิ่มเฉพาะเมื่อลงเอกสารสำเร็จ · ล้มดัง (F2 #7)"),
+    dict(file=BOOK_WORKFLOW, method="CompletionPlanAsync",
+         must=["BookingInvoiceTimingPolicy.Decide(", "BookingDocumentFlow.Label("],
+         why=_R207_WHY + "ข้อ 5 แผนตอนเสร็จบนจอถามตัวตัดสินเดียวกับเส้นจริง"),
+    dict(file=BOOK_PRODUCTS, method="LinkProductAsync",
+         must=["_productService.CreateAsync(", "EnsureProductOfCompanyAsync("],
+         forbid=["_db.Products.Add("],
+         why=_R207_WHY + "ข้อ 1 สร้างสินค้าผ่านเส้นสินค้าเดิม · ผูกข้ามบริษัทไม่ได้"),
+    dict(file=BOOK_ENGINE, method="PickResource",
+         must=["RankResources("],
+         why=_R207_WHY + "ข้อ 8 ระบบจัดให้ = อันดับแรกของตัวจัดอันดับเดียวกับรายการแนะนำบนจอ"),
 ]
 
 def main() -> int:

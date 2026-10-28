@@ -212,6 +212,11 @@ public partial class CmsBookingService
         r.InternalNotes = null;
         r.ErpNotices = new List<string>();
         r.ErpDocumentId = null;
+        // รอบ 207: ข้อมูลหน้าทำงานของพนักงาน (เอกสาร · ประวัติรับเงิน · แผนตอนเสร็จ · สัดส่วนงาน) ไม่ใช่ของลูกค้า
+        r.Documents = new List<BookingDocumentLinkDto>();
+        r.PaymentLines = new List<BookingPaymentLineDto>();
+        r.CompletionPlan = null;
+        foreach (var a in r.Assignments) a.SharePercent = 0m;
         r.PaymentReference = null;
         return r;
     }

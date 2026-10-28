@@ -67,5 +67,20 @@ public static class BookingEngineMigration
             + "\"DayOfWeek\" integer NULL, \"SpecificDate\" date NULL, \"StartTime\" time without time zone NOT NULL, "
             + "\"EndTime\" time without time zone NOT NULL, \"IsBlocked\" boolean NOT NULL DEFAULT false);",
         """CREATE INDEX IF NOT EXISTS "IX_SiteBookingResourceSlots_ResourceId" ON "SiteBookingResourceSlots" ("ResourceId");""",
+
+        // รอบ 207: ผู้ให้บริการ (เปิด/ปิด · ตรรกะแนะนำ · คนหลัก/ลำดับ · ผูกพนักงาน) · ฟอร์มจอง · เอกสารตอนเสร็จ ·
+        // ผู้ให้บริการหลายคนต่อการจอง — NULL/DEFAULT = พฤติกรรมเดิมทุกตัว (ProviderAllocationEnabled NULL ⇒ ตัดสินจากข้อมูลเดิม)
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "ProviderAllocationEnabled" boolean NULL;""",
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "ProviderRecommendStrategy" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "FormFieldsJson" text NULL;""",
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "CompletionDocument" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "SiteBookingResources" ADD COLUMN IF NOT EXISTS "StaffUserId" uuid NULL;""",
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "StartedAt" timestamptz NULL;""",
+        """ALTER TABLE "SiteBookingResourceServices" ADD COLUMN IF NOT EXISTS "IsPrimary" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "SiteBookingResourceServices" ADD COLUMN IF NOT EXISTS "Priority" integer NOT NULL DEFAULT 0;""",
+        "CREATE TABLE IF NOT EXISTS \"SiteBookingAssignments\" (" + Base + ", \"SiteId\" uuid NOT NULL, \"BookingId\" uuid NOT NULL, "
+            + "\"ResourceId\" uuid NOT NULL, \"ResourceName\" varchar(256) NOT NULL DEFAULT '', \"SharePercent\" numeric(5,2) NOT NULL DEFAULT 100);",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SiteBookingAssignments_Booking_Resource" ON "SiteBookingAssignments" ("BookingId", "ResourceId");""",
+        """CREATE INDEX IF NOT EXISTS "IX_SiteBookingAssignments_Company_Resource" ON "SiteBookingAssignments" ("CompanyId", "ResourceId");""",
     };
 }

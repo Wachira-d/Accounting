@@ -36,10 +36,14 @@ public sealed record BookingSlotRules
     public bool WaitlistEnabled { get; init; }
     /// <summary>การจัดสรรผู้ให้บริการ/ห้อง/อุปกรณ์ — None = นับความจุของบริการ (เดิม)</summary>
     public BookingResourceMode ResourceMode { get; init; } = BookingResourceMode.None;
+    /// <summary>รอบ 207: ตรรกะแนะนำ/จัดผู้ให้บริการของไซต์ · ค่าเริ่มต้น = งานน้อยสุดของวัน (เดิม)</summary>
+    public BookingRecommendStrategy Strategy { get; init; } = BookingRecommendStrategy.LeastLoadedDay;
 }
 
-/// <summary>ค่าตั้งระดับไซต์ที่บริการ "ใช้ค่าของไซต์" รับไป (ระยะเวลา · buffer · ล่วงหน้า)</summary>
-public sealed record BookingSiteDefaults(int DurationMinutes, int BufferBeforeMinutes, int BufferAfterMinutes, int MinAdvanceHours, int MaxAdvanceDays)
+/// <summary>ค่าตั้งระดับไซต์ที่บริการ "ใช้ค่าของไซต์" รับไป (ระยะเวลา · buffer · ล่วงหน้า)
+/// <para>รอบ 207: <see cref="Strategy"/> ตรรกะแนะนำผู้ให้บริการ · <see cref="ProvidersEnabled"/> ไซต์เปิดจัดสรรผู้ให้บริการ (ตัดสินแล้วโดย <c>BookingProviderAllocation.Enabled</c>)</para></summary>
+public sealed record BookingSiteDefaults(int DurationMinutes, int BufferBeforeMinutes, int BufferAfterMinutes, int MinAdvanceHours, int MaxAdvanceDays,
+    BookingRecommendStrategy Strategy = BookingRecommendStrategy.LeastLoadedDay, bool ProvidersEnabled = true)
 {
     /// <summary>ไซต์ที่ยังไม่เคยตั้ง — ค่าเดียวกับค่าเริ่มต้นของบริการเดิม</summary>
     public static readonly BookingSiteDefaults Fallback = new(60, 0, 0, 1, 30);
@@ -54,8 +58,15 @@ public sealed record BookingOccupancy(TimeOnly Start, TimeOnly End, int GuestCou
     Guid? ServiceId = null, Guid? ResourceId = null);
 
 /// <summary>ผู้ให้บริการ/ห้อง/อุปกรณ์ที่ทำบริการนี้ได้ · <see cref="Hours"/> ว่าง = ว่างตลอดเวลาทำการของบริการ ·
-/// <see cref="Capacity"/> = งานพร้อมกันได้กี่งาน (ช่าง 1 · ห้อง 1 · รถ 1)</summary>
-public sealed record BookingResourceInfo(Guid Id, string Name, int Capacity, int SortOrder, IReadOnlyList<BookingScheduleRow> Hours);
+/// <see cref="Capacity"/> = งานพร้อมกันได้กี่งาน (ช่าง 1 · ห้อง 1 · รถ 1)
+/// <para>รอบ 207: ข้อมูลประกอบตรรกะแนะนำ (<see cref="BookingSlotEngine.RankResources"/>) — <see cref="IsPrimary"/>/<see cref="Priority"/> ต่อบริการ ·
+/// <see cref="PeriodLoadMinutes"/> นาทีงานของเดือนนี้ · <see cref="LastAssignedUtc"/> ได้งานล่าสุด · ค่าเริ่มต้น = ไม่ใช้ (โหมดเดิม)</para></summary>
+public sealed record BookingResourceInfo(Guid Id, string Name, int Capacity, int SortOrder, IReadOnlyList<BookingScheduleRow> Hours,
+    bool IsPrimary = false, int Priority = 0, int PeriodLoadMinutes = 0, DateTime? LastAssignedUtc = null);
+
+/// <summary>ผลจัดอันดับผู้ให้บริการหนึ่งคนสำหรับรอบหนึ่ง (รอบ 207) — <see cref="OnDuty"/> เข้างานช่วงนี้ · <see cref="Fits"/> ว่างพอรับงานนี้ ·
+/// <see cref="DayLoadMinutes"/> งานของวันนั้น · ลำดับในรายการ = ลำดับที่แนะนำ</summary>
+public sealed record BookingResourceRank(BookingResourceInfo Resource, bool OnDuty, bool Fits, int Remaining, int DayLoadMinutes);
 
 /// <summary>รอบที่จองได้ — นาทีนับจากเที่ยงคืน (EndMinute 1440 = สิ้นวัน) · <see cref="BookedMinutes"/> = ระยะที่บันทึกบนการจอง</summary>
 public sealed record BookingSlotOption(int StartMinute, int EndMinute, int BookedMinutes, int Capacity, int Remaining, string? Label)
@@ -294,16 +305,46 @@ public static class BookingSlotEngine
     internal static Guid? PickResource(BookingSlotRules r, BookingSlotOption c, DateOnly date, IEnumerable<BookingResourceInfo> resources,
         IReadOnlyList<BookingOccupancy> existing, int guestCount, bool mustFit = true)
     {
-        var demand = Demand(r, guestCount);
-        return resources
-            .Where(x => x.Hours.Count == 0 || Covers(date, x.Hours, c.StartMinute, c.EndMinute))
-            .Select(x => (Res: x, Rem: ResourceRemaining(r, x, c, existing),
-                Load: existing.Where(b => b.ResourceId == x.Id).Sum(b => Math.Max(0, ToEndMinute(b.End) - ToMinute(b.Start)))))
-            .Where(x => !mustFit || x.Rem >= demand)
-            .OrderBy(x => x.Rem >= demand ? 0 : 1)
-            .ThenBy(x => x.Load).ThenBy(x => x.Res.SortOrder).ThenBy(x => x.Res.Name, StringComparer.Ordinal).ThenBy(x => x.Res.Id)
-            .Select(x => (Guid?)x.Res.Id)
+        return RankResources(r, c, date, resources, existing, guestCount)
+            .Where(x => x.OnDuty && (!mustFit || x.Fits))
+            .Select(x => (Guid?)x.Resource.Id)
             .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// <b>ตัวจัดอันดับเดียว</b>ของผู้ให้บริการสำหรับรอบหนึ่ง (รอบ 207) — ใช้ทั้งจัดอัตโนมัติ (<see cref="PickResource"/>) และรายการแนะนำตอน "เริ่มให้บริการ"
+    /// ⇒ คำแนะนำบนจอกับที่ระบบจัดให้เป็นคนเดียวกันเสมอ · เรียง: เข้างาน → ว่างพอ → ตามตรรกะของไซต์ (<see cref="BookingSlotRules.Strategy"/>) →
+    /// ลำดับที่ตั้ง → ชื่อ (ordinal) → Id · <see cref="BookingRecommendStrategy.LeastLoadedDay"/> = ลำดับเดิมทุกตัว
+    /// </summary>
+    public static IReadOnlyList<BookingResourceRank> RankResources(BookingSlotRules r, BookingSlotOption c, DateOnly date,
+        IEnumerable<BookingResourceInfo> resources, IReadOnlyList<BookingOccupancy> existing, int guestCount)
+    {
+        var demand = Demand(r, guestCount);
+        var rows = resources.Select(x =>
+        {
+            var onDuty = x.Hours.Count == 0 || Covers(date, x.Hours, c.StartMinute, c.EndMinute);
+            var rem = onDuty ? ResourceRemaining(r, x, c, existing) : 0;
+            var load = existing.Where(b => b.ResourceId == x.Id).Sum(b => Math.Max(0, ToEndMinute(b.End) - ToMinute(b.Start)));
+            return new BookingResourceRank(x, onDuty, onDuty && rem >= demand, rem, load);
+        });
+        var ordered = rows.OrderBy(x => x.OnDuty ? 0 : 1).ThenBy(x => x.Fits ? 0 : 1);
+        ordered = r.Strategy switch
+        {
+            BookingRecommendStrategy.FairShareMonth => ordered.ThenBy(x => x.Resource.PeriodLoadMinutes + x.DayLoadMinutes),
+            BookingRecommendStrategy.RoundRobin => ordered.ThenBy(x => x.Resource.LastAssignedUtc ?? DateTime.MinValue),
+            BookingRecommendStrategy.PrimaryFirst => ordered.ThenBy(x => x.Resource.IsPrimary ? 0 : 1).ThenBy(x => x.Resource.Priority).ThenBy(x => x.DayLoadMinutes),
+            BookingRecommendStrategy.PriorityOrder => ordered.ThenBy(x => x.Resource.Priority).ThenBy(x => x.DayLoadMinutes),
+            _ => ordered.ThenBy(x => x.DayLoadMinutes),
+        };
+        return ordered.ThenBy(x => x.Resource.SortOrder).ThenBy(x => x.Resource.Name, StringComparer.Ordinal).ThenBy(x => x.Resource.Id).ToList();
+    }
+
+    /// <summary>รอบของการจองที่มีอยู่แล้ว (เวลาเริ่ม-จบตามที่บันทึก) — ใช้จัดอันดับผู้ให้บริการตอนเริ่มให้บริการ (รอบ 207)</summary>
+    public static BookingSlotOption SlotOfBooking(TimeOnly start, TimeOnly end, int capacity = 1)
+    {
+        var s = ToMinute(start); var e = ToEndMinute(end);
+        var cap = Math.Max(1, capacity);
+        return new BookingSlotOption(s, e, Math.Max(0, e - s), cap, cap, null);
     }
 
     private static bool UsesResources(BookingSlotRules r, IReadOnlyList<BookingResourceInfo>? resources)
@@ -475,13 +516,16 @@ public static class BookingSlotEngine
             EnforceCapacity = s.EnforceSlotCapacity,
             OverlapLimit = s.OverlapLimit,
             WaitlistEnabled = s.WaitlistEnabled,
-            ResourceMode = s.ResourceMode,
+            // รอบ 207: ไซต์ปิดจัดสรรผู้ให้บริการ ⇒ None (ค่ารายบริการยังเก็บไว้) · ไม่มีค่าตั้งไซต์ = ค่าของบริการ (เดิม)
+            ResourceMode = BookingProviderAllocation.EffectiveMode(s.ResourceMode, site?.ProvidersEnabled ?? true),
+            Strategy = site?.Strategy ?? BookingRecommendStrategy.LeastLoadedDay,
         };
     }
 
     public static BookingSiteDefaults DefaultsOf(SiteBookingSettings? x)
         => x == null ? BookingSiteDefaults.Fallback
-            : new BookingSiteDefaults(x.DurationMinutes, x.BufferBeforeMinutes, x.BufferAfterMinutes, x.MinAdvanceHours, x.MaxAdvanceDays);
+            : new BookingSiteDefaults(x.DurationMinutes, x.BufferBeforeMinutes, x.BufferAfterMinutes, x.MinAdvanceHours, x.MaxAdvanceDays,
+                x.ProviderRecommendStrategy, x.ProviderAllocationEnabled ?? true);
 
     /// <summary>
     /// <b>ตัวตัดสินเดียว</b> "เวลาทำการของบริการนี้คือตารางไหน" (รอบ 205 W3 · R-14 · B13): บริการที่ตั้งเวลาทำการเอง (มีแถว <c>SiteBookingSlot</c> ≥ 1)

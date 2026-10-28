@@ -37,7 +37,7 @@ public interface ICmsBookingService
     Task<BookingResponse?> GetBookingAsync(Guid companyId, Guid siteId, Guid bookingId);
     /// <summary>พนักงานยืนยัน "รับเงินแล้ว" ⇒ ออกใบกำกับภาษีของการจอง Guaranteed (คำตัดสินข้อ 155 · <c>BookingInvoiceTimingPolicy</c>)</summary>
     Task<BookingResponse> IssueTaxInvoiceOnPaymentAsync(Guid companyId, Guid siteId, Guid bookingId, DateTime? receivedDate, string userId);
-    Task<PagedResponse<BookingListResponse>> GetBookingsAsync(Guid companyId, Guid siteId, string? status = null, Guid? serviceId = null, DateTime? fromDate = null, DateTime? toDate = null, int page = 1, int pageSize = 20, string? search = null);
+    Task<PagedResponse<BookingListResponse>> GetBookingsAsync(Guid companyId, Guid siteId, string? status = null, Guid? serviceId = null, DateTime? fromDate = null, DateTime? toDate = null, int page = 1, int pageSize = 20, string? search = null, Guid? resourceId = null, string? sort = null);
     /// <summary>รอบ 205 W3 R-16: พนักงานเลือก/เปลี่ยนผู้ให้บริการ (null = ระบบจัดให้ใหม่) — ตัดสินผ่าน <c>BookingSlotEngine.Decide</c> ตัวเดียวใต้ล็อกไซต์</summary>
     Task<BookingResponse> AssignResourceAsync(Guid companyId, Guid siteId, Guid bookingId, Guid? resourceId, string userId);
     /// <summary>รอบ 205 W3 R-13: แจ้งลูกค้าที่ได้คิวจากคิวสำรอง (เรียกซ้ำได้ — ใบที่แจ้งถึงแล้วถูกข้าม) · คืนข้อความผลการส่ง · <c>BookingReminderJob</c> เรียกซ้ำให้ใบที่ส่งไม่ถึง</summary>
@@ -56,6 +56,20 @@ public interface ICmsBookingService
     /// <summary>รอบ 206: เลื่อนนัด (แถวเดิม · ตัดสินรอบใหม่ด้วย BookingSlotEngine.Decide ไม่นับตัวเอง · เอกสาร/เงินคงผูก) — CmsBookingService.Reschedule.cs</summary>
     Task<BookingResponse> RescheduleAsync(Guid companyId, Guid siteId, Guid bookingId, RescheduleBookingRequest request, string userId);
     Task<BookingResponse> RescheduleByCustomerAsync(Guid companyId, Guid siteId, string token, RescheduleBookingRequest request);
+
+    // ── รอบ 207: หน้าทำงานผู้ให้บริการ — CmsBookingService.Workflow.cs ──
+    /// <summary>ผู้ให้บริการที่เลือกได้ตอนเริ่มให้บริการ (รับบริการนี้ได้ · ว่าง/ไม่ว่าง + เหตุ · เรียงตามตรรกะแนะนำของไซต์)</summary>
+    Task<BookingProviderCandidatesResponse> GetProviderCandidatesAsync(Guid companyId, Guid siteId, Guid bookingId);
+    /// <summary>เริ่มให้บริการ + ผู้ให้บริการ (หลายคน · แบ่ง %) — ตรวจว่างใต้ล็อกไซต์</summary>
+    Task<BookingResponse> StartServiceAsync(Guid companyId, Guid siteId, Guid bookingId, StartBookingServiceRequest request, string userId);
+    /// <summary>แก้ผู้ให้บริการ/สัดส่วนหลังเริ่ม</summary>
+    Task<BookingResponse> SetAssignmentsAsync(Guid companyId, Guid siteId, Guid bookingId, StartBookingServiceRequest request, string userId);
+    /// <summary>เสร็จสิ้น (+ รับชำระ: วิธี/บัญชีรับเงิน/ยอด) — เอกสารเดินเส้นเดิมตามค่าตั้งไซต์ + สถานะ VAT</summary>
+    Task<BookingResponse> CompleteBookingAsync(Guid companyId, Guid siteId, Guid bookingId, CompleteBookingRequest request, string userId);
+    /// <summary>ผูก/สร้าง/เลิกผูกสินค้า/บริการในระบบของบริการจอง (CmsBookingService.Products.cs)</summary>
+    Task<BookingServiceResponse> LinkProductAsync(Guid companyId, Guid siteId, Guid serviceId, LinkBookingProductRequest request, string userId);
+    /// <summary>สรุปการทำงาน/รายงานผู้ให้บริการของช่วงวันที่</summary>
+    Task<BookingProviderReportResponse> GetProviderReportAsync(Guid companyId, Guid siteId, DateTime from, DateTime to);
 
     // ERP Sync (event-driven)
     Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId);
