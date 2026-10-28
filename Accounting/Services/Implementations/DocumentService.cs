@@ -17563,7 +17563,7 @@ public partial class DocumentService : IDocumentService
             var parsed = new List<Accounting.Helpers.PaymentSourceLine>();
             foreach (var s in requestedSources)
             {
-                if (!Enum.TryParse<Accounting.Helpers.PaymentSourceKind>((s.Kind ?? "").Trim(), ignoreCase: true, out var kind))
+                if (!Enum.TryParse<Accounting.Helpers.PaymentSplitSourceKind>((s.Kind ?? "").Trim(), ignoreCase: true, out var kind))
                     throw new Accounting.Helpers.BusinessRuleException(
                         $"ชนิดบรรทัดแยกยอด \"{s.Kind}\" ไม่รู้จัก — ใช้ Money (เงินออกจริง) หรือ PostVatDeduction (หักหลัง VAT)",
                         Accounting.Helpers.PaymentSourceSplit.RuleCode);
@@ -17593,7 +17593,7 @@ public partial class DocumentService : IDocumentService
             // ย่อยเป็นความจริงเดียว: เงินออกจริง = Σ เงิน (เท่ายอดรวม = จ่ายเต็ม = null) · หักหลัง VAT = Σ หัก · ผัง = ผังเดียวของบรรทัดหัก (ถ้ามีบรรทัดเดียว)
             doc.ActualPaidAmount = Math.Abs(split.MoneyTotal - doc.TotalAmount) <= Accounting.Helpers.PostVatDeduction.Tolerance ? null : split.MoneyTotal;
             requestedAmount = split.DeductionTotal;
-            var dedCodes = sources.Where(s => s.Kind == Accounting.Helpers.PaymentSourceKind.PostVatDeduction).Select(s => s.AccountCode).Distinct().ToList();
+            var dedCodes = sources.Where(s => s.Kind == Accounting.Helpers.PaymentSplitSourceKind.PostVatDeduction).Select(s => s.AccountCode).Distinct().ToList();
             if (requestedAccountCode is null && dedCodes.Count == 1) requestedAccountCode = dedCodes[0];
         }
 

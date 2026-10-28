@@ -7,7 +7,7 @@ using System.Text.Json.Serialization;
 namespace Accounting.Helpers;
 
 /// <summary>ชนิดบรรทัดในการ "แยกยอดจ่ายจริงตามแหล่ง"</summary>
-public enum PaymentSourceKind
+public enum PaymentSplitSourceKind
 {
     /// <summary>เงินออกจริงจากแหล่งนี้ (เงินสด · ธนาคาร · เจ้าหนี้กรรมการที่จ่ายแทน 21230 ฯลฯ)</summary>
     Money = 1,
@@ -20,7 +20,7 @@ public enum PaymentSourceKind
 /// <param name="AccountCode">รหัสผังของบริษัท (ต้องมีจริง — service ตรวจ)</param>
 /// <param name="Amount">ยอดบวกเสมอ</param>
 /// <param name="Note">หมายเหตุ/ป้ายบนกระดาษ</param>
-public sealed record PaymentSourceLine(PaymentSourceKind Kind, string AccountCode, decimal Amount, string? Note = null);
+public sealed record PaymentSourceLine(PaymentSplitSourceKind Kind, string AccountCode, decimal Amount, string? Note = null);
 
 /// <summary>ผลตรวจชุดบรรทัดแยกยอด</summary>
 /// <param name="Ok">บันทึกได้ไหม</param>
@@ -72,19 +72,19 @@ public static class PaymentSourceSplit
 
         foreach (var l in lines)
         {
-            var label = l.Kind == PaymentSourceKind.Money ? "แหล่งเงิน" : "หักหลัง VAT";
+            var label = l.Kind == PaymentSplitSourceKind.Money ? "แหล่งเงิน" : "หักหลัง VAT";
             if (string.IsNullOrWhiteSpace(l.AccountCode))
                 return Fail($"บรรทัด{label}ต้องระบุผังบัญชี (เช่น 11110 เงินสด · 21230 เจ้าหนี้กรรมการ · {PostVatDeduction.DefaultAccountCode} ส่วนลดรับ)");
             if (l.Amount <= 0m)
                 return Fail($"บรรทัด{label} {l.AccountCode} ยอดต้องมากกว่า 0 — ลบบรรทัดที่ไม่ใช้ทิ้ง");
             if (decimal.Round(l.Amount, 2) != l.Amount)
                 return Fail($"บรรทัด{label} {l.AccountCode} ต้องเป็นทศนิยมไม่เกิน 2 ตำแหน่ง");
-            if (l.Kind == PaymentSourceKind.PostVatDeduction && PostVatDeduction.AccountError(l.AccountCode) is string accErr)
+            if (l.Kind == PaymentSplitSourceKind.PostVatDeduction && PostVatDeduction.AccountError(l.AccountCode) is string accErr)
                 return Fail(accErr);
         }
 
-        var money = lines.Where(l => l.Kind == PaymentSourceKind.Money).Sum(l => l.Amount);
-        var deduction = lines.Where(l => l.Kind == PaymentSourceKind.PostVatDeduction).Sum(l => l.Amount);
+        var money = lines.Where(l => l.Kind == PaymentSplitSourceKind.Money).Sum(l => l.Amount);
+        var deduction = lines.Where(l => l.Kind == PaymentSplitSourceKind.PostVatDeduction).Sum(l => l.Amount);
         if (money <= 0m)
             return Fail("การแยกยอดต้องมีเงินออกจริงอย่างน้อย 1 แหล่ง — ถ้าไม่มีเงินออกเลย (ปิดด้วยคูปองทั้งใบ) ให้บันทึกเป็นใบตั้งหนี้แล้วปิดด้วยบรรทัดปรับตอนชำระ");
         var sum = Math.Round(money + deduction, 2, MidpointRounding.AwayFromZero);
@@ -107,7 +107,7 @@ public static class PaymentSourceSplit
         var result = new List<PaymentSourceJournalLine>();
         foreach (var l in lines)
         {
-            if (l.Kind == PaymentSourceKind.PostVatDeduction)
+            if (l.Kind == PaymentSplitSourceKind.PostVatDeduction)
             {
                 var (dr, cr) = PostVatDeduction.JournalLine(l.Amount);
                 result.Add(new(l.AccountCode, dr, cr, PostVatDeduction.JournalDescription(l.Amount, documentNumber)

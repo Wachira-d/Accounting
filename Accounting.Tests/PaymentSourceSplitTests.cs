@@ -15,8 +15,8 @@ public class PaymentSourceSplitTests
 {
     private static readonly PaymentSourceLine[] UserCase =
     {
-        new(PaymentSourceKind.Money, "21230", 438.00m, "กรรมการจ่ายแทน"),
-        new(PaymentSourceKind.PostVatDeduction, "52120", 98.00m, "ส่วนลดพิเศษ Shopee"),
+        new(PaymentSplitSourceKind.Money, "21230", 438.00m, "กรรมการจ่ายแทน"),
+        new(PaymentSplitSourceKind.PostVatDeduction, "52120", 98.00m, "ส่วนลดพิเศษ Shopee"),
     };
 
     [Fact]
@@ -42,9 +42,9 @@ public class PaymentSourceSplitTests
     {
         var split = new[]
         {
-            new PaymentSourceLine(PaymentSourceKind.Money, "11110", 300.00m),
-            new PaymentSourceLine(PaymentSourceKind.Money, "21230", 138.00m),
-            new PaymentSourceLine(PaymentSourceKind.PostVatDeduction, "51150", 98.00m),
+            new PaymentSourceLine(PaymentSplitSourceKind.Money, "11110", 300.00m),
+            new PaymentSourceLine(PaymentSplitSourceKind.Money, "21230", 138.00m),
+            new PaymentSourceLine(PaymentSplitSourceKind.PostVatDeduction, "51150", 98.00m),
         };
         Assert.True(PaymentSourceSplit.Check(536.00m, split).Ok);
         var lines = PaymentSourceSplit.JournalLines(split, "11110", "PV-TEST");
@@ -65,8 +65,8 @@ public class PaymentSourceSplitTests
     {
         var split = new[]
         {
-            new PaymentSourceLine(PaymentSourceKind.Money, "11110", 300.00m),
-            new PaymentSourceLine(PaymentSourceKind.Money, "21230", 236.00m, "กรรมการจ่ายแทน"),
+            new PaymentSourceLine(PaymentSplitSourceKind.Money, "11110", 300.00m),
+            new PaymentSourceLine(PaymentSplitSourceKind.Money, "21230", 236.00m, "กรรมการจ่ายแทน"),
         };
         var c = PaymentSourceSplit.Check(536.00m, split);
         Assert.True(c.Ok);
@@ -77,13 +77,13 @@ public class PaymentSourceSplitTests
         Assert.Contains(lines, l => l.AccountCode == "21230" && l.Credit == 236.00m && l.Debit == 0m);
         Assert.Null(PaymentSettlementAdjustment.CheckDocumentLines(0m, lines.Sum(l => l.Debit), lines.Sum(l => l.Credit), 536.00m, null));
         // ติ๊กแยกยอดที่ทุกบรรทัดคือแหล่งหลักเอง = ไม่มีขาเพิ่ม (พฤติกรรมเดิม)
-        Assert.Empty(PaymentSourceSplit.JournalLines(new[] { new PaymentSourceLine(PaymentSourceKind.Money, "11110", 536.00m) }, "11110", "PV-TEST"));
+        Assert.Empty(PaymentSourceSplit.JournalLines(new[] { new PaymentSourceLine(PaymentSplitSourceKind.Money, "11110", 536.00m) }, "11110", "PV-TEST"));
     }
 
     [Fact]
     public void ผลรวมไม่ตรง_ปฏิเสธ_บอกส่วนต่าง()
     {
-        var c = PaymentSourceSplit.Check(536.00m, new[] { new PaymentSourceLine(PaymentSourceKind.Money, "21230", 438.00m) });
+        var c = PaymentSourceSplit.Check(536.00m, new[] { new PaymentSourceLine(PaymentSplitSourceKind.Money, "21230", 438.00m) });
         Assert.False(c.Ok);
         Assert.Contains("536.00", c.Error);
         Assert.Contains("438.00", c.Error);
@@ -93,7 +93,7 @@ public class PaymentSourceSplitTests
     [Fact]
     public void ไม่มีเงินออกเลย_ปฏิเสธ()
     {
-        var c = PaymentSourceSplit.Check(98.00m, new[] { new PaymentSourceLine(PaymentSourceKind.PostVatDeduction, "51150", 98.00m) });
+        var c = PaymentSourceSplit.Check(98.00m, new[] { new PaymentSourceLine(PaymentSplitSourceKind.PostVatDeduction, "51150", 98.00m) });
         Assert.False(c.Ok);
         Assert.Contains("เงินออกจริง", c.Error);
     }
@@ -101,21 +101,21 @@ public class PaymentSourceSplitTests
     [Fact]
     public void ยอดศูนย์_ผังว่าง_ทศนิยม3_ผังเงินสดในบรรทัดหัก_ปฏิเสธ()
     {
-        Assert.False(PaymentSourceSplit.Check(536m, new[] { new PaymentSourceLine(PaymentSourceKind.Money, "21230", 0m) }).Ok);
-        Assert.False(PaymentSourceSplit.Check(536m, new[] { new PaymentSourceLine(PaymentSourceKind.Money, "", 536m) }).Ok);
-        Assert.False(PaymentSourceSplit.Check(536m, new[] { new PaymentSourceLine(PaymentSourceKind.Money, "21230", 536.001m) }).Ok);
+        Assert.False(PaymentSourceSplit.Check(536m, new[] { new PaymentSourceLine(PaymentSplitSourceKind.Money, "21230", 0m) }).Ok);
+        Assert.False(PaymentSourceSplit.Check(536m, new[] { new PaymentSourceLine(PaymentSplitSourceKind.Money, "", 536m) }).Ok);
+        Assert.False(PaymentSourceSplit.Check(536m, new[] { new PaymentSourceLine(PaymentSplitSourceKind.Money, "21230", 536.001m) }).Ok);
         Assert.False(PaymentSourceSplit.Check(536m, new[]
         {
-            new PaymentSourceLine(PaymentSourceKind.Money, "21230", 438m),
-            new PaymentSourceLine(PaymentSourceKind.PostVatDeduction, "11110", 98m),
+            new PaymentSourceLine(PaymentSplitSourceKind.Money, "21230", 438m),
+            new PaymentSourceLine(PaymentSplitSourceKind.PostVatDeduction, "11110", 98m),
         }).Ok);
     }
 
     [Fact]
     public void ค่าเผื่อ_ครึ่งสตางค์ผ่าน_หนึ่งสตางค์ไม่ผ่าน()
     {
-        Assert.True(PaymentSourceSplit.Check(536.00m, new[] { new PaymentSourceLine(PaymentSourceKind.Money, "21230", 536.00m) }).Ok);
-        Assert.False(PaymentSourceSplit.Check(536.00m, new[] { new PaymentSourceLine(PaymentSourceKind.Money, "21230", 535.99m) }).Ok);
+        Assert.True(PaymentSourceSplit.Check(536.00m, new[] { new PaymentSourceLine(PaymentSplitSourceKind.Money, "21230", 536.00m) }).Ok);
+        Assert.False(PaymentSourceSplit.Check(536.00m, new[] { new PaymentSourceLine(PaymentSplitSourceKind.Money, "21230", 535.99m) }).Ok);
     }
 
     [Fact]
