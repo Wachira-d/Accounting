@@ -148,6 +148,7 @@
           <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
             <button class="btn btn-primary" id="srSave" onclick="Page.saveStampRules()">บันทึกกฎตราประทับ</button>
             <span id="srSummary" style="font-size:12px;color:#64748b"></span>
+            <span id="srAudit" style="font-size:12px;color:#94a3b8"></span>
           </div>
         </details>
       </div>
@@ -771,6 +772,34 @@
           เปิด = สแกนเอกสาร (OCR) เติมอัตราและประเภทเงินได้ <b>ต่อบรรทัด</b> ให้ (เช่น ค่าบริการ 3% · ค่าโฆษณา 2% · ค่าสินค้า 0% ในใบเดียว) และ
           ใบต่างสกุลที่สแกนแล้วพบยอดเงินบาทพิมพ์ไว้ ใช้ยอดบาทนั้นเป็นฐาน (ผลที่ระบบแยกเองต้องมีคนกดอนุมัติ) · ปิด = สแกนแบบเดิม ·
           ทำงานเสมอไม่ว่าเปิด/ปิด: กรอกหัก ณ ที่จ่ายรายบรรทัดเองในฟอร์ม · 50 ทวิ/ภ.ง.ด.3/53/54 แยกตามประเภทเงินได้ของแต่ละบรรทัด และเป็นบาทเสมอ
+        </div>
+      </div>
+      <!-- คำตัดสินเจ้าของข้อ 162 (Q2 · 2026-10-26): อัตราแลกเปลี่ยนของใบต่างสกุล — ตั้งค่าได้ต่อบริษัท · ค่าตั้งต้น = เดิมทุกสตางค์ -->
+      <div class="form-group">
+        <label class="form-label">อัตราแลกเปลี่ยนที่ใช้กับฐานหัก ณ ที่จ่ายของใบต่างสกุลที่จ่ายเป็นงวด</label>
+        <select class="form-select" id="sWhtFxRateBasis" style="max-width:520px">
+          <option value="DocumentDate">อัตราของเอกสาร (วันที่ใบ) — ค่าเริ่มต้น</option>
+          <option value="PaymentDate">อัตรา ณ วันจ่าย (ป.132/2548)</option>
+        </select>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          <b>ผลทางภาษี:</b> 50 ทวิ รายงวดกับขาภาษีค้างจ่ายใน GL (2191x) ใช้อัตราตัวเดียวกันเสมอ (เท่ากันถึงสตางค์) ·
+          <b>วันที่ใบ</b> = ภาษีที่นำส่งเท่ากับที่ตั้งหนี้ไว้ ไม่มีผลต่างอัตราแลกเปลี่ยนบนส่วนภาษี ·
+          <b>วันจ่าย</b> = ตามแนวกรมสรรพากรสำหรับเงินได้ที่จ่ายเป็นเงินตราต่างประเทศ (ม.3 เตรส/ม.70 · ป.132/2548) — ยอดภาษีบน 50 ทวิ ต่างจากที่ตั้งหนี้ไว้
+          ผลต่างลงกำไร/ขาดทุนจากอัตราแลกเปลี่ยนที่เกิดขึ้นจริง (TFRS for NPAEs บทที่ 19) · ใบที่ออก 50 ทวิ ไปแล้วไม่ถูกแก้ย้อนหลัง · ทุกใบบันทึกที่มาของอัตราไว้ ·
+          ใบบาทไม่เกี่ยวกับค่าตั้งนี้
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">อัตรา ธปท. ที่ใช้เมื่อไม่ได้กรอกอัตราเอง</label>
+        <select class="form-select" id="sFxBotRateType" style="max-width:520px">
+          <option value="Mid">อัตรากลาง — ค่าเริ่มต้น</option>
+          <option value="AverageBuying">อัตราซื้อถัวเฉลี่ย (โอน)</option>
+          <option value="AverageSelling">อัตราขายถัวเฉลี่ย</option>
+        </select>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          <b>ผลทางภาษี:</b> ใช้กับใบต่างสกุลที่สร้าง/สแกนโดยไม่กรอกอัตรา (ฐาน VAT ภ.พ.30 · ฐานหัก ณ ที่จ่าย · JE) · แนวกรมสรรพากร (§79/4 · ป.132/2548):
+          ฐานภาษีซื้อ/เงินได้ที่จ่ายใช้ <b>อัตราซื้อถัวเฉลี่ย</b> ของวันทำการก่อนวันที่ความรับผิดเกิด — ให้นักบัญชีของบริษัทเลือก · เปลี่ยนแล้วมีผลเฉพาะใบใหม่ ·
+          อัตราที่ผู้ใช้กรอก/ยอดบาทที่พิมพ์บนเอกสารชนะค่าตั้งนี้เสมอ · ตัวที่เลือกไม่มีค่าในวันนั้น ⇒ ใช้อัตรากลาง
         </div>
       </div>
 
@@ -2741,6 +2770,11 @@
             document.getElementById('sPerLineWht').checked = !!s.perLineWhtEnabled;
             this._perLineWhtLoaded = true;
           }
+          // คำตัดสินข้อ 162 (Q2): ค่าจากเซิร์ฟเวอร์เป็นชื่อ enum · ไม่มีค่า (เซิร์ฟเวอร์รุ่นก่อน) = ไม่แตะ select (ค่าเริ่มต้นในหน้า = เดิม)
+          if (document.getElementById('sWhtFxRateBasis') && s.whtFxRateBasis)
+            document.getElementById('sWhtFxRateBasis').value = s.whtFxRateBasis;
+          if (document.getElementById('sFxBotRateType') && s.fxBotRateType)
+            document.getElementById('sFxBotRateType').value = s.fxBotRateType;
           // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
           if (document.getElementById('sBookkeeperName'))
             document.getElementById('sBookkeeperName').value = s.bookkeeperName || '';
@@ -2842,8 +2876,14 @@
           sel.innerHTML = (d.kinds || []).map(k => `<option value="${Layout.esc(k.key)}">${Layout.esc(k.label)}</option>`).join('');
           document.getElementById('srRoles').innerHTML = (d.roles || []).map(r =>
             `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" class="sr-role" value="${Layout.esc(r)}"> ${Layout.esc(this.SR_ROLE_LABEL[r] || r)}</label>`).join('');
+          // W9 R-61: แสดงบทบาท + สถานะบัญชีข้างชื่อ (ไม่กรองตัวเลือก — เซิร์ฟเวอร์ส่งสมาชิกทุกคน · คนที่ถูกถอดแล้วไม่อยู่ในรายการ)
           document.getElementById('srUsers').innerHTML = (d.signers || []).map(u =>
-            `<option value="${Layout.esc(u.userId)}">${Layout.esc(u.name)} (${Layout.esc(this.SR_ROLE_LABEL[u.role] || u.role)})</option>`).join('');
+            `<option value="${Layout.esc(u.userId)}">${Layout.esc(u.name)} (${Layout.esc(this.SR_ROLE_LABEL[u.role] || u.role)}${u.isActive === false ? ' · บัญชีปิดใช้งาน' : ''})</option>`).join('');
+          // W9 R-60: ผู้แก้/เวลาล่าสุดจาก audit chain (เซิร์ฟเวอร์ส่ง · หน้าแสดงอย่างเดียว)
+          const au = document.getElementById('srAudit');
+          if (au) au.textContent = d.lastChangedAt
+            ? `แก้ล่าสุด ${new Date(d.lastChangedAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })}${d.lastChangedBy ? ' โดย ' + d.lastChangedBy : ''}`
+            : 'ยังไม่เคยแก้กฎผ่านหน้านี้';
           this.srRender(sel.value);
         } catch (e) {
           document.getElementById('srNote').textContent = 'โหลดกฎตราประทับไม่สำเร็จ: ' + (e.message || e);
@@ -3059,6 +3099,11 @@
             autoAttachWhtCertPdf: document.getElementById('sAutoAttachWhtCert')?.checked || false,
             // ทีม F: ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จ (โหลดล้ม = ไม่แตะ — กันปิดฟีเจอร์ทับเงียบ ๆ)
             ...(this._perLineWhtLoaded ? { perLineWhtEnabled: document.getElementById('sPerLineWht').checked } : {}),
+            // คำตัดสินข้อ 162 (Q2): ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จ (โหลดล้ม = ไม่แตะ — กันรีเซ็ตกลับค่าเริ่มต้นเงียบ ๆ)
+            ...(this._perLineWhtLoaded ? {
+              whtFxRateBasis: document.getElementById('sWhtFxRateBasis')?.value || 'DocumentDate',
+              fxBotRateType: document.getElementById('sFxBotRateType')?.value || 'Mid',
+            } : {}),
             // ผู้ทำบัญชี (พ.ร.บ.การบัญชี ม.7)
             // ไม่มีช่องบนหน้า = undefined (ไม่ส่งคีย์ = ไม่แก้) · มีช่องแต่ว่าง = "" (ล้าง)
             bookkeeperName: document.getElementById('sBookkeeperName')?.value?.trim(),

@@ -449,6 +449,45 @@ RULES += [
          why=_ADV1 + " รอบ 2 P2(d): ทางอัตโนมัติตรวจแค่ tenant (ของที่ลบทีหลังไม่ทำให้รายการประจำ/แก้ JE ล้ม)"),
 ]
 
+# ── รอบ 205 ทีม W6 (R-26 R-38 R-39 R-40 R-41 B2): ด่านเงินของคอร์ส/เครดิต + ค่าตั้งที่ต้องมีผล — เทสต์ที่เรียกแค่ helper ไม่พิสูจน์ว่า service ต่อสาย
+RULES += [
+    dict(file="Services/Implementations/CourseCredit/CreditPassDocumentHook.cs", method="OnCreditNoteApprovedAsync",
+         must=["CreditPassDocumentRule.OnCreditNote(", "ReduceCredits("],
+         before=[("CreditPassDocumentRule.OnCreditNote(", "ReduceCredits(")],
+         why="R-38 ใบลดหนี้บางส่วน ⇒ ลดเครดิตตามตัวตัดสินเดียว (ไม่ปิดบัตร/ไม่คำนวณเอง)"),
+    dict(file="Services/Implementations/CourseCredit/CourseCreditService.cs", method="DraftRefundCreditNoteAsync",
+         must=["CreditPassDocumentRule.RefundPreview(", "SaleDocumentProblemAsync(", "CreditNoteReason.Adjustment"],
+         before=[("CreditPassDocumentRule.RefundPreview(", "CreateDocumentAsync(")],
+         forbid=["ApproveDocumentAsync("],
+         why="ปุ่มคืนเงินจากหน้าบัตรสร้างใบร่างเท่านั้น (ไม่อนุมัติเอง) และต้องผ่านตัวตัดสินเดียวกับด่านอนุมัติ"),
+    dict(file="Services/Implementations/CourseCredit/CourseCreditService.cs", method="ConsumeAsync",
+         must=["CourseCreditMath.EffectiveContract(pass.ContractAmount, pass.RefundedAmount)"],
+         why="R-38 หลังคืนบางส่วน การรับรู้ต้องใช้สัญญาที่มีผล (สัญญา − คืนแล้ว) ไม่ใช่สัญญาเดิม"),
+    dict(file="Services/Implementations/CourseCredit/CourseCreditService.cs", method="ExpireCoreAsync",
+         must=["CourseCreditMath.EffectiveContract(pass.ContractAmount, pass.RefundedAmount)"],
+         why="R-38 breakage ต้องใช้สัญญาที่มีผล"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="CreateBookingAsync",
+         must=["PrepareCreditBookingAsync(", "HoldCreditForBookingAsync(", "CreditBookingLink.ShouldSyncErp("],
+         before=[("PrepareCreditBookingAsync(", "_db.SiteBookings.Add("), ("HoldCreditForBookingAsync(", "tx.CommitAsync(")],
+         why="R-39 จองด้วยบัตร: กันเครดิตในธุรกรรมเดียวกับ Decide · ไม่ออกเอกสาร ERP ซ้ำ"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="UpdateBookingStatusAsync",
+         must=["IsPaidWithCreditAsync(", "SettleCreditOnStatusAsync("],
+         before=[("IsPaidWithCreditAsync(", "SettleCreditOnStatusAsync("), ("SettleCreditOnStatusAsync(", "ApplyInvoiceTimingAsync(")],
+         why="R-39 เสร็จ/ไม่มา/ยกเลิก ⇒ Settle/Release ในสมุดเครดิต · การจองใช้บัตรไม่เดิน tax point ของบริการ"),
+    dict(file=POS, method="AddItemToOrder",
+         must=["EnsurePackageRevenueAccountAsync(", "p.RevenueAccountId"],
+         why="R-26 ServicePackage.RevenueAccountId ต้องตรึงลงบรรทัดตอนเพิ่ม (ค่าตั้งต้องมีผล — F2 #2)"),
+    dict(file="Services/Implementations/RevenueRecognitionService.cs", method="RecognizeRevenueAsync",
+         must=["ResolveDeferredRevenueAccountIdAsync("], forbid_lit=['StartsWith("218")', '"21810"'],
+         why="R-40 ผังรายได้รับล่วงหน้าผ่าน Helpers/DeferredRevenueAccount — ห้าม fallback กลุ่ม 218 ค่าใช้จ่ายบุคลากรค้างจ่าย"),
+    dict(file="Services/Implementations/CmsCommerceService.cs", method="SyncOrderToErpCoreAsync",
+         must=["CourseCreditOnlineSale.UnearnedAccountsAsync("],
+         why="R-41 B2 บรรทัดสินค้าคอร์สของออเดอร์ลง 21713 (ไม่ใช่รายได้)"),
+    dict(file="Services/Implementations/IssuedDocumentHooks.cs", method="TryActivateCoursePassAsync",
+         must=["CourseCreditOnlineSale.Judge(", "ActivateFromDocumentAsync(", "CreditSaleChannel.Online", "StampNoteAsync("],
+         before=[("CourseCreditOnlineSale.Judge(", "ActivateFromDocumentAsync(")],
+         why="R-41 B2 เปิดบัตรหลังอนุมัติใบของออเดอร์คอร์ส (ตัวตัดสินเดียว · ล้ม = ป้ายบนใบ ไม่กลืน) — จุดเดียวครอบทั้ง gateway และสลิป"),
+]
 RULES += [
     dict(file=EXPENSE, method=m, must=["EnsureClaimActionAsync("],
          before=[("EnsureClaimActionAsync(", "_db.SaveChangesAsync(")], why=_EXPENSE_WHY)
@@ -626,6 +665,28 @@ TUPLE_RULES = [
     (DOC, "UpdateDocumentAsync",
      ["DocumentRounding.Validate(", "subTotal + doc.RoundingAdjustment", "PaymentSettlementAdjustment.ActualPaidNotApplicableReason("],
      [], [], "ข้อ 8 · C1 เส้นแก้ไขต้องเดินด่านเดียวกับเส้นสร้าง"),
+    # ── ทีม U 2026-10-26: หักหลัง VAT (ใบ Shopee 536/98/438 · PV-202610-0040 ฐานถูกบีบ) ──
+    (DOC, "CreateDocumentAsync",
+     ["ApplyPostVatDeductionAsync(companyId, doc, request.PostVatDeductionAmount"], [], [],
+     "ช่องหักหลัง VAT/แยกยอดตามแหล่งต้องผ่านตัวตัดสินกลางตอนสร้าง (Helpers/PostVatDeduction · PaymentSourceSplit)"),
+    (DOC, "UpdateDocumentAsync",
+     ["ApplyPostVatDeductionAsync(companyId, doc, request.PostVatDeductionAmount"], [], [],
+     "เส้นแก้ไขเดินด่านหักหลัง VAT เดียวกับเส้นสร้าง"),
+    (DOC, "ApplyPostVatDeductionAsync",
+     ["PaymentSourceSplit.Check(", "PostVatDeduction.ValidateAmount(", "PostVatDeduction.Resolve(", "PostVatDeduction.AccountError("],
+     [("PaymentSourceSplit.Check(", "PostVatDeduction.Resolve(")], [],
+     "แยกยอดต้องถูกตรวจ/ย่อยก่อน · ยอดชำระจริง = รวม − หัก (ด่านข้อ 4) · ผังหักห้ามเงินสด"),
+    (DOC, "AutoPostToJournalAsync",
+     ["PostVatDeduction.VatConsistencyError(", "BuildPostVatDeductionJournalLinesAsync(", "postVatLines.Sum(l => l.Credit)"],
+     [("PostVatDeduction.VatConsistencyError(", "PaymentSettlementAdjustment.DocumentCashDelta("),
+      ("BuildPostVatDeductionJournalLinesAsync(", "PaymentSettlementAdjustment.CheckDocumentLines(")], [],
+     "ด่าน VAT ไม่ตรงฐานต้องมาก่อนลง JE · ขาหักหลัง VAT ต้องนับเข้าด่านสมดุลเดิม (ห้าม posting layer ใหม่)"),
+    (DOC, "CreatePaymentAsync",
+     ["doc.PostVatDeductionAmount > 0m"], [("doc.PostVatDeductionAmount > 0m", "PaymentSettlementAdjustment.Check(")], [],
+     "ใบตั้งหนี้ที่มีหักหลัง VAT: บรรทัดปรับที่เติมให้ต้องผ่านตัวตรวจกลางตัวเดิม"),
+    (OCR, "ApplyScanSettlementPlanAsync",
+     ["OcrPostVatDeduction.FromPlan(", "OcrPostVatDeduction.FilledNote("], [], [],
+     "สแกน: ส่วนลดหลังยอดรวม ⇒ ช่องหักหลัง VAT ก้อนเดียว + แท็ก [POST-VAT-DEDUCTION] (ปลด [PAY≠TOTAL])"),
     (DOC, "ConvertCoreAsync",
      ["DocumentRounding.Inherit("], [], [],
      "C2: เอกสารลูกที่ยกทุกบรรทัดต้องสืบทอดผลต่างปัดเศษ (ไม่งั้น 5,024.00 → 5,024.01)"),
@@ -682,16 +743,20 @@ TUPLE_RULES = [
     # ── รอบ 193 ทีม L2 หลังฝ่ายค้าน (review193-L2.md §D: เทสต์เรียกแค่ helper — ถอดการแก้ใน service แล้วยังเขียว) ──
     # รอบ 201 ทีม IN (A-IN5): ตัวสร้างรายการ/ใบร่าง/การใช้มัดจำ แยกเป็นเมธอดที่เส้นเช็คเอาต์และเส้นออกใบใหม่ใช้ร่วม ⇒ ย้ายจุดล็อก
     # ChargeVatRate → BuildFinalInvoiceLinesAsync · CreateDocumentAsync → UpsertFinalDraftAsync (ลำดับ "วางแผนก่อนออกเลข" ล็อกที่จุดเรียก)
+    # รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์ = ส่วนของราคา ⇒ ตัวตัดสิน LodgingCheckoutDiscount.Resolve ต้องมาก่อน PlanCheckout (ความจุหักมัดจำ = ฐานหลังส่วนลด) ·
+    # ส่วนลดลงช่อง BillDiscountAmount ของตัวเอง (ไม่ปนฐานมัดจำ) · ห้ามส่ง % เข้าเอกสาร (AllocateBillDeductions ปฏิเสธ % คู่ฐานมัดจำ)
     (LODGING_LIFE, "CheckOutCoreAsync",
      ["LoadDepositSnapshotsAsync(", "LodgingDepositSettlement.PlanCheckout(", "DocumentService.PreviewTotals(",
       "BuildFinalInvoiceLinesAsync(", "ResumeCheckOutAsync(", "SettleCheckOutAsync(",
-      "DepositBaseDeducted: depositPlan.BaseDeducted"],
+      "DepositBaseDeducted: depositPlan.BaseDeducted",
+      "LodgingCheckoutDiscount.Resolve(", "BillDiscountAmount: discount.HasDiscount ? discount.BaseAmount : null"],
      [("LodgingDepositSettlement.PlanCheckout(", "UpsertFinalDraftAsync("),
+      ("LodgingCheckoutDiscount.Resolve(", "LodgingDepositSettlement.PlanCheckout("),
       ("FindOrCreateContactAsync(", "AddNewChild(r.Charges"),
       ("_docService.ApproveDocumentAsync(", "AddNewChild(r.Charges")],
-     ["DepositAppliedDrivesJournal", "r.FinalDocumentId != null", "BillDiscountAmount: depositPlan"],
+     ["DepositAppliedDrivesJournal", "r.FinalDocumentId != null", "BillDiscountAmount: depositPlan", "BillDiscountPercent: request", "BillDiscountPercent: discount"],
      "R3-1 ฐานมัดจำลงช่องของตัวเอง (ห้ามใส่ช่องส่วนลดการค้า) · C2/C5 วางแผนใช้มัดจำ (มัดจำเกินยอด = ค้างคืน) ก่อนออกเลขใบ · ด่าน/สร้างผู้ติดต่อก่อนผูกค่าเสียหาย · "
-     "ใบเครดิตห้ามใช้ธงขับ JE (P0-1) · ออกใบแล้วกดซ้ำ = ทำต่อ ไม่ throw"),
+     "ใบเครดิตห้ามใช้ธงขับ JE (P0-1) · ออกใบแล้วกดซ้ำ = ทำต่อ ไม่ throw · R-49 ส่วนลดคิดก่อนแผนมัดจำ (ตัวตัดสินเดียว) ลงช่องส่วนลดการค้า"),
     (LODGING_LIFE, "SettleCheckOutAsync",
      ["ApplyFinalDepositPlanAsync(", "r.RefundAmount = plan.ExcessGross", "r.RefundBaselineGross ="],
      [("ApplyFinalDepositPlanAsync(", "r.RefundAmount = plan.ExcessGross")], [],
@@ -711,12 +776,14 @@ TUPLE_RULES = [
      ["DepositRealizedForDocumentId == finalId", "LodgingDepositSettlement.PlanCheckout(",
       "finalDoc.DepositBaseDeducted - realizedForFinal"], [], ["finalDoc.BillDiscountAmount"],
      "ทำเช็คเอาต์ต่อ: นับที่รับรู้เพื่อใบนี้ไปแล้ว ไม่ใช้มัดจำซ้ำ · R3-1 ความจุ = ช่องฐานมัดจำ ไม่ใช่ส่วนลดการค้า"),
+    # รอบ 205 W5 (R-51): folio ที่ยังไม่ออกใบของการจองที่ยกเลิก/ไม่มา ล้างผ่านกติกาตัวเดียว (ก่อนประทับสถานะ · Paid ไม่แตะ)
     (LODGING_LIFE, "CancelCoreAsync",
-     ["Terminal.Contains(r.Status)", "LodgingDepositSettlement.PlanCancellation("],
+     ["Terminal.Contains(r.Status)", "LodgingDepositSettlement.PlanCancellation(", "LodgingFolioOnCancel.ToVoid("],
      [("Terminal.Contains(r.Status)", "LodgingDepositSettlement.PlanCancellation("),
+      ("LodgingFolioOnCancel.ToVoid(", "r.Status = noShow ? LodgingReservationStatus.NoShow"),
       ("_db.SaveChangesAsync(", "RealizeDepositAsync(")],
      ["RefundDepositAsync("],
-     "C3 ด่านสถานะอยู่ที่ตัวกลาง (เส้นแขกยกเลิกซ้ำได้) · บันทึกสถานะก่อนลงบัญชีส่วนริบ · ยกเลิกห้ามลงคืนเงิน (F-03)"),
+     "C3 ด่านสถานะอยู่ที่ตัวกลาง (เส้นแขกยกเลิกซ้ำได้) · บันทึกสถานะก่อนลงบัญชีส่วนริบ · ยกเลิกห้ามลงคืนเงิน (F-03) · R-51 folio ค้างล้างตามกติกาเดียว"),
     (LODGING_LIFE, "RecordRefundPaidAsync",
      ["JobLock.RunExclusiveAsync(", "RecordRefundPaidCoreAsync("], [], [],
      "คืนเงินต้องล็อกระดับการจอง (สองคำขอพร้อมกัน = lost update)"),
@@ -1286,7 +1353,7 @@ RULES += [
     # ยกเลิก: ตัดสินก่อน void · ตัวเมธอดสถานะห้ามเรียก void/realize ตรง (ต้องผ่านเมธอดที่ตัดสินแล้ว)
     dict(file=CMS_BOOK, method="SettleErpDocumentOnCancelAsync", must=["CmsBookingCancelPolicy.DecideOnCancel("],
          before=[("CmsBookingCancelPolicy.DecideOnCancel(", "VoidDocumentAsync(")], why=_CMS_C1_WHY),
-    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync", must=["SettleErpDocumentOnCancelAsync(", "RealizeDepositOnCompleteAsync("],
+    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync", must=["SettleErpDocumentOnCancelAsync(", "SettleDepositOnCompleteAsync("],   # รอบ 205 W2: ตัวห่อ RealizeDepositOnCompleteAsync (R-09 ใบส่วนที่เหลือ)
          forbid=["VoidDocumentAsync(", "RealizeDepositAsync("], why=_CMS_C1_WHY),
     dict(file=CMS_BOOK, method="RealizeDepositOnCompleteAsync", must=["CmsBookingCancelPolicy.DecideOnComplete("],
          before=[("CmsBookingCancelPolicy.DecideOnComplete(", "RealizeDepositAsync(")],
@@ -1729,11 +1796,16 @@ RULES += [
     dict(file=HARNESS, method="BuildLines", must=list(LINE_PIPELINE_HELPERS) + ["OcrAmountIntegrity.Check("],
          why="2026-10-09 ข้อ 4: replay harness ต้องเรียก helper ชุดเดียวกับ BuildScanLinesAsync — ไม่งั้น golden ล็อกคำตอบที่ service ไม่ได้ให้"),
     # ทีม E 2026-10-13: จำนวน < 1 ไม่มีราคาต่อหน่วย ⇒ ราคาที่เก็บมาจาก LineDiscount (ไม่งั้นส่วนลดติดลบ ⇒ บันทึกซ้ำได้ จำนวน × ยอด) — ทั้ง service และ harness
-    dict(file=OCR, method="BuildScanLinesAsync", must=["UnitPrice = lineDisc.UnitPrice ?? item.UnitPrice ?? item.Amount ?? 0"],
+    dict(file=OCR, method="BuildScanLinesAsync", must=["UnitPrice = lineDisc.UnitPrice ?? item.UnitPrice ?? (billDiscountApplied ? preBillAmounts[i] : item.Amount) ?? 0"],
          forbid=["UnitPrice = item.UnitPrice ?? item.Amount ?? 0,"],
          why="ทีม E 2026-10-13: ราคาต่อหน่วยของบรรทัดไม่มีราคา + จำนวน < 1 มาจาก OcrLineReconciler.LineDiscount ตัวเดียว"),
-    dict(file=HARNESS, method="BuildLines", must=["decidedUnitPrice ?? lines[i].UnitPrice ?? amount"],
-         why="ทีม E 2026-10-13: harness ใช้ราคาที่ตัวตัดสินคืนเหมือน service"),
+    dict(file=HARNESS, method="BuildLines", must=["decidedUnitPrice ?? lines[i].UnitPrice ?? (billDiscount > 0m ? preBillAmounts[i] : amount)"],
+         why="ทีม E 2026-10-13: harness ใช้ราคาที่ตัวตัดสินคืนเหมือน service (ข้อ 159: ราคาเมื่อไม่มีราคาต่อหน่วย = ยอดก่อนหักส่วนลดท้ายบิล)"),
+    # คำตัดสินข้อ 159 (ทีม T 2026-10-26 · ฝ่ายค้านข้อ 2): ส่วนลดท้ายบิลตามกระดาษ ⇒ ยอดบรรทัดจาก DocumentService.PlanLineAmounts ตัวเดียว — service และ harness ต้องเรียกตัวเดียวกัน
+    dict(file=OCR, method="BuildScanLinesAsync", must=["recon.BillDiscountPreVat", "DocumentService.PlanLineAmounts("],
+         why="ข้อ 159: เคส F/G ลง BillDiscountAmount ตามกระดาษ แล้วยอดบรรทัดมาจากสูตรของ DocumentService (ไม่มีสำเนา)"),
+    dict(file=HARNESS, method="BuildLines", must=["recon.BillDiscountPreVat", "DocumentService.PlanLineAmounts("],
+         why="ข้อ 159: harness ต้องเดินสาขาเดียวกับ service — ไม่งั้น golden ระดับบรรทัดของใบเคส F/G ล็อกคำตอบคนละแบบ"),
 ]
 
 # ── 2026-10-09 (ผู้ใช้รายงาน ใบ BS2026100001 บุญทรัพย์ ถาวร — PDF ต้นฉบับ+สำเนา ⇒ engine คืน 5 บรรทัดสองรอบ ⇒ ขั้นยุบรวมจำนวนเป็น ×2):
@@ -5835,8 +5907,11 @@ _GUEST_FILE_WHY = "ไฟล์จากคนนอกระบบ (ไม่�
 RULES += [
     dict(file="Services/Implementations/Lodging/LodgingService.Operations.cs", method="SaveSlipFileAsync",
          must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปแขกที่พัก"),
+    # ทีม W4 R-43: สลิปเข้าที่เก็บไฟล์กลางผ่าน UploadAnonymousBytesAsync (ตัวนั้นตั้ง UploadedByUserId = null เอง) — ห้ามกลับไป new FileAttachment เอง
+    # หรือเรียก UploadBytesAsync (ที่ต้องมีผู้ใช้) ในเส้นลูกค้าหน้าร้าน
     dict(file="Services/Implementations/CmsCommerceService.cs", method="RecordPaymentSlipAsync",
-         must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปหน้าร้านออนไลน์"),
+         must=["UploadAnonymousBytesAsync"], forbid=["UploadedByUserId = Guid.Empty", "UploadBytesAsync(", "new FileAttachment"],
+         why=_GUEST_FILE_WHY + " · สลิปหน้าร้านออนไลน์ (ผ่าน IFileAttachmentService.UploadAnonymousBytesAsync)"),
     dict(file="Services/Implementations/PortalService.cs", method="UploadDocumentSlipAsync",
          must=["UploadedByUserId = null"], forbid=["UploadedByUserId = Guid.Empty"], why=_GUEST_FILE_WHY + " · สลิปพอร์ทัลลูกค้า"),
 ]
@@ -7421,8 +7496,10 @@ RULES += [
          must_re=[r"WhtGrossUp\.Normalize\(source\.WhtCertType\)\s*!=\s*WhtGrossUp\.Normalize\(doc\.WhtCertType\)"],
          why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ซื้อกลับขาส่วนที่ออกแทน (ใบเพิ่มหนี้ Dr) + เงื่อนไขไม่ตรงใบต้นทาง = ล้มดัง · P1-1: ใบต่างประเทศ+ออกแทน (ข้อมูลเก่า) ไม่ลง JE"),
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AdjustCertsForCreditNoteAsync",
-         must=["WhtGrossUp.ForLines(", "cnBorneByLine.GetValueOrDefault(l.Id)", "cn.SubTotal + cn.WhtPayerBorneAmount"],
-         why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ลดเงินได้บน 50 ทวิ = ฐาน + ส่วนที่ออกแทน (ม.39) — ตรงกับเงินได้ของใบเดิม"),
+         # รอบ 205 W7 (R-18): เงินได้ที่ลด = Σ IncomeThb ของ PerLineWht.ForDocument(cn) (ฐาน + ส่วนออกแทน เป็นบาท — ใบบาทเท่า cn.SubTotal + cn.WhtPayerBorneAmount ทุกสตางค์)
+         must=["WhtGrossUp.ForLines(", "cnBorneByLine.GetValueOrDefault(l.Id)", "PerLineWht.ForDocument(cn)", "cnBaht.Values.Sum(v => v.IncomeThb)",
+               "PerLineWht.DocumentWhtThb(cn.WithholdingTaxAmount, cn.ExchangeRate)"],
+         why=_WHTBORNE_ADV + "P1-2: ใบลดหนี้ลดเงินได้บน 50 ทวิ = ฐาน + ส่วนที่ออกแทน (ม.39) — ตรงกับเงินได้ของใบเดิม · R-18: เป็นบาทผ่าน PerLineWht ตัวเดียว (ใบต่างสกุล)"),
     dict(file="Services/Implementations/PdfGenerationService.cs", method="BuildDocumentHtml",
          must_lit=["{L.TotalWhtPayerBorne}", "doc.WhtPayerBorneAmount > 0"],
          why=_WHTBORNE_ADV + "P2-1: กระดาษบวกลงยอด — แถวผู้จ่ายออกแทน (+) (คู่กับ QuestPDF)"),
@@ -9141,9 +9218,11 @@ RULES += [
     dict(file=LODGING_TAX, method="CheckOutWithAdvanceAsync",
          must=["LodgingTaxInvoiceTimingPolicy.StayDelta(", "includeStay: false", "IssueAdvanceCreditNoteAsync(", "SettleCheckOutAsync(",
                "LodgingDepositSettlement.RoomDeposits(", "LodgingDepositSettlement.PlanCheckout(", "LodgingPaymentBank.Problem(",
-               "NewCheckoutChargesAsync(", "ApplyFinalDepositPlanAsync("],
+               "NewCheckoutChargesAsync(", "ApplyFinalDepositPlanAsync(", "LodgingCheckoutDiscount.Resolve("],
          before=[("LodgingPaymentBank.Problem(", "IssueAdvanceCreditNoteAsync("), ("IssueAdvanceCreditNoteAsync(", "ApplyFinalDepositPlanAsync("),
-                 ("LodgingDepositSettlement.PlanCheckout(", "UpsertFinalDraftAsync(")],
+                 ("LodgingDepositSettlement.PlanCheckout(", "UpsertFinalDraftAsync("),
+                 # รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์ลดค่าห้องก่อนเทียบใบล่วงหน้า (ตัวตัดสินเดียว · อ่านช่องจากคำขอในตัวตัดสิน ไม่ประกอบเอง)
+                 ("LodgingCheckoutDiscount.Resolve(", "LodgingTaxInvoiceTimingPolicy.StayDelta(")],
          forbid=["BillDiscountAmount", "DepositAppliedDrivesJournal"],
          why="ข้อ 157: เช็คเอาต์บนใบล่วงหน้า — ด่านก่อนแตะข้อมูล · ยอดลด = ใบลดหนี้ก่อนตัดชำระ · วางแผนมัดจำก่อนออกเลข (§86/4) · ปิดการเข้าพักด้วยขั้นเดิม"),
     dict(file=LODGING_OPS, method="MapAsync", must=["LoadAdvanceAsync(", "LodgingTaxInvoiceTimingPolicy.CanOfferManualIssue("],
@@ -9229,8 +9308,10 @@ RULES += [
 _PLWHT = "ทีม F หัก ณ ที่จ่ายเป็นบาท: "
 RULES += [
     dict(file="Services/Implementations/WithholdingTaxCertService.cs", method="AutoGenerateFromDocumentAsync",
-         must=["PerLineWht.ForDocument(doc)", "PerLineWht.DocumentWhtThb(", "PerLineWht.TieOut("],
-         why=_PLWHT + "50 ทวิ ของใบต่างสกุลเป็นบาทต่อบรรทัด + ผูก Σ กับยอด GL"),
+         # คำตัดสินข้อ 162 (รอบ 205 W7): อัตราฐานภาษีของงวดผ่าน DocumentFx.WhtRateFor ตัวเดียวกับขา 2191x — ForDocument/DocumentWhtThb ต้องรับอัตราตัวนั้น
+         must=["PerLineWht.ForDocument(doc, whtFxRate)", "PerLineWht.DocumentWhtThb(v, whtFxRate)", "PerLineWht.TieOut(",
+               "DocumentFx.WhtRateFor(whtFxBasis, doc.ExchangeRate, paymentFx)"],
+         why=_PLWHT + "50 ทวิ ของใบต่างสกุลเป็นบาทต่อบรรทัด + ผูก Σ กับยอด GL · ข้อ 162: อัตราฐานภาษีตัวเดียวกับ CreatePaymentJournalAsync"),
     dict(file="Services/Implementations/TaxService.cs", method="GenerateWhtReport",
          must=["PerLineWht.ForDocument(doc)", "PerLineWht.DocumentWhtThb("],
          why=_PLWHT + "แถวเตือน \"ยังไม่ออกใบ\" ของ ภ.ง.ด. เป็นบาทเหมือน 50 ทวิ ที่จะออก"),
@@ -9247,8 +9328,10 @@ RULES += [
          forbid=["noCert.Sum(d => d.WithholdingTaxAmount)"],
          why=_PLWHT + "ตัวกระทบ GL: สาเหตุ \"ยังไม่ออก 50 ทวิ\" เป็นบาท"),
     dict(file=DOC, method="CreatePaymentJournalAsync",
-         must=["PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx)"],
-         why=_PLWHT + "JE ตอนจ่าย: ขา WHT ฐานเดียวกับ 50 ทวิ รายงวด (อัตราของเอกสาร)"),
+         # คำตัดสินข้อ 162 (รอบ 205 W7): อัตราฐานภาษีของงวด = DocumentFx.WhtRateFor (ตัวเดียวกับ 50 ทวิ) · ส่วนที่ AR/AP ถือยังเป็นอัตราเอกสาร
+         must=["PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, whtFx)", "PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx)",
+               "DocumentFx.WhtRateFor(", "thbWht - thbWhtAtDocRate"],
+         why=_PLWHT + "JE ตอนจ่าย: ขา WHT ฐานเดียวกับ 50 ทวิ รายงวด (อัตราตามค่าตั้งบริษัท · ค่าเริ่มต้น = อัตราของเอกสาร) · ผลต่างส่วนภาษีเข้า FX เส้นเดิม"),
     dict(file=DOC, method="CreateDocumentAsync",
          must=["ApplyDocumentFxDecisionAsync(companyId, doc, request)"],
          why=_PLWHT + "สร้างเอกสาร: อัตรา/ที่มา/ฐานบาทผ่าน DocumentFx.Decide ตัวเดียว"),
@@ -9447,6 +9530,133 @@ RULES += [
          must=["BookingDepositDrawdown.JournalApiEventType"],
          must_lit=["BookingDepositDrawdown.OutputVatNoInvoiceCode"],
          why=_S_WHY + "ตัวกระทบภาษี-GL ระบุ JE จาก API ที่มีภาษีขายไม่มีใบกำกับ"),
+]
+
+# ── ทีม W10 2026-10-26 (R-56): รูปแบบเลขอ้างอิงการจองตั้งค่าได้ต่อคีย์ integration — ด่านทุกเส้นต้องใช้ชุดเดียวจาก BookingDepositLedger.PatternsAsync ──
+_W10_WHY = "ทีม W10 2026-10-26 (R-56 pattern ตั้งค่าได้): "
+RULES += [
+    dict(file="Helpers/BookingDepositLedger.cs", method="PatternsAsync",
+         must=["i.CompanyId == companyId", "BookingRefPattern.Merge("],
+         forbid=["i.IsActive"],
+         why=_W10_WHY + "ชุดรูปแบบ = ค่าเริ่มต้น + ทุกคีย์ของบริษัท (tenant · รวมคีย์ที่ปิดใช้แล้ว — มัดจำสมัยคีย์นั้นยังต้องถูกเห็น) · ตัวรวมตัวเดียว"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="DrawdownProblemAsync",
+         must=["PatternsAsync("],
+         before=[("PatternsAsync(", "BookingDepositDrawdown.AssignDrawdown(")],
+         forbid=["BookingRefPattern.Default"],
+         why=_W10_WHY + "ฝั่งรับ JE แยกยอดด้วยชุดรูปแบบของบริษัท (ไม่ใช่ค่าเริ่มต้นล้วน) — ไม่งั้นมัดจำที่ลงด้วยรูปที่ตั้งเพิ่มถูกมองไม่เห็น"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="RemovalProblemAsync",
+         must=["PatternsAsync("],
+         before=[("PatternsAsync(", "BookingDepositDrawdown.ExtractKeys(")],
+         forbid=["BookingRefPattern.Default"],
+         why=_W10_WHY + "ทิศกลับใช้ชุดรูปแบบเดียวกับฝั่งรับ (ใบมัดจำ BK-… ที่ถูกตัดแล้วต้องถูกบล็อกเหมือน RES-…)"),
+    dict(file="Helpers/BookingDepositLedger.cs", method="LoadChunkAsync",
+         must=["BookingDepositDrawdown.ExtractKeys(patterns,", "BookingDepositDrawdown.Mentions(patterns,"],
+         why=_W10_WHY + "ตัวโหลดยอดเดิมใช้ชุดรูปแบบที่ส่งมา — ห้ามกลับไปใช้ overload ค่าเริ่มต้น (ฝั่งยอดเดิมกับฝั่งรับต้องเห็นเท่ากัน)"),
+    dict(file=INTEG, method="CreateIntegrationAsync",
+         must=["ValidatedBookingRefPatternsJson("],
+         before=[("ValidatedBookingRefPatternsJson(", "_db.SaveChangesAsync(")],
+         why=_W10_WHY + "regex ที่ผิดต้องถูกปฏิเสธ (400 + ข้อความ) ก่อนบันทึก — ไม่เก็บค่าตั้งที่ทำให้ด่านเพี้ยน"),
+    dict(file=INTEG, method="UpdateIntegrationAsync",
+         must=["ValidatedBookingRefPatternsJson("],
+         must_re=[r"if\s*\(\s*request\.BookingRefPatterns\s*!=\s*null\s*\)"],
+         before=[("ValidatedBookingRefPatternsJson(", "_db.SaveChangesAsync(")],
+         why=_W10_WHY + "null = ไม่แตะ (แก้ชื่อคีย์ต้องไม่ล้างรูปแบบเงียบ ๆ) · [] = ล้าง · ผิด ⇒ 400 ก่อน SaveChanges"),
+    dict(file=INTEG, method="ToResponse",
+         must=["BookingRefPatterns:", "DefaultBookingRefPatterns:", "BookingRefPattern.DefaultSources"],
+         why=_W10_WHY + "เก็บแล้วต้อง echo กลับ (ฟอร์มแก้ไข hydrate) + รูปเริ่มต้นมาจาก server (หน้าไม่มีสำเนา)"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadBookingDepositOverdrawnAsync",
+         must=["BookingDepositLedger.PatternsAsync(", "BookingDepositDrawdown.ExtractKeys(patterns,"],
+         why=_W10_WHY + "รายงานใช้ชุดรูปแบบเดียวกับด่าน"),
+    dict(file="Services/Implementations/DataIntegrityReportService.cs", method="LoadApiJournalDepositDrawnWithoutBookingRefAsync",
+         must=["BookingDepositLedger.PatternsAsync(", "BookingDepositDrawdown.JournalApiEventType", "BookingDepositDrawdown.IsDepositLiabilityAccount(",
+               "s.CompanyId == companyId", "j.CompanyId == companyId", "a.CompanyId == companyId", "j.EntryDate >= since"],
+         forbid=["SaveChangesAsync(", "ReverseJournalEntryAsync("],
+         why=_W10_WHY + "G3: JE จาก API ที่ตัดผังมัดจำแต่ไม่อ้างการจองรูปที่รู้จัก — รายงานอ่านอย่างเดียว · tenant ทุก query"),
+]
+
+# ── รอบ 205 แพ็ก W3 (ทีม W · R-12 R-13 R-14 R-16): งานเบื้องหลังเครื่องจอง + เวลาทำการระดับเว็บ + เลือกผู้ให้บริการ ──
+#    หลัก: ประทับ "ส่งแล้ว" หลังส่งถึงจริงเท่านั้น (F2 #3) · job ผ่าน JobLock (F4 #6) · ปล่อยรอบผ่านเส้นสถานะปกติ (ไม่เขียนสถานะตรง) ·
+#    ตารางเวลาผ่าน ScheduleOf ตัวเดียว (กฎ #4 A) · เปลี่ยนผู้ให้บริการผ่าน Decide ใต้ล็อกไซต์ (ไม่ข้ามด่าน)
+BOOK_JOB = "Services/Background/BookingReminderJob.cs"
+BOOK_NOTIFY = "Services/Implementations/CmsBookingService.Notify.cs"
+_W3_WHY = "รอบ 205 W3: "
+RULES += [
+    dict(file=BOOK_JOB, method="RunGuardedAsync", must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.BackgroundJob"],
+         why=_W3_WHY + "job ที่ส่งข้อความถึงลูกค้าต้องเดินทีละเครื่อง (F4 #6) — ไม่งั้นลูกค้าได้อีเมล N ฉบับตามจำนวนเครื่อง"),
+    dict(file=BOOK_JOB, method="ProcessAsync",
+         must=["BookingReminderPlan.DueStage(", "BookingReminderPlan.MayAttempt(", "notifier.SendAsync(", "ReminderSentAt = nowUtc",
+               "BookingReminderPlan.HoldExpired(", "UpdateBookingStatusAsync(", "NotifyWaitlistPromotedAsync("],
+         before=[("notifier.SendAsync(", "ReminderSentAt = nowUtc"), ("BookingReminderPlan.DueStage(", "notifier.SendAsync(")],
+         forbid=[".Status = BookingStatus.Cancelled", "ReminderSentAt = DateTime.UtcNow"],
+         why=_W3_WHY + "ประทับ ReminderSentAt หลังส่งถึงจริง (F2 #3) · ตัดสินขั้นเตือนด้วย BookingReminderPlan ตัวเดียว · ปล่อยรอบผ่าน UpdateBookingStatusAsync (เอกสาร ERP/คิวถัดไปเดินด่านเดียวกับคน)"),
+    dict(file=BOOK_NOTIFY, method="NotifyWaitlistPromotedAsync", must=["_notifier.SendAsync(", "WaitlistNotifiedAt = DateTime.UtcNow", "NotifyLastError = result.Error"],
+         before=[("_notifier.SendAsync(", "WaitlistNotifiedAt = DateTime.UtcNow")],
+         why=_W3_WHY + "แจ้งได้คิว: ประทับ WaitlistNotifiedAt หลังส่งถึงจริง + ร่องรอยส่งล้มต่อแถว (job ลองซ้ำจาก null)"),
+    dict(file=BOOK_NOTIFY, method="AssignResourceAsync",
+         must=["LockSiteBookingsAsync(", "BookingSlotEngine.Decide(", "excludeBookingId: booking.Id", "ignoreAdvance: true"],
+         before=[("LockSiteBookingsAsync(", "BookingSlotEngine.Decide("), ("BookingSlotEngine.Decide(", "booking.ResourceId = decision.Slot.ResourceId")],
+         forbid=["booking.ResourceId = resourceId"],
+         why=_W3_WHY + "เลือก/เปลี่ยนผู้ให้บริการต้องผ่าน Decide/PickResource ตัวเดียวใต้ล็อกไซต์ (ไม่นับใบตัวเอง) — ห้ามเขียน ResourceId ที่พนักงานเลือกลงตรง"),
+    dict(file=CMS_BOOK, method="LoadDayAsync", must=["BookingSlotEngine.ScheduleOf("], forbid=["ownRows.Count == 0", "Hours.Count == 0 ?"],
+         why=_W3_WHY + "เวลาทำการของบริการ vs ของเว็บ ตัดสินที่ ScheduleOf ตัวเดียว (กฎ #4 A) — ห้าม ?? / ternary เอง"),
+    dict(file=CMS_BOOK, method="MapService", must=["BookingSlotEngine.ScheduleOf(", "UsesSiteHours = usesSiteHours"],
+         why=_W3_WHY + "ป้าย 'ยังไม่ตั้งเวลาทำการ' ต้องดูตารางที่มีผลจริง (รวมของเว็บ) + echo ว่ารับจากเว็บ"),
+    dict(file=CMS_BOOK, method="PromoteWaitlistAsync", must=["BookingReminderPlan.HoldUntil(", "WaitlistPromotedAt = DateTime.UtcNow"],
+         why=_W3_WHY + "ถือรอบคิวสำรองคิดจาก BookingReminderPlan.HoldUntil ตัวเดียว (ค่าตั้ง WaitlistHoldMinutes ต้องมีผู้อ่าน — F2 #2)"),
+    dict(file=CMS_BOOK, method="UpdateSiteSettingsAsync", must=["BookingReminderPlan.Validate(", "BookingSiteHours.Serialize(", "ParseSchedule("],
+         why=_W3_WHY + "ค่าตั้งใหม่ของเว็บผ่านด่านตรวจเดียวกับของบริการก่อนเขียน (ค่าเสียต้องไม่ถูกบันทึกเงียบ)"),
+]
+
+# ── รอบ 205 แพ็ก W2 (ผู้ประสานงาน 2026-10-28 · R-06 R-07 R-08 R-09 R-10 R-11): เส้นเงินการจองนัดหมาย + ยกเลิกออเดอร์ ──
+#    หลัก: ยอดจ่ายออนไลน์จากเซิร์ฟเวอร์ตัวเดียว (CmsBookingOnlinePayment) · กันซ้ำด้วยเลขอ้างอิง · ค่าธรรมเนียมผ่าน BookingCancellationFee
+#    (เพดาน = มัดจำ ข้อ 126) · ริบด้วย RealizeDepositAsync(ForfeitAs) เดิม · ใบที่มีการชำระผูกห้าม void ⇒ เสนอใบลดหนี้ (§86/10) · ไม่อนุมัติเอง (R1)
+BOOK_PAY = "Services/Implementations/CmsBookingService.Payment.cs"
+BOOK_PAY_HANDLER = "Services/Payments/Handlers/SiteBookingPaymentHandler.cs"
+PUBLIC_PAY_RESOLVER = "Services/Payments/PublicPaymentResolver.cs"
+CMS_COMMERCE_SVC = "Services/Implementations/CmsCommerceService.cs"
+_W2_WHY = "รอบ 205 W2: "
+RULES += [
+    dict(file=BOOK_PAY, method="RecordDepositPaymentAsync",
+         must=["ExecuteSqlRawAsync(", "CmsBookingOnlinePayment.AlreadyRecorded(", "CmsBookingOnlinePayment.ValidateAmount(",
+               "CmsBookingOnlinePayment.ValidatePaidAt(", "CmsBookingOnlinePayment.DepositSettled(", "CmsBookingOnlinePayment.AppendReference("],
+         before=[("ExecuteSqlRawAsync(", "CmsBookingOnlinePayment.AlreadyRecorded("), ("CmsBookingOnlinePayment.ValidateAmount(", "booking.PaidAmount = ")],
+         why=_W2_WHY + "R-08 รับเงินใต้ล็อกต่อการจอง · กันซ้ำด้วยเลขอ้างอิงก่อนบวกยอด · ด่านยอด/วันที่จากตัวตัดสินเดียว"),
+    dict(file=BOOK_PAY, method="IssueDepositReceiptAfterPaymentAsync",
+         must=["CmsBookingOnlinePayment.DepositSettled(", "doc.DocumentDate = paidAt", "ApproveBookingTaxDocumentAsync("],
+         before=[("doc.DocumentDate = paidAt", "ApproveBookingTaxDocumentAsync(")],
+         why=_W2_WHY + "R-08 ใบเสร็จมัดจำอนุมัติเฉพาะเมื่อครบมัดจำ และลงวันที่รับเงินจริงก่อนอนุมัติ (§78/1)"),
+    dict(file=BOOK_PAY, method="CancelByCustomerAsync",
+         must=["BookingCancellationFee.Plan(BookingCancelKind.CustomerCancel", "UpdateBookingStatusAsync(", "ForfeitDepositByPolicyAsync("],
+         before=[("UpdateBookingStatusAsync(", "ForfeitDepositByPolicyAsync(")],
+         why=_W2_WHY + "R-10 ยกเลิกเองเดินเส้นสถานะเดิม (เอกสาร/คิวสำรอง) แล้วริบตามนโยบายจากตัวตัดสินเดียว"),
+    dict(file=BOOK_PAY, method="ForfeitDepositByPolicyAsync",
+         must=["BookingCancellationFee.ForfeitBase(", "DocumentStatusRules.IsEffective(", "ForfeitAs: DepositForfeitAs.PriceOrFee"],
+         forbid=["RefundDepositAsync("],
+         why=_W2_WHY + "R-10/R-11 ริบไม่เกินฐานคงค้าง · ริบเฉพาะใบที่ออกแล้ว · ไม่คืนเงินเอง (R1 — ศูนย์มัดจำ)"),
+    dict(file=BOOK_PAY, method="SettleDepositOnCompleteAsync",
+         must=["CmsBookingCancelPolicy.DecideOnComplete(", "DepositAppliedRef: erpDoc.DocumentNumber", "DepositBaseDeducted: deductBase", "RealizeDepositOnCompleteAsync("],
+         why=_W2_WHY + "R-09 ใบส่วนที่เหลือหักฐานมัดจำผ่านช่องเดียวกับที่พัก/MTO (ข้อ 156) · กรณีอื่นเส้นเดิม"),
+    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync",
+         must=["SettleDepositOnCompleteAsync(", "ForfeitOnNoShowAsync("],
+         why=_W2_WHY + "R-09/R-11 ให้บริการเสร็จ ⇒ ใบส่วนที่เหลือ · ไม่มา ⇒ ริบตามนโยบาย — ต่อสายในเส้นสถานะเดียว"),
+    dict(file=BOOK_PAY_HANDLER, method="HandleSucceededAsync",
+         must=["CmsBookingOnlinePayment.AlreadyRecorded(", "GatewaySourceEvidence.AlreadyRecordedBySomeoneElseAsync(", "RecordDepositPaymentAsync(", "fromOnlinePayment: true"],
+         before=[("CmsBookingOnlinePayment.AlreadyRecorded(", "RecordDepositPaymentAsync(")],
+         why=_W2_WHY + "R-08 เงินเข้า ⇒ กันซ้ำสองชั้น แล้วเดินเส้นเดียวกับพนักงาน (ไม่เขียนสำเนา)"),
+    dict(file=PUBLIC_PAY_RESOLVER, method="ResolveBookingAsync",
+         must=["CmsBookingOnlinePayment.DepositDue(", "CmsBookingOnlinePayment.BlockedNote(", "x.PublicToken == token", "OnlineDepositEnabled"],
+         why=_W2_WHY + "R-08 ยอดจากเซิร์ฟเวอร์ตัวเดียว · โทเคน = สิทธิ์ · ไซต์ไม่เปิด (Q5 = ข) ⇒ ยอด 0 + เหตุผล"),
+    dict(file=PUBLIC_PAY_RESOLVER, method="ResolveOrderAsync",
+         must=["GatewayPaymentRecord.SlipReferencePrefix", "BlockedNote: GatewayPaymentRecord.PendingSlipBlocksOnlineNote"],
+         why=_W2_WHY + "R-06 สลิปรอตรวจ ⇒ ปิดช่องจ่ายออนไลน์พร้อมเหตุผล (ไม่ silent)"),
+    dict(file=CMS_COMMERCE_SVC, method="UpdateOrderStatusAsync",
+         must=["ProposeCreditNoteOnCancelAsync(", "!cnProposed"],
+         before=[("ProposeCreditNoteOnCancelAsync(", "VoidDocumentAsync(")],
+         why=_W2_WHY + "R-07 ตัดสินใบลดหนี้ก่อน void (ใบที่มีการชำระผูกห้าม void §86/10)"),
+    dict(file=CMS_COMMERCE_SVC, method="ProposeCreditNoteOnCancelAsync",
+         must=["SiteOrderCancelPlan.Decide(", "DocumentType.CreditNote", "RelatedDocumentId: doc.Id", "SiteOrderCancelPlan.DraftReason"],
+         forbid=["ApproveDocumentAsync("],
+         why=_W2_WHY + "R-07 ใบลดหนี้อ้างใบเดิม เป็นร่างเท่านั้น — ไม่อนุมัติเอง (R1: เงินยังไม่คืน)"),
 ]
 
 def main() -> int:

@@ -129,7 +129,7 @@
               <button class="btn btn-sm btn-secondary" onclick="Page.addLine()">+ เพิ่ม</button>
             </div>
             <div class="table-container"><table class="table">
-              <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th data-i18n="common.amount">จำนวนเงิน</th><th>VAT%</th><th>WHT%</th><th></th></tr></thead>
+              <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th data-i18n="common.amount">จำนวนเงิน</th><th>VAT%</th><th>WHT%</th><th title="R-19: ประเภทเงินได้ ม.40 ของบรรทัด — ว่าง = ตามหัวใบ · ตารางจากเซิร์ฟเวอร์ (/api/reference/income-types) · ไหลเข้าใบสำคัญจ่าย/50 ทวิ ต่อบรรทัด">ประเภทเงินได้</th><th></th></tr></thead>
               <tbody id="linesBody"></tbody>
             </table></div>
             <div class="text-right font-semibold" style="margin-top:8px">รวม: <span id="fTotal">0.00</span> บาท</div>
@@ -190,6 +190,8 @@
         const navId = isNoReceipt ? 'expense-no-receipt' : 'expense';
         if (!Layout.init(navId)) return;
         Layout.setTitle(isNoReceipt ? 'เบิกค่าใช้จ่าย (ไม่มีใบเสร็จ — §65 ทวิ)' : 'เบิกค่าใช้จ่าย');
+        // R-19: ตารางประเภทเงินได้ ม.40 มาจากเซิร์ฟเวอร์เท่านั้น (Helpers/ThaiWhtRateTable) — หน้านี้ไม่พิมพ์รายการ/อัตราเอง
+        this._loadWhtIncomeTypes();
         await this.load();
         // Deep-link from sidebar "เบิกค่าใช้จ่ายไม่มีใบเสร็จ" pre-opens
         // the create modal so the employee starts the form immediately
@@ -239,6 +241,38 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       goPage(p) { Page.page = p; Page.load(); },
+      /** R-19 (B-5): ตารางประเภทเงินได้ ม.40 — **มาจากเซิร์ฟเวอร์เท่านั้น** (`/api/reference/income-types` ← `Helpers/ThaiWhtRateTable`) */
+      _whtIncomeTypes: [],
+      async _loadWhtIncomeTypes() {
+        try {
+          const res = await API.get('/api/reference/income-types');
+          this._whtIncomeTypes = res?.data || [];
+        } catch { this._whtIncomeTypes = []; return; }
+        // แถวที่สร้างก่อนตารางมาถึง — เติมตัวเลือกแล้วตั้งค่าที่รอไว้ (dataset.want) กลับ (ห้ามปล่อยค่าที่บันทึกไว้หายเงียบ ๆ)
+        document.querySelectorAll('#linesBody [data-f="incomeType"]').forEach(sel => {
+          const want = sel.dataset.want || sel.value || '';
+          sel.innerHTML = this._incomeTypeOptHtml();
+          this._setLineIncomeType(sel, want);
+        });
+      },
+      _incomeTypeOptHtml() {
+        return '<option value="">— ตามหัวใบ —</option>' + (this._whtIncomeTypes || []).map(t =>
+          `<option value="${Layout.esc(t.code)}">${Layout.esc(t.taxSection)} ${Layout.esc(t.name)}</option>`).join('');
+      },
+      /** ตั้งค่าช่องประเภทเงินได้ — รหัสที่ยังไม่อยู่ในตัวเลือก (ตารางยังโหลดไม่เสร็จ) เก็บไว้ใน dataset.want + เพิ่ม option ชั่วคราว ห้ามปล่อยว่าง */
+      _setLineIncomeType(sel, code) {
+        const v = code || '';
+        sel.dataset.want = v;
+        if (v && ![...sel.options].some(o => o.value === v)) {
+          const opt = document.createElement('option'); opt.value = v; opt.textContent = v; sel.appendChild(opt);
+        }
+        sel.value = v;
+      },
+      _incomeTypeName(code) {
+        if (!code) return '';
+        const t = (this._whtIncomeTypes || []).find(x => x.code === code);
+        return t ? `${t.taxSection} ${t.name}` : code;
+      },
       addLine() {
         const row = document.createElement('tr');
         row.innerHTML = `
@@ -246,6 +280,7 @@
           <td><input type="number" class="form-input text-right" data-f="amt" step="0.01" oninput="Page.calcTotal()"></td>
           <td><select class="form-select" data-f="vat" style="font-size:13px" onchange="Page.calcTotal()"><option value="7">7%</option><option value="0">0%</option></select></td>
           <td><input type="number" class="form-input text-right" data-f="wht" value="0" step="0.01" oninput="Page.calcTotal()"></td>
+          <td><select class="form-select" data-f="incomeType" style="font-size:13px" title="ประเภทเงินได้ ม.40 ของบรรทัด — ว่าง = ตามหัวใบ">${this._incomeTypeOptHtml()}</select></td>
           <td><button class="btn btn-sm btn-ghost text-danger" onclick="this.closest('tr').remove();Page.calcTotal()">✕</button></td>`;
         document.getElementById('linesBody').appendChild(row);
       },
@@ -404,6 +439,8 @@
             // (ห้ามให้ตัวเติมใด ๆ ทับค่าที่บันทึกไว้ ดู Layout.setLineVat)
             Layout.setLineVat(row.querySelector('[data-f="vat"]'), l.vatRate || 0, 'doc');
             row.querySelector('[data-f="wht"]').value = l.withholdingTaxRate || 0;
+            // R-19: hydrate ประเภทเงินได้ที่บันทึกไว้ (เก็บแล้วต้อง echo กลับ — กฎเหล็ก #4 A)
+            this._setLineIncomeType(row.querySelector('[data-f="incomeType"]'), l.incomeTypeCode || '');
           });
           if (!e.lines?.length) this.addLine();
           this.calcTotal();
@@ -421,6 +458,8 @@
             amount: amt, vatRate: vatR, vatAmount: amt * vatR / 100,
             withholdingTaxRate: whtR, withholdingTaxAmount: amt * whtR / 100,
             netAmount: amt + amt * vatR / 100 - amt * whtR / 100,
+            // R-19: ประเภทเงินได้ต่อบรรทัด — ว่าง = null (ตามหัวใบ)
+            incomeTypeCode: row.querySelector('[data-f="incomeType"]')?.value || null,
           });
         });
         return lines;
@@ -517,7 +556,7 @@
             <div class="table-container"><table class="table">
               <thead><tr><th data-i18n="common.detail">รายละเอียด</th><th class="text-right" data-i18n="common.amount">จำนวนเงิน</th><th class="text-right">VAT</th><th class="text-right">WHT</th><th class="text-right">สุทธิ</th></tr></thead>
               <tbody>${(e.lines || []).map(l => `<tr>
-                <td>${Layout.esc(l.description)}</td>
+                <td>${Layout.esc(l.description)}${l.incomeTypeCode ? `<div style="font-size:11px;color:var(--gray-500)">ประเภทเงินได้: ${Layout.esc(this._incomeTypeName(l.incomeTypeCode))}</div>` : ''}</td>
                 <td class="text-right">${Layout.money(l.amount)}</td>
                 <td class="text-right">${Layout.money(l.vatAmount)}</td>
                 <td class="text-right">${Layout.money(l.withholdingTaxAmount)}</td>

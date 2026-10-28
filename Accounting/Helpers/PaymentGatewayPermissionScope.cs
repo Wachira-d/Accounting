@@ -61,6 +61,7 @@ public static class PaymentGatewayPermissionScope
         PaymentSourceKind.PosOrder => PermissionKeys.PosCashier,
         PaymentSourceKind.SubscriptionPayment => PermissionKeys.BillingManage,
         PaymentSourceKind.AddOnPurchase => PermissionKeys.BillingManage,
+        PaymentSourceKind.SiteBooking => PermissionKeys.CmsOrderManage,   // รอบ 205 W2 R-08 — สิทธิ์เดียวกับออเดอร์หน้าเว็บ
         _ => PermissionKeys.BankPaymentInit,
     };
 }

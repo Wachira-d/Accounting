@@ -151,6 +151,7 @@ public static class PaymentIntentPolicy
         PaymentSourceKind.SubscriptionPayment => "ค่าบริการระบบ",
         PaymentSourceKind.PosOrder => "บิล POS",
         PaymentSourceKind.AddOnPurchase => "ส่วนเสริม",
+        PaymentSourceKind.SiteBooking => "มัดจำการจองนัดหมาย",
         _ => kind.ToString(),
     };
 

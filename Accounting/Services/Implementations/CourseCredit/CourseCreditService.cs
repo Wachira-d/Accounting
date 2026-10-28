@@ -286,7 +286,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         else
             throw new BusinessRuleException("เอกสารนี้มีบรรทัดหนี้สินหลายผัง — ระบุผังค่าบริการรับล่วงหน้าในแพ็กเกจก่อน", CourseCreditMath.RuleCode);
         return await OpenPassFromDocumentAsync(companyId, pkg, request.DocumentId, unearnedId, revenue.Id,
-            CreditSaleChannel.ExistingDocument, request.Note, actor, ct);
+            request.Channel ?? CreditSaleChannel.ExistingDocument, request.Note, actor, ct);
     }
 
     private static readonly DocumentType[] SaleTypes =
@@ -361,6 +361,81 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             return pass.Id;
         }, ct);
         return (await GetPassAsync(companyId, passId, ct)).Pass;
+    }
+
+    // ===================================================================== คืนเงินจากบัตร (R-38)
+
+    /// <summary>ปุ่ม "ออกใบลดหนี้คืนเงิน (ร่าง)" บนหน้าบัตร — สร้าง<b>ใบร่าง</b>ใบลดหนี้อ้างใบขายของบัตร บรรทัดเดียวลงผังค่าบริการรับล่วงหน้าของบัตร
+    /// (ยอดสุทธิก่อน VAT · อัตรา VAT ตามบรรทัดใบขาย) · <b>ไม่อนุมัติเอง</b> — ผู้มีสิทธิ์ตรวจแล้วอนุมัติที่หน้าเอกสาร ⇒ ด่าน <see cref="CreditPassDocumentHook"/>
+    /// ลดเครดิต/ปิดบัตรตาม <see cref="CreditPassDocumentRule.RefundPreview"/> (ตัวตัดสินเดียวกับที่ใช้คำนวณตัวอย่างตรงนี้) · ระบุยอดบาท หรือจำนวนเครดิต (แปลงเป็นบาทด้วยราคาต่อเครดิต)</summary>
+    public async Task<CreditRefundDraftResponse> DraftRefundCreditNoteAsync(Guid companyId, Guid passId, DraftCreditRefundRequest request, string actor, CancellationToken ct = default)
+    {
+        var pass = await _db.CreditPasses.AsNoTracking().FirstOrDefaultAsync(p => p.Id == passId && p.CompanyId == companyId, ct)
+            ?? throw new KeyNotFoundException("ไม่พบบัตรคอร์ส");
+        if (pass.Status != CreditPassStatus.Active)
+            throw new BusinessRuleException($"บัตรอยู่ในสถานะ {CourseCreditMath.StatusTh(pass.Status)} — คืนเงินจากบัตรไม่ได้", CreditPassDocumentRule.RuleCode);
+        if (pass.SaleDocumentId is not Guid saleId)
+            throw new BusinessRuleException("บัตรนี้ไม่ผูกใบขายในระบบ — ออกใบลดหนี้จากหน้าเอกสารเอง", CreditPassDocumentRule.RuleCode);
+        if (await SaleDocumentProblemAsync(pass, ct) is string problem)
+            throw new BusinessRuleException(problem, CreditPassDocumentRule.RuleCode);
+        var facts = CreditPassDocumentHook.Facts(pass);
+        decimal net;
+        if (request.AmountNet is decimal a && a > 0m) net = Math.Round(a, 2, MidpointRounding.AwayFromZero);
+        else if (request.Credits is decimal c && c > 0m)
+        {
+            // คืนตามจำนวนเครดิต: เครดิตที่เหลือทั้งหมด ⇒ ยอดเท่าส่วนที่เหลือ (ปิดบัตร · ไม่มีเศษสตางค์ค้าง) · อื่น ⇒ เครดิต × ราคาต่อเครดิต
+            var removable = Math.Max(0m, pass.CreditsTotal - pass.CreditsUsed - pass.CreditsReserved);
+            net = c >= removable && pass.CreditsReserved <= 0m
+                ? facts.Deferred
+                : Math.Round(c * facts.PricePerCredit, 2, MidpointRounding.AwayFromZero);
+        }
+        else throw new BusinessRuleException("ระบุยอดคืน (บาท สุทธิก่อน VAT) หรือจำนวนเครดิตที่คืน", CreditPassDocumentRule.RuleCode);
+
+        var plan = CreditPassDocumentRule.RefundPreview(facts, net);
+        if (plan.Problem != null) throw new BusinessRuleException(plan.Problem, CreditPassDocumentRule.RuleCode);
+
+        var saleLine = await _db.DocumentLines.AsNoTracking()
+            .Where(l => l.DocumentId == saleId && !l.IsDeleted && l.Document.CompanyId == companyId)
+            .OrderByDescending(l => l.AccountId == pass.UnearnedAccountId)
+            .Select(l => new { l.VatRate })
+            .FirstOrDefaultAsync(ct) ?? throw new BusinessRuleException("ใบขายของบัตรไม่มีบรรทัด — ออกใบลดหนี้จากหน้าเอกสารเอง", CreditPassDocumentRule.RuleCode);
+
+        var what = plan.ClosesPass
+            ? $"คืนเงินส่วนที่ยังไม่ใช้ทั้งหมด {plan.Net:N2} — ปิดบัตร"
+            : $"คืนเงินบางส่วน {plan.Net:N2} — ลดเครดิต {plan.CreditsToRemove:0.##} {UnitTh(pass.Unit)} (คงเหลือ {plan.CreditsRemaining:0.##})";
+        var created = await _docService.CreateDocumentAsync(companyId, new CreateDocumentRequest(
+            DocumentType: DocumentType.CreditNote,
+            DocumentDate: ThaiDate.CalendarDateUtc(DateTime.UtcNow),
+            DueDate: null,
+            ContactId: pass.ContactId,
+            Reference: pass.PassNumber,
+            Notes: string.IsNullOrWhiteSpace(request.Note) ? $"คืนเงินคอร์ส {pass.PackageName} บัตร {pass.PassNumber} — {what}" : request.Note.Trim(),
+            Lines: new List<DocumentLineRequest>
+            {
+                new(Description: $"{pass.PackageName} — บัตร {pass.PassNumber} · {what} (ค่าบริการรับล่วงหน้า)", Quantity: 1, Unit: "คอร์ส",
+                    UnitPrice: plan.Net, DiscountPercent: 0, VatRate: saleLine.VatRate, WithholdingTaxRate: 0, AccountId: pass.UnearnedAccountId),
+            },
+            RelatedDocumentId: saleId,
+            CreditNoteReason: CreditNoteReason.Adjustment,
+            PricesIncludeVat: false), actor, Origin);
+        _db.AddChainedAuditLog(Audit(companyId, actor, AuditAction.Create, "CreditPass", pass.Id, new
+        {
+            action = "DraftRefundCreditNote", pass = pass.PassNumber, document = created.DocumentNumber, net = plan.Net,
+            creditsToRemove = plan.CreditsToRemove, closesPass = plan.ClosesPass, ruleCode = CreditPassDocumentRule.RuleCode,
+        }));
+        await _db.SaveChangesAsync(ct);
+        return new CreditRefundDraftResponse(created.Id, created.DocumentNumber, plan.Net, plan.CreditsToRemove, plan.CreditsRemaining, plan.ClosesPass,
+            $"สร้างใบร่างใบลดหนี้ {created.DocumentNumber} แล้ว ({what}) — ตรวจแล้วอนุมัติที่หน้าเอกสาร ระบบจึง{(plan.ClosesPass ? "ปิดบัตร" : "ลดเครดิต")}");
+    }
+
+    /// <summary>ตัวอย่างผลการคืนเงิน (ไม่สร้างเอกสาร) — ให้หน้าบัตรแสดงก่อนกดสร้างใบร่าง</summary>
+    public async Task<CreditRefundPreviewResponse> PreviewRefundAsync(Guid companyId, Guid passId, CancellationToken ct = default)
+    {
+        var pass = await _db.CreditPasses.AsNoTracking().FirstOrDefaultAsync(p => p.Id == passId && p.CompanyId == companyId, ct)
+            ?? throw new KeyNotFoundException("ไม่พบบัตรคอร์ส");
+        var facts = CreditPassDocumentHook.Facts(pass);
+        return new CreditRefundPreviewResponse(facts.Deferred, facts.PricePerCredit, facts.MaxRemovableCredits,
+            CreditPassDocumentRule.MaxPartialAmount(facts), pass.CreditsReserved > 0m);
     }
 
     // ===================================================================== อ่าน
@@ -659,7 +734,8 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
     private async Task ExpireCoreAsync(CreditPass pass, string actor, CancellationToken ct)
     {
         await EnsureSaleDocumentLiveAsync(pass, ct);
-        var amount = CourseCreditMath.BreakageAmount(pass.ContractAmount, pass.RecognizedAmount);
+        // สัญญาที่มีผล = สัญญา − คืนเงินบางส่วนแล้ว (R-38) — บัตรที่ไม่เคยคืน = สัญญาเดิม
+        var amount = CourseCreditMath.BreakageAmount(CourseCreditMath.EffectiveContract(pass.ContractAmount, pass.RefundedAmount), pass.RecognizedAmount);
         var remainingCredits = Math.Max(0m, pass.CreditsTotal - pass.CreditsUsed);
         Guid? jeId = null; string? dateNote = null;
         if (amount > 0m)
@@ -800,7 +876,8 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         if (pass.Status != CreditPassStatus.Active)
             throw new BusinessRuleException($"บัตรอยู่ในสถานะ {CourseCreditMath.StatusTh(pass.Status)} — ตัดเครดิตไม่ได้", CourseCreditMath.RuleCode);
         await EnsureSaleDocumentLiveAsync(pass, ct);
-        var amount = CourseCreditMath.RecognizeOnUse(pass.ContractAmount, pass.CreditsTotal, pass.CreditsUsed, pass.RecognizedAmount, booking.Credits);
+        var amount = CourseCreditMath.RecognizeOnUse(CourseCreditMath.EffectiveContract(pass.ContractAmount, pass.RefundedAmount),
+            pass.CreditsTotal, pass.CreditsUsed, pass.RecognizedAmount, booking.Credits);
         Guid? jeId = null; string? dateNote = null;
         if (amount > 0m)
         {
@@ -1061,7 +1138,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             names.TryGetValue(p.ContactId, out var n) ? n : null, p.Unit, UnitTh(p.Unit), p.PurchasedAt, p.ExpiresOn,
             p.CreditsTotal, p.CreditsUsed, p.CreditsReserved, CourseCreditMath.Available(p.CreditsTotal, p.CreditsUsed, p.CreditsReserved),
             p.ContractAmount, p.RecognizedAmount, p.ContractAmount - p.RecognizedAmount - p.RefundedAmount,
-            CourseCreditMath.PricePerCredit(p.ContractAmount, p.CreditsTotal),
+            CourseCreditMath.PricePerCredit(CourseCreditMath.EffectiveContract(p.ContractAmount, p.RefundedAmount), p.CreditsTotal),
             p.Status, CourseCreditMath.StatusTh(p.Status), p.SaleDocumentId, p.SaleDocumentNumber, warning);
     }
 
@@ -1163,6 +1240,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         CreditLedgerKind.Consume => "ใช้เครดิต",
         CreditLedgerKind.Expire => "หมดอายุ",
         CreditLedgerKind.Cancel => "ยกเลิกบัตร",
+        CreditLedgerKind.Adjust => "ลดเครดิต (คืนเงินบางส่วน)",
         _ => k.ToString(),
     };
 

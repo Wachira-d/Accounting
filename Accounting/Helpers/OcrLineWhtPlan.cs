@@ -44,6 +44,50 @@ public static class OcrLineWhtPlan
     public const string MismatchTag = "[WHT-LINE-MISMATCH]";
     /// <summary>ใช้แผนรายบรรทัดแล้ว (บอกผู้ใช้ว่าบรรทัดไหนได้อะไร)</summary>
     public const string AppliedTag = "[WHT-LINE]";
+    /// <summary>R-20 (B-6): หัวใบ<b>ไม่</b>มีหัก แต่บรรทัดเข้าข่ายตามกฎหมาย ⇒ "⚙️ ระบบแนะนำ" ต่อบรรทัด — <b>ข้อเสนอเท่านั้น</b> (warn-gate · DOCTRINE 2.3) ·
+    /// ระบบไม่หักให้เอง (คำตัดสินเดิม) · ไม่อยู่ใน <c>OcrPostingReadiness.BlockingTags</c></summary>
+    public const string SuggestTag = "[WHT-LINE-SUGGEST]";
+    /// <summary>ค่าที่ผู้ใช้เลือกในหน้ารีวิว = "ไม่หักบรรทัดนี้" (เก็บใน <c>OcrExtractedLineItem.WhtIncomeTypeCode</c>) · null = ตามแผนระบบ</summary>
+    public const string NoWhtOverrideCode = "0";
+
+    /// <summary>บรรทัดในสายตาแผนเมื่อผู้ใช้เลือกประเภทเงินได้เองในหน้ารีวิว (R-17 round-trip · กฎเหล็ก #4 A "ค่าผู้ใช้ชนะเสมอ"):
+    /// <see cref="NoWhtOverrideCode"/> ⇒ ไม่หัก · รหัสที่ตารางชี้ขาดได้ ⇒ หักตามรหัสนั้น · ว่าง/รหัสไม่รู้จัก ⇒ ผลจัดประเภทของระบบ (ไม่แต่ง)</summary>
+    public static OcrLineWhtInput WithUserChoice(decimal amount, string? userIncomeTypeCode, (OcrLineWhtKind Kind, string? IncomeTypeCode) classified)
+    {
+        var code = userIncomeTypeCode?.Trim();
+        if (string.IsNullOrEmpty(code)) return new(amount, classified.Kind, classified.IncomeTypeCode);
+        if (code == NoWhtOverrideCode) return new(amount, OcrLineWhtKind.NotWithholdable, null);
+        return ThaiWhtRateTable.Resolve(code) is { } t
+            ? new(amount, OcrLineWhtKind.Withholdable, t.Code)
+            : new(amount, classified.Kind, classified.IncomeTypeCode);
+    }
+
+    /// <summary>R-20 (B-6) — <b>ข้อเสนอ</b>หักต่อบรรทัดเมื่อหัวใบไม่มีหัก (กระดาษไม่พิมพ์ยอดหัก) · คืน <c>Applied = false</c> เสมอ (ไม่แตะยอด/บรรทัด) ·
+    /// <paramref name="thresholdMet"/> = ด่านเกณฑ์ 1,000 บาทระดับใบ (<c>OcrWhtThresholdBase.Verdict == Meets</c>) — ไม่ผ่าน/ตัดสินไม่ได้ ⇒ ไม่เสนอ (ไม่แต่ง) ·
+    /// หัวใบมีหักอยู่แล้ว (อัตรา/ยอด &gt; 0) ⇒ ไม่เสนอซ้ำ (ทิศตรงข้าม — ใบนั้นเดิน <see cref="Decide"/>) · ไม่มีบรรทัดเข้าข่าย ⇒ ไม่เสนอ ·
+    /// อัตราที่ขึ้นกับชนิดผู้รับและไม่รู้ชนิด ⇒ ไม่เสนอบรรทัดนั้น (ไม่เดา 15/1)</summary>
+    public static OcrLineWhtResult Suggest(IReadOnlyList<OcrLineWhtInput> lines, decimal headerRate, decimal headerWht,
+        bool? payeeIsJuristic, bool thresholdMet)
+    {
+        var none = new OcrLineWhtResult(false, Array.Empty<OcrLineWhtPick>(), null);
+        if (lines.Count == 0 || headerRate > 0m || headerWht > 0m || !thresholdMet) return none;
+        var picks = new OcrLineWhtPick[lines.Count];
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var l = lines[i];
+            if (l.Kind == OcrLineWhtKind.Withholdable && RateOf(l.IncomeTypeCode, payeeIsJuristic) is decimal r && r > 0m)
+                picks[i] = new(r, l.IncomeTypeCode, Math.Round(l.Amount * r / 100m, 2, MidpointRounding.AwayFromZero));
+            else
+                picks[i] = new(0m, null, 0m);
+        }
+        if (picks.All(p => p.WhtAmount <= 0m)) return none;
+        var groups = picks.Where(p => p.WhtAmount > 0m)
+            .GroupBy(p => (p.IncomeTypeCode ?? PerLineWht.DefaultIncomeTypeCode, p.RatePercent))
+            .Select(g => $"{ThaiWhtRateTable.Resolve(g.Key.Item1)?.Name ?? g.Key.Item1} {g.Key.RatePercent:0.##}% ≈ {g.Sum(x => x.WhtAmount):N2}");
+        return new(false, picks,
+            $"{SuggestTag} ⚙️ ระบบแนะนำ: บรรทัดที่กฎหมายให้ผู้จ่ายหัก ณ ที่จ่าย — {string.Join(" · ", groups)}"
+            + " (หน่วยสกุลเอกสาร) — กระดาษไม่ได้พิมพ์ยอดหัก ระบบจึงไม่หักให้ ตรวจแล้วเลือกประเภทเงินได้ต่อบรรทัดหรือกรอกหัวใบก่อนอนุมัติ");
+    }
 
     /// <summary>ผลต่างสูงสุดระหว่าง Σ แผน กับยอดหัวใบ <b>เป็นบาท</b> — เศษปัดของการพิมพ์ยอดหักต่อประเภท · ใบต่างสกุลแปลงเป็นหน่วยสกุลเอกสารด้วยอัตรา
     /// (ฝ่ายค้านทีม F ข้อ 7: เดิม 1.00 หน่วยสกุลเอกสาร ⇒ ใบ USD ยอมต่างได้ 36 บาท)</summary>

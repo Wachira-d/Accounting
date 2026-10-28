@@ -426,6 +426,9 @@ public class LodgingReservation : TenantEntity
     public string? PaymentSlipUrl { get; set; }
     public string? PaymentReference { get; set; }
     public DateTime? SlipUploadedAt { get; set; }
+    /// <summary>รอบ 205 W5 (R-52): ยอดที่แขก<b>กรอกเอง</b>ตอนส่งสลิปใบล่าสุด — ไม่ใช่หลักฐานการรับเงิน (ยอดจริงบันทึกตอนพนักงานกด
+    /// “บันทึกรับเงินตามสลิป”) · ไม่ประทับว่า "ตรง" เอง (G3) · ยอดของสลิปใบก่อน ๆ อยู่ใน audit <c>GuestUploadedSlip.declaredAmount</c></summary>
+    public decimal? SlipDeclaredAmount { get; set; }
 
     // ── การตรวจสลิป (LDG-P0-02) ──
     // เดิมมีแต่ "ยืนยัน" กับ "ยกเลิกทั้งใบ" ⇒ สลิปไม่ตรง/ปลอม พนักงานได้แต่เงียบ
@@ -478,6 +481,10 @@ public class LodgingReservation : TenantEntity
     /// <summary>รอบ 202 ทีม LO (O-P1-4) — เงินออนไลน์เข้าแล้วแต่ยืนยันการจองอัตโนมัติไม่ได้ (ห้องเต็ม/สถานะเปลี่ยน) · null = ไม่มีปัญหา ·
     /// ล้างเมื่อยืนยัน+รับมัดจำสำเร็จ · ระหว่างนี้การจองยังกันห้อง (LodgingHoldRule) และไม่ถูกยกเลิกอัตโนมัติ</summary>
     public DateTime? PaymentProblemAt { get; set; }
+    /// <summary>รอบ 205 ทีม W1 (R-02 · BOOKING_REVENUE_AUDIT L-2) — คืนเงินผ่าน gateway <b>สำเร็จแล้ว</b> (หลักฐานจากผู้ให้บริการ · ประทับโดย
+    /// <c>GatewayRefundService</c> เท่านั้น) แต่ "ยืนยันคืนเงินแล้ว"/ใบลดหนี้ยังเป็นการตัดสินของคน (R1) ⇒ คิว "ต้องคืนเงินแขก" ติดป้าย · null = ไม่เคยคืนผ่าน gateway
+    /// · เก็บครั้งแรก (ไม่ทับ)</summary>
+    public DateTime? RefundedAtGatewayAt { get; set; }
     /// <summary>เหตุผลที่ยืนยันไม่ได้ + เลขรายการชำระ (ข้อความภายใน — หน้าแขกเห็นข้อความกลางแทน)</summary>
     public string? PaymentProblemNote { get; set; }
     /// <summary>ฝ่ายค้านรอบ 202 P1-3ค: รายการชำระออนไลน์ที่เงินเข้าแต่ยืนยันไม่ได้ — ตอนพนักงานยืนยัน+รับมัดจำภายหลัง ใบมัดจำต้องลงบัญชีพักของ

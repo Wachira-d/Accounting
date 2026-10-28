@@ -63,7 +63,27 @@ public class BookingSiteSettingsDto
     public BookingInvoiceTiming? GuaranteedInvoiceTiming { get; set; }
     /// <summary>ตัวเลือก + ผลทางภาษี (server ประกอบจาก <c>BookingInvoiceTimingPolicy.Options</c> · หน้าเว็บแสดงตรง ๆ) — ไม่อ่านตอนบันทึก</summary>
     public List<BookingInvoiceTimingOption> GuaranteedInvoiceTimingOptions { get; set; } = new();
+
+    // ── รอบ 205 W3 ──
+    /// <summary>เวลาทำการระดับเว็บ (R-14) — ค่าตั้งต้นของบริการที่ไม่ตั้งเวลาเอง · คำตอบมีค่าเสมอ (ว่าง = ไม่ตั้ง) · ตอนบันทึก null = คงค่าเดิม · ส่งตารางว่าง = ล้างค่า</summary>
+    public BookingScheduleDto? Schedule { get; set; }
+    /// <summary>คิวสำรองได้คิวแล้วถือรอบให้ยืนยันกี่นาที (0 = ไม่ถือ) (R-13) · ตอนบันทึก null = คงค่าเดิม</summary>
+    public int? WaitlistHoldMinutes { get; set; }
+    /// <summary>เตือนก่อนนัด เปิด/ปิด (R-12) · ตอนบันทึก null = คงค่าเดิม</summary>
+    public bool? ReminderEnabled { get; set; }
+    /// <summary>กี่ชั่วโมงก่อนนัด เช่น "24,2" · ตอนบันทึก null = คงค่าเดิม</summary>
+    public string? ReminderHoursBefore { get; set; }
+    /// <summary>เทมเพลตข้อความเตือน · ตอนบันทึก null = คงค่าเดิม · "" = กลับไปใช้ข้อความระบบ</summary>
+    public string? ReminderTemplate { get; set; }
+    /// <summary>รอบ 205 W2 R-08 (Q5 = ข): เปิดรับมัดจำออนไลน์ของบริการชำระล่วงหน้า · null ตอนบันทึก = คงค่าเดิม</summary>
+    public bool? OnlineDepositEnabled { get; set; }
+    /// <summary>ข้อความเริ่มต้นของระบบ + ตัวแทนที่ใช้ได้ (server ประกาศ · หน้าเว็บแสดงเป็นคำใบ้ — ไม่อ่านตอนบันทึก)</summary>
+    public string? ReminderDefaultTemplate { get; set; }
+    public List<string> ReminderPlaceholders { get; set; } = new();
 }
+
+/// <summary>พนักงานเปลี่ยน/เลือกผู้ให้บริการของการจอง (R-16) · <see cref="ResourceId"/> null = ให้ระบบจัดให้ใหม่ — server ตัดสินผ่าน <c>BookingSlotEngine.Decide</c>/<c>PickResource</c> ตัวเดียว</summary>
+public record AssignBookingResourceRequest(Guid? ResourceId);
 
 /// <summary>ผู้ให้บริการ/ห้อง/อุปกรณ์ — <see cref="ServiceIds"/> = ประเภทบริการที่รับได้ · <see cref="Schedule"/> = เวลาเข้า-ออกงาน + วันหยุด/วันลา
 /// (ว่าง = ว่างตลอดเวลาทำการของบริการ)</summary>
@@ -177,8 +197,10 @@ public class BookingServiceResponse
     /// <summary>ผู้ให้บริการที่ทำบริการนี้ได้ (เปิดใช้อยู่) — ลูกค้าเลือกเมื่อโหมด "บังคับระบุ"/"ลูกค้าเลือก"</summary>
     public List<BookingResourceBrief> Resources { get; set; } = new();
     public BookingScheduleDto Schedule { get; set; } = new();
-    /// <summary>มีเวลาทำการอย่างน้อย 1 ช่วง — false = ลูกค้าจะไม่เห็นเวลาว่างเลย (หน้า CMS เตือน)</summary>
+    /// <summary>มีเวลาทำการอย่างน้อย 1 ช่วง (ของบริการเอง หรือรับจากเว็บ) — false = ลูกค้าจะไม่เห็นเวลาว่างเลย (หน้า CMS เตือน)</summary>
     public bool HasOpeningHours { get; set; }
+    /// <summary>บริการนี้ไม่ตั้งเวลาทำการเอง และรับเวลาทำการระดับเว็บอยู่ (ตัวตัดสิน <c>BookingSlotEngine.ScheduleOf</c> · R-14) — <c>Schedule</c> ข้างบนคือของบริการเอง (ว่าง)</summary>
+    public bool UsesSiteHours { get; set; }
     /// <summary>ข้อความความละเอียดรอบที่ server ประกอบ (เช่น "ทุก 30 นาที · ครั้งละ 60 นาที")</summary>
     public string? SlotSummary { get; set; }
     /// <summary>ข้อความนโยบายมัดจำ/ยกเลิกที่ server ประกอบ — หน้าเว็บแสดงตรง ๆ</summary>
@@ -242,6 +264,12 @@ public class CreateBookingRequest
     // Payment info
     public Guid? PaymentGatewayId { get; set; }
     public string? PaymentReference { get; set; }
+
+    // ── จ่ายด้วยบัตรคอร์ส (รอบ 205 W6 · R-39 · Helpers/CreditBookingLink) ──
+    /// <summary>true = กันเครดิตจากบัตรของลูกค้า (ต้องมี CustomerId ที่ผูกผู้ติดต่อ) · ไม่ออกเอกสาร ERP · ยอดเงินการจอง = 0</summary>
+    public bool PayWithCredit { get; set; }
+    /// <summary>บัตรที่ใช้ · ว่าง = ระบบเลือกบัตรที่หมดอายุก่อน (FEFO) ที่ใช้กับบริการนี้ได้</summary>
+    public Guid? CreditPassId { get; set; }
 }
 
 public class UpdateBookingStatusRequest
@@ -291,8 +319,37 @@ public class BookingResponse
     /// <summary>รอบ 194 (C-1): ผลของขั้น ERP อัตโนมัติตอนเปลี่ยนสถานะ (ยกเลิก/เสร็จ) ที่ผู้กดต้องรู้ — ใบมัดจำไม่ถูกยกเลิก ·
     /// ต้องออกใบกำกับเอง · ขั้นที่ล้มพร้อมเหตุ · ว่าง = ไม่มีอะไรต้องทำ (ข้อความเดียวกันถูกประทับบน <c>InternalNotes</c> ด้วย)</summary>
     public List<string> ErpNotices { get; set; } = new();
+    /// <summary>R-39: เลขบัตรคอร์สที่ใช้จ่ายการจองนี้ · null = การจองชำระปกติ</summary>
+    public string? CreditPassNumber { get; set; }
     /// <summary>แสดงปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี" ไหม (server ตัดสินด้วย <c>BookingInvoiceTimingPolicy.Decide(PaymentReceived)</c> · คำตัดสินข้อ 155)</summary>
     public bool CanIssueTaxInvoiceNow { get; set; }
+
+    // ── รอบ 205 W3 ──
+    /// <summary>โหมดผู้ให้บริการของบริการ — None = ไม่มีช่องเลือกผู้ให้บริการ (R-16)</summary>
+    public BookingResourceMode ResourceMode { get; set; }
+    /// <summary>เปลี่ยน/เลือกผู้ให้บริการได้ไหม (server ตัดสิน: บริการใช้ผู้ให้บริการ + สถานะรอยืนยัน/ยืนยันแล้ว + นัดยังไม่ผ่าน)</summary>
+    public bool CanAssignResource { get; set; }
+    // ── รอบ 205 W2 (R-08 R-10): เส้นเงิน/ลิงก์ลูกค้า — ค่าทุกตัวจากเซิร์ฟเวอร์ (Helpers/CmsBookingOnlinePayment · BookingCancellationFee) หน้าเว็บแสดงอย่างเดียว
+    /// <summary>โทเคนลิงก์ลูกค้า (คืนเฉพาะคำตอบของเส้นสร้าง/เส้น by-token — เส้นพนักงานได้ด้วยเพื่อคัดลอกลิงก์)</summary>
+    public string? PublicToken { get; set; }
+    /// <summary>มัดจำที่ยังค้าง (PrePayment) · 0 = ไม่มี/รับครบ</summary>
+    public decimal OnlineDepositDue { get; set; }
+    /// <summary>จ่ายออนไลน์ไม่ได้เพราะอะไร (null = จ่ายได้ หรือไม่มียอด)</summary>
+    public string? OnlinePaymentNote { get; set; }
+    /// <summary>คำอธิบายค่าธรรมเนียมถ้ายกเลิก "ตอนนี้" (ตัวตัดสิน BookingCancellationFee) · null = ยกเลิกไม่ได้แล้ว</summary>
+    public string? CancelPolicyNote { get; set; }
+    public bool CanCancelOnline { get; set; }
+    public DateTime? PaidAt { get; set; }
+    public string? PaymentReference { get; set; }
+    /// <summary>เตือนก่อนนัดส่งถึงจริงล่าสุดเมื่อไร (UTC) · null = ยังไม่ส่ง</summary>
+    public DateTime? ReminderSentAt { get; set; }
+    /// <summary>ร่องรอยส่งข้อความถึงลูกค้าล้มครั้งล่าสุด (ไม่มีช่องทาง/SMTP/LINE) · null = ไม่มีปัญหา</summary>
+    public string? NotifyLastError { get; set; }
+    /// <summary>ได้คิวจากคิวสำรอง + แจ้งลูกค้าถึงจริง (UTC)</summary>
+    public DateTime? WaitlistPromotedAt { get; set; }
+    public DateTime? WaitlistNotifiedAt { get; set; }
+    /// <summary>ถือรอบให้ยืนยันถึง (UTC) · พ้นแล้ว job ปล่อยรอบ</summary>
+    public DateTime? WaitlistHoldUntil { get; set; }
 }
 
 /// <summary>"รับเงินแล้ว — ออกใบกำกับภาษี" (คำตัดสินข้อ 155) · <see cref="ReceivedDate"/> = วันที่รับเงินจริง (ว่าง = วันนี้ · ห้ามอนาคต) ใช้เป็นวันที่ใบกำกับ</summary>
@@ -301,6 +358,10 @@ public record IssueBookingTaxInvoiceRequest(DateTime? ReceivedDate);
 public class BookingListResponse
 {
     public Guid Id { get; set; }
+    /// <summary>R-45 มุมมองทุกไซต์ — เว็บเจ้าของแถว (ปุ่ม action ต้องยิงไปเว็บนี้)</summary>
+    public Guid SiteId { get; set; }
+    /// <summary>ชื่อเว็บเจ้าของแถว — ใส่เฉพาะมุมมองทุกไซต์</summary>
+    public string? SiteName { get; set; }
     public string BookingNumber { get; set; } = "";
     public BookingStatus Status { get; set; }
     public string ServiceName { get; set; } = "";
@@ -345,3 +406,9 @@ public class AvailableSlotResponse
     /// <summary>ผู้ให้บริการที่ระบบจะจัดให้ (แสดงเพื่อประกอบ — server ตัดสินอีกครั้งตอนจอง)</summary>
     public string? ResourceName { get; set; }
 }
+
+/// <summary>พนักงานบันทึกรับเงินมัดจำของการจอง (รอบ 205 W2 R-08) — ยอด/วันที่/อ้างอิง · ตัวตัดสิน Helpers/CmsBookingOnlinePayment</summary>
+public record RecordBookingPaymentRequest(decimal Amount, DateTime? PaidAt = null, string? Reference = null, Guid? BankAccountId = null, string? Note = null);
+
+/// <summary>ลูกค้ายกเลิกการจองเองผ่านลิงก์โทเคน (รอบ 205 W2 R-10)</summary>
+public record CustomerCancelBookingRequest(string? Reason = null);

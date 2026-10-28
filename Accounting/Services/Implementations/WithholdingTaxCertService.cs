@@ -709,10 +709,22 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             ? v : Math.Round(v * whtRatio, 2, MidpointRounding.AwayFromZero);
         // ทีม F — 50 ทวิ เป็น<b>บาท</b>เสมอ: ใบสกุลต่างประเทศ ⇒ เงินได้/ภาษีบาทต่อบรรทัดจากตัวคำนวณกลาง Helpers/PerLineWht (ยอดบาทที่เอกสารพิมพ์ไว้ชนะ ·
         // ไม่งั้นอัตราของเอกสาร — ตัวเดียวกับ JE) · ใบบาท ⇒ ยอดที่เก็บไว้ตรงตัว (เดิมทุกสตางค์) — เดิมใบ USD ออก 50 ทวิ เป็นตัวเลขดอลลาร์
-        var whtBasis = Accounting.Helpers.PerLineWht.BasisOf(doc);
+        // คำตัดสินเจ้าของข้อ 162 (Q2 · รอบ 205 W7): อัตราฐานภาษีของงวด — ตัวตัดสินเดียว DocumentFx.WhtRateFor (ตัวเดียวกับขา 2191x ใน CreatePaymentJournalAsync
+        // ⇒ 50 ทวิ = GL ถึงสตางค์ทั้งสองค่าตั้ง) · ค่าตั้งต้น DocumentDate = อัตราเอกสาร (เดิมทุกสตางค์) · PaymentDate = Payment.ExchangeRate ของงวด (ไม่มี = อัตราเอกสาร) ·
+        // บันทึกที่มาของอัตราลงใบทุกใบ (ExchangeRateUsed / ExchangeRateBasis)
+        var whtFxBasis = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(s => s.CompanyId == companyId).Select(s => (WhtFxRateBasis?)s.WhtFxRateBasis).FirstOrDefaultAsync() ?? WhtFxRateBasis.DocumentDate;
+        decimal? paymentFx = sourcePaymentId.HasValue
+            ? await _db.Payments.AsNoTracking().Where(p => p.Id == sourcePaymentId.Value && p.CompanyId == companyId)
+                .Select(p => p.ExchangeRate).FirstOrDefaultAsync()
+            : null;
+        var whtFxRate = Accounting.Helpers.DocumentFx.WhtRateFor(whtFxBasis, doc.ExchangeRate, paymentFx);
+        var whtBasis = Accounting.Helpers.PerLineWht.BasisOf(doc, whtFxRate);
         var inBaht = whtBasis != Accounting.Helpers.WhtBahtBasis.Thb;
-        var bahtByLine = inBaht ? Accounting.Helpers.PerLineWht.ForDocument(doc) : null;
-        decimal DocToBaht(decimal v) => inBaht ? Accounting.Helpers.PerLineWht.DocumentWhtThb(v, doc.ExchangeRate) : v;
+        var bahtByLine = inBaht ? Accounting.Helpers.PerLineWht.ForDocument(doc, whtFxRate) : null;
+        decimal DocToBaht(decimal v) => inBaht ? Accounting.Helpers.PerLineWht.DocumentWhtThb(v, whtFxRate) : v;
+        cert.ExchangeRateUsed = inBaht ? whtFxRate : 1m;
+        cert.ExchangeRateBasis = inBaht ? Accounting.Helpers.DocumentFx.WhtRateBasisLabel(whtFxBasis, doc.ExchangeRate, paymentFx) : "บาท";
 
         if (whtLines.Count == 0)
         {
@@ -1162,7 +1174,12 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var certs = await _db.WithholdingTaxCerts.Include(w => w.Lines)
             .Where(w => w.CompanyId == companyId && w.DocumentId == src.Id && w.Status != WithholdingTaxCertStatus.Voided)
             .ToListAsync();
-        var prefix = $"ใบลดหนี้ {cn.DocumentNumber} ลดภาษีหัก ณ ที่จ่าย {cn.WithholdingTaxAmount:N2} บาท";
+        // R-18 (B-4 · รอบ 205 W7): ใบลดหนี้ต่างสกุล — ตัวเลขทุกตัวที่เทียบกับ 50 ทวิ (บาท) ต้องเป็นบาทผ่านตัวตั้งเดียว Helpers/PerLineWht
+        // (ForDocument ของใบลดหนี้ต่อบรรทัด · DocumentWhtThb ระดับหัวใบ) · ใบบาท ⇒ ยอดที่เก็บไว้ตรงตัว (ไม่ขยับแม้แต่สตางค์ — เทสต์ทิศตรงข้าม PerLineWhtTests)
+        var cnBaht = PerLineWht.ForDocument(cn);
+        var cnWhtThb = PerLineWht.DocumentWhtThb(cn.WithholdingTaxAmount, cn.ExchangeRate);
+        var srcWhtThb = PerLineWht.DocumentWhtThb(src.WithholdingTaxAmount, src.ExchangeRate);
+        var prefix = $"ใบลดหนี้ {cn.DocumentNumber} ลดภาษีหัก ณ ที่จ่าย {cnWhtThb:N2} บาท";
         if (certs.Count == 0 || src.BalanceDue > 0.01m)
         {
             // บอร์ดตัดสิน 2026-10-13 (A3): ป้ายต้องบอกตัวเลขที่ต้องกรอก ไม่ใช่ "ลดยอดเอง" — ภาษีหักที่เหลือ = ใบเดิม − ใบลดหนี้ทุกใบที่มีผลของใบต้นทาง
@@ -1174,10 +1191,12 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     && n.CnDnPurchaseSideOverride != false
                     && !cnNotIssued.Contains(n.Status) && n.Status != DocumentStatus.Voided
                     && n.WithholdingTaxAmount > 0m)
-                .Select(n => n.WithholdingTaxAmount)
+                .Select(n => new { n.WithholdingTaxAmount, n.ExchangeRate })
                 .ToListAsync();
-            var figures = WhtCreditNoteRemainder.Compute(src.WithholdingTaxAmount,
-                otherCnWht.Append(cn.WithholdingTaxAmount).ToList(), certs.Sum(c => c.TotalTaxAmount));
+            // ทุกตัวเป็นบาท: ใบเดิม · ใบลดหนี้ทุกใบ · 50 ทวิ ที่ออกแล้ว (บาทอยู่แล้ว) — เดิมใบต่างสกุลเทียบดอลลาร์กับบาท
+            var figures = WhtCreditNoteRemainder.Compute(srcWhtThb,
+                otherCnWht.Select(n => PerLineWht.DocumentWhtThb(n.WithholdingTaxAmount, n.ExchangeRate)).Append(cnWhtThb).ToList(),
+                certs.Sum(c => c.TotalTaxAmount));
             // ยังไม่มีใบ (ยังไม่จ่าย/ออกเอง) — ใบที่จะออกทีหลังคิดจากช่องภาษีหักตอนบันทึกจ่าย ⇒ บอกยอดที่ต้องแก้ ·
             // ยังจ่ายไม่ครบ — ใบลดหนี้เกณฑ์เงินสดไม่แตะหนี้ 2191x (ลง gross) และใบที่มีอยู่เป็นของงวดที่จ่ายแล้ว ⇒ ระบบเลือกแทนไม่ได้ว่าลดตรงไหน
             await FlagReviewAsync(companyId, src, certs.Count == 0
@@ -1219,7 +1238,8 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             }
             reductions[singlePayee] = new List<WhtCertAmountLine>
             {
-                new(only.IncomeTypeCode, only.TaxRate, cn.SubTotal + cn.WhtPayerBorneAmount, cn.WithholdingTaxAmount, cn.DocumentNumber, cn.DocumentDate),
+                // บาท: เงินได้ = Σ ฐานบาท + ส่วนออกแทนบาททุกบรรทัด (ForDocument) · ภาษี = ยอดบาทระดับหัวใบ (ตัวเดียวกับ GL)
+                new(only.IncomeTypeCode, only.TaxRate, cnBaht.Values.Sum(v => v.IncomeThb), cnWhtThb, cn.DocumentNumber, cn.DocumentDate),
             };
         }
         foreach (var l in cnWhtLines)
@@ -1235,8 +1255,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             }
             if (!reductions.TryGetValue(pid, out var list)) reductions[pid] = list = new List<WhtCertAmountLine>();
             // รหัสเดียวกับที่ตัวออกใบใส่ให้บรรทัดที่ไม่มีประเภท (AutoGenerateFromDocumentAsync)
-            list.Add(new WhtCertAmountLine(l.IncomeTypeCode ?? "8", l.WithholdingTaxRate, l.Amount + cnBorneByLine.GetValueOrDefault(l.Id),
-                l.WithholdingTaxAmount, l.Description, cn.DocumentDate));
+            // R-18: บาทต่อบรรทัดจาก PerLineWht.ForDocument(cn) — IncomeThb = ฐาน + ส่วนออกแทน (สูตร WhtGrossUp เดียวกัน) · ใบบาท = l.Amount + borne / l.WithholdingTaxAmount เดิม
+            var lb = cnBaht.TryGetValue(l.Id, out var b) ? b
+                : new PerLineWhtBaht(0, l.IncomeTypeCode, l.WithholdingTaxRate, l.Amount, cnBorneByLine.GetValueOrDefault(l.Id), l.WithholdingTaxAmount);
+            list.Add(new WhtCertAmountLine(l.IncomeTypeCode ?? "8", l.WithholdingTaxRate, lb.IncomeThb,
+                lb.WhtThb, l.Description, cn.DocumentDate));
         }
 
         foreach (var (payeeId, cuts) in reductions)
@@ -1585,5 +1608,6 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         PayerNameLine: Accounting.Helpers.WhtCertFormText.PartyName(null, company.Name, company.TaxId, company.BranchCode, company.BranchName),
         PayeeNameLine: Accounting.Helpers.WhtCertFormText.PartyName(w.PayeeContact.TitleTh, w.PayeeContact.Name, w.PayeeContact.TaxId,
             w.PayeeContact.BranchCode, w.PayeeContact.BranchName),
-        TotalTaxAmountInWords: Accounting.Helpers.ThaiBahtText.Format(w.TotalTaxAmount));
+        TotalTaxAmountInWords: Accounting.Helpers.ThaiBahtText.Format(w.TotalTaxAmount),
+        ExchangeRateUsed: w.ExchangeRateUsed, ExchangeRateBasis: w.ExchangeRateBasis);
 }

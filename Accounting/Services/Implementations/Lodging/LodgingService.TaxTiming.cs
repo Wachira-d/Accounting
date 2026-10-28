@@ -333,8 +333,16 @@ public partial class LodgingService
         var pendingCharges = r.Charges.Where(c => c.Status == LodgingChargeStatus.Pending).Concat(newCharges).ToList();
         // ยอดเข้าพักตอนนี้ (ตัวสร้างรายการใบสุดท้ายตัวเดียว · ไม่รวม folio) เทียบใบล่วงหน้าหลังหักใบลดหนี้
         var stayLines = await BuildFinalInvoiceLinesAsync(companyId, r, prop, registered, vatRate, Array.Empty<LodgingFolioCharge>());
-        var stayNow = DocumentService.PreviewTotals(stayLines, prop.PricesIncludeVat, 0m);
+        var stayBefore = DocumentService.PreviewTotals(stayLines, prop.PricesIncludeVat, 0m);
+        // รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์เมื่อค่าห้องอยู่ในใบล่วงหน้าแล้ว = ลดราคาเข้าพัก ⇒ เดินเส้นเดิมของข้อ 157 (ยอดลด = ใบลดหนี้อ้างใบล่วงหน้า)
+        // · ตัวตัดสินเดียวกับเช็คเอาต์ปกติ · ส่วนลดเกินค่าห้อง = ปฏิเสธพร้อมทางไปต่อ (ลดบรรทัด folio เอง) · ไม่กรอก = ตัวเลขเดิมทุกสตางค์
+        var (discount, discountProblem) = LodgingCheckoutDiscount.Resolve(request, stayBefore.Net, prop.PricesIncludeVat, vatRate);
+        if (discountProblem != null)
+            throw new BusinessRuleException(discountProblem + $" (ค่าห้องอยู่ในใบกำกับภาษีล่วงหน้า {adv.Number} — ส่วนลดลดได้ไม่เกินค่าห้อง · รายการระหว่างพักแก้ที่บรรทัด folio)",
+                LodgingCheckoutDiscount.RuleCode);
+        var stayNow = discount.HasDiscount ? DocumentService.PreviewTotals(stayLines, prop.PricesIncludeVat, discount.BaseAmount) : stayBefore;
         var delta = LodgingTaxInvoiceTimingPolicy.StayDelta(prop.PricesIncludeVat, stayNow.Net, stayNow.Total, adv.NetRemaining, adv.GrossRemaining);
+        if (discount.HasDiscount) AppendInternal(r, $"{LodgingCheckoutDiscount.Note(discount)} — ลดจากใบกำกับภาษีล่วงหน้า {adv.Number} (โดย {userId})");
         var extraLines = await BuildFinalInvoiceLinesAsync(companyId, r, prop, registered, vatRate, pendingCharges, includeStay: false);
         if (delta.IsCharge)
             extraLines.Insert(0, new DocumentLineRequest(
@@ -356,7 +364,8 @@ public partial class LodgingService
         // ── (1) ยอดลด ⇒ ใบลดหนี้ก่อน (ยอดค้างของใบล่วงหน้าต้องเป็นยอดหลังลดหนี้) · กดซ้ำ: ยอดคงเหลือหักใบลดหนี้แล้ว ⇒ ส่วนต่าง 0 ไม่ลดซ้ำ ──
         if (delta.IsCredit)
         {
-            var cn = await IssueAdvanceCreditNoteAsync(companyId, r, adv, -delta.Gross, "ยอดเข้าพักลดลงจากใบกำกับภาษีล่วงหน้า (เลื่อนวัน/ปรับราคา)", userId);
+            var cn = await IssueAdvanceCreditNoteAsync(companyId, r, adv, -delta.Gross,
+                discount.HasDiscount ? $"ยอดเข้าพักลดลงจากใบกำกับภาษีล่วงหน้า — {LodgingCheckoutDiscount.Note(discount)}" : "ยอดเข้าพักลดลงจากใบกำกับภาษีล่วงหน้า (เลื่อนวัน/ปรับราคา)", userId);
             if (cn != null) AppendInternal(r, $"ยอดเข้าพักลดลง {-delta.Gross:N2} จากใบกำกับภาษีล่วงหน้า {adv.Number} — ออกใบลดหนี้ {cn.DocumentNumber}");
             advDoc = await _docService.GetDocumentAsync(companyId, adv.Id);
         }

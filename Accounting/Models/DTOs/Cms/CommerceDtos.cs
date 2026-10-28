@@ -30,6 +30,8 @@ public class CreateSiteProductRequest
     public List<CreatePricingTierRequest>? PricingTiers { get; set; }
     /// <summary>สินค้าตามสั่ง: ผลิตกี่วัน (null = ไม่ใช่สินค้าตามสั่ง) · ทีม K</summary>
     public int? LeadTimeDays { get; set; }
+    /// <summary>R-41 B2: ขายเป็นคอร์ส — แพ็กเกจคอร์สที่ผูก (บรรทัดใบขายลง 21713 + เปิดบัตรหลังอนุมัติ) · null = สินค้าปกติ</summary>
+    public Guid? CreditPackageId { get; set; }
     /// <summary>น้ำหนักต่อชิ้น (กก.) สำหรับค่าส่งตามน้ำหนัก · null = ไม่คิดน้ำหนัก</summary>
     public decimal? WeightKg { get; set; }
 }
@@ -57,6 +59,9 @@ public class UpdateSiteProductRequest
     /// <summary>null = ไม่เปลี่ยน · ล้างค่า (เลิกเป็นสินค้าตามสั่ง) ใช้ <see cref="ClearLeadTime"/></summary>
     public int? LeadTimeDays { get; set; }
     public bool ClearLeadTime { get; set; }
+    /// <summary>R-41 B2: null = ไม่เปลี่ยน · เลิกขายเป็นคอร์ส ใช้ <see cref="ClearCreditPackage"/></summary>
+    public Guid? CreditPackageId { get; set; }
+    public bool ClearCreditPackage { get; set; }
     /// <summary>null = ไม่เปลี่ยน · ล้างค่าใช้ <see cref="ClearWeight"/></summary>
     public decimal? WeightKg { get; set; }
     public bool ClearWeight { get; set; }
@@ -136,6 +141,8 @@ public class SiteProductResponse
     public DateTime CreatedAt { get; set; }
     // ── สินค้าตามสั่ง (ทีม K) ──
     public int? LeadTimeDays { get; set; }
+    /// <summary>R-41 B2: แพ็กเกจคอร์สที่สินค้านี้ขาย · null = สินค้าปกติ</summary>
+    public Guid? CreditPackageId { get; set; }
     public decimal? WeightKg { get; set; }
     /// <summary>วันรับเร็วสุดถ้าสั่งตอนนี้ (yyyy-MM-dd · ยังไม่รวมวันเพิ่มของตัวเลือก) — null = ไม่ใช่สินค้าตามสั่ง</summary>
     public string? EarliestReadyDate { get; set; }
@@ -372,6 +379,8 @@ public class OrderResponse
     public bool RequestTaxInvoice { get; set; }
     public string? BillingTaxId { get; set; }
     public Guid? ErpDocumentId { get; set; }
+    /// <summary>รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้วเมื่อ (null = ไม่เคย) — ยังต้องออกใบลดหนี้ที่เอกสารต้นทาง</summary>
+    public DateTime? RefundedAtGatewayAt { get; set; }
     public string? CouponCode { get; set; }
     public string? CustomerNotes { get; set; }
     public string? InternalNotes { get; set; }
@@ -402,6 +411,8 @@ public class OrderResponse
     /// <summary>ข้อความถึงลูกค้า/พนักงานเรื่องใบกำกับของมัดจำ (null = ไม่ต้องแสดง)</summary>
     public string? DepositInvoicingNote { get; set; }
     public List<OrderDepositDocumentResponse> DepositDocuments { get; set; } = new();
+    /// <summary>รอบ 205 W2 (R-06): ช่องจ่ายออนไลน์ปิดชั่วคราวเพราะอะไร (สลิปรอตรวจ) · null = เปิด — หน้าเว็บแสดงตรง ๆ</summary>
+    public string? OnlinePaymentBlockedNote { get; set; }
 }
 
 /// <summary>ใบรับเงินมัดจำ 1 ใบของออเดอร์ (ทีม Q)</summary>
@@ -470,6 +481,10 @@ public class CheckoutQuoteResponse
 public class OrderListResponse
 {
     public Guid Id { get; set; }
+    /// <summary>R-45 มุมมองทุกไซต์ — เว็บเจ้าของแถว (ปุ่ม action ต้องยิงไปเว็บนี้) · endpoint รายเว็บเดิมก็ใส่ให้ (ค่าเดียวกับ siteId ใน URL)</summary>
+    public Guid SiteId { get; set; }
+    /// <summary>ชื่อเว็บเจ้าของแถว — ใส่เฉพาะมุมมองทุกไซต์ (null = หน้ารายเว็บ ไม่ต้องโชว์)</summary>
+    public string? SiteName { get; set; }
     public string OrderNumber { get; set; } = "";
     public SiteOrderStatus Status { get; set; }
     public string? CustomerName { get; set; }
@@ -508,6 +523,10 @@ public class OrderPaymentResponse
     public Guid? DepositDocumentId { get; set; }
     /// <summary>ทีม Q (ฝ่ายค้านข้อ 2) — ป้ายปุ่ม "ทำขั้นที่ค้าง" ของรายการนี้ (เซิร์ฟเวอร์ตัดสิน · null = ไม่มีอะไรค้าง)</summary>
     public string? PendingAction { get; set; }
+    /// <summary>R-43 — URL สลิปที่ลูกค้าแนบ (null = รายการนี้ไม่มีสลิป เช่น จ่ายผ่าน gateway)</summary>
+    public string? SlipUrl { get; set; }
+    /// <summary>true = สลิปอยู่ในที่เก็บกลาง ต้องดึงผ่าน API พร้อม JWT (<c>API.fetchFile</c>) · false = URL เดิมเปิดตรงได้</summary>
+    public bool SlipRequiresAuth { get; set; }
 }
 
 // ==================== Payment Gateway ====================

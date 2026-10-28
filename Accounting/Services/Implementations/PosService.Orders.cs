@@ -2181,6 +2181,28 @@ public partial class PosService
             throw new Accounting.Helpers.BusinessRuleException(
                 "เลือกบัญชีรายได้เองได้เฉพาะรายการพิเศษ (Quick Add) — สินค้า/บริการในระบบลงบัญชีตามผังมาตรฐาน", "POS-CUSTOM-ITEM");
 
+        // ── รอบ 205 W6 (R-26 · POS_MTO_DESIGN §4 #5): ServicePackage.RevenueAccountId มีผลจริง — ตรึงลงบรรทัดตอนเพิ่ม (F2 #2 "เก็บแล้วต้องมีผล") ·
+        //    JE ขาย/คืนแบ่งรายได้ตาม PosOrderItem.RevenueAccountId อยู่แล้ว (PosRevenueSplit) ⇒ ไม่แตะ JE · บิลเดิม/JE ที่ปิดแล้วไม่เปลี่ยน (ค่าตรึงต่อบรรทัด)
+        if (!req.IsCustomItem && req.ServicePackageId is Guid pkgIdForAccount)
+        {
+            var packageAccount = await _db.ServicePackages.AsNoTracking()
+                .Where(p => p.Id == pkgIdForAccount && p.CompanyId == order.CompanyId)
+                .Select(p => p.RevenueAccountId).FirstOrDefaultAsync();
+            if (packageAccount is Guid pa && pa != Guid.Empty)
+            {
+                try
+                {
+                    await EnsurePackageRevenueAccountAsync(order.CompanyId, pa);
+                    revenueAccountId = pa;
+                }
+                catch (Accounting.Helpers.BusinessRuleException ex) when (offline)
+                {
+                    // บิลออฟไลน์ขายไปแล้วจริง — ผังของแพ็กเกจถูกปิด/ลบระหว่างออฟไลน์ ⇒ ลงรายได้มาตรฐาน (ยอดเงิน/ภาษีไม่เปลี่ยน) + log ดัง
+                    _logger.LogError(ex, "POS offline sync: package revenue account {AccountId} rejected — booked to default sales account", pa);
+                }
+            }
+        }
+
         // ── ช่าง/พนักงานของบรรทัด (multi-staff · ทีม K) ──
         var (staffId, staffName) = await ResolveStaffAsync(order.CompanyId, req.StaffId, lenient: offline);
 
@@ -2281,6 +2303,19 @@ public partial class PosService
     }
 
     /// <summary>บัญชีรายได้ของรายการพิเศษ: ผังของบริษัทนี้ · ลงรายการได้ (PostingAccountGuard ตัวเดียว) · หมวดรายได้เท่านั้น</summary>
+    /// <summary>R-26: ผังรายได้ที่ตั้งไว้บนแพ็กเกจต้องลงบัญชีได้ + หมวดรายได้ — ไม่ผ่าน ⇒ บอกให้แก้ที่หน้าแพ็กเกจ (ทางไปต่อ) ไม่ลงผังอื่นเงียบ ๆ</summary>
+    private async Task EnsurePackageRevenueAccountAsync(Guid companyId, Guid accountId)
+    {
+        await _db.EnsurePostingAccountAsync(companyId, accountId, "บัญชีรายได้ของแพ็กเกจบริการ");
+        var type = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.Id == accountId && a.CompanyId == companyId)
+            .Select(a => a.AccountType).FirstAsync();
+        if (type != AccountType.Revenue)
+            throw new Accounting.Helpers.BusinessRuleException(
+                "บัญชีรายได้ที่ตั้งไว้บนแพ็กเกจบริการต้องเป็นผังหมวดรายได้ (4xxxx) — แก้ที่หน้า \"แพ็คเกจบริการ\" (เว้นว่าง = รายได้จากการขาย) แล้วเพิ่มรายการใหม่",
+                "POS-PACKAGE-ACCOUNT");
+    }
+
     private async Task EnsureCustomRevenueAccountAsync(Guid companyId, Guid accountId)
     {
         await _db.EnsurePostingAccountAsync(companyId, accountId, "บัญชีรายได้ของรายการพิเศษ");

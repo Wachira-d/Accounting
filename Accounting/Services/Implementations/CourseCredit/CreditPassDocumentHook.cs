@@ -49,8 +49,39 @@ public static class CreditPassDocumentHook
         var net = lines.Sum(l => l.Amount);
         var allUnearned = lines.All(l => l.AccountId == null || l.AccountId == pass.UnearnedAccountId);
         var decision = CreditPassDocumentRule.OnCreditNote(Facts(pass), source.DocumentNumber, net, allUnearned);
+        if (decision.Action == CreditPassDocumentRule.DocAction.ReduceCredits)
+        {
+            ReduceCredits(db, decision.CreditsToRemove, pass, creditNote, actor, net);
+            return;
+        }
         Apply(db, decision, pass, creditNote, actor, refunded: net,
             $"ใบลดหนี้ {creditNote.DocumentNumber} คืนเงินส่วนที่ยังไม่ใช้ {net:N2} — ปิดบัตร");
+    }
+
+    /// <summary>คืนเงินบางส่วน (R-38): ลดเครดิตทั้งหมดของบัตร + บวกยอดคืน · บัตรยัง Active · แถว Adjust ในสมุด (ราคาต่อเครดิตหลังจากนี้ = (สัญญา − คืนแล้ว) ÷ เครดิตที่เหลือ)</summary>
+    private static void ReduceCredits(AccountingDbContext db, decimal credits, CreditPass pass, Document creditNote, string actor, decimal refunded)
+    {
+        if (credits <= 0m) throw new BusinessRuleException("จำนวนเครดิตที่ลดต้องมากกว่า 0", CreditPassDocumentRule.RuleCode, 409);
+        var before = pass.CreditsTotal;
+        pass.CreditsTotal -= credits;
+        pass.RefundedAmount += refunded;
+        pass.UpdatedAt = DateTime.UtcNow; pass.UpdatedBy = actor;
+        var note = $"ใบลดหนี้ {creditNote.DocumentNumber} คืนเงินบางส่วน {refunded:N2} — ลดเครดิต {credits:0.##} (ทั้งหมด {before:0.##} → {pass.CreditsTotal:0.##}) · บัตรใช้ต่อได้";
+        db.CreditLedgerEntries.Add(new CreditLedgerEntry
+        {
+            CompanyId = pass.CompanyId, CreatedBy = actor, PassId = pass.Id, Kind = CreditLedgerKind.Adjust,
+            Credits = credits, Note = note,
+        });
+        db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = pass.CompanyId, UserEmail = actor, Action = AuditAction.Update, EntityType = "CreditPass", EntityId = pass.Id.ToString(),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                action = "PartialRefundByCreditNote", pass = pass.PassNumber, document = creditNote.DocumentNumber,
+                refunded, creditsRemoved = credits, creditsTotalBefore = before, creditsTotalAfter = pass.CreditsTotal,
+                ruleCode = CreditPassDocumentRule.RuleCode,
+            }),
+        });
     }
 
     private static async Task<CreditPass?> LockLivePassAsync(AccountingDbContext db, Guid companyId, Guid saleDocumentId, CancellationToken ct)
@@ -63,8 +94,9 @@ public static class CreditPassDocumentHook
         return pass;
     }
 
-    private static CreditPassDocumentRule.PassFacts Facts(CreditPass p)
-        => new(p.PassNumber, p.Status, p.CreditsUsed, p.CreditsReserved, p.ContractAmount, p.RecognizedAmount, p.RefundedAmount);
+    internal static CreditPassDocumentRule.PassFacts Facts(CreditPass p)
+        => new(p.PassNumber, p.Status, p.CreditsUsed, p.CreditsReserved, p.ContractAmount, p.RecognizedAmount, p.RefundedAmount,
+            p.CreditsTotal, p.Unit);
 
     private static void Apply(AccountingDbContext db, CreditPassDocumentRule.Decision decision, CreditPass? pass, Document doc,
         string actor, decimal refunded, string note)

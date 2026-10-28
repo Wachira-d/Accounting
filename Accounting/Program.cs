@@ -375,6 +375,9 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandle
     Accounting.Services.Payments.Handlers.SubscriptionPaymentHandler>();
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.PosOrderPaymentHandler>();
+// รอบ 205 W2 (R-08): มัดจำการจองนัดหมาย (CMS booking) — เงินเข้า ⇒ CmsBookingService.RecordDepositPaymentAsync
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.SiteBookingPaymentHandler>();
 // (3-way match endpoint ProcurementController/GrnMatchService ถูกลบ 2026-10-08 ตามคำตัดสินเจ้าของ — ไม่มีหน้าใดเรียก และผิดบนเส้น GRN→PI ปกติ ·
 // ด่านจริงคือ F20 ตอนอนุมัติใบแจ้งหนี้ซื้อ + PurchaseReceiptRoute)
 // Cheque lifecycle — book ordering, issuance, clearing, bouncing,
@@ -679,6 +682,7 @@ builder.Services.AddScoped<ICmsSiteService, CmsSiteService>();
 builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+builder.Services.AddScoped<IBookingNotifier, Accounting.Services.Implementations.Cms.BookingNotifier>();   // รอบ 205 W3 — ช่องส่งข้อความถึงลูกค้าของเครื่องจอง (อีเมล/LINE · บอกผลจริง)
 // ธุรกิจที่พัก (โรงแรม/รีสอร์ท/บ้านพัก) — จอง · มัดจำ · เช็คอิน/เอาต์ · folio · แม่บ้าน
 builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.Lodging.LodgingService>();
 // resolver สิทธิ์ตัวเดียว (แพ็กเกจ + add-on) — ห้ามมีตัวที่สอง
@@ -708,9 +712,13 @@ builder.Services.AddSignalR();
 // Background job scheduler
 builder.Services.AddHostedService<BackgroundJobService>();
 builder.Services.AddHostedService<AbandonedCartService>();
+// ทีม W4 R-25 — ล้างรูปตัวอย่างของตะกร้าที่ไม่ได้สั่ง (ผ่าน JobLock · ลบผ่าน IFileAttachmentService ตัวเดียว)
+builder.Services.AddHostedService<Accounting.Services.Implementations.Jobs.CartImageCleanupJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.DocumentAgingBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
+// รอบ 205 W3 (R-12 R-13): เตือนลูกค้าก่อนนัด (ReminderSent/ReminderSentAt มีมาแต่ไม่มีผู้เขียน) · แจ้งได้คิวซ้ำ · ปล่อยรอบคิวสำรองที่หมดเวลาถือ — Helpers/JobLock
+builder.Services.AddHostedService<Accounting.Services.Background.BookingReminderJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
@@ -893,6 +901,8 @@ builder.Services.AddHsts(options =>
 });
 
 var app = builder.Build();
+// ทีม W10 (ฝ่ายค้านข้อ 1): regex เลขอ้างอิงการจองที่เจ้าของตั้งแล้ว timeout ตอนใช้งาน ⇒ ด่านข้ามรูปนั้นและแจ้งเตือนครั้งเดียวต่อรูปที่นี่
+Accounting.Helpers.BookingRefPattern.TimeoutSink = msg => app.Logger.LogWarning("[BookingRefPattern] {Message}", msg);
 
 // ตัวออกเลขรันกลางเป็น static helper (ทุกที่เรียกได้โดยไม่ผ่าน DI) — ให้มัน
 // มี logger จริงไว้เตือนเมื่อถูกเรียกนอก transaction ไม่งั้นคำเตือนหายเงียบ

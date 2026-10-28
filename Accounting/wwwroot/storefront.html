@@ -536,8 +536,8 @@
             const hideMobile = b.hideOnMobile ? 'sf-hide-mobile' : '';
             const hideDesktop = b.hideOnDesktop ? 'sf-hide-desktop' : '';
             const wrap = `<section class="${cssClasses} ${hideMobile} ${hideDesktop}">`;
-            // Server may provide rendered HTML, but we always re-render client-side
-            // for known types because server template may not handle every block.
+            // บล็อกพื้นฐาน (Hero/Image/Gallery/FAQ/Testimonials) ใช้ renderedHtml จากเซิร์ฟเวอร์ตัวเดียว (R-46) ·
+            // บล็อกที่ต้องมีข้อมูลสด/ฟอร์ม (สินค้า จอง ฟอร์ม แผนที่ ฯลฯ) ยังวาดฝั่งนี้แล้ว hydrate
             const html = this.renderBlock(b) || b.renderedHtml || '';
             return `${wrap}${html}</section>`;
           }).join('');
@@ -564,20 +564,15 @@
           ? ({Hero:1,RichText:2,Image:3,Gallery:4,Video:5,ProductGrid:6,BookingCalendar:8,ContactForm:9,Map:11,Testimonials:12,Faq:13,PricingTable:14,CallToAction:15,Newsletter:17,Divider:19,Html:20,CartSummary:23,LodgingRooms:27}[b.blockType] ?? b.blockType)
           : b.blockType;
         switch (t) {
-          case 1: { // Hero
-            const bg = cfg.backgroundUrl ? `style="background-image:url('${esc(cfg.backgroundUrl)}')"` : '';
-            const cls = cfg.backgroundUrl ? 'blk-hero with-bg' : 'blk-hero';
-            return `<div class="${cls}" ${bg}>
-              ${cfg.headline ? `<h1>${esc(cfg.headline)}</h1>` : ''}
-              ${cfg.subheadline ? `<p>${esc(cfg.subheadline)}</p>` : ''}
-              ${cfg.ctaText ? `<a href="${link(cfg.ctaUrl||'#')}" class="btn">${esc(cfg.ctaText)}</a>` : ''}
-            </div>`;
+          case 1: { // Hero — HTML จากเซิร์ฟเวอร์ตัวเดียว (Helpers/CmsBasicBlocks · R-46) · ที่นี่แค่แปลงลิงก์ปุ่มให้ตรงโหมด path-based
+            // ห้ามวาดซ้ำฝั่งนี้: เดิมเซิร์ฟเวอร์อ่าน title/subtitle/backgroundImage ส่วนตัวแก้ไขเขียน headline/subheadline/backgroundUrl ⇒ drift
+            return this.rewriteInternalLinks(b.renderedHtml || '');
           }
           case 2: { // RichText (HTML allowed — content authored by site owner)
             return `<div class="blk-richtext">${this.rewriteInternalLinks(cfg.content || '')}</div>`;
           }
-          case 3: { // Image
-            return `<figure class="blk-image"><img src="${esc(cfg.url||'')}" alt="${esc(cfg.alt||'')}">${cfg.caption?`<figcaption>${esc(cfg.caption)}</figcaption>`:''}</figure>`;
+          case 3: { // Image — HTML จากเซิร์ฟเวอร์ (CmsBasicBlocks · อ่านทั้ง url และ src เดิม · กรอง URL แล้ว)
+            return b.renderedHtml || '';
           }
           case 4: { // Gallery / Slider — เรนเดอร์ฝั่งเซิร์ฟเวอร์ตัวเดียว (Helpers/CmsGalleryBlock · escape + กรอง URL แล้ว)
             // ห้ามวาดซ้ำฝั่งนี้: เดิมสองตัววาดอ่านคีย์คนละชื่อ (url/src) จน drift · พฤติกรรมติดทีหลังใน initGalleries
@@ -657,18 +652,9 @@
             const q = encodeURIComponent(cfg.address || `${cfg.lat||'13.7563'},${cfg.lng||'100.5018'}`);
             return `<div class="blk-map sf-container"><iframe src="https://www.google.com/maps?q=${q}&output=embed" loading="lazy"></iframe></div>`;
           }
-          case 12: { // Testimonials
-            const items = (cfg.testimonials || cfg.items || []).map(t => `
-              <div class="testi-card">
-                <div class="quote">"${esc(t.quote||t.text||'')}"</div>
-                <div class="author">${esc(t.author||t.name||'')}${t.role?` <span style="color:var(--text-secondary)">— ${esc(t.role)}</span>`:''}</div>
-              </div>`).join('');
-            return `<div class="blk-testi">${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}<div class="testi-grid">${items||'<div style="color:var(--text-secondary)">ยังไม่มีรีวิว</div>'}</div></div>`;
-          }
-          case 13: { // FAQ
-            const items = (cfg.items || []).map(it => `
-              <details class="faq-item"><summary>${esc(it.q||'')}</summary><div class="a">${esc(it.a||'')}</div></details>`).join('');
-            return `<div class="blk-faq">${cfg.headline?`<h2>${esc(cfg.headline)}</h2>`:''}${items}</div>`;
+          case 12: // Testimonials — HTML จากเซิร์ฟเวอร์ (CmsBasicBlocks · testimonials[].quote/author และ items[].text/name เดิม)
+          case 13: { // FAQ — HTML จากเซิร์ฟเวอร์ (CmsBasicBlocks · items[].q/a และ question/answer เดิม) · FAQ JSON-LD ประกอบฝั่งเซิร์ฟเวอร์ (R-47)
+            return b.renderedHtml || '';
           }
           case 14: { // Pricing
             const cards = (cfg.plans || []).map(p => `
@@ -1018,6 +1004,10 @@
         if (slug === 'checkout')         { await this.renderCheckout();      return true; }
         if (slug.startsWith('order-success/')) {
           await this.renderOrderSuccess(slug.split('/')[1]); return true;
+        }
+        // รอบ 205 W2: ลิงก์ลูกค้าของการจองนัดหมาย (จ่ายมัดจำ/ยกเลิกเอง) — คนละเส้นกับ /booking (ที่พัก)
+        if (slug.startsWith('my-booking/')) {
+          await this.renderBookingByToken(decodeURIComponent(slug.substring('my-booking/'.length))); return true;
         }
         if (slug.startsWith('product/')) {
           await this.renderProductDetail(slug.substring('product/'.length)); return true;
@@ -1584,6 +1574,11 @@
         const m = await this._payMethods();
         // ยอดรอบนี้จากเซิร์ฟเวอร์ (ตัวคิดเดียวกับช่องจ่าย public-pay) — ออเดอร์เดิมได้ค่าเท่า TotalAmount − PaidAmount
         const due = Math.max(0, Number(order?.nextPayableAmount ?? (Number(order?.totalAmount || 0) - Number(order?.paidAmount || 0))));
+        // รอบ 205 W2 (R-06): สลิปรอตรวจ ⇒ เซิร์ฟเวอร์ปิดช่องจ่ายออนไลน์ชั่วคราว — แสดงเหตุผลแทนปุ่ม (ไม่ซ่อนเงียบ)
+        if (order?.onlinePaymentBlockedNote) {
+          box.innerHTML = `<div class="sf-pay-card" style="border:1px solid #FCD34D;background:#FFFBEB;border-radius:12px;padding:14px 18px;color:#78350F;font-size:13px">⏳ ${this.esc(order.onlinePaymentBlockedNote)}</div>`;
+          return;
+        }
         if (!m || !m.online || !(m.methods || []).length || due <= 0) { box.remove(); return; }
         box.innerHTML = `<details open class="sf-pay-card" style="border:2px solid #16a34a;background:#fff;border-radius:12px;padding:18px 22px">
             <summary style="cursor:pointer;font-weight:600;font-size:16px;list-style:none">⚡ ชำระออนไลน์ทันที — ยืนยันอัตโนมัติ</summary>
@@ -1794,8 +1789,85 @@
               ${booking.resourceName ? `<p style="color:var(--text-secondary)">ผู้ให้บริการ: ${this.esc(booking.resourceName)}</p>` : ''}
               <p style="color:var(--text-secondary);margin:14px 0">เลขที่การจอง: <strong>${this.esc(booking.bookingNumber || booking.id)}</strong></p>
               <p style="color:var(--text-secondary)">เราจะส่งข้อความยืนยันให้ภายในไม่นาน</p>
+              <div id="sfBookingPayBox"></div>
+              ${booking.publicToken ? `<p style="margin-top:12px;font-size:13px"><a href="${this._pageUrl('my-booking/' + encodeURIComponent(booking.publicToken))}">ดู/จัดการการจองของฉัน</a> — เก็บลิงก์นี้ไว้</p>` : ''}
               <button onclick="document.getElementById('sfBookingModal').remove()" class="btn btn-primary" style="margin-top:14px;padding:12px 28px">ปิด</button>
             </div>`;
+          // รอบ 205 W2 (R-08): มัดจำออนไลน์ — ยอด/สิทธิ์จากเซิร์ฟเวอร์ (onlineDepositDue · onlinePaymentNote) หน้าเว็บแสดงอย่างเดียว
+          await this._renderBookingPayOnline(booking);
+        } catch (e) { alert(e.message); }
+      },
+
+      // ── รอบ 205 W2 (R-08/R-10): มัดจำออนไลน์ + ลิงก์จัดการการจองของลูกค้า (my-booking/{token}) — ค่าทุกตัวจากเซิร์ฟเวอร์ ──
+      async _renderBookingPayOnline(booking, boxId = 'sfBookingPayBox') {
+        const box = document.getElementById(boxId);
+        if (!box) return;
+        const due = Number(booking?.onlineDepositDue || 0);
+        if (booking?.onlinePaymentNote) {
+          box.innerHTML = `<div style="margin-top:12px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:12px 14px;color:#78350F;font-size:13px;text-align:left">${this.esc(booking.onlinePaymentNote)}</div>`;
+          return;
+        }
+        if (!(due > 0) || !booking.publicToken) { box.innerHTML = ''; return; }
+        const m = await this._payMethods();
+        if (!m || !m.online || !(m.methods || []).length) {
+          box.innerHTML = `<div style="margin-top:12px;font-size:13px;color:var(--text-secondary)">มัดจำ ฿${this._money(due)} — โอนแล้วแจ้งร้านเพื่อยืนยันการจอง</div>`;
+          return;
+        }
+        box.innerHTML = `<div style="margin-top:14px;border:2px solid #16a34a;border-radius:12px;padding:14px 18px;text-align:left">
+            <div style="font-weight:600">💳 ชำระมัดจำ ฿${this._money(due)} เพื่อยืนยันการจอง${m.isTestMode ? ' <span style="color:#92400e">(โหมดทดสอบ)</span>' : ''}</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+              ${(m.methods || []).map(x => `<button class="btn btn-primary" onclick="Store.bookingPayOnline('${this.jsArg(booking.publicToken)}', '${this.jsArg(x)}')">${this.esc(this._payLabel(x))}</button>`).join('')}
+            </div></div>`;
+      },
+      bookingPayOnline(token, method) {
+        const { companyId, siteId } = this._ctx;
+        PayWidget.open({
+          companyId,
+          // ตัวตนอยู่ใน URL (โทเคนที่ลูกค้าถือ) — widget ไม่ส่ง sourceId/amount (ยอดจาก PublicPaymentResolver)
+          publicBase: `/api/companies/${companyId}/public-pay/bookings/${siteId}/${encodeURIComponent(token)}`,
+          method,
+          onPaid: () => { setTimeout(() => this.renderBookingByToken(token, 'ชำระมัดจำสำเร็จ — ระบบยืนยันการจองแล้ว'), 800); },
+        });
+      },
+      async renderBookingByToken(token, flash) {
+        const main = document.getElementById('sfMain');
+        document.title = 'การจองของฉัน';
+        const modal = document.getElementById('sfBookingModal'); if (modal) modal.remove();
+        let b = null, msg = null;
+        try {
+          const r = await fetch(this._url('/booking/bookings/by-token/' + encodeURIComponent(token)));
+          const j = await r.json().catch(() => null);
+          if (r.ok) b = j.data; else msg = j?.message || 'ไม่พบการจอง';
+        } catch (_) { msg = 'โหลดไม่สำเร็จ'; }
+        if (!b) {
+          main.innerHTML = `<div class="sf-container" style="padding:40px 20px;text-align:center"><h2>ไม่พบการจอง</h2><p style="color:var(--text-secondary)">${this.esc(msg || '')}</p></div>`;
+          return;
+        }
+        const STATUS = { Pending: 'รอยืนยัน', Confirmed: 'ยืนยันแล้ว', Waitlisted: 'คิวสำรอง', Completed: 'ใช้บริการแล้ว', Cancelled: 'ยกเลิกแล้ว', NoShow: 'ไม่มาตามนัด' };
+        main.innerHTML = `
+          <div class="sf-container" style="padding:32px 20px;max-width:640px">
+            ${flash ? `<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:10px;padding:12px 16px;color:#065F46;margin-bottom:16px">${this.esc(flash)}</div>` : ''}
+            <h1 style="margin:0 0 6px">การจอง ${this.esc(b.bookingNumber || '')}</h1>
+            <p style="color:var(--text-secondary)">${this.esc(b.serviceName || '')} · ${this.esc(String(b.bookingDate || '').slice(0, 10))} ${this.esc(b.startTime || '')}–${this.esc(b.endTime || '')} · สถานะ <strong>${this.esc(STATUS[b.status] || b.status)}</strong></p>
+            <p>ค่าบริการ ฿${this._money(b.totalAmount)}${Number(b.depositAmount) > 0 ? ` · มัดจำ ฿${this._money(b.depositAmount)} (ชำระแล้ว ฿${this._money(b.paidAmount)})` : ''}</p>
+            <div id="sfBookingPayBox"></div>
+            ${b.canCancelOnline ? `<div style="margin-top:20px;border-top:1px solid #E5E7EB;padding-top:16px">
+              <div style="font-size:13px;color:var(--text-secondary)">${this.esc(b.cancelPolicyNote || '')}</div>
+              <button class="btn" style="margin-top:10px;border:1px solid #DC2626;color:#DC2626" onclick="Store.cancelBookingByToken('${this.jsArg(token)}')">ยกเลิกการจอง</button>
+            </div>` : ''}
+          </div>`;
+        await this._renderBookingPayOnline(b);
+      },
+      async cancelBookingByToken(token) {
+        const reason = prompt('เหตุผลที่ยกเลิก (ถ้ามี)');
+        if (reason === null) return;
+        if (!confirm('ยืนยันยกเลิกการจองนี้? ค่าธรรมเนียม/การคืนมัดจำตามเงื่อนไขที่แสดง')) return;
+        try {
+          const r = await fetch(this._url('/booking/bookings/by-token/' + encodeURIComponent(token) + '/cancel'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason: reason || null }) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(j?.message || 'ยกเลิกไม่สำเร็จ');
+          await this.renderBookingByToken(token, 'ยกเลิกการจองแล้ว' + (j?.data?.cancelPolicyNote ? ' — ' + j.data.cancelPolicyNote : ''));
         } catch (e) { alert(e.message); }
       },
 
@@ -2599,11 +2671,12 @@
             ${amt > 0 ? `<div class="row" style="font-size:16px"><span>ยอดที่ต้องโอน</span><b>฿${this._money(amt)}</b></div>` : ''}
             ${r.slipRequired && r.slipDueAt ? `<div style="font-size:13px;color:#92400E;margin-bottom:6px">ส่งสลิปภายใน ${this.esc(new Date(r.slipDueAt).toLocaleString('th-TH'))}</div>` : ''}
             ${accounts}
-            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${this.esc(new Date(r.slipUploadedAt).toLocaleString('th-TH'))} — รอที่พักตรวจสอบ ·
+            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${this.esc(new Date(r.slipUploadedAt).toLocaleString('th-TH'))}${r.slipDeclaredAmount != null ? ` (แจ้งยอดโอน ฿${this._money(r.slipDeclaredAmount)})` : ''} — รอที่พักตรวจสอบ ·
               <a href="${this.esc(r.paymentSlipUrl)}" target="_blank" rel="noopener">ดูสลิปที่ส่งไป</a></div>` : ''}
             <form onsubmit="Store.lodgingUploadSlip(event, '${this.jsArg(token)}')" style="display:grid;gap:8px;grid-template-columns:1fr 1fr auto">
               <input type="file" name="file" accept="image/*,application/pdf" required class="lg-input">
               <input name="reference" class="lg-input" placeholder="อ้างอิง/เวลาโอน (ถ้ามี)" maxlength="100">
+              <input name="declaredAmount" type="number" inputmode="decimal" step="0.01" min="0" class="lg-input" placeholder="ยอดที่โอน (บาท · ไม่บังคับ)" style="grid-column:1/-1">
               <button class="btn btn-primary" type="submit">ส่งสลิป</button>
               <div class="sf-slip-status" style="grid-column:1/-1;font-size:13px"></div>
             </form></div>`;

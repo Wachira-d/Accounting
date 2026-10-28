@@ -94,7 +94,7 @@ public interface IOcrService
     /// <para><paramref name="priceEnteredExVat"/> = แปลงราคาไม่รวม VAT ที่กรอกในแถวของใบราคารวม VAT เป็นฐานรวม VAT (คืนราคาใหม่ + ข้อความ)</para>
     Task<(decimal Amount, decimal? LineDiscount, bool DiscountDropped, decimal? UnitPrice, string? ConversionNote)> SetExtractedLineFieldsAsync(Guid companyId, Guid scanResultId,
         int lineIndex, string? description, decimal? quantity, decimal? unitPrice,
-        string? accountCode = null, decimal? lineDiscount = null, bool priceEnteredExVat = false);
+        string? accountCode = null, decimal? lineDiscount = null, bool priceEnteredExVat = false, string? whtIncomeTypeCode = null);
 
     /// <summary>เพิ่ม/ลบบรรทัดรายการของผลสแกน — <c>action</c> = "add" | "delete"
     /// (เดิมตาราง review เพิ่ม/ลบแถวไม่ได้เลย ⇒ OCR รวมหรือแตกแถวผิดแล้วผู้ใช้

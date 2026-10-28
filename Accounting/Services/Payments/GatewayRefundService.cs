@@ -276,6 +276,7 @@ public class GatewayRefundService : IGatewayRefundService
         intent.LastRefundedAt = refundAtUtc;
         intent.LastRefundJournalEntryId = je.Id;
         intent.UpdatedAt = DateTime.UtcNow;
+        await StampSourceRefundedAtGatewayAsync(companyId, intent, refundAtUtc, ct);
         _db.PaymentIntentEvents.Add(new PaymentIntentEvent
         {
             CompanyId = companyId,
@@ -290,6 +291,29 @@ public class GatewayRefundService : IGatewayRefundService
                  + $"JE {je.EntryNumber} โดย {actor} · {reason}",
         });
         return je;
+    }
+
+    /// <summary>รอบ 205 ทีม W1 (R-02 · BOOKING_REVENUE_AUDIT L-2): เงินคืนออกทาง gateway แล้ว ⇒ ประทับ <c>RefundedAtGatewayAt</c> ที่ต้นทาง
+    /// (การจองที่พัก / ออเดอร์หน้าเว็บ) ครั้งแรกเท่านั้น — คิว "ต้องคืนเงินแขก" ติดป้าย "คืนที่ gateway แล้ว · ยังไม่ออกใบลดหนี้" ·
+    /// <b>ไม่</b>ประทับ RefundPaid/ไม่ออกใบลดหนี้เอง (R1 — หลักฐานคืนมีแล้ว แต่ "ยืนยันคืนเงินแล้ว" เป็นการตัดสินของคน · ทางไปต่อ = ปุ่มเดิม) ·
+    /// ไม่ SaveChanges (อยู่ในธุรกรรมของผู้เรียก) · ต้นทางหาไม่พบ = ไม่ทำอะไร (เงินออกแล้ว — ห้ามให้ธงล้มเส้นคืนเงิน)</summary>
+    private async Task StampSourceRefundedAtGatewayAsync(Guid companyId, PaymentIntent intent, DateTime refundAtUtc, CancellationToken ct)
+    {
+        switch (intent.SourceKind)
+        {
+            case PaymentSourceKind.LodgingReservation:
+            {
+                var r = await _db.LodgingReservations.FirstOrDefaultAsync(x => x.Id == intent.SourceId && x.CompanyId == companyId, ct);
+                if (r != null && r.RefundedAtGatewayAt == null) r.RefundedAtGatewayAt = refundAtUtc;
+                break;
+            }
+            case PaymentSourceKind.SiteOrder:
+            {
+                var o = await _db.SiteOrders.FirstOrDefaultAsync(x => x.Id == intent.SourceId && x.CompanyId == companyId, ct);
+                if (o != null && o.RefundedAtGatewayAt == null) o.RefundedAtGatewayAt = refundAtUtc;
+                break;
+            }
+        }
     }
 
     /// <summary>E-2: ประทับ "ผลไม่แน่ชัด" + เหตุการณ์ ⚠️ บนแถวที่ถือล็อกอยู่ (ไม่ SaveChanges — ผู้เรียกบันทึก)</summary>
@@ -608,6 +632,7 @@ public class GatewayRefundService : IGatewayRefundService
             intent.RefundedAmount = check.AmountToBook;
             intent.LastRefundedAt = refundAt;
             intent.UpdatedAt = DateTime.UtcNow;
+            await StampSourceRefundedAtGatewayAsync(companyId, intent, refundAt, ct);
             _db.PaymentIntentEvents.Add(new PaymentIntentEvent
             {
                 CompanyId = companyId, IntentId = intent.Id, At = refundAt, Source = PaymentEventSource.Manual,

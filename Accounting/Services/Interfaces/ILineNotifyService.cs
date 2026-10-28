@@ -15,6 +15,10 @@ public interface ILineNotifyService
     /// appsettings if the company didn't configure their own).</summary>
     Task PushToUserAsync(Guid? companyId, string lineUserId, string message);
 
+    /// <summary>รอบ 205 W3: push แล้ว<b>บอกผล</b> (ไม่ตั้งค่า token / LINE ตอบไม่สำเร็จ / โยน ⇒ false · log แล้ว) — ผู้เรียกที่ต้อง
+    /// "ประทับหลังส่งถึงจริง" (เตือนนัดหมาย · แจ้งได้คิว) ใช้ตัวนี้</summary>
+    Task<bool> TryPushToUserAsync(Guid? companyId, string lineUserId, string message);
+
     /// <summary>Push a LINE Flex Message bubble to a specific user.
     /// <paramref name="flexContents"/> is the "contents" payload LINE
     /// expects (the bubble shape with header / body / footer / actions

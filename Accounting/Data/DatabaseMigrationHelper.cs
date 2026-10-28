@@ -224,6 +224,9 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
+        list.AddRange(W9HygieneStatements());   // W9 R-58/R-59 — backfill ช่องทาง LINE + ตัด feedback ความหมายเก่าออกจากการสอน (บล็อกท้ายไฟล์)
+        list.AddRange(PostVatDeductionStatements());   // ทีม U — หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง (บล็อกท้ายไฟล์)
+        list.AddRange(CmsMediaAttachmentStatements());   // ทีม W4 R-43 — สื่อ CMS ผ่านที่เก็บไฟล์กลาง (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -3430,6 +3433,8 @@ public static class DatabaseMigrationHelper
             // LegacyGraceDays) · แถวที่มีอยู่ ณ วันเพิ่มคอลัมน์ = คีย์รุ่นเก่า (สิทธิ์เต็มจนถึงวันเลิกใช้) ·
             // idempotent: ADD เป็น no-op เมื่อรันซ้ำ และ UPDATE แตะเฉพาะแถวรุ่นเก่าที่ยังไม่มีวัน
             .. Accounting.Helpers.IntegrationKeyPolicy.MigrationStatements(),
+            // ── รูปแบบเลขอ้างอิงการจองเพิ่มเติมต่อคีย์ integration (R-56 · ทีม W10 2026-10-26 · Helpers/BookingRefPattern) — NULL = ค่าเริ่มต้นล้วน ──
+            """ALTER TABLE "ExternalIntegrations" ADD COLUMN IF NOT EXISTS "BookingRefPatternsJson" text NULL;""",
             // ===== Bank reconciliation: rejected-match memory + audit log =====
             // New tables; CREATE IF NOT EXISTS so existing DBs gain them on
             // first startup after deploy (the GenerateCreateScript path also
@@ -7032,6 +7037,8 @@ public static class DatabaseMigrationHelper
             // โมดูลต้นทางของเอกสาร — เอกสารจากโมดูลที่พักห้ามบล็อกเมื่อโควตาเต็ม (การนับ: Helpers/DocumentQuotaPolicy ·
             // ยังนับใบที่กฎหมายบังคับจนกว่า stay → 2 หน่วยโควตาตาม LODGING_LICENSING_PLAN §13.2 จะมีโค้ด)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "OriginModule" varchar(40) NULL;""",
+            // รอบ 205 ทีม W1 (R-04): ใบร่างจากเส้นอัตโนมัติเลื่อนนับโควตาไปตอนอนุมัติ — ใบเก่า false = นับตอนสร้างไปแล้ว ไม่นับซ้ำ
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotaCountDeferred" boolean NOT NULL DEFAULT false;""",
 
             // รอบ 193 (เจ้าของข้อ 8): ผังผลต่างจากการปัดเศษ 54960 — ขา JE ของ Document.RoundingAdjustment (Helpers/DocumentRounding)
             // ใส่ให้ทุกบริษัทที่มีผังแล้ว (ไม่ผูกกับชุดผังสินค้าข้างบน — ใบบริการก็มีเศษปัดได้) · ไม่เคลมภาษีซื้อ ·
@@ -7154,6 +7161,8 @@ public static class DatabaseMigrationHelper
             // แถวที่ job รุ่นเดิมประทับ CheckedOut/NoShow ไปแล้ว **ไม่ย้ายสถานะกลับ** (ไม่เดาว่าแขกออกจริงเมื่อไร) — เปิดทางปิดผ่านเส้นปกติแทน (LodgingOverdueRule)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "OverdueFlaggedAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemAt" timestamptz NULL;""",
+            // รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้ว (หลักฐานจากผู้ให้บริการ) แต่คนยังไม่ยืนยันคืนเงิน/ออกใบลดหนี้ — คิว "ต้องคืนเงินแขก" ติดป้าย
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "RefundedAtGatewayAt" timestamptz NULL;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemNote" text NULL;""",
             // ฝ่ายค้านรอบ 202 P1-3ค — รายการชำระที่เงินเข้าแต่ยืนยันไม่ได้ (บัญชีขาเงินเข้าของใบมัดจำที่ออกภายหลังมาจากรายการนี้)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "PaymentProblemIntentId" uuid NULL;""",
@@ -7169,6 +7178,8 @@ public static class DatabaseMigrationHelper
             // + ใบกำกับภาษีล่วงหน้าที่ผูกกับการจอง (NULL = ไม่มี) · ไม่ backfill — ที่พัก/การจองเดิมได้ผลเดิมทุกตัวอักษร
             """ALTER TABLE "LodgingProperties" ADD COLUMN IF NOT EXISTS "TaxInvoiceTiming" integer NOT NULL DEFAULT 1;""",
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "AdvanceTaxDocumentId" uuid NULL;""",
+            // รอบ 205 W5 (R-52): ยอดที่แขกกรอกตอนส่งสลิป (ไม่ใช่หลักฐาน · null = ไม่ได้กรอก)
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SlipDeclaredAmount" numeric(18,2) NULL;""",
             // 2026-10-22 ทีม D (หน้าห้องพักสาธารณะ) — รายละเอียดห้องที่แขกต้องเห็น: สูบบุหรี่/สัตว์เลี้ยง/หมายเหตุห้อง ·
             // ค่าตั้งต้น false = ปลอดบุหรี่/ไม่รับสัตว์ (ตรงกับที่ที่พักส่วนใหญ่ใช้ · เดิมไม่มีช่องให้ตั้ง ⇒ ไม่มีของเก่าที่ต้องแปลง)
             """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "SmokingAllowed" boolean NOT NULL DEFAULT false;""",
@@ -7748,6 +7759,8 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "ProductModifierOptions" ADD COLUMN IF NOT EXISTS "ExtraLeadDays" integer NOT NULL DEFAULT 0;""",
         """ALTER TABLE "SiteProducts" ADD COLUMN IF NOT EXISTS "LeadTimeDays" integer NULL;""",
         """ALTER TABLE "SiteProducts" ADD COLUMN IF NOT EXISTS "WeightKg" numeric(12,3) NULL;""",
+        // รอบ 205 W6 (R-41 B2): สินค้าบนเว็บที่ขายเป็นคอร์ส/บัตรเครดิต (CourseCreditOnlineSale)
+        """ALTER TABLE "SiteProducts" ADD COLUMN IF NOT EXISTS "CreditPackageId" uuid NULL;""",
         """ALTER TABLE "SiteCartItems" ADD COLUMN IF NOT EXISTS "ModifierSelectionsJson" text NULL;""",
         """ALTER TABLE "SiteCartItems" ADD COLUMN IF NOT EXISTS "ExtraLeadDays" integer NOT NULL DEFAULT 0;""",
         """ALTER TABLE "SiteOrderLines" ADD COLUMN IF NOT EXISTS "ModifierSelectionsJson" text NULL;""",
@@ -7768,6 +7781,8 @@ public static class DatabaseMigrationHelper
         // ทีม Q (คำตัดสินข้อ 156) — วิธีออกเอกสารของมัดจำ · DEFAULT = แบบเดิม (ร้านเดิมไม่เปลี่ยน) · ออเดอร์เดิม NULL = แบบเดิม
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoDepositInvoicing" varchar(32) NOT NULL DEFAULT 'full_at_first_payment';""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "DepositInvoicingMode" varchar(32) NULL;""",
+        // รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้ว แต่ยังไม่ออกใบลดหนี้ — ป้ายฝั่งออเดอร์
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "RefundedAtGatewayAt" timestamptz NULL;""",
         """ALTER TABLE "SiteOrderPayments" ADD COLUMN IF NOT EXISTS "DepositDocumentId" uuid NULL;""",
         """ALTER TABLE "SiteOrderPayments" ADD COLUMN IF NOT EXISTS "ErpPaymentId" uuid NULL;""",
     };
@@ -7820,5 +7835,45 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PerLineWhtEnabled" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DocumentThbBase" numeric(18,2) NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "ExchangeRateSource" character varying(16) NULL;""",
+        // คำตัดสินเจ้าของข้อ 162 (Q2 · รอบ 205 W7): อัตราฐาน WHT ใบต่างสกุลที่จ่ายเป็นงวด (0 = วันที่ใบ เดิม) + อัตรา ธปท. ที่ใช้ (0 = กลาง เดิม)
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "WhtFxRateBasis" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "FxBotRateType" integer NOT NULL DEFAULT 0;""",
+        // ข้อ 162: ที่มาของอัตราบน 50 ทวิ ทุกใบ (ใบเก่า = NULL ไม่รู้ · ไม่แต่ง)
+        """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "ExchangeRateUsed" numeric(18,6) NULL;""",
+        """ALTER TABLE "WithholdingTaxCerts" ADD COLUMN IF NOT EXISTS "ExchangeRateBasis" character varying(64) NULL;""",
+        // R-19 (B-5): ประเภทเงินได้ต่อบรรทัดของใบเบิกพนักงาน (ว่าง = ตามหัวใบ — เหมือน DocumentLine)
+        """ALTER TABLE "ExpenseClaimLines" ADD COLUMN IF NOT EXISTS "IncomeTypeCode" text NULL;""",
+    };
+
+    /// <summary>W9 (<c>docs/BACKLOG_REGISTER_2026-10-26.md</c> R-58 · R-59) — ของเสียที่ persist แล้ว (F2 #9) · รันทุกบูตได้ (ทุกคำสั่ง idempotent):
+    /// <list type="number">
+    /// <item>R-58 ใบจาก LINE bot เดิมไม่มี <c>OriginModule</c> ⇒ backfill จาก Reference "LINE-bot" (SQL ตัวเดียว
+    /// <see cref="Accounting.Helpers.DocumentCreationChannelRule.BackfillLineBotOriginSql"/> · แตะเฉพาะแถว NULL · Reference อื่นไม่ถูกแตะ)</item>
+    /// <item>R-59 คอลัมน์ <c>AiSuggestionFeedbacks.ExcludedFromTraining</c> + เหตุผล · UPDATE ครั้งเดียวติดธงแถว DocumentTypeClassification
+    /// ก่อน prompt v2 ที่มีแค่คำตอบครู (<see cref="Accounting.Helpers.AiFeedbackTrainingExclusion.DocTypePromptV1BackfillSql"/>) —
+    /// <b>ไม่ลบ ไม่แก้คำตอบ</b> (กฎเหล็ก #1 · G3) · แถวหลัง cutoff / แถวที่ผู้ใช้เลือกแล้วไม่ถูกแตะ</item>
+    /// </list></summary>
+    internal static IReadOnlyList<string> W9HygieneStatements() => new List<string>
+    {
+        Accounting.Helpers.DocumentCreationChannelRule.BackfillLineBotOriginSql(),
+        """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "ExcludedFromTraining" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "AiSuggestionFeedbacks" ADD COLUMN IF NOT EXISTS "ExcludedFromTrainingReason" character varying(80) NULL;""",
+        Accounting.Helpers.AiFeedbackTrainingExclusion.DocTypePromptV1BackfillSql(),
+    };
+
+    /// <summary>ทีม U 2026-10-26 (ใบ Shopee 536 · ส่วนลดพิเศษ 98 หลัง VAT · ชำระ 438) — ช่อง "หักหลัง VAT" + ผัง + ติ๊กแยกยอดจ่ายจริงตามแหล่ง ·
+    /// ค่าตั้งต้น 0/NULL = พฤติกรรมเดิมทุกแถว · ไม่มี UPDATE (ใบที่ลงผิดไปแล้วอยู่ในรายงานตรวจข้อมูล — ผู้ใช้แก้เอง)</summary>
+    internal static IReadOnlyList<string> PostVatDeductionStatements() => new List<string>
+    {
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PostVatDeductionAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PostVatDeductionAccountId" uuid NULL;""",
+        """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentSourceSplitJson" text NULL;""",
+    };
+
+    /// <summary>ทีม W4 (R-43 · <c>docs/BACKLOG_REGISTER_2026-10-26.md</c>) — สื่อ CMS ที่อัปโหลดใหม่เก็บผ่าน <c>IFileAttachmentService</c> ·
+    /// <c>SiteMediaItems.AttachmentId</c> NULL = ไฟล์เดิมบน disk (ไม่ย้ายไฟล์ · ไม่มี UPDATE — URL เดิมยังเปิดได้ · F2 #9) · รันทุกบูตได้</summary>
+    internal static IReadOnlyList<string> CmsMediaAttachmentStatements() => new List<string>
+    {
+        """ALTER TABLE "SiteMediaItems" ADD COLUMN IF NOT EXISTS "AttachmentId" uuid NULL;""",
     };
 }

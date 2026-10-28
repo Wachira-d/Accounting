@@ -218,8 +218,10 @@ public static class OcrPostingReadiness
         // รอบ 193 (คำตัดสินเจ้าของข้อ 1): [PAY≠TOTAL] หยุดการอนุมัติเอง "จนกว่าบรรทัดปรับส่วนต่างจะถูกบันทึก"
         // — ผู้เขียน [PAY-SETTLED] คือเส้นสร้างเอกสารจากสแกนเมื่อลงบรรทัดปรับ (Helpers/OcrSettlementProposal) แล้วเท่านั้น
         // · หรือ [PAY-AT-PAYMENT] (เอกสารตั้งหนี้ — ส่วนต่างเป็นเรื่องขั้นชำระ ยอดเอกสารถูกแล้ว · ฝ่ายค้าน C8)
+        // · หรือ [POST-VAT-DEDUCTION] (ทีม U 2026-10-26 — เติมช่อง "หักหลัง VAT" ลงเอกสารแล้ว ขา JE มาจากช่องนั้น)
         var paySettled = notes.Contains(OcrSettlementProposal.SettledTag, StringComparison.Ordinal)
-            || notes.Contains(OcrSettlementProposal.DeferredTag, StringComparison.Ordinal);
+            || notes.Contains(OcrSettlementProposal.DeferredTag, StringComparison.Ordinal)
+            || notes.Contains(OcrPostVatDeduction.FilledTag, StringComparison.Ordinal);
         foreach (var (tag, why) in BlockingTags)
         {
             if (paySettled && tag == OcrTotalDecomposer.PayNotTotalTag) continue;

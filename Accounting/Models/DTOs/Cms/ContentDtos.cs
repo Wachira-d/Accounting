@@ -251,6 +251,8 @@ public class MediaResponse
     /// <summary>URL ที่เบราว์เซอร์เปิดได้ (<c>/uploads/cms/{companyId}/{siteId}/{fileName}</c>) — <see cref="StoragePath"/> เป็น
     /// path บนดิสก์ของเซิร์ฟเวอร์ ใช้เป็น src ของรูปไม่ได้ (เดิมหน้า cms-edit ตกไปใช้ storagePath ⇒ รูปจากคลังไม่ขึ้นบนเว็บ)</summary>
     public string PublicUrl { get; set; } = "";
+    /// <summary>R-43: ไฟล์อยู่ในที่เก็บไฟล์กลาง (null = ไฟล์เดิมบน disk — PublicUrl ชี้ /uploads/cms เดิม)</summary>
+    public Guid? AttachmentId { get; set; }
     public SiteMediaType MediaType { get; set; }
     public string? WebPPath { get; set; }
     public string? ThumbnailPath { get; set; }
@@ -309,3 +311,7 @@ public class BlockTemplateResponse
     public string? Category { get; set; }
     public bool IsActive { get; set; }
 }
+
+
+/// <summary>R-43 — ไบต์ของสื่อเว็บที่ storefront เสิร์ฟ (ผ่าน <c>ICmsContentService.ReadSiteMediaAsync</c>)</summary>
+public sealed record CmsMediaFile(byte[] Content, string ContentType, string FileName);

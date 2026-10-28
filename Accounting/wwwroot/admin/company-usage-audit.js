@@ -182,7 +182,7 @@ const CompanyUsageAudit = {
         <div class="cua-kpi"><div class="l">มูลค่าใบที่อนุมัติ</div><div class="v">${this.money(sum(m, 'approvedAmount'))}</div><div class="s">ไม่รวมร่าง/รอ/ยกเลิก/ปฏิเสธ</div></div>
         <div class="cua-kpi"><div class="l">นับโควตาเอกสาร (ประมาณ)</div><div class="v">${this.n(sum(m, 'documentsQuotaCounted'))}</div>
           <div class="s">เฉลี่ย ${this.n(Math.round(sum(m, 'documentsQuotaCounted') / Math.max(m.length, 1)))}/เดือน${L ? ' · เพดาน ' + this.n(L.maxDocumentsPerMonth) : ''}</div></div>
-        <div class="cua-kpi"><div class="l">สแกน OCR</div><div class="v">${this.n(sum(m, 'ocrScans'))}</div><div class="s">สำเร็จ ${this.n(sum(m, 'ocrCompleted'))} ใบ</div></div>
+        <div class="cua-kpi"><div class="l">สแกน OCR (ครั้ง)</div><div class="v">${this.n(sum(m, 'ocrScans'))}</div><div class="s">สำเร็จ ${this.n(sum(m, 'ocrCompleted'))} ครั้ง · หน้า (มิเตอร์) ดูที่ "ใช้จริงเดือนนี้"</div></div>
         <div class="cua-kpi"><div class="l">เรียก AI (ยิงถึง provider)</div><div class="v">${this.n(sum(m, 'aiCallsPaid'))}</div>
           <div class="s">ทั้งหมด ${this.n(sum(m, 'aiCallsTotal'))} · ${this.usd(sum(m, 'aiCostUsd'))}</div></div>
         <div class="cua-kpi"><div class="l">สมุดรายวัน</div><div class="v">${this.n(sum(m, 'journalEntries'))}</div><div class="s">อีเมล ${this.n(sum(m, 'emailsSent'))} · e-Tax ${this.n(sum(m, 'etaxIssued'))}</div></div>
@@ -207,7 +207,7 @@ const CompanyUsageAudit = {
              <option value="docs">เอกสาร (แยกสถานะ)</option>
              <option value="quota">เอกสารที่นับโควตา เทียบเพดาน</option>
              <option value="je">สมุดรายวัน เทียบเพดาน</option>
-             <option value="ocr">ใบสแกน OCR เทียบเพดานหน้า</option>
+             <option value="ocr">สแกน OCR (ครั้ง — ไม่เทียบเพดานหน้า)</option>
              <option value="ai">เรียก AI (local / provider)</option>
            </select></h4><div id="cuaChart"></div>
            <div class="cua-muted" style="font-size:11px;margin-top:4px">คลิกแท่งเพื่อดูรายการเอกสารของเดือนนั้น</div></div>`
@@ -250,7 +250,8 @@ const CompanyUsageAudit = {
       { key: 'rejected', label: this.statusLabel('Rejected'), color: '#fbbf24' }];
     else if (metric === 'quota') { series = [{ key: 'documentsQuotaCounted', label: 'นับโควตา (ประมาณ)', color: '#4f46e5' }]; limit = L?.maxDocumentsPerMonth; }
     else if (metric === 'je') { series = [{ key: 'journalEntries', label: 'สมุดรายวัน', color: '#0d9488' }]; limit = L?.maxJournalEntriesPerMonth; }
-    else if (metric === 'ocr') { series = [{ key: 'ocrScans', label: 'ใบสแกน', color: '#7c3aed' }]; limit = L?.maxOcrPagesPerMonth; }
+    // W9 R-62: ครั้ง ≠ หน้า — ไม่วาดเส้นเพดานหน้าทับกราฟครั้ง
+    else if (metric === 'ocr') { series = [{ key: 'ocrScans', label: 'สแกน (ครั้ง)', color: '#7c3aed' }]; limit = null; }
     else series = [
       { key: 'aiLocal', label: 'ตอบในระบบ (ไม่เสียเงิน)', color: '#94a3b8' },
       { key: 'aiCallsPaid', label: 'ยิงถึง provider', color: '#ea580c' }];
@@ -344,7 +345,7 @@ const CompanyUsageAudit = {
     const L = d.limits;
     el.innerHTML = `<table class="cua-tbl"><thead><tr>
         <th>เดือน</th><th class="num">เอกสาร</th><th class="num">นับโควตา</th><th class="num">ร่าง</th><th class="num">อนุมัติ</th><th class="num">ยกเลิก</th>
-        <th class="num">สมุดรายวัน</th><th class="num">OCR (ใบ)</th><th class="num">AI ทั้งหมด</th><th class="num">AI provider</th><th class="num">ค่า AI</th>
+        <th class="num">สมุดรายวัน</th><th class="num">OCR สแกน (ครั้ง)</th><th class="num">OCR หน้า (มิเตอร์)</th><th class="num">AI ทั้งหมด</th><th class="num">AI provider</th><th class="num">ค่า AI</th>
         <th class="num">อีเมล</th><th class="num">e-Tax</th><th class="num">ไฟล์ใหม่</th><th class="num">พื้นที่สะสม</th><th class="num">ผู้ใช้สะสม</th><th class="num">ค่ามิเตอร์</th></tr></thead>
       <tbody>${(d.monthly || []).map(r => `<tr>
         <td class="click" onclick="CompanyUsageAudit.drill({month:'${this.esc(r.month)}'})">${this.esc(this.monthLabel(r.month))}</td>
@@ -352,7 +353,8 @@ const CompanyUsageAudit = {
         <td class="num">${this.pctCell(r.documentsQuotaCounted, L?.maxDocumentsPerMonth)}</td>
         <td class="num">${this.n(r.draft)}</td><td class="num">${this.n(r.approved)}</td><td class="num">${this.n(r.voided)}</td>
         <td class="num">${this.pctCell(r.journalEntries, L?.maxJournalEntriesPerMonth)}</td>
-        <td class="num">${this.pctCell(r.ocrScans, L?.maxOcrPagesPerMonth)}</td>
+        <td class="num">${this.n(r.ocrScans)}</td>
+        <td class="num">${r.ocrPagesMetered == null ? '<span class="cua-muted" title="ไม่มีประวัติรายเดือน — มิเตอร์หน้ามีเฉพาะเดือนปัจจุบัน">—</span>' : this.pctCell(r.ocrPagesMetered, L?.maxOcrPagesPerMonth)}</td>
         <td class="num">${this.n(r.aiCallsTotal)}</td><td class="num">${this.n(r.aiCallsPaid)}</td><td class="num">${this.usd(r.aiCostUsd)}</td>
         <td class="num">${this.n(r.emailsSent)}</td><td class="num">${this.n(r.etaxIssued)}</td>
         <td class="num">${this.n(r.filesAdded)} · ${this.bytes(r.storageAddedBytes)}</td>
@@ -427,10 +429,10 @@ const CompanyUsageAudit = {
       header = ['เดือน', 'ประเภท', 'รหัสประเภท', 'สถานะ', 'ช่องทาง', 'จำนวน', 'มูลค่า(อนุมัติแล้ว)', 'นับโควตา'];
       rows = (d.docCells || []).map(c => [c.month, c.typeLabel, c.type, c.statusLabel, this.channelLabel(c.channel), c.count, c.amount, c.quotaCount]);
     } else {
-      header = ['เดือน', 'เอกสาร', 'นับโควตา', 'ร่าง', 'รออนุมัติ', 'อนุมัติ', 'ยกเลิก', 'ถูกปฏิเสธ', 'มูลค่าอนุมัติ', 'สมุดรายวัน', 'OCR ใบสแกน', 'OCR สำเร็จ',
+      header = ['เดือน', 'เอกสาร', 'นับโควตา', 'ร่าง', 'รออนุมัติ', 'อนุมัติ', 'ยกเลิก', 'ถูกปฏิเสธ', 'มูลค่าอนุมัติ', 'สมุดรายวัน', 'OCR สแกน (ครั้ง)', 'OCR สำเร็จ (ครั้ง)', 'OCR หน้า (มิเตอร์ · เดือนปัจจุบันเท่านั้น)',
         'AI ทั้งหมด', 'AI provider', 'ค่า AI (USD)', 'อีเมล', 'e-Tax', 'ไฟล์ใหม่', 'ไบต์ใหม่', 'ไบต์สะสม', 'ผู้ใช้สะสม', 'ค่ามิเตอร์ (บาท)'];
       rows = (d.monthly || []).map(r => [r.month, r.documents, r.documentsQuotaCounted, r.draft, r.pending, r.approved, r.voided, r.rejected, r.approvedAmount,
-        r.journalEntries, r.ocrScans, r.ocrCompleted, r.aiCallsTotal, r.aiCallsPaid, r.aiCostUsd, r.emailsSent, r.etaxIssued,
+        r.journalEntries, r.ocrScans, r.ocrCompleted, r.ocrPagesMetered ?? '', r.aiCallsTotal, r.aiCallsPaid, r.aiCostUsd, r.emailsSent, r.etaxIssued,
         r.filesAdded, r.storageAddedBytes, r.storageCumulativeBytes, r.usersCumulative, r.meteredCharged]);
     }
     const csv = '﻿' + [header, ...rows].map(r => r.map(q).join(',')).join('\r\n');

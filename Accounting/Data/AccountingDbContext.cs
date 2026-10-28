@@ -3941,7 +3941,7 @@ public class AccountingDbContext : DbContext
     /// Id = identity ของฐาน · ลำดับแถวใน VALUES = ลำดับ chain (ประทับแล้ว)</summary>
     private IEnumerable<(string Sql, object[] Args)> AuditInsertBatches(List<Models.Entities.AuditLog> rows)
     {
-        var et = Model.FindEntityType(typeof(Models.Entities.AuditLog))!;
+        var et = this.Model.FindEntityType(typeof(Models.Entities.AuditLog))!;   // this. — กัน using_check สับสนกับ record CmsSeoHead.Model (W4)
         var props = new[] { "CompanyId", "UserId", "UserEmail", "Action", "EntityType", "EntityId", "OldValues", "NewValues",
             "IpAddress", "UserAgent", "Timestamp", "PrevHash", "RowHash" };
         var cols = props.Select(p => et.FindProperty(p)!.GetColumnName()).ToList();

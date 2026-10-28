@@ -96,8 +96,11 @@ public class CmsCommerceService : ICmsCommerceService
             MetaDescription = request.MetaDescription,
             LeadTimeDays = ValidLeadTime(request.LeadTimeDays),
             WeightKg = ValidWeight(request.WeightKg),
+            // รอบ 205 W6 (R-41 B2): สินค้าคอร์ส — ใบเดียว = บัตรเดียว ⇒ สั่งได้ครั้งละ 1 (CourseCreditOnlineSale)
+            CreditPackageId = request.CreditPackageId,
             CreatedBy = userId
         };
+        sp.MaxOrderQuantity = CourseCreditOnlineSale.MaxOrderQuantityFor(sp.CreditPackageId, sp.MaxOrderQuantity);
 
         _db.SiteProducts.Add(sp);
 
@@ -151,6 +154,10 @@ public class CmsCommerceService : ICmsCommerceService
         else if (request.LeadTimeDays.HasValue) sp.LeadTimeDays = ValidLeadTime(request.LeadTimeDays);
         if (request.ClearWeight) sp.WeightKg = null;
         else if (request.WeightKg.HasValue) sp.WeightKg = ValidWeight(request.WeightKg);
+        // รอบ 205 W6 (R-41 B2): ขายเป็นคอร์ส — null = ไม่เปลี่ยน · ClearCreditPackage = เลิก · ตั้งแล้วสั่งได้ครั้งละ 1
+        if (request.ClearCreditPackage) sp.CreditPackageId = null;
+        else if (request.CreditPackageId.HasValue) sp.CreditPackageId = request.CreditPackageId;
+        sp.MaxOrderQuantity = CourseCreditOnlineSale.MaxOrderQuantityFor(sp.CreditPackageId, sp.MaxOrderQuantity);
 
         sp.UpdatedBy = userId;
         await _db.SaveChangesAsync();
@@ -197,6 +204,7 @@ public class CmsCommerceService : ICmsCommerceService
                 CreatedAt = p.CreatedAt,
                 LeadTimeDays = p.LeadTimeDays,
                 WeightKg = p.WeightKg,
+                CreditPackageId = p.CreditPackageId,
             })
             .FirstOrDefaultAsync();
         if (result != null)
@@ -279,6 +287,7 @@ public class CmsCommerceService : ICmsCommerceService
                 CreatedAt = p.CreatedAt,
                 LeadTimeDays = p.LeadTimeDays,
                 WeightKg = p.WeightKg,
+                CreditPackageId = p.CreditPackageId,
             })
             .ToListAsync();
 
@@ -795,7 +804,12 @@ public class CmsCommerceService : ICmsCommerceService
         // สต๊อก + ตัดชำระ). เดิมแค่ตั้ง Cancelled → รายได้/VAT/สต๊อกยังค้างสำหรับ
         // ออเดอร์ที่ยกเลิก. best-effort: ถ้า void ไม่ได้ (เช่นมีใบเสร็จลูก/จ่ายแล้ว)
         // log ไว้ให้กลับรายการเอง (ปกติต้องออกใบลดหนี้/คืนเงินแทน).
+        // รอบ 205 W2 (R-07 · S-3): ใบที่มีการชำระผูกแล้ว void ไม่ได้ (§86/10) ⇒ เสนอใบลดหนี้ร่าง + ทางคืนเงิน แทนการประทับ [ERP-VOID-FAILED] ค้าง
+        var cnProposed = false;
         if (request.Status == SiteOrderStatus.Cancelled && order.ErpDocumentId.HasValue && _docService != null)
+            cnProposed = await ProposeCreditNoteOnCancelAsync(companyId, order, request.CancellationReason, userId);
+
+        if (request.Status == SiteOrderStatus.Cancelled && order.ErpDocumentId.HasValue && _docService != null && !cnProposed)
         {
             try
             {
@@ -845,6 +859,71 @@ public class CmsCommerceService : ICmsCommerceService
         return await GetOrderAsync(companyId, siteId, orderId) ?? throw new InvalidOperationException("Failed.");
     }
 
+    /// <summary>R-07: ตัดสินด้วย <see cref="Accounting.Helpers.SiteOrderCancelPlan.Decide"/> — ใบที่มีการชำระผูก ⇒ ร่างใบลดหนี้เต็มใบอ้างใบเดิม
+    /// (<b>ไม่อนุมัติ</b> — เงินยังไม่คืนจริง R1) + หมายเหตุชี้รายการชำระที่ต้องคืน · คืน true = ข้ามเส้น void · ล้ม = ประทับ [ERP-CN-FAILED] + โยน (ไม่กลืน)</summary>
+    private async Task<bool> ProposeCreditNoteOnCancelAsync(Guid companyId, SiteOrder order, string? cancellationReason, string userId)
+    {
+        var erpDocId = order.ErpDocumentId!.Value;
+        var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == erpDocId && d.CompanyId == companyId);
+        var hasPayments = doc != null && await _db.Payments.AsNoTracking()
+            .AnyAsync(p => p.CompanyId == companyId && p.DocumentId == erpDocId && !p.IsDeleted);
+        var action = SiteOrderCancelPlan.Decide(doc != null, doc?.Status, hasPayments);
+        if (action != SiteOrderCancelErpAction.ProposeCreditNote) return false;
+
+        var now = DateTime.UtcNow;
+        try
+        {
+            var lines = (doc!.Lines ?? new List<DocumentLine>()).Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+                .Select(l => new Models.DTOs.Document.DocumentLineRequest(
+                    Description: $"ลดหนี้ (ยกเลิกคำสั่งซื้อ): {l.Description}", Quantity: l.Quantity, Unit: l.Unit,
+                    UnitPrice: l.UnitPrice, DiscountPercent: l.DiscountPercent, VatRate: l.VatRate, WithholdingTaxRate: 0m,
+                    AccountId: l.AccountId, ProductCode: l.ProductCode))
+                .ToList();
+            if (lines.Count == 0) return false;
+            var create = new Models.DTOs.Document.CreateDocumentRequest(
+                DocumentType: DocumentType.CreditNote, DocumentDate: now, DueDate: null,
+                ContactId: doc.ContactId, Reference: doc.DocumentNumber,
+                Notes: SiteOrderCancelPlan.DraftNotes(order.OrderNumber, doc.DocumentNumber, doc.DocumentDate, cancellationReason),
+                Lines: lines,
+                RelatedDocumentId: doc.Id,
+                CnDnPurchaseSideOverride: false,
+                BillDiscountAmount: doc.BillDiscountAmount > 0m ? doc.BillDiscountAmount : null,
+                CreditNoteReason: SiteOrderCancelPlan.DraftReason,
+                PricesIncludeVat: doc.PricesIncludeVat,
+                BranchId: doc.BranchId,
+                Currency: doc.Currency, ExchangeRate: doc.ExchangeRate);
+            var cn = await _docService!.CreateDocumentAsync(companyId, create, userId, originModule: SiteOrderDepositInvoicing.OriginModule);
+            var refundIntents = await _db.PaymentIntents.AsNoTracking()
+                .Where(i => i.CompanyId == companyId && i.SourceKind == PaymentSourceKind.SiteOrder && i.SourceId == order.Id
+                    && i.Status == PaymentIntentStatus.Succeeded)
+                .Select(i => i.Id).ToListAsync();
+            var slipPaid = order.Payments.Where(p => !p.IsDeleted && p.Status == SitePaymentStatus.Completed
+                    && (p.Reference == null || !p.Reference.StartsWith("PAY-INTENT-", StringComparison.Ordinal)))
+                .Sum(p => p.Amount);
+            var note = SiteOrderCancelPlan.ProposedNote(now, cn.DocumentNumber, doc.DocumentNumber, cn.TotalAmount, refundIntents, slipPaid);
+            order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, note);
+            _logger.LogInformation("ยกเลิกออเดอร์ {Order} หลังชำระ — ร่างใบลดหนี้ {Cn} อ้างใบ {Doc}", order.OrderNumber, cn.DocumentNumber, doc.DocumentNumber);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "ยกเลิกออเดอร์ {Order} — ร่างใบลดหนี้อ้างใบ {Doc} ไม่สำเร็จ", order.OrderNumber, doc?.DocumentNumber);
+            _db.ChangeTracker.Clear();
+            var reloaded = await _db.SiteOrders.Include(o => o.Lines).Include(o => o.Payments)
+                .FirstAsync(o => o.Id == order.Id && o.CompanyId == companyId);
+            var why = ex is BusinessRuleException or InvalidOperationException ? ex.Message : "เกิดข้อผิดพลาดภายใน (ดูบันทึกระบบ)";
+            reloaded.Status = order.Status; reloaded.CancelledAt = order.CancelledAt; reloaded.CancellationReason = order.CancellationReason;
+            reloaded.InternalNotes = DepositPolicyResolver.AppendNoteOnce(reloaded.InternalNotes,
+                SiteOrderCancelPlan.ProposeFailedNote(now, doc?.DocumentNumber ?? "-", why));
+            reloaded.UpdatedBy = userId;
+            await _db.SaveChangesAsync();
+            throw new BusinessRuleException(
+                $"ยกเลิกออเดอร์แล้ว แต่ร่างใบลดหนี้อ้างใบ {doc?.DocumentNumber} ไม่สำเร็จ: {why} — ออกใบลดหนี้เองที่หน้าเอกสาร",
+                SiteOrderCancelPlan.RuleCode);
+        }
+    }
+
     public async Task<OrderResponse?> GetOrderAsync(Guid companyId, Guid siteId, Guid orderId)
     {
         var result = await _db.SiteOrders.AsNoTracking()
@@ -862,6 +941,7 @@ public class CmsCommerceService : ICmsCommerceService
                 ShippingMethod = o.ShippingMethod, TrackingNumber = o.TrackingNumber,
                 RequestTaxInvoice = o.RequestTaxInvoice, BillingTaxId = o.BillingTaxId,
                 ErpDocumentId = o.ErpDocumentId,
+                RefundedAtGatewayAt = o.RefundedAtGatewayAt,
                 CouponCode = o.CouponCode, CustomerNotes = o.CustomerNotes,
                 InternalNotes = o.InternalNotes,
                 PaidAt = o.PaidAt, ShippedAt = o.ShippedAt, DeliveredAt = o.DeliveredAt,
@@ -880,6 +960,8 @@ public class CmsCommerceService : ICmsCommerceService
                     PaymentMethod = p.PaymentMethod, Status = p.Status,
                     Reference = p.Reference, PaidAt = p.PaidAt,
                     DepositDocumentId = p.DepositDocumentId,
+                    // R-43: เดิม DTO ไม่มี SlipUrl เลย ⇒ ปุ่ม "ดูสลิป" ใน cms-orders ไม่เคยขึ้น (มี ≠ ถูกเรียก)
+                    SlipUrl = p.SlipUrl,
                 }).ToList(),
                 FulfillmentMethod = o.FulfillmentMethod,
                 ShippingProvince = o.ShippingProvince, ShippingPostalCode = o.ShippingPostalCode,
@@ -892,6 +974,8 @@ public class CmsCommerceService : ICmsCommerceService
         if (result == null) return null;
         // ข้อความ/ยอดที่หน้าเว็บแสดง — คำนวณที่นี่ตัวเดียว (หน้าเว็บห้ามคิดเอง)
         foreach (var l in result.Lines) l.ModifierSummary = SummaryOf(l.ModifierSummary);
+        // สลิปรูปใหม่ (ที่เก็บกลาง) ต้องแนบ JWT ตอนเปิด · สลิปเดิม (/uploads/order-slips) เปิดตรง — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแค่เลือกวิธีโหลด
+        foreach (var p in result.Payments) p.SlipRequiresAuth = Accounting.Helpers.CmsMediaUrl.NeedsAuth(p.SlipUrl);
         result.FulfillmentMethod ??= Accounting.Helpers.FulfillmentMethod.Delivery;
         result.FulfillmentLabel = Accounting.Helpers.FulfillmentMethod.Label(result.FulfillmentMethod);
         var due = Accounting.Helpers.MtoPaymentTerms.FromSnapshot(result.PaymentTermMode, result.TotalAmount,
@@ -900,6 +984,10 @@ public class CmsCommerceService : ICmsCommerceService
         result.PaymentTermLabel = Accounting.Helpers.PaymentTermMode.Label(due.Mode);
         result.AmountDueNow = result.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded ? 0m : due.DueNow;
         result.NextPayableAmount = result.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded ? 0m : due.NextPayable;
+        // รอบ 205 W2 (R-06 · S-2): สลิปรอตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว — ตัวตัดสินเดียวกับ PublicPaymentResolver (เงินเข้า 2 ทางแล้วต้องคืน)
+        result.OnlinePaymentBlockedNote = result.NextPayableAmount > 0.005m
+            && result.Payments.Any(p => Accounting.Helpers.GatewayPaymentRecord.IsPendingSlipRow(p.Status, p.Reference))
+            ? Accounting.Helpers.GatewayPaymentRecord.PendingSlipBlocksOnlineNote : null;
         result.BalanceAmount = due.Balance;
         // ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงบนออเดอร์ + ใบรับเงินมัดจำที่ออกแล้ว (echo กลับให้หลังบ้าน/หน้าร้านเห็นตามจริง)
         result.DepositInvoicingMode = Accounting.Helpers.DepositInvoicingMode.OfOrder(result.DepositInvoicingMode);
@@ -945,13 +1033,42 @@ public class CmsCommerceService : ICmsCommerceService
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(o => new OrderListResponse
             {
-                Id = o.Id, OrderNumber = o.OrderNumber, Status = o.Status,
+                Id = o.Id, SiteId = o.SiteId, OrderNumber = o.OrderNumber, Status = o.Status,
                 CustomerName = o.Customer != null ? o.Customer.FullName : o.ShippingName,
                 TotalAmount = o.TotalAmount, Currency = o.Currency,
                 ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt
             })
             .ToListAsync();
 
+        return new PagedResponse<OrderListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
+    }
+
+    public async Task<PagedResponse<OrderListResponse>> GetOrdersAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, string? search, int page, int pageSize)
+    {
+        page = Accounting.Helpers.CmsSiteScope.ClampPage(page);
+        pageSize = Accounting.Helpers.CmsSiteScope.ClampPageSize(pageSize);
+        // รายการเว็บว่าง = ผู้ใช้ไม่มีสิทธิ์เว็บใด ⇒ ไม่มีแถว (ห้ามตีความเป็น "ทุกเว็บ")
+        if (siteIds.Count == 0) return new PagedResponse<OrderListResponse>(new List<OrderListResponse>(), 0, page, pageSize, 0);
+        var ids = siteIds.ToList();
+        var query = _db.SiteOrders.AsNoTracking().Where(o => o.CompanyId == companyId && ids.Contains(o.SiteId));
+        if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<SiteOrderStatus>(status, out var st))
+            query = query.Where(o => o.Status == st);
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(o => o.OrderNumber.Contains(search) || (o.ShippingName != null && o.ShippingName.Contains(search)));
+
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(o => o.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(o => new OrderListResponse
+            {
+                Id = o.Id, SiteId = o.SiteId, SiteName = o.Site.Name,
+                OrderNumber = o.OrderNumber, Status = o.Status,
+                CustomerName = o.Customer != null ? o.Customer.FullName : o.ShippingName,
+                TotalAmount = o.TotalAmount, Currency = o.Currency,
+                ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt
+            })
+            .ToListAsync();
         return new PagedResponse<OrderListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
@@ -1090,7 +1207,8 @@ public class CmsCommerceService : ICmsCommerceService
             // เดิมใส่เฉพาะ order.Lines (สินค้า) → ตก ค่าจัดส่ง/ส่วนลด → ยอดเอกสาร ERP
             // ≠ order.TotalAmount แต่ตอนตัดชำระจ่าย order.TotalAmount → AR ค้างเศษ
             // ถาวร + รายได้เพี้ยน. เพิ่มบรรทัดค่าจัดส่ง (บวก) + ส่วนลด (ลบ) ให้ยอดตรง.
-            Lines: BuildOrderErpLines(order, storeVatRegistered),
+            // รอบ 205 W6 (R-41 B2): บรรทัดสินค้าคอร์สลงผังค่าบริการรับล่วงหน้า (21713) — จุดเชื่อมเดียวกับ CourseCreditOnlineSale (ออเดอร์ไม่มีคอร์ส = เส้นเดิม)
+            Lines: BuildOrderErpLines(order, storeVatRegistered, await CourseCreditOnlineSale.UnearnedAccountsAsync(_db, companyId, order)),
             ProjectId: null,
             BankAccountId: null,
             PaymentAccountId: null,
@@ -1102,7 +1220,9 @@ public class CmsCommerceService : ICmsCommerceService
             DepositBaseDeducted: deduction is { DepositBase: > 0m } ? deduction.DepositBase : null
         );
 
-        var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-customer");
+        // รอบ 205 ทีม W1 (R-04): ต้นทางเดียวกับใบมัดจำของออเดอร์ ⇒ ใบร่างไม่กินโควตาจนอนุมัติ (DocumentQuotaPolicy.DefersCountUntilApproval)
+        var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-customer",
+            originModule: Accounting.Helpers.SiteOrderDepositInvoicing.OriginModule);
         order.ErpDocumentId = created.Id;
 
         // Branch hint — ฝัง InternalNotes ของ Document ตามเดิม
@@ -1143,7 +1263,8 @@ public class CmsCommerceService : ICmsCommerceService
     /// ร้อยละ 0 (§80/1 ส่งออก)" ของ ภ.พ.30 · ก่อนรอบนี้ไม่มีทางเข้าใดตั้ง <c>ShippingAmount</c> ⇒ ไม่มีออเดอร์เดิมที่ยอดภาษีเปลี่ยน</para></summary>
     // internal (ไม่ใช่ private) เพื่อให้เทสต์เรียกตรงได้ — เส้นนี้เป็นเส้นที่เงียบ
     // ที่สุดของระบบ (webhook → เอกสาร) ไม่มีใครเห็นถ้าพัง (InternalsVisibleTo อยู่ใน .csproj แล้ว)
-    internal static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order, bool vatRegistered = true)
+    internal static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order, bool vatRegistered = true,
+        IReadOnlyDictionary<Guid, Guid>? unearnedBySiteProduct = null)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
         var lines = new List<Models.DTOs.Document.DocumentLineRequest>();
@@ -1163,7 +1284,8 @@ public class CmsCommerceService : ICmsCommerceService
                 DiscountPercent: 0m,
                 VatRate: vatRegistered ? l.VatRate : 0m,
                 WithholdingTaxRate: 0m,
-                AccountId: null,
+                // สินค้าคอร์ส (R-41 B2) ⇒ ผังค่าบริการรับล่วงหน้าของแพ็กเกจ · สินค้าปกติ ⇒ null (ผังมาตรฐานเดิม)
+                AccountId: unearnedBySiteProduct != null && unearnedBySiteProduct.TryGetValue(l.SiteProductId, out var unearnedId) ? unearnedId : null,
                 ProjectId: null));
             lineGross.Add(Math.Round(l.Quantity * l.UnitPrice, 2, R));
         }
@@ -1990,47 +2112,38 @@ public class CmsCommerceService : ICmsCommerceService
             throw new BusinessRuleException(
                 "คำสั่งซื้อนี้ไม่มียอดค้างชำระแล้ว — ไม่ต้องแนบสลิปเพิ่ม (ถ้าโอนเกิน ติดต่อร้านเพื่อขอคืนเงิน)", "CMS-SLIP-NOTHING-DUE");
 
-        // Persist file under wwwroot/uploads/order-slips/{yyyy-MM}/{guid}{ext}
-        // Compress images via ImageProcessingService (Slip profile); PDFs pass through.
-        var relDir = $"uploads/order-slips/{DateTime.UtcNow:yyyy-MM}";
-        var absDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "wwwroot", relDir);
-        System.IO.Directory.CreateDirectory(absDir);
-        string storedName; string absPath; string relUrl;
+        // R-43 (กฎเหล็ก #4 D): ไม่เขียน wwwroot/uploads/order-slips ตรงอีก — ไบต์เข้าที่เก็บไฟล์กลาง
+        // (FileAttachment ชนิด SiteOrder · ผู้อัปโหลด null = ลูกค้าหน้าร้าน · ด่านอ่าน/ลบ = CmsOrderManage ตาม AttachmentPermissionScope)
+        // สลิป = ชื่อผู้โอน/เลขบัญชี/ยอด (PII) ⇒ URL ที่คืนเป็นเส้นดาวน์โหลดที่มีด่าน ไม่ใช่ static สาธารณะเหมือนเดิม (คำตัดสินเดียวกับสลิปที่พัก LDG-P2-06)
+        // สลิปเดิมที่เขียนไว้ก่อนแก้ยังเปิดจาก /uploads/order-slips ได้ (ไม่ย้ายไฟล์เงียบ ๆ · F2 #9 · Helpers/CmsMediaUrl.NeedsAuth แยกสองรูป)
+        if (_files == null)
+            throw new BusinessRuleException("ระบบจัดเก็บไฟล์ยังไม่พร้อม — ลองแนบสลิปใหม่อีกครั้ง", "CMS-SLIP-STORAGE");
+        byte[] content;
+        string storedName, storedType;
         if (_images != null && _images.IsProcessableImage(file.ContentType ?? ""))
         {
             await using var s = file.OpenReadStream();
-            var processed = await _images.ProcessAndSaveAsync(s, file.ContentType ?? "", file.FileName ?? "slip", absDir, "/" + relDir, ImageProfile.Slip);
-            absPath = processed.AbsolutePath;
-            storedName = System.IO.Path.GetFileName(absPath);
-            relUrl = processed.RelativeUrl;
+            var processed = await _images.ProcessToBytesAsync(s, file.ContentType ?? "", file.FileName ?? "slip", ImageProfile.Slip);
+            content = processed.Content;
+            storedName = $"slip{processed.Extension}";
+            storedType = processed.ContentType;
         }
         else
         {
-            var ext = System.IO.Path.GetExtension(file.FileName);
-            if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
-            storedName = $"{Guid.NewGuid():N}{ext}";
-            absPath = System.IO.Path.Combine(absDir, storedName);
-            await using (var fs = System.IO.File.Create(absPath))
-            {
-                await file.CopyToAsync(fs);
-            }
-            relUrl = "/" + relDir + "/" + storedName;
+            // PDF/อื่น — ชนิดจาก **ไบต์จริง** (เดิมใช้นามสกุลจากชื่อไฟล์ client · ไม่มีก็ ".bin") · ไม่อยู่ใน allow-list ⇒ ปฏิเสธพร้อมบอกชนิดที่รับ
+            await using var s = file.OpenReadStream();
+            using var ms = new MemoryStream();
+            await s.CopyToAsync(ms);
+            content = ms.ToArray();
+            var kind = Accounting.Helpers.UploadFileType.Sniff(
+                    content.AsSpan(0, Math.Min(content.Length, Accounting.Helpers.UploadFileType.HeaderBytes)))
+                ?? throw new Accounting.Helpers.UnsupportedUploadException(Accounting.Helpers.UploadFileType.RejectMessage);
+            storedName = $"slip{kind.Extension}";
+            storedType = kind.ContentType;
         }
-
-        // FileAttachment record — gives the file an audit + ownership row
-        var fa = new FileAttachment
-        {
-            CompanyId = companyId,
-            FileName = storedName,
-            OriginalFileName = file.FileName ?? storedName,
-            ContentType = file.ContentType ?? "application/octet-stream",
-            StoragePath = absPath,
-            EntityType = "SiteOrder",
-            EntityId = order.Id,
-            UploadedByUserId = null,
-            CreatedBy = "storefront-customer"
-        };
-        _db.Set<FileAttachment>().Add(fa);
+        var saved = await _files.UploadAnonymousBytesAsync(companyId, Accounting.Helpers.CmsMediaUrl.OrderEntityType, order.Id,
+            storedName, storedType, content);
+        var relUrl = Accounting.Helpers.CmsMediaUrl.SlipDownloadUrl(companyId, saved.Id);
 
         // SiteOrderPayment — the actual money record
         // ทีม K — ยอดของสลิป = ยอดที่ช่องจ่ายเปิดรอบนี้ (มัดจำที่ขาด หรือยอดคงค้าง) ตัวคิดเดียว — เดิม TotalAmount เสมอ

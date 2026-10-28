@@ -159,6 +159,7 @@ public class OcrLineReconcilerTests
         var r = OcrLineReconciler.Classify(2010.00m, 1471.68m, 103.02m, 1574.70m, headerDiscount: 576.00m);
         Assert.Equal(OcrLineReconcileCase.DiscountInclVatOnExclusivePrices, r.Case);
         Assert.Equal((false, 26.78m, (decimal?)1471.68m, 0m), (r.PricesIncludeVat, r.DiscountPercent, r.TargetLineSum, r.UnreconciledGap));
+        Assert.Equal((decimal?)538.32m, r.BillDiscountPreVat);   // ข้อ 159: ลง BillDiscountAmount (ก่อน VAT) ไม่กระจาย — ตัวเลขข้างล่างคือสูตรกระจายเดิม (helper ยังใช้กับเคส C)
         // ตัวกระจายของตัวสร้างบรรทัด (เป้า = ฐาน) + ส่วนลดบาทต่อบรรทัด = round(จำนวน × ราคา) − ยอดหลังลด ⇒ Σ = 1,471.68 พอดี
         var first = Math.Round(1471.68m * 1840.00m / 2010.00m, 2, MidpointRounding.AwayFromZero);
         Assert.Equal(new[] { 1347.21m, 124.47m }, new[] { first, 1471.68m - first });

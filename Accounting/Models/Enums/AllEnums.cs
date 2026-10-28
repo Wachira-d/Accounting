@@ -633,6 +633,7 @@ public enum PaymentSourceKind
     SubscriptionPayment = 4,   // ค่าบริการ SaaS ของตัวระบบเอง
     PosOrder = 5,              // บิล POS (แสดง QR บนจอลูกค้า)
     AddOnPurchase = 6,         // ซื้อส่วนเสริม (add-on) รายเดือน — LDG-P0-03
+    SiteBooking = 7,           // มัดจำการจองนัดหมาย (CMS booking) — รอบ 205 W2 R-08 (Helpers/CmsBookingOnlinePayment)
 }
 
 /// <summary>สถานะการชำระเงินของการเปิดใช้ add-on หนึ่งครั้ง (LDG-P0-03)
@@ -1673,6 +1674,29 @@ public enum WhtRecognitionBasis
     /// SMBs; the auditor accepts it. Stays as an opt-in for tenants that
     /// already book this way in their existing GL.</summary>
     Accrual = 2,
+}
+
+/// <summary>คำตัดสินเจ้าของข้อ 162 (Q2 · 2026-10-26) — อัตราแลกเปลี่ยนที่ใช้กับ<b>ฐานหัก ณ ที่จ่าย</b> (50 ทวิ · ขา 2191x ตอนจ่าย) ของใบต่างสกุล
+/// ที่จ่ายเป็นงวด · ตัวอ่าน: <c>Helpers/DocumentFx.WhtRateFor</c> (ตัวเดียว) · ค่าตั้งต้น = เดิมทุกสตางค์</summary>
+public enum WhtFxRateBasis
+{
+    /// <summary>อัตราของเอกสาร (วันที่ใบ) — พฤติกรรมเดิม · 50 ทวิ = ขา 2191x = ยอดหนี้ที่ตั้ง (ไม่มีผลต่าง FX บนภาษี)</summary>
+    DocumentDate = 0,
+    /// <summary>อัตรา ณ วันจ่าย (<c>Payment.ExchangeRate</c> · ป.132/2548 · ม.3 เตรส/ม.70 เงินได้ที่จ่ายเป็นเงินตราต่างประเทศ) — ผลต่างระหว่างอัตราวันตั้งหนี้
+    /// กับวันจ่ายของส่วนภาษีลงกำไร/ขาดทุนอัตราแลกเปลี่ยนเส้นเดิม (TFRS for NPAEs บทที่ 19) · ไม่มีอัตราวันจ่าย ⇒ ตกไปใช้อัตราเอกสาร</summary>
+    PaymentDate = 1,
+}
+
+/// <summary>คำตัดสินเจ้าของข้อ 162 (Q2) — อัตรา ธปท. ตัวไหนที่ระบบใช้เมื่อผู้ใช้ไม่กรอกอัตราเอง · ตัวอ่าน: <c>Helpers/DocumentFx.PickBotRate</c> ·
+/// ค่าตั้งต้น = อัตรากลาง (เดิม) · แนวสรรพากร (§79/4 · ป.132/2548) = อัตราซื้อถัวเฉลี่ยสำหรับเงินได้/ภาษีซื้อ — ต้องให้นักบัญชีของบริษัทเลือก</summary>
+public enum BotRateType
+{
+    /// <summary>อัตรากลาง (Mid) — พฤติกรรมเดิม</summary>
+    Mid = 0,
+    /// <summary>อัตราซื้อถัวเฉลี่ย (โอน · <c>BotExchangeRate.BuyingTransfer</c>)</summary>
+    AverageBuying = 1,
+    /// <summary>อัตราขายถัวเฉลี่ย (<c>BotExchangeRate.Selling</c>)</summary>
+    AverageSelling = 2,
 }
 
 /// <summary>

@@ -154,6 +154,8 @@ public class SiteBooking : TenantEntity
     // Payment
     public string? PaymentReference { get; set; }
     public DateTime? PaidAt { get; set; }
+    /// <summary>โทเคนสาธารณะที่ลูกค้าถือ (ลิงก์จ่ายมัดจำ/จัดการการจอง) — ออกตอนจอง · ใบเก่า null = ไม่มีลิงก์ (รอบ 205 W2 R-08/R-10)</summary>
+    public string? PublicToken { get; set; }
 
     // ERP Integration (event-driven document creation)
     public Guid? ErpDocumentId { get; set; }
@@ -168,9 +170,21 @@ public class SiteBooking : TenantEntity
     public DateTime? CompletedAt { get; set; }
     public DateTime? CancelledAt { get; set; }
 
-    // Reminders
+    // Reminders — ผู้เขียน: Services/Background/BookingReminderJob (รอบ 205 W3 R-12) · ประทับหลังส่งถึงจริงเท่านั้น (F2 #3)
     public bool ReminderSent { get; set; } = false;
     public DateTime? ReminderSentAt { get; set; }
+    /// <summary>ครั้งล่าสุดที่พยายามส่งข้อความถึงลูกค้า (เตือน/ได้คิว) — ใช้เว้นระยะลองใหม่ (<c>BookingReminderPlan.MayAttempt</c>)</summary>
+    public DateTime? NotifyAttemptedAt { get; set; }
+    /// <summary>ร่องรอยส่งล้มครั้งล่าสุด (ไม่มีช่องทาง · SMTP/LINE ล้ม) · null = ครั้งล่าสุดสำเร็จ/ยังไม่เคยส่ง · พนักงานเห็นในหน้าการจอง</summary>
+    public string? NotifyLastError { get; set; }
+
+    // คิวสำรองได้คิว (รอบ 205 W3 R-13) — ผู้เขียน: CmsBookingService.PromoteWaitlistAsync / .Notify.cs / BookingReminderJob
+    /// <summary>เวลาที่ถูกเลื่อนจากคิวสำรองขึ้นเป็นการจอง (UTC) · null = ไม่เคยอยู่คิวสำรอง/ยังอยู่</summary>
+    public DateTime? WaitlistPromotedAt { get; set; }
+    /// <summary>แจ้งลูกค้าว่าได้คิวแล้ว "ถึงจริง" เมื่อไร (UTC) · null = ยังไม่ถึง (job ลองใหม่)</summary>
+    public DateTime? WaitlistNotifiedAt { get; set; }
+    /// <summary>ถือรอบให้ยืนยันถึงเมื่อไร (UTC) · null = ไม่ถือ/ยืนยันแล้ว · พ้นแล้วยังรอยืนยัน ⇒ job ปล่อยรอบ</summary>
+    public DateTime? WaitlistHoldUntil { get; set; }
 
     // ── ดึงคิวเข้า POS (ทีม K · 2026-10-22) ──
     /// <summary>บิล POS ที่เปิดจากการจองนี้ (ตัวจริงของ "เปิดแล้ว" คือ <c>PosOrder.SourceBookingId</c> + unique index — ช่องนี้แสดงผลฝั่งระบบจอง)</summary>

@@ -196,6 +196,39 @@ public class CmsBookingController : ControllerBase
         return Ok(new ApiResponse<BookingResponse>(true, result));
     }
 
+    // ── รอบ 205 W2 (R-08 R-10): เส้นเงิน + ลิงก์ลูกค้า ──
+
+    /// <summary>ลูกค้าดูการจองของตนผ่านโทเคนที่ได้ตอนจอง (ไม่มีข้อมูลภายใน) — ยอดมัดจำค้าง/ปุ่มจ่าย/นโยบายยกเลิก มาจากเซิร์ฟเวอร์</summary>
+    [HttpGet("bookings/by-token/{token}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> GetBookingByToken(Guid companyId, Guid siteId, string token)
+    {
+        var result = await _bookingService.GetBookingByTokenAsync(companyId, siteId, token);
+        if (result == null) return NotFound(new ApiResponse<BookingResponse>(false, null, CmsMessages.Get("booking.notFound", Lang)));
+        return Ok(new ApiResponse<BookingResponse>(true, result));
+    }
+
+    /// <summary>ลูกค้ายกเลิกเอง — ค่าธรรมเนียมตามนโยบายของบริการ (Helpers/BookingCancellationFee · ริบ ≤ มัดจำ ข้อ 126)</summary>
+    [HttpPost("bookings/by-token/{token}/cancel")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> CancelByToken(Guid companyId, Guid siteId, string token,
+        [FromBody] CustomerCancelBookingRequest? request)
+    {
+        var result = await _bookingService.CancelByCustomerAsync(companyId, siteId, token, request ?? new CustomerCancelBookingRequest());
+        return Ok(new ApiResponse<BookingResponse>(true, result, "ยกเลิกการจองแล้ว"));
+    }
+
+    /// <summary>พนักงานบันทึกรับเงินมัดจำ (โอน/เงินสด) — ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (ตัวเดียวกับ gateway)</summary>
+    [HttpPost("bookings/{bookingId:guid}/payments")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> RecordPayment(Guid companyId, Guid siteId, Guid bookingId,
+        [FromBody] RecordBookingPaymentRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.RecordDepositPaymentAsync(companyId, siteId, bookingId, request, userId);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "บันทึกรับเงินแล้ว"));
+    }
+
     [HttpPut("bookings/{bookingId:guid}/status")]
     [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
     public async Task<ActionResult<ApiResponse<BookingResponse>>> UpdateBookingStatus(
@@ -204,6 +237,18 @@ public class CmsBookingController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _bookingService.UpdateBookingStatusAsync(companyId, siteId, bookingId, request, userId);
         return Ok(new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.statusUpdated", Lang)));
+    }
+
+    /// <summary>รอบ 205 W3 R-16: พนักงานเลือก/เปลี่ยนผู้ให้บริการของการจอง (null = ให้ระบบจัดให้ใหม่) — server ตัดสินผ่าน <c>BookingSlotEngine.Decide</c> ตัวเดียว</summary>
+    [HttpPut("bookings/{bookingId:guid}/resource")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    [RequirePermission(PermissionKeys.CmsOrderManage)]   // เขียนข้อมูลการจอง — ด่านสิทธิ์ระดับบริษัทด้วย (write_permission_gate_check)
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> AssignBookingResource(
+        Guid companyId, Guid siteId, Guid bookingId, [FromBody] AssignBookingResourceRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.AssignResourceAsync(companyId, siteId, bookingId, request?.ResourceId, userId);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "บันทึกผู้ให้บริการแล้ว"));
     }
 
     /// <summary>คำตัดสินข้อ 155: "รับเงินแล้ว — ออกใบกำกับภาษี" ของการจอง Guaranteed (tax point §78/1 = วันรับเงิน) · ออกแล้วไม่ออกซ้ำ</summary>

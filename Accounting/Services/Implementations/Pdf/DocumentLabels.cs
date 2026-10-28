@@ -146,6 +146,7 @@ public sealed class DocumentLabels
     public string Phone => this["phone"];
     public string Reference => this["reference"];
     public string StatusVoided => this["status_voided"];
+    public string SigDeparted => this["sig_departed"];
     public string TaxId => this["tax_id"];
     public string TaxIdShort => this["tax_id_short"];
     public string Terms => this["terms"];
@@ -157,6 +158,10 @@ public sealed class DocumentLabels
     public string TotalDepositTaxInvoiced => this["total_deposit_tax_invoiced"];
     /// <summary>รอบ 193: ผลต่างจากการปัดเศษ (Document.RoundingAdjustment — แสดงเมื่อ ≠ 0)</summary>
     public string TotalRounding => this["total_rounding"];
+    /// <summary>ทีม U 2026-10-26: หักหลัง VAT (Document.PostVatDeductionAmount — แสดงเมื่อ &gt; 0 · ฐาน/VAT คงตามใบ)</summary>
+    public string TotalPostVatDeduction => this["total_post_vat_deduction"];
+    /// <summary>ยอดชำระหลังหักหลัง VAT (= ยอดรวมทั้งสิ้น − หัก) — คู่กับ <see cref="TotalPostVatDeduction"/></summary>
+    public string TotalAmountDueAfterDeduction => this["total_amount_due_after_deduction"];
     public string TotalDiscount => this["total_discount"];
     public string TotalGrand => this["total_grand"];
     public string TotalNet => this["total_net"];
@@ -181,6 +186,8 @@ public sealed class DocumentLabels
         ["copy_original"] = "ต้นฉบับ",
         ["copy_duplicate"] = "สำเนา",
         ["status_voided"] = "ยกเลิก",
+        // W9 R-61: ผู้ลงนามที่ถูกถอดจากบริษัทแล้ว — ไม่วาดลายเซ็น คงชื่อ + หมายเหตุนี้ (Helpers/DepartedSignerRule)
+        ["sig_departed"] = "ผู้ลงนามไม่อยู่ในบริษัทแล้ว",
 
         // ── หัวข้อมูลเอกสาร ──
         ["doc_number"] = "เลขที่",
@@ -228,6 +235,8 @@ public sealed class DocumentLabels
         ["total_deposit_applied"] = "หักเงินมัดจำ",
         ["total_deposit_tax_invoiced"] = "หักมูลค่ามัดจำ (ก่อน VAT) ตามใบกำกับภาษี",
         ["total_rounding"] = "ผลต่างจากการปัดเศษ",
+        ["total_post_vat_deduction"] = "หัก ส่วนลด/คูปองหลังภาษี",
+        ["total_amount_due_after_deduction"] = "ยอดชำระ",
         ["total_grand"] = "ยอดรวมทั้งสิ้น",
         ["total_net"] = "ยอดรวมสุทธิ",
         ["total_net_payable"] = "ยอดชำระสุทธิ",
@@ -280,6 +289,7 @@ public sealed class DocumentLabels
         ["copy_original"] = "ORIGINAL",
         ["copy_duplicate"] = "COPY",
         ["status_voided"] = "VOID",
+        ["sig_departed"] = "Signer no longer with the company",
 
         ["doc_number"] = "No.",
         ["doc_date"] = "Date",
@@ -326,6 +336,8 @@ public sealed class DocumentLabels
         ["total_deposit_applied"] = "Less deposit",
         ["total_deposit_tax_invoiced"] = "Less deposit already tax-invoiced (excl. VAT)",
         ["total_rounding"] = "Rounding adjustment",
+        ["total_post_vat_deduction"] = "Less post-VAT discount/voucher",
+        ["total_amount_due_after_deduction"] = "Amount due",
         ["total_grand"] = "Grand total",
         ["total_net"] = "Net total",
         ["total_net_payable"] = "Net payable",

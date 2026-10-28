@@ -51,6 +51,9 @@ public class SiteProduct : TenantEntity
     public int? LeadTimeDays { get; set; }
     /// <summary>น้ำหนักต่อชิ้น (กก.) สำหรับค่าส่ง "ตามน้ำหนัก" (<c>Helpers.ShippingFeeRules</c>) — ฝั่งเซิร์ฟเวอร์รวมเอง ไม่รับน้ำหนักจาก client · null = 0</summary>
     public decimal? WeightKg { get; set; }
+    /// <summary>รอบ 205 W6 (R-41 B2): สินค้านี้คือ "คอร์ส/บัตรเครดิต" ของแพ็กเกจคอร์ส — บรรทัดใบขายลงผังค่าบริการรับล่วงหน้า (21713) และเปิดบัตรหลังอนุมัติใบ
+    /// (CourseCreditOnlineSale) · null = สินค้าปกติ · ตั้งแล้วสั่งได้ครั้งละ 1 (MaxOrderQuantity = 1 — ใบเดียว = บัตรเดียว)</summary>
+    public Guid? CreditPackageId { get; set; }
 
     // Multi-tier pricing
     public ICollection<SitePricingTier> PricingTiers { get; set; } = new List<SitePricingTier>();
@@ -207,6 +210,9 @@ public class SiteOrder : TenantEntity
     public SitePaymentGateway? PaymentGateway { get; set; }
     public string? PaymentReference { get; set; }
     public DateTime? PaidAt { get; set; }
+
+    /// <summary>รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้ว (ประทับโดย <c>GatewayRefundService</c>) แต่ยังไม่ออกใบลดหนี้ — ป้ายฝั่งออเดอร์ · null = ไม่เคย</summary>
+    public DateTime? RefundedAtGatewayAt { get; set; }
 
     // ERP Integration: linked document in ERP
     public Guid? ErpDocumentId { get; set; }

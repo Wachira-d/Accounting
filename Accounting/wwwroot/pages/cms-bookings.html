@@ -58,6 +58,7 @@
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่จองหรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
     </div>
 
+    <div id="allNote" style="display:none"></div>
     <div class="table-container">
       <table class="table">
         <thead><tr>
@@ -102,7 +103,14 @@
     };
 
     const Page = {
-      siteId: null, _searchTimer: null,
+      siteId: null,       // เว็บที่เลือก · null เมื่อดู "ทุกไซต์"
+      allSites: false,
+      actSiteId: null,    // เว็บของการจองที่เปิดอยู่ (โหมดทุกไซต์ — ทุก action ต้องยิงไปเว็บเจ้าของแถว)
+      page: 1, _searchTimer: null,
+      _sid() { return this.actSiteId || this.siteId; },
+      // โหมดทุกไซต์ (R-45): endpoint ระดับบริษัทแบ่งหน้าจริง — เว็บที่เห็นตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
+      _list(q) { const api = Layout.api(); return this.allSites ? api.cmsOverviewBookings(q) : api.cmsListBookings(this.siteId, q); },
+      goPage(n) { this.page = Math.max(1, n); this.load(); },
       async init() {
         if (!Layout.init('cms-bookings')) return;
         await this.loadSites();
@@ -117,36 +125,38 @@
             CmsSiteContext.renderCrumb('cmsCrumb', sites, null, 'การจองคิว', 'cms-bookings');
             return;
           }
-          this.siteId = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'bookings' });
-          CmsSiteContext.fillSelect(sel, sites, { module: 'bookings', value: this.siteId });
-          this._siteCtx();
-          await this.load();
-          await this.loadStats();
+          // ?siteId=all = ภาพรวมทุกไซต์ (R-45 — เดิมหน้านี้ไม่มีโหมดนี้) · ตรวจกับรายการเว็บจริงก่อนใช้
+          const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'bookings', allowAll: true });
+          CmsSiteContext.fillSelect(sel, sites, { module: 'bookings', allowAll: true, value: picked });
+          await this.applySite(sel.value || picked);
         } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      _siteCtx() {
-        CmsSiteContext.setUrl(this.siteId);
-        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], this.siteId, 'การจองคิว', 'cms-bookings');
+      async applySite(v) {
+        this.allSites = v === CmsSiteContext.ALL;
+        this.siteId = this.allSites ? null : v;
+        this.actSiteId = null;
+        this.page = 1;
+        CmsSiteContext.setUrl(v);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], v, 'การจองคิว', 'cms-bookings');
+        await this.load(); await this.loadStats();
       },
       async onSiteChange() {
-        this.siteId = document.getElementById('siteSelector').value;
-        this._siteCtx();
-        await this.load(); await this.loadStats();
+        await this.applySite(document.getElementById('siteSelector').value);
       },
       debounceLoad() {
         clearTimeout(this._searchTimer);
-        this._searchTimer = setTimeout(() => this.load(), 300);
+        this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
       },
       async loadStats() {
-        if (!this.siteId) return;
+        if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
         try {
           const today = new Date().toISOString().split('T')[0];
           const [pend, conf, td, done] = await Promise.all([
-            api.cmsListBookings(this.siteId, '?status=Pending&pageSize=1'),
-            api.cmsListBookings(this.siteId, '?status=Confirmed&pageSize=1'),
-            api.cmsListBookings(this.siteId, `?fromDate=${today}&toDate=${today}&pageSize=1`),
-            api.cmsListBookings(this.siteId, `?status=Completed&fromDate=${today.slice(0, 8)}01&pageSize=1`)
+            this._list('?status=Pending&pageSize=1'),
+            this._list('?status=Confirmed&pageSize=1'),
+            this._list(`?fromDate=${today}&toDate=${today}&pageSize=1`),
+            this._list(`?status=Completed&fromDate=${today.slice(0, 8)}01&pageSize=1`)
           ]);
           document.getElementById('statPending').textContent = pend?.data?.totalCount ?? '0';
           document.getElementById('statConfirmed').textContent = conf?.data?.totalCount ?? '0';
@@ -155,27 +165,29 @@
         } catch (e) { /* non-fatal */ }
       },
       async load() {
-        if (!this.siteId) return;
+        if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
         const date = document.getElementById('dateFilter').value;
         const search = document.getElementById('searchInput').value;
-        let q = `?pageSize=50`;
+        let q = `?page=${this.page}&pageSize=50`;
         if (status) q += `&status=${encodeURIComponent(status)}`;
         // server รับ fromDate/toDate (ไม่มี date) — เดิมส่ง date/search ที่ server ไม่รู้จัก ⇒ ตัวกรองไม่มีผลเงียบ ๆ
         if (date) q += `&fromDate=${encodeURIComponent(date)}&toDate=${encodeURIComponent(date)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          const res = await api.cmsListBookings(this.siteId, q);
+          const res = await this._list(q);
           const items = res?.data?.items || res?.data || [];
+          // แบ่งหน้าจริงจากเซิร์ฟเวอร์ (โหมดทุกไซต์) · หน้ารายเว็บ = 50 แถวแรกเหมือนเดิม
+          CmsSiteContext.allNote('allNote', this.allSites ? { totalCount: res?.data?.totalCount, page: res?.data?.page, totalPages: res?.data?.totalPages, goPage: 'Page.goPage' } : null);
           const tbody = document.getElementById('bookingsBody');
           if (!items.length) {
             tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีการจองตามเงื่อนไข</td></tr>';
             return;
           }
           tbody.innerHTML = items.map(b => `
-            <tr class="booking-row" onclick="Page.viewBooking('${b.id}')">
-              <td class="font-medium">${Layout.esc(b.bookingNumber||b.id.substring(0,8))}</td>
+            <tr class="booking-row" onclick="Page.viewBooking('${Layout.jsArg(b.id)}', '${Layout.jsArg(b.siteId || '')}')">
+              <td class="font-medium">${Layout.esc(b.bookingNumber||b.id.substring(0,8))}${b.siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(b.siteName)}</div>` : ''}</td>
               <td>${Layout.esc(b.customerName||'(ไม่ระบุ)')}</td>
               <td>${Layout.esc(b.serviceName||'-')}${b.resourceName ? `<div style="font-size:11px;color:var(--gray-500)">👤 ${Layout.esc(b.resourceName)}</div>` : ''}</td>
               <td>${Layout.date(b.bookingDate)}</td>
@@ -185,12 +197,30 @@
             </tr>`).join('');
         } catch (e) { Layout.toast('โหลดการจองไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      async viewBooking(id) {
+      async viewBooking(id, siteId) {
         const api = Layout.api(); if (!api) return;
+        // โหมดทุกไซต์: การจองเป็นของเว็บไหน action ทั้งหมดต้องไปเว็บนั้น · เปิดซ้ำ (ไม่ส่ง siteId) = คงเว็บเดิม
+        if (siteId !== undefined) this.actSiteId = siteId || null;
         try {
-          const res = await api.cmsGetBooking(this.siteId, id);
+          const res = await api.cmsGetBooking(this._sid(), id);
           const b = res?.data || res;
           if (!b) return;
+          // รอบ 205 W3 R-16: ช่องเลือกผู้ให้บริการ — server ตัดสินว่าเปลี่ยนได้ไหม (canAssignResource) · รายชื่อ = ผู้ให้บริการที่รับบริการนี้และเปิดใช้
+          let resourcePicker = '';
+          if (b.canAssignResource) {
+            const rr = await api.cmsListBookingResources(this.siteId);
+            const pool = (rr?.data || []).filter(r => r.isActive !== false && Array.isArray(r.serviceIds) && r.serviceIds.includes(b.bookingServiceId));
+            resourcePicker = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
+              <label style="font-size:12px">ผู้ให้บริการ
+                <select id="bkResource" class="form-input" style="width:auto;display:inline-block">
+                  <option value="">ให้ระบบจัดให้ (ว่าง · งานน้อยสุด)</option>
+                  ${pool.map(r => `<option value="${Layout.esc(r.id)}" ${r.id === b.resourceId ? 'selected' : ''}>${Layout.esc(r.name)}</option>`).join('')}
+                </select></label>
+              <button class="btn btn-secondary btn-sm" onclick="Page.assignResource('${b.id}')">บันทึกผู้ให้บริการ</button>
+              <span style="font-size:11px;color:var(--gray-500)">ระบบตรวจว่าว่าง/เข้างาน/รับบริการนี้ก่อนบันทึก</span>
+            </div>`;
+          }
+          const fmtUtc = v => v ? new Date(v).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'short' }) : '';
           document.getElementById('bkTitle').textContent = `จอง #${b.bookingNumber} — ${STATUS_LABEL[b.status]||b.status}`;
           const workflow = (NEXT_STATUS[b.status] || []).map(([next, label, cls]) =>
             `<button class="btn ${cls}" onclick="Page.advance('${b.id}', '${next}')">${label}</button>`).join('');
@@ -210,15 +240,31 @@
             <div style="background:var(--gray-50);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
               <div style="font-weight:600;margin-bottom:6px">📅 ${Layout.date(b.bookingDate)} เวลา <strong>${Layout.esc(b.startTime)}</strong> — ${Layout.esc(b.endTime||'?')}</div>
               <div>บริการ: <strong>${Layout.esc(b.serviceName)}</strong> · ${b.durationMinutes||0} นาที</div>
-              ${b.resourceName ? `<div>ผู้ให้บริการ: <strong>${Layout.esc(b.resourceName)}</strong></div>` : ''}
+              ${b.resourceName ? `<div>ผู้ให้บริการ: <strong>${Layout.esc(b.resourceName)}</strong></div>` : (b.resourceMode && b.resourceMode !== 'None' ? '<div style="color:#b45309">ยังไม่ได้จัดผู้ให้บริการ</div>' : '')}
+              ${resourcePicker}
               ${b.waitlistPosition ? `<div style="color:#6b21a8">คิวสำรองลำดับที่ ${b.waitlistPosition} — ระบบเลื่อนขึ้นเองเมื่อมีที่ว่าง</div>` : ''}
               <div>จำนวนคน: ${b.guestCount||1}${(b.units||1) > 1 ? ` · ${b.units} ช่วงติดกัน` : ''}</div>
+              ${b.waitlistPromotedAt ? `<div style="color:#6b21a8;margin-top:4px">ได้คิวจากคิวสำรอง ${fmtUtc(b.waitlistPromotedAt)} · ${b.waitlistNotifiedAt ? 'แจ้งลูกค้าแล้ว ' + fmtUtc(b.waitlistNotifiedAt) : 'ยังแจ้งลูกค้าไม่ถึง — ระบบจะลองซ้ำ'}${b.waitlistHoldUntil ? ` · ถือรอบถึง ${fmtUtc(b.waitlistHoldUntil)} (ไม่ยืนยัน = ปล่อยรอบ)` : ''}</div>` : ''}
+              ${b.reminderSentAt ? `<div style="color:#059669;margin-top:4px">🔔 เตือนลูกค้าก่อนนัดแล้ว ${fmtUtc(b.reminderSentAt)}</div>` : ''}
+              ${b.notifyLastError ? `<div style="color:#b91c1c;margin-top:4px">⚠️ ส่งข้อความถึงลูกค้าไม่สำเร็จ: ${Layout.esc(b.notifyLastError)} — กรุณาติดต่อลูกค้าเอง</div>` : ''}
             </div>
             <div style="background:var(--gray-50);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
               <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><span>฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
               ${b.depositAmount>0 ? `<div style="display:flex;justify-content:space-between"><span>มัดจำ</span><span>฿${Number(b.depositAmount).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>` : ''}
               <div style="display:flex;justify-content:space-between"><span>ชำระแล้ว</span><span class="${b.paidAmount>=b.totalAmount?'text-success':'text-warning'}">฿${Number(b.paidAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
               ${b.erpDocumentId ? `<div style="margin-top:6px;font-size:11px;color:#059669">✓ ผูกกับเอกสารบัญชี — <a href="/pages/documents.html?id=${b.erpDocumentId}" style="color:#059669;text-decoration:underline">เปิดดู</a></div>` : ''}
+              ${b.creditPassNumber ? `<div style="margin-top:6px;font-size:11px;color:#6b21a8">🎟️ ชำระด้วยบัตรคอร์ส ${Layout.esc(b.creditPassNumber)} — ไม่มีเงินต้องเก็บ · ไม่ออกเอกสารบัญชี (รายได้รับรู้จากบัตรเมื่อให้บริการเสร็จ)</div>` : ''}
+              ${b.bookingType === 'PrePayment' && b.status !== 'Cancelled' && b.status !== 'NoShow' && b.status !== 'Completed' && !b.creditPassNumber && Number(b.paidAmount || 0) + 0.005 < Number(b.depositAmount || 0) ? `<div style="margin-top:8px;border-top:1px dashed var(--gray-300);padding-top:8px">
+                <div style="font-size:12px;font-weight:600">บันทึกรับเงินมัดจำ (โอน/เงินสด) — รอบ 205 W2</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+                  <input type="number" step="0.01" min="0" id="bkPayAmount" class="form-input" style="width:120px" value="${(Number(b.depositAmount || 0) - Number(b.paidAmount || 0)).toFixed(2)}">
+                  <input type="date" id="bkPayDate" class="form-input" style="width:auto" value="${this._todayBkk()}">
+                  <input type="text" id="bkPayRef" class="form-input" style="width:150px" placeholder="อ้างอิง/เลขโอน">
+                  <button class="btn btn-primary btn-sm" onclick="Page.recordPayment('${b.id}')">บันทึกรับเงิน</button>
+                </div>
+                <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (§78/1)${b.onlinePaymentNote ? ' · ' + Layout.esc(b.onlinePaymentNote) : ''}</div>
+              </div>` : ''}
+              ${b.publicToken ? `<div style="margin-top:6px;font-size:11px"><button class="btn btn-sm" onclick="Page.copyBookingLink('${Layout.jsArg(b.publicToken)}')">📋 คัดลอกลิงก์ลูกค้า (จ่ายมัดจำ / ยกเลิกเอง)</button></div>` : ''}
             </div>
             ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
             ${b.canIssueTaxInvoiceNow ? `<div style="background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px">
@@ -240,7 +286,7 @@
         const paidOn = (document.getElementById('bkPaidOn') || {}).value || null;
         if (!confirm(`ยืนยันว่าได้รับเงินของการจองนี้แล้ว — ระบบจะออกใบกำกับภาษีลงวันที่ ${paidOn || 'วันนี้'}`)) return;
         try {
-          const res = await api.cmsIssueBookingTaxInvoice(this.siteId, id, { receivedDate: paidOn });
+          const res = await api.cmsIssueBookingTaxInvoice(this._sid(), id, { receivedDate: paidOn });
           // ข้อความจาก server (ออกใบแล้ว · มีใบแล้วไม่ออกซ้ำ · ขั้นที่ล้มพร้อมเหตุ) — แสดงตามจริง
           const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
           if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
@@ -248,11 +294,49 @@
           await this.load();
         } catch (e) { Layout.toast('ออกใบกำกับไม่สำเร็จ: ' + e.message, 'error'); }
       },
+      // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ — ตัวตัดสิน/ผลอยู่ที่เซิร์ฟเวอร์ (RecordDepositPaymentAsync) หน้านี้ส่งค่าแล้วแสดงข้อความกลับ
+      async recordPayment(id) {
+        const api = Layout.api(); if (!api) return;
+        const amount = Number((document.getElementById('bkPayAmount') || {}).value || 0);
+        const paidOn = (document.getElementById('bkPayDate') || {}).value || null;
+        const reference = ((document.getElementById('bkPayRef') || {}).value || '').trim() || null;
+        if (!(amount > 0)) { Layout.toast('ระบุยอดรับเงิน', 'error'); return; }
+        try {
+          const res = await api.cmsRecordBookingPayment(this._sid(), id, { amount, paidAt: paidOn ? paidOn + 'T12:00:00Z' : null, reference });
+          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
+          notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          Layout.toast('บันทึกรับเงินแล้ว');
+          await this.viewBooking(id);
+          await this.load();
+        } catch (e) { Layout.toast('บันทึกรับเงินไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      // ลิงก์ลูกค้า: ใช้ subdomain ของเว็บถ้ามี (storefront resolve เอง) ไม่งั้นระบุ companyId+siteId ตรง ๆ
+      copyBookingLink(token) {
+        const sid = this._sid();
+        const site = (this.sites || []).find(s => s.id === sid);
+        const cid = (Layout.user && Layout.user.companyId) || '';
+        const url = site && site.subdomain
+          ? `${location.origin}/storefront.html?subdomain=${encodeURIComponent(site.subdomain)}&slug=${encodeURIComponent('my-booking/' + token)}`
+          : `${location.origin}/storefront.html?companyId=${encodeURIComponent(cid)}&siteId=${encodeURIComponent(sid)}&slug=${encodeURIComponent('my-booking/' + token)}`;
+        (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => Layout.toast('คัดลอกลิงก์แล้ว')).catch(() => prompt('คัดลอกลิงก์นี้', url));
+      },
+      // รอบ 205 W3 R-16: เลือก/เปลี่ยนผู้ให้บริการ — ค่าว่าง = ให้ระบบจัดให้ · server ตัดสินผ่าน BookingSlotEngine ตัวเดียว (ไม่ว่าง/ไม่เข้างาน ⇒ ข้อความไทยจาก server)
+      async assignResource(id) {
+        const api = Layout.api(); if (!api) return;
+        const sel = document.getElementById('bkResource');
+        const resourceId = sel && sel.value ? sel.value : null;
+        try {
+          await api.cmsAssignBookingResource(this.siteId, id, { resourceId });
+          Layout.toast('บันทึกผู้ให้บริการแล้ว');
+          await this.viewBooking(id);
+          await this.load();
+        } catch (e) { Layout.toast('เปลี่ยนผู้ให้บริการไม่สำเร็จ: ' + e.message, 'error'); }
+      },
       async advance(id, nextStatus) {
         const api = Layout.api(); if (!api) return;
         const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
         try {
-          const res = await api.cmsUpdateBookingStatus(this.siteId, id, { status: nextStatus, internalNotes: note });
+          const res = await api.cmsUpdateBookingStatus(this._sid(), id, { status: nextStatus, internalNotes: note });
           // ข้อความจาก server (ขั้น ERP · เลื่อนคิวสำรองขึ้น) — แสดงตามจริง
           const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
           if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));

@@ -110,9 +110,21 @@ public partial class PdfGenerationService
         {
             var s = signers[i];
             if (i < customerSlots.Length && customerSlots[i]) continue;
+            // W9 R-61 (2): ผู้ใช้เจ้าของช่องถูกถอดจากบริษัทแล้ว (ไม่มีแถว CompanyUser ⇒ บทบาท null) — ถอดรูป + ติดธงให้ renderer พิมพ์หมายเหตุ
+            // (ตัวตัดสิน Helpers/DepartedSignerRule · ตรวจก่อนเงื่อนไข "ไม่มีรูป" เพื่อให้ช่องที่ไม่มีรูปก็ได้หมายเหตุ)
+            string? role = null;
+            if (slotUsers[i] is { } su)
+            {
+                role = await SignerRoleAsync(companyId, su);
+                if (DepartedSignerRule.IsDeparted(su, role))
+                {
+                    signers[i] = s with { SignatureImageBytes = null, SignatureImageDataUri = null, Departed = true };
+                    continue;
+                }
+            }
             if (s.SignatureImageBytes == null && s.SignatureImageDataUri == null) continue;
             var allowed = d.ShowSignature
-                && (slotUsers[i] is not { } uid || d.SignerAllowed(uid, await SignerRoleAsync(companyId, uid)));
+                && (slotUsers[i] is not { } uid || d.SignerAllowed(uid, role));
             if (!allowed) signers[i] = s with { SignatureImageBytes = null, SignatureImageDataUri = null };
         }
     }
@@ -134,8 +146,11 @@ public partial class PdfGenerationService
         if (u == null) return (null, null);
         var name = !string.IsNullOrWhiteSpace(u.SignatureName) ? u.SignatureName : u.FullName;
         byte[]? bytes = null;
+        // W9 R-61: ผู้จ่ายเงินที่ออกจากบริษัทแล้ว ⇒ ไม่วาดลายเซ็น (คงชื่อ) — Helpers/DepartedSignerRule
+        var role = await SignerRoleAsync(companyId, signerId.Value);
         if (!string.IsNullOrWhiteSpace(u.SignatureImageBase64)
-            && d.ShowSignature && d.SignerAllowed(signerId, await SignerRoleAsync(companyId, signerId.Value)))
+            && !DepartedSignerRule.IsDeparted(signerId, role)
+            && d.ShowSignature && d.SignerAllowed(signerId, role))
             bytes = TryDecodeBase64Image(u.SignatureImageBase64.Trim());
         return (bytes, name);
     }

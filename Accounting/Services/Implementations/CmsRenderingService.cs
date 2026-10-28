@@ -257,6 +257,127 @@ public class CmsRenderingService : ICmsRenderingService
         };
     }
 
+    /// <summary>แท็ก &lt;head&gt; ที่เซิร์ฟเวอร์เรนเดอร์ของหน้า storefront (R-44/R-47) — ประกอบจาก Site/SitePage/SiteProduct + บริษัท ·
+    /// ไม่พบเว็บ ⇒ "" (middleware ส่ง shell เดิม) · ไม่พบหน้า ⇒ ชื่อเว็บ + noindex · ทุกช่องผ่าน <see cref="Accounting.Helpers.CmsSeoHead"/> ตัวเดียว</summary>
+    /// <param name="origin">scheme://host ของคำขอ (ทำ og:image/canonical ให้เป็น absolute)</param>
+    /// <param name="requestPath">path ที่ผู้ชมเปิด (ใช้เป็น canonical เมื่อหน้าไม่ได้ตั้งเอง)</param>
+    public async Task<string> BuildSeoHeadAsync(Guid companyId, Guid siteId, string? slug, string origin, string requestPath, string? languageCode = null)
+    {
+        var site = await _db.Sites.AsNoTracking()
+            .Where(s => s.Id == siteId && s.CompanyId == companyId)
+            .Select(s => new
+            {
+                s.Name, s.NameEn, s.MetaTitle, s.MetaDescription, s.OgImageUrl, s.LogoUrl, s.CanonicalUrl, s.RobotsDirective,
+                s.DefaultLanguage, s.ContactPhone, s.ContactEmail, s.FacebookUrl, s.InstagramUrl, s.DefaultCurrency
+            })
+            .FirstOrDefaultAsync();
+        if (site == null) return "";
+
+        var company = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => new { c.Name, c.Phone, c.Email, c.Address })
+            .FirstOrDefaultAsync();
+
+        var lang = string.IsNullOrWhiteSpace(languageCode) ? (site.DefaultLanguage ?? "th") : languageCode!;
+        var canonicalDefault = Accounting.Helpers.CmsSeoHead.IsAbsoluteHttp(origin) ? origin.TrimEnd('/') + (requestPath.StartsWith('/') ? requestPath : "/" + requestPath) : null;
+        var siteRobots = (site.RobotsDirective ?? "").ToLowerInvariant();
+        var siteNoIndex = siteRobots.Contains("noindex");
+        var siteNoFollow = siteRobots.Contains("nofollow");
+        var siteName = (lang == "en" && !string.IsNullOrWhiteSpace(site.NameEn)) ? site.NameEn! : site.Name;
+        var jsonLd = new List<string>();
+        var localBusiness = Accounting.Helpers.CmsSeoHead.LocalBusinessJsonLd(
+            siteName.Length > 0 ? siteName : company?.Name, canonicalDefault == null ? null : origin,
+            site.ContactPhone ?? company?.Phone, site.ContactEmail ?? company?.Email, company?.Address,
+            Accounting.Helpers.CmsSeoHead.AbsoluteUrl(origin, site.LogoUrl), site.FacebookUrl, site.InstagramUrl);
+
+        var cleanSlug = (slug ?? "").Trim().Trim('/');
+        if (cleanSlug.Length == 0) cleanSlug = "home";
+
+        // หน้าสินค้า (product/{slug}) — เส้น JS ของ storefront · เซิร์ฟเวอร์ประกอบ og + Product JSON-LD จากข้อมูลสินค้าจริง
+        if (cleanSlug.StartsWith("product/", StringComparison.OrdinalIgnoreCase) && cleanSlug.Length > 8)
+        {
+            var pslug = cleanSlug[8..];
+            var prod = await _db.SiteProducts.AsNoTracking()
+                .Where(p => p.SiteId == siteId && p.CompanyId == companyId && p.Slug == pslug && p.IsVisible)
+                .Select(p => new
+                {
+                    p.DisplayName, p.DisplayNameEn, ProductName = p.Product.Name, p.ShortDescription, p.MetaTitle, p.MetaDescription,
+                    p.OverrideSellingPrice, ErpPrice = p.Product.SellingPrice, p.ImageUrlsJson, ProductImages = p.Product.ImageUrlsJson,
+                    p.StockBehavior, Stock = p.Product.CurrentStock,
+                })
+                .FirstOrDefaultAsync();
+            if (prod != null)
+            {
+                var name = (lang == "en" && !string.IsNullOrWhiteSpace(prod.DisplayNameEn)) ? prod.DisplayNameEn!
+                    : (!string.IsNullOrWhiteSpace(prod.DisplayName) ? prod.DisplayName! : prod.ProductName);
+                var img = Accounting.Helpers.CmsSeoHead.AbsoluteUrl(origin, FirstImage(prod.ImageUrlsJson) ?? FirstImage(prod.ProductImages) ?? site.OgImageUrl ?? site.LogoUrl);
+                var price = prod.OverrideSellingPrice ?? prod.ErpPrice;
+                var inStock = prod.StockBehavior != StockBehavior.InStockOnly || prod.Stock > 0;
+                jsonLd.Add(Accounting.Helpers.CmsSeoHead.ProductJsonLd(name, prod.ShortDescription ?? prod.MetaDescription, img, price,
+                    site.DefaultCurrency ?? "THB", canonicalDefault, inStock));
+                if (localBusiness != null) jsonLd.Add(localBusiness);
+                return Accounting.Helpers.CmsSeoHead.Render(new Accounting.Helpers.CmsSeoHead.Model(
+                    prod.MetaTitle ?? name, prod.MetaDescription ?? prod.ShortDescription ?? site.MetaDescription, img, canonicalDefault,
+                    siteName, lang, siteNoIndex, siteNoFollow, "product", jsonLd));
+            }
+        }
+
+        var page = await _db.SitePages.AsNoTracking()
+            .Include(p => p.Blocks.Where(b => b.IsVisible && b.BlockType == CmsBlockType.Faq))
+            .Include(p => p.Translations)
+            .Where(p => p.SiteId == siteId && p.CompanyId == companyId && p.Status == PageStatus.Published)
+            .FirstOrDefaultAsync(p => p.Slug == cleanSlug || p.Translations.Any(t => t.Slug == cleanSlug && t.LanguageCode == lang));
+
+        if (page == null)
+        {
+            // ไม่พบหน้า (เส้น JS เช่น cart/checkout หรือ 404) — ชื่อเว็บ + ไม่ให้ index · ไม่มีรูปก็ไม่ใส่แท็กว่าง
+            return Accounting.Helpers.CmsSeoHead.Render(new Accounting.Helpers.CmsSeoHead.Model(
+                site.MetaTitle ?? siteName, site.MetaDescription, Accounting.Helpers.CmsSeoHead.AbsoluteUrl(origin, site.OgImageUrl ?? site.LogoUrl),
+                canonicalDefault, siteName, lang, true, siteNoFollow, "website", localBusiness == null ? new List<string>() : new List<string> { localBusiness }));
+        }
+
+        var tr = page.Translations.FirstOrDefault(t => t.LanguageCode == lang);
+        var title = tr?.MetaTitle ?? tr?.Title ?? page.MetaTitle ?? page.Title;
+        var description = tr?.MetaDescription ?? page.MetaDescription ?? tr?.Excerpt ?? page.Excerpt ?? site.MetaDescription;
+        var image = Accounting.Helpers.CmsSeoHead.AbsoluteUrl(origin, tr?.FeaturedImageUrl ?? page.OgImageUrl ?? page.FeaturedImageUrl ?? site.OgImageUrl ?? site.LogoUrl);
+        var canonical = Accounting.Helpers.CmsSeoHead.IsAbsoluteHttp(page.CanonicalUrl) ? page.CanonicalUrl : canonicalDefault;
+
+        if (!string.IsNullOrWhiteSpace(page.JsonLdData))
+            jsonLd.Add(Accounting.Helpers.CmsSeoHead.SafeInlineJson(page.JsonLdData!));
+        else
+            jsonLd.Add(Accounting.Helpers.CmsSeoHead.WebPageJsonLd(title, canonical, description, siteName));
+        var faqItems = new List<Accounting.Helpers.CmsBasicBlocks.FaqItem>();
+        foreach (var b in page.Blocks.Where(b => b.BlockType == CmsBlockType.Faq).OrderBy(b => b.SortOrder))
+        {
+            try { faqItems.AddRange(Accounting.Helpers.CmsBasicBlocks.ParseFaq(JsonSerializer.Deserialize<JsonElement>(b.ConfigJson)).Items); }
+            catch (JsonException) { /* คอนฟิกบล็อกเสีย — หน้า render ต่อได้ (RenderBlockToHtml ตอบ "Block render error" อยู่แล้ว) */ }
+        }
+        var faq = Accounting.Helpers.CmsSeoHead.FaqJsonLd(faqItems);
+        if (faq != null) jsonLd.Add(faq);
+        if (localBusiness != null) jsonLd.Add(localBusiness);
+
+        return Accounting.Helpers.CmsSeoHead.Render(new Accounting.Helpers.CmsSeoHead.Model(
+            title, description, image, canonical, siteName, lang, page.NoIndex || siteNoIndex, page.NoFollow || siteNoFollow, "website", jsonLd));
+    }
+
+    /// <summary>URL รูปแรกจาก ImageUrlsJson (array ของ string หรือ object{url}) — parse ไม่ได้ ⇒ null</summary>
+    private static string? FirstImage(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+            foreach (var it in doc.RootElement.EnumerateArray())
+            {
+                if (it.ValueKind == JsonValueKind.String) return it.GetString();
+                if (it.ValueKind == JsonValueKind.Object && it.TryGetProperty("url", out var u) && u.ValueKind == JsonValueKind.String) return u.GetString();
+            }
+        }
+        catch (JsonException) { }
+        return null;
+    }
+
     public async Task<string> RenderBlockHtmlAsync(Guid companyId, Guid siteId, Guid blockId, string? languageCode = null)
     {
         var block = await _db.PageBlocks
@@ -344,14 +465,15 @@ public class CmsRenderingService : ICmsRenderingService
             var config = JsonSerializer.Deserialize<JsonElement>(configJson);
             return blockType switch
             {
-                CmsBlockType.Hero => RenderHeroBlock(config, cls),
+                // Hero/Image/FAQ/Testimonials — ตัวอ่าน+เรนเดอร์ตัวเดียว Helpers/CmsBasicBlocks (R-46 · เดิมเซิร์ฟเวอร์อ่านคีย์คนละชื่อกับตัวแก้ไข ⇒ drift)
+                CmsBlockType.Hero => Accounting.Helpers.CmsBasicBlocks.RenderHero(Accounting.Helpers.CmsBasicBlocks.ParseHero(config), cls),
                 CmsBlockType.RichText => RenderRichTextBlock(config, cls),
-                CmsBlockType.Image => RenderImageBlock(config, cls),
+                CmsBlockType.Image => Accounting.Helpers.CmsBasicBlocks.RenderImage(Accounting.Helpers.CmsBasicBlocks.ParseImage(config), cls),
                 CmsBlockType.Gallery => RenderGalleryBlock(config, cls),
                 CmsBlockType.Video => RenderVideoBlock(config, cls),
                 CmsBlockType.CallToAction => RenderCtaBlock(config, cls),
-                CmsBlockType.Faq => RenderFaqBlock(config, cls),
-                CmsBlockType.Testimonials => RenderTestimonialsBlock(config, cls),
+                CmsBlockType.Faq => Accounting.Helpers.CmsBasicBlocks.RenderFaq(Accounting.Helpers.CmsBasicBlocks.ParseFaq(config), cls),
+                CmsBlockType.Testimonials => Accounting.Helpers.CmsBasicBlocks.RenderTestimonials(Accounting.Helpers.CmsBasicBlocks.ParseTestimonials(config), cls),
                 CmsBlockType.Divider => $"<hr class=\"cms-divider{cls}\" />",
                 CmsBlockType.Html => RenderHtmlBlock(config, cls),
                 CmsBlockType.ProductGrid => $"<div class=\"cms-block cms-product-grid{cls}\" data-config='{EscapeAttribute(configJson)}'></div>",
@@ -380,20 +502,6 @@ public class CmsRenderingService : ICmsRenderingService
         }
     }
 
-    private static string RenderHeroBlock(JsonElement config, string cls)
-    {
-        var title = GetProp(config, "title");
-        var subtitle = GetProp(config, "subtitle");
-        var bgImage = GetProp(config, "backgroundImage");
-        var ctaText = GetProp(config, "ctaText");
-        var ctaUrl = GetProp(config, "ctaUrl");
-
-        var bgStyle = !string.IsNullOrEmpty(bgImage) ? $" style=\"background-image:url('{EscapeAttribute(bgImage)}');background-size:cover;background-position:center;\"" : "";
-        var ctaHtml = !string.IsNullOrEmpty(ctaText) ? $"<a href=\"{EscapeAttribute(ctaUrl)}\" class=\"cms-hero-cta\">{Escape(ctaText)}</a>" : "";
-
-        return $"<section class=\"cms-block cms-hero{cls}\"{bgStyle}><div class=\"cms-hero-content\"><h1>{Escape(title)}</h1><p>{Escape(subtitle)}</p>{ctaHtml}</div></section>";
-    }
-
     private static string RenderRichTextBlock(JsonElement config, string cls)
     {
         // เนื้อหาจาก WYSIWYG = HTML โดยเจตนา จึง escape ทั้งก้อนไม่ได้ → ผ่าน
@@ -401,17 +509,6 @@ public class CmsRenderingService : ICmsRenderingService
         // ผู้เข้าชม (ผู้แก้ไข CMS ฝัง <script> ได้ตรง ๆ)
         var content = Accounting.Helpers.CmsHtmlSanitizer.Sanitize(GetProp(config, "content"));
         return $"<div class=\"cms-block cms-richtext{cls}\">{content}</div>";
-    }
-
-    private static string RenderImageBlock(JsonElement config, string cls)
-    {
-        // "url" = คีย์ที่ตัวแก้ไข (cms-edit) เขียน · "src" = คีย์เดิมของตัวเรนเดอร์นี้ (ข้อมูลเก่า)
-        var src = GetProp(config, "url");
-        if (string.IsNullOrWhiteSpace(src)) src = GetProp(config, "src");
-        var alt = GetProp(config, "alt");
-        var caption = GetProp(config, "caption");
-        var captionHtml = !string.IsNullOrEmpty(caption) ? $"<figcaption>{Escape(caption)}</figcaption>" : "";
-        return $"<figure class=\"cms-block cms-image{cls}\"><img src=\"{EscapeAttribute(src)}\" alt=\"{EscapeAttribute(alt)}\" loading=\"lazy\" />{captionHtml}</figure>";
     }
 
     // แกลเลอรี (ตาราง + lightbox) / สไลด์โชว์ — ตัวอ่านคอนฟิก+เรนเดอร์ตัวเดียวอยู่ที่ CmsGalleryBlock
@@ -433,43 +530,6 @@ public class CmsRenderingService : ICmsRenderingService
         var buttonText = GetProp(config, "buttonText");
         var buttonUrl = GetProp(config, "buttonUrl");
         return $"<section class=\"cms-block cms-cta{cls}\"><h2>{Escape(heading)}</h2><p>{Escape(description)}</p><a href=\"{EscapeAttribute(buttonUrl)}\" class=\"cms-cta-btn\">{Escape(buttonText)}</a></section>";
-    }
-
-    private static string RenderFaqBlock(JsonElement config, string cls)
-    {
-        var sb = new StringBuilder();
-        sb.Append($"<div class=\"cms-block cms-faq{cls}\">");
-        if (config.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in items.EnumerateArray())
-            {
-                var q = item.TryGetProperty("question", out var qp) ? qp.GetString() ?? "" : "";
-                var a = item.TryGetProperty("answer", out var ap) ? ap.GetString() ?? "" : "";
-                sb.Append($"<details class=\"cms-faq-item\"><summary>{Escape(q)}</summary><div>{Escape(a)}</div></details>");
-            }
-        }
-        sb.Append("</div>");
-        return sb.ToString();
-    }
-
-    private static string RenderTestimonialsBlock(JsonElement config, string cls)
-    {
-        var sb = new StringBuilder();
-        sb.Append($"<div class=\"cms-block cms-testimonials{cls}\">");
-        if (config.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in items.EnumerateArray())
-            {
-                var name = item.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                var role = item.TryGetProperty("role", out var r) ? r.GetString() ?? "" : "";
-                var text = item.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                var avatar = item.TryGetProperty("avatar", out var a) ? a.GetString() ?? "" : "";
-                var avatarHtml = !string.IsNullOrEmpty(avatar) ? $"<img src=\"{EscapeAttribute(avatar)}\" alt=\"{EscapeAttribute(name)}\" class=\"cms-testimonial-avatar\" />" : "";
-                sb.Append($"<div class=\"cms-testimonial\">{avatarHtml}<blockquote>{Escape(text)}</blockquote><cite>{Escape(name)}<span>{Escape(role)}</span></cite></div>");
-            }
-        }
-        sb.Append("</div>");
-        return sb.ToString();
     }
 
     private static string RenderHtmlBlock(JsonElement config, string cls)

@@ -15,7 +15,9 @@ public sealed record PublicPayTarget(
     string Description,
     string? CustomerEmail,
     string? CustomerPhone,
-    string Reference)
+    string Reference,
+    // รอบ 205 W2 (R-06/R-08): เหตุที่จ่ายออนไลน์ไม่ได้ตอนนี้ (null = จ่ายได้/ไม่มียอด) — ข้อความถึงลูกค้าตรง ๆ ไม่ silent
+    string? BlockedNote = null)
 {
     /// <summary>จ่ายเพิ่มได้ตอนนี้ไหม — <c>false</c> เมื่อจ่ายครบ/ยกเลิก/เช็คเอาต์แล้ว
     ///
@@ -35,6 +37,10 @@ public interface IPublicPaymentResolver
     /// <summary>คำสั่งซื้อหน้าเว็บ — พิสูจน์สิทธิ์ด้วย <c>orderId</c> (GUID ที่คืนตอนสั่งซื้อ)
     /// ซึ่งเป็น trust model เดียวกับ endpoint สาธารณะเดิมของ <c>CmsCommerceController</c></summary>
     Task<PublicPayTarget?> ResolveOrderAsync(Guid companyId, Guid siteId, Guid orderId, CancellationToken ct = default);
+
+    /// <summary>การจองนัดหมาย (CMS booking) — พิสูจน์สิทธิ์ด้วย <c>PublicToken</c> ที่ออกตอนจอง · ยอด = มัดจำค้าง (<c>CmsBookingOnlinePayment</c>) ·
+    /// ไซต์ไม่เปิดรับมัดจำออนไลน์ (Q5 = ข) ⇒ ยอด 0 + <c>BlockedNote</c> · คืน null เฉพาะโทเคนผิด (รอบ 205 W2 R-08)</summary>
+    Task<PublicPayTarget?> ResolveBookingAsync(Guid companyId, Guid siteId, string token, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -103,14 +109,50 @@ public class PublicPaymentResolver : IPublicPaymentResolver
             .FirstOrDefaultAsync(ct);
         if (o == null) return null;
 
+        // รอบ 205 W2 (R-06 · S-2): มีสลิปรอตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว (เงินเข้า 2 ทางแล้วต้องคืน) — บอกเหตุผล ไม่ silent
+        var pendingSlip = await _db.SiteOrderPayments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && p.OrderId == o.Id && !p.IsDeleted
+                && (p.Status == SitePaymentStatus.Pending || p.Status == SitePaymentStatus.Processing)
+                && p.Reference != null && p.Reference.StartsWith(GatewayPaymentRecord.SlipReferencePrefix))
+            .AnyAsync(ct);
         // ยกเลิก/คืนเงินแล้ว = ไม่รับเงินเพิ่ม (ห้ามเปิดช่องให้จ่ายบิลที่ตายแล้ว)
         // — คืนเป้าหมายที่ยอด 0 ไม่ใช่ null เพราะยังต้องยืนยันตัวตนเพื่ออ่านผลการจ่ายได้
         // ทีม K — ยอดรอบนี้จากตัวคิดเดียว (มัดจำที่ตรึงตอนสั่ง) · ออเดอร์เดิม (ไม่มีเงื่อนไข) = TotalAmount − PaidAmount เท่าเดิม
         var due = o.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded
             ? 0m : Accounting.Helpers.MtoPaymentTerms.FromSnapshot(o.PaymentTermMode, o.TotalAmount, o.DepositRequiredAmount, o.PaidAmount).NextPayable;
 
+        if (pendingSlip && due > 0.005m)
+            return new PublicPayTarget(PaymentSourceKind.SiteOrder, o.Id, siteId, 0m,
+                $"คำสั่งซื้อ {o.OrderNumber}", o.ShippingEmail, o.ShippingPhone, o.OrderNumber,
+                BlockedNote: GatewayPaymentRecord.PendingSlipBlocksOnlineNote);
         return new PublicPayTarget(
             PaymentSourceKind.SiteOrder, o.Id, siteId, due,
             $"คำสั่งซื้อ {o.OrderNumber}", o.ShippingEmail, o.ShippingPhone, o.OrderNumber);
+    }
+
+    public async Task<PublicPayTarget?> ResolveBookingAsync(Guid companyId, Guid siteId, string token, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return null;
+        var b = await _db.SiteBookings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && x.PublicToken == token)
+            .Select(x => new
+            {
+                x.Id, x.BookingNumber, x.Status, x.DepositAmount, x.PaidAmount, x.GuestEmail, x.GuestPhone,
+                x.BookingService.BookingType,
+                CustomerEmail = x.Customer != null ? x.Customer.Email : null,
+                CustomerPhone = x.Customer != null ? x.Customer.Phone : null,
+            })
+            .FirstOrDefaultAsync(ct);
+        if (b == null) return null;
+        var onlineEnabled = await _db.SiteBookingSettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.SiteId == siteId)
+            .Select(s => (bool?)s.OnlineDepositEnabled).FirstOrDefaultAsync(ct) ?? false;
+        // ยอดจากเซิร์ฟเวอร์เท่านั้น (ตัวตัดสินเดียว CmsBookingOnlinePayment) — ไซต์ไม่เปิด ⇒ 0 + เหตุผล
+        var due = CmsBookingOnlinePayment.DepositDue(b.BookingType, b.Status, b.DepositAmount, b.PaidAmount);
+        var blocked = CmsBookingOnlinePayment.BlockedNote(onlineEnabled, b.BookingType, b.Status, due);
+        return new PublicPayTarget(
+            PaymentSourceKind.SiteBooking, b.Id, siteId, blocked == null ? due : 0m,
+            $"มัดจำการจอง {b.BookingNumber}", b.CustomerEmail ?? b.GuestEmail, b.CustomerPhone ?? b.GuestPhone, b.BookingNumber,
+            BlockedNote: blocked);
     }
 }

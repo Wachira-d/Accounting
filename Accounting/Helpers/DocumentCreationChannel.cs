@@ -23,7 +23,9 @@ public enum DocumentCreationChannel
     PlatformBilling,
     /// <summary>งานอัตโนมัติของระบบ (CreatedBy = "System") — รวมงานประจำที่รันตามรอบซึ่งไม่ใช่ใบล่าสุดของรายการประจำ</summary>
     SystemJob,
-    /// <summary>ไม่มีร่องรอยพอจะบอกช่องทาง — ห้ามเดา (LINE ไม่ประทับป้าย ⇒ ตกที่นี่)</summary>
+    /// <summary>LINE bot (พิมพ์ "บันทึก {ร้าน} {จำนวน}" ในแชท) — ประทับ <c>OriginModule = "LineBot"</c> (W9 R-58 · ใบเดิม backfill จาก Reference "LINE-bot")</summary>
+    LineBot,
+    /// <summary>ไม่มีร่องรอยพอจะบอกช่องทาง — ห้ามเดา</summary>
     Unknown,
 }
 
@@ -49,7 +51,8 @@ public readonly record struct DocumentOriginProbe(
 /// <para>ลำดับความเชื่อถือ: (1) <c>OriginModule</c> ที่โมดูลประทับเอง → (2) ตารางที่ผูก FK กลับมาที่ใบ (OCR/POS/หน้าร้าน/มิเตอร์ API)
 /// → (3) ป้าย <c>CreatedBy</c> ของเส้นระบบ ("api:v1" · "storefront-*" · "OCR-*" · "system:settlement:*" …) → (4) ใบล่าสุดของรายการประจำ
 /// → (5) "System" = งานอัตโนมัติ → (6) รหัสผู้ใช้ = สร้างจากหน้าจอ → อื่น ๆ = <see cref="DocumentCreationChannel.Unknown"/>.</para>
-/// <para>ข้อจำกัดที่บอกผู้อ่านตรง ๆ (ไม่แต่งตัวเลข): LINE บันทึก CreatedBy เป็นอีเมลผู้ใช้โดยไม่มีป้ายช่องทาง ⇒ "ไม่ทราบ" ·
+/// <para>ข้อจำกัดที่บอกผู้อ่านตรง ๆ (ไม่แต่งตัวเลข): LINE บันทึก CreatedBy เป็นอีเมลผู้ใช้ — ก่อน W9 (R-58) ไม่มีป้ายช่องทาง ⇒ "ไม่ทราบ";
+/// ตอนนี้ <c>LineBotService</c> ประทับ <see cref="LineBotOrigin"/> และ migration backfill ใบเดิมจาก <see cref="LineBotReference"/> ·
 /// รายการประจำเก็บเฉพาะใบล่าสุด ⇒ ใบงวดก่อน ๆ อยู่ใน "งานอัตโนมัติ"/"หน้าจอ" (ถ้ากดรันเอง).</para></summary>
 public static class DocumentCreationChannelRule
 {
@@ -89,6 +92,17 @@ public static class DocumentCreationChannelRule
     /// <summary>รูป GUID 36 ตัว (LIKE) — CreatedBy ของผู้ใช้จากหน้าจอคือ userId.ToString()</summary>
     public const string GuidLikePattern = "________-____-____-____-____________";
 
+    // ── LINE bot (W9 R-58) — ค่าคงที่ตัวเดียว: ฝั่งเขียน (LineBotService) · ฝั่งอ่าน (Classify) · migration backfill ใช้ร่วม ──
+    /// <summary><c>Document.OriginModule</c> ที่ LINE bot ประทับ</summary>
+    public const string LineBotOrigin = "LineBot";
+    /// <summary><c>Document.Reference</c> ที่ LINE bot เขียนมาตั้งแต่ก่อน W9 — กุญแจ backfill ใบเดิม (ใบที่ Reference อื่นไม่ถูกแตะ)</summary>
+    public const string LineBotReference = "LINE-bot";
+
+    /// <summary>SQL backfill ใบ LINE เดิม (F2 #9 — ของเสียถูก persist แล้ว) · idempotent: แตะเฉพาะ <c>OriginModule IS NULL</c> + Reference ตรงตัว ·
+    /// ใบที่โมดูลอื่นประทับ OriginModule ไว้แล้วไม่ถูกทับ · ใบที่ Reference อื่นไม่ถูกแตะ (เทสต์ทิศตรงข้าม <c>LineBotOriginBackfillDbTests</c>)</summary>
+    public static string BackfillLineBotOriginSql()
+        => $"""UPDATE "Documents" SET "OriginModule" = '{LineBotOrigin}' WHERE "Reference" = '{LineBotReference}' AND "OriginModule" IS NULL;""";
+
     public static DocumentCreationChannel Classify(DocumentOriginProbe p)
     {
         // เทียบแบบไม่สนตัวพิมพ์ — ตรงกับ DocumentService.IsLodgingOrigin
@@ -98,6 +112,10 @@ public static class DocumentCreationChannelRule
             case "lodging": return DocumentCreationChannel.Lodging;
             case "pos": return DocumentCreationChannel.Pos;
             case "ocr": return DocumentCreationChannel.Ocr;
+            case "linebot": return DocumentCreationChannel.LineBot;
+            // รอบ 205 ทีม W1 (R-04): เส้นอัตโนมัติหน้าเว็บประทับต้นทางแล้ว (เดิมแยกจาก marker ของ CreatedBy เท่านั้น)
+            case "cmsbooking": return DocumentCreationChannel.Storefront;
+            case "site-order": return DocumentCreationChannel.Storefront;
         }
         if (p.HasPosLink) return DocumentCreationChannel.Pos;
         if (p.HasOcrLink) return DocumentCreationChannel.Ocr;
@@ -138,6 +156,7 @@ public static class DocumentCreationChannelRule
         DocumentCreationChannel.ExpenseClaim => "เบิกค่าใช้จ่าย/เงินทดรอง",
         DocumentCreationChannel.PlatformBilling => "บิลค่าบริการแพลตฟอร์ม",
         DocumentCreationChannel.SystemJob => "งานอัตโนมัติของระบบ",
+        DocumentCreationChannel.LineBot => "LINE bot",
         _ => "ไม่ทราบ",
     };
 
@@ -146,7 +165,7 @@ public static class DocumentCreationChannelRule
     {
         DocumentCreationChannel.Recurring => "นับได้เฉพาะใบล่าสุดของแต่ละรายการประจำ — ใบงวดก่อนหน้าอยู่ใน \"งานอัตโนมัติของระบบ\" หรือ \"สร้างจากหน้าจอ\" (กดรันเอง)",
         DocumentCreationChannel.SystemJob => "CreatedBy = System — ส่วนใหญ่คือรายการประจำที่รันตามรอบ",
-        DocumentCreationChannel.Unknown => "ไม่มีร่องรอยช่องทาง (เช่น LINE ที่บันทึกเป็นอีเมลผู้ใช้ หรือเส้นที่ไม่ประทับป้าย) — ไม่เดา",
+        DocumentCreationChannel.Unknown => "ไม่มีร่องรอยช่องทาง (เส้นที่ไม่ประทับป้าย) — ไม่เดา",
         _ => null,
     };
 

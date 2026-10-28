@@ -7,7 +7,7 @@
 | ของเดิม | คืออะไร | ใช้ได้ไหมกับคอร์ส |
 | --- | --- | --- |
 | `pos-packages.html` + `ServicePackage` (`PosService.Packages.cs`) | แพ็กเกจบริการ "ชุดขั้นตอน" ขายครั้งเดียวจบ (สระ+ทำเล็บ 399฿) + ค่าคอมต่อขั้นตอน | **ไม่ใช่** เครดิต — ไม่มีจำนวนครั้ง/อายุ/ยอดคงเหลือ · บิล POS ลงรายได้ 41000 ทันที |
-| `RevenueRecognitionController` / `revenue-recognition.html` | สัญญา + performance obligation + ตารางรับรู้ตามงวด (Dr 21810 / Cr 41100) | ตารางตามเวลา ไม่ใช่ตามการใช้ · ผังที่หาก่อน (21810) ไม่มีในผังมาตรฐาน และอยู่ใต้กลุ่ม 218 "ค่าใช้จ่ายบุคลากรค้างจ่าย" (fallback `StartsWith("218")` ได้ผังเงินเดือนค้างจ่าย) — ไม่ใช่รายได้รับล่วงหน้า (**ไม่แก้ในงานนี้ — แจ้งไว้ backlog**) |
+| `RevenueRecognitionController` / `revenue-recognition.html` | สัญญา + performance obligation + ตารางรับรู้ตามงวด (Dr 217xx / Cr 41100 — รอบ 205 W6 แก้จาก 218 แล้ว · `Helpers/DeferredRevenueAccount`) | ตารางตามเวลา ไม่ใช่ตามการใช้ |
 | `deposits.html` / `deposit-center.html` (`DepositPolicyResolver`) | มัดจำ/เงินรับล่วงหน้าที่จะหักกับใบสุดท้าย | คอร์สไม่มี "ใบสุดท้าย" — ใช้เส้นขายเงินสดที่บรรทัดลงผังหนี้สินแทน |
 | `CmsBookingService` (ทีม B กำลังทำ slot engine) | บริการ/ช่องเวลา/การจองจากเว็บ | ต่อผ่านสัญญาบาง `ICreditBookingLedger` — **ไม่แตะ slot logic** |
 | `ChartOfAccountTemplates` | ผังมาตรฐาน | มี **21713 ค่าบริการรับล่วงหน้า** (หนี้สิน) + **42000 รายได้จากการบริการ** ให้ทุกบริษัทแล้ว — ไม่ seed เพิ่ม |
@@ -70,11 +70,11 @@ schema `DatabaseMigrationHelper.CourseCreditStatements` (5 ตารางให
 
 | # | งาน | เหตุ |
 | --- | --- | --- |
-| B1 | **ขายผ่าน POS** — บรรทัดคอร์สในบิล POS ต้อง Cr 21713 แทน 41000 (`PosService.CreateSalesJournalEntryAsync` + ภาพสะท้อนตอนคืนเงิน) แล้วเรียก `OpenPass` | แตะ JE ของ POS + เส้นคืนเงิน (คู่สมมาตร) — งานใหญ่แยกรอบ · ระหว่างนี้ขายที่หน้า "คอร์ส & เครดิต" (ออกใบกำกับให้เอง) |
-| B2 | **ขายผ่านร้านออนไลน์ (CMS commerce)** — สินค้าประเภทคอร์ส ⇒ ใบขายบรรทัด 21713 + เปิดบัตรหลังชำระ | ต้องตกลงกับเส้น `SiteOrderPaymentHandler` · ใช้ `ActivateFromDocumentAsync` เป็นจุดต่อได้ทันทีถ้าใบลง 21713 |
-| B3 | คืนเงิน**บางส่วน** (ลดเครดิตบางส่วนแล้วใช้ต่อ) · ปุ่มออกใบลดหนี้คืนเงินจากหน้าบัตร | ตอนนี้คืนได้ทั้งส่วนที่เหลือผ่านใบลดหนี้ที่หน้าเอกสาร (ด่านข้อ 9b) แล้วบัตรปิด |
-| B4 | ต่อสายเครื่องจองของทีม B เข้ากับ `ICreditBookingLedger` | ตามคำสั่ง — ห้ามแก้ slot logic ในงานนี้ |
+| B1 | **ขายผ่าน POS** | **ตั้งใจไม่ทำ — คำตัดสินเจ้าของข้อ 161 (2026-10-26)**: ขายที่หน้า "คอร์ส & เครดิต"/ร้านออนไลน์เท่านั้น · ไม่แตะ JE ขาย/คืนของ POS |
+| B2 | ~~ขายผ่านร้านออนไลน์~~ **ทำแล้ว (รอบ 205 W6)** — `SiteProduct.CreditPackageId` (ช่อง "ขายเป็นคอร์ส" ใน cms-edit · สั่งได้ครั้งละ 1) ⇒ `CmsCommerceService.SyncOrderToErpCoreAsync` ส่งผังจาก `CourseCreditOnlineSale.UnearnedAccountsAsync` เข้า `BuildOrderErpLines` (บรรทัดคอร์สลง 21713) ⇒ ใบอนุมัติ ⇒ `IssuedDocumentHooks.TryActivateCoursePassAsync` เปิดบัตร (`ActivateFromDocumentAsync` · ช่องทาง Online) | จุดเชื่อม: ไม่แตะ `ConfirmPaymentAsync` (ทีม U) · ครอบทั้ง gateway และสลิป เพราะ hook รันหลังอนุมัติทุกใบ · ล้ม/หลายหน่วย ⇒ `[COURSE-PASS-FAILED]` บนใบ + log (ทางไปต่อ: ปุ่ม "เปิดบัตรจากเอกสารขาย") |
+| B3 | ~~คืนเงินบางส่วน~~ **ทำแล้ว (รอบ 205 W6 · R-38 · ยังไม่ผ่านฝ่ายค้าน)** — `CreditPassDocumentRule.RefundPreview` ตัวเดียว: ยอด = ส่วนที่เหลือ ⇒ ปิดบัตร (เดิม) · ยอดน้อยกว่า ⇒ ลดเครดิต `floor(ยอด ÷ ราคาต่อเครดิต)` (ชั่วโมงขั้น 0.25) โดยคงเหลือต้อง > ใช้แล้ว+จองไว้ · บัตรยัง Active · แถว `Adjust` ในสมุด · หลังคืน ราคาต่อเครดิต/รับรู้/breakage ใช้ `EffectiveContract = สัญญา − คืนแล้ว` · ปุ่ม "ออกใบลดหนี้คืนเงิน (ร่าง)" บนหน้าบัตร (`DraftRefundCreditNoteAsync` · PosManager · ไม่อนุมัติเอง) | เทสต์ `CreditPassDocumentRuleTests` (ทั้งสองทิศ) |
+| B4 | ~~ต่อสายเครื่องจอง~~ **ทำแล้ว (รอบ 205 W6 · R-39)** — `CreateBookingRequest.PayWithCredit/CreditPassId` ⇒ `CmsBookingService.Credits.cs` Hold ในธุรกรรมเดียวกับ Decide (ล้ม = ไม่มีการจอง) · ยอดเงินการจอง 0 · ไม่ออกเอกสาร ERP · เสร็จ/ไม่มา/ยกเลิก ⇒ Settle/Release (`Helpers/CreditBookingLink`) · ความจริง "จ่ายด้วยบัตร" อยู่ที่ `CreditClassBooking.ExternalRef` (ไม่แก้ schema) | ยังไม่มี UI ให้แขกเลือก (หน้าเว็บจองเป็นแขกไม่ล็อกอิน) — เปิดใช้ผ่าน API/หน้าหลังบ้านรุ่นถัดไป · ไม่แตะ `BookingSlotEngine` |
 | B5 | ขยายอายุบัตร / โอนเครดิต / แพ็กเกจหลายบริการแยกจำนวน (เช่น 5 กลุ่ม + 2 ตัวต่อตัว) | ยังไม่มีผู้ขอ · โครงสร้างสมุดรองรับ (แถว Adjust ภายหลัง) |
-| B6 | `RevenueRecognitionService` หาผังรายได้รับล่วงหน้าด้วย 21810 → `StartsWith("218")` = กลุ่ม "ค่าใช้จ่ายบุคลากรค้างจ่าย" ของผังมาตรฐาน (ควรเป็น 217xx) | นอกขอบเขต — แจ้งผู้ดูแลโมดูลนั้น (ควรเป็น 217xx) |
+| B6 | ~~ผัง 218~~ **ทำแล้ว (รอบ 205 W6 · R-40)** — `Helpers/DeferredRevenueAccount.Pick` (21713 → ผังเดียวในกลุ่ม 217 · ไม่นับ 21714) · ไม่พบ ⇒ ล้มดัง (ไม่สร้าง JE ขาข้างเดียว) · รายงานตรวจ JE เดิมที่ลง 218 อ่านอย่างเดียว `GET revenue-recognition/deferred-account-audit` (กล่องเหลืองในแท็บรายได้รอรับรู้) | ระบบไม่แก้ JE ที่ลงแล้ว — นักบัญชีออก JE ปรับปรุง |
 | B7 | Integration test (DB จริง) ของเส้นขาย→จอง→ตัด→หมดอายุ | env ไม่มี Testcontainers · ตัวเลขทั้งหมดล็อกใน pure helper แล้ว |
 | B8 | หน้าแขก/สมาชิกดูยอดคงเหลือเอง (portal) | ต้องผ่าน PDPA/สิทธิ์ของ portal |

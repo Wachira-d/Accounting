@@ -196,7 +196,9 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   ตัวเลือก = ผู้สร้าง + สมาชิกลูกค้าที่ active (ตัดผู้ดูแลแพลตฟอร์ม support/`IsSystemAdmin` ที่ไม่ใช่ผู้สร้าง) ·
   `POST api/admin/companies/without-owner/repair` (ตัดสินซ้ำใต้ล็อก) · `POST api/admin/companies/{id}/assign-owner {userId}` (ด่าน `AdminAssignBlock`:
   บริษัทยังไม่มีเจ้าของ · ผู้รับเป็นสมาชิก · ผู้รับฝั่งแพลตฟอร์ม (รวมตัวเอง) ได้เฉพาะเมื่อเป็นผู้สร้าง — ข้อ 105) · หน้าแอดมินสร้างผู้ใช้เป็น Owner เดินด่านเดียวกัน ·
-  ทั้งสามทาง: ตรวจ+เลื่อนบทบาทใต้ `pg_advisory_xact_lock` ต่อบริษัท (`AdvisoryLockKey.CompanyOwnership`) + audit chain `COMPANY-OWNERLESS-REPAIR`
+  ทั้งสามทาง: ตรวจ+เลื่อนบทบาทใต้ `pg_advisory_xact_lock` ต่อบริษัท (`AdvisoryLockKey.CompanyOwnership`) + audit chain `COMPANY-OWNERLESS-REPAIR` ·
+  Db test (W9 R-63 · 2026-10-26) `Accounting.Tests/Db/CompanyOwnershipDbTests` — assign-owner พร้อมกัน 2 คำขอ ⇒ Owner คนเดียว · `LastOwnerGuard` ปฏิเสธ
+  ถอด/ลด Owner ลูกค้าคนสุดท้าย (แอดมินที่เป็น Owner ไม่นับ) · แอดมินที่ไม่ใช่ผู้สร้างไม่อยู่ใน Candidates + ตั้งไม่ได้ (ทิศตรงข้าม: ผู้สร้าง active ตั้งได้)
 - **โอนความเป็นเจ้าของจากผู้ดูแลแพลตฟอร์ม** — `OwnershipTransferPolicy.ActorRowAfter`: support ⇒ ถอด (เลือกถอด) / คง · บัญชีแอดมินที่ถือ Owner/SystemAdmin
   (สร้างให้ลูกค้าแต่ลืมติ๊ก) ⇒ ถอด (เลือกถอด) / **ลดเป็น support** (ไม่เลือก) · เจ้าของลูกค้ายกเจ้าของร่วม ⇒ คงเดิม
 - **แอดมินแพลตฟอร์มอ่านทีม/บทบาทของบริษัทที่ไม่ได้เป็นสมาชิก** ⇒ audit chain View (`CompanyMembershipGuard.PlatformReadAudit`)

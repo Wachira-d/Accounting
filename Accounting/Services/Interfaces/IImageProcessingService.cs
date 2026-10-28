@@ -36,8 +36,27 @@ public record ProcessedImageResult(
     string? ThumbRelativeUrl
 );
 
+/// <summary>ผลประมวลผลรูปแบบ<b>ไม่แตะ disk</b> — ผู้เรียกส่งไบต์ต่อให้ที่เก็บไฟล์กลาง (<c>IFileAttachmentService</c>) ·
+/// <c>Extension</c>/<c>ContentType</c> สรุปจาก<b>ไบต์จริง</b> (ไม่ใช่ที่ client บอก) · Width/Height = 0 เมื่อเป็นไฟล์ที่เซฟดิบ (PDF/decoder ล้ม)</summary>
+public record ProcessedImageBytes(
+    byte[] Content,
+    string Extension,
+    string ContentType,
+    long OriginalBytes,
+    int Width,
+    int Height);
+
 public interface IImageProcessingService
 {
+    /// <summary>เหมือน <see cref="ProcessAndSaveAsync"/> แต่คืน<b>ไบต์</b>แทนการเขียนไฟล์ — สำหรับเส้นที่เก็บผ่าน
+    /// <c>IFileAttachmentService</c> (สื่อ CMS · สลิปออเดอร์ — R-43 กฎเหล็ก #4 D "ไฟล์ห้ามเขียน local disk ตรง") ·
+    /// ชนิดไฟล์ตัดสินจากไบต์จริง · ไม่อยู่ใน allow-list ⇒ <c>UnsupportedUploadException</c> เหมือนกัน</summary>
+    Task<ProcessedImageBytes> ProcessToBytesAsync(
+        Stream input,
+        string contentType,
+        string originalFileName,
+        ImageProfile profile);
+
     /// <summary>
     /// Reads an uploaded form file, downsizes / recompresses per profile, and saves
     /// to <paramref name="absoluteDirectory"/>. Returns the final web-relative URL

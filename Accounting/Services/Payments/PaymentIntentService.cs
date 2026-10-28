@@ -50,7 +50,18 @@ public interface IPaymentIntentService
     Task<PaymentIntent> RecordExternalSuccessAsync(Guid companyId, PaymentSourceKind sourceKind,
         Guid sourceId, decimal amount, string providerRef, string confirmedBy,
         Guid? siteId = null, CancellationToken ct = default);
+
+    /// <summary>รอบ 205 ทีม W1 (R-01 · BOOKING_REVENUE_AUDIT G-2): <b>ส่งต่อใหม่</b> ให้ handler ของต้นทาง — เฉพาะรายการที่เงินเข้าแล้ว (Succeeded)
+    /// และประวัติบอกว่าต้นทางยังไม่ถูกบันทึก (<see cref="PaymentRedispatchPolicy"/>) · เรียก <c>DispatchSucceededAsync</c> ตัวเดิมตัวเดียว (ไม่มีสำเนา) ·
+    /// ไม่ค้าง = no-op พร้อมข้อความ (<c>NoOp = true</c>) · handler ล้ม = <c>Ok = false</c> + เหตุการณ์ ⚠️ ใหม่ (ล้มดัง 3 ที่)</summary>
+    Task<PaymentRedispatchResult> RedispatchAsync(Guid companyId, Guid intentId, string actor, CancellationToken ct = default);
+
+    /// <summary>สถานะ "ส่งต่อ" ของรายการ Succeeded ที่เคยมี ⚠️ (ตัวเดียวกับ <see cref="RedispatchAsync"/> — ประวัติ + หลักฐานฝั่งต้นทาง) · ไม่อยู่ใน dict = ไม่เคยมีปัญหา</summary>
+    Task<IReadOnlyDictionary<Guid, PaymentRedispatchState>> RedispatchStatesAsync(Guid companyId, IReadOnlyCollection<Guid> intentIds, CancellationToken ct = default);
 }
+
+/// <summary>ผล "ส่งต่อใหม่" — <paramref name="NoOp"/> = ไม่มีอะไรให้ทำ (ไม่ใช่ความล้มเหลว) · <paramref name="Ok"/> = handler ทำสำเร็จ</summary>
+public sealed record PaymentRedispatchResult(bool Ok, bool NoOp, PaymentRedispatchState State, string Message);
 
 /// <summary>
 /// **เครื่องสถานะของการจ่ายเงิน — ที่เดียวที่เขียน <c>PaymentIntent.Status</c>**
@@ -354,7 +365,9 @@ public class PaymentIntentService : IPaymentIntentService
     /// <summary>ส่งต่อให้ทางเข้าเดิมทำงาน — ถ้าไม่ทำขั้นนี้ ระบบจะกลายเป็น
     /// "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" ทันที (ลูกค้าจ่ายเงินสำเร็จ · แถวถูกต้อง ·
     /// แต่ออเดอร์ยังค้างชำระตลอดกาล)</summary>
-    private async Task DispatchSucceededAsync(PaymentIntent intent, CancellationToken ct)
+    /// <returns>true = handler ทำสำเร็จ (หรือไม่มีอะไรต้องทำ) · false = ไม่มี handler/handler ล้ม (เหตุการณ์ ⚠️ ถูกเขียนแล้ว)</returns>
+    /// <param name="redispatchActor">ไม่ null = ถูกเรียกจาก <see cref="RedispatchAsync"/> ⇒ สำเร็จแล้วเขียนเหตุการณ์ ✅ (การส่งต่อครั้งแรกไม่เขียน — ของเดิม)</param>
+    private async Task<bool> DispatchSucceededAsync(PaymentIntent intent, CancellationToken ct, string? redispatchActor = null)
     {
         var handler = _handlers.FirstOrDefault(h => h.SourceKind == intent.SourceKind);
         if (handler == null)
@@ -364,15 +377,26 @@ public class PaymentIntentService : IPaymentIntentService
                 "เงินเข้าแล้วแต่ยังไม่มีตัวจัดการของต้นทางชนิด {Kind} — intent {Intent} "
                 + "ยอด {Amount:N2} · ต้องบันทึกการรับเงินด้วยมือ",
                 intent.SourceKind, intent.Id, intent.Amount);
+            // คำนำหน้า = PaymentRedispatchPolicy.UnfulfilledNotePrefix (ตัวตัดสินปุ่ม "ส่งต่อใหม่" อ่านจากหมายเหตุนี้ — ห้ามเปลี่ยนข้อความแยกกัน)
             AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Succeeded,
                 PaymentIntentStatus.Succeeded,
-                note: "⚠️ เงินเข้าแล้วแต่ระบบยังไม่ได้บันทึกการรับเงินให้ต้นทางนี้อัตโนมัติ");
+                note: PaymentRedispatchPolicy.UnfulfilledNotePrefix + "ระบบยังไม่ได้บันทึกการรับเงินให้ต้นทางนี้อัตโนมัติ");
             await _db.SaveChangesAsync(ct);
             await NotifyUnfulfilledAsync(intent, "ระบบยังไม่ได้บันทึกการรับเงินให้ต้นทางนี้อัตโนมัติ", ct);
-            return;
+            return false;
         }
 
-        try { await handler.HandleSucceededAsync(intent, ct); }
+        try
+        {
+            await handler.HandleSucceededAsync(intent, ct);
+            if (redispatchActor != null)
+            {
+                AddEvent(intent, PaymentEventSource.Manual, PaymentIntentStatus.Succeeded, PaymentIntentStatus.Succeeded,
+                    note: $"{PaymentRedispatchPolicy.FulfilledNotePrefix} โดย {redispatchActor}");
+                await _db.SaveChangesAsync(ct);
+            }
+            return true;
+        }
         catch (Exception ex)
         {
             // ห้าม throw กลับไปหา webhook — provider จะ retry ไม่รู้จบ และการยืนยันว่า
@@ -382,13 +406,95 @@ public class PaymentIntentService : IPaymentIntentService
                 + "ต้นทาง {Source}", intent.SourceKind, intent.Id, intent.SourceId);
             AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Succeeded,
                 PaymentIntentStatus.Succeeded,
-                note: "⚠️ เงินเข้าแล้วแต่ดำเนินการต่อไม่สำเร็จ: " + ex.Message);
+                note: PaymentRedispatchPolicy.UnfulfilledNotePrefix + "ดำเนินการต่อไม่สำเร็จ: " + ex.Message);
             await _db.SaveChangesAsync(ct);
             // ที่พักติดธง + แจ้งเตือนของตัวเองแล้ว (FlagPaymentProblemAsync · คำตัดสินข้อ 127) — ไม่แจ้งซ้ำ · เว้นหาการจองไม่พบ (ไม่มีแถวให้ติดธง)
             if (intent.SourceKind != PaymentSourceKind.LodgingReservation
                 || (ex is BusinessRuleException bre && bre.RuleCode == GatewayPaymentRecord.SourceMissingRuleCode))
                 await NotifyUnfulfilledAsync(intent, ex.Message, ct);
+            return false;
         }
+    }
+
+    public async Task<PaymentRedispatchResult> RedispatchAsync(Guid companyId, Guid intentId, string actor, CancellationToken ct = default)
+    {
+        PaymentIntent intent;
+        PaymentRedispatchState state;
+        // ฝ่ายค้าน W1 ข้อ 3: ล็อกต่อ intent ตัวเดียวกับ ApplyChargeAsync แล้ว**ตรวจซ้ำหลังได้ล็อก** — สองคนกด "ส่งต่อใหม่" พร้อมกัน คนที่สองต้องเห็น attempt
+        // ของคนแรก (InProgress) ไม่ใช่รัน handler ซ้อน (SiteOrder: แถวรับเงิน Pending ซ้อน · Lodging: ConfirmAsync ซ้อน)
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct))
+        {
+            intent = await _db.PaymentIntents.FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct)
+                ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                new object[] { AdvisoryLockKey.For(intent.CompanyId, AdvisoryLockKey.PaymentIntent, intent.Id.ToString("N")) }, ct);
+            await _db.Entry(intent).ReloadAsync(ct);
+            state = await EvaluateRedispatchAsync(intent, ct);
+            if (state != PaymentRedispatchState.Pending)
+            {
+                await tx.CommitAsync(ct);
+                return new PaymentRedispatchResult(Ok: false, NoOp: true, state, PaymentRedispatchPolicy.NoOpMessage(state));
+            }
+
+            // ร่องรอยว่าใครกด (ก่อนผล · ใต้ล็อก ⇒ คำขอถัดไปเห็นเป็น InProgress) + audit chain — การสั่งให้ระบบบันทึกเงินซ้ำเป็นจุดที่ผู้สอบบัญชีถาม
+            AddEvent(intent, PaymentEventSource.Manual, intent.Status, intent.Status,
+                note: $"{PaymentRedispatchPolicy.AttemptNotePrefix} {actor}");
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                EntityType = nameof(PaymentIntent),
+                EntityId = intent.Id.ToString(),
+                Action = AuditAction.Update,
+                UserEmail = actor,
+                NewValues = JsonSerializer.Serialize(new { action = "gateway-redispatch", sourceKind = intent.SourceKind.ToString(), intent.SourceId, intent.Amount, actor }),
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
+
+        // ส่งต่อ**นอกธุรกรรม** เหมือน ApplyChargeAsync (handler เปิดธุรกรรมของตัวเอง) — ผลถูกเขียนเป็น ✅/⚠️ เสมอ ⇒ InProgress ปิดตัวเอง
+        var ok = await DispatchSucceededAsync(intent, ct, redispatchActor: actor);
+        return ok
+            ? new PaymentRedispatchResult(Ok: true, NoOp: false, PaymentRedispatchState.Fulfilled,
+                "ส่งต่อให้ต้นทางสำเร็จ — เอกสาร/การรับเงินถูกบันทึกแล้ว (ดูประวัติของรายการ)")
+            : new PaymentRedispatchResult(Ok: false, NoOp: false, PaymentRedispatchState.Pending,
+                "ส่งต่อใหม่แล้วแต่ต้นทางยังบันทึกไม่สำเร็จ — ดูเหตุผลในประวัติของรายการ แล้วแก้ที่ต้นทาง (สต็อก/ผังบัญชี/การจอง) ก่อนกดอีกครั้ง หรือบันทึกรับเงินด้วยมือ");
+    }
+
+    /// <summary>สถานะ "ส่งต่อ" ของ intent เดียว — ประวัติ + หลักฐานฝั่งต้นทาง (ตัวเดียวกับที่รายการใช้)</summary>
+    private async Task<PaymentRedispatchState> EvaluateRedispatchAsync(PaymentIntent intent, CancellationToken ct)
+    {
+        if (intent.Status != PaymentIntentStatus.Succeeded) return PaymentRedispatchState.NotSucceeded;
+        var events = await _db.PaymentIntentEvents.AsNoTracking()
+            .Where(e => e.CompanyId == intent.CompanyId && e.IntentId == intent.Id)
+            .OrderBy(e => e.At).ThenBy(e => e.Id)
+            .Select(e => new { e.At, e.Note })
+            .ToListAsync(ct);
+        var tuples = events.Select(e => (e.At, e.Note)).ToList();
+        var since = PaymentRedispatchPolicy.LastUnfulfilledAt(tuples);
+        var sourceRecorded = since != null
+            && PaymentRedispatchPolicy.SourceRecorded(await GatewaySourceEvidence.RecordedPaymentsAsync(_db, intent, ct),
+                intent.Amount, GatewaySourceEvidence.GatewayReferences(intent), since);
+        return PaymentRedispatchPolicy.Evaluate(intent.Status, tuples, sourceRecorded, DateTime.UtcNow);
+    }
+
+    public async Task<IReadOnlyDictionary<Guid, PaymentRedispatchState>> RedispatchStatesAsync(Guid companyId, IReadOnlyCollection<Guid> intentIds,
+        CancellationToken ct = default)
+    {
+        var result = new Dictionary<Guid, PaymentRedispatchState>();
+        if (intentIds.Count == 0) return result;
+        // คัดเฉพาะ intent ที่มี ⚠️ (ส่วนใหญ่ไม่มี) แล้วค่อยโหลดหลักฐานต้นทางทีละราย — รายการมีไม่กี่แถว
+        var warned = await _db.PaymentIntentEvents.AsNoTracking()
+            .Where(e => e.CompanyId == companyId && intentIds.Contains(e.IntentId) && e.Note != null
+                && e.Note.StartsWith(PaymentRedispatchPolicy.UnfulfilledNotePrefix))
+            .Select(e => e.IntentId).Distinct().ToListAsync(ct);
+        if (warned.Count == 0) return result;
+        var intents = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.CompanyId == companyId && warned.Contains(i.Id) && i.Status == PaymentIntentStatus.Succeeded)
+            .ToListAsync(ct);
+        foreach (var intent in intents)
+            result[intent.Id] = await EvaluateRedispatchAsync(intent, ct);
+        return result;
     }
 
     /// <summary>รอบ 205 ทีม E (BOOKING_REVENUE_AUDIT G-1): เงินเข้าแล้วแต่ต้นทางไม่ถูกบันทึก (ไม่มีใบ/JE) — เดิมดังแค่ log + ประวัติของรายการชำระ

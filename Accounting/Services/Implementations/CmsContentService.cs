@@ -19,14 +19,18 @@ public class CmsContentService : ICmsContentService
     private readonly ISubscriptionService _subscription;
     /// <summary>ตัวนับโควตาหน้าเว็บ — ด่านเดียวกับที่หน้าจอใช้แสดงตัวเลข</summary>
     private readonly ICmsQuotaService _quota;
+    /// <summary>ที่เก็บไฟล์กลาง (R-43) — สื่อที่อัปโหลดใหม่ทุกไฟล์ไปที่นี่ · ไม่มี DI ⇒ อัปโหลดสื่อไม่ได้ (ล้มดัง ไม่ตกไปเขียน disk เอง)</summary>
+    private readonly IFileAttachmentService? _files;
 
-    public CmsContentService(AccountingDbContext db, ILogger<CmsContentService> logger, ISubscriptionService subscription, ICmsQuotaService quota, IImageProcessingService? images = null)
+    public CmsContentService(AccountingDbContext db, ILogger<CmsContentService> logger, ISubscriptionService subscription, ICmsQuotaService quota,
+        IImageProcessingService? images = null, IFileAttachmentService? files = null)
     {
         _db = db;
         _logger = logger;
         _images = images;
         _subscription = subscription;
         _quota = quota;
+        _files = files;
     }
 
     // ===== Pages =====
@@ -547,55 +551,51 @@ public class CmsContentService : ICmsContentService
         // เว็บต้องเป็นของบริษัทนี้ก่อนเขียนไฟล์ใด ๆ (เดิมเช็คทีหลังแค่ตอนบวกตัวนับ ⇒ siteId แปลกปลอมได้ไฟล์ค้างในโฟลเดอร์)
         if (!await _db.Sites.AsNoTracking().AnyAsync(s => s.Id == siteId && s.CompanyId == companyId))
             throw new KeyNotFoundException("Site not found.");
-        var basePath = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "cms", companyId.ToString(), siteId.ToString());
-        Directory.CreateDirectory(basePath);
 
         // ═══ ทุกไฟล์ต้องผ่านตัวตรวจชนิดจากไบต์จริง (F-03) ═══
         // เดิม: ชนิดที่ IsProcessableImage ไม่รู้จัก ถูกเซฟดิบ **ด้วยนามสกุลจากชื่อ
-        // ไฟล์ของ client** ลงโฟลเดอร์นี้ ซึ่งอยู่ใน publicUploadPrefixes ⇒ อัปโหลด
-        // x.html / x.js / x.svg แล้วได้ URL origin เดียวกับแอป = stored XSS
-        // ตอนนี้ทุกเส้นเดินผ่าน ProcessAndSaveAsync ซึ่ง sniff ไบต์ + ตั้งนามสกุลเอง
+        // ไฟล์ของ client** ลงโฟลเดอร์สาธารณะ ⇒ x.html / x.js / x.svg = stored XSS
+        // ตอนนี้ทุกเส้นเดินผ่าน ProcessToBytesAsync ซึ่ง sniff ไบต์ + ตั้งนามสกุลเอง
         // และ throw UnsupportedUploadException (→ HTTP 400) เมื่อไม่อยู่ใน allow-list
-        if (_images == null)
+        if (_images == null || _files == null)
             throw new Accounting.Helpers.UnsupportedUploadException(
                 "ระบบประมวลผลไฟล์ยังไม่พร้อม — ลองใหม่อีกครั้ง");
 
-        var webBase = $"/uploads/cms/{companyId}/{siteId}";
-        var processed = await _images.ProcessAndSaveAsync(
-            fileStream, contentType, fileName, basePath, webBase, ImageProfile.Banner);
-        var filePath = processed.AbsolutePath;
-        var uniqueName = Path.GetFileName(filePath);
+        // R-43 (กฎเหล็ก #4 D): ไม่เขียน disk ตรง — ประมวลผลในหน่วยความจำแล้วส่งเข้าที่เก็บไฟล์กลาง
+        // (FileAttachment ชนิด SiteMedia ผูกกับเว็บ) · URL สาธารณะผ่าน endpoint storefront (Helpers/CmsMediaUrl)
+        var processed = await _images.ProcessToBytesAsync(fileStream, contentType, fileName, ImageProfile.Banner);
+
+        // License-aware storage check: accounting docs + every CMS site under
+        // the same License share one storage pool. ตรวจ **ก่อน** เขียนไฟล์ (เดิมเขียนแล้วค่อยลบเมื่อเกิน)
+        if (!await _subscription.CanFitStorageAsync(companyId, processed.Content.LongLength))
+            throw new InvalidOperationException("Storage quota exceeded — โปรดเคลียร์ไฟล์เก่าหรืออัปเกรด License");
+
+        // ชื่อไฟล์จากเครื่องผู้ใช้ไม่ใช้เป็นชื่อเก็บ (path/อักขระพิเศษ) — ที่เก็บกลางตั้งชื่อ GUID เอง · นามสกุลจากไบต์จริง
+        var storedName = $"media{processed.Extension}";
+        var saved = Guid.TryParse(userId, out var uploaderId)
+            ? await _files.UploadBytesAsync(companyId, Accounting.Helpers.CmsMediaUrl.SiteMediaEntityType, siteId,
+                storedName, processed.ContentType, processed.Content, uploaderId)
+            : await _files.UploadAnonymousBytesAsync(companyId, Accounting.Helpers.CmsMediaUrl.SiteMediaEntityType, siteId,
+                storedName, processed.ContentType, processed.Content);
 
         var media = new SiteMedia
         {
             CompanyId = companyId,
             SiteId = siteId,
-            FileName = uniqueName,
+            FileName = saved.FileName,
             OriginalFileName = fileName,
-            // MIME ที่บันทึกต้องมาจาก **ไฟล์ที่เซฟจริง** ไม่ใช่ที่ client บอก —
-            // ไม่งั้นระบบยังถือค่าที่โกหกไว้ใช้ต่อ (เช่นตอนตอบ header)
-            ContentType = Accounting.Helpers.UploadFileType.ContentTypeForExtension(
-                Path.GetExtension(uniqueName)),
-            FileSize = new FileInfo(filePath).Length,
-            StoragePath = filePath,
-            MediaType = GetMediaType(contentType),
+            // MIME ที่บันทึกต้องมาจาก **ไฟล์ที่เซฟจริง** ไม่ใช่ที่ client บอก
+            ContentType = processed.ContentType,
+            FileSize = processed.Content.LongLength,
+            StoragePath = saved.StoragePath,
+            AttachmentId = saved.Id,
+            Width = processed.Width > 0 ? processed.Width : null,
+            Height = processed.Height > 0 ? processed.Height : null,
+            MediaType = GetMediaType(processed.ContentType),
             LazyLoad = true,
             UploadedByUserId = userId,
             CreatedBy = userId
         };
-
-        // License-aware storage check: accounting docs + every CMS site under
-        // the same License share one storage pool. The check uses the
-        // License's MaxStorageBytes when this company is attached, otherwise
-        // the per-company Subscription limit. Without this every per-site
-        // cap (Site.MaxStorageBytes) created a parallel pool that ignored
-        // the License the customer is paying for.
-        if (!await _subscription.CanFitStorageAsync(companyId, media.FileSize))
-        {
-            File.Delete(filePath);
-            throw new InvalidOperationException("Storage quota exceeded — โปรดเคลียร์ไฟล์เก่าหรืออัปเกรด License");
-        }
-
         _db.SiteMediaItems.Add(media);
 
         // Per-site counter still maintained for the CMS dashboard / media
@@ -625,12 +625,14 @@ public class CmsContentService : ICmsContentService
             {
                 Id = m.Id, FileName = m.FileName, OriginalFileName = m.OriginalFileName,
                 ContentType = m.ContentType, FileSize = m.FileSize, StoragePath = m.StoragePath,
+                AttachmentId = m.AttachmentId,
                 MediaType = m.MediaType, WebPPath = m.WebPPath, ThumbnailPath = m.ThumbnailPath,
                 Width = m.Width, Height = m.Height, AltText = m.AltText, AltTextEn = m.AltTextEn,
                 Caption = m.Caption, FolderPath = m.FolderPath, Tags = m.Tags, CreatedAt = m.CreatedAt
             })
             .ToListAsync();
-        foreach (var it in items) it.PublicUrl = CmsMediaPublicUrl(companyId, siteId, it.FileName);
+        // URL ตัวเดียว (Helpers/CmsMediaUrl): แถวใหม่ → endpoint storefront · แถวเดิม (AttachmentId null) → /uploads/cms เดิม
+        foreach (var it in items) it.PublicUrl = Accounting.Helpers.CmsMediaUrl.PublicUrl(companyId, siteId, it.FileName, it.AttachmentId);
 
         return new PagedResponse<MediaResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
@@ -651,17 +653,45 @@ public class CmsContentService : ICmsContentService
         return MapMediaResponse(media);
     }
 
+    public async Task<CmsMediaFile?> ReadSiteMediaAsync(Guid companyId, Guid siteId, Guid attachmentId, CancellationToken ct = default)
+    {
+        if (_files == null) return null;
+        // tenant check 3 ชั้น: บริษัท · เว็บเป็นของบริษัท · ไฟล์เป็นสื่อ (SiteMedia) ของเว็บนี้ — ไฟล์แนบชนิดอื่น (สลิป/เอกสาร) ตอบ null แม้ id ถูก
+        var siteOk = await _db.Sites.AsNoTracking().AnyAsync(s => s.Id == siteId && s.CompanyId == companyId, ct);
+        if (!siteOk) return null;
+        var att = await _db.FileAttachments.AsNoTracking()
+            .Where(f => f.Id == attachmentId && f.CompanyId == companyId
+                && f.EntityType == Accounting.Helpers.CmsMediaUrl.SiteMediaEntityType && f.EntityId == siteId)
+            .Select(f => new { f.ContentType, f.OriginalFileName })
+            .FirstOrDefaultAsync(ct);
+        if (att == null) return null;
+        var bytes = await _files.ReadBytesAsync(companyId, attachmentId, ct);
+        if (bytes == null) return null;
+        var contentType = string.IsNullOrWhiteSpace(att.ContentType) ? "application/octet-stream" : att.ContentType;
+        return new CmsMediaFile(bytes, contentType, att.OriginalFileName);
+    }
+
     public async Task<bool> DeleteMediaAsync(Guid companyId, Guid siteId, Guid mediaId)
     {
         var media = await _db.SiteMediaItems.FirstOrDefaultAsync(m => m.Id == mediaId && m.SiteId == siteId && m.CompanyId == companyId);
         if (media == null) return false;
 
-        if (File.Exists(media.StoragePath))
-            File.Delete(media.StoragePath);
-        if (!string.IsNullOrEmpty(media.WebPPath) && File.Exists(media.WebPPath))
-            File.Delete(media.WebPPath);
-        if (!string.IsNullOrEmpty(media.ThumbnailPath) && File.Exists(media.ThumbnailPath))
-            File.Delete(media.ThumbnailPath);
+        if (media.AttachmentId is Guid attId && _files != null)
+        {
+            // ไฟล์ใหม่ (R-43) — ลบผ่านที่เก็บกลางตัวเดียว (ไม่พบแถวไฟล์แนบ = ถูกลบไปแล้ว ⇒ ลบแถวสื่อต่อได้)
+            try { await _files.DeleteAsync(companyId, attId); }
+            catch (KeyNotFoundException) { /* แถวไฟล์แนบหายไปก่อน — ไม่ขวางการลบแถวสื่อ */ }
+        }
+        else
+        {
+            // ไฟล์เดิมที่เขียน disk ตรง (ก่อน R-43) — ยังต้องลบที่ตำแหน่งเดิม (ไม่ย้ายไฟล์เงียบ ๆ · F2 #9)
+            if (File.Exists(media.StoragePath))
+                File.Delete(media.StoragePath);
+            if (!string.IsNullOrEmpty(media.WebPPath) && File.Exists(media.WebPPath))
+                File.Delete(media.WebPPath);
+            if (!string.IsNullOrEmpty(media.ThumbnailPath) && File.Exists(media.ThumbnailPath))
+                File.Delete(media.ThumbnailPath);
+        }
 
         var site = await _db.Sites.FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId);
         if (site != null) site.CurrentStorageUsed = Math.Max(0, site.CurrentStorageUsed - media.FileSize);
@@ -788,7 +818,8 @@ public class CmsContentService : ICmsContentService
             ? $"https://{site.CustomDomain}"
             : $"https://{site.Subdomain}.nextacc.net";
 
-        return $$"""{"@context":"https://schema.org","@type":"WebPage","name":"{{page?.Title ?? site.Name}}","url":"{{baseUrl}}/{{page?.Slug ?? ""}}"}""";
+        // ประกอบผ่าน JsonSerializer (Helpers/CmsSeoHead) — เดิมต่อสตริงดิบ ⇒ ชื่อหน้าที่มี " ทำ JSON พัง/ฉีด </script> ได้
+        return Accounting.Helpers.CmsSeoHead.WebPageJsonLd(page?.Title ?? site.Name, $"{baseUrl}/{page?.Slug ?? ""}", page?.MetaDescription, site.Name);
     }
 
     // ===== Helpers =====
@@ -824,15 +855,11 @@ public class CmsContentService : ICmsContentService
         _ => SiteMediaType.Document
     };
 
-    /// <summary>URL สาธารณะของไฟล์คลังสื่อ — ต้องตรงกับ <c>webBase</c> ที่ UploadMediaAsync ส่งให้ ProcessAndSaveAsync
-    /// (โฟลเดอร์ <c>uploads/cms/{companyId}/{siteId}</c> · เสิร์ฟที่ /uploads ผ่าน allow-list "/uploads/cms" ใน Program.cs)</summary>
-    private static string CmsMediaPublicUrl(Guid companyId, Guid siteId, string fileName) =>
-        $"/uploads/cms/{companyId}/{siteId}/{Uri.EscapeDataString(fileName ?? "")}";
-
     private static MediaResponse MapMediaResponse(SiteMedia m) => new()
     {
         Id = m.Id, FileName = m.FileName, OriginalFileName = m.OriginalFileName,
-        PublicUrl = CmsMediaPublicUrl(m.CompanyId, m.SiteId, m.FileName),
+        PublicUrl = Accounting.Helpers.CmsMediaUrl.PublicUrl(m.CompanyId, m.SiteId, m.FileName, m.AttachmentId),
+        AttachmentId = m.AttachmentId,
         ContentType = m.ContentType, FileSize = m.FileSize, StoragePath = m.StoragePath,
         MediaType = m.MediaType, WebPPath = m.WebPPath, ThumbnailPath = m.ThumbnailPath,
         Width = m.Width, Height = m.Height, AltText = m.AltText, AltTextEn = m.AltTextEn,

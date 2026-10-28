@@ -55,6 +55,11 @@
             <div class="form-group"><label class="form-label">URL รูปภาพ</label><input type="text" class="form-input" id="fImageUrl"></div>
           </div>
           <div class="form-group"><label class="form-label" data-i18n="common.description">คำอธิบาย</label><textarea class="form-textarea" id="fDesc" rows="2"></textarea></div>
+          <!-- รอบ 205 W6 (R-26): ผังรายได้ของแพ็กเกจมีผลจริง — ตรึงลงบรรทัดบิลตอนเพิ่มรายการ (บิลเดิม/JE ที่ปิดแล้วไม่เปลี่ยน) -->
+          <div class="form-group">
+            <label class="form-label">บัญชีรายได้ <span style="font-size:11px;color:var(--gray-500)">(ว่าง = รายได้จากการขาย 41000 · มีผลกับบิลใหม่ที่เพิ่มรายการหลังบันทึกเท่านั้น — บิลเดิมไม่เปลี่ยน)</span></label>
+            <select class="form-select" id="fRevenueAccount"><option value="">-- รายได้จากการขาย (ค่าเริ่มต้น) --</option></select>
+          </div>
 
           <!-- Components Section (edit mode only) -->
           <div id="componentsSection" style="display:none; margin-top:16px; border-top:1px solid var(--gray-200); padding-top:16px">
@@ -179,9 +184,25 @@
         document.getElementById('fDuration').value = '';
         document.getElementById('fSortOrder').value = '0';
         document.getElementById('fVatIncl').checked = true;
+        this._loadRevenueAccounts('');
         document.getElementById('componentsSection').style.display = 'none';
         this.hideComponentForm();
         Layout.openModal('formModal');
+      },
+      /** R-26: รายการผังหมวดรายได้ (ชุดเดียวกับรายการพิเศษ · server กรองบัญชีคุม) — โหลดไม่ได้ = คงค่าที่เลือกไว้ ไม่ล้างเงียบ ๆ */
+      async _loadRevenueAccounts(selected) {
+        const sel = document.getElementById('fRevenueAccount');
+        const api = Layout.api(); if (!sel || !api) return;
+        let accounts = this._revenueAccounts;
+        if (!accounts) {
+          try { accounts = (await api.getPosCustomItemOptions()).data?.revenueAccounts || []; this._revenueAccounts = accounts; }
+          catch (e) { accounts = []; }
+        }
+        const known = accounts.some(a => a.id === selected);
+        sel.innerHTML = '<option value="">-- รายได้จากการขาย (ค่าเริ่มต้น) --</option>'
+          + accounts.map(a => `<option value="${a.id}">${Layout.esc(a.code)} ${Layout.esc(a.name)}</option>`).join('')
+          + (selected && !known ? `<option value="${Layout.esc(selected)}">(ผังที่ตั้งไว้ — โหลดรายชื่อไม่สำเร็จ)</option>` : '');
+        sel.value = selected || '';
       },
       async openEdit(id) {
         const api = Layout.api(); if (!api) return;
@@ -200,6 +221,7 @@
           document.getElementById('fDuration').value = p.durationMinutes || '';
           document.getElementById('fSortOrder').value = p.sortOrder || 0;
           document.getElementById('fVatIncl').checked = p.isVatIncluded !== false;
+          this._loadRevenueAccounts(p.revenueAccountId || '');
           document.getElementById('fImageUrl').value = p.imageUrl || '';
           document.getElementById('fDesc').value = p.description || '';
           document.getElementById('componentsSection').style.display = '';
@@ -250,6 +272,8 @@
           costPrice: parseFloat(document.getElementById('fCostPrice').value) || 0,
           durationMinutes: parseInt(duration),
           isVatIncluded: document.getElementById('fVatIncl').checked,
+          // R-26: ว่าง = ส่ง null (server เก็บเฉพาะเมื่อมีค่า — ล้างกลับเป็นค่าเริ่มต้นยังไม่รองรับใน UpdatePackage เดิม ⇒ บอกตรง ๆ ใต้ช่อง)
+          revenueAccountId: document.getElementById('fRevenueAccount').value || null,
           imageUrl: document.getElementById('fImageUrl').value || null,
           sortOrder: parseInt(document.getElementById('fSortOrder').value) || 0,
         };

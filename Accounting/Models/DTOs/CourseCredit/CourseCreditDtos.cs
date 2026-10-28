@@ -48,7 +48,8 @@ public record SellCreditPassRequest(
     Guid? ClientRequestId = null);
 
 /// <summary>เปิดบัตรจากเอกสารขายที่ออกแล้ว (ช่องทางอื่น / ทางกู้เมื่อเปิดบัตรหลังออกใบไม่สำเร็จ) — ใบต้องมีบรรทัดลงผังหนี้สินรายได้รับล่วงหน้า</summary>
-public record ActivateCreditPassRequest(Guid PackageId, Guid DocumentId, string? Note);
+/// <param name="Channel">ช่องทางขายที่ประทับบนบัตร · null = เปิดจากใบเดิม (ExistingDocument) · ร้านออนไลน์ส่ง Online (R-41 B2)</param>
+public record ActivateCreditPassRequest(Guid PackageId, Guid DocumentId, string? Note, CreditSaleChannel? Channel = null);
 
 public record CreditPassResponse(
     Guid Id, string PassNumber, Guid PackageId, string PackageName,
@@ -71,6 +72,15 @@ public record CreditPassDetailResponse(
     CreditPassResponse Pass,
     List<CreditLedgerEntryResponse> Ledger,
     List<CreditBookingResponse> Bookings);
+
+// ===== คืนเงินจากบัตร (R-38 · รอบ 205 W6) =====
+/// <summary>ระบุอย่างใดอย่างหนึ่ง: ยอดบาทสุทธิก่อน VAT หรือจำนวนเครดิตที่คืน (ระบบแปลงเป็นบาทด้วยราคาต่อเครดิต · คืนเครดิตที่เหลือทั้งหมด = ยอดส่วนที่เหลือ ⇒ ปิดบัตร)</summary>
+public record DraftCreditRefundRequest(decimal? AmountNet, decimal? Credits, string? Note);
+
+public record CreditRefundDraftResponse(Guid DocumentId, string DocumentNumber, decimal AmountNet, decimal CreditsToRemove,
+    decimal CreditsRemaining, bool ClosesPass, string Message);
+
+public record CreditRefundPreviewResponse(decimal Deferred, decimal PricePerCredit, decimal MaxPartialCredits, decimal MaxPartialAmount, bool HasReservations);
 
 public record CreditSummaryResponse(
     int ActivePasses, decimal TotalDeferredBalance, int ExpiringWithin7Days, int PendingExpiry);

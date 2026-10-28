@@ -125,6 +125,7 @@
                 <div class="text-xs" style="color:var(--gray-500);margin-top:4px">เพื่อความปลอดภัย ระบบเก็บ Key แบบเข้ารหัส จึงแสดงเต็มครั้งเดียวตอนสร้าง — หากไม่ได้บันทึกไว้ กด "สร้างใหม่" เพื่อรับ Key ใหม่</div>
               </span>
               <span class="info-label">Webhook URL</span><span class="info-value" id="detailWebhook" style="word-break:break-all">-</span>
+              <span class="info-label">รูปแบบเลขอ้างอิงการจอง</span><span class="info-value" id="detailBookingRefPatterns" style="word-break:break-all;font-family:monospace;font-size:12px">-</span>
               <span class="info-label">สร้างเมื่อ</span><span class="info-value" id="detailCreated">-</span>
             </div>
           </div>
@@ -230,6 +231,11 @@
             <div class="form-group"><label class="form-label">Webhook URL</label><input type="text" id="fWebhook" class="form-input" placeholder="https://your-system/webhook"></div>
           </div>
           <div class="form-group"><label><input type="checkbox" id="fWebhookEnabled"> เปิดใช้งาน Webhook</label></div>
+          <div class="form-group">
+            <label class="form-label">รูปแบบเลขอ้างอิงการจองเพิ่มเติม (regex · บรรทัดละ 1 รูป)</label>
+            <textarea id="fBookingRefPatterns" class="form-input" rows="3" style="font-family:monospace;font-size:12px" placeholder="BK-(?&lt;key&gt;\d{4,})"></textarea>
+            <div class="text-xs" id="fBookingRefHint" style="color:var(--gray-500);margin-top:4px"></div>
+          </div>
           <div class="form-group">
             <label class="form-label">สิทธิ์ของคีย์</label>
             <div style="display:flex;gap:16px;flex-wrap:wrap">
@@ -405,6 +411,11 @@ const Page = {
     document.getElementById('detailUrl').textContent = full?.baseUrl || '-';
     document.getElementById('detailKeyPrefix').textContent = (full?.apiKeyPrefix || '???') + '...';
     document.getElementById('detailWebhook').textContent = full?.webhookUrl || '(ไม่ได้ตั้งค่า)';
+    // R-56: รูปที่ด่านมัดจำรู้จักสำหรับคีย์นี้ = ค่าเริ่มต้น (server ส่งมา) + ที่ตั้งเพิ่ม — หน้าแสดงอย่างเดียว ไม่มีสำเนากติกา
+    const extraPatterns = Array.isArray(full?.bookingRefPatterns) ? full.bookingRefPatterns : [];
+    document.getElementById('detailBookingRefPatterns').textContent = extraPatterns.length
+      ? extraPatterns.join('  ·  ') + '  (+ ค่าเริ่มต้น)'
+      : '(ค่าเริ่มต้นเท่านั้น: ' + ((full?.defaultBookingRefPatterns) || []).join('  ·  ') + ')';
     document.getElementById('detailCreated').textContent = full ? new Date(full.createdAt).toLocaleString('th-TH') : '-';
     this.renderScopes(full);
     this.loadUserMappings(id);
@@ -529,10 +540,11 @@ const Page = {
   openCreateModal() {
     this.editMode = false;
     document.getElementById('intModalTitle').textContent = 'เพิ่มระบบภายนอก';
-    ['fName','fVersion','fUrl','fWebhook'].forEach(id => document.getElementById(id).value = '');
+    ['fName','fVersion','fUrl','fWebhook','fBookingRefPatterns'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('fType').value = 'POS';
     document.getElementById('fRate').value = '60';
     document.getElementById('fWebhookEnabled').checked = false;
+    this.renderBookingRefHint(null);
     // คีย์ใหม่ = อ่านอย่างเดียว (ห้ามค้างค่าของใบก่อน)
     document.getElementById('fCanRead').checked = true;
     document.getElementById('fCanWrite').checked = false;
@@ -555,6 +567,9 @@ const Page = {
     document.getElementById('fRate').value = i.rateLimitPerMinute || 60;
     document.getElementById('fWebhook').value = i.webhookUrl || '';
     document.getElementById('fWebhookEnabled').checked = i.webhookEnabled || false;
+    // R-56: hydrate รูปแบบที่เก็บ (echo กลับ — เปิดแก้แล้วบันทึกต้องไม่หายเงียบ)
+    document.getElementById('fBookingRefPatterns').value = (Array.isArray(i.bookingRefPatterns) ? i.bookingRefPatterns : []).join('\n');
+    this.renderBookingRefHint(i);
     // hydrate ด้วยสิทธิ์ที่ "ใช้ได้ตอนนี้" — คีย์รุ่นเก่าในช่วงผ่อนผันจึงเห็นครบสามช่อง ไม่ใช่ค่าหลังหมดช่วง
     document.getElementById('fCanRead').checked = !!i.effectiveCanRead;
     document.getElementById('fCanWrite').checked = !!i.effectiveCanWrite;
@@ -568,6 +583,16 @@ const Page = {
 
   closeModal(id) { document.getElementById(id).classList.remove('active'); },
 
+  // R-56: คำอธิบายใต้ช่อง regex — รูปเริ่มต้นมาจาก server (ไม่มีสำเนาในหน้า) · ไม่มีข้อมูล ⇒ บอกแค่กติกากลุ่ม key
+  renderBookingRefHint(i) {
+    const defaults = (i && Array.isArray(i.defaultBookingRefPatterns) && i.defaultBookingRefPatterns.length)
+      ? i.defaultBookingRefPatterns
+      : (this.fullIntegrations.find(x => Array.isArray(x.defaultBookingRefPatterns))?.defaultBookingRefPatterns || []);
+    document.getElementById('fBookingRefHint').textContent =
+      'ด่านมัดจำของการจองรู้จักค่าเริ่มต้นเสมอ' + (defaults.length ? ' (' + defaults.join('  ·  ') + ')' : '')
+      + ' — เพิ่มเฉพาะเมื่อระบบนี้ใช้เลขอ้างอิงรูปอื่น · ทุกรูปต้องมีกลุ่ม (?<key>…) ครอบเลขการจอง · regex ผิดระบบจะปฏิเสธและไม่บันทึก · เว้นว่าง = ค่าเริ่มต้นล้วน';
+  },
+
   async saveIntegration() {
     const data = {
       systemName: document.getElementById('fName').value,
@@ -576,7 +601,9 @@ const Page = {
       baseUrl: document.getElementById('fUrl').value || null,
       rateLimitPerMinute: parseInt(document.getElementById('fRate').value) || 60,
       webhookUrl: document.getElementById('fWebhook').value || null,
-      webhookEnabled: document.getElementById('fWebhookEnabled').checked
+      webhookEnabled: document.getElementById('fWebhookEnabled').checked,
+      // R-56: ส่งเสมอ (ว่าง = [] = ล้าง/ค่าเริ่มต้นล้วน) — server ตรวจ regex แล้วตอบ 400 พร้อมข้อความถ้าผิด
+      bookingRefPatterns: document.getElementById('fBookingRefPatterns').value.split('\n').map(x => x.trim()).filter(Boolean)
     };
     // สิทธิ์: ตอนสร้างส่งเสมอ · ตอนแก้ส่งเฉพาะเมื่อผู้ใช้แตะช่อง (ไม่งั้นแก้ชื่อคีย์รุ่นเก่า = เสียสิทธิ์เงียบ ๆ)
     const sendScopes = !this.editMode || this.scopeTouched;

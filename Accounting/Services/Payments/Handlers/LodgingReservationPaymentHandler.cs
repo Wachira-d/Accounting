@@ -63,6 +63,15 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
             return;
         }
 
+        // ฝ่ายค้าน W1 ข้อ 2 (รอบ 205 ทีม W1): พนักงานบันทึกรับเงินยอดนี้ที่การจองเองแล้ว (หลังเงินเข้า · เลขอ้างอิงไม่ใช่ของ gateway) ⇒ ส่งต่อใหม่ต้องไม่รับซ้ำ
+        // ตัวตัดสินเดียวกับปุ่ม "ส่งต่อใหม่" (GatewaySourceEvidence → PaymentRedispatchPolicy.SourceRecorded)
+        if (await GatewaySourceEvidence.AlreadyRecordedBySomeoneElseAsync(_db, intent, ct))
+        {
+            _logger.LogInformation("การจอง {Res} มีบันทึกรับเงินยอด {Amount:N2} หลังเงินเข้าอยู่แล้ว (บันทึกมือ) — ข้าม intent {Intent}",
+                r.ReservationNumber, intent.Amount, intent.Id);
+            return;
+        }
+
         var moneyIn = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
 
         try

@@ -90,11 +90,49 @@ public class CmsLeadService
             .Select(l => new LeadListResponse(
                 l.Id, l.LeadNumber, l.LeadType, l.Status,
                 l.CustomerName, l.CustomerEmail, l.CustomerPhone,
-                l.SourceSlug, l.CreatedAt))
+                l.SourceSlug, l.CreatedAt, null, null))   // CS0854: expression tree ห้ามใช้ค่าตั้งต้นของ optional param — ส่งครบ (หน้ารายเว็บ = ไม่มีชื่อเว็บ)
             .ToListAsync();
 
         return new PagedResponse<LeadListResponse>(items, total, page, pageSize,
             (int)Math.Ceiling(total / (double)pageSize));
+    }
+
+    /// <summary>R-45 มุมมองทุกไซต์ — lead ของเว็บใน <paramref name="siteIds"/> (ผู้เรียกกรองสิทธิ์ด้วย Helpers/CmsSiteScope มาแล้ว · ว่าง = ไม่มีแถว) · แบ่งหน้าจริง</summary>
+    public async Task<PagedResponse<LeadListResponse>> ListAcrossSitesAsync(
+        Guid companyId, IReadOnlyCollection<Guid> siteIds,
+        LeadType? type, LeadStatus? status, string? search, int page, int pageSize)
+    {
+        page = Accounting.Helpers.CmsSiteScope.ClampPage(page);
+        pageSize = Accounting.Helpers.CmsSiteScope.ClampPageSize(pageSize);
+        if (siteIds.Count == 0) return new PagedResponse<LeadListResponse>(new List<LeadListResponse>(), 0, page, pageSize, 0);
+        var ids = siteIds.ToList();
+        var q = _db.Set<CmsLead>().AsNoTracking()
+            .Where(l => l.CompanyId == companyId && ids.Contains(l.SiteId) && !l.IsDeleted);
+        if (type.HasValue) q = q.Where(l => l.LeadType == type);
+        if (status.HasValue) q = q.Where(l => l.Status == status);
+        if (!string.IsNullOrWhiteSpace(search))
+        {
+            var s = $"%{search}%";
+            q = q.Where(l =>
+                EF.Functions.ILike(l.LeadNumber, s)
+                || (l.CustomerName != null && EF.Functions.ILike(l.CustomerName, s))
+                || (l.CustomerEmail != null && EF.Functions.ILike(l.CustomerEmail, s))
+                || (l.CustomerPhone != null && EF.Functions.ILike(l.CustomerPhone, s))
+                || (l.CustomerCompany != null && EF.Functions.ILike(l.CustomerCompany, s)));
+        }
+        var total = await q.CountAsync();
+        var rows = await q
+            .OrderByDescending(l => l.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .Select(l => new { l.Id, l.LeadNumber, l.LeadType, l.Status, l.CustomerName, l.CustomerEmail, l.CustomerPhone, l.SourceSlug, l.CreatedAt, l.SiteId })
+            .ToListAsync();
+        var names = await _db.Sites.AsNoTracking().Where(x => x.CompanyId == companyId && ids.Contains(x.Id))
+            .Select(x => new { x.Id, x.Name }).ToDictionaryAsync(x => x.Id, x => x.Name);
+        var items = rows.Select(l => new LeadListResponse(
+            l.Id, l.LeadNumber, l.LeadType, l.Status, l.CustomerName, l.CustomerEmail, l.CustomerPhone, l.SourceSlug, l.CreatedAt,
+            l.SiteId, names.GetValueOrDefault(l.SiteId))).ToList();
+        return new PagedResponse<LeadListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
     public async Task<LeadDetailResponse?> GetAsync(Guid companyId, Guid siteId, Guid leadId)

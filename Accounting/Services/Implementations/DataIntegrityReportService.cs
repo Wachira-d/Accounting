@@ -39,7 +39,14 @@ public sealed record DataIntegrityReport(
     // ทีม S 2026-10-26 (การจอง #149433) — JE ที่ตัดมัดจำ/รับล่วงหน้าของการจองเกินยอดคงเหลือ (มัดจำถูกยกเลิก/กลับรายการแล้ว) · อ่านอย่างเดียว · ลิงก์ไปกลับรายการ
     List<DataIntegritySuspect>? BookingDepositOverdrawnJournals = null,
     // ทีม S 2026-10-26 ข้อ 3 — JE จาก API ที่มีภาษีขาย (21911) โดยไม่มีใบกำกับภาษีในระบบรองรับ · อ่านอย่างเดียว
-    List<DataIntegritySuspect>? ApiJournalOutputVatWithoutInvoice = null)
+    List<DataIntegritySuspect>? ApiJournalOutputVatWithoutInvoice = null,
+    // ทีม V 2026-10-26 (V-DN-01 · คำตัดสินข้อ 160) — ใบเพิ่มหนี้เงินเชื่อที่ JE อนุมัติรุ่นก่อนลงขาเงิน แล้วชำระซ้ำ · ปุ่มกลับ JE ชำระต่อใบที่เลือก
+    List<DataIntegritySuspect>? DebitNotesCashPostedTwice = null,
+
+    // ทีม W10 2026-10-26 (R-56 · G3) — JE จาก API ที่ตัดผังมัดจำ/รับล่วงหน้าโดยไม่อ้างเลขการจองรูปที่ด่านรู้จัก (ด่าน INT-DEPOSIT-OVERDRAW ตรวจไม่ได้ ⇒ ปล่อยผ่านตั้งใจ) · อ่านอย่างเดียว
+    List<DataIntegritySuspect>? ApiJournalDepositDrawnWithoutBookingRef = null,
+    // ทีม U 2026-10-26 (PV-202610-0040: ฐาน 402.93 · VAT 35.07) — เอกสารฝั่งซื้อที่ลงบัญชีแล้วซึ่ง VAT ไม่สอดคล้องกับฐาน × อัตรา (ฐานถูกบีบตามยอดชำระ) · อ่านอย่างเดียว
+    List<DataIntegritySuspect>? PurchaseVatInconsistentWithBase = null)
 {
     /// <summary>หัวข้อ + คำอธิบายของทุกหมวด (ตัวตั้ง <see cref="Accounting.Helpers.DataIntegritySections"/>) — หน้าแสดงตามลำดับนี้ ·
     /// ไม่มีชื่อหมวดใน JS อีกต่อไป (ทีม X5 2026-10-15)</summary>
@@ -50,7 +57,10 @@ public sealed record DataIntegrityReport(
         + OcrLineDiscountWouldChangeOnResave.Count + VoidedPayrollRunsWithIssuedWhtCerts.Count
         + OpeningRollMismatches.Count + UnlinkedImportedAccounts.Count + TemplateLeafImportedChildren.Count
         + (ForeignCurrencyWhtCertsNotInBaht?.Count ?? 0)
-        + (BookingDepositOverdrawnJournals?.Count ?? 0) + (ApiJournalOutputVatWithoutInvoice?.Count ?? 0);
+        + (BookingDepositOverdrawnJournals?.Count ?? 0) + (ApiJournalOutputVatWithoutInvoice?.Count ?? 0)
+        + (DebitNotesCashPostedTwice?.Count ?? 0)
+        + (ApiJournalDepositDrawnWithoutBookingRef?.Count ?? 0)
+        + (PurchaseVatInconsistentWithBase?.Count ?? 0);
 }
 
 /// <summary>
@@ -178,8 +188,146 @@ public class DataIntegrityReportService
         var foreignCerts = await LoadForeignCurrencyWhtCertsAsync(companyId);
         var overdrawn = await LoadBookingDepositOverdrawnAsync(companyId);
         var apiVat = await LoadApiJournalOutputVatAsync(companyId);
+        var dnCashTwice = await LoadDebitNoteCashPostedTwiceAsync(companyId);
+        var apiNoRef = await LoadApiJournalDepositDrawnWithoutBookingRefAsync(companyId);
+        var vatBase = await LoadPurchaseVatInconsistentAsync(companyId);
         return new DataIntegrityReport(pos, bnList, piList, runs, plainVatReceipts, pnd3Section40_4, tipOn21915,
-            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat);
+            ocrLineDiscount, voidedRunCerts, rollRows, unlinkedRows, leafRows, foreignCerts, overdrawn, apiVat, dnCashTwice, apiNoRef, vatBase);
+    }
+
+    /// <summary>ทีม V 2026-10-26 (V-DN-01 · คำตัดสินข้อ 160) — ใบเพิ่มหนี้เงินเชื่อที่ JE อนุมัติ (รุ่นก่อน) ลงขาเงิน แล้วมี/จะมี JE ชำระลงขาเงินซ้ำ ·
+    /// ข้อเท็จจริงจากฐาน · ตัวตัดสิน <see cref="Accounting.Helpers.DebitNoteCashRepair"/> · <b>อ่านอย่างเดียว</b> — ปุ่มซ่อมแยกต่อใบที่ผู้ใช้เลือก</summary>
+    private async Task<List<DataIntegritySuspect>> LoadDebitNoteCashPostedTwiceAsync(Guid companyId)
+    {
+        var facts = await LoadDebitNoteCashFactsAsync(companyId, null);
+        return facts.Where(Accounting.Helpers.DebitNoteCashRepair.IsSuspect)
+            .Select(Accounting.Helpers.DebitNoteCashRepair.ToSuspect)
+            .Where(x => x != null).Select(x => x!)
+            .OrderBy(x => x.Date).ThenBy(x => x.Number)
+            .ToList();
+    }
+
+    /// <summary>ข้อเท็จจริงของใบเพิ่มหนี้ (ทุกใบ หรือใบเดียว) — ขาเงิน = ผัง 111xx หรือผังที่ผูกบัญชีธนาคาร · นับเฉพาะ JE ที่ยังมีผล
+    /// (Posted · ไม่ใช่ตัวกลับ · ยังไม่ถูกกลับ) · JE อนุมัติ = สมุดขาย/ซื้อ · JE ชำระ = สมุดรับ/จ่าย ของเอกสารนี้</summary>
+    private async Task<List<Accounting.Helpers.DebitNoteCashFacts>> LoadDebitNoteCashFactsAsync(Guid companyId, Guid? onlyDocumentId)
+    {
+        var dns = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.DocumentType == DocumentType.DebitNote
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && (onlyDocumentId == null || d.Id == onlyDocumentId))
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.PaymentType, d.TotalAmount })
+            .ToListAsync();
+        if (dns.Count == 0) return new List<Accounting.Helpers.DebitNoteCashFacts>();
+        var dnIds = dns.Select(d => d.Id).ToList();
+        var bankGl = _db.BankAccounts.AsNoTracking()
+            .Where(b => b.CompanyId == companyId && !b.IsDeleted && b.LinkedAccountId != null)
+            .Select(b => b.LinkedAccountId!.Value);
+        var legs = await (
+                from l in _db.JournalEntryLines.AsNoTracking()
+                join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                where j.CompanyId == companyId && a.CompanyId == companyId && !j.IsDeleted && !l.IsDeleted
+                    && j.SourceDocumentId != null && dnIds.Contains(j.SourceDocumentId.Value)
+                    && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                    && (a.AccountCode.StartsWith("111") || bankGl.Contains(a.Id))
+                group l by new { DocId = j.SourceDocumentId!.Value, j.Id, j.EntryNumber, j.JournalType } into g
+                select new { g.Key.DocId, g.Key.Id, g.Key.EntryNumber, g.Key.JournalType,
+                    Dr = g.Sum(x => x.DebitAmount), Cr = g.Sum(x => x.CreditAmount) })
+            .ToListAsync();
+        var result = new List<Accounting.Helpers.DebitNoteCashFacts>();
+        foreach (var d in dns)
+        {
+            var mine = legs.Where(x => x.DocId == d.Id).ToList();
+            var approval = mine.Where(x => x.JournalType == JournalType.Sales || x.JournalType == JournalType.Purchase).ToList();
+            if (approval.Count == 0) continue;   // ไม่มี JE อนุมัติที่มีขาเงินและยังมีผล ⇒ ไม่เข้าข่าย
+            var isPurchase = approval.Any(x => x.JournalType == JournalType.Purchase);
+            var approvalMoney = isPurchase ? approval.Sum(x => x.Cr - x.Dr) : approval.Sum(x => x.Dr - x.Cr);
+            var payments = mine.Where(x => x.JournalType == JournalType.CashReceipts || x.JournalType == JournalType.CashPayments)
+                .Select(x => new Accounting.Helpers.DebitNotePaymentJournal(x.Id, x.EntryNumber, isPurchase ? x.Cr - x.Dr : x.Dr - x.Cr))
+                .Where(x => x.MoneyLeg > Accounting.Helpers.DebitNoteCashRepair.Tolerance)
+                .ToList();
+            result.Add(new Accounting.Helpers.DebitNoteCashFacts(d.Id, d.DocumentNumber, d.DocumentDate, isPurchase, d.PaymentType,
+                d.TotalAmount, approvalMoney, payments));
+        }
+        return result;
+    }
+
+    /// <summary>ปุ่ม "แก้" ของ V-DN-01 (คำตัดสินข้อ 160): กลับรายการ JE ชำระที่ลงขาเงินซ้ำของใบเพิ่มหนี้<b>ใบเดียวที่ผู้ใช้เลือก</b> ด้วย
+    /// <c>ReverseJournalEntryAsync</c> เดิม (systemTriggered — JE ผูกเอกสาร) + audit ต่อ JE · ห้ามเรียกอัตโนมัติ · คืนข้อความผลลัพธ์</summary>
+    public async Task<(int Reversed, string Message)> ReverseDebitNoteDuplicatePaymentJournalsAsync(Guid companyId, Guid documentId, Guid? actorUserId)
+    {
+        var accounting = _accounting ?? throw new InvalidOperationException("บริการบัญชีไม่พร้อมใช้งาน — กลับรายการไม่ได้");
+        var facts = (await LoadDebitNoteCashFactsAsync(companyId, documentId)).FirstOrDefault()
+            ?? throw new KeyNotFoundException("ไม่พบใบเพิ่มหนี้ หรือใบนี้ไม่มี JE อนุมัติที่มีขาเงินและยังมีผล");
+        var targets = Accounting.Helpers.DebitNoteCashRepair.JournalsToReverse(facts);
+        if (targets.Count == 0)
+            return (0, $"{facts.DocumentNumber} ไม่มี JE ชำระที่ลงขาเงินซ้ำให้กลับ (ยังไม่ชำระ · กลับไปแล้ว · หรือใบจ่ายทันทีที่ขาเงินตอนอนุมัติถูกต้อง)");
+        var reversed = 0;
+        foreach (var pj in facts.LivePaymentJournals.Where(p => targets.Contains(p.JournalEntryId)))
+        {
+            var rev = await accounting.ReverseJournalEntryAsync(companyId, pj.JournalEntryId, null,
+                Accounting.Helpers.DebitNoteCashRepair.ReversalDescription(facts.DocumentNumber, pj.EntryNumber), systemTriggered: true);
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = actorUserId,
+                Action = AuditAction.Update,
+                EntityType = "JournalEntry",
+                EntityId = pj.JournalEntryId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    RuleCode = Accounting.Helpers.DebitNoteCashRepair.RuleCode,
+                    Decision = "DECISIONS ข้อ 160",
+                    DocumentNumber = facts.DocumentNumber,
+                    ReversedEntry = pj.EntryNumber,
+                    ReversalEntry = rev.EntryNumber,
+                    MoneyLeg = pj.MoneyLeg,
+                    ApprovalMoneyLeg = facts.ApprovalMoneyLeg,
+                }),
+            });
+            reversed++;
+        }
+        await _db.SaveChangesAsync();
+        return (reversed, $"กลับรายการ JE ชำระซ้ำ {reversed} รายการของ {facts.DocumentNumber} แล้ว — เงินใน GL ลดลง {Accounting.Helpers.DebitNoteCashRepair.DuplicatedMoney(facts):N2} เหลือครั้งเดียวตาม JE อนุมัติ");
+    }
+
+    /// <summary>ทีม U 2026-10-26 (ผู้ใช้รายงาน PV-202610-0040: Dr 52120 402.93 / Dr 11610 35.07 — ฐานถูกบีบเป็น 438 − 35.07 ทั้งที่ใบกำกับ 500.93/35.07) —
+    /// เอกสารฝั่งซื้อที่ลงบัญชีแล้ว (ไม่ใช่ร่าง/ยกเลิก) ซึ่ง Σ VAT ต่ออัตราไม่ตรง round(Σ ฐาน × อัตรา) เกิน <see cref="Accounting.Helpers.PostVatDeduction.VatTolerance"/>
+    /// (ตัวตัดสินเดียวกับด่านอนุมัติ <see cref="Accounting.Helpers.PostVatDeduction.VatConsistencyError"/>) · <b>อ่านอย่างเดียว — ไม่แก้ให้</b> (ผู้ใช้ยกเลิก/แก้ใบ
+    /// แล้วใส่ช่อง "หักหลัง VAT") · จำกัด 24 เดือนล่าสุด</summary>
+    private async Task<List<DataIntegritySuspect>> LoadPurchaseVatInconsistentAsync(Guid companyId)
+    {
+        var since = DateTime.UtcNow.Date.AddMonths(-24);
+        var purchaseTypes = new[] { DocumentType.PaymentVoucher, DocumentType.PurchaseInvoice, DocumentType.Expense };
+        var docs = await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && !d.IsDeleted && purchaseTypes.Contains(d.DocumentType)
+                && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.WaitingApproval
+                && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                && !d.IsForeignService && d.VatAmount > 0m && d.DocumentDate >= since)
+            .Select(d => new
+            {
+                d.Id, d.DocumentNumber, d.DocumentDate, d.SubTotal, d.VatAmount, d.TotalAmount, d.ActualPaidAmount, d.PostVatDeductionAmount,
+                Lines = d.Lines.Where(l => !l.IsDeleted).Select(l => new { l.Amount, l.VatRate, l.VatAmount }).ToList(),
+            })
+            .ToListAsync();
+        var rows = new List<DataIntegritySuspect>();
+        foreach (var d in docs)
+        {
+            var finding = Accounting.Helpers.PostVatDeduction.FindVatInconsistency(
+                d.Lines.Select(l => new Accounting.Helpers.VatLineFact(l.Amount, l.VatRate, l.VatAmount)));
+            if (finding is null) continue;
+            var err = finding.Message;
+            var impliedBase = finding.ImpliedBase;   // VAT ÷ อัตราของกลุ่มที่ไม่ผ่าน (ไม่ hardcode 7%) — ตัวตัดสินเดียวกับด่านอนุมัติ
+            rows.Add(new DataIntegritySuspect("PurchaseVatInconsistentWithBase", d.Id, d.DocumentNumber, d.DocumentDate,
+                $"ฐานที่บันทึก {d.SubTotal:N2} · VAT {d.VatAmount:N2} · ยอดเอกสาร {d.TotalAmount:N2}"
+                + (d.ActualPaidAmount is decimal ap ? $" · ยอดชำระจริง {ap:N2}" : "")
+                + (d.PostVatDeductionAmount > 0m ? $" · หักหลัง VAT {d.PostVatDeductionAmount:N2}" : " · ไม่มีช่องหักหลัง VAT")
+                + $" — {err}",
+                d.SubTotal, impliedBase,
+                LinkUrl: "/pages/documents.html?side=expense", LinkLabel: "เปิดเอกสารฝั่งรายจ่าย"));
+        }
+        return rows.OrderBy(r => r.Date).ThenBy(r => r.Number).ToList();
     }
 
     /// <summary>ทีม S 2026-10-26 (ผู้ใช้รายงาน · การจอง #149433 · หลักการ #9) — JE สมุดรายวัน (ไม่มีเอกสารต้นทาง · ยังมีผล) ที่ตัดบัญชีมัดจำ/รับล่วงหน้าของการจอง
@@ -190,6 +338,8 @@ public class DataIntegrityReportService
         // ฝ่ายค้านข้อ 5: จำกัดช่วง 24 เดือนล่าสุด (ข้อมูลค้างที่ยังแก้ได้ในงวดเปิด/ปีที่ยังไม่ปิด) · โหลดยอดของทุกการจองเป็นชุดเดียว (LoadManyAsync)
         var since = DateTime.UtcNow.Date.AddMonths(-24);
         var configured = await Accounting.Helpers.BookingDepositLedger.ConfiguredDepositCodesAsync(_db, companyId);
+        // R-56: ชุดรูปแบบเลขอ้างอิงของบริษัท (ค่าเริ่มต้น + ที่ตั้งต่อคีย์) — ตัวเดียวกับด่านฝั่งรับ
+        var patterns = await Accounting.Helpers.BookingDepositLedger.PatternsAsync(_db, companyId);
         var cand = (await (
                 from l in _db.JournalEntryLines.AsNoTracking()
                 join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
@@ -203,12 +353,12 @@ public class DataIntegrityReportService
             .Where(x => Accounting.Helpers.BookingDepositDrawdown.IsDepositLiabilityAccount(x.AccountType, x.AccountCode, x.AccountName, configured))
             .ToList();
         var candByKey = cand
-            .SelectMany(x => Accounting.Helpers.BookingDepositDrawdown.ExtractKeys(x.LineDesc, x.Reference, x.Description).Select(k => (Key: k, Row: x)))
+            .SelectMany(x => Accounting.Helpers.BookingDepositDrawdown.ExtractKeys(patterns, x.LineDesc, x.Reference, x.Description).Select(k => (Key: k, Row: x)))
             .GroupBy(t => t.Key)
             .Take(500)
             .ToDictionary(g => g.Key, g => g.Select(t => t.Row).ToList());
         if (candByKey.Count == 0) return new List<DataIntegritySuspect>();
-        var snaps = await Accounting.Helpers.BookingDepositLedger.LoadManyAsync(_db, companyId, candByKey.Keys.ToList());
+        var snaps = await Accounting.Helpers.BookingDepositLedger.LoadManyAsync(_db, companyId, candByKey.Keys.ToList(), patterns);
         var result = new List<DataIntegritySuspect>();
         foreach (var (key, rows) in candByKey)
         {
@@ -229,6 +379,46 @@ public class DataIntegrityReportService
             }
         }
         return result.GroupBy(r => (r.Id, r.Detail)).Select(g => g.First()).OrderBy(r => r.Date).ThenBy(r => r.Number).ToList();
+    }
+
+    /// <summary>ทีม W10 2026-10-26 (R-56 · G3 "ไม่รู้ = ปล่อยผ่าน + รายงาน") — JE ที่ระบบภายนอกส่งผ่าน <c>POST /api/integration/journals</c> ซึ่งยังมีผล
+    /// และ<b>เดบิต</b>บัญชีมัดจำ/รับล่วงหน้า แต่ไม่มีเลขอ้างอิงการจองในรูปที่ด่านรู้จัก (ค่าเริ่มต้น + ที่ตั้งต่อคีย์ — <see cref="Accounting.Helpers.BookingDepositLedger.PatternsAsync"/>)
+    /// ⇒ ด่าน INT-DEPOSIT-OVERDRAW ไม่ได้ตรวจรายการนี้ (ตั้งใจ) · ทางไปต่อ = ตั้งรูปแบบเพิ่มที่หน้า Integration หรือให้ระบบต้นทางใส่เลขการจอง · <b>อ่านอย่างเดียว</b></summary>
+    private async Task<List<DataIntegritySuspect>> LoadApiJournalDepositDrawnWithoutBookingRefAsync(Guid companyId)
+    {
+        var since = DateTime.UtcNow.Date.AddMonths(-24);
+        var configured = await Accounting.Helpers.BookingDepositLedger.ConfiguredDepositCodesAsync(_db, companyId);
+        var patterns = await Accounting.Helpers.BookingDepositLedger.PatternsAsync(_db, companyId);
+        var apiJeIds = _db.IntegrationSyncLogs.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.EventType == Accounting.Helpers.BookingDepositDrawdown.JournalApiEventType
+                && s.CreatedJournalEntryId != null)
+            .Select(s => s.CreatedJournalEntryId!.Value);
+        var rows = await (
+                from l in _db.JournalEntryLines.AsNoTracking()
+                join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                where j.CompanyId == companyId && a.CompanyId == companyId && !j.IsDeleted && !l.IsDeleted
+                    && j.Status == JournalEntryStatus.Posted && j.OriginalEntryId == null && j.ReversedByEntryId == null
+                    && j.SourceDocumentId == null && j.EntryDate >= since && apiJeIds.Contains(j.Id)
+                    && a.AccountType == AccountType.Liability && l.DebitAmount > 0
+                select new { j.Id, j.EntryNumber, j.EntryDate, j.Reference, j.Description, l.DebitAmount, l.CreditAmount, a.AccountType, a.AccountCode, a.AccountName, LineDesc = l.Description })
+            .ToListAsync();
+        var result = new List<DataIntegritySuspect>();
+        foreach (var g in rows
+                     .Where(x => Accounting.Helpers.BookingDepositDrawdown.IsDepositLiabilityAccount(x.AccountType, x.AccountCode, x.AccountName, configured))
+                     .Where(x => Accounting.Helpers.BookingDepositDrawdown.ExtractKeys(patterns, x.LineDesc, x.Reference, x.Description).Count == 0)
+                     .GroupBy(x => new { x.Id, x.AccountCode }))
+        {
+            var r0 = g.First();
+            var drawn = g.Sum(x => x.DebitAmount - x.CreditAmount);
+            if (drawn <= Accounting.Helpers.BookingDepositDrawdown.Tolerance) continue;
+            result.Add(new DataIntegritySuspect("ApiJournalDepositDrawnWithoutBookingRef", r0.Id, r0.EntryNumber, r0.EntryDate,
+                $"อ้างอิง {r0.Reference ?? "-"} · ตัด {r0.AccountCode} {r0.AccountName} {drawn:N2} โดยไม่มีเลขการจองในรูปที่ระบบรู้จัก "
+                + "— ด่านตรวจมัดจำคงเหลือ (INT-DEPOSIT-OVERDRAW) ไม่ได้ตรวจรายการนี้ · ถ้าระบบต้นทางใช้เลขอ้างอิงรูปอื่น ให้ตั้ง \"รูปแบบเลขอ้างอิงการจอง\" ที่คีย์ Integration "
+                + "(regex มีกลุ่ม (?<key>…)) แล้วรายการต่อไปจะถูกตรวจ · รายการนี้ตรวจกับบัญชีแยกประเภทของบัญชีมัดจำเอง",
+                drawn, null, LinkUrl: $"/pages/journals.html?entryId={r0.Id}", LinkLabel: "เปิดรายการ"));
+        }
+        return result.OrderBy(r => r.Date).ThenBy(r => r.Number).ToList();
     }
 
     /// <summary>ทีม S 2026-10-26 ข้อ 3 — JE ที่ระบบภายนอกส่งผ่าน <c>POST /api/integration/journals</c> (ไล่จากประวัติ sync) ซึ่งยังมีผลและมีภาษีขาย 21911

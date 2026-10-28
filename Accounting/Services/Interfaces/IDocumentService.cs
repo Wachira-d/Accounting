@@ -25,7 +25,8 @@ public interface IDocumentService
     /// <b>พารามิเตอร์ของเมธอด ไม่ใช่ช่องใน request</b> (ค่าที่ client คุมได้ห้ามปลดด่าน) · null = ทุกช่องตรวจแบบเพิ่งเลือก</param>
     Task<DocumentResponse> CreateDocumentAsync(Guid companyId, CreateDocumentRequest request, string createdBy,
         string? originModule = null, bool isFullTaxInvoiceReplacement = false, decimal? depositChannelVatRate = null,
-        string? autoApproveBy = null, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null);
+        string? autoApproveBy = null, Accounting.Helpers.CarriedMoneyHeader? carriedMoneyHeader = null,
+        bool isDepositForfeitInvoice = false);
     Task<DocumentResponse> GetDocumentAsync(Guid companyId, Guid documentId);
     /// <summary>Same as GetDocumentAsync but honors per-user sensitivity rules — when the
     /// caller cannot see the doc, returns a redacted stub instead of throwing.</summary>

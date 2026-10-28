@@ -181,7 +181,22 @@ public record CreateDocumentRequest(
     // (Helpers/DocumentFx.Decide) · ใบบาทส่งมา = 400 · ตรึงตั้งแต่สร้างเหมือนอัตรา (แก้ไขไม่ได้)
     decimal? DocumentThbBase = null,
     // ทีม F — ที่มาของอัตราที่ส่งมา ("BOT" = ผู้ใช้กดใช้อัตรา ธปท. ที่ระบบเติม · "User" = กรอกเอง) · null + ส่งอัตรา = "User" · ไม่ส่งอัตรา = "BOT"
-    string? ExchangeRateSource = null);
+    string? ExchangeRateSource = null,
+    // ทีม U 2026-10-26 (ใบ Shopee 536/98/438): "หักหลัง VAT" = ส่วนลด/คูปอง/voucher ที่ลดจากยอดรวมทั้งสิ้นหลังคำนวณภาษี — ฐาน/VAT ไม่เปลี่ยน ·
+    // ยอดชำระ = รวมทั้งสิ้น − ค่านี้ (ActualPaidAmount ตั้งให้อัตโนมัติถ้าไม่ส่ง · ส่งทั้งคู่ไม่ตรง = 400) · null/0 = ไม่มี · ฝั่งขาย = ปฏิเสธ (ใช้ Settlement) ·
+    // ผัง (รหัส): null = 51150 ส่วนลดรับ ถ้ามี ไม่งั้นผังค่าใช้จ่ายหลักของใบ — ตัวตัดสิน Helpers/PostVatDeduction
+    decimal? PostVatDeductionAmount = null,
+    string? PostVatDeductionAccountCode = null,
+    // ทีม U — ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง": บรรทัดเงิน (แหล่ง + ยอด) + บรรทัดหักหลัง VAT (ผัง + ยอด) รวม = ยอดรวมทั้งสิ้น ·
+    // ย่อยเป็น ActualPaidAmount (Σ เงิน) + PostVatDeductionAmount (Σ หัก) · ตัวตรวจ Helpers/PaymentSourceSplit.Check · null/ว่าง = ไม่ติ๊ก
+    List<PaymentSourceLineRequest>? PaymentSources = null);
+
+/// <summary>บรรทัดหนึ่งของการแยกยอดจ่ายจริงตามแหล่ง — <c>Kind</c> = "Money" (เงินออกจริง) หรือ "PostVatDeduction" (หักหลัง VAT ไม่ใช่เงิน) ·
+/// <c>Amount</c> บวกเสมอ · ตัวตัดสิน <c>Helpers/PaymentSourceSplit</c></summary>
+public record PaymentSourceLineRequest(string Kind, string AccountCode, decimal Amount, string? Note = null);
+
+/// <summary>บรรทัดแยกยอดที่ echo กลับ (เก็บแล้วต้อง echo กลับ — กฎ #4 A) · <c>Kind</c> เป็นชื่อ enum</summary>
+public record PaymentSourceLineDto(string Kind, string AccountCode, decimal Amount, string? Note, string? AccountName = null);
 
 // ⚠️ **ห้ามเพิ่ม `OriginModule` กลับเข้ามาใน request นี้**
 // เดิมเคยอยู่ตรงนี้ แล้วถูกใช้ตัดสินว่าเอกสาร "นับโควตาไหม"
@@ -365,7 +380,13 @@ public record UpdateDocumentRequest(
     // รอบ 204 (ทีม B) — ผู้จ่ายรับภาระตามสัญญา: null = คงค่าเดิม (หลังอนุมัติแก้ผ่าน POST document/{id}/wht-borne-contract)
     bool? WhtBorneByContract = null,
     // รอบ 204 — หักผ่าน e-Withholding: null = คงค่าเดิม (แก้ได้เฉพาะใบร่าง/ถูกตีกลับ — หลังอนุมัติ ยกเลิกแล้วออกใหม่)
-    bool? WhtViaEWithholding = null);
+    bool? WhtViaEWithholding = null,
+    // ทีม U — หักหลัง VAT: null = คงค่าเดิม · 0 = ล้าง · > 0 = ตั้ง (ยอดชำระจริงคิดใหม่ = รวมทั้งสิ้น − ค่านี้ เว้นแต่ส่งมาเองและตรงกัน) ·
+    // ผัง: null = คงค่าเดิม · "" = กลับค่าเริ่มต้น (51150/ผังค่าใช้จ่ายหลัก) · รหัส = ตั้ง
+    decimal? PostVatDeductionAmount = null,
+    string? PostVatDeductionAccountCode = null,
+    // ทีม U — แยกยอดจ่ายจริงตามแหล่ง: null = คงค่าเดิม · [] = ล้าง (เลิกติ๊ก) · มีบรรทัด = แทนชุดเดิมทั้งชุด (Σ ต้อง = ยอดรวมทั้งสิ้นหลังแก้)
+    List<PaymentSourceLineRequest>? PaymentSources = null);
 
 /// <summary>เติม/แก้ใบกำกับภาษีซื้อหลังอนุมัติ — trigger reclassify 11640→11610
 /// เมื่อข้อมูลครบ §86/4. ทุก field nullable: omit = คงค่าเดิม. ส่งเฉพาะที่แก้.
@@ -1058,7 +1079,15 @@ public record DocumentResponse(
     /// <summary>ทีม F — ป้ายไทยของที่มาอัตรา (<c>DocumentFx.SourceLabel</c>)</summary>
     string? ExchangeRateSourceLabel = null,
     /// <summary>ทีม F — สรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (เซิร์ฟเวอร์คำนวณด้วย <c>Helpers/PerLineWht</c> · หน้าเว็บแสดงอย่างเดียว)</summary>
-    IReadOnlyList<WhtIncomeGroupDto>? WhtByIncomeType = null);
+    IReadOnlyList<WhtIncomeGroupDto>? WhtByIncomeType = null,
+    /// <summary>ทีม U 2026-10-26 — หักหลัง VAT (ส่วนลด/คูปองหลังยอดรวม · ฐาน/VAT คงตามใบ) · 0 = ไม่มี · echo ให้ฟอร์ม hydrate (กฎ #4 A)</summary>
+    decimal PostVatDeductionAmount = 0m,
+    /// <summary>ผังที่ลงขาหักหลัง VAT (ตัดสินตอนบันทึก: ที่เลือก → 51150 ถ้ามี → ผังค่าใช้จ่ายหลักของใบ · null = ไม่พบผังเลย) — หน้าเว็บแปลงเป็นรหัสจากรายการผังที่โหลดไว้</summary>
+    Guid? PostVatDeductionAccountId = null,
+    /// <summary>ยอดที่ต้องชำระ = ยอดรวมทั้งสิ้น − หักหลัง VAT (เซิร์ฟเวอร์คำนวณ — <c>PostVatDeduction.AmountDue</c>) · null เมื่อไม่มีหัก</summary>
+    decimal? AmountDueAfterPostVatDeduction = null,
+    /// <summary>ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง" ที่เก็บไว้ — null = ไม่ได้ติ๊ก</summary>
+    IReadOnlyList<PaymentSourceLineDto>? PaymentSources = null);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

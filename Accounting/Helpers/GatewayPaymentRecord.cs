@@ -58,6 +58,9 @@ public static class GatewayPaymentRecord
     /// <summary>คำนำหน้าเลขอ้างอิงของแถว <c>SiteOrderPayment</c> ที่เกิดจากลูกค้าแนบสลิป (<c>CmsCommerceService</c> เขียน <c>slip-{ชื่อไฟล์}</c>)</summary>
     public const string SlipReferencePrefix = "slip-";
 
+    /// <summary>รอบ 205 W2 (R-06): ข้อความปิดช่องจ่ายออนไลน์ขณะมีสลิปรอตรวจ — ตัวเดียวทั้ง resolver/คำตอบออเดอร์/หน้าเว็บ</summary>
+    public const string PendingSlipBlocksOnlineNote = "ร้านกำลังตรวจสลิปที่คุณส่งไว้ — ช่องชำระออนไลน์ปิดชั่วคราวเพื่อไม่ให้ชำระซ้ำ · ถ้าสลิปถูกปฏิเสธจะเปิดให้จ่ายใหม่";
+
     /// <summary>แถวสลิปที่ยังรอตรวจของออเดอร์ — เงินออนไลน์เข้ามาแล้วต้องปิดแถวนี้ (ไม่งั้นพนักงานยืนยันทีหลัง ⇒ รับเงินสองเท่า)
     /// · ฝ่ายค้านรอบ 205 ข้อ 2</summary>
     public static bool IsPendingSlipRow(SitePaymentStatus status, string? reference)

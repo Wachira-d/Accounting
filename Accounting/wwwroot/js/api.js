@@ -1004,6 +1004,10 @@ const API = {
       cmsUpdateBookingStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/status`, d),
       // คำตัดสินข้อ 155: รับเงินแล้ว — ออกใบกำกับภาษีของการจอง Guaranteed (server ตัดสิน · ออกแล้วไม่ออกซ้ำ)
       cmsIssueBookingTaxInvoice: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/issue-tax-invoice`, d || {}),
+      // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ (ครบ = ยืนยัน + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน)
+      cmsRecordBookingPayment: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/payments`, d || {}),
+      // รอบ 205 W3 R-16 — เลือก/เปลี่ยนผู้ให้บริการ (resourceId null = ระบบจัดให้)
+      cmsAssignBookingResource: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/resource`, d || {}),
 
       // Lodging — ธุรกิจที่พัก (ตั้งค่า + front desk) — ทุก endpoint ใต้ /lodging
       lodgingProperties: () => API.get(`${base}/lodging/properties`),
@@ -1075,6 +1079,11 @@ const API = {
       cmsGetCommerceConfig: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/config`),
       cmsUpdateCommerceConfig: (siteId, d) => API.put(`${base}/cms/sites/${siteId}/commerce/config`, d),
       cmsListLeads: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/leads${q}`),
+      // มุมมอง "ทุกไซต์" (R-45) — endpoint ระดับบริษัท แบ่งหน้าจริง · เว็บที่เห็นต่อแถวตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
+      // แทนการวนยิง endpoint รายเว็บ 20 แถว/เว็บ (CmsSiteContext.collect เดิม) · ปุ่ม action ยังยิงไปเว็บเจ้าของแถว (row.siteId)
+      cmsOverviewOrders: (q = '') => API.get(`${base}/cms/overview/orders${q}`),
+      cmsOverviewBookings: (q = '') => API.get(`${base}/cms/overview/bookings${q}`),
+      cmsOverviewLeads: (q = '') => API.get(`${base}/cms/overview/leads${q}`),
       cmsGetLead: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/leads/${id}`),
       cmsUpdateLeadStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/leads/${id}/status`, d),
       cmsConvertLeadToQuotation: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/leads/${id}/convert-to-quotation`, d),
@@ -1296,6 +1305,8 @@ const API = {
       // เดียวกับ webhook ⇒ ต้นทางถูกดำเนินการต่อครบเหมือนกัน · บังคับเหตุผล
       confirmPaymentIntentManually: (id, reason) =>
         API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason }),
+      // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ให้ handler ของต้นทาง — เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง (redispatchPending)
+      redispatchPaymentIntent: (id) => API.post(`${base}/pay/intents/${id}/redispatch`, {}),
       refundPaymentIntent: (id, amount, reason) =>
         API.post(`${base}/pay/intents/${id}/refund`, { amount, reason }),
       // แก้ค่าธรรมเนียมจริงรายรายการก่อนบันทึกรอบโอน (รอบ 198 G-6) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit
@@ -1556,6 +1567,10 @@ const API = {
       recognizeRevenue: (id) => API.post(`${base}/revenue-recognition/schedules/${id}/recognize`),
       // asOfDate บังคับฝั่ง backend — ไม่ส่ง = default(DateTime) ปี 0001 → รายงานว่างเสมอ
       getDeferredRevenue: (asOfDate) => API.get(`${base}/revenue-recognition/deferred-revenue?asOfDate=${asOfDate || new Date().toISOString().slice(0, 10)}`),
+      // รอบ 205 W6 (R-40): รายงานตรวจข้อมูล (อ่านอย่างเดียว) — JE REV-* ที่ลงผังกลุ่ม 218 ผิดกลุ่ม
+      getDeferredAccountAudit: () => API.get(`${base}/revenue-recognition/deferred-account-audit`),
+      // รอบ 205 W6 (R-41 B2): แพ็กเกจคอร์สสำหรับผูกสินค้าบนเว็บ
+      getCreditPackages: () => API.get(`${base}/course-credits/packages`),
       // Time & Billing
       getTimeEntries: (q = '') => API.get(`${base}/time-billing/entries${q}`),
       getTimeEntry: (id) => API.get(`${base}/time-billing/entries/${id}`),
@@ -1831,6 +1846,10 @@ const API = {
       // POS - Service Package
       getPosPackages: (q = '') => API.get(`${base}/pos/packages${q}`),
       getPosPackage: (id) => API.get(`${base}/pos/packages/${id}`),
+      // รอบ 205 W6 (R-26): รายการผังรายได้สำหรับช่อง "บัญชีรายได้" ของแพ็กเกจ (ชุดเดียวกับรายการพิเศษ)
+      getPosCustomItemOptions: () => API.get(`${base}/pos/custom-item-options`),
+      // รอบ 205 W6 (R-27): ยอดขายตามพนักงาน (ฐานคอมมิชชัน) — แท็บคอมมิชชันอ่านตัวนี้แทน commission-summary (ตารางสรุปไม่มีผู้เขียน)
+      getPosStaffSales: (from, to) => API.get(`${base}/pos/reports/staff-sales?from=${from}&to=${to}`),
       // รอบ 193: รายงานอ่านอย่างเดียว — ขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ (ข้อมูลเก่าจากฟอร์ม option 0/1)
       getPosCommissionReview: () => API.get(`${base}/pos/packages/commission-review`),
       createPosPackage: (d) => API.post(`${base}/pos/packages`, d),

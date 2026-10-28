@@ -10,6 +10,8 @@ public interface ICmsSiteService
     Task<SiteResponse> UpdateSiteAsync(Guid companyId, Guid siteId, UpdateSiteRequest request, string userId);
     Task<SiteResponse?> GetSiteAsync(Guid companyId, Guid siteId);
     Task<PagedResponse<SiteListResponse>> GetSitesAsync(Guid companyId, string? search = null, int page = 1, int pageSize = 20);
+    /// <summary>R-45 — เว็บที่ผู้ใช้เห็นในมุมมองทุกไซต์ (ตัวตัดสิน <c>Helpers/CmsSiteScope.AllowedSiteIds</c> · กติกาเดียวกับ <c>[RequireSiteRole]</c> รายเว็บ)</summary>
+    Task<IReadOnlyList<Guid>> GetAccessibleSiteIdsAsync(Guid companyId, Guid userId, bool isCompanyOwner, IReadOnlyCollection<Models.Enums.SiteStaffRole> allowedRoles);
     Task<bool> DeleteSiteAsync(Guid companyId, Guid siteId);
     Task<SiteResponse> PublishSiteAsync(Guid companyId, Guid siteId, string userId);
     Task<ApplySiteTemplateResponse> ApplyTemplateAsync(Guid companyId, Guid siteId, ApplySiteTemplateRequest request, string userId);

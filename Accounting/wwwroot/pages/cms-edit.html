@@ -255,6 +255,30 @@
         <div id="bssInvoiceTiming" class="bs-hint">กำลังโหลด…</div>
         <div class="bs-hint" style="margin-top:4px">มีผลกับการจองใหม่ · การจองเดิมยังออกใบกำกับเมื่อรับเงิน/ให้บริการตามเอกสารที่ผูกอยู่ · กด “บันทึกค่าตั้งของเว็บไซต์” เพื่อบันทึก</div>
       </div>
+
+      <!-- รอบ 205 W3 R-14: เวลาทำการระดับเว็บ (ค่าตั้งต้นของบริการที่ไม่ตั้งเวลาเอง · ตัวตัดสิน BookingSlotEngine.ScheduleOf) -->
+      <h4 class="bs-sec">เวลาทำการของเว็บไซต์ <span class="bs-hint">(ตั้งครั้งเดียวใช้กับทุกบริการที่ไม่ได้ตั้งเวลาทำการเอง · บริการที่ตั้งเวลาเองใช้ของตัวเองทั้งชุด)</span></h4>
+      <div id="ssWeekly"></div>
+      <button type="button" class="btn btn-secondary btn-sm" style="margin:6px 0" onclick="Page.schedCopyMonday('ss')">ใช้เวลาของวันจันทร์กับทุกวันที่เปิด</button>
+      <h4 class="bs-sec">วันหยุด / วันพิเศษของเว็บไซต์</h4>
+      <div id="ssExceptions"></div>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="Page.schedAddException('ss')">+ เพิ่มวันหยุด/วันพิเศษ</button>
+
+      <!-- รอบ 205 W3 R-12/R-13: เตือนก่อนนัด + ถือรอบคิวสำรอง (ผู้อ่าน: Services/Background/BookingReminderJob · CmsBookingService.PromoteWaitlistAsync) -->
+      <h4 class="bs-sec">แจ้งเตือนลูกค้า (อีเมล / LINE)</h4>
+      <div class="form-row-3">
+        <div class="form-group" style="align-self:end"><label style="font-size:13px"><input type="checkbox" id="bssReminderEnabled" checked> เตือนลูกค้าก่อนนัด</label></div>
+        <div class="form-group" style="align-self:end"><label style="font-size:13px" title="รอบ 205 W2 R-08 · คำตัดสิน Q5 = ข: ปิดเป็นค่าเริ่มต้น ไซต์เปิดเอง — ต้องตั้งค่าระบบรับชำระเงิน (gateway) ก่อน"><input type="checkbox" id="bssOnlineDeposit"> รับชำระมัดจำออนไลน์ (บริการชำระล่วงหน้า)</label></div>
+        <div class="form-group"><label class="form-label">เตือนก่อนนัดกี่ชั่วโมง (คั่นด้วยจุลภาค)</label><input type="text" class="form-input" id="bssReminderHours" placeholder="24,2"></div>
+        <div class="form-group"><label class="form-label">คิวสำรองได้คิวแล้ว ถือรอบให้ยืนยัน (นาที · 0 = ไม่ถือ)</label><input type="number" class="form-input" id="bssHoldMinutes" min="0" max="10080"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">ข้อความเตือน (ว่าง = ข้อความเริ่มต้นของระบบ)</label>
+        <textarea class="form-input" id="bssReminderTemplate" rows="4"></textarea>
+        <div class="bs-hint" id="bssReminderHint" style="margin-top:4px"></div>
+      </div>
+      <div class="bs-hint">ส่งถึงลูกค้าทางอีเมล (บัญชี/แขก) หรือ LINE (ลูกค้าที่ล็อกอินด้วย LINE) · ระบบประทับ “ส่งแล้ว” เฉพาะเมื่อส่งถึงจริง · ส่งไม่ถึงจะเห็นเหตุในหน้าการจอง · ถือรอบหมดเวลาแล้วยังไม่ยืนยัน ⇒ ระบบยกเลิกและเลื่อนคิวถัดไป</div>
+      <div class="form-group"><button class="btn btn-primary btn-sm" onclick="Page.saveBookingSiteSettings()">บันทึกค่าตั้งของเว็บไซต์</button></div>
     </div>
 
     <!-- ====================== BOOKINGS TAB ====================== -->
@@ -569,6 +593,11 @@
             </div>
           </div>
           <div style="font-size:12px;color:var(--gray-500);margin:-6px 0 12px">ตัวเลือกสินค้า (ขนาด · ข้อความบนเค้ก · อัปโหลดรูป ฯลฯ) ตั้งที่หน้า "ตัวเลือกเพิ่มเติม" แล้วผูกกับสินค้านี้</div>
+          <!-- รอบ 205 W6 (R-41 B2 · คำตัดสินข้อ 161): ขายคอร์ส/บัตรเครดิตผ่านร้านออนไลน์ — ใบขายลง 21713 + เปิดบัตรหลังชำระ · สั่งได้ครั้งละ 1 -->
+          <div class="form-group">
+            <label class="form-label">ขายเป็นคอร์ส/บัตรเครดิต <span style="font-size:11px;color:var(--gray-500)">(ว่าง = สินค้าปกติ · เลือกแพ็กเกจ = ใบขายลง "ค่าบริการรับล่วงหน้า" และระบบเปิดบัตรให้ลูกค้าหลังชำระ · สั่งได้ครั้งละ 1)</span></label>
+            <select class="form-select" id="prdCreditPackage"><option value="">-- ไม่ใช่คอร์ส --</option></select>
+          </div>
           <div class="form-group">
             <label class="form-label">URL ภาพหลัก</label>
             <input type="text" class="form-input" id="prdImageUrl">
@@ -778,7 +807,7 @@
             <div class="bs-hint">ใช้ผู้ให้บริการที่ผูกกับบริการนี้ (ส่วน "ผู้ให้บริการ" ใต้รายการบริการ) · ระบบจัดให้ = คนที่ว่าง + รับงานนี้ได้ + งานน้อยสุดของวัน · ยังไม่ผูกใคร = นับ "รับพร้อมกันต่อรอบ" · คลาสกลุ่ม: นับเป็น "จำนวนคน" + รับพร้อมกัน = ที่นั่งต่อรอบ</div>
           </div>
 
-          <h4 class="bs-sec">4. เวลาทำการรายสัปดาห์</h4>
+          <h4 class="bs-sec">4. เวลาทำการรายสัปดาห์ <span class="bs-hint">(ไม่ตั้งเลย = ใช้เวลาทำการของเว็บไซต์ · ตั้งแล้วใช้ของบริการนี้ทั้งชุด)</span></h4>
           <div class="bs-hint" id="bsWeeklyHint" style="margin-bottom:6px"></div>
           <div id="bsWeekly"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 4px">
@@ -2300,6 +2329,7 @@
           }
         };
         ['prdDisplayName','prdDisplayNameEn','prdSlug','prdShortDesc','prdPrice','prdComparePrice','prdImageUrl','prdLeadTime','prdWeight'].forEach(id => document.getElementById(id).value = '');
+        await this._loadCreditPackageOptions('');
         document.getElementById('prdVisible').checked = true;
         document.getElementById('prdFeatured').checked = false;
         document.getElementById('prdSubTabs').style.display = 'none';
@@ -2307,6 +2337,24 @@
         Layout.openModal('productModal');
         setTimeout(() => this._initPrdDescEditor(), 50);
         if (this._prdDescQuill) this._prdDescQuill.root.innerHTML = '';
+      },
+
+      /** รายการแพ็กเกจคอร์สของบริษัท (หน้า "คอร์ส & เครดิต") สำหรับช่อง "ขายเป็นคอร์ส" — โหลดไม่ได้ = ช่องยังมีค่าที่เลือกไว้ (ไม่ล้างค่าเงียบ ๆ) */
+      async _loadCreditPackageOptions(selected) {
+        const sel = document.getElementById('prdCreditPackage');
+        if (!sel) return;
+        const api = Layout.api();
+        let pkgs = this._creditPackages;
+        if (!pkgs && api) {
+          try { pkgs = (await api.getCreditPackages()).data || []; this._creditPackages = pkgs; }
+          catch (e) { pkgs = []; }
+        }
+        pkgs = pkgs || [];
+        const known = pkgs.some(p => p.id === selected);
+        sel.innerHTML = '<option value="">-- ไม่ใช่คอร์ส --</option>'
+          + pkgs.map(p => `<option value="${p.id}">${Layout.esc(p.name)} — ${p.creditQuantity} ${Layout.esc(p.unitLabel || '')} · ฿${Number(p.price || 0).toLocaleString('th-TH')}</option>`).join('')
+          + (selected && !known ? `<option value="${Layout.esc(selected)}">(แพ็กเกจที่เลือกไว้ — โหลดรายชื่อไม่สำเร็จ)</option>` : '');
+        sel.value = selected || '';
       },
 
       openEditProduct(id) {
@@ -2324,6 +2372,7 @@
         document.getElementById('prdComparePrice').value = p.compareAtPrice ?? '';
         document.getElementById('prdLeadTime').value = p.leadTimeDays ?? '';
         document.getElementById('prdWeight').value = p.weightKg ?? '';
+        this._loadCreditPackageOptions(p.creditPackageId || '');
         document.getElementById('prdImageUrl').value = p.featuredImageUrl || '';
         document.getElementById('prdVisible').checked = p.isVisible !== false;
         document.getElementById('prdFeatured').checked = !!p.isFeatured;
@@ -2354,11 +2403,14 @@
           isFeatured: document.getElementById('prdFeatured').checked,
           // สินค้าตามสั่ง — ว่างตอนแก้ไข = ล้างค่า (ไม่ใช่ "ไม่เปลี่ยน" เงียบ ๆ)
           leadTimeDays: Layout.intOrNull('prdLeadTime'),
-          weightKg: Layout.numOrNull('prdWeight')
+          weightKg: Layout.numOrNull('prdWeight'),
+          // คอร์ส (R-41 B2) — ว่างตอนแก้ไข = เลิกขายเป็นคอร์ส (clearCreditPackage) ไม่ใช่ "ไม่เปลี่ยน" เงียบ ๆ
+          creditPackageId: document.getElementById('prdCreditPackage').value || null
         };
         if (id) {
           body.clearLeadTime = body.leadTimeDays == null;
           body.clearWeight = body.weightKg == null;
+          body.clearCreditPackage = body.creditPackageId == null;
         }
         try {
           if (id) await api.cmsUpdateProduct(this.siteId, id, body);
@@ -2623,7 +2675,8 @@
                   ${s.capacityGroup ? `<span class="block-type-badge" title="ทรัพยากรร่วม">🔗 ${Layout.esc(s.capacityGroup)}</span>` : ''}</div>
                 <div style="font-size:12px;color:var(--gray-500)">฿${Number(s.price||0).toLocaleString('th-TH')} · ${Layout.esc(s.slotSummary||'')}</div>
                 ${s.policySummary ? `<div style="font-size:12px;color:var(--gray-500)">${Layout.esc(s.policySummary)}</div>` : ''}
-                ${s.hasOpeningHours ? '' : '<div style="font-size:12px;color:#b45309;margin-top:2px">⚠️ ยังไม่ได้ตั้งเวลาทำการ — ลูกค้าจะไม่เห็นเวลาว่างเลย (กด "แก้ไข" → ข้อ 4)</div>'}
+                ${s.usesSiteHours ? '<div style="font-size:12px;color:var(--gray-500);margin-top:2px">🕒 ใช้เวลาทำการของเว็บไซต์ (ตั้งเวลาเองในบริการได้ที่ "แก้ไข" → ข้อ 4)</div>' : ''}
+                ${s.hasOpeningHours ? '' : '<div style="font-size:12px;color:#b45309;margin-top:2px">⚠️ ยังไม่ได้ตั้งเวลาทำการ (ทั้งของบริการและของเว็บไซต์) — ลูกค้าจะไม่เห็นเวลาว่างเลย (กด "แก้ไข" → ข้อ 4 หรือตั้ง "เวลาทำการของเว็บไซต์" ด้านล่าง)</div>'}
               </div>
               <button class="btn btn-sm btn-secondary" onclick="Page.openBookingPreview('${Layout.jsArg(s.id)}')">ดูรอบว่าง</button>
               <button class="btn btn-sm btn-primary" onclick="Page.openEditBookingService('${Layout.jsArg(s.id)}')">แก้ไข</button>
@@ -2694,7 +2747,7 @@
       },
 
       // ── ตัวแก้ตารางเวลา (ใช้ร่วม: 'bs' = เวลาทำการของบริการ · 'rs' = ตารางงานรายบุคคลของผู้ให้บริการ) ──
-      _sched: { bs: { weekly: [], exceptions: [] }, rs: { weekly: [], exceptions: [] } },
+      _sched: { bs: { weekly: [], exceptions: [] }, rs: { weekly: [], exceptions: [] }, ss: { weekly: [], exceptions: [] } },   // ss = เวลาทำการของเว็บไซต์ (R-14)
       schedLoad(p, sch) {
         sch = sch || {};
         this._sched[p] = {
@@ -2793,6 +2846,18 @@
               <span><strong>${Layout.esc(o.label)}</strong><br><span style="font-size:12px;color:var(--gray-600)">${Layout.esc(o.taxEffect)}</span></span>
             </label>`).join('') || 'โหลดตัวเลือกไม่สำเร็จ';
           this._bssInvoiceTimingLoaded = opts.length > 0;
+          // รอบ 205 W3: เวลาทำการของเว็บ (ตัวแก้ตารางเดียวกับบริการ/ผู้ให้บริการ — prefix 'ss') · เตือนก่อนนัด · ถือรอบคิวสำรอง — hydrate ครบทุกช่องที่ server echo
+          this.schedLoad('ss', d.schedule);
+          document.getElementById('bssReminderEnabled').checked = d.reminderEnabled !== false;
+          document.getElementById('bssOnlineDeposit').checked = d.onlineDepositEnabled === true;   // รอบ 205 W2 R-08
+          document.getElementById('bssReminderHours').value = d.reminderHoursBefore || '24,2';
+          document.getElementById('bssHoldMinutes').value = d.waitlistHoldMinutes ?? 0;
+          document.getElementById('bssReminderTemplate').value = d.reminderTemplate || '';
+          document.getElementById('bssReminderTemplate').placeholder = d.reminderDefaultTemplate || '';
+          // ตัวแทนที่ใช้ได้มาจาก server (BookingReminderPlan.Placeholders) — ไม่มีสำเนาที่นี่
+          const ph = Array.isArray(d.reminderPlaceholders) ? d.reminderPlaceholders : [];
+          document.getElementById('bssReminderHint').textContent = ph.length ? 'ตัวแทนที่ใช้ได้: ' + ph.join(' ') : '';
+          this._bssAuxLoaded = true;
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async saveBookingSiteSettings() {
@@ -2804,6 +2869,15 @@
         // ยังโหลดตัวเลือกไม่สำเร็จ ⇒ ไม่ส่ง (server คงค่าเดิม — ไม่รีเซ็ตเงียบ)
         const timing = document.querySelector('input[name="bssInvoiceTiming"]:checked');
         if (this._bssInvoiceTimingLoaded && timing) body.guaranteedInvoiceTiming = timing.value;
+        // รอบ 205 W3 — ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จแล้ว (ไม่งั้นตารางว่างจะ "ล้าง" เวลาทำการของเว็บเงียบ ๆ) · เทมเพลตว่าง = กลับไปใช้ข้อความระบบ
+        if (this._bssAuxLoaded) {
+          body.schedule = this.schedPayload('ss');
+          body.reminderEnabled = document.getElementById('bssReminderEnabled').checked;
+          body.onlineDepositEnabled = document.getElementById('bssOnlineDeposit').checked;   // รอบ 205 W2 R-08
+          body.reminderHoursBefore = document.getElementById('bssReminderHours').value.trim() || '24,2';
+          body.waitlistHoldMinutes = this._bsNum('bssHoldMinutes', 0);
+          body.reminderTemplate = document.getElementById('bssReminderTemplate').value;
+        }
         try {
           await api.cmsUpdateBookingSiteSettings(this.siteId, body);
           Layout.toast('บันทึกค่าตั้งของเว็บไซต์แล้ว', 'success');

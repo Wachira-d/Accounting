@@ -59,6 +59,21 @@ public class CmsStorefrontController : ControllerBase
         return Ok(new ApiResponse<RenderedPageResponse>(true, result));
     }
 
+    // ===== Media (public · R-43) =====
+
+    /// <summary>สื่อของเว็บที่อยู่ในที่เก็บไฟล์กลาง (รูปใหม่หลัง R-43) — URL จาก <c>Helpers/CmsMediaUrl.AttachmentMediaUrl</c> ·
+    /// ตรวจบริษัท+เว็บ+ชนิดใน service · ไม่ใช่ของเว็บนี้ = 404 (ไม่บอกว่ามีอยู่) · cache ได้ (ชื่อไฟล์เป็น GUID · เนื้อหาไม่เปลี่ยน) ·
+    /// nosniff + inline เหมือน static /uploads (ไฟล์ที่ผู้ใช้อัปโหลดต้องไม่ถูกรันเป็นหน้าเว็บ — F-03)</summary>
+    [HttpGet("media/{attachmentId:guid}")]
+    public async Task<IActionResult> Media(Guid companyId, Guid siteId, Guid attachmentId, CancellationToken ct)
+    {
+        var f = await _contentService.ReadSiteMediaAsync(companyId, siteId, attachmentId, ct);
+        if (f == null) return NotFound();
+        Response.Headers["Cache-Control"] = "public, max-age=604800";
+        Response.Headers["X-Content-Type-Options"] = "nosniff";
+        return File(f.Content, f.ContentType);
+    }
+
     // ===== Product Catalog (public) =====
 
     [HttpGet("products")]

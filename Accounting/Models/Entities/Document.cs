@@ -547,6 +547,19 @@ public class Document : TenantEntity
     /// เอกสารตั้งหนี้: เป็นข้อเสนอยอดเงินของการชำระ (บรรทัดปรับอยู่ที่ <c>Payment</c>)</para></summary>
     public decimal? ActualPaidAmount { get; set; }
 
+    /// <summary>หักหลัง VAT — ส่วนลด/คูปอง/voucher ที่ลดจาก<b>ยอดรวมทั้งสิ้น</b>หลังคำนวณภาษีแล้ว (ทีม U 2026-10-26 · ใบ Shopee
+    /// 536 − ส่วนลดพิเศษ 98 = ยอดชำระ 438) · ฐาน/VAT ของเอกสารไม่เปลี่ยน · ยอดชำระ = TotalAmount − ค่านี้ ·
+    /// ความจริงเดียวกับ <see cref="ActualPaidAmount"/> (ตัวตัดสิน <c>Helpers/PostVatDeduction.Resolve</c>: ไม่ระบุยอดชำระจริง ⇒ ตั้งให้ · ไม่ตรง ⇒ ปฏิเสธ) ·
+    /// JE: Cr <see cref="PostVatDeductionAccountId"/> (ผ่าน adjusting-line path เดิม) · 0 = ไม่มี (พฤติกรรมเดิมทุกใบ)</summary>
+    public decimal PostVatDeductionAmount { get; set; }
+
+    /// <summary>ผังที่ลงขาหักหลัง VAT — null = ค่าเริ่มต้นตอนอนุมัติ (51150 ส่วนลดรับ ถ้ามี ไม่งั้นผังค่าใช้จ่ายหลักของใบ — ตัวอย่างผู้ใช้ Cr 52120)</summary>
+    public Guid? PostVatDeductionAccountId { get; set; }
+
+    /// <summary>ติ๊ก "แยกยอดจ่ายจริงตามแหล่ง" — JSON ของ <c>Helpers/PaymentSourceLine[]</c> (เขียน/อ่านด้วย <c>PaymentSourceSplit.Serialize/Parse</c> คู่เดียว) ·
+    /// null = ไม่ได้ติ๊ก · ย่อยลง <see cref="ActualPaidAmount"/> (Σ เงิน) + <see cref="PostVatDeductionAmount"/> (Σ หัก) ตอนบันทึก</summary>
+    public string? PaymentSourceSplitJson { get; set; }
+
     // Notes
     public string? Notes { get; set; }
     public string? InternalNotes { get; set; }
@@ -572,6 +585,11 @@ public class Document : TenantEntity
     /// ใบที่กฎหมายบังคับยังนับโควตาเอกสาร จนกว่าการแปลง "1 การเข้าพัก = 2 หน่วยโควตา" (LODGING_LICENSING_PLAN §13.2)
     /// จะมีโค้ด — แล้วค่อยเปลี่ยนเป็นไม่นับซ้ำ (ฝ่ายค้าน ภ.ง.ด.1/Tb P1-1)</summary>
     public string? OriginModule { get; set; }
+
+    /// <summary>รอบ 205 ทีม W1 (R-04): ใบนี้<b>ยังไม่ถูกนับโควตาเอกสาร</b> — ใบร่างจากเส้นอัตโนมัติ (จองนัดหมาย/คำสั่งซื้อหน้าเว็บ ·
+    /// <c>DocumentQuotaPolicy.DefersCountUntilApproval</c>) นับตอน <c>ApproveDocumentAsync</c> แล้วปลดธง · false = นับไปแล้วตอนสร้าง/ไม่นับ/ใบเก่า
+    /// (ใบก่อนรอบนี้นับตอนสร้างไปแล้ว ⇒ ไม่ถูกนับซ้ำตอนอนุมัติ)</summary>
+    public bool QuotaCountDeferred { get; set; }
 
     /// <summary>True when the operator has explicitly DISMISSED this document
     /// from the "waiting to issue WHT cert" list. The source doc still

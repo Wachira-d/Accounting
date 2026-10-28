@@ -32,6 +32,10 @@ public interface ICourseCreditService
 
     /// <summary>ปิดบัตรที่หมดอายุ + รับรู้ส่วนคงเหลือเป็นรายได้ (breakage) — บัตรเดียว (ปุ่มบนจอ)</summary>
     Task<CreditPassResponse> ExpirePassAsync(Guid companyId, Guid passId, string actor, CancellationToken ct = default);
+
+    /// <summary>R-38: ใบร่างใบลดหนี้คืนเงินจากบัตร (ไม่อนุมัติเอง) · ตัวอย่างผลก่อนสร้าง</summary>
+    Task<CreditRefundDraftResponse> DraftRefundCreditNoteAsync(Guid companyId, Guid passId, DraftCreditRefundRequest request, string actor, CancellationToken ct = default);
+    Task<CreditRefundPreviewResponse> PreviewRefundAsync(Guid companyId, Guid passId, CancellationToken ct = default);
     /// <summary>ทุกบัตรของบริษัทที่เลยวันหมดอายุ (งานกลางคืน) — บัตรที่มีการจองค้าง ข้าม + นับไว้ในผลลัพธ์</summary>
     Task<CreditExpiryRunResult> ExpireDueAsync(Guid companyId, string actor, CancellationToken ct = default);
 }

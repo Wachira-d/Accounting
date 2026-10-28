@@ -494,6 +494,19 @@ public class CmsSiteService : ICmsSiteService
         return result;
     }
 
+    public async Task<IReadOnlyList<Guid>> GetAccessibleSiteIdsAsync(Guid companyId, Guid userId, bool isCompanyOwner, IReadOnlyCollection<SiteStaffRole> allowedRoles)
+    {
+        // เว็บของบริษัทนี้เท่านั้น (tenant isolation) · เรียงตามชื่อให้ภาพรวมคงลำดับ
+        var siteIds = await _db.Sites.AsNoTracking().Where(s => s.CompanyId == companyId).OrderBy(s => s.Name).Select(s => s.Id).ToListAsync();
+        var access = isCompanyOwner
+            ? new List<Accounting.Helpers.CmsSiteScope.AccessRow>()
+            : await _db.SiteStaffAccesses.AsNoTracking()
+                .Where(a => a.UserId == userId && a.Site.CompanyId == companyId)
+                .Select(a => new Accounting.Helpers.CmsSiteScope.AccessRow(a.SiteId, a.Role, a.IsActive))
+                .ToListAsync();
+        return Accounting.Helpers.CmsSiteScope.AllowedSiteIds(isCompanyOwner, siteIds, access, allowedRoles);
+    }
+
     public async Task<bool> DeleteSiteAsync(Guid companyId, Guid siteId)
     {
         var site = await _db.Sites.FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId);

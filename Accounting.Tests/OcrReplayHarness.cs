@@ -451,6 +451,22 @@ public static class OcrReplayHarness
             EngineSubTotal: null, EngineVat: 0m, EngineTotal: 450m,
             LineAmounts: new[] { 450.00m },
             Lines: new ReplayLine[] { new("หมูสับ", 5m, 450.00m, 450.00m) }),
+
+        // ── 2026-10-26 R-34 (W8) — ใบจริง e-Tax SP-IN2026-10-00933 Rapbizz Direct · เส้นกระดาษ (ข้อความหน้า PDF ต้นฉบับ+สำเนา · ไม่มี XML ในชุดนี้) ──
+        // กระดาษ: 2 × 920.00 = 1,840.00 · 1 × 170.00 (ราคารวม VAT) · "จำนวนเงิน Amount 1,878.51" · "ส่วนลด 538.32" (ก่อน VAT) · "ยอดรวม Total 1,340.19" · VAT 93.81 ·
+        // "ราคารวม Sub Total 1,434.00" (ป้ายสลับ) ⇒ เคส F DiscountPreVatOnInclusivePrices · คำตัดสินข้อ 159: BillDiscountAmount 538.32 ไม่กระจาย · ยอดบรรทัดจาก
+        // DocumentService.PlanLineAmounts ⇒ 1,226.84/85.88 · 113.35/7.93 (= เส้น e-Tax ของใบเดียวกัน EtaxGoldenCorpusTests["RapbizzSpIn00933"] ทุกสตางค์) ·
+        // หัวใบ = สามยอดที่ engine อ่านถูก (เส้นกระดาษจริงยังไม่มี engine ภาพของใบนี้ — ใช้ตัวเลขบนกระดาษ) · คำอธิบายบรรทัดตามแถว (ฟอนต์เพี้ยนในข้อความดิบ แต่แถวที่
+        // engine คืนอ่านออก — ตัวเลขทุกตัวจากกระดาษ) · เลขผู้ขายจากกระดาษ
+        new ReplayPaper("rapbizz-spin00933-prevat-discount-on-incl", OcrPaperSamples.RapbizzSpIn00933PdfText,
+            EngineSubTotal: 1340.19m, EngineVat: 93.81m, EngineTotal: 1434.00m,
+            LineAmounts: new[] { 1840.00m, 170.00m },
+            Lines: new ReplayLine[]
+            {
+                new("เก้าอี้สนาม พับเก็บได้ 56x60x100 ซม. รับน้ำหนักได้ 125 KG สีดำ JBUYNOW YLFC-032", 2m, 920.00m, 1840.00m),
+                new("ค่าขนส่งสินค้า", 1m, 170.00m, 170.00m),
+            },
+            VendorTaxId: "0105559170207"),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
@@ -780,9 +796,27 @@ public static class OcrReplayHarness
                 rates[i] ??= hdrVat > 0m
                     ? ThaiVatTypeRule.ToVatRate(ThaiVatTypeRule.Suggest(lines[i].Description, null, p.VendorTaxId, p.VendorNameFromEngine), standardVatRate)
                     : 0m;
+            // ข้อ 159 (ตรงกับ service · ฝ่ายค้านข้อ 2 ห้าม drift): เคส F/G ⇒ BillDiscountAmount ตามกระดาษ · ไม่กระจาย · ยอดบรรทัดจาก DocumentService.PlanLineAmounts
+            // (ตัวกระจายข้างบนยังรันเพื่อให้ตัวพิสูจน์อัตราทั้งใบเห็นยอดหลังหัก — เหมือน plannerAmounts ของ service)
+            var billDiscount = recon.BillDiscountPreVat is decimal bpv && bpv > 0m && codePlan.AmountsAfterDiscount is null ? bpv : 0m;
+            var preBillAmounts = amounts.ToArray();
+            decimal[]? billPlanVat = null;
+            decimal? billPlanNetSum = null;
+            if (billDiscount > 0m)
+            {
+                docDiscountPercent = 0m;
+                var billPlan = Accounting.Services.Implementations.DocumentService.PlanLineAmounts(
+                    Enumerable.Range(0, n).Select(i => new Accounting.Models.DTOs.Document.DocumentLineRequest(
+                        lines[i].Description ?? "", lines[i].Quantity ?? 1m, null, lines[i].UnitPrice ?? printed[i], 0m,
+                        rates[i] ?? standardVatRate, 0m, null, DiscountAmount: lineOwnDisc[i] > 0m ? lineOwnDisc[i] : null)).ToList(),
+                    pricesIncludeVat, billDiscount);
+                for (var i = 0; i < n; i++) amounts[i] = pricesIncludeVat ? billPlan[i].Net + billPlan[i].Vat : billPlan[i].Net;
+                billPlanVat = billPlan.Select(x => x.Vat).ToArray();
+                billPlanNetSum = billPlan.Sum(x => x.Net);
+            }
 
             // บรรทัดจากภาพ/ข้อความไม่มีธง PriceIncludesVat (เว้นใบส่วนลดจากกระดาษที่พิสูจน์รวม VAT) ⇒ InclusiveLineVats คืน null ⇒ เฉลี่ยหัวใบตามเดิม
-            var spreadVat = (pricesIncludeVat
+            var spreadVat = billPlanVat ?? (pricesIncludeVat
                     ? OcrEtaxLineNormalizer.InclusiveLineVats(
                         amounts.Select((a, i) => (a, rates[i] ?? 0m, lines[i].PriceIncludesVat)).ToList(), hdrVat)
                     : null)
@@ -827,17 +861,20 @@ public static class OcrReplayHarness
                         : Math.Round(headerWht * amount / lineAmountSum, 2, R);
                     whtAssigned += lineWht;
                 }
-                roundingShift += shifts[i];
+                var shift = billDiscount > 0m ? 0m : shifts[i];   // ข้อ 159: ยอดจาก PlanLineAmounts คิดจาก จำนวน × ราคา แล้ว (ตรงกับ service)
+                roundingShift += shift;
                 // ตรงกับ service: ตัวตัดสินตัวเดียว (ไม่มีราคาต่อหน่วย ⇒ 0% — ทีม D 2026-10-13 B5 · จำนวน < 1 ไม่มีราคา ⇒ ราคาจากตัวตัดสิน — ทีม E)
                 var (discPct, discAmt, decidedUnitPrice) = OcrLineReconciler.LineDiscount(
                     codePlan.DiscountPercents?[i] ?? docDiscountPercent, lineGross[i], lines[i].UnitPrice.HasValue, amount, lines[i].Quantity);
-                var unitPrice = decidedUnitPrice ?? lines[i].UnitPrice ?? amount;
-                var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shifts[i];
+                var unitPrice = decidedUnitPrice ?? lines[i].UnitPrice ?? (billDiscount > 0m ? preBillAmounts[i] : amount);
+                var net = (pricesIncludeVat ? Math.Round(amount - lineVat, 2, R) : amount) + shift;
                 builtItemsTotal += net + lineVat;
                 // ตรงกับ service: DiscountAmount = ส่วนลดจากตัวกระจาย + ส่วนลดรายบรรทัดของเอกสาร/กระดาษ
                 rows.Add(Fmt(net, rates[i] ?? standardVatRate, lineVat, unitPrice, discPct, discAmt + lineOwnDisc[i], lineWht));
             }
-            return new ReplayBuiltLines("Items", recon.Case.ToString(), pricesIncludeVat,
+            if (billDiscount > 0m && billPlanNetSum is decimal planNetSum)
+                roundingShift = DocumentRounding.CapShifts(new[] { planNetSum - netSubForRecon }).Applied[0];   // ตรงกับ service (ข้อ 159)
+            return new ReplayBuiltLines("Items" + (billDiscount > 0m ? $"+Bill:{billDiscount:0.00}" : ""), recon.Case.ToString(), pricesIncludeVat,
                 string.Join(";", rows), GapText(WithOverstatement(gaps, builtItemsTotal - roundingShift)), -roundingShift, duplicateRowsDropped, quantityGuard, descriptions);
             }
         }

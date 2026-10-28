@@ -1,4 +1,5 @@
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Accounting.Tests;
 
@@ -17,6 +18,16 @@ namespace Accounting.Tests;
 public class OcrReplayPartyGoldenTests
 {
     private static readonly string[] PartyFields = { "BuyerBranch", "BuyerName", "BuyerTaxId", "VendorBranch", "VendorName", "VendorTaxId" };
+
+    /// <summary>ใบที่เพิ่มเข้า <see cref="OcrReplayHarness.Corpus"/> โดยเครื่องที่ commit <b>ไม่มี .NET SDK</b> — ค่าช่องคู่สัญญาต้องมาจากการรัน dotnet
+    /// (CLAUDE.md F2 #3/#6: ห้ามเขียนจากความจำ) จึงยังไม่อยู่ใน <see cref="Golden"/> · ขั้นเติม: รัน job <c>dotnet test</c> ของ CI (workflow_dispatch หรือ PR เข้า main —
+    /// push บน <c>claude/**</c> ไม่รัน job นี้) → อ่าน StdOut ของเทสต์ <see cref="รอCIเติม_ใบที่ยังไม่มีgoldenคู่สัญญา_พิมพ์แถวให้วาง_และต้องไม่อยู่ในGolden"/> →
+    /// วางแถวลง Golden → ลบชื่อออกจากรายการนี้ (เทสต์ด้านล่างบังคับว่าใบในรายการต้องไม่มีแถวใน Golden — มีสองที่ไม่ได้) · ติดตามใน
+    /// <c>docs/BACKLOG_REGISTER_2026-10-26.md</c> R-34</summary>
+    internal static readonly string[] PendingCiFill = { "rapbizz-spin00933-prevat-discount-on-incl" };
+
+    private readonly ITestOutputHelper _out;
+    public OcrReplayPartyGoldenTests(ITestOutputHelper output) => _out = output;
 
     /// <summary>แถวช่องคู่สัญญาของทุกใบใน <see cref="OcrReplayHarness.Corpus"/> — รูปเดียวกับ <see cref="OcrReplayHarness.Snapshot"/></summary>
     internal static string PartySnapshot(IReadOnlyList<ReplayAnswer> answers)
@@ -313,7 +324,8 @@ public class OcrReplayPartyGoldenTests
     public void ช่องคู่สัญญาทุกใบ_ตรงgolden_ทุกแถวที่เปลี่ยนต้องอธิบายได้()
     {
         var expected = Golden.Replace("\r", "").Split('\n');
-        var actual = PartySnapshot(OcrReplayHarness.Run()).Split('\n');
+        // ใบใน PendingCiFill ยังไม่มีแถวใน Golden (รอ CI พิมพ์) — ตัดออกจากการเทียบ · เทสต์ถัดไปบังคับให้รายการนั้นสอดคล้องกับ Golden/Corpus
+        var actual = PartySnapshot(OcrReplayHarness.Run().Where(a => !PendingCiFill.Contains(a.Paper)).ToList()).Split('\n');
         var missing = expected.Except(actual).ToList();
         var extra = actual.Except(expected).ToList();
         Assert.True(missing.Count == 0 && extra.Count == 0,
@@ -327,6 +339,23 @@ public class OcrReplayPartyGoldenTests
         foreach (var p in OcrReplayHarness.Corpus)
             foreach (var f in PartyFields)
                 Assert.Single(run, a => a.Paper == p.Name && a.Field == f);
+    }
+
+    /// <summary>ใบที่รอ CI เติม golden: ต้องอยู่ใน Corpus · ต้องยังไม่มีแถวใน Golden (ถ้ามีแล้ว = ลืมลบออกจาก PendingCiFill — ด่านจะหลวมเงียบ) ·
+    /// พิมพ์หกแถวจริงของวันนี้ลง StdOut ให้คนคัดลอกวาง (F2 #3: ค่าจากการรัน ไม่ใช่ความจำ)</summary>
+    [Fact]
+    public void รอCIเติม_ใบที่ยังไม่มีgoldenคู่สัญญา_พิมพ์แถวให้วาง_และต้องไม่อยู่ในGolden()
+    {
+        var run = OcrReplayHarness.Run();
+        foreach (var paper in PendingCiFill)
+        {
+            Assert.Contains(OcrReplayHarness.Corpus, p => p.Name == paper);
+            Assert.DoesNotContain(paper + " · ", Golden);
+            var rows = PartySnapshot(run.Where(a => a.Paper == paper).ToList());
+            Assert.Equal(PartyFields.Length, rows.Split('\n').Length);
+            _out.WriteLine("── วางลง Golden แล้วลบ \"" + paper + "\" ออกจาก PendingCiFill ──");
+            _out.WriteLine(rows);
+        }
     }
 
     /// <summary>negative test ของ golden (F2 #6): สลับชื่อสองฝั่งของใบหนึ่ง (บั๊ก P1-2) แล้ว snapshot ต้องไม่ตรง golden</summary>

@@ -2,7 +2,9 @@ using Accounting.Helpers;
 using Accounting.Middleware;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -16,11 +18,54 @@ public class CmsSiteController : ControllerBase
 {
     private readonly ICmsSiteService _siteService;
     private readonly ICmsQuotaService _quotaService;
+    private readonly ICmsCommerceService _commerceService;
+    private readonly ICmsBookingService _bookingService;
+    private readonly CmsLeadService _leadService;
 
-    public CmsSiteController(ICmsSiteService siteService, ICmsQuotaService quotaService)
+    public CmsSiteController(ICmsSiteService siteService, ICmsQuotaService quotaService,
+        ICmsCommerceService commerceService, ICmsBookingService bookingService, CmsLeadService leadService)
     {
         _siteService = siteService;
         _quotaService = quotaService;
+        _commerceService = commerceService;
+        _bookingService = bookingService;
+        _leadService = leadService;
+    }
+
+    // ===== มุมมอง "ทุกไซต์" (R-45) — endpoint ระดับบริษัท · แบ่งหน้าจริง =====
+    // ไม่มี {siteId} ใน route ⇒ CmsRbacMiddleware ไม่ตรวจ — ด่านอยู่ที่นี่: เว็บที่เห็น = Helpers/CmsSiteScope (เจ้าของ = ทุกเว็บ ·
+    // คนอื่น = เว็บที่มี SiteStaffAccess ใช้งานอยู่ และบทบาทตรงกับ endpoint รายเว็บเดิม) · service กรอง CompanyId + siteIds เสมอ
+
+    private bool IsCompanyOwner() => HttpContext.Items.TryGetValue("UserRole", out var r) && r is UserRole ur && ur == UserRole.Owner;
+
+    [HttpGet("~/api/companies/{companyId:guid}/cms/overview/orders")]
+    public async Task<ActionResult<ApiResponse<PagedResponse<OrderListResponse>>>> OverviewOrders(
+        Guid companyId, [FromQuery] string? status = null, [FromQuery] string? search = null,
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var siteIds = await _siteService.GetAccessibleSiteIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User), IsCompanyOwner(), CmsSiteScope.OrderRoles);
+        var result = await _commerceService.GetOrdersAcrossSitesAsync(companyId, siteIds, status, search, page, pageSize);
+        return Ok(new ApiResponse<PagedResponse<OrderListResponse>>(true, result));
+    }
+
+    [HttpGet("~/api/companies/{companyId:guid}/cms/overview/bookings")]
+    public async Task<ActionResult<ApiResponse<PagedResponse<BookingListResponse>>>> OverviewBookings(
+        Guid companyId, [FromQuery] string? status = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
+        [FromQuery] string? search = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var siteIds = await _siteService.GetAccessibleSiteIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User), IsCompanyOwner(), CmsSiteScope.AnyRole);
+        var result = await _bookingService.GetBookingsAcrossSitesAsync(companyId, siteIds, status, fromDate, toDate, search, page, pageSize);
+        return Ok(new ApiResponse<PagedResponse<BookingListResponse>>(true, result));
+    }
+
+    [HttpGet("~/api/companies/{companyId:guid}/cms/overview/leads")]
+    public async Task<ActionResult<ApiResponse<PagedResponse<LeadListResponse>>>> OverviewLeads(
+        Guid companyId, [FromQuery] LeadType? type = null, [FromQuery] LeadStatus? status = null,
+        [FromQuery] string? search = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+    {
+        var siteIds = await _siteService.GetAccessibleSiteIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User), IsCompanyOwner(), CmsSiteScope.AnyRole);
+        var result = await _leadService.ListAcrossSitesAsync(companyId, siteIds, type, status, search, page, pageSize);
+        return Ok(new ApiResponse<PagedResponse<LeadListResponse>>(true, result));
     }
 
     // ===== Sites =====

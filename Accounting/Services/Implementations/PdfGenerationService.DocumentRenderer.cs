@@ -949,6 +949,13 @@ public partial class PdfGenerationService
             }
             else
                 Row(printTotals.NetLabel, printTotals.Grand.ToString("N2"), total: true);
+            // ทีม U 2026-10-26: หักหลัง VAT → แถวหัก + "ยอดชำระ" (ตัวตั้งเดียวกับ HTML renderer ใน PdfGenerationService — ห้าม drift)
+            if (doc.PostVatDeductionAmount > 0m)
+            {
+                Row(L.TotalPostVatDeduction, $"({doc.PostVatDeductionAmount:N2})");
+                Row(L.TotalAmountDueAfterDeduction,
+                    Accounting.Helpers.PostVatDeduction.AmountDue(printTotals.Grand - doc.DepositAppliedAmount, doc.PostVatDeductionAmount).ToString("N2"), total: true);
+            }
         });
 
         // มัดจำ VAT พักรอ — แจ้งชัดว่าไม่ใช่ใบกำกับภาษี (ใบกำกับออกตอนใช้บริการ)
@@ -1124,6 +1131,7 @@ public partial class PdfGenerationService
         IReadOnlyList<DocumentSigner>? signers, string lang = "th")
     {
         if (!t.ShowSignature) return;
+        var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);   // W9 R-61: ป้ายผู้ลงนามที่ออกแล้ว (คู่กับ HTML Box)
         // ป้ายลายเซ็นภาษาอังกฤษที่ผู้ใช้ตั้งไว้ — เดิมไม่เคยถูกอ่าน เอกสารภาษา
         // อังกฤษจึงพิมพ์ป้ายไทยเสมอ (ช่อง "(EN)" ในหน้าปรับแต่งเป็นช่องลม)
         var labels = new List<string>();
@@ -1201,6 +1209,9 @@ public partial class PdfGenerationService
                         c.Item().AlignCenter().Text(s.Name!).FontSize(10).Bold();
                     if (s != null && !string.IsNullOrWhiteSpace(s.Title))
                         c.Item().AlignCenter().Text(s.Title!).FontSize(9).FontColor("#666");
+                    // W9 R-61: ผู้ลงนามออกจากบริษัทแล้ว — รูปถูกถอดที่ ApplySignerPolicyAsync · ป้ายเดียวกับ HTML
+                    if (s is { Departed: true })
+                        c.Item().AlignCenter().Text(L.SigDeparted).FontSize(9).FontColor("#666");
                 });
             }
         });

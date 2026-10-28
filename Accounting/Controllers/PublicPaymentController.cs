@@ -143,6 +143,18 @@ public class PublicPaymentController : ControllerBase
         Guid companyId, Guid siteId, Guid orderId, Guid intentId, CancellationToken ct)
         => StatusAsync(companyId, intentId, () => _resolver.ResolveOrderAsync(companyId, siteId, orderId, ct), ct);
 
+    // ═══════════════ การจองนัดหมาย (CMS booking) — พิสูจน์สิทธิ์ด้วย PublicToken ของการจอง (รอบ 205 W2 R-08) ═══════════════
+
+    [HttpPost("bookings/{siteId:guid}/{token}/intents")]
+    public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartBooking(
+        Guid companyId, Guid siteId, string token, [FromBody] StartRequest req, CancellationToken ct)
+        => StartAsync(companyId, () => _resolver.ResolveBookingAsync(companyId, siteId, token, ct), req, ct);
+
+    [HttpGet("bookings/{siteId:guid}/{token}/intents/{intentId:guid}")]
+    public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StatusBooking(
+        Guid companyId, Guid siteId, string token, Guid intentId, CancellationToken ct)
+        => StatusAsync(companyId, intentId, () => _resolver.ResolveBookingAsync(companyId, siteId, token, ct), ct);
+
     // ═══════════════ แกนกลาง — ทางเข้าทุกเส้นเดินผ่านสองเมธอดนี้ ═══════════════
 
     /// <param name="holdForPayment">ต้นทางที่ต้อง "กันของไว้ระหว่างจ่าย" (การจองที่พัก) — เรียกก่อนสร้างรายการ (วันหมดอายุ null) และหลังสร้าง
@@ -160,7 +172,7 @@ public class PublicPaymentController : ControllerBase
             return NotFound(new ApiResponse<PublicIntentResponse>(false, null, "ไม่พบรายการ"));
         if (!target.CanPayNow)
             return BadRequest(new ApiResponse<PublicIntentResponse>(false, null,
-                "รายการนี้ไม่มียอดค้างชำระแล้ว"));
+                target.BlockedNote ?? "รายการนี้ไม่มียอดค้างชำระแล้ว"));   // รอบ 205 W2: เหตุผลจริง (สลิปรอตรวจ · ไซต์ไม่เปิด) ไม่ใช่ "ไม่มียอด"
 
         var since = DateTime.UtcNow.AddHours(-1);
         var attempts = await _db.PaymentIntents.AsNoTracking().CountAsync(
