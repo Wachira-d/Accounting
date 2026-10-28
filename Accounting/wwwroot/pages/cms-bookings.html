@@ -264,7 +264,7 @@
                 </div>
                 <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (§78/1)${b.onlinePaymentNote ? ' · ' + Layout.esc(b.onlinePaymentNote) : ''}</div>
               </div>` : ''}
-              ${b.publicToken ? `<div style="margin-top:6px;font-size:11px"><button class="btn btn-sm" onclick="Page.copyBookingLink('${Layout.esc(b.publicToken)}')">📋 คัดลอกลิงก์ลูกค้า (จ่ายมัดจำ / ยกเลิกเอง)</button></div>` : ''}
+              ${b.publicToken ? `<div style="margin-top:6px;font-size:11px"><button class="btn btn-sm" onclick="Page.copyBookingLink('${Layout.jsArg(b.publicToken)}')">📋 คัดลอกลิงก์ลูกค้า (จ่ายมัดจำ / ยกเลิกเอง)</button></div>` : ''}
             </div>
             ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
             ${b.canIssueTaxInvoiceNow ? `<div style="background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px">
