@@ -1004,6 +1004,8 @@ const API = {
       cmsUpdateBookingStatus: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/status`, d),
       // คำตัดสินข้อ 155: รับเงินแล้ว — ออกใบกำกับภาษีของการจอง Guaranteed (server ตัดสิน · ออกแล้วไม่ออกซ้ำ)
       cmsIssueBookingTaxInvoice: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/issue-tax-invoice`, d || {}),
+      // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ (ครบ = ยืนยัน + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน)
+      cmsRecordBookingPayment: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/payments`, d || {}),
       // รอบ 205 W3 R-16 — เลือก/เปลี่ยนผู้ให้บริการ (resourceId null = ระบบจัดให้)
       cmsAssignBookingResource: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/resource`, d || {}),
 

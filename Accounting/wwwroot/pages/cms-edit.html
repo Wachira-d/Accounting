@@ -268,6 +268,7 @@
       <h4 class="bs-sec">แจ้งเตือนลูกค้า (อีเมล / LINE)</h4>
       <div class="form-row-3">
         <div class="form-group" style="align-self:end"><label style="font-size:13px"><input type="checkbox" id="bssReminderEnabled" checked> เตือนลูกค้าก่อนนัด</label></div>
+        <div class="form-group" style="align-self:end"><label style="font-size:13px" title="รอบ 205 W2 R-08 · คำตัดสิน Q5 = ข: ปิดเป็นค่าเริ่มต้น ไซต์เปิดเอง — ต้องตั้งค่าระบบรับชำระเงิน (gateway) ก่อน"><input type="checkbox" id="bssOnlineDeposit"> รับชำระมัดจำออนไลน์ (บริการชำระล่วงหน้า)</label></div>
         <div class="form-group"><label class="form-label">เตือนก่อนนัดกี่ชั่วโมง (คั่นด้วยจุลภาค)</label><input type="text" class="form-input" id="bssReminderHours" placeholder="24,2"></div>
         <div class="form-group"><label class="form-label">คิวสำรองได้คิวแล้ว ถือรอบให้ยืนยัน (นาที · 0 = ไม่ถือ)</label><input type="number" class="form-input" id="bssHoldMinutes" min="0" max="10080"></div>
       </div>
@@ -2848,6 +2849,7 @@
           // รอบ 205 W3: เวลาทำการของเว็บ (ตัวแก้ตารางเดียวกับบริการ/ผู้ให้บริการ — prefix 'ss') · เตือนก่อนนัด · ถือรอบคิวสำรอง — hydrate ครบทุกช่องที่ server echo
           this.schedLoad('ss', d.schedule);
           document.getElementById('bssReminderEnabled').checked = d.reminderEnabled !== false;
+          document.getElementById('bssOnlineDeposit').checked = d.onlineDepositEnabled === true;   // รอบ 205 W2 R-08
           document.getElementById('bssReminderHours').value = d.reminderHoursBefore || '24,2';
           document.getElementById('bssHoldMinutes').value = d.waitlistHoldMinutes ?? 0;
           document.getElementById('bssReminderTemplate').value = d.reminderTemplate || '';
@@ -2871,6 +2873,7 @@
         if (this._bssAuxLoaded) {
           body.schedule = this.schedPayload('ss');
           body.reminderEnabled = document.getElementById('bssReminderEnabled').checked;
+          body.onlineDepositEnabled = document.getElementById('bssOnlineDeposit').checked;   // รอบ 205 W2 R-08
           body.reminderHoursBefore = document.getElementById('bssReminderHours').value.trim() || '24,2';
           body.waitlistHoldMinutes = this._bsNum('bssHoldMinutes', 0);
           body.reminderTemplate = document.getElementById('bssReminderTemplate').value;

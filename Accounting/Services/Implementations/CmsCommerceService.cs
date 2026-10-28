@@ -804,7 +804,12 @@ public class CmsCommerceService : ICmsCommerceService
         // สต๊อก + ตัดชำระ). เดิมแค่ตั้ง Cancelled → รายได้/VAT/สต๊อกยังค้างสำหรับ
         // ออเดอร์ที่ยกเลิก. best-effort: ถ้า void ไม่ได้ (เช่นมีใบเสร็จลูก/จ่ายแล้ว)
         // log ไว้ให้กลับรายการเอง (ปกติต้องออกใบลดหนี้/คืนเงินแทน).
+        // รอบ 205 W2 (R-07 · S-3): ใบที่มีการชำระผูกแล้ว void ไม่ได้ (§86/10) ⇒ เสนอใบลดหนี้ร่าง + ทางคืนเงิน แทนการประทับ [ERP-VOID-FAILED] ค้าง
+        var cnProposed = false;
         if (request.Status == SiteOrderStatus.Cancelled && order.ErpDocumentId.HasValue && _docService != null)
+            cnProposed = await ProposeCreditNoteOnCancelAsync(companyId, order, request.CancellationReason, userId);
+
+        if (request.Status == SiteOrderStatus.Cancelled && order.ErpDocumentId.HasValue && _docService != null && !cnProposed)
         {
             try
             {
@@ -852,6 +857,71 @@ public class CmsCommerceService : ICmsCommerceService
         await _db.SaveChangesAsync();
 
         return await GetOrderAsync(companyId, siteId, orderId) ?? throw new InvalidOperationException("Failed.");
+    }
+
+    /// <summary>R-07: ตัดสินด้วย <see cref="Accounting.Helpers.SiteOrderCancelPlan.Decide"/> — ใบที่มีการชำระผูก ⇒ ร่างใบลดหนี้เต็มใบอ้างใบเดิม
+    /// (<b>ไม่อนุมัติ</b> — เงินยังไม่คืนจริง R1) + หมายเหตุชี้รายการชำระที่ต้องคืน · คืน true = ข้ามเส้น void · ล้ม = ประทับ [ERP-CN-FAILED] + โยน (ไม่กลืน)</summary>
+    private async Task<bool> ProposeCreditNoteOnCancelAsync(Guid companyId, SiteOrder order, string? cancellationReason, string userId)
+    {
+        var erpDocId = order.ErpDocumentId!.Value;
+        var doc = await _db.Documents.AsNoTracking().Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == erpDocId && d.CompanyId == companyId);
+        var hasPayments = doc != null && await _db.Payments.AsNoTracking()
+            .AnyAsync(p => p.CompanyId == companyId && p.DocumentId == erpDocId && !p.IsDeleted);
+        var action = SiteOrderCancelPlan.Decide(doc != null, doc?.Status, hasPayments);
+        if (action != SiteOrderCancelErpAction.ProposeCreditNote) return false;
+
+        var now = DateTime.UtcNow;
+        try
+        {
+            var lines = (doc!.Lines ?? new List<DocumentLine>()).Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+                .Select(l => new Models.DTOs.Document.DocumentLineRequest(
+                    Description: $"ลดหนี้ (ยกเลิกคำสั่งซื้อ): {l.Description}", Quantity: l.Quantity, Unit: l.Unit,
+                    UnitPrice: l.UnitPrice, DiscountPercent: l.DiscountPercent, VatRate: l.VatRate, WithholdingTaxRate: 0m,
+                    AccountId: l.AccountId, ProductCode: l.ProductCode))
+                .ToList();
+            if (lines.Count == 0) return false;
+            var create = new Models.DTOs.Document.CreateDocumentRequest(
+                DocumentType: DocumentType.CreditNote, DocumentDate: now, DueDate: null,
+                ContactId: doc.ContactId, Reference: doc.DocumentNumber,
+                Notes: SiteOrderCancelPlan.DraftNotes(order.OrderNumber, doc.DocumentNumber, doc.DocumentDate, cancellationReason),
+                Lines: lines,
+                RelatedDocumentId: doc.Id,
+                CnDnPurchaseSideOverride: false,
+                BillDiscountAmount: doc.BillDiscountAmount > 0m ? doc.BillDiscountAmount : null,
+                CreditNoteReason: SiteOrderCancelPlan.DraftReason,
+                PricesIncludeVat: doc.PricesIncludeVat,
+                BranchId: doc.BranchId,
+                Currency: doc.Currency, ExchangeRate: doc.ExchangeRate);
+            var cn = await _docService!.CreateDocumentAsync(companyId, create, userId, originModule: SiteOrderDepositInvoicing.OriginModule);
+            var refundIntents = await _db.PaymentIntents.AsNoTracking()
+                .Where(i => i.CompanyId == companyId && i.SourceKind == PaymentSourceKind.SiteOrder && i.SourceId == order.Id
+                    && i.Status == PaymentIntentStatus.Succeeded)
+                .Select(i => i.Id).ToListAsync();
+            var slipPaid = order.Payments.Where(p => !p.IsDeleted && p.Status == SitePaymentStatus.Completed
+                    && (p.Reference == null || !p.Reference.StartsWith("PAY-INTENT-", StringComparison.Ordinal)))
+                .Sum(p => p.Amount);
+            var note = SiteOrderCancelPlan.ProposedNote(now, cn.DocumentNumber, doc.DocumentNumber, cn.TotalAmount, refundIntents, slipPaid);
+            order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, note);
+            _logger.LogInformation("ยกเลิกออเดอร์ {Order} หลังชำระ — ร่างใบลดหนี้ {Cn} อ้างใบ {Doc}", order.OrderNumber, cn.DocumentNumber, doc.DocumentNumber);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "ยกเลิกออเดอร์ {Order} — ร่างใบลดหนี้อ้างใบ {Doc} ไม่สำเร็จ", order.OrderNumber, doc?.DocumentNumber);
+            _db.ChangeTracker.Clear();
+            var reloaded = await _db.SiteOrders.Include(o => o.Lines).Include(o => o.Payments)
+                .FirstAsync(o => o.Id == order.Id && o.CompanyId == companyId);
+            var why = ex is BusinessRuleException or InvalidOperationException ? ex.Message : "เกิดข้อผิดพลาดภายใน (ดูบันทึกระบบ)";
+            reloaded.Status = order.Status; reloaded.CancelledAt = order.CancelledAt; reloaded.CancellationReason = order.CancellationReason;
+            reloaded.InternalNotes = DepositPolicyResolver.AppendNoteOnce(reloaded.InternalNotes,
+                SiteOrderCancelPlan.ProposeFailedNote(now, doc?.DocumentNumber ?? "-", why));
+            reloaded.UpdatedBy = userId;
+            await _db.SaveChangesAsync();
+            throw new BusinessRuleException(
+                $"ยกเลิกออเดอร์แล้ว แต่ร่างใบลดหนี้อ้างใบ {doc?.DocumentNumber} ไม่สำเร็จ: {why} — ออกใบลดหนี้เองที่หน้าเอกสาร",
+                SiteOrderCancelPlan.RuleCode);
+        }
     }
 
     public async Task<OrderResponse?> GetOrderAsync(Guid companyId, Guid siteId, Guid orderId)
@@ -914,6 +984,10 @@ public class CmsCommerceService : ICmsCommerceService
         result.PaymentTermLabel = Accounting.Helpers.PaymentTermMode.Label(due.Mode);
         result.AmountDueNow = result.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded ? 0m : due.DueNow;
         result.NextPayableAmount = result.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded ? 0m : due.NextPayable;
+        // รอบ 205 W2 (R-06 · S-2): สลิปรอตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว — ตัวตัดสินเดียวกับ PublicPaymentResolver (เงินเข้า 2 ทางแล้วต้องคืน)
+        result.OnlinePaymentBlockedNote = result.NextPayableAmount > 0.005m
+            && result.Payments.Any(p => Accounting.Helpers.GatewayPaymentRecord.IsPendingSlipRow(p.Status, p.Reference))
+            ? Accounting.Helpers.GatewayPaymentRecord.PendingSlipBlocksOnlineNote : null;
         result.BalanceAmount = due.Balance;
         // ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงบนออเดอร์ + ใบรับเงินมัดจำที่ออกแล้ว (echo กลับให้หลังบ้าน/หน้าร้านเห็นตามจริง)
         result.DepositInvoicingMode = Accounting.Helpers.DepositInvoicingMode.OfOrder(result.DepositInvoicingMode);

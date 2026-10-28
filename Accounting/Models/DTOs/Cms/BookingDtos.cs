@@ -75,6 +75,8 @@ public class BookingSiteSettingsDto
     public string? ReminderHoursBefore { get; set; }
     /// <summary>เทมเพลตข้อความเตือน · ตอนบันทึก null = คงค่าเดิม · "" = กลับไปใช้ข้อความระบบ</summary>
     public string? ReminderTemplate { get; set; }
+    /// <summary>รอบ 205 W2 R-08 (Q5 = ข): เปิดรับมัดจำออนไลน์ของบริการชำระล่วงหน้า · null ตอนบันทึก = คงค่าเดิม</summary>
+    public bool? OnlineDepositEnabled { get; set; }
     /// <summary>ข้อความเริ่มต้นของระบบ + ตัวแทนที่ใช้ได้ (server ประกาศ · หน้าเว็บแสดงเป็นคำใบ้ — ไม่อ่านตอนบันทึก)</summary>
     public string? ReminderDefaultTemplate { get; set; }
     public List<string> ReminderPlaceholders { get; set; } = new();
@@ -327,6 +329,18 @@ public class BookingResponse
     public BookingResourceMode ResourceMode { get; set; }
     /// <summary>เปลี่ยน/เลือกผู้ให้บริการได้ไหม (server ตัดสิน: บริการใช้ผู้ให้บริการ + สถานะรอยืนยัน/ยืนยันแล้ว + นัดยังไม่ผ่าน)</summary>
     public bool CanAssignResource { get; set; }
+    // ── รอบ 205 W2 (R-08 R-10): เส้นเงิน/ลิงก์ลูกค้า — ค่าทุกตัวจากเซิร์ฟเวอร์ (Helpers/CmsBookingOnlinePayment · BookingCancellationFee) หน้าเว็บแสดงอย่างเดียว
+    /// <summary>โทเคนลิงก์ลูกค้า (คืนเฉพาะคำตอบของเส้นสร้าง/เส้น by-token — เส้นพนักงานได้ด้วยเพื่อคัดลอกลิงก์)</summary>
+    public string? PublicToken { get; set; }
+    /// <summary>มัดจำที่ยังค้าง (PrePayment) · 0 = ไม่มี/รับครบ</summary>
+    public decimal OnlineDepositDue { get; set; }
+    /// <summary>จ่ายออนไลน์ไม่ได้เพราะอะไร (null = จ่ายได้ หรือไม่มียอด)</summary>
+    public string? OnlinePaymentNote { get; set; }
+    /// <summary>คำอธิบายค่าธรรมเนียมถ้ายกเลิก "ตอนนี้" (ตัวตัดสิน BookingCancellationFee) · null = ยกเลิกไม่ได้แล้ว</summary>
+    public string? CancelPolicyNote { get; set; }
+    public bool CanCancelOnline { get; set; }
+    public DateTime? PaidAt { get; set; }
+    public string? PaymentReference { get; set; }
     /// <summary>เตือนก่อนนัดส่งถึงจริงล่าสุดเมื่อไร (UTC) · null = ยังไม่ส่ง</summary>
     public DateTime? ReminderSentAt { get; set; }
     /// <summary>ร่องรอยส่งข้อความถึงลูกค้าล้มครั้งล่าสุด (ไม่มีช่องทาง/SMTP/LINE) · null = ไม่มีปัญหา</summary>
@@ -392,3 +406,9 @@ public class AvailableSlotResponse
     /// <summary>ผู้ให้บริการที่ระบบจะจัดให้ (แสดงเพื่อประกอบ — server ตัดสินอีกครั้งตอนจอง)</summary>
     public string? ResourceName { get; set; }
 }
+
+/// <summary>พนักงานบันทึกรับเงินมัดจำของการจอง (รอบ 205 W2 R-08) — ยอด/วันที่/อ้างอิง · ตัวตัดสิน Helpers/CmsBookingOnlinePayment</summary>
+public record RecordBookingPaymentRequest(decimal Amount, DateTime? PaidAt = null, string? Reference = null, Guid? BankAccountId = null, string? Note = null);
+
+/// <summary>ลูกค้ายกเลิกการจองเองผ่านลิงก์โทเคน (รอบ 205 W2 R-10)</summary>
+public record CustomerCancelBookingRequest(string? Reason = null);

@@ -5800,6 +5800,17 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 
 **ตาราง (CREATE TABLE IF NOT EXISTS ใน `DatabaseMigrationHelper`)**: LodgingProperties · LodgingRoomTypes · LodgingUnits · LodgingRatePlans · LodgingSeasons · LodgingRateOverrides · LodgingCancellationPolicies · LodgingExtras · LodgingReservations · LodgingReservationRooms · LodgingReservationExtras · LodgingFolioCharges · LodgingHousekeepingTasks · LodgingGuestRequests
 
+### 6.5c การจองนัดหมาย (CMS booking) — เส้นเงิน (รอบ 205 แพ็ก W2 · `docs/BACKLOG_REGISTER_2026-10-26.md` §3 W2)
+
+- **มัดจำ (PrePayment)**: จอง ⇒ ใบเสร็จมัดจำ**ร่าง** (เดิม) · ลูกค้าจ่ายออนไลน์ `public-pay/bookings/{siteId}/{token}` (โทเคน `SiteBooking.PublicToken` ออกตอนจอง · ไซต์ต้องเปิด `SiteBookingSettings.OnlineDepositEnabled` — คำตัดสินข้อ 164) หรือพนักงานบันทึก `POST …/bookings/{id}/payments`
+  ⇒ `CmsBookingService.RecordDepositPaymentAsync` (ตัวเดียว · ล็อกต่อการจอง · กันซ้ำด้วยเลขอ้างอิง `GatewayPaymentRecord.Reference`) ⇒ `PaidAmount` · ครบมัดจำ ⇒ Pending→Confirmed · ใบเสร็จมัดจำร่างอนุมัติ**ลงวันที่รับเงินจริง** (§78/1) ·
+  ยอดที่จ่ายได้/ข้อความบล็อกจาก `Helpers/CmsBookingOnlinePayment` ตัวเดียว (resolver · handler · คำตอบ `BookingResponse.OnlineDepositDue/OnlinePaymentNote`)
+- **ให้บริการเสร็จ (R-09)**: มัดจำออกใบแล้ว + ราคาเต็ม > มัดจำ ⇒ `SettleDepositOnCompleteAsync` ออกใบกำกับ (จด VAT) / ใบเสร็จ ส่วนที่เหลือ `DepositBaseDeducted` + `DepositAppliedRef` = ใบมัดจำ (ช่องเดียวกับเช็คเอาต์ที่พัก §6.5 / MTO ข้อ 156) · อนุมัติ ⇒ `RealizeTaxedDepositDeductionsAsync` รับรู้ฐานมัดจำ · `ServiceUsedDate` = เวลานัด (tax point §78/1) · มัดจำ = ราคาเต็ม / มัดจำ VAT รอ / เงินประกัน ⇒ เส้นเดิม `RealizeDepositOnCompleteAsync` + ข้อความเดิม
+- **ยกเลิกเอง (R-10) / ไม่มา (R-11)**: `Helpers/BookingCancellationFee.Plan` — หน้าต่างฟรี `FreeCancellationHours` (เฉพาะยกเลิกเอง) · ค่าธรรมเนียม = ค่าบริการรวม × `CancellationFeePercent` · ริบ ≤ มัดจำที่รับจริง (ข้อ 126) ผ่าน `RealizeDepositAsync(ForfeitAs: PriceOrFee)` เท่า**ฐาน**ของส่วนที่ริบ · ส่วนที่เหลือ "รอคืน" ที่ศูนย์มัดจำ (ใบลดหนี้ §86/10 · ระบบไม่คืนเอง R1) · ไม่ตั้ง % ⇒ ไม่ริบ/ไม่คืนเอง (มัดจำคงเป็นหนี้สินรอพนักงาน — เส้นเดิม) · พนักงานยกเลิกจากหลังบ้าน = ไม่คิดค่าธรรมเนียมอัตโนมัติ (เส้นเดิม `SettleErpDocumentOnCancelAsync`)
+- **ออเดอร์หน้าเว็บ**: (R-06) สลิปรอตรวจ ⇒ ช่องจ่ายออนไลน์ปิดชั่วคราวพร้อมเหตุผล (`GatewayPaymentRecord.PendingSlipBlocksOnlineNote` · resolver + `OrderResponse.OnlinePaymentBlockedNote`) · (R-07) ยกเลิกออเดอร์ที่ใบกำกับมีการชำระผูก ⇒ `Helpers/SiteOrderCancelPlan` ⇒ ร่างใบลดหนี้เต็มใบอ้างใบเดิม (Adjustment · ไม่อนุมัติ — คืนเงินแล้วจึงอนุมัติ) + `[ERP-CN-DRAFT]` ชี้รายการชำระที่ต้องคืน · ใบไม่มีชำระ ⇒ void เส้นเดิม
+
+_Last verified against codebase: 2026-10-28 (รอบ 205 แพ็ก W2 — ผู้ประสานงาน · ยังไม่ผ่านฝ่ายค้าน · commit <sha ในคอมมิตถัดไป>)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

@@ -45,6 +45,15 @@ public interface ICmsBookingService
     /// <summary>R-45 มุมมองทุกไซต์ — การจองของเว็บใน <paramref name="siteIds"/> (ผู้เรียกกรองสิทธิ์ด้วย <c>Helpers/CmsSiteScope</c> มาแล้ว · ว่าง = ไม่มีแถว) · แบ่งหน้าจริง</summary>
     Task<PagedResponse<BookingListResponse>> GetBookingsAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, DateTime? fromDate, DateTime? toDate, string? search, int page, int pageSize);
 
+    // ── รอบ 205 W2 (R-08 R-10 R-11): เส้นเงินการจองนัดหมาย — CmsBookingService.Payment.cs ──
+    /// <summary>บันทึกรับเงินมัดจำ (พนักงาน หรือ gateway ผ่าน SiteBookingPaymentHandler) ⇒ PaidAmount/อ้างอิง · ครบมัดจำ = ยืนยันการจอง + อนุมัติใบเสร็จมัดจำลงวันที่รับเงิน · กันซ้ำด้วยเลขอ้างอิง</summary>
+    Task<BookingResponse> RecordDepositPaymentAsync(Guid companyId, Guid siteId, Guid bookingId, RecordBookingPaymentRequest request, string actor,
+        Guid? moneyInAccountId = null, bool fromOnlinePayment = false, CancellationToken ct = default);
+    /// <summary>มุมมองลูกค้าผ่านโทเคน (ไม่มีหมายเหตุภายใน) · null = โทเคนผิด</summary>
+    Task<BookingResponse?> GetBookingByTokenAsync(Guid companyId, Guid siteId, string token);
+    /// <summary>ลูกค้ายกเลิกเองผ่านโทเคน — ค่าธรรมเนียมตามนโยบาย (BookingCancellationFee · เพดาน = มัดจำ ข้อ 126)</summary>
+    Task<BookingResponse> CancelByCustomerAsync(Guid companyId, Guid siteId, string token, CustomerCancelBookingRequest request);
+
     // ERP Sync (event-driven)
     Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId);
 }

@@ -344,6 +344,7 @@ public partial class CmsBookingService : ICmsBookingService
             ReminderEnabled = ctx.Row?.ReminderEnabled ?? true,
             ReminderHoursBefore = ctx.Row?.ReminderHoursBefore ?? BookingReminderPlan.DefaultHoursCsv,
             ReminderTemplate = ctx.Row?.ReminderTemplate,
+            OnlineDepositEnabled = ctx.Row?.OnlineDepositEnabled ?? false,   // รอบ 205 W2 R-08 (Q5 = ข)
             ReminderDefaultTemplate = BookingReminderPlan.DefaultTemplate,
             ReminderPlaceholders = BookingReminderPlan.Placeholders.ToList(),
         };
@@ -395,6 +396,7 @@ public partial class CmsBookingService : ICmsBookingService
             row.ReminderHoursBefore = string.Join(",", BookingReminderPlan.ParseHours(request.ReminderHoursBefore));
         if (request.ReminderTemplate != null)
             row.ReminderTemplate = string.IsNullOrWhiteSpace(request.ReminderTemplate) ? null : request.ReminderTemplate.Trim();
+        if (request.OnlineDepositEnabled is bool onlineDeposit) row.OnlineDepositEnabled = onlineDeposit;   // รอบ 205 W2 R-08
         await _db.SaveChangesAsync();
         return await GetSiteSettingsAsync(companyId, siteId);
     }
@@ -687,6 +689,7 @@ public partial class CmsBookingService : ICmsBookingService
                 TotalAmount = total, DepositAmount = depositAmount,
                 Currency = svc.Currency,
                 CustomerNotes = request.CustomerNotes,
+                PublicToken = CmsBookingOnlinePayment.NewPublicToken(),   // รอบ 205 W2: ลิงก์จ่ายมัดจำ/จัดการการจองของลูกค้า
                 CreatedBy = userId
             };
 
@@ -870,7 +873,8 @@ public partial class CmsBookingService : ICmsBookingService
                         && (o.Status == PosOrderStatus.Completed || o.Status == PosOrderStatus.Refunded))
                     .Select(o => o.OrderNumber).FirstOrDefaultAsync();
                 if (PosBookingIntake.MayRealizeDepositOnComplete(posBill != null))
-                    await RealizeDepositOnCompleteAsync(companyId, erpDocId, userId, notices, bookingNotes);
+                    // รอบ 205 W2 (R-09): ราคาเต็ม > มัดจำ ⇒ ใบส่วนที่เหลือหักฐานมัดจำ · กรณีอื่นเส้นเดิม RealizeDepositOnCompleteAsync (Payment.cs)
+                    await SettleDepositOnCompleteAsync(companyId, siteId, bookingId, erpDocId, userId, notices, bookingNotes);
                 else
                 {
                     var note = PosBookingIntake.SkippedDepositRealizationNote(posBill);
@@ -887,7 +891,11 @@ public partial class CmsBookingService : ICmsBookingService
         else if (request.Status == BookingStatus.Completed && oldStatus != BookingStatus.Completed)
             await ApplyInvoiceTimingAsync(companyId, siteId, bookingId, BookingInvoiceEvent.ServiceCompleted, userId, notices, bookingNotes);
         else if (request.Status == BookingStatus.NoShow && oldStatus != BookingStatus.NoShow)
+        {
             await ApplyInvoiceTimingAsync(companyId, siteId, bookingId, BookingInvoiceEvent.NoShow, userId, notices, bookingNotes);
+            // รอบ 205 W2 (R-11): ริบมัดจำตามนโยบายของบริการ (BookingCancellationFee · เพดาน = มัดจำ ข้อ 126) — ไม่ตั้ง % = ไม่ริบเอง
+            await ForfeitOnNoShowAsync(companyId, siteId, bookingId, userId, notices, bookingNotes);
+        }
 
         if (bookingNotes.Count > 0)
         {
@@ -1312,6 +1320,7 @@ public partial class CmsBookingService : ICmsBookingService
                     : _db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == companyId).Select(r => r.Name).FirstOrDefault(),
                 TotalAmount = b.TotalAmount, DepositAmount = b.DepositAmount,
                 PaidAmount = b.PaidAmount, Currency = b.Currency,
+                PaidAt = b.PaidAt, PaymentReference = b.PaymentReference, PublicToken = b.PublicToken,   // รอบ 205 W2
                 BookingType = b.BookingService.BookingType,
                 ErpDocumentType = b.ErpDocumentType, ErpDocumentId = b.ErpDocumentId,
                 CustomerNotes = b.CustomerNotes, InternalNotes = b.InternalNotes,
@@ -1326,6 +1335,7 @@ public partial class CmsBookingService : ICmsBookingService
         if (resp != null && resp.Status == BookingStatus.Waitlisted)
             resp.WaitlistPosition = (await WaitlistPositionsAsync(companyId, siteId, new[] { resp.Id })).GetValueOrDefault(resp.Id);
         if (resp != null) resp.CreditPassNumber = await CreditPassNumberAsync(companyId, resp.Id);   // R-39
+        if (resp != null) await FillCustomerFacingAsync(companyId, siteId, resp);   // รอบ 205 W2: มัดจำค้าง/จ่ายออนไลน์/นโยบายยกเลิก — ค่าจากเซิร์ฟเวอร์
         // ปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี": ตัวตัดสินเดียวกับตอนกดจริง (server ตัดสิน · หน้าเว็บแสดง) · โหลดข้อเท็จจริงเฉพาะการจองที่เป็นไปได้
         // (Guaranteed ที่ผูกใบยืนยันการจอง หรือยังไม่มีเอกสาร) ⇒ โหมด (ก) ไม่มี query เพิ่ม + หน้าจอเดิม (ฝ่ายค้าน ข้อ 6)
         if (resp != null && resp.BookingType == BookingType.Guaranteed
@@ -1458,7 +1468,8 @@ public partial class CmsBookingService : ICmsBookingService
 
     /// <summary>ตัวจริงของเส้นสร้างเอกสาร ERP ของการจอง · <paramref name="taxDocumentNow"/> = ถึง tax point แล้วแต่การจองยังไม่มีเอกสารผูก
     /// (ขั้น ERP ตอนจองล้ม) ⇒ สร้างใบชนิดนี้ (ใบกำกับ/ใบแจ้งหนี้) ด้วยเส้นเดียวกัน แทนชนิดตอนจอง — ตัดสินโดย <see cref="BookingInvoiceTimingPolicy"/> (ข้อ 155)</summary>
-    private async Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId, DocumentType? taxDocumentNow, DateTime? documentDate)
+    private async Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId, DocumentType? taxDocumentNow, DateTime? documentDate,
+        Guid? paymentAccountId = null, Guid? bankAccountId = null)
     {
         var booking = await _db.SiteBookings
             .Include(b => b.BookingService)
@@ -1580,7 +1591,10 @@ public partial class CmsBookingService : ICmsBookingService
             PricesIncludeVat: true,           // ราคา CMS เป็น gross
             BookingNumber: booking.BookingNumber,
             IsDeposit: isDeposit,
-            DepositKindId: bookingDepositKindId
+            DepositKindId: bookingDepositKindId,
+            // รอบ 205 W2 (R-08): ใบเสร็จมัดจำที่สร้างหลังเงินเข้า — ผังเงินเข้าจาก gateway/ธนาคารที่พนักงานเลือก (null = ค่าเริ่มต้นเดิม)
+            PaymentAccountId: paymentAccountId,
+            BankAccountId: bankAccountId
         );
 
         // รอบ 205 ทีม W1 (R-04): ระบุต้นทาง ⇒ ใบร่างจากการจองไม่กินโควตาจนอนุมัติ (DocumentQuotaPolicy.DefersCountUntilApproval)

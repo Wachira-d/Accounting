@@ -28,6 +28,8 @@ public class SiteBookingSettings : TenantEntity
     public string ReminderHoursBefore { get; set; } = BookingReminderPlan.DefaultHoursCsv;
     /// <summary>เทมเพลตข้อความเตือน (ตัวแทน <c>BookingReminderPlan.Placeholders</c>) · null = ข้อความเริ่มต้นของระบบ</summary>
     public string? ReminderTemplate { get; set; }
+    /// <summary>เปิดให้ลูกค้าจ่ายมัดจำออนไลน์ผ่าน gateway (คำตัดสินเจ้าของ Q5 = ข: ปิดเป็นค่าเริ่มต้น ไซต์เปิดเอง · รอบ 205 W2 R-08)</summary>
+    public bool OnlineDepositEnabled { get; set; }
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>

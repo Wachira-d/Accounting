@@ -45,9 +45,9 @@ public static class PaymentRedispatchPolicy
     /// <summary>attempt ที่ไม่มีผลตามหลังนานกว่านี้ = ถือว่าหลุด (process ตาย) ⇒ ส่งต่อใหม่ได้อีก</summary>
     public static readonly TimeSpan InProgressWindow = TimeSpan.FromMinutes(10);
 
-    public static bool IsUnfulfilledNote(string? note) => note != null && note.StartsWith(UnfulfilledNotePrefix, StringComparison.Ordinal);
-    public static bool IsFulfilledNote(string? note) => note != null && note.StartsWith(FulfilledNotePrefix, StringComparison.Ordinal);
-    public static bool IsAttemptNote(string? note) => note != null && note.StartsWith(AttemptNotePrefix, StringComparison.Ordinal);
+    internal static bool IsUnfulfilledNote(string? note) => note != null && note.StartsWith(UnfulfilledNotePrefix, StringComparison.Ordinal);
+    internal static bool IsFulfilledNote(string? note) => note != null && note.StartsWith(FulfilledNotePrefix, StringComparison.Ordinal);
+    internal static bool IsAttemptNote(string? note) => note != null && note.StartsWith(AttemptNotePrefix, StringComparison.Ordinal);
 
     /// <summary>เวลาของ ⚠️ ล่าสุด (เรียงตามเวลา) · null = ไม่มี</summary>
     public static DateTime? LastUnfulfilledAt(IEnumerable<(DateTime At, string? Note)> events)

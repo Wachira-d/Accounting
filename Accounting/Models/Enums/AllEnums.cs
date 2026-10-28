@@ -633,6 +633,7 @@ public enum PaymentSourceKind
     SubscriptionPayment = 4,   // ค่าบริการ SaaS ของตัวระบบเอง
     PosOrder = 5,              // บิล POS (แสดง QR บนจอลูกค้า)
     AddOnPurchase = 6,         // ซื้อส่วนเสริม (add-on) รายเดือน — LDG-P0-03
+    SiteBooking = 7,           // มัดจำการจองนัดหมาย (CMS booking) — รอบ 205 W2 R-08 (Helpers/CmsBookingOnlinePayment)
 }
 
 /// <summary>สถานะการชำระเงินของการเปิดใช้ add-on หนึ่งครั้ง (LDG-P0-03)

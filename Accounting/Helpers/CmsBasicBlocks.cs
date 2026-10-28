@@ -153,7 +153,7 @@ public static class CmsBasicBlocks
 
     /// <summary>URL ของปุ่ม/ลิงก์ที่ยอมลงหน้าเว็บ: ของ <see cref="CmsGalleryBlock.IsSafeUrl"/> + <c>#anchor</c> + <c>mailto:</c>/<c>tel:</c>/<c>sms:</c> ·
     /// path ภายในที่ไม่ขึ้นต้น "/" (เช่น <c>contact</c>) เติม "/" ให้ · อย่างอื่น (ว่าง · <c>javascript:</c> · <c>data:</c>) ⇒ "#"</summary>
-    public static string SafeLink(string? url)
+    internal static string SafeLink(string? url)
     {
         var s = (url ?? "").Trim();
         if (s.Length == 0 || s == "#") return "#";

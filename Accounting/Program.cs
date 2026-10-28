@@ -375,6 +375,9 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandle
     Accounting.Services.Payments.Handlers.SubscriptionPaymentHandler>();
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.PosOrderPaymentHandler>();
+// รอบ 205 W2 (R-08): มัดจำการจองนัดหมาย (CMS booking) — เงินเข้า ⇒ CmsBookingService.RecordDepositPaymentAsync
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.SiteBookingPaymentHandler>();
 // (3-way match endpoint ProcurementController/GrnMatchService ถูกลบ 2026-10-08 ตามคำตัดสินเจ้าของ — ไม่มีหน้าใดเรียก และผิดบนเส้น GRN→PI ปกติ ·
 // ด่านจริงคือ F20 ตอนอนุมัติใบแจ้งหนี้ซื้อ + PurchaseReceiptRoute)
 // Cheque lifecycle — book ordering, issuance, clearing, bouncing,

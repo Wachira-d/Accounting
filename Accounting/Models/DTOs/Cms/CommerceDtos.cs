@@ -411,6 +411,8 @@ public class OrderResponse
     /// <summary>ข้อความถึงลูกค้า/พนักงานเรื่องใบกำกับของมัดจำ (null = ไม่ต้องแสดง)</summary>
     public string? DepositInvoicingNote { get; set; }
     public List<OrderDepositDocumentResponse> DepositDocuments { get; set; } = new();
+    /// <summary>รอบ 205 W2 (R-06): ช่องจ่ายออนไลน์ปิดชั่วคราวเพราะอะไร (สลิปรอตรวจ) · null = เปิด — หน้าเว็บแสดงตรง ๆ</summary>
+    public string? OnlinePaymentBlockedNote { get; set; }
 }
 
 /// <summary>ใบรับเงินมัดจำ 1 ใบของออเดอร์ (ทีม Q)</summary>

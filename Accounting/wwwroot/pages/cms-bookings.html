@@ -254,6 +254,17 @@
               <div style="display:flex;justify-content:space-between"><span>ชำระแล้ว</span><span class="${b.paidAmount>=b.totalAmount?'text-success':'text-warning'}">฿${Number(b.paidAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
               ${b.erpDocumentId ? `<div style="margin-top:6px;font-size:11px;color:#059669">✓ ผูกกับเอกสารบัญชี — <a href="/pages/documents.html?id=${b.erpDocumentId}" style="color:#059669;text-decoration:underline">เปิดดู</a></div>` : ''}
               ${b.creditPassNumber ? `<div style="margin-top:6px;font-size:11px;color:#6b21a8">🎟️ ชำระด้วยบัตรคอร์ส ${Layout.esc(b.creditPassNumber)} — ไม่มีเงินต้องเก็บ · ไม่ออกเอกสารบัญชี (รายได้รับรู้จากบัตรเมื่อให้บริการเสร็จ)</div>` : ''}
+              ${b.bookingType === 'PrePayment' && b.status !== 'Cancelled' && b.status !== 'NoShow' && b.status !== 'Completed' && !b.creditPassNumber && Number(b.paidAmount || 0) + 0.005 < Number(b.depositAmount || 0) ? `<div style="margin-top:8px;border-top:1px dashed var(--gray-300);padding-top:8px">
+                <div style="font-size:12px;font-weight:600">บันทึกรับเงินมัดจำ (โอน/เงินสด) — รอบ 205 W2</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+                  <input type="number" step="0.01" min="0" id="bkPayAmount" class="form-input" style="width:120px" value="${(Number(b.depositAmount || 0) - Number(b.paidAmount || 0)).toFixed(2)}">
+                  <input type="date" id="bkPayDate" class="form-input" style="width:auto" value="${this._todayBkk()}">
+                  <input type="text" id="bkPayRef" class="form-input" style="width:150px" placeholder="อ้างอิง/เลขโอน">
+                  <button class="btn btn-primary btn-sm" onclick="Page.recordPayment('${b.id}')">บันทึกรับเงิน</button>
+                </div>
+                <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (§78/1)${b.onlinePaymentNote ? ' · ' + Layout.esc(b.onlinePaymentNote) : ''}</div>
+              </div>` : ''}
+              ${b.publicToken ? `<div style="margin-top:6px;font-size:11px"><button class="btn btn-sm" onclick="Page.copyBookingLink('${Layout.esc(b.publicToken)}')">📋 คัดลอกลิงก์ลูกค้า (จ่ายมัดจำ / ยกเลิกเอง)</button></div>` : ''}
             </div>
             ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
             ${b.canIssueTaxInvoiceNow ? `<div style="background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px">
@@ -282,6 +293,32 @@
           Layout.closeModal('bkModal');
           await this.load();
         } catch (e) { Layout.toast('ออกใบกำกับไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ — ตัวตัดสิน/ผลอยู่ที่เซิร์ฟเวอร์ (RecordDepositPaymentAsync) หน้านี้ส่งค่าแล้วแสดงข้อความกลับ
+      async recordPayment(id) {
+        const api = Layout.api(); if (!api) return;
+        const amount = Number((document.getElementById('bkPayAmount') || {}).value || 0);
+        const paidOn = (document.getElementById('bkPayDate') || {}).value || null;
+        const reference = ((document.getElementById('bkPayRef') || {}).value || '').trim() || null;
+        if (!(amount > 0)) { Layout.toast('ระบุยอดรับเงิน', 'error'); return; }
+        try {
+          const res = await api.cmsRecordBookingPayment(this._sid(), id, { amount, paidAt: paidOn ? paidOn + 'T12:00:00Z' : null, reference });
+          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
+          notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          Layout.toast('บันทึกรับเงินแล้ว');
+          await this.viewBooking(id);
+          await this.load();
+        } catch (e) { Layout.toast('บันทึกรับเงินไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      // ลิงก์ลูกค้า: ใช้ subdomain ของเว็บถ้ามี (storefront resolve เอง) ไม่งั้นระบุ companyId+siteId ตรง ๆ
+      copyBookingLink(token) {
+        const sid = this._sid();
+        const site = (this.sites || []).find(s => s.id === sid);
+        const cid = (Layout.user && Layout.user.companyId) || '';
+        const url = site && site.subdomain
+          ? `${location.origin}/storefront.html?subdomain=${encodeURIComponent(site.subdomain)}&slug=${encodeURIComponent('my-booking/' + token)}`
+          : `${location.origin}/storefront.html?companyId=${encodeURIComponent(cid)}&siteId=${encodeURIComponent(sid)}&slug=${encodeURIComponent('my-booking/' + token)}`;
+        (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => Layout.toast('คัดลอกลิงก์แล้ว')).catch(() => prompt('คัดลอกลิงก์นี้', url));
       },
       // รอบ 205 W3 R-16: เลือก/เปลี่ยนผู้ให้บริการ — ค่าว่าง = ให้ระบบจัดให้ · server ตัดสินผ่าน BookingSlotEngine ตัวเดียว (ไม่ว่าง/ไม่เข้างาน ⇒ ข้อความไทยจาก server)
       async assignResource(id) {

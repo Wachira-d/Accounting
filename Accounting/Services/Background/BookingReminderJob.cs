@@ -74,7 +74,8 @@ public class BookingReminderJob : BackgroundService
 
     /// <summary>ตัวงานจริง — รับ DbContext/ตัวส่ง/เวลาจากผู้เรียก (เทสต์ Db ป้อนตัวส่งปลอม + เวลา)</summary>
     public async Task<(int RemindersSent, int RemindersFailed, int WaitlistRetried, int HoldsReleased)> ProcessAsync(
-        AccountingDbContext db, IBookingNotifier? notifier, ICmsBookingService bookings, DateTime nowUtc, CancellationToken ct)
+        AccountingDbContext db, IBookingNotifier? notifier, ICmsBookingService bookings, DateTime nowUtc, CancellationToken ct,
+        Guid? onlyCompanyId = null)   // เทสต์ Db บนฐานร่วม: จำกัดบริษัท (null = ทุกบริษัท — เส้นจริง)
     {
         var nowLocal = BookingSlotEngine.BangkokNow(nowUtc);
         var today = DateOnly.FromDateTime(nowLocal);
@@ -90,6 +91,7 @@ public class BookingReminderJob : BackgroundService
             var from = today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
             var to = today.AddDays((int)Math.Ceiling(maxHours / 24.0) + 1).ToDateTime(TimeOnly.MinValue);
             var rows = await db.SiteBookings
+                .Where(b => onlyCompanyId == null || b.CompanyId == onlyCompanyId)
                 .Where(b => !b.IsDeleted && (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed)
                     && b.BookingDate >= from && b.BookingDate < to)
                 .Select(b => new
@@ -146,6 +148,7 @@ public class BookingReminderJob : BackgroundService
         // ── 2. แจ้งได้คิวซ้ำ (ส่งไม่ถึงตอนเลื่อนขึ้น) ──
         var retryFrom = today.AddDays(-1).ToDateTime(TimeOnly.MinValue);
         var pendingNotify = await db.SiteBookings.AsNoTracking()
+            .Where(b => onlyCompanyId == null || b.CompanyId == onlyCompanyId)
             .Where(b => !b.IsDeleted && b.WaitlistPromotedAt != null && b.WaitlistNotifiedAt == null
                 && (b.Status == BookingStatus.Pending || b.Status == BookingStatus.Confirmed) && b.BookingDate >= retryFrom)
             .Select(b => new { b.CompanyId, b.SiteId, b.Id, b.NotifyAttemptedAt })
@@ -167,6 +170,7 @@ public class BookingReminderJob : BackgroundService
 
         // ── 3. ปล่อยรอบที่ถือไว้แล้วไม่ยืนยัน ──
         var expired = await db.SiteBookings.AsNoTracking()
+            .Where(b => onlyCompanyId == null || b.CompanyId == onlyCompanyId)
             .Where(b => !b.IsDeleted && b.Status == BookingStatus.Pending && b.WaitlistHoldUntil != null && b.WaitlistHoldUntil <= nowUtc)
             .Select(b => new { b.CompanyId, b.SiteId, b.Id, b.BookingNumber, b.Status, b.WaitlistHoldUntil })
             .ToListAsync(ct);

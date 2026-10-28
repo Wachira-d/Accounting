@@ -154,6 +154,8 @@ public class SiteBooking : TenantEntity
     // Payment
     public string? PaymentReference { get; set; }
     public DateTime? PaidAt { get; set; }
+    /// <summary>โทเคนสาธารณะที่ลูกค้าถือ (ลิงก์จ่ายมัดจำ/จัดการการจอง) — ออกตอนจอง · ใบเก่า null = ไม่มีลิงก์ (รอบ 205 W2 R-08/R-10)</summary>
+    public string? PublicToken { get; set; }
 
     // ERP Integration (event-driven document creation)
     public Guid? ErpDocumentId { get; set; }

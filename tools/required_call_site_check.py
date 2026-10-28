@@ -1353,7 +1353,7 @@ RULES += [
     # ยกเลิก: ตัดสินก่อน void · ตัวเมธอดสถานะห้ามเรียก void/realize ตรง (ต้องผ่านเมธอดที่ตัดสินแล้ว)
     dict(file=CMS_BOOK, method="SettleErpDocumentOnCancelAsync", must=["CmsBookingCancelPolicy.DecideOnCancel("],
          before=[("CmsBookingCancelPolicy.DecideOnCancel(", "VoidDocumentAsync(")], why=_CMS_C1_WHY),
-    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync", must=["SettleErpDocumentOnCancelAsync(", "RealizeDepositOnCompleteAsync("],
+    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync", must=["SettleErpDocumentOnCancelAsync(", "SettleDepositOnCompleteAsync("],   # รอบ 205 W2: ตัวห่อ RealizeDepositOnCompleteAsync (R-09 ใบส่วนที่เหลือ)
          forbid=["VoidDocumentAsync(", "RealizeDepositAsync("], why=_CMS_C1_WHY),
     dict(file=CMS_BOOK, method="RealizeDepositOnCompleteAsync", must=["CmsBookingCancelPolicy.DecideOnComplete("],
          before=[("CmsBookingCancelPolicy.DecideOnComplete(", "RealizeDepositAsync(")],
@@ -9605,6 +9605,58 @@ RULES += [
          why=_W3_WHY + "ถือรอบคิวสำรองคิดจาก BookingReminderPlan.HoldUntil ตัวเดียว (ค่าตั้ง WaitlistHoldMinutes ต้องมีผู้อ่าน — F2 #2)"),
     dict(file=CMS_BOOK, method="UpdateSiteSettingsAsync", must=["BookingReminderPlan.Validate(", "BookingSiteHours.Serialize(", "ParseSchedule("],
          why=_W3_WHY + "ค่าตั้งใหม่ของเว็บผ่านด่านตรวจเดียวกับของบริการก่อนเขียน (ค่าเสียต้องไม่ถูกบันทึกเงียบ)"),
+]
+
+# ── รอบ 205 แพ็ก W2 (ผู้ประสานงาน 2026-10-28 · R-06 R-07 R-08 R-09 R-10 R-11): เส้นเงินการจองนัดหมาย + ยกเลิกออเดอร์ ──
+#    หลัก: ยอดจ่ายออนไลน์จากเซิร์ฟเวอร์ตัวเดียว (CmsBookingOnlinePayment) · กันซ้ำด้วยเลขอ้างอิง · ค่าธรรมเนียมผ่าน BookingCancellationFee
+#    (เพดาน = มัดจำ ข้อ 126) · ริบด้วย RealizeDepositAsync(ForfeitAs) เดิม · ใบที่มีการชำระผูกห้าม void ⇒ เสนอใบลดหนี้ (§86/10) · ไม่อนุมัติเอง (R1)
+BOOK_PAY = "Services/Implementations/CmsBookingService.Payment.cs"
+BOOK_PAY_HANDLER = "Services/Payments/Handlers/SiteBookingPaymentHandler.cs"
+PUBLIC_PAY_RESOLVER = "Services/Payments/PublicPaymentResolver.cs"
+CMS_COMMERCE_SVC = "Services/Implementations/CmsCommerceService.cs"
+_W2_WHY = "รอบ 205 W2: "
+RULES += [
+    dict(file=BOOK_PAY, method="RecordDepositPaymentAsync",
+         must=["ExecuteSqlRawAsync(", "CmsBookingOnlinePayment.AlreadyRecorded(", "CmsBookingOnlinePayment.ValidateAmount(",
+               "CmsBookingOnlinePayment.ValidatePaidAt(", "CmsBookingOnlinePayment.DepositSettled(", "CmsBookingOnlinePayment.AppendReference("],
+         before=[("ExecuteSqlRawAsync(", "CmsBookingOnlinePayment.AlreadyRecorded("), ("CmsBookingOnlinePayment.ValidateAmount(", "booking.PaidAmount = ")],
+         why=_W2_WHY + "R-08 รับเงินใต้ล็อกต่อการจอง · กันซ้ำด้วยเลขอ้างอิงก่อนบวกยอด · ด่านยอด/วันที่จากตัวตัดสินเดียว"),
+    dict(file=BOOK_PAY, method="IssueDepositReceiptAfterPaymentAsync",
+         must=["CmsBookingOnlinePayment.DepositSettled(", "doc.DocumentDate = paidAt", "ApproveBookingTaxDocumentAsync("],
+         before=[("doc.DocumentDate = paidAt", "ApproveBookingTaxDocumentAsync(")],
+         why=_W2_WHY + "R-08 ใบเสร็จมัดจำอนุมัติเฉพาะเมื่อครบมัดจำ และลงวันที่รับเงินจริงก่อนอนุมัติ (§78/1)"),
+    dict(file=BOOK_PAY, method="CancelByCustomerAsync",
+         must=["BookingCancellationFee.Plan(BookingCancelKind.CustomerCancel", "UpdateBookingStatusAsync(", "ForfeitDepositByPolicyAsync("],
+         before=[("UpdateBookingStatusAsync(", "ForfeitDepositByPolicyAsync(")],
+         why=_W2_WHY + "R-10 ยกเลิกเองเดินเส้นสถานะเดิม (เอกสาร/คิวสำรอง) แล้วริบตามนโยบายจากตัวตัดสินเดียว"),
+    dict(file=BOOK_PAY, method="ForfeitDepositByPolicyAsync",
+         must=["BookingCancellationFee.ForfeitBase(", "DocumentStatusRules.IsEffective(", "ForfeitAs: DepositForfeitAs.PriceOrFee"],
+         forbid=["RefundDepositAsync("],
+         why=_W2_WHY + "R-10/R-11 ริบไม่เกินฐานคงค้าง · ริบเฉพาะใบที่ออกแล้ว · ไม่คืนเงินเอง (R1 — ศูนย์มัดจำ)"),
+    dict(file=BOOK_PAY, method="SettleDepositOnCompleteAsync",
+         must=["CmsBookingCancelPolicy.DecideOnComplete(", "DepositAppliedRef: erpDoc.DocumentNumber", "DepositBaseDeducted: deductBase", "RealizeDepositOnCompleteAsync("],
+         why=_W2_WHY + "R-09 ใบส่วนที่เหลือหักฐานมัดจำผ่านช่องเดียวกับที่พัก/MTO (ข้อ 156) · กรณีอื่นเส้นเดิม"),
+    dict(file=CMS_BOOK, method="UpdateBookingStatusAsync",
+         must=["SettleDepositOnCompleteAsync(", "ForfeitOnNoShowAsync("],
+         why=_W2_WHY + "R-09/R-11 ให้บริการเสร็จ ⇒ ใบส่วนที่เหลือ · ไม่มา ⇒ ริบตามนโยบาย — ต่อสายในเส้นสถานะเดียว"),
+    dict(file=BOOK_PAY_HANDLER, method="HandleSucceededAsync",
+         must=["CmsBookingOnlinePayment.AlreadyRecorded(", "GatewaySourceEvidence.AlreadyRecordedBySomeoneElseAsync(", "RecordDepositPaymentAsync(", "fromOnlinePayment: true"],
+         before=[("CmsBookingOnlinePayment.AlreadyRecorded(", "RecordDepositPaymentAsync(")],
+         why=_W2_WHY + "R-08 เงินเข้า ⇒ กันซ้ำสองชั้น แล้วเดินเส้นเดียวกับพนักงาน (ไม่เขียนสำเนา)"),
+    dict(file=PUBLIC_PAY_RESOLVER, method="ResolveBookingAsync",
+         must=["CmsBookingOnlinePayment.DepositDue(", "CmsBookingOnlinePayment.BlockedNote(", "x.PublicToken == token", "OnlineDepositEnabled"],
+         why=_W2_WHY + "R-08 ยอดจากเซิร์ฟเวอร์ตัวเดียว · โทเคน = สิทธิ์ · ไซต์ไม่เปิด (Q5 = ข) ⇒ ยอด 0 + เหตุผล"),
+    dict(file=PUBLIC_PAY_RESOLVER, method="ResolveOrderAsync",
+         must=["GatewayPaymentRecord.SlipReferencePrefix", "BlockedNote: GatewayPaymentRecord.PendingSlipBlocksOnlineNote"],
+         why=_W2_WHY + "R-06 สลิปรอตรวจ ⇒ ปิดช่องจ่ายออนไลน์พร้อมเหตุผล (ไม่ silent)"),
+    dict(file=CMS_COMMERCE_SVC, method="UpdateOrderStatusAsync",
+         must=["ProposeCreditNoteOnCancelAsync(", "!cnProposed"],
+         before=[("ProposeCreditNoteOnCancelAsync(", "VoidDocumentAsync(")],
+         why=_W2_WHY + "R-07 ตัดสินใบลดหนี้ก่อน void (ใบที่มีการชำระผูกห้าม void §86/10)"),
+    dict(file=CMS_COMMERCE_SVC, method="ProposeCreditNoteOnCancelAsync",
+         must=["SiteOrderCancelPlan.Decide(", "DocumentType.CreditNote", "RelatedDocumentId: doc.Id", "SiteOrderCancelPlan.DraftReason"],
+         forbid=["ApproveDocumentAsync("],
+         why=_W2_WHY + "R-07 ใบลดหนี้อ้างใบเดิม เป็นร่างเท่านั้น — ไม่อนุมัติเอง (R1: เงินยังไม่คืน)"),
 ]
 
 def main() -> int:

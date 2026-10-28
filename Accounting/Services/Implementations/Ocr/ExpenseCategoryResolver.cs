@@ -959,7 +959,9 @@ internal static class ExpenseCategoryResolver
             // ฝั่งประวัติผู้ขาย เพื่อไม่ให้ "ข้อเสนอสองชนิด" ดูต่างกันโดยไม่มีเหตุ
             data.FieldConfidence[Accounting.Helpers.OcrFieldKeys.WhtRate] =
                 Accounting.Helpers.OcrWhtSuggestionGate.SuggestionFieldConfidence;
-            data.Note(Accounting.Helpers.OcrFieldKeys.SuggestedWhtRate, effectiveWhtRate,
+            // ชื่อคีย์ (string) — ไม่ใช่ค่า decimal? ที่ชื่อเดียวกันใน DTO (nullable_arg_check แยกไม่ได้ · F4 #1)
+            const string suggestedWhtKey = Accounting.Helpers.OcrFieldKeys.SuggestedWhtRate;
+            data.Note(suggestedWhtKey, effectiveWhtRate,
                 Accounting.Helpers.OcrFieldSource.Statute, result.Confidence,
                 $"อัตราตามกฎหมายของหมวด '{result.Category}'"
                 + (string.IsNullOrEmpty(result.WhtIncomeTypeCode) ? "" : $" (ม.40 {result.WhtIncomeTypeCode})"));

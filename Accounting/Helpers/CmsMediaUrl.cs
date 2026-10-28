@@ -17,11 +17,11 @@ public static class CmsMediaUrl
     public const string OrderEntityType = "SiteOrder";
 
     /// <summary>URL เดิมของสื่อที่เขียน disk ตรง (static allow-list <c>/uploads/cms</c>) — ใช้กับแถวที่ยังไม่มี <c>AttachmentId</c></summary>
-    public static string LegacyMediaUrl(Guid companyId, Guid siteId, string? fileName) =>
+    internal static string LegacyMediaUrl(Guid companyId, Guid siteId, string? fileName) =>
         $"/uploads/cms/{companyId}/{siteId}/{Uri.EscapeDataString(fileName ?? "")}";
 
     /// <summary>URL ของสื่อที่อยู่ในที่เก็บไฟล์กลาง — endpoint สาธารณะของ storefront (ตรวจ companyId + siteId + ชนิด)</summary>
-    public static string AttachmentMediaUrl(Guid companyId, Guid siteId, Guid attachmentId) =>
+    internal static string AttachmentMediaUrl(Guid companyId, Guid siteId, Guid attachmentId) =>
         $"/api/companies/{companyId}/cms/sites/{siteId}/storefront/media/{attachmentId}";
 
     /// <summary>URL สาธารณะของแถว <c>SiteMedia</c> — มี <paramref name="attachmentId"/> ⇒ ที่เก็บกลาง · ไม่มี ⇒ ตำแหน่งเดิม</summary>

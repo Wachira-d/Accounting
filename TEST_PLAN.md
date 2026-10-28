@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **665 ไฟล์ · 6,640 `[Fact]` + 1,072 `[Theory]` (4,985 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **668 ไฟล์ · 6,660 `[Fact]` + 1,077 `[Theory]` (5,019 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
@@ -6683,6 +6683,13 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | BKE-20 | **W3 R-16** พนักงานเลือก/เปลี่ยนผู้ให้บริการ (`PUT …/bookings/{id}/resource`) — คนที่เลือกไม่ว่าง/ไม่เข้างาน/ไม่รับบริการ ⇒ 409/400 ข้อความไทย · ว่าง = ระบบจัดให้ (`PickResource`) · ใบตัวเองไม่นับเป็นคิวที่ชน · เฉพาะรอยืนยัน/ยืนยันแล้ว+ยังไม่ถึงนัด | server ตัดสิน (`CanAssignResource`) · จุดเรียกล็อก `required_call_site_check` | ⏳ manual (ไม่มี Db test — ต้องมีผู้ให้บริการ+ตารางงาน) |
 | BKE-11 | cms-edit: เปิดแก้บริการแล้วบันทึกโดยไม่แตะ | ชนิดการจอง/มัดจำ/buffer/ตารางเวลา คงเดิม (เดิมรีเซ็ต) | ⏳ manual |
 | BKE-12 | `cms-bookings.html?siteId=X` | ซ่อนตัวเลือกไซต์ · แสดงเฉพาะไซต์ X · siteId ไม่ใช่ของบริษัท ⇒ ข้อความ "ไม่พบเว็บไซต์" | ⏳ manual |
+| BKE-21 | **W2 R-08** PrePayment มัดจำ 500 · ลูกค้าจ่ายออนไลน์ผ่าน `public-pay/bookings/{siteId}/{token}` (ไซต์เปิด `OnlineDepositEnabled`) | `PaidAmount` 500 · สถานะ Pending→Confirmed · ใบเสร็จมัดจำร่างอนุมัติ**ลงวันที่รับเงิน** · เลขอ้างอิง `PAY-INTENT-…` บนการจอง · webhook ซ้ำไม่บวกซ้ำ | `CmsBookingOnlinePaymentTests` + manual |
+| BKE-22 | **W2 R-08 ทิศตรงข้าม** ไซต์ไม่เปิดรับมัดจำออนไลน์ (ค่าเริ่มต้น Q5 = ข) | resolver ยอด 0 + `BlockedNote` "ยังไม่เปิดรับชำระมัดจำออนไลน์" · storefront ไม่มีปุ่ม แสดงข้อความ · พนักงานบันทึกรับเงินผ่าน `POST …/bookings/{id}/payments` ได้ผลเดียวกัน | manual |
+| BKE-23 | **W2 R-09** ให้บริการเสร็จ · มัดจำ 500 ออกใบแล้ว · ราคาเต็ม 2,000 | ใบกำกับ/ใบเสร็จ 2,000 `DepositBaseDeducted` = ฐานมัดจำ · ค้างชำระ 1,500 · มัดจำรับรู้ครบ (JE 217→41) · tax point วันใช้บริการ · มัดจำ = ราคาเต็ม ⇒ เส้นเดิม `RealizeDepositOnCompleteAsync` | manual (Db) |
+| BKE-24 | **W2 R-10** ลูกค้ายกเลิกเองก่อนนัด ≥ `FreeCancellationHours` | ค่าธรรมเนียม 0 · มัดจำทั้งหมด "รอคืน" (ไม่คืนเอง) · การจอง Cancelled · คิวสำรองเลื่อน | `BookingCancellationFeeTests` + manual |
+| BKE-25 | **W2 R-10/R-11** ยกเลิกหลังหน้าต่างฟรี / ไม่มา · `CancellationFeePercent` 50 · มัดจำ 500 · ราคา 2,000 | ค่าธรรมเนียม 1,000 ⇒ ริบ 500 (เพดาน = มัดจำ ข้อ 126) ผ่าน `RealizeDepositAsync(ForfeitAs)` · ค้าง 500 เป็นหมายเหตุ CRM · ไม่ตั้ง % ⇒ ไม่ริบ ไม่คืน | `BookingCancellationFeeTests` |
+| BKE-26 | **W2 R-06** ออเดอร์มีสลิปรอตรวจ แล้วเปิดหน้าสั่งซื้อสำเร็จ | `onlinePaymentBlockedNote` แสดงแทนปุ่มจ่าย · `public-pay/orders/…/intents` ตอบ 400 พร้อมข้อความเดียวกัน · สลิปถูกปฏิเสธ ⇒ ปุ่มกลับมา | manual |
+| BKE-27 | **W2 R-07** ยกเลิกออเดอร์ที่ใบกำกับมีการชำระผูก | ไม่ void · ร่างใบลดหนี้เต็มใบอ้างใบเดิม (ไม่อนุมัติ) · หมายเหตุ `[ERP-CN-DRAFT]` ชี้รายการชำระ/ยอดโอนที่ต้องคืน · ออเดอร์ที่ยังไม่จ่าย void เหมือนเดิม | `SiteOrderCancelPlanTests` + manual |
 
 
 ## CC — คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md` · `Helpers/CourseCreditMath`)

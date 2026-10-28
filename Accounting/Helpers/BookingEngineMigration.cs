@@ -50,6 +50,10 @@ public static class BookingEngineMigration
         """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "WaitlistPromotedAt" timestamptz NULL;""",
         """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "WaitlistNotifiedAt" timestamptz NULL;""",
         """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "WaitlistHoldUntil" timestamptz NULL;""",
+        // รอบ 205 W2 (R-08/R-10): โทเคนลิงก์ลูกค้า + ไซต์เปิดรับมัดจำออนไลน์ (Q5 = ข ⇒ default false)
+        """ALTER TABLE "SiteBookings" ADD COLUMN IF NOT EXISTS "PublicToken" varchar(64) NULL;""",
+        """CREATE INDEX IF NOT EXISTS "IX_SiteBookings_Company_Site_PublicToken" ON "SiteBookings" ("CompanyId", "SiteId", "PublicToken");""",
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "OnlineDepositEnabled" boolean NOT NULL DEFAULT false;""",
 
         // ผู้ให้บริการ / ห้อง / อุปกรณ์
         "CREATE TABLE IF NOT EXISTS \"SiteBookingResources\" (" + Base + ", \"SiteId\" uuid NOT NULL, \"Name\" varchar(256) NOT NULL, "

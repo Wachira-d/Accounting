@@ -54,6 +54,23 @@ public static class GatewaySourceEvidence
                     .Where(p => p.CompanyId == companyId && p.DocumentId == intent.SourceId && !p.IsDeleted && p.PaymentIntentId != intent.Id)
                     .Select(p => new SourceRecordedPayment(p.Amount, p.PaymentDate, p.Reference))
                     .ToListAsync(ct);
+            case PaymentSourceKind.SiteBooking:
+            {
+                // รอบ 205 W2 (R-08): ยอดรับบนการจอง + ใบมัดจำที่ออกแล้วของเลขการจองนี้ (พนักงานบันทึกมือ/ออกใบเองหลังเงินเข้า)
+                var b = await db.SiteBookings.AsNoTracking()
+                    .Where(x => x.Id == intent.SourceId && x.CompanyId == companyId)
+                    .Select(x => new { x.BookingNumber, x.PaidAmount, x.PaymentReference, x.PaidAt, x.UpdatedAt, x.CreatedAt })
+                    .FirstOrDefaultAsync(ct);
+                if (b == null) return Array.Empty<SourceRecordedPayment>();
+                var docs = await db.Documents.AsNoTracking()
+                    .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == b.BookingNumber && d.IsDeposit
+                        && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+                    .Select(d => new SourceRecordedPayment(d.TotalAmount, d.CreatedAt, d.Reference))
+                    .ToListAsync(ct);
+                if (b.PaidAmount > 0m)
+                    docs.Add(new SourceRecordedPayment(b.PaidAmount, b.PaidAt ?? b.UpdatedAt ?? b.CreatedAt, b.PaymentReference));
+                return docs;
+            }
             default:
                 return Array.Empty<SourceRecordedPayment>();
         }

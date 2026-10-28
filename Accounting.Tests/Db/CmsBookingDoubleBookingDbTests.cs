@@ -181,7 +181,7 @@ public class CmsBookingDoubleBookingDbTests
         using (var db = DbTestDatabase.TryCreateContext()!)
         {
             var job = new BookingReminderJob(null!, NullLogger<BookingReminderJob>.Instance);
-            var r = await job.ProcessAsync(db, notifier, Svc(db, notifier), DateTime.UtcNow, CancellationToken.None);
+            var r = await job.ProcessAsync(db, notifier, Svc(db, notifier), DateTime.UtcNow, CancellationToken.None, onlyCompanyId: cid);
             Assert.Equal(0, r.HoldsReleased);
         }
         Assert.Equal(BookingStatus.Pending, (await LoadAsync(cid, w1.Id!.Value)).Status);
@@ -190,7 +190,7 @@ public class CmsBookingDoubleBookingDbTests
         using (var db = DbTestDatabase.TryCreateContext()!)
         {
             var job = new BookingReminderJob(null!, NullLogger<BookingReminderJob>.Instance);
-            var r = await job.ProcessAsync(db, notifier, Svc(db, notifier), DateTime.UtcNow.AddMinutes(16), CancellationToken.None);
+            var r = await job.ProcessAsync(db, notifier, Svc(db, notifier), DateTime.UtcNow.AddMinutes(16), CancellationToken.None, onlyCompanyId: cid);
             Assert.Equal(1, r.HoldsReleased);
         }
         var releasedRow = await LoadAsync(cid, w1.Id!.Value);
@@ -206,7 +206,7 @@ public class CmsBookingDoubleBookingDbTests
         using (var db = DbTestDatabase.TryCreateContext()!)
         {
             var job = new BookingReminderJob(null!, NullLogger<BookingReminderJob>.Instance);
-            var r = await job.ProcessAsync(db, notifier, Svc(db, notifier), DateTime.UtcNow.AddHours(2), CancellationToken.None);
+            var r = await job.ProcessAsync(db, notifier, Svc(db, notifier), DateTime.UtcNow.AddHours(2), CancellationToken.None, onlyCompanyId: cid);
             Assert.Equal(0, r.HoldsReleased);
         }
         var confirmed = await LoadAsync(cid, w2.Id!.Value);
@@ -231,7 +231,7 @@ public class CmsBookingDoubleBookingDbTests
         using (var db = DbTestDatabase.TryCreateContext()!)
         {
             var job = new BookingReminderJob(null!, NullLogger<BookingReminderJob>.Instance);
-            var r = await job.ProcessAsync(db, failing, Svc(db), nowUtc, CancellationToken.None);
+            var r = await job.ProcessAsync(db, failing, Svc(db), nowUtc, CancellationToken.None, onlyCompanyId: cid);
             Assert.Equal((0, 2), (r.RemindersSent, r.RemindersFailed));
         }
         var afterFail = await LoadAsync(cid, a.Id!.Value);
@@ -245,13 +245,13 @@ public class CmsBookingDoubleBookingDbTests
         using (var db = DbTestDatabase.TryCreateContext()!)
         {
             var job = new BookingReminderJob(null!, NullLogger<BookingReminderJob>.Instance);
-            var r = await job.ProcessAsync(db, ok, Svc(db), nowUtc.AddMinutes(1), CancellationToken.None);
+            var r = await job.ProcessAsync(db, ok, Svc(db), nowUtc.AddMinutes(1), CancellationToken.None, onlyCompanyId: cid);
             Assert.Equal(0, r.RemindersSent + r.RemindersFailed);
         }
         using (var db = DbTestDatabase.TryCreateContext()!)
         {
             var job = new BookingReminderJob(null!, NullLogger<BookingReminderJob>.Instance);
-            var r = await job.ProcessAsync(db, ok, Svc(db), nowUtc.AddMinutes(31), CancellationToken.None);
+            var r = await job.ProcessAsync(db, ok, Svc(db), nowUtc.AddMinutes(31), CancellationToken.None, onlyCompanyId: cid);
             Assert.Equal((2, 0), (r.RemindersSent, r.RemindersFailed));
         }
         var sent = await LoadAsync(cid, a.Id!.Value);
