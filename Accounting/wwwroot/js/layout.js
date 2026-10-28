@@ -1472,6 +1472,9 @@ const Layout = {
       description: 'จัดการ order ที่ลูกค้าสั่งผ่านร้านค้าออนไลน์ — ยืนยัน · จัดส่ง · ติดตาม' },
     { id: 'cms-bookings', navParent: 'cms-sites', label: 'การจองคิวจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings', cmsModule: 'bookings',
       description: 'จัดการการจองคิว/นัดหมาย — ร้านอาหาร · สปา · คลินิก · ยืนยัน-ยกเลิก-No show (การจองห้องพักอยู่ที่ "ที่พัก · Front desk")' },
+    // รอบ 207 (คำขอเจ้าของข้อ 4): สรุปการทำงาน/รายงานผู้ให้บริการ — มีข้อมูลเมื่อเว็บเปิด "จัดสรรผู้ให้บริการ"
+    { id: 'cms-booking-providers', navParent: 'cms-sites', label: 'สรุปงานผู้ให้บริการ', icon: '📊', href: '/pages/cms-booking-providers.html', feature: 'CmsWebsiteBuilder', cmsModule: 'bookings',
+      description: 'ผู้ให้บริการแต่ละคน: จำนวนงาน · ชั่วโมงงาน · ยอดตาม % งาน · แยกบริการ/รายวัน · รายการงานละเอียด · ส่งออก CSV' },
     { id: 'lodging', navParent: 'cms-sites', label: 'ที่พัก · Front desk', icon: '🏨', href: '/pages/lodging.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodging', cmsModule: 'lodging',
       description: 'จองห้องพัก · ยืนยันมัดจำ · เช็คอิน/เอาต์ · ปฏิทินห้อง · แม่บ้าน · โรงแรม/รีสอร์ท/บ้านพัก' },
     { id: 'lodging-settings', navParent: 'cms-sites', label: 'ตั้งค่าที่พัก', icon: '🛏️', href: '/pages/lodging-settings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodgingSettings', cmsModule: 'lodging',

@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Services.Interfaces;
@@ -106,7 +107,7 @@ public class CmsStorefrontController : ControllerBase
     [HttpGet("booking-services")]
     public async Task<ActionResult<ApiResponse<List<BookingServiceResponse>>>> BookingServices(Guid companyId, Guid siteId)
     {
-        var result = await _bookingService.GetServicesAsync(companyId, siteId);
+        var result = BookingServicePublicView.Strip(await _bookingService.GetServicesAsync(companyId, siteId));   // รอบ 207: ไม่ส่งข้อมูลสินค้าภายใน
         return Ok(new ApiResponse<List<BookingServiceResponse>>(true, result));
     }
 

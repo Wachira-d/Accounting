@@ -7,9 +7,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <style>
-    .stat-card { background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:14px 18px }
+    .stat-card { background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:12px 16px }
     .stat-label { font-size:12px;color:var(--gray-500) }
-    .stat-value { font-size:22px;font-weight:700;margin-top:4px }
+    .stat-value { font-size:20px;font-weight:700;margin-top:4px }
     .booking-row { cursor:pointer } .booking-row:hover { background:var(--gray-50) }
     .status-pill { display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600 }
     .status-Pending     { background:#fef3c7;color:#92400e }
@@ -19,6 +19,12 @@
     .status-Cancelled   { background:#fee2e2;color:#991b1b }
     .status-NoShow      { background:#fde68a;color:#78350f }
     .status-Waitlisted  { background:#f3e8ff;color:#6b21a8 }
+    .range-btn.active { background:var(--primary,#4F46E5);color:#fff;border-color:transparent }
+    .bk-sec { background:var(--gray-50);padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px }
+    .bk-sec h4 { font-size:12px;font-weight:700;color:var(--gray-600);margin:0 0 6px }
+    .cand-row { display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--gray-200);border-radius:8px;margin-bottom:6px }
+    .cand-row.off { opacity:.55 }
+    .row-actions .btn { padding:3px 8px;font-size:12px }
   </style>
 </head>
 <body>
@@ -27,24 +33,36 @@
     <div class="page-header">
       <div>
         <h2 class="page-title">การจองจากเว็บไซต์</h2>
-        <p class="page-subtitle">จัดการการจอง — ร้านอาหาร · สปา · คลินิก · โรงแรม · บริการอื่นๆ ที่รับจองผ่านหน้าเว็บ</p>
+        <p class="page-subtitle">หน้าทำงานประจำวัน — ลูกค้ามา · เริ่มให้บริการ · เสร็จ · รับชำระ · จบที่หน้านี้</p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2" style="flex-wrap:wrap">
+        <a class="btn btn-secondary" id="reportLink" href="/pages/cms-booking-providers.html" style="display:none">📊 สรุปงานผู้ให้บริการ</a>
         <select class="form-input" id="siteSelector" onchange="Page.onSiteChange()" style="min-width:220px">
           <option value="">กำลังโหลดเว็บไซต์...</option>
         </select>
       </div>
     </div>
 
-    <div class="grid grid-4 gap-4" style="margin-bottom:18px">
-      <div class="stat-card"><div class="stat-label">รอยืนยัน</div><div class="stat-value" id="statPending" style="color:#92400e">-</div></div>
-      <div class="stat-card"><div class="stat-label">ยืนยันแล้ว</div><div class="stat-value" id="statConfirmed" style="color:#1e40af">-</div></div>
-      <div class="stat-card"><div class="stat-label">วันนี้</div><div class="stat-value" id="statToday" style="color:#3730a3">-</div></div>
-      <div class="stat-card"><div class="stat-label">เสร็จสิ้น (เดือนนี้)</div><div class="stat-value" id="statCompleted" style="color:#065f46">-</div></div>
+    <!-- รอบ 207 (คำขอเจ้าของข้อ 9): ช่วงวันที่ — ค่าเริ่มต้น "วันนี้" · เลื่อนทีละวัน · ปุ่มลัดล่วงหน้า/ย้อนหลัง · กำหนดเอง -->
+    <div class="toolbar" style="display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+      <button class="btn btn-secondary btn-sm" onclick="Page.shiftDay(-1)" title="วันก่อนหน้า">◀</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="today" onclick="Page.setRange('today')">วันนี้</button>
+      <button class="btn btn-secondary btn-sm" onclick="Page.shiftDay(1)" title="วันถัดไป">▶</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="tomorrow" onclick="Page.setRange('tomorrow')">พรุ่งนี้</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="next7" onclick="Page.setRange('next7')">7 วันข้างหน้า</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="week" onclick="Page.setRange('week')">สัปดาห์นี้</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="month" onclick="Page.setRange('month')">เดือนนี้</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="yesterday" onclick="Page.setRange('yesterday')">เมื่อวาน</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="last7" onclick="Page.setRange('last7')">ย้อนหลัง 7 วัน</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="last30" onclick="Page.setRange('last30')">ย้อนหลัง 30 วัน</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="all" onclick="Page.setRange('all')">ทั้งหมด</button>
+      <span style="display:inline-flex;gap:4px;align-items:center;font-size:13px">
+        <input type="date" class="form-input" id="fromDate" style="width:auto" onchange="Page.customRange()"> ถึง
+        <input type="date" class="form-input" id="toDate" style="width:auto" onchange="Page.customRange()">
+      </span>
     </div>
-
     <div class="toolbar" style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
-      <select class="filter-select" id="statusFilter" onchange="Page.load()">
+      <select class="filter-select" id="statusFilter" onchange="Page.reload()">
         <option value="">ทุกสถานะ</option>
         <option value="Pending">รอยืนยัน</option>
         <option value="Confirmed">ยืนยันแล้ว</option>
@@ -54,23 +72,32 @@
         <option value="NoShow">ไม่มา (No-show)</option>
         <option value="Waitlisted">คิวสำรอง</option>
       </select>
-      <input type="date" class="form-input" id="dateFilter" onchange="Page.load()">
-      <input type="text" class="search-input" placeholder="ค้นหาเลขที่จองหรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
+      <select class="filter-select" id="serviceFilter" onchange="Page.reload()"><option value="">ทุกบริการ</option></select>
+      <select class="filter-select" id="resourceFilter" onchange="Page.reload()" style="display:none"><option value="">ผู้ให้บริการทุกคน</option></select>
+      <input type="text" class="search-input" placeholder="ค้นหาเลขที่จอง ชื่อ หรือเบอร์ลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
+      <span id="rangeLabel" style="font-size:13px;color:var(--gray-600)"></span>
+    </div>
+
+    <div class="grid grid-4 gap-3" style="margin-bottom:14px" id="statsGrid">
+      <div class="stat-card"><div class="stat-label">การจองในช่วงนี้</div><div class="stat-value" id="statTotal">-</div></div>
+      <div class="stat-card"><div class="stat-label">รอยืนยัน · ยืนยันแล้ว</div><div class="stat-value" id="statWaiting" style="color:#1e40af">-</div></div>
+      <div class="stat-card"><div class="stat-label">กำลังให้บริการ · เสร็จสิ้น</div><div class="stat-value" id="statDoing" style="color:#065f46">-</div></div>
+      <div class="stat-card"><div class="stat-label">ยอดเสร็จสิ้น · ค้างรับ</div><div class="stat-value" id="statMoney" style="font-size:16px">-</div></div>
     </div>
 
     <div id="allNote" style="display:none"></div>
     <div class="table-container">
       <table class="table">
         <thead><tr>
-          <th>#</th><th>ลูกค้า</th><th>บริการ</th><th>วันที่</th><th>เวลา</th>
-          <th class="text-right">ยอด</th><th>สถานะ</th>
+          <th>เวลา</th><th>#</th><th>ลูกค้า</th><th>บริการ / ผู้ให้บริการ</th>
+          <th class="text-right">ยอด / รับแล้ว</th><th>สถานะ</th><th>ดำเนินการ</th>
         </tr></thead>
         <tbody id="bookingsBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กรุณาเลือกเว็บไซต์ก่อน</td></tr></tbody>
       </table>
     </div>
 
     <div class="modal-overlay" id="bkModal">
-      <div class="modal" style="max-width:640px">
+      <div class="modal" style="max-width:760px">
         <div class="modal-header">
           <h3 class="modal-title" id="bkTitle">รายละเอียดการจอง</h3>
           <button class="modal-close" onclick="Layout.closeModal('bkModal')">&times;</button>
@@ -78,6 +105,36 @@
         <div class="modal-body" id="bkBody"></div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('bkModal')">ปิด</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- รอบ 207 (ข้อ 3): เริ่มให้บริการ — เลือกผู้ให้บริการที่ว่าง (ได้หลายคน) + แบ่ง % งาน · รายชื่อ/ลำดับแนะนำ/สถานะว่างมาจากเซิร์ฟเวอร์ -->
+    <div class="modal-overlay" id="startModal">
+      <div class="modal" style="max-width:620px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="startTitle">เริ่มให้บริการ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('startModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="startBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('startModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="startSubmit" onclick="Page.submitStart()">เริ่มให้บริการ</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- รอบ 207 (ข้อ 5): เสร็จสิ้น + รับชำระ — เอกสารที่จะออก/ยอดค้าง/วิธีรับเงินมาจากเซิร์ฟเวอร์ (CompletionPlan) -->
+    <div class="modal-overlay" id="completeModal">
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3 class="modal-title" id="completeTitle">ให้บริการเสร็จ</h3>
+          <button class="modal-close" onclick="Layout.closeModal('completeModal')">&times;</button>
+        </div>
+        <div class="modal-body" id="completeBody"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('completeModal')">ยกเลิก</button>
+          <button class="btn btn-primary" onclick="Page.submitComplete()">✓ บันทึกเสร็จสิ้น</button>
         </div>
       </div>
     </div>
@@ -91,28 +148,39 @@
   <script>
     // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว — ที่นี่แค่มอบต่อ
     const STATUS_LABEL = Layout.ENUM_LABELS.bookingStatus;
+    // ปุ่มสถานะ: "เริ่มให้บริการ" และ "เสร็จสิ้น" เปิดหน้าต่างของตัวเอง (เลือกผู้ให้บริการ / รับชำระ) — ที่เหลือเปลี่ยนสถานะตรง
     const NEXT_STATUS = {
       'Pending':    [['Confirmed','✓ ยืนยันการจอง','btn-primary'],['Cancelled','ปฏิเสธ/ยกเลิก','btn-secondary']],
-      'Confirmed':  [['InProgress','เริ่มให้บริการ','btn-primary'],['NoShow','ลูกค้าไม่มา','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
-      'InProgress': [['Completed','✓ เสร็จสิ้น','btn-primary']],
+      'Confirmed':  [['START','▶ เริ่มให้บริการ','btn-primary'],['COMPLETE','✓ เสร็จสิ้น + รับชำระ','btn-secondary'],['NoShow','ลูกค้าไม่มา','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
+      'InProgress': [['COMPLETE','✓ เสร็จสิ้น + รับชำระ','btn-primary']],
       'Completed':  [],
       'Cancelled':  [],
       'NoShow':     [],
       // คิวสำรอง: ระบบเลื่อนขึ้นเองเมื่อมีคนยกเลิก · ยืนยันนอกคิว = แอดมินรับเองแม้รอบเต็ม
       'Waitlisted': [['Confirmed','ยืนยันนอกคิว (รับเกิน)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']]
     };
+    const money = v => '฿' + Number(v || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+    const fmtUtc = v => v ? new Date(v).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'short' }) : '';
 
     const Page = {
       siteId: null,       // เว็บที่เลือก · null เมื่อดู "ทุกไซต์"
       allSites: false,
       actSiteId: null,    // เว็บของการจองที่เปิดอยู่ (โหมดทุกไซต์ — ทุก action ต้องยิงไปเว็บเจ้าของแถว)
       page: 1, _searchTimer: null,
+      range: 'today', from: null, to: null,
+      items: [],
       _sid() { return this.actSiteId || this.siteId; },
       // โหมดทุกไซต์ (R-45): endpoint ระดับบริษัทแบ่งหน้าจริง — เว็บที่เห็นตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
       _list(q) { const api = Layout.api(); return this.allSites ? api.cmsOverviewBookings(q) : api.cmsListBookings(this.siteId, q); },
       goPage(n) { this.page = Math.max(1, n); this.load(); },
+      // วันตามเวลาไทย (yyyy-mm-dd)
+      _bkkDate(offsetDays = 0) { return new Date(Date.now() + 7 * 3600 * 1000 + offsetDays * 86400000).toISOString().slice(0, 10); },
+      _todayBkk() { return this._bkkDate(0); },
+      _addDays(ymd, n) { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); },
+
       async init() {
         if (!Layout.init('cms-bookings')) return;
+        this.setRange('today', true);
         await this.loadSites();
       },
       async loadSites() {
@@ -125,7 +193,6 @@
             CmsSiteContext.renderCrumb('cmsCrumb', sites, null, 'การจองคิว', 'cms-bookings');
             return;
           }
-          // ?siteId=all = ภาพรวมทุกไซต์ (R-45 — เดิมหน้านี้ไม่มีโหมดนี้) · ตรวจกับรายการเว็บจริงก่อนใช้
           const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'bookings', allowAll: true });
           CmsSiteContext.fillSelect(sel, sites, { module: 'bookings', allowAll: true, value: picked });
           await this.applySite(sel.value || picked);
@@ -138,172 +205,446 @@
         this.page = 1;
         CmsSiteContext.setUrl(v);
         CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], v, 'การจองคิว', 'cms-bookings');
-        await this.load(); await this.loadStats();
+        await this.loadFilters();
+        await this.load();
       },
-      async onSiteChange() {
-        await this.applySite(document.getElementById('siteSelector').value);
-      },
-      debounceLoad() {
-        clearTimeout(this._searchTimer);
-        this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
-      },
-      async loadStats() {
-        if (!this.siteId && !this.allSites) return;
+      async onSiteChange() { await this.applySite(document.getElementById('siteSelector').value); },
+      // ตัวกรองบริการ/ผู้ให้บริการของเว็บที่เลือก (โหมดทุกไซต์ไม่มี — แต่ละเว็บมีชุดของตัวเอง)
+      async loadFilters() {
+        const svcSel = document.getElementById('serviceFilter');
+        const resSel = document.getElementById('resourceFilter');
+        const rep = document.getElementById('reportLink');
+        svcSel.innerHTML = '<option value="">ทุกบริการ</option>'; resSel.innerHTML = '<option value="">ผู้ให้บริการทุกคน</option>';
+        resSel.style.display = 'none'; rep.style.display = 'none'; svcSel.style.display = this.allSites ? 'none' : '';
+        if (this.allSites || !this.siteId) return;
         const api = Layout.api(); if (!api) return;
         try {
-          const today = new Date().toISOString().split('T')[0];
-          const [pend, conf, td, done] = await Promise.all([
-            this._list('?status=Pending&pageSize=1'),
-            this._list('?status=Confirmed&pageSize=1'),
-            this._list(`?fromDate=${today}&toDate=${today}&pageSize=1`),
-            this._list(`?status=Completed&fromDate=${today.slice(0, 8)}01&pageSize=1`)
-          ]);
-          document.getElementById('statPending').textContent = pend?.data?.totalCount ?? '0';
-          document.getElementById('statConfirmed').textContent = conf?.data?.totalCount ?? '0';
-          document.getElementById('statToday').textContent = td?.data?.totalCount ?? '0';
-          document.getElementById('statCompleted').textContent = done?.data?.totalCount ?? '0';
-        } catch (e) { /* non-fatal */ }
+          const [svcs, settings] = await Promise.all([api.cmsListAllBookingServices(this.siteId), api.cmsGetBookingSiteSettings(this.siteId)]);
+          svcSel.innerHTML += (svcs.data || []).map(s => `<option value="${Layout.esc(s.id)}">${Layout.esc(s.name)}</option>`).join('');
+          this.providersOn = settings?.data?.providerAllocationEnabled === true;
+          if (this.providersOn) {
+            const rr = await api.cmsListBookingResources(this.siteId);
+            resSel.innerHTML += (rr.data || []).filter(r => r.isActive !== false).map(r => `<option value="${Layout.esc(r.id)}">${Layout.esc(r.name)}</option>`).join('');
+            resSel.style.display = '';
+            rep.style.display = ''; rep.href = '/pages/cms-booking-providers.html?siteId=' + encodeURIComponent(this.siteId);
+          }
+        } catch (_) { /* ตัวกรองเสริม — โหลดไม่ได้ยังใช้หน้าได้ */ }
+      },
+
+      // ── ช่วงวันที่ ──
+      setRange(key, silent) {
+        const t = this._todayBkk();
+        const dow = new Date(t + 'T00:00:00Z').getUTCDay();   // 0 = อาทิตย์
+        const monday = this._addDays(t, dow === 0 ? -6 : 1 - dow);
+        const r = {
+          today: [t, t], tomorrow: [this._addDays(t, 1), this._addDays(t, 1)], yesterday: [this._addDays(t, -1), this._addDays(t, -1)],
+          next7: [t, this._addDays(t, 6)], last7: [this._addDays(t, -6), t], last30: [this._addDays(t, -29), t],
+          week: [monday, this._addDays(monday, 6)], month: [t.slice(0, 8) + '01', this._addDays(this._addDays(t.slice(0, 8) + '01', 32).slice(0, 8) + '01', -1)],
+          all: [null, null],
+        }[key] || [t, t];
+        this.range = key; this.from = r[0]; this.to = r[1];
+        document.getElementById('fromDate').value = this.from || '';
+        document.getElementById('toDate').value = this.to || '';
+        this._markRange();
+        if (!silent) this.reload();
+      },
+      shiftDay(n) {
+        const base = this.from || this._todayBkk();
+        const d = this._addDays(base, n);
+        this.range = d === this._todayBkk() ? 'today' : 'custom'; this.from = d; this.to = d;
+        document.getElementById('fromDate').value = d; document.getElementById('toDate').value = d;
+        this._markRange(); this.reload();
+      },
+      customRange() {
+        const f = document.getElementById('fromDate').value || null;
+        let t = document.getElementById('toDate').value || null;
+        if (f && t && t < f) { t = f; document.getElementById('toDate').value = f; }
+        this.range = 'custom'; this.from = f; this.to = t;
+        this._markRange(); this.reload();
+      },
+      _markRange() {
+        document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === this.range));
+        const lbl = !this.from && !this.to ? 'ทุกวันที่' : this.from === this.to ? Layout.date(this.from) : `${this.from ? Layout.date(this.from) : '…'} – ${this.to ? Layout.date(this.to) : '…'}`;
+        document.getElementById('rangeLabel').textContent = '📅 ' + lbl;
+      },
+      reload() { this.page = 1; this.load(); },
+      debounceLoad() {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => this.reload(), 300);
+      },
+      _query(extra = '') {
+        const status = document.getElementById('statusFilter').value;
+        const svc = document.getElementById('serviceFilter').value;
+        const res = document.getElementById('resourceFilter').value;
+        const search = document.getElementById('searchInput').value;
+        let q = `?page=${this.page}&pageSize=200`;
+        if (status) q += `&status=${encodeURIComponent(status)}`;
+        if (this.from) q += `&fromDate=${encodeURIComponent(this.from)}`;
+        if (this.to) q += `&toDate=${encodeURIComponent(this.to)}`;
+        if (svc && !this.allSites) q += `&serviceId=${encodeURIComponent(svc)}`;
+        if (res && !this.allSites) q += `&resourceId=${encodeURIComponent(res)}`;
+        if (search) q += `&search=${encodeURIComponent(search)}`;
+        // มุมมองช่วงวัน = เรียงตามเวลานัด (งานถัดไปอยู่บน) · "ทั้งหมด" = ล่าสุดก่อน
+        if (this.from || this.to) q += '&sort=asc';
+        return q + extra;
       },
       async load() {
         if (!this.siteId && !this.allSites) return;
-        const api = Layout.api(); if (!api) return;
-        const status = document.getElementById('statusFilter').value;
-        const date = document.getElementById('dateFilter').value;
-        const search = document.getElementById('searchInput').value;
-        let q = `?page=${this.page}&pageSize=50`;
-        if (status) q += `&status=${encodeURIComponent(status)}`;
-        // server รับ fromDate/toDate (ไม่มี date) — เดิมส่ง date/search ที่ server ไม่รู้จัก ⇒ ตัวกรองไม่มีผลเงียบ ๆ
-        if (date) q += `&fromDate=${encodeURIComponent(date)}&toDate=${encodeURIComponent(date)}`;
-        if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          const res = await this._list(q);
-          const items = res?.data?.items || res?.data || [];
-          // แบ่งหน้าจริงจากเซิร์ฟเวอร์ (โหมดทุกไซต์) · หน้ารายเว็บ = 50 แถวแรกเหมือนเดิม
+          const res = await this._list(this._query());
+          const items = this.items = res?.data?.items || res?.data || [];
           CmsSiteContext.allNote('allNote', this.allSites ? { totalCount: res?.data?.totalCount, page: res?.data?.page, totalPages: res?.data?.totalPages, goPage: 'Page.goPage' } : null);
+          this.renderStats(items, res?.data?.totalCount);
           const tbody = document.getElementById('bookingsBody');
           if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีการจองตามเงื่อนไข</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ไม่มีการจองในช่วงนี้</td></tr>';
             return;
           }
-          tbody.innerHTML = items.map(b => `
-            <tr class="booking-row" onclick="Page.viewBooking('${Layout.jsArg(b.id)}', '${Layout.jsArg(b.siteId || '')}')">
-              <td class="font-medium">${Layout.esc(b.bookingNumber||b.id.substring(0,8))}${b.siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(b.siteName)}</div>` : ''}</td>
-              <td>${Layout.esc(b.customerName||'(ไม่ระบุ)')}</td>
-              <td>${Layout.esc(b.serviceName||'-')}${b.resourceName ? `<div style="font-size:11px;color:var(--gray-500)">👤 ${Layout.esc(b.resourceName)}</div>` : ''}</td>
-              <td>${Layout.date(b.bookingDate)}</td>
-              <td><strong>${Layout.esc(b.startTime||'')}</strong>${b.endTime ? '–' + Layout.esc(b.endTime) : ''}${(b.guestCount||1) > 1 ? ` · ${b.guestCount} คน` : ''}</td>
-              <td class="text-right">฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
-              <td><span class="status-pill status-${b.status}">${STATUS_LABEL[b.status]||b.status}${b.waitlistPosition ? ' #' + b.waitlistPosition : ''}</span></td>
-            </tr>`).join('');
+          const multiDay = this.from !== this.to;
+          tbody.innerHTML = items.map((b, i) => {
+            const quick = (NEXT_STATUS[b.status] || []).slice(0, 2).map(([next, label, cls]) =>
+              `<button class="btn ${cls}" onclick="event.stopPropagation();Page.act(${i}, '${Layout.jsArg(next)}')">${Layout.esc(label)}</button>`).join(' ');
+            return `
+            <tr class="booking-row" onclick="Page.viewIndex(${i})">
+              <td><strong>${Layout.esc(b.startTime || '')}</strong>${b.endTime ? '–' + Layout.esc(b.endTime) : ''}${multiDay ? `<div style="font-size:11px;color:var(--gray-500)">${Layout.date(b.bookingDate)}</div>` : ''}</td>
+              <td class="font-medium">${Layout.esc(b.bookingNumber || b.id.substring(0, 8))}${b.siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(b.siteName)}</div>` : ''}</td>
+              <td>${Layout.esc(b.customerName || '(ไม่ระบุ)')}${b.guestPhone ? `<div style="font-size:11px;color:var(--gray-500)">📱 ${Layout.esc(b.guestPhone)}</div>` : ''}${(b.guestCount || 1) > 1 ? `<div style="font-size:11px;color:var(--gray-500)">${Number(b.guestCount)} คน</div>` : ''}</td>
+              <td>${Layout.esc(b.serviceName || '-')}${b.providersLabel ? `<div style="font-size:11px;color:var(--gray-500)">👤 ${Layout.esc(b.providersLabel)}</div>` : ''}</td>
+              <td class="text-right">${money(b.totalAmount)}<div style="font-size:11px;color:${Number(b.paidAmount || 0) + 0.005 >= Number(b.totalAmount || 0) ? '#059669' : 'var(--gray-500)'}">รับแล้ว ${money(b.paidAmount)}</div></td>
+              <td><span class="status-pill status-${Layout.esc(b.status)}">${Layout.esc(STATUS_LABEL[b.status] || b.status)}${b.waitlistPosition ? ' #' + Number(b.waitlistPosition) : ''}</span></td>
+              <td class="row-actions">${quick}</td>
+            </tr>`; }).join('');
         } catch (e) { Layout.toast('โหลดการจองไม่สำเร็จ: ' + e.message, 'error'); }
       },
+      // สถิติของช่วงที่เลือก (จากแถวที่โหลด — หน้าละ 200 แถว ตรงกับมุมมองรายวัน/รายสัปดาห์)
+      renderStats(items, totalCount) {
+        const n = s => items.filter(b => b.status === s).length;
+        const done = items.filter(b => b.status === 'Completed');
+        const live = items.filter(b => !['Cancelled', 'NoShow', 'Waitlisted'].includes(b.status));
+        const unpaid = live.reduce((a, b) => a + Math.max(0, Number(b.totalAmount || 0) - Number(b.paidAmount || 0)), 0);
+        document.getElementById('statTotal').textContent = String(totalCount ?? items.length);
+        document.getElementById('statWaiting').textContent = `${n('Pending')} · ${n('Confirmed')}`;
+        document.getElementById('statDoing').textContent = `${n('InProgress')} · ${done.length}`;
+        document.getElementById('statMoney').innerHTML = `${money(done.reduce((a, b) => a + Number(b.totalAmount || 0), 0))}<div style="font-size:12px;color:#b45309">ค้าง ${money(unpaid)}</div>`;
+      },
+      viewIndex(i) { const b = this.items[i]; if (b) this.viewBooking(b.id, b.siteId || ''); },
+      act(i, next) {
+        const b = this.items[i]; if (!b) return;
+        this.actSiteId = this.allSites ? (b.siteId || null) : null;
+        if (next === 'START') return this.openStart(b.id);
+        if (next === 'COMPLETE') return this.openComplete(b.id);
+        return this.advance(b.id, next);
+      },
+
       async viewBooking(id, siteId) {
         const api = Layout.api(); if (!api) return;
-        // โหมดทุกไซต์: การจองเป็นของเว็บไหน action ทั้งหมดต้องไปเว็บนั้น · เปิดซ้ำ (ไม่ส่ง siteId) = คงเว็บเดิม
         if (siteId !== undefined) this.actSiteId = siteId || null;
         try {
           const res = await api.cmsGetBooking(this._sid(), id);
-          const b = res?.data || res;
+          const b = this.current = res?.data || res;
           if (!b) return;
-          // รอบ 205 W3 R-16: ช่องเลือกผู้ให้บริการ — server ตัดสินว่าเปลี่ยนได้ไหม (canAssignResource) · รายชื่อ = ผู้ให้บริการที่รับบริการนี้และเปิดใช้
+          // ก่อนเริ่ม: เปลี่ยนผู้ให้บริการที่จัดไว้ตอนจอง (R-16 · server ตัดสินว่าเปลี่ยนได้ไหม)
           let resourcePicker = '';
-          if (b.canAssignResource) {
-            const rr = await api.cmsListBookingResources(this.siteId);
+          if (b.canAssignResource && !this.allSites) {
+            const rr = await api.cmsListBookingResources(this._sid());
             const pool = (rr?.data || []).filter(r => r.isActive !== false && Array.isArray(r.serviceIds) && r.serviceIds.includes(b.bookingServiceId));
             resourcePicker = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px">
-              <label style="font-size:12px">ผู้ให้บริการ
+              <label style="font-size:12px">ผู้ให้บริการที่จองไว้
                 <select id="bkResource" class="form-input" style="width:auto;display:inline-block">
-                  <option value="">ให้ระบบจัดให้ (ว่าง · งานน้อยสุด)</option>
+                  <option value="">ให้ระบบจัดให้ (ตามตรรกะแนะนำของเว็บ)</option>
                   ${pool.map(r => `<option value="${Layout.esc(r.id)}" ${r.id === b.resourceId ? 'selected' : ''}>${Layout.esc(r.name)}</option>`).join('')}
                 </select></label>
-              <button class="btn btn-secondary btn-sm" onclick="Page.assignResource('${b.id}')">บันทึกผู้ให้บริการ</button>
-              <span style="font-size:11px;color:var(--gray-500)">ระบบตรวจว่าว่าง/เข้างาน/รับบริการนี้ก่อนบันทึก</span>
+              <button class="btn btn-secondary btn-sm" onclick="Page.assignResource('${Layout.jsArg(b.id)}')">บันทึก</button>
             </div>`;
           }
-          const fmtUtc = v => v ? new Date(v).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'short', timeStyle: 'short' }) : '';
-          document.getElementById('bkTitle').textContent = `จอง #${b.bookingNumber} — ${STATUS_LABEL[b.status]||b.status}`;
+          document.getElementById('bkTitle').textContent = `จอง #${b.bookingNumber} — ${STATUS_LABEL[b.status] || b.status}`;
           const workflow = (NEXT_STATUS[b.status] || []).map(([next, label, cls]) =>
-            `<button class="btn ${cls}" onclick="Page.advance('${b.id}', '${next}')">${label}</button>`).join('');
+            `<button class="btn ${cls}" onclick="Page.detailAct('${Layout.jsArg(next)}')">${Layout.esc(label)}</button>`).join('');
+          const assigns = (b.assignments || []);
+          const providersBlock = assigns.length
+            ? assigns.map(a => `<div>👤 <strong>${Layout.esc(a.resourceName)}</strong> ${Number(a.sharePercent).toLocaleString('th-TH')}%${a.isPrimary ? ' <span style="color:var(--gray-500)">(หลัก)</span>' : ''}</div>`).join('')
+            : (b.providerAllocationEnabled ? '<div style="color:#b45309">ยังไม่ได้มอบหมายผู้ให้บริการ — เลือกตอนกด "เริ่มให้บริการ"</div>' : '<div style="color:var(--gray-500)">เว็บนี้ไม่ได้เปิดจัดสรรผู้ให้บริการ</div>');
+          const editProviders = b.providerAllocationEnabled && (b.status === 'InProgress' || b.status === 'Completed') && !this.allSites
+            ? `<button class="btn btn-sm btn-secondary" style="margin-top:6px" onclick="Page.openStart('${Layout.jsArg(b.id)}', true)">แก้ผู้ให้บริการ / สัดส่วน %</button>` : '';
+          const docs = (b.documents || []);
+          const docsBlock = docs.length ? `<table class="table" style="font-size:12px;margin:0"><thead><tr><th>เอกสาร</th><th>เลขที่</th><th>วันที่</th><th class="text-right">ยอด</th><th>สถานะ</th></tr></thead><tbody>${
+              docs.map(d => `<tr><td>${Layout.esc(d.typeLabel)}${d.isPrimaryLink ? ' ⭐' : ''}</td>
+                <td><a href="/pages/documents.html?id=${encodeURIComponent(d.id)}" target="_blank" rel="noopener" style="text-decoration:underline">${Layout.esc(d.documentNumber)}</a></td>
+                <td>${Layout.date(d.documentDate)}</td><td class="text-right">${money(d.totalAmount)}${Number(d.balanceDue) > 0.005 ? `<div style="color:#b45309">ค้าง ${money(d.balanceDue)}</div>` : ''}</td>
+                <td>${Layout.esc(d.statusLabel)}</td></tr>`).join('')}</tbody></table>`
+            : '<div style="color:var(--gray-500)">ยังไม่มีเอกสารบัญชีของการจองนี้</div>';
+          const pays = (b.paymentLines || []);
+          const payBlock = pays.length ? pays.map(p => `<div style="display:flex;justify-content:space-between;gap:8px"><span>${Layout.date(p.paidAt)} · ${Layout.esc(p.source)}${p.reference ? ' · ' + Layout.esc(p.reference) : ''}${p.documentNumber ? ` <span style="color:var(--gray-500)">(${Layout.esc(p.documentNumber)})</span>` : ''}</span><strong>${money(p.amount)}</strong></div>`).join('')
+            : '<div style="color:var(--gray-500)">ยังไม่มีการรับเงิน</div>';
+          const timeline = (b.timeline || []).map(t => `<div>${fmtUtc(t.at)} — ${Layout.esc(t.label)}</div>`).join('');
           document.getElementById('bkBody').innerHTML = `
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:12px">
               <div>
                 <div style="font-size:11px;color:var(--gray-500);font-weight:600">ลูกค้า</div>
-                <div style="font-weight:600">${Layout.esc(b.customerName||b.guestName||'-')}</div>
-                ${b.customerEmail || b.guestEmail ? `<div style="font-size:12px;color:var(--gray-600)">📧 ${Layout.esc(b.customerEmail||b.guestEmail)}</div>` : ''}
+                <div style="font-weight:600">${Layout.esc(b.customerName || b.guestName || '-')}</div>
+                ${b.customerEmail || b.guestEmail ? `<div style="font-size:12px;color:var(--gray-600)">📧 ${Layout.esc(b.customerEmail || b.guestEmail)}</div>` : ''}
                 ${b.guestPhone ? `<div style="font-size:12px;color:var(--gray-600)">📱 ${Layout.esc(b.guestPhone)}</div>` : ''}
               </div>
               <div>
                 <div style="font-size:11px;color:var(--gray-500);font-weight:600">สถานะ</div>
-                <div><span class="status-pill status-${b.status}">${STATUS_LABEL[b.status]||b.status}</span></div>
+                <div><span class="status-pill status-${Layout.esc(b.status)}">${Layout.esc(STATUS_LABEL[b.status] || b.status)}</span></div>
+                <div style="font-size:11px;color:var(--gray-500);margin-top:4px">${Layout.esc(Layout.enumLabel('bookingType', b.bookingType))}</div>
               </div>
             </div>
-            <div style="background:var(--gray-50);padding:12px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
-              <div style="font-weight:600;margin-bottom:6px">📅 ${Layout.date(b.bookingDate)} เวลา <strong>${Layout.esc(b.startTime)}</strong> — ${Layout.esc(b.endTime||'?')}</div>
-              <div>บริการ: <strong>${Layout.esc(b.serviceName)}</strong> · ${b.durationMinutes||0} นาที</div>
-              ${b.resourceName ? `<div>ผู้ให้บริการ: <strong>${Layout.esc(b.resourceName)}</strong></div>` : (b.resourceMode && b.resourceMode !== 'None' ? '<div style="color:#b45309">ยังไม่ได้จัดผู้ให้บริการ</div>' : '')}
+            <div class="bk-sec">
+              <h4>นัดหมาย</h4>
+              <div style="font-weight:600;margin-bottom:4px">📅 ${Layout.date(b.bookingDate)} เวลา <strong>${Layout.esc(b.startTime)}</strong> — ${Layout.esc(b.endTime || '?')}</div>
+              <div>บริการ: <strong>${Layout.esc(b.serviceName)}</strong> · ${Number(b.durationMinutes || 0)} นาที${b.serviceProductName ? ` · 📦 ${Layout.esc(b.serviceProductName)}` : ''}</div>
+              <div>จำนวนคน: ${Number(b.guestCount || 1)}${(b.units || 1) > 1 ? ` · ${Number(b.units)} ช่วงติดกัน` : ''}</div>
               ${resourcePicker}
-              ${b.waitlistPosition ? `<div style="color:#6b21a8">คิวสำรองลำดับที่ ${b.waitlistPosition} — ระบบเลื่อนขึ้นเองเมื่อมีที่ว่าง</div>` : ''}
-              <div>จำนวนคน: ${b.guestCount||1}${(b.units||1) > 1 ? ` · ${b.units} ช่วงติดกัน` : ''}</div>
-              ${b.waitlistPromotedAt ? `<div style="color:#6b21a8;margin-top:4px">ได้คิวจากคิวสำรอง ${fmtUtc(b.waitlistPromotedAt)} · ${b.waitlistNotifiedAt ? 'แจ้งลูกค้าแล้ว ' + fmtUtc(b.waitlistNotifiedAt) : 'ยังแจ้งลูกค้าไม่ถึง — ระบบจะลองซ้ำ'}${b.waitlistHoldUntil ? ` · ถือรอบถึง ${fmtUtc(b.waitlistHoldUntil)} (ไม่ยืนยัน = ปล่อยรอบ)` : ''}</div>` : ''}
+              ${b.waitlistPosition ? `<div style="color:#6b21a8">คิวสำรองลำดับที่ ${Number(b.waitlistPosition)} — ระบบเลื่อนขึ้นเองเมื่อมีที่ว่าง</div>` : ''}
+              ${b.waitlistPromotedAt ? `<div style="color:#6b21a8;margin-top:4px">ได้คิวจากคิวสำรอง ${fmtUtc(b.waitlistPromotedAt)} · ${b.waitlistNotifiedAt ? 'แจ้งลูกค้าแล้ว ' + fmtUtc(b.waitlistNotifiedAt) : 'ยังแจ้งลูกค้าไม่สำเร็จ'}${b.waitlistHoldUntil ? ' · ถือรอบถึง ' + fmtUtc(b.waitlistHoldUntil) : ''}</div>` : ''}
               ${b.reminderSentAt ? `<div style="color:#059669;margin-top:4px">🔔 เตือนลูกค้าก่อนนัดแล้ว ${fmtUtc(b.reminderSentAt)}</div>` : ''}
               ${b.notifyLastError ? `<div style="color:#b91c1c;margin-top:4px">⚠️ ส่งข้อความถึงลูกค้าไม่สำเร็จ: ${Layout.esc(b.notifyLastError)} — กรุณาติดต่อลูกค้าเอง</div>` : ''}
             </div>
-            <div style="background:var(--gray-50);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px">
-              <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><span>฿${Number(b.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
-              ${b.depositAmount>0 ? `<div style="display:flex;justify-content:space-between"><span>มัดจำ</span><span>฿${Number(b.depositAmount).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>` : ''}
-              <div style="display:flex;justify-content:space-between"><span>ชำระแล้ว</span><span class="${b.paidAmount>=b.totalAmount?'text-success':'text-warning'}">฿${Number(b.paidAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</span></div>
-              ${b.erpDocumentId ? `<div style="margin-top:6px;font-size:11px;color:#059669">✓ ผูกกับเอกสารบัญชี — <a href="/pages/documents.html?id=${b.erpDocumentId}" style="color:#059669;text-decoration:underline">เปิดดู</a></div>` : ''}
-              ${b.creditPassNumber ? `<div style="margin-top:6px;font-size:11px;color:#6b21a8">🎟️ ชำระด้วยบัตรคอร์ส ${Layout.esc(b.creditPassNumber)} — ไม่มีเงินต้องเก็บ · ไม่ออกเอกสารบัญชี (รายได้รับรู้จากบัตรเมื่อให้บริการเสร็จ)</div>` : ''}
-              ${b.bookingType === 'PrePayment' && b.status !== 'Cancelled' && b.status !== 'NoShow' && b.status !== 'Completed' && !b.creditPassNumber && Number(b.paidAmount || 0) + 0.005 < Number(b.depositAmount || 0) ? `<div style="margin-top:8px;border-top:1px dashed var(--gray-300);padding-top:8px">
-                <div style="font-size:12px;font-weight:600">บันทึกรับเงินมัดจำ (โอน/เงินสด) — รอบ 205 W2</div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
-                  <input type="number" step="0.01" min="0" id="bkPayAmount" class="form-input" style="width:120px" value="${(Number(b.depositAmount || 0) - Number(b.paidAmount || 0)).toFixed(2)}">
-                  <input type="date" id="bkPayDate" class="form-input" style="width:auto" value="${this._todayBkk()}">
-                  <input type="text" id="bkPayRef" class="form-input" style="width:150px" placeholder="อ้างอิง/เลขโอน">
-                  <button class="btn btn-primary btn-sm" onclick="Page.recordPayment('${b.id}')">บันทึกรับเงิน</button>
-                </div>
-                <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (§78/1)${b.onlinePaymentNote ? ' · ' + Layout.esc(b.onlinePaymentNote) : ''}</div>
-              </div>` : ''}
-              ${(b.status === 'Pending' || b.status === 'Confirmed') ? `<div style="margin-top:8px;border-top:1px dashed var(--gray-300);padding-top:8px">
-                <div style="font-size:12px;font-weight:600">เลื่อนนัด (รอบ 206) — แถวเดิม เอกสาร/มัดจำคงผูก</div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
-                  <input type="date" id="bkRsDate" class="form-input" style="width:auto" value="${String(b.bookingDate || '').slice(0, 10)}">
-                  <input type="time" id="bkRsTime" class="form-input" style="width:auto" value="${Layout.esc(b.startTime || '')}">
-                  <input type="text" id="bkRsReason" class="form-input" style="width:160px" placeholder="เหตุผล (ถ้ามี)">
-                  <button class="btn btn-sm" onclick="Page.reschedule('${b.id}')">เลื่อนนัด</button>
-                </div>
-              </div>` : ''}
-              ${b.publicToken ? `<div style="margin-top:6px;font-size:11px"><button class="btn btn-sm" onclick="Page.copyBookingLink('${Layout.jsArg(b.publicToken)}')">📋 คัดลอกลิงก์ลูกค้า (จ่ายมัดจำ / ยกเลิกเอง)</button></div>` : ''}
+            <div class="bk-sec"><h4>ผู้ให้บริการ</h4>${providersBlock}${editProviders}</div>
+            <div class="bk-sec">
+              <h4>ยอดเงิน</h4>
+              <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><span>${money(b.totalAmount)}</span></div>
+              ${b.depositAmount > 0 ? `<div style="display:flex;justify-content:space-between"><span>มัดจำ</span><span>${money(b.depositAmount)}</span></div>` : ''}
+              <div style="display:flex;justify-content:space-between"><span>ชำระแล้ว</span><span class="${b.paidAmount >= b.totalAmount ? 'text-success' : 'text-warning'}">${money(b.paidAmount)}</span></div>
+              ${b.creditPassNumber ? `<div style="margin-top:6px;font-size:11px;color:#6b21a8">🎟️ ชำระด้วยบัตรคอร์ส ${Layout.esc(b.creditPassNumber)} — ไม่มีเงินต้องเก็บ · ไม่ออกเอกสารใหม่</div>` : ''}
+              <div style="margin-top:8px;font-weight:600;font-size:12px">ประวัติรับเงิน</div>${payBlock}
+              ${this._depositForm(b)}
+              ${this._rescheduleForm(b)}
+              ${b.publicToken ? `<div style="margin-top:6px;font-size:11px"><button class="btn btn-sm" onclick="Page.copyBookingLink('${Layout.jsArg(b.publicToken)}')">📋 คัดลอกลิงก์ลูกค้า (ใบยืนยัน / จ่ายมัดจำ / เลื่อน / ยกเลิก)</button></div>` : ''}
             </div>
-            ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
+            <div class="bk-sec"><h4>เอกสารบัญชีของการจองนี้ (ทุกใบ)</h4>${docsBlock}</div>
             ${b.canIssueTaxInvoiceNow ? `<div style="background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;margin-bottom:10px;font-size:12px">
               การจองนี้ยังไม่มีใบกำกับภาษีที่อนุมัติแล้ว — ถ้า<strong>รับเงินแล้ว</strong> ต้องออกใบกำกับในวันที่รับเงิน (§78/1)
               <div style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
                 <label style="font-size:12px">วันที่รับเงิน <input type="date" id="bkPaidOn" class="form-input" style="width:auto;display:inline-block" value="${Page._todayBkk()}" max="${Page._todayBkk()}"></label>
-                <button class="btn btn-primary btn-sm" onclick="Page.issueTaxInvoice('${b.id}')">รับเงินแล้ว — ออกใบกำกับภาษี</button>
+                <button class="btn btn-primary btn-sm" onclick="Page.issueTaxInvoice('${Layout.jsArg(b.id)}')">รับเงินแล้ว — ออกใบกำกับภาษี</button>
               </div>
-              <div style="margin-top:4px;color:var(--gray-600)">ใบกำกับลงวันที่รับเงินที่ระบุ · ยังต้องบันทึกรับชำระที่หน้าเอกสารใบนั้น</div>
             </div>` : ''}
+            ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
+            ${b.internalNotes ? `<details style="font-size:12px;margin-bottom:10px"><summary style="cursor:pointer;font-weight:600">บันทึกภายใน / ร่องรอยระบบ</summary><div style="white-space:pre-wrap;color:var(--gray-700);margin-top:4px">${Layout.esc(b.internalNotes)}</div></details>` : ''}
+            ${timeline ? `<div class="bk-sec"><h4>ไทม์ไลน์</h4>${timeline}</div>` : ''}
             ${workflow ? `<h4 style="margin-top:12px;margin-bottom:6px;font-size:13px">ดำเนินการ</h4><div style="display:flex;gap:8px;flex-wrap:wrap">${workflow}</div>` : ''}`;
           Layout.openModal('bkModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      // วันนี้ตามเวลาไทย (ค่าเริ่มต้นของช่องวันที่ — server ตรวจห้ามอนาคตเอง)
-      _todayBkk() { return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10); },
+      _depositForm(b) {
+        if (!(b.bookingType === 'PrePayment' && !['Cancelled', 'NoShow', 'Completed'].includes(b.status) && !b.creditPassNumber
+          && Number(b.paidAmount || 0) + 0.005 < Number(b.depositAmount || 0))) return '';
+        return `<div style="margin-top:8px;border-top:1px dashed var(--gray-300);padding-top:8px">
+          <div style="font-size:12px;font-weight:600">บันทึกรับเงินมัดจำ (โอน/เงินสด)</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+            <input type="number" step="0.01" min="0" id="bkPayAmount" class="form-input" style="width:120px" value="${(Number(b.depositAmount || 0) - Number(b.paidAmount || 0)).toFixed(2)}">
+            <input type="date" id="bkPayDate" class="form-input" style="width:auto" value="${this._todayBkk()}">
+            <input type="text" id="bkPayRef" class="form-input" style="width:150px" placeholder="อ้างอิง/เลขโอน">
+            <button class="btn btn-primary btn-sm" onclick="Page.recordPayment('${Layout.jsArg(b.id)}')">บันทึกรับเงิน</button>
+          </div>
+          <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (§78/1)</div>
+        </div>`;
+      },
+      _rescheduleForm(b) {
+        if (!(b.status === 'Pending' || b.status === 'Confirmed')) return '';
+        return `<div style="margin-top:8px;border-top:1px dashed var(--gray-300);padding-top:8px">
+          <div style="font-size:12px;font-weight:600">เลื่อนนัด — แถวเดิม เอกสาร/มัดจำคงผูก</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+            <input type="date" id="bkRsDate" class="form-input" style="width:auto" value="${Layout.esc(String(b.bookingDate || '').slice(0, 10))}">
+            <input type="time" id="bkRsTime" class="form-input" style="width:auto" value="${Layout.esc(b.startTime || '')}">
+            <input type="text" id="bkRsReason" class="form-input" style="width:160px" placeholder="เหตุผล (ถ้ามี)">
+            <button class="btn btn-sm" onclick="Page.reschedule('${Layout.jsArg(b.id)}')">เลื่อนนัด</button>
+          </div>
+        </div>`;
+      },
+      detailAct(next) {
+        const b = this.current; if (!b) return;
+        if (next === 'START') return this.openStart(b.id);
+        if (next === 'COMPLETE') return this.openComplete(b.id);
+        return this.advance(b.id, next);
+      },
+
+      // ── เริ่มให้บริการ: ผู้ให้บริการหลายคน + แบ่ง % ──
+      async openStart(id, editOnly) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const c = (await api.cmsBookingProviderCandidates(this._sid(), id)).data || {};
+          this._start = { id, editOnly: !!editOnly, data: c };
+          // ไซต์ไม่เปิดจัดสรร / ไม่มีใครรับบริการนี้ ⇒ เริ่มได้ทันที (server ตัดสินอีกครั้ง)
+          if (!editOnly && !c.requiresProvider) {
+            if (c.note) Layout.toast(c.note, 'warning', 8000);
+            if (!confirm('เริ่มให้บริการการจองนี้?')) return;
+            await this._doStart([]);
+            return;
+          }
+          document.getElementById('startTitle').textContent = editOnly ? 'แก้ผู้ให้บริการ / สัดส่วน %' : 'เริ่มให้บริการ — เลือกผู้ให้บริการ';
+          document.getElementById('startSubmit').textContent = editOnly ? 'บันทึก' : '▶ เริ่มให้บริการ';
+          const cands = c.candidates || [];
+          const preselect = cands.some(x => x.currentlyAssigned) ? cands.filter(x => x.currentlyAssigned).map(x => x.resourceId)
+            : cands.filter(x => x.recommended).map(x => x.resourceId);
+          const shares = new Map(((this.current && this.current.id === id ? this.current.assignments : []) || []).map(a => [a.resourceId, a.sharePercent]));
+          document.getElementById('startBody').innerHTML = `
+            <div class="bs-hint" style="margin-bottom:8px;font-size:12px;color:var(--gray-600)">ตรรกะแนะนำของเว็บ: <strong>${Layout.esc(c.strategyLabel || '')}</strong> · ⭐ = ระบบแนะนำ · เลือกได้หลายคน แล้วแบ่ง % งาน (รวม 100) หรือกด "แบ่งเท่ากัน"</div>
+            ${cands.map((x, i) => `
+              <div class="cand-row ${x.available || x.currentlyAssigned ? '' : 'off'}">
+                <input type="checkbox" class="st-pick" data-i="${i}" ${preselect.includes(x.resourceId) ? 'checked' : ''} ${x.available || x.currentlyAssigned ? '' : 'disabled'} onchange="Page.startEven(false)">
+                <div style="flex:1;min-width:0">
+                  <div style="font-weight:600">${x.recommended ? '⭐ ' : ''}${Layout.esc(x.name)}${x.isPrimaryForService ? ' <span style="font-size:11px;color:#1e40af">(คนหลักของบริการนี้)</span>' : ''}</div>
+                  <div style="font-size:11px;color:${x.available ? 'var(--gray-500)' : '#b91c1c'}">${x.available ? '✓ ว่าง · ' + Layout.esc(x.reason) : Layout.esc(x.unavailableReason || 'ไม่ว่าง')}${x.currentlyAssigned ? ' · มอบหมายอยู่' : ''}</div>
+                </div>
+                <label style="font-size:12px">% <input type="number" class="form-input st-share" data-i="${i}" min="0" max="100" step="0.01" style="width:90px" value="${shares.has(x.resourceId) ? Number(shares.get(x.resourceId)) : ''}"></label>
+              </div>`).join('') || '<div class="bs-hint">ไม่มีผู้ให้บริการที่รับบริการนี้</div>'}
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+              <button type="button" class="btn btn-sm btn-secondary" onclick="Page.startEven(true)">แบ่งเท่ากัน</button>
+              <span id="stSum" style="font-size:13px"></span>
+            </div>
+            <input type="text" id="stNote" class="form-input" style="margin-top:8px" placeholder="หมายเหตุ (ถ้ามี)">`;
+          this.startEven(!shares.size);
+          Layout.openModal('startModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // แบ่งเท่ากันให้คนที่ติ๊ก (force) · ไม่ force = แค่สรุปผลรวม — การตรวจจริงอยู่ที่เซิร์ฟเวอร์ (BookingProviderShare)
+      startEven(force) {
+        const picks = Array.from(document.querySelectorAll('.st-pick')).filter(x => x.checked).map(x => x.dataset.i);
+        document.querySelectorAll('.st-share').forEach(inp => { if (!picks.includes(inp.dataset.i)) inp.value = ''; });
+        if (force && picks.length) {
+          const each = Math.floor(10000 / picks.length) / 100;
+          picks.forEach((i, k) => { document.querySelector(`.st-share[data-i="${i}"]`).value = k === 0 ? (100 - each * (picks.length - 1)).toFixed(2) : each.toFixed(2); });
+        }
+        const sum = picks.reduce((a, i) => a + (Number(document.querySelector(`.st-share[data-i="${i}"]`).value) || 0), 0);
+        const el = document.getElementById('stSum');
+        if (el) el.innerHTML = picks.length ? `รวม <strong style="color:${Math.abs(sum - 100) < 0.005 ? '#059669' : '#b91c1c'}">${sum.toFixed(2)}%</strong> · ${picks.length} คน` : '<span style="color:#b91c1c">ยังไม่ได้เลือกผู้ให้บริการ</span>';
+      },
+      async submitStart() {
+        const st = this._start; if (!st) return;
+        const cands = st.data.candidates || [];
+        const picks = Array.from(document.querySelectorAll('.st-pick')).filter(x => x.checked).map(x => Number(x.dataset.i));
+        const assignments = picks.map(i => {
+          const v = document.querySelector(`.st-share[data-i="${i}"]`).value;
+          return { resourceId: cands[i].resourceId, sharePercent: v === '' ? null : Number(v) };
+        });
+        if (!assignments.length) { Layout.toast('เลือกผู้ให้บริการอย่างน้อย 1 คน', 'error'); return; }
+        if (st.editOnly) {
+          const api = Layout.api(); if (!api) return;
+          try {
+            await api.cmsSetBookingAssignments(this._sid(), st.id, { assignments, note: document.getElementById('stNote').value.trim() || null });
+            Layout.toast('บันทึกผู้ให้บริการแล้ว');
+            Layout.closeModal('startModal');
+            await this.viewBooking(st.id); await this.load();
+          } catch (e) { Layout.toast(e.message, 'error'); }
+          return;
+        }
+        await this._doStart(assignments, document.getElementById('stNote').value.trim() || null);
+      },
+      async _doStart(assignments, note) {
+        const api = Layout.api(); if (!api) return;
+        const id = this._start.id;
+        try {
+          const res = await api.cmsStartBooking(this._sid(), id, { assignments, note: note || null });
+          (res?.data?.erpNotices || []).forEach(n => Layout.toast(n, 'warning', 15000));
+          Layout.toast('เริ่มให้บริการแล้ว');
+          Layout.closeModal('startModal'); Layout.closeModal('bkModal');
+          await this.load();
+        } catch (e) { Layout.toast('เริ่มให้บริการไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      // ── เสร็จสิ้น + รับชำระ ──
+      async openComplete(id) {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const b = (await api.cmsGetBooking(this._sid(), id)).data;
+          if (!b) return;
+          this._complete = { id, plan: b.completionPlan || {} };
+          const p = this._complete.plan;
+          const banks = await this._banks();
+          document.getElementById('completeTitle').textContent = `ให้บริการเสร็จ — #${b.bookingNumber}`;
+          document.getElementById('completeBody').innerHTML = `
+            <div class="bk-sec">
+              <div>${Layout.esc(b.serviceName)} · ${Layout.esc(b.customerName || b.guestName || '')}</div>
+              <div style="display:flex;justify-content:space-between"><span>ค่าบริการรวม</span><strong>${money(b.totalAmount)}</strong></div>
+              <div style="display:flex;justify-content:space-between"><span>รับแล้ว</span><span>${money(b.paidAmount)}</span></div>
+              <div style="display:flex;justify-content:space-between"><span>ยอดค้าง</span><strong style="color:#b45309">${money(p.amountDue)}</strong></div>
+              <div style="margin-top:6px">🧾 เอกสารที่จะออก: <strong id="cpDocLabel">${Layout.esc((p.canCollectPayment ? p.documentLabel : p.documentLabelNoPayment) || 'ไม่ออกเอกสาร')}</strong></div>
+              ${p.explanation ? `<div style="font-size:12px;color:var(--gray-600)">${Layout.esc(p.explanation)}</div>` : ''}
+            </div>
+            ${p.canCollectPayment ? `
+            <label style="font-weight:600"><input type="checkbox" id="cpCollect" checked onchange="Page.cpToggle()"> รับชำระตอนนี้</label>
+            <div id="cpFields" style="margin-top:8px">
+              <div class="form-row">
+                <div class="form-group"><label class="form-label">วิธีรับเงิน</label>
+                  <select class="form-input" id="cpMethod" onchange="Page.cpToggle()">${(p.paymentMethods || []).map(m => `<option value="${Layout.esc(m.value)}">${Layout.esc(m.label)}</option>`).join('')}</select></div>
+                <div class="form-group" id="cpBankWrap"><label class="form-label">รับเข้าบัญชี</label>
+                  <select class="form-input" id="cpBank"><option value="">— เงินสด/ไม่ระบุ —</option>${banks.map(x => `<option value="${Layout.esc(x.id)}">${Layout.esc(x.label)}</option>`).join('')}</select></div>
+              </div>
+              <div class="form-row-3">
+                <div class="form-group"><label class="form-label">ยอดรับ</label><input type="number" step="0.01" min="0" class="form-input" id="cpAmount" value="${Number(p.amountDue || 0).toFixed(2)}"></div>
+                <div class="form-group"><label class="form-label">วันที่รับเงิน</label><input type="date" class="form-input" id="cpDate" value="${this._todayBkk()}" max="${this._todayBkk()}"></div>
+                <div class="form-group"><label class="form-label">อ้างอิง</label><input type="text" class="form-input" id="cpRef" placeholder="เลขโอน/สลิป"></div>
+              </div>
+              <div class="bs-hint" style="font-size:11px;color:var(--gray-500)">รับไม่ครบ = ลงรับบางส่วนที่เอกสาร (ยอดที่เหลือค้างอยู่ที่เอกสาร) · โอน/พร้อมเพย์ต้องเลือกบัญชีธนาคาร</div>
+            </div>` : `<div style="font-size:12px;color:var(--gray-600)">${Layout.esc(p.collectBlockedNote || (Number(p.amountDue || 0) > 0 ? '' : 'ไม่มียอดค้าง'))}</div>`}
+            <input type="text" id="cpNote" class="form-input" style="margin-top:8px" placeholder="หมายเหตุ (ถ้ามี)">`;
+          this.cpToggle();
+          Layout.openModal('completeModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async _banks() {
+        if (this._bankCache) return this._bankCache;
+        const api = Layout.api(); if (!api) return [];
+        try {
+          const r = await api.getBankAccounts({ activeOnly: true });
+          this._bankCache = (r?.data?.items || r?.data || []).map(x => ({ id: x.id, label: [x.bankName, x.accountName, x.accountNumber].filter(Boolean).join(' · ') || x.id }));
+        } catch (_) { this._bankCache = []; }
+        return this._bankCache;
+      },
+      cpToggle() {
+        const on = document.getElementById('cpCollect');
+        const f = document.getElementById('cpFields');
+        if (!on || !f) return;
+        f.style.display = on.checked ? '' : 'none';
+        // ป้ายเอกสารสองกรณีมาจากเซิร์ฟเวอร์ (CompletionPlan) — รับชำระ = ออกเอกสารรับเงินเสมอ · ไม่รับ = ตามค่าตั้งของเว็บ
+        const p = (this._complete || {}).plan || {};
+        const lbl = document.getElementById('cpDocLabel');
+        if (lbl) lbl.textContent = (on.checked ? p.documentLabel : p.documentLabelNoPayment) || 'ไม่ออกเอกสาร';
+        const m = document.getElementById('cpMethod').value;
+        document.getElementById('cpBankWrap').style.display = m === 'Cash' ? 'none' : '';
+      },
+      async submitComplete() {
+        const api = Layout.api(); if (!api) return;
+        const c = this._complete; if (!c) return;
+        const collect = !!(document.getElementById('cpCollect') || {}).checked;
+        const body = { collectPayment: collect, internalNotes: (document.getElementById('cpNote').value || '').trim() || null };
+        if (collect) {
+          body.amount = Number(document.getElementById('cpAmount').value || 0);
+          body.paymentMethod = document.getElementById('cpMethod').value;
+          const bank = document.getElementById('cpBank').value;
+          body.bankAccountId = body.paymentMethod === 'Cash' ? null : (bank || null);
+          const d = document.getElementById('cpDate').value;
+          body.paidAt = d ? d + 'T05:00:00Z' : null;   // 12:00 เวลาไทย ของวันที่เลือก
+          body.reference = (document.getElementById('cpRef').value || '').trim() || null;
+          if (!(body.amount > 0)) { Layout.toast('ระบุยอดรับ', 'error'); return; }
+        }
+        try {
+          const res = await api.cmsCompleteBooking(this._sid(), c.id, body);
+          (res?.data?.erpNotices || []).forEach(n => Layout.toast(n, 'warning', 15000));
+          Layout.toast('บันทึกให้บริการเสร็จแล้ว');
+          Layout.closeModal('completeModal');
+          await this.viewBooking(c.id);
+          await this.load();
+        } catch (e) { Layout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
       async issueTaxInvoice(id) {
         const api = Layout.api(); if (!api) return;
         const paidOn = (document.getElementById('bkPaidOn') || {}).value || null;
         if (!confirm(`ยืนยันว่าได้รับเงินของการจองนี้แล้ว — ระบบจะออกใบกำกับภาษีลงวันที่ ${paidOn || 'วันนี้'}`)) return;
         try {
           const res = await api.cmsIssueBookingTaxInvoice(this._sid(), id, { receivedDate: paidOn });
-          // ข้อความจาก server (ออกใบแล้ว · มีใบแล้วไม่ออกซ้ำ · ขั้นที่ล้มพร้อมเหตุ) — แสดงตามจริง
           const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
           if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
-          Layout.closeModal('bkModal');
+          await this.viewBooking(id);
           await this.load();
         } catch (e) { Layout.toast('ออกใบกำกับไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ — ตัวตัดสิน/ผลอยู่ที่เซิร์ฟเวอร์ (RecordDepositPaymentAsync) หน้านี้ส่งค่าแล้วแสดงข้อความกลับ
+      // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ — ตัวตัดสิน/ผลอยู่ที่เซิร์ฟเวอร์ (RecordDepositPaymentAsync)
       async recordPayment(id) {
         const api = Layout.api(); if (!api) return;
         const amount = Number((document.getElementById('bkPayAmount') || {}).value || 0);
@@ -312,8 +653,7 @@
         if (!(amount > 0)) { Layout.toast('ระบุยอดรับเงิน', 'error'); return; }
         try {
           const res = await api.cmsRecordBookingPayment(this._sid(), id, { amount, paidAt: paidOn ? paidOn + 'T12:00:00Z' : null, reference });
-          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
-          notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          (res?.data?.erpNotices || []).forEach(n => Layout.toast(n, 'warning', 15000));
           Layout.toast('บันทึกรับเงินแล้ว');
           await this.viewBooking(id);
           await this.load();
@@ -328,8 +668,7 @@
         if (!bookingDate || !startTime) { Layout.toast('ระบุวันและเวลาใหม่', 'error'); return; }
         try {
           const res = await api.cmsRescheduleBooking(this._sid(), id, { bookingDate: bookingDate + 'T00:00:00', startTime: startTime.slice(0, 5), reason });
-          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
-          notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          (res?.data?.erpNotices || []).forEach(n => Layout.toast(n, 'warning', 15000));
           Layout.toast('เลื่อนนัดแล้ว');
           await this.viewBooking(id);
           await this.load();
@@ -345,13 +684,13 @@
           : `${location.origin}/storefront.html?companyId=${encodeURIComponent(cid)}&siteId=${encodeURIComponent(sid)}&slug=${encodeURIComponent('my-booking/' + token)}`;
         (navigator.clipboard ? navigator.clipboard.writeText(url) : Promise.reject()).then(() => Layout.toast('คัดลอกลิงก์แล้ว')).catch(() => prompt('คัดลอกลิงก์นี้', url));
       },
-      // รอบ 205 W3 R-16: เลือก/เปลี่ยนผู้ให้บริการ — ค่าว่าง = ให้ระบบจัดให้ · server ตัดสินผ่าน BookingSlotEngine ตัวเดียว (ไม่ว่าง/ไม่เข้างาน ⇒ ข้อความไทยจาก server)
+      // รอบ 205 W3 R-16: เลือก/เปลี่ยนผู้ให้บริการที่จองไว้ (ก่อนเริ่ม) — ค่าว่าง = ให้ระบบจัดให้ · server ตัดสินผ่าน BookingSlotEngine ตัวเดียว
       async assignResource(id) {
         const api = Layout.api(); if (!api) return;
         const sel = document.getElementById('bkResource');
         const resourceId = sel && sel.value ? sel.value : null;
         try {
-          await api.cmsAssignBookingResource(this.siteId, id, { resourceId });
+          await api.cmsAssignBookingResource(this._sid(), id, { resourceId });
           Layout.toast('บันทึกผู้ให้บริการแล้ว');
           await this.viewBooking(id);
           await this.load();
@@ -360,15 +699,15 @@
       async advance(id, nextStatus) {
         const api = Layout.api(); if (!api) return;
         const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
+        if (nextStatus === 'Cancelled' && note === null) return;
         try {
-          const res = await api.cmsUpdateBookingStatus(this._sid(), id, { status: nextStatus, internalNotes: note });
+          const res = await api.cmsUpdateBookingStatus(this._sid(), id, { status: nextStatus, internalNotes: note || null });
           // ข้อความจาก server (ขั้น ERP · เลื่อนคิวสำรองขึ้น) — แสดงตามจริง
           const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
           if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
           else Layout.toast('อัปเดตสถานะเรียบร้อย');
           Layout.closeModal('bkModal');
           await this.load();
-          await this.loadStats();
         } catch (e) { Layout.toast('อัปเดตไม่สำเร็จ: ' + e.message, 'error'); }
       }
     };

@@ -105,8 +105,10 @@ public partial class CmsBookingService
             var svc = await _db.SiteBookingServices.AsNoTracking()
                 .FirstOrDefaultAsync(s => s.Id == booking.BookingServiceId && s.CompanyId == companyId && !s.IsDeleted)
                 ?? throw new KeyNotFoundException("Booking service not found.");
-            if (!CanAssignResource(svc.ResourceMode, booking.Status, booking.BookingDate, booking.StartTime.ToString("HH:mm")))
-                throw new BusinessRuleException(svc.ResourceMode == BookingResourceMode.None
+            // รอบ 207: โหมดที่มีผลจริง (ไซต์ปิดจัดสรรผู้ให้บริการ ⇒ None) — ตัวประกอบเดียว RulesOf
+            var effectiveMode = BookingSlotEngine.RulesOf(svc, await SiteDefaultsAsync(companyId, siteId)).ResourceMode;
+            if (!CanAssignResource(effectiveMode, booking.Status, booking.BookingDate, booking.StartTime.ToString("HH:mm")))
+                throw new BusinessRuleException(effectiveMode == BookingResourceMode.None
                     ? "บริการนี้ไม่ใช้ผู้ให้บริการ"
                     : "เปลี่ยนผู้ให้บริการได้เฉพาะการจองที่รอยืนยัน/ยืนยันแล้วและยังไม่ถึงเวลานัด", "CMS-BOOKING-ASSIGN");
 

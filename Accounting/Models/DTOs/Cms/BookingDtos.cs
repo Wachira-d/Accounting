@@ -80,6 +80,29 @@ public class BookingSiteSettingsDto
     /// <summary>ข้อความเริ่มต้นของระบบ + ตัวแทนที่ใช้ได้ (server ประกาศ · หน้าเว็บแสดงเป็นคำใบ้ — ไม่อ่านตอนบันทึก)</summary>
     public string? ReminderDefaultTemplate { get; set; }
     public List<string> ReminderPlaceholders { get; set; } = new();
+
+    // ── รอบ 207 ── (ตอนบันทึก null = คงค่าเดิมทุกช่อง)
+    /// <summary>เปิดจัดสรรผู้ให้บริการของไซต์ · คำตอบ = ค่าที่มีผลจริง (แถวเก่า null ⇒ ตัดสินจากข้อมูลเดิม · <c>BookingProviderAllocation.Enabled</c>)</summary>
+    public bool? ProviderAllocationEnabled { get; set; }
+    /// <summary>ตรรกะแนะนำ/จัดผู้ให้บริการ</summary>
+    public BookingRecommendStrategy? ProviderRecommendStrategy { get; set; }
+    public List<BookingProviderAllocation.StrategyOption> ProviderStrategyOptions { get; set; } = new();
+    /// <summary>ช่องบังคับของฟอร์มจอง (<c>BookingFormFields</c>)</summary>
+    public BookingFormFieldsConfig? FormFields { get; set; }
+    public List<BookingFormFields.FieldOption> FormFieldOptions { get; set; } = new();
+    /// <summary>เอกสารตอนให้บริการเสร็จ (บริการแบบนัดหมาย/Lead ที่มียอด)</summary>
+    public BookingCompletionDocument? CompletionDocument { get; set; }
+    public List<BookingDocumentFlow.Option> CompletionDocumentOptions { get; set; } = new();
+    /// <summary>ตารางสรุป "ออกเอกสารอะไร ขั้นไหน" ต่อชนิดบริการ ตามค่าตั้งปัจจุบัน + สถานะ VAT ของบริษัท (server ประกอบ — หน้าเว็บแสดงตรง)</summary>
+    public List<BookingDocumentFlow.StageRow> DocumentFlow { get; set; } = new();
+}
+
+/// <summary>รอบ 207: บริการที่ผู้ให้บริการรับได้ + คนหลัก/ลำดับความสำคัญต่อบริการ</summary>
+public class BookingResourceServiceLinkDto
+{
+    public Guid ServiceId { get; set; }
+    public bool IsPrimary { get; set; }
+    public int Priority { get; set; }
 }
 
 /// <summary>พนักงานเปลี่ยน/เลือกผู้ให้บริการของการจอง (R-16) · <see cref="ResourceId"/> null = ให้ระบบจัดให้ใหม่ — server ตัดสินผ่าน <c>BookingSlotEngine.Decide</c>/<c>PickResource</c> ตัวเดียว</summary>
@@ -99,6 +122,10 @@ public class BookingResourceRequest
     public bool IsActive { get; set; } = true;
     public List<Guid> ServiceIds { get; set; } = new();
     public BookingScheduleDto Schedule { get; set; } = new();
+    /// <summary>รอบ 207: บริการที่รับ + คนหลัก/ลำดับ · ส่งมา (ไม่ null) ⇒ ใช้แทน <see cref="ServiceIds"/> · null = ผู้เรียกเดิม (ServiceIds · ไม่แตะคนหลัก/ลำดับเดิม)</summary>
+    public List<BookingResourceServiceLinkDto>? ServiceLinks { get; set; }
+    /// <summary>รอบ 207: ผู้ใช้ระบบ (พนักงาน) ของผู้ให้บริการ — POS เติมช่าง/ค่าคอม · null = ไม่ผูก</summary>
+    public Guid? StaffUserId { get; set; }
 }
 
 public class BookingResourceResponse : BookingResourceRequest
@@ -176,6 +203,10 @@ public class BookingServiceResponse
     public string Currency { get; set; } = "THB";
     public BookingType BookingType { get; set; }
     public Guid? ProductId { get; set; }
+    /// <summary>รอบ 207: รหัส/ชื่อสินค้า/บริการที่ผูก + คำเตือน (ยังไม่ผูก · ราคาไม่ตรง)</summary>
+    public string? ProductCode { get; set; }
+    public string? ProductName { get; set; }
+    public string? ProductWarning { get; set; }
     public string? Category { get; set; }
     public bool AutoConfirm { get; set; }
     public int? FreeCancellationHours { get; set; }
@@ -194,6 +225,10 @@ public class BookingServiceResponse
     public bool UseSiteDefaults { get; set; }
     /// <summary>ระยะเวลาที่ใช้จริง (ของไซต์เมื่อ UseSiteDefaults) — หน้าเว็บแสดงตัวนี้</summary>
     public int EffectiveDurationMinutes { get; set; }
+    /// <summary>รอบ 207: โหมดผู้ให้บริการที่มีผลจริง (ไซต์ปิดจัดสรร ⇒ None) — หน้าจองของลูกค้าอ่านช่องนี้</summary>
+    public BookingResourceMode EffectiveResourceMode { get; set; }
+    /// <summary>รอบ 207: ช่องบังคับ/ซ่อนของฟอร์มจอง (ค่าของไซต์) — หน้าจองแสดงตาม · ด่านจริงอยู่ที่เซิร์ฟเวอร์</summary>
+    public BookingFormFieldsConfig FormFields { get; set; } = BookingFormFields.Default;
     /// <summary>ผู้ให้บริการที่ทำบริการนี้ได้ (เปิดใช้อยู่) — ลูกค้าเลือกเมื่อโหมด "บังคับระบุ"/"ลูกค้าเลือก"</summary>
     public List<BookingResourceBrief> Resources { get; set; } = new();
     public BookingScheduleDto Schedule { get; set; } = new();
@@ -352,6 +387,150 @@ public class BookingResponse
     public DateTime? WaitlistNotifiedAt { get; set; }
     /// <summary>ถือรอบให้ยืนยันถึง (UTC) · พ้นแล้ว job ปล่อยรอบ</summary>
     public DateTime? WaitlistHoldUntil { get; set; }
+
+    // ── รอบ 207 ──
+    /// <summary>ไซต์เปิดจัดสรรผู้ให้บริการ (ตัวตัดสินเดียว BookingProviderAllocation) — หน้าทำงานเปิดหน้าต่างเลือกผู้ให้บริการตอนเริ่มให้บริการ</summary>
+    public bool ProviderAllocationEnabled { get; set; }
+    /// <summary>ผู้ให้บริการที่ลงมือจริง + สัดส่วน % (ว่าง = ยังไม่มอบหมาย · การจองเก่าที่มีผู้ให้บริการคนเดียว ⇒ 1 แถว 100%)</summary>
+    public List<BookingAssignmentDto> Assignments { get; set; } = new();
+    /// <summary>เอกสารทุกใบของการจองนี้ (ใบยืนยัน · มัดจำ · ใบกำกับ/ใบเสร็จ · ใบลดหนี้ ...) — ค้นจากเลขการจองบนเอกสาร (server ประกอบ)</summary>
+    public List<BookingDocumentLinkDto> Documents { get; set; } = new();
+    /// <summary>ประวัติรับเงิน (บนการจอง + บนเอกสาร)</summary>
+    public List<BookingPaymentLineDto> PaymentLines { get; set; } = new();
+    /// <summary>ไทม์ไลน์ของการจอง (สร้าง · ยืนยัน · เริ่ม · เสร็จ · ยกเลิก)</summary>
+    public List<BookingTimelineDto> Timeline { get; set; } = new();
+    /// <summary>แผนตอนกด "เสร็จสิ้น" (server ตัดสิน — หน้าต่างชำระเงินแสดงตาม): เอกสารที่จะออก · ยอดค้าง · เก็บเงินได้ไหม</summary>
+    public BookingCompletionPlanDto? CompletionPlan { get; set; }
+    public DateTime? StartedAt { get; set; }
+    public string? ServiceProductName { get; set; }
+    /// <summary>ป้ายสถานะที่ลูกค้าเห็น (BookingStatusLabels.Customer) — หน้าเว็บ/ใบยืนยันแสดงตรง</summary>
+    public string CustomerStatusLabel { get; set; } = "";
+}
+
+public class BookingAssignmentDto
+{
+    public Guid ResourceId { get; set; }
+    public string ResourceName { get; set; } = "";
+    public decimal SharePercent { get; set; }
+    public bool IsPrimary { get; set; }
+}
+
+public class BookingDocumentLinkDto
+{
+    public Guid Id { get; set; }
+    public string DocumentNumber { get; set; } = "";
+    public string DocumentType { get; set; } = "";
+    /// <summary>ชื่อชนิดภาษาไทย (server · หัวที่พิมพ์จริงอยู่ที่หน้าเอกสาร)</summary>
+    public string TypeLabel { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string StatusLabel { get; set; } = "";
+    public DateTime DocumentDate { get; set; }
+    public decimal TotalAmount { get; set; }
+    public decimal BalanceDue { get; set; }
+    public bool IsDeposit { get; set; }
+    /// <summary>ใบที่ผูกกับการจองเป็นหลัก (ErpDocumentId)</summary>
+    public bool IsPrimaryLink { get; set; }
+}
+
+public class BookingPaymentLineDto
+{
+    public DateTime PaidAt { get; set; }
+    public decimal Amount { get; set; }
+    public string Source { get; set; } = "";
+    public string? Reference { get; set; }
+    public string? DocumentNumber { get; set; }
+}
+
+public class BookingTimelineDto
+{
+    public DateTime At { get; set; }
+    public string Label { get; set; } = "";
+}
+
+/// <summary>รอบ 207: ผู้ให้บริการที่เลือกได้ตอนเริ่มให้บริการ — เรียงตามคำแนะนำ (ตัวจัดอันดับเดียว BookingSlotEngine.RankResources)</summary>
+public class BookingProviderCandidateDto
+{
+    public Guid ResourceId { get; set; }
+    public string Name { get; set; } = "";
+    public bool OnDuty { get; set; }
+    public bool Available { get; set; }
+    /// <summary>เหตุที่ไม่ว่าง (ไม่เข้างาน/มีงานชนเวลา) · null = ว่าง</summary>
+    public string? UnavailableReason { get; set; }
+    public bool Recommended { get; set; }
+    public string Reason { get; set; } = "";
+    public bool IsPrimaryForService { get; set; }
+    public bool CurrentlyAssigned { get; set; }
+}
+
+public class BookingProviderCandidatesResponse
+{
+    public bool ProviderAllocationEnabled { get; set; }
+    /// <summary>ต้องเลือกอย่างน้อย 1 คนก่อนเริ่ม (ไซต์เปิด + มีคนรับบริการนี้)</summary>
+    public bool RequiresProvider { get; set; }
+    public string StrategyLabel { get; set; } = "";
+    public string? Note { get; set; }
+    public List<BookingProviderCandidateDto> Candidates { get; set; } = new();
+}
+
+public class BookingAssignmentRequestItem
+{
+    public Guid ResourceId { get; set; }
+    /// <summary>null ทุกคน ⇒ แบ่งเท่ากัน</summary>
+    public decimal? SharePercent { get; set; }
+}
+
+/// <summary>รอบ 207: เริ่มให้บริการ + ผู้ให้บริการ (ได้หลายคน) · หรือแก้สัดส่วนภายหลัง</summary>
+public class StartBookingServiceRequest
+{
+    public List<BookingAssignmentRequestItem> Assignments { get; set; } = new();
+    public string? Note { get; set; }
+}
+
+/// <summary>รอบ 207: ผูก/สร้างสินค้า/บริการในระบบให้บริการจอง · <see cref="CreateNew"/> = สร้างสินค้าประเภทบริการจากชื่อ/ราคาของบริการนี้ ·
+/// ไม่ส่งทั้งคู่ = เลิกผูก</summary>
+public class LinkBookingProductRequest
+{
+    public Guid? ProductId { get; set; }
+    public bool CreateNew { get; set; }
+}
+
+/// <summary>รอบ 207: สรุปการทำงาน/รายงานผู้ให้บริการ (ตัวประกอบเดียว Helpers/BookingProviderReport)</summary>
+public class BookingProviderReportResponse
+{
+    public DateTime From { get; set; }
+    public DateTime To { get; set; }
+    public bool ProviderAllocationEnabled { get; set; }
+    public ProviderReportTotals Totals { get; set; } = new(0, 0, 0, 0, 0m);
+    public IReadOnlyList<ProviderSummary> Providers { get; set; } = Array.Empty<ProviderSummary>();
+}
+
+/// <summary>รอบ 207: แผนตอนเสร็จสิ้น (server ประกอบจาก BookingInvoiceTimingPolicy + ยอดค้าง)</summary>
+public class BookingCompletionPlanDto
+{
+    /// <summary>เอกสารที่จะออกตอนกดเสร็จ + รับชำระ (ป้ายไทย) · null = ไม่ออก</summary>
+    public string? DocumentLabel { get; set; }
+    /// <summary>เอกสารที่จะออกถ้ากดเสร็จโดยไม่รับชำระ (ตามค่าตั้ง CompletionDocument ของเว็บ)</summary>
+    public string? DocumentLabelNoPayment { get; set; }
+    public string? Explanation { get; set; }
+    /// <summary>ยอดที่ยังต้องเก็บ (ราคาเต็ม − ที่รับแล้ว) — ค่าเริ่มต้นของช่องยอดในหน้าต่างชำระเงิน</summary>
+    public decimal AmountDue { get; set; }
+    /// <summary>บันทึกรับเงินตอนเสร็จได้ไหม (ไม่ได้ = บิล POS / จ่ายด้วยบัตรคอร์ส / ไม่มีเอกสารให้ลงเงิน)</summary>
+    public bool CanCollectPayment { get; set; }
+    public string? CollectBlockedNote { get; set; }
+    /// <summary>วิธีรับเงินที่เลือกได้ (ชื่อ enum + ป้ายไทย) — โอน/พร้อมเพย์ต้องเลือกบัญชีธนาคาร (LodgingPaymentBank)</summary>
+    public List<BookingFormFields.FieldOption> PaymentMethods { get; set; } = new();
+}
+
+/// <summary>รอบ 207: กด "เสร็จสิ้น" + รับชำระ (เลือกวิธี/บัญชีรับเงิน · ระบุยอด) · <see cref="CollectPayment"/> false = เสร็จโดยยังไม่รับเงิน</summary>
+public class CompleteBookingRequest
+{
+    public bool CollectPayment { get; set; }
+    public decimal? Amount { get; set; }
+    public PaymentMethod PaymentMethod { get; set; } = PaymentMethod.Cash;
+    public Guid? BankAccountId { get; set; }
+    public DateTime? PaidAt { get; set; }
+    public string? Reference { get; set; }
+    public string? InternalNotes { get; set; }
 }
 
 /// <summary>"รับเงินแล้ว — ออกใบกำกับภาษี" (คำตัดสินข้อ 155) · <see cref="ReceivedDate"/> = วันที่รับเงินจริง (ว่าง = วันนี้ · ห้ามอนาคต) ใช้เป็นวันที่ใบกำกับ</summary>
@@ -377,6 +556,11 @@ public class BookingListResponse
     public decimal TotalAmount { get; set; }
     public string Currency { get; set; } = "THB";
     public DateTime CreatedAt { get; set; }
+    // ── รอบ 207: หน้าทำงานประจำวัน ──
+    public decimal PaidAmount { get; set; }
+    public string? GuestPhone { get; set; }
+    /// <summary>ผู้ให้บริการทุกคน (หลายคน = "ก 60% · ข 40%")</summary>
+    public string? ProvidersLabel { get; set; }
 }
 
 // ==================== Available Slots Query ====================

@@ -376,6 +376,7 @@ public static class SubscriptionGatePolicy
     {
         ("cms-orders",    "/api/companies/{companyId}/cms/sites/{siteId}/commerce/orders"),   // CmsWebsiteBuilder (เมนู) → CmsEcommerce
         ("cms-bookings",  "/api/companies/{companyId}/cms/sites/{siteId}/booking/bookings"),  // CmsWebsiteBuilder (เมนู) → CmsBooking
+        ("cms-booking-providers", "/api/companies/{companyId}/cms/sites/{siteId}/booking/provider-report"),   // รอบ 207 · เหมือน cms-bookings
         ("lodging",       "/api/companies/{companyId}/lodging/reservations"),                 // CmsWebsiteBuilder (เมนู) → ไม่ gate (null)
         ("document-scan", "/api/companies/{companyId}/ocr"),                                  // AI_Features (เมนู) → DocumentOCR
     };

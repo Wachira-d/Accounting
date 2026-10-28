@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สรุปงานผู้ให้บริการ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .stat-card { background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:12px 16px }
+    .stat-label { font-size:12px;color:var(--gray-500) }
+    .stat-value { font-size:20px;font-weight:700;margin-top:4px }
+    .prov-row { cursor:pointer } .prov-row:hover { background:var(--gray-50) }
+    .prov-row.sel { background:#eef2ff }
+    .range-btn.active { background:var(--primary,#4F46E5);color:#fff;border-color:transparent }
+    .bar { height:6px;background:#c7d2fe;border-radius:3px }
+    @media print { .no-print { display:none !important } }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb" class="no-print"></div>
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">สรุปงานผู้ให้บริการ</h2>
+        <p class="page-subtitle">จำนวนงาน · ชั่วโมงงาน · ยอดตาม % งาน · แยกบริการ/รายวัน · รายการงาน — จากการจองหน้าเว็บ</p>
+      </div>
+      <div class="flex gap-2 no-print" style="flex-wrap:wrap">
+        <a class="btn btn-secondary" id="workLink" href="/pages/cms-bookings.html">📋 หน้าทำงานการจอง</a>
+        <select class="form-input" id="siteSelector" onchange="Page.onSiteChange()" style="min-width:220px"><option value="">กำลังโหลดเว็บไซต์...</option></select>
+      </div>
+    </div>
+
+    <div class="toolbar no-print" style="display:flex;gap:6px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <button class="btn btn-secondary btn-sm range-btn" data-range="today" onclick="Page.setRange('today')">วันนี้</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="week" onclick="Page.setRange('week')">สัปดาห์นี้</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="month" onclick="Page.setRange('month')">เดือนนี้</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="lastMonth" onclick="Page.setRange('lastMonth')">เดือนที่แล้ว</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="last30" onclick="Page.setRange('last30')">ย้อนหลัง 30 วัน</button>
+      <button class="btn btn-secondary btn-sm range-btn" data-range="year" onclick="Page.setRange('year')">ปีนี้</button>
+      <span style="display:inline-flex;gap:4px;align-items:center;font-size:13px">
+        <input type="date" class="form-input" id="fromDate" style="width:auto" onchange="Page.customRange()"> ถึง
+        <input type="date" class="form-input" id="toDate" style="width:auto" onchange="Page.customRange()">
+      </span>
+      <button class="btn btn-secondary btn-sm" onclick="Page.exportCsv()">⬇️ ส่งออก CSV</button>
+      <button class="btn btn-secondary btn-sm" onclick="window.print()">🖨️ พิมพ์</button>
+    </div>
+
+    <div id="disabledNote" style="display:none;background:#fffbeb;border:1px solid #fcd34d;padding:10px 14px;border-radius:8px;margin-bottom:12px;font-size:13px"></div>
+
+    <div class="grid grid-4 gap-3" style="margin-bottom:14px">
+      <div class="stat-card"><div class="stat-label">การจองในช่วงนี้</div><div class="stat-value" id="tBookings">-</div></div>
+      <div class="stat-card"><div class="stat-label">ให้บริการเสร็จ</div><div class="stat-value" id="tCompleted" style="color:#065f46">-</div></div>
+      <div class="stat-card"><div class="stat-label">ชั่วโมงงานที่เสร็จ</div><div class="stat-value" id="tHours">-</div></div>
+      <div class="stat-card"><div class="stat-label">ยอดบริการที่เสร็จ</div><div class="stat-value" id="tRevenue">-</div><div style="font-size:11px;color:var(--gray-500)">ราคาการจอง (รวม VAT) — รายได้ทางบัญชีดูที่รายงานภาษีขาย/งบ</div></div>
+    </div>
+
+    <div class="table-container">
+      <table class="table">
+        <thead><tr>
+          <th>ผู้ให้บริการ</th><th class="text-right">งานทั้งหมด</th><th class="text-right">เสร็จ</th><th class="text-right">กำลังทำ</th>
+          <th class="text-right">นัดล่วงหน้า</th><th class="text-right">ไม่มา</th><th class="text-right">ยกเลิก</th>
+          <th class="text-right">ชม.งาน</th><th class="text-right">ชม.ตาม %</th><th class="text-right">ยอดตาม %</th><th class="text-right">เฉลี่ย/งาน</th><th>สัดส่วนยอด</th>
+        </tr></thead>
+        <tbody id="provBody"><tr><td colspan="12" class="text-center text-gray-400" style="padding:40px">กรุณาเลือกเว็บไซต์</td></tr></tbody>
+      </table>
+    </div>
+
+    <div id="detail" style="margin-top:18px"></div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
+  <script>
+    // ตัวเลขทั้งหมดมาจากเซิร์ฟเวอร์ (Helpers/BookingProviderReport) — หน้านี้จัดรูปอย่างเดียว · ป้ายสถานะจาก Layout.ENUM_LABELS
+    const STATUS_LABEL = Layout.ENUM_LABELS.bookingStatus;
+    const money = v => '฿' + Number(v || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+    const hours = m => (Number(m || 0) / 60).toLocaleString('th-TH', { maximumFractionDigits: 1 });
+
+    const Page = {
+      siteId: null, range: 'month', from: null, to: null, data: null, sel: null,
+      _bkkDate() { return new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10); },
+      _addDays(ymd, n) { const d = new Date(ymd + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); },
+      async init() {
+        if (!Layout.init('cms-booking-providers')) return;
+        this.setRange('month', true);
+        try {
+          const sites = this.sites = await CmsSiteContext.loadSites();
+          const sel = document.getElementById('siteSelector');
+          if (!sites.length) { sel.innerHTML = '<option value="">ยังไม่มีเว็บไซต์</option>'; return; }
+          const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'bookings', allowAll: false });
+          CmsSiteContext.fillSelect(sel, sites, { module: 'bookings', allowAll: false, value: picked });
+          await this.applySite(sel.value || picked);
+        } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      async applySite(v) {
+        this.siteId = v || null; this.sel = null;
+        CmsSiteContext.setUrl(v);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], v, 'สรุปงานผู้ให้บริการ', 'cms-booking-providers');
+        document.getElementById('workLink').href = '/pages/cms-bookings.html?siteId=' + encodeURIComponent(v || '');
+        await this.load();
+      },
+      async onSiteChange() { await this.applySite(document.getElementById('siteSelector').value); },
+      setRange(key, silent) {
+        const t = this._bkkDate();
+        const dow = new Date(t + 'T00:00:00Z').getUTCDay();
+        const monday = this._addDays(t, dow === 0 ? -6 : 1 - dow);
+        const m1 = t.slice(0, 8) + '01';
+        const prevEnd = this._addDays(m1, -1);
+        const r = {
+          today: [t, t], week: [monday, t], month: [m1, t], lastMonth: [prevEnd.slice(0, 8) + '01', prevEnd],
+          last30: [this._addDays(t, -29), t], year: [t.slice(0, 4) + '-01-01', t],
+        }[key] || [m1, t];
+        this.range = key; this.from = r[0]; this.to = r[1];
+        document.getElementById('fromDate').value = this.from; document.getElementById('toDate').value = this.to;
+        document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b.dataset.range === key));
+        if (!silent) this.load();
+      },
+      customRange() {
+        this.range = 'custom';
+        this.from = document.getElementById('fromDate').value || this.from;
+        this.to = document.getElementById('toDate').value || this.to;
+        document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+        this.load();
+      },
+      async load() {
+        if (!this.siteId) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.cmsBookingProviderReport(this.siteId, `?fromDate=${encodeURIComponent(this.from)}&toDate=${encodeURIComponent(this.to)}`);
+          const d = this.data = res.data || {};
+          const note = document.getElementById('disabledNote');
+          note.style.display = d.providerAllocationEnabled ? 'none' : '';
+          note.innerHTML = d.providerAllocationEnabled ? '' : 'เว็บนี้ยังไม่เปิด "จัดสรรผู้ให้บริการ" — เปิดได้ที่ เว็บไซต์ → แก้ไข → การจอง → 👥 จัดสรรผู้ให้บริการ (การจองที่ไม่มีผู้ให้บริการรวมอยู่ในแถว "ยังไม่ระบุผู้ให้บริการ")';
+          const t = d.totals || {};
+          document.getElementById('tBookings').textContent = `${Number(t.bookings || 0)}${t.unassigned ? ` (ยังไม่ระบุ ${Number(t.unassigned)})` : ''}`;
+          document.getElementById('tCompleted').textContent = String(Number(t.completed || 0));
+          document.getElementById('tHours').textContent = hours(t.workedMinutes) + ' ชม.';
+          document.getElementById('tRevenue').textContent = money(t.revenue);
+          const list = d.providers || [];
+          const body = document.getElementById('provBody');
+          if (!list.length) { body.innerHTML = '<tr><td colspan="12" class="text-center text-gray-400" style="padding:40px">ไม่มีการจองในช่วงนี้</td></tr>'; document.getElementById('detail').innerHTML = ''; return; }
+          body.innerHTML = list.map((p, i) => `
+            <tr class="prov-row ${this.sel === i ? 'sel' : ''}" onclick="Page.pick(${i})">
+              <td><strong>${Layout.esc(p.name)}</strong></td>
+              <td class="text-right">${Number(p.assigned)}</td><td class="text-right">${Number(p.completed)}</td><td class="text-right">${Number(p.inProgress)}</td>
+              <td class="text-right">${Number(p.upcoming)}</td><td class="text-right">${Number(p.noShow)}</td><td class="text-right">${Number(p.cancelled)}</td>
+              <td class="text-right">${hours(p.workedMinutes)}</td><td class="text-right">${hours(p.shareMinutes)}</td>
+              <td class="text-right"><strong>${money(p.revenueShare)}</strong></td><td class="text-right">${money(p.averageRevenuePerJob)}</td>
+              <td style="min-width:110px"><div class="bar" style="width:${Math.max(2, Math.min(100, Number(p.shareOfTotalRevenuePercent || 0)))}%"></div><span style="font-size:11px">${Number(p.shareOfTotalRevenuePercent || 0).toLocaleString('th-TH')}%</span></td>
+            </tr>`).join('');
+          if (this.sel != null && list[this.sel]) this.renderDetail(list[this.sel]); else document.getElementById('detail').innerHTML = '';
+        } catch (e) { Layout.toast('โหลดรายงานไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      pick(i) {
+        this.sel = i;
+        document.querySelectorAll('.prov-row').forEach((r, k) => r.classList.toggle('sel', k === i));
+        const p = (this.data?.providers || [])[i];
+        if (p) this.renderDetail(p);
+      },
+      renderDetail(p) {
+        const svc = (p.services || []).map(s => `<tr><td>${Layout.esc(s.serviceName)}</td><td class="text-right">${Number(s.completed)}</td><td class="text-right">${hours(s.minutes)}</td><td class="text-right">${money(s.revenue)}</td></tr>`).join('')
+          || '<tr><td colspan="4" class="text-gray-400">ยังไม่มีงานที่เสร็จ</td></tr>';
+        const days = (p.days || []).map(d => `<tr><td>${Layout.date(d.date)}</td><td class="text-right">${Number(d.completed)}</td><td class="text-right">${hours(d.minutes)}</td><td class="text-right">${money(d.revenue)}</td></tr>`).join('')
+          || '<tr><td colspan="4" class="text-gray-400">—</td></tr>';
+        const jobs = (p.jobs || []).map(j => `<tr>
+            <td>${Layout.date(j.bookingDate)} ${Layout.esc(j.startTime)}–${Layout.esc(j.endTime)}</td><td>${Layout.esc(j.bookingNumber)}</td>
+            <td>${Layout.esc(j.serviceName)}</td><td>${Layout.esc(j.customerName || '')}</td>
+            <td>${Layout.esc(STATUS_LABEL[j.status] || j.status)}</td><td class="text-right">${Number(j.sharePercent).toLocaleString('th-TH')}%</td>
+            <td class="text-right">${j.shareMinutes ? hours(j.shareMinutes) : '—'}</td><td class="text-right">${j.revenueShare ? money(j.revenueShare) : '—'}</td>
+            <td style="font-size:11px;color:var(--gray-500)">${Layout.esc(j.coProviders || '')}</td></tr>`).join('');
+        document.getElementById('detail').innerHTML = `
+          <h3 style="font-size:16px;font-weight:600;margin-bottom:8px">👤 ${Layout.esc(p.name)} — รายละเอียด</h3>
+          <div class="grid grid-2 gap-3" style="margin-bottom:12px">
+            <div class="table-container"><table class="table" style="font-size:13px"><thead><tr><th>แยกตามบริการ</th><th class="text-right">เสร็จ</th><th class="text-right">ชม.</th><th class="text-right">ยอดตาม %</th></tr></thead><tbody>${svc}</tbody></table></div>
+            <div class="table-container"><table class="table" style="font-size:13px"><thead><tr><th>รายวัน</th><th class="text-right">เสร็จ</th><th class="text-right">ชม.</th><th class="text-right">ยอดตาม %</th></tr></thead><tbody>${days}</tbody></table></div>
+          </div>
+          <div class="table-container"><table class="table" style="font-size:12px"><thead><tr><th>วัน-เวลา</th><th>#</th><th>บริการ</th><th>ลูกค้า</th><th>สถานะ</th><th class="text-right">% งาน</th><th class="text-right">ชม.ตาม %</th><th class="text-right">ยอดตาม %</th><th>ร่วมกับ</th></tr></thead><tbody>${jobs}</tbody></table></div>`;
+      },
+      // CSV (UTF-8 BOM ให้ Excel อ่านไทยได้) — ตัวเลขจากเซิร์ฟเวอร์ตรง ๆ
+      exportCsv() {
+        const d = this.data; if (!d) return;
+        const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+        const rows = [['ผู้ให้บริการ', 'งานทั้งหมด', 'เสร็จ', 'กำลังทำ', 'นัดล่วงหน้า', 'ไม่มา', 'ยกเลิก', 'นาทีงาน', 'นาทีตาม%', 'ยอดตาม%', 'เฉลี่ยต่องาน', 'สัดส่วนยอด%']];
+        (d.providers || []).forEach(p => rows.push([p.name, p.assigned, p.completed, p.inProgress, p.upcoming, p.noShow, p.cancelled, p.workedMinutes, p.shareMinutes, p.revenueShare, p.averageRevenuePerJob, p.shareOfTotalRevenuePercent]));
+        rows.push([]);
+        rows.push(['ผู้ให้บริการ', 'วันที่', 'เวลา', 'เลขที่จอง', 'บริการ', 'ลูกค้า', 'สถานะ', '%งาน', 'นาทีตาม%', 'ยอดตาม%', 'ร่วมกับ']);
+        (d.providers || []).forEach(p => (p.jobs || []).forEach(j => rows.push([p.name, String(j.bookingDate).slice(0, 10), `${j.startTime}-${j.endTime}`, j.bookingNumber, j.serviceName, j.customerName || '', STATUS_LABEL[j.status] || j.status, j.sharePercent, j.shareMinutes, j.revenueShare, j.coProviders || ''])));
+        const csv = '﻿' + rows.map(r => r.map(q).join(',')).join('\r\n');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        a.download = `provider-report_${this.from}_${this.to}.csv`;
+        document.body.appendChild(a); a.click(); a.remove();
+      },
+    };
+    window.Page = Page;
+    Page.init();
+  </script>
+</body>
+</html>

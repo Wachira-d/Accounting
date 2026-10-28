@@ -1658,7 +1658,11 @@
         const maxUnits = Math.max(1, Number(svc && svc.maxUnitsPerBooking) || 1);
         const byGuests = !!svc && svc.capacityUnit === 'Guests';
         // ผู้ให้บริการ: บังคับระบุ = ต้องเลือก · ลูกค้าเลือก = มี "ใครก็ได้" · ระบบจัดให้ = ไม่แสดง (server ตัดสินตอนจอง)
-        const resMode = svc ? svc.resourceMode : 'None';
+        // รอบ 207: โหมดที่มีผลจริง (เว็บปิดจัดสรรผู้ให้บริการ ⇒ None) — server ส่ง effectiveResourceMode
+        const resMode = svc ? (svc.effectiveResourceMode || svc.resourceMode) : 'None';
+        // รอบ 207 (ข้อ 7): ช่องบังคับ/ซ่อนจากค่าตั้งของเว็บ (ด่านจริงที่เซิร์ฟเวอร์ — BookingFormFields)
+        const ff = (svc && svc.formFields) || { phone: 'Required', email: 'Optional', notes: 'Optional' };
+        const fld = (key, label, html) => ff[key] === 'Hidden' ? '' : `<div><label>${label}${ff[key] === 'Required' ? ' <span style="color:#DC2626">*</span>' : ' <span style="color:var(--text-secondary);font-size:12px">(ไม่บังคับ)</span>'}</label>${html(ff[key] === 'Required' ? 'required' : '')}</div>`;
         const resList = (svc && Array.isArray(svc.resources)) ? svc.resources : [];
         const showRes = (resMode === 'Required' || resMode === 'CustomerChoice') && resList.length > 0;
         box.innerHTML = `
@@ -1690,10 +1694,10 @@
           <form id="sfBookForm" style="display:none;display:grid;gap:10px">
             <input type="hidden" name="serviceId" value="${this.esc(serviceId)}">
             <input type="hidden" name="slotStart" id="sfSlotStart">
-            <div><label>ชื่อ-นามสกุล</label><input name="customerName" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
-            <div><label>เบอร์โทร</label><input name="customerPhone" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
-            <div><label>อีเมล</label><input type="email" name="customerEmail" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
-            <div><label>หมายเหตุ</label><textarea name="notes" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea></div>
+            <div><label>ชื่อ-นามสกุล <span style="color:#DC2626">*</span></label><input name="customerName" required maxlength="200" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+            ${fld('phone', 'เบอร์โทร', r => `<input name="customerPhone" type="tel" ${r} maxlength="30" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`)}
+            ${fld('email', 'อีเมล', r => `<input type="email" name="customerEmail" ${r} maxlength="200" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`)}
+            ${fld('notes', 'หมายเหตุ', r => `<textarea name="notes" rows="2" ${r} style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea>`)}
             <button type="button" onclick="Store._submitBooking()" class="btn btn-primary" style="padding:12px">ยืนยันการจอง</button>
           </form>`;
         await this._loadSlots(serviceId);
@@ -1751,6 +1755,8 @@
         const form = document.getElementById('sfBookForm');
         const fd = new FormData(form);
         if (!fd.get('slotStart')) { alert('กรุณาเลือกเวลา'); return; }
+        // ช่องบังคับ (ตามค่าตั้งของเว็บ) — เตือนก่อนส่ง · เซิร์ฟเวอร์ตรวจซ้ำเป็นด่านจริง
+        if (!form.reportValidity()) return;
         const bookingDate = document.getElementById('sfBookDate').value; // yyyy-mm-dd
         // DTO contract (CreateBookingRequest): BookingServiceId, BookingDate
         // (DateTime), StartTime (string "HH:mm"), guest fields.
@@ -1759,7 +1765,7 @@
           bookingDate: bookingDate + 'T00:00:00',
           startTime: fd.get('slotStart'),
           guestName: fd.get('customerName'),
-          guestPhone: fd.get('customerPhone'),
+          guestPhone: fd.get('customerPhone') || null,
           guestEmail: fd.get('customerEmail') || null,
           customerNotes: fd.get('notes') || null,
           guestCount: this._bkGuests(),
@@ -1781,21 +1787,83 @@
             throw new Error(msg);
           }
           const booking = (await r.json()).data;
+          // รอบ 207 (ข้อ 6): หน้าจองสำเร็จแสดงรายละเอียดครบ + ดาวน์โหลด/พิมพ์ใบยืนยันการจองเก็บไว้
+          this._lastBooking = booking;
           document.getElementById('sfBookingModal').innerHTML = `
-            <div style="background:#fff;border-radius:12px;max-width:480px;padding:32px;text-align:center">
-              <div style="font-size:64px">✅</div>
-              <h2>${booking.status === 'Waitlisted' ? 'ลงคิวสำรองแล้ว' : 'จองสำเร็จ'}</h2>
-              ${booking.status === 'Waitlisted' ? `<p style="color:var(--text-secondary)">คิวสำรองลำดับที่ ${this.esc(String(booking.waitlistPosition || '-'))} — มีที่ว่างเมื่อไรร้านจะติดต่อกลับ</p>` : ''}
-              ${booking.resourceName ? `<p style="color:var(--text-secondary)">ผู้ให้บริการ: ${this.esc(booking.resourceName)}</p>` : ''}
-              <p style="color:var(--text-secondary);margin:14px 0">เลขที่การจอง: <strong>${this.esc(booking.bookingNumber || booking.id)}</strong></p>
-              <p style="color:var(--text-secondary)">เราจะส่งข้อความยืนยันให้ภายในไม่นาน</p>
+            <div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:92vh;overflow:auto;padding:28px">
+              <div style="text-align:center">
+                <div style="font-size:56px">✅</div>
+                <h2 style="margin:4px 0">${booking.status === 'Waitlisted' ? 'ลงคิวสำรองแล้ว' : 'จองสำเร็จ'}</h2>
+                ${booking.status === 'Waitlisted' ? `<p style="color:var(--text-secondary)">คิวสำรองลำดับที่ ${this.esc(String(booking.waitlistPosition || '-'))} — มีที่ว่างเมื่อไรร้านจะแจ้งกลับ</p>` : ''}
+              </div>
+              ${this._bookingDetailHtml(booking)}
               <div id="sfBookingPayBox"></div>
-              ${booking.publicToken ? `<p style="margin-top:12px;font-size:13px"><a href="${this._pageUrl('my-booking/' + encodeURIComponent(booking.publicToken))}">ดู/จัดการการจองของฉัน</a> — เก็บลิงก์นี้ไว้</p>` : ''}
-              <button onclick="document.getElementById('sfBookingModal').remove()" class="btn btn-primary" style="margin-top:14px;padding:12px 28px">ปิด</button>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px">
+                <button class="btn btn-primary" onclick="Store.downloadBookingConfirmation()">⬇️ ดาวน์โหลดใบยืนยันการจอง</button>
+                <button class="btn" onclick="Store.printBookingConfirmation()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
+              </div>
+              ${booking.publicToken ? `<p style="margin-top:12px;font-size:13px;text-align:center"><a href="${this._pageUrl('my-booking/' + encodeURIComponent(booking.publicToken))}">ดู/จัดการการจองของฉัน</a> — เก็บลิงก์นี้ไว้เพื่อจ่ายมัดจำ เลื่อน หรือยกเลิก</p>` : ''}
+              <div style="text-align:center"><button onclick="document.getElementById('sfBookingModal').remove()" class="btn" style="margin-top:10px;padding:10px 28px">ปิด</button></div>
             </div>`;
           // รอบ 205 W2 (R-08): มัดจำออนไลน์ — ยอด/สิทธิ์จากเซิร์ฟเวอร์ (onlineDepositDue · onlinePaymentNote) หน้าเว็บแสดงอย่างเดียว
           await this._renderBookingPayOnline(booking);
         } catch (e) { alert(e.message); }
+      },
+
+      // ── รอบ 207 (ข้อ 6): รายละเอียดการจอง + ใบยืนยันที่ลูกค้าเก็บไว้ได้ (ค่าทุกตัวจากคำตอบของเซิร์ฟเวอร์ · หนีด้วย esc ทุกช่อง) ──
+      _bookingRows(b) {
+        const providers = (b.assignments || []).map(a => a.resourceName).filter(Boolean).join(', ') || b.resourceName || '';
+        const site = this.data?.site || this.site || {};
+        return [
+          ['ร้าน / ผู้ให้บริการ', site.name || ''],
+          ['เลขที่การจอง', b.bookingNumber || b.id],
+          ['สถานะ', b.customerStatusLabel || b.status],   // ป้ายจากเซิร์ฟเวอร์ (BookingStatusLabels)
+          ['บริการ', b.serviceName || ''],
+          ['วันที่', String(b.bookingDate || '').slice(0, 10)],
+          ['เวลา', `${b.startTime || ''}${b.endTime ? ' – ' + b.endTime : ''}${b.durationMinutes ? ` (${b.durationMinutes} นาที)` : ''}`],
+          ['ผู้ให้บริการ', providers],
+          ['จำนวน', `${b.guestCount || 1} คน${(b.units || 1) > 1 ? ` · ${b.units} ช่วง` : ''}`],
+          ['ชื่อผู้จอง', b.guestName || b.customerName || ''],
+          ['เบอร์โทร', b.guestPhone || ''],
+          ['อีเมล', b.guestEmail || b.customerEmail || ''],
+          ['ค่าบริการ', '฿' + this._money(b.totalAmount)],
+          ['มัดจำ', Number(b.depositAmount) > 0 ? `฿${this._money(b.depositAmount)} (ชำระแล้ว ฿${this._money(b.paidAmount)})` : ''],
+          ['หมายเหตุ', b.customerNotes || ''],
+          ['นโยบายยกเลิก', b.cancelPolicyNote || ''],
+        ].filter(([, v]) => v !== '' && v != null);
+      },
+      _bookingDetailHtml(b) {
+        return `<table style="width:100%;border-collapse:collapse;margin-top:14px;font-size:14px">${this._bookingRows(b).map(([k, v]) =>
+          `<tr><td style="padding:6px 8px;color:var(--text-secondary);border-bottom:1px solid #F3F4F6;white-space:nowrap;vertical-align:top">${this.esc(k)}</td><td style="padding:6px 8px;border-bottom:1px solid #F3F4F6;font-weight:500">${this.esc(String(v))}</td></tr>`).join('')}</table>`;
+      },
+      _bookingConfirmationDoc(b) {
+        const site = this.data?.site || this.site || {};
+        const link = b.publicToken ? location.origin + this._pageUrl('my-booking/' + encodeURIComponent(b.publicToken)) : '';
+        const rows = this._bookingRows(b).map(([k, v]) => `<tr><th>${this.esc(k)}</th><td>${this.esc(String(v))}</td></tr>`).join('');
+        return `<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ใบยืนยันการจอง ${this.esc(b.bookingNumber || '')}</title>
+<style>body{font-family:'Noto Sans Thai',Tahoma,sans-serif;color:#111827;max-width:640px;margin:24px auto;padding:0 16px}h1{font-size:22px;margin:0}h2{font-size:15px;color:#6B7280;font-weight:500;margin:4px 0 16px}
+table{width:100%;border-collapse:collapse}th{text-align:left;color:#6B7280;font-weight:500;padding:8px;border-bottom:1px solid #E5E7EB;width:34%;vertical-align:top}td{padding:8px;border-bottom:1px solid #E5E7EB}
+.no{font-size:28px;font-weight:700;letter-spacing:1px;margin:10px 0}.foot{margin-top:18px;font-size:12px;color:#6B7280}</style></head><body>
+<h1>ใบยืนยันการจอง</h1><h2>${this.esc(site.name || '')}</h2>
+<div class="no">${this.esc(b.bookingNumber || '')}</div>
+<table>${rows}</table>
+${link ? `<p class="foot">ดู/จัดการการจอง: ${this.esc(link)}</p>` : ''}
+<p class="foot">แสดงใบนี้ต่อร้านเพื่อยืนยันการจอง · ออกเมื่อ ${this.esc(new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }))} · เอกสารนี้ไม่ใช่ใบกำกับภาษี/ใบเสร็จรับเงิน</p>
+</body></html>`;
+      },
+      downloadBookingConfirmation(b) {
+        b = b || this._lastBooking; if (!b) return;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([this._bookingConfirmationDoc(b)], { type: 'text/html;charset=utf-8' }));
+        a.download = `booking-${String(b.bookingNumber || 'confirmation').replace(/[^A-Za-z0-9_-]/g, '_')}.html`;
+        document.body.appendChild(a); a.click(); a.remove();
+      },
+      printBookingConfirmation(b) {
+        b = b || this._lastBooking; if (!b) return;
+        const w = window.open('', '_blank');
+        if (!w) { this.downloadBookingConfirmation(b); return; }
+        w.document.open(); w.document.write(this._bookingConfirmationDoc(b)); w.document.close();
+        w.focus(); setTimeout(() => w.print(), 300);
       },
 
       // ── รอบ 205 W2 (R-08/R-10): มัดจำออนไลน์ + ลิงก์จัดการการจองของลูกค้า (my-booking/{token}) — ค่าทุกตัวจากเซิร์ฟเวอร์ ──
@@ -1843,13 +1911,16 @@
           main.innerHTML = `<div class="sf-container" style="padding:40px 20px;text-align:center"><h2>ไม่พบการจอง</h2><p style="color:var(--text-secondary)">${this.esc(msg || '')}</p></div>`;
           return;
         }
-        const STATUS = { Pending: 'รอยืนยัน', Confirmed: 'ยืนยันแล้ว', Waitlisted: 'คิวสำรอง', Completed: 'ใช้บริการแล้ว', Cancelled: 'ยกเลิกแล้ว', NoShow: 'ไม่มาตามนัด' };
+        this._lastBooking = b;
         main.innerHTML = `
           <div class="sf-container" style="padding:32px 20px;max-width:640px">
             ${flash ? `<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:10px;padding:12px 16px;color:#065F46;margin-bottom:16px">${this.esc(flash)}</div>` : ''}
             <h1 style="margin:0 0 6px">การจอง ${this.esc(b.bookingNumber || '')}</h1>
-            <p style="color:var(--text-secondary)">${this.esc(b.serviceName || '')} · ${this.esc(String(b.bookingDate || '').slice(0, 10))} ${this.esc(b.startTime || '')}–${this.esc(b.endTime || '')} · สถานะ <strong>${this.esc(STATUS[b.status] || b.status)}</strong></p>
-            <p>ค่าบริการ ฿${this._money(b.totalAmount)}${Number(b.depositAmount) > 0 ? ` · มัดจำ ฿${this._money(b.depositAmount)} (ชำระแล้ว ฿${this._money(b.paidAmount)})` : ''}</p>
+            ${this._bookingDetailHtml(b)}
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
+              <button class="btn btn-primary" onclick="Store.downloadBookingConfirmation()">⬇️ ดาวน์โหลดใบยืนยันการจอง</button>
+              <button class="btn" onclick="Store.printBookingConfirmation()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
+            </div>
             <div id="sfBookingPayBox"></div>
             ${b.canRescheduleOnline ? `<div style="margin-top:20px;border-top:1px solid #E5E7EB;padding-top:16px">
               <div style="font-weight:600;margin-bottom:6px">เลื่อนนัด</div>

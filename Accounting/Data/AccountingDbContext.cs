@@ -454,6 +454,7 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteBookingResource> SiteBookingResources => Set<SiteBookingResource>();
     public DbSet<SiteBookingResourceService> SiteBookingResourceServices => Set<SiteBookingResourceService>();
     public DbSet<SiteBookingResourceSlot> SiteBookingResourceSlots => Set<SiteBookingResourceSlot>();
+    public DbSet<SiteBookingAssignment> SiteBookingAssignments => Set<SiteBookingAssignment>();
 
     // Lodging (ธุรกิจที่พัก)
     public DbSet<LodgingProperty> LodgingProperties => Set<LodgingProperty>();
@@ -3395,6 +3396,15 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<SiteBookingResourceSlot>(e =>
         {
             e.HasOne(x => x.Resource).WithMany(r => r.Slots).HasForeignKey(x => x.ResourceId).OnDelete(DeleteBehavior.Cascade);
+        });
+        // รอบ 207: ผู้ให้บริการหลายคนต่อการจอง (ตาราง + index ต้องตรงกับ Helpers/BookingEngineMigration)
+        modelBuilder.Entity<SiteBookingAssignment>(e =>
+        {
+            e.Property(x => x.ResourceName).HasMaxLength(256);
+            e.Property(x => x.SharePercent).HasPrecision(5, 2);
+            e.HasIndex(x => new { x.BookingId, x.ResourceId }).IsUnique().HasDatabaseName("UX_SiteBookingAssignments_Booking_Resource");
+            e.HasIndex(x => new { x.CompanyId, x.ResourceId }).HasDatabaseName("IX_SiteBookingAssignments_Company_Resource");
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         // ===== SiteBookingPayment =====
