@@ -115,6 +115,8 @@ Accounting/Controllers/CmsBookingController.cs	DeleteService	1
 Accounting/Controllers/CmsBookingController.cs	DeleteSlot	1
 Accounting/Controllers/CmsBookingController.cs	GetAvailableSlots	1
 Accounting/Controllers/CmsBookingController.cs	RecordPayment	1
+Accounting/Controllers/CmsBookingController.cs	Reschedule	1
+Accounting/Controllers/CmsBookingController.cs	RescheduleByToken	1
 Accounting/Controllers/CmsBookingController.cs	SyncBookingToErp	1
 Accounting/Controllers/CmsBookingController.cs	UpdateBookingStatus	1
 Accounting/Controllers/CmsBookingController.cs	UpdateService	1

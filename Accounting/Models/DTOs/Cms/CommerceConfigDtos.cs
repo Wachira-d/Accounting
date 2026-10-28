@@ -77,6 +77,11 @@ public class UpdateCommerceConfigRequest
     public decimal? MtoDepositFixedAmount { get; set; }
     /// <summary>ทีม Q — Helpers.DepositInvoicingMode: full_at_first_payment / deposit_tax_invoice · null = ไม่เปลี่ยน</summary>
     public string? MtoDepositInvoicing { get; set; }
+    /// <summary>รอบ 206 R-32: max_rate | proportional (Helpers.ShippingVatAllocation)</summary>
+    public string? ShippingVatAllocation { get; set; }
+    /// <summary>รอบ 206 R-31: % ริบมัดจำคงเหลือเมื่อยกเลิกออเดอร์ · null = คงค่าเดิม · ส่ง ClearDepositForfeitOnCancelPercent=true เพื่อปิด</summary>
+    public decimal? DepositForfeitOnCancelPercent { get; set; }
+    public bool? ClearDepositForfeitOnCancelPercent { get; set; }
     /// <summary>"0,6" (0 = อาทิตย์) · "" = เปิดทุกวัน</summary>
     public string? MtoClosedWeekdays { get; set; }
     public int? MtoCutoffHour { get; set; }
@@ -165,6 +170,9 @@ public class CommerceConfigResponse
     public List<CommerceOptionValue> PaymentTermModes { get; set; } = new();
     /// <summary>ทีม Q — วิธีออกเอกสารของมัดจำที่ร้านเลือก + ตัวเลือกพร้อมคำอธิบายผลภาษี (เซิร์ฟเวอร์เป็นเจ้าของข้อความ)</summary>
     public string MtoDepositInvoicing { get; set; } = "full_at_first_payment";
+    public string ShippingVatAllocation { get; set; } = Accounting.Helpers.ShippingVatAllocation.MaxRate;
+    public List<Accounting.Helpers.ShippingVatAllocation.Option> ShippingVatAllocationOptions { get; set; } = new();
+    public decimal? DepositForfeitOnCancelPercent { get; set; }
     public List<CommerceOptionValue> DepositInvoicingModes { get; set; } = new();
 }
 

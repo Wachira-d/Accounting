@@ -7781,6 +7781,10 @@ public static class DatabaseMigrationHelper
         // ทีม Q (คำตัดสินข้อ 156) — วิธีออกเอกสารของมัดจำ · DEFAULT = แบบเดิม (ร้านเดิมไม่เปลี่ยน) · ออเดอร์เดิม NULL = แบบเดิม
         """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "MtoDepositInvoicing" varchar(32) NOT NULL DEFAULT 'full_at_first_payment';""",
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "DepositInvoicingMode" varchar(32) NULL;""",
+        // รอบ 206 (R-31 R-32 · คำตัดสินข้อ 165): VAT ค่าส่งตามสัดส่วน (ค่าตั้งร้าน + ตรึงบนออเดอร์) · ริบมัดจำเมื่อยกเลิก (null = ไม่ริบ)
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "ShippingVatAllocation" varchar(32) NOT NULL DEFAULT 'max_rate';""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "DepositForfeitOnCancelPercent" numeric(5,2) NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "ShippingVatAllocation" varchar(32) NULL;""",
         // รอบ 205 ทีม W1 (R-02): คืนเงินผ่าน gateway สำเร็จแล้ว แต่ยังไม่ออกใบลดหนี้ — ป้ายฝั่งออเดอร์
         """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "RefundedAtGatewayAt" timestamptz NULL;""",
         """ALTER TABLE "SiteOrderPayments" ADD COLUMN IF NOT EXISTS "DepositDocumentId" uuid NULL;""",

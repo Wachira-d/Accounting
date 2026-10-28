@@ -243,6 +243,8 @@ public class SiteOrder : TenantEntity
     public DateTime? EarliestReadyDate { get; set; }
     /// <summary><c>Helpers.PaymentTermMode</c> ที่ตรึงตอนสั่ง · null = ออเดอร์เดิม (= เต็มจำนวน)</summary>
     public string? PaymentTermMode { get; set; }
+    /// <summary>รอบ 206 (R-32): วิธีคิด VAT ค่าจัดส่งที่ตรึงตอนสั่ง (<c>Helpers.ShippingVatAllocation</c>) · null = ออเดอร์เก่า = อัตราสูงสุด</summary>
+    public string? ShippingVatAllocation { get; set; }
     /// <summary>มัดจำที่ต้องจ่ายก่อนร้านเริ่มทำ (ตรึงตอนสั่ง)</summary>
     public decimal DepositRequiredAmount { get; set; }
     /// <summary>ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงตอนสั่ง (<c>Helpers.DepositInvoicingMode</c>) · null = ออเดอร์เดิม (= แบบเดิม)</summary>

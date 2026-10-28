@@ -264,6 +264,15 @@
                 </div>
                 <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (§78/1)${b.onlinePaymentNote ? ' · ' + Layout.esc(b.onlinePaymentNote) : ''}</div>
               </div>` : ''}
+              ${(b.status === 'Pending' || b.status === 'Confirmed') ? `<div style="margin-top:8px;border-top:1px dashed var(--gray-300);padding-top:8px">
+                <div style="font-size:12px;font-weight:600">เลื่อนนัด (รอบ 206) — แถวเดิม เอกสาร/มัดจำคงผูก</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px">
+                  <input type="date" id="bkRsDate" class="form-input" style="width:auto" value="${String(b.bookingDate || '').slice(0, 10)}">
+                  <input type="time" id="bkRsTime" class="form-input" style="width:auto" value="${Layout.esc(b.startTime || '')}">
+                  <input type="text" id="bkRsReason" class="form-input" style="width:160px" placeholder="เหตุผล (ถ้ามี)">
+                  <button class="btn btn-sm" onclick="Page.reschedule('${b.id}')">เลื่อนนัด</button>
+                </div>
+              </div>` : ''}
               ${b.publicToken ? `<div style="margin-top:6px;font-size:11px"><button class="btn btn-sm" onclick="Page.copyBookingLink('${Layout.jsArg(b.publicToken)}')">📋 คัดลอกลิงก์ลูกค้า (จ่ายมัดจำ / ยกเลิกเอง)</button></div>` : ''}
             </div>
             ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
@@ -309,6 +318,22 @@
           await this.viewBooking(id);
           await this.load();
         } catch (e) { Layout.toast('บันทึกรับเงินไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      // รอบ 206: พนักงานเลื่อนนัด — เซิร์ฟเวอร์ตัดสินรอบใหม่ (เต็ม/ปิด = ปฏิเสธพร้อมเหตุผล)
+      async reschedule(id) {
+        const api = Layout.api(); if (!api) return;
+        const bookingDate = (document.getElementById('bkRsDate') || {}).value;
+        const startTime = (document.getElementById('bkRsTime') || {}).value;
+        const reason = ((document.getElementById('bkRsReason') || {}).value || '').trim() || null;
+        if (!bookingDate || !startTime) { Layout.toast('ระบุวันและเวลาใหม่', 'error'); return; }
+        try {
+          const res = await api.cmsRescheduleBooking(this._sid(), id, { bookingDate: bookingDate + 'T00:00:00', startTime: startTime.slice(0, 5), reason });
+          const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
+          notices.forEach(n => Layout.toast(n, 'warning', 15000));
+          Layout.toast('เลื่อนนัดแล้ว');
+          await this.viewBooking(id);
+          await this.load();
+        } catch (e) { Layout.toast('เลื่อนนัดไม่สำเร็จ: ' + e.message, 'error'); }
       },
       // ลิงก์ลูกค้า: ใช้ subdomain ของเว็บถ้ามี (storefront resolve เอง) ไม่งั้นระบุ companyId+siteId ตรง ๆ
       copyBookingLink(token) {

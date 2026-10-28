@@ -218,6 +218,27 @@ public class CmsBookingController : ControllerBase
         return Ok(new ApiResponse<BookingResponse>(true, result, "ยกเลิกการจองแล้ว"));
     }
 
+    /// <summary>ลูกค้าเลื่อนนัดเอง (ในหน้าต่างยกเลิกฟรี · รอบ 206) — แถวเดิม เอกสาร/มัดจำคงผูก</summary>
+    [HttpPost("bookings/by-token/{token}/reschedule")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> RescheduleByToken(Guid companyId, Guid siteId, string token,
+        [FromBody] RescheduleBookingRequest request)
+    {
+        var result = await _bookingService.RescheduleByCustomerAsync(companyId, siteId, token, request);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "เลื่อนนัดแล้ว"));
+    }
+
+    /// <summary>พนักงานเลื่อนนัด (รอบ 206)</summary>
+    [HttpPut("bookings/{bookingId:guid}/reschedule")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> Reschedule(Guid companyId, Guid siteId, Guid bookingId,
+        [FromBody] RescheduleBookingRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookingService.RescheduleAsync(companyId, siteId, bookingId, request, userId);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "เลื่อนนัดแล้ว"));
+    }
+
     /// <summary>พนักงานบันทึกรับเงินมัดจำ (โอน/เงินสด) — ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (ตัวเดียวกับ gateway)</summary>
     [HttpPost("bookings/{bookingId:guid}/payments")]
     [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]

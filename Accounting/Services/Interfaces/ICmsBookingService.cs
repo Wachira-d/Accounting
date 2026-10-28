@@ -53,6 +53,9 @@ public interface ICmsBookingService
     Task<BookingResponse?> GetBookingByTokenAsync(Guid companyId, Guid siteId, string token);
     /// <summary>ลูกค้ายกเลิกเองผ่านโทเคน — ค่าธรรมเนียมตามนโยบาย (BookingCancellationFee · เพดาน = มัดจำ ข้อ 126)</summary>
     Task<BookingResponse> CancelByCustomerAsync(Guid companyId, Guid siteId, string token, CustomerCancelBookingRequest request);
+    /// <summary>รอบ 206: เลื่อนนัด (แถวเดิม · ตัดสินรอบใหม่ด้วย BookingSlotEngine.Decide ไม่นับตัวเอง · เอกสาร/เงินคงผูก) — CmsBookingService.Reschedule.cs</summary>
+    Task<BookingResponse> RescheduleAsync(Guid companyId, Guid siteId, Guid bookingId, RescheduleBookingRequest request, string userId);
+    Task<BookingResponse> RescheduleByCustomerAsync(Guid companyId, Guid siteId, string token, RescheduleBookingRequest request);
 
     // ERP Sync (event-driven)
     Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId);

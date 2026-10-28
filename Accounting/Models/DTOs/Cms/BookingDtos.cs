@@ -339,6 +339,8 @@ public class BookingResponse
     /// <summary>คำอธิบายค่าธรรมเนียมถ้ายกเลิก "ตอนนี้" (ตัวตัดสิน BookingCancellationFee) · null = ยกเลิกไม่ได้แล้ว</summary>
     public string? CancelPolicyNote { get; set; }
     public bool CanCancelOnline { get; set; }
+    /// <summary>ลูกค้าเลื่อนนัดเองได้ (ในหน้าต่างยกเลิกฟรี · รอบ 206)</summary>
+    public bool CanRescheduleOnline { get; set; }
     public DateTime? PaidAt { get; set; }
     public string? PaymentReference { get; set; }
     /// <summary>เตือนก่อนนัดส่งถึงจริงล่าสุดเมื่อไร (UTC) · null = ยังไม่ส่ง</summary>
@@ -412,3 +414,6 @@ public record RecordBookingPaymentRequest(decimal Amount, DateTime? PaidAt = nul
 
 /// <summary>ลูกค้ายกเลิกการจองเองผ่านลิงก์โทเคน (รอบ 205 W2 R-10)</summary>
 public record CustomerCancelBookingRequest(string? Reason = null);
+
+/// <summary>เลื่อนนัด (พนักงาน หรือลูกค้าผ่านโทเคน · รอบ 206) — วันใหม่ + เวลาเริ่ม "HH:mm" จากรายการเวลาว่าง</summary>
+public record RescheduleBookingRequest(DateTime BookingDate, string StartTime, string? Reason = null);
