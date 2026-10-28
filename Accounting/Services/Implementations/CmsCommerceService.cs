@@ -890,6 +890,8 @@ public class CmsCommerceService : ICmsCommerceService
                     PaymentMethod = p.PaymentMethod, Status = p.Status,
                     Reference = p.Reference, PaidAt = p.PaidAt,
                     DepositDocumentId = p.DepositDocumentId,
+                    // R-43: เดิม DTO ไม่มี SlipUrl เลย ⇒ ปุ่ม "ดูสลิป" ใน cms-orders ไม่เคยขึ้น (มี ≠ ถูกเรียก)
+                    SlipUrl = p.SlipUrl,
                 }).ToList(),
                 FulfillmentMethod = o.FulfillmentMethod,
                 ShippingProvince = o.ShippingProvince, ShippingPostalCode = o.ShippingPostalCode,
@@ -902,6 +904,8 @@ public class CmsCommerceService : ICmsCommerceService
         if (result == null) return null;
         // ข้อความ/ยอดที่หน้าเว็บแสดง — คำนวณที่นี่ตัวเดียว (หน้าเว็บห้ามคิดเอง)
         foreach (var l in result.Lines) l.ModifierSummary = SummaryOf(l.ModifierSummary);
+        // สลิปรูปใหม่ (ที่เก็บกลาง) ต้องแนบ JWT ตอนเปิด · สลิปเดิม (/uploads/order-slips) เปิดตรง — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแค่เลือกวิธีโหลด
+        foreach (var p in result.Payments) p.SlipRequiresAuth = Accounting.Helpers.CmsMediaUrl.NeedsAuth(p.SlipUrl);
         result.FulfillmentMethod ??= Accounting.Helpers.FulfillmentMethod.Delivery;
         result.FulfillmentLabel = Accounting.Helpers.FulfillmentMethod.Label(result.FulfillmentMethod);
         var due = Accounting.Helpers.MtoPaymentTerms.FromSnapshot(result.PaymentTermMode, result.TotalAmount,
@@ -955,13 +959,42 @@ public class CmsCommerceService : ICmsCommerceService
             .Skip((page - 1) * pageSize).Take(pageSize)
             .Select(o => new OrderListResponse
             {
-                Id = o.Id, OrderNumber = o.OrderNumber, Status = o.Status,
+                Id = o.Id, SiteId = o.SiteId, OrderNumber = o.OrderNumber, Status = o.Status,
                 CustomerName = o.Customer != null ? o.Customer.FullName : o.ShippingName,
                 TotalAmount = o.TotalAmount, Currency = o.Currency,
                 ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt
             })
             .ToListAsync();
 
+        return new PagedResponse<OrderListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
+    }
+
+    public async Task<PagedResponse<OrderListResponse>> GetOrdersAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, string? search, int page, int pageSize)
+    {
+        page = Accounting.Helpers.CmsSiteScope.ClampPage(page);
+        pageSize = Accounting.Helpers.CmsSiteScope.ClampPageSize(pageSize);
+        // รายการเว็บว่าง = ผู้ใช้ไม่มีสิทธิ์เว็บใด ⇒ ไม่มีแถว (ห้ามตีความเป็น "ทุกเว็บ")
+        if (siteIds.Count == 0) return new PagedResponse<OrderListResponse>(new List<OrderListResponse>(), 0, page, pageSize, 0);
+        var ids = siteIds.ToList();
+        var query = _db.SiteOrders.AsNoTracking().Where(o => o.CompanyId == companyId && ids.Contains(o.SiteId));
+        if (!string.IsNullOrWhiteSpace(status) && Enum.TryParse<SiteOrderStatus>(status, out var st))
+            query = query.Where(o => o.Status == st);
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(o => o.OrderNumber.Contains(search) || (o.ShippingName != null && o.ShippingName.Contains(search)));
+
+        var total = await query.CountAsync();
+        var items = await query
+            .OrderByDescending(o => o.CreatedAt)
+            .Skip((page - 1) * pageSize).Take(pageSize)
+            .Select(o => new OrderListResponse
+            {
+                Id = o.Id, SiteId = o.SiteId, SiteName = o.Site.Name,
+                OrderNumber = o.OrderNumber, Status = o.Status,
+                CustomerName = o.Customer != null ? o.Customer.FullName : o.ShippingName,
+                TotalAmount = o.TotalAmount, Currency = o.Currency,
+                ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt
+            })
+            .ToListAsync();
         return new PagedResponse<OrderListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
@@ -2005,47 +2038,38 @@ public class CmsCommerceService : ICmsCommerceService
             throw new BusinessRuleException(
                 "คำสั่งซื้อนี้ไม่มียอดค้างชำระแล้ว — ไม่ต้องแนบสลิปเพิ่ม (ถ้าโอนเกิน ติดต่อร้านเพื่อขอคืนเงิน)", "CMS-SLIP-NOTHING-DUE");
 
-        // Persist file under wwwroot/uploads/order-slips/{yyyy-MM}/{guid}{ext}
-        // Compress images via ImageProcessingService (Slip profile); PDFs pass through.
-        var relDir = $"uploads/order-slips/{DateTime.UtcNow:yyyy-MM}";
-        var absDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "wwwroot", relDir);
-        System.IO.Directory.CreateDirectory(absDir);
-        string storedName; string absPath; string relUrl;
+        // R-43 (กฎเหล็ก #4 D): ไม่เขียน wwwroot/uploads/order-slips ตรงอีก — ไบต์เข้าที่เก็บไฟล์กลาง
+        // (FileAttachment ชนิด SiteOrder · ผู้อัปโหลด null = ลูกค้าหน้าร้าน · ด่านอ่าน/ลบ = CmsOrderManage ตาม AttachmentPermissionScope)
+        // สลิป = ชื่อผู้โอน/เลขบัญชี/ยอด (PII) ⇒ URL ที่คืนเป็นเส้นดาวน์โหลดที่มีด่าน ไม่ใช่ static สาธารณะเหมือนเดิม (คำตัดสินเดียวกับสลิปที่พัก LDG-P2-06)
+        // สลิปเดิมที่เขียนไว้ก่อนแก้ยังเปิดจาก /uploads/order-slips ได้ (ไม่ย้ายไฟล์เงียบ ๆ · F2 #9 · Helpers/CmsMediaUrl.NeedsAuth แยกสองรูป)
+        if (_files == null)
+            throw new BusinessRuleException("ระบบจัดเก็บไฟล์ยังไม่พร้อม — ลองแนบสลิปใหม่อีกครั้ง", "CMS-SLIP-STORAGE");
+        byte[] content;
+        string storedName, storedType;
         if (_images != null && _images.IsProcessableImage(file.ContentType ?? ""))
         {
             await using var s = file.OpenReadStream();
-            var processed = await _images.ProcessAndSaveAsync(s, file.ContentType ?? "", file.FileName ?? "slip", absDir, "/" + relDir, ImageProfile.Slip);
-            absPath = processed.AbsolutePath;
-            storedName = System.IO.Path.GetFileName(absPath);
-            relUrl = processed.RelativeUrl;
+            var processed = await _images.ProcessToBytesAsync(s, file.ContentType ?? "", file.FileName ?? "slip", ImageProfile.Slip);
+            content = processed.Content;
+            storedName = $"slip{processed.Extension}";
+            storedType = processed.ContentType;
         }
         else
         {
-            var ext = System.IO.Path.GetExtension(file.FileName);
-            if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
-            storedName = $"{Guid.NewGuid():N}{ext}";
-            absPath = System.IO.Path.Combine(absDir, storedName);
-            await using (var fs = System.IO.File.Create(absPath))
-            {
-                await file.CopyToAsync(fs);
-            }
-            relUrl = "/" + relDir + "/" + storedName;
+            // PDF/อื่น — ชนิดจาก **ไบต์จริง** (เดิมใช้นามสกุลจากชื่อไฟล์ client · ไม่มีก็ ".bin") · ไม่อยู่ใน allow-list ⇒ ปฏิเสธพร้อมบอกชนิดที่รับ
+            await using var s = file.OpenReadStream();
+            using var ms = new MemoryStream();
+            await s.CopyToAsync(ms);
+            content = ms.ToArray();
+            var kind = Accounting.Helpers.UploadFileType.Sniff(
+                    content.AsSpan(0, Math.Min(content.Length, Accounting.Helpers.UploadFileType.HeaderBytes)))
+                ?? throw new Accounting.Helpers.UnsupportedUploadException(Accounting.Helpers.UploadFileType.RejectMessage);
+            storedName = $"slip{kind.Extension}";
+            storedType = kind.ContentType;
         }
-
-        // FileAttachment record — gives the file an audit + ownership row
-        var fa = new FileAttachment
-        {
-            CompanyId = companyId,
-            FileName = storedName,
-            OriginalFileName = file.FileName ?? storedName,
-            ContentType = file.ContentType ?? "application/octet-stream",
-            StoragePath = absPath,
-            EntityType = "SiteOrder",
-            EntityId = order.Id,
-            UploadedByUserId = null,
-            CreatedBy = "storefront-customer"
-        };
-        _db.Set<FileAttachment>().Add(fa);
+        var saved = await _files.UploadAnonymousBytesAsync(companyId, Accounting.Helpers.CmsMediaUrl.OrderEntityType, order.Id,
+            storedName, storedType, content);
+        var relUrl = Accounting.Helpers.CmsMediaUrl.SlipDownloadUrl(companyId, saved.Id);
 
         // SiteOrderPayment — the actual money record
         // ทีม K — ยอดของสลิป = ยอดที่ช่องจ่ายเปิดรอบนี้ (มัดจำที่ขาด หรือยอดคงค้าง) ตัวคิดเดียว — เดิม TotalAmount เสมอ

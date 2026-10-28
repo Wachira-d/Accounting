@@ -226,6 +226,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
         list.AddRange(W9HygieneStatements());   // W9 R-58/R-59 — backfill ช่องทาง LINE + ตัด feedback ความหมายเก่าออกจากการสอน (บล็อกท้ายไฟล์)
         list.AddRange(PostVatDeductionStatements());   // ทีม U — หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง (บล็อกท้ายไฟล์)
+        list.AddRange(CmsMediaAttachmentStatements());   // ทีม W4 R-43 — สื่อ CMS ผ่านที่เก็บไฟล์กลาง (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7867,5 +7868,12 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PostVatDeductionAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PostVatDeductionAccountId" uuid NULL;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "PaymentSourceSplitJson" text NULL;""",
+    };
+
+    /// <summary>ทีม W4 (R-43 · <c>docs/BACKLOG_REGISTER_2026-10-26.md</c>) — สื่อ CMS ที่อัปโหลดใหม่เก็บผ่าน <c>IFileAttachmentService</c> ·
+    /// <c>SiteMediaItems.AttachmentId</c> NULL = ไฟล์เดิมบน disk (ไม่ย้ายไฟล์ · ไม่มี UPDATE — URL เดิมยังเปิดได้ · F2 #9) · รันทุกบูตได้</summary>
+    internal static IReadOnlyList<string> CmsMediaAttachmentStatements() => new List<string>
+    {
+        """ALTER TABLE "SiteMediaItems" ADD COLUMN IF NOT EXISTS "AttachmentId" uuid NULL;""",
     };
 }

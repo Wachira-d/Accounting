@@ -115,8 +115,11 @@
       siteId: null,       // เว็บที่เลือก · null เมื่อดู "ทุกไซต์"
       allSites: false,
       actSiteId: null,    // เว็บของ lead ที่เปิดอยู่ (โหมดทุกไซต์ — action ต้องยิงไปเว็บเจ้าของ lead)
-      sites: [], _searchTimer: null, _currentLead: null,
+      sites: [], _searchTimer: null, _currentLead: null, page: 1,
       _sid() { return this.actSiteId || this.siteId; },
+      // โหมดทุกไซต์ (R-45): endpoint ระดับบริษัทแบ่งหน้าจริง — เว็บที่เห็นตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
+      _list(q) { const api = Layout.api(); return this.allSites ? api.cmsOverviewLeads(q) : api.cmsListLeads(this.siteId, q); },
+      goPage(n) { this.page = Math.max(1, n); this.load(); },
       async init() {
         if (!Layout.init('cms-leads')) return;
         await this.loadSites();
@@ -140,6 +143,7 @@
         this.allSites = v === CmsSiteContext.ALL;
         this.siteId = this.allSites ? null : v;
         this.actSiteId = null;
+        this.page = 1;
         CmsSiteContext.setUrl(v);
         CmsSiteContext.renderCrumb('cmsCrumb', this.sites, v, 'คำขอ / Lead', 'cms-leads');
         await this.load(); await this.loadStats();
@@ -149,17 +153,15 @@
       },
       debounceLoad() {
         clearTimeout(this._searchTimer);
-        this._searchTimer = setTimeout(() => this.load(), 300);
+        this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
       },
       async loadStats() {
         if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
-        // ทุกไซต์ = ผลรวมของเว็บที่โหลดได้ · โหลดไม่ได้เลย = "-"
-        const targets = this.allSites ? this.sites.map(s => s.id) : [this.siteId];
+        // ทุกไซต์ = ตัวเลขรวมจาก endpoint overview (เซิร์ฟเวอร์กรองเว็บที่มีสิทธิ์) · โหลดไม่ได้ = "-"
         const count = async (st) => {
-          const rs = await Promise.allSettled(targets.map(id => api.cmsListLeads(id, `?status=${st}&pageSize=1`)));
-          const ok = rs.filter(r => r.status === 'fulfilled');
-          return ok.length ? ok.reduce((n, r) => n + (r.value?.data?.totalItems || 0), 0) : '-';
+          try { const r = await this._list(`?status=${st}&pageSize=1`); return r?.data?.totalCount ?? 0; }
+          catch (_) { return '-'; }
         };
         try {
           const [nu, qu, qt, wn] = await Promise.all(['New', 'Qualified', 'Quoted', 'Won'].map(count));
@@ -175,32 +177,23 @@
         const status = document.getElementById('statusFilter').value;
         const type = document.getElementById('typeFilter').value;
         const search = document.getElementById('searchInput').value;
-        let q = '?pageSize=50';
+        let q = `?page=${this.page}&pageSize=50`;
         if (status) q += `&status=${encodeURIComponent(status)}`;
         if (type) q += `&type=${encodeURIComponent(type)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          let items;
-          if (this.allSites) {
-            const r = await CmsSiteContext.collect(this.sites, async (s) => {
-              const res = await api.cmsListLeads(s.id, q);
-              return res?.data?.items || res?.data || [];
-            });
-            items = r.items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-            CmsSiteContext.allNote('allNote', { siteCount: this.sites.length, perSite: 50, failed: r.failed });
-          } else {
-            const res = await api.cmsListLeads(this.siteId, q);
-            items = res?.data?.items || res?.data || [];
-            CmsSiteContext.allNote('allNote', null);
-          }
+          const res = await this._list(q);
+          const items = res?.data?.items || res?.data || [];
+          // แบ่งหน้าจริงจากเซิร์ฟเวอร์ (เดิมโหมดทุกไซต์ = 50 แถวล่าสุดต่อเว็บ ค้นย้อนหลังไม่ได้)
+          CmsSiteContext.allNote('allNote', this.allSites ? { totalCount: res?.data?.totalCount, page: res?.data?.page, totalPages: res?.data?.totalPages, goPage: 'Page.goPage' } : null);
           const tbody = document.getElementById('leadsBody');
           if (!items.length) {
             tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีคำขอ</td></tr>';
             return;
           }
           tbody.innerHTML = items.map(l => `
-            <tr class="lead-row" onclick="Page.viewLead('${Layout.jsArg(l.id)}', '${Layout.jsArg(l._siteId || '')}')">
-              <td class="font-medium">${Layout.esc(l.leadNumber||l.id.substring(0,8))}${l._siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(l._siteName)}</div>` : ''}</td>
+            <tr class="lead-row" onclick="Page.viewLead('${Layout.jsArg(l.id)}', '${Layout.jsArg(l.siteId || '')}')">
+              <td class="font-medium">${Layout.esc(l.leadNumber||l.id.substring(0,8))}${l.siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(l.siteName)}</div>` : ''}</td>
               <td><span class="type-pill">${TYPE_LABEL[l.leadType]||l.leadType}</span></td>
               <td>${Layout.esc(l.customerName||'(ไม่ระบุ)')}</td>
               <td style="font-size:12px">${l.customerEmail?`📧 ${Layout.esc(l.customerEmail)}`:''}${l.customerPhone?`<br>📱 ${Layout.esc(l.customerPhone)}`:''}</td>

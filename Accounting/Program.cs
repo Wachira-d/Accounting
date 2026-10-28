@@ -709,6 +709,8 @@ builder.Services.AddSignalR();
 // Background job scheduler
 builder.Services.AddHostedService<BackgroundJobService>();
 builder.Services.AddHostedService<AbandonedCartService>();
+// ทีม W4 R-25 — ล้างรูปตัวอย่างของตะกร้าที่ไม่ได้สั่ง (ผ่าน JobLock · ลบผ่าน IFileAttachmentService ตัวเดียว)
+builder.Services.AddHostedService<Accounting.Services.Implementations.Jobs.CartImageCleanupJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.DocumentAgingBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();

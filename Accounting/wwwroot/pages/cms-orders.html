@@ -218,8 +218,6 @@
       'PartiallyRefunded': [['Refunded','คืนเงินทั้งหมด','btn-secondary']]
     };
 
-    const PER_SITE_ALL = 20; // โหมด "ทุกไซต์": รายการล่าสุดต่อเว็บ (บอกผู้ใช้บนจอผ่าน CmsSiteContext.allNote)
-
     const Page = {
       siteId: null,       // เว็บที่เลือก · null เมื่อดู "ทุกไซต์"
       allSites: false,
@@ -228,8 +226,9 @@
       page: 1,
       _searchTimer: null,
       _sid() { return this.actSiteId || this.siteId; },
-      // เว็บที่รวมในภาพรวม — เว็บที่ใช้งานร้านค้า (ไม่มีเลย = ทุกเว็บ ไม่ให้ภาพรวมว่างเพราะยังไม่มีเว็บร้านค้า)
-      _allTargets() { const w = CmsSiteContext.sitesWith(this.sites, 'orders'); return w.length ? w : this.sites; },
+      // โหมดทุกไซต์ (R-45): endpoint ระดับบริษัทแบ่งหน้าจริง — เว็บที่เห็นตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
+      _list(q) { const api = Layout.api(); return this.allSites ? api.cmsOverviewOrders(q) : api.cmsListOrders(this.siteId, q); },
+      goPage(n) { this.page = Math.max(1, n); this.load(); },
       async init() {
         if (!Layout.init('cms-orders')) return;
         await this.loadSites();
@@ -395,12 +394,10 @@
       async loadStats() {
         if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
-        // Cheap parallel fetches — just to fill the 4 KPI cards (ทุกไซต์ = ผลรวมของเว็บที่โหลดได้ · โหลดไม่ได้เลย = "-")
-        const targets = this.allSites ? this._allTargets().map(s => s.id) : [this.siteId];
+        // Cheap parallel fetches — just to fill the 4 KPI cards (ทุกไซต์ = ตัวเลขรวมจาก endpoint overview · โหลดไม่ได้ = "-")
         const count = async (st) => {
-          const rs = await Promise.allSettled(targets.map(id => api.cmsListOrders(id, `?status=${st}&pageSize=1`)));
-          const ok = rs.filter(r => r.status === 'fulfilled');
-          return ok.length ? ok.reduce((n, r) => n + (r.value?.data?.totalItems || 0), 0) : '-';
+          try { const r = await this._list(`?status=${st}&pageSize=1`); return r?.data?.totalCount ?? 0; }
+          catch (_) { return '-'; }
         };
         try {
           const [pend, proc, ship, deliv] = await Promise.all(['Pending', 'Processing', 'Shipped', 'Delivered'].map(count));
@@ -415,32 +412,22 @@
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
         const search = document.getElementById('searchInput').value;
-        let q = `?page=${this.allSites ? 1 : this.page}&pageSize=${this.allSites ? PER_SITE_ALL : 20}`;
+        let q = `?page=${this.page}&pageSize=20`;
         if (status) q += `&status=${encodeURIComponent(status)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          let items;
-          if (this.allSites) {
-            const targets = this._allTargets();
-            const r = await CmsSiteContext.collect(targets, async (s) => {
-              const res = await api.cmsListOrders(s.id, q);
-              return res?.data?.items || res?.data || [];
-            });
-            items = r.items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-            CmsSiteContext.allNote('allNote', { siteCount: targets.length, perSite: PER_SITE_ALL, failed: r.failed });
-          } else {
-            const res = await api.cmsListOrders(this.siteId, q);
-            items = res?.data?.items || res?.data || [];
-            CmsSiteContext.allNote('allNote', null);
-          }
+          const res = await this._list(q);
+          const items = res?.data?.items || res?.data || [];
+          // แบ่งหน้าจริงจากเซิร์ฟเวอร์ (เดิมโหมดทุกไซต์ = 20 แถวล่าสุดต่อเว็บ ค้นย้อนหลังไม่ได้)
+          CmsSiteContext.allNote('allNote', this.allSites ? { totalCount: res?.data?.totalCount, page: res?.data?.page, totalPages: res?.data?.totalPages, goPage: 'Page.goPage' } : null);
           const tbody = document.getElementById('ordersBody');
           if (!items.length) {
             tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีคำสั่งซื้อตามเงื่อนไขที่เลือก</td></tr>';
             return;
           }
           tbody.innerHTML = items.map(o => `
-            <tr class="order-row" onclick="Page.viewOrder('${Layout.jsArg(o.id)}', '${Layout.jsArg(o._siteId || '')}')">
-              <td class="font-medium">${Layout.esc(o.orderNumber||o.id.substring(0,8))}${o._siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(o._siteName)}</div>` : ''}</td>
+            <tr class="order-row" onclick="Page.viewOrder('${Layout.jsArg(o.id)}', '${Layout.jsArg(o.siteId || '')}')">
+              <td class="font-medium">${Layout.esc(o.orderNumber||o.id.substring(0,8))}${o.siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(o.siteName)}</div>` : ''}</td>
               <td>${Layout.esc(o.customerName||'(ไม่ระบุชื่อ)')}</td>
               <td class="text-right">${o.itemCount||0}</td>
               <td class="text-right font-semibold">฿${Number(o.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
@@ -527,10 +514,13 @@
                     ${p.paidAt?`<div style="color:#059669;font-size:11px">ยืนยันเมื่อ ${Layout.date(p.paidAt)}</div>`:''}
                   </div>
                   <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-                    ${p.slipUrl ? `<a href="${Layout.esc(p.slipUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" title="เปิดดูสลิป">🧾 ดูสลิป</a>` : ''}
+                    ${p.slipUrl ? (p.slipRequiresAuth
+                      ? `<button type="button" class="btn btn-sm btn-outline" onclick="Page.viewSlip('${Layout.jsArg(p.slipUrl)}', '${Layout.jsArg(p.id)}')" title="เปิดดูสลิป (ดึงผ่านระบบ — สลิปเป็นข้อมูลส่วนบุคคล ไม่ใช่ลิงก์สาธารณะ)">🧾 ดูสลิป</button>`
+                      : `<a href="${Layout.esc(p.slipUrl)}" target="_blank" rel="noopener" class="btn btn-sm btn-outline" title="เปิดดูสลิป">🧾 ดูสลิป</a>`) : ''}
                     ${p.status === 'Pending' ? `<button class="btn btn-sm btn-success" onclick="Page.confirmPayment('${o.id}', '${p.id}')" title="ยืนยันรับเงินจริง → ระบบลงบัญชีตามวิธีออกเอกสารของออเดอร์นี้">✓ ยืนยันรับเงิน + ลงบัญชี</button>` : ''}
                     ${p.pendingAction ? `<button class="btn btn-sm btn-outline" onclick="Page.confirmPayment('${o.id}', '${p.id}', '${Layout.jsArg(p.pendingAction)}')" title="เงินรับแล้วแต่ขั้นเอกสาร/บัญชียังค้าง (ดูหมายเหตุ) — กดซ้ำได้ ไม่ออกซ้ำ">🧾 ${Layout.esc(p.pendingAction)}</button>` : ''}
                   </div>
+                  ${p.slipRequiresAuth ? `<div id="slipBox-${Layout.esc(p.id)}" style="grid-column:1/-1"></div>` : ''}
                 </div>`;
               }).join('')}
             </div>
@@ -543,6 +533,20 @@
             </div>` : ''}`;
           Layout.openModal('orderModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+      // สลิปในที่เก็บกลาง (R-43) — ดึงผ่าน API.fetchFile (แนบ JWT) แล้วแสดงในหน้าเดียวกัน (ไม่เปิดแท็บใหม่หลัง await — เบราว์เซอร์บล็อก)
+      _slipUrls: [],
+      async viewSlip(url, paymentId) {
+        const box = document.getElementById('slipBox-' + paymentId); if (!box) return;
+        box.innerHTML = '<div style="font-size:12px;color:var(--gray-500);padding:6px 0">กำลังโหลดสลิป…</div>';
+        try {
+          const f = await API.fetchFile(url, 'slip');
+          if (!f) { box.innerHTML = ''; return; }
+          const u = URL.createObjectURL(f.blob); this._slipUrls.push(u);
+          box.innerHTML = (f.blob.type || '').startsWith('image/')
+            ? `<a href="${Layout.esc(u)}" target="_blank" rel="noopener"><img src="${Layout.esc(u)}" alt="สลิปโอนเงิน" style="max-width:100%;max-height:420px;border:1px solid var(--gray-200);border-radius:8px;margin-top:8px"></a>`
+            : `<a href="${Layout.esc(u)}" download="${Layout.esc(f.name || 'slip')}" class="btn btn-sm btn-outline" style="margin-top:8px">⬇️ ดาวน์โหลดสลิป (${Layout.esc(f.name || 'ไฟล์')})</a>`;
+        } catch (e) { box.innerHTML = `<div style="font-size:12px;color:#b91c1c;padding:6px 0">โหลดสลิปไม่สำเร็จ: ${Layout.esc(e.message || '')}</div>`; }
       },
       async confirmPayment(orderId, paymentId, retry) {
         const api = Layout.api(); if (!api) return;

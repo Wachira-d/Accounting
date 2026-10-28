@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.EntityFrameworkCore;
 
@@ -27,7 +28,9 @@ public class CmsSiteRoutingMiddleware
         _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context, AccountingDbContext db)
+    /// <param name="rendering">ตัวประกอบ &lt;head&gt; SSR (R-44) — scoped · ใช้เฉพาะเมื่อคำขอเป็นหน้า storefront</param>
+    /// <param name="env">อ่านไฟล์ <c>wwwroot/storefront.html</c> (shell) ผ่าน WebRootFileProvider — ไม่ประกอบ path ด้วย GetCurrentDirectory</param>
+    public async Task InvokeAsync(HttpContext context, AccountingDbContext db, ICmsRenderingService rendering, IWebHostEnvironment env)
     {
         var host = context.Request.Host.Host.ToLowerInvariant();
         var path = context.Request.Path.Value ?? "";
@@ -75,9 +78,12 @@ public class CmsSiteRoutingMiddleware
                     context.Items["CmsCompanyId"] = site.CompanyId;
                     context.Items["CmsSiteSubdomain"] = string.IsNullOrEmpty(site.Subdomain) ? site.Slug : site.Subdomain;
                     context.Items["CmsPathBased"] = true;
-                    context.Request.Path = "/storefront.html";
                     context.Response.Headers["X-CMS-Site-Match"] = $"path:{key} → siteId:{site.Id} status:{site.Status}";
                     _logger.LogInformation("CmsSiteRouting matched path /{Key} → site {SiteId} (status={Status}), rewrote to /storefront.html", key, site.Id, site.Status);
+                    // R-44: ส่ง shell พร้อม <head> ที่เซิร์ฟเวอร์เรนเดอร์ (crawler LINE/Facebook ไม่รัน JS) — ล้ม/ไม่พบ ⇒ ตกไปเสิร์ฟ static เดิม
+                    var pageSlug = slashIdx >= 0 ? remainder[(slashIdx + 1)..] : "";
+                    if (await TryServeShellAsync(context, rendering, env, site.CompanyId, site.Id, pageSlug)) return;
+                    context.Request.Path = "/storefront.html";
                     await _next(context);
                     return;
                 }
@@ -119,8 +125,72 @@ public class CmsSiteRoutingMiddleware
         context.Items["CmsSiteSubdomain"] = hostSite.Subdomain;
         context.Response.Headers["X-CMS-Site-Match"] = $"host:{host} → siteId:{hostSite.Id}";
 
+        if (await TryServeShellAsync(context, rendering, env, hostSite.CompanyId, hostSite.Id, path.Trim('/'))) return;
         context.Request.Path = "/storefront.html";
         await _next(context);
+    }
+
+    // ───── SSR <head> (R-44 · roadmap §6 #1) ─────
+    // shell = wwwroot/storefront.html ตัวเดียวกับที่ static เสิร์ฟ · cache ตามเวลาแก้ไฟล์ (ไม่อ่าน disk ทุกคำขอ)
+    private static readonly object ShellLock = new();
+    private static string? _shellHtml;
+    private static DateTimeOffset _shellStamp;
+
+    private static string? LoadShell(IWebHostEnvironment env)
+    {
+        var fi = env.WebRootFileProvider.GetFileInfo("storefront.html");
+        if (!fi.Exists || fi.IsDirectory) return null;
+        lock (ShellLock)
+        {
+            if (_shellHtml != null && _shellStamp == fi.LastModified) return _shellHtml;
+        }
+        string html;
+        using (var stream = fi.CreateReadStream())
+        using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8))
+            html = reader.ReadToEnd();
+        lock (ShellLock)
+        {
+            _shellHtml = html;
+            _shellStamp = fi.LastModified;
+        }
+        return html;
+    }
+
+    /// <summary>ส่ง storefront.html ที่ฝัง &lt;head&gt; SSR แล้ว — คืน false เมื่อทำไม่ได้ (ให้ผู้เรียกตกไป static เดิม · ผู้ชมเห็นหน้าเหมือนเดิม
+    /// แค่ไม่มี og) · ความล้มเหลวถูก log ระดับ Warning (ไม่ใช่ปล่อยเงียบ — F2 #7)</summary>
+    private async Task<bool> TryServeShellAsync(HttpContext context, ICmsRenderingService rendering, IWebHostEnvironment env,
+        Guid companyId, Guid siteId, string rawSlug)
+    {
+        if (!HttpMethods.IsGet(context.Request.Method) && !HttpMethods.IsHead(context.Request.Method)) return false;
+        try
+        {
+            var slug = rawSlug;
+            try { slug = Uri.UnescapeDataString(rawSlug); } catch (UriFormatException) { /* คง raw */ }
+            if (string.IsNullOrWhiteSpace(slug)) slug = context.Request.Query["slug"].ToString();
+            var lang = context.Request.Query["lang"].ToString();
+            var origin = Accounting.Helpers.CmsSeoHead.Origin(context.Request.Scheme, context.Request.Host.Value ?? "");
+            var head = await rendering.BuildSeoHeadAsync(companyId, siteId, slug, origin, context.Request.Path.Value ?? "/",
+                string.IsNullOrWhiteSpace(lang) ? null : lang);
+            if (string.IsNullOrEmpty(head)) return false;
+            var shell = LoadShell(env);
+            if (shell == null) return false;
+            var html = Accounting.Helpers.CmsSeoHead.InjectIntoShell(shell, head, string.IsNullOrWhiteSpace(lang) ? "th" : lang);
+
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            context.Response.ContentType = "text/html; charset=utf-8";
+            // เหมือน static .html: ห้าม cache (เนื้อหา head เปลี่ยนตามหน้าที่แก้)
+            context.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+            context.Response.Headers["Pragma"] = "no-cache";
+            context.Response.Headers["Expires"] = "0";
+            if (HttpMethods.IsHead(context.Request.Method)) return true;
+            await context.Response.WriteAsync(html, context.RequestAborted);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "SSR head ของ storefront ล้ม (site {SiteId}) — ตกไปเสิร์ฟ shell เดิมโดยไม่มี og", siteId);
+            return false;
+        }
     }
 
     private static async Task TryAttachSiteAsync(HttpContext context, AccountingDbContext db, string host)

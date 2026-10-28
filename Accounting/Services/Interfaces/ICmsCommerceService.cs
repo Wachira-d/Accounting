@@ -37,6 +37,8 @@ public interface ICmsCommerceService
     Task<OrderResponse> UpdateOrderStatusAsync(Guid companyId, Guid siteId, Guid orderId, UpdateOrderStatusRequest request, string userId);
     Task<OrderResponse?> GetOrderAsync(Guid companyId, Guid siteId, Guid orderId);
     Task<PagedResponse<OrderListResponse>> GetOrdersAsync(Guid companyId, Guid siteId, string? status = null, Guid? customerId = null, string? search = null, int page = 1, int pageSize = 20);
+    /// <summary>R-45 มุมมองทุกไซต์ — ออเดอร์ของเว็บใน <paramref name="siteIds"/> (ผู้เรียกกรองสิทธิ์ด้วย <c>Helpers/CmsSiteScope</c> มาแล้ว · ว่าง = ไม่มีแถว) · แบ่งหน้าจริง</summary>
+    Task<PagedResponse<OrderListResponse>> GetOrdersAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, string? search, int page, int pageSize);
 
     // Payment Gateways
     Task<PaymentGatewayResponse> CreatePaymentGatewayAsync(Guid companyId, Guid siteId, CreatePaymentGatewayRequest request, string userId);

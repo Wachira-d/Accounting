@@ -42,6 +42,8 @@ public interface ICmsBookingService
     Task<BookingResponse> AssignResourceAsync(Guid companyId, Guid siteId, Guid bookingId, Guid? resourceId, string userId);
     /// <summary>รอบ 205 W3 R-13: แจ้งลูกค้าที่ได้คิวจากคิวสำรอง (เรียกซ้ำได้ — ใบที่แจ้งถึงแล้วถูกข้าม) · คืนข้อความผลการส่ง · <c>BookingReminderJob</c> เรียกซ้ำให้ใบที่ส่งไม่ถึง</summary>
     Task<List<string>> NotifyWaitlistPromotedAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid> bookingIds, CancellationToken ct = default);
+    /// <summary>R-45 มุมมองทุกไซต์ — การจองของเว็บใน <paramref name="siteIds"/> (ผู้เรียกกรองสิทธิ์ด้วย <c>Helpers/CmsSiteScope</c> มาแล้ว · ว่าง = ไม่มีแถว) · แบ่งหน้าจริง</summary>
+    Task<PagedResponse<BookingListResponse>> GetBookingsAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, DateTime? fromDate, DateTime? toDate, string? search, int page, int pageSize);
 
     // ERP Sync (event-driven)
     Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId);

@@ -58,6 +58,7 @@
       <input type="text" class="search-input" placeholder="ค้นหาเลขที่จองหรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
     </div>
 
+    <div id="allNote" style="display:none"></div>
     <div class="table-container">
       <table class="table">
         <thead><tr>
@@ -102,7 +103,14 @@
     };
 
     const Page = {
-      siteId: null, _searchTimer: null,
+      siteId: null,       // เว็บที่เลือก · null เมื่อดู "ทุกไซต์"
+      allSites: false,
+      actSiteId: null,    // เว็บของการจองที่เปิดอยู่ (โหมดทุกไซต์ — ทุก action ต้องยิงไปเว็บเจ้าของแถว)
+      page: 1, _searchTimer: null,
+      _sid() { return this.actSiteId || this.siteId; },
+      // โหมดทุกไซต์ (R-45): endpoint ระดับบริษัทแบ่งหน้าจริง — เว็บที่เห็นตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
+      _list(q) { const api = Layout.api(); return this.allSites ? api.cmsOverviewBookings(q) : api.cmsListBookings(this.siteId, q); },
+      goPage(n) { this.page = Math.max(1, n); this.load(); },
       async init() {
         if (!Layout.init('cms-bookings')) return;
         await this.loadSites();
@@ -117,36 +125,38 @@
             CmsSiteContext.renderCrumb('cmsCrumb', sites, null, 'การจองคิว', 'cms-bookings');
             return;
           }
-          this.siteId = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'bookings' });
-          CmsSiteContext.fillSelect(sel, sites, { module: 'bookings', value: this.siteId });
-          this._siteCtx();
-          await this.load();
-          await this.loadStats();
+          // ?siteId=all = ภาพรวมทุกไซต์ (R-45 — เดิมหน้านี้ไม่มีโหมดนี้) · ตรวจกับรายการเว็บจริงก่อนใช้
+          const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'bookings', allowAll: true });
+          CmsSiteContext.fillSelect(sel, sites, { module: 'bookings', allowAll: true, value: picked });
+          await this.applySite(sel.value || picked);
         } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      _siteCtx() {
-        CmsSiteContext.setUrl(this.siteId);
-        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], this.siteId, 'การจองคิว', 'cms-bookings');
+      async applySite(v) {
+        this.allSites = v === CmsSiteContext.ALL;
+        this.siteId = this.allSites ? null : v;
+        this.actSiteId = null;
+        this.page = 1;
+        CmsSiteContext.setUrl(v);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], v, 'การจองคิว', 'cms-bookings');
+        await this.load(); await this.loadStats();
       },
       async onSiteChange() {
-        this.siteId = document.getElementById('siteSelector').value;
-        this._siteCtx();
-        await this.load(); await this.loadStats();
+        await this.applySite(document.getElementById('siteSelector').value);
       },
       debounceLoad() {
         clearTimeout(this._searchTimer);
-        this._searchTimer = setTimeout(() => this.load(), 300);
+        this._searchTimer = setTimeout(() => { this.page = 1; this.load(); }, 300);
       },
       async loadStats() {
-        if (!this.siteId) return;
+        if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
         try {
           const today = new Date().toISOString().split('T')[0];
           const [pend, conf, td, done] = await Promise.all([
-            api.cmsListBookings(this.siteId, '?status=Pending&pageSize=1'),
-            api.cmsListBookings(this.siteId, '?status=Confirmed&pageSize=1'),
-            api.cmsListBookings(this.siteId, `?fromDate=${today}&toDate=${today}&pageSize=1`),
-            api.cmsListBookings(this.siteId, `?status=Completed&fromDate=${today.slice(0, 8)}01&pageSize=1`)
+            this._list('?status=Pending&pageSize=1'),
+            this._list('?status=Confirmed&pageSize=1'),
+            this._list(`?fromDate=${today}&toDate=${today}&pageSize=1`),
+            this._list(`?status=Completed&fromDate=${today.slice(0, 8)}01&pageSize=1`)
           ]);
           document.getElementById('statPending').textContent = pend?.data?.totalCount ?? '0';
           document.getElementById('statConfirmed').textContent = conf?.data?.totalCount ?? '0';
@@ -155,27 +165,29 @@
         } catch (e) { /* non-fatal */ }
       },
       async load() {
-        if (!this.siteId) return;
+        if (!this.siteId && !this.allSites) return;
         const api = Layout.api(); if (!api) return;
         const status = document.getElementById('statusFilter').value;
         const date = document.getElementById('dateFilter').value;
         const search = document.getElementById('searchInput').value;
-        let q = `?pageSize=50`;
+        let q = `?page=${this.page}&pageSize=50`;
         if (status) q += `&status=${encodeURIComponent(status)}`;
         // server รับ fromDate/toDate (ไม่มี date) — เดิมส่ง date/search ที่ server ไม่รู้จัก ⇒ ตัวกรองไม่มีผลเงียบ ๆ
         if (date) q += `&fromDate=${encodeURIComponent(date)}&toDate=${encodeURIComponent(date)}`;
         if (search) q += `&search=${encodeURIComponent(search)}`;
         try {
-          const res = await api.cmsListBookings(this.siteId, q);
+          const res = await this._list(q);
           const items = res?.data?.items || res?.data || [];
+          // แบ่งหน้าจริงจากเซิร์ฟเวอร์ (โหมดทุกไซต์) · หน้ารายเว็บ = 50 แถวแรกเหมือนเดิม
+          CmsSiteContext.allNote('allNote', this.allSites ? { totalCount: res?.data?.totalCount, page: res?.data?.page, totalPages: res?.data?.totalPages, goPage: 'Page.goPage' } : null);
           const tbody = document.getElementById('bookingsBody');
           if (!items.length) {
             tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีการจองตามเงื่อนไข</td></tr>';
             return;
           }
           tbody.innerHTML = items.map(b => `
-            <tr class="booking-row" onclick="Page.viewBooking('${b.id}')">
-              <td class="font-medium">${Layout.esc(b.bookingNumber||b.id.substring(0,8))}</td>
+            <tr class="booking-row" onclick="Page.viewBooking('${Layout.jsArg(b.id)}', '${Layout.jsArg(b.siteId || '')}')">
+              <td class="font-medium">${Layout.esc(b.bookingNumber||b.id.substring(0,8))}${b.siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(b.siteName)}</div>` : ''}</td>
               <td>${Layout.esc(b.customerName||'(ไม่ระบุ)')}</td>
               <td>${Layout.esc(b.serviceName||'-')}${b.resourceName ? `<div style="font-size:11px;color:var(--gray-500)">👤 ${Layout.esc(b.resourceName)}</div>` : ''}</td>
               <td>${Layout.date(b.bookingDate)}</td>
@@ -185,10 +197,12 @@
             </tr>`).join('');
         } catch (e) { Layout.toast('โหลดการจองไม่สำเร็จ: ' + e.message, 'error'); }
       },
-      async viewBooking(id) {
+      async viewBooking(id, siteId) {
         const api = Layout.api(); if (!api) return;
+        // โหมดทุกไซต์: การจองเป็นของเว็บไหน action ทั้งหมดต้องไปเว็บนั้น · เปิดซ้ำ (ไม่ส่ง siteId) = คงเว็บเดิม
+        if (siteId !== undefined) this.actSiteId = siteId || null;
         try {
-          const res = await api.cmsGetBooking(this.siteId, id);
+          const res = await api.cmsGetBooking(this._sid(), id);
           const b = res?.data || res;
           if (!b) return;
           // รอบ 205 W3 R-16: ช่องเลือกผู้ให้บริการ — server ตัดสินว่าเปลี่ยนได้ไหม (canAssignResource) · รายชื่อ = ผู้ให้บริการที่รับบริการนี้และเปิดใช้
@@ -261,7 +275,7 @@
         const paidOn = (document.getElementById('bkPaidOn') || {}).value || null;
         if (!confirm(`ยืนยันว่าได้รับเงินของการจองนี้แล้ว — ระบบจะออกใบกำกับภาษีลงวันที่ ${paidOn || 'วันนี้'}`)) return;
         try {
-          const res = await api.cmsIssueBookingTaxInvoice(this.siteId, id, { receivedDate: paidOn });
+          const res = await api.cmsIssueBookingTaxInvoice(this._sid(), id, { receivedDate: paidOn });
           // ข้อความจาก server (ออกใบแล้ว · มีใบแล้วไม่ออกซ้ำ · ขั้นที่ล้มพร้อมเหตุ) — แสดงตามจริง
           const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
           if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));
@@ -285,7 +299,7 @@
         const api = Layout.api(); if (!api) return;
         const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
         try {
-          const res = await api.cmsUpdateBookingStatus(this.siteId, id, { status: nextStatus, internalNotes: note });
+          const res = await api.cmsUpdateBookingStatus(this._sid(), id, { status: nextStatus, internalNotes: note });
           // ข้อความจาก server (ขั้น ERP · เลื่อนคิวสำรองขึ้น) — แสดงตามจริง
           const notices = (res && res.data && Array.isArray(res.data.erpNotices)) ? res.data.erpNotices : [];
           if (notices.length) notices.forEach(n => Layout.toast(n, 'warning', 15000));

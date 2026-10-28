@@ -344,6 +344,10 @@ public record IssueBookingTaxInvoiceRequest(DateTime? ReceivedDate);
 public class BookingListResponse
 {
     public Guid Id { get; set; }
+    /// <summary>R-45 มุมมองทุกไซต์ — เว็บเจ้าของแถว (ปุ่ม action ต้องยิงไปเว็บนี้)</summary>
+    public Guid SiteId { get; set; }
+    /// <summary>ชื่อเว็บเจ้าของแถว — ใส่เฉพาะมุมมองทุกไซต์</summary>
+    public string? SiteName { get; set; }
     public string BookingNumber { get; set; } = "";
     public BookingStatus Status { get; set; }
     public string ServiceName { get; set; } = "";

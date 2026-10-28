@@ -30,7 +30,10 @@ public record LeadListResponse(
     string? CustomerEmail,
     string? CustomerPhone,
     string? SourceSlug,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    // R-45 มุมมองทุกไซต์ — เว็บเจ้าของแถว + ชื่อ (null = หน้ารายเว็บ) · ต่อท้ายเพื่อให้ผู้เรียกเดิมคอมไพล์ต่อได้
+    Guid? SiteId = null,
+    string? SiteName = null);
 
 public record LeadDetailResponse(
     Guid Id,

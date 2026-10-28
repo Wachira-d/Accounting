@@ -45,6 +45,61 @@ public class ImageProcessingService : IImageProcessingService
     {
         Directory.CreateDirectory(absoluteDirectory);
 
+        // ตัวแปลง (sniff ไบต์ → decode → resize/encode) อยู่ที่ TransformAsync ตัวเดียว — ใช้ร่วมกับ ProcessToBytesAsync (R-43)
+        using var t = await TransformAsync(input, contentType, originalFileName, profile);
+
+        var fileName = $"{Guid.NewGuid():N}{t.Extension}";
+        var absPath = Path.Combine(absoluteDirectory, fileName);
+        await File.WriteAllBytesAsync(absPath, t.Bytes);
+        var url = $"{webBaseUrl.TrimEnd('/')}/{fileName}";
+
+        if (t.IsRaw || t.Image == null)
+            return new ProcessedImageResult(url, absPath, t.OriginalBytes, t.Bytes.LongLength, 0, 0, null);
+
+        string? thumbUrl = null;
+        if (generateThumb)
+        {
+            var tSpec = _specs[ImageProfile.ProductThumb];
+            using var thumb = SkiaImageOps.CropToSquare(t.Image, tSpec.MaxLongEdge);
+            var thumbName = $"{Path.GetFileNameWithoutExtension(fileName)}_thumb.jpg";
+            var thumbPath = Path.Combine(absoluteDirectory, thumbName);
+            await File.WriteAllBytesAsync(thumbPath, SkiaImageOps.EncodeJpeg(thumb, tSpec.Quality));
+            thumbUrl = $"{webBaseUrl.TrimEnd('/')}/{thumbName}";
+        }
+
+        LogSaved(originalFileName, t, profile);
+        return new ProcessedImageResult(url, absPath, t.OriginalBytes, t.Bytes.LongLength, t.Width, t.Height, thumbUrl);
+    }
+
+    public async Task<ProcessedImageBytes> ProcessToBytesAsync(
+        Stream input,
+        string contentType,
+        string originalFileName,
+        ImageProfile profile)
+    {
+        using var t = await TransformAsync(input, contentType, originalFileName, profile);
+        if (!t.IsRaw) LogSaved(originalFileName, t, profile);
+        return new ProcessedImageBytes(t.Bytes, t.Extension,
+            Accounting.Helpers.UploadFileType.ContentTypeForExtension(t.Extension),
+            t.OriginalBytes, t.Width, t.Height);
+    }
+
+    private void LogSaved(string originalFileName, Transformed t, ImageProfile profile) =>
+        _logger.LogInformation(
+            "Image {File}: {OrigKB}KB -> {NewKB}KB ({Pct}% saved) profile={Profile} {W}x{H}",
+            originalFileName, t.OriginalBytes / 1024, t.Bytes.LongLength / 1024,
+            t.OriginalBytes == 0 ? 0 : 100 - (t.Bytes.LongLength * 100 / t.OriginalBytes),
+            profile, t.Width, t.Height);
+
+    /// <summary>ผลแปลงในหน่วยความจำ — <c>Image</c> ถือไว้ให้ผู้เรียกทำ thumbnail ต่อ (dispose พร้อมกัน) · <c>IsRaw</c> = เซฟดิบ (PDF/ICO · decoder ล้ม)</summary>
+    private sealed record Transformed(byte[] Bytes, string Extension, int Width, int Height, long OriginalBytes, bool IsRaw, SKBitmap? Image) : IDisposable
+    {
+        public void Dispose() => Image?.Dispose();
+    }
+
+    /// <summary>ตัวแปลงตัวเดียว: buffer → sniff ไบต์ → (ไม่ใช่รูป/decode ไม่ได้ ⇒ ดิบด้วยนามสกุลที่ระบบสรุป) → resize + encode ตาม profile</summary>
+    private async Task<Transformed> TransformAsync(Stream input, string contentType, string originalFileName, ImageProfile profile)
+    {
         // ═══ ไบต์จริงเป็นตัวตัดสินชนิดไฟล์ — ไม่ใช่ Content-Type/นามสกุลจาก client (F-03) ═══
         //
         // เดิม: ชนิดที่ "ประมวลผลไม่ได้" ถูกเซฟดิบ **ด้วยนามสกุลจากชื่อไฟล์ของ client**
@@ -67,16 +122,16 @@ public class ImageProcessingService : IImageProcessingService
 
         // ไม่ใช่รูป (PDF/ICO) — เซฟดิบด้วยนามสกุล **ที่ระบบสรุปเอง**
         if (!kind.IsImage)
-            return await SaveRawAsync(src, originalFileName, kind.Extension, absoluteDirectory, webBaseUrl);
+            return new Transformed(src.ToArray(), kind.Extension, 0, 0, originalBytes, true, null);
 
         // SkiaSharp (ย้ายจาก ImageSharp 2026-10-19 — สูตร/ขนาดคงเดิม ดู SkiaImageOps):
         // decode + หมุนตาม EXIF ในขั้นเดียว · ไฟล์ที่ encode ออกมาไม่พก EXIF/IPTC/XMP ของ
         // ต้นฉบับ (พิกัด GPS · รุ่นอุปกรณ์) เพราะ Skia เขียนแต่พิกเซล
         SkiaImageOps.Decoded? decoded;
+        var raw = src.ToArray();
         try
         {
-            var bytes = src.ToArray();
-            decoded = await Task.Run(() => SkiaImageOps.DecodeUpright(bytes));
+            decoded = await Task.Run(() => SkiaImageOps.DecodeUpright(raw));
         }
         catch (Exception ex)
         {
@@ -89,62 +144,22 @@ public class ImageProcessingService : IImageProcessingService
             // ไม่ใช่ชื่อไฟล์ของ client: decoder ล้มไม่ได้แปลว่าไบต์โกหก (ไฟล์รูปเสียบางส่วนก็ decode
             // ไม่ได้) แต่ถ้าปล่อยให้ client เลือกนามสกุลตรงนี้ ก็เท่ากับเปิดช่องเดิมกลับมาทางประตูหลัง
             _logger.LogWarning("SkiaSharp cannot decode {File} ({ContentType}, sniffed {Kind}); saving raw", originalFileName, contentType, kind.Extension);
-            src.Position = 0;
-            return await SaveRawAsync(src, originalFileName, kind.Extension, absoluteDirectory, webBaseUrl);
+            return new Transformed(raw, kind.Extension, 0, 0, originalBytes, true, null);
         }
 
         using (decoded)
         {
             var spec = _specs.TryGetValue(profile, out var s) ? s : _specs[ImageProfile.Generic];
 
-            using SKBitmap image = spec.ForceSquareCrop
+            SKBitmap image = spec.ForceSquareCrop
                 ? SkiaImageOps.CropToSquare(decoded.Bitmap, spec.MaxLongEdge)
                 : SkiaImageOps.ResizeMax(decoded.Bitmap, spec.MaxLongEdge);
 
             // Choose output format: keep PNG when transparency matters, otherwise JPEG for smaller files
             var keepPng = spec.KeepTransparency && SkiaImageOps.HasTransparency(image);
             var ext = keepPng ? ".png" : ".jpg";
-            var fileName = $"{Guid.NewGuid():N}{ext}";
-            var absPath = Path.Combine(absoluteDirectory, fileName);
-
             var encoded = keepPng ? SkiaImageOps.EncodePng(image) : SkiaImageOps.EncodeJpeg(image, spec.Quality);
-            await File.WriteAllBytesAsync(absPath, encoded);
-
-            var finalBytes = new FileInfo(absPath).Length;
-            var url = $"{webBaseUrl.TrimEnd('/')}/{fileName}";
-
-            string? thumbUrl = null;
-            if (generateThumb)
-            {
-                var tSpec = _specs[ImageProfile.ProductThumb];
-                using var thumb = SkiaImageOps.CropToSquare(image, tSpec.MaxLongEdge);
-                var thumbName = $"{Path.GetFileNameWithoutExtension(fileName)}_thumb.jpg";
-                var thumbPath = Path.Combine(absoluteDirectory, thumbName);
-                await File.WriteAllBytesAsync(thumbPath, SkiaImageOps.EncodeJpeg(thumb, tSpec.Quality));
-                thumbUrl = $"{webBaseUrl.TrimEnd('/')}/{thumbName}";
-            }
-
-            _logger.LogInformation(
-                "Image {File}: {OrigKB}KB -> {NewKB}KB ({Pct}% saved) profile={Profile} {W}x{H}",
-                originalFileName, originalBytes / 1024, finalBytes / 1024,
-                originalBytes == 0 ? 0 : 100 - (finalBytes * 100 / originalBytes),
-                profile, image.Width, image.Height);
-
-            return new ProcessedImageResult(url, absPath, originalBytes, finalBytes, image.Width, image.Height, thumbUrl);
+            return new Transformed(encoded, ext, image.Width, image.Height, originalBytes, false, image);
         }
-    }
-
-    private static async Task<ProcessedImageResult> SaveRawAsync(
-        Stream input, string originalName, string ext, string absoluteDirectory, string webBaseUrl)
-    {
-        var name = $"{Guid.NewGuid():N}{ext}";
-        var abs = Path.Combine(absoluteDirectory, name);
-        await using (var fs = File.Create(abs))
-        {
-            if (input.CanSeek) input.Position = 0;
-            await input.CopyToAsync(fs);
-        }
-        var size = new FileInfo(abs).Length;
-        return new ProcessedImageResult($"{webBaseUrl.TrimEnd('/')}/{name}", abs, size, size, 0, 0, null);
     }
 }
