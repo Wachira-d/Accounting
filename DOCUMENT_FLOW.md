@@ -5817,7 +5817,7 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 - **รอบ 207 · ผูกสินค้า**: `SyncBookingToErpAsync` โหลดสินค้าที่ผูก (เดิมไม่ Include ⇒ null เสมอ) ⇒ บรรทัดได้รหัสสินค้า + บัญชีรายได้ (ยกเว้นใบมัดจำ) + อัตรา VAT ผ่าน `Helpers/BookingProductLink.VatRate` · สร้างสินค้าบริการจากบริการ `PUT …/services/{id}/product` ผ่าน `IProductService.CreateAsync`
 - **รอบ 207 · ฟอร์มจอง**: ช่องบังคับ/ซ่อน `Helpers/BookingFormFields` ตรวจใน `CreateBookingAsync` (เส้นลูกค้า) ก่อนกันรอบ · ใบยืนยันการจองให้ลูกค้าดาวน์โหลด/พิมพ์ (ไม่ใช่ใบกำกับ/ใบเสร็จ — ระบุบนใบ)
 _Last verified against codebase: 2026-10-28 (รอบ 205 แพ็ก W2 — ผู้ประสานงาน · ยังไม่ผ่านฝ่ายค้าน · commit 05fe77ff (+แก้ CI 42c03a86 · 4bd84ebc — CI 40708272765 เขียว) · รอบ 206 เลื่อนนัด/R-31/R-32 commit 02aa14da (+แก้คอมไพล์ 4327916f · 6dda57d6 — CI 40723321274 เขียว · PR #5 merge 9c5680d7))_
-_Last verified against codebase: 2026-10-28 (รอบ 207 — หน้าทำงานผู้ให้บริการ · เอกสารตอนเสร็จ · ผูกสินค้า · ฟอร์มจอง · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-28 (รอบ 207 — หน้าทำงานผู้ให้บริการ · เอกสารตอนเสร็จ · ผูกสินค้า · ฟอร์มจอง · ฝ่ายค้านรอบ 1 แล้ว · commit 4b9c344f + แก้ฝ่ายค้าน 3efb2bd3 — CI 40752825832 เขียว)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
