@@ -707,6 +707,10 @@ public class LodgingReservationResponse
     public DateTime? SlipDueAt { get; set; }
     /// <summary>ยอดที่ต้องโอน (null = ไม่ต้อง)</summary>
     public decimal? AmountToTransfer { get; set; }
+    /// <summary>รอบ 205 W5 (R-52): ยอดที่แขก<b>กรอกเอง</b>ตอนส่งสลิปใบล่าสุด — ไม่ใช่หลักฐาน · แสดงคู่ยอดที่ต้องโอนให้คนเทียบ (ระบบไม่ประทับว่า "ตรง")</summary>
+    public decimal? SlipDeclaredAmount { get; set; }
+    /// <summary>รอบ 205 W5 (R-50): เอกสาร<b>ทุกใบ</b>ที่อ้างเลขจองนี้ (มัดจำทุกใบ · ใบล่วงหน้า · เช็คเอาต์ · ใบลดหนี้ · เงินประกัน) — เฉพาะหน้าพนักงาน · เซิร์ฟเวอร์ติดป้ายบทบาท/สถานะ</summary>
+    public List<LodgingReservationDocumentDto> Documents { get; set; } = new();
     /// <summary>เปิดช่องส่งสลิปไหม (เซิร์ฟเวอร์ตัดสินตามสถานะ/การปิดรับสลิป)</summary>
     public bool CanUploadSlip { get; set; }
     /// <summary>หน้าพนักงาน: ป้าย "รอสลิป (หมดเวลา …)" · "สลิปรอตรวจ" · "ยืนยันจากสลิป · ยังไม่บันทึกรับเงิน" (null = ไม่มี)</summary>
@@ -907,7 +911,14 @@ public record LodgingCheckOutRequest(
     string? Note = null,
     /// <summary>ฝ่ายค้านรอบ 202 P1-4: ออกใบเช็คเอาต์ย้อนหลัง (แถวที่ระบบรุ่นก่อนปิดเอง) ที่วันใช้บริการอยู่ในเดือนที่ยื่น ภ.พ.30 แล้ว ⇒
     /// พนักงานต้องติ๊กรับทราบเองว่าต้องยื่นแบบเพิ่มเติม (ไม่ติ๊ก = ปฏิเสธพร้อมข้อความ · ห้ามอนุมัติเงียบ)</summary>
-    bool AcknowledgeFiledVatPeriod = false);
+    bool AcknowledgeFiledVatPeriod = false,
+    /// <summary>รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์เป็นบาท (ตามราคาที่แขกเห็น — ที่พักราคารวม VAT ⇒ รวม VAT) · ใช้คู่กับ % ไม่ได้ ·
+    /// เซิร์ฟเวอร์คิดผ่าน <c>Helpers/LodgingCheckoutDiscount</c> ตัวเดียว (ส่วนลด = ส่วนของราคา คิด<b>ก่อน</b>หักมัดจำ)</summary>
+    decimal? BillDiscountAmount = null,
+    /// <summary>ส่วนลดเช็คเอาต์เป็น % ของยอดเข้าพัก (0–100)</summary>
+    decimal? BillDiscountPercent = null,
+    /// <summary>เหตุผลส่วนลด — บังคับเมื่อมีส่วนลด (ลงหมายเหตุใบ + audit)</summary>
+    string? BillDiscountReason = null);
 
 /// <summary>ฝ่ายค้านรอบ 202 P1-3ข (คำตัดสินข้อ 127): ปิดเรื่อง "เงินเข้าแต่ยืนยันไม่ได้" — พนักงานเลือกทางเอง ทุกทางลง audit · ห้ามล้างธงเงียบ</summary>
 public enum LodgingPaymentProblemResolution
@@ -1081,7 +1092,14 @@ public sealed class LodgingSlipItemDto
     public string? RejectedReason { get; set; }
     public DateTime? RejectedAt { get; set; }
     public string? Reference { get; set; }
+    /// <summary>ยอดที่แขกกรอกตอนส่งสลิปใบนี้ (null = ไม่ได้กรอก/สลิปรุ่นก่อน) — ไม่ใช่หลักฐาน (R-52)</summary>
+    public decimal? DeclaredAmount { get; set; }
 }
+
+/// <summary>เอกสาร 1 ใบของการจองในการ์ดการเงิน (R-50) — ป้ายจาก <c>Helpers/LodgingReservationDocuments</c></summary>
+public sealed record LodgingReservationDocumentDto(
+    Guid Id, string DocumentNumber, string DocumentType, string RoleLabel, DateTime DocumentDate, decimal TotalAmount,
+    string Status, string StatusLabel);
 
 /// <summary>ปฏิเสธสลิปที่แขกส่งมา — <b>เหตุผลบังคับ</b> เพราะข้อความนี้คือสิ่งเดียว
 /// ที่แขกจะได้เห็นว่าทำไมไม่ผ่านและต้องทำอะไรต่อ</summary>

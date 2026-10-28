@@ -14,7 +14,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **652 ไฟล์ · 6,518 `[Fact]` + 1,051 `[Theory]` (4,901 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **655 ไฟล์ · 6,532 `[Fact]` + 1,058 `[Theory]` (4,923 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 
@@ -3224,6 +3225,12 @@
 | LDG-202-15 | หน้าแขก: ต้องส่งสลิป ⇒ แบนเนอร์ไม่ใช่ "จองสำเร็จ" สีเขียว · ยอด/เวลา/ช่องสลิปจากเซิร์ฟเวอร์ · บัญชีรับโอนหนีอักขระ · ใบปกติคงเดิม (sim รันโค้ดจริง + negative 2 แบบ) | ✅ `tools/lodging_slip_confirm_sim.js` |
 | LDG-202-16 | **ฝ่ายค้านข้อ 128** P1-1 ใบยืนยันเพราะสลิป (ยังไม่รับเงิน) เช็คอินไม่ได้ · ใบที่พนักงานยืนยันเอง/รับเงินแล้วเช็คอินได้ · ยกเลิกใบที่มีสลิปค้างตรวจ ⇒ ธงข้อ 127 ไม่ประทับยอดคืน · P2-1 สลิปรอตรวจไม่ชวนจ่ายซ้ำ (หน้าแขก + ตัวคิดยอด gateway) · P2-2 ปฏิเสธสลิปจากข้อมูลเก่า ⇒ LODGING-SLIP-STALE · P2-3 คิว/ตัวนับเงื่อนไขเดียว · P2-4 หลักฐานการจองใบรอสลิปไม่ใช่ "ยืนยันการจอง" · P2-5 เหตุผลยกเลิกตามโหมด + ข้อความเดิมในฐาน · P3-2 ปิดรับสลิปยัง hold ≥ 24 ชม. | ✅ `LodgingGuestConfirmPolicyTests` · `LodgingVoucherBuilderTests` · `Db/LodgingSlipConfirmDbTests` |
 
+| LDG-205-01 | **รอบ 205 W5 (R-49)** ส่วนลดเช็คเอาต์: บาทบนราคารวม VAT แยกฐาน (500 → 467.29) · % ของฐาน · เหตุผลบังคับ · ติดลบ/ทั้งสองแบบ/>100%/เกินยอด = ปฏิเสธ · 7,450 ลด 500 มัดจำ 2,000 VAT ทันที ⇒ ฐานใบ 4,626.17 · VAT ทั้งเรื่อง 454.67 = VAT ของ 6,950 ครั้งเดียว · ลดจนต่ำกว่ามัดจำ ⇒ หักเท่าฐานหลังลด ส่วนเกินค้างคืน ใบ 0 ไม่ติดลบ · มัดจำเต็มยอดตัดชำระเท่ายอดใบหลังลด · **ทิศตรงข้าม**: ไม่ใส่ส่วนลด ⇒ `PlanCheckout` + `PreviewTotals` เท่าเส้นเดิมทุกสตางค์ ทั้ง 3 ประเภทมัดจำ | ✅ `LodgingCheckoutDiscountTests` · จุดเรียกล็อก `required_call_site_check` (Resolve ก่อน PlanCheckout · ห้ามส่ง %) · **ยังไม่ผ่านฝ่ายค้าน** |
+| LDG-205-02 | **รอบ 205 W5 (R-51)** folio เมื่อยกเลิก/ไม่มา: Pending/Confirmed ⇒ ล้างเฉพาะ Pending (Paid/Cancelled ไม่แตะ) · **ทิศตรงข้าม** CheckedIn/CheckedOut ⇒ ว่าง · หมายเหตุบอกจำนวน/ยอด/เหตุ | ✅ `LodgingFolioOnCancelTests` · จุดเรียกล็อก (`ToVoid` ก่อนประทับสถานะ) |
+| LDG-205-03 | **รอบ 205 W5 (R-50)** ป้ายบทบาทเอกสารของการจอง: ใบที่ผูกจริง (ล่วงหน้า/เช็คเอาต์/เงินประกัน) ชนะชนิด · ใบรับเงินใบที่ 2+ = "ใบรับเงินมัดจำ (ชนิด)" · ใบลดหนี้ · ป้ายสถานะ ยกเลิก/ตีกลับ/ชำระแล้ว/มีผล | ✅ `LodgingReservationDocumentsTests` |
+| LDG-205-04 | **รอบ 205 W5 (R-52)** ยอดที่แขกกรอกตอนส่งสลิป: 0/ไม่กรอก = null · ปัด 2 ตำแหน่ง AwayFromZero · ติดลบ/เกิน 10 ล้าน = ปฏิเสธ · แกลเลอรี: ใบปัจจุบันจากแถวการจอง · ใบก่อนจาก audit ของใบนั้น · รุ่นก่อน = null (ไม่ยกค่าใบอื่น) · **ทิศตรงข้าม** ไม่ส่ง = null ทุกใบ | ✅ `LodgingSlipGalleryTests` (+6) |
+| LDG-205-05 | **manual** (เจ้าของ): เช็คเอาต์จริงใส่ส่วนลด 500 บาทบนการจองที่มีมัดจำใบกำกับ 2,000 ⇒ ใบพิมพ์ "ส่วนลดท้ายบิล 467.29" + "หักมูลค่ามัดจำตามใบกำกับภาษี" คนละบรรทัด · ลดจนต่ำกว่ามัดจำ ⇒ การ์ดการเงินขึ้น "ค้างคืน" + กด “ยืนยันคืนเงินแล้ว” ได้ใบลดหนี้อ้างใบมัดจำ · ยกเลิกการจอง Confirmed ที่มี folio ⇒ folio หาย + หมายเหตุ · แขกกรอกยอดโอน ⇒ กรอบสลิปแสดงคู่ยอดที่ต้องโอน | ⏳ |
+
 ### License ส่วนเสริม + โควตาเอกสาร (LIC-*) — LODGING_LICENSING_PLAN §3-§6, §11-§12
 
 | ID | เคส | สถานะ |
@@ -4930,6 +4937,7 @@ Text ขึ้น "ไม่มี Raw Text — ตรวจสอบ ocr-servic
 | `IntegrationKeyPolicyTests` · `TaxReportTenantScopeTests` | S | คีย์ใหม่ read-only · legacy เต็มสิทธิ์ในช่วงผ่อนผัน · หลังวันเลิกใช้ · mapping ชนะ email · reportId บริษัทอื่น = ไม่เจอ |
 | `OwnerActionGuardTests` · `ApiAccessPolicyTests` · `RegistrationPolicyTests` · `DocumentChannelHeadingTests` · `SettingsSilentNoOpTests` · `IntegrationKeyLegacyHygieneTests` · `TrialExtensionPolicyTests` · `PermissionDeniedMessageTests` · `OwnerGateDecisionTests` · `SensitivityAccessTests` · `AuditHashChainTests` (เขียนใหม่ 23 ข้อ — **จำลองการอ่านกลับ ไม่ผ่าน PostgreSQL จริง**) | W | ด่านเจ้าของ/คีย์ · สวิตช์ API · ปิดรับสมัคร+คำเชิญ · หัวอีเมล = หัว PDF · "" = ล้าง · number-series 400 · trial เพดาน · hash chain v2 ถูกแก้/ขาดตอน/แตกกิ่ง |
 | `ContactTaxBranchKeyTests` · `ContactDataHygieneTests` · `OcrOurAddressFillTests` · `RdVatBranchRecordsTests` (+7) · `OcrDateReaderTests` (+6) · `TaxBranchCodeTests`/`DocumentLabelsTests`/`DocumentIssuerBranchTests` (5 หลัก) | O2 · C3 | คีย์เลขภาษี+สาขา · SoftScope · AdoptTaxId (fuzzy+เลขจริง = Reject · mod-11 · walk-in) · ทะเบียน RD ทั้งแถว · ใบอังกฤษ+สกุลต่างประเทศเชื่อ engine · ที่อยู่ผู้ซื้อ 0.70 |
+| `LodgingCheckoutDiscountTests` (ใหม่ 11) · `LodgingFolioOnCancelTests` (ใหม่ 4) · `LodgingReservationDocumentsTests` (ใหม่ 3) · `LodgingSlipGalleryTests` (+4) | W5 รอบ 205 (2026-10-26) | ส่วนลดเช็คเอาต์คิดก่อนหักมัดจำ (ตัวตัดสิน + เดินผ่าน `PreviewTotals`/`PlanCheckout` จริง · ติดลบ = ค้างคืน · ทิศตรงข้ามเท่าเดิมทุกสตางค์ 3 ประเภทมัดจำ) · folio ล้างเมื่อยกเลิก (CheckedIn ไม่แตะ) · ป้ายเอกสารของการจอง · ยอดสลิปที่แขกกรอก (null ≠ 0 · ไม่ยกค่าใบอื่น) |
 | `LodgingGuestContactTests` · `DepositPolicyResolverTests` · `LodgingDepositSettlementTests` · `LodgingPricingEngineTests` (+3) | L2 | 3 โหมด + ลำดับชั้น · เช็คเอาต์ 7,450 − 2,000 VAT รวม 487.38 · ริบ/คืน · คืนหลายงวด (จำลอง 20,000 กรณี) · บริการเสริมราคา 0 · VAT ที่พักบริษัทไม่จด |
 | `TaxedDepositDeductionTests` (6 · ผ่าน `PreviewTotals`) · `DepositPolicyResolverTests` (+4 แทน 1 เคสเดิม) · `LodgingDepositSettlementTests` (ช่องฐานมัดจำ) | L2 (04ce362) | ส่วนลด + มัดจำเต็ม/บางส่วน · ทิศตรงข้ามไม่มีส่วนลด = เดิมทุกสตางค์ · ส่วนลดอย่างเดียว = ไม่มีฐานมัดจำ · เกินยอดขาย/ปน % = ล้มดัง · `DrivesGuardMessage` ไม่มีประโยครับรู้เอง |
 | `DocumentSignedContentTests` (+ v2 ทีละช่อง 14 เคส · ร่าง/ออกแล้ว/ขั้นภายใน/External) | O1 (de5dc4cd) | แก้ช่อง v2 ⇒ ต้องเซ็นใหม่ · v1 ≠ v2 · ร่างเนื้อหาเดิม ⇒ นับ · ใบออกแล้ว + ไม่มี hash ⇒ ยังนับ · `Supersede` ต่อเหตุผลท้ายหมายเหตุ |

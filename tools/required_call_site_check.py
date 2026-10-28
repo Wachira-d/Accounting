@@ -721,16 +721,20 @@ TUPLE_RULES = [
     # ── รอบ 193 ทีม L2 หลังฝ่ายค้าน (review193-L2.md §D: เทสต์เรียกแค่ helper — ถอดการแก้ใน service แล้วยังเขียว) ──
     # รอบ 201 ทีม IN (A-IN5): ตัวสร้างรายการ/ใบร่าง/การใช้มัดจำ แยกเป็นเมธอดที่เส้นเช็คเอาต์และเส้นออกใบใหม่ใช้ร่วม ⇒ ย้ายจุดล็อก
     # ChargeVatRate → BuildFinalInvoiceLinesAsync · CreateDocumentAsync → UpsertFinalDraftAsync (ลำดับ "วางแผนก่อนออกเลข" ล็อกที่จุดเรียก)
+    # รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์ = ส่วนของราคา ⇒ ตัวตัดสิน LodgingCheckoutDiscount.Resolve ต้องมาก่อน PlanCheckout (ความจุหักมัดจำ = ฐานหลังส่วนลด) ·
+    # ส่วนลดลงช่อง BillDiscountAmount ของตัวเอง (ไม่ปนฐานมัดจำ) · ห้ามส่ง % เข้าเอกสาร (AllocateBillDeductions ปฏิเสธ % คู่ฐานมัดจำ)
     (LODGING_LIFE, "CheckOutCoreAsync",
      ["LoadDepositSnapshotsAsync(", "LodgingDepositSettlement.PlanCheckout(", "DocumentService.PreviewTotals(",
       "BuildFinalInvoiceLinesAsync(", "ResumeCheckOutAsync(", "SettleCheckOutAsync(",
-      "DepositBaseDeducted: depositPlan.BaseDeducted"],
+      "DepositBaseDeducted: depositPlan.BaseDeducted",
+      "LodgingCheckoutDiscount.Resolve(", "BillDiscountAmount: discount.HasDiscount ? discount.BaseAmount : null"],
      [("LodgingDepositSettlement.PlanCheckout(", "UpsertFinalDraftAsync("),
+      ("LodgingCheckoutDiscount.Resolve(", "LodgingDepositSettlement.PlanCheckout("),
       ("FindOrCreateContactAsync(", "AddNewChild(r.Charges"),
       ("_docService.ApproveDocumentAsync(", "AddNewChild(r.Charges")],
-     ["DepositAppliedDrivesJournal", "r.FinalDocumentId != null", "BillDiscountAmount: depositPlan"],
+     ["DepositAppliedDrivesJournal", "r.FinalDocumentId != null", "BillDiscountAmount: depositPlan", "BillDiscountPercent: request", "BillDiscountPercent: discount"],
      "R3-1 ฐานมัดจำลงช่องของตัวเอง (ห้ามใส่ช่องส่วนลดการค้า) · C2/C5 วางแผนใช้มัดจำ (มัดจำเกินยอด = ค้างคืน) ก่อนออกเลขใบ · ด่าน/สร้างผู้ติดต่อก่อนผูกค่าเสียหาย · "
-     "ใบเครดิตห้ามใช้ธงขับ JE (P0-1) · ออกใบแล้วกดซ้ำ = ทำต่อ ไม่ throw"),
+     "ใบเครดิตห้ามใช้ธงขับ JE (P0-1) · ออกใบแล้วกดซ้ำ = ทำต่อ ไม่ throw · R-49 ส่วนลดคิดก่อนแผนมัดจำ (ตัวตัดสินเดียว) ลงช่องส่วนลดการค้า"),
     (LODGING_LIFE, "SettleCheckOutAsync",
      ["ApplyFinalDepositPlanAsync(", "r.RefundAmount = plan.ExcessGross", "r.RefundBaselineGross ="],
      [("ApplyFinalDepositPlanAsync(", "r.RefundAmount = plan.ExcessGross")], [],
@@ -750,12 +754,14 @@ TUPLE_RULES = [
      ["DepositRealizedForDocumentId == finalId", "LodgingDepositSettlement.PlanCheckout(",
       "finalDoc.DepositBaseDeducted - realizedForFinal"], [], ["finalDoc.BillDiscountAmount"],
      "ทำเช็คเอาต์ต่อ: นับที่รับรู้เพื่อใบนี้ไปแล้ว ไม่ใช้มัดจำซ้ำ · R3-1 ความจุ = ช่องฐานมัดจำ ไม่ใช่ส่วนลดการค้า"),
+    # รอบ 205 W5 (R-51): folio ที่ยังไม่ออกใบของการจองที่ยกเลิก/ไม่มา ล้างผ่านกติกาตัวเดียว (ก่อนประทับสถานะ · Paid ไม่แตะ)
     (LODGING_LIFE, "CancelCoreAsync",
-     ["Terminal.Contains(r.Status)", "LodgingDepositSettlement.PlanCancellation("],
+     ["Terminal.Contains(r.Status)", "LodgingDepositSettlement.PlanCancellation(", "LodgingFolioOnCancel.ToVoid("],
      [("Terminal.Contains(r.Status)", "LodgingDepositSettlement.PlanCancellation("),
+      ("LodgingFolioOnCancel.ToVoid(", "r.Status = noShow ? LodgingReservationStatus.NoShow"),
       ("_db.SaveChangesAsync(", "RealizeDepositAsync(")],
      ["RefundDepositAsync("],
-     "C3 ด่านสถานะอยู่ที่ตัวกลาง (เส้นแขกยกเลิกซ้ำได้) · บันทึกสถานะก่อนลงบัญชีส่วนริบ · ยกเลิกห้ามลงคืนเงิน (F-03)"),
+     "C3 ด่านสถานะอยู่ที่ตัวกลาง (เส้นแขกยกเลิกซ้ำได้) · บันทึกสถานะก่อนลงบัญชีส่วนริบ · ยกเลิกห้ามลงคืนเงิน (F-03) · R-51 folio ค้างล้างตามกติกาเดียว"),
     (LODGING_LIFE, "RecordRefundPaidAsync",
      ["JobLock.RunExclusiveAsync(", "RecordRefundPaidCoreAsync("], [], [],
      "คืนเงินต้องล็อกระดับการจอง (สองคำขอพร้อมกัน = lost update)"),
@@ -9187,9 +9193,11 @@ RULES += [
     dict(file=LODGING_TAX, method="CheckOutWithAdvanceAsync",
          must=["LodgingTaxInvoiceTimingPolicy.StayDelta(", "includeStay: false", "IssueAdvanceCreditNoteAsync(", "SettleCheckOutAsync(",
                "LodgingDepositSettlement.RoomDeposits(", "LodgingDepositSettlement.PlanCheckout(", "LodgingPaymentBank.Problem(",
-               "NewCheckoutChargesAsync(", "ApplyFinalDepositPlanAsync("],
+               "NewCheckoutChargesAsync(", "ApplyFinalDepositPlanAsync(", "LodgingCheckoutDiscount.Resolve("],
          before=[("LodgingPaymentBank.Problem(", "IssueAdvanceCreditNoteAsync("), ("IssueAdvanceCreditNoteAsync(", "ApplyFinalDepositPlanAsync("),
-                 ("LodgingDepositSettlement.PlanCheckout(", "UpsertFinalDraftAsync(")],
+                 ("LodgingDepositSettlement.PlanCheckout(", "UpsertFinalDraftAsync("),
+                 # รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์ลดค่าห้องก่อนเทียบใบล่วงหน้า (ตัวตัดสินเดียว · อ่านช่องจากคำขอในตัวตัดสิน ไม่ประกอบเอง)
+                 ("LodgingCheckoutDiscount.Resolve(", "LodgingTaxInvoiceTimingPolicy.StayDelta(")],
          forbid=["BillDiscountAmount", "DepositAppliedDrivesJournal"],
          why="ข้อ 157: เช็คเอาต์บนใบล่วงหน้า — ด่านก่อนแตะข้อมูล · ยอดลด = ใบลดหนี้ก่อนตัดชำระ · วางแผนมัดจำก่อนออกเลข (§86/4) · ปิดการเข้าพักด้วยขั้นเดิม"),
     dict(file=LODGING_OPS, method="MapAsync", must=["LoadAdvanceAsync(", "LodgingTaxInvoiceTimingPolicy.CanOfferManualIssue("],

@@ -2599,11 +2599,12 @@
             ${amt > 0 ? `<div class="row" style="font-size:16px"><span>ยอดที่ต้องโอน</span><b>฿${this._money(amt)}</b></div>` : ''}
             ${r.slipRequired && r.slipDueAt ? `<div style="font-size:13px;color:#92400E;margin-bottom:6px">ส่งสลิปภายใน ${this.esc(new Date(r.slipDueAt).toLocaleString('th-TH'))}</div>` : ''}
             ${accounts}
-            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${this.esc(new Date(r.slipUploadedAt).toLocaleString('th-TH'))} — รอที่พักตรวจสอบ ·
+            ${r.paymentSlipUrl ? `<div class="lg-badge info" style="margin-bottom:8px">ส่งสลิปแล้วเมื่อ ${this.esc(new Date(r.slipUploadedAt).toLocaleString('th-TH'))}${r.slipDeclaredAmount != null ? ` (แจ้งยอดโอน ฿${this._money(r.slipDeclaredAmount)})` : ''} — รอที่พักตรวจสอบ ·
               <a href="${this.esc(r.paymentSlipUrl)}" target="_blank" rel="noopener">ดูสลิปที่ส่งไป</a></div>` : ''}
             <form onsubmit="Store.lodgingUploadSlip(event, '${this.jsArg(token)}')" style="display:grid;gap:8px;grid-template-columns:1fr 1fr auto">
               <input type="file" name="file" accept="image/*,application/pdf" required class="lg-input">
               <input name="reference" class="lg-input" placeholder="อ้างอิง/เวลาโอน (ถ้ามี)" maxlength="100">
+              <input name="declaredAmount" type="number" inputmode="decimal" step="0.01" min="0" class="lg-input" placeholder="ยอดที่โอน (บาท · ไม่บังคับ)" style="grid-column:1/-1">
               <button class="btn btn-primary" type="submit">ส่งสลิป</button>
               <div class="sf-slip-status" style="grid-column:1/-1;font-size:13px"></div>
             </form></div>`;
