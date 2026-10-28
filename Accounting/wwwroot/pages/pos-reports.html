@@ -472,37 +472,39 @@
         const from = document.getElementById('dateFrom').value;
         const to = document.getElementById('dateTo').value;
         try {
-          const res = await api.getPosCommissionSummary(`?fromDate=${from}&toDate=${to}`);
+          // รอบ 205 W6 (R-27 · POS_MTO_DESIGN §4 #6): เดิมอ่าน commission-summary จากตาราง StaffCommissionSummaries ที่ไม่มีผู้เขียน ⇒ แท็บว่างเสมอ (HTTP 200 ของว่าง = โกหก)
+          // ⇒ อ่านยอดขายตามพนักงาน (ฐานคอมมิชชัน · PosStaffAttribution — ยอดบรรทัดก่อน VAT หลังส่วนลดท้ายบิล) จาก reports/staff-sales · รายละเอียดรายกิจกรรมยังอ่านจากกิจกรรมจริง
+          const res = await api.getPosStaffSales(from, to);
           const items = res.data || [];
           const el = document.getElementById('commissionContent');
           if (!items.length) {
-            el.innerHTML = '<p class="text-center text-gray-400" style="padding:40px;">ไม่มีข้อมูลคอมมิชชันในช่วงเวลานี้</p>';
+            el.innerHTML = '<p class="text-center text-gray-400" style="padding:40px;">ไม่มีบิลที่ระบุช่าง/พนักงานในช่วงเวลานี้ — ยอดจะขึ้นเมื่อบรรทัดบิลระบุพนักงานผู้ทำรายการ</p>';
             return;
           }
-          const totalCommission = items.reduce((s, i) => s + i.totalCommission, 0);
+          const totalSales = items.reduce((s, i) => s + (i.netSales || 0), 0);
+          const totalLines = items.reduce((s, i) => s + (i.lineCount || 0), 0);
           el.innerHTML = `
+            <div class="text-xs" style="color:var(--gray-500);margin-bottom:10px">ฐานคอมมิชชัน = ยอดขายสุทธิก่อน VAT ตามพนักงานผู้ทำรายการ (บิลที่ปิดแล้ว · หักส่วนลดท้ายบิลตามสัดส่วน · บิลคืนเงินไม่นับ) · กด "ดูรายละเอียด" เพื่อดูคอมรายขั้นตอนบริการจากกิจกรรมจริง</div>
             <div class="report-cards" style="margin-bottom:20px;">
-              <div class="report-card success"><div class="rc-label">คอมมิชชันรวม</div><div class="rc-value">${Layout.money(totalCommission)}</div></div>
+              <div class="report-card success"><div class="rc-label">ยอดขายตามพนักงานรวม</div><div class="rc-value">${Layout.money(totalSales)}</div></div>
               <div class="report-card primary"><div class="rc-label">จำนวนพนักงาน</div><div class="rc-value">${items.length}</div></div>
-              <div class="report-card warning"><div class="rc-label">เฉลี่ย/คน</div><div class="rc-value">${Layout.money(totalCommission / items.length)}</div></div>
+              <div class="report-card warning"><div class="rc-label">รายการที่ระบุพนักงาน</div><div class="rc-value">${totalLines}</div></div>
             </div>
             ${items.map(s => `
               <div class="commission-card">
                 <div class="cc-header">
                   <div class="cc-name">${Layout.esc(s.staffName || 'พนักงาน ' + (s.staffId||'').slice(0,8))}</div>
                   <div style="display:flex;align-items:center;gap:12px;">
-                    <div class="cc-total">${Layout.money(s.totalCommission)}</div>
+                    <div class="cc-total">${Layout.money(s.netSales || 0)}</div>
                     <button class="btn btn-sm btn-secondary"
                       onclick="Page.openCommissionDetail('${s.staffId}','${Layout.jsArg(s.staffName||'')}')">
                       🔍 ดูรายละเอียด
                     </button>
                   </div>
                 </div>
-                ${s.activitiesNeedingTypeReview ? `<div class="text-xs" style="color:#b45309;margin-bottom:6px">⚠️ ${s.activitiesNeedingTypeReview} กิจกรรมมาจากขั้นตอนบริการที่ประเภทคอมมิชชันต้องตรวจ — ยอดคอมอาจคิดกลับด้าน (คงที่ ↔ เปอร์เซ็นต์) · ตรวจที่หน้าแพ็คเกจบริการก่อนจ่ายคอม</div>` : ''}
                 <div class="cc-detail">
-                  <span>ออเดอร์: ${s.orderCount || '-'}</span>
-                  <span>รายการ: ${s.totalActivities || s.serviceCount || '-'}</span>
-                  <span>ยอดขาย: ${Layout.money(s.totalSales || 0)}</span>
+                  <span>รายการ: ${s.lineCount || 0}</span>
+                  <span>ยอดขายสุทธิก่อน VAT: ${Layout.money(s.netSales || 0)}</span>
                 </div>
               </div>
             `).join('')}

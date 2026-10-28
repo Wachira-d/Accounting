@@ -43,6 +43,22 @@ public static class CourseCreditMath
     }
 
     /// <summary>breakage ตอนหมดอายุ — ส่วนคงเหลือทั้งหมดในหนี้สิน (ไม่ติดลบ)</summary>
+    /// <summary>สัญญาที่ยังมีผลหลังคืนเงินบางส่วน (R-38) = สัญญา − คืนแล้ว · ต้องส่งเข้า <see cref="RecognizeOnUse"/>/<see cref="BreakageAmount"/>/<see cref="PricePerCredit"/>
+    /// ทุกจุด (บัตรที่ไม่เคยคืน = สัญญาเดิมทุกสตางค์)</summary>
+    public static decimal EffectiveContract(decimal contractAmount, decimal refundedAmount)
+        => Math.Max(0m, contractAmount - Math.Max(0m, refundedAmount));
+
+    /// <summary>หน่วยนับเล็กสุดของเครดิต — ครั้ง = 1 · ชั่วโมง = 0.25 (15 นาที)</summary>
+    public static decimal CreditStep(CreditUnit unit) => unit == CreditUnit.Hour ? 0.25m : 1m;
+
+    /// <summary>เครดิตที่ลดได้จากยอดคืน <paramref name="net"/> = floor(ยอด ÷ ราคาต่อเครดิต) ปัดลงเป็นพหุคูณของ <see cref="CreditStep"/> · ราคา ≤ 0 ⇒ 0</summary>
+    public static decimal CreditsRefundable(decimal net, decimal pricePerCredit, CreditUnit unit)
+    {
+        if (net <= 0m || pricePerCredit <= 0m) return 0m;
+        var step = CreditStep(unit);
+        return Math.Floor(net / pricePerCredit / step) * step;
+    }
+
     public static decimal BreakageAmount(decimal contractAmount, decimal recognizedBefore)
         => Math.Max(0m, contractAmount - recognizedBefore);
 

@@ -7751,6 +7751,8 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "ProductModifierOptions" ADD COLUMN IF NOT EXISTS "ExtraLeadDays" integer NOT NULL DEFAULT 0;""",
         """ALTER TABLE "SiteProducts" ADD COLUMN IF NOT EXISTS "LeadTimeDays" integer NULL;""",
         """ALTER TABLE "SiteProducts" ADD COLUMN IF NOT EXISTS "WeightKg" numeric(12,3) NULL;""",
+        // รอบ 205 W6 (R-41 B2): สินค้าบนเว็บที่ขายเป็นคอร์ส/บัตรเครดิต (CourseCreditOnlineSale)
+        """ALTER TABLE "SiteProducts" ADD COLUMN IF NOT EXISTS "CreditPackageId" uuid NULL;""",
         """ALTER TABLE "SiteCartItems" ADD COLUMN IF NOT EXISTS "ModifierSelectionsJson" text NULL;""",
         """ALTER TABLE "SiteCartItems" ADD COLUMN IF NOT EXISTS "ExtraLeadDays" integer NOT NULL DEFAULT 0;""",
         """ALTER TABLE "SiteOrderLines" ADD COLUMN IF NOT EXISTS "ModifierSelectionsJson" text NULL;""",

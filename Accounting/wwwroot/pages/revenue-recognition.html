@@ -191,8 +191,19 @@ const Page = {
       // backend คืน DeferredRevenueReportResponse: { totalDeferred, totalRecognized, byContract: [{contractName, contactName, contractValue, recognized, deferred}] }
       const items = res.data?.byContract || [];
       const content = document.getElementById('deferredContent');
-      content.innerHTML = items.length ? `<div class="table-container"><table class="table"><thead><tr><th>สัญญา</th><th>ลูกค้า</th><th class="text-right">มูลค่าสัญญา</th><th class="text-right">รับรู้แล้ว</th><th class="text-right">รอรับรู้</th></tr></thead>
-      <tbody>${items.map(d => `<tr><td class="font-medium">${Layout.esc(d.contractName||'-')}</td><td>${Layout.esc(d.contactName||'-')}</td><td class="text-right">${Layout.money(d.contractValue)}</td><td class="text-right">${Layout.money(d.recognized)}</td><td class="text-right text-primary font-medium">${Layout.money(d.deferred)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>';
+      // รอบ 205 W6 (R-40): JE REV-* เดิมที่ลงผังกลุ่ม 218 "ค่าใช้จ่ายบุคลากรค้างจ่าย" ผิดกลุ่ม — รายงานอ่านอย่างเดียว · ระบบไม่แก้ JE ที่ลงแล้ว (นักบัญชีออก JE ปรับปรุง)
+      let auditHtml = '';
+      try {
+        const audit = (await api.getDeferredAccountAudit()).data;
+        if (audit && audit.count > 0)
+          auditHtml = `<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px">
+            <strong>⚠️ ตรวจพบ JE รับรู้รายได้ ${audit.count} รายการ (${Layout.money(audit.totalAmount)}) ที่ลงผังกลุ่ม 218 "ค่าใช้จ่ายบุคลากรค้างจ่าย"</strong> — ผังรายได้รับล่วงหน้าที่ถูกคือกลุ่ม 217 (21713) ·
+            ระบบไม่แก้ JE ที่ลงแล้ว ให้ออก JE ปรับปรุง (Dr 218xx / Cr 217xx) ตามรายการนี้ · การรับรู้ใหม่ตั้งแต่รอบนี้ลง 217 แล้ว
+            <div style="margin-top:8px;max-height:200px;overflow:auto"><table class="table table-sm" style="font-size:12px"><thead><tr><th>JE</th><th>วันที่</th><th>ผังที่ลง</th><th class="text-right">ยอด</th></tr></thead>
+            <tbody>${audit.rows.map(r => `<tr><td>${Layout.esc(r.entryNumber)}</td><td>${Layout.date(r.entryDate)}</td><td>${Layout.esc(r.accountCode)} ${Layout.esc(r.accountName)}</td><td class="text-right">${Layout.money(r.amount)}</td></tr>`).join('')}</tbody></table></div></div>`;
+      } catch (e) { auditHtml = `<p class="text-danger" style="font-size:12px">ตรวจผังรายได้รับล่วงหน้าไม่สำเร็จ: ${Layout.esc(e.message)}</p>`; }
+      content.innerHTML = auditHtml + (items.length ? `<div class="table-container"><table class="table"><thead><tr><th>สัญญา</th><th>ลูกค้า</th><th class="text-right">มูลค่าสัญญา</th><th class="text-right">รับรู้แล้ว</th><th class="text-right">รอรับรู้</th></tr></thead>
+      <tbody>${items.map(d => `<tr><td class="font-medium">${Layout.esc(d.contractName||'-')}</td><td>${Layout.esc(d.contactName||'-')}</td><td class="text-right">${Layout.money(d.contractValue)}</td><td class="text-right">${Layout.money(d.recognized)}</td><td class="text-right text-primary font-medium">${Layout.money(d.deferred)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="text-gray-400 text-center" data-i18n="common.noData">ไม่มีข้อมูล</p>');
     } catch (err) { document.getElementById('deferredContent').innerHTML = `<p class="text-danger">${Layout.esc(err.message)}</p>`; }
   },
 };

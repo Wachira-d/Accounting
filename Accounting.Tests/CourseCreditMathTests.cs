@@ -182,4 +182,42 @@ public class CourseCreditMathTests
         Assert.Equal(c, CourseCreditMath.PickTrainer(order, new Dictionary<Guid, int> { [c] = 5 }, new HashSet<Guid> { a, b }));
         Assert.Null(CourseCreditMath.PickTrainer(order, new Dictionary<Guid, int>(), new HashSet<Guid> { a, b, c }));
     }
+
+    // ===== R-38 คืนเงินบางส่วน (รอบ 205 W6) =====
+
+    [Fact]
+    public void สัญญาที่มีผลหลังคืนบางส่วน_ลดตามยอดคืน_ไม่ติดลบ_และบัตรไม่เคยคืนเท่าเดิม()
+    {
+        Assert.Equal(4205.61m, CourseCreditMath.EffectiveContract(4205.61m, 0m));
+        Assert.Equal(3205.61m, CourseCreditMath.EffectiveContract(4205.61m, 1000m));
+        Assert.Equal(0m, CourseCreditMath.EffectiveContract(1000m, 1500m));
+        Assert.Equal(4205.61m, CourseCreditMath.EffectiveContract(4205.61m, -5m));   // ค่าลบไม่เพิ่มสัญญา
+    }
+
+    [Fact]
+    public void เครดิตที่ลดจากยอดคืน_ปัดลงเป็นหน่วยนับ_ครั้งเต็ม_ชั่วโมงขั้น15นาที()
+    {
+        Assert.Equal(2m, CourseCreditMath.CreditsRefundable(1000m, 420.56m, CreditUnit.Session));
+        Assert.Equal(0m, CourseCreditMath.CreditsRefundable(100m, 420.56m, CreditUnit.Session));
+        Assert.Equal(3.25m, CourseCreditMath.CreditsRefundable(1000m, 300m, CreditUnit.Hour));
+        Assert.Equal(0m, CourseCreditMath.CreditsRefundable(1000m, 0m, CreditUnit.Session));   // ราคา 0 = ไม่รู้ ⇒ ไม่ลด
+        Assert.Equal(1m, CourseCreditMath.CreditStep(CreditUnit.Session));
+        Assert.Equal(0.25m, CourseCreditMath.CreditStep(CreditUnit.Hour));
+    }
+
+    [Fact]
+    public void หลังคืนบางส่วน_การรับรู้ที่เหลือใช้สัญญาที่มีผล_รวมแล้วเท่าสัญญาหักยอดคืน()
+    {
+        // 10 ครั้ง 4,205.61 · ใช้ 4 (1,682.24) · คืน 2 เครดิต 1,000 ⇒ สัญญาที่มีผล 3,205.61 · เครดิตทั้งหมด 8 · เหลือใช้ 4
+        var effective = CourseCreditMath.EffectiveContract(4205.61m, 1000m);
+        decimal used = 4m, recognized = 1682.24m, sum = 0m;
+        for (var i = 0; i < 4; i++)
+        {
+            var a = CourseCreditMath.RecognizeOnUse(effective, 8m, used, recognized, 1m);
+            sum += a; used += 1m; recognized += a;
+        }
+        Assert.Equal(1523.37m, sum);                         // 3,205.61 − 1,682.24
+        Assert.Equal(effective, recognized);                 // รับรู้ครบ = สัญญาที่มีผล · 21713 ของบัตร = 0
+        Assert.Equal(0m, CourseCreditMath.BreakageAmount(effective, recognized));
+    }
 }

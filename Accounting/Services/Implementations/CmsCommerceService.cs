@@ -96,8 +96,11 @@ public class CmsCommerceService : ICmsCommerceService
             MetaDescription = request.MetaDescription,
             LeadTimeDays = ValidLeadTime(request.LeadTimeDays),
             WeightKg = ValidWeight(request.WeightKg),
+            // รอบ 205 W6 (R-41 B2): สินค้าคอร์ส — ใบเดียว = บัตรเดียว ⇒ สั่งได้ครั้งละ 1 (CourseCreditOnlineSale)
+            CreditPackageId = request.CreditPackageId,
             CreatedBy = userId
         };
+        sp.MaxOrderQuantity = CourseCreditOnlineSale.MaxOrderQuantityFor(sp.CreditPackageId, sp.MaxOrderQuantity);
 
         _db.SiteProducts.Add(sp);
 
@@ -151,6 +154,10 @@ public class CmsCommerceService : ICmsCommerceService
         else if (request.LeadTimeDays.HasValue) sp.LeadTimeDays = ValidLeadTime(request.LeadTimeDays);
         if (request.ClearWeight) sp.WeightKg = null;
         else if (request.WeightKg.HasValue) sp.WeightKg = ValidWeight(request.WeightKg);
+        // รอบ 205 W6 (R-41 B2): ขายเป็นคอร์ส — null = ไม่เปลี่ยน · ClearCreditPackage = เลิก · ตั้งแล้วสั่งได้ครั้งละ 1
+        if (request.ClearCreditPackage) sp.CreditPackageId = null;
+        else if (request.CreditPackageId.HasValue) sp.CreditPackageId = request.CreditPackageId;
+        sp.MaxOrderQuantity = CourseCreditOnlineSale.MaxOrderQuantityFor(sp.CreditPackageId, sp.MaxOrderQuantity);
 
         sp.UpdatedBy = userId;
         await _db.SaveChangesAsync();
@@ -197,6 +204,7 @@ public class CmsCommerceService : ICmsCommerceService
                 CreatedAt = p.CreatedAt,
                 LeadTimeDays = p.LeadTimeDays,
                 WeightKg = p.WeightKg,
+                CreditPackageId = p.CreditPackageId,
             })
             .FirstOrDefaultAsync();
         if (result != null)
@@ -279,6 +287,7 @@ public class CmsCommerceService : ICmsCommerceService
                 CreatedAt = p.CreatedAt,
                 LeadTimeDays = p.LeadTimeDays,
                 WeightKg = p.WeightKg,
+                CreditPackageId = p.CreditPackageId,
             })
             .ToListAsync();
 
@@ -1090,7 +1099,8 @@ public class CmsCommerceService : ICmsCommerceService
             // เดิมใส่เฉพาะ order.Lines (สินค้า) → ตก ค่าจัดส่ง/ส่วนลด → ยอดเอกสาร ERP
             // ≠ order.TotalAmount แต่ตอนตัดชำระจ่าย order.TotalAmount → AR ค้างเศษ
             // ถาวร + รายได้เพี้ยน. เพิ่มบรรทัดค่าจัดส่ง (บวก) + ส่วนลด (ลบ) ให้ยอดตรง.
-            Lines: BuildOrderErpLines(order, storeVatRegistered),
+            // รอบ 205 W6 (R-41 B2): บรรทัดสินค้าคอร์สลงผังค่าบริการรับล่วงหน้า (21713) — จุดเชื่อมเดียวกับ CourseCreditOnlineSale (ออเดอร์ไม่มีคอร์ส = เส้นเดิม)
+            Lines: BuildOrderErpLines(order, storeVatRegistered, await CourseCreditOnlineSale.UnearnedAccountsAsync(_db, companyId, order)),
             ProjectId: null,
             BankAccountId: null,
             PaymentAccountId: null,
@@ -1143,7 +1153,8 @@ public class CmsCommerceService : ICmsCommerceService
     /// ร้อยละ 0 (§80/1 ส่งออก)" ของ ภ.พ.30 · ก่อนรอบนี้ไม่มีทางเข้าใดตั้ง <c>ShippingAmount</c> ⇒ ไม่มีออเดอร์เดิมที่ยอดภาษีเปลี่ยน</para></summary>
     // internal (ไม่ใช่ private) เพื่อให้เทสต์เรียกตรงได้ — เส้นนี้เป็นเส้นที่เงียบ
     // ที่สุดของระบบ (webhook → เอกสาร) ไม่มีใครเห็นถ้าพัง (InternalsVisibleTo อยู่ใน .csproj แล้ว)
-    internal static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order, bool vatRegistered = true)
+    internal static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order, bool vatRegistered = true,
+        IReadOnlyDictionary<Guid, Guid>? unearnedBySiteProduct = null)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
         var lines = new List<Models.DTOs.Document.DocumentLineRequest>();
@@ -1163,7 +1174,8 @@ public class CmsCommerceService : ICmsCommerceService
                 DiscountPercent: 0m,
                 VatRate: vatRegistered ? l.VatRate : 0m,
                 WithholdingTaxRate: 0m,
-                AccountId: null,
+                // สินค้าคอร์ส (R-41 B2) ⇒ ผังค่าบริการรับล่วงหน้าของแพ็กเกจ · สินค้าปกติ ⇒ null (ผังมาตรฐานเดิม)
+                AccountId: unearnedBySiteProduct != null && unearnedBySiteProduct.TryGetValue(l.SiteProductId, out var unearnedId) ? unearnedId : null,
                 ProjectId: null));
             lineGross.Add(Math.Round(l.Quantity * l.UnitPrice, 2, R));
         }

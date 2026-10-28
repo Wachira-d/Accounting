@@ -112,9 +112,9 @@
 3. **ค่าส่งตามระยะทาง (กม.)** — ระยะทางจาก client เชื่อไม่ได้ และยังไม่มีตัวหาระยะฝั่งเซิร์ฟเวอร์ (geocoder) · ใช้โซนตามจังหวัด/รหัสไปรษณีย์แทนได้
 4. **ตัวเลือกสินค้าบน POS** — `pos.html` ยังไม่แสดงกลุ่มตัวเลือก (เดิมส่ง `modifiers: []` เสมอ) และ POS ยังรับ `PriceAdjustment` จาก client ·
    ทำต่อ = หน้าต่างเลือกตัวเลือกบน POS ที่ส่งแค่ option id แล้วเซิร์ฟเวอร์คิดราคา (`ModifierSelectionRules` ตัวเดียวกัน) — ระวังบิลออฟไลน์ที่ราคาเปลี่ยนระหว่าง sync
-5. **`ServicePackage.RevenueAccountId` ไม่มีผู้อ่าน** — `PosRevenueSplit` พร้อมแล้ว · ต่อสายได้โดยตรึงบัญชีลง `PosOrderItem.RevenueAccountId` ตอนเพิ่มบรรทัดแพ็กเกจ
+5. ~~`ServicePackage.RevenueAccountId` ไม่มีผู้อ่าน~~ **ทำแล้ว (รอบ 205 W6 · R-26)** — `PosService.AddItemToOrder` ตรึงผังของแพ็กเกจลง `PosOrderItem.RevenueAccountId` ตอนเพิ่มบรรทัด (ผ่าน `EnsurePackageRevenueAccountAsync` — ผังต้องลงบัญชีได้+หมวดรายได้ · ออฟไลน์ผังเสีย ⇒ ผังมาตรฐาน + log) · JE ขาย/คืนไม่แตะ (แบ่งตาม `RevenueAccountId` ของบรรทัดอยู่แล้ว) · บิลเดิม/JE ปิดแล้วไม่เปลี่ยน · หน้าแพ็คเกจมีช่อง "บัญชีรายได้" + ป้าย "มีผลกับบิลใหม่เท่านั้น"
    (เปลี่ยน JE ของร้านที่ตั้งค่าไว้ — ต้องให้เจ้าของยืนยันก่อน)
-6. **`StaffCommissionSummaries` ไม่มีผู้เขียน** (แท็บค่าคอมใน `pos-reports.html` ว่างเสมอ) — แทนได้ด้วยรายงาน `reports/staff-sales` + ค่าคอมต่อขั้นตอน
+6. ~~`StaffCommissionSummaries` ไม่มีผู้เขียน~~ **ทำแล้ว (รอบ 205 W6 · R-27)** — แท็บคอมมิชชันใน `pos-reports.html` อ่าน `GET pos/reports/staff-sales` (ยอดขายสุทธิก่อน VAT ตามพนักงาน · `PosStaffAttribution`) · ปุ่ม "ดูรายละเอียด" ยังอ่าน `commission-detail` (กิจกรรมจริง `PosServiceActivity`) · ตาราง/endpoint `commission-summary` คง schema แต่หน้าไม่อ่านอีก
 7. **หน้าจัดการการจองบนเว็บ (CMS)** ยังไม่มีช่องเลือกช่าง — ช่างถูกบันทึกจากคิว POS ตอนเปิดบิล (`SiteBooking.AssignedStaffId`)
 8. **ล้างรูปตัวอย่างของตะกร้าที่ไม่ได้สั่ง** (ฝ่ายค้านข้อ 4) — รูปที่แนบแล้วไม่สั่งค้าง `EntityId = cartId` ตลอดไป · ทำ = งานเบื้องหลังผ่าน `Helpers/JobLock`
    ลบไฟล์ชนิด `SiteOrder` ที่ `EntityId` ไม่ใช่คำสั่งซื้อและอายุเกิน N วัน (เช่น 14) · ตอนนี้กันปริมาณด้วย ≤ 10 รูป/ตะกร้า + จำกัด 10/นาที · 60/วัน ต่อ IP ต่อไซต์

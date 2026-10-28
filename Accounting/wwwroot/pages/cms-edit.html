@@ -592,6 +592,11 @@
             </div>
           </div>
           <div style="font-size:12px;color:var(--gray-500);margin:-6px 0 12px">ตัวเลือกสินค้า (ขนาด · ข้อความบนเค้ก · อัปโหลดรูป ฯลฯ) ตั้งที่หน้า "ตัวเลือกเพิ่มเติม" แล้วผูกกับสินค้านี้</div>
+          <!-- รอบ 205 W6 (R-41 B2 · คำตัดสินข้อ 161): ขายคอร์ส/บัตรเครดิตผ่านร้านออนไลน์ — ใบขายลง 21713 + เปิดบัตรหลังชำระ · สั่งได้ครั้งละ 1 -->
+          <div class="form-group">
+            <label class="form-label">ขายเป็นคอร์ส/บัตรเครดิต <span style="font-size:11px;color:var(--gray-500)">(ว่าง = สินค้าปกติ · เลือกแพ็กเกจ = ใบขายลง "ค่าบริการรับล่วงหน้า" และระบบเปิดบัตรให้ลูกค้าหลังชำระ · สั่งได้ครั้งละ 1)</span></label>
+            <select class="form-select" id="prdCreditPackage"><option value="">-- ไม่ใช่คอร์ส --</option></select>
+          </div>
           <div class="form-group">
             <label class="form-label">URL ภาพหลัก</label>
             <input type="text" class="form-input" id="prdImageUrl">
@@ -2323,6 +2328,7 @@
           }
         };
         ['prdDisplayName','prdDisplayNameEn','prdSlug','prdShortDesc','prdPrice','prdComparePrice','prdImageUrl','prdLeadTime','prdWeight'].forEach(id => document.getElementById(id).value = '');
+        await this._loadCreditPackageOptions('');
         document.getElementById('prdVisible').checked = true;
         document.getElementById('prdFeatured').checked = false;
         document.getElementById('prdSubTabs').style.display = 'none';
@@ -2330,6 +2336,24 @@
         Layout.openModal('productModal');
         setTimeout(() => this._initPrdDescEditor(), 50);
         if (this._prdDescQuill) this._prdDescQuill.root.innerHTML = '';
+      },
+
+      /** รายการแพ็กเกจคอร์สของบริษัท (หน้า "คอร์ส & เครดิต") สำหรับช่อง "ขายเป็นคอร์ส" — โหลดไม่ได้ = ช่องยังมีค่าที่เลือกไว้ (ไม่ล้างค่าเงียบ ๆ) */
+      async _loadCreditPackageOptions(selected) {
+        const sel = document.getElementById('prdCreditPackage');
+        if (!sel) return;
+        const api = Layout.api();
+        let pkgs = this._creditPackages;
+        if (!pkgs && api) {
+          try { pkgs = (await api.getCreditPackages()).data || []; this._creditPackages = pkgs; }
+          catch (e) { pkgs = []; }
+        }
+        pkgs = pkgs || [];
+        const known = pkgs.some(p => p.id === selected);
+        sel.innerHTML = '<option value="">-- ไม่ใช่คอร์ส --</option>'
+          + pkgs.map(p => `<option value="${p.id}">${Layout.esc(p.name)} — ${p.creditQuantity} ${Layout.esc(p.unitLabel || '')} · ฿${Number(p.price || 0).toLocaleString('th-TH')}</option>`).join('')
+          + (selected && !known ? `<option value="${Layout.esc(selected)}">(แพ็กเกจที่เลือกไว้ — โหลดรายชื่อไม่สำเร็จ)</option>` : '');
+        sel.value = selected || '';
       },
 
       openEditProduct(id) {
@@ -2347,6 +2371,7 @@
         document.getElementById('prdComparePrice').value = p.compareAtPrice ?? '';
         document.getElementById('prdLeadTime').value = p.leadTimeDays ?? '';
         document.getElementById('prdWeight').value = p.weightKg ?? '';
+        this._loadCreditPackageOptions(p.creditPackageId || '');
         document.getElementById('prdImageUrl').value = p.featuredImageUrl || '';
         document.getElementById('prdVisible').checked = p.isVisible !== false;
         document.getElementById('prdFeatured').checked = !!p.isFeatured;
@@ -2377,11 +2402,14 @@
           isFeatured: document.getElementById('prdFeatured').checked,
           // สินค้าตามสั่ง — ว่างตอนแก้ไข = ล้างค่า (ไม่ใช่ "ไม่เปลี่ยน" เงียบ ๆ)
           leadTimeDays: Layout.intOrNull('prdLeadTime'),
-          weightKg: Layout.numOrNull('prdWeight')
+          weightKg: Layout.numOrNull('prdWeight'),
+          // คอร์ส (R-41 B2) — ว่างตอนแก้ไข = เลิกขายเป็นคอร์ส (clearCreditPackage) ไม่ใช่ "ไม่เปลี่ยน" เงียบ ๆ
+          creditPackageId: document.getElementById('prdCreditPackage').value || null
         };
         if (id) {
           body.clearLeadTime = body.leadTimeDays == null;
           body.clearWeight = body.weightKg == null;
+          body.clearCreditPackage = body.creditPackageId == null;
         }
         try {
           if (id) await api.cmsUpdateProduct(this.siteId, id, body);

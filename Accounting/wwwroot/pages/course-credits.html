@@ -357,9 +357,29 @@
           const active = p.status === 'Active';
           document.getElementById('passFooter').innerHTML = `
             ${active && p.warning ? `<button class="btn btn-secondary" onclick="Page.expirePass('${p.id}')">ปิดบัตรหมดอายุ</button>` : ''}
+            ${active && p.deferredBalance > 0 && p.saleDocumentId ? `<button class="btn btn-secondary" onclick="Page.refundDraft('${p.id}')">ออกใบลดหนี้คืนเงิน (ร่าง)</button>` : ''}
             ${active ? `<button class="btn btn-primary" onclick="Page.openOne()">จองตัวต่อตัว</button>` : ''}
             <button class="btn btn-secondary" onclick="Layout.closeModal('passModal')">ปิด</button>`;
           Layout.openModal('passModal');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // R-38 คืนเงินบางส่วน/ทั้งหมดจากบัตร — ระบบสร้าง "ใบร่าง" ใบลดหนี้ · ผู้มีสิทธิ์อนุมัติที่หน้าเอกสาร (ไม่อนุมัติเองจากตรงนี้) · ตัวเลขทั้งหมด server คำนวณ
+      async refundDraft(id) {
+        try {
+          const pv = (await API.get(`${this.base()}/passes/${id}/refund-preview`)).data;
+          const hint = `ส่วนที่ยังไม่ใช้ ${Layout.money(pv.deferred)} บาท (สุทธิก่อน VAT) · ราคาต่อเครดิต ${Layout.money(pv.pricePerCredit)}\n`
+            + (pv.maxPartialCredits > 0 ? `คืนบางส่วนได้ไม่เกิน ${pv.maxPartialCredits} เครดิต (${Layout.money(pv.maxPartialAmount)} บาท) · ` : '')
+            + (pv.hasReservations ? 'มีการจองค้าง — คืนทั้งส่วนที่เหลือต้องปิดการจองก่อน\n' : `คืนทั้งส่วนที่เหลือ ${Layout.money(pv.deferred)} = ปิดบัตร\n`)
+            + '\nระบุยอดคืน (บาท สุทธิก่อน VAT):';
+          const raw = prompt(hint, pv.deferred);
+          if (raw == null) return;
+          const amount = parseFloat(raw);
+          if (!(amount > 0)) { Layout.toast('ยอดคืนต้องมากกว่า 0', 'error'); return; }
+          const r = await API.post(`${this.base()}/passes/${id}/refund-draft`, { amountNet: amount, credits: null, note: null });
+          Layout.toast(r.message || r.data.message, 'success');
+          if (confirm(`${r.data.message}\n\nเปิดหน้าเอกสารเพื่อตรวจ/อนุมัติใบ ${r.data.documentNumber} เลยไหม?`))
+            window.location.href = `/pages/documents.html?id=${r.data.documentId}`;
+          else await this.refreshAfterBooking();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       bookingActions(b) {

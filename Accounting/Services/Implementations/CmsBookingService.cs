@@ -14,16 +14,19 @@ public partial class CmsBookingService : ICmsBookingService
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsBookingService> _logger;
     private readonly IDocumentService? _docService;
-    /// <summary>ช่องส่งข้อความถึงลูกค้า (แจ้งได้คิว · รอบ 205 W3 — <c>CmsBookingService.Notify.cs</c>) · null = ไม่ส่ง (เทสต์/ไม่ได้ลงทะเบียน) — job ส่งซ้ำให้ภายหลัง</summary>
+    /// <summary>ช่องส่งข้อความถึงลูกค้า (แจ้งได้คิว · รอบ 205 W3 — <c>CmsBookingService.Notify.cs</c>) · null = ไม่ส่ง</summary>
     private readonly IBookingNotifier? _notifier;
+    // รอบ 205 W6 (R-39): สายต่อบัตรคอร์ส — ดู CmsBookingService.Credits.cs · null = ไม่เปิดใช้ (การจองปกติไม่แตะ)
+    private readonly ICreditBookingLedger? _creditLedger;
 
     public CmsBookingService(AccountingDbContext db, ILogger<CmsBookingService> logger,
-        IDocumentService? docService = null, IBookingNotifier? notifier = null)
+        IDocumentService? docService = null, IBookingNotifier? notifier = null, ICreditBookingLedger? creditLedger = null)
     {
         _db = db;
         _logger = logger;
         _docService = docService;
         _notifier = notifier;
+        _creditLedger = creditLedger;
     }
 
     // ===== Services =====
@@ -695,8 +698,12 @@ public partial class CmsBookingService : ICmsBookingService
                 booking.ConfirmedAt = DateTime.UtcNow;
             }
 
+            // R-39: จ่ายด้วยบัตรคอร์ส ⇒ ยอดเงิน 0 + กันเครดิตในธุรกรรมเดียวกับ Decide (ล้ม = ไม่มีการจอง) — CmsBookingService.Credits.cs
+            var creditContactId = await PrepareCreditBookingAsync(companyId, booking, request);
             _db.SiteBookings.Add(booking);
             await _db.SaveChangesAsync();
+            if (creditContactId is Guid creditCid)
+                await HoldCreditForBookingAsync(companyId, svc, booking, creditCid, request.CreditPassId, total, userId);
             await tx.CommitAsync();
         }
 
@@ -708,7 +715,9 @@ public partial class CmsBookingService : ICmsBookingService
         // การจองสำเร็จเสมอ + ล้มดัง: หมายเหตุบนการจอง + log Error + ErpNotices ในคำตอบ (ถอยของครึ่งทางออกจาก context ก่อนบันทึกหมายเหตุ)
         var createNotices = new List<string>();
         // คิวสำรองยังไม่มีบริการให้ ⇒ ไม่ออกเอกสารจนกว่าจะถูกเลื่อนขึ้น (ทีม B)
-        if (svc.BookingType != BookingType.Lead && booking.Status != BookingStatus.Waitlisted)
+        // R-39: การจองที่จ่ายด้วยบัตรคอร์สไม่ออกเอกสาร ERP (รายได้มาจาก JE รับรู้ของบัตร — CreditBookingLink.ShouldSyncErp)
+        if (svc.BookingType != BookingType.Lead && booking.Status != BookingStatus.Waitlisted
+            && CreditBookingLink.ShouldSyncErp(request.PayWithCredit))
         {
             try { await SyncBookingToErpAsync(companyId, siteId, booking.Id); }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -846,7 +855,11 @@ public partial class CmsBookingService : ICmsBookingService
 
         var notices = new List<string>();       // ตอบผู้กด (BookingResponse.ErpNotices)
         var bookingNotes = new List<string>();  // ประทับบนการจอง (InternalNotes) — ผู้เปิดดูทีหลังเห็น
-        if (_docService != null && booking.ErpDocumentId is Guid erpDocId)
+        // R-39: การจองที่จ่ายด้วยบัตรคอร์ส ⇒ ปรับสมุดเครดิต (ตัด/คืน) แทนเส้นเอกสาร ERP/tax point ของบริการ — CmsBookingService.Credits.cs
+        var paidWithCredit = await IsPaidWithCreditAsync(companyId, bookingId);
+        if (paidWithCredit)
+            await SettleCreditOnStatusAsync(companyId, bookingId, oldStatus, request.Status, userId, notices, bookingNotes);
+        if (!paidWithCredit && _docService != null && booking.ErpDocumentId is Guid erpDocId)
         {
             if (request.Status == BookingStatus.Completed)
             {
@@ -870,7 +883,8 @@ public partial class CmsBookingService : ICmsBookingService
         }
         // คำตัดสินข้อ 155: ให้บริการเสร็จ = tax point (§78/1) ของ Guaranteed ที่ยังไม่มีใบกำกับ (รวมการจองที่ไม่มีเอกสารผูกเพราะขั้น ERP ตอนจองล้ม) ·
         // ไม่มา ⇒ ไม่ออกใบกำกับเอง แต่บอกทางไปต่อ — ตัดสินที่ BookingInvoiceTimingPolicy (เมธอดออกเองเมื่อไม่มีเส้นเอกสาร)
-        if (request.Status == BookingStatus.Completed && oldStatus != BookingStatus.Completed)
+        if (paidWithCredit) { /* ภาษีขายเกิดครบตอนขายคอร์ส (§78/1) — ไม่เดิน tax point ของบริการซ้ำ */ }
+        else if (request.Status == BookingStatus.Completed && oldStatus != BookingStatus.Completed)
             await ApplyInvoiceTimingAsync(companyId, siteId, bookingId, BookingInvoiceEvent.ServiceCompleted, userId, notices, bookingNotes);
         else if (request.Status == BookingStatus.NoShow && oldStatus != BookingStatus.NoShow)
             await ApplyInvoiceTimingAsync(companyId, siteId, bookingId, BookingInvoiceEvent.NoShow, userId, notices, bookingNotes);
@@ -1182,7 +1196,9 @@ public partial class CmsBookingService : ICmsBookingService
         var type = await _db.SiteBookings.AsNoTracking()
             .Where(b => b.Id == bookingId && b.CompanyId == companyId && b.SiteId == siteId)
             .Select(b => (BookingType?)b.BookingService.BookingType).FirstOrDefaultAsync();
-        if (type is BookingType t && t != BookingType.Lead) await SyncBookingToErpAsync(companyId, siteId, bookingId);
+        if (type is BookingType t && t != BookingType.Lead
+            && CreditBookingLink.ShouldSyncErp(await IsPaidWithCreditAsync(companyId, bookingId)))
+            await SyncBookingToErpAsync(companyId, siteId, bookingId);
     }
 
     /// <summary>ให้บริการเสร็จ + เอกสาร ERP เป็นมัดจำ → รับรู้รายได้จากมัดจำ (ตัด 217xx ขายรอรับรู้ → รายได้) ตามนโยบาย
@@ -1309,6 +1325,7 @@ public partial class CmsBookingService : ICmsBookingService
         if (resp != null) resp.CanAssignResource = CanAssignResource(resp.ResourceMode, resp.Status, resp.BookingDate, resp.StartTime);
         if (resp != null && resp.Status == BookingStatus.Waitlisted)
             resp.WaitlistPosition = (await WaitlistPositionsAsync(companyId, siteId, new[] { resp.Id })).GetValueOrDefault(resp.Id);
+        if (resp != null) resp.CreditPassNumber = await CreditPassNumberAsync(companyId, resp.Id);   // R-39
         // ปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี": ตัวตัดสินเดียวกับตอนกดจริง (server ตัดสิน · หน้าเว็บแสดง) · โหลดข้อเท็จจริงเฉพาะการจองที่เป็นไปได้
         // (Guaranteed ที่ผูกใบยืนยันการจอง หรือยังไม่มีเอกสาร) ⇒ โหมด (ก) ไม่มี query เพิ่ม + หน้าจอเดิม (ฝ่ายค้าน ข้อ 6)
         if (resp != null && resp.BookingType == BookingType.Guaranteed

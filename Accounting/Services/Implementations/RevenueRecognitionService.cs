@@ -337,14 +337,17 @@ public class RevenueRecognitionService : IRevenueRecognitionService
             if (int.TryParse(lastPart, out var parsed)) revSeq = parsed + 1;
         }
 
-        var deferredRevenueAccount = await _db.ChartOfAccounts.DefaultPostingCandidates(_db)
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "21810")
-            ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db)
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("218"));
+        // รอบ 205 ทีม W6 (R-40 · COURSE_CREDIT_DESIGN B6): เดิมหา 21810 (ไม่มีในผังมาตรฐาน) แล้ว fallback StartsWith("218") = กลุ่ม
+        // "ค่าใช้จ่ายบุคลากรค้างจ่าย" ⇒ JE รับรู้รายได้ไป Dr เงินเดือนค้างจ่ายเงียบ ๆ · ตัวตัดสินเดียว Helpers/DeferredRevenueAccount (กลุ่ม 217) ·
+        // ไม่พบ/กำกวม ⇒ ล้มดัง (ไม่ลงผังที่ความหมายผิด · ไม่สร้าง JE ขาข้างเดียว)
+        var deferredRevenueAccountId = await ResolveDeferredRevenueAccountIdAsync(companyId);
         var revenueAccount = await _db.ChartOfAccounts.DefaultPostingCandidates(_db)
             .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == "41100")
             ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db)
-            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("411"));
+            .FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode.StartsWith("411"))
+            ?? throw new Accounting.Helpers.BusinessRuleException(
+                "ไม่พบผังรายได้ 41100 (กลุ่ม 411) ในผังบัญชีของบริษัท — เพิ่ม/เปิดใช้ผังก่อนแล้วรับรู้รายได้ใหม่",
+                Accounting.Helpers.DeferredRevenueAccount.RuleCode);
 
         var entry = new JournalEntry
         {
@@ -359,24 +362,22 @@ public class RevenueRecognitionService : IRevenueRecognitionService
             ProjectId = projectId
         };
 
-        if (deferredRevenueAccount != null)
-            entry.Lines.Add(new JournalEntryLine
-            {
-                AccountId = deferredRevenueAccount.Id,
-                DebitAmount = schedule.Amount,
-                CreditAmount = 0,
-                Description = "รายได้รอตัดบัญชี",
-                ProjectId = projectId
-            });
-        if (revenueAccount != null)
-            entry.Lines.Add(new JournalEntryLine
-            {
-                AccountId = revenueAccount.Id,
-                DebitAmount = 0,
-                CreditAmount = schedule.Amount,
-                Description = "รับรู้รายได้",
-                ProjectId = projectId
-            });
+        entry.Lines.Add(new JournalEntryLine
+        {
+            AccountId = deferredRevenueAccountId,
+            DebitAmount = schedule.Amount,
+            CreditAmount = 0,
+            Description = "รายได้รับล่วงหน้า (ตัดเข้ารายได้)",
+            ProjectId = projectId
+        });
+        entry.Lines.Add(new JournalEntryLine
+        {
+            AccountId = revenueAccount.Id,
+            DebitAmount = 0,
+            CreditAmount = schedule.Amount,
+            Description = "รับรู้รายได้",
+            ProjectId = projectId
+        });
 
         _db.JournalEntries.Add(entry);
 
@@ -440,6 +441,38 @@ public class RevenueRecognitionService : IRevenueRecognitionService
     }
 
     // ===== Reports =====
+
+    /// <summary>ผังรายได้รับล่วงหน้าของบริษัท — ตัวตัดสินเดียว <see cref="Accounting.Helpers.DeferredRevenueAccount.Pick"/> (21713 → ผังเดียวในกลุ่ม 217) ·
+    /// ไม่พบ/กำกวม ⇒ <see cref="Accounting.Helpers.BusinessRuleException"/> พร้อมทางไปต่อ (ไม่ fallback prefix 218)</summary>
+    private async Task<Guid> ResolveDeferredRevenueAccountIdAsync(Guid companyId)
+    {
+        var postable = await _db.ChartOfAccounts.DefaultFallbackCandidates(_db)
+            .Where(a => a.CompanyId == companyId && a.IsActive && a.AccountType == AccountType.Liability
+                        && a.AccountCode.StartsWith(Accounting.Helpers.DeferredRevenueAccount.GroupPrefix))
+            .Select(a => new Accounting.Helpers.DeferredRevenueAccount.Candidate(a.Id, a.AccountCode, a.AccountType))
+            .ToListAsync();
+        return Accounting.Helpers.DeferredRevenueAccount.Pick(postable)
+            ?? throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.DeferredRevenueAccount.MissingMessage(Accounting.Helpers.DeferredRevenueAccount.GroupCandidateCount(postable)),
+                Accounting.Helpers.DeferredRevenueAccount.RuleCode);
+    }
+
+    /// <summary>รายงานตรวจข้อมูล (อ่านอย่างเดียว · R-40): JE รับรู้รายได้ตามสัญญา (REV-*) เดิมที่ Dr ผังกลุ่ม 218 "ค่าใช้จ่ายบุคลากรค้างจ่าย" —
+    /// ให้นักบัญชีออก JE ปรับปรุงเอง (ระบบไม่แก้ JE ที่ลงแล้ว)</summary>
+    public async Task<DeferredAccountAuditResponse> GetDeferredAccountAuditAsync(Guid companyId)
+    {
+        var rows = await (from l in _db.JournalEntryLines.AsNoTracking()
+                          join j in _db.JournalEntries.AsNoTracking() on l.JournalEntryId equals j.Id
+                          join a in _db.ChartOfAccounts.AsNoTracking() on l.AccountId equals a.Id
+                          where j.CompanyId == companyId && !j.IsDeleted && j.EntryNumber.StartsWith("REV-")
+                                && j.Status == JournalEntryStatus.Posted && j.ReversedByEntryId == null
+                                && l.DebitAmount > 0 && a.CompanyId == companyId && a.AccountCode.StartsWith("218")
+                          orderby j.EntryDate, j.EntryNumber
+                          select new DeferredAccountAuditRow(j.Id, j.EntryNumber, j.EntryDate, l.DebitAmount, a.AccountCode, a.AccountName))
+            .ToListAsync();
+        rows = rows.Where(r => Accounting.Helpers.DeferredRevenueAccount.IsMisposted(r.AccountCode)).ToList();
+        return new DeferredAccountAuditResponse(rows.Count, rows.Sum(r => r.Amount), rows);
+    }
 
     public async Task<DeferredRevenueReportResponse> GetDeferredRevenueReportAsync(Guid companyId, DateTime asOfDate)
     {
