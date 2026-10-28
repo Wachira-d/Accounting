@@ -30,7 +30,8 @@ TYPE_DECL = re.compile(
     r"(?:class|struct|interface|enum|record)\s+(?:class\s+|struct\s+)?([A-Za-z_]\w*)", re.M)
 # โซ่ `A.B.C` เต็มสาย (≥ 2 ตอน) ที่ทุกตอนขึ้นต้นด้วยตัวใหญ่ — ต้องจับ**ทั้งสาย**
 # ไม่ใช่แค่สองตอนแรก เพราะเคสที่ราก (`Accounting`) ถูกบังต้องดูตอนกลางด้วย
-QUALIFIED = re.compile(r"(?<![\w.])([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)+)")
+# `global::A.B.C` = ชี้รากโดยตรง ไม่ถูกบัง (checker เองแนะทางนี้) ⇒ ข้าม (รอบ 206: ฟ้องผิดบน global::)
+QUALIFIED = re.compile(r"(?<![\w.:])([A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)+)")
 
 
 def build_index(files):

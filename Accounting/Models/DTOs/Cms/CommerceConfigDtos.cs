@@ -1,4 +1,5 @@
 using Accounting.Models.Enums;
+using ShipVat = Accounting.Helpers.ShippingVatAllocation;
 
 namespace Accounting.Models.DTOs.Cms;
 
@@ -170,8 +171,8 @@ public class CommerceConfigResponse
     public List<CommerceOptionValue> PaymentTermModes { get; set; } = new();
     /// <summary>ทีม Q — วิธีออกเอกสารของมัดจำที่ร้านเลือก + ตัวเลือกพร้อมคำอธิบายผลภาษี (เซิร์ฟเวอร์เป็นเจ้าของข้อความ)</summary>
     public string MtoDepositInvoicing { get; set; } = "full_at_first_payment";
-    public string ShippingVatAllocation { get; set; } = global::Accounting.Helpers.ShippingVatAllocation.MaxRate;
-    public List<global::Accounting.Helpers.ShippingVatAllocation.Option> ShippingVatAllocationOptions { get; set; } = new();
+    public string ShippingVatAllocation { get; set; } = ShipVat.MaxRate;
+    public List<ShipVat.Option> ShippingVatAllocationOptions { get; set; } = new();
     public decimal? DepositForfeitOnCancelPercent { get; set; }
     public List<CommerceOptionValue> DepositInvoicingModes { get; set; } = new();
 }
