@@ -46,6 +46,13 @@ public partial class CmsBookingService
                 .FirstOrDefaultAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("Booking not found.");
             var svc = booking.BookingService;
+            // รอบ 208 (ฝ่ายค้าน W6 ข้อ 6): การจองที่จ่ายด้วยบัตรคอร์ส — สมุดเครดิตเก็บวันเรียนไว้ (วันหมดอายุบัตร/ชั่วโมง) และยังไม่มีเส้นย้ายการกัน ⇒
+            // เลื่อนตรงนี้ไม่ได้ (เลื่อนแล้วสมุดไม่ตาม = ตัดเครดิตล้มทีหลัง) · ทางไปต่อ: ร้านยกเลิก (คืนเครดิต) แล้วจองรอบใหม่
+            if (await IsPaidWithCreditAsync(companyId, bookingId))
+                throw new BusinessRuleException(byCustomer
+                    ? "การจองนี้ชำระด้วยบัตรคอร์ส — เลื่อนออนไลน์ไม่ได้ กรุณาติดต่อร้านเพื่อเลื่อน"
+                    : "การจองนี้ชำระด้วยบัตรคอร์ส — เลื่อนนัดตรงนี้ไม่ได้ (สมุดเครดิตไม่ตาม) · ยกเลิกการจองนี้ (คืนเครดิตให้ลูกค้า) แล้วจองรอบใหม่ด้วยบัตรเดิม",
+                    RescheduleRuleCode, 409);
             if (booking.Status is not (BookingStatus.Pending or BookingStatus.Confirmed))
                 throw new BusinessRuleException($"เลื่อนนัดได้เฉพาะการจองที่รอยืนยัน/ยืนยันแล้ว (สถานะปัจจุบัน {booking.Status})", RescheduleRuleCode, 409);
             var currentStartUtc = CreditBookingLink.StartUtc(booking.BookingDate, booking.StartTime);

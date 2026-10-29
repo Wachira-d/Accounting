@@ -9,7 +9,7 @@ public enum BookingCancelKind { CustomerCancel = 1, NoShow = 2 }
 /// <param name="Fee">ค่าธรรมเนียมตามนโยบาย (รวม VAT · หน่วยราคาที่ลูกค้าเห็น) ก่อนเพดาน</param>
 /// <param name="ForfeitFromDeposit">ส่วนที่ริบจากมัดจำที่รับไว้จริง = min(Fee, มัดจำที่รับ) — คำตัดสินเจ้าของข้อ 126 (เพดาน = มัดจำ)</param>
 /// <param name="RefundDue">มัดจำที่รับไว้ − ส่วนที่ริบ ⇒ รอคืน (ศูนย์มัดจำ/ใบลดหนี้ §86/10)</param>
-/// <param name="UncollectedFee">ค่าธรรมเนียมส่วนที่เกินมัดจำ — ไม่มีเงินให้ริบ ⇒ บันทึกเป็นยอดค้างใน CRM เท่านั้น (ไม่ออกเอกสารเอง)</param>
+/// <param name="UncollectedFee">ค่าธรรมเนียมส่วนที่เกินมัดจำ — ไม่มีเงินให้ริบ ⇒ ไม่เรียกเก็บ (ข้อ 126 · แสดงเพื่อทราบเท่านั้น ไม่มีแถวยอดค้าง)</param>
 public sealed record BookingCancellationFeePlan(
     BookingCancelKind Kind, bool PolicyUndefined, bool WithinFreeWindow,
     decimal Fee, decimal ForfeitFromDeposit, decimal RefundDue, decimal UncollectedFee)
@@ -52,6 +52,24 @@ public static class BookingCancellationFee
             Fee: fee, ForfeitFromDeposit: forfeit, RefundDue: R2(paid - forfeit), UncollectedFee: R2(fee - forfeit));
     }
 
+    /// <summary>รอบ 208 (ฝ่ายค้าน W2 ข้อ 9): จำนวน/ราคาต่อหน่วยของใบส่วนที่เหลือจากราคาที่ตรึงบนการจอง — หารลงตัวต่อช่วง ⇒ (ช่วง, ราคาต่อช่วง) ·
+    /// ไม่ลงตัว ⇒ (1, ยอดรวม) · ผลคูณ = ยอดที่ตรึงเสมอ</summary>
+    public static (int Quantity, decimal UnitPrice) FrozenUnitPrice(decimal frozenTotal, int units)
+    {
+        var u = Math.Max(1, units);
+        var total = Math.Round(frozenTotal, 2, MidpointRounding.AwayFromZero);
+        var each = Math.Round(total / u, 2, MidpointRounding.AwayFromZero);
+        return each * u == total ? (u, each) : (1, total);
+    }
+
+    /// <summary>รอบ 208: ยอดรวม VAT ของฐานที่ริบจริง (ฐาน × ยอดรวม/ฐานของใบ) · ไม่เกินยอดตามแผน · ใบไม่มี VAT ⇒ เท่าฐาน</summary>
+    public static decimal GrossOfBase(decimal forfeitBase, decimal docSubTotal, decimal docTotal, decimal plannedGross)
+    {
+        if (forfeitBase <= 0m) return 0m;
+        var gross = docSubTotal > 0m ? Math.Round(forfeitBase * docTotal / docSubTotal, 2, MidpointRounding.AwayFromZero) : forfeitBase;
+        return Math.Min(gross, Math.Round(plannedGross, 2, MidpointRounding.AwayFromZero));
+    }
+
     /// <summary>ฐานก่อน VAT ของส่วนที่ริบ — ใบมัดจำเก็บ (ฐาน, VAT) แยก ⇒ ริบตามสัดส่วนฐาน/ยอดรวมของใบนั้น · ไม่เกินฐานคงค้าง</summary>
     public static decimal ForfeitBase(decimal forfeitGross, decimal depositSubTotal, decimal depositTotal, decimal remainingBase)
     {
@@ -71,7 +89,8 @@ public static class BookingCancellationFee
         if (p.Fee > 0m) parts.Add($"ค่าธรรมเนียม{(p.Kind == BookingCancelKind.NoShow ? "ไม่มาตามนัด" : "ยกเลิก")} {p.Fee:N2} บาท");
         if (p.HasForfeit) parts.Add($"หักจากมัดจำ {p.ForfeitFromDeposit:N2} บาท");
         if (p.HasRefund) parts.Add($"มัดจำส่วนที่เหลือ {p.RefundDue:N2} บาท รอคืน");
-        if (p.UncollectedFee > 0.005m) parts.Add($"ส่วนที่ยังไม่ได้ชำระ {p.UncollectedFee:N2} บาท (บันทึกเป็นยอดค้าง)");
+        // รอบ 208 (ฝ่ายค้าน W2 ข้อ 13): ไม่มีแถวยอดค้างจริง ⇒ ห้ามบอกว่า "บันทึกเป็นยอดค้าง" · ข้อ 126 ร้านไม่เรียกเก็บเกินมัดจำ
+        if (p.UncollectedFee > 0.005m) parts.Add($"ส่วนที่ยังไม่ได้ชำระ {p.UncollectedFee:N2} บาท — ร้านไม่เรียกเก็บเกินมัดจำ");
         if (parts.Count == 0) parts.Add("ไม่มีค่าธรรมเนียม");
         return string.Join(" · ", parts);
     }

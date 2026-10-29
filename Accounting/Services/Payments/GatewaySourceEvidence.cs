@@ -67,7 +67,15 @@ public static class GatewaySourceEvidence
                         && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
                     .Select(d => new SourceRecordedPayment(d.TotalAmount, d.CreatedAt, d.Reference))
                     .ToListAsync(ct);
-                if (b.PaidAmount > 0m)
+                // รอบ 208 (ฝ่ายค้าน W2 ข้อ 5): หลักฐานรายก้อน (SiteBookingPayment ที่บันทึกตอนรับเงิน) ลงเวลาที่ "บันทึก" ไม่ใช่วันที่รับเงินที่พนักงานกรอก
+                // (วันย้อนหลัง ⇒ ดูเหมือนก่อนเงินเข้า gateway ⇒ เดิมระบบรับซ้ำ) · การจองก่อนรอบ 208 ไม่มีแถว ⇒ ยอดรวมแบบเดิม
+                var rows = await db.SiteBookingPayments.AsNoTracking()
+                    .Where(p => p.CompanyId == companyId && p.BookingId == intent.SourceId && !p.IsDeleted && !p.IsRefund
+                        && p.Status == SitePaymentStatus.Completed)
+                    .Select(p => new SourceRecordedPayment(p.Amount, p.CreatedAt, p.Reference))
+                    .ToListAsync(ct);
+                if (rows.Count > 0) docs.AddRange(rows);
+                else if (b.PaidAmount > 0m)
                     docs.Add(new SourceRecordedPayment(b.PaidAmount, b.PaidAt ?? b.UpdatedAt ?? b.CreatedAt, b.PaymentReference));
                 return docs;
             }

@@ -51,6 +51,8 @@ public static class AdvisoryLockKey
 
     /// <summary>ตัด/ยกเลิกเงินมัดจำของการจอง — part = เลขการจอง (<c>BookingDepositDrawdown.ExtractKeys</c>) · ทีม S 2026-10-26</summary>
     public const string BookingDeposit = "booking-deposit";
+    /// <summary>รอบ 208: เปลี่ยนสถานะออเดอร์หน้าเว็บ (ขั้นริบมัดจำ/ใบลดหนี้ห้ามรันซ้อน) — part = orderId</summary>
+    public const string CmsOrderStatus = "cms-order-status";
     /// <summary>เลขสมุดรายวัน (JE) — part = prefix เต็มรวมเดือน เช่น "JV-202608-"</summary>
     public const string JournalSequence = "je-seq";
     /// <summary>เลขเอกสาร — part = prefix ของชนิดเอกสาร</summary>

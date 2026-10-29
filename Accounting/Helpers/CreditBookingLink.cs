@@ -23,6 +23,11 @@ public static class CreditBookingLink
     /// <summary>การจองที่จ่ายด้วยบัตรไม่ออกเอกสาร ERP (ไม่ซ้ำกับรายได้ที่รับรู้จากบัตร) — การจองอื่นเดินกติกาเดิมของเครื่องจองทุกข้อ</summary>
     public static bool ShouldSyncErp(bool paidWithCredit) => !paidWithCredit;
 
+    /// <summary>ผู้กระทำที่เป็นลูกค้าหน้าเว็บ (ยกเลิกเองผ่านลิงก์ — <c>CancelByCustomerAsync</c> ตั้ง "customer:{token}") · รอบ 208 ฝ่ายค้าน W6 ข้อ 5:
+    /// ลูกค้ายกเลิก ⇒ ใช้นโยบายยกเลิกของคอร์ส (ไม่ใช่ "ร้านยกเลิก" ที่คืนเครดิตเสมอ)</summary>
+    public const string CustomerActorPrefix = "customer:";
+    public static bool IsCustomerActor(string? actor) => actor != null && actor.StartsWith(CustomerActorPrefix, StringComparison.Ordinal);
+
     /// <summary>เปลี่ยนสถานะการจอง ⇒ ต้องทำอะไรกับสมุดเครดิต (เฉพาะการจองที่จ่ายด้วยบัตร · ผู้เรียกตรวจ <paramref name="paidWithCredit"/> ก่อน)</summary>
     public static LedgerAction ActionFor(BookingStatus oldStatus, BookingStatus newStatus, bool paidWithCredit)
     {

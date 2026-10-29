@@ -313,6 +313,8 @@ public class UpdateBookingStatusRequest
     public BookingStatus Status { get; set; }
     public string? InternalNotes { get; set; }
     public string? CancellationReason { get; set; }
+    /// <summary>รอบ 208: สถานะที่ผู้เรียกคาดว่าเป็นอยู่ (job ปล่อยรอบคิวสำรอง) · ไม่ตรงตอนถือล็อก ⇒ ไม่ทำ · null = ไม่ตรวจ</summary>
+    public BookingStatus? ExpectedCurrentStatus { get; set; }
 }
 
 public class BookingResponse

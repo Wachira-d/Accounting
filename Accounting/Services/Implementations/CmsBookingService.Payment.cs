@@ -57,8 +57,19 @@ public partial class CmsBookingService
                         PaymentRuleCode, 409);
                 if (CmsBookingOnlinePayment.ValidateAmount(amount, booking.TotalAmount, booking.PaidAmount) is string amtErr)
                     throw new BusinessRuleException(amtErr, PaymentRuleCode);
+                // รอบ 208 (ฝ่ายค้าน W2 ข้อ 10): วันรับเงิน = วันที่ใบเสร็จมัดจำ (§78/1) ⇒ ห้ามก่อนวันที่จอง (กันลงย้อนเข้างวดที่ยื่นแล้ว)
+                if (ThaiDate.CalendarDateUtc(paidAt) < ThaiDate.CalendarDateUtc(booking.CreatedAt))
+                    throw new BusinessRuleException($"วันที่รับเงินต้องไม่ก่อนวันที่จอง ({ThaiDate.CalendarDateUtc(booking.CreatedAt):dd/MM/yyyy})", PaymentRuleCode);
 
                 booking.PaidAmount = Math.Round(booking.PaidAmount + amount, 2, MidpointRounding.AwayFromZero);
+                booking.WaitlistHoldUntil = null;   // รอบ 208: รับเงินแล้ว = เลิกถือรอบ (job ปล่อยรอบไม่แตะใบที่มีเงิน)
+                // รอบ 208 (ฝ่ายค้าน W2 ข้อ 5): แถวรับเงินรายก้อน — หลักฐานของ gateway re-dispatch อ่านเวลาที่บันทึก (กันรับซ้ำเมื่อพนักงานกรอกวันย้อนหลัง)
+                _db.SiteBookingPayments.Add(new SiteBookingPayment
+                {
+                    CompanyId = companyId, BookingId = booking.Id, Amount = amount, Currency = booking.Currency,
+                    PaymentMethod = fromOnlinePayment ? PaymentMethod.Other : (request.BankAccountId != null ? PaymentMethod.BankTransfer : PaymentMethod.Cash),
+                    Reference = reference, Status = SitePaymentStatus.Completed, PaidAt = paidAt, CreatedBy = actor,
+                });
                 booking.PaymentReference = CmsBookingOnlinePayment.AppendReference(booking.PaymentReference, reference);
                 booking.PaidAt = paidAt;
                 // ครบมัดจำ = ยืนยันการจอง (PrePayment: เงินคือการยืนยัน) · คิวสำรอง/ยืนยันแล้ว ไม่แตะสถานะ
@@ -255,8 +266,19 @@ public partial class CmsBookingService
 
     public async Task<BookingResponse> CancelByCustomerAsync(Guid companyId, Guid siteId, string token, CustomerCancelBookingRequest request)
     {
-        var now = DateTime.UtcNow;
         if (string.IsNullOrWhiteSpace(token)) throw new KeyNotFoundException("Booking not found.");
+        var id = await _db.SiteBookings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && x.PublicToken == token)
+            .Select(x => (Guid?)x.Id).FirstOrDefaultAsync() ?? throw new KeyNotFoundException("Booking not found.");
+        // รอบ 208 (ฝ่ายค้าน W2 ข้อ 1 blocking): ยกเลิก + ริบมัดจำเป็นก้อนเดียวใต้ล็อกเดียวกับเส้นสถานะ — กดซ้ำ/สองแท็บพร้อมกัน ⇒
+        // คำขอที่สองเห็นสถานะยกเลิกแล้วและถูกปฏิเสธ (เดิมทั้งสองคำขอริบ ⇒ ริบ 600 แทน 300)
+        return await WithBookingSessionLockAsync(companyId, BookingStatusLockPart(id),
+            () => CancelByCustomerLockedAsync(companyId, siteId, token, request));
+    }
+
+    private async Task<BookingResponse> CancelByCustomerLockedAsync(Guid companyId, Guid siteId, string token, CustomerCancelBookingRequest request)
+    {
+        var now = DateTime.UtcNow;
         var b = await _db.SiteBookings.AsNoTracking().Include(x => x.BookingService)
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && x.PublicToken == token)
             ?? throw new KeyNotFoundException("Booking not found.");
@@ -270,7 +292,7 @@ public partial class CmsBookingService
 
         var plan = BookingCancellationFee.Plan(BookingCancelKind.CustomerCancel, now, startUtc,
             b.BookingService.FreeCancellationHours, b.BookingService.CancellationFeePercent, b.TotalAmount, b.PaidAmount);
-        var actor = "customer:" + token[..Math.Min(8, token.Length)];
+        var actor = CreditBookingLink.CustomerActorPrefix + token[..Math.Min(8, token.Length)];
         var reason = string.IsNullOrWhiteSpace(request.Reason) ? "ลูกค้ายกเลิกเองผ่านลิงก์" : $"ลูกค้ายกเลิกเองผ่านลิงก์: {request.Reason.Trim()}";
 
         // เส้นสถานะเดิม: เอกสาร ERP (ใบมัดจำที่ออกแล้วคงเป็นหนี้สิน / ใบร่าง void) · เลื่อนคิวสำรอง · แจ้งคนได้คิว
@@ -328,7 +350,10 @@ public partial class CmsBookingService
         }
         if (_docService == null || doc == null || !doc.IsDeposit || !DocumentStatusRules.IsEffective(doc.Status))
         {
-            notices.Add($"{summary} — ใบมัดจำยังไม่ออก/ถูกยกเลิก จึงยังไม่มีเงินในบัญชีให้ริบ · ค่าธรรมเนียมบันทึกเป็นยอดค้างบนการจอง");
+            // รอบ 208 (ฝ่ายค้าน W2 ข้อ 6/13): ข้อความเดิม "ไม่มีเงิน · บันทึกเป็นยอดค้าง" ไม่จริง — อาจรับเงินแล้วแต่ยังไม่มีใบ และไม่มีแถวยอดค้างใด ๆ
+            notices.Add(b.PaidAmount > 0.005m
+                ? $"{summary} — รับเงินไว้แล้ว {b.PaidAmount:N2} บาท แต่ใบมัดจำยังไม่ออก/ถูกยกเลิก ระบบจึงไม่ริบเอง · คืนเงินลูกค้า หรือออกใบเสร็จมัดจำที่หน้าเอกสารก่อนแล้วจึงริบ"
+                : $"{summary} — ยังไม่ได้รับเงินมัดจำ ไม่มีอะไรให้ริบ");
             return;
         }
         var vatPortion = doc.TotalAmount > 0m ? doc.VatAmount / doc.TotalAmount : 0m;
@@ -344,7 +369,10 @@ public partial class CmsBookingService
         {
             await _docService.RealizeDepositAsync(companyId, doc.Id,
                 new RealizeDepositRequest(forfeitBase, now, null, null, ForfeitAs: DepositForfeitAs.PriceOrFee), actor);
-            var done = $"ริบมัดจำ {plan.ForfeitFromDeposit:N2} บาท (ฐาน {forfeitBase:N2}) จากใบ {doc.DocumentNumber} เป็นค่าธรรมเนียม{(plan.Kind == BookingCancelKind.NoShow ? "ไม่มาตามนัด" : "ยกเลิก")}"
+            // รอบ 208 (ฝ่ายค้าน W2 ข้อ 7): ยอดที่ริบจริง = ฐานที่ realize แปลงกลับเป็นยอดรวม VAT — ใบมัดจำอาจเล็กกว่ายอดที่รับบนการจอง (ข้อความเดิมบอกเกินจริง)
+            var forfeitGross = BookingCancellationFee.GrossOfBase(forfeitBase, doc.SubTotal, doc.TotalAmount, plan.ForfeitFromDeposit);
+            var done = $"ริบมัดจำ {forfeitGross:N2} บาท (ฐาน {forfeitBase:N2}) จากใบ {doc.DocumentNumber} เป็นค่าธรรมเนียม{(plan.Kind == BookingCancelKind.NoShow ? "ไม่มาตามนัด" : "ยกเลิก")}"
+                + (forfeitGross + 0.005m < plan.ForfeitFromDeposit ? $" (ตามแผน {plan.ForfeitFromDeposit:N2} แต่ใบมัดจำเหลือให้ริบเท่านี้ — ส่วนต่างไม่ได้ริบ)" : "")
                 + (plan.HasRefund ? $" · ส่วนที่เหลือ {plan.RefundDue:N2} รอคืนที่ “เงินมัดจำ” (ใบลดหนี้ §86/10)" : "");
             notices.Add(done); bookingNotes.Add(done);
         }
@@ -390,13 +418,17 @@ public partial class CmsBookingService
         }
 
         var svc = booking.BookingService;
-        var vatRate = OutputVatRate.ForCompany(vatRegistered, defaultRate);
+        // รอบ 207/208: สินค้าที่ผูก ⇒ อัตรา VAT/บัญชีรายได้/รหัส ผ่านตัวตัดสินเดียวกับใบตอนจอง (BookingProductLink)
+        var product = svc.Product is { IsDeleted: false } pr && pr.CompanyId == companyId ? pr : null;
+        var vatRate = BookingProductLink.VatRate(vatRegistered, OutputVatRate.ForCompany(vatRegistered, defaultRate), product?.VatRate);
         var docType = vatRegistered ? DocumentType.TaxInvoice : DocumentType.Invoice;
+        // รอบ 208 (ฝ่ายค้าน W2 ข้อ 9): ราคาที่ตรึงบนการจอง (TotalAmount) ไม่ใช่ราคาบริการวันนี้ — หารลงตัวต่อช่วงได้ใช้ต่อช่วง ไม่งั้น 1 × ยอดรวม
+        var (qty, unitPrice) = BookingCancellationFee.FrozenUnitPrice(booking.TotalAmount, booking.Units);
         var lines = new List<DocumentLineRequest>
         {
             new(Description: $"{svc.Name} ({booking.BookingDate:yyyy-MM-dd} {booking.StartTime:HH:mm}-{booking.EndTime:HH:mm})",
-                Quantity: Math.Max(1, booking.Units), Unit: booking.Units > 1 ? "ช่วง" : "ครั้ง",
-                UnitPrice: svc.Price, DiscountPercent: 0m, VatRate: vatRate, WithholdingTaxRate: 0m, AccountId: null, ProductCode: svc.Product?.Code),
+                Quantity: qty, Unit: qty > 1 ? "ช่วง" : "ครั้ง",
+                UnitPrice: unitPrice, DiscountPercent: 0m, VatRate: vatRate, WithholdingTaxRate: 0m, AccountId: product?.SalesAccountId, ProductCode: product?.Code),
         };
         var full = DocumentService.PreviewTotals(lines, true, 0m);
         var vatPortion = erpDoc.TotalAmount > 0m ? erpDoc.VatAmount / erpDoc.TotalAmount : 0m;
