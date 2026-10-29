@@ -1099,6 +1099,18 @@ const API = {
       cmsUpdateGateway: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/payment-gateways/${id}`, d),
       cmsGetCommerceConfig: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/config`),
       cmsUpdateCommerceConfig: (siteId, d) => API.put(`${base}/cms/sites/${siteId}/commerce/config`, d),
+      // รอบ 209 P2 — หน้า "ตั้งค่าร้านค้า" (cms-store-settings.html): คูปอง + โซน/อัตราค่าส่ง (API เดิมใน CmsCommerceExtController)
+      cmsListCoupons: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/coupons`),
+      cmsCreateCoupon: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/coupons`, d),
+      cmsUpdateCoupon: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/coupons/${id}`, d),
+      cmsDeleteCoupon: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/coupons/${id}`),
+      cmsListShippingZones: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/shipping/zones`),
+      cmsCreateShippingZone: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/shipping/zones`, d),
+      cmsUpdateShippingZone: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${id}`, d),
+      cmsDeleteShippingZone: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${id}`),
+      cmsAddShippingRate: (siteId, zoneId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${zoneId}/rates`, d),
+      cmsUpdateShippingRate: (siteId, zoneId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${zoneId}/rates/${id}`, d),
+      cmsDeleteShippingRate: (siteId, zoneId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${zoneId}/rates/${id}`),
       cmsListLeads: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/leads${q}`),
       // มุมมอง "ทุกไซต์" (R-45) — endpoint ระดับบริษัท แบ่งหน้าจริง · เว็บที่เห็นต่อแถวตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
       // แทนการวนยิง endpoint รายเว็บ 20 แถว/เว็บ (CmsSiteContext.collect เดิม) · ปุ่ม action ยังยิงไปเว็บเจ้าของแถว (row.siteId)

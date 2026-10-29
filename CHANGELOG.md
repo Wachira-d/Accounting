@@ -5670,3 +5670,11 @@ _รอบ 209 — แพ็ก P5 สมาชิก/ครู/รายงา�
 (3) แจ้งเตือนบัตรใกล้หมดอายุผ่าน `IBookingNotifier` (ประทับเฉพาะส่งถึง) (4) `SiteBookingResource.EmployeeId` + กติกาค่าตอบแทนต่อคลาส/ต่อหัว/% · ฐานคอมมิชชัน BookingServices (นอก POS · ดีดซ้ำด้วย SourceBookingId) + InstructorPay
 (5) รายงานผู้ให้บริการ: การจองด้วยบัตร = รายได้ที่รับรู้ (เดิม 0) ผ่าน `BookingServiceValue` ตัวเดียว (6) รายงานคลาส fill-rate/no-show/retention/บัตรใกล้หมดอายุ (`Helpers/ClassFillRateReport`) ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ (ไม่มี .NET SDK) · ยังไม่ผ่านฝ่ายค้าน — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 209 · แพ็ก P2 — ค่าตั้งร้าน + ฟอร์มสั่งซื้อ + วิธีรับ/จ่าย (คำตัดสินข้อ 168 ก/ค/ง/จ/ฉ · R-209-D1/D2 · A2/A3/A7/A10 · B2/B6/B7/B8/B10/B11 · E3/E4/E6/E14):
+`Helpers/CmsFeatureFlags` ตัวตัดสินสวิตช์ร้านตัวเดียว (จัดส่ง/รับเอง · ออนไลน์/โอน/COD · สมาชิก · ยืนยันอัตโนมัติ · คูปอง · ขอใบกำกับ · รีวิว · wishlist · ขอใบเสนอราคา ·
+คำนำหน้าเลขออเดอร์) — ลบคอลัมน์ `SiteCommerceConfig` ที่ไม่มีผู้อ่าน 17 ตัว (DROP COLUMN IF EXISTS) · ตัด baseline settings_reader 31 แถว (เหลือ 7 ของ P3/P6) ·
+`Helpers/OrderFormFields` (บังคับ/ไม่บังคับ/ซ่อน + ช่องเพิ่มเอง + ผู้ซื้อใบกำกับ checksum/สาขา) ตรวจก่อนบันทึก · วันรับที่ลูกค้าเลือก · COD = pay_on_pickup ·
+คูปองส่งฟรี + นับสิทธิ์ · ส่งฟรีร้านทับโซน (ค่าตั้งใหม่ default ปิด) + น้ำหนัก variant · ใบลดหนี้ร่างหลังจัดส่งไม่รวมค่าส่ง · วันส่งถึงโดยประมาณ · หน้า `cms-store-settings.html` +
+api.js คูปอง/โซน · ด่าน tenant (CompanyId) ใน coupon/shipping/review ที่แตะ · 15 กติกา required_call_site_check · เทสต์ `CmsRound209P2Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ —
+commit <sha ในคอมมิตถัดไป>_

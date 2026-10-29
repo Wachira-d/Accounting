@@ -18,7 +18,10 @@
 
   // key = โมดูลจาก CmsModuleResolver · ปุ่มเรียงตามลำดับนี้บนการ์ดเว็บ
   const MODULE_LINKS = {
-    orders:   [{ page: 'cms-orders',   label: '🛒 คำสั่งซื้อ', href: (id) => `/pages/cms-orders.html?siteId=${enc(id)}` }],
+    orders:   [
+      { page: 'cms-orders',         label: '🛒 คำสั่งซื้อ',     href: (id) => `/pages/cms-orders.html?siteId=${enc(id)}` },
+      { page: 'cms-store-settings', label: '⚙️ ตั้งค่าร้านค้า', href: (id) => `/pages/cms-store-settings.html?siteId=${enc(id)}` },
+    ],
     bookings: [{ page: 'cms-bookings', label: '📅 การจองคิว', href: (id) => `/pages/cms-bookings.html?siteId=${enc(id)}` }],
     lodging:  [
       { page: 'lodging',          label: '🏨 Front desk',   href: (id) => `/pages/lodging.html?siteId=${enc(id)}` },

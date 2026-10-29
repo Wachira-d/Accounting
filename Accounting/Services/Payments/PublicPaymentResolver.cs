@@ -121,6 +121,13 @@ public class PublicPaymentResolver : IPublicPaymentResolver
         var due = o.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded
             ? 0m : Accounting.Helpers.MtoPaymentTerms.FromSnapshot(o.PaymentTermMode, o.TotalAmount, o.DepositRequiredAmount, o.PaidAmount).NextPayable;
 
+        // รอบ 209 P2 (คำตัดสินข้อ 168 ก): ร้านปิดชำระออนไลน์ ⇒ ยอด 0 + เหตุผล (ไม่รับเงินทางที่ร้านไม่เปิด · ไม่เงียบ)
+        var storeCfg = await _db.SiteCommerceConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.CompanyId == companyId && c.SiteId == siteId, ct);
+        if (!CmsFeatureFlags.Resolve(storeCfg).OnlinePayment && due > 0.005m)
+            return new PublicPayTarget(PaymentSourceKind.SiteOrder, o.Id, siteId, 0m,
+                $"คำสั่งซื้อ {o.OrderNumber}", o.ShippingEmail, o.ShippingPhone, o.OrderNumber,
+                BlockedNote: CmsFeatureFlags.OnlinePaymentOffMessage);
         if (pendingSlip && due > 0.005m)
             return new PublicPayTarget(PaymentSourceKind.SiteOrder, o.Id, siteId, 0m,
                 $"คำสั่งซื้อ {o.OrderNumber}", o.ShippingEmail, o.ShippingPhone, o.OrderNumber,

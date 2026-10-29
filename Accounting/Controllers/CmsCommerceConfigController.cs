@@ -1,7 +1,9 @@
 using Accounting.Data;
+using Accounting.Filters;
 using Accounting.Helpers;
 using Accounting.Middleware;
 using Accounting.Models.DTOs;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -44,6 +46,7 @@ public class CmsCommerceConfigController : ControllerBase
 
     [HttpPut]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // รอบ 209 P2: ค่าตั้งร้าน = สิทธิ์ตั้งค่าเว็บ (เดียวกับค่าตั้งการจอง)
     public async Task<ActionResult<ApiResponse<CommerceConfigResponse>>> UpdateConfig(
         Guid companyId, Guid siteId, [FromBody] UpdateCommerceConfigRequest request)
     {
@@ -56,53 +59,57 @@ public class CmsCommerceConfigController : ControllerBase
             _db.SiteCommerceConfigs.Add(config);
         }
 
-        if (request.CheckoutMode.HasValue) config.CheckoutMode = request.CheckoutMode.Value;
-        if (request.AutoGenerateQuotation.HasValue) config.AutoGenerateQuotation = request.AutoGenerateQuotation.Value;
-        if (request.RequireCustomerAccount.HasValue) config.RequireCustomerAccount = request.RequireCustomerAccount.Value;
-        if (request.EnableGuestCheckout.HasValue) config.EnableGuestCheckout = request.EnableGuestCheckout.Value;
-
-        if (request.DefaultVatRate.HasValue) config.DefaultVatRate = request.DefaultVatRate.Value;
-        if (request.PricesIncludeVat.HasValue) config.PricesIncludeVat = request.PricesIncludeVat.Value;
+        // ── รอบ 209 P2 (คำตัดสินข้อ 168 ก) — สวิตช์ร้าน · ผู้อ่านเชิงธุรกิจทุกตัวผ่าน Helpers/CmsFeatureFlags ──
+        if (request.EnableGuestCheckout.HasValue)
+        {
+            // สองคอลัมน์เดิมความหมายเดียว ⇒ ตั้งคู่กันเสมอ (ไม่ให้ค่าค้างขัดกัน)
+            config.EnableGuestCheckout = request.EnableGuestCheckout.Value;
+            config.RequireCustomerAccount = !request.EnableGuestCheckout.Value;
+        }
         if (request.EnableTaxInvoice.HasValue) config.EnableTaxInvoice = request.EnableTaxInvoice.Value;
 
         if (request.EnableShipping.HasValue) config.EnableShipping = request.EnableShipping.Value;
-        if (request.EnableShippingCalculation.HasValue) config.EnableShippingCalculation = request.EnableShippingCalculation.Value;
-        if (request.FlatShippingRate.HasValue) config.FlatShippingRate = request.FlatShippingRate;
-        if (request.FreeShippingThreshold.HasValue) config.FreeShippingThreshold = request.FreeShippingThreshold;
-
-        if (request.EnableStockTracking.HasValue) config.EnableStockTracking = request.EnableStockTracking.Value;
-        if (request.AutoDeductStock.HasValue) config.AutoDeductStock = request.AutoDeductStock.Value;
-        if (request.DefaultStockBehavior.HasValue) config.DefaultStockBehavior = request.DefaultStockBehavior.Value;
-        if (request.ShowStockQuantity.HasValue) config.ShowStockQuantity = request.ShowStockQuantity.Value;
+        if (request.ClearFlatShippingRate == true) config.FlatShippingRate = null;
+        else if (request.FlatShippingRate.HasValue)
+        {
+            if (request.FlatShippingRate < 0m) return BadRequest(new ApiResponse<CommerceConfigResponse>(false, null, "ค่าส่งเหมาจ่ายต้องไม่ติดลบ"));
+            config.FlatShippingRate = request.FlatShippingRate;
+        }
+        if (request.ClearFreeShippingThreshold == true) config.FreeShippingThreshold = null;
+        else if (request.FreeShippingThreshold.HasValue)
+        {
+            if (request.FreeShippingThreshold < 0m) return BadRequest(new ApiResponse<CommerceConfigResponse>(false, null, "ยอดส่งฟรีต้องไม่ติดลบ"));
+            config.FreeShippingThreshold = request.FreeShippingThreshold;
+        }
+        if (request.FreeShippingOverridesZones.HasValue) config.FreeShippingOverridesZones = request.FreeShippingOverridesZones.Value;
 
         if (request.EnableCoupons.HasValue) config.EnableCoupons = request.EnableCoupons.Value;
-        if (request.EnableTierPricing.HasValue) config.EnableTierPricing = request.EnableTierPricing.Value;
-
         if (request.EnableReviews.HasValue) config.EnableReviews = request.EnableReviews.Value;
         if (request.ReviewAutoApprove.HasValue) config.ReviewAutoApprove = request.ReviewAutoApprove.Value;
         if (request.ReviewRequirePurchase.HasValue) config.ReviewRequirePurchase = request.ReviewRequirePurchase.Value;
-
         if (request.EnableWishlist.HasValue) config.EnableWishlist = request.EnableWishlist.Value;
+
         if (request.EnableAbandonedCartRecovery.HasValue) config.EnableAbandonedCartRecovery = request.EnableAbandonedCartRecovery.Value;
         if (request.CartExpiryDays.HasValue) config.CartExpiryDays = request.CartExpiryDays.Value;
         if (request.AbandonedCartHours.HasValue) config.AbandonedCartHours = request.AbandonedCartHours.Value;
 
-        if (request.OrderNumberPrefix != null) config.OrderNumberPrefix = request.OrderNumberPrefix;
+        // คำนำหน้าเลขคำสั่งซื้อ — ผิดรูป = 400 (ไม่เก็บค่าที่ตัวรันเลขใช้ไม่ได้) · มีผลกับออเดอร์ที่สั่งหลังบันทึก
+        if (request.OrderNumberPrefix != null) config.OrderNumberPrefix = CmsFeatureFlags.NormalizeOrderPrefix(request.OrderNumberPrefix);
         if (request.AutoConfirmOrders.HasValue) config.AutoConfirmOrders = request.AutoConfirmOrders.Value;
         if (request.NotifyOnNewOrder.HasValue) config.NotifyOnNewOrder = request.NotifyOnNewOrder.Value;
         if (request.OrderNotificationEmails != null) config.OrderNotificationEmails = request.OrderNotificationEmails;
-
-        if (request.AutoSyncToErp.HasValue) config.AutoSyncToErp = request.AutoSyncToErp.Value;
-        if (request.ErpDocumentType.HasValue) config.ErpDocumentType = request.ErpDocumentType.Value;
+        if (request.EnableQuoteConversion.HasValue) config.EnableQuoteConversion = request.EnableQuoteConversion.Value;
+        if (request.ResetOrderFormFields == true) config.OrderFormFieldsJson = null;
+        else if (request.OrderFormFields != null)
+        {
+            if (OrderFormFields.ValidateConfig(request.OrderFormFields) is string formErr)
+                return BadRequest(new ApiResponse<CommerceConfigResponse>(false, null, formErr));
+            config.OrderFormFieldsJson = OrderFormFields.Serialize(request.OrderFormFields);
+        }
 
         if (request.EnableOnlinePayment.HasValue) config.EnableOnlinePayment = request.EnableOnlinePayment.Value;
         if (request.EnableCod.HasValue) config.EnableCod = request.EnableCod.Value;
         if (request.EnableBankTransfer.HasValue) config.EnableBankTransfer = request.EnableBankTransfer.Value;
-
-        if (request.DefaultProductSort != null) config.DefaultProductSort = request.DefaultProductSort;
-        if (request.ProductsPerPage.HasValue) config.ProductsPerPage = request.ProductsPerPage.Value;
-        if (request.ShowComparePrice.HasValue) config.ShowComparePrice = request.ShowComparePrice.Value;
-        if (request.ShowSku.HasValue) config.ShowSku = request.ShowSku.Value;
 
         if (request.OrderConfirmMessageTh != null) config.OrderConfirmMessageTh = request.OrderConfirmMessageTh;
         if (request.OrderConfirmMessageEn != null) config.OrderConfirmMessageEn = request.OrderConfirmMessageEn;
@@ -137,6 +144,10 @@ public class CmsCommerceConfigController : ControllerBase
         }
         if (request.MtoSkipCompanyHolidays.HasValue) config.MtoSkipCompanyHolidays = request.MtoSkipCompanyHolidays.Value;
 
+        // ชุดค่าตั้งทั้งก้อนต้องสั่งซื้อได้ (มีวิธีรับ ≥ 1 · วิธีชำระ ≥ 1) — ตรวจหลังรวมค่าใหม่ ไม่ใช่รายช่อง
+        if (CmsFeatureFlags.ValidateConfig(config) is string cfgErr)
+            return BadRequest(new ApiResponse<CommerceConfigResponse>(false, null, cfgErr));
+
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         config.UpdatedBy = userId;
         await _db.SaveChangesAsync();
@@ -147,23 +158,26 @@ public class CmsCommerceConfigController : ControllerBase
     private static CommerceConfigResponse MapConfig(SiteCommerceConfig c) => new()
     {
         Id = c.Id, SiteId = c.SiteId,
-        CheckoutMode = c.CheckoutMode, AutoGenerateQuotation = c.AutoGenerateQuotation,
-        RequireCustomerAccount = c.RequireCustomerAccount, EnableGuestCheckout = c.EnableGuestCheckout,
-        DefaultVatRate = c.DefaultVatRate, PricesIncludeVat = c.PricesIncludeVat, EnableTaxInvoice = c.EnableTaxInvoice,
-        EnableShipping = c.EnableShipping, EnableShippingCalculation = c.EnableShippingCalculation,
+        EnableGuestCheckout = c.EnableGuestCheckout, RequireCustomerAccount = c.RequireCustomerAccount,
+        EnableTaxInvoice = c.EnableTaxInvoice,
+        EnableShipping = c.EnableShipping,
         FlatShippingRate = c.FlatShippingRate, FreeShippingThreshold = c.FreeShippingThreshold,
-        EnableStockTracking = c.EnableStockTracking, AutoDeductStock = c.AutoDeductStock,
-        DefaultStockBehavior = c.DefaultStockBehavior, ShowStockQuantity = c.ShowStockQuantity,
-        EnableCoupons = c.EnableCoupons, EnableTierPricing = c.EnableTierPricing,
+        FreeShippingOverridesZones = c.FreeShippingOverridesZones,
+        EnableCoupons = c.EnableCoupons,
         EnableReviews = c.EnableReviews, ReviewAutoApprove = c.ReviewAutoApprove, ReviewRequirePurchase = c.ReviewRequirePurchase,
         EnableWishlist = c.EnableWishlist, EnableAbandonedCartRecovery = c.EnableAbandonedCartRecovery,
         CartExpiryDays = c.CartExpiryDays, AbandonedCartHours = c.AbandonedCartHours,
-        OrderNumberPrefix = c.OrderNumberPrefix, AutoConfirmOrders = c.AutoConfirmOrders,
+        OrderNumberPrefix = CmsFeatureFlags.OrderPrefixOf(c.OrderNumberPrefix),
+        OrderNumberExample = CmsFeatureFlags.OrderNumberStem(CmsFeatureFlags.Resolve(c), DateTime.UtcNow) + "0001",
+        AutoConfirmOrders = c.AutoConfirmOrders,
         NotifyOnNewOrder = c.NotifyOnNewOrder, OrderNotificationEmails = c.OrderNotificationEmails,
-        AutoSyncToErp = c.AutoSyncToErp, ErpDocumentType = c.ErpDocumentType,
+        EnableQuoteConversion = c.EnableQuoteConversion,
+        OrderFormFields = OrderFormFields.ForDisplay(c.OrderFormFieldsJson),
+        OrderFormFieldsConfigured = OrderFormFields.Parse(c.OrderFormFieldsJson) != null,
+        FormFieldRequirementOptions = BookingFormFields.RequirementOptions()
+            .Select(o => new CommerceOptionValue { Value = o.Value, Label = o.Label }).ToList(),
+        FormFieldTypes = OrderFormFields.FieldTypes.ToList(),
         EnableOnlinePayment = c.EnableOnlinePayment, EnableCod = c.EnableCod, EnableBankTransfer = c.EnableBankTransfer,
-        DefaultProductSort = c.DefaultProductSort, ProductsPerPage = c.ProductsPerPage,
-        ShowComparePrice = c.ShowComparePrice, ShowSku = c.ShowSku,
         OrderConfirmMessageTh = c.OrderConfirmMessageTh, OrderConfirmMessageEn = c.OrderConfirmMessageEn,
         QuotationMessageTh = c.QuotationMessageTh, QuotationMessageEn = c.QuotationMessageEn,
         EnablePickup = c.EnablePickup,

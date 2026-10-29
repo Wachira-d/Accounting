@@ -22,9 +22,11 @@ public class CmsCouponService : ICmsCouponService
 
     public async Task<CouponResponse> CreateCouponAsync(Guid companyId, Guid siteId, CreateCouponRequest request, string userId)
     {
-        var code = request.Code.Trim().ToUpperInvariant();
-        if (await _db.SiteCoupons.AnyAsync(c => c.SiteId == siteId && c.Code == code))
-            throw new InvalidOperationException("Coupon code already exists.");
+        var code = (request.Code ?? "").Trim().ToUpperInvariant();
+        if (code.Length == 0) throw new BusinessRuleException("กรุณากรอกรหัสคูปอง", "CMS-COUPON");
+        if (await _db.SiteCoupons.AnyAsync(c => c.SiteId == siteId && c.CompanyId == companyId && c.Code == code))
+            throw new BusinessRuleException($"รหัสคูปอง {code} มีอยู่แล้ว (รวมคูปองที่ลบไปแล้ว) — ใช้รหัสอื่น", "CMS-COUPON");
+        ValidateCouponRequest(request);
 
         var coupon = new SiteCoupon
         {
@@ -46,6 +48,7 @@ public class CmsCouponService : ICmsCouponService
             MaxUsesPerCustomer = request.MaxUsesPerCustomer,
             IsFirstOrderOnly = request.IsFirstOrderOnly,
             FreeShipping = request.FreeShipping,
+            IsActive = request.IsActive ?? true,
             CreatedBy = userId
         };
 
@@ -58,6 +61,7 @@ public class CmsCouponService : ICmsCouponService
     {
         var coupon = await _db.SiteCoupons.FirstOrDefaultAsync(c => c.Id == couponId && c.SiteId == siteId && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Coupon not found.");
+        ValidateCouponRequest(request);
 
         coupon.Description = request.Description;
         coupon.DiscountType = request.DiscountType;
@@ -74,6 +78,7 @@ public class CmsCouponService : ICmsCouponService
         coupon.MaxUsesPerCustomer = request.MaxUsesPerCustomer;
         coupon.IsFirstOrderOnly = request.IsFirstOrderOnly;
         coupon.FreeShipping = request.FreeShipping;
+        if (request.IsActive.HasValue) coupon.IsActive = request.IsActive.Value;   // รอบ 209 P2: เปิด/ปิดคูปองจากหน้าตั้งค่าร้าน
         coupon.UpdatedBy = userId;
 
         await _db.SaveChangesAsync();
@@ -89,7 +94,7 @@ public class CmsCouponService : ICmsCouponService
 
     public async Task<List<CouponResponse>> GetCouponsAsync(Guid companyId, Guid siteId, bool? activeOnly = null)
     {
-        var q = _db.SiteCoupons.AsNoTracking().Where(c => c.SiteId == siteId && c.CompanyId == companyId);
+        var q = _db.SiteCoupons.AsNoTracking().Where(c => c.SiteId == siteId && c.CompanyId == companyId && !c.IsDeleted);
         if (activeOnly == true) q = q.Where(c => c.IsActive);
         var list = await q.OrderByDescending(c => c.CreatedAt).ToListAsync();
         return list.Select(MapResponse).ToList();
@@ -107,9 +112,14 @@ public class CmsCouponService : ICmsCouponService
 
     public async Task<CouponApplicationResult> ValidateAndApplyCouponAsync(Guid companyId, Guid siteId, Guid cartId, ApplyCouponRequest request, string lang = "th")
     {
+        // รอบ 209 P2 (คำตัดสินข้อ 168 ก): ร้านปิดคูปอง ⇒ ปฏิเสธพร้อมเหตุ (ตัวตัดสินเดียว CmsFeatureFlags)
+        var storeCfg = await _db.SiteCommerceConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId);
+        if (!CmsFeatureFlags.Resolve(storeCfg).Coupons)
+            return new CouponApplicationResult { Valid = false, ErrorMessage = CmsFeatureFlags.CouponsOffMessage };
         var code = request.Code.Trim().ToUpperInvariant();
         var coupon = await _db.SiteCoupons.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.Code == code);
+            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId && c.Code == code);
 
         if (coupon == null || !coupon.IsActive || coupon.IsDeleted)
             return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.invalid", lang) };
@@ -139,7 +149,7 @@ public class CmsCouponService : ICmsCouponService
         }
 
         var cart = await _db.SiteCarts.Include(c => c.Items).ThenInclude(i => i.SiteProduct)
-            .FirstOrDefaultAsync(c => c.Id == cartId && c.SiteId == siteId);
+            .FirstOrDefaultAsync(c => c.Id == cartId && c.SiteId == siteId && c.CompanyId == companyId);
         if (cart == null)
             return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("cart.notFound", lang) };
 
@@ -147,7 +157,9 @@ public class CmsCouponService : ICmsCouponService
             return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.GetMinOrder(coupon.MinOrderAmount.Value, lang) };
 
         var eligibleSubtotal = await CalculateEligibleSubtotalAsync(coupon, cart);
-        if (eligibleSubtotal <= 0)
+        // รอบ 209 (R-209-B7): คูปองส่งฟรีไม่ต้องมีสินค้าเข้าเงื่อนไข "ส่วนลด" — ผลอยู่ที่ค่าส่ง (ComputeCheckoutAsync)
+        var freeShippingOnly = coupon.DiscountType == CouponDiscountType.FreeShipping;
+        if (eligibleSubtotal <= 0 && !freeShippingOnly)
             return new CouponApplicationResult { Valid = false, ErrorMessage = CmsMessages.Get("coupon.noEligible", lang) };
 
         decimal discount = coupon.DiscountType switch
@@ -204,11 +216,14 @@ public class CmsCouponService : ICmsCouponService
     {
         var order = await _db.SiteOrders
             .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
-        if (order == null || string.IsNullOrEmpty(order.CouponCode) || order.DiscountAmount <= 0) return;
+        if (order == null || string.IsNullOrEmpty(order.CouponCode)) return;
 
         var coupon = await _db.SiteCoupons
             .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId && c.Code == order.CouponCode);
         if (coupon == null) return;
+        // รอบ 209 (R-209-B7): คูปองส่งฟรีไม่มีส่วนลดสินค้า (DiscountAmount 0) แต่ต้องนับการใช้ด้วย — เดิมข้าม ⇒ จำนวนสิทธิ์ (MaxUses) ไม่เคยลด
+        var grantsFreeShipping = coupon.FreeShipping || coupon.DiscountType == CouponDiscountType.FreeShipping;
+        if (order.DiscountAmount <= 0 && !grantsFreeShipping) return;
 
         var alreadyRecorded = await _db.SiteCouponUsages.AnyAsync(u => u.OrderId == orderId);
         if (alreadyRecorded) return;
@@ -251,6 +266,18 @@ public class CmsCouponService : ICmsCouponService
         return cart.SubTotal;
     }
 
+    /// <summary>รอบ 209 P2 — ค่าคูปองที่ใช้ไม่ได้ ⇒ 400 พร้อมเหตุ (เดิมรับทุกค่า เช่น ลด 150%)</summary>
+    private static void ValidateCouponRequest(CreateCouponRequest r)
+    {
+        if (r.DiscountValue < 0m) throw new BusinessRuleException("มูลค่าส่วนลดต้องไม่ติดลบ", "CMS-COUPON");
+        if (r.DiscountType == CouponDiscountType.Percentage && r.DiscountValue > 100m)
+            throw new BusinessRuleException("ส่วนลดแบบเปอร์เซ็นต์ต้องไม่เกิน 100%", "CMS-COUPON");
+        if (r.MaxDiscountAmount < 0m || r.MinOrderAmount < 0m) throw new BusinessRuleException("ยอดส่วนลดสูงสุด/ยอดขั้นต่ำต้องไม่ติดลบ", "CMS-COUPON");
+        if (r.MaxUses < 0 || r.MaxUsesPerCustomer < 0) throw new BusinessRuleException("จำนวนสิทธิ์ต้องไม่ติดลบ", "CMS-COUPON");
+        if (r.StartsAt is DateTime s && r.ExpiresAt is DateTime e && e < s)
+            throw new BusinessRuleException("วันหมดอายุต้องอยู่หลังวันเริ่ม", "CMS-COUPON");
+    }
+
     private static CouponResponse MapResponse(SiteCoupon c) => new()
     {
         Id = c.Id, Code = c.Code, Description = c.Description,
@@ -260,6 +287,16 @@ public class CmsCouponService : ICmsCouponService
         StartsAt = c.StartsAt, ExpiresAt = c.ExpiresAt,
         MaxUses = c.MaxUses, CurrentUses = c.CurrentUses,
         IsActive = c.IsActive, IsFirstOrderOnly = c.IsFirstOrderOnly,
-        FreeShipping = c.FreeShipping
+        FreeShipping = c.FreeShipping,
+        // รอบ 209 P2 — echo ทุกค่าที่รับ (หน้าแก้ส่งกลับครบ ไม่ล้างเงื่อนไขขอบเขตที่ตั้งผ่าน API เงียบ ๆ)
+        MaxUsesPerCustomer = c.MaxUsesPerCustomer, CustomerGroupTag = c.CustomerGroupTag,
+        CategoryIds = ParseIds(c.CategoryIdsJson), ProductIds = ParseIds(c.ProductIdsJson),
     };
+
+    private static List<Guid>? ParseIds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<List<Guid>>(json); }
+        catch (JsonException) { return null; }
+    }
 }

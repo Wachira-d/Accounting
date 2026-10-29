@@ -63,7 +63,7 @@ public static class RoleTemplates
                 PermissionKeys.CmsPageEdit, PermissionKeys.CmsPagePublish,
                 PermissionKeys.CmsLeadView, PermissionKeys.CmsLeadAssign,
                 PermissionKeys.CmsOrderManage, PermissionKeys.CmsSiteSettings,
-                "cms-sites", "cms-leads", "cms-bookings", "cms-orders",
+                "cms-sites", "cms-leads", "cms-bookings", "cms-orders", "cms-store-settings",
             }),
         new("accountant", "Accountant", "🧮",
             "นักบัญชี — ทุกเอกสาร + รายงานการเงิน + ภาษี + บัญชีธนาคาร",

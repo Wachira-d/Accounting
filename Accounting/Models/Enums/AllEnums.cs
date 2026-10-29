@@ -1618,14 +1618,6 @@ public enum ShippingRateType
     Calculated = 4
 }
 
-public enum CheckoutMode
-{
-    PaymentRequired = 1,
-    QuotationOnly = 2,
-    QuotationThenPayment = 3,
-    InquiryOnly = 4
-}
-
 public enum InvitationStatus
 {
     Pending   = 0,

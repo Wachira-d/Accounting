@@ -230,6 +230,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(PostVatDeductionStatements());   // ทีม U — หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง (บล็อกท้ายไฟล์)
         list.AddRange(CmsMediaAttachmentStatements());   // ทีม W4 R-43 — สื่อ CMS ผ่านที่เก็บไฟล์กลาง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.StorefrontP1Migration.Statements());   // รอบ 209 P1 — โทเคนสถานะออเดอร์/ผู้ขนส่ง/คีย์กันสั่งซ้ำ (Helpers/StorefrontP1Migration)
+        list.AddRange(Round209P2StoreSettingsStatements());   // รอบ 209 P2 — ค่าตั้งร้าน/ฟอร์มสั่งซื้อ/COD (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7891,5 +7892,40 @@ public static class DatabaseMigrationHelper
     internal static IReadOnlyList<string> CmsMediaAttachmentStatements() => new List<string>
     {
         """ALTER TABLE "SiteMediaItems" ADD COLUMN IF NOT EXISTS "AttachmentId" uuid NULL;""",
+    };
+
+    /// <summary>รอบ 209 แพ็ก P2 (คำตัดสินข้อ 168 ก/ค/ง/จ · R-209-D1/D2 · B8 · B11) — รันทุกบูตได้ (IF [NOT] EXISTS ทุกคำสั่ง):
+    /// <list type="number">
+    /// <item>คอลัมน์ใหม่ของค่าตั้งร้าน — DEFAULT = พฤติกรรมเดิม (ส่งฟรีระดับร้านไม่ทับโซน · ขอใบเสนอราคาได้ · ฟอร์มเดิม)</item>
+    /// <item>คอลัมน์ใหม่ของออเดอร์ — NULL = ออเดอร์เดิม (ชำระก่อน · ไม่ได้เลือกวันรับ · ไม่มีช่องเพิ่มเอง · ไม่รู้วันส่งถึง) ไม่มี UPDATE (ไม่แต่งค่าย้อนหลัง)</item>
+    /// <item>ลบคอลัมน์ค่าตั้งที่ไม่เคยมีผู้อ่าน (ทีม D §1.1 · เหตุผลรายตัวใน <c>Helpers/CmsFeatureFlags</c>) — ค่าที่เก็บไว้ไม่เคยเปลี่ยนพฤติกรรมใด ⇒ ไม่มีข้อมูลที่มีความหมายหาย ·
+    ///   ต้องลบ (ไม่ใช่ปล่อยค้าง) เพราะคอลัมน์ NOT NULL ที่ไม่มี DEFAULT จะทำให้ INSERT แถวค่าตั้งใหม่ล้มเมื่อ entity ไม่มี property แล้ว</item>
+    /// </list></summary>
+    internal static IReadOnlyList<string> Round209P2StoreSettingsStatements() => new List<string>
+    {
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "FreeShippingOverridesZones" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "EnableQuoteConversion" boolean NOT NULL DEFAULT true;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "OrderFormFieldsJson" text NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "PaymentMethodChoice" varchar(20) NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "RequestedReadyDate" timestamptz NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "CustomFieldsJson" text NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "EstimatedDeliveryDate" timestamptz NULL;""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "CheckoutMode";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "AutoGenerateQuotation";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "DefaultVatRate";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "PricesIncludeVat";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "EnableShippingCalculation";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "EnableStockTracking";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "AutoDeductStock";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "DefaultStockBehavior";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ShowStockQuantity";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "LowStockThresholdJson";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "EnableTierPricing";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "AutoSyncToErp";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ErpDocumentType";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "DefaultProductSort";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ProductsPerPage";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ShowComparePrice";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ShowSku";""",
     };
 }

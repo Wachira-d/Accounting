@@ -287,6 +287,14 @@ public class CreateOrderRequest
     public string? ShippingProvince { get; set; }
     public string? ShippingPostalCode { get; set; }
 
+    // ── รอบ 209 P2 (คำตัดสินข้อ 168 ค/ง/จ) — ตรวจที่เซิร์ฟเวอร์ทั้งหมด ──
+    /// <summary>"prepay" (ว่าง = เดิม) / "cod" — Helpers.CmsFeatureFlags.ResolvePaymentChoice</summary>
+    public string? PaymentMethodChoice { get; set; }
+    /// <summary>yyyy-MM-dd · ว่าง = ไม่ได้เลือก (เดิม)</summary>
+    public string? RequestedReadyDate { get; set; }
+    /// <summary>คำตอบช่องที่ร้านเพิ่มเอง (key → ค่า) — Helpers.OrderFormFields.Check</summary>
+    public Dictionary<string, string?>? CustomFields { get; set; }
+
     // Direct order (without cart)
     public List<CreateOrderLineRequest>? Lines { get; set; }
 
@@ -361,6 +369,13 @@ public class StorefrontPaymentOptions
     /// When false the storefront falls back to "pay later only" mode
     /// and instructs the customer that the shop will contact them.</summary>
     public bool HasPaymentMethod { get; set; }
+    // ── รอบ 209 P2 — สวิตช์ร้าน (เซิร์ฟเวอร์ตัดสิน · หน้าเว็บแสดงตาม) ──
+    /// <summary>false = ร้านไม่รับโอน/แนบสลิป (ไม่ส่งเลขบัญชี · ซ่อนกล่องโอน — ไม่ใช่ "ยังไม่ตั้งบัญชี")</summary>
+    public bool BankTransferEnabled { get; set; } = true;
+    public bool OnlinePaymentEnabled { get; set; } = true;
+    public bool CodEnabled { get; set; }
+    /// <summary>false = ซ่อนปุ่ม "ขอใบเสนอราคา" (เซิร์ฟเวอร์ปฏิเสธด้วย)</summary>
+    public bool QuoteConversionEnabled { get; set; } = true;
 }
 
 public class OrderResponse
@@ -423,6 +438,21 @@ public class OrderResponse
     public List<OrderDepositDocumentResponse> DepositDocuments { get; set; } = new();
     /// <summary>รอบ 205 W2 (R-06): ช่องจ่ายออนไลน์ปิดชั่วคราวเพราะอะไร (สลิปรอตรวจ) · null = เปิด — หน้าเว็บแสดงตรง ๆ</summary>
     public string? OnlinePaymentBlockedNote { get; set; }
+    // ── รอบ 209 P2 — ค่าที่ตรึงตอนสั่ง (echo ทุกค่าที่รับ · กฎเหล็ก #4 A) ──
+    /// <summary>"prepay"/"cod" · ออเดอร์เดิม = prepay</summary>
+    public string PaymentMethodChoice { get; set; } = "prepay";
+    public string PaymentMethodLabel { get; set; } = "";
+    /// <summary>yyyy-MM-dd · null = ลูกค้าไม่ได้เลือก</summary>
+    public string? RequestedReadyDate { get; set; }
+    /// <summary>yyyy-MM-dd · null = รับเอง/ไม่รู้วันขนส่ง</summary>
+    public string? EstimatedDeliveryDate { get; set; }
+    public List<global::Accounting.Helpers.OrderCustomAnswer> CustomFields { get; set; } = new();
+    /// <summary>JSON ดิบจากฐาน (ใช้ภายในเพื่อแปลงเป็น <see cref="CustomFields"/> หลัง query) — ไม่ส่งออก</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? CustomFieldsRaw { get; set; }
+    public string? BillingName { get; set; }
+    public string? BillingAddress { get; set; }
+    public string? BillingBranchCode { get; set; }
 }
 
 /// <summary>ใบรับเงินมัดจำ 1 ใบของออเดอร์ (ทีม Q)</summary>
@@ -444,6 +474,10 @@ public class OptionImageUploadResponse
 
 public class CheckoutQuoteRequest
 {
+    /// <summary>รอบ 209 P2: "prepay"/"cod" (ว่าง = เดิม)</summary>
+    public string? PaymentMethodChoice { get; set; }
+    /// <summary>รอบ 209 P2: yyyy-MM-dd · ว่าง = ไม่ได้เลือก</summary>
+    public string? RequestedReadyDate { get; set; }
     public string? FulfillmentMethod { get; set; }
     public Guid? ShippingRateId { get; set; }
     public string? CountryCode { get; set; }
@@ -486,6 +520,28 @@ public class CheckoutQuoteResponse
     public string? DepositInvoicingNote { get; set; }
     /// <summary>เหตุที่ยังสั่งไม่ได้ (เช่น ต้องเลือกวิธีส่ง) — null = สั่งได้</summary>
     public string? Problem { get; set; }
+    // ── รอบ 209 P2 — หน้าเว็บวาดฟอร์มจากค่าที่เซิร์ฟเวอร์ตัดสินแล้ว (ไม่มีสำเนากติกาใน JS · F2 ข้อ 5) ──
+    public bool DeliveryEnabled { get; set; } = true;
+    /// <summary>สวิตช์ร้าน (ชื่อ → ค่า) — Helpers.CmsFeatureFlags.ToStorefront</summary>
+    public Dictionary<string, bool> Features { get; set; } = new();
+    /// <summary>ค่าตั้งฟอร์มสั่งซื้อ (ไม่ได้ตั้ง = ฟอร์มเดิม)</summary>
+    public global::Accounting.Helpers.OrderFormFieldsConfig FormFields { get; set; } = global::Accounting.Helpers.OrderFormFields.Default;
+    /// <summary>ช่องเพิ่มเองที่ต้องแสดงกับวิธีรับนี้ (เซิร์ฟเวอร์กรองแล้ว — หน้าเว็บวาดตามลำดับ)</summary>
+    public List<global::Accounting.Helpers.OrderCustomField> CustomFields { get; set; } = new();
+    /// <summary>วิธีชำระที่ลูกค้าเลือกได้ (ว่าง/ตัวเดียว = ไม่ต้องแสดงตัวเลือก)</summary>
+    public List<CommerceOptionValue> PaymentChoices { get; set; } = new();
+    public string PaymentMethodChoice { get; set; } = "prepay";
+    public string PaymentMethodLabel { get; set; } = "";
+    /// <summary>yyyy-MM-dd — วันแรกที่เลือกเป็นวันรับได้ (null = ช่องวันรับซ่อน)</summary>
+    public string? MinRequestedDate { get; set; }
+    /// <summary>yyyy-MM-dd — วันรับที่ผ่านการตรวจแล้ว</summary>
+    public string? RequestedReadyDate { get; set; }
+    /// <summary>yyyy-MM-dd — วันส่งถึงโดยประมาณ (null = ไม่รู้)</summary>
+    public string? EstimatedDeliveryDate { get; set; }
+    /// <summary>คูปองในตะกร้าให้ส่งฟรี</summary>
+    public bool FreeShippingByCoupon { get; set; }
+    /// <summary>คูปองที่ใช้อยู่ (ร้านปิดคูปอง = null)</summary>
+    public string? CouponCode { get; set; }
 }
 
 public class OrderListResponse

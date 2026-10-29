@@ -1221,9 +1221,9 @@
             <form onsubmit="Store.submitOrder(event, '${cart.id}')" style="display:grid;gap:14px;background:#fff;padding:24px;border:1px solid #E5E7EB;border-radius:var(--radius,8px)">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
                 <div><label>ชื่อ-นามสกุล *</label><input name="shippingName" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
-                <div><label>เบอร์โทร *</label><input name="shippingPhone" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+                <div id="sfPhoneWrap"><label>เบอร์โทร <span class="sf-req">*</span></label><input name="shippingPhone" id="sfPhone" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
               </div>
-              <div><label>อีเมล *</label><input type="email" name="shippingEmail" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+              <div id="sfEmailWrap"><label>อีเมล <span class="sf-req">*</span></label><input type="email" name="shippingEmail" id="sfEmail" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
               <div id="sfFulfillBox"></div>
               <div id="sfAddressBlock" style="display:grid;gap:14px">
                 <div><label>ที่อยู่จัดส่ง *</label><textarea name="shippingAddress" id="sfShipAddress" required rows="3" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea></div>
@@ -1233,8 +1233,14 @@
                 </div>
                 <div id="sfShipOptions"></div>
               </div>
+              <!-- รอบ 209 P2: วันรับ · ช่องที่ร้านเพิ่มเอง · วิธีชำระ · คูปอง — วาดจากค่าที่เซิร์ฟเวอร์ส่งใน checkout-quote (ด่านจริงอยู่ที่ CreateOrder) -->
+              <div id="sfReqDateBox"></div>
+              <div id="sfCustomFieldsBox" style="display:grid;gap:14px"></div>
+              <div id="sfPayChoiceBox"></div>
+              <div id="sfCouponBox"></div>
               <div id="sfQuoteBox" style="background:#F9FAFB;border-radius:8px;padding:14px 16px;font-size:14px"></div>
-              <div><label>หมายเหตุ</label><textarea name="customerNotes" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px" placeholder="คำขอพิเศษ ฯลฯ"></textarea></div>
+              <div id="sfNotesWrap"><label>หมายเหตุ <span class="sf-req" style="display:none">*</span></label><textarea name="customerNotes" id="sfNotes" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px" placeholder="คำขอพิเศษ ฯลฯ"></textarea></div>
+              <div id="sfTaxInvWrap" style="display:grid;gap:14px">
               <label style="display:flex;gap:8px;align-items:flex-start;padding:12px;background:#F9FAFB;border-radius:6px;cursor:pointer">
                 <input type="checkbox" name="requestTaxInvoice" id="reqTaxInv" onchange="document.getElementById('billingBlock').style.display=this.checked?'grid':'none'">
                 <span>📑 ขอใบกำกับภาษีเต็มรูป</span>
@@ -1242,22 +1248,128 @@
               <div id="billingBlock" style="display:none;grid-template-columns:1fr 1fr;gap:14px;padding:14px;background:#FFFBEB;border-radius:6px">
                 <div style="grid-column:1/-1"><label>ชื่อผู้รับใบกำกับ</label><input name="billingName" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
                 <div><label>เลขผู้เสียภาษี (13 หลัก)</label><input name="billingTaxId" maxlength="13" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
-                <div><label>รหัสสาขา</label><input name="billingBranchCode" placeholder="00000" maxlength="5" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+                <div><label>รหัสสาขา (สำนักงานใหญ่ = 00000)</label><input name="billingBranchCode" value="00000" placeholder="00000" maxlength="5" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
                 <div style="grid-column:1/-1"><label>ที่อยู่ใบกำกับ</label><textarea name="billingAddress" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea></div>
+              </div>
               </div>
               <button type="submit" class="btn btn-primary" style="padding:16px;font-size:17px;margin-top:8px">ยืนยันสั่งซื้อ</button>
             </form>
           </div>`;
-        this._checkout = { fulfillment: 'delivery', rateId: null };
+        // รอบ 209 P2: วิธีรับเริ่มต้นให้เซิร์ฟเวอร์ตัดสิน (ร้านปิดจัดส่ง ⇒ มารับเอง) — ไม่เดาเองฝั่งหน้าเว็บ
+        this._checkout = { fulfillment: null, rateId: null, payChoice: null, reqDate: null };
+        this._cfKeys = null;
         await this.refreshQuote(cart.id);
+      },
+
+      // ===== รอบ 209 P2: ฟอร์มสั่งซื้อจากค่าที่เซิร์ฟเวอร์ส่ง (ช่องบังคับ/ซ่อน · วันรับ · ช่องเพิ่มเอง · วิธีชำระ · คูปอง · ใบกำกับ) =====
+      _applyCheckoutForm(cartId, q) {
+        const ff = q.formFields || {};
+        const feat = q.features || {};
+        const setField = (wrapId, inputId, req) => {
+          const w = document.getElementById(wrapId), i = document.getElementById(inputId);
+          if (!w || !i) return;
+          w.style.display = req === 'Hidden' ? 'none' : '';
+          i.required = req === 'Required';
+          const star = w.querySelector('.sf-req'); if (star) star.style.display = req === 'Required' ? '' : 'none';
+          if (req === 'Hidden') i.value = '';
+        };
+        setField('sfPhoneWrap', 'sfPhone', ff.phone || 'Required');
+        setField('sfEmailWrap', 'sfEmail', ff.email || 'Required');
+        setField('sfNotesWrap', 'sfNotes', ff.notes || 'Optional');
+        const tw = document.getElementById('sfTaxInvWrap');
+        if (tw) {
+          const off = feat.taxInvoiceRequest === false;
+          tw.style.display = off ? 'none' : 'grid';
+          if (off) {
+            const tick = document.getElementById('reqTaxInv'); if (tick) tick.checked = false;
+            const bb = document.getElementById('billingBlock'); if (bb) bb.style.display = 'none';
+          }
+        }
+        // วันที่ต้องการรับ — วาดครั้งเดียว (คงค่าที่ลูกค้าเลือก) · วันขั้นต่ำมาจากเซิร์ฟเวอร์ · วันปิดร้านเซิร์ฟเวอร์ตอบใน quote.problem
+        const rb = document.getElementById('sfReqDateBox');
+        if (rb) {
+          if (!q.minRequestedDate) rb.innerHTML = '';
+          else if (!rb.querySelector('input')) {
+            const reqd = ff.requestedDate === 'Required';
+            rb.innerHTML = `<label>วันที่ต้องการรับสินค้า${reqd ? ' *' : ''}</label>
+              <input type="date" id="sfReqDate" min="${this.esc(q.minRequestedDate)}" ${reqd ? 'required' : ''}
+                onchange="Store.setRequestedDate('${this.jsArg(cartId)}', this.value)" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`;
+          } else rb.querySelector('input').min = q.minRequestedDate;
+        }
+        // ช่องที่ร้านเพิ่มเอง — เซิร์ฟเวอร์กรองตามวิธีรับแล้ว · วาดใหม่เฉพาะเมื่อชุดช่องเปลี่ยน (ไม่ล้างค่าที่กรอก)
+        const cf = q.customFields || [];
+        const keys = cf.map(f => f.key).join('|');
+        const cfb = document.getElementById('sfCustomFieldsBox');
+        if (cfb && keys !== this._cfKeys) {
+          this._cfKeys = keys;
+          cfb.innerHTML = cf.map(f => this._renderCustomField(f)).join('');
+        }
+        // วิธีชำระ — แสดงเมื่อมีให้เลือกมากกว่า 1 (เปิดเก็บเงินปลายทาง)
+        const pb = document.getElementById('sfPayChoiceBox');
+        if (pb) {
+          const choices = q.paymentChoices || [];
+          pb.innerHTML = choices.length > 1 ? `<label>วิธีชำระเงิน *</label><div style="display:flex;gap:16px;flex-wrap:wrap">${choices.map(c => `
+              <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="radio" name="sfPayChoice" value="${this.esc(c.value)}" ${c.value === q.paymentMethodChoice ? 'checked' : ''}
+                onchange="Store.setPayChoice('${this.jsArg(cartId)}', '${this.jsArg(c.value)}')"> ${this.esc(c.label)}</label>`).join('')}</div>` : '';
+        }
+        // คูปอง (ร้านเปิดคูปอง)
+        const kb = document.getElementById('sfCouponBox');
+        if (kb) {
+          if (feat.coupons === false) kb.innerHTML = '';
+          else kb.innerHTML = q.couponCode
+            ? `<div style="display:flex;gap:8px;align-items:center;font-size:14px">🏷️ คูปอง <strong>${this.esc(q.couponCode)}</strong>${q.freeShippingByCoupon ? ' · ส่งฟรี' : ''}
+                 <button type="button" class="btn btn-secondary" style="padding:4px 10px" onclick="Store.removeCoupon('${this.jsArg(cartId)}')">เอาออก</button></div>`
+            : `<div style="display:flex;gap:8px"><input id="sfCouponCode" placeholder="โค้ดส่วนลด (ถ้ามี)" style="flex:1;padding:10px;border:1px solid #D1D5DB;border-radius:6px">
+                 <button type="button" class="btn btn-secondary" onclick="Store.applyCoupon('${this.jsArg(cartId)}')">ใช้โค้ด</button></div>`;
+        }
+      },
+      _renderCustomField(f) {
+        const req = f.requirement === 'Required';
+        const lbl = `<label>${this.esc(f.label)}${req ? ' *' : ''}</label>`;
+        const st = 'width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px';
+        const name = 'cf_' + this.esc(f.key);
+        const ml = Number(f.maxLength || 500);
+        const r = req ? 'required' : '';
+        if (f.type === 'textarea') return `<div>${lbl}<textarea name="${name}" rows="2" maxlength="${ml}" ${r} style="${st}"></textarea></div>`;
+        if (f.type === 'date') return `<div>${lbl}<input type="date" name="${name}" ${r} style="${st}"></div>`;
+        if (f.type === 'select') return `<div>${lbl}<select name="${name}" ${r} style="${st}"><option value="">— เลือก —</option>${(f.options || []).map(o => `<option value="${this.esc(o)}">${this.esc(o)}</option>`).join('')}</select></div>`;
+        if (f.type === 'checkbox') return `<label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" name="${name}" value="true" ${r}> ${this.esc(f.label)}${req ? ' *' : ''}</label>`;
+        return `<div>${lbl}<input type="text" name="${name}" maxlength="${ml}" ${r} style="${st}"></div>`;
+      },
+      async setRequestedDate(cartId, v) {
+        this._checkout = Object.assign(this._checkout || {}, { reqDate: v || null });
+        await this.refreshQuote(cartId);
+      },
+      async setPayChoice(cartId, v) {
+        this._checkout = Object.assign(this._checkout || {}, { payChoice: v || null });
+        await this.refreshQuote(cartId);
+      },
+      async applyCoupon(cartId) {
+        const code = (document.getElementById('sfCouponCode')?.value || '').trim();
+        if (!code) return;
+        try {
+          const r = await fetch(this._url(`/commerce/cart/${cartId}/apply-coupon`), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error((j && j.message) || 'ใช้โค้ดไม่สำเร็จ');
+        } catch (e) { alert(e.message); return; }
+        await this.refreshQuote(cartId);
+      },
+      async removeCoupon(cartId) {
+        try {
+          const r = await fetch(this._url(`/commerce/cart/${cartId}/coupon`), { method: 'DELETE' });
+          if (!r.ok) { const j = await r.json().catch(() => null); throw new Error((j && j.message) || 'เอาคูปองออกไม่สำเร็จ'); }
+        } catch (e) { alert(e.message); return; }
+        await this.refreshQuote(cartId);
       },
 
       // ===== ทีม K: ยอดก่อนยืนยันสั่งซื้อ — เซิร์ฟเวอร์คิดทั้งหมด (ค่าส่ง · วันรับ · ยอดที่ต้องจ่ายตอนนี้) หน้าเว็บแสดงอย่างเดียว =====
       async refreshQuote(cartId) {
-        const c = this._checkout || (this._checkout = { fulfillment: 'delivery', rateId: null });
+        const c = this._checkout || (this._checkout = { fulfillment: null, rateId: null });
         const box = document.getElementById('sfQuoteBox'); if (!box) return;
         const body = {
           fulfillmentMethod: c.fulfillment, shippingRateId: c.rateId, countryCode: 'TH',
+          paymentMethodChoice: c.payChoice || null, requestedReadyDate: c.reqDate || null,
           province: (document.getElementById('sfShipProvince')?.value || '').trim() || null,
           postalCode: (document.getElementById('sfShipPostal')?.value || '').trim() || null,
         };
@@ -1271,9 +1383,12 @@
         } catch (e) { box.innerHTML = `<div style="color:#DC2626">${this.esc(e.message)}</div>`; return; }
         this._quote = q;
         c.rateId = q.selectedShippingRateId || null;
+        c.fulfillment = q.fulfillmentMethod || c.fulfillment;
+        c.payChoice = q.paymentMethodChoice || c.payChoice;
+        this._applyCheckoutForm(cartId, q);
         const m = v => '฿' + Number(v || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 });
         const fb = document.getElementById('sfFulfillBox');
-        if (fb) fb.innerHTML = q.pickupEnabled ? `<div style="display:flex;gap:16px;flex-wrap:wrap">
+        if (fb) fb.innerHTML = (q.pickupEnabled && q.deliveryEnabled !== false) ? `<div style="display:flex;gap:16px;flex-wrap:wrap">
             <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="radio" name="sfFulfill" value="delivery" ${q.fulfillmentMethod==='delivery'?'checked':''} onchange="Store.setFulfillment('${cartId}','delivery')"> 🚚 จัดส่ง</label>
             <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="radio" name="sfFulfill" value="pickup" ${q.fulfillmentMethod==='pickup'?'checked':''} onchange="Store.setFulfillment('${cartId}','pickup')"> 🏪 มารับเองที่ร้าน (ไม่มีค่าส่ง)</label>
           </div>` : '';
@@ -1300,6 +1415,9 @@
           <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:700;margin-top:6px"><span>ยอดสุทธิ</span><span>${m(q.orderTotal)}</span></div>
           ${dueRow}
           ${q.earliestReadyDate ? `<div style="margin-top:8px;color:#3730A3">🕒 ${isPickup ? 'รับสินค้าได้' : 'พร้อมจัดส่ง'}เร็วสุด <strong>${this.esc(this._thaiDate(q.earliestReadyDate))}</strong></div>` : ''}
+          ${isPickup && q.deliveryEnabled === false ? `<div style="margin-top:6px;color:#6B7280">🏪 ร้านนี้รับสินค้าที่ร้านเท่านั้น</div>` : ''}
+          ${q.estimatedDeliveryDate ? `<div style="margin-top:6px;color:#3730A3">🚚 ส่งถึงประมาณ <strong>${this.esc(this._thaiDate(q.estimatedDeliveryDate))}</strong></div>` : ''}
+          ${q.paymentMethodChoice === 'cod' ? `<div style="margin-top:6px;color:#92400E">💵 ${this.esc(q.paymentMethodLabel)}</div>` : ''}
           ${q.problem ? `<div style="margin-top:8px;color:#B45309">⚠️ ${this.esc(q.problem)}</div>` : ''}`;
       },
       async setFulfillment(cartId, method) {
@@ -1398,13 +1516,17 @@
           billingBranchCode: fd.get('billingBranchCode') || null,
           billingAddress: fd.get('billingAddress') || null,
           // ทีม K — วิธีรับ + อัตราค่าส่งที่เลือก (เซิร์ฟเวอร์คิดค่าส่งเองจากอัตรา ไม่รับยอดจากหน้าเว็บ)
-          fulfillmentMethod: (this._checkout && this._checkout.fulfillment) || 'delivery',
+          fulfillmentMethod: (this._checkout && this._checkout.fulfillment) || null,
           shippingRateId: (this._checkout && this._checkout.rateId) || null,
           shippingCountryCode: 'TH',
           shippingProvince: fd.get('shippingProvince') || null,
           shippingPostalCode: fd.get('shippingPostalCode') || null,
+          // รอบ 209 P2 — วิธีชำระ · วันรับ · ช่องที่ร้านเพิ่มเอง (เซิร์ฟเวอร์ตรวจทั้งหมด)
+          paymentMethodChoice: (this._checkout && this._checkout.payChoice) || null,
+          requestedReadyDate: (this._checkout && this._checkout.reqDate) || null,
+          customFields: Object.fromEntries(((this._quote && this._quote.customFields) || []).map(f => [f.key,
+            f.type === 'checkbox' ? (fd.get('cf_' + f.key) ? 'true' : null) : (fd.get('cf_' + f.key) || null)])),
         };
-        if (body.fulfillmentMethod === 'pickup' && !body.shippingAddress) body.shippingAddress = 'มารับเองที่ร้าน';
         // เหตุที่ยังสั่งไม่ได้มาจากเซิร์ฟเวอร์ (ต้องกรอกจังหวัด/เลือกวิธีส่ง) — บอกก่อนกดส่ง ด่านจริงยังอยู่ที่ CreateOrder
         if (this._quote && this._quote.problem) { alert(this._quote.problem); return; }
         const btn = ev.target.querySelector('button[type="submit"]');
@@ -1499,6 +1621,10 @@
           : (payNow > 0 ? (pay?.promptPayQrUrl || null) : null);
 
         const hasPay = pay?.hasPaymentMethod;
+        // รอบ 209 P2 — สวิตช์ร้านจากเซิร์ฟเวอร์: ปิดโอน ⇒ ไม่แสดงกล่องโอน/คำเตือน "ยังไม่ตั้งบัญชี" · ปิดขอใบเสนอราคา ⇒ ซ่อนปุ่ม · COD ⇒ บอกว่าชำระตอนรับ
+        const bankOn = pay?.bankTransferEnabled !== false;
+        const quoteOn = pay?.quoteConversionEnabled !== false;
+        const isCod = order?.paymentMethodChoice === 'cod';
 
         main.innerHTML = `
           <div class="sf-container" style="padding:32px 20px;max-width:780px">
@@ -1526,8 +1652,9 @@
                    ร้านนี้เปิด gateway ไหม · ไม่เปิด = ลบกล่องทิ้ง เหลือเส้นแนบสลิปเดิม -->
               <div id="sfPayOnlineBox"></div>
 
-              ${hasPay ? `
-              <details open class="sf-pay-card" style="border:2px solid #4F46E5;background:#fff;border-radius:12px;padding:18px 22px">
+              ${isCod ? `<div style="background:#FFFBEB;border:1px solid #FCD34D;color:#78350F;border-radius:10px;padding:14px 18px;font-size:14px">💵 ${this.esc(order.paymentMethodLabel || 'ชำระเงินเมื่อรับสินค้า')} — ไม่ต้องชำระตอนนี้</div>` : ''}
+              ${!bankOn ? '' : hasPay ? `
+              <details ${isCod ? '' : 'open'} class="sf-pay-card" style="border:2px solid #4F46E5;background:#fff;border-radius:12px;padding:18px 22px">
                 <summary style="cursor:pointer;font-weight:600;font-size:16px;list-style:none">💳 โอนเงินแล้ว — แนบสลิป</summary>
                 <div style="margin-top:14px;display:grid;gap:14px">
                   ${ppQrImg ? `
@@ -1566,7 +1693,7 @@
                 <button class="btn btn-secondary" style="margin-top:12px" onclick="location.href='${this._pageUrl('home')}'">เสร็จสิ้น</button>
               </details>
 
-              <details class="sf-pay-card" style="border:1px solid var(--gray-300,#D1D5DB);background:#fff;border-radius:12px;padding:18px 22px">
+              ${quoteOn ? `<details class="sf-pay-card" style="border:1px solid var(--gray-300,#D1D5DB);background:#fff;border-radius:12px;padding:18px 22px">
                 <summary style="cursor:pointer;font-weight:600;font-size:16px;list-style:none">📄 ขอใบเสนอราคา (ออกใบให้ทันที)</summary>
                 <div style="margin-top:12px;font-size:13px;color:var(--text-secondary);line-height:1.6">
                   ระบบจะ <strong>ออกใบเสนอราคาตามรายการในตะกร้าทันที</strong> ไม่ตัดสต็อก ไม่ชำระเงินตอนนี้
@@ -1579,21 +1706,23 @@
                   placeholder="เช่น สอบถามรายละเอียดเพิ่ม · ขอคำแนะนำ · ขอแก้รายการก่อนออกใบเสนอราคา ฯลฯ — ข้อความนี้จะถึงร้านโดยตรง"
                   style="width:100%;margin-top:6px;padding:10px;border:1px solid #D1D5DB;border-radius:6px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
                 <button class="btn btn-outline" style="margin-top:12px" onclick="Store.convertOrderToQuotation('${orderId}')">📄 ออกใบเสนอราคา</button>
-              </details>
+              </details>` : ''}
 
             </div>
             `}
           </div>`;
-        if (!isCancelled) await this._renderOrderPayOnline(orderId, order);
+        if (!isCancelled) await this._renderOrderPayOnline(orderId, order, pay);
         await this.refreshCartBadge();
       },
 
       // รอบ 209 P1: ตัวสร้าง payload พร้อมเพย์ฝั่งเว็บ (makePromptPayPayload) ถูกลบ — สำเนากติกา EMVCo ที่สอง · รูป QR มาจาก
       // GET commerce/promptpay-qr (Services/Implementations/PromptPayService ตัวเดียวของระบบ)
 
-      async _renderOrderPayOnline(orderId, order) {
+      async _renderOrderPayOnline(orderId, order, pay) {
         const box = document.getElementById('sfPayOnlineBox');
         if (!box) return;
+        // รอบ 209 P2: ร้านปิดชำระออนไลน์ ⇒ ไม่มีกล่อง (เซิร์ฟเวอร์ปฏิเสธที่ public-pay ด้วย)
+        if (pay && pay.onlinePaymentEnabled === false) { box.remove(); return; }
         const m = await this._payMethods();
         // ยอดรอบนี้จากเซิร์ฟเวอร์ (ตัวคิดเดียวกับช่องจ่าย public-pay) — ออเดอร์เดิมได้ค่าเท่า TotalAmount − PaidAmount
         const due = Math.max(0, Number(order?.nextPayableAmount ?? (Number(order?.totalAmount || 0) - Number(order?.paidAmount || 0))));
