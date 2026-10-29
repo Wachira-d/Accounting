@@ -14,7 +14,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **682 ไฟล์ · 6,867 `[Fact]` + 1,096 `[Theory]` (5,112 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **683 ไฟล์ · 6,900 `[Fact]` + 1,100 `[Theory]` (5,127 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 
@@ -6868,3 +6869,24 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CMS209-P1-11 | ลูกค้าล็อกอินจองคลาสติ๊ก "ใช้บัตรคอร์ส" | การจองสำเร็จ ยอด 0 · กันเครดิตจากบัตรของตัวเอง · ไม่ออกเอกสาร ERP | `CmsRound209P1Tests.CMS209_P1_12` · `_14` |
 | CMS209-P1-12 | **ทิศตรงข้าม** แขกนิรนาม / ส่ง customerId ของคนอื่น / โทเคนเว็บอื่น ขอจองด้วยบัตร | 403 พร้อมเหตุผล · พนักงานที่มีสิทธิ์ยังจองแทนได้ (เดิม) | `CmsRound209P1Tests.CMS209_P1_11` · `_13` · `CmsRound209Tests.Anonymous_cannot_pay_with_credit_staff_can` |
 | CMS209-P1-13 | QR พร้อมเพย์หน้าออเดอร์/ที่พัก | รูปมาจาก `commerce/promptpay-qr` ของเว็บ (ไม่มีคำขอไป api.qrserver.com) · ยอด ≤0 / ไม่ตั้งพร้อมเพย์ ⇒ 404 (รูปซ่อน) | `CmsRound209P1Tests.CMS209_P1_15` |
+
+## CMS209-P6 — จุดเชื่อม CMS↔ERP · PDPA · variant (รอบ 209 แพ็ก P6 · `erp-review/2026-10-29/PLAN.md` · `CmsRound209P6Tests`)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS209-P6-01 | ลูกค้าเว็บมีเลขภาษี + อีเมลตรงผู้ติดต่ออีกแถว | ได้แถวตามเลขภาษี+สาขา (ไม่ใช่แถวอีเมล) | `Contact_tax_key_beats_email` |
+| CMS209-P6-02 | อีเมลต่างตัวพิมพ์/มีช่องว่าง · เบอร์ +66/ขีด | จับได้ (อีเมลไม่สนตัวพิมพ์ · เบอร์ normalize แล้วเท่ากันทั้งเบอร์) | `Contact_email_matches_case_and_space_insensitively` · `Contact_phone_normalized_matches_exact_number` |
+| CMS209-P6-03 | **ทิศตรงข้าม** เบอร์ต่างหลักเดียว / สั้นกว่า 9 หลัก | ไม่จับ (ไม่ fuzzy บนตัวเลข) ⇒ สร้างผู้ติดต่อใหม่ | `Contact_phone_never_fuzzy` |
+| CMS209-P6-04 | ผู้ติดต่อที่ลบ/ปิดใช้งานอีเมลตรง | ไม่จับ (เดิมออเดอร์/จองจับแถวที่ลบแล้ว) | `Contact_deleted_or_inactive_rows_ignored` |
+| CMS209-P6-05 | เลขภาษีมีเจ้าของคนละสาขา · walk-in + เลขจริง | ไม่ถอยไปอีเมล / Reject ⇒ สร้างใหม่ · ไม่มีเลข ⇒ ใช้แถวเดิม | `Contact_tax_id_owned_by_other_branch_does_not_fall_back_to_email` · `Contact_walk_in_row_rejected_when_buyer_has_real_tax_id` |
+| CMS209-P6-06 | เว็บผูกสาขา → ออเดอร์ชำระ/มัดจำ/ส่วนที่เหลือ/ใบเสนอราคา/จอง/lead | `Document.BranchId` = สาขาของเว็บ (รหัสสาขาบนใบ ตรึงตอนออกเลข) · ใบลดหนี้/ใบส่วนที่เหลือของการจองสืบทอดจากใบแม่ | `Document_branch_from_site` + required_call_site_check (P6 ฐ) |
+| CMS209-P6-07 | **ทิศตรงข้าม** เว็บไม่ผูกสาขา / สาขาถูกลบ | null = สำนักงานใหญ่เดิม (ไม่ล้มการรับเงิน) | `Document_branch_from_site` |
+| CMS209-P6-08 | `UseGlobalInventory=false` + คลังเว็บ / ไม่มีคลัง + สาขา / ค่าเริ่มต้น | ตัดคลังเว็บ / คลังของสาขา / คลังหลักเดิม · คืนสต็อกเข้าคลัง+สินค้าที่ตรึงบนบรรทัด | `Warehouse_default_is_company_default` · `Warehouse_site_then_branch` |
+| CMS209-P6-09 | เว็บบังคับยินยอม แขกไม่ติ๊ก (เช็กเอาต์/จอง/ติดต่อ/ฟอร์ม) | 400 `PDPA-19-CMS-CONSENT` ก่อนบันทึก (ไม่มีแถวลอย) | `Consent_required_blocks_guest_without_tick` |
+| CMS209-P6-10 | **ทิศตรงข้าม** ติ๊ก · พนักงานบันทึกแทน · ลูกค้าที่ยินยอมไว้แล้ว · เว็บไม่บังคับ | ผ่าน · บันทึก `PdpaConsentRecord` เฉพาะเมื่อติ๊ก (hash `PdpaConsentEvidence` · เวอร์ชัน = hash ข้อความที่แสดง) | `Consent_passes` · `Consent_recorded_only_when_ticked` · `Consent_version_tracks_shown_text` · `Consent_evidence_hash_round_trips` |
+| CMS209-P6-11 | ตะกร้าค้างของลูกค้าที่ไม่ยินยอมการตลาด / ร้านปิดอีเมลกู้ตะกร้า / ถอนความยินยอม | ไม่ส่ง + log `PDPA-24-CART-MARKETING` · ยังทำเครื่องหมายค้าง | `Abandoned_cart_sends_only_with_marketing_consent` · `Abandoned_cart_blocked` · `Abandoned_cart_hours_from_site` |
+| CMS209-P6-12 | สินค้ามี variant: ไม่เลือก / เลือกตัวปิดขาย / เลือกตัวราคา 390 ผูกสินค้า ERP ลูก | ปฏิเสธ / ปฏิเสธ / ราคา 390 · ตัดสต็อกสินค้าลูก · SKU บนบรรทัด+คำอธิบายเอกสาร | `Variant_*` |
+| CMS209-P6-13 | **ทิศตรงข้าม** สินค้าไม่มี variant | ราคา/ชื่อ/SKU/สต็อกเดิมทุกตัวอักษร · ส่ง variantId มาเอง ⇒ ปฏิเสธ (ไม่ทิ้งเงียบ) | `Variant_absent_product_unchanged` · `Variant_sku_and_line_name` |
+| CMS209-P6-14 | DSR ลบข้อมูลเว็บ (`POST pdpa/dsr/cms/erase`) ออเดอร์ผูกใบกำกับอายุ < 5 ปี / ไม่ผูก | คงชื่อ/ที่อยู่/เลขภาษีผู้ซื้อ ล้างช่องติดต่อ / ล้างทุกช่อง · ยอดเงินคงไว้ · ความยินยอมถูกถอน (ไม่ลบหลักฐาน) | `Erase_order_*` · `Legal_hold_window_is_five_years` · `Erase_lead_and_booking_respect_hold` · `Erase_customer_closes_every_entry_point` |
+| CMS209-P6-15 | ฟอร์มกำหนดเองติ๊ก "ส่งเข้าระบบ" + อีเมลแจ้ง | สร้าง `CmsLead` (ไม่สร้าง Document ตรง) · แจ้งร้าน/ตอบกลับผ่าน `TrySendAsync` ผลประทับ `NotifyResult` · HtmlEncode ทุกค่า | `Form_fields_mapped_to_lead_columns` · `Form_lead_type_and_recipients` · `Form_notify_html_encodes_user_input` |
+

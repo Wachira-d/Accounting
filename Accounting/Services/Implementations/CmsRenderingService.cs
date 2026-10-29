@@ -211,7 +211,11 @@ public class CmsRenderingService : ICmsRenderingService
                 ContactAddress = siteTokens.GetValueOrDefault("company.address"),
                 LineId = siteTokens.GetValueOrDefault("site.lineId"),
                 FacebookUrl = siteTokens.GetValueOrDefault("site.facebook"),
-                InstagramUrl = siteTokens.GetValueOrDefault("site.instagram")
+                InstagramUrl = siteTokens.GetValueOrDefault("site.instagram"),
+                // รอบ 209 P6 (ฑ): ข้อความยินยอม/ลิงก์นโยบาย/บังคับ — ตัวตัดสินเดียว CmsDataConsent (ตัวเดียวกับที่ service บันทึกเวอร์ชัน)
+                PrivacyPolicyUrl = Accounting.Helpers.CmsGalleryBlock.IsSafeUrl(site.PrivacyPolicyUrl) ? site.PrivacyPolicyUrl : null,
+                RequireDataConsent = site.RequireDataConsent,
+                DataConsentText = Accounting.Helpers.CmsDataConsent.ResolveText(site.DataConsentText, site.Name)
             },
             Theme = new StorefrontThemeInfo
             {

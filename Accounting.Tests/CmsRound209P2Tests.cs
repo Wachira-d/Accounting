@@ -330,11 +330,6 @@ public class CmsRound209P2Tests
         // ตัวตัดสินเดียว (รวม P2/P3): SiteOrderRefundPlan.ExcludesShipping
         Assert.False(SiteOrderRefundPlan.ExcludesShipping(null, null));                     // ก่อนจัดส่ง = คืนเต็มเดิม
         Assert.True(SiteOrderRefundPlan.ExcludesShipping(DateTime.UtcNow, null));
-        Assert.True(ShippingVatAllocation.IsShippingLineDescription("ค่าจัดส่ง"));
-        Assert.True(ShippingVatAllocation.IsShippingLineDescription("ค่าจัดส่ง (VAT 7%)"));
-        Assert.False(ShippingVatAllocation.IsShippingLineDescription("เค้กช็อกโกแลต (ค่าจัดส่งรวม)"));
-        // คู่สมมาตรกับตัวสร้างบรรทัด
-        var part = ShippingVatAllocation.Split(ShippingVatAllocation.MaxRate, true, 50m, new List<(decimal, decimal)> { (100m, 7m) })[0];
-        Assert.True(ShippingVatAllocation.IsShippingLineDescription(ShippingVatAllocation.LineDescription(part, 1)));
+        Assert.True(SiteOrderRefundPlan.ExcludesShipping(null, DateTime.UtcNow));            // ส่งมอบแล้ว (มารับเอง) ก็ไม่คืนค่าส่ง
     }
 }

@@ -175,6 +175,8 @@ public class CreateProductVariantRequest
     public string? Barcode { get; set; }
     public Guid? ErpProductId { get; set; }
     public int SortOrder { get; set; }
+    /// <summary>รอบ 209 P6 (E5): เปิด/ปิดขายตัวเลือกนี้ · null = ไม่เปลี่ยน (สร้างใหม่ = เปิด)</summary>
+    public bool? IsActive { get; set; }
 }
 
 public class ProductVariantResponse
@@ -193,6 +195,10 @@ public class ProductVariantResponse
     public bool IsActive { get; set; }
     public int SortOrder { get; set; }
     public Guid? ErpProductId { get; set; }
+    /// <summary>รอบ 209 P6 (E5 · D-Q5): ชื่อสินค้า ERP ที่ตัดสต็อกจริง (ผูกไว้ ⇒ สินค้านั้น · ไม่ผูก ⇒ สินค้าแม่)</summary>
+    public string? StockProductName { get; set; }
+    /// <summary>สต็อกจริงที่หน้าร้านใช้ (Product.CurrentStock ของสินค้าที่ตัด) — ช่อง <see cref="Stock"/> เดิมไม่ใช่สต็อกจริง (ไม่มีใครตัดตามการขาย)</summary>
+    public decimal? EffectiveStock { get; set; }
 }
 
 public class CreateProductOptionRequest

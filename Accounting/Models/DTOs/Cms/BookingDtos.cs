@@ -305,6 +305,9 @@ public class CreateBookingRequest
     public bool PayWithCredit { get; set; }
     /// <summary>บัตรที่ใช้ · ว่าง = ระบบเลือกบัตรที่หมดอายุก่อน (FEFO) ที่ใช้กับบริการนี้ได้</summary>
     public Guid? CreditPassId { get; set; }
+
+    /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มจอง — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
+    public bool ConsentGiven { get; set; }
 }
 
 public class UpdateBookingStatusRequest

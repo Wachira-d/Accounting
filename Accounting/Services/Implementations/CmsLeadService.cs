@@ -36,6 +36,26 @@ public partial class CmsLeadService
 
     public async Task<LeadDetailResponse> CreateAsync(Guid companyId, Guid siteId, CreateLeadRequest req)
     {
+        // รอบ 209 P6 (ฑ): ด่านยินยอม PDPA ก่อนบันทึก (ตรวจด้วยว่าเว็บเป็นของบริษัทนี้ — ทางเข้านิรนาม) · ติ๊กแล้ว ⇒ PdpaConsentRecord บันทึกพร้อม lead
+        await Accounting.Helpers.CmsDataConsent.EnforceAsync(_db, companyId, siteId, Accounting.Helpers.CmsDataConsent.LeadPurpose,
+            req.ConsentGiven, actorUserId: null, customerId: null, req.CustomerEmail, req.CustomerPhone, reference: "lead");
+        var lead = await CreateCoreAsync(companyId, siteId, req);
+        // รอบ 209 P3 (D5/E2): แจ้งร้านหลังบันทึก — คำตอบถึงผู้ส่งฟอร์ม (สาธารณะ) สร้างก่อนประทับ (เหตุส่งไม่ถึงไม่รั่วออกหน้าเว็บ)
+        var response = MapDetail(lead);
+        await NotifyShopNewLeadAsync(lead);
+        return response;
+    }
+
+    /// <summary>รอบ 209 P6 (D7): lead จากฟอร์มกำหนดเองของเว็บ — ด่านยินยอมทำแล้วที่ <c>CmsCustomerService.SubmitFormAsync</c> (ไม่บันทึกความยินยอมซ้ำ)</summary>
+    internal async Task<CmsLead> CreateFromFormAsync(Guid companyId, Guid siteId, CreateLeadRequest req)
+    {
+        var lead = await CreateCoreAsync(companyId, siteId, req);
+        await NotifyShopNewLeadAsync(lead);   // รอบ 209 P3+P6: lead จากฟอร์มแจ้งร้านเหมือน lead หน้าเว็บ
+        return lead;
+    }
+
+    private async Task<CmsLead> CreateCoreAsync(Guid companyId, Guid siteId, CreateLeadRequest req)
+    {
         var lead = new CmsLead
         {
             CompanyId = companyId,
@@ -57,11 +77,7 @@ public partial class CmsLeadService
         };
         _db.Set<CmsLead>().Add(lead);
         await _db.SaveChangesAsync();
-        // รอบ 209 P3 (D5/E2): แจ้งร้านหลังบันทึก — ส่งไม่ถึง = ประทับบน lead ไม่ล้มการส่งฟอร์มของลูกค้า (Notify.cs) ·
-        // คำตอบถึงผู้ส่งฟอร์ม (สาธารณะ) สร้างก่อนประทับ — เหตุส่งไม่ถึง (อีเมลร้าน) ไม่รั่วออกนอกร้าน
-        var response = MapDetail(lead);
-        await NotifyShopNewLeadAsync(lead);
-        return response;
+        return lead;
     }
 
     // ====================================================================
@@ -238,7 +254,9 @@ public partial class CmsLeadService
                 new(Description: lineDesc, Quantity: 1m, Unit: "งาน",
                     UnitPrice: amount, DiscountPercent: 0m, VatRate: quoteVatRate,
                     WithholdingTaxRate: 0m, AccountId: null)
-            });
+            },
+            // รอบ 209 P6 (ฐ): lead ของเว็บที่ผูกสาขา ⇒ ใบเสนอราคาออกในนามสาขานั้น · ไม่ผูก = สำนักงานใหญ่เดิม
+            BranchId: await Accounting.Helpers.CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId));
 
         var doc = await _docService.CreateDocumentAsync(companyId, docReq, userId);
 
@@ -273,63 +291,11 @@ public partial class CmsLeadService
     private async Task EnsureContactLinkedAsync(CmsLead lead)
     {
         if (lead.ContactId.HasValue) return;
-
-        // Match by tax-id first (most reliable for businesses),
-        // then by email. Skip name-only matching — too many false
-        // positives, the user can manually merge later if needed.
-        // รอบ 193 ทีม C3 (ฝ่ายค้าน C-6 · แก้เฉพาะการจับคู่ผู้ติดต่อ): คีย์เลขภาษี + สาขาตัวเดียว (Helpers/ContactTaxBranchKey)
-        // — lead ไม่มีช่องสาขา ⇒ "ไม่ระบุ" = แถวสำนักงานใหญ่ก่อน (เดิม `c.TaxId ==` หยิบแถวไหนก็ได้ของเลขนั้น) ·
-        // อีเมลจับได้เฉพาะชุด SoftScope (เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข — เดิมอีเมลตรงแถวที่ถือเลขอื่น = ผูกคนละนิติบุคคล)
-        Contact? existing = null;
-        var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
-            _db.Contacts.Where(c => !c.IsDeleted), lead.CompanyId, lead.CustomerTaxId, branchCode: null);
-        if (taxKey.ContactId is Guid keyId)
-            existing = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == lead.CompanyId);
-        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(
-            _db.Contacts.Where(c => !c.IsDeleted), lead.CompanyId, lead.CustomerTaxId, taxKey);
-        if (existing == null && softScope != null && !string.IsNullOrEmpty(lead.CustomerEmail))
-            existing = await softScope.FirstOrDefaultAsync(c => c.Email == lead.CustomerEmail);
-        // ฝ่ายค้านรอบสอง R2-C5: จับด้วยอีเมลแล้วต้องรับเลขของ lead (บันทึกพร้อม SaveChanges ของผู้เรียกเหมือน IsCustomer)
-        // รอบสาม: แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = สร้างผู้ติดต่อใหม่ของ lead รายนี้ (ด้านล่าง)
-        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(existing, lead.CustomerTaxId, branchCode: null,
-                taxKey.Found ? Accounting.Helpers.ContactMatchKind.TaxKey : Accounting.Helpers.ContactMatchKind.Email)
-            == Accounting.Helpers.ContactAdoptOutcome.Reject)
-            existing = null;
-
-        if (existing != null)
-        {
-            lead.ContactId = existing.Id;
-            // Mark as customer if previously only a supplier.
-            if (!existing.IsCustomer)
-            {
-                existing.IsCustomer = true;
-                existing.UpdatedAt = DateTime.UtcNow;
-            }
-            return;
-        }
-
-        // Create a new Contact. Use the company name when present
-        // (business customer), else the customer's name (individual).
-        var contact = new Contact
-        {
-            CompanyId = lead.CompanyId,
-            Name = !string.IsNullOrEmpty(lead.CustomerCompany)
-                ? lead.CustomerCompany!
-                : (lead.CustomerName ?? "(ไม่ระบุชื่อ)"),
-            ContactType = !string.IsNullOrEmpty(lead.CustomerCompany)
-                ? Models.Enums.ContactType.JuristicPerson
-                : Models.Enums.ContactType.Individual,
-            TaxId = lead.CustomerTaxId,
-            Email = lead.CustomerEmail,
-            Phone = lead.CustomerPhone,
-            IsCustomer = true,
-            IsSupplier = false,
-            CreatedBy = "lead-qualify"
-        };
-        Accounting.Helpers.ContactTaxBranchKey.StampTaxIdWarning(contact);   // ฝ่ายค้านรอบสี่ P4-5: เลขไม่ผ่าน checksum ⇒ ป้ายบนผู้ติดต่อ
-        _db.Contacts.Add(contact);
-        await _db.SaveChangesAsync();
-        lead.ContactId = contact.Id;
+        // รอบ 209 P6 (D4): ตัวหาเดียวของลูกค้าเว็บ — เลขภาษี+สาขา (ContactTaxBranchKey) → อีเมล → เบอร์ บนชุด SoftScope · AdoptTaxId Reject ⇒ สร้างใหม่
+        // (กติกาเดิมของ lead ย้ายเข้า Helpers/CmsContactResolver ทั้งชุด · เพิ่มขั้นเบอร์โทร + กรองแถวที่ปิดใช้งาน)
+        var r = await Accounting.Helpers.CmsContactResolver.ResolveAsync(_db, lead.CompanyId,
+            Accounting.Helpers.CmsContactResolver.ForLead(lead));
+        lead.ContactId = r.ContactId;
     }
 
     private async Task<string> NextLeadNumberAsync(Guid companyId)

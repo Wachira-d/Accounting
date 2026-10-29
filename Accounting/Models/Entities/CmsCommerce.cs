@@ -166,6 +166,8 @@ public class SiteCartItem : TenantEntity
     public string? ModifierSelectionsJson { get; set; }
     /// <summary>วันผลิตเพิ่มจากตัวเลือก (ตรึงตอนใส่ตะกร้า)</summary>
     public int ExtraLeadDays { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือก (<c>SiteProductVariant</c>) — ราคาตรึงตอนใส่ตะกร้าผ่าน <c>Helpers/CmsVariantPricing</c> · null = สินค้าไม่มี variant (เดิม)</summary>
+    public Guid? VariantId { get; set; }
 }
 
 // ===== Orders =====
@@ -298,6 +300,12 @@ public class SiteOrderLine : TenantEntity
 
     /// <summary>ตัวเลือกสินค้าตามสั่งที่ลูกค้าเลือก (สำเนาจากตะกร้า — ใบสั่งผลิต/ใบขายอ่านจากที่นี่)</summary>
     public string? ModifierSelectionsJson { get; set; }
+
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่ขาย (สำเนาจากตะกร้า) · null = ไม่มี variant (เดิม)</summary>
+    public Guid? VariantId { get; set; }
+    /// <summary>รอบ 209 P6 (E5/D3): สินค้า ERP ที่ถูกตัดสต็อกจริง (variant ที่ผูกสินค้า ERP หรือสินค้าแม่) — ตรึงตอนตัด ⇒ คืนสต็อกเข้าสินค้า/คลังเดียวกันเสมอ
+    /// (คู่กับ <see cref="WarehouseId"/>) · null = แถวเก่า/ยังไม่ตัด ⇒ สินค้าแม่ (เดิม)</summary>
+    public Guid? StockProductId { get; set; }
 }
 
 public class SiteOrderPayment : TenantEntity

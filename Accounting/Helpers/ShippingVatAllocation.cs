@@ -78,13 +78,6 @@ public static class ShippingVatAllocation
     public static string LineDescription(Part p, int partCount)
         => partCount <= 1 ? "ค่าจัดส่ง" : $"ค่าจัดส่ง ({RateLabel(p.Rate)})";
 
-    /// <summary>บรรทัดเอกสารนี้เป็นบรรทัดค่าจัดส่งที่ <see cref="LineDescription"/> สร้างไหม (คู่สมมาตรของตัวสร้าง — ห้ามเทียบข้อความเองที่อื่น) ·
-    /// ผู้อ่าน: ใบลดหนี้ร่างตอนยกเลิกหลังจัดส่ง (รอบ 209 · คำตัดสินข้อ 168 ฉ)</summary>
-    public static bool IsShippingLineDescription(string? description)
-    {
-        var d = (description ?? "").Trim();
-        return d == "ค่าจัดส่ง" || d.StartsWith("ค่าจัดส่ง (", StringComparison.Ordinal);
-    }
 
     private static string RateLabel(decimal rate)
         => rate == ThaiVatTypeRule.ExemptRate ? "ยกเว้น VAT" : rate <= 0m ? "VAT 0%" : $"VAT {rate:0.##}%";
