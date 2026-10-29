@@ -106,8 +106,10 @@ public partial class LodgingService
         var documents = new List<LodgingReservationDocumentDto>();
         if (includeInternal)
         {
+            // รอบ 208 ฝ่ายค้าน W5 ข้อ 10: ตัดใบที่ยังไม่ออก (ร่าง/รออนุมัติ) ด้วยชุดสถานะตัวเดียว — ใบถูกตีกลับยังแสดง (ประวัติ)
+            var hiddenStatuses = LodgingReservationDocuments.HiddenStatuses;
             var rows = await _db.Documents.AsNoTracking()
-                .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == r.ReservationNumber && d.Status != DocumentStatus.Draft)
+                .Where(d => d.CompanyId == companyId && !d.IsDeleted && d.BookingNumber == r.ReservationNumber && !hiddenStatuses.Contains(d.Status))
                 .OrderBy(d => d.DocumentDate).ThenBy(d => d.CreatedAt)
                 .Select(d => new LodgingReservationDocumentRow(d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.DocumentDate, d.TotalAmount, d.IsDeposit, d.DepositNature))
                 .ToListAsync();

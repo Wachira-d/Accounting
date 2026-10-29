@@ -23,6 +23,11 @@ public static class LodgingReservationDocuments
         return DocumentTypeNames.Title(d.Type, null);
     }
 
+    /// <summary>สถานะที่<b>ไม่แสดง</b>ในการ์ดเอกสารของการจอง = ยังไม่ออกจริง (<see cref="DocumentStatusRules.NotIssued"/> · ไม่มีเลขจริง) <b>ยกเว้น</b>ถูกตีกลับ
+    /// (เป็นประวัติที่พนักงานต้องเห็นว่าใบถูกตีกลับ) — รอบ 208 ฝ่ายค้าน W5 ข้อ 10 (เดิมตัดเฉพาะร่าง ⇒ ใบรออนุมัติเลข <c>DRAFT-…</c> โผล่ป้าย "มีผล")</summary>
+    public static readonly DocumentStatus[] HiddenStatuses =
+        DocumentStatusRules.NotIssued.Where(s => s != DocumentStatus.Rejected).ToArray();
+
     /// <summary>ป้ายสถานะไทย — ใบที่ยกเลิก/ตีกลับต้องเห็นชัด (ไม่ซ่อนออกจากรายการ — เป็นประวัติของการจอง)</summary>
     public static string StatusLabel(DocumentStatus s) => s switch
     {

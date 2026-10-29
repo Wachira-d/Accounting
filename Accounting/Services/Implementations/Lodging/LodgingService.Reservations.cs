@@ -688,12 +688,20 @@ public partial class LodgingService
                 .Where(f => LodgingHoldRule.HoldLapsed(new LodgingHoldFacts(f.Status, f.HoldExpiresAt, f.DepositPaid, f.SlipUploadedAt != null, f.PaymentProblemAt != null), now))
                 .Select(f => f.Id).ToList();
             if (lapsedIds.Count == 0) return 0;
-            var expired = await _db.LodgingReservations.Where(r => r.CompanyId == companyId && lapsedIds.Contains(r.Id)).ToListAsync();
+            // รอบ 208 ฝ่ายค้าน W5 ข้อ 5: โหลด folio ด้วย — หมดเวลาถือห้อง = ยกเลิก ⇒ folio ที่ยังไม่ออกใบต้องถูกล้างเหมือนยกเลิกโดยคน
+            // (ตัวเดียว VoidPendingFolioOnCancel → LodgingFolioOnCancel.ToVoid · เพิ่ม folio ได้ตั้งแต่ก่อนเช็คอินตั้งแต่รอบ 205)
+            var expired = await _db.LodgingReservations.Include(r => r.Charges)
+                .Where(r => r.CompanyId == companyId && lapsedIds.Contains(r.Id)).ToListAsync();
             foreach (var r in expired)
             {
+                var (folioVoidedCount, folioVoidedTotal) = VoidPendingFolioOnCancel(r, r.Status, "system", noShow: false);
                 r.Status = LodgingReservationStatus.Cancelled; r.CancelledAt = now;
                 r.CancellationReason = LodgingGuestConfirmPolicy.AutoExpireReasonFor(r.GuestConfirmMode);   // ตัวอ่าน: LodgingHoldRule.IsAutoExpiredHold (สลิปหลังหมด hold · P1-3ก)
-                _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new { action = "AutoExpireHold" }));
+                _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new
+                {
+                    action = "AutoExpireHold",
+                    folioVoided = folioVoidedCount == 0 ? null : new { count = folioVoidedCount, total = folioVoidedTotal, ruleCode = LodgingFolioOnCancel.RuleCode },
+                }));
             }
             await _db.SaveChangesAsync();
             return expired.Count;
