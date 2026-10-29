@@ -78,3 +78,17 @@ public enum BookingCompletionDocument
     /// <summary>ออกให้อัตโนมัติตามสถานะ VAT: จด VAT ⇒ ใบกำกับภาษี · ไม่จด VAT ⇒ ใบแจ้งหนี้ (รับเงินครบตอนเสร็จ = ใบเสร็จรับเงิน)</summary>
     Auto = 1,
 }
+
+/// <summary>รอบ 209 · P4 — สถานะเทอมคลาส (<c>SiteClassTerm</c>) · Ended = หยุดสร้างรอบใหม่ (รอบที่สร้างแล้วคงอยู่ · บริการยังเดินตามตารางคลาส)</summary>
+public enum ClassTermStatus
+{
+    Active = 0,
+    Ended = 1,
+}
+
+/// <summary>รอบ 209 · P4 — สถานะรอบเรียนจริง (<c>SiteClassSession</c>) · Cancelled = ร้านยกเลิกทั้งคลาส (ไม่เปิดให้จอง · การจองถูกยกเลิกผ่านเส้นสถานะเดิม)</summary>
+public enum ClassSessionStatus
+{
+    Scheduled = 0,
+    Cancelled = 1,
+}

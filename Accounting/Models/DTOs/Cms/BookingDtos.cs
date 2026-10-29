@@ -268,8 +268,8 @@ public class BookingSlotResponse
     public string? SpecificDate { get; set; }
     public bool IsBlocked { get; set; }
     public int MaxCapacity { get; set; }
-    public int CurrentBookings { get; set; }
-    public int AvailableSlots { get; set; }
+    // รอบ 209 P4 (C9): CurrentBookings/AvailableSlots ถูกลบ — ไม่มีผู้เขียน ⇒ ตอบ "ว่าง = ความจุเต็ม" เสมอ (ค่าโกหก) ·
+    // ที่ว่างจริงของรอบ = GET …/available-slots (BookingSlotEngine) หรือ GET …/classes (ตารางคลาส)
     public bool IsActive { get; set; }
 }
 
@@ -361,6 +361,11 @@ public class BookingResponse
     public List<string> ErpNotices { get; set; } = new();
     /// <summary>R-39: เลขบัตรคอร์สที่ใช้จ่ายการจองนี้ · null = การจองชำระปกติ</summary>
     public string? CreditPassNumber { get; set; }
+    /// <summary>รอบ 209 P4 (คำตัดสินข้อ 168 ญ): นโยบายยกเลิกที่ใช้กับการจองนี้ — "CreditPass" (จองด้วยบัตร ⇒ กติกาของแพ็กเกจชนะ) / "Service" ·
+    /// ตัวตัดสินเดียว <c>CreditBookingLink.CancellationPolicy</c> (server ประกอบ หน้าเว็บแสดง)</summary>
+    public string CancellationPolicySource { get; set; } = "Service";
+    /// <summary>ข้อความนโยบายยกเลิกที่ใช้จริง · null = บริการไม่ได้ตั้งนโยบาย</summary>
+    public string? CancellationPolicy { get; set; }
     /// <summary>แสดงปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี" ไหม (server ตัดสินด้วย <c>BookingInvoiceTimingPolicy.Decide(PaymentReceived)</c> · คำตัดสินข้อ 155)</summary>
     public bool CanIssueTaxInvoiceNow { get; set; }
 
@@ -594,8 +599,10 @@ public class AvailableSlotResponse
     public decimal Price { get; set; }
     /// <summary>รอบเต็ม — จองได้เฉพาะเข้าคิวสำรอง</summary>
     public bool IsFull { get; set; }
-    /// <summary>ผู้ให้บริการที่ระบบจะจัดให้ (แสดงเพื่อประกอบ — server ตัดสินอีกครั้งตอนจอง)</summary>
+    /// <summary>ผู้ให้บริการที่ระบบจะจัดให้ (แสดงเพื่อประกอบ — server ตัดสินอีกครั้งตอนจอง) · บริการที่ใช้ตารางคลาส = ครูของรอบ (รอบ 209 P4)</summary>
     public string? ResourceName { get; set; }
+    /// <summary>รอบ 209 P4: รอบเรียน (SiteClassSession) ของเวลานี้ · null = บริการไม่ใช้ตารางคลาส</summary>
+    public Guid? ClassSessionId { get; set; }
 }
 
 /// <summary>พนักงานบันทึกรับเงินมัดจำของการจอง (รอบ 205 W2 R-08) — ยอด/วันที่/อ้างอิง · ตัวตัดสิน Helpers/CmsBookingOnlinePayment</summary>

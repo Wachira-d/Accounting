@@ -71,6 +71,19 @@ public interface ICmsBookingService
     /// <summary>สรุปการทำงาน/รายงานผู้ให้บริการของช่วงวันที่</summary>
     Task<BookingProviderReportResponse> GetProviderReportAsync(Guid companyId, Guid siteId, DateTime from, DateTime to);
 
+    // ── รอบ 209 P4: ตารางคลาส (เทอม → รอบเรียน) — CmsBookingService.Classes.cs ──
+    Task<List<ClassTermResponse>> GetClassTermsAsync(Guid companyId, Guid siteId, Guid? serviceId);
+    Task<ClassTermResponse> SaveClassTermAsync(Guid companyId, Guid siteId, Guid? termId, SaveClassTermRequest request, string userId);
+    Task<List<string>> DeleteClassTermAsync(Guid companyId, Guid siteId, Guid termId, string userId);
+    Task<ClassGenerateResponse> GenerateClassSessionsAsync(Guid companyId, Guid siteId, Guid termId, GenerateClassSessionsRequest request, string userId);
+    Task<List<ClassSessionResponse>> GetClassSessionsAsync(Guid companyId, Guid siteId, DateOnly from, DateOnly to, Guid? serviceId);
+    Task<ClassSessionDetailResponse> GetClassSessionAsync(Guid companyId, Guid siteId, Guid sessionId);
+    Task<ClassActionResponse> UpdateClassSessionAsync(Guid companyId, Guid siteId, Guid sessionId, UpdateClassSessionRequest request, string userId);
+    Task<ClassActionResponse> SetClassSubstituteAsync(Guid companyId, Guid siteId, Guid sessionId, ClassSubstituteRequest request, string userId);
+    Task<ClassActionResponse> CancelClassSessionAsync(Guid companyId, Guid siteId, Guid sessionId, ClassCancelRequest request, string userId);
+    Task<ClassActionResponse> ReopenClassSessionAsync(Guid companyId, Guid siteId, Guid sessionId, string userId);
+    Task<ClassActionResponse> CheckInClassAsync(Guid companyId, Guid siteId, Guid sessionId, ClassCheckInRequest request, string userId);
+
     // ERP Sync (event-driven)
     Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId);
 }

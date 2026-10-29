@@ -455,6 +455,9 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteBookingResourceService> SiteBookingResourceServices => Set<SiteBookingResourceService>();
     public DbSet<SiteBookingResourceSlot> SiteBookingResourceSlots => Set<SiteBookingResourceSlot>();
     public DbSet<SiteBookingAssignment> SiteBookingAssignments => Set<SiteBookingAssignment>();
+    // รอบ 209 P4 — ตารางคลาส (Helpers/ClassScheduleMigration)
+    public DbSet<SiteClassTerm> SiteClassTerms => Set<SiteClassTerm>();
+    public DbSet<SiteClassSession> SiteClassSessions => Set<SiteClassSession>();
 
     // Lodging (ธุรกิจที่พัก)
     public DbSet<LodgingProperty> LodgingProperties => Set<LodgingProperty>();
@@ -3404,6 +3407,21 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.SharePercent).HasPrecision(5, 2);
             e.HasIndex(x => new { x.BookingId, x.ResourceId }).IsUnique().HasDatabaseName("UX_SiteBookingAssignments_Booking_Resource");
             e.HasIndex(x => new { x.CompanyId, x.ResourceId }).HasDatabaseName("IX_SiteBookingAssignments_Company_Resource");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 209 P4: ตารางคลาส (ตาราง + index ต้องตรงกับ Helpers/ClassScheduleMigration)
+        modelBuilder.Entity<SiteClassTerm>(e =>
+        {
+            e.Property(x => x.Title).HasMaxLength(200);
+            e.Property(x => x.Weekdays).HasMaxLength(32);
+            e.HasIndex(x => new { x.CompanyId, x.BookingServiceId }).HasDatabaseName("IX_SiteClassTerms_Company_Service");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<SiteClassSession>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.BookingServiceId, x.SessionDate, x.StartTime }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_SiteClassSessions_Company_Service_Date_Start");
+            e.HasIndex(x => new { x.CompanyId, x.SiteId, x.SessionDate }).HasDatabaseName("IX_SiteClassSessions_Company_Site_Date");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 

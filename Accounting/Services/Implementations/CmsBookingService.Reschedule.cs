@@ -74,6 +74,7 @@ public partial class CmsBookingService
             var decision = BookingSlotEngine.Decide(ctx.Rules, newDate, start, ctx.Rows, ctx.Occupied,
                 BookingSlotEngine.BangkokNow(now), booking.GuestCount, Math.Max(1, booking.Units), ctx.Resources, requested,
                 ignoreAdvance: !byCustomer);
+            decision = ClassScheduleGenerator.Explain(decision, ctx.ClassSessions, newDate, start);   // รอบ 209 P4: รอบคลาสยกเลิก/ไม่มีคลาส บอกตรง ๆ
             if (!decision.Allowed || decision.Slot == null)
                 throw new BusinessRuleException(decision.Message ?? "รอบที่เลือกไม่ว่าง — เลือกเวลาอื่น", RescheduleRuleCode,
                     decision.Reason == BookingSlotRejection.Full ? 409 : 400);
@@ -85,7 +86,10 @@ public partial class CmsBookingService
                 + (string.IsNullOrWhiteSpace(request.Reason) ? "" : $" · เหตุผล: {request.Reason.Trim()}");
             booking.BookingDate = newDate.ToDateTime(TimeOnly.MinValue);
             booking.StartTime = slot.Start; booking.EndTime = slot.BookedEnd; booking.DurationMinutes = slot.BookedMinutes;
-            booking.ResourceId = slot.ResourceId ?? (ctx.Rules.ResourceMode == BookingResourceMode.None ? null : booking.ResourceId);
+            // รอบ 209 P4: ย้ายเข้ารอบคลาส ⇒ ครูของรอบใหม่ (ไม่ค้างครูของรอบเดิม)
+            booking.ResourceId = ctx.ClassSessions != null
+                ? ClassScheduleGenerator.ResourceForBooking(slot.ResourceId, ctx.ClassSessions, newDate, slot.Start)
+                : slot.ResourceId ?? (ctx.Rules.ResourceMode == BookingResourceMode.None ? null : booking.ResourceId);
             // เตือนก่อนนัดรอบเดิมไม่มีความหมายแล้ว ⇒ ให้ job เตือนรอบใหม่ (BookingReminderPlan อ่าน ReminderSentAt)
             booking.ReminderSent = false; booking.ReminderSentAt = null; booking.NotifyAttemptedAt = null; booking.NotifyLastError = null;
             booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, changeNote);

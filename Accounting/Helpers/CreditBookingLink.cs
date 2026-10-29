@@ -126,6 +126,34 @@ public static class CreditBookingLink
     /// <summary>หมายเหตุบนบิล POS ที่เปิดจากการจองที่จ่ายด้วยบัตร</summary>
     public const string PosOpenNote = "ชำระด้วยบัตรคอร์ส — ปิดบิลแล้วระบบตัดเครดิต (มาเรียน) ให้ในธุรกรรมเดียวกัน";
 
+    // ───────── รอบ 209 P4 (คำตัดสินข้อ 168 ญ): นโยบายยกเลิกของการจองด้วยบัตร = กติกาของแพ็กเกจ (ตรึงบนบัตรตอนขาย) ชนะนโยบายของบริการ ─────────
+
+    public const string PolicySourceCreditPass = "CreditPass";
+    public const string PolicySourceService = "Service";
+
+    /// <summary>นโยบายยกเลิกที่ใช้กับการจองหนึ่งใบ (server ประกอบ · หน้าเว็บแสดงตรง) — มีบัตร ⇒ กติกาของบัตร (<paramref name="passFreeCancelHours"/>
+    /// คือค่าที่ <c>CourseCreditMath.CancelOutcome</c> ใช้ตอนยกเลิกจริง) · ไม่มีบัตร ⇒ ของบริการ · บริการไม่ตั้งอะไรเลย ⇒ ข้อความ null</summary>
+    public static (string Source, string? Text) CancellationPolicy(string? passNumber, int? passFreeCancelHours, int? serviceFreeHours, decimal? serviceFeePercent)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (!string.IsNullOrWhiteSpace(passNumber) && passFreeCancelHours is int h)
+            return (PolicySourceCreditPass, h > 0
+                ? $"จองด้วยบัตรคอร์ส {passNumber} — ใช้กติกาของบัตร: ยกเลิกก่อนเวลาเรียนอย่างน้อย {h} ชั่วโมง คืนเครดิต · ช้ากว่านั้นหรือไม่มา = ตัดเครดิต · ร้านยกเลิกคลาส = คืนเครดิตเสมอ"
+                : $"จองด้วยบัตรคอร์ส {passNumber} — ใช้กติกาของบัตร: ยกเลิกก่อนเวลาเรียน คืนเครดิต · ไม่มา = ตัดเครดิต · ร้านยกเลิกคลาส = คืนเครดิตเสมอ");
+        var fee = serviceFeePercent is decimal f && f > 0 ? f : (decimal?)null;
+        if (serviceFreeHours is int sh && sh > 0)
+            return (PolicySourceService, fee is decimal fp
+                ? $"ยกเลิกฟรีก่อนเวลานัด {sh} ชั่วโมง (หลังจากนั้นค่าธรรมเนียม {fp.ToString("0.##", inv)}%)"
+                : $"ยกเลิกฟรีก่อนเวลานัด {sh} ชั่วโมง");
+        return (PolicySourceService, fee is decimal fo ? $"ยกเลิกมีค่าธรรมเนียม {fo.ToString("0.##", inv)}%" : null);
+    }
+
+    /// <summary>"ถ้ายกเลิกตอนนี้" ของการจองด้วยบัตร — ผลจากตัวตัดสินเดียวกับเส้นยกเลิกจริง (<see cref="CourseCreditMath.CancelOutcome"/>)</summary>
+    public static string CancelNowNote(DateTime startUtc, DateTime nowUtc, int passFreeCancelHours)
+        => CourseCreditMath.CancelOutcome(startUtc, nowUtc, passFreeCancelHours) == CreditCancelOutcome.Refund
+            ? $"ยกเลิกตอนนี้ได้เครดิตคืน (กติกาของบัตร: ก่อนเวลาเรียนอย่างน้อย {Math.Max(0, passFreeCancelHours)} ชั่วโมง)"
+            : $"ยกเลิกตอนนี้ = ตัดเครดิต 1 ครั้งตามกติกาของบัตร (น้อยกว่า {Math.Max(0, passFreeCancelHours)} ชั่วโมงก่อนเวลาเรียน)";
+
     public static string ActionTh(LedgerAction a) => a switch
     {
         LedgerAction.SettleAttended => "ตัดเครดิต (มาเรียน)",

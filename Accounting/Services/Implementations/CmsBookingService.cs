@@ -619,7 +619,11 @@ public partial class CmsBookingService : ICmsBookingService
 
     /// <summary>ข้อมูลที่ engine ต้องใช้ตัดสินหนึ่งวันของบริการหนึ่งตัว</summary>
     private sealed record DayContext(BookingSlotRules Rules, List<BookingScheduleRow> Rows, List<BookingOccupancy> Occupied,
-        List<BookingResourceInfo> Resources);
+        List<BookingResourceInfo> Resources)
+    {
+        /// <summary>รอบ 209 P4: รอบเรียนของวันนั้น (บริการที่ใช้ตารางคลาส — CmsBookingService.Classes.cs) · null = บริการไม่ใช้ตารางคลาส (พฤติกรรมเดิมทุกข้อ)</summary>
+        public List<ClassSessionFact>? ClassSessions { get; init; }
+    }
 
     /// <summary>รอบ 207: สถิติต่อผู้ให้บริการที่ตรรกะแนะนำใช้ — <see cref="BookingRecommendStrategy.FairShareMonth"/> นาทีงานของเดือน (ไม่รวมวันที่จัด —
     /// engine บวกงานของวันนั้นเอง) · <see cref="BookingRecommendStrategy.RoundRobin"/> ได้งานล่าสุดเมื่อไร (เวลาสร้าง/มอบหมาย) · โหมดอื่น ⇒ ว่าง (ไม่ query)</summary>
@@ -745,7 +749,10 @@ public partial class CmsBookingService : ICmsBookingService
         // ฝั่งความจุของบริการ/กลุ่ม (ไม่ใช้ผู้ให้บริการ): การจองของบริการอื่นที่มาเพราะ "ใช้ผู้ให้บริการร่วม" ไม่ใช่คิวของบริการนี้
         if (!forProviders && (resources.Count == 0 || !rules.EnforceCapacity))
             occupied = occupied.Where(b => b.ServiceId is Guid sid && poolIds.Contains(sid)).ToList();
-        return new DayContext(rules, rows, occupied, resources);
+        var day = new DayContext(rules, rows, occupied, resources);
+        // รอบ 209 P4: บริการที่มีเทอมคลาส ⇒ ตาราง/ที่นั่ง/ครูของวันมาจากรอบเรียน (Classes.cs) · ไม่มีเทอม ⇒ คืนตัวเดิมทุกค่า ·
+        // หน้าต่างเลือกผู้ให้บริการตอนเริ่มให้บริการ (forProviders) ไม่ปรับ — คนลงมือจริงหน้างานเลือกได้ตามเดิม
+        return forProviders ? day : await ApplyClassSessionsAsync(companyId, svc, date, day);
     }
 
     public async Task<List<AvailableSlotResponse>> GetAvailableSlotsAsync(Guid companyId, Guid siteId, AvailableSlotsRequest request)
@@ -761,18 +768,26 @@ public partial class CmsBookingService : ICmsBookingService
         var requested = ctx.Rules.ResourceMode == BookingResourceMode.Auto ? null : request.ResourceId;
         if (requested is Guid want && ctx.Resources.All(r => r.Id != want)) return new();
         var names = ctx.Resources.ToDictionary(r => r.Id, r => r.Name);
+        // รอบ 209 P4: บริการที่ใช้ตารางคลาส ⇒ ประกาศชื่อครูของรอบ (ครูถูกตั้งบนรอบ ไม่ใช่สุ่มตอนจอง) — ชื่อครูที่ไม่อยู่ในรายชื่อของ engine โหลดจากฐาน
+        var classNames = ctx.ClassSessions == null ? new Dictionary<Guid, string>() : await ClassInstructorNamesAsync(companyId, ctx.ClassSessions);
         return BookingSlotEngine.Available(ctx.Rules, date, ctx.Rows, ctx.Occupied, BookingSlotEngine.BangkokNow(DateTime.UtcNow),
                 Math.Max(1, request.GuestCount), units, ctx.Resources, requested, includeFull: svc.WaitlistEnabled)
-            .Select(o => new AvailableSlotResponse
+            .Select(o =>
             {
-                StartTime = BookingSlotEngine.Hhmm(o.StartMinute),
-                EndTime = BookingSlotEngine.Hhmm(o.EndMinute),
-                AvailableCapacity = o.Remaining,
-                Label = o.Label,
-                Price = BookingSlotEngine.TotalPrice(ctx.Rules, svc.Price, units),
-                IsFull = o.IsFull,
-                // โหมดบังคับระบุ/ลูกค้าเลือก แสดงชื่อคนที่จะได้ · ระบบจัดให้ ไม่ประกาศชื่อล่วงหน้า (ตัดสินใหม่ตอนจอง)
-                ResourceName = ctx.Rules.ResourceMode != BookingResourceMode.Auto && o.ResourceId is Guid rid ? names.GetValueOrDefault(rid) : null,
+                var cls = ClassScheduleGenerator.SessionAt(ctx.ClassSessions, date, o.Start);
+                return new AvailableSlotResponse
+                {
+                    StartTime = BookingSlotEngine.Hhmm(o.StartMinute),
+                    EndTime = BookingSlotEngine.Hhmm(o.EndMinute),
+                    AvailableCapacity = o.Remaining,
+                    Label = o.Label,
+                    Price = BookingSlotEngine.TotalPrice(ctx.Rules, svc.Price, units),
+                    IsFull = o.IsFull,
+                    // โหมดบังคับระบุ/ลูกค้าเลือก แสดงชื่อคนที่จะได้ · ระบบจัดให้ ไม่ประกาศชื่อล่วงหน้า (ตัดสินใหม่ตอนจอง) · คลาส = ครูของรอบ
+                    ResourceName = cls?.EffectiveInstructorId is Guid ci ? classNames.GetValueOrDefault(ci)
+                        : ctx.Rules.ResourceMode != BookingResourceMode.Auto && o.ResourceId is Guid rid ? names.GetValueOrDefault(rid) : null,
+                    ClassSessionId = cls?.Id,
+                };
             })
             .ToList();
     }
@@ -822,6 +837,8 @@ public partial class CmsBookingService : ICmsBookingService
             var requested = ctx.Rules.ResourceMode == BookingResourceMode.Auto ? null : request.ResourceId;
             var decision = BookingSlotEngine.Decide(ctx.Rules, date, start, ctx.Rows, ctx.Occupied,
                 BookingSlotEngine.BangkokNow(DateTime.UtcNow), guests, units, ctx.Resources, requested);
+            // รอบ 209 P4: คลาสที่ถูกยกเลิก/ไม่มีคลาสเวลานี้ บอกเหตุตรง ๆ (บริการไม่ใช้ตารางคลาส ⇒ ผลเดิม)
+            decision = ClassScheduleGenerator.Explain(decision, ctx.ClassSessions, date, start);
             var waitlist = decision.CanWaitlist(ctx.Rules);
             if (!decision.Allowed && !waitlist)
                 throw new BusinessRuleException(decision.Message ?? "จองรอบนี้ไม่ได้",
@@ -843,7 +860,8 @@ public partial class CmsBookingService : ICmsBookingService
                 DurationMinutes = slot.BookedMinutes,
                 Units = units,
                 // คิวสำรอง: เก็บผู้ให้บริการที่ลูกค้าขอ (ถ้ามี) — จัดจริงตอนเลื่อนขึ้น · จองได้: ผู้ให้บริการที่ engine จัดให้
-                ResourceId = waitlist ? requested : slot.ResourceId,
+                // รอบ 209 P4: บริการไม่ใช้ผู้ให้บริการแต่รอบคลาสตั้งครูไว้ ⇒ บันทึกครูของรอบ (รายงานผู้ให้บริการ/ค่าตอบแทนเห็น)
+                ResourceId = ClassScheduleGenerator.ResourceForBooking(waitlist ? requested : slot.ResourceId, ctx.ClassSessions, date, slot.Start),
                 GuestName = request.GuestName, GuestEmail = request.GuestEmail,
                 GuestPhone = request.GuestPhone, GuestCount = guests,
                 TotalAmount = total, DepositAmount = depositAmount,
@@ -959,7 +977,7 @@ public partial class CmsBookingService : ICmsBookingService
             var d = BookingSlotEngine.Decide(ctx.Rules, date, w.StartTime, ctx.Rows, ctx.Occupied, now,
                 w.GuestCount, Math.Max(1, w.Units), ctx.Resources, requested, ignoreAdvance: true);
             if (!d.Allowed) continue;
-            w.ResourceId = d.Slot!.ResourceId;
+            w.ResourceId = ClassScheduleGenerator.ResourceForBooking(d.Slot!.ResourceId, ctx.ClassSessions, date, w.StartTime);   // รอบ 209 P4: ครูของรอบคลาส
             if (svc.AutoConfirm || svc.BookingType == BookingType.Lead) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
             else w.Status = BookingStatus.Pending;
             // R-13: ประทับเวลาได้คิว + ถือรอบ (เฉพาะรอยืนยัน · BookingReminderPlan.HoldUntil) · แจ้งลูกค้า = NotifyWaitlistPromotedAsync (Notify.cs) หลัง commit —
@@ -1574,8 +1592,12 @@ public partial class CmsBookingService : ICmsBookingService
         }
         if (resp != null && resp.Status == BookingStatus.Waitlisted)
             resp.WaitlistPosition = (await WaitlistPositionsAsync(companyId, siteId, new[] { resp.Id })).GetValueOrDefault(resp.Id);
-        if (resp != null) resp.CreditPassNumber = await CreditPassNumberAsync(companyId, resp.Id);   // R-39
+        // R-39 เลขบัตร + รอบ 209 P4 (ญ): นโยบายยกเลิกที่ใช้จริง (จองด้วยบัตร ⇒ กติกาของแพ็กเกจชนะ) — Credits.cs
+        int? creditFreeCancelHours = resp != null ? await FillCreditPolicyAsync(companyId, resp) : null;
         if (resp != null) await FillCustomerFacingAsync(companyId, siteId, resp);   // รอบ 205 W2: มัดจำค้าง/จ่ายออนไลน์/นโยบายยกเลิก — ค่าจากเซิร์ฟเวอร์
+        // ญ: "ถ้ายกเลิกตอนนี้" ของการจองด้วยบัตร = ตัวตัดสินของคอร์ส (เส้นยกเลิกจริงใช้ตัวเดียวกัน) ไม่ใช่ค่าธรรมเนียมของบริการ
+        if (resp != null && creditFreeCancelHours is int cfh && resp.CanCancelOnline)
+            resp.CancelPolicyNote = CreditBookingLink.CancelNowNote(StartUtcOf(resp.BookingDate, resp.StartTime), DateTime.UtcNow, cfh);
         // ปุ่ม "รับเงินแล้ว — ออกใบกำกับภาษี": ตัวตัดสินเดียวกับตอนกดจริง (server ตัดสิน · หน้าเว็บแสดง) · โหลดข้อเท็จจริงเฉพาะการจองที่เป็นไปได้
         // (Guaranteed ที่ผูกใบยืนยันการจอง หรือยังไม่มีเอกสาร) ⇒ โหมด (ก) ไม่มี query เพิ่ม + หน้าจอเดิม (ฝ่ายค้าน ข้อ 6)
         if (resp != null && resp.BookingType == BookingType.Guaranteed
@@ -1970,8 +1992,6 @@ public partial class CmsBookingService : ICmsBookingService
         EndTime = s.EndTime.ToString("HH:mm"),
         SpecificDate = s.SpecificDate?.ToString("yyyy-MM-dd"),
         IsBlocked = s.IsBlocked, MaxCapacity = s.MaxCapacity,
-        CurrentBookings = s.CurrentBookings,
-        AvailableSlots = s.MaxCapacity - s.CurrentBookings,
         IsActive = s.IsActive
     };
 }

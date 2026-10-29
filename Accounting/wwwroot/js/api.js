@@ -1009,6 +1009,19 @@ const API = {
       cmsRescheduleBooking: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/reschedule`, d || {}),   // รอบ 206
       // รอบ 205 W3 R-16 — เลือก/เปลี่ยนผู้ให้บริการ (resourceId null = ระบบจัดให้)
       cmsAssignBookingResource: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/resource`, d || {}),
+      // รอบ 209 P4 — ตารางคลาส (เทอม → รอบเรียน · ครูแทน · ยกเลิกทั้งคลาส · roster/เช็คอิน) · server ตัดสินทุกข้อ (ClassScheduleGenerator)
+      cmsClassTerms: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/booking/classes/terms${q}`),
+      cmsCreateClassTerm: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/classes/terms`, d),
+      cmsUpdateClassTerm: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/classes/terms/${id}`, d),
+      cmsDeleteClassTerm: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/classes/terms/${id}`),
+      cmsGenerateClassSessions: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/classes/terms/${id}/generate`, d || {}),
+      cmsClassSessions: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/booking/classes/sessions${q}`),
+      cmsClassSession: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}`),
+      cmsUpdateClassSession: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}`, d || {}),
+      cmsClassSubstitute: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}/substitute`, d || {}),
+      cmsCancelClassSession: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}/cancel`, d || {}),
+      cmsReopenClassSession: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}/reopen`, {}),
+      cmsClassCheckIn: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}/check-in`, d),
       // รอบ 207 — หน้าทำงานผู้ให้บริการ (เริ่ม/เสร็จ/ผู้ให้บริการหลายคน) · รายงาน · ผูกสินค้าให้บริการจอง
       cmsBookingProviderCandidates: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/booking/bookings/${id}/provider-candidates`),
       cmsStartBooking: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/start`, d || {}),
