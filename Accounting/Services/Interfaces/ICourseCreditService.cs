@@ -38,6 +38,22 @@ public interface ICourseCreditService
     Task<CreditRefundPreviewResponse> PreviewRefundAsync(Guid companyId, Guid passId, CancellationToken ct = default);
     /// <summary>ทุกบัตรของบริษัทที่เลยวันหมดอายุ (งานกลางคืน) — บัตรที่มีการจองค้าง ข้าม + นับไว้ในผลลัพธ์</summary>
     Task<CreditExpiryRunResult> ExpireDueAsync(Guid companyId, string actor, CancellationToken ct = default);
+
+    // ── รอบ 209 · P5 (R-209-C5/C7 · คำตัดสินข้อ 168 ฎ) — CourseCreditService.Membership.cs / .Reports.cs ──
+    /// <summary>พักบัตร (เลื่อนวันหมดอายุ · สมาชิกไม่จำกัดไม่รับรู้ช่วงพัก)</summary>
+    Task<CreditPassResponse> FreezePassAsync(Guid companyId, Guid passId, FreezeCreditPassRequest request, string actor, CancellationToken ct = default);
+    /// <summary>ยกเลิกการพักที่ยังไม่เริ่ม</summary>
+    Task<CreditPassResponse> CancelFreezeAsync(Guid companyId, Guid passId, Guid freezeId, string actor, CancellationToken ct = default);
+    /// <summary>ขยายอายุ (ไม่มีเงิน · audit)</summary>
+    Task<CreditPassResponse> ExtendPassAsync(Guid companyId, Guid passId, ExtendCreditPassRequest request, string actor, CancellationToken ct = default);
+    /// <summary>โอนบัตร — คืนบัตรใหม่ของผู้รับโอน</summary>
+    Task<CreditPassResponse> TransferPassAsync(Guid companyId, Guid passId, TransferCreditPassRequest request, string actor, CancellationToken ct = default);
+    /// <summary>รับรู้รายได้สมาชิกไม่จำกัดถึงเมื่อวาน (งานรายคืน/ปุ่ม)</summary>
+    Task<CreditPeriodRunResult> RecognizePeriodDueAsync(Guid companyId, string actor, CancellationToken ct = default);
+    /// <summary>แจ้งเตือนบัตรใกล้หมดอายุ (งานรายคืน/ปุ่ม)</summary>
+    Task<CreditReminderRunResult> SendExpiryRemindersAsync(Guid companyId, string actor, CancellationToken ct = default);
+    /// <summary>รายงานคลาส: fill-rate ต่อคลาส/บริการ/ผู้สอน · no-show · retention · บัตรใกล้หมดอายุ (<c>Helpers/ClassFillRateReport</c>)</summary>
+    Task<Accounting.Helpers.ClassReportResponse> GetClassReportAsync(Guid companyId, DateTime from, DateTime to, int expiringWithinDays, CancellationToken ct = default);
 }
 
 /// <summary>

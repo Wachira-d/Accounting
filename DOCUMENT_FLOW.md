@@ -5870,7 +5870,26 @@ _Last verified against codebase: 2026-10-29 (รอบ 209 · P4 — ตาร�
 การจองค้างไม่บล็อกคืนบางส่วนแล้ว (คงเหลือต้อง > ใช้แล้ว+จองไว้ · คืนทั้งก้อนยังบล็อก) · (4) ปุ่มคืนตามจำนวนเครดิตส่งเครดิตเข้า `RefundPreview(credits:)` ตรง · `CreditsRefundable` เผื่อ 0.0001 ก่อน floor ·
 (หมายเหตุ) ปุ่มคืนเงินไม่สร้างใบลดหนี้ให้บริษัทไม่จด VAT / บริการยกเว้น §81 (`RefundDocumentProblem` — §86/10 เฉพาะผู้ออกใบกำกับ) · ดัชนี `IX_CreditClassBookings_Company_ExternalRef_Any`
 
-**ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`)
+**รอบ 209 · P5 (คำตัดสินข้อ 168 ฎ/ฏ · R-209-C5/C6/C7/D8)**:
+(1) **สมาชิกไม่จำกัดครั้งตามช่วงเวลา** (`CreditPackage.Kind = UnlimitedPeriod` · `ValidityDays` = วันของสมาชิก > 0): ขาย/เปิดบัตรเส้นเดิม (ใบกำกับ/ใบเสร็จ ณ วันขาย · Cr 21713) ·
+บัตร `CreditsTotal = 0` · วันหมดอายุ = วันเริ่ม + วัน − 1 · จอง (`BookAsync`/`HoldAsync` → `BookReasonAsync` → `CourseCreditMath.CannotBookUnlimitedReason`) **ไม่ตัดเครดิต** แต่เคารพเพดานต่อวัน (ตั้งต้น 1) / จองค้าง / ช่วงพัก / จองครั้งละ 1 ที่ ·
+มาเรียน/no-show/ยกเลิกช้า **ไม่มี JE** (`RecognizeOnUseFor` = 0) · รับรู้รายได้**เส้นตรงรายวัน** โดยงาน `CourseCreditExpiryJob` (ทุก 6 ชม. · `JobLock`) → `RecognizePeriodDueAsync` ถึงเมื่อวาน:
+แผน `CourseCreditMath.PeriodRecognitionPlan` (รายวัน = round(สัญญา ÷ วัน, AwayFromZero) · วันสุดท้ายรับส่วนที่เหลือ · Σ = สัญญา) **หนึ่ง JE ต่อเดือนปฏิทิน** Dr 21713 · Cr 42000 ลงวันสิ้นช่วง (งวดปิด ⇒ ลงวันนี้ + หมายเหตุ เส้นเดิม) · แถวสมุด `PeriodRecognize` · ปิดบัตรหมดอายุรับรู้ครบถึงวันหมดอายุก่อน ·
+คืนเงิน: บางส่วนไม่รองรับ (บัตร CreditsTotal 0 ⇒ ตัวตัดสินเดิมตอบ) · ทั้งก้อน = ปิดบัตรเส้นเดิม
+(2) **พักบัตร** (`FreezePassAsync` · `CreditPassFreezes` · ตัวตัดสิน `FreezeProblem`): เพดานต่อแพ็กเกจ `MaxFreezeDays` (0 = ไม่อนุญาต · เดิม) · ไม่ย้อนหลัง · หลังวันที่รับรู้แล้ว · ไม่มีการจองค้างในช่วง · วันหมดอายุ + จำนวนวัน ·
+ช่วงพักไม่นับวันใช้งาน (ไม่รับรู้) · จองวันพักไม่ได้ (ทั้งบัตรครั้งและสมาชิก) · ยกเลิกพักที่ยังไม่เริ่มได้ · **ไม่มีเงิน** · audit + แถวสมุด `Freeze`
+(3) **ขยายอายุ** (`ExtendPassAsync`): บันทึก + audit ไม่มีเงิน · สมาชิก: รับรู้ถึงเมื่อวานก่อน แล้วตั้งฐานใหม่ (ส่วนที่ยังไม่รับรู้กระจายบนวันที่เหลือ + วันที่เพิ่ม)
+(4) **โอนบัตร** (`TransferPassAsync` · `PlanTransfer`): บัตรเดิม → สถานะ `Transferred` (`TransferredOutAmount`) · บัตรใหม่ของผู้รับ = ยอดที่ยังไม่รับรู้ + เครดิต/วันใช้งานที่เหลือ (สมาชิกเริ่มวันนี้) ·
+**ไม่มี JE · ไม่ออกใบกำกับใหม่** (โอนภายใน · ภาษีขายเกิดครบตอนขาย §78/1) · ห้ามมีการจองค้าง/พักค้าง · ยกเลิก/ลดหนี้ใบขายเดิมหลังโอน ⇒ **บล็อก** (`CreditPassDocumentRule.TransferredBlock`)
+(5) **แจ้งเตือนใกล้หมดอายุ** (`SendExpiryRemindersAsync` ในงานเดียวกัน · `CreditPackage.ExpiryReminderDays` 0 = ไม่แจ้ง (เดิม)): `IBookingNotifier` อีเมล → LINE ของผู้ติดต่อ · ประทับ `ExpiryNotifiedAt` เฉพาะส่งถึงจริง ·
+ล้ม ⇒ `ExpiryNotifyError` บนบัตร (ป้ายเตือนหน้าบัตร) + เว้น 6 ชม. ลองใหม่ · พัก/ขยายแล้วแจ้งรอบใหม่
+(6) **ค่าตอบแทนผู้สอน + คอมมิชชันจากการจอง**: `SiteBookingResource.EmployeeId/PayMode/PayRate/PayMinimumPerClass` (หน้า "สรุปงานผู้ให้บริการ" · อ่าน `Payroll.View` · แก้ `HR.Admin`) ·
+ตัวคิด `Helpers/InstructorPayRule` (ต่อคลาส · ต่อหัว + ขั้นต่ำ · % รายได้ก่อน VAT · แบ่งตาม `SharePercent`) · ฐานคอมมิชชันใหม่ `BookingServices` (การจองเสร็จ**นอก POS** — ดีดซ้ำด้วย `PosOrder.SourceBookingId` เสร็จ/คืน) และ `InstructorPay` ·
+มูลค่าการจองผ่าน `BookingServiceValue` ตัวเดียว: จ่ายด้วยบัตร = **รายได้ที่รับรู้จากบัตร** (ไม่ใช่ `TotalAmount` 0) · คอมมิชชัน = ก่อน VAT · รายงานผู้ให้บริการใช้ตัวเดียวกัน (ป้าย "บัตร")
+(7) **รายงานคลาส** (`GET course-credits/reports/classes` · แท็บ "รายงานคลาส"): `Helpers/ClassFillRateReport` — fill-rate / no-show ต่อคลาส·บริการ·ผู้สอน (คีย์รอบ บริการ+วัน+เวลาเริ่ม · บริการความจุ > 1) ·
+retention ช่วงนี้เทียบช่วงก่อน + เสี่ยงหาย 30 วัน · บัตรใกล้หมดอายุ · อ่านอย่างเดียว · ยังไม่มีตารางรอบเว็บ (P4 `SiteClassSession`) ⇒ รอบเว็บที่ไม่มีคนจองไม่ปรากฏ (รอบของโมดูลคอร์สนับ 0%)
+
+**ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`) · CreditPassFreezes + คอลัมน์สมาชิก/ค่าตอบแทน (`Helpers/CourseCreditMembershipMigration` · รอบ 209 P5)
 
 ## 7. Validation gates (compliance — กฎเหล็ก #2)
 

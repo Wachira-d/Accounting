@@ -12,7 +12,7 @@ namespace Accounting.Helpers;
 /// <para><b>VAT:</b> บริการ — จุดความรับผิด §78/1 = วันรับเงิน ⇒ ภาษีขายเกิดครบตอนขาย (ใบกำกับออก ณ วันขายผ่านเส้นเอกสารเดิม) ·
 /// การใช้เครดิต/หมดอายุ <b>ไม่มี VAT เพิ่ม</b> (ย้ายระหว่างหนี้สินกับรายได้ล้วน)</para>
 /// </summary>
-public static class CourseCreditMath
+public static partial class CourseCreditMath
 {
     public const string RuleCode = "TFRS-NPAE-6-CREDIT";
     public const string LegalReference = "TFRS for NPAEs บทที่ 6 (รายได้จากการให้บริการ) · ป.รัษฎากร §78/1";
@@ -156,6 +156,7 @@ public static class CourseCreditMath
         CreditPassStatus.Exhausted => "ใช้ครบแล้ว",
         CreditPassStatus.Expired => "หมดอายุ",
         CreditPassStatus.Cancelled => "ยกเลิก",
+        CreditPassStatus.Transferred => "โอนแล้ว",
         _ => s.ToString(),
     };
 

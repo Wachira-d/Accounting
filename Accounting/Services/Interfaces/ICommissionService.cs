@@ -20,4 +20,10 @@ public interface ICommissionService
     Task<List<CommissionCalcResponse>> CalculateAsync(Guid companyId, int year, int month);
     Task<List<CommissionCalcResponse>> GetCalculationsAsync(Guid companyId, int year, int month);
     Task ApproveCalculationsAsync(Guid companyId, int year, int month, string approvedBy);
+
+    // รอบ 209 P5 (R-209-C6 · คำตัดสินข้อ 168 ฏ) — ค่าตอบแทนผู้ให้บริการของระบบจอง (CommissionService.Bookings.cs)
+    Task<Accounting.Models.DTOs.Commission.ResourcePaySettingsResponse> GetResourcePayAsync(Guid companyId, Guid siteId);
+    Task<Accounting.Models.DTOs.Commission.ResourcePayResponse> SaveResourcePayAsync(Guid companyId, Guid siteId, Guid resourceId,
+        Accounting.Models.DTOs.Commission.SaveResourcePayRequest request, string actor);
+    Task<List<Accounting.Helpers.InstructorPayLine>> GetInstructorPayAsync(Guid companyId, Guid siteId, DateTime from, DateTime to);
 }

@@ -11,7 +11,12 @@ namespace Accounting.Models.Enums
     /// <summary>วิธีกำหนดครูฝึก — ลูกค้าเลือกเอง / ระบบกำหนดให้ (ภาระน้อยสุดที่ว่าง)</summary>
     public enum TrainerAssignmentMode { CustomerChooses = 0, SystemAssigns = 1 }
 
-    public enum CreditPassStatus { Active = 0, Exhausted = 1, Expired = 2, Cancelled = 3 }
+    /// <summary>Transferred (รอบ 209 · P5 · คำตัดสินข้อ 168 ฎ) = โอนให้ลูกค้าคนอื่นแล้ว — ยอดที่เหลือย้ายไปบัตรปลายทาง (<c>TransferredToPassId</c>)</summary>
+    public enum CreditPassStatus { Active = 0, Exhausted = 1, Expired = 2, Cancelled = 3, Transferred = 4 }
+
+    /// <summary>ชนิดแพ็กเกจ (รอบ 209 · P5 · R-209-C5) — Credits = นับครั้ง/ชั่วโมง (เดิม) · UnlimitedPeriod = ไม่จำกัดครั้งตามช่วงเวลา
+    /// (รับรู้รายได้เส้นตรงรายวัน — <c>CourseCreditMath.PeriodRecognitionPlan</c>) · ค่าเริ่มต้น 0 = พฤติกรรมเดิม</summary>
+    public enum CreditPackageKind { Credits = 0, UnlimitedPeriod = 1 }
 
     /// <summary>ช่องทางที่ขายคอร์ส (ร่องรอย · ไม่มีผลต่อการลงบัญชี — บัญชีตามเอกสารขาย)</summary>
     public enum CreditSaleChannel { BackOffice = 0, Pos = 1, Online = 2, ExistingDocument = 3 }
@@ -24,7 +29,10 @@ namespace Accounting.Models.Enums
 
     /// <summary>Adjust (รอบ 205 W6 · R-38) = ลดเครดิตจากใบลดหนี้คืนเงินบางส่วน — บัตรยัง Active</summary>
     /// <summary>AdjustReversal (รอบ 208) = ยกเลิกใบลดหนี้คืนเงินบางส่วน ⇒ คืนเครดิตที่ลดไป + ถอนยอดคืน</summary>
-    public enum CreditLedgerKind { Purchase = 0, Reserve = 1, Release = 2, Consume = 3, Expire = 4, Cancel = 5, Adjust = 6, AdjustReversal = 7 }
+    /// <summary>รอบ 209 (P5): PeriodRecognize = รับรู้รายได้สมาชิกไม่จำกัดตามวัน · Freeze = พักบัตร · Extend = ขยายอายุ (ไม่มีเงิน) ·
+    /// TransferOut / TransferIn = โอนบัตร (ไม่มี JE — หนี้สินย้ายเจ้าของ ไม่ย้ายผัง)</summary>
+    public enum CreditLedgerKind { Purchase = 0, Reserve = 1, Release = 2, Consume = 3, Expire = 4, Cancel = 5, Adjust = 6, AdjustReversal = 7,
+        PeriodRecognize = 8, Freeze = 9, Extend = 10, TransferOut = 11, TransferIn = 12 }
 
     public enum CreditCancelOutcome { Refund = 0, Forfeit = 1 }
 }
@@ -59,6 +67,18 @@ namespace Accounting.Models.Entities
         public Guid? RevenueAccountId { get; set; }
         public bool IsActive { get; set; } = true;
         public int SortOrder { get; set; }
+
+        // ── รอบ 209 · P5 (R-209-C5 · คำตัดสินข้อ 168 ฎ) — ค่าเริ่มต้น = พฤติกรรมเดิม ──
+        /// <summary>ชนิดแพ็กเกจ · UnlimitedPeriod ⇒ <see cref="ValidityDays"/> = จำนวนวันของสมาชิก (ต้อง &gt; 0) · <see cref="CreditQuantity"/> ไม่มีผล</summary>
+        public CreditPackageKind Kind { get; set; } = CreditPackageKind.Credits;
+        /// <summary>สมาชิกไม่จำกัด: จองได้สูงสุดกี่ครั้งต่อวัน (ตั้งต้น 1)</summary>
+        public int MaxBookingsPerDay { get; set; } = 1;
+        /// <summary>สมาชิกไม่จำกัด: จองค้างพร้อมกันได้สูงสุดกี่รายการ · 0 = ไม่จำกัด</summary>
+        public int MaxActiveBookings { get; set; }
+        /// <summary>พักบัตร (freeze) ได้รวมสูงสุดกี่วันต่อบัตร · 0 = ไม่อนุญาตพักบัตร</summary>
+        public int MaxFreezeDays { get; set; }
+        /// <summary>แจ้งเตือนลูกค้าก่อนบัตรหมดอายุกี่วัน (อีเมล → LINE ผ่าน <c>IBookingNotifier</c>) · 0 = ไม่แจ้ง (เดิม)</summary>
+        public int ExpiryReminderDays { get; set; }
     }
 
     /// <summary>บัตรคอร์สของลูกค้า 1 ใบ (1 การซื้อ) — ยอดคงเหลือ = ทั้งหมด − ใช้แล้ว − ถูกจอง ·
@@ -94,6 +114,44 @@ namespace Accounting.Models.Entities
         public string? SaleDocumentNumber { get; set; }
         public DateTime? ClosedAt { get; set; }
         public string? Notes { get; set; }
+
+        // ── รอบ 209 · P5 (R-209-C5) — ตรึงจากแพ็กเกจตอนเปิดบัตร · บัตรเดิม = ค่าเริ่มต้น (Credits) ทุกตัว ──
+        public CreditPackageKind Kind { get; set; } = CreditPackageKind.Credits;
+        public int MaxBookingsPerDay { get; set; } = 1;
+        public int MaxActiveBookings { get; set; }
+        public int MaxFreezeDays { get; set; }
+        /// <summary>สมาชิกไม่จำกัด: จำนวน "วันใช้งาน" ทั้งหมดที่รับรู้รายได้ (วันพักไม่นับ · ขยายอายุ = บวกเพิ่ม)</summary>
+        public int PeriodDays { get; set; }
+        /// <summary>วันแรกของช่วงสมาชิก (วันปฏิทินไทย)</summary>
+        public DateTime? PeriodStartsOn { get; set; }
+        /// <summary>จุดตั้งฐานของสูตรเส้นตรง (หลังขยายอายุ) — รับรู้แล้ว ณ ฐาน · วันใช้งานที่ผ่านไปแล้ว ณ ฐาน (บัตรที่ไม่เคยขยาย = 0/0)</summary>
+        public decimal PeriodBaseRecognized { get; set; }
+        public int PeriodBaseActiveDays { get; set; }
+        /// <summary>รับรู้รายได้ถึงวันที่ (รวมวันนั้น) · null = ยังไม่เคยรับรู้</summary>
+        public DateTime? RecognizedThroughDate { get; set; }
+        /// <summary>วันพักรวมที่ใช้ไปแล้ว (เทียบเพดาน <see cref="MaxFreezeDays"/>)</summary>
+        public int FrozenDays { get; set; }
+        public Guid? TransferredFromPassId { get; set; }
+        public Guid? TransferredToPassId { get; set; }
+        /// <summary>ยอดค่าบริการรับล่วงหน้าที่ย้ายไปบัตรปลายทางตอนโอน (บัตรเดิม) — ค้างในหนี้สินของบัตรนี้ = สัญญา − รับรู้ − คืน − โอนออก</summary>
+        public decimal TransferredOutAmount { get; set; }
+        /// <summary>แจ้งเตือนใกล้หมดอายุ "ส่งถึงจริง" เมื่อไร · null = ยังไม่ส่ง (F2 #3 — ประทับหลังช่องทางตอบสำเร็จเท่านั้น)</summary>
+        public DateTime? ExpiryNotifiedAt { get; set; }
+        public DateTime? ExpiryNotifyAttemptedAt { get; set; }
+        /// <summary>ร่องรอยส่งล้มครั้งล่าสุด (พนักงานเห็นบนหน้าบัตร) · null = สำเร็จ/ยังไม่เคยส่ง</summary>
+        public string? ExpiryNotifyError { get; set; }
+    }
+
+    /// <summary>พักบัตร (freeze · รอบ 209 P5 · คำตัดสินข้อ 168 ฎ) — ช่วงวันรวมหัวท้าย · ระหว่างพัก: จองไม่ได้ · สมาชิกไม่จำกัดไม่รับรู้รายได้ ·
+    /// วันหมดอายุเลื่อนออกเท่าจำนวนวัน · ไม่มีเงิน (21713 คงเดิม) · ยกเลิกพักที่ยังไม่เริ่มได้ (เลื่อนวันหมดอายุกลับ)</summary>
+    public class CreditPassFreeze : TenantEntity
+    {
+        public Guid PassId { get; set; }
+        public DateTime FromDate { get; set; }
+        public DateTime ToDate { get; set; }
+        public int Days { get; set; }
+        public string Reason { get; set; } = "";
+        public DateTime? CancelledAt { get; set; }
     }
 
     /// <summary>สมุดเครดิต (append-only) — ทุกการขยับเครดิต/รายได้ของบัตร · JE ที่ผูก = ใบสำคัญรับรู้รายได้ของแถวนั้น</summary>

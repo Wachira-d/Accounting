@@ -481,6 +481,8 @@ public class AccountingDbContext : DbContext
     public DbSet<CreditLedgerEntry> CreditLedgerEntries => Set<CreditLedgerEntry>();
     public DbSet<CreditClassSession> CreditClassSessions => Set<CreditClassSession>();
     public DbSet<CreditClassBooking> CreditClassBookings => Set<CreditClassBooking>();
+    // รอบ 209 P5 — พักบัตร (schema: Helpers/CourseCreditMembershipMigration)
+    public DbSet<CreditPassFreeze> CreditPassFreezes => Set<CreditPassFreeze>();
 
     // รอบ 194 — ประเภทเงินมัดจำต่อบริษัท (ลักษณะเงิน = ตัวกำหนด VAT · โหมด = วิธีบันทึก) — Helpers/DepositPolicyResolver.ResolveKind
     public DbSet<DepositKind> DepositKinds => Set<DepositKind>();
@@ -3390,6 +3392,7 @@ public class AccountingDbContext : DbContext
         {
             e.Property(x => x.Name).HasMaxLength(256);
             e.HasIndex(x => new { x.CompanyId, x.SiteId }).HasDatabaseName("IX_SiteBookingResources_Company_Site");
+            e.Property(x => x.PayRate).HasPrecision(18, 2); e.Property(x => x.PayMinimumPerClass).HasPrecision(18, 2);   // รอบ 209 P5
         });
         modelBuilder.Entity<SiteBookingResourceService>(e =>
         {
@@ -3635,8 +3638,16 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.PassNumber).HasMaxLength(40); e.Property(p => p.PackageName).HasMaxLength(200); e.Property(p => p.SaleDocumentNumber).HasMaxLength(50);
             e.Property(p => p.CreditsTotal).HasPrecision(18, 2); e.Property(p => p.CreditsUsed).HasPrecision(18, 2); e.Property(p => p.CreditsReserved).HasPrecision(18, 2);
             e.Property(p => p.ContractAmount).HasPrecision(18, 2); e.Property(p => p.RecognizedAmount).HasPrecision(18, 2); e.Property(p => p.RefundedAmount).HasPrecision(18, 2);
+            // รอบ 209 P5 (ชื่อ index ตรงกับ Helpers/CourseCreditMembershipMigration)
+            e.HasIndex(p => new { p.CompanyId, p.Kind, p.Status }).HasDatabaseName("IX_CreditPasses_Company_Kind_Status");
+            e.Property(p => p.PeriodBaseRecognized).HasPrecision(18, 2); e.Property(p => p.TransferredOutAmount).HasPrecision(18, 2);
             e.HasOne(p => p.Package).WithMany().HasForeignKey(p => p.PackageId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(p => !p.IsDeleted);
+        });
+        modelBuilder.Entity<CreditPassFreeze>(e =>
+        {
+            e.HasIndex(f => new { f.CompanyId, f.PassId }).HasDatabaseName("IX_CreditPassFreezes_Company_Pass");
+            e.HasQueryFilter(f => !f.IsDeleted);
         });
         modelBuilder.Entity<CreditLedgerEntry>(e =>
         {

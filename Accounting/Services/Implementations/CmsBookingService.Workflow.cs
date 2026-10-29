@@ -245,6 +245,8 @@ public partial class CmsBookingService
         var names = await _db.SiteBookingResources.AsNoTracking().IgnoreQueryFilters()
             .Where(r => r.CompanyId == companyId && resIds.Contains(r.Id))
             .ToDictionaryAsync(r => r.Id, r => r.Name);
+        // รอบ 209 P5 (R-209-C6): การจองที่จ่ายด้วยบัตรคอร์ส ⇒ รายได้ที่รับรู้จากบัตร (ตัวอ่าน/ตัวตัดสินเดียวกับฐานคอมมิชชัน — BookingWorkLoader + BookingServiceValue)
+        var creditValue = await BookingWorkLoader.CreditRecognizedAsync(_db, companyId, ids);
         var rows = bookings.Select(b =>
         {
             var mine = assigns.Where(a => a.BookingId == b.Id).ToList();
@@ -252,8 +254,10 @@ public partial class CmsBookingService
                 ? mine.Select(a => (a.ResourceId, a.ResourceName, a.SharePercent)).ToList()
                 : b.ResourceId is Guid rid ? new List<(Guid, string, decimal)> { (rid, names.GetValueOrDefault(rid) ?? "(ลบแล้ว)", 100m) }
                 : new List<(Guid, string, decimal)>();
+            var paidWithCredit = creditValue.TryGetValue(b.Id, out var cv);
             return new BookingProviderReportRow(b.Id, b.BookingNumber, b.BookingDate, b.StartTime.ToString("HH:mm"), b.EndTime.ToString("HH:mm"),
-                b.DurationMinutes, b.Status, b.BookingServiceId, b.ServiceName, b.CustomerName, b.TotalAmount, providers);
+                b.DurationMinutes, b.Status, b.BookingServiceId, b.ServiceName, b.CustomerName,
+                BookingServiceValue.ForReport(b.TotalAmount, paidWithCredit ? cv : null), providers, paidWithCredit);
         }).ToList();
         var (list, totals) = BookingProviderReport.Build(rows);
         return new BookingProviderReportResponse

@@ -50,12 +50,46 @@ public class CourseCreditExpiryJob : BackgroundService
         using (var scope = _services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
+            // รอบ 209 P5: + บริษัทที่มีสมาชิกไม่จำกัดค้างรับรู้ตามวัน + บริษัทที่เปิดแจ้งเตือนใกล้หมดอายุ (แพ็กเกจ ExpiryReminderDays > 0)
+            var yesterday = today.AddDays(-1);
             companies = await db.CreditPasses.AsNoTracking()
-                .Where(p => p.Status == CreditPassStatus.Active && p.ExpiresOn != null && p.ExpiresOn < today)
-                .Select(p => p.CompanyId).Distinct().Take(1000).ToListAsync(ct);
+                .Where(p => p.Status == CreditPassStatus.Active
+                    && ((p.ExpiresOn != null && p.ExpiresOn < today)
+                        || (p.Kind == CreditPackageKind.UnlimitedPeriod && p.PeriodStartsOn != null && p.PeriodStartsOn <= yesterday
+                            && (p.RecognizedThroughDate == null || p.RecognizedThroughDate < yesterday))))
+                .Select(p => p.CompanyId)
+                .Union(db.CreditPackages.AsNoTracking().Where(k => k.ExpiryReminderDays > 0).Select(k => k.CompanyId))
+                .Distinct().Take(1000).ToListAsync(ct);
         }
         foreach (var companyId in companies)
         {
+            // ลำดับ: รับรู้ตามวันก่อน → แจ้งเตือนใกล้หมดอายุ → ปิดบัตรหมดอายุ (ปิดบัตรสมาชิกรับรู้ครบถึงวันหมดอายุเองอีกชั้น) · ขั้นหนึ่งล้มไม่หยุดขั้นถัดไป
+            try
+            {
+                using var scope = _services.CreateScope();
+                var svc = scope.ServiceProvider.GetRequiredService<ICourseCreditService>();
+                var pr = await svc.RecognizePeriodDueAsync(companyId, "system:course-credit-period", ct);
+                if (pr.Failed > 0)
+                    _logger.LogError("บริษัท {Cid}: รับรู้รายได้สมาชิกไม่จำกัดล้ม {F} ใบ (สำเร็จ {N} · {Amt:N2}) — {Msgs}",
+                        companyId, pr.Failed, pr.Passes, pr.Recognized, string.Join(" | ", pr.Messages));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "รับรู้รายได้สมาชิกไม่จำกัดของบริษัท {Cid} ล้ม", companyId);
+            }
+            try
+            {
+                using var scope = _services.CreateScope();
+                var svc = scope.ServiceProvider.GetRequiredService<ICourseCreditService>();
+                var rr = await svc.SendExpiryRemindersAsync(companyId, "system:course-credit-reminder", ct);
+                if (rr.Failed > 0)
+                    _logger.LogWarning("บริษัท {Cid}: แจ้งเตือนบัตรใกล้หมดอายุส่งไม่ถึง {F} ใบ (ถึง {S}) — ประทับเหตุบนบัตรแล้ว · {Msgs}",
+                        companyId, rr.Failed, rr.Sent, string.Join(" | ", rr.Messages));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "แจ้งเตือนบัตรใกล้หมดอายุของบริษัท {Cid} ล้ม", companyId);
+            }
             try
             {
                 using var scope = _services.CreateScope();
