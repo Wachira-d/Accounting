@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class CmsCommerceService : ICmsCommerceService
+public partial class CmsCommerceService : ICmsCommerceService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsCommerceService> _logger;
@@ -607,6 +607,8 @@ public class CmsCommerceService : ICmsCommerceService
     {
         var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Site not found.");
+        // รอบ 209 P2 (คำตัดสินข้อ 168 ก/ง · A10): สวิตช์ร้าน + ฟอร์มสั่งซื้อ + ผู้ซื้อใบกำกับ ตรวจก่อนสร้าง/บันทึกอะไร (CmsCommerceService.Checkout.cs)
+        var formCtx = await ValidateCheckoutFormAsync(companyId, siteId, request);
 
         var order = new SiteOrder
         {
@@ -623,6 +625,7 @@ public class CmsCommerceService : ICmsCommerceService
             CouponCode = request.CouponCode, CustomerNotes = request.CustomerNotes,
             CreatedBy = userId
         };
+        ApplyCheckoutForm(order, formCtx);
 
         _db.SiteOrders.Add(order);
         // ทีม K — บรรทัดที่จะใช้คิดค่าส่ง/วันรับ/เงื่อนไขชำระ (ตัวเดียวกับหน้าเช็กเอาต์ — ComputeCheckoutAsync)
@@ -659,7 +662,7 @@ public class CmsCommerceService : ICmsCommerceService
                     ModifierSelectionsJson = ci.ModifierSelectionsJson,
                 });
                 checkoutLines.Add(new CheckoutLine(ci.SiteProduct, ci.Quantity, ci.TotalPrice,
-                    ci.SiteProduct.Product.VatRate, ci.ExtraLeadDays));
+                    ci.SiteProduct.Product.VatRate, ci.ExtraLeadDays, ci.VariantOptionsJson));
             }
             optionCartId = request.CartId;
             // Clear cart after order
@@ -685,7 +688,7 @@ public class CmsCommerceService : ICmsCommerceService
 
                 var price = (sp.OverrideSellingPrice ?? sp.Product.SellingPrice) + directEval.PriceAdjustmentTotal;
                 var total = price * lineReq.Quantity;
-                checkoutLines.Add(new CheckoutLine(sp, lineReq.Quantity, total, sp.Product.VatRate, directEval.ExtraLeadDays));
+                checkoutLines.Add(new CheckoutLine(sp, lineReq.Quantity, total, sp.Product.VatRate, directEval.ExtraLeadDays, lineReq.VariantOptionsJson));
 
                 _db.SiteOrderLines.Add(new SiteOrderLine
                 {
@@ -703,13 +706,16 @@ public class CmsCommerceService : ICmsCommerceService
 
         // ทีม K — ค่าส่ง (เซิร์ฟเวอร์คิดจากอัตราที่เลือก) · วันรับเร็วสุด · เงื่อนไขชำระ — ตัวคิดเดียวกับหน้าเช็กเอาต์
         var vatRegistered = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
+        if (!formCtx.Flags.Coupons) { order.DiscountAmount = 0m; order.CouponCode = null; }   // รอบ 209 P2: ร้านปิดคูปอง ⇒ ส่วนลดค้างในตะกร้าไม่ถูกใช้ (ยอดเดียวกับหน้าเช็กเอาต์)
         var checkout = await ComputeCheckoutAsync(companyId, siteId, checkoutLines, order.DiscountAmount, new CheckoutQuoteRequest
         {
             FulfillmentMethod = request.FulfillmentMethod, ShippingRateId = request.ShippingRateId,
             CountryCode = request.ShippingCountryCode, Province = request.ShippingProvince, PostalCode = request.ShippingPostalCode,
-        }, vatRegistered);
+            PaymentMethodChoice = request.PaymentMethodChoice, RequestedReadyDate = request.RequestedReadyDate,
+        }, vatRegistered, order.CouponCode);
         if (checkout.Quote.Problem != null)
             throw new BusinessRuleException(checkout.Quote.Problem, "CHECKOUT");
+        ApplyCheckoutDecisions(order, checkout, formCtx);   // รอบ 209 P2: วิธีชำระ/วันรับที่ขอ/วันส่งถึง/ยืนยันอัตโนมัติ
         order.ShippingAmount = checkout.Quote.ShippingFee;
         // ฝ่ายค้านทีม K ข้อ 2: ที่อยู่ที่ใช้คิดค่าส่งต้องอยู่บนคำสั่งซื้อ (ตรวจย้อนได้ว่าอัตรามาจากโซนไหน)
         order.ShippingProvince = ThaiAddressParser.NormalizeProvince(request.ShippingProvince);
@@ -940,7 +946,11 @@ public class CmsCommerceService : ICmsCommerceService
         var now = DateTime.UtcNow;
         try
         {
-            var lines = (doc!.Lines ?? new List<DocumentLine>()).Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder)
+            // รอบ 209 (คำตัดสินข้อ 168 ฉ): ยกเลิกหลังจัดส่งแล้ว ⇒ ไม่คืนค่าจัดส่งอัตโนมัติ (ตัดบรรทัดค่าจัดส่งออกจากใบลดหนี้ร่าง) · ก่อนจัดส่ง = เต็มใบเดิม
+            var excludeShipping = SiteOrderCancelPlan.ExcludesShippingLine(order.ShippedAt);
+            var lines = (doc!.Lines ?? new List<DocumentLine>()).Where(l => !l.IsDeleted)
+                .Where(l => !excludeShipping || !ShippingVatAllocation.IsShippingLineDescription(l.Description))
+                .OrderBy(l => l.LineOrder)
                 .Select(l => new Models.DTOs.Document.DocumentLineRequest(
                     Description: $"ลดหนี้ (ยกเลิกคำสั่งซื้อ): {l.Description}", Quantity: l.Quantity, Unit: l.Unit,
                     UnitPrice: l.UnitPrice, DiscountPercent: l.DiscountPercent, VatRate: l.VatRate, WithholdingTaxRate: 0m,
@@ -967,7 +977,9 @@ public class CmsCommerceService : ICmsCommerceService
             var slipPaid = order.Payments.Where(p => !p.IsDeleted && p.Status == SitePaymentStatus.Completed
                     && (p.Reference == null || !p.Reference.StartsWith("PAY-INTENT-", StringComparison.Ordinal)))
                 .Sum(p => p.Amount);
-            var note = SiteOrderCancelPlan.ProposedNote(now, cn.DocumentNumber, doc.DocumentNumber, cn.TotalAmount, refundIntents, slipPaid);
+            var note = SiteOrderCancelPlan.ProposedNote(now, cn.DocumentNumber, doc.DocumentNumber, cn.TotalAmount, refundIntents, slipPaid)
+                + (excludeShipping && (doc.Lines ?? new List<DocumentLine>()).Any(l => !l.IsDeleted && ShippingVatAllocation.IsShippingLineDescription(l.Description))
+                    ? SiteOrderCancelPlan.ShippingRetainedNote : "");
             order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, note);
             _logger.LogInformation("ยกเลิกออเดอร์ {Order} หลังชำระ — ร่างใบลดหนี้ {Cn} อ้างใบ {Doc}", order.OrderNumber, cn.DocumentNumber, doc.DocumentNumber);
             return true;
@@ -1035,9 +1047,17 @@ public class CmsCommerceService : ICmsCommerceService
                 DepositRequiredAmount = o.DepositRequiredAmount,
                 DepositInvoicingMode = o.DepositInvoicingMode ?? "",
                 EarliestReadyDate = o.EarliestReadyDate.HasValue ? o.EarliestReadyDate.Value.ToString("yyyy-MM-dd") : null,
+                // รอบ 209 P2 — ค่าที่ตรึงตอนสั่ง (echo ครบ)
+                PaymentMethodChoice = o.PaymentMethodChoice ?? CmsFeatureFlags.PayNow,
+                RequestedReadyDate = o.RequestedReadyDate.HasValue ? o.RequestedReadyDate.Value.ToString("yyyy-MM-dd") : null,
+                EstimatedDeliveryDate = o.EstimatedDeliveryDate.HasValue ? o.EstimatedDeliveryDate.Value.ToString("yyyy-MM-dd") : null,
+                CustomFieldsRaw = o.CustomFieldsJson,
+                BillingName = o.BillingName, BillingAddress = o.BillingAddress, BillingBranchCode = o.BillingBranchCode,
             })
             .FirstOrDefaultAsync();
         if (result == null) return null;
+        result.CustomFields = OrderFormFields.ParseAnswers(result.CustomFieldsRaw).ToList();
+        result.PaymentMethodLabel = CmsFeatureFlags.PaymentChoiceLabel(result.PaymentMethodChoice, result.FulfillmentMethod);
         // ข้อความ/ยอดที่หน้าเว็บแสดง — คำนวณที่นี่ตัวเดียว (หน้าเว็บห้ามคิดเอง)
         foreach (var l in result.Lines) l.ModifierSummary = SummaryOf(l.ModifierSummary);
         // สลิปรูปใหม่ (ที่เก็บกลาง) ต้องแนบ JWT ตอนเปิด · สลิปเดิม (/uploads/order-slips) เปิดตรง — เซิร์ฟเวอร์ตัดสิน หน้าเว็บแค่เลือกวิธีโหลด
@@ -1054,6 +1074,9 @@ public class CmsCommerceService : ICmsCommerceService
         result.OnlinePaymentBlockedNote = result.NextPayableAmount > 0.005m
             && result.Payments.Any(p => Accounting.Helpers.GatewayPaymentRecord.IsPendingSlipRow(p.Status, p.Reference))
             ? Accounting.Helpers.GatewayPaymentRecord.PendingSlipBlocksOnlineNote : null;
+        // รอบ 209 P2: ร้านปิดชำระออนไลน์ ⇒ เหตุผลเดียวกับ PublicPaymentResolver (หน้าเว็บแสดงแทนปุ่ม)
+        if (result.OnlinePaymentBlockedNote == null && result.NextPayableAmount > 0.005m && !(await GetFeatureFlagsAsync(companyId, siteId)).OnlinePayment)
+            result.OnlinePaymentBlockedNote = CmsFeatureFlags.OnlinePaymentOffMessage;
         result.BalanceAmount = due.Balance;
         // ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงบนออเดอร์ + ใบรับเงินมัดจำที่ออกแล้ว (echo กลับให้หลังบ้าน/หน้าร้านเห็นตามจริง)
         result.DepositInvoicingMode = Accounting.Helpers.DepositInvoicingMode.OfOrder(result.DepositInvoicingMode);
@@ -1269,7 +1292,8 @@ public class CmsCommerceService : ICmsCommerceService
             DueDate: DateTime.UtcNow,   // online order = ลูกค้าจ่ายแล้ว, ไม่ใช่ credit
             ContactId: contactId,
             Reference: order.OrderNumber,
-            Notes: $"Online order #{order.OrderNumber}",
+            // รอบ 209 P2: วันที่ต้องการรับ + ช่องที่ร้านเพิ่มเองอยู่บนเอกสาร (ตัวสรุปเดียว · ไม่มี = ข้อความเดิมทุกตัวอักษร)
+            Notes: OrderFormFields.DocumentNotes(order.OrderNumber, order.RequestedReadyDate, order.CustomFieldsJson),
             // เดิมใส่เฉพาะ order.Lines (สินค้า) → ตก ค่าจัดส่ง/ส่วนลด → ยอดเอกสาร ERP
             // ≠ order.TotalAmount แต่ตอนตัดชำระจ่าย order.TotalAmount → AR ค้างเศษ
             // ถาวร + รายได้เพี้ยน. เพิ่มบรรทัดค่าจัดส่ง (บวก) + ส่วนลด (ลบ) ให้ยอดตรง.
@@ -1990,7 +2014,8 @@ public class CmsCommerceService : ICmsCommerceService
     {
         // ล็อก + integer-max ผ่านตัวกลาง (ผลตรวจ F-08) — เลขคำสั่งซื้อซ้ำบนเว็บ
         // = ลูกค้าสองรายเห็นเลขเดียวกันในอีเมลยืนยัน แล้วตามของกันไม่ถูก
-        var prefix = $"WEB-{DateTime.UtcNow:yyMM}-";
+        // รอบ 209 P2: คำนำหน้าจากค่าตั้งร้านผ่านตัวตัดสินเดียว (ค่าเริ่มต้น "WEB" = เดิม) · ตัวรันเลขแยกต่อ prefix ต่อเว็บ (lockPart)
+        var prefix = CmsFeatureFlags.OrderNumberStem(CmsFeatureFlags.Resolve(await LoadStoreConfigAsync(companyId, siteId)), DateTime.UtcNow);
         return await Accounting.Helpers.SequenceNumber.NextAsync(
             _db, companyId, Accounting.Helpers.AdvisoryLockKey.StorefrontSequence, prefix,
             _db.SiteOrders.IgnoreQueryFilters()
@@ -2191,6 +2216,9 @@ public class CmsCommerceService : ICmsCommerceService
         var order = await _db.SiteOrders.FirstOrDefaultAsync(o =>
             o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId && !o.IsDeleted);
         if (order == null) return null;
+        // รอบ 209 P2: ร้านปิด "โอน/แนบสลิป" ⇒ ปฏิเสธ (หน้าเว็บไม่แสดงกล่องโอนตาม payment-options ด้วย)
+        if (!(await GetFeatureFlagsAsync(companyId, siteId)).BankTransfer)
+            throw new BusinessRuleException("ร้านนี้ไม่รับชำระด้วยการโอน/แนบสลิป — เลือกวิธีชำระอื่นหรือติดต่อร้าน", CmsFeatureFlags.RuleCode);
         // ฝ่ายค้านทีม K ข้อ 6: ยอดที่เปิดจ่ายรอบนี้ = 0 (จ่ายครบแล้ว/ยกเลิก) ⇒ ปฏิเสธตั้งแต่ตอนแนบ — เดิม fallback เป็นยอดเต็มใบ ⇒ สลิปเกินถูกยืนยันได้
         var slipDue = MtoPaymentTerms.FromSnapshot(order.PaymentTermMode, order.TotalAmount, order.DepositRequiredAmount, order.PaidAmount);
         if (order.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded || slipDue.NextPayable <= 0m)
@@ -2324,7 +2352,10 @@ public class CmsCommerceService : ICmsCommerceService
             // as an internal message-to-merchant.
             var commerceConfig = await _db.Set<SiteCommerceConfig>().AsNoTracking()
                 .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId);
-            var ownerFooter = commerceConfig?.QuotationMessageTh;
+            // รอบ 209 P2: เว็บภาษาอังกฤษใช้ข้อความท้ายภาษาอังกฤษ (ว่าง = ไทยเดิม) — ตัวเลือกเดียว CmsFeatureFlags.QuotationFooter
+            var siteLang = await _db.Sites.AsNoTracking().Where(s => s.Id == siteId && s.CompanyId == companyId)
+                .Select(s => s.DefaultLanguage).FirstOrDefaultAsync();
+            var ownerFooter = CmsFeatureFlags.QuotationFooter(commerceConfig?.QuotationMessageTh, commerceConfig?.QuotationMessageEn, siteLang);
 
             // Customer's free-text → internal Notes section (not footer).
             // Prefixed so the owner can tell it apart from system-generated
@@ -2507,29 +2538,7 @@ public class CmsCommerceService : ICmsCommerceService
         return $"{prefix}{seq:D4}";
     }
 
-    public async Task<StorefrontPaymentOptions> GetStorefrontPaymentOptionsAsync(Guid companyId, Guid siteId)
-    {
-        var gw = await _db.Set<SitePaymentGateway>()
-            .AsNoTracking()
-            .Where(g => g.CompanyId == companyId && g.SiteId == siteId
-                     && g.IsActive && !g.IsDeleted)
-            .OrderBy(g => g.SortOrder)
-            .FirstOrDefaultAsync();
-        if (gw == null)
-        {
-            return new StorefrontPaymentOptions { HasPaymentMethod = false };
-        }
-        var hasAny = !string.IsNullOrEmpty(gw.PromptPayId) || !string.IsNullOrEmpty(gw.BankAccountNumber);
-        return new StorefrontPaymentOptions
-        {
-            PromptPayId = gw.PromptPayId,
-            PromptPayQrUrl = gw.PromptPayQrUrl,
-            BankName = gw.BankName,
-            BankAccountNumber = gw.BankAccountNumber,
-            BankAccountName = gw.BankAccountName,
-            HasPaymentMethod = hasAny
-        };
-    }
+    // GetStorefrontPaymentOptionsAsync ⇒ CmsCommerceService.Checkout.cs (รอบ 209 P2 — ผ่านสวิตช์ร้าน)
 
     // ==================== สินค้าตามสั่ง (ทีม K · 2026-10-22) ====================
     // ตัวตัดสินทั้งหมดอยู่ใน Helpers/ (ModifierSelectionRules · MtoLeadTime · ShippingFeeRules · MtoPaymentTerms) —
@@ -2542,12 +2551,6 @@ public class CmsCommerceService : ICmsCommerceService
     private const int OptionImageMaxPerCart = 10;
     private static readonly HashSet<string> OptionImageTypes = new(StringComparer.OrdinalIgnoreCase)
         { "image/jpeg", "image/png", "image/webp" };
-
-    private sealed record CheckoutLine(SiteProduct Sp, decimal Quantity, decimal TotalPrice, decimal VatRate, int ExtraLeadDays);
-    private sealed record CheckoutComputation(CheckoutQuoteResponse Quote, PaymentDue Due, DateOnly? ReadyDate,
-        decimal? DepositPercent, decimal? DepositFixed,
-        string DepositInvoicing = Accounting.Helpers.DepositInvoicingMode.FullAtFirstPayment,
-        string ShippingVatAllocation = Accounting.Helpers.ShippingVatAllocation.MaxRate);   // รอบ 206 R-32
 
     /// <summary>เวลาไทยตอนนี้ (ไทยไม่มีเวลาออมแสง — +7 ตายตัว)</summary>
     private static DateTime BangkokNow() => DateTime.SpecifyKind(DateTime.UtcNow.AddHours(7), DateTimeKind.Unspecified);
@@ -2642,140 +2645,7 @@ public class CmsCommerceService : ICmsCommerceService
         catch (System.Text.Json.JsonException) { return null; }
     }
 
-    /// <summary>ปฏิทินร้าน — วันปิดประจำสัปดาห์ + ตัดรอบ (ค่าตั้งร้าน) + วันหยุดบริษัท (หน้า "วันหยุด" เมื่อเปิดใช้)</summary>
-    private async Task<(ShopCalendar Cal, SiteCommerceConfig? Cfg)> LoadShopCalendarAsync(Guid companyId, Guid siteId)
-    {
-        var cfg = await _db.SiteCommerceConfigs.AsNoTracking()
-            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId);
-        var holidays = new HashSet<DateOnly>();
-        if (cfg?.MtoSkipCompanyHolidays ?? true)
-        {
-            var from = DateTime.UtcNow.AddDays(-2);
-            var until = DateTime.UtcNow.AddDays(800);
-            var rows = await _db.PublicHolidays.AsNoTracking()
-                .Where(h => h.CompanyId == companyId && !h.IsDeleted && h.Date >= from && h.Date <= until)
-                .Select(h => h.Date).ToListAsync();
-            foreach (var d in rows) holidays.Add(DateOnly.FromDateTime(ThaiDate.CalendarDateUtc(d)));
-        }
-        var cutoff = cfg?.MtoCutoffHour is int h && h >= 0 && h <= 23 ? h : (int?)null;
-        return (new ShopCalendar(MtoLeadTime.ParseClosedWeekdays(cfg?.MtoClosedWeekdays), holidays, cutoff), cfg);
-    }
-
-    /// <summary>ตัวคิดยอดสั่งซื้อตัวเดียว — หน้าเช็กเอาต์ (<see cref="CheckoutQuoteAsync"/>) และ <see cref="CreateOrderAsync"/> ได้ผลเดียวกันเสมอ</summary>
-    private async Task<CheckoutComputation> ComputeCheckoutAsync(Guid companyId, Guid siteId,
-        IReadOnlyList<CheckoutLine> lines, decimal discount, CheckoutQuoteRequest req, bool vatRegistered)
-    {
-        var (cal, cfg) = await LoadShopCalendarAsync(companyId, siteId);
-        var method = Accounting.Helpers.FulfillmentMethod.Normalize(req.FulfillmentMethod);
-        var pickupEnabled = cfg?.EnablePickup ?? false;
-        if (method == Accounting.Helpers.FulfillmentMethod.Pickup && !pickupEnabled)
-            throw new BusinessRuleException("ร้านนี้ยังไม่เปิดให้มารับสินค้าเอง — เลือกจัดส่ง", "SHIP-METHOD");
-
-        var goods = lines.Sum(l => l.TotalPrice);
-        var goodsAfterDiscount = Math.Max(0m, goods - discount);
-        var quote = new CheckoutQuoteResponse
-        {
-            GoodsTotal = goods, DiscountAmount = discount,
-            FulfillmentMethod = method, FulfillmentLabel = Accounting.Helpers.FulfillmentMethod.Label(method),
-            PickupEnabled = pickupEnabled,
-        };
-
-        decimal fee = 0m;
-        if (method == Accounting.Helpers.FulfillmentMethod.Delivery && (cfg?.EnableShipping ?? true))
-        {
-            var weight = lines.Sum(l => l.Quantity * (l.Sp.WeightKg ?? 0m));
-            var zones = await _db.SiteShippingZones.AsNoTracking()
-                .Include(z => z.Rates.Where(r => r.IsActive && !r.IsDeleted))
-                .Where(z => z.SiteId == siteId && z.CompanyId == companyId && z.IsActive && !z.IsDeleted)
-                .OrderBy(z => z.SortOrder)
-                .ToListAsync();
-            var address = new CalculateShippingRequest
-            {
-                CountryCode = req.CountryCode, Province = req.Province, PostalCode = req.PostalCode,
-                TotalWeightKg = weight, SubTotal = goodsAfterDiscount,
-            };
-            foreach (var zone in zones.Where(z => CmsShippingService.ZoneMatchesAddress(z, address)))
-                foreach (var rate in zone.Rates.OrderBy(r => r.SortOrder))
-                {
-                    var q = ShippingFeeRules.Quote(new ShippingRateFacts(rate.RateType, rate.BaseRate, rate.PerKgRate,
-                        rate.FreeAboveAmount, rate.MinWeightKg, rate.MaxWeightKg), goodsAfterDiscount, weight);
-                    if (!q.Applicable) continue;
-                    quote.ShippingOptions.Add(new CheckoutShippingOption
-                    {
-                        RateId = rate.Id, Name = rate.Name, ZoneName = zone.Name, Fee = q.Fee, IsFree = q.IsFree,
-                        EstimatedDeliveryDaysMin = rate.EstimatedDeliveryDaysMin, EstimatedDeliveryDaysMax = rate.EstimatedDeliveryDaysMax,
-                    });
-                }
-
-            if (quote.ShippingOptions.Count > 0)
-            {
-                CheckoutShippingOption? chosen = null;
-                if (req.ShippingRateId is Guid rid)
-                    chosen = quote.ShippingOptions.FirstOrDefault(o => o.RateId == rid)
-                        ?? throw new BusinessRuleException("วิธีจัดส่งที่เลือกใช้กับที่อยู่/น้ำหนักนี้ไม่ได้ — เลือกใหม่", "SHIP-RATE");
-                else if (quote.ShippingOptions.Count == 1)
-                    chosen = quote.ShippingOptions[0];
-                if (chosen != null) { fee = chosen.Fee; quote.SelectedShippingRateId = chosen.RateId; }
-                else quote.Problem = "กรุณาเลือกวิธีจัดส่ง";
-            }
-            else if (zones.Count > 0)
-            {
-                // โซนจำกัดพื้นที่ + ยังไม่กรอกที่อยู่ ⇒ บอกให้กรอก (ไม่ใช่ "ไม่มีวิธีส่ง") · กรอกแล้วไม่ตรง ⇒ บอกทางไปต่อ
-                var missingAddress = string.IsNullOrWhiteSpace(req.Province) || string.IsNullOrWhiteSpace(req.PostalCode);
-                quote.Problem = missingAddress && zones.Any(CmsShippingService.ZoneNeedsAddress)
-                    ? "กรุณากรอกจังหวัดและรหัสไปรษณีย์เพื่อคำนวณค่าจัดส่ง"
-                    : "ยังไม่มีวิธีจัดส่งสำหรับจังหวัด/รหัสไปรษณีย์นี้ — ตรวจการสะกด"
-                        + (pickupEnabled ? " หรือเลือกมารับเองที่ร้าน" : " หรือติดต่อร้านเพื่อสั่งทางอื่น");
-            }
-            else
-            {
-                // ร้านไม่ได้ตั้งโซน ⇒ ค่าส่งเหมาจ่าย/ส่งฟรีเมื่อครบยอดระดับร้าน (ค่าตั้งที่เดิมไม่มีผู้อ่าน)
-                fee = ShippingFeeRules.SiteFlatFee(cfg?.FlatShippingRate, cfg?.FreeShippingThreshold, goodsAfterDiscount);
-            }
-        }
-        quote.ShippingFee = fee;
-        quote.ShippingVatRate = fee > 0m ? ShippingFeeRules.VatRateForShipping(vatRegistered, lines.Select(l => l.VatRate)) : 0m;
-        // สูตรยอดเดียวกับ CreateOrderAsync: Σ สินค้า + ค่าส่ง − ส่วนลด (ไม่ติดลบ)
-        quote.OrderTotal = Math.Max(0m, goods + fee - discount);
-
-        // วันรับเร็วสุด = ช้าสุดในบรรทัดที่เป็นสินค้าตามสั่ง (ของต้องครบทั้งออเดอร์)
-        DateOnly? ready = null;
-        var now = BangkokNow();
-        foreach (var l in lines.Where(l => l.Sp.LeadTimeDays.HasValue))
-        {
-            var d = MtoLeadTime.EarliestReadyDate(now, l.Sp.LeadTimeDays!.Value, l.ExtraLeadDays, cal);
-            if (ready == null || d > ready) ready = d;
-        }
-        quote.HasMadeToOrder = ready != null;
-        quote.EarliestReadyDate = ready?.ToString("yyyy-MM-dd");
-
-        // เงื่อนไขชำระ — ใช้เฉพาะออเดอร์ที่มีสินค้าตามสั่ง · ไม่มี = เต็มจำนวน (พฤติกรรมเดิม)
-        var mode = quote.HasMadeToOrder ? PaymentTermMode.Normalize(cfg?.MtoPaymentTermMode) : PaymentTermMode.Full;
-        var due = MtoPaymentTerms.Compute(mode, quote.OrderTotal, cfg?.MtoDepositPercent, cfg?.MtoDepositFixedAmount, 0m);
-        quote.PaymentTermMode = due.Mode;
-        quote.PaymentTermLabel = PaymentTermMode.Label(due.Mode);
-        quote.DepositRequiredAmount = due.DepositRequired;
-        quote.AmountDueNow = due.DueNow;
-        quote.BalanceAfterDueNow = Math.Max(0m, due.Balance - due.DueNow);
-        // ทีม Q — วิธีออกเอกสารของมัดจำ (ค่าตั้งร้าน) · ข้อความถึงลูกค้ามาจากตัวตัดสินตัวเดียว (หน้าเว็บแสดงอย่างเดียว)
-        var depositInvoicing = Accounting.Helpers.DepositInvoicingMode.OfOrder(cfg?.MtoDepositInvoicing);
-        quote.DepositInvoicingNote = Accounting.Helpers.SiteOrderDepositInvoicing.CustomerNote(depositInvoicing,
-            paysInInstallments: due.DueNow < due.Balance);
-        return new CheckoutComputation(quote, due, ready, cfg?.MtoDepositPercent, cfg?.MtoDepositFixedAmount, depositInvoicing,
-            Accounting.Helpers.ShippingVatAllocation.OfOrder(cfg?.ShippingVatAllocation));
-    }
-
-    public async Task<CheckoutQuoteResponse> CheckoutQuoteAsync(Guid companyId, Guid siteId, Guid cartId, CheckoutQuoteRequest request)
-    {
-        await EnsureCartScopeAsync(companyId, siteId, cartId);
-        var cart = await _db.SiteCarts.AsNoTracking().FirstAsync(c => c.Id == cartId && c.CompanyId == companyId);
-        var items = await _db.SiteCartItems.AsNoTracking()
-            .Include(i => i.SiteProduct).ThenInclude(p => p.Product)
-            .Where(i => i.CartId == cartId).ToListAsync();
-        var lines = items.Select(i => new CheckoutLine(i.SiteProduct, i.Quantity, i.TotalPrice, i.SiteProduct.Product.VatRate, i.ExtraLeadDays)).ToList();
-        var vatRegistered = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
-        return (await ComputeCheckoutAsync(companyId, siteId, lines, cart.DiscountAmount, request, vatRegistered)).Quote;
-    }
+    // LoadShopCalendarAsync · ComputeCheckoutAsync · CheckoutQuoteAsync ⇒ ย้ายไป CmsCommerceService.Checkout.cs (รอบ 209 P2)
 
     public async Task<OptionImageUploadResponse> UploadOptionImageAsync(Guid companyId, Guid siteId, Guid cartId, IFormFile file)
     {

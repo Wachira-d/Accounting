@@ -250,6 +250,16 @@ public class SiteOrder : TenantEntity
     /// <summary>ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงตอนสั่ง (<c>Helpers.DepositInvoicingMode</c>) · null = ออเดอร์เดิม (= แบบเดิม)</summary>
     public string? DepositInvoicingMode { get; set; }
 
+    // ── รอบ 209 · P2 (คำตัดสินข้อ 168 ค/ง/จ · R-209-B11) — ตรึงตอนสั่ง ──
+    /// <summary>วิธีชำระที่ลูกค้าเลือกตอนสั่ง (<c>CmsFeatureFlags.PayNow</c>/<c>PayCod</c>) · null = ออเดอร์ก่อนมีช่องนี้ (= ชำระก่อน)</summary>
+    public string? PaymentMethodChoice { get; set; }
+    /// <summary>วันที่ลูกค้าขอรับ/ให้พร้อมส่ง (ตรวจกับวันพร้อมเร็วสุด + ปฏิทินร้านแล้ว · วันที่ 00:00 UTC) · null = ไม่ได้เลือก (เดิม)</summary>
+    public DateTime? RequestedReadyDate { get; set; }
+    /// <summary>คำตอบช่องที่ร้านเพิ่มเองบนฟอร์มสั่งซื้อ (JSON ป้าย+ค่า ณ ตอนสั่ง — <c>OrderFormFields.ParseAnswers</c>)</summary>
+    public string? CustomFieldsJson { get; set; }
+    /// <summary>วันส่งถึงโดยประมาณ (วันออกของ + วันขนส่งสูงสุดของอัตรา) · null = รับเอง/ไม่รู้จำนวนวันขนส่ง</summary>
+    public DateTime? EstimatedDeliveryDate { get; set; }
+
     public ICollection<SiteOrderLine> Lines { get; set; } = new List<SiteOrderLine>();
     public ICollection<SiteOrderPayment> Payments { get; set; } = new List<SiteOrderPayment>();
 }

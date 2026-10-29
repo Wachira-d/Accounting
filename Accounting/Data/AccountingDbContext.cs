@@ -3294,12 +3294,10 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<SiteCommerceConfig>(e =>
         {
             e.HasIndex(c => c.SiteId).IsUnique().HasDatabaseName("IX_CommerceConfig_SiteId");
-            e.Property(c => c.DefaultVatRate).HasPrecision(5, 2);
             e.Property(c => c.FlatShippingRate).HasPrecision(18, 2);
             e.Property(c => c.FreeShippingThreshold).HasPrecision(18, 2);
             e.Property(c => c.OrderNumberPrefix).HasMaxLength(16);
             e.Property(c => c.OrderNotificationEmails).HasMaxLength(1024);
-            e.Property(c => c.DefaultProductSort).HasMaxLength(32);
             e.Property(c => c.OrderConfirmMessageTh).HasMaxLength(2048);
             e.Property(c => c.OrderConfirmMessageEn).HasMaxLength(2048);
             e.Property(c => c.QuotationMessageTh).HasMaxLength(2048);

@@ -30,6 +30,8 @@ public class CreateCouponRequest
 
     public bool IsFirstOrderOnly { get; set; } = false;
     public bool FreeShipping { get; set; } = false;
+    /// <summary>รอบ 209 P2: null = ไม่เปลี่ยน (สร้างใหม่ = เปิด)</summary>
+    public bool? IsActive { get; set; }
 }
 
 public class CouponResponse
@@ -49,6 +51,10 @@ public class CouponResponse
     public bool IsActive { get; set; }
     public bool IsFirstOrderOnly { get; set; }
     public bool FreeShipping { get; set; }
+    public int? MaxUsesPerCustomer { get; set; }
+    public string? CustomerGroupTag { get; set; }
+    public List<Guid>? CategoryIds { get; set; }
+    public List<Guid>? ProductIds { get; set; }
 }
 
 public class ApplyCouponRequest
@@ -119,6 +125,10 @@ public class ShippingRateResponse
     public decimal BaseRate { get; set; }
     public decimal? PerKgRate { get; set; }
     public decimal? FreeAboveAmount { get; set; }
+    /// <summary>รอบ 209 P2 — echo ค่าที่รับ (เดิมเก็บแต่ไม่ส่งกลับ ⇒ หน้าแก้ล้างค่าเงียบ ๆ)</summary>
+    public decimal? MinWeightKg { get; set; }
+    public decimal? MaxWeightKg { get; set; }
+    public int SortOrder { get; set; }
     public int? EstimatedDeliveryDaysMin { get; set; }
     public int? EstimatedDeliveryDaysMax { get; set; }
     public bool IsActive { get; set; }

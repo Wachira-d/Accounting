@@ -50,6 +50,8 @@ public static class PaymentGatewayPermissionScope
     {
         ["payment-intents"] = ViewPayments,
         ["payment-settlements"] = PreviewSettlement,
+        // รอบ 209 P2: หน้าตั้งค่าร้านค้า — สิทธิ์เดียวกับ PUT commerce/config ([RequirePermission(CmsSiteSettings)])
+        ["cms-store-settings"] = PermissionKeys.CmsSiteSettings,
     };
 
     /// <summary>สิทธิ์เริ่มรับชำระของต้นทางแต่ละชนิด — ต้นทางที่ไม่รู้จัก ⇒ สิทธิ์การเงินที่เข้มที่สุด (ไม่ใช่ "ใครก็ได้")</summary>

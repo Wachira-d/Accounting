@@ -1635,6 +1635,18 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     **Slug** ระบบสร้างจากชื่อเว็บ ผู้ใช้ไม่มีช่องให้แก้ → `Helpers/CmsSlugUniquifier` เติม `-2`
     ให้เอง (โยน error = ทางตัน)
   - ไม่มีเส้นทางกู้คืนเว็บที่ลบแล้ว การปลดคีย์จึงไม่ต้องย้อนกลับ
+- **รอบ 209 · P2 — ค่าตั้งร้าน/ฟอร์มสั่งซื้อ/วิธีรับ-จ่าย** (คำตัดสินข้อ 168 ก/ค/ง/จ/ฉ · `CmsCommerceService.Checkout.cs` · ยังไม่ได้คอมไพล์ในเครื่องนี้):
+  สวิตช์ร้านทุกตัวผ่านตัวตัดสินเดียว `Helpers/CmsFeatureFlags` (ค่าเริ่มต้น = เดิม) — จัดส่ง/มารับเอง (ปิดจัดส่ง ⇒ ขอจัดส่ง = 400 · ว่าง = มารับเอง) ·
+  ชำระออนไลน์ (public-pay ยอด 0 + เหตุผล) · โอน/สลิป (upload-slip 400 · ไม่ส่งเลขบัญชี) · **COD** (ค่าเริ่มต้นปิด · ออเดอร์ตรึง `PaymentMethodChoice=cod` +
+  `PaymentTermMode=pay_on_pickup` ⇒ ยังไม่ชำระจนพนักงานยืนยันรับเงินเส้นเดิม · ใบกำกับตามเส้นเดิม · สินค้าตามสั่งแบบมัดจำใช้ไม่ได้) · สมาชิกเท่านั้น ·
+  ยืนยันอัตโนมัติ (สถานะ Confirmed + นับคูปอง — ไม่ใช่การรับเงิน) · คูปอง (ปิด ⇒ ส่วนลดค้างไม่ใช้) · ขอใบกำกับ · รีวิว (ปิด/เฉพาะผู้ซื้อ/อนุมัติทันที) · wishlist ·
+  ขอใบเสนอราคาแทนชำระ · คำนำหน้าเลขออเดอร์ (`{prefix}-yyMM-nnnn` · ตัวรันต่อ prefix ต่อเว็บ) · ไม่เปิดเป็นสวิตช์โดยเจตนา: ซิงก์ ERP/ตัดสต็อก (ลบคอลัมน์ตายพร้อมเหตุผลใน resolver) ·
+  ฟอร์มสั่งซื้อ `Helpers/OrderFormFields` (`SiteCommerceConfig.OrderFormFieldsJson` · ตรวจใน `CreateOrderAsync` ก่อนบันทึก: ชื่อ + เบอร์/อีเมล เสมอ · จัดส่ง ⇒ ที่อยู่ ·
+  ขอใบกำกับ ⇒ ชื่อ/ที่อยู่/เลขผู้เสียภาษี checksum `ThaiTaxId.IsValid`/สาขา 5 หลัก (§86/4) · ช่องเพิ่มเอง ≤ 10 ตรึงป้าย+ค่าใน `SiteOrder.CustomFieldsJson` ⇒ หมายเหตุใบขาย
+  `OrderFormFields.DocumentNotes`) · วันที่ต้องการรับ `SiteOrder.RequestedReadyDate` (≥ วันพร้อมเร็วสุด · ไม่ใช่วันปิด/วันหยุด `MtoLeadTime.RequestedDateProblem`) ·
+  คูปองส่งฟรีมีผลกับค่าส่ง + นับสิทธิ์ (B7) · ส่งฟรีระดับร้านทับโซนเมื่อเปิด `FreeShippingOverridesZones` + น้ำหนัก variant (B8) · ยกเลิกหลัง "จัดส่งแล้ว" ⇒
+  ใบลดหนี้ร่างไม่รวมบรรทัดค่าจัดส่ง (`SiteOrderCancelPlan.ExcludesShippingLine`) ก่อนจัดส่ง = เต็มใบเดิม (B10) · `SiteOrder.EstimatedDeliveryDate` = วันออกของ + วันขนส่งสูงสุด (B11) ·
+  หน้าแอดมิน `cms-store-settings.html` (สิทธิ์ `CmsSiteSettings` บน PUT config) · หน้าร้านวาดฟอร์มจาก checkout-quote (`features`/`formFields`/`customFields`/`paymentChoices`)
 - **Order flow** (`CmsCommerceService.cs`):
   - Customer checkout → `SiteOrder` + upload สลิป → `RecordPaymentSlipAsync`
     สร้าง `SiteOrderPayment` Status=`Pending` · **(ทีม W4 R-43)** ไฟล์สลิปเข้า `IFileAttachmentService` (ชนิด `SiteOrder` · ผู้อัปโหลด null ·

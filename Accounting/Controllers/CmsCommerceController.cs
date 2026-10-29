@@ -209,6 +209,9 @@ public class CmsCommerceController : ControllerBase
         try { userIdGuid = JwtHelper.GetUserIdFromClaims(User); } catch { }
         var userId = userIdGuid == Guid.Empty ? "guest" : userIdGuid.ToString();
         var result = await _commerceService.CreateOrderAsync(companyId, siteId, request, userId);
+        // รอบ 209 P2: ร้านเปิด "ยืนยันออเดอร์อัตโนมัติ" ⇒ นับการใช้คูปองทันที (ทางเดียวกับพนักงานกดยืนยัน — idempotent)
+        if (result.Status == SiteOrderStatus.Confirmed)
+            await _couponService.RecordCouponUsageAsync(companyId, siteId, result.Id);
         return StatusCode(201, new ApiResponse<OrderResponse>(true, result, CmsMessages.Get("order.created", Lang)));
     }
 
@@ -316,6 +319,9 @@ public class CmsCommerceController : ControllerBase
         [FromBody] ConvertOrderToQuotationRequest? req,
         [FromServices] IDocumentService docService)
     {
+        // รอบ 209 P2: ร้านปิด "ขอใบเสนอราคาแทนการชำระ" ⇒ ปฏิเสธพร้อมเหตุ (หน้าเว็บซ่อนปุ่มตาม payment-options ด้วย)
+        if (!(await _commerceService.GetFeatureFlagsAsync(companyId, siteId)).QuoteConversion)
+            return BadRequest(new ApiResponse<ConvertToQuotationResponse>(false, null, CmsFeatureFlags.QuoteConversionOffMessage));
         var notes = req?.CustomerNotes;
         if (!string.IsNullOrEmpty(notes) && notes.Length > 1000) notes = notes[..1000];
         var result = await _commerceService.ConvertOrderToQuotationAsync(companyId, siteId, orderId, notes, docService);

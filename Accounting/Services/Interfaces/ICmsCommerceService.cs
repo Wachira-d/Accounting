@@ -72,4 +72,7 @@ public interface ICmsCommerceService
     Task<CheckoutQuoteResponse> CheckoutQuoteAsync(Guid companyId, Guid siteId, Guid cartId, CheckoutQuoteRequest request);
     /// <summary>ลูกค้าแนบรูปตัวอย่างของตัวเลือกชนิด "รูป" — คืน id ไฟล์ให้ส่งมากับการใส่ตะกร้า</summary>
     Task<OptionImageUploadResponse> UploadOptionImageAsync(Guid companyId, Guid siteId, Guid cartId, IFormFile file);
+
+    /// <summary>รอบ 209 P2 — สวิตช์ร้านที่ตัดสินแล้ว (Helpers/CmsFeatureFlags) ให้คอนโทรลเลอร์ปฏิเสธฟังก์ชันที่ร้านปิด</summary>
+    Task<Accounting.Helpers.CmsFeatureSet> GetFeatureFlagsAsync(Guid companyId, Guid siteId);
 }

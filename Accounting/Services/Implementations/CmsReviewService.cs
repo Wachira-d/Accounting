@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
@@ -31,12 +32,18 @@ public class CmsReviewService : ICmsReviewService
         if (request.OrderId.HasValue)
         {
             verified = await _db.SiteOrders.AnyAsync(o =>
-                o.Id == request.OrderId.Value && o.SiteId == siteId &&
+                o.Id == request.OrderId.Value && o.SiteId == siteId && o.CompanyId == companyId &&
                 o.CustomerId == customerId &&
                 o.Status == SiteOrderStatus.Delivered &&
                 o.Lines.Any(l => l.SiteProductId == request.SiteProductId));
             if (!verified) orderIdToLink = null;
         }
+
+        // รอบ 209 P2 (คำตัดสินข้อ 168 ก): ปิดรีวิว · รับเฉพาะผู้ซื้อ · อนุมัติทันที — ตัวตัดสินเดียว CmsFeatureFlags (เดิม IsApproved=false ตายตัว ไม่ดูค่าตั้ง)
+        var storeCfg = await _db.SiteCommerceConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId);
+        var (reviewProblem, autoApproved) = CmsFeatureFlags.ReviewDecision(CmsFeatureFlags.Resolve(storeCfg), verified);
+        if (reviewProblem != null) throw new BusinessRuleException(reviewProblem, CmsFeatureFlags.RuleCode);
 
         var review = new SiteProductReview
         {
@@ -51,7 +58,7 @@ public class CmsReviewService : ICmsReviewService
             Content = request.Content,
             ImageUrlsJson = request.ImageUrls?.Any() == true ? JsonSerializer.Serialize(request.ImageUrls) : null,
             IsVerifiedPurchase = verified,
-            IsApproved = false
+            IsApproved = autoApproved
         };
         _db.SiteProductReviews.Add(review);
         await _db.SaveChangesAsync();
@@ -63,6 +70,10 @@ public class CmsReviewService : ICmsReviewService
         var q = _db.SiteProductReviews.AsNoTracking()
             .Where(r => r.SiteId == siteId && r.CompanyId == companyId && r.SiteProductId == siteProductId && !r.IsHidden);
         if (approvedOnly) q = q.Where(r => r.IsApproved);
+        // รอบ 209 P2: ร้านปิดรีวิว ⇒ หน้าร้านไม่แสดงรีวิว (รายการว่าง · หลังบ้านยังเห็นที่ GetSiteReviewsAsync)
+        if (approvedOnly && !CmsFeatureFlags.Resolve(await _db.SiteCommerceConfigs.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId)).Reviews)
+            return new PagedResponse<ReviewResponse>(new List<ReviewResponse>(), 0, page, pageSize, 0);
 
         var total = await q.CountAsync();
         var items = await q.OrderByDescending(r => r.CreatedAt)

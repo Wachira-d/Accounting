@@ -25,6 +25,11 @@ public sealed record ShippingRateFacts(
     ShippingRateType RateType, decimal BaseRate, decimal? PerKgRate, decimal? FreeAboveAmount,
     decimal? MinWeightKg, decimal? MaxWeightKg);
 
+/// <summary>ข้อเท็จจริงของคูปองที่ใช้ตัดสิน "ส่งฟรี" (จาก <c>SiteCoupon</c>)</summary>
+public sealed record CouponShippingFacts(
+    bool IsActive, bool IsDeleted, bool FreeShipping, CouponDiscountType DiscountType,
+    DateTime? StartsAt, DateTime? ExpiresAt, int? MaxUses, int CurrentUses, decimal? MinOrderAmount);
+
 /// <summary>ผลคิดค่าส่ง — <see cref="Applicable"/> false = อัตรานี้ใช้กับน้ำหนักนี้ไม่ได้</summary>
 public readonly record struct ShippingQuote(bool Applicable, decimal Fee, bool IsFree);
 
@@ -74,6 +79,73 @@ public static class ShippingFeeRules
         if (flatRate is not decimal fr || fr <= 0m) return 0m;
         if (freeThreshold is decimal t && t > 0m && goodsSubtotal >= t) return 0m;
         return Math.Round(fr, 2, R);
+    }
+
+    /// <summary>
+    /// รอบ 209 (R-209-B8) — "ส่งฟรีเมื่อครบยอด" ระดับร้านกับอัตราในโซน: ค่าตั้ง <c>FreeShippingOverridesZones</c> เปิด ⇒ ยอดสินค้า (หลังส่วนลด) ถึงเกณฑ์
+    /// ⇒ ค่าส่ง 0 ทุกอัตรา · ปิด (ค่าเริ่มต้น) ⇒ ค่าเดิมของอัตรา (เกณฑ์ระดับร้านใช้เฉพาะร้านที่ไม่ได้ตั้งโซน — พฤติกรรมเดิม)
+    /// </summary>
+    public static ShippingQuote ApplyShopFreeThreshold(ShippingQuote zoneQuote, decimal? shopThreshold, bool overridesZones, decimal goodsSubtotal)
+    {
+        if (!zoneQuote.Applicable || !overridesZones) return zoneQuote;
+        if (shopThreshold is decimal t && t > 0m && goodsSubtotal >= t) return new ShippingQuote(true, 0m, true);
+        return zoneQuote;
+    }
+
+    /// <summary>
+    /// รอบ 209 (R-209-B7) — คูปองในตะกร้าให้ "ส่งฟรี" จริงไหม (เดิมคูปองชนิดส่งฟรีคืนส่วนลด 0 แล้วค่าส่งไม่ถูกแตะ = ลูกค้าเสียค่าส่งเต็ม) ·
+    /// ตรวจซ้ำตอนคิดยอด (คูปองหมดอายุ/ถูกปิด/ครบจำนวนหลังลูกค้ากดใช้ ⇒ ไม่ส่งฟรี) · null = ไม่มีคูปอง/ใช้ไม่ได้
+    /// </summary>
+    public static bool CouponGrantsFreeShipping(CouponShippingFacts? c, DateTime nowUtc, decimal goodsSubtotal)
+    {
+        if (c == null || !c.IsActive || c.IsDeleted) return false;
+        if (!c.FreeShipping && c.DiscountType != CouponDiscountType.FreeShipping) return false;
+        if (c.StartsAt is DateTime s && nowUtc < s) return false;
+        if (c.ExpiresAt is DateTime e && nowUtc > e) return false;
+        if (c.MaxUses is int max && c.CurrentUses >= max) return false;
+        if (c.MinOrderAmount is decimal min && goodsSubtotal < min) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// รอบ 209 (R-209-B8) — น้ำหนักของบรรทัดที่ใช้คิดค่าส่ง = จำนวน × (น้ำหนักของตัวเลือกสินค้า (variant) ที่ตรงกับตัวเลือกในตะกร้า ?? น้ำหนักสินค้า ?? 0) ·
+    /// เดิมใช้น้ำหนักสินค้าแม่เสมอ (เสื้อไซซ์ XL หนักกว่า S แต่ค่าส่งเท่ากัน)
+    /// </summary>
+    public static decimal LineWeightKg(decimal quantity, decimal? productWeightKg, decimal? variantWeightKg)
+    {
+        var w = variantWeightKg is decimal v && v > 0m ? v : productWeightKg ?? 0m;
+        return quantity <= 0m || w <= 0m ? 0m : quantity * w;
+    }
+
+    /// <summary>น้ำหนักของ variant ที่ตัวเลือกในตะกร้า (JSON object ชื่อ→ค่า) ตรงกับตัวเลือกของ variant ทุกคู่ (ไม่สนตัวพิมพ์/ลำดับ) ·
+    /// ไม่ตรงตัวใด/อ่านไม่ออก/variant ปิดอยู่ = null (ใช้น้ำหนักสินค้าแม่ — ไม่เดา)</summary>
+    public static decimal? VariantWeightOf(string? cartOptionsJson, IEnumerable<(string? OptionsJson, decimal? WeightKg, bool IsActive)> variants)
+    {
+        var want = ParseOptions(cartOptionsJson);
+        if (want == null || want.Count == 0) return null;
+        foreach (var v in variants)
+        {
+            if (!v.IsActive || v.WeightKg is not decimal w || w <= 0m) continue;
+            var have = ParseOptions(v.OptionsJson);
+            if (have != null && have.Count == want.Count && want.All(kv => have.TryGetValue(kv.Key, out var hv) && string.Equals(hv, kv.Value, StringComparison.OrdinalIgnoreCase)))
+                return w;
+        }
+        return null;
+    }
+
+    private static Dictionary<string, string>? ParseOptions(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var p in doc.RootElement.EnumerateObject())
+                d[p.Name.Trim()] = (p.Value.ValueKind == System.Text.Json.JsonValueKind.String ? p.Value.GetString() : p.Value.GetRawText())?.Trim() ?? "";
+            return d;
+        }
+        catch (System.Text.Json.JsonException) { return null; }
     }
 
     /// <summary>อัตรา VAT ของบรรทัดค่าส่ง — ตามสถานะของสินค้าที่ขาย (ค่าขนส่งเป็นส่วนของมูลค่าฐานภาษี §79):

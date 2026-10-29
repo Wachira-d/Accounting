@@ -51,6 +51,35 @@ public static class MtoLeadTime
         return d;
     }
 
+    /// <summary>ร้านเปิดวันนี้ไหม (ไม่ใช่วันปิดประจำสัปดาห์ และไม่ใช่วันหยุดเฉพาะวัน)</summary>
+    private static bool IsOpenDay(DateOnly d, ShopCalendar cal)
+        => !cal.ClosedWeekdays.Contains(d.DayOfWeek) && !cal.Holidays.Contains(d);
+
+    /// <summary>จองวันรับล่วงหน้าได้ไกลสุด (วัน) — กันลูกค้าพิมพ์ปีผิดแล้วออเดอร์ค้างเป็นปี</summary>
+    public const int MaxRequestedDaysAhead = 365;
+
+    /// <summary>
+    /// <b>วันที่ลูกค้าขอรับสินค้า</b> (รอบ 209 · คำตัดสินข้อ 168 จ) — ต้อง ≥ วันพร้อมเร็วสุด (<paramref name="earliest"/> จาก <see cref="EarliestReadyDate"/>
+    /// — ออเดอร์ที่ไม่มีสินค้าตามสั่ง = วันเปิดร้านแรกที่รับได้) และร้านต้องเปิดวันนั้น · ไม่เกิน <see cref="MaxRequestedDaysAhead"/> วัน · null = ใช้ได้
+    /// </summary>
+    public static string? RequestedDateProblem(DateOnly requested, DateOnly earliest, ShopCalendar cal)
+    {
+        if (requested < earliest)
+            return $"วันที่ต้องการรับเร็วเกินไป — รับได้เร็วสุดวันที่ {earliest:dd/MM/yyyy}";
+        if (requested > earliest.AddDays(MaxRequestedDaysAhead))
+            return $"เลือกวันรับล่วงหน้าได้ไม่เกิน {MaxRequestedDaysAhead} วัน";
+        if (!IsOpenDay(requested, cal))
+            return $"ร้านปิดวันที่ {requested:dd/MM/yyyy} — เลือกวันอื่น";
+        return null;
+    }
+
+    /// <summary>
+    /// <b>วันส่งถึงโดยประมาณ</b> (รอบ 209 · R-209-B11) = วันออกของ (วันพร้อม/วันที่ลูกค้าขอ — เป็นวันเปิดร้านแล้ว) + จำนวนวันขนส่งสูงสุดของอัตราที่เลือก
+    /// (วันปฏิทิน — ผู้ขนส่งไม่หยุดตามวันปิดร้าน) · ไม่รู้จำนวนวันขนส่ง (อัตราไม่ตั้ง/ค่าส่งเหมาจ่าย) = null (ไม่แต่งวันขึ้นมา)
+    /// </summary>
+    public static DateOnly? EstimatedDeliveryDate(DateOnly dispatch, int? maxTransitDays)
+        => maxTransitDays is int d && d >= 0 && d <= 90 ? dispatch.AddDays(d) : null;
+
     private static void Guard(ref int guard)
     {
         if (++guard > MaxScanDays)
