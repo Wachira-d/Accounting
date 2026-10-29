@@ -1370,7 +1370,7 @@ public partial class PosService
         order.CompletedAt = DateTime.UtcNow;
         await IssueAbbreviatedInvoiceNumberAsync(companyId, order);
         // ทีม K — บิลจากคิวการจองปิดแล้ว ⇒ การจองจบ (เฉพาะสถานะ ไม่แตะเงิน — ดู MarkSourceBookingCompletedAsync)
-        await MarkSourceBookingCompletedAsync(companyId, order);
+        await MarkSourceBookingCompletedAsync(companyId, order, userId);
 
         // Loyalty: award 1 point per ฿100 spent (NetAmount excluding tip) and
         // bump visit counter / lastVisit on the linked Contact. Floor — fractions

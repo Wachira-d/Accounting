@@ -712,19 +712,22 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         // คำตัดสินเจ้าของข้อ 162 (Q2 · รอบ 205 W7): อัตราฐานภาษีของงวด — ตัวตัดสินเดียว DocumentFx.WhtRateFor (ตัวเดียวกับขา 2191x ใน CreatePaymentJournalAsync
         // ⇒ 50 ทวิ = GL ถึงสตางค์ทั้งสองค่าตั้ง) · ค่าตั้งต้น DocumentDate = อัตราเอกสาร (เดิมทุกสตางค์) · PaymentDate = Payment.ExchangeRate ของงวด (ไม่มี = อัตราเอกสาร) ·
         // บันทึกที่มาของอัตราลงใบทุกใบ (ExchangeRateUsed / ExchangeRateBasis)
-        var whtFxBasis = await _db.Set<CompanySettings>().AsNoTracking()
-            .Where(s => s.CompanyId == companyId).Select(s => (WhtFxRateBasis?)s.WhtFxRateBasis).FirstOrDefaultAsync() ?? WhtFxRateBasis.DocumentDate;
+        // รอบ 208 (ฝ่ายค้าน W7 ข้อ 7): เกณฑ์รับรู้ Accrual ⇒ อัตราเอกสารเสมอ (2191x ตั้งตอนอนุมัติใบที่อัตรานั้น) — ตัดสินใน WhtRateFor ตัวเดียว
+        var whtFxSettings = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(s => s.CompanyId == companyId).Select(s => new { s.WhtFxRateBasis, s.WhtRecognitionBasis }).FirstOrDefaultAsync();
+        var whtFxBasis = whtFxSettings?.WhtFxRateBasis ?? WhtFxRateBasis.DocumentDate;
+        var whtRecognition = whtFxSettings?.WhtRecognitionBasis ?? WhtRecognitionBasis.Cash;
         decimal? paymentFx = sourcePaymentId.HasValue
             ? await _db.Payments.AsNoTracking().Where(p => p.Id == sourcePaymentId.Value && p.CompanyId == companyId)
                 .Select(p => p.ExchangeRate).FirstOrDefaultAsync()
             : null;
-        var whtFxRate = Accounting.Helpers.DocumentFx.WhtRateFor(whtFxBasis, doc.ExchangeRate, paymentFx);
+        var whtFxRate = Accounting.Helpers.DocumentFx.WhtRateFor(whtFxBasis, whtRecognition, doc.ExchangeRate, paymentFx);
         var whtBasis = Accounting.Helpers.PerLineWht.BasisOf(doc, whtFxRate);
         var inBaht = whtBasis != Accounting.Helpers.WhtBahtBasis.Thb;
         var bahtByLine = inBaht ? Accounting.Helpers.PerLineWht.ForDocument(doc, whtFxRate) : null;
         decimal DocToBaht(decimal v) => inBaht ? Accounting.Helpers.PerLineWht.DocumentWhtThb(v, whtFxRate) : v;
         cert.ExchangeRateUsed = inBaht ? whtFxRate : 1m;
-        cert.ExchangeRateBasis = inBaht ? Accounting.Helpers.DocumentFx.WhtRateBasisLabel(whtFxBasis, doc.ExchangeRate, paymentFx) : "บาท";
+        cert.ExchangeRateBasis = inBaht ? Accounting.Helpers.DocumentFx.WhtRateBasisLabel(whtFxBasis, whtRecognition, doc.ExchangeRate, paymentFx) : "บาท";
 
         if (whtLines.Count == 0)
         {
@@ -1176,9 +1179,14 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
             .ToListAsync();
         // R-18 (B-4 · รอบ 205 W7): ใบลดหนี้ต่างสกุล — ตัวเลขทุกตัวที่เทียบกับ 50 ทวิ (บาท) ต้องเป็นบาทผ่านตัวตั้งเดียว Helpers/PerLineWht
         // (ForDocument ของใบลดหนี้ต่อบรรทัด · DocumentWhtThb ระดับหัวใบ) · ใบบาท ⇒ ยอดที่เก็บไว้ตรงตัว (ไม่ขยับแม้แต่สตางค์ — เทสต์ทิศตรงข้าม PerLineWhtTests)
-        var cnBaht = PerLineWht.ForDocument(cn);
-        var cnWhtThb = PerLineWht.DocumentWhtThb(cn.WithholdingTaxAmount, cn.ExchangeRate);
-        var srcWhtThb = PerLineWht.DocumentWhtThb(src.WithholdingTaxAmount, src.ExchangeRate);
+        // รอบ 208 (ฝ่ายค้าน W7 ข้อ 9): แปลงด้วยอัตราที่ 50 ทวิ ใช้จริง (ExchangeRateUsed — ตัวตัดสินเดียว PerLineWht.CreditNoteWhtRate) ไม่ใช่อัตราของใบลดหนี้เอง
+        // (คนละวัน ⇒ ใบรับรองใหม่ ≠ ยอดเดิม − ส่วนลด) · ใบเก่าไม่มีอัตรา/หลายอัตรา ⇒ อัตราใบต้นทาง · ใบบาท ⇒ 1 (เดิมทุกสตางค์)
+        var cnFx = PerLineWht.CreditNoteWhtRate(cn.ExchangeRate, src.ExchangeRate, certs.Select(c => c.ExchangeRateUsed));
+        var cnBaht = PerLineWht.ForDocument(cn, cnFx);
+        var cnWhtThb = PerLineWht.DocumentWhtThb(cn.WithholdingTaxAmount, cnFx);
+        // ฝ่ายค้านรอบ 2 (W7) ข้อ 2: ยอดใบต้นทางแปลงด้วยอัตราของใบต้นทาง (ตัวตัดสินเดียวกัน) — ใบลดหนี้บาทอ้างใบ USD ได้ cnFx = 1 ⇒ เดิม 30 USD ถูกนับเป็น 30 บาท
+        var srcFx = PerLineWht.CreditNoteWhtRate(src.ExchangeRate, src.ExchangeRate, certs.Select(c => c.ExchangeRateUsed));
+        var srcWhtThb = PerLineWht.DocumentWhtThb(src.WithholdingTaxAmount, srcFx);
         var prefix = $"ใบลดหนี้ {cn.DocumentNumber} ลดภาษีหัก ณ ที่จ่าย {cnWhtThb:N2} บาท";
         if (certs.Count == 0 || src.BalanceDue > 0.01m)
         {
@@ -1193,9 +1201,11 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
                     && n.WithholdingTaxAmount > 0m)
                 .Select(n => new { n.WithholdingTaxAmount, n.ExchangeRate })
                 .ToListAsync();
-            // ทุกตัวเป็นบาท: ใบเดิม · ใบลดหนี้ทุกใบ · 50 ทวิ ที่ออกแล้ว (บาทอยู่แล้ว) — เดิมใบต่างสกุลเทียบดอลลาร์กับบาท
+            // ทุกตัวเป็นบาท: ใบเดิม · ใบลดหนี้ทุกใบ · 50 ทวิ ที่ออกแล้ว (บาทอยู่แล้ว) — เดิมใบต่างสกุลเทียบดอลลาร์กับบาท ·
+            // รอบ 208: ใบลดหนี้ใบอื่นใช้อัตราตัวเดียวกับใบนี้ (อัตราที่ 50 ทวิ ใช้) — ใบบาทได้ 1 จากตัวตัดสินเดียวกัน
             var figures = WhtCreditNoteRemainder.Compute(srcWhtThb,
-                otherCnWht.Select(n => PerLineWht.DocumentWhtThb(n.WithholdingTaxAmount, n.ExchangeRate)).Append(cnWhtThb).ToList(),
+                otherCnWht.Select(n => PerLineWht.DocumentWhtThb(n.WithholdingTaxAmount,
+                    PerLineWht.CreditNoteWhtRate(n.ExchangeRate, src.ExchangeRate, certs.Select(c => c.ExchangeRateUsed)))).Append(cnWhtThb).ToList(),
                 certs.Sum(c => c.TotalTaxAmount));
             // ยังไม่มีใบ (ยังไม่จ่าย/ออกเอง) — ใบที่จะออกทีหลังคิดจากช่องภาษีหักตอนบันทึกจ่าย ⇒ บอกยอดที่ต้องแก้ ·
             // ยังจ่ายไม่ครบ — ใบลดหนี้เกณฑ์เงินสดไม่แตะหนี้ 2191x (ลง gross) และใบที่มีอยู่เป็นของงวดที่จ่ายแล้ว ⇒ ระบบเลือกแทนไม่ได้ว่าลดตรงไหน

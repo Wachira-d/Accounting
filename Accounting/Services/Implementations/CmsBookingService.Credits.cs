@@ -80,7 +80,9 @@ public partial class CmsBookingService
             {
                 CreditBookingLink.LedgerAction.SettleAttended => await _creditLedger.SettleAsync(companyId, r, attended: true, userId),
                 CreditBookingLink.LedgerAction.SettleNoShow => await _creditLedger.SettleAsync(companyId, r, attended: false, userId),
-                _ => await _creditLedger.ReleaseAsync(companyId, r, byBusiness: true, userId),
+                // รอบ 208 (ฝ่ายค้าน W6 ข้อ 5): ลูกค้ายกเลิกเองผ่านลิงก์ = ไม่ใช่ร้านยกเลิก ⇒ นโยบายยกเลิกของคอร์ส (ทันเวลาคืน · ช้าริบ) ·
+                // ร้าน/ระบบยกเลิก = คืนเครดิตเสมอ (เดิม)
+                _ => await _creditLedger.ReleaseAsync(companyId, r, byBusiness: !CreditBookingLink.IsCustomerActor(userId), userId),
             };
             notices.Add($"{CreditBookingLink.ActionTh(action)} บัตร {result.PassNumber} แล้ว — {result.StatusLabel}"
                 + (result.RecognizedAmount > 0m ? $" · รับรู้รายได้ {result.RecognizedAmount:N2}" : ""));

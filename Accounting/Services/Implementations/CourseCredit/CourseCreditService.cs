@@ -379,19 +379,15 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         if (await SaleDocumentProblemAsync(pass, ct) is string problem)
             throw new BusinessRuleException(problem, CreditPassDocumentRule.RuleCode);
         var facts = CreditPassDocumentHook.Facts(pass);
-        decimal net;
-        if (request.AmountNet is decimal a && a > 0m) net = Math.Round(a, 2, MidpointRounding.AwayFromZero);
+        CreditPassDocumentRule.RefundPlan plan;
+        if (request.AmountNet is decimal a && a > 0m)
+            plan = CreditPassDocumentRule.RefundPreview(facts, Math.Round(a, 2, MidpointRounding.AwayFromZero));
         else if (request.Credits is decimal c && c > 0m)
-        {
-            // คืนตามจำนวนเครดิต: เครดิตที่เหลือทั้งหมด ⇒ ยอดเท่าส่วนที่เหลือ (ปิดบัตร · ไม่มีเศษสตางค์ค้าง) · อื่น ⇒ เครดิต × ราคาต่อเครดิต
-            var removable = Math.Max(0m, pass.CreditsTotal - pass.CreditsUsed - pass.CreditsReserved);
-            net = c >= removable && pass.CreditsReserved <= 0m
-                ? facts.Deferred
-                : Math.Round(c * facts.PricePerCredit, 2, MidpointRounding.AwayFromZero);
-        }
+            // รอบ 208 (ฝ่ายค้าน W6 ข้อ 4): คืนตามจำนวนเครดิต ⇒ ส่งเครดิตเข้าตัวตัดสินตรง ๆ (เดิมแปลงเป็นบาทปัดสตางค์แล้วหารกลับ ⇒ บัตรชั่วโมงหาย 0.25) ·
+            // เครดิตที่ยังไม่ใช้ทั้งหมด ⇒ ยอดเท่าส่วนที่เหลือ (ปิดบัตร · ไม่มีเศษสตางค์ค้าง) — ตัดสินใน RefundPreview ตัวเดียว
+            plan = CreditPassDocumentRule.RefundPreview(facts, 0m, credits: c);
         else throw new BusinessRuleException("ระบุยอดคืน (บาท สุทธิก่อน VAT) หรือจำนวนเครดิตที่คืน", CreditPassDocumentRule.RuleCode);
 
-        var plan = CreditPassDocumentRule.RefundPreview(facts, net);
         if (plan.Problem != null) throw new BusinessRuleException(plan.Problem, CreditPassDocumentRule.RuleCode);
 
         var saleLine = await _db.DocumentLines.AsNoTracking()
@@ -399,6 +395,10 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             .OrderByDescending(l => l.AccountId == pass.UnearnedAccountId)
             .Select(l => new { l.VatRate })
             .FirstOrDefaultAsync(ct) ?? throw new BusinessRuleException("ใบขายของบัตรไม่มีบรรทัด — ออกใบลดหนี้จากหน้าเอกสารเอง", CreditPassDocumentRule.RuleCode);
+        // รอบ 208 (ฝ่ายค้าน W6 หมายเหตุ): ใบลดหนี้ §86/10 เฉพาะผู้จด VAT ที่ออกใบกำกับไว้ — ไม่จด VAT / บริการยกเว้น ⇒ ไม่สร้างใบผิดชนิด (ตัวตัดสินเดียว)
+        var companyVatRegistered = await _db.Companies.AsNoTracking().Where(co => co.Id == companyId).Select(co => co.IsVatRegistered).FirstOrDefaultAsync(ct);
+        if (CreditPassDocumentRule.RefundDocumentProblem(companyVatRegistered, saleLine.VatRate) is string refundDocProblem)
+            throw new BusinessRuleException(refundDocProblem, CreditPassDocumentRule.RuleCode);
 
         var what = plan.ClosesPass
             ? $"คืนเงินส่วนที่ยังไม่ใช้ทั้งหมด {plan.Net:N2} — ปิดบัตร"
@@ -1241,6 +1241,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         CreditLedgerKind.Expire => "หมดอายุ",
         CreditLedgerKind.Cancel => "ยกเลิกบัตร",
         CreditLedgerKind.Adjust => "ลดเครดิต (คืนเงินบางส่วน)",
+        CreditLedgerKind.AdjustReversal => "คืนเครดิต (ยกเลิกใบลดหนี้)",
         _ => k.ToString(),
     };
 

@@ -171,7 +171,9 @@ public class BookingReminderJob : BackgroundService
         // ── 3. ปล่อยรอบที่ถือไว้แล้วไม่ยืนยัน ──
         var expired = await db.SiteBookings.AsNoTracking()
             .Where(b => onlyCompanyId == null || b.CompanyId == onlyCompanyId)
-            .Where(b => !b.IsDeleted && b.Status == BookingStatus.Pending && b.WaitlistHoldUntil != null && b.WaitlistHoldUntil <= nowUtc)
+            // รอบ 208 (ฝ่ายค้าน W2 ข้อ 2): ใบที่รับเงินแล้ว (มัดจำบางส่วน) ไม่ปล่อยเอง — ยกเลิกจะ void ใบร่างทั้งที่ถือเงินลูกค้าอยู่ ⇒ ให้คนตัดสิน
+            .Where(b => !b.IsDeleted && b.Status == BookingStatus.Pending && b.WaitlistHoldUntil != null && b.WaitlistHoldUntil <= nowUtc
+                && b.PaidAmount <= 0m)
             .Select(b => new { b.CompanyId, b.SiteId, b.Id, b.BookingNumber, b.Status, b.WaitlistHoldUntil })
             .ToListAsync(ct);
         foreach (var e in expired)
@@ -181,7 +183,8 @@ public class BookingReminderJob : BackgroundService
             try
             {
                 await bookings.UpdateBookingStatusAsync(e.CompanyId, e.SiteId, e.Id,
-                    new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = BookingReminderPlan.HoldExpiredReason }, SystemUser);
+                    new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = BookingReminderPlan.HoldExpiredReason,
+                        ExpectedCurrentStatus = BookingStatus.Pending, HoldLapsedAsOfUtc = nowUtc }, SystemUser);   // ลูกค้าจ่าย/ยืนยันระหว่างทาง ⇒ เส้นสถานะปฏิเสธใต้ล็อก
                 released++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

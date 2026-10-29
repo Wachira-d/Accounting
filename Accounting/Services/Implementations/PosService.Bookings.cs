@@ -2,6 +2,7 @@ using Accounting.Helpers;
 using Accounting.Models.DTOs.Pos;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -210,12 +211,16 @@ public partial class PosService
         }
 
         var label = snap.Source == PosBookingSource.CmsBooking ? $"การจอง {snap.Number}" : "การจองโต๊ะ";
+        // รอบ 208 (ฝ่ายค้าน W6 ข้อ 1): การจองที่จ่ายด้วยบัตร — บอกบนบิลว่าการปิดบิลจะตัดเครดิต (ยอดบริการ 0 ไม่ใช่ของฟรี)
+        var paidWithCredit = snap.Source == PosBookingSource.CmsBooking
+            && CreditBookingLink.ForPosClose(await CreditLedgerStatusAsync(companyId, snap.Id)) != CreditBookingLink.PosCloseAction.NotCredit;
         var create = new CreateOrderRequest(
             request.SessionId,
             snap.Source == PosBookingSource.PosReservation ? PosOrderType.DineIn : PosOrderType.Appointment,
             snap.ContactId, snap.CustomerName, snap.TableNumber,
             snap.PartySize, null, snap.StartAtUtc, staffId,
-            Notes: $"เปิดจาก{label}" + (decision.Warning != null ? $" · {decision.Warning}" : ""),
+            Notes: $"เปิดจาก{label}" + (decision.Warning != null ? $" · {decision.Warning}" : "")
+                + (paidWithCredit ? $" · {CreditBookingLink.PosOpenNote}" : ""),
             Reference: snap.Number,
             Items: items);
 
@@ -282,8 +287,10 @@ public partial class PosService
             {
                 b.PosOrderId = null;
                 if (b.Status == BookingStatus.InProgress) b.Status = BookingStatus.Confirmed;
-                // POS ประทับ Completed เฉพาะการจองที่ไม่มีเงิน/เอกสารผูก (MarkSourceBookingCompletedAsync) ⇒ ถอยกลับได้ปลอดภัย
-                else if (b.Status == BookingStatus.Completed && b.ErpDocumentId == null && b.PaidAmount <= 0m)
+                // POS ประทับ Completed เฉพาะการจองที่ไม่มีเงิน/เอกสารผูก (MarkSourceBookingCompletedAsync) ⇒ ถอยกลับได้ปลอดภัย ·
+                // รอบ 208: การจองด้วยบัตรที่ตัดเครดิตแล้วไม่ถอย (ตัวตัดสิน CreditBookingLink.PosVoidRevertsCompleted)
+                else if (b.Status == BookingStatus.Completed && b.ErpDocumentId == null && b.PaidAmount <= 0m
+                    && CreditBookingLink.PosVoidRevertsCompleted(await CreditLedgerStatusAsync(companyId, bid)))
                 {
                     b.Status = BookingStatus.Confirmed;
                     b.CompletedAt = null;
@@ -309,7 +316,7 @@ public partial class PosService
 
     /// <summary>บิลจากการจองปิดแล้ว ⇒ การจองโต๊ะ = เสร็จสิ้น · การจองจากเว็บ = เสร็จสิ้น<b>เฉพาะ</b>เมื่อไม่มีเงิน/เอกสารผูกกับการจอง
     /// (มีมัดจำ/เอกสาร ⇒ คงไว้ "กำลังให้บริการ" ให้คนปิดที่หน้าการจอง ซึ่งเป็นเส้นที่ตัดมัดจำ — POS ห้ามประทับ "เสร็จ" แทนเส้นเงิน)</summary>
-    private async Task MarkSourceBookingCompletedAsync(Guid companyId, PosOrder order)
+    private async Task MarkSourceBookingCompletedAsync(Guid companyId, PosOrder order, string userId)
     {
         if (order.SourceBookingId is not Guid bid) return;
         // ฝ่ายค้านทีม K ข้อ 1: มัดจำถูกรับ<b>หลัง</b>เปิดบิล (ด่านตอนเปิดไม่เห็น) ⇒ ปิดบิลเต็มราคา = ลูกค้าจ่ายซ้ำ/รายได้ซ้ำ — บล็อกพร้อมทางไปต่อ
@@ -333,6 +340,40 @@ public partial class PosService
         else if (order.SourceBookingType == PosBookingSource.CmsBooking)
         {
             var b = await _db.SiteBookings.FirstOrDefaultAsync(x => x.Id == bid && x.CompanyId == companyId);
+            // รอบ 208 (ฝ่ายค้าน W6 ข้อ 1 · BLOCKING): การจองที่จ่ายด้วยบัตรคอร์ส (ยอด 0) — เดิมผ่านเงื่อนไข "ไม่มีเงินผูก" แล้วประทับเสร็จตรง ๆ
+            // ⇒ เครดิตค้าง "จองไว้" · 21713 ไม่ถูกรับรู้ · ตอนนี้ตัดเครดิต (มาเรียน) ผ่านสมุดเครดิตในธุรกรรมเดียวกับการปิดบิล (ล้ม = ปิดบิลไม่สำเร็จทั้งก้อน)
+            var creditAction = b == null ? CreditBookingLink.PosCloseAction.NotCredit
+                : CreditBookingLink.ForPosClose(await CreditLedgerStatusAsync(companyId, bid), order.NetAmount);
+            if (b != null && creditAction != CreditBookingLink.PosCloseAction.NotCredit)
+            {
+                if (creditAction == CreditBookingLink.PosCloseAction.Refuse)
+                    throw new BusinessRuleException(CreditBookingLink.PosCloseRefusal(b.BookingNumber), CreditBookingLink.RuleCode);
+                if (b.Status is BookingStatus.Cancelled or BookingStatus.NoShow)
+                    throw new BusinessRuleException(
+                        $"การจอง {b.BookingNumber} ชำระด้วยบัตรคอร์สและถูกปิดเป็น \"{(b.Status == BookingStatus.Cancelled ? "ยกเลิก" : "ไม่มา")}\" ที่หน้าการจองแล้ว — POS ไม่ตัดเครดิตทับ · ยกเลิกบิลนี้หรือขายเป็นบิลปกติ",
+                        CreditBookingLink.RuleCode);
+                if (creditAction == CreditBookingLink.PosCloseAction.Settle)
+                {
+                    var ledger = _services?.GetService(typeof(ICreditBookingLedger)) as ICreditBookingLedger
+                        ?? throw new BusinessRuleException("การจองนี้ชำระด้วยบัตรคอร์ส แต่ระบบนี้ไม่ได้เปิดโมดูลคอร์ส/เครดิต — ปิดงานที่หน้าการจองแทน", CreditBookingLink.RuleCode);
+                    try
+                    {
+                        await ledger.SettleAsync(companyId, CreditBookingLink.Ref(bid), attended: true, userId);
+                    }
+                    catch (KeyNotFoundException)
+                    {
+                        // ฝ่ายค้านรอบ 2 (W6) ข้อ 3: หน้าคอร์สตัดเครดิตไปก่อนในช่วงเดียวกัน ⇒ อ่านสถานะใหม่ · ใช้แล้ว = ไปต่อ (ไม่ตัดซ้ำ) · นอกนั้นล้มดังเดิม
+                        if (CreditBookingLink.ForPosClose(await CreditLedgerStatusAsync(companyId, bid), order.NetAmount) != CreditBookingLink.PosCloseAction.AlreadySettled)
+                            throw;
+                    }
+                }
+                if (b.Status is BookingStatus.InProgress or BookingStatus.Confirmed or BookingStatus.Pending)
+                {
+                    b.Status = BookingStatus.Completed;
+                    b.CompletedAt = DateTime.UtcNow;
+                }
+                return;
+            }
             if (b != null && b.ErpDocumentId == null && b.PaidAmount <= 0m
                 && b.Status is BookingStatus.InProgress or BookingStatus.Confirmed or BookingStatus.Pending)
             {
@@ -340,6 +381,17 @@ public partial class PosService
                 b.CompletedAt = DateTime.UtcNow;
             }
         }
+    }
+
+    /// <summary>สถานะที่มีผลของการจอง CMS ในสมุดเครดิต (ความจริงอยู่ที่ <c>CreditClassBooking.ExternalRef</c> — ตัวเดียวกับ
+    /// <c>CmsBookingService.IsPaidWithCreditAsync</c>) · null = ไม่ได้จ่ายด้วยบัตร · ตัวเลือกแถว = <see cref="CreditBookingLink.LedgerStatusOf"/></summary>
+    private async Task<CreditBookingStatus?> CreditLedgerStatusAsync(Guid companyId, Guid siteBookingId)
+    {
+        var r = CreditBookingLink.Ref(siteBookingId);
+        var rows = await _db.CreditClassBookings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.ExternalRef == r)
+            .Select(x => x.Status).ToListAsync();
+        return CreditBookingLink.LedgerStatusOf(rows);
     }
 
     public async Task<OrderResponse> SetItemStaffAsync(Guid companyId, Guid orderId, Guid itemId, Guid? staffId)

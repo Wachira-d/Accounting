@@ -736,8 +736,10 @@ public class CmsCommerceService : ICmsCommerceService
         order.VatAmount = lines.Sum(l => l.VatAmount)
             + (Accounting.Helpers.ShippingVatAllocation.OfOrder(order.ShippingVatAllocation) == Accounting.Helpers.ShippingVatAllocation.MaxRate
                 ? ShippingFeeRules.VatInShipping(order.ShippingAmount, checkout.Quote.ShippingVatRate)
-                : Accounting.Helpers.ShippingVatAllocation.VatIn(Accounting.Helpers.ShippingVatAllocation.Split(order.ShippingVatAllocation, true,
-                    order.ShippingAmount, lines.Select(l => (l.TotalAmount, l.VatRate)).ToList())));
+                // รอบ 208 (ฝ่ายค้าน W2 ข้อ 8): สถานะ VAT จริงของบริษัท + ฐานแบ่งเดียวกับบรรทัดเอกสาร (จำนวน × ราคา) ⇒ VAT บนออเดอร์ = บนใบกำกับทุกสตางค์
+                : Accounting.Helpers.ShippingVatAllocation.VatIn(Accounting.Helpers.ShippingVatAllocation.Split(order.ShippingVatAllocation,
+                    (await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId)).Registered,
+                    order.ShippingAmount, lines.Select(l => (Math.Round(l.Quantity * l.UnitPrice, 2, MidpointRounding.AwayFromZero), l.VatRate)).ToList())));
         order.TotalAmount = lines.Sum(l => l.TotalAmount) + order.ShippingAmount - order.DiscountAmount;
         if (order.TotalAmount < 0) order.TotalAmount = 0;
         // มัดจำตรึงจากยอดสุดท้ายของใบ (ตัวคิดเดียว — ค่าเดียวกับที่หน้าเช็กเอาต์แสดง)
@@ -757,12 +759,32 @@ public class CmsCommerceService : ICmsCommerceService
         return await GetOrderAsync(companyId, siteId, order.Id) ?? throw new InvalidOperationException("Failed.");
     }
 
-    public async Task<OrderResponse> UpdateOrderStatusAsync(Guid companyId, Guid siteId, Guid orderId, UpdateOrderStatusRequest request, string userId)
+    /// <summary>รอบ 208 (ฝ่ายค้าน W2 ข้อ 1 blocking): เปลี่ยนสถานะออเดอร์ทีละคำขอต่อออเดอร์ (ล็อก session) + ด่าน <see cref="SiteOrderStatusTransition"/> —
+    /// กดยกเลิกซ้ำ/สองแท็บไม่ริบมัดจำซ้ำ · ยกเลิกแล้วเปิดกลับไม่ได้</summary>
+    public Task<OrderResponse> UpdateOrderStatusAsync(Guid companyId, Guid siteId, Guid orderId, UpdateOrderStatusRequest request, string userId)
+        => AdvisorySessionLock.RunAsync(_db, AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsOrderStatus, orderId.ToString("N")),
+            () => UpdateOrderStatusLockedAsync(companyId, siteId, orderId, request, userId),
+            "มีการเปลี่ยนสถานะออเดอร์นี้กำลังทำงานอยู่ — รอสักครู่แล้วเปิดดูใหม่", SiteOrderStatusTransition.RuleCode);
+
+    private async Task<OrderResponse> UpdateOrderStatusLockedAsync(Guid companyId, Guid siteId, Guid orderId, UpdateOrderStatusRequest request, string userId)
     {
         // ทีม Q: บรรทัด + รายการรับเงิน ใช้ตอนส่งมอบ (ใบขายส่วนที่เหลือ) และตอนยกเลิก (มัดจำค้าง)
         var order = await _db.SiteOrders.Include(o => o.Lines).Include(o => o.Payments)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Order not found.");
+        var (transition, transitionMsg) = SiteOrderStatusTransition.Check(order.Status, request.Status);
+        if (transition == BookingTransitionResult.Rejected)
+            throw new BusinessRuleException(transitionMsg!, SiteOrderStatusTransition.RuleCode, 409);
+        if (transition == BookingTransitionResult.NoOp)
+        {
+            // สถานะเดิม — แก้แค่เลขพัสดุ/หมายเหตุได้ (เดิมทำผ่านปุ่มเดียวกัน) · ไม่รันขั้นเงิน/เอกสารซ้ำ
+            if (request.TrackingNumber != null) order.TrackingNumber = request.TrackingNumber;
+            if (!string.IsNullOrWhiteSpace(request.InternalNotes))
+                order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, request.InternalNotes.Trim());
+            order.UpdatedBy = userId;
+            await _db.SaveChangesAsync();
+            return await GetOrderAsync(companyId, siteId, orderId) ?? throw new InvalidOperationException("Failed.");
+        }
 
         void ApplyStatus(SiteOrder o)
         {
@@ -880,6 +902,9 @@ public class CmsCommerceService : ICmsCommerceService
         var done = new List<SiteOrderDepositForfeitLine>();
         foreach (var line in plan)
         {
+            // รอบ 208 (ฝ่ายค้าน W2 ข้อ 4 · คลาส A-PL10): ล้มกลางทาง ⇒ ถอยสิ่งที่ realize ค้างใน change tracker (เส้นเดียวกับ ApproveBookingTaxDocumentAsync)
+            // ก่อนประทับหมายเหตุ — ไม่งั้น SaveChanges ท้ายเส้นสถานะบันทึกการรับรู้ครึ่งทางลงไป
+            var baseline = new HashSet<object>(_db.ChangeTracker.Entries().Select(e => e.Entity), ReferenceEqualityComparer.Instance);
             try
             {
                 await _docService!.RealizeDepositAsync(companyId, line.Id,
@@ -888,6 +913,9 @@ public class CmsCommerceService : ICmsCommerceService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                foreach (var entry in TrackedChangeRevert.DetachSince(_db, baseline))
+                    await entry.ReloadAsync();
+                TrackedChangeRevert.DetachStrays(_db, baseline);
                 _logger.LogWarning(ex, "ริบมัดจำ {Doc} ของออเดอร์ {Order} ตามเงื่อนไขร้านไม่สำเร็จ", line.Number, order.OrderNumber);
                 var why = ex is BusinessRuleException or InvalidOperationException ? ex.Message : "เกิดข้อผิดพลาดภายใน (ดูบันทึกระบบ)";
                 order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, SiteOrderDepositForfeit.FailureNote(line.Number, why, now));
@@ -1368,14 +1396,27 @@ public class CmsCommerceService : ICmsCommerceService
     ///
     /// ทุก step ที่ล้มเหลวจะ log แต่ไม่ rollback step ก่อนหน้า — operator
     /// แก้ใน UI ต่อได้.</summary>
-    public async Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId,
+    public Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId,
         Guid? paymentId, string actor, Guid? moneyInAccountId = null)
+        // รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 3): คีย์เดียวกับเส้นเปลี่ยนสถานะ ⇒ ยืนยันเงินกับยกเลิกออเดอร์ไม่สวนกัน (reentrant ถ้าเรียกจากใต้เส้นสถานะ)
+        => AdvisorySessionLock.RunAsync(_db, AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsOrderStatus, orderId.ToString("N")),
+            () => ConfirmPaymentLockedAsync(companyId, siteId, orderId, paymentId, actor, moneyInAccountId),
+            "มีการเปลี่ยนสถานะออเดอร์นี้กำลังทำงานอยู่ — รอสักครู่แล้วลองใหม่", SiteOrderStatusTransition.RuleCode);
+
+    private async Task<bool> ConfirmPaymentLockedAsync(Guid companyId, Guid siteId, Guid orderId,
+        Guid? paymentId, string actor, Guid? moneyInAccountId)
     {
         var order = await _db.SiteOrders
             .Include(o => o.Payments)
             .Include(o => o.Lines)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
         if (order == null) return false;
+        // ยกเลิก/คืนเงินแล้ว ⇒ ไม่ออกใบรับเงิน/มัดจำบนออเดอร์ที่ปิดแล้ว (ขั้นริบตอนยกเลิกคิดจากรายการชำระชุดเดิม) — ผู้เรียก (webhook) ได้ exception
+        // ⇒ ประวัติรายการชำระ + แจ้งเจ้าของ (แบบเดียวกับรับเกินยอด) · ร้านคืนเงิน หรือเปิดออเดอร์ใหม่
+        if (order.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded)
+            throw new BusinessRuleException(
+                $"ออเดอร์ {order.OrderNumber} {(order.Status == SiteOrderStatus.Cancelled ? "ถูกยกเลิก" : "คืนเงิน")}แล้ว — ยืนยันรับเงินไม่ได้ · ถ้าเงินเข้าจริงให้คืนเงินลูกค้า หรือสร้างออเดอร์ใหม่",
+                SiteOrderStatusTransition.RuleCode, 409);
 
         // 1. Confirm SiteOrderPayment row
         var pay = paymentId.HasValue
@@ -2257,6 +2298,12 @@ public class CmsCommerceService : ICmsCommerceService
                 QuotationNumber = existing
             };
         }
+
+        // รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 2): ทางนี้เปิดให้ลูกค้า (AllowAnonymous) ยกเลิกออเดอร์เอง — เดิมรับทุกสถานะ (ชำระแล้ว/ส่งแล้ว/คืนเงินแล้ว)
+        // โดยไม่ผ่านขั้นมัดจำ/void ⇒ เปลี่ยนเป็นใบเสนอราคาได้เฉพาะออเดอร์ที่ยังรอ + ยังไม่มีเงินเข้า · นอกนั้นติดต่อร้าน (ร้านยกเลิกผ่านเส้นสถานะที่มีด่าน)
+        if (order.Status != SiteOrderStatus.Pending || order.PaidAmount > 0m
+            || await _db.SiteOrderPayments.AnyAsync(p => p.OrderId == order.Id && p.CompanyId == companyId && p.Status != SitePaymentStatus.Failed && p.Status != SitePaymentStatus.Cancelled))
+            throw new BusinessRuleException("ออเดอร์นี้ดำเนินการ/ชำระเงินแล้ว — เปลี่ยนเป็นใบเสนอราคาเองไม่ได้ กรุณาติดต่อร้าน", SiteOrderStatusTransition.RuleCode, 409);
 
         await ReverseStockIfDeductedAsync(companyId, order);
 

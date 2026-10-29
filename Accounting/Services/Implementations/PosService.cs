@@ -23,11 +23,15 @@ public partial class PosService : IPosService
     private readonly Accounting.Services.Payments.IGatewayAccountResolver? _gatewayAccounts;
     /// <summary>ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — ใบกำกับเต็มรูปจาก POS ต้องเดินขั้นเดียวกับเส้นเว็บ (S-02)</summary>
     private readonly IIssuedDocumentHooks _issuedHooks;
+    /// <summary>รอบ 208 (ฝ่ายค้าน W6 ข้อ 1) — ดึงสมุดเครดิต (<c>ICreditBookingLedger</c>) ตอนปิดบิลของการจองที่จ่ายด้วยบัตร ·
+    /// resolve ตอนใช้ (ไม่ฉีดตรง) กันวง DI: CourseCreditService → IDocumentService → … · null (เทสต์/สร้างนอก container) ⇒ ปิดบิลการจองด้วยบัตรไม่ได้ (ล้มดัง)</summary>
+    private readonly IServiceProvider? _services;
 
     public PosService(AccountingDbContext db, IAccountingService accountingService, ILogger<PosService> logger,
         IStockLedger stock, IIssuedDocumentHooks issuedHooks, IEmailSenderFactory? emailFactory = null,
-        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null)
+        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null, IServiceProvider? services = null)
     {
+        _services = services;
         _issuedHooks = issuedHooks;
         _db = db;
         _accountingService = accountingService;

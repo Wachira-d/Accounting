@@ -624,15 +624,84 @@ public class PerLineWhtTests
     [InlineData(WhtFxRateBasis.DocumentDate, 0, 37, 1)]       // อัตราเสีย (ข้อมูลเก่า) ⇒ 1 เหมือน DocumentFx.ToBaht
     public void WhtRateFor_follows_company_setting_with_document_rate_default(WhtFxRateBasis basis, int docRate, int? payRate, int expected)
     {
-        Assert.Equal((decimal)expected, DocumentFx.WhtRateFor(basis, docRate, payRate is int p ? (decimal)p : null));
+        Assert.Equal((decimal)expected, DocumentFx.WhtRateFor(basis, WhtRecognitionBasis.Cash, docRate, payRate is int p ? (decimal)p : null));
     }
 
     [Fact]
     public void WhtRateBasisLabel_names_the_rate_actually_used()
     {
-        Assert.Equal("อัตราของเอกสาร (วันที่ใบ)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.DocumentDate, 36m, 37m));
-        Assert.Equal("อัตราของเอกสาร (วันที่ใบ)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.PaymentDate, 36m, null));
-        Assert.Equal("อัตรา ณ วันจ่าย (ป.132/2548)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.PaymentDate, 36m, 37m));
+        Assert.Equal("อัตราของเอกสาร (วันที่ใบ)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.DocumentDate, WhtRecognitionBasis.Cash, 36m, 37m));
+        Assert.Equal("อัตราของเอกสาร (วันที่ใบ)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash, 36m, null));
+        Assert.Equal("อัตรา ณ วันจ่าย (ป.132/2548)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash, 36m, 37m));
+        // รอบ 208: Accrual ⇒ ป้ายบอกอัตราเอกสาร (ตัวที่ใช้จริง)
+        Assert.Equal("อัตราของเอกสาร (วันที่ใบ)", DocumentFx.WhtRateBasisLabel(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Accrual, 36m, 37m));
+    }
+
+    // ===== รอบ 208 — ฝ่ายค้าน W7 ข้อ 7/8/9 =====
+
+    [Fact]
+    public void WhtRateFor_accrual_forces_document_rate_even_when_setting_is_payment_date()
+    {
+        // ข้อ 7: Accrual ตั้ง 2191x ตอนอนุมัติใบที่อัตรา 36 ⇒ 50 ทวิ ต้อง 36 ด้วย (เดิมได้ 37 = 50 ทวิ ≠ GL)
+        Assert.Equal(36m, DocumentFx.WhtRateFor(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Accrual, 36m, 37m));
+        Assert.Equal(WhtFxRateBasis.DocumentDate, DocumentFx.EffectiveWhtFxBasis(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Accrual));
+        // ทิศตรงข้าม: Cash + วันจ่าย ยังใช้อัตราวันจ่ายเหมือนเดิม · Accrual + วันที่ใบ = เดิม
+        Assert.Equal(37m, DocumentFx.WhtRateFor(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash, 36m, 37m));
+        Assert.Equal(36m, DocumentFx.WhtRateFor(WhtFxRateBasis.DocumentDate, WhtRecognitionBasis.Accrual, 36m, 37m));
+        Assert.Equal(WhtFxRateBasis.PaymentDate, DocumentFx.EffectiveWhtFxBasis(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash));
+    }
+
+    [Fact]
+    public void WhtFxBasisConflict_rejects_only_accrual_with_payment_date()
+    {
+        var bad = DocumentFx.WhtFxBasisConflict(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Accrual);
+        Assert.NotNull(bad);
+        Assert.Contains("Accrual", bad);
+        Assert.Contains("ทางเลือก", bad);   // บอกทางไปต่อ
+        Assert.Null(DocumentFx.WhtFxBasisConflict(WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash));
+        Assert.Null(DocumentFx.WhtFxBasisConflict(WhtFxRateBasis.DocumentDate, WhtRecognitionBasis.Accrual));
+        Assert.Null(DocumentFx.WhtFxBasisConflict(WhtFxRateBasis.DocumentDate, WhtRecognitionBasis.Cash));
+    }
+
+    [Fact]
+    public void UncertifiedWhtThb_matches_certificate_rate_per_installment()
+    {
+        // ข้อ 8: USD 100 หัก 3 · อัตราใบ 36 · จ่ายงวดเดียวที่ 37 · ค่าตั้งวันจ่าย ⇒ ช่องโหว่ = 111.00 (= 50 ทวิ ที่จะออก) ไม่ใช่ 108.00
+        var paid = new[] { new PerLineWht.WhtPaymentSlice(3m, 37m) };
+        Assert.Equal(111m, PerLineWht.UncertifiedWhtThb(3m, 3m, 36m, paid, WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash));
+        // สองงวด (1.5 @37 + 1.5 @38) = 55.50 + 57.00 · ส่วนผู้ถูกหักครึ่งหนึ่ง ⇒ ครึ่งของยอดบาท
+        var two = new[] { new PerLineWht.WhtPaymentSlice(1.5m, 37m), new PerLineWht.WhtPaymentSlice(1.5m, 38m) };
+        Assert.Equal(112.50m, PerLineWht.UncertifiedWhtThb(3m, 3m, 36m, two, WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash));
+        Assert.Equal(56.25m, PerLineWht.UncertifiedWhtThb(1.5m, 3m, 36m, two, WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash));
+        // ยังจ่ายไม่ครบ: ส่วนที่ค้างใช้อัตราใบ (1.5 @37 = 55.50 + 1.5 @36 = 54.00)
+        var half = new[] { new PerLineWht.WhtPaymentSlice(1.5m, 37m) };
+        Assert.Equal(109.50m, PerLineWht.UncertifiedWhtThb(3m, 3m, 36m, half, WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash));
+    }
+
+    [Fact]
+    public void UncertifiedWhtThb_default_and_accrual_and_thb_unchanged_to_the_satang()
+    {
+        // ทิศตรงข้าม: ค่าตั้งต้น / Accrual / ไม่มีงวด / ใบบาท ⇒ DocumentWhtThb(ส่วนนั้น, อัตราใบ) เดิมทุกสตางค์
+        var paid = new[] { new PerLineWht.WhtPaymentSlice(3m, 37m) };
+        Assert.Equal(PerLineWht.DocumentWhtThb(3m, 36m), PerLineWht.UncertifiedWhtThb(3m, 3m, 36m, paid, WhtFxRateBasis.DocumentDate, WhtRecognitionBasis.Cash));
+        Assert.Equal(PerLineWht.DocumentWhtThb(3m, 36m), PerLineWht.UncertifiedWhtThb(3m, 3m, 36m, paid, WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Accrual));
+        Assert.Equal(PerLineWht.DocumentWhtThb(1.33m, 36.123456m),
+            PerLineWht.UncertifiedWhtThb(1.33m, 3m, 36.123456m, Array.Empty<PerLineWht.WhtPaymentSlice>(), WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash));
+        Assert.Equal(30m, PerLineWht.UncertifiedWhtThb(30m, 30m, 1m, paid, WhtFxRateBasis.PaymentDate, WhtRecognitionBasis.Cash));
+    }
+
+    [Fact]
+    public void CreditNoteWhtRate_uses_certificate_rate_not_credit_note_rate()
+    {
+        // ข้อ 9: 50 ทวิ ออกที่ 37 (วันจ่าย) · ใบลดหนี้ลงวันที่อัตรา 35 ⇒ ลดที่ 37 (ใบใหม่ = ยอดเดิม − ส่วนลดถึงสตางค์)
+        Assert.Equal(37m, PerLineWht.CreditNoteWhtRate(35m, 36m, new decimal?[] { 37m }));
+        // ใบเก่าไม่บันทึกอัตรา / หลายอัตรา ⇒ อัตราใบต้นทาง
+        Assert.Equal(36m, PerLineWht.CreditNoteWhtRate(35m, 36m, new decimal?[] { null }));
+        Assert.Equal(36m, PerLineWht.CreditNoteWhtRate(35m, 36m, new decimal?[] { 37m, 38m }));
+        Assert.Equal(36m, PerLineWht.CreditNoteWhtRate(35m, 36m, Array.Empty<decimal?>()));
+        // ทิศตรงข้าม: ใบลดหนี้สกุลบาท ⇒ 1 เสมอ (ไม่คูณบาทด้วยอัตราของใบรับรองใบอื่น)
+        Assert.Equal(1m, PerLineWht.CreditNoteWhtRate(1m, 36m, new decimal?[] { 37m }));
+        Assert.Equal(1m, PerLineWht.CreditNoteWhtRate(0m, 1m, new decimal?[] { 1m }));
     }
 
     [Theory]
@@ -711,5 +780,15 @@ public class PerLineWhtTests
         Assert.True(ok.Applied);
         Assert.Equal(2m, ok.Lines[1].RatePercent);
         Assert.Equal(10m, ok.Lines[1].WhtAmount);
+    }
+
+    [Fact]
+    public void Source_document_wht_uses_its_own_rate_even_when_credit_note_is_thb()
+    {
+        // ฝ่ายค้านรอบ 2 (W7) ข้อ 2: ใบต้นทาง USD (35) · ใบลดหนี้บาท ⇒ ยอดใบต้นทางต้องแปลงที่ 35 ไม่ใช่ 1
+        Assert.Equal(1m, PerLineWht.CreditNoteWhtRate(1m, 35m, Array.Empty<decimal?>()));
+        Assert.Equal(35m, PerLineWht.CreditNoteWhtRate(35m, 35m, Array.Empty<decimal?>()));
+        Assert.Equal(34.5m, PerLineWht.CreditNoteWhtRate(35m, 35m, new decimal?[] { 34.5m }));
+        Assert.Equal(1m, PerLineWht.CreditNoteWhtRate(1m, 1m, new decimal?[] { 34.5m }));   // ใบต้นทางบาท ⇒ 1 เดิมทุกสตางค์
     }
 }

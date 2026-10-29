@@ -313,6 +313,11 @@ public class UpdateBookingStatusRequest
     public BookingStatus Status { get; set; }
     public string? InternalNotes { get; set; }
     public string? CancellationReason { get; set; }
+    /// <summary>รอบ 208: สถานะที่ผู้เรียกคาดว่าเป็นอยู่ (job ปล่อยรอบคิวสำรอง) · ไม่ตรงตอนถือล็อก ⇒ ไม่ทำ · null = ไม่ตรวจ</summary>
+    public BookingStatus? ExpectedCurrentStatus { get; set; }
+    /// <summary>รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 1b): job ปล่อยที่ — ตรวจซ้ำใต้ล็อกว่ายังไม่รับเงิน + พ้นเวลาถือที่ ณ เวลาอ้างอิงของ job (เงินเข้าหลังคิวรีของ job ⇒ ไม่ยกเลิก) ·
+    /// null = ไม่ตรวจ · ใช้เวลาของ job ไม่ใช่นาฬิกาเครื่อง (job/เทสต์ส่งเวลาอ้างอิงเอง)</summary>
+    public DateTime? HoldLapsedAsOfUtc { get; set; }
 }
 
 public class BookingResponse

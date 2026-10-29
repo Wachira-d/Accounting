@@ -324,7 +324,7 @@ public partial class CmsBookingService
     /// ลงเงินไม่สำเร็จ ⇒ ล้มดัง (ข้อความถึงผู้กด + หมายเหตุบนการจอง) และไม่เพิ่มยอดรับบนการจอง</summary>
     public Task<BookingResponse> CompleteBookingAsync(Guid companyId, Guid siteId, Guid bookingId, CompleteBookingRequest request, string userId)
         // ฝ่ายค้านรอบ 207 ข้อ 4: กดซ้ำ/สองแท็บ ⇒ คำขอที่สองรอล็อกแล้วเห็นสถานะเสร็จแล้ว (ปฏิเสธ) — ไม่ลงเงินซ้ำ
-        => WithBookingSessionLockAsync(companyId, "complete:" + bookingId.ToString("N"),
+        => WithBookingSessionLockAsync(companyId, BookingStatusLockPart(bookingId),   // คีย์เดียวกับเส้นสถานะ (ล็อกซ้อนได้)
             () => CompleteBookingLockedAsync(companyId, siteId, bookingId, request, userId));
 
     private async Task<BookingResponse> CompleteBookingLockedAsync(Guid companyId, Guid siteId, Guid bookingId, CompleteBookingRequest request, string userId)
@@ -370,39 +370,9 @@ public partial class CmsBookingService
     }
 
     /// <summary>ล็อกระดับ session ต่อการจอง (แบบ ApplyInvoiceTimingAsync) — งานที่เปิดธุรกรรมของตัวเองหลายช่วงใช้ล็อก xact ไม่ได้</summary>
-    private async Task<T> WithBookingSessionLockAsync<T>(Guid companyId, string part, Func<Task<T>> body)
-    {
-        var key = AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsBookingInvoice, part);
-        var conn = _db.Database.GetDbConnection();
-        var openedHere = conn.State != System.Data.ConnectionState.Open;
-        if (openedHere) await conn.OpenAsync();
-        var acquired = false;
-        try
-        {
-            for (var attempt = 0; attempt < 20 && !acquired; attempt++)
-            {
-                await using (var cmd = conn.CreateCommand())
-                {
-                    cmd.CommandText = $"SELECT pg_try_advisory_lock({key})";
-                    acquired = Convert.ToBoolean(await cmd.ExecuteScalarAsync());
-                }
-                if (!acquired) await Task.Delay(500);
-            }
-            if (!acquired)
-                throw new BusinessRuleException("มีการบันทึกของการจองนี้กำลังทำงานอยู่ — รอสักครู่แล้วเปิดดูใหม่", WorkflowRuleCode, 409);
-            return await body();
-        }
-        finally
-        {
-            if (acquired)
-            {
-                await using var unlock = conn.CreateCommand();
-                unlock.CommandText = $"SELECT pg_advisory_unlock({key})";
-                await unlock.ExecuteScalarAsync();
-            }
-            if (openedHere) await conn.CloseAsync();
-        }
-    }
+    private Task<T> WithBookingSessionLockAsync<T>(Guid companyId, string part, Func<Task<T>> body)
+        => AdvisorySessionLock.RunAsync(_db, AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsBookingInvoice, part), body,
+            "มีการบันทึกของการจองนี้กำลังทำงานอยู่ — รอสักครู่แล้วเปิดดูใหม่", WorkflowRuleCode);
 
     /// <summary>เอกสารของ "การจองนี้" — เลขการจองนับต่อเว็บ (สองเว็บในบริษัทเดียวกันมี BK-… ซ้ำได้ · ฝ่ายค้านรอบ 207 ข้อ 3) ⇒
     /// เลขตรง + (ใบที่ผูกกับการจอง หรือผู้ติดต่อเดียวกับใบที่ผูก) · ยังไม่มีใบผูก = ไม่มีเอกสาร</summary>

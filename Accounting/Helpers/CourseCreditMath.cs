@@ -51,13 +51,17 @@ public static class CourseCreditMath
     /// <summary>หน่วยนับเล็กสุดของเครดิต — ครั้ง = 1 · ชั่วโมง = 0.25 (15 นาที)</summary>
     public static decimal CreditStep(CreditUnit unit) => unit == CreditUnit.Hour ? 0.25m : 1m;
 
-    /// <summary>เครดิตที่ลดได้จากยอดคืน <paramref name="net"/> = floor(ยอด ÷ ราคาต่อเครดิต) ปัดลงเป็นพหุคูณของ <see cref="CreditStep"/> · ราคา ≤ 0 ⇒ 0</summary>
+    /// <summary>เครดิตที่ลดได้จากยอดคืน <paramref name="net"/> = floor(ยอด ÷ ราคาต่อเครดิต) ปัดลงเป็นพหุคูณของ <see cref="CreditStep"/> · ราคา ≤ 0 ⇒ 0 ·
+    /// รอบ 208 (ฝ่ายค้าน W6 ข้อ 4): บวก <see cref="FloorEpsilon"/> ก่อน floor — ผลหารที่ควรได้ 13 หน่วยพอดีแต่ทศนิยมออกมา 12.99999… ต้องไม่หล่นไป 12</summary>
     public static decimal CreditsRefundable(decimal net, decimal pricePerCredit, CreditUnit unit)
     {
         if (net <= 0m || pricePerCredit <= 0m) return 0m;
         var step = CreditStep(unit);
-        return Math.Floor(net / pricePerCredit / step) * step;
+        return Math.Floor(net / pricePerCredit / step + FloorEpsilon) * step;
     }
+
+    /// <summary>ค่าเผื่อก่อน floor ของ <see cref="CreditsRefundable"/> (หน่วย = จำนวนขั้นเครดิต)</summary>
+    public const decimal FloorEpsilon = 0.0001m;
 
     public static decimal BreakageAmount(decimal contractAmount, decimal recognizedBefore)
         => Math.Max(0m, contractAmount - recognizedBefore);

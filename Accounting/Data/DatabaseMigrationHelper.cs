@@ -7180,6 +7180,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "AdvanceTaxDocumentId" uuid NULL;""",
             // รอบ 205 W5 (R-52): ยอดที่แขกกรอกตอนส่งสลิป (ไม่ใช่หลักฐาน · null = ไม่ได้กรอก)
             """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "SlipDeclaredAmount" numeric(18,2) NULL;""",
+            // รอบ 208 ฝ่ายค้าน W5 ข้อ 1: ส่วนลดเช็คเอาต์ที่ออกเอกสารแล้ว (กดซ้ำต้องใช้ค่าเดิม · null = ยังไม่เคยใช้/แถวเก่า — ไม่ backfill)
+            """ALTER TABLE "LodgingReservations" ADD COLUMN IF NOT EXISTS "CheckoutDiscountBase" numeric(18,2) NULL;""",
             // 2026-10-22 ทีม D (หน้าห้องพักสาธารณะ) — รายละเอียดห้องที่แขกต้องเห็น: สูบบุหรี่/สัตว์เลี้ยง/หมายเหตุห้อง ·
             // ค่าตั้งต้น false = ปลอดบุหรี่/ไม่รับสัตว์ (ตรงกับที่ที่พักส่วนใหญ่ใช้ · เดิมไม่มีช่องให้ตั้ง ⇒ ไม่มีของเก่าที่ต้องแปลง)
             """ALTER TABLE "LodgingRoomTypes" ADD COLUMN IF NOT EXISTS "SmokingAllowed" boolean NOT NULL DEFAULT false;""",
@@ -7346,7 +7348,9 @@ public static class DatabaseMigrationHelper
         return statements.Concat(DepositKindMigrationStatements()).Concat(Round201GatewayStatements())
             // รอบ PP36 ทีม F2 (คำตัดสินข้อ 131): ยอดจ่ายแล้ว/ค้างของใบบริการต่างประเทศเดิมที่รวม VAT ประเมินเอง ⇒ ยอดจ่ายผู้รับเงิน (idempotent ·
             // เฉพาะแถวที่อยู่ในสภาพสูตรเดิมแน่นอน · ใบที่จ่ายเกินไปแล้วไม่แตะ — ReportForeignServiceOverpaid log ให้คนซ่อม)
-            .Concat(Accounting.Helpers.ForeignServicePayeeBalanceMigration.Statements()).ToArray();
+            .Concat(Accounting.Helpers.ForeignServicePayeeBalanceMigration.Statements())
+            // รอบ 208 ฝ่ายค้าน W5 ข้อ 4: ใบลดหนี้คืนมัดจำสืบทอดเลขจองจากใบมัดจำ (idempotent · เติมเฉพาะแถวที่ยังว่าง)
+            .Concat(Accounting.Helpers.DepositRefundCreditNoteBookingMigration.Statements()).ToArray();
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -7830,6 +7834,11 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "CreditPasses" ADD COLUMN IF NOT EXISTS "CancelledByDocumentId" uuid NULL;""",
         """DROP INDEX IF EXISTS "IX_CreditClassBookings_Company_ExternalRef";""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CreditClassBookings_Company_ExternalRef_Live" ON "CreditClassBookings" ("CompanyId", "ExternalRef") WHERE "ExternalRef" IS NOT NULL AND "Status" <> 3 AND "IsDeleted" = false;""",
+        // รอบ 208 (ฝ่ายค้าน W6): IsPaidWithCreditAsync / POS CreditLedgerStatusAsync ค้นทุกสถานะ (รวมแถวที่ยกเลิก) — ดัชนีบางส่วนข้างบนใช้ไม่ได้ ⇒ ดัชนีทั่วไป
+        """CREATE INDEX IF NOT EXISTS "IX_CreditClassBookings_Company_ExternalRef_Any" ON "CreditClassBookings" ("CompanyId", "ExternalRef") WHERE "ExternalRef" IS NOT NULL;""",
+        // รอบ 208 (ฝ่ายค้าน W6 ข้อ 2): แถว Adjust ประทับใบลดหนี้ ⇒ ยกเลิกใบลดหนี้คืนเครดิตได้ (NULL = แถวเก่า)
+        """ALTER TABLE "CreditLedgerEntries" ADD COLUMN IF NOT EXISTS "DocumentId" uuid NULL;""",
+        """CREATE INDEX IF NOT EXISTS "IX_CreditLedgerEntries_Company_Document" ON "CreditLedgerEntries" ("CompanyId", "DocumentId") WHERE "DocumentId" IS NOT NULL;""",
     };
 
     /// <summary>ทีม F (<c>docs/PER_LINE_WHT_DESIGN.md</c>) — ค่าตั้ง "หัก ณ ที่จ่ายตามรายการ" + ฐานบาทที่เอกสารพิมพ์ไว้ + ที่มาของอัตรา ·

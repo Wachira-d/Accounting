@@ -139,6 +139,45 @@ public static class PerLineWht
     /// สรุปต่อประเภท · แถวเตือน ภ.ง.ด. · หน้านำส่ง/ปฏิทิน · ตัวกระทบ GL ผูกยอดเข้าหา (ห้ามเขียน <c>WithholdingTaxAmount</c> สกุลเอกสารตรง ๆ ลงที่เป็นบาท)</summary>
     public static decimal DocumentWhtThb(decimal docCurrencyWht, decimal exchangeRate) => DocumentFx.ToBaht(docCurrencyWht, exchangeRate);
 
+    /// <summary>งวดจ่ายของเอกสาร (ภาษีหักสกุลเอกสารของงวด · อัตราวันจ่ายของงวด) — ข้อมูลเข้าของ <see cref="UncertifiedWhtThb"/></summary>
+    public readonly record struct WhtPaymentSlice(decimal WhtAmount, decimal? ExchangeRate);
+
+    /// <summary>
+    /// รอบ 208 (ฝ่ายค้าน W7 ข้อ 8): ภาษีหักบาทของเอกสาร<b>ที่ยังไม่มี 50 ทวิ</b> (แถวช่องโหว่หน้านำส่ง/ปฏิทิน) — เป้าเดียวกับ 50 ทวิ ที่จะออก:
+    /// แต่ละงวดจ่ายแปลงด้วย <see cref="DocumentFx.WhtRateFor"/> ของงวดนั้น (ตัวเดียวกับ 50 ทวิ รายงวด + ขา 2191x) · ส่วนที่ยังไม่จ่ายแปลงด้วยอัตราเอกสาร ·
+    /// <paramref name="whtPart"/> = ส่วนของผู้ถูกหักรายหนึ่ง (ใบหลายผู้ถูกหัก) ⇒ สัดส่วนของยอดบาททั้งใบ ·
+    /// <b>ทุกงวดได้อัตราเอกสาร (ค่าตั้งต้น · Accrual · ไม่มีอัตราวันจ่าย) ⇒ <see cref="DocumentWhtThb"/>(ส่วนนั้น, อัตราเอกสาร) เดิมทุกสตางค์</b> · ใบบาท ⇒ ยอดเดิม
+    /// </summary>
+    public static decimal UncertifiedWhtThb(decimal whtPart, decimal documentWht, decimal documentRate,
+        IReadOnlyList<WhtPaymentSlice> payments, Models.Enums.WhtFxRateBasis basis, Models.Enums.WhtRecognitionBasis recognition)
+    {
+        var docFx = documentRate <= 0m ? 1m : documentRate;
+        if (docFx == 1m) return whtPart;
+        var paid = payments.Where(p => p.WhtAmount > 0m).ToList();
+        if (paid.All(p => DocumentFx.WhtRateFor(basis, recognition, docFx, p.ExchangeRate) == docFx))
+            return DocumentWhtThb(whtPart, docFx);
+        var paidWht = paid.Sum(p => p.WhtAmount);
+        var totalThb = paid.Sum(p => DocumentWhtThb(p.WhtAmount, DocumentFx.WhtRateFor(basis, recognition, docFx, p.ExchangeRate)))
+            + DocumentWhtThb(Math.Max(0m, documentWht - paidWht), docFx);
+        if (whtPart == documentWht || documentWht <= 0m) return totalThb;
+        return Math.Round(totalThb * whtPart / documentWht, 2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>
+    /// รอบ 208 (ฝ่ายค้าน W7 ข้อ 9 · R-18): อัตราที่ใช้แปลงยอดของ<b>ใบลดหนี้</b>เพื่อเทียบ/ลด 50 ทวิ ที่ออกแล้ว — ต้องเป็นอัตราที่ใบรับรองใช้จริง
+    /// (<c>WithholdingTaxCert.ExchangeRateUsed</c> ทุกใบที่ไม่ยกเลิกเป็นค่าเดียวกัน) ไม่ใช่อัตราของใบลดหนี้เอง (คนละวัน ⇒ 50 ทวิ ใหม่ไม่เท่ายอดเดิม − ส่วนลด) ·
+    /// ใบรับรองไม่บอกอัตรา (ใบเก่า) / หลายอัตรา ⇒ อัตราใบต้นทาง · ใบลดหนี้สกุลบาท ⇒ 1 เสมอ (ไม่คูณบาทด้วยอัตรา)
+    /// </summary>
+    public static decimal CreditNoteWhtRate(decimal creditNoteRate, decimal sourceRate, IEnumerable<decimal?> certRates)
+    {
+        var cnFx = creditNoteRate <= 0m ? 1m : creditNoteRate;
+        if (cnFx == 1m) return 1m;
+        var distinct = certRates.Where(r => r is > 0m).Select(r => r!.Value).Distinct().ToList();
+        if (distinct.Count == 1 && distinct[0] != 1m) return distinct[0];
+        var srcFx = sourceRate <= 0m ? 1m : sourceRate;
+        return srcFx == 1m ? cnFx : srcFx;
+    }
+
     /// <summary>ฐานบาทของเอกสารที่ใช้จริง (ยอดบาทที่พิมพ์เมื่อยังใช้ได้ · ไม่งั้น null)</summary>
     public static decimal? UsablePrintedBase(Accounting.Models.Entities.Document doc)
         => PrintedBaseUsable(doc.DocumentThbBase, doc.SubTotal, doc.ExchangeRate) ? doc.DocumentThbBase : null;

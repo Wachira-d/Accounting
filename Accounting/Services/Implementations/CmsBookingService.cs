@@ -1001,9 +1001,18 @@ public partial class CmsBookingService : ICmsBookingService
     public Task<BookingResponse> UpdateBookingStatusAsync(Guid companyId, Guid siteId, Guid bookingId, UpdateBookingStatusRequest request, string userId)
         => UpdateBookingStatusCoreAsync(companyId, siteId, bookingId, request, userId, null);
 
+    /// <summary>รอบ 208 (ฝ่ายค้าน W2 ข้อ 1/3): ทุกการเปลี่ยนสถานะเดินใต้ล็อก session ต่อการจอง (ตัวเดียวกับ "เสร็จสิ้น + รับชำระ" — ล็อกซ้อนในการเชื่อมต่อเดียวกันได้)
+    /// ⇒ คำขอพร้อมกันเข้าทีละคำขอ แล้วด่าน <see cref="BookingStatusTransition"/> เห็นสถานะจริง</summary>
+    private Task<BookingResponse> UpdateBookingStatusCoreAsync(Guid companyId, Guid siteId, Guid bookingId, UpdateBookingStatusRequest request, string userId,
+        BookingCompletionMoney? money)
+        => WithBookingSessionLockAsync(companyId, BookingStatusLockPart(bookingId),
+            () => UpdateBookingStatusLockedAsync(companyId, siteId, bookingId, request, userId, money));
+
+    private static string BookingStatusLockPart(Guid bookingId) => "status:" + bookingId.ToString("N");
+
     /// <summary>ตัวเปลี่ยนสถานะเดียว (รอบ 207 แยกจากเมธอดสาธารณะ) — <paramref name="money"/> = รับเงินตอนเสร็จ (CompleteBookingAsync — ใบเสร็จขายสด
     /// ได้ผังเงินเข้าที่เลือก) · null = เส้นเดิมทุกตัว · เริ่มให้บริการ ⇒ ด่านผู้ให้บริการ <c>EnsureStartAssignmentsAsync</c> (Workflow.cs)</summary>
-    private async Task<BookingResponse> UpdateBookingStatusCoreAsync(Guid companyId, Guid siteId, Guid bookingId, UpdateBookingStatusRequest request, string userId,
+    private async Task<BookingResponse> UpdateBookingStatusLockedAsync(Guid companyId, Guid siteId, Guid bookingId, UpdateBookingStatusRequest request, string userId,
         BookingCompletionMoney? money)
     {
         var booking = await _db.SiteBookings.FirstOrDefaultAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId)
@@ -1013,6 +1022,22 @@ public partial class CmsBookingService : ICmsBookingService
         if (request.Status == BookingStatus.Waitlisted && booking.Status != BookingStatus.Waitlisted)
             throw new BusinessRuleException("ย้ายการจองเข้าคิวสำรองเองไม่ได้ — คิวสำรองเกิดจากรอบเต็มเท่านั้น", "CMS-BOOKING-WAITLIST-MANUAL");
         var oldStatus = booking.Status;
+        // รอบ 208: ผู้เรียกที่อ่านสถานะมาก่อน (job ปล่อยรอบ) ระบุสถานะที่คาด — เปลี่ยนไปแล้ว (ลูกค้าจ่าย/ยืนยันระหว่างทาง) ⇒ ไม่ทำ
+        if (request.ExpectedCurrentStatus is BookingStatus expected && expected != oldStatus)
+            throw new BusinessRuleException($"สถานะการจองเปลี่ยนไปแล้ว ({oldStatus}) — ไม่ได้ดำเนินการ", BookingStatusTransition.RuleCode, 409);
+        if (request.HoldLapsedAsOfUtc is DateTime asOf
+            && (booking.PaidAmount > 0m || booking.WaitlistHoldUntil is not DateTime holdUntil || holdUntil > asOf))
+            throw new BusinessRuleException("การจองรับเงินแล้ว/ยังอยู่ในเวลาถือที่ — ไม่ปล่อยที่อัตโนมัติ", BookingStatusTransition.RuleCode, 409);
+        // รอบ 208 (ฝ่ายค้าน W2 ข้อ 1/3 blocking): กดซ้ำ = ไม่ทำซ้ำ · สถานะปลายทางเปลี่ยนต่อไม่ได้ (ขั้นเงินห้ามรันซ้ำ)
+        var (transition, transitionMsg) = BookingStatusTransition.Check(oldStatus, request.Status);
+        if (transition == BookingTransitionResult.Rejected)
+            throw new BusinessRuleException(transitionMsg!, BookingStatusTransition.RuleCode, 409);
+        if (transition == BookingTransitionResult.NoOp)
+        {
+            var same = await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
+            same.ErpNotices = new List<string> { BookingStatusTransition.NoOpNotice };
+            return same;
+        }
         // รอบ 207 (คำขอเจ้าของข้อ 3): เริ่มให้บริการ — ไซต์เปิดจัดสรรผู้ให้บริการ + มีคนรับบริการนี้ ⇒ ต้องมีผู้ให้บริการ (เลือกจากหน้าต่าง หรือคนที่จัดไว้ตอนจอง)
         // ฝ่ายค้านรอบ 207 ข้อ 9: ข้ามจากยืนยันแล้วไปเสร็จเลยก็ต้องมีผู้ให้บริการ (รายงานผู้ให้บริการไม่ตกหล่น)
         if (request.Status is BookingStatus.InProgress or BookingStatus.Completed

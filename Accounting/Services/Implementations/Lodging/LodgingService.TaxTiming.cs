@@ -334,16 +334,25 @@ public partial class LodgingService
         // ยอดเข้าพักตอนนี้ (ตัวสร้างรายการใบสุดท้ายตัวเดียว · ไม่รวม folio) เทียบใบล่วงหน้าหลังหักใบลดหนี้
         var stayLines = await BuildFinalInvoiceLinesAsync(companyId, r, prop, registered, vatRate, Array.Empty<LodgingFolioCharge>());
         var stayBefore = DocumentService.PreviewTotals(stayLines, prop.PricesIncludeVat, 0m);
-        // รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์เมื่อค่าห้องอยู่ในใบล่วงหน้าแล้ว = ลดราคาเข้าพัก ⇒ เดินเส้นเดิมของข้อ 157 (ยอดลด = ใบลดหนี้อ้างใบล่วงหน้า)
-        // · ตัวตัดสินเดียวกับเช็คเอาต์ปกติ · ส่วนลดเกินค่าห้อง = ปฏิเสธพร้อมทางไปต่อ (ลดบรรทัด folio เอง) · ไม่กรอก = ตัวเลขเดิมทุกสตางค์
-        var (discount, discountProblem) = LodgingCheckoutDiscount.Resolve(request, stayBefore.Net, prop.PricesIncludeVat, vatRate);
-        if (discountProblem != null)
-            throw new BusinessRuleException(discountProblem + $" (ค่าห้องอยู่ในใบกำกับภาษีล่วงหน้า {adv.Number} — ส่วนลดลดได้ไม่เกินค่าห้อง · รายการระหว่างพักแก้ที่บรรทัด folio)",
-                LodgingCheckoutDiscount.RuleCode);
-        var stayNow = discount.HasDiscount ? DocumentService.PreviewTotals(stayLines, prop.PricesIncludeVat, discount.BaseAmount) : stayBefore;
-        var delta = LodgingTaxInvoiceTimingPolicy.StayDelta(prop.PricesIncludeVat, stayNow.Net, stayNow.Total, adv.NetRemaining, adv.GrossRemaining);
-        if (discount.HasDiscount) AppendInternal(r, $"{LodgingCheckoutDiscount.Note(discount)} — ลดจากใบกำกับภาษีล่วงหน้า {adv.Number} (โดย {userId})");
+        // รายการระหว่างพัก/ส่วนเพิ่ม (folio · ค่าเสียหาย · ค่าเช็คเอาต์ช้า) — ใบส่วนเพิ่มใช้ชุดนี้ (+ บรรทัดส่วนต่างค่าห้องถ้ามี)
         var extraLines = await BuildFinalInvoiceLinesAsync(companyId, r, prop, registered, vatRate, pendingCharges, includeStay: false);
+        var folioNet = extraLines.Count == 0 ? 0m : DocumentService.PreviewTotals(extraLines, prop.PricesIncludeVat, 0m).Net;
+        // รอบ 205 W5 (R-49) + รอบ 208 ฝ่ายค้าน W5 ข้อ 6: ฐานส่วนลด = ค่าห้อง + folio/ค่าเสียหาย/ค่าเช็คเอาต์ช้า — ฐานเดียวกับเช็คเอาต์ปกติ ·
+        // แบ่ง "ค่าห้องก่อน" (LodgingCheckoutDiscount.SplitStayFirst): ส่วนค่าห้อง = ลดราคาเข้าพัก ⇒ เส้นข้อ 157 (ใบลดหนี้อ้างใบล่วงหน้า) ·
+        // ส่วนที่เกินค่าห้อง = ส่วนลดท้ายบิลของใบส่วนเพิ่ม (BillDiscountAmount) · ไม่กรอก = ตัวเลขเดิมทุกสตางค์
+        var (requestedDiscount, discountProblem) = LodgingCheckoutDiscount.Resolve(request, stayBefore.Net + folioNet, prop.PricesIncludeVat, vatRate);
+        if (discountProblem != null)
+            throw new BusinessRuleException(discountProblem + $" (ค่าห้องอยู่ในใบกำกับภาษีล่วงหน้า {adv.Number})", LodgingCheckoutDiscount.RuleCode);
+        // รอบ 208 ฝ่ายค้าน W5 ข้อ 1: กดซ้ำหลังใบลดหนี้ส่วนลด commit แล้ว (ใบส่วนเพิ่มอนุมัติล้ม) — ต้องใช้ส่วนลดเดิม (เว้นว่าง = ยกค่าเดิม ·
+        // ต่าง = ปฏิเสธ) มิฉะนั้นยอดคงเหลือที่หักใบลดหนี้แล้วจะถูกเรียกเก็บคืนเป็น "ส่วนต่างค่าห้องพัก" หรือออกใบลดหนี้ใบที่สอง
+        var (discount, appliedProblem) = LodgingCheckoutDiscount.ReconcileApplied(requestedDiscount, r.CheckoutDiscountBase);
+        if (appliedProblem != null) throw new BusinessRuleException(appliedProblem, LodgingCheckoutDiscount.RuleCode);
+        var (stayDiscount, folioDiscount) = LodgingCheckoutDiscount.SplitStayFirst(discount.BaseAmount, stayBefore.Net, folioNet);
+        var stayNow = stayDiscount > 0.005m ? DocumentService.PreviewTotals(stayLines, prop.PricesIncludeVat, stayDiscount) : stayBefore;
+        var delta = LodgingTaxInvoiceTimingPolicy.StayDelta(prop.PricesIncludeVat, stayNow.Net, stayNow.Total, adv.NetRemaining, adv.GrossRemaining);
+        if (discount.HasDiscount)
+            AppendInternal(r, $"{LodgingCheckoutDiscount.Note(discount)} — ลดค่าห้อง {stayDiscount:N2} จากใบกำกับภาษีล่วงหน้า {adv.Number}"
+                + (folioDiscount > 0.005m ? $" · ลดรายการระหว่างพัก {folioDiscount:N2} บนใบส่วนเพิ่ม" : "") + $" (โดย {userId})");
         if (delta.IsCharge)
             extraLines.Insert(0, new DocumentLineRequest(
                 Description: $"ส่วนต่างค่าห้องพัก/บริการ (เลื่อนวัน/เพิ่มคืน) จากใบกำกับภาษีล่วงหน้า {adv.Number}",
@@ -354,7 +363,7 @@ public partial class LodgingService
         var untaxed = deposits.Where(d => d.VatAmount <= 0.005m).ToList();
         if (request.CollectBalanceNow)
         {
-            var extrasTotal = extraLines.Count == 0 ? 0m : DocumentService.PreviewTotals(extraLines, prop.PricesIncludeVat, 0m).Total;
+            var extrasTotal = extraLines.Count == 0 ? 0m : DocumentService.PreviewTotals(extraLines, prop.PricesIncludeVat, folioDiscount).Total;
             var estimate = Math.Max(0m, advDoc.BalanceDue + Math.Min(0m, delta.Gross)) + extrasTotal
                 - untaxed.Sum(d => LodgingDepositSettlement.Remaining(d).Gross);
             if (LodgingPaymentBank.Problem(request.PaymentMethod, estimate, request.BankAccountId) is { } advBankProblem)
@@ -364,9 +373,25 @@ public partial class LodgingService
         // ── (1) ยอดลด ⇒ ใบลดหนี้ก่อน (ยอดค้างของใบล่วงหน้าต้องเป็นยอดหลังลดหนี้) · กดซ้ำ: ยอดคงเหลือหักใบลดหนี้แล้ว ⇒ ส่วนต่าง 0 ไม่ลดซ้ำ ──
         if (delta.IsCredit)
         {
-            var cn = await IssueAdvanceCreditNoteAsync(companyId, r, adv, -delta.Gross,
-                discount.HasDiscount ? $"ยอดเข้าพักลดลงจากใบกำกับภาษีล่วงหน้า — {LodgingCheckoutDiscount.Note(discount)}" : "ยอดเข้าพักลดลงจากใบกำกับภาษีล่วงหน้า (เลื่อนวัน/ปรับราคา)", userId);
+            // รอบ 208 ฝ่ายค้าน W5 ข้อ 1: ประทับส่วนลดที่ใช้คู่ใบลดหนี้ (DbContext เดียวกับการอนุมัติ ⇒ commit พร้อมใบ) — กดซ้ำต้องใช้ค่านี้ ·
+            // ใบลดหนี้ล้ม ⇒ คืนค่าเดิมแล้วโยนต่อ (ห้ามประทับส่วนลดที่ไม่มีเอกสาร)
+            var appliedBefore = r.CheckoutDiscountBase;
+            if (discount.HasDiscount) r.CheckoutDiscountBase = discount.BaseAmount;
+            DocumentResponse? cn;
+            try
+            {
+                // ข้อ 9: ใบลดหนี้เป็นเอกสารที่แขกเห็น — ข้อความส่วนลดไม่มีเหตุผลภายใน (เหตุผลอยู่ในหมายเหตุภายใน + audit)
+                cn = await IssueAdvanceCreditNoteAsync(companyId, r, adv, -delta.Gross,
+                    discount.HasDiscount ? $"ยอดเข้าพักลดลงจากใบกำกับภาษีล่วงหน้า — {LodgingCheckoutDiscount.GuestNote(stayDiscount)}" : "ยอดเข้าพักลดลงจากใบกำกับภาษีล่วงหน้า (เลื่อนวัน/ปรับราคา)", userId);
+            }
+            catch (Exception)
+            {
+                r.CheckoutDiscountBase = appliedBefore;
+                throw;
+            }
             if (cn != null) AppendInternal(r, $"ยอดเข้าพักลดลง {-delta.Gross:N2} จากใบกำกับภาษีล่วงหน้า {adv.Number} — ออกใบลดหนี้ {cn.DocumentNumber}");
+            else r.CheckoutDiscountBase = appliedBefore;   // ไม่มีใบลดหนี้ออก ⇒ ไม่ประทับ
+            await _db.SaveChangesAsync();
             advDoc = await _docService.GetDocumentAsync(companyId, adv.Id);
         }
 
@@ -374,12 +399,14 @@ public partial class LodgingService
         {
             // ไม่มีรายการเพิ่ม — ใบล่วงหน้าคือใบของการเข้าพักนี้ · ผูกเป็นใบสุดท้าย (ล้มหลังจากนี้ = กดเช็คเอาต์ซ้ำทำต่อผ่าน ResumeCheckOutAsync)
             r.FinalDocumentId = adv.Id;
+            if (discount.HasDiscount) r.CheckoutDiscountBase = discount.BaseAmount;
             await _db.SaveChangesAsync();
             var planAdvanceOnly = LodgingDepositSettlement.PlanCheckout(untaxed, 0m, _ => advDoc.BalanceDue);
             _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new
             {
                 action = "CheckOutOnAdvanceInvoice", advance = adv.Number, credit = delta.IsCredit ? -delta.Gross : 0m,
-                depositApplied = planAdvanceOnly.GrossApplied, refundDue = planAdvanceOnly.ExcessGross, by = userId,
+                depositApplied = planAdvanceOnly.GrossApplied, refundDue = planAdvanceOnly.ExcessGross,
+                checkoutDiscount = AdvanceDiscountAudit(discount, stayDiscount, folioDiscount), by = userId,
             }));
             return await SettleCheckOutAsync(companyId, r, advDoc, planAdvanceOnly, request, userId);
         }
@@ -401,15 +428,18 @@ public partial class LodgingService
 
         // ── (4) ใบเช็คเอาต์ = รายการระหว่างพัก + ส่วนเพิ่ม · แผนมัดจำจากยอดคงเหลือหลังตัดชำระใบล่วงหน้า (วางแผนก่อนออกเลข §86/4) ──
         var rest = LodgingDepositSettlement.RoomDeposits(await LoadDepositSnapshotsAsync(companyId, r), r.SecurityDepositDocumentId);
-        var full = DocumentService.PreviewTotals(extraLines, prop.PricesIncludeVat, 0m);
+        // ข้อ 6: ส่วนลดส่วนที่เกินค่าห้องลงใบนี้เป็นส่วนลดท้ายบิล — คิดก่อนวางแผนมัดจำ (หลักเดียวกับเช็คเอาต์ปกติ R-49)
+        var full = DocumentService.PreviewTotals(extraLines, prop.PricesIncludeVat, folioDiscount);
         var depositPlan = LodgingDepositSettlement.PlanCheckout(rest, full.Net,
-            deducted => DocumentService.PreviewTotals(extraLines, prop.PricesIncludeVat, 0m, deducted).Total);
+            deducted => DocumentService.PreviewTotals(extraLines, prop.PricesIncludeVat, folioDiscount, deducted).Total);
         var create = new CreateDocumentRequest(
             DocumentType: docType, DocumentDate: DateTime.UtcNow, DueDate: request.CollectBalanceNow ? null : DateTime.UtcNow.AddDays(30),
             ContactId: contactId, Reference: r.ReservationNumber,
             Notes: $"ค่าใช้จ่ายระหว่างเข้าพัก/ส่วนเพิ่ม {prop.Name} {r.CheckInDate:dd/MM/yyyy}–{r.CheckOutDate:dd/MM/yyyy} · จอง {r.ReservationNumber} · "
-                + $"ค่าห้องตามใบกำกับภาษีล่วงหน้า {adv.Number}",
+                + $"ค่าห้องตามใบกำกับภาษีล่วงหน้า {adv.Number}"
+                + (folioDiscount > 0.005m ? $" · {LodgingCheckoutDiscount.GuestNote(folioDiscount)}" : ""),
             Lines: extraLines,
+            BillDiscountAmount: folioDiscount > 0.005m ? folioDiscount : null,
             DepositAppliedRef: depositPlan.DeductionRef,
             DepositBaseDeducted: depositPlan.BaseDeducted > 0m ? depositPlan.BaseDeducted : null,
             PricesIncludeVat: prop.PricesIncludeVat,
@@ -423,13 +453,25 @@ public partial class LodgingService
         RecalcFolio(r);
         r.ContactId = contactId;
         r.FinalDocumentId = approved.Id;
+        if (discount.HasDiscount) r.CheckoutDiscountBase = discount.BaseAmount;
         await _db.SaveChangesAsync();
         _db.AddChainedAuditLog(Audit(companyId, AuditAction.Update, r, new
         {
             action = "CheckOutInvoiceIssued", finalDocument = approved.DocumentNumber, docType = docType.ToString(), advance = adv.Number,
             stayDelta = delta.Gross, depositAppliedToAdvance = planAdvance.GrossApplied,
-            depositApplied = depositPlan.GrossApplied, depositExcessToRefund = depositPlan.ExcessGross, by = userId,
+            depositApplied = depositPlan.GrossApplied, depositExcessToRefund = depositPlan.ExcessGross,
+            checkoutDiscount = AdvanceDiscountAudit(discount, stayDiscount, folioDiscount), by = userId,
         }));
         return await SettleCheckOutAsync(companyId, r, approved, depositPlan, request, userId);
     }
+
+    /// <summary>ส่วนลดเช็คเอาต์บนใบล่วงหน้าใน audit (null = ไม่มีส่วนลด) — แยกส่วนค่าห้อง (ใบลดหนี้) / ส่วนรายการระหว่างพัก (ใบส่วนเพิ่ม)</summary>
+    private static object? AdvanceDiscountAudit(LodgingCheckoutDiscountPlan d, decimal stay, decimal folio) => d.HasDiscount
+        ? new
+        {
+            entered = d.Entered, isPercent = d.IsPercent, baseAmt = d.BaseAmount, stayShare = stay, folioShare = folio, reason = d.Reason,
+            reused = d.Reason == LodgingCheckoutDiscount.ReusedReason,
+            ruleCode = LodgingCheckoutDiscount.RuleCode, legalReference = LodgingCheckoutDiscount.LegalReference,
+        }
+        : null;
 }

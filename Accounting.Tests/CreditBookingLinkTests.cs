@@ -44,6 +44,45 @@ public class CreditBookingLinkTests
         Assert.Contains("[CREDIT-PASS-FAILED]", CreditBookingLink.LedgerFailureNote(CreditBookingLink.LedgerAction.Release, "x"));
     }
 
+    // ===== รอบ 208 (ฝ่ายค้าน W6 ข้อ 1 · BLOCKING): การจองที่จ่ายด้วยบัตร ถูกปิดบิลที่ POS =====
+
+    [Fact]
+    public void ปิดบิลPOSของการจองด้วยบัตร_ตัดเครดิต_ตัดแล้วไม่ตัดซ้ำ_คืนแล้วปฏิเสธ()
+    {
+        // เดิม POS ประทับ "เสร็จ" ตรง ๆ (ยอด 0 = ไม่มีเงินผูก) ⇒ เครดิตค้าง "จองไว้" ตลอด · 21713 ไม่ถูกรับรู้
+        Assert.Equal(CreditBookingLink.PosCloseAction.Settle, CreditBookingLink.ForPosClose(CreditBookingStatus.Booked));
+        Assert.Equal(CreditBookingLink.PosCloseAction.AlreadySettled, CreditBookingLink.ForPosClose(CreditBookingStatus.Attended));
+        Assert.Equal(CreditBookingLink.PosCloseAction.AlreadySettled, CreditBookingLink.ForPosClose(CreditBookingStatus.NoShow));
+        Assert.Equal(CreditBookingLink.PosCloseAction.AlreadySettled, CreditBookingLink.ForPosClose(CreditBookingStatus.LateCancelled));
+        Assert.Equal(CreditBookingLink.PosCloseAction.Refuse, CreditBookingLink.ForPosClose(CreditBookingStatus.Cancelled));
+        // ฝ่ายค้านรอบ 2 ข้อ 1 (ทิศตรงข้าม): คืนเครดิตแล้วแต่บิลมีเงินจริง ⇒ ปิดแบบบิลปกติ ไม่ปฏิเสธ
+        Assert.Equal(CreditBookingLink.PosCloseAction.NotCredit, CreditBookingLink.ForPosClose(CreditBookingStatus.Cancelled, 800m));
+        Assert.Equal(CreditBookingLink.PosCloseAction.Refuse, CreditBookingLink.ForPosClose(CreditBookingStatus.Cancelled, 0m));
+        Assert.Contains("BK-1", CreditBookingLink.PosCloseRefusal("BK-1"));
+        // ทิศตรงข้าม: การจองที่ไม่ได้จ่ายด้วยบัตร ⇒ กติกาเดิมทุกข้อ
+        Assert.Equal(CreditBookingLink.PosCloseAction.NotCredit, CreditBookingLink.ForPosClose(null));
+    }
+
+    [Fact]
+    public void สถานะในสมุดเครดิต_แถวที่ยังไม่ยกเลิกชนะ_ไม่มีแถว_คือไม่ได้จ่ายด้วยบัตร()
+    {
+        Assert.Null(CreditBookingLink.LedgerStatusOf(Array.Empty<CreditBookingStatus>()));
+        // เลื่อนนัด = แถวเดิมยกเลิก + แถวใหม่จองไว้ ⇒ ใช้แถวใหม่ (ลำดับแถวไม่มีผล)
+        Assert.Equal(CreditBookingStatus.Booked, CreditBookingLink.LedgerStatusOf(new[] { CreditBookingStatus.Cancelled, CreditBookingStatus.Booked }));
+        Assert.Equal(CreditBookingStatus.Booked, CreditBookingLink.LedgerStatusOf(new[] { CreditBookingStatus.Booked, CreditBookingStatus.Cancelled }));
+        Assert.Equal(CreditBookingStatus.Cancelled, CreditBookingLink.LedgerStatusOf(new[] { CreditBookingStatus.Cancelled }));
+    }
+
+    [Fact]
+    public void ยกเลิกบิลPOS_การจองด้วยบัตรที่ตัดเครดิตแล้ว_ไม่ถอยสถานะ()
+    {
+        Assert.False(CreditBookingLink.PosVoidRevertsCompleted(CreditBookingStatus.Attended));
+        Assert.False(CreditBookingLink.PosVoidRevertsCompleted(CreditBookingStatus.NoShow));
+        // ทิศตรงข้าม: การจองปกติ / ยังกันไว้ ⇒ ถอยได้ตามเดิม
+        Assert.True(CreditBookingLink.PosVoidRevertsCompleted(null));
+        Assert.True(CreditBookingLink.PosVoidRevertsCompleted(CreditBookingStatus.Booked));
+    }
+
     // ===== R-41 B2 ขายคอร์สผ่านร้านออนไลน์ =====
 
     [Fact]

@@ -73,17 +73,33 @@ public static class DocumentFx
 
     /// <summary>อัตราที่ใช้กับ<b>ฐานหัก ณ ที่จ่าย</b>ของงวดจ่าย (50 ทวิ รายงวด + ขา 2191x ใน <c>CreatePaymentJournalAsync</c>) — <b>ตัวตัดสินเดียว</b> ·
     /// <see cref="Models.Enums.WhtFxRateBasis.DocumentDate"/> (ค่าตั้งต้น) ⇒ อัตราเอกสารเสมอ (เดิม) ·
-    /// <see cref="Models.Enums.WhtFxRateBasis.PaymentDate"/> ⇒ อัตราวันจ่ายเมื่อมี (&gt; 0) ไม่งั้นอัตราเอกสาร (ไม่แต่งอัตรา) · ใบบาท (อัตรา 1) ⇒ 1 เสมอ</summary>
-    public static decimal WhtRateFor(Models.Enums.WhtFxRateBasis basis, decimal documentRate, decimal? paymentRate)
+    /// <see cref="Models.Enums.WhtFxRateBasis.PaymentDate"/> ⇒ อัตราวันจ่ายเมื่อมี (&gt; 0) ไม่งั้นอัตราเอกสาร (ไม่แต่งอัตรา) · ใบบาท (อัตรา 1) ⇒ 1 เสมอ ·
+    /// <b>รอบ 208 (ฝ่ายค้าน W7 ข้อ 7):</b> เกณฑ์รับรู้ <see cref="Models.Enums.WhtRecognitionBasis.Accrual"/> ⇒ อัตราเอกสารเสมอ — ขา 2191x/11910 ถูกตั้งตอนอนุมัติใบ
+    /// ที่อัตราเอกสาร (งวดจ่ายไม่มีขาภาษี) ⇒ ถ้า 50 ทวิ/ภ.ง.ด. ใช้อัตราวันจ่าย = ภาษีที่นำส่งไม่เท่ายอดที่ตั้งหนี้ใน GL (และไม่มีเส้นผลต่าง FX ให้ลง)</summary>
+    public static decimal WhtRateFor(Models.Enums.WhtFxRateBasis basis, Models.Enums.WhtRecognitionBasis recognition,
+        decimal documentRate, decimal? paymentRate)
     {
         var docFx = documentRate <= 0m ? 1m : documentRate;
         if (docFx == 1m) return 1m;
-        return basis == Models.Enums.WhtFxRateBasis.PaymentDate && paymentRate is decimal p && p > 0m ? p : docFx;
+        return EffectiveWhtFxBasis(basis, recognition) == Models.Enums.WhtFxRateBasis.PaymentDate && paymentRate is decimal p && p > 0m ? p : docFx;
     }
 
+    /// <summary>ค่าตั้งอัตราฐานภาษีที่มีผลจริง — Accrual บังคับวันที่ใบ (ดู <see cref="WhtRateFor"/>) · Cash ⇒ ตามค่าตั้ง</summary>
+    public static Models.Enums.WhtFxRateBasis EffectiveWhtFxBasis(Models.Enums.WhtFxRateBasis basis, Models.Enums.WhtRecognitionBasis recognition)
+        => recognition == Models.Enums.WhtRecognitionBasis.Accrual ? Models.Enums.WhtFxRateBasis.DocumentDate : basis;
+
+    /// <summary>ด่านบันทึกค่าตั้ง — คู่ "รับรู้ภาษีหัก ณ ที่จ่ายตอนออกใบ (Accrual)" + "อัตราฐานภาษี ณ วันจ่าย" ขัดกันเอง (GL ตั้งที่อัตราใบแล้ว) ⇒ ข้อความไทย · null = ผ่าน</summary>
+    public static string? WhtFxBasisConflict(Models.Enums.WhtFxRateBasis basis, Models.Enums.WhtRecognitionBasis recognition)
+        => basis == Models.Enums.WhtFxRateBasis.PaymentDate && recognition == Models.Enums.WhtRecognitionBasis.Accrual
+            ? "เลือก \"อัตรา ณ วันจ่าย\" คู่กับเกณฑ์รับรู้ภาษีหัก ณ ที่จ่าย \"ตอนออกใบแจ้งหนี้ (Accrual)\" ไม่ได้ — เกณฑ์ Accrual ตั้งภาษีค้างจ่าย/ถูกหักใน GL "
+              + "ตั้งแต่อนุมัติใบที่อัตราของเอกสาร ถ้า 50 ทวิ ใช้อัตราวันจ่าย ยอดภาษีที่นำส่งจะไม่เท่ายอดใน GL · ทางเลือก: ใช้ \"อัตราของเอกสาร (วันที่ใบ)\" "
+              + "หรือเปลี่ยนเกณฑ์รับรู้เป็น \"รับรู้ตอนรับ/จ่ายเงินจริง (Cash)\""
+            : null;
+
     /// <summary>ป้ายที่มาของอัตราฐานภาษีบน 50 ทวิ (เก็บลง <c>WithholdingTaxCert.WhtFxRateBasis</c> — ทุกใบต้องบอกที่มา)</summary>
-    public static string WhtRateBasisLabel(Models.Enums.WhtFxRateBasis basis, decimal documentRate, decimal? paymentRate)
-        => WhtRateFor(basis, documentRate, paymentRate) == (documentRate <= 0m ? 1m : documentRate)
+    public static string WhtRateBasisLabel(Models.Enums.WhtFxRateBasis basis, Models.Enums.WhtRecognitionBasis recognition,
+        decimal documentRate, decimal? paymentRate)
+        => WhtRateFor(basis, recognition, documentRate, paymentRate) == (documentRate <= 0m ? 1m : documentRate)
             ? "อัตราของเอกสาร (วันที่ใบ)"
             : "อัตรา ณ วันจ่าย (ป.132/2548)";
 

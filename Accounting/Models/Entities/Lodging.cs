@@ -429,6 +429,10 @@ public class LodgingReservation : TenantEntity
     /// <summary>รอบ 205 W5 (R-52): ยอดที่แขก<b>กรอกเอง</b>ตอนส่งสลิปใบล่าสุด — ไม่ใช่หลักฐานการรับเงิน (ยอดจริงบันทึกตอนพนักงานกด
     /// “บันทึกรับเงินตามสลิป”) · ไม่ประทับว่า "ตรง" เอง (G3) · ยอดของสลิปใบก่อน ๆ อยู่ใน audit <c>GuestUploadedSlip.declaredAmount</c></summary>
     public decimal? SlipDeclaredAmount { get; set; }
+    /// <summary>รอบ 208 ฝ่ายค้าน W5 ข้อ 1–3: ส่วนลดเช็คเอาต์ (ฐานก่อน VAT · โหมดไม่ออกเอกสาร = ยอดตามราคาที่แขกเห็น) ที่<b>ออกเอกสาร/บันทึกไปแล้ว</b>
+    /// — ประทับคู่ใบลดหนี้อ้างใบล่วงหน้า / ใบเช็คเอาต์ที่อนุมัติ · กดเช็คเอาต์ซ้ำต้องใช้ค่าเดิม (<c>LodgingCheckoutDiscount.ReconcileApplied</c> /
+    /// <c>ResumeProblem</c>) · null = ยังไม่เคยใช้ส่วนลด (แถวก่อนรอบ 208 = ไม่รู้ ⇒ ตัวเรียกถอยไปอ่าน <c>BillDiscountAmount</c> ของใบ)</summary>
+    public decimal? CheckoutDiscountBase { get; set; }
 
     // ── การตรวจสลิป (LDG-P0-02) ──
     // เดิมมีแต่ "ยืนยัน" กับ "ยกเลิกทั้งใบ" ⇒ สลิปไม่ตรง/ปลอม พนักงานได้แต่เงียบ
