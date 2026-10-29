@@ -155,16 +155,14 @@ public class LodgingCheckoutDiscountRetryTests
     // ═══ ข้อ 7 / 9 ═══
 
     [Fact]
-    public void ข้อ7_ตรวจVATอัตราผสมเมื่อมีส่วนลดหรือหักมัดจำ_ไม่มีทั้งสอง_ไม่ตรวจ()
+    public void ข้อ7_ตรวจVATอัตราผสมเฉพาะเมื่อหักฐานมัดจำ_ส่วนลดอย่างเดียวไม่ตรวจ()
     {
-        var d = Discount(500m, 6962.62m);
-        Assert.True(LodgingCheckoutDiscount.NeedsVatMixCheck(0m, d));
-        Assert.True(LodgingCheckoutDiscount.NeedsVatMixCheck(1869.16m, LodgingCheckoutDiscountPlan.None));
-        Assert.False(LodgingCheckoutDiscount.NeedsVatMixCheck(0m, LodgingCheckoutDiscountPlan.None));
+        Assert.True(LodgingCheckoutDiscount.NeedsVatMixCheck(1869.16m));
+        Assert.False(LodgingCheckoutDiscount.NeedsVatMixCheck(0m));   // ฝ่ายค้านรอบ 2 ข้อ 7: ส่วนลดอย่างเดียว ⇒ ไม่ตรวจ
     }
 
     [Fact]
-    public void ข้อ7_ใบอัตราผสม_ส่วนลดถูกเฉลี่ยลงบรรทัด0เปอร์เซ็นต์_VATต่ำกว่าที่ควร_ตาข่ายเห็น()
+    public void ข้อ7_ใบอัตราผสมที่ถูก_ส่วนลดเฉลี่ยตามสัดส่วน_สูตรอัตราเดียวจะฟ้องผิด_จึงห้ามตรวจกรณีส่วนลดอย่างเดียว()
     {
         var lines = new List<DocumentLineRequest>
         {
@@ -173,7 +171,8 @@ public class LodgingCheckoutDiscountRetryTests
         };
         var t = DocumentService.PreviewTotals(lines, false, 200m);
         var expected = LodgingDepositSettlement.FinalInvoiceVat(t.Net, 0m, 7m);
-        Assert.True(Math.Abs(expected - t.Vat) > 0.05m);
+        Assert.True(Math.Abs(expected - t.Vat) > 0.05m);          // สูตรสมมุติอัตราเดียว ≠ ใบที่ถูก ⇒ ถ้าตรวจจะฟ้องใบถูก
+        Assert.False(LodgingCheckoutDiscount.NeedsVatMixCheck(0m)); // ⇒ ไม่ตรวจเมื่อไม่มีฐานมัดจำ
     }
 
     [Fact]

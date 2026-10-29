@@ -1395,8 +1395,8 @@ public partial class LodgingService
             // ตาข่าย: VAT ใบสุดท้ายต้อง = VAT ของ (ฐานเต็มหลังส่วนลด − ฐานมัดจำที่ออกใบกำกับแล้ว) · ไม่ตรง = มีบรรทัดอัตราอื่นปน
             // (ส่วนหักท้ายบิลถูกเฉลี่ยลงบรรทัด 0% ด้วย ⇒ VAT ใบนี้สูงกว่าที่ควร) — ไม่แก้เอกสารเอง แต่ต้องเห็น (ล้มดัง)
             decimal roundingDelta = 0m;
-            // รอบ 208 ฝ่ายค้าน W5 ข้อ 7: ส่วนลดท้ายบิลก็ถูกเฉลี่ยลงบรรทัด 0%/อัตราอื่นเหมือนฐานมัดจำ ⇒ ตรวจเมื่อมีส่วนลดด้วย (ไม่ใช่เฉพาะเมื่อหักมัดจำ)
-            if (LodgingCheckoutDiscount.NeedsVatMixCheck(depositPlan.BaseDeducted, discount))
+            // ตรวจเฉพาะเมื่อหักฐานมัดจำ — ส่วนลดท้ายบิลเฉลี่ยตามสัดส่วนทุกอัตรา = ถูก (รอบ 208 ฝ่ายค้านรอบ 2 ข้อ 7 · ดู NeedsVatMixCheck)
+            if (LodgingCheckoutDiscount.NeedsVatMixCheck(depositPlan.BaseDeducted))
             {
                 var expectedVat = LodgingDepositSettlement.FinalInvoiceVat(full.Net, depositPlan.BaseDeducted, vatRate);
                 if (Math.Abs(expectedVat - approved.VatAmount) > 0.05m)
@@ -1857,6 +1857,9 @@ public partial class LodgingService
             RecalcFolio(r);
             r.CheckoutDiscountBase = offDiscount.BaseAmount;
             AppendInternal(r, $"{LodgingCheckoutDiscount.Note(offDiscount)} — เช็คเอาต์แบบไม่ออกเอกสาร (โดย {userId})");
+            // รอบ 208 ฝ่ายค้านรอบ 2 ข้อ 5: ส่วนลดทำให้รับเงินไว้เกินยอด ⇒ BalanceDue ตัดที่ 0 แล้วส่วนเกินหายเงียบ — จดยอดที่ต้องคืนแขก (แบบเส้นออกเอกสาร)
+            var offExcess = r.PaidAmount - (r.TotalAmount + r.FolioTotal);
+            if (offExcess > 0.005m) AppendInternal(r, LodgingCheckoutDiscount.OffModeExcessNote(Math.Round(offExcess, 2, MidpointRounding.AwayFromZero)));
         }
         var balance = Accounting.Helpers.LodgingAmounts.BalanceDue(r.TotalAmount, r.FolioTotal, r.PaidAmount);
         if (request.CollectBalanceNow && balance > 0) r.PaidAmount += balance;

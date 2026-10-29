@@ -82,4 +82,14 @@ public class BookingRound208Tests
         Assert.False(CreditBookingLink.IsCustomerActor("8f3c-user-id"));
         Assert.False(CreditBookingLink.IsCustomerActor(null));
     }
+
+    // ═════════ LodgingCheckoutDiscount.OffModeExcessNote (ฝ่ายค้านรอบ 2 ข้อ 5) ═════════
+
+    [Fact]
+    public void Off_mode_excess_note_states_amount_without_deposit_credit_note()
+    {
+        var note = LodgingCheckoutDiscount.OffModeExcessNote(500m);
+        Assert.Contains("500.00", note);
+        Assert.DoesNotContain("ใบลดหนี้", note);   // โหมดไม่ออกเอกสารไม่มีใบมัดจำให้อ้าง
+    }
 }

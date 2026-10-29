@@ -1396,14 +1396,27 @@ public class CmsCommerceService : ICmsCommerceService
     ///
     /// ทุก step ที่ล้มเหลวจะ log แต่ไม่ rollback step ก่อนหน้า — operator
     /// แก้ใน UI ต่อได้.</summary>
-    public async Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId,
+    public Task<bool> ConfirmPaymentAsync(Guid companyId, Guid siteId, Guid orderId,
         Guid? paymentId, string actor, Guid? moneyInAccountId = null)
+        // รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 3): คีย์เดียวกับเส้นเปลี่ยนสถานะ ⇒ ยืนยันเงินกับยกเลิกออเดอร์ไม่สวนกัน (reentrant ถ้าเรียกจากใต้เส้นสถานะ)
+        => AdvisorySessionLock.RunAsync(_db, AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsOrderStatus, orderId.ToString("N")),
+            () => ConfirmPaymentLockedAsync(companyId, siteId, orderId, paymentId, actor, moneyInAccountId),
+            "มีการเปลี่ยนสถานะออเดอร์นี้กำลังทำงานอยู่ — รอสักครู่แล้วลองใหม่", SiteOrderStatusTransition.RuleCode);
+
+    private async Task<bool> ConfirmPaymentLockedAsync(Guid companyId, Guid siteId, Guid orderId,
+        Guid? paymentId, string actor, Guid? moneyInAccountId)
     {
         var order = await _db.SiteOrders
             .Include(o => o.Payments)
             .Include(o => o.Lines)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId);
         if (order == null) return false;
+        // ยกเลิก/คืนเงินแล้ว ⇒ ไม่ออกใบรับเงิน/มัดจำบนออเดอร์ที่ปิดแล้ว (ขั้นริบตอนยกเลิกคิดจากรายการชำระชุดเดิม) — ผู้เรียก (webhook) ได้ exception
+        // ⇒ ประวัติรายการชำระ + แจ้งเจ้าของ (แบบเดียวกับรับเกินยอด) · ร้านคืนเงิน หรือเปิดออเดอร์ใหม่
+        if (order.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded)
+            throw new BusinessRuleException(
+                $"ออเดอร์ {order.OrderNumber} {(order.Status == SiteOrderStatus.Cancelled ? "ถูกยกเลิก" : "คืนเงิน")}แล้ว — ยืนยันรับเงินไม่ได้ · ถ้าเงินเข้าจริงให้คืนเงินลูกค้า หรือสร้างออเดอร์ใหม่",
+                SiteOrderStatusTransition.RuleCode, 409);
 
         // 1. Confirm SiteOrderPayment row
         var pay = paymentId.HasValue
@@ -2285,6 +2298,12 @@ public class CmsCommerceService : ICmsCommerceService
                 QuotationNumber = existing
             };
         }
+
+        // รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 2): ทางนี้เปิดให้ลูกค้า (AllowAnonymous) ยกเลิกออเดอร์เอง — เดิมรับทุกสถานะ (ชำระแล้ว/ส่งแล้ว/คืนเงินแล้ว)
+        // โดยไม่ผ่านขั้นมัดจำ/void ⇒ เปลี่ยนเป็นใบเสนอราคาได้เฉพาะออเดอร์ที่ยังรอ + ยังไม่มีเงินเข้า · นอกนั้นติดต่อร้าน (ร้านยกเลิกผ่านเส้นสถานะที่มีด่าน)
+        if (order.Status != SiteOrderStatus.Pending || order.PaidAmount > 0m
+            || await _db.SiteOrderPayments.AnyAsync(p => p.OrderId == order.Id && p.CompanyId == companyId && p.Status != SitePaymentStatus.Failed && p.Status != SitePaymentStatus.Cancelled))
+            throw new BusinessRuleException("ออเดอร์นี้ดำเนินการ/ชำระเงินแล้ว — เปลี่ยนเป็นใบเสนอราคาเองไม่ได้ กรุณาติดต่อร้าน", SiteOrderStatusTransition.RuleCode, 409);
 
         await ReverseStockIfDeductedAsync(companyId, order);
 

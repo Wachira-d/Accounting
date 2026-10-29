@@ -1025,6 +1025,9 @@ public partial class CmsBookingService : ICmsBookingService
         // รอบ 208: ผู้เรียกที่อ่านสถานะมาก่อน (job ปล่อยรอบ) ระบุสถานะที่คาด — เปลี่ยนไปแล้ว (ลูกค้าจ่าย/ยืนยันระหว่างทาง) ⇒ ไม่ทำ
         if (request.ExpectedCurrentStatus is BookingStatus expected && expected != oldStatus)
             throw new BusinessRuleException($"สถานะการจองเปลี่ยนไปแล้ว ({oldStatus}) — ไม่ได้ดำเนินการ", BookingStatusTransition.RuleCode, 409);
+        if (request.RequireHoldLapsedUnpaid
+            && (booking.PaidAmount > 0m || booking.WaitlistHoldUntil is not DateTime holdUntil || holdUntil > DateTime.UtcNow))
+            throw new BusinessRuleException("การจองรับเงินแล้ว/ยังอยู่ในเวลาถือที่ — ไม่ปล่อยที่อัตโนมัติ", BookingStatusTransition.RuleCode, 409);
         // รอบ 208 (ฝ่ายค้าน W2 ข้อ 1/3 blocking): กดซ้ำ = ไม่ทำซ้ำ · สถานะปลายทางเปลี่ยนต่อไม่ได้ (ขั้นเงินห้ามรันซ้ำ)
         var (transition, transitionMsg) = BookingStatusTransition.Check(oldStatus, request.Status);
         if (transition == BookingTransitionResult.Rejected)

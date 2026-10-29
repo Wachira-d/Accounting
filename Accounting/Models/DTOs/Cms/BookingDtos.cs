@@ -315,6 +315,8 @@ public class UpdateBookingStatusRequest
     public string? CancellationReason { get; set; }
     /// <summary>รอบ 208: สถานะที่ผู้เรียกคาดว่าเป็นอยู่ (job ปล่อยรอบคิวสำรอง) · ไม่ตรงตอนถือล็อก ⇒ ไม่ทำ · null = ไม่ตรวจ</summary>
     public BookingStatus? ExpectedCurrentStatus { get; set; }
+    /// <summary>รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 1b): job ปล่อยที่ — ตรวจซ้ำใต้ล็อกว่ายังไม่รับเงิน + พ้นเวลาถือที่จริง (เงินเข้าหลังคิวรีของ job ⇒ ไม่ยกเลิก)</summary>
+    public bool RequireHoldLapsedUnpaid { get; set; }
 }
 
 public class BookingResponse

@@ -39,6 +39,10 @@ public partial class CmsBookingService
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
             // ล็อกต่อการจอง (xact) — webhook+poll ของเงินก้อนเดียว / พนักงานสองแท็บ ⇒ คำขอที่สองเห็นเลขอ้างอิงที่บันทึกแล้ว
+            // รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 1): ถือคีย์เดียวกับเส้นเปลี่ยนสถานะ <b>ก่อน</b>คีย์ใบ (ลำดับเดียวกับเส้นสถานะ ⇒ ไม่ deadlock) (xact ชน session lock ข้าม session · reentrant ใน session เดียวกัน)
+            // ⇒ ยกเลิก/ปล่อยที่ระหว่างรับเงินไม่เขียนทับกัน (เดิม: รับเงินเขียน Confirmed ทับ Cancelled ที่ void ใบมัดจำแล้ว)
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsBookingInvoice, BookingStatusLockPart(bookingId)));
             var key = AdvisoryLockKey.For(companyId, AdvisoryLockKey.CmsBookingInvoice, bookingId.ToString());
             await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", key);
             var booking = await _db.SiteBookings.Include(b => b.BookingService)
