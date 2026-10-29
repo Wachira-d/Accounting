@@ -23,7 +23,8 @@ namespace Accounting.Models.Enums
     public enum CreditBookingStatus { Booked = 0, Attended = 1, NoShow = 2, Cancelled = 3, LateCancelled = 4 }
 
     /// <summary>Adjust (รอบ 205 W6 · R-38) = ลดเครดิตจากใบลดหนี้คืนเงินบางส่วน — บัตรยัง Active</summary>
-    public enum CreditLedgerKind { Purchase = 0, Reserve = 1, Release = 2, Consume = 3, Expire = 4, Cancel = 5, Adjust = 6 }
+    /// <summary>AdjustReversal (รอบ 208) = ยกเลิกใบลดหนี้คืนเงินบางส่วน ⇒ คืนเครดิตที่ลดไป + ถอนยอดคืน</summary>
+    public enum CreditLedgerKind { Purchase = 0, Reserve = 1, Release = 2, Consume = 3, Expire = 4, Cancel = 5, Adjust = 6, AdjustReversal = 7 }
 
     public enum CreditCancelOutcome { Refund = 0, Forfeit = 1 }
 }
@@ -106,6 +107,9 @@ namespace Accounting.Models.Entities
         public decimal RecognizedAmount { get; set; }
         public Guid? BookingId { get; set; }
         public Guid? JournalEntryId { get; set; }
+        /// <summary>รอบ 208 (ฝ่ายค้าน W6 ข้อ 2) — เอกสารที่ทำให้เกิดแถวนี้ (ใบลดหนี้คืนเงินบางส่วนของแถว Adjust) · ยกเลิกใบลดหนี้ ⇒ หาแถวนี้เพื่อคืนเครดิต/ยอดคืน ·
+        /// null = แถวที่ไม่ได้มาจากเอกสาร / แถวเก่าก่อนรอบ 208</summary>
+        public Guid? DocumentId { get; set; }
         public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
         public string? Note { get; set; }
     }

@@ -141,6 +141,17 @@
 - ~~B-8~~ ✅ รอบ 205 W7 — **คำตัดสินเจ้าของข้อ 162 (Q2)**: `CompanySettings.FxBotRateType` (`Mid` ค่าเริ่มต้น = เดิม · `AverageBuying` = `BuyingTransfer` · `AverageSelling`) · ตัวเลือกเดียว `DocumentFx.PickBotRate`
   ที่ `DocumentService.ResolveExchangeRateAsync` + `OcrService.ResolveScanExchangeRateAsync` · ตัวที่เลือกไม่มีค่า ⇒ กลาง · ข้อความหน้าตั้งค่าบอกแนวสรรพากร (§79/4 · ป.132/2548) ให้นักบัญชีเลือกเอง
 
+## 8a. รอบ 208 — แก้ตามฝ่ายค้าน W7 (ข้อ 7 · 8 · 9)
+
+| ข้อ | ปัญหา | แก้ |
+| --- | --- | --- |
+| 7 | เกณฑ์รับรู้ **Accrual** ตั้ง 2191x/11910 ตอนอนุมัติใบที่อัตราเอกสาร แต่ค่าตั้ง "วันจ่าย" ทำให้ 50 ทวิ/ภ.ง.ด. ใช้อัตราวันจ่าย ⇒ นำส่ง ≠ GL (ไม่มีเส้นผลต่าง FX ให้ลง) | `DocumentFx.WhtRateFor(basis, recognition, …)` — Accrual ⇒ อัตราเอกสารเสมอ (`EffectiveWhtFxBasis`) · ทุกผู้เรียกส่งเกณฑ์รับรู้ · บันทึกค่าตั้งคู่นี้ถูกปฏิเสธ (`WhtFxBasisConflict` · `SET-WHT-FX`) + คำอธิบายบน settings.html |
+| 8 | หน้านำส่ง/ปฏิทิน (แถวช่องโหว่) + รายงานตรวจ 50 ทวิ ต่างสกุล แปลงด้วยอัตราเอกสารเสมอ | `PerLineWht.UncertifiedWhtThb` (งวดจ่ายแปลงด้วย `WhtRateFor` ของงวด · ส่วนค้างใช้อัตราใบ · ค่าตั้งต้น/Accrual/ไม่มีงวด = `DocumentWhtThb` เดิมทุกสตางค์) ← `StatutoryRemittanceService.LoadWhtPaymentSlicesAsync` · รายงานตรวจใช้ `ExchangeRateUsed` ของใบ (ใบเก่า ⇒ `WhtRateFor`) |
+| 9 | R-18 ใบลดหนี้แปลงด้วยอัตราของใบลดหนี้เอง ⇒ 50 ทวิ ใบแทน ≠ ยอดเดิม − ส่วนลด | `PerLineWht.CreditNoteWhtRate(cnRate, srcRate, certs.ExchangeRateUsed)` — อัตราที่ใบรับรองใช้ (ค่าเดียว) · ไม่มี/หลายค่า ⇒ อัตราใบต้นทาง · ใบลดหนี้บาท ⇒ 1 |
+
+ยังเหลือ (ไม่ได้อยู่ในรายการฝ่ายค้านรอบนี้ · คลาสเดียวกัน): `TaxService.GenerateWhtReport` แถว "ยังไม่ออกใบ" และ `TaxGlReconciliationService.BuildWhtLineAsync`
+สาเหตุ "ยังไม่ออก 50 ทวิ" ยังแปลงด้วยอัตราเอกสาร — ค่าตั้งต้นถูกต้อง · ค่าตั้งวันจ่าย (Cash) ต่างจาก 50 ทวิ ที่จะออกได้ ⇒ ต่อสาย `UncertifiedWhtThb` รอบถัดไป
+
 ## 8b. ค่าตั้งเปิด/ปิด — อะไรขึ้นกับค่าตั้ง (แก้ doc ตามฝ่ายค้านข้อ 3)
 
 | ขึ้นกับ `PerLineWhtEnabled` | ทำงานเสมอ (แก้บั๊ก) |

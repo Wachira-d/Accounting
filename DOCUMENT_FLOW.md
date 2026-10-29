@@ -3975,6 +3975,11 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ที่ `CreatePaymentJournalAsync` (ขา 2191x · AR/AP ตัดที่อัตราเอกสาร · ผลต่างส่วนภาษี → FX gain/loss เส้นเดิม) + 50 ทวิ รายงวด (`PerLineWht.ForDocument(doc, whtFxRate)`) ⇒ เท่ากันถึงสตางค์ ·
   `CompanySettings.FxBotRateType` (กลาง [เดิม] / ซื้อถัวเฉลี่ย / ขายถัวเฉลี่ย) — `DocumentFx.PickBotRate` ที่ `ResolveExchangeRateAsync` + OCR · 50 ทวิ ทุกใบบันทึก `ExchangeRateUsed/ExchangeRateBasis` ·
   R-21 (GL = Σ ฐานบาท × อัตรา) ตรวจแล้ว**ไม่ merge** (TieOut ทำให้เท่ากันอยู่แล้ว · ต้องฝ่ายค้าน) · ⚠️ แตะภาษี — ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ในเครื่องนี้
+- **รอบ 208 — แก้ตามฝ่ายค้าน W7** (Last verified `commit <sha ในคอมมิตถัดไป>`): (7) `DocumentFx.WhtRateFor(basis, recognition, docRate, payRate)` — เกณฑ์รับรู้ **Accrual ⇒ อัตราเอกสารเสมอ**
+  (2191x/11910 ตั้งตอนอนุมัติใบที่อัตรานั้น) · บันทึกค่าตั้งคู่ Accrual + วันจ่าย ถูกปฏิเสธ (`WhtFxBasisConflict` · SettingsService `SET-WHT-FX` · คำอธิบายบน settings.html) ·
+  (8) แถวช่องโหว่หน้านำส่ง/ปฏิทิน (`StatutoryRemittanceService` GetDashboard/GetFilingCalendar) = `PerLineWht.UncertifiedWhtThb` — งวดจ่ายแปลงด้วย `WhtRateFor` ของงวด ส่วนค้างใช้อัตราใบ
+  (ค่าตั้งต้น/Accrual = เดิมทุกสตางค์) · รายงานตรวจ 50 ทวิ ต่างสกุลใช้ `ExchangeRateUsed` ของใบ (ไม่มี ⇒ `WhtRateFor`) · (9) R-18 ใบลดหนี้แปลงด้วยอัตราที่ 50 ทวิ ใช้จริง
+  (`PerLineWht.CreditNoteWhtRate` ← `ExchangeRateUsed` · ไม่มี/หลายอัตรา ⇒ อัตราใบต้นทาง · ใบลดหนี้บาท ⇒ 1) — เดิมใช้อัตราของใบลดหนี้เอง · ยังไม่ได้คอมไพล์ในเครื่องนี้
 - **รวมเงินภาษีที่หักนำส่ง (ตัวอักษร)** (2026-10-14): `ThaiBahtText.Format(TotalTaxAmount)` ทั้ง HTML (`BuildWithholdingTaxCertHtml`) · QuestPDF
   (`BuildTotalInWords`) · หน้าพิมพ์ `wht.html` แสดง `TotalTaxAmountInWords` จาก DTO อย่างเดียว (เดิมมีสำเนาสูตร JS ของตัวเอง) — ดู §5.1
 - **Trigger (แก้ doc 2026-10-12 — บรรทัดเดิม "ตอน PV/Expense ถูก approve" ไม่ครบ)**: ทุกทางเข้าอัตโนมัติเดินทางเดียว
@@ -5844,6 +5849,15 @@ _Last verified against codebase: 2026-10-28 (รอบ 207 — หน้าท�
 **เครื่องจอง CMS** (`CmsBookingService.Credits.cs` · `Helpers/CreditBookingLink`): `CreateBookingRequest.PayWithCredit` ⇒ Hold ในธุรกรรมเดียวกับ Decide · ยอด 0 · ไม่ออกเอกสาร ERP/ไม่เดิน tax point ของบริการ · เสร็จ/ไม่มา ⇒ Settle · ยกเลิก ⇒ Release · ล้ม ⇒ `[CREDIT-PASS-FAILED]` บนการจอง ·
 **ร้านออนไลน์ (B2)**: `SiteProduct.CreditPackageId` ⇒ บรรทัดใบขายของออเดอร์ลง 21713 (`CourseCreditOnlineSale.UnearnedAccountsAsync` → `BuildOrderErpLines`) ⇒ ใบอนุมัติ ⇒ `IssuedDocumentHooks.TryActivateCoursePassAsync` เปิดบัตร (ช่องทาง Online · ใบเดียว = บัตรเดียว · >1 หน่วย/ล้ม ⇒ `[COURSE-PASS-FAILED]` บนใบ) ·
 **POS**: ไม่ขายคอร์สที่ POS (คำตัดสินข้อ 161) — บิล POS ลง 41000/ผังแพ็กเกจ (R-26) ตามเดิม
+**รอบ 208 — แก้ตามฝ่ายค้าน W6** (Last verified `commit <sha ในคอมมิตถัดไป>`):
+(1) **ปิดบิล POS ของการจอง CMS ที่จ่ายด้วยบัตร** (`PosService.MarkSourceBookingCompletedAsync` ← `CompleteOrderAsync` ในธุรกรรมเดียวกัน): สถานะในสมุด (`CreditClassBooking.ExternalRef` · `CreditBookingLink.LedgerStatusOf`)
+→ `CreditBookingLink.ForPosClose`: กันไว้ ⇒ `ICreditBookingLedger.SettleAsync(attended)` (Dr 21713 · Cr รายได้ วันเรียน) แล้วประทับเสร็จ · ตัดแล้ว ⇒ ไม่ตัดซ้ำ · คืนเครดิตแล้ว ⇒ บล็อก (ข้อความบอกทางไปต่อ) ·
+ล้ม = ปิดบิลไม่สำเร็จทั้งก้อน · เปิดบิลจากคิวมีหมายเหตุ "ชำระด้วยบัตรคอร์ส" · ยกเลิกบิลที่ตัดเครดิตแล้ว **ไม่ถอย** "เสร็จสิ้น" (`PosVoidRevertsCompleted`) · เดิมประทับเสร็จตรง ๆ (ยอด 0) ⇒ เครดิตค้างจอง/21713 ไม่รับรู้ ·
+(2) **ยกเลิกใบลดหนี้คืนบางส่วน** (`CreditPassDocumentHook.RestorePartialRefundAsync`): แถว `Adjust` ประทับ `CreditLedgerEntries.DocumentId` (แถวเก่า ⇒ จับจากหมายเหตุ "ใบลดหนี้ {เลข} คืนเงินบางส่วน") ⇒
+`CreditPassDocumentRule.OnVoidPartialCreditNote` ใต้ล็อกบัตร: บัตร Active/ใช้หมด ⇒ `CreditsTotal += เครดิต` · `RefundedAmount −= ยอด` · แถว `AdjustReversal` (ใช้หมด ⇒ เปิดกลับ) · บัตรปิด/หมดอายุ ⇒ บล็อก 409 ·
+(3) คืนบางส่วนต้อง **ยอด = k × ราคาต่อเครดิตคงเหลือ (±0.01)** · ราคาคงเหลือ = ส่วนที่ยังไม่รับรู้ ÷ เครดิตที่ยังไม่ใช้ (`PassFacts.RefundUnitPrice` — เดิม floor + สัญญา÷ทั้งหมด ⇒ คืนเงินเกินมูลค่าเครดิตที่ตัด) ·
+การจองค้างไม่บล็อกคืนบางส่วนแล้ว (คงเหลือต้อง > ใช้แล้ว+จองไว้ · คืนทั้งก้อนยังบล็อก) · (4) ปุ่มคืนตามจำนวนเครดิตส่งเครดิตเข้า `RefundPreview(credits:)` ตรง · `CreditsRefundable` เผื่อ 0.0001 ก่อน floor ·
+(หมายเหตุ) ปุ่มคืนเงินไม่สร้างใบลดหนี้ให้บริษัทไม่จด VAT / บริการยกเว้น §81 (`RefundDocumentProblem` — §86/10 เฉพาะผู้ออกใบกำกับ) · ดัชนี `IX_CreditClassBookings_Company_ExternalRef_Any`
 
 **ตาราง**: CreditPackages · CreditPasses · CreditLedgerEntries · CreditClassSessions · CreditClassBookings (`DatabaseMigrationHelper.CourseCreditStatements`)
 
