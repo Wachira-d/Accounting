@@ -781,4 +781,14 @@ public class PerLineWhtTests
         Assert.Equal(2m, ok.Lines[1].RatePercent);
         Assert.Equal(10m, ok.Lines[1].WhtAmount);
     }
+
+    [Fact]
+    public void Source_document_wht_uses_its_own_rate_even_when_credit_note_is_thb()
+    {
+        // ฝ่ายค้านรอบ 2 (W7) ข้อ 2: ใบต้นทาง USD (35) · ใบลดหนี้บาท ⇒ ยอดใบต้นทางต้องแปลงที่ 35 ไม่ใช่ 1
+        Assert.Equal(1m, PerLineWht.CreditNoteWhtRate(1m, 35m, Array.Empty<decimal?>()));
+        Assert.Equal(35m, PerLineWht.CreditNoteWhtRate(35m, 35m, Array.Empty<decimal?>()));
+        Assert.Equal(34.5m, PerLineWht.CreditNoteWhtRate(35m, 35m, new decimal?[] { 34.5m }));
+        Assert.Equal(1m, PerLineWht.CreditNoteWhtRate(1m, 1m, new decimal?[] { 34.5m }));   // ใบต้นทางบาท ⇒ 1 เดิมทุกสตางค์
+    }
 }

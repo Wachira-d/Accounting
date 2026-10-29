@@ -343,7 +343,7 @@ public partial class PosService
             // รอบ 208 (ฝ่ายค้าน W6 ข้อ 1 · BLOCKING): การจองที่จ่ายด้วยบัตรคอร์ส (ยอด 0) — เดิมผ่านเงื่อนไข "ไม่มีเงินผูก" แล้วประทับเสร็จตรง ๆ
             // ⇒ เครดิตค้าง "จองไว้" · 21713 ไม่ถูกรับรู้ · ตอนนี้ตัดเครดิต (มาเรียน) ผ่านสมุดเครดิตในธุรกรรมเดียวกับการปิดบิล (ล้ม = ปิดบิลไม่สำเร็จทั้งก้อน)
             var creditAction = b == null ? CreditBookingLink.PosCloseAction.NotCredit
-                : CreditBookingLink.ForPosClose(await CreditLedgerStatusAsync(companyId, bid));
+                : CreditBookingLink.ForPosClose(await CreditLedgerStatusAsync(companyId, bid), order.NetAmount);
             if (b != null && creditAction != CreditBookingLink.PosCloseAction.NotCredit)
             {
                 if (creditAction == CreditBookingLink.PosCloseAction.Refuse)
@@ -356,7 +356,16 @@ public partial class PosService
                 {
                     var ledger = _services?.GetService(typeof(ICreditBookingLedger)) as ICreditBookingLedger
                         ?? throw new BusinessRuleException("การจองนี้ชำระด้วยบัตรคอร์ส แต่ระบบนี้ไม่ได้เปิดโมดูลคอร์ส/เครดิต — ปิดงานที่หน้าการจองแทน", CreditBookingLink.RuleCode);
-                    await ledger.SettleAsync(companyId, CreditBookingLink.Ref(bid), attended: true, userId);
+                    try
+                    {
+                        await ledger.SettleAsync(companyId, CreditBookingLink.Ref(bid), attended: true, userId);
+                    }
+                    catch (KeyNotFoundException)
+                    {
+                        // ฝ่ายค้านรอบ 2 (W6) ข้อ 3: หน้าคอร์สตัดเครดิตไปก่อนในช่วงเดียวกัน ⇒ อ่านสถานะใหม่ · ใช้แล้ว = ไปต่อ (ไม่ตัดซ้ำ) · นอกนั้นล้มดังเดิม
+                        if (CreditBookingLink.ForPosClose(await CreditLedgerStatusAsync(companyId, bid), order.NetAmount) != CreditBookingLink.PosCloseAction.AlreadySettled)
+                            throw;
+                    }
                 }
                 if (b.Status is BookingStatus.InProgress or BookingStatus.Confirmed or BookingStatus.Pending)
                 {

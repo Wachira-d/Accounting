@@ -71,11 +71,12 @@ public static class CreditBookingLink
     /// <summary>ปิดบิล POS ของการจอง CMS ⇒ ต้องทำอะไรกับสมุดเครดิต · <paramref name="ledgerStatus"/> = <see cref="LedgerStatusOf"/> ·
     /// กันไว้ ⇒ <b>ตัดเครดิต (มาเรียน) ในธุรกรรมเดียวกับการปิดบิล</b> · ตัดไปแล้ว (ปิดจากหน้าการจอง/หน้าคอร์ส) ⇒ ไม่ตัดซ้ำ ·
     /// คืนเครดิตไปแล้ว ⇒ ปฏิเสธ (ให้บริการโดยไม่มีทั้งเงินและเครดิต) · ไม่ใช่การจองด้วยบัตร ⇒ กติกาเดิมทุกข้อ</summary>
-    public static PosCloseAction ForPosClose(CreditBookingStatus? ledgerStatus) => ledgerStatus switch
+    /// <para>รอบ 208 ฝ่ายค้านรอบ 2 ข้อ 1: คืนเครดิตแล้ว แต่บิลมีเงินจริง (ร้านให้จ่ายเงินสดแทนบัตร · แก้ราคาบิล) ⇒ ไม่ใช่ "ไม่มีทั้งเงินและเครดิต" ⇒ ปิดแบบบิลปกติ</para>
+    public static PosCloseAction ForPosClose(CreditBookingStatus? ledgerStatus, decimal billNet = 0m) => ledgerStatus switch
     {
         null => PosCloseAction.NotCredit,
         CreditBookingStatus.Booked => PosCloseAction.Settle,
-        CreditBookingStatus.Cancelled => PosCloseAction.Refuse,
+        CreditBookingStatus.Cancelled => billNet > 0m ? PosCloseAction.NotCredit : PosCloseAction.Refuse,
         _ => PosCloseAction.AlreadySettled,   // Attended · NoShow · LateCancelled = ใช้เครดิตแล้ว
     };
 

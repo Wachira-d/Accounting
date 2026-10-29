@@ -55,6 +55,9 @@ public class CreditBookingLinkTests
         Assert.Equal(CreditBookingLink.PosCloseAction.AlreadySettled, CreditBookingLink.ForPosClose(CreditBookingStatus.NoShow));
         Assert.Equal(CreditBookingLink.PosCloseAction.AlreadySettled, CreditBookingLink.ForPosClose(CreditBookingStatus.LateCancelled));
         Assert.Equal(CreditBookingLink.PosCloseAction.Refuse, CreditBookingLink.ForPosClose(CreditBookingStatus.Cancelled));
+        // ฝ่ายค้านรอบ 2 ข้อ 1 (ทิศตรงข้าม): คืนเครดิตแล้วแต่บิลมีเงินจริง ⇒ ปิดแบบบิลปกติ ไม่ปฏิเสธ
+        Assert.Equal(CreditBookingLink.PosCloseAction.NotCredit, CreditBookingLink.ForPosClose(CreditBookingStatus.Cancelled, 800m));
+        Assert.Equal(CreditBookingLink.PosCloseAction.Refuse, CreditBookingLink.ForPosClose(CreditBookingStatus.Cancelled, 0m));
         Assert.Contains("BK-1", CreditBookingLink.PosCloseRefusal("BK-1"));
         // ทิศตรงข้าม: การจองที่ไม่ได้จ่ายด้วยบัตร ⇒ กติกาเดิมทุกข้อ
         Assert.Equal(CreditBookingLink.PosCloseAction.NotCredit, CreditBookingLink.ForPosClose(null));

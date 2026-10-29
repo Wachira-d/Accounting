@@ -1184,7 +1184,9 @@ public class WithholdingTaxCertService : IWithholdingTaxCertService
         var cnFx = PerLineWht.CreditNoteWhtRate(cn.ExchangeRate, src.ExchangeRate, certs.Select(c => c.ExchangeRateUsed));
         var cnBaht = PerLineWht.ForDocument(cn, cnFx);
         var cnWhtThb = PerLineWht.DocumentWhtThb(cn.WithholdingTaxAmount, cnFx);
-        var srcWhtThb = PerLineWht.DocumentWhtThb(src.WithholdingTaxAmount, cnFx);
+        // ฝ่ายค้านรอบ 2 (W7) ข้อ 2: ยอดใบต้นทางแปลงด้วยอัตราของใบต้นทาง (ตัวตัดสินเดียวกัน) — ใบลดหนี้บาทอ้างใบ USD ได้ cnFx = 1 ⇒ เดิม 30 USD ถูกนับเป็น 30 บาท
+        var srcFx = PerLineWht.CreditNoteWhtRate(src.ExchangeRate, src.ExchangeRate, certs.Select(c => c.ExchangeRateUsed));
+        var srcWhtThb = PerLineWht.DocumentWhtThb(src.WithholdingTaxAmount, srcFx);
         var prefix = $"ใบลดหนี้ {cn.DocumentNumber} ลดภาษีหัก ณ ที่จ่าย {cnWhtThb:N2} บาท";
         if (certs.Count == 0 || src.BalanceDue > 0.01m)
         {
