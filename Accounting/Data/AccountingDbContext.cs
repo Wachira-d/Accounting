@@ -3338,7 +3338,6 @@ public class AccountingDbContext : DbContext
             e.Property(bs => bs.CancellationFeePercent).HasPrecision(5, 2);
             e.Property(bs => bs.Currency).HasMaxLength(3);
             e.Property(bs => bs.Category).HasMaxLength(128);
-            e.Property(bs => bs.Tags).HasMaxLength(500);
             e.Property(bs => bs.HalfDaySplitTime).HasMaxLength(8);
             e.Property(bs => bs.CapacityGroup).HasMaxLength(64);
             e.HasOne(bs => bs.Site).WithMany(s => s.BookingServices).HasForeignKey(bs => bs.SiteId).OnDelete(DeleteBehavior.Cascade);
