@@ -504,7 +504,7 @@ public class CmsCustomerService : ICmsCustomerService
         }
         if (form.SendAutoReply)
         {
-            var replyTo = CmsContactResolver.NormalizeEmail(fields.Email);
+            var replyTo = CmsFormLeadMapper.SingleReplyAddress(fields.Email);   // ที่อยู่เดียว (กันขยายสแปม)
             if (replyTo == null) notify.Add("ตอบกลับอัตโนมัติ: ไม่มีอีเมลผู้กรอก");
             else
             {
@@ -520,9 +520,8 @@ public class CmsCustomerService : ICmsCustomerService
         return new FormSubmissionResponse
         {
             Id = sub.Id, FormId = formId, FormName = form.Name,
-            DataJson = sub.DataJson, Status = sub.Status,
-            ErpDocumentId = sub.ErpDocumentId, LeadId = sub.LeadId, NotifyResult = sub.NotifyResult,
-            IpAddress = sub.IpAddress, CreatedAt = sub.CreatedAt
+            // ฝ่ายค้านรอบ 209 (security ข้อ 3): ทางนิรนาม — ไม่คืนผลแจ้งร้าน (อีเมลผู้รับฝั่งร้าน) · ข้อมูลที่กรอก · IP (พนักงานดูได้ที่หน้าคำตอบ)
+            Status = sub.Status, CreatedAt = sub.CreatedAt
         };
     }
 

@@ -36,4 +36,28 @@ public class CmsRound209Tests
         Assert.NotNull(CreditBookingLink.ActorPayWithCreditProblem(" ", null));
         Assert.Null(CreditBookingLink.ActorPayWithCreditProblem("3f2b0c1e-0000-0000-0000-000000000001", null));
     }
+
+    // ═════════ ฝ่ายค้านรอบ 209 (security) ═════════
+
+    [Fact]
+    public void Dsr_submission_match_is_whole_token_not_substring()
+    {
+        const string json = "{\"email\":\"jimbob@x.com\",\"phone\":\"081-234-5678\"}";
+        Assert.False(CmsPdpaErasure.SubmissionMentions(json, "bob@x.com", null));       // เดิม substring ⇒ true (ลบของคนอื่น)
+        Assert.True(CmsPdpaErasure.SubmissionMentions(json, "jimbob@x.com", null));
+        Assert.True(CmsPdpaErasure.SubmissionMentions(json, null, CmsContactResolver.NormalizePhone("0812345678")));
+        Assert.False(CmsPdpaErasure.SubmissionMentions(json, null, CmsContactResolver.NormalizePhone("0812345679")));
+    }
+
+    [Theory]
+    [InlineData("a@x.com", "a@x.com")]
+    [InlineData(" A@X.com ", "a@x.com")]
+    [InlineData("a@x.com,b@y.com", null)]
+    [InlineData("a@x.com;b@y.com", null)]
+    [InlineData("a@x.com b@y.com", null)]
+    [InlineData("Name <a@x.com>", null)]
+    [InlineData("not-an-email", null)]
+    [InlineData(null, null)]
+    public void Auto_reply_accepts_single_address_only(string? raw, string? expected)
+        => Assert.Equal(expected, CmsFormLeadMapper.SingleReplyAddress(raw));
 }

@@ -27,7 +27,8 @@ public partial class CmsBookingService
         if (request.CustomerId is not Guid customerId)
             throw new BusinessRuleException("จองด้วยบัตรคอร์สต้องระบุลูกค้า (บัญชีลูกค้าของเว็บไซต์ที่ผูกผู้ติดต่อ) — แขกไม่ล็อกอินใช้บัตรไม่ได้", CreditBookingLink.RuleCode);
         var contactId = await _db.SiteCustomers.AsNoTracking()
-            .Where(c => c.Id == customerId && c.CompanyId == companyId)
+            // ฝ่ายค้านรอบ 209 (security note): บัญชีที่ปิดแล้ว/ของเว็บอื่นใช้บัตรไม่ได้ (โทเคนยังไม่หมดอายุ 24 ชม. ก็ตาม)
+            .Where(c => c.Id == customerId && c.CompanyId == companyId && c.SiteId == booking.SiteId && c.IsActive)
             .Select(c => c.ContactId).FirstOrDefaultAsync();
         if (contactId is not Guid cid)
             throw new BusinessRuleException("ลูกค้ารายนี้ยังไม่ผูกผู้ติดต่อในระบบบัญชี — ผูกผู้ติดต่อก่อนจึงใช้บัตรคอร์สได้", CreditBookingLink.RuleCode);

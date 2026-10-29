@@ -19,14 +19,7 @@ public partial class PdpaService
         List<SiteCustomer> Customers, List<SiteOrder> Orders, List<SiteBooking> Bookings,
         List<CmsLead> Leads, List<SiteFormSubmission> Submissions, List<PdpaConsentRecord> Consents);
 
-    private static readonly Regex PhoneToken = new(@"\+?\d[\d\-\s]{7,}\d", RegexOptions.Compiled);
 
-    private static bool SubmissionMentions(string? json, string? email, string? phone)
-    {
-        if (string.IsNullOrEmpty(json)) return false;
-        if (email != null && json.Contains(email, StringComparison.OrdinalIgnoreCase)) return true;
-        return phone != null && PhoneToken.Matches(json).Any(m => CmsContactResolver.NormalizePhone(m.Value) == phone);
-    }
 
     private async Task<CmsSubjectRows> LoadCmsSubjectRowsAsync(Guid companyId, string? emailRaw, string? phoneRaw, bool track, CancellationToken ct)
     {
@@ -76,7 +69,7 @@ public partial class PdpaService
                     || EF.Functions.ILike(s.DataJson, "%" + e + "%")
                     || s.DataJson.Contains(tail)))
                 .ToListAsync(ct))
-            .Where(s => (s.CustomerId is Guid cid && custIds.Contains(cid)) || SubmissionMentions(s.DataJson, email, phone)).ToList();
+            .Where(s => (s.CustomerId is Guid cid && custIds.Contains(cid)) || CmsPdpaErasure.SubmissionMentions(s.DataJson, email, phone)).ToList();
 
         var consents = await Q(_db.Set<PdpaConsentRecord>()).Where(r => r.CompanyId == companyId
                 && r.SubjectContact != null && (r.SubjectContact == e || r.SubjectContact == (phone ?? "#no-phone#")))

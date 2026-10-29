@@ -15,6 +15,20 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class CmsPdpaErasure
 {
+    private static readonly System.Text.RegularExpressions.Regex EmailToken =
+        new(@"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex PhoneToken =
+        new(@"\+?\d[\d\-\s]{7,}\d", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>คำตอบฟอร์มนี้เป็นของเจ้าของข้อมูลไหม — เทียบ<b>ทั้งโทเคน</b> (อีเมล normalize เท่ากันพอดี · เบอร์ normalize เท่ากันพอดี) ·
+    /// ฝ่ายค้านรอบ 209 (security ข้อ 5): เดิม substring ⇒ bob@x.com ตรง jimbob@x.com ⇒ ลบ/ส่งออกคำตอบของบุคคลอื่น (ม.33 ย้อนไม่ได้)</summary>
+    public static bool SubmissionMentions(string? json, string? normalizedEmail, string? normalizedPhone)
+    {
+        if (string.IsNullOrEmpty(json)) return false;
+        if (normalizedEmail != null && EmailToken.Matches(json).Any(m => CmsContactResolver.NormalizeEmail(m.Value) == normalizedEmail)) return true;
+        return normalizedPhone != null && PhoneToken.Matches(json).Any(m => CmsContactResolver.NormalizePhone(m.Value) == normalizedPhone);
+    }
+
     public const string RuleCode = "PDPA-33-CMS-ERASE";
     public const string Anonymized = "[ANONYMIZED]";
     public const int RetentionYears = 5;

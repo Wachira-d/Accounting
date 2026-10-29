@@ -11,6 +11,16 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class SiteOrderPublic
 {
+    /// <summary>ฝ่ายค้านรอบ 209 (security ข้อ 2): คำตอบ "สร้างออเดอร์" ให้ผู้เรียกที่ไม่ใช่พนักงาน — เหลือเฉพาะที่หน้าเว็บใช้ (โทเคนหน้าสถานะ · เลข · ยอด) ·
+    /// ไม่มีหมายเหตุภายใน (ประทับส่งแจ้งเตือนล้มมีอีเมลร้าน/ข้อความ error) · ไม่มีที่อยู่/อีเมล/เลขภาษี/สลิป (คีย์กันสั่งซ้ำซ้ำ ⇒ คืนออเดอร์เดิม — ห้ามเปิด PII ให้ผู้ถือคีย์)</summary>
+    public static Accounting.Models.DTOs.Cms.OrderResponse ForGuestCreate(Accounting.Models.DTOs.Cms.OrderResponse full) => new()
+    {
+        Id = full.Id, OrderNumber = full.OrderNumber, Status = full.Status, PublicToken = full.PublicToken,
+        Currency = full.Currency, SubTotal = full.SubTotal, DiscountAmount = full.DiscountAmount, ShippingAmount = full.ShippingAmount,
+        VatAmount = full.VatAmount, TotalAmount = full.TotalAmount, AmountDueNow = full.AmountDueNow, NextPayableAmount = full.NextPayableAmount,
+        CreatedAt = full.CreatedAt,
+    };
+
     public const string RuleCode = "CMS-ORDER-PUBLIC";
     public const string IdempotencyHeader = "Idempotency-Key";
     public const int IdempotencyKeyMinLength = 16;

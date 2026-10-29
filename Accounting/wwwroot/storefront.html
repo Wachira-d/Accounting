@@ -1546,7 +1546,8 @@
         let idemKey = null;
         try { idemKey = sessionStorage.getItem(idemStore); } catch (_) {}
         if (!idemKey) {
-          idemKey = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g, '');
+          // ฝ่ายค้านรอบ 209: คีย์ต้องเดาไม่ได้ — สุ่มด้วย crypto เท่านั้น (ไม่มี Date.now/Math.random สำรอง)
+          idemKey = (crypto.randomUUID ? crypto.randomUUID() : Array.from(crypto.getRandomValues(new Uint8Array(24)), b => b.toString(16).padStart(2, '0')).join('')).replace(/[^A-Za-z0-9_-]/g, '');
           try { sessionStorage.setItem(idemStore, idemKey); } catch (_) {}
         }
         body.idempotencyKey = idemKey;

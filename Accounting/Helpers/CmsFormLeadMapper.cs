@@ -21,6 +21,20 @@ public sealed record CmsFormFields(string? Name, string? Email, string? Phone, s
 /// </summary>
 public static class CmsFormLeadMapper
 {
+    /// <summary>อีเมลผู้กรอกสำหรับตอบกลับอัตโนมัติ — <b>ที่อยู่เดียว</b>เท่านั้น (ฝ่ายค้านรอบ 209 security ข้อ 4: "a@x,b@y" ⇒ MailAddressCollection รับหลายปลายทาง
+    /// ⇒ ใช้ร้านส่งสแปม) · มี , ; ช่องว่าง หรือ parse ไม่ผ่าน ⇒ null</summary>
+    public static string? SingleReplyAddress(string? raw)
+    {
+        var e = raw?.Trim();
+        if (string.IsNullOrEmpty(e) || e.IndexOfAny(new[] { ',', ';', ' ', '\t', '\r', '\n', '<', '>' }) >= 0) return null;
+        try
+        {
+            var a = new System.Net.Mail.MailAddress(e);
+            return a.Address == e && e.Contains('@') ? e.ToLowerInvariant() : null;
+        }
+        catch (FormatException) { return null; }
+    }
+
     public const string RuleCode = "CMS-FORM-LEAD";
 
     private static readonly string[] NameKeys = { "name", "fullname", "full_name", "ชื่อ", "ชื่อ-นามสกุล" };
