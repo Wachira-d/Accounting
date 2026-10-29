@@ -853,7 +853,8 @@ public partial class CmsCommerceService : ICmsCommerceService
         // ★ ทีม Q (คำตัดสินข้อ 156) — โหมดมัดจำ: จัดส่ง/ส่งมอบ = จุดส่งมอบสินค้า (§78(1)) ⇒ ใบขายส่วนที่เหลือ (หักมัดจำที่ออกใบกำกับแล้ว) + ตัดสต็อกครั้งเดียว
         // ก่อนเปลี่ยนสถานะ · ล้ม = ประทับบนออเดอร์ + ตอบผู้กดด้วยเหตุ (สถานะไม่เปลี่ยน · กดซ้ำทำขั้นที่ค้างต่อ ไม่ออกใบซ้ำ/ไม่ตัดสต็อกซ้ำ) ·
         // โหมดเดิม = ไม่แตะ (พฤติกรรมเดิม)
-        if (Accounting.Helpers.SiteOrderDepositInvoicing.SettlesOnHandover(order.DepositInvoicingMode, request.Status)
+        // รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 3: โหมดเดิมที่ยังไม่มีใบขาย (เก็บเงินปลายทาง/ชำระเมื่อรับ) ⇒ ออกใบขายลงวันส่งมอบ + ตัดสต็อกด้วยเส้นเดียวกัน
+        if (Accounting.Helpers.SiteOrderDepositInvoicing.SettlesOnHandover(order.DepositInvoicingMode, request.Status, order.ErpDocumentId.HasValue)
             && order.Status is not (SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded or SiteOrderStatus.PartiallyRefunded))
         {
             var (handoverFailures, handoverNotes) = await SettleOnHandoverAsync(companyId, siteId, order, userId);
@@ -1314,8 +1315,10 @@ public partial class CmsCommerceService : ICmsCommerceService
     }
 
     /// <summary>ทีม Q — ใบขายส่วนที่เหลือของออเดอร์ที่ออกใบรับเงินมัดจำไปแล้ว: ผู้ติดต่อเดียวกับใบมัดจำ (ตัดชำระ/หักฐานต้องเป็นลูกค้ารายเดียวกัน)
-    /// + หักฐานมัดจำที่ออกใบกำกับแล้ว (<c>DepositBaseDeducted</c> + เลขอ้างอิง ⇒ อนุมัติแล้วรับรู้มัดจำเอง — เส้นเดิมของเช็คเอาต์ที่พัก)</summary>
-    private sealed record FinalInvoiceDeduction(Guid ContactId, string? DepositRef, decimal DepositBase);
+    /// + หักฐานมัดจำที่ออกใบกำกับแล้ว (<c>DepositBaseDeducted</c> + เลขอ้างอิง ⇒ อนุมัติแล้วรับรู้มัดจำเอง — เส้นเดิมของเช็คเอาต์ที่พัก)
+    /// <para>รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 4: <c>BranchId</c> = สาขาของใบมัดจำ ⇒ ใบส่วนที่เหลือออกสาขาเดียวกัน (เอกสารลูกสืบทอด · แบบเดียวกับการจอง
+    /// <c>CmsBookingService.Payment</c>) — เดิมใช้สาขาของเว็บ ณ ตอนส่งมอบ ⇒ เว็บย้ายสาขาระหว่างทาง = หักมัดจำข้ามสาขา</para></summary>
+    private sealed record FinalInvoiceDeduction(Guid ContactId, string? DepositRef, decimal DepositBase, Guid? BranchId = null);
 
     private async Task<Guid?> SyncOrderToErpCoreAsync(Guid companyId, Guid siteId, Guid orderId, FinalInvoiceDeduction? deduction)
     {
@@ -1371,7 +1374,8 @@ public partial class CmsCommerceService : ICmsCommerceService
             DepositAppliedRef: deduction is { DepositBase: > 0m } ? deduction.DepositRef : null,
             DepositBaseDeducted: deduction is { DepositBase: > 0m } ? deduction.DepositBase : null,
             // รอบ 209 P6 (ฐ): สาขาของเว็บ ⇒ สาขาที่ออกใบ (§86/4(2)) · เว็บไม่ผูกสาขา = null = สำนักงานใหญ่เดิม
-            BranchId: await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId)
+            // รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 4: หักมัดจำ ⇒ สาขาของใบมัดจำ (สืบทอด · null = สำนักงานใหญ่ตามใบมัดจำ ไม่แปลงเป็นสาขาเว็บ)
+            BranchId: deduction is { DepositBase: > 0m } ? deduction.BranchId : await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId)
         );
 
         // รอบ 205 ทีม W1 (R-04): ต้นทางเดียวกับใบมัดจำของออเดอร์ ⇒ ใบร่างไม่กินโควตาจนอนุมัติ (DocumentQuotaPolicy.DefersCountUntilApproval)
@@ -1889,7 +1893,10 @@ public partial class CmsCommerceService : ICmsCommerceService
         if (roundingDelta != 0m)
             order.InternalNotes = Accounting.Helpers.DepositPolicyResolver.AppendNoteOnce(order.InternalNotes,
                 $"ปัดเศษ VAT รายใบ: ใบมัดจำ + ใบขายส่วนที่เหลือ รวม{(roundingDelta > 0 ? "มากกว่า" : "น้อยกว่า")}ยอดเต็ม {Math.Abs(roundingDelta):N2} (ส่วนต่างอยู่ที่ VAT · ตามกฎ VAT คิดรายใบ)");
-        return new FinalInvoiceDeduction(deposits[0].ContactId, depositPlan.DeductionRef, depositPlan.BaseDeducted);
+        var depositBranchId = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == deposits[0].Id && d.CompanyId == companyId)
+            .Select(d => d.BranchId).FirstOrDefaultAsync();
+        return new FinalInvoiceDeduction(deposits[0].ContactId, depositPlan.DeductionRef, depositPlan.BaseDeducted, depositBranchId);
     }
 
     /// <summary>ส่งมอบ/จัดส่ง (โหมดมัดจำ) ⇒ ใบขายส่วนที่เหลือ + ตัดสต็อกครั้งเดียว ·

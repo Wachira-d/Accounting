@@ -139,10 +139,14 @@ public static class SiteOrderDepositInvoicing
         return new(SiteOrderPaymentStep.DepositReceipt, null);
     }
 
-    /// <summary>เปลี่ยนสถานะเป็น <paramref name="newStatus"/> แล้วต้องออกใบส่วนที่เหลือ + ตัดสต็อกไหม — เฉพาะโหมดใหม่ ·
-    /// โหมดเดิม = false เสมอ (พฤติกรรมเดิม: ส่งมอบไม่แตะเอกสาร/สต็อก) · ใบขายมีแล้ว ⇒ ยังต้องเรียกเพื่อ "ตัดสต็อกที่ค้าง" (ทำซ้ำได้)</summary>
-    public static bool SettlesOnHandover(string? orderMode, SiteOrderStatus newStatus)
-        => DepositInvoicingMode.OfOrder(orderMode) == DepositInvoicingMode.DepositTaxInvoice && IsHandoverStatus(newStatus);
+    /// <summary>เปลี่ยนสถานะเป็น <paramref name="newStatus"/> แล้วต้องออกใบขาย (ส่วนที่เหลือ) + ตัดสต็อกไหม ·
+    /// โหมดมัดจำ = ทุกครั้งที่ส่งมอบ (ใบขายมีแล้ว ⇒ ยังต้องเรียกเพื่อ "ตัดสต็อกที่ค้าง" — ทำซ้ำได้) ·
+    /// <b>โหมดเดิม</b> (รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 3): ส่งมอบ<b>ก่อนมีใบขาย</b> (เก็บเงินปลายทาง/ชำระเมื่อรับ — DueNow = 0 ⇒ ส่งมอบได้โดยยังไม่รับเงิน) ⇒
+    /// ออกใบขายลงวันส่งมอบ + ตัดสต็อกตอนนั้น (จุดความรับผิด §78(1) = ส่งมอบ ไม่ใช่วันรับเงิน · เดิมใบขายออกวันยืนยันเงินทีหลัง ⇒ ภาษีขายเลื่อนเดือนได้) ·
+    /// รับเงินทีหลัง = บันทึกรับชำระกับใบนั้น (เส้นยืนยันเงินเดิม — มีใบแล้วไม่ออกซ้ำ) · โหมดเดิมที่มีใบขายแล้ว = false (พฤติกรรมเดิม)</summary>
+    public static bool SettlesOnHandover(string? orderMode, SiteOrderStatus newStatus, bool hasSalesDocument = true)
+        => IsHandoverStatus(newStatus)
+           && (DepositInvoicingMode.OfOrder(orderMode) == DepositInvoicingMode.DepositTaxInvoice || !hasSalesDocument);
 
     public const string DraftDepositDiscardedNote =
         "ใบรับเงินมัดจำร่าง (อนุมัติไม่สำเร็จ) ไม่ได้ถูกหักในใบขายที่ออกแล้ว — ระบบลบใบร่างและบันทึกเงินงวดนั้นเป็นรับชำระของใบขายแทน (กัน VAT ซ้ำ)";

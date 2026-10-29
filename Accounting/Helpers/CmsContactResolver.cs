@@ -8,6 +8,8 @@ namespace Accounting.Helpers;
 /// <param name="LinkedContactId">ผู้ติดต่อที่ผูกไว้แล้ว (<c>SiteCustomer.ContactId</c>) — ชนะทุกกติกาเมื่อแถวยังใช้ได้</param>
 /// <param name="CreatedBy">ป้ายผู้สร้างแถวใหม่ (เช่น "storefront-order") — ใช้เมื่อต้องสร้างเท่านั้น</param>
 /// <param name="FallbackName">ชื่อเมื่อไม่มีทั้งชื่อบริษัทและชื่อคน (เช่น "Online Guest")</param>
+/// <param name="BuyerTaxIdExplicit">ผู้ซื้อกรอกเลขผู้เสียภาษีเพื่อขอใบกำกับในเอกสารใบนี้ (<c>SiteOrder.BillingTaxId</c>) — รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 5:
+/// จับคู่ด้วยเลขภาษี+สาขาเท่านั้น (ไม่ถอยอีเมล/เบอร์ · ไม่เติมเลขลงแถวคนอื่น) และผู้ติดต่อที่ผูกไว้ต้องถือเลข+สาขาเดียวกันจึงชนะ</param>
 public sealed record CmsContactInput(
     Guid? LinkedContactId,
     string? TaxId,
@@ -18,7 +20,12 @@ public sealed record CmsContactInput(
     string? CompanyName,
     string? Address,
     string CreatedBy,
-    string FallbackName = "ลูกค้าออนไลน์");
+    string FallbackName = "ลูกค้าออนไลน์",
+    bool BuyerTaxIdExplicit = false)
+{
+    /// <summary>โหมดเข้ม: ขอใบกำกับพร้อมเลขภาษีของผู้ซื้อ ⇒ ผู้ซื้อในใบกำกับ (§86/4(3)) ตัดสินด้วยเลข+สาขาเท่านั้น</summary>
+    public bool StrictTaxKey => BuyerTaxIdExplicit && !string.IsNullOrWhiteSpace(TaxId);
+}
 
 /// <summary>จับคู่ได้ด้วยอะไร (log/เทสต์ · <see cref="Created"/> = สร้างแถวใหม่)</summary>
 public enum CmsContactMatchKind { None, Linked, TaxKey, Email, Phone, Created }
@@ -44,6 +51,8 @@ public readonly record struct CmsContactResolution(Guid? ContactId, CmsContactMa
 ///   — มีเลขภาษีแต่เลขนั้นมีเจ้าของแล้วคนละสาขา ⇒ ไม่ถอยมาอีเมล/เบอร์ (ได้แถวสาขาอื่นของนิติบุคคลเดียวกัน)</item>
 /// <item>เบอร์โทร (ตัวเลขล้วน · +66 → 0 · ต้องยาว ≥ 9 หลัก) เทียบเท่ากันทั้งเบอร์บนชุดเดียวกัน</item>
 /// <item>แถวที่จับได้ด้วยอีเมล/เบอร์ผ่าน <see cref="ContactTaxBranchKey.AdoptTaxId"/> (Reject = ห้ามใช้ ⇒ สร้างใหม่)</item>
+/// <item><b>โหมดเข้ม</b> (<see cref="CmsContactInput.StrictTaxKey"/> — ขอใบกำกับพร้อมเลขภาษี · รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 5): ข้อ 1 ชนะเฉพาะแถวที่ถือเลข+สาขาเดียวกัน ·
+///   ข้าม 3–5 (ไม่จับด้วยอีเมล/เบอร์ · ไม่เติมเลขลงแถวอื่น) ⇒ ไม่พบเลข+สาขา = สร้างใหม่</item>
 /// <item>ไม่พบ ⇒ สร้างผู้ติดต่อใหม่ (ชนิด/สาขาผ่าน <see cref="ContactTypeResolver.ResolveWithBranch"/> · ป้ายเลขภาษีไม่ผ่าน checksum)</item>
 /// </list>
 /// </summary>
@@ -78,13 +87,21 @@ public static class CmsContactResolver
         var rows = (candidates ?? Array.Empty<Contact>()).Where(c => !c.IsDeleted && c.IsActive)
             .OrderBy(c => c.CreatedAt).ThenBy(c => c.Id).ToList();
 
-        if (input.LinkedContactId is Guid linked && rows.FirstOrDefault(c => c.Id == linked) is Contact l)
+        var strict = input.StrictTaxKey;
+        // รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 5(b): ผู้ซื้อกรอกเลขภาษีเองในใบนี้ ⇒ ผู้ติดต่อที่ผูกไว้ชนะเฉพาะเมื่อถือเลข+สาขาเดียวกัน
+        // (เดิมผูกไว้ชนะเสมอ ⇒ ใบกำกับออกชื่อ/เลขของผู้ติดต่อเดิม ทั้งที่ผู้ซื้อขอใบในนามนิติบุคคลอื่น)
+        if (input.LinkedContactId is Guid linked && rows.FirstOrDefault(c => c.Id == linked) is Contact l
+            && (!strict || ContactTaxBranchKey.Pick(new[] { new ContactKeyCandidate(l.Id, l.TaxId, l.BranchCode) },
+                input.TaxId, input.BranchCode).ContactId == l.Id))
             return new CmsContactDecision(l, CmsContactMatchKind.Linked);
 
         var taxKey = ContactTaxBranchKey.Pick(rows.Select(c => new ContactKeyCandidate(c.Id, c.TaxId, c.BranchCode)),
             input.TaxId, input.BranchCode);
         if (taxKey.ContactId is Guid keyId)
             return new CmsContactDecision(rows.First(c => c.Id == keyId), CmsContactMatchKind.TaxKey);
+        // ข้อ 5(a): ขอใบกำกับพร้อมเลขภาษี ⇒ ไม่พบเลข+สาขา = สร้างใหม่ — ห้ามถอยอีเมล/เบอร์ และห้าม AdoptTaxId ลงแถวที่จับได้ด้วยข้อมูลที่ใครก็กรอกได้
+        // (เดิม: กรอกอีเมล/เบอร์ของลูกค้ารายอื่น + เลขภาษีของตน ⇒ เลขถูกเติมลงผู้ติดต่อของคนอื่น + ใบกำกับออกชื่อคนอื่น)
+        if (strict) return new CmsContactDecision(null, CmsContactMatchKind.None);
 
         var soft = ContactTaxBranchKey.SoftScope(rows, input.TaxId, taxKey).ToList();
         Contact? hit = null;
@@ -149,14 +166,15 @@ public static class CmsContactResolver
         var candidates = new List<Contact>();
         if (input.LinkedContactId is Guid linkedId)
             candidates.AddRange(await scope.Where(c => c.Id == linkedId).ToListAsync(ct));
-        if (candidates.Count == 0)
+        // ข้อ 5: โหมดเข้มต้องโหลดแถวเลขภาษีเสมอ (ผู้ติดต่อที่ผูกไว้อาจถือเลขอื่น) และไม่โหลดอีเมล/เบอร์ (ไม่ใช้จับคู่)
+        if (candidates.Count == 0 || input.StrictTaxKey)
         {
             candidates.AddRange(await ContactTaxBranchKey.LoadByTaxIdsAsync(scope, companyId, new[] { input.TaxId }, ct));
-            var email = NormalizeEmail(input.Email);
+            var email = input.StrictTaxKey ? null : NormalizeEmail(input.Email);
             if (email != null)
                 candidates.AddRange(await scope.Where(c => c.Email != null && c.Email.Trim().ToLower() == email)
                     .OrderBy(c => c.CreatedAt).Take(50).ToListAsync(ct));
-            var phone = NormalizePhone(input.Phone);
+            var phone = input.StrictTaxKey ? null : NormalizePhone(input.Phone);
             if (phone != null)
             {
                 // ตัวกรองหยาบฝั่งฐาน (4 หลักท้ายติดกันในทุกรูปแบบการพิมพ์เบอร์) แล้วเทียบทั้งเบอร์ในหน่วยความจำ — ไม่ใช่ fuzzy
@@ -205,7 +223,9 @@ public static class CmsContactResolver
         CompanyName: !string.IsNullOrWhiteSpace(order.BillingTaxId) ? order.BillingName : order.Customer?.CompanyName,
         Address: order.BillingAddress ?? order.ShippingAddress,
         CreatedBy: createdBy,
-        FallbackName: "Online Guest");
+        FallbackName: "Online Guest",
+        // รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 5: เลขภาษีที่ผู้ซื้อกรอกในช่องใบกำกับของออเดอร์นี้ = ผู้ซื้อของใบกำกับ ⇒ จับคู่ด้วยเลข+สาขาเท่านั้น
+        BuyerTaxIdExplicit: !string.IsNullOrWhiteSpace(order.BillingTaxId));
 
     /// <summary>ข้อเท็จจริงของการจองเว็บ</summary>
     public static CmsContactInput ForBooking(SiteBooking booking, string createdBy) => new(

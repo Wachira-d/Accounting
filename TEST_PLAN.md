@@ -14,7 +14,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **683 ไฟล์ · 6,901 `[Fact]` + 1,102 `[Theory]` (5,140 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **684 ไฟล์ · 6,921 `[Fact]` + 1,104 `[Theory]` (5,149 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 
@@ -6889,4 +6890,24 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CMS209-P6-13 | **ทิศตรงข้าม** สินค้าไม่มี variant | ราคา/ชื่อ/SKU/สต็อกเดิมทุกตัวอักษร · ส่ง variantId มาเอง ⇒ ปฏิเสธ (ไม่ทิ้งเงียบ) | `Variant_absent_product_unchanged` · `Variant_sku_and_line_name` |
 | CMS209-P6-14 | DSR ลบข้อมูลเว็บ (`POST pdpa/dsr/cms/erase`) ออเดอร์ผูกใบกำกับอายุ < 5 ปี / ไม่ผูก | คงชื่อ/ที่อยู่/เลขภาษีผู้ซื้อ ล้างช่องติดต่อ / ล้างทุกช่อง · ยอดเงินคงไว้ · ความยินยอมถูกถอน (ไม่ลบหลักฐาน) | `Erase_order_*` · `Legal_hold_window_is_five_years` · `Erase_lead_and_booking_respect_hold` · `Erase_customer_closes_every_entry_point` |
 | CMS209-P6-15 | ฟอร์มกำหนดเองติ๊ก "ส่งเข้าระบบ" + อีเมลแจ้ง | สร้าง `CmsLead` (ไม่สร้าง Document ตรง) · แจ้งร้าน/ตอบกลับผ่าน `TrySendAsync` ผลประทับ `NotifyResult` · HtmlEncode ทุกค่า | `Form_fields_mapped_to_lead_columns` · `Form_lead_type_and_recipients` · `Form_notify_html_encodes_user_input` |
+
+## CMS209-RV — ฝ่ายค้านรอบ 209 (เงิน/ภาษี) · `CmsRound209ReviewMoneyTests` · จุดเรียกล็อกด้วย `required_call_site_check` (_RV_WHY)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS209-RV-01 | ออเดอร์ 10,700 มัดจำ 3,210 ⇒ ใบส่วนที่เหลือ 7,490 · คืนเงินบางส่วน 1,070 | ใบลดหนี้ร่างรวม 1,070.00 (ฐานมัดจำตามสัดส่วน 428.57 เป็นส่วนลดท้ายบิล) — เดิม 1,528.57 | `Remainder_document_total_is_7490` · `Partial_refund_on_deposit_deducted_invoice_equals_refund_amount` |
+| CMS209-RV-02 | ออเดอร์เดียวกัน คืนเต็ม/ยกเลิกหลังชำระ | ใบลดหนี้ 7,490.00 ≤ ใบเดิม (เดิม 10,700 อนุมัติไม่ได้) · หมายเหตุชี้ให้คืนมัดจำที่ใบมัดจำ | `Full_refund_on_deposit_deducted_invoice_never_exceeds_invoice` · `Deposit_portion_note_points_to_deposit_receipt_only_when_deducted` |
+| CMS209-RV-03 | **ทิศตรงข้าม** ออเดอร์ไม่มีมัดจำ | ใบลดหนี้เดิมทุกตัวเลข (ส่วนลดท้ายบิล 0) | `Order_without_deposit_unchanged` |
+| CMS209-RV-04 | คืนบางส่วนแล้วยิงเปลี่ยนเป็นกำลังเตรียม/ส่งมอบ/ยกเลิก | 409 ทางไปต่อ "คืนเงินทั้งหมด" · ปุ่มมีแค่คืนเงินทั้งหมด | `Partially_refunded_cannot_go_back_to_work_stages` · `Partially_refunded_next_actions_offer_only_full_refund` |
+| CMS209-RV-05 | **ทิศตรงข้าม** คืนบางส่วน → คืนเต็ม · ขั้นงานปกติถอยในช่วงเตรียม | ยังทำได้ | `Partially_refunded_to_refunded_still_allowed_and_same_is_noop` |
+| CMS209-RV-06 | ยกเลิก/คืนเต็มหลังมีใบลดหนี้ 1,070 แล้ว | ร่างได้แค่ 6,420 · ใบลดหนี้เต็มแล้ว ⇒ ไม่ร่างซ้ำ (Σ ≤ ใบเดิม §86/10) | `Cancel_plan_subtracts_already_credited` |
+| CMS209-RV-07 | COD/ชำระเมื่อรับ (โหมดเดิม) กดส่งมอบ/จัดส่งก่อนรับเงิน | ออกใบขายลงวันส่งมอบ + ตัดสต็อก (§78(1)) · รับเงินทีหลังบันทึกกับใบนั้น | `Legacy_mode_handover_without_sale_document_settles` · `Cod_pay_on_pickup_can_be_delivered_before_payment` |
+| CMS209-RV-08 | **ทิศตรงข้าม** จ่ายก่อนส่ง (มีใบขายแล้ว) · ยังไม่ส่งมอบ · โหมดมัดจำ | พฤติกรรมเดิม | `Legacy_mode_handover_without_sale_document_settles` · `Deposit_mode_handover_unchanged` |
+| CMS209-RV-09 | ใบส่วนที่เหลือของออเดอร์มัดจำ (เว็บย้ายสาขาระหว่างทาง) | ออกสาขาเดียวกับใบมัดจำ | required_call_site `SyncOrderToErpCoreAsync` · `PlanFinalDeductionAsync` |
+| CMS209-RV-10 | ขอใบกำกับพร้อมเลขภาษี · อีเมล/เบอร์ตรงผู้ติดต่อรายอื่น | ไม่จับ · ไม่เติมเลขภาษีลงแถวคนอื่น ⇒ สร้างผู้ติดต่อใหม่ · เลข+สาขาตรง ⇒ แถวนั้น | `Strict_tax_key_does_not_fall_back_to_email_or_phone_nor_adopt_tax_id` · `Strict_tax_key_matches_by_tax_and_branch` |
+| CMS209-RV-11 | ลูกค้าที่ผูกผู้ติดต่อไว้ กรอกเลขภาษี/สาขาอื่นในช่องใบกำกับ | ผู้ติดต่อที่ผูกไว้ไม่ชนะ · เลขตรง ⇒ ผูกไว้ชนะเดิม | `Linked_contact_loses_to_explicit_different_tax_id` · `Linked_contact_with_same_tax_key_still_wins` |
+| CMS209-RV-12 | **ทิศตรงข้าม** ไม่ได้กรอกเลขในช่องใบกำกับ | เส้นเดิม (ผูกไว้ชนะ · อีเมลจับได้ · เติมเลขจากบัญชีลูกค้า) · ผูกถาวรเฉพาะแถวที่สร้างใหม่ | `No_tax_invoice_path_unchanged` · `For_order_marks_billing_tax_id_explicit` |
+| CMS209-RV-13 | ใบลดหนี้อ้างใบขายของบัตรคอร์สที่โอนแล้ว | ตัดสินกับบัตรปลายทาง: เท่ามูลค่าคงเหลือ ⇒ ปิดบัตรปลายทาง · บางส่วน ⇒ ลดเครดิต · เกิน ⇒ บล็อก · ปลายทางปิดแล้ว ⇒ บล็อก | `Transfer_chain_follows_only_transferred_passes_and_stops` · `Destination_pass_caps_credit_note_at_its_remaining_value` |
+| CMS209-RV-14 | ยกเลิกใบขายของบัตรที่โอนแล้ว | ยังบล็อก + ทางไปต่อ = ใบลดหนี้ไม่เกินมูลค่าบัตรปลายทาง · ตามสายไม่ถึง ⇒ ให้ปรับด้วย JE | `Transferred_void_block_gives_credit_note_way_forward` |
+| CMS209-RV-15 | ใบลดหนี้ร่างของการคืนเงินออเดอร์เว็บ | ข้อความไม่สัญญาว่า "เปลี่ยนเหตุผลเป็นคืนสินค้า" คืนสต็อก (บรรทัดไม่ผูกรหัสสินค้า) · บอกให้ปรับสต็อกที่หน้าสินค้า | `Draft_notes_do_not_promise_stock_return_via_reason_change` |
 

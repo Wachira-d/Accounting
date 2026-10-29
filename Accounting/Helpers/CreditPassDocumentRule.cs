@@ -84,12 +84,27 @@ public static class CreditPassDocumentRule
         return plan.ClosesPass ? new(DocAction.CancelPass, null) : new(DocAction.ReduceCredits, null, plan.CreditsToRemove);
     }
 
+    /// <summary>สายโอนบัตรยาวสุดที่ตามไป (กันวน/ข้อมูลเสีย) — เกิน ⇒ หยุดที่บัตรสุดท้าย (ยัง Transferred ⇒ <see cref="TransferredBlock"/>)</summary>
+    public const int MaxTransferHops = 10;
+
+    /// <summary>รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 6: ทอดถัดไปของสายโอน — บัตรโอนออกแล้วและรู้ปลายทาง ⇒ id ปลายทาง · ไม่งั้น null (หยุด) · ผู้เรียกล็อกแถวเอง</summary>
+    public static Guid? NextTransferHop(CreditPassStatus status, Guid? transferredToPassId, int hopsSoFar)
+        => status == CreditPassStatus.Transferred && transferredToPassId is Guid to && hopsSoFar < MaxTransferHops ? to : null;
+
+    /// <summary>บัตรปลายทางถูกปิดแล้ว (คืนเงิน/ยกเลิก) ⇒ ไม่มีค่าบริการรับล่วงหน้าให้ลด</summary>
+    public static string TransferredTargetClosedMessage(string sourceNumber, string fromPass, string toPass)
+        => $"ออกใบลดหนี้อ้าง {sourceNumber} ไม่ได้ — บัตรคอร์ส {fromPass} โอนไปบัตร {toPass} ซึ่งถูกปิด (คืนเงิน/ยกเลิก) แล้ว ไม่มีค่าบริการรับล่วงหน้าเหลือให้ลด · "
+           + "ถ้าต้องคืนเงินเพิ่ม ติดต่อผู้ดูแลบัญชีเพื่อปรับปรุงด้วย JE";
+
     /// <summary>รอบ 209 P5 (คำตัดสินข้อ 168 ฎ): บัตรที่โอนให้ลูกค้าคนอื่นแล้ว — ยอดรับล่วงหน้าย้ายไปบัตรปลายทาง (ไม่มี JE) ⇒ ยกเลิก/ลดหนี้ใบขายเดิม
     /// จะกลับ 21713 ที่บัตรปลายทางยังถือ ⇒ บล็อกเสมอ · ทางไปต่อ: จัดการที่บัตรปลายทาง (ใช้/หมดอายุตามปกติ) หรือให้ผู้ดูแลบัญชีออก JE ปรับปรุง</summary>
     private static Decision TransferredBlock(PassFacts pass, string what)
         => new(DocAction.Block,
             $"{what} ไม่ได้ — ใบนี้เป็นใบขายของบัตรคอร์ส {pass.PassNumber} ซึ่งโอนให้ลูกค้าคนอื่นแล้ว (ค่าบริการรับล่วงหน้าย้ายไปบัตรปลายทาง) · "
-            + "ยกเลิก/ลดหนี้ใบเดิมจะกลับยอดที่บัตรปลายทางยังถืออยู่ — ติดต่อผู้ดูแลบัญชีเพื่อปรับปรุงด้วย JE");
+            + (what.StartsWith("ยกเลิก", StringComparison.Ordinal)
+                // รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 6: ทางไปต่อจริง — ใบลดหนี้อ้างใบนี้ตัดสินกับบัตรปลายทาง (CreditPassDocumentHook.FollowTransfersAsync)
+                ? "ยกเลิกทั้งใบจะกลับยอดที่บัตรปลายทางยังถืออยู่ · ทางไปต่อ: ออกใบลดหนี้อ้างใบนี้ ยอดสุทธิก่อน VAT ไม่เกินมูลค่าคงเหลือของบัตรปลายทาง (ระบบลดเครดิต/ปิดบัตรปลายทางให้)"
+                : "ตามสายโอนไปบัตรปลายทางไม่ถึง (ข้อมูลบัตรปลายทางหาย/สายโอนยาวเกิน) — ติดต่อผู้ดูแลบัญชีเพื่อปรับปรุงด้วย JE"));
 
     /// <summary>ผลของการคืนเงิน <paramref name="Net"/> (สุทธิก่อน VAT) จากบัตร — ปิดบัตร / ลดเครดิต / หรือเหตุที่ทำไม่ได้พร้อมยอดที่ออกได้</summary>
     public sealed record RefundPlan(decimal Net, decimal CreditsToRemove, decimal CreditsRemaining, bool ClosesPass, string? Problem);
