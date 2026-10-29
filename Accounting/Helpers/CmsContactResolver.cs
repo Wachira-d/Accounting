@@ -192,7 +192,7 @@ public static class CmsContactResolver
     }
 
     /// <summary>ผลจับคู่แบบไหนผูก <c>SiteCustomer.ContactId</c> ถาวรได้ — เฉพาะผู้ติดต่อที่สร้างใหม่จากข้อมูลของลูกค้าคนนี้ (ไม่ใช่ข้อมูลที่ใครก็กรอกได้)</summary>
-    public static bool PersistsCustomerLink(CmsContactMatchKind kind) => kind == CmsContactMatchKind.Created;
+    internal static bool PersistsCustomerLink(CmsContactMatchKind kind) => kind == CmsContactMatchKind.Created;
 
     /// <summary>ข้อเท็จจริงของออเดอร์เว็บ (ลูกค้าเว็บชนะช่องผู้รับ · ช่องใบกำกับชนะบัญชีลูกค้าเรื่องเลขภาษี)</summary>
     public static CmsContactInput ForOrder(SiteOrder order, string createdBy) => new(
