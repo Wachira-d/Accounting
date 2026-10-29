@@ -452,6 +452,14 @@ public class DataIntegrityReportService
     /// <b>อ่านอย่างเดียว</b> — ใบที่ส่งผู้รับ/ยื่นแล้วห้ามแก้ย้อนหลัง ⇒ ผู้ทำบัญชียกเลิกแล้วออกใบใหม่ (ระบบออกเป็นบาทแล้ว) หรือยื่นแบบเพิ่มเติม</summary>
     private async Task<List<DataIntegritySuspect>> LoadForeignCurrencyWhtCertsAsync(Guid companyId)
     {
+        // รอบ 208 (ฝ่ายค้าน W7 ข้อ 8): ยอดบาทที่ "ควรเป็น" ต้องคิดด้วยอัตราที่ใบรับรองใช้จริง (ExchangeRateUsed) — ใบเก่าที่ไม่บันทึกอัตรา ⇒
+        // ตัวตัดสินเดียว DocumentFx.WhtRateFor (ค่าตั้งบริษัท + เกณฑ์รับรู้ + อัตราวันจ่ายของงวด) · เดิมใช้อัตราเอกสารเสมอ ⇒ ค่าตั้งวันจ่ายเห็นตัวเลขคนละชุดกับ 50 ทวิ/GL
+        var fxSettings = await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => new { s.WhtFxRateBasis, s.WhtRecognitionBasis })
+            .FirstOrDefaultAsync();
+        var fxBasis = fxSettings?.WhtFxRateBasis ?? Models.Enums.WhtFxRateBasis.DocumentDate;
+        var fxRecognition = fxSettings?.WhtRecognitionBasis ?? Models.Enums.WhtRecognitionBasis.Cash;
         var rows = await _db.WithholdingTaxCerts.AsNoTracking()
             .Where(w => w.CompanyId == companyId && !w.IsDeleted && w.DocumentId != null
                 && w.Status != Models.DTOs.Tax.WithholdingTaxCertStatus.Voided)
@@ -460,19 +468,25 @@ public class DataIntegrityReportService
                 (w, d) => new
                 {
                     w.Id, w.CertificateNumber, w.IssuedDate, w.CreatedAt, w.Status, w.TaxYear, w.TaxMonth, w.TotalTaxAmount, w.SourcePaymentId,
+                    w.ExchangeRateUsed,
                     d.DocumentNumber, d.Currency, d.ExchangeRate, d.WithholdingTaxAmount,
                     PaymentWht = w.SourcePaymentId == null ? (decimal?)null
                         : _db.Payments.Where(p => p.Id == w.SourcePaymentId && p.CompanyId == companyId).Select(p => (decimal?)p.WithholdingTaxAmount).FirstOrDefault(),
+                    PaymentFx = w.SourcePaymentId == null ? (decimal?)null
+                        : _db.Payments.Where(p => p.Id == w.SourcePaymentId && p.CompanyId == companyId).Select(p => p.ExchangeRate).FirstOrDefault(),
                 })
             .OrderBy(w => w.TaxYear).ThenBy(w => w.TaxMonth).ThenBy(w => w.CertificateNumber)
             .ToListAsync();
+        decimal RateOf(decimal? used, decimal docRate, decimal? paymentFx)
+            => used is > 0m ? used.Value : Accounting.Helpers.DocumentFx.WhtRateFor(fxBasis, fxRecognition, docRate, paymentFx);
         return rows
             .Where(w => Accounting.Helpers.WhtCertCurrencyCheck.LooksDocumentCurrency(w.TotalTaxAmount,
-                w.PaymentWht is > 0m ? w.PaymentWht.Value : w.WithholdingTaxAmount, w.ExchangeRate))
+                w.PaymentWht is > 0m ? w.PaymentWht.Value : w.WithholdingTaxAmount, RateOf(w.ExchangeRateUsed, w.ExchangeRate, w.PaymentFx)))
             .Select(w => new DataIntegritySuspect(Accounting.Helpers.WhtCertCurrencyCheck.Kind, w.Id, w.CertificateNumber, w.IssuedDate ?? w.CreatedAt,
-                $"50 ทวิ {w.CertificateNumber} (งวด {w.TaxMonth:D2}/{w.TaxYear} · สถานะ {w.Status}) ของเอกสาร {w.DocumentNumber} สกุล {w.Currency} @ {w.ExchangeRate:0.######} "
+                $"50 ทวิ {w.CertificateNumber} (งวด {w.TaxMonth:D2}/{w.TaxYear} · สถานะ {w.Status}) ของเอกสาร {w.DocumentNumber} สกุล {w.Currency} @ {RateOf(w.ExchangeRateUsed, w.ExchangeRate, w.PaymentFx):0.######} "
                 + "ยอดภาษีบนใบเป็นตัวเลขสกุลเอกสาร ไม่ใช่บาท — ระบบไม่แก้ใบที่ออกแล้วให้ · ยังไม่ยื่น ⇒ ยกเลิกใบนี้แล้วออกใหม่ (ออกเป็นบาท) · ยื่นแล้ว ⇒ ยื่นแบบเพิ่มเติม",
-                w.TotalTaxAmount, Accounting.Helpers.PerLineWht.DocumentWhtThb(w.PaymentWht is > 0m ? w.PaymentWht.Value : w.WithholdingTaxAmount, w.ExchangeRate),
+                w.TotalTaxAmount, Accounting.Helpers.PerLineWht.DocumentWhtThb(w.PaymentWht is > 0m ? w.PaymentWht.Value : w.WithholdingTaxAmount,
+                    RateOf(w.ExchangeRateUsed, w.ExchangeRate, w.PaymentFx)),
                 "/pages/wht.html", $"เปิดหน้า 50 ทวิ (ค้นเลข {w.CertificateNumber})"))
             .ToList();
     }

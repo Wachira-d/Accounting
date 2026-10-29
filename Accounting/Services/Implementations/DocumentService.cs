@@ -20204,8 +20204,9 @@ public partial class DocumentService : IDocumentService
         // คำตัดสินเจ้าของข้อ 162 (Q2 · รอบ 205 W7): อัตราฐานภาษีตามค่าตั้งบริษัท — ตัวตัดสินเดียว DocumentFx.WhtRateFor (ตัวเดียวกับ 50 ทวิ)
         // · DocumentDate (ค่าตั้งต้น) ⇒ whtFx == fx ⇒ ตัวเลขเดิมทุกสตางค์ · PaymentDate ⇒ WHT ที่อัตราวันจ่าย ส่วนลูกหนี้/เจ้าหนี้ตัดที่อัตราเอกสาร
         //   (มูลค่าที่ตั้งไว้ใน GL) ⇒ ผลต่างของส่วนภาษีเข้ากำไร/ขาดทุนอัตราแลกเปลี่ยนเส้นเดิม (TFRS for NPAEs บทที่ 19)
+        // รอบ 208 (ฝ่ายค้าน W7 ข้อ 7): ส่งเกณฑ์รับรู้เข้าไปด้วย — Accrual ⇒ อัตราเอกสาร (ตัวเดียวกับ 50 ทวิ · ขาภาษีตั้งไว้ตอนอนุมัติใบ)
         var whtFx = Accounting.Helpers.DocumentFx.WhtRateFor(
-            whtSettings?.WhtFxRateBasis ?? Models.Enums.WhtFxRateBasis.DocumentDate, fx, payment.ExchangeRate);
+            whtSettings?.WhtFxRateBasis ?? Models.Enums.WhtFxRateBasis.DocumentDate, whtBasis, fx, payment.ExchangeRate);
         var thbWht = Accounting.Helpers.PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, whtFx);
         // ส่วนภาษีที่ลูกหนี้/เจ้าหนี้ถืออยู่ที่อัตราเอกสาร (ค่าตั้งต้น = thbWht ตัวเดียวกัน)
         var thbWhtAtDocRate = Accounting.Helpers.PerLineWht.DocumentWhtThb(payment.WithholdingTaxAmount, fx);

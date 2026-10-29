@@ -301,6 +301,11 @@ public class SettingsService : ISettingsService
         // คำตัดสินเจ้าของข้อ 162 (Q2) — ผู้อ่าน: DocumentFx.WhtRateFor (CreatePaymentJournalAsync + 50 ทวิ รายงวด) · DocumentFx.PickBotRate (ResolveExchangeRateAsync + OCR)
         if (request.WhtFxRateBasis.HasValue)
             settings.WhtFxRateBasis = request.WhtFxRateBasis.Value;
+        // รอบ 208 (ฝ่ายค้าน W7 ข้อ 7): Accrual + อัตราวันจ่าย ขัดกันเอง (GL ตั้งภาษีที่อัตราใบแล้ว) — ปฏิเสธพร้อมทางเลือก (ตัวตัดสินเดียว DocumentFx) ·
+        // ตรวจเฉพาะเมื่อคำขอแตะสองค่านี้ (ค่าตั้งอื่นบันทึกได้ตามเดิม) · ข้อมูลเดิมที่เป็นคู่นี้ runtime บังคับอัตราใบอยู่แล้ว (DocumentFx.WhtRateFor)
+        if ((request.WhtFxRateBasis.HasValue || request.WhtRecognitionBasis.HasValue)
+            && Accounting.Helpers.DocumentFx.WhtFxBasisConflict(settings.WhtFxRateBasis, settings.WhtRecognitionBasis) is string whtFxConflict)
+            throw new Accounting.Helpers.BusinessRuleException(whtFxConflict, "SET-WHT-FX");
         if (request.FxBotRateType.HasValue)
             settings.FxBotRateType = request.FxBotRateType.Value;
         // กองทุนเงินทดแทน (กท.20ก)

@@ -64,7 +64,11 @@ schema `DatabaseMigrationHelper.CourseCreditStatements` (5 ตารางให
 - จุดต่อที่ทีม B ใส่ (ยังไม่ต่อสาย — งานของทีม B หลัง merge): ตอนยืนยันการจองที่ลูกค้าเลือก "ใช้เครดิต" ⇒ `HoldAsync(new CreditHoldRequest(contactId, passId?, serviceId,
   "SiteBooking:"+id, startUtc, durationMin, format))` · ตอนยกเลิก ⇒ `ReleaseAsync(ref, byBusiness)` · ตอน Completed/NoShow ⇒ `SettleAsync(ref, attended)` ·
   การจองที่ใช้เครดิต**ห้าม**ออกเอกสาร ERP ค่าบริการซ้ำ (`SyncBookingToErpAsync`) — รายได้มาจาก JE รับรู้ของโมดูลนี้แล้ว
-- `CreditClassBooking.ExternalRef` มี index (CompanyId, ExternalRef)
+- `CreditClassBooking.ExternalRef` มี index (CompanyId, ExternalRef) — unique บางส่วน (แถวที่ยังไม่ยกเลิก) + รอบ 208 `IX_CreditClassBookings_Company_ExternalRef_Any` (ค้นทุกสถานะ)
+- **รอบ 208 (ฝ่ายค้าน W6 ข้อ 1)**: บิล POS ที่เปิดจากคิวการจองที่จ่ายด้วยบัตร ⇒ ปิดบิล = `SettleAsync(ref, attended)` ในธุรกรรมปิดบิล (`CreditBookingLink.ForPosClose`) ·
+  ยกเลิกบิลที่ตัดเครดิตแล้วไม่ถอยสถานะการจอง (`PosVoidRevertsCompleted`) · คืนเครดิตไปแล้ว ⇒ ปิดบิลไม่ได้ (ข้อความทางไปต่อ)
+- **รอบ 208 (ข้อ 2–4)**: ยกเลิกใบลดหนี้คืนบางส่วน ⇒ คืนเครดิต/ถอนยอดคืน (`OnVoidPartialCreditNote` · แถว `AdjustReversal` · `CreditLedgerEntries.DocumentId`) ·
+  คืนบางส่วนต้องเท่า k × ราคาต่อเครดิตคงเหลือ (ส่วนที่ยังไม่รับรู้ ÷ เครดิตที่ยังไม่ใช้) · คืนตามจำนวนเครดิตส่งเครดิตตรง · ไม่จด VAT/ยกเว้น ⇒ ปุ่มไม่สร้างใบลดหนี้
 
 ## 5. Backlog (ยังไม่ทำ + เหตุผล)
 

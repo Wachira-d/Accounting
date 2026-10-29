@@ -48,6 +48,45 @@ public static class CreditBookingLink
     public static string LedgerFailureNote(LedgerAction action, string reason)
         => $"[CREDIT-PASS-FAILED] {ActionTh(action)}ในสมุดเครดิตไม่สำเร็จ: {reason} — เครดิตของบัตรยังค้างสถานะเดิม · ไปที่หน้า \"คอร์ส & เครดิต\" › บัตรของลูกค้า แล้วปิด/ยกเลิกการจองนั้นเอง";
 
+    // ───────── รอบ 208 (ฝ่ายค้าน W6 ข้อ 1): การจองที่จ่ายด้วยบัตร ถูกเปิด/ปิดบิลที่ POS ─────────
+    // เดิม MarkSourceBookingCompletedAsync ประทับ "เสร็จสิ้น" ตรง ๆ (ยอด 0 ⇒ ผ่านเงื่อนไข "ไม่มีเงินผูก") ⇒ เครดิตค้าง "จองไว้" ตลอด · 21713 ไม่ถูกรับรู้เป็นรายได้
+
+    public enum PosCloseAction { NotCredit = 0, Settle = 1, AlreadySettled = 2, Refuse = 3 }
+
+    /// <summary>สถานะที่มีผลของการจองในสมุดเครดิต จากทุกแถวที่ ExternalRef ตรงกัน (เลื่อนนัด = ยกเลิกแถวเดิม + จองแถวใหม่) ·
+    /// ไม่มีแถว ⇒ null (การจองไม่ได้จ่ายด้วยบัตร) · มีแถวที่ยังไม่ยกเลิก ⇒ แถวนั้น (unique index กันไว้ได้แถวเดียว) · เหลือแต่ยกเลิก ⇒ Cancelled</summary>
+    public static CreditBookingStatus? LedgerStatusOf(IReadOnlyCollection<CreditBookingStatus> rows)
+    {
+        if (rows.Count == 0) return null;
+        foreach (var s in rows)
+            if (s != CreditBookingStatus.Cancelled) return s;
+        return CreditBookingStatus.Cancelled;
+    }
+
+    /// <summary>ปิดบิล POS ของการจอง CMS ⇒ ต้องทำอะไรกับสมุดเครดิต · <paramref name="ledgerStatus"/> = <see cref="LedgerStatusOf"/> ·
+    /// กันไว้ ⇒ <b>ตัดเครดิต (มาเรียน) ในธุรกรรมเดียวกับการปิดบิล</b> · ตัดไปแล้ว (ปิดจากหน้าการจอง/หน้าคอร์ส) ⇒ ไม่ตัดซ้ำ ·
+    /// คืนเครดิตไปแล้ว ⇒ ปฏิเสธ (ให้บริการโดยไม่มีทั้งเงินและเครดิต) · ไม่ใช่การจองด้วยบัตร ⇒ กติกาเดิมทุกข้อ</summary>
+    public static PosCloseAction ForPosClose(CreditBookingStatus? ledgerStatus) => ledgerStatus switch
+    {
+        null => PosCloseAction.NotCredit,
+        CreditBookingStatus.Booked => PosCloseAction.Settle,
+        CreditBookingStatus.Cancelled => PosCloseAction.Refuse,
+        _ => PosCloseAction.AlreadySettled,   // Attended · NoShow · LateCancelled = ใช้เครดิตแล้ว
+    };
+
+    /// <summary>ยกเลิกบิล POS ที่ปิดการจองด้วยบัตรไปแล้ว ⇒ ถอย "เสร็จสิ้น" ได้ไหม — เครดิตถูกตัด + รับรู้รายได้แล้ว ⇒ <b>ไม่ถอย</b>
+    /// (ถอยแล้วกด "ยกเลิก/ไม่มา" ที่หน้าการจองได้อีก แต่สมุดไม่มีอะไรให้คืน = หน้าจอเล่าคนละเรื่องกับสมุด) · ไม่ใช่การจองด้วยบัตร/ยังกันไว้ ⇒ ถอยได้ตามเดิม</summary>
+    public static bool PosVoidRevertsCompleted(CreditBookingStatus? ledgerStatus)
+        => ledgerStatus is null or CreditBookingStatus.Booked;
+
+    /// <summary>ข้อความปฏิเสธเมื่อปิดบิล POS ของการจองที่คืนเครดิตไปแล้ว</summary>
+    public static string PosCloseRefusal(string? bookingNumber)
+        => $"การจอง {bookingNumber ?? "-"} ชำระด้วยบัตรคอร์ส แต่เครดิตถูกคืนไปแล้ว (การจองในสมุดเครดิตถูกยกเลิก) — ปิดบิลนี้จะเท่ากับให้บริการโดยไม่มีทั้งเงินและเครดิต · "
+           + "ทางไปต่อ: ยกเลิกบิลนี้ แล้วจองใหม่ด้วยบัตร หรือขายบริการเป็นบิลปกติ (ไม่เปิดจากคิวการจอง)";
+
+    /// <summary>หมายเหตุบนบิล POS ที่เปิดจากการจองที่จ่ายด้วยบัตร</summary>
+    public const string PosOpenNote = "ชำระด้วยบัตรคอร์ส — ปิดบิลแล้วระบบตัดเครดิต (มาเรียน) ให้ในธุรกรรมเดียวกัน";
+
     public static string ActionTh(LedgerAction a) => a switch
     {
         LedgerAction.SettleAttended => "ตัดเครดิต (มาเรียน)",

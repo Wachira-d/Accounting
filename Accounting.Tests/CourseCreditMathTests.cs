@@ -201,6 +201,11 @@ public class CourseCreditMathTests
         Assert.Equal(0m, CourseCreditMath.CreditsRefundable(100m, 420.56m, CreditUnit.Session));
         Assert.Equal(3.25m, CourseCreditMath.CreditsRefundable(1000m, 300m, CreditUnit.Hour));
         Assert.Equal(0m, CourseCreditMath.CreditsRefundable(1000m, 0m, CreditUnit.Session));   // ราคา 0 = ไม่รู้ ⇒ ไม่ลด
+        // รอบ 208 (ฝ่ายค้าน W6 ข้อ 4): ผลหารที่ควรเป็นหน่วยเต็มแต่ทศนิยมขาดไปเศษเสี้ยว ไม่หล่นลงหนึ่งขั้น
+        Assert.Equal(1m, CourseCreditMath.CreditsRefundable(99.999m, 100m, CreditUnit.Session));
+        Assert.Equal(0.25m, CourseCreditMath.CreditsRefundable(83.33m, 1000m / 3m, CreditUnit.Hour));
+        // ทิศตรงข้าม: ขาดจริงเกินค่าเผื่อ ⇒ ยังปัดลง
+        Assert.Equal(0m, CourseCreditMath.CreditsRefundable(99.9m, 100m, CreditUnit.Session));
         Assert.Equal(1m, CourseCreditMath.CreditStep(CreditUnit.Session));
         Assert.Equal(0.25m, CourseCreditMath.CreditStep(CreditUnit.Hour));
     }

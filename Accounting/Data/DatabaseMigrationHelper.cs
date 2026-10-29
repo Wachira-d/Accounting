@@ -7830,6 +7830,11 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "CreditPasses" ADD COLUMN IF NOT EXISTS "CancelledByDocumentId" uuid NULL;""",
         """DROP INDEX IF EXISTS "IX_CreditClassBookings_Company_ExternalRef";""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CreditClassBookings_Company_ExternalRef_Live" ON "CreditClassBookings" ("CompanyId", "ExternalRef") WHERE "ExternalRef" IS NOT NULL AND "Status" <> 3 AND "IsDeleted" = false;""",
+        // รอบ 208 (ฝ่ายค้าน W6): IsPaidWithCreditAsync / POS CreditLedgerStatusAsync ค้นทุกสถานะ (รวมแถวที่ยกเลิก) — ดัชนีบางส่วนข้างบนใช้ไม่ได้ ⇒ ดัชนีทั่วไป
+        """CREATE INDEX IF NOT EXISTS "IX_CreditClassBookings_Company_ExternalRef_Any" ON "CreditClassBookings" ("CompanyId", "ExternalRef") WHERE "ExternalRef" IS NOT NULL;""",
+        // รอบ 208 (ฝ่ายค้าน W6 ข้อ 2): แถว Adjust ประทับใบลดหนี้ ⇒ ยกเลิกใบลดหนี้คืนเครดิตได้ (NULL = แถวเก่า)
+        """ALTER TABLE "CreditLedgerEntries" ADD COLUMN IF NOT EXISTS "DocumentId" uuid NULL;""",
+        """CREATE INDEX IF NOT EXISTS "IX_CreditLedgerEntries_Company_Document" ON "CreditLedgerEntries" ("CompanyId", "DocumentId") WHERE "DocumentId" IS NOT NULL;""",
     };
 
     /// <summary>ทีม F (<c>docs/PER_LINE_WHT_DESIGN.md</c>) — ค่าตั้ง "หัก ณ ที่จ่ายตามรายการ" + ฐานบาทที่เอกสารพิมพ์ไว้ + ที่มาของอัตรา ·

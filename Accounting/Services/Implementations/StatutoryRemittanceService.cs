@@ -270,6 +270,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             // รอบ 204 (ข้อ 143): ใบหลายผู้ถูกหัก — ครอบต่อ (เอกสาร, ผู้ถูกหัก) · ใบรายเดียว = ครอบระดับเอกสารเหมือนเดิม
             var coveredPairs = coveredCerts.Select(c => (c.DocumentId, c.PayeeContactId)).ToHashSet();
             var gapItems = new List<(DateTime Date, TaxType Form, decimal Amount, Guid DocId)>();
+            // รอบ 208 (ฝ่ายค้าน W7 ข้อ 8): ยอดช่องโหว่ต้องเท่า 50 ทวิ ที่จะออก/ขา 2191x — งวดจ่ายแปลงด้วย DocumentFx.WhtRateFor ของงวด (ค่าตั้งบริษัท + เกณฑ์รับรู้)
+            var (gapFxBasis, gapRecognition, gapSlices) = await LoadWhtPaymentSlicesAsync(companyId,
+                whtDocs.Where(d => d.ExchangeRate != 1m).Select(d => d.Id).ToList());
+            IReadOnlyList<Accounting.Helpers.PerLineWht.WhtPaymentSlice> GapSlicesOf(Guid docId)
+                => gapSlices.TryGetValue(docId, out var sl) ? sl : (IReadOnlyList<Accounting.Helpers.PerLineWht.WhtPaymentSlice>)Array.Empty<Accounting.Helpers.PerLineWht.WhtPaymentSlice>();
             foreach (var d in whtDocs)
             {
                 var portions = Accounting.Helpers.WhtPayeeSplit.Portions(d.ContactId, d.WhtPayeeContactId,
@@ -285,8 +290,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     gapItems.Add((date, gapPayee != d.ContactId && gapPayees.TryGetValue(gapPayee, out var gk)
                         ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, gk.Country, gk.TaxId, gk.Type, gk.Name, d.IncomeCodes, royalty.AppliesTo(date))
                         : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes, royalty.AppliesTo(date)),
-                        // ทีม F (ฝ่ายค้านข้อ 4): ยอดเป็นบาท — เป้าเดียวกับ 50 ทวิ/JE (PerLineWht.DocumentWhtThb) · เดิมใบ USD ต่ำ ~36 เท่า
-                        Accounting.Helpers.PerLineWht.DocumentWhtThb(d.WithholdingTaxAmount, d.ExchangeRate), d.Id));
+                        // ทีม F (ฝ่ายค้านข้อ 4): ยอดเป็นบาท — เป้าเดียวกับ 50 ทวิ/JE · เดิมใบ USD ต่ำ ~36 เท่า · รอบ 208: อัตราของงวดจ่าย (UncertifiedWhtThb)
+                        Accounting.Helpers.PerLineWht.UncertifiedWhtThb(d.WithholdingTaxAmount, d.WithholdingTaxAmount, d.ExchangeRate,
+                            GapSlicesOf(d.Id), gapFxBasis, gapRecognition), d.Id));
                     continue;
                 }
                 var lineCodes = d.LinePayees.Select(l => l.IncomeTypeCode).ToList();
@@ -298,7 +304,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     gapItems.Add((date, p.PayeeContactId != d.ContactId && gapPayees.TryGetValue(p.PayeeContactId, out var pk)
                         ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, pk.Country, pk.TaxId, pk.Type, pk.Name, pCodes, royalty.AppliesTo(date))
                         : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, pCodes, royalty.AppliesTo(date)),
-                        Accounting.Helpers.PerLineWht.DocumentWhtThb(p.WithholdingTaxAmount, d.ExchangeRate), d.Id));
+                        Accounting.Helpers.PerLineWht.UncertifiedWhtThb(p.WithholdingTaxAmount, d.WithholdingTaxAmount, d.ExchangeRate,
+                            GapSlicesOf(d.Id), gapFxBasis, gapRecognition), d.Id));
                 }
             }
 
@@ -545,6 +552,32 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     private sealed record PayeeKindSnap(ContactType Type, string? TaxId, string? Name, string? Country);
 
     /// <summary>โหลดผู้ถูกหัก (<c>Document.WhtPayeeContactId</c>) รวมที่ถูก soft-delete — ใบที่ไม่ได้ตั้ง (null) ใช้ผู้ติดต่อของเอกสารตามเดิม</summary>
+    /// <summary>รอบ 208 (ฝ่ายค้าน W7 ข้อ 8) — ค่าตั้งอัตราฐานภาษี + เกณฑ์รับรู้ของบริษัท + งวดจ่ายที่มีภาษีหักของเอกสารต่างสกุล (ข้อมูลเข้าของ
+    /// <see cref="Accounting.Helpers.PerLineWht.UncertifiedWhtThb"/>) · กรอง CompanyId · ไม่มีเอกสาร ⇒ ไม่ query งวดจ่าย</summary>
+    private async Task<(WhtFxRateBasis Basis, WhtRecognitionBasis Recognition, Dictionary<Guid, List<Accounting.Helpers.PerLineWht.WhtPaymentSlice>> Slices)>
+        LoadWhtPaymentSlicesAsync(Guid companyId, IReadOnlyCollection<Guid> foreignDocIds)
+    {
+        var s = await _db.CompanySettings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.WhtFxRateBasis, x.WhtRecognitionBasis })
+            .FirstOrDefaultAsync();
+        var basis = s?.WhtFxRateBasis ?? WhtFxRateBasis.DocumentDate;
+        var recognition = s?.WhtRecognitionBasis ?? WhtRecognitionBasis.Cash;
+        var slices = new Dictionary<Guid, List<Accounting.Helpers.PerLineWht.WhtPaymentSlice>>();
+        if (foreignDocIds.Count == 0 || Accounting.Helpers.DocumentFx.EffectiveWhtFxBasis(basis, recognition) == WhtFxRateBasis.DocumentDate)
+            return (basis, recognition, slices);   // ทุกงวดได้อัตราเอกสารอยู่แล้ว — ไม่ต้องอ่านงวดจ่าย
+        var rows = await _db.Payments.AsNoTracking()
+            .Where(p => p.CompanyId == companyId && !p.IsDeleted && foreignDocIds.Contains(p.DocumentId) && p.WithholdingTaxAmount > 0m)
+            .Select(p => new { p.DocumentId, p.WithholdingTaxAmount, p.ExchangeRate })
+            .ToListAsync();
+        foreach (var r in rows)
+        {
+            if (!slices.TryGetValue(r.DocumentId, out var list)) slices[r.DocumentId] = list = new List<Accounting.Helpers.PerLineWht.WhtPaymentSlice>();
+            list.Add(new Accounting.Helpers.PerLineWht.WhtPaymentSlice(r.WithholdingTaxAmount, r.ExchangeRate));
+        }
+        return (basis, recognition, slices);
+    }
+
     private async Task<Dictionary<Guid, PayeeKindSnap>> LoadPayeeKindsAsync(Guid companyId, IEnumerable<Guid?> payeeIds)
     {
         var ids = payeeIds.Where(i => i.HasValue).Select(i => i!.Value).Distinct().ToList();
@@ -751,6 +784,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             // ⚠️ กรอง `wht != 0` ใน helper (PV ที่ไม่มี WHT ไม่ได้คลุมภาระของใบตั้งหนี้ — เดิม query นี้ดึง PV ภ.พ.36 เข้ามาด้วย ⇒ ยอด ภ.ง.ด.53 หาย · รอบ 203 ภ.พ.36 ย้ายไป Pp36Ledger แล้ว)
             var settledByPv = Accounting.Helpers.WhtRemitScope.SettledSourceIds(
                 docs, d => d.DocumentType, d => d.RelatedDocumentId, d => d.WithholdingTaxAmount);
+            // รอบ 208 (ฝ่ายค้าน W7 ข้อ 8): ตัวเดียวกับหน้านำส่ง — งวดจ่ายแปลงด้วยอัตราที่ 50 ทวิ ใช้
+            var (calFxBasis, calRecognition, calSlices) = await LoadWhtPaymentSlicesAsync(companyId,
+                docs.Where(d => d.ExchangeRate != 1m).Select(d => d.Id).ToList());
+            IReadOnlyList<Accounting.Helpers.PerLineWht.WhtPaymentSlice> CalSlicesOf(Guid docId)
+                => calSlices.TryGetValue(docId, out var sl) ? sl : (IReadOnlyList<Accounting.Helpers.PerLineWht.WhtPaymentSlice>)Array.Empty<Accounting.Helpers.PerLineWht.WhtPaymentSlice>();
             foreach (var d in docs)
             {
                 if (d.DocumentType != DocumentType.PaymentVoucher && settledByPv.Contains(d.Id))
@@ -773,7 +811,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                             p.PayeeContactId != d.ContactId && calPayees.TryGetValue(p.PayeeContactId, out var pk)
                                 ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, pk.Country, pk.TaxId, pk.Type, pk.Name, pCodes, calRoyalty.AppliesTo(dt))
                                 : Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, pCodes, calRoyalty.AppliesTo(dt)),
-                            Accounting.Helpers.PerLineWht.DocumentWhtThb(p.WithholdingTaxAmount, d.ExchangeRate)));   // ทีม F: บาท (ฝ่ายค้านข้อ 4)
+                            Accounting.Helpers.PerLineWht.UncertifiedWhtThb(p.WithholdingTaxAmount, d.WithholdingTaxAmount, d.ExchangeRate,
+                                CalSlicesOf(d.Id), calFxBasis, calRecognition)));   // ทีม F: บาท (ฝ่ายค้านข้อ 4) · รอบ 208: อัตรางวดจ่าย
                     }
                     continue;
                 }
@@ -786,7 +825,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                             ? Accounting.Helpers.WhtPayeeKind.ResolveForm(d.IsForeignService, ck.Country, ck.TaxId, ck.Type, ck.Name, d.IncomeCodes, calRoyalty.AppliesTo(dt))
                             : Accounting.Helpers.WhtPayeeKind.ResolveForm(
                                 d.IsForeignService, d.CCountry, d.CTaxId, d.CType, d.CName, d.IncomeCodes, calRoyalty.AppliesTo(dt)),
-                        Accounting.Helpers.PerLineWht.DocumentWhtThb(d.WithholdingTaxAmount, d.ExchangeRate)));   // ทีม F: บาท (ฝ่ายค้านข้อ 4)
+                        Accounting.Helpers.PerLineWht.UncertifiedWhtThb(d.WithholdingTaxAmount, d.WithholdingTaxAmount, d.ExchangeRate,
+                            CalSlicesOf(d.Id), calFxBasis, calRecognition)));   // ทีม F: บาท (ฝ่ายค้านข้อ 4) · รอบ 208: อัตรางวดจ่าย
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "โหลดเอกสารหัก ณ ที่จ่าย ไม่สำเร็จ"); }
