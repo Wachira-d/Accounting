@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class CmsCommerceService : ICmsCommerceService
+public partial class CmsCommerceService : ICmsCommerceService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsCommerceService> _logger;
@@ -212,6 +212,8 @@ public class CmsCommerceService : ICmsCommerceService
             // ทีม K — ตัวเลือกสินค้าตามสั่ง + วันรับเร็วสุด (ตัวคิดเดียวกับตะกร้า/คำสั่งซื้อ)
             var groups = await LoadOptionGroupsAsync(companyId, result.ProductId);
             result.OptionGroups = groups.Count == 0 ? null : groups.Select(ToStorefrontGroup).ToList();
+            // รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือกได้ + ราคา/มีของต่อ variant (ไม่มี variant = null — หน้าร้านเดิม)
+            result.Variants = await LoadStorefrontVariantsAsync(companyId, siteId, result.Id, result.ProductId, result.EffectivePrice, result.StockBehavior);
             if (result.LeadTimeDays is int lead)
             {
                 var (cal, _) = await LoadShopCalendarAsync(companyId, siteId);
@@ -527,13 +529,16 @@ public class CmsCommerceService : ICmsCommerceService
         // ทีม K — ตัวเลือกสินค้าตามสั่ง: ตรวจ + คิดราคา/วันเพิ่มที่เซิร์ฟเวอร์ (Helpers/ModifierSelectionRules ตัวเดียว)
         var eval = await EvaluateOptionsAsync(companyId, cartId, sp.ProductId, request.Modifiers);
         var selectionsJson = SerializeSelections(eval.Lines);
-        var unitPrice = (sp.OverrideSellingPrice ?? sp.Product.SellingPrice) + eval.PriceAdjustmentTotal;
+        // รอบ 209 P6 (E5): ตัวเลือกย่อย — ด่านเลือก + ราคาแทนราคาฐานเมื่อ variant ตั้งราคา (Helpers/CmsVariantPricing) · ไม่มี variant = ราคาเดิม
+        var variant = await ResolveSelectedVariantAsync(companyId, sp.Id, request.VariantId);
+        var unitPrice = CmsVariantPricing.UnitPrice(sp.OverrideSellingPrice ?? sp.Product.SellingPrice, variant?.Price) + eval.PriceAdjustmentTotal;
         if (unitPrice < 0m)
             throw new BusinessRuleException("ราคาหลังรวมตัวเลือกติดลบ — ร้านตั้งราคาตัวเลือกผิด กรุณาติดต่อร้าน", "MTO-OPTION");
 
         // บรรทัดเดิมรวมกันได้เฉพาะเมื่อเลือกตัวเลือกเหมือนกันทุกช่อง (เค้กคนละข้อความ = คนละบรรทัด)
+        var variantId = variant?.Id;
         var existing = await _db.SiteCartItems.FirstOrDefaultAsync(i => i.CartId == cartId
-            && i.SiteProductId == request.SiteProductId && i.ModifierSelectionsJson == selectionsJson);
+            && i.SiteProductId == request.SiteProductId && i.ModifierSelectionsJson == selectionsJson && i.VariantId == variantId);
         if (existing != null)
         {
             existing.Quantity += request.Quantity;
@@ -549,6 +554,7 @@ public class CmsCommerceService : ICmsCommerceService
                 VariantOptionsJson = request.VariantOptionsJson, Notes = request.Notes,
                 ModifierSelectionsJson = selectionsJson,
                 ExtraLeadDays = eval.ExtraLeadDays,
+                VariantId = variantId,
             });
         }
 
@@ -624,6 +630,9 @@ public class CmsCommerceService : ICmsCommerceService
             CreatedBy = userId
         };
 
+        // รอบ 209 P6 (ฑ): ด่านยินยอม PDPA ก่อนบันทึก (Helpers/CmsDataConsent) · ติ๊กแล้ว ⇒ PdpaConsentRecord บันทึกพร้อมออเดอร์
+        await CmsDataConsent.EnforceAsync(_db, companyId, siteId, CmsDataConsent.OrderPurpose, request.ConsentGiven,
+            userId, request.CustomerId, request.ShippingEmail, request.ShippingPhone, order.OrderNumber);
         _db.SiteOrders.Add(order);
         // ทีม K — บรรทัดที่จะใช้คิดค่าส่ง/วันรับ/เงื่อนไขชำระ (ตัวเดียวกับหน้าเช็กเอาต์ — ComputeCheckoutAsync)
         var checkoutLines = new List<CheckoutLine>();
@@ -644,14 +653,17 @@ public class CmsCommerceService : ICmsCommerceService
                 .Where(i => i.CartId == request.CartId).ToListAsync();
 
             var lineOrder = 1;
+            var cartVariants = await LoadVariantsByIdAsync(companyId, cartItems.Select(i => i.VariantId));   // รอบ 209 P6 (E5)
             foreach (var ci in cartItems)
             {
+                var civ = ci.VariantId is Guid cvid && cartVariants.TryGetValue(cvid, out var cv) ? cv : null;
                 _db.SiteOrderLines.Add(new SiteOrderLine
                 {
                     CompanyId = companyId, OrderId = order.Id, SiteProductId = ci.SiteProductId,
                     LineOrder = lineOrder++,
-                    ProductName = ci.SiteProduct.DisplayName ?? ci.SiteProduct.Product.Name,
-                    ProductSku = ci.SiteProduct.Product.SKU,
+                    ProductName = CmsVariantPricing.LineName(ci.SiteProduct.DisplayName ?? ci.SiteProduct.Product.Name, civ),
+                    ProductSku = CmsVariantPricing.Sku(ci.SiteProduct.Product.SKU, civ),
+                    VariantId = civ?.Id,
                     Quantity = ci.Quantity, UnitPrice = ci.UnitPrice,
                     VatRate = ci.SiteProduct.Product.VatRate,
                     VatAmount = ShippingFeeRules.VatInGross(ci.TotalPrice, ci.SiteProduct.Product.VatRate),
@@ -682,8 +694,9 @@ public class CmsCommerceService : ICmsCommerceService
                     throw new BusinessRuleException("จำนวนต้องมากกว่า 0", "CART-QTY");
                 // ทีม K — สั่งตรงไม่ผ่านตะกร้าเลือกตัวเลือกไม่ได้ ⇒ สินค้าที่มีตัวเลือกบังคับต้องผ่านตะกร้า (ด่านเดียวกัน ไม่ข้ามเงียบ)
                 var directEval = await EvaluateOptionsAsync(companyId, null, sp.ProductId, null);
+                var directVariant = await ResolveSelectedVariantAsync(companyId, sp.Id, lineReq.VariantId);   // รอบ 209 P6 (E5)
 
-                var price = (sp.OverrideSellingPrice ?? sp.Product.SellingPrice) + directEval.PriceAdjustmentTotal;
+                var price = CmsVariantPricing.UnitPrice(sp.OverrideSellingPrice ?? sp.Product.SellingPrice, directVariant?.Price) + directEval.PriceAdjustmentTotal;
                 var total = price * lineReq.Quantity;
                 checkoutLines.Add(new CheckoutLine(sp, lineReq.Quantity, total, sp.Product.VatRate, directEval.ExtraLeadDays));
 
@@ -691,8 +704,9 @@ public class CmsCommerceService : ICmsCommerceService
                 {
                     CompanyId = companyId, OrderId = order.Id, SiteProductId = sp.Id,
                     LineOrder = lineOrder++,
-                    ProductName = sp.DisplayName ?? sp.Product.Name,
-                    ProductSku = sp.Product.SKU,
+                    ProductName = CmsVariantPricing.LineName(sp.DisplayName ?? sp.Product.Name, directVariant),
+                    ProductSku = CmsVariantPricing.Sku(sp.Product.SKU, directVariant),
+                    VariantId = directVariant?.Id,
                     Quantity = lineReq.Quantity, UnitPrice = price,
                     VatRate = sp.Product.VatRate,
                     VatAmount = ShippingFeeRules.VatInGross(total, sp.Product.VatRate),
@@ -1239,8 +1253,6 @@ public class CmsCommerceService : ICmsCommerceService
 
         if (order == null || order.ErpDocumentId.HasValue) return order?.ErpDocumentId;
 
-        var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId);
-
         // Resolve or create ERP Contact (required by Document.ContactId non-nullable FK)
         Guid contactId;
 
@@ -1283,20 +1295,15 @@ public class CmsCommerceService : ICmsCommerceService
             PricesIncludeVat: true,   // CMS เก็บราคา gross — backend จะ split VAT ออกให้
             // ทีม Q — null ทั้งคู่เมื่อไม่มีมัดจำออกใบกำกับ (เส้นเดิมทุกตัวอักษร)
             DepositAppliedRef: deduction is { DepositBase: > 0m } ? deduction.DepositRef : null,
-            DepositBaseDeducted: deduction is { DepositBase: > 0m } ? deduction.DepositBase : null
+            DepositBaseDeducted: deduction is { DepositBase: > 0m } ? deduction.DepositBase : null,
+            // รอบ 209 P6 (ฐ): สาขาของเว็บ ⇒ สาขาที่ออกใบ (§86/4(2)) · เว็บไม่ผูกสาขา = null = สำนักงานใหญ่เดิม
+            BranchId: await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId)
         );
 
         // รอบ 205 ทีม W1 (R-04): ต้นทางเดียวกับใบมัดจำของออเดอร์ ⇒ ใบร่างไม่กินโควตาจนอนุมัติ (DocumentQuotaPolicy.DefersCountUntilApproval)
         var created = await _docService.CreateDocumentAsync(companyId, request, "storefront-customer",
             originModule: Accounting.Helpers.SiteOrderDepositInvoicing.OriginModule);
         order.ErpDocumentId = created.Id;
-
-        // Branch hint — ฝัง InternalNotes ของ Document ตามเดิม
-        if (site?.BranchId.HasValue == true)
-        {
-            var doc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id);
-            if (doc != null) doc.InternalNotes = $"Branch: {site.BranchId}";
-        }
 
         await _db.SaveChangesAsync();
         _logger.LogInformation("Order {OrderNumber} synced to ERP document {DocId} ({DocNumber})",
@@ -1701,7 +1708,8 @@ public class CmsCommerceService : ICmsCommerceService
                     PricesIncludeVat: true,
                     IsDeposit: true,
                     DepositOutputVatDeferred: false,
-                    BookingNumber: order.OrderNumber);
+                    BookingNumber: order.OrderNumber,
+                    BranchId: await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId));   // รอบ 209 P6 (ฐ)
                 var created = await _docService.CreateDocumentAsync(companyId, request, actor,
                     Accounting.Helpers.SiteOrderDepositInvoicing.OriginModule);
                 // ผูกก่อนอนุมัติ — อนุมัติล้ม ⇒ ยืนยันซ้ำแล้วอนุมัติใบร่างเดิมต่อ (ไม่สร้างใบที่สอง)
@@ -1906,36 +1914,12 @@ public class CmsCommerceService : ICmsCommerceService
         return result;
     }
 
-    /// <summary>ผู้ติดต่อของออเดอร์สำหรับใบรับเงินมัดจำ — ลำดับเดียวกับที่ใบขาย (<c>SyncOrderToErpCoreAsync</c>) ใช้
-    /// (ลูกค้าเว็บที่ผูกแล้ว → อีเมลเดิม → สร้างใหม่ + ผูก) ⇒ ใบมัดจำกับใบขายเป็นลูกค้ารายเดียวกัน</summary>
-    private async Task<Guid> ResolveErpContactForOrderAsync(Guid companyId, SiteOrder order)
+    /// <summary>ผู้ติดต่อของออเดอร์ (ใบขาย · ใบมัดจำ · ใบเสนอราคาจากออเดอร์) — ตัวหาเดียว <see cref="CmsContactResolver"/> (รอบ 209 P6 · D4)
+    /// ⇒ ใบมัดจำ ใบขาย และใบเสนอราคาของลูกค้ารายเดียวกันได้ผู้ติดต่อแถวเดียวกัน</summary>
+    private async Task<Guid> ResolveErpContactForOrderAsync(Guid companyId, SiteOrder order, string createdBy = "storefront-order")
     {
-        if (order.Customer?.ContactId.HasValue == true) return order.Customer.ContactId.Value;
-        var matchEmail = order.Customer?.Email ?? order.ShippingEmail;
-        if (!string.IsNullOrEmpty(matchEmail))
-        {
-            var existingContact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Email == matchEmail);
-            if (existingContact != null)
-            {
-                if (order.Customer != null) order.Customer.ContactId = existingContact.Id;
-                return existingContact.Id;
-            }
-        }
-        var newContact = new Contact
-        {
-            CompanyId = companyId,
-            Name = order.Customer?.FullName ?? order.ShippingName ?? order.BillingName ?? "Online Guest",
-            Email = order.Customer?.Email ?? order.ShippingEmail,
-            Phone = order.Customer?.Phone ?? order.ShippingPhone,
-            TaxId = order.BillingTaxId,
-            BranchCode = order.BillingBranchCode,
-            IsCustomer = true,
-            Address = order.ShippingAddress
-        };
-        _db.Contacts.Add(newContact);
-        await _db.SaveChangesAsync();
-        if (order.Customer != null) order.Customer.ContactId = newContact.Id;
-        return newContact.Id;
+        var r = await CmsContactResolver.ResolveAsync(_db, companyId, CmsContactResolver.ForOrder(order, createdBy), order.Customer);
+        return r.ContactId!.Value;   // createIfMissing (ค่าเริ่มต้น) ⇒ มีค่าเสมอ
     }
 
     // ===== Helpers =====
@@ -1979,6 +1963,9 @@ public class CmsCommerceService : ICmsCommerceService
                     VariantOptionsJson = i.VariantOptionsJson,
                     ModifierSummary = i.ModifierSelectionsJson,
                     ExtraLeadDays = i.ExtraLeadDays,
+                    VariantId = i.VariantId,
+                    VariantName = i.VariantId == null ? null
+                        : _db.SiteProductVariants.Where(v => v.Id == i.VariantId && v.CompanyId == c.CompanyId).Select(v => v.Name).FirstOrDefault(),
                 }).ToList()
             })
             .FirstAsync();
@@ -2044,7 +2031,8 @@ public class CmsCommerceService : ICmsCommerceService
             foreach (var guestItem in guestCart.Items.ToList())
             {
                 var existing = customerCart.Items.FirstOrDefault(i => i.SiteProductId == guestItem.SiteProductId
-                    && i.VariantOptionsJson == guestItem.VariantOptionsJson);
+                    && i.VariantOptionsJson == guestItem.VariantOptionsJson
+                    && i.VariantId == guestItem.VariantId && i.ModifierSelectionsJson == guestItem.ModifierSelectionsJson);   // รอบ 209 P6: คนละไซซ์/ตัวเลือก = คนละบรรทัด
                 if (existing != null)
                 {
                     existing.Quantity += guestItem.Quantity;
@@ -2082,20 +2070,25 @@ public class CmsCommerceService : ICmsCommerceService
         // ตาม duplicate audit #5) — ใช้ advisory lock + atomic txn + validation
         // เหมือนกันทั่วระบบ. CMS-specific เหลือแค่ตรวจ StockBehavior +
         // mark line.StockDeducted (audit trail per line)
-        foreach (var line in order.Lines.Where(l => !l.StockDeducted))
+        // รอบ 209 P6 (D3/E5): คลังของเว็บ (CmsSiteWarehouse · ค่าเริ่มต้น = คลังหลักเดิม) + สินค้าที่ตัดจริง (variant ที่ผูกสินค้า ERP หรือสินค้าแม่)
+        // ตรึงลงบรรทัด (WarehouseId · StockProductId) ⇒ คืนสต็อกเข้าสินค้า/คลังเดียวกันเสมอ
+        var warehouseId = await CmsSiteWarehouse.ResolveAsync(_db, _stock, companyId, siteId);
+        var pending = order.Lines.Where(l => !l.StockDeducted).ToList();
+        var targets = await LoadLineStockTargetsAsync(companyId, pending, warehouseId);
+        foreach (var line in pending)
         {
-            var product = line.SiteProduct.Product;
+            var target = targets[line.Id];
             // CMS guard: บางสินค้าเป็น PreOrder ปล่อยติดลบได้ — ProductService
             // จะ throw ถ้า OUT แล้วติดลบ (โหมด strict). ตอนนี้ CMS guard เฉพาะ
             // InStockOnly + ปล่อยอย่างอื่นไป AdjustStockAsync จะ enforce อีกชั้น
             if (line.SiteProduct.StockBehavior != StockBehavior.InStockOnly
-                && product.CurrentStock < line.Quantity)
+                && target.Available < line.Quantity)
             {
                 // PreOrder / Backorder: skip AdjustStockAsync (จะ throw) แต่ mark
                 // line ว่าตัดแล้ว เพื่อกัน loop ซ้ำ
                 line.StockDeducted = true;
                 _logger.LogInformation("Skipping stock deduct for pre-order line {LineId} product {ProductId}",
-                    line.Id, product.Id);
+                    line.Id, target.ProductId);
                 continue;
             }
 
@@ -2104,12 +2097,13 @@ public class CmsCommerceService : ICmsCommerceService
                 if (_productService != null)
                 {
                     await _productService.AdjustStockAsync(companyId, new Models.DTOs.Product.StockAdjustmentRequest(
-                        ProductId: product.Id,
+                        ProductId: target.ProductId,
                         Quantity: line.Quantity,
                         MovementType: "OUT",
                         UnitCost: null,
                         Reference: $"WEB-Order-{order.OrderNumber}",
-                        Notes: "Online order line"
+                        Notes: "Online order line",
+                        WarehouseId: warehouseId
                     ), "storefront-customer");
                 }
                 else if (_stock != null)
@@ -2118,10 +2112,11 @@ public class CmsCommerceService : ICmsCommerceService
                     // เดินผ่าน ledger เหมือนกัน **ห้ามเขียนสต็อกเอง**
                     await _stock.MoveAsync(new StockMoveRequest(
                         CompanyId: companyId,
-                        ProductId: product.Id,
+                        ProductId: target.ProductId,
                         Quantity: -line.Quantity,
                         MovementType: "OUT",
                         Reference: $"WEB-Order-{order.OrderNumber}",
+                        WarehouseId: warehouseId,
                         Notes: "Online order line",
                         CreatedBy: "storefront-customer"));
                 }
@@ -2132,13 +2127,15 @@ public class CmsCommerceService : ICmsCommerceService
                         "ระบบสต็อกไม่พร้อม — ไม่สามารถตัดสต็อกของคำสั่งซื้อนี้ได้");
                 }
                 line.StockDeducted = true;
+                line.StockProductId = target.ProductId;
+                line.WarehouseId = warehouseId;
             }
             catch (InvalidOperationException ex)
             {
                 _logger.LogWarning(ex, "Stock deduct rejected for line {LineId} product {ProductId}",
-                    line.Id, product.Id);
+                    line.Id, target.ProductId);
                 throw new InvalidOperationException(
-                    $"สต็อกไม่พอสำหรับ '{product.Name}' — {ex.Message}", ex);
+                    $"สต็อกไม่พอสำหรับ '{target.ProductName}' — {ex.Message}", ex);
             }
         }
 
@@ -2159,13 +2156,17 @@ public class CmsCommerceService : ICmsCommerceService
             throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถคืนสต็อกได้");
 
         await using var tx = await _db.Database.BeginTransactionAsync();
-        foreach (var line in order.Lines.Where(l => l.StockDeducted))
+        // รอบ 209 P6: คืนเข้าสินค้า/คลังที่ตัดจริง (ตรึงบนบรรทัด · แถวเก่า = สินค้าแม่ + คลังหลักเดิม)
+        var deducted = order.Lines.Where(l => l.StockDeducted).ToList();
+        var back = await LoadLineStockTargetsAsync(companyId, deducted, null);
+        foreach (var line in deducted)
         {
             await _stock.MoveAsync(new StockMoveRequest(
                 CompanyId: companyId,
-                ProductId: line.SiteProduct.Product.Id,
+                ProductId: back[line.Id].ProductId,
                 Quantity: line.Quantity,          // + = คืนเข้าคลัง
                 MovementType: "IN",
+                WarehouseId: line.WarehouseId,
                 Reference: $"WEB-Cancel-{order.OrderNumber}",
                 Notes: "Online order cancelled",
                 CreatedBy: "storefront"));
@@ -2311,7 +2312,7 @@ public class CmsCommerceService : ICmsCommerceService
         order.CancelledAt = DateTime.UtcNow;
         order.CancellationReason = "เปลี่ยนเป็นใบเสนอราคาตามคำขอลูกค้า";
 
-        var contactId = await ResolveOrCreateContactFromOrderAsync(companyId, order);
+        Guid? contactId = await ResolveErpContactForOrderAsync(companyId, order, "storefront-quotation");
 
         Guid? quotationId = null;
         string? quotationNumber = null;
@@ -2367,7 +2368,8 @@ public class CmsCommerceService : ICmsCommerceService
                 // false ⇒ DocumentService บวก VAT ทับอีก 7% ⇒ ใบเสนอราคาที่ลูกค้าได้รับ
                 // สูงกว่ายอดในตะกร้า ~7% ทุกใบ (ญาติของบั๊กส่วนลด: เส้นที่สองที่แปลง
                 // ออเดอร์ CMS เป็นเอกสาร แต่แปลงคนละกติกา)
-                PricesIncludeVat: true);
+                PricesIncludeVat: true,
+                BranchId: await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId));   // รอบ 209 P6 (ฐ)
 
             try
             {
@@ -2425,49 +2427,6 @@ public class CmsCommerceService : ICmsCommerceService
         };
     }
 
-    /// <summary>Match-or-create ERP Contact for an online order — mirror
-    /// of the resolution logic in SyncOrderToErpAsync. Matches by the
-    /// customer's email first (most reliable), else creates a new
-    /// IsCustomer=true Contact populated from the shipping/billing
-    /// fields on the order. Returns null only when even the new-row
-    /// insert fails — practically unreachable.</summary>
-    private async Task<Guid?> ResolveOrCreateContactFromOrderAsync(Guid companyId, SiteOrder order)
-    {
-        if (order.Customer?.ContactId.HasValue == true) return order.Customer.ContactId.Value;
-
-        var matchEmail = order.Customer?.Email ?? order.ShippingEmail;
-        if (!string.IsNullOrEmpty(matchEmail))
-        {
-            var existing = await _db.Contacts
-                .FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted && c.Email == matchEmail);
-            if (existing != null)
-            {
-                if (!existing.IsCustomer) existing.IsCustomer = true;
-                if (order.Customer != null) order.Customer.ContactId = existing.Id;
-                return existing.Id;
-            }
-        }
-
-        var name = order.Customer?.FullName ?? order.ShippingName ?? order.BillingName;
-        if (string.IsNullOrWhiteSpace(name)) name = "Online Guest";
-        var newContact = new Contact
-        {
-            CompanyId = companyId,
-            Name = name,
-            Email = order.Customer?.Email ?? order.ShippingEmail,
-            Phone = order.Customer?.Phone ?? order.ShippingPhone,
-            TaxId = order.BillingTaxId,
-            BranchCode = order.BillingBranchCode,
-            IsCustomer = true,
-            Address = order.ShippingAddress,
-            CreatedBy = "storefront-quotation"
-        };
-        _db.Contacts.Add(newContact);
-        await _db.SaveChangesAsync();
-        if (order.Customer != null) order.Customer.ContactId = newContact.Id;
-        return newContact.Id;
-    }
-
     // stage เท่านั้น ไม่ SaveChanges — ผู้เรียกเป็นคน flush (ledger ก็ไม่ save เอง
     // ตามสัญญาของมัน) · เดิมเมธอดนี้เขียนสต็อกเองซึ่งไม่แตะ WarehouseStock เลย
     private async Task ReverseStockIfDeductedAsync(Guid companyId, SiteOrder order)
@@ -2479,14 +2438,17 @@ public class CmsCommerceService : ICmsCommerceService
                 throw new InvalidOperationException("ระบบสต็อกไม่พร้อม — ไม่สามารถคืนสต็อกก่อนแปลงเอกสารได้");
             return;
         }
-        foreach (var line in order.Lines.Where(l => l.StockDeducted))
+        // รอบ 209 P6: คืนเข้าสินค้า/คลังที่ตัดจริง (ตรึงบนบรรทัด · แถวเก่า = สินค้าแม่ + คลังหลักเดิม)
+        var deducted = order.Lines.Where(l => l.StockDeducted && l.SiteProduct?.Product != null).ToList();
+        var back = await LoadLineStockTargetsAsync(companyId, deducted, null);
+        foreach (var line in deducted)
         {
-            if (line.SiteProduct?.Product == null) continue;
             await _stock.MoveAsync(new StockMoveRequest(
                 CompanyId: companyId,
-                ProductId: line.SiteProduct.Product.Id,
+                ProductId: back[line.Id].ProductId,
                 Quantity: line.Quantity,          // + = คืนเข้าคลัง
                 MovementType: "IN",
+                WarehouseId: line.WarehouseId,
                 Reference: $"WEB-Convert-{order.OrderNumber}",
                 Notes: "เปลี่ยนเป็นใบเสนอราคา",
                 CreatedBy: "storefront"));

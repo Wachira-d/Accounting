@@ -71,6 +71,10 @@ public class UpdateSiteRequest
     public bool? CookieConsentEnabled { get; set; }
     public string? PrivacyPolicyUrl { get; set; }
     public string? TermsOfServiceUrl { get; set; }
+    /// <summary>รอบ 209 P6 (ฑ): บังคับติ๊กยินยอมบนฟอร์มหน้าเว็บ · null = ไม่เปลี่ยน</summary>
+    public bool? RequireDataConsent { get; set; }
+    /// <summary>ข้อความยินยอม · "" = กลับไปใช้ข้อความมาตรฐาน · null = ไม่เปลี่ยน</summary>
+    public string? DataConsentText { get; set; }
     public Guid? ThemeId { get; set; }
 }
 
@@ -115,6 +119,8 @@ public class SiteResponse
     public string? InstagramUrl { get; set; }
     public bool CookieConsentEnabled { get; set; }
     public string? PrivacyPolicyUrl { get; set; }
+    public bool RequireDataConsent { get; set; }
+    public string? DataConsentText { get; set; }
     public long CurrentStorageUsed { get; set; }
     public long? MaxStorageBytes { get; set; }
     public int PageCount { get; set; }

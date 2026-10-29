@@ -63,7 +63,10 @@ public class AbandonedCartService : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         var emailService = scope.ServiceProvider.GetService<IEmailService>();
 
-        var threshold = DateTime.UtcNow.AddHours(-3); // carts inactive for 3+ hours
+        // รอบ 209 P6 (คำตัดสินข้อ 168 ช): ชั่วโมงที่ถือว่าค้างอ่านจากค่าตั้งของแต่ละเว็บ (AbandonedCartHours · ไม่ตั้ง = 3 เดิม) —
+        // คัดหยาบด้วยเกณฑ์ต่ำสุด (1 ชม.) แล้วตัดสินรายตะกร้าด้วยค่าตั้งของเว็บนั้น
+        var now = DateTime.UtcNow;
+        var coarse = now.AddHours(-1);
 
         // Mark abandoned: carts with items, not abandoned yet, not updated recently, has customer or session
         var staleCarts = await db.SiteCarts
@@ -73,15 +76,39 @@ public class AbandonedCartService : BackgroundService
             .Where(c => !c.IsAbandoned
                 && c.Items.Any()
                 && c.AbandonedEmailSentAt == null
-                && (c.UpdatedAt ?? c.CreatedAt) < threshold)
+                && (c.UpdatedAt ?? c.CreatedAt) < coarse)
+            .OrderBy(c => c.UpdatedAt ?? c.CreatedAt)
             .Take(100)
             .ToListAsync(ct);
 
+        var siteIds = staleCarts.Select(c => c.SiteId).Distinct().ToList();
+        var configs = await db.Set<Models.Entities.SiteCommerceConfig>().AsNoTracking()
+            .Where(c => siteIds.Contains(c.SiteId))
+            .Select(c => new { c.SiteId, c.CompanyId, c.EnableAbandonedCartRecovery, c.AbandonedCartHours })
+            .ToListAsync(ct);
+
+        var marked = 0;
         foreach (var cart in staleCarts)
         {
+            var cfg = configs.FirstOrDefault(c => c.SiteId == cart.SiteId && c.CompanyId == cart.CompanyId);
+            var hours = Accounting.Helpers.AbandonedCartEligibility.Hours(cfg?.AbandonedCartHours);
+            if ((cart.UpdatedAt ?? cart.CreatedAt) >= now.AddHours(-hours)) continue;   // ยังไม่ถึงเกณฑ์ของเว็บนี้
             cart.IsAbandoned = true;
+            marked++;
 
-            if (cart.Customer != null && !string.IsNullOrEmpty(cart.Customer.Email) && emailService != null)
+            // ด่าน PDPA: ร้านเปิดอีเมลกู้ตะกร้า (ไม่มีแถวค่าตั้ง = ค่าเริ่มต้นของ entity = เปิด) **และ** ลูกค้ายินยอมรับข่าวสารการตลาด
+            var (send, reason) = Accounting.Helpers.AbandonedCartEligibility.Decide(
+                cfg?.EnableAbandonedCartRecovery ?? true, cart.Customer != null, cart.Customer?.Email,
+                cart.Customer?.AcceptMarketing == true,
+                cart.Customer != null && !cart.Customer.ConsentGiven && cart.Customer.ConsentWithdrawnAt != null);
+            if (!send)
+            {
+                _logger.LogInformation("[{RuleCode}] ไม่ส่งอีเมลกู้ตะกร้า {CartId}: {Reason}",
+                    Accounting.Helpers.AbandonedCartEligibility.RuleCode, cart.Id, reason);
+                continue;
+            }
+
+            if (emailService != null)
             {
                 try
                 {
@@ -90,7 +117,7 @@ public class AbandonedCartService : BackgroundService
                         ? $"You left items in your cart at {cart.Site.Name}"
                         : $"คุณมีสินค้าค้างในตะกร้าที่ {cart.Site.Name}";
                     var body = BuildRecoveryEmail(cart, lang);
-                    await emailService.SendAsync(cart.Customer.Email, subject, body);
+                    await emailService.SendAsync(cart.Customer!.Email, subject, body);
                     cart.AbandonedEmailSentAt = DateTime.UtcNow;
                     // บันทึกทันทีทีละใบ — ธง "ส่งแล้ว" ต้อง durable ก่อนส่งใบถัดไป
                     // ไม่งั้น crash/ct ถูกยกเลิกกลางลูป = ส่งซ้ำทั้งชุดในรอบหน้า
@@ -116,7 +143,7 @@ public class AbandonedCartService : BackgroundService
             _logger.LogInformation("Cleaned up {Count} expired guest carts", expired.Count);
         }
 
-        if (staleCarts.Count > 0 || expired.Count > 0)
+        if (marked > 0 || expired.Count > 0)
             await db.SaveChangesAsync(ct);
     }
 

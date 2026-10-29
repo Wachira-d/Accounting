@@ -19,7 +19,9 @@ public record CreateLeadRequest(
     Dictionary<string, object?>? Fields = null,
     /// <summary>captcha token if captchaProvider is configured for
     /// the site (hcaptcha or recaptcha) — verified server-side.</summary>
-    string? CaptchaToken = null);
+    string? CaptchaToken = null,
+    // รอบ 209 P6 (ฑ): ติ๊กยินยอม PDPA บนฟอร์มติดต่อ — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)
+    bool ConsentGiven = false);
 
 public record LeadListResponse(
     Guid Id,

@@ -174,6 +174,34 @@
           <summary style="cursor:pointer;font-size:12px;color:var(--gray-600)">โทเคนที่ใช้ได้ในเนื้อหาหน้าเว็บ</summary>
           <div id="tokenHelp" style="font-size:12px;color:var(--gray-600);line-height:1.9;margin-top:6px"></div>
         </details>
+        <!-- รอบ 209 P6: สาขา/คลังของเว็บ (ฐ/D3) + PDPA (ฑ) — ผู้อ่าน: Helpers/CmsDocumentBranch · CmsSiteWarehouse · CmsDataConsent -->
+        <h4 style="margin:20px 0 6px;font-size:15px">🏢 สาขาและคลังของเว็บนี้</h4>
+        <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;line-height:1.7">
+          ใบขาย/ใบมัดจำ/ใบเสนอราคาจากออเดอร์และการจองของเว็บนี้ออกในนาม<b>สาขาที่เลือก</b> (รหัสสาขาบนใบกำกับ §86/4) — ไม่เลือก = สำนักงานใหญ่ (เหมือนเดิม) ·
+          เลขที่เอกสารรันต่อเนื่องชุดเดียวของบริษัท · มีผลกับใบใหม่เท่านั้น
+        </p>
+        <div class="grid-2">
+          <div class="form-group"><label class="form-label">สาขาที่ออกเอกสาร</label>
+            <select class="form-input" id="sBranchId"><option value="">สำนักงานใหญ่ (ค่าเริ่มต้น)</option></select></div>
+          <div class="form-group"><label class="form-label">คลังที่ตัดสต็อก</label>
+            <select class="form-input" id="sWarehouseId"><option value="">คลังหลักของบริษัท (ค่าเริ่มต้น)</option></select>
+            <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="sUseGlobalInventory" checked> ใช้คลังหลักของบริษัท (ไม่ติ๊ก = ตัดจากคลังที่เลือก หรือคลังของสาขาที่เลือก)</label></div>
+        </div>
+        <h4 style="margin:20px 0 6px;font-size:15px">🔒 ข้อมูลส่วนบุคคล (PDPA)</h4>
+        <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;line-height:1.7">
+          ช่องยินยอม + ลิงก์นโยบายแสดงบนฟอร์มสั่งซื้อ · จอง · ติดต่อ — ลูกค้าติ๊กแล้วระบบบันทึกหลักฐานความยินยอม (เวอร์ชันตามข้อความที่แสดง) ·
+          ติ๊ก "บังคับ" ⇒ ไม่ติ๊กส่งไม่ได้ (ตรวจที่เซิร์ฟเวอร์)
+        </p>
+        <div class="grid-2">
+          <div class="form-group"><label class="form-label">ลิงก์นโยบายความเป็นส่วนตัว</label>
+            <input type="text" class="form-input" id="sPrivacyUrl" placeholder="https://... หรือ /privacy"></div>
+          <div class="form-group">
+            <label style="font-size:13px;display:flex;gap:6px;align-items:center;margin-top:24px"><input type="checkbox" id="sRequireConsent"> บังคับติ๊กยินยอมก่อนส่งฟอร์ม</label>
+            <label style="font-size:13px;display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="sCookieConsent" checked> แสดงแบนเนอร์คุกกี้ (สคริปต์วิเคราะห์โหลดหลังลูกค้ากดยอมรับ)</label>
+          </div>
+        </div>
+        <div class="form-group"><label class="form-label">ข้อความยินยอม (เว้นว่าง = ข้อความมาตรฐาน)</label>
+          <textarea class="form-input" id="sConsentText" rows="2" placeholder="ข้าพเจ้ายินยอมให้ร้านเก็บและใช้ข้อมูลส่วนบุคคลเพื่อดำเนินการตามคำสั่งซื้อ/การจอง ตามนโยบายความเป็นส่วนตัว"></textarea></div>
         <div style="margin-top:16px">
           <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO, Analytics &amp; CAPTCHA</button>
         </div>
@@ -700,9 +728,12 @@
                   <div class="form-group" style="flex:1"><label class="form-label">ชื่อ</label><input type="text" class="form-input" id="varName"></div>
                 </div>
                 <div class="form-row">
-                  <div class="form-group" style="flex:1"><label class="form-label">ราคา</label><input type="number" class="form-input" id="varPrice" step="0.01"></div>
-                  <div class="form-group" style="flex:1"><label class="form-label">สต๊อก</label><input type="number" class="form-input" id="varStock"></div>
+                  <div class="form-group" style="flex:1"><label class="form-label">ราคา (ว่าง = ราคาสินค้า)</label><input type="number" class="form-input" id="varPrice" step="0.01"></div>
+                  <div class="form-group" style="flex:1"><label class="form-label">ตัดสต็อกจากสินค้า ERP</label><select class="form-input" id="varErpProduct"><option value="">— สินค้าแม่ (ไม่แยกสต็อก) —</option></select></div>
                 </div>
+                <input type="hidden" id="varId">
+                <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-bottom:8px"><input type="checkbox" id="varActive" checked> เปิดขายตัวเลือกนี้</label>
+                <p style="font-size:11px;color:var(--gray-500);margin:0 0 8px">สต็อกของตัวเลือกมาจากสินค้า ERP ที่ผูก (หนึ่งไซซ์/สี = หนึ่งสินค้า) — ไม่ผูก = ตัดสต็อกสินค้าแม่ · หน้าร้านบังคับลูกค้าเลือกเมื่อมีตัวเลือกที่เปิดขาย</p>
                 <div class="form-group"><label class="form-label">Options (JSON: {"สี":"แดง"})</label><input type="text" class="form-input" id="varOptions" placeholder='{"สี":"แดง","ขนาด":"M"}'></div>
                 <div class="flex gap-2">
                   <button class="btn btn-sm btn-primary" onclick="Page.saveVariant()">บันทึก Variant</button>
@@ -1039,10 +1070,10 @@
           </div>
           <div class="form-group"><label class="form-label">อีเมลแจ้งเตือน (คั่น ,)</label><input type="text" class="form-input" id="frmNotify" placeholder="admin@example.com,sales@example.com"></div>
           <div class="form-row">
-            <div class="form-group form-checkbox"><input type="checkbox" id="frmAutoReply"><label for="frmAutoReply">ส่งอีเมลตอบกลับอัตโนมัติ</label></div>
+            <div class="form-group form-checkbox"><input type="checkbox" id="frmAutoReply"><label for="frmAutoReply">ส่งอีเมลตอบกลับอัตโนมัติ (ถึงอีเมลที่ผู้กรอกใส่ในช่อง email)</label></div>
             <div class="form-group form-checkbox"><input type="checkbox" id="frmCaptcha" checked><label for="frmCaptcha">ใช้ CAPTCHA</label></div>
           </div>
-          <div class="form-group form-checkbox"><input type="checkbox" id="frmCreateErp"><label for="frmCreateErp">สร้างเอกสารใน ERP เมื่อรับฟอร์ม</label></div>
+          <div class="form-group form-checkbox"><input type="checkbox" id="frmCreateErp"><label for="frmCreateErp">ส่งเข้ากล่อง Lead เมื่อรับฟอร์ม (แปลงเป็นใบเสนอราคาได้ที่หน้า Lead)</label></div>
           <hr style="margin:14px 0">
           <h4 style="font-size:14px;margin-bottom:10px">ฟิลด์ในฟอร์ม</h4>
           <div id="formFieldsList" style="margin-bottom:12px"></div>
@@ -1298,6 +1329,13 @@
           document.getElementById('sLineId').value = this.site.lineId || '';
           document.getElementById('sFacebookUrl').value = this.site.facebookUrl || '';
           document.getElementById('sInstagramUrl').value = this.site.instagramUrl || '';
+          // รอบ 209 P6: สาขา/คลัง + PDPA (echo จาก SiteResponse — เปิดแก้แล้วบันทึกค่าไม่หาย)
+          document.getElementById('sPrivacyUrl').value = this.site.privacyPolicyUrl || '';
+          document.getElementById('sRequireConsent').checked = !!this.site.requireDataConsent;
+          document.getElementById('sCookieConsent').checked = this.site.cookieConsentEnabled !== false;
+          document.getElementById('sConsentText').value = this.site.dataConsentText || '';
+          document.getElementById('sUseGlobalInventory').checked = this.site.useGlobalInventory !== false;
+          this.loadSiteErpMapping();
           this.renderTokenHelp();
           this.applyTabsBySiteType();
           this.loadQuotas();
@@ -2071,10 +2109,35 @@
             contactEmail: document.getElementById('sContactEmail').value,
             lineId: document.getElementById('sLineId').value,
             facebookUrl: document.getElementById('sFacebookUrl').value,
-            instagramUrl: document.getElementById('sInstagramUrl').value
+            instagramUrl: document.getElementById('sInstagramUrl').value,
+            // รอบ 209 P6 — ว่าง = ล้าง (Guid ศูนย์ = กลับเป็นสำนักงานใหญ่/คลังหลัก · "" = ข้อความมาตรฐาน)
+            // รายการยังโหลดไม่เสร็จ ⇒ ไม่ส่ง (undefined = ไม่เปลี่ยน) — กันล้างสาขา/คลังเดิมเงียบ ๆ
+            branchId: this._erpMap?.branches ? (document.getElementById('sBranchId').value || '00000000-0000-0000-0000-000000000000') : undefined,
+            defaultWarehouseId: this._erpMap?.warehouses ? (document.getElementById('sWarehouseId').value || '00000000-0000-0000-0000-000000000000') : undefined,
+            useGlobalInventory: document.getElementById('sUseGlobalInventory').checked,
+            privacyPolicyUrl: document.getElementById('sPrivacyUrl').value.trim(),
+            requireDataConsent: document.getElementById('sRequireConsent').checked,
+            cookieConsentEnabled: document.getElementById('sCookieConsent').checked,
+            dataConsentText: document.getElementById('sConsentText').value
           });
           Layout.toast('บันทึกสำเร็จ', 'success');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // รอบ 209 P6: ตัวเลือกสาขา/คลังของเว็บ (ค่าที่เลือกไว้ต้องอยู่ในรายการเสมอ แม้สาขาถูกปิดใช้งาน)
+      async loadSiteErpMapping() {
+        const api = Layout.api(); if (!api || !this.site) return;
+        const fill = (id, rows, selected, label) => {
+          const sel = document.getElementById(id); if (!sel) return;
+          const first = sel.options[0].outerHTML;
+          sel.innerHTML = first + rows.map(r => `<option value="${Layout.esc(r.id)}">${Layout.esc(label(r))}</option>`).join('');
+          sel.value = selected && rows.some(r => r.id === selected) ? selected : '';
+        };
+        this._erpMap = {};
+        try { const r = await api.getBranches(true); fill('sBranchId', r.data?.items || r.data || [], this.site.branchId, b => `${b.code || ''} ${b.name || ''}${b.taxBranchCode ? ' · สาขา ' + b.taxBranchCode : ''}`); this._erpMap.branches = true; }
+        catch (_) { /* โหลดไม่ได้ ⇒ ไม่ส่งค่า (ค่าเดิมคงอยู่) */ }
+        try { const r = await api.getWarehouses(); fill('sWarehouseId', r.data?.items || r.data || [], this.site.defaultWarehouseId, w => `${w.code || ''} ${w.name || ''}`); this._erpMap.warehouses = true; }
+        catch (_) { /* โหลดไม่ได้ ⇒ ไม่ส่งค่า */ }
       },
 
       // ============ DOMAINS ============
@@ -2580,22 +2643,52 @@
           const res = await api.cmsListVariants(this.siteId, productId);
           const variants = res.data || [];
           if (!variants.length) { list.innerHTML = '<div style="color:var(--gray-500);font-size:12px;padding:10px">ยังไม่มี Variant</div>'; return; }
+          this._variants = variants;
           list.innerHTML = variants.map(v => {
-            const opts = v.options ? Object.entries(v.options).map(([k,val]) => `${Layout.esc(k)}: ${Layout.esc(val)}`).join(', ') : '';
+            let optObj = null; try { optObj = v.optionsJson ? JSON.parse(v.optionsJson) : null; } catch (_) {}
+            const opts = optObj ? Object.entries(optObj).map(([k,val]) => `${Layout.esc(k)}: ${Layout.esc(val)}`).join(', ') : '';
             return `<div class="variant-row" style="display:flex;align-items:center;gap:10px">
               <div style="flex:1">
-                <strong>${Layout.esc(v.name || v.sku || '')}</strong>
-                <div style="font-size:12px;color:var(--gray-600)">${Layout.esc(v.sku||'')} · ฿${Number(v.price||0).toLocaleString('th-TH')} · สต๊อก: ${v.stock ?? '-'} ${opts ? `· ${opts}` : ''}</div>
+                <strong>${Layout.esc(v.name || v.sku || '')}</strong>${v.isActive ? '' : ' <span style="font-size:11px;color:#B45309">(ปิดขาย)</span>'}
+                <div style="font-size:12px;color:var(--gray-600)">${Layout.esc(v.sku||'')} · ${v.price != null ? '฿' + Number(v.price).toLocaleString('th-TH') : 'ราคาสินค้า'} · สต็อก ${Layout.esc(v.stockProductName || '')}: ${v.effectiveStock ?? '-'} ${opts ? `· ${opts}` : ''}</div>
               </div>
+              <button class="btn btn-sm btn-secondary" onclick="Page.editVariant('${Layout.jsArg(v.id)}')">✏️</button>
               <button class="btn btn-sm btn-danger" onclick="Page.deleteVariant('${productId}','${v.id}')">🗑</button>
             </div>`;
           }).join('');
         } catch(e) { list.innerHTML = `<div style="color:#DC2626;font-size:12px">${Layout.esc(e.message)}</div>`; }
       },
 
-      addVariantRow() {
+      async addVariantRow() {
         document.getElementById('prdVariantForm').style.display = '';
-        ['varSku','varName','varPrice','varStock','varOptions'].forEach(id => document.getElementById(id).value = '');
+        ['varId','varSku','varName','varPrice','varOptions'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('varActive').checked = true;
+        await this.fillVariantProducts(null);
+      },
+
+      // รอบ 209 P6: แก้ตัวเลือกย่อยเดิม (API update มีอยู่แล้ว — เดิมหน้าจอมีแค่เพิ่ม/ลบ)
+      async editVariant(variantId) {
+        const v = (this._variants || []).find(x => x.id === variantId); if (!v) return;
+        document.getElementById('prdVariantForm').style.display = '';
+        document.getElementById('varId').value = v.id;
+        document.getElementById('varSku').value = v.sku || '';
+        document.getElementById('varName').value = v.name || '';
+        document.getElementById('varPrice').value = v.price ?? '';
+        document.getElementById('varOptions').value = v.optionsJson || '';
+        document.getElementById('varActive').checked = v.isActive !== false;
+        await this.fillVariantProducts(v.erpProductId);
+      },
+
+      async fillVariantProducts(selected) {
+        if (!this._productsCache) {
+          const api = Layout.api(); if (!api) return;
+          try { const r = await api.getProducts('?pageSize=500'); this._productsCache = r.data?.items || r.data || []; }
+          catch (_) { this._productsCache = []; }
+        }
+        const sel = document.getElementById('varErpProduct');
+        sel.innerHTML = '<option value="">— สินค้าแม่ (ไม่แยกสต็อก) —</option>' + this._productsCache.map(p =>
+          `<option value="${Layout.esc(p.id)}">${Layout.esc(p.code || '')} · ${Layout.esc(p.name || '')}</option>`).join('');
+        sel.value = selected || '';
       },
 
       async saveVariant() {
@@ -2606,12 +2699,16 @@
         if (!sku) { Layout.toast('กรุณากรอก SKU', 'error'); return; }
         let options = {};
         try { options = JSON.parse(document.getElementById('varOptions').value || '{}'); } catch(_) {}
+        const variantId = document.getElementById('varId').value;
+        const payload = {
+          sku, name: name || sku, options,
+          price: Layout.numOrNull('varPrice'),
+          erpProductId: document.getElementById('varErpProduct').value || null,
+          isActive: document.getElementById('varActive').checked
+        };
         try {
-          await api.cmsCreateVariant(this.siteId, productId, {
-            sku, name: name || sku, options,
-            price: Layout.numOrNull('varPrice'),
-            stock: Layout.intOrNull('varStock')   // 0 = ของหมด (กันขายเกิน) ≠ ไม่จำกัด
-          });
+          if (variantId) await api.cmsUpdateVariant(this.siteId, productId, variantId, payload);
+          else await api.cmsCreateVariant(this.siteId, productId, payload);
           document.getElementById('prdVariantForm').style.display = 'none';
           Layout.toast('บันทึก Variant สำเร็จ', 'success');
           this.loadVariants(productId);

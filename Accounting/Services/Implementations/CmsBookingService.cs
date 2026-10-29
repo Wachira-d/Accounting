@@ -807,6 +807,11 @@ public partial class CmsBookingService : ICmsBookingService
             request.GuestName = clean.Name; request.GuestPhone = clean.Phone; request.GuestEmail = clean.Email; request.CustomerNotes = clean.Notes;
         }
 
+        // รอบ 209 P6 (ฑ): ด่านยินยอม PDPA ก่อนบันทึก (พนักงาน/ลูกค้าที่ยินยอมไว้แล้วยกเว้น — ตัวตัดสินเดียว CmsDataConsent) ·
+        // ติ๊กแล้ว ⇒ PdpaConsentRecord บันทึกพร้อมการจอง
+        await CmsDataConsent.EnforceAsync(_db, companyId, siteId, CmsDataConsent.BookingPurpose, request.ConsentGiven,
+            userId, request.CustomerId, request.GuestEmail, request.GuestPhone, reference: "booking");
+
         var start = BookingSlotEngine.ParseTime(request.StartTime)
             ?? throw new BusinessRuleException("กรุณาเลือกเวลาจากรายการเวลาว่าง", "CMS-BOOKING-INVALID");
         var date = DateOnly.FromDateTime(request.BookingDate);
@@ -1767,36 +1772,9 @@ public partial class CmsBookingService : ICmsBookingService
         var erpDocType = taxDocumentNow is DocumentType forced ? CmsBookingErpPolicy.ErpTypeOf(forced)
             : atBooking.ErpType ?? ErpBookingDocumentType.DraftServiceOrder;
 
-        // Find or create ERP Contact
-        Guid? contactId = booking.Customer?.ContactId;
-        if (contactId == null)
-        {
-            var email = booking.Customer?.Email ?? booking.GuestEmail;
-            var name = booking.Customer?.FullName ?? booking.GuestName ?? "Walk-in Customer";
-
-            if (!string.IsNullOrEmpty(email))
-            {
-                var existingContact = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == companyId && c.Email == email);
-                if (existingContact != null)
-                {
-                    contactId = existingContact.Id;
-                    if (booking.Customer != null) booking.Customer.ContactId = contactId;
-                }
-            }
-
-            if (contactId == null)
-            {
-                var newContact = new Contact
-                {
-                    CompanyId = companyId, Name = name,
-                    Email = email, Phone = booking.Customer?.Phone ?? booking.GuestPhone,
-                    IsCustomer = true
-                };
-                _db.Contacts.Add(newContact);
-                contactId = newContact.Id;
-                if (booking.Customer != null) booking.Customer.ContactId = contactId;
-            }
-        }
+        // ผู้ติดต่อ ERP — ตัวหาเดียวของลูกค้าเว็บ (รอบ 209 P6 · D4: เดิมสำเนาที่สามจับอีเมลตรงตัวโดยไม่กรองแถวที่ลบแล้ว)
+        Guid? contactId = (await CmsContactResolver.ResolveAsync(_db, companyId,
+            CmsContactResolver.ForBooking(booking, "storefront-booking"), booking.Customer)).ContactId;
 
         // Route ผ่าน IDocumentService.CreateDocumentAsync = ได้ DocumentNumberGenerator
         // (gap-free §86/4) + tax point + JE auto-post tooling + completeness check
@@ -1868,7 +1846,9 @@ public partial class CmsBookingService : ICmsBookingService
             DepositKindId: bookingDepositKindId,
             // รอบ 205 W2 (R-08): ใบเสร็จมัดจำที่สร้างหลังเงินเข้า — ผังเงินเข้าจาก gateway/ธนาคารที่พนักงานเลือก (null = ค่าเริ่มต้นเดิม)
             PaymentAccountId: paymentAccountId,
-            BankAccountId: bankAccountId
+            BankAccountId: bankAccountId,
+            // รอบ 209 P6 (ฐ): สาขาของเว็บ ⇒ สาขาที่ออกใบ · เว็บไม่ผูกสาขา = null = สำนักงานใหญ่เดิม
+            BranchId: await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId)
         );
 
         // รอบ 205 ทีม W1 (R-04): ระบุต้นทาง ⇒ ใบร่างจากการจองไม่กินโควตาจนอนุมัติ (DocumentQuotaPolicy.DefersCountUntilApproval)

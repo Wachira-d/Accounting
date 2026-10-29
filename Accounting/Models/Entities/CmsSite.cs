@@ -75,6 +75,11 @@ public class Site : TenantEntity
 
     public bool CookieConsentEnabled { get; set; } = true;
     public string? PrivacyPolicyUrl { get; set; }
+    /// <summary>รอบ 209 P6 (ฑ · PDPA ม.19): บังคับติ๊กยินยอมบนฟอร์มเช็กเอาต์/จอง/ติดต่อ — ตรวจที่เซิร์ฟเวอร์ (<c>Helpers/CmsDataConsent</c>) ·
+    /// ค่าเริ่มต้น false = พฤติกรรมเดิม (ช่องยินยอมแสดงแบบไม่บังคับ · ติ๊กแล้วบันทึก <c>PdpaConsentRecord</c>)</summary>
+    public bool RequireDataConsent { get; set; } = false;
+    /// <summary>ข้อความยินยอมที่ลูกค้าเห็น (ว่าง = ข้อความมาตรฐานของระบบ) — เวอร์ชันความยินยอม = hash ของข้อความที่แสดงจริง</summary>
+    public string? DataConsentText { get; set; }
     public string? TermsOfServiceUrl { get; set; }
 
     // Quotas (override from subscription tier)

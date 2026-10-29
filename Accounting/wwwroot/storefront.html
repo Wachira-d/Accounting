@@ -311,7 +311,7 @@
           this.applyTheme(this.data.theme);
           this.renderHeader();
           this.renderFooter();
-          this.injectAnalytics(this.data.seo);
+          if (!this.p6DeferAnalytics(this.data.seo)) this.injectAnalytics(this.data.seo);   // รอบ 209 P6: แบนเนอร์คุกกี้ (CookieConsentEnabled)
           this.loadCaptchaScript(this.data.site);
 
           // 3. Special storefront routes — product detail, cart, checkout,
@@ -644,6 +644,7 @@
               ${extrasHtml}
               <label>ข้อความ / รายละเอียด</label><textarea name="message" required></textarea>
               ${captchaHtml}
+              ${Store.p6ConsentHtml()}
               <button type="submit" class="btn btn-primary">${esc(cfg.submitText||'ส่งข้อความ')}</button>
               <div class="form-status" style="margin-top:10px"></div>
             </form>`;
@@ -673,6 +674,7 @@
                 <input type="email" name="email" placeholder="email@example.com" required style="flex:1;min-width:200px;padding:12px 14px;border-radius:var(--radius);border:1px solid #D1D5DB">
                 <input type="hidden" name="message" value="สมัครรับข่าวสาร (${esc(cfg.headline||'newsletter')})">
                 ${this.captchaWidgetHtml('width:100%;display:flex;justify-content:center')}
+                <div style="width:100%">${Store.p6ConsentHtml()}</div>
                 <button type="submit" class="btn btn-primary">${esc(cfg.buttonText||'สมัคร')}</button>
                 <div class="form-status" style="width:100%;font-size:13px;margin-top:6px"></div>
               </form>
@@ -858,7 +860,7 @@
         // Standard fields land on the lead's first-class columns; the
         // rest go into the `fields` JSON for the owner to read in the
         // detail modal.
-        const standardKeys = new Set(['name','email','phone','company','taxId','message']);
+        const standardKeys = new Set(['name','email','phone','company','taxId','message','pdpaConsent']);
         const extras = {};
         for (const [k, v] of Object.entries(data)) {
           if (!standardKeys.has(k) && !k.startsWith('h-captcha') && !k.startsWith('g-recaptcha')
@@ -882,7 +884,8 @@
           customerTaxId: data.taxId || null,
           message: data.message || null,
           fields: Object.keys(extras).length ? extras : null,
-          captchaToken
+          captchaToken,
+          consentGiven: Store.p6ConsentValue(form)   // รอบ 209 P6: ด่านจริงอยู่ที่เซิร์ฟเวอร์ (RequireDataConsent)
         };
 
         let posted = false;
@@ -901,6 +904,9 @@
               form.reset();
               return;
             }
+            // รอบ 209 P6: เซิร์ฟเวอร์ปฏิเสธพร้อมเหตุ (เช่น ยังไม่ติ๊กยินยอม) ⇒ แสดงเหตุ ไม่เปิด mailto แทน
+            const jErr = await r.json().catch(() => null);
+            if (r.status === 400 && jErr && jErr.message) { status.textContent = jErr.message; status.style.color = '#DC2626'; return; }
           } catch (_) { /* network — fall through to mailto */ }
         }
 
@@ -1075,13 +1081,14 @@
               <div>
                 <h1 style="margin:0 0 12px">${this.esc(_name)}</h1>
                 <div style="margin-bottom:18px;display:flex;gap:12px;align-items:baseline">
-                  <span style="font-size:28px;font-weight:700;color:var(--primary,#4F46E5)">฿${Number(price).toLocaleString('th-TH')}</span>
+                  <span id="pdPrice" style="font-size:28px;font-weight:700;color:var(--primary,#4F46E5)">฿${Number(price).toLocaleString('th-TH')}</span>
                   ${compare ? `<span style="text-decoration:line-through;color:var(--text-secondary,#6B7280)">฿${Number(compare).toLocaleString('th-TH')}</span>` : ''}
                 </div>
                 ${p.shortDescription ? `<p style="color:var(--text-secondary,#6B7280);margin-bottom:18px">${this.esc(p.shortDescription)}</p>` : ''}
                 ${p.earliestReadyDate ? `<div style="margin-bottom:16px;padding:10px 14px;background:#EEF2FF;border-radius:8px;font-size:14px;color:#3730A3">
                   🕒 สินค้าทำตามสั่ง — ผลิต ${Number(p.leadTimeDays||0)} วัน · สั่งตอนนี้รับได้เร็วสุด <strong>${this.esc(this._thaiDate(p.earliestReadyDate))}</strong>
                   <div style="font-size:12px;color:#6366F1;margin-top:2px">ตัวเลือกบางอย่างอาจเพิ่มวันผลิต — วันรับจริงแสดงตอนชำระเงิน</div></div>` : ''}
+                ${this.p6VariantPickerHtml(p)}
                 <div id="pdOptions">${(p.optionGroups || []).map(g => this._renderOptionGroup(g)).join('')}</div>
                 <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px">
                   <label style="font-size:14px">จำนวน:</label>
@@ -1108,7 +1115,8 @@
           const r = await fetch(this._url(`/commerce/cart/${cart.id}/items`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ siteProductId: productId, quantity, modifiers })
+            body: JSON.stringify({ siteProductId: productId, quantity, modifiers,
+              variantId: (this._pd && this._pd.id === productId && this._pd.variantId) || null })   // รอบ 209 P6: ตัวเลือกย่อย (ด่าน/ราคาที่เซิร์ฟเวอร์)
           });
           if (!r.ok) {
             // ข้อความจากเซิร์ฟเวอร์ (เช่น "กรุณาเลือกขนาด") — ด่านจริงอยู่ที่เซิร์ฟเวอร์
@@ -1147,7 +1155,7 @@
                   <div style="display:flex;gap:14px;align-items:center;padding:14px;border-bottom:1px solid #F3F4F6">
                     ${it.imageUrl ? `<img src="${this.esc(it.imageUrl)}" style="width:64px;height:64px;object-fit:cover;border-radius:6px">` : `<div style="width:64px;height:64px;background:#F3F4F6;border-radius:6px"></div>`}
                     <div style="flex:1;min-width:0">
-                      <div style="font-weight:600">${this.esc(it.productName||'')}</div>
+                      <div style="font-weight:600">${this.esc(it.productName||'')}${it.variantName ? ` <span style="font-weight:400;color:#4F46E5">· ${this.esc(it.variantName)}</span>` : ''}</div>
                       ${it.modifierSummary ? `<div style="font-size:12px;color:#4F46E5">${this.esc(it.modifierSummary)}</div>` : ''}
                       <div style="font-size:13px;color:var(--text-secondary)">฿${Number(it.unitPrice).toLocaleString('th-TH')} × ${Number(it.quantity)}</div>
                     </div>
@@ -1229,6 +1237,7 @@
                 <div><label>รหัสสาขา</label><input name="billingBranchCode" placeholder="00000" maxlength="5" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
                 <div style="grid-column:1/-1"><label>ที่อยู่ใบกำกับ</label><textarea name="billingAddress" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea></div>
               </div>
+              ${this.p6ConsentHtml()}
               <button type="submit" class="btn btn-primary" style="padding:16px;font-size:17px;margin-top:8px">ยืนยันสั่งซื้อ</button>
             </form>
           </div>`;
@@ -1387,6 +1396,7 @@
           shippingCountryCode: 'TH',
           shippingProvince: fd.get('shippingProvince') || null,
           shippingPostalCode: fd.get('shippingPostalCode') || null,
+          consentGiven: this.p6ConsentValue(ev.target),   // รอบ 209 P6 (PDPA)
         };
         if (body.fulfillmentMethod === 'pickup' && !body.shippingAddress) body.shippingAddress = 'มารับเองที่ร้าน';
         // เหตุที่ยังสั่งไม่ได้มาจากเซิร์ฟเวอร์ (ต้องกรอกจังหวัด/เลือกวิธีส่ง) — บอกก่อนกดส่ง ด่านจริงยังอยู่ที่ CreateOrder
@@ -1698,6 +1708,7 @@
             ${fld('phone', 'เบอร์โทร', r => `<input name="customerPhone" type="tel" ${r} maxlength="30" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`)}
             ${fld('email', 'อีเมล', r => `<input type="email" name="customerEmail" ${r} maxlength="200" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`)}
             ${fld('notes', 'หมายเหตุ', r => `<textarea name="notes" rows="2" ${r} style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea>`)}
+            ${this.p6ConsentHtml()}
             <button type="button" onclick="Store._submitBooking()" class="btn btn-primary" style="padding:12px">ยืนยันการจอง</button>
           </form>`;
         await this._loadSlots(serviceId);
@@ -1770,7 +1781,8 @@
           customerNotes: fd.get('notes') || null,
           guestCount: this._bkGuests(),
           units: this._bkUnits(),
-          resourceId: this._bkResource()
+          resourceId: this._bkResource(),
+          consentGiven: this.p6ConsentValue(form)   // รอบ 209 P6 (PDPA)
         };
         try {
           const r = await fetch(this._url('/booking/bookings'), {
@@ -2862,6 +2874,75 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
           if (!r.ok) throw new Error(j?.message || 'ยกเลิกไม่สำเร็จ');
           await this.renderLodgingReservation(token, j.message);
         } catch (e) { this._toast('❌ ' + e.message); }
+      },
+    });
+
+    // ═══════════════ รอบ 209 P6 — PDPA (ช่องยินยอม · แบนเนอร์คุกกี้) + ตัวเลือกย่อยสินค้า (variant) ═══════════════
+    // ข้อความยินยอม/บังคับ/ลิงก์นโยบาย/ราคา/มีของ มาจากเซิร์ฟเวอร์ทั้งหมด (หน้าเว็บแสดงอย่างเดียว · ด่านจริงอยู่ที่ service — Helpers/CmsDataConsent · CmsVariantPricing)
+    Object.assign(Store, {
+      p6ConsentHtml() {
+        const site = (this.data && this.data.site) || {};
+        if (!site.dataConsentText) return '';
+        const req = site.requireDataConsent;
+        const link = site.privacyPolicyUrl
+          ? ` <a href="${this.esc(site.privacyPolicyUrl)}" target="_blank" rel="noopener">อ่านนโยบายความเป็นส่วนตัว</a>` : '';
+        return `<label class="p6-consent" style="display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.5;margin:6px 0;text-align:left">`
+          + `<input type="checkbox" name="pdpaConsent" value="1" ${req ? 'required' : ''} style="margin-top:3px;width:auto">`
+          + `<span>${this.esc(site.dataConsentText)}${link}${req ? ' <b style="color:#DC2626">*</b>' : ''}</span></label>`;
+      },
+      p6ConsentValue(form) {
+        const el = form && form.querySelector('input[name="pdpaConsent"]');
+        return !!(el && el.checked);
+      },
+      // แบนเนอร์คุกกี้ (Site.CookieConsentEnabled) — ยังไม่เลือก ⇒ เลื่อนสคริปต์วิเคราะห์ (GA/GTM/Pixel) จนกว่าจะกดยอมรับ · ปฏิเสธ ⇒ ไม่โหลด ·
+      // ปิดแบนเนอร์ที่หลังบ้าน ⇒ โหลดทันทีเหมือนเดิม · ค่าที่เลือกเก็บต่อเครื่อง (localStorage — ห่อ try/catch)
+      p6DeferAnalytics(seo) {
+        if (!seo || !seo.cookieConsentEnabled) return false;
+        const key = 'sf_cookie_' + ((this.data && this.data.site && this.data.site.siteId) || '');
+        let choice = null;
+        try { choice = localStorage.getItem(key); } catch (_) {}
+        if (choice === 'accept') return false;
+        if (choice === 'reject') return true;
+        this._p6Seo = seo; this._p6CookieKey = key;
+        const bar = document.createElement('div');
+        bar.id = 'p6CookieBar';
+        bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:12px;z-index:9999;background:#0f172a;color:#fff;padding:14px 16px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.3);display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;max-width:900px;margin:0 auto';
+        const url = this.data && this.data.site && this.data.site.privacyPolicyUrl;
+        bar.innerHTML = `<span style="flex:1;min-width:220px">เว็บไซต์นี้ใช้คุกกี้เพื่อการวิเคราะห์และปรับปรุงบริการ — คุกกี้ที่จำเป็นต่อการทำงานของร้านใช้เสมอ`
+          + (url ? ` · <a href="${this.esc(url)}" target="_blank" rel="noopener" style="color:#93C5FD">นโยบายความเป็นส่วนตัว</a>` : '') + `</span>`
+          + `<button type="button" class="btn" style="background:#334155;color:#fff;padding:8px 14px" onclick="Store.p6CookieChoice(false)">ปฏิเสธ</button>`
+          + `<button type="button" class="btn btn-primary" style="padding:8px 14px" onclick="Store.p6CookieChoice(true)">ยอมรับ</button>`;
+        document.body.appendChild(bar);
+        return true;
+      },
+      p6CookieChoice(accept) {
+        try { localStorage.setItem(this._p6CookieKey || 'sf_cookie_', accept ? 'accept' : 'reject'); } catch (_) {}
+        const bar = document.getElementById('p6CookieBar'); if (bar) bar.remove();
+        if (accept && this._p6Seo) this.injectAnalytics(this._p6Seo);
+      },
+      // ตัวเลือกย่อย (ไซซ์/สี) บนหน้าสินค้า — สินค้าไม่มี variant ⇒ ไม่แสดงอะไร (หน้าเดิม) · ราคา/มีของจากเซิร์ฟเวอร์
+      p6VariantPickerHtml(p) {
+        const vs = (p && p.variants) || [];
+        if (this._pd) { this._pd.variants = vs; this._pd.variantId = null; }
+        if (!vs.length) return '';
+        const btns = vs.map(v => `<button type="button" class="p6-var" data-vid="${this.esc(v.id)}" ${v.inStock ? '' : 'disabled'}
+            onclick="Store.p6PickVariant('${this.jsArg(v.id)}')"
+            style="padding:8px 14px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;cursor:pointer;${v.inStock ? '' : 'opacity:.45;cursor:not-allowed;'}">
+            ${this.esc(v.name || v.sku)}${v.inStock ? '' : ' (หมด)'}</button>`).join('');
+        return `<div style="margin-bottom:16px"><div style="font-size:14px;font-weight:600;margin-bottom:6px">ตัวเลือก <span style="color:#DC2626">*</span></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">${btns}</div></div>`;
+      },
+      p6PickVariant(id) {
+        const v = ((this._pd && this._pd.variants) || []).find(x => x.id === id);
+        if (!v || !v.inStock) return;
+        this._pd.variantId = id;
+        document.querySelectorAll('.p6-var').forEach(b => {
+          const on = b.dataset.vid === id;
+          b.style.borderColor = on ? 'var(--primary,#4F46E5)' : '#D1D5DB';
+          b.style.background = on ? '#EEF2FF' : '#fff';
+        });
+        const el = document.getElementById('pdPrice');
+        if (el) el.textContent = '฿' + Number(v.price || 0).toLocaleString('th-TH');
       },
     });
 

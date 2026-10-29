@@ -224,6 +224,62 @@ public class PdpaController : ControllerBase
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
+    // ===== รอบ 209 P6 (D6) — DSR ครอบข้อมูลเว็บ (ลูกค้าเว็บ/ออเดอร์/การจอง/lead/ฟอร์ม) — ระบุด้วยอีเมลและ/หรือเบอร์ =====
+
+    /// <summary>ม.30 — ข้อมูลเว็บของเจ้าของข้อมูล (แขกที่ไม่มี User/Contact ระบุได้ด้วยอีเมล/เบอร์เท่านั้น)</summary>
+    [HttpGet("dsr/cms/access")]
+    public async Task<ActionResult<ApiResponse<CmsSubjectDataReport>>> DsrCmsAccess(
+        Guid companyId, [FromQuery] string? email, [FromQuery] string? phone, CancellationToken ct)
+    {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
+        try
+        {
+            var r = await _svc.GenerateCmsAccessReportAsync(companyId, email, phone, ct);
+            await LogPiiAsync(companyId, "CmsSubject", Guid.Empty, "*", "Read", $"DSR ม.30 ข้อมูลเว็บ ({r.SubjectEmail ?? r.SubjectPhone})", ct);
+            return Ok(new ApiResponse<CmsSubjectDataReport>(true, r, $"DSR ข้อมูลเว็บ: {r.TotalRecords} แถว"));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    /// <summary>ม.31 portability — ข้อมูลเว็บเป็นไฟล์ JSON</summary>
+    [HttpGet("dsr/cms/portability")]
+    public async Task<IActionResult> DsrCmsPortability(
+        Guid companyId, [FromQuery] string? email, [FromQuery] string? phone, CancellationToken ct)
+    {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
+        try
+        {
+            var r = await _svc.GenerateCmsAccessReportAsync(companyId, email, phone, ct);
+            await LogPiiAsync(companyId, "CmsSubject", Guid.Empty, "*", "Export", $"DSR ม.31 portability ข้อมูลเว็บ ({r.SubjectEmail ?? r.SubjectPhone})", ct);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(r,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            return File(bytes, "application/json", $"PDPA-DSR-WEB-{DateTime.UtcNow:yyyyMMdd}.json");
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    public sealed record DsrCmsEraseRequest(string? Email, string? Phone, string? Acknowledgement);
+
+    /// <summary>ม.33 — anonymize ข้อมูลเว็บ · แถวที่ผูกเอกสารบัญชีในงวดเก็บ 5 ปีคงช่องผู้ซื้อ (legal_hold) · ต้องยืนยัน "I confirm"</summary>
+    [HttpPost("dsr/cms/erase")]
+    [Accounting.Filters.RejectApiKey("ลบข้อมูลส่วนบุคคลบนเว็บถาวร (DSR erase)")]
+    public async Task<ActionResult<ApiResponse<CmsErasureResult>>> DsrCmsErase(
+        Guid companyId, [FromBody] DsrCmsEraseRequest req, CancellationToken ct)
+    {
+        var block = await RequireDpoAsync(companyId); if (block != null) return block;
+        if (req.Acknowledgement != "I confirm")
+            return BadRequest(new ApiResponse<object>(false, null,
+                "ต้องยืนยัน Acknowledgement='I confirm' ก่อน erasure (irreversible action)"));
+        var userId = Helpers.JwtHelper.GetUserIdFromClaims(User).ToString();
+        try
+        {
+            var r = await _svc.ApplyCmsErasureAsync(companyId, req.Email, req.Phone, userId, ct);
+            await LogPiiAsync(companyId, "CmsSubject", Guid.Empty, "*", "Erase", "DSR ม.33 สิทธิลบ ข้อมูลเว็บ", ct);
+            return Ok(new ApiResponse<CmsErasureResult>(true, r, string.Join(" · ", r.Notes)));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
     // ===== Wave 3 — RoPA =====
     [HttpGet("ropa")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<PdpaProcessingActivity>>>> ListRopa(

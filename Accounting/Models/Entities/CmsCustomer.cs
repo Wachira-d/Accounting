@@ -186,6 +186,11 @@ public class SiteFormSubmission : TenantEntity
     public string? Notes { get; set; }
     public string? RepliedBy { get; set; }
     public DateTime? RepliedAt { get; set; }
+
+    /// <summary>รอบ 209 P6 (D7): ฟอร์มที่ตั้ง "ส่งเข้าระบบ" ⇒ สร้าง <c>CmsLead</c> (พนักงานแปลงเป็นใบเสนอราคาผ่าน IDocumentService) · null = ไม่สร้าง</summary>
+    public Guid? LeadId { get; set; }
+    /// <summary>ผลการแจ้งอีเมล (ถึงร้าน <c>NotifyEmails</c> / ตอบกลับอัตโนมัติ) — ประทับบนแถว ไม่ใช่แค่ log (F2 #7) · null = ไม่ได้ตั้งให้แจ้ง</summary>
+    public string? NotifyResult { get; set; }
 }
 
 // ===== Customer Identity Merge Log =====

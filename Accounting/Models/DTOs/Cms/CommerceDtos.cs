@@ -148,6 +148,21 @@ public class SiteProductResponse
     public string? EarliestReadyDate { get; set; }
     /// <summary>กลุ่มตัวเลือก (dynamic option builder) — null/ว่าง = ไม่มี</summary>
     public List<StorefrontOptionGroup>? OptionGroups { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือกได้ (ราคา/มีของคิดที่เซิร์ฟเวอร์) — null = สินค้าไม่มี variant (หน้าร้านไม่แสดงตัวเลือก)</summary>
+    public List<StorefrontVariant>? Variants { get; set; }
+}
+
+/// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยบนหน้าร้าน — ราคาสุดท้าย (variant ตั้งราคา ⇒ ราคานั้น · ไม่ตั้ง ⇒ ราคาสินค้า) · ไม่ส่งยอดสต็อกจริง (แค่มี/หมด)</summary>
+public class StorefrontVariant
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Sku { get; set; } = "";
+    public string? OptionsJson { get; set; }
+    public string? ImageUrl { get; set; }
+    public decimal Price { get; set; }
+    public decimal? CompareAtPrice { get; set; }
+    public bool InStock { get; set; }
 }
 
 // ==================== Pricing Tier ====================
@@ -214,6 +229,8 @@ public class AddToCartRequest
     public string? Notes { get; set; }
     /// <summary>ตัวเลือกสินค้าตามสั่ง (ทีม K) — ราคา/วันเพิ่มคิดที่เซิร์ฟเวอร์</summary>
     public List<CartModifierChoice>? Modifiers { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อย (ไซซ์/สี) — บังคับเมื่อสินค้ามี variant ใช้งานอยู่ · ราคา/สต็อกคิดที่เซิร์ฟเวอร์ (Helpers/CmsVariantPricing)</summary>
+    public Guid? VariantId { get; set; }
 }
 
 public class UpdateCartItemRequest
@@ -248,6 +265,9 @@ public class CartItemResponse
     /// <summary>คำอธิบายตัวเลือกที่เลือก ("ขนาด: 2 ปอนด์ · ข้อความ: HBD") — เซิร์ฟเวอร์ประกอบ</summary>
     public string? ModifierSummary { get; set; }
     public int ExtraLeadDays { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือก (null = สินค้าไม่มี variant)</summary>
+    public Guid? VariantId { get; set; }
+    public string? VariantName { get; set; }
 }
 
 // ==================== Order ====================
@@ -289,6 +309,9 @@ public class CreateOrderRequest
 
     // Direct order (without cart)
     public List<CreateOrderLineRequest>? Lines { get; set; }
+
+    /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มเช็กเอาต์ — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
+    public bool ConsentGiven { get; set; }
 }
 
 public class CreateOrderLineRequest
@@ -297,6 +320,8 @@ public class CreateOrderLineRequest
     public Guid SiteProductId { get; set; }
     public decimal Quantity { get; set; } = 1;
     public string? VariantOptionsJson { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือก (บังคับเมื่อสินค้ามี variant ใช้งานอยู่)</summary>
+    public Guid? VariantId { get; set; }
 }
 
 public class UpdateOrderStatusRequest

@@ -100,7 +100,31 @@ public interface IPdpaService
         CancellationToken ct = default);
     /// <summary>Breach ที่ใกล้ครบ 72h หรือเกินกำหนดแล้ว (สำหรับ dashboard alert)</summary>
     Task<IReadOnlyList<PdpaBreachIncident>> ListBreachAlertsAsync(Guid companyId, CancellationToken ct = default);
+
+    // ===== รอบ 209 P6 (D6) — DSR ครอบข้อมูลเว็บ (ลูกค้าเว็บ · ออเดอร์ · การจอง · lead · คำตอบฟอร์ม) — PdpaService.Cms.cs =====
+
+    /// <summary>ม.30/31 — ข้อมูลเว็บทั้งหมดของเจ้าของข้อมูลที่ระบุด้วยอีเมลและ/หรือเบอร์ (เทียบตรงหลัง normalize · ไม่ fuzzy) · กรองบริษัทเสมอ</summary>
+    Task<CmsSubjectDataReport> GenerateCmsAccessReportAsync(Guid companyId, string? email, string? phone, CancellationToken ct = default);
+
+    /// <summary>ม.33 — anonymize ข้อมูลเว็บของเจ้าของข้อมูล · คงช่องผู้ซื้อของแถวที่ผูกเอกสารบัญชีในงวดเก็บ 5 ปี (legal_hold · MAX retention)</summary>
+    Task<CmsErasureResult> ApplyCmsErasureAsync(Guid companyId, string? email, string? phone, string actor, CancellationToken ct = default);
 }
+
+/// <summary>รายงาน DSR ของข้อมูลเว็บ (รอบ 209 P6) — แถวละ dictionary แบบเดียวกับ <see cref="DataSubjectAccessResult"/></summary>
+public sealed record CmsSubjectDataReport(
+    DateTime GeneratedAt,
+    string? SubjectEmail,
+    string? SubjectPhone,
+    List<Dictionary<string, object?>> SiteCustomers,
+    List<Dictionary<string, object?>> Orders,
+    List<Dictionary<string, object?>> Bookings,
+    List<Dictionary<string, object?>> Leads,
+    List<Dictionary<string, object?>> FormSubmissions,
+    List<Dictionary<string, object?>> Consents,
+    int TotalRecords);
+
+/// <summary>ผลการลบข้อมูลเว็บ — นับแถวที่เปลี่ยน + แถวที่คงช่องผู้ซื้อไว้ตามกฎหมาย (บอกผู้ขอได้ว่าเหลืออะไรเพราะอะไร)</summary>
+public sealed record CmsErasureResult(int RowsAnonymized, int RowsUnderLegalHold, IReadOnlyList<string> Notes);
 
 /// <summary>DSR ม.30 export — JSON portable ตามมาตรฐานสากล (W3C Verifiable
 /// Credentials lite). ทุก field ที่ระบบเก็บของ subject + audit log การเข้าถึง
@@ -132,7 +156,7 @@ public sealed record ErasureImpactReport(
     int JournalEntryRowsAffected,
     IReadOnlyList<string> WarningNotes);
 
-public class PdpaService : IPdpaService
+public partial class PdpaService : IPdpaService
 {
     private readonly AccountingDbContext _db;
     private static int _serial = 0;

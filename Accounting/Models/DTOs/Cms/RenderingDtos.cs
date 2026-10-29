@@ -102,6 +102,13 @@ public class StorefrontSiteInfo
     public string? LineId { get; set; }
     public string? FacebookUrl { get; set; }
     public string? InstagramUrl { get; set; }
+
+    // ── รอบ 209 P6 (ฑ) PDPA — เซิร์ฟเวอร์ตัดสินข้อความ/บังคับ (หน้าเว็บแสดงตามนี้ · ด่านจริงอยู่ที่ service) ──
+    public string? PrivacyPolicyUrl { get; set; }
+    /// <summary>บังคับติ๊กยินยอมบนฟอร์ม (ไม่ติ๊ก = เซิร์ฟเวอร์ปฏิเสธ)</summary>
+    public bool RequireDataConsent { get; set; }
+    /// <summary>ข้อความยินยอมที่แสดง (resolve แล้ว — ข้อความร้าน หรือข้อความมาตรฐาน)</summary>
+    public string DataConsentText { get; set; } = "";
 }
 
 public class StorefrontThemeInfo
