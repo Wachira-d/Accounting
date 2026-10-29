@@ -52,7 +52,7 @@
       <div class="stat-card"><div class="stat-label">การจองในช่วงนี้</div><div class="stat-value" id="tBookings">-</div></div>
       <div class="stat-card"><div class="stat-label">ให้บริการเสร็จ</div><div class="stat-value" id="tCompleted" style="color:#065f46">-</div></div>
       <div class="stat-card"><div class="stat-label">ชั่วโมงงานที่เสร็จ</div><div class="stat-value" id="tHours">-</div></div>
-      <div class="stat-card"><div class="stat-label">ยอดบริการที่เสร็จ</div><div class="stat-value" id="tRevenue">-</div><div style="font-size:11px;color:var(--gray-500)">ราคาการจอง (รวม VAT) — รายได้ทางบัญชีดูที่รายงานภาษีขาย/งบ</div></div>
+      <div class="stat-card"><div class="stat-label">ยอดบริการที่เสร็จ</div><div class="stat-value" id="tRevenue">-</div><div style="font-size:11px;color:var(--gray-500)">ราคาการจอง (รวม VAT) · จองด้วยบัตรคอร์ส = รายได้ที่รับรู้จากบัตร (ก่อน VAT) — รายได้ทางบัญชีดูที่รายงานภาษีขาย/งบ</div></div>
     </div>
 
     <div class="table-container">
@@ -67,6 +67,14 @@
     </div>
 
     <div id="detail" style="margin-top:18px"></div>
+
+    <!-- รอบ 209 P5 (R-209-C6 · คำตัดสินข้อ 168 ฏ): ค่าตอบแทนผู้ให้บริการ — อ่าน = Payroll.View · แก้ = HR.Admin (ไม่มีสิทธิ์ ⇒ ซ่อนส่วนนี้พร้อมบอกเหตุ) -->
+    <div id="paySection" style="margin-top:22px">
+      <h3 style="font-size:16px;font-weight:600;margin-bottom:6px">💰 ค่าตอบแทนผู้ให้บริการ</h3>
+      <p style="font-size:12px;color:var(--gray-500);margin-bottom:8px">ผูกผู้ให้บริการกับพนักงาน + กติกา (ต่อคลาส · ต่อหัว · % รายได้ก่อน VAT) — ค่าที่คิดได้ใช้เป็นฐานคอมมิชชัน "ค่าตอบแทนผู้สอน" ที่หน้าค่าคอมมิชชัน ·
+        ฐาน "บริการจากการจองที่ปิดนอก POS" ไม่นับการจองที่ปิดบิลที่ POS แล้ว (นับในฐาน POS อยู่แล้ว)</p>
+      <div id="payBody"><div class="text-gray-400" style="padding:12px">กำลังโหลด...</div></div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -128,6 +136,7 @@
       },
       async load() {
         if (!this.siteId) return;
+        this.loadPay();   // ส่วนค่าตอบแทนโหลดแยก (สิทธิ์ต่างกัน · ล้มไม่กระทบรายงาน)
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.cmsBookingProviderReport(this.siteId, `?fromDate=${encodeURIComponent(this.from)}&toDate=${encodeURIComponent(this.to)}`);
@@ -155,6 +164,52 @@
           if (this.sel != null && list[this.sel]) this.renderDetail(list[this.sel]); else document.getElementById('detail').innerHTML = '';
         } catch (e) { Layout.toast('โหลดรายงานไม่สำเร็จ: ' + e.message, 'error'); }
       },
+      // ── ค่าตอบแทน (ตัวเลขทั้งหมดจากเซิร์ฟเวอร์ — Helpers/InstructorPayRule) ──
+      payBase() { return `/api/companies/${Layout.getCompanyId()}/cms/sites/${this.siteId}/booking`; },
+      PAY_MODES: [['None', 'ไม่คิดค่าตอบแทน'], ['PerClass', 'ต่อคลาส (บาท)'], ['PerHead', 'ต่อหัว (บาท)'], ['PercentOfRevenue', '% ของรายได้']],
+      async loadPay() {
+        const el = document.getElementById('payBody');
+        if (!this.siteId) { el.innerHTML = ''; return; }
+        let settings, lines;
+        try {
+          [settings, lines] = await Promise.all([
+            API.get(`${this.payBase()}/resource-pay`),
+            API.get(`${this.payBase()}/instructor-pay?fromDate=${encodeURIComponent(this.from)}&toDate=${encodeURIComponent(this.to)}`)]);
+        } catch (e) {
+          el.innerHTML = `<div style="font-size:13px;color:var(--gray-500);padding:8px">ดูค่าตอบแทนไม่ได้: ${Layout.esc(e.message)} (ต้องมีสิทธิ์ดูเงินเดือน)</div>`;
+          return;
+        }
+        const st = settings.data || { resources: [], employees: [] };
+        const pay = new Map((lines.data || []).map(l => [l.resourceId, l]));
+        const empOpts = sel => '<option value="">— ไม่ผูก —</option>' + st.employees.map(e => `<option value="${e.id}"${e.id === sel ? ' selected' : ''}>${Layout.esc(e.name)}</option>`).join('')
+          + (sel && !st.employees.some(e => e.id === sel) ? `<option value="${sel}" selected>(พนักงานที่ไม่ใช้งาน)</option>` : '');
+        const modeOpts = sel => this.PAY_MODES.map(([v, l]) => `<option value="${v}"${v === sel ? ' selected' : ''}>${l}</option>`).join('');
+        const rows = st.resources.map(r => {
+          const l = pay.get(r.resourceId);
+          return `<tr data-rid="${r.resourceId}">
+            <td><strong>${Layout.esc(r.name)}</strong>${r.isActive ? '' : ' <span class="badge badge-gray">ปิด</span>'}</td>
+            <td><select class="form-input pay-emp" aria-label="พนักงาน">${empOpts(r.employeeId)}</select></td>
+            <td><select class="form-input pay-mode" aria-label="กติกา">${modeOpts(r.mode)}</select></td>
+            <td><input type="number" class="form-input pay-rate" min="0" step="0.01" value="${Number(r.rate)}" style="width:100px" aria-label="อัตรา"></td>
+            <td><input type="number" class="form-input pay-min" min="0" step="0.01" value="${Number(r.minimumPerClass)}" style="width:100px" aria-label="ขั้นต่ำต่อคลาส (ต่อหัวเท่านั้น)"></td>
+            <td class="text-right">${l ? Number(l.classes) : 0}</td><td class="text-right">${l ? Number(l.heads) : 0}</td>
+            <td class="text-right">${l ? money(l.revenueShare) : '—'}</td>
+            <td class="text-right"><strong>${l ? money(l.pay) : '—'}</strong><div style="font-size:11px;color:var(--gray-500)">${l ? Layout.esc(l.basis) : ''}</div></td>
+            <td><button class="btn btn-sm btn-secondary" onclick="Page.savePay('${r.resourceId}')">บันทึก</button></td></tr>`;
+        }).join('') || '<tr><td colspan="10" class="text-center text-gray-400" style="padding:20px">ยังไม่มีผู้ให้บริการ</td></tr>';
+        el.innerHTML = `<div class="table-container"><table class="table" style="font-size:13px"><thead><tr>
+            <th>ผู้ให้บริการ</th><th>พนักงาน (HR)</th><th>กติกา</th><th>อัตรา</th><th>ขั้นต่ำ/คลาส</th>
+            <th class="text-right">คลาส</th><th class="text-right">คนที่มา</th><th class="text-right">รายได้ตาม % (ก่อน VAT)</th><th class="text-right">ค่าตอบแทนช่วงนี้</th><th></th>
+          </tr></thead><tbody>${rows}</tbody></table></div>`;
+      },
+      async savePay(rid) {
+        const tr = document.querySelector(`#payBody tr[data-rid="${rid}"]`); if (!tr) return;
+        const body = {
+          employeeId: tr.querySelector('.pay-emp').value || null, mode: tr.querySelector('.pay-mode').value,
+          rate: Number(tr.querySelector('.pay-rate').value || 0), minimumPerClass: Number(tr.querySelector('.pay-min').value || 0) };
+        try { const r = await API.put(`${this.payBase()}/resource-pay/${rid}`, body); Layout.toast(r.message || 'บันทึกแล้ว', 'success'); await this.loadPay(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
       pick(i) {
         this.sel = i;
         document.querySelectorAll('.prov-row').forEach((r, k) => r.classList.toggle('sel', k === i));
@@ -170,7 +225,7 @@
             <td>${Layout.date(j.bookingDate)} ${Layout.esc(j.startTime)}–${Layout.esc(j.endTime)}</td><td>${Layout.esc(j.bookingNumber)}</td>
             <td>${Layout.esc(j.serviceName)}</td><td>${Layout.esc(j.customerName || '')}</td>
             <td>${Layout.esc(STATUS_LABEL[j.status] || j.status)}</td><td class="text-right">${Number(j.sharePercent).toLocaleString('th-TH')}%</td>
-            <td class="text-right">${j.shareMinutes ? hours(j.shareMinutes) : '—'}</td><td class="text-right">${j.revenueShare ? money(j.revenueShare) : '—'}</td>
+            <td class="text-right">${j.shareMinutes ? hours(j.shareMinutes) : '—'}</td><td class="text-right">${j.revenueShare ? money(j.revenueShare) : '—'}${j.paidWithCredit ? ' <span class="badge badge-gray" title="จ่ายด้วยบัตรคอร์ส — ยอด = รายได้ที่รับรู้จากบัตร (ก่อน VAT)">บัตร</span>' : ''}</td>
             <td style="font-size:11px;color:var(--gray-500)">${Layout.esc(j.coProviders || '')}</td></tr>`).join('');
         document.getElementById('detail').innerHTML = `
           <h3 style="font-size:16px;font-weight:600;margin-bottom:8px">👤 ${Layout.esc(p.name)} — รายละเอียด</h3>

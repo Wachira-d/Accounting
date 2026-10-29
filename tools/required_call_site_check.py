@@ -9381,6 +9381,52 @@ RULES += [
          why="ขายคอร์สกันกดซ้ำด้วยคีย์ของหน้าจอ"),
 ]
 
+# รอบ 209 · P5 (คำตัดสินข้อ 168 ฎ/ฏ) — สมาชิกไม่จำกัด: รับรู้ตามวันผ่านแผนเดียว · พักบัตรผ่านตัวตัดสินเดียว · การจองทุกทางเข้าผ่าน BookReasonAsync ·
+# ค่าตอบแทน/คอมมิชชันจากการจอง: มูลค่าผ่าน BookingServiceValue + ดีดซ้ำบิล POS ด้วย SourceBookingId
+CC_MEM = "Services/Implementations/CourseCredit/CourseCreditService.Membership.cs"
+BWL = "Services/Implementations/CourseCredit/BookingWorkLoader.cs"
+RULES += [
+    dict(file=CC_MEM, method="RecognizePeriodCoreAsync",
+         must=["CourseCreditMath.PeriodRecognitionPlan(", "PostRecognitionAsync(", "pass.RecognizedThroughDate = seg.PostingDate"],
+         before=[("CourseCreditMath.PeriodRecognitionPlan(", "PostRecognitionAsync(")],
+         why="P5: สมาชิกไม่จำกัดรับรู้เส้นตรงรายวันจากแผน pure ตัวเดียว (แยกรายเดือน) ผ่าน JE กลาง — ห้ามคิดยอดเอง"),
+    dict(file=CC_MEM, method="RecognizePeriodDueAsync",
+         must=["LockPassAsync(", "RecognizePeriodCoreAsync("],
+         before=[("LockPassAsync(", "RecognizePeriodCoreAsync(")],
+         why="P5: รับรู้ตามวันใต้ล็อกแถวบัตร"),
+    dict(file=CC_MEM, method="FreezePassAsync",
+         must=["LockPassAsync(", "CourseCreditMath.FreezeProblem(", "AddChainedAuditLog("],
+         before=[("CourseCreditMath.FreezeProblem(", "pass.FrozenDays += days")],
+         why="P5: พักบัตรผ่านตัวตัดสินเดียวก่อนเลื่อนวันหมดอายุ + audit"),
+    dict(file=CC_MEM, method="ExtendPassAsync",
+         must=["CourseCreditMath.ExtendProblem(", "RecognizePeriodCoreAsync(", "AddChainedAuditLog("],
+         before=[("RecognizePeriodCoreAsync(", "pass.PeriodBaseRecognized = pass.RecognizedAmount")],
+         why="P5: ขยายอายุสมาชิกต้องรับรู้ถึงเมื่อวานก่อนตั้งฐานใหม่"),
+    dict(file=CC_MEM, method="TransferPassAsync",
+         must=["CourseCreditMath.PlanTransfer(", "EnsureSaleDocumentLiveAsync(", "CreditPassStatus.Transferred"],
+         forbid=["JournalEntryBuilder", "CreateDocumentAsync("],
+         why="P5: โอนบัตร = ปิด/เปิดยอดเท่าเดิม ไม่มี JE ไม่ออกใบกำกับใหม่"),
+    dict(file=CC_MEM, method="SendExpiryRemindersAsync",
+         must_re=[r"if \(result\.Sent\) \{ row\.ExpiryNotifiedAt = now"],
+         why="P5: ประทับส่งแล้วเฉพาะเมื่อช่องทางตอบสำเร็จ (F2 #3)"),
+    dict(file=CC_SVC, method="BookAsync", must=["BookReasonAsync("], forbid=["CourseCreditMath.CannotBookReason("],
+         why="P5: ทุกทางเข้าการจองผ่านตัวตัดสินที่รู้จักสมาชิกไม่จำกัด/ช่วงพัก"),
+    dict(file=CC_SVC, method="HoldAsync", must=["BookReasonAsync("], forbid=["CourseCreditMath.CannotBookReason("],
+         why="P5: ทุกทางเข้าการจองผ่านตัวตัดสินที่รู้จักสมาชิกไม่จำกัด/ช่วงพัก"),
+    dict(file=CC_SVC, method="ConsumeAsync", must=["CourseCreditMath.RecognizeOnUseFor(pass.Kind,"],
+         why="P5: สมาชิกไม่จำกัดไม่รับรู้ต่อการเข้าเรียน · บัตรครั้งสูตรเดิม"),
+    dict(file=BWL, method="PosBilledAsync", must=["o.SourceBookingId"],
+         why="P5 D8: คีย์ดีดซ้ำกับคอมมิชชัน POS = PosOrder.SourceBookingId"),
+    dict(file=BWL, method="LoadAsync", must=["BookingServiceValue.ForCommission(", "PosBilledAsync(", "CreditRecognizedAsync("],
+         why="P5: มูลค่าการจอง (บัตร = รายได้ที่รับรู้) + ธงปิดที่ POS จากตัวอ่านเดียว"),
+    dict(file="Services/Implementations/CommissionService.Bookings.cs", method="BookingBasisAsync",
+         must=["BookingServiceValue.BookingSalesBasis(", "InstructorPayRule.Compute(", "BookingWorkLoader.LoadAsync("],
+         why="P5 D8/C6: ฐานคอมมิชชันการจองผ่านตัวคิดเดียว (ไม่นับซ้ำบิล POS)"),
+    dict(file="Services/Implementations/CmsBookingService.Workflow.cs", method="GetProviderReportAsync",
+         must=["BookingWorkLoader.CreditRecognizedAsync(", "BookingServiceValue.ForReport("],
+         why="P5 C6: รายงานผู้ให้บริการ การจองด้วยบัตร = รายได้ที่รับรู้ ไม่ใช่ 0"),
+]
+
 
 # ทีม F (หัก ณ ที่จ่ายตามรายการ · ฝ่ายค้านข้อ 4/5): ทุกผู้อ่านที่ส่งยอดหัก ณ ที่จ่ายออกเป็น "บาท" ต้องเดินตัวคำนวณเดียว Helpers/PerLineWht —
 # เดิมหน้านำส่ง/ปฏิทิน/ตัวกระทบ GL รวม d.WithholdingTaxAmount สกุลเอกสาร ⇒ ใบ USD ต่ำ ~36 เท่า (docs/PER_LINE_WHT_DESIGN.md)

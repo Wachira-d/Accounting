@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class CommissionService : ICommissionService
+public partial class CommissionService : ICommissionService
 {
     private readonly AccountingDbContext _db;
 
@@ -345,6 +345,11 @@ public class CommissionService : ICommissionService
                 // ต้องเห็นได้บนแถวผลคำนวณ ไม่ใช่ 0 เงียบ ๆ
                 else
                     breakdownNote = "ฐาน 0 เพราะพนักงานไม่ได้ผูกผู้ใช้ระบบ — ผูกผู้ใช้ที่หน้าพนักงานแล้วคำนวณใหม่";
+            }
+            else if (assignment.Plan.CalculationBasis is CommissionPlanRules.BookingServicesBasis or CommissionPlanRules.InstructorPayBasis)
+            {
+                // รอบ 209 P5 (R-209-C6/D8): การจองที่ปิดนอก POS + ค่าตอบแทนผู้สอน — ตัวคิดใน CommissionService.Bookings.cs (ดีดซ้ำกับฐาน POS ด้วย SourceBookingId)
+                (basisAmount, breakdownNote) = await BookingBasisAsync(companyId, assignment, periodStart, assignment.Plan.CalculationBasis);
             }
             else if (assignment.Plan.CalculationBasis == "Profit")
             {

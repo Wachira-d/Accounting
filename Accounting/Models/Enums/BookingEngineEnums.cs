@@ -1,5 +1,18 @@
 namespace Accounting.Models.Enums;
 
+/// <summary>รอบ 209 · P5 (R-209-C6 · คำตัดสินข้อ 168 ฏ) — กติกาค่าตอบแทนผู้สอน/ผู้ให้บริการ ต่อ <c>SiteBookingResource</c> ·
+/// ตัวคิดเดียว <c>Helpers/InstructorPayRule</c> · None = ไม่คิด (เดิม)</summary>
+public enum InstructorPayMode
+{
+    None = 0,
+    /// <summary>ต่อคลาสที่สอนจริง (รอบที่มีผู้เรียนมา/ไม่มา ≥ 1 — ยกเลิกทั้งรอบไม่นับ)</summary>
+    PerClass = 1,
+    /// <summary>ต่อหัวผู้เรียนที่มา (การจองเสร็จสิ้น × จำนวนคน) · มีขั้นต่ำต่อคลาสได้</summary>
+    PerHead = 2,
+    /// <summary>% ของรายได้การจองที่เสร็จ (ก่อน VAT · บัตรคอร์ส = รายได้ที่รับรู้จากบัตร)</summary>
+    PercentOfRevenue = 3,
+}
+
 /// <summary>ความละเอียดของ "รอบที่เปิดให้จอง" ต่อบริการ (CMS booking) — ตัวตัดสินเดียวคือ <c>Helpers/BookingSlotEngine</c>
 /// <para><b>ค่า 0 = พฤติกรรมเดิม</b> (ก่อนมี engine): แต่ละแถวเวลาทำการ = 1 รอบ · ข้อมูลเก่าได้ค่านี้จาก DEFAULT ของคอลัมน์</para></summary>
 public enum BookingSlotMode

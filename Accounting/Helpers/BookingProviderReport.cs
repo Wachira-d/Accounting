@@ -6,12 +6,15 @@ namespace Accounting.Helpers;
 public sealed record BookingProviderReportRow(
     Guid BookingId, string BookingNumber, DateTime BookingDate, string StartTime, string EndTime, int DurationMinutes,
     BookingStatus Status, Guid ServiceId, string ServiceName, string? CustomerName, decimal TotalAmount,
-    IReadOnlyList<(Guid ResourceId, string Name, decimal SharePercent)> Providers);
+    IReadOnlyList<(Guid ResourceId, string Name, decimal SharePercent)> Providers,
+    // รอบ 209 P5: จ่ายด้วยบัตรคอร์ส — TotalAmount ของแถวต้องเป็นรายได้ที่รับรู้จากบัตร (ผู้ประกอบส่งผ่าน BookingServiceValue.ForReport) · ป้าย "บัตร" ในรายการงาน
+    bool PaidWithCredit = false);
 
 public sealed record ProviderServiceLine(Guid ServiceId, string ServiceName, int Completed, int Minutes, decimal Revenue);
 public sealed record ProviderDayLine(DateTime Date, int Completed, int Minutes, decimal Revenue);
 public sealed record ProviderJobLine(Guid BookingId, string BookingNumber, DateTime BookingDate, string StartTime, string EndTime,
-    string ServiceName, string? CustomerName, BookingStatus Status, decimal SharePercent, int ShareMinutes, decimal RevenueShare, string? CoProviders);
+    string ServiceName, string? CustomerName, BookingStatus Status, decimal SharePercent, int ShareMinutes, decimal RevenueShare, string? CoProviders,
+    bool PaidWithCredit = false);
 
 public sealed record ProviderSummary(
     Guid? ResourceId, string Name,
@@ -26,7 +29,9 @@ public sealed record ProviderReportTotals(int Bookings, int Completed, int Unass
 /// <para>นิยาม: <b>รายได้</b> = ยอดการจองที่ <i>เสร็จสิ้น</i> แบ่งตาม % งาน (<see cref="BookingProviderShare.SplitAmount"/> — เศษลงคนหลัก ⇒ Σ ทุกคน = ยอดจริง) ·
 /// <b>นาทีงาน</b> = ระยะเวลาการจองที่เสร็จ (เต็ม — ทุกคนที่ร่วมอยู่ตลอด) · <b>นาทีตามสัดส่วน</b> = ระยะเวลา × % ·
 /// ยกเลิก/ไม่มา นับจำนวนเท่านั้น (ไม่มีรายได้) · การจองที่ยังไม่มอบหมายรวมในแถว "ยังไม่ระบุผู้ให้บริการ" (ไม่ซ่อน)</para>
-/// <para>ยอดเป็นราคาการจอง (รวม VAT ตามราคาหน้าเว็บ) ไม่ใช่รายได้ทางบัญชี — รายได้ทางบัญชีอยู่ที่รายงานภาษีขาย/งบ</para>
+/// <para>ยอดเป็นราคาการจอง (รวม VAT ตามราคาหน้าเว็บ) ไม่ใช่รายได้ทางบัญชี — รายได้ทางบัญชีอยู่ที่รายงานภาษีขาย/งบ ·
+/// รอบ 209 P5 (R-209-C6): การจองที่จ่ายด้วยบัตรคอร์ส (ราคาการจอง 0) ⇒ ผู้ประกอบแถวส่ง<b>รายได้ที่รับรู้จากบัตร</b> (สุทธิก่อน VAT) ผ่าน
+/// <see cref="BookingServiceValue.ForReport"/> ตัวเดียว — เดิมครูที่สอนคลาสบัตรล้วนได้ "0 บาท"</para>
 /// </summary>
 public static class BookingProviderReport
 {
@@ -81,7 +86,7 @@ public static class BookingProviderReport
                     ? BookingProviderShare.Describe(r.Providers.Where(x => (Guid?)x.ResourceId != p.Id).Select(x => (x.Name, x.SharePercent)))
                     : null;
                 a.Jobs.Add(new ProviderJobLine(r.BookingId, r.BookingNumber, r.BookingDate, r.StartTime, r.EndTime, r.ServiceName, r.CustomerName,
-                    r.Status, p.Share, completed ? shareMinutes : 0, revenue, co));
+                    r.Status, p.Share, completed ? shareMinutes : 0, revenue, co, r.PaidWithCredit));
             }
         }
         var list = acc.Values
