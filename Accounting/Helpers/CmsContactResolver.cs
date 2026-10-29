@@ -183,10 +183,16 @@ public static class CmsContactResolver
             contactId = created.Id;
             kind = CmsContactMatchKind.Created;
         }
-        if (contactId is Guid cid && customer != null && customer.ContactId == null)
+        // รอบ 209 ฝ่ายค้าน (security ข้อ 1 · blocking): อีเมล/เบอร์/เลขภาษีบนบัญชีลูกค้าหน้าร้าน = ลูกค้ากรอกเอง ไม่ได้ยืนยัน ⇒ ห้ามผูกถาวร
+        // (เดิม: สมัครด้วยเบอร์เหยื่อ → จอง 1 ครั้ง → ผูกผู้ติดต่อของเหยื่อ → เห็น/ใช้บัตรคอร์สของเหยื่อ) · ผูกถาวรได้เฉพาะผู้ติดต่อที่สร้างจากข้อมูลของลูกค้าคนนี้เอง ·
+        // จับคู่หลวมยังใช้กับเอกสารใบนี้ได้ (ผู้ติดต่อบนใบขาย) · พนักงานผูกเองได้ที่หน้าลูกค้า (LinkToErp)
+        if (contactId is Guid cid && customer != null && customer.ContactId == null && PersistsCustomerLink(kind))
             customer.ContactId = cid;
         return new CmsContactResolution(contactId, kind);
     }
+
+    /// <summary>ผลจับคู่แบบไหนผูก <c>SiteCustomer.ContactId</c> ถาวรได้ — เฉพาะผู้ติดต่อที่สร้างใหม่จากข้อมูลของลูกค้าคนนี้ (ไม่ใช่ข้อมูลที่ใครก็กรอกได้)</summary>
+    public static bool PersistsCustomerLink(CmsContactMatchKind kind) => kind == CmsContactMatchKind.Created;
 
     /// <summary>ข้อเท็จจริงของออเดอร์เว็บ (ลูกค้าเว็บชนะช่องผู้รับ · ช่องใบกำกับชนะบัญชีลูกค้าเรื่องเลขภาษี)</summary>
     public static CmsContactInput ForOrder(SiteOrder order, string createdBy) => new(

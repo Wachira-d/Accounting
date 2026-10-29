@@ -385,4 +385,15 @@ public class CmsRound209P6Tests
         Assert.DoesNotContain("<script>", html);
         Assert.Contains("&lt;script&gt;", html);
     }
+
+    // ═════════ ฝ่ายค้านรอบ 209 security ข้อ 1 (blocking): ผูกผู้ติดต่อถาวรเฉพาะที่สร้างจากข้อมูลลูกค้าคนนี้ ═════════
+
+    [Theory]
+    [InlineData(CmsContactMatchKind.Email, false)]
+    [InlineData(CmsContactMatchKind.Phone, false)]
+    [InlineData(CmsContactMatchKind.TaxKey, false)]
+    [InlineData(CmsContactMatchKind.None, false)]
+    [InlineData(CmsContactMatchKind.Created, true)]
+    public void Only_created_contact_is_linked_permanently(CmsContactMatchKind kind, bool persists)
+        => Assert.Equal(persists, CmsContactResolver.PersistsCustomerLink(kind));
 }
