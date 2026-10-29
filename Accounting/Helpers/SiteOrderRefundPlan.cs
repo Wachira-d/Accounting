@@ -24,14 +24,16 @@ public sealed record RefundCreditPlan(IReadOnlyList<RefundCreditLine> Lines, dec
 /// (4) ใบลดหนี้ = ทุกบรรทัด (ไม่รวมค่าส่งตามข้อ 1) คูณสัดส่วน ยอดคืน ÷ ยอดที่เหลือของใบ — ราคา/ส่วนลดต่อหน่วยปัด 2 ตำแหน่ง AwayFromZero
 /// (จำนวนเท่าเดิม · อัตรา VAT ต่อบรรทัดเท่าเดิม ⇒ VAT ผลต่างแยกตามอัตรา) · ยอดจริงของใบร่างอาจต่างเศษสตางค์ ⇒ คนตรวจก่อนอนุมัติ ·
 /// (5) <b>ร่างเท่านั้น</b> — ผู้เรียกห้ามอนุมัติเอง (R1: คืนเงินจริงแล้วค่อยอนุมัติ) · สต็อก: ใบลดหนี้เหตุ "ปรับยอด" ไม่คืนสต็อก —
-/// ถ้ารับสินค้าคืน พนักงานเปลี่ยนเหตุผลเป็น "คืนสินค้า" ในใบร่างก่อนอนุมัติ (เส้นใบลดหนี้เดิมคืนสต็อกตอนอนุมัติ)</para>
+/// รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 7: บรรทัดใบขายของออเดอร์เว็บ<b>ไม่ผูกรหัสสินค้า</b> (สต็อกเว็บตัดจากบรรทัดออเดอร์ <c>DeductStockAsync</c> ไม่ใช่จากเอกสาร —
+/// ใส่รหัสสินค้าจะตัดซ้ำตอนอนุมัติ) ⇒ เปลี่ยนเหตุผลเป็น "คืนสินค้า" ก็<b>ไม่คืนสต็อก</b> · ข้อความเดิมสัญญาว่าคืน = silent no-op ⇒ แก้ข้อความให้บอกทางที่ทำได้จริง
+/// (รับของเข้าคลังด้วยการปรับสต็อกที่หน้าสินค้า)</para>
 /// </summary>
 public static class SiteOrderRefundPlan
 {
     public const string RuleCode = "CMS-ORDER-REFUND-CN";
     public const string LegalReference = "RD-86/10";
     public const string DraftTag = "[ERP-REFUND-CN-DRAFT]";
-    /// <summary>เหตุผลบนใบลดหนี้ร่างของการคืนเงิน — ปรับยอด (ไม่คืนสต็อก) · รับของคืน ⇒ คนเปลี่ยนเป็น "คืนสินค้า" ก่อนอนุมัติ</summary>
+    /// <summary>เหตุผลบนใบลดหนี้ร่างของการคืนเงิน — ปรับยอด (ไม่คืนสต็อก) · รับของคืน ⇒ ปรับสต็อกเข้าคลังที่หน้าสินค้า (ใบลดหนี้ของออเดอร์เว็บไม่คืนสต็อกทุกเหตุผล)</summary>
     public const CreditNoteReason DraftReason = CreditNoteReason.Adjustment;
     private const MidpointRounding R = MidpointRounding.AwayFromZero;
     private static decimal R2(decimal v) => Math.Round(v, 2, R);
@@ -46,7 +48,7 @@ public static class SiteOrderRefundPlan
     /// <summary>วางแผนใบลดหนี้ — บรรทัดค่าจัดส่งจับด้วยคำอธิบายตรงกับ <see cref="ShippingVatAllocation.LineDescription"/> + จำนวน 1 + ราคา = ค่าส่งส่วนนั้น (ทีละส่วน)</summary>
     public static RefundCreditPlan Plan(IReadOnlyList<RefundSourceLine> docLines, decimal docTotal, decimal docBillDiscount,
         IReadOnlyCollection<(string Description, decimal Fee)> shippingParts, bool excludeShipping,
-        decimal alreadyCredited, decimal paid, decimal? requestedAmount, bool fullRefund)
+        decimal alreadyCredited, decimal paid, decimal? requestedAmount, bool fullRefund, decimal depositBaseDeducted = 0m)
     {
         var kept = new List<RefundSourceLine>();
         var shippingExcluded = 0m;
@@ -94,7 +96,11 @@ public static class SiteOrderRefundPlan
                 l.DiscountAmount > 0m ? (ratio == 1m ? l.DiscountAmount : R2(l.DiscountAmount * ratio)) : null,
                 l.VatRate, l.AccountId, l.ProductCode))
             .ToList();
-        var bill = docBillDiscount > 0m ? (ratio == 1m ? docBillDiscount : R2(docBillDiscount * ratio)) : 0m;
+        // รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 1: ใบส่วนที่เหลือของออเดอร์มีมัดจำ = บรรทัดเต็มราคา + หักฐานมัดจำท้ายบิล (DepositBaseDeducted · ฐานก่อน VAT)
+        // ⇒ ใบลดหนี้พาส่วนหักนั้นมาเป็นส่วนลดท้ายบิลตามสัดส่วนเดียวกัน (ไม่ใช้ช่องฐานมัดจำ — ใบลดหนี้ไม่รับรู้มัดจำซ้ำ) ·
+        // เดิมไม่พา ⇒ คืน 1,070 จากใบ 7,490 ได้ใบลดหนี้ 1,528.57 · คืนเต็มได้ 10,700 > ใบเดิม (อนุมัติไม่ได้ตลอดกาล)
+        var deduct = Math.Max(0m, docBillDiscount) + Math.Max(0m, depositBaseDeducted);
+        var bill = deduct > 0m ? (ratio == 1m ? deduct : R2(deduct * ratio)) : 0m;
         return new RefundCreditPlan(lines, amount, ratio, bill, refundable, shippingExcluded, null);
     }
 
@@ -103,7 +109,17 @@ public static class SiteOrderRefundPlan
         => $"คืนเงินคำสั่งซื้อ {orderNumber}{(partial ? " (บางส่วน)" : "")} {amount:N2} บาท — ลดหนี้อ้างใบ {invoiceNumber} ลงวันที่ {ThaiDate.CalendarDateUtc(invoiceDateUtc):dd/MM/yyyy}"
            + (shippingExcluded ? " · ไม่รวมค่าจัดส่ง (จัดส่งแล้ว)" : "")
            + (string.IsNullOrWhiteSpace(reason) ? "" : $" · เหตุผล: {reason.Trim()}")
-           + " · ร่างโดยระบบ — คืนเงินลูกค้าแล้วจึงอนุมัติ (§86/10) · รับสินค้าคืน ⇒ เปลี่ยนเหตุผลเป็น \"คืนสินค้า\" ก่อนอนุมัติ";
+           + " · ร่างโดยระบบ — คืนเงินลูกค้าแล้วจึงอนุมัติ (§86/10) · " + StockReturnHint;
+
+    /// <summary>รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 7: ทางรับของคืนที่ทำได้จริง (ใบลดหนี้ของออเดอร์เว็บไม่คืนสต็อก — บรรทัดไม่ผูกรหัสสินค้า) · ห้ามสัญญา no-op</summary>
+    public const string StockReturnHint =
+        "ใบลดหนี้นี้ไม่คืนสต็อก (สต็อกเว็บตัดจากออเดอร์) — ถ้ารับสินค้าคืน ให้ปรับสต็อกเข้าคลังที่หน้าสินค้า";
+
+    /// <summary>ใบขายหักมัดจำไว้ ⇒ ใบลดหนี้ครอบเฉพาะยอดของใบส่วนที่เหลือ — มัดจำคืน/ริบที่หน้าใบรับเงินมัดจำ (บอกบนออเดอร์ ไม่เงียบ)</summary>
+    public static string DepositPortionNote(decimal depositBaseDeducted, string? depositRef)
+        => depositBaseDeducted > 0m
+            ? $" · ใบขายนี้หักฐานมัดจำ {depositBaseDeducted:N2} บาท{(string.IsNullOrWhiteSpace(depositRef) ? "" : $" ({depositRef})")} — ใบลดหนี้ครอบเฉพาะยอดของใบนี้ · ส่วนมัดจำคืนลูกค้าที่หน้าใบรับเงินมัดจำ"
+            : "";
 
     /// <summary>หมายเหตุบนออเดอร์หลังร่างใบลดหนี้</summary>
     public static string ProposedNote(DateTime atUtc, string creditNoteNumber, string invoiceNumber, decimal amount, bool shippingExcluded)

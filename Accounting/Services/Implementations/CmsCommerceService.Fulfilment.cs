@@ -165,11 +165,26 @@ public partial class CmsCommerceService
         return SiteOrderRefundPlan.ShippingPartsOf(parts);
     }
 
-    /// <summary>ใบลดหนี้ของการยกเลิกหลังชำระ (R-07) — เต็มใบ ยกเว้นค่าจัดส่งเมื่อจัดส่งแล้ว (ข้อ 168 ฉ)</summary>
+    /// <summary>ใบลดหนี้ที่ออก/ร่างไว้แล้วอ้างใบนี้ (ไม่นับที่ยกเลิก/ปฏิเสธ) — ตัวเดียวของเส้นคืนเงินและเส้นยกเลิก (Σ ใบลดหนี้ ≤ ใบเดิม §86/10)</summary>
+    private async Task<decimal> AlreadyCreditedAsync(Guid companyId, Guid docId)
+    {
+        return await _db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == docId && d.DocumentType == DocumentType.CreditNote
+                && !d.IsDeleted && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
+            .SumAsync(d => (decimal?)d.TotalAmount) ?? 0m;
+    }
+
+    /// <summary>ใบลดหนี้ของการยกเลิกหลังชำระ (R-07) — เต็มใบ ยกเว้นค่าจัดส่งเมื่อจัดส่งแล้ว (ข้อ 168 ฉ) ·
+    /// รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 1–2: พาฐานมัดจำที่ใบหักไว้ + หักใบลดหนี้ที่ออกไปแล้ว (เดิม alreadyCredited = 0 ⇒ คืนบางส่วนแล้วยกเลิก ได้ใบลดหนี้เต็มซ้ำ)</summary>
     private async Task<RefundCreditPlan> CancelCreditPlanAsync(Guid companyId, SiteOrder order, Document doc)
-        => SiteOrderRefundPlan.Plan(RefundSourceLinesOf(doc), doc.TotalAmount, doc.BillDiscountAmount,
-            await ShippingPartsOfOrderAsync(companyId, order), SiteOrderRefundPlan.ExcludesShipping(order.ShippedAt, order.DeliveredAt),
-            alreadyCredited: 0m, paid: doc.TotalAmount, requestedAmount: null, fullRefund: true);
+    {
+        var shippingParts = await ShippingPartsOfOrderAsync(companyId, order);
+        var alreadyCredited = await AlreadyCreditedAsync(companyId, doc.Id);
+        return SiteOrderRefundPlan.Plan(RefundSourceLinesOf(doc), doc.TotalAmount, doc.BillDiscountAmount,
+            shippingParts, SiteOrderRefundPlan.ExcludesShipping(order.ShippedAt, order.DeliveredAt),
+            alreadyCredited, paid: doc.TotalAmount, requestedAmount: null, fullRefund: true,
+            depositBaseDeducted: doc.DepositBaseDeducted);
+    }
 
     private static List<Models.DTOs.Document.DocumentLineRequest> ToCreditDocumentLines(RefundCreditPlan plan, string prefix)
         => plan.Lines.Select(l => new Models.DTOs.Document.DocumentLineRequest(
@@ -202,13 +217,11 @@ public partial class CmsCommerceService
                 _ => $"ใบขาย {doc?.DocumentNumber} ยังไม่อนุมัติหรือยังไม่มีการรับชำระผูก — แก้/ยกเลิกใบเดิมที่หน้าเอกสาร แทนใบลดหนี้",
             });
 
-        var alreadyCredited = await _db.Documents.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && d.RelatedDocumentId == doc.Id && d.DocumentType == DocumentType.CreditNote
-                && !d.IsDeleted && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected)
-            .SumAsync(d => (decimal?)d.TotalAmount) ?? 0m;
+        var alreadyCredited = await AlreadyCreditedAsync(companyId, doc.Id);
         var plan = SiteOrderRefundPlan.Plan(RefundSourceLinesOf(doc), doc.TotalAmount, doc.BillDiscountAmount,
             await ShippingPartsOfOrderAsync(companyId, order), SiteOrderRefundPlan.ExcludesShipping(order.ShippedAt, order.DeliveredAt),
-            alreadyCredited, order.PaidAmount, request.RefundAmount, fullRefund: !partial);
+            alreadyCredited, order.PaidAmount, request.RefundAmount, fullRefund: !partial,
+            depositBaseDeducted: doc.DepositBaseDeducted);
         if (plan.Problem != null)
             throw new BusinessRuleException(plan.Problem, SiteOrderRefundPlan.RuleCode);
         return new RefundDraft(doc, plan, partial, reason, null);
@@ -242,7 +255,8 @@ public partial class CmsCommerceService
                 Currency: doc.Currency, ExchangeRate: doc.ExchangeRate);
             var cn = await _docService!.CreateDocumentAsync(companyId, create, userId, originModule: SiteOrderDepositInvoicing.OriginModule);
             order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes,
-                SiteOrderRefundPlan.ProposedNote(now, cn.DocumentNumber, doc.DocumentNumber, cn.TotalAmount, plan.ShippingExcluded > 0m));
+                SiteOrderRefundPlan.ProposedNote(now, cn.DocumentNumber, doc.DocumentNumber, cn.TotalAmount, plan.ShippingExcluded > 0m)
+                + SiteOrderRefundPlan.DepositPortionNote(doc.DepositBaseDeducted, doc.DepositAppliedRef));
             _logger.LogInformation("คืนเงินออเดอร์ {Order} — ร่างใบลดหนี้ {Cn} อ้างใบ {Doc} ยอด {Amount}", order.OrderNumber, cn.DocumentNumber, doc.DocumentNumber, cn.TotalAmount);
             return order;
         }

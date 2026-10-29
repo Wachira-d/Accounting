@@ -10169,9 +10169,11 @@ _CCS = "Services/Implementations/CmsCommerceService.cs"
 _CBS = "Services/Implementations/CmsBookingService.cs"
 RULES += [
     dict(file=_CCS, method="SyncOrderToErpCoreAsync",
-         must=["BranchId: await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId)", "ResolveErpContactForOrderAsync("],
+         must=["await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId)", "ResolveErpContactForOrderAsync("],
+         # รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 4: หักมัดจำ ⇒ สาขาของใบมัดจำ (สืบทอด) · ไม่มีมัดจำ ⇒ สาขาของเว็บ
+         must_re=[r"BranchId:\s*deduction\s+is\s*\{\s*DepositBase:\s*>\s*0m\s*\}\s*\?\s*deduction\.BranchId\s*:\s*await\s+CmsDocumentBranch\.ForSiteAsync\("],
          forbid_lit=['$"Branch: {site.BranchId}"'],
-         why="รอบ 209 P6 ฐ: ใบขาย/ใบส่วนที่เหลือของออเดอร์ออกในนามสาขาของเว็บ (เดิมเขียนแค่ InternalNotes)"),
+         why="รอบ 209 P6 ฐ: ใบขาย/ใบส่วนที่เหลือของออเดอร์ออกในนามสาขาของเว็บ (เดิมเขียนแค่ InternalNotes) · ฝ่ายค้าน (เงิน) ข้อ 4 ใบส่วนที่เหลือสืบทอดสาขาใบมัดจำ"),
     dict(file=_CCS, method="IssueOrderDepositReceiptAsync",
          must=["BranchId: await CmsDocumentBranch.ForSiteAsync(_db, companyId, siteId)", "ResolveErpContactForOrderAsync("],
          why="รอบ 209 P6 ฐ: ใบมัดจำออเดอร์ = สาขาเดียวกับใบขาย"),
@@ -10230,6 +10232,50 @@ RULES += [
          must=["AbandonedCartEligibility.Decide(", "AbandonedCartEligibility.Hours(", "AbandonedCartEligibility.RuleCode"],
          before=[("AbandonedCartEligibility.Decide(", "emailService.SendAsync(")],
          why="รอบ 209 P6 ช: อีเมลกู้ตะกร้าเฉพาะร้านเปิด + ลูกค้ายินยอมการตลาด (PDPA ม.19/24)"),
+]
+
+# รอบ 209 ฝ่ายค้าน (เงิน) — ใบลดหนี้ออเดอร์หักมัดจำ · คืนบางส่วนแล้วยกเลิก · COD ส่งมอบก่อนมีใบขาย · สาขาใบส่วนที่เหลือ · ตัวหาผู้ติดต่อโหมดเข้ม · บัตรโอนแล้ว
+_RV_WHY = "รอบ 209 ฝ่ายค้าน (เงิน): "
+_RV_FUL = "Services/Implementations/CmsCommerceService.Fulfilment.cs"
+RULES += [
+    dict(file=_RV_FUL, method="CancelCreditPlanAsync",
+         must=["SiteOrderRefundPlan.Plan(", "AlreadyCreditedAsync(companyId, doc.Id)", "depositBaseDeducted: doc.DepositBaseDeducted"],
+         call_args=[("SiteOrderRefundPlan.Plan(", "alreadyCredited")],
+         forbid=["alreadyCredited: 0m"],
+         why=_RV_WHY + "ข้อ 1–2 ยกเลิกหลังชำระ: พาฐานมัดจำของใบ + หักใบลดหนี้ที่ออกแล้ว (เดิม 0 ⇒ ใบลดหนี้เต็มซ้ำ Σ > ใบเดิม §86/10)"),
+    dict(file=_RV_FUL, method="PlanRefundCreditAsync",
+         must=["AlreadyCreditedAsync(companyId, doc.Id)", "depositBaseDeducted: doc.DepositBaseDeducted"],
+         why=_RV_WHY + "ข้อ 1 คืนเงินจากใบส่วนที่เหลือ ⇒ ใบลดหนี้ = ยอดคืน (ฐานมัดจำตามสัดส่วนเป็นส่วนลดท้ายบิล)"),
+    dict(file=_RV_FUL, method="AlreadyCreditedAsync",
+         must=["d.CompanyId == companyId", "d.RelatedDocumentId == docId", "DocumentType.CreditNote", "DocumentStatus.Voided", "DocumentStatus.Rejected"],
+         why=_RV_WHY + "ข้อ 2 ใบลดหนี้ที่นับแล้ว — ตัวเดียวของเส้นคืนเงินและเส้นยกเลิก · tenant"),
+    dict(file=_RV_FUL, method="ProposeRefundCreditNoteAsync",
+         must=["SiteOrderRefundPlan.DepositPortionNote(doc.DepositBaseDeducted"],
+         why=_RV_WHY + "ข้อ 1 ส่วนมัดจำไม่อยู่ในใบลดหนี้ ⇒ บอกทางคืนที่ใบมัดจำ (ไม่เงียบ)"),
+    dict(file=_CCS, method="UpdateOrderStatusLockedAsync",
+         call_args=[("SiteOrderDepositInvoicing.SettlesOnHandover(", "order.ErpDocumentId.HasValue")],
+         why=_RV_WHY + "ข้อ 3 โหมดเดิมส่งมอบก่อนมีใบขาย (COD/ชำระเมื่อรับ) ⇒ ออกใบขายลงวันส่งมอบ + ตัดสต็อก (§78(1)) ผ่านเส้น SettleOnHandoverAsync เดิม"),
+    dict(file=_CCS, method="PlanFinalDeductionAsync",
+         must=["d.Id == deposits[0].Id && d.CompanyId == companyId", "depositBranchId)"],
+         why=_RV_WHY + "ข้อ 4 ใบส่วนที่เหลือสืบทอดสาขาจากใบมัดจำ (แบบเดียวกับการจอง)"),
+    dict(file="Helpers/CmsContactResolver.cs", method="Decide",
+         must=["input.StrictTaxKey"],
+         must_re=[r"if\s*\(\s*strict\s*\)\s*return\s+new\s+CmsContactDecision\(\s*null\s*,\s*CmsContactMatchKind\.None\s*\)",
+                  r"!strict\s*\|\|\s*ContactTaxBranchKey\.Pick\("],
+         before=[("if (strict) return", "ContactTaxBranchKey.SoftScope(")],
+         why=_RV_WHY + "ข้อ 5 ขอใบกำกับพร้อมเลขภาษี ⇒ เลข+สาขาเท่านั้น (ไม่ถอยอีเมล/เบอร์ · ไม่ AdoptTaxId) · ผูกไว้ชนะเฉพาะเลข+สาขาเดียวกัน"),
+    dict(file="Helpers/CmsContactResolver.cs", method="ResolveAsync",
+         must=["input.StrictTaxKey ? null : NormalizeEmail(", "input.StrictTaxKey ? null : NormalizePhone(", "PersistsCustomerLink(kind)"],
+         why=_RV_WHY + "ข้อ 5 โหมดเข้มโหลดแถวเลขภาษีเสมอ ไม่โหลดอีเมล/เบอร์ · การผูกถาวรเฉพาะแถวที่สร้างใหม่ (security ข้อ 1)"),
+    dict(file=CC_HOOK, method="OnCreditNoteApprovedAsync",
+         must=["FollowTransfersAsync(db, companyId, pass, source.DocumentNumber, ct)"],
+         before=[("FollowTransfersAsync(", "CreditPassDocumentRule.OnCreditNote(")],
+         why=_RV_WHY + "ข้อ 6 บัตรโอนแล้ว ⇒ ใบลดหนี้ใบขายเดิมตัดสินกับบัตรปลายทาง (ยอดไม่เกินมูลค่าคงเหลือของบัตรนั้น)"),
+    dict(file=CC_HOOK, method="FollowTransfersAsync",
+         must=["CreditPassDocumentRule.NextTransferHop(", "p.Id == nextId && p.CompanyId == companyId", "CreditPassStatus.Cancelled",
+               "CreditPassDocumentRule.TransferredTargetClosedMessage("],
+         must_lit=["FOR UPDATE"],
+         why=_RV_WHY + "ข้อ 6 ตามสายโอนใต้ล็อกแถว · ปลายทางปิดแล้ว ⇒ บล็อก (ห้ามผ่านเงียบ) · tenant"),
 ]
 
 def main() -> int:
