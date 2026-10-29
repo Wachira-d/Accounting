@@ -5621,6 +5621,9 @@ public partial class DocumentService : IDocumentService
                 BrandId = doc.BrandId,
                 BranchId = doc.BranchId,   // และสาขาที่ออกใบเดิม (§87)
                 DocumentTemplateId = doc.DocumentTemplateId,
+                // รอบ 208 ฝ่ายค้าน W5 ข้อ 4: เลขจองสืบทอดจากใบมัดจำ (การ์ดเอกสารของการจองอ่านจาก BookingNumber) · ใบเก่าเติมด้วย
+                // Helpers/DepositRefundCreditNoteBookingMigration
+                BookingNumber = doc.BookingNumber,
                 SubTotal = refundBase,
                 VatAmount = refundVat,
                 TotalAmount = request.Amount,

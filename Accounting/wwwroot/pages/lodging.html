@@ -531,7 +531,8 @@
           <div class="fld"><label>รายละเอียดค่าเสียหาย</label><input class="form-input" name="dmgd"></div>
           <!-- รอบ 205 W5 (R-49): ส่วนลดเช็คเอาต์ — เซิร์ฟเวอร์คิด (LodgingCheckoutDiscount): ส่วนลด = ส่วนของราคา คิดก่อนหักมัดจำ · ติดลบ = ค้างคืน → ใบลดหนี้อ้างใบมัดจำตอนยืนยันคืนเงิน -->
           <div class="fld"><label>ส่วนลดท้ายบิล</label><div style="display:flex;gap:6px"><input class="form-input" type="number" step="0.01" min="0" name="disc" value="0" style="flex:1"><select class="form-input" name="discMode" style="width:70px"><option value="amt">บาท</option><option value="pct">%</option></select></div>
-            <div class="hint">คิดบนราคาเข้าพักก่อนหักมัดจำ (บาท = ตามราคาที่แขกเห็น) · ถ้าหลังลดต่ำกว่ามัดจำที่รับไว้ ส่วนต่างเป็นยอดค้างคืนแขก (ใบลดหนี้อ้างใบมัดจำออกตอน “ยืนยันคืนเงินแล้ว”)</div></div>
+            <div class="hint">คิดบนยอดเข้าพักทั้งหมด (ค่าห้อง + folio + ค่าเสียหาย/ค่าเช็คเอาต์ช้า) ก่อนหักมัดจำ (บาท = ตามราคาที่แขกเห็น) · ถ้าหลังลดต่ำกว่ามัดจำที่รับไว้ ส่วนต่างเป็นยอดค้างคืนแขก (ใบลดหนี้อ้างใบมัดจำออกตอน “ยืนยันคืนเงินแล้ว”) ·
+              มีใบกำกับล่วงหน้า: ส่วนค่าห้องออกเป็นใบลดหนี้อ้างใบนั้น ส่วนที่เกินลดในใบรายการระหว่างพัก · เหตุผลไม่พิมพ์บนเอกสารของแขก (อยู่ในบันทึกภายใน) · กดเช็คเอาต์ซ้ำหลังออกเอกสารแล้วให้เว้นช่องนี้หรือกรอกเท่าเดิม</div></div>
           <div class="fld"><label>เหตุผลส่วนลด (บังคับเมื่อมีส่วนลด)</label><input class="form-input" name="discReason" maxlength="200" placeholder="เช่น ชดเชยแอร์เสีย · ลูกค้าประจำ"></div>
           <div class="fld"><label>รับชำระส่วนที่เหลือตอนนี้</label><select class="form-input" name="collect"><option value="true">รับเงินเลย</option><option value="false">ออกใบแจ้งหนี้ (เครดิต/agent)</option></select></div>
           <div class="fld"><label>วิธีชำระ</label>${this.pmSelect('pm', 1)}</div>
