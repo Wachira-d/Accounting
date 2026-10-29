@@ -18,13 +18,17 @@ namespace Accounting.Services.Implementations;
 /// either matched (by tax-id, then by email) or created so subsequent
 /// quotations/invoices attach to a real customer record.
 /// </summary>
-public class CmsLeadService
+public partial class CmsLeadService
 {
     private readonly AccountingDbContext _db;
     private readonly Services.Interfaces.IDocumentService _docService;
+    /// <summary>รอบ 209 P3 — แจ้งร้านเมื่อมี lead ใหม่ / ลูกค้ายอมรับใบเสนอราคา (CmsLeadService.Notify.cs) · null = ไม่ส่ง</summary>
+    private readonly Services.Interfaces.ICmsShopNotifier? _shopNotifier;
+    private readonly ILogger<CmsLeadService>? _logger;
 
-    public CmsLeadService(AccountingDbContext db, Services.Interfaces.IDocumentService docService)
-    { _db = db; _docService = docService; }
+    public CmsLeadService(AccountingDbContext db, Services.Interfaces.IDocumentService docService,
+        Services.Interfaces.ICmsShopNotifier? shopNotifier = null, ILogger<CmsLeadService>? logger = null)
+    { _db = db; _docService = docService; _shopNotifier = shopNotifier; _logger = logger; }
 
     // ====================================================================
     // PUBLIC submission (called from storefront — no auth)
@@ -53,7 +57,11 @@ public class CmsLeadService
         };
         _db.Set<CmsLead>().Add(lead);
         await _db.SaveChangesAsync();
-        return MapDetail(lead);
+        // รอบ 209 P3 (D5/E2): แจ้งร้านหลังบันทึก — ส่งไม่ถึง = ประทับบน lead ไม่ล้มการส่งฟอร์มของลูกค้า (Notify.cs) ·
+        // คำตอบถึงผู้ส่งฟอร์ม (สาธารณะ) สร้างก่อนประทับ — เหตุส่งไม่ถึง (อีเมลร้าน) ไม่รั่วออกนอกร้าน
+        var response = MapDetail(lead);
+        await NotifyShopNewLeadAsync(lead);
+        return response;
     }
 
     // ====================================================================

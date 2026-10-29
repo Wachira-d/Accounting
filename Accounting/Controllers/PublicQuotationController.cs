@@ -19,11 +19,15 @@ public class PublicQuotationController : ControllerBase
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<PublicQuotationController> _logger;
+    /// <summary>รอบ 209 P3 (E2): ยอมรับแล้ว ⇒ lead ที่ผูกใบ = ได้งาน + แจ้งร้าน · null (ประกอบเองนอก DI) = ไม่ทำขั้นนี้</summary>
+    private readonly Accounting.Services.Implementations.CmsLeadService? _leads;
 
-    public PublicQuotationController(AccountingDbContext db, ILogger<PublicQuotationController> logger)
+    public PublicQuotationController(AccountingDbContext db, ILogger<PublicQuotationController> logger,
+        Accounting.Services.Implementations.CmsLeadService? leads = null)
     {
         _db = db;
         _logger = logger;
+        _leads = leads;
     }
 
     [HttpGet("{token}")]
@@ -86,6 +90,9 @@ public class PublicQuotationController : ControllerBase
 
         _logger.LogInformation("Quotation {DocNo} accepted online by {By} (company {Cid})",
             doc.DocumentNumber, doc.QuotationAcceptedBy, doc.CompanyId);
+        // รอบ 209 P3 (E2): lead ที่ผูกใบนี้ ⇒ ได้งาน + แจ้งร้าน (หลังบันทึกการยอมรับ · ไม่โยน — ล้มประทับบน lead/บันทึกระบบ)
+        if (_leads != null)
+            await _leads.OnQuotationAcceptedAsync(doc.CompanyId, doc.Id, doc.DocumentNumber, doc.QuotationAcceptedBy ?? "", doc.TotalAmount);
 
         return Ok(new ApiResponse<object>(true,
             new { acceptedAt = doc.QuotationAcceptedAt, acceptedBy = doc.QuotationAcceptedBy },

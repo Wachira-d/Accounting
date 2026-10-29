@@ -306,6 +306,23 @@ public class UpdateOrderStatusRequest
     public string? TrackingNumber { get; set; }
     public string? InternalNotes { get; set; }
     public string? CancellationReason { get; set; }
+    /// <summary>รอบ 209 P3 (E8): ยอดคืนเงิน (รวม VAT) เมื่อเปลี่ยนเป็นคืนเงิน/คืนเงินบางส่วน — คืนบางส่วนต้องระบุ · คืนเต็มไม่ระบุ = คืนทั้งหมดที่คืนได้ ·
+    /// ใช้ร่างใบลดหนี้ (<c>Helpers.SiteOrderRefundPlan</c>) — ไม่อนุมัติเอง</summary>
+    public decimal? RefundAmount { get; set; }
+    /// <summary>เหตุผลการคืนเงิน (พิมพ์บนใบลดหนี้ร่าง §86/10)</summary>
+    public string? RefundReason { get; set; }
+}
+
+/// <summary>รอบ 209 P3 (E7): พนักงานบันทึกรับเงินหน้าร้าน/ปลายทางของออเดอร์ — สร้างรายการรับเงินแล้วเดินเส้นยืนยันรับเงินเดิม (ConfirmPaymentAsync)</summary>
+public class RecordCounterPaymentRequest
+{
+    /// <summary>ยอดที่รับ · ว่าง = ยอดคงค้างทั้งหมด</summary>
+    public decimal? Amount { get; set; }
+    /// <summary>วิธีรับเงิน (Cash · BankTransfer · PromptPay · CreditCard · EWallet · Other) · ว่าง = เงินสด</summary>
+    public PaymentMethod? PaymentMethod { get; set; }
+    public string? Reference { get; set; }
+    /// <summary>ผังเงินเข้า (เงินสด/ธนาคาร) — ว่าง = ตามค่าเริ่มต้นของเส้นยืนยันรับเงิน</summary>
+    public Guid? MoneyInAccountId { get; set; }
 }
 
 public class UploadSlipResponse
@@ -413,6 +430,10 @@ public class OrderResponse
     public List<OrderDepositDocumentResponse> DepositDocuments { get; set; } = new();
     /// <summary>รอบ 205 W2 (R-06): ช่องจ่ายออนไลน์ปิดชั่วคราวเพราะอะไร (สลิปรอตรวจ) · null = เปิด — หน้าเว็บแสดงตรง ๆ</summary>
     public string? OnlinePaymentBlockedNote { get; set; }
+    /// <summary>รอบ 209 P3 (A6): ปุ่ม "ดำเนินการต่อ" จากตัวตัดสินเดียว <c>SiteOrderStatusTransition.NextActions</c> (หน้าเว็บไม่มีตารางสถานะของตัวเอง)</summary>
+    public List<global::Accounting.Helpers.SiteOrderNextAction> NextActions { get; set; } = new();
+    /// <summary>รอบ 209 P3 (E7): ปุ่ม "บันทึกรับเงินหน้าร้าน/ปลายทาง" ใช้ได้ไหม (ยังมียอดค้าง · ออเดอร์ยังไม่ปิด)</summary>
+    public bool CanRecordCounterPayment { get; set; }
 }
 
 /// <summary>ใบรับเงินมัดจำ 1 ใบของออเดอร์ (ทีม Q)</summary>
@@ -493,6 +514,23 @@ public class OrderListResponse
     public int ItemCount { get; set; }
     public DateTime? PaidAt { get; set; }
     public DateTime CreatedAt { get; set; }
+    // ── รอบ 209 P3 (A5 คิวผลิต) — คำนวณที่เซิร์ฟเวอร์ (หน้าเว็บแสดงอย่างเดียว) ──
+    /// <summary>yyyy-MM-dd วันพร้อมเร็วสุดที่สัญญาตอนสั่ง · null = ไม่มีสินค้าตามสั่ง</summary>
+    public string? EarliestReadyDate { get; set; }
+    public string? FulfillmentMethod { get; set; }
+    public string? FulfillmentLabel { get; set; }
+    public decimal PaidAmount { get; set; }
+    public string? PaymentTermMode { get; set; }
+    public decimal DepositRequiredAmount { get; set; }
+    /// <summary>ยอดคงค้างทั้งใบ (ปิดแล้ว = 0)</summary>
+    public decimal BalanceDue { get; set; }
+    public string? TrackingNumber { get; set; }
+    /// <summary>คิวผลิตเท่านั้น: รายการ + ตัวเลือก (ใบงานครัว) · null = มุมมองรายการปกติ</summary>
+    public string? LineSummary { get; set; }
+    /// <summary>คิวผลิตเท่านั้น: เลยวันพร้อมแล้วยังไม่ส่งมอบ</summary>
+    public bool IsOverdue { get; set; }
+    /// <summary>คิวผลิตเท่านั้น: ปุ่มด่วน (ตัวตัดสินเดียวกับหน้ารายละเอียด)</summary>
+    public List<global::Accounting.Helpers.SiteOrderNextAction>? NextActions { get; set; }
 }
 
 public class OrderLineResponse

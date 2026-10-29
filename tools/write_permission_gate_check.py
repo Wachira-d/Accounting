@@ -126,6 +126,8 @@ WATCHED = [
     "Accounting/Controllers/ImportConflictController.cs",
     # ทีม L (คอร์ส/เครดิต) — ขายคอร์ส = ออกใบกำกับภาษี · ตัดเครดิต/หมดอายุ = ลง JE รับรู้รายได้ ⇒ ทุก write มีด่าน (ใส่ตอนเขียวตั้งแต่ไฟล์เกิด)
     "Accounting/Controllers/CourseCreditController.cs",
+    # รอบ 209 P3 — บันทึกรับเงินหน้าร้าน/ปลายทาง = ออกเอกสาร + ลง JE (ใส่ตอนเขียวตั้งแต่ไฟล์เกิด)
+    "Accounting/Controllers/CmsOrderFulfilmentController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
