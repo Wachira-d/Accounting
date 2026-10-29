@@ -681,6 +681,7 @@ builder.Services.AddScoped<IExecutiveReportService, ExecutiveReportService>();
 builder.Services.AddScoped<ICmsSiteService, CmsSiteService>();
 builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
+builder.Services.AddScoped<IStorefrontCustomerService, StorefrontCustomerService>();   // รอบ 209 P1 — หน้าสถานะออเดอร์ของแขก · QR พร้อมเพย์ · บัญชีของฉัน
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
 builder.Services.AddScoped<IBookingNotifier, Accounting.Services.Implementations.Cms.BookingNotifier>();   // รอบ 205 W3 — ช่องส่งข้อความถึงลูกค้าของเครื่องจอง (อีเมล/LINE · บอกผลจริง)
 // ธุรกิจที่พัก (โรงแรม/รีสอร์ท/บ้านพัก) — จอง · มัดจำ · เช็คอิน/เอาต์ · folio · แม่บ้าน

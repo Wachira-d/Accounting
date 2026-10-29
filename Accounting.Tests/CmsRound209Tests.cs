@@ -31,8 +31,9 @@ public class CmsRound209Tests
     [Fact]
     public void Anonymous_cannot_pay_with_credit_staff_can()
     {
-        Assert.NotNull(CreditBookingLink.PayWithCreditProblem(null));
-        Assert.NotNull(CreditBookingLink.PayWithCreditProblem(" "));
-        Assert.Null(CreditBookingLink.PayWithCreditProblem("3f2b0c1e-0000-0000-0000-000000000001"));
+        // รอบ 209 P1: ตัวตรวจชั้น service รวมเป็น ActorPayWithCreditProblem (ผู้กระทำว่าง ⇒ ไม่ได้ · พนักงาน ⇒ ได้)
+        Assert.NotNull(CreditBookingLink.ActorPayWithCreditProblem(null, null));
+        Assert.NotNull(CreditBookingLink.ActorPayWithCreditProblem(" ", null));
+        Assert.Null(CreditBookingLink.ActorPayWithCreditProblem("3f2b0c1e-0000-0000-0000-000000000001", null));
     }
 }

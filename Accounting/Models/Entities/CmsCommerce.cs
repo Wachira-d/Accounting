@@ -197,6 +197,12 @@ public class SiteOrder : TenantEntity
     public string? ShippingEmail { get; set; }
     public string? ShippingMethod { get; set; }
     public string? TrackingNumber { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-B4): ผู้ขนส่ง — ตั้งจาก <c>SiteShippingRate.CarrierName</c> ของอัตราที่ลูกค้าเลือกตอนสั่ง · พนักงานแก้คู่กับเลขพัสดุ · null = ไม่ทราบ/มารับเอง</summary>
+    public string? ShippingCarrier { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-A1/B3): โทเคนสุ่มของหน้าสถานะออเดอร์ของแขก (<c>SiteOrderPublic.NewToken</c>) — ไม่ใช่ GUID ของออเดอร์ · ออเดอร์เดิม backfill ตอนบูต</summary>
+    public string? PublicToken { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-A9): คีย์กันกดสั่งซ้ำจากหน้าเว็บ (unique ต่อบริษัท+เว็บ) · null = ไม่ส่งมา (ผู้เรียกเดิม)</summary>
+    public string? IdempotencyKey { get; set; }
 
     // Billing
     public string? BillingName { get; set; }

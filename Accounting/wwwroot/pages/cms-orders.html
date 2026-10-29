@@ -486,6 +486,7 @@
               <div style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(o.shippingAddress||'-')}</div>
               ${o.shippingMethod ? `<div style="margin-top:4px;color:var(--gray-600)">วิธีจัดส่ง: ${Layout.esc(o.shippingMethod)}</div>` : ''}
               ${o.trackingNumber ? `<div style="color:var(--primary);font-weight:600">เลขติดตาม: ${Layout.esc(o.trackingNumber)}</div>` : ''}
+              <div style="font-size:12px;color:var(--text-secondary)">ผู้ขนส่ง: ${Layout.esc(o.shippingCarrier || '-')}</div>
             </div>` : ''}
             ${(o.earliestReadyDate || (o.paymentTermMode && o.paymentTermMode !== 'full') || o.fulfillmentMethod === 'pickup') ? `
             <div style="background:#EEF2FF;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#3730A3">
@@ -546,7 +547,7 @@
             <h4 style="margin-top:16px;margin-bottom:6px;font-size:13px">ดำเนินการต่อ</h4>
             <div class="workflow-step">
               ${workflow}
-              ${o.status==='Shipped' || o.status==='Processing' ? `<input type="text" id="trackInput" class="form-input" placeholder="เลข tracking (ถ้ามี)" style="width:200px;font-size:12px"><button class="btn btn-sm btn-secondary" onclick="Page.saveTracking('${o.id}')">บันทึก tracking</button>` : ''}
+              ${o.status==='Shipped' || o.status==='Processing' ? `<input type="text" id="carrierInput" class="form-input" placeholder="ผู้ขนส่ง" maxlength="100" value="${Layout.esc(o.shippingCarrier || '')}" style="width:140px;font-size:12px"><input type="text" id="trackInput" class="form-input" placeholder="เลข tracking (ถ้ามี)" value="${Layout.esc(o.trackingNumber || '')}" style="width:200px;font-size:12px"><button class="btn btn-sm btn-secondary" onclick="Page.saveTracking('${o.id}')">บันทึก tracking</button>` : ''}
             </div>` : ''}`;
           Layout.openModal('orderModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
@@ -593,9 +594,12 @@
       async saveTracking(orderId) {
         const api = Layout.api(); if (!api) return;
         const tracking = document.getElementById('trackInput').value.trim();
-        if (!tracking) return;
+        // รอบ 209 P1 (B4): ผู้ขนส่งบันทึกคู่กับเลขพัสดุ · ช่องว่าง = ล้างค่า (เซิร์ฟเวอร์ถือ "" = ล้าง)
+        const carrierEl = document.getElementById('carrierInput');
+        const carrier = carrierEl ? carrierEl.value.trim() : null;
+        if (!tracking && carrier === null) return;
         try {
-          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: this._currentOrder.status, trackingNumber: tracking });
+          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: this._currentOrder.status, trackingNumber: tracking || null, shippingCarrier: carrier });
           Layout.toast('บันทึก tracking แล้ว');
           this.viewOrder(orderId);
         } catch (e) { Layout.toast('บันทึก tracking ไม่สำเร็จ: ' + e.message, 'error'); }

@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
-public class CmsCommerceService : ICmsCommerceService
+public partial class CmsCommerceService : ICmsCommerceService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsCommerceService> _logger;
@@ -607,10 +607,18 @@ public class CmsCommerceService : ICmsCommerceService
     {
         var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Site not found.");
+        // รอบ 209 P1 (R-209-A9): คีย์กันกดสั่งซ้ำ — คีย์เดิม ⇒ คืนออเดอร์เดิม (ไม่สร้างใบที่สอง · ไม่ตัดตะกร้าซ้ำ) · CmsCommerceService.Public.cs
+        var (idemKey, idemProblem) = SiteOrderPublic.NormalizeIdempotencyKey(request.IdempotencyKey);
+        if (idemProblem != null) throw new BusinessRuleException(idemProblem, SiteOrderPublic.RuleCode);
+        if (await FindIdempotentOrderIdAsync(companyId, siteId, idemKey) is Guid replayId)
+            return await GetOrderAsync(companyId, siteId, replayId) ?? throw new InvalidOperationException("Failed.");
 
         var order = new SiteOrder
         {
-            CompanyId = companyId, SiteId = siteId, CustomerId = request.CustomerId,
+            CompanyId = companyId, SiteId = siteId,
+            CustomerId = await VerifiedOrderCustomerAsync(companyId, siteId, request.CustomerId),   // รอบ 209 P1: ลูกค้าของเว็บนี้จริงเท่านั้น
+            PublicToken = SiteOrderPublic.NewToken(),   // รอบ 209 P1 (R-209-A1): กุญแจหน้าสถานะของแขก
+            IdempotencyKey = idemKey,
             OrderNumber = await GenerateOrderNumber(companyId, siteId),
             Currency = site.DefaultCurrency,
             ShippingName = request.ShippingName, ShippingAddress = request.ShippingAddress,
@@ -701,6 +709,10 @@ public class CmsCommerceService : ICmsCommerceService
             }
         }
 
+        // รอบ 209 P1 (R-209-A9): ไม่มีบรรทัด (ตะกร้าว่าง/ตะกร้าผิดเว็บ/ไม่ส่งรายการ) ⇒ ปฏิเสธก่อนบันทึก — เดิมได้ออเดอร์ ฿0
+        if (SiteOrderPublic.EmptyOrderProblem(checkoutLines.Count) is string emptyProblem)
+            throw new BusinessRuleException(emptyProblem, SiteOrderPublic.RuleCode);
+
         // ทีม K — ค่าส่ง (เซิร์ฟเวอร์คิดจากอัตราที่เลือก) · วันรับเร็วสุด · เงื่อนไขชำระ — ตัวคิดเดียวกับหน้าเช็กเอาต์
         var vatRegistered = await Accounting.Helpers.CompanyVatStatus.IsRegisteredAsync(_db, companyId);
         var checkout = await ComputeCheckoutAsync(companyId, siteId, checkoutLines, order.DiscountAmount, new CheckoutQuoteRequest
@@ -716,6 +728,7 @@ public class CmsCommerceService : ICmsCommerceService
         order.ShippingPostalCode = string.IsNullOrWhiteSpace(request.ShippingPostalCode) ? null : request.ShippingPostalCode.Trim();
         order.FulfillmentMethod = checkout.Quote.FulfillmentMethod;
         order.ShippingRateId = checkout.Quote.SelectedShippingRateId;
+        order.ShippingCarrier = await CarrierOfRateAsync(companyId, order.ShippingRateId, order.FulfillmentMethod);   // รอบ 209 P1 (R-209-B4)
         if (order.FulfillmentMethod == Accounting.Helpers.FulfillmentMethod.Pickup && string.IsNullOrWhiteSpace(order.ShippingMethod))
             order.ShippingMethod = Accounting.Helpers.FulfillmentMethod.Label(order.FulfillmentMethod);
         order.EarliestReadyDate = checkout.ReadyDate is DateOnly rd
@@ -726,7 +739,9 @@ public class CmsCommerceService : ICmsCommerceService
         order.DepositInvoicingMode = checkout.DepositInvoicing;
         order.ShippingVatAllocation = checkout.ShippingVatAllocation;   // รอบ 206 R-32: ตรึงวิธีคิด VAT ค่าส่งตอนสั่ง (ข้อ 165)
 
-        await _db.SaveChangesAsync();
+        // รอบ 209 P1 (A9): คำขอซ้อนคีย์เดียวกันชน unique index ⇒ คืนออเดอร์ของคำขอแรก (ตะกร้าไม่ถูกตัดซ้ำ — บันทึกครั้งนี้ถอยทั้งก้อน)
+        if (await SaveNewOrderOrReplayAsync(companyId, siteId, order) is Guid racedId)
+            return await GetOrderAsync(companyId, siteId, racedId) ?? throw new InvalidOperationException("Failed.");
 
         // Recalculate order totals
         var lines = await _db.SiteOrderLines.Where(l => l.OrderId == order.Id).ToListAsync();
@@ -779,6 +794,7 @@ public class CmsCommerceService : ICmsCommerceService
         {
             // สถานะเดิม — แก้แค่เลขพัสดุ/หมายเหตุได้ (เดิมทำผ่านปุ่มเดียวกัน) · ไม่รันขั้นเงิน/เอกสารซ้ำ
             if (request.TrackingNumber != null) order.TrackingNumber = request.TrackingNumber;
+            order.ShippingCarrier = SiteOrderPublic.CarrierEdit(order.ShippingCarrier, request.ShippingCarrier);   // รอบ 209 P1 (B4)
             if (!string.IsNullOrWhiteSpace(request.InternalNotes))
                 order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, request.InternalNotes.Trim());
             order.UpdatedBy = userId;
@@ -790,6 +806,7 @@ public class CmsCommerceService : ICmsCommerceService
         {
             o.Status = request.Status;
             if (request.TrackingNumber != null) o.TrackingNumber = request.TrackingNumber;
+            o.ShippingCarrier = SiteOrderPublic.CarrierEdit(o.ShippingCarrier, request.ShippingCarrier);   // รอบ 209 P1 (B4)
             if (request.InternalNotes != null) o.InternalNotes = request.InternalNotes;
             if (request.CancellationReason != null) o.CancellationReason = request.CancellationReason;
             switch (request.Status)
@@ -1005,6 +1022,7 @@ public class CmsCommerceService : ICmsCommerceService
                 TotalAmount = o.TotalAmount, PaidAmount = o.PaidAmount,
                 ShippingName = o.ShippingName, ShippingAddress = o.ShippingAddress,
                 ShippingMethod = o.ShippingMethod, TrackingNumber = o.TrackingNumber,
+                ShippingCarrier = o.ShippingCarrier, PublicToken = o.PublicToken,   // รอบ 209 P1
                 RequestTaxInvoice = o.RequestTaxInvoice, BillingTaxId = o.BillingTaxId,
                 ErpDocumentId = o.ErpDocumentId,
                 RefundedAtGatewayAt = o.RefundedAtGatewayAt,

@@ -227,6 +227,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(W9HygieneStatements());   // W9 R-58/R-59 — backfill ช่องทาง LINE + ตัด feedback ความหมายเก่าออกจากการสอน (บล็อกท้ายไฟล์)
         list.AddRange(PostVatDeductionStatements());   // ทีม U — หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง (บล็อกท้ายไฟล์)
         list.AddRange(CmsMediaAttachmentStatements());   // ทีม W4 R-43 — สื่อ CMS ผ่านที่เก็บไฟล์กลาง (บล็อกท้ายไฟล์)
+        list.AddRange(Accounting.Helpers.StorefrontP1Migration.Statements());   // รอบ 209 P1 — โทเคนสถานะออเดอร์/ผู้ขนส่ง/คีย์กันสั่งซ้ำ (Helpers/StorefrontP1Migration)
         return list;
     }
 

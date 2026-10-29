@@ -18,8 +18,9 @@ public partial class CmsBookingService
     {
         if (!request.PayWithCredit) return null;
         // รอบ 209 (ทีม C ข้อ C1 · blocking): ทางสร้างการจองเป็น AllowAnonymous และ CustomerId มาจาก body ⇒ ใครรู้ id ก็ตัดเครดิตบัตรคนอื่นได้ ·
-        // จนกว่าจะมีหน้าสมาชิก (ยืนยันตัวตนลูกค้า) ใช้บัตรได้เฉพาะพนักงานที่ล็อกอิน (controller ตรวจสิทธิ์ CmsOrderManage อีกชั้น)
-        if (CreditBookingLink.PayWithCreditProblem(userId) is string who)
+        // controller ตัดสินด้วย CreditBookingLink.PayWithCreditGate (พนักงานมีสิทธิ์ · หรือลูกค้าหน้าร้านที่โทเคนตรง CustomerId — รอบ 209 P1) ·
+        // ชั้นนี้ตรวจซ้ำ: ผู้กระทำว่าง ⇒ ไม่ได้ · ผู้กระทำเป็นลูกค้าหน้าร้าน ⇒ ต้องเป็นเจ้าของ CustomerId พอดี
+        if (CreditBookingLink.ActorPayWithCreditProblem(userId, request.CustomerId) is string who)
             throw new BusinessRuleException(who, CreditBookingLink.RuleCode, 403);
         if (_creditLedger == null)
             throw new BusinessRuleException("ระบบนี้ยังไม่เปิดใช้โมดูลคอร์ส/เครดิต — จองแบบชำระปกติ", CreditBookingLink.RuleCode);

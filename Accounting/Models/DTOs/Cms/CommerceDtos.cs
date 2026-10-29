@@ -289,6 +289,10 @@ public class CreateOrderRequest
 
     // Direct order (without cart)
     public List<CreateOrderLineRequest>? Lines { get; set; }
+
+    /// <summary>รอบ 209 P1 (R-209-A9): คีย์กันกดสั่งซ้ำ (หน้าเว็บสุ่มต่อการกดยืนยัน 1 ครั้ง · หรือส่งเป็น header <c>Idempotency-Key</c>) —
+    /// คีย์เดิมซ้ำ ⇒ คืนออเดอร์เดิม ไม่สร้างใหม่ · null = เดิม (ไม่กัน)</summary>
+    public string? IdempotencyKey { get; set; }
 }
 
 public class CreateOrderLineRequest
@@ -304,6 +308,8 @@ public class UpdateOrderStatusRequest
     [Required]
     public SiteOrderStatus Status { get; set; }
     public string? TrackingNumber { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-B4): ผู้ขนส่ง — null = ไม่แก้ · "" = ล้างค่า</summary>
+    public string? ShippingCarrier { get; set; }
     public string? InternalNotes { get; set; }
     public string? CancellationReason { get; set; }
 }
@@ -376,6 +382,10 @@ public class OrderResponse
     public string? ShippingAddress { get; set; }
     public string? ShippingMethod { get; set; }
     public string? TrackingNumber { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-B4): ผู้ขนส่ง (echo กลับให้หลังบ้านแก้ได้)</summary>
+    public string? ShippingCarrier { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-A1): โทเคนหน้าสถานะออเดอร์ของลูกค้า — หน้าร้านพาไป order-success/{token} (echo ให้ผู้สร้างออเดอร์ · หน้า cms-orders ยังไม่แสดงลิงก์ — แพ็ก P3)</summary>
+    public string? PublicToken { get; set; }
     public bool RequestTaxInvoice { get; set; }
     public string? BillingTaxId { get; set; }
     public Guid? ErpDocumentId { get; set; }

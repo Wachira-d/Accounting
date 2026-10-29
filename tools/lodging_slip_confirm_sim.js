@@ -20,7 +20,7 @@ const path = require('path');
 
 const PAGE = process.env.SF_PAGE || path.join(__dirname, '..', 'Accounting', 'wwwroot', 'storefront.html');
 const REAL_SRC = fs.readFileSync(PAGE, 'utf8');
-const METHODS = ['esc', 'jsArg', '_money', '_lgGuestBanner', '_lgSlipBox'];
+const METHODS = ['esc', 'jsArg', '_money', '_url', '_promptPayQrSrc', '_lgGuestBanner', '_lgSlipBox'];
 
 function extract(src, name) {
   const re = new RegExp('\\n      (?:async )?' + name + '\\(');
@@ -54,8 +54,8 @@ function run(src) {
   const fails = [];
   let S;
   try { S = makeStore(src); } catch (e) { return [e.message]; }
-  let ppCalls = [];
-  S.makePromptPayPayload = (id, amt) => { ppCalls.push([id, amt]); return 'PAYLOAD-' + amt; };
+  // รอบ 209 P1: QR สร้างที่เซิร์ฟเวอร์ (commerce/promptpay-qr?amount=) — ไม่ส่งเลข/ยอดไป api.qrserver.com
+  S._ctx = { companyId: 'c1', siteId: 's1' };
   const pay = { promptPayId: '0812345678', bankName: 'กสิกร<b>', bankAccountNumber: '123-4-56789-0', bankAccountName: 'บจก. ริมน้ำ "จริง"' };
 
   // (a) ต้องส่งสลิปก่อน
@@ -76,7 +76,8 @@ function run(src) {
   if (!box.includes("tok\\'en") || box.includes("'tok'en'")) fails.push('(a) token ใน onsubmit ต้องผ่าน jsArg');
   if (box.includes('กสิกร<b>') || !box.includes('กสิกร&lt;b&gt;') || box.includes('"จริง"')) fails.push('(a) บัญชีรับโอนต้องหนีอักขระ');
   if (!box.includes('123-4-56789-0') || !box.includes('0812345678')) fails.push('(a) ต้องแสดงบัญชี/พร้อมเพย์จากค่าตั้งของเว็บ');
-  if (!ppCalls.some(c => c[1] === 2500)) fails.push('(a) QR พร้อมเพย์ต้องใช้ยอดของเซิร์ฟเวอร์ (amountToTransfer)');
+  if (!box.includes('/commerce/promptpay-qr?amount=2500.00')) fails.push('(a) QR พร้อมเพย์ต้องใช้ยอดของเซิร์ฟเวอร์ (amountToTransfer) ผ่าน endpoint ของเรา');
+  if (box.includes('qrserver')) fails.push('(a) ห้ามส่งเลขพร้อมเพย์/ยอดไปบริการภายนอก');
 
   // (b) เซิร์ฟเวอร์ตัดสินช่องส่งสลิป
   if (S._lgSlipBox(Object.assign({}, slipRes, { canUploadSlip: false }), 't', pay) !== '')

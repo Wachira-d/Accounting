@@ -208,6 +208,12 @@ public class CmsCommerceController : ControllerBase
         Guid userIdGuid = Guid.Empty;
         try { userIdGuid = JwtHelper.GetUserIdFromClaims(User); } catch { }
         var userId = userIdGuid == Guid.Empty ? "guest" : userIdGuid.ToString();
+        // รอบ 209 P1: ลูกค้าของออเดอร์ = ลูกค้าที่ล็อกอินหน้าร้าน (โทเคน) · พนักงาน ERP ระบุแทนได้ · แขกนิรนาม ⇒ ไม่ผูก (CustomerId จาก body เดาได้)
+        var cfg = HttpContext.RequestServices.GetService(typeof(IConfiguration)) as IConfiguration;
+        var sf = cfg == null ? null : StorefrontCustomerAuth.FromRequest(Request, cfg);
+        request.CustomerId = StorefrontCustomerAuth.OrderCustomerId(request.CustomerId, userIdGuid != Guid.Empty, sf, siteId);
+        // A9: คีย์กันกดซ้ำจาก body หรือ header Idempotency-Key
+        request.IdempotencyKey = SiteOrderPublic.PickIdempotencyKey(request.IdempotencyKey, Request.Headers[SiteOrderPublic.IdempotencyHeader].FirstOrDefault());
         var result = await _commerceService.CreateOrderAsync(companyId, siteId, request, userId);
         return StatusCode(201, new ApiResponse<OrderResponse>(true, result, CmsMessages.Get("order.created", Lang)));
     }

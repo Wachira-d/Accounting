@@ -1,0 +1,117 @@
+using Accounting.Models.Enums;
+
+namespace Accounting.Models.DTOs.Cms;
+
+// รอบ 209 · P1 — DTO ฝั่งลูกค้าหน้าร้าน (แยกจาก OrderResponse ของหลังบ้าน — ห้าม reuse เพราะตัวนั้นมี InternalNotes/สลิป/ที่อยู่)
+
+/// <summary>หน้าสถานะออเดอร์ของแขก (<c>GET commerce/orders/public/{token}</c>) — ฟิลด์จำกัดตามคำตัดสินข้อ 168 ข ·
+/// ทุกค่าคำนวณที่เซิร์ฟเวอร์ (<c>Helpers.SiteOrderPublic.ToPublic</c>) · หน้าเว็บแสดงอย่างเดียว</summary>
+public class PublicOrderResponse
+{
+    /// <summary>id ของออเดอร์ — ใช้กับทางเดิมที่แขกถืออยู่แล้ว (แนบสลิป · จ่ายออนไลน์ · ขอใบเสนอราคา)</summary>
+    public Guid Id { get; set; }
+    public string OrderNumber { get; set; } = "";
+    public SiteOrderStatus Status { get; set; }
+    public string StatusLabel { get; set; } = "";
+    public DateTime CreatedAt { get; set; }
+    public string Currency { get; set; } = "THB";
+    public decimal SubTotal { get; set; }
+    public decimal DiscountAmount { get; set; }
+    public decimal ShippingAmount { get; set; }
+    public decimal VatAmount { get; set; }
+    public decimal TotalAmount { get; set; }
+    public decimal PaidAmount { get; set; }
+    public decimal AmountDueNow { get; set; }
+    public decimal NextPayableAmount { get; set; }
+    public decimal BalanceAmount { get; set; }
+    public string? PaymentTermMode { get; set; }
+    public string? PaymentTermLabel { get; set; }
+    public decimal DepositRequiredAmount { get; set; }
+    public string? DepositInvoicingNote { get; set; }
+    /// <summary>yyyy-MM-dd · null = ไม่มีสินค้าตามสั่ง</summary>
+    public string? EarliestReadyDate { get; set; }
+    public string FulfillmentMethod { get; set; } = "delivery";
+    public string FulfillmentLabel { get; set; } = "";
+    public string? ShippingMethod { get; set; }
+    public string? ShippingCarrier { get; set; }
+    public string? TrackingNumber { get; set; }
+    /// <summary>ลิงก์ติดตามพัสดุ — เฉพาะผู้ขนส่งที่รู้รูปแบบ URL · null = แสดงเลขอย่างเดียว</summary>
+    public string? TrackingUrl { get; set; }
+    public DateTime? ShippedAt { get; set; }
+    public DateTime? DeliveredAt { get; set; }
+    public string? OnlinePaymentBlockedNote { get; set; }
+    /// <summary>มี QR พร้อมเพย์ให้สแกน (ร้านตั้งพร้อมเพย์ + มียอดค้าง) — รูปสร้างที่เซิร์ฟเวอร์ (<c>commerce/promptpay-qr</c>)</summary>
+    public bool PromptPayQrAvailable { get; set; }
+    /// <summary>เลขใบรับเงินมัดจำที่ออกแล้ว (อ้างอิงกับร้าน — ไม่มีลิงก์เปิดเอกสารสาธารณะ)</summary>
+    public List<string> DepositDocumentNumbers { get; set; } = new();
+    public List<PublicOrderLineResponse> Lines { get; set; } = new();
+}
+
+public class PublicOrderLineResponse
+{
+    public string ProductName { get; set; } = "";
+    public decimal Quantity { get; set; }
+    public string Unit { get; set; } = "";
+    public decimal UnitPrice { get; set; }
+    public decimal TotalAmount { get; set; }
+    public string? ModifierSummary { get; set; }
+}
+
+/// <summary>ข้อมูลบัญชีลูกค้าหน้าร้านของตัวเอง (<c>GET portal/me</c>)</summary>
+public class StorefrontMeResponse
+{
+    public Guid CustomerId { get; set; }
+    public string Email { get; set; } = "";
+    public string? FullName { get; set; }
+    /// <summary>ผูกผู้ติดต่อในระบบบัญชีแล้ว (จำเป็นสำหรับบัตรคอร์ส)</summary>
+    public bool HasErpContact { get; set; }
+}
+
+public class StorefrontMyOrderItem
+{
+    public string OrderNumber { get; set; } = "";
+    public SiteOrderStatus Status { get; set; }
+    public string StatusLabel { get; set; } = "";
+    public decimal TotalAmount { get; set; }
+    public string Currency { get; set; } = "THB";
+    public DateTime CreatedAt { get; set; }
+    /// <summary>โทเคนหน้าสถานะ — พาไป <c>track-order/{token}</c></summary>
+    public string? PublicToken { get; set; }
+    public string? ShippingCarrier { get; set; }
+    public string? TrackingNumber { get; set; }
+    public string? TrackingUrl { get; set; }
+}
+
+public class StorefrontMyBookingItem
+{
+    public string BookingNumber { get; set; } = "";
+    public string ServiceName { get; set; } = "";
+    /// <summary>yyyy-MM-dd</summary>
+    public string BookingDate { get; set; } = "";
+    /// <summary>HH:mm</summary>
+    public string StartTime { get; set; } = "";
+    public string EndTime { get; set; } = "";
+    public BookingStatus Status { get; set; }
+    public string StatusLabel { get; set; } = "";
+    /// <summary>โทเคนหน้า my-booking (ยกเลิก/เลื่อน/จ่ายมัดจำ — ทางเดิม) · ใบเก่า null = ไม่มีลิงก์</summary>
+    public string? PublicToken { get; set; }
+}
+
+public class StorefrontMyCreditItem
+{
+    public Guid PassId { get; set; }
+    public string PassNumber { get; set; } = "";
+    public string PackageName { get; set; } = "";
+    public string UnitLabel { get; set; } = "";
+    public decimal CreditsTotal { get; set; }
+    public decimal CreditsUsed { get; set; }
+    public decimal CreditsReserved { get; set; }
+    public decimal CreditsAvailable { get; set; }
+    /// <summary>yyyy-MM-dd · null = ไม่หมดอายุ</summary>
+    public string? ExpiresOn { get; set; }
+    public bool IsExpired { get; set; }
+    public CreditPassStatus Status { get; set; }
+    public string StatusLabel { get; set; } = "";
+    /// <summary>ใช้จองได้ตอนนี้ (Active · ไม่หมดอายุ · เหลือเครดิต) — เซิร์ฟเวอร์ตัดสินซ้ำตอนจองจริง</summary>
+    public bool Usable { get; set; }
+}

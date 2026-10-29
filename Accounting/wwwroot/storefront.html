@@ -206,6 +206,7 @@
       <a class="sf-logo" id="sfLogo" href="#">เว็บไซต์</a>
       <button class="sf-mobile-toggle" onclick="document.getElementById('sfNav').classList.toggle('open')">☰</button>
       <nav class="sf-nav" id="sfNav"></nav>
+      <a id="sfAccountBtn" href="#" onclick="Store.openAccount();return false" style="display:none;padding:8px 12px;margin-right:6px;border:1px solid var(--primary,#4F46E5);color:var(--primary,#4F46E5);border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">👤 <span id="sfAccountLabel">บัญชีของฉัน</span></a>
       <a id="sfCartBtn" href="#" onclick="Store.openCart();return false" style="display:none;position:relative;padding:8px 14px;background:var(--primary,#4F46E5);color:#fff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600">
         🛒 <span id="sfCartCount" style="background:#fff;color:var(--primary,#4F46E5);padding:1px 7px;border-radius:999px;font-size:12px;margin-left:4px">0</span>
       </a>
@@ -1003,8 +1004,13 @@
         if (slug === 'cart')             { await this.renderCart();          return true; }
         if (slug === 'checkout')         { await this.renderCheckout();      return true; }
         if (slug.startsWith('order-success/')) {
-          await this.renderOrderSuccess(slug.split('/')[1]); return true;
+          await this.renderOrderSuccess(decodeURIComponent(slug.substring('order-success/'.length))); return true;
         }
+        // รอบ 209 P1 (R-209-A1/B3): หน้าติดตามคำสั่งซื้อด้วยโทเคน · บัญชีลูกค้า (E1/C3)
+        if (slug === 'track-order' || slug.startsWith('track-order/')) {
+          await this.renderTrackOrder(slug.startsWith('track-order/') ? decodeURIComponent(slug.substring('track-order/'.length)) : ''); return true;
+        }
+        if (slug === 'account') { await this.renderAccount(); return true; }
         // รอบ 205 W2: ลิงก์ลูกค้าของการจองนัดหมาย (จ่ายมัดจำ/ยกเลิกเอง) — คนละเส้นกับ /booking (ที่พัก)
         if (slug.startsWith('my-booking/')) {
           await this.renderBookingByToken(decodeURIComponent(slug.substring('my-booking/'.length))); return true;
@@ -1046,6 +1052,16 @@
             const siteType = this._ctx.store?.data?.site?.siteType;
             const showsCommerce = siteType === 2 || siteType === 'Ecommerce' || siteType === 5 || siteType === 'Hybrid';
             btn.style.display = (showsCommerce || count > 0) ? '' : 'none';
+          }
+          // รอบ 209 P1: ปุ่มบัญชีลูกค้า — เว็บขายของ/จอง หรือมีคนล็อกอินอยู่
+          const acc = document.getElementById('sfAccountBtn');
+          if (acc) {
+            const siteType = this._ctx.store?.data?.site?.siteType;
+            const hasAccounts = [2, 3, 5, 'Ecommerce', 'Booking', 'Hybrid'].includes(siteType);
+            const sess = this._custSession();
+            acc.style.display = (hasAccounts || sess) ? '' : 'none';
+            const lbl = document.getElementById('sfAccountLabel');
+            if (lbl) lbl.textContent = sess ? (sess.fullName || 'บัญชีของฉัน') : 'เข้าสู่ระบบ';
           }
         } catch(_) {}
       },
@@ -1393,9 +1409,18 @@
         if (this._quote && this._quote.problem) { alert(this._quote.problem); return; }
         const btn = ev.target.querySelector('button[type="submit"]');
         btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+        // รอบ 209 P1 (R-209-A9): คีย์กันกดซ้ำ — สุ่มครั้งเดียวต่อตะกร้า (กดซ้ำ/เน็ตหลุดแล้วกดใหม่ = คีย์เดิม ⇒ เซิร์ฟเวอร์คืนออเดอร์เดิม)
+        const idemStore = 'sf_order_idem_' + this._ctx.siteId + '_' + cartId;
+        let idemKey = null;
+        try { idemKey = sessionStorage.getItem(idemStore); } catch (_) {}
+        if (!idemKey) {
+          idemKey = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).replace(/[^A-Za-z0-9_-]/g, '');
+          try { sessionStorage.setItem(idemStore, idemKey); } catch (_) {}
+        }
+        body.idempotencyKey = idemKey;
         try {
           const r = await fetch(this._url('/commerce/orders'), {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: this._custHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(body)
           });
           if (!r.ok) {
@@ -1405,7 +1430,9 @@
           const order = (await r.json()).data;
           // Clear local cart reference — backend marks cart closed too.
           localStorage.removeItem('sf_session_' + this._ctx.siteId);
-          window.location.href = this._pageUrl('order-success/' + order.id);
+          try { sessionStorage.removeItem(idemStore); } catch (_) {}
+          // รอบ 209 P1: หน้าสำเร็จเปิดด้วยโทเคนสาธารณะของออเดอร์ (endpoint สาธารณะแบบจำกัดฟิลด์ — ไม่ใช่ GET ของพนักงาน)
+          window.location.href = this._pageUrl('order-success/' + encodeURIComponent(order.publicToken || ''));
         } catch (e) {
           alert(e.message);
         } finally {
@@ -1413,36 +1440,63 @@
         }
       },
 
-      async renderOrderSuccess(orderId) {
+      // รอบ 209 P1 (R-209-A1): อ่านออเดอร์ด้วยโทเคนสาธารณะ (DTO จำกัดฟิลด์) · ไม่พบ ⇒ null (ผู้เรียกแสดงข้อความ — ห้ามแสดง QR ฿0)
+      async _publicOrder(token) {
+        if (!token) return null;
+        try {
+          const r = await fetch(this._url('/commerce/orders/public/' + encodeURIComponent(token)));
+          if (!r.ok) return null;
+          return (await r.json()).data || null;
+        } catch (_) { return null; }
+      },
+      _orderNotFoundHtml() {
+        return `<div class="sf-container" style="padding:48px 20px;max-width:640px;text-align:center">
+            <div style="font-size:48px">🔎</div>
+            <h1 style="margin:12px 0 6px">ไม่พบคำสั่งซื้อจากลิงก์นี้</h1>
+            <p style="color:var(--text-secondary)">ลิงก์อาจไม่ครบ หรือเป็นลิงก์รูปแบบเดิม — ดูคำสั่งซื้อของคุณได้จากหน้า "บัญชีของฉัน" หรือติดต่อร้านพร้อมเลขที่คำสั่งซื้อ</p>
+            <div style="display:flex;gap:10px;justify-content:center;margin-top:18px;flex-wrap:wrap">
+              <a class="btn btn-primary" href="${this._pageUrl('account')}">บัญชีของฉัน</a>
+              <a class="btn btn-secondary" href="${this._pageUrl('track-order')}">ติดตามคำสั่งซื้อ</a>
+            </div></div>`;
+      },
+      // QR พร้อมเพย์สร้างที่เซิร์ฟเวอร์ (ไม่ส่งเลข/ยอดไปบริการภายนอก — คำตัดสินข้อ 168 ฑ) · ยอดมาจากเซิร์ฟเวอร์ทุกครั้ง
+      _promptPayQrSrc(amount) {
+        return this._url('/commerce/promptpay-qr?amount=' + encodeURIComponent(Number(amount).toFixed(2)));
+      },
+      // ป้ายสถานะ + ผู้ขนส่ง/เลขพัสดุ (ข้อความจากเซิร์ฟเวอร์ทั้งหมด)
+      _orderStatusHtml(order) {
+        const track = order.trackingNumber
+          ? `<div style="margin-top:6px">📦 ${this.esc(order.shippingCarrier || 'ผู้ขนส่ง')} · เลขพัสดุ <b style="font-family:monospace">${this.esc(order.trackingNumber)}</b>${order.trackingUrl ? ` · <a href="${this.esc(order.trackingUrl)}" target="_blank" rel="noopener">ติดตามพัสดุ</a>` : ''}</div>`
+          : (order.shippingCarrier ? `<div style="margin-top:6px">📦 ${this.esc(order.shippingCarrier)}</div>` : '');
+        return `<div style="display:inline-block;margin-top:8px;padding:6px 14px;border-radius:999px;background:#EEF2FF;color:#3730A3;font-weight:600">${this.esc(order.statusLabel || '')}</div>${track}`;
+      },
+
+      async renderOrderSuccess(token) {
         const main = document.getElementById('sfMain');
         document.title = 'สั่งซื้อสำเร็จ';
-        let order = null, pay = null;
+        let pay = null;
+        const order = await this._publicOrder(token);
+        if (!order) { main.innerHTML = this._orderNotFoundHtml(); await this.refreshCartBadge(); return; }
         try {
-          const [or, pr] = await Promise.all([
-            fetch(this._url(`/commerce/orders/${orderId}`)),
-            fetch(this._url(`/commerce/payment-options`))
-          ]);
-          if (or.ok) order = (await or.json()).data;
+          const pr = await fetch(this._url(`/commerce/payment-options`));
           if (pr.ok) pay = (await pr.json()).data;
         } catch(_) {}
+        // ทางเดิมของแขก (แนบสลิป · จ่ายออนไลน์ · ขอใบเสนอราคา) ยังใช้ id ของออเดอร์ — ได้จากคำตอบที่พิสูจน์ด้วยโทเคนแล้ว
+        const orderId = order.id;
+        this._lastOrderToken = token;
 
-        const oNum = this.esc(order?.orderNumber || orderId);
+        const oNum = this.esc(order.orderNumber);
         // ทีม K — ยอดที่ต้องจ่ายรอบนี้มาจากเซิร์ฟเวอร์ (มัดจำ/เต็มจำนวน/คงค้าง) — QR และสลิปใช้ยอดเดียวกัน
         const payNow = order ? Number(order.nextPayableAmount ?? order.totalAmount ?? 0) : 0;
         const total = payNow.toLocaleString('th-TH', {minimumFractionDigits: 2});
         const grand = Number(order?.totalAmount || 0).toLocaleString('th-TH', {minimumFractionDigits: 2});
         const isCancelled = order?.status === 'Cancelled';
 
-        // PromptPay payload — generate the standard EMVCo QR string
-        // client-side so the customer sees the QR even when the site
-        // didn't pre-render PromptPayQrUrl.
+        // QR พร้อมเพย์: เซิร์ฟเวอร์สร้างรูปจากยอดค้างของออเดอร์ (ยอด 0/ไม่มีพร้อมเพย์ ⇒ ไม่มี QR — ไม่แสดง QR ฿0)
         const ppId = pay?.promptPayId;
-        const ppQrPayload = ppId
-          ? Store.makePromptPayPayload(ppId, payNow)
-          : null;
-        const ppQrImg = ppQrPayload
-          ? `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(ppQrPayload)}&margin=8`
-          : (pay?.promptPayQrUrl || null);
+        const ppQrImg = order.promptPayQrAvailable
+          ? this._promptPayQrSrc(payNow)
+          : (payNow > 0 ? (pay?.promptPayQrUrl || null) : null);
 
         const hasPay = pay?.hasPaymentMethod;
 
@@ -1452,6 +1506,8 @@
               <div style="font-size:64px">🎉</div>
               <h1 style="margin:14px 0 6px">${isCancelled ? 'เปลี่ยนเป็นใบเสนอราคา' : 'ได้รับคำสั่งซื้อแล้ว'}</h1>
               <p style="color:var(--text-secondary)">เลขที่: <strong>${oNum}</strong> · ยอดรวม: <strong>฿${grand}</strong></p>
+              ${this._orderStatusHtml(order)}
+              <p style="font-size:13px;margin-top:10px"><a href="${this._pageUrl('track-order/' + encodeURIComponent(token))}">🔗 ลิงก์ติดตามคำสั่งซื้อ</a> — เก็บลิงก์นี้ไว้เพื่อดูสถานะ/เลขพัสดุภายหลัง</p>
               ${order && order.paymentTermMode && order.paymentTermMode !== 'full' ? `<p style="color:#16A34A;font-weight:600">${this.esc(order.paymentTermLabel || '')} · ชำระตอนนี้ ฿${total}</p>` : ''}
               ${order && order.depositInvoicingNote ? `<p style="color:#6B7280;font-size:13px">🧾 ${this.esc(order.depositInvoicingNote)}</p>` : ''}
               ${order && order.earliestReadyDate ? `<p style="color:#3730A3">🕒 ${this.esc(order.fulfillmentLabel || '')} · พร้อมเร็วสุด ${this.esc(this._thaiDate(order.earliestReadyDate))}</p>` : ''}
@@ -1477,8 +1533,8 @@
                   ${ppQrImg ? `
                     <div style="text-align:center;background:#F9FAFB;padding:18px;border-radius:8px">
                       <div style="font-size:13px;color:var(--text-secondary);margin-bottom:8px">สแกน QR PromptPay</div>
-                      <img src="${ppQrImg}" alt="PromptPay QR" style="width:220px;height:220px">
-                      <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">PromptPay: <strong>${this.esc(ppId)}</strong> · ยอด ฿${total}</div>
+                      <img src="${this.esc(ppQrImg)}" alt="PromptPay QR" style="width:220px;height:220px" onerror="this.style.display='none'">
+                      <div style="font-size:12px;color:var(--text-secondary);margin-top:8px">PromptPay: <strong>${this.esc(ppId || '-')}</strong> · ยอด ฿${total}</div>
                     </div>
                   ` : ''}
                   ${pay?.bankAccountNumber ? `
@@ -1532,41 +1588,8 @@
         await this.refreshCartBadge();
       },
 
-      /**
-       * Build an EMVCo-compliant PromptPay QR payload. Pure client-
-       * side so we don't burn a server roundtrip and the QR renders
-       * even when the site never uploaded a PromptPayQrUrl.
-       *
-       *   ppId: phone (with or without leading 0) or 13-digit tax-id
-       *   amount: THB amount (decimal); 0 for "open amount" QR
-       *
-       * Reference: Bank of Thailand QR Code Standard, EMVCo TLV format.
-       */
-      makePromptPayPayload(ppId, amount) {
-        // Normalize id: phone → 0066 prefix, tax-id → 13 digits
-        const digits = String(ppId).replace(/\D/g, '');
-        let target;
-        if (digits.length === 13) target = digits;                      // tax-id
-        else if (digits.startsWith('0') && digits.length === 10) target = '0066' + digits.slice(1);
-        else if (digits.length === 10) target = '0066' + digits;
-        else target = digits;
-        const aid = '0016A000000677010111';
-        const idTag = digits.length === 13 ? '02' : '01';
-        const idTlv = idTag + String(target.length).padStart(2, '0') + target;
-        const m29 = aid + idTlv;
-        const tlv = (id, v) => id + String(v.length).padStart(2, '0') + v;
-        let body = tlv('00','01') + tlv('01', amount > 0 ? '12' : '11') +
-                   tlv('29', m29) + tlv('53', '764') + tlv('58','TH');
-        if (amount > 0) body += tlv('54', Number(amount).toFixed(2));
-        const partial = body + '6304';
-        // CRC16/CCITT-FALSE
-        let crc = 0xFFFF;
-        for (let i = 0; i < partial.length; i++) {
-          crc ^= partial.charCodeAt(i) << 8;
-          for (let j = 0; j < 8; j++) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
-        }
-        return partial + crc.toString(16).toUpperCase().padStart(4, '0');
-      },
+      // รอบ 209 P1: ตัวสร้าง payload พร้อมเพย์ฝั่งเว็บ (makePromptPayPayload) ถูกลบ — สำเนากติกา EMVCo ที่สอง · รูป QR มาจาก
+      // GET commerce/promptpay-qr (Services/Implementations/PromptPayService ตัวเดียวของระบบ)
 
       async _renderOrderPayOnline(orderId, order) {
         const box = document.getElementById('sfPayOnlineBox');
@@ -1598,7 +1621,7 @@
           companyId,
           publicBase: `/api/companies/${companyId}/public-pay/orders/${siteId}/${orderId}`,
           method,
-          onPaid: () => { setTimeout(() => this.renderOrderSuccess(orderId), 800); },
+          onPaid: () => { setTimeout(() => this.renderOrderSuccess(this._lastOrderToken || ''), 800); },
         });
       },
 
@@ -1639,6 +1662,247 @@
         } catch (e) {
           alert(e.message || 'เปลี่ยนไม่สำเร็จ');
         }
+      },
+
+
+      // ===== รอบ 209 P1 (R-209-E1/C3): บัญชีลูกค้าหน้าร้าน =====
+      // โทเคนลูกค้า (portal/login · audience หน้าร้าน) เก็บต่อเว็บใน localStorage · ส่งใน header X-Storefront-Token
+      // (เซิร์ฟเวอร์ตรวจด้วย Helpers/StorefrontCustomerAuth) · หน้าเว็บไม่ตัดสินสิทธิ์เอง — 401 = ล้างเซสชันแล้วให้เข้าใหม่
+      _custKey() { return 'sf_cust_' + this._ctx.siteId; },
+      _custSession() {
+        try {
+          const raw = localStorage.getItem(this._custKey());
+          if (!raw) return null;
+          const v = JSON.parse(raw);
+          if (!v || !v.token || (v.expiresAt && new Date(v.expiresAt) <= new Date())) { localStorage.removeItem(this._custKey()); return null; }
+          return v;
+        } catch (_) { return null; }
+      },
+      _custHeaders(h) {
+        const out = Object.assign({}, h || {});
+        const sess = this._custSession();
+        if (sess) out['X-Storefront-Token'] = sess.token;
+        return out;
+      },
+      _custLogout() {
+        try { localStorage.removeItem(this._custKey()); } catch (_) {}
+        this._custMe = null;
+      },
+      async _custFetch(path) {
+        const r = await fetch(this._url(path), { headers: this._custHeaders() });
+        const j = await r.json().catch(() => null);
+        if (r.status === 401) { this._custLogout(); throw Object.assign(new Error((j && j.message) || 'กรุณาเข้าสู่ระบบใหม่'), { auth: true }); }
+        if (!r.ok) throw new Error((j && j.message) || 'โหลดข้อมูลไม่สำเร็จ');
+        return j ? j.data : null;
+      },
+      // ข้อมูลบัญชี (id ลูกค้า — ใช้ส่ง customerId ตอนจองด้วยบัตร) · ไม่ล็อกอิน/หมดอายุ ⇒ null
+      async _custMeLoad() {
+        if (!this._custSession()) return null;
+        if (this._custMe) return this._custMe;
+        try { this._custMe = await this._custFetch('/portal/me'); } catch (_) { this._custMe = null; }
+        return this._custMe;
+      },
+      openAccount() { window.location.href = this._pageUrl('account'); },
+
+      async renderAccount(tab) {
+        const main = document.getElementById('sfMain');
+        document.title = 'บัญชีของฉัน';
+        const me = await this._custMeLoad();
+        if (!me) { main.innerHTML = this._accountLoginHtml(); await this.refreshCartBadge(); return; }
+        const t = tab || 'orders';
+        const tabBtn = (k, label) => `<button class="btn ${t === k ? 'btn-primary' : 'btn-secondary'}" onclick="Store.renderAccount('${k}')">${label}</button>`;
+        main.innerHTML = `<div class="sf-container" style="padding:32px 20px;max-width:860px">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+              <div><h1 style="margin:0">บัญชีของฉัน</h1><div style="color:var(--text-secondary);font-size:13px">${this.esc(me.fullName || '')} · ${this.esc(me.email || '')}</div></div>
+              <button class="btn btn-secondary" onclick="Store.accountLogout()">ออกจากระบบ</button>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin:18px 0">
+              ${tabBtn('orders', '🧾 คำสั่งซื้อ')}${tabBtn('bookings', '📅 การจองของฉัน')}${tabBtn('credits', '🎟️ บัตรคอร์สของฉัน')}
+            </div>
+            <div id="sfAccountBody"><div class="sf-loader">กำลังโหลด...</div></div>
+          </div>`;
+        const body = document.getElementById('sfAccountBody');
+        try {
+          if (t === 'bookings') body.innerHTML = this._myBookingsHtml(await this._custFetch('/portal/me/bookings'));
+          else if (t === 'credits') body.innerHTML = this._myCreditsHtml(await this._custFetch('/portal/me/credits'), me);
+          else body.innerHTML = this._myOrdersHtml(await this._custFetch('/portal/me/orders'));
+        } catch (e) {
+          if (e.auth) { main.innerHTML = this._accountLoginHtml(e.message); return; }
+          body.innerHTML = `<div style="color:#DC2626">${this.esc(e.message)}</div>`;
+        }
+        await this.refreshCartBadge();
+      },
+      _myOrdersHtml(rows) {
+        if (!rows || !rows.length) return '<div style="color:var(--text-secondary)">ยังไม่มีคำสั่งซื้อในบัญชีนี้ (คำสั่งซื้อที่สั่งก่อนเข้าสู่ระบบ ดูได้จากลิงก์ติดตามที่ได้ตอนสั่ง)</div>';
+        return `<div style="display:grid;gap:10px">${rows.map(o => `
+            <div style="border:1px solid #E5E7EB;border-radius:10px;padding:14px 16px;background:#fff">
+              <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                <b>${this.esc(o.orderNumber)}</b>
+                <span style="color:#3730A3;font-weight:600">${this.esc(o.statusLabel)}</span>
+              </div>
+              <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${this.esc(new Date(o.createdAt).toLocaleDateString('th-TH'))} · ฿${this._money(o.totalAmount)}
+                ${o.trackingNumber ? ` · 📦 ${this.esc(o.shippingCarrier || '')} ${this.esc(o.trackingNumber)}${o.trackingUrl ? ` (<a href="${this.esc(o.trackingUrl)}" target="_blank" rel="noopener">ติดตามพัสดุ</a>)` : ''}` : ''}</div>
+              ${o.publicToken ? `<a style="font-size:13px" href="${this._pageUrl('track-order/' + encodeURIComponent(o.publicToken))}">ดูรายละเอียด/สถานะ</a>` : ''}
+            </div>`).join('')}</div>`;
+      },
+      _myBookingsHtml(rows) {
+        if (!rows || !rows.length) return '<div style="color:var(--text-secondary)">ยังไม่มีการจองในบัญชีนี้</div>';
+        return `<div style="display:grid;gap:10px">${rows.map(b => `
+            <div style="border:1px solid #E5E7EB;border-radius:10px;padding:14px 16px;background:#fff">
+              <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                <b>${this.esc(b.serviceName)}</b><span style="color:#3730A3;font-weight:600">${this.esc(b.statusLabel)}</span>
+              </div>
+              <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${this.esc(b.bookingNumber)} · ${this.esc(this._thaiDate(b.bookingDate))} ${this.esc(b.startTime)}–${this.esc(b.endTime)}</div>
+              ${b.publicToken ? `<a style="font-size:13px" href="${this._pageUrl('my-booking/' + encodeURIComponent(b.publicToken))}">จัดการการจอง (เลื่อน/ยกเลิก/ชำระมัดจำ)</a>` : ''}
+            </div>`).join('')}</div>`;
+      },
+      _myCreditsHtml(rows, me) {
+        if (!me.hasErpContact) return '<div style="color:var(--text-secondary)">บัญชีนี้ยังไม่ผูกกับข้อมูลลูกค้าของร้าน — ติดต่อร้านเพื่อดูบัตรคอร์ส</div>';
+        if (!rows || !rows.length) return '<div style="color:var(--text-secondary)">ยังไม่มีบัตรคอร์สในบัญชีนี้</div>';
+        return `<div style="display:grid;gap:10px">${rows.map(p => `
+            <div style="border:1px solid ${p.usable ? '#A7F3D0' : '#E5E7EB'};border-radius:10px;padding:14px 16px;background:#fff">
+              <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                <b>${this.esc(p.packageName)}</b><span style="font-weight:600;color:${p.usable ? '#047857' : '#6B7280'}">${this.esc(p.statusLabel)}${p.isExpired && p.status === 'Active' ? ' (หมดอายุแล้ว)' : ''}</span>
+              </div>
+              <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${this.esc(p.passNumber)} · คงเหลือ <b>${this.esc(String(p.creditsAvailable))}</b> / ${this.esc(String(p.creditsTotal))} ${this.esc(p.unitLabel)}
+                ${Number(p.creditsReserved) > 0 ? ` (จองไว้ ${this.esc(String(p.creditsReserved))})` : ''} · ${p.expiresOn ? 'ใช้ได้ถึง ' + this.esc(this._thaiDate(p.expiresOn)) : 'ไม่หมดอายุ'}</div>
+            </div>`).join('')}</div>
+            <p style="font-size:12px;color:var(--text-secondary);margin-top:10px">จองคลาสด้วยบัตร: เลือกบริการแล้วติ๊ก "ใช้บัตรคอร์ส" ในหน้าจอง (ต้องเข้าสู่ระบบ)</p>`;
+      },
+      _accountLoginHtml(msg) {
+        const inp = 'width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px';
+        return `<div class="sf-container" style="padding:32px 20px;max-width:880px">
+            <h1 style="margin:0 0 6px">บัญชีของฉัน</h1>
+            <p style="color:var(--text-secondary);margin-bottom:18px">เข้าสู่ระบบเพื่อดูประวัติคำสั่งซื้อ การจอง และบัตรคอร์ส — สั่งซื้อแบบไม่สมัครสมาชิกยังทำได้ตามปกติ</p>
+            ${msg ? `<div style="background:#FEF3C7;border:1px solid #FCD34D;color:#78350F;border-radius:8px;padding:10px 14px;margin-bottom:14px">${this.esc(msg)}</div>` : ''}
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px">
+              <form onsubmit="Store.accountLogin(event)" style="display:grid;gap:10px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:20px">
+                <h2 style="margin:0;font-size:18px">เข้าสู่ระบบ</h2>
+                <input name="email" type="email" required maxlength="200" placeholder="อีเมล" style="${inp}">
+                <input name="password" type="password" required placeholder="รหัสผ่าน" style="${inp}">
+                <button type="submit" class="btn btn-primary">เข้าสู่ระบบ</button>
+                <div class="sf-acc-status" style="font-size:13px"></div>
+              </form>
+              <form onsubmit="Store.accountRegister(event)" style="display:grid;gap:10px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:20px">
+                <h2 style="margin:0;font-size:18px">สมัครสมาชิก</h2>
+                <input name="fullName" required maxlength="256" placeholder="ชื่อ-นามสกุล" style="${inp}">
+                <input name="email" type="email" required maxlength="200" placeholder="อีเมล" style="${inp}">
+                <input name="phone" type="tel" maxlength="20" placeholder="เบอร์โทร (ไม่บังคับ)" style="${inp}">
+                <input name="password" type="password" required minlength="8" placeholder="รหัสผ่าน (อย่างน้อย 8 ตัว)" style="${inp}">
+                <label style="font-size:13px;display:flex;gap:6px;align-items:flex-start"><input type="checkbox" name="consentGiven" required> ยินยอมให้ร้านเก็บและใช้ข้อมูลส่วนบุคคลเพื่อให้บริการบัญชีสมาชิก คำสั่งซื้อ และการจอง</label>
+                <label style="font-size:13px;display:flex;gap:6px;align-items:flex-start"><input type="checkbox" name="acceptMarketing"> รับข่าวสาร/โปรโมชันจากร้าน (ไม่บังคับ)</label>
+                <button type="submit" class="btn btn-primary">สมัครสมาชิก</button>
+                <div class="sf-acc-status" style="font-size:13px"></div>
+              </form>
+            </div></div>`;
+      },
+      async _accountLoginWith(email, password) {
+        const r = await fetch(this._url('/portal/login'), {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j || !j.data || !j.data.token) throw new Error((j && j.message) || 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
+        localStorage.setItem(this._custKey(), JSON.stringify({ token: j.data.token, expiresAt: j.data.expiresAt, fullName: j.data.fullName, email: j.data.email }));
+        this._custMe = null;
+      },
+      async accountLogin(ev) {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        const st = ev.target.querySelector('.sf-acc-status');
+        st.textContent = 'กำลังเข้าสู่ระบบ...'; st.style.color = 'var(--text-secondary)';
+        try {
+          await this._accountLoginWith(fd.get('email'), fd.get('password'));
+          await this.renderAccount();
+        } catch (e) { st.textContent = '✗ ' + e.message; st.style.color = '#DC2626'; }
+      },
+      async accountRegister(ev) {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        const st = ev.target.querySelector('.sf-acc-status');
+        st.textContent = 'กำลังสมัคร...'; st.style.color = 'var(--text-secondary)';
+        try {
+          const r = await fetch(this._url('/portal/register'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fullName: fd.get('fullName'), email: fd.get('email'), phone: fd.get('phone') || null,
+              password: fd.get('password'), consentGiven: !!fd.get('consentGiven'), acceptMarketing: !!fd.get('acceptMarketing')
+            })
+          });
+          const j = await r.json().catch(() => null);
+          if (!r.ok) throw new Error((j && j.message) || 'สมัครไม่สำเร็จ');
+          await this._accountLoginWith(fd.get('email'), fd.get('password'));
+          await this.renderAccount();
+        } catch (e) { st.textContent = '✗ ' + e.message; st.style.color = '#DC2626'; }
+      },
+      async accountLogout() {
+        this._custLogout();
+        await this.renderAccount();
+      },
+
+      // ===== รอบ 209 P1 (R-209-A1/B3): ติดตามคำสั่งซื้อด้วยโทเคน =====
+      async renderTrackOrder(token) {
+        const main = document.getElementById('sfMain');
+        document.title = 'ติดตามคำสั่งซื้อ';
+        if (!token) {
+          main.innerHTML = `<div class="sf-container" style="padding:40px 20px;max-width:640px">
+              <h1 style="margin:0 0 8px">ติดตามคำสั่งซื้อ</h1>
+              <p style="color:var(--text-secondary)">วางลิงก์ติดตามที่ได้ตอนสั่งซื้อ (หรือรหัสท้ายลิงก์) — หรือเข้าสู่ระบบเพื่อดูคำสั่งซื้อทั้งหมด</p>
+              <form onsubmit="Store.submitTrackOrder(event)" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+                <input name="link" required maxlength="500" placeholder="ลิงก์ติดตามคำสั่งซื้อ" style="flex:1;min-width:220px;padding:10px;border:1px solid #D1D5DB;border-radius:6px">
+                <button type="submit" class="btn btn-primary">ดูสถานะ</button>
+              </form>
+              <p style="margin-top:14px"><a href="${this._pageUrl('account')}">เข้าสู่ระบบ / บัญชีของฉัน</a></p></div>`;
+          return;
+        }
+        const o = await this._publicOrder(token);
+        if (!o) { main.innerHTML = this._orderNotFoundHtml(); return; }
+        const m = v => '฿' + this._money(v);
+        main.innerHTML = `<div class="sf-container" style="padding:32px 20px;max-width:780px">
+            <h1 style="margin:0">คำสั่งซื้อ ${this.esc(o.orderNumber)}</h1>
+            <div style="color:var(--text-secondary);font-size:13px">${this.esc(new Date(o.createdAt).toLocaleString('th-TH'))} · ${this.esc(o.fulfillmentLabel || '')}${o.earliestReadyDate ? ' · พร้อมเร็วสุด ' + this.esc(this._thaiDate(o.earliestReadyDate)) : ''}</div>
+            ${this._orderStatusHtml(o)}
+            <table style="width:100%;margin-top:18px;border-collapse:collapse;font-size:14px">
+              ${(o.lines || []).map(l => `<tr style="border-bottom:1px solid #F3F4F6"><td style="padding:8px 0">${this.esc(l.productName)}${l.modifierSummary ? `<div style="font-size:12px;color:var(--text-secondary)">${this.esc(l.modifierSummary)}</div>` : ''}</td>
+                <td style="text-align:right;white-space:nowrap">${this.esc(String(l.quantity))} ${this.esc(l.unit || '')}</td><td style="text-align:right;white-space:nowrap;padding-left:12px">${m(l.totalAmount)}</td></tr>`).join('')}
+              ${Number(o.shippingAmount) > 0 ? `<tr><td style="padding:6px 0">ค่าจัดส่ง</td><td></td><td style="text-align:right">${m(o.shippingAmount)}</td></tr>` : ''}
+              ${Number(o.discountAmount) > 0 ? `<tr><td style="padding:6px 0">ส่วนลด</td><td></td><td style="text-align:right">−${m(o.discountAmount)}</td></tr>` : ''}
+              <tr><td style="padding:8px 0;font-weight:700">ยอดรวม</td><td></td><td style="text-align:right;font-weight:700">${m(o.totalAmount)}</td></tr>
+              <tr><td style="padding:4px 0;color:var(--text-secondary)">ชำระแล้ว</td><td></td><td style="text-align:right;color:var(--text-secondary)">${m(o.paidAmount)}</td></tr>
+            </table>
+            ${o.depositInvoicingNote ? `<p style="font-size:13px;color:#6B7280">🧾 ${this.esc(o.depositInvoicingNote)}</p>` : ''}
+            ${(o.depositDocumentNumbers || []).length ? `<p style="font-size:13px;color:#6B7280">ใบรับเงินมัดจำ: ${(o.depositDocumentNumbers || []).map(n => this.esc(n)).join(', ')}</p>` : ''}
+            ${o.onlinePaymentBlockedNote ? `<div style="margin-top:12px;border:1px solid #FCD34D;background:#FFFBEB;border-radius:10px;padding:12px 16px;color:#78350F;font-size:13px">⏳ ${this.esc(o.onlinePaymentBlockedNote)}</div>` : ''}
+            ${Number(o.nextPayableAmount) > 0 && !o.onlinePaymentBlockedNote ? `<div style="margin-top:16px"><a class="btn btn-primary" href="${this._pageUrl('order-success/' + encodeURIComponent(token))}">ชำระเงิน ${m(o.nextPayableAmount)}</a></div>` : ''}
+          </div>`;
+      },
+      submitTrackOrder(ev) {
+        ev.preventDefault();
+        const raw = String(new FormData(ev.target).get('link') || '').trim();
+        // รับทั้งลิงก์เต็ม (…/track-order/{token} · …/order-success/{token} · ?slug=…) และรหัสอย่างเดียว
+        const m = raw.match(/(?:track-order|order-success)(?:%2F|\/)([A-Za-z0-9_-]{20,64})/);
+        const token = m ? m[1] : (/^[A-Za-z0-9_-]{20,64}$/.test(raw) ? raw : '');
+        if (!token) { alert('ลิงก์ไม่ถูกต้อง — คัดลอกลิงก์ติดตามที่ได้ตอนสั่งซื้อมาวางทั้งลิงก์'); return; }
+        window.location.href = this._pageUrl('track-order/' + encodeURIComponent(token));
+      },
+
+      // ===== รอบ 209 P1 (R-209-C3): จองด้วยบัตรคอร์สจากหน้าเว็บ (ต้องล็อกอิน · เซิร์ฟเวอร์ตัดสินสิทธิ์ด้วย CreditBookingLink.PayWithCreditGate) =====
+      async _bookingCreditBox() {
+        const box = document.getElementById('sfBookCreditBox');
+        if (!box) return;
+        const me = await this._custMeLoad();
+        if (!me) {
+          box.innerHTML = `<div style="font-size:12px;color:var(--text-secondary)">มีบัตรคอร์ส? <a href="${this._pageUrl('account')}">เข้าสู่ระบบ</a> เพื่อจองด้วยบัตร</div>`;
+          return;
+        }
+        let passes = [];
+        try { passes = ((await this._custFetch('/portal/me/credits')) || []).filter(p => p.usable); } catch (_) { passes = []; }
+        if (!passes.length) { box.innerHTML = ''; return; }
+        box.innerHTML = `<label style="display:flex;gap:6px;align-items:center;font-weight:600"><input type="checkbox" id="sfBookUseCredit"> ใช้บัตรคอร์สของฉัน (ไม่ต้องชำระเงิน)</label>
+            <select id="sfBookCreditPass" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px;margin-top:6px">
+              <option value="">ให้ระบบเลือกบัตรที่หมดอายุก่อน</option>
+              ${passes.map(p => `<option value="${this.esc(p.passId)}">${this.esc(p.packageName)} · ${this.esc(p.passNumber)} · เหลือ ${this.esc(String(p.creditsAvailable))} ${this.esc(p.unitLabel)}</option>`).join('')}
+            </select>`;
       },
 
       // ===== Booking =====
@@ -1698,9 +1962,11 @@
             ${fld('phone', 'เบอร์โทร', r => `<input name="customerPhone" type="tel" ${r} maxlength="30" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`)}
             ${fld('email', 'อีเมล', r => `<input type="email" name="customerEmail" ${r} maxlength="200" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`)}
             ${fld('notes', 'หมายเหตุ', r => `<textarea name="notes" rows="2" ${r} style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea>`)}
+            <div id="sfBookCreditBox"></div>
             <button type="button" onclick="Store._submitBooking()" class="btn btn-primary" style="padding:12px">ยืนยันการจอง</button>
           </form>`;
         await this._loadSlots(serviceId);
+        await this._bookingCreditBox();
       },
 
       async _loadSlots(serviceId) {
@@ -1772,9 +2038,19 @@
           units: this._bkUnits(),
           resourceId: this._bkResource()
         };
+        // รอบ 209 P1 (C3): จองด้วยบัตร — ส่ง id ลูกค้าของตัวเอง + โทเคนหน้าร้าน (เซิร์ฟเวอร์เทียบ id ในโทเคนกับ customerId)
+        const useCredit = document.getElementById('sfBookUseCredit');
+        const meForCredit = useCredit && useCredit.checked ? await this._custMeLoad() : null;
+        if (useCredit && useCredit.checked && !meForCredit) { alert('เซสชันสมาชิกหมดอายุ — เข้าสู่ระบบใหม่ก่อนจองด้วยบัตร'); return; }
+        if (meForCredit) {
+          body.customerId = meForCredit.customerId;
+          body.payWithCredit = true;
+          const passSel = document.getElementById('sfBookCreditPass');
+          body.creditPassId = passSel && passSel.value ? passSel.value : null;
+        }
         try {
           const r = await fetch(this._url('/booking/bookings'), {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            method: 'POST', headers: this._custHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(body)
           });
           // server ตัดสินรอบอีกครั้งตอนจอง (เต็ม/ปิด/ล่วงหน้าไม่พอ) — แสดงเหตุผลของ server แล้วโหลดเวลาว่างใหม่
@@ -2758,8 +3034,9 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
         if (r.canUploadSlip !== true) return '';
         const amt = r.slipRequired ? r.amountToTransfer : null;
         const ppId = pay && pay.promptPayId;
+        // รอบ 209 P1: QR สร้างที่เซิร์ฟเวอร์ (เดิมส่งเลขพร้อมเพย์+ยอดไป api.qrserver.com)
         const qr = ppId && amt > 0
-          ? 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&margin=8&data=' + encodeURIComponent(this.makePromptPayPayload(ppId, amt))
+          ? this._promptPayQrSrc(amt)
           : ((pay && pay.promptPayQrUrl) || null);
         const hasAccount = !!(ppId || (pay && pay.bankAccountNumber) || qr);
         const accounts = hasAccount ? `<div style="display:grid;gap:10px;margin:8px 0 12px">
