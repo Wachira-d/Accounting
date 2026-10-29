@@ -9902,6 +9902,63 @@ RULES += [
          why="รอบ 208 W2 ข้อ 5: หลักฐานรับเงินของการจองลงเวลาที่บันทึก (ไม่ใช่วันที่พนักงานกรอกย้อนหลัง) ⇒ gateway ไม่รับซ้ำ"),
 ]
 
+# ── รอบ 209 P4 (คำตัดสินข้อ 168 ฌ/ญ): ตารางคลาสบนเครื่องจอง CMS ตัวเดิม — ทุกทางเข้าผ่าน LoadDayAsync ตัวเดียว · ยกเลิก/เช็คอินผ่านเส้นสถานะเดิม ──
+BOOK_CLASSES = "Services/Implementations/CmsBookingService.Classes.cs"
+BOOK_CREDITS = "Services/Implementations/CmsBookingService.Credits.cs"
+_P4_WHY = "รอบ 209 P4: "
+RULES += [
+    dict(file=BOOK_SVC207, method="LoadDayAsync",
+         must=["ApplyClassSessionsAsync("],
+         why=_P4_WHY + "ตาราง/ที่นั่ง/ครูของบริการที่มีเทอมมาจากรอบเรียน ที่จุดประกอบเดียว ⇒ หน้าเวลาว่าง · จอง · คิวสำรอง · เลื่อนนัด · เปลี่ยนผู้ให้บริการ เห็นชุดเดียว"),
+    dict(file=BOOK_CLASSES, method="ApplyClassSessionsAsync",
+         must=["ClassScheduleGenerator.ScheduleRows(", "ClassScheduleGenerator.ResourcesFor(", "ClassScheduleGenerator.RulesFor(", "ClassSessions = sessions", "if (!hasTerm) return day"],
+         forbid=["new BookingScheduleRow("],
+         why=_P4_WHY + "แถวเวลา/ครูของรอบประกอบที่ตัวตัดสินเดียว (รอบยกเลิก = ไม่มีแถว) · บริการไม่มีเทอม = คืนตัวเดิม (ทิศตรงข้าม)"),
+    dict(file=BOOK_SVC207, method="CreateBookingAsync",
+         must=["ClassScheduleGenerator.Explain(", "ClassScheduleGenerator.ResourceForBooking("],
+         before=[("BookingSlotEngine.Decide(", "ClassScheduleGenerator.Explain("), ("ClassScheduleGenerator.Explain(", "decision.CanWaitlist(")],
+         why=_P4_WHY + "รอบที่ร้านยกเลิกต้องไม่ถูกรับเข้าคิวสำรอง (Explain ก่อน CanWaitlist) · ครูของรอบถูกบันทึกบนการจอง"),
+    dict(file=BOOK_SVC207, method="PromoteWaitlistAsync",
+         must=["ClassScheduleGenerator.ResourceForBooking("],
+         why=_P4_WHY + "คิวสำรองที่ได้ที่ในคลาสได้ครูของรอบ (รายงานผู้ให้บริการไม่ตกหล่น)"),
+    dict(file=BOOK_RESCHEDULE, method="RescheduleCoreAsync",
+         must=["ClassScheduleGenerator.Explain(", "ClassScheduleGenerator.ResourceForBooking("],
+         why=_P4_WHY + "เลื่อนเข้ารอบคลาส ⇒ ครูของรอบใหม่ · รอบยกเลิกบอกเหตุตรง"),
+    dict(file=BOOK_SVC207, method="GetAvailableSlotsAsync",
+         must=["ClassScheduleGenerator.SessionAt(", "ClassSessionId = cls?.Id"],
+         why=_P4_WHY + "หน้าร้านเห็นรอบเรียน + ชื่อครูของรอบจาก server (widget เดิมไม่ต้องรู้จักตารางคลาส)"),
+    dict(file=BOOK_CLASSES, method="CancelClassSessionAsync",
+         must=["LockSiteBookingsAsync(", "ClassScheduleGenerator.CancelProblem(", "UpdateBookingStatusCoreAsync(", "ClassScheduleGenerator.CancelsWithSession(", "NotifyClassBookingsAsync("],
+         before=[("LockSiteBookingsAsync(", "s.Status = ClassSessionStatus.Cancelled"), ("s.Status = ClassSessionStatus.Cancelled", "UpdateBookingStatusCoreAsync(")],
+         forbid=[".Status = BookingStatus", "ReleaseAsync(", "catch { }", "catch {}"],
+         why=_P4_WHY + "ปิดรอบใต้ล็อกก่อน แล้วยกเลิกทุกใบผ่านเส้นสถานะเดิม (ด่านรอบ 208 · คืนเครดิต byBusiness · มัดจำตามกติกา) — ห้ามประทับสถานะ/คืนเครดิตเอง"),
+    dict(file=BOOK_CLASSES, method="CheckInClassAsync",
+         must=["ClassScheduleGenerator.CheckInProblem(", "UpdateBookingStatusCoreAsync(", "InSession("],
+         before=[("ClassScheduleGenerator.CheckInProblem(", "UpdateBookingStatusCoreAsync(")],
+         forbid=[".Status = BookingStatus", "SettleAsync("],
+         why=_P4_WHY + "เช็คอิน มา/ไม่มา ผ่านเส้นสถานะเดิม (ตัดเครดิต/เอกสาร/ริบมัดจำเดิม) · การจองต้องอยู่ในรอบนี้"),
+    dict(file=BOOK_CLASSES, method="SetClassSubstituteAsync",
+         must=["LockSiteBookingsAsync(", "EnsureClassInstructorAsync(", "ClassScheduleGenerator.FollowsSubstitute(", "ClassScheduleGenerator.Overlaps(", "NotifyClassBookingsAsync("],
+         before=[("LockSiteBookingsAsync(", "s.SubstituteResourceId = newSub"), ("ClassScheduleGenerator.Overlaps(", "s.SubstituteResourceId = newSub")],
+         why=_P4_WHY + "ครูแทนต้องรับบริการนี้ + ไม่ติดงานอื่นที่ทับ (ตรวจใต้ล็อกก่อนเปลี่ยน) · การจองที่ยังไม่เริ่มตามทุกใบ"),
+    dict(file=BOOK_CLASSES, method="GenerateClassSessionsAsync",
+         must=["LockSiteBookingsAsync(", "ClassScheduleGenerator.Plan(", "plan.ToRemove", "BookingSlotEngine.ScheduleOf("],
+         before=[("LockSiteBookingsAsync(", "ClassScheduleGenerator.Plan(")],
+         forbid=["RemoveRange(existing)"],
+         why=_P4_WHY + "สร้างรอบจากแผนตัวเดียวใต้ล็อกไซต์ — ลบได้เฉพาะรอบที่แผนบอกว่าไม่มีการจอง"),
+    dict(file=BOOK_CLASSES, method="DeleteClassTermAsync",
+         must=["withBookings.Count > 0"],
+         before=[("withBookings.Count > 0", "RemoveRange(")],
+         why=_P4_WHY + "ลบเทอมห้ามลบรอบที่มีผู้จอง (ต้องยกเลิกคลาสก่อน — ลูกค้าได้คืนเครดิต/ได้รับแจ้ง)"),
+    dict(file=BOOK_SVC207, method="GetBookingAsync",
+         must=["FillCreditPolicyAsync(", "CreditBookingLink.CancelNowNote("],
+         before=[("FillCustomerFacingAsync(", "CreditBookingLink.CancelNowNote(")],
+         why=_P4_WHY + "ญ: จองด้วยบัตร ⇒ นโยบาย/ข้อความ \"ถ้ายกเลิกตอนนี้\" ของบัตร ชนะของบริการ (ทับหลังตัวคิดของบริการ)"),
+    dict(file=BOOK_CREDITS, method="FillCreditPolicyAsync",
+         must=["CreditBookingLink.CancellationPolicy(", "resp.CancellationPolicySource = source"],
+         why=_P4_WHY + "ญ: ข้อความนโยบายประกอบที่ตัวตัดสินเดียว (หน้าเว็บแสดง ไม่คิดเอง)"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

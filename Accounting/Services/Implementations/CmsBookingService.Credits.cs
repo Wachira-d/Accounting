@@ -58,16 +58,34 @@ public partial class CmsBookingService
         return await _db.CreditClassBookings.AsNoTracking().AnyAsync(b => b.CompanyId == companyId && b.ExternalRef == r);
     }
 
-    /// <summary>เลขบัตรของการจองที่จ่ายด้วยบัตร (แสดงบนหน้าการจอง) · null = การจองปกติ</summary>
-    private async Task<string?> CreditPassNumberAsync(Guid companyId, Guid bookingId)
+    /// <summary>เลขบัตร + ชั่วโมงยกเลิกฟรีที่ตรึงบนบัตร ของการจองที่จ่ายด้วยบัตร · null = การจองปกติ</summary>
+    private async Task<(string PassNumber, int FreeCancelHours)?> CreditPassOfBookingAsync(Guid companyId, Guid bookingId)
     {
         if (_creditLedger == null) return null;
         var r = CreditBookingLink.Ref(bookingId);
-        return await (from b in _db.CreditClassBookings.AsNoTracking()
-                      join p in _db.CreditPasses.AsNoTracking() on b.PassId equals p.Id
-                      where b.CompanyId == companyId && p.CompanyId == companyId && b.ExternalRef == r
-                      orderby b.BookedAt descending
-                      select p.PassNumber).FirstOrDefaultAsync();
+        var row = await (from b in _db.CreditClassBookings.AsNoTracking()
+                         join p in _db.CreditPasses.AsNoTracking() on b.PassId equals p.Id
+                         where b.CompanyId == companyId && p.CompanyId == companyId && b.ExternalRef == r
+                         orderby b.BookedAt descending
+                         select new { p.PassNumber, p.FreeCancelHours }).FirstOrDefaultAsync();
+        return row == null ? null : (row.PassNumber, row.FreeCancelHours);
+    }
+
+    /// <summary>รอบ 209 P4 (คำตัดสินข้อ 168 ญ): เลขบัตร (R-39) + นโยบายยกเลิกที่ใช้จริงบนคำตอบ — จองด้วยบัตร ⇒ กติกาของแพ็กเกจ (ตรึงบนบัตร · เส้นยกเลิกจริง
+    /// <c>CourseCreditService</c> ใช้ตัวนี้) · ไม่ใช่บัตร ⇒ นโยบายของบริการ · ตัวตัดสินข้อความเดียว <see cref="CreditBookingLink.CancellationPolicy"/> ·
+    /// คืนชั่วโมงยกเลิกฟรีของบัตร (null = ไม่ใช่การจองด้วยบัตร) ให้ผู้เรียกคิด "ถ้ายกเลิกตอนนี้"</summary>
+    private async Task<int?> FillCreditPolicyAsync(Guid companyId, BookingResponse resp)
+    {
+        var pass = await CreditPassOfBookingAsync(companyId, resp.Id);
+        resp.CreditPassNumber = pass?.PassNumber;
+        var svc = await _db.SiteBookingServices.AsNoTracking()
+            .Where(s => s.Id == resp.BookingServiceId && s.CompanyId == companyId)
+            .Select(s => new { s.FreeCancellationHours, s.CancellationFeePercent }).FirstOrDefaultAsync();
+        var (source, text) = CreditBookingLink.CancellationPolicy(pass?.PassNumber, pass?.FreeCancelHours,
+            svc?.FreeCancellationHours, svc?.CancellationFeePercent);
+        resp.CancellationPolicySource = source;
+        resp.CancellationPolicy = text;
+        return pass?.FreeCancelHours;
     }
 
     /// <summary>หลังบันทึกสถานะการจองแล้ว: ให้บริการเสร็จ ⇒ ตัดเครดิต · ไม่มา ⇒ ตัดเครดิต (no-show) · ยกเลิก ⇒ คืนเครดิต (ร้านยกเลิก) ·

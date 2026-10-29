@@ -221,6 +221,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
         list.AddRange(TeamKPosMtoStatements());   // ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่ง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.BookingEngineMigration.Statements());   // ทีม B — engine รอบจองคิว CMS (Helpers/BookingEngineMigration)
+        list.AddRange(Accounting.Helpers.ClassScheduleMigration.Statements());   // รอบ 209 P4 — ตารางคลาส (เทอม/รอบเรียน) บนเครื่องจอง CMS
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
