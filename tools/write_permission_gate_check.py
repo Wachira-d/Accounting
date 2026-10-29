@@ -128,6 +128,8 @@ WATCHED = [
     "Accounting/Controllers/CourseCreditController.cs",
     # รอบ 209 P4 — ตารางคลาส: ยกเลิกทั้งคลาส = คืนเครดิต/ยกเลิกเอกสารมัดจำหลายใบ · เช็คอิน = ตัดเครดิต + JE รับรู้รายได้ ⇒ ทุก write มีด่าน (ใส่ตอนเขียวตั้งแต่ไฟล์เกิด)
     "Accounting/Controllers/CmsClassScheduleController.cs",
+    # รอบ 209 P3 — บันทึกรับเงินหน้าร้าน/ปลายทาง = ออกเอกสาร + ลง JE (ใส่ตอนเขียวตั้งแต่ไฟล์เกิด)
+    "Accounting/Controllers/CmsOrderFulfilmentController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

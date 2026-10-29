@@ -9996,7 +9996,8 @@ RULES += [
          must=["CmsFeatureFlags.OrderNumberStem("], forbid_lit=['$"WEB-'],
          why="รอบ 209 P2: คำนำหน้าเลขคำสั่งซื้อจากค่าตั้งร้าน (เดิมฮาร์ดโค้ด WEB-)"),
     dict(file="Services/Implementations/CmsCommerceService.cs", method="ProposeCreditNoteOnCancelAsync",
-         must=["SiteOrderCancelPlan.ExcludesShippingLine(order.ShippedAt)", "ShippingVatAllocation.IsShippingLineDescription(", "SiteOrderCancelPlan.ShippingRetainedNote"],
+         must=["CancelCreditPlanAsync(", "cnPlan.ShippingExcluded > 0m ? SiteOrderCancelPlan.ShippingRetainedNote"],
+         forbid=["ExcludesShippingLine("],
          why="รอบ 209 P2 (ข้อ 168 ฉ): ยกเลิกหลังจัดส่ง ⇒ ใบลดหนี้ร่างไม่รวมค่าจัดส่ง + หมายเหตุทางไปต่อ"),
     dict(file="Services/Implementations/CmsCommerceService.cs", method="SyncOrderToErpCoreAsync",
          must=["OrderFormFields.DocumentNotes("],
@@ -10091,6 +10092,68 @@ RULES += [
          must=["CreditBookingLink.CancellationPolicy(", "resp.CancellationPolicySource = source"],
          why=_P4_WHY + "ญ: ข้อความนโยบายประกอบที่ตัวตัดสินเดียว (หน้าเว็บแสดง ไม่คิดเอง)"),
 ]
+
+# รอบ 209 P3 — แจ้งเตือนหลังบันทึก · ด่านลำดับสถานะก่อนเปลี่ยน · รับเงินหน้าร้านผ่าน ConfirmPaymentAsync · คืนเงิน ⇒ ใบลดหนี้ร่าง
+_P3_WHY = "รอบ 209 P3: "
+_P3_SVC = "Services/Implementations/CmsCommerceService.cs"
+_P3_FUL = "Services/Implementations/CmsCommerceService.Fulfilment.cs"
+_P3_NOTIFY = "Services/Implementations/CmsCommerceService.Notify.cs"
+_P3_BOOK = "Services/Implementations/CmsBookingService.cs"
+RULES += [
+    dict(file=_P3_SVC, method="UpdateOrderStatusLockedAsync",
+         must=["MtoPaymentTerms.FromSnapshot(", "PlanRefundCreditAsync(", "ProposeRefundCreditNoteAsync(", "NotifyOrderStatusAsync("],
+         call_args=[("SiteOrderStatusTransition.Check(", "statusDue")],
+         must_re=[r"await\s+_db\.SaveChangesAsync\(\)\s*;\s*if\s*\(\s*fromStatus\s*!=\s*request\.Status\s*\)\s*await\s+NotifyOrderStatusAsync\("],
+         before=[("SiteOrderStatusTransition.Check(", "PlanRefundCreditAsync("), ("PlanRefundCreditAsync(", "ApplyStatus(order)"),
+                 ("ProposeRefundCreditNoteAsync(", "NotifyOrderStatusAsync(")],
+         why=_P3_WHY + "A6 ด่านลำดับ+เงินก่อนเปลี่ยนสถานะ (ส่งยอดจริง) · E8 วางแผนใบลดหนี้ก่อนเปลี่ยน · แจ้งลูกค้าหลังบันทึกสถานะเท่านั้น (NoOp ไม่ส่งซ้ำ)"),
+    dict(file=_P3_SVC, method="CreateOrderAsync",
+         must_re=[r"await\s+_db\.SaveChangesAsync\(\)\s*;\s*_logger\.LogInformation\([^;]*;\s*await\s+NotifyOrderCreatedAsync\("],
+         why=_P3_WHY + "A4 แจ้งร้าน/ลูกค้าหลังบันทึกออเดอร์ (ส่งก่อน commit = แจ้งของที่ยังไม่มี)"),
+    dict(file=_P3_SVC, method="RecordPaymentSlipAsync",
+         must_re=[r"await\s+_db\.SaveChangesAsync\(\)\s*;\s*await\s+NotifySlipUploadedAsync\("],
+         why=_P3_WHY + "A4 แจ้งร้านเรื่องสลิปหลังบันทึกรายการรับเงิน"),
+    dict(file=_P3_SVC, method="ProposeCreditNoteOnCancelAsync", must=["CancelCreditPlanAsync("],
+         why=_P3_WHY + "ข้อ 168 ฉ ยกเลิกหลังจัดส่ง ⇒ ใบลดหนี้ร่างไม่รวมค่าส่ง (ตัวตัดสินเดียว SiteOrderRefundPlan)"),
+    dict(file=_P3_SVC, method="GetOrderAsync",
+         must=["SiteOrderStatusTransition.NextActions(", "SiteOrderStatusTransition.AcceptsCounterPayment("],
+         why=_P3_WHY + "ปุ่มบนหน้าออเดอร์มาจากตัวตัดสินเดียวกับด่านของ endpoint (F2 #5)"),
+    dict(file=_P3_FUL, method="RecordCounterPaymentLockedAsync",
+         must=["SiteOrderStatusTransition.AcceptsCounterPayment(", "MtoPaymentTerms.FromSnapshot(", "SitePaymentStatus.Pending", "ConfirmPaymentAsync("],
+         before=[("_db.SaveChangesAsync(", "ConfirmPaymentAsync(")],
+         forbid=["SitePaymentStatus.Completed", "PaidAmount =", "PaidAt =", "_docService"],
+         why=_P3_WHY + "E7 รับเงินหน้าร้านต้องเดิน ConfirmPaymentAsync เดิม (ด่านรับเกินยอด · เอกสาร/JE ตามโหมด) — ห้ามประทับรับแล้ว/ลงเอกสารเอง"),
+    dict(file=_P3_FUL, method="RecordCounterPaymentAsync", must=["AdvisorySessionLock.RunAsync(", "AdvisoryLockKey.CmsOrderStatus"],
+         why=_P3_WHY + "E7 ล็อกเดียวกับเส้นสถานะ/ยืนยันรับเงิน (ไม่สวนกับยกเลิก)"),
+    dict(file=_P3_FUL, method="PlanRefundCreditAsync",
+         must=["SiteOrderCancelPlan.Decide(", "SiteOrderRefundPlan.Plan(", "SiteOrderRefundPlan.ExcludesShipping(", "d.CompanyId == companyId"],
+         must_re=[r"if\s*\(\s*plan\.Problem\s*!=\s*null\s*\)\s*throw\b"],
+         why=_P3_WHY + "E8 ยอดเกิน/ซ้ำ ⇒ ปฏิเสธก่อนเปลี่ยนสถานะ · Σ ใบลดหนี้ ≤ ใบเดิม (§86/10) · tenant"),
+    dict(file=_P3_FUL, method="ProposeRefundCreditNoteAsync",
+         must=["DocumentType.CreditNote", "RelatedDocumentId: doc.Id", "SiteOrderRefundPlan.DraftReason", "_db.ChangeTracker.Clear("],
+         forbid=["ApproveDocumentAsync("],
+         why=_P3_WHY + "E8 ใบลดหนี้อ้างใบเดิมเป็นร่างเท่านั้น (R1) · ล้มแล้วล้าง context ก่อนประทับ"),
+    dict(file=_P3_NOTIFY, method="NotifyOrderStatusAsync", must=["CmsNotificationText.CustomerOrderStatus(", "StampOrderNotesAsync("],
+         why=_P3_WHY + "ข้อ 168 ซ ข้อความจากตัวเดียว · ส่งไม่ถึงประทับบนออเดอร์ (ไม่เงียบ)"),
+    dict(file=_P3_NOTIFY, method="NotifyOrderCreatedAsync", must=["CmsNotificationText.ShopNewOrder(", "CmsNotificationText.CustomerOrderConfirmation(", "orderEvent: true", "StampOrderNotesAsync("],
+         why=_P3_WHY + "ข้อ 168 ซ แจ้งร้านเคารพสวิตช์ NotifyOnNewOrder · ส่งไม่ถึงประทับบนออเดอร์"),
+    dict(file=_P3_BOOK, method="CreateBookingAsync", must=["NotifyBookingCreatedAsync("],
+         before=[("tx.CommitAsync(", "NotifyBookingCreatedAsync(")],
+         why=_P3_WHY + "C4 ยืนยันการจองหลัง commit"),
+    dict(file=_P3_BOOK, method="UpdateBookingStatusLockedAsync", must=["NotifyBookingCancelledByShopAsync(", "CreditBookingLink.IsCustomerActor("],
+         before=[("_db.SaveChangesAsync(", "NotifyBookingCancelledByShopAsync(")],
+         why=_P3_WHY + "C4 ร้าน/ระบบยกเลิก ⇒ แจ้งลูกค้าหลังบันทึก (ลูกค้ายกเลิกเองไม่แจ้งซ้ำ)"),
+    dict(file="Services/Implementations/CmsLeadService.cs", method="CreateAsync",
+         must_re=[r"var\s+response\s*=\s*MapDetail\(lead\)\s*;\s*await\s+NotifyShopNewLeadAsync\("],
+         why=_P3_WHY + "D5 แจ้งร้านหลังบันทึก lead · คำตอบสาธารณะสร้างก่อนประทับ (เหตุส่งไม่ถึง/อีเมลร้านไม่รั่ว)"),
+    dict(file="Controllers/PublicQuotationController.cs", method="Accept", must=["OnQuotationAcceptedAsync("],
+         before=[("_db.SaveChangesAsync(", "OnQuotationAcceptedAsync(")],
+         why=_P3_WHY + "E2 ยอมรับใบเสนอราคา ⇒ lead ได้งาน + แจ้งร้าน หลังบันทึกการยอมรับ"),
+    dict(file="Services/Implementations/Cms/CmsShopNotifier.cs", method="NotifyShopAsync",
+         must=["CmsNotificationText.ShopRecipients(", "CmsNotificationText.ShopOrderNotifyEnabled(", "c.CompanyId == companyId", "_channel.SendAsync("],
+         why=_P3_WHY + "ข้อ 168 ซ ผู้รับฝั่งร้านจากลำดับชั้นเดียว · ช่องส่งเดิม IBookingNotifier (ไม่มีผู้ให้บริการใหม่)"),
+]
+
 
 def main() -> int:
     errs = []

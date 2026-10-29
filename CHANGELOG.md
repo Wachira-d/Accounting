@@ -5678,3 +5678,9 @@ _รอบ 209 · แพ็ก P2 — ค่าตั้งร้าน + ฟอ
 คูปองส่งฟรี + นับสิทธิ์ · ส่งฟรีร้านทับโซน (ค่าตั้งใหม่ default ปิด) + น้ำหนัก variant · ใบลดหนี้ร่างหลังจัดส่งไม่รวมค่าส่ง · วันส่งถึงโดยประมาณ · หน้า `cms-store-settings.html` +
 api.js คูปอง/โซน · ด่าน tenant (CompanyId) ใน coupon/shipping/review ที่แตะ · 15 กติกา required_call_site_check · เทสต์ `CmsRound209P2Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ —
 commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 209 — แพ็ก P3 แจ้งเตือน + คิวผลิต + ลำดับสถานะออเดอร์ (คำตัดสินข้อ 168 ซ/ฉ · R-209-A4/A5/A6/B5/C4/D5/E2/E7/E8): `SiteOrderStatus.ReadyForPickup` (ต่อท้าย = 8) ·
+`Helpers/SiteOrderStatusTransition` ลำดับงานจริง + ส่งมอบต้องชำระตามเงื่อนไข + `NextActions` (ปุ่มจากเซิร์ฟเวอร์ แทนตาราง JS) · คืนเงิน/คืนบางส่วน ⇒ ใบลดหนี้ร่าง
+(`Helpers/SiteOrderRefundPlan` · ไม่รวมค่าส่งหลังจัดส่ง · ไม่อนุมัติเอง) · ยกเลิกหลังจัดส่งใช้แผนเดียวกัน · บันทึกรับเงินหน้าร้าน/ปลายทางผ่าน `ConfirmPaymentAsync` ·
+คิวผลิต `production-queue` · แจ้งเตือนผ่าน `ICmsShopNotifier` → `IBookingNotifier` (ข้อความ `Helpers/CmsNotificationText`) · หมายเหตุออเดอร์ต่อท้ายไม่ทับ ·
+เทสต์ `CmsRound209P3Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ผ่านฝ่ายค้าน — commit <sha ในคอมมิตถัดไป>_

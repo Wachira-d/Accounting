@@ -327,8 +327,9 @@ public class CmsRound209P2Tests
     [Fact]
     public void Credit_note_excludes_shipping_only_after_shipped()
     {
-        Assert.False(SiteOrderCancelPlan.ExcludesShippingLine(null));                       // ก่อนจัดส่ง = คืนเต็มเดิม
-        Assert.True(SiteOrderCancelPlan.ExcludesShippingLine(DateTime.UtcNow));
+        // ตัวตัดสินเดียว (รวม P2/P3): SiteOrderRefundPlan.ExcludesShipping
+        Assert.False(SiteOrderRefundPlan.ExcludesShipping(null, null));                     // ก่อนจัดส่ง = คืนเต็มเดิม
+        Assert.True(SiteOrderRefundPlan.ExcludesShipping(DateTime.UtcNow, null));
         Assert.True(ShippingVatAllocation.IsShippingLineDescription("ค่าจัดส่ง"));
         Assert.True(ShippingVatAllocation.IsShippingLineDescription("ค่าจัดส่ง (VAT 7%)"));
         Assert.False(ShippingVatAllocation.IsShippingLineDescription("เค้กช็อกโกแลต (ค่าจัดส่งรวม)"));

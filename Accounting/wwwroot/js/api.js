@@ -1159,6 +1159,9 @@ const API = {
       // cmsListOrders/cmsGetOrder/cmsUpdateOrderStatus อยู่ในกลุ่ม "Orders" ด้านบน — ห้ามประกาศซ้ำ (key ซ้ำตัวหลังทับเงียบ)
       cmsSyncOrderToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/sync-erp`, {}),
       cmsConfirmOrderPayment: (siteId, id, paymentId = null) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${paymentId ? `?paymentId=${paymentId}` : ''}`, {}),
+      // รอบ 209 P3: คิวผลิต (A5) + บันทึกรับเงินหน้าร้าน/ปลายทาง (E7) — CmsOrderFulfilmentController
+      cmsProductionQueue: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/commerce/orders/production-queue${q}`),
+      cmsRecordCounterPayment: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/counter-payment`, d),
       // Booking (per site)
       cmsListBookingServices: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/services`),
       cmsCreateBookingService: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/services`, d),

@@ -27,15 +27,18 @@ public partial class CmsCommerceService : ICmsCommerceService
     private readonly ICmsQuotaService? _quota;
     /// <summary>ที่เก็บไฟล์กลาง (รูปตัวอย่างของสินค้าตามสั่ง · ทีม K) — ห้ามเขียน disk เอง</summary>
     private readonly IFileAttachmentService? _files;
+    /// <summary>รอบ 209 P3 — แจ้งร้าน/ลูกค้า (ออเดอร์ใหม่ · สลิป · จัดส่ง/พร้อมรับ/ส่งมอบ) ผ่านช่องเดิม · null = ไม่ส่ง (CmsCommerceService.Notify.cs)</summary>
+    private readonly ICmsShopNotifier? _shopNotifier;
 
     public CmsCommerceService(AccountingDbContext db, ILogger<CmsCommerceService> logger,
         IConfiguration config, IImageProcessingService? images = null,
         IDocumentService? docService = null, IEtaxInvoiceService? etaxService = null,
         IProductService? productService = null, IStockLedger? stock = null,
         ICmsQuotaService? quota = null, IIssuedDocumentHooks? issuedHooks = null,
-        IFileAttachmentService? files = null)
+        IFileAttachmentService? files = null, ICmsShopNotifier? shopNotifier = null)
     {
         _files = files;
+        _shopNotifier = shopNotifier;
         // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) จุดเดียวกับเส้นเว็บ (S-02) · ไม่มี DI แต่มี e-Tax service
         // → สร้างตัวจริงเอง ห้ามปล่อย null แล้วข้ามเงียบ
         _issuedHooks = issuedHooks ?? (etaxService != null
@@ -777,6 +780,8 @@ public partial class CmsCommerceService : ICmsCommerceService
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Order {OrderNumber} created for site {SiteId}", order.OrderNumber, siteId);
+        // รอบ 209 P3 (A4/E2): แจ้งร้าน (ออเดอร์ใหม่) + ยืนยันถึงลูกค้า หลังบันทึกแล้ว — ส่งไม่ถึง = ประทับบนออเดอร์ ไม่ล้มคำสั่งซื้อ (Notify.cs)
+        await NotifyOrderCreatedAsync(companyId, siteId, order.Id);
         return await GetOrderAsync(companyId, siteId, order.Id) ?? throw new InvalidOperationException("Failed.");
     }
 
@@ -793,7 +798,9 @@ public partial class CmsCommerceService : ICmsCommerceService
         var order = await _db.SiteOrders.Include(o => o.Lines).Include(o => o.Payments)
             .FirstOrDefaultAsync(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Order not found.");
-        var (transition, transitionMsg) = SiteOrderStatusTransition.Check(order.Status, request.Status);
+        // รอบ 209 P3 (A6): ลำดับงานจริง + ส่งมอบต้องรับเงินตามเงื่อนไขแล้ว (เว้นชำระเมื่อรับ) — ยอดจากตัวคิดเดียว (ตรึงตอนสั่ง)
+        var statusDue = MtoPaymentTerms.FromSnapshot(order.PaymentTermMode, order.TotalAmount, order.DepositRequiredAmount, order.PaidAmount);
+        var (transition, transitionMsg) = SiteOrderStatusTransition.Check(order.Status, request.Status, statusDue);
         if (transition == BookingTransitionResult.Rejected)
             throw new BusinessRuleException(transitionMsg!, SiteOrderStatusTransition.RuleCode, 409);
         if (transition == BookingTransitionResult.NoOp)
@@ -813,7 +820,8 @@ public partial class CmsCommerceService : ICmsCommerceService
             o.Status = request.Status;
             if (request.TrackingNumber != null) o.TrackingNumber = request.TrackingNumber;
             o.ShippingCarrier = SiteOrderPublic.CarrierEdit(o.ShippingCarrier, request.ShippingCarrier);   // รอบ 209 P1 (B4)
-            if (request.InternalNotes != null) o.InternalNotes = request.InternalNotes;
+            // รอบ 209 P3: ต่อท้าย ไม่ทับ — หมายเหตุภายในคือร่องรอยระบบ (ประทับล้ม/ใบลดหนี้/แจ้งเตือนไม่ถึง) เดิมเหตุผลยกเลิกจากหน้าออเดอร์ทับทั้งหมด (แบบเดียวกับการจอง รอบ 207 ข้อ 6)
+            if (!string.IsNullOrWhiteSpace(request.InternalNotes)) o.InternalNotes = DepositPolicyResolver.AppendNoteOnce(o.InternalNotes, request.InternalNotes.Trim());
             if (request.CancellationReason != null) o.CancellationReason = request.CancellationReason;
             switch (request.Status)
             {
@@ -822,6 +830,11 @@ public partial class CmsCommerceService : ICmsCommerceService
                 case SiteOrderStatus.Cancelled: o.CancelledAt = DateTime.UtcNow; break;
             }
         }
+
+        // รอบ 209 P3 (E8): คืนเงิน ⇒ วางแผนใบลดหนี้ร่างก่อนเปลี่ยนสถานะ (ยอดเกิน/ไม่ระบุยอด ⇒ ปฏิเสธ สถานะไม่เปลี่ยน) — Fulfilment.cs
+        var fromStatus = order.Status;
+        var refundDraft = request.Status is SiteOrderStatus.Refunded or SiteOrderStatus.PartiallyRefunded
+            ? await PlanRefundCreditAsync(companyId, order, request) : null;
 
         // ★ ทีม Q (คำตัดสินข้อ 156) — โหมดมัดจำ: จัดส่ง/ส่งมอบ = จุดส่งมอบสินค้า (§78(1)) ⇒ ใบขายส่วนที่เหลือ (หักมัดจำที่ออกใบกำกับแล้ว) + ตัดสต็อกครั้งเดียว
         // ก่อนเปลี่ยนสถานะ · ล้ม = ประทับบนออเดอร์ + ตอบผู้กดด้วยเหตุ (สถานะไม่เปลี่ยน · กดซ้ำทำขั้นที่ค้างต่อ ไม่ออกใบซ้ำ/ไม่ตัดสต็อกซ้ำ) ·
@@ -893,6 +906,10 @@ public partial class CmsCommerceService : ICmsCommerceService
             }
         }
 
+        // รอบ 209 P3 (E8): ร่างใบลดหนี้ของการคืนเงิน (ไม่อนุมัติเอง) · ล้ม = ประทับบนออเดอร์ + โยน (ไม่กลืน — แบบเดียวกับเส้นยกเลิก)
+        if (refundDraft != null)
+            order = await ProposeRefundCreditNoteAsync(companyId, siteId, order, refundDraft, userId);
+
         // ★ ทีม Q — ยกเลิก/คืนเงินออเดอร์ที่มีใบรับเงินมัดจำค้าง ⇒ มัดจำไม่ถูกยกเลิกเอง (เงินยังอยู่กับร้าน) · บอกทางไปต่อบนออเดอร์ (คืน/ริบที่ใบมัดจำ)
         if (request.Status is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded)
         {
@@ -908,6 +925,10 @@ public partial class CmsCommerceService : ICmsCommerceService
 
         order.UpdatedBy = userId;
         await _db.SaveChangesAsync();
+
+        // รอบ 209 P3 (A4/B5): แจ้งลูกค้า จัดส่งแล้ว/พร้อมให้รับ/ส่งมอบแล้ว หลังบันทึกสถานะ (NoOp ไม่ถึงตรงนี้ ⇒ ไม่ส่งซ้ำ) · ส่งไม่ถึง = ประทับบนออเดอร์
+        if (fromStatus != request.Status)
+            await NotifyOrderStatusAsync(companyId, siteId, orderId, request.Status);
 
         return await GetOrderAsync(companyId, siteId, orderId) ?? throw new InvalidOperationException("Failed.");
     }
@@ -963,25 +984,24 @@ public partial class CmsCommerceService : ICmsCommerceService
         var now = DateTime.UtcNow;
         try
         {
-            // รอบ 209 (คำตัดสินข้อ 168 ฉ): ยกเลิกหลังจัดส่งแล้ว ⇒ ไม่คืนค่าจัดส่งอัตโนมัติ (ตัดบรรทัดค่าจัดส่งออกจากใบลดหนี้ร่าง) · ก่อนจัดส่ง = เต็มใบเดิม
-            var excludeShipping = SiteOrderCancelPlan.ExcludesShippingLine(order.ShippedAt);
-            var lines = (doc!.Lines ?? new List<DocumentLine>()).Where(l => !l.IsDeleted)
-                .Where(l => !excludeShipping || !ShippingVatAllocation.IsShippingLineDescription(l.Description))
-                .OrderBy(l => l.LineOrder)
-                .Select(l => new Models.DTOs.Document.DocumentLineRequest(
-                    Description: $"ลดหนี้ (ยกเลิกคำสั่งซื้อ): {l.Description}", Quantity: l.Quantity, Unit: l.Unit,
-                    UnitPrice: l.UnitPrice, DiscountPercent: l.DiscountPercent, VatRate: l.VatRate, WithholdingTaxRate: 0m,
-                    AccountId: l.AccountId, ProductCode: l.ProductCode))
-                .ToList();
-            if (lines.Count == 0) return false;
+            // รอบ 209 P3 (คำตัดสินข้อ 168 ฉ): ยกเลิกหลังจัดส่ง ⇒ ไม่รวมบรรทัดค่าจัดส่ง (ค่าส่งเกิดขึ้นแล้ว) · ก่อนส่ง = เต็มใบเดิม — ตัวตัดสินเดียว SiteOrderRefundPlan
+            if ((doc!.Lines ?? new List<DocumentLine>()).All(l => l.IsDeleted)) return false;
+            var cnPlan = await CancelCreditPlanAsync(companyId, order, doc);
+            if (cnPlan.Problem != null)
+            {
+                order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, SiteOrderRefundPlan.SkippedNote(now, cnPlan.Problem));
+                return true;
+            }
+            var lines = ToCreditDocumentLines(cnPlan, "ลดหนี้ (ยกเลิกคำสั่งซื้อ): ");
             var create = new Models.DTOs.Document.CreateDocumentRequest(
                 DocumentType: DocumentType.CreditNote, DocumentDate: now, DueDate: null,
                 ContactId: doc.ContactId, Reference: doc.DocumentNumber,
-                Notes: SiteOrderCancelPlan.DraftNotes(order.OrderNumber, doc.DocumentNumber, doc.DocumentDate, cancellationReason),
+                Notes: SiteOrderCancelPlan.DraftNotes(order.OrderNumber, doc.DocumentNumber, doc.DocumentDate, cancellationReason)
+                    + (cnPlan.ShippingExcluded > 0m ? $" · ไม่รวมค่าจัดส่ง {cnPlan.ShippingExcluded:N2} บาท (จัดส่งแล้ว)" : ""),
                 Lines: lines,
                 RelatedDocumentId: doc.Id,
                 CnDnPurchaseSideOverride: false,
-                BillDiscountAmount: doc.BillDiscountAmount > 0m ? doc.BillDiscountAmount : null,
+                BillDiscountAmount: cnPlan.BillDiscount > 0m ? cnPlan.BillDiscount : null,
                 CreditNoteReason: SiteOrderCancelPlan.DraftReason,
                 PricesIncludeVat: doc.PricesIncludeVat,
                 BranchId: doc.BranchId,
@@ -995,8 +1015,7 @@ public partial class CmsCommerceService : ICmsCommerceService
                     && (p.Reference == null || !p.Reference.StartsWith("PAY-INTENT-", StringComparison.Ordinal)))
                 .Sum(p => p.Amount);
             var note = SiteOrderCancelPlan.ProposedNote(now, cn.DocumentNumber, doc.DocumentNumber, cn.TotalAmount, refundIntents, slipPaid)
-                + (excludeShipping && (doc.Lines ?? new List<DocumentLine>()).Any(l => !l.IsDeleted && ShippingVatAllocation.IsShippingLineDescription(l.Description))
-                    ? SiteOrderCancelPlan.ShippingRetainedNote : "");
+                + (cnPlan.ShippingExcluded > 0m ? SiteOrderCancelPlan.ShippingRetainedNote : "");   // รวม P2/P3: ตัวตัดสินเดียว SiteOrderRefundPlan.ExcludesShipping
             order.InternalNotes = DepositPolicyResolver.AppendNoteOnce(order.InternalNotes, note);
             _logger.LogInformation("ยกเลิกออเดอร์ {Order} หลังชำระ — ร่างใบลดหนี้ {Cn} อ้างใบ {Doc}", order.OrderNumber, cn.DocumentNumber, doc.DocumentNumber);
             return true;
@@ -1096,6 +1115,9 @@ public partial class CmsCommerceService : ICmsCommerceService
         if (result.OnlinePaymentBlockedNote == null && result.NextPayableAmount > 0.005m && !(await GetFeatureFlagsAsync(companyId, siteId)).OnlinePayment)
             result.OnlinePaymentBlockedNote = CmsFeatureFlags.OnlinePaymentOffMessage;
         result.BalanceAmount = due.Balance;
+        // รอบ 209 P3 (A6/E7): ปุ่มดำเนินการต่อ + ปุ่มรับเงินหน้าร้าน — ตัวตัดสินเดียวกับด่านของ endpoint (หน้าเว็บแสดงตามนี้)
+        result.NextActions = SiteOrderStatusTransition.NextActions(result.Status, result.FulfillmentMethod, due).ToList();
+        result.CanRecordCounterPayment = SiteOrderStatusTransition.AcceptsCounterPayment(result.Status, due.Balance);
         // ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงบนออเดอร์ + ใบรับเงินมัดจำที่ออกแล้ว (echo กลับให้หลังบ้าน/หน้าร้านเห็นตามจริง)
         result.DepositInvoicingMode = Accounting.Helpers.DepositInvoicingMode.OfOrder(result.DepositInvoicingMode);
         result.DepositInvoicingLabel = Accounting.Helpers.DepositInvoicingMode.Label(result.DepositInvoicingMode);
@@ -1143,9 +1165,14 @@ public partial class CmsCommerceService : ICmsCommerceService
                 Id = o.Id, SiteId = o.SiteId, OrderNumber = o.OrderNumber, Status = o.Status,
                 CustomerName = o.Customer != null ? o.Customer.FullName : o.ShippingName,
                 TotalAmount = o.TotalAmount, Currency = o.Currency,
-                ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt
+                ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt,
+                // รอบ 209 P3 (A5): วันพร้อม/วิธีรับ/ยอดค้าง บนรายการ (ค่าคำนวณเติมที่ FillListDerived)
+                EarliestReadyDate = o.EarliestReadyDate.HasValue ? o.EarliestReadyDate.Value.ToString("yyyy-MM-dd") : null,
+                FulfillmentMethod = o.FulfillmentMethod, PaidAmount = o.PaidAmount, PaymentTermMode = o.PaymentTermMode,
+                DepositRequiredAmount = o.DepositRequiredAmount, TrackingNumber = o.TrackingNumber,
             })
             .ToListAsync();
+        FillListDerived(items);
 
         return new PagedResponse<OrderListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
@@ -1173,9 +1200,14 @@ public partial class CmsCommerceService : ICmsCommerceService
                 OrderNumber = o.OrderNumber, Status = o.Status,
                 CustomerName = o.Customer != null ? o.Customer.FullName : o.ShippingName,
                 TotalAmount = o.TotalAmount, Currency = o.Currency,
-                ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt
+                ItemCount = o.Lines.Count, PaidAt = o.PaidAt, CreatedAt = o.CreatedAt,
+                // รอบ 209 P3 (A5): วันพร้อม/วิธีรับ/ยอดค้าง บนรายการ (ค่าคำนวณเติมที่ FillListDerived)
+                EarliestReadyDate = o.EarliestReadyDate.HasValue ? o.EarliestReadyDate.Value.ToString("yyyy-MM-dd") : null,
+                FulfillmentMethod = o.FulfillmentMethod, PaidAmount = o.PaidAmount, PaymentTermMode = o.PaymentTermMode,
+                DepositRequiredAmount = o.DepositRequiredAmount, TrackingNumber = o.TrackingNumber,
             })
             .ToListAsync();
+        FillListDerived(items);
         return new PagedResponse<OrderListResponse>(items, total, page, pageSize, (int)Math.Ceiling(total / (double)pageSize));
     }
 
@@ -2293,6 +2325,8 @@ public partial class CmsCommerceService : ICmsCommerceService
         };
         _db.Set<SiteOrderPayment>().Add(payment);
         await _db.SaveChangesAsync();
+        // รอบ 209 P3 (A4): แจ้งร้านว่ามีสลิปรอตรวจ (หลังบันทึก · ส่งไม่ถึง = ประทับบนออเดอร์)
+        await NotifySlipUploadedAsync(companyId, siteId, order.Id, payment.Amount);
 
         return new UploadSlipResponse
         {

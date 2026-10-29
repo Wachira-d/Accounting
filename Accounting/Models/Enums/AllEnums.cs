@@ -1464,7 +1464,10 @@ public enum SiteOrderStatus
     Delivered = 4,
     Cancelled = 5,
     Refunded = 6,
-    PartiallyRefunded = 7
+    PartiallyRefunded = 7,
+    /// <summary>รอบ 209 P3 (A5): ผลิต/เตรียมเสร็จ รอลูกค้ามารับ — <b>ไม่ใช่</b>จุดส่งมอบ §78(1) (<c>SiteOrderDepositInvoicing.IsHandoverStatus</c> ไม่รวม)
+    /// ⇒ ไม่ออกใบส่วนที่เหลือ/ไม่ตัดสต็อก · ต่อท้าย enum (ห้ามเรียงเลขใหม่ — ค่าเก็บเป็นตัวเลขในฐาน)</summary>
+    ReadyForPickup = 8
 }
 
 public enum SitePaymentStatus

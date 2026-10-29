@@ -39,6 +39,10 @@ public interface ICmsCommerceService
     Task<PagedResponse<OrderListResponse>> GetOrdersAsync(Guid companyId, Guid siteId, string? status = null, Guid? customerId = null, string? search = null, int page = 1, int pageSize = 20);
     /// <summary>R-45 มุมมองทุกไซต์ — ออเดอร์ของเว็บใน <paramref name="siteIds"/> (ผู้เรียกกรองสิทธิ์ด้วย <c>Helpers/CmsSiteScope</c> มาแล้ว · ว่าง = ไม่มีแถว) · แบ่งหน้าจริง</summary>
     Task<PagedResponse<OrderListResponse>> GetOrdersAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, string? search, int page, int pageSize);
+    /// <summary>รอบ 209 P3 (A5): คิวผลิต — ออเดอร์ที่ยังไม่ส่งมอบ เรียงตามวันพร้อม (CmsCommerceService.Fulfilment.cs)</summary>
+    Task<PagedResponse<OrderListResponse>> GetProductionQueueAsync(Guid companyId, Guid siteId, DateOnly? from, DateOnly? to, int page, int pageSize);
+    /// <summary>รอบ 209 P3 (E7): บันทึกรับเงินหน้าร้าน/ปลายทาง — สร้างรายการรับเงินแล้วเดิน ConfirmPaymentAsync เดิม</summary>
+    Task<OrderResponse> RecordCounterPaymentAsync(Guid companyId, Guid siteId, Guid orderId, RecordCounterPaymentRequest request, string userId);
 
     // Payment Gateways
     Task<PaymentGatewayResponse> CreatePaymentGatewayAsync(Guid companyId, Guid siteId, CreatePaymentGatewayRequest request, string userId);

@@ -82,7 +82,7 @@ const Layout = {
   ENUM_LABELS: {
     orderStatus: { Pending:'รอดำเนินการ', Confirmed:'ยืนยันแล้ว', Processing:'กำลังเตรียม',
       Shipped:'จัดส่งแล้ว', Delivered:'ส่งถึงปลายทาง', Cancelled:'ยกเลิก',
-      Refunded:'คืนเงินแล้ว', PartiallyRefunded:'คืนเงินบางส่วน' },
+      Refunded:'คืนเงินแล้ว', PartiallyRefunded:'คืนเงินบางส่วน', ReadyForPickup:'พร้อมให้รับ' },
     bookingStatus: { Pending:'รอยืนยัน', Confirmed:'ยืนยันแล้ว', InProgress:'กำลังให้บริการ',
       Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก', NoShow:'ไม่มา (No-show)', Waitlisted:'คิวสำรอง' },
     // ทีม B — ค่าตั้งของบริการจองคิว CMS (enum ฝั่ง server: BookingType · BookingSlotMode · BookingCapacityUnit)

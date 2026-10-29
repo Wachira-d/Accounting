@@ -20,12 +20,15 @@ public partial class CmsBookingService : ICmsBookingService
     private readonly ICreditBookingLedger? _creditLedger;
     /// <summary>รอบ 207: สร้างสินค้า/บริการในระบบจากบริการจอง (CmsBookingService.Products.cs) · null = สร้างไม่ได้ (ผูกของเดิมได้)</summary>
     private readonly IProductService? _productService;
+    /// <summary>รอบ 209 P3 — แจ้งร้าน (การจองใหม่) + ลูกค้า (ยืนยันการจอง · ร้านยกเลิก) · null = ไม่ส่ง (CmsBookingService.ShopNotify.cs)</summary>
+    private readonly ICmsShopNotifier? _shopNotifier;
 
     public CmsBookingService(AccountingDbContext db, ILogger<CmsBookingService> logger,
         IDocumentService? docService = null, IBookingNotifier? notifier = null, ICreditBookingLedger? creditLedger = null,
-        IProductService? productService = null)
+        IProductService? productService = null, ICmsShopNotifier? shopNotifier = null)
     {
         _productService = productService;
+        _shopNotifier = shopNotifier;
         _db = db;
         _logger = logger;
         _docService = docService;
@@ -927,6 +930,9 @@ public partial class CmsBookingService : ICmsBookingService
             }
         }
 
+        // รอบ 209 P3 (C4/E2): ยืนยันการจองถึงลูกค้า + แจ้งร้าน หลัง commit — ส่งไม่ถึง = ประทับบนการจอง ไม่ล้มการจอง (ShopNotify.cs)
+        await NotifyBookingCreatedAsync(companyId, siteId, booking.Id);
+
         var created = await GetBookingAsync(companyId, siteId, booking.Id) ?? throw new InvalidOperationException("Failed.");
         created.ErpNotices = createNotices;
         // รอบ 207: ลูกค้าหน้าเว็บ (ไม่ใช่พนักงานของบริษัท) ได้มุมมองลูกค้า — ไม่มีหมายเหตุภายใน/เอกสาร/ประวัติรับเงิน (เดิมคืนทั้งก้อน)
@@ -1143,6 +1149,13 @@ public partial class CmsBookingService : ICmsBookingService
             foreach (var id in promoted) await SyncIfBillableAsync(companyId, siteId, id);
             // R-13: แจ้งลูกค้าที่ได้คิวทันที (อีเมล/LINE · Notify.cs) — ผลจริงอยู่ในข้อความถึงผู้กด · ส่งไม่ถึง ⇒ job ส่งซ้ำ
             if (promoted.Count > 0) notices.AddRange(await NotifyWaitlistPromotedAsync(companyId, siteId, promoted));
+        }
+
+        // รอบ 209 P3 (C4): ร้าน/ระบบยกเลิก (ไม่ใช่ลูกค้ายกเลิกเองผ่านลิงก์) ⇒ แจ้งลูกค้า หลังบันทึก · ส่งไม่ถึง = ประทับบนการจอง + บอกผู้กด
+        if (request.Status == BookingStatus.Cancelled && oldStatus != BookingStatus.Cancelled && !CreditBookingLink.IsCustomerActor(userId))
+        {
+            var cancelNotice = await NotifyBookingCancelledByShopAsync(companyId, siteId, bookingId);
+            if (cancelNotice != null) notices.Add(cancelNotice);
         }
 
         var result = await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
