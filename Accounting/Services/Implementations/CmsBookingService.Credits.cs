@@ -14,9 +14,13 @@ namespace Accounting.Services.Implementations;
 public partial class CmsBookingService
 {
     /// <summary>ก่อน Add การจองที่เลือกใช้บัตร: ยอดเงิน = 0 (ไม่มีเงินต้องเก็บ — รายได้มาจาก JE รับรู้ของบัตร) · ต้องมีลูกค้าที่ผูกผู้ติดต่อ ERP</summary>
-    private async Task<Guid?> PrepareCreditBookingAsync(Guid companyId, SiteBooking booking, CreateBookingRequest request)
+    private async Task<Guid?> PrepareCreditBookingAsync(Guid companyId, SiteBooking booking, CreateBookingRequest request, string? userId)
     {
         if (!request.PayWithCredit) return null;
+        // รอบ 209 (ทีม C ข้อ C1 · blocking): ทางสร้างการจองเป็น AllowAnonymous และ CustomerId มาจาก body ⇒ ใครรู้ id ก็ตัดเครดิตบัตรคนอื่นได้ ·
+        // จนกว่าจะมีหน้าสมาชิก (ยืนยันตัวตนลูกค้า) ใช้บัตรได้เฉพาะพนักงานที่ล็อกอิน (controller ตรวจสิทธิ์ CmsOrderManage อีกชั้น)
+        if (CreditBookingLink.PayWithCreditProblem(userId) is string who)
+            throw new BusinessRuleException(who, CreditBookingLink.RuleCode, 403);
         if (_creditLedger == null)
             throw new BusinessRuleException("ระบบนี้ยังไม่เปิดใช้โมดูลคอร์ส/เครดิต — จองแบบชำระปกติ", CreditBookingLink.RuleCode);
         if (request.CustomerId is not Guid customerId)
@@ -40,7 +44,7 @@ public partial class CmsBookingService
             ExternalRef: CreditBookingLink.Ref(booking.Id),
             StartAt: CreditBookingLink.StartUtc(booking.BookingDate, booking.StartTime),
             DurationMinutes: booking.DurationMinutes,
-            Format: CreditClassFormat.Any), actor ?? "storefront-customer");
+            Format: CreditClassFormat.Any, Seats: booking.Units), actor ?? "storefront-customer");
         booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes,
             CreditBookingLink.PaidNote(hold.PassNumber, hold.Credits, servicePrice));
         await _db.SaveChangesAsync();

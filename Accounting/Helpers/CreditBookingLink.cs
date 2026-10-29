@@ -26,6 +26,12 @@ public static class CreditBookingLink
     /// <summary>ผู้กระทำที่เป็นลูกค้าหน้าเว็บ (ยกเลิกเองผ่านลิงก์ — <c>CancelByCustomerAsync</c> ตั้ง "customer:{token}") · รอบ 208 ฝ่ายค้าน W6 ข้อ 5:
     /// ลูกค้ายกเลิก ⇒ ใช้นโยบายยกเลิกของคอร์ส (ไม่ใช่ "ร้านยกเลิก" ที่คืนเครดิตเสมอ)</summary>
     public const string CustomerActorPrefix = "customer:";
+    /// <summary>รอบ 209 (ทีม C ข้อ C1): จองด้วยบัตรคอร์สได้ไหม — ต้องเป็นพนักงานที่ล็อกอิน (ยังไม่มีการยืนยันตัวตนลูกค้าหน้าร้าน) · null = ได้</summary>
+    public static string? PayWithCreditProblem(string? staffUserId)
+        => string.IsNullOrWhiteSpace(staffUserId)
+            ? "จองด้วยบัตรคอร์สจากหน้าเว็บยังไม่เปิด (ต้องยืนยันตัวตนสมาชิกก่อน) — ติดต่อร้านเพื่อจองด้วยบัตร หรือจองแบบชำระปกติ"
+            : null;
+
     public static bool IsCustomerActor(string? actor) => actor != null && actor.StartsWith(CustomerActorPrefix, StringComparison.Ordinal);
 
     /// <summary>เปลี่ยนสถานะการจอง ⇒ ต้องทำอะไรกับสมุดเครดิต (เฉพาะการจองที่จ่ายด้วยบัตร · ผู้เรียกตรวจ <paramref name="paidWithCredit"/> ก่อน)</summary>

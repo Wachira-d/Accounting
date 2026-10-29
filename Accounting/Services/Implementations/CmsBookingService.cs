@@ -862,7 +862,7 @@ public partial class CmsBookingService : ICmsBookingService
             }
 
             // R-39: จ่ายด้วยบัตรคอร์ส ⇒ ยอดเงิน 0 + กันเครดิตในธุรกรรมเดียวกับ Decide (ล้ม = ไม่มีการจอง) — CmsBookingService.Credits.cs
-            var creditContactId = await PrepareCreditBookingAsync(companyId, booking, request);
+            var creditContactId = await PrepareCreditBookingAsync(companyId, booking, request, userId);
             _db.SiteBookings.Add(booking);
             await _db.SaveChangesAsync();
             if (creditContactId is Guid creditCid)

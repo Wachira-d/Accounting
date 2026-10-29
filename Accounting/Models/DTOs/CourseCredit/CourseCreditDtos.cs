@@ -141,6 +141,7 @@ public record CreditHoldRequest(
     DateTime StartAt,
     int DurationMinutes,
     CreditClassFormat Format,
-    decimal? Credits = null);
+    decimal? Credits = null,
+    int Seats = 1);   // รอบ 209: จำนวนที่นั่งของการจอง (CMS Units) ⇒ เครดิต × ที่นั่ง เมื่อไม่ระบุ Credits
 
 public record CreditHoldResult(Guid BookingId, Guid PassId, string PassNumber, decimal Credits, decimal CreditsAvailableAfter);

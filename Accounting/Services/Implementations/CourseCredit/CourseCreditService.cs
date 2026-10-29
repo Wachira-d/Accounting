@@ -794,7 +794,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
                 if (dup is Guid dupId) return dupId;
                 var credits = request.Credits is decimal c && c > 0m
                     ? c
-                    : CourseCreditMath.CreditsForSession(pass.Unit, request.DurationMinutes, 1m);
+                    : CourseCreditMath.CreditsForBooking(pass.Unit, request.DurationMinutes, 1m, request.Seats);
                 lastReason = CourseCreditMath.CannotBookReason(Facts(pass), credits, request.StartAt, request.BookingServiceId,
                     request.Format, DateTime.UtcNow);
                 if (lastReason != null) continue;

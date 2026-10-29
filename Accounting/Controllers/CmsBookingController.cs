@@ -175,6 +175,14 @@ public class CmsBookingController : ControllerBase
     {
         string? userId = null;
         try { userId = JwtHelper.GetUserIdFromClaims(User).ToString(); } catch { }
+        // รอบ 209 (ทีม C ข้อ C1): ใช้บัตรคอร์สแทนลูกค้า = เขียนสมุดเครดิตของลูกค้า ⇒ ต้องเป็นพนักงานของบริษัทนี้ที่มีสิทธิ์จัดการการจอง
+        // (โทเคนหน้าร้าน/บัญชี ERP ของบริษัทอื่นไม่ผ่าน) · ไม่ใช้บัตร = เส้นเดิมทุกตัว
+        if (request.PayWithCredit)
+        {
+            var perms = HttpContext.RequestServices.GetService(typeof(IPermissionService)) as IPermissionService;
+            if (userId == null || perms == null || !await perms.HasPermissionAsync(companyId, Guid.Parse(userId), PermissionKeys.CmsOrderManage))
+                return StatusCode(403, new ApiResponse<BookingResponse>(false, null!, CreditBookingLink.PayWithCreditProblem(null)));
+        }
         var result = await _bookingService.CreateBookingAsync(companyId, siteId, request, userId);
         return StatusCode(201, new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.created", Lang)));
     }
