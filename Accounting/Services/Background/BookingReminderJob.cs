@@ -184,7 +184,7 @@ public class BookingReminderJob : BackgroundService
             {
                 await bookings.UpdateBookingStatusAsync(e.CompanyId, e.SiteId, e.Id,
                     new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = BookingReminderPlan.HoldExpiredReason,
-                        ExpectedCurrentStatus = BookingStatus.Pending, RequireHoldLapsedUnpaid = true }, SystemUser);   // ลูกค้าจ่าย/ยืนยันระหว่างทาง ⇒ เส้นสถานะปฏิเสธใต้ล็อก
+                        ExpectedCurrentStatus = BookingStatus.Pending, HoldLapsedAsOfUtc = nowUtc }, SystemUser);   // ลูกค้าจ่าย/ยืนยันระหว่างทาง ⇒ เส้นสถานะปฏิเสธใต้ล็อก
                 released++;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
