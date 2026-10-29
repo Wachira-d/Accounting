@@ -32,7 +32,16 @@ public static class CommissionPlanRules
         // ทีม K (2026-10-22) — ยอดที่ช่างทำรายบรรทัดบนบิล POS (ก่อน VAT · หลังส่วนลดท้ายบิล · หักคืน · ไม่รวมค่าบริการ/ทิป)
         // ตัวคิดยอด = Helpers/PosStaffAttribution · ผู้รับต้องผูกผู้ใช้ (UserId) — ตรวจตอนกำหนดแผนให้พนักงาน
         (PosStaffSalesBasis, "ยอดขาย/บริการที่ทำเองบน POS (ระบุช่างรายบรรทัด)"),
+        // รอบ 209 P5 (R-209-D8 · คำตัดสินข้อ 168 ฏ) — การจองที่เสร็จนอก POS (ก่อน VAT · บัตรคอร์ส = รายได้ที่รับรู้ · แบ่งตาม % งาน · ไม่นับซ้ำบิล POS)
+        (BookingServicesBasis, "บริการจากการจองที่ปิดนอก POS (ก่อน VAT · แบ่งตาม % งาน)"),
+        // รอบ 209 P5 (R-209-C6) — ค่าตอบแทนผู้สอนตามกติกาต่อผู้ให้บริการ (ต่อคลาส/ต่อหัว/%) · ใช้คู่กับวิธี "เปอร์เซ็นต์" 100% = จ่ายเท่าค่าตอบแทน
+        (InstructorPayBasis, "ค่าตอบแทนผู้สอนตามกติกาผู้ให้บริการ (ต่อคลาส/ต่อหัว/%)"),
     };
+
+    /// <summary>ฐาน "บริการจากการจองที่ปิดนอก POS" — ผู้อ่าน: <c>CommissionService.BookingBasisAsync</c></summary>
+    public const string BookingServicesBasis = "BookingServices";
+    /// <summary>ฐาน "ค่าตอบแทนผู้สอน" — ผู้อ่าน: <c>CommissionService.BookingBasisAsync</c> (<see cref="InstructorPayRule"/>)</summary>
+    public const string InstructorPayBasis = "InstructorPay";
 
     /// <summary>ฐาน "ยอดที่ช่างทำบน POS" — ผู้อ่าน: <c>CommissionService.CalculateAsync</c></summary>
     public const string PosStaffSalesBasis = "PosStaffSales";

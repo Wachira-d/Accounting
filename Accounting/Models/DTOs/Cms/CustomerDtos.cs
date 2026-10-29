@@ -243,6 +243,8 @@ public class SubmitFormRequest
     [Required]
     public string DataJson { get; set; } = "{}";
     public string? CaptchaToken { get; set; }
+    /// <summary>รอบ 209 P6 (ฑ): ติ๊กยินยอม PDPA — บังคับเมื่อเว็บตั้ง RequireDataConsent</summary>
+    public bool ConsentGiven { get; set; }
 }
 
 public class FormSubmissionResponse
@@ -255,6 +257,10 @@ public class FormSubmissionResponse
     public Guid? CustomerId { get; set; }
     public string? CustomerName { get; set; }
     public Guid? ErpDocumentId { get; set; }
+    /// <summary>รอบ 209 P6 (D7): lead ที่สร้างจากคำตอบนี้ (ฟอร์มตั้ง "ส่งเข้าระบบ") — แปลงเป็นใบเสนอราคาที่หน้า lead</summary>
+    public Guid? LeadId { get; set; }
+    /// <summary>ผลการแจ้งอีเมลถึงร้าน/ตอบกลับอัตโนมัติ (ประทับบนแถว)</summary>
+    public string? NotifyResult { get; set; }
     public string? Notes { get; set; }
     public string? RepliedBy { get; set; }
     public DateTime? RepliedAt { get; set; }

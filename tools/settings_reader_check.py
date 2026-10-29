@@ -58,7 +58,9 @@ ENTITIES = {
                       'Accounting/wwwroot/admin/subscription-enforcement.html']),
     'LodgingProperty': ('Accounting/Models/Entities/Lodging.cs', None,
                         ['Accounting/wwwroot/pages/lodging-settings.html']),
-    'SiteCommerceConfig': ('Accounting/Models/Entities/CmsSite.cs', None, []),
+    # รอบ 209 P2: หน้าแก้ค่าตั้งร้าน (hydrate ฟอร์มไม่นับเป็นผู้อ่าน)
+    'SiteCommerceConfig': ('Accounting/Models/Entities/CmsSite.cs', None,
+                           ['Accounting/wwwroot/pages/cms-store-settings.html', 'Accounting/wwwroot/pages/cms-orders.html']),
     'DocumentTemplate': ('Accounting/Models/Entities/DocumentTemplate.cs', None,
                          ['Accounting/wwwroot/pages/document-templates.html']),
     'TrialConfig': ('Accounting/Models/Entities/Subscription.cs', None, ['Accounting/wwwroot/admin/plans.html']),

@@ -14,12 +14,18 @@ public class CmsCustomerService : ICmsCustomerService
     private readonly AccountingDbContext _db;
     private readonly ILogger<CmsCustomerService> _logger;
     private readonly IConfiguration _config;
+    // รอบ 209 P6 (D7): ฟอร์ม → lead · อีเมลแจ้งร้าน/ตอบกลับ (null = DI ไม่ครบในเทสต์เก่า — ฟอร์มที่ต้องใช้แจ้งผลบนแถว/โยนชัด)
+    private readonly CmsLeadService? _leads;
+    private readonly IEmailService? _email;
 
-    public CmsCustomerService(AccountingDbContext db, ILogger<CmsCustomerService> logger, IConfiguration config)
+    public CmsCustomerService(AccountingDbContext db, ILogger<CmsCustomerService> logger, IConfiguration config,
+        CmsLeadService? leads = null, IEmailService? email = null)
     {
         _db = db;
         _logger = logger;
         _config = config;
+        _leads = leads;
+        _email = email;
     }
 
     // ===== Customers =====
@@ -276,18 +282,9 @@ public class CmsCustomerService : ICmsCustomerService
         var c = await _db.SiteCustomers.FirstOrDefaultAsync(c => c.Id == request.CustomerId && c.CompanyId == companyId);
         if (c == null) return false;
 
-        c.RightToBeforgotten = true;
+        // รอบ 209 P6 (D6): ช่องที่ล้างอยู่ที่ Helpers/CmsPdpaErasure ตัวเดียว (ใช้ร่วมกับ DSR ของ PdpaService) — เพิ่มถอดโทเคน/SSO/การตลาด
         c.DataDeletionRequestedAt = DateTime.UtcNow;
-        c.Email = $"deleted_{c.Id:N}@anonymized.local";
-        c.FullName = "Anonymized User";
-        c.Phone = null;
-        c.TaxId = null;
-        c.BranchCode = null;
-        c.CompanyName = null;
-        c.PasswordHash = null;
-        c.IsActive = false;
-        c.Tags = null;
-        c.CustomerGroup = null;
+        CmsPdpaErasure.AnonymizeCustomer(c, DateTime.UtcNow);
 
         // Remove addresses
         var addresses = await _db.SiteCustomerAddresses.Where(a => a.CustomerId == request.CustomerId).ToListAsync();
@@ -336,37 +333,12 @@ public class CmsCustomerService : ICmsCustomerService
         var customer = await _db.SiteCustomers.FirstOrDefaultAsync(c => c.Id == customerId && c.CompanyId == companyId);
         if (customer == null || customer.ContactId.HasValue) return false;
 
-        // รอบ 193 ทีม C3 (คำตัดสินเจ้าของข้อ 20): คีย์เลขภาษี + สาขา ก่อนอีเมล — ตัวจับคู่กลาง Helpers/ContactTaxBranchKey.
-        // เดิมจับอีเมลก่อนแล้วค่อยเลขภาษีอย่างเดียว ⇒ ลูกค้าเว็บของสาขา 8 ผูกเข้าผู้ติดต่อสำนักงานใหญ่ (แถวไหนก็ได้ของเลขนั้น)
-        // ⇒ ใบกำกับจากคำสั่งซื้อเว็บออกสาขาผิดตาม §86/4 · SiteCustomer.BranchCode ว่าง = "ไม่ระบุ" (แถว สนญ. ก่อน)
-        Contact? contact = null;
-        var taxKey = await Accounting.Helpers.ContactTaxBranchKey.FindAsync(
-            _db.Contacts.Where(c => c.IsActive), companyId, customer.TaxId, customer.BranchCode);
-        if (taxKey.ContactId is Guid keyId)
-            contact = await _db.Contacts.FirstOrDefaultAsync(c => c.Id == keyId && c.CompanyId == companyId);
-
-        // มีผู้ติดต่อเลขนี้แล้วแต่คนละสาขา ⇒ ห้ามถอยไปจับด้วยอีเมล (อีเมลเดียวกัน = แถวสาขาอื่นของเลขเดียวกัน) —
-        // ไม่ผูก ให้ผู้ใช้สร้าง/เลือกผู้ติดต่อของสาขานั้นเอง (เมธอดนี้ไม่สร้างผู้ติดต่อ)
-        // ฝ่ายค้าน C-6: อีเมลจับได้เฉพาะชุด SoftScope — เลขใหม่ ⇒ เฉพาะแถวที่ยังไม่มีเลข (อีเมลเดียวกันบนแถวที่ถือเลขอื่น = คนละนิติบุคคล)
-        var softScope = Accounting.Helpers.ContactTaxBranchKey.SoftScope(
-            _db.Contacts.Where(c => c.IsActive), companyId, customer.TaxId, taxKey);
-        if (contact == null && softScope != null && !string.IsNullOrWhiteSpace(customer.Email))
-            contact = await softScope.FirstOrDefaultAsync(c => c.Email == customer.Email);
-        // ฝ่ายค้านรอบสอง R2-C5: แถวที่จับได้ด้วยอีเมล (ยังไม่มีเลข) รับเลข + สาขาของลูกค้าเว็บ — ใบกำกับจากคำสั่งซื้อจึงมีเลขผู้ซื้อ ·
-        // รอบสาม: แถวลูกค้าทั่วไป (walk-in) ไม่รับเลข ⇒ Reject = ไม่ผูก (เมธอดนี้ไม่สร้างผู้ติดต่อ)
-        if (Accounting.Helpers.ContactTaxBranchKey.AdoptTaxId(contact, customer.TaxId, customer.BranchCode,
-                taxKey.Found ? Accounting.Helpers.ContactMatchKind.TaxKey : Accounting.Helpers.ContactMatchKind.Email)
-            == Accounting.Helpers.ContactAdoptOutcome.Reject)
-            contact = null;
-
-        if (contact != null)
-        {
-            customer.ContactId = contact.Id;
-            await _db.SaveChangesAsync();
-            return true;
-        }
-
-        return false;
+        // รอบ 209 P6 (D4): ตัวหาเดียวของลูกค้าเว็บ (Helpers/CmsContactResolver) — เลขภาษี+สาขา → อีเมล → เบอร์ บนชุด SoftScope ·
+        // เลขนี้มีเจ้าของแล้วคนละสาขา ⇒ ไม่ถอยไปอีเมล · walk-in/ลูกค้าทั่วไปไม่รับเลข (Reject) · เมธอดนี้ไม่สร้างผู้ติดต่อ (createIfMissing: false)
+        var r = await CmsContactResolver.ResolveAsync(_db, companyId, CmsContactResolver.ForCustomer(customer), customer, createIfMissing: false);
+        if (r.ContactId == null) return false;
+        await _db.SaveChangesAsync();
+        return true;
     }
 
     // ===== Forms =====
@@ -455,7 +427,9 @@ public class CmsCustomerService : ICmsCustomerService
 
     public async Task<FormSubmissionResponse> SubmitFormAsync(Guid companyId, Guid siteId, Guid formId, SubmitFormRequest request, string? ipAddress, string? userAgent)
     {
-        var form = await _db.SiteForms.Include(f => f.Fields).FirstOrDefaultAsync(f => f.Id == formId && f.SiteId == siteId && f.IsActive)
+        // รอบ 209 P6: ทางเข้านิรนาม ⇒ ฟอร์มต้องเป็นของบริษัทนี้ (กฎ M — เดิมกรองแค่ SiteId)
+        var form = await _db.SiteForms.Include(f => f.Fields)
+            .FirstOrDefaultAsync(f => f.Id == formId && f.SiteId == siteId && f.CompanyId == companyId && f.IsActive)
             ?? throw new KeyNotFoundException("Form not found or inactive.");
 
         // CAPTCHA verification
@@ -484,39 +458,70 @@ public class CmsCustomerService : ICmsCustomerService
                 throw new InvalidOperationException("Rate limit exceeded. Please try again later.");
         }
 
+        // รอบ 209 P6 (ฑ/D7): ช่องมาตรฐานจากคำตอบ (อีเมล/เบอร์ใช้ผูกความยินยอม · สร้าง lead · ตอบกลับ) — ตัวแยกเดียว CmsFormLeadMapper
+        var fields = CmsFormLeadMapper.Map(request.DataJson);
         var sub = new SiteFormSubmission
         {
             CompanyId = companyId, FormId = formId,
             DataJson = request.DataJson,
             IpAddress = ipAddress, UserAgent = userAgent
         };
+        // ด่านยินยอม PDPA ก่อนบันทึก (Helpers/CmsDataConsent) · ติ๊กแล้ว ⇒ PdpaConsentRecord บันทึกพร้อมคำตอบ
+        await CmsDataConsent.EnforceAsync(_db, companyId, siteId, CmsDataConsent.FormPurpose, request.ConsentGiven,
+            actorUserId: null, customerId: null, fields.Email, fields.Phone, reference: $"form:{sub.Id:N}");
 
         _db.SiteFormSubmissions.Add(sub);
         await _db.SaveChangesAsync();
 
-        // Auto-create ERP document (RFQ → Quotation)
-        if (form.CreateErpDocument && form.ErpDocumentType.HasValue)
+        // รอบ 209 P6 (D7): "ส่งเข้าระบบ" ⇒ CmsLead (เส้นมาตรฐาน) — เดิม _db.Documents.Add ตรง (ข้าม IDocumentService · ไม่มีผู้ติดต่อ · ไม่มีเลขรัน) ·
+        // พนักงานแปลง lead เป็นใบเสนอราคาที่หน้า lead (ตัวหาผู้ติดต่อเดียว + IDocumentService)
+        if (form.CreateErpDocument)
         {
-            var doc = new Document
-            {
-                CompanyId = companyId,
-                DocumentType = form.ErpDocumentType.Value,
-                Status = DocumentStatus.Draft,
-                DocumentDate = DateTime.UtcNow,
-                Notes = $"Auto-created from form: {form.Name}",
-                Reference = $"FORM-{sub.Id:N}"[..20]
-            };
-            _db.Documents.Add(doc);
-            sub.ErpDocumentId = doc.Id;
-            await _db.SaveChangesAsync();
+            if (_leads == null)
+                throw new InvalidOperationException("ฟอร์มนี้ตั้งให้ส่งเข้าระบบ แต่บริการ lead ไม่พร้อม — ติดต่อผู้ดูแลระบบ");
+            var lead = await _leads.CreateFromFormAsync(companyId, siteId, new CreateLeadRequest(
+                LeadType: CmsFormLeadMapper.LeadTypeFor(form.FormType, form.ErpDocumentType),
+                SourceSlug: $"form:{form.Name}",
+                CustomerName: fields.Name, CustomerEmail: fields.Email, CustomerPhone: fields.Phone,
+                CustomerCompany: fields.Company, CustomerTaxId: fields.TaxId, Message: fields.Message,
+                Fields: fields.Extras.Count > 0 ? fields.Extras : null));
+            sub.LeadId = lead.Id;
         }
+
+        // แจ้งร้าน (NotifyEmails) + ตอบกลับอัตโนมัติ (SendAutoReply) — ผลประทับบนแถว (ล้มไม่ล้มการส่งฟอร์ม · ไม่เงียบ · F2 #7)
+        var notify = new List<string>();
+        var siteName = await _db.Sites.AsNoTracking().Where(x => x.Id == siteId && x.CompanyId == companyId)
+            .Select(x => x.Name).FirstOrDefaultAsync() ?? "";
+        var recipients = CmsFormLeadMapper.Recipients(form.NotifyEmails);
+        if (recipients.Count > 0)
+        {
+            var html = CmsFormLeadMapper.NotifyHtml(form.Name, siteName, fields);
+            foreach (var to in recipients)
+            {
+                var ok = _email != null && await _email.TrySendAsync(to, $"[{siteName}] คำตอบใหม่: {form.Name}", html);
+                notify.Add(ok ? $"แจ้งร้าน {to} ✓" : $"แจ้งร้าน {to} ไม่สำเร็จ (ยังไม่ตั้งค่าอีเมลระบบ หรือส่งล้ม)");
+            }
+        }
+        if (form.SendAutoReply)
+        {
+            var replyTo = CmsFormLeadMapper.SingleReplyAddress(fields.Email);   // ที่อยู่เดียว (กันขยายสแปม)
+            if (replyTo == null) notify.Add("ตอบกลับอัตโนมัติ: ไม่มีอีเมลผู้กรอก");
+            else
+            {
+                var ok = _email != null && await _email.TrySendAsync(replyTo,
+                    string.IsNullOrWhiteSpace(form.AutoReplySubject) ? $"ขอบคุณที่ติดต่อ {siteName}" : form.AutoReplySubject!,
+                    CmsFormLeadMapper.AutoReplyHtml(form.AutoReplyBody, siteName));
+                notify.Add(ok ? "ตอบกลับอัตโนมัติ ✓" : "ตอบกลับอัตโนมัติไม่สำเร็จ (ยังไม่ตั้งค่าอีเมลระบบ หรือส่งล้ม)");
+            }
+        }
+        if (notify.Count > 0) sub.NotifyResult = string.Join(" · ", notify);
+        if (sub.LeadId != null || sub.NotifyResult != null) await _db.SaveChangesAsync();
 
         return new FormSubmissionResponse
         {
             Id = sub.Id, FormId = formId, FormName = form.Name,
-            DataJson = sub.DataJson, Status = sub.Status,
-            ErpDocumentId = sub.ErpDocumentId,
-            IpAddress = sub.IpAddress, CreatedAt = sub.CreatedAt
+            // ฝ่ายค้านรอบ 209 (security ข้อ 3): ทางนิรนาม — ไม่คืนผลแจ้งร้าน (อีเมลผู้รับฝั่งร้าน) · ข้อมูลที่กรอก · IP (พนักงานดูได้ที่หน้าคำตอบ)
+            Status = sub.Status, CreatedAt = sub.CreatedAt
         };
     }
 
@@ -537,7 +542,7 @@ public class CmsCustomerService : ICmsCustomerService
                 DataJson = s.DataJson, Status = s.Status,
                 CustomerId = s.CustomerId,
                 CustomerName = s.Customer != null ? s.Customer.FullName : null,
-                ErpDocumentId = s.ErpDocumentId,
+                ErpDocumentId = s.ErpDocumentId, LeadId = s.LeadId, NotifyResult = s.NotifyResult,
                 Notes = s.Notes, RepliedBy = s.RepliedBy, RepliedAt = s.RepliedAt,
                 IpAddress = s.IpAddress, CreatedAt = s.CreatedAt
             })

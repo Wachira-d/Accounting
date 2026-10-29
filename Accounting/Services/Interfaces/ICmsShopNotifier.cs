@@ -1,0 +1,17 @@
+using Accounting.Helpers;
+
+namespace Accounting.Services.Interfaces;
+
+/// <summary>
+/// ตัวกลางแจ้งเตือนของหน้าเว็บ (ร้านค้า · การจอง · lead) — รอบ 209 P3 (R-209-D5 · คำตัดสินข้อ 168 ซ) ·
+/// <b>ไม่ใช่ผู้ให้บริการใหม่</b>: ส่งผ่านช่องเดิม <see cref="IBookingNotifier"/> (อีเมล → LINE) ทุกฉบับ ·
+/// <b>ไม่โยน</b> — คืนเหตุที่ส่งไม่ถึง (null = ถึง/ปิดไว้ตามค่าตั้ง) ให้ผู้เรียกประทับบนรายการ (F2 #7) · ทุกความล้มเหลว log ระดับ Error
+/// </summary>
+public interface ICmsShopNotifier
+{
+    /// <summary>แจ้งร้าน — ผู้รับตาม <see cref="CmsNotificationText.ShopRecipients"/> · <paramref name="orderEvent"/> = เรื่องออเดอร์ (เคารพ <c>NotifyOnNewOrder</c>)</summary>
+    Task<string?> NotifyShopAsync(Guid companyId, Guid? siteId, CmsNotification message, bool orderEvent, CancellationToken ct = default);
+
+    /// <summary>แจ้งลูกค้า — ช่องทางจาก <paramref name="contact"/> (อีเมล/LINE ของรายการ)</summary>
+    Task<string?> NotifyCustomerAsync(Guid companyId, BookingContact contact, CmsNotification message, CancellationToken ct = default);
+}

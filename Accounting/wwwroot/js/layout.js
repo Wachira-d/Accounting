@@ -82,7 +82,7 @@ const Layout = {
   ENUM_LABELS: {
     orderStatus: { Pending:'รอดำเนินการ', Confirmed:'ยืนยันแล้ว', Processing:'กำลังเตรียม',
       Shipped:'จัดส่งแล้ว', Delivered:'ส่งถึงปลายทาง', Cancelled:'ยกเลิก',
-      Refunded:'คืนเงินแล้ว', PartiallyRefunded:'คืนเงินบางส่วน' },
+      Refunded:'คืนเงินแล้ว', PartiallyRefunded:'คืนเงินบางส่วน', ReadyForPickup:'พร้อมให้รับ' },
     bookingStatus: { Pending:'รอยืนยัน', Confirmed:'ยืนยันแล้ว', InProgress:'กำลังให้บริการ',
       Completed:'เสร็จสิ้น', Cancelled:'ยกเลิก', NoShow:'ไม่มา (No-show)', Waitlisted:'คิวสำรอง' },
     // ทีม B — ค่าตั้งของบริการจองคิว CMS (enum ฝั่ง server: BookingType · BookingSlotMode · BookingCapacityUnit)
@@ -1470,6 +1470,9 @@ const Layout = {
       description: 'สร้างเว็บไซต์ multi-site · e-commerce · booking · เชื่อม ERP อัตโนมัติ' },
     { id: 'cms-orders', navParent: 'cms-sites', label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders', cmsModule: 'orders',
       description: 'จัดการ order ที่ลูกค้าสั่งผ่านร้านค้าออนไลน์ — ยืนยัน · จัดส่ง · ติดตาม' },
+    // รอบ 209 P2: ตั้งค่าร้านค้า (สวิตช์ · วิธีชำระ · ฟอร์มสั่งซื้อ · โซนค่าส่ง · คูปอง) — สิทธิ์ CmsSiteSettings (PaymentGatewayPermissionScope.MenuPermissionKeys)
+    { id: 'cms-store-settings', navParent: 'cms-sites', label: 'ตั้งค่าร้านค้า', icon: '⚙️', href: '/pages/cms-store-settings.html', feature: 'CmsWebsiteBuilder', cmsModule: 'orders',
+      description: 'วิธีรับ/จัดส่ง · วิธีชำระ (โอน/ออนไลน์/เก็บเงินปลายทาง) · ฟอร์มสั่งซื้อ + ช่องเพิ่มเอง · โซนค่าส่ง · คูปอง · เลขคำสั่งซื้อ' },
     { id: 'cms-bookings', navParent: 'cms-sites', label: 'การจองคิวจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings', cmsModule: 'bookings',
       description: 'จัดการการจองคิว/นัดหมาย — ร้านอาหาร · สปา · คลินิก · ยืนยัน-ยกเลิก-No show (การจองห้องพักอยู่ที่ "ที่พัก · Front desk")' },
     // รอบ 207 (คำขอเจ้าของข้อ 4): สรุปการทำงาน/รายงานผู้ให้บริการ — มีข้อมูลเมื่อเว็บเปิด "จัดสรรผู้ให้บริการ"

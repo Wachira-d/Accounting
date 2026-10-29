@@ -94,6 +94,46 @@ public class CourseCreditController : ControllerBase
     public async Task<ActionResult<ApiResponse<CreditExpiryRunResult>>> ExpireDue(Guid companyId, CancellationToken ct)
         => Ok(new ApiResponse<CreditExpiryRunResult>(true, await _service.ExpireDueAsync(companyId, UserId, ct)));
 
+    // ---------- รอบ 209 P5 — สมาชิก: พัก / ขยาย / โอน · งานรับรู้ตามวัน · แจ้งเตือน (คำตัดสินข้อ 168 ฎ) ----------
+    [HttpPost("passes/{passId:guid}/freeze")]
+    [RequirePermission(PermissionKeys.PosManager)]
+    public async Task<ActionResult<ApiResponse<CreditPassResponse>>> Freeze(Guid companyId, Guid passId, [FromBody] FreezeCreditPassRequest request, CancellationToken ct)
+        => Ok(new ApiResponse<CreditPassResponse>(true, await _service.FreezePassAsync(companyId, passId, request, UserId, ct), "พักบัตรแล้ว — เลื่อนวันหมดอายุออกตามจำนวนวัน"));
+
+    [HttpPost("passes/{passId:guid}/freezes/{freezeId:guid}/cancel")]
+    [RequirePermission(PermissionKeys.PosManager)]
+    public async Task<ActionResult<ApiResponse<CreditPassResponse>>> CancelFreeze(Guid companyId, Guid passId, Guid freezeId, CancellationToken ct)
+        => Ok(new ApiResponse<CreditPassResponse>(true, await _service.CancelFreezeAsync(companyId, passId, freezeId, UserId, ct), "ยกเลิกการพักแล้ว"));
+
+    [HttpPost("passes/{passId:guid}/extend")]
+    [RequirePermission(PermissionKeys.PosManager)]
+    public async Task<ActionResult<ApiResponse<CreditPassResponse>>> Extend(Guid companyId, Guid passId, [FromBody] ExtendCreditPassRequest request, CancellationToken ct)
+        => Ok(new ApiResponse<CreditPassResponse>(true, await _service.ExtendPassAsync(companyId, passId, request, UserId, ct), "ขยายอายุบัตรแล้ว (ไม่มีรายการเงิน)"));
+
+    [HttpPost("passes/{passId:guid}/transfer")]
+    [RequirePermission(PermissionKeys.PosManager)]
+    public async Task<ActionResult<ApiResponse<CreditPassResponse>>> Transfer(Guid companyId, Guid passId, [FromBody] TransferCreditPassRequest request, CancellationToken ct)
+    {
+        var r = await _service.TransferPassAsync(companyId, passId, request, UserId, ct);
+        return Ok(new ApiResponse<CreditPassResponse>(true, r, $"โอนแล้ว — บัตรใหม่ {r.PassNumber} ของ {r.ContactName} (ไม่ออกใบกำกับใหม่)"));
+    }
+
+    [HttpPost("passes/recognize-due")]
+    [RequirePermission(PermissionKeys.PosManager)]
+    public async Task<ActionResult<ApiResponse<CreditPeriodRunResult>>> RecognizeDue(Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<CreditPeriodRunResult>(true, await _service.RecognizePeriodDueAsync(companyId, UserId, ct)));
+
+    [HttpPost("passes/send-expiry-reminders")]
+    [RequirePermission(PermissionKeys.PosManager)]
+    public async Task<ActionResult<ApiResponse<CreditReminderRunResult>>> SendReminders(Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<CreditReminderRunResult>(true, await _service.SendExpiryRemindersAsync(companyId, UserId, ct)));
+
+    /// <summary>R-209-C7 รายงานคลาส (อ่าน): fill-rate · no-show · retention · บัตรใกล้หมดอายุ</summary>
+    [HttpGet("reports/classes")]
+    public async Task<ActionResult<ApiResponse<ClassReportResponse>>> ClassReport(Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate,
+        [FromQuery] int expiringWithinDays = 14, CancellationToken ct = default)
+        => Ok(new ApiResponse<ClassReportResponse>(true, await _service.GetClassReportAsync(companyId, fromDate, toDate, expiringWithinDays, ct)));
+
     // ---------- รอบเรียน ----------
     [HttpGet("trainers")]
     public async Task<ActionResult<ApiResponse<List<CreditTrainerOption>>>> Trainers(Guid companyId, CancellationToken ct)

@@ -5,66 +5,51 @@ namespace Accounting.Models.DTOs.Cms;
 
 public class UpdateCommerceConfigRequest
 {
-    // Checkout
-    public CheckoutMode? CheckoutMode { get; set; }
-    public bool? AutoGenerateQuotation { get; set; }
-    public bool? RequireCustomerAccount { get; set; }
+    // รอบ 209 P2 (คำตัดสินข้อ 168 ก): ค่าตั้งที่ไม่มีผู้อ่านถูกลบ (เหตุผลใน Helpers/CmsFeatureFlags) · null = ไม่เปลี่ยน
+    // สมาชิก — EnableGuestCheckout=false ⇒ ต้องเป็นสมาชิก (RequireCustomerAccount ตั้งคู่กันให้อัตโนมัติ)
     public bool? EnableGuestCheckout { get; set; }
 
-    // Tax
-    public decimal? DefaultVatRate { get; set; }
-    public bool? PricesIncludeVat { get; set; }
+    // ภาษี
     public bool? EnableTaxInvoice { get; set; }
 
-    // Shipping
+    // การจัดส่ง
     public bool? EnableShipping { get; set; }
-    public bool? EnableShippingCalculation { get; set; }
     public decimal? FlatShippingRate { get; set; }
     public decimal? FreeShippingThreshold { get; set; }
+    /// <summary>รอบ 209: true = ล้างค่าส่งเหมาจ่าย (ไม่คิดค่าส่ง)</summary>
+    public bool? ClearFlatShippingRate { get; set; }
+    /// <summary>รอบ 209: true = ล้างเกณฑ์ส่งฟรี</summary>
+    public bool? ClearFreeShippingThreshold { get; set; }
+    public bool? FreeShippingOverridesZones { get; set; }
 
-    // Inventory
-    public bool? EnableStockTracking { get; set; }
-    public bool? AutoDeductStock { get; set; }
-    public StockBehavior? DefaultStockBehavior { get; set; }
-    public bool? ShowStockQuantity { get; set; }
-
-    // Coupons
+    // คูปอง · รีวิว · รายการโปรด
     public bool? EnableCoupons { get; set; }
-    public bool? EnableTierPricing { get; set; }
-
-    // Reviews
     public bool? EnableReviews { get; set; }
     public bool? ReviewAutoApprove { get; set; }
     public bool? ReviewRequirePurchase { get; set; }
-
-    // Cart
     public bool? EnableWishlist { get; set; }
+
+    // ตะกร้า (ผู้อ่าน: แพ็ก P6 · AbandonedCartService)
     public bool? EnableAbandonedCartRecovery { get; set; }
     public int? CartExpiryDays { get; set; }
     public int? AbandonedCartHours { get; set; }
 
-    // Order
+    // คำสั่งซื้อ
     public string? OrderNumberPrefix { get; set; }
     public bool? AutoConfirmOrders { get; set; }
     public bool? NotifyOnNewOrder { get; set; }
     public string? OrderNotificationEmails { get; set; }
+    public bool? EnableQuoteConversion { get; set; }
+    /// <summary>รอบ 209: ค่าตั้งฟอร์มสั่งซื้อ (Helpers.OrderFormFields) · null = ไม่เปลี่ยน · ส่ง ResetOrderFormFields=true เพื่อกลับเป็นฟอร์มเดิม</summary>
+    public global::Accounting.Helpers.OrderFormFieldsConfig? OrderFormFields { get; set; }
+    public bool? ResetOrderFormFields { get; set; }
 
-    // ERP
-    public bool? AutoSyncToErp { get; set; }
-    public DocumentType? ErpDocumentType { get; set; }
-
-    // Payment
+    // การชำระ
     public bool? EnableOnlinePayment { get; set; }
     public bool? EnableCod { get; set; }
     public bool? EnableBankTransfer { get; set; }
 
-    // Display
-    public string? DefaultProductSort { get; set; }
-    public int? ProductsPerPage { get; set; }
-    public bool? ShowComparePrice { get; set; }
-    public bool? ShowSku { get; set; }
-
-    // Notification messages
+    // ข้อความ
     public string? OrderConfirmMessageTh { get; set; }
     public string? OrderConfirmMessageEn { get; set; }
     public string? QuotationMessageTh { get; set; }
@@ -96,64 +81,37 @@ public class CommerceConfigResponse
     public Guid Id { get; set; }
     public Guid SiteId { get; set; }
 
-    // Checkout
-    public CheckoutMode CheckoutMode { get; set; }
-    public bool AutoGenerateQuotation { get; set; }
-    public bool RequireCustomerAccount { get; set; }
+    // รอบ 209 P2 — สวิตช์ร้าน (echo ทุกค่าที่รับ · ผู้อ่านเชิงธุรกิจผ่าน Helpers/CmsFeatureFlags)
     public bool EnableGuestCheckout { get; set; }
-
-    // Tax
-    public decimal DefaultVatRate { get; set; }
-    public bool PricesIncludeVat { get; set; }
+    public bool RequireCustomerAccount { get; set; }
     public bool EnableTaxInvoice { get; set; }
-
-    // Shipping
     public bool EnableShipping { get; set; }
-    public bool EnableShippingCalculation { get; set; }
     public decimal? FlatShippingRate { get; set; }
     public decimal? FreeShippingThreshold { get; set; }
-
-    // Inventory
-    public bool EnableStockTracking { get; set; }
-    public bool AutoDeductStock { get; set; }
-    public StockBehavior DefaultStockBehavior { get; set; }
-    public bool ShowStockQuantity { get; set; }
-
-    // Coupons & Reviews
+    public bool FreeShippingOverridesZones { get; set; }
     public bool EnableCoupons { get; set; }
-    public bool EnableTierPricing { get; set; }
     public bool EnableReviews { get; set; }
     public bool ReviewAutoApprove { get; set; }
     public bool ReviewRequirePurchase { get; set; }
-
-    // Cart
     public bool EnableWishlist { get; set; }
     public bool EnableAbandonedCartRecovery { get; set; }
     public int CartExpiryDays { get; set; }
     public int AbandonedCartHours { get; set; }
-
-    // Order
     public string OrderNumberPrefix { get; set; } = "";
+    /// <summary>ตัวอย่างเลขคำสั่งซื้อถัดไปตามคำนำหน้า (เซิร์ฟเวอร์ประกอบ — หน้าเว็บไม่ประกอบเอง)</summary>
+    public string OrderNumberExample { get; set; } = "";
     public bool AutoConfirmOrders { get; set; }
     public bool NotifyOnNewOrder { get; set; }
     public string? OrderNotificationEmails { get; set; }
-
-    // ERP
-    public bool AutoSyncToErp { get; set; }
-    public DocumentType ErpDocumentType { get; set; }
-
-    // Payment
+    public bool EnableQuoteConversion { get; set; }
+    /// <summary>ค่าตั้งฟอร์มที่ใช้วาด (ไม่ได้ตั้ง = ฟอร์มเดิม) + ตั้งแล้วหรือยัง</summary>
+    public global::Accounting.Helpers.OrderFormFieldsConfig OrderFormFields { get; set; } = global::Accounting.Helpers.OrderFormFields.Default;
+    public bool OrderFormFieldsConfigured { get; set; }
+    public List<CommerceOptionValue> FormFieldRequirementOptions { get; set; } = new();
+    public List<string> FormFieldTypes { get; set; } = new();
     public bool EnableOnlinePayment { get; set; }
     public bool EnableCod { get; set; }
     public bool EnableBankTransfer { get; set; }
-
-    // Display
-    public string DefaultProductSort { get; set; } = "";
-    public int ProductsPerPage { get; set; }
-    public bool ShowComparePrice { get; set; }
-    public bool ShowSku { get; set; }
-
-    // Notification messages
     public string? OrderConfirmMessageTh { get; set; }
     public string? OrderConfirmMessageEn { get; set; }
     public string? QuotationMessageTh { get; set; }

@@ -455,7 +455,8 @@ public partial class CmsBookingService
             PricesIncludeVat: true,
             Currency: svc.Currency,
             BookingNumber: booking.BookingNumber,
-            ServiceUsedDate: serviceUsed);
+            ServiceUsedDate: serviceUsed,
+            BranchId: erpDoc.BranchId);   // รอบ 209 P6 (ฐ): ใบส่วนที่เหลือสืบทอดสาขาจากใบมัดจำ (เอกสารลูกสืบทอด · หักมัดจำในสาขาเดียวกัน)
         DocumentResponse created;
         try
         {

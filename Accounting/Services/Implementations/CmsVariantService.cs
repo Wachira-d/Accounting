@@ -18,8 +18,9 @@ public class CmsVariantService : ICmsVariantService
         var product = await _db.SiteProducts.FirstOrDefaultAsync(p => p.Id == siteProductId && p.SiteId == siteId && p.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Site product not found.");
 
-        if (await _db.SiteProductVariants.AnyAsync(v => v.SiteProductId == siteProductId && v.Sku == request.Sku))
+        if (await _db.SiteProductVariants.AnyAsync(v => v.SiteProductId == siteProductId && v.Sku == request.Sku && !v.IsDeleted))
             throw new InvalidOperationException("SKU already exists for this product.");
+        await EnsureErpProductAsync(companyId, request.ErpProductId);
 
         var variant = new SiteProductVariant
         {
@@ -29,7 +30,8 @@ public class CmsVariantService : ICmsVariantService
             Price = request.Price, CompareAtPrice = request.CompareAtPrice,
             Stock = request.Stock, WeightKg = request.WeightKg,
             ImageUrl = request.ImageUrl, Barcode = request.Barcode,
-            ErpProductId = request.ErpProductId,
+            ErpProductId = request.ErpProductId == Guid.Empty ? null : request.ErpProductId,
+            IsActive = request.IsActive ?? true,
             SortOrder = request.SortOrder, CreatedBy = userId
         };
         _db.SiteProductVariants.Add(variant);
@@ -41,8 +43,10 @@ public class CmsVariantService : ICmsVariantService
     {
         var variant = await _db.SiteProductVariants
             .Include(v => v.SiteProduct)
-            .FirstOrDefaultAsync(v => v.Id == variantId && v.SiteProductId == siteProductId && v.SiteProduct.SiteId == siteId)
+            .FirstOrDefaultAsync(v => v.Id == variantId && v.SiteProductId == siteProductId && v.SiteProduct.SiteId == siteId
+                && v.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Variant not found.");
+        await EnsureErpProductAsync(companyId, request.ErpProductId);
 
         variant.Sku = request.Sku;
         variant.Name = request.Name;
@@ -53,7 +57,8 @@ public class CmsVariantService : ICmsVariantService
         variant.WeightKg = request.WeightKg;
         variant.ImageUrl = request.ImageUrl;
         variant.Barcode = request.Barcode;
-        variant.ErpProductId = request.ErpProductId;
+        variant.ErpProductId = request.ErpProductId == Guid.Empty ? null : request.ErpProductId;
+        if (request.IsActive.HasValue) variant.IsActive = request.IsActive.Value;
         variant.SortOrder = request.SortOrder;
         variant.UpdatedBy = userId;
 
@@ -65,7 +70,7 @@ public class CmsVariantService : ICmsVariantService
     {
         return await _db.SiteProductVariants.AsNoTracking()
             .Include(v => v.SiteProduct)
-            .Where(v => v.SiteProductId == siteProductId && v.SiteProduct.SiteId == siteId && v.SiteProduct.CompanyId == companyId)
+            .Where(v => v.SiteProductId == siteProductId && v.SiteProduct.SiteId == siteId && v.SiteProduct.CompanyId == companyId && !v.IsDeleted)
             .OrderBy(v => v.SortOrder)
             .Select(v => new ProductVariantResponse
             {
@@ -73,16 +78,27 @@ public class CmsVariantService : ICmsVariantService
                 OptionsJson = v.OptionsJson, Price = v.Price, CompareAtPrice = v.CompareAtPrice,
                 Stock = v.Stock, WeightKg = v.WeightKg,
                 ImageUrl = v.ImageUrl, Barcode = v.Barcode,
-                IsActive = v.IsActive, SortOrder = v.SortOrder, ErpProductId = v.ErpProductId
+                IsActive = v.IsActive, SortOrder = v.SortOrder, ErpProductId = v.ErpProductId,
+                // รอบ 209 P6 (D-Q5): สต็อกจริง = สินค้า ERP ที่ผูก (หรือสินค้าแม่) — ตัวเดียวกับที่ออเดอร์ตัด (Helpers/CmsVariantPricing.StockProductId)
+                StockProductName = v.ErpProduct != null ? v.ErpProduct.Name : v.SiteProduct.Product.Name,
+                EffectiveStock = v.ErpProduct != null ? v.ErpProduct.CurrentStock : v.SiteProduct.Product.CurrentStock
             })
             .ToListAsync();
+    }
+
+    /// <summary>รอบ 209 P6: สินค้า ERP ที่ผูกกับ variant ต้องเป็นของบริษัทนี้ (กฎ M) — ต่อไปนี้ออเดอร์ตัดสต็อกสินค้านั้นจริง</summary>
+    private async Task EnsureErpProductAsync(Guid companyId, Guid? erpProductId)
+    {
+        if (erpProductId is not Guid pid || pid == Guid.Empty) return;
+        if (!await _db.Products.AnyAsync(p => p.Id == pid && p.CompanyId == companyId && !p.IsDeleted))
+            throw new Accounting.Helpers.BusinessRuleException("ไม่พบสินค้า ERP ที่เลือก หรือไม่ใช่ของบริษัทนี้", Accounting.Helpers.CmsVariantPricing.RuleCode);
     }
 
     public async Task<bool> DeleteVariantAsync(Guid companyId, Guid siteId, Guid siteProductId, Guid variantId)
     {
         var variant = await _db.SiteProductVariants
             .Include(v => v.SiteProduct)
-            .FirstOrDefaultAsync(v => v.Id == variantId && v.SiteProductId == siteProductId && v.SiteProduct.SiteId == siteId);
+            .FirstOrDefaultAsync(v => v.Id == variantId && v.SiteProductId == siteProductId && v.SiteProduct.SiteId == siteId && v.CompanyId == companyId);
         if (variant == null) return false;
         variant.IsActive = false;
         variant.IsDeleted = true;

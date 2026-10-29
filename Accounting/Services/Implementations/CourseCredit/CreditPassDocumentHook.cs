@@ -40,6 +40,9 @@ public static class CreditPassDocumentHook
     {
         var pass = await LockLivePassAsync(db, companyId, source.Id, ct);
         if (pass == null) return;
+        // รอบ 209 ฝ่ายค้าน (เงิน) ข้อ 6: บัตรโอนให้ลูกค้าคนอื่นแล้ว ⇒ ค่าบริการรับล่วงหน้าอยู่ที่บัตรปลายทาง — ใบลดหนี้อ้างใบขายเดิม (ใบกำกับใบเดียวของเงินก้อนนี้)
+        // ตัดสินกับบัตรปลายทาง (ยอดไม่เกินมูลค่าคงเหลือของบัตรนั้น · ลดเครดิต/ปิดบัตรนั้น) แทนการบล็อกตายตัว · ตามบัตรไม่ถึง ⇒ ตัวตัดสินบล็อกเดิม (TransferredBlock)
+        pass = await FollowTransfersAsync(db, companyId, pass, source.DocumentNumber, ct);
         var lines = await CreditNoteLinesAsync(db, companyId, creditNote, ct);
         var net = lines.Sum(l => l.Amount);
         var allUnearned = lines.All(l => l.AccountId == null || l.AccountId == pass.UnearnedAccountId);
@@ -154,6 +157,26 @@ public static class CreditPassDocumentHook
             .FirstOrDefaultAsync(p => p.CompanyId == companyId && p.SaleDocumentId == saleDocumentId && p.Status != CreditPassStatus.Cancelled, ct);
         if (pass != null && db.Entry(pass).State == EntityState.Unchanged) await db.Entry(pass).ReloadAsync(ct);
         return pass;
+    }
+
+    /// <summary>ตามสายโอนบัตรไปบัตรปลายทางที่ยังถือค่าบริการรับล่วงหน้า (ล็อกแถวทีละใบ · ไม่เกิน <see cref="CreditPassDocumentRule.MaxTransferHops"/> ทอด) ·
+    /// ตัวเลือกทอดถัดไป = <see cref="CreditPassDocumentRule.NextTransferHop"/> · ปลายทางถูกปิดด้วยใบลดหนี้/ยกเลิกแล้ว ⇒ บล็อก (ไม่มียอดให้ลด — ห้ามผ่านเงียบ)</summary>
+    private static async Task<CreditPass> FollowTransfersAsync(AccountingDbContext db, Guid companyId, CreditPass pass, string sourceNumber, CancellationToken ct)
+    {
+        var current = pass;
+        for (var hops = 0; CreditPassDocumentRule.NextTransferHop(current.Status, current.TransferredToPassId, hops) is Guid nextId; hops++)
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"CreditPasses\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", nextId, companyId);
+            var next = await db.CreditPasses.FirstOrDefaultAsync(p => p.Id == nextId && p.CompanyId == companyId, ct);
+            if (next == null) break;
+            if (db.Entry(next).State == EntityState.Unchanged) await db.Entry(next).ReloadAsync(ct);
+            if (next.Status == CreditPassStatus.Cancelled)
+                throw new BusinessRuleException(CreditPassDocumentRule.TransferredTargetClosedMessage(sourceNumber, pass.PassNumber, next.PassNumber),
+                    CreditPassDocumentRule.RuleCode, 409);
+            current = next;
+        }
+        return current;
     }
 
     internal static CreditPassDocumentRule.PassFacts Facts(CreditPass p)

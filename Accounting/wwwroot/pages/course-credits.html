@@ -39,6 +39,7 @@
       <div class="tab active" data-tab="passes" onclick="Page.tab('passes')">บัตรของลูกค้า</div>
       <div class="tab" data-tab="sessions" onclick="Page.tab('sessions')">ตารางคลาส</div>
       <div class="tab" data-tab="packages" onclick="Page.tab('packages')">แพ็กเกจ</div>
+      <div class="tab" data-tab="reports" onclick="Page.tab('reports')">รายงานคลาส</div>
     </div>
 
     <!-- บัตรของลูกค้า -->
@@ -91,6 +92,40 @@
     </section>
 
     <!-- โมดัล: แพ็กเกจ -->
+    <!-- รอบ 209 P5 (R-209-C7): รายงานคลาส — ตัวเลขทั้งหมดจากเซิร์ฟเวอร์ (Helpers/ClassFillRateReport) -->
+    <section id="tab-reports" style="display:none">
+      <div class="toolbar" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <label class="text-sm">ตั้งแต่ <input type="date" class="form-input" id="repFrom" style="width:auto;display:inline-block" onchange="Page.loadReport()"></label>
+        <label class="text-sm">ถึง <input type="date" class="form-input" id="repTo" style="width:auto;display:inline-block" onchange="Page.loadReport()"></label>
+        <label class="text-sm">บัตรหมดอายุภายใน <input type="number" class="form-input" id="repExpDays" min="1" max="180" value="14" style="width:80px;display:inline-block" onchange="Page.loadReport()"> วัน</label>
+        <button class="btn btn-secondary btn-sm" onclick="Page.runPeriodRecognition()">รับรู้รายได้สมาชิก (ถึงเมื่อวาน)</button>
+        <button class="btn btn-secondary btn-sm" onclick="Page.runReminders()">ส่งแจ้งเตือนบัตรใกล้หมดอายุ</button>
+      </div>
+      <div id="repBody"><div class="text-center text-gray-400" style="padding:40px">กำลังโหลด...</div></div>
+    </section>
+
+    <!-- รอบ 209 P5: พักบัตร / ขยายอายุ / โอนบัตร (คำตัดสินข้อ 168 ฎ) -->
+    <div class="modal-overlay" id="memModal">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header"><h3 class="modal-title" id="memTitle">บัตร</h3><button class="modal-close" onclick="Layout.closeModal('memModal')">&times;</button></div>
+        <div class="modal-body">
+          <div id="memFreeze" class="form-row">
+            <div class="form-group"><label class="form-label" for="mFrom">พักตั้งแต่ *</label><input type="date" class="form-input" id="mFrom"></div>
+            <div class="form-group"><label class="form-label" for="mTo">ถึง *</label><input type="date" class="form-input" id="mTo"></div>
+          </div>
+          <div id="memExtend" class="form-group"><label class="form-label" for="mDays">ขยายกี่วัน *</label><input type="number" class="form-input" id="mDays" min="1" max="3650" value="7"></div>
+          <div id="memTransfer" class="form-group"><label class="form-label" for="mContactName">โอนให้ลูกค้า *</label>
+            <input type="hidden" id="mContactId"><input type="text" class="form-input" id="mContactName"></div>
+          <div class="form-group"><label class="form-label" for="mReason">เหตุผล *</label><input type="text" class="form-input" id="mReason" maxlength="300"></div>
+          <p class="text-xs text-gray-500" id="memHint"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('memModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="memBtn" onclick="Page.submitMembership()">บันทึก</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="pkgModal">
       <div class="modal" style="max-width:760px">
         <div class="modal-header"><h3 class="modal-title" id="pkgTitle">เพิ่มแพ็กเกจ</h3><button class="modal-close" onclick="Layout.closeModal('pkgModal')">&times;</button></div>
@@ -101,10 +136,24 @@
             <div class="form-group"><label class="form-label" for="pName">ชื่อแพ็กเกจ *</label><input type="text" class="form-input" id="pName" maxlength="200"></div>
           </div>
           <div class="form-row">
+            <div class="form-group"><label class="form-label" for="pKind">ชนิดแพ็กเกจ</label>
+              <select class="form-select" id="pKind" onchange="Page.kindChanged()"><option value="Credits">นับครั้ง/ชั่วโมง</option><option value="UnlimitedPeriod">ไม่จำกัดครั้งตามช่วงเวลา (สมาชิก)</option></select></div>
+          </div>
+          <div class="form-row" id="pUnlimitedRow" style="display:none">
+            <div class="form-group"><label class="form-label" for="pPerDay">จองได้สูงสุดต่อวัน</label><input type="number" class="form-input" id="pPerDay" min="1" max="50" value="1"></div>
+            <div class="form-group"><label class="form-label" for="pMaxActive">จองค้างพร้อมกันสูงสุด (0 = ไม่จำกัด)</label><input type="number" class="form-input" id="pMaxActive" min="0" max="365" value="0"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="pFreezeDays">พักบัตรได้สูงสุด (วัน · 0 = ไม่อนุญาต)</label><input type="number" class="form-input" id="pFreezeDays" min="0" max="365" value="0"></div>
+            <div class="form-group"><label class="form-label" for="pRemindDays">แจ้งเตือนลูกค้าก่อนหมดอายุ (วัน · 0 = ไม่แจ้ง)</label><input type="number" class="form-input" id="pRemindDays" min="0" max="90" value="0"></div>
+          </div>
+          <div class="form-row" id="pCreditsRow">
             <div class="form-group"><label class="form-label" for="pUnit">หน่วย</label>
               <select class="form-select" id="pUnit"><option value="Session">ครั้ง (Class Credits)</option><option value="Hour">ชั่วโมง (Hour Pass)</option></select></div>
             <div class="form-group"><label class="form-label" for="pQty">จำนวนครั้ง/ชั่วโมง *</label><input type="number" class="form-input" id="pQty" min="0.5" step="0.5"></div>
-            <div class="form-group"><label class="form-label" for="pDays">อายุใช้งาน (วัน · 0 = ไม่หมดอายุ)</label><input type="number" class="form-input" id="pDays" min="0" value="90"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group"><label class="form-label" for="pDays" id="pDaysLabel">อายุใช้งาน (วัน · 0 = ไม่หมดอายุ)</label><input type="number" class="form-input" id="pDays" min="0" value="90"></div>
           </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" for="pPrice">ราคา *</label><input type="number" class="form-input" id="pPrice" min="0" step="0.01"></div>
@@ -276,6 +325,9 @@
         document.getElementById('sesTo').value = Layout.dateInput(new Date(today.getTime() + 30 * 864e5));
         Layout.contactPicker('sContactName', 'sContactId', { side: 'customer' });
         Layout.contactPicker('rContactName', 'rContactId', { side: 'customer', onSelect: c => this.loadContactPasses(c.id), onClear: () => this.loadContactPasses(null) });
+        Layout.contactPicker('mContactName', 'mContactId', { side: 'customer' });
+        document.getElementById('repFrom').value = Layout.dateInput(new Date(today.getTime() - 29 * 864e5));
+        document.getElementById('repTo').value = Layout.dateInput(today);
         await Promise.all([this.loadRefs(), this.loadSummary(), this.loadPasses(1)]);
       },
       async loadRefs() {
@@ -287,9 +339,10 @@
       },
       tab(name) {
         document.querySelectorAll('.tabs .tab').forEach(el => el.classList.toggle('active', el.dataset.tab === name));
-        ['passes', 'sessions', 'packages'].forEach(n => document.getElementById('tab-' + n).style.display = n === name ? '' : 'none');
+        ['passes', 'sessions', 'packages', 'reports'].forEach(n => document.getElementById('tab-' + n).style.display = n === name ? '' : 'none');
         if (name === 'sessions') this.loadSessions();
         if (name === 'packages') this.loadPackages();
+        if (name === 'reports') this.loadReport();
       },
       async loadSummary() {
         try {
@@ -315,11 +368,12 @@
           if (!items.length) { body.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีบัตรคอร์ส</td></tr>'; }
           else body.innerHTML = items.map(p => {
             const pct = p.creditsTotal > 0 ? Math.round((p.creditsUsed / p.creditsTotal) * 100) : 0;
+            const unlimited = p.kind === 'UnlimitedPeriod';
             return `<tr>
               <td class="font-medium">${Layout.esc(p.passNumber)}<div class="text-xs text-gray-500">${Layout.esc(p.saleDocumentNumber || '')}</div></td>
               <td>${Layout.esc(p.contactName || '-')}</td>
               <td>${Layout.esc(p.packageName)}</td>
-              <td class="num">${p.creditsAvailable} / ${p.creditsTotal} ${Layout.esc(p.unitLabel)}<div class="cc-bar"><span style="width:${pct}%"></span></div>${p.creditsReserved > 0 ? `<div class="text-xs text-gray-500">จองไว้ ${p.creditsReserved}</div>` : ''}</td>
+              <td class="num">${unlimited ? `ไม่จำกัด<div class="text-xs text-gray-500">มาแล้ว ${p.creditsUsed} ครั้ง</div>` : `${p.creditsAvailable} / ${p.creditsTotal} ${Layout.esc(p.unitLabel)}<div class="cc-bar"><span style="width:${pct}%"></span></div>`}${p.creditsReserved > 0 ? `<div class="text-xs text-gray-500">จองไว้ ${p.creditsReserved}</div>` : ''}</td>
               <td>${p.expiresOn ? Layout.date(p.expiresOn) : 'ไม่หมดอายุ'}</td>
               <td class="num">${Layout.money(p.deferredBalance)}</td>
               <td>${Layout.esc(p.statusLabel)}${p.warning ? `<div class="cc-warn">⚠️ ${Layout.esc(p.warning)}</div>` : ''}</td>
@@ -339,15 +393,25 @@
               <td class="num">${l.recognizedAmount ? Layout.money(l.recognizedAmount) : '-'}</td><td>${Layout.esc(l.journalEntryNumber || '')}</td><td class="text-xs">${Layout.esc(l.note || '')}</td></tr>`).join('');
           const bookings = d.bookings.map(b => `<tr><td>${Layout.dateTime(b.startAt)}</td><td>${Layout.esc(b.sessionTitle || b.externalRef || '-')}</td><td>${Layout.esc(b.trainerName || '-')}</td>
               <td class="num">${b.credits}</td><td>${Layout.esc(b.statusLabel)}</td><td>${this.bookingActions(b)}</td></tr>`).join('');
+          const unlimited = p.kind === 'UnlimitedPeriod';
+          const freezes = (d.freezes || []).map(f => `<tr><td>${Layout.date(f.fromDate)} – ${Layout.date(f.toDate)}</td><td class="num">${f.days}</td><td>${Layout.esc(f.reason)}</td>
+              <td>${f.cancelledAt ? 'ยกเลิกแล้ว' : (p.status === 'Active' ? `<button class="btn btn-sm btn-ghost text-danger" onclick="Page.cancelFreeze('${p.id}','${f.id}')">ยกเลิกการพัก</button>` : '')}</td></tr>`).join('');
           document.getElementById('passBodyDetail').innerHTML = `
             <div class="cc-cards">
-              <div class="cc-card"><div class="k">คงเหลือ</div><div class="v">${p.creditsAvailable} ${Layout.esc(p.unitLabel)}</div><div class="text-xs text-gray-500">ใช้ ${p.creditsUsed} · จองไว้ ${p.creditsReserved} · ทั้งหมด ${p.creditsTotal}</div></div>
-              <div class="cc-card"><div class="k">มูลค่าสัญญา (สุทธิก่อน VAT)</div><div class="v">${Layout.money(p.contractAmount)}</div><div class="text-xs text-gray-500">รับรู้ต่อเครดิต ${Layout.money(p.pricePerCredit)} (ครั้งสุดท้ายรับส่วนที่เหลือ)</div></div>
+              ${unlimited
+                ? `<div class="cc-card"><div class="k">สมาชิกไม่จำกัดครั้ง</div><div class="v">${p.periodDays} วันใช้งาน</div><div class="text-xs text-gray-500">เริ่ม ${p.periodStartsOn ? Layout.date(p.periodStartsOn) : '-'} · มาแล้ว ${p.creditsUsed} ครั้ง · จองไว้ ${p.creditsReserved} · ต่อวันไม่เกิน ${p.maxBookingsPerDay}</div></div>`
+                : `<div class="cc-card"><div class="k">คงเหลือ</div><div class="v">${p.creditsAvailable} ${Layout.esc(p.unitLabel)}</div><div class="text-xs text-gray-500">ใช้ ${p.creditsUsed} · จองไว้ ${p.creditsReserved} · ทั้งหมด ${p.creditsTotal}</div></div>`}
+              <div class="cc-card"><div class="k">มูลค่าสัญญา (สุทธิก่อน VAT)</div><div class="v">${Layout.money(p.contractAmount)}</div><div class="text-xs text-gray-500">${unlimited
+                ? `รับรู้ตามวัน ${Layout.money(p.periodDailyAmount)}/วัน (วันสุดท้ายรับส่วนที่เหลือ) · ถึง ${p.recognizedThroughDate ? Layout.date(p.recognizedThroughDate) : 'ยังไม่เริ่ม'}`
+                : `รับรู้ต่อเครดิต ${Layout.money(p.pricePerCredit)} (ครั้งสุดท้ายรับส่วนที่เหลือ)`}</div></div>
               <div class="cc-card"><div class="k">รับรู้รายได้แล้ว</div><div class="v">${Layout.money(p.recognizedAmount)}</div></div>
               <div class="cc-card"><div class="k">รับล่วงหน้าคงเหลือ</div><div class="v">${Layout.money(p.deferredBalance)}</div></div>
             </div>
             <div class="text-sm" style="margin-bottom:8px">${Layout.esc(p.packageName)} · ${Layout.esc(p.statusLabel)} · ใช้ได้ถึง ${p.expiresOn ? Layout.date(p.expiresOn) : 'ไม่หมดอายุ'} · เอกสารขาย ${Layout.esc(p.saleDocumentNumber || '-')}
               ${p.warning ? `<div class="cc-warn">⚠️ ${Layout.esc(p.warning)}</div>` : ''}</div>
+            ${p.maxFreezeDays > 0 || freezes ? `<h4 style="margin:12px 0 6px;font-weight:600">การพักบัตร (ใช้ไป ${p.frozenDays}/${p.maxFreezeDays} วัน)</h4>
+            <div class="table-container"><table class="table"><thead><tr><th>ช่วง</th><th class="text-right">วัน</th><th>เหตุผล</th><th></th></tr></thead>
+              <tbody>${freezes || '<tr><td colspan="4" class="text-center text-gray-400">ยังไม่เคยพัก</td></tr>'}</tbody></table></div>` : ''}
             <h4 style="margin:12px 0 6px;font-weight:600">การจอง</h4>
             <div class="table-container"><table class="table"><thead><tr><th>วัน-เวลา</th><th>คลาส</th><th>ครูฝึก</th><th class="text-right">เครดิต</th><th>สถานะ</th><th></th></tr></thead>
               <tbody>${bookings || '<tr><td colspan="6" class="text-center text-gray-400">ยังไม่มีการจอง</td></tr>'}</tbody></table></div>
@@ -358,6 +422,9 @@
           document.getElementById('passFooter').innerHTML = `
             ${active && p.warning ? `<button class="btn btn-secondary" onclick="Page.expirePass('${p.id}')">ปิดบัตรหมดอายุ</button>` : ''}
             ${active && p.deferredBalance > 0 && p.saleDocumentId ? `<button class="btn btn-secondary" onclick="Page.refundDraft('${p.id}')">ออกใบลดหนี้คืนเงิน (ร่าง)</button>` : ''}
+            ${active && p.expiresOn && p.maxFreezeDays > p.frozenDays ? `<button class="btn btn-secondary" onclick="Page.openMembership('freeze')">พักบัตร</button>` : ''}
+            ${active && p.expiresOn ? `<button class="btn btn-secondary" onclick="Page.openMembership('extend')">ขยายอายุ</button>` : ''}
+            ${active ? `<button class="btn btn-secondary" onclick="Page.openMembership('transfer')">โอนบัตร</button>` : ''}
             ${active ? `<button class="btn btn-primary" onclick="Page.openOne()">จองตัวต่อตัว</button>` : ''}
             <button class="btn btn-secondary" onclick="Layout.closeModal('passModal')">ปิด</button>`;
           Layout.openModal('passModal');
@@ -440,7 +507,7 @@
       // ---------- ขาย ----------
       packageOptions(activeOnly) {
         return this.pkgs.filter(p => !activeOnly || p.isActive).map(p =>
-          `<option value="${p.id}">${Layout.esc(p.code)} · ${Layout.esc(p.name)} — ${p.creditQuantity} ${Layout.esc(p.unitLabel)} · ${Layout.money(p.price)}</option>`).join('');
+          `<option value="${p.id}">${Layout.esc(p.code)} · ${Layout.esc(p.name)} — ${p.kind === 'UnlimitedPeriod' ? `ไม่จำกัดครั้ง ${p.validityDays} วัน` : `${p.creditQuantity} ${Layout.esc(p.unitLabel)}`} · ${Layout.money(p.price)}</option>`).join('');
       },
       async openSell() {
         const sel = document.getElementById('sPackage');
@@ -548,7 +615,7 @@
         try {
           const d = (await API.get(`${this.base()}/passes?contactId=${encodeURIComponent(contactId)}&status=Active&pageSize=50`)).data;
           const items = d.items || [];
-          sel.innerHTML = items.length ? items.map(p => `<option value="${p.id}">${Layout.esc(p.passNumber)} · ${Layout.esc(p.packageName)} (เหลือ ${p.creditsAvailable} ${Layout.esc(p.unitLabel)})</option>`).join('')
+          sel.innerHTML = items.length ? items.map(p => `<option value="${p.id}">${Layout.esc(p.passNumber)} · ${Layout.esc(p.packageName)} (${p.kind === 'UnlimitedPeriod' ? 'ไม่จำกัดครั้ง' : `เหลือ ${p.creditsAvailable} ${Layout.esc(p.unitLabel)}`})</option>`).join('')
             : '<option value="">ลูกค้านี้ไม่มีบัตรที่ใช้งานได้ — ขายคอร์สก่อน</option>';
         } catch (e) { sel.innerHTML = `<option value="">โหลดบัตรไม่สำเร็จ: ${Layout.esc(e.message)}</option>`; }
       },
@@ -561,13 +628,116 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
+      // ---------- รอบ 209 P5: สมาชิก — พัก / ขยาย / โอน (ตัวตัดสินทั้งหมดอยู่ที่เซิร์ฟเวอร์ · หน้านี้ส่งค่าแล้วแสดงข้อความที่ได้) ----------
+      kindChanged() {
+        const unlimited = document.getElementById('pKind').value === 'UnlimitedPeriod';
+        document.getElementById('pUnlimitedRow').style.display = unlimited ? '' : 'none';
+        document.getElementById('pCreditsRow').style.display = unlimited ? 'none' : '';
+        document.getElementById('pDaysLabel').textContent = unlimited ? 'จำนวนวันของสมาชิก * (รับรู้รายได้เส้นตรงรายวัน)' : 'อายุใช้งาน (วัน · 0 = ไม่หมดอายุ)';
+      },
+      openMembership(kind) {
+        this._memKind = kind;
+        const p = this.curPass;
+        document.getElementById('memFreeze').style.display = kind === 'freeze' ? '' : 'none';
+        document.getElementById('memExtend').style.display = kind === 'extend' ? '' : 'none';
+        document.getElementById('memTransfer').style.display = kind === 'transfer' ? '' : 'none';
+        document.getElementById('memTitle').textContent = { freeze: 'พักบัตร', extend: 'ขยายอายุบัตร', transfer: 'โอนบัตร' }[kind] + ' ' + p.passNumber;
+        document.getElementById('memHint').textContent = {
+          freeze: `พักได้อีก ${Math.max(0, p.maxFreezeDays - p.frozenDays)} วัน · วันหมดอายุเลื่อนออกเท่าจำนวนวันที่พัก · ระหว่างพักจองไม่ได้${p.kind === 'UnlimitedPeriod' ? ' และไม่รับรู้รายได้' : ''}`,
+          extend: 'ขยายอายุไม่มีรายการเงิน (บันทึก + audit)' + (p.kind === 'UnlimitedPeriod' ? ' · รายได้ที่ยังไม่รับรู้กระจายบนวันที่เหลือรวมวันที่เพิ่ม' : ''),
+          transfer: 'ปิดบัตรนี้และเปิดบัตรใหม่ให้ผู้รับยอดที่เหลือเท่าเดิม · ไม่ออกใบกำกับภาษีใหม่ (โอนภายใน) · ต้องไม่มีการจองค้าง',
+        }[kind];
+        ['mFrom', 'mTo', 'mReason', 'mContactId', 'mContactName'].forEach(i => document.getElementById(i).value = '');
+        document.getElementById('mDays').value = 7;
+        Layout.openModal('memModal');
+      },
+      async submitMembership() {
+        const p = this.curPass, g = i => document.getElementById(i).value, reason = g('mReason').trim() || null;
+        const btn = document.getElementById('memBtn'); btn.disabled = true;
+        try {
+          let r;
+          if (this._memKind === 'freeze') r = await API.post(`${this.base()}/passes/${p.id}/freeze`, { fromDate: g('mFrom') || null, toDate: g('mTo') || null, reason });
+          else if (this._memKind === 'extend') r = await API.post(`${this.base()}/passes/${p.id}/extend`, { days: Number(g('mDays') || 0), reason });
+          else r = await API.post(`${this.base()}/passes/${p.id}/transfer`, { toContactId: g('mContactId') || null, reason });
+          Layout.toast(r.message || 'บันทึกแล้ว', 'success'); Layout.closeModal('memModal');
+          await this.loadSummary(); await this.loadPasses();
+          await this.openPass(r.data.id);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+      async cancelFreeze(passId, freezeId) {
+        if (!confirm('ยกเลิกการพักนี้? วันหมดอายุจะเลื่อนกลับ')) return;
+        try { await API.post(`${this.base()}/passes/${passId}/freezes/${freezeId}/cancel`, {}); Layout.toast('ยกเลิกการพักแล้ว'); await this.openPass(passId); await this.loadPasses(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ---------- รอบ 209 P5: รายงานคลาส (R-209-C7) ----------
+      pct(v) { return v == null ? '—' : Number(v).toLocaleString('th-TH', { maximumFractionDigits: 2 }) + '%'; },
+      groupTable(title, rows) {
+        const body = rows.map(r => `<tr><td>${Layout.esc(r.name)}</td><td class="num">${r.classes}</td><td class="num">${r.booked}/${r.capacity}</td>
+            <td class="num">${this.pct(r.fillRatePercent)}</td><td class="num">${r.attended}</td><td class="num">${r.noShow}</td><td class="num">${this.pct(r.noShowRatePercent)}</td></tr>`).join('')
+          || '<tr><td colspan="7" class="text-center text-gray-400">ไม่มีคลาสในช่วงนี้</td></tr>';
+        return `<h4 style="margin:12px 0 6px;font-weight:600">${title}</h4><div class="table-container"><table class="table"><thead><tr><th></th><th class="text-right">คลาส</th>
+          <th class="text-right">จอง/ความจุ</th><th class="text-right">Fill-rate</th><th class="text-right">มา</th><th class="text-right">ไม่มา</th><th class="text-right">No-show</th></tr></thead><tbody>${body}</tbody></table></div>`;
+      },
+      async loadReport() {
+        const from = document.getElementById('repFrom').value, to = document.getElementById('repTo').value;
+        const el = document.getElementById('repBody');
+        if (!from || !to) return;
+        try {
+          const q = new URLSearchParams({ fromDate: from, toDate: to, expiringWithinDays: document.getElementById('repExpDays').value || 14 });
+          const d = (await API.get(`${this.base()}/reports/classes?${q}`)).data;
+          const t = d.totals, r = d.retention;
+          const classes = d.classes.map(c => `<tr><td>${Layout.date(c.date)} ${Layout.esc(c.startTime)}</td><td>${Layout.esc(c.serviceName)}<div class="text-xs text-gray-500">${Layout.esc(c.source)}</div></td>
+              <td>${Layout.esc(c.instructors || '-')}</td><td class="num">${c.booked}/${c.capacity > 0 ? c.capacity : '?'}</td><td class="num">${c.sessionCancelled ? 'ยกเลิกรอบ' : this.pct(c.fillRatePercent)}</td>
+              <td class="num">${c.attended}</td><td class="num">${c.noShow}</td><td class="num">${c.cancelled}</td></tr>`).join('')
+            || '<tr><td colspan="8" class="text-center text-gray-400">ไม่มีคลาสในช่วงนี้</td></tr>';
+          const atRisk = r.atRisk.slice(0, 50).map(m => `<tr><td>${Layout.esc(m.name || '-')}</td><td>${Layout.date(m.lastActivity)}</td><td class="num">${m.daysSince}</td></tr>`).join('')
+            || '<tr><td colspan="3" class="text-center text-gray-400">ไม่มี</td></tr>';
+          const exp = d.expiring.map(x => `<tr><td>${Layout.esc(x.passNumber)}</td><td>${Layout.esc(x.contactName || '-')}</td><td>${Layout.esc(x.packageName)}</td>
+              <td>${Layout.date(x.expiresOn)} (${x.daysLeft} วัน)</td><td>${Layout.esc(x.remainingLabel)}</td><td class="num">${Layout.money(x.deferredBalance)}</td><td>${x.notified ? 'แจ้งแล้ว' : '-'}</td>
+              <td><button class="btn btn-sm btn-ghost" onclick="Page.openPass('${x.passId}')">เปิด</button></td></tr>`).join('')
+            || '<tr><td colspan="8" class="text-center text-gray-400">ไม่มีบัตรใกล้หมดอายุ</td></tr>';
+          el.innerHTML = `
+            <div class="cc-cards">
+              <div class="cc-card"><div class="k">คลาสในช่วงนี้</div><div class="v">${t.classes}</div><div class="text-xs text-gray-500">จอง ${t.booked} / ความจุ ${t.capacity}</div></div>
+              <div class="cc-card"><div class="k">Fill-rate เฉลี่ย</div><div class="v">${this.pct(t.fillRatePercent)}</div></div>
+              <div class="cc-card"><div class="k">No-show rate</div><div class="v">${this.pct(t.noShowRatePercent)}</div><div class="text-xs text-gray-500">ไม่มา ${t.noShow} · มา ${t.attended}</div></div>
+              <div class="cc-card"><div class="k">สมาชิกคงอยู่ (เทียบช่วงก่อน)</div><div class="v">${this.pct(r.retentionRatePercent)}</div>
+                <div class="text-xs text-gray-500">ช่วงนี้ ${r.activeThisPeriod} · ช่วงก่อน ${r.activeLastPeriod} · คงอยู่ ${r.retained} · หาย ${r.churned} · ใหม่ ${r.new}</div></div>
+            </div>
+            ${(d.notes || []).map(n => `<div class="text-xs text-gray-500">• ${Layout.esc(n)}</div>`).join('')}
+            <div class="grid grid-2 gap-3">${this.groupTable('แยกตามคลาส/บริการ', d.byService)}${this.groupTable('แยกตามผู้สอน', d.byInstructor)}</div>
+            <h4 style="margin:12px 0 6px;font-weight:600">บัตรใกล้หมดอายุ</h4>
+            <div class="table-container"><table class="table"><thead><tr><th>บัตร</th><th>ลูกค้า</th><th>แพ็กเกจ</th><th>หมดอายุ</th><th>คงเหลือ</th><th class="text-right">รับล่วงหน้าคงเหลือ</th><th>แจ้งเตือน</th><th></th></tr></thead><tbody>${exp}</tbody></table></div>
+            <h4 style="margin:12px 0 6px;font-weight:600">สมาชิกเสี่ยงหาย</h4>
+            <div class="table-container"><table class="table"><thead><tr><th>สมาชิก</th><th>มาครั้งล่าสุด</th><th class="text-right">ห่างมา (วัน)</th></tr></thead><tbody>${atRisk}</tbody></table></div>
+            <h4 style="margin:12px 0 6px;font-weight:600">รายคลาส</h4>
+            <div class="table-container"><table class="table"><thead><tr><th>วัน-เวลา</th><th>คลาส</th><th>ผู้สอน</th><th class="text-right">จอง/ความจุ</th><th class="text-right">Fill-rate</th><th class="text-right">มา</th><th class="text-right">ไม่มา</th><th class="text-right">ยกเลิก</th></tr></thead><tbody>${classes}</tbody></table></div>`;
+        } catch (e) { el.innerHTML = `<div class="cc-warn">โหลดรายงานไม่สำเร็จ: ${Layout.esc(e.message)}</div>`; }
+      },
+      async runPeriodRecognition() {
+        try {
+          const r = (await API.post(`${this.base()}/passes/recognize-due`, {})).data;
+          Layout.toast(`รับรู้รายได้สมาชิก ${r.passes} บัตร · ${Layout.money(r.recognized)}${r.failed ? ` · ล้ม ${r.failed}: ${r.messages.join(' | ')}` : ''}`, r.failed ? 'error' : 'success');
+          await this.loadSummary();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async runReminders() {
+        try {
+          const r = (await API.post(`${this.base()}/passes/send-expiry-reminders`, {})).data;
+          Layout.toast(`ถึงกำหนดแจ้ง ${r.due} · ส่งถึง ${r.sent}${r.failed ? ` · ส่งไม่ถึง ${r.failed}: ${r.messages.join(' | ')}` : ''}`, r.failed ? 'error' : 'success');
+          await this.loadReport();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       // ---------- แพ็กเกจ ----------
       async loadPackages() {
         await this.loadRefs();
         const showInactive = document.getElementById('pkgInactive').checked;
         const rows = this.pkgs.filter(p => showInactive || p.isActive);
         document.getElementById('pkgBody').innerHTML = rows.length ? rows.map(p => `<tr>
-          <td>${Layout.esc(p.code)}</td><td class="font-medium">${Layout.esc(p.name)}</td><td class="num">${p.creditQuantity} ${Layout.esc(p.unitLabel)}</td>
+          <td>${Layout.esc(p.code)}</td><td class="font-medium">${Layout.esc(p.name)}</td><td class="num">${p.kind === 'UnlimitedPeriod' ? 'ไม่จำกัดครั้ง' : `${p.creditQuantity} ${Layout.esc(p.unitLabel)}`}</td>
           <td>${p.validityDays ? p.validityDays + ' วัน' : 'ไม่หมดอายุ'}</td><td class="num">${Layout.money(p.price)}<div class="text-xs text-gray-500">${Layout.esc(p.vatLabel)}</div></td>
           <td>${Layout.esc(p.classFormatLabel)}</td><td class="num">${p.activePassCount}</td>
           <td>${p.isActive ? '<span class="badge badge-success">เปิดขาย</span>' : '<span class="badge badge-gray">ปิดขาย</span>'}</td>
@@ -595,6 +765,10 @@
         v('pDays', p ? p.validityDays : 90); v('pPrice', p ? p.price : ''); v('pVat', p ? String(p.vatRate) : '7');
         v('pFormat', p ? p.classFormat : 'Any'); v('pTrainerMode', p ? p.trainerMode : 'CustomerChooses'); v('pCancelHrs', p ? p.freeCancelHours : 24);
         v('pDesc', p ? (p.description || '') : ''); v('pSort', p ? p.sortOrder : 0);
+        // รอบ 209 P5 — ชนิด/ค่าสมาชิก: hydrate ตอนแก้ · ฟอร์มใหม่ = ค่าเริ่มต้น (ไม่ค้างค่าแพ็กเกจก่อน)
+        v('pKind', p ? (p.kind || 'Credits') : 'Credits'); v('pPerDay', p ? p.maxBookingsPerDay : 1); v('pMaxActive', p ? p.maxActiveBookings : 0);
+        v('pFreezeDays', p ? p.maxFreezeDays : 0); v('pRemindDays', p ? p.expiryReminderDays : 0);
+        this.kindChanged();
         document.getElementById('pVatIncl').checked = p ? p.priceIncludesVat : true;
         document.getElementById('pActive').checked = p ? p.isActive : true;
         this.chips('pTrainers', this.trainers, p ? p.trainerEmployeeIds : []);
@@ -612,7 +786,9 @@
           vatRate: Number(g('pVat')), classFormat: g('pFormat'), trainerMode: g('pTrainerMode'),
           allowedServiceIds: this.checked('pServices'), trainerEmployeeIds: this.checked('pTrainers'),
           freeCancelHours: Number(g('pCancelHrs') || 0), unearnedAccountId: g('pUnearned') || null, revenueAccountId: g('pRevenue') || null,
-          isActive: document.getElementById('pActive').checked, sortOrder: Number(g('pSort') || 0) };
+          isActive: document.getElementById('pActive').checked, sortOrder: Number(g('pSort') || 0),
+          kind: g('pKind'), maxBookingsPerDay: Number(g('pPerDay') || 1), maxActiveBookings: Number(g('pMaxActive') || 0),
+          maxFreezeDays: Number(g('pFreezeDays') || 0), expiryReminderDays: Number(g('pRemindDays') || 0) };
         const id = g('pId');
         try {
           if (id) await API.put(`${this.base()}/packages/${id}`, body); else await API.post(`${this.base()}/packages`, body);

@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าร้านค้า - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .ss-card { background:#fff;border:1px solid var(--gray-200);border-radius:12px;padding:18px 20px;margin-bottom:16px }
+    .ss-card h3 { font-size:16px;font-weight:600;margin-bottom:4px }
+    .ss-hint { font-size:12px;color:var(--gray-500);margin-bottom:12px }
+    .ss-row { display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid var(--gray-100) }
+    .ss-row:first-of-type { border-top:none }
+    .ss-row label { flex:1;cursor:pointer }
+    .ss-row small { display:block;color:var(--gray-500);font-size:12px }
+    .ss-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px }
+    .ss-table { width:100%;border-collapse:collapse;font-size:13px }
+    .ss-table th, .ss-table td { padding:6px 8px;border-bottom:1px solid var(--gray-100);text-align:left;vertical-align:top }
+    .ss-table input, .ss-table select { width:100%;padding:6px 8px;border:1px solid var(--gray-300);border-radius:6px;font-size:13px }
+    .ss-tabs { display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px }
+    .ss-tab.active { background:var(--primary,#4F46E5);color:#fff;border-color:transparent }
+    .ss-warn { background:#fffbeb;border:1px solid #fcd34d;color:#78350f;border-radius:8px;padding:10px 14px;font-size:13px;margin-top:8px }
+    .ss-zone { border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;margin-bottom:12px }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb"></div>
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">⚙️ ตั้งค่าร้านค้า</h2>
+        <p class="page-subtitle">วิธีรับสินค้า · วิธีชำระ · ฟอร์มสั่งซื้อ · ค่าส่ง · คูปอง · เลขคำสั่งซื้อ — ทุกค่าตรวจที่เซิร์ฟเวอร์ (ค่าเริ่มต้น = พฤติกรรมเดิมของร้าน)</p>
+      </div>
+      <div class="flex gap-2" style="flex-wrap:wrap">
+        <a class="btn btn-secondary" id="ordersLink" href="/pages/cms-orders.html">🛒 คำสั่งซื้อ</a>
+        <select class="form-input" id="siteSelector" onchange="Page.onSiteChange()" style="min-width:220px"><option value="">กำลังโหลดเว็บไซต์...</option></select>
+      </div>
+    </div>
+
+    <div class="ss-tabs">
+      <button class="btn btn-secondary btn-sm ss-tab" data-tab="general" onclick="Page.tab('general')">สวิตช์ร้าน</button>
+      <button class="btn btn-secondary btn-sm ss-tab" data-tab="payment" onclick="Page.tab('payment')">วิธีชำระ</button>
+      <button class="btn btn-secondary btn-sm ss-tab" data-tab="form" onclick="Page.tab('form')">ฟอร์มสั่งซื้อ</button>
+      <button class="btn btn-secondary btn-sm ss-tab" data-tab="shipping" onclick="Page.tab('shipping')">โซน/อัตราค่าส่ง</button>
+      <button class="btn btn-secondary btn-sm ss-tab" data-tab="coupons" onclick="Page.tab('coupons')">คูปอง</button>
+    </div>
+
+    <!-- ── สวิตช์ร้าน + เลขคำสั่งซื้อ ── -->
+    <section data-pane="general">
+      <div class="ss-card">
+        <h3>🚚 วิธีรับสินค้า</h3>
+        <div class="ss-hint">ต้องเปิดอย่างน้อย 1 วิธี · ปิดจัดส่ง = หน้าร้านไม่แสดงที่อยู่/ค่าส่ง และเซิร์ฟเวอร์ปฏิเสธคำสั่งซื้อแบบจัดส่ง</div>
+        <div class="ss-row"><input type="checkbox" id="sw_enableShipping"><label for="sw_enableShipping">รับคำสั่งซื้อแบบจัดส่ง<small>ปิด = ร้านมารับเองอย่างเดียว</small></label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_enablePickup"><label for="sw_enablePickup">ให้ลูกค้ามารับเองที่ร้าน<small>ไม่มีค่าส่ง · วันปิดร้าน/ตัดรอบตั้งที่ ⚙️ สินค้าตามสั่ง ในหน้าคำสั่งซื้อ</small></label></div>
+        <div class="ss-grid" style="margin-top:8px">
+          <div><label class="form-label">ค่าส่งเหมาจ่าย (บาท · ร้านที่ไม่ได้ตั้งโซน)</label><input type="number" min="0" step="0.01" class="form-input" id="sw_flatShippingRate" placeholder="ว่าง = ไม่คิดค่าส่ง"></div>
+          <div><label class="form-label">ส่งฟรีเมื่อยอดสินค้าถึง (บาท)</label><input type="number" min="0" step="0.01" class="form-input" id="sw_freeShippingThreshold" placeholder="ว่าง = ไม่มี"></div>
+        </div>
+        <div class="ss-row"><input type="checkbox" id="sw_freeShippingOverridesZones"><label for="sw_freeShippingOverridesZones">ใช้ "ส่งฟรีเมื่อครบยอด" กับอัตราในโซนด้วย<small>ปิด = ใช้เฉพาะร้านที่ไม่ได้ตั้งโซน (อัตราในโซนใช้ "ส่งฟรีเมื่อครบ" ของอัตรานั้นเอง)</small></label></div>
+      </div>
+
+      <div class="ss-card">
+        <h3>🛍️ การสั่งซื้อ</h3>
+        <div class="ss-row"><input type="checkbox" id="sw_enableGuestCheckout"><label for="sw_enableGuestCheckout">สั่งซื้อได้โดยไม่ต้องสมัครสมาชิก<small>ปิด = ต้องเข้าสู่ระบบบัญชีลูกค้าของเว็บนี้ก่อนสั่ง</small></label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_autoConfirmOrders"><label for="sw_autoConfirmOrders">ยืนยันคำสั่งซื้อใหม่อัตโนมัติ<small>เปลี่ยนสถานะเป็น "ยืนยันแล้ว" ทันที — ไม่ใช่การรับเงิน (เงินยังต้องยืนยันตามเดิม)</small></label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_enableTaxInvoice"><label for="sw_enableTaxInvoice">ลูกค้าขอใบกำกับภาษีเต็มรูปที่หน้าร้านได้<small>ผู้ซื้อต้องกรอกชื่อ · ที่อยู่ · เลขผู้เสียภาษี 13 หลัก · สาขา 5 หลัก (ตรวจที่เซิร์ฟเวอร์ §86/4)</small></label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_enableQuoteConversion"><label for="sw_enableQuoteConversion">ลูกค้ากด "ขอใบเสนอราคา" แทนการชำระได้</label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_enableCoupons"><label for="sw_enableCoupons">ใช้คูปองส่วนลด<small>ปิด = ช่องโค้ดหายจากหน้าร้าน และส่วนลดค้างในตะกร้าไม่ถูกใช้</small></label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_enableWishlist"><label for="sw_enableWishlist">รายการโปรด (Wishlist) ของสมาชิก</label></div>
+      </div>
+
+      <div class="ss-card">
+        <h3>⭐ รีวิวสินค้า</h3>
+        <div class="ss-row"><input type="checkbox" id="sw_enableReviews"><label for="sw_enableReviews">รับและแสดงรีวิวสินค้า</label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_reviewAutoApprove"><label for="sw_reviewAutoApprove">แสดงรีวิวทันทีไม่ต้องรออนุมัติ</label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_reviewRequirePurchase"><label for="sw_reviewRequirePurchase">รับรีวิวเฉพาะผู้ที่ซื้อและได้รับสินค้าแล้ว</label></div>
+      </div>
+
+      <div class="ss-card">
+        <h3>🔢 เลขคำสั่งซื้อ</h3>
+        <div class="ss-hint">A–Z และตัวเลข ไม่เกิน 10 ตัว · มีผลกับคำสั่งซื้อที่สั่งหลังบันทึก (เลขเดิมไม่เปลี่ยน)</div>
+        <div class="ss-grid">
+          <div><label class="form-label">คำนำหน้า</label><input class="form-input" id="sw_orderNumberPrefix" maxlength="10" placeholder="WEB"></div>
+          <div><label class="form-label">ตัวอย่างเลขถัดไป</label><div id="orderNumberExample" style="padding:9px 0;font-family:monospace">-</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── วิธีชำระ ── -->
+    <section data-pane="payment" style="display:none">
+      <div class="ss-card">
+        <h3>💳 วิธีชำระเงิน</h3>
+        <div class="ss-hint">ต้องเปิดอย่างน้อย 1 วิธี · เลขบัญชี/PromptPay ตั้งที่ ⚙️ ในหน้าคำสั่งซื้อ · ชำระออนไลน์ใช้ผู้ให้บริการรับชำระของบริษัท (หน้า "ระบบรับชำระเงิน")</div>
+        <div class="ss-row"><input type="checkbox" id="sw_enableOnlinePayment"><label for="sw_enableOnlinePayment">ชำระออนไลน์ (บัตร/QR ผ่านผู้ให้บริการ — ยืนยันอัตโนมัติ)</label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_enableBankTransfer"><label for="sw_enableBankTransfer">โอน/PromptPay แล้วแนบสลิป (ร้านตรวจสลิป)</label></div>
+        <div class="ss-row"><input type="checkbox" id="sw_enableCod"><label for="sw_enableCod">เก็บเงินปลายทาง / ชำระเมื่อรับสินค้า<small>คำสั่งซื้อจะ "ยังไม่ชำระ" จนพนักงานบันทึกรับเงินในหน้าคำสั่งซื้อ · ใบกำกับออกตามเส้นเดิมตอนรับเงิน · สินค้าตามสั่งที่ต้องมัดจำใช้วิธีนี้ไม่ได้</small></label></div>
+      </div>
+    </section>
+
+    <!-- ── ฟอร์มสั่งซื้อ ── -->
+    <section data-pane="form" style="display:none">
+      <div class="ss-card">
+        <h3>📝 ช่องมาตรฐาน</h3>
+        <div class="ss-hint">ชื่อบังคับเสมอ · ต้องมีเบอร์หรืออีเมลอย่างน้อย 1 ช่อง · จัดส่ง = ที่อยู่บังคับเสมอ · ขอใบกำกับ = ข้อมูลผู้ซื้อบังคับเสมอ (ตั้งปิดไม่ได้) <span id="formState"></span></div>
+        <div class="ss-grid">
+          <div><label class="form-label">เบอร์โทร</label><select class="form-input" id="ff_phone"></select></div>
+          <div><label class="form-label">อีเมล</label><select class="form-input" id="ff_email"></select></div>
+          <div><label class="form-label">หมายเหตุ</label><select class="form-input" id="ff_notes"></select></div>
+          <div><label class="form-label">วันที่ต้องการรับสินค้า</label><select class="form-input" id="ff_requestedDate"></select></div>
+        </div>
+        <div class="ss-hint" style="margin-top:8px">วันที่ต้องการรับ: เลือกได้ตั้งแต่วันพร้อมเร็วสุด และไม่ตรงวันปิดร้าน/วันหยุด (เซิร์ฟเวอร์ตรวจ)</div>
+      </div>
+      <div class="ss-card">
+        <h3>➕ ช่องที่ร้านเพิ่มเอง <span style="font-size:12px;color:var(--gray-500)">(ไม่เกิน 10 ช่อง · คำตอบติดอยู่กับคำสั่งซื้อและหมายเหตุบนเอกสารขาย)</span></h3>
+        <div class="table-container"><table class="ss-table">
+          <thead><tr><th style="width:110px">รหัส (a-z 0-9 _)</th><th>ชื่อที่แสดง</th><th style="width:110px">ชนิด</th><th>ตัวเลือก (คั่นด้วย ,)</th><th style="width:120px">บังคับ</th><th style="width:110px">ใช้กับ</th><th style="width:70px">ยาวสุด</th><th style="width:40px"></th></tr></thead>
+          <tbody id="cfRows"></tbody>
+        </table></div>
+        <div class="flex gap-2" style="margin-top:10px;flex-wrap:wrap">
+          <button class="btn btn-secondary btn-sm" onclick="Page.addCustomField()">+ เพิ่มช่อง</button>
+          <button class="btn btn-secondary btn-sm" onclick="Page.resetForm()">↺ กลับเป็นฟอร์มเดิม</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── โซน/อัตราค่าส่ง ── -->
+    <section data-pane="shipping" style="display:none">
+      <div class="ss-card">
+        <h3>📦 โซนและอัตราค่าส่ง</h3>
+        <div class="ss-hint">ไม่มีโซน = ใช้ค่าส่งเหมาจ่ายของร้าน · จังหวัดคั่นด้วย , (ว่าง = ทุกจังหวัด) · รหัสไปรษณีย์ใช้ * แทนตัวเลข เช่น 10* · บันทึกโซน/อัตราได้ทันที (แยกจากปุ่มบันทึกค่าตั้ง)</div>
+        <div id="zoneList"></div>
+        <button class="btn btn-secondary btn-sm" onclick="Page.addZone()">+ เพิ่มโซน</button>
+      </div>
+    </section>
+
+    <!-- ── คูปอง ── -->
+    <section data-pane="coupons" style="display:none">
+      <div class="ss-card">
+        <h3>🏷️ คูปองส่วนลด</h3>
+        <div class="ss-hint" id="couponHint">บันทึกคูปองได้ทันที · ร้านปิดคูปองที่แท็บ "สวิตช์ร้าน" = ลูกค้าใช้ไม่ได้ทุกใบ</div>
+        <div class="table-container"><table class="ss-table">
+          <thead><tr><th>รหัส</th><th>ชนิด</th><th>มูลค่า</th><th>ยอดขั้นต่ำ</th><th>เริ่ม</th><th>หมดอายุ</th><th>สิทธิ์ (ใช้แล้ว)</th><th>ส่งฟรี</th><th>เปิด</th><th></th></tr></thead>
+          <tbody id="couponRows"></tbody>
+        </table></div>
+        <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="Page.addCoupon()">+ เพิ่มคูปอง</button>
+      </div>
+    </section>
+
+    <div id="saveBar" style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--gray-200);padding:12px 0;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" id="btnSave" onclick="Page.save()">💾 บันทึกค่าตั้งร้าน</button>
+      <span id="saveNote" style="font-size:13px;color:var(--gray-500)">สวิตช์ · วิธีชำระ · ฟอร์ม · เลขคำสั่งซื้อ บันทึกพร้อมกัน</span>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
+  <script>
+    // รอบ 209 P2 — หน้าแสดง/แก้ค่าอย่างเดียว: กติกา (ต้องมีวิธีรับ/ชำระ ≥ 1 · รูปคำนำหน้า · ช่องฟอร์ม) ตัดสินที่เซิร์ฟเวอร์
+    // (Helpers/CmsFeatureFlags · Helpers/OrderFormFields) แล้วข้อความผิดกลับมาแสดงตรง ๆ — ไม่มีสำเนากติกาในหน้านี้
+    const SWITCHES = ['enableShipping', 'enablePickup', 'freeShippingOverridesZones', 'enableGuestCheckout', 'autoConfirmOrders',
+      'enableTaxInvoice', 'enableQuoteConversion', 'enableCoupons', 'enableWishlist', 'enableReviews', 'reviewAutoApprove',
+      'reviewRequirePurchase', 'enableOnlinePayment', 'enableBankTransfer', 'enableCod'];
+    const RATE_TYPES = [['Flat', 'เหมาจ่าย'], ['ByWeight', 'ตามน้ำหนัก'], ['Free', 'ส่งฟรี']];
+    const COUPON_TYPES = [['Percentage', '% ส่วนลด'], ['FixedAmount', 'ลดเป็นบาท'], ['FreeShipping', 'ส่งฟรี']];
+    const APPLIES = [['all', 'ทุกวิธีรับ'], ['delivery', 'เฉพาะจัดส่ง'], ['pickup', 'เฉพาะมารับเอง']];
+
+    const Page = {
+      siteId: null, sites: [], cfg: null, customFields: [], zones: [], coupons: [], resetFormFlag: false,
+
+      async init() {
+        if (!Layout.init('cms-store-settings')) return;
+        this.tab('general');
+        try {
+          const sites = this.sites = await CmsSiteContext.loadSites();
+          const sel = document.getElementById('siteSelector');
+          const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'orders', allowAll: false });
+          CmsSiteContext.fillSelect(sel, sites, { module: 'orders', allowAll: false, value: picked });
+          this.onSiteChange();
+        } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      tab(name) {
+        document.querySelectorAll('[data-pane]').forEach(p => { p.style.display = p.dataset.pane === name ? '' : 'none'; });
+        document.querySelectorAll('.ss-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+        document.getElementById('saveBar').style.display = (name === 'shipping' || name === 'coupons') ? 'none' : 'flex';
+      },
+
+      async onSiteChange() {
+        const v = document.getElementById('siteSelector').value;
+        this.siteId = v || null;
+        CmsSiteContext.setUrl(v);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], v, 'ตั้งค่าร้านค้า', 'cms-store-settings');
+        document.getElementById('ordersLink').href = '/pages/cms-orders.html?siteId=' + encodeURIComponent(v || '');
+        if (!this.siteId) return;
+        await Promise.all([this.loadConfig(), this.loadZones(), this.loadCoupons()]);
+      },
+
+      // ───────── ค่าตั้งร้าน ─────────
+      async loadConfig() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const c = this.cfg = (await api.cmsGetCommerceConfig(this.siteId)).data;
+          SWITCHES.forEach(k => { const el = document.getElementById('sw_' + k); if (el) el.checked = !!c[k]; });
+          document.getElementById('sw_flatShippingRate').value = c.flatShippingRate ?? '';
+          document.getElementById('sw_freeShippingThreshold').value = c.freeShippingThreshold ?? '';
+          document.getElementById('sw_orderNumberPrefix').value = c.orderNumberPrefix || '';
+          document.getElementById('orderNumberExample').textContent = c.orderNumberExample || '-';
+          const opts = (c.formFieldRequirementOptions || []).map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+          const ff = c.orderFormFields || {};
+          ['phone', 'email', 'notes', 'requestedDate'].forEach(k => {
+            const el = document.getElementById('ff_' + k); el.innerHTML = opts; el.value = ff[k] || 'Optional';
+          });
+          document.getElementById('formState').textContent = c.orderFormFieldsConfigured ? ' · ตั้งค่าแล้ว' : ' · ใช้ฟอร์มเดิม (ยังไม่ได้ตั้ง)';
+          this.formTypes = c.formFieldTypes || ['text'];
+          this.reqOptions = c.formFieldRequirementOptions || [];
+          this.customFields = (ff.customFields || []).map(f => Object.assign({}, f));
+          this.resetFormFlag = false;
+          this.renderCustomFields();
+        } catch (e) { Layout.toast('โหลดค่าตั้งไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      renderCustomFields() {
+        const sel = (list, v) => list.map(([val, lbl]) => `<option value="${Layout.esc(val)}" ${val === v ? 'selected' : ''}>${Layout.esc(lbl)}</option>`).join('');
+        const typeList = (this.formTypes || []).map(t => [t, t]);
+        const reqList = (this.reqOptions || []).map(o => [o.value, o.label]);
+        document.getElementById('cfRows').innerHTML = this.customFields.map((f, i) => `<tr>
+            <td><input value="${Layout.esc(f.key || '')}" maxlength="30" onchange="Page.cf(${i}, 'key', this.value)"></td>
+            <td><input value="${Layout.esc(f.label || '')}" maxlength="100" onchange="Page.cf(${i}, 'label', this.value)"></td>
+            <td><select onchange="Page.cf(${i}, 'type', this.value)">${sel(typeList, f.type || 'text')}</select></td>
+            <td><input value="${Layout.esc((f.options || []).join(', '))}" placeholder="เฉพาะชนิด select" onchange="Page.cf(${i}, 'options', this.value)"></td>
+            <td><select onchange="Page.cf(${i}, 'requirement', this.value)">${sel(reqList, f.requirement || 'Optional')}</select></td>
+            <td><select onchange="Page.cf(${i}, 'appliesTo', this.value)">${sel(APPLIES, f.appliesTo || 'all')}</select></td>
+            <td><input type="number" min="1" max="500" value="${f.maxLength == null ? '' : Number(f.maxLength)}" onchange="Page.cf(${i}, 'maxLength', this.value)"></td>
+            <td><button class="btn btn-secondary btn-sm" onclick="Page.removeCustomField(${i})">✕</button></td>
+          </tr>`).join('') || '<tr><td colspan="8" style="color:var(--gray-500)">ยังไม่มีช่องที่เพิ่มเอง</td></tr>';
+      },
+      cf(i, k, v) {
+        const f = this.customFields[i]; if (!f) return;
+        if (k === 'options') f.options = String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+        else if (k === 'maxLength') f.maxLength = v === '' ? null : Number(v);
+        else f[k] = v;
+        this.resetFormFlag = false;
+      },
+      addCustomField() {
+        this.customFields.push({ key: 'field' + (this.customFields.length + 1), label: '', type: 'text', options: [], requirement: 'Optional', appliesTo: 'all', maxLength: null });
+        this.resetFormFlag = false;
+        this.renderCustomFields();
+      },
+      removeCustomField(i) { this.customFields.splice(i, 1); this.renderCustomFields(); },
+      resetForm() {
+        if (!confirm('กลับเป็นฟอร์มสั่งซื้อเดิม (ลบการตั้งค่าช่อง + ช่องที่เพิ่มเองทั้งหมด) เมื่อกดบันทึก?')) return;
+        this.resetFormFlag = true; this.customFields = []; this.renderCustomFields();
+        Layout.toast('จะกลับเป็นฟอร์มเดิมเมื่อกด "บันทึกค่าตั้งร้าน"', 'info');
+      },
+
+      _num(id) { const v = document.getElementById(id).value; return v === '' ? null : Number(v); },
+
+      async save() {
+        const api = Layout.api(); if (!api || !this.siteId) return;
+        const body = {};
+        SWITCHES.forEach(k => { const el = document.getElementById('sw_' + k); if (el) body[k] = el.checked; });
+        // ช่องว่าง = ล้างค่า (ไม่ใช่ "ไม่เปลี่ยน") — เซิร์ฟเวอร์รับธง clear แยก
+        const flat = this._num('sw_flatShippingRate'), free = this._num('sw_freeShippingThreshold');
+        if (flat == null) body.clearFlatShippingRate = true; else body.flatShippingRate = flat;
+        if (free == null) body.clearFreeShippingThreshold = true; else body.freeShippingThreshold = free;
+        body.orderNumberPrefix = document.getElementById('sw_orderNumberPrefix').value;
+        if (this.resetFormFlag) body.resetOrderFormFields = true;
+        else body.orderFormFields = {
+          phone: document.getElementById('ff_phone').value,
+          email: document.getElementById('ff_email').value,
+          notes: document.getElementById('ff_notes').value,
+          requestedDate: document.getElementById('ff_requestedDate').value,
+          customFields: this.customFields,
+        };
+        const btn = document.getElementById('btnSave'); btn.disabled = true;
+        try {
+          await api.cmsUpdateCommerceConfig(this.siteId, body);
+          Layout.toast('บันทึกค่าตั้งร้านแล้ว', 'success');
+          await this.loadConfig();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+
+      // ───────── โซน/อัตราค่าส่ง ─────────
+      async loadZones() {
+        const api = Layout.api(); if (!api) return;
+        try { this.zones = (await api.cmsListShippingZones(this.siteId)).data || []; }
+        catch (e) { this.zones = []; Layout.toast('โหลดโซนค่าส่งไม่สำเร็จ: ' + e.message, 'error'); }
+        this.renderZones();
+      },
+      renderZones() {
+        const typeSel = (v) => RATE_TYPES.map(([val, lbl]) => `<option value="${val}" ${val === v ? 'selected' : ''}>${lbl}</option>`).join('');
+        const num = (v) => v == null ? '' : Number(v);
+        document.getElementById('zoneList').innerHTML = this.zones.map((z, zi) => `<div class="ss-zone">
+            <div class="ss-grid">
+              <div><label class="form-label">ชื่อโซน</label><input class="form-input" id="z_name_${zi}" value="${Layout.esc(z.name || '')}"></div>
+              <div><label class="form-label">จังหวัด (คั่นด้วย ,)</label><input class="form-input" id="z_prov_${zi}" value="${Layout.esc(z.provinces || '')}"></div>
+              <div><label class="form-label">รหัสไปรษณีย์ (เช่น 10*,11*)</label><input class="form-input" id="z_post_${zi}" value="${Layout.esc(z.postalCodePatterns || '')}"></div>
+              <div><label class="form-label">ลำดับ</label><input type="number" class="form-input" id="z_sort_${zi}" value="${num(z.sortOrder) || 0}"></div>
+            </div>
+            <div class="flex gap-2" style="margin:8px 0;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" onclick="Page.saveZone(${zi})">💾 บันทึกโซน</button>
+              ${z.id ? `<button class="btn btn-secondary btn-sm" onclick="Page.deleteZone(${zi})">🗑 ลบโซน</button>` : ''}
+            </div>
+            ${z.id ? `<div class="table-container"><table class="ss-table"><thead><tr><th>ชื่ออัตรา</th><th>ผู้ขนส่ง</th><th>ชนิด</th><th>ค่าส่ง</th><th>บาท/กก.</th><th>ฟรีเมื่อครบ</th><th>กก. ต่ำ</th><th>กก. สูง</th><th>วันส่ง (ต่ำ–สูง)</th><th></th></tr></thead><tbody>
+              ${(z.rates || []).map((r, ri) => `<tr>
+                <td><input id="r_name_${zi}_${ri}" value="${Layout.esc(r.name || '')}"></td>
+                <td><input id="r_carrier_${zi}_${ri}" value="${Layout.esc(r.carrierName || '')}"></td>
+                <td><select id="r_type_${zi}_${ri}">${typeSel(r.rateType || 'Flat')}</select></td>
+                <td><input type="number" min="0" step="0.01" id="r_base_${zi}_${ri}" value="${num(r.baseRate)}"></td>
+                <td><input type="number" min="0" step="0.01" id="r_perkg_${zi}_${ri}" value="${num(r.perKgRate)}"></td>
+                <td><input type="number" min="0" step="0.01" id="r_free_${zi}_${ri}" value="${num(r.freeAboveAmount)}"></td>
+                <td><input type="number" min="0" step="0.001" id="r_minw_${zi}_${ri}" value="${num(r.minWeightKg)}"></td>
+                <td><input type="number" min="0" step="0.001" id="r_maxw_${zi}_${ri}" value="${num(r.maxWeightKg)}"></td>
+                <td style="white-space:nowrap"><input type="number" min="0" style="width:48%" id="r_dmin_${zi}_${ri}" value="${num(r.estimatedDeliveryDaysMin)}"><input type="number" min="0" style="width:48%" id="r_dmax_${zi}_${ri}" value="${num(r.estimatedDeliveryDaysMax)}"></td>
+                <td style="white-space:nowrap"><button class="btn btn-primary btn-sm" onclick="Page.saveRate(${zi}, ${ri})">💾</button>
+                  ${r.id ? `<button class="btn btn-secondary btn-sm" onclick="Page.deleteRate(${zi}, ${ri})">🗑</button>` : ''}</td>
+              </tr>`).join('')}
+              </tbody></table></div>
+              <button class="btn btn-secondary btn-sm" style="margin-top:6px" onclick="Page.addRate(${zi})">+ เพิ่มอัตรา</button>`
+            : '<div class="ss-hint">บันทึกโซนก่อน แล้วจึงเพิ่มอัตรา</div>'}
+          </div>`).join('') || '<div class="ss-hint">ยังไม่มีโซน — ร้านใช้ค่าส่งเหมาจ่าย (แท็บ "สวิตช์ร้าน")</div>';
+      },
+      addZone() { this.zones.push({ name: '', provinces: '', postalCodePatterns: '', sortOrder: this.zones.length, rates: [] }); this.renderZones(); },
+      async saveZone(zi) {
+        const api = Layout.api(); const z = this.zones[zi]; if (!api || !z) return;
+        const body = {
+          name: document.getElementById('z_name_' + zi).value.trim(),
+          provinces: document.getElementById('z_prov_' + zi).value.trim() || null,
+          postalCodePatterns: document.getElementById('z_post_' + zi).value.trim() || null,
+          countryCodes: z.countryCodes || 'TH',
+          sortOrder: Number(document.getElementById('z_sort_' + zi).value || 0),
+        };
+        try {
+          if (z.id) await api.cmsUpdateShippingZone(this.siteId, z.id, body);
+          else await api.cmsCreateShippingZone(this.siteId, body);
+          Layout.toast('บันทึกโซนแล้ว', 'success');
+          await this.loadZones();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteZone(zi) {
+        const api = Layout.api(); const z = this.zones[zi]; if (!api || !z || !z.id) return;
+        if (!confirm('ลบโซนนี้และอัตราทั้งหมดในโซน?')) return;
+        try { await api.cmsDeleteShippingZone(this.siteId, z.id); await this.loadZones(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      addRate(zi) { const z = this.zones[zi]; if (!z) return; (z.rates = z.rates || []).push({ name: '', rateType: 'Flat', baseRate: 0 }); this.renderZones(); },
+      async saveRate(zi, ri) {
+        const api = Layout.api(); const z = this.zones[zi]; const r = z && z.rates[ri]; if (!api || !r) return;
+        const v = (k) => document.getElementById(`r_${k}_${zi}_${ri}`).value;
+        const n = (k) => v(k) === '' ? null : Number(v(k));
+        const body = {
+          name: v('name').trim(), carrierName: v('carrier').trim() || null, rateType: v('type'),
+          baseRate: n('base') ?? 0, perKgRate: n('perkg'), freeAboveAmount: n('free'),
+          minWeightKg: n('minw'), maxWeightKg: n('maxw'),
+          estimatedDeliveryDaysMin: n('dmin'), estimatedDeliveryDaysMax: n('dmax'), sortOrder: ri,
+        };
+        try {
+          if (r.id) await api.cmsUpdateShippingRate(this.siteId, z.id, r.id, body);
+          else await api.cmsAddShippingRate(this.siteId, z.id, body);
+          Layout.toast('บันทึกอัตราแล้ว', 'success');
+          await this.loadZones();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteRate(zi, ri) {
+        const api = Layout.api(); const z = this.zones[zi]; const r = z && z.rates[ri]; if (!api || !r || !r.id) return;
+        if (!confirm('ลบอัตรานี้?')) return;
+        try { await api.cmsDeleteShippingRate(this.siteId, z.id, r.id); await this.loadZones(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ───────── คูปอง ─────────
+      async loadCoupons() {
+        const api = Layout.api(); if (!api) return;
+        try { this.coupons = (await api.cmsListCoupons(this.siteId)).data || []; }
+        catch (e) { this.coupons = []; Layout.toast('โหลดคูปองไม่สำเร็จ: ' + e.message, 'error'); }
+        this.renderCoupons();
+      },
+      renderCoupons() {
+        const typeSel = (v) => COUPON_TYPES.map(([val, lbl]) => `<option value="${val}" ${val === v ? 'selected' : ''}>${lbl}</option>`).join('');
+        const d = (v) => v ? String(v).slice(0, 10) : '';
+        const num = (v) => v == null ? '' : Number(v);
+        document.getElementById('couponRows').innerHTML = this.coupons.map((c, i) => `<tr>
+            <td><input id="c_code_${i}" value="${Layout.esc(c.code || '')}" ${c.id ? 'disabled' : ''} maxlength="64"></td>
+            <td><select id="c_type_${i}">${typeSel(c.discountType || 'Percentage')}</select></td>
+            <td><input type="number" min="0" step="0.01" id="c_value_${i}" value="${num(c.discountValue)}"></td>
+            <td><input type="number" min="0" step="0.01" id="c_min_${i}" value="${num(c.minOrderAmount)}"></td>
+            <td><input type="date" id="c_start_${i}" value="${d(c.startsAt)}"></td>
+            <td><input type="date" id="c_end_${i}" value="${d(c.expiresAt)}"></td>
+            <td style="white-space:nowrap"><input type="number" min="0" style="width:60%" id="c_max_${i}" value="${num(c.maxUses)}"> (${Number(c.currentUses || 0)})</td>
+            <td><input type="checkbox" id="c_free_${i}" ${c.freeShipping ? 'checked' : ''}></td>
+            <td><input type="checkbox" id="c_active_${i}" ${c.id ? (c.isActive ? 'checked' : '') : 'checked'}></td>
+            <td style="white-space:nowrap"><button class="btn btn-primary btn-sm" onclick="Page.saveCoupon(${i})">💾</button>
+              ${c.id ? `<button class="btn btn-secondary btn-sm" onclick="Page.deleteCoupon(${i})">🗑</button>` : ''}</td>
+          </tr>`).join('') || '<tr><td colspan="10" style="color:var(--gray-500)">ยังไม่มีคูปอง</td></tr>';
+      },
+      addCoupon() { this.coupons.push({ code: '', discountType: 'Percentage', discountValue: 10, isActive: true }); this.renderCoupons(); },
+      async saveCoupon(i) {
+        const api = Layout.api(); const c = this.coupons[i]; if (!api || !c) return;
+        const v = (k) => document.getElementById(`c_${k}_${i}`);
+        const n = (k) => v(k).value === '' ? null : Number(v(k).value);
+        const day = (k, end) => v(k).value ? v(k).value + (end ? 'T23:59:59' : 'T00:00:00') : null;
+        // ส่งค่าเดิมที่หน้านี้ไม่แก้กลับไปครบ (ขอบเขตสินค้า/หมวด · สิทธิ์ต่อคน · ส่วนลดสูงสุด) — ไม่ล้างเงียบ ๆ
+        const body = {
+          code: v('code').value.trim(), description: c.description || null,
+          discountType: v('type').value, discountValue: n('value') ?? 0,
+          maxDiscountAmount: c.maxDiscountAmount ?? null, minOrderAmount: n('min'),
+          scope: c.scope || 'AllProducts', categoryIds: c.categoryIds || null, productIds: c.productIds || null,
+          customerGroupTag: c.customerGroupTag || null,
+          startsAt: day('start', false), expiresAt: day('end', true),
+          maxUses: n('max'), maxUsesPerCustomer: c.maxUsesPerCustomer ?? null,
+          isFirstOrderOnly: !!c.isFirstOrderOnly, freeShipping: v('free').checked, isActive: v('active').checked,
+        };
+        try {
+          if (c.id) await api.cmsUpdateCoupon(this.siteId, c.id, body);
+          else await api.cmsCreateCoupon(this.siteId, body);
+          Layout.toast('บันทึกคูปองแล้ว', 'success');
+          await this.loadCoupons();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async deleteCoupon(i) {
+        const api = Layout.api(); const c = this.coupons[i]; if (!api || !c || !c.id) return;
+        if (!confirm('ลบคูปองนี้? (ลูกค้าใช้ไม่ได้อีก — ประวัติการใช้ยังอยู่)')) return;
+        try { await api.cmsDeleteCoupon(this.siteId, c.id); await this.loadCoupons(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

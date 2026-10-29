@@ -166,6 +166,8 @@ public class SiteCartItem : TenantEntity
     public string? ModifierSelectionsJson { get; set; }
     /// <summary>วันผลิตเพิ่มจากตัวเลือก (ตรึงตอนใส่ตะกร้า)</summary>
     public int ExtraLeadDays { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือก (<c>SiteProductVariant</c>) — ราคาตรึงตอนใส่ตะกร้าผ่าน <c>Helpers/CmsVariantPricing</c> · null = สินค้าไม่มี variant (เดิม)</summary>
+    public Guid? VariantId { get; set; }
 }
 
 // ===== Orders =====
@@ -197,6 +199,12 @@ public class SiteOrder : TenantEntity
     public string? ShippingEmail { get; set; }
     public string? ShippingMethod { get; set; }
     public string? TrackingNumber { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-B4): ผู้ขนส่ง — ตั้งจาก <c>SiteShippingRate.CarrierName</c> ของอัตราที่ลูกค้าเลือกตอนสั่ง · พนักงานแก้คู่กับเลขพัสดุ · null = ไม่ทราบ/มารับเอง</summary>
+    public string? ShippingCarrier { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-A1/B3): โทเคนสุ่มของหน้าสถานะออเดอร์ของแขก (<c>SiteOrderPublic.NewToken</c>) — ไม่ใช่ GUID ของออเดอร์ · ออเดอร์เดิม backfill ตอนบูต</summary>
+    public string? PublicToken { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-A9): คีย์กันกดสั่งซ้ำจากหน้าเว็บ (unique ต่อบริษัท+เว็บ) · null = ไม่ส่งมา (ผู้เรียกเดิม)</summary>
+    public string? IdempotencyKey { get; set; }
 
     // Billing
     public string? BillingName { get; set; }
@@ -250,6 +258,16 @@ public class SiteOrder : TenantEntity
     /// <summary>ทีม Q — วิธีออกเอกสารของมัดจำที่ตรึงตอนสั่ง (<c>Helpers.DepositInvoicingMode</c>) · null = ออเดอร์เดิม (= แบบเดิม)</summary>
     public string? DepositInvoicingMode { get; set; }
 
+    // ── รอบ 209 · P2 (คำตัดสินข้อ 168 ค/ง/จ · R-209-B11) — ตรึงตอนสั่ง ──
+    /// <summary>วิธีชำระที่ลูกค้าเลือกตอนสั่ง (<c>CmsFeatureFlags.PayNow</c>/<c>PayCod</c>) · null = ออเดอร์ก่อนมีช่องนี้ (= ชำระก่อน)</summary>
+    public string? PaymentMethodChoice { get; set; }
+    /// <summary>วันที่ลูกค้าขอรับ/ให้พร้อมส่ง (ตรวจกับวันพร้อมเร็วสุด + ปฏิทินร้านแล้ว · วันที่ 00:00 UTC) · null = ไม่ได้เลือก (เดิม)</summary>
+    public DateTime? RequestedReadyDate { get; set; }
+    /// <summary>คำตอบช่องที่ร้านเพิ่มเองบนฟอร์มสั่งซื้อ (JSON ป้าย+ค่า ณ ตอนสั่ง — <c>OrderFormFields.ParseAnswers</c>)</summary>
+    public string? CustomFieldsJson { get; set; }
+    /// <summary>วันส่งถึงโดยประมาณ (วันออกของ + วันขนส่งสูงสุดของอัตรา) · null = รับเอง/ไม่รู้จำนวนวันขนส่ง</summary>
+    public DateTime? EstimatedDeliveryDate { get; set; }
+
     public ICollection<SiteOrderLine> Lines { get; set; } = new List<SiteOrderLine>();
     public ICollection<SiteOrderPayment> Payments { get; set; } = new List<SiteOrderPayment>();
 }
@@ -282,6 +300,12 @@ public class SiteOrderLine : TenantEntity
 
     /// <summary>ตัวเลือกสินค้าตามสั่งที่ลูกค้าเลือก (สำเนาจากตะกร้า — ใบสั่งผลิต/ใบขายอ่านจากที่นี่)</summary>
     public string? ModifierSelectionsJson { get; set; }
+
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่ขาย (สำเนาจากตะกร้า) · null = ไม่มี variant (เดิม)</summary>
+    public Guid? VariantId { get; set; }
+    /// <summary>รอบ 209 P6 (E5/D3): สินค้า ERP ที่ถูกตัดสต็อกจริง (variant ที่ผูกสินค้า ERP หรือสินค้าแม่) — ตรึงตอนตัด ⇒ คืนสต็อกเข้าสินค้า/คลังเดียวกันเสมอ
+    /// (คู่กับ <see cref="WarehouseId"/>) · null = แถวเก่า/ยังไม่ตัด ⇒ สินค้าแม่ (เดิม)</summary>
+    public Guid? StockProductId { get; set; }
 }
 
 public class SiteOrderPayment : TenantEntity

@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Middleware;
 using Accounting.Models.DTOs;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -208,8 +209,20 @@ public class CmsCommerceController : ControllerBase
         Guid userIdGuid = Guid.Empty;
         try { userIdGuid = JwtHelper.GetUserIdFromClaims(User); } catch { }
         var userId = userIdGuid == Guid.Empty ? "guest" : userIdGuid.ToString();
+        // รอบ 209 P1: ลูกค้าของออเดอร์ = ลูกค้าที่ล็อกอินหน้าร้าน (โทเคน) · พนักงาน ERP ระบุแทนได้ · แขกนิรนาม ⇒ ไม่ผูก (CustomerId จาก body เดาได้)
+        var cfg = HttpContext.RequestServices.GetService(typeof(IConfiguration)) as IConfiguration;
+        var sf = cfg == null ? null : StorefrontCustomerAuth.FromRequest(Request, cfg);
+        // ฝ่ายค้านรอบ 209 (security ข้อ 2/6): "พนักงาน" = ผู้ใช้ ERP ที่มีสิทธิ์จัดการออเดอร์ของบริษัทนี้ (บัญชี ERP ใครก็สมัครได้)
+        var perms = HttpContext.RequestServices.GetService(typeof(IPermissionService)) as IPermissionService;
+        var staffOk = userIdGuid != Guid.Empty && perms != null && await perms.HasPermissionAsync(companyId, userIdGuid, PermissionKeys.CmsOrderManage);
+        request.CustomerId = StorefrontCustomerAuth.OrderCustomerId(request.CustomerId, staffOk, sf, siteId);
+        // A9: คีย์กันกดซ้ำจาก body หรือ header Idempotency-Key
+        request.IdempotencyKey = SiteOrderPublic.PickIdempotencyKey(request.IdempotencyKey, Request.Headers[SiteOrderPublic.IdempotencyHeader].FirstOrDefault());
         var result = await _commerceService.CreateOrderAsync(companyId, siteId, request, userId);
-        return StatusCode(201, new ApiResponse<OrderResponse>(true, result, CmsMessages.Get("order.created", Lang)));
+        // รอบ 209 P2: ร้านเปิด "ยืนยันออเดอร์อัตโนมัติ" ⇒ นับการใช้คูปองทันที (ทางเดียวกับพนักงานกดยืนยัน — idempotent)
+        if (result.Status == SiteOrderStatus.Confirmed)
+            await _couponService.RecordCouponUsageAsync(companyId, siteId, result.Id);
+        return StatusCode(201, new ApiResponse<OrderResponse>(true, staffOk ? result : SiteOrderPublic.ForGuestCreate(result), CmsMessages.Get("order.created", Lang)));
     }
 
     [HttpGet("orders")]
@@ -316,6 +329,9 @@ public class CmsCommerceController : ControllerBase
         [FromBody] ConvertOrderToQuotationRequest? req,
         [FromServices] IDocumentService docService)
     {
+        // รอบ 209 P2: ร้านปิด "ขอใบเสนอราคาแทนการชำระ" ⇒ ปฏิเสธพร้อมเหตุ (หน้าเว็บซ่อนปุ่มตาม payment-options ด้วย)
+        if (!(await _commerceService.GetFeatureFlagsAsync(companyId, siteId)).QuoteConversion)
+            return BadRequest(new ApiResponse<ConvertToQuotationResponse>(false, null, CmsFeatureFlags.QuoteConversionOffMessage));
         var notes = req?.CustomerNotes;
         if (!string.IsNullOrEmpty(notes) && notes.Length > 1000) notes = notes[..1000];
         var result = await _commerceService.ConvertOrderToQuotationAsync(companyId, siteId, orderId, notes, docService);

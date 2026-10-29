@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
@@ -49,6 +50,12 @@ public class CmsWishlistService : ICmsWishlistService
 
     public async Task<WishlistItemResponse> AddToWishlistAsync(Guid companyId, Guid siteId, Guid customerId, AddToWishlistRequest request)
     {
+        // รอบ 209 P2 (คำตัดสินข้อ 168 ก): ร้านปิดรายการโปรด ⇒ ปฏิเสธพร้อมเหตุ (ตัวตัดสินเดียว CmsFeatureFlags) · รายการเดิมยังอ่าน/ลบได้
+        var storeCfg = await _db.SiteCommerceConfigs.AsNoTracking()
+            .FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId);
+        if (!CmsFeatureFlags.Resolve(storeCfg).Wishlist)
+            throw new BusinessRuleException(CmsFeatureFlags.WishlistOffMessage, CmsFeatureFlags.RuleCode);
+
         var product = await _db.SiteProducts.AsNoTracking()
             .Include(p => p.Product)
             .FirstOrDefaultAsync(p => p.Id == request.SiteProductId && p.SiteId == siteId && p.CompanyId == companyId)

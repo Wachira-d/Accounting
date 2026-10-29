@@ -25,7 +25,7 @@ namespace Accounting.Services.Implementations;
 /// </list></para>
 /// <para>ทุกการขยับยอดล็อกแถวบัตร (<c>FOR UPDATE</c>) ในธุรกรรมเดียวกับ JE + สมุดเครดิต + audit</para>
 /// </summary>
-public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
+public partial class CourseCreditService : ICourseCreditService, ICreditBookingLedger
 {
     private const string Origin = "CourseCredit";
     private const string UnearnedCode = "21713";
@@ -34,12 +34,16 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
     private readonly AccountingDbContext _db;
     private readonly IDocumentService _docService;
     private readonly ILogger<CourseCreditService> _logger;
+    /// <summary>รอบ 209 P5 — แจ้งเตือนบัตรใกล้หมดอายุ (อีเมล → LINE · ช่องทางเดียวกับเครื่องจอง) · null = ไม่มีช่องส่ง (ล้มดังต่อบัตร ไม่ประทับว่าส่งแล้ว)</summary>
+    private readonly IBookingNotifier? _notifier;
 
-    public CourseCreditService(AccountingDbContext db, IDocumentService docService, ILogger<CourseCreditService> logger)
+    public CourseCreditService(AccountingDbContext db, IDocumentService docService, ILogger<CourseCreditService> logger,
+        IBookingNotifier? notifier = null)
     {
         _db = db;
         _docService = docService;
         _logger = logger;
+        _notifier = notifier;
     }
 
     // ===================================================================== แพ็กเกจ
@@ -89,9 +93,20 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
     {
         if (string.IsNullOrWhiteSpace(r.Name)) throw new BusinessRuleException("ระบุชื่อแพ็กเกจ", CourseCreditMath.RuleCode);
         if (string.IsNullOrWhiteSpace(r.Code)) throw new BusinessRuleException("ระบุรหัสแพ็กเกจ", CourseCreditMath.RuleCode);
-        if (r.CreditQuantity <= 0m) throw new BusinessRuleException("จำนวนครั้ง/ชั่วโมงต้องมากกว่า 0", CourseCreditMath.RuleCode);
-        if (r.Unit == CreditUnit.Session && r.CreditQuantity != Math.Floor(r.CreditQuantity))
-            throw new BusinessRuleException("แพ็กเกจแบบ \"ครั้ง\" ต้องเป็นจำนวนเต็ม", CourseCreditMath.RuleCode);
+        if (!CourseCreditMath.IsUnlimited(r.Kind))
+        {
+            if (r.CreditQuantity <= 0m) throw new BusinessRuleException("จำนวนครั้ง/ชั่วโมงต้องมากกว่า 0", CourseCreditMath.RuleCode);
+            if (r.Unit == CreditUnit.Session && r.CreditQuantity != Math.Floor(r.CreditQuantity))
+                throw new BusinessRuleException("แพ็กเกจแบบ \"ครั้ง\" ต้องเป็นจำนวนเต็ม", CourseCreditMath.RuleCode);
+        }
+        else if (r.ValidityDays <= 0)
+            // รอบ 209 P5 (R-209-C5): สมาชิกไม่จำกัดรับรู้รายได้ตามวัน ⇒ ต้องมีจำนวนวัน (ไม่มีวันหมด = รับรู้ไม่ได้เลย)
+            throw new BusinessRuleException("สมาชิกไม่จำกัดต้องระบุจำนวนวัน (อายุใช้งาน) มากกว่า 0", CourseCreditMath.MembershipRuleCode);
+        if (r.MaxBookingsPerDay < 1 || r.MaxBookingsPerDay > 50) throw new BusinessRuleException("จองได้ต่อวันต้องอยู่ระหว่าง 1–50", CourseCreditMath.MembershipRuleCode);
+        if (r.MaxActiveBookings < 0 || r.MaxActiveBookings > 365) throw new BusinessRuleException("จองค้างพร้อมกันต้องอยู่ระหว่าง 0–365 (0 = ไม่จำกัด)", CourseCreditMath.MembershipRuleCode);
+        if (r.MaxFreezeDays < 0 || r.MaxFreezeDays > CourseCreditMath.MaxFreezeDaysCap)
+            throw new BusinessRuleException($"พักบัตรได้สูงสุดต้องอยู่ระหว่าง 0–{CourseCreditMath.MaxFreezeDaysCap} วัน (0 = ไม่อนุญาต)", CourseCreditMath.MembershipRuleCode);
+        if (r.ExpiryReminderDays < 0 || r.ExpiryReminderDays > 90) throw new BusinessRuleException("แจ้งเตือนก่อนหมดอายุต้องอยู่ระหว่าง 0–90 วัน (0 = ไม่แจ้ง)", CourseCreditMath.MembershipRuleCode);
         if (r.Price <= 0m) throw new BusinessRuleException("ราคาต้องมากกว่า 0", CourseCreditMath.RuleCode);
         if (r.ValidityDays < 0) throw new BusinessRuleException("อายุใช้งานต้องไม่ติดลบ (0 = ไม่หมดอายุ)", CourseCreditMath.RuleCode);
         if (r.FreeCancelHours < 0) throw new BusinessRuleException("ชั่วโมงยกเลิกฟรีต้องไม่ติดลบ", CourseCreditMath.RuleCode);
@@ -136,6 +151,13 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         p.RevenueAccountId = r.RevenueAccountId;
         p.IsActive = r.IsActive;
         p.SortOrder = r.SortOrder;
+        // รอบ 209 P5 — สมาชิกไม่จำกัดไม่มีจำนวนเครดิต (เก็บ 0 · ไม่ให้ค่าค้างเข้าใจผิด)
+        p.Kind = r.Kind;
+        if (CourseCreditMath.IsUnlimited(r.Kind)) p.CreditQuantity = 0m;
+        p.MaxBookingsPerDay = r.MaxBookingsPerDay;
+        p.MaxActiveBookings = r.MaxActiveBookings;
+        p.MaxFreezeDays = r.MaxFreezeDays;
+        p.ExpiryReminderDays = r.ExpiryReminderDays;
     }
 
     // ===================================================================== ขาย
@@ -195,8 +217,8 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         var saleDate = ThaiDate.CalendarDateUtc(request.SaleDate ?? DateTime.UtcNow);
         var vatRegistered = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.IsVatRegistered).FirstOrDefaultAsync(ct);
         var shape = CourseCreditMath.SaleDocumentShape(vatRegistered, pkg.VatRate);
-        var expiresOn = CourseCreditMath.ExpiresOn(saleDate, pkg.ValidityDays);
-        var desc = $"{pkg.Name} — {pkg.CreditQuantity:0.##} {UnitTh(pkg.Unit)}"
+        var expiresOn = PassExpiresOn(pkg, saleDate);
+        var desc = $"{pkg.Name} — {(CourseCreditMath.IsUnlimited(pkg.Kind) ? $"ไม่จำกัดครั้ง {pkg.ValidityDays} วัน" : $"{pkg.CreditQuantity:0.##} {UnitTh(pkg.Unit)}")}"
             + (expiresOn is DateTime e ? $" · ใช้ได้ถึง {ThaiDate.ToThaiDisplayString(e)}" : " · ไม่มีวันหมดอายุ")
             + " (ค่าบริการรับล่วงหน้า — รับรู้รายได้เมื่อใช้บริการ)";
 
@@ -338,8 +360,12 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
                 Unit = pkg.Unit, ClassFormat = pkg.ClassFormat, AllowedServiceIds = pkg.AllowedServiceIds,
                 FreeCancelHours = pkg.FreeCancelHours,
                 PurchasedAt = doc.DocumentDate,
-                ExpiresOn = CourseCreditMath.ExpiresOn(doc.DocumentDate, pkg.ValidityDays),
-                CreditsTotal = pkg.CreditQuantity,
+                ExpiresOn = PassExpiresOn(pkg, doc.DocumentDate),
+                CreditsTotal = CourseCreditMath.IsUnlimited(pkg.Kind) ? 0m : pkg.CreditQuantity,
+                // รอบ 209 P5 — ตรึงกติกาสมาชิกลงบัตร (แก้แพ็กเกจภายหลังไม่ย้อนเปลี่ยน)
+                Kind = pkg.Kind, MaxBookingsPerDay = pkg.MaxBookingsPerDay, MaxActiveBookings = pkg.MaxActiveBookings, MaxFreezeDays = pkg.MaxFreezeDays,
+                PeriodDays = CourseCreditMath.IsUnlimited(pkg.Kind) ? pkg.ValidityDays : 0,
+                PeriodStartsOn = CourseCreditMath.IsUnlimited(pkg.Kind) ? ThaiDate.CalendarDateUtc(doc.DocumentDate) : null,
                 ContractAmount = contract,
                 UnearnedAccountId = unearnedAccountId, RevenueAccountId = revenueAccountId,
                 SaleChannel = channel, SaleDocumentId = doc.Id, SaleDocumentNumber = doc.DocumentNumber,
@@ -349,7 +375,8 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             _db.CreditLedgerEntries.Add(new CreditLedgerEntry
             {
                 CompanyId = companyId, CreatedBy = actor, PassId = pass.Id, Kind = CreditLedgerKind.Purchase,
-                Credits = pass.CreditsTotal, Note = $"ซื้อ {pkg.Name} — {doc.DocumentNumber} · ค่าบริการรับล่วงหน้า {contract:N2}",
+                Credits = pass.CreditsTotal, Note = $"ซื้อ {pkg.Name} — {doc.DocumentNumber} · ค่าบริการรับล่วงหน้า {contract:N2}"
+                    + (CourseCreditMath.IsUnlimited(pkg.Kind) ? $" · สมาชิกไม่จำกัด {pass.PeriodDays} วัน (รับรู้รายได้เส้นตรงรายวัน)" : ""),
             });
             _db.AddChainedAuditLog(Audit(companyId, actor, AuditAction.Create, "CreditPass", pass.Id, new
             {
@@ -478,12 +505,16 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         var bookings = await _db.CreditClassBookings.AsNoTracking()
             .Where(b => b.CompanyId == companyId && b.PassId == passId)
             .OrderByDescending(b => b.StartAt).ToListAsync(ct);
+        var freezes = await _db.CreditPassFreezes.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.PassId == passId)
+            .OrderBy(f => f.FromDate).ToListAsync(ct);
         return new CreditPassDetailResponse(
             MapPass(pass, names, DateTime.UtcNow),
             ledger.Select(l => new CreditLedgerEntryResponse(l.Id, l.Kind, KindTh(l.Kind), l.Credits, l.RecognizedAmount,
                 l.BookingId, l.JournalEntryId, l.JournalEntryId is Guid j && jeNumbers.TryGetValue(j, out var no) ? no : null,
                 l.OccurredAt, l.Note, l.CreatedBy)).ToList(),
-            await MapBookingsAsync(companyId, bookings, ct));
+            await MapBookingsAsync(companyId, bookings, ct),
+            freezes.Select(f => new CreditFreezeResponse(f.Id, f.FromDate, f.ToDate, f.Days, f.Reason, f.CancelledAt, f.CreatedBy)).ToList());
     }
 
     public async Task<CreditSummaryResponse> GetSummaryAsync(Guid companyId, CancellationToken ct = default)
@@ -636,9 +667,10 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
 
             var pass = await LockPassAsync(companyId, request.PassId, ct);
             await EnsureSaleDocumentLiveAsync(pass, ct);
-            var credits = CourseCreditMath.CreditsForSession(pass.Unit, (int)(session.EndAt - session.StartAt).TotalMinutes, session.CreditCost);
-            var reason = CourseCreditMath.CannotBookReason(Facts(pass), credits, session.StartAt, session.BookingServiceId,
-                session.Format, DateTime.UtcNow);
+            var credits = CourseCreditMath.IsUnlimited(pass.Kind)
+                ? CourseCreditMath.UnlimitedBookingCredits
+                : CourseCreditMath.CreditsForSession(pass.Unit, (int)(session.EndAt - session.StartAt).TotalMinutes, session.CreditCost);
+            var reason = await BookReasonAsync(pass, credits, session.StartAt, 1, session.BookingServiceId, session.Format, ct);
             if (reason != null) throw new BusinessRuleException(reason, CourseCreditMath.RuleCode);
             var booking = Reserve(pass, credits, session.StartAt, session.Id, null, session.TrainerEmployeeId, request.Note, actor);
             _db.AddChainedAuditLog(Audit(companyId, actor, AuditAction.Create, "CreditClassBooking", booking.Id,
@@ -698,6 +730,9 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
                 throw new BusinessRuleException("บัตรยังไม่หมดอายุ", CourseCreditMath.RuleCode);
             if (pass.CreditsReserved > 0m)
                 throw new BusinessRuleException($"มีการจองค้าง {pass.CreditsReserved:0.##} เครดิต — ปิดการจอง (มาเรียน/no-show/ยกเลิก) ก่อนปิดบัตร", CourseCreditMath.RuleCode);
+            // รอบ 209 P5: สมาชิกไม่จำกัด — รับรู้ตามวันให้ครบถึงวันหมดอายุก่อน (แยกรายเดือน) · ส่วนที่เหลือหลังจากนั้น (ถ้ามี) = breakage ตามเส้นเดิม
+            if (CourseCreditMath.IsUnlimited(pass.Kind) && pass.ExpiresOn is DateTime periodEnd)
+                await RecognizePeriodCoreAsync(pass, periodEnd, actor, ct);
             await ExpireCoreAsync(pass, actor, ct);
             await _db.SaveChangesAsync(ct);
             return true;
@@ -792,11 +827,12 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
                     .Where(b => b.CompanyId == companyId && b.ExternalRef == extRef && b.Status != CreditBookingStatus.Cancelled)
                     .Select(b => (Guid?)b.Id).FirstOrDefaultAsync(ct);
                 if (dup is Guid dupId) return dupId;
-                var credits = request.Credits is decimal c && c > 0m
-                    ? c
-                    : CourseCreditMath.CreditsForSession(pass.Unit, request.DurationMinutes, 1m);
-                lastReason = CourseCreditMath.CannotBookReason(Facts(pass), credits, request.StartAt, request.BookingServiceId,
-                    request.Format, DateTime.UtcNow);
+                var credits = CourseCreditMath.IsUnlimited(pass.Kind)
+                    ? CourseCreditMath.UnlimitedBookingCredits
+                    : request.Credits is decimal c && c > 0m
+                        ? c
+                        : CourseCreditMath.CreditsForBooking(pass.Unit, request.DurationMinutes, 1m, request.Seats);
+                lastReason = await BookReasonAsync(pass, credits, request.StartAt, request.Seats, request.BookingServiceId, request.Format, ct);
                 if (lastReason != null) continue;
                 var booking = Reserve(pass, credits, request.StartAt, null, extRef, null, null, actor);
                 _db.AddChainedAuditLog(Audit(companyId, actor, AuditAction.Create, "CreditClassBooking", booking.Id,
@@ -876,7 +912,8 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         if (pass.Status != CreditPassStatus.Active)
             throw new BusinessRuleException($"บัตรอยู่ในสถานะ {CourseCreditMath.StatusTh(pass.Status)} — ตัดเครดิตไม่ได้", CourseCreditMath.RuleCode);
         await EnsureSaleDocumentLiveAsync(pass, ct);
-        var amount = CourseCreditMath.RecognizeOnUse(CourseCreditMath.EffectiveContract(pass.ContractAmount, pass.RefundedAmount),
+        // รอบ 209 P5: สมาชิกไม่จำกัด ⇒ 0 (รับรู้ตามวันโดยงานรายคืน — ไม่ผูกการเข้าเรียน) · บัตรครั้ง/ชั่วโมง = สูตรเดิมทุกสตางค์
+        var amount = CourseCreditMath.RecognizeOnUseFor(pass.Kind, CourseCreditMath.EffectiveContract(pass.ContractAmount, pass.RefundedAmount),
             pass.CreditsTotal, pass.CreditsUsed, pass.RecognizedAmount, booking.Credits);
         Guid? jeId = null; string? dateNote = null;
         if (amount > 0m)
@@ -893,7 +930,7 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         pass.CreditsReserved = Math.Max(0m, pass.CreditsReserved - booking.Credits);
         pass.CreditsUsed += booking.Credits;
         pass.RecognizedAmount += amount;
-        if (pass.CreditsUsed >= pass.CreditsTotal)
+        if (!CourseCreditMath.IsUnlimited(pass.Kind) && pass.CreditsUsed >= pass.CreditsTotal)
         {
             pass.Status = CreditPassStatus.Exhausted;
             pass.ClosedAt = DateTime.UtcNow;
@@ -903,7 +940,8 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         {
             CompanyId = pass.CompanyId, CreatedBy = actor, PassId = pass.Id, Kind = CreditLedgerKind.Consume,
             Credits = booking.Credits, RecognizedAmount = amount, BookingId = booking.Id, JournalEntryId = jeId,
-            Note = BookingStatusTh(outcome) + (dateNote != null ? $" · {dateNote}" : ""),
+            Note = BookingStatusTh(outcome) + (dateNote != null ? $" · {dateNote}" : "")
+                + (CourseCreditMath.IsUnlimited(pass.Kind) ? " · สมาชิกไม่จำกัด — รายได้รับรู้ตามวัน (ไม่ผูกการเข้าเรียน)" : ""),
         });
         _db.AddChainedAuditLog(Audit(pass.CompanyId, actor, AuditAction.Update, "CreditClassBooking", booking.Id, new
         {
@@ -1134,12 +1172,19 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             warning = p.CreditsReserved > 0m
                 ? $"หมดอายุแล้ว — มีการจองค้าง {p.CreditsReserved:0.##} เครดิต ปิดการจองก่อนระบบจึงปิดบัตรได้"
                 : "หมดอายุแล้ว — รอระบบปิดบัตรรอบกลางคืน (หรือกด \"ปิดบัตรหมดอายุ\")";
+        if (warning == null && p.Status == CreditPassStatus.Active && p.ExpiryNotifyError != null && p.ExpiryNotifiedAt == null)
+            warning = $"แจ้งเตือนใกล้หมดอายุส่งไม่สำเร็จ: {p.ExpiryNotifyError}";
+        var unlimited = CourseCreditMath.IsUnlimited(p.Kind);
         return new CreditPassResponse(p.Id, p.PassNumber, p.PackageId, p.PackageName, p.ContactId,
-            names.TryGetValue(p.ContactId, out var n) ? n : null, p.Unit, UnitTh(p.Unit), p.PurchasedAt, p.ExpiresOn,
+            names.TryGetValue(p.ContactId, out var n) ? n : null, p.Unit, unlimited ? "ไม่จำกัดครั้ง" : UnitTh(p.Unit), p.PurchasedAt, p.ExpiresOn,
             p.CreditsTotal, p.CreditsUsed, p.CreditsReserved, CourseCreditMath.Available(p.CreditsTotal, p.CreditsUsed, p.CreditsReserved),
-            p.ContractAmount, p.RecognizedAmount, p.ContractAmount - p.RecognizedAmount - p.RefundedAmount,
-            CourseCreditMath.PricePerCredit(CourseCreditMath.EffectiveContract(p.ContractAmount, p.RefundedAmount), p.CreditsTotal),
-            p.Status, CourseCreditMath.StatusTh(p.Status), p.SaleDocumentId, p.SaleDocumentNumber, warning);
+            p.ContractAmount, p.RecognizedAmount, p.ContractAmount - p.RecognizedAmount - p.RefundedAmount - p.TransferredOutAmount,
+            unlimited ? 0m : CourseCreditMath.PricePerCredit(CourseCreditMath.EffectiveContract(p.ContractAmount, p.RefundedAmount), p.CreditsTotal),
+            p.Status, CourseCreditMath.StatusTh(p.Status), p.SaleDocumentId, p.SaleDocumentNumber, warning,
+            p.Kind, p.PeriodDays, p.PeriodStartsOn, p.RecognizedThroughDate,
+            unlimited ? CourseCreditMath.PeriodDailyAmount(PeriodFactsOf(p, Array.Empty<CourseCreditMath.FreezeSpan>())) : 0m,
+            p.FrozenDays, p.MaxFreezeDays, p.MaxBookingsPerDay, p.MaxActiveBookings, p.TransferredFromPassId, p.TransferredToPassId,
+            p.ExpiryNotifiedAt, p.ExpiryNotifyError);
     }
 
     private static CreditPackageResponse MapPackage(CreditPackage p, IReadOnlyDictionary<Guid, string> labels, int activePasses)
@@ -1149,7 +1194,9 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
             ParseIds(p.AllowedServiceIds), ParseIds(p.TrainerEmployeeIds), p.FreeCancelHours,
             p.UnearnedAccountId, p.UnearnedAccountId is Guid u && labels.TryGetValue(u, out var ul) ? ul : null,
             p.RevenueAccountId, p.RevenueAccountId is Guid r && labels.TryGetValue(r, out var rl) ? rl : null,
-            p.IsActive, p.SortOrder, activePasses);
+            p.IsActive, p.SortOrder, activePasses,
+            p.Kind, CourseCreditMath.IsUnlimited(p.Kind) ? "ไม่จำกัดครั้งตามช่วงเวลา" : "นับครั้ง/ชั่วโมง",
+            p.MaxBookingsPerDay, p.MaxActiveBookings, p.MaxFreezeDays, p.ExpiryReminderDays);
 
     private static CourseCreditMath.PassFacts Facts(CreditPass p)
         => new(p.Status, p.ExpiresOn, p.CreditsTotal, p.CreditsUsed, p.CreditsReserved, p.ClassFormat, ParseIds(p.AllowedServiceIds));
@@ -1242,6 +1289,11 @@ public class CourseCreditService : ICourseCreditService, ICreditBookingLedger
         CreditLedgerKind.Cancel => "ยกเลิกบัตร",
         CreditLedgerKind.Adjust => "ลดเครดิต (คืนเงินบางส่วน)",
         CreditLedgerKind.AdjustReversal => "คืนเครดิต (ยกเลิกใบลดหนี้)",
+        CreditLedgerKind.PeriodRecognize => "รับรู้รายได้ตามวัน (สมาชิก)",
+        CreditLedgerKind.Freeze => "พักบัตร",
+        CreditLedgerKind.Extend => "ขยายอายุ",
+        CreditLedgerKind.TransferOut => "โอนออก",
+        CreditLedgerKind.TransferIn => "รับโอน",
         _ => k.ToString(),
     };
 

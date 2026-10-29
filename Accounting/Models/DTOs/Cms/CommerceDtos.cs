@@ -148,6 +148,21 @@ public class SiteProductResponse
     public string? EarliestReadyDate { get; set; }
     /// <summary>กลุ่มตัวเลือก (dynamic option builder) — null/ว่าง = ไม่มี</summary>
     public List<StorefrontOptionGroup>? OptionGroups { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือกได้ (ราคา/มีของคิดที่เซิร์ฟเวอร์) — null = สินค้าไม่มี variant (หน้าร้านไม่แสดงตัวเลือก)</summary>
+    public List<StorefrontVariant>? Variants { get; set; }
+}
+
+/// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยบนหน้าร้าน — ราคาสุดท้าย (variant ตั้งราคา ⇒ ราคานั้น · ไม่ตั้ง ⇒ ราคาสินค้า) · ไม่ส่งยอดสต็อกจริง (แค่มี/หมด)</summary>
+public class StorefrontVariant
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Sku { get; set; } = "";
+    public string? OptionsJson { get; set; }
+    public string? ImageUrl { get; set; }
+    public decimal Price { get; set; }
+    public decimal? CompareAtPrice { get; set; }
+    public bool InStock { get; set; }
 }
 
 // ==================== Pricing Tier ====================
@@ -214,6 +229,8 @@ public class AddToCartRequest
     public string? Notes { get; set; }
     /// <summary>ตัวเลือกสินค้าตามสั่ง (ทีม K) — ราคา/วันเพิ่มคิดที่เซิร์ฟเวอร์</summary>
     public List<CartModifierChoice>? Modifiers { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อย (ไซซ์/สี) — บังคับเมื่อสินค้ามี variant ใช้งานอยู่ · ราคา/สต็อกคิดที่เซิร์ฟเวอร์ (Helpers/CmsVariantPricing)</summary>
+    public Guid? VariantId { get; set; }
 }
 
 public class UpdateCartItemRequest
@@ -248,6 +265,9 @@ public class CartItemResponse
     /// <summary>คำอธิบายตัวเลือกที่เลือก ("ขนาด: 2 ปอนด์ · ข้อความ: HBD") — เซิร์ฟเวอร์ประกอบ</summary>
     public string? ModifierSummary { get; set; }
     public int ExtraLeadDays { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือก (null = สินค้าไม่มี variant)</summary>
+    public Guid? VariantId { get; set; }
+    public string? VariantName { get; set; }
 }
 
 // ==================== Order ====================
@@ -287,8 +307,22 @@ public class CreateOrderRequest
     public string? ShippingProvince { get; set; }
     public string? ShippingPostalCode { get; set; }
 
+    // ── รอบ 209 P2 (คำตัดสินข้อ 168 ค/ง/จ) — ตรวจที่เซิร์ฟเวอร์ทั้งหมด ──
+    /// <summary>"prepay" (ว่าง = เดิม) / "cod" — Helpers.CmsFeatureFlags.ResolvePaymentChoice</summary>
+    public string? PaymentMethodChoice { get; set; }
+    /// <summary>yyyy-MM-dd · ว่าง = ไม่ได้เลือก (เดิม)</summary>
+    public string? RequestedReadyDate { get; set; }
+    /// <summary>คำตอบช่องที่ร้านเพิ่มเอง (key → ค่า) — Helpers.OrderFormFields.Check</summary>
+    public Dictionary<string, string?>? CustomFields { get; set; }
+
     // Direct order (without cart)
     public List<CreateOrderLineRequest>? Lines { get; set; }
+
+    /// <summary>รอบ 209 P1 (R-209-A9): คีย์กันกดสั่งซ้ำ (หน้าเว็บสุ่มต่อการกดยืนยัน 1 ครั้ง · หรือส่งเป็น header <c>Idempotency-Key</c>) —
+    /// คีย์เดิมซ้ำ ⇒ คืนออเดอร์เดิม ไม่สร้างใหม่ · null = เดิม (ไม่กัน)</summary>
+    public string? IdempotencyKey { get; set; }
+    /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มเช็กเอาต์ — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
+    public bool ConsentGiven { get; set; }
 }
 
 public class CreateOrderLineRequest
@@ -297,6 +331,8 @@ public class CreateOrderLineRequest
     public Guid SiteProductId { get; set; }
     public decimal Quantity { get; set; } = 1;
     public string? VariantOptionsJson { get; set; }
+    /// <summary>รอบ 209 P6 (E5): ตัวเลือกย่อยที่เลือก (บังคับเมื่อสินค้ามี variant ใช้งานอยู่)</summary>
+    public Guid? VariantId { get; set; }
 }
 
 public class UpdateOrderStatusRequest
@@ -304,8 +340,27 @@ public class UpdateOrderStatusRequest
     [Required]
     public SiteOrderStatus Status { get; set; }
     public string? TrackingNumber { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-B4): ผู้ขนส่ง — null = ไม่แก้ · "" = ล้างค่า</summary>
+    public string? ShippingCarrier { get; set; }
     public string? InternalNotes { get; set; }
     public string? CancellationReason { get; set; }
+    /// <summary>รอบ 209 P3 (E8): ยอดคืนเงิน (รวม VAT) เมื่อเปลี่ยนเป็นคืนเงิน/คืนเงินบางส่วน — คืนบางส่วนต้องระบุ · คืนเต็มไม่ระบุ = คืนทั้งหมดที่คืนได้ ·
+    /// ใช้ร่างใบลดหนี้ (<c>Helpers.SiteOrderRefundPlan</c>) — ไม่อนุมัติเอง</summary>
+    public decimal? RefundAmount { get; set; }
+    /// <summary>เหตุผลการคืนเงิน (พิมพ์บนใบลดหนี้ร่าง §86/10)</summary>
+    public string? RefundReason { get; set; }
+}
+
+/// <summary>รอบ 209 P3 (E7): พนักงานบันทึกรับเงินหน้าร้าน/ปลายทางของออเดอร์ — สร้างรายการรับเงินแล้วเดินเส้นยืนยันรับเงินเดิม (ConfirmPaymentAsync)</summary>
+public class RecordCounterPaymentRequest
+{
+    /// <summary>ยอดที่รับ · ว่าง = ยอดคงค้างทั้งหมด</summary>
+    public decimal? Amount { get; set; }
+    /// <summary>วิธีรับเงิน (Cash · BankTransfer · PromptPay · CreditCard · EWallet · Other) · ว่าง = เงินสด</summary>
+    public PaymentMethod? PaymentMethod { get; set; }
+    public string? Reference { get; set; }
+    /// <summary>ผังเงินเข้า (เงินสด/ธนาคาร) — ว่าง = ตามค่าเริ่มต้นของเส้นยืนยันรับเงิน</summary>
+    public Guid? MoneyInAccountId { get; set; }
 }
 
 public class UploadSlipResponse
@@ -355,6 +410,13 @@ public class StorefrontPaymentOptions
     /// When false the storefront falls back to "pay later only" mode
     /// and instructs the customer that the shop will contact them.</summary>
     public bool HasPaymentMethod { get; set; }
+    // ── รอบ 209 P2 — สวิตช์ร้าน (เซิร์ฟเวอร์ตัดสิน · หน้าเว็บแสดงตาม) ──
+    /// <summary>false = ร้านไม่รับโอน/แนบสลิป (ไม่ส่งเลขบัญชี · ซ่อนกล่องโอน — ไม่ใช่ "ยังไม่ตั้งบัญชี")</summary>
+    public bool BankTransferEnabled { get; set; } = true;
+    public bool OnlinePaymentEnabled { get; set; } = true;
+    public bool CodEnabled { get; set; }
+    /// <summary>false = ซ่อนปุ่ม "ขอใบเสนอราคา" (เซิร์ฟเวอร์ปฏิเสธด้วย)</summary>
+    public bool QuoteConversionEnabled { get; set; } = true;
 }
 
 public class OrderResponse
@@ -376,6 +438,10 @@ public class OrderResponse
     public string? ShippingAddress { get; set; }
     public string? ShippingMethod { get; set; }
     public string? TrackingNumber { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-B4): ผู้ขนส่ง (echo กลับให้หลังบ้านแก้ได้)</summary>
+    public string? ShippingCarrier { get; set; }
+    /// <summary>รอบ 209 P1 (R-209-A1): โทเคนหน้าสถานะออเดอร์ของลูกค้า — หน้าร้านพาไป order-success/{token} (echo ให้ผู้สร้างออเดอร์ · หน้า cms-orders ยังไม่แสดงลิงก์ — แพ็ก P3)</summary>
+    public string? PublicToken { get; set; }
     public bool RequestTaxInvoice { get; set; }
     public string? BillingTaxId { get; set; }
     public Guid? ErpDocumentId { get; set; }
@@ -413,6 +479,25 @@ public class OrderResponse
     public List<OrderDepositDocumentResponse> DepositDocuments { get; set; } = new();
     /// <summary>รอบ 205 W2 (R-06): ช่องจ่ายออนไลน์ปิดชั่วคราวเพราะอะไร (สลิปรอตรวจ) · null = เปิด — หน้าเว็บแสดงตรง ๆ</summary>
     public string? OnlinePaymentBlockedNote { get; set; }
+    // ── รอบ 209 P2 — ค่าที่ตรึงตอนสั่ง (echo ทุกค่าที่รับ · กฎเหล็ก #4 A) ──
+    /// <summary>"prepay"/"cod" · ออเดอร์เดิม = prepay</summary>
+    public string PaymentMethodChoice { get; set; } = "prepay";
+    public string PaymentMethodLabel { get; set; } = "";
+    /// <summary>yyyy-MM-dd · null = ลูกค้าไม่ได้เลือก</summary>
+    public string? RequestedReadyDate { get; set; }
+    /// <summary>yyyy-MM-dd · null = รับเอง/ไม่รู้วันขนส่ง</summary>
+    public string? EstimatedDeliveryDate { get; set; }
+    public List<global::Accounting.Helpers.OrderCustomAnswer> CustomFields { get; set; } = new();
+    /// <summary>JSON ดิบจากฐาน (ใช้ภายในเพื่อแปลงเป็น <see cref="CustomFields"/> หลัง query) — ไม่ส่งออก</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? CustomFieldsRaw { get; set; }
+    public string? BillingName { get; set; }
+    public string? BillingAddress { get; set; }
+    public string? BillingBranchCode { get; set; }
+    /// <summary>รอบ 209 P3 (A6): ปุ่ม "ดำเนินการต่อ" จากตัวตัดสินเดียว <c>SiteOrderStatusTransition.NextActions</c> (หน้าเว็บไม่มีตารางสถานะของตัวเอง)</summary>
+    public List<global::Accounting.Helpers.SiteOrderNextAction> NextActions { get; set; } = new();
+    /// <summary>รอบ 209 P3 (E7): ปุ่ม "บันทึกรับเงินหน้าร้าน/ปลายทาง" ใช้ได้ไหม (ยังมียอดค้าง · ออเดอร์ยังไม่ปิด)</summary>
+    public bool CanRecordCounterPayment { get; set; }
 }
 
 /// <summary>ใบรับเงินมัดจำ 1 ใบของออเดอร์ (ทีม Q)</summary>
@@ -434,6 +519,10 @@ public class OptionImageUploadResponse
 
 public class CheckoutQuoteRequest
 {
+    /// <summary>รอบ 209 P2: "prepay"/"cod" (ว่าง = เดิม)</summary>
+    public string? PaymentMethodChoice { get; set; }
+    /// <summary>รอบ 209 P2: yyyy-MM-dd · ว่าง = ไม่ได้เลือก</summary>
+    public string? RequestedReadyDate { get; set; }
     public string? FulfillmentMethod { get; set; }
     public Guid? ShippingRateId { get; set; }
     public string? CountryCode { get; set; }
@@ -476,6 +565,28 @@ public class CheckoutQuoteResponse
     public string? DepositInvoicingNote { get; set; }
     /// <summary>เหตุที่ยังสั่งไม่ได้ (เช่น ต้องเลือกวิธีส่ง) — null = สั่งได้</summary>
     public string? Problem { get; set; }
+    // ── รอบ 209 P2 — หน้าเว็บวาดฟอร์มจากค่าที่เซิร์ฟเวอร์ตัดสินแล้ว (ไม่มีสำเนากติกาใน JS · F2 ข้อ 5) ──
+    public bool DeliveryEnabled { get; set; } = true;
+    /// <summary>สวิตช์ร้าน (ชื่อ → ค่า) — Helpers.CmsFeatureFlags.ToStorefront</summary>
+    public Dictionary<string, bool> Features { get; set; } = new();
+    /// <summary>ค่าตั้งฟอร์มสั่งซื้อ (ไม่ได้ตั้ง = ฟอร์มเดิม)</summary>
+    public global::Accounting.Helpers.OrderFormFieldsConfig FormFields { get; set; } = global::Accounting.Helpers.OrderFormFields.Default;
+    /// <summary>ช่องเพิ่มเองที่ต้องแสดงกับวิธีรับนี้ (เซิร์ฟเวอร์กรองแล้ว — หน้าเว็บวาดตามลำดับ)</summary>
+    public List<global::Accounting.Helpers.OrderCustomField> CustomFields { get; set; } = new();
+    /// <summary>วิธีชำระที่ลูกค้าเลือกได้ (ว่าง/ตัวเดียว = ไม่ต้องแสดงตัวเลือก)</summary>
+    public List<CommerceOptionValue> PaymentChoices { get; set; } = new();
+    public string PaymentMethodChoice { get; set; } = "prepay";
+    public string PaymentMethodLabel { get; set; } = "";
+    /// <summary>yyyy-MM-dd — วันแรกที่เลือกเป็นวันรับได้ (null = ช่องวันรับซ่อน)</summary>
+    public string? MinRequestedDate { get; set; }
+    /// <summary>yyyy-MM-dd — วันรับที่ผ่านการตรวจแล้ว</summary>
+    public string? RequestedReadyDate { get; set; }
+    /// <summary>yyyy-MM-dd — วันส่งถึงโดยประมาณ (null = ไม่รู้)</summary>
+    public string? EstimatedDeliveryDate { get; set; }
+    /// <summary>คูปองในตะกร้าให้ส่งฟรี</summary>
+    public bool FreeShippingByCoupon { get; set; }
+    /// <summary>คูปองที่ใช้อยู่ (ร้านปิดคูปอง = null)</summary>
+    public string? CouponCode { get; set; }
 }
 
 public class OrderListResponse
@@ -493,6 +604,23 @@ public class OrderListResponse
     public int ItemCount { get; set; }
     public DateTime? PaidAt { get; set; }
     public DateTime CreatedAt { get; set; }
+    // ── รอบ 209 P3 (A5 คิวผลิต) — คำนวณที่เซิร์ฟเวอร์ (หน้าเว็บแสดงอย่างเดียว) ──
+    /// <summary>yyyy-MM-dd วันพร้อมเร็วสุดที่สัญญาตอนสั่ง · null = ไม่มีสินค้าตามสั่ง</summary>
+    public string? EarliestReadyDate { get; set; }
+    public string? FulfillmentMethod { get; set; }
+    public string? FulfillmentLabel { get; set; }
+    public decimal PaidAmount { get; set; }
+    public string? PaymentTermMode { get; set; }
+    public decimal DepositRequiredAmount { get; set; }
+    /// <summary>ยอดคงค้างทั้งใบ (ปิดแล้ว = 0)</summary>
+    public decimal BalanceDue { get; set; }
+    public string? TrackingNumber { get; set; }
+    /// <summary>คิวผลิตเท่านั้น: รายการ + ตัวเลือก (ใบงานครัว) · null = มุมมองรายการปกติ</summary>
+    public string? LineSummary { get; set; }
+    /// <summary>คิวผลิตเท่านั้น: เลยวันพร้อมแล้วยังไม่ส่งมอบ</summary>
+    public bool IsOverdue { get; set; }
+    /// <summary>คิวผลิตเท่านั้น: ปุ่มด่วน (ตัวตัดสินเดียวกับหน้ารายละเอียด)</summary>
+    public List<global::Accounting.Helpers.SiteOrderNextAction>? NextActions { get; set; }
 }
 
 public class OrderLineResponse

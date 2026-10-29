@@ -78,6 +78,7 @@ public static class ShippingVatAllocation
     public static string LineDescription(Part p, int partCount)
         => partCount <= 1 ? "ค่าจัดส่ง" : $"ค่าจัดส่ง ({RateLabel(p.Rate)})";
 
+
     private static string RateLabel(decimal rate)
         => rate == ThaiVatTypeRule.ExemptRate ? "ยกเว้น VAT" : rate <= 0m ? "VAT 0%" : $"VAT {rate:0.##}%";
 }

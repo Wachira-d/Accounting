@@ -21,6 +21,10 @@
     .status-Cancelled    { background:#fee2e2;color:#991b1b }
     .status-Refunded     { background:#fecaca;color:#7f1d1d }
     .status-PartiallyRefunded { background:#fed7aa;color:#9a3412 }
+    .status-ReadyForPickup { background:#cffafe;color:#155e75 }
+    .view-tab { padding:6px 14px;border:1px solid var(--gray-200);background:#fff;border-radius:8px;font-size:13px;cursor:pointer }
+    .view-tab.active { background:var(--primary);color:#fff;border-color:var(--primary) }
+    .queue-overdue { background:#FEF2F2 }
     .workflow-step { display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:12px }
     .workflow-step button { font-size:12px;padding:4px 10px }
   </style>
@@ -106,24 +110,79 @@
         <option value="Pending">รอดำเนินการ</option>
         <option value="Confirmed">ยืนยันแล้ว</option>
         <option value="Processing">กำลังเตรียม</option>
+        <option value="ReadyForPickup">พร้อมให้รับ</option>
         <option value="Shipped">จัดส่งแล้ว</option>
         <option value="Delivered">ส่งถึงปลายทาง</option>
         <option value="Cancelled">ยกเลิก</option>
+        <option value="PartiallyRefunded">คืนเงินบางส่วน</option>
+        <option value="Refunded">คืนเงินแล้ว</option>
       </select>
       <input type="text" class="search-input" placeholder="ค้นหา order# หรือชื่อลูกค้า..." id="searchInput" oninput="Page.debounceLoad()">
     </div>
 
+    <!-- รอบ 209 P3 (A5): มุมมองรายการ / คิวผลิต (คิวผลิตต้องเลือกเว็บเดียว) -->
+    <div style="display:flex;gap:6px;margin-bottom:12px" id="viewTabs">
+      <button type="button" class="view-tab active" id="tabList" onclick="Page.setView('list')">📋 รายการคำสั่งซื้อ</button>
+      <button type="button" class="view-tab" id="tabQueue" onclick="Page.setView('queue')" title="ออเดอร์ที่ยังไม่ส่งมอบ เรียงตามวันพร้อม — ใบงานครัว/ฝ่ายผลิต">🧁 คิวผลิต</button>
+    </div>
+
+    <div id="listView">
     <div id="allNote" style="display:none"></div>
     <div class="table-container">
       <table class="table">
         <thead><tr>
           <th>#</th><th>ลูกค้า</th><th>รายการ</th><th class="text-right">ยอดรวม</th>
-          <th>สถานะ</th><th>ชำระเงิน</th><th>วันที่</th>
+          <th>สถานะ</th><th>รับ/พร้อม</th><th>ชำระเงิน</th><th>วันที่</th>
         </tr></thead>
-        <tbody id="ordersBody"><tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">กรุณาเลือกเว็บไซต์ก่อน</td></tr></tbody>
+        <tbody id="ordersBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กรุณาเลือกเว็บไซต์ก่อน</td></tr></tbody>
       </table>
     </div>
     <div id="pagination"></div>
+    </div>
+
+    <div id="queueView" style="display:none">
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px">
+        <div class="form-group" style="margin:0"><label class="form-label">พร้อมตั้งแต่</label><input type="date" class="form-input" id="queueFrom" onchange="Page.loadQueue()"></div>
+        <div class="form-group" style="margin:0"><label class="form-label">ถึง</label><input type="date" class="form-input" id="queueTo" onchange="Page.loadQueue()"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="Page.resetQueueRange()">วันนี้ – 7 วัน</button>
+        <div style="font-size:12px;color:var(--gray-500)">ออเดอร์ที่ยังไม่ส่งมอบ เรียงตามวันพร้อม · ของค้างเลยกำหนดแสดงเสมอ (แถวสีแดง) · ไม่มีวันพร้อม = วันที่สั่ง</div>
+      </div>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วันพร้อม</th><th>#</th><th>ลูกค้า</th><th>รายการ</th><th>รับ</th><th>สถานะ</th><th class="text-right">ค้างชำระ</th><th>ดำเนินการ</th></tr></thead>
+          <tbody id="queueBody"><tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">กรุณาเลือกเว็บไซต์ก่อน</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- รอบ 209 P3 (E7): บันทึกรับเงินหน้าร้าน/ปลายทาง — เซิร์ฟเวอร์สร้างรายการรับเงินแล้วเดินเส้นยืนยันรับเงินเดิม -->
+    <div class="modal-overlay" id="counterPayModal">
+      <div class="modal" style="max-width:440px">
+        <div class="modal-header">
+          <h3 class="modal-title">💵 บันทึกรับเงินหน้าร้าน/ปลายทาง</h3>
+          <button class="modal-close" onclick="Layout.closeModal('counterPayModal')">&times;</button>
+        </div>
+        <div class="modal-body" style="display:grid;gap:10px">
+          <div id="counterPayInfo" style="font-size:13px;color:var(--gray-700)"></div>
+          <div class="form-group"><label class="form-label">ยอดที่รับ (บาท)</label><input type="number" class="form-input" id="counterPayAmount" min="0.01" step="0.01"></div>
+          <div class="form-group"><label class="form-label">วิธีรับเงิน</label>
+            <select class="form-input" id="counterPayMethod">
+              <option value="Cash">เงินสด</option>
+              <option value="BankTransfer">โอนเงิน</option>
+              <option value="PromptPay">พร้อมเพย์</option>
+              <option value="CreditCard">บัตรเครดิต</option>
+              <option value="EWallet">e-Wallet</option>
+              <option value="Other">อื่น ๆ</option>
+            </select></div>
+          <div class="form-group"><label class="form-label">เลขอ้างอิง (ถ้ามี)</label><input type="text" class="form-input" id="counterPayRef" maxlength="80"></div>
+          <div style="font-size:12px;color:var(--gray-500)">ระบบออกเอกสาร + ลงบัญชี + บันทึกรับชำระ (ตัดสต็อก/ออก e-Tax ตามวิธีของออเดอร์) — เส้นเดียวกับปุ่ม "ยืนยันรับเงิน"</div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('counterPayModal')">ยกเลิก</button>
+          <button class="btn btn-primary" id="counterPaySave" onclick="Page.saveCounterPayment()">บันทึกรับเงิน</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Payment Gateway setup modal -->
     <div class="modal-overlay" id="gatewayModal">
@@ -211,17 +270,8 @@
     // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว (cms-edit เคยถือสำเนาที่คีย์ด้วยตัวเลข
     // แล้วไม่ match อะไรเลย) — ที่นี่แค่มอบต่อ ห้ามพิมพ์ตารางซ้ำ
     const STATUS_LABEL = Layout.ENUM_LABELS.orderStatus;
-    const NEXT_STATUS = {
-      'Pending':       [['Confirmed','ยืนยันคำสั่งซื้อ','btn-primary'],['Cancelled','ปฏิเสธ/ยกเลิก','btn-secondary']],
-      // ทีม Q: "ส่งมอบแล้ว (ลูกค้ามารับ)" = จุดส่งมอบของออเดอร์มารับเอง (เดิมไปถึง "ส่งถึงปลายทาง" ได้ทางจัดส่งเท่านั้น)
-      'Confirmed':     [['Processing','เริ่มเตรียมสินค้า','btn-primary'],['Delivered','ส่งมอบแล้ว (ลูกค้ามารับ)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
-      'Processing':    [['Shipped','จัดส่งแล้ว','btn-primary'],['Delivered','ส่งมอบแล้ว (ลูกค้ามารับ)','btn-secondary'],['Cancelled','ยกเลิก','btn-secondary']],
-      'Shipped':       [['Delivered','ส่งถึงปลายทาง','btn-primary']],
-      'Delivered':     [['Refunded','คืนเงิน','btn-secondary']],
-      'Cancelled':     [],
-      'Refunded':      [],
-      'PartiallyRefunded': [['Refunded','คืนเงินทั้งหมด','btn-secondary']]
-    };
+    // รอบ 209 P3 (A6): ปุ่ม "ดำเนินการต่อ" มาจากเซิร์ฟเวอร์ (o.nextActions — Helpers/SiteOrderStatusTransition.NextActions) ·
+    // เดิมหน้านี้ถือตาราง NEXT_STATUS เอง ⇒ ด่านลำดับสถานะของเซิร์ฟเวอร์กับปุ่มบนจอ drift ได้ — ลบแล้ว (F2 #5)
 
     const Page = {
       siteId: null,       // เว็บที่เลือก · null เมื่อดู "ทุกไซต์"
@@ -229,6 +279,8 @@
       actSiteId: null,    // เว็บของออเดอร์ที่เปิดอยู่ (โหมดทุกไซต์ — ทุก action ต้องยิงไปเว็บเจ้าของออเดอร์)
       sites: [],
       page: 1,
+      view: 'list',       // 'list' | 'queue' (คิวผลิต — เว็บเดียวเท่านั้น)
+      _actions: {},       // orderId → nextActions ล่าสุดจากเซิร์ฟเวอร์ (ปุ่มด่วนอ่านธงถามเลขพัสดุ/ยอดคืนจากที่นี่)
       _searchTimer: null,
       _sid() { return this.actSiteId || this.siteId; },
       // โหมดทุกไซต์ (R-45): endpoint ระดับบริษัทแบ่งหน้าจริง — เว็บที่เห็นตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
@@ -260,9 +312,69 @@
         this.page = 1;
         CmsSiteContext.setUrl(v);
         CmsSiteContext.renderCrumb('cmsCrumb', this.sites, v, 'คำสั่งซื้อ', 'cms-orders');
+        document.getElementById('tabQueue').style.display = this.allSites ? 'none' : '';
+        if (this.allSites && this.view === 'queue') this.view = 'list';
+        this._applyView();
         await this.load();
         await this.loadStats();
         await this.loadGatewayStatus();
+        if (this.view === 'queue') await this.loadQueue();
+      },
+      // ===== รอบ 209 P3 (A5): คิวผลิต =====
+      setView(v) {
+        if (v === 'queue' && this.allSites) { Layout.toast('คิวผลิตดูได้ทีละเว็บ — เลือกเว็บไซต์ก่อน', 'warning'); return; }
+        this.view = v;
+        this._applyView();
+        if (v === 'queue') {
+          if (!document.getElementById('queueFrom').value) this.resetQueueRange(true);
+          this.loadQueue();
+        }
+      },
+      _applyView() {
+        const q = this.view === 'queue';
+        document.getElementById('listView').style.display = q ? 'none' : '';
+        document.getElementById('queueView').style.display = q ? '' : 'none';
+        document.getElementById('tabList').classList.toggle('active', !q);
+        document.getElementById('tabQueue').classList.toggle('active', q);
+      },
+      _isoLocal(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; },
+      resetQueueRange(silent) {
+        const today = new Date();
+        const to = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 7);
+        document.getElementById('queueFrom').value = this._isoLocal(today);
+        document.getElementById('queueTo').value = this._isoLocal(to);
+        if (!silent) this.loadQueue();
+      },
+      async loadQueue() {
+        if (!this.siteId || this.allSites) return;
+        const api = Layout.api(); if (!api) return;
+        const from = document.getElementById('queueFrom').value, to = document.getElementById('queueTo').value;
+        let q = '?pageSize=100';
+        if (from) q += `&from=${encodeURIComponent(from)}`;
+        if (to) q += `&to=${encodeURIComponent(to)}`;
+        const tbody = document.getElementById('queueBody');
+        try {
+          const res = await api.cmsProductionQueue(this.siteId, q);
+          const items = res?.data?.items || [];
+          if (!items.length) { tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ไม่มีออเดอร์ที่ต้องผลิต/ส่งมอบในช่วงนี้</td></tr>'; return; }
+          // ปุ่มด่วน: เริ่มผลิต · พร้อมรับ · ส่งมอบ · จัดส่ง(+เลขพัสดุ) — ชุดย่อยของ nextActions จากเซิร์ฟเวอร์ (ยกเลิก/คืนเงิน ทำที่หน้ารายละเอียด)
+          const QUICK = ['Processing', 'ReadyForPickup', 'Shipped', 'Delivered'];
+          tbody.innerHTML = items.map(o => {
+            this._actions[o.id] = o.nextActions || [];
+            const quick = (o.nextActions || []).filter(a => QUICK.includes(a.status)).map(a =>
+              `<button type="button" class="btn btn-sm ${a.primary ? 'btn-primary' : 'btn-secondary'}" ${a.disabledReason ? `disabled title="${Layout.esc(a.disabledReason)}"` : ''} onclick="event.stopPropagation();Page.advance('${Layout.jsArg(o.id)}', '${Layout.jsArg(a.status)}')">${Layout.esc(a.label)}</button>`).join(' ');
+            return `<tr class="order-row ${o.isOverdue ? 'queue-overdue' : ''}" onclick="Page.viewOrder('${Layout.jsArg(o.id)}')">
+              <td style="white-space:nowrap">${o.earliestReadyDate ? Layout.date(o.earliestReadyDate) : `<span style="color:var(--gray-400)">สั่ง ${Layout.date(o.createdAt)}</span>`}${o.isOverdue ? '<div style="font-size:11px;color:#b91c1c;font-weight:600">เลยกำหนด</div>' : ''}</td>
+              <td class="font-medium">${Layout.esc(o.orderNumber)}</td>
+              <td>${Layout.esc(o.customerName || '(ไม่ระบุชื่อ)')}</td>
+              <td style="font-size:12px;max-width:320px">${Layout.esc(o.lineSummary || '')}</td>
+              <td style="font-size:12px">${Layout.esc(o.fulfillmentLabel || '-')}</td>
+              <td><span class="status-pill status-${Layout.esc(o.status)}">${Layout.esc(STATUS_LABEL[o.status] || o.status)}</span></td>
+              <td class="text-right">${o.balanceDue > 0 ? Layout.money(o.balanceDue) : '<span style="color:#059669">ครบ</span>'}</td>
+              <td style="white-space:nowrap">${quick}</td>
+            </tr>`;
+          }).join('');
+        } catch (e) { Layout.toast('โหลดคิวผลิตไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async onSiteChange() {
         await this.applySite(document.getElementById('siteSelector').value);
@@ -439,7 +551,7 @@
           CmsSiteContext.allNote('allNote', this.allSites ? { totalCount: res?.data?.totalCount, page: res?.data?.page, totalPages: res?.data?.totalPages, goPage: 'Page.goPage' } : null);
           const tbody = document.getElementById('ordersBody');
           if (!items.length) {
-            tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" style="padding:40px">ยังไม่มีคำสั่งซื้อตามเงื่อนไขที่เลือก</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400" style="padding:40px">ยังไม่มีคำสั่งซื้อตามเงื่อนไขที่เลือก</td></tr>';
             return;
           }
           tbody.innerHTML = items.map(o => `
@@ -449,7 +561,8 @@
               <td class="text-right">${o.itemCount||0}</td>
               <td class="text-right font-semibold">฿${Number(o.totalAmount||0).toLocaleString('th-TH',{minimumFractionDigits:2})}</td>
               <td><span class="status-pill status-${o.status}">${STATUS_LABEL[o.status]||o.status}</span></td>
-              <td>${o.paidAt ? `<span style="color:#059669;font-size:12px">✓ ${Layout.date(o.paidAt)}</span>` : '<span style="color:var(--gray-400);font-size:12px">รอชำระ</span>'}</td>
+              <td style="font-size:12px">${Layout.esc(o.fulfillmentLabel || '-')}${o.earliestReadyDate ? `<div style="color:var(--gray-500)">พร้อม ${Layout.date(o.earliestReadyDate)}</div>` : ''}</td>
+              <td>${o.paidAt ? `<span style="color:#059669;font-size:12px">✓ ${Layout.date(o.paidAt)}</span>` : (o.balanceDue > 0 && o.balanceDue < o.totalAmount ? `<span style="color:#B45309;font-size:12px">ค้าง ${Layout.money(o.balanceDue)}</span>` : '<span style="color:var(--gray-400);font-size:12px">รอชำระ</span>')}</td>
               <td style="font-size:12px;color:var(--gray-600)">${Layout.date(o.createdAt)}</td>
             </tr>`).join('');
         } catch (e) { Layout.toast('โหลดคำสั่งซื้อไม่สำเร็จ: ' + e.message, 'error'); }
@@ -464,8 +577,11 @@
           if (!o) return;
           this._currentOrder = o;
           document.getElementById('orderTitle').textContent = `#${o.orderNumber} — ${STATUS_LABEL[o.status]||o.status}`;
-          const workflow = (NEXT_STATUS[o.status] || []).map(([next, label, cls]) =>
-            `<button class="btn ${cls}" onclick="Page.advance('${o.id}', '${next}')">${label}</button>`).join('');
+          this._actions[o.id] = o.nextActions || [];
+          const workflow = (o.nextActions || []).map(a =>
+            `<button class="btn ${a.primary ? 'btn-primary' : 'btn-secondary'}" ${a.disabledReason ? `disabled title="${Layout.esc(a.disabledReason)}"` : ''} onclick="Page.advance('${Layout.jsArg(o.id)}', '${Layout.jsArg(a.status)}')">${Layout.esc(a.label)}</button>`).join('')
+            + (o.canRecordCounterPayment ? `<button class="btn btn-success" onclick="Page.openCounterPayment('${Layout.jsArg(o.id)}')" title="ลูกค้าจ่ายที่ร้าน/ปลายทาง — ระบบออกเอกสาร + ลงบัญชีตามวิธีของออเดอร์">💵 บันทึกรับเงินหน้าร้าน/ปลายทาง</button>` : '');
+          const blocked = (o.nextActions || []).filter(a => a.disabledReason).map(a => `<div>• ${Layout.esc(a.label)}: ${Layout.esc(a.disabledReason)}</div>`).join('');
           document.getElementById('orderBody').innerHTML = `
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
               <div>
@@ -486,6 +602,7 @@
               <div style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(o.shippingAddress||'-')}</div>
               ${o.shippingMethod ? `<div style="margin-top:4px;color:var(--gray-600)">วิธีจัดส่ง: ${Layout.esc(o.shippingMethod)}</div>` : ''}
               ${o.trackingNumber ? `<div style="color:var(--primary);font-weight:600">เลขติดตาม: ${Layout.esc(o.trackingNumber)}</div>` : ''}
+              <div style="font-size:12px;color:var(--text-secondary)">ผู้ขนส่ง: ${Layout.esc(o.shippingCarrier || '-')}</div>
             </div>` : ''}
             ${(o.earliestReadyDate || (o.paymentTermMode && o.paymentTermMode !== 'full') || o.fulfillmentMethod === 'pickup') ? `
             <div style="background:#EEF2FF;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:13px;color:#3730A3">
@@ -546,7 +663,8 @@
             <h4 style="margin-top:16px;margin-bottom:6px;font-size:13px">ดำเนินการต่อ</h4>
             <div class="workflow-step">
               ${workflow}
-              ${o.status==='Shipped' || o.status==='Processing' ? `<input type="text" id="trackInput" class="form-input" placeholder="เลข tracking (ถ้ามี)" style="width:200px;font-size:12px"><button class="btn btn-sm btn-secondary" onclick="Page.saveTracking('${o.id}')">บันทึก tracking</button>` : ''}
+              ${blocked ? `<div style="flex-basis:100%;font-size:12px;color:#92400E;background:#FFFBEB;border-radius:6px;padding:6px 10px">${blocked}</div>` : ''}
+              ${o.status==='Shipped' || o.status==='Processing' ? `<input type="text" id="carrierInput" class="form-input" placeholder="ผู้ขนส่ง" maxlength="100" value="${Layout.esc(o.shippingCarrier || '')}" style="width:140px;font-size:12px"><input type="text" id="trackInput" class="form-input" placeholder="เลข tracking (ถ้ามี)" value="${Layout.esc(o.trackingNumber || '')}" style="width:200px;font-size:12px"><button class="btn btn-sm btn-secondary" onclick="Page.saveTracking('${o.id}')">บันทึก tracking</button>` : ''}
             </div>` : ''}`;
           Layout.openModal('orderModal');
         } catch (e) { Layout.toast('โหลดรายละเอียดไม่สำเร็จ: ' + e.message, 'error'); }
@@ -581,21 +699,79 @@
       },
       async advance(orderId, nextStatus) {
         const api = Layout.api(); if (!api) return;
-        const note = nextStatus === 'Cancelled' ? prompt('เหตุผลที่ยกเลิก (ถ้ามี)') : null;
+        // ธงถามข้อมูลมาจากเซิร์ฟเวอร์ (nextActions) — หน้าเว็บไม่ตัดสินเองว่าสถานะไหนต้องถามอะไร
+        const act = (this._actions[orderId] || []).find(a => a.status === nextStatus) || {};
+        const body = { status: nextStatus };
+        if (nextStatus === 'Cancelled') {
+          const reason = prompt('เหตุผลที่ยกเลิก (ถ้ามี)');
+          if (reason === null) return;
+          if (reason.trim()) { body.cancellationReason = reason.trim(); body.internalNotes = 'เหตุผลยกเลิก: ' + reason.trim(); }
+        }
+        if (act.asksTracking) {
+          const tracking = prompt('เลขพัสดุ (ถ้ามี — ลูกค้าจะได้รับในข้อความแจ้งจัดส่ง)', '');
+          if (tracking === null) return;
+          if (tracking.trim()) body.trackingNumber = tracking.trim();
+        }
+        if (act.asksRefundAmount) {
+          const partial = nextStatus === 'PartiallyRefunded';
+          const amt = prompt(partial ? 'ยอดที่คืนลูกค้า (บาท รวม VAT)' : 'ยอดที่คืน (บาท) — เว้นว่าง = คืนทั้งหมดที่คืนได้ (หลังจัดส่งไม่รวมค่าจัดส่ง)', '');
+          if (amt === null) return;
+          if (amt.trim()) {
+            const n = Number(amt.replace(/,/g, ''));
+            if (!(n > 0)) { Layout.toast('ยอดคืนเงินไม่ถูกต้อง', 'error'); return; }
+            body.refundAmount = n;
+          } else if (partial) { Layout.toast('คืนเงินบางส่วน — กรุณาระบุยอด', 'error'); return; }
+          const why = prompt('เหตุผลการคืนเงิน (พิมพ์บนใบลดหนี้ร่าง)', '');
+          if (why === null) return;
+          if (why.trim()) body.refundReason = why.trim();
+        }
         try {
-          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: nextStatus, internalNotes: note });
-          Layout.toast('อัปเดตสถานะเรียบร้อย');
+          await api.cmsUpdateOrderStatus(this._sid(), orderId, body);
+          Layout.toast(act.asksRefundAmount ? 'บันทึกคืนเงินแล้ว — ระบบร่างใบลดหนี้ไว้ (ยังไม่อนุมัติ) ดูหมายเหตุบนออเดอร์' : 'อัปเดตสถานะเรียบร้อย');
           Layout.closeModal('orderModal');
           await this.load();
           await this.loadStats();
-        } catch (e) { Layout.toast('อัปเดตไม่สำเร็จ: ' + e.message, 'error'); }
+          if (this.view === 'queue') await this.loadQueue();
+        } catch (e) { Layout.toast('อัปเดตไม่สำเร็จ: ' + e.message, 'error', 8000); }
+      },
+      // ===== รอบ 209 P3 (E7): บันทึกรับเงินหน้าร้าน/ปลายทาง =====
+      openCounterPayment(orderId) {
+        const o = this._currentOrder; if (!o || o.id !== orderId) return;
+        document.getElementById('counterPayInfo').textContent = `ออเดอร์ #${o.orderNumber} · ยอดรวม ${Layout.money(o.totalAmount)} · ค้างชำระ ${Layout.money(o.balanceAmount)}`;
+        document.getElementById('counterPayAmount').value = o.balanceAmount ?? '';
+        document.getElementById('counterPayMethod').value = 'Cash';
+        document.getElementById('counterPayRef').value = '';
+        this._counterOrderId = orderId;
+        Layout.openModal('counterPayModal');
+      },
+      async saveCounterPayment() {
+        const api = Layout.api(); if (!api || !this._counterOrderId) return;
+        const amount = Layout.numOrNull('counterPayAmount');
+        if (!(amount > 0)) { Layout.toast('กรุณาระบุยอดที่รับ', 'error'); return; }
+        const btn = document.getElementById('counterPaySave');
+        btn.disabled = true;
+        try {
+          await api.cmsRecordCounterPayment(this._sid(), this._counterOrderId, {
+            amount, paymentMethod: document.getElementById('counterPayMethod').value,
+            reference: document.getElementById('counterPayRef').value.trim() || null,
+          });
+          Layout.toast('บันทึกรับเงิน + ลงบัญชีสำเร็จ', 'success');
+          Layout.closeModal('counterPayModal');
+          await this.viewOrder(this._counterOrderId);
+          await this.load();
+          if (this.view === 'queue') await this.loadQueue();
+        } catch (e) { Layout.toast('บันทึกรับเงินไม่สำเร็จ: ' + e.message, 'error', 8000); }
+        finally { btn.disabled = false; }
       },
       async saveTracking(orderId) {
         const api = Layout.api(); if (!api) return;
         const tracking = document.getElementById('trackInput').value.trim();
-        if (!tracking) return;
+        // รอบ 209 P1 (B4): ผู้ขนส่งบันทึกคู่กับเลขพัสดุ · ช่องว่าง = ล้างค่า (เซิร์ฟเวอร์ถือ "" = ล้าง)
+        const carrierEl = document.getElementById('carrierInput');
+        const carrier = carrierEl ? carrierEl.value.trim() : null;
+        if (!tracking && carrier === null) return;
         try {
-          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: this._currentOrder.status, trackingNumber: tracking });
+          await api.cmsUpdateOrderStatus(this._sid(), orderId, { status: this._currentOrder.status, trackingNumber: tracking || null, shippingCarrier: carrier });
           Layout.toast('บันทึก tracking แล้ว');
           this.viewOrder(orderId);
         } catch (e) { Layout.toast('บันทึก tracking ไม่สำเร็จ: ' + e.message, 'error'); }

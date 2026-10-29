@@ -1,6 +1,8 @@
+using Accounting.Filters;
 using Accounting.Helpers;
 using Accounting.Middleware;
 using Accounting.Models.DTOs;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
@@ -43,6 +45,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpPost("coupons")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<CouponResponse>>> CreateCoupon(
         Guid companyId, Guid siteId, [FromBody] CreateCouponRequest request)
     {
@@ -71,6 +74,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpPut("coupons/{couponId:guid}")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<CouponResponse>>> UpdateCoupon(
         Guid companyId, Guid siteId, Guid couponId, [FromBody] CreateCouponRequest request)
     {
@@ -81,6 +85,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpDelete("coupons/{couponId:guid}")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<bool>>> DeleteCoupon(Guid companyId, Guid siteId, Guid couponId)
     {
         var result = await _couponService.DeleteCouponAsync(companyId, siteId, couponId);
@@ -111,6 +116,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpPost("shipping/zones")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<ShippingZoneResponse>>> CreateShippingZone(
         Guid companyId, Guid siteId, [FromBody] CreateShippingZoneRequest request)
     {
@@ -129,6 +135,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpPut("shipping/zones/{zoneId:guid}")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<ShippingZoneResponse>>> UpdateShippingZone(
         Guid companyId, Guid siteId, Guid zoneId, [FromBody] CreateShippingZoneRequest request)
     {
@@ -139,6 +146,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpDelete("shipping/zones/{zoneId:guid}")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<bool>>> DeleteShippingZone(Guid companyId, Guid siteId, Guid zoneId)
     {
         var result = await _shippingService.DeleteZoneAsync(companyId, siteId, zoneId);
@@ -148,6 +156,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpPost("shipping/zones/{zoneId:guid}/rates")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<ShippingRateResponse>>> AddShippingRate(
         Guid companyId, Guid siteId, Guid zoneId, [FromBody] CreateShippingRateRequest request)
     {
@@ -158,6 +167,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpPut("shipping/zones/{zoneId:guid}/rates/{rateId:guid}")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<ShippingRateResponse>>> UpdateShippingRate(
         Guid companyId, Guid siteId, Guid zoneId, Guid rateId, [FromBody] CreateShippingRateRequest request)
     {
@@ -168,6 +178,7 @@ public class CmsCommerceExtController : ControllerBase
 
     [HttpDelete("shipping/zones/{zoneId:guid}/rates/{rateId:guid}")]
     [RequireSiteRole(SiteStaffRole.Admin)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]   // ฝ่ายค้านรอบ 209: ด่านเดียวกับ PUT commerce/config (หน้าตั้งค่าร้านค้า)
     public async Task<ActionResult<ApiResponse<bool>>> DeleteShippingRate(
         Guid companyId, Guid siteId, Guid zoneId, Guid rateId)
     {

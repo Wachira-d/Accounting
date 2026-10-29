@@ -75,6 +75,11 @@ public class Site : TenantEntity
 
     public bool CookieConsentEnabled { get; set; } = true;
     public string? PrivacyPolicyUrl { get; set; }
+    /// <summary>รอบ 209 P6 (ฑ · PDPA ม.19): บังคับติ๊กยินยอมบนฟอร์มเช็กเอาต์/จอง/ติดต่อ — ตรวจที่เซิร์ฟเวอร์ (<c>Helpers/CmsDataConsent</c>) ·
+    /// ค่าเริ่มต้น false = พฤติกรรมเดิม (ช่องยินยอมแสดงแบบไม่บังคับ · ติ๊กแล้วบันทึก <c>PdpaConsentRecord</c>)</summary>
+    public bool RequireDataConsent { get; set; } = false;
+    /// <summary>ข้อความยินยอมที่ลูกค้าเห็น (ว่าง = ข้อความมาตรฐานของระบบ) — เวอร์ชันความยินยอม = hash ของข้อความที่แสดงจริง</summary>
+    public string? DataConsentText { get; set; }
     public string? TermsOfServiceUrl { get; set; }
 
     // Quotas (override from subscription tier)
@@ -117,57 +122,52 @@ public class SiteCommerceConfig : TenantEntity
     public Guid SiteId { get; set; }
     public Site Site { get; set; } = null!;
 
-    // ── Checkout Mode ──
-    public CheckoutMode CheckoutMode { get; set; } = CheckoutMode.PaymentRequired;
-    public bool AutoGenerateQuotation { get; set; } = false;
+    // รอบ 209 (คำตัดสินข้อ 168 ก · R-209-D1/D2): ทุกสวิตช์ในคลาสนี้มีผู้อ่านผ่านตัวตัดสินเดียว Helpers/CmsFeatureFlags ·
+    // ลบคอลัมน์ที่ไม่เคยมีผู้อ่าน (CheckoutMode · AutoGenerateQuotation · DefaultVatRate · PricesIncludeVat · EnableShippingCalculation ·
+    // EnableStockTracking · AutoDeductStock · DefaultStockBehavior · ShowStockQuantity · LowStockThresholdJson · EnableTierPricing ·
+    // AutoSyncToErp · ErpDocumentType · DefaultProductSort · ProductsPerPage · ShowComparePrice · ShowSku) — เหตุผลรายตัวอยู่ใน CmsFeatureFlags
+
+    // ── สมาชิก ── (สองคอลัมน์เดิมความหมายเดียว — CmsFeatureFlags.Resolve รวมเป็น GuestCheckout)
     public bool RequireCustomerAccount { get; set; } = false;
     public bool EnableGuestCheckout { get; set; } = true;
 
-    // ── Tax Settings ──
-    public decimal DefaultVatRate { get; set; } = 7m;
-    public bool PricesIncludeVat { get; set; } = true;
+    // ── ภาษี ── ลูกค้าขอใบกำกับเต็มรูปที่หน้าร้านได้
     public bool EnableTaxInvoice { get; set; } = true;
 
-    // ── Shipping ──
+    // ── การจัดส่ง ── EnableShipping = รับคำสั่งซื้อแบบจัดส่ง (ปิด = มารับเองอย่างเดียว)
     public bool EnableShipping { get; set; } = true;
-    public bool EnableShippingCalculation { get; set; } = false;
     public decimal? FlatShippingRate { get; set; }
     public decimal? FreeShippingThreshold { get; set; }
+    /// <summary>รอบ 209 (R-209-B8): เกณฑ์ส่งฟรีระดับร้านใช้กับอัตราในโซนด้วย · false = เฉพาะร้านที่ไม่ได้ตั้งโซน (เดิม)</summary>
+    public bool FreeShippingOverridesZones { get; set; } = false;
 
-    // ── Inventory ──
-    public bool EnableStockTracking { get; set; } = true;
-    public bool AutoDeductStock { get; set; } = true;
-    public StockBehavior DefaultStockBehavior { get; set; } = StockBehavior.InStockOnly;
-    public bool ShowStockQuantity { get; set; } = false;
-    public string? LowStockThresholdJson { get; set; }
-
-    // ── Coupons & Discounts ──
+    // ── คูปอง ──
     public bool EnableCoupons { get; set; } = true;
-    public bool EnableTierPricing { get; set; } = true;
 
-    // ── Reviews ──
+    // ── รีวิว ──
     public bool EnableReviews { get; set; } = true;
     public bool ReviewAutoApprove { get; set; } = false;
     public bool ReviewRequirePurchase { get; set; } = false;
 
-    // ── Cart ──
+    // ── ตะกร้า ── (EnableAbandonedCartRecovery/CartExpiryDays/AbandonedCartHours — ผู้อ่านอยู่แพ็ก P6 รอบ 209 · AbandonedCartService)
     public bool EnableWishlist { get; set; } = true;
     public bool EnableAbandonedCartRecovery { get; set; } = true;
     public int CartExpiryDays { get; set; } = 7;
     public int AbandonedCartHours { get; set; } = 3;
 
-    // ── Order ──
+    // ── คำสั่งซื้อ ── (NotifyOnNewOrder/OrderNotificationEmails — ผู้อ่านอยู่แพ็ก P3 รอบ 209 · แจ้งเตือน)
     public string OrderNumberPrefix { get; set; } = "WEB";
     public bool AutoConfirmOrders { get; set; } = false;
     public bool NotifyOnNewOrder { get; set; } = true;
     public string? OrderNotificationEmails { get; set; }
+    /// <summary>รอบ 209: ลูกค้ากด "ขอใบเสนอราคา" แทนการชำระบนหน้าสั่งซื้อสำเร็จได้ (เดิมเปิดเสมอ)</summary>
+    public bool EnableQuoteConversion { get; set; } = true;
+    /// <summary>รอบ 209 (คำตัดสินข้อ 168 ง): ค่าตั้งฟอร์มสั่งซื้อ (<c>Helpers.OrderFormFields</c>) · null = ฟอร์มเดิม</summary>
+    public string? OrderFormFieldsJson { get; set; }
 
-    // ── ERP Integration ──
-    public bool AutoSyncToErp { get; set; } = false;
-    public DocumentType ErpDocumentType { get; set; } = DocumentType.Invoice;
-
-    // ── Payment ──
+    // ── การชำระ ──
     public bool EnableOnlinePayment { get; set; } = true;
+    /// <summary>รอบ 209 (คำตัดสินข้อ 168 ค): เก็บเงินปลายทาง/ชำระเมื่อรับ · ค่าเริ่มต้นปิด</summary>
     public bool EnableCod { get; set; } = false;
     public bool EnableBankTransfer { get; set; } = true;
     /// <summary>รอบ 206 (R-32 · คำตัดสินข้อ 165): วิธีคิด VAT ค่าจัดส่งบิลหลายอัตรา — <c>Helpers.ShippingVatAllocation</c> · ค่าเริ่มต้นอัตราสูงสุด (เดิม)</summary>
@@ -175,13 +175,7 @@ public class SiteCommerceConfig : TenantEntity
     /// <summary>รอบ 206 (R-31 · คำตัดสินข้อ 165): ยกเลิกออเดอร์หลังมัดจำ ริบ % ของมัดจำคงเหลือ · null/0 = ไม่ริบเอง (เดิม) — <c>Helpers.SiteOrderDepositForfeit</c></summary>
     public decimal? DepositForfeitOnCancelPercent { get; set; }
 
-    // ── Product Display ──
-    public string DefaultProductSort { get; set; } = "newest";
-    public int ProductsPerPage { get; set; } = 20;
-    public bool ShowComparePrice { get; set; } = true;
-    public bool ShowSku { get; set; } = false;
-
-    // ── Notification Messages (bilingual) ──
+    // ── ข้อความ (สองภาษา) ── (OrderConfirmMessageTh/En — ผู้อ่านอยู่แพ็ก P3 รอบ 209 · ข้อความยืนยันถึงลูกค้า)
     public string? OrderConfirmMessageTh { get; set; }
     public string? OrderConfirmMessageEn { get; set; }
     public string? QuotationMessageTh { get; set; }

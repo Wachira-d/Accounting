@@ -21,7 +21,13 @@ public record SaveCreditPackageRequest(
     Guid? UnearnedAccountId,
     Guid? RevenueAccountId,
     bool IsActive = true,
-    int SortOrder = 0);
+    int SortOrder = 0,
+    // รอบ 209 P5 (R-209-C5) — ไม่ส่ง = พฤติกรรมเดิม (แพ็กเกจนับครั้ง · ไม่อนุญาตพัก · ไม่แจ้งเตือน)
+    CreditPackageKind Kind = CreditPackageKind.Credits,
+    int MaxBookingsPerDay = 1,
+    int MaxActiveBookings = 0,
+    int MaxFreezeDays = 0,
+    int ExpiryReminderDays = 0);
 
 public record CreditPackageResponse(
     Guid Id, string Code, string Name, string? Description,
@@ -33,7 +39,10 @@ public record CreditPackageResponse(
     int FreeCancelHours,
     Guid? UnearnedAccountId, string? UnearnedAccountLabel,
     Guid? RevenueAccountId, string? RevenueAccountLabel,
-    bool IsActive, int SortOrder, int ActivePassCount);
+    bool IsActive, int SortOrder, int ActivePassCount,
+    // รอบ 209 P5 — echo กลับครบ (กฎ #4 A "เก็บแล้วต้อง echo")
+    CreditPackageKind Kind = CreditPackageKind.Credits, string? KindLabel = null,
+    int MaxBookingsPerDay = 1, int MaxActiveBookings = 0, int MaxFreezeDays = 0, int ExpiryReminderDays = 0);
 
 // ===== ขาย / เปิดบัตร =====
 /// <summary>ขายคอร์ส — ออกใบกำกับภาษี/ใบเสร็จ (ขายเงินสด) ผ่าน DocumentService ตัวเดิม · บรรทัดลงผัง "ค่าบริการรับล่วงหน้า"</summary>
@@ -61,7 +70,13 @@ public record CreditPassResponse(
     CreditPassStatus Status, string StatusLabel,
     Guid? SaleDocumentId, string? SaleDocumentNumber,
     // Warning: เลยวันหมดอายุแล้วแต่ยังปิดไม่ได้ (มีการจองค้าง) — ป้ายเตือนบนจอ
-    string? Warning);
+    string? Warning,
+    // รอบ 209 P5 (R-209-C5) — สมาชิกไม่จำกัด / พัก / โอน / แจ้งเตือนหมดอายุ
+    CreditPackageKind Kind = CreditPackageKind.Credits,
+    int PeriodDays = 0, DateTime? PeriodStartsOn = null, DateTime? RecognizedThroughDate = null, decimal PeriodDailyAmount = 0m,
+    int FrozenDays = 0, int MaxFreezeDays = 0, int MaxBookingsPerDay = 1, int MaxActiveBookings = 0,
+    Guid? TransferredFromPassId = null, Guid? TransferredToPassId = null,
+    DateTime? ExpiryNotifiedAt = null, string? ExpiryNotifyError = null);
 
 public record CreditLedgerEntryResponse(
     Guid Id, CreditLedgerKind Kind, string KindLabel, decimal Credits, decimal RecognizedAmount,
@@ -71,7 +86,22 @@ public record CreditLedgerEntryResponse(
 public record CreditPassDetailResponse(
     CreditPassResponse Pass,
     List<CreditLedgerEntryResponse> Ledger,
-    List<CreditBookingResponse> Bookings);
+    List<CreditBookingResponse> Bookings,
+    List<CreditFreezeResponse>? Freezes = null);
+
+// ===== รอบ 209 P5 — พักบัตร / ขยายอายุ / โอน (คำตัดสินข้อ 168 ฎ) =====
+/// <summary>พักบัตร — ช่วงวันรวมหัวท้าย (วันปฏิทินไทย) · เหตุผลบังคับ</summary>
+public record FreezeCreditPassRequest(DateTime FromDate, DateTime ToDate, string? Reason);
+/// <summary>ขยายอายุบัตร (ไม่มีเงิน · audit) — จำนวนวัน + เหตุผลบังคับ</summary>
+public record ExtendCreditPassRequest(int Days, string? Reason);
+/// <summary>โอนบัตรให้ลูกค้าคนอื่น — ปิดบัตรเดิม/เปิดบัตรใหม่ยอดเท่าเดิม · ไม่ออกใบกำกับภาษีใหม่ (โอนภายใน) · เหตุผลบังคับ</summary>
+public record TransferCreditPassRequest(Guid ToContactId, string? Reason);
+public record CreditFreezeResponse(Guid Id, DateTime FromDate, DateTime ToDate, int Days, string Reason, DateTime? CancelledAt, string? CreatedBy);
+
+/// <summary>ผลงานรับรู้รายได้สมาชิกไม่จำกัด (รายคืน/ปุ่ม)</summary>
+public record CreditPeriodRunResult(int Passes, int Failed, decimal Recognized, List<string> Messages);
+/// <summary>ผลแจ้งเตือนบัตรใกล้หมดอายุ — Sent นับเฉพาะที่ช่องทางตอบสำเร็จจริง</summary>
+public record CreditReminderRunResult(int Sent, int Failed, int Due, List<string> Messages);
 
 // ===== คืนเงินจากบัตร (R-38 · รอบ 205 W6) =====
 /// <summary>ระบุอย่างใดอย่างหนึ่ง: ยอดบาทสุทธิก่อน VAT หรือจำนวนเครดิตที่คืน (ระบบแปลงเป็นบาทด้วยราคาต่อเครดิต · คืนเครดิตที่เหลือทั้งหมด = ยอดส่วนที่เหลือ ⇒ ปิดบัตร)</summary>
@@ -141,6 +171,7 @@ public record CreditHoldRequest(
     DateTime StartAt,
     int DurationMinutes,
     CreditClassFormat Format,
-    decimal? Credits = null);
+    decimal? Credits = null,
+    int Seats = 1);   // รอบ 209: จำนวนที่นั่งของการจอง (CMS Units) ⇒ เครดิต × ที่นั่ง เมื่อไม่ระบุ Credits
 
 public record CreditHoldResult(Guid BookingId, Guid PassId, string PassNumber, decimal Credits, decimal CreditsAvailableAfter);

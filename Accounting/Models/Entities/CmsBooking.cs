@@ -64,7 +64,7 @@ public class SiteBookingService : TenantEntity
 
     // Categorization
     public string? Category { get; set; }
-    public string? Tags { get; set; }
+    // รอบ 209 P4 (C9 · ตัดสิน): Tags ถูกลบ — ไม่มีทางเขียนจาก API/หน้าจอ และไม่มีผู้อ่าน (จัดกลุ่มใช้ Category) · คอลัมน์ nullable เดิมคงอยู่ในฐานโดยไม่มีผล
 
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }
@@ -108,7 +108,7 @@ public class SiteBookingSlot : TenantEntity
     public bool IsBlocked { get; set; } = false;
 
     public int MaxCapacity { get; set; } = 1;
-    public int CurrentBookings { get; set; }
+    // รอบ 209 P4 (C9): CurrentBookings ถูกลบ (ไม่มีผู้เขียน — echo "ว่าง = ความจุเต็ม" เสมอ) · คอลัมน์เดิมได้ DEFAULT 0 จาก Helpers/ClassScheduleMigration
 
     public bool IsActive { get; set; } = true;
 }

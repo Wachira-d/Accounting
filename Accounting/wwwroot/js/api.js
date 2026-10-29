@@ -1009,6 +1009,19 @@ const API = {
       cmsRescheduleBooking: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/reschedule`, d || {}),   // รอบ 206
       // รอบ 205 W3 R-16 — เลือก/เปลี่ยนผู้ให้บริการ (resourceId null = ระบบจัดให้)
       cmsAssignBookingResource: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/resource`, d || {}),
+      // รอบ 209 P4 — ตารางคลาส (เทอม → รอบเรียน · ครูแทน · ยกเลิกทั้งคลาส · roster/เช็คอิน) · server ตัดสินทุกข้อ (ClassScheduleGenerator)
+      cmsClassTerms: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/booking/classes/terms${q}`),
+      cmsCreateClassTerm: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/classes/terms`, d),
+      cmsUpdateClassTerm: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/classes/terms/${id}`, d),
+      cmsDeleteClassTerm: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/booking/classes/terms/${id}`),
+      cmsGenerateClassSessions: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/classes/terms/${id}/generate`, d || {}),
+      cmsClassSessions: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/booking/classes/sessions${q}`),
+      cmsClassSession: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}`),
+      cmsUpdateClassSession: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}`, d || {}),
+      cmsClassSubstitute: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}/substitute`, d || {}),
+      cmsCancelClassSession: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}/cancel`, d || {}),
+      cmsReopenClassSession: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}/reopen`, {}),
+      cmsClassCheckIn: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/classes/sessions/${id}/check-in`, d),
       // รอบ 207 — หน้าทำงานผู้ให้บริการ (เริ่ม/เสร็จ/ผู้ให้บริการหลายคน) · รายงาน · ผูกสินค้าให้บริการจอง
       cmsBookingProviderCandidates: (siteId, id) => API.get(`${base}/cms/sites/${siteId}/booking/bookings/${id}/provider-candidates`),
       cmsStartBooking: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/start`, d || {}),
@@ -1086,6 +1099,18 @@ const API = {
       cmsUpdateGateway: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/payment-gateways/${id}`, d),
       cmsGetCommerceConfig: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/config`),
       cmsUpdateCommerceConfig: (siteId, d) => API.put(`${base}/cms/sites/${siteId}/commerce/config`, d),
+      // รอบ 209 P2 — หน้า "ตั้งค่าร้านค้า" (cms-store-settings.html): คูปอง + โซน/อัตราค่าส่ง (API เดิมใน CmsCommerceExtController)
+      cmsListCoupons: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/coupons`),
+      cmsCreateCoupon: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/coupons`, d),
+      cmsUpdateCoupon: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/coupons/${id}`, d),
+      cmsDeleteCoupon: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/coupons/${id}`),
+      cmsListShippingZones: (siteId) => API.get(`${base}/cms/sites/${siteId}/commerce/shipping/zones`),
+      cmsCreateShippingZone: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/shipping/zones`, d),
+      cmsUpdateShippingZone: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${id}`, d),
+      cmsDeleteShippingZone: (siteId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${id}`),
+      cmsAddShippingRate: (siteId, zoneId, d) => API.post(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${zoneId}/rates`, d),
+      cmsUpdateShippingRate: (siteId, zoneId, id, d) => API.put(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${zoneId}/rates/${id}`, d),
+      cmsDeleteShippingRate: (siteId, zoneId, id) => API.del(`${base}/cms/sites/${siteId}/commerce/shipping/zones/${zoneId}/rates/${id}`),
       cmsListLeads: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/leads${q}`),
       // มุมมอง "ทุกไซต์" (R-45) — endpoint ระดับบริษัท แบ่งหน้าจริง · เว็บที่เห็นต่อแถวตัดสินฝั่งเซิร์ฟเวอร์ (Helpers/CmsSiteScope)
       // แทนการวนยิง endpoint รายเว็บ 20 แถว/เว็บ (CmsSiteContext.collect เดิม) · ปุ่ม action ยังยิงไปเว็บเจ้าของแถว (row.siteId)
@@ -1134,6 +1159,9 @@ const API = {
       // cmsListOrders/cmsGetOrder/cmsUpdateOrderStatus อยู่ในกลุ่ม "Orders" ด้านบน — ห้ามประกาศซ้ำ (key ซ้ำตัวหลังทับเงียบ)
       cmsSyncOrderToErp: (siteId, id) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/sync-erp`, {}),
       cmsConfirmOrderPayment: (siteId, id, paymentId = null) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/confirm-payment${paymentId ? `?paymentId=${paymentId}` : ''}`, {}),
+      // รอบ 209 P3: คิวผลิต (A5) + บันทึกรับเงินหน้าร้าน/ปลายทาง (E7) — CmsOrderFulfilmentController
+      cmsProductionQueue: (siteId, q = '') => API.get(`${base}/cms/sites/${siteId}/commerce/orders/production-queue${q}`),
+      cmsRecordCounterPayment: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/commerce/orders/${id}/counter-payment`, d),
       // Booking (per site)
       cmsListBookingServices: (siteId) => API.get(`${base}/cms/sites/${siteId}/booking/services`),
       cmsCreateBookingService: (siteId, d) => API.post(`${base}/cms/sites/${siteId}/booking/services`, d),

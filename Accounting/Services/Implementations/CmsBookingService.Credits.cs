@@ -14,15 +14,21 @@ namespace Accounting.Services.Implementations;
 public partial class CmsBookingService
 {
     /// <summary>ก่อน Add การจองที่เลือกใช้บัตร: ยอดเงิน = 0 (ไม่มีเงินต้องเก็บ — รายได้มาจาก JE รับรู้ของบัตร) · ต้องมีลูกค้าที่ผูกผู้ติดต่อ ERP</summary>
-    private async Task<Guid?> PrepareCreditBookingAsync(Guid companyId, SiteBooking booking, CreateBookingRequest request)
+    private async Task<Guid?> PrepareCreditBookingAsync(Guid companyId, SiteBooking booking, CreateBookingRequest request, string? userId)
     {
         if (!request.PayWithCredit) return null;
+        // รอบ 209 (ทีม C ข้อ C1 · blocking): ทางสร้างการจองเป็น AllowAnonymous และ CustomerId มาจาก body ⇒ ใครรู้ id ก็ตัดเครดิตบัตรคนอื่นได้ ·
+        // controller ตัดสินด้วย CreditBookingLink.PayWithCreditGate (พนักงานมีสิทธิ์ · หรือลูกค้าหน้าร้านที่โทเคนตรง CustomerId — รอบ 209 P1) ·
+        // ชั้นนี้ตรวจซ้ำ: ผู้กระทำว่าง ⇒ ไม่ได้ · ผู้กระทำเป็นลูกค้าหน้าร้าน ⇒ ต้องเป็นเจ้าของ CustomerId พอดี
+        if (CreditBookingLink.ActorPayWithCreditProblem(userId, request.CustomerId) is string who)
+            throw new BusinessRuleException(who, CreditBookingLink.RuleCode, 403);
         if (_creditLedger == null)
             throw new BusinessRuleException("ระบบนี้ยังไม่เปิดใช้โมดูลคอร์ส/เครดิต — จองแบบชำระปกติ", CreditBookingLink.RuleCode);
         if (request.CustomerId is not Guid customerId)
             throw new BusinessRuleException("จองด้วยบัตรคอร์สต้องระบุลูกค้า (บัญชีลูกค้าของเว็บไซต์ที่ผูกผู้ติดต่อ) — แขกไม่ล็อกอินใช้บัตรไม่ได้", CreditBookingLink.RuleCode);
         var contactId = await _db.SiteCustomers.AsNoTracking()
-            .Where(c => c.Id == customerId && c.CompanyId == companyId)
+            // ฝ่ายค้านรอบ 209 (security note): บัญชีที่ปิดแล้ว/ของเว็บอื่นใช้บัตรไม่ได้ (โทเคนยังไม่หมดอายุ 24 ชม. ก็ตาม)
+            .Where(c => c.Id == customerId && c.CompanyId == companyId && c.SiteId == booking.SiteId && c.IsActive)
             .Select(c => c.ContactId).FirstOrDefaultAsync();
         if (contactId is not Guid cid)
             throw new BusinessRuleException("ลูกค้ารายนี้ยังไม่ผูกผู้ติดต่อในระบบบัญชี — ผูกผู้ติดต่อก่อนจึงใช้บัตรคอร์สได้", CreditBookingLink.RuleCode);
@@ -40,7 +46,7 @@ public partial class CmsBookingService
             ExternalRef: CreditBookingLink.Ref(booking.Id),
             StartAt: CreditBookingLink.StartUtc(booking.BookingDate, booking.StartTime),
             DurationMinutes: booking.DurationMinutes,
-            Format: CreditClassFormat.Any), actor ?? "storefront-customer");
+            Format: CreditClassFormat.Any, Seats: booking.Units), actor ?? "storefront-customer");
         booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes,
             CreditBookingLink.PaidNote(hold.PassNumber, hold.Credits, servicePrice));
         await _db.SaveChangesAsync();
@@ -54,16 +60,34 @@ public partial class CmsBookingService
         return await _db.CreditClassBookings.AsNoTracking().AnyAsync(b => b.CompanyId == companyId && b.ExternalRef == r);
     }
 
-    /// <summary>เลขบัตรของการจองที่จ่ายด้วยบัตร (แสดงบนหน้าการจอง) · null = การจองปกติ</summary>
-    private async Task<string?> CreditPassNumberAsync(Guid companyId, Guid bookingId)
+    /// <summary>เลขบัตร + ชั่วโมงยกเลิกฟรีที่ตรึงบนบัตร ของการจองที่จ่ายด้วยบัตร · null = การจองปกติ</summary>
+    private async Task<(string PassNumber, int FreeCancelHours)?> CreditPassOfBookingAsync(Guid companyId, Guid bookingId)
     {
         if (_creditLedger == null) return null;
         var r = CreditBookingLink.Ref(bookingId);
-        return await (from b in _db.CreditClassBookings.AsNoTracking()
-                      join p in _db.CreditPasses.AsNoTracking() on b.PassId equals p.Id
-                      where b.CompanyId == companyId && p.CompanyId == companyId && b.ExternalRef == r
-                      orderby b.BookedAt descending
-                      select p.PassNumber).FirstOrDefaultAsync();
+        var row = await (from b in _db.CreditClassBookings.AsNoTracking()
+                         join p in _db.CreditPasses.AsNoTracking() on b.PassId equals p.Id
+                         where b.CompanyId == companyId && p.CompanyId == companyId && b.ExternalRef == r
+                         orderby b.BookedAt descending
+                         select new { p.PassNumber, p.FreeCancelHours }).FirstOrDefaultAsync();
+        return row == null ? null : (row.PassNumber, row.FreeCancelHours);
+    }
+
+    /// <summary>รอบ 209 P4 (คำตัดสินข้อ 168 ญ): เลขบัตร (R-39) + นโยบายยกเลิกที่ใช้จริงบนคำตอบ — จองด้วยบัตร ⇒ กติกาของแพ็กเกจ (ตรึงบนบัตร · เส้นยกเลิกจริง
+    /// <c>CourseCreditService</c> ใช้ตัวนี้) · ไม่ใช่บัตร ⇒ นโยบายของบริการ · ตัวตัดสินข้อความเดียว <see cref="CreditBookingLink.CancellationPolicy"/> ·
+    /// คืนชั่วโมงยกเลิกฟรีของบัตร (null = ไม่ใช่การจองด้วยบัตร) ให้ผู้เรียกคิด "ถ้ายกเลิกตอนนี้"</summary>
+    private async Task<int?> FillCreditPolicyAsync(Guid companyId, BookingResponse resp)
+    {
+        var pass = await CreditPassOfBookingAsync(companyId, resp.Id);
+        resp.CreditPassNumber = pass?.PassNumber;
+        var svc = await _db.SiteBookingServices.AsNoTracking()
+            .Where(s => s.Id == resp.BookingServiceId && s.CompanyId == companyId)
+            .Select(s => new { s.FreeCancellationHours, s.CancellationFeePercent }).FirstOrDefaultAsync();
+        var (source, text) = CreditBookingLink.CancellationPolicy(pass?.PassNumber, pass?.FreeCancelHours,
+            svc?.FreeCancellationHours, svc?.CancellationFeePercent);
+        resp.CancellationPolicySource = source;
+        resp.CancellationPolicy = text;
+        return pass?.FreeCancelHours;
     }
 
     /// <summary>หลังบันทึกสถานะการจองแล้ว: ให้บริการเสร็จ ⇒ ตัดเครดิต · ไม่มา ⇒ ตัดเครดิต (no-show) · ยกเลิก ⇒ คืนเครดิต (ร้านยกเลิก) ·

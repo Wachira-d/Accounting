@@ -71,7 +71,7 @@ public class CmsShippingService : ICmsShippingService
     public async Task<List<ShippingZoneResponse>> GetZonesAsync(Guid companyId, Guid siteId)
     {
         return await _db.SiteShippingZones.AsNoTracking()
-            .Where(z => z.SiteId == siteId && z.CompanyId == companyId)
+            .Where(z => z.SiteId == siteId && z.CompanyId == companyId && !z.IsDeleted)
             .OrderBy(z => z.SortOrder)
             .Select(z => new ShippingZoneResponse
             {
@@ -79,10 +79,12 @@ public class CmsShippingService : ICmsShippingService
                 CountryCodes = z.CountryCodes, Provinces = z.Provinces,
                 PostalCodePatterns = z.PostalCodePatterns,
                 IsActive = z.IsActive, SortOrder = z.SortOrder,
-                Rates = z.Rates.OrderBy(r => r.SortOrder).Select(r => new ShippingRateResponse
+                // รอบ 209 P2: อัตราที่ลบแล้วไม่ขึ้นในหน้าตั้งค่า · echo น้ำหนักต่ำ/สูงสุดที่รับไว้ (กฎเหล็ก #4 A — เดิมเก็บแต่ไม่ส่งกลับ)
+                Rates = z.Rates.Where(r => !r.IsDeleted).OrderBy(r => r.SortOrder).Select(r => new ShippingRateResponse
                 {
                     Id = r.Id, Name = r.Name, CarrierName = r.CarrierName, RateType = r.RateType,
                     BaseRate = r.BaseRate, PerKgRate = r.PerKgRate, FreeAboveAmount = r.FreeAboveAmount,
+                    MinWeightKg = r.MinWeightKg, MaxWeightKg = r.MaxWeightKg, SortOrder = r.SortOrder,
                     EstimatedDeliveryDaysMin = r.EstimatedDeliveryDaysMin,
                     EstimatedDeliveryDaysMax = r.EstimatedDeliveryDaysMax,
                     IsActive = r.IsActive
@@ -103,7 +105,7 @@ public class CmsShippingService : ICmsShippingService
 
     public async Task<ShippingRateResponse> AddRateAsync(Guid companyId, Guid siteId, Guid zoneId, CreateShippingRateRequest request, string userId)
     {
-        var zone = await _db.SiteShippingZones.FirstOrDefaultAsync(z => z.Id == zoneId && z.SiteId == siteId)
+        var zone = await _db.SiteShippingZones.FirstOrDefaultAsync(z => z.Id == zoneId && z.SiteId == siteId && z.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Shipping zone not found.");
 
         var rate = new SiteShippingRate
@@ -125,7 +127,7 @@ public class CmsShippingService : ICmsShippingService
     public async Task<ShippingRateResponse> UpdateRateAsync(Guid companyId, Guid siteId, Guid zoneId, Guid rateId, CreateShippingRateRequest request, string userId)
     {
         var rate = await _db.SiteShippingRates.Include(r => r.Zone)
-            .FirstOrDefaultAsync(r => r.Id == rateId && r.ZoneId == zoneId && r.Zone.SiteId == siteId)
+            .FirstOrDefaultAsync(r => r.Id == rateId && r.ZoneId == zoneId && r.Zone.SiteId == siteId && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Shipping rate not found.");
 
         rate.Name = request.Name;
@@ -148,7 +150,7 @@ public class CmsShippingService : ICmsShippingService
     public async Task<bool> DeleteRateAsync(Guid companyId, Guid siteId, Guid zoneId, Guid rateId)
     {
         var rate = await _db.SiteShippingRates.Include(r => r.Zone)
-            .FirstOrDefaultAsync(r => r.Id == rateId && r.ZoneId == zoneId && r.Zone.SiteId == siteId);
+            .FirstOrDefaultAsync(r => r.Id == rateId && r.ZoneId == zoneId && r.Zone.SiteId == siteId && r.CompanyId == companyId);
         if (rate == null) return false;
         rate.IsActive = false;
         rate.IsDeleted = true;
@@ -251,7 +253,7 @@ public class CmsShippingService : ICmsShippingService
             CountryCodes = z.CountryCodes, Provinces = z.Provinces,
             PostalCodePatterns = z.PostalCodePatterns,
             IsActive = z.IsActive, SortOrder = z.SortOrder,
-            Rates = z.Rates.OrderBy(r => r.SortOrder).Select(MapRateResponse).ToList()
+            Rates = z.Rates.Where(r => !r.IsDeleted).OrderBy(r => r.SortOrder).Select(MapRateResponse).ToList()
         };
     }
 
@@ -259,6 +261,7 @@ public class CmsShippingService : ICmsShippingService
     {
         Id = r.Id, Name = r.Name, CarrierName = r.CarrierName, RateType = r.RateType,
         BaseRate = r.BaseRate, PerKgRate = r.PerKgRate, FreeAboveAmount = r.FreeAboveAmount,
+        MinWeightKg = r.MinWeightKg, MaxWeightKg = r.MaxWeightKg, SortOrder = r.SortOrder,
         EstimatedDeliveryDaysMin = r.EstimatedDeliveryDaysMin,
         EstimatedDeliveryDaysMax = r.EstimatedDeliveryDaysMax,
         IsActive = r.IsActive

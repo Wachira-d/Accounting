@@ -58,6 +58,15 @@ public class SiteBookingResource : TenantEntity
     /// <summary>รอบ 207: ผู้ใช้ระบบ (พนักงาน) ของผู้ให้บริการคนนี้ — POS เติมช่างให้บรรทัด/ค่าคอม · null = ไม่ผูก</summary>
     public Guid? StaffUserId { get; set; }
 
+    // ── รอบ 209 · P5 (R-209-C6/D8 · คำตัดสินข้อ 168 ฏ) — ตั้งที่หน้า "สรุปงานผู้ให้บริการ" (endpoint แยก · ฟอร์มผู้ให้บริการเดิมไม่แตะช่องเหล่านี้) ──
+    /// <summary>พนักงาน (ทะเบียน HR) ของผู้ให้บริการ — ฐานค่าคอม/ค่าตอบแทน (<c>CommissionService</c> ฐาน BookingServices/InstructorPay) · null = ไม่ผูก</summary>
+    public Guid? EmployeeId { get; set; }
+    public InstructorPayMode PayMode { get; set; } = InstructorPayMode.None;
+    /// <summary>บาทต่อคลาส (PerClass) · บาทต่อหัว (PerHead) · เปอร์เซ็นต์ (PercentOfRevenue)</summary>
+    public decimal PayRate { get; set; }
+    /// <summary>ขั้นต่ำต่อคลาส (PerHead เท่านั้น · 0 = ไม่มีขั้นต่ำ)</summary>
+    public decimal PayMinimumPerClass { get; set; }
+
     public ICollection<SiteBookingResourceService> Services { get; set; } = new List<SiteBookingResourceService>();
     public ICollection<SiteBookingResourceSlot> Slots { get; set; } = new List<SiteBookingResourceSlot>();
 }

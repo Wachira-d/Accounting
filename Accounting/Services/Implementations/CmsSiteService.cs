@@ -67,6 +67,14 @@ public class CmsSiteService : ICmsSiteService
             reserved.Select(r => r.Slug),
             CmsFieldLengths.SiteSlug);
 
+        // รอบ 209 P6 (ฐ/D3): สาขา/คลังของเว็บไหลไปเอกสาร/สต็อกจริง ⇒ ต้องเป็นของบริษัทนี้ (กฎ M)
+        if (request.BranchId is Guid nb && nb != Guid.Empty
+            && !await _db.Branches.AnyAsync(x => x.Id == nb && x.CompanyId == companyId && !x.IsDeleted))
+            throw new BusinessRuleException("ไม่พบสาขาที่เลือก หรือไม่ใช่สาขาของบริษัทนี้", CmsDocumentBranch.RuleCode);
+        if (request.DefaultWarehouseId is Guid nw && nw != Guid.Empty
+            && !await _db.Warehouses.AnyAsync(x => x.Id == nw && x.CompanyId == companyId && !x.IsDeleted))
+            throw new BusinessRuleException("ไม่พบคลังที่เลือก หรือไม่ใช่คลังของบริษัทนี้", CmsDocumentBranch.RuleCode);
+
         var site = new Site
         {
             CompanyId = companyId,
@@ -77,8 +85,8 @@ public class CmsSiteService : ICmsSiteService
             SiteType = request.SiteType,
             IndustryType = request.IndustryType,
             RenderMode = request.RenderMode,
-            BranchId = request.BranchId,
-            DefaultWarehouseId = request.DefaultWarehouseId,
+            BranchId = request.BranchId == Guid.Empty ? null : request.BranchId,
+            DefaultWarehouseId = request.DefaultWarehouseId == Guid.Empty ? null : request.DefaultWarehouseId,
             UseGlobalInventory = request.UseGlobalInventory,
             DefaultLanguage = request.DefaultLanguage,
             DefaultCurrency = request.DefaultCurrency,
@@ -210,8 +218,21 @@ public class CmsSiteService : ICmsSiteService
         if (request.Status.HasValue) site.Status = request.Status.Value;
         if (request.SiteType.HasValue) site.SiteType = request.SiteType.Value;
         if (request.RenderMode.HasValue) site.RenderMode = request.RenderMode.Value;
-        if (request.BranchId.HasValue) site.BranchId = request.BranchId;
-        if (request.DefaultWarehouseId.HasValue) site.DefaultWarehouseId = request.DefaultWarehouseId;
+        // รอบ 209 P6 (ฐ/D3): สาขา/คลังของเว็บมีผลกับเอกสาร/สต็อกจริงแล้ว ⇒ ต้องเป็นของบริษัทนี้ (กฎ M) · Guid.Empty = ล้าง (กลับเป็นสำนักงานใหญ่/คลังหลัก)
+        if (request.BranchId.HasValue)
+        {
+            var b = request.BranchId.Value;
+            if (b != Guid.Empty && !await _db.Branches.AnyAsync(x => x.Id == b && x.CompanyId == companyId && !x.IsDeleted))
+                throw new BusinessRuleException("ไม่พบสาขาที่เลือก หรือไม่ใช่สาขาของบริษัทนี้", CmsDocumentBranch.RuleCode);
+            site.BranchId = b == Guid.Empty ? null : b;
+        }
+        if (request.DefaultWarehouseId.HasValue)
+        {
+            var w = request.DefaultWarehouseId.Value;
+            if (w != Guid.Empty && !await _db.Warehouses.AnyAsync(x => x.Id == w && x.CompanyId == companyId && !x.IsDeleted))
+                throw new BusinessRuleException("ไม่พบคลังที่เลือก หรือไม่ใช่คลังของบริษัทนี้", CmsDocumentBranch.RuleCode);
+            site.DefaultWarehouseId = w == Guid.Empty ? null : w;
+        }
         if (request.UseGlobalInventory.HasValue) site.UseGlobalInventory = request.UseGlobalInventory.Value;
         if (request.CustomDomain != null) site.CustomDomain = request.CustomDomain;
         if (request.LogoUrl != null) site.LogoUrl = request.LogoUrl;
@@ -242,6 +263,9 @@ public class CmsSiteService : ICmsSiteService
         if (request.CookieConsentEnabled.HasValue) site.CookieConsentEnabled = request.CookieConsentEnabled.Value;
         if (request.PrivacyPolicyUrl != null) site.PrivacyPolicyUrl = request.PrivacyPolicyUrl;
         if (request.TermsOfServiceUrl != null) site.TermsOfServiceUrl = request.TermsOfServiceUrl;
+        // รอบ 209 P6 (ฑ): ยินยอม PDPA บนฟอร์มหน้าเว็บ — "" = ข้อความมาตรฐาน · null = ไม่เปลี่ยน (echo ใน SiteResponse · ผู้อ่าน: CmsDataConsent)
+        if (request.RequireDataConsent.HasValue) site.RequireDataConsent = request.RequireDataConsent.Value;
+        if (request.DataConsentText != null) site.DataConsentText = Blank(request.DataConsentText);
         if (request.ThemeId.HasValue) site.ThemeId = request.ThemeId;
 
         if (request.Status == SiteStatus.Published && site.PublishedAt == null)
@@ -317,6 +341,8 @@ public class CmsSiteService : ICmsSiteService
                 InstagramUrl = s.InstagramUrl,
                 CookieConsentEnabled = s.CookieConsentEnabled,
                 PrivacyPolicyUrl = s.PrivacyPolicyUrl,
+                RequireDataConsent = s.RequireDataConsent,
+                DataConsentText = s.DataConsentText,
                 CurrentStorageUsed = s.CurrentStorageUsed,
                 MaxStorageBytes = s.MaxStorageBytes,
                 PageCount = s.Pages.Count(p => !p.IsDeleted),

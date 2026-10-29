@@ -26,6 +26,39 @@ public static class CreditBookingLink
     /// <summary>ผู้กระทำที่เป็นลูกค้าหน้าเว็บ (ยกเลิกเองผ่านลิงก์ — <c>CancelByCustomerAsync</c> ตั้ง "customer:{token}") · รอบ 208 ฝ่ายค้าน W6 ข้อ 5:
     /// ลูกค้ายกเลิก ⇒ ใช้นโยบายยกเลิกของคอร์ส (ไม่ใช่ "ร้านยกเลิก" ที่คืนเครดิตเสมอ)</summary>
     public const string CustomerActorPrefix = "customer:";
+    // ───────── รอบ 209 · P1 (R-209-C3/E1): ลูกค้าที่ล็อกอินหน้าร้านจองด้วยบัตรของตัวเองได้ ─────────
+
+    /// <summary>ข้อความเมื่อแขกไม่ล็อกอินขอใช้บัตร</summary>
+    public const string AnonymousCreditProblem = "จองด้วยบัตรคอร์สต้องเข้าสู่ระบบสมาชิกของเว็บนี้ก่อน (เมนู \"บัญชีของฉัน\") — หรือจองแบบชำระปกติ / ติดต่อร้านให้จองแทน";
+    /// <summary>ผู้กระทำที่เป็นลูกค้าหน้าร้านที่ล็อกอิน (ส่งต่อจาก controller เป็น userId ของการจอง) — "storefront-customer:{id}"</summary>
+    public const string StorefrontActorPrefix = "storefront-customer:";
+    public static string StorefrontActor(Guid customerId) => StorefrontActorPrefix + customerId.ToString("D");
+
+    /// <summary>ด่านที่ controller (ทางสร้างการจองเป็น AllowAnonymous) — <b>ตัวตัดสินเดียว 3 ทิศ</b>:
+    /// ① พนักงานของบริษัทที่มีสิทธิ์จัดการการจอง ⇒ ได้ (ทางเดิม) ·
+    /// ② ลูกค้าหน้าร้านที่โทเคนออกโดยเว็บนี้ และ id ในโทเคน = <paramref name="requestCustomerId"/> ⇒ ได้ (ใช้บัตรของตัวเอง) ·
+    /// ③ อื่น ๆ (แขกนิรนาม · โทเคนเว็บอื่น · ขอใช้แทนลูกค้าคนอื่น) ⇒ ปัญหา (403) · null = ได้</summary>
+    public static string? PayWithCreditGate(bool staffAuthorized, Guid? tokenCustomerId, Guid? tokenSiteId, Guid routeSiteId, Guid? requestCustomerId)
+    {
+        if (staffAuthorized) return null;
+        if (tokenCustomerId is not Guid me) return AnonymousCreditProblem;
+        if (tokenSiteId != routeSiteId) return "บัญชีสมาชิกนี้เป็นของเว็บไซต์อื่น — เข้าสู่ระบบที่เว็บนี้ใหม่ก่อนจองด้วยบัตร";
+        if (requestCustomerId != me) return "ใช้บัตรคอร์สได้เฉพาะบัญชีของตัวเอง — ออกจากระบบแล้วเข้าใหม่ หรือติดต่อร้าน";
+        return null;
+    }
+
+    /// <summary>ด่านซ้ำชั้น service (defense in depth — ถ้ามีทางเรียกอื่นที่ไม่ผ่าน controller): ผู้กระทำว่าง ⇒ ไม่ได้ ·
+    /// ผู้กระทำเป็นลูกค้าหน้าร้าน ⇒ ต้องเป็นเจ้าของ <paramref name="requestCustomerId"/> พอดี · อื่น ๆ (id พนักงาน — controller ตรวจสิทธิ์แล้ว) ⇒ ได้</summary>
+    public static string? ActorPayWithCreditProblem(string? actor, Guid? requestCustomerId)
+    {
+        // รอบ 209 (ทีม C ข้อ C1 · เดิม PayWithCreditProblem): ผู้กระทำว่าง (แขกนิรนาม) ⇒ ไม่ได้
+        if (string.IsNullOrWhiteSpace(actor)) return AnonymousCreditProblem;
+        if (actor.StartsWith(StorefrontActorPrefix, StringComparison.Ordinal))
+            return requestCustomerId is Guid c && actor == StorefrontActor(c)
+                ? null : "ใช้บัตรคอร์สได้เฉพาะบัญชีของตัวเอง — ออกจากระบบแล้วเข้าใหม่ หรือติดต่อร้าน";
+        return null;
+    }
+
     public static bool IsCustomerActor(string? actor) => actor != null && actor.StartsWith(CustomerActorPrefix, StringComparison.Ordinal);
 
     /// <summary>เปลี่ยนสถานะการจอง ⇒ ต้องทำอะไรกับสมุดเครดิต (เฉพาะการจองที่จ่ายด้วยบัตร · ผู้เรียกตรวจ <paramref name="paidWithCredit"/> ก่อน)</summary>
@@ -92,6 +125,34 @@ public static class CreditBookingLink
 
     /// <summary>หมายเหตุบนบิล POS ที่เปิดจากการจองที่จ่ายด้วยบัตร</summary>
     public const string PosOpenNote = "ชำระด้วยบัตรคอร์ส — ปิดบิลแล้วระบบตัดเครดิต (มาเรียน) ให้ในธุรกรรมเดียวกัน";
+
+    // ───────── รอบ 209 P4 (คำตัดสินข้อ 168 ญ): นโยบายยกเลิกของการจองด้วยบัตร = กติกาของแพ็กเกจ (ตรึงบนบัตรตอนขาย) ชนะนโยบายของบริการ ─────────
+
+    public const string PolicySourceCreditPass = "CreditPass";
+    public const string PolicySourceService = "Service";
+
+    /// <summary>นโยบายยกเลิกที่ใช้กับการจองหนึ่งใบ (server ประกอบ · หน้าเว็บแสดงตรง) — มีบัตร ⇒ กติกาของบัตร (<paramref name="passFreeCancelHours"/>
+    /// คือค่าที่ <c>CourseCreditMath.CancelOutcome</c> ใช้ตอนยกเลิกจริง) · ไม่มีบัตร ⇒ ของบริการ · บริการไม่ตั้งอะไรเลย ⇒ ข้อความ null</summary>
+    public static (string Source, string? Text) CancellationPolicy(string? passNumber, int? passFreeCancelHours, int? serviceFreeHours, decimal? serviceFeePercent)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (!string.IsNullOrWhiteSpace(passNumber) && passFreeCancelHours is int h)
+            return (PolicySourceCreditPass, h > 0
+                ? $"จองด้วยบัตรคอร์ส {passNumber} — ใช้กติกาของบัตร: ยกเลิกก่อนเวลาเรียนอย่างน้อย {h} ชั่วโมง คืนเครดิต · ช้ากว่านั้นหรือไม่มา = ตัดเครดิต · ร้านยกเลิกคลาส = คืนเครดิตเสมอ"
+                : $"จองด้วยบัตรคอร์ส {passNumber} — ใช้กติกาของบัตร: ยกเลิกก่อนเวลาเรียน คืนเครดิต · ไม่มา = ตัดเครดิต · ร้านยกเลิกคลาส = คืนเครดิตเสมอ");
+        var fee = serviceFeePercent is decimal f && f > 0 ? f : (decimal?)null;
+        if (serviceFreeHours is int sh && sh > 0)
+            return (PolicySourceService, fee is decimal fp
+                ? $"ยกเลิกฟรีก่อนเวลานัด {sh} ชั่วโมง (หลังจากนั้นค่าธรรมเนียม {fp.ToString("0.##", inv)}%)"
+                : $"ยกเลิกฟรีก่อนเวลานัด {sh} ชั่วโมง");
+        return (PolicySourceService, fee is decimal fo ? $"ยกเลิกมีค่าธรรมเนียม {fo.ToString("0.##", inv)}%" : null);
+    }
+
+    /// <summary>"ถ้ายกเลิกตอนนี้" ของการจองด้วยบัตร — ผลจากตัวตัดสินเดียวกับเส้นยกเลิกจริง (<see cref="CourseCreditMath.CancelOutcome"/>)</summary>
+    public static string CancelNowNote(DateTime startUtc, DateTime nowUtc, int passFreeCancelHours)
+        => CourseCreditMath.CancelOutcome(startUtc, nowUtc, passFreeCancelHours) == CreditCancelOutcome.Refund
+            ? $"ยกเลิกตอนนี้ได้เครดิตคืน (กติกาของบัตร: ก่อนเวลาเรียนอย่างน้อย {Math.Max(0, passFreeCancelHours)} ชั่วโมง)"
+            : $"ยกเลิกตอนนี้ = ตัดเครดิต 1 ครั้งตามกติกาของบัตร (น้อยกว่า {Math.Max(0, passFreeCancelHours)} ชั่วโมงก่อนเวลาเรียน)";
 
     public static string ActionTh(LedgerAction a) => a switch
     {

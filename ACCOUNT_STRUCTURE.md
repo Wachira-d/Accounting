@@ -1127,3 +1127,10 @@ _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PL ฝ่าย�
 _Last verified against codebase: 2026-10-02 (รอบ 202 ทีม LS — §3.1b สถานะเปิดจองออนไลน์ของที่พัก + id เว็บ/นโยบายต้องเป็นของบริษัท — commit 7b83b697)_
 _Last verified against codebase: 2026-10-22 (rev 49 · รอบ 205 ทีม I — **§3.1g** ผู้สร้างบริษัท = Owner ทุกทางเข้า (`CompanyCreatorMembership`) + ตัวซ่อมบริษัทไม่มีเจ้าของ + `LastOwnerGuard` + `BuiltInRolePermissions`/`PermissionMatrix`/`RoleTemplates` + `PlanIdentityResolver` — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_
 _Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I ฝ่ายค้าน — **§3.1g** ตัวซ่อมตั้งเองเฉพาะผู้สร้าง active · ตัดฝั่งแพลตฟอร์มจากตัวเลือก · ล็อกต่อบริษัท · `ActorRowAfter` · `LastOwnerGuard` นับเฉพาะ Owner ลูกค้า · migration id เมนู — ไม่มีคอลัมน์ใหม่ — sha เติมในคอมมิตตามหลัง)_
+
+## รอบ 209 P6 — เว็บ (Site) ผูกสาขา/คลังมีผลจริง
+
+- `Site.BranchId` ⇒ สาขาที่ออกเอกสารของออเดอร์/การจอง/lead ของเว็บนั้น (`Helpers/CmsDocumentBranch`) · ไม่ผูก = สำนักงานใหญ่ (`Company.BranchCode`) เหมือนเดิม
+- `Site.UseGlobalInventory=false` ⇒ ตัดสต็อกที่ `Site.DefaultWarehouseId` หรือคลังของสาขาที่ผูก (`Helpers/CmsSiteWarehouse`) · ค่าเริ่มต้น true = คลังหลักบริษัท
+- ตั้ง/เปลี่ยนที่ `cms-edit` แท็บ SEO → "สาขาและคลังของเว็บนี้" · เซิร์ฟเวอร์ตรวจว่าสาขา/คลังเป็นของบริษัทนี้ (Guid ศูนย์ = ล้าง) · มีผลกับเอกสารใหม่เท่านั้น
+

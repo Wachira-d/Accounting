@@ -175,6 +175,23 @@ public class CmsBookingController : ControllerBase
     {
         string? userId = null;
         try { userId = JwtHelper.GetUserIdFromClaims(User).ToString(); } catch { }
+        // รอบ 209 (ทีม C ข้อ C1): ใช้บัตรคอร์สแทนลูกค้า = เขียนสมุดเครดิตของลูกค้า ⇒ ต้องเป็นพนักงานของบริษัทนี้ที่มีสิทธิ์จัดการการจอง
+        // (โทเคนหน้าร้าน/บัญชี ERP ของบริษัทอื่นไม่ผ่าน) · ไม่ใช้บัตร = เส้นเดิมทุกตัว
+        // รอบ 209 P1 (R-209-C3): ลูกค้าที่ล็อกอินหน้าร้าน (โทเคนหน้าร้านของเว็บนี้ · id ตรง CustomerId) ใช้บัตรของตัวเองได้ — ตัวตัดสินเดียว 3 ทิศ PayWithCreditGate
+        var perms = HttpContext.RequestServices.GetService(typeof(IPermissionService)) as IPermissionService;
+        var staffOk = userId != null && perms != null && await perms.HasPermissionAsync(companyId, Guid.Parse(userId), PermissionKeys.CmsOrderManage);
+        var cfg = HttpContext.RequestServices.GetService(typeof(IConfiguration)) as IConfiguration;
+        var sf = staffOk || cfg == null ? null : StorefrontCustomerAuth.FromRequest(Request, cfg);
+        // รอบ 209 ฝ่ายค้าน (security ข้อ 6): ลูกค้าของการจอง = ตัวตนที่ยืนยันแล้ว (โทเคนหน้าร้านของเว็บนี้) · พนักงานที่มีสิทธิ์ระบุจาก body ได้ ·
+        // นิรนาม ⇒ ไม่มีลูกค้า (เดิมรับ CustomerId จาก body ⇒ ยัดการจองเข้า "การจองของฉัน" ของคนอื่น + ข้ามด่านยินยอมด้วย id ของคนอื่น) — ตัวตัดสินเดียวกับออเดอร์
+        var bodyCustomerId = request.CustomerId;
+        request.CustomerId = StorefrontCustomerAuth.OrderCustomerId(bodyCustomerId, staffOk, sf, siteId);
+        if (request.PayWithCredit)
+        {
+            if (CreditBookingLink.PayWithCreditGate(staffOk, sf?.CustomerId, sf?.SiteId, siteId, bodyCustomerId ?? request.CustomerId) is string creditProblem)
+                return StatusCode(403, new ApiResponse<BookingResponse>(false, null!, creditProblem));
+            if (!staffOk && sf != null) userId = CreditBookingLink.StorefrontActor(sf.CustomerId);   // ผู้กระทำ = ลูกค้าคนนั้น (service ตรวจซ้ำ)
+        }
         var result = await _bookingService.CreateBookingAsync(companyId, siteId, request, userId);
         return StatusCode(201, new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.created", Lang)));
     }

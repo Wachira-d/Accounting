@@ -455,6 +455,9 @@ public class AccountingDbContext : DbContext
     public DbSet<SiteBookingResourceService> SiteBookingResourceServices => Set<SiteBookingResourceService>();
     public DbSet<SiteBookingResourceSlot> SiteBookingResourceSlots => Set<SiteBookingResourceSlot>();
     public DbSet<SiteBookingAssignment> SiteBookingAssignments => Set<SiteBookingAssignment>();
+    // รอบ 209 P4 — ตารางคลาส (Helpers/ClassScheduleMigration)
+    public DbSet<SiteClassTerm> SiteClassTerms => Set<SiteClassTerm>();
+    public DbSet<SiteClassSession> SiteClassSessions => Set<SiteClassSession>();
 
     // Lodging (ธุรกิจที่พัก)
     public DbSet<LodgingProperty> LodgingProperties => Set<LodgingProperty>();
@@ -478,6 +481,8 @@ public class AccountingDbContext : DbContext
     public DbSet<CreditLedgerEntry> CreditLedgerEntries => Set<CreditLedgerEntry>();
     public DbSet<CreditClassSession> CreditClassSessions => Set<CreditClassSession>();
     public DbSet<CreditClassBooking> CreditClassBookings => Set<CreditClassBooking>();
+    // รอบ 209 P5 — พักบัตร (schema: Helpers/CourseCreditMembershipMigration)
+    public DbSet<CreditPassFreeze> CreditPassFreezes => Set<CreditPassFreeze>();
 
     // รอบ 194 — ประเภทเงินมัดจำต่อบริษัท (ลักษณะเงิน = ตัวกำหนด VAT · โหมด = วิธีบันทึก) — Helpers/DepositPolicyResolver.ResolveKind
     public DbSet<DepositKind> DepositKinds => Set<DepositKind>();
@@ -3294,12 +3299,10 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<SiteCommerceConfig>(e =>
         {
             e.HasIndex(c => c.SiteId).IsUnique().HasDatabaseName("IX_CommerceConfig_SiteId");
-            e.Property(c => c.DefaultVatRate).HasPrecision(5, 2);
             e.Property(c => c.FlatShippingRate).HasPrecision(18, 2);
             e.Property(c => c.FreeShippingThreshold).HasPrecision(18, 2);
             e.Property(c => c.OrderNumberPrefix).HasMaxLength(16);
             e.Property(c => c.OrderNotificationEmails).HasMaxLength(1024);
-            e.Property(c => c.DefaultProductSort).HasMaxLength(32);
             e.Property(c => c.OrderConfirmMessageTh).HasMaxLength(2048);
             e.Property(c => c.OrderConfirmMessageEn).HasMaxLength(2048);
             e.Property(c => c.QuotationMessageTh).HasMaxLength(2048);
@@ -3335,7 +3338,6 @@ public class AccountingDbContext : DbContext
             e.Property(bs => bs.CancellationFeePercent).HasPrecision(5, 2);
             e.Property(bs => bs.Currency).HasMaxLength(3);
             e.Property(bs => bs.Category).HasMaxLength(128);
-            e.Property(bs => bs.Tags).HasMaxLength(500);
             e.Property(bs => bs.HalfDaySplitTime).HasMaxLength(8);
             e.Property(bs => bs.CapacityGroup).HasMaxLength(64);
             e.HasOne(bs => bs.Site).WithMany(s => s.BookingServices).HasForeignKey(bs => bs.SiteId).OnDelete(DeleteBehavior.Cascade);
@@ -3387,6 +3389,7 @@ public class AccountingDbContext : DbContext
         {
             e.Property(x => x.Name).HasMaxLength(256);
             e.HasIndex(x => new { x.CompanyId, x.SiteId }).HasDatabaseName("IX_SiteBookingResources_Company_Site");
+            e.Property(x => x.PayRate).HasPrecision(18, 2); e.Property(x => x.PayMinimumPerClass).HasPrecision(18, 2);   // รอบ 209 P5
         });
         modelBuilder.Entity<SiteBookingResourceService>(e =>
         {
@@ -3404,6 +3407,21 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.SharePercent).HasPrecision(5, 2);
             e.HasIndex(x => new { x.BookingId, x.ResourceId }).IsUnique().HasDatabaseName("UX_SiteBookingAssignments_Booking_Resource");
             e.HasIndex(x => new { x.CompanyId, x.ResourceId }).HasDatabaseName("IX_SiteBookingAssignments_Company_Resource");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 209 P4: ตารางคลาส (ตาราง + index ต้องตรงกับ Helpers/ClassScheduleMigration)
+        modelBuilder.Entity<SiteClassTerm>(e =>
+        {
+            e.Property(x => x.Title).HasMaxLength(200);
+            e.Property(x => x.Weekdays).HasMaxLength(32);
+            e.HasIndex(x => new { x.CompanyId, x.BookingServiceId }).HasDatabaseName("IX_SiteClassTerms_Company_Service");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<SiteClassSession>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.BookingServiceId, x.SessionDate, x.StartTime }).IsUnique()
+                .HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_SiteClassSessions_Company_Service_Date_Start");
+            e.HasIndex(x => new { x.CompanyId, x.SiteId, x.SessionDate }).HasDatabaseName("IX_SiteClassSessions_Company_Site_Date");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 
@@ -3617,8 +3635,16 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.PassNumber).HasMaxLength(40); e.Property(p => p.PackageName).HasMaxLength(200); e.Property(p => p.SaleDocumentNumber).HasMaxLength(50);
             e.Property(p => p.CreditsTotal).HasPrecision(18, 2); e.Property(p => p.CreditsUsed).HasPrecision(18, 2); e.Property(p => p.CreditsReserved).HasPrecision(18, 2);
             e.Property(p => p.ContractAmount).HasPrecision(18, 2); e.Property(p => p.RecognizedAmount).HasPrecision(18, 2); e.Property(p => p.RefundedAmount).HasPrecision(18, 2);
+            // รอบ 209 P5 (ชื่อ index ตรงกับ Helpers/CourseCreditMembershipMigration)
+            e.HasIndex(p => new { p.CompanyId, p.Kind, p.Status }).HasDatabaseName("IX_CreditPasses_Company_Kind_Status");
+            e.Property(p => p.PeriodBaseRecognized).HasPrecision(18, 2); e.Property(p => p.TransferredOutAmount).HasPrecision(18, 2);
             e.HasOne(p => p.Package).WithMany().HasForeignKey(p => p.PackageId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(p => !p.IsDeleted);
+        });
+        modelBuilder.Entity<CreditPassFreeze>(e =>
+        {
+            e.HasIndex(f => new { f.CompanyId, f.PassId }).HasDatabaseName("IX_CreditPassFreezes_Company_Pass");
+            e.HasQueryFilter(f => !f.IsDeleted);
         });
         modelBuilder.Entity<CreditLedgerEntry>(e =>
         {

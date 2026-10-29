@@ -12,7 +12,7 @@ namespace Accounting.Helpers;
 /// <para><b>VAT:</b> บริการ — จุดความรับผิด §78/1 = วันรับเงิน ⇒ ภาษีขายเกิดครบตอนขาย (ใบกำกับออก ณ วันขายผ่านเส้นเอกสารเดิม) ·
 /// การใช้เครดิต/หมดอายุ <b>ไม่มี VAT เพิ่ม</b> (ย้ายระหว่างหนี้สินกับรายได้ล้วน)</para>
 /// </summary>
-public static class CourseCreditMath
+public static partial class CourseCreditMath
 {
     public const string RuleCode = "TFRS-NPAE-6-CREDIT";
     public const string LegalReference = "TFRS for NPAEs บทที่ 6 (รายได้จากการให้บริการ) · ป.รัษฎากร §78/1";
@@ -75,6 +75,11 @@ public static class CourseCreditMath
         => unit == CreditUnit.Hour
             ? R2(Math.Max(0, durationMinutes) / 60m)
             : (sessionCreditCost > 0m ? sessionCreditCost : 1m);
+
+    /// <summary>รอบ 209 (ทีม C ข้อ C1 · blocking): เครดิตของการจองหนึ่งรายการ = เครดิตต่อรอบ × จำนวนที่นั่ง — เดิมจอง 3 ที่ตัด 1 เครดิต ·
+    /// ที่นั่ง ≤ 0 ถือเป็น 1 (การจองเดิมทุกตัว)</summary>
+    public static decimal CreditsForBooking(CreditUnit unit, int durationMinutes, decimal sessionCreditCost, int seats)
+        => R2(CreditsForSession(unit, durationMinutes, sessionCreditCost) * Math.Max(1, seats));
 
     /// <summary>วันสุดท้ายที่ใช้ได้ (วันตามปฏิทินไทย เก็บแบบ <see cref="ThaiDate.CalendarDateUtc(DateTime)"/>) =
     /// วันซื้อ + อายุวัน · อายุ ≤ 0 = ไม่หมดอายุ (null)</summary>
@@ -151,6 +156,7 @@ public static class CourseCreditMath
         CreditPassStatus.Exhausted => "ใช้ครบแล้ว",
         CreditPassStatus.Expired => "หมดอายุ",
         CreditPassStatus.Cancelled => "ยกเลิก",
+        CreditPassStatus.Transferred => "โอนแล้ว",
         _ => s.ToString(),
     };
 

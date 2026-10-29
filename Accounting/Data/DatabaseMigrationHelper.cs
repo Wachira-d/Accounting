@@ -221,12 +221,17 @@ public static class DatabaseMigrationHelper
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
         list.AddRange(TeamKPosMtoStatements());   // ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่ง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.BookingEngineMigration.Statements());   // ทีม B — engine รอบจองคิว CMS (Helpers/BookingEngineMigration)
+        list.AddRange(Accounting.Helpers.ClassScheduleMigration.Statements());   // รอบ 209 P4 — ตารางคลาส (เทอม/รอบเรียน) บนเครื่องจอง CMS
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
+        list.AddRange(Accounting.Helpers.CourseCreditMembershipMigration.Statements());   // รอบ 209 P5 — สมาชิกไม่จำกัด/พัก/โอน + ค่าตอบแทนผู้ให้บริการ (Helpers/CourseCreditMembershipMigration)
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
         list.AddRange(W9HygieneStatements());   // W9 R-58/R-59 — backfill ช่องทาง LINE + ตัด feedback ความหมายเก่าออกจากการสอน (บล็อกท้ายไฟล์)
         list.AddRange(PostVatDeductionStatements());   // ทีม U — หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง (บล็อกท้ายไฟล์)
         list.AddRange(CmsMediaAttachmentStatements());   // ทีม W4 R-43 — สื่อ CMS ผ่านที่เก็บไฟล์กลาง (บล็อกท้ายไฟล์)
+        list.AddRange(Accounting.Helpers.StorefrontP1Migration.Statements());   // รอบ 209 P1 — โทเคนสถานะออเดอร์/ผู้ขนส่ง/คีย์กันสั่งซ้ำ (Helpers/StorefrontP1Migration)
+        list.AddRange(Round209P2StoreSettingsStatements());   // รอบ 209 P2 — ค่าตั้งร้าน/ฟอร์มสั่งซื้อ/COD (บล็อกท้ายไฟล์)
+        list.AddRange(CmsRound209P6Statements());   // รอบ 209 P6 — variant บนตะกร้า/ออเดอร์ · ยินยอม PDPA ของเว็บ · ฟอร์ม → lead (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7888,5 +7893,53 @@ public static class DatabaseMigrationHelper
     internal static IReadOnlyList<string> CmsMediaAttachmentStatements() => new List<string>
     {
         """ALTER TABLE "SiteMediaItems" ADD COLUMN IF NOT EXISTS "AttachmentId" uuid NULL;""",
+    };
+
+    /// <summary>รอบ 209 แพ็ก P2 (คำตัดสินข้อ 168 ก/ค/ง/จ · R-209-D1/D2 · B8 · B11) — รันทุกบูตได้ (IF [NOT] EXISTS ทุกคำสั่ง):
+    /// <list type="number">
+    /// <item>คอลัมน์ใหม่ของค่าตั้งร้าน — DEFAULT = พฤติกรรมเดิม (ส่งฟรีระดับร้านไม่ทับโซน · ขอใบเสนอราคาได้ · ฟอร์มเดิม)</item>
+    /// <item>คอลัมน์ใหม่ของออเดอร์ — NULL = ออเดอร์เดิม (ชำระก่อน · ไม่ได้เลือกวันรับ · ไม่มีช่องเพิ่มเอง · ไม่รู้วันส่งถึง) ไม่มี UPDATE (ไม่แต่งค่าย้อนหลัง)</item>
+    /// <item>ลบคอลัมน์ค่าตั้งที่ไม่เคยมีผู้อ่าน (ทีม D §1.1 · เหตุผลรายตัวใน <c>Helpers/CmsFeatureFlags</c>) — ค่าที่เก็บไว้ไม่เคยเปลี่ยนพฤติกรรมใด ⇒ ไม่มีข้อมูลที่มีความหมายหาย ·
+    ///   ต้องลบ (ไม่ใช่ปล่อยค้าง) เพราะคอลัมน์ NOT NULL ที่ไม่มี DEFAULT จะทำให้ INSERT แถวค่าตั้งใหม่ล้มเมื่อ entity ไม่มี property แล้ว</item>
+    /// </list></summary>
+    internal static IReadOnlyList<string> Round209P2StoreSettingsStatements() => new List<string>
+    {
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "FreeShippingOverridesZones" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "EnableQuoteConversion" boolean NOT NULL DEFAULT true;""",
+        """ALTER TABLE "SiteCommerceConfigs" ADD COLUMN IF NOT EXISTS "OrderFormFieldsJson" text NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "PaymentMethodChoice" varchar(20) NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "RequestedReadyDate" timestamptz NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "CustomFieldsJson" text NULL;""",
+        """ALTER TABLE "SiteOrders" ADD COLUMN IF NOT EXISTS "EstimatedDeliveryDate" timestamptz NULL;""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "CheckoutMode";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "AutoGenerateQuotation";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "DefaultVatRate";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "PricesIncludeVat";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "EnableShippingCalculation";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "EnableStockTracking";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "AutoDeductStock";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "DefaultStockBehavior";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ShowStockQuantity";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "LowStockThresholdJson";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "EnableTierPricing";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "AutoSyncToErp";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ErpDocumentType";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "DefaultProductSort";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ProductsPerPage";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ShowComparePrice";""",
+        """ALTER TABLE "SiteCommerceConfigs" DROP COLUMN IF EXISTS "ShowSku";""",
+    };
+
+    /// <summary>รอบ 209 P6 (<c>erp-review/2026-10-29/PLAN.md</c> แพ็ก P6) — ค่าเริ่มต้น NULL/false = พฤติกรรมเดิมทุกแถว · ไม่มี UPDATE
+    /// (ออเดอร์/ตะกร้าเดิมไม่มี variant · เว็บเดิมไม่บังคับยินยอม · ใบที่ออกไปแล้วไม่ถูกแตะ) · รันทุกบูตได้</summary>
+    internal static IReadOnlyList<string> CmsRound209P6Statements() => new List<string>
+    {
+        """ALTER TABLE "SiteCartItems" ADD COLUMN IF NOT EXISTS "VariantId" uuid NULL;""",
+        """ALTER TABLE "SiteOrderLines" ADD COLUMN IF NOT EXISTS "VariantId" uuid NULL;""",
+        """ALTER TABLE "SiteOrderLines" ADD COLUMN IF NOT EXISTS "StockProductId" uuid NULL;""",
+        """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "RequireDataConsent" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "DataConsentText" text NULL;""",
+        """ALTER TABLE "SiteFormSubmissions" ADD COLUMN IF NOT EXISTS "LeadId" uuid NULL;""",
+        """ALTER TABLE "SiteFormSubmissions" ADD COLUMN IF NOT EXISTS "NotifyResult" text NULL;""",
     };
 }
