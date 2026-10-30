@@ -135,6 +135,8 @@ public class StorefrontMyBookingItem
     public string StatusLabel { get; set; } = "";
     /// <summary>โทเคนหน้า my-booking (ยกเลิก/เลื่อน/จ่ายมัดจำ — ทางเดิม) · ใบเก่า null = ไม่มีลิงก์</summary>
     public string? PublicToken { get; set; }
+    /// <summary>รอบ 218: รอชำระ/รอตรวจสลิป/ชำระแล้ว (BookingPaymentPolicy.StatusLabel) · null = ไม่มีเรื่องชำระล่วงหน้า</summary>
+    public string? PaymentStatusLabel { get; set; }
 }
 
 public class StorefrontMyCreditItem

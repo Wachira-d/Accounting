@@ -45,6 +45,21 @@ public class SiteBookingSettings : TenantEntity
     // ── รอบ 210 (คำตัดสินข้อ 169) ──
     /// <summary>ต้องเข้าสู่ระบบสมาชิกของเว็บก่อนจอง (ทุกบริการที่ไม่ตั้งเอง) · false = แขกจองได้ (เดิม) · ตัวตัดสินเดียว <c>Helpers/BookingAccessRule</c></summary>
     public bool RequireMemberToBook { get; set; }
+
+    // ── รอบ 218 (คำตัดสินข้อ 177): นโยบายรับชำระล่วงหน้า (ตัวตัดสินเดียว Helpers/BookingPaymentPolicy · NULL = แบบเดิมตามชนิดบริการ) ──
+    /// <summary>โหมดของเว็บ (บริการทับได้) · null = ยังไม่ได้ตั้ง ⇒ พฤติกรรมก่อนรอบ 218</summary>
+    public BookingPaymentMode? PaymentMode { get; set; }
+    /// <summary>มัดจำตั้งต้นของเว็บ (บาท — ใช้แทน %) · บริการที่กรอกมัดจำเองใช้ของบริการ</summary>
+    public decimal? PaymentDepositFixedAmount { get; set; }
+    public decimal? PaymentDepositPercent { get; set; }
+    public decimal? PaymentDepositMinAmount { get; set; }
+    public decimal? PaymentDepositMaxAmount { get; set; }
+    /// <summary>ต้องชำระภายในกี่นาทีหลังจอง (โหมดบังคับ) · null/0 = ไม่กำหนด (ไม่ยกเลิกอัตโนมัติ) · ผู้อ่าน: <c>BookingReminderJob</c> ผ่าน <c>SiteBooking.PaymentHoldUntil</c></summary>
+    public int? PaymentDeadlineMinutes { get; set; }
+    /// <summary>รับโอน/สแกน QR + แนบสลิป (ข้อมูลบัญชีอยู่ที่ <c>SitePaymentGateway</c> ของเว็บ) · ค่าเริ่ม true (มีบัญชีเมื่อไรใช้ได้ทันที)</summary>
+    public bool BankTransferEnabled { get; set; } = true;
+    /// <summary>ข้อความถึงลูกค้าเรื่องการชำระ/คืนเงิน (แสดงในกล่องชำระ) · null = ไม่มี</summary>
+    public string? PaymentNote { get; set; }
     /// <summary>รอบ 215 เฟส 2 (คำตัดสินข้อ 176): "ลูกค้าเลือกผู้ให้บริการได้ไหม" ค่าเริ่มต้นของทุกบริการที่ตั้ง "ตามค่าเว็บ" ·
     /// null = ไม่ตั้ง ⇒ None (พฤติกรรมเดิม) · เว็บใหม่ตั้งตอนสร้าง (<c>BookingProviderAllocation.NewSiteDefaultMode</c>)</summary>
     public BookingResourceMode? DefaultResourceMode { get; set; }

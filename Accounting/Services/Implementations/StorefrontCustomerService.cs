@@ -81,7 +81,10 @@ public partial class StorefrontCustomerService : IStorefrontCustomerService
                           where b.CompanyId == companyId && b.SiteId == siteId && b.CustomerId == customerId
                                 && s.CompanyId == companyId && !b.IsDeleted
                           orderby b.BookingDate descending, b.StartTime descending
-                          select new { b.BookingNumber, s.Name, b.BookingDate, b.StartTime, b.EndTime, b.Status, b.PublicToken })
+                          select new { b.BookingNumber, s.Name, b.BookingDate, b.StartTime, b.EndTime, b.Status, b.PublicToken,
+                              // รอบ 218: ป้ายการชำระล่วงหน้า (ตัวตัดสินเดียว BookingPaymentPolicy.StatusLabel)
+                              s.BookingType, b.DepositAmount, b.PaidAmount, b.PaymentHoldUntil, b.SlipRejectedReason,
+                              SlipPending = b.SlipUploadedAt != null && b.SlipAttachmentId != null })
             .Take(100).ToListAsync();
         return rows.Select(b => new StorefrontMyBookingItem
         {
@@ -89,6 +92,9 @@ public partial class StorefrontCustomerService : IStorefrontCustomerService
             BookingDate = b.BookingDate.ToString("yyyy-MM-dd"),
             StartTime = b.StartTime.ToString("HH:mm"), EndTime = b.EndTime.ToString("HH:mm"),
             Status = b.Status, StatusLabel = BookingStatusLabels.Customer(b.Status), PublicToken = b.PublicToken,
+            PaymentStatusLabel = b.BookingType == Accounting.Models.Enums.BookingType.PrePayment
+                ? BookingPaymentPolicy.StatusLabel(new BookingPaymentFacts(b.Status, b.DepositAmount, b.PaidAmount, b.SlipPending, b.PaymentHoldUntil, b.SlipRejectedReason))
+                : null,
         }).ToList();
     }
 

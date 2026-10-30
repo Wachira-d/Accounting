@@ -22,11 +22,18 @@ public partial class CmsBookingService : ICmsBookingService
     private readonly IProductService? _productService;
     /// <summary>รอบ 209 P3 — แจ้งร้าน (การจองใหม่) + ลูกค้า (ยืนยันการจอง · ร้านยกเลิก) · null = ไม่ส่ง (CmsBookingService.ShopNotify.cs)</summary>
     private readonly ICmsShopNotifier? _shopNotifier;
+    private readonly IPromptPayService _promptPay;
+    /// <summary>ฝ่ายค้านรอบ 218 (S1): resolve <c>IPaymentIntentService</c> ตอนใช้ (ปิดรายการชำระของสลิปที่ไม่ใช้แล้ว) — ฉีดตรงเป็นวงกลม DI</summary>
+    private readonly IServiceProvider? _services;
 
     public CmsBookingService(AccountingDbContext db, ILogger<CmsBookingService> logger,
         IDocumentService? docService = null, IBookingNotifier? notifier = null, ICreditBookingLedger? creditLedger = null,
-        IProductService? productService = null, ICmsShopNotifier? shopNotifier = null)
+        IProductService? productService = null, ICmsShopNotifier? shopNotifier = null, IPromptPayService? promptPay = null,
+        IServiceProvider? services = null)
     {
+        _services = services;
+        // รอบ 218: ตรวจรูปแบบพร้อมเพย์ของช่องโอน (stateless — เทสต์ที่ไม่ส่งใช้ตัวจริงได้)
+        _promptPay = promptPay ?? new PromptPayService();
         _productService = productService;
         _shopNotifier = shopNotifier;
         _db = db;
@@ -44,6 +51,7 @@ public partial class CmsBookingService : ICmsBookingService
         var svc = new SiteBookingService { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
         await EnsureProductOfCompanyAsync(companyId, request.ProductId);   // รอบ 207: ผูกสินค้าข้ามบริษัทไม่ได้
         ApplySettings(svc, request);
+        await EnsureServicePaymentAsync(companyId, siteId, svc, paymentChanged: true, wasActive: false);   // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด
         svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, null);
         if (request.Schedule != null)
             foreach (var row in BuildSlotRows(companyId, svc, request.Schedule, userId)) svc.Slots.Add(row);
@@ -60,10 +68,14 @@ public partial class CmsBookingService : ICmsBookingService
             ?? throw new KeyNotFoundException("Booking service not found.");
 
         var oldSlug = svc.Slug;
+        var payBefore = PaymentFieldsOf(svc);
+        var wasActive = svc.IsActive;
         await EnsureProductOfCompanyAsync(companyId, request.ProductId);   // รอบ 207
         ApplySettings(svc, request);
         if (svc.Slug != oldSlug) svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, svc.Id);
         if (request.IsActive.HasValue) svc.IsActive = request.IsActive.Value;
+        // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด · รอบ 2: ปิดใช้บริการ/แก้ชื่อโดยไม่แตะค่าชำระ ⇒ ไม่ตรวจ (ไม่ขังผู้ใช้)
+        await EnsureServicePaymentAsync(companyId, siteId, svc, paymentChanged: !Equals(payBefore, PaymentFieldsOf(svc)), wasActive);
         // ตารางเวลา: null = ผู้เรียก API เดิมที่ไม่รู้จักฟิลด์นี้ ⇒ ไม่แตะ · ส่งมา = แทนที่ทั้งชุด (การจองเดิมไม่ถูกแตะ — แถวเวลาไม่ใช่ FK ของการจอง)
         if (request.Schedule != null)
         {
@@ -125,6 +137,22 @@ public partial class CmsBookingService : ICmsBookingService
             if (!Enum.IsDefined(memberAccess)) errs.Add("ค่าตั้ง \"ต้องเป็นสมาชิกก่อนจอง\" ไม่ถูกต้อง");
             else svc.MemberOnly = BookingAccessRule.ToOverride(memberAccess);
         }
+        // รอบ 218 (คำตัดสินข้อ 177): ชำระล่วงหน้ารายบริการ — null = ไม่แตะทั้งชุด (ผู้เรียก API เดิม/seed) · ตัวตัดสินเดียว BookingPaymentPolicy
+        if (r.PaymentMode != null)
+        {
+            var (payMode, payModeErr) = BookingPaymentPolicy.ParseMode(r.PaymentMode);
+            if (payModeErr != null) errs.Add(payModeErr);
+            else
+            {
+                svc.PaymentMode = payMode;
+                svc.DepositMinAmount = r.DepositMinAmount; svc.DepositMaxAmount = r.DepositMaxAmount;
+                svc.PaymentDeadlineMinutes = r.PaymentDeadlineMinutes;
+                errs.AddRange(BookingPaymentPolicy.ValidateRule(new BookingPaymentRuleInput(payMode, null, null,
+                    r.DepositMinAmount, r.DepositMaxAmount, r.PaymentDeadlineMinutes)));
+            }
+        }
+        // ทุกครั้ง (รวมเปลี่ยนชนิดบริการโดยไม่ส่งช่องชำระ): ตั้งเก็บเงินเองแต่ชนิดเก็บไม่ได้ ⇒ ปฏิเสธ ไม่บันทึกค่าที่ไม่มีผล
+        if (BookingPaymentPolicy.ServiceSaveProblem(svc.BookingType, svc.PaymentMode) is string payProblem) errs.Add(payProblem);
 
         errs.AddRange(BookingSlotEngine.ValidateRules(BookingSlotEngine.RulesOf(svc)));
         if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), "CMS-BOOKING-SETTINGS");
@@ -324,6 +352,11 @@ public partial class CmsBookingService : ICmsBookingService
             UsesSiteHours = usesSiteHours,
             SlotSummary = BookingSlotEngine.Summary(rules),
             PolicySummary = BookingSlotEngine.PolicySummary(rules, s.DepositAmount, s.DepositPercent, s.FreeCancellationHours, s.CancellationFeePercent),
+            // รอบ 218: ค่าที่ตั้ง (ฟอร์ม) + ผลที่มีจริง (ตัวตัดสินเดียว BookingPaymentPolicy · ค่าเว็บจาก SiteBookingSettings แถวเดียวกับ site.Row)
+            PaymentMode = s.PaymentMode?.ToString() ?? "Inherit",
+            DepositMinAmount = s.DepositMinAmount, DepositMaxAmount = s.DepositMaxAmount, PaymentDeadlineMinutes = s.PaymentDeadlineMinutes,
+            PaymentSummary = BookingPaymentPolicy.Describe(PaymentOf(s, site.Row)),
+            PaymentProblem = PaymentOf(s, site.Row).Problem,
             IsActive = s.IsActive,
             UpcomingBookingsCount = upcoming,
             CreatedAt = s.CreatedAt
@@ -928,6 +961,11 @@ public partial class CmsBookingService : ICmsBookingService
         var date = DateOnly.FromDateTime(request.BookingDate);
         var units = request.Units;
         var guests = request.GuestCount;
+        // รอบ 218 (คำตัดสินข้อ 177): นโยบายรับชำระล่วงหน้า — ตัวตัดสินเดียว BookingPaymentPolicy (บริการ ?? เว็บ ?? แบบเดิม) · อ่านก่อนเปิดธุรกรรม ·
+        // พนักงานจองแทน = ไม่บังคับรอยืนยัน/ไม่ถือรอบ (พนักงานรับเงินเองหน้างาน)
+        var payEff = BookingPaymentPolicy.Resolve(svc.BookingType, (await LoadPaymentContextAsync(companyId, siteId)).SiteRule,
+            Cms.BookingPaymentContextLoader.ServiceRule(svc));
+        var createdByStaff = staffOnBehalf || await IsCompanyStaffAsync(companyId, userId);
 
         SiteBooking booking;
         Guid? duplicateOfId = null;
@@ -975,7 +1013,9 @@ public partial class CmsBookingService : ICmsBookingService
             var slot = decision.Slot!;
 
             var total = BookingSlotEngine.TotalPrice(ctx.Rules, svc.Price, units);
-            var depositAmount = BookingSlotEngine.Deposit(total, svc.DepositAmount, svc.DepositPercent);
+            // รอบ 218: ยอดมัดจำผ่านตัวตัดสินเดียว (แบบเดิม = สูตรเดิมทุกตัวอักษร · มัดจำไม่บังคับ = ตามที่ลูกค้าเลือก)
+            var depositAmount = BookingPaymentPolicy.BookingDeposit(svc.BookingType, payEff, total, svc.DepositAmount, svc.DepositPercent,
+                customerOptsIn: request.PayDepositNow == true);
 
             booking = new SiteBooking
             {
@@ -1009,6 +1049,15 @@ public partial class CmsBookingService : ICmsBookingService
 
             // R-39: จ่ายด้วยบัตรคอร์ส ⇒ ยอดเงิน 0 + กันเครดิตในธุรกรรมเดียวกับ Decide (ล้ม = ไม่มีการจอง) — CmsBookingService.Credits.cs
             var creditContactId = await PrepareCreditBookingAsync(companyId, booking, request, userId);
+            // รอบ 218: โหมดบังคับ + ยอด > 0 (หลังหักบัตรคอร์ส) ⇒ รอยืนยันจนรับเงินครบ (ชนะ AutoConfirm) + ถือรอบถึงกำหนดชำระ (job ยกเลิกเมื่อพ้น)
+            var seatPay = BookingPaymentPolicy.OnSeat(payEff, booking.DepositAmount, DateTime.UtcNow,
+                CreditBookingLink.StartUtc(booking.BookingDate, booking.StartTime), createdByStaff);
+            if (!waitlist && seatPay.ForcePending)
+            {
+                booking.Status = BookingStatus.Pending;
+                booking.ConfirmedAt = null;
+                booking.PaymentHoldUntil = seatPay.PaymentHoldUntil;
+            }
             _db.SiteBookings.Add(booking);
             // รอบ 217 (ข้อ 175 ง): แจ้งเตือน "การจองใหม่" เข้าคิวในธุรกรรมเดียวกับการจอง ⇒ ตอบแขกทันที (ไม่รอ SMTP/LINE) · ส่งตามหลังโดย DeferredNotifyDispatcher
             _db.DeferredNotifications.Add(DeferredNotifyPolicy.New(companyId, siteId, DeferredNotifyPolicy.BookingCreated, booking.Id, DateTime.UtcNow));
@@ -1131,6 +1180,7 @@ public partial class CmsBookingService : ICmsBookingService
             .ToListAsync();
         var now = BookingSlotEngine.BangkokNow(DateTime.UtcNow);
         var holdMinutes = (await SiteContextAsync(companyId, siteId)).Row?.WaitlistHoldMinutes ?? 0;   // R-13 ถือรอบ (0 = ไม่ถือ)
+        var promoteSiteRule = (await LoadPaymentContextAsync(companyId, siteId)).SiteRule;   // ฝ่ายค้านรอบ 218 S5: ตัดสินการชำระตอนได้ที่ด้วยตัวเดียวกับจองใหม่
         foreach (var w in queue)
         {
             if (date.ToDateTime(w.StartTime) < now) continue;   // รอบผ่านไปแล้ว — ไม่เลื่อน
@@ -1143,8 +1193,16 @@ public partial class CmsBookingService : ICmsBookingService
                 w.GuestCount, Math.Max(1, w.Units), ctx.Resources, requested, ignoreAdvance: true);
             if (!d.Allowed) continue;
             w.ResourceId = ClassScheduleGenerator.ResourceForBooking(d.Slot!.ResourceId, ctx.ClassSessions, date, w.StartTime);   // รอบ 209 P4: ครูของรอบคลาส
-            if (svc.AutoConfirm || svc.BookingType == BookingType.Lead) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
+            // ฝ่ายค้านรอบ 218 (S5): ได้ที่จากคิวสำรอง = ได้ที่ ⇒ นโยบายชำระล่วงหน้าเดียวกับจองใหม่ (BookingPaymentPolicy.OnSeat) · บังคับ ⇒ รอยืนยัน + กำหนดชำระ
+            var promoteEff = BookingPaymentPolicy.Resolve(svc.BookingType, promoteSiteRule, Cms.BookingPaymentContextLoader.ServiceRule(svc));
+            // ฝ่ายค้านรอบ 2 (F3): ผู้สร้างใบคิวเป็นพนักงานของบริษัท ⇒ ไม่บังคับรอยืนยัน/ไม่ถือรอบ (ตัวตัดสินเดียวกับจองใหม่ IsCompanyStaffAsync) ·
+            // ยอด = มัดจำที่ยังค้าง (หักเงินที่รับไว้แล้ว) ไม่ใช่มัดจำเต็ม
+            var promoteByStaff = await IsCompanyStaffAsync(companyId, w.CreatedBy);
+            var promotePay = BookingPaymentPolicy.OnSeat(promoteEff, BookingPaymentPolicy.RemainingDeposit(w.DepositAmount, w.PaidAmount), DateTime.UtcNow,
+                CreditBookingLink.StartUtc(w.BookingDate, w.StartTime), promoteByStaff);
+            if (!promotePay.ForcePending && (svc.AutoConfirm || svc.BookingType == BookingType.Lead)) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
             else w.Status = BookingStatus.Pending;
+            w.PaymentHoldUntil = promotePay.PaymentHoldUntil;
             // R-13: ประทับเวลาได้คิว + ถือรอบ (เฉพาะรอยืนยัน · BookingReminderPlan.HoldUntil) · แจ้งลูกค้า = NotifyWaitlistPromotedAsync (Notify.cs) หลัง commit —
             // WaitlistNotifiedAt ประทับหลังส่งถึงจริงเท่านั้น · ส่งไม่ถึง ⇒ BookingReminderJob ส่งซ้ำ
             w.WaitlistPromotedAt = DateTime.UtcNow;
@@ -1211,6 +1269,11 @@ public partial class CmsBookingService : ICmsBookingService
         if (request.HoldLapsedAsOfUtc is DateTime asOf
             && (booking.PaidAmount > 0m || booking.WaitlistHoldUntil is not DateTime holdUntil || holdUntil > asOf))
             throw new BusinessRuleException("การจองรับเงินแล้ว/ยังอยู่ในเวลาถือที่ — ไม่ปล่อยที่อัตโนมัติ", BookingStatusTransition.RuleCode, 409);
+        // รอบ 218: job ยกเลิกใบที่ไม่ชำระล่วงหน้าในเวลา — ตัดสินซ้ำใต้ล็อก (ลูกค้าจ่าย/แนบสลิประหว่างทาง ⇒ ไม่ยกเลิก) · ตัวตัดสินเดียว BookingPaymentPolicy.HoldLapsed
+        if (request.PaymentHoldLapsedAsOfUtc is DateTime payAsOf
+            && !BookingPaymentPolicy.HoldLapsed(booking.Status, booking.PaymentHoldUntil, booking.PaidAmount,
+                booking.SlipUploadedAt != null && booking.SlipAttachmentId != null, payAsOf))
+            throw new BusinessRuleException("การจองชำระแล้ว/แนบสลิปแล้ว/ยังไม่พ้นกำหนดชำระ — ไม่ยกเลิกอัตโนมัติ", BookingPaymentPolicy.RuleCode, 409);
         // รอบ 208 (ฝ่ายค้าน W2 ข้อ 1/3 blocking): กดซ้ำ = ไม่ทำซ้ำ · สถานะปลายทางเปลี่ยนต่อไม่ได้ (ขั้นเงินห้ามรันซ้ำ)
         var (transition, transitionMsg) = BookingStatusTransition.Check(oldStatus, request.Status);
         if (transition == BookingTransitionResult.Rejected)
@@ -1234,7 +1297,7 @@ public partial class CmsBookingService : ICmsBookingService
 
         switch (request.Status)
         {
-            case BookingStatus.Confirmed: booking.ConfirmedAt = DateTime.UtcNow; booking.WaitlistHoldUntil = null; break;   // ยืนยันแล้ว = เลิกถือรอบ (R-13)
+            case BookingStatus.Confirmed: booking.ConfirmedAt = DateTime.UtcNow; booking.WaitlistHoldUntil = null; booking.PaymentHoldUntil = null; break;   // ยืนยันแล้ว = เลิกถือรอบ (R-13) · ร้านยืนยันเอง = เลิกกำหนดชำระ (รอบ 218)
             case BookingStatus.InProgress: booking.StartedAt ??= DateTime.UtcNow; break;   // รอบ 207: ไทม์ไลน์ + รายงานผู้ให้บริการ
             case BookingStatus.Completed: booking.CompletedAt = DateTime.UtcNow; break;
             case BookingStatus.Cancelled: booking.CancelledAt = DateTime.UtcNow; break;
@@ -1295,6 +1358,9 @@ public partial class CmsBookingService : ICmsBookingService
             noted.UpdatedBy = userId;
             await _db.SaveChangesAsync();
         }
+        // ฝ่ายค้านรอบ 218 (S1/S2): ยกเลิก/ไม่มา ขณะมีสลิปรอตรวจ ⇒ ปิดสลิป + รายการชำระของสลิป (ยืนยันภายหลังไม่ได้ = ไม่รับเงินเข้าการจองที่ปิดแล้ว)
+        if (request.Status is BookingStatus.Cancelled or BookingStatus.NoShow && oldStatus != request.Status)
+            await CloseSlipOnBookingClosedAsync(companyId, siteId, bookingId, userId);
 
         // แอดมินยืนยันใบในคิวสำรองเอง (นอกคิว) ⇒ ออกเอกสาร ERP เหมือนการจองปกติ
         if (oldStatus == BookingStatus.Waitlisted && request.Status is BookingStatus.Pending or BookingStatus.Confirmed)
@@ -1875,6 +1941,7 @@ public partial class CmsBookingService : ICmsBookingService
                 : BookingProviderShare.Describe(g.OrderByDescending(x => x.SharePercent).Select(x => (x.ResourceName, x.SharePercent)));
         }
         foreach (var i in items.Where(i => i.ProvidersLabel == null)) i.ProvidersLabel = i.ResourceName;
+        await FillListPaymentLabelsAsync(companyId, items);   // รอบ 218: ป้ายรอชำระ/รอตรวจสลิป/ชำระแล้ว (ตัวตัดสินเดียว BookingPaymentPolicy)
     }
 
     public async Task<PagedResponse<BookingListResponse>> GetBookingsAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, DateTime? fromDate, DateTime? toDate, string? search, int page, int pageSize)

@@ -75,9 +75,9 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
-    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();
-    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();
-    public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
+    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
+    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)
+    public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม (ไม่มี CompanyId)
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
     public DbSet<SystemAccountTemplate> SystemAccountTemplates => Set<SystemAccountTemplate>();
@@ -3265,6 +3265,7 @@ public class AccountingDbContext : DbContext
             e.Property(g => g.BankAccountNumber).HasMaxLength(50);
             e.Property(g => g.BankAccountName).HasMaxLength(256);
             e.Property(g => g.BankName).HasMaxLength(128);
+            e.Property(g => g.BankBranch).HasMaxLength(128);   // รอบ 218
             e.Property(g => g.SupportedCurrencies).HasMaxLength(100);
             e.HasOne(g => g.Site).WithMany(s => s.PaymentGateways).HasForeignKey(g => g.SiteId).OnDelete(DeleteBehavior.Cascade);
         });
@@ -3392,6 +3393,7 @@ public class AccountingDbContext : DbContext
             e.Property(bs => bs.DepositAmount).HasPrecision(18, 2);
             e.Property(bs => bs.DepositPercent).HasPrecision(5, 2);
             e.Property(bs => bs.CancellationFeePercent).HasPrecision(5, 2);
+            e.Property(bs => bs.DepositMinAmount).HasPrecision(18, 2); e.Property(bs => bs.DepositMaxAmount).HasPrecision(18, 2);   // รอบ 218
             e.Property(bs => bs.Currency).HasMaxLength(3);
             e.Property(bs => bs.Category).HasMaxLength(128);
             e.Property(bs => bs.HalfDaySplitTime).HasMaxLength(8);
@@ -3429,6 +3431,7 @@ public class AccountingDbContext : DbContext
             e.Property(b => b.DepositAmount).HasPrecision(18, 2);
             e.Property(b => b.PaidAmount).HasPrecision(18, 2);
             e.Property(b => b.Currency).HasMaxLength(3);
+            e.Property(b => b.SlipRejectedReason).HasMaxLength(500);   // รอบ 218
             e.HasOne(b => b.Site).WithMany().HasForeignKey(b => b.SiteId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(b => b.BookingService).WithMany(bs => bs.Bookings).HasForeignKey(b => b.BookingServiceId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(b => b.Customer).WithMany(c => c.Bookings).HasForeignKey(b => b.CustomerId).OnDelete(DeleteBehavior.SetNull);
@@ -3440,6 +3443,11 @@ public class AccountingDbContext : DbContext
         modelBuilder.Entity<SiteBookingSettings>(e =>
         {
             e.HasIndex(x => new { x.CompanyId, x.SiteId }).IsUnique().HasDatabaseName("UX_SiteBookingSettings_Company_Site");
+            // รอบ 218 (Helpers/BookingPaymentMigration): นโยบายรับชำระล่วงหน้า
+            e.Property(x => x.PaymentDepositFixedAmount).HasPrecision(18, 2); e.Property(x => x.PaymentDepositPercent).HasPrecision(5, 2);
+            e.Property(x => x.PaymentDepositMinAmount).HasPrecision(18, 2); e.Property(x => x.PaymentDepositMaxAmount).HasPrecision(18, 2);
+            e.Property(x => x.BankTransferEnabled).HasDefaultValue(true);
+            e.Property(x => x.PaymentNote).HasMaxLength(1000);
         });
         modelBuilder.Entity<SiteBookingResource>(e =>
         {

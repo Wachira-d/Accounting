@@ -143,6 +143,7 @@ public class LegalController : ControllerBase
     /// ผู้ใช้ที่ไม่มีบริษัทก็ใช้ได้) · DSR ของบริษัทไม่ส่ง IP/UA (ประวัติข้ามบริษัท) · ขอลบด้วยตัวเอง (ไม่มีบริษัท) = งานถัดไป</summary>
     [HttpGet("my-data")]
     [Authorize]
+    [Accounting.Filters.RejectApiKey("อ่านข้อมูลส่วนบุคคลแทนผู้ใช้")]
     public async Task<IActionResult> MyData([FromQuery] bool download = false, CancellationToken ct = default)
     {
         var uid = JwtHelper.GetUserIdFromClaims(User);
@@ -153,6 +154,8 @@ public class LegalController : ControllerBase
         {
             generatedAt = DateTime.UtcNow, policyAcceptances = rows,
             erasureRequest = erase == null ? null : new { erase.Status, erase.RequestedAt, erase.DueAt, erase.ResolvedAt, erase.ResolutionNote },
+            // ฝ่ายค้านรอบ 214 B2: ต้องโอนความเป็นเจ้าของก่อน (ผู้ใช้เห็นก่อนยื่น)
+            ownershipBlockers = await _pdpa.ErasureOwnershipBlockersAsync(uid, ct),
         };
         if (!download) return Ok(new ApiResponse<object>(true, payload));
         var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });

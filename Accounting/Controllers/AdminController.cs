@@ -512,7 +512,10 @@ public class AdminController : ControllerBase
     private async Task<List<OwnerlessRow>> LoadOwnerlessCompaniesAsync(int take, Guid? onlyCompanyId = null)
     {
         var q = _db.Companies.AsNoTracking()
-            .Where(c => !c.CompanyUsers.Any(cu => cu.Role == UserRole.Owner || cu.Role == UserRole.SystemAdmin));
+            // ฝ่ายค้านรอบ 214 B2: นับเฉพาะเจ้าของที่ยังทำหน้าที่ได้ (เงื่อนไขเดียวกับ CompanyMembership.CanAct — EF แปลเมธอดไม่ได้) —
+            // เดิมนับเจ้าของที่บัญชีถูกปิด/ลบตามคำขอ ⇒ บริษัทกำพร้าไม่โผล่ในรายการซ่อม
+            .Where(c => !c.CompanyUsers.Any(cu => (cu.Role == UserRole.Owner || cu.Role == UserRole.SystemAdmin)
+                && !cu.User.IsDeleted && cu.User.Status != UserStatus.Inactive && cu.User.Status != UserStatus.Suspended));
         if (onlyCompanyId is { } oc) q = q.Where(c => c.Id == oc);
         return await q.OrderBy(c => c.CreatedAt)
             .Take(take)

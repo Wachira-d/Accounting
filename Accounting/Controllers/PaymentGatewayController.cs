@@ -361,6 +361,11 @@ public class PaymentGatewayController : ControllerBase
             adapter != null && !adapter.SettlesDirectlyToBank, intent.ProviderRef);
         if (blocked != null)
             return BadRequest(new ApiResponse<IntentResponse>(false, null, blocked));
+        // ฝ่ายค้านรอบ 218 รอบ 2 (K2): สลิปของการจองนัดหมาย ⇒ ตรวจที่หน้าการจองเท่านั้น (BookingSlipService.VerifyAsync: วันรับเงิน = วันที่โอน · ล็อกเดียวกับ
+        // ปฏิเสธ/ยกเลิก · ตรวจงวดปิด) — ยืนยันที่นี่ = ใบรับมัดจำลงวันกด + ชนกับการปฏิเสธได้
+        if (BookingSlipRule.GatewayManualConfirmProblem(intent.SourceKind == PaymentSourceKind.SiteBooking
+                && intent.ProviderCode == Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code) is string slipProblem)
+            return Conflict(new ApiResponse<IntentResponse>(false, null, slipProblem));
 
         var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
         var updated = await _intents.ApplyChargeAsync(intentId,

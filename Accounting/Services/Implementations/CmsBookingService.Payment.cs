@@ -36,6 +36,7 @@ public partial class CmsBookingService
         BookingType type;
         decimal depositAmount;
         var duplicate = false;
+        Guid? supersededSlipIntent = null;   // ฝ่ายค้านรอบ 218 (S1): สลิปรอตรวจที่ถูกแทนด้วยเงินก้อนอื่น ⇒ ปิดรายการชำระของสลิปหลัง commit
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
             // ล็อกต่อการจอง (xact) — webhook+poll ของเงินก้อนเดียว / พนักงานสองแท็บ ⇒ คำขอที่สองเห็นเลขอ้างอิงที่บันทึกแล้ว
@@ -67,11 +68,29 @@ public partial class CmsBookingService
 
                 booking.PaidAmount = Math.Round(booking.PaidAmount + amount, 2, MidpointRounding.AwayFromZero);
                 booking.WaitlistHoldUntil = null;   // รอบ 208: รับเงินแล้ว = เลิกถือรอบ (job ปล่อยรอบไม่แตะใบที่มีเงิน)
+                booking.PaymentHoldUntil = null;    // รอบ 218: รับเงินแล้ว = เลิกกำหนดชำระ (job ไม่ยกเลิกใบที่มีเงิน)
+                // รอบ 218: เงินก้อนนี้คือสลิปที่รอตรวจ (ยืนยันผ่าน PaymentIntent) หรือรับครบแล้ว ⇒ สลิปไม่ "รอตรวจ" อีก (ไฟล์คงไว้เป็นหลักฐาน)
+                var isSlipMoney = BookingSlipRule.IsSlipReference(booking.SlipIntentId, reference);
+                if (booking.SlipUploadedAt != null
+                    && BookingSlipRule.SettlesPendingSlip(booking.SlipIntentId, reference, booking.DepositAmount, booking.PaidAmount))
+                {
+                    // ฝ่ายค้านรอบ 218 (S1): ครบด้วยเงินก้อนอื่น ⇒ รายการชำระของสลิปต้องปิด (ไม่งั้น "ยืนยันด้วยมือ" ภายหลัง = รับซ้ำ)
+                    if (!isSlipMoney)
+                    {
+                        supersededSlipIntent = booking.SlipIntentId;
+                        // ฝ่ายค้านรอบ 2 (F5): ลูกค้าแนบสลิปไว้แล้ว + รับเงินก้อนอื่นครบ ⇒ อาจจ่ายซ้ำ — บอกพนักงานให้ตรวจบัญชีธนาคาร/คืนเงิน
+                        booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes,
+                            BookingSlipRule.SupersededNote(reference, now));
+                    }
+                    booking.SlipUploadedAt = null;
+                }
                 // รอบ 208 (ฝ่ายค้าน W2 ข้อ 5): แถวรับเงินรายก้อน — หลักฐานของ gateway re-dispatch อ่านเวลาที่บันทึก (กันรับซ้ำเมื่อพนักงานกรอกวันย้อนหลัง)
                 _db.SiteBookingPayments.Add(new SiteBookingPayment
                 {
                     CompanyId = companyId, BookingId = booking.Id, Amount = amount, Currency = booking.Currency,
-                    PaymentMethod = fromOnlinePayment ? PaymentMethod.Other : (request.BankAccountId != null ? PaymentMethod.BankTransfer : PaymentMethod.Cash),
+                    // ฝ่ายค้านรอบ 218: เงินของสลิป = โอนเงิน (ไม่ใช่ "ออนไลน์")
+                    PaymentMethod = isSlipMoney ? PaymentMethod.BankTransfer
+                        : fromOnlinePayment ? PaymentMethod.Other : (request.BankAccountId != null ? PaymentMethod.BankTransfer : PaymentMethod.Cash),
                     Reference = reference, Status = SitePaymentStatus.Completed, PaidAt = paidAt, CreatedBy = actor,
                 });
                 booking.PaymentReference = CmsBookingOnlinePayment.AppendReference(booking.PaymentReference, reference);
@@ -83,7 +102,7 @@ public partial class CmsBookingService
                     booking.Status = BookingStatus.Confirmed;
                     booking.ConfirmedAt = now;
                 }
-                var note = CmsBookingOnlinePayment.PaidNote(amount, reference, paidAt, fromOnlinePayment, booking.PaidAmount, booking.DepositAmount)
+                var note = CmsBookingOnlinePayment.PaidNote(amount, reference, paidAt, fromOnlinePayment && !isSlipMoney, booking.PaidAmount, booking.DepositAmount)
                     + (string.IsNullOrWhiteSpace(request.Note) ? "" : $" · {request.Note.Trim()}");
                 booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, note);
                 booking.UpdatedBy = actor;
@@ -91,6 +110,8 @@ public partial class CmsBookingService
             }
             await tx.CommitAsync(ct);
         }
+        if (supersededSlipIntent is Guid sup)
+            await FailSlipIntentAsync(companyId, siteId, bookingId, sup, BookingSlipRule.SupersededRaw, "การจองรับเงินครบด้วยรายการอื่นแล้ว — ปิดรายการของสลิป", actor);
 
         if (duplicate)
         {
@@ -233,6 +254,8 @@ public partial class CmsBookingService
         r.CompletionPlan = null;
         foreach (var a in r.Assignments) a.SharePercent = 0m;
         r.PaymentReference = null;
+        // รอบ 218: รายการชำระของสลิป/ลิงก์ไฟล์สลิปของพนักงาน ไม่ใช่ของลูกค้า (ลูกค้าเปิดสลิปตัวเองผ่านเส้นโทเคน)
+        if (r.Payment != null) { r.Payment.SlipIntentId = null; r.Payment.SlipFileUrl = null; }
         return r;
     }
 
@@ -244,7 +267,9 @@ public partial class CmsBookingService
             .Where(s => s.CompanyId == companyId && s.SiteId == siteId)
             .Select(s => (bool?)s.OnlineDepositEnabled).FirstOrDefaultAsync() ?? false;
         var due = CmsBookingOnlinePayment.DepositDue(resp.BookingType, resp.Status, resp.DepositAmount, resp.PaidAmount);
-        resp.OnlinePaymentNote = CmsBookingOnlinePayment.BlockedNote(onlineEnabled, resp.BookingType, resp.Status, due);
+        // รอบ 218: ยอด/สถานะ/ช่องทาง/สลิป (BookingPaymentPolicy) — สลิปรอตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว (ตัวเดียวกับ PublicPaymentResolver)
+        var slipPending = await FillPaymentInfoAsync(companyId, siteId, resp, due);
+        resp.OnlinePaymentNote = CmsBookingOnlinePayment.BlockedNote(onlineEnabled, resp.BookingType, resp.Status, due, slipPending);
         resp.OnlineDepositDue = onlineEnabled && resp.OnlinePaymentNote == null ? due : 0m;
 
         var startUtc = StartUtcOf(resp.BookingDate, resp.StartTime);

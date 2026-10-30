@@ -59,4 +59,38 @@ public class PlatformErasureRequestTests
         // ทิศตรงข้าม: หน้าเอกสารสาธารณะยังเปิดได้โดยไม่ล็อกอิน
         Assert.NotEmpty(typeof(LegalController).GetMethod(nameof(LegalController.GetDocument))!.GetCustomAttributes<AllowAnonymousAttribute>());
     }
+
+    // ═══════ ฝ่ายค้านรอบ 214 (ฑ) ═══════
+
+    [Fact]
+    public void Audit_redaction_masks_pii_fields_per_entity_only()
+    {
+        Assert.Equal(AuditRedaction.PiiMask, AuditRedaction.Value("User", "Email", "somchai@example.com"));
+        Assert.Equal(AuditRedaction.PiiMask, AuditRedaction.Value("PlatformErasureRequest", "Reason", "เลิกใช้"));
+        Assert.Equal(AuditRedaction.PiiMask, AuditRedaction.Value("PdpaConsentRecord", "IpAddress", "203.0.113.1"));
+        Assert.Null(AuditRedaction.Value("User", "Email", null));                    // ตั้ง/ล้าง ยังเห็น
+        Assert.Equal("", AuditRedaction.Value("User", "Phone", ""));
+        Assert.Equal("ร้าน ก", AuditRedaction.Value("Company", "Name", "ร้าน ก"));      // ทิศตรงข้าม: entity อื่น/ช่องอื่นไม่ถูกแตะ
+        Assert.Equal("Active", AuditRedaction.Value("User", "Status", "Active"));
+        Assert.Equal(AuditRedaction.Mask, AuditRedaction.Value("User", "PasswordHash", "h"));   // กติกาความลับเดิมยังทำงาน
+    }
+
+    [Fact]
+    public void Token_gate_rejects_erased_or_inactive_users_only()
+    {
+        Assert.Null(TokenUserGate.Reject(false, default, false));                    // token ที่ subject ไม่ใช่ User — ไม่ตัดสิน
+        Assert.NotNull(TokenUserGate.Reject(true, Accounting.Models.Enums.UserStatus.Inactive, false));
+        Assert.NotNull(TokenUserGate.Reject(true, Accounting.Models.Enums.UserStatus.Active, true));
+        Assert.Null(TokenUserGate.Reject(true, Accounting.Models.Enums.UserStatus.Active, false));
+        Assert.Null(TokenUserGate.Reject(true, Accounting.Models.Enums.UserStatus.Suspended, false));
+    }
+
+    [Fact]
+    public void Notify_address_prefers_current_real_email()
+    {
+        Assert.Equal("new@example.com", PlatformErasureRequestPolicy.NotifyAddress("new@example.com", "old@example.com"));
+        Assert.Equal("old@example.com", PlatformErasureRequestPolicy.NotifyAddress("anon-1@deleted.local", "old@example.com"));
+        Assert.Null(PlatformErasureRequestPolicy.NotifyAddress(null, "anon-2@deleted.local"));
+        Assert.Contains("บริษัท ก", PlatformErasureRequestPolicy.OwnershipBlockMessage(new[] { "บริษัท ก" }));
+    }
 }

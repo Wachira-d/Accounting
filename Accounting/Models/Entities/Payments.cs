@@ -162,6 +162,9 @@ public class PaymentIntent : TenantEntity
     public string? SettlementRef { get; set; }
 
     public DateTime? ConfirmedAt { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 218 (B2): เวลาที่เงินเข้าจริงตามหลักฐาน (สลิปโอน = วันที่โอน) — ต่างจาก <see cref="ConfirmedAt"/> (เวลาที่คนกดยืนยัน) ·
+    /// ผู้อ่าน: handler ของต้นทางใช้เป็นวันรับเงิน (tax point §78/1) · null = ใช้ ConfirmedAt (เส้น gateway เดิม)</summary>
+    public DateTime? PaidAt { get; set; }
     /// <summary>"webhook:omise" · "poll" · "manual:{user}" — ต้องรู้ว่าใครยืนยัน
     /// เพราะการยืนยันด้วยมือคือจุดที่ผู้สอบบัญชีถามเสมอ</summary>
     public string? ConfirmedBy { get; set; }

@@ -412,6 +412,8 @@ public class StorefrontPaymentOptions
     public string? BankName { get; set; }
     public string? BankAccountNumber { get; set; }
     public string? BankAccountName { get; set; }
+    /// <summary>รอบ 218: สาขาธนาคาร</summary>
+    public string? BankBranch { get; set; }
     /// <summary>True when at least one payment method is configured.
     /// When false the storefront falls back to "pay later only" mode
     /// and instructs the customer that the shop will contact them.</summary>
@@ -681,6 +683,8 @@ public class CreatePaymentGatewayRequest
     public string? BankName { get; set; }
     public string? BankAccountNumber { get; set; }
     public string? BankAccountName { get; set; }
+    /// <summary>รอบ 218: สาขาธนาคาร · null = ไม่ระบุ</summary>
+    public string? BankBranch { get; set; }
     public bool IsTestMode { get; set; } = true;
     public string SupportedCurrencies { get; set; } = "THB";
 }
@@ -696,6 +700,10 @@ public class PaymentGatewayResponse
     public string? PromptPayId { get; set; }
     public string? BankName { get; set; }
     public string? BankAccountName { get; set; }
+    /// <summary>รอบ 218 (เก็บแล้วต้อง echo กลับ): เดิมไม่ส่งกลับ ⇒ หน้า cms-orders เปิดแก้แล้วช่องเลขบัญชีว่าง · บันทึกซ้ำ = ล้างเลขบัญชีเงียบ ๆ</summary>
+    public string? BankAccountNumber { get; set; }
+    public string? BankBranch { get; set; }
+    public string? PromptPayQrUrl { get; set; }
     public bool IsTestMode { get; set; }
     public bool IsActive { get; set; }
     public int SortOrder { get; set; }

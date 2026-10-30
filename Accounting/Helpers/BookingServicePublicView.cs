@@ -8,7 +8,7 @@ public static class BookingServicePublicView
 {
     public static List<BookingServiceResponse> Strip(List<BookingServiceResponse> list)
     {
-        foreach (var s in list) { s.ProductId = null; s.ProductCode = null; s.ProductName = null; s.ProductWarning = null; }
+        foreach (var s in list) { s.ProductId = null; s.ProductCode = null; s.ProductName = null; s.ProductWarning = null; s.PaymentProblem = null; }   // รอบ 218: ข้อความถึงร้าน ไม่ใช่ลูกค้า
         return list;
     }
 }
