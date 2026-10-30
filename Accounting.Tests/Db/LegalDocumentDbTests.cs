@@ -94,6 +94,34 @@ public class LegalDocumentDbTests
             .OrderByDescending(c => c.AcceptedAt).FirstAsync();
         Assert.Equal(after.CurrentConsentVersion, rec.PolicyVersion);
         Assert.Equal("policy-update-banner", rec.Channel);
-        Assert.Equal(64, rec.EvidenceHash!.Length);   // SHA-256 hex จาก canonical ตัวเดียวกับตอนสมัคร (round-trip เวลาผ่าน PG: ดูหมายเหตุความเสี่ยงรอบ 214)
+        // รอบ 214 ต่อ (ฎ): เขียน → อ่านกลับจาก PostgreSQL → ตรวจ hash ต้องผ่าน (v2 · เวลา normalize) — control ที่ไม่มี round-trip test = ไม่มี control
+        Assert.StartsWith(PdpaConsentEvidence.V2Prefix, rec.EvidenceHash);
+        Assert.Equal(PdpaConsentEvidence.EvidenceCheck.Valid, PlatformPolicyAcceptanceRules.Check(rec));
+        // ทิศตรงข้าม: แก้ช่องในฐานหลังบันทึก ⇒ ตรวจไม่ผ่าน
+        await db.PlatformPolicyAcceptances.Where(x => x.Id == rec.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.IpAddress, "198.51.100.66"));
+        db.ChangeTracker.Clear();
+        var tampered = await db.PlatformPolicyAcceptances.AsNoTracking().SingleAsync(x => x.Id == rec.Id);
+        Assert.Equal(PdpaConsentEvidence.EvidenceCheck.Invalid, PlatformPolicyAcceptanceRules.Check(tampered));
+    }
+
+    /// <summary>รอบ 214 ต่อ (ฎ): ความยินยอมบนฟอร์มเว็บร้าน (PdpaConsentRecord · CmsDataConsent) — เขียน → อ่านกลับ → ตรวจผ่าน</summary>
+    [Fact]
+    public async Task Shop_form_consent_evidence_round_trips_through_postgres()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var company = new Company { Name = "ร้านทดสอบหลักฐานยินยอม", TaxId = "0105556000004" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var row = CmsDataConsent.StageForSubject(db, company.Id, CmsDataConsent.OrderPurpose, "ยินยอมให้ร้านใช้ข้อมูล",
+            "guest@example.test", "WEB-214", DateTime.UtcNow.AddTicks(7));
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var back = await db.PdpaConsentRecords.AsNoTracking().SingleAsync(x => x.Id == row.Id);
+        Assert.True(PdpaConsentEvidence.Verify(back.EvidenceHash, back.SubjectContact, back.Purpose, back.PolicyVersion,
+            back.GrantedAt, back.Channel, null, null));
+        Assert.False(PdpaConsentEvidence.Verify(back.EvidenceHash, "other@example.test", back.Purpose, back.PolicyVersion,
+            back.GrantedAt, back.Channel, null, null));
     }
 }

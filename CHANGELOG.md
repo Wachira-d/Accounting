@@ -5832,3 +5832,10 @@ _รอบ 216 (คำตัดสินข้อ 174 · เจ้าของ: 
 _รอบ 215 ฝ่ายค้านเฟส 1 (ไม่มี blocking · แก้ S1–S4 + N1/N2/N4/N7/N11): รายการเว็บกรองตามสิทธิ์รายเว็บ (`CmsSiteScope.ListableSiteIds`) + ตัวสลับเว็บเฉพาะเว็บที่มีแท็บ ·
 ?siteId=/เว็บล่าสุดที่ค้างไม่เป็นทางตัน · Newsletter นับเป็นทางรับ lead · หัวพื้นที่ทำงานวาดใหม่เมื่อสิทธิ์โหลด · เว็บล่าสุดต่อผู้ใช้ · ยืนยันก่อนทิ้งฟอร์มที่พัก ·
 sim +17 เคส/+6 negative · `required_call_site_check` +6 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ — ผู้ประสานงานอนุมัติข้อเสนอ): (1) หลักฐานยอมรับนโยบายแพลตฟอร์มเข้า DSR — รายงานเข้าถึง/ไฟล์โอนย้ายมี `PolicyAcceptances` + ผลตรวจรายแถว ·
+ลบตามคำขอ = legal hold (อีเมลนิรนาม · ล้าง IP/UA · `PseudonymisedAt`) · `PdpaRetentionPurgeJob` ลบจริงเมื่อพ้น 10 ปีหลังลบ (`Helpers/PlatformPolicyAcceptanceRules`) ·
+RoPA ระดับแพลตฟอร์มไม่สร้าง (ตาราง RoPA เป็นของ tenant — บันทึกในนโยบายแพลตฟอร์มแทน) · (2) `PdpaConsentEvidence` สูตร v2 แบบ AuditHashChain v2 (เวลา UTC ไมโครวินาที ·
+ป้าย "v2:" · v1 ตรวจไม่ได้ = `LegacyUnverifiable` ไม่ใช่ผ่าน) ใช้กับตอนสมัคร/แถบยอมรับ/ฟอร์มเว็บร้าน · `PlatformPolicyAcceptances` เก็บ `VersionShown`/`UserAgent` ให้ตรวจจากแถวได้ ·
+เทสต์ `PdpaConsentEvidenceV2Tests` + Db round-trip (เขียน → อ่านกลับ → ตรวจผ่าน · แก้ในฐาน ⇒ ไม่ผ่าน) ใน `Db/LegalDocumentDbTests` · TEST_PLAN LEGAL214-22..27 ·
+`required_call_site_check` +4 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

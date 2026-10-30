@@ -269,20 +269,9 @@ public class LegalDocumentService : ILegalDocumentService
         // หน้าเว็บค้างฉบับเก่า (แท็บเปิดไว้ข้ามวันเผยแพร่) ⇒ ไม่บันทึกว่ายอมรับฉบับใหม่ที่ผู้ใช้ยังไม่เห็น — ให้โหลดใหม่
         if (!string.IsNullOrWhiteSpace(versionShown) && versionShown.Trim() != current)
             throw new BusinessRuleException("นโยบายมีฉบับใหม่กว่าที่หน้านี้แสดง — โหลดหน้าใหม่แล้วอ่านอีกครั้ง", LegalDocumentPolicy.RuleCode, 409);
-        if (!string.IsNullOrEmpty(ip) && ip.Length > 45) ip = ip[..45];
-        const string channel = "policy-update-banner";
-        var grantedAt = DateTime.UtcNow;
-        _db.PlatformPolicyAcceptances.Add(new PlatformPolicyAcceptance
-        {
-            UserId = userId,
-            Email = email,
-            Purpose = PdpaPolicy.PolicyUpdatePurpose,
-            PolicyVersion = current,
-            AcceptedAt = grantedAt,
-            Channel = channel,
-            IpAddress = ip,
-            EvidenceHash = PdpaConsentEvidence.ComputeHash(email, PdpaPolicy.PolicyUpdatePurpose, current, grantedAt, channel, ip, userAgent),
-        });
+        // รอบ 214 ต่อ (ฎ): ตัวสร้างแถวเดียวกับตอนสมัคร (เวลา normalize · ทุกช่องใน canonical เก็บในแถว)
+        _db.PlatformPolicyAcceptances.Add(PlatformPolicyAcceptanceRules.Create(
+            userId, email, PdpaPolicy.PolicyUpdatePurpose, current, versionShown ?? current, DateTime.UtcNow, "policy-update-banner", ip, userAgent));
         await _db.SaveChangesAsync(ct);
         return await GetAcceptanceStatusAsync(userId, ct);
     }

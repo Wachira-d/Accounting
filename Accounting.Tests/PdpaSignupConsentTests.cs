@@ -38,11 +38,14 @@ public class PdpaSignupConsentTests
     }
 
     [Fact]
-    public void hash_เป็น_SHA256_hex_64_ตัว()
+    public void hash_เป็น_v2_นำหน้า_SHA256_hex_64_ตัว()
     {
+        // รอบ 214 ต่อ (ฎ): ฝั่งเขียนออก v2 เสมอ ("v2:" + 64 hex) — แถวเก่าไม่มีป้าย = v1 ตรวจแบบ legacy
         var h = Hash();
-        Assert.Equal(64, h.Length);
-        Assert.All(h, c => Assert.True(Uri.IsHexDigit(c), $"ไม่ใช่เลขฐานสิบหก: {c}"));
+        Assert.StartsWith(PdpaConsentEvidence.V2Prefix, h);
+        var hex = h[PdpaConsentEvidence.V2Prefix.Length..];
+        Assert.Equal(64, hex.Length);
+        Assert.All(hex, c => Assert.True(Uri.IsHexDigit(c), $"ไม่ใช่เลขฐานสิบหก: {c}"));
     }
 
     // แก้ field ใดก็ตามหลังบันทึก = hash ต้องเปลี่ยน (ตรวจไม่ผ่าน)
