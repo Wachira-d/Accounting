@@ -6040,7 +6040,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 213 — ส่งซ้�
   (ง) **การจองซ้ำที่บันทึกไปก่อนรอบนี้ไม่ถูกยกเลิกอัตโนมัติ** — ร้านเปิดหน้าการจอง ค้นด้วยชื่อ/เบอร์ เห็นสองใบรอบเดียวกัน ⇒ ยกเลิกใบที่สร้างทีหลัง (สถานะ "ยกเลิก" + เหตุผล "จองซ้ำ") ·
   ใบรอร้านยืนยันยังไม่ออกเอกสาร/ไม่มีเงิน ⇒ ยกเลิกได้เลย · ใบที่มีมัดจำแล้วเดินเส้นยกเลิก/คืนเงินเดิม
 
-_Last verified against codebase: 2026-10-30 (รอบ 217 — Idempotency-Key ทุกฟอร์มลูกค้า + RequestHash · DuplicateSubmitGuard การจอง/ที่พัก · แจ้งเตือนตามหลังผ่าน DeferredNotifications · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 217 — Idempotency-Key ทุกฟอร์มลูกค้า + RequestHash · DuplicateSubmitGuard การจอง/ที่พัก · แจ้งเตือนตามหลังผ่าน DeferredNotifications · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
