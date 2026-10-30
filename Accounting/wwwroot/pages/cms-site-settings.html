@@ -296,8 +296,7 @@
           <div class="sg-link"><div style="flex:1;min-width:240px"><b>โควตาข้อความเดือนนี้</b><div id="sgQuota"></div></div></div>`;
         const cid = Layout.getCompanyId();
         try {
-          const r = await fetch(`/api/companies/${cid}/line-config`, { headers: { 'Authorization': 'Bearer ' + API.token } });
-          const j = r.ok ? await r.json() : null;
+          const j = await API.get(`/api/companies/${cid}/line-config`);
           const ch = j && j.data && j.data.customerChannel;
           document.getElementById('sgLineStatus').textContent = !ch ? 'ไม่มีข้อมูล (อาจไม่มีสิทธิ์ดูค่าตั้งบริษัท)'
             : (ch.scope === 'company' ? 'LINE OA ของบริษัท' : 'LINE OA ของ NextAcc (ค่าเริ่มต้น)') + (ch.oaBasicId ? ' · ' + ch.oaBasicId : '')
