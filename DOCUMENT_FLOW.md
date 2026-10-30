@@ -6107,7 +6107,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 216 — ข้อมู�
   (เช็กเอาต์แสดงที่หน้าสำเร็จ) · ฟอร์มติดต่อไม่เติมบริษัท/เลขภาษี/ช่องซ่อน
 _Last verified against codebase: 2026-10-30 (รอบ 216 ฝ่ายค้าน — S1–S3 + หมายเหตุที่อยู่/เบอร์/ข้อความ · ยังไม่ได้คอมไพล์ · commit c93341cc)_
 - **รอบ 216 ฝ่ายค้าน (ต่อ)**: ทางเขียนที่อยู่หลักทุกทางผ่าน `Helpers/CustomerAddressDefaults` (ล็อกแถวลูกค้า + ปลดแถวหลักเดิมลงฐานก่อน INSERT) — `CmsCustomerService.AddAddressAsync` (พนักงาน · กรองบริษัท/เว็บแล้ว) และ `ApplyProfileAsync`
-_Last verified against codebase: 2026-10-30 (รอบ 216 ฝ่ายค้าน ต่อ — ทางเขียนที่อยู่หลักกับ unique index · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 216 ฝ่ายค้าน ต่อ — ทางเขียนที่อยู่หลักกับ unique index · ยังไม่ได้คอมไพล์ · commit d0239edd)_
 
   **ฝ่ายค้านรอบ 217** (สถานะปัจจุบัน — ทับข้อความข้างบนที่ขัดกัน):
   (S1) ด่านซ้ำของการจองเทียบ "รูปคำขอ" ด้วย (จำนวนช่วง · จำนวนคน · ผู้ให้บริการที่ขอ — `DuplicateSubmitGuard.SameBookingShape`) · สมาชิกเจ้าของใบได้ใบเดิม `reused` +

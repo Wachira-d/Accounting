@@ -5858,4 +5858,4 @@ _รอบ 216 ฝ่ายค้าน (ไม่ blocking · คำตัด�
 
 _รอบ 216 ฝ่ายค้าน (ต่อ · ความเสี่ยงค้างข้อ 3 ของผู้ประสานงาน): ทางเขียนที่อยู่หลักทุกทางไม่ชน partial unique index ใหม่ — ตัวกลาง `Helpers/CustomerAddressDefaults`
 (ล็อกแถวลูกค้า `FOR UPDATE` + ปลดแถวหลักเดิมด้วย UPDATE ตรงถึงฐานก่อน INSERT) · `CmsCustomerService.AddAddressAsync` (พนักงาน) ใช้ตัวกลางในธุรกรรม + กรองบริษัท/เว็บ (เดิมกรองแค่ customerId) ·
-`ApplyProfileAsync` ล็อกแถวลูกค้าก่อน · Db test รันคำสั่ง `MemberProfileMigration` ในฐานทดสอบเพื่อเดินบนด่านจริง (CMS216-20) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`ApplyProfileAsync` ล็อกแถวลูกค้าก่อน · Db test รันคำสั่ง `MemberProfileMigration` ในฐานทดสอบเพื่อเดินบนด่านจริง (CMS216-20) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d0239edd_

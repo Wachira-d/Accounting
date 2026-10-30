@@ -90,7 +90,10 @@ public class MemberProfileDbTests
         Assert.Equal("ลูกค้าในระบบบัญชี", contact.Name);
         Assert.Equal("3100100123451", contact.TaxId);
 
-        var audits = await db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == cid && a.EntityType == nameof(SiteCustomer) && a.EntityId == custId.ToString()).ToListAsync();
+        // CI รอบ 216: SaveChanges ประทับ audit อัตโนมัติของทุก entity ที่เปลี่ยน (AuditTrailService.CaptureAuditEntries) ด้วย EntityType เดียวกัน ⇒
+        // นับเฉพาะแถวของตัวแก้โปรไฟล์ (มีรหัสกฎ) — แก้สองครั้ง = 2 แถว · แถวของเราเก็บชื่อช่อง ไม่ใส่ค่า
+        var audits = (await db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == cid && a.EntityType == nameof(SiteCustomer) && a.EntityId == custId.ToString()).ToListAsync())
+            .Where(a => a.NewValues != null && a.NewValues.Contains(StorefrontMemberProfile.RuleCode)).ToList();
         Assert.Equal(2, audits.Count);
         Assert.All(audits, a => Assert.DoesNotContain("0812345678", a.NewValues));   // ชื่อช่องเท่านั้น ไม่ใช่ค่า
     }
