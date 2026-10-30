@@ -5787,3 +5787,9 @@ _รอบ 213 ฝ่ายค้าน (ไม่มีข้อ blocking · �
 (d) แอดมิน "คืนค่าตั้งต้น" แพ็ก (e) คำอธิบายอายุแพ็กตรงกับ GREATEST (f) ซื้อแพ็กแล้ววาดรายการค้างส่งใหม่ · ปุ่มกลับข้อความเดิมเมื่อล้ม ·
 (CI) Db test ล้ม: `ResendCount` NOT NULL ไม่มี default ในโมเดล ⇒ INSERT ดิบของ `ClaimAsync` ล้ม — ระบุคอลัมน์ใน INSERT + `HasDefaultValue(0)` · เทสต์ CMS213-11..16 · `required_call_site_check` +7 กติกา/แก้ 7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e877767d · 41bcab58_
 
+_รอบ 217 (คำตัดสินข้อ 175): เจ้าของรายงาน "กดจองเบิ้ลสองที บันทึกการจองซ้ำได้" (BK-2610-0003/0004) + "กดยืนยันจองแล้วนิ่ง ไม่ขึ้นว่าโหลด" ·
+(ก) `IdempotencyMiddleware` เดิมครอบ `/api/*` อยู่แล้วแต่หน้าเว็บลูกค้าไม่เคยส่งคีย์ + ไม่ตรวจเนื้อคำขอ ⇒ กติกาย้ายเข้า `Helpers/IdempotencyKeyPolicy` + `RequestHash` (คีย์เดิมเนื้อต่าง 409 mismatch) ·
+namespace ด้วยแฮช credential header · ตาราง `IdempotencyRecords` ย้ายไป `Helpers/SubmitOnceMigration` · หน้าเว็บ `js/submit-once.js` (ปุ่มล็อก + คีย์ต่อฟอร์ม + รอ in-flight) ใช้ที่ storefront/booking/booking-manage/contact/pay-widget/cms-bookings ·
+(ข) `Helpers/DuplicateSubmitGuard` ใต้ล็อกไซต์/ที่พัก (ผู้จองเดิม + รอบเดิม 10 นาที · สมาชิกได้ใบเดิม · แขก 409 · `ConfirmAdditional`) · ออเดอร์สองแท็บ 500 ⇒ 409 ·
+(ค) ต้นเหตุ "นิ่ง" = `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` (SMTP/LINE ถึงลูกค้า + อีเมลร้านทีละผู้รับ) ในคำขอ ⇒ คิว `DeferredNotifications` + `DeferredNotifyDispatchJob` (10 วิ · JobLock · SKIP LOCKED · lease) ·
+เทสต์ SUB-01..15 · `required_call_site_check` +10 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

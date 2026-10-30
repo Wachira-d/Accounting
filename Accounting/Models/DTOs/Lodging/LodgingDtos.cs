@@ -556,7 +556,9 @@ public record LodgingCreateReservationRequest(
     Guid? ContactId = null,
     string? InternalNotes = null,
     /// <summary>ยืนยันทันทีโดยไม่รอมัดจำ (พนักงานรับจองทางโทรศัพท์/OTA ที่จ่ายผ่านช่องทางอื่น)</summary>
-    bool ConfirmImmediately = false);
+    bool ConfirmImmediately = false,
+    /// <summary>รอบ 217 (คำตัดสินข้อ 175 ข): แขกตั้งใจจองช่วงเดิมเพิ่มอีกชุด (กดยืนยันหลังได้คำเตือนจองซ้ำ) ⇒ ข้ามด่าน DuplicateSubmitGuard · ห้องว่าง/เพดานยังตรวจครบ</summary>
+    bool ConfirmAdditional = false);
 
 public class LodgingReservationResponse
 {

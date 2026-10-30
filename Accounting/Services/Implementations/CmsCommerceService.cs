@@ -791,11 +791,12 @@ public partial class CmsCommerceService : ICmsCommerceService
                 .ToListAsync();
             foreach (var a in atts) a.EntityId = order.Id;
         }
+        // รอบ 209 P3 (A4/E2): แจ้งร้าน (ออเดอร์ใหม่) + ยืนยันถึงลูกค้า หลังบันทึกแล้ว — รอบ 217 (ข้อ 175 ง): เข้าคิวพร้อมยอดสุดท้ายของใบ
+        // (SaveChanges เดียวกัน) แล้ว DeferredNotifyDispatcher ส่งตามหลัง ⇒ ลูกค้าไม่ต้องรอ SMTP/LINE ก่อนเห็นหน้าสำเร็จ · ส่งไม่ถึงยังประทับบนออเดอร์
+        _db.DeferredNotifications.Add(DeferredNotifyPolicy.New(companyId, siteId, DeferredNotifyPolicy.OrderCreated, order.Id, DateTime.UtcNow));
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Order {OrderNumber} created for site {SiteId}", order.OrderNumber, siteId);
-        // รอบ 209 P3 (A4/E2): แจ้งร้าน (ออเดอร์ใหม่) + ยืนยันถึงลูกค้า หลังบันทึกแล้ว — ส่งไม่ถึง = ประทับบนออเดอร์ ไม่ล้มคำสั่งซื้อ (Notify.cs)
-        await NotifyOrderCreatedAsync(companyId, siteId, order.Id);
         return await GetOrderAsync(companyId, siteId, order.Id) ?? throw new InvalidOperationException("Failed.");
     }
 

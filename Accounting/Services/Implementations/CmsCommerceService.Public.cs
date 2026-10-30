@@ -48,6 +48,13 @@ public partial class CmsCommerceService
             await _db.SaveChangesAsync();
             return null;
         }
+        catch (DbUpdateConcurrencyException)
+        {
+            // รอบ 217 (ข้อ 175 ข · ออเดอร์): สองแท็บ/กดซ้ำคนละคีย์บนตะกร้าเดียวกัน — คำขอแรกตัดบรรทัดตะกร้าไปแล้ว ⇒ DELETE ของคำขอนี้กระทบ 0 แถว
+            // (EF ล้มทั้งชุด = ไม่มีออเดอร์ที่สอง) · เดิมหลุดเป็น 500 ⇒ บอกเหตุตรง ๆ แทน (ตะกร้าเป็น "ตัวกันซ้ำเชิงความหมาย" ของออเดอร์)
+            _db.ChangeTracker.Clear();
+            throw new BusinessRuleException(SiteOrderPublic.CartAlreadyOrderedMessage, SiteOrderPublic.RuleCode, 409);
+        }
         catch (DbUpdateException) when (order.IdempotencyKey != null)
         {
             _db.ChangeTracker.Clear();

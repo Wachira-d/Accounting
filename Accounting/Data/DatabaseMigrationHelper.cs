@@ -238,6 +238,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(CmsRound212NotifyStatements());   // รอบ 212 — ค่าตั้งแจ้งลูกค้า · โควตาข้อความช่องกลาง · ตารางของแพ็ก B/C (บล็อกท้ายไฟล์ · แพ็ก A เป็นเจ้าของ)
         list.AddRange(Accounting.Helpers.CustomerRelinkMigration.Statements());   // รอบ 212 แพ็ก B — ความคืบหน้า/คีย์กันซ้ำของ LineOaSwitchEvents (ต้องอยู่หลังบล็อกของแพ็ก A)
         list.AddRange(Accounting.Helpers.CustomerNotifyResendMigration.Statements());   // รอบ 213 — เหตุระงับ/ส่งซ้ำของ CustomerNotifyLogs + แพ็ก notify.topup ที่แอดมินตั้ง (หลังบล็อกรอบ 212)
+        list.AddRange(Accounting.Helpers.SubmitOnceMigration.Statements());   // รอบ 217 — IdempotencyRecords (+RequestHash) · คิวแจ้งเตือนหลังสร้างการจอง/ออเดอร์
         return list;
     }
 
@@ -6960,22 +6961,7 @@ public static class DatabaseMigrationHelper
             // challenge (กันบอทยิงรัวซ้ำ) + คำถามที่ตอบไม่ได้ (feed หา KB gap)
             """ALTER TABLE "ChatConversations" ADD COLUMN IF NOT EXISTS "PendingChallenge" varchar(20) NULL;""",
             """ALTER TABLE "ChatMessages" ADD COLUMN IF NOT EXISTS "NoContextFound" boolean NOT NULL DEFAULT false;""",
-            // Idempotency-Key ที่ใช้ร่วมกันข้าม instance — เดิมเก็บใน IMemoryCache
-            // (in-process) ⇒ deploy 2 node แล้ว partner retry ไปโดนคนละ node =
-            // ลงเอกสาร/รับเงินซ้ำเงียบ ๆ. "Status" = InFlight/Done ใช้กัน request
-            // ที่เข้าพร้อมกันด้วยคีย์เดียวกัน (ตัวที่สองได้ 409 ไม่ใช่ยิงซ้ำ)
-            """
-            CREATE TABLE IF NOT EXISTS "IdempotencyRecords" (
-                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-                "CacheKey" varchar(400) NOT NULL,
-                "Status" varchar(16) NOT NULL DEFAULT 'InFlight',
-                "StatusCode" integer NOT NULL DEFAULT 0,
-                "ContentType" varchar(200) NULL,
-                "Body" bytea NULL,
-                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
-                "CompletedAt" timestamptz NULL
-            );
-            """,
+            // IdempotencyRecords (Idempotency-Key ข้าม instance) — ย้ายไป Helpers/SubmitOnceMigration (รอบ 217 · ตัวตั้งเดียวของตาราง + RequestHash)
             // tax point การนำเข้า §78/2 — วันชำระอากรขาเข้า (เดิมไม่มีที่เก็บเลย
             // ทำให้ VAT นำเข้าตกไปใช้ issueDate = เข้า ภ.พ.30 ผิดงวดได้)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomsDutyPaidDate" timestamptz NULL;""",
@@ -6990,8 +6976,6 @@ public static class DatabaseMigrationHelper
             UPDATE "TaxReports" SET "CitAmount" = "TotalTaxWithheld"
              WHERE "CitAmount" IS NULL AND "TaxType" = 6;
             """,
-            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_IdempotencyRecords_Key" ON "IdempotencyRecords" ("CacheKey");""",
-            """CREATE INDEX IF NOT EXISTS "IX_IdempotencyRecords_CreatedAt" ON "IdempotencyRecords" ("CreatedAt");""",
 
             // ===== UserExternalLogins — บัญชี Google/Facebook/LINE ที่ผูกกับผู้ใช้ =====
             // เดิมเก็บใน Users.AuthProvider/AuthProviderId ซึ่งเป็นช่องเดี่ยว ⇒ ผูก

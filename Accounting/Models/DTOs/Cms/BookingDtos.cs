@@ -318,6 +318,10 @@ public class CreateBookingRequest
     /// <summary>บัตรที่ใช้ · ว่าง = ระบบเลือกบัตรที่หมดอายุก่อน (FEFO) ที่ใช้กับบริการนี้ได้</summary>
     public Guid? CreditPassId { get; set; }
 
+    /// <summary>รอบ 217 (คำตัดสินข้อ 175 ข): ผู้จองตั้งใจจองรอบเดิมเพิ่มอีกที่ (กดยืนยันหลังได้คำเตือน "คุณจองรอบนี้ไว้แล้ว") ⇒ ข้ามด่านซ้ำ
+    /// <c>DuplicateSubmitGuard</c> · ความจุ/ด่านอื่นยังตรวจครบ · ค่าเริ่มต้น false</summary>
+    public bool ConfirmAdditional { get; set; }
+
     /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มจอง — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
     public bool ConsentGiven { get; set; }
 }
@@ -374,6 +378,10 @@ public class BookingResponse
     /// <summary>รอบ 194 (C-1): ผลของขั้น ERP อัตโนมัติตอนเปลี่ยนสถานะ (ยกเลิก/เสร็จ) ที่ผู้กดต้องรู้ — ใบมัดจำไม่ถูกยกเลิก ·
     /// ต้องออกใบกำกับเอง · ขั้นที่ล้มพร้อมเหตุ · ว่าง = ไม่มีอะไรต้องทำ (ข้อความเดียวกันถูกประทับบน <c>InternalNotes</c> ด้วย)</summary>
     public List<string> ErpNotices { get; set; } = new();
+    /// <summary>รอบ 217 (ข้อ 175 ข): คำขอนี้ไม่ได้สร้างใบใหม่ — คืนใบเดิมของผู้จองคนเดิม (กดซ้ำ/สองแท็บ) · หน้าเว็บแสดง "คุณจองรอบนี้ไว้แล้ว"</summary>
+    public bool Reused { get; set; }
+    /// <summary>เลขที่ใบเดิมเมื่อ <see cref="Reused"/></summary>
+    public string? DuplicateOf { get; set; }
     /// <summary>R-39: เลขบัตรคอร์สที่ใช้จ่ายการจองนี้ · null = การจองชำระปกติ</summary>
     public string? CreditPassNumber { get; set; }
     /// <summary>รอบ 209 P4 (คำตัดสินข้อ 168 ญ): นโยบายยกเลิกที่ใช้กับการจองนี้ — "CreditPass" (จองด้วยบัตร ⇒ กติกาของแพ็กเกจชนะ) / "Service" ·
