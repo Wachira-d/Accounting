@@ -1818,7 +1818,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     แจ้งชำระ: ใบต่ออายุที่ถูกแทนที่ 409 · ภาษีหักของนิติบุคคล · ยอดตามใบตอนนี้ + unique ใบละหนึ่งรายการเปิด · เก็บไฟล์ก่อนสร้างรายการ · ทวงหนี้ `PlatformDunningPolicy.Excluded`
     + ล็อกแถว + ส่งหลัง commit · ยกเลิกมีผล ⇒ `RenewalVoidOnCancel` · ส่วนเสริมสลับวิธีชำระ ⇒ `NeedsCatchUpAfterSwitch` · ผู้ถูกระงับจ่ายออนไลน์
     (`IsBillingPaymentPath`) · สลิปผ่าน endpoint ตรวจสิทธิ์ · ลิงก์ชำระ: audit ครั้งแรก/นับ atomic/ถังต่อโทเคน/intent ของใบนี้เท่านั้น/URL กลับไม่มีโทเคน ·
-    Last verified `commit <sha ในคอมมิตถัดไป>`
+    Last verified `commit 8dffaaf7`
 - **รอบ 219 ส่วน B — ช่องทางรับชำระของ NextAcc + ติ๊กยอมรับนโยบาย (คำตัดสินข้อ 179):** ผู้เช่าชำระค่าแพ็กเกจ/ส่วนเสริมออนไลน์ผ่าน `IPlatformPaymentService`
   (`platform-pay/addons/{code}/intents` · `platform-pay/subscription-payments/{id}/intents` · intent ใต้บริษัทผู้ให้บริการ + `PayerCompanyId` · ยอดจากเซิร์ฟเวอร์) —
   **มีปุ่มเฉพาะเมื่อ config ของแพลตฟอร์ม active + โหมดใช้งานจริง** (`Helpers/PlatformPayAvailability`) · นอกนั้นโอน + แนบสลิป · ตั้งค่าที่ `/admin/platform-gateway.html`
