@@ -295,7 +295,7 @@ public class LegalDocumentTests
     {
         var tokens = CmsContentTokens.BuildValues("ร้านกาแฟดอยช้าง จำกัด", null, "02-111-2222", "hello@doi.example",
             "99 ถ.สุขุมวิท กรุงเทพฯ 10110", "0105551234567", null, siteName: "Doi Cafe");
-        var html = LegalMarkdown.Render(LegalDocumentDefaults.ShopTemplate(kind), tokens);
+        var html = LegalMarkdown.Render(LegalDocumentDefaults.ShopTemplate(kind), CmsLegalPages.BuildShopTokens(tokens, isJuristic: true));
         Assert.Contains("ร้านกาแฟดอยช้าง จำกัด", html);
         Assert.Contains("99 ถ.สุขุมวิท กรุงเทพฯ 10110", html);
         Assert.Contains("0105551234567", html);
@@ -347,5 +347,111 @@ public class LegalDocumentTests
         Assert.Equal("1.0", LegalDocumentDefaults.BuiltInVersion);
         Assert.Contains(PdpaPolicy.SignupPurpose, PdpaPolicy.TermsAcceptancePurposes);
         Assert.Contains(PdpaPolicy.PolicyUpdatePurpose, PdpaPolicy.TermsAcceptancePurposes);
+    }
+
+    // ═══════════════ ฝ่ายค้านรอบ 214 ═══════════════
+
+    public static IEnumerable<object[]> Pathological() => new[]
+    {
+        new object[] { "italic", string.Concat(Enumerable.Repeat("*a ", 33_000)) },
+        new object[] { "bold", string.Concat(Enumerable.Repeat("**a ", 25_000)) },
+        new object[] { "link-open", new string('[', 100_000) },
+        new object[] { "link-half", string.Concat(Enumerable.Repeat("[x](", 25_000)) },
+        new object[] { "tags", string.Concat(Enumerable.Repeat("<a", 50_000)) },
+        new object[] { "tokens", string.Concat(Enumerable.Repeat("{{ ", 33_000)) },
+        new object[] { "heading", "## " + new string(' ', 50_000) + "x" + new string('#', 40_000) },
+        new object[] { "paragraphs", string.Join("\n\n", Enumerable.Repeat(string.Concat(Enumerable.Repeat("*a ", 1_300)), 25)) },
+        new object[] { "table", "| a |\n|---|\n" + string.Concat(Enumerable.Repeat("| *a [b ", 12_000)) },
+    };
+
+    /// <summary>S1 (ReDoS): ข้อความ 100k ที่ออกแบบให้ regex ย้อนรอย ต้องแปลง + ตรวจคำเตือนเสร็จภายใน ~1 วินาที (เดิม quadratic — หน้าร้านสาธารณะค้าง)</summary>
+    [Theory]
+    [MemberData(nameof(Pathological))]
+    public void Render_PathologicalInput_IsFast(string name, string md)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var html = LegalMarkdown.Render(md, new Dictionary<string, string?> { ["company.name"] = "x" });
+        LegalMarkdown.Warnings(md, new[] { "company.name" });
+        sw.Stop();
+        Assert.True(sw.ElapsedMilliseconds < 1500, $"{name}: {sw.ElapsedMilliseconds} ms");
+        Assert.DoesNotContain("<script", html);
+    }
+
+    [Fact]
+    public void Render_OverlongParagraph_IsPlainEncoded_ShortOneStillFormatted()
+    {
+        var longPara = "**หนา** <i>" + new string('x', LegalMarkdown.MaxInlineLength);
+        var html = LegalMarkdown.Render(longPara);
+        Assert.DoesNotContain("<b>", html);
+        Assert.Contains("&lt;i&gt;", html);
+        Assert.Contains("<b>หนา</b>", LegalMarkdown.Render("**หนา** สั้น"));   // ทิศตรงข้าม: ย่อหน้าปกติยังแปลง
+    }
+
+    [Fact]
+    public void Heading_TrailingHashes_Stripped()
+        => Assert.Contains("<h2>หัวข้อ</h2>", LegalMarkdown.Render("## หัวข้อ ##"));
+
+    /// <summary>S4: อีเมลยังไม่ได้ตั้ง ⇒ ไม่มีลิงก์ "mailto:" เสีย — แสดงข้อความแทน · ทิศตรงข้าม: อีเมลจริงยังเป็นลิงก์</summary>
+    [Fact]
+    public void MissingEmail_NoBrokenMailto_RealEmailStillLinked()
+    {
+        var md = "ติดต่อ [{{company.email}}](mailto:{{company.email}})";
+        var missing = LegalMarkdown.Render(md, CmsLegalPages.BuildShopTokens(new Dictionary<string, string?>(), isJuristic: true));
+        Assert.DoesNotContain("mailto:", missing);
+        Assert.Contains(CmsLegalPages.NotSpecified, missing);
+        var real = LegalMarkdown.Render(md, CmsLegalPages.BuildShopTokens(new Dictionary<string, string?> { ["company.email"] = "a@b.example" }, true));
+        Assert.Contains("href=\"mailto:a@b.example\"", real);
+    }
+
+    /// <summary>S3: บุคคลธรรมดา (ไม่มีเลขนิติบุคคล) — เลขผู้เสียภาษี = เลขบัตรประชาชน ห้ามเผยแพร่อัตโนมัติ · นิติบุคคลแสดงได้</summary>
+    [Fact]
+    public void ShopTokens_TaxId_OnlyForJuristic_AndMissingValuesExplicit()
+    {
+        var baseTokens = CmsContentTokens.BuildValues("ร้านป้าแดง", null, null, null, null, "3100500123456", null);
+        var person = CmsLegalPages.BuildShopTokens(baseTokens, isJuristic: false);
+        Assert.Equal(CmsLegalPages.TaxIdWithheld, person["company.taxId"]);
+        var html = LegalMarkdown.Render(LegalDocumentDefaults.ShopTemplate("privacy"), person);
+        Assert.DoesNotContain("3100500123456", html);
+        Assert.Contains(CmsLegalPages.NotSpecified, html);              // ที่อยู่/เบอร์/อีเมลที่ยังไม่ตั้ง
+        Assert.Equal("ร้านป้าแดง", person["site.name"]);                  // ชื่อเว็บว่าง ⇒ ชื่อร้าน
+        var company = CmsLegalPages.BuildShopTokens(baseTokens, isJuristic: true);
+        Assert.Equal("3100500123456", company["company.taxId"]);
+    }
+
+    [Fact]
+    public void ShopTokens_BookingPageScope_RevealsOnlyNameAndPhone()
+    {
+        var t = CmsLegalPages.BuildShopTokens(
+            CmsContentTokens.BuildValues("ร้านข้าวมันไก่", null, "081-000-0000", "owner@x.example", "บ้านเลขที่ 1", "0105500000001", null),
+            isJuristic: true, bookingPageScope: true);
+        Assert.Equal("ร้านข้าวมันไก่", t["company.name"]);
+        Assert.Equal("081-000-0000", t["company.phone"]);
+        Assert.Equal(CmsLegalPages.AskTheShop, t["company.address"]);
+        Assert.Equal(CmsLegalPages.AskTheShop, t["company.email"]);
+        Assert.Equal(CmsLegalPages.AskTheShop, t["company.taxId"]);
+    }
+
+    [Fact]
+    public void IdentityGaps_And_StoredLinkWarning()
+    {
+        Assert.Equal(new[] { "ที่อยู่", "อีเมลติดต่อ" }, CmsLegalPages.IdentityGaps("ร้าน", " ", "02", null));
+        Assert.Empty(CmsLegalPages.IdentityGaps("ร้าน", "ที่อยู่", "02", "a@b.c"));
+        Assert.Contains("javascript:alert(1)", CmsLegalPages.StoredLinkWarning("นโยบาย", "javascript:alert(1)"));
+        Assert.Null(CmsLegalPages.StoredLinkWarning("นโยบาย", "https://shop.example/p"));
+        Assert.Null(CmsLegalPages.StoredLinkWarning("นโยบาย", "/privacy"));
+        Assert.Null(CmsLegalPages.StoredLinkWarning("นโยบาย", null));
+    }
+
+    /// <summary>หมายเหตุฝ่ายค้าน: ร่าง ≤ 100k ตัวอักษรไม่ถูกคัดลอกทั้งก้อนลง audit ทุกครั้งที่บันทึก — เก็บความยาว + hash · ช่องอื่นไม่ถูกแตะ</summary>
+    [Fact]
+    public void AuditRedaction_Markdown_IsDigested_OthersUntouched()
+    {
+        var body = new string('ก', 50_000);
+        var v = AuditRedaction.Value("BodyMarkdown", body) as string;
+        Assert.StartsWith("[markdown 50,000 ตัวอักษร · sha256 ", v);
+        Assert.NotEqual(v, AuditRedaction.Value("PrivacyPolicyMarkdown", body + "x"));
+        Assert.Equal("", AuditRedaction.Value("TermsOfServiceMarkdown", ""));
+        Assert.Null(AuditRedaction.Value("TermsOfServiceMarkdown", null));
+        Assert.Equal("1.1", AuditRedaction.Value("Version", "1.1"));
     }
 }

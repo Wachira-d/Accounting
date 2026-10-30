@@ -35,6 +35,59 @@ public static class CmsLegalPages
     public static string EffectiveMarkdown(string kind, string? customMarkdown)
         => string.IsNullOrWhiteSpace(customMarkdown) ? LegalDocumentDefaults.ShopTemplate(kind) : customMarkdown;
 
+    public const string NotSpecified = "ยังไม่ได้ระบุ";
+    public const string TaxIdWithheld = "ไม่แสดงบนเว็บ (ผู้ประกอบการบุคคลธรรมดา — เลขประจำตัวผู้เสียภาษีคือเลขบัตรประชาชน)";
+    public const string AskTheShop = "สอบถามได้ที่ร้านตามเบอร์โทรด้านล่าง";
+
+    /// <summary>ฝ่ายค้านรอบ 214 S3/S4 — ค่าโทเคนของหน้านโยบาย/ข้อกำหนดของร้าน (ตัวเดียว · ทุกทางแสดงใช้):
+    /// <list type="bullet">
+    /// <item><b>เลขผู้เสียภาษี</b> แสดงเฉพาะนิติบุคคล (<c>Company.JuristicId</c> มีค่า) — บุคคลธรรมดาใช้เลขบัตรประชาชน (PDPA · กฎ J: ปิดบังเลข 13 หลัก)
+    /// ⇒ แทนด้วยข้อความ ไม่เผยแพร่อัตโนมัติ (ทั้งในแม่แบบและข้อความที่ร้านเขียนเองที่อ้าง <c>{{company.taxId}}</c>)</item>
+    /// <item>ค่าที่ยังไม่ได้ตั้ง ⇒ "ยังไม่ได้ระบุ" (ไม่ใช่ช่องว่าง/ประโยคขาด) · mailto ที่ไม่มีอีเมลกลายเป็นข้อความ (<c>LegalMarkdown</c>)</item>
+    /// <item><paramref name="bookingPageScope"/> = หน้าจองโต๊ะที่ไม่ผูกเว็บ (ใครรู้ companyId ก็เปิดได้) ⇒ เปิดเผยเท่าที่หน้าจองแสดงอยู่แล้ว
+    /// (ชื่อ · เบอร์โทร) — ที่อยู่/อีเมล/เลขผู้เสียภาษี ไม่แสดง</item>
+    /// </list></summary>
+    public static Dictionary<string, string?> BuildShopTokens(IReadOnlyDictionary<string, string?> contentTokens, bool isJuristic, bool bookingPageScope = false)
+    {
+        var t = new Dictionary<string, string?>(contentTokens, StringComparer.OrdinalIgnoreCase);
+        string? Get(string k) => t.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v) ? v!.Trim() : null;
+        var name = Get("company.name");
+        t["company.name"] = name ?? NotSpecified;
+        t["site.name"] = Get("site.name") ?? name ?? NotSpecified;
+        t["company.phone"] = Get("company.phone") ?? NotSpecified;
+        if (bookingPageScope)
+        {
+            t["company.address"] = AskTheShop;
+            t["company.email"] = AskTheShop;
+            t["company.taxId"] = AskTheShop;
+        }
+        else
+        {
+            t["company.address"] = Get("company.address") ?? NotSpecified;
+            t["company.email"] = Get("company.email") ?? NotSpecified;
+            t["company.taxId"] = isJuristic ? (Get("company.taxId") ?? NotSpecified) : TaxIdWithheld;
+        }
+        return t;
+    }
+
+    /// <summary>ข้อมูลตัวตนร้านที่ยังขาด (หน้า cms-edit เตือนเจ้าของก่อนเผยแพร่) — คืนชื่อช่องภาษาไทย</summary>
+    public static List<string> IdentityGaps(string? name, string? address, string? phone, string? email)
+    {
+        var gaps = new List<string>();
+        if (string.IsNullOrWhiteSpace(name)) gaps.Add("ชื่อกิจการ");
+        if (string.IsNullOrWhiteSpace(address)) gaps.Add("ที่อยู่");
+        if (string.IsNullOrWhiteSpace(phone)) gaps.Add("เบอร์โทร");
+        if (string.IsNullOrWhiteSpace(email)) gaps.Add("อีเมลติดต่อ");
+        return gaps;
+    }
+
+    /// <summary>ลิงก์ที่เก็บไว้ก่อนรอบ 214 แต่ใช้ไม่ได้ (เช่น javascript: · ไม่ใช่ URL) — ตัวตัดสินถือว่าไม่ได้ตั้งแล้วใช้หน้าระบบ ⇒ ต้องบอกเจ้าของ
+    /// (ไม่ลบเงียบ) · null = ไม่มีปัญหา</summary>
+    public static string? StoredLinkWarning(string kindTitle, string? storedUrl)
+        => !string.IsNullOrWhiteSpace(storedUrl) && !CmsGalleryBlock.IsSafeUrl(storedUrl.Trim())
+            ? $"ลิงก์{kindTitle}เดิมไม่ถูกต้อง: \"{storedUrl.Trim()}\" — ระบบใช้หน้าของระบบแทน (บันทึกครั้งถัดไปจะล้างลิงก์นี้)"
+            : null;
+
     /// <summary>ตรวจลิงก์ที่ร้านกรอก — "" = ล้าง (ใช้หน้าของระบบ) · รับ URL เต็ม http(s) หรือ path ในเว็บร้าน (<c>/privacy</c>) ·
     /// คืนข้อความผิด (ไทย) หรือ null = ใช้ได้ (ก่อนรอบ 214 เก็บค่าดิบอะไรก็ได้ — storefront กรองตอนแสดงเท่านั้น)</summary>
     public static string? ValidateExternalUrl(string? url)

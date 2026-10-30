@@ -44,7 +44,7 @@ public interface ILegalDocumentService
     Task<LegalDraftView?> GetDraftAsync(string kind, CancellationToken ct = default);
     Task<LegalDraftView> SaveDraftAsync(string kind, LegalDraftInput input, string actor, CancellationToken ct = default);
     /// <summary>เผยแพร่ร่าง (ตรวจด้วย <c>LegalDocumentPolicy.ValidatePublish</c>) — หลังจากนี้แถวแก้ไม่ได้</summary>
-    Task<LegalHistoryItem> PublishDraftAsync(string kind, string actor, CancellationToken ct = default);
+    Task<LegalHistoryItem> PublishDraftAsync(string kind, string actor, string? ipAddress = null, CancellationToken ct = default);
     Task<bool> DiscardDraftAsync(string kind, string actor, CancellationToken ct = default);
 
     /// <summary>ผู้ใช้ที่ล็อกอินอยู่ยอมรับฉบับปัจจุบันแล้วหรือยัง (แถบแจ้ง "มีฉบับใหม่" — ไม่บล็อกการใช้งาน)</summary>

@@ -56,7 +56,11 @@ window.LegalPolicy = {
 
     const notice = document.getElementById('legalNotice');
     if (notice) {
-      if (d.isArchived) {
+      if (d.isUpcoming) {
+        // ฝ่ายค้านรอบ 214 S2: ฉบับที่ประกาศล่วงหน้า ≠ ฉบับเก่า
+        notice.innerHTML = `ท่านกำลังดู<b>ฉบับที่จะมีผลตั้งแต่ ${this.esc(this.thaiDate(d.effectiveDate))}</b> (ฉบับที่ ${this.esc(d.version)}) — <a href="${this.esc(location.pathname)}">ดูฉบับที่ใช้อยู่ปัจจุบัน</a>`;
+        notice.style.display = 'block';
+      } else if (d.isArchived) {
         notice.innerHTML = `ท่านกำลังดู<b>ฉบับเก่า</b> (ฉบับที่ ${this.esc(d.version)}) — <a href="${this.esc(location.pathname)}">ดูฉบับปัจจุบัน</a>`;
         notice.style.display = 'block';
       } else if (d.upcoming) {

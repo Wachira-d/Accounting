@@ -208,8 +208,9 @@
         <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;line-height:1.7">
           ร้านเป็น<b>ผู้ควบคุมข้อมูลส่วนบุคคล</b>ของลูกค้าที่สั่งซื้อ/จอง/สมัครสมาชิกผ่านเว็บนี้ (NextAcc เป็นผู้ประมวลผลข้อมูล) — PDPA ม.23 ต้องแจ้งนโยบายก่อนเก็บข้อมูล ·
           ลิงก์แสดงท้ายเว็บทุกหน้า · บนช่องยินยอมของฟอร์มสั่งซื้อ/จอง/ติดต่อ · หน้าสมัครสมาชิก · แบนเนอร์คุกกี้ ·
-          <b>แม่แบบของระบบ</b>เติมชื่อร้าน ที่อยู่ เลขผู้เสียภาษี อีเมล/เบอร์โทรจากข้อมูลบริษัท/ข้อมูลติดต่อด้านบนให้อัตโนมัติ — ตรวจให้ครบก่อนเผยแพร่เว็บ
+          <b>แม่แบบของระบบ</b>เติมชื่อร้าน ที่อยู่ อีเมล/เบอร์โทรจากข้อมูลบริษัท/ข้อมูลติดต่อด้านบนให้อัตโนมัติ (เลขผู้เสียภาษีแสดงเฉพาะนิติบุคคล) — ตรวจให้ครบก่อนเผยแพร่เว็บ
         </p>
+        <div id="lgWarnings" style="display:none;background:#fffbeb;border:1px solid #fcd34d;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;line-height:1.7;margin-bottom:10px"></div>
         <div class="lg-box" style="border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;margin-bottom:12px">
           <div style="font-weight:600;margin-bottom:6px">🔒 นโยบายความเป็นส่วนตัว</div>
           <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">
@@ -2166,6 +2167,11 @@
         return `${location.origin}/site/${encodeURIComponent(this.site.subdomain)}/legal/${kind}`;
       },
       hydrateLegal() {
+        // ฝ่ายค้านรอบ 214: คำเตือนจากเซิร์ฟเวอร์ (ตัวตนร้านที่ขาด · ลิงก์เดิมที่ใช้ไม่ได้ — ไม่ลบเงียบ)
+        const warns = this.site.legalWarnings || [];
+        const wbox = document.getElementById('lgWarnings');
+        wbox.innerHTML = warns.map(w => '⚠️ ' + Layout.esc(w)).join('<br>');
+        wbox.style.display = warns.length ? '' : 'none';
         for (const kind of this._legalKinds) {
           const f = this._legalField(kind);
           const mode = this.site[f.mode] || 'default';   // ผลตัวตัดสินของเซิร์ฟเวอร์
@@ -2185,7 +2191,12 @@
         const ext = document.getElementById('lgUrl_' + kind).value.trim();
         const shown = mode === 'external' && ext ? (ext.startsWith('/') ? `${location.origin}/site/${encodeURIComponent(this.site.subdomain)}${ext}` : ext) : this._legalInternalUrl(kind);
         document.getElementById('lgPub_' + kind).textContent = shown;
-        document.getElementById('lgOpen_' + kind).href = shown;
+        const open = document.getElementById('lgOpen_' + kind);
+        open.href = shown;
+        // เว็บยังไม่เผยแพร่ ⇒ หน้าสาธารณะยังเปิดไม่ได้ — ปุ่ม "เปิด" แสดงตัวอย่างในหน้านี้แทน (ไม่พาไปหน้า 404)
+        open.onclick = (mode !== 'external' && !isPublished(this.site.status))
+          ? (ev) => { ev.preventDefault(); Layout.toast('เว็บยังไม่เผยแพร่ — แสดงตัวอย่างในหน้านี้แทน', 'info'); this.legalPreview(kind); }
+          : null;
         // เลือก "เขียนเอง" ครั้งแรก ⇒ ตั้งต้นจากแม่แบบ (ไม่ต้องเริ่มจากหน้าว่าง)
         const md = document.getElementById('lgMd_' + kind);
         if (!fromHydrate && mode === 'custom' && !md.value.trim()) {

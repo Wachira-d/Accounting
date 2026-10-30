@@ -78,6 +78,8 @@ public class AdminLegalDocumentController : ControllerBase
             history = (await _legal.GetHistoryAsync(kind, ct)).Select(HistoryDto).ToList(),
             tokens = LegalDocumentDefaults.PlatformTokens.Select(t => new { token = "{{" + t.Token + "}}", label = t.Label }).ToList(),
             consentVersion = (await _legal.GetConsentVersionAsync(ct)).ConsentVersion,
+            // ฝ่ายค้านรอบ 214: วันนี้ตามเวลาไทยจากเซิร์ฟเวอร์ — หน้าแอดมินเทียบวันมีผลของร่างที่ค้าง (ไม่คำนวณเวลาไทยเอง)
+            today = LegalDocumentPolicy.TodayBangkok(DateTime.UtcNow).ToString("yyyy-MM-dd"),
         }));
     }
 
@@ -105,7 +107,7 @@ public class AdminLegalDocumentController : ControllerBase
         if (!LegalDocumentDefaults.IsKind(kind))
             return NotFound(new ApiResponse<object>(false, null, "ชนิดเอกสารต้องเป็น privacy หรือ terms"));
         var md = req.BodyMarkdown ?? "";
-        if (md.Length > LegalMarkdown.MaxLength * 2)
+        if (md.Length > LegalMarkdown.MaxLength)   // ฝ่ายค้าน S1: เพดานเท่าที่เก็บได้จริง
             return BadRequest(new ApiResponse<object>(false, null, "เนื้อความยาวเกินไป"));
         var html = await _legal.RenderPlatformAsync(md, ct);
         var warnings = LegalMarkdown.Warnings(md, LegalDocumentDefaults.PlatformTokens.Select(t => t.Token));
@@ -120,7 +122,9 @@ public class AdminLegalDocumentController : ControllerBase
         if (!LegalDocumentDefaults.IsKind(kind))
             return NotFound(new ApiResponse<object>(false, null, "ชนิดเอกสารต้องเป็น privacy หรือ terms"));
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var item = await _legal.PublishDraftAsync(kind, actor, ct);
+        var ip = Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
+        if (string.IsNullOrWhiteSpace(ip)) ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var item = await _legal.PublishDraftAsync(kind, actor, ip, ct);
         var msg = item.IsUpcoming
             ? $"เผยแพร่ฉบับ {item.Version} แล้ว — ประกาศล่วงหน้า มีผล {item.EffectiveDate:yyyy-MM-dd}"
             : $"เผยแพร่ฉบับ {item.Version} แล้ว — มีผลทันที";

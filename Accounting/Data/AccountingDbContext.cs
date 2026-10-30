@@ -75,7 +75,8 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
-    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
+    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();
+    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
     public DbSet<SystemAccountTemplate> SystemAccountTemplates => Set<SystemAccountTemplate>();
@@ -1000,13 +1001,28 @@ public class AccountingDbContext : DbContext
             e.Property(a => a.EntityType).HasMaxLength(100);
         });
 
+        // ===== PlatformPolicyAcceptance (รอบ 214 หลัง CI) — ไม่มี FK ไป Companies (ผู้ใช้ไม่ต้องมีบริษัท) · ชื่อ index ตรงกับ LegalDocumentMigration =====
+        modelBuilder.Entity<PlatformPolicyAcceptance>(e =>
+        {
+            e.HasIndex(x => new { x.UserId, x.AcceptedAt }).HasDatabaseName("IX_PlatformPolicyAcceptances_User_AcceptedAt");
+            e.Property(x => x.Email).HasMaxLength(256);
+            e.Property(x => x.Purpose).HasMaxLength(100);
+            e.Property(x => x.PolicyVersion).HasMaxLength(50);
+            e.Property(x => x.Channel).HasMaxLength(50);
+            e.Property(x => x.IpAddress).HasMaxLength(45);
+            e.Property(x => x.EvidenceHash).HasMaxLength(100);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
         // ===== LegalDocumentVersion (รอบ 214 · คำตัดสินข้อ 173) — เลขฉบับไม่ซ้ำต่อชนิด · ชื่อ index ตรงกับ LegalDocumentMigration =====
         modelBuilder.Entity<LegalDocumentVersion>(e =>
         {
             e.HasIndex(x => new { x.Kind, x.Version }).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_LegalDocumentVersions_Kind_Version");
             e.Property(x => x.Kind).HasMaxLength(20);
             e.Property(x => x.Version).HasMaxLength(20);
-            e.Property(x => x.Status).HasMaxLength(20);
+            // ฝ่ายค้านรอบ 214: Status เป็น concurrency token (เผยแพร่ซ้ำพร้อมกัน ⇒ แถวที่สองไม่ถูก UPDATE) + ร่างได้ฉบับเดียวต่อชนิดระดับฐาน
+            e.Property(x => x.Status).HasMaxLength(20).IsConcurrencyToken();
+            e.HasIndex(x => x.Kind).IsUnique().HasFilter("\"Status\" = 'Draft' AND \"IsDeleted\" = false").HasDatabaseName("UX_LegalDocumentVersions_Kind_Draft");
             e.Property(x => x.ChangeSummary).HasMaxLength(500);
             e.Property(x => x.PublishedBy).HasMaxLength(100);
             e.HasQueryFilter(x => !x.IsDeleted);

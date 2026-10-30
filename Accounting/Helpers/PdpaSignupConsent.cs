@@ -47,6 +47,8 @@ public static class PdpaPolicy
     /// ทางสมัครผ่านคำเชิญไม่สร้างบริษัทเลยด้วยซ้ำ). ใช้ค่าเดียวทุกทางสมัคร
     /// เพื่อให้ค้น "ผู้ใช้คนนี้ยอมรับนโยบายฉบับไหนแล้ว" ได้ด้วย query เดียว
     /// (แนวเดียวกับ <c>ChatbotService.PublicCompanyId</c> ที่มีอยู่แล้ว)</summary>
+    /// <para>รอบ 214 หลัง CI: <b>ไม่ใช้กับแถวความยินยอมแล้ว</b> — PdpaConsentRecords มี FK → Companies (Guid.Empty ถูกปฏิเสธบนฐานที่สร้างจากโมเดล) ·
+    /// หลักฐานยอมรับข้อกำหนด/นโยบายแพลตฟอร์มอยู่ที่ <c>PlatformPolicyAcceptances</c> (ระดับผู้ใช้) · ค่านี้เหลือใช้เป็น CompanyId ของแถว audit ระดับแพลตฟอร์ม</para>
     public static readonly Guid PlatformScopeCompanyId = Guid.Empty;
 }
 

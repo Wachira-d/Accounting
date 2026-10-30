@@ -110,7 +110,7 @@ public class CmsSiteController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> LegalPreview(Guid companyId, Guid siteId, string kind,
         [FromBody] LegalPreviewRequest request, [FromServices] ICmsRenderingService rendering)
     {
-        if ((request?.Markdown?.Length ?? 0) > LegalMarkdown.MaxLength * 2)
+        if ((request?.Markdown?.Length ?? 0) > LegalMarkdown.MaxLength)   // ฝ่ายค้าน S1: เพดานเท่าที่เก็บได้จริง
             return BadRequest(new ApiResponse<object>(false, null, "เนื้อความยาวเกินไป"));
         var r = await rendering.PreviewLegalPageAsync(companyId, siteId, kind, request?.Markdown);
         if (r == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเว็บไซต์หรือชนิดเอกสาร"));

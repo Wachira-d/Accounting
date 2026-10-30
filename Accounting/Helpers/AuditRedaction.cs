@@ -43,11 +43,19 @@ public static class AuditRedaction
     /// <summary>ค่าที่เก็บลง audit — ช่องลับที่มีค่า ⇒ <see cref="Mask"/> · null/ว่าง คงไว้</summary>
     public static object? Value(string propertyName, object? value)
     {
+        // ฝ่ายค้านรอบ 214: เนื้อความเอกสารยาว (ช่องลงท้าย "Markdown" — ร่างนโยบาย/ข้อกำหนด ≤ 100k ตัวอักษร) ไม่คัดลอกทั้งก้อนลง audit ทุกครั้งที่บันทึกร่าง
+        // (append-only — ลบไม่ได้) ⇒ เก็บความยาว + SHA-256 แทน (ยังพิสูจน์ได้ว่าเนื้อความเปลี่ยนเมื่อไร · ฉบับที่เผยแพร่คือแถวในตารางเอง)
+        if (value is string md && md.Length > 0 && propertyName.EndsWith("Markdown", StringComparison.OrdinalIgnoreCase))
+            return MarkdownDigest(md);
         if (!IsSensitive(propertyName)) return value;
         if (value is null) return null;
         if (value is string s && s.Length == 0) return s;
         return Mask;
     }
+
+    /// <summary>สรุปเนื้อความยาวสำหรับ audit — "[markdown N ตัวอักษร · sha256 XXXXXXXXXXXXXXXX]"</summary>
+    private static string MarkdownDigest(string text)
+        => $"[markdown {text.Length.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} ตัวอักษร · sha256 {Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)))[..16]}]";
 
     /// <summary>ปิดค่าช่องลับใน JSON ของแถว audit ก่อนแสดง (ทุกชั้นของ object/array) — ไม่ใช่ JSON/ไม่มีช่องลับ ⇒ คืนข้อความเดิมทุกตัวอักษร</summary>
     public static string? RedactJson(string? json)

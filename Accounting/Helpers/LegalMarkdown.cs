@@ -27,23 +27,49 @@ public static class LegalMarkdown
     /// <summary>ความยาวสูงสุดของเนื้อความที่รับเก็บ (ตัวอักษร) — เอกสารนโยบายจริงยาวราว 10k</summary>
     public const int MaxLength = 100_000;
 
-    private static readonly Regex TokenPattern = new(@"\{\{\s*([A-Za-z]+\.[A-Za-z]+)\s*\}\}", RegexOptions.Compiled);
-    private static readonly Regex Heading = new(@"^(#{1,3})\s+(.+?)\s*#*\s*$", RegexOptions.Compiled);
-    private static readonly Regex Bullet = new(@"^\s*[-*]\s+(.*)$", RegexOptions.Compiled);
-    private static readonly Regex Ordered = new(@"^\s*\d{1,3}[.)]\s+(.*)$", RegexOptions.Compiled);
-    private static readonly Regex TableSep = new(@"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$", RegexOptions.Compiled);
-    private static readonly Regex CodeSpan = new(@"`([^`]+)`", RegexOptions.Compiled);
-    private static readonly Regex LinkPattern = new(@"\[([^\]]+)\]\(([^)\s]+)\)", RegexOptions.Compiled);
-    private static readonly Regex BoldPattern = new(@"\*\*(.+?)\*\*", RegexOptions.Compiled);
-    private static readonly Regex ItalicPattern = new(@"(?<![\*\w])\*(?!\s)(.+?)(?<!\s)\*(?![\*\w])", RegexOptions.Compiled);
-    private static readonly Regex StashRef = new("\u0001(\\d+)\u0001", RegexOptions.Compiled);
-    private static readonly Regex RelativePath = new(@"^[A-Za-z0-9][A-Za-z0-9._\-/]*(#[A-Za-z0-9_\-]*)?$", RegexOptions.Compiled);
-    private static readonly Regex RawTag =new(@"<\s*/?\s*[A-Za-z][^>]*>", RegexOptions.Compiled);
+    /// <summary>ฝ่ายค้านรอบ 214 S1 (ReDoS): ทุก regex มีเพดานเวลา (แบบเดียวกับ <see cref="BookingRefPattern.MatchTimeout"/>) และเขียนให้
+    /// ไม่ย้อนรอยข้ามตัวคั่น (ตัวเอียงไม่ข้าม <c>*</c> · ลิงก์ไม่ข้าม <c>[</c> · แท็กไม่ข้าม <c>&lt;</c>) ⇒ เวลาเป็นเชิงเส้น ·
+    /// เกินเวลา = ย่อหน้านั้นแสดงเป็นข้อความ encode ล้วน (ไม่ล้ม · ไม่ปล่อยดิบ)</summary>
+    private static readonly TimeSpan Timeout = BookingRefPattern.MatchTimeout;
+    /// <summary>บรรทัด/ย่อหน้า/รายการที่ยาวกว่านี้ไม่แปลงไวยากรณ์ในบรรทัด (encode ล้วน) — เอกสารจริงไม่มีย่อหน้ายาวขนาดนี้</summary>
+    public const int MaxInlineLength = 4_000;
+
+    private static Regex Rx(string pattern) => new(pattern, RegexOptions.Compiled | RegexOptions.CultureInvariant, Timeout);
+
+    private static readonly Regex TokenPattern = Rx(@"\{\{[ \t]*([A-Za-z]+\.[A-Za-z]+)[ \t]*\}\}");
+    private static readonly Regex Heading = Rx(@"^(#{1,3})[ \t]+(\S.*)$");
+    private static readonly Regex Bullet = Rx(@"^[ \t]*[-*][ \t]+(.*)$");
+    private static readonly Regex Ordered = Rx(@"^[ \t]*\d{1,3}[.)][ \t]+(.*)$");
+    private static readonly Regex TableSep = Rx(@"^[ \t]*\|?[ \t]*:?-{2,}:?[ \t]*(\|[ \t]*:?-{2,}:?[ \t]*)*\|?[ \t]*$");
+    private static readonly Regex CodeSpan = Rx(@"`([^`]+)`");
+    private static readonly Regex LinkPattern = Rx(@"\[([^\[\]]+)\]\(([^()\s]+)\)");
+    private static readonly Regex BoldPattern = Rx(@"\*\*([^*]+)\*\*");
+    private static readonly Regex ItalicPattern = Rx(@"(?<![*\w])\*([^\s*][^*]*)(?<!\s)\*(?![*\w])");
+    private static readonly Regex StashRef = Rx("\u0001(\\d+)\u0001");
+    private static readonly Regex RelativePath = Rx(@"^[A-Za-z0-9][A-Za-z0-9._\-/]*(#[A-Za-z0-9_\-]*)?$");
+    private static readonly Regex RawTag = Rx(@"<[ \t]*/?[ \t]*[A-Za-z][^<>]*>");
+    /// <summary>ลิงก์ mailto ที่หลังแทนโทเคนแล้วไม่มีอีเมลจริง (ร้านยังไม่ได้ตั้ง) ⇒ แสดงเป็นข้อความ ไม่ใช่ลิงก์เสีย (ฝ่ายค้าน S4)</summary>
+    private static readonly Regex EmptyMailto = Rx("<a href=\"mailto:([^\"@]*)\">([^<]*)</a>");
 
     /// <summary>แปลง markdown ชุดย่อย → HTML ที่ปลอดภัย · <paramref name="tokens"/> = ค่าแทนโทเคน (null = ไม่แทน)</summary>
     public static string Render(string? markdown, IReadOnlyDictionary<string, string?>? tokens = null)
     {
         if (string.IsNullOrWhiteSpace(markdown)) return "";
+        if (markdown.Length > MaxLength * 2) markdown = markdown[..(MaxLength * 2)];   // เพดานสุดท้าย (เก็บได้ ≤ MaxLength อยู่แล้ว)
+        try
+        {
+            var html = RenderBlocks(markdown);
+            return tokens == null ? html : ApplyTokens(html, tokens);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // ฝ่ายค้าน S1: เกินเวลา = แสดงทั้งเอกสารเป็นข้อความ encode ล้วน (ปลอดภัย · ไม่ล้มหน้า) — ไม่แทนโทเคน (regex อาจช้าอีก)
+            return "<p>" + WebUtility.HtmlEncode(markdown).Replace("\n", "<br>") + "</p>";
+        }
+    }
+
+    private static string RenderBlocks(string markdown)
+    {
         var lines = markdown.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         var sb = new StringBuilder();
         var para = new List<string>();
@@ -68,7 +94,7 @@ public static class LegalMarkdown
                 FlushPara();
                 // # และ ## = หัวข้อหลักของเอกสาร (h2 — h1 คือชื่อเอกสารบนหน้า) · ### = หัวข้อย่อย (h3)
                 var tag = h.Groups[1].Value.Length >= 3 ? "h3" : "h2";
-                sb.Append('<').Append(tag).Append('>').Append(Inline(h.Groups[2].Value)).Append("</").Append(tag).Append(">\n");
+                sb.Append('<').Append(tag).Append('>').Append(Inline(h.Groups[2].Value.TrimEnd().TrimEnd('#').TrimEnd())).Append("</").Append(tag).Append(">\n");
                 i++; continue;
             }
 
@@ -137,16 +163,17 @@ public static class LegalMarkdown
         }
         FlushPara();
 
-        var html = sb.ToString();
-        return tokens == null ? html : ApplyTokens(html, tokens);
+        return sb.ToString();
     }
 
     /// <summary>แทนโทเคนบน HTML ที่แปลงแล้ว — ค่าถูก HtmlEncode เสมอ (ใช้ได้ทั้งในเนื้อความและใน href ที่ผ่านด่าน scheme แล้ว)</summary>
     private static string ApplyTokens(string html, IReadOnlyDictionary<string, string?> tokens)
     {
         if (html.IndexOf("{{", StringComparison.Ordinal) < 0) return html;
-        return TokenPattern.Replace(html, m =>
+        var replaced = TokenPattern.Replace(html, m =>
             tokens.TryGetValue(m.Groups[1].Value, out var v) ? WebUtility.HtmlEncode(v ?? "") : m.Value);
+        // ฝ่ายค้าน S4: mailto ที่ไม่มีอีเมลจริงหลังแทนค่า (ยังไม่ได้ตั้ง) ⇒ ข้อความธรรมดา ไม่ใช่ลิงก์ "mailto:" เสีย
+        return EmptyMailto.Replace(replaced, m => m.Groups[2].Value);
     }
 
     /// <summary>ลิงก์ที่ยอมให้เป็น &lt;a&gt; — allowlist (ไม่ใช่ blocklist): http(s) · mailto · tel · path ภายใน · anchor ·
@@ -173,7 +200,19 @@ public static class LegalMarkdown
     {
         var w = new List<string>();
         if (string.IsNullOrEmpty(markdown)) return w;
-        if (markdown.Length > MaxLength) w.Add($"เนื้อความยาวเกิน {MaxLength:N0} ตัวอักษร — บันทึกไม่ได้");
+        if (markdown.Length > MaxLength)
+        {
+            // ฝ่ายค้าน S1: ยาวเกินเก็บไม่ได้อยู่แล้ว — ไม่สแกนต่อ (กันเวลาพุ่งบนข้อความยาวผิดปกติ)
+            w.Add($"เนื้อความยาวเกิน {MaxLength:N0} ตัวอักษร — บันทึกไม่ได้");
+            return w;
+        }
+        try { ScanWarnings(markdown, knownTokens, w); }
+        catch (RegexMatchTimeoutException) { w.Add("เนื้อความซับซ้อนเกินกว่าจะตรวจได้ครบ — ตรวจตัวอย่างด้วยตาก่อนเผยแพร่"); }
+        return w.Distinct().Take(50).ToList();
+    }
+
+    private static void ScanWarnings(string markdown, IEnumerable<string>? knownTokens, List<string> w)
+    {
         foreach (Match m in LinkPattern.Matches(markdown))
             if (!IsAllowedHref(m.Groups[2].Value))
                 w.Add($"ลิงก์ \"{m.Groups[2].Value}\" ไม่ใช่ http(s)/mailto/tel/path ภายใน — จะแสดงเป็นข้อความ ไม่เป็นลิงก์");
@@ -186,7 +225,6 @@ public static class LegalMarkdown
                 if (!known.Contains(m.Groups[1].Value))
                     w.Add($"โทเคน {{{{{m.Groups[1].Value}}}}} ไม่รู้จัก — จะแสดงตามที่พิมพ์");
         }
-        return w.Distinct().ToList();
     }
 
     private static List<string> SplitRow(string row)
@@ -205,6 +243,8 @@ public static class LegalMarkdown
         string Put(string html) { stash.Add(html); return "\u0001" + (stash.Count - 1) + "\u0001"; }
 
         // อักขระ \u0001 ของผู้ใช้เองถูกตัดทิ้ง — กันการปลอมอ้างอิง stash
+        // ฝ่ายค้าน S1: ย่อหน้ายาวผิดปกติไม่แปลงไวยากรณ์ (encode ล้วน) — กันเวลาแปลงพุ่งตามความยาว
+        if (text.Length > MaxInlineLength) return WebUtility.HtmlEncode(text.Replace("\u0001", ""));
         var s = WebUtility.HtmlEncode(text.Replace("\u0001", ""));
         s = CodeSpan.Replace(s, m => Put("<code>" + m.Groups[1].Value + "</code>"));
         s = LinkPattern.Replace(s, m =>
