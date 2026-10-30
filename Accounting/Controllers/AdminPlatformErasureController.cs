@@ -30,17 +30,22 @@ public class AdminPlatformErasureController : ControllerBase
         _logger = logger;
     }
 
-    private static object Dto(PlatformErasureRequest r) => new
+    private static object Dto(PlatformErasureRequest r, List<string>? blockers = null) => new
     {
         r.Id, r.UserId, r.RequesterEmail, r.RequestedAt, r.DueAt, r.Status, r.Reason, r.ResolvedAt, r.ResolutionNote,
         overdue = r.Status == PlatformErasureRequestPolicy.StatusPending && r.DueAt < DateTime.UtcNow,
+        // ฝ่ายค้านรอบ 214 B2: คำขอค้างที่ลบไม่ได้จนกว่าจะโอนความเป็นเจ้าของ — แสดงก่อนกด (ไม่ใช่รอให้ 409)
+        ownershipBlockers = blockers ?? new List<string>(),
     };
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<object>>> List([FromQuery] string? status, CancellationToken ct)
     {
         var rows = await _pdpa.ListPlatformErasureRequestsAsync(string.IsNullOrWhiteSpace(status) ? null : status, ct);
-        return Ok(new ApiResponse<object>(true, rows.Select(Dto).ToList()));
+        var list = new List<object>();
+        foreach (var r in rows)
+            list.Add(Dto(r, r.Status == PlatformErasureRequestPolicy.StatusPending ? await _pdpa.ErasureOwnershipBlockersAsync(r.UserId, ct) : null));
+        return Ok(new ApiResponse<object>(true, list));
     }
 
     public sealed record ResolveRequest(string? Note);
@@ -55,7 +60,8 @@ public class AdminPlatformErasureController : ControllerBase
         var (row, notify) = await _pdpa.CompletePlatformErasureAsync(id, admin, req?.Note, ip, ct);
         var sent = await NotifyAsync(notify, "ดำเนินการลบข้อมูลส่วนบุคคลตามคำขอแล้ว",
             "ระบบได้ลบ/ทำให้ไม่สามารถระบุตัวตนได้สำหรับข้อมูลบัญชีผู้ใช้ของท่านตามคำขอ (พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล ม.33) แล้ว · "
-            + "ข้อมูลที่กฎหมายกำหนดให้ต้องเก็บ (เช่น หลักฐานการยอมรับข้อกำหนด เอกสารบัญชี/ภาษี) ยังคงเก็บไว้ในรูปที่ไม่ระบุตัวตนตามระยะเวลาที่กฎหมายกำหนด");
+            + "หลักฐานการยอมรับข้อกำหนด/นโยบายเก็บไว้ในรูปที่ไม่ระบุตัวตนจนพ้นอายุความ · เอกสารบัญชี/ภาษีที่ออกไปแล้วคงไว้ตามเดิมตามระยะเวลาที่กฎหมายกำหนด (พ.ร.บ.การบัญชี · ประมวลรัษฎากร) · "
+            + "บันทึกร่องรอยการใช้งานที่เกิดก่อนหน้านี้ไม่สามารถแก้ไขย้อนหลังได้ (บันทึกแบบเพิ่มได้อย่างเดียว)");
         return Ok(new ApiResponse<object>(true, Dto(row), sent ? "ลบข้อมูลแล้ว · แจ้งผู้ใช้ทางอีเมลแล้ว" : "ลบข้อมูลแล้ว · ส่งอีเมลแจ้งผลไม่สำเร็จ (ตรวจอีเมลระบบ)"));
     }
 
@@ -71,7 +77,7 @@ public class AdminPlatformErasureController : ControllerBase
     }
 
     /// <summary>แจ้งผล — ส่งไม่สำเร็จไม่ทำให้การลบล้ม (ลบไปแล้ว) แต่บอกแอดมินในข้อความตอบ (ล้มดัง ไม่เงียบ)</summary>
-    private async Task<bool> NotifyAsync(string to, string subject, string text)
+    private async Task<bool> NotifyAsync(string? to, string subject, string text)
     {
         if (string.IsNullOrWhiteSpace(to) || !to.Contains('@') || to.EndsWith("@deleted.local")) return false;
         try { return await _email.TrySendAsync(to, subject, $"<p>{WebUtility.HtmlEncode(text)}</p>"); }

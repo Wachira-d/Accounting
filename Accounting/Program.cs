@@ -187,6 +187,20 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 return Task.CompletedTask;
             },
 
+            // ฝ่ายค้านรอบ 214 S4 (คำตัดสินข้อ 173 ฑ): token ของบัญชีที่ลบตามคำขอ/ปิดใช้งานต้องใช้ไม่ได้ทันที — ค้นด้วย PK ต่อคำขอ (ไม่มี static cache ·
+            // CLAUDE.md §D) · ตัวตัดสินเดียว Helpers/TokenUserGate (ไม่พบแถว = ไม่ตัดสิน · token ชนิดอื่นไม่กระทบ) · ใช้กับ hub ด้วย (handler เดียวกัน)
+            OnTokenValidated = async context =>
+            {
+                var sub = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (!Guid.TryParse(sub, out var uid)) return;
+                var db = context.HttpContext.RequestServices.GetRequiredService<Accounting.Data.AccountingDbContext>();
+                var row = await db.Users.IgnoreQueryFilters().AsNoTracking()
+                    .Where(u => u.Id == uid).Select(u => new { u.Status, u.IsDeleted })
+                    .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
+                var reason = Accounting.Helpers.TokenUserGate.Reject(row != null, row?.Status ?? default, row?.IsDeleted ?? false);
+                if (reason != null) context.Fail(reason);
+            },
+
             // 401 ต้องมี **body ที่อ่านได้** — ค่าเริ่มต้นของ JwtBearer ตอบ 401 พร้อม
             // header WWW-Authenticate แต่ **body ว่างเปล่า** ⇒ ฝั่งเว็บที่เรียก
             // `response.json()` จะได้ "Unexpected end of JSON input" ซึ่งไม่บอกอะไร

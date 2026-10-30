@@ -40,6 +40,33 @@ public static class AuditRedaction
         return false;
     }
 
+    /// <summary>ฝ่ายค้านรอบ 214 B1 (คำตัดสินข้อ 173 ฑ) — ข้อมูลส่วนบุคคลรายช่อง<b>ต่อชนิด entity</b> ที่ห้ามคัดลอกค่าลง audit (append-only · hash chain —
+    /// ลบตามคำขอ ม.33 ตามไปลบไม่ได้) · audit ยังเห็น "ใคร · เมื่อไร · ช่องไหนเปลี่ยน" (ชื่อช่องอยู่ใน Old/New) แต่ไม่เห็นค่า ·
+    /// ตัวตั้งเดียว — ห้ามเขียนรายชื่อซ้ำที่อื่น (กฎ J minimisation ชนะประโยชน์ของการเห็นค่าเดิมใน audit)</summary>
+    public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> PiiFields = new Dictionary<string, IReadOnlySet<string>>
+    {
+        ["User"] = new HashSet<string> { "Email", "FullName", "Phone", "LineUserId", "AuthProviderId", "SignatureImageBase64", "SignatureName", "SignatureTitle" },
+        ["PlatformPolicyAcceptance"] = new HashSet<string> { "Email", "IpAddress", "UserAgent" },
+        ["PdpaConsentRecord"] = new HashSet<string> { "SubjectContact", "IpAddress" },
+        ["UserExternalLogin"] = new HashSet<string> { "ProviderEmail", "LinkedIp", "ProviderUserId" },
+        ["PlatformErasureRequest"] = new HashSet<string> { "RequesterEmail", "RequesterIp", "Reason" },
+    };
+
+    public const string PiiMask = "[ข้อมูลส่วนบุคคล — ไม่บันทึกค่า]";
+
+    /// <summary>ค่าที่เก็บลง audit โดยรู้ชนิด entity (ฝั่งเก็บอัตโนมัติ <c>AuditTrailService.CaptureAuditEntries</c>) —
+    /// ช่อง PII ของ entity นั้นที่มีค่า ⇒ <see cref="PiiMask"/> · null/ว่าง คงไว้ (ยังเห็นว่าตั้ง/ล้าง) · ที่เหลือตามกติกาเดิม</summary>
+    public static object? Value(string entityType, string propertyName, object? value)
+    {
+        if (PiiFields.TryGetValue(entityType, out var set) && set.Contains(propertyName))
+        {
+            if (value is null) return null;
+            if (value is string s && s.Length == 0) return s;
+            return PiiMask;
+        }
+        return Value(propertyName, value);
+    }
+
     /// <summary>ค่าที่เก็บลง audit — ช่องลับที่มีค่า ⇒ <see cref="Mask"/> · null/ว่าง คงไว้</summary>
     public static object? Value(string propertyName, object? value)
     {

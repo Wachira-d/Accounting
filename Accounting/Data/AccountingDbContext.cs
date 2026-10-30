@@ -75,9 +75,9 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
-    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();
-    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();
-    public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
+    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
+    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)
+    public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม (ไม่มี CompanyId)
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
     public DbSet<SystemAccountTemplate> SystemAccountTemplates => Set<SystemAccountTemplate>();
