@@ -6054,7 +6054,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 217 — Idempotency-Key �
   (ข้อสังเกต 6) ออเดอร์: แถวคิวอยู่ใน SaveChanges เดียวกับการสร้างออเดอร์ และ SaveChanges ทั้งสองครั้ง (สร้าง + ยอดสุดท้าย) อยู่ในธุรกรรมเดียว ·
   (ข้อสังเกต 9) หลังบ้าน "บันทึกรับเงิน" มัดจำการจองส่ง Idempotency-Key (`API.request(..., extraHeaders)`)
 
-_Last verified against codebase: 2026-10-30 (รอบ 217 ฝ่ายค้าน — รูปคำขอ/409 พนักงาน · in-flight ก่อนเทียบเนื้อ · multipart · ยึด InFlight ค้าง · HMAC · ไม่เก็บ success:false · คิวถอยจริง · ไม่ส่งเมื่อยกเลิก · ธุรกรรมออเดอร์ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 217 ฝ่ายค้าน — รูปคำขอ/409 พนักงาน · in-flight ก่อนเทียบเนื้อ · multipart · ยึด InFlight ค้าง · HMAC · ไม่เก็บ success:false · คิวถอยจริง · ไม่ส่งเมื่อยกเลิก · ธุรกรรมออเดอร์ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a7fa9ea5)_
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·
