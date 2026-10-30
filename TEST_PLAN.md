@@ -75,6 +75,13 @@
 | LEGAL214-39 | ฑ S4: token ของบัญชีที่ลบ/ปิดใช้งาน | ปฏิเสธทันที · ไม่พบแถว (token ชนิดอื่น) ไม่ตัดสิน · Suspended คงเดิม | `PlatformErasureRequestTests`.Token_gate_rejects_erased_or_inactive_users_only · ตรวจมือ (hub/คีย์ API/เข้าดูในนามลูกค้า) |
 | LEGAL214-40 | ฑ S5: ผู้ใช้เปลี่ยนอีเมลหลังยื่น | แจ้งผลไปอีเมลปัจจุบัน · อีเมลนิรนามแล้ว ⇒ อีเมล ณ ตอนยื่น | `PlatformErasureRequestTests`.Notify_address_prefers_current_real_email |
 | LEGAL214-41 (มือ) | ฑ: การ์ดแอดมิน/หน้า my-data แสดง "ต้องโอนความเป็นเจ้าของก่อน" · เวลาแสดงเป็นเวลาไทย | ตามคำตัดสิน 173 ฑ | ตรวจมือ |
+| LEGAL214-42 | ฑ-2 B1-a: ลบผู้ติดต่อ + สแกน OCR + ผู้ใช้ตามคำขอ แล้วค้น AuditLogs (Update) | ไม่มีชื่อ/อีเมล/โทร/ที่อยู่/ข้อความสแกน/ชื่อภายนอก · ขอบเขตการลบคืนค่า · ทิศตรงข้าม: แก้ผู้ติดต่อปกติยังเห็นค่าเก่า/ใหม่ | Db `LegalDocumentDbTests`.Contact_and_ocr_erasure_leaves_no_original_pii_in_audit_but_ordinary_edits_keep_history · `ErasureAuditScopeTests`.Erasure_scope_masks_every_non_empty_string_but_keeps_non_text · .Ocr_scan_pii_list_is_the_same_list_as_the_eraser |
+| LEGAL214-43 | ฑ-2 B1-c: แถว audit เก่าที่มีอีเมล/ชื่อของ User | หน้าแสดงปิดค่า · ผู้ติดต่อ/ชนิดที่ไม่รู้จักไม่ถูกแตะ | `ErasureAuditScopeTests`.Read_time_redaction_masks_pii_of_that_entity_only |
+| LEGAL214-44 | ฑ-2 B1-b: ยื่นคำขอลบ/ยอมรับนโยบาย | แถว AuditMiddleware ไม่มีอีเมล/IP/UA · เส้นอื่นคงเดิม | `ErasureAuditScopeTests`.Privacy_self_service_paths_drop_email_ip_ua_from_middleware_audit |
+| LEGAL214-45 | ฑ-2 S4-b: ลบผู้ใช้ที่ถูกผูกกับคีย์ API (X-Acting-User) | การผูกถูกถอด · ชื่อ/คีย์อีเมลล้าง · คีย์ของบริษัทคงอยู่ | Db ข้างบน (LEGAL214-42) · ตรวจมือ: คีย์เดิมส่ง X-Acting-User ของผู้ใช้ที่ลบ ⇒ ไม่สวม |
+| LEGAL214-46 | ฑ-2 B2-a/b: เจ้าของที่ยังทำหน้าที่ได้ · เจ้าของถูกระงับ | นิยามเดียว (ปิด/ลบ/ระงับ ไม่นับ) · ระงับ ⇒ แอดมินตัดสิน · ปิด ⇒ ผู้สร้างถูกตั้งเองตามเดิม | `ErasureAuditScopeTests`.Acting_owner_is_one_definition_for_list_assign_and_erasure · .Suspended_owner_needs_admin_decision_not_auto_promote · `TeamPermissionLicenseRound205Tests`.HasOwner_CountsOwnerAndSystemAdmin |
+| LEGAL214-47 | ฑ-2 B2-c: ผู้ขอลบเป็นเจ้าของแพ็กเกจ · แพ็กเกจมีบริษัทผูก | ป้ายบอก "ติดต่อแอดมินให้ยกเลิกแพ็กเกจ" · ยกเลิกได้เมื่อไม่มีบริษัทผูก · มี ⇒ 409 ไม่ยกเลิกครึ่ง ๆ | `ErasureAuditScopeTests`.Account_plan_blocker_has_a_remedy_and_cancel_refuses_plans_with_companies |
+| LEGAL214-48 (มือ) | ฑ-2 S4-a + ปุ่ม: เข้าดูในนามบริษัทที่เจ้าของถูกปิด · ปุ่ม "ยกเลิกแพ็กเกจบัญชี" บน `/admin/legal.html` | เลือกผู้ใช้ Active คนถัดไป (ไม่ 401) · ปุ่มโผล่เฉพาะคำขอที่ติดแพ็กเกจ | ตรวจมือ |
 | LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
 
 ## SUB217 — กดซ้ำไม่บันทึกซ้ำ (Idempotency-Key + ด่านซ้ำเชิงความหมาย) · ตอบเร็ว แจ้งเตือนตามหลัง (รอบ 217 · คำตัดสินข้อ 175)
@@ -298,7 +305,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **704 ไฟล์ · 7,281 `[Fact]` + 1,152 `[Theory]` (5,399 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **705 ไฟล์ · 7,289 `[Fact]` + 1,152 `[Theory]` (5,399 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

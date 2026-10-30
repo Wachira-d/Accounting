@@ -88,17 +88,19 @@ public class AuditMiddleware
             // ไปแล้ว** ⇒ ผู้ใช้เห็น 500 แล้วกดซ้ำ = เอกสารซ้ำ
             Guid? auditUserId = Guid.TryParse(userId, out var uid) ? uid : null;
 
+            // ฝ่ายค้านรอบ 214 (ฑ-2) B1-b: หน้าข้อมูลส่วนบุคคลของฉัน/ยอมรับนโยบาย — ไม่เก็บอีเมล/IP/UA (UserId พอระบุตัวในระบบ)
+            var privacyPath = Accounting.Helpers.AuditRedaction.IsPrivacySelfServicePath(path);
             var auditLog = new AuditLog
             {
                 CompanyId = companyId,
                 UserId = auditUserId,
-                UserEmail = email,
+                UserEmail = privacyPath ? null : email,
                 Action = action,
                 EntityType = ExtractEntityType(path),
-                IpAddress = context.Connection.RemoteIpAddress?.ToString(),
+                IpAddress = privacyPath ? null : context.Connection.RemoteIpAddress?.ToString(),
                 // UA ยาวได้ไม่จำกัดจาก client — ตัดกันแถว audit บวมและกัน
                 // header ที่จงใจยิงยาวเพื่อถ่วงฐานข้อมูล
-                UserAgent = Truncate(context.Request.Headers.UserAgent.ToString(), 512),
+                UserAgent = privacyPath ? null : Truncate(context.Request.Headers.UserAgent.ToString(), 512),
             };
 
             try

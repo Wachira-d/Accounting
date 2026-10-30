@@ -5902,3 +5902,14 @@ _รอบ 214 ฝ่ายค้าน (ฐ) — 2 blocking + 5 (คำตั�
 (S3) ล้างลายมือชื่อ + คำขอลบทุกฉบับ · ข้อความอีเมล/หน้าแก้ตามจริง · (S4) `OnTokenValidated` + `Helpers/TokenUserGate` · (S5) อีเมลแจ้งผล = อีเมลปัจจุบัน ·
 GET my-data ปฏิเสธคีย์ API · เวลาบนหน้า UTC→ไทย · คอมเมนต์ DbSet แยกบรรทัด · เทสต์ +3 pure +1 Db (+ตรวจ audit ไม่มี PII ใน Db เดิม) · TEST_PLAN LEGAL214-36..41 ·
 `required_call_site_check` +4/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 214 ฝ่ายค้าน (ฑ) รอบสอง — 1 blocking + should-fix (คำตัดสินข้อ 173 ฒ): **แก้คำกล่าวอ้างของรอบก่อน** — "(B1) audit ไม่เก็บค่า PII รายช่อง" ไม่ครอบผู้ติดต่อ/สแกน OCR และ
+`AuditMiddleware`/แถว audit ที่เขียนเองยังเก็บอีเมล ⇒ (B1-a) สแกน OCR เข้า `PiiFields` (รายชื่อเดียวกับ `OcrScanPii.PersonalDataFields`) + "ขอบเขตการลบ" บน DbContext
+(`SaveUnderErasureScopeAsync`) ทุกเส้นลบตามคำขอ: ปิดค่าข้อความทุกช่องใน audit ของการบันทึกนั้น (แก้ผู้ติดต่อตามปกติยังเห็นประวัติค่า) · (B1-c) ปิดช่อง PII ตอนแสดงตามชนิด entity
+(`RedactJson(json, entityType)` — แถวเก่าไม่โชว์ · hash ไม่เปลี่ยน) · (B1-b) `/api/legal/my-data*` + `/api/legal/acceptance` ไม่เก็บอีเมล/IP/UA ใน AuditMiddleware · audit เข้าดูในนามลูกค้าไม่เก็บอีเมลเป้าหมาย ·
+ข้อจำกัดที่ยังอยู่บันทึกใน DECISIONS 173 ฒ · (S4-a) เข้าดูในนามลูกค้าเลือกเฉพาะบัญชี Active ไม่ถูกลบ · (S4-b) คีย์ API สวมได้เฉพาะสมาชิกที่ยังทำหน้าที่ได้ (`CompanyMembership`) +
+ลบผู้ใช้ถอดการผูกผู้ใช้ภายนอก · คีย์ API ของบริษัทคงอยู่ · (B2-a) นิยามเดียว `OwnerlessCompanyRepair.ActingOwner` (ลบ `HasOwner`) · (B2-b) เจ้าของถูกระงับ ⇒ แอดมินตัดสิน ไม่ตั้งเอง ·
+(B2-c) ป้าย "ติดต่อแอดมินให้ยกเลิกแพ็กเกจ" + `POST /api/admin/platform-erasure-requests/{id}/cancel-account-plans` (เฉพาะแพ็กเกจไม่มีบริษัทผูก · audit) + ปุ่มบน `/admin/legal.html` ·
+`OnTokenValidated` ผู้เรียกตัดการเชื่อมต่อ = จบเงียบ · **ผลข้างเคียงที่ตั้งใจของ (ฑ) S4: พนักงานที่ payroll ตั้งลาออก (Inactive) เสีย access ทันทีที่คำขอถัดไป** (เดิมใช้ token ได้จนหมดอายุ) ·
+SignalR socket ที่เปิดอยู่ก่อนปิดบัญชีใช้ต่อได้จนเชื่อมต่อใหม่ · `TokenUserGate.RejectMessage` ไปที่ log ไม่ได้แสดงบนหน้า · เทสต์ +7 pure (`ErasureAuditScopeTests`) +1 Db · แก้ 1 (HasOwner→ActingOwner) ·
+TEST_PLAN LEGAL214-42..48 · `required_call_site_check` +12/แก้ 4 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
