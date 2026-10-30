@@ -278,6 +278,10 @@ public record CompanySettingsResponse(
     /// (กติกาเดียวกับ VatRegistered/EtaxEnabled: null = ยังไม่ได้คำนวณ → หน้าเว็บต้องแสดงไว้ก่อน)</summary>
     public IReadOnlyList<string>? CmsModules { get; init; }
 
+    /// <summary>ชื่อหมวดเมนูซ้ายของงานเว็บ (รอบ 215 · คำตัดสินข้อ 176) — <c>CmsModuleResolver.NavSectionLabel(CmsModules)</c> ·
+    /// null = ยังไม่ได้คำนวณ (หน้าเว็บใช้ชื่อคงที่ "เว็บไซต์ & การจอง")</summary>
+    public string? CmsNavLabel { get; init; }
+
     /// <summary>มีคนยืนยันสถานะจด VAT ของบริษัทนี้แล้วหรือยัง (<c>CompanySettings.VatStatusConfirmedAt</c>) —
     /// false = บริษัทจากหน้าสมัคร/SSO ที่ไม่เคยถูกถาม ⇒ หน้าเอกสาร/แดชบอร์ดขึ้นแถบให้ไปตั้งค่า (รอบ 193 ฝ่ายค้าน C-9) ·
     /// null = เส้นที่ไม่ได้คำนวณ (หน้าเว็บต้องไม่แสดงแถบ)</summary>

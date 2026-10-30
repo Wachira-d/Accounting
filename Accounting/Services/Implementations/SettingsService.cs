@@ -29,8 +29,9 @@ public class SettingsService : ISettingsService
         var settings = await GetOrCreateSettingsAsync(companyId);
         // เมนู CMS ที่ควรแสดง — คำนวณที่นี่ (request เดียวที่ layout.js ยิงอยู่แล้วตอนโหลดบริษัท
         // ตามกติกา "reuse /settings ไม่เพิ่ม request ต่อธง") — เส้น update อื่นคืน null = ไม่แตะเมนู
+        var cmsModules = await ComputeCmsModulesAsync(companyId);
         return await WithDepositVatInfoAsync(companyId,
-            MapToResponse(companyId, settings) with { CmsModules = await ComputeCmsModulesAsync(companyId) });
+            MapToResponse(companyId, settings) with { CmsModules = cmsModules, CmsNavLabel = CmsModuleResolver.NavSectionLabel(cmsModules) });
     }
 
     /// <summary>ป้าย + คำเตือนของแหล่งเงินเริ่มต้นที่บันทึกไว้ (PC#6 · ID#22) — ตัวตัดสินเดียวกับตอนใช้จริง
@@ -106,7 +107,7 @@ public class SettingsService : ISettingsService
             HasBookings: await _db.SiteBookings.AnyAsync(b => b.CompanyId == companyId),
             HasLodgingProperty: await _db.LodgingProperties.AnyAsync(p => p.CompanyId == companyId),
             HasHotelSite: sites.Any(s => s.IndustryType == IndustryType.Hotel),
-            HasAnySite: sites.Count > 0);
+            HasLeadSource: sites.Count > 0 && (await CmsSiteService.LoadLeadSourceSiteIdsAsync(_db, companyId, null)).Count > 0);
         return CmsModuleResolver.Resolve(facts);
     }
 

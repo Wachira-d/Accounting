@@ -288,6 +288,7 @@ public class CmsSiteService : ICmsSiteService
         var withServices = (await _db.SiteBookingServices.Where(b => b.CompanyId == companyId && !b.IsDeleted && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
         var withBookings = (await _db.SiteBookings.Where(b => b.CompanyId == companyId && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
         var withLodging = (await _db.LodgingProperties.Where(p => p.CompanyId == companyId && p.SiteId != null && ids.Contains(p.SiteId.Value)).Select(p => p.SiteId!.Value).Distinct().ToListAsync()).ToHashSet();
+        var withLeadSource = await LoadLeadSourceSiteIdsAsync(_db, companyId, ids);
         return sites.ToDictionary(x => x.Id, x => CmsModuleResolver.Resolve(new CmsModuleFacts(
             HasCommerceSite: CmsModuleResolver.IsCommerceSiteType(x.SiteType),
             HasOrders: withOrders.Contains(x.Id),
@@ -295,7 +296,28 @@ public class CmsSiteService : ICmsSiteService
             HasBookings: withBookings.Contains(x.Id),
             HasLodgingProperty: withLodging.Contains(x.Id),
             HasHotelSite: x.Industry == IndustryType.Hotel,
-            HasAnySite: true)).ToList());
+            HasLeadSource: withLeadSource.Contains(x.Id))).ToList());
+    }
+
+    /// <summary>เว็บที่ "รับคำขอได้จริง" (รอบ 215 · fact <c>HasLeadSource</c> ของ <see cref="CmsModuleResolver"/>) — ตัวเดียวที่ทั้งระดับเว็บ
+    /// (ที่นี่) และระดับบริษัท (<c>SettingsService.ComputeCmsModulesAsync</c>) เรียก ห้ามเขียนเงื่อนไขซ้ำ: มีบล็อกฟอร์มติดต่อบนหน้าที่ยังไม่ลบ ·
+    /// ฟอร์มกำหนดเองที่เปิดและส่งเข้าระบบ · หรือมี lead แล้ว (เว็บที่เคยรับ lead ต้องไม่หายจากเมนู) · ทุก query กรอง CompanyId</summary>
+    internal static async Task<HashSet<Guid>> LoadLeadSourceSiteIdsAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid>? siteIds)
+    {
+        var blocks = db.PageBlocks.Where(b => b.CompanyId == companyId && !b.IsDeleted && b.BlockType == CmsBlockType.ContactForm
+            && !b.Page.IsDeleted && b.Page.CompanyId == companyId);
+        var forms = db.SiteForms.Where(f => f.CompanyId == companyId && !f.IsDeleted && f.IsActive && f.CreateErpDocument);
+        var leads = db.CmsLeads.Where(l => l.CompanyId == companyId);
+        if (siteIds != null)
+        {
+            blocks = blocks.Where(b => siteIds.Contains(b.Page.SiteId));
+            forms = forms.Where(f => siteIds.Contains(f.SiteId));
+            leads = leads.Where(l => siteIds.Contains(l.SiteId));
+        }
+        var set = (await blocks.Select(b => b.Page.SiteId).Distinct().ToListAsync()).ToHashSet();
+        set.UnionWith(await forms.Select(f => f.SiteId).Distinct().ToListAsync());
+        set.UnionWith(await leads.Select(l => l.SiteId).Distinct().ToListAsync());
+        return set;
     }
 
     public async Task<SiteResponse?> GetSiteAsync(Guid companyId, Guid siteId)
