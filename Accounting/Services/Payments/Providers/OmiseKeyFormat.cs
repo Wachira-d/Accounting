@@ -1,4 +1,4 @@
-namespace Accounting.Helpers;
+namespace Accounting.Services.Payments.Providers;
 
 /// <summary>
 /// รอบ 219 ส่วน B ฝ่ายค้าน (B3) — รูปแบบคีย์ของ Omise ต่อโหมด · pure · ตัวเดียวของ adapter (<c>OmisePaymentProvider.KeyModeProblem</c>)

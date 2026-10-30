@@ -416,8 +416,8 @@ public class OmisePaymentProvider : IPaymentProvider
            && eventId.StartsWith("evnt_", StringComparison.Ordinal)
            && eventId.All(ch => ch is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_');
 
-    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน B3: คีย์ test ต้องเป็น pkey_test_/skey_test_ · คีย์ live ต้องไม่ใช่คีย์ทดสอบ (Helpers/OmiseKeyFormat)</summary>
-    public string? KeyModeProblem(bool live, bool secret, string? value) => Accounting.Helpers.OmiseKeyFormat.Problem(live, secret, value);
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน B3: คีย์ test ต้องเป็น pkey_test_/skey_test_ · คีย์ live ต้องไม่ใช่คีย์ทดสอบ (Services/Payments/Providers/OmiseKeyFormat)</summary>
+    public string? KeyModeProblem(bool live, bool secret, string? value) => OmiseKeyFormat.Problem(live, secret, value);
 
     public async Task<ProviderHealth> TestConnectionAsync(PaymentProviderConfig config,
         CancellationToken ct = default)

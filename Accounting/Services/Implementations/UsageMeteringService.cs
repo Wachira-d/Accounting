@@ -250,9 +250,22 @@ public class UsageMeteringService : IUsageMeteringService
 
     /// <summary>เปิด/ปิด add-on — เส้นทางเดียวของทั้งลูกค้ากดเอง (OwnerSelfServe)
     /// และ admin ยัดให้ (AdminGranted/BundledInPlan) ห้ามมีตัวที่สอง</summary>
-    public async Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
+    public Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
         string actor, AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
         CancellationToken ct = default)
+        => SetFeatureEnabledCoreAsync(companyId, featureCode, enabled, actor, grantSource, snapshotUnitPrice, null, false, ct);
+
+    public Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled, string actor,
+        AddOnBillingChoice? choice, CancellationToken ct = default)
+        => SetFeatureEnabledCoreAsync(companyId, featureCode, enabled, actor, AddOnGrantSource.OwnerSelfServe, null, choice, true, ct);
+
+    /// <param name="selfServePurchase">ทางเข้าของผู้เช่ากดเอง (หน้าส่วนเสริม) — ต้องเลือกวิธีชำระเมื่อส่วนเสริมต้องจ่าย (ติ๊กยอมรับนโยบายตรวจที่ controller ·
+    /// part B <c>PurchasePolicyAcceptance</c> ช่อง platform-addon — ส่งวิธีชำระมา = ต้องติ๊ก) ·
+    /// false = เส้นภายใน (ยืนยันการชำระ/แอดมิน) คงวิธีชำระเดิมของแถว</param>
+    private async Task SetFeatureEnabledCoreAsync(Guid companyId, string featureCode, bool enabled,
+        string actor, AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
+        AddOnBillingChoice? choice, bool selfServePurchase,
+        CancellationToken ct)
     {
         var row = await _db.CompanyFeatures
             .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted, ct);
@@ -286,6 +299,20 @@ public class UsageMeteringService : IUsageMeteringService
             // เริ่มต้องทำให้รอบนี้ไม่ต้องจ่าย
             var needPay = Accounting.Helpers.AddOnPaymentPolicy.RequiresPayment(
                 grantSource, plan?.Method, row.AcceptedUnitPrice, row.TrialUntil, now);
+            // รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤): ทางเข้าของผู้เช่า + ต้องจ่าย ⇒ เลือกวิธีชำระ (ก่อนเปลี่ยนสถานะใด ๆ)
+            var statusBefore = row.PaymentStatus;
+            var effectiveChoice = choice ?? row.BillingChoice;
+            if (selfServePurchase && needPay)
+            {
+                if (choice == null)
+                    throw new BusinessRuleException("กรุณาเลือกวิธีชำระ (จ่ายล่วงหน้า หรือรวมในใบแจ้งหนี้รายเดือน) ที่หน้า \"ส่วนเสริมของฉัน\"",
+                        "ADDON-CHOICE-REQUIRED", 400);
+            }
+            var (choiceOutcome, choiceRefusal) = AddOnPaymentPolicy.ApplyChoice(needPay, effectiveChoice, statusBefore, row.LastBilledPeriod,
+                AddOnBilling.PeriodOf(now));
+            if (choiceOutcome == AddOnPaymentPolicy.ChoiceOutcome.Refuse)
+                throw new BusinessRuleException(choiceRefusal!, "ADDON-CHOICE-CONFLICT", 409);
+
             // เคยจ่ายผ่านแล้วและเปิดใหม่ในงวดเดิม = ไม่เก็บซ้ำ (Paid ค้างไว้ได้)
             var wasAwaiting = row.PaymentStatus is AddOnPaymentStatus.AwaitingPayment or AddOnPaymentStatus.PendingReview;
             if (row.PaymentStatus != AddOnPaymentStatus.Paid || !needPay)
@@ -301,6 +328,14 @@ public class UsageMeteringService : IUsageMeteringService
             {
                 row.PaymentRejectedReason = null;
             }
+            // รวมในใบรายเดือน ⇒ ไม่มีขั้นรอชำระ/งวดจ่ายล่วงหน้า (ค่าเหมาเข้าใบรายเดือนตามปกติ — ไม่ ฿0 · ไม่ซ้อนเพราะไม่มีการจ่ายล่วงหน้า)
+            if (choiceOutcome == AddOnPaymentPolicy.ChoiceOutcome.MonthlyInvoice)
+            {
+                row.PaymentStatus = AddOnPaymentStatus.NotRequired;
+                row.PaymentAwaitingSince = null;
+                row.UpfrontPeriod = null;
+            }
+            row.BillingChoice = effectiveChoice;
 
             // ทดลองใช้ฟรีตามที่ตั้งไว้บนฟีเจอร์ — เริ่มนับ**ครั้งแรกที่เปิดเท่านั้น**
             // (ปิดแล้วเปิดใหม่ต้องไม่ได้ trial รอบสอง ไม่งั้นใช้ฟรีตลอดกาลด้วยการ

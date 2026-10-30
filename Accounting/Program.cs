@@ -323,6 +323,12 @@ builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 // ต้อง register ก่อน SaasBillingDocumentService ที่รับตัวนี้เป็น optional dependency
 builder.Services.AddScoped<IPlatformBillingDocumentIssuer, PlatformBillingDocumentIssuer>();
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
+// รอบ 219 เฟส 2 (คำตัดสินข้อ 180) — เก็บค่าบริการ NextAcc ได้จริง: ค่าตั้งการเรียกเก็บ · ศูนย์บิลของผู้เช่า · ช่องทางชำระ
+builder.Services.AddScoped<IPlatformBillingSettingsService, PlatformBillingSettingsService>();
+builder.Services.AddScoped<IPlatformBillingCenterService, PlatformBillingCenterService>();
+builder.Services.AddScoped<IPlatformBillingNotifier, PlatformBillingNotifier>();   // ขั้น 2 — ส่งใบ/แจ้งเตือน (อีเมลระบบ + LINE OA กลาง · คีย์กันซ้ำ)
+builder.Services.AddScoped<IPlatformDunningService, PlatformDunningService>();
+builder.Services.AddScoped<IPlatformPaymentLinkService, PlatformPaymentLinkService>();   // ขั้น 4 — ลิงก์ชำระใบแจ้งหนี้ (โทเคน hash · audit)     // ขั้น 2 — ทวงหนี้/ระงับ/คืนสถานะต่อบริษัท
 // นับ/คิดเงินการใช้งานรายหน่วย (ACCOUNT_STRUCTURE.md §6) — ไม่ throw ทุกกรณี
 // เพื่อไม่ให้ระบบเก็บเงินทำให้งานหลักของลูกค้าพัง
 builder.Services.AddScoped<IUsageMeteringService, UsageMeteringService>();
@@ -804,6 +810,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAud
 // ปิดรอบบิลค่าใช้งาน — รวม UsageEvent ที่ยังไม่ออกบิลเป็นใบแจ้งหนี้หลายบรรทัด
 // (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
 builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.PlatformDunningJob>();   // รอบ 219 เฟส 2 ขั้น 2 — ทวงหนี้ค่าบริการ NextAcc ทุกชั่วโมง (JobLock · watermark ต่อบริษัท)
 // ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)

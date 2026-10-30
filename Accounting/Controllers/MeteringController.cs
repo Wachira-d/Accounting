@@ -121,6 +121,12 @@ public class MeteringController : ControllerBase
                 // สูตรเดียวกับ AddOnPurchaseService — เรียก policy ตัวเดียว ห้ามคัดลอกมา
                 amountDue = state == null ? 0m
                     : Accounting.Helpers.AddOnPaymentPolicy.AmountDue(state.PaymentStatus, state.AcceptedUnitPrice),
+                // รอบ 219 เฟส 2 ขั้น 3: ต้องเลือกวิธีชำระ + ติ๊กยอมรับตอนเปิดไหม (ตัวตัดสินเดียวกับเซิร์ฟเวอร์ — ทดลองใช้ครั้งแรก = ไม่ต้อง)
+                requiresPaymentChoice = !(state?.IsEnabled ?? false) && Accounting.Helpers.AddOnPaymentPolicy.RequiresPayment(
+                    Models.Enums.AddOnGrantSource.OwnerSelfServe, plan?.Method, plan?.UnitPrice,
+                    state?.TrialUntil ?? (f.TrialDays > 0 && state == null ? (DateTime?)now.AddDays(f.TrialDays) : null), now),
+                billingChoice = (state?.BillingChoice ?? Models.Enums.AddOnBillingChoice.Upfront).ToString(),
+                billingChoiceLabel = state == null ? null : Accounting.Helpers.AddOnPaymentPolicy.ChoiceLabel(state.BillingChoice),
                 pricing = plan == null ? null : new
                 {
                     method = plan.Method.ToString(),
@@ -134,12 +140,16 @@ public class MeteringController : ControllerBase
         })));
     }
 
-    public record ToggleFeatureRequest(bool Enabled);
+    /// <summary>รอบ 219 เฟส 2 ขั้น 3: <paramref name="BillingChoice"/> = "Upfront"/"MonthlyInvoice" — บังคับเมื่อส่วนเสริมต้องจ่าย (เซิร์ฟเวอร์ตัดสิน) ·
+    /// ส่งวิธีชำระมา = การซื้อ ⇒ ต้องติ๊กยอมรับนโยบาย (part B <c>PurchasePolicyAcceptance</c> ช่อง platform-addon)</summary>
+    public record ToggleFeatureRequest(bool Enabled, Models.Enums.AddOnBillingChoice? BillingChoice = null,
+        bool PolicyAccepted = false, string? PolicyVersionShown = null);
 
     /// <summary>เปิด/ปิดฟีเจอร์ — เป็นสวิตช์ค่าใช้จ่ายจริง จึงบันทึกว่าใครกดตอนไหน</summary>
     [HttpPost("features/{featureCode}")]
     public async Task<ActionResult<ApiResponse<object>>> ToggleFeature(
-        Guid companyId, string featureCode, [FromBody] ToggleFeatureRequest req)
+        Guid companyId, string featureCode, [FromBody] ToggleFeatureRequest req,
+        [FromServices] ILegalDocumentService legal, CancellationToken ct)
     {
         var block = await RequireBillingAsync(companyId,
             req.Enabled ? "เปิดใช้ส่วนเสริม" : "ปิดส่วนเสริม");
@@ -157,7 +167,17 @@ public class MeteringController : ControllerBase
                 "ฟีเจอร์นี้ปิดรับผู้ใช้ใหม่แล้ว — กรุณาติดต่อผู้ดูแลระบบ"));
 
         var actor = User.Identity?.Name ?? "unknown";
-        await _metering.SetFeatureEnabledAsync(companyId, featureCode, req.Enabled, actor);
+        // รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤⑧): เลือกวิธีชำระ = ซื้อ ⇒ ติ๊กยอมรับนโยบายก่อนเปิด (แถวหลักฐานบันทึกพร้อมการเปิด)
+        if (req.Enabled && req.BillingChoice != null)
+        {
+            var sourceId = await _db.CompanyFeatures.AsNoTracking()
+                .Where(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted)
+                .Select(f => (Guid?)f.Id).FirstOrDefaultAsync(ct);
+            await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, legal, companyId, User,
+                PurchasePolicyAcceptance.ChannelPlatformAddOn, sourceId, req.PolicyAccepted, req.PolicyVersionShown,
+                HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
+        }
+        await _metering.SetFeatureEnabledAsync(companyId, featureCode, req.Enabled, actor, req.BillingChoice, ct);
 
         return Ok(new ApiResponse<object>(true, new { featureCode, enabled = req.Enabled },
             req.Enabled ? $"เปิดใช้ {feature.Name} แล้ว" : $"ปิด {feature.Name} แล้ว — หยุดคิดค่าใช้จ่ายทันที"));

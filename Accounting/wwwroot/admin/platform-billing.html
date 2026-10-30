@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เรียกเก็บค่าบริการ - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .pb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%, 260px),1fr));gap:14px}
+    .pb-grid label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:#334155}
+    .pb-grid .hint{font-size:11px;color:#94a3b8}
+    .pb-note{font-size:13px;padding:10px 12px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0;color:#334155;margin-bottom:12px}
+    .pb-note.warn{background:#fffbeb;border-color:#fde68a;color:#78350f}
+  </style>
+</head>
+<body>
+  <div id="pageContent">
+    <!-- รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บ — ช่วงที่รับได้/คำอธิบายโหมดระงับมาจากเซิร์ฟเวอร์ (ไม่พิมพ์ซ้ำใน JS) -->
+    <div class="admin-card">
+      <div class="section-title">⚙️ ค่าตั้งการเรียกเก็บค่าบริการ NextAcc</div>
+      <div id="settingsNote" class="pb-note">กำลังโหลด...</div>
+      <form id="settingsForm" class="pb-grid" onsubmit="event.preventDefault(); PB.saveSettings()">
+        <label>ออกใบแจ้งหนี้ต่ออายุล่วงหน้า (วัน)<input class="admin-input" type="number" name="renewalInvoiceLeadDays" min="1"><span class="hint" id="hLead"></span></label>
+        <label>แจ้งเตือนก่อนครบกำหนด (วัน คั่นจุลภาค)<input class="admin-input" name="reminderDaysBeforeDue" placeholder="7,3,1"><span class="hint">ว่าง = ไม่แจ้งก่อนครบกำหนด</span></label>
+        <label>แจ้งเตือนหลังเกินกำหนด (วัน คั่นจุลภาค)<input class="admin-input" name="reminderDaysAfterDue" placeholder="1,3,7"><span class="hint">ว่าง = ไม่ทวงหลังเกินกำหนด</span></label>
+        <label>ระยะผ่อนผันก่อนระงับ (วันหลังครบกำหนด)<input class="admin-input" type="number" name="suspendGraceDays" min="0"><span class="hint" id="hGrace"></span></label>
+        <label>อายุลิงก์ชำระตั้งต้น (วัน)<input class="admin-input" type="number" name="paymentLinkExpiryDays" min="1"><span class="hint" id="hLink"></span></label>
+        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="autoSuspendEnabled"> ระงับอัตโนมัติเมื่อเกินระยะผ่อนผัน</label>
+        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="reminderEmailEnabled"> ส่งใบแจ้งหนี้/แจ้งเตือนทางอีเมล</label>
+        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="reminderLineEnabled"> ส่งใบแจ้งหนี้/แจ้งเตือนทาง LINE</label>
+      </form>
+      <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="admin-btn admin-btn-primary" onclick="PB.saveSettings()">บันทึกค่าตั้ง</button>
+        <span class="hint" id="settingsMeta" style="font-size:12px;color:#64748b"></span>
+      </div>
+    </div>
+    <!-- ขั้น 2: ใบค้างทุกบริษัท + สถานะทวงหนี้ (ค่าทุกช่องจากเซิร์ฟเวอร์ · esc ทุกช่องข้อความ) -->
+    <div class="admin-card">
+      <div class="section-title">🧾 ใบแจ้งหนี้ค่าบริการที่ค้าง (ทุกบริษัท)</div>
+      <div id="openInvoices">กำลังโหลด...</div>
+    </div>
+    <!-- ขั้น 4: ลิงก์ชำระ — ลิงก์เต็มแสดงครั้งเดียวตอนสร้าง (ฐานเก็บแค่ hash) -->
+    <div class="admin-card">
+      <div class="section-title">🔗 ลิงก์ชำระที่สร้างแล้ว</div>
+      <div id="newLink"></div>
+      <div id="links">กำลังโหลด...</div>
+    </div>
+    <div class="admin-card">
+      <div class="section-title">✉️ ใบแจ้งหนี้/แจ้งเตือนที่ส่ง (ส่งไม่ถึงขึ้นก่อน)</div>
+      <div id="notices">กำลังโหลด...</div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    AdminLayout.init('platform-billing');
+    const PB = {
+      // id ในปุ่ม onclick = GUID จากเซิร์ฟเวอร์เท่านั้น — ตัดทุกอักขระที่ไม่ใช่ hex/ขีด (ไม่พึ่ง HTML escape ใน JS string)
+      gid(v) { return String(v || '').replace(/[^0-9a-fA-F-]/g, ''); },
+      fillSettings(d) {
+        const f = document.getElementById('settingsForm'), e = AdminLayout.esc;
+        f.renewalInvoiceLeadDays.value = d.renewalInvoiceLeadDays;
+        f.reminderDaysBeforeDue.value = d.reminderDaysBeforeDue;
+        f.reminderDaysAfterDue.value = d.reminderDaysAfterDue;
+        f.suspendGraceDays.value = d.suspendGraceDays;
+        f.paymentLinkExpiryDays.value = d.paymentLinkExpiryDays;
+        f.autoSuspendEnabled.checked = d.autoSuspendEnabled;
+        f.reminderEmailEnabled.checked = d.reminderEmailEnabled;
+        f.reminderLineEnabled.checked = d.reminderLineEnabled;
+        const L = d.limits || {};
+        document.getElementById('hLead').textContent = L.renewalLead ? `${L.renewalLead[0]}–${L.renewalLead[1]} วัน` : '';
+        document.getElementById('hGrace').textContent = L.grace ? `${L.grace[0]}–${L.grace[1]} วัน` : '';
+        document.getElementById('hLink').textContent = L.linkExpiry ? `${L.linkExpiry[0]}–${L.linkExpiry[1]} วัน` : '';
+        const note = document.getElementById('settingsNote');
+        note.className = 'pb-note' + (d.enforcementMode !== 'Enforce' && d.autoSuspendEnabled ? ' warn' : '');
+        note.innerHTML = `<b>ผลตอนนี้:</b> ${e(d.suspensionSummary)} · โหมดบังคับแพ็กเกจ: <b>${e(d.enforcementMode)}</b>
+          (เปลี่ยนที่ <a href="/admin/subscription-enforcement.html">บังคับแพ็กเกจบนหน้าเว็บ</a>)`;
+        document.getElementById('settingsMeta').textContent = d.isDefault ? 'ใช้ค่าตั้งต้นของระบบ (ยังไม่เคยบันทึก)'
+          : `แก้ล่าสุด ${AdminLayout.date(d.updatedAt)}`;
+      },
+      async loadSettings() {
+        try { this.fillSettings((await AdminAPI.platformBillingSettings()).data); }
+        catch (err) { document.getElementById('settingsNote').textContent = err.message; }
+      },
+      async saveSettings() {
+        const f = document.getElementById('settingsForm');
+        const body = {
+          renewalInvoiceLeadDays: parseInt(f.renewalInvoiceLeadDays.value || '0', 10),
+          reminderDaysBeforeDue: f.reminderDaysBeforeDue.value,
+          reminderDaysAfterDue: f.reminderDaysAfterDue.value,
+          suspendGraceDays: parseInt(f.suspendGraceDays.value || '0', 10),
+          autoSuspendEnabled: f.autoSuspendEnabled.checked,
+          paymentLinkExpiryDays: parseInt(f.paymentLinkExpiryDays.value || '0', 10),
+          reminderEmailEnabled: f.reminderEmailEnabled.checked,
+          reminderLineEnabled: f.reminderLineEnabled.checked,
+        };
+        try {
+          const r = await AdminAPI.savePlatformBillingSettings(body);
+          this.fillSettings(r.data);
+          AdminLayout.toast(r.message || 'บันทึกแล้ว');
+        } catch (err) { AdminLayout.toast(err.message, 'error'); }
+      },
+    };
+    PB.table = (rows, head, cells, empty) => !rows || rows.length === 0
+      ? `<div style="text-align:center;color:#94a3b8;padding:24px">${empty}</div>`
+      : `<div class="admin-table-wrap"><table class="admin-table"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+          <tbody>${rows.map(r => `<tr>${cells(r).map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    PB.loadOpen = async function () {
+      const e = AdminLayout.esc, el = document.getElementById('openInvoices');
+      try {
+        const r = await AdminAPI.platformOpenInvoices();
+        if (!r.data.configured) { el.innerHTML = `<div class="pb-note warn">${e(r.message)}</div>`; return; }
+        this.openRows = r.data.rows;
+        el.innerHTML = this.table(r.data.rows, ['บริษัท', 'ใบ', 'ชนิด', 'ครบกำหนด', 'ค้าง', 'สถานะ', 'ทวงหนี้', ''],
+          x => [e(x.companyName), e(x.documentNumber), e(x.kindLabel), AdminLayout.date(x.dueDate), AdminLayout.money(x.balanceDue),
+            e(x.stateLabel), e((x.suspendedByDunning ? '⛔ ระงับโดยระบบ · ' : (x.wouldSuspendSince ? '⚠️ จะระงับ (โหมดเงา) · ' : '')) + (x.lastDunningAction || '-')),
+            `<div style="display:flex;gap:4px;flex-wrap:wrap">
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.evaluate('${PB.gid(x.buyerCompanyId)}')">ประเมิน</button>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.exempt('${PB.gid(x.buyerCompanyId)}')">พักระงับ</button>
+              ${PB.linkButton ? PB.linkButton(x) : ''}</div>`],
+          'ไม่มีใบค้าง 🎉');
+      } catch (err) { el.textContent = err.message; }
+    };
+    PB.loadNotices = async function () {
+      const e = AdminLayout.esc, el = document.getElementById('notices');
+      try {
+        const r = await AdminAPI.platformBillingNotices();
+        el.innerHTML = this.table(r.data, ['บริษัท', 'ข้อความ', 'ช่อง', 'ผล', 'รายละเอียด', 'เมื่อ'],
+          x => [e(x.companyName), e(x.messageKey), e(x.channel), e(x.status), e(x.detail || '-'), AdminLayout.date(x.createdAt)], 'ยังไม่มีการส่ง');
+      } catch (err) { el.textContent = err.message; }
+    };
+    PB.evaluate = async function (cid) {
+      try { const r = await AdminAPI.platformDunningEvaluate(cid); AdminLayout.toast(r.message || 'ประเมินแล้ว'); this.loadOpen(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.exempt = async function (cid) {
+      const days = parseInt(prompt('พักการระงับอัตโนมัติกี่วัน (1–90)?', '7') || '0', 10);
+      if (!days) return;
+      const reason = prompt('เหตุผล (บันทึกใน audit)') || '';
+      try { const r = await AdminAPI.platformDunningExempt(cid, days, reason); AdminLayout.toast(r.message || 'บันทึกแล้ว'); this.loadOpen(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.linkButton = x => `<button class="admin-btn admin-btn-primary admin-btn-sm" onclick="PB.createLink('${PB.gid(x.id)}')">สร้างลิงก์ชำระ</button>`;
+    PB.createLink = async function (docId) {
+      const days = prompt('อายุลิงก์ (วัน) — เว้นว่าง = ค่าตั้งต้น', '');
+      try {
+        const r = await AdminAPI.platformCreatePaymentLink(docId, days ? parseInt(days, 10) : null);
+        const e = AdminLayout.esc;
+        document.getElementById('newLink').innerHTML = `<div class="pb-note warn"><b>${e(r.message)}</b><br>
+          <input class="admin-input" style="width:100%;margin-top:6px" readonly value="${e(r.data.url)}" onclick="this.select()">
+          <div style="font-size:12px;margin-top:4px">ใบ ${e(r.data.invoiceNumber)} · ยอด ${AdminLayout.money(r.data.amountSnapshot)} · หมดอายุ ${AdminLayout.date(r.data.expiresAt)}</div></div>`;
+        this.loadLinks();
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.loadLinks = async function () {
+      const e = AdminLayout.esc, el = document.getElementById('links');
+      try {
+        const r = await AdminAPI.platformPaymentLinks();
+        el.innerHTML = this.table(r.data, ['บริษัท', 'ใบ', 'ยอดตอนสร้าง', 'หมดอายุ', 'สถานะ', 'เปิดดู', ''],
+          x => [e(x.buyerName || '-'), e(x.invoiceNumber), AdminLayout.money(x.amountSnapshot), AdminLayout.date(x.expiresAt),
+            e(x.stateMessage || 'ใช้ได้') + (x.revokedReason ? ` (${e(x.revokedReason)})` : ''), x.viewCount,
+            x.state === 'Valid' ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.revokeLink('${PB.gid(x.id)}')">ยกเลิกลิงก์</button>` : ''],
+          'ยังไม่มีลิงก์');
+      } catch (err) { el.textContent = err.message; }
+    };
+    PB.revokeLink = async function (id) {
+      const reason = prompt('เหตุผลที่ยกเลิกลิงก์ (บันทึกใน audit)');
+      if (!reason) return;
+      try { await AdminAPI.platformRevokePaymentLink(id, reason); AdminLayout.toast('ยกเลิกลิงก์แล้ว'); this.loadLinks(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.loadSettings();
+    PB.loadOpen();
+    PB.loadLinks();
+    PB.loadNotices();
+  </script>
+</body>
+</html>

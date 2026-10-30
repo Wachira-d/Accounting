@@ -46,7 +46,7 @@ public static class PurchasePolicyAcceptance
         "นโยบายมีการปรับปรุงระหว่างที่ท่านเปิดหน้านี้ — กรุณาโหลดหน้าใหม่ อ่านนโยบายฉบับล่าสุด แล้วติ๊กยอมรับอีกครั้ง";
 
     /// <summary>ข้อความช่องติ๊กของแพลตฟอร์ม — อ้างชื่อเอกสาร + ฉบับที่เผยแพร่จริง (ฝ่ายค้าน: ไม่สรุปเนื้อหาเอง — แอดมินแก้นโยบายแล้วข้อความต้องไม่ขัด)</summary>
-    public static string PlatformText(string version)
+    private static string PlatformText(string version)
         => $"ข้าพเจ้าได้อ่านและยอมรับ{LegalDocumentDefaults.Title(LegalDocumentDefaults.KindTerms)} และ{LegalDocumentDefaults.Title(LegalDocumentDefaults.KindRefund)}ของ NextAcc (ฉบับ {version})";
 
     /// <summary>ข้อความช่องติ๊กของร้าน — ร้านตั้งเอง ⇒ ข้อความนั้น · ว่าง ⇒ ข้อความมาตรฐาน</summary>
@@ -204,11 +204,11 @@ public static class PurchasePolicyAcceptance
 
     /// <summary>
     /// <b>ด่านก่อนเริ่มชำระค่าบริการ NextAcc</b> (แพ็กเกจ · ส่วนเสริม · แพ็ก · ใบแจ้งหนี้แพลตฟอร์ม) — บังคับเสมอ ·
-    /// ผ่าน ⇒ เพิ่มแถวหลักฐาน (CompanyId = บริษัทผู้จ่าย) · ผู้เรียกบันทึก · <b>ทีมศูนย์ชำระค่าบริการเรียกตัวนี้</b>ด้วย <see cref="ChannelPlatformInvoice"/>
+    /// ผ่าน ⇒ เพิ่มแถวหลักฐาน (CompanyId = บริษัทผู้จ่าย) · ผู้เรียกบันทึก · ทุกทางเข้าเรียกผ่าน <see cref="EnforcePlatformForUserAsync"/> (ยกเว้นแอดมินที่ไม่ใช่สมาชิก) เช่นศูนย์ชำระค่าบริการด้วย <see cref="ChannelPlatformInvoice"/>
     /// <para>ผู้ซื้อยอมรับฉบับปัจจุบันไว้แล้วสำหรับรายการเดียวกัน (ติ๊กตอนขอแพ็กเกจ แล้วมาแนบสลิป/จ่ายออนไลน์ทีหลัง) ⇒ ไม่ต้องติ๊กซ้ำ
     /// (คืน null — ไม่เพิ่มแถว) · ฉบับเปลี่ยนระหว่างนั้น ⇒ ต้องติ๊กใหม่</para>
     /// </summary>
-    public static async Task<PolicyAcceptance?> EnforcePlatformAsync(AccountingDbContext db, ILegalDocumentService legal,
+    private static async Task<PolicyAcceptance?> EnforcePlatformAsync(AccountingDbContext db, ILegalDocumentService legal,
         Guid payerCompanyId, Guid userId, string channel, Guid? sourceId, bool accepted, string? versionShown,
         string? ip, string? userAgent, CancellationToken ct = default)
     {

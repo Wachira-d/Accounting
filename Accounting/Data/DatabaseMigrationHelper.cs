@@ -243,6 +243,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.SubmitOnceMigration.Statements());   // รอบ 217 — IdempotencyRecords (+RequestHash) · คิวแจ้งเตือนหลังสร้างการจอง/ออเดอร์
         list.AddRange(Accounting.Helpers.MemberProfileMigration.Statements());   // รอบ 216 ฝ่ายค้าน — ที่อยู่หลักของสมาชิกชนิดละแถว (ล้างซ้ำ + unique index บางส่วน)
         list.AddRange(Accounting.Helpers.PlatformBillingPhase0Migration.Statements());   // รอบ 219 เฟส 0 — ผู้จ่ายของ intent ค่าบริการ · ระยะผ่อนผัน/งวดจ่ายล่วงหน้าของส่วนเสริม · ดาวน์เกรดรอครบรอบ · วิธีโอนให้ NextAcc
+        list.AddRange(Accounting.Helpers.PlatformBillingPhase2Migration.Statements());   // รอบ 219 เฟส 2 — ค่าตั้งการเรียกเก็บ · หลักฐานยอมรับเงื่อนไข · ผูกการชำระกับใบแจ้งหนี้ · dunning · ลิงก์ชำระ (หลังเฟส 0)
         list.AddRange(Accounting.Helpers.PurchasePolicyAcceptanceMigration.Statements());   // รอบ 219 ส่วน B — หลักฐานยอมรับนโยบายก่อนชำระ · นโยบายคืนเงินของร้าน · ด่าน live เข้มขึ้น · ยกเลิกสิ้นรอบ · หน้าทดลองจ่าย
         return list;
     }

@@ -17,7 +17,7 @@ namespace Accounting.Controllers;
 /// (<see cref="IPlatformPaymentService"/> — intent ใต้บริษัทผู้ให้บริการ + บริษัทผู้จ่าย) · ไม่ใช่ gateway ของร้าน (บั๊กเฟส 0 G-1)
 /// <list type="bullet">
 /// <item>ปุ่มออนไลน์มีเฉพาะเมื่อช่องทางของแพลตฟอร์ม<b>เปิดรับเงินจริงแล้ว</b> — โหมดทดสอบ/ปิด/ยังไม่ตั้ง ⇒ เส้นโอน + แนบสลิปเดิม</item>
-/// <item>ทุกการเริ่มชำระต้องติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงิน (<see cref="PurchasePolicyAcceptance.EnforcePlatformAsync"/>)</item>
+/// <item>ทุกการเริ่มชำระต้องติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงิน (<see cref="PurchasePolicyAcceptance.EnforcePlatformForUserAsync"/>)</item>
 /// <item>รูปเส้นทางเข้ากับ <c>PayWidget</c> โหมด <c>publicBase</c> (POST <c>{base}/intents</c> · GET <c>{base}/intents/{id}</c>)</item>
 /// </list>
 /// </summary>

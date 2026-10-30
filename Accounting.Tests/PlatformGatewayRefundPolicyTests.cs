@@ -286,7 +286,7 @@ public class PlatformGatewayRefundPolicyTests
     [InlineData(true, false, "skey_live_abc", false)]     // คีย์ลับในช่องคีย์สาธารณะ
     [InlineData(true, true, "", true)]                    // ว่าง = ไม่เปลี่ยน
     public void Omise_key_format_must_match_field_mode(bool live, bool secret, string value, bool ok)
-        => Assert.Equal(ok, OmiseKeyFormat.Problem(live, secret, value) == null);
+        => Assert.Equal(ok, Accounting.Services.Payments.Providers.OmiseKeyFormat.Problem(live, secret, value) == null);
 
     [Fact]
     public void Live_mode_guard_blocks_cross_mode_charges_only()

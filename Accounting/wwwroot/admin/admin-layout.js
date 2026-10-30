@@ -80,6 +80,8 @@ const AdminLayout = {
     { section: 'การเงิน' },
     { id: 'revenue', label: 'รายรับ/ธุรกิจ', icon: '📈', href: '/admin/revenue.html' },
     { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },
+    // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บ · ใบค้างชำระทุกบริษัท · ทวงหนี้/ระงับ · ลิงก์ชำระ
+    { id: 'platform-billing', label: 'เรียกเก็บค่าบริการ', icon: '🧾', href: '/admin/platform-billing.html' },
     // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ช่องทางรับชำระค่าบริการของ NextAcc (Omise) — คีย์ · ทดสอบ · ทดลองจ่าย · เปิดรับเงินจริง · ปิดฉุกเฉิน · หน้าทดลองจ่าย
     { id: 'platform-gateway', label: 'ช่องทางรับชำระของ NextAcc', icon: '🏦', href: '/admin/platform-gateway.html' },
     { section: 'เชื่อมต่อระบบ' },

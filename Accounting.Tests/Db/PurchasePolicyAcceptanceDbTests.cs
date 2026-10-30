@@ -132,12 +132,15 @@ public class PurchasePolicyAcceptanceDbTests
         var legal = new LegalDocumentService(db, NullLogger<LegalDocumentService>.Instance);
         var user = Guid.NewGuid();
         var paymentA = Guid.NewGuid();
+        // ผู้ซื้อทั่วไป (ไม่ใช่ SystemAdmin) ⇒ บังคับติ๊กเสมอ — ทางเข้าเดียวจาก controller
+        var principal = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+            new[] { new System.Security.Claims.Claim(System.Security.Claims.ClaimTypes.NameIdentifier, user.ToString()) }, "test"));
         var paymentB = Guid.NewGuid();
 
-        await Assert.ThrowsAsync<BusinessRuleException>(() => PurchasePolicyAcceptance.EnforcePlatformAsync(db, legal, company.Id, user,
+        await Assert.ThrowsAsync<BusinessRuleException>(() => PurchasePolicyAcceptance.EnforcePlatformForUserAsync(db, legal, company.Id, principal,
             PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentA, accepted: false, null, null, null));
 
-        var row = await PurchasePolicyAcceptance.EnforcePlatformAsync(db, legal, company.Id, user,
+        var row = await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(db, legal, company.Id, principal,
             PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentA, accepted: true, null, "203.0.113.9", "test-agent");
         await db.SaveChangesAsync();
         Assert.NotNull(row);
@@ -145,11 +148,11 @@ public class PurchasePolicyAcceptanceDbTests
         Assert.Contains(" · refund ", row.PolicyVersion);
 
         // แนบสลิปทีหลังโดยไม่ติ๊กซ้ำ ⇒ ผ่าน (ยอมรับฉบับนี้ไว้แล้ว) และไม่เพิ่มแถว
-        var again = await PurchasePolicyAcceptance.EnforcePlatformAsync(db, legal, company.Id, user,
+        var again = await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(db, legal, company.Id, principal,
             PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentA, accepted: false, null, null, null);
         Assert.Null(again);
         // ทิศตรงข้าม: รายการอื่นยังต้องติ๊ก
-        await Assert.ThrowsAsync<BusinessRuleException>(() => PurchasePolicyAcceptance.EnforcePlatformAsync(db, legal, company.Id, user,
+        await Assert.ThrowsAsync<BusinessRuleException>(() => PurchasePolicyAcceptance.EnforcePlatformForUserAsync(db, legal, company.Id, principal,
             PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentB, accepted: false, null, null, null));
 
         using var fresh = DbTestDatabase.TryCreateContext()!;

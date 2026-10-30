@@ -21,13 +21,12 @@ public class SubscriptionService : ISubscriptionService
     private readonly ISaasBillingDocumentService? _billing;
     private readonly ILogger<SubscriptionService>? _logger;
 
-    /// <summary>WP-B1: ออกใบแจ้งหนี้ต่ออายุกี่วันก่อนหมดอายุ (default 15).</summary>
-    private const int RenewalInvoiceLeadDays = 15;
-
     public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
         INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null,
-        ISubscriptionGateShadowLog? shadowLog = null, ILogger<SubscriptionService>? logger = null)
+        ISubscriptionGateShadowLog? shadowLog = null, ILogger<SubscriptionService>? logger = null,
+        IPlatformDunningService? dunning = null)
     {
+        _dunning = dunning;
         _db = db;
         _logger = logger;
         _notificationService = notificationService;
@@ -38,6 +37,9 @@ public class SubscriptionService : ISubscriptionService
 
     /// <summary>รอบ 201 ทีม PL (C-3): ที่บันทึก "จะถูกปิด" ของด่านเจ้าของปิดฟีเจอร์ระดับ service (โหมดเงา) · null ในเทสต์ที่สร้างเอง</summary>
     private readonly ISubscriptionGateShadowLog? _shadowLog;
+
+    /// <summary>รอบ 219 เฟส 2 ขั้น 2: ประเมินค้างชำระใหม่หลังอนุมัติการชำระ (คืนสถานะที่ระบบระงับเพราะค้างชำระทันที) · null ในเทสต์ที่สร้างเอง</summary>
+    private readonly IPlatformDunningService? _dunning;
 
     /// <summary>duplicate audit #7 phase 2: route subscription notification ผ่าน
     /// NotificationEngine (production) → กลับไป NotificationService legacy
@@ -784,16 +786,9 @@ public class SubscriptionService : ISubscriptionService
         {
             sub.CancelAtPeriodEnd = true;
             sub.CancelRequestedAt = now;
-            // ฝ่ายค้าน S5: ยกเลิกแล้ว ⇒ การเปลี่ยนแพ็กเกจที่รอมีผลไม่มีความหมาย + ใบแจ้งหนี้ต่ออายุที่ออกไปแล้วไม่ต้องชำระ (ตัวเดียวกับเฟส 2 S9)
+            // ฝ่ายค้าน S5: ยกเลิกแล้ว ⇒ การเปลี่ยนแพ็กเกจที่รอมีผลไม่มีความหมาย · ใบแจ้งหนี้ต่ออายุที่ออกแล้ว<b>คงตัวชี้ไว้</b> — เฟส 2 ใช้ตัวชี้นี้
+            // ยกเว้นใบจากการทวงหนี้ (PlatformDunningService) + ห้ามจ่าย (PlatformInvoiceRules.RenewalNotPayableReason) + "ใช้ต่อ" แล้วจ่ายใบเดิมได้ (ล้าง = ใบซ้ำ/ทวงผิด)
             sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
-            if (RenewalInvoiceSupersede.Apply(sub) is string staleInvoice)
-                _db.SubscriptionHistories.Add(new SubscriptionHistory
-                {
-                    SubscriptionId = sub.Id,
-                    Action = "RenewalInvoiceSuperseded",
-                    Notes = RenewalInvoiceSupersede.CancelNote(staleInvoice),
-                    PerformedBy = performedBy
-                });
             _db.SubscriptionHistories.Add(new SubscriptionHistory
             {
                 SubscriptionId = sub.Id,
@@ -2023,6 +2018,86 @@ public class SubscriptionService : ISubscriptionService
         return MapPaymentToResponse(payment);
     }
 
+    /// <summary>
+    /// รอบ 219 เฟส 2 (คำตัดสินข้อ 180) — แจ้งชำระ <b>ใบแจ้งหนี้ค่าบริการ</b> (ศูนย์บิล · ลิงก์ชำระ) ด้วยการโอน + สลิป
+    /// <list type="bullet">
+    /// <item>ใบต้องเป็นของบริษัทนี้ใน tenant ผู้ให้บริการ (<see cref="PlatformInvoiceQueries.ForBuyer"/>) — ของบริษัทอื่น/ไม่มี = 404 เหมือนกัน</item>
+    /// <item>ยอด = ยอดค้างของใบ (เซิร์ฟเวอร์) · ใบชำระครบ/ยกเลิก = 409 · มีรายการรอตรวจของใบนี้แล้ว: ยังไม่แนบสลิป ⇒ คืนรายการเดิม · แนบแล้ว ⇒ 409</item>
+    /// <item>ติ๊กยอมรับนโยบายบังคับ — ผู้เรียกตรวจก่อนด้วย part B <c>PurchasePolicyAcceptance</c> (ช่อง platform-invoice) · ไม่ติ๊ก/ฉบับไม่ตรง ⇒ ไม่เกิดรายการ</item>
+    /// <item>ใบต่ออายุของรอบนี้ ⇒ อนุมัติแล้วต่ออายุตามเส้นเดิม (เดือน = รอบบิลที่ใบคิด) · ใบอื่น ⇒ <c>RequestedPeriodMonths = 0</c> (ตัดหนี้อย่างเดียว)</item>
+    /// </list>
+    /// </summary>
+    public async Task<SubscriptionPaymentResponse> SubmitInvoicePaymentAsync(Guid companyId, Guid invoiceDocumentId,
+        SubmitInvoicePaymentRequest request, string performedBy)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+
+        // ด่านติ๊กยอมรับนโยบาย (part B · PurchasePolicyAcceptance ช่อง platform-invoice) อยู่ที่ผู้เรียก <b>ก่อน</b>เมธอดนี้ (ต้องรู้ผู้ใช้/IP · ลิงก์ชำระไม่มีบัญชี) —
+        // ล็อกด้วย required_call_site_check ทั้งศูนย์บิลและลิงก์ชำระ · แถวหลักฐานที่ผู้เรียกเพิ่มไว้ถูกบันทึกพร้อม SaveChanges ของเมธอดนี้
+        var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db)
+            ?? throw new BusinessRuleException(
+                "ยังไม่ได้ตั้งบริษัทผู้ให้บริการ — ใบแจ้งหนี้ค่าบริการยังชำระผ่านหน้านี้ไม่ได้ กรุณาชำระที่หน้าแพ็กเกจ", "PLATFORM-TENANT-NOT-SET", 409);
+        var inv = await PlatformInvoiceQueries.ForBuyer(_db, platformId, companyId)
+            .FirstOrDefaultAsync(d => d.Id == invoiceDocumentId)
+            ?? throw new KeyNotFoundException("ไม่พบใบแจ้งหนี้นี้ของบริษัท");
+        if (!PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue))
+            throw new BusinessRuleException($"ใบแจ้งหนี้ {inv.DocumentNumber} ไม่มียอดค้างชำระแล้ว", "PLATFORM-INVOICE-NOT-OPEN", 409);
+        if (inv.Id == sub.RenewalInvoiceDocumentId && PlatformInvoiceRules.RenewalNotPayableReason(sub.CancelAtPeriodEnd) is string cancelled)
+            throw new BusinessRuleException(cancelled, "PLATFORM-RENEWAL-CANCELLED", 409);
+        var pending = await _db.SubscriptionPayments
+            .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId == inv.Id
+                && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview))
+            .OrderByDescending(p => p.CreatedAt)
+            .FirstOrDefaultAsync();
+        if (pending != null)
+        {
+            if (pending.SlipFileName != null)
+                throw new BusinessRuleException(
+                    $"ใบแจ้งหนี้ {inv.DocumentNumber} มีรายการแจ้งชำระ {pending.PaymentNumber} รอผู้ดูแลระบบตรวจอยู่แล้ว", "PLATFORM-INVOICE-PENDING", 409);
+            return MapPaymentToResponse(pending);
+        }
+
+        var isRenewal = inv.Id == sub.RenewalInvoiceDocumentId;
+        var plan = isRenewal ? (sub.ScheduledPlan ?? sub.Plan) : sub.Plan;
+        var cycle = isRenewal && sub.ScheduledPlan != null ? (sub.ScheduledBillingCycle ?? sub.BillingCycle) : sub.BillingCycle;
+        var now = DateTime.UtcNow;
+        var payment = new SubscriptionPayment
+        {
+            SubscriptionId = sub.Id,
+            PaymentNumber = await NextPaymentNumberAsync(sub),
+            Amount = decimal.Round(inv.BalanceDue, 2, MidpointRounding.AwayFromZero),
+            PaymentDate = PlatformPlanPricing.ClampPaymentDate(request.PaymentDate ?? now, now, now),
+            PaymentMethod = PaymentMethod.BankTransfer,
+            FromBankName = Trunc(request.FromBankName, 100),
+            TransferReference = Trunc(request.TransferReference, 100),
+            RequestedPlan = plan,
+            RequestedBillingCycle = cycle,
+            RequestedPeriodMonths = isRenewal ? PlatformPlanPricing.MonthsOf(cycle) : 0,
+            CustomerNotes = Trunc(request.CustomerNotes, 1000),
+            PlatformInvoiceDocumentId = inv.Id,
+            Status = SubscriptionPaymentStatus.Pending,
+            CreatedBy = performedBy,
+        };
+        _db.SubscriptionPayments.Add(payment);
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = "InvoicePaymentSubmitted",
+            Notes = $"แจ้งชำระใบแจ้งหนี้ {inv.DocumentNumber}: {payment.PaymentNumber} {payment.Amount:N2} THB",
+            PerformedBy = performedBy
+        });
+        await _db.SaveChangesAsync();
+        return MapPaymentToResponse(payment);
+    }
+
+    private static string? Trunc(string? s, int max)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        var t = s.Trim();
+        return t.Length > max ? t[..max] : t;
+    }
+
     public async Task<SubscriptionPaymentResponse> UploadPaymentSlipAsync(
         Guid paymentId, string fileName, string originalFileName,
         string contentType, long fileSize, string storagePath, string performedBy)
@@ -2112,7 +2187,35 @@ public class SubscriptionService : ISubscriptionService
         payment.ReviewedAt = DateTime.UtcNow;
         payment.ReviewNotes = request.ReviewNotes;
 
-        if (request.Approve)
+        // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): การชำระใบแจ้งหนี้ค่าใช้งาน (ผูกใบ · ไม่มีเดือนต่ออายุ) = ตัดหนี้อย่างเดียว ห้ามแตะวันหมดอายุ/แพ็กเกจ
+        var invoiceOnly = PlatformInvoiceRules.IsInvoiceOnlyPayment(payment.PlatformInvoiceDocumentId, payment.RequestedPeriodMonths);
+        // รอบ 219 เฟส 2 (S9 · ผู้ประสานงาน): อนุมัติการชำระที่เริ่มรอบใหม่/ต่ออายุ "โดยไม่ได้จ่ายใบต่ออายุที่ออกไว้" ⇒ ใบต่ออายุของรอบเดิมค้างเป็นหนี้เท็จ
+        Guid? staleRenewalId = null;
+        if (request.Approve && invoiceOnly)
+        {
+            payment.Status = SubscriptionPaymentStatus.Approved;
+            payment.PaymentDate = PlatformPlanPricing.ApprovedPaymentDate(systemConfirmed, gatewayPaidAtUtc,
+                payment.Kind is SubscriptionPaymentKind.ManualByAdmin or SubscriptionPaymentKind.Waived,
+                payment.PaymentDate, payment.CreatedAt, DateTime.UtcNow);
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = payment.SubscriptionId,
+                Action = "InvoicePaymentApproved",
+                Notes = $"Payment {payment.PaymentNumber} approved — ตัดชำระใบแจ้งหนี้ค่าบริการ (ไม่ต่ออายุแพ็กเกจ)",
+                PerformedBy = performedBy
+            });
+            var ownerId = await _db.CompanyUsers
+                .Where(cu => cu.CompanyId == payment.Subscription.CompanyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId).FirstOrDefaultAsync();
+            if (ownerId != Guid.Empty)
+                await NotifyUserAsync(ownerId, payment.Subscription.CompanyId,
+                    Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded,
+                    NotificationType.SubscriptionPaymentApproved,
+                    "ได้รับชำระใบแจ้งหนี้แล้ว",
+                    $"การชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท ได้รับการยืนยันแล้ว",
+                    "/pages/billing.html", "SubscriptionPayment", payment.Id);
+        }
+        else if (request.Approve)
         {
             payment.Status = SubscriptionPaymentStatus.Approved;
 
@@ -2131,14 +2234,20 @@ public class SubscriptionService : ISubscriptionService
             var baseDate = PlatformPlanPricing.PeriodStart(changeKind, sub.Plan == payment.RequestedPlan, sub.IsPermanentFree, sub.EndDate, now);
             var newEndDate = baseDate.AddMonths(payment.RequestedPeriodMonths);
             var wasTrial = sub.Status == SubscriptionStatus.Trial;
+            staleRenewalId = PlatformInvoiceRules.StaleRenewalInvoice(sub.RenewalInvoiceDocumentId, sub.RenewalInvoiceForEndDate, sub.EndDate,
+                payment.PlatformInvoiceDocumentId);
+            if (staleRenewalId != null)
+            {
+                // ใบเดิมถูกจัดการหลังบันทึก (ยกเลิกผ่านเส้นยกเลิกเอกสาร / ต้องออกใบลดหนี้) — ล้างตัวชี้ให้รอบใหม่ออกใบต่ออายุของตัวเอง
+                sub.RenewalInvoiceNumber = null; sub.RenewalInvoiceIssuedAt = null; sub.RenewalInvoiceForEndDate = null; sub.RenewalInvoiceDocumentId = null;
+            }
+            // จ่ายแพ็กเกจ = ใช้ต่อ ⇒ ยกเลิกเมื่อสิ้นรอบที่ตั้งไว้ไม่มีผลแล้ว (คำตัดสินเจ้าของข้อ 178 ⑥)
+            sub.CancelAtPeriodEnd = false; sub.CancelRequestedAt = null;
             sub.Status = SubscriptionStatus.Active;
             sub.EndDate = newEndDate;
             sub.NextBillingDate = newEndDate;
             sub.LastPaymentDate = payment.PaymentDate;
             sub.PaymentReference = payment.PaymentNumber;
-            // รอบ 219 ส่วน B ฝ่ายค้าน S5: จ่ายค่าแพ็กเกจที่อนุมัติแล้ว = ใช้ต่อ ⇒ ล้าง "ขอยกเลิกสิ้นรอบ" (ไม่งั้นจ่ายแล้วถูกตัดตอนสิ้นรอบ)
-            sub.CancelAtPeriodEnd = false;
-            sub.CancelRequestedAt = null;
             if (defer && template != null)
             {
                 sub.ScheduledPlan = payment.RequestedPlan;
@@ -2162,7 +2271,7 @@ public class SubscriptionService : ISubscriptionService
                               + "ห้ามรับชำระใบเดิม · ผู้ดูแลระบบยกเลิกเอกสารใบเดิมในบริษัทผู้ให้บริการ",
                         PerformedBy = performedBy
                     });
-                    RenewalInvoiceSupersede.Apply(sub);   // รอบ 219 ส่วน B ฝ่ายค้าน S5: ตัวเดียวกับการยกเลิกสิ้นรอบ
+                    RenewalInvoiceSupersede.Apply(sub);   // ตัวล้างตัวชี้ใบต่ออายุตัวเดียว (เดิมเขียน 4 บรรทัดเอง)
                 }
                 // ธง "ฟรีถาวร" ต้องตามแพ็กเกจใหม่เสมอ (ApplyTemplate ตั้งให้) — เดิมเส้นนี้เคยลืมธงนี้ ⇒ จ่ายแล้วยังโชว์ "ฟรีถาวร" และงานตัดหมดอายุไม่ตัด
                 ApplyTemplate(sub, template, payment.RequestedBillingCycle);
@@ -2322,8 +2431,24 @@ public class SubscriptionService : ISubscriptionService
         await _db.SaveChangesAsync();
 
         // WP-B2: อนุมัติแล้ว → ออกใบเสร็จ/ใบกำกับค่าบริการ (best-effort, ไม่ block approval)
+        // รอบ 219 เฟส 2 (G-10): รายการที่ผูกใบแจ้งหนี้ ⇒ ตัดชำระใบเดิมใน tenant ผู้ให้บริการ (ไม่ออกขายสดใบใหม่ = ไม่นับรายได้ซ้ำ)
         if (payment.Status == SubscriptionPaymentStatus.Approved && _billing != null)
-            await _billing.GenerateReceiptForApprovedPaymentAsync(payment.Id);
+        {
+            if (payment.PlatformInvoiceDocumentId != null)
+                await _billing.SettlePlatformInvoiceAsync(payment.Id);
+            else
+                await _billing.GenerateReceiptForApprovedPaymentAsync(payment.Id);
+        }
+        // รอบ 219 เฟส 2 (S9): ใบต่ออายุของรอบเดิมที่ไม่ได้ถูกจ่าย ⇒ ยกเลิกผ่านเส้นยกเลิกเอกสาร (ยังไม่มีการชำระ) / บันทึกงานออกใบลดหนี้ (มีการชำระแล้ว)
+        if (payment.Status == SubscriptionPaymentStatus.Approved && staleRenewalId is Guid stale && _billing != null)
+            await _billing.HandleStaleRenewalInvoiceAsync(payment.SubscriptionId, stale, payment.PaymentNumber);
+
+        // รอบ 219 เฟส 2 ขั้น 2 (G-8): ชำระแล้ว ⇒ ประเมินค้างชำระของบริษัทนี้ใหม่ทันที (ไม่รอรอบงาน) — ระบบระงับไว้เพราะค้างชำระและไม่มีใบเกินผ่อนผันแล้ว ⇒ คืนสถานะ
+        if (payment.Status == SubscriptionPaymentStatus.Approved && _dunning != null)
+        {
+            try { await _dunning.EvaluateCompanyAsync(payment.Subscription.CompanyId, sendReminders: false); }
+            catch (Exception ex) { _logger?.LogError(ex, "ประเมินค้างชำระหลังอนุมัติ {Payment} ไม่สำเร็จ — งานทวงหนี้จะประเมินรอบถัดไป", payment.Id); }
+        }
 
         return MapPaymentToResponse(payment);
     }
@@ -2423,6 +2548,8 @@ public class SubscriptionService : ISubscriptionService
     public async Task ProcessSubscriptionNotificationsAsync()
     {
         var now = DateTime.UtcNow;
+        // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ออกใบแจ้งหนี้ต่ออายุกี่วันก่อนครบรอบ = ค่าตั้งของแอดมิน (เดิมค่าคงที่ 15) — ตัวโหลดเดียว
+        var renewalLeadDays = (await PlatformBillingSettingsService.LoadPolicyAsync(_db)).RenewalInvoiceLeadDays;
         var activeSubscriptions = await _db.Subscriptions
             .Where(s => s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.PastDue)
             .ToListAsync();
@@ -2446,10 +2573,10 @@ public class SubscriptionService : ISubscriptionService
                 }
             }
 
-            // WP-B1: ออกใบแจ้งหนี้ต่ออายุล่วงหน้า (default 15 วันก่อนหมดอายุ) —
+            // WP-B1: ออกใบแจ้งหนี้ต่ออายุล่วงหน้า (ค่าตั้ง RenewalInvoiceLeadDays · ตั้งต้น 15 วัน) —
             // idempotent ต่อ EndDate ของรอบ (service เช็คซ้ำอีกชั้น) จึงเรียกซ้ำได้ปลอดภัย
-            if (_billing != null && daysUntilExpiry > 0 && daysUntilExpiry <= RenewalInvoiceLeadDays
-                && sub.Status == SubscriptionStatus.Active && !sub.CancelAtPeriodEnd
+            if (_billing != null && daysUntilExpiry > 0 && daysUntilExpiry <= renewalLeadDays && !sub.CancelAtPeriodEnd
+                && sub.Status == SubscriptionStatus.Active
                 && sub.RenewalInvoiceForEndDate != sub.EndDate)
             {
                 await _billing.GenerateRenewalInvoiceAsync(sub.Id);
@@ -2511,10 +2638,12 @@ public class SubscriptionService : ISubscriptionService
     public async Task ProcessExpiredSubscriptionsAsync()
     {
         var now = DateTime.UtcNow;
+        var autoSuspend = (await PlatformBillingSettingsService.LoadPolicyAsync(_db)).AutoSuspendEnabled;
 
         // รอบ 219 เฟส 0 (G-0): ดาวน์เกรด/เปลี่ยนรอบที่ถึงวันมีผล — ใช้สิทธิ์ของแพ็กเกจใหม่ (ApplyTemplate ตัวเดียวกับการอนุมัติชำระ)
         var dueChanges = await _db.Subscriptions
-            .Where(s => s.ScheduledPlan != null && s.ScheduledPlanEffectiveAt != null && s.ScheduledPlanEffectiveAt <= now)
+            .Where(s => s.ScheduledPlan != null && s.ScheduledPlanEffectiveAt != null && s.ScheduledPlanEffectiveAt <= now
+                && !s.CancelAtPeriodEnd && s.Status != SubscriptionStatus.Cancelled)
             .ToListAsync();
         foreach (var sub in dueChanges)
         {
@@ -2587,7 +2716,8 @@ public class SubscriptionService : ISubscriptionService
         foreach (var sub in pastDue)
         {
             var deactivationDate = sub.EndDate.AddDays(sub.DeactivationDaysAfterExpiry);
-            if (now >= deactivationDate)
+            // รอบ 219 เฟส 2 ขั้น 2 (คำตัดสินข้อ 180): สวิตช์ "ระงับอัตโนมัติ" ของแอดมินครอบเส้นหมดอายุด้วย (ปิด = คง PastDue ให้แอดมินตามเอง) · ค่าตั้งต้นเปิด = พฤติกรรมเดิม
+            if (now >= deactivationDate && autoSuspend)
             {
                 sub.Status = SubscriptionStatus.Suspended;
 
@@ -2689,7 +2819,8 @@ public class SubscriptionService : ISubscriptionService
             p.SlipOcrAmount,
             p.SlipOcrAmountMatches,
             p.SlipOcrReference,
-            p.SlipOcrDate);
+            p.SlipOcrDate,
+            p.PlatformInvoiceDocumentId);
     }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)

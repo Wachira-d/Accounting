@@ -2,9 +2,12 @@ using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace Accounting.Controllers;
 
@@ -130,6 +133,142 @@ public class AdminPlatformBillingController : ControllerBase
             mode = r.ProviderConfigId is Guid g ? modes.GetValueOrDefault(g) : null,
             r.CreatedAt, r.ConfirmedBy,
         }).ToList()));
+    }
+
+    // ═══════════ รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บ — SystemAdmin แก้ได้ · ทุกการแก้ลง audit chain ═══════════
+
+    private async Task<SubscriptionEnforcementMode> EffectiveModeAsync(ISubscriptionGateShadowLog gate, IConfiguration config, CancellationToken ct)
+        => SubscriptionEnforcementResolver.Resolve(await gate.ReadAdminSwitchAsync(ct), config).EffectiveMode;
+
+    [HttpGet("settings")]
+    public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> GetSettings(
+        [FromServices] IPlatformBillingSettingsService settings, [FromServices] ISubscriptionGateShadowLog gate,
+        [FromServices] IConfiguration config, CancellationToken ct)
+        => Ok(new ApiResponse<PlatformBillingSettingsDto>(true, await settings.GetAsync(await EffectiveModeAsync(gate, config, ct), ct)));
+
+    [HttpPut("settings")]
+    public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> UpdateSettings(
+        [FromBody] UpdatePlatformBillingSettingsRequest req,
+        [FromServices] IPlatformBillingSettingsService settings, [FromServices] ISubscriptionGateShadowLog gate,
+        [FromServices] IConfiguration config, CancellationToken ct)
+    {
+        var actor = new PlatformBillingActor(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(ClaimTypes.Email),
+            HttpContext.Connection.RemoteIpAddress?.ToString());
+        var dto = await settings.UpdateAsync(req, actor, await EffectiveModeAsync(gate, config, ct), ct);
+        return Ok(new ApiResponse<PlatformBillingSettingsDto>(true, dto, "บันทึกค่าตั้งการเรียกเก็บแล้ว"));
+    }
+
+    // ═══════════ รอบ 219 เฟส 2 ขั้น 2: ใบค้างทุกบริษัท · ทวงหนี้/ระงับ · ข้อความที่ส่ง ═══════════
+
+    /// <summary>ใบแจ้งหนี้ค่าบริการที่ยังค้างของทุกบริษัทผู้เช่า + สถานะทวงหนี้ของบริษัท (ตัวหาเดียว PlatformInvoiceQueries)</summary>
+    [HttpGet("open-invoices")]
+    public async Task<ActionResult<ApiResponse<object>>> OpenInvoices(CancellationToken ct)
+    {
+        var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
+        if (platformId == null)
+            return Ok(new ApiResponse<object>(true, new { configured = false, rows = Array.Empty<object>() },
+                "ยังไม่ได้ตั้งบริษัทผู้ให้บริการ (ตั้งค่าเว็บไซต์ → ข้อมูลผู้ขาย) — ยังไม่มีใบแจ้งหนี้จริงให้ติดตาม"));
+        var rows = await PlatformInvoiceQueries.OpenForAllBuyersAsync(_db, platformId.Value, 1000, ct);
+        var buyers = rows.Select(r => r.BuyerCompanyId).Distinct().ToList();
+        var names = await CompanyNamesAsync(buyers, ct);
+        var states = await _db.PlatformDunningStates.AsNoTracking().Where(s => buyers.Contains(s.CompanyId))
+            .ToDictionaryAsync(s => s.CompanyId, ct);
+        var subs = await _db.Subscriptions.AsNoTracking().Where(s => buyers.Contains(s.CompanyId))
+            .Select(s => new { s.CompanyId, s.Status, s.RenewalInvoiceDocumentId })
+            .ToListAsync(ct);
+        var subBy = subs.GroupBy(s => s.CompanyId).ToDictionary(g => g.Key, g => g.First());
+        var now = DateTime.UtcNow;
+        return Ok(new ApiResponse<object>(true, new
+        {
+            configured = true,
+            rows = rows.Select(r =>
+            {
+                states.TryGetValue(r.BuyerCompanyId, out var st);
+                subBy.TryGetValue(r.BuyerCompanyId, out var sb);
+                var late = PlatformInvoiceRules.DaysPastDue(r.DueDate, now);
+                var state = PlatformInvoiceRules.StateOf(r.Status, r.BalanceDue, r.DueDate, now);
+                var kind = PlatformInvoiceRules.KindOf(r.Reference);
+                return new
+                {
+                    r.Id, r.BuyerCompanyId, companyName = names.GetValueOrDefault(r.BuyerCompanyId, "(ไม่พบชื่อ)"),
+                    r.DocumentNumber, kind = kind.ToString(), kindLabel = PlatformInvoiceRules.KindLabel(kind),
+                    r.DocumentDate, r.DueDate, r.TotalAmount, r.BalanceDue, daysPastDue = late,
+                    state = state.ToString(), stateLabel = PlatformInvoiceRules.StateLabel(state, late),
+                    subscriptionStatus = sb?.Status.ToString(),
+                    suspendedByDunning = st?.SuspendedByDunningAt != null,
+                    wouldSuspendSince = st?.WouldSuspendSince,
+                    suspendExemptUntil = st?.SuspendExemptUntil,
+                    lastDunningAction = st?.LastAction,
+                    lastEvaluatedAt = st?.LastEvaluatedAt,
+                };
+            }).ToList(),
+        }));
+    }
+
+    public record DunningExemptRequest(int Days, string? Reason);
+
+    [HttpPost("dunning/{companyId:guid}/evaluate")]
+    public async Task<ActionResult<ApiResponse<object>>> EvaluateDunning(Guid companyId,
+        [FromServices] IPlatformDunningService dunning, CancellationToken ct)
+    {
+        var r = await dunning.EvaluateCompanyAsync(companyId, sendReminders: false, ct);
+        return Ok(new ApiResponse<object>(true, r, r == null ? "ยังไม่ได้ตั้งบริษัทผู้ให้บริการ/ไม่พบ subscription" : r.Reason));
+    }
+
+    [HttpPost("dunning/{companyId:guid}/exempt")]
+    public async Task<ActionResult<ApiResponse<object>>> ExemptDunning(Guid companyId, [FromBody] DunningExemptRequest req,
+        [FromServices] IPlatformDunningService dunning, CancellationToken ct)
+    {
+        var actor = new PlatformBillingActor(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(ClaimTypes.Email),
+            HttpContext.Connection.RemoteIpAddress?.ToString());
+        var r = await dunning.ExemptAsync(companyId, req.Days, req.Reason ?? "", actor, ct);
+        return Ok(new ApiResponse<object>(true, r, r?.Reason ?? "บันทึกแล้ว"));
+    }
+
+    // ═══════════ ขั้น 4: ลิงก์ชำระ — สร้างให้ใบที่มีอยู่แล้วเท่านั้น (ห้ามยอดอิสระ) · โทเคนแสดงครั้งเดียว · audit ทุกการกระทำ ═══════════
+
+    public record CreatePaymentLinkRequest(int? ExpiryDays);
+    public record RevokePaymentLinkRequest(string? Reason);
+
+    private PlatformBillingActor Actor() => new(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(ClaimTypes.Email),
+        HttpContext.Connection.RemoteIpAddress?.ToString());
+
+    [HttpPost("invoices/{documentId:guid}/payment-links")]
+    public async Task<ActionResult<ApiResponse<PaymentLinkCreated>>> CreatePaymentLink(Guid documentId, [FromBody] CreatePaymentLinkRequest? req,
+        [FromServices] IPlatformPaymentLinkService links, CancellationToken ct)
+    {
+        var created = await links.CreateAsync(documentId, req?.ExpiryDays, Actor(), ct);
+        return Ok(new ApiResponse<PaymentLinkCreated>(true, created,
+            $"สร้างลิงก์ชำระใบ {created.InvoiceNumber} แล้ว — คัดลอกตอนนี้ (ระบบเก็บเฉพาะรหัสแฮช แสดงลิงก์ซ้ำไม่ได้)"));
+    }
+
+    [HttpGet("payment-links")]
+    public async Task<ActionResult<ApiResponse<List<PaymentLinkRow>>>> PaymentLinks([FromQuery] Guid? documentId,
+        [FromServices] IPlatformPaymentLinkService links, CancellationToken ct)
+        => Ok(new ApiResponse<List<PaymentLinkRow>>(true, await links.ListAsync(documentId, ct)));
+
+    [HttpPost("payment-links/{linkId:guid}/revoke")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokePaymentLink(Guid linkId, [FromBody] RevokePaymentLinkRequest req,
+        [FromServices] IPlatformPaymentLinkService links, CancellationToken ct)
+    {
+        await links.RevokeAsync(linkId, req?.Reason ?? "", Actor(), ct);
+        return Ok(new ApiResponse<object>(true, null, "ยกเลิกลิงก์แล้ว"));
+    }
+
+    /// <summary>ใบแจ้งหนี้/แจ้งเตือนที่ส่งล่าสุด — ส่งไม่ถึง (Failed/Skipped) ขึ้นก่อน (ล้มดัง)</summary>
+    [HttpGet("notices")]
+    public async Task<ActionResult<ApiResponse<object>>> Notices(CancellationToken ct)
+    {
+        var rows = await _db.PlatformBillingNotices.AsNoTracking()
+            .OrderByDescending(n => n.CreatedAt).Take(300).ToListAsync(ct);
+        var names = await CompanyNamesAsync(rows.Select(r => r.BuyerCompanyId), ct);
+        return Ok(new ApiResponse<object>(true, rows
+            .OrderBy(r => r.Status == PlatformBillingNotifier.StatusSent ? 1 : 0).ThenByDescending(r => r.CreatedAt)
+            .Select(r => new
+            {
+                r.Id, r.BuyerCompanyId, companyName = names.GetValueOrDefault(r.BuyerCompanyId, "(ไม่พบชื่อ)"),
+                r.MessageKey, r.Channel, r.Status, r.Detail, r.CreatedAt, r.SentAt,
+            }).ToList()));
     }
 
     private async Task<Dictionary<Guid, string>> CompanyNamesAsync(IEnumerable<Guid> ids, CancellationToken ct)
