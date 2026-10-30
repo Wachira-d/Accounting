@@ -1,3 +1,18 @@
+## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS213-01 | ระงับเพราะโควตาเต็ม / ร้านปิดประเภทนั้น / ส่งถึง | รหัสเหตุ quota-full / event-off / null | `CmsRound212PrefsQuotaTests.Round213_suppress_reason_code_separates_quota_full_from_shop_switched_off` · `Db/NotifyResendDbTests` |
+| CMS213-02 | แถวค้างเพราะโควตา + การจองยืนยัน นัดยังไม่ถึง | ส่งซ้ำได้ (ยกเลิก/คำสั่งซื้อในสถานะตรงก็ได้) | `CmsRound213NotifyResendTests`.Quota_suppressed_confirmation_for_upcoming_booking_is_resendable |
+| CMS213-03 | ทิศตรงข้าม: ร้านปิดเอง / ส่งแล้ว / > 30 วัน / ค่าตั้งปิดตอนนี้ / มีข้อความใหม่กว่า | ส่งซ้ำไม่ได้ พร้อมเหตุ | `CmsRound213NotifyResendTests`.Only_quota_full_rows_… · Older_than_30_days_… |
+| CMS213-04 | การจองยกเลิกแล้ว → "ยืนยัน" · เลยเวลานัด · ออเดอร์ส่งมอบแล้ว → "จัดส่งแล้ว" · ถูกลบ | ไม่ส่ง (สถานะไม่ตรงเนื้อข้อความ) | `CmsRound213NotifyResendTests`.Message_must_still_match_current_state_of_the_target |
+| CMS213-05 | เตือนก่อนนัด · ได้คิว · ตะกร้า · ที่พัก · บัตร · ฟอร์ม · คลาส | แสดงในรายการพร้อมเหตุ (ไม่ซ่อน) · ทุกประเภทในแคตตาล็อกมีคำตอบ | `CmsRound213NotifyResendTests`.Events_without_a_rebuild_path_… · Every_supported_event_… |
+| CMS213-06 | คีย์เลื่อนนัดอ่านกลับ | ประกอบใหม่ได้คีย์เดิมทุกตัวอักษร (claim แถวเดิม) | `CmsRound213NotifyResendTests`.Rescheduled_key_round_trips_to_the_same_key |
+| CMS213-07 | ส่งซ้ำตอนยังเต็ม → เติมโบนัส 1 → ส่งซ้ำ · กดแถวที่ส่งแล้ว · บริษัทอื่นส่งรหัสแถว | หยุด ไม่ส่ง + ปล่อย lease → ส่ง 1 หยุดที่ถัดไป → ข้าม → "ไม่พบรายการ" แถวไม่ถูกแตะ · audit | `Db/NotifyResendDbTests`.Quota_full_rows_are_resent_after_topup_and_stop_again_when_quota_runs_out |
+| CMS213-08 | กดส่งซ้ำสองแท็บพร้อมกัน | ลูกค้าได้ข้อความเดียว | `Db/NotifyResendDbTests`.Double_click_resends_a_row_once |
+| CMS213-09 | แถวเก่าก่อนรอบ 213 (ไม่มีรหัส) | เติมรหัสจากหมายเหตุ · รันซ้ำได้ · แถว Failed ไม่ถูกแตะ | `Db/NotifyResendDbTests`.Legacy_suppressed_rows_get_their_reason_from_the_note · `CmsRound213NotifyResendTests`.Legacy_backfill_… |
+| CMS213-10 | แพ็ก notify.topup ที่แอดมินตั้ง / ว่าง / นอกช่วง · เพดานเฉพาะบริษัท | ว่าง = 500/60 · ค่าแอดมินชนะ · documents.topup ไม่เปลี่ยน · ตรวจช่วง · สรุปบอกแหล่งเพดาน | `CmsRound213NotifyResendTests`.Topup_pack_… · Admin_pack_validation · Company_override_validation · Admin_summary_… · `required_call_site_check` (PurchaseTopUpAsync ห้ามค่าคงที่) |
+
 ## CMS212D — ค่าตั้ง LINE OA กลางของ NextAcc บนหน้าแอดมิน + สลิปเงินเดือนผ่าน OA ที่ผูกจริง (รอบ 212 แพ็ก D)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -141,7 +156,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **691 ไฟล์ · 7,071 `[Fact]` + 1,125 `[Theory]` (5,262 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **693 ไฟล์ · 7,086 `[Fact]` + 1,128 `[Theory]` (5,281 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

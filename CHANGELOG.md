@@ -5768,3 +5768,13 @@ cooldown 1 คำเชิญ/คน/30 วัน (`CustomerRelinkInvitePlan.Set
 ไม่ถอยไป config (`NextAccLineConfigRule.UndecryptableTokenMessage`) · (4) สแกน OA กลางข้ามบริษัทย้ายจากคำขอ webhook ไป `CustomerNotifyOutboxJob` (`LineOaDestinationSightings` · ลบ static memo) ·
 (5) หน้าแอดมิน token/secret ต้องคู่กัน (`PairProblem`) · (6) สลิปเงินเดือน: การผูกบัญชี ERP ชนะ LINE ID ที่ HR พิมพ์ · (ผู้ประสาน) webhook ร้านจากบอทไม่ตรง ⇒ ไม่ประมวลผลเหตุการณ์ (ไม่ผูก/ปลดลูกค้ากับ OA ที่ token ส่งไม่ถึง) · เทสต์ CMS212B-13..17 + CMS212D-05/09 ·
 `required_call_site_check` +12 กติกา/แก้ 1 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a8cccb97 · 020f0d3f_
+
+_รอบ 213 (คำตัดสินข้อ 172 · เจ้าของ: "มีหน้าให้จัดการ ถ้าเติมโควต้าแล้ว สามารถส่งซ้ำทีหลังได้" + แอดมินตั้งโควตา/ราคา/แพ็ก/จำนวนข้อความได้):
+(1) รหัสเหตุระงับ `CustomerNotifyLogs.SuppressReason` (`Helpers/NotifySuppressReason`) ประทับที่ `BookingNotifier` + ซ่อมแถวเก่าจากหมายเหตุ (`Helpers/CustomerNotifyResendMigration`) ·
+(2) หน้า "ข้อความที่ยังไม่ได้ส่ง" (การ์ด `#notifyPending` ที่ส่วนเสริม · `CustomerNotify.mountPending`) + `GET/POST …/customer-notify/pending[/resend]` → `CustomerNotifyResendService`
+(ตัวตัดสินเดียว `Helpers/CustomerNotifyResend.Evaluate` · lease ต่อแถว · ประกอบใหม่จากสถานะปัจจุบันผ่านเส้นเดิมด้วยคีย์เดิม · ยังเต็ม ⇒ หยุด + ลิงก์ซื้อแพ็ก · audit chain) ·
+การ์ดโควตาแสดง "ค้างส่ง N" + หลังซื้อแพ็กถามส่งตอนนี้ไหม (ไม่ส่งเอง) · (3) แพ็ก `notify.topup` ตั้งขนาด/อายุได้ที่ /pages/admin-addons.html (`ApiFeature.PackSize/PackValidDays` → `NotifyQuotaPolicy.TopUpPack`) ·
+(4) เพดานเฉพาะบริษัท + ยอดใช้/โบนัสที่ /admin/customers.html + /admin/account-subscriptions.html (`AdminNotifyQuotaController` · `/admin/notify-quota-admin.js`) ·
+เทสต์ `CmsRound213NotifyResendTests` + `Db/NotifyResendDbTests` + 1 เคสใน `CmsRound212PrefsQuotaTests` (TEST_PLAN CMS213-01..10) · `required_call_site_check` +17 กติกา/ย้าย 6 ·
+`settings_reader_check` +ApiFeature · `write_permission_gate_check` +CustomerNotifyController · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+

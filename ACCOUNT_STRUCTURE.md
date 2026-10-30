@@ -424,6 +424,11 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   เต็ม ⇒ โบนัส `Subscription.NotifyBonusQuota`/`NotifyBonusExpiresAt` (แพ็ก `notify.topup`) ⇒ หมด = ไม่ส่งทางช่องกลาง (ลองช่องของร้านก่อน) · เตือนเจ้าของ 80%/100% ครั้งเดียวต่องวด ·
   **ไม่บล็อกงานธุรกิจ/เอกสาร** · สถานะ `GET metering/notify-quota` (เซิร์ฟเวอร์คำนวณ · หน้า ตั้งค่า/การใช้งาน/แพ็กเกจ/ส่วนเสริม)
 
+  **รอบ 213 (คำตัดสินข้อ 172)**: เพดานเฉพาะบริษัท `Subscription.MaxSharedMessagesPerMonth` แก้ได้ที่ /admin/customers.html + /admin/account-subscriptions.html
+  (`AdminNotifyQuotaController` `api/admin/companies/{id}/notify-quota` · ว่าง = ตามแพ็กเกจ · -1 = ไม่จำกัด · SubscriptionHistory + audit chain · ยอดใช้/โบนัสอ่านอย่างเดียว) ·
+  ขนาด/อายุแพ็ก `notify.topup` ตั้งที่ /pages/admin-addons.html (`ApiFeature.PackSize/PackValidDays` → `NotifyQuotaPolicy.TopUpPack` · ว่าง = 500/60 · มีผลกับการซื้อครั้งถัดไป ·
+  `UnitLabel` ประกอบจากขนาด) · ข้อความที่ค้างเพราะโควตาเต็ม ⇒ ส่งซ้ำได้หลังเติม (`GET/POST …/customer-notify/pending[/resend]` · ใช้โควตาปกติ · DOCUMENT_FLOW §6.5)
+
 ### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
 
 เพดานของ **เว็บ** อยู่บน `Site` เอง (`MaxPages` · `MaxProducts` · `MaxStorageBytes`)
@@ -581,6 +586,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   วันที่คาดว่าจะเต็ม / ยอดส่วนเกินเดือนนี้ · **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว**
   (`Layout.showQuotaBanner()` ใช้ในหน้าเอกสาร · ที่พัก · POS)
 - `POST …/quota/topup` — ซื้อโควตาเพิ่ม 100 ฉบับ/แพ็ก (อายุ 60 วัน) ผ่าน `documents.topup`
+- (รอบ 213: ขนาด/อายุแพ็ก `notify.topup` ตั้งได้ที่หน้าแอดมิน — `AddOnCodes.MessagesPerNotifyTopUpPack`/`TopUpValidDays` เป็นแค่ค่าตั้งต้น · ดู §5 ด้านบน)
 - `GET/POST …/notify-quota[/topup]` (รอบ 212 แพ็ก A) — โควตาข้อความผ่านช่องกลาง + ซื้อแพ็ก `notify.topup` (500 ข้อความ/แพ็ก · อายุ 60 วัน ·
   `AddOnCodes.MessagesPerNotifyTopUpPack` ต้องตรง `UnitLabel` ที่ seed) · ด่าน `RequireBillingAsync` เดิม · `NotifyQuotaService.PurchaseTopUpAsync` ลอก `QuotaService.PurchaseTopUpAsync`
   (advisory xact lock ต่อบริษัท `AdvisoryLockKey.QuotaGrant` · UsageEvent ก่อนให้ของ · audit chain) · `notify.topup` อยู่ใน `AddOnCodes.SystemMeters` (ไม่ใช่สวิตช์ลูกค้า) ·
