@@ -86,4 +86,6 @@ public class DeferredNotification : TenantEntity
     public int Attempts { get; set; }
     public DateTime? DoneAt { get; set; }
     public string? LastError { get; set; }
+    /// <summary>ฝ่ายค้าน S4: ปิดแถวโดยไม่ส่ง (ยกเลิก/คืนเงิน/ถูกลบก่อนถึงคิว) — เหตุจาก <c>DeferredNotifyPolicy.BookingSkipReason/OrderSkipReason</c></summary>
+    public string? Note { get; set; }
 }

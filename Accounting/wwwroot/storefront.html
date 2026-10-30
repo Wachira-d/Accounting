@@ -2205,13 +2205,14 @@
         const st = ev.target.querySelector('.sf-acc-status');
         st.textContent = 'กำลังสมัคร...'; st.style.color = 'var(--text-secondary)';
         try {
-          const r = await SubmitOnce.fetch(this._url('/portal/register'), {
+          // ฝ่ายค้าน S6: เส้นที่ถือรหัสผ่านไม่ส่ง Idempotency-Key (ไม่เก็บลายนิ้วมือ/โทเคน) — กันกดซ้ำด้วยล็อกฟอร์ม + อีเมลซ้ำที่เซิร์ฟเวอร์
+          const r = await fetch(this._url('/portal/register'), {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               fullName: fd.get('fullName'), email: fd.get('email'), phone: fd.get('phone') || null,
               password: fd.get('password'), consentGiven: !!fd.get('consentGiven'), acceptMarketing: !!fd.get('acceptMarketing')
             })
-          }, ev.target);
+          });
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error((j && j.message) || 'สมัครไม่สำเร็จ');
           await this._accountLoginWith(fd.get('email'), fd.get('password'));
@@ -2568,6 +2569,7 @@
           body.creditPassId = passSel && passSel.value ? passSel.value : null;
         }
         try {
+          this._lastBookingBody = body;   // รอบ 217 ฝ่ายค้าน S1: ให้ปุ่ม "จองเพิ่มอีกที่" บนหน้าผลส่งซ้ำพร้อม ConfirmAdditional
           const r = await SubmitOnce.fetch(this._url('/booking/bookings'), {
             method: 'POST', headers: this._custHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(body)
@@ -2599,32 +2601,58 @@
             throw new Error(msg);
           }
           const bookingJson = await r.json();
-          const booking = bookingJson.data;
-          this._memberAfterSubmit(body.saveToProfile && !booking.reused, bookingJson);   // ใบเดิมที่ถูกคืน (รอบ 217) = ไม่ได้บันทึก
-          // รอบ 207 (ข้อ 6): หน้าจองสำเร็จแสดงรายละเอียดครบ + ดาวน์โหลด/พิมพ์ใบยืนยันการจองเก็บไว้
-          this._lastBooking = booking;
-          document.getElementById('sfBookingModal').innerHTML = `
-            <div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:92vh;overflow:auto;padding:28px">
-              <div style="text-align:center">
-                <div style="font-size:56px">✅</div>
-                <h2 style="margin:4px 0">${booking.reused ? 'คุณจองรอบนี้ไว้แล้ว' : booking.status === 'Waitlisted' ? 'ลงคิวสำรองแล้ว' : 'จองสำเร็จ'}</h2>
-                ${booking.reused ? `<p style="color:var(--text-secondary)">ระบบไม่บันทึกซ้ำ — นี่คือการจองเดิมของคุณ (เลขที่ ${this.esc(booking.duplicateOf || booking.bookingNumber || '')})</p>` : ''}
-                ${booking.status === 'Waitlisted' ? `<p style="color:var(--text-secondary)">คิวสำรองลำดับที่ ${this.esc(String(booking.waitlistPosition || '-'))} — มีที่ว่างเมื่อไรร้านจะแจ้งกลับ</p>` : ''}
-              </div>
-              ${this._bookingDetailHtml(booking)}
-              <div id="sfBookingPayBox"></div>
-              <div id="sfBookingLineBox"></div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px">
-                <button class="btn btn-primary" onclick="Store.downloadBookingConfirmation()">⬇️ ดาวน์โหลดใบยืนยันการจอง</button>
-                <button class="btn" onclick="Store.printBookingConfirmation()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
-              </div>
-              ${booking.publicToken ? `<p style="margin-top:12px;font-size:13px;text-align:center"><a href="${this._pageUrl('my-booking/' + encodeURIComponent(booking.publicToken))}">ดู/จัดการการจองของฉัน</a> — เก็บลิงก์นี้ไว้เพื่อจ่ายมัดจำ เลื่อน หรือยกเลิก</p>` : ''}
-              <div style="text-align:center"><button onclick="document.getElementById('sfBookingModal').remove()" class="btn" style="margin-top:10px;padding:10px 28px">ปิด</button></div>
-            </div>`;
-          // รอบ 205 W2 (R-08): มัดจำออนไลน์ — ยอด/สิทธิ์จากเซิร์ฟเวอร์ (onlineDepositDue · onlinePaymentNote) หน้าเว็บแสดงอย่างเดียว
-          await this._renderBookingPayOnline(booking);
-          if (booking.publicToken) this.renderLineBox('sfBookingLineBox', { kind: 'booking', token: booking.publicToken });
+          // รอบ 216 + 217: ใบเดิมที่ถูกคืน (reused) = ไม่ได้บันทึกโปรไฟล์ (เซิร์ฟเวอร์ ProfileOwner(SaveToProfile && !Reused))
+          this._memberAfterSubmit(body.saveToProfile && !bookingJson.data.reused, bookingJson);
+          await this._showBookingDone(bookingJson.data);
         } catch (e) { alert(e.message); }
+      },
+
+      // รอบ 217: หน้าผลการจอง (แยกออกมาให้ "จองเพิ่มอีกที่" ใช้ร่วม) — ค่าทุกตัวจากคำตอบของเซิร์ฟเวอร์
+      async _showBookingDone(booking) {
+        // รอบ 207 (ข้อ 6): หน้าจองสำเร็จแสดงรายละเอียดครบ + ดาวน์โหลด/พิมพ์ใบยืนยันการจองเก็บไว้
+        this._lastBooking = booking;
+        document.getElementById('sfBookingModal').innerHTML = `
+          <div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:92vh;overflow:auto;padding:28px">
+            <div style="text-align:center">
+              <div style="font-size:56px">✅</div>
+              <h2 style="margin:4px 0">${booking.reused ? 'คุณจองรอบนี้ไว้แล้ว' : booking.status === 'Waitlisted' ? 'ลงคิวสำรองแล้ว' : 'จองสำเร็จ'}</h2>
+              ${booking.reused ? `<p style="color:var(--text-secondary)">ระบบไม่บันทึกซ้ำ — นี่คือการจองเดิมของคุณ (เลขที่ ${this.esc(booking.duplicateOf || booking.bookingNumber || '')})</p>
+                <button class="btn btn-secondary" onclick="Store._bookAnotherSeat(this)" style="margin-top:6px">➕ จองเพิ่มอีกที่ในรอบเดียวกัน</button>` : ''}
+              ${booking.status === 'Waitlisted' ? `<p style="color:var(--text-secondary)">คิวสำรองลำดับที่ ${this.esc(String(booking.waitlistPosition || '-'))} — มีที่ว่างเมื่อไรร้านจะแจ้งกลับ</p>` : ''}
+            </div>
+            ${this._bookingDetailHtml(booking)}
+            <div id="sfBookingPayBox"></div>
+            <div id="sfBookingLineBox"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px">
+              <button class="btn btn-primary" onclick="Store.downloadBookingConfirmation()">⬇️ ดาวน์โหลดใบยืนยันการจอง</button>
+              <button class="btn" onclick="Store.printBookingConfirmation()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
+            </div>
+            ${booking.publicToken ? `<p style="margin-top:12px;font-size:13px;text-align:center"><a href="${this._pageUrl('my-booking/' + encodeURIComponent(booking.publicToken))}">ดู/จัดการการจองของฉัน</a> — เก็บลิงก์นี้ไว้เพื่อจ่ายมัดจำ เลื่อน หรือยกเลิก</p>` : ''}
+            <div style="text-align:center"><button onclick="document.getElementById('sfBookingModal').remove()" class="btn" style="margin-top:10px;padding:10px 28px">ปิด</button></div>
+          </div>`;
+        // รอบ 205 W2 (R-08): มัดจำออนไลน์ — ยอด/สิทธิ์จากเซิร์ฟเวอร์ (onlineDepositDue · onlinePaymentNote) หน้าเว็บแสดงอย่างเดียว
+        await this._renderBookingPayOnline(booking);
+        if (booking.publicToken) this.renderLineBox('sfBookingLineBox', { kind: 'booking', token: booking.publicToken });
+      },
+
+      // รอบ 217 ฝ่ายค้าน S1: เซิร์ฟเวอร์คืนการจองเดิม (reused) ⇒ สมาชิกที่ตั้งใจจองที่นั่งที่สองกดยืนยันได้ (ConfirmAdditional · คีย์ใหม่ต่อปุ่ม)
+      _bookAnotherSeat(btn) {
+        const base = this._lastBookingBody;
+        if (!base) return;
+        if (!confirm('ยืนยันจองเพิ่มอีก 1 ที่ในรอบเดียวกัน?')) return;
+        return SubmitOnce.run(btn, async () => {
+          try {
+            const r = await SubmitOnce.fetch(this._url('/booking/bookings'), {
+              method: 'POST', headers: this._custHeaders({ 'Content-Type': 'application/json' }),
+              body: JSON.stringify(Object.assign({}, base, { confirmAdditional: true }))
+            }, btn);
+            const j = await r.json().catch(() => null);
+            if (!r.ok) throw new Error((j && j.message) || 'จองเพิ่มไม่สำเร็จ');
+            // ส่ง saveToProfile เดิมของฟอร์ม (รอบ 216) · ใบที่ถูกคืนไม่ได้บันทึก
+            this._memberAfterSubmit(base.saveToProfile && !(j.data && j.data.reused), j);
+            await this._showBookingDone(j.data);
+          } catch (e) { alert(e.message); return false; }
+        }, { busyText: 'กำลังจอง…' });
       },
 
       // ── รอบ 207 (ข้อ 6): รายละเอียดการจอง + ใบยืนยันที่ลูกค้าเก็บไว้ได้ (ค่าทุกตัวจากคำตอบของเซิร์ฟเวอร์ · หนีด้วย esc ทุกช่อง) ──
