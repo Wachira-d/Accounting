@@ -134,6 +134,9 @@ public class GatewayRefundService : IGatewayRefundService
         var intent = await _db.PaymentIntents
             .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
         if (intent == null) return new RefundStep(Fail("ไม่พบรายการชำระเงิน"), null, null);
+        // รอบ 219 ส่วน B ฝ่ายค้าน B2: ทดลองจ่ายคืนเงินไม่ได้ (ไม่มีเงินจริง) — ก่อนเรียกผู้ให้บริการ
+        if (GatewayTestPaymentRules.RefundRefusal(intent.SourceKind) is string selfTestNo)
+            return new RefundStep(Fail(selfTestNo), null, null);
 
         var refundedBefore = intent.RefundedAmount;
         var check = GatewayRefundMath.Check(intent.Status, intent.Amount, refundedBefore, amount,
@@ -267,6 +270,21 @@ public class GatewayRefundService : IGatewayRefundService
         DateTime entryDate, decimal amount, decimal newRefundedTotal, string refundRef, string reason, string actor,
         PaymentIntentStatus fromStatus, PaymentIntentStatus newStatus, DateTime refundAtUtc, CancellationToken ct)
     {
+        // รอบ 219 ส่วน B ฝ่ายค้าน B2: โหมดทดสอบ/ทดลองจ่าย = ไม่มีเงินจริง ⇒ บันทึกยอดคืน + เหตุการณ์ แต่ไม่ลง PV (ทั้งร้านและแพลตฟอร์ม)
+        if (GatewayTestPaymentRules.IsNoMoney(intent.SourceKind, intent.IsTestMode))
+        {
+            intent.RefundedAmount = newRefundedTotal;
+            intent.LastRefundedAt = refundAtUtc;
+            intent.UpdatedAt = DateTime.UtcNow;
+            _db.PaymentIntentEvents.Add(new PaymentIntentEvent
+            {
+                CompanyId = companyId, IntentId = intent.Id, At = refundAtUtc, Source = PaymentEventSource.Manual,
+                FromStatus = fromStatus, ToStatus = newStatus, RefundAmount = amount,
+                Note = $"คืนเงิน {amount:N2} (สะสม {newRefundedTotal:N2}) · อ้างอิง {refundRef} โดย {actor} · {reason} · "
+                     + GatewayTestPaymentRules.TestModeNotBookedNote,
+            });
+            return null;
+        }
         if (PlatformRevenueSource.RefundSkipsStoreReceivable(intent.SourceKind))
         {
             intent.RefundedAmount = newRefundedTotal;
@@ -526,6 +544,7 @@ public class GatewayRefundService : IGatewayRefundService
         var intent = await _db.PaymentIntents
             .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
         if (intent == null) return (Fail("ไม่พบรายการชำระเงิน"), null);
+        if (GatewayTestPaymentRules.RefundRefusal(intent.SourceKind) is string selfTestNo) return (Fail(selfTestNo), null);
 
         var attemptAt = intent.RefundOutcomeUnknownSince ?? DateTime.UtcNow;
         var check = GatewayRefundMath.CheckManualResolution(intent.RefundOutcomeUnknownSince != null, decision, amount,
@@ -627,6 +646,7 @@ public class GatewayRefundService : IGatewayRefundService
         var intent = await _db.PaymentIntents
             .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
         if (intent == null) return Fail("ไม่พบรายการชำระเงิน");
+        if (GatewayTestPaymentRules.RefundRefusal(intent.SourceKind) is string selfTestNo) return Fail(selfTestNo);
 
         var check = GatewayRefundMath.CheckLegacyRefundEntry(intent.Status, intent.Amount, intent.RefundedAmount,
             intent.RefundOutcomeUnknownSince != null, amount, refundedAtUtc, DateTime.UtcNow, providerRefundRef, evidence, journal);

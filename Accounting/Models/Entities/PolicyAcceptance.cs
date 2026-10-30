@@ -31,4 +31,7 @@ public class PolicyAcceptance : TenantEntity
     public string? IpAddress { get; set; }
     public string? UserAgent { get; set; }
     public string? EvidenceHash { get; set; }
+    /// <summary>ฝ่ายค้าน S4: ลบตามคำขอ (PDPA ม.33) แล้ว — ผู้ยอมรับ/IP/UA ถูกทำไม่ให้ระบุตัว · แถวคงไว้เป็นหลักฐาน (legal hold) จนพ้น
+    /// <c>PurchasePolicyAcceptance.RetentionYears</c> แล้วลบจริง (<c>PdpaRetentionPurgeJob</c>)</summary>
+    public DateTime? PseudonymisedAt { get; set; }
 }

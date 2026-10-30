@@ -47,6 +47,8 @@ public static class AuditRedaction
     {
         ["User"] = new HashSet<string> { "Email", "FullName", "Phone", "LineUserId", "AuthProviderId", "SignatureImageBase64", "SignatureName", "SignatureTitle" },
         ["PlatformPolicyAcceptance"] = new HashSet<string> { "Email", "IpAddress", "UserAgent" },
+        // รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับนโยบายก่อนชำระ (ผู้ยอมรับ = อีเมล/เบอร์)
+        ["PolicyAcceptance"] = new HashSet<string> { "Subject", "IpAddress", "UserAgent" },
         ["PdpaConsentRecord"] = new HashSet<string> { "SubjectContact", "IpAddress" },
         ["UserExternalLogin"] = new HashSet<string> { "ProviderEmail", "LinkedIp", "ProviderUserId" },
         ["PlatformErasureRequest"] = new HashSet<string> { "RequesterEmail", "RequesterIp", "Reason" },

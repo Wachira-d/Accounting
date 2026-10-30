@@ -85,6 +85,10 @@ public class PdpaRetentionPurgeJob : BackgroundService
                         && c.PseudonymisedAt != null && c.PseudonymisedAt < acceptCutoff)
             .ExecuteDeleteAsync(ct);
         if (acceptsDeleted > 0) _logger.LogInformation("PDPA retention purge: ลบหลักฐานยอมรับนโยบายที่พ้น legal hold {Rows} แถว", acceptsDeleted);
+        // รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับนโยบายก่อนชำระ — เก็บ MAX(5 ปีเอกสารบัญชี · 10 ปีอายุความสัญญา) นับแต่วันยอมรับ แล้วลบจริง
+        var purchaseCutoff = Accounting.Helpers.PurchasePolicyAcceptance.PurgeCutoff(DateTime.UtcNow);
+        var purchaseDeleted = await db.PolicyAcceptances.Where(x => x.AcceptedAt < purchaseCutoff).ExecuteDeleteAsync(ct);
+        if (purchaseDeleted > 0) _logger.LogInformation("PDPA retention purge: ลบหลักฐานยอมรับนโยบายก่อนชำระที่พ้นอายุเก็บ {Rows} แถว", purchaseDeleted);
 
         // contact ที่ถูก anonymize + ติดธง retained (ผู้ใช้ขอลบแล้ว แต่ค้างเพราะ legal-hold)
         var retained = await db.Contacts

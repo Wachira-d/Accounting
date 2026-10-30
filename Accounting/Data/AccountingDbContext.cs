@@ -1041,7 +1041,7 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.IpAddress).HasMaxLength(45);
             e.Property(x => x.UserAgent).HasMaxLength(500);
             e.Property(x => x.EvidenceHash).HasMaxLength(100);
-            e.HasQueryFilter(x => !x.IsDeleted);
+            // ฝ่ายค้าน S4: ไม่มี soft delete (append-only — PolicyAcceptanceAppendOnly ห้ามแก้ IsDeleted) ⇒ ไม่มีตัวกรอง IsDeleted
         });
 
         // ===== PlatformPolicyAcceptance (รอบ 214 หลัง CI) — ไม่มี FK ไป Companies (ผู้ใช้ไม่ต้องมีบริษัท) · ชื่อ index ตรงกับ LegalDocumentMigration =====
@@ -4016,6 +4016,8 @@ public class AccountingDbContext : DbContext
     public override int SaveChanges()
     {
         UpdateTimestamps();
+        if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
+            throw new InvalidOperationException(evidenceBad);
         var directAudit = DetachPendingAuditRows();
         var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null, AuditErasureScope);
         var chained = directAudit.Concat(auditEntries).ToList();
@@ -4064,6 +4066,8 @@ public class AccountingDbContext : DbContext
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         UpdateTimestamps();
+        if (Accounting.Helpers.PolicyAcceptanceAppendOnly.Violation(ChangeTracker) is string evidenceBad)   // รอบ 219 ส่วน B ฝ่ายค้าน S4
+            throw new InvalidOperationException(evidenceBad);
         var directAudit = DetachPendingAuditRows();
         var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null, AuditErasureScope);
         var chained = directAudit.Concat(auditEntries).ToList();

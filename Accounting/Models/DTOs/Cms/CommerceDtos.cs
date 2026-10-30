@@ -328,6 +328,9 @@ public class CreateOrderRequest
     public bool PolicyAccepted { get; set; }
     /// <summary>ฉบับที่หน้าเว็บแสดงตอนติ๊ก (<c>StorefrontSiteInfo.PolicyVersion</c>) — ไม่ตรงฉบับปัจจุบัน ⇒ ขอให้โหลดหน้าใหม่ · null = ยอมรับฉบับปัจจุบัน</summary>
     public string? PolicyVersionShown { get; set; }
+    /// <summary>ฝ่ายค้าน S7: IP/UA ของผู้ติ๊ก — controller เติม (ไม่รับจาก body)</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public string? ClientIp { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public string? ClientUserAgent { get; set; }
     /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังสั่งสำเร็จ controller บันทึกชื่อ/เบอร์/ที่อยู่/ข้อมูลใบกำกับลงโปรไฟล์ ·
     /// สมาชิก = id ในโทเคนหน้าร้านของเว็บนี้เท่านั้น (ไม่ใช่ CustomerId ใน body) · แขก/โทเคนเว็บอื่น ⇒ ไม่มีผล</summary>
     public bool SaveToProfile { get; set; }

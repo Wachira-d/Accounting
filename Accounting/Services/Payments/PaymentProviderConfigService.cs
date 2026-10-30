@@ -54,6 +54,25 @@ public class PaymentProviderConfigService : IPaymentProviderConfigService
 
     public void ApplyKeys(PaymentProviderConfig cfg, string? testPublicKey, string? testSecretKey, string? livePublicKey, string? liveSecretKey)
     {
+        // รอบ 219 ส่วน B ฝ่ายค้าน B3: คีย์ต้องตรงโหมดของช่อง (adapter ประกาศรูปแบบเอง) — ตรวจก่อนแตะค่าใด ๆ
+        var provider = _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode);
+        if (provider != null)
+        {
+            var bad = new[]
+            {
+                provider.KeyModeProblem(false, false, testPublicKey), provider.KeyModeProblem(false, true, testSecretKey),
+                provider.KeyModeProblem(true, false, livePublicKey), provider.KeyModeProblem(true, true, liveSecretKey),
+            }.Where(x => x != null).ToList();
+            if (bad.Count > 0) throw new BusinessRuleException(string.Join(" · ", bad), PaymentLiveGate.RuleCode);
+        }
+        // แก้คีย์ live ขณะเปิดรับเงินจริงอยู่ ⇒ ถอยกลับโหมดทดสอบ (ต้องผ่านด่านใหม่ทั้งชุด — คีย์ใหม่ยังไม่เคยตรวจ)
+        var liveKeyChanging = (livePublicKey != null && livePublicKey.Trim() != (cfg.LivePublicKey ?? ""))
+                              || !string.IsNullOrWhiteSpace(liveSecretKey);
+        if (liveKeyChanging && cfg.Mode == PaymentProviderMode.Live)
+        {
+            cfg.Mode = PaymentProviderMode.Test;
+            cfg.PlatformLiveConfirmedAt = null;
+        }
         // เปลี่ยนคีย์ = ผลทดสอบครั้งก่อนใช้ไม่ได้แล้ว ต้องทดสอบใหม่ก่อนเปิด live (ไม่งั้นเปลี่ยนเป็นคีย์ผิดแล้วยัง "ผ่าน" จากผลเก่า)
         if (testPublicKey != null && testPublicKey.Trim() != (cfg.TestPublicKey ?? ""))
         {
@@ -112,7 +131,9 @@ public class PaymentProviderConfigService : IPaymentProviderConfigService
         // "ผ่าน" ต้องครบทั้งคีย์และ webhook — คีย์ถูกอย่างเดียวยังเปิด live ไม่ได้
         var passed = test.KeysValid && test.WebhookReceived;
         if (passed) cfg.LastTestPassedAt = now;
-        cfg.LiveKeyVerifiedAt = live?.KeysValid == true ? now : null;
+        // ฝ่ายค้าน (หมายเหตุ): ขณะเปิดรับเงินจริง ความล้มเหลวชั่วคราวของการตรวจคีย์ live ไม่ล้างผลตรวจเดิม (ล้างเมื่อเปลี่ยนคีย์เท่านั้น)
+        if (live?.KeysValid == true) cfg.LiveKeyVerifiedAt = now;
+        else if (cfg.Mode != PaymentProviderMode.Live) cfg.LiveKeyVerifiedAt = null;
         cfg.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
 
@@ -135,6 +156,8 @@ public class PaymentProviderConfigService : IPaymentProviderConfigService
             if (refusal != null) throw new BusinessRuleException(refusal, PaymentLiveGate.RuleCode);
             cfg.LiveEnabledAt = DateTime.UtcNow;
         }
+        // ฝ่ายค้าน S1: เครื่องหมายด่านแพลตฟอร์ม — ตั้งเฉพาะเมื่อผ่านด่านแพลตฟอร์ม · ถอยกลับ/สลับจากเส้นร้าน = ล้าง
+        cfg.PlatformLiveConfirmedAt = mode == PaymentProviderMode.Live && platform != null ? DateTime.UtcNow : null;
         cfg.Mode = mode;
         cfg.UpdatedAt = DateTime.UtcNow;
         // การเปลี่ยนแปลงที่กระทบ "เงินจริง" ห้ามเงียบ — ทั้งเปิดและถอยกลับ เข้า hash chain
@@ -167,6 +190,10 @@ public class PaymentProviderConfigService : IPaymentProviderConfigService
             throw new BusinessRuleException(refusal, PaymentLiveGate.RuleCode);
         if (!cfg.IsActive)
             throw new BusinessRuleException("ช่องทางนี้ปิดอยู่ — เปิดใช้งานก่อนทดลองจ่าย", PaymentLiveGate.RuleCode);
+        // ฝ่ายค้าน B3: คีย์ทดสอบที่เก็บไว้ (รวมค่าก่อนมีด่านรูปแบบ) ต้องเป็นคีย์ทดสอบจริง — ไม่งั้นทดลองจ่ายจะเก็บเงินจริง
+        var provider = _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode);
+        if (provider?.KeyModeProblem(false, true, _secrets.Unprotect(cfg.TestSecretKeyProtected)) is string keyBad)
+            throw new BusinessRuleException(keyBad, PaymentLiveGate.RuleCode);
         // SourceId ใหม่ทุกครั้ง — การทดลองครั้งก่อนที่สำเร็จแล้วต้องไม่ขวางการทดลองครั้งใหม่ ("รายการนี้ชำระแล้ว")
         return await _intents.StartAsync(cfg.CompanyId, new StartPaymentRequest(
             PaymentSourceKind.GatewaySelfTest, Guid.NewGuid(), PaymentLiveGate.SelfTestAmount, PaymentMethodKind.PromptPay,

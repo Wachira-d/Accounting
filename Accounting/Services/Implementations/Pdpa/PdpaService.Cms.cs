@@ -78,6 +78,17 @@ public partial class PdpaService
         return new CmsSubjectRows(customers, orders, bookings, leads, submissions, consents);
     }
 
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับนโยบายก่อนสั่ง/จองของเจ้าของข้อมูล (ร้าน · กรองบริษัท · ผู้ยอมรับ = อีเมล/เบอร์ที่ normalize แล้ว)</summary>
+    private async Task<List<PolicyAcceptance>> LoadShopPolicyAcceptancesAsync(Guid companyId, string? emailRaw, string? phoneRaw, bool track, CancellationToken ct)
+    {
+        var email = CmsContactResolver.NormalizeEmail(emailRaw);
+        var phone = CmsContactResolver.NormalizePhone(phoneRaw);
+        if (email == null && phone == null) return new List<PolicyAcceptance>();
+        var q = _db.PolicyAcceptances.Where(a => a.CompanyId == companyId && a.Scope == Accounting.Helpers.PurchasePolicyAcceptance.ScopeShop
+            && a.Subject != null && (a.Subject == (email ?? "#no-email#") || a.Subject == (phone ?? "#no-phone#")));
+        return await (track ? q : q.AsNoTracking()).ToListAsync(ct);
+    }
+
     /// <summary>รอบ 211: ลิงก์ LINE ของสมาชิก/ออเดอร์/การจองของเจ้าของข้อมูล (กรองบริษัท)</summary>
     private async Task<List<CustomerLineLink>> LoadCmsLineLinksAsync(Guid companyId, CmsSubjectRows r, bool track, CancellationToken ct)
     {
@@ -156,6 +167,15 @@ public partial class PdpaService
             // รอบ 214 ฝ่ายค้าน S4: ผลตรวจหลักฐานรายแถว (ตัวตรวจเดียวกับแถวยอมรับนโยบาย)
             ["evidenceCheck"] = Accounting.Helpers.PlatformPolicyAcceptanceRules.CheckLabel(c),
         }).ToList();
+        // รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับข้อกำหนด/นโยบายคืนเงินก่อนสั่ง/จอง (ร้าน · ผู้ยอมรับ = อีเมล/เบอร์ของเจ้าของข้อมูล)
+        foreach (var pa in await LoadShopPolicyAcceptancesAsync(companyId, email, phone, track: false, ct))
+            consents.Add(new Dictionary<string, object?>
+            {
+                ["id"] = pa.Id, ["kind"] = "purchase-policy", ["purpose"] = Accounting.Helpers.PurchasePolicyAcceptance.Purpose,
+                ["policyVersion"] = pa.PolicyVersion, ["versionShown"] = pa.VersionShown, ["grantedAt"] = pa.AcceptedAt,
+                ["channel"] = pa.Channel, ["sourceId"] = pa.SourceId, ["ipAddress"] = pa.IpAddress, ["userAgent"] = pa.UserAgent,
+                ["evidenceHash"] = pa.EvidenceHash, ["evidenceCheck"] = Accounting.Helpers.PurchasePolicyAcceptance.CheckLabel(pa),
+            });
 
         return new CmsSubjectDataReport(DateTime.UtcNow, CmsContactResolver.NormalizeEmail(email), CmsContactResolver.NormalizePhone(phone),
             customers, orders, bookings, leads, subs, consents,
@@ -243,6 +263,13 @@ public partial class PdpaService
         {
             cr.WithdrawnAt = now;
             cr.WithdrawnReason = "DSR ม.33 ขอลบข้อมูล";
+            rows++;
+        }
+        // รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับนโยบายก่อนสั่ง/จอง = ภาระพิสูจน์ของร้าน ⇒ legal hold — คงแถว ทำผู้ยอมรับ/IP/UA ไม่ให้ระบุตัว
+        foreach (var pa in await LoadShopPolicyAcceptancesAsync(companyId, email, phone, track: true, ct))
+        {
+            if (pa.PseudonymisedAt != null) continue;
+            Accounting.Helpers.PurchasePolicyAcceptance.Pseudonymise(pa, "anon-" + pa.Id.ToString("N")[..12], now);
             rows++;
         }
 

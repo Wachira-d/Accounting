@@ -567,7 +567,10 @@ public record LodgingCreateReservationRequest(
     /// (ด่าน <c>Helpers/PurchasePolicyAcceptance</c>) · พนักงานจองแทน ⇒ ไม่มีผล</summary>
     bool PolicyAccepted = false,
     /// <summary>ฉบับที่หน้าเว็บแสดงตอนติ๊ก (<c>StorefrontSiteInfo.PolicyVersion</c>) — ไม่ตรงฉบับปัจจุบัน ⇒ ขอให้โหลดหน้าใหม่</summary>
-    string? PolicyVersionShown = null);
+    string? PolicyVersionShown = null,
+    /// <summary>ฝ่ายค้าน S7: IP/UA ของผู้ติ๊ก — controller เติม (ไม่รับจาก body)</summary>
+    [property: System.Text.Json.Serialization.JsonIgnore] string? ClientIp = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] string? ClientUserAgent = null);
 
 public class LodgingReservationResponse
 {
