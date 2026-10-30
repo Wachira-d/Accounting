@@ -101,21 +101,25 @@
       box.innerHTML = `<div style="margin-top:14px;border:2px solid ${due > 0 && !p.slipPending ? '#F59E0B' : '#16a34a'};border-radius:12px;padding:14px 18px;text-align:left">${parts.join('')}</div>`;
       return true;
     },
+    // รอบ 217 รวม: ส่งครั้งเดียว (SubmitOnce — ล็อกฟอร์ม + Idempotency-Key ต่อฟอร์ม · ลองใหม่ใช้คีย์เดิม) · ด่านจริงที่เซิร์ฟเวอร์ (สลิปค้าง = ปฏิเสธ)
     async bookingUploadSlip(ev, token) {
       ev.preventDefault();
       const form = ev.target;
+      if (window.SubmitOnce && !SubmitOnce.claim(form)) return;
       const status = form.querySelector('.sf-slip-status');
-      const btn = form.querySelector('button[type="submit"]');
-      if (btn) btn.disabled = true;
       if (status) status.textContent = 'กำลังส่งสลิป…';
       try {
-        const r = await fetch(this._url('/booking/bookings/by-token/' + encodeURIComponent(token) + '/slip'), { method: 'POST', body: new FormData(form) });
+        const url = this._url('/booking/bookings/by-token/' + encodeURIComponent(token) + '/slip');
+        const init = { method: 'POST', body: new FormData(form) };
+        const r = window.SubmitOnce ? await SubmitOnce.fetch(url, init, form) : await fetch(url, init);
         const j = await r.json().catch(() => null);
         if (!r.ok) throw new Error((j && j.message) || 'ส่งสลิปไม่สำเร็จ');
+        if (window.SubmitOnce) SubmitOnce.reset(form);   // สลิปใบถัดไป = คำขอใหม่
         await this.renderBookingByToken(token, (j && j.message) || 'ส่งสลิปแล้ว — ร้านจะตรวจสอบและยืนยันการจอง');
       } catch (e) {
         if (status) status.textContent = e.message;
-        if (btn) btn.disabled = false;
+      } finally {
+        if (window.SubmitOnce) SubmitOnce.release(form);
       }
     },
   };

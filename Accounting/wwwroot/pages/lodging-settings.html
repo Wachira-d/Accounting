@@ -33,6 +33,7 @@
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb"></div>
     <div class="page-header">
       <div>
         <h2 class="page-title">🛏️ ตั้งค่าที่พัก</h2>
@@ -232,6 +233,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
   <script>
     const DAYS = ['อา','จ','อ','พ','พฤ','ศ','ส'];
     // ป้าย enum ทั้งหมดอยู่ที่ Layout.ENUM_LABELS ที่เดียว — API ส่งเป็น "ชื่อ" ไม่ใช่ตัวเลข
@@ -254,6 +256,8 @@
         await this.loadSites(api);
         this.renderSiteSelect();
         document.getElementById('weekendDays').innerHTML = DAYS.map((d, i) => `<label><input type="checkbox" data-mask="${1 << i}"> ${d}</label>`).join('');
+        const pf = document.getElementById('propForm');
+        if (pf) { pf.addEventListener('input', () => { this._dirty = true; }); pf.addEventListener('change', () => { this._dirty = true; }); }
         await this.loadProps(qs.get('propertyId'), qs.get('siteId'));
         if (qs.get('welcome') === '1' && this.prop && (!qs.get('siteId') || this.prop.siteId === qs.get('siteId'))) {
           document.getElementById('welcomeBox').style.display = '';
@@ -305,6 +309,8 @@
           return;
         }
         sel.innerHTML = this.props.map(p => `<option value="${p.id}">${esc(p.name)} (${esc(p.code)})</option>`).join('');
+        // ฝ่ายค้านรอบ 215 S2: ?siteId= ที่ไม่อยู่ในรายการเว็บ (ลบแล้ว/ค้างจากเว็บล่าสุด/ไม่มีสิทธิ์) = ไม่มี — ไม่เปิดกล่อง "สร้างที่พักให้เว็บ <GUID>"
+        if (preferSite && this.sites.length && !this.sites.some(s => s.id === preferSite)) preferSite = null;
         const bySite = preferSite ? this.props.find(p => p.siteId === preferSite) : null;
         // ?propertyId= ที่ไม่ใช่ของบริษัทนี้ → ไม่ยิง 6 API ให้ 404 เงียบ ๆ (ล็อกกับรายการที่โหลดได้จริง)
         const validPreferId = preferId && this.props.some(p => p.id === preferId) ? preferId : null;
@@ -322,20 +328,28 @@
           // ห้ามโหลดที่พักแห่งอื่นค้างไว้ข้างหลังฟอร์ม "ที่พักใหม่" (แท็บอื่นจะโชว์ห้อง/ราคาของคนละแห่ง
           // แล้วปุ่มเพิ่มห้องจะทำงานกับ propertyId = null) — เปิดฟอร์มเปล่าอย่างเดียว
           sel.value = '';
+          CmsSiteContext.renderPropertyHeader('cmsCrumb', this.sites, null, this.props, 'ตั้งค่าที่พัก', 'lodging-settings', preferSite, () => this.confirmLeave());
           await this.newProperty(preferSite);
           return;
         }
-        this.propertyId = validPreferId || bySite?.id || this.props[0].id;
+        // รอบ 215: ไม่มี ?propertyId=/?siteId= ⇒ ที่พักของเว็บล่าสุด (ตัวตัดสินเดียวกับ Front desk: CmsSiteContext.pickProperty)
+        this.propertyId = validPreferId || bySite?.id || CmsSiteContext.pickProperty(this.props, null, null, this.sites);
         sel.value = this.propertyId;
         await this.loadAll();
       },
       async onPropChange() { this.propertyId = document.getElementById('propSelector').value; await this.loadAll(); },
+      // ฝ่ายค้านรอบ 215 N11: ฟอร์มที่พักค้างแก้ ⇒ ถามก่อนสลับเว็บที่หัวพื้นที่ทำงาน (ไม่มี helper กลางให้ใช้ซ้ำ — ธงเฉพาะฟอร์มนี้)
+      _dirty: false,
+      confirmLeave() { return !this._dirty || confirm('ข้อมูลที่พักที่แก้ไว้ยังไม่ได้บันทึก — ทิ้งการแก้ไขแล้วสลับเว็บ?'); },
       async loadAll() {
         const api = Layout.api();
         const [p, rt, pl, se, po, ex] = await Promise.all([
           api.lodgingGetProperty(this.propertyId), api.lodgingRoomTypes(this.propertyId), api.lodgingRatePlans(this.propertyId),
           api.lodgingSeasons(this.propertyId), api.lodgingPolicies(this.propertyId), api.lodgingExtras(this.propertyId)]);
-        this.prop = p.data; this.roomTypes = rt.data || []; this.plans = pl.data || []; this.seasons = se.data || []; this.policies = po.data || []; this.extras = ex.data || [];
+        this.prop = p.data; this.roomTypes = rt.data || [];
+        // รอบ 215: หัวพื้นที่ทำงาน — เว็บที่ที่พักนี้ผูกอยู่ (หลังบันทึกเปลี่ยนเว็บที่ผูก loadAll รอบใหม่วาดใหม่)
+        CmsSiteContext.renderPropertyHeader('cmsCrumb', this.sites, this.prop, this.props, 'ตั้งค่าที่พัก', 'lodging-settings', null, () => this.confirmLeave());
+        this._dirty = false; this.plans = pl.data || []; this.seasons = se.data || []; this.policies = po.data || []; this.extras = ex.data || [];
         this.fillProp(this.prop); this.updateTabLock(); this.renderRooms(); this.renderPlans(); this.renderSeasons(); this.renderPolicies(); this.renderExtras();
         // #36 — รายงานข้ามที่พัก (เซิร์ฟเวอร์ตัดสินว่าแถวไหนต้องเลือกใหม่) · ล้ม = ไม่แสดงส่วนที่พักอื่น (ส่วนที่พักนี้มาจาก configProblem อยู่แล้ว)
         api.lodgingExtrasNeedsReselect().then(r => { this._reselectAll = r?.data || []; this.renderExtras(); }).catch(() => { this._reselectAll = undefined; });
@@ -591,6 +605,7 @@
           Layout.toast(res.message || 'บันทึกแล้ว');
           API.clearFieldErrors(document.getElementById('propForm'));   // S-P2-6: บันทึกผ่านแล้วต้องไม่เหลือขอบแดง
           if (!this.propertyId) { this._draft = null; await this.loadProps(res.data.id); } else { this.prop = res.data; this.fillProp(this.prop); }
+          this._dirty = false;
         } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },
       // S-P1-3 (รอบ 202 ทีม LS): ค่าตั้งต้นมาจากเซิร์ฟเวอร์ (GET properties/defaults = ค่าเริ่มต้นของ entity) — เดิมหน้านี้มีสำเนา

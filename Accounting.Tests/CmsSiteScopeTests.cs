@@ -82,4 +82,27 @@ public class CmsSiteScopeTests
     {
         Assert.Equal(new[] { SiteStaffRole.Admin, SiteStaffRole.OrderManager }, CmsSiteScope.OrderRoles);
     }
+
+    // ── รอบ 215 ฝ่ายค้าน S1: รายการเว็บไซต์ (ตัวสลับเว็บ) กรองตามสิทธิ์ ──
+
+    [Fact]
+    public void รายการเว็บ_พนักงานมีบทบาทเฉพาะA_ไม่เห็นชื่อBและC()
+    {
+        var access = new[] { new CmsSiteScope.AccessRow(A, SiteStaffRole.Viewer, true) };
+        Assert.Equal(new[] { A }, CmsSiteScope.ListableSiteIds(false, new[] { A, B, C }, access, System.Array.Empty<System.Guid>()));
+    }
+
+    [Fact]
+    public void รายการเว็บ_ทิศตรงข้าม_เจ้าของเห็นทุกเว็บ_ผู้สร้างเห็นเว็บที่ตัวเองสร้าง()
+    {
+        Assert.Equal(new[] { A, B, C }, CmsSiteScope.ListableSiteIds(true, new[] { A, B, C }, System.Array.Empty<CmsSiteScope.AccessRow>(), System.Array.Empty<System.Guid>()));
+        Assert.Equal(new[] { B }, CmsSiteScope.ListableSiteIds(false, new[] { A, B, C }, System.Array.Empty<CmsSiteScope.AccessRow>(), new[] { B }));
+    }
+
+    [Fact]
+    public void รายการเว็บ_สิทธิ์ปิดใช้_และเว็บบริษัทอื่น_ไม่เปิดอะไร()
+    {
+        var access = new[] { new CmsSiteScope.AccessRow(A, SiteStaffRole.Admin, false), new CmsSiteScope.AccessRow(Other, SiteStaffRole.Admin, true) };
+        Assert.Empty(CmsSiteScope.ListableSiteIds(false, new[] { A, B }, access, new[] { Other }));
+    }
 }

@@ -99,4 +99,6 @@ public interface ICmsBookingService
     /// <summary>สถานะสลิปบนการจอง — ผู้เรียกเดียว <c>BookingSlipService</c> (ไฟล์ + PaymentIntent สร้างแล้ว)</summary>
     Task<BookingResponse> MarkSlipUploadedAsync(Guid companyId, Guid siteId, Guid bookingId, Guid attachmentId, Guid intentId, decimal amount);
     Task<BookingResponse> MarkSlipRejectedAsync(Guid companyId, Guid siteId, Guid bookingId, Guid expectedIntentId, string reason, string actor);
+    /// <summary>รอบ 217 (ข้อ 175 ง): ส่งแจ้งเตือน "การจองใหม่" (ลูกค้า + ร้าน) — เรียกจาก <c>DeferredNotifyDispatcher</c> เท่านั้น (หลังคำขอจองตอบไปแล้ว)</summary>
+    Task DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid bookingId);
 }

@@ -18,11 +18,14 @@ public static class SiteOrderPublic
         Id = full.Id, OrderNumber = full.OrderNumber, Status = full.Status, PublicToken = full.PublicToken,
         Currency = full.Currency, SubTotal = full.SubTotal, DiscountAmount = full.DiscountAmount, ShippingAmount = full.ShippingAmount,
         VatAmount = full.VatAmount, TotalAmount = full.TotalAmount, AmountDueNow = full.AmountDueNow, NextPayableAmount = full.NextPayableAmount,
-        CreatedAt = full.CreatedAt,
+        CreatedAt = full.CreatedAt, Replayed = full.Replayed,   // รอบ 216: หน้าเว็บรู้ว่าเป็นออเดอร์เดิม (ไม่ได้บันทึกโปรไฟล์ซ้ำ)
     };
 
     public const string RuleCode = "CMS-ORDER-PUBLIC";
-    public const string IdempotencyHeader = "Idempotency-Key";
+    public const string IdempotencyHeader = IdempotencyKeyPolicy.Header;   // รอบ 217: ตัวตั้งเดียวของชื่อ header
+    /// <summary>รอบ 217 (ข้อ 175 ข): สองแท็บ/กดซ้ำบนตะกร้าเดียวกัน — คำขอแรกสั่งไปแล้ว</summary>
+    public const string CartAlreadyOrderedMessage =
+        "ตะกร้านี้เพิ่งถูกสั่งซื้อไปแล้ว (ระบบไม่บันทึกซ้ำ) — ตรวจคำสั่งซื้อของคุณจากข้อความยืนยัน หรือหน้า \"ตรวจสอบคำสั่งซื้อ\"";
     public const int IdempotencyKeyMinLength = 16;
     public const int IdempotencyKeyMaxLength = 80;
 

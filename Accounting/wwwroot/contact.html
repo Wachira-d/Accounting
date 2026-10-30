@@ -177,6 +177,7 @@
 
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
+  <script src="/js/submit-once.js"></script>
   <script>
     I18n.init();
 
@@ -249,16 +250,19 @@
           message: document.getElementById('message').value,
         };
 
-        const res = await fetch('/api/contact', {
+        // รอบ 217 (ข้อ 175): คีย์กันซ้ำต่อฟอร์ม (js/submit-once.js) — เน็ตหลุดแล้วกดใหม่ = ไม่บันทึกซ้ำ
+        const form = document.getElementById('contactForm');
+        const res = await SubmitOnce.fetch('/api/contact', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
-        });
+        }, form);
         const data = await res.json();
 
         if (data.success) {
           document.getElementById('formSection').style.display = 'none';
           document.getElementById('successSection').style.display = 'block';
+          SubmitOnce.reset(form);   // ส่งข้อความถัดไป = คำขอใหม่
         } else {
           throw new Error(data.message || 'เกิดข้อผิดพลาด กรุณาลองใหม่');
         }

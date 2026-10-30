@@ -82,7 +82,10 @@ public class CmsSiteController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<SiteListResponse>>>> GetAll(
         Guid companyId, [FromQuery] string? search = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var result = await _siteService.GetSitesAsync(companyId, search, page, pageSize);
+        // รอบ 215 ฝ่ายค้าน S1: รายการเว็บกรองตามสิทธิ์รายเว็บ (เจ้าของเห็นทุกเว็บ · คนอื่นเห็นเว็บที่มีบทบาท/ที่ตัวเองสร้าง) —
+        // เดิมคืนทุกเว็บของบริษัท ⇒ ตัวสลับเว็บบนหัวพื้นที่ทำงานเผยชื่อเว็บที่ไม่มีสิทธิ์ และพาไปหน้าที่ถูกปฏิเสธ
+        var visible = await _siteService.GetListableSiteIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User), IsCompanyOwner());
+        var result = await _siteService.GetSitesAsync(companyId, search, page, pageSize, visible);
         return Ok(new ApiResponse<PagedResponse<SiteListResponse>>(true, result));
     }
 
@@ -100,6 +103,21 @@ public class CmsSiteController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _siteService.UpdateSiteAsync(companyId, siteId, request, userId);
         return Ok(new ApiResponse<SiteResponse>(true, result, "อัปเดตเว็บไซต์สำเร็จ"));
+    }
+
+    public sealed record LegalPreviewRequest(string? Markdown);
+
+    /// <summary>รอบ 214 (คำตัดสินข้อ 173 B): ตัวอย่างหน้านโยบาย/ข้อกำหนดของร้าน + markdown ที่ใช้จริง (ว่าง = แม่แบบ — ใช้ตั้งต้นการแก้) ·
+    /// อ่านอย่างเดียว ไม่เขียนอะไร (เก็บผ่าน PUT {siteId} ตามเดิม)</summary>
+    [HttpPost("{siteId:guid}/legal/{kind}/preview")]
+    public async Task<ActionResult<ApiResponse<object>>> LegalPreview(Guid companyId, Guid siteId, string kind,
+        [FromBody] LegalPreviewRequest request, [FromServices] ICmsRenderingService rendering)
+    {
+        if ((request?.Markdown?.Length ?? 0) > LegalMarkdown.MaxLength)   // ฝ่ายค้าน S1: เพดานเท่าที่เก็บได้จริง
+            return BadRequest(new ApiResponse<object>(false, null, "เนื้อความยาวเกินไป"));
+        var r = await rendering.PreviewLegalPageAsync(companyId, siteId, kind, request?.Markdown);
+        if (r == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเว็บไซต์หรือชนิดเอกสาร"));
+        return Ok(new ApiResponse<object>(true, new { html = r.Value.Html, markdown = r.Value.Markdown, warnings = r.Value.Warnings }));
     }
 
     [HttpDelete("{siteId:guid}")]

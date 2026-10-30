@@ -864,8 +864,16 @@ public partial class CmsBookingService : ICmsBookingService
         // รอบ 207 (คำขอเจ้าของข้อ 7): ช่องบังคับของฟอร์มจอง — ด่านจริงอยู่ที่นี่ (หน้าเว็บแสดงตามค่าเดียวกัน) · ตัวตัดสินเดียว BookingFormFields ·
         // พนักงานของบริษัทสร้างเอง (walk-in) และลูกค้าที่ล็อกอิน (CustomerId — ข้อมูลอยู่ที่บัญชีลูกค้า) ไม่ผ่านด่านนี้
         // ฝ่ายค้านรอบ 207 ข้อ 9: CustomerId มาจาก body ของคำขอนิรนาม ⇒ ยกเว้นเฉพาะลูกค้าที่เป็นของเว็บนี้จริง
-        var knownCustomer = request.CustomerId is Guid custId
-            && await _db.SiteCustomers.AsNoTracking().AnyAsync(c => c.Id == custId && c.CompanyId == companyId && c.SiteId == siteId);
+        var member = request.CustomerId is Guid custId
+            ? await _db.SiteCustomers.AsNoTracking().Where(c => c.Id == custId && c.CompanyId == companyId && c.SiteId == siteId)
+                .Select(c => new { c.FullName, c.Phone, c.Email, c.IsActive }).FirstOrDefaultAsync()
+            : null;
+        var knownCustomer = member != null;
+        // รอบ 216 (คำตัดสินข้อ 174): ลูกค้าของเว็บนี้เว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ (ตาข่ายฝั่งเซิร์ฟเวอร์ — ใบนัด/แจ้งร้าน/เอกสาร ERP ใช้ช่อง Guest*) ·
+        // ค่าที่พิมพ์มาชนะเสมอ · ตัวตัดสินเดียว StorefrontMemberProfile.FillContact
+        if (member is { IsActive: true })
+            (request.GuestName, request.GuestPhone, request.GuestEmail) = StorefrontMemberProfile.FillContact(
+                request.GuestName, request.GuestPhone, request.GuestEmail, member.FullName, member.Phone, member.Email);
         // ด่านทำงานเมื่อเว็บตั้งค่าฟอร์มแล้วเท่านั้น (FormFieldsJson ไม่ null) — เว็บที่ไม่เคยตั้ง = เซิร์ฟเวอร์ไม่บังคับเหมือนเดิม
         // (ผู้เรียก API/ช่องทางอื่นที่ไม่ส่งเบอร์ไม่พังเงียบหลังอัปเดต · หน้าเว็บเดิมยังบังคับชื่อ+เบอร์ที่ฝั่งฟอร์ม)
         var formJson = (await SiteContextAsync(companyId, siteId)).Row?.FormFieldsJson;
@@ -894,9 +902,34 @@ public partial class CmsBookingService : ICmsBookingService
         var createdByStaff = staffOnBehalf || await IsCompanyStaffAsync(companyId, userId);
 
         SiteBooking booking;
+        Guid? duplicateOfId = null;
         await using (var tx = await _db.Database.BeginTransactionAsync())
         {
             await LockSiteBookingsAsync(companyId, siteId);
+
+            // รอบ 217 (คำตัดสินข้อ 175 ข): กดจองเบิ้ล/สองแท็บ/หน้าเก่าที่ไม่ส่ง Idempotency-Key — ผู้จองคนเดิม (สมาชิก/เบอร์/อีเมล) จองรอบเดิมของบริการเดิม
+            // ภายใน DuplicateSubmitGuard.Window ⇒ ไม่สร้างใบที่สอง · ตรวจใต้ล็อกไซต์เดียวกับ Decide ⇒ คำขอพร้อมกันเห็นใบของกันและกัน ·
+            // ตั้งใจจองเพิ่ม (คนละที่นั่ง) ⇒ ConfirmAdditional
+            if (!request.ConfirmAdditional
+                && DuplicateSubmitGuard.IdentityOf(request.CustomerId, request.GuestPhone, request.GuestEmail) is { } requester)
+            {
+                var since = DuplicateSubmitGuard.WindowStart(DateTime.UtcNow);
+                var bookingDay = date.ToDateTime(TimeOnly.MinValue);
+                var recent = await _db.SiteBookings.AsNoTracking()
+                    .Where(b => b.CompanyId == companyId && b.SiteId == siteId && b.BookingServiceId == svc.Id
+                        && b.BookingDate == bookingDay && b.StartTime == start && b.CreatedAt >= since
+                        && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)
+                    .OrderBy(b => b.CreatedAt)
+                    .Select(b => new { b.Id, b.CustomerId, b.GuestPhone, b.GuestEmail })
+                    .ToListAsync();
+                duplicateOfId = DuplicateSubmitGuard.FindDuplicate(recent, b => DuplicateSubmitGuard.IdentityOf(b.CustomerId, b.GuestPhone, b.GuestEmail), requester)?.Id;
+            }
+
+            if (duplicateOfId is Guid dupId)
+            {
+                await tx.RollbackAsync();
+                return await DuplicateBookingResultAsync(companyId, siteId, dupId, request.CustomerId, userId, staffOnBehalf);
+            }
 
             var ctx = await LoadDayAsync(companyId, siteId, svc, date);
             var requested = ctx.Rules.ResourceMode == BookingResourceMode.Auto ? null : request.ResourceId;
@@ -957,6 +990,8 @@ public partial class CmsBookingService : ICmsBookingService
                     CreditBookingLink.StartUtc(booking.BookingDate, booking.StartTime), createdByStaff);
             }
             _db.SiteBookings.Add(booking);
+            // รอบ 217 (ข้อ 175 ง): แจ้งเตือน "การจองใหม่" เข้าคิวในธุรกรรมเดียวกับการจอง ⇒ ตอบแขกทันที (ไม่รอ SMTP/LINE) · ส่งตามหลังโดย DeferredNotifyDispatcher
+            _db.DeferredNotifications.Add(DeferredNotifyPolicy.New(companyId, siteId, DeferredNotifyPolicy.BookingCreated, booking.Id, DateTime.UtcNow));
             await _db.SaveChangesAsync();
             if (creditContactId is Guid creditCid)
                 await HoldCreditForBookingAsync(companyId, svc, booking, creditCid, request.CreditPassId, total, userId);
@@ -1002,14 +1037,30 @@ public partial class CmsBookingService : ICmsBookingService
             }
         }
 
-        // รอบ 209 P3 (C4/E2): ยืนยันการจองถึงลูกค้า + แจ้งร้าน หลัง commit — ส่งไม่ถึง = ประทับบนการจอง ไม่ล้มการจอง (ShopNotify.cs)
-        await NotifyBookingCreatedAsync(companyId, siteId, booking.Id);
+        // รอบ 209 P3 (C4/E2): ยืนยันการจองถึงลูกค้า + แจ้งร้าน — รอบ 217: ไม่ส่งในคำขอแล้ว (แถวคิวเขียนพร้อมการจองข้างบน ·
+        // DeferredNotifyDispatcher → DispatchCreatedNotifyAsync → NotifyBookingCreatedAsync หลังตอบแขก · ส่งไม่ถึงยังประทับบนการจองเหมือนเดิม)
 
         var created = await GetBookingAsync(companyId, siteId, booking.Id) ?? throw new InvalidOperationException("Failed.");
         created.ErpNotices = createNotices;
         // รอบ 207: ลูกค้าหน้าเว็บ (ไม่ใช่พนักงานของบริษัท) ได้มุมมองลูกค้า — ไม่มีหมายเหตุภายใน/เอกสาร/ประวัติรับเงิน (เดิมคืนทั้งก้อน)
         if (!await IsCompanyStaffAsync(companyId, userId)) created = ForCustomer(created);
         return created;
+    }
+
+    /// <summary>รอบ 217 (คำตัดสินข้อ 175 ข): คำตอบเมื่อพบการจองซ้ำของผู้จองคนเดิม — <see cref="DuplicateSubmitGuard.Reveal"/> ตัดสินว่าเปิดใบเดิมให้ได้ไหม:
+    /// พนักงาน หรือสมาชิกที่เป็นเจ้าของใบเดิม (CustomerId ตรง — ยืนยันจากโทเคนแล้ว) ⇒ คืนใบเดิม (<c>Reused=true</c>) ·
+    /// แขกนิรนามที่ตรงด้วยเบอร์/อีเมล ⇒ 409 ไม่เปิดใบ/โทเคนของใบเดิม (เบอร์/อีเมลใครก็พิมพ์ได้ — กันดึงลิงก์จัดการการจองของคนอื่น)</summary>
+    private async Task<BookingResponse> DuplicateBookingResultAsync(Guid companyId, Guid siteId, Guid duplicateId, Guid? requesterCustomerId,
+        string? userId, bool staffOnBehalf)
+    {
+        var staff = staffOnBehalf || await IsCompanyStaffAsync(companyId, userId);
+        var existing = await GetBookingAsync(companyId, siteId, duplicateId) ?? throw new KeyNotFoundException("Booking not found.");
+        _logger.LogInformation("Booking create deduplicated → {BookingNumber} (site {SiteId})", existing.BookingNumber, siteId);
+        if (!DuplicateSubmitGuard.Reveal(staff, requesterCustomerId, existing.CustomerId))
+            throw new BusinessRuleException(DuplicateSubmitGuard.BookingGuestMessage, DuplicateSubmitGuard.BookingRuleCode, 409);
+        existing.Reused = true;
+        existing.DuplicateOf = existing.BookingNumber;
+        return staff ? existing : ForCustomer(existing);
     }
 
     /// <summary>รอบ 210: บริการนี้ต้องเป็นสมาชิกก่อนจองไหม (ค่าบริการชนะ · null = ค่าของเว็บ) — ตัวตัดสินเดียว <see cref="BookingAccessRule.RequiresMember"/></summary>

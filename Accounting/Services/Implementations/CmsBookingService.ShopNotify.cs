@@ -41,6 +41,13 @@ public partial class CmsBookingService
 
     private static string? BookingDisplayName(BookingNotifyFacts f) => !string.IsNullOrWhiteSpace(f.CustomerName) ? f.CustomerName : f.GuestName;
 
+    /// <summary>รอบ 217 (ข้อ 175 ง): จุดเข้าของคิวแจ้งเตือนตามหลัง (<c>DeferredNotifyDispatcher</c>) — เดิม CreateBookingAsync เรียก
+    /// <see cref="NotifyBookingCreatedAsync"/> ในคำขอ ⇒ "กดยืนยันจองแล้วนิ่งไปพักนึง" (รอ SMTP/LINE ถึงลูกค้า + อีเมลร้านทีละผู้รับ)</summary>
+    public Task DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid bookingId)
+    {
+        return NotifyBookingCreatedAsync(companyId, siteId, bookingId);
+    }
+
     /// <summary>การจองใหม่: ยืนยันถึงลูกค้า + แจ้งร้าน (คิวสำรองบอกว่าเป็นคิวสำรอง)</summary>
     private async Task NotifyBookingCreatedAsync(Guid companyId, Guid siteId, Guid bookingId)
     {

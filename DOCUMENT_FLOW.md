@@ -4927,7 +4927,10 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   | ฟอร์มสมัคร (`POST /api/auth/register`) | `AcceptedTerms` ต้อง true | `web-form` |
   | รับคำเชิญเข้าบริษัท (`?invite=` บนฟอร์มเดียวกัน) | เหมือนกัน | `web-form` |
   | Google / Facebook / LINE (`POST /api/auth/sso`) | บังคับ**เฉพาะตอนสร้าง user ใหม่** — ผู้ใช้เดิมเข้าระบบไม่ถูกขวาง | `sso-google` / `sso-facebook` / `sso-line` |
-- แถวที่เขียน: `PdpaConsentRecord` scope **ระดับแพลตฟอร์ม**
+- **รอบ 214 หลัง CI (สถานะปัจจุบัน)**: แถวที่เขียน = `PlatformPolicyAcceptances` (ระดับผู้ใช้ · ไม่มี CompanyId/FK — ผู้ใช้ไม่ต้องมีบริษัท) ·
+  แถวเก่าใน `PdpaConsentRecords` (CompanyId ศูนย์) คัดลอกมาด้วย Id เดิม (`Helpers/LegalDocumentMigration`) · ข้อความ ~~ขีดฆ่า~~ ด้านล่างคือแบบเดิม ·
+  เหตุ: ฐานที่สร้างจากโมเดล (EnsureCreated) มี FK → Companies ⇒ แถว CompanyId ศูนย์ถูกปฏิเสธ ⇒ ตอนสมัคร error ถูกจับแล้ว log (หลักฐานหายเงียบ) · Db test จับได้
+- ~~แถวที่เขียน: `PdpaConsentRecord` scope **ระดับแพลตฟอร์ม**~~
   (`CompanyId = PdpaPolicy.PlatformScopeCompanyId` = `Guid.Empty` — ตอนสมัคร
   ผู้ควบคุมข้อมูลคือผู้ให้บริการ ไม่ใช่ tenant ที่ยังไม่เกิด; ทางรับคำเชิญไม่สร้าง
   บริษัทเลยด้วยซ้ำ) · `Purpose = PdpaPolicy.SignupPurpose`
@@ -4935,11 +4938,54 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   ของทั้งฝั่งเขียนและฝั่งตรวจ (`Helpers/PdpaSignupConsent.cs`), ผูก
   `Email|Purpose|เวอร์ชันที่หน้าเว็บแสดง|GrantedAt|Channel|IP|UserAgent`
   → round-trip test: `Accounting.Tests/PdpaSignupConsentTests.cs`
-- เวอร์ชันนโยบายอยู่ในโค้ด (`PdpaPolicy.CurrentVersion`) เพราะเนื้อความอยู่ใน
-  `wwwroot/terms.html` + `privacy.html` ซึ่งเปลี่ยนได้ด้วย deploy เท่านั้น —
-  **แก้เนื้อความเมื่อไรต้องขยับเวอร์ชันด้วย**
-- ตัวตนผู้ควบคุมข้อมูลบนหน้าเอกสาร ← `GET /api/legal/policy`
-  ← `SiteSettings.PlatformSeller*` (ชุดเดียวกับที่ใช้ออกใบกำกับค่าบริการ)
+- ~~เวอร์ชันนโยบายอยู่ในโค้ด (`PdpaPolicy.CurrentVersion`)~~ — **รอบ 214 (คำตัดสินข้อ 173) สถานะปัจจุบัน**: เวอร์ชันมาจาก resolver ตัวเดียว
+  `ILegalDocumentService.GetConsentVersionAsync` (ฉบับนโยบาย/ข้อกำหนดที่**มีผลวันนี้**ตามวันไทย · ไม่มีฉบับเผยแพร่ = ฉบับตั้งต้น 1.0 ใน
+  `Helpers/LegalDocumentDefaults` ซึ่งคือเนื้อความเดิมของ terms.html/privacy.html) · ผู้เรียก: `AuthService.RecordSignupConsentAsync` (แถวยินยอม) +
+  `GET /api/legal/policy` (`version` = เวอร์ชันความยินยอมที่หน้าสมัครส่งกลับ) · สองฉบับเท่ากัน ⇒ เลขเดียว (เข้ากันกับแถวเก่า "1.0") ไม่งั้น
+  `privacy x · terms y` (`LegalDocumentPolicy.ConsentVersion`) · `PdpaPolicy.CurrentVersion` เหลือเป็นฉบับตั้งต้น — ห้ามผู้เรียกใหม่ (required_call_site_check)
+- ตัวตนผู้ควบคุมข้อมูลบนหน้าเอกสาร ← `SiteSettings.PlatformSeller*` (ชุดเดียวกับที่ใช้ออกใบกำกับค่าบริการ) — รอบ 214: แทนลงเนื้อความเป็นโทเคน
+  `{{controller.*}}` ที่เซิร์ฟเวอร์ (`LegalDocumentService.RenderPlatformAsync`) · `GET /api/legal/policy` ยังคืนตัวตน + `privacyVersion`/`termsVersion`
+
+**เอกสารทางกฎหมายของแพลตฟอร์ม — แอดมินแก้ได้แบบมีฉบับ (รอบ 214 · คำตัดสินข้อ 173)**
+- หน้า `/privacy.html` · `/terms.html` = โครง + `js/legal-policy.js` → `GET /api/legal/documents/{privacy|terms}[?version=]` (ไม่ต้องล็อกอิน) →
+  ฉบับที่มีผล (หรือฉบับที่ขอ) แปลง markdown ชุดย่อยเป็น HTML ที่เซิร์ฟเวอร์ (`Helpers/LegalMarkdown` — encode ทุกตัว · ลิงก์ allowlist ·
+  โทเคนแทนหลังแปลง) + ฉบับที่ประกาศล่วงหน้า + `GET …/history` (ประวัติสาธารณะ ไม่มีร่าง/ชื่อผู้เผยแพร่) · โหลดไม่ได้ = ข้อความแจ้ง (ไม่ใช่หน้าว่าง)
+- แอดมิน `/admin/legal.html` → `AdminLegalDocumentController` (`api/admin/legal-documents/{kind}` · SystemAdmin · ปฏิเสธคีย์ API):
+  GET (ฉบับปัจจุบัน + markdown · ร่าง · ประวัติ · URL สาธารณะเต็มจาก `AppBaseUrl`/โฮสต์คำขอ · โทเคน) · PUT `draft` · POST `preview` (อ่านอย่างเดียว ·
+  คำเตือน `LegalMarkdown.Warnings`) · POST `publish` · DELETE `draft` → `LegalDocumentService` → ตาราง `LegalDocumentVersions` (ระดับแพลตฟอร์ม · ไม่มี CompanyId)
+- กติกา (`Helpers/LegalDocumentPolicy`): ร่าง 1 ฉบับ/ชนิด · **เผยแพร่แล้วแก้/ลบไม่ได้** (`CanEdit`) · `ValidatePublish`: เลขฉบับรูปแบบตัวเลข · มากกว่าทุกฉบับรวม 1.0 ·
+  วันมีผล ≥ วันนี้ และ ≥ ฉบับล่าสุด · ฉบับปัจจุบัน = `PickCurrent` (เผยแพร่แล้ว · มีผล ≤ วันนี้ · ล่าสุด) · ประกาศล่วงหน้า = `PickUpcoming` ·
+  เผยแพร่ ⇒ แถว audit (`LegalDocumentPublished` · ruleCode `PDPA-23-NOTICE-VERSION`) + audit อัตโนมัติของ BaseEntity
+- **ฉบับใหม่ = แจ้ง ไม่บล็อก**: `js/layout.js` `_showPolicyUpdateBannerIfNeeded` → `GET /api/legal/acceptance` (`NeedsAcknowledge`: ไม่มีแถวยอมรับ หรือฉบับล่าสุดที่ยอมรับ ≠ ปัจจุบัน ·
+  Purpose `account-signup:*` หรือ `policy-update:*` · ไม่นับแถวที่ถอน) → "รับทราบและยอมรับ" `POST /api/legal/acceptance` → `PlatformPolicyAcceptance` (หลัง CI — เดิม `PdpaConsentRecord`)
+  (`policy-update:terms-and-privacy` · ช่องทาง `policy-update-banner` · hash `PdpaConsentEvidence` ตัวเดียว) · หน้าค้างฉบับเก่า = 409 ·
+  โหมดเข้าดูในนามลูกค้า = ไม่แสดงแถบ + 403
+- ลิงก์: หน้าแรก (footer) · หน้าสมัคร (ช่องติ๊ก) · หน้าเข้าสู่ระบบ · เมนูผู้ใช้ในแอป · แถบแจ้ง · (อีเมลระบบไม่มี layout กลาง — ไม่ได้ใส่)
+
+**นโยบาย/ข้อกำหนดของร้าน (เว็บ CMS · หน้าจองโต๊ะ) — รอบ 214 คำตัดสินข้อ 173 (ข้อ ช–ซ)**
+- ตัวตัดสินเดียว `Helpers/CmsLegalPages.Resolve(kind, Sites.PrivacyPolicyUrl|TermsOfServiceUrl, Sites.PrivacyPolicyMarkdown|TermsOfServiceMarkdown)`:
+  ลิงก์ที่ร้านตั้ง (http(s) เต็ม หรือ path ในเว็บร้าน) > ข้อความที่ร้านเขียน > แม่แบบ `LegalDocumentDefaults.ShopTemplate` (ตัวตนร้านจาก `CmsContentTokens` ·
+  ร้าน = ผู้ควบคุมข้อมูล · NextAcc = ผู้ประมวลผล ม.40) · ผลไปที่ `StorefrontSiteInfo.PrivacyLink/TermsLink` (มีค่าเสมอ) + `SiteResponse.*LegalMode`
+- storefront: หน้า `legal/privacy` · `legal/terms` (`Store.renderLegalPage` → `GET …/storefront/legal/{kind}` → `CmsRenderingService.GetLegalPageAsync` ·
+  เว็บที่เผยแพร่แล้ว · CompanyId scope) · ลิงก์ท้ายเว็บทุกหน้า + ช่องยินยอม (`p6ConsentHtml`: สั่งซื้อ · จอง · ติดต่อ · รับข่าว) + สมัครสมาชิก + แบนเนอร์คุกกี้ ผ่าน
+  `Store.legalHref/legalAnchor` ตัวเดียว
+- หลังบ้าน `pages/cms-edit.html` (แท็บ SEO → 📜): สามโหมด · ตัวอย่าง `POST cms/sites/{id}/legal/{kind}/preview` (markdown ว่าง = แม่แบบ · อ่านอย่างเดียว) ·
+  เก็บผ่าน `PUT cms/sites/{id}` (`CmsSiteService.UpdateSiteAsync`: ลิงก์ตรวจ `ValidateExternalUrl` · ข้อความ ≤ 100k · เปลี่ยนจริงขยับ `*UpdatedAt`) · echo ครบใน `SiteResponse`
+- หน้าจองโต๊ะ (`booking.html` · `booking-manage.html`): ลิงก์ `/shop-policy.html?c=&k=` → `GET /api/public/reservations/legal/{companyId}/{kind}`
+  (แม่แบบ + ตัวตนบริษัท · เฉพาะบริษัทที่มีโต๊ะใช้งาน)
+
+- **ฝ่ายค้านรอบ 214**: (S1) `LegalMarkdown` regex มีเพดานเวลา + เขียนไม่ย้อนรอยข้ามตัวคั่น · ย่อหน้า > 4,000 ตัวอักษร encode ล้วน · เกินเวลา = ทั้งเอกสาร encode ล้วน ·
+  ตัวอย่างรับ ≤ 100k · (S2) `GET /api/legal/documents` แยก `isUpcoming` ออกจาก `isArchived` · (S3) หน้านโยบายร้านแสดงเลขผู้เสียภาษีเฉพาะนิติบุคคล
+  (`CmsLegalPages.BuildShopTokens` · `Company.JuristicId`) · หน้าจองโต๊ะแสดงแค่ชื่อ+เบอร์ (`bookingPageScope`) · (S4) ค่าที่ขาด = "ยังไม่ได้ระบุ" · mailto ที่ไม่มีอีเมล = ข้อความ ·
+  cms-edit เตือนตัวตนร้านที่ขาด + ลิงก์เดิมที่ใช้ไม่ได้ (`SiteResponse.LegalWarnings`) · (S5) แถว audit ตอนเผยแพร่มี UserId/อีเมล/IP ·
+  หมายเหตุ: `Status` = concurrency token + unique ร่างต่อชนิด (`UX_LegalDocumentVersions_Kind_Draft`) ⇒ กดพร้อมกัน 409 ไทย · ร่างที่วันมีผลเลยแล้วมีปุ่มตั้งเป็นวันนี้ ·
+  `LegalController` เลิก `[AllowAnonymous]` ระดับคลาส (เดิมลบล้าง `[Authorize]` ของ acceptance) · เว็บยังไม่เผยแพร่ ปุ่ม "เปิด" = ตัวอย่างในหน้า ·
+  audit ช่อง `*Markdown` เก็บความยาว + sha256 แทนเนื้อความ (`AuditRedaction.Value`)
+- **รอบ 214 ต่อ (ฎ)**: หลักฐานยอมรับนโยบาย (`PlatformPolicyAcceptances` — สร้างผ่าน `PlatformPolicyAcceptanceRules.Create` ตัวเดียว · เก็บ `VersionShown`/`UserAgent`)
+  เข้า DSR เข้าถึง/โอนย้าย (`PdpaService.GenerateAccessReportAsync` → `PolicyAcceptances` + ผลตรวจ) · ลบตามคำขอ = `Pseudonymise` (legal hold) ใน `ApplyErasureAsync` ·
+  `PdpaRetentionPurgeJob` ลบจริงเมื่อ `PseudonymisedAt` เกิน 10 ปี · hash `PdpaConsentEvidence` v2 ("v2:" · `NormalizeTimestamp` ตัวเดียว ทั้งเขียน/ตรวจ ·
+  v1 ตรวจไม่ได้ = `LegacyUnverifiable`) — ใช้กับตอนสมัคร · แถบยอมรับ · ฟอร์มเว็บร้าน (`CmsDataConsent.StageForSubject`)
+_Last verified against codebase: 2026-10-30 (รอบ 214 — นโยบาย/ข้อกำหนดแพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS/หน้าจองโต๊ะ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
 - **รอบ 200 ทีม R**: รายงาน ภ.ง.ด.1 / ปกส. (`GET payroll/pnd1|sso/{y}/{m}`) ปิดบังเลขบัตร/เลข ปกส. เมื่อไม่มี `Pii.View` (ตัวตัดสิน `CanViewPiiAsync`
   ตัวเดียวกับรายชื่อพนักงาน + `PiiAccessLog` เมื่อเปิดดูเต็ม · G2-05) · ไฟล์ยื่นแบบไม่ผ่านเส้นนี้ (ยังได้เลขเต็ม) · ตัวจับพนักงานซ้ำตอนนำเข้า
   เทียบเลขบัตรหลังถอดรหัส (`EncryptedIdMatch` — คอลัมน์เข้ารหัส nonce สุ่มเทียบใน SQL ไม่มีวันเจอ · G2-06) · audit 50 ทวิรายปีเก็บเลขแบบปิดบัง (D-11)
@@ -6039,6 +6085,36 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค�
 
 _Last verified against codebase: 2026-10-30 (รอบ 213 — ส่งซ้ำข้อความค้างเพราะโควตา · แพ็ก notify.topup ที่แอดมินตั้ง · เพดานเฉพาะบริษัท · ผ่านฝ่ายค้าน + CI เขียว — commit 2faabd48 · a6909467 · 41bcab58)_
 
+- **รอบ 217 · กดซ้ำไม่บันทึกซ้ำ + ตอบเร็ว แจ้งเตือนตามหลัง (คำตัดสินข้อ 175 · เจ้าของรายงาน BK-2610-0003/0004 กดจองเบิ้ล + "กดยืนยันแล้วนิ่ง")**:
+  (ก) **ชั้นคีย์** — หน้าเว็บส่ง `Idempotency-Key` ผ่าน `wwwroot/js/submit-once.js` (คีย์ต่อฟอร์มที่เปิด · ปุ่มล็อก + "กำลังจอง…") → `IdempotencyMiddleware` (ทุก POST/PUT/PATCH `/api/*`)
+  ตัดสินด้วย `Helpers/IdempotencyKeyPolicy`: แถว `IdempotencyRecords` (+`RequestHash`) · คีย์เดิมเนื้อเดิม ⇒ ผลเดิม (`Idempotency-Status: replayed`) · เนื้อต่าง ⇒ 409 `mismatch` ·
+  กำลังทำ ⇒ 409 `in-flight` (หน้าเว็บรอแล้วยิงซ้ำ) · 4xx/5xx ปล่อยคีย์ · ทางเข้าที่หน้าเว็บส่งคีย์: จองคิว · ที่พัก (จอง/สลิป/คำขอ) · lead/ฟอร์มติดต่อ · สมัครสมาชิก · สลิปออเดอร์ ·
+  จองโต๊ะ (booking.html/booking-manage.html) · /contact · pay-widget · (เช็กเอาต์ออเดอร์ใช้คีย์ใน body เดิม รอบ 209 A9)
+  (ข) **ชั้นความหมาย** `Helpers/DuplicateSubmitGuard` — `CmsBookingService.CreateBookingAsync` ใต้ล็อกไซต์ (ก่อน Decide): ผู้จองคนเดิม (สมาชิก/เบอร์/อีเมล) + บริการ + วัน + เวลาเริ่มเดิม
+  ภายใน 10 นาที (ไม่นับยกเลิก/ไม่มา) ⇒ ไม่สร้างใบ: สมาชิกเจ้าของ/พนักงาน ได้ใบเดิม `reused=true` · แขก ⇒ 409 `CMS-BOOKING-DUPLICATE` (ไม่เปิดใบ/โทเคน) ·
+  `ConfirmAdditional` = ตั้งใจจองเพิ่ม · ที่พัก `CreateReservationAsync` (เส้นเว็บ) เบอร์/อีเมล + วันเข้า-ออกเดิม ใต้ล็อกที่พัก ⇒ 409 `LODGING-DUPLICATE` ·
+  ออเดอร์: ตะกร้าถูกตัดในธุรกรรมเดียวกับออเดอร์ · สองแท็บคนละคีย์ ⇒ 409 `CartAlreadyOrderedMessage` (เดิม 500)
+  (ค) **แจ้งเตือน "สร้างแล้ว" ไม่อยู่ในคำขอแล้ว** — การจอง: แถว `DeferredNotifications` (booking.created) ในธุรกรรมเดียวกับการจอง · ออเดอร์: (order.created) ใน SaveChanges ของยอดสุดท้าย ·
+  `DeferredNotifyDispatchJob` ทุก 10 วิ (JobLock · `FOR UPDATE SKIP LOCKED` · lease 2 นาที) → `DispatchCreatedNotifyAsync` → `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` เดิม
+  (ลูกค้า: คีย์กันซ้ำ CustomerNotifyLogs · ส่งไม่ถึงประทับบนรายการเหมือนเดิม) · ข้อยกเว้น ⇒ ถอย ≤ 5 ครั้ง แล้วปิดพร้อม `LastError` · ขั้น ERP ของการจองคงในคำขอ
+  (ง) **การจองซ้ำที่บันทึกไปก่อนรอบนี้ไม่ถูกยกเลิกอัตโนมัติ** — ร้านเปิดหน้าการจอง ค้นด้วยชื่อ/เบอร์ เห็นสองใบรอบเดียวกัน ⇒ ยกเลิกใบที่สร้างทีหลัง (สถานะ "ยกเลิก" + เหตุผล "จองซ้ำ") ·
+  ใบรอร้านยืนยันยังไม่ออกเอกสาร/ไม่มีเงิน ⇒ ยกเลิกได้เลย · ใบที่มีมัดจำแล้วเดินเส้นยกเลิก/คืนเงินเดิม
+
+_Last verified against codebase: 2026-10-30 (รอบ 217 — Idempotency-Key ทุกฟอร์มลูกค้า + RequestHash · DuplicateSubmitGuard การจอง/ที่พัก · แจ้งเตือนตามหลังผ่าน DeferredNotifications · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74)_
+- **รอบ 216 · ข้อมูลส่วนตัวของสมาชิกหน้าร้าน + เติมฟอร์มจาก "บัญชีของฉัน" (คำตัดสินข้อ 174 · เจ้าของ: "ล็อคอินไว้แล้วควรมี ให้บันทึกข้อมูลส่วนตัวและดึงมาได้เลย" · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **ที่เก็บเดิม ไม่มี migration**: `SiteCustomer.FullName/Phone/CompanyName/TaxId/BranchCode` + `SiteCustomerAddress` แถวหลักชนิดละแถว (Shipping · Billing) · อีเมลเข้าระบบอ่านอย่างเดียว ·
+  ตัวตรวจ/ตัวรวมค่าเดียว `Helpers/StorefrontMemberProfile` (`Validate` · `FillContact` · `MergeCheckout` · `ComposeAddress` · `SaveNote`) — เบอร์ผ่าน `CmsContactResolver.NormalizePhone` · เลขภาษี `ThaiTaxId.IsValid` · สาขาว่าง = 00000 ·
+  (ข) **API** (`Controllers/CmsStorefrontCustomerController` → `StorefrontCustomerService.Profile.cs`): `GET portal/me` คืนโปรไฟล์ + `ShippingAddressText`/`BillingAddressText` ที่เซิร์ฟเวอร์ประกอบ ·
+  `PUT portal/me/profile` (ด่าน `Me` = โทเคนของเว็บนี้ · จำกัด 10/นาที 100/วันต่อสมาชิก · ผิด ⇒ `BusinessRuleException` `CMS-MEMBER-PROFILE` ทุกข้อในข้อความเดียว · audit chain ชื่อช่องที่เปลี่ยน ไม่ใส่ค่า) ·
+  **ไม่แตะผู้ติดต่อ ERP** ที่ผูกไว้ (ข้อ 174 ข) ·
+  (ค) **ตาข่ายเซิร์ฟเวอร์** — สมาชิกที่ใช้งานเว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ (ค่าที่พิมพ์ชนะ): เช็กเอาต์ใน `ValidateCheckoutFormAsync` ก่อน `OrderFormFields.Check` · จองนัด/คลาสใน `CreateBookingAsync` ก่อน `CmsDataConsent.EnforceAsync` ·
+  จองที่พักใน `LodgingPublicController.Create` ก่อน `CreateReservationAsync` (หน้าเว็บส่ง `X-Storefront-Token` แล้ว · การจองที่พักยังไม่ผูกบัญชี — ข้อ 174 ฉ) · ที่อยู่จัดส่งไม่เติมฝั่งเซิร์ฟเวอร์ (ค่าส่งคิดจากจังหวัดที่ลูกค้าเห็น) ·
+  (ง) **"บันทึกเป็นข้อมูลของฉัน"** — `SaveToProfile` บน `CreateBookingRequest`/`CreateOrderRequest`/`LodgingCreateReservationRequest` · เจ้าของ `StorefrontCustomerAuth.ProfileOwner` (โทเคนของเว็บนี้เท่านั้น) ·
+  บันทึกหลังรายการสำเร็จในคำขอเดียวกัน (`Helpers/StorefrontProfileSaveBack`) · ค่าผิดรูปแบบ/บันทึกล้ม ⇒ รายการยังสำเร็จ + ข้อความใน `ApiResponse.Errors` (หน้าเว็บแสดง) · ข้อมูลใบกำกับเข้าโปรไฟล์เฉพาะเลขผ่าน mod-11 และ (เช็กเอาต์) เมื่อติ๊กขอใบกำกับ ·
+  (จ) **หน้าเว็บ** `storefront.html`: แท็บ "👤 ข้อมูลส่วนตัว" ในบัญชีของฉัน (`#profile`) · `_memberPrefill` เติมฟอร์มจอง/คลาส · เช็กเอาต์ (แล้วคิดค่าส่งใหม่) · ฟอร์มที่พัก (หลังวาดใหม่ทุกครั้ง · ช่องใบกำกับในนามบริษัทไม่เติมให้ = คำขอของแขก) · ฟอร์มติดต่อ (ไม่บันทึกกลับ) ตามกฎ #4 A (`userTouched` ชนะ · ทับเฉพาะช่องว่าง/`autoSrc`) ·
+  ช่องที่ร้านเพิ่มเอง (MTO) ไม่เติม · PDPA: รายงาน DSR เข้าถึง/โอนย้ายเพิ่มชนิด/ที่อยู่หลักของที่อยู่ · ลบ/ล้างครอบช่องเดิมอยู่แล้ว
+_Last verified against codebase: 2026-10-30 (รอบ 216 — ข้อมูลส่วนตัวสมาชิก · เติมฟอร์มจอง/สั่งซื้อ/ที่พัก · บันทึกกลับจากฟอร์ม · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 1fd81626)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·
@@ -6656,3 +6732,30 @@ _Last verified against codebase: 2026-10-29 (รอบ 208 แก้ตามฝ
 - **ตัวเลือกย่อย (variant)**: สินค้ามี variant ที่เปิดขาย ⇒ ต้องเลือก · ราคา variant แทนราคาฐาน (+ตัวเลือกตามสั่ง) · ชื่อบรรทัด "ชื่อ - ตัวเลือก [SKU x]" ไหลไปคำอธิบายบรรทัดเอกสาร · สต็อกจากสินค้า ERP ที่ผูก (ไม่ผูก = สินค้าแม่) · สินค้าไม่มี variant = เดิม
 - Last verified `commit e9801193`
 
+## CMS215 — พื้นที่ทำงานเว็บไซต์ (รอบ 215 เฟส 1 · สถานะปัจจุบัน · `erp-review/2026-10-30/CMS_UX_REDESIGN.md`)
+
+ไม่เปลี่ยนเส้นเอกสาร/เงิน — เปลี่ยน**ทางเข้าและขอบเขตบนจอ**ของหน้ารายเว็บ (คำตัดสินข้อ 176)
+- **แถบซ้าย** (`layout.js` navItems): หมวดงานเว็บ = "🧭 พื้นที่ทำงานเว็บไซต์" (ไม่มี id = ไม่ใช่กุญแจสิทธิ์ใหม่ · แสดงเมื่อผู้ใช้เห็นแท็บรายเว็บ ≥ 1 ·
+  ลิงก์ = แท็บล่าสุดของเว็บล่าสุด `Layout.cmsWorkspaceHref` / `cmsLastSite` ใน localStorage — ความสะดวก, URL `?siteId=` คือความจริง) + "🗂 เว็บไซต์ทั้งหมด · ภาพรวม" (`cms-sites`) ·
+  หน้ารายเว็บ 7 หน้า (`workspaceTab: true` — id เดิม `cms-orders` `cms-store-settings` `cms-bookings` `cms-booking-providers` `lodging` `lodging-settings` `cms-leads`)
+  พับไว้เสมอ (ช่องค้นหาเมนูยังเจอ · roles/settings-features/RoleTemplates/gate ใช้ id เดิม) · ชื่อหมวด = `CompanySettingsResponse.CmsNavLabel`
+  (`CmsModuleResolver.NavSectionLabel`) · Portal ลูกค้า → หมวดขาย · Vendor Portal → หมวดซื้อ · รับชำระเงินออนไลน์ → หมวดตั้งค่า
+- **หัวพื้นที่ทำงาน** (`CmsSiteContext.renderCrumb` — ชื่อเดิม ทุกหน้าที่เรียกได้ของใหม่): ตัวสลับเว็บตัวเดียว (หน้าที่มี `#siteSelector` ⇒ สั่ง select เดิมแล้วซ่อน ·
+  เว็บปลายทางไม่มีงานของหน้านี้ ⇒ ไปแท็บแรกของเว็บนั้น) · ป้ายขอบเขต `scopeBadge` (🌐 เฉพาะเว็บนี้ / 🗂 ทุกไซต์ / 🏢 ระดับบริษัท) ·
+  แท็บ = `site.modules` จากเซิร์ฟเวอร์ (`MODULE_LINKS` + หน้าเว็บ `cms-edit`) กรองด้วย `Layout.hasMenuAccess` เรียง งานเข้า → รายงาน → ตั้งค่า → หน้าเว็บ
+- **เลือกเว็บเมื่อไม่มี `?siteId=`** (`CmsSiteContext.pick`): เว็บล่าสุดถ้าใช้งานของหน้านั้น ⇒ ไม่งั้นเว็บแรกที่ใช้ · `?siteId=` ชนะเสมอ
+- **ที่พัก** (`lodging.html` · `lodging-settings.html`): ตัวเลือกที่พักเดียว `CmsSiteContext.pickProperty` (?propertyId= > ที่พักของ ?siteId= > ของเว็บล่าสุด > แห่งแรก) ·
+  **?siteId= ที่ยังไม่มีที่พักผูก ⇒ บอกตรง ๆ + ลิงก์สร้าง (เดิม Front desk ตกไปที่พักแห่งแรกเงียบ ๆ)** · หัวพื้นที่ทำงานแสดงเว็บที่ที่พักผูก · ที่พักไม่ผูกเว็บ ⇒ หมายเหตุ ·
+  `#propSelector` ซ่อนเมื่อทุกที่พักผูกเว็บแล้ว
+- **lead** (`CmsModuleResolver` fact `HasLeadSource` · ตัวหาเดียว `CmsSiteService.LoadLeadSourceSiteIdsAsync`): บล็อกฟอร์มติดต่อบนหน้าที่ยังไม่ลบ · ฟอร์มส่งเข้าระบบที่เปิดอยู่ · หรือมี lead แล้ว
+  (เดิมทุกเว็บ) — เว็บที่ไม่มีทางรับคำขอไม่มีแท็บ/ปุ่ม "คำขอ / Lead" (หน้า `cms-leads.html?siteId=` ยังเปิดได้)
+- **cms-sites**: ภาพรวม = `CmsSiteContext.allLinks` (`?siteId=all` จริง — เดิมการจองเปิดเว็บแรก) + Front desk รายเว็บพร้อมชื่อ · การ์ด = เปิดพื้นที่ทำงาน / หน้าเว็บ / 👁 / ⋯ (เผยแพร่ · เติมเทมเพลต · ลบ) + ชิปงานค้าง ·
+  dropdown ประเภทธุรกิจสร้างจาก `Layout.ENUM_LABELS.siteIndustry` (ตารางป้ายเดียว)
+- ยังไม่ทำ (เฟส 2–3): `cms-edit.html` (ทีมอื่น) · รวมค่าตั้ง · ค่าเริ่มต้นผู้ให้บริการระดับเว็บ · หน้า "วันนี้" · เช็กลิสต์ · ที่พักโหมดทุกไซต์
+- **ฝ่ายค้านรอบ 215 (ไม่มี blocking · แก้แล้ว)**: (S1) `GET …/cms/sites` กรองด้วย `CmsSiteScope.ListableSiteIds` (เจ้าของ = ทุกเว็บ · คนอื่น = เว็บที่มีบทบาทใดก็ได้ ∪ เว็บที่ตัวเองสร้าง)
+  และตัวสลับเว็บแสดงเฉพาะเว็บที่ผู้ใช้มีแท็บ (+ เว็บปัจจุบัน) · ไม่มีแท็บ ⇒ บอก + คืนค่า (ไม่พาไปหน้าที่ถูกปฏิเสธ) ·
+  (S2) `?siteId=` ที่ไม่อยู่ในรายการเว็บ ⇒ `pickProperty` ตกไปลำดับถัดไป · `lodging-settings` ไม่เปิดกล่องสร้างที่พักให้เว็บที่ไม่มี · เว็บล่าสุดค้าง ⇒ ล้าง (`Layout.clearCmsLastSite`) ·
+  (S3) ทางรับ lead = `CmsModuleResolver.LeadBlockTypes` (ContactForm + Newsletter) · (S4) `Layout.loadMyPermissions` ประกาศ `layout:permissions` ⇒ หัวพื้นที่ทำงานวาดใหม่ ·
+  (N1) เว็บล่าสุดคีย์ `cmsLastSite:<companyId>:<userId>` · (N2) lead ระดับบริษัทนับเฉพาะเว็บที่ยังอยู่ · (N4) ไม่มี `data-nav-id="undefined"` · (N7) encode subdomain · (N11) ฟอร์มที่พักค้างแก้ ⇒ ถามก่อนสลับเว็บ ·
+  `required_call_site_check` +6 กติกา (`_R215_WHY`)
+- sim `tools/cms_workspace_nav_sim.js` · เทสต์ `CmsModuleResolverTests` (lead ทั้งสองทิศ · ชื่อหมวด · Newsletter) · `CmsSiteScopeTests` (รายการเว็บ 3 เคส) · Last verified `commit e717d3b5` (+ คอมมิตแก้ฝ่ายค้านตามหลัง)

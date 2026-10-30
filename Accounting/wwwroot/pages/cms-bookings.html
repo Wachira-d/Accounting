@@ -536,7 +536,7 @@
             <input type="number" step="0.01" min="0" id="bkPayAmount" class="form-input" style="width:120px" value="${(Number(b.depositAmount || 0) - Number(b.paidAmount || 0)).toFixed(2)}">
             <input type="date" id="bkPayDate" class="form-input" style="width:auto" value="${this._todayBkk()}">
             <input type="text" id="bkPayRef" class="form-input" style="width:150px" placeholder="อ้างอิง/เลขโอน">
-            <button class="btn btn-primary btn-sm" onclick="Page.recordPayment('${Layout.jsArg(b.id)}')">บันทึกรับเงิน</button>
+            <button class="btn btn-primary btn-sm" onclick="Page.recordPayment('${Layout.jsArg(b.id)}', this)">บันทึกรับเงิน</button>
           </div>
           <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (§78/1)</div>
         </div>`;
@@ -743,7 +743,11 @@
         } catch (e) { Layout.toast('ออกใบกำกับไม่สำเร็จ: ' + e.message, 'error'); }
       },
       // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ — ตัวตัดสิน/ผลอยู่ที่เซิร์ฟเวอร์ (RecordDepositPaymentAsync)
-      async recordPayment(id) {
+      // รอบ 217 (ข้อ 175): กดซ้ำระหว่างรอ = ไม่บันทึกรับเงินซ้ำ (ล็อกปุ่ม · js/submit-once.js)
+      recordPayment(id, btn) {
+        return window.SubmitOnce ? SubmitOnce.run(btn, () => this._recordPaymentNow(id), { busyText: 'กำลังบันทึก…' }) : this._recordPaymentNow(id);
+      },
+      async _recordPaymentNow(id) {
         const api = Layout.api(); if (!api) return;
         const amount = Number((document.getElementById('bkPayAmount') || {}).value || 0);
         const paidOn = (document.getElementById('bkPayDate') || {}).value || null;

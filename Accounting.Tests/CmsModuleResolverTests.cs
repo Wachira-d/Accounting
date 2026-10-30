@@ -19,7 +19,7 @@ public class CmsModuleResolverTests
     [Fact]
     public void เว็บที่พัก_ได้_lodging_และ_leads_แต่ไม่ได้_bookings()
     {
-        var mods = CmsModuleResolver.Resolve(None with { HasHotelSite = true, HasLodgingProperty = true, HasAnySite = true });
+        var mods = CmsModuleResolver.Resolve(None with { HasHotelSite = true, HasLodgingProperty = true, HasLeadSource = true });
         Assert.Contains(CmsModuleResolver.Lodging, mods);
         Assert.Contains(CmsModuleResolver.Leads, mods);
         Assert.DoesNotContain(CmsModuleResolver.Bookings, mods);
@@ -29,7 +29,7 @@ public class CmsModuleResolverTests
     [Fact]
     public void เว็บที่พักที่_property_ถูกลบไปแล้ว_ยังนับเป็น_lodging_ตามเจตนา()
     {
-        var mods = CmsModuleResolver.Resolve(None with { HasHotelSite = true, HasAnySite = true });
+        var mods = CmsModuleResolver.Resolve(None with { HasHotelSite = true, HasLeadSource = true });
         Assert.Contains(CmsModuleResolver.Lodging, mods);
     }
 
@@ -43,7 +43,7 @@ public class CmsModuleResolverTests
     [Fact]
     public void สปาที่มีบริการจองคิว_ได้_bookings_ไม่ได้_lodging()
     {
-        var mods = CmsModuleResolver.Resolve(None with { HasBookingServices = true, HasAnySite = true });
+        var mods = CmsModuleResolver.Resolve(None with { HasBookingServices = true, HasLeadSource = true });
         Assert.Contains(CmsModuleResolver.Bookings, mods);
         Assert.DoesNotContain(CmsModuleResolver.Lodging, mods);
     }
@@ -57,7 +57,7 @@ public class CmsModuleResolverTests
     public void ชนิดเว็บที่ขายของ_เปิด_orders_ตั้งแต่ยังไม่มีออเดอร์(SiteType t, bool expected)
     {
         Assert.Equal(expected, CmsModuleResolver.IsCommerceSiteType(t));
-        var mods = CmsModuleResolver.Resolve(None with { HasCommerceSite = CmsModuleResolver.IsCommerceSiteType(t), HasAnySite = true });
+        var mods = CmsModuleResolver.Resolve(None with { HasCommerceSite = CmsModuleResolver.IsCommerceSiteType(t), HasLeadSource = true });
         Assert.Equal(expected, mods.Contains(CmsModuleResolver.Orders));
     }
 
@@ -66,5 +66,60 @@ public class CmsModuleResolverTests
     {
         var mods = CmsModuleResolver.Resolve(new CmsModuleFacts(true, true, true, true, true, true, true));
         Assert.Equal(new[] { "orders", "bookings", "lodging", "leads" }, mods);
+    }
+
+    // ── รอบ 215: lead เฉพาะเว็บที่รับคำขอได้จริง (เดิมทุกเว็บ) ──
+
+    [Fact]
+    public void เว็บที่ไม่มีทางรับคำขอ_ไม่ได้_leads()
+    {
+        // เว็บสปาที่ไม่มีฟอร์มติดต่อ/ฟอร์มส่งเข้าระบบ/lead เก่า ⇒ ไม่มีแท็บ "คำขอ / Lead" (เดิม HasAnySite ⇒ ได้ทุกเว็บ)
+        var mods = CmsModuleResolver.Resolve(None with { HasBookingServices = true });
+        Assert.DoesNotContain(CmsModuleResolver.Leads, mods);
+    }
+
+    [Fact]
+    public void เว็บที่มีทางรับคำขอ_ยังได้_leads_ทิศตรงข้าม()
+    {
+        var mods = CmsModuleResolver.Resolve(None with { HasBookingServices = true, HasLeadSource = true });
+        Assert.Contains(CmsModuleResolver.Leads, mods);
+    }
+
+    // ── รอบ 215 คำตัดสินข้อ 176: ชื่อหมวดเมนูซ้ายตามโมดูลของบริษัท ──
+
+    [Theory]
+    [InlineData(new[] { "bookings" }, CmsModuleResolver.NavLabelBookings)]
+    [InlineData(new[] { "bookings", "orders", "lodging", "leads" }, CmsModuleResolver.NavLabelBookings)]
+    [InlineData(new[] { "orders", "lodging" }, CmsModuleResolver.NavLabelBookings)]
+    [InlineData(new[] { "orders", "leads" }, CmsModuleResolver.NavLabelShop)]
+    [InlineData(new[] { "lodging", "leads" }, CmsModuleResolver.NavLabelLodging)]
+    [InlineData(new[] { "leads" }, CmsModuleResolver.NavLabelPlain)]
+    [InlineData(new string[0], CmsModuleResolver.NavLabelPlain)]
+    public void ชื่อหมวดเมนูตามโมดูล(string[] modules, string expected)
+    {
+        Assert.Equal(expected, CmsModuleResolver.NavSectionLabel(modules));
+    }
+
+    [Fact]
+    public void ชื่อหมวดเมนู_null_คือไม่มีโมดูล()
+    {
+        Assert.Equal(CmsModuleResolver.NavLabelPlain, CmsModuleResolver.NavSectionLabel(null));
+    }
+
+    // ── ฝ่ายค้านรอบ 215 S3: บล็อกสมัครรับข่าว (Newsletter) ก็เป็นทางรับ lead ──
+
+    [Fact]
+    public void เว็บที่มีแต่บล็อกสมัครรับข่าว_นับเป็นทางรับคำขอ()
+    {
+        // storefront case 17 (Newsletter) ส่ง lead ชนิด Subscription — ชุดเดียวที่ query ของ LoadLeadSourceSiteIdsAsync ใช้
+        Assert.Contains(CmsBlockType.Newsletter, CmsModuleResolver.LeadBlockTypes);
+        Assert.Contains(CmsBlockType.ContactForm, CmsModuleResolver.LeadBlockTypes);
+    }
+
+    [Fact]
+    public void บล็อกที่ไม่ส่งคำขอ_ไม่นับเป็นทางรับคำขอ_ทิศตรงข้าม()
+    {
+        Assert.DoesNotContain(CmsBlockType.Hero, CmsModuleResolver.LeadBlockTypes);
+        Assert.Equal(2, CmsModuleResolver.LeadBlockTypes.Length);
     }
 }
