@@ -73,7 +73,8 @@ public partial class CmsCommerceService
             var customer = await WithOrderLinkAsync(companyId, siteId, f,
                 CmsNotificationText.CustomerOrderConfirmation(f.SiteName, f.OrderNumber, DisplayNameOf(f), f.TotalAmount,
                     due.DueNow, fulfil, ReadyDateOf(f), shopMessage));
-            var custErr = await _shopNotifier.NotifyCustomerAsync(companyId, CustomerContactOf(f), customer);
+            var custErr = await _shopNotifier.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.OrderConfirmation,
+                CustomerNotifyKeys.Order(orderId, CustomerNotifyEvents.OrderConfirmation), CustomerContactOf(f), customer);
             if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
             await StampOrderNotesAsync(companyId, siteId, orderId, failures);
@@ -116,9 +117,10 @@ public partial class CmsCommerceService
             // ผู้ขนส่ง: ชื่อวิธีจัดส่งที่ลูกค้าเลือกตอนสั่ง (อัตราค่าส่ง) — ฐานรอบนี้ยังไม่มีช่องผู้ขนส่งแยก (ทีม P1 · B4)
             var carrier = f.FulfillmentMethod == FulfillmentMethod.Pickup ? null : f.ShippingMethod;
             var msg = CmsNotificationText.CustomerOrderStatus(status, f.SiteName, f.OrderNumber, DisplayNameOf(f), carrier, f.TrackingNumber, due.Balance);
-            if (msg == null) return;
+            var eventKey = CustomerNotifyEvents.OrderStatusKey(status);
+            if (msg == null || eventKey == null) return;
             msg = await WithOrderLinkAsync(companyId, siteId, f, msg);
-            var err = await _shopNotifier.NotifyCustomerAsync(companyId, CustomerContactOf(f), msg);
+            var err = await _shopNotifier.NotifyCustomerAsync(companyId, siteId, eventKey, CustomerNotifyKeys.Order(orderId, eventKey), CustomerContactOf(f), msg);
             if (err != null)
                 await StampOrderNotesAsync(companyId, siteId, orderId, new[] { CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow) });
         }

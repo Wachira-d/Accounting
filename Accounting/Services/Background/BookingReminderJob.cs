@@ -105,12 +105,24 @@ public class BookingReminderJob : BackgroundService
                         : db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == b.CompanyId).Select(r => r.Name).FirstOrDefault(),
                 })
                 .ToListAsync(ct);
+            // รอบ 212: ค่าตั้งช่องทางต่อประเภท (ตัวตัดสินเดียว CustomerNotifyPolicy) — ปิดทั้งสองช่องสำหรับ "เตือนก่อนนัด" ⇒ ข้ามก่อนวน
+            // (ไม่ลองทุก 30 นาทีแล้วถูกระงับซ้ำ) · เปิด/ปิด+ชั่วโมงยังเป็นของ SiteBookingSettings.ReminderEnabled (เจ้าของเรื่องเดิม)
+            var companyIds = rows.Select(r => r.Booking.CompanyId).Distinct().ToList();
+            var rulesByCompany = (await db.CustomerNotifyRules.AsNoTracking()
+                    .Where(r => companyIds.Contains(r.CompanyId))
+                    .Select(r => new { r.CompanyId, Row = new Accounting.Helpers.CustomerNotifyRuleRow(r.SiteId, r.EventKey, r.LineEnabled, r.EmailEnabled) })
+                    .ToListAsync(ct))
+                .GroupBy(r => r.CompanyId)
+                .ToDictionary(g => g.Key, g => (IReadOnlyList<Accounting.Helpers.CustomerNotifyRuleRow>)g.Select(r => r.Row).ToList());
             foreach (var x in rows)
             {
                 if (ct.IsCancellationRequested) break;
                 var b = x.Booking;
                 var cfg = bySite.GetValueOrDefault(b.SiteId);
                 if (cfg != null && !cfg.ReminderEnabled) continue;
+                if (!Accounting.Helpers.CustomerNotifyPolicy.Resolve(
+                        rulesByCompany.GetValueOrDefault(b.CompanyId) ?? Array.Empty<Accounting.Helpers.CustomerNotifyRuleRow>(),
+                        b.SiteId, Accounting.Helpers.CustomerNotifyEvents.BookingReminder).AnyOn) continue;
                 if (!BookingReminderPlan.NeedsReminder(b.Status)) continue;
                 var date = DateOnly.FromDateTime(b.BookingDate);
                 var stage = BookingReminderPlan.DueStage(BookingReminderPlan.ParseHours(cfg?.ReminderHoursBefore),
@@ -124,7 +136,10 @@ public class BookingReminderJob : BackgroundService
                         Accounting.Helpers.CustomerLineTarget.ForBooking(b.Id, b.CustomerId));
                     var text = BookingReminderPlan.Render(cfg?.ReminderTemplate, x.CustomerName ?? b.GuestName ?? "", x.ServiceName, x.SiteName,
                         date, b.StartTime, x.ResourceName, b.BookingNumber);
-                    var r = await notifier.SendAsync(b.CompanyId, contact, BookingReminderPlan.ReminderSubject(stage.Value, x.ServiceName, b.BookingNumber), text, ct);
+                    // รอบ 212: คีย์ต่อขั้นเตือน ⇒ ส่งซ้ำไม่ได้แม้ job สองตัวชนกัน · ระงับ (โควตาเต็ม) ⇒ ไม่ประทับ ReminderSentAt — เติมโควตาแล้วรอบถัดไปส่งต่อได้
+                    var r = await notifier.SendAsync(new Accounting.Helpers.CustomerNotifyRequest(b.CompanyId, b.SiteId,
+                        Accounting.Helpers.CustomerNotifyEvents.BookingReminder, Accounting.Helpers.CustomerNotifyKeys.Reminder(b.Id, stage.Value), contact,
+                        BookingReminderPlan.ReminderSubject(stage.Value, x.ServiceName, b.BookingNumber), text), ct);
                     b.NotifyAttemptedAt = nowUtc;
                     if (r.Sent)
                     {

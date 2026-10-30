@@ -1091,6 +1091,11 @@
         </p>
         <div id="staffSummaryBody"><div class="text-gray-400" style="padding:16px">กำลังโหลด…</div></div>
       </div>
+      <!-- รอบ 212 แพ็ก A: การแจ้งเตือน "ลูกค้า" (คนละเรื่องกับตารางพนักงานด้านบน) — เซิร์ฟเวอร์ส่งแคตตาล็อก/ค่าที่ resolve แล้ว (/js/customer-notify.js) -->
+      <h4 style="font-size:15px;font-weight:600;margin:28px 0 6px;padding-top:16px;border-top:1px solid #e2e8f0">💬 การแจ้งเตือนลูกค้า (การจอง · คำสั่งซื้อ · บัตร · ที่พัก · ฟอร์ม)</h4>
+      <p class="text-gray-400" style="margin:0 0 10px;font-size:13px">เลือกช่องทางต่อประเภทข้อความ — ระดับบริษัท (ตั้งต่อเว็บได้ที่ ตั้งค่าร้านค้า ของแต่ละเว็บ)</p>
+      <div id="notifyQuotaCard" style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:12px"></div>
+      <div id="customerNotifyPanel"></div>
     </div>
 
     <!-- ===== Approval Tab ===== -->
@@ -1231,6 +1236,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/staff-daily-summary.js"></script>
+  <script src="/js/customer-notify.js"></script>
   <script>
     const Page = {
       // ลบบริษัท (soft-delete) — Owner + พิมพ์ชื่อยืนยัน; server ตรวจซ้ำทุกชั้น
@@ -1394,7 +1400,15 @@
         if (tab === 'security') this.loadExternalLogins();
         if (tab === 'license') this.loadLicenseTab();
         if (tab === 'line') this.loadLineConfig();
-        if (tab === 'notify') { this.loadNotifyMatrix(); if (window.StaffDailySummary) StaffDailySummary.load(); }
+        if (tab === 'notify') {
+          this.loadNotifyMatrix();
+          const cid = Layout.getCompanyId();
+          if (cid && window.CustomerNotify) {
+            CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: cid });
+            CustomerNotify.mountRules(document.getElementById('customerNotifyPanel'), { companyId: cid });
+          }
+          if (window.StaffDailySummary) StaffDailySummary.load();   // รอบ 212 C
+        }
       },
 
       // ===== Signature Settings =====

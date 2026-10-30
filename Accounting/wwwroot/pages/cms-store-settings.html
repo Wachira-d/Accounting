@@ -44,6 +44,7 @@
       <button class="btn btn-secondary btn-sm ss-tab" data-tab="form" onclick="Page.tab('form')">ฟอร์มสั่งซื้อ</button>
       <button class="btn btn-secondary btn-sm ss-tab" data-tab="shipping" onclick="Page.tab('shipping')">โซน/อัตราค่าส่ง</button>
       <button class="btn btn-secondary btn-sm ss-tab" data-tab="coupons" onclick="Page.tab('coupons')">คูปอง</button>
+      <button class="btn btn-secondary btn-sm ss-tab" data-tab="notify" onclick="Page.tab('notify')">แจ้งเตือนลูกค้า</button>
     </div>
 
     <!-- ── สวิตช์ร้าน + เลขคำสั่งซื้อ ── -->
@@ -147,6 +148,15 @@
       </div>
     </section>
 
+    <!-- ── รอบ 212 แพ็ก A: ช่องทางแจ้งลูกค้าต่อประเภท (override ของเว็บนี้ · "ตามค่าที่สืบทอด" = ค่าของบริษัท) — บันทึกได้ทันที (แยกจากปุ่มบันทึกค่าตั้ง) ── -->
+    <section data-pane="notify" style="display:none">
+      <div class="ss-card">
+        <h3>💬 การแจ้งเตือนลูกค้าของเว็บนี้</h3>
+        <div class="ss-hint">ตั้งเฉพาะเว็บนี้ทับค่าของบริษัท (ตั้งค่า → การแจ้งเตือน) · ตาราง/ป้ายมาจากเซิร์ฟเวอร์</div>
+        <div id="customerNotifyPanel"></div>
+      </div>
+    </section>
+
     <div id="saveBar" style="position:sticky;bottom:0;background:#fff;border-top:1px solid var(--gray-200);padding:12px 0;display:flex;gap:10px;align-items:center">
       <button class="btn btn-primary" id="btnSave" onclick="Page.save()">💾 บันทึกค่าตั้งร้าน</button>
       <span id="saveNote" style="font-size:13px;color:var(--gray-500)">สวิตช์ · วิธีชำระ · ฟอร์ม · เลขคำสั่งซื้อ บันทึกพร้อมกัน</span>
@@ -158,6 +168,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
+  <script src="/js/customer-notify.js"></script>
   <script>
     // รอบ 209 P2 — หน้าแสดง/แก้ค่าอย่างเดียว: กติกา (ต้องมีวิธีรับ/ชำระ ≥ 1 · รูปคำนำหน้า · ช่องฟอร์ม) ตัดสินที่เซิร์ฟเวอร์
     // (Helpers/CmsFeatureFlags · Helpers/OrderFormFields) แล้วข้อความผิดกลับมาแสดงตรง ๆ — ไม่มีสำเนากติกาในหน้านี้
@@ -186,7 +197,8 @@
       tab(name) {
         document.querySelectorAll('[data-pane]').forEach(p => { p.style.display = p.dataset.pane === name ? '' : 'none'; });
         document.querySelectorAll('.ss-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-        document.getElementById('saveBar').style.display = (name === 'shipping' || name === 'coupons') ? 'none' : 'flex';
+        document.getElementById('saveBar').style.display = (name === 'shipping' || name === 'coupons' || name === 'notify') ? 'none' : 'flex';
+        if (name === 'notify') this.loadCustomerNotify();
       },
 
       async onSiteChange() {
@@ -197,6 +209,14 @@
         document.getElementById('ordersLink').href = '/pages/cms-orders.html?siteId=' + encodeURIComponent(v || '');
         if (!this.siteId) return;
         await Promise.all([this.loadConfig(), this.loadZones(), this.loadCoupons()]);
+        if (document.querySelector('[data-pane="notify"]')?.style.display !== 'none') this.loadCustomerNotify();
+      },
+
+      // รอบ 212 แพ็ก A: ตารางช่องทางแจ้งลูกค้าโหมดต่อเว็บ (/js/customer-notify.js)
+      loadCustomerNotify() {
+        const cid = Layout.getCompanyId();
+        if (!cid || !this.siteId || !window.CustomerNotify) return;
+        CustomerNotify.mountRules(document.getElementById('customerNotifyPanel'), { companyId: cid, siteId: this.siteId });
       },
 
       // ───────── ค่าตั้งร้าน ─────────

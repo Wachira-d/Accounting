@@ -337,6 +337,10 @@ public class CmsRound211LineNotifyTests
 
     private sealed class Calls { public List<string> Order { get; } = new(); }
 
+    /// <summary>รอบ 212: คำขอส่งผ่าน CustomerNotifyRequest (ไม่มีคีย์กันซ้ำ · ไม่มีกติกา = พฤติกรรมเดิม)</summary>
+    private static CustomerNotifyRequest Req(BookingContact c)
+        => new(Guid.NewGuid(), null, CustomerNotifyEvents.BookingConfirmed, null, c, "s", "t");
+
     private static BookingNotifier Notifier(Calls calls, string? optedLine, bool emailOk, bool lineOk)
     {
         var email = F4Proxy<IEmailService>.Create((m, a) =>
@@ -359,7 +363,7 @@ public class CmsRound211LineNotifyTests
     {
         var calls = new Calls();
         var n = Notifier(calls, optedLine: null, emailOk: true, lineOk: true);
-        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null) { LineTarget = CustomerLineTarget.ForBooking(Guid.NewGuid(), null) }, "s", "t");
+        var r = await n.SendAsync(Req(new BookingContact("a@b.co", null) { LineTarget = CustomerLineTarget.ForBooking(Guid.NewGuid(), null) }));
         Assert.True(r.Sent);
         Assert.Equal("email", r.Channel);
         Assert.Equal(new[] { "email:a@b.co" }, calls.Order);
@@ -370,13 +374,13 @@ public class CmsRound211LineNotifyTests
     {
         var calls = new Calls();
         var ok = await Notifier(calls, "Ulinked", emailOk: true, lineOk: true)
-            .SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null) { LineTarget = CustomerLineTarget.ForOrder(Guid.NewGuid(), null) }, "s", "t");
+            .SendAsync(Req(new BookingContact("a@b.co", null) { LineTarget = CustomerLineTarget.ForOrder(Guid.NewGuid(), null) }));
         Assert.Equal("line", ok.Channel);
         Assert.Equal(new[] { "line:Ulinked" }, calls.Order);
 
         var calls2 = new Calls();
         var fb = await Notifier(calls2, "Ulinked", emailOk: true, lineOk: false)
-            .SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null) { LineTarget = CustomerLineTarget.ForOrder(Guid.NewGuid(), null) }, "s", "t");
+            .SendAsync(Req(new BookingContact("a@b.co", null) { LineTarget = CustomerLineTarget.ForOrder(Guid.NewGuid(), null) }));
         Assert.True(fb.Sent);
         Assert.Equal("email", fb.Channel);
         Assert.Equal(new[] { "line:Ulinked", "email:a@b.co" }, calls2.Order);
@@ -387,11 +391,11 @@ public class CmsRound211LineNotifyTests
     {
         var calls = new Calls();
         var r = await Notifier(calls, "Ulinked", emailOk: false, lineOk: false)
-            .SendAsync(Guid.NewGuid(), new BookingContact(null, null) { LineTarget = CustomerLineTarget.ForBooking(Guid.NewGuid(), null) }, "s", "t");
+            .SendAsync(Req(new BookingContact(null, null) { LineTarget = CustomerLineTarget.ForBooking(Guid.NewGuid(), null) }));
         Assert.False(r.Sent);
         Assert.Contains("LINE", r.Error);
         var none = await Notifier(new Calls(), null, true, true)
-            .SendAsync(Guid.NewGuid(), new BookingContact(null, null) { LineTarget = CustomerLineTarget.ForBooking(Guid.NewGuid(), null) }, "s", "t");
+            .SendAsync(Req(new BookingContact(null, null) { LineTarget = CustomerLineTarget.ForBooking(Guid.NewGuid(), null) }));
         Assert.False(none.Sent);
         Assert.Contains("ไม่มีช่องทาง", none.Error);
     }
@@ -428,7 +432,7 @@ public class CmsRound211LineNotifyTests
     public async Task Tenant_email_ok_uses_tenant_only()
     {
         var (n, c) = Tenant(configured: true, tenantOk: true, systemOk: true);
-        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null), "s", "t");
+        var r = await n.SendAsync(Req(new BookingContact("a@b.co", null)));
         Assert.True(r.Sent);
         Assert.Null(r.Warning);
         Assert.Equal(new[] { "tenant:shop@shop.test" }, c.Order);
@@ -438,7 +442,7 @@ public class CmsRound211LineNotifyTests
     public async Task Tenant_email_failure_falls_back_to_system_and_warns()
     {
         var (n, c) = Tenant(configured: true, tenantOk: false, systemOk: true);
-        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null), "s", "t");
+        var r = await n.SendAsync(Req(new BookingContact("a@b.co", null)));
         Assert.True(r.Sent);                                   // ลูกค้าได้รับ (ไม่ถดถอย)
         Assert.Equal(new[] { "tenant:shop@shop.test", "system" }, c.Order);
         Assert.NotNull(r.Warning);
@@ -450,7 +454,7 @@ public class CmsRound211LineNotifyTests
     public async Task Tenant_and_system_both_fail_reports_both()
     {
         var (n, _) = Tenant(configured: true, tenantOk: false, systemOk: false);
-        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null), "s", "t");
+        var r = await n.SendAsync(Req(new BookingContact("a@b.co", null)));
         Assert.False(r.Sent);
         Assert.Contains("535 auth", r.Error);
         Assert.Contains("SMTP", r.Error);
@@ -460,7 +464,7 @@ public class CmsRound211LineNotifyTests
     public async Task Tenant_not_configured_uses_system_like_before()
     {
         var (n, c) = Tenant(configured: false, tenantOk: true, systemOk: true);
-        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null), "s", "t");
+        var r = await n.SendAsync(Req(new BookingContact("a@b.co", null)));
         Assert.True(r.Sent);
         Assert.Null(r.Warning);
         Assert.Equal(new[] { "system" }, c.Order);

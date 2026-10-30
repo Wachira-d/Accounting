@@ -56,6 +56,14 @@ public static class AddOnCodes
     /// ลูกค้าจ่ายเงินจริง (ซื้อปลายเดือนแล้วหมดอายุใน 3 วันคือการโกงกลาย ๆ)</summary>
     public const int TopUpValidDays = 60;
 
+    /// <summary>รอบ 212 (คำตัดสินข้อ 171): แพ็กข้อความแจ้งเตือนผ่านช่องกลาง (LINE OA/อีเมลของ NextAcc) — ราคาต่อแพ็ก ·
+    /// คิดเงินผ่านเส้นเดิม UsageEvent → UsageInvoicingJob → PlatformBillingDocumentIssuer (ไม่มีเส้นเอกสาร/ภาษีใหม่) · อายุ = <see cref="TopUpValidDays"/></summary>
+    public const string NotifyTopUp = "notify.topup";
+
+    /// <summary>1 แพ็ก <see cref="NotifyTopUp"/> = กี่ข้อความ — <b>ต้องตรงกับ `UnitLabel` ที่ seed ไว้</b> ("แพ็ก 500 ข้อความ" ·
+    /// <c>DatabaseMigrationHelper.CmsRound212NotifyStatements</c>) แก้ต้องแก้ทั้งสองที่พร้อมกัน</summary>
+    public const int MessagesPerNotifyTopUpPack = 500;
+
     /// <summary>add-on ทั้งหมดที่เป็น "สวิตช์" ให้ลูกค้าเปิด/ปิดเอง (ใช้ในหน้า addons
     /// และตอน seed) — เรียงตามลำดับที่อยากให้เห็นบนหน้าจอ</summary>
     public static readonly IReadOnlyList<string> Switchable = new[]
@@ -68,7 +76,7 @@ public static class AddOnCodes
     /// (ถ้าโผล่ ลูกค้าจะ "ปิด" แล้วคิดว่าไม่ต้องจ่ายค่าเอกสารเกินโควตา)</summary>
     public static readonly IReadOnlyList<string> SystemMeters = new[]
     {
-        DocumentsOverage, LodgingStay, LodgingEmailOverage, LodgingSms, DocumentsTopUp,
+        DocumentsOverage, LodgingStay, LodgingEmailOverage, LodgingSms, DocumentsTopUp, NotifyTopUp,
     };
 
     public static bool IsSystemMeter(string? code)

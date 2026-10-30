@@ -74,7 +74,8 @@ public partial class CmsBookingService
             var text = BookingReminderPlan.WaitlistPromotedMessage(x.CustomerName ?? b.GuestName ?? "", x.Name, siteName,
                 DateOnly.FromDateTime(b.BookingDate), b.StartTime, x.ResourceName, b.BookingNumber, b.WaitlistHoldUntil,
                 autoConfirmed: b.Status == BookingStatus.Confirmed);
-            var result = await _notifier.SendAsync(companyId, contact, BookingReminderPlan.WaitlistPromotedSubject(x.Name, b.BookingNumber), text, ct);
+            var result = await _notifier.SendAsync(new CustomerNotifyRequest(companyId, siteId, CustomerNotifyEvents.BookingWaitlistPromoted,
+                CustomerNotifyKeys.Waitlist(b.Id), contact, BookingReminderPlan.WaitlistPromotedSubject(x.Name, b.BookingNumber), text), ct);
             b.NotifyAttemptedAt = DateTime.UtcNow;
             if (result.Sent)
             {

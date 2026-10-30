@@ -413,6 +413,15 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   **ไฟล์แนบเกินเพดาน = บันทึกและเตือน** (`storageWarning` · `Helpers/AttachmentStorageNotice` Near ≥90%/Over พร้อม MB · ไม่รู้เพดาน = ไม่เตือน) · **CMS ยังบล็อก** ·
   ไฟล์ที่ soft-delete แต่เก็บไฟล์จริง (`AttachmentRetention`) ไม่ถูกนับ (คำถามเจ้าของ)
 
+- **ข้อความแจ้งเตือนผ่านช่องกลาง (รอบ 212 แพ็ก A · คำตัดสินข้อ 171)** 🔨 *(ยังไม่ได้คอมไพล์)* — นับ**ต่อบริษัท** (ไม่ pool ข้ามกลุ่มบัญชี) ต่องวดเดือนตามเวลาไทย
+  (`NotifyUsageCounters` PK บริษัท+งวด · ไม่มีงาน reset) · นับเฉพาะ push ผ่าน LINE OA ของ NextAcc + อีเมลผ่าน SMTP ของระบบ (`Helpers/NotifyQuotaPolicy.IsMetered`) —
+  OA/SMTP ของร้านเองไม่นับ · เพดาน resolve ที่ `NotifyQuotaService.LoadLimitAsync` ตัวเดียว: `Subscription.MaxSharedMessagesPerMonth` (เฉพาะบริษัท · null = ตามแพ็กเกจ · -1 = ไม่จำกัด)
+  ⇒ `PlanTemplate.MaxSharedMessagesPerMonth` (ทดลองใช้ `TrialMaxSharedMessagesPerMonth` · บริษัทใต้กลุ่มบัญชีใช้แม่แบบของกลุ่ม) ⇒ ไม่พบแม่แบบ = ไม่จำกัด ·
+  **อ่านจากแม่แบบตอนนับ ไม่คัดลอกลง Subscription** (ต่างจาก `MaxDocumentsPerMonth` — แก้ที่ /admin/plans.html มีผลทันทีทุกบริษัท) ·
+  ค่าตั้งต้นจาก migration `CmsRound212NotifyStatements` (เติมครั้งเดียวตอนเพิ่มคอลัมน์): ทดลอง 100 · Basic 300 · Pro 1,000 · Enterprise 5,000 · ทดลองใช้ของทุกแม่แบบ 100 ·
+  เต็ม ⇒ โบนัส `Subscription.NotifyBonusQuota`/`NotifyBonusExpiresAt` (แพ็ก `notify.topup`) ⇒ หมด = ไม่ส่งทางช่องกลาง (ลองช่องของร้านก่อน) · เตือนเจ้าของ 80%/100% ครั้งเดียวต่องวด ·
+  **ไม่บล็อกงานธุรกิจ/เอกสาร** · สถานะ `GET metering/notify-quota` (เซิร์ฟเวอร์คำนวณ · หน้า ตั้งค่า/การใช้งาน/แพ็กเกจ/ส่วนเสริม)
+
 ### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
 
 เพดานของ **เว็บ** อยู่บน `Site` เอง (`MaxPages` · `MaxProducts` · `MaxStorageBytes`)
@@ -570,6 +579,11 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   วันที่คาดว่าจะเต็ม / ยอดส่วนเกินเดือนนี้ · **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว**
   (`Layout.showQuotaBanner()` ใช้ในหน้าเอกสาร · ที่พัก · POS)
 - `POST …/quota/topup` — ซื้อโควตาเพิ่ม 100 ฉบับ/แพ็ก (อายุ 60 วัน) ผ่าน `documents.topup`
+- `GET/POST …/notify-quota[/topup]` (รอบ 212 แพ็ก A) — โควตาข้อความผ่านช่องกลาง + ซื้อแพ็ก `notify.topup` (500 ข้อความ/แพ็ก · อายุ 60 วัน ·
+  `AddOnCodes.MessagesPerNotifyTopUpPack` ต้องตรง `UnitLabel` ที่ seed) · ด่าน `RequireBillingAsync` เดิม · `NotifyQuotaService.PurchaseTopUpAsync` ลอก `QuotaService.PurchaseTopUpAsync`
+  (advisory xact lock ต่อบริษัท `AdvisoryLockKey.QuotaGrant` · UsageEvent ก่อนให้ของ · audit chain) · `notify.topup` อยู่ใน `AddOnCodes.SystemMeters` (ไม่ใช่สวิตช์ลูกค้า) ·
+  ราคาตั้งต้นเสนอ 99 บาท/แพ็ก (`ApiPricingPlan` seed · แก้ที่ /admin/addons.html) · **ใบแจ้งหนี้/ใบกำกับไหลเส้นเดิม** `UsageInvoicingJob` → `PlatformBillingDocumentIssuer`
+  (ไม่มีเลขเอกสาร/เส้นภาษีใหม่ · Prepaid ตัดเครดิตตอนบันทึก)
 - `POST …/quota/rewards/{id}/claim` — ภารกิจแลกโควตา (§12 ของ LODGING_LICENSING_PLAN),
   สวิตช์ 3 ชั้น: ไม่มี option ที่ `IsActive` · `PlanTemplate.AllowQuotaReward` ·
   `Subscription.QuotaRewardBlocked`

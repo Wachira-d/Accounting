@@ -666,7 +666,7 @@ builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
 builder.Services.AddScoped<IPosService, PosService>();
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (push ผ่าน OA กลาง) · มิเตอร์ช่องกลาง = no-op จนกว่าโควตาแพ็ก A เข้า (ผู้ประสานงานต่อสายตอน merge)
-builder.Services.AddScoped<ISharedMessageMeter, NoOpSharedMessageMeter>();
+builder.Services.AddScoped<ISharedMessageMeter, NotifyQuotaSharedMessageMeter>();   // รอบ 212: สรุปรายวันนับโควตาช่องกลางของแพ็ก A (คำตัดสิน §10)
 builder.Services.AddScoped<IStaffDailySummaryService, StaffDailySummaryService>();
 
 // External Integration (TakeTime, PMS, E-Commerce, Bank Feeds)
@@ -694,6 +694,7 @@ builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.
 // resolver สิทธิ์ตัวเดียว (แพ็กเกจ + add-on) — ห้ามมีตัวที่สอง
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IQuotaService, QuotaService>();
+builder.Services.AddScoped<INotifyQuotaService, NotifyQuotaService>();   // รอบ 212 แพ็ก A — โควตาข้อความช่องกลาง + กันส่งซ้ำ (BookingNotifier ตัวเดียวเรียก) · ซื้อแพ็ก notify.topup
 builder.Services.AddScoped<CmsLeadService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();

@@ -61,7 +61,8 @@ public class AbandonedCartService : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-        var emailService = scope.ServiceProvider.GetService<IEmailService>();
+        // รอบ 212 แพ็ก A: อีเมลกู้ตะกร้าผ่านช่องกลางเดียว (ค่าตั้ง cart.abandoned · ผู้ส่งของร้าน · โควตา · กันซ้ำ) — ไม่เรียก IEmailService ตรง
+        var notifier = scope.ServiceProvider.GetService<IBookingNotifier>();
 
         // รอบ 209 P6 (คำตัดสินข้อ 168 ช): ชั่วโมงที่ถือว่าค้างอ่านจากค่าตั้งของแต่ละเว็บ (AbandonedCartHours · ไม่ตั้ง = 3 เดิม) —
         // คัดหยาบด้วยเกณฑ์ต่ำสุด (1 ชม.) แล้วตัดสินรายตะกร้าด้วยค่าตั้งของเว็บนั้น
@@ -108,7 +109,7 @@ public class AbandonedCartService : BackgroundService
                 continue;
             }
 
-            if (emailService != null)
+            if (notifier != null)
             {
                 try
                 {
@@ -117,12 +118,20 @@ public class AbandonedCartService : BackgroundService
                         ? $"You left items in your cart at {cart.Site.Name}"
                         : $"คุณมีสินค้าค้างในตะกร้าที่ {cart.Site.Name}";
                     var body = BuildRecoveryEmail(cart, lang);
-                    await emailService.SendAsync(cart.Customer!.Email, subject, body);
-                    cart.AbandonedEmailSentAt = DateTime.UtcNow;
-                    // บันทึกทันทีทีละใบ — ธง "ส่งแล้ว" ต้อง durable ก่อนส่งใบถัดไป
-                    // ไม่งั้น crash/ct ถูกยกเลิกกลางลูป = ส่งซ้ำทั้งชุดในรอบหน้า
-                    await db.SaveChangesAsync(ct);
-                    _logger.LogInformation("Abandoned cart recovery email sent to {Email}", cart.Customer.Email);
+                    var res = await notifier.SendAsync(new Accounting.Helpers.CustomerNotifyRequest(cart.CompanyId, cart.SiteId,
+                        Accounting.Helpers.CustomerNotifyEvents.CartAbandoned, Accounting.Helpers.CustomerNotifyKeys.Cart(cart.Id),
+                        new Accounting.Helpers.BookingContact(cart.Customer!.Email, null), subject, subject)
+                        { Html = body, TargetKind = "cart", TargetId = cart.Id }, ct);
+                    if (res.Sent)
+                    {
+                        cart.AbandonedEmailSentAt = DateTime.UtcNow;
+                        // บันทึกทันทีทีละใบ — ธง "ส่งแล้ว" ต้อง durable ก่อนส่งใบถัดไป
+                        // ไม่งั้น crash/ct ถูกยกเลิกกลางลูป = ส่งซ้ำทั้งชุดในรอบหน้า (คีย์ข้อความกันซ้ำอีกชั้น)
+                        await db.SaveChangesAsync(ct);
+                        _logger.LogInformation("ส่งอีเมลกู้ตะกร้า {CartId} แล้ว", cart.Id);
+                    }
+                    else
+                        _logger.LogInformation("ไม่ได้ส่งอีเมลกู้ตะกร้า {CartId}: {Reason}", cart.Id, res.Error);
                 }
                 catch (Exception ex)
                 {

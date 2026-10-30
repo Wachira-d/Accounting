@@ -19,8 +19,17 @@ public sealed record BookingSendResult(bool Sent, string? Channel, string? Error
     /// <summary>รอบ 211 ฝ่ายค้าน: ส่งถึงแล้วแต่ผ่านทางถอย (ผู้ส่งอีเมลของร้านล้ม ⇒ อีเมลของระบบ) — ผู้เรียกต้องประทับบนรายการ (ไม่เงียบ) · null = ปกติ</summary>
     public string? Warning { get; init; }
 
+    /// <summary>รอบ 212: ไม่ส่ง<b>โดยตั้งใจ</b> (ค่าตั้งปิดประเภทนี้ · โควตาช่องกลางเต็มและไม่มีช่องของร้าน · กำลังถูกส่งโดยคำขออื่น) — ต่างจากส่งล้ม ·
+    /// <see cref="Error"/> = เหตุ (ผู้เรียกประทับบนรายการเหมือนเดิม · <see cref="Sent"/> = false ⇒ ไม่ประทับ "ส่งแล้ว" · งานตามรอบลองใหม่ได้เมื่อเติมโควตา)</summary>
+    public bool IsSuppressed { get; init; }
+
+    /// <summary>รอบ 212: ข้อความคีย์นี้ส่งถึงไปแล้วก่อนหน้า (<c>CustomerNotifyLog</c>) — ไม่ส่งซ้ำ · <see cref="Sent"/> = true</summary>
+    public bool Duplicate { get; init; }
+
     public static BookingSendResult Ok(string channel) => new(true, channel, null);
     public static BookingSendResult Fail(string error) => new(false, null, error);
+    public static BookingSendResult Suppressed(string reason) => new(false, null, reason) { IsSuppressed = true };
+    public static BookingSendResult AlreadySent(string? channel) => new(true, channel ?? CustomerNotifyChannel.ChannelEmail, null) { Duplicate = true };
 }
 
 /// <summary>

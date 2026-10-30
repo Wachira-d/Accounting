@@ -56,6 +56,9 @@
       <div class="usage-card"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
+    <!-- รอบ 212 แพ็ก A: โควตาข้อความผ่านช่องกลาง (เซิร์ฟเวอร์คำนวณ · /js/customer-notify.js) -->
+    <div class="card" style="margin-bottom:24px"><div id="notifyQuotaCard"></div></div>
+
     <!-- Usage Bars -->
     <div class="card" style="margin-bottom:24px">
       <div class="card-header"><h3 class="card-title">โควต้าการใช้งาน</h3></div>
@@ -145,6 +148,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/customer-notify.js"></script>
   <script>
     const Page = {
       data: null,
@@ -158,6 +162,8 @@
       async init() {
         if (!Layout.init('usage')) return;
         Layout.setTitle('สถานะการใช้งาน');
+        if (window.CustomerNotify && Layout.getCompanyId())
+          CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: Layout.getCompanyId() });
         await this.load();
       },
 

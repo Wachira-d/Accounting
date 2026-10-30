@@ -52,6 +52,10 @@ public static class NotificationEvents
     public const string GatewayPaymentUnfulfilled = "gateway.payment_unfulfilled";
     /// <summary>รอบ 205 ทีม E: โควตาเอกสารเดือนนี้ข้าม 80% / เต็ม — แจ้งเจ้าของครั้งเดียวต่อระดับต่อเดือน (เอกสารที่กฎหมายบังคับยังออกได้ = ส่วนเกิน)</summary>
     public const string DocumentQuotaLevel = "quota.documents_level";
+    /// <summary>รอบ 212 แพ็ก A (คำตัดสินข้อ 171): ข้อความถึงลูกค้าผ่านช่องกลาง (LINE OA/อีเมลของ NextAcc) ข้าม 80% ของโควตาเดือนนี้ — ครั้งเดียวต่องวด</summary>
+    public const string NotifyQuota80 = "notify.quota.80";
+    /// <summary>รอบ 212 แพ็ก A: โควตาข้อความช่องกลางเต็ม — ข้อความถัดไปไปช่องของร้าน หรือไม่ถูกส่ง · ครั้งเดียวต่องวด</summary>
+    public const string NotifyQuota100 = "notify.quota.100";
     public const string DepreciationPosted      = "depreciation.posted";
     /// <summary>2026-10-14 (ID#13): งานลงค่าเสื่อมราคาอัตโนมัติรายเดือนล้ม (เช่น ผังค่าเสื่อมถูกปิดใช้/งวดปิด) —
     /// เดิมลงแค่ log ⇒ เจ้าของไม่รู้จนปิดงบ</summary>
@@ -124,6 +128,8 @@ public static class NotificationEvents
         ("Accounting", GatewayPaymentStuck, "รับชำระออนไลน์ค้างนานผิดปกติ (ตรวจ webhook)"),
         ("Accounting", GatewayPaymentUnfulfilled, "เงินออนไลน์เข้าแล้วแต่ระบบบันทึกรับเงิน/ออกเอกสารไม่สำเร็จ (ต้องทำมือ)"),
         ("Accounting", DocumentQuotaLevel, "โควตาเอกสารเดือนนี้ใกล้เต็ม (80%) / เต็มแล้ว"),
+        ("Accounting", NotifyQuota80, "ข้อความแจ้งเตือนลูกค้าผ่านช่องกลางใช้ไปแล้ว 80% ของโควตาเดือนนี้"),
+        ("Accounting", NotifyQuota100, "ข้อความแจ้งเตือนลูกค้าผ่านช่องกลางเต็มโควตาเดือนนี้แล้ว"),
         ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
         ("Accounting", DepreciationFailed, "ลงค่าเสื่อมราคาอัตโนมัติไม่สำเร็จ (ต้องแก้แล้วกดคำนวณค่าเสื่อมเอง)"),
         ("Accounting", RecurringApprovedWithNotes, "รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี"),

@@ -123,5 +123,6 @@ public class EmailConfigController : ControllerBase
             ("รหัสผ่าน SMTP", s.EmailSmtpPassword),
             ("Client Secret (Microsoft)", s.EmailMsClientSecret),
             ("Client Secret (Gmail)", s.EmailGmailClientSecret),
-            ("Refresh Token (Gmail)", s.EmailGmailRefreshToken)));
+            ("Refresh Token (Gmail)", s.EmailGmailRefreshToken)),
+        CustomerEmailFallback: s.CustomerEmailFallback);
 }
