@@ -74,6 +74,10 @@ public static class PdpaConsentEvidence
 
     public const string V2Prefix = "v2:";
 
+    /// <summary>ที่มาของ hash บน <c>PdpaConsentRecord.EvidenceSource</c> (ฝ่ายค้าน N2)</summary>
+    public const string SourceSystem = "system";
+    public const string SourceStaff = "staff";
+
     /// <summary>ผลตรวจหลักฐาน — <c>Valid</c> เท่านั้นที่นับว่าผ่าน</summary>
     public enum EvidenceCheck { Valid, Invalid, LegacyUnverifiable, Missing }
 
@@ -143,7 +147,7 @@ public static class PdpaConsentEvidence
         DateTime grantedAt, string? channel, string? ipAddress, string? userAgent)
     {
         if (string.IsNullOrWhiteSpace(expectedHash)) return EvidenceCheck.Missing;
-        if (expectedHash.StartsWith(V2Prefix, StringComparison.Ordinal))
+        if (expectedHash.StartsWith(V2Prefix, StringComparison.OrdinalIgnoreCase))   // ฝ่ายค้าน N3: ป้ายไม่สนตัวพิมพ์
             return string.Equals(expectedHash,
                 ComputeHash(email, purpose, policyVersionShown, grantedAt, channel, ipAddress, userAgent),
                 StringComparison.OrdinalIgnoreCase) ? EvidenceCheck.Valid : EvidenceCheck.Invalid;

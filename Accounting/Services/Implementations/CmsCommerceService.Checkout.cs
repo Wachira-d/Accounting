@@ -50,7 +50,7 @@ public partial class CmsCommerceService
                 throw new BusinessRuleException("ไม่พบบัญชีลูกค้าของเว็บนี้ — เข้าสู่ระบบใหม่แล้วสั่งอีกครั้ง", CmsFeatureFlags.RuleCode);
             // รอบ 216 (คำตัดสินข้อ 174): สมาชิกเว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ก่อนด่านฟอร์ม (ไม่ล้มเพราะช่องบังคับว่าง · ค่าที่พิมพ์ชนะ) ·
             // ที่อยู่จัดส่งไม่เติมฝั่งเซิร์ฟเวอร์ (ค่าส่งคิดจากจังหวัด/รหัสไปรษณีย์ที่ลูกค้าเห็นบนหน้า — หน้าเว็บเติมให้ก่อนแล้ว)
-            if (member is { IsActive: true })
+            if (member is { IsActive: true } && request.ContactFromProfile)   // ฝ่ายค้าน S3: เฉพาะเมื่อหน้าเว็บยืนยัน
                 (request.ShippingName, request.ShippingPhone, request.ShippingEmail) = StorefrontMemberProfile.FillContact(
                     request.ShippingName, request.ShippingPhone, request.ShippingEmail, member.FullName, member.Phone, member.Email);
         }

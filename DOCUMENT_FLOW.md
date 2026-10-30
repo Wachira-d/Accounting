@@ -4985,6 +4985,14 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   เข้า DSR เข้าถึง/โอนย้าย (`PdpaService.GenerateAccessReportAsync` → `PolicyAcceptances` + ผลตรวจ) · ลบตามคำขอ = `Pseudonymise` (legal hold) ใน `ApplyErasureAsync` ·
   `PdpaRetentionPurgeJob` ลบจริงเมื่อ `PseudonymisedAt` เกิน 10 ปี · hash `PdpaConsentEvidence` v2 ("v2:" · `NormalizeTimestamp` ตัวเดียว ทั้งเขียน/ตรวจ ·
   v1 ตรวจไม่ได้ = `LegacyUnverifiable`) — ใช้กับตอนสมัคร · แถบยอมรับ · ฟอร์มเว็บร้าน (`CmsDataConsent.StageForSubject`)
+- **รอบ 214 ต่อ (ฐ)**: เจ้าของข้อมูล — `/pages/my-data.html` (เมนูผู้ใช้) → `GET /api/legal/my-data[?download=true]` · ยื่นลบ `POST /api/legal/my-data/erase-request`
+  → `PdpaService.RequestPlatformErasureAsync` (`PlatformErasureRequests` · `PlatformErasureRequestPolicy`: ค้างฉบับเดียว · วันละครั้ง · SLA 30 วัน) · SystemAdmin
+  `/admin/legal.html` → `api/admin/platform-erasure-requests` (`complete`/`reject`) → `CompletePlatformErasureAsync` → `AnonymiseUserCoreAsync` (แกนลบตัวเดียว —
+  `ApplyErasureAsync` ของ DSR บริษัทเรียกตัวเดียวกันหลังตรวจสมาชิก) + audit chain + อีเมลแจ้งผล
+- **รอบ 214 ฝ่ายค้าน (ฑ)**: audit อัตโนมัติ (`AuditTrailService.CaptureAuditEntries`) ปิดค่า PII รายช่องต่อ entity (`AuditRedaction.PiiFields`) — แถว audit เก่าก่อนรอบนี้แก้ไม่ได้ (append-only · แจ้งผู้ใช้) ·
+  ลบ (คำขอแพลตฟอร์ม + DSR บริษัท) ⇒ `ErasureOwnershipBlockersAsync` ก่อน (เจ้าของคนสุดท้าย/เจ้าของแพ็กเกจ = 409) · แกนลบ IgnoreQueryFilters + ล้างลายมือชื่อ + คำขอทุกฉบับ ·
+  `CompletePlatformErasureAsync`: ห้ามตัวเอง/แอดมินแพลตฟอร์ม · ไม่พบ = 404 · แจ้งผลอีเมลปัจจุบัน · `Program.cs` `OnTokenValidated` → `TokenUserGate` (ลบ/Inactive ⇒ token ใช้ไม่ได้ทันที) ·
+  เอกสารพิมพ์ซ้ำของผู้ใช้ที่ลบแล้ว: ไม่มีลายเซ็น · ชื่อ [ANONYMIZED] (ฉบับที่ออก/ส่งแล้วไม่เปลี่ยน)
 _Last verified against codebase: 2026-10-30 (รอบ 214 — นโยบาย/ข้อกำหนดแพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS/หน้าจองโต๊ะ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
 - **รอบ 200 ทีม R**: รายงาน ภ.ง.ด.1 / ปกส. (`GET payroll/pnd1|sso/{y}/{m}`) ปิดบังเลขบัตร/เลข ปกส. เมื่อไม่มี `Pii.View` (ตัวตัดสิน `CanViewPiiAsync`
   ตัวเดียวกับรายชื่อพนักงาน + `PiiAccessLog` เมื่อเปิดดูเต็ม · G2-05) · ไฟล์ยื่นแบบไม่ผ่านเส้นนี้ (ยังได้เลขเต็ม) · ตัวจับพนักงานซ้ำตอนนำเข้า
@@ -6126,6 +6134,14 @@ _Last verified against codebase: 2026-10-30 (รอบ 217 — Idempotency-Key �
   (จ) **หน้าเว็บ** `storefront.html`: แท็บ "👤 ข้อมูลส่วนตัว" ในบัญชีของฉัน (`#profile`) · `_memberPrefill` เติมฟอร์มจอง/คลาส · เช็กเอาต์ (แล้วคิดค่าส่งใหม่) · ฟอร์มที่พัก (หลังวาดใหม่ทุกครั้ง · ช่องใบกำกับในนามบริษัทไม่เติมให้ = คำขอของแขก) · ฟอร์มติดต่อ (ไม่บันทึกกลับ) ตามกฎ #4 A (`userTouched` ชนะ · ทับเฉพาะช่องว่าง/`autoSrc`) ·
   ช่องที่ร้านเพิ่มเอง (MTO) ไม่เติม · PDPA: รายงาน DSR เข้าถึง/โอนย้ายเพิ่มชนิด/ที่อยู่หลักของที่อยู่ · ลบ/ล้างครอบช่องเดิมอยู่แล้ว
 _Last verified against codebase: 2026-10-30 (รอบ 216 — ข้อมูลส่วนตัวสมาชิก · เติมฟอร์มจอง/สั่งซื้อ/ที่พัก · บันทึกกลับจากฟอร์ม · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 1fd81626)_
+- **รอบ 216 ฝ่ายค้าน (ไม่ blocking · คำตัดสินข้อ 174 ภาคผนวก)**: (S1) สาขาเดิมคงไว้เมื่อฟอร์มไม่มีช่องสาขาและเลขภาษีเดิม · (S2) เช็กเอาต์ส่ง `IdentityFromForm: false` — ชื่อ/เบอร์ = ผู้รับของที่อยู่จัดส่ง ·
+  จอง/ที่พักเติมชื่อ/เบอร์ของบัญชีเฉพาะช่องที่ว่าง · ไม่ติ๊กช่องขอบันทึกให้เอง · (S3) ธง `ContactFromProfile` บน `CreateBookingRequest`/`CreateOrderRequest`/`LodgingCreateReservationRequest` ⇒
+  controller ตัดผ่าน `StorefrontCustomerAuth.FillFromProfile` (สมาชิกในโทเคนของเว็บนี้เท่านั้น · พนักงาน/แขก/API ไม่ส่งธง ⇒ ไม่เติม) · ที่อยู่หลักต่อชนิดแถวเดียว (`Helpers/MemberProfileMigration` +
+  ธุรกรรมสองจังหวะใน `ApplyProfileAsync`) · แถว Both · ล้างคอลัมน์โครงเมื่อบรรทัดที่อยู่เปลี่ยน · `portal/me` คืนเบอร์ normalize แล้ว · ผลการบันทึกเป็นข้อความจากเซิร์ฟเวอร์เท่านั้น
+  (เช็กเอาต์แสดงที่หน้าสำเร็จ) · ฟอร์มติดต่อไม่เติมบริษัท/เลขภาษี/ช่องซ่อน
+_Last verified against codebase: 2026-10-30 (รอบ 216 ฝ่ายค้าน — S1–S3 + หมายเหตุที่อยู่/เบอร์/ข้อความ · ยังไม่ได้คอมไพล์ · commit c93341cc)_
+- **รอบ 216 ฝ่ายค้าน (ต่อ)**: ทางเขียนที่อยู่หลักทุกทางผ่าน `Helpers/CustomerAddressDefaults` (ล็อกแถวลูกค้า + ปลดแถวหลักเดิมลงฐานก่อน INSERT) — `CmsCustomerService.AddAddressAsync` (พนักงาน · กรองบริษัท/เว็บแล้ว) และ `ApplyProfileAsync`
+_Last verified against codebase: 2026-10-30 (รอบ 216 ฝ่ายค้าน ต่อ — ทางเขียนที่อยู่หลักกับ unique index · ยังไม่ได้คอมไพล์ · commit d0239edd)_
 
   **ฝ่ายค้านรอบ 217** (สถานะปัจจุบัน — ทับข้อความข้างบนที่ขัดกัน):
   (S1) ด่านซ้ำของการจองเทียบ "รูปคำขอ" ด้วย (จำนวนช่วง · จำนวนคน · ผู้ให้บริการที่ขอ — `DuplicateSubmitGuard.SameBookingShape`) · สมาชิกเจ้าของใบได้ใบเดิม `reused` +

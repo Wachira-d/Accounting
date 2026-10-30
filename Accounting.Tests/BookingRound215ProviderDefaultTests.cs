@@ -89,4 +89,39 @@ public class BookingRound215ProviderDefaultTests
         Assert.Contains("\"DefaultResourceMode\" integer NULL", sql);
         Assert.DoesNotContain("SET \"ResourceMode\"", sql);
     }
+
+    // ── ฝ่ายค้านรอบ 215 เฟส 2 ──
+
+    [Fact]
+    public void S1_เว็บใหม่ที่ตั้งค่าเว็บไว้_อนุมานว่าเปิดจัดสรร_แม้ยังไม่มีผู้ให้บริการ()
+    {
+        Assert.True(BookingProviderAllocation.Enabled(null, false, false, BookingResourceMode.CustomerChoice));
+        Assert.True(BookingProviderAllocation.Enabled(null, false, false, BookingResourceMode.Auto));
+    }
+
+    [Fact]
+    public void S1_ทิศตรงข้าม_ค่าเว็บไม่ตั้งหรือNone_อนุมานแบบเดิม_และเจ้าของปิดเองชนะ()
+    {
+        Assert.False(BookingProviderAllocation.Enabled(null, false, false, null));
+        Assert.False(BookingProviderAllocation.Enabled(null, false, false, BookingResourceMode.None));
+        Assert.False(BookingProviderAllocation.Enabled(false, true, true, BookingResourceMode.CustomerChoice));
+        Assert.True(BookingProviderAllocation.Enabled(null, true, false));   // เดิม: มีผู้ให้บริการ ⇒ เปิด
+    }
+
+    [Fact]
+    public void S2_ตัวอย่างบริการที่ไม่ตั้งโหมดเอง_สร้างเป็นตามค่าเว็บ()
+    {
+        var all = Accounting.Services.Implementations.Cms.CmsBookingServiceSeeder.PresetResponses().SelectMany(p => p.Services).ToList();
+        var aroma = all.First(s => s.Name.StartsWith("นวดน้ำมันอโรมา"));
+        Assert.Null(aroma.ResourceMode);
+    }
+
+    [Fact]
+    public void S2_ทิศตรงข้าม_ตัวอย่างที่ตั้งโหมดเฉพาะ_คงค่าเดิม()
+    {
+        var all = Accounting.Services.Implementations.Cms.CmsBookingServiceSeeder.PresetResponses().SelectMany(p => p.Services).ToList();
+        Assert.Equal(BookingResourceMode.CustomerChoice, all.First(s => s.Name.StartsWith("นวดไทย 60")).ResourceMode);
+        Assert.Equal(BookingResourceMode.Auto, all.First(s => s.Name.StartsWith("ทำเล็บเจล")).ResourceMode);
+    }
 }
+

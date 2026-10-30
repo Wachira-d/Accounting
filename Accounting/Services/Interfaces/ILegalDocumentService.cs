@@ -47,6 +47,9 @@ public interface ILegalDocumentService
     Task<LegalHistoryItem> PublishDraftAsync(string kind, string actor, string? ipAddress = null, CancellationToken ct = default);
     Task<bool> DiscardDraftAsync(string kind, string actor, CancellationToken ct = default);
 
+    /// <summary>ฝ่ายค้านรอบ 214 S3: หลักฐานยอมรับนโยบายทั้งหมดของผู้ใช้เอง (ทุกช่อง + ผลตรวจ) — DSR ม.30/31 ระดับแพลตฟอร์ม</summary>
+    Task<List<Dictionary<string, object?>>> GetMyAcceptancesAsync(Guid userId, CancellationToken ct = default);
+
     /// <summary>ผู้ใช้ที่ล็อกอินอยู่ยอมรับฉบับปัจจุบันแล้วหรือยัง (แถบแจ้ง "มีฉบับใหม่" — ไม่บล็อกการใช้งาน)</summary>
     Task<LegalAcceptanceStatus> GetAcceptanceStatusAsync(Guid userId, CancellationToken ct = default);
 

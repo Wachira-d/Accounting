@@ -244,6 +244,22 @@ public class LegalDocumentService : ILegalDocumentService
         }
     }
 
+    public async Task<List<Dictionary<string, object?>>> GetMyAcceptancesAsync(Guid userId, CancellationToken ct = default)
+    {
+        // ฝ่ายค้านรอบ 214 S3: DSR ของเจ้าของข้อมูลเอง (ระดับแพลตฟอร์ม) — ครบทุกช่องรวม IP/UA + ผลตรวจรายแถว · เฉพาะแถวของผู้ล็อกอิน
+        var rows = await _db.PlatformPolicyAcceptances.AsNoTracking()
+            .Where(x => x.UserId == userId)
+            .OrderBy(x => x.AcceptedAt)
+            .ToListAsync(ct);
+        return rows.Select(x => new Dictionary<string, object?>
+        {
+            ["purpose"] = x.Purpose, ["policyVersion"] = x.PolicyVersion, ["versionShown"] = x.VersionShown,
+            ["acceptedAt"] = x.AcceptedAt, ["channel"] = x.Channel, ["ipAddress"] = x.IpAddress, ["userAgent"] = x.UserAgent,
+            ["withdrawnAt"] = x.WithdrawnAt, ["evidenceHash"] = x.EvidenceHash,
+            ["evidenceCheck"] = PlatformPolicyAcceptanceRules.CheckLabel(PlatformPolicyAcceptanceRules.Check(x)),
+        }).ToList();
+    }
+
     public async Task<LegalAcceptanceStatus> GetAcceptanceStatusAsync(Guid userId, CancellationToken ct = default)
     {
         var p = await GetCurrentAsync(LegalDocumentDefaults.KindPrivacy, ct);
@@ -271,7 +287,7 @@ public class LegalDocumentService : ILegalDocumentService
             throw new BusinessRuleException("นโยบายมีฉบับใหม่กว่าที่หน้านี้แสดง — โหลดหน้าใหม่แล้วอ่านอีกครั้ง", LegalDocumentPolicy.RuleCode, 409);
         // รอบ 214 ต่อ (ฎ): ตัวสร้างแถวเดียวกับตอนสมัคร (เวลา normalize · ทุกช่องใน canonical เก็บในแถว)
         _db.PlatformPolicyAcceptances.Add(PlatformPolicyAcceptanceRules.Create(
-            userId, email, PdpaPolicy.PolicyUpdatePurpose, current, versionShown ?? current, DateTime.UtcNow, "policy-update-banner", ip, userAgent));
+            userId, email, PdpaPolicy.PolicyUpdatePurpose, current, string.IsNullOrWhiteSpace(versionShown) ? current : versionShown, DateTime.UtcNow, "policy-update-banner", ip, userAgent));   // ฝ่ายค้าน N1
         await _db.SaveChangesAsync(ct);
         return await GetAcceptanceStatusAsync(userId, ct);
     }

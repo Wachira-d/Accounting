@@ -63,11 +63,12 @@ public class CreateBookingServiceRequest
 /// <summary>ค่าตั้งการจองระดับไซต์ (บริการที่ "ใช้ค่าของไซต์" รับไป)</summary>
 public class BookingSiteSettingsDto
 {
-    public int DurationMinutes { get; set; } = 60;
-    public int BufferBeforeMinutes { get; set; }
-    public int BufferAfterMinutes { get; set; }
-    public int MinAdvanceHours { get; set; } = 1;
-    public int MaxAdvanceDays { get; set; } = 30;
+    // ฝ่ายค้านรอบ 215 เฟส 2: ตอนบันทึก null/ไม่ส่ง = คงค่าเดิม (เดิมไม่ส่ง = รีเซ็ตเป็นค่าเริ่มต้นเงียบ ๆ) · GET มีค่าเสมอ
+    public int? DurationMinutes { get; set; }
+    public int? BufferBeforeMinutes { get; set; }
+    public int? BufferAfterMinutes { get; set; }
+    public int? MinAdvanceHours { get; set; }
+    public int? MaxAdvanceDays { get; set; }
     /// <summary>จังหวะออกใบกำกับภาษีของบริการแบบ Guaranteed (คำตัดสินข้อ 155) · คำตอบมีค่าเสมอ · ตอนบันทึก null = คงค่าเดิม (ไม่รีเซ็ตเงียบ)</summary>
     public BookingInvoiceTiming? GuaranteedInvoiceTiming { get; set; }
     /// <summary>ตัวเลือก + ผลทางภาษี (server ประกอบจาก <c>BookingInvoiceTimingPolicy.Options</c> · หน้าเว็บแสดงตรง ๆ) — ไม่อ่านตอนบันทึก</summary>
@@ -117,6 +118,8 @@ public class BookingSiteSettingsDto
     public List<BookingServiceModeOverride> ResourceModeOverrides { get; set; } = new();
     /// <summary>GET เท่านั้น: จำนวนบริการที่ใช้ "ตามค่าเว็บ"</summary>
     public int ResourceModeInheritingCount { get; set; }
+    /// <summary>GET เท่านั้น: ผู้ให้บริการที่ใช้งานอยู่ (0 = ยังไม่มี — หน้าบอกทางไปเพิ่ม)</summary>
+    public int ActiveProviderCount { get; set; }
     /// <summary>ตัวเลือก "ต้องเป็นสมาชิก" ต่อบริการ (server ประกาศป้าย · <c>BookingAccessRule.Options</c>) — ไม่อ่านตอนบันทึก</summary>
     public List<BookingAccessRule.Option> MemberAccessOptions { get; set; } = new();
 }
@@ -355,6 +358,9 @@ public class CreateBookingRequest
     /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังจองสำเร็จบันทึกชื่อ/เบอร์ลงโปรไฟล์ ·
     /// สมาชิก = id ในโทเคนหน้าร้านของเว็บนี้เท่านั้น · แขก/พนักงาน/โทเคนเว็บอื่น ⇒ ไม่มีผล</summary>
     public bool SaveToProfile { get; set; }
+    /// <summary>รอบ 216 ฝ่ายค้าน S3: หน้าเว็บยืนยันว่าชื่อ/เบอร์/อีเมลมาจากโปรไฟล์ (ผู้ใช้ไม่ได้ลบ/แก้เอง) ⇒ เซิร์ฟเวอร์เติมช่องที่ว่างจากโปรไฟล์ได้ ·
+    /// มีผลเฉพาะสมาชิกในโทเคนของเว็บนี้ (controller ตัดเป็น false สำหรับพนักงาน/แขก/ผู้เรียก API) · false = ไม่เติม (ช่องบังคับว่าง ⇒ ข้อความปกติ)</summary>
+    public bool ContactFromProfile { get; set; }
 }
 
 public class UpdateBookingStatusRequest

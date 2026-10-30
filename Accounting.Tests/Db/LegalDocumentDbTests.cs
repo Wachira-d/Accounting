@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Services.Implementations;
+using Accounting.Services.Implementations.Pdpa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -123,5 +124,162 @@ public class LegalDocumentDbTests
             back.GrantedAt, back.Channel, null, null));
         Assert.False(PdpaConsentEvidence.Verify(back.EvidenceHash, "other@example.test", back.Purpose, back.PolicyVersion,
             back.GrantedAt, back.Channel, null, null));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 S2/S3: DSR ของบริษัทไม่ส่ง IP/UA (ประวัติข้ามบริษัท) แต่เจ้าของข้อมูลดูเองได้ครบ ·
+    /// ลบตามคำขอทำไม่ให้ระบุตัว**รวมแถวที่ soft-delete** · แถวคงอยู่ (legal hold)</summary>
+    [Fact]
+    public async Task Dsr_hides_platform_ip_from_company_and_erasure_reaches_soft_deleted_rows()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var user = new User { Email = $"dsr-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ทดสอบ DSR นโยบาย" };
+        var company = new Company { Name = "บริษัททดสอบ DSR นโยบาย", TaxId = "0105556000005" };
+        db.Users.Add(user);
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = user.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner, IsDefault = true });
+        var live = PlatformPolicyAcceptanceRules.Create(user.Id, user.Email, PdpaPolicy.SignupPurpose, "1.0", "1.0", DateTime.UtcNow, "web-form", "203.0.113.21", "ua-live");
+        var softDeleted = PlatformPolicyAcceptanceRules.Create(user.Id, user.Email, PdpaPolicy.PolicyUpdatePurpose, "1.0", "1.0", DateTime.UtcNow, "policy-update-banner", "203.0.113.22", "ua-old");
+        softDeleted.IsDeleted = true;
+        db.PlatformPolicyAcceptances.AddRange(live, softDeleted);
+        await db.SaveChangesAsync();
+
+        var pdpa = new PdpaService(db);
+        var report = await pdpa.GenerateAccessReportAsync(company.Id, user.Id, null);
+        var row = Assert.Single(report.PolicyAcceptances!);
+        Assert.False(row.ContainsKey("ipAddress"));                     // S3: DPO ของบริษัทไม่เห็นประวัติ IP/UA ระดับแพลตฟอร์ม
+        Assert.False(row.ContainsKey("userAgent"));
+        Assert.Equal(PlatformPolicyAcceptanceRules.CheckLabel(PdpaConsentEvidence.EvidenceCheck.Valid), row["evidenceCheck"]);
+        var mine = await Svc(db).GetMyAcceptancesAsync(user.Id);         // เจ้าของข้อมูลเองเห็นครบ
+        Assert.Equal("203.0.113.21", Assert.Single(mine)["ipAddress"]);
+
+        await pdpa.ApplyErasureAsync(company.Id, user.Id, null, "dpo-test");
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var after = await db.PlatformPolicyAcceptances.IgnoreQueryFilters().AsNoTracking().Where(x => x.UserId == user.Id).ToListAsync();
+        Assert.Equal(2, after.Count);                                     // legal hold: แถวคงอยู่
+        Assert.All(after, x =>
+        {
+            Assert.NotNull(x.PseudonymisedAt);
+            Assert.Null(x.IpAddress);
+            Assert.Null(x.UserAgent);
+            Assert.DoesNotContain("dsr-", x.Email);                       // S2: แถว soft-delete ก็ถูกทำไม่ให้ระบุตัว
+            Assert.False(string.IsNullOrEmpty(x.EvidenceHash));
+        });
+    }
+
+    /// <summary>รอบ 214 ต่อ (ฐ): ผู้ใช้ที่ไม่มีบริษัทยื่นคำขอลบเอง — กดซ้ำได้ฉบับเดิม · ผู้ใช้อื่นไม่เห็น/ไม่แตะคำขอนี้ · ดำเนินการลบ = แกนลบตัวเดียว
+    /// (บัญชีไม่ระบุตัว · หลักฐานยอมรับนโยบาย legal hold) · ดำเนินการซ้ำ = 409 · ยื่นใหม่ภายใน 24 ชม. = 429 · ปฏิเสธต้องมีเหตุผล</summary>
+    [Fact]
+    public async Task Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var a = new User { Email = $"erase-a-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ผู้ขอลบ (ไม่มีบริษัท)" };
+        var b = new User { Email = $"erase-b-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ผู้ใช้อื่น" };
+        db.Users.AddRange(a, b);
+        db.PlatformPolicyAcceptances.Add(PlatformPolicyAcceptanceRules.Create(a.Id, a.Email, PdpaPolicy.SignupPurpose, "1.0", "1.0", DateTime.UtcNow, "web-form", "203.0.113.31", "ua"));
+        await db.SaveChangesAsync();
+        var originalEmail = a.Email;
+        var pdpa = new PdpaService(db);
+
+        var (r1, created1) = await pdpa.RequestPlatformErasureAsync(a.Id, "เลิกใช้บริการ", "203.0.113.31");
+        var (r2, created2) = await pdpa.RequestPlatformErasureAsync(a.Id, "กดซ้ำ", "203.0.113.31");
+        Assert.True(created1);
+        Assert.False(created2);                                            // ค้างอยู่ ⇒ ฉบับเดิม
+        Assert.Equal(r1.Id, r2.Id);
+        Assert.Equal(r1.RequestedAt.AddDays(30), r1.DueAt);
+        Assert.Null(await pdpa.GetMyPlatformErasureRequestAsync(b.Id));    // ผู้ใช้อื่นไม่เห็นคำขอของ A
+        var (rb, _) = await pdpa.RequestPlatformErasureAsync(b.Id, null, null);
+        Assert.NotEqual(r1.Id, rb.Id);
+        await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.RejectPlatformErasureAsync(rb.Id, Guid.NewGuid(), " "));   // ปฏิเสธต้องมีเหตุผล
+
+        var admin = Guid.NewGuid();
+        var (done, notify) = await pdpa.CompletePlatformErasureAsync(r1.Id, admin, "ทดสอบ", "198.51.100.5");
+        Assert.Equal(originalEmail, notify);                               // แจ้งผลไปอีเมลเดิม (เก็บก่อนลบ)
+        Assert.Equal(PlatformErasureRequestPolicy.StatusCompleted, done.Status);
+        db.ChangeTracker.Clear();
+        var userAfter = await db.Users.AsNoTracking().SingleAsync(u => u.Id == a.Id);
+        Assert.Equal("[ANONYMIZED]", userAfter.FullName);
+        Assert.EndsWith("@deleted.local", userAfter.Email);
+        var acc = await db.PlatformPolicyAcceptances.IgnoreQueryFilters().AsNoTracking().SingleAsync(x => x.UserId == a.Id);
+        Assert.NotNull(acc.PseudonymisedAt);                               // legal hold — แถวคงอยู่
+        Assert.Null(acc.IpAddress);
+        var reqAfter = await db.PlatformErasureRequests.AsNoTracking().SingleAsync(x => x.Id == r1.Id);
+        Assert.EndsWith("@deleted.local", reqAfter.RequesterEmail);       // คำขอเองไม่เก็บอีเมลจริงหลังลบ
+
+        // ฝ่ายค้านรอบ 214 B1: audit chain (append-only) ไม่มีค่า PII เดิมของผู้ใช้จากขั้นยื่น/ลบ — มีแค่ "ช่องไหนเปลี่ยน"
+        var leaked = await db.AuditLogs.AsNoTracking()
+            .Where(x => (x.OldValues != null && (x.OldValues.Contains(originalEmail) || x.OldValues.Contains("203.0.113.31") || x.OldValues.Contains("ผู้ขอลบ (ไม่มีบริษัท)")))
+                     || (x.NewValues != null && (x.NewValues.Contains(originalEmail) || x.NewValues.Contains("203.0.113.31") || x.NewValues.Contains("ผู้ขอลบ (ไม่มีบริษัท)"))))
+            .CountAsync();
+        Assert.Equal(0, leaked);
+        Assert.True(await db.AuditLogs.AsNoTracking().AnyAsync(x => x.EntityType == "User" && x.EntityId == a.Id.ToString()
+            && x.NewValues != null && x.NewValues.Contains(AuditRedaction.PiiMask)));   // ทิศตรงข้าม: ยังเห็นว่ามีการเปลี่ยน
+        var again = await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(r1.Id, admin, null, null));
+        Assert.Equal(409, again.StatusCode);
+        var tooSoon = await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.RequestPlatformErasureAsync(a.Id, null, null));
+        Assert.Equal(429, tooSoon.StatusCode);
+        // ทิศตรงข้าม: ผู้ใช้อื่นไม่ถูกแตะ
+        Assert.StartsWith("erase-b-", (await db.Users.AsNoTracking().SingleAsync(u => u.Id == b.Id)).Email);
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 B2/S1/S2: ลบเจ้าของคนสุดท้าย = 409 พร้อมรายชื่อบริษัท (ทิศตรงข้าม: มีเจ้าของคนอื่นที่ยังทำงานได้ ⇒ ลบได้) ·
+    /// แอดมินดำเนินการคำขอตัวเอง/ลบแอดมินแพลตฟอร์ม = 409 · บัญชี soft-delete ยังลบได้ (ไม่ปิดคำขอว่าเสร็จทั้งที่ไม่ได้ลบ)</summary>
+    [Fact]
+    public async Task Erasure_refuses_last_owner_self_and_platform_admin_and_handles_soft_deleted_users()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        User U(string tag) => new() { Email = $"{tag}-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = tag };
+        var owner = U("owner"); var other = U("other"); var sysAdmin = U("sysadmin"); var ghost = U("ghost");
+        sysAdmin.IsSystemAdmin = true;
+        ghost.IsDeleted = true;
+        db.Users.AddRange(owner, other, sysAdmin, ghost);
+        var company = new Company { Name = "บริษัทเจ้าของคนเดียว", TaxId = "0105556000006" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = owner.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner, IsDefault = true });
+        await db.SaveChangesAsync();
+        var pdpa = new PdpaService(db);
+        var admin = Guid.NewGuid();
+
+        var (rOwner, _) = await pdpa.RequestPlatformErasureAsync(owner.Id, null, null);
+        var blocked = await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(rOwner.Id, admin, null, null));
+        Assert.Equal(409, blocked.StatusCode);
+        Assert.Contains("บริษัทเจ้าของคนเดียว", blocked.Message);
+        Assert.Contains("บริษัทเจ้าของคนเดียว", string.Join("|", await pdpa.ErasureOwnershipBlockersAsync(owner.Id)));
+        // ทิศตรงข้าม: เพิ่มเจ้าของอีกคนที่ยังทำงานได้ ⇒ ลบได้
+        db.CompanyUsers.Add(new CompanyUser { UserId = other.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner });
+        await db.SaveChangesAsync();
+        Assert.Empty(await pdpa.ErasureOwnershipBlockersAsync(owner.Id));
+        var (done, notify) = await pdpa.CompletePlatformErasureAsync(rOwner.Id, admin, null, null);
+        Assert.Equal(PlatformErasureRequestPolicy.StatusCompleted, done.Status);
+        Assert.StartsWith("owner-", notify);
+
+        // S2: ดำเนินการคำขอของตัวเอง · ลบแอดมินแพลตฟอร์ม
+        var (rOther, _) = await pdpa.RequestPlatformErasureAsync(other.Id, null, null);
+        Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(rOther.Id, other.Id, null, null))).StatusCode);
+        var (rAdmin, _) = await pdpa.RequestPlatformErasureAsync(sysAdmin.Id, null, null);
+        Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(rAdmin.Id, admin, null, null))).StatusCode);
+
+        // S1: บัญชี soft-delete ยังถูกลบจริง (ไม่ใช่ปิดคำขอว่าเสร็จเงียบ ๆ)
+        db.PlatformErasureRequests.Add(new PlatformErasureRequest { UserId = ghost.Id, RequesterEmail = ghost.Email, RequestedAt = DateTime.UtcNow,
+            DueAt = DateTime.UtcNow.AddDays(30), Status = PlatformErasureRequestPolicy.StatusPending });
+        await db.SaveChangesAsync();
+        var rGhost = await db.PlatformErasureRequests.AsNoTracking().SingleAsync(x => x.UserId == ghost.Id);
+        await pdpa.CompletePlatformErasureAsync(rGhost.Id, admin, null, null);
+        db.ChangeTracker.Clear();
+        Assert.Equal("[ANONYMIZED]", (await db.Users.IgnoreQueryFilters().AsNoTracking().SingleAsync(x => x.Id == ghost.Id)).FullName);
+
+        // ไม่พบบัญชี ⇒ 404 และคำขอยังค้าง (ไม่ปิดว่าเสร็จ)
+        var orphan = new PlatformErasureRequest { UserId = Guid.NewGuid(), RequesterEmail = "x@example.test", RequestedAt = DateTime.UtcNow,
+            DueAt = DateTime.UtcNow.AddDays(30), Status = PlatformErasureRequestPolicy.StatusPending };
+        db.PlatformErasureRequests.Add(orphan);
+        await db.SaveChangesAsync();
+        Assert.Equal(404, (await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(orphan.Id, admin, null, null))).StatusCode);
+        db.ChangeTracker.Clear();
+        Assert.Equal(PlatformErasureRequestPolicy.StatusPending, (await db.PlatformErasureRequests.AsNoTracking().SingleAsync(x => x.Id == orphan.Id)).Status);
     }
 }

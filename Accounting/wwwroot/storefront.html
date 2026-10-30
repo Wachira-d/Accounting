@@ -1051,7 +1051,9 @@
         if (slug === 'cart')             { await this.renderCart();          return true; }
         if (slug === 'checkout')         { await this.renderCheckout();      return true; }
         if (slug.startsWith('order-success/')) {
-          await this.renderOrderSuccess(decodeURIComponent(slug.substring('order-success/'.length))); return true;
+          await this.renderOrderSuccess(decodeURIComponent(slug.substring('order-success/'.length)));
+          this._memberFlash();   // รอบ 216: ผลการบันทึกลงบัญชีจากหน้าเช็กเอาต์ (ข้อความจากเซิร์ฟเวอร์)
+          return true;
         }
         // รอบ 209 P1 (R-209-A1/B3): หน้าติดตามคำสั่งซื้อด้วยโทเคน · บัญชีลูกค้า (E1/C3)
         if (slug === 'track-order' || slug.startsWith('track-order/')) {
@@ -1319,11 +1321,12 @@
         await this._memberPrefill(main.querySelector('form'), me => {
           const sa = me.shippingAddress || {};
           const tax = !!(document.getElementById('reqTaxInv') || {}).checked;
-          return [['shippingName', me.fullName, 'text', true], ['shippingPhone', me.phone, 'phone', true], ['shippingEmail', me.email, 'text', false],
+          // ฝ่ายค้านรอบ 216 S2: ชื่อ/เบอร์บนเช็กเอาต์ = ผู้รับของที่อยู่จัดส่ง (ไม่ใช่ตัวตนสมาชิก)
+          return [['shippingName', sa.recipientName || me.fullName, 'text', true], ['shippingPhone', sa.phone || me.phone, 'phone', true], ['shippingEmail', me.email, 'text', false],
             ['shippingAddress', me.shippingAddressText, 'text', true], ['shippingProvince', sa.province, 'text', true], ['shippingPostalCode', sa.postalCode, 'text', true],
             ['billingName', me.companyName, 'text', tax], ['billingTaxId', me.taxId, 'digits', tax], ['billingBranchCode', me.branchCode, 'text', tax],
             ['billingAddress', me.billingAddressText, 'text', tax]];
-        }, { afterFill: () => this.refreshQuote(cart.id) });
+        }, { afterFill: () => this.refreshQuote(cart.id), saveLabel: 'บันทึกที่อยู่จัดส่งนี้ (และข้อมูลใบกำกับ ถ้าขอ) ไว้ใช้ครั้งหน้า' });
       },
 
       // ===== รอบ 209 P2: ฟอร์มสั่งซื้อจากค่าที่เซิร์ฟเวอร์ส่ง (ช่องบังคับ/ซ่อน · วันรับ · ช่องเพิ่มเอง · วิธีชำระ · คูปอง · ใบกำกับ) =====
@@ -1603,6 +1606,7 @@
             f.type === 'checkbox' ? (fd.get('cf_' + f.key) ? 'true' : null) : (fd.get('cf_' + f.key) || null)])),
           consentGiven: this.p6ConsentValue(ev.target),   // รอบ 209 P6 (PDPA)
           saveToProfile: this._memberSaveValue(ev.target),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
+          contactFromProfile: this._memberContactFromProfile(ev.target, ['shippingName', 'shippingPhone', 'shippingEmail']),   // ฝ่ายค้าน S3
         };
         // เหตุที่ยังสั่งไม่ได้มาจากเซิร์ฟเวอร์ (ต้องกรอกจังหวัด/เลือกวิธีส่ง) — บอกก่อนกดส่ง ด่านจริงยังอยู่ที่ CreateOrder
         if (this._quote && this._quote.problem) { alert(this._quote.problem); return; }
@@ -1630,8 +1634,8 @@
           const orderJson = await r.json();
           const order = orderJson.data;
           // รอบ 216: กำลังเปลี่ยนหน้า ⇒ บอกเฉพาะช่องที่ไม่ได้บันทึกลงบัญชี (ข้อความจากเซิร์ฟเวอร์)
-          const profileNotes = this._memberAfterSubmit(body.saveToProfile && !order.replayed, orderJson, true);
-          if (profileNotes.length) alert(profileNotes.join('\n'));
+          // ข้อความผลการบันทึก (ถ้ามี) แสดงที่หน้าสำเร็จ (_memberFlash)
+          this._memberAfterSubmit(body.saveToProfile && !order.replayed, orderJson, true);
           // Clear local cart reference — backend marks cart closed too.
           localStorage.removeItem('sf_session_' + this._ctx.siteId);
           try { sessionStorage.removeItem(idemStore); } catch (_) {}
@@ -1991,6 +1995,7 @@
         if (!form || !this._custSession()) return;
         const o = opts || {};
         form._sfMemberSpec = spec;
+        form._sfMemberSaveLabel = o.saveLabel || 'บันทึกเป็นข้อมูลของฉัน (เฉพาะช่องที่บัญชียังไม่มี)';
         if (!form._sfMemberWired) {
           form._sfMemberWired = true;
           const touch = (e) => {
@@ -2008,7 +2013,7 @@
         let filled = false;
         for (const [name, val] of spec(me).filter(x => x[4] !== false).map(x => [x[0], x[1]])) {
           const el = form.querySelector(`[name="${name}"]`);
-          if (!el || val == null || val === '') continue;
+          if (!el || el.type === 'hidden' || val == null || val === '') continue;   // ช่องซ่อนของฟอร์ม (ฝ่ายค้านรอบ 216) ไม่เติม
           if (el.dataset.userTouched === '1') continue;                 // ผู้ใช้พิมพ์แล้ว ⇒ ค่าผู้ใช้ชนะ
           if (el.value && !el.dataset.autoSrc) continue;                // มีค่าอยู่แล้วที่ระบบไม่ได้เติม ⇒ ไม่ทับ
           if (el.value !== String(val)) filled = true;
@@ -2023,39 +2028,45 @@
         if (o.save !== false) this._memberSaveRefresh(form);
         if (filled && typeof o.afterFill === 'function') o.afterFill();
       },
+      // เทียบอย่างเดียว ไม่ใช่กติกา: เบอร์/เลขเทียบเฉพาะตัวเลข (เบอร์ในโปรไฟล์ normalize ที่เซิร์ฟเวอร์แล้ว — ไม่มีสำเนากติกา +66 ฝั่งนี้) ·
+      // เซิร์ฟเวอร์ตัดสินซ้ำว่าบันทึกอะไรจริง (StorefrontMemberProfile.MergeCheckout)
       _memberNorm(kind, v) {
         const s = String(v == null ? '' : v).trim();
-        if (kind === 'phone') { let d = s.replace(/\D/g, ''); if (d.length === 11 && d.startsWith('66')) d = '0' + d.slice(2); return d; }
-        if (kind === 'digits') return s.replace(/\D/g, '');
+        if (kind === 'phone' || kind === 'digits') return s.replace(/\D/g, '');
         return s.replace(/\s+/g, ' ');
       },
-      /** แสดง/ซ่อนช่อง "บันทึกเป็นข้อมูลของฉัน": มีช่องที่พิมพ์ต่างจากโปรไฟล์ ⇒ แสดง · ติ๊กไว้ก่อนเฉพาะเมื่อทุกช่องที่ต่างเป็นช่องที่โปรไฟล์ยังว่าง ·
-       *  ผู้ใช้กดเองแล้ว (userTouched) ⇒ ไม่เปลี่ยนสถานะติ๊กให้อีก */
+      /** ธง contactFromProfile (ฝ่ายค้านรอบ 216 S3): true เฉพาะเมื่อมีช่องที่ระบบเติมจากโปรไฟล์อยู่ และไม่มีช่องติดต่อที่ผู้ใช้ลบทิ้งเอง ·
+       *  เซิร์ฟเวอร์จะเติมช่องว่างจากโปรไฟล์ก็ต่อเมื่อธงนี้เป็น true */
+      _memberContactFromProfile(form, names) {
+        if (!form || !this._custSession()) return false;
+        const els = names.map(n => form.querySelector(`[name="${n}"]`)).filter(Boolean);
+        if (els.some(el => el.dataset.userTouched === '1' && !String(el.value || '').trim())) return false;
+        return els.some(el => el.dataset.autoSrc === 'member');
+      },
+      /** แสดง/ซ่อนช่องขอบันทึก: มีช่องที่ "บันทึกได้" ซึ่งพิมพ์ต่างจากโปรไฟล์ ⇒ แสดง · <b>ไม่ติ๊กให้เองเลย</b> (ฝ่ายค้านรอบ 216 S2 —
+       *  ผู้ใช้ต้องติ๊กเอง) · ข้อความบอกว่าบันทึกอะไร (เช็กเอาต์ = ที่อยู่จัดส่ง · จอง/ที่พัก = ช่องที่บัญชียังว่าง) */
       _memberSaveRefresh(form) {
         const me = this._custMe;
         if (!form || !me || typeof form._sfMemberSpec !== 'function') return;
-        let fillsEmpty = false, changesExisting = false;
+        let differs = false;
         for (const [name, val, kind, savable] of form._sfMemberSpec(me)) {
           if (!savable) continue;
           const el = form.querySelector(`[name="${name}"]`);
           if (!el) continue;
           const typed = this._memberNorm(kind, el.value), cur = this._memberNorm(kind, val);
-          if (!typed || typed === cur) continue;
-          if (!cur) fillsEmpty = true; else changesExisting = true;
+          if (typed && typed !== cur) differs = true;
         }
         let box = form.querySelector('.sf-save-profile');
-        if (!fillsEmpty && !changesExisting) { if (box) box.style.display = 'none'; return; }
+        if (!differs) { if (box) box.style.display = 'none'; return; }
         if (!box) {
           box = document.createElement('label');
           box.className = 'sf-save-profile';
           box.style.cssText = 'display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer';
-          box.innerHTML = `<input type="checkbox" name="saveToProfile" style="margin-top:3px;width:auto"><span>บันทึกเป็นข้อมูลของฉัน (ใช้เติมให้ครั้งหน้า)</span>`;
+          box.innerHTML = `<input type="checkbox" name="saveToProfile" style="margin-top:3px;width:auto"><span>${this.esc(form._sfMemberSaveLabel || '')}</span>`;
           const submit = form.querySelector('button[type="submit"], #sfBookSubmit');
           form.insertBefore(box, submit || null);
         }
         box.style.display = 'flex';
-        const cb = box.querySelector('input');
-        if (cb.dataset.userTouched !== '1') cb.checked = fillsEmpty && !changesExisting;
       },
       /** ส่ง saveToProfile เฉพาะเมื่อช่องแสดงอยู่และติ๊ก (ซ่อน = ไม่มีอะไรต่าง = ไม่ขอบันทึก) */
       _memberSaveValue(form) {
@@ -2063,21 +2074,28 @@
         const cb = box && box.querySelector('input');
         return !!(cb && box.style.display !== 'none' && cb.checked);
       },
-      /** หลังส่งสำเร็จ: ล้างโปรไฟล์ที่จำไว้ (โหลดใหม่ครั้งถัดไป) · ข้อความ "ไม่ได้บันทึก…" มาจากเซิร์ฟเวอร์ (ApiResponse.errors) — คืนไว้ให้ผู้เรียกแสดง ·
-       *  quiet=true (หน้าที่กำลังเปลี่ยนหน้า) ไม่แสดง toast เอง */
+      /** หลังส่งสำเร็จ: ล้างโปรไฟล์ที่จำไว้ (โหลดใหม่ครั้งถัดไป) · ข้อความผลการบันทึกมาจากเซิร์ฟเวอร์เท่านั้น (ApiResponse.errors · ไม่มี = ไม่มีอะไรเปลี่ยน —
+       *  ไม่ประกอบ "บันทึกแล้ว" เอง) · quiet=true (กำลังเปลี่ยนหน้า) ⇒ เก็บไว้แสดงที่หน้าถัดไป (_memberFlash) */
       _memberAfterSubmit(saved, j, quiet) {
         if (!saved) return [];
         this._custMe = null;
         const notes = (j && Array.isArray(j.errors)) ? j.errors.filter(Boolean) : [];
-        if (!quiet) this._toast(notes.length ? '⚠️ ' + notes.join(' · ') : '✓ บันทึกข้อมูลลงบัญชีของคุณแล้ว');
+        if (!notes.length) return notes;
+        if (quiet) { try { sessionStorage.setItem('sf_member_note_' + this._ctx.siteId, notes.join(' · ')); } catch (_) {} }
+        else this._toast(notes.join(' · '));
         return notes;
+      },
+      _memberFlash() {
+        let note = null;
+        try { note = sessionStorage.getItem('sf_member_note_' + this._ctx.siteId); sessionStorage.removeItem('sf_member_note_' + this._ctx.siteId); } catch (_) {}
+        if (note) this._toast(note);
       },
       _memberPrefillContactForms(root) {
         if (!this._custSession()) return;
         (root || document).querySelectorAll('form.blk-form').forEach(f => {
           if (!f.querySelector('[name="name"]')) return;   // ฟอร์มสมัครรับข่าวสาร (อีเมลอย่างเดียว) — เติมอีเมลอย่างเดียวไม่จำเป็นต้องมีป้าย
-          this._memberPrefill(f, me => [['name', me.fullName, 'text', false], ['email', me.email, 'text', false], ['phone', me.phone, 'phone', false],
-            ['company', me.companyName, 'text', false], ['taxId', me.taxId, 'text', false]], { save: false });
+          // ไม่เติมบริษัท/เลขภาษี (ฝ่ายค้านรอบ 216 — ฟอร์มติดต่อไม่ใช่คำขอใบกำกับ) · ช่องซ่อนข้ามใน _memberPrefill
+          this._memberPrefill(f, me => [['name', me.fullName, 'text', false], ['email', me.email, 'text', false], ['phone', me.phone, 'phone', false]], { save: false });
         });
       },
 
@@ -2468,7 +2486,7 @@
         await this._bookingCreditBox();
         // รอบ 216 (ข้อ 174): สมาชิกที่ล็อกอิน ⇒ เติมชื่อ/เบอร์/อีเมลจากโปรไฟล์ (ช่องที่ผู้ใช้แตะแล้วไม่ถูกทับ) · อีเมลเข้าระบบไม่บันทึกกลับ
         await this._memberPrefill(document.getElementById('sfBookForm'), me => [
-          ['customerName', me.fullName, 'text', true], ['customerPhone', me.phone, 'phone', true], ['customerEmail', me.email, 'text', false]]);
+          ['customerName', me.fullName, 'text', !me.fullName], ['customerPhone', me.phone, 'phone', !me.phone], ['customerEmail', me.email, 'text', false]]);
       },
 
       async _loadSlots(serviceId) {
@@ -2558,6 +2576,7 @@
           resourceId: this._bkResource(),
           consentGiven: this.p6ConsentValue(form),   // รอบ 209 P6 (PDPA)
           saveToProfile: this._memberSaveValue(form),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
+          contactFromProfile: this._memberContactFromProfile(form, ['customerName', 'customerPhone', 'customerEmail']),   // ฝ่ายค้าน S3
           confirmAdditional: !!confirmAdditional      // รอบ 217: ตั้งใจจองรอบเดิมเพิ่มอีกที่ (ผู้ใช้กดยืนยันหลังคำเตือนจองซ้ำ)
         };
         if (typeof this._bkPayExtras === 'function') Object.assign(body, this._bkPayExtras());   // รอบ 218: มัดจำไม่บังคับ — ลูกค้าเลือกจ่ายไหม
@@ -3436,7 +3455,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
           }
           // รอบ 216 (ข้อ 174): สมาชิกที่ล็อกอิน ⇒ เติมชื่อ/เบอร์/อีเมล/ข้อมูลใบกำกับจากโปรไฟล์ — ค่าที่พิมพ์ค้างจากการวาดใหม่ (ข้างบน) ไม่ถูกทับ
           this._memberPrefill(document.getElementById('lgBookForm'), me => [
-            ['guestName', me.fullName, 'text', true], ['guestPhone', me.phone, 'phone', true], ['guestEmail', me.email, 'text', false],
+            ['guestName', me.fullName, 'text', !me.fullName], ['guestPhone', me.phone, 'phone', !me.phone], ['guestEmail', me.email, 'text', false],
             // ช่องใบกำกับในนามบริษัท = คำขอใบกำกับของแขก ⇒ ไม่เติมให้เอง (เทียบเพื่อบันทึกกลับอย่างเดียว — ข้อ 174 ช)
             ['guestCompanyName', me.companyName, 'text', true, false], ['guestTaxId', me.taxId, 'digits', true, false], ['guestAddress', me.billingAddressText, 'text', true, false]]);
           if (scroll) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -3495,6 +3514,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
           specialRequests: fd.get('specialRequests') || null, guestCompanyName: fd.get('guestCompanyName') || null,
           guestTaxId: fd.get('guestTaxId') || null, guestAddress: fd.get('guestAddress') || null, acceptHouseRules: fd.get('acceptHouseRules') === 'on',
           saveToProfile: this._memberSaveValue(form),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
+          contactFromProfile: this._memberContactFromProfile(form, ['guestName', 'guestPhone', 'guestEmail']),   // ฝ่ายค้าน S3
         });
         btn.disabled = true; btn.textContent = 'กำลังจอง...';
         try {

@@ -104,7 +104,7 @@ public class CmsRound216MemberProfileTests
         Assert.Equal("0812345678", m.Next.Phone);
         Assert.Equal(new[] { "เบอร์โทร" }, m.Saved);
         Assert.Empty(m.Skipped);
-        Assert.Null(StorefrontMemberProfile.SaveNote(m.Skipped));
+        Assert.Contains("บันทึกลงบัญชีของคุณแล้ว", StorefrontMemberProfile.SaveNote(m.Saved, m.Skipped));
     }
 
     [Fact]
@@ -114,16 +114,17 @@ public class CmsRound216MemberProfileTests
         Assert.Equal("0812345678", m.Next.Phone);   // คงค่าเดิม
         Assert.Empty(m.Saved);
         Assert.Contains(m.Skipped, s => s.Contains("เบอร์โทร"));
-        Assert.Contains("ไม่ได้บันทึก", StorefrontMemberProfile.SaveNote(m.Skipped));
+        Assert.Contains("ไม่ได้บันทึก", StorefrontMemberProfile.SaveNote(m.Saved, m.Skipped));
     }
 
     [Fact]
     public void MergeCheckout_SameValues_NoChange()
     {
-        var current = Profile() with { Shipping = new MemberAddress("สมชาย", null, "99/1 ถ.สุขุมวิท", "คลองเตย", null, "กรุงเทพมหานคร", "10110") };
-        var m = StorefrontMemberProfile.MergeCheckout(current, new CheckoutProfileInput("สมชาย ใจดี", "0812345678",
-            ShippingAddressText: "99/1  ถ.สุขุมวิท คลองเตย", ShippingProvince: "กรุงเทพมหานคร", ShippingPostalCode: "10110"));
+        var current = Profile() with { Shipping = new MemberAddress("สมชาย", "0812345678", "99/1 ถ.สุขุมวิท", "คลองเตย", null, "กรุงเทพมหานคร", "10110") };
+        var m = StorefrontMemberProfile.MergeCheckout(current, new CheckoutProfileInput("สมชาย", "081-234-5678",
+            ShippingAddressText: "99/1  ถ.สุขุมวิท คลองเตย", ShippingProvince: "กรุงเทพมหานคร", ShippingPostalCode: "10110", IdentityFromForm: false));
         Assert.Empty(m.Saved);
+        Assert.Null(StorefrontMemberProfile.SaveNote(m.Saved, m.Skipped));   // ไม่มีอะไรเปลี่ยน ⇒ ไม่รายงาน "บันทึกแล้ว" ปลอม
         Assert.Equal(current, m.Next);   // ที่อยู่ที่มีโครง (ตำบล) ไม่ถูกยุบเป็นข้อความเมื่อข้อความตรงกับของเดิม
     }
 
@@ -132,7 +133,7 @@ public class CmsRound216MemberProfileTests
     {
         var current = Profile() with { Shipping = new MemberAddress("สมชาย", "0812345678", "99/1", "คลองเตย", "คลองเตย", "กรุงเทพมหานคร", "10110") };
         var m = StorefrontMemberProfile.MergeCheckout(current, new CheckoutProfileInput(null, null,
-            ShippingAddressText: "5 หมู่ 2 ต.สันทราย อ.เมือง", ShippingProvince: "เชียงใหม่", ShippingPostalCode: "50000"));
+            ShippingAddressText: "5 หมู่ 2 ต.สันทราย อ.เมือง", ShippingProvince: "เชียงใหม่", ShippingPostalCode: "50000", IdentityFromForm: false));
         Assert.Contains("ที่อยู่จัดส่ง", m.Saved);
         Assert.Equal("5 หมู่ 2 ต.สันทราย อ.เมือง", m.Next.Shipping!.AddressLine);
         Assert.Null(m.Next.Shipping.SubDistrict);
@@ -156,6 +157,69 @@ public class CmsRound216MemberProfileTests
         Assert.Null(bad.Next.TaxId);
         Assert.Null(bad.Next.CompanyName);   // ชื่อ/ที่อยู่ใบกำกับไปเป็นชุดกับเลขที่ผ่าน checksum เท่านั้น
         Assert.Contains(bad.Skipped, s => s.Contains("ใบกำกับ"));
+    }
+
+    // ═════════ ฝ่ายค้านรอบ 216 ═════════
+
+    [Fact]
+    public void S1_LodgingSameTaxId_WithoutBranchField_KeepsBranch_NewTaxId_HeadOffice()
+    {
+        var current = Profile() with { CompanyName = "บจก. ทดสอบ", TaxId = ValidTaxId, BranchCode = "00003" };
+        var same = StorefrontMemberProfile.MergeCheckout(current, new CheckoutProfileInput(null, null,
+            BillingName: "บจก. ทดสอบ", BillingTaxId: ValidTaxId));   // ฟอร์มที่พักไม่มีช่องสาขา
+        Assert.Equal("00003", same.Next.BranchCode);
+        Assert.Empty(same.Saved);   // ไม่มีอะไรเปลี่ยน
+
+        var other = StorefrontMemberProfile.MergeCheckout(current, new CheckoutProfileInput(null, null,
+            BillingName: "บุคคล", BillingTaxId: "3100100123451"));
+        Assert.Equal("00000", other.Next.BranchCode);   // เลขใหม่ไม่ส่งสาขา ⇒ สำนักงานใหญ่
+        Assert.Equal("3100100123451", other.Next.TaxId);
+    }
+
+    [Fact]
+    public void S2_CheckoutGiftRecipient_DoesNotTouchMemberIdentity()
+    {
+        var current = Profile();   // สมชาย ใจดี · 0812345678
+        var m = StorefrontMemberProfile.MergeCheckout(current, new CheckoutProfileInput("คุณแม่", "0899999999",
+            ShippingAddressText: "5 หมู่ 2", ShippingProvince: "เชียงใหม่", ShippingPostalCode: "50000", IdentityFromForm: false));
+        Assert.Equal("สมชาย ใจดี", m.Next.FullName);
+        Assert.Equal("0812345678", m.Next.Phone);
+        Assert.Equal("คุณแม่", m.Next.Shipping!.RecipientName);
+        Assert.Equal("0899999999", m.Next.Shipping.Phone);
+    }
+
+    [Fact]
+    public void S2_BookingForm_FillsOnlyEmptyIdentity_NeverOverwrites()
+    {
+        // จองแทนคนอื่น: บัญชีมีชื่อแล้ว ⇒ ไม่ทับ + บอกเหตุ · บัญชียังไม่มีเบอร์ ⇒ เติม
+        var m = StorefrontMemberProfile.MergeCheckout(Profile(phone: null), new CheckoutProfileInput("เพื่อนที่จองแทน", "0899999999"));
+        Assert.Equal("สมชาย ใจดี", m.Next.FullName);
+        Assert.Equal("0899999999", m.Next.Phone);
+        Assert.Contains(m.Skipped, x => x.Contains("ชื่อ-นามสกุล"));
+        var full = StorefrontMemberProfile.MergeCheckout(Profile(), new CheckoutProfileInput(null, "0899999999"));
+        Assert.Equal("0812345678", full.Next.Phone);   // มีเบอร์อยู่แล้ว ⇒ ไม่ทับ
+        Assert.Contains(full.Skipped, x => x.Contains("เบอร์โทร"));
+    }
+
+    [Fact]
+    public void LegacyRawPhone_SameNumber_IsNotAChange()
+    {
+        var m = StorefrontMemberProfile.MergeCheckout(Profile(phone: "081-234-5678"), new CheckoutProfileInput(null, "0812345678"));
+        Assert.Empty(m.Saved);
+        Assert.Empty(m.Skipped);
+        Assert.Null(StorefrontMemberProfile.SaveNote(m.Saved, m.Skipped));
+        Assert.Equal("0812345678", StorefrontMemberProfile.ComparablePhone("081-234-5678"));
+        Assert.Equal("abc", StorefrontMemberProfile.ComparablePhone("abc"));   // normalize ไม่ได้ ⇒ คงค่าดิบ
+    }
+
+    [Fact]
+    public void S3_FillFromProfile_OnlyPageConfirmedMemberOfThisSite()
+    {
+        var me = new StorefrontCustomerIdentity(CustA, SiteA);
+        Assert.True(StorefrontCustomerAuth.FillFromProfile(true, me, SiteA));
+        Assert.False(StorefrontCustomerAuth.FillFromProfile(false, me, SiteA));   // ผู้ใช้ลบเอง/ผู้เรียก API ไม่ส่งธง
+        Assert.False(StorefrontCustomerAuth.FillFromProfile(true, null, SiteA));  // พนักงาน walk-in / แขก
+        Assert.False(StorefrontCustomerAuth.FillFromProfile(true, me, SiteB));    // โทเคนเว็บอื่น
     }
 
     // ═════════ เจ้าของโปรไฟล์ = โทเคนหน้าร้านของเว็บนี้เท่านั้น ═════════

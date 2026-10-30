@@ -10,7 +10,7 @@
 //   (b) ผู้ใช้พิมพ์ก่อน /portal/me ตอบ ⇒ ค่าผู้ใช้ชนะ (ไม่ถูกทับ) · ช่องที่มีค่าอยู่แล้วแต่ระบบไม่ได้เติม ⇒ ไม่ทับ
 //   (c) ค่าตั้งต้นของระบบ (data-auto-src="default" เช่นสาขา 00000) ⇒ โปรไฟล์ (เฉพาะกว่า) ชนะ
 //   (d) ช่องที่ spec บอก "เทียบอย่างเดียว" (x[4] === false) ⇒ ไม่เติม
-//   (e) ช่อง "บันทึกเป็นข้อมูลของฉัน": ซ่อนเมื่อไม่มีอะไรต่าง · ติ๊กไว้ก่อนเฉพาะเมื่อทุกช่องที่ต่างเป็นช่องที่โปรไฟล์ยังว่าง ·
+//   (e) ช่องขอบันทึก: ซ่อนเมื่อไม่มีอะไรต่าง · แสดงเมื่อช่องที่ "บันทึกได้" ต่าง · <ไม่ติ๊กให้เองเลย> (ฝ่ายค้านรอบ 216 S2) ·
 //       แก้ค่าที่มีอยู่แล้ว ⇒ แสดงแต่ไม่ติ๊ก · ผู้ใช้กดเองแล้ว ⇒ ไม่เปลี่ยนสถานะให้ · ซ่อนอยู่ ⇒ ไม่ขอบันทึก
 //   (f) ไม่ได้ล็อกอิน ⇒ ไม่แตะฟอร์ม
 // negative test: ถอดด่าน userTouched / ถอดด่าน "มีค่าอยู่แล้ว" / ติ๊กเสมอ ⇒ ต้องล้มทุกตัว
@@ -20,7 +20,7 @@ const path = require('path');
 
 const PAGE = process.env.SF_PAGE || path.join(__dirname, '..', 'Accounting', 'wwwroot', 'storefront.html');
 const REAL_SRC = fs.readFileSync(PAGE, 'utf8');
-const METHODS = ['esc', '_profileUrl', '_memberPrefill', '_memberNorm', '_memberSaveRefresh', '_memberSaveValue'];
+const METHODS = ['esc', '_profileUrl', '_memberPrefill', '_memberNorm', '_memberSaveRefresh', '_memberSaveValue', '_memberContactFromProfile'];
 
 function extract(src, name) {
   const re = new RegExp('\\n      (?:async )?' + name + '\\(');
@@ -104,7 +104,7 @@ function makeStore(src, profile, opts) {
 }
 
 const PROFILE = { fullName: 'สมชาย ใจดี', phone: '0812345678', email: 'a@shop.test', branchCode: '00001', taxId: '0105556000009' };
-const SPEC = me => [['customerName', me.fullName, 'text', true], ['customerPhone', me.phone, 'phone', true],
+const SPEC = me => [['customerName', me.fullName, 'text', !me.fullName], ['customerPhone', me.phone, 'phone', !me.phone],
   ['customerEmail', me.email, 'text', false], ['billingBranchCode', me.branchCode, 'text', false], ['guestTaxId', me.taxId, 'digits', true, false]];
 
 async function scenario(src) {
@@ -126,11 +126,12 @@ async function scenario(src) {
     ok(f.querySelector('[name="customerEmail"]').value === 'keep@x.test', '(b) ช่องที่มีค่าอยู่แล้ว (ระบบไม่ได้เติม) ต้องไม่ถูกทับ');
     ok(f.querySelector('[name="billingBranchCode"]').value === '00001', '(c) ค่าตั้งต้น (autoSrc=default) ต้องแพ้โปรไฟล์');
     ok(f.querySelector('[name="guestTaxId"]').value === '', '(d) ช่อง "เทียบอย่างเดียว" ต้องไม่ถูกเติม');
-    // (e) เบอร์ต่างจากโปรไฟล์ที่มีค่าอยู่แล้ว ⇒ แสดง แต่ไม่ติ๊กให้
+    // (e) S2: บัญชีมีเบอร์อยู่แล้ว (จองแทนคนอื่น) ⇒ ช่องเบอร์ไม่ "บันทึกได้" ⇒ ไม่แสดงช่องขอบันทึก
     const box = f.querySelector('.sf-save-profile');
-    ok(box && box.style.display !== 'none', '(e) พิมพ์เบอร์ต่างจากโปรไฟล์ ⇒ ต้องแสดงช่อง "บันทึกเป็นข้อมูลของฉัน"');
-    ok(box && !box.querySelector('input').checked, '(e) แก้ค่าที่โปรไฟล์มีอยู่แล้ว ⇒ ห้ามติ๊กไว้ก่อน');
-    ok(s._memberSaveValue(f) === false, '(e) ไม่ติ๊ก ⇒ ไม่ขอบันทึก');
+    ok(!box || box.style.display === 'none', '(e) บัญชีมีเบอร์แล้ว ⇒ เบอร์ที่ต่างต้องไม่ชวนให้บันทึกทับ');
+    ok(s._memberSaveValue(f) === false, '(e) ไม่แสดง ⇒ ไม่ขอบันทึก');
+    // (g) S3: ธง contactFromProfile — ชื่อเติมจากโปรไฟล์อยู่ ⇒ true
+    ok(s._memberContactFromProfile(f, ['customerName', 'customerPhone', 'customerEmail']) === true, '(g) มีช่องที่ระบบเติมจากโปรไฟล์ ⇒ ธงต้องเป็น true');
     // (b) ซ้ำ: เรียกเติมอีกรอบ (เช่นวาดใหม่) ต้องไม่ทับค่าที่ผู้ใช้แตะ
     await s._memberPrefill(f, SPEC);
     ok(phone.value === '0899999999', '(b) เติมรอบสองต้องไม่ทับช่องที่ผู้ใช้แตะแล้ว');
@@ -139,9 +140,10 @@ async function scenario(src) {
     name.value = ''; f.fire('input', name);
     await s._memberPrefill(f, SPEC);
     ok(name.value === '', '(b) ช่องที่ผู้ใช้ลบค่าที่ระบบเติมทิ้ง ⇒ เติมรอบใหม่ต้องไม่ใส่กลับ');
+    ok(s._memberContactFromProfile(f, ['customerName', 'customerPhone', 'customerEmail']) === false, '(g) ผู้ใช้ลบช่องที่เติมไว้ ⇒ ธงต้องเป็น false (เซิร์ฟเวอร์ห้ามเติมกลับ)');
   }
 
-  // (e) โปรไฟล์ไม่มีเบอร์ ⇒ ผู้ใช้พิมพ์เบอร์ ⇒ ติ๊กไว้ก่อน · ผู้ใช้เอาติ๊กออกแล้วพิมพ์ต่อ ⇒ ไม่ติ๊กกลับให้
+  // (e) โปรไฟล์ไม่มีเบอร์ ⇒ ผู้ใช้พิมพ์เบอร์ ⇒ แสดงช่องขอบันทึกแต่ไม่ติ๊กให้ · ผู้ใช้ติ๊กเอง ⇒ ขอบันทึก · พิมพ์ต่อไม่เปลี่ยนสถานะติ๊ก
   {
     const s = makeStore(src, Object.assign({}, PROFILE, { phone: null }));
     const f = makeForm([['customerName'], ['customerPhone']]);
@@ -150,17 +152,31 @@ async function scenario(src) {
     const phone = f.querySelector('[name="customerPhone"]');
     phone.value = '081-111-2222'; f.fire('input', phone);
     const cb = f.querySelector('.sf-save-profile').querySelector('input');
-    ok(cb.checked === true, '(e) เติมช่องที่โปรไฟล์ว่าง ⇒ ติ๊กไว้ก่อน');
-    ok(s._memberSaveValue(f) === true, '(e) ติ๊กอยู่และแสดงอยู่ ⇒ ขอบันทึก');
-    cb.checked = false; f.fire('change', cb);
+    ok(cb.checked === false, '(e) ห้ามติ๊กให้เอง (S2) — ผู้ใช้ต้องติ๊กเอง');
+    ok(s._memberSaveValue(f) === false, '(e) ไม่ติ๊ก ⇒ ไม่ขอบันทึก');
+    cb.checked = true; f.fire('change', cb);
     phone.value = '081-111-3333'; f.fire('input', phone);
-    ok(cb.checked === false, '(e) ผู้ใช้เอาติ๊กออกเองแล้ว ⇒ ห้ามติ๊กกลับให้');
-    // เบอร์ที่ต่างแค่รูปแบบ (ขีด/+66) = ไม่ต่าง
-    const s2 = makeStore(src, PROFILE);
-    const f2 = makeForm([['customerName'], ['customerPhone', '+66 81 234 5678']]);
-    await s2._memberPrefill(f2, SPEC);
+    ok(cb.checked === true && s._memberSaveValue(f) === true, '(e) ผู้ใช้ติ๊กเองแล้ว ⇒ คงติ๊ก + ขอบันทึก');
+    // เบอร์เดียวกันต่างแค่ขีด/เว้นวรรค = ไม่ต่าง (เทียบตัวเลขกับเบอร์ที่เซิร์ฟเวอร์ normalize แล้ว)
+    const s2 = makeStore(src, Object.assign({}, PROFILE, { phone: '' }));
+    const spec2 = me => [['customerPhone', '0812345678', 'phone', true]];
+    const f2 = makeForm([['customerPhone', '081-234-5678']]);
+    await s2._memberPrefill(f2, spec2);
     const box2 = f2.querySelector('.sf-save-profile');
-    ok(!box2 || box2.style.display === 'none', '(e) เบอร์เดียวกันต่างรูปแบบ ⇒ ไม่นับว่าต่าง');
+    ok(!box2 || box2.style.display === 'none', '(e) เบอร์เดียวกันต่างแค่ขีด ⇒ ไม่นับว่าต่าง');
+    // (g) ชื่อยังเป็นค่าจากโปรไฟล์ แต่ผู้ใช้ลบอีเมลที่เติมไว้ทิ้ง ⇒ ธง false (ไม่ให้เซิร์ฟเวอร์เติมอีเมลกลับ)
+    const s4 = makeStore(src, PROFILE);
+    const f4 = makeForm([['customerName'], ['customerEmail']]);
+    await s4._memberPrefill(f4, SPEC);
+    ok(s4._memberContactFromProfile(f4, ['customerName', 'customerEmail']) === true, '(g) เติมครบ ⇒ ธง true');
+    const em = f4.querySelector('[name="customerEmail"]');
+    em.value = ''; f4.fire('input', em);
+    ok(s4._memberContactFromProfile(f4, ['customerName', 'customerEmail']) === false, '(g) ลบอีเมลที่เติมไว้ ⇒ ธงต้องเป็น false');
+    // (h) ช่องซ่อนของฟอร์มไม่ถูกเติม
+    const s3 = makeStore(src, PROFILE);
+    const f3 = makeForm([['customerName', '', { type: 'hidden' }]]);
+    await s3._memberPrefill(f3, SPEC);
+    ok(f3.querySelector('[name="customerName"]').value === '', '(h) ช่อง type=hidden ต้องไม่ถูกเติม');
   }
 
   // (f) ไม่ได้ล็อกอิน ⇒ ไม่แตะ
@@ -184,7 +200,9 @@ async function scenario(src) {
   const mutants = [
     ['ถอดด่าน userTouched', REAL_SRC.replace("if (el.dataset.userTouched === '1') continue;", '')],
     ['ถอดด่าน "มีค่าอยู่แล้วที่ระบบไม่ได้เติม"', REAL_SRC.replace('if (el.value && !el.dataset.autoSrc) continue;', '')],
-    ['ติ๊กบันทึกเสมอ', REAL_SRC.replace("cb.checked = fillsEmpty && !changesExisting;", 'cb.checked = true;')],
+    ['ติ๊กให้เอง', REAL_SRC.replace("        box.style.display = 'flex';\n      },", "        box.style.display = 'flex';\n        box.querySelector('input').checked = true;\n      },")],
+    ['ธงไม่สนช่องที่ผู้ใช้ลบ', REAL_SRC.replace("if (els.some(el => el.dataset.userTouched === '1' && !String(el.value || '').trim())) return false;", '')],
+    ['เติมช่องซ่อน', REAL_SRC.replace("el.type === 'hidden' || ", '')],
     ['เติมช่อง "เทียบอย่างเดียว"', REAL_SRC.replace('.filter(x => x[4] !== false)', '')],
   ];
   let bad = 0;

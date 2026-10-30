@@ -58,6 +58,27 @@ public static class PlatformPolicyAcceptanceRules
         r.PseudonymisedAt ??= nowUtc;
     }
 
+    /// <summary>ฝ่ายค้าน S1: แถวยินยอมเดิมใน <c>PdpaConsentRecords</c> (ระดับแพลตฟอร์ม CompanyId ศูนย์ — ต้นฉบับที่ migration คัดลอกมา)
+    /// ลบตามคำขอแบบเดียวกัน — อีเมล/IP ทำไม่ให้ระบุตัว · คงแถว · วันลบครั้งแรกไม่เลื่อน</summary>
+    public static void Pseudonymise(PdpaConsentRecord r, string anonymisedEmail, DateTime nowUtc)
+    {
+        r.SubjectContact = anonymisedEmail;
+        r.IpAddress = null;
+        r.PseudonymisedAt ??= nowUtc;
+    }
+
+    public const string StaffEnteredLabel = "บันทึกโดยเจ้าหน้าที่ (ไม่ใช่ hash ของระบบ)";
+
+    /// <summary>ฝ่ายค้าน S4/N2: ผลตรวจหลักฐานของแถวความยินยอมบนเว็บร้าน/ที่เจ้าหน้าที่บันทึก — ป้ายเดียวกับแถวยอมรับนโยบาย ·
+    /// hash ที่เจ้าหน้าที่กรอกเอง (ของเอกสารภายนอก) ตรวจด้วย canonical ไม่ได้ ⇒ บอกที่มา ไม่ใช่ "ไม่ตรง"</summary>
+    public static string CheckLabel(PdpaConsentRecord c)
+    {
+        if (c.EvidenceSource == PdpaConsentEvidence.SourceStaff) return StaffEnteredLabel;
+        if (c.PseudonymisedAt != null) return CheckLabel(PdpaConsentEvidence.EvidenceCheck.LegacyUnverifiable);
+        return CheckLabel(PdpaConsentEvidence.Check(c.EvidenceHash, c.SubjectContact, c.Purpose, c.PolicyVersion,
+            c.GrantedAt, c.Channel, c.IpAddress, null));
+    }
+
     /// <summary>แถวที่ลบตามคำขอก่อนเวลานี้ = พ้น legal hold ลบจริงได้</summary>
     public static DateTime PurgeCutoff(DateTime nowUtc) => nowUtc.AddYears(-RetentionYearsAfterErasure);
 

@@ -215,7 +215,8 @@
 
       const tabs = isAll ? this.allLinks(sites) : this.workspaceTabs(site);
       const tabHtml = tabs.map(t => {
-        const cur = t.page === currentPage;
+        // ฝ่ายค้านเฟส 2: หน้าตั้งค่าร้าน/ที่พักที่ศูนย์ตั้งค่าเว็บครอบไว้ ⇒ แท็บ "ตั้งค่าเว็บ" เป็นแท็บปัจจุบัน
+        const cur = t.page === currentPage || (t.page === SETTINGS_LINK.page && HUB_COVERS.includes(currentPage));
         return `<a href="${esc(t.href)}"${cur ? ' aria-current="page"' : ''} style="white-space:nowrap;padding:8px 12px;font-size:13px;border-bottom:2px solid ${cur ? 'var(--primary)' : 'transparent'};color:${cur ? 'var(--primary)' : 'var(--gray-600)'};font-weight:${cur ? '600' : '400'};text-decoration:none">${esc(t.label)}</a>`;
       }).join('');
 

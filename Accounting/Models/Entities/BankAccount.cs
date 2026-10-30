@@ -550,6 +550,11 @@ public class PdpaConsentRecord : TenantEntity
     public string? EvidenceHash { get; set; }
     public string? Channel { get; set; }               // web-form / email / sms / paper
     public string? IpAddress { get; set; }
+    /// <summary>รอบ 214 ฝ่ายค้าน N2: ที่มาของ <see cref="EvidenceHash"/> — "system" = ระบบคำนวณจาก canonical (ตรวจกลับได้) ·
+    /// "staff" = เจ้าหน้าที่กรอกเอง (hash ของเอกสารภายนอก — ตรวจด้วย canonical ไม่ได้) · null = แถวก่อนรอบนี้ (ไม่ทราบ)</summary>
+    public string? EvidenceSource { get; set; }
+    /// <summary>รอบ 214 ฝ่ายค้าน S1: ลบตามคำขอแล้ว (อีเมล/IP ทำไม่ให้ระบุตัว · แถวคงไว้เป็นหลักฐาน)</summary>
+    public DateTime? PseudonymisedAt { get; set; }
 }
 
 /// <summary>PiiAccessLog (ม.37(4)) — บันทึก who-accessed-what PII event-style.

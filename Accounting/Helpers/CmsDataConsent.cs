@@ -86,6 +86,7 @@ public static class CmsDataConsent
             GrantedAt = grantedAtUtc,
             Channel = channel,
             EvidenceHash = PdpaConsentEvidence.ComputeHash(subject, purpose, version, grantedAtUtc, channel, null, null),
+            EvidenceSource = PdpaConsentEvidence.SourceSystem,
             CreatedBy = "storefront",
         };
         db.Set<PdpaConsentRecord>().Add(row);

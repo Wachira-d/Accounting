@@ -142,6 +142,8 @@
         this.group = this.groups().some(g => g.key === want) ? want : (this.groups().find(g => g.key === 'booking') || this.groups()[0]).key;
         await this.render();
         this.renderCompany();
+        // ลิงก์กรองตามสิทธิ์ — วาดใหม่เมื่อสิทธิ์โหลดเสร็จ (ก่อนนั้น hasMenuAccess = true)
+        document.addEventListener('layout:permissions', () => { this.render(); this.renderCompany(); });
       },
 
       async go(key) {
@@ -186,11 +188,19 @@
 
       /** กลุ่มที่ยังไม่ย้าย: สรุป + ลิงก์ไปที่แก้จริง · rows = [label, href, where] */
       links(title, desc, rows) {
+        // ฝ่ายค้านเฟส 2: ซ่อนลิงก์ไปหน้าที่ผู้ใช้ไม่มีสิทธิ์ (r[3] = id เมนูของหน้าปลายทาง · ไม่ระบุ = เดาจาก URL)
+        rows = rows.filter(r => Layout.hasMenuAccess(r[3] || this.menuOf(r[1])));
         return `<div class="sg-card"><h3>${esc(title)} ${CmsSiteContext.scopeBadge('site', this.site && this.site.name)}</h3>
           <div class="sg-hint" style="margin-bottom:8px">${esc(desc)}</div>
           ${rows.map(r => `<div class="sg-link"><div><div style="font-weight:500">${esc(r[0])}</div><div class="sg-hint">แก้ที่: ${esc(r[2])}</div></div>
             <a class="btn btn-sm btn-secondary" href="${esc(r[1])}">ไปที่นั่น →</a></div>`).join('')}
         </div>`;
+      },
+
+      menuOf(href) {
+        const page = String(href || '').split('?')[0].replace(/^\/pages\//, '').replace(/\.html$/, '');
+        return ({ 'cms-edit': 'cms-sites', 'cms-sites': 'cms-sites', 'cms-store-settings': 'cms-store-settings',
+          'lodging-settings': 'lodging-settings', 'payment-settings': 'payment-settings', 'settings': 'settings' })[page] || page;
       },
 
       renderPayment(mods) {
@@ -216,7 +226,7 @@
         const over = Array.isArray(d.resourceModeOverrides) ? d.resourceModeOverrides : [];
         const id = enc(this.siteId || '');
         return `<div class="sg-card"><h3>ผู้ให้บริการ / ห้อง / อุปกรณ์ ${CmsSiteContext.scopeBadge('site', this.site && this.site.name)}</h3>
-            <div class="sg-hint" style="margin-bottom:10px">การจัดสรรผู้ให้บริการของเว็บ: <b>${d.providerAllocationEnabled ? 'เปิดอยู่' : 'ปิดอยู่ — ทุกบริการนับความจุอย่างเดียว (ค่าด้านล่างมีผลเมื่อเปิด)'}</b>
+            <div class="sg-hint" style="margin-bottom:10px">การจัดสรรผู้ให้บริการของเว็บ: <b>${d.providerAllocationEnabled ? (Number(d.activeProviderCount || 0) > 0 ? 'เปิดอยู่' : 'เปิดอยู่ · ยังไม่มีผู้ให้บริการ') : 'ปิดอยู่ — ทุกบริการนับความจุอย่างเดียว (ค่าด้านล่างมีผลเมื่อเปิด)'}</b>
               · <a href="/pages/cms-edit.html?siteId=${id}&tab=booking" style="color:var(--primary)">เปิด/ปิด · ผู้ให้บริการ · ตรรกะแนะนำ →</a></div>
             <fieldset style="border:0;padding:0;margin:0"><legend style="font-weight:600;font-size:14px;margin-bottom:4px">ลูกค้าเลือกผู้ให้บริการได้ไหม
               <span class="sg-hint">(ค่าเริ่มต้นของทุกบริการที่ตั้ง "ตามค่าเว็บ")</span></legend>
@@ -227,7 +237,7 @@
             <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" id="sgSaveMode">บันทึก</button></div>
           </div>
           <div class="sg-card"><h3>บริการที่กำหนดเอง (ไม่ตามค่าเว็บ) · ${over.length} บริการ</h3>
-            <div class="sg-hint" style="margin-bottom:8px">ตามค่าเว็บอยู่ ${Number(d.resourceModeInheritingCount || 0)} บริการ · บริการที่สร้างก่อนรอบนี้เป็น "กำหนดเอง" ทุกตัว (คงพฤติกรรมเดิม) — กด "ใช้ตามค่าเว็บ" เพื่อให้เปลี่ยนตามค่าด้านบน</div>
+            <div class="sg-hint" style="margin-bottom:8px">ตามค่าเว็บอยู่ ${Number(d.resourceModeInheritingCount || 0)} บริการ · บริการที่กำหนดเองไม่เปลี่ยนตามค่าด้านบน — กด "ใช้ตามค่าเว็บ" เพื่อให้เปลี่ยนตาม</div>
             ${over.length ? over.map(o => `<div class="sg-link"><div>${esc(o.name)} — <b>${esc(label(o.resourceMode))}</b> <span class="sg-hint">กำหนดเอง</span></div>
                 <button class="btn btn-sm btn-secondary" data-inherit="${esc(o.serviceId)}">ใช้ตามค่าเว็บ</button></div>`).join('')
               + `<div style="margin-top:10px"><button class="btn btn-sm btn-ghost" data-inherit-all="1">ให้ทุกบริการใช้ตามค่าเว็บ</button></div>`
@@ -250,10 +260,8 @@
       async saveDefaultMode() {
         const sel = document.querySelector('input[name="sgDefMode"]:checked');
         if (!sel || !this.bss) return;
-        const d = this.bss;
-        // PUT รับทั้งชุด: ช่องตัวเลขต้องส่งค่าเดิมกลับ (ไม่งั้นถูกตั้งเป็น 0) · ช่อง null = คงค่าเดิม
-        const body = { durationMinutes: d.durationMinutes, bufferBeforeMinutes: d.bufferBeforeMinutes, bufferAfterMinutes: d.bufferAfterMinutes,
-          minAdvanceHours: d.minAdvanceHours, maxAdvanceDays: d.maxAdvanceDays, defaultResourceMode: sel.value };
+        // ส่งเฉพาะช่องที่แก้ (ช่องอื่นไม่ส่ง = server คงค่าเดิม — ไม่ทับค่าที่คนอื่นเพิ่งแก้ในหน้าอื่น)
+        const body = { defaultResourceMode: sel.value };
         try {
           await Layout.api().cmsUpdateBookingSiteSettings(this.siteId, body);
           Layout.toast('บันทึกแล้ว', 'success');
@@ -296,6 +304,8 @@
           <div class="sg-link"><div><b>อีเมลผู้ส่ง (SMTP)</b></div><a class="btn btn-sm btn-secondary" href="/pages/settings.html?tab=email">ตั้งค่าอีเมล →</a></div>
           <div class="sg-link"><div><b>ช่องรับเงินออนไลน์ (บัตร/QR ผ่านผู้ให้บริการ)</b><div class="sg-hint">แต่ละเว็บเลือกเปิด "ชำระออนไลน์" เองที่กลุ่ม "การชำระเงิน"</div></div><a class="btn btn-sm btn-secondary" href="/pages/payment-settings.html">รับชำระเงินออนไลน์ →</a></div>
           <div class="sg-link"><div style="flex:1;min-width:240px"><b>โควตาข้อความเดือนนี้</b><div id="sgQuota"></div></div></div>`;
+        // ฝ่ายค้านเฟส 2: ปุ่มไปหน้าบริษัทที่ผู้ใช้ไม่มีสิทธิ์ ⇒ ไม่แสดงปุ่ม (สถานะยังแสดง)
+        el.querySelectorAll('a[href]').forEach(a => { if (!Layout.hasMenuAccess(this.menuOf(a.getAttribute('href')))) a.remove(); });
         const cid = Layout.getCompanyId();
         try {
           const j = await API.get(`/api/companies/${cid}/line-config`);

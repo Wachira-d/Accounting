@@ -241,6 +241,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.CustomerNotifyResendMigration.Statements());   // รอบ 213 — เหตุระงับ/ส่งซ้ำของ CustomerNotifyLogs + แพ็ก notify.topup ที่แอดมินตั้ง (หลังบล็อกรอบ 212)
         list.AddRange(Accounting.Helpers.LegalDocumentMigration.Statements());   // รอบ 214 — ฉบับนโยบาย/ข้อกำหนดของแพลตฟอร์ม + ข้อความนโยบายของร้าน (Helpers/LegalDocumentMigration)
         list.AddRange(Accounting.Helpers.SubmitOnceMigration.Statements());   // รอบ 217 — IdempotencyRecords (+RequestHash) · คิวแจ้งเตือนหลังสร้างการจอง/ออเดอร์
+        list.AddRange(Accounting.Helpers.MemberProfileMigration.Statements());   // รอบ 216 ฝ่ายค้าน — ที่อยู่หลักของสมาชิกชนิดละแถว (ล้างซ้ำ + unique index บางส่วน)
         return list;
     }
 

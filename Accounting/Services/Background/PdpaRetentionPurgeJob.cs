@@ -79,6 +79,11 @@ public class PdpaRetentionPurgeJob : BackgroundService
         var acceptCutoff = Accounting.Helpers.PlatformPolicyAcceptanceRules.PurgeCutoff(DateTime.UtcNow);
         var acceptsDeleted = await db.PlatformPolicyAcceptances.IgnoreQueryFilters()
             .Where(x => x.PseudonymisedAt != null && x.PseudonymisedAt < acceptCutoff).ExecuteDeleteAsync(ct);
+        // ฝ่ายค้านรอบ 214 S1: ต้นฉบับเดิมใน PdpaConsentRecords (ระดับแพลตฟอร์ม) — กติกาเดียวกัน
+        acceptsDeleted += await db.PdpaConsentRecords.IgnoreQueryFilters()
+            .Where(c => c.CompanyId == Accounting.Helpers.PdpaPolicy.PlatformScopeCompanyId
+                        && c.PseudonymisedAt != null && c.PseudonymisedAt < acceptCutoff)
+            .ExecuteDeleteAsync(ct);
         if (acceptsDeleted > 0) _logger.LogInformation("PDPA retention purge: ลบหลักฐานยอมรับนโยบายที่พ้น legal hold {Rows} แถว", acceptsDeleted);
 
         // contact ที่ถูก anonymize + ติดธง retained (ผู้ใช้ขอลบแล้ว แต่ค้างเพราะ legal-hold)

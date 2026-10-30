@@ -5,6 +5,8 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -88,7 +90,10 @@ public class MemberProfileDbTests
         Assert.Equal("ลูกค้าในระบบบัญชี", contact.Name);
         Assert.Equal("3100100123451", contact.TaxId);
 
-        var audits = await db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == cid && a.EntityType == nameof(SiteCustomer) && a.EntityId == custId.ToString()).ToListAsync();
+        // CI รอบ 216: SaveChanges ประทับ audit อัตโนมัติของทุก entity ที่เปลี่ยน (AuditTrailService.CaptureAuditEntries) ด้วย EntityType เดียวกัน ⇒
+        // นับเฉพาะแถวของตัวแก้โปรไฟล์ (มีรหัสกฎ) — แก้สองครั้ง = 2 แถว · แถวของเราเก็บชื่อช่อง ไม่ใส่ค่า
+        var audits = (await db.AuditLogs.AsNoTracking().Where(a => a.CompanyId == cid && a.EntityType == nameof(SiteCustomer) && a.EntityId == custId.ToString()).ToListAsync())
+            .Where(a => a.NewValues != null && a.NewValues.Contains(StorefrontMemberProfile.RuleCode)).ToList();
         Assert.Equal(2, audits.Count);
         Assert.All(audits, a => Assert.DoesNotContain("0812345678", a.NewValues));   // ชื่อช่องเท่านั้น ไม่ใช่ค่า
     }
@@ -131,13 +136,21 @@ public class MemberProfileDbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var (cid, siteA, _, custId, _) = await SeedAsync(db);
 
-        var note = await Svc(db).SaveFromCheckoutAsync(cid, siteA, custId, new CheckoutProfileInput("สมชาย ใจดี", "0812345678",
-            ShippingAddressText: "99/1 ถ.สุขุมวิท", ShippingProvince: "กรุงเทพมหานคร", ShippingPostalCode: "10110"));
-        Assert.Null(note);   // บันทึกครบ ⇒ ไม่มีข้อความปัญหา
+        // เช็กเอาต์ (ฝ่ายค้าน S2): ชื่อ/เบอร์บนฟอร์ม = ผู้รับ — ไม่แตะชื่อ/เบอร์ของบัญชี
+        var note = await Svc(db).SaveFromCheckoutAsync(cid, siteA, custId, new CheckoutProfileInput("คุณแม่", "0899999999",
+            ShippingAddressText: "99/1 ถ.สุขุมวิท", ShippingProvince: "กรุงเทพมหานคร", ShippingPostalCode: "10110", IdentityFromForm: false));
+        Assert.Contains("บันทึกลงบัญชีของคุณแล้ว", note);
         db.ChangeTracker.Clear();
         var me = await Svc(db).GetMeAsync(cid, siteA, custId);
-        Assert.Equal("0812345678", me!.Phone);
+        Assert.Equal("a", me!.FullName);
+        Assert.Null(me.Phone);
         Assert.Equal("99/1 ถ.สุขุมวิท", me.ShippingAddressText);
+        Assert.Equal("คุณแม่", me.ShippingAddress!.RecipientName);
+
+        // ฟอร์มจอง: บัญชียังไม่มีเบอร์ ⇒ เติม · ส่งซ้ำค่าเดิม ⇒ ไม่มีข้อความ (ไม่มี "บันทึกแล้ว" ปลอม)
+        Assert.NotNull(await Svc(db).SaveFromCheckoutAsync(cid, siteA, custId, new CheckoutProfileInput(null, "0812345678")));
+        db.ChangeTracker.Clear();
+        Assert.Null(await Svc(db).SaveFromCheckoutAsync(cid, siteA, custId, new CheckoutProfileInput(null, "081-234-5678")));
 
         var bad = await Svc(db).SaveFromCheckoutAsync(cid, siteA, custId, new CheckoutProfileInput(null, "12", BillingTaxId: "0105556000002"));
         Assert.NotNull(bad);
@@ -146,5 +159,99 @@ public class MemberProfileDbTests
         var after = await Svc(db).GetMeAsync(cid, siteA, custId);
         Assert.Equal("0812345678", after!.Phone);   // ค่าที่ถูกอยู่แล้วไม่ถูกแตะ
         Assert.Null(after.TaxId);
+    }
+
+    [Fact]
+    public async Task BothRow_And_DuplicateDefaults_AreNormalizedOnSave()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, siteA, _, custId, _) = await SeedAsync(db);
+        // ข้อมูลเดิม: แถว Both หลัก (มีคอลัมน์โครง) + แถว Shipping หลักเก่าซ้ำ
+        db.SiteCustomerAddresses.Add(new SiteCustomerAddress
+        {
+            CompanyId = cid, CustomerId = custId, AddressType = SiteAddressType.Both, IsDefault = true,
+            AddressLine = "1 ถ.เดิม", BuildingNumber = "1", StreetName = "ถ.เดิม", Province = "กรุงเทพมหานคร", PostalCode = "10100",
+            CreatedAt = DateTime.UtcNow,
+        });
+        db.SiteCustomerAddresses.Add(new SiteCustomerAddress
+        {
+            CompanyId = cid, CustomerId = custId, AddressType = SiteAddressType.Shipping, IsDefault = true,
+            AddressLine = "เก่า", CreatedAt = DateTime.UtcNow.AddDays(-10),
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var before = await Svc(db).GetMeAsync(cid, siteA, custId);
+        Assert.Equal("1 ถ.เดิม กรุงเทพมหานคร 10100", before!.BillingAddressText);   // ใบกำกับอ่านจากแถว Both ได้
+
+        await Svc(db).UpdateProfileAsync(cid, siteA, custId, new UpdateStorefrontProfileRequest
+        {
+            FullName = "a",
+            ShippingAddress = new StorefrontAddressDto { AddressLine = "9 ถ.ใหม่", Province = "เชียงใหม่", PostalCode = "50000" },
+            BillingAddress = new StorefrontAddressDto { AddressLine = "1 ถ.เดิม", Province = "กรุงเทพมหานคร", PostalCode = "10100" },
+        });
+        db.ChangeTracker.Clear();
+        var rows = await db.SiteCustomerAddresses.AsNoTracking().Where(a => a.CompanyId == cid && a.CustomerId == custId).ToListAsync();
+        Assert.Single(rows, a => a.IsDefault && a.AddressType == SiteAddressType.Shipping);   // แถวหลักต่อชนิดแถวเดียว
+        Assert.Single(rows, a => a.IsDefault && a.AddressType == SiteAddressType.Billing);
+        var ship = rows.Single(a => a.IsDefault && a.AddressType == SiteAddressType.Shipping);
+        Assert.Equal("9 ถ.ใหม่", ship.AddressLine);
+        Assert.Null(ship.StreetName);   // บรรทัดที่อยู่เปลี่ยน ⇒ คอลัมน์โครงเดิมถูกล้าง
+        var me = await Svc(db).GetMeAsync(cid, siteA, custId);
+        Assert.Equal("1 ถ.เดิม กรุงเทพมหานคร 10100", me!.BillingAddressText);   // ที่อยู่ใบกำกับไม่หายเมื่อแยกแถว Both
+    }
+
+    /// <summary>ฐานทดสอบสร้างด้วย EnsureCreated (ไม่มี index จาก DatabaseMigrationHelper) ⇒ รันคำสั่งของ <see cref="MemberProfileMigration"/> เอง
+    /// (idempotent · เหมือนตอนบูตจริง) เพื่อให้เทสต์เดินบนด่านฐานจริง</summary>
+    private static async Task EnsureDefaultIndexAsync(AccountingDbContext db)
+    {
+        foreach (var sql in MemberProfileMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+    }
+
+    [Fact]
+    public async Task DefaultAddressIndex_AllWriters_DoNotViolate_AndIndexIsReal()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsureDefaultIndexAsync(db);
+        var (cid, siteA, siteB, custId, _) = await SeedAsync(db);
+        var staff = new CmsCustomerService(db, NullLogger<CmsCustomerService>.Instance, new ConfigurationBuilder().Build());
+
+        // พนักงานเพิ่มที่อยู่หลักสองครั้ง ⇒ ไม่ชน index · แถวหลักแถวเดียว (แถวใหม่)
+        await staff.AddAddressAsync(cid, siteA, custId, new CreateCustomerAddressRequest { AddressLine = "1 ถ.หนึ่ง", IsDefault = true });
+        db.ChangeTracker.Clear();
+        var second = await staff.AddAddressAsync(cid, siteA, custId, new CreateCustomerAddressRequest { AddressLine = "2 ถ.สอง", IsDefault = true });
+        db.ChangeTracker.Clear();
+        var defaults = await db.SiteCustomerAddresses.AsNoTracking()
+            .Where(a => a.CompanyId == cid && a.CustomerId == custId && a.IsDefault && a.AddressType == SiteAddressType.Shipping).ToListAsync();
+        Assert.Equal(second.Id, Assert.Single(defaults).Id);
+
+        // สมาชิกแก้โปรไฟล์ (แถวหลักเดิมถูกแก้) · บันทึกจากเช็กเอาต์ ⇒ ไม่ชน index
+        await Svc(db).UpdateProfileAsync(cid, siteA, custId, new UpdateStorefrontProfileRequest
+        {
+            FullName = "a", ShippingAddress = new StorefrontAddressDto { AddressLine = "3 ถ.สาม", Province = "เชียงใหม่", PostalCode = "50000" },
+            BillingAddress = new StorefrontAddressDto { AddressLine = "4 ถ.สี่" },
+        });
+        db.ChangeTracker.Clear();
+        await Svc(db).SaveFromCheckoutAsync(cid, siteA, custId, new CheckoutProfileInput("คุณแม่", "0899999999",
+            ShippingAddressText: "5 ถ.ห้า", ShippingProvince: "ลำปาง", ShippingPostalCode: "52000", IdentityFromForm: false));
+        db.ChangeTracker.Clear();
+        var rows = await db.SiteCustomerAddresses.AsNoTracking().Where(a => a.CompanyId == cid && a.CustomerId == custId).ToListAsync();
+        Assert.Equal("5 ถ.ห้า", Assert.Single(rows, a => a.IsDefault && a.AddressType == SiteAddressType.Shipping).AddressLine);
+        Assert.Single(rows, a => a.IsDefault && a.AddressType == SiteAddressType.Billing);
+
+        // พนักงานเพิ่มที่อยู่หลักหลังโปรไฟล์ ⇒ ยังไม่ชน
+        await staff.AddAddressAsync(cid, siteA, custId, new CreateCustomerAddressRequest { AddressLine = "6 ถ.หก", IsDefault = true });
+        db.ChangeTracker.Clear();
+        Assert.Equal(1, await db.SiteCustomerAddresses.CountAsync(a => a.CompanyId == cid && a.CustomerId == custId && a.IsDefault && a.AddressType == SiteAddressType.Shipping));
+
+        // ทิศตรงข้าม: ด่านฐานมีจริง — เพิ่มแถวหลักซ้ำตรง ๆ (ข้ามตัวกลาง) ⇒ ฐานปฏิเสธ
+        db.SiteCustomerAddresses.Add(new SiteCustomerAddress { CompanyId = cid, CustomerId = custId, AddressType = SiteAddressType.Shipping, IsDefault = true, AddressLine = "ซ้ำ" });
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+        db.ChangeTracker.Clear();
+
+        // พนักงานเพิ่มที่อยู่ให้ลูกค้าผ่าน URL ของเว็บอื่น ⇒ ไม่พบ (กรองบริษัท+เว็บ)
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => staff.AddAddressAsync(cid, siteB, custId, new CreateCustomerAddressRequest { AddressLine = "x", IsDefault = true }));
     }
 }

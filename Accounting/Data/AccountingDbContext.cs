@@ -75,8 +75,9 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
-    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();
-    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
+    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
+    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)
+    public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม (ไม่มี CompanyId)
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
     public DbSet<SystemAccountTemplate> SystemAccountTemplates => Set<SystemAccountTemplate>();
@@ -999,6 +1000,19 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(a => a.Timestamp);
             e.Property(a => a.EntityType).HasMaxLength(100);
+        });
+
+        // ===== PlatformErasureRequest (รอบ 214 ต่อ ฐ) — ค้างได้ฉบับเดียวต่อผู้ใช้ · ชื่อ index ตรงกับ LegalDocumentMigration =====
+        modelBuilder.Entity<PlatformErasureRequest>(e =>
+        {
+            e.HasIndex(x => x.UserId).IsUnique().HasFilter("\"Status\" = 'Pending' AND \"IsDeleted\" = false").HasDatabaseName("UX_PlatformErasureRequests_User_Pending");
+            e.HasIndex(x => new { x.Status, x.DueAt }).HasDatabaseName("IX_PlatformErasureRequests_Status_Due");
+            e.Property(x => x.RequesterEmail).HasMaxLength(256);
+            e.Property(x => x.Status).HasMaxLength(20).IsConcurrencyToken();
+            e.Property(x => x.Reason).HasMaxLength(1000);
+            e.Property(x => x.RequesterIp).HasMaxLength(45);
+            e.Property(x => x.ResolutionNote).HasMaxLength(1000);
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         // ===== PlatformPolicyAcceptance (รอบ 214 หลัง CI) — ไม่มี FK ไป Companies (ผู้ใช้ไม่ต้องมีบริษัท) · ชื่อ index ตรงกับ LegalDocumentMigration =====

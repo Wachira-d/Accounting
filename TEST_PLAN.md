@@ -61,6 +61,20 @@
 | LEGAL214-25 | ฎ: round-trip บนฐานจริง — แถบยอมรับ + ฟอร์มเว็บร้าน | เขียน → อ่านกลับ → ตรวจผ่าน · แก้ IP ในฐาน ⇒ Invalid · อีเมลอื่น ⇒ ไม่ผ่าน | `Db/LegalDocumentDbTests`.Publish_is_append_only_… · Shop_form_consent_evidence_round_trips_through_postgres |
 | LEGAL214-26 | ฎ: ลบตามคำขอ (ม.33) | แถวคงอยู่ (legal hold) · อีเมลนิรนาม · IP/UA ล้าง · ผลตรวจ = ตรวจซ้ำไม่ได้ · วันลบครั้งแรกไม่เลื่อน · ลบจริงเมื่อพ้น 10 ปี | `PdpaConsentEvidenceV2Tests`.Erasure_pseudonymises_but_keeps_legal_hold_row · กติกา `ApplyErasureAsync`/`PdpaRetentionPurgeJob.RunAsync` |
 | LEGAL214-27 | ฎ: DSR เข้าถึง/โอนย้ายของผู้ใช้ที่ยอมรับนโยบายแล้ว | มี `policyAcceptances` พร้อมผลตรวจรายแถวทั้ง JSON และไฟล์ดาวน์โหลด | กติกา `GenerateAccessReportAsync` · ตรวจมือ |
+| LEGAL214-28 | ฝ่ายค้าน S2/S3: DSR ของบริษัท · เจ้าของดูเอง · ลบตามคำขอที่มีแถว soft-delete | บริษัทไม่เห็น IP/UA · `/api/legal/my-data` เห็นครบ · ลบแล้วทุกแถว (รวม soft-delete) ไม่ระบุตัว แถวคงอยู่ | `Db/LegalDocumentDbTests`.Dsr_hides_platform_ip_from_company_and_erasure_reaches_soft_deleted_rows |
+| LEGAL214-29 | ฝ่ายค้าน S1: ต้นฉบับ PdpaConsentRecords ระดับแพลตฟอร์ม | ลบตามคำขอ = อีเมลนิรนาม/ล้าง IP/`PseudonymisedAt` · ลบจริงพ้น 10 ปี | `PdpaConsentEvidenceV2Tests`.Consent_record_labels_by_source_and_state · กติกา `ApplyErasureAsync`/`PdpaRetentionPurgeJob.RunAsync` |
+| LEGAL214-30 | ฝ่ายค้าน S4/N2: ผลตรวจหลักฐานบนรายงานลูกค้าเว็บ | ระบบ = ตรวจผ่าน/ไม่ตรง · เจ้าหน้าที่กรอก hash เอง = "บันทึกโดยเจ้าหน้าที่" (ไม่ใช่ไม่ตรง) · ลบแล้ว = ตรวจซ้ำไม่ได้ | `PdpaConsentEvidenceV2Tests`.Consent_record_labels_by_source_and_state |
+| LEGAL214-31 | ฝ่ายค้าน N3: ป้าย "V2:" ตัวพิมพ์ใหญ่ | ตรวจผ่าน | `PdpaConsentEvidenceV2Tests`.Prefix_is_case_insensitive |
+| LEGAL214-32 | ฐ: ยื่นคำขอลบซ้ำ · ยื่นใหม่ภายใน 24 ชม. · ผ่าน 24 ชม. | ค้าง = ฉบับเดิม (ไม่สร้างแถวใหม่) · ถี่ = 429 · ครบเวลา = ยื่นได้ · SLA 30 วัน | `PlatformErasureRequestTests`.Pending_request_is_returned_not_duplicated · Too_soon_… · Sla_… · Db `Platform_erasure_request_is_idempotent_…` |
+| LEGAL214-33 | ฐ: ผู้ใช้อื่น · ผู้ไม่ใช่ SystemAdmin · ไม่ล็อกอิน | ผู้ใช้อื่นไม่เห็น/ไม่แตะคำขอ · ดำเนินการลบต้อง SystemAdmin · ยื่นต้องล็อกอิน (ทิศตรงข้าม: หน้าเอกสารสาธารณะยังเปิดได้) | `PlatformErasureRequestTests`.Admin_erasure_endpoints_require_SystemAdmin · Self_service_endpoints_require_login_… · Db (ผู้ใช้ B) |
+| LEGAL214-34 | ฐ: SystemAdmin ดำเนินการลบ · ดำเนินการซ้ำ · ปฏิเสธไม่มีเหตุผล | แกนลบตัวเดียว (บัญชีไม่ระบุตัว · หลักฐาน legal hold) · แจ้งผลไปอีเมลเดิม · ซ้ำ = 409 · ปฏิเสธไม่มีเหตุผล = ไม่ได้ | Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · กติกา `CompletePlatformErasureAsync`/`ApplyErasureAsync` |
+| LEGAL214-35 (มือ) | ฐ: เมนูผู้ใช้ → ข้อมูลส่วนบุคคลของฉัน · ผู้ใช้ไม่มีบริษัท · ดาวน์โหลด JSON · แท็บคำขอลบบน /admin/legal.html | แสดงค่าที่ escape แล้ว · ปุ่มยื่นปิดเมื่อมีคำขอค้าง | ตรวจมือ |
+| LEGAL214-36 | ฑ B1: ยื่น + ดำเนินการลบ แล้วค้น AuditLogs | ไม่มีอีเมล/IP/ชื่อเดิม · ยังมีแถว audit ของ User ที่บอกว่าช่องเปลี่ยน (`PiiMask`) · entity/ช่องอื่นไม่ถูกปิด | Db `Platform_erasure_request_is_idempotent_…` · `PlatformErasureRequestTests`.Audit_redaction_masks_pii_fields_per_entity_only |
+| LEGAL214-37 | ฑ B2: เจ้าของบริษัทคนเดียวขอลบ · เพิ่มเจ้าของอีกคน | 409 พร้อมชื่อบริษัท · ทิศตรงข้าม: มีเจ้าของคนอื่นที่ทำงานได้ ⇒ ลบได้ | Db `Erasure_refuses_last_owner_self_and_platform_admin_and_handles_soft_deleted_users` |
+| LEGAL214-38 | ฑ S1/S2: บัญชี soft-delete · ไม่พบบัญชี · แอดมินลบคำขอตัวเอง · ลบแอดมินแพลตฟอร์ม | soft-delete ลบได้จริง · ไม่พบ = 404 คำขอยังค้าง · ตัวเอง/แอดมิน = 409 | Db ข้างบน |
+| LEGAL214-39 | ฑ S4: token ของบัญชีที่ลบ/ปิดใช้งาน | ปฏิเสธทันที · ไม่พบแถว (token ชนิดอื่น) ไม่ตัดสิน · Suspended คงเดิม | `PlatformErasureRequestTests`.Token_gate_rejects_erased_or_inactive_users_only · ตรวจมือ (hub/คีย์ API/เข้าดูในนามลูกค้า) |
+| LEGAL214-40 | ฑ S5: ผู้ใช้เปลี่ยนอีเมลหลังยื่น | แจ้งผลไปอีเมลปัจจุบัน · อีเมลนิรนามแล้ว ⇒ อีเมล ณ ตอนยื่น | `PlatformErasureRequestTests`.Notify_address_prefers_current_real_email |
+| LEGAL214-41 (มือ) | ฑ: การ์ดแอดมิน/หน้า my-data แสดง "ต้องโอนความเป็นเจ้าของก่อน" · เวลาแสดงเป็นเวลาไทย | ตามคำตัดสิน 173 ฑ | ตรวจมือ |
 | LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
 
 ## SUB217 — กดซ้ำไม่บันทึกซ้ำ (Idempotency-Key + ด่านซ้ำเชิงความหมาย) · ตอบเร็ว แจ้งเตือนตามหลัง (รอบ 217 · คำตัดสินข้อ 175)
@@ -111,6 +125,14 @@
 | CMS216-10 | ค่าที่ฟอร์มส่งตรงกับโปรไฟล์ (เว้นวรรคต่าง) · ที่อยู่ใหม่จากเช็กเอาต์ | ไม่เปลี่ยน (ที่อยู่มีโครงไม่ถูกยุบ) · ที่อยู่ใหม่ = บรรทัดที่อยู่ + จังหวัด/รหัสไปรษณีย์ | `CmsRound216MemberProfileTests`.MergeCheckout_SameValues_NoChange · .MergeCheckout_NewShippingText_ReplacesStructuredAddress |
 | CMS216-11 | หน้าเว็บ: `/portal/me` ตอบช้ากว่าที่ผู้ใช้เริ่มพิมพ์ · ช่องที่มีค่าอยู่แล้ว · รหัสสาขาค่าตั้งต้น 00000 · ช่องใบกำกับของที่พัก · ช่อง "บันทึกเป็นข้อมูลของฉัน" | ช่องที่ผู้ใช้แตะไม่ถูกทับ (`dataset.userTouched`) · ทับเฉพาะช่องว่าง/ช่องที่ระบบเติม (`dataset.autoSrc`) · สาขาจากโปรไฟล์ชนะค่าตั้งต้น · ช่อง "เทียบอย่างเดียว" ไม่เติม · ติ๊กไว้ก่อนเฉพาะเติมช่องที่โปรไฟล์ว่าง · ผู้ใช้เอาติ๊กออกแล้วไม่ติ๊กกลับ | `tools/member_prefill_sim.js` (โค้ดจริงจากหน้า บน DOM จำลอง · /portal/me ตอบช้า · ผู้ใช้ลบค่าที่เติม · ช่องบันทึกติ๊ก/ไม่ติ๊ก · negative test 4 ตัว) |
 | CMS216-12 | รวมกับรอบ 217: กดซ้ำได้ใบจองเดิม (`Reused`) · ออเดอร์คืนจากคีย์กันกดซ้ำ (`Replayed`) · ที่พักซ้ำ (409) · คำขอซ้ำคีย์เดิม (มิดเดิลแวร์ตอบจากแคช) | ไม่บันทึกโปรไฟล์ซ้ำ · หน้าเว็บไม่ขึ้น "บันทึกแล้ว" | `required_call_site_check` (`ProfileOwner(request.SaveToProfile && !result.Reused …)` / `!result.Replayed`) · ตรวจมือ storefront `_memberAfterSubmit(… && !booking.reused)` |
+| CMS216-13 | ฝ่ายค้าน S1: บันทึกจากฟอร์มที่พัก (ไม่มีช่องสาขา) ด้วยเลขภาษีเดิม · เลขใหม่ไม่ส่งสาขา | คงสาขา 00003 · เลขใหม่ = 00000 | `CmsRound216MemberProfileTests`.S1_LodgingSameTaxId_WithoutBranchField_KeepsBranch_NewTaxId_HeadOffice |
+| CMS216-14 | ฝ่ายค้าน S2: สั่งของขวัญถึงแม่ (ชื่อ/เบอร์ผู้รับต่างจากบัญชี) · จองแทนเพื่อนเมื่อบัญชีมีชื่อแล้ว | ชื่อ/เบอร์บัญชีไม่เปลี่ยน · ผู้รับของที่อยู่จัดส่ง = แม่ · จองแทน: ไม่ทับ + บอกเหตุ · บัญชีว่างเบอร์ ⇒ เติม | `CmsRound216MemberProfileTests`.S2_CheckoutGiftRecipient_DoesNotTouchMemberIdentity · .S2_BookingForm_FillsOnlyEmptyIdentity_NeverOverwrites · `Db/MemberProfileDbTests`.SaveFromCheckout_FillsEmpty_ReportsSkipped_LeavesValidUntouched |
+| CMS216-15 | ฝ่ายค้าน S2 หน้าเว็บ: ช่องขอบันทึก | ไม่ติ๊กให้เองเลย · บัญชีมีค่าแล้ว ⇒ ไม่ชวนบันทึกทับ · ผู้ใช้ติ๊กเอง ⇒ คงติ๊ก | `tools/member_prefill_sim.js` (e) + negative "ติ๊กให้เอง" |
+| CMS216-16 | ฝ่ายค้าน S3: ผู้ใช้ลบช่องที่เติมไว้แล้วส่ง · พนักงาน walk-in ระบุ CustomerId · ผู้เรียก API ไม่ส่งธง · โทเคนเว็บอื่น | ธง false ⇒ เซิร์ฟเวอร์ไม่เติมกลับ · พนักงาน/API/เว็บอื่นไม่เติม | `tools/member_prefill_sim.js` (g) + negative · `CmsRound216MemberProfileTests`.S3_FillFromProfile_OnlyPageConfirmedMemberOfThisSite · `required_call_site_check` (FillFromProfile ก่อน CreateBookingAsync/CreateOrderAsync · ธงก่อน FillContact) |
+| CMS216-17 | เบอร์ดิบของแถวเก่า (081-234-5678) กับค่าที่พิมพ์ 0812345678 · ส่งซ้ำค่าเดิม | ไม่นับว่าเปลี่ยน · ไม่มีข้อความ "บันทึกแล้ว" ปลอม | `CmsRound216MemberProfileTests`.LegacyRawPhone_SameNumber_IsNotAChange · .MergeCheckout_SameValues_NoChange · `Db/MemberProfileDbTests`.SaveFromCheckout_… |
+| CMS216-18 | แถว Both หลัก + แถว Shipping หลักเก่าซ้ำ → แก้ที่อยู่จัดส่ง/ใบกำกับต่างกัน | ที่อยู่หลักต่อชนิดแถวเดียว · ใบกำกับอ่านจาก Both ได้และไม่หายเมื่อแยกแถว · บรรทัดเปลี่ยน ⇒ ล้างถนน/บ้านเลขที่เดิม | `Db/MemberProfileDbTests`.BothRow_And_DuplicateDefaults_AreNormalizedOnSave · migration `MemberProfileMigration` (ตรวจมือ: ล้างซ้ำคงแถวล่าสุด + unique index บางส่วน) |
+| CMS216-19 | ฟอร์มติดต่อ: ช่องบริษัท/เลขภาษี · ช่อง type=hidden | ไม่เติม | `tools/member_prefill_sim.js` (h) + negative "เติมช่องซ่อน" |
+| CMS216-20 | ด่านฐาน `UX_SiteCustomerAddresses_Customer_Type_Default` จริง (รัน `MemberProfileMigration` ในเทสต์): พนักงานเพิ่มที่อยู่หลักสองครั้ง → สมาชิกแก้โปรไฟล์ → บันทึกจากเช็กเอาต์ → พนักงานเพิ่มอีก · เพิ่มแถวหลักซ้ำตรง ๆ · พนักงานเพิ่มผ่าน URL เว็บอื่น | ไม่ชน index ทุกทางเขียน · แถวหลักต่อชนิดแถวเดียว · เพิ่มตรง = ฐานปฏิเสธ (ด่านมีจริง) · เว็บอื่น = ไม่พบ | `Db/MemberProfileDbTests`.DefaultAddressIndex_AllWriters_DoNotViolate_AndIndexIsReal · `required_call_site_check` (AddAddressAsync: ล็อก → ปลดก่อน INSERT) |
 
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
 
@@ -276,7 +298,13 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **703 ไฟล์ · 7,257 `[Fact]` + 1,152 `[Theory]` (5,399 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **704 ไฟล์ · 7,281 `[Fact]` + 1,152 `[Theory]` (5,399 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
+
+
+
+
+
 
 
 
@@ -7217,4 +7245,9 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CMS215-18 | (เฟส 2) เว็บสปา (ไม่มีออเดอร์) เปิด ตั้งค่าเว็บ › การแจ้งเตือน / LINE | ตั้งการแจ้งลูกค้ารายเว็บได้ (เดิมทำไม่ได้) · ตั้งค่าร้านค้า › แจ้งเตือนลูกค้า เหลือกล่อง "ย้ายแล้ว" |
 | CMS215-19 | (เฟส 2) ผู้มีสิทธิ์แค่ "ตั้งค่าร้านค้า" | หัวพื้นที่ทำงานยังมีแท็บตั้งค่าร้านค้า (ไม่เห็นศูนย์ตั้งค่าเว็บ) · เจ้าของเห็น "⚙️ ตั้งค่าเว็บ" แทน (sim) |
 | CMS215-20 | (เฟส 2) ลิงก์ในศูนย์ตั้งค่า (`cms-edit?tab=seo` · `cms-store-settings?tab=shipping`) | เปิดตรงแท็บ · `deep_link_param_check` 0 จุด |
+| CMS215-21 | (ฝ่ายค้าน S1) สร้างเว็บสปาใหม่ ยังไม่เพิ่มผู้ให้บริการ แล้วบันทึกค่าตั้งการจองใน cms-edit โดยไม่แตะสวิตช์ | การจัดสรรยังไม่ถูกบันทึกเป็นปิด · ศูนย์ตั้งค่าแสดง "ยังไม่มีผู้ให้บริการ — เพิ่มที่…" · ทิศตรงข้าม: เจ้าของกดปิดเอง ⇒ ปิดจริง |
+| CMS215-22 | (S2) เพิ่มบริการจากแม่แบบ "สปา / นวด" | นวดอโรมา = ตามค่าเว็บ · นวดไทย = ลูกค้าเลือกเอง (ตั้งในแม่แบบ) |
+| CMS215-23 | (S3) PUT booking/settings `defaultResourceMode: 99` | ปฏิเสธด้วยข้อความไทย ไม่บันทึก |
+| CMS215-24 | (S4) ผู้มีสิทธิ์ตั้งค่าร้านค้าแต่ไม่มีสิทธิ์เว็บไซต์ เปิดแท็บแจ้งเตือนลูกค้า | ตารางแจ้งลูกค้ารายเว็บยังแก้ได้ที่นี่ · เจ้าของเห็นกล่อง "ย้ายแล้ว" |
+| CMS215-25 | ศูนย์ตั้งค่าเปลี่ยนค่าเว็บโหมดผู้ให้บริการ ระหว่างอีกแท็บแก้ระยะเวลาเริ่มต้น | ระยะเวลาที่อีกแท็บบันทึกไม่ถูกทับ (ศูนย์ส่งเฉพาะช่องที่แก้) |
 

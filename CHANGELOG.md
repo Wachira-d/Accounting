@@ -5839,6 +5839,12 @@ RoPA ระดับแพลตฟอร์มไม่สร้าง (ตา�
 ป้าย "v2:" · v1 ตรวจไม่ได้ = `LegacyUnverifiable` ไม่ใช่ผ่าน) ใช้กับตอนสมัคร/แถบยอมรับ/ฟอร์มเว็บร้าน · `PlatformPolicyAcceptances` เก็บ `VersionShown`/`UserAgent` ให้ตรวจจากแถวได้ ·
 เทสต์ `PdpaConsentEvidenceV2Tests` + Db round-trip (เขียน → อ่านกลับ → ตรวจผ่าน · แก้ในฐาน ⇒ ไม่ผ่าน) ใน `Db/LegalDocumentDbTests` · TEST_PLAN LEGAL214-22..27 ·
 `required_call_site_check` +4 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 214 ฝ่ายค้าน (ฎ) (ไม่มีข้อ blocking · คำตัดสินข้อ 173 ฏ): (S1) ลบตามคำขอทำไม่ให้ระบุตัวต้นฉบับใน `PdpaConsentRecords` ระดับแพลตฟอร์มด้วย (คงแถว · `PseudonymisedAt`) +
+ลบจริงพ้น 10 ปีกติกาเดียวกัน · (S2) รวมแถว soft-delete (`IgnoreQueryFilters`) · (S3) DSR ของบริษัทไม่ส่ง IP/UA ของหลักฐานยอมรับนโยบาย · เจ้าของดูเองที่ `GET /api/legal/my-data` ·
+(S4) รายงานลูกค้าเว็บมีผลตรวจหลักฐานรายแถว · (N1) เวอร์ชันที่เห็นว่าง = ฉบับปัจจุบัน · (N2) `PdpaConsentRecords.EvidenceSource` (system/staff) · (N3) ป้าย v2 ไม่สนตัวพิมพ์ ·
+เทสต์ `PdpaConsentEvidenceV2Tests` +2 · `Db/LegalDocumentDbTests` +1 · TEST_PLAN LEGAL214-28..31 · `required_call_site_check` +2 กติกา/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
 _รอบ 217 ฝ่ายค้าน (ไม่มี blocking · แก้ครบ S1–S6 + ข้อสังเกต 1/3/6/9): (S1) ด่านซ้ำเทียบช่วง/จำนวนคน/ผู้ให้บริการ · ปุ่ม "จองเพิ่มอีกที่" บนหน้าผล · พนักงาน 409 + เลขที่ ·
 (S2) in-flight ตัดสินก่อนเทียบเนื้อ + multipart ไม่รวม boundary · (S3) Notify*CreatedAsync ไม่กลืนข้อยกเว้น ⇒ คิวลองใหม่จริง · (S4) ยกเลิก/คืนเงินก่อนถึงคิว ⇒ ไม่ส่ง + `Note` ·
 (S5) ยึด InFlight ค้าง > 2 นาที แบบมีเงื่อนไข · (S6) ลายนิ้วมือ HMAC (กุญแจลูกจาก Jwt:Secret · fail-fast) + เส้นรหัสผ่าน/โทเคนไม่เข้าระบบคีย์ + หน้าสมัครไม่ส่งคีย์ ·
@@ -5850,6 +5856,29 @@ _รอบ 215 เฟส 2 (2026-10-30 · คำตัดสินข้อ 176 
 พร้อมการ์ด 🏢 ค่าระดับบริษัท · แจ้งลูกค้ารายเว็บใช้ได้ทุกประเภทเว็บ (ย้ายจากตั้งค่าร้านค้า) · กลุ่มชำระเงินเป็นที่ว่างให้รอบ 218 (`CmsSiteSettingsExt.payment`) · cms-edit มีหัวพื้นที่ทำงาน ·
 เทสต์ `BookingRound215ProviderDefaultTests` · `required_call_site_check` +6 · sim +3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 639a0e1a · 2e0aee49 · c7fab68c (+ คอมมิตเอกสารตามหลัง)_
 
+_รอบ 216 ฝ่ายค้าน (ไม่ blocking · คำตัดสินข้อ 174 ภาคผนวก): (S1) บันทึกจากฟอร์มที่พัก (ไม่มีช่องสาขา) ไม่รีเซ็ตสาขา 00003→00000 เมื่อเลขภาษีเดิม ·
+(S2) ชื่อ/เบอร์บนเช็กเอาต์ = ผู้รับของที่อยู่จัดส่ง (ไม่ทับชื่อ/เบอร์บัญชี) · ฟอร์มจอง/ที่พักเติมเฉพาะช่องที่บัญชียังว่าง · ไม่ติ๊กช่องขอบันทึกให้เอง + ข้อความบอกสิ่งที่บันทึก ·
+(S3) ธง `ContactFromProfile` — เซิร์ฟเวอร์เติมช่องว่างจากโปรไฟล์เฉพาะเมื่อหน้าเว็บยืนยัน + สมาชิกในโทเคนของเว็บนี้ (`StorefrontCustomerAuth.FillFromProfile`) ·
+ที่อยู่หลักต่อชนิดแถวเดียว (`Helpers/MemberProfileMigration` ล้างซ้ำ + partial unique index · ธุรกรรมสองจังหวะ) · แถว Both · ล้างคอลัมน์โครงเมื่อบรรทัดที่อยู่เปลี่ยน ·
+`portal/me` คืนเบอร์ normalize แล้ว + เทียบหลัง normalize ทั้งสองฝั่ง (ไม่มี "บันทึกแล้ว" ปลอม) · ผลการบันทึกเป็นข้อความจากเซิร์ฟเวอร์ (`SaveNote(saved, skipped)`) ·
+ฟอร์มติดต่อไม่เติมบริษัท/เลขภาษี/ช่องซ่อน · เทสต์ CMS216-13..19 · `member_prefill_sim` negative 6 ตัว · `required_call_site_check` +6 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c93341cc_
+
+_รอบ 216 ฝ่ายค้าน (ต่อ · ความเสี่ยงค้างข้อ 3 ของผู้ประสานงาน): ทางเขียนที่อยู่หลักทุกทางไม่ชน partial unique index ใหม่ — ตัวกลาง `Helpers/CustomerAddressDefaults`
+(ล็อกแถวลูกค้า `FOR UPDATE` + ปลดแถวหลักเดิมด้วย UPDATE ตรงถึงฐานก่อน INSERT) · `CmsCustomerService.AddAddressAsync` (พนักงาน) ใช้ตัวกลางในธุรกรรม + กรองบริษัท/เว็บ (เดิมกรองแค่ customerId) ·
+`ApplyProfileAsync` ล็อกแถวลูกค้าก่อน · Db test รันคำสั่ง `MemberProfileMigration` ในฐานทดสอบเพื่อเดินบนด่านจริง (CMS216-20) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d0239edd_
+_รอบ 215 เฟส 2 ฝ่ายค้าน (ไม่มี blocking · แก้ S1–S4 + โน้ต): (S1) `BookingProviderAllocation.Enabled` นับค่าเว็บโหมดผู้ให้บริการ (≠ None) เป็นเจตนาเปิด —
+เว็บใหม่ไม่ถูกอนุมานเป็นปิด · cms-edit ส่ง `providerAllocationEnabled` เฉพาะเมื่อกดสวิตช์ · ยังไม่มีผู้ให้บริการ ⇒ ตัวอย่างบอกทางไปเพิ่ม (`NoProvidersYetNote` · `ActiveProviderCount`) ·
+(S2) ตัวอย่างบริการ (`CmsBookingServiceSeeder.Sample.ResourceMode`) ไม่ตั้ง = ตามค่าเว็บ · ข้อความศูนย์ตั้งค่าเป็นกลาง · (S3) `Enum.IsDefined` ของค่าเว็บ ·
+(S4) ผู้มีสิทธิ์ตั้งค่าร้านแต่ไม่มีสิทธิ์ cms-sites ยังตั้งแจ้งลูกค้ารายเว็บที่ตั้งค่าร้านค้าได้ · PUT booking/settings ช่องตัวเลข null = คงค่าเดิม (ศูนย์ส่งเฉพาะช่องที่แก้) ·
+ลิงก์ในศูนย์กรองตามสิทธิ์ + วาดใหม่เมื่อสิทธิ์โหลด · แท็บ "ตั้งค่าเว็บ" เป็นแท็บปัจจุบันบนหน้าตั้งค่าร้าน/ที่พัก · "ใช้ตามค่าเว็บ" เขียน audit chain พร้อมโหมดเดิมรายบริการ ·
+คำตัดสิน: คลาส — บริการตามค่าเว็บที่ค่าเว็บ ≠ None ⇒ รอบคลาสใช้ "ระบบจัดให้" (ครูของรอบ · `ClassScheduleGenerator.RulesFor`) ลูกค้าไม่เลือกเอง ไม่ว่าค่าเว็บเป็นอะไร ·
+ผู้เรียก API เดิมที่ไม่ส่ง `resourceMode` = None ตามเดิม (ไม่เปลี่ยนสัญญา) · เทสต์ +4 · required_call_site_check +1/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit faa61c71_
+
+_รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ — ปิดงานค้าง): หน้า `/pages/my-data.html` + เมนูผู้ใช้ "ข้อมูลส่วนบุคคลของฉัน" (แสดง/ดาวน์โหลดหลักฐานยอมรับนโยบาย · สถานะคำขอลบ) ·
+คำขอลบระดับแพลตฟอร์มที่ผู้ใช้ยื่นเอง (`PlatformErasureRequests` · `POST /api/legal/my-data/erase-request` · ค้างฉบับเดียว · วันละครั้ง · SLA 30 วัน · กติกา `Helpers/PlatformErasureRequestPolicy`) ·
+SystemAdmin ดำเนินการ/ปฏิเสธที่ `/admin/legal.html` (`AdminPlatformErasureController`) → แกนลบตัวเดียว `PdpaService.AnonymiseUserCoreAsync` (แยกออกจาก `ApplyErasureAsync` — DSR ของบริษัทใช้ตัวเดียวกัน) + audit + อีเมลแจ้งผล ·
+เทสต์ `PlatformErasureRequestTests` + Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · TEST_PLAN LEGAL214-32..35 · `required_call_site_check` +4 กติกา/แก้ 1 ·
+`write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
 _รอบ 218 (คำตัดสินข้อ 177 · เจ้าของ: "ติ๊ก รับชำระมัดจำออนไลน์ แล้วตอนจองไม่มีให้ระบุเรื่องโอนมัดจำ · ต้องตั้งได้ว่าบังคับมัดจำ/จ่ายเต็มก่อน/ปิด · ตั้งเลขบัญชีหรือแนบ QR ได้" ·
 `erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`): ต้นเหตุ = ช่องติ๊กเดิมเปิดแค่ช่องทาง gateway แต่ยอดมาจากชนิด PrePayment + ช่องมัดจำของบริการ (ไม่ตรง ⇒ ยอด 0 เงียบ) ·
 ไม่มีช่องโอน/QR/สลิปของการจอง · ไม่บอกยอดก่อนกดจอง. (1) ตัวตัดสินเดียว `Helpers/BookingPaymentPolicy` (บริการ ?? เว็บ ?? แบบเดิม · ปิด/มัดจำบังคับ/มัดจำไม่บังคับ/เต็มยอด ·
@@ -5866,3 +5895,10 @@ S2 ยกเลิก/ไม่มาปิดสลิป · S3 ล็อกเ
 S6 งานยกเลิกข้ามรายการชำระออนไลน์ที่ยังไม่หมดอายุ · บริการเก็บเงินเองต้องมีช่องทาง/ยอด · PDPA ลบสลิปปฏิเสธ 90 วัน (`BookingSlipRetention`) ·
 เทสต์ `BookingPaymentPolicyTests` + `BookingPaymentPolicyDbTests` (ทั้งสองทิศ) · `required_call_site_check` +16 กฎ · รวม 215 เฟส 2: ฟอร์มค่าตั้งการชำระของการจองย้ายไป "ตั้งค่าเว็บ › การชำระเงิน" (`CmsSiteSettingsExt.payment` ใน `booking-payment-admin.js` · cms-edit เหลือกล่อง "ย้ายแล้ว" · ฟอร์มบริการยังตั้งทับได้)_
 
+
+_รอบ 214 ฝ่ายค้าน (ฐ) — 2 blocking + 5 (คำตัดสินข้อ 173 ฑ): (B1) audit อัตโนมัติไม่เก็บค่า PII รายช่องต่อ entity (`AuditRedaction.PiiFields` · `Value(entityType, …)`) ·
+(B2) ลบเจ้าของบริษัทคนสุดท้าย/เจ้าของแพ็กเกจบัญชี = 409 พร้อมรายการ (`PdpaService.ErasureOwnershipBlockersAsync` · `LastOwnerGuard`) ทั้งคำขอแพลตฟอร์มและ DSR บริษัท + แสดงล่วงหน้า ·
+รายการบริษัทไม่มีเจ้าของนับเฉพาะเจ้าของที่ยังทำงานได้ · (S1) แกนลบ IgnoreQueryFilters · ไม่พบ = 404 ไม่ปิดคำขอ · (S2) ห้ามดำเนินการคำขอตัวเอง/ลบแอดมินแพลตฟอร์ม ·
+(S3) ล้างลายมือชื่อ + คำขอลบทุกฉบับ · ข้อความอีเมล/หน้าแก้ตามจริง · (S4) `OnTokenValidated` + `Helpers/TokenUserGate` · (S5) อีเมลแจ้งผล = อีเมลปัจจุบัน ·
+GET my-data ปฏิเสธคีย์ API · เวลาบนหน้า UTC→ไทย · คอมเมนต์ DbSet แยกบรรทัด · เทสต์ +3 pure +1 Db (+ตรวจ audit ไม่มี PII ใน Db เดิม) · TEST_PLAN LEGAL214-36..41 ·
+`required_call_site_check` +4/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
