@@ -61,6 +61,12 @@ public class PdpaRetentionPurgeJob : BackgroundService
         using var scope = _services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
 
+        // รอบ 211 ฝ่ายค้าน ข้อ 3: รหัสผูก LINE ที่หมดอายุเกิน 7 วัน (ไม่ให้ hash ค้างใน unique index ตลอดไป) +
+        // LINE userId ที่ค้างบนลิงก์ที่ปิดแล้ว — ใต้ JobLock เดียวกับงานนี้ (ไม่เพิ่ม BackgroundService ใหม่ · F4 #6)
+        var (codesDeleted, linksCleared) = await Accounting.Helpers.CustomerLineLinkClosure.PurgeAsync(db, DateTime.UtcNow, ct);
+        if (codesDeleted + linksCleared > 0)
+            _logger.LogInformation("PDPA retention purge: ลบรหัสผูก LINE หมดอายุ {Codes} · ล้าง LINE userId ของลิงก์ที่ปิดแล้ว {Links}", codesDeleted, linksCleared);
+
         // contact ที่ถูก anonymize + ติดธง retained (ผู้ใช้ขอลบแล้ว แต่ค้างเพราะ legal-hold)
         var retained = await db.Contacts
             .Where(c => !c.IsDeleted && c.Address == RetainedMarker)

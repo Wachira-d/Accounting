@@ -8,7 +8,8 @@ public interface ILineBotService
 
     /// <summary>Handle an inbound LINE message event. Returns the text reply
     /// to send back to the user (or null to ignore).</summary>
-    Task<string?> HandleMessageAsync(string lineUserId, string text);
+    /// <param name="destination">รอบ 211 ฝ่ายค้าน: bot userId ของ OA จากฟิลด์ <c>destination</c> ของ webhook — ส่งต่อให้การผูก LINE ของลูกค้า</param>
+    Task<string?> HandleMessageAsync(string lineUserId, string text, string? destination = null);
 
     /// <summary>"โยนบิลเข้าไลน์" — รับรูป/ไฟล์ใบเสร็จจาก LINE, ดึง content จาก
     /// LINE Content API แล้ววิ่งเข้า OCR pipeline เดียวกับหน้าเว็บ (preflight →

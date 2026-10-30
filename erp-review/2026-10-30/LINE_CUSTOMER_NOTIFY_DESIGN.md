@@ -48,7 +48,7 @@
 `LineWebhookController` รับ `follow/unfollow` ⇒ เปิด/ปิดลิงก์ลูกค้า (เงียบ — ผู้ใช้ ERP ก็ follow OA นี้)
 
 **อีเมล**: ร้านตั้ง + ทดสอบผ่าน (`CompanySettings.EmailConfigured` — ล้างทุกครั้งที่แก้ค่า) ⇒ `IEmailSenderFactory.GetSenderForSettings` + ผู้ส่งจาก
-`DocumentEmailService.ResolveFromAddress` (ตัวเดียวกับเอกสาร) · ไม่งั้น `IEmailService` ของระบบ (เดิม) · ร้านตั้งแล้วส่งล้ม ⇒ ไม่สลับไปอีเมลระบบ ไปช่องถัดไป + ประทับเหตุ
+`DocumentEmailService.ResolveFromAddress` (ตัวเดียวกับเอกสาร) · ไม่งั้น `IEmailService` ของระบบ (เดิม) · **ร้านตั้งแล้วส่งล้ม ⇒ ถอยไปอีเมลของระบบ** (ผู้ประสานงานตัดสินหลังฝ่ายค้าน — ลูกค้าต้องไม่ได้อะไรเลยไม่ได้) + ประทับ `[CMS-NOTIFY-FALLBACK]` บนการจอง/ออเดอร์ (`BookingSendResult.Warning`)
 
 ## 3. ทางเลือกที่ไม่เลือก
 
@@ -94,7 +94,7 @@
 ## 7. คำตัดสินที่ขอเจ้าของ
 
 1. **ลำดับช่อง**: ผูก LINE แล้ว ⇒ LINE ก่อนแล้วอีเมล (หยุดที่ช่องแรกที่สำเร็จ) — หรืออยากให้ส่ง**ทั้งสอง**ช่อง? (ทำแล้วแบบแรก)
-2. **อีเมลของร้านล้ม**: ไม่สลับไปอีเมลของระบบ (แบรนด์ผู้ส่ง) — ยืนยัน?
+2. ~~อีเมลของร้านล้ม~~ — **ตัดสินแล้ว** (ผู้ประสานงาน หลังฝ่ายค้าน): ถอยไปอีเมลของระบบ + ประทับเหตุ
 3. **ค่าข้อความ LINE**: push ผ่าน OA กลางกินโควตาข้อความของ NextAcc (แผน LINE OA คิดตามจำนวน) — จะคิดค่าบริการ/จำกัดต่อร้านไหม? ตอนนี้ไม่มีเพดาน
 4. **พนักงานรับสลิปผ่าน OA ของร้าน** (พบระหว่างตรวจ): "สลิป 123456" ที่ส่งเข้า OA ร้านยังไม่มีผู้รับ — ต่อสายเข้า webhook ต่อบริษัทในรอบถัดไปไหม?
 5. **ร้านสลับ OA**: ลูกค้าเดิมต้องผูกใหม่ (ข้อจำกัดของ LINE) — ต้องการให้ระบบอีเมลเชิญผูกใหม่อัตโนมัติไหม?
@@ -105,3 +105,16 @@
 - `follow` บน OA ร้านตอบวิธีผูกทุกครั้ง — ซ้อนกับข้อความทักทายที่ร้านตั้งใน LINE OA Manager ได้
 - push ไม่ตรวจว่าลูกค้า "เป็นเพื่อน" ก่อน — ยังไม่เพิ่มเพื่อนแต่ส่งรหัส ⇒ ผูกสำเร็จแต่ push ล้ม ⇒ ประทับเหตุ + ไปอีเมล (ไม่เงียบ)
 - `Line:BotUserId` ไม่ตั้ง ⇒ ลิงก์ของ OA กลางตัดสินด้วย scope อย่างเดียว (พอ เพราะ OA กลางไม่ถูกสลับ)
+
+## 9. แก้ตามฝ่ายค้าน (รอบ 211 ฝ่ายค้าน · ไม่มี blocking)
+
+| # | เรื่อง | แก้ |
+| --- | --- | --- |
+| 1 | log มี LINE userId เต็ม (`LineNotifyService` context + body ตอบกลับ) | บริบทใช้ `CustomerLineLinkRule.Mask` · body ผ่าน `RedactForLog` (แทน U/C/R+32hex) · `LineBotService` log ปิดบังเช่นกัน |
+| 2 | DSR ลบไม่ถอนยินยอม + รหัสค้างผูกกลับได้ 30 นาที | เส้นปิดเดียว `Helpers/CustomerLineLinkClosure.CloseAsync` (ถอนยินยอม · ล้าง userId · audit · เผารหัสค้าง) ใช้ทั้งยกเลิก/ผูกใหม่/DSR · DSR เผารหัสของทุกเป้าหมายรวมที่ยังไม่เคยผูก |
+| 3 | เก็บ userId หลังยกเลิก · hash รหัสค้างใน unique index ตลอดไป | ปิดลิงก์ = ล้าง userId (audit เก็บแบบปิดบัง) · `PdpaRetentionPurgeJob` (มี JobLock) ลบรหัสหมดอายุเกิน 7 วัน + ล้าง userId ของลิงก์ที่ปิดแล้ว |
+| 4 | `Line:BotUserId` ไม่มีผล | `LineWebhookController` ส่ง `destination` → `HandleMessageAsync` → `TryRedeemAsync` · ตั้ง BotUserId แล้วไม่ตรง ⇒ ไม่ผูก + log Error (`CustomerNotifyChannel.AcceptDestination`) |
+| 5 | อีเมลร้านล้ม ⇒ ลูกค้าไม่ได้อะไร | ถอยไปอีเมลระบบ + `Warning` ⇒ ประทับ `[CMS-NOTIFY-FALLBACK]` บนหมายเหตุภายใน/`NotifyLastError`/`ExpiryNotifyError` |
+| 6 | webhook ต่อบริษัท | `[RequestSizeLimit(256 KB)]` · ดูค่าตั้งก่อนอ่าน body · ไม่ได้ตั้ง/ลายเซ็นผิด = 401 แบบเดียว |
+| 7 | ธุรกรรม | ไถ่รหัส: claim + บันทึกลิงก์ในธุรกรรมเดียว (ล้ม ⇒ rollback ไม่เผารหัส) · ออกรหัส: `pg_advisory_xact_lock` ต่อเป้าหมาย + เผารหัสเดิมในธุรกรรมเดียว |
+| 8 | ยินยอมไม่มีอีเมล/เบอร์ ⇒ ไม่มีหลักฐาน | `CmsDataConsent.StageForSubject` ด้วย `line:` + SHA-256 ของ userId (`CustomerLineLinkRule.ConsentSubject`) — มีแถวยินยอมเสมอ |

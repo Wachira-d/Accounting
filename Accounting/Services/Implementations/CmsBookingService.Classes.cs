@@ -690,7 +690,7 @@ public partial class CmsBookingService
             b.NotifyAttemptedAt = DateTime.UtcNow;
             if (result.Sent)
             {
-                b.NotifyLastError = null;
+                b.NotifyLastError = result.Warning;   // รอบ 211 ฝ่ายค้าน: ส่งถึงทางถอย ⇒ ประทับคำเตือน (null = ปกติ)
                 b.InternalNotes = DepositPolicyResolver.AppendNoteOnce(b.InternalNotes,
                     $"[{ClassRule}] แจ้งลูกค้า ({(kind == ClassMessageKind.Cancelled ? "คลาสยกเลิก" : "เปลี่ยนผู้สอน")}) ทาง {(result.Channel == "line" ? "LINE" : "อีเมล")} แล้ว");
                 sent++;

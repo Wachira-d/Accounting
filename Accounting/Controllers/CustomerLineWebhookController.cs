@@ -11,7 +11,7 @@ namespace Accounting.Controllers;
 /// <summary>
 /// รอบ 211 (คำตัดสินข้อ 170) — webhook ของ LINE OA <b>ของบริษัท</b> (ร้านตั้งใน LINE Developers ว่า <c>{App:BaseUrl}/api/line/webhook/c/{companyId}</c>)
 /// <list type="bullet">
-/// <item>ด่าน: บริษัทต้องมี Channel Secret ที่ถอดได้ (ไม่มี ⇒ 404 · ไม่มีการข้ามการตรวจ) · ลายเซ็นตรวจด้วย <see cref="LineWebhookSignature"/> ตัวเดียวของระบบ (ไม่ผ่าน ⇒ 401)</item>
+/// <item>ด่าน: บริษัทต้องมี Channel Secret ที่ถอดได้ · ลายเซ็นตรวจด้วย <see cref="LineWebhookSignature"/> ตัวเดียวของระบบ · ไม่ได้ตั้ง/ลายเซ็นผิด ⇒ 401 แบบเดียวกัน · body ≤ 256 KB</item>
 /// <item>ข้อความ <c>ผูก LN-…</c> ⇒ ผูก LINE ของลูกค้า (<see cref="ICustomerLineLinkService.TryRedeemAsync"/> · scope company + companyId จาก URL ที่ลายเซ็นผ่าน) · ข้อความอื่นไม่ตอบ (แชตของร้านเอง)</item>
 /// <item><c>follow</c> ⇒ เปิดลิงก์ที่บล็อกไว้กลับ + ตอบวิธีผูก · <c>unfollow</c> ⇒ ประทับบล็อก (ไม่ส่งจนกว่าจะเพิ่มเพื่อนกลับ)</item>
 /// <item>ลายเซ็นผ่านแล้ว ⇒ ตอบ 200 เสมอ (LINE ส่งซ้ำเมื่อไม่ใช่ 2xx) · ความล้มเหลวภายใน log ระดับ Error</item>
@@ -34,16 +34,21 @@ public class CustomerLineWebhookController : ControllerBase
         _db = db; _secrets = secrets; _links = links; _logger = logger;
     }
 
+    /// <summary>body ของ LINE webhook เล็ก (event ไม่กี่ตัว) — จำกัด 256 KB กันยิง body ใหญ่ใส่ทางเข้าสาธารณะ (ฝ่ายค้าน ข้อ 6)</summary>
+    public const int MaxBodyBytes = 256 * 1024;
+
     [HttpPost]
+    [RequestSizeLimit(MaxBodyBytes)]
     public async Task<IActionResult> Receive(Guid companyId, CancellationToken ct)
     {
-        using var reader = new StreamReader(Request.Body);
-        var body = await reader.ReadToEndAsync(ct);
-
+        // ฝ่ายค้าน ข้อ 6: ดูค่าตั้งก่อนอ่าน body · "ไม่ได้ตั้ง" กับ "ลายเซ็นผิด" ตอบ 401 แบบเดียวกัน (ไม่บอกคนนอกว่าบริษัทไหนตั้ง LINE ไว้)
         var enc = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
             .Select(s => s.LineChannelSecret).FirstOrDefaultAsync(ct);
         var secret = _secrets.Unprotect(enc);
-        if (string.IsNullOrEmpty(secret)) return NotFound();
+        if (string.IsNullOrEmpty(secret)) return Unauthorized();
+
+        using var reader = new StreamReader(Request.Body);
+        var body = await reader.ReadToEndAsync(ct);
         if (!LineWebhookSignature.Verify(secret, body, Request.Headers["X-Line-Signature"].FirstOrDefault()))
         {
             _logger.LogWarning("LINE webhook ของบริษัท {CompanyId}: ลายเซ็นไม่ตรง", companyId);

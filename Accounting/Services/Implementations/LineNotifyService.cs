@@ -66,7 +66,7 @@ public class LineNotifyService : ILineNotifyService
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync();
-                _logger.LogError("LINE push failed ({Ctx}): {Status} {Body}", context, resp.StatusCode, body);
+                _logger.LogError("LINE push failed ({Ctx}): {Status} {Body}", context, resp.StatusCode, CustomerLineLinkRule.RedactForLog(body));   // รอบ 211 ฝ่ายค้าน: ห้าม log userId เต็ม
                 return false;
             }
             return true;
@@ -104,7 +104,7 @@ public class LineNotifyService : ILineNotifyService
         {
             to = lineUserId,
             messages = new[] { new { type = "text", text = message } }
-        }, $"user {lineUserId}");
+        }, $"user {CustomerLineLinkRule.Mask(lineUserId)}");
     }
 
     public async Task<bool> TryPushToUserAsync(Guid? companyId, string lineUserId, string message)
@@ -116,7 +116,7 @@ public class LineNotifyService : ILineNotifyService
         {
             to = lineUserId,
             messages = new[] { new { type = "text", text = message } }
-        }, $"user {lineUserId}");
+        }, $"user {CustomerLineLinkRule.Mask(lineUserId)}");
     }
 
     public Task PushFlexToUserAsync(string lineUserId, string altText, object flexContents)
@@ -138,7 +138,7 @@ public class LineNotifyService : ILineNotifyService
                     contents = flexContents
                 }
             }
-        }, $"flex user {lineUserId}");
+        }, $"flex user {CustomerLineLinkRule.Mask(lineUserId)}");
     }
 
     public async Task NotifyDocumentApprovedAsync(Guid companyId, string documentNumber, string contactName, decimal amount)

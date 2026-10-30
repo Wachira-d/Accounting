@@ -223,10 +223,10 @@ public class CmsRound211LineNotifyTests
     }
 
     [Fact]
-    public void Email_source_tenant_only_when_tested()
+    public void Email_plan_tenant_then_system_fallback_only_when_tested()
     {
-        Assert.Equal(CustomerNotifyChannel.EmailTenant, CustomerNotifyChannel.EmailSource(true));
-        Assert.Equal(CustomerNotifyChannel.EmailSystem, CustomerNotifyChannel.EmailSource(false));
+        Assert.Equal(new[] { "tenant", "system" }, CustomerNotifyChannel.EmailPlan(true));
+        Assert.Equal(new[] { "system" }, CustomerNotifyChannel.EmailPlan(false));   // เดิม
     }
 
     // ═════════ 4. ลายเซ็น webhook — สูตรเดียว ═════════
@@ -247,19 +247,90 @@ public class CmsRound211LineNotifyTests
         Assert.False(LineWebhookSignature.Verify(secret, body, ""));
     }
 
-    // ═════════ 5. DSR — ล้าง LINE userId ═════════
+    // ═════════ 5. ปิดลิงก์ (ยกเลิก/ผูกใหม่/DSR ลบ) — เส้นเดียว · ล้าง LINE userId ═════════
 
-    [Fact]
-    public void Erase_clears_line_user_and_closes_link_once()
+    [Theory]
+    [InlineData("user")]
+    [InlineData("relinked")]
+    [InlineData("erase")]
+    public void Close_clears_line_user_and_closes_link_once(string reason)
     {
         var now = new DateTime(2026, 10, 30, 0, 0, 0, DateTimeKind.Utc);
         var l = new CustomerLineLink { LineUserId = "Uabc1234567", OaScope = "nextacc", TargetKind = "booking" };
-        Assert.Equal(2, CmsPdpaErasure.EraseLineLink(l, now));
+        Assert.Equal(2, CustomerLineLinkRule.Close(l, reason, now));
         Assert.Equal("", l.LineUserId);
         Assert.Equal(now, l.UnlinkedAt);
-        Assert.Equal("erase", l.UnlinkReason);
-        Assert.Equal(0, CmsPdpaErasure.EraseLineLink(l, now.AddDays(1)));
-        Assert.Equal(now, l.UnlinkedAt);   // ไม่ทับเวลาเดิม
+        Assert.Equal(reason, l.UnlinkReason);
+        Assert.Equal(0, CustomerLineLinkRule.Close(l, "erase", now.AddDays(1)));
+        Assert.Equal(now, l.UnlinkedAt);   // ไม่ทับเวลา/เหตุเดิม
+        Assert.Equal(reason, l.UnlinkReason);
+    }
+
+    [Fact]
+    public void Close_clears_legacy_unlinked_row_that_still_holds_user_id()
+    {
+        var at = new DateTime(2026, 10, 1, 0, 0, 0, DateTimeKind.Utc);
+        var l = new CustomerLineLink { LineUserId = "Uold", UnlinkedAt = at, UnlinkReason = "user" };
+        Assert.Equal(1, CustomerLineLinkRule.Close(l, "erase", at.AddDays(3)));
+        Assert.Equal("", l.LineUserId);
+        Assert.Equal(at, l.UnlinkedAt);
+    }
+
+    [Fact]
+    public void Code_purge_cutoff_never_touches_live_codes()
+    {
+        var now = new DateTime(2026, 10, 30, 0, 0, 0, DateTimeKind.Utc);
+        var cutoff = CustomerLineLinkRule.CodePurgeCutoff(now);
+        Assert.Equal(now.AddDays(-7), cutoff);
+        Assert.False(now.Add(CustomerLineLinkRule.CodeLifetime) < cutoff);   // รหัสที่เพิ่งออกไม่ถูกลบ
+        Assert.True(now.AddDays(-8) < cutoff);                               // หมดอายุเกิน 7 วัน = ลบ
+    }
+
+    // ═════════ 6. ฝ่ายค้าน: ยินยอมไม่มีอีเมล/เบอร์ · ปลายทาง OA กลาง · log ═════════
+
+    [Fact]
+    public void Consent_subject_is_hashed_line_id()
+    {
+        var a = CustomerLineLinkRule.ConsentSubject("U1234567890abcdef1234567890abcdef");
+        Assert.StartsWith("line:", a);
+        Assert.Equal(5 + 32, a.Length);
+        Assert.DoesNotContain("1234567890abcdef", a);
+        Assert.Equal(a, CustomerLineLinkRule.ConsentSubject(" U1234567890abcdef1234567890abcdef "));
+        Assert.NotEqual(a, CustomerLineLinkRule.ConsentSubject("U0000000000abcdef1234567890abcdef"));
+    }
+
+    [Theory]
+    [InlineData(null, "Ubot", true)]       // ไม่ได้ตั้ง Line:BotUserId ⇒ ตัดสินด้วย scope (เดิม)
+    [InlineData("", "Ubot", true)]
+    [InlineData("Ubot", null, true)]       // webhook ไม่มี destination
+    [InlineData("Ubot", "Ubot", true)]
+    [InlineData("Ubot", "Uother", false)]  // ตั้งไว้แล้วไม่ตรง ⇒ ปฏิเสธ (ค่าตั้งผิด)
+    public void Destination_check_against_configured_bot(string? configured, string? received, bool ok)
+        => Assert.Equal(ok, CustomerNotifyChannel.AcceptDestination(configured, received));
+
+    [Fact]
+    public void Redact_for_log_masks_line_ids_and_truncates()
+    {
+        var id = "U" + new string('a', 32);
+        var r = CustomerLineLinkRule.RedactForLog($"{{\"message\":\"bad to {id}\"}}");
+        Assert.DoesNotContain(id, r);
+        Assert.Contains("Uaaa••••aa", r);
+        Assert.Equal("", CustomerLineLinkRule.RedactForLog(null));
+        Assert.True(CustomerLineLinkRule.RedactForLog(new string('x', 2000)).Length <= 501);
+    }
+
+    [Fact]
+    public void Failure_note_distinguishes_fallback_from_failure()
+    {
+        var at = new DateTime(2026, 10, 30, 1, 0, 0, DateTimeKind.Utc);
+        var warn = CustomerNotifyChannel.TenantEmailFallbackWarning("535 auth");
+        Assert.StartsWith(CmsNotificationText.FallbackTag, warn);
+        var fb = CmsNotificationText.FailureNote("ลูกค้า", "ยืนยันการจอง", warn, at);
+        Assert.StartsWith(CmsNotificationText.FallbackTag, fb);
+        Assert.DoesNotContain(CmsNotificationText.FailureTag, fb);
+        Assert.Contains("535 auth", fb);
+        var fail = CmsNotificationText.FailureNote("ลูกค้า", "ยืนยันการจอง", "อีเมล: ส่งไม่สำเร็จ", at);
+        Assert.StartsWith(CmsNotificationText.FailureTag, fail);   // เดิม
     }
 
     // ═════════ 6. ตัวส่ง — LINE ที่ผูกเองก่อน · ไม่ผูก = เดิม ═════════
@@ -323,6 +394,76 @@ public class CmsRound211LineNotifyTests
             .SendAsync(Guid.NewGuid(), new BookingContact(null, null) { LineTarget = CustomerLineTarget.ForBooking(Guid.NewGuid(), null) }, "s", "t");
         Assert.False(none.Sent);
         Assert.Contains("ไม่มีช่องทาง", none.Error);
+    }
+
+    private sealed class TenantNotifier : BookingNotifier
+    {
+        private readonly CompanySettings? _s;
+        public TenantNotifier(CompanySettings? s, IEmailService email, IEmailSenderFactory senders)
+            : base(NullLogger<BookingNotifier>.Instance, email, null, null, senders) => _s = s;
+        protected override Task<CompanySettings?> LoadEmailSettingsAsync(Guid companyId, CancellationToken ct) => Task.FromResult(_s);
+    }
+
+    private static (TenantNotifier N, Calls C) Tenant(bool configured, bool tenantOk, bool systemOk)
+    {
+        var calls = new Calls();
+        var settings = new CompanySettings { EmailConfigured = configured, EmailSmtpHost = "smtp.shop.test", EmailFromAddress = "shop@shop.test" };
+        var sender = F4Proxy<IEmailSender>.Create((m, a) =>
+        {
+            if (m != nameof(IEmailSender.SendAsync)) return null;
+            calls.Order.Add("tenant:" + ((EmailMessage)a[0]!).FromAddress);
+            return tenantOk ? EmailSendResult.Ok("id") : EmailSendResult.Fail("535 auth");
+        });
+        var factory = F4Proxy<IEmailSenderFactory>.Create((m, a) => m == nameof(IEmailSenderFactory.GetSenderForSettings) ? sender : null);
+        var system = F4Proxy<IEmailService>.Create((m, a) =>
+        {
+            if (m != nameof(IEmailService.TrySendAsync)) return null;
+            calls.Order.Add("system");
+            return systemOk;
+        });
+        return (new TenantNotifier(settings, system, factory), calls);
+    }
+
+    [Fact]
+    public async Task Tenant_email_ok_uses_tenant_only()
+    {
+        var (n, c) = Tenant(configured: true, tenantOk: true, systemOk: true);
+        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null), "s", "t");
+        Assert.True(r.Sent);
+        Assert.Null(r.Warning);
+        Assert.Equal(new[] { "tenant:shop@shop.test" }, c.Order);
+    }
+
+    [Fact]
+    public async Task Tenant_email_failure_falls_back_to_system_and_warns()
+    {
+        var (n, c) = Tenant(configured: true, tenantOk: false, systemOk: true);
+        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null), "s", "t");
+        Assert.True(r.Sent);                                   // ลูกค้าได้รับ (ไม่ถดถอย)
+        Assert.Equal(new[] { "tenant:shop@shop.test", "system" }, c.Order);
+        Assert.NotNull(r.Warning);
+        Assert.StartsWith(CmsNotificationText.FallbackTag, r.Warning);
+        Assert.Contains("535 auth", r.Warning);
+    }
+
+    [Fact]
+    public async Task Tenant_and_system_both_fail_reports_both()
+    {
+        var (n, _) = Tenant(configured: true, tenantOk: false, systemOk: false);
+        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null), "s", "t");
+        Assert.False(r.Sent);
+        Assert.Contains("535 auth", r.Error);
+        Assert.Contains("SMTP", r.Error);
+    }
+
+    [Fact]
+    public async Task Tenant_not_configured_uses_system_like_before()
+    {
+        var (n, c) = Tenant(configured: false, tenantOk: true, systemOk: true);
+        var r = await n.SendAsync(Guid.NewGuid(), new BookingContact("a@b.co", null), "s", "t");
+        Assert.True(r.Sent);
+        Assert.Null(r.Warning);
+        Assert.Equal(new[] { "system" }, c.Order);
     }
 
     [Fact]

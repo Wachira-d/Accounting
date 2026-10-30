@@ -5711,3 +5711,10 @@ _รอบ 211 — คำขอเจ้าของ "ลูกค้าขอ�
 (3) `BookingNotifier` — LINE ที่ผูกเองก่อน (opt-in) · อีเมลผ่านผู้ส่งของร้านเมื่อทดสอบผ่าน · ทุกทางเข้าแจ้งลูกค้าส่ง `LineTarget` · (4) PDPA: ยินยอม/ถอน · DSR ขอดู/ลบ ·
 (5) หน้าร้าน 5 จุด + หน้าตั้งค่า LINE · เทสต์ `CmsRound211LineNotifyTests` (TEST_PLAN CMS211-01..20) · `required_call_site_check` +23 กติกา ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 461eeea5_
+
+_รอบ 211 ฝ่ายค้าน (ลูกค้าผูก LINE · ไม่มี blocking · แก้ 8 ข้อ): (1) log ไม่มี LINE userId เต็ม (`CustomerLineLinkRule.Mask`/`RedactForLog` ใน `LineNotifyService`/`LineBotService`) ·
+(2) DSR ลบเดินเส้นปิดเดียว `Helpers/CustomerLineLinkClosure.CloseAsync` (ถอนยินยอม · ล้าง userId · audit · เผารหัสค้างของทุกเป้าหมาย — เดิมรหัสที่ออกก่อนลบผูกกลับได้ 30 นาที) ·
+(3) ยกเลิก = ล้าง userId · `PdpaRetentionPurgeJob` (JobLock เดิม) ลบรหัสหมดอายุ > 7 วัน + ล้าง userId ของลิงก์ที่ปิดแล้ว · (4) `destination` ของ webhook OA กลางส่งถึงการผูก ·
+`Line:BotUserId` ตั้งแล้วไม่ตรง ⇒ ไม่ผูก + log Error · (5) **ผู้ประสานงานตัดสิน**: ผู้ส่งอีเมลของร้านล้ม ⇒ ถอยไปอีเมลของระบบ + ประทับ `[CMS-NOTIFY-FALLBACK]` (`BookingSendResult.Warning`) ·
+(6) webhook ต่อบริษัท 401 แบบเดียว + ดูค่าตั้งก่อนอ่าน body + จำกัด 256 KB · (7) ไถ่รหัสในธุรกรรมเดียว · ออกรหัสใต้ advisory lock ต่อเป้าหมาย · (8) ยินยอมด้วย `line:`+hash เมื่อไม่มีอีเมล/เบอร์ ·
+เทสต์ +12 (CMS211-21..28) · `required_call_site_check` +11 กติกา/แก้ 6 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f19dac45_

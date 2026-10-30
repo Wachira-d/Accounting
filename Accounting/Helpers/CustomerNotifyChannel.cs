@@ -19,7 +19,7 @@ public sealed record CustomerLineChannel(string Scope, string? BasicId, bool Can
 /// <item>LINE: บริษัทเปิด LINE + มี token ของตัวเอง ⇒ OA ของบริษัท · ไม่งั้น ⇒ OA ของ NextAcc (config <c>Line:*</c>) — <b>กติกาเดียวกับที่ push ใช้อยู่เดิม</b>
 ///   (<c>LineNotifyService.ResolveConfigAsync</c>) ⇒ ค่าเริ่มต้นไม่เปลี่ยนพฤติกรรมการส่ง</item>
 /// <item>userId ของ LINE ผูกกับ OA (provider) ⇒ ลิงก์ที่ผูกกับ OA อื่นใช้ไม่ได้ (<see cref="LinkUsable"/>) — ร้านสลับ OA = ลูกค้าต้องผูกใหม่</item>
-/// <item>อีเมล: ร้านตั้ง + ทดสอบผ่าน (<c>CompanySettings.EmailConfigured</c>) ⇒ ผู้ส่งของร้าน · ไม่งั้น ⇒ อีเมลของระบบ (เดิม)</item>
+/// <item>อีเมล: ร้านตั้ง + ทดสอบผ่าน (<c>CompanySettings.EmailConfigured</c>) ⇒ ผู้ส่งของร้าน แล้วถอยไปอีเมลของระบบเมื่อล้ม (ฝ่ายค้าน) · ไม่งั้น ⇒ อีเมลของระบบ (เดิม)</item>
 /// <item>ลำดับ: ลูกค้าผูก LINE เอง (opt-in) ⇒ LINE ก่อน แล้วอีเมล · ไม่ได้ผูก ⇒ อีเมลก่อน (เดิม)</item>
 /// </list>
 /// </summary>
@@ -58,6 +58,12 @@ public static class CustomerNotifyChannel
            && (string.IsNullOrEmpty(linkDestination) || string.IsNullOrEmpty(currentDestination)
                || string.Equals(linkDestination, currentDestination, StringComparison.Ordinal));
 
+    /// <summary>รอบ 211 ฝ่ายค้าน ข้อ 4: ปลายทางของ webhook (<c>destination</c>) ใช้ได้ไหมกับ bot userId ที่ตั้งไว้ (<c>Line:BotUserId</c>) —
+    /// ไม่ได้ตั้ง/ไม่มีใน webhook ⇒ ยอมรับ (ตัดสินด้วย scope) · ตั้งไว้แล้วไม่ตรง ⇒ ปฏิเสธ (ค่าตั้งผิด ลิงก์ที่เก็บจะใช้ไม่ได้)</summary>
+    public static bool AcceptDestination(string? configuredBotUserId, string? receivedDestination)
+        => string.IsNullOrWhiteSpace(configuredBotUserId) || string.IsNullOrWhiteSpace(receivedDestination)
+           || string.Equals(configuredBotUserId.Trim(), receivedDestination.Trim(), StringComparison.Ordinal);
+
     /// <summary>ลำดับช่องที่จะลอง (หยุดที่ช่องแรกที่ส่งสำเร็จ)</summary>
     public static IReadOnlyList<string> Order(bool hasEmail, bool hasLine, bool lineOptedIn)
     {
@@ -68,6 +74,12 @@ public static class CustomerNotifyChannel
         return list;
     }
 
-    /// <summary>อีเมลส่งผ่านใคร — ร้านตั้งค่าและทดสอบผ่านแล้ว ⇒ ของร้าน · ไม่งั้น ⇒ ของระบบ (พฤติกรรมเดิม)</summary>
-    public static string EmailSource(bool tenantEmailConfigured) => tenantEmailConfigured ? EmailTenant : EmailSystem;
+    /// <summary>รอบ 211 ฝ่ายค้าน (ผู้ประสานงานตัดสิน ข้อ 170): ลำดับผู้ส่งอีเมล — ร้านตั้ง+ทดสอบผ่าน ⇒ ของร้าน แล้ว<b>ถอยไปของระบบ</b>เมื่อล้ม · ไม่ได้ตั้ง ⇒ ของระบบ (เดิม)</summary>
+    public static IReadOnlyList<string> EmailPlan(bool tenantEmailConfigured)
+        => tenantEmailConfigured ? new[] { EmailTenant, EmailSystem } : new[] { EmailSystem };
+
+    /// <summary>ข้อความเตือนเมื่อส่งถึงด้วยอีเมลของระบบหลังผู้ส่งของร้านล้ม (ประทับบนรายการผ่าน <see cref="CmsNotificationText.FailureNote"/>)</summary>
+    public static string TenantEmailFallbackWarning(string tenantError)
+        => $"{CmsNotificationText.FallbackTag} ผู้ส่งอีเมลของร้านล้ม ({tenantError}) — ส่งถึงลูกค้าทางอีเมลของระบบแทน กรุณาตรวจ ตั้งค่า → อีเมล";
+
 }

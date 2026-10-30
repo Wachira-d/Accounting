@@ -144,19 +144,23 @@ public class CustomerLineLinkService : ICustomerLineLinkService
         if (await LoadTargetAsync(companyId, siteId, kind, targetId, ct) == null) throw new KeyNotFoundException("ไม่พบรายการ");
 
         var now = DateTime.UtcNow;
-        // รหัสค้างของเป้าหมายเดียวกันใช้ไม่ได้อีก — มีได้ทีละรหัส
-        await _db.CustomerLineLinkCodes
-            .Where(c => c.CompanyId == companyId && c.TargetKind == kind && c.TargetId == targetId && c.UsedAt == null)
-            .ExecuteUpdateAsync(s => s.SetProperty(c => c.UsedAt, now), ct);
-
         var code = CustomerLineLinkRule.NewCode();
         var expires = now.Add(CustomerLineLinkRule.CodeLifetime);
-        _db.CustomerLineLinkCodes.Add(new CustomerLineLinkCode
+        // รอบ 211 ฝ่ายค้าน ข้อ 7: มีรหัสค้างได้ทีละรหัสต่อเป้าหมาย — ล็อกต่อเป้าหมายในธุรกรรมเดียวกับ "เผารหัสเดิม + ออกรหัสใหม่"
+        // (สองคำขอพร้อมกันจาก instance ต่างกันจะเข้าคิว ไม่ได้รหัสใช้ได้สองตัว)
+        await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
-            CompanyId = companyId, SiteId = siteId, TargetKind = kind, TargetId = targetId,
-            CodeHash = CustomerLineLinkRule.Hash(code), OaScope = ch.Scope, ExpiresAt = expires, CreatedBy = "storefront",
-        });
-        await _db.SaveChangesAsync(ct);
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.CustomerLineCode, $"{kind}:{targetId:N}") }, ct);
+            await CustomerLineLinkClosure.BurnPendingCodesAsync(_db, companyId, kind, targetId, now, ct);
+            _db.CustomerLineLinkCodes.Add(new CustomerLineLinkCode
+            {
+                CompanyId = companyId, SiteId = siteId, TargetKind = kind, TargetId = targetId,
+                CodeHash = CustomerLineLinkRule.Hash(code), OaScope = ch.Scope, ExpiresAt = expires, CreatedBy = "storefront",
+            });
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+        }
 
         var sendUrl = CustomerLineLinkRule.SendCodeUrl(ch.BasicId, code);
         return new CustomerLineStartResponse(code, CustomerLineLinkRule.MessageText(code), CustomerLineLinkRule.AddFriendUrl(ch.BasicId),
@@ -176,32 +180,15 @@ public class CustomerLineLinkService : ICustomerLineLinkService
         var rows = await _db.CustomerLineLinks
             .Where(l => l.CompanyId == companyId && l.SiteId == siteId && l.TargetKind == kind && l.TargetId == targetId && l.UnlinkedAt == null)
             .ToListAsync(ct);
-        if (rows.Count == 0) return 0;
-        var now = DateTime.UtcNow;
-        await CloseLinksAsync(companyId, rows, reason, now, ct);
+        // เส้นปิดเดียว (ถอนยินยอม · ล้าง userId · audit · เผารหัสค้าง) — ไม่มีลิงก์ก็ยังเผารหัสค้าง
+        if (rows.Count == 0)
+        {
+            await CustomerLineLinkClosure.BurnPendingCodesAsync(_db, companyId, kind, targetId, DateTime.UtcNow, ct);
+            return 0;
+        }
+        await CustomerLineLinkClosure.CloseAsync(_db, companyId, rows, reason, DateTime.UtcNow, ct);
         await _db.SaveChangesAsync(ct);
         return rows.Count;
-    }
-
-    /// <summary>ปิดลิงก์ + ถอนความยินยอมของแถวนั้น + audit (ผู้เรียก SaveChanges)</summary>
-    private async Task CloseLinksAsync(Guid companyId, IReadOnlyCollection<CustomerLineLink> rows, string reason, DateTime now, CancellationToken ct)
-    {
-        var consentIds = rows.Where(r => r.ConsentRecordId != null).Select(r => r.ConsentRecordId!.Value).ToList();
-        if (consentIds.Count > 0)
-        {
-            var consents = await _db.Set<PdpaConsentRecord>()
-                .Where(c => c.CompanyId == companyId && consentIds.Contains(c.Id) && c.WithdrawnAt == null).ToListAsync(ct);
-            foreach (var c in consents) { c.WithdrawnAt = now; c.WithdrawnReason = $"ยกเลิกการเชื่อมต่อ LINE ({reason})"; }
-        }
-        foreach (var r in rows)
-        {
-            r.UnlinkedAt = now; r.UnlinkReason = reason; r.UpdatedAt = now;
-            _db.AddChainedAuditLog(new AuditLog
-            {
-                CompanyId = companyId, Action = AuditAction.Update, EntityType = nameof(CustomerLineLink), EntityId = r.Id.ToString(),
-                NewValues = JsonSerializer.Serialize(new { unlinked = true, reason, r.TargetKind, r.TargetId, rule = CustomerLineLinkRule.RuleCode }),
-            });
-        }
     }
 
     // ───────────── webhook ─────────────
@@ -221,6 +208,13 @@ public class CustomerLineLinkService : ICustomerLineLinkService
         var code = CustomerLineLinkRule.TryParse(text);
         if (code == null) return CustomerLineLinkRule.Replies.BadFormat;
 
+        // รอบ 211 ฝ่ายค้าน ข้อ 4: OA กลาง — ปลายทาง webhook ต้องตรงกับ Line:BotUserId เมื่อตั้งไว้ (ตั้งผิด = ล้มดัง ไม่เก็บลิงก์ที่จะใช้ไม่ได้)
+        if (scope == CustomerNotifyChannel.ScopeNextAcc && !CustomerNotifyChannel.AcceptDestination(_config["Line:BotUserId"], destination))
+        {
+            _logger.LogError("Line:BotUserId ไม่ตรงกับ destination ของ webhook OA กลาง — ไม่ผูก LINE ลูกค้า (ตรวจค่าตั้ง)");
+            return CustomerLineLinkRule.Replies.WrongChannel;
+        }
+
         var hash = CustomerLineLinkRule.Hash(code);
         // OA กลาง: OA เดียวทุกบริษัท ⇒ ค้นด้วย hash (unique) + scope · OA ของบริษัท: ต้องเป็นรหัสของบริษัทเจ้าของ URL เท่านั้น (กฎ M)
         var q = _db.CustomerLineLinkCodes.Where(c => c.CodeHash == hash && c.OaScope == scope);
@@ -233,27 +227,33 @@ public class CustomerLineLinkService : ICustomerLineLinkService
         var ch = await ResolveChannelAsync(row.CompanyId, ct);
         if (ch.Scope != scope) return CustomerLineLinkRule.Replies.WrongChannel;
 
+        var facts = await LoadTargetAsync(row.CompanyId, row.SiteId, row.TargetKind, row.TargetId, ct);
+        if (facts == null) return CustomerLineLinkRule.Replies.Invalid;
+
+        // รอบ 211 ฝ่ายค้าน ข้อ 7: ใช้รหัส + บันทึกลิงก์ในธุรกรรมเดียว — บันทึกล้ม ⇒ rollback รหัสไม่ถูกเผา (ลูกค้าส่งซ้ำได้)
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
         // ใช้ครั้งเดียว — update แบบมีเงื่อนไข (สอง instance ไถ่พร้อมกัน ได้แถวเดียว)
         var claimed = await _db.CustomerLineLinkCodes.Where(c => c.Id == row.Id && c.UsedAt == null)
             .ExecuteUpdateAsync(s => s.SetProperty(c => c.UsedAt, now), ct);
         if (claimed != 1) return CustomerLineLinkRule.Replies.Invalid;
 
-        var facts = await LoadTargetAsync(row.CompanyId, row.SiteId, row.TargetKind, row.TargetId, ct);
-        if (facts == null) return CustomerLineLinkRule.Replies.Invalid;
-
         var prev = await _db.CustomerLineLinks
             .Where(l => l.CompanyId == row.CompanyId && l.TargetKind == row.TargetKind && l.TargetId == row.TargetId && l.UnlinkedAt == null)
             .ToListAsync(ct);
-        if (prev.Count > 0) await CloseLinksAsync(row.CompanyId, prev, "relinked", now, ct);
+        if (prev.Count > 0) await CustomerLineLinkClosure.CloseAsync(_db, row.CompanyId, prev, "relinked", now, ct);
 
-        // ความยินยอม (PDPA ม.19): ลูกค้ากดปุ่มที่แสดงข้อความยินยอม + ส่งรหัสเอง = การกระทำยืนยันชัดแจ้ง
-        var consent = CmsDataConsent.Stage(_db, row.CompanyId, CmsDataConsent.LineNotifyPurpose, CustomerLineLinkRule.ConsentText(facts.SiteName),
-            facts.Email, facts.Phone, $"line:{row.TargetKind}:{row.TargetId:N}", now);
+        // ความยินยอม (PDPA ม.19): ลูกค้ากดปุ่มที่แสดงข้อความยินยอม + ส่งรหัสเอง = การกระทำยืนยันชัดแจ้ง ·
+        // ไม่มีอีเมล/เบอร์ ⇒ ตัวระบุ hash ของ LINE userId (ฝ่ายค้าน ข้อ 8 — หลักฐานต้องมีเสมอ)
+        var shown = CustomerLineLinkRule.ConsentText(facts.SiteName);
+        var reference = $"line:{row.TargetKind}:{row.TargetId:N}";
+        var consent = CmsDataConsent.Stage(_db, row.CompanyId, CmsDataConsent.LineNotifyPurpose, shown, facts.Email, facts.Phone, reference, now)
+            ?? CmsDataConsent.StageForSubject(_db, row.CompanyId, CmsDataConsent.LineNotifyPurpose, shown,
+                CustomerLineLinkRule.ConsentSubject(lineUserId), reference, now);
         var link = new CustomerLineLink
         {
             CompanyId = row.CompanyId, SiteId = row.SiteId, TargetKind = row.TargetKind, TargetId = row.TargetId,
             LineUserId = lineUserId.Trim(), OaScope = scope, OaDestination = string.IsNullOrWhiteSpace(destination) ? null : destination.Trim(),
-            LinkedAt = now, ConsentRecordId = consent?.Id, CreatedBy = "line-webhook",
+            LinkedAt = now, ConsentRecordId = consent.Id, CreatedBy = "line-webhook",
         };
         _db.CustomerLineLinks.Add(link);
         row.UsedAt = now;
@@ -264,10 +264,11 @@ public class CustomerLineLinkService : ICustomerLineLinkService
             NewValues = JsonSerializer.Serialize(new
             {
                 linked = true, row.TargetKind, row.TargetId, scope,
-                lineUser = CustomerLineLinkRule.Mask(lineUserId), consent = consent != null, rule = CustomerLineLinkRule.RuleCode,
+                lineUser = CustomerLineLinkRule.Mask(lineUserId), consent = true, rule = CustomerLineLinkRule.RuleCode,
             }),
         });
         await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
         return CustomerLineLinkRule.Replies.Linked(facts.SiteName, row.TargetKind);
     }
 
