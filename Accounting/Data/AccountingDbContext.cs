@@ -15,6 +15,8 @@ public class AccountingDbContext : DbContext
     public DbSet<EmployeeLineBindCode> EmployeeLineBindCodes => Set<EmployeeLineBindCode>();
     public DbSet<CustomerLineLink> CustomerLineLinks => Set<CustomerLineLink>();   // รอบ 211
     public DbSet<CustomerLineLinkCode> CustomerLineLinkCodes => Set<CustomerLineLinkCode>();   // รอบ 211
+    public DbSet<StaffDailySummaryConfig> StaffDailySummaryConfigs => Set<StaffDailySummaryConfig>();   // รอบ 212 C
+    public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
     public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
@@ -3430,6 +3432,23 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.OaScope).HasMaxLength(16);
             e.HasIndex(x => x.CodeHash).IsUnique().HasDatabaseName("UX_CustomerLineLinkCodes_Hash");
             e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinkCodes_Company_Target");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (ตาราง + index ต้องตรงกับ Helpers/StaffDailySummaryMigration)
+        modelBuilder.Entity<StaffDailySummaryConfig>(e =>
+        {
+            e.Property(x => x.Sections).HasMaxLength(200);
+            e.Property(x => x.RecipientRoles).HasMaxLength(200);
+            e.Property(x => x.LastRunNote).HasMaxLength(1000);
+            e.HasIndex(x => x.CompanyId).HasDatabaseName("IX_StaffDailySummaryConfigs_Company");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<StaffDailySummaryDelivery>(e =>
+        {
+            e.Property(x => x.Status).HasMaxLength(32);
+            e.Property(x => x.Error).HasMaxLength(1000);
+            e.HasIndex(x => new { x.ConfigId, x.LocalDate, x.UserId }).IsUnique().HasDatabaseName("UX_StaffDailySummaryDeliveries_Config_Date_User");
+            e.HasIndex(x => new { x.CompanyId, x.LocalDate }).HasDatabaseName("IX_StaffDailySummaryDeliveries_Company_Date");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 209 P4: ตารางคลาส (ตาราง + index ต้องตรงกับ Helpers/ClassScheduleMigration)

@@ -665,6 +665,9 @@ builder.Services.AddScoped<IDocumentEmailService, DocumentEmailService>();
 builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
 builder.Services.AddScoped<IPosService, PosService>();
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
+// รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (push ผ่าน OA กลาง) · มิเตอร์ช่องกลาง = no-op จนกว่าโควตาแพ็ก A เข้า (ผู้ประสานงานต่อสายตอน merge)
+builder.Services.AddScoped<ISharedMessageMeter, NoOpSharedMessageMeter>();
+builder.Services.AddScoped<IStaffDailySummaryService, StaffDailySummaryService>();
 
 // External Integration (TakeTime, PMS, E-Commerce, Bank Feeds)
 builder.Services.AddScoped<IIntegrationService, IntegrationService>();
@@ -722,6 +725,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBac
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
 // รอบ 205 W3 (R-12 R-13): เตือนลูกค้าก่อนนัด (ReminderSent/ReminderSentAt มีมาแต่ไม่มีผู้เขียน) · แจ้งได้คิวซ้ำ · ปล่อยรอบคิวสำรองที่หมดเวลาถือ — Helpers/JobLock
 builder.Services.AddHostedService<Accounting.Services.Background.BookingReminderJob>();
+// รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน — Helpers/JobLock + watermark LastSentLocalDate ต่อชุด + unique (ชุด, วัน, คน)
+builder.Services.AddHostedService<Accounting.Services.Background.StaffDailySummaryJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();

@@ -5718,3 +5718,12 @@ _รอบ 211 ฝ่ายค้าน (ลูกค้าผูก LINE · ไ
 `Line:BotUserId` ตั้งแล้วไม่ตรง ⇒ ไม่ผูก + log Error · (5) **ผู้ประสานงานตัดสิน**: ผู้ส่งอีเมลของร้านล้ม ⇒ ถอยไปอีเมลของระบบ + ประทับ `[CMS-NOTIFY-FALLBACK]` (`BookingSendResult.Warning`) ·
 (6) webhook ต่อบริษัท 401 แบบเดียว + ดูค่าตั้งก่อนอ่าน body + จำกัด 256 KB · (7) ไถ่รหัสในธุรกรรมเดียว · ออกรหัสใต้ advisory lock ต่อเป้าหมาย · (8) ยินยอมด้วย `line:`+hash เมื่อไม่มีอีเมล/เบอร์ ·
 เทสต์ +12 (CMS211-21..28) · `required_call_site_check` +11 กติกา/แก้ 6 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f19dac45_
+
+_รอบ 212 C (2026-10-30 · คำตัดสินข้อ 5 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §8 แพ็ก C) — (1) **บั๊กแฝง**: `NotificationEngine.DispatchLineAsync`
+push ถึงพนักงานผ่าน OA ของร้าน (`ResolveConfigAsync`) ทั้งที่ userId ของพนักงานผูกกับ OA กลางเท่านั้น ⇒ ร้านที่ตั้ง OA เองแจ้งเตือนพนักงานทาง LINE ล้มทุกฉบับ ·
+แก้เป็น `ILineNotifyService.TryPushViaNextAccAsync` (OA กลางระบุชัด · คืนเหตุ · ≤5×5,000 `Helpers/LineMessageLimits`) · ตัวยิงจริงย้ายเป็น `PushCoreAsync` (คืนเหตุ · log ปิดบังเหมือนเดิม) ·
+(2) **สรุปประจำวันทาง LINE ถึงพนักงาน**: `StaffDailySummaryConfig`/`StaffDailySummaryDelivery` (`Helpers/StaffDailySummaryMigration`) · ตัวตัดสิน `Helpers/StaffDailySummaryPlan`
+(หัวข้อ+สิทธิ์ · `Due` เวลาไทย · กรองต่อผู้รับ · สถานะแถว) · ตัวประกอบ `Helpers/StaffDailySummaryBuilder` · `StaffDailySummaryService` + `StaffDailySummaryJob` (JobLock · watermark ต่อชุด ·
+claim unique ต่อวันต่อผู้รับ) · มิเตอร์ `ISharedMessageMeter` (no-op — ผู้ประสานงานต่อเข้ากับโควตาแพ็ก A) · หน้า settings แท็บแจ้งเตือน + `js/staff-daily-summary.js` ·
+`StaffDailySummaryController` (CompanySettings.Edit · write_permission_gate_check เฝ้า) · เทสต์ CMS212C-01..14 (`CmsRound212DailySummaryTests`) ·
+`required_call_site_check` +9 กติกา/แก้ 1 (PushRawAsync → PushCoreAsync) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

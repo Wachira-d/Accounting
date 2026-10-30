@@ -349,12 +349,18 @@ public class NotificationEngine : INotificationEngine
         catch (Exception ex) { _logger.LogError(ex, "Email dispatch to {Email} failed", toEmail); }
     }
 
+    /// <summary>รอบ 212 C (บั๊กแฝง §0 ของ NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN): ผู้รับของ engine = ผู้ใช้ ERP (<c>User.LineUserId</c> จาก "ผูก 123456") หรือ
+    /// พนักงาน HR (<c>Employee.LineId</c> จาก "สลิป 123456") — ทั้งคู่ผูกผ่าน webhook ของ <b>OA กลาง</b>เท่านั้น ⇒ push ต้องออก OA กลางแบบระบุชัด ·
+    /// เดิม <c>PushToUserAsync(companyId, …)</c> เลือก OA ของร้านเมื่อร้านเปิด LINE ⇒ userId ข้าม provider ⇒ ล้มทุกฉบับเงียบ ๆ ·
+    /// แจ้งเตือนรายเหตุการณ์<b>ไม่นับ</b>โควตาข้อความช่องกลาง (§10) · ล้ม ⇒ log พร้อมเหตุ (ช่องอื่นของผู้รับยังทำงานตามเดิม)</summary>
     private async Task DispatchLineAsync(Guid companyId, string lineUserId, NotificationContext context)
     {
         var text = $"{context.Title}\n\n{context.Message}";
         if (!string.IsNullOrEmpty(context.ActionUrl))
             text += $"\n\n🔗 {context.ActionUrl}";
-        await _line.PushToUserAsync(companyId, lineUserId, text);
+        var r = await _line.TryPushViaNextAccAsync(lineUserId, new[] { text });
+        if (!r.Ok)
+            _logger.LogWarning("NotificationEngine: LINE ถึงพนักงานไม่สำเร็จ (company {CompanyId}): {Error}", companyId, r.Error);
     }
 
     private static string WebUtilityEncode(string s) =>

@@ -130,6 +130,8 @@ WATCHED = [
     "Accounting/Controllers/CmsClassScheduleController.cs",
     # รอบ 209 P3 — บันทึกรับเงินหน้าร้าน/ปลายทาง = ออกเอกสาร + ลง JE (ใส่ตอนเขียวตั้งแต่ไฟล์เกิด)
     "Accounting/Controllers/CmsOrderFulfilmentController.cs",
+    # เพิ่มรอบ 212 C — ตั้ง "ใครได้รับข้อมูลธุรกิจทาง LINE" + ส่งทดสอบ (นับโควตาข้อความ) ⇒ ต้องมีสิทธิ์ตั้งค่าบริษัททุก write
+    "Accounting/Controllers/StaffDailySummaryController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

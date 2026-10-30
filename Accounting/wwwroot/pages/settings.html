@@ -1081,6 +1081,16 @@
       <div style="display:flex;justify-content:flex-end;margin-top:16px">
         <button class="btn btn-primary" onclick="Page.saveNotifyMatrix()">บันทึก</button>
       </div>
+
+      <!-- รอบ 212 C: สรุปรายวันทาง LINE ถึงพนักงาน (js/staff-daily-summary.js · ข้อมูล/ป้ายจากเซิร์ฟเวอร์) -->
+      <div style="margin-top:28px;padding-top:20px;border-top:1px solid #e2e8f0">
+        <h3 class="card-title" style="margin-bottom:4px">💬 สรุปรายวันทาง LINE</h3>
+        <p class="text-gray-400" style="margin:0 0 12px;font-size:13px">
+          ส่งสรุปงานประจำวัน (การจอง · คลาส · คิวผลิต · ออเดอร์รอส่ง · ที่พัก · บัตรคอร์สใกล้หมดอายุ) ถึง LINE ของพนักงานตามเวลาที่ตั้ง —
+          ผู้รับแต่ละคนเห็นเฉพาะข้อมูลที่ตัวเองมีสิทธิ์ดูในระบบ · ส่งผ่าน LINE OA ของ NextAcc (ผู้รับต้องผูก LINE ก่อน)
+        </p>
+        <div id="staffSummaryBody"><div class="text-gray-400" style="padding:16px">กำลังโหลด…</div></div>
+      </div>
     </div>
 
     <!-- ===== Approval Tab ===== -->
@@ -1220,6 +1230,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/staff-daily-summary.js"></script>
   <script>
     const Page = {
       // ลบบริษัท (soft-delete) — Owner + พิมพ์ชื่อยืนยัน; server ตรวจซ้ำทุกชั้น
@@ -1383,7 +1394,7 @@
         if (tab === 'security') this.loadExternalLogins();
         if (tab === 'license') this.loadLicenseTab();
         if (tab === 'line') this.loadLineConfig();
-        if (tab === 'notify') this.loadNotifyMatrix();
+        if (tab === 'notify') { this.loadNotifyMatrix(); if (window.StaffDailySummary) StaffDailySummary.load(); }
       },
 
       // ===== Signature Settings =====
