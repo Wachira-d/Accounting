@@ -11336,7 +11336,7 @@ RULES += [
          forbid=["cfg.Mode = req.Mode", "cfg.LiveEnabledAt ="],
          why=_R219B_WHY + "หน้าร้านสลับโหมดผ่านตัวกลางเท่านั้น (ห้ามสำเนาด่าน)"),
     dict(file="Controllers/AdminPlatformGatewayController.cs", method="SetMode",
-         must=["RefundPolicyPublished", "_configs.SetModeAsync(", "req.TypedConfirmation"],
+         must=["purchase.RefundPublished", "_configs.SetModeAsync(", "req.TypedConfirmation"],
          forbid=["cfg.Mode ="],
          why=_R219B_WHY + "แพลตฟอร์มเปิดรับเงินจริงต้องผ่านด่านแพลตฟอร์ม (นโยบายคืนเงินเผยแพร่แล้ว + พิมพ์ยืนยัน)"),
     dict(file=PAY_INTENT, method="StartAsync",
