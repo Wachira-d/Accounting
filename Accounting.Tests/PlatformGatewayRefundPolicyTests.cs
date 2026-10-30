@@ -141,9 +141,12 @@ public class PlatformGatewayRefundPolicyTests
     [Fact]
     public void Platform_policy_info_points_to_public_pages()
     {
-        var p = PurchasePolicyAcceptance.PlatformInfo("terms 1.0 · refund 1.0");
+        var p = PurchasePolicyAcceptance.PlatformInfo("terms 1.0 · refund 1.1");
         Assert.Equal("/refund-policy.html", p.RefundUrl);
-        Assert.Contains("ไม่คืนเงิน", p.Text);
+        // ฝ่ายค้าน: ข้อความอ้างชื่อเอกสาร + ฉบับจริง ไม่สรุปเนื้อหาเอง (แอดมินแก้นโยบายแล้วข้อความต้องไม่ขัด)
+        Assert.Contains("นโยบายการยกเลิกและคืนเงิน", p.Text);
+        Assert.Contains("refund 1.1", p.Text);
+        Assert.DoesNotContain("ไม่คืนเงิน", p.Text);
     }
 
     // ═══════════════ ③ ด่านเปิดรับเงินจริง ═══════════════
@@ -187,10 +190,12 @@ public class PlatformGatewayRefundPolicyTests
     [Fact]
     public void Platform_pay_offline_unless_active_live_with_methods()
     {
-        Assert.Null(PlatformPayAvailability.OfflineReason(true, PaymentProviderMode.Live, 1));
-        Assert.NotNull(PlatformPayAvailability.OfflineReason(false, PaymentProviderMode.Live, 1));
-        Assert.NotNull(PlatformPayAvailability.OfflineReason(true, PaymentProviderMode.Test, 1));   // โหมดทดสอบ ⇒ ผู้เช่าไม่เห็นปุ่มออนไลน์
-        Assert.NotNull(PlatformPayAvailability.OfflineReason(true, PaymentProviderMode.Live, 0));
+        Assert.Null(PlatformPayAvailability.OfflineReason(true, PaymentProviderMode.Live, 1, platformLiveConfirmed: true));
+        Assert.NotNull(PlatformPayAvailability.OfflineReason(false, PaymentProviderMode.Live, 1, true));
+        Assert.NotNull(PlatformPayAvailability.OfflineReason(true, PaymentProviderMode.Test, 1, true));   // โหมดทดสอบ ⇒ ผู้เช่าไม่เห็นปุ่มออนไลน์
+        Assert.NotNull(PlatformPayAvailability.OfflineReason(true, PaymentProviderMode.Live, 0, true));
+        // ฝ่ายค้าน S1: Live ที่ไม่ผ่านด่านแพลตฟอร์ม (สลับจากหน้าร้าน/ค่าเดิม) ⇒ ยังไม่เปิดให้ผู้เช่า
+        Assert.NotNull(PlatformPayAvailability.OfflineReason(true, PaymentProviderMode.Live, 1, platformLiveConfirmed: false));
     }
 
     [Fact]
@@ -224,5 +229,140 @@ public class PlatformGatewayRefundPolicyTests
         Assert.NotNull(SubscriptionCancelPolicy.ResumeRefusal(false, SubscriptionStatus.Active, now.AddDays(1), now));
         Assert.NotNull(SubscriptionCancelPolicy.ResumeRefusal(true, SubscriptionStatus.Cancelled, now.AddDays(1), now));
         Assert.Contains("2569", SubscriptionCancelPolicy.Message(SubscriptionCancelPolicy.Outcome.AtPeriodEnd, now.AddDays(10)));   // พ.ศ.
+        // ฝ่ายค้าน S5: วันสิ้นรอบไกลเกินรอบที่ขาย (+100 ปี) ไม่ใช่รอบที่จ่ายแล้ว ⇒ ยกเลิกทันที (ไม่ค้าง "รอยกเลิก" 100 ปี)
+        Assert.Equal(SubscriptionCancelPolicy.Outcome.Immediate, SubscriptionCancelPolicy.Decide(SubscriptionStatus.Active, now.AddYears(100), now, false));
+        Assert.Equal(SubscriptionCancelPolicy.Outcome.AtPeriodEnd, SubscriptionCancelPolicy.Decide(SubscriptionStatus.Active, now.AddMonths(12), now, false));
+        Assert.Contains("2569", SubscriptionCancelPolicy.ConfirmText(SubscriptionStatus.Active, now.AddDays(10), now, false));
+        Assert.DoesNotContain("2569", SubscriptionCancelPolicy.ConfirmText(SubscriptionStatus.Trial, now.AddDays(10), now, false));
+    }
+
+    // ═══════════════ ⑤ ฝ่ายค้านรอบ 219 ส่วน B ═══════════════
+
+    private static Accounting.Models.Entities.PaymentIntent Intent(PaymentSourceKind kind, bool? test, Guid company, string provider = "gw")
+        => new()
+        {
+            CompanyId = company, ProviderCode = provider, SourceKind = kind, IsTestMode = test,
+            Status = PaymentIntentStatus.Succeeded, ConfirmedAt = DateTime.UtcNow, Amount = 20m,
+        };
+
+    [Fact]
+    public void Batch_rules_exclude_self_test_and_test_mode_intents()
+    {
+        var cid = Guid.NewGuid();
+        var unclaimed = GatewayBatchIntentRules.UnclaimedForBatch(cid, "gw", null, null).Compile();
+        Assert.False(unclaimed(Intent(PaymentSourceKind.GatewaySelfTest, true, cid)));
+        Assert.False(unclaimed(Intent(PaymentSourceKind.GatewaySelfTest, null, cid)));
+        Assert.False(unclaimed(Intent(PaymentSourceKind.SiteOrder, true, cid)));
+        // ทิศตรงข้าม: เงินจริง (ประทับ false) และแถวเดิมที่ไม่รู้ (null) ยังเข้ารอบโอน
+        Assert.True(unclaimed(Intent(PaymentSourceKind.SiteOrder, false, cid)));
+        Assert.True(unclaimed(Intent(PaymentSourceKind.SiteOrder, null, cid)));
+
+        var late = GatewayBatchIntentRules.LateRefundInBatch(cid, "gw").Compile();
+        var testRefund = Intent(PaymentSourceKind.SiteOrder, true, cid); testRefund.SettlementBatchId = Guid.NewGuid(); testRefund.RefundedAmount = 5m;
+        var realRefund = Intent(PaymentSourceKind.SiteOrder, false, cid); realRefund.SettlementBatchId = Guid.NewGuid(); realRefund.RefundedAmount = 5m;
+        Assert.False(late(testRefund));
+        Assert.True(late(realRefund));
+    }
+
+    [Fact]
+    public void Self_test_refund_refused_and_test_mode_not_booked()
+    {
+        Assert.Equal(GatewayTestPaymentRules.SelfTestRefundMessage, GatewayTestPaymentRules.RefundRefusal(PaymentSourceKind.GatewaySelfTest));
+        Assert.Null(GatewayTestPaymentRules.RefundRefusal(PaymentSourceKind.SiteOrder));
+        Assert.True(GatewayTestPaymentRules.IsNoMoney(PaymentSourceKind.SiteOrder, true));
+        Assert.True(GatewayTestPaymentRules.IsNoMoney(PaymentSourceKind.GatewaySelfTest, null));
+        Assert.False(GatewayTestPaymentRules.IsNoMoney(PaymentSourceKind.SiteOrder, false));   // เงินจริงลงบัญชีตามเดิม
+        Assert.False(GatewayTestPaymentRules.IsNoMoney(PaymentSourceKind.SiteOrder, null));
+    }
+
+    [Theory]
+    [InlineData(false, true, "skey_test_abc", true)]
+    [InlineData(false, false, "pkey_test_abc", true)]
+    [InlineData(false, true, "skey_live_abc", false)]     // คีย์จริงในช่องทดสอบ ⇒ ปฏิเสธ (หน้าทดลองจ่ายจะเก็บเงินจริง)
+    [InlineData(false, true, "skey_5abc", false)]
+    [InlineData(true, true, "skey_test_abc", false)]      // คีย์ทดสอบในช่องจริง ⇒ ปฏิเสธ
+    [InlineData(true, true, "skey_live_abc", true)]
+    [InlineData(true, true, "skey_5abc", true)]
+    [InlineData(true, false, "skey_live_abc", false)]     // คีย์ลับในช่องคีย์สาธารณะ
+    [InlineData(true, true, "", true)]                    // ว่าง = ไม่เปลี่ยน
+    public void Omise_key_format_must_match_field_mode(bool live, bool secret, string value, bool ok)
+        => Assert.Equal(ok, OmiseKeyFormat.Problem(live, secret, value) == null);
+
+    [Fact]
+    public void Live_mode_guard_blocks_cross_mode_charges_only()
+    {
+        Assert.NotNull(PaymentLiveModeGuard.Mismatch(true, expectTest: true));    // เงินจริงบนรายการทดสอบ
+        Assert.NotNull(PaymentLiveModeGuard.Mismatch(false, expectTest: false));  // รายการทดสอบบนรายการจริง
+        Assert.Null(PaymentLiveModeGuard.Mismatch(true, expectTest: false));
+        Assert.Null(PaymentLiveModeGuard.Mismatch(false, expectTest: true));
+        Assert.Null(PaymentLiveModeGuard.Mismatch(null, expectTest: true));       // ผู้ให้บริการไม่ส่ง = ไม่ตัดสิน
+    }
+
+    [Fact]
+    public void Platform_gateway_config_is_admin_only_for_platform_company()
+    {
+        var platform = Guid.NewGuid();
+        Assert.NotNull(PlatformGatewayOwnership.TenantEndpointRefusal(platform, platform));
+        Assert.Null(PlatformGatewayOwnership.TenantEndpointRefusal(Guid.NewGuid(), platform));   // ร้านอื่นไม่ถูกแตะ
+        Assert.Null(PlatformGatewayOwnership.TenantEndpointRefusal(platform, null));
+    }
+
+    [Fact]
+    public void Double_payment_decisions()
+    {
+        var me = Guid.NewGuid();
+        Assert.Equal(PlatformDoublePayment.SlipPendingMessage, PlatformDoublePayment.OnlineStartRefusal(true));
+        Assert.Null(PlatformDoublePayment.OnlineStartRefusal(false));
+        Assert.Equal(PlatformDoublePayment.Outcome.AlreadySettled, PlatformDoublePayment.OnGatewaySuccess(true, null, me, false));       // อนุมัติสลิปแล้ว
+        Assert.Equal(PlatformDoublePayment.Outcome.AlreadySettled, PlatformDoublePayment.OnGatewaySuccess(true, Guid.NewGuid(), me, false));
+        Assert.Equal(PlatformDoublePayment.Outcome.SlipPendingButPaidOnline, PlatformDoublePayment.OnGatewaySuccess(false, null, me, true));
+        Assert.Equal(PlatformDoublePayment.Outcome.Apply, PlatformDoublePayment.OnGatewaySuccess(false, null, me, false));
+        Assert.True(PlatformDoublePayment.SubscriptionPaymentClosed(SubscriptionPaymentStatus.Approved));
+        Assert.False(PlatformDoublePayment.SubscriptionPaymentClosed(SubscriptionPaymentStatus.UnderReview));
+    }
+
+    [Fact]
+    public void Evidence_hash_binds_company_source_and_version()
+    {
+        var row = PurchasePolicyAcceptance.Create(Guid.NewGuid(), PurchasePolicyAcceptance.ScopeShop, PurchasePolicyAcceptance.ChannelSiteBooking,
+            null, null, "shop-abc", null, "guest@example.test", null, DateTime.UtcNow, null, null);
+        Assert.True(PurchasePolicyAcceptance.Verify(row));
+        var before = row.EvidenceHash;
+        PurchasePolicyAcceptance.BindSource(row, Guid.NewGuid());
+        Assert.NotEqual(before, row.EvidenceHash);
+        Assert.True(PurchasePolicyAcceptance.Verify(row));
+        row.SourceId = Guid.NewGuid();          // ย้ายไปผูกรายการอื่น ⇒ ตรวจไม่ผ่าน
+        Assert.False(PurchasePolicyAcceptance.Verify(row));
+        var other = PurchasePolicyAcceptance.Create(Guid.NewGuid(), PurchasePolicyAcceptance.ScopeShop, PurchasePolicyAcceptance.ChannelSiteBooking,
+            null, null, "shop-abc", null, "guest@example.test", null, DateTime.UtcNow, null, null);
+        other.CompanyId = Guid.NewGuid();       // ย้ายบริษัท ⇒ ตรวจไม่ผ่าน
+        Assert.False(PurchasePolicyAcceptance.Verify(other));
+    }
+
+    [Fact]
+    public void Evidence_is_append_only_except_pseudonymisation()
+    {
+        Assert.Empty(PolicyAcceptanceAppendOnly.ForbiddenChanges(new[] { "Subject", "IpAddress", "UserAgent", "PseudonymisedAt", "UpdatedAt" }));
+        Assert.Equal(new[] { "PolicyVersion" }, PolicyAcceptanceAppendOnly.ForbiddenChanges(new[] { "Subject", "PolicyVersion" }));
+        Assert.Contains("IsDeleted", PolicyAcceptanceAppendOnly.ForbiddenChanges(new[] { "IsDeleted" }));
+        var row = PurchasePolicyAcceptance.Create(Guid.NewGuid(), PurchasePolicyAcceptance.ScopeShop, PurchasePolicyAcceptance.ChannelSiteOrder,
+            Guid.NewGuid(), null, "shop-abc", null, "guest@example.test", null, DateTime.UtcNow, "203.0.113.1", "ua");
+        var t = new DateTime(2026, 10, 30, 0, 0, 0, DateTimeKind.Utc);
+        PurchasePolicyAcceptance.Pseudonymise(row, "anon-1", t);
+        Assert.Equal("anon-1", row.Subject);
+        Assert.Null(row.IpAddress);
+        Assert.Contains("ทำไม่ให้ระบุตัว", PurchasePolicyAcceptance.CheckLabel(row));
+        Assert.Equal(t.AddYears(-PurchasePolicyAcceptance.RetentionYears), PurchasePolicyAcceptance.PurgeCutoff(t));
+        Assert.True(PurchasePolicyAcceptance.RetentionYears >= 5);   // MAX(retention) ≥ เอกสารบัญชี 5 ปี
+    }
+
+    [Fact]
+    public void Renewal_invoice_supersede_clears_pointers_once()
+    {
+        var sub = new Accounting.Models.Entities.Subscription { RenewalInvoiceNumber = "INV-1", RenewalInvoiceForEndDate = DateTime.UtcNow, RenewalInvoiceDocumentId = Guid.NewGuid() };
+        Assert.Equal("INV-1", RenewalInvoiceSupersede.Apply(sub));
+        Assert.Null(sub.RenewalInvoiceNumber);
+        Assert.Null(sub.RenewalInvoiceDocumentId);
+        Assert.Null(RenewalInvoiceSupersede.Apply(sub));   // ไม่มีใบ ⇒ ไม่มีอะไรให้ล้าง
     }
 }

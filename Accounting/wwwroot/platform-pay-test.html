@@ -34,7 +34,10 @@
         return t ? { Authorization: 'Bearer ' + t } : {};
       };
       const box = document.getElementById('box');
-      fetch('/api/platform-pay-test', { headers: auth() }).then(r => r.json()).then(j => {
+      fetch('/api/platform-pay-test', { headers: auth() }).then(r => {
+        if (r.status === 404) return { data: { available: false, reason: 'ไม่พบหน้านี้' } };
+        return r.json();
+      }).then(j => {
         const d = (j && j.data) || {};
         if (!d.available) {
           box.innerHTML = `<h1>ทดลองชำระเงิน</h1><div class="err">${esc(d.reason || 'หน้านี้ยังไม่เปิด')}</div>`;
@@ -45,9 +48,7 @@
           <div class="test">⚠️ โหมดทดสอบ — เงินไม่เข้าจริง (ใช้แอป/บัตรทดสอบของผู้ให้บริการรับชำระเงิน)</div>
           <div class="line"><span>รายการ</span><b>ทดสอบการชำระค่าบริการ</b></div>
           <div class="line"><span>ยอดชำระ</span><b>฿${esc(Number(d.amount || 0).toFixed(2))}</b></div>
-          <div id="testPolicy">${PolicyAccept.html({
-            text: 'ข้าพเจ้าได้อ่านและยอมรับข้อกำหนดการใช้งาน และนโยบายการยกเลิกและคืนเงินของ NextAcc',
-            version: 'demo', termsUrl: '/terms.html', refundUrl: '/refund-policy.html' })}</div>
+          <div id="testPolicy">${PolicyAccept.html(d.policy)}</div>
           <button class="btn" id="payBtn">ชำระด้วยพร้อมเพย์ (QR ทดสอบ)</button>
           <p class="muted">หน้านี้แสดงขั้นตอนชำระเงินเหมือนหน้าจริงของผู้ใช้ — ข้อกำหนดและนโยบายการยกเลิกและคืนเงินแสดงก่อนชำระทุกครั้ง ·
             <a href="/terms.html" target="_blank" rel="noopener">ข้อกำหนด</a> · <a href="/refund-policy.html" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a> ·

@@ -51,7 +51,7 @@ public class PlatformPaymentController : ControllerBase
         if (sourceId == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้เปิดใช้ส่วนเสริมนี้"));
         try
         {
-            await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, _legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+            await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, _legal, companyId, User,
                 PurchasePolicyAcceptance.ChannelPlatformAddOn, sourceId, req.PolicyAccepted, req.PolicyVersionShown,
                 HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
             var intent = await _platform.StartAddOnAsync(companyId, featureCode, req.Method, req.ReturnUrl, req.CardToken, ct);
@@ -74,7 +74,7 @@ public class PlatformPaymentController : ControllerBase
         if (!mine) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระค่าแพ็กเกจของบริษัทนี้"));
         try
         {
-            await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, _legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+            await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, _legal, companyId, User,
                 PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentId, req.PolicyAccepted, req.PolicyVersionShown,
                 HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
             var intent = await _platform.StartSubscriptionPaymentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct);
@@ -96,10 +96,18 @@ public class PlatformPaymentController : ControllerBase
     [Accounting.Filters.RequirePermission(PermissionKeys.BillingManage)]
     public async Task<ActionResult<ApiResponse<object>>> Accept(Guid companyId, [FromBody] AcceptRequest req, CancellationToken ct)
     {
-        if (req.Channel is not (PurchasePolicyAcceptance.ChannelPlatformSubscription or PurchasePolicyAcceptance.ChannelPlatformAddOn
-                or PurchasePolicyAcceptance.ChannelPlatformInvoice or PurchasePolicyAcceptance.ChannelPlatformTopUp))
-            return BadRequest(new ApiResponse<object>(false, null, "ช่องทางไม่ถูกต้อง"));
-        var row = await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, _legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+        // ฝ่ายค้าน (หมายเหตุ): แถวต้นทางต้องเป็นของบริษัทผู้จ่ายจริง (กันแต่งหลักฐานผูกรายการของบริษัทอื่น) — ใบแจ้งหนี้/แพ็กของศูนย์ชำระค่าบริการ
+        // ผูกหลักฐานฝั่งเซิร์ฟเวอร์ด้วย PurchasePolicyAcceptance.EnforcePlatformForUserAsync (ตรวจเจ้าของในเส้นของตัวเอง) ไม่ผ่าน endpoint นี้
+        var owned = req.Channel switch
+        {
+            PurchasePolicyAcceptance.ChannelPlatformSubscription => await _db.SubscriptionPayments.AsNoTracking()
+                .AnyAsync(p => p.Id == req.SourceId && p.Subscription.CompanyId == companyId, ct),
+            PurchasePolicyAcceptance.ChannelPlatformAddOn => await _db.CompanyFeatures.AsNoTracking()
+                .AnyAsync(f => f.Id == req.SourceId && f.CompanyId == companyId && !f.IsDeleted, ct),
+            _ => false,
+        };
+        if (!owned) return BadRequest(new ApiResponse<object>(false, null, "ช่องทางหรือรายการไม่ถูกต้อง (ต้องเป็นรายการค่าแพ็กเกจ/ส่วนเสริมของบริษัทนี้)"));
+        var row = await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, _legal, companyId, User,
             req.Channel, req.SourceId, req.PolicyAccepted, req.PolicyVersionShown,
             HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
         await _db.SaveChangesAsync(ct);
@@ -119,8 +127,8 @@ public class PlatformPaymentController : ControllerBase
         id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
         qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl,
         failureMessage = i.FailureMessage,
-        // ช่องทางค่าบริการเปิดออนไลน์เฉพาะโหมดใช้งานจริง (PlatformPayAvailability) — ป้ายทดสอบไม่ขึ้นบนเส้นนี้
-        isTestMode = false,
+        // ฝ่ายค้าน (หมายเหตุ): โหมดจากค่าที่ประทับบน intent (ตัวเดียว PaymentIntentTestMode) — ไม่เดาจากช่องทาง
+        isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
     };
 }
 

@@ -64,7 +64,7 @@ public class AdminPlatformGatewayController : ControllerBase
         var status = await _platform.StatusAsync(ct);
         var facts = cfg == null ? null : _configs.GateFacts(cfg);
         var missing = facts == null ? new List<string>() : PaymentLiveGate.Missing(facts);
-        if (!purchase.RefundPolicyPublished)
+        if (!purchase.RefundPublished)
             missing.Add("ยังไม่ได้เผยแพร่ \"นโยบายการยกเลิกและคืนเงิน\" ฉบับของ NextAcc (เอกสารกฎหมาย → นโยบายการยกเลิกและคืนเงิน)");
         var testMode = PlatformPayTestPage.Normalize(settings?.PlatformPayTestPageMode);
         return Ok(new ApiResponse<object>(true, new
@@ -80,6 +80,7 @@ public class AdminPlatformGatewayController : ControllerBase
                 cfg.TestPublicKey, cfg.LivePublicKey,
                 testSecretHint = Hint(cfg.TestSecretKeyProtected), liveSecretHint = Hint(cfg.LiveSecretKeyProtected),
                 cfg.LastTestPassedAt, cfg.LiveKeyVerifiedAt, cfg.LastWebhookAt, cfg.LastLiveWebhookAt, cfg.LastSelfTestPaidAt, cfg.LiveEnabledAt,
+                cfg.PlatformLiveConfirmedAt,   // ฝ่ายค้าน S1: ผ่านด่านแพลตฟอร์มแล้ว (ผู้เช่าเห็นปุ่มออนไลน์เฉพาะเมื่อมีค่านี้)
                 webhookUrl = $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.Path(cfg.ProviderCode, cfg.WebhookToken)}",
                 enabledMethods = ParseMethods(cfg.EnabledMethodsJson),
                 providerNotice = _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode)?.PendingVerificationNotice,
@@ -88,7 +89,7 @@ public class AdminPlatformGatewayController : ControllerBase
             canEnableLive = missing.Count == 0 && cfg != null,
             liveGateMissing = missing,
             confirmPhrase = PaymentLiveGate.ConfirmPhrase,
-            refundPolicy = new { version = purchase.RefundVersion, published = purchase.RefundPolicyPublished,
+            refundPolicy = new { version = purchase.RefundVersion, published = purchase.RefundPublished,
                 url = LegalDocumentDefaults.PlatformPath(LegalDocumentDefaults.KindRefund) },
             online = status.Online,
             offlineReason = status.OfflineReason,
@@ -184,7 +185,7 @@ public class AdminPlatformGatewayController : ControllerBase
         {
             id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
             qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl, failureMessage = i.FailureMessage,
-            isTestMode = true,
+            isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
             // webhook มาถึงหลังสร้างรายการนี้ไหม — ข้อที่ "ทดสอบเชื่อมต่อ" ต้องการ
             webhookReceivedSinceStart = cfg?.LastWebhookAt != null && cfg.LastWebhookAt >= i.CreatedAt,
         }));
@@ -198,7 +199,7 @@ public class AdminPlatformGatewayController : ControllerBase
         var cfg = await ConfigOrNullAsync(ct);
         if (cfg == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้ตั้งค่าช่องทางรับชำระของ NextAcc"));
         var purchase = await _legal.GetPurchasePolicyVersionAsync(ct);
-        await _configs.SetModeAsync(cfg, req.Mode, new PlatformLiveExtras(purchase.RefundPolicyPublished, req.TypedConfirmation), Actor(), ct);
+        await _configs.SetModeAsync(cfg, req.Mode, new PlatformLiveExtras(purchase.RefundPublished, req.TypedConfirmation), Actor(), ct);
         return Ok(new ApiResponse<object>(true, null, req.Mode == PaymentProviderMode.Live
             ? "เปิดรับเงินค่าบริการจริงแล้ว — ผู้เช่าเห็นปุ่ม \"ชำระออนไลน์\" ทันที · ตรวจว่ามีการแจ้งเตือนโหมดจริงมาถึงหลังรายการแรก"
             : "กลับสู่โหมดทดสอบแล้ว — ผู้เช่ากลับไปใช้เส้นโอน + แนบสลิป"));
@@ -269,6 +270,6 @@ public class AdminPlatformGatewayController : ControllerBase
     {
         id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
         qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl, failureMessage = i.FailureMessage,
-        isTestMode = true,
+        isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
     };
 }

@@ -56,7 +56,8 @@
             <div class="muted">ตั้งที่ <a href="/admin/site-settings.html">ตั้งค่าเว็บไซต์ → ใบเสร็จค่าบริการ</a> ก่อน — เงินค่าบริการลงสมุดของบริษัทนั้น</div></div>`;
           return;
         }
-        const mode = !c ? 'off' : !c.isActive ? 'off' : (c.mode === 'Live' ? 'live' : 'test');
+        // โหมดใช้งานจริงที่ยังไม่ผ่านด่านแพลตฟอร์ม (เดิม/สลับจากเส้นอื่น) = ผู้เช่ายังไม่เห็นปุ่ม ⇒ แสดงเป็น "ยังไม่เปิด" ตามผลจริงจากเซิร์ฟเวอร์ (d.online)
+        const mode = !c ? 'off' : !c.isActive ? 'off' : (d.online ? 'live' : 'test');
         const banner = { off: '⏸️ ปิด/ยังไม่ตั้งค่า — ผู้เช่าชำระด้วยการโอน + แนบสลิป', test: '🧪 โหมดทดสอบ — เงินไม่เข้าจริง · ผู้เช่ายังไม่เห็นปุ่มชำระออนไลน์', live: '✅ เปิดรับเงินจริงแล้ว — ผู้เช่าเห็นปุ่ม "ชำระออนไลน์"' }[mode];
         const provOpts = d.providers.map(p => `<option value="${e(p.code)}" ${c && c.providerCode === p.code ? 'selected' : ''}>${e(p.code)}</option>`).join('');
         const prov = d.providers.find(p => p.code === (c ? c.providerCode : (d.providers[0] || {}).code)) || { methods: [] };
@@ -104,8 +105,8 @@
           </div>
           <div class="admin-card" style="margin-bottom:14px">
             <div class="admin-card-header"><span class="admin-card-title">🚦 เปิดรับเงินจริง / ปิดฉุกเฉิน</span></div>
-            ${c.mode === 'Live'
-              ? `<div class="muted">เปิดรับเงินจริงเมื่อ ${this.dt(c.liveEnabledAt)}</div>
+            ${d.online
+              ? `<div class="muted">เปิดรับเงินจริงเมื่อ ${this.dt(c.platformLiveConfirmedAt)}</div>
                  <div class="row"><button class="admin-btn admin-btn-outline" onclick="Page.mode('Test')">กลับสู่โหมดทดสอบ</button></div>`
               : `${missing.length ? `<div class="bad" style="font-size:13px">ยังเปิดรับเงินจริงไม่ได้:</div><ul class="list">${missing.map(m => `<li>${e(m)}</li>`).join('')}</ul>` : '<div class="ok" style="font-size:13px">พร้อมเปิดรับเงินจริง</div>'}
                  <div class="row"><input id="gConfirm" placeholder="พิมพ์ &quot;${e(d.confirmPhrase)}&quot; เพื่อยืนยัน" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;min-width:240px">

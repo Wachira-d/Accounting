@@ -117,6 +117,16 @@ public class PaymentSettingsController : ControllerBase
         LiveGateMissing: PaymentLiveGate.Missing(_configs.GateFacts(c)));
     }
 
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน S1: ช่องทางรับชำระของ<b>บริษัทผู้ให้บริการ NextAcc</b> ตั้งที่หน้าแอดมินเท่านั้น (ด่านแพลตฟอร์ม · นโยบายคืนเงิน · พิมพ์ยืนยัน) —
+    /// หน้าตั้งค่าร้านของบริษัทนั้นแก้คีย์/ทดสอบ/สลับโหมดไม่ได้ (เดิมสลับ live จากตรงนี้ได้โดยไม่ผ่านด่านแพลตฟอร์ม) · null = ผ่าน</summary>
+    private async Task<ActionResult?> DenyPlatformCompanyAsync(Guid companyId, CancellationToken ct)
+    {
+        var platformId = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt).Select(x => x.PlatformCompanyId).FirstOrDefaultAsync(ct);
+        return PlatformGatewayOwnership.TenantEndpointRefusal(companyId, platformId) is string why
+            ? StatusCode(403, new ApiResponse<object>(false, null, why))
+            : null;
+    }
+
     private static List<string> ParseMethods(string? json)
     {
         if (string.IsNullOrWhiteSpace(json)) return new List<string>();
@@ -177,6 +187,7 @@ public class PaymentSettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<ConfigResponse>>> Save(
         Guid companyId, [FromBody] SaveConfigRequest req, CancellationToken ct)
     {
+        if (await DenyPlatformCompanyAsync(companyId, ct) is { } platformDeny) return platformDeny;   // ฝ่ายค้าน S1
         if (_providers.All(p => p.ProviderCode != req.ProviderCode))
             return BadRequest(new ApiResponse<ConfigResponse>(false, null, "ไม่รู้จักผู้ให้บริการนี้"));
 
@@ -241,6 +252,7 @@ public class PaymentSettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<ProviderHealth>>> Test(
         Guid companyId, string providerCode, CancellationToken ct)
     {
+        if (await DenyPlatformCompanyAsync(companyId, ct) is { } platformDeny) return platformDeny;   // ฝ่ายค้าน S1
         var cfg = await _configs.FindAsync(companyId, providerCode, ct);
         if (cfg == null) return NotFound(new ApiResponse<ProviderHealth>(false, null, "ยังไม่ได้ตั้งค่าผู้ให้บริการนี้"));
         // รอบ 219 ส่วน B: ทดสอบคีย์ทั้งสองชุด (คีย์ทดสอบ + webhook · คีย์ live อ่านอย่างเดียว) — ตัวเดียวกับแพลตฟอร์ม
@@ -258,6 +270,7 @@ public class PaymentSettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> SelfTest(
         Guid companyId, string providerCode, [FromBody] SelfTestRequest? req, CancellationToken ct)
     {
+        if (await DenyPlatformCompanyAsync(companyId, ct) is { } platformDeny) return platformDeny;   // ฝ่ายค้าน S1
         var cfg = await _configs.FindAsync(companyId, providerCode, ct);
         if (cfg == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้ตั้งค่าผู้ให้บริการนี้"));
         try
@@ -267,7 +280,7 @@ public class PaymentSettingsController : ControllerBase
             {
                 id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
                 qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl,
-                failureMessage = i.FailureMessage, isTestMode = true,
+                failureMessage = i.FailureMessage, isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
             }));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
@@ -282,6 +295,7 @@ public class PaymentSettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<ConfigResponse>>> RotateWebhookToken(
         Guid companyId, string providerCode, CancellationToken ct)
     {
+        if (await DenyPlatformCompanyAsync(companyId, ct) is { } platformDeny) return platformDeny;   // ฝ่ายค้าน S1
         var cfg = await _db.PaymentProviderConfigs
             .FirstOrDefaultAsync(c => c.CompanyId == companyId
                                    && c.ProviderCode == providerCode && !c.IsDeleted, ct);
@@ -331,6 +345,7 @@ public class PaymentSettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<ConfigResponse>>> SetMode(
         Guid companyId, string providerCode, [FromBody] SetModeRequest req, CancellationToken ct)
     {
+        if (await DenyPlatformCompanyAsync(companyId, ct) is { } platformDeny) return platformDeny;   // ฝ่ายค้าน S1
         var cfg = await _configs.FindAsync(companyId, providerCode, ct);
         if (cfg == null) return NotFound(new ApiResponse<ConfigResponse>(false, null, "ยังไม่ได้ตั้งค่าผู้ให้บริการนี้"));
         // รอบ 219 ส่วน B: ด่านเดียวกับแพลตฟอร์ม (PaymentLiveGate ผ่าน IPaymentProviderConfigService) — ไม่ผ่าน ⇒ BusinessRuleException (400 ข้อความไทย) ·

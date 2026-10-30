@@ -226,7 +226,7 @@ public class MeteringController : ControllerBase
         if (sourceId == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้เปิดใช้ส่วนเสริมนี้"));
         try
         {
-            await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+            await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, legal, companyId, User,
                 PurchasePolicyAcceptance.ChannelPlatformAddOn, sourceId, req.PolicyAccepted, req.PolicyVersionShown,
                 HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
             var intent = await platform.StartAddOnAsync(companyId, featureCode, req.Method, req.ReturnUrl, req.CardToken, ct);
@@ -236,7 +236,7 @@ public class MeteringController : ControllerBase
                 id = intent.Id, status = intent.Status.ToString(), amount = intent.Amount,
                 currency = intent.Currency, qrPayload = intent.QrPayload,
                 qrExpiresAt = intent.QrExpiresAt, authorizeUrl = intent.AuthorizeUrl,
-                failureMessage = intent.FailureMessage, isTestMode = false,
+                failureMessage = intent.FailureMessage, isTestMode = PaymentIntentTestMode.Decide(intent.IsTestMode, null),
             }));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
@@ -267,7 +267,7 @@ public class MeteringController : ControllerBase
         var block = await RequireBillingAsync(companyId, "ส่งหลักฐานการชำระเงิน");
         if (block != null) return block;
         // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ส่งสลิป = ชำระค่าบริการ ⇒ ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงินก่อน (ยอมรับไว้แล้วสำหรับรายการนี้ = ผ่าน)
-        await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+        await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, legal, companyId, User,
             PurchasePolicyAcceptance.ChannelPlatformAddOn, await platform.AddOnSourceIdAsync(companyId, featureCode, ct),
             policyAccepted, policyVersionShown, HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
 

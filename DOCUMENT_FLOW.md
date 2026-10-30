@@ -1803,6 +1803,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`IPaymentProviderConfigService` ตัวเดียวกับหน้าร้าน · ด่าน `Helpers/PaymentLiveGate`) · ทดลองจ่าย ฿20 = `GatewaySelfTest` (handler ประทับเวลาอย่างเดียว · ไม่มี JE · รอบโอนไม่หยิบ) ·
   ก่อนทุกการชำระ/ยืนยันการซื้อ (แพลตฟอร์ม + ออเดอร์/จอง/ที่พักของร้าน) ต้องติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (`Helpers/PurchasePolicyAcceptance` · แถว `PolicyAcceptances`) ·
   ยกเลิกแพ็กเกจมีผลสิ้นรอบ (`Subscription.CancelAtPeriodEnd`) · Last verified `commit a426a0ed`
+  · **ฝ่ายค้าน:** ทดลองจ่าย/โหมดทดสอบไม่เข้ารอบโอน · คืนไม่ลง PV · ทดลองจ่ายคืนไม่ได้ · คีย์/livemode ตรงโหมด · ปุ่มออนไลน์ต้องมี `PlatformLiveConfirmedAt` ·
+  จ่ายซ้อนออนไลน์+สลิปกันตอนเริ่ม + ล็อก session + ล้มดัง · หลักฐานยอมรับ append-only + DSR · ยกเลิกสิ้นรอบล้างใบต่ออายุ (`RenewalInvoiceSupersede`) · Last verified `commit <sha ในคอมมิตถัดไป>`
 
 - **รอบ 219 เฟส 0 — เงินค่าบริการ NextAcc (คำตัดสินข้อ 178):** ชนิดต้นทาง `SubscriptionPayment`/`AddOnPurchase` = รายได้ของแพลตฟอร์ม (`Helpers/PlatformRevenueSource`) ·
   `PaymentIntentService.StartAsync`/`RecordExternalSuccessAsync` ปฏิเสธเมื่อไม่อยู่ใต้บริษัทผู้ให้บริการหรือไม่ระบุ `PayerCompanyId` (ครอบ `pay/intents` · `public-pay` · ส่วนเสริม) ·

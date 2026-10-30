@@ -163,7 +163,7 @@ public class SubscriptionController : ControllerBase
     {
         if (await RequireOwnerAsync(companyId, "อัปเกรดแพ็กเกจ") is { } deny) return deny;
         // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงินก่อนสร้างรายการชำระ — ตรวจก่อน (ไม่ผ่าน = ไม่สร้างอะไร) แล้วบันทึกหลักฐานผูกรายการชำระ
-        if (await PolicyProblemAsync(legal, request.PolicyAccepted, request.PolicyVersionShown) is { } policyDeny) return policyDeny;
+        if (await PolicyProblemAsync(legal, request.PolicyAccepted, request.PolicyVersionShown, companyId) is { } policyDeny) return policyDeny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ConvertTrialAsync(companyId, request, userId);
         await RecordPlanAcceptanceAsync(legal, companyId, result, request.PolicyVersionShown);
@@ -171,8 +171,11 @@ public class SubscriptionController : ControllerBase
     }
 
     /// <summary>รอบ 219 ส่วน B: ด่านติ๊กยอมรับนโยบายของ endpoint ขอแพ็กเกจ (pure check ก่อนสร้างรายการ) — null = ผ่าน</summary>
-    private async Task<ActionResult?> PolicyProblemAsync(ILegalDocumentService legal, bool accepted, string? versionShown)
+    private async Task<ActionResult?> PolicyProblemAsync(ILegalDocumentService legal, bool accepted, string? versionShown, Guid companyId)
     {
+        // ฝ่ายค้าน S6: SystemAdmin ที่ไม่ใช่สมาชิก (ทำแทนผู้เช่า) ไม่ใช่ผู้ซื้อ ⇒ ไม่บังคับ (และไม่มีแถวหลักฐาน — RecordPlanAcceptanceAsync ข้ามเช่นกัน)
+        if (await PurchasePolicyAcceptance.IsPlatformAdminActingAsync(_db, companyId, JwtHelper.GetUserIdFromClaims(User), User.IsInRole("SystemAdmin")))
+            return null;
         var current = await legal.GetPurchasePolicyVersionAsync();
         return PurchasePolicyAcceptance.Problem(false, accepted, versionShown, current.Version) is string problem
             ? BadRequest(new ApiResponse<PlanPurchaseResponse>(false, null!, problem))
@@ -183,7 +186,7 @@ public class SubscriptionController : ControllerBase
     private async Task RecordPlanAcceptanceAsync(ILegalDocumentService legal, Guid companyId, PlanPurchaseResponse result, string? versionShown)
     {
         if (result.Payment == null) return;
-        await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+        await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, legal, companyId, User,
             PurchasePolicyAcceptance.ChannelPlatformSubscription, result.Payment.Id, accepted: true, versionShown,
             HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());
         await _db.SaveChangesAsync();
@@ -198,7 +201,7 @@ public class SubscriptionController : ControllerBase
         [FromServices] ILegalDocumentService legal)
     {
         if (await RequireOwnerAsync(companyId, "เปลี่ยนแพ็กเกจ") is { } deny) return deny;
-        if (await PolicyProblemAsync(legal, request.PolicyAccepted, request.PolicyVersionShown) is { } policyDeny) return policyDeny;
+        if (await PolicyProblemAsync(legal, request.PolicyAccepted, request.PolicyVersionShown, companyId) is { } policyDeny) return policyDeny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ChangeSubscriptionAsync(companyId, request, userId);
         await RecordPlanAcceptanceAsync(legal, companyId, result, request.PolicyVersionShown);
@@ -279,12 +282,18 @@ public class SubscriptionController : ControllerBase
     /// </summary>
     [HttpPost("{companyId:guid}/payments")]
     public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> SubmitPayment(
-        Guid companyId, [FromBody] SubmitSubscriptionPaymentRequest request)
+        Guid companyId, [FromBody] SubmitSubscriptionPaymentRequest request, [FromServices] ILegalDocumentService legal)
     {
         // รอบ 219 เฟส 0 (G-4): แจ้งชำระค่าแพ็กเกจ = ขอแพ็กเกจ/ระยะเวลา ⇒ ด่านเจ้าของเดียวกับอัปเกรด (เดิมสมาชิกคนไหนก็ได้) · ยอดคำนวณที่เซิร์ฟเวอร์
         if (await RequireOwnerAsync(companyId, "แจ้งชำระค่าแพ็กเกจ") is { } deny) return deny;
+        // รอบ 219 ส่วน B ฝ่ายค้าน S6: ด่านติ๊กยอมรับนโยบายก่อนสร้างรายการ แล้วผูกหลักฐานกับรายการที่ได้
+        if (await PolicyProblemAsync(legal, request.PolicyAccepted, request.PolicyVersionShown, companyId) is { } policyDeny) return policyDeny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.SubmitPaymentAsync(companyId, request, userId);
+        await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, legal, companyId, User,
+            PurchasePolicyAcceptance.ChannelPlatformSubscription, result.Id, accepted: true, request.PolicyVersionShown,
+            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());
+        await _db.SaveChangesAsync();
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, "ส่งข้อมูลการชำระเงินสำเร็จ รอการตรวจสอบ"));
     }
 
@@ -302,7 +311,7 @@ public class SubscriptionController : ControllerBase
         var payerId = await _db.SubscriptionPayments.AsNoTracking().Where(p => p.Id == paymentId)
             .Select(p => (Guid?)p.Subscription.CompanyId).FirstOrDefaultAsync();
         if (payerId is Guid payer)
-            await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, payer, JwtHelper.GetUserIdFromClaims(User),
+            await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, legal, payer, User,
                 PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentId, policyAccepted, policyVersionShown,
                 HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());
         if (file == null || file.Length == 0)

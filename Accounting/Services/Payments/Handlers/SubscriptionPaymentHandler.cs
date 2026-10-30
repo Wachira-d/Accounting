@@ -43,7 +43,7 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
         // (PayerCompanyId — intent อยู่ใต้บริษัทผู้ให้บริการ ตรวจแล้วใน DispatchSucceededAsync ด้วย PlatformRevenueSource)
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == intent.SourceId)
-            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.RequestedPlan, p.RequestedBillingCycle })
+            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.RequestedPlan, p.RequestedBillingCycle, p.ReviewNotes })
             .FirstOrDefaultAsync(ct);
         if (pay != null && !Accounting.Helpers.PlatformRevenueSource.SourceBelongsToPayer(intent.PayerCompanyId, pay.CompanyId))
         {
@@ -60,12 +60,31 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
             return;
         }
 
-        // อนุมัติไปแล้ว = webhook ซ้ำ → no-op (อนุมัติซ้ำจะต่ออายุแพ็กเกจสองรอบ)
-        if (pay.Status is not (SubscriptionPaymentStatus.Pending or SubscriptionPaymentStatus.UnderReview))
+        // อนุมัติไปแล้วด้วย intent นี้ = ส่งต่อซ้ำ → no-op (อนุมัติซ้ำจะต่ออายุแพ็กเกจสองรอบ)
+        // รอบ 219 ส่วน B ฝ่ายค้าน S2: ปิดไปแล้วด้วยทางอื่น (อนุมัติสลิป/ปฏิเสธ/ยกเลิก) แต่เงินออนไลน์เข้า = จ่ายซ้อน ⇒ ล้มดัง (audit + ⚠️ + แจ้ง) ให้แอดมินคืนเงิน
+        if (Accounting.Helpers.PlatformDoublePayment.SubscriptionPaymentClosed(pay.Status))
         {
-            _logger.LogInformation("รายการค่าบริการ {No} อยู่ในสถานะ {Status} แล้ว — ข้าม intent {Intent}",
-                pay.PaymentNumber, pay.Status, intent.Id);
-            return;
+            var myRef = intent.ProviderRef ?? intent.Id.ToString("N");
+            if (pay.Status == SubscriptionPaymentStatus.Approved && (pay.ReviewNotes ?? "").Contains(myRef, StringComparison.Ordinal))
+            {
+                _logger.LogInformation("รายการค่าบริการ {No} อนุมัติแล้วด้วย intent {Intent} — ข้าม", pay.PaymentNumber, intent.Id);
+                return;
+            }
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = pay.CompanyId, EntityType = nameof(SubscriptionPayment), EntityId = pay.Id.ToString(), Action = AuditAction.Update,
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = Accounting.Helpers.PlatformDoublePayment.AuditAction, ruleCode = Accounting.Helpers.PlatformDoublePayment.RuleCode,
+                    paymentNumber = pay.PaymentNumber, status = pay.Status.ToString(), intentId = intent.Id, amount = intent.Amount,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync(ct);
+            _logger.LogError("ค่าแพ็กเกจ {No} ชำระซ้อน: รายการปิดแล้ว ({Status}) แต่เงินออนไลน์เข้า (intent {Intent} ยอด {Amount:N2})",
+                pay.PaymentNumber, pay.Status, intent.Id, intent.Amount);
+            throw new BusinessRuleException(Accounting.Helpers.PlatformDoublePayment.AlreadySettledMessage,
+                Accounting.Helpers.PlatformDoublePayment.RuleCode);
         }
 
         // ยอดไม่ตรงต้องดัง: อนุมัติเต็มแพ็กเกจทั้งที่ได้เงินไม่ครบ = ให้บริการฟรีบางส่วน
