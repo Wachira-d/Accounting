@@ -80,7 +80,8 @@ public class AccountingDbContext : DbContext
     public DbSet<PlatformBillingSettings> PlatformBillingSettings => Set<PlatformBillingSettings>();   // รอบ 219 เฟส 2 — ค่าตั้งการเรียกเก็บค่าบริการ NextAcc (แถวเดียว)
     public DbSet<PlatformPurchaseAcceptance> PlatformPurchaseAcceptances => Set<PlatformPurchaseAcceptance>();   // รอบ 219 เฟส 2 — หลักฐานติ๊กยอมรับเงื่อนไขการซื้อ (append-only)
     public DbSet<PlatformBillingNotice> PlatformBillingNotices => Set<PlatformBillingNotice>();   // รอบ 219 เฟส 2 ขั้น 2 — ใบแจ้งหนี้/แจ้งเตือนที่ส่ง (unique คีย์+ช่อง)
-    public DbSet<PlatformDunningState> PlatformDunningStates => Set<PlatformDunningState>();   // รอบ 219 เฟส 2 ขั้น 2 — สถานะทวงหนี้ต่อบริษัท (watermark)
+    public DbSet<PlatformDunningState> PlatformDunningStates => Set<PlatformDunningState>();
+    public DbSet<PlatformPaymentLink> PlatformPaymentLinks => Set<PlatformPaymentLink>();   // รอบ 219 เฟส 2 ขั้น 4 — ลิงก์ชำระใบแจ้งหนี้ค่าบริการ (เก็บ hash)   // รอบ 219 เฟส 2 ขั้น 2 — สถานะทวงหนี้ต่อบริษัท (watermark)
     public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม (ไม่มี CompanyId)
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
@@ -1066,6 +1067,16 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Channel).HasMaxLength(20);
             e.Property(x => x.Status).HasMaxLength(20);
             e.Property(x => x.Detail).HasMaxLength(500);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PlatformPaymentLink>(e =>
+        {
+            e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("UX_PlatformPaymentLinks_TokenHash");
+            e.HasIndex(x => x.DocumentId).HasDatabaseName("IX_PlatformPaymentLinks_Document");
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.AmountSnapshot).HasPrecision(18, 2);
+            e.Property(x => x.RevokedBy).HasMaxLength(256);
+            e.Property(x => x.RevokedReason).HasMaxLength(300);
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<PlatformDunningState>(e =>

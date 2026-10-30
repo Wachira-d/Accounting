@@ -120,6 +120,9 @@ const AdminAPI = {
   platformOpenInvoices() { return this.get('/platform-billing/open-invoices'); },
   platformBillingNotices() { return this.get('/platform-billing/notices'); },
   platformDunningEvaluate(companyId) { return this.post(`/platform-billing/dunning/${companyId}/evaluate`, {}); },
+  platformCreatePaymentLink(documentId, expiryDays) { return this.post(`/platform-billing/invoices/${documentId}/payment-links`, { expiryDays }); },
+  platformPaymentLinks(documentId) { return this.get('/platform-billing/payment-links' + (documentId ? `?documentId=${documentId}` : '')); },
+  platformRevokePaymentLink(linkId, reason) { return this.post(`/platform-billing/payment-links/${linkId}/revoke`, { reason }); },
   platformDunningExempt(companyId, days, reason) { return this.post(`/platform-billing/dunning/${companyId}/exempt`, { days, reason }); },
 
   // Customers

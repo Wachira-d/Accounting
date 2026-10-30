@@ -15,6 +15,10 @@ public static class PlatformBillingPhase2Migration
         """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "PlatformInvoiceDocumentId" uuid NULL;""",
         """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "PolicyAcceptanceId" uuid NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_SubscriptionPayments_PlatformInvoiceDocumentId" ON "SubscriptionPayments" ("PlatformInvoiceDocumentId") WHERE "PlatformInvoiceDocumentId" IS NOT NULL;""",
+        // ── ขั้น 4: ลิงก์ชำระ (เก็บเฉพาะ hash ของโทเคน) ──
+        """CREATE TABLE IF NOT EXISTS "PlatformPaymentLinks" ("Id" uuid PRIMARY KEY, "PlatformCompanyId" uuid NOT NULL, "BuyerCompanyId" uuid NOT NULL, "DocumentId" uuid NOT NULL, "TokenHash" varchar(64) NOT NULL DEFAULT '', "AmountSnapshot" numeric(18,2) NOT NULL DEFAULT 0, "ExpiresAt" timestamp without time zone NOT NULL, "RevokedAt" timestamp without time zone NULL, "RevokedBy" varchar(256) NULL, "RevokedReason" varchar(300) NULL, "ViewCount" integer NOT NULL DEFAULT 0, "LastViewedAt" timestamp without time zone NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PlatformPaymentLinks_TokenHash" ON "PlatformPaymentLinks" ("TokenHash");""",
+        """CREATE INDEX IF NOT EXISTS "IX_PlatformPaymentLinks_Document" ON "PlatformPaymentLinks" ("DocumentId");""",
         // ── ขั้น 3: ยกเลิกเมื่อสิ้นรอบ · วิธีชำระส่วนเสริมต่อการซื้อ ──
         """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CancelAtPeriodEnd" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CancelRequestedAt" timestamp with time zone NULL;""",

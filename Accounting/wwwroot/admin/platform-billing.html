@@ -40,6 +40,12 @@
       <div class="section-title">🧾 ใบแจ้งหนี้ค่าบริการที่ค้าง (ทุกบริษัท)</div>
       <div id="openInvoices">กำลังโหลด...</div>
     </div>
+    <!-- ขั้น 4: ลิงก์ชำระ — ลิงก์เต็มแสดงครั้งเดียวตอนสร้าง (ฐานเก็บแค่ hash) -->
+    <div class="admin-card">
+      <div class="section-title">🔗 ลิงก์ชำระที่สร้างแล้ว</div>
+      <div id="newLink"></div>
+      <div id="links">กำลังโหลด...</div>
+    </div>
     <div class="admin-card">
       <div class="section-title">✉️ ใบแจ้งหนี้/แจ้งเตือนที่ส่ง (ส่งไม่ถึงขึ้นก่อน)</div>
       <div id="notices">กำลังโหลด...</div>
@@ -134,8 +140,38 @@
       try { const r = await AdminAPI.platformDunningExempt(cid, days, reason); AdminLayout.toast(r.message || 'บันทึกแล้ว'); this.loadOpen(); }
       catch (err) { AdminLayout.toast(err.message, 'error'); }
     };
+    PB.linkButton = x => `<button class="admin-btn admin-btn-primary admin-btn-sm" onclick="PB.createLink('${AdminLayout.esc(x.id)}')">สร้างลิงก์ชำระ</button>`;
+    PB.createLink = async function (docId) {
+      const days = prompt('อายุลิงก์ (วัน) — เว้นว่าง = ค่าตั้งต้น', '');
+      try {
+        const r = await AdminAPI.platformCreatePaymentLink(docId, days ? parseInt(days, 10) : null);
+        const e = AdminLayout.esc;
+        document.getElementById('newLink').innerHTML = `<div class="pb-note warn"><b>${e(r.message)}</b><br>
+          <input class="admin-input" style="width:100%;margin-top:6px" readonly value="${e(r.data.url)}" onclick="this.select()">
+          <div style="font-size:12px;margin-top:4px">ใบ ${e(r.data.invoiceNumber)} · ยอด ${AdminLayout.money(r.data.amountSnapshot)} · หมดอายุ ${AdminLayout.date(r.data.expiresAt)}</div></div>`;
+        this.loadLinks();
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.loadLinks = async function () {
+      const e = AdminLayout.esc, el = document.getElementById('links');
+      try {
+        const r = await AdminAPI.platformPaymentLinks();
+        el.innerHTML = this.table(r.data, ['บริษัท', 'ใบ', 'ยอดตอนสร้าง', 'หมดอายุ', 'สถานะ', 'เปิดดู', ''],
+          x => [e(x.buyerName || '-'), e(x.invoiceNumber), AdminLayout.money(x.amountSnapshot), AdminLayout.date(x.expiresAt),
+            e(x.stateMessage || 'ใช้ได้') + (x.revokedReason ? ` (${e(x.revokedReason)})` : ''), x.viewCount,
+            x.state === 'Valid' ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.revokeLink('${e(x.id)}')">ยกเลิกลิงก์</button>` : ''],
+          'ยังไม่มีลิงก์');
+      } catch (err) { el.textContent = err.message; }
+    };
+    PB.revokeLink = async function (id) {
+      const reason = prompt('เหตุผลที่ยกเลิกลิงก์ (บันทึกใน audit)');
+      if (!reason) return;
+      try { await AdminAPI.platformRevokePaymentLink(id, reason); AdminLayout.toast('ยกเลิกลิงก์แล้ว'); this.loadLinks(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
     PB.loadSettings();
     PB.loadOpen();
+    PB.loadLinks();
     PB.loadNotices();
   </script>
 </body>

@@ -328,7 +328,8 @@ builder.Services.AddScoped<IPlatformBillingSettingsService, PlatformBillingSetti
 builder.Services.AddScoped<IPlatformPayOptionsService, PlatformPayOptionsService>();
 builder.Services.AddScoped<IPlatformBillingCenterService, PlatformBillingCenterService>();
 builder.Services.AddScoped<IPlatformBillingNotifier, PlatformBillingNotifier>();   // ขั้น 2 — ส่งใบ/แจ้งเตือน (อีเมลระบบ + LINE OA กลาง · คีย์กันซ้ำ)
-builder.Services.AddScoped<IPlatformDunningService, PlatformDunningService>();     // ขั้น 2 — ทวงหนี้/ระงับ/คืนสถานะต่อบริษัท
+builder.Services.AddScoped<IPlatformDunningService, PlatformDunningService>();
+builder.Services.AddScoped<IPlatformPaymentLinkService, PlatformPaymentLinkService>();   // ขั้น 4 — ลิงก์ชำระใบแจ้งหนี้ (โทเคน hash · audit)     // ขั้น 2 — ทวงหนี้/ระงับ/คืนสถานะต่อบริษัท
 // ช่องเสียบชำระออนไลน์ของ NextAcc — ค่าตั้งต้น "ยังไม่เปิด" (โอน+สลิป) · part B (IPlatformPaymentService · Omise ของ NextAcc) ลงทะเบียน adapter ของตัวเอง
 // หลังบรรทัดนี้ (ตัวที่ลงทะเบียนทีหลังชนะ) — ดู Services/Implementations/PlatformPayOptions.cs
 builder.Services.AddScoped<IPlatformOnlinePaymentPort, UnconfiguredPlatformOnlinePayment>();

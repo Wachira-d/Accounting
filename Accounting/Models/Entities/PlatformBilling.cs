@@ -88,3 +88,24 @@ public class PlatformDunningState : BaseEntity
     public DateTime? SuspendExemptUntil { get; set; }
     public string? LastAction { get; set; }
 }
+
+/// <summary>
+/// รอบ 219 เฟส 2 ขั้น 4 (PLATFORM_BILLING_AUDIT §4 · คำตัดสินข้อ 180) — <b>ลิงก์ชำระใบแจ้งหนี้ค่าบริการ</b> ที่แอดมินสร้างให้ใบที่มีอยู่แล้ว
+/// (ห้ามยอดอิสระ) · เก็บเฉพาะ SHA-256 ของโทเคน 128 บิต (<c>Helpers/PlatformPaymentLinkRules.Hash</c>) · ใบเดียว · ปิดเองเมื่อใบชำระครบ · เพิกถอนได้ ·
+/// ทุกการสร้าง/เปิดดู/เพิกถอน/แจ้งชำระลง audit chain
+/// </summary>
+public class PlatformPaymentLink : BaseEntity
+{
+    public Guid PlatformCompanyId { get; set; }
+    public Guid BuyerCompanyId { get; set; }
+    public Guid DocumentId { get; set; }
+    public string TokenHash { get; set; } = "";
+    /// <summary>ยอดค้าง ณ ตอนสร้าง (อ้างอิง) — ยอดที่จ่ายจริง = ยอดค้างของใบ ณ ตอนแจ้งชำระ</summary>
+    public decimal AmountSnapshot { get; set; }
+    public DateTime ExpiresAt { get; set; }
+    public DateTime? RevokedAt { get; set; }
+    public string? RevokedBy { get; set; }
+    public string? RevokedReason { get; set; }
+    public int ViewCount { get; set; }
+    public DateTime? LastViewedAt { get; set; }
+}

@@ -225,6 +225,36 @@ public class AdminPlatformBillingController : ControllerBase
         return Ok(new ApiResponse<object>(true, r, r?.Reason ?? "บันทึกแล้ว"));
     }
 
+    // ═══════════ ขั้น 4: ลิงก์ชำระ — สร้างให้ใบที่มีอยู่แล้วเท่านั้น (ห้ามยอดอิสระ) · โทเคนแสดงครั้งเดียว · audit ทุกการกระทำ ═══════════
+
+    public record CreatePaymentLinkRequest(int? ExpiryDays);
+    public record RevokePaymentLinkRequest(string? Reason);
+
+    private PlatformBillingActor Actor() => new(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(ClaimTypes.Email),
+        HttpContext.Connection.RemoteIpAddress?.ToString());
+
+    [HttpPost("invoices/{documentId:guid}/payment-links")]
+    public async Task<ActionResult<ApiResponse<PaymentLinkCreated>>> CreatePaymentLink(Guid documentId, [FromBody] CreatePaymentLinkRequest? req,
+        [FromServices] IPlatformPaymentLinkService links, CancellationToken ct)
+    {
+        var created = await links.CreateAsync(documentId, req?.ExpiryDays, Actor(), ct);
+        return Ok(new ApiResponse<PaymentLinkCreated>(true, created,
+            $"สร้างลิงก์ชำระใบ {created.InvoiceNumber} แล้ว — คัดลอกตอนนี้ (ระบบเก็บเฉพาะรหัสแฮช แสดงลิงก์ซ้ำไม่ได้)"));
+    }
+
+    [HttpGet("payment-links")]
+    public async Task<ActionResult<ApiResponse<List<PaymentLinkRow>>>> PaymentLinks([FromQuery] Guid? documentId,
+        [FromServices] IPlatformPaymentLinkService links, CancellationToken ct)
+        => Ok(new ApiResponse<List<PaymentLinkRow>>(true, await links.ListAsync(documentId, ct)));
+
+    [HttpPost("payment-links/{linkId:guid}/revoke")]
+    public async Task<ActionResult<ApiResponse<object>>> RevokePaymentLink(Guid linkId, [FromBody] RevokePaymentLinkRequest req,
+        [FromServices] IPlatformPaymentLinkService links, CancellationToken ct)
+    {
+        await links.RevokeAsync(linkId, req?.Reason ?? "", Actor(), ct);
+        return Ok(new ApiResponse<object>(true, null, "ยกเลิกลิงก์แล้ว"));
+    }
+
     /// <summary>ใบแจ้งหนี้/แจ้งเตือนที่ส่งล่าสุด — ส่งไม่ถึง (Failed/Skipped) ขึ้นก่อน (ล้มดัง)</summary>
     [HttpGet("notices")]
     public async Task<ActionResult<ApiResponse<object>>> Notices(CancellationToken ct)
