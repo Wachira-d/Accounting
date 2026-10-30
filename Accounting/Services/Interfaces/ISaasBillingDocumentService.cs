@@ -15,6 +15,10 @@ public interface ISaasBillingDocumentService
     /// ใน tenant ผู้ให้บริการ (ไม่ออกขายสดใบใหม่) · idempotent (อ้างอิงการชำระคงที่ต่อรายการ) · ล้ม ⇒ หมายเหตุบนรายการ (ดัง) ไม่โยน</summary>
     Task SettlePlatformInvoiceAsync(Guid paymentId);
 
+    /// <summary>รอบ 219 เฟส 2 (S9): ใบต่ออายุที่ล้าสมัยหลังอนุมัติการชำระอื่น — ยังไม่มีการชำระ ⇒ ยกเลิกผ่านเส้นยกเลิกเอกสารปกติ ·
+    /// มีการชำระแล้ว ⇒ ไม่ยกเลิก บันทึก "ต้องออกใบลดหนี้" ให้แอดมิน · ประวัติ + audit chain ทุกกรณี · ไม่โยน</summary>
+    Task HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string paymentNumber);
+
     /// <summary>ดึง PDF ที่ออกแล้วสำหรับดาวน์โหลด (regenerate ถ้าไฟล์หาย).</summary>
     Task<(byte[] Bytes, string FileName)?> GetReceiptPdfAsync(Guid paymentId);
 

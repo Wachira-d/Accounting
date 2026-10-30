@@ -106,7 +106,10 @@ public record SubscriptionResponse(
     /// <summary>รอบ 219 เฟส 0: ดาวน์เกรด/เปลี่ยนรอบบิลที่รอมีผลวันครบรอบ (echo ของ <c>Subscription.Scheduled*</c>)</summary>
     SubscriptionPlan? ScheduledPlan = null,
     BillingCycle? ScheduledBillingCycle = null,
-    DateTime? ScheduledPlanEffectiveAt = null);
+    DateTime? ScheduledPlanEffectiveAt = null,
+    /// <summary>รอบ 219 เฟส 2 ขั้น 3: ยกเลิกเมื่อสิ้นรอบ (echo ของ <c>Subscription.CancelAtPeriodEnd</c>) + ข้อความจากตัวตัดสินเดียว</summary>
+    bool CancelAtPeriodEnd = false,
+    string? CancelNote = null);
 
 public record UsageLimits(
     int MaxUsers,

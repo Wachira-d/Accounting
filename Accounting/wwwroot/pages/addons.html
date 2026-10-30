@@ -94,6 +94,21 @@
     </div>
   </div>
 
+  <!-- รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤⑧): ซื้อส่วนเสริมที่ต้องจ่าย = เลือกวิธีชำระต่อการซื้อ + ติ๊กยอมรับเงื่อนไข (เซิร์ฟเวอร์บอกว่าต้องไหม) -->
+  <div class="modal" id="buyModal">
+    <div class="modal-content" style="max-width:520px">
+      <div class="modal-header">
+        <h3 id="buyModalTitle">เปิดใช้ส่วนเสริม</h3>
+        <button class="modal-close" onclick="Layout.closeModal('buyModal')">&times;</button>
+      </div>
+      <div class="modal-body" id="buyModalBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('buyModal')">ยกเลิก</button>
+        <button class="btn btn-primary" onclick="Page.confirmBuy()">ยืนยันเปิดใช้</button>
+      </div>
+    </div>
+  </div>
+
   <!-- หน้าจ่ายเงินกลาง — ห้ามเขียน QR/poll เองซ้ำอีกชุด -->
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
@@ -423,9 +438,41 @@
           if (!ck || !ck.checked) { Layout.toast('กรุณาติ๊กยอมรับค่าใช้จ่ายก่อนเปิดใช้งาน', 'error'); return; }
         } else if (!confirm(`ปิด "${name}" ใช่ไหม? ระบบจะหยุดคิดค่าใช้จ่ายทันที`)) return;
 
+        const feat = this.features.find(x => x.featureCode === code);
+        if (enable && feat?.requiresPaymentChoice) { this.openBuy(feat); return; }
+        await this.postToggle(code, { enabled: enable });
+      },
+
+      openBuy(f) {
+        this._buyCode = f.featureCode;
+        const e = Layout.esc;
+        document.getElementById('buyModalTitle').textContent = 'เปิดใช้ ' + (f.name || f.featureCode);
+        document.getElementById('buyModalBody').innerHTML = `
+          <div style="display:grid;gap:10px">
+            <div class="muted">ค่าบริการ ฿${Layout.money(f.pricing?.unitPrice || 0)} / เดือน — เลือกวิธีชำระสำหรับการซื้อครั้งนี้</div>
+            <label style="display:flex;gap:8px;align-items:flex-start"><input type="radio" name="buyChoice" value="MonthlyInvoice" checked>
+              <span><b>รวมในใบแจ้งหนี้รายเดือน</b><br><span class="muted">ใช้ได้ทันที · ค่าเหมาเดือนนี้ออกในใบแจ้งหนี้ค่าใช้งานรอบถัดไป</span></span></label>
+            <label style="display:flex;gap:8px;align-items:flex-start"><input type="radio" name="buyChoice" value="Upfront">
+              <span><b>จ่ายล่วงหน้าตอนนี้</b><br><span class="muted">โอนแล้วแนบสลิปค่าเดือนแรก (เดือนนั้นไม่เก็บซ้ำในใบรายเดือน)</span></span></label>
+            <div class="paybox"><b>เงื่อนไขการชำระค่าบริการ (ฉบับ ${e(f.termsVersion)})</b>
+              <ul style="margin:6px 0 0 18px">${(f.termsLines || []).map(l => `<li>${e(l)}</li>`).join('')}</ul></div>
+            <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="buyAccept">
+              <span>ข้าพเจ้าอ่านและยอมรับเงื่อนไขการชำระค่าบริการข้างต้น</span></label>
+          </div>`;
+        Layout.openModal('buyModal');
+      },
+      async confirmBuy() {
+        const f = this.features.find(x => x.featureCode === this._buyCode);
+        if (!document.getElementById('buyAccept').checked) { Layout.toast('กรุณาติ๊กยอมรับเงื่อนไขก่อน', 'error'); return; }
+        const choice = document.querySelector('input[name=buyChoice]:checked')?.value || 'MonthlyInvoice';
+        Layout.closeModal('buyModal');
+        await this.postToggle(this._buyCode, { enabled: true, billingChoice: choice, acceptTerms: true, termsVersion: f?.termsVersion });
+      },
+
+      async postToggle(code, body) {
         try {
           const res = await API.post(
-            `/api/companies/${this.cid()}/metering/features/${encodeURIComponent(code)}`, { enabled: enable });
+            `/api/companies/${this.cid()}/metering/features/${encodeURIComponent(code)}`, body);
           Layout.toast(res?.message || 'บันทึกแล้ว', 'success');
           await this.loadFeatures();
           // สิทธิ์เปลี่ยน → เมนู/หน้าอื่นต้องเห็นทันที ไม่ต้องให้ผู้ใช้ล็อกอินใหม่

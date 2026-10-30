@@ -14,6 +14,9 @@
 | P2-10 | ระงับ: Enforce/Shadow/Off × ระงับอัตโนมัติเปิด/ปิด · ผ่อนผัน 14/15 วัน · พักระงับ · ทดลองใช้/ระงับเหตุอื่น · คืนสถานะ | Suspend / "จะระงับ" / ไม่แตะ · คืน Active หรือ PastDue | `Dunning_suspends_only_in_enforce_mode_with_auto_suspend` · `Dunning_grace_exemption_status_and_restore_directions` |
 | P2-11 | ฐานจริง: เงา ⇒ จะระงับ · บังคับ ⇒ ระงับ + audit · ชำระครบ ⇒ คืน · ระงับโดยแอดมินไม่ถูกแตะ · พักระงับ (เหตุผลบังคับ) | ตามนั้น | Db `Dunning_suspends_in_enforce_shadow_records_only_and_restores_after_payment` · `Dunning_does_not_touch_suspension_by_other_cause_and_admin_exemption_restores` |
 | P2-12 | ผู้ส่งข้อความ: คีย์เดิมสองครั้ง · ไม่มีบริการอีเมล/LINE | 1 แถวต่อช่อง · "ข้าม" พร้อมเหตุ (ไม่ใช่ "ส่งแล้ว") | Db `Notifier_claims_each_key_once_per_channel` |
+| P2-13 | ยกเลิก: Active มีรอบเหลือ · ฟรีถาวร · ทดลองใช้ · PastDue · ใช้ต่อ · ใช้ต่อซ้ำ · ครบรอบ · จ่ายใบต่ออายุของรอบที่ยกเลิก | สิ้นรอบ / ทันที · ล้าง · 409 · Cancelled · 409 | `Cancel_is_at_period_end_only_with_paid_cycle_left` · `Reactivate_and_renewal_payability_follow_cancellation` · Db `Cancel_keeps_access_to_period_end_reactivate_and_expiry_cancels_without_renewal` · `Trial_cancel_is_immediate` |
+| P2-14 | ส่วนเสริม: ไม่เลือกวิธี · ไม่ติ๊ก · รวมใบรายเดือน · จ่ายล่วงหน้า · จ่ายล่วงหน้าซ้ำงวดที่คิดแล้ว · สลิปรอตรวจ | 400 / 400 / ใช้ได้ทันที ค่าเหมาเต็มในใบ / รอชำระ ฿0 งวดนั้น / 409 / 409 | `Addon_choice_never_charges_same_period_twice` · Db `Addon_purchase_requires_choice_and_terms_monthly_invoice_skips_upfront` · `Addon_upfront_choice_keeps_phase0_upfront_flow` |
+| P2-15 | S9: ต่ออายุ/อัปเกรดอนุมัติหลังออกใบต่ออายุ · ใบยังไม่จ่าย · ใบจ่ายบางส่วน · จ่ายใบนั้นเอง | ล้างตัวชี้ · ยกเลิกผ่านเส้นยกเลิกเอกสาร · ไม่ยกเลิก + งานใบลดหนี้ (ประวัติ + audit) · ไม่แตะ | `Stale_renewal_invoice_only_when_issued_for_current_cycle_and_not_the_one_paid` · Db `Upgrade_approval_clears_stale_renewal_and_issuer_voids_only_unpaid` |
 
 ## PB219 — อุดรั่วเงินค่าบริการ NextAcc เฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` · `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2)
 
@@ -363,7 +366,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **709 ไฟล์ · 7,355 `[Fact]` + 1,161 `[Theory]` (5,446 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **709 ไฟล์ · 7,363 `[Fact]` + 1,162 `[Theory]` (5,451 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |

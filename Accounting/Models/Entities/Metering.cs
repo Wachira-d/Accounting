@@ -129,6 +129,9 @@ public class CompanyFeature : TenantEntity
 
     /// <summary>สลิปที่ลูกค้าแนบ (เส้นสำรองเมื่อยังไม่เปิด gateway)</summary>
     public string? PaymentSlipUrl { get; set; }
+
+    /// <summary>รอบ 219 เฟส 2 ขั้น 3: วิธีชำระที่ผู้เช่าเลือกตอนซื้อครั้งล่าสุด (<see cref="Accounting.Models.Enums.AddOnBillingChoice"/>)</summary>
+    public Accounting.Models.Enums.AddOnBillingChoice BillingChoice { get; set; } = Accounting.Models.Enums.AddOnBillingChoice.Upfront;
     public DateTime? SlipUploadedAt { get; set; }
     public string? PaymentReference { get; set; }
     public decimal? PaidAmount { get; set; }

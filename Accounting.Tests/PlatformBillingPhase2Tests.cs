@@ -257,4 +257,54 @@ public class PlatformBillingPhase2Tests
         Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.RestoreStatus(SubscriptionStatus.Active, Now.AddDays(10), Now, false));
         Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.RestoreStatus(SubscriptionStatus.Active, Now.AddDays(-1), Now, true));
     }
+
+    // ═══ ขั้น 3: ยกเลิกเมื่อสิ้นรอบ · วิธีชำระส่วนเสริม · ใบต่ออายุที่ล้าสมัย (S9) ═══
+
+    [Theory]
+    [InlineData(SubscriptionStatus.Active, false, 10, SubscriptionCancelMode.AtPeriodEnd)]
+    [InlineData(SubscriptionStatus.Active, true, 10, SubscriptionCancelMode.Immediate)]      // ฟรีถาวร — ไม่มีรอบที่จ่าย
+    [InlineData(SubscriptionStatus.Trial, false, 10, SubscriptionCancelMode.Immediate)]
+    [InlineData(SubscriptionStatus.PastDue, false, -3, SubscriptionCancelMode.Immediate)]
+    [InlineData(SubscriptionStatus.Active, false, -1, SubscriptionCancelMode.Immediate)]
+    public void Cancel_is_at_period_end_only_with_paid_cycle_left(SubscriptionStatus st, bool free, int endInDays, SubscriptionCancelMode expected)
+        => Assert.Equal(expected, SubscriptionCancelPolicy.Decide(st, free, Now.AddDays(endInDays), Now));
+
+    [Fact]
+    public void Reactivate_and_renewal_payability_follow_cancellation()
+    {
+        Assert.Null(SubscriptionCancelPolicy.ReactivateRefusal(true, SubscriptionStatus.Active, Now.AddDays(5), Now));
+        Assert.NotNull(SubscriptionCancelPolicy.ReactivateRefusal(false, SubscriptionStatus.Active, Now.AddDays(5), Now));
+        Assert.NotNull(SubscriptionCancelPolicy.ReactivateRefusal(true, SubscriptionStatus.Cancelled, Now.AddDays(-1), Now));
+        Assert.NotNull(SubscriptionCancelPolicy.RenewalNotPayableReason(true));
+        Assert.Null(SubscriptionCancelPolicy.RenewalNotPayableReason(false));
+        Assert.Contains("ไม่คืนเงินตามสัดส่วน", SubscriptionCancelPolicy.Note(true, Now.AddDays(5)));
+    }
+
+    [Fact]
+    public void Addon_choice_never_charges_same_period_twice()
+    {
+        const string P = "2026-10";
+        var monthly = AddOnPaymentPolicy.ApplyChoice(true, AddOnBillingChoice.MonthlyInvoice, AddOnPaymentStatus.AwaitingPayment, null, P);
+        Assert.Equal(AddOnPaymentPolicy.ChoiceOutcome.MonthlyInvoice, monthly.Outcome);
+        // จ่ายล่วงหน้างวดนี้แล้ว ⇒ คงเดิมทั้งสองทาง (งวดนี้ ฿0 · ไม่ออกใบซ้ำ)
+        Assert.Equal(AddOnPaymentPolicy.ChoiceOutcome.Keep, AddOnPaymentPolicy.ApplyChoice(true, AddOnBillingChoice.MonthlyInvoice, AddOnPaymentStatus.Paid, P, P).Outcome);
+        // งวดนี้ถูกคิดในใบรายเดือนแล้ว ⇒ จ่ายล่วงหน้าอีก = เก็บสองครั้ง ⇒ ปฏิเสธ
+        Assert.Equal(AddOnPaymentPolicy.ChoiceOutcome.Refuse, AddOnPaymentPolicy.ApplyChoice(true, AddOnBillingChoice.Upfront, AddOnPaymentStatus.NotRequired, P, P).Outcome);
+        Assert.Equal(AddOnPaymentPolicy.ChoiceOutcome.Keep, AddOnPaymentPolicy.ApplyChoice(true, AddOnBillingChoice.Upfront, AddOnPaymentStatus.NotRequired, "2026-09", P).Outcome);
+        // สลิปรอตรวจ ⇒ เปลี่ยนเป็นรายเดือนไม่ได้จนรู้ผล
+        Assert.Equal(AddOnPaymentPolicy.ChoiceOutcome.Refuse, AddOnPaymentPolicy.ApplyChoice(true, AddOnBillingChoice.MonthlyInvoice, AddOnPaymentStatus.PendingReview, null, P).Outcome);
+        // ไม่ต้องจ่าย ⇒ ไม่แตะ
+        Assert.Equal(AddOnPaymentPolicy.ChoiceOutcome.Keep, AddOnPaymentPolicy.ApplyChoice(false, AddOnBillingChoice.Upfront, AddOnPaymentStatus.NotRequired, P, P).Outcome);
+    }
+
+    [Fact]
+    public void Stale_renewal_invoice_only_when_issued_for_current_cycle_and_not_the_one_paid()
+    {
+        var doc = Guid.NewGuid();
+        var end = Now.AddDays(5);
+        Assert.Equal(doc, PlatformInvoiceRules.StaleRenewalInvoice(doc, end, end, null));            // อัปเกรด/ต่ออายุแบบเดิม
+        Assert.Null(PlatformInvoiceRules.StaleRenewalInvoice(doc, end, end, doc));                    // จ่ายใบนั้นเอง
+        Assert.Null(PlatformInvoiceRules.StaleRenewalInvoice(doc, end.AddMonths(-1), end, null));     // ใบของรอบอื่น
+        Assert.Null(PlatformInvoiceRules.StaleRenewalInvoice(null, end, end, null));
+    }
 }

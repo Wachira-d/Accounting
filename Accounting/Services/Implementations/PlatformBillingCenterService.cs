@@ -46,8 +46,11 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             ? sub.EndDate.AddDays(-policy.RenewalInvoiceLeadDays) : null;
         var plan = new BillingCenterPlan(sub.Plan.ToString(), planName, sub.Status.ToString(), StatusLabel(sub.Status),
             sub.BillingCycle.ToString(), sub.PricePerCycle, sub.IsPermanentFree ? null : sub.EndDate, sub.IsPermanentFree,
-            nextRenewalAt, sub.ScheduledPlan?.ToString(), sub.ScheduledPlanEffectiveAt,
-            false, null, false, false, null);
+            sub.CancelAtPeriodEnd ? null : nextRenewalAt, sub.ScheduledPlan?.ToString(), sub.ScheduledPlanEffectiveAt,
+            sub.CancelAtPeriodEnd, sub.CancelAtPeriodEnd ? sub.EndDate : null,
+            !sub.CancelAtPeriodEnd && sub.Status is SubscriptionStatus.Active or SubscriptionStatus.Trial or SubscriptionStatus.PastDue,
+            SubscriptionCancelPolicy.ReactivateRefusal(sub.CancelAtPeriodEnd, sub.Status, sub.EndDate, now) == null,
+            SubscriptionCancelPolicy.Note(sub.CancelAtPeriodEnd, sub.EndDate));
 
         // ── ใบแจ้งหนี้ ──
         var invoices = platformId is Guid pid
@@ -72,7 +75,9 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             var kind = PlatformInvoiceRules.KindOf(inv.Reference);
             var open = PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue);
             pendingByInvoice.TryGetValue(inv.Id, out var pending);
-            var reason = PayRefusal(open, canPay, pending?.HasSlip == true, pending?.PaymentNumber);
+            var reason = inv.Id == sub.RenewalInvoiceDocumentId && open
+                    && SubscriptionCancelPolicy.RenewalNotPayableReason(sub.CancelAtPeriodEnd) is string cancelled
+                ? cancelled : PayRefusal(open, canPay, pending?.HasSlip == true, pending?.PaymentNumber);
             var lines = open && platformId is Guid p2
                 ? (await PlatformInvoiceQueries.LineSummaryAsync(_db, p2, inv.Id, LineTake, ct))
                     .Select(l => $"{l.Description} — {l.Amount:N2}").ToList()
@@ -116,7 +121,7 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
         var addOns = features.Where(f => f.IsEnabled).Select(f => new BillingCenterAddOn(
             f.FeatureCode, names.GetValueOrDefault(f.FeatureCode, f.FeatureCode),
             f.PaymentStatus.ToString(), AddOnPaymentPolicy.StatusLabel(f.PaymentStatus),
-            "", "",
+            f.BillingChoice.ToString(), AddOnPaymentPolicy.ChoiceLabel(f.BillingChoice),
             f.TrialUntil > now ? f.TrialUntil : null,
             f.PaymentStatus == AddOnPaymentStatus.AwaitingPayment ? AddOnPaymentPolicy.GraceEndsAt(f.PaymentAwaitingSince) : null,
             AddOnPaymentPolicy.UsableWhilePending(f.PaymentStatus, f.PaymentAwaitingSince, now),

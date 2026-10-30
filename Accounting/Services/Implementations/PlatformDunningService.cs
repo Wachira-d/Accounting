@@ -61,7 +61,7 @@ public class PlatformDunningService : IPlatformDunningService
                 && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview))
             .Select(p => p.PlatformInvoiceDocumentId!.Value).ToListAsync(ct);
         var invoices = rows.Select(r => new DunningInvoice(r.Id, r.DocumentNumber, r.DueDate, r.DocumentDate, r.BalanceDue,
-            Excluded: pendingSlip.Contains(r.Id))).ToList();
+            Excluded: pendingSlip.Contains(r.Id) || (sub.CancelAtPeriodEnd && sub.RenewalInvoiceDocumentId == r.Id))).ToList();
 
         var state = await _db.PlatformDunningStates.FirstOrDefaultAsync(s => s.CompanyId == companyId, ct);
         if (state == null) { state = new PlatformDunningState { CompanyId = companyId, CreatedBy = "system:dunning" }; _db.PlatformDunningStates.Add(state); }

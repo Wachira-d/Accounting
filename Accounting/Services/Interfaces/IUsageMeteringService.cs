@@ -67,6 +67,12 @@ public interface IUsageMeteringService
         string actor, Models.Enums.AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
         CancellationToken ct = default);
 
+    /// <summary>รอบ 219 เฟส 2 ขั้น 3: ผู้เช่ากดเปิดเอง = "การซื้อ" — ส่วนเสริมที่ต้องจ่าย บังคับเลือกวิธีชำระ (จ่ายล่วงหน้า/รวมใบรายเดือน) +
+    /// ติ๊กยอมรับเงื่อนไขการซื้อ (คำตัดสินเจ้าของข้อ 178 ⑤⑧) · ไม่ต้องจ่าย = เปิดได้เลย</summary>
+    Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled, string actor,
+        Models.Enums.AddOnBillingChoice? choice, Models.DTOs.Subscription.PlatformPurchaseAcceptanceInput? acceptance,
+        CancellationToken ct = default);
+
     /// <summary>ออก <see cref="UsageEvent"/> ค่าเหมารายเดือนของ add-on 1 ตัว 1 งวด
     ///
     /// แยกจาก <see cref="RecordAsync"/> โดยเจตนา: RecordAsync คือ "มีการใช้งาน 1 ครั้ง"

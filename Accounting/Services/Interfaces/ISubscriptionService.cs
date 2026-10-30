@@ -26,7 +26,9 @@ public interface ISubscriptionService
     Task<SubscriptionGateState?> GetGateStateAsync(Guid companyId);
     /// <summary>รอบ 219 เฟส 0 (G-0): อัปเกรด = รายการชำระรอเงินเข้า · ดาวน์เกรด/เปลี่ยนรอบ = มีผลวันครบรอบ</summary>
     Task<PlanPurchaseResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy);
-    Task CancelSubscriptionAsync(Guid companyId, string performedBy);
+    /// <summary>คืนข้อความผลการยกเลิก — มีรอบที่ชำระแล้วเหลือ ⇒ ยกเลิกเมื่อสิ้นรอบ (รอบ 219 เฟส 2 ขั้น 3)</summary>
+    Task<string> CancelSubscriptionAsync(Guid companyId, string performedBy);
+    Task<string> ReactivateSubscriptionAsync(Guid companyId, string performedBy);
 
     // Usage Tracking
     /// <param name="recordShadow">false = เส้นอ่านอย่างเดียว (GET ของหน้าเว็บ) — ไม่บันทึกโหมดเงา "เจ้าของปิดฟีเจอร์" (PL-C2: เดิมทุกการเปิดหน้านับเป็น "จะถูกปิด")</param>

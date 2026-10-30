@@ -34,6 +34,10 @@ public interface IPlatformBillingDocumentIssuer
     Task<PlatformDocResult?> SettleInvoiceAsync(Guid invoiceDocumentId, decimal amountReceived, decimal withholdingTax,
         DateTime paymentDate, string reference, string notes);
 
+    /// <summary>รอบ 219 เฟส 2 (S9): ยกเลิกใบแจ้งหนี้ต่ออายุที่ไม่มีการชำระเลย ผ่าน <c>IDocumentService.VoidDocumentAsync</c> (เก็บใบ + JE กลับรายการ ·
+    /// ห้ามแก้ใบย้อนหลัง §86/4) · มีการชำระแล้ว ⇒ NeedsCreditNote (ไม่แตะ) · ไม่โยน</summary>
+    Task<StaleRenewalOutcome> VoidStaleRenewalInvoiceAsync(Guid invoiceDocumentId);
+
     /// <summary>ออก "ใบแจ้งหนี้ค่าใช้งานตามจริง" หลายบรรทัดในใบเดียว
     /// (ค่าเหมา add-on · เอกสารเกินโควตา · การเข้าพัก · SMS ฯลฯ ของงวดนั้น)
     ///
@@ -46,6 +50,9 @@ public interface IPlatformBillingDocumentIssuer
     /// <summary>tenant ผู้ให้บริการถูกตั้งค่าไว้แล้วหรือยัง (ใช้เลือกเส้นทาง)</summary>
     Task<bool> IsEnabledAsync();
 }
+
+/// <summary>ผลการจัดการใบต่ออายุที่ล้าสมัย (S9)</summary>
+public enum StaleRenewalOutcome { Voided = 1, NeedsCreditNote = 2, NotFound = 3, Failed = 4 }
 
 public sealed record PlatformDocResult(Guid DocumentId, string DocumentNumber, bool IsTaxInvoice);
 
@@ -254,6 +261,30 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         {
             _logger.LogError(ex, "ตัดชำระใบแจ้งหนี้ค่าบริการไม่สำเร็จ (ใบ {DocId} · อ้างอิง {Ref})", invoiceDocumentId, reference);
             return null;
+        }
+    }
+
+    public async Task<StaleRenewalOutcome> VoidStaleRenewalInvoiceAsync(Guid invoiceDocumentId)
+    {
+        try
+        {
+            var (_, tenantId) = await ResolveTenantAsync();
+            if (tenantId == null) return StaleRenewalOutcome.NotFound;
+            var doc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == invoiceDocumentId && d.CompanyId == tenantId.Value && !d.IsDeleted)
+                .Select(d => new { d.Id, d.Status, d.PaidAmount, d.BalanceDue, d.TotalAmount })
+                .FirstOrDefaultAsync();
+            if (doc == null) return StaleRenewalOutcome.NotFound;
+            if (doc.Status == DocumentStatus.Voided) return StaleRenewalOutcome.Voided;
+            if (doc.PaidAmount > 0m || doc.BalanceDue < doc.TotalAmount - Accounting.Helpers.PlatformInvoiceRules.Epsilon)
+                return StaleRenewalOutcome.NeedsCreditNote;
+            await Documents.VoidDocumentAsync(tenantId.Value, doc.Id);
+            return StaleRenewalOutcome.Voided;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ยกเลิกใบต่ออายุที่ล้าสมัยไม่สำเร็จ (ใบ {DocId})", invoiceDocumentId);
+            return StaleRenewalOutcome.Failed;
         }
     }
 

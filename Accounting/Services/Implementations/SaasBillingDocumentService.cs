@@ -293,6 +293,45 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         }
     }
 
+    public const string RuleStaleVoided = "PLATFORM-STALE-RENEWAL-VOIDED", RuleStaleCreditNote = "PLATFORM-STALE-RENEWAL-CREDIT-NOTE-NEEDED";
+
+    public async Task HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string paymentNumber)
+    {
+        try
+        {
+            var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == subscriptionId);
+            if (sub == null) return;
+            var outcome = _issuer == null ? StaleRenewalOutcome.Failed : await _issuer.VoidStaleRenewalInvoiceAsync(invoiceDocumentId);
+            var (action, rule, note) = outcome switch
+            {
+                StaleRenewalOutcome.Voided => ("StaleRenewalInvoiceVoided", RuleStaleVoided,
+                    $"ยกเลิกใบแจ้งหนี้ต่ออายุของรอบเดิมแล้ว (รายการ {paymentNumber} เริ่ม/ต่อรอบใหม่ — ใบเดิมไม่ต้องชำระ)"),
+                StaleRenewalOutcome.NeedsCreditNote => ("StaleRenewalInvoiceNeedsCreditNote", RuleStaleCreditNote,
+                    $"⚠️ ใบแจ้งหนี้ต่ออายุของรอบเดิมมีการชำระแล้ว — ไม่ยกเลิก · ผู้ดูแลระบบต้องออกใบลดหนี้ (§86/10) หรือจัดการยอดในบริษัทผู้ให้บริการ (รายการ {paymentNumber})"),
+                _ => ("StaleRenewalInvoiceNeedsAction", RuleStaleCreditNote,
+                    $"⚠️ ยกเลิกใบแจ้งหนี้ต่ออายุของรอบเดิมอัตโนมัติไม่สำเร็จ — ผู้ดูแลระบบต้องยกเลิกใบด้วยมือในบริษัทผู้ให้บริการ (รายการ {paymentNumber})"),
+            };
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = subscriptionId, Action = action, Notes = note, PerformedBy = "system:platform-billing",
+            });
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = sub.CompanyId,
+                UserEmail = "system:platform-billing",
+                Action = AuditAction.Update,
+                EntityType = "Document",
+                EntityId = invoiceDocumentId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { outcome = outcome.ToString(), paymentNumber, ruleCode = rule }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            if (outcome != StaleRenewalOutcome.Voided)
+                _logger.LogError("ใบต่ออายุที่ล้าสมัย {Doc} ต้องจัดการด้วยมือ ({Outcome}) — sub {Sub}", invoiceDocumentId, outcome, subscriptionId);
+        }
+        catch (Exception ex) { _logger.LogError(ex, "จัดการใบต่ออายุที่ล้าสมัยไม่สำเร็จ (sub {Sub} · ใบ {Doc})", subscriptionId, invoiceDocumentId); }
+    }
+
     /// <summary>อ้างอิงการรับชำระใบแจ้งหนี้ค่าบริการต่อรายการ — ตัวเดียวทั้งฝั่งเขียนและฝั่งกันซ้ำ</summary>
     public static string SettlementReference(string paymentNumber) => $"SUBPAY-{paymentNumber}";
 
@@ -309,6 +348,9 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                 && sub.RenewalInvoiceForEndDate.Value == sub.EndDate
                 && !string.IsNullOrEmpty(sub.RenewalInvoiceNumber))
                 return sub.RenewalInvoiceNumber;
+
+            // รอบ 219 เฟส 2 ขั้น 3: ผู้เช่ายกเลิกเมื่อสิ้นรอบ ⇒ ไม่ออกใบต่ออายุ (ใช้ได้ถึงสิ้นรอบ ไม่ต่อ)
+            if (sub.CancelAtPeriodEnd) return null;
 
             var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sub.CompanyId);
             if (buyer == null) return null;

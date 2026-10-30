@@ -34,6 +34,12 @@ public class Subscription : BaseEntity
     public DateTime EndDate { get; set; }
     public DateTime? CancelledAt { get; set; }
 
+    /// <summary>รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑥): ยกเลิกแล้ว — ใช้ได้ถึง <see cref="EndDate"/> ของรอบที่ชำระแล้ว · ไม่ออกใบต่ออายุ ·
+    /// ไม่ prorate · ครบรอบ ⇒ Cancelled (<c>ProcessExpiredSubscriptionsAsync</c>) · กด "ใช้ต่อ" ก่อนสิ้นรอบได้ (<c>Helpers/SubscriptionCancelPolicy</c>)</summary>
+    public bool CancelAtPeriodEnd { get; set; }
+    public DateTime? CancelRequestedAt { get; set; }
+    public string? CancelRequestedBy { get; set; }
+
     // WP-B1: ใบแจ้งหนี้ต่ออายุที่ออกล่วงหน้าก่อนหมดอายุ. ผูกกับ EndDate ที่ออกให้
     // → รอบใหม่ (EndDate เปลี่ยนหลังจ่าย) จะออกใบใหม่ ไม่ออกซ้ำรอบเดิม (idempotent).
     public string? RenewalInvoiceNumber { get; set; }

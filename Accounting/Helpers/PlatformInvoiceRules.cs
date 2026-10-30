@@ -74,6 +74,12 @@ public static class PlatformInvoiceRules
     public static bool IsInvoiceOnlyPayment(Guid? platformInvoiceDocumentId, int requestedPeriodMonths) =>
         platformInvoiceDocumentId != null && requestedPeriodMonths <= 0;
 
+    /// <summary>รอบ 219 เฟส 2 (S9): ใบต่ออายุที่ออกไว้ให้ "รอบที่กำลังจะถูกแทน" — การอนุมัติที่เริ่ม/ต่อรอบใหม่ (อัปเกรด · ต่ออายุแบบเดิม) โดยไม่ได้จ่ายใบนี้
+    /// ⇒ ใบนี้ล้าสมัย (ค้างเป็นหนี้เท็จ/เก็บซ้ำ) · null = ไม่มีใบ/ใบออกให้รอบอื่น/การชำระนี้คือการจ่ายใบนั้นเอง</summary>
+    public static Guid? StaleRenewalInvoice(Guid? renewalInvoiceDocumentId, DateTime? renewalInvoiceForEndUtc, DateTime currentEndUtc,
+        Guid? paidInvoiceDocumentId) =>
+        renewalInvoiceDocumentId is Guid id && renewalInvoiceForEndUtc == currentEndUtc && paidInvoiceDocumentId != id ? id : null;
+
     /// <summary>วันที่ตามปฏิทินไทย (UTC+7) — ครบกำหนด/เกินกำหนดนับเป็นวัน ไม่ใช่ชั่วโมง</summary>
     public static DateTime ThaiDate(DateTime utc) => utc.AddHours(7).Date;
 

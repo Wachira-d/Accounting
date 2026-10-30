@@ -15,6 +15,11 @@ public static class PlatformBillingPhase2Migration
         """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "PlatformInvoiceDocumentId" uuid NULL;""",
         """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "PolicyAcceptanceId" uuid NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_SubscriptionPayments_PlatformInvoiceDocumentId" ON "SubscriptionPayments" ("PlatformInvoiceDocumentId") WHERE "PlatformInvoiceDocumentId" IS NOT NULL;""",
+        // ── ขั้น 3: ยกเลิกเมื่อสิ้นรอบ · วิธีชำระส่วนเสริมต่อการซื้อ ──
+        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CancelAtPeriodEnd" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CancelRequestedAt" timestamp with time zone NULL;""",
+        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CancelRequestedBy" text NULL;""",
+        """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "BillingChoice" integer NOT NULL DEFAULT 0;""",
         // ── ขั้น 2: ส่งใบ + ทวงหนี้ (คีย์ข้อความ unique ต่อช่อง · สถานะทวงหนี้ต่อบริษัท = watermark ของงาน) ──
         """CREATE TABLE IF NOT EXISTS "PlatformBillingNotices" ("Id" uuid PRIMARY KEY, "BuyerCompanyId" uuid NOT NULL, "DocumentId" uuid NULL, "MessageKey" varchar(200) NOT NULL DEFAULT '', "Channel" varchar(20) NOT NULL DEFAULT '', "Status" varchar(20) NOT NULL DEFAULT 'Claimed', "Detail" varchar(500) NULL, "SentAt" timestamp without time zone NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PlatformBillingNotices_Key_Channel" ON "PlatformBillingNotices" ("MessageKey", "Channel");""",

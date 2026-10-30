@@ -121,6 +121,14 @@ public class MeteringController : ControllerBase
                 // สูตรเดียวกับ AddOnPurchaseService — เรียก policy ตัวเดียว ห้ามคัดลอกมา
                 amountDue = state == null ? 0m
                     : Accounting.Helpers.AddOnPaymentPolicy.AmountDue(state.PaymentStatus, state.AcceptedUnitPrice),
+                // รอบ 219 เฟส 2 ขั้น 3: ต้องเลือกวิธีชำระ + ติ๊กยอมรับตอนเปิดไหม (ตัวตัดสินเดียวกับเซิร์ฟเวอร์ — ทดลองใช้ครั้งแรก = ไม่ต้อง)
+                requiresPaymentChoice = !(state?.IsEnabled ?? false) && Accounting.Helpers.AddOnPaymentPolicy.RequiresPayment(
+                    Models.Enums.AddOnGrantSource.OwnerSelfServe, plan?.Method, plan?.UnitPrice,
+                    state?.TrialUntil ?? (f.TrialDays > 0 && state == null ? (DateTime?)now.AddDays(f.TrialDays) : null), now),
+                billingChoice = (state?.BillingChoice ?? Models.Enums.AddOnBillingChoice.Upfront).ToString(),
+                billingChoiceLabel = state == null ? null : Accounting.Helpers.AddOnPaymentPolicy.ChoiceLabel(state.BillingChoice),
+                termsVersion = Accounting.Helpers.PlatformPurchaseTerms.Version,
+                termsLines = Accounting.Helpers.PlatformPurchaseTerms.Lines,
                 pricing = plan == null ? null : new
                 {
                     method = plan.Method.ToString(),
@@ -134,7 +142,9 @@ public class MeteringController : ControllerBase
         })));
     }
 
-    public record ToggleFeatureRequest(bool Enabled);
+    /// <summary>รอบ 219 เฟส 2 ขั้น 3: <paramref name="BillingChoice"/> = "Upfront"/"MonthlyInvoice" · ติ๊กยอมรับเงื่อนไข — บังคับเฉพาะส่วนเสริมที่ต้องจ่าย (เซิร์ฟเวอร์ตัดสิน)</summary>
+    public record ToggleFeatureRequest(bool Enabled, Models.Enums.AddOnBillingChoice? BillingChoice = null,
+        bool AcceptTerms = false, string? TermsVersion = null);
 
     /// <summary>เปิด/ปิดฟีเจอร์ — เป็นสวิตช์ค่าใช้จ่ายจริง จึงบันทึกว่าใครกดตอนไหน</summary>
     [HttpPost("features/{featureCode}")]
@@ -157,7 +167,10 @@ public class MeteringController : ControllerBase
                 "ฟีเจอร์นี้ปิดรับผู้ใช้ใหม่แล้ว — กรุณาติดต่อผู้ดูแลระบบ"));
 
         var actor = User.Identity?.Name ?? "unknown";
-        await _metering.SetFeatureEnabledAsync(companyId, featureCode, req.Enabled, actor);
+        var acceptance = new Models.DTOs.Subscription.PlatformPurchaseAcceptanceInput(req.AcceptTerms, req.TermsVersion,
+            User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? actor, "addons",
+            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());
+        await _metering.SetFeatureEnabledAsync(companyId, featureCode, req.Enabled, actor, req.BillingChoice, acceptance);
 
         return Ok(new ApiResponse<object>(true, new { featureCode, enabled = req.Enabled },
             req.Enabled ? $"เปิดใช้ {feature.Name} แล้ว" : $"ปิด {feature.Name} แล้ว — หยุดคิดค่าใช้จ่ายทันที"));

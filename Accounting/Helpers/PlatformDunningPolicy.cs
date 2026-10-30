@@ -43,9 +43,9 @@ public static class PlatformDunningPolicy
         $"co:{companyId:N}:{kind}:{PlatformInvoiceRules.ThaiDate(nowUtc):yyyyMMdd}";
 
     /// <summary>ชนิดสถานะที่ระบบระงับเพราะค้างชำระได้ (ทดลองใช้/ยกเลิก/หมดอายุ/ระงับด้วยเหตุอื่น = ไม่แตะ)</summary>
-    public static bool Suspendable(SubscriptionStatus s) => s is SubscriptionStatus.Active or SubscriptionStatus.PastDue;
+    private static bool Suspendable(SubscriptionStatus s) => s is SubscriptionStatus.Active or SubscriptionStatus.PastDue;
 
-    public static IReadOnlyList<DunningReminder> RemindersFor(DunningInvoice inv, DateTime nowUtc, PlatformBillingPolicy p)
+    internal static IReadOnlyList<DunningReminder> RemindersFor(DunningInvoice inv, DateTime nowUtc, PlatformBillingPolicy p)
     {
         var list = new List<DunningReminder>();
         if (inv.Excluded || inv.Balance <= PlatformInvoiceRules.Epsilon) return list;

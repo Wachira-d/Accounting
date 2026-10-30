@@ -187,8 +187,18 @@ public class SubscriptionController : ControllerBase
     {
         if (await RequireOwnerAsync(companyId, "ยกเลิก subscription") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        await _subscriptionService.CancelSubscriptionAsync(companyId, userId);
-        return Ok(new ApiResponse<string>(true, null, "ยกเลิก subscription สำเร็จ"));
+        var message = await _subscriptionService.CancelSubscriptionAsync(companyId, userId);
+        return Ok(new ApiResponse<string>(true, null, message));
+    }
+
+    /// <summary>รอบ 219 เฟส 2 ขั้น 3: ใช้ต่อ (ยกเลิกการยกเลิกเมื่อสิ้นรอบ) — เจ้าของเท่านั้น (ด่านเดียวกับยกเลิก)</summary>
+    [HttpPost("{companyId:guid}/reactivate")]
+    public async Task<ActionResult<ApiResponse<string>>> Reactivate(Guid companyId)
+    {
+        if (await RequireOwnerAsync(companyId, "กลับมาใช้แพ็กเกจต่อ") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var message = await _subscriptionService.ReactivateSubscriptionAsync(companyId, userId);
+        return Ok(new ApiResponse<string>(true, null, message));
     }
 
     // ===== Plan Templates (Public) =====
