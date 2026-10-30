@@ -74,6 +74,7 @@ public class AccountingDbContext : DbContext
     public DbSet<AuditChainCheckpoint> AuditChainCheckpoints => Set<AuditChainCheckpoint>();
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
+    public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
     public DbSet<SystemAccountTemplate> SystemAccountTemplates => Set<SystemAccountTemplate>();
@@ -996,6 +997,18 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(a => a.Timestamp);
             e.Property(a => a.EntityType).HasMaxLength(100);
+        });
+
+        // ===== LegalDocumentVersion (รอบ 214 · คำตัดสินข้อ 173) — เลขฉบับไม่ซ้ำต่อชนิด · ชื่อ index ตรงกับ LegalDocumentMigration =====
+        modelBuilder.Entity<LegalDocumentVersion>(e =>
+        {
+            e.HasIndex(x => new { x.Kind, x.Version }).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_LegalDocumentVersions_Kind_Version");
+            e.Property(x => x.Kind).HasMaxLength(20);
+            e.Property(x => x.Version).HasMaxLength(20);
+            e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.ChangeSummary).HasMaxLength(500);
+            e.Property(x => x.PublishedBy).HasMaxLength(100);
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
 
         // ===== PlatformHoliday (รอบ 201 ทีม PL · B-9) — วันที่ไม่ซ้ำในแถวที่ยังไม่ลบ =====

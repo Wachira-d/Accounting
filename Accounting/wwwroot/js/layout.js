@@ -508,7 +508,57 @@ const Layout = {
     this._showPasswordWeakBannerIfNeeded();
     // แถบเตือนใบรับรอง SSL ใกล้หมด — เฉพาะผู้ดูแลระบบ (ไม่ await: ห้ามหน่วงการโหลดหน้า)
     this._showTlsBannerIfNeeded();
+    // รอบ 214: นโยบาย/ข้อกำหนดมีฉบับใหม่ที่ผู้ใช้ยังไม่ได้รับทราบ — แจ้ง ไม่บล็อก (ไม่ await)
+    this._showPolicyUpdateBannerIfNeeded();
     return true;
+  },
+
+  /** รอบ 214 (คำตัดสินข้อ 173): แถบ "นโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งานมีฉบับใหม่" — เซิร์ฟเวอร์ตัดสินว่าต้องแจ้งไหม
+   *  (GET /api/legal/acceptance · ตัวตัดสิน Helpers/LegalDocumentPolicy.NeedsAcknowledge) · กด "รับทราบและยอมรับ" = บันทึกหลักฐาน
+   *  (POST · PdpaConsentRecord) · ปิดแถบได้ต่อแท็บ (แจ้งใหม่ครั้งหน้า) · ไม่แสดงในโหมดเข้าดูในนามลูกค้า (ห้ามยอมรับแทนเจ้าของบัญชี) ·
+   *  เรียกไม่สำเร็จ = ไม่วาด (แถบเป็นส่วนเสริม ห้ามทำหน้าพัง) */
+  async _showPolicyUpdateBannerIfNeeded() {
+    try {
+      if (document.getElementById('policyUpdateBanner')) return;
+      try {
+        const t = localStorage.getItem('token') || '';
+        const payload = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (payload && payload.imp === 'true') return;
+      } catch { /* token อ่านไม่ได้ ⇒ ปล่อยเซิร์ฟเวอร์ตัดสิน */ }
+      const res = await API.get('/api/legal/acceptance');
+      const st = res?.data;
+      if (!st || !st.needsAcknowledge) return;
+      try { if (sessionStorage.getItem('policyBannerDismissed') === st.currentConsentVersion) return; } catch { /* ignore */ }
+      const summary = [st.privacyChangeSummary, st.termsChangeSummary].filter(Boolean).join(' · ');
+      const banner = document.createElement('div');
+      banner.id = 'policyUpdateBanner';
+      banner.style.cssText = 'position:sticky;top:0;left:0;right:0;z-index:9998;background:#eff6ff;color:#1e3a8a;padding:10px 16px;font-size:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.08)';
+      banner.innerHTML = `
+        <span style="font-size:18px">📣</span>
+        <span style="flex:1;min-width:220px">${st.acceptedVersion
+            ? `นโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งานมีฉบับใหม่ (ฉบับที่ ${this.esc(st.currentConsentVersion)})`
+            : `กรุณาอ่านและรับทราบนโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งาน (ฉบับที่ ${this.esc(st.currentConsentVersion)})`}${summary ? ` — ${this.esc(summary)}` : ''}
+          · <a href="/privacy.html" target="_blank" rel="noopener" style="color:inherit;font-weight:600">อ่านนโยบาย</a>
+          · <a href="/terms.html" target="_blank" rel="noopener" style="color:inherit;font-weight:600">อ่านข้อกำหนด</a></span>
+        <button type="button" id="policyAcceptBtn" style="background:#1d4ed8;color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px">รับทราบและยอมรับ</button>
+        <button type="button" id="policyDismissBtn" style="background:transparent;border:none;color:inherit;font-size:20px;cursor:pointer;padding:0 4px" aria-label="ปิด">×</button>`;
+      document.body.insertBefore(banner, document.body.firstChild);
+      document.getElementById('policyDismissBtn').addEventListener('click', () => {
+        try { sessionStorage.setItem('policyBannerDismissed', st.currentConsentVersion); } catch { /* ignore */ }
+        banner.remove();
+      });
+      document.getElementById('policyAcceptBtn').addEventListener('click', async (ev) => {
+        ev.target.disabled = true;
+        try {
+          await API.post('/api/legal/acceptance', { versionShown: st.currentConsentVersion });
+          banner.remove();
+          if (typeof this.toast === 'function') this.toast('บันทึกการยอมรับแล้ว', 'success');
+        } catch (e) {
+          ev.target.disabled = false;
+          if (typeof this.toast === 'function') this.toast('บันทึกไม่สำเร็จ: ' + (e.message || e), 'error');
+        }
+      });
+    } catch { /* แถบแจ้งเป็นส่วนเสริม — ห้ามทำหน้าพัง */ }
   },
 
   /** แถบเตือนใบรับรอง SSL ของโดเมนระบบใกล้หมดอายุ — เฉพาะผู้ดูแลระบบ
@@ -1702,6 +1752,9 @@ const Layout = {
             <a class="dropdown-item" href="/pages/my-signature.html">✍️ ลายเซ็นของฉัน</a>
             <a class="dropdown-item" href="/pages/account-subscription.html">🎫 License ของฉัน</a>
             <a class="dropdown-item" href="/pages/settings.html">⚙️ ${this.esc(tSettings)}</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" href="/terms.html" target="_blank" rel="noopener">📄 ข้อกำหนดการใช้งาน</a>
+            <a class="dropdown-item" href="/privacy.html" target="_blank" rel="noopener">🔒 นโยบายความเป็นส่วนตัว</a>
             <div class="dropdown-divider"></div>
             <a class="dropdown-item" href="#" onclick="Layout.logout();return false">🚪 ${this.esc(tLogout)}</a>
           </div>

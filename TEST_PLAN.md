@@ -1,3 +1,21 @@
+## LEGAL214 — นโยบายความเป็นส่วนตัว/ข้อกำหนด: แพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS (รอบ 214 · คำตัดสินข้อ 173)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| LEGAL214-01 | markdown ชุดย่อย: หัวข้อ · ย่อหน้า · รายการ · ตาราง · กล่องหมายเหตุ · หนา/เอียง/โค้ด | HTML ตามแบบที่หน้าแสดง · แถวตารางสั้นเติมช่อง | `LegalDocumentTests`.Render_BasicBlocks · Render_Table_WithHeaderAndPaddedRows |
+| LEGAL214-02 | XSS: `<script>` · `<img onerror>` · `"><svg>` · แท็กในหัวข้อ/ตาราง | encode เป็นข้อความ ไม่มีแท็ก | `LegalDocumentTests`.Render_RawHtml_IsEncoded_NeverATag |
+| LEGAL214-03 | ลิงก์ `javascript:` (ทุกตัวพิมพ์) · `data:` · `vbscript:` · `//host` · entity · แท็บกลางคำ | ไม่เป็น `<a>` (แสดงข้อความ) · **ทิศตรงข้าม** https/mailto/tel/path/สัมพัทธ์ เป็นลิงก์ · ภายนอกเปิดแท็บใหม่ noopener | `LegalDocumentTests`.Render_DangerousLinks_AreNotAnchors · Render_AllowedLinks · Render_ExternalLink_OpensNewTabWithNoopener |
+| LEGAL214-04 | ค่าโทเคน (ชื่อบริษัท/อีเมล) มี `<script>` · `**` · `[x](javascript:)` · `"` | encode · ไม่ถูกตีความเป็น markdown · ไม่หลุด attribute · โทเคนไม่รู้จักคงเดิม · อักขระ stash ของผู้ใช้ปลอมลิงก์ไม่ได้ | `LegalDocumentTests`.Tokens_AreEncoded_AndCannotInjectMarkupOrMarkdown · Tokens_Unknown_… · StashMarker_… |
+| LEGAL214-05 | ฉบับปัจจุบัน/ประกาศล่วงหน้า · ร่างไม่นับ · วันมีผลเท่ากัน · วันไทย | มีผล ≤ วันนี้ล่าสุด · ไม่มีแถว = ฉบับตั้งต้น 1.0 · เผยแพร่ทีหลังชนะ · 17:00 UTC = วันถัดไป | `LegalDocumentTests`.PickCurrent_* · TodayBangkok_UsesThaiCalendarDay |
+| LEGAL214-06 | เผยแพร่: เลขซ้ำ/ถอยหลัง/ชน 1.0 · วันมีผลย้อนหลัง · ก่อนฉบับประกาศล่วงหน้า · เนื้อความว่าง · รูปแบบเลขผิด | ปฏิเสธพร้อมเหตุ · **ทิศตรงข้าม** เลขถัดไปวันนี้/อนาคตผ่าน | `LegalDocumentTests`.ValidatePublish_Rules · ValidatePublish_EffectiveBeforeLatestAnnounced_Rejected |
+| LEGAL214-07 | append-only บนฐานจริง: เผยแพร่แล้วบันทึกร่างเลขเดิม · เผยแพร่ร่างที่ย้อนหลัง | ปฏิเสธ · แถวเผยแพร่ไม่เปลี่ยน · ร่างยังเป็นร่าง · ทิ้งร่างได้ | `Db/LegalDocumentDbTests`.Publish_is_append_only_and_drives_the_acceptance_banner · `LegalDocumentTests`.PublishedRows_AreNotEditable_DraftsAre |
+| LEGAL214-08 | เวอร์ชันความยินยอม · ผู้ใช้เดิม (ยอมรับ "1.0") ไม่มีฉบับใหม่ / มีฉบับใหม่ / ไม่มีแถว | สองฉบับเท่ากัน = เลขเดียว · ไม่รบกวนผู้ใช้เดิม · ฉบับใหม่ = แถบ · ≤ 50 ตัวอักษร | `LegalDocumentTests`.ConsentVersion_SameVersions_StaysBackwardCompatible · NeedsAcknowledge_OnlyWhenNoRecordOrDifferentVersion |
+| LEGAL214-09 | กด "รับทราบและยอมรับ" ด้วยฉบับปัจจุบัน / หน้าค้างฉบับเก่า / โหมดเข้าดูในนามลูกค้า | แถวยินยอม `policy-update:*` + hash · ฉบับเก่า = ปฏิเสธ (409) · imp = 403 (required_call_site_check) | `Db/LegalDocumentDbTests` · กติกา `LegalController.Accept` |
+| LEGAL214-10 | ลิงก์ของร้าน: ลิงก์ร้าน + ข้อความร้าน · ข้อความอย่างเดียว · ว่าง · ค่าไม่ปลอดภัย · path ในเว็บร้าน | external > custom > default · ไม่ปลอดภัย = ใช้หน้าระบบ + บันทึกถูกปฏิเสธ · `/privacy` = หน้า CMS ของร้าน · slug ใต้ `legal/` | `LegalDocumentTests`.Resolve_* · Slugs_LiveUnderLegal_NoClashWithShopPages · EffectiveMarkdown_CustomOrTemplate |
+| LEGAL214-11 | แม่แบบของร้าน (นโยบาย/ข้อกำหนด) กับตัวตนร้านจริง | ชื่อ · ที่อยู่ · เลขผู้เสียภาษี · mailto · เบอร์ · ชื่อเว็บ ครบ · ไม่มีโทเคนค้าง · ระบุผู้ควบคุม/ผู้ประมวลผล · LINE · ชำระเงิน · จอง · สมาชิก | `LegalDocumentTests`.ShopTemplate_ContainsShopIdentity_AndProcessorStatement · ShopPrivacyTemplate_StatesControllerAndProcessorRoles_AndLineAndPayment |
+| LEGAL214-12 | ฉบับตั้งต้นของแพลตฟอร์มเทียบหน้าเดิม | ครบ 12 หัวข้อทั้งสองฉบับ · ตัวตนผู้ให้บริการแทนครบ · ค่าที่ยังไม่ตั้งบอกตรง ๆ · 1.0 = `PdpaPolicy.CurrentVersion` เดิม | `LegalDocumentTests`.PlatformBuiltIn_KeepsAllSectionsOfOldPages · PlatformTokens_Missing_… · BuiltInVersion_MatchesLegacyConsentVersion |
+| LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
+
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -162,7 +180,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **693 ไฟล์ · 7,092 `[Fact]` + 1,130 `[Theory]` (5,297 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **695 ไฟล์ · 7,117 `[Fact]` + 1,137 `[Theory]` (5,325 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
