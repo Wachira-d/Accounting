@@ -41,6 +41,10 @@ public class SiteBookingSettings : TenantEntity
     public string? FormFieldsJson { get; set; }
     /// <summary>เอกสารตอนกดเสร็จ (ไม่รับชำระ) ของบริการแบบนัดหมาย (<c>BookingInvoiceTimingPolicy</c>) · 0 = ไม่ออก (เดิม) · เจ้าของเปิด Auto เอง</summary>
     public BookingCompletionDocument CompletionDocument { get; set; } = BookingCompletionDocument.None;
+
+    // ── รอบ 210 (คำตัดสินข้อ 169) ──
+    /// <summary>ต้องเข้าสู่ระบบสมาชิกของเว็บก่อนจอง (ทุกบริการที่ไม่ตั้งเอง) · false = แขกจองได้ (เดิม) · ตัวตัดสินเดียว <c>Helpers/BookingAccessRule</c></summary>
+    public bool RequireMemberToBook { get; set; }
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>

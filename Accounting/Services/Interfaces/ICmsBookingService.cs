@@ -32,7 +32,8 @@ public interface ICmsBookingService
     Task<List<AvailableSlotResponse>> GetAvailableSlotsAsync(Guid companyId, Guid siteId, AvailableSlotsRequest request);
 
     // Bookings
-    Task<BookingResponse> CreateBookingAsync(Guid companyId, Guid siteId, CreateBookingRequest request, string? userId = null);
+    /// <param name="staffOnBehalf">รอบ 210: ผู้เรียกเป็นพนักงานที่มีสิทธิ์จัดการการจอง (controller ตัดสินจากสิทธิ์) — ผ่านด่าน "ต้องเป็นสมาชิก" (จองแทนลูกค้า)</param>
+    Task<BookingResponse> CreateBookingAsync(Guid companyId, Guid siteId, CreateBookingRequest request, string? userId = null, bool staffOnBehalf = false);
     Task<BookingResponse> UpdateBookingStatusAsync(Guid companyId, Guid siteId, Guid bookingId, UpdateBookingStatusRequest request, string userId);
     Task<BookingResponse?> GetBookingAsync(Guid companyId, Guid siteId, Guid bookingId);
     /// <summary>พนักงานยืนยัน "รับเงินแล้ว" ⇒ ออกใบกำกับภาษีของการจอง Guaranteed (คำตัดสินข้อ 155 · <c>BookingInvoiceTimingPolicy</c>)</summary>

@@ -114,6 +114,8 @@ public partial class CmsBookingService
         var promoted = await PromoteWaitlistAsync(companyId, siteId, oldDate, actor);
         foreach (var pid in promoted) await SyncIfBillableAsync(companyId, siteId, pid);
         if (promoted.Count > 0) notices.AddRange(await NotifyWaitlistPromotedAsync(companyId, siteId, promoted));
+        // รอบ 210: ยืนยันวัน-เวลาใหม่ + ลิงก์จัดการการจองถึงลูกค้า (ทั้งร้านเลื่อนและลูกค้าเลื่อนเอง) · ส่งไม่ถึง = ประทับบนการจอง + บอกผู้กด
+        if (await NotifyBookingRescheduledAsync(companyId, siteId, bookingId, oldDate, oldStart) is string rescheduleNotice) notices.Add(rescheduleNotice);
 
         var result = await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
         result.ErpNotices = notices;

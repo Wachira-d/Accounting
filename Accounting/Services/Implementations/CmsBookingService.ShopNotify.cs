@@ -14,7 +14,7 @@ public partial class CmsBookingService
 {
     private sealed record BookingNotifyFacts(string BookingNumber, string ServiceName, DateTime BookingDate, TimeOnly StartTime, BookingStatus Status,
         int GuestCount, string? GuestName, string? GuestEmail, string? GuestPhone, string? CancellationReason, string? CustomerName, string? CustomerEmail,
-        string? AuthProvider, string? AuthProviderId, string? ResourceName);
+        string? AuthProvider, string? AuthProviderId, string? ResourceName, string? PublicToken);
 
     private Task<BookingNotifyFacts?> LoadBookingNotifyFactsAsync(Guid companyId, Guid siteId, Guid bookingId)
         => _db.SiteBookings.AsNoTracking()
@@ -24,8 +24,17 @@ public partial class CmsBookingService
                 b.Customer != null ? b.Customer.FullName : null, b.Customer != null ? b.Customer.Email : null,
                 b.Customer != null ? b.Customer.AuthProvider : null, b.Customer != null ? b.Customer.AuthProviderId : null,
                 b.ResourceId == null ? null
-                    : _db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == companyId).Select(r => r.Name).FirstOrDefault()))
+                    : _db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == companyId).Select(r => r.Name).FirstOrDefault(),
+                b.PublicToken))
             .FirstOrDefaultAsync();
+
+    /// <summary>รอบ 210: บรรทัด "ดู/จัดการการจอง" ท้ายข้อความถึงลูกค้า — ลิงก์ my-booking จากฐานหน้าร้าน (<see cref="CmsStorefrontLink"/>) ·
+    /// ประกอบไม่ได้ ⇒ เลขที่ + หน้า "ตรวจสอบการจอง / คำสั่งซื้อ" (ไม่เงียบ)</summary>
+    private async Task<CmsNotification> WithBookingLinkAsync(Guid companyId, Guid siteId, BookingNotifyFacts f, CmsNotification message)
+    {
+        var baseUrl = _shopNotifier == null ? null : await _shopNotifier.StorefrontBaseUrlAsync(companyId, siteId);
+        return CmsNotificationText.WithLine(message, CmsStorefrontLink.BookingManageLine(baseUrl, f.PublicToken, f.BookingNumber));
+    }
 
     private async Task<string> SiteNameAsync(Guid companyId, Guid siteId)
         => await _db.Sites.AsNoTracking().Where(s => s.Id == siteId && s.CompanyId == companyId).Select(s => s.Name).FirstOrDefaultAsync() ?? "";
@@ -45,7 +54,8 @@ public partial class CmsBookingService
             var now = DateTime.UtcNow;
             var failures = new List<string>();
 
-            var customer = CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), date, f.StartTime, f.ResourceName, f.Status);
+            var customer = await WithBookingLinkAsync(companyId, siteId, f,
+                CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), date, f.StartTime, f.ResourceName, f.Status));
             var custErr = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId), customer);
             if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
@@ -72,8 +82,9 @@ public partial class CmsBookingService
             var f = await LoadBookingNotifyFactsAsync(companyId, siteId, bookingId);
             if (f == null) return null;
             var site = await SiteNameAsync(companyId, siteId);
-            var msg = CmsNotificationText.CustomerBookingCancelledByShop(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f),
-                DateOnly.FromDateTime(f.BookingDate), f.StartTime, f.CancellationReason);
+            var msg = await WithBookingLinkAsync(companyId, siteId, f,
+                CmsNotificationText.CustomerBookingCancelledByShop(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f),
+                    DateOnly.FromDateTime(f.BookingDate), f.StartTime, f.CancellationReason));
             var err = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId), msg);
             if (err == null) return null;
             var note = CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow);
@@ -84,6 +95,31 @@ public partial class CmsBookingService
         {
             _logger.LogError(ex, "แจ้งลูกค้าเรื่องยกเลิกการจอง {BookingId} ล้ม (company {CompanyId})", bookingId, companyId);
             return $"{CmsNotificationText.FailureTag} แจ้งลูกค้าเรื่องยกเลิกไม่สำเร็จ (ข้อผิดพลาดภายใน) — กรุณาติดต่อลูกค้าเอง";
+        }
+    }
+
+    /// <summary>รอบ 210: เลื่อนนัดแล้ว ⇒ แจ้งวัน-เวลาใหม่ + ลิงก์จัดการการจองถึงลูกค้า · คืนข้อความถึงผู้กดเมื่อส่งไม่ถึง (null = ส่งถึง/ไม่มีตัวส่ง) · ไม่โยน</summary>
+    private async Task<string?> NotifyBookingRescheduledAsync(Guid companyId, Guid siteId, Guid bookingId, DateTime oldDate, TimeOnly oldStart)
+    {
+        if (_shopNotifier == null) return null;
+        try
+        {
+            var f = await LoadBookingNotifyFactsAsync(companyId, siteId, bookingId);
+            if (f == null) return null;
+            var site = await SiteNameAsync(companyId, siteId);
+            var msg = await WithBookingLinkAsync(companyId, siteId, f,
+                CmsNotificationText.CustomerBookingRescheduled(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f),
+                    DateOnly.FromDateTime(oldDate), oldStart, DateOnly.FromDateTime(f.BookingDate), f.StartTime));
+            var err = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId), msg);
+            if (err == null) return null;
+            var note = CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow);
+            await StampBookingNotesAsync(companyId, siteId, bookingId, new[] { note });
+            return note;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งลูกค้าเรื่องเลื่อนนัด {BookingId} ล้ม (company {CompanyId})", bookingId, companyId);
+            return $"{CmsNotificationText.FailureTag} แจ้งลูกค้าเรื่องเลื่อนนัดไม่สำเร็จ (ข้อผิดพลาดภายใน) — กรุณาติดต่อลูกค้าเอง";
         }
     }
 

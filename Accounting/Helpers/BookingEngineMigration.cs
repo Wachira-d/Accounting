@@ -82,5 +82,9 @@ public static class BookingEngineMigration
             + "\"ResourceId\" uuid NOT NULL, \"ResourceName\" varchar(256) NOT NULL DEFAULT '', \"SharePercent\" numeric(5,2) NOT NULL DEFAULT 100);",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_SiteBookingAssignments_Booking_Resource" ON "SiteBookingAssignments" ("BookingId", "ResourceId");""",
         """CREATE INDEX IF NOT EXISTS "IX_SiteBookingAssignments_Company_Resource" ON "SiteBookingAssignments" ("CompanyId", "ResourceId");""",
+
+        // รอบ 210 (คำตัดสินข้อ 169): ต้องเป็นสมาชิกก่อนจอง — DEFAULT false / NULL = พฤติกรรมเดิม (แขกจองได้)
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "RequireMemberToBook" boolean NOT NULL DEFAULT false;""",
+        """ALTER TABLE "SiteBookingServices" ADD COLUMN IF NOT EXISTS "MemberOnly" boolean NULL;""",
     };
 }

@@ -5867,6 +5867,25 @@ _Last verified against codebase: 2026-10-29 (รอบ 209 · P1 หน้าร
 
 _Last verified against codebase: 2026-10-29 (รอบ 209 · P4 — ตารางคลาส/รอบเรียน · ครูแทน · ยกเลิกทั้งคลาส · C9 · ญ · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 3adbb139)_
 
+- **รอบ 210 · สมาชิกก่อนจอง + แขกค้นด้วยเลขที่ + ลิงก์ในแจ้งเตือน (คำตัดสินข้อ 169 · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **ต้องเป็นสมาชิกก่อนจอง** — ค่าเว็บ `SiteBookingSettings.RequireMemberToBook` (ค่าเริ่มต้น false = แขกจองได้เดิม) + ต่อบริการ `SiteBookingService.MemberOnly`
+  (null = ตามเว็บ · ฟอร์มส่ง `memberAccess` Inherit/Required/NotRequired · ไม่ส่ง = คงค่าเดิม) · ตัวตัดสินเดียว `Helpers/BookingAccessRule` ·
+  `CreateBookingAsync` ตรวจ **ก่อน** ฟอร์ม/ยินยอม/`Decide`/บันทึก: สมาชิก = `request.CustomerId` ที่ controller แปลงจากโทเคนหน้าร้าน (`StorefrontCustomerAuth.OrderCustomerId`)
+  และ `SiteCustomer` ของเว็บนี้ยัง `IsActive` · พนักงานที่มี `CMS.OrderManage` (`staffOnBehalf`) จองแทนได้ · ถูกกัน ⇒ 401 `CMS-BOOKING-MEMBER-ONLY` + ข้อความบอกให้เข้าสู่ระบบ/สมัคร ·
+  เซิร์ฟเวอร์ประกาศ `memberOnly` ใน `booking-services` + `available-slots` · หน้าร้านแสดงป้าย + ปุ่มเข้าสู่ระบบ/สมัคร (หน้า `account`) ปิดปุ่มจองเมื่อยังไม่ล็อกอิน และส่ง `X-Storefront-Token` ตอนจอง (เดิม) ·
+  ค่าตั้งอยู่ใน cms-edit (ค่าตั้งการจองของเว็บ ส่วน "สมาชิก" + ช่องในฟอร์มบริการ) · ฝั่งออเดอร์: `GuestCheckout=false` หน้าเช็กเอาต์บอกก่อนกรอก + ปุ่มเข้าสู่ระบบ (ด่านจริง `CmsFeatureFlags.AccountProblem` เดิม) ·
+  (ข) **แขกค้นการจอง/คำสั่งซื้อ** `[AllowAnonymous] POST storefront/lookup/booking {bookingNumber, contact}` · `…/lookup/order {orderNumber, contact}`
+  (`CmsStorefrontCustomerController` → `StorefrontCustomerService.Lookup.cs`) — กรองบริษัท + เว็บ + เลขที่ แล้ว `Helpers/GuestRecordLookup.Match`: เบอร์/อีเมล (ของแขก + ของบัญชีลูกค้าที่ผูก)
+  ตรงตัวหลัง `CmsContactResolver.NormalizePhone/NormalizeEmail` · สำเร็จคืน `{publicToken, kind}` เท่านั้น ⇒ หน้าร้านพาไป `my-booking/{token}` / `track-order/{token}` ·
+  ไม่ตรง = 404 ข้อความกลางเดียว · โควตา `IChatRateLimiter` ต่อ IP (10/นาที · 100/วัน) และต่อเลขที่ (5/นาที · 20/วัน · คีย์ = แฮช 16 ตัวให้พอดี `BucketKey` varchar(120)) ·
+  หน้าร้าน `check` "ตรวจสอบการจอง / คำสั่งซื้อ" (ลิงก์ท้ายเว็บ · วิดเจ็ตจอง · หน้า track-order) ·
+  (ค) **ลิงก์ในข้อความถึงลูกค้า** — ยืนยัน/ยกเลิกโดยร้าน/**เลื่อนนัด (ใหม่ · `CustomerBookingRescheduled` ทั้งร้านและลูกค้าเลื่อน)** ของการจอง ⇒ `my-booking/{token}` ·
+  ยืนยัน/จัดส่งแล้ว/พร้อมให้รับ/ส่งมอบแล้วของคำสั่งซื้อ ⇒ `track-order/{token}` · ฐานจาก `ICmsShopNotifier.StorefrontBaseUrlAsync` → `Helpers/CmsStorefrontLink.BaseUrl`
+  (โดเมน custom ที่อนุมัติ+ยืนยัน ตัวหลักก่อน ⇒ `App:BaseUrl` + `/site/{subdomain}` ⇒ null) · ไม่มีฐาน/ใบเก่าไม่มีโทเคน ⇒ เลขที่ + หน้า "ตรวจสอบการจอง / คำสั่งซื้อ" (ไม่เงียบ) ·
+  ข้อความเป็น text ล้วน ช่องอีเมล HtmlEncode ทั้งก้อน (`BookingReminderPlan.ToHtml`) · ข้อความ "ได้คิวแล้ว" (คิวสำรอง) และเตือนก่อนนัดยังไม่มีลิงก์ (ช่องส่งคนละเส้น `IBookingNotifier` — งานถัดไป)
+
+_Last verified against codebase: 2026-10-30 (รอบ 210 — สมาชิกก่อนจอง · แขกค้นด้วยเลขที่ + เบอร์/อีเมล · ลิงก์ในแจ้งเตือน · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

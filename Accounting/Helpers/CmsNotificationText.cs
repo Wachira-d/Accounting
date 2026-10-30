@@ -162,6 +162,18 @@ public static class CmsNotificationText
             $"เรียน {Who(customerName)}\n{siteName} ยกเลิกการจอง {serviceName} วันที่ {BookingReminderPlan.ThaiDate(date)} เวลา {Time(start)}\nเลขที่จอง {bookingNumber}"
             + (string.IsNullOrWhiteSpace(reason) ? "" : $"\nเหตุผล: {reason.Trim()}") + "\nหากชำระเงินไว้ ร้านจะติดต่อเรื่องการคืนเงิน/เลื่อนนัด");
 
+    /// <summary>รอบ 210: ร้าน/ลูกค้าเลื่อนนัด ⇒ ยืนยันวัน-เวลาใหม่ถึงลูกค้า</summary>
+    public static CmsNotification CustomerBookingRescheduled(string siteName, string bookingNumber, string serviceName, string? customerName,
+        DateOnly oldDate, TimeOnly oldStart, DateOnly newDate, TimeOnly newStart)
+        => new($"เลื่อนนัด #{bookingNumber} แล้ว — {serviceName}",
+            $"เรียน {Who(customerName)}\n{siteName}: เลื่อนนัด {serviceName} แล้ว\n"
+            + $"จากเดิม {BookingReminderPlan.ThaiDate(oldDate)} เวลา {Time(oldStart)}\nเป็น {BookingReminderPlan.ThaiDate(newDate)} เวลา {Time(newStart)}\nเลขที่จอง {bookingNumber}");
+
+    /// <summary>รอบ 210: ต่อบรรทัดลิงก์จัดการ/ติดตาม (<see cref="CmsStorefrontLink.BookingManageLine"/> · <see cref="CmsStorefrontLink.OrderTrackLine"/>) ท้ายข้อความถึงลูกค้า ·
+    /// บรรทัดว่าง = ข้อความเดิม</summary>
+    public static CmsNotification WithLine(CmsNotification message, string? line)
+        => string.IsNullOrWhiteSpace(line) ? message : message with { Text = message.Text + "\n" + line.Trim() };
+
     /// <summary>หมายเหตุภายในเมื่อแจ้งไม่ถึง — "ใคร" (ร้าน/ลูกค้า) + เรื่อง + เหตุจริงจากช่องส่ง</summary>
     public static string FailureNote(string target, string subject, string error, DateTime atUtc)
         => $"{FailureTag} [{atUtc:yyyy-MM-dd HH:mm}Z] แจ้ง{target}ไม่สำเร็จ ({subject}): {error} — กรุณาติดต่อเอง";

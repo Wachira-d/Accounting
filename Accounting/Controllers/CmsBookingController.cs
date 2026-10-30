@@ -192,7 +192,8 @@ public class CmsBookingController : ControllerBase
                 return StatusCode(403, new ApiResponse<BookingResponse>(false, null!, creditProblem));
             if (!staffOk && sf != null) userId = CreditBookingLink.StorefrontActor(sf.CustomerId);   // ผู้กระทำ = ลูกค้าคนนั้น (service ตรวจซ้ำ)
         }
-        var result = await _bookingService.CreateBookingAsync(companyId, siteId, request, userId);
+        // รอบ 210: ด่าน "ต้องเป็นสมาชิกก่อนจอง" อยู่ใน service (ก่อน Decide) — ลูกค้า = request.CustomerId ที่แปลงจากโทเคนแล้วข้างบน · พนักงานจองแทนผ่าน
+        var result = await _bookingService.CreateBookingAsync(companyId, siteId, request, userId, staffOnBehalf: staffOk);
         return StatusCode(201, new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.created", Lang)));
     }
 

@@ -14,7 +14,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **684 ไฟล์ · 6,921 `[Fact]` + 1,104 `[Theory]` (5,149 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **685 ไฟล์ · 6,938 `[Fact]` + 1,110 `[Theory]` (5,178 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
@@ -6911,3 +6911,19 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CMS209-RV-14 | ยกเลิกใบขายของบัตรที่โอนแล้ว | ยังบล็อก + ทางไปต่อ = ใบลดหนี้ไม่เกินมูลค่าบัตรปลายทาง · ตามสายไม่ถึง ⇒ ให้ปรับด้วย JE | `Transferred_void_block_gives_credit_note_way_forward` |
 | CMS209-RV-15 | ใบลดหนี้ร่างของการคืนเงินออเดอร์เว็บ | ข้อความไม่สัญญาว่า "เปลี่ยนเหตุผลเป็นคืนสินค้า" คืนสต็อก (บรรทัดไม่ผูกรหัสสินค้า) · บอกให้ปรับสต็อกที่หน้าสินค้า | `Draft_notes_do_not_promise_stock_return_via_reason_change` |
 
+## CMS210 — สมาชิกก่อนจอง · แขกค้นด้วยเลขที่ + เบอร์/อีเมล · ลิงก์ในแจ้งเตือน (คำตัดสินข้อ 169) · `CmsRound210Tests` · จุดเรียกล็อกด้วย `required_call_site_check` (รอบ 210)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS210-01 | **ค่าเริ่มต้น** เว็บ/บริการไม่ได้ตั้ง | แขกจองได้เหมือนเดิม (`RequireMemberToBook=false` · `MemberOnly=null`) | `Defaults_keep_guest_booking_open` |
+| CMS210-02 | เว็บบังคับ/ไม่บังคับ × บริการ ตามเว็บ/บังคับ/ไม่บังคับ | ค่าบริการชนะ · null = ค่าเว็บ | `Service_override_wins_over_site` |
+| CMS210-03 | บริการเฉพาะสมาชิก: แขกนิรนาม / สมาชิกที่ล็อกอิน / พนักงานจองแทน | 401 + ทางไปต่อ (เข้าสู่ระบบ/สมัคร) ก่อนตัดสินรอบ / ผ่าน / ผ่าน | `Problem_matrix` · `Member_rejection_is_401` · rule `CreateBookingAsync` (before `Decide`) |
+| CMS210-04 | ฟอร์มบริการ: ไม่ส่งช่อง (ผู้เรียก API เดิม) / ตามเว็บ / ไม่บังคับ / ค่าแปลก | คงค่าเดิม / null / false / ข้อความไทย | `ApplySettings_null_member_access_keeps_existing_value` · `ApplySettings_rejects_unknown_member_access` · `Member_access_round_trips` |
+| CMS210-05 | หน้าร้าน: บริการ `memberOnly` + ยังไม่ล็อกอิน | ป้าย "ต้องเข้าสู่ระบบสมาชิกก่อนจอง" + ปุ่มเข้าสู่ระบบ/สมัคร · ปุ่มจองปิด · 401 จากเซิร์ฟเวอร์ ⇒ ล้างเซสชัน + พาไปหน้าบัญชี | ตรวจด้วยตา (storefront `_bkMemberGateHtml`) |
+| CMS210-06 | ร้านปิดสั่งแบบแขก (`guestCheckout=false`) + ยังไม่ล็อกอิน | หน้าเช็กเอาต์บอกก่อนกรอก + ปุ่มเข้าสู่ระบบ/สมัคร (ด่านจริง `CmsFeatureFlags.AccountProblem` เดิม) | ตรวจด้วยตา (`sfMemberGate`) |
+| CMS210-07 | ค้นด้วยเลขที่ + เบอร์/อีเมลที่ตรง (ต่างรูปแบบ: ขีด/เว้นวรรค/+66/ตัวพิมพ์) | ได้โทเคน ⇒ ไป my-booking / track-order | `Matches_after_normalization` · `Linked_member_contact_also_matches` |
+| CMS210-08 | **ทิศตรงข้าม** เบอร์ผิดหนึ่งหลัก / อีเมลผิด / เลขผิด / เบอร์สั้น / ช่องว่าง / ไม่มีโทเคน | ไม่ตรง · ข้อความกลางเดียว (ไม่บอกว่าผิดที่ไหน) | `Wrong_or_missing_parts_do_not_match` · `Email_input_does_not_match_phone_field_and_vice_versa` · `Row_without_token_is_not_returned` |
+| CMS210-09 | รายการของบริษัท/เว็บอื่นเลขเดียวกัน | ไม่ตรง (กฎ M) | `Other_company_or_site_never_matches` |
+| CMS210-10 | ยิงเดาถี่ (IP เดียว / หลาย IP เลขเดียว) | 429 · คีย์โควตาพอดี `BucketKey` varchar(120) (ไม่ fail-open เงียบ) | `Request_validation_and_number_bucket` · rule `LookupThrottledAsync` |
+| CMS210-11 | ลิงก์ในแจ้งเตือน: มีโดเมนร้านที่ยืนยันแล้ว / ไม่มี ⇒ `App:BaseUrl/site/{key}` / ไม่มีทั้งคู่หรือใบเก่าไม่มีโทเคน | `https://โดเมน/my-booking/{token}` / path-based / เลขที่ + หน้า "ตรวจสอบการจอง / คำสั่งซื้อ" (ไม่เงียบ) | `Verified_custom_domain_wins` · `Falls_back_to_path_based_app_url` · `No_usable_base_gives_null` · `No_base_url_falls_back_to_number_and_lookup_page_not_silent` · `Booking_line_has_escaped_manage_link` · `Order_line_has_track_link` |
+| CMS210-12 | แจ้งเตือนถึงลูกค้าทุกฉบับ (ยืนยัน/ยกเลิก/เลื่อนการจอง · ยืนยัน/จัดส่ง/พร้อมรับ/ส่งมอบคำสั่งซื้อ) | มีบรรทัดลิงก์ · เลื่อนนัดมีข้อความใหม่ (เดิม/ใหม่) | `WithLine_appends_and_blank_keeps_message` · `Rescheduled_text_has_old_and_new_time` · rules `WithBookingLinkAsync`/`WithOrderLinkAsync` + ผู้เรียก |

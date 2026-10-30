@@ -11,7 +11,7 @@ namespace Accounting.Services.Implementations;
 /// รอบ 209 · P1 (R-209-A1/B3/E1/C3 + ฑ) — ฝั่งอ่านของลูกค้าหน้าร้าน · ตัวตัดสินอยู่ที่ <see cref="SiteOrderPublic"/> ·
 /// ยอด/งวดของออเดอร์มาจาก <see cref="ICmsCommerceService.GetOrderAsync"/> ตัวเดียวกับหลังบ้าน (ไม่คิดซ้ำ) แล้วเลือกฟิลด์ผ่าน <see cref="SiteOrderPublic.ToPublic"/>
 /// </summary>
-public class StorefrontCustomerService : IStorefrontCustomerService
+public partial class StorefrontCustomerService : IStorefrontCustomerService
 {
     private readonly AccountingDbContext _db;
     private readonly ICmsCommerceService _commerce;

@@ -1,5 +1,6 @@
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,9 +13,12 @@ public class CmsShopNotifier : ICmsShopNotifier
     private readonly AccountingDbContext _db;
     private readonly IBookingNotifier _channel;
     private readonly ILogger<CmsShopNotifier> _logger;
+    /// <summary>รอบ 210: โดเมนของระบบ (<c>App:BaseUrl</c>) — ฐานลิงก์หน้าร้านเมื่อร้านไม่มีโดเมนของตัวเอง · null = ไม่มี (ข้อความใช้เลขที่ + หน้าตรวจสอบแทน)</summary>
+    private readonly IConfiguration? _config;
 
-    public CmsShopNotifier(AccountingDbContext db, IBookingNotifier channel, ILogger<CmsShopNotifier> logger)
+    public CmsShopNotifier(AccountingDbContext db, IBookingNotifier channel, ILogger<CmsShopNotifier> logger, IConfiguration? config = null)
     {
+        _config = config;
         _db = db;
         _channel = channel;
         _logger = logger;
@@ -69,6 +73,30 @@ public class CmsShopNotifier : ICmsShopNotifier
         {
             _logger.LogError(ex, "แจ้งลูกค้า ({Subject}) ล้ม (company {CompanyId})", message.Subject, companyId);
             return "เกิดข้อผิดพลาดภายในระหว่างส่ง (ดูบันทึกระบบ)";
+        }
+    }
+
+    public async Task<string?> StorefrontBaseUrlAsync(Guid companyId, Guid siteId, CancellationToken ct = default)
+    {
+        try
+        {
+            var siteKey = await _db.Sites.AsNoTracking().Where(s => s.Id == siteId && s.CompanyId == companyId)
+                .Select(s => s.Subdomain != "" ? s.Subdomain : s.Slug).FirstOrDefaultAsync(ct);
+            if (siteKey == null) return null;
+            // โดเมนของร้านที่อนุมัติ + ยืนยันแล้ว (ชนิด custom · ตัวหลักก่อน) — subdomain ของระบบยังไม่มี wildcard cert จึงไม่ใช้
+            var domains = await _db.SiteDomains.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.SiteId == siteId && d.IsActive && !d.IsDeleted
+                    && d.DomainType == DomainType.CustomDomain
+                    && d.ApprovalStatus == DomainApprovalStatus.Approved && d.VerificationStatus == DomainVerificationStatus.Verified)
+                .OrderByDescending(d => d.IsPrimary).ThenBy(d => d.CreatedAt)
+                .Select(d => d.Domain).ToListAsync(ct);
+            return CmsStorefrontLink.BaseUrl(domains, _config?["App:BaseUrl"], siteKey);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // ไม่มีฐานลิงก์ ⇒ ข้อความยังมีเลขที่ + หน้าตรวจสอบ (ไม่เงียบ) · ล้มดังที่บันทึกระบบ
+            _logger.LogError(ex, "ประกอบลิงก์หน้าร้านไม่สำเร็จ (company {CompanyId} site {SiteId})", companyId, siteId);
+            return null;
         }
     }
 

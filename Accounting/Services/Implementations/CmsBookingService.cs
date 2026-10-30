@@ -117,6 +117,12 @@ public partial class CmsBookingService : ICmsBookingService
         svc.WaitlistEnabled = r.WaitlistEnabled;
         svc.ResourceMode = r.ResourceMode;
         svc.UseSiteDefaults = r.UseSiteDefaults;
+        // รอบ 210: null = ไม่แตะค่าเดิม (ผู้เรียก API เดิมไม่รีเซ็ตเงียบ) · ค่าไม่รู้จัก = ข้อความไทย
+        if (r.MemberAccess is BookingMemberAccess memberAccess)
+        {
+            if (!Enum.IsDefined(memberAccess)) errs.Add("ค่าตั้ง \"ต้องเป็นสมาชิกก่อนจอง\" ไม่ถูกต้อง");
+            else svc.MemberOnly = BookingAccessRule.ToOverride(memberAccess);
+        }
 
         errs.AddRange(BookingSlotEngine.ValidateRules(BookingSlotEngine.RulesOf(svc)));
         if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), "CMS-BOOKING-SETTINGS");
@@ -302,6 +308,9 @@ public partial class CmsBookingService : ICmsBookingService
             CapacityGroup = s.CapacityGroup,
             EnforceSlotCapacity = s.EnforceSlotCapacity, OverlapLimit = s.OverlapLimit, WaitlistEnabled = s.WaitlistEnabled,
             ResourceMode = s.ResourceMode, UseSiteDefaults = s.UseSiteDefaults,
+            // รอบ 210: ค่าที่ตั้ง (ฟอร์ม) + ค่าที่มีผลจริง (หน้าจอง) — ตัวตัดสินเดียว BookingAccessRule
+            MemberAccess = BookingAccessRule.FromOverride(s.MemberOnly),
+            MemberOnly = BookingAccessRule.RequiresMember(site.Row?.RequireMemberToBook ?? false, s.MemberOnly),
             // รอบ 207: โหมดที่มีผลจริง (ไซต์ปิดจัดสรรผู้ให้บริการ ⇒ None) — หน้าจองของลูกค้าอ่านช่องนี้ · ResourceMode = ค่าที่ตั้ง (ฟอร์มแก้ไข)
             EffectiveResourceMode = rules.ResourceMode,
             FormFields = BookingFormFields.Parse(site.Row?.FormFieldsJson),
@@ -392,6 +401,9 @@ public partial class CmsBookingService : ICmsBookingService
                 ctx.Row?.GuaranteedInvoiceTiming ?? BookingInvoiceTiming.TaxInvoiceAtBooking,
                 ctx.Row?.CompletionDocument ?? BookingCompletionDocument.None,
                 (await Accounting.Helpers.CompanyVatStatus.ProfileAsync(_db, companyId)).Registered).ToList(),
+            // รอบ 210 — echo กลับ + ตัวเลือกต่อบริการจากเซิร์ฟเวอร์
+            RequireMemberToBook = ctx.Row?.RequireMemberToBook ?? false,
+            MemberAccessOptions = BookingAccessRule.Options(ctx.Row?.RequireMemberToBook ?? false).ToList(),
         };
     }
 
@@ -451,6 +463,7 @@ public partial class CmsBookingService : ICmsBookingService
         if (request.ProviderRecommendStrategy is BookingRecommendStrategy strategy) row.ProviderRecommendStrategy = strategy;
         if (request.FormFields != null) row.FormFieldsJson = BookingFormFields.Serialize(request.FormFields);
         if (request.CompletionDocument is BookingCompletionDocument completion) row.CompletionDocument = completion;
+        if (request.RequireMemberToBook is bool memberOnly) row.RequireMemberToBook = memberOnly;   // รอบ 210 — null = คงค่าเดิม
         await _db.SaveChangesAsync();
         return await GetSiteSettingsAsync(companyId, siteId);
     }
@@ -773,6 +786,8 @@ public partial class CmsBookingService : ICmsBookingService
         var names = ctx.Resources.ToDictionary(r => r.Id, r => r.Name);
         // รอบ 209 P4: บริการที่ใช้ตารางคลาส ⇒ ประกาศชื่อครูของรอบ (ครูถูกตั้งบนรอบ ไม่ใช่สุ่มตอนจอง) — ชื่อครูที่ไม่อยู่ในรายชื่อของ engine โหลดจากฐาน
         var classNames = ctx.ClassSessions == null ? new Dictionary<Guid, string>() : await ClassInstructorNamesAsync(companyId, ctx.ClassSessions);
+        // รอบ 210: ประกาศว่าต้องเป็นสมาชิกก่อนจองไหม (หน้าจองแสดงปุ่มเข้าสู่ระบบ — ด่านจริงตอนสร้างการจอง)
+        var memberOnly = await MemberOnlyAsync(companyId, siteId, svc);
         return BookingSlotEngine.Available(ctx.Rules, date, ctx.Rows, ctx.Occupied, BookingSlotEngine.BangkokNow(DateTime.UtcNow),
                 Math.Max(1, request.GuestCount), units, ctx.Resources, requested, includeFull: svc.WaitlistEnabled)
             .Select(o =>
@@ -790,6 +805,7 @@ public partial class CmsBookingService : ICmsBookingService
                     ResourceName = cls?.EffectiveInstructorId is Guid ci ? classNames.GetValueOrDefault(ci)
                         : ctx.Rules.ResourceMode != BookingResourceMode.Auto && o.ResourceId is Guid rid ? names.GetValueOrDefault(rid) : null,
                     ClassSessionId = cls?.Id,
+                    MemberOnly = memberOnly,
                 };
             })
             .ToList();
@@ -802,12 +818,24 @@ public partial class CmsBookingService : ICmsBookingService
     /// เต็ม + บริการเปิดคิวสำรอง ⇒ บันทึกเป็นคิวสำรอง (<see cref="BookingStatus.Waitlisted"/> · ไม่ออกเอกสาร ERP) · ตัดสิน + ออกเลข + บันทึก อยู่ใต้
     /// <c>pg_advisory_xact_lock</c> ของไซต์ (ผู้ให้บริการใช้ร่วมข้ามบริการ ⇒ ล็อกระดับไซต์) ⇒ สองคนกดรอบสุดท้ายพร้อมกันได้คนเดียว ·
     /// ขั้น ERP รันหลัง commit (เส้นเอกสารเปิดธุรกรรมของตัวเอง)</summary>
-    public async Task<BookingResponse> CreateBookingAsync(Guid companyId, Guid siteId, CreateBookingRequest request, string? userId)
+    public async Task<BookingResponse> CreateBookingAsync(Guid companyId, Guid siteId, CreateBookingRequest request, string? userId,
+        bool staffOnBehalf = false)
     {
         var svc = await _db.SiteBookingServices.AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == request.BookingServiceId && s.SiteId == siteId && s.CompanyId == companyId
                 && s.IsActive && !s.IsDeleted)
             ?? throw new KeyNotFoundException("Booking service not found or inactive.");
+
+        // รอบ 210 (คำตัดสินข้อ 169): บริการ/เว็บที่ต้องเป็นสมาชิกก่อนจอง — ด่านอยู่ก่อนตัดสินรอบ (Decide) และก่อนบันทึกใด ๆ ·
+        // สมาชิก = ลูกค้าจากโทเคนหน้าร้านของเว็บนี้ (controller แปลงแล้ว — body นิรนามตั้ง CustomerId เองไม่ได้) ที่ยังใช้งาน ·
+        // พนักงานที่มีสิทธิ์จัดการการจอง (staffOnBehalf) จองแทนได้ · ค่าเริ่มต้นไม่บังคับ = เส้นเดิม
+        if (await MemberOnlyAsync(companyId, siteId, svc))
+        {
+            var activeMember = request.CustomerId is Guid memberId
+                && await _db.SiteCustomers.AsNoTracking().AnyAsync(c => c.Id == memberId && c.CompanyId == companyId && c.SiteId == siteId && c.IsActive);
+            if (BookingAccessRule.Problem(true, activeMember, staffOnBehalf) is string memberProblem)
+                throw new BusinessRuleException(memberProblem, BookingAccessRule.RuleCode, BookingAccessRule.MemberRequiredStatus);
+        }
 
         // รอบ 207 (คำขอเจ้าของข้อ 7): ช่องบังคับของฟอร์มจอง — ด่านจริงอยู่ที่นี่ (หน้าเว็บแสดงตามค่าเดียวกัน) · ตัวตัดสินเดียว BookingFormFields ·
         // พนักงานของบริษัทสร้างเอง (walk-in) และลูกค้าที่ล็อกอิน (CustomerId — ข้อมูลอยู่ที่บัญชีลูกค้า) ไม่ผ่านด่านนี้
@@ -943,6 +971,16 @@ public partial class CmsBookingService : ICmsBookingService
         // รอบ 207: ลูกค้าหน้าเว็บ (ไม่ใช่พนักงานของบริษัท) ได้มุมมองลูกค้า — ไม่มีหมายเหตุภายใน/เอกสาร/ประวัติรับเงิน (เดิมคืนทั้งก้อน)
         if (!await IsCompanyStaffAsync(companyId, userId)) created = ForCustomer(created);
         return created;
+    }
+
+    /// <summary>รอบ 210: บริการนี้ต้องเป็นสมาชิกก่อนจองไหม (ค่าบริการชนะ · null = ค่าของเว็บ) — ตัวตัดสินเดียว <see cref="BookingAccessRule.RequiresMember"/></summary>
+    private async Task<bool> MemberOnlyAsync(Guid companyId, Guid siteId, SiteBookingService svc)
+    {
+        if (svc.MemberOnly is bool own) return BookingAccessRule.RequiresMember(false, own);
+        var site = await _db.SiteBookingSettings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted)
+            .Select(x => (bool?)x.RequireMemberToBook).FirstOrDefaultAsync();
+        return BookingAccessRule.RequiresMember(site ?? false, null);
     }
 
     /// <summary>รอบ 207: ผู้เรียกเป็นผู้ใช้ของบริษัทนี้ไหม (พนักงานสร้างการจองเอง) — ไม่ใช่ = ลูกค้าหน้าเว็บ</summary>

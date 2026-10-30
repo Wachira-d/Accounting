@@ -14,4 +14,8 @@ public interface ICmsShopNotifier
 
     /// <summary>แจ้งลูกค้า — ช่องทางจาก <paramref name="contact"/> (อีเมล/LINE ของรายการ)</summary>
     Task<string?> NotifyCustomerAsync(Guid companyId, BookingContact contact, CmsNotification message, CancellationToken ct = default);
+
+    /// <summary>รอบ 210: ฐาน URL หน้าร้านของเว็บ (<see cref="CmsStorefrontLink.BaseUrl"/>) สำหรับลิงก์จัดการการจอง/ติดตามคำสั่งซื้อในข้อความถึงลูกค้า ·
+    /// null = ประกอบไม่ได้ (ผู้เรียกใส่เลขที่ + หน้า "ตรวจสอบการจอง / คำสั่งซื้อ" แทน — ไม่เงียบ) · ไม่โยน</summary>
+    Task<string?> StorefrontBaseUrlAsync(Guid companyId, Guid siteId, CancellationToken ct = default);
 }
