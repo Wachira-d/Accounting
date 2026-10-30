@@ -271,21 +271,24 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sub.CompanyId);
             if (buyer == null) return null;
 
+            // รอบ 219 เฟส 0 (G-0): ดาวน์เกรด/เปลี่ยนรอบที่รอมีผลวันครบรอบ ⇒ รอบถัดไปคิดตามแพ็กเกจใหม่ (ไม่ใช่แพ็กเกจเดิม)
+            var renewPlan = sub.ScheduledPlan ?? sub.Plan;
+            var renewCycle = sub.ScheduledPlan != null ? (sub.ScheduledBillingCycle ?? sub.BillingCycle) : sub.BillingCycle;
             var template = await _db.PlanTemplates.AsNoTracking()
-                .FirstOrDefaultAsync(t => t.Plan == sub.Plan && t.IsActive);
-            var amount = PriceFor(template, sub.BillingCycle, sub.PricePerCycle);
+                .FirstOrDefaultAsync(t => t.Plan == renewPlan && t.IsActive);
+            var amount = PriceFor(template, renewCycle, sub.PricePerCycle);
             if (amount <= 0) return null; // ฟรี/ไม่มีราคา → ไม่ต้องออกใบแจ้งหนี้
 
             var settings = await _db.Set<SiteSettings>().AsNoTracking().OrderBy(s => s.CreatedAt).FirstOrDefaultAsync();
             var now = DateTime.UtcNow;
-            var months = MonthsFor(sub.BillingCycle);
+            var months = MonthsFor(renewCycle);
 
             // ─── ทางหลัก: ออกใบแจ้งหนี้จริงใน tenant ของผู้ให้บริการ ───
             // ได้ลูกหนี้ใน GL ของเราเอง (ตามเก็บได้จริง) + เลขในชุดเดียวกับเอกสารอื่น
             if (_issuer != null && await _issuer.IsEnabledAsync())
             {
                 var invoiced = await _issuer.IssueRenewalInvoiceAsync(sub.CompanyId,
-                    $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {sub.Plan} ({months} เดือน) "
+                    $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {renewPlan} ({months} เดือน) "
                         + $"— รอบถัดไปถึง {sub.EndDate.AddMonths(months):dd/MM/yyyy}",
                     amount, now, sub.EndDate, $"RENEW-{sub.Id.ToString()[..8].ToUpper()}");
                 if (invoiced != null)
@@ -303,7 +306,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
             var number = await NextInvoiceNumberAsync(now);
 
-            var html = BuildInvoiceHtml(buyer, settings, number, now, sub.EndDate, amount, sub.Plan, sub.BillingCycle, months);
+            var html = BuildInvoiceHtml(buyer, settings, number, now, sub.EndDate, amount, renewPlan, renewCycle, months);
             byte[] pdfBytes;
             try { pdfBytes = _pdf.ConvertHtmlToPdfBytes(html); }
             catch (Exception ex) { _logger.LogWarning(ex, "แปลง PDF ใบแจ้งหนี้ต่ออายุไม่สำเร็จ sub {Sub}", subscriptionId); return null; }
@@ -376,13 +379,15 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         // regenerate
         var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sub.CompanyId);
         if (buyer == null) return null;
-        var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == sub.Plan && t.IsActive);
-        var amount = PriceFor(template, sub.BillingCycle, sub.PricePerCycle);
+        var renewPlan = sub.ScheduledPlan ?? sub.Plan;   // รอบ 219 เฟส 0: ให้ตรงกับตอนออกใบ (ดาวน์เกรดที่รอมีผล)
+        var renewCycle = sub.ScheduledPlan != null ? (sub.ScheduledBillingCycle ?? sub.BillingCycle) : sub.BillingCycle;
+        var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == renewPlan && t.IsActive);
+        var amount = PriceFor(template, renewCycle, sub.PricePerCycle);
         var settings = await _db.Set<SiteSettings>().AsNoTracking().OrderBy(s => s.CreatedAt).FirstOrDefaultAsync();
         var issuedAt = sub.RenewalInvoiceIssuedAt ?? DateTime.UtcNow;
         var forEnd = sub.RenewalInvoiceForEndDate ?? sub.EndDate;
         var html = BuildInvoiceHtml(buyer, settings, sub.RenewalInvoiceNumber!, issuedAt, forEnd, amount,
-            sub.Plan, sub.BillingCycle, MonthsFor(sub.BillingCycle));
+            renewPlan, renewCycle, MonthsFor(renewCycle));
         try { return (_pdf.ConvertHtmlToPdfBytes(html), $"{sub.RenewalInvoiceNumber}.pdf"); }
         catch { return null; }
     }
@@ -393,18 +398,9 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         BillingCycle.SemiAnnual => 6, BillingCycle.Annual => 12, _ => 1
     };
 
+    /// <remarks>รอบ 219 เฟส 0: ราคาต่อรอบมาจาก <see cref="Accounting.Helpers.PlatformPlanPricing.CyclePrice"/> ตัวเดียว (เดิม switch สำเนาที่ 5)</remarks>
     private static decimal PriceFor(PlanTemplate? t, BillingCycle c, decimal fallback)
-    {
-        if (t == null) return fallback;
-        return c switch
-        {
-            BillingCycle.Monthly => t.MonthlyPrice,
-            BillingCycle.Quarterly => t.QuarterlyPrice,
-            BillingCycle.SemiAnnual => t.SemiAnnualPrice,
-            BillingCycle.Annual => t.AnnualPrice,
-            _ => t.MonthlyPrice
-        };
-    }
+        => t == null ? fallback : Accounting.Helpers.PlatformPlanPricing.CyclePrice(t, c);
 
     private async Task<string> NextInvoiceNumberAsync(DateTime now)
     {

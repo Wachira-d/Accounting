@@ -300,4 +300,7 @@ public class SiteSettings : BaseEntity
     public string? PlatformRevenueAccountCode { get; set; }
     /// <summary>ผังเงินสด/ธนาคารที่รับเงินค่าบริการ (ว่าง = ให้ระบบเลือกตามค่าเริ่มต้น)</summary>
     public string? PlatformCashAccountCode { get; set; }
+    /// <summary>รอบ 219 เฟส 0 (G-1/G-13): วิธีโอนเงินค่าบริการให้ NextAcc (ชื่อบัญชี · ธนาคาร · เลขบัญชี · พร้อมเพย์) — แสดงบนหน้า
+    /// "ส่วนเสริม"/"แพ็กเกจ" ระหว่างที่ยังไม่มีช่องชำระออนไลน์ของแพลตฟอร์ม (เฟส 1) · ว่าง = หน้าเว็บบอกให้ติดต่อผู้ดูแลระบบ</summary>
+    public string? PlatformBankTransferInstructions { get; set; }
 }

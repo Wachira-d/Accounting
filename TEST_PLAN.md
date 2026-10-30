@@ -1,3 +1,21 @@
+## PB219 — อุดรั่วเงินค่าบริการ NextAcc เฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` · `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| PB219-01 | ชนิดที่เป็นเงินของแพลตฟอร์ม | SubscriptionPayment · AddOnPurchase เท่านั้น | `PlatformBillingPhase0Tests`.Platform_revenue_kinds_are_exactly_subscription_and_addon |
+| PB219-02 | G-1: ร้านเริ่ม intent ค่าบริการใต้บริษัทตัวเอง · ไม่ตั้งบริษัทผู้ให้บริการ · ไม่รู้ผู้จ่าย / ทิศตรงข้าม ออเดอร์-ใบแจ้งหนี้ของร้าน | ปฏิเสธ (ข้อความไทย) / ไม่ถูกแตะ | `PlatformBillingPhase0Tests`.Start_tenant_side_platform_intent_is_refused_store_intents_untouched |
+| PB219-03 | G-2: เจ้าของร้านยืนยันมือ/ส่งต่อ/คืนเงินค่าบริการ · SystemAdmin ใต้บริษัทร้าน · พนักงานบริษัทผู้ให้บริการ / SystemAdmin ใน tenant ผู้ให้บริการ · รายการของร้าน | 403 / ผ่าน · รายการของร้านผ่านเหมือนเดิม | `PlatformBillingPhase0Tests`.Staff_actions_on_platform_intents_only_for_system_admin_in_platform_tenant + required_call_site_check (ConfirmManually/Redispatch/Refund/VerifyRefund/ResolveRefundManually/RecordLegacyRefund) |
+| PB219-04 | part B (a): เงินเข้าแต่เกิดใต้บริษัทร้าน · ไม่รู้ผู้จ่าย · โหมดทดสอบ | ไม่เรียก handler · ประวัติ ⚠️ + แจ้ง · ออเดอร์ร้านโหมดทดสอบยังส่งต่อ | `PlatformBillingPhase0Tests`.Entitlement_blocked_for_tenant_routed_unknown_payer_and_test_mode |
+| PB219-05 | G-3: handler ค่าแพ็กเกจ — intent ไม่รู้ผู้จ่าย / ผู้จ่ายเป็นบริษัทอื่น | ไม่อนุมัติ · รายการยัง Pending | Db `PlatformBillingPhase0DbTests`.Subscription_handler_refuses_unknown_or_foreign_payer + `Source_must_belong_to_payer` |
+| PB219-06 | G-4: แจ้งชำระ ฿1 ขอรายปี · ขอ 120 เดือน · ไม่แจ้งยอด | 409 `PLATFORM-PRICE-MISMATCH` · 400 · ยอดของเซิร์ฟเวอร์ | Db `Submit_payment_with_wrong_amount_is_409_and_server_amount_is_stored` + `Claimed_amount_must_match_server_price` |
+| PB219-07 | G-0: ทดลองใช้กด "อัปเกรด" · กดซ้ำ | ยังเป็นทดลองใช้ · รายการชำระ Pending ยอดจากเซิร์ฟเวอร์ · กดซ้ำได้รายการเดิม | Db `Convert_trial_creates_pending_payment_and_does_not_activate_paid_plan` |
+| PB219-08 | ราคา/รอบ/ส่วนลด/อัป-ดาวน์เกรด/รายงานเปิดเองไม่จ่าย | ตัวตั้งเดียว `PlatformPlanPricing` | `Cycle_price_and_months` · `Amount_due_applies_discount_and_rounds_away_from_zero` · `Classify_and_defer_downgrade_to_cycle_end` · `Unpaid_self_activation_report_rule` |
+| PB219-09 | G-11: ส่วนเสริมค้างชำระ 1 วัน / 8 วัน · แนบสลิปแล้ว 30 วัน · แถวเดิมก่อนเฟส 0 | ใช้ได้ / ระงับ / ใช้ได้ / ใช้ได้ (พฤติกรรมเดิม) | `Unpaid_addon_usable_within_grace_then_blocked` + Db `Unpaid_addon_is_disabled_after_grace_but_legacy_and_pending_review_still_usable` |
+| PB219-10 | G-5: งวดที่จ่ายล่วงหน้า · งวดถัดไป · ยังไม่จ่าย · แถวเดิม | ฿0 / เต็ม / ฿0 ไม่ออกบิล / เต็มเหมือนเดิม | `Flat_monthly_not_double_charged_for_upfront_period` + Db `Flat_monthly_skips_period_paid_upfront_but_legacy_rows_still_charged` |
+| PB219-11 | part B (c): คีย์เข้ารหัส env/config · production ไม่มีคีย์/dev key · ค่าที่เข้ารหัสด้วย dev key เดิม | env ชนะ · boot ไม่ขึ้น · IsUsable=false (กรอกใหม่) | `Encryption_key_env_wins_and_production_refuses_missing_or_dev_key` · `Secret_protector_round_trips_with_resolved_key_and_old_dev_key_values_need_reentry` |
+| PB219-12 (มือ) | ส่วนเสริม: ไม่มีปุ่ม "ชำระออนไลน์" · โมดัลแนบสลิปแสดงวิธีโอนของ NextAcc (แอดมินตั้งที่ ตั้งค่าเว็บไซต์ → ข้อมูลผู้ขาย) · แพ็กเกจ: อัปเกรด → โมดัลชำระ + แนบสลิป · ประวัติ Pending มีปุ่ม "แนบสลิป" | ข้อความ escape · ยอดจากเซิร์ฟเวอร์ | ตรวจมือ |
+| PB219-13 (มือ) | `/admin/revenue.html` 3 ตารางรายงานรอยรั่ว (เปิดเองไม่จ่าย · prepaid ปิดรอบไม่ออกใบ · intent ค่าบริการใต้บริษัทร้าน) | อ่านอย่างเดียว ไม่มีปุ่มแก้ข้อมูล | ตรวจมือ |
+
 ## LEGAL214 — นโยบายความเป็นส่วนตัว/ข้อกำหนด: แพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS (รอบ 214 · คำตัดสินข้อ 173)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -259,7 +277,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **702 ไฟล์ · 7,230 `[Fact]` + 1,145 `[Theory]` (5,364 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **704 ไฟล์ · 7,246 `[Fact]` + 1,148 `[Theory]` (5,379 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Subscription;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -352,81 +353,107 @@ public class SubscriptionService : ISubscriptionService
 
     // ==================== Subscription Management ====================
 
-    public async Task<SubscriptionResponse> ConvertTrialAsync(Guid companyId, ConvertTrialRequest request, string performedBy)
+    /// <summary>รอบ 219 เฟส 0 (G-0 · คำตัดสินข้อ 178): <b>จ่ายก่อนเปิด</b> — เดิมตั้ง Active + EndDate + ฟีเจอร์ทันทีโดยไม่มีขั้นชำระ
+    /// (ปุ่ม "อัปเกรด" ให้แพ็กเกจจ่ายเงินฟรีหนึ่งรอบเต็ม) · ตอนนี้: ทดลองใช้/หมดอายุ ⇒ สร้างรายการชำระยอดจากเซิร์ฟเวอร์ (ทดลองใช้ต่อจนกว่าจะชำระ)
+    /// · แพ็กเกจที่ใช้งานอยู่ ⇒ เดินเส้น <see cref="ChangeSubscriptionAsync"/> (อัปเกรด/ดาวน์เกรด) · แพ็กเกจเปิดเมื่อ <see cref="ReviewPaymentAsync"/> อนุมัติ</summary>
+    public async Task<PlanPurchaseResponse> ConvertTrialAsync(Guid companyId, ConvertTrialRequest request, string performedBy)
     {
         var sub = await _db.Subscriptions
             .Include(s => s.TrialConfig)
             .FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
 
-        if (sub.Status != SubscriptionStatus.Trial && sub.Status != SubscriptionStatus.Expired)
-            throw new InvalidOperationException("ไม่สามารถแปลง subscription ที่ไม่ใช่ trial ได้");
+        if (sub.Status == SubscriptionStatus.Active && !sub.IsPermanentFree)
+            return await ChangeSubscriptionAsync(companyId,
+                new ChangeSubscriptionRequest(request.Plan, request.BillingCycle), performedBy);
 
-        // Get plan template
         var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.Plan && p.IsActive)
             ?? throw new KeyNotFoundException($"ไม่พบ plan template สำหรับ {request.Plan}");
 
-        // Calculate price
-        var price = request.BillingCycle switch
+        // ส่วนลดเมื่อแปลงจากทดลองใช้ (โค้ดของบริษัทนี้ · ยังไม่หมดอายุ) — คิดใน PlatformPlanPricing ตัวเดียว
+        decimal? discount = null;
+        if (!string.IsNullOrEmpty(request.PromoCode) && sub.TrialConfig != null
+            && sub.TrialConfig.ConversionPromoCode == request.PromoCode
+            && sub.TrialConfig.DiscountPercentOnConversion.HasValue
+            && (sub.TrialConfig.DiscountValidUntil == null || sub.TrialConfig.DiscountValidUntil > DateTime.UtcNow))
+            discount = sub.TrialConfig.DiscountPercentOnConversion.Value;
+
+        var payment = await RequestPlanPaymentAsync(sub, template, request.BillingCycle, discount, performedBy,
+            "PlanPurchaseRequested", "ขอเปลี่ยนเป็นแพ็กเกจจ่ายเงิน");
+        return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), payment,
+            $"สร้างรายการชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาทแล้ว — แพ็กเกจ {template.Name} จะเปิดใช้เมื่อชำระเงินและผู้ดูแลระบบยืนยัน "
+            + "(ระหว่างนี้ใช้งานตามสิทธิ์เดิมได้ตามปกติ)");
+    }
+
+    /// <summary>รอบ 219 เฟส 0: สร้าง (หรือใช้ซ้ำ) รายการชำระค่าแพ็กเกจที่<b>ยอดมาจากเซิร์ฟเวอร์</b> (<see cref="PlatformPlanPricing.AmountDue"/>) —
+    /// ทางเดียวของผู้เช่าในการขอแพ็กเกจจ่ายเงิน · ใช้ซ้ำรายการรอชำระที่แพ็กเกจ/รอบ/ยอดเดียวกัน (กดซ้ำไม่เกิดหลายรายการ)</summary>
+    private async Task<SubscriptionPaymentResponse> RequestPlanPaymentAsync(Subscription sub, PlanTemplate template,
+        BillingCycle cycle, decimal? discountPercent, string performedBy, string historyAction, string note)
+    {
+        var months = PlatformPlanPricing.MonthsOf(cycle);
+        if (months <= 0) throw new BusinessRuleException("รอบบิลไม่ถูกต้อง");
+        var amount = PlatformPlanPricing.AmountDue(template, cycle, discountPercent);
+        if (amount <= 0m)
+            throw new BusinessRuleException(
+                "แพ็กเกจนี้ไม่มีค่าบริการตามตารางราคา — ติดต่อผู้ดูแลระบบ NextAcc เพื่อเปลี่ยนแพ็กเกจ");
+
+        var existing = await _db.SubscriptionPayments
+            .FirstOrDefaultAsync(p => p.SubscriptionId == sub.Id && p.Status == SubscriptionPaymentStatus.Pending
+                && p.RequestedPlan == template.Plan && p.RequestedBillingCycle == cycle && p.Amount == amount);
+        if (existing != null) return MapPaymentToResponse(existing);
+
+        var payment = new SubscriptionPayment
         {
-            BillingCycle.Monthly => template.MonthlyPrice,
-            BillingCycle.Quarterly => template.QuarterlyPrice,
-            BillingCycle.SemiAnnual => template.SemiAnnualPrice,
-            BillingCycle.Annual => template.AnnualPrice,
-            _ => template.MonthlyPrice
+            SubscriptionId = sub.Id,
+            PaymentNumber = await NextPaymentNumberAsync(sub),
+            Amount = amount,
+            PaymentDate = DateTime.UtcNow,
+            PaymentMethod = PaymentMethod.BankTransfer,
+            RequestedPlan = template.Plan,
+            RequestedBillingCycle = cycle,
+            RequestedPeriodMonths = months,
+            CustomerNotes = note,
+            Status = SubscriptionPaymentStatus.Pending,
+            CreatedBy = performedBy
         };
-
-        // Apply promo code discount
-        if (!string.IsNullOrEmpty(request.PromoCode) && sub.TrialConfig != null)
+        _db.SubscriptionPayments.Add(payment);
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
-            if (sub.TrialConfig.ConversionPromoCode == request.PromoCode
-                && sub.TrialConfig.DiscountPercentOnConversion.HasValue
-                && (sub.TrialConfig.DiscountValidUntil == null || sub.TrialConfig.DiscountValidUntil > DateTime.UtcNow))
-            {
-                price *= (1 - sub.TrialConfig.DiscountPercentOnConversion.Value / 100);
-            }
-        }
+            SubscriptionId = sub.Id,
+            Action = historyAction,
+            FromPlan = sub.Plan,
+            ToPlan = template.Plan,
+            Notes = $"{note}: {payment.PaymentNumber} {template.Plan} ({cycle}) {amount:N2} THB — รอชำระ (ยังไม่เปิดแพ็กเกจ)",
+            PerformedBy = performedBy
+        });
+        await _db.SaveChangesAsync();
+        return MapPaymentToResponse(payment);
+    }
 
-        var oldPlan = sub.Plan;
-        var now = DateTime.UtcNow;
-        var months = (int)request.BillingCycle;
+    /// <summary>เลขรายการชำระค่าแพ็กเกจ (SP-{บริษัท 8 ตัว}-{ลำดับ}) — ตัวเดียวของ Submit/คำขอแพ็กเกจ/บันทึกโดยแอดมิน</summary>
+    private async Task<string> NextPaymentNumberAsync(Subscription sub)
+    {
+        var count = await _db.SubscriptionPayments.CountAsync(p => p.SubscriptionId == sub.Id);
+        return $"SP-{sub.CompanyId.ToString()[..8].ToUpper()}-{count + 1:D4}";
+    }
 
-        sub.Plan = request.Plan;
-        sub.Status = SubscriptionStatus.Active;
-        sub.BillingCycle = request.BillingCycle;
-        sub.PricePerCycle = price;
-        sub.StartDate = now;
-        sub.EndDate = now.AddMonths(months);
-        sub.NextBillingDate = now.AddMonths(months);
+    /// <summary>รอบ 219 เฟส 0: คัดลอกสิทธิ์/โควตาของแพ็กเกจลง subscription — ตัวเดียวของการอนุมัติชำระ และดาวน์เกรดที่ถึงวันมีผล</summary>
+    private static void ApplyTemplate(Subscription sub, PlanTemplate template, BillingCycle cycle)
+    {
+        sub.Plan = template.Plan;
+        sub.BillingCycle = cycle;
+        sub.PricePerCycle = PlatformPlanPricing.CyclePrice(template, cycle);
         sub.EnabledFeatures = template.EnabledFeatures;
         sub.MaxUsers = template.MaxUsers;
         sub.MaxCompanies = template.MaxCompanies;
         sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
         sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
         sub.MaxStorageBytes = template.MaxStorageBytes;
-        // Bring per-engine OCR quotas across when subscriber upgrades to paid.
         sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth;
         sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth;
         sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
         sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
-
-        if (sub.TrialConfig != null)
-            sub.TrialConfig.TrialStatus = TrialStatus.Converted;
-
-        _db.SubscriptionHistories.Add(new SubscriptionHistory
-        {
-            SubscriptionId = sub.Id,
-            Action = "TrialConverted",
-            FromPlan = oldPlan,
-            ToPlan = request.Plan,
-            FromStatus = SubscriptionStatus.Trial,
-            ToStatus = SubscriptionStatus.Active,
-            Notes = $"Converted to {request.Plan} ({request.BillingCycle}) at {price:N2} THB",
-            PerformedBy = performedBy
-        });
-
-        await _db.SaveChangesAsync();
-        return await GetSubscriptionAsync(companyId);
+        sub.IsPermanentFree = template.IsPermanentFree;
     }
 
     public async Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId)
@@ -495,7 +522,10 @@ public class SubscriptionService : ISubscriptionService
             await GetUsageCurrentAsync(sub),
             sub.IsPermanentFree,
             addOnCodes,
-            planName);
+            planName,
+            ScheduledPlan: sub.ScheduledPlan,
+            ScheduledBillingCycle: sub.ScheduledBillingCycle,
+            ScheduledPlanEffectiveAt: sub.ScheduledPlanEffectiveAt);
     }
 
     /// <summary>ผลของ overlay แพ็กเกจ (บริษัท ↔ User License) + mask ที่เจ้าของบริษัทปิดเอง — ตัวเดียวของ
@@ -672,7 +702,10 @@ public class SubscriptionService : ISubscriptionService
         return docBytes + cmsBytes;
     }
 
-    public async Task<SubscriptionResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy)
+    /// <summary>รอบ 219 เฟส 0 (G-0 · คำตัดสินข้อ 178): เดิมเปลี่ยนแพ็กเกจ/ราคา/สิทธิ์ทันทีโดยไม่คิดเงิน ⇒ อัปเกรดฟรีจนถึงรอบต่ออายุ ·
+    /// ตอนนี้ <b>อัปเกรด</b> = รายการชำระยอดจากเซิร์ฟเวอร์ (เปิดเมื่อเงินเข้า) · <b>ดาวน์เกรด/เปลี่ยนรอบ</b> = ตั้งไว้มีผลวันครบรอบ
+    /// (<c>Scheduled*</c> → <see cref="ProcessExpiredSubscriptionsAsync"/>) · แอดมินแพลตฟอร์มเปลี่ยนทันทีได้ที่ <c>AdminController.AdminChangePlan</c> (audit)</summary>
+    public async Task<PlanPurchaseResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy)
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
@@ -682,49 +715,38 @@ public class SubscriptionService : ISubscriptionService
 
         var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.NewPlan && p.IsActive)
             ?? throw new KeyNotFoundException($"ไม่พบ plan template สำหรับ {request.NewPlan}");
-
-        var oldPlan = sub.Plan;
+        var current = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.Plan && p.IsActive);
         var cycle = request.NewBillingCycle ?? sub.BillingCycle;
 
-        var price = cycle switch
+        var kind = PlatformPlanPricing.Classify(current?.MonthlyPrice ?? 0m, template.MonthlyPrice);
+        if (kind == PlatformPlanPricing.ChangeKind.Upgrade)
         {
-            BillingCycle.Monthly => template.MonthlyPrice,
-            BillingCycle.Quarterly => template.QuarterlyPrice,
-            BillingCycle.SemiAnnual => template.SemiAnnualPrice,
-            BillingCycle.Annual => template.AnnualPrice,
-            _ => template.MonthlyPrice
-        };
+            var payment = await RequestPlanPaymentAsync(sub, template, cycle, null, performedBy,
+                "PlanUpgradeRequested", $"ขออัปเกรดจาก {sub.Plan}");
+            return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), payment,
+                $"สร้างรายการชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาทแล้ว — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงินและผู้ดูแลระบบยืนยัน");
+        }
 
-        sub.Plan = request.NewPlan;
-        sub.BillingCycle = cycle;
-        sub.PricePerCycle = price;
-        sub.EnabledFeatures = template.EnabledFeatures;
-        sub.MaxUsers = template.MaxUsers;
-        sub.MaxCompanies = template.MaxCompanies;
-        sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
-        sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
-        sub.MaxStorageBytes = template.MaxStorageBytes;
-        // Bring per-engine OCR quotas across when subscriber upgrades to paid.
-        sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth;
-        sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth;
-        sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
-        sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
-        sub.IsPermanentFree = template.IsPermanentFree;
-        if (template.IsPermanentFree)
-            sub.EndDate = DateTime.UtcNow.AddYears(100);
+        if (template.Plan == sub.Plan && cycle == sub.BillingCycle)
+            return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), null, "แพ็กเกจและรอบบิลนี้คือแพ็กเกจปัจจุบันอยู่แล้ว");
 
+        // ดาวน์เกรด / เปลี่ยนรอบบิล — ไม่ตัดสิทธิ์ที่จ่ายไปแล้ว: มีผลวันครบรอบปัจจุบัน
+        sub.ScheduledPlan = template.Plan;
+        sub.ScheduledBillingCycle = cycle;
+        sub.ScheduledPlanEffectiveAt = sub.EndDate;
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
             SubscriptionId = sub.Id,
-            Action = "PlanChanged",
-            FromPlan = oldPlan,
-            ToPlan = request.NewPlan,
-            Notes = $"Changed from {oldPlan} to {request.NewPlan}",
+            Action = "PlanChangeScheduled",
+            FromPlan = sub.Plan,
+            ToPlan = template.Plan,
+            Notes = $"เปลี่ยนเป็น {template.Plan} ({cycle}) มีผลวันครบรอบ {sub.EndDate:yyyy-MM-dd}",
             PerformedBy = performedBy
         });
-
         await _db.SaveChangesAsync();
-        return await GetSubscriptionAsync(companyId);
+        return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), null,
+            $"บันทึกแล้ว — เปลี่ยนเป็น {template.Name} มีผลวันครบรอบ {sub.EndDate.AddHours(7):dd/MM/yyyy} (ใช้สิทธิ์แพ็กเกจเดิมได้จนถึงวันนั้น)",
+            sub.EndDate);
     }
 
     public async Task CancelSubscriptionAsync(Guid companyId, string performedBy)
@@ -1856,16 +1878,28 @@ public class SubscriptionService : ISubscriptionService
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
 
-        // Generate payment number
-        var count = await _db.SubscriptionPayments.CountAsync(p => p.SubscriptionId == sub.Id);
-        var paymentNumber = $"SP-{sub.CompanyId.ToString()[..8].ToUpper()}-{count + 1:D4}";
+        // รอบ 219 เฟส 0 (G-4 · คำตัดสินข้อ 178): ยอด/ระยะเวลามาจากตารางราคาของเซิร์ฟเวอร์ (PlatformPlanPricing) — เดิมเก็บ Amount/
+        // RequestedPeriodMonths จาก body ตรง ๆ ⇒ ฿1 ขอ Enterprise 120 เดือนได้ · ยอดที่แจ้งมาไม่ตรง = 409 พร้อมยอดที่ถูก (ไม่เดา)
+        var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == request.RequestedPlan && p.IsActive)
+            ?? throw new BusinessRuleException($"ไม่พบแพ็กเกจ {request.RequestedPlan} ที่เปิดขาย");
+        var months = PlatformPlanPricing.MonthsOf(request.RequestedBillingCycle);
+        if (months <= 0) throw new BusinessRuleException("รอบบิลไม่ถูกต้อง");
+        if (request.RequestedPeriodMonths > 0 && request.RequestedPeriodMonths != months)
+            throw new BusinessRuleException($"จำนวนเดือนต้องตรงกับรอบบิล ({months} เดือน)");
+        var due = PlatformPlanPricing.AmountDue(template, request.RequestedBillingCycle);
+        if (due <= 0m)
+            throw new BusinessRuleException("แพ็กเกจนี้ไม่มีค่าบริการตามตารางราคา — ไม่ต้องแจ้งชำระ");
+        if (!PlatformPlanPricing.ClaimedAmountAcceptable(request.Amount, due))
+            throw new BusinessRuleException(
+                $"ยอดที่แจ้ง ({request.Amount:N2} บาท) ไม่ตรงกับค่าบริการ {template.Name} รอบนี้ ({due:N2} บาท) — กรุณาแจ้งยอดตามราคาเต็ม "
+                + "(ถ้าหักภาษี ณ ที่จ่าย ให้แนบหนังสือรับรองกับสลิป ผู้ดูแลระบบจะบันทึกให้)", "PLATFORM-PRICE-MISMATCH", 409);
 
         var payment = new SubscriptionPayment
         {
             SubscriptionId = sub.Id,
-            PaymentNumber = paymentNumber,
-            Amount = request.Amount,
-            PaymentDate = request.PaymentDate,
+            PaymentNumber = await NextPaymentNumberAsync(sub),
+            Amount = due,
+            PaymentDate = request.PaymentDate == default ? DateTime.UtcNow : request.PaymentDate,
             PaymentMethod = request.PaymentMethod,
             FromBankName = request.FromBankName,
             FromAccountNumber = request.FromAccountNumber,
@@ -1874,7 +1908,7 @@ public class SubscriptionService : ISubscriptionService
             TransferReference = request.TransferReference,
             RequestedPlan = request.RequestedPlan,
             RequestedBillingCycle = request.RequestedBillingCycle,
-            RequestedPeriodMonths = request.RequestedPeriodMonths,
+            RequestedPeriodMonths = months,
             CustomerNotes = request.CustomerNotes,
             Status = SubscriptionPaymentStatus.Pending,
             CreatedBy = performedBy
@@ -1886,7 +1920,7 @@ public class SubscriptionService : ISubscriptionService
         {
             SubscriptionId = sub.Id,
             Action = "PaymentSubmitted",
-            Notes = $"Payment {paymentNumber} submitted: {request.Amount:N2} THB",
+            Notes = $"Payment {payment.PaymentNumber} submitted: {payment.Amount:N2} THB",
             PerformedBy = performedBy
         });
 
@@ -1904,7 +1938,7 @@ public class SubscriptionService : ISubscriptionService
                 Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded,
                 NotificationType.SubscriptionPaymentPending,
                 "มีการชำระเงิน Subscription รอตรวจสอบ",
-                $"การชำระเงิน {paymentNumber} จำนวน {request.Amount:N2} THB รอการตรวจสอบ",
+                $"การชำระเงิน {payment.PaymentNumber} จำนวน {payment.Amount:N2} THB รอการตรวจสอบ",
                 $"/admin/subscription-payments/{payment.Id}",
                 "SubscriptionPayment", payment.Id);
         }
@@ -1993,51 +2027,43 @@ public class SubscriptionService : ISubscriptionService
             // Extend/renew subscription
             var sub = payment.Subscription;
             var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == payment.RequestedPlan && p.IsActive);
-
             var now = DateTime.UtcNow;
             var baseDate = sub.EndDate > now ? sub.EndDate : now; // ต่อจากวันหมดอายุเดิม หรือจากวันนี้
             var newEndDate = baseDate.AddMonths(payment.RequestedPeriodMonths);
-
-            sub.Plan = payment.RequestedPlan;
+            // รอบ 219 เฟส 0 (G-0): ดาวน์เกรดที่จ่ายระหว่างรอบที่ยังใช้งาน ⇒ ไม่ตัดสิทธิ์แพ็กเกจที่จ่ายไปแล้ว — ตั้งไว้มีผลวันครบรอบเดิม
+            var currentTpl = sub.Plan == payment.RequestedPlan ? template
+                : await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.Plan && p.IsActive);
+            var changeKind = PlatformPlanPricing.Classify(currentTpl?.MonthlyPrice ?? 0m, template?.MonthlyPrice ?? 0m);
+            var defer = sub.Plan != payment.RequestedPlan
+                && PlatformPlanPricing.DeferToCycleEnd(changeKind, sub.Status, sub.EndDate, now);
+            var wasTrial = sub.Status == SubscriptionStatus.Trial;
             sub.Status = SubscriptionStatus.Active;
-            sub.BillingCycle = payment.RequestedBillingCycle;
             sub.EndDate = newEndDate;
             sub.NextBillingDate = newEndDate;
             sub.LastPaymentDate = payment.PaymentDate;
             sub.PaymentReference = payment.PaymentNumber;
-
-            if (template != null)
+            if (defer && template != null)
             {
-                sub.EnabledFeatures = template.EnabledFeatures;
-                sub.MaxUsers = template.MaxUsers;
-                sub.MaxCompanies = template.MaxCompanies;
-                sub.MaxDocumentsPerMonth = template.MaxDocumentsPerMonth;
-                sub.MaxJournalEntriesPerMonth = template.MaxJournalEntriesPerMonth;
-                sub.MaxStorageBytes = template.MaxStorageBytes;
-                // OCR quotas — same upgrade-to-paid propagation as UpgradeAsync
-                sub.MaxOcrPagesPerMonth = template.MaxOcrPagesPerMonth;
-                sub.AzureOcrPagesPerMonth = template.AzureOcrPagesPerMonth;
-                sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
-                sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
-
-                var price = payment.RequestedBillingCycle switch
-                {
-                    BillingCycle.Monthly => template.MonthlyPrice,
-                    BillingCycle.Quarterly => template.QuarterlyPrice,
-                    BillingCycle.SemiAnnual => template.SemiAnnualPrice,
-                    BillingCycle.Annual => template.AnnualPrice,
-                    _ => template.MonthlyPrice
-                };
-                sub.PricePerCycle = price;
-
-                // ธง "ฟรีถาวร" ต้องตามแพ็กเกจใหม่เสมอ — เส้นนี้ sync โควตาครบทุก
-                // ตัวแต่เดิม**ลืมธงนี้** (UpgradeAsync sync ถูก): บริษัทที่เคยอยู่
-                // แพ็กเกจฟรีถาวรแล้วจ่ายเงินอัปเกรด/ต่ออายุ Enterprise จะติดธงเก่า
-                // ⇒ หน้า admin โชว์ "Enterprise · ไม่หมดอายุ (ฟรีถาวร)" ทั้งที่เพิ่ง
-                // เก็บเงินไป และงานตัดหมดอายุจะไม่เคยตัด (ลูกค้าหยุดจ่ายก็ใช้ต่อฟรี)
-                sub.IsPermanentFree = template.IsPermanentFree;
+                sub.ScheduledPlan = payment.RequestedPlan;
+                sub.ScheduledBillingCycle = payment.RequestedBillingCycle;
+                sub.ScheduledPlanEffectiveAt = baseDate;
             }
-
+            else if (template != null)
+            {
+                // ธง "ฟรีถาวร" ต้องตามแพ็กเกจใหม่เสมอ (ApplyTemplate ตั้งให้) — เดิมเส้นนี้เคยลืมธงนี้ ⇒ จ่ายแล้วยังโชว์ "ฟรีถาวร" และงานตัดหมดอายุไม่ตัด
+                ApplyTemplate(sub, template, payment.RequestedBillingCycle);
+                sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
+            }
+            else
+            {
+                sub.Plan = payment.RequestedPlan;
+                sub.BillingCycle = payment.RequestedBillingCycle;
+            }
+            if (wasTrial)
+            {
+                var trial = await _db.TrialConfigs.FirstOrDefaultAsync(t => t.SubscriptionId == sub.Id);
+                if (trial != null) trial.TrialStatus = TrialStatus.Converted;
+            }
             payment.SubscriptionExtendedTo = newEndDate;
 
             // Cascade renewal to the AccountSubscription if this Company is
@@ -2185,8 +2211,7 @@ public class SubscriptionService : ISubscriptionService
             throw new InvalidOperationException("ยอดรับเงินต้องมากกว่า 0 (หรือเลือกยกเว้นค่าบริการ)");
         }
 
-        var count = await _db.SubscriptionPayments.CountAsync(p => p.SubscriptionId == sub.Id);
-        var paymentNumber = $"SP-{sub.CompanyId.ToString()[..8].ToUpper()}-{count + 1:D4}";
+        var paymentNumber = await NextPaymentNumberAsync(sub);
 
         var kindLabel = request.IsWaived ? "ยกเว้นค่าบริการ" : "บันทึกรับเงินโดย admin";
         var payment = new SubscriptionPayment
@@ -2336,6 +2361,28 @@ public class SubscriptionService : ISubscriptionService
     public async Task ProcessExpiredSubscriptionsAsync()
     {
         var now = DateTime.UtcNow;
+
+        // รอบ 219 เฟส 0 (G-0): ดาวน์เกรด/เปลี่ยนรอบที่ถึงวันมีผล — ใช้สิทธิ์ของแพ็กเกจใหม่ (ApplyTemplate ตัวเดียวกับการอนุมัติชำระ)
+        var dueChanges = await _db.Subscriptions
+            .Where(s => s.ScheduledPlan != null && s.ScheduledPlanEffectiveAt != null && s.ScheduledPlanEffectiveAt <= now)
+            .ToListAsync();
+        foreach (var sub in dueChanges)
+        {
+            var tpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.ScheduledPlan && p.IsActive);
+            var fromPlan = sub.Plan;
+            if (tpl != null) ApplyTemplate(sub, tpl, sub.ScheduledBillingCycle ?? sub.BillingCycle);
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id,
+                Action = tpl != null ? "ScheduledPlanApplied" : "ScheduledPlanSkipped",
+                FromPlan = fromPlan,
+                ToPlan = sub.ScheduledPlan,
+                Notes = tpl != null ? $"เปลี่ยนแพ็กเกจตามที่ตั้งไว้ (มีผล {sub.ScheduledPlanEffectiveAt:yyyy-MM-dd})"
+                                    : $"ไม่พบแม่แบบแพ็กเกจ {sub.ScheduledPlan} ที่เปิดขาย — ไม่เปลี่ยน",
+                PerformedBy = "System"
+            });
+            sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
+        }
 
         // Mark active subscriptions as expired
         var newlyExpired = await _db.Subscriptions

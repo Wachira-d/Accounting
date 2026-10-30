@@ -5878,3 +5878,11 @@ _รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ — ปิ�
 SystemAdmin ดำเนินการ/ปฏิเสธที่ `/admin/legal.html` (`AdminPlatformErasureController`) → แกนลบตัวเดียว `PdpaService.AnonymiseUserCoreAsync` (แยกออกจาก `ApplyErasureAsync` — DSR ของบริษัทใช้ตัวเดียวกัน) + audit + อีเมลแจ้งผล ·
 เทสต์ `PlatformErasureRequestTests` + Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · TEST_PLAN LEGAL214-32..35 · `required_call_site_check` +4 กติกา/แก้ 1 ·
 `write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 219 เฟส 0 (2026-10-30 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` + `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2) — อุดรั่วเงินค่าบริการ NextAcc:
+ตัวตัดสินเดียว `Helpers/PlatformRevenueSource` ที่ StartAsync/RecordExternalSuccessAsync/DispatchSucceededAsync + งานพนักงานทุกตัวใน `PaymentGatewayController` (ร้านยืนยัน/ส่งต่อ/คืนเงินค่าบริการไม่ได้ ·
+โหมดทดสอบไม่ให้สิทธิ์) · `PaymentIntent.PayerCompanyId` · handler ค่าแพ็กเกจ/ส่วนเสริมกรองบริษัทผู้จ่าย + ยอดตรงราคาเซิร์ฟเวอร์ · ปิด "ชำระออนไลน์" ของส่วนเสริม (เคยเข้า gateway ของร้าน) + วิธีโอนของ NextAcc ที่แอดมินตั้ง ·
+`Helpers/PlatformPlanPricing` ตัวตั้งราคาเดียว (ยุบ switch 5 สำเนา) · แจ้งชำระ = ยอดของเซิร์ฟเวอร์ (409 เมื่อไม่ตรง) + ต้องเป็นเจ้าของ · อัปเกรด/แปลงทดลองใช้ = จ่ายก่อนเปิด · ดาวน์เกรดมีผลวันครบรอบ ·
+แอดมินเปลี่ยนทันที + audit chain · ส่วนเสริมค้างชำระผ่อนผัน 7 วันแล้วระงับ · ค่าเหมาไม่เก็บซ้อนงวดที่จ่ายล่วงหน้า · BillingAccount ค่าตั้งต้น Postpaid · `SecretProtector`/`Program.cs`/`CmsCommerceService` ใช้
+`Helpers/EncryptionKeyResolver` (production ไม่มีคีย์/dev key ⇒ boot ไม่ขึ้น) · รายงานอ่านอย่างเดียว 3 ชุดที่ `/admin/revenue.html` · migration `Helpers/PlatformBillingPhase0Migration` (ADD COLUMN ล้วน ไม่แก้แถวเดิม) ·
+เทสต์ `PlatformBillingPhase0Tests` + Db `PlatformBillingPhase0DbTests` · TEST_PLAN PB219-01..13 · `required_call_site_check` +21 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

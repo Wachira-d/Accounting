@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Hosting;
+
 namespace Accounting.Helpers;
 
 /// <summary>
@@ -29,13 +31,18 @@ public interface ISecretProtector
 
 public class SecretProtector : ISecretProtector
 {
-    private const string DevKey = "default-dev-key-change-in-production";
+    private const string DevKey = EncryptionKeyResolver.DevKey;
 
     private readonly string _key;
     private readonly ILogger<SecretProtector>? _logger;
 
-    public SecretProtector(IConfiguration config, ILogger<SecretProtector> logger)
-        : this(config["Security:EncryptionKey"] ?? DevKey, logger)
+    /// <summary>รอบ 219 เฟส 0 (P0-4): คีย์มาจาก <see cref="EncryptionKeyResolver"/> ตัวเดียวกับคอลัมน์ PII ใน <c>Program.cs</c>
+    /// (env <c>ENCRYPTION_KEY</c> ชนะ <c>Security:EncryptionKey</c>) · production + ไม่มีคีย์/เป็น dev key ⇒ throw ตอนสร้าง (boot ไม่ขึ้น) ·
+    /// เดิมอ่าน config อย่างเดียวแล้วตกไป dev key พร้อมแค่ LogWarning</summary>
+    public SecretProtector(IConfiguration config, IHostEnvironment env, ILogger<SecretProtector> logger)
+        : this(EncryptionKeyResolver.RequireUsable(
+            EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), config["Security:EncryptionKey"]),
+            env.IsProduction(), "ความลับที่เก็บในฐานข้อมูล (คีย์ gateway/SMTP/OAuth)"), logger)
     {
     }
 

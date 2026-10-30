@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.DTOs.Subscription;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -38,10 +39,18 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
 
     public async Task HandleSucceededAsync(PaymentIntent intent, CancellationToken ct = default)
     {
+        // รอบ 219 เฟส 0 (G-3): เดิมหาด้วย Id อย่างเดียว ⇒ intent ของบริษัทหนึ่งอนุมัติรายการของอีกบริษัทได้ · ตอนนี้แถวต้องเป็นของบริษัทผู้จ่าย
+        // (PayerCompanyId — intent อยู่ใต้บริษัทผู้ให้บริการ ตรวจแล้วใน DispatchSucceededAsync ด้วย PlatformRevenueSource)
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == intent.SourceId)
-            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount })
+            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.RequestedPlan, p.RequestedBillingCycle })
             .FirstOrDefaultAsync(ct);
+        if (pay != null && !Accounting.Helpers.PlatformRevenueSource.SourceBelongsToPayer(intent.PayerCompanyId, pay.CompanyId))
+        {
+            _logger.LogError("รายการชำระค่าบริการ {No} ไม่ใช่ของบริษัทผู้จ่ายของ intent {Intent} (ผู้จ่าย {Payer}) — ไม่อนุมัติ",
+                pay.PaymentNumber, intent.Id, intent.PayerCompanyId);
+            throw new BusinessRuleException("รายการชำระค่าบริการนี้ไม่ใช่ของบริษัทผู้จ่าย — ไม่อนุมัติอัตโนมัติ");
+        }
         if (pay == null)
         {
             _logger.LogError(
@@ -67,6 +76,18 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
                 + "ไม่อนุมัติอัตโนมัติ ให้แอดมินตรวจเอง (intent {Intent})",
                 intent.Amount, pay.PaymentNumber, pay.Amount, intent.Id);
             return;
+        }
+
+        // รอบ 219 เฟส 0 (G-4): ยอดของรายการเคยมาจาก body ของผู้เช่า — ยืนยันอัตโนมัติได้เฉพาะเมื่อยอดตรงราคาแพ็กเกจที่เซิร์ฟเวอร์คำนวณ
+        // (ตัวตั้งเดียว PlatformPlanPricing · ยอดที่มีส่วนลดโปรโมชัน = ไม่ตรงราคาเต็ม ⇒ แอดมินตรวจเอง — ไม่เดาว่าส่วนลดถูกต้อง)
+        var template = await _db.PlanTemplates.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Plan == pay.RequestedPlan && t.IsActive, ct);
+        var listPrice = template == null ? 0m : Accounting.Helpers.PlatformPlanPricing.AmountDue(template, pay.RequestedBillingCycle);
+        if (template == null || listPrice <= 0m || !Accounting.Helpers.PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m)
+        {
+            _logger.LogError("ยอดรายการค่าบริการ {No} ({Amount:N2}) ไม่สอดคล้องกับราคาแพ็กเกจ ({List:N2}) — ไม่อนุมัติอัตโนมัติ (intent {Intent})",
+                pay.PaymentNumber, pay.Amount, listPrice, intent.Id);
+            throw new BusinessRuleException("ยอดของรายการชำระไม่สอดคล้องกับราคาแพ็กเกจ — ให้ผู้ดูแลระบบตรวจและอนุมัติเอง");
         }
 
         await _subs.ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(

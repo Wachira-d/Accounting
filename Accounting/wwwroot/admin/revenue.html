@@ -53,6 +53,20 @@
       <div class="section-title">⚠️ ใกล้เต็ม limit (&gt;85%) — โอกาส upsell</div>
       <div id="usageAlerts">กำลังโหลด...</div>
     </div>
+
+    <!-- รอบ 219 เฟส 0: รอยรั่วค่าบริการที่เกิดก่อนอุด — อ่านอย่างเดียว ระบบไม่ย้อนสิทธิ์/เก็บย้อนหลังเอง (รอเจ้าของตัดสิน) -->
+    <div class="admin-card">
+      <div class="section-title">🔎 แพ็กเกจที่ผู้เช่าเปิดเองโดยยังไม่มีการชำระที่อนุมัติ</div>
+      <div id="leakUnpaid">กำลังโหลด...</div>
+    </div>
+    <div class="admin-card">
+      <div class="section-title">🔎 กลุ่มบัญชี Prepaid ที่เครดิตติดลบ / ค่าใช้งานที่ปิดรอบโดยไม่ออกใบ</div>
+      <div id="leakPrepaid">กำลังโหลด...</div>
+    </div>
+    <div class="admin-card">
+      <div class="section-title">🔎 รายการค่าบริการ NextAcc ที่เกิดใต้บริษัทของร้าน (เงินอาจเข้ากระเป๋าร้าน)</div>
+      <div id="leakIntents">กำลังโหลด...</div>
+    </div>
   </div>
 
   <script src="/admin/admin-api.js"></script>
@@ -155,7 +169,41 @@
       }
     }
 
+    // รอบ 219 เฟส 0 — ตารางรายงานรอยรั่ว (ค่าทุกช่องมาจากเซิร์ฟเวอร์ · esc ทุกช่องข้อความ)
+    function leakTable(el, rows, head, cells, empty) {
+      document.getElementById(el).innerHTML = !rows || rows.length === 0
+        ? `<div style="text-align:center;color:#94a3b8;padding:24px">${empty}</div>`
+        : `<div class="admin-table-wrap"><table class="admin-table"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map(r => `<tr>${cells(r).map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    }
+    async function loadLeaks() {
+      const e = AdminLayout.esc;
+      const fail = (el, err) => { document.getElementById(el).innerHTML = `<div style="color:var(--admin-danger);padding:16px">${e(err.message)}</div>`; };
+      try {
+        const r = await AdminAPI.platformUnpaidActivations();
+        leakTable('leakUnpaid', r.data, ['บริษัท', 'แพ็กเกจ', 'รอบ', 'ราคา/รอบ', 'เปิดเมื่อ', 'ชำระที่อนุมัติล่าสุด', 'หมดอายุ'],
+          x => [e(x.companyName), AdminLayout.planBadge(x.plan), e(x.billingCycle), AdminLayout.money(x.pricePerCycle),
+                AdminLayout.date(x.activatedAt), x.lastApprovedPaymentAt ? AdminLayout.date(x.lastApprovedPaymentAt) : '—', AdminLayout.date(x.endDate)],
+          'ไม่พบรายการ');
+      } catch (err) { fail('leakUnpaid', err); }
+      try {
+        const r = await AdminAPI.platformPrepaidAccounts();
+        leakTable('leakPrepaid', r.data, ['กลุ่มบัญชี', 'บริษัท', 'เครดิตคงเหลือ', 'ปิดรอบโดยไม่ออกใบ (บาท)', 'จำนวนรายการ', 'สร้างจาก migration'],
+          x => [e(x.name), x.companyCount, AdminLayout.money(x.creditBalance), `<strong>${AdminLayout.money(x.unbilledClosedAmount)}</strong>`,
+                x.unbilledClosedEvents, x.backfilled ? 'ใช่' : '—'],
+          'ไม่พบรายการ');
+      } catch (err) { fail('leakPrepaid', err); }
+      try {
+        const r = await AdminAPI.platformTenantRoutedIntents();
+        leakTable('leakIntents', r.data, ['บริษัท', 'ชนิด', 'สถานะ', 'ยอด', 'ช่องทาง', 'โหมด', 'ยืนยันโดย', 'สร้างเมื่อ'],
+          x => [e(x.companyName), e(x.kind), e(x.status), AdminLayout.money(x.amount), e(x.providerCode), e(x.mode || '—'),
+                e(x.confirmedBy || '—'), AdminLayout.date(x.createdAt)],
+          'ไม่พบรายการ');
+      } catch (err) { fail('leakIntents', err); }
+    }
+
     load();
+    loadLeaks();
   </script>
 </body>
 </html>

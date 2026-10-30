@@ -637,13 +637,29 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 โบนัสโควตาต่อแพ็กเกจแล้ว 404. กติกา: ค่าที่มีที่ให้ตั้งในระบบ ห้ามมีสำเนาบนหน้าใด ๆ · API ไม่ตอบ =
 ซ่อนส่วนนั้น/บอกว่าโหลดไม่ได้ ไม่ตกไปใช้ตารางราคาสำรองที่พิมพ์ไว้ (เดิม `renderFallback` โชว์ราคาเก่า)
 
-### 6.2 Prepaid (default) / Postpaid
+### 6.2 Prepaid / Postpaid (default — รอบ 219 เฟส 0)
+
+> **รอบ 219 เฟส 0 (คำตัดสินข้อ 178 · G-6):** ระบบ**ยังไม่มีทางเติมเครดิต** ⇒ Prepaid ทำให้ค่าใช้งานถูกตัดเครดิตจนติดลบแล้ว `UsageInvoicingJob`
+> ปิดรอบโดยไม่ออกใบ · ค่าตั้งต้นของ `BillingAccount.PaymentModel` (entity + DEFAULT ของคอลัมน์ ก่อน backfill) = **Postpaid** · แถวเดิมไม่ถูกแก้ —
+> รายงาน `GET api/admin/platform-billing/prepaid-accounts` (เจ้าของตัดสินว่าจะเปลี่ยน/ออกใบย้อนหลังไหม) · ข้อความด้านล่างคือดีไซน์เดิมของ Prepaid
 
 - **Prepaid**: ซื้อแพ็กเครดิตล่วงหน้า → `CreditBalance` ตัดตาม UsageEvent → เตือน 20%/หมด
   → หมดแล้ว block งานใหม่ (งานค้างคิวทำต่อจนจบ) — เหมาะตลาดไทย ตัดปัญหาตามเก็บเงิน
 - **Postpaid**: ใช้ก่อนจ่ายทีหลัง สิ้นเดือนออกใบแจ้งหนี้ — เฉพาะลูกค้าใหญ่ที่มีสัญญา + วงเงิน
 - ซื้อเครดิต = ออก "ใบเสร็จรับเงิน (มัดจำ)" ตาม flow เงินมัดจำที่มีอยู่ (deferred VAT
   ตามเคสที่ระบบรองรับแล้ว — ดู DOCUMENT_FLOW.md §2.3a)
+
+### 6.2b ค่าบริการ NextAcc ที่ผู้เช่าจ่าย — อุดรั่วเฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md`)
+
+- **เงินของแพลตฟอร์ม** = `PaymentSourceKind ∈ {SubscriptionPayment, AddOnPurchase}` (`Helpers/PlatformRevenueSource` ตัวเดียว) ⇒ intent ต้องอยู่ใต้บริษัทผู้ให้บริการ
+  (`SiteSettings.PlatformCompanyId`) + ระบุ `PaymentIntent.PayerCompanyId` · ร้านเริ่ม/ยืนยันมือ/ส่งต่อ/คืนเงินรายการเหล่านี้ไม่ได้ (SystemAdmin ใน tenant ผู้ให้บริการเท่านั้น) ·
+  จ่ายโหมดทดสอบไม่ให้สิทธิ์ · เฟส 0 **ยังไม่มีช่องชำระออนไลน์ของแพลตฟอร์ม** ⇒ โอน + แนบสลิป (วิธีโอน = `SiteSettings.PlatformBankTransferInstructions`)
+- **แพ็กเกจ: จ่ายก่อนเปิด** — "อัปเกรด"/แปลงจากทดลองใช้ = รายการชำระยอดจาก `Helpers/PlatformPlanPricing` (ทดลองใช้ต่อจนแอดมินอนุมัติ) · ดาวน์เกรด/เปลี่ยนรอบ =
+  `Subscription.ScheduledPlan/ScheduledBillingCycle/ScheduledPlanEffectiveAt` มีผลวันครบรอบ (`ProcessExpiredSubscriptionsAsync`) และใบแจ้งหนี้ต่ออายุคิดตามแพ็กเกจใหม่ ·
+  แอดมินเปลี่ยนทันทีได้ (`AdminChangePlan` + audit chain) · sub ที่เคยเปิดเองโดยไม่จ่าย = รายงาน `unpaid-activations` (ไม่ย้อนอัตโนมัติ)
+- **ส่วนเสริมเหมารายเดือน**: ค้างชำระใช้ได้ `AddOnPaymentPolicy.UnpaidGraceDays` (7) วันนับจาก `CompanyFeature.PaymentAwaitingSince` แล้วระงับ · งวดที่จ่ายล่วงหน้า
+  (`CompanyFeature.UpfrontPeriod`) ไม่ออกค่าเหมาซ้ำ · ยังไม่จ่าย = ไม่ออกค่าเดือน · แถวก่อนเฟส 0 พฤติกรรมเดิม
+- รายงานอ่านอย่างเดียว `/admin/revenue.html` (`AdminPlatformBillingController`): unpaid-activations · prepaid-accounts · tenant-routed-intents
 
 ### 6.3 Edge cases (ตัดสินใจแล้ว)
 

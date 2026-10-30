@@ -54,8 +54,45 @@ public static class AddOnPaymentPolicy
     /// <para><c>Rejected</c> คือสถานะเดียวที่ตัดสิทธิ์ — และตอนนั้น
     /// <c>IsEnabled</c> ถูกปิดไปพร้อมกันอยู่แล้ว</para>
     /// </summary>
-    public static bool UsableWhilePending(AddOnPaymentStatus status)
-        => status != AddOnPaymentStatus.Rejected;
+    /// <remarks>รอบ 219 เฟส 0 (G-11 · คำตัดสินข้อ 178): เดิม helper นี้ไม่มีผู้เรียกเลย ⇒ <c>AwaitingPayment</c> (กดเปิดแล้วไม่จ่าย ไม่แนบสลิป)
+    /// ใช้ได้ตลอดกาล · ตอนนี้ต่อสายที่ <c>EntitlementService</c> + <c>UsageMeteringService.IsFeatureEnabledAsync</c> และให้ระยะผ่อนผัน
+    /// <see cref="UnpaidGraceDays"/> วันนับจาก <paramref name="awaitingSinceUtc"/> (ครั้งแรกที่เข้าสถานะรอชำระ — ปิด/เปิดใหม่ไม่รีเซ็ต) ·
+    /// <c>PendingReview</c> (แนบสลิปแล้ว รอแอดมิน) ยังใช้ได้ · แถวเดิมก่อนเฟส 0 (<paramref name="awaitingSinceUtc"/> = null) = พฤติกรรมเดิม (ไม่ตัด — เจ้าของตัดสิน)</remarks>
+    public static bool UsableWhilePending(AddOnPaymentStatus status, DateTime? awaitingSinceUtc = null, DateTime? nowUtc = null)
+    {
+        if (status == AddOnPaymentStatus.Rejected) return false;
+        if (status == AddOnPaymentStatus.AwaitingPayment && GraceEndsAt(awaitingSinceUtc) is DateTime end
+            && (nowUtc ?? DateTime.UtcNow) > end)
+            return false;
+        return true;
+    }
+
+    /// <summary>ระยะผ่อนผันของส่วนเสริมที่กดเปิดแล้วยังไม่ชำระ (วัน)</summary>
+    public const int UnpaidGraceDays = 7;
+
+    /// <summary>วันสิ้นสุดระยะผ่อนผัน — null = ไม่มีกำหนด (ไม่ได้รอชำระแบบใหม่)</summary>
+    public static DateTime? GraceEndsAt(DateTime? awaitingSinceUtc)
+        => awaitingSinceUtc is DateTime s ? s.AddDays(UnpaidGraceDays) : null;
+
+    /// <summary>
+    /// รอบ 219 เฟส 0 (G-5 · คำตัดสินข้อ 178): ค่าเหมารายเดือนของงวดนี้ต้องถูก "ทับ" ไหม เพราะเส้นจ่ายล่วงหน้าครอบงวดนี้แล้ว — ตัวตัดสินเดียว
+    /// ที่ <c>AddOnBilling.FlatAmount</c> เรียก
+    /// <list type="bullet">
+    ///   <item>ไม่มี <paramref name="upfrontPeriod"/> (แถวไม่ได้เข้าเส้นจ่ายล่วงหน้าแบบใหม่) ⇒ null = คิดตามปกติ</item>
+    ///   <item>ยังไม่จ่ายล่วงหน้า (<c>AwaitingPayment</c>) หรือถูกปฏิเสธ ⇒ ฿0 "upfront-unpaid" — ไม่ได้ใช้บริการเกินระยะผ่อนผัน จึงไม่ออกบิล
+    ///     (ออกบิลค่าเดือนให้ฟีเจอร์ที่ถูกตัดสิทธิ์ = เก็บเงินโดยไม่มีบริการ)</item>
+    ///   <item>งวดที่จ่ายล่วงหน้าไปแล้ว (<c>Paid</c>/<c>PendingReview</c>) ⇒ ฿0 "upfront-paid" — เดิมงวดแรกถูกเก็บสองครั้ง</item>
+    /// </list>
+    /// </summary>
+    public static (decimal Amount, string Reason)? UpfrontOverride(AddOnPaymentStatus status, string? upfrontPeriod, string period)
+    {
+        if (string.IsNullOrEmpty(upfrontPeriod)) return null;
+        if (status is AddOnPaymentStatus.AwaitingPayment or AddOnPaymentStatus.Rejected) return (0m, "upfront-unpaid");
+        if (string.Equals(upfrontPeriod, period, StringComparison.Ordinal)
+            && status is AddOnPaymentStatus.Paid or AddOnPaymentStatus.PendingReview)
+            return (0m, "upfront-paid");
+        return null;
+    }
 
     /// <summary>
     /// ยอดที่ยังต้องชำระของ add-on ตัวหนึ่ง — <b>สูตรอยู่ที่นี่ที่เดียว</b>

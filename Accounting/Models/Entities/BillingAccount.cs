@@ -43,7 +43,10 @@ public class BillingAccount : BaseEntity
 
     /// <summary>เติมเครดิตล่วงหน้า (default — ตัดปัญหาตามเก็บเงิน) หรือใช้ก่อน
     /// จ่ายทีหลัง (เฉพาะลูกค้าที่มีสัญญา + วงเงินที่ admin อนุมัติ)</summary>
-    public PaymentModel PaymentModel { get; set; } = PaymentModel.Prepaid;
+    /// <remarks>รอบ 219 เฟส 0 (G-6 · คำตัดสินข้อ 178): ค่าตั้งต้นเปลี่ยนเป็น <c>Postpaid</c> — ระบบยังไม่มีทางเติมเครดิตเลย ⇒ Prepaid
+    /// ทำให้ค่าใช้งานถูก "ตัดเครดิต" จนติดลบแล้วปิดรอบโดยไม่ออกใบ · แถวเดิม<b>ไม่ถูกแก้</b> (เจ้าของตัดสิน · รายงานที่
+    /// <c>GET api/admin/platform-billing/prepaid-accounts</c>)</remarks>
+    public PaymentModel PaymentModel { get; set; } = PaymentModel.Postpaid;
 
     /// <summary>เครดิตคงเหลือ (โหมด Prepaid) — ตัดตาม UsageEvent.
     /// **หน่วยเป็นบาท** ไม่ใช่ "แต้ม" เพื่อให้กระทบยอดกับใบเสร็จได้ตรง ๆ</summary>

@@ -99,6 +99,18 @@
       </div>
     </div>
 
+    <!-- รอบ 219 เฟส 0: ชำระค่าแพ็กเกจ (โอน + แนบสลิป) -->
+    <div class="modal-overlay" id="payModal">
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header"><h3 class="modal-title">ชำระค่าแพ็กเกจ</h3><button class="modal-close" onclick="Layout.closeModal('payModal')">&times;</button></div>
+        <div class="modal-body" id="payContent"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="Layout.closeModal('payModal')">ไว้ภายหลัง</button>
+          <button class="btn btn-primary" onclick="Sub.submitPaySlip()">ส่งสลิป</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Convert/Upgrade Modal -->
     <div class="modal-overlay" id="upgradeModal">
       <div class="modal" style="max-width:500px">
@@ -106,7 +118,7 @@
         <div class="modal-body" id="upgradeContent"></div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('upgradeModal')" data-i18n="common.cancel">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Sub.confirmUpgrade()">ยืนยันอัปเกรด</button>
+          <button class="btn btn-primary" onclick="Sub.confirmUpgrade()">ยืนยันและไปชำระเงิน</button>
         </div>
       </div>
     </div>
@@ -230,9 +242,16 @@
             <td>${cycleMap[p.requestedBillingCycle] || Layout.esc(p.requestedBillingCycle)}</td>
             <td class="text-right font-semibold">฿${Layout.money(p.amount)}</td>
             <td>${methodMap[p.paymentMethod] || Layout.esc(p.paymentMethod)}</td>
-            <td>${Layout.statusBadge(p.status)}</td>
+            <td>${Layout.statusBadge(p.status)}${p.status === 'Pending' && !p.slipFileName
+              ? ` <button class="btn btn-secondary btn-sm" onclick="Sub.openPayById('${Layout.jsArg(p.id)}')">📎 แนบสลิป</button>` : ''}</td>
           </tr>`).join('');
+          this._payments = payments;
         } catch (e) { document.getElementById('paymentHistory').innerHTML = '<tr><td colspan="7" class="text-center text-gray-400" data-i18n="common.noData">ไม่มีข้อมูล</td></tr>'; }
+      },
+
+      openPayById(id) {
+        const p = (this._payments || []).find(x => x.id === id);
+        if (p) this.openPay(p, null);
       },
 
       renderSubscription() {
@@ -461,11 +480,46 @@
         const cycle = document.getElementById('upgradeCycle').value;
         const promo = document.getElementById('promoCode').value;
         try {
-          await API.post(`/api/subscription/${cid}/convert`, { plan, billingCycle: cycle, promoCode: promo || null });
+          // รอบ 219 เฟส 0 (G-0): ไม่เปิดแพ็กเกจทันที — เซิร์ฟเวอร์คืนรายการชำระ (ยอดของเซิร์ฟเวอร์) หรือการเปลี่ยนที่รอมีผล + ข้อความ
+          const res = await API.post(`/api/subscription/${cid}/convert`, { plan, billingCycle: cycle, promoCode: promo || null });
           Layout.closeModal('upgradeModal');
-          Layout.toast('อัปเกรดสำเร็จ!');
-          setTimeout(() => location.reload(), 1000);
+          const r = res?.data || {};
+          if (r.payment) { await this.openPay(r.payment, res.message); }
+          else { Layout.toast(res?.message || 'บันทึกแล้ว'); setTimeout(() => location.reload(), 1200); }
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // รอบ 219 เฟส 0: วิธีโอนของ NextAcc + แนบสลิปของรายการชำระ (ยอดมาจากเซิร์ฟเวอร์ — หน้าเว็บแสดงอย่างเดียว)
+      async openPay(p, message) {
+        const cid = Layout.getCompanyId();
+        let info = null;
+        try { info = (await API.get(`/api/companies/${cid}/metering/platform-pay`))?.data; } catch { info = null; }
+        const bank = info?.bankTransferInstructions
+          ? `<div class="sub-card" style="white-space:pre-line;margin-bottom:12px"><b>โอนเงินค่าบริการให้ NextAcc</b>\n${Layout.esc(info.bankTransferInstructions)}</div>`
+          : `<div class="sub-card" style="margin-bottom:12px;color:var(--danger)">${Layout.esc(info?.fallbackNote || 'กรุณาติดต่อผู้ดูแลระบบ NextAcc ก่อนโอนเงิน')}</div>`;
+        this._payId = p.id;
+        document.getElementById('payContent').innerHTML = `
+          ${message ? `<p style="margin-bottom:12px">${Layout.esc(message)}</p>` : ''}
+          <div class="sub-card" style="margin-bottom:12px">
+            <div class="flex justify-between"><span>เลขที่รายการ</span><strong>${Layout.esc(p.paymentNumber)}</strong></div>
+            <div class="flex justify-between"><span>ยอดที่ต้องโอน</span><strong class="text-primary">฿${Layout.money(p.amount)}</strong></div>
+          </div>
+          ${bank}
+          <div class="form-group"><label class="form-label">แนบสลิปการโอน (รูปหรือ PDF)</label><input type="file" id="paySlipFile" class="form-input" accept="image/*,application/pdf"></div>
+          <div class="text-xs text-gray-500">แพ็กเกจเปิดใช้เมื่อผู้ดูแลระบบตรวจสลิปและยืนยันแล้ว</div>`;
+        Layout.openModal('payModal');
+      },
+
+      async submitPaySlip() {
+        const f = document.getElementById('paySlipFile');
+        if (!this._payId || !f || !f.files.length) { Layout.toast('เลือกไฟล์สลิปก่อน', 'error'); return; }
+        const fd = new FormData(); fd.append('file', f.files[0]);
+        try {
+          const j = await API.upload(`/api/subscription/payments/${this._payId}/slip`, fd);
+          Layout.closeModal('payModal');
+          Layout.toast(j?.message || 'ส่งสลิปแล้ว — รอผู้ดูแลระบบตรวจสอบ');
+          setTimeout(() => location.reload(), 1200);
+        } catch (e) { Layout.toast(e.message || 'ส่งสลิปไม่สำเร็จ', 'error'); }
       },
 
       async startTrial() {

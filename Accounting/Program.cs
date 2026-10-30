@@ -122,8 +122,13 @@ builder.Configuration["Jwt:Secret"] = jwtSecret;
 
 // PDPA ม.26 — configure EncryptedColumnConverter ก่อน DbContext build
 // เพื่อให้ EF ValueConverter ใช้ key จริง (มิฉะนั้น default dev key)
-var encryptionKey = Environment.GetEnvironmentVariable("ENCRYPTION_KEY")
-    ?? builder.Configuration["Security:EncryptionKey"];
+// รอบ 219 เฟส 0 (P0-4): แหล่งคีย์ตัวเดียว (EncryptionKeyResolver) ใช้ร่วมกับ SecretProtector — production ปฏิเสธทั้งค่าว่างและ dev key ·
+// เขียนค่าที่ได้กลับเข้า config ให้ผู้อ่าน Security:EncryptionKey ทุกตัว (CmsCommerceService ฯลฯ) ได้คีย์เดียวกัน
+var encryptionKey = Accounting.Helpers.EncryptionKeyResolver.Resolve(
+    Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]);
+if (builder.Environment.IsProduction())
+    Accounting.Helpers.EncryptionKeyResolver.RequireUsable(encryptionKey, true, "คอลัมน์ PII (PDPA ม.26) และความลับในฐานข้อมูล");
+if (encryptionKey != null) builder.Configuration["Security:EncryptionKey"] = encryptionKey;
 // fail-fast ใน production เหมือน JWT — เดิมถ้าไม่ตั้ง key จะเงียบ ๆ ตกไปใช้
 // dev key ("default-dev-key-change-in-production") ที่อยู่ใน source ⇒ PII ตาม
 // PDPA ม.26 (เลขบัตร ปชช./passport/บัญชีธนาคาร) ถูกเข้ารหัสด้วยกุญแจสาธารณะ =

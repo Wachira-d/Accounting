@@ -18,7 +18,9 @@ public sealed record StartPaymentRequest(
     string? ReturnUrl = null,
     string? CardToken = null,
     Guid? SiteId = null,
-    Guid? ContactId = null);
+    Guid? ContactId = null,
+    // รอบ 219 เฟส 0: บริษัทผู้จ่ายของรายการค่าบริการ NextAcc (PlatformRevenueSource) — รายการของร้านไม่ต้องส่ง
+    Guid? PayerCompanyId = null);
 
 public interface IPaymentIntentService
 {
@@ -124,6 +126,11 @@ public class PaymentIntentService : IPaymentIntentService
         PaymentSourceKind sourceKind, Guid sourceId, decimal amount, string providerRef,
         string confirmedBy, Guid? siteId = null, CancellationToken ct = default)
     {
+        // รอบ 219 เฟส 0 (G-1/G-2): ทางเข้านี้ไม่มีบริษัทผู้จ่าย ⇒ รายการค่าบริการ NextAcc ถูกปฏิเสธเสมอ (ตัวตัดสินเดียว)
+        var platformDeny = PlatformRevenueSource.StartDenyReason(sourceKind, companyId,
+            await PlatformCompanyIdAsync(ct), payerCompanyId: null);
+        if (platformDeny != null) throw new InvalidOperationException(platformDeny);
+
         Guid intentId;
         await using (var tx = await _db.Database.BeginTransactionAsync(ct))
         {
@@ -190,6 +197,12 @@ public class PaymentIntentService : IPaymentIntentService
         if (request.Amount <= 0m)
             throw new InvalidOperationException("ยอดที่ต้องชำระต้องมากกว่า 0");
 
+        // รอบ 219 เฟส 0 (G-1 · คำตัดสินข้อ 178): เงินค่าบริการ NextAcc ต้องเกิดใต้บริษัทผู้ให้บริการ + ระบุผู้จ่ายเท่านั้น — ห้ามไหลเข้า
+        // gateway ของร้าน · ทุกทางเข้า (pay/intents · public-pay · ส่วนเสริม) เดินผ่านที่นี่ ⇒ ด่านเดียว
+        var platformDeny = PlatformRevenueSource.StartDenyReason(request.SourceKind, companyId,
+            await PlatformCompanyIdAsync(ct), request.PayerCompanyId);
+        if (platformDeny != null) throw new InvalidOperationException(platformDeny);
+
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
 
         // ล็อกต่อ source ไม่ใช่ต่อ intent — เรากำลังจะ "ตัดสินว่ามี intent อยู่แล้วไหม"
@@ -249,6 +262,7 @@ public class PaymentIntentService : IPaymentIntentService
             SourceId = request.SourceId,
             SiteId = request.SiteId,
             ContactId = request.ContactId,
+            PayerCompanyId = PlatformRevenueSource.IsPlatformRevenue(request.SourceKind) ? request.PayerCompanyId : null,
             Amount = request.Amount,
             Description = request.Description,
             CustomerEmail = request.CustomerEmail,
@@ -362,6 +376,10 @@ public class PaymentIntentService : IPaymentIntentService
         return intent;
     }
 
+    /// <summary>รอบ 219 เฟส 0: บริษัทผู้ให้บริการ (<c>SiteSettings.PlatformCompanyId</c>) — ตัวอ่านของด่าน <see cref="PlatformRevenueSource"/> ในไฟล์นี้</summary>
+    private Task<Guid?> PlatformCompanyIdAsync(CancellationToken ct)
+        => _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.PlatformCompanyId).FirstOrDefaultAsync(ct);
+
     /// <summary>ส่งต่อให้ทางเข้าเดิมทำงาน — ถ้าไม่ทำขั้นนี้ ระบบจะกลายเป็น
     /// "ของที่สร้างไว้แล้วไม่ได้ถูกเรียกใช้" ทันที (ลูกค้าจ่ายเงินสำเร็จ · แถวถูกต้อง ·
     /// แต่ออเดอร์ยังค้างชำระตลอดกาล)</summary>
@@ -369,6 +387,26 @@ public class PaymentIntentService : IPaymentIntentService
     /// <param name="redispatchActor">ไม่ null = ถูกเรียกจาก <see cref="RedispatchAsync"/> ⇒ สำเร็จแล้วเขียนเหตุการณ์ ✅ (การส่งต่อครั้งแรกไม่เขียน — ของเดิม)</param>
     private async Task<bool> DispatchSucceededAsync(PaymentIntent intent, CancellationToken ct, string? redispatchActor = null)
     {
+        // รอบ 219 เฟส 0 (G-1/G-3 · part B (a)): เงินค่าบริการ NextAcc ให้สิทธิ์ได้เฉพาะเมื่อรับผ่านบริษัทผู้ให้บริการ · รู้ผู้จ่าย · ไม่ใช่โหมดทดสอบ —
+        // ไม่ผ่าน = ไม่เรียก handler (ไม่ต่ออายุ/ไม่เปิดส่วนเสริม) แต่ล้มดัง: ประวัติ ⚠️ + log + แจ้ง (เหมือนไม่มี handler)
+        if (PlatformRevenueSource.IsPlatformRevenue(intent.SourceKind))
+        {
+            var isTest = intent.ProviderConfigId is Guid cfgId
+                && await _db.PaymentProviderConfigs.AsNoTracking().AnyAsync(c => c.Id == cfgId && c.Mode == PaymentProviderMode.Test, ct);
+            var block = PlatformRevenueSource.EntitlementBlockReason(intent.SourceKind, intent.CompanyId,
+                await PlatformCompanyIdAsync(ct), intent.PayerCompanyId, isTest);
+            if (block != null)
+            {
+                _logger.LogError("เงินค่าบริการ NextAcc เข้าแล้วแต่ไม่ให้สิทธิ์อัตโนมัติ — intent {Intent} บริษัท {Company} ผู้จ่าย {Payer} ยอด {Amount:N2}: {Reason}",
+                    intent.Id, intent.CompanyId, intent.PayerCompanyId, intent.Amount, block);
+                AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Succeeded, PaymentIntentStatus.Succeeded,
+                    note: PaymentRedispatchPolicy.UnfulfilledNotePrefix + block);
+                await _db.SaveChangesAsync(ct);
+                await NotifyUnfulfilledAsync(intent, block, ct);
+                return false;
+            }
+        }
+
         var handler = _handlers.FirstOrDefault(h => h.SourceKind == intent.SourceKind);
         if (handler == null)
         {

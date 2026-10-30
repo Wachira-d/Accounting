@@ -50,11 +50,17 @@ public static class AddOnBilling
     /// <para>ของแถมจาก admin/แพ็กเกจ = ฿0 เช่นกัน แต่คนละเหตุผล — แยกไว้ให้รายงาน
     /// ตอบได้ว่าทำไมยอดเป็นศูนย์</para>
     /// </summary>
+    /// <remarks>รอบ 219 เฟส 0 (G-5): <paramref name="upfrontPeriod"/>/<paramref name="paymentStatus"/>/<paramref name="period"/> ส่งต่อให้
+    /// <see cref="AddOnPaymentPolicy.UpfrontOverride"/> (ตัวตัดสินเดียวของ "เส้นจ่ายล่วงหน้าครอบงวดนี้แล้ว") — ผู้เรียกจริง
+    /// (<c>UsageMeteringService.RecordFlatMonthlyAsync</c>) ต้องส่งครบ (ล็อกด้วย required_call_site_check)</remarks>
     public static (decimal Amount, string Reason) FlatAmount(
         decimal standardPrice, decimal? snapshotPrice, DateTime? trialUntilUtc,
-        bool bundledOrGranted, DateTime nowUtc)
+        bool bundledOrGranted, DateTime nowUtc,
+        Accounting.Models.Enums.AddOnPaymentStatus paymentStatus = Accounting.Models.Enums.AddOnPaymentStatus.NotRequired,
+        string? upfrontPeriod = null, string? period = null)
     {
         if (trialUntilUtc is DateTime t && t > nowUtc) return (0m, "trial");
+        if (AddOnPaymentPolicy.UpfrontOverride(paymentStatus, upfrontPeriod, period ?? PeriodOf(nowUtc)) is { } up) return up;
         if (bundledOrGranted) return (0m, "granted");
         var price = snapshotPrice ?? standardPrice;
         if (price <= 0) return (0m, "no-price");

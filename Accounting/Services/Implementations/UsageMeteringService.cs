@@ -232,10 +232,16 @@ public class UsageMeteringService : IUsageMeteringService
         return await ResolvePlanAsync(featureCode, accountId, DateTime.UtcNow, ct);
     }
 
+    /// <remarks>รอบ 219 เฟส 0 (G-11): เปิดอยู่ <b>และ</b>ยังไม่เกินระยะผ่อนผันของการค้างชำระ (<c>AddOnPaymentPolicy.UsableWhilePending</c>
+    /// ตัวเดียวกับ <c>EntitlementService</c>)</remarks>
     public async Task<bool> IsFeatureEnabledAsync(Guid companyId, string featureCode, CancellationToken ct = default)
-        => await _db.CompanyFeatures.AsNoTracking()
-            .AnyAsync(f => f.CompanyId == companyId && f.FeatureCode == featureCode
-                        && f.IsEnabled && !f.IsDeleted, ct);
+    {
+        var row = await _db.CompanyFeatures.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && f.FeatureCode == featureCode && f.IsEnabled && !f.IsDeleted)
+            .Select(f => new { f.PaymentStatus, f.PaymentAwaitingSince })
+            .FirstOrDefaultAsync(ct);
+        return row != null && AddOnPaymentPolicy.UsableWhilePending(row.PaymentStatus, row.PaymentAwaitingSince, DateTime.UtcNow);
+    }
 
     public Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
         string actor, CancellationToken ct = default)
@@ -281,8 +287,16 @@ public class UsageMeteringService : IUsageMeteringService
             var needPay = Accounting.Helpers.AddOnPaymentPolicy.RequiresPayment(
                 grantSource, plan?.Method, row.AcceptedUnitPrice, row.TrialUntil, now);
             // เคยจ่ายผ่านแล้วและเปิดใหม่ในงวดเดิม = ไม่เก็บซ้ำ (Paid ค้างไว้ได้)
+            var wasAwaiting = row.PaymentStatus is AddOnPaymentStatus.AwaitingPayment or AddOnPaymentStatus.PendingReview;
             if (row.PaymentStatus != AddOnPaymentStatus.Paid || !needPay)
                 row.PaymentStatus = Accounting.Helpers.AddOnPaymentPolicy.InitialStatus(needPay);
+            // รอบ 219 เฟส 0 (G-5/G-11): เข้าสถานะรอชำระ "ใหม่" ⇒ เริ่มนับระยะผ่อนผัน + ผูกงวดที่ค่าจ่ายล่วงหน้าครอบ ·
+            // ค้างชำระอยู่แล้ว (ปิด/เปิดใหม่) ⇒ ไม่รีเซ็ต (กันต่อระยะผ่อนผัน/ค่าเดือนฟรีด้วยการกดสลับ)
+            if (row.PaymentStatus == AddOnPaymentStatus.AwaitingPayment && !(wasAwaiting && row.PaymentAwaitingSince != null))
+            {
+                row.PaymentAwaitingSince = now;
+                row.UpfrontPeriod = AddOnBilling.PeriodOf(now);
+            }
             if (!needPay)
             {
                 row.PaymentRejectedReason = null;
@@ -332,9 +346,11 @@ public class UsageMeteringService : IUsageMeteringService
             if (plan is not { Method: PricingMethod.FlatMonthly })
                 return new UsageRecordResult(false, null, 0, false, false, "ไม่ใช่ฟีเจอร์แบบเหมารายเดือน");
 
+            // รอบ 219 เฟส 0 (G-5): ส่งสถานะจ่ายล่วงหน้า + งวดที่ครอบ ⇒ งวดที่จ่ายล่วงหน้าแล้วไม่ออกค่าเหมาซ้ำ · ยังไม่จ่าย = ไม่ออกบิล
             var (amount, reason) = AddOnBilling.FlatAmount(
                 plan.UnitPrice, row.SnapshotUnitPrice, row.TrialUntil,
-                row.GrantSource != AddOnGrantSource.OwnerSelfServe, nowUtc);
+                row.GrantSource != AddOnGrantSource.OwnerSelfServe, nowUtc,
+                row.PaymentStatus, row.UpfrontPeriod, period);
 
             var account = company.BillingAccountId.HasValue
                 ? await _db.BillingAccounts.FirstOrDefaultAsync(a => a.Id == company.BillingAccountId.Value, ct)

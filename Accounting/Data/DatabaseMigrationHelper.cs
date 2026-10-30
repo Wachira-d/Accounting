@@ -241,6 +241,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.LegalDocumentMigration.Statements());   // รอบ 214 — ฉบับนโยบาย/ข้อกำหนดของแพลตฟอร์ม + ข้อความนโยบายของร้าน (Helpers/LegalDocumentMigration)
         list.AddRange(Accounting.Helpers.SubmitOnceMigration.Statements());   // รอบ 217 — IdempotencyRecords (+RequestHash) · คิวแจ้งเตือนหลังสร้างการจอง/ออเดอร์
         list.AddRange(Accounting.Helpers.MemberProfileMigration.Statements());   // รอบ 216 ฝ่ายค้าน — ที่อยู่หลักของสมาชิกชนิดละแถว (ล้างซ้ำ + unique index บางส่วน)
+        list.AddRange(Accounting.Helpers.PlatformBillingPhase0Migration.Statements());   // รอบ 219 เฟส 0 — ผู้จ่ายของ intent ค่าบริการ · ระยะผ่อนผัน/งวดจ่ายล่วงหน้าของส่วนเสริม · ดาวน์เกรดรอครบรอบ · วิธีโอนให้ NextAcc
         return list;
     }
 
@@ -6125,6 +6126,9 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE INDEX IF NOT EXISTS "IX_BillingAccounts_TaxId" ON "BillingAccounts" ("TaxId") WHERE "IsDeleted" = false;""",
+            // รอบ 219 เฟส 0 (G-6 · คำตัดสินข้อ 178): ค่าตั้งต้น = Postpaid (2) — ต้องมาก่อน backfill ด้านล่าง (INSERT ไม่ระบุ PaymentModel) ·
+            // ระบบไม่มีทางเติมเครดิต ⇒ Prepaid = ค่าใช้งานถูกปิดรอบโดยไม่ออกใบ · แถวเดิมไม่ถูกแก้ (รายงานแอดมิน prepaid-accounts)
+            """ALTER TABLE "BillingAccounts" ALTER COLUMN "PaymentModel" SET DEFAULT 2;""",
             """
             CREATE TABLE IF NOT EXISTS "BillingAccountAdmins" (
                 "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),

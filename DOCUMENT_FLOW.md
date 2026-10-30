@@ -1796,6 +1796,12 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     แนบสลิปเมื่อไม่มียอดค้าง ⇒ ปฏิเสธ (`CMS-SLIP-NOTHING-DUE`) · รูปตัวอย่างตรวจชนิดจากไบต์ (`ImageMagicBytes`) + จำกัดต่อ IP/ไซต์
 
 ### 2.6b Payment gateway — รับเงิน · คืนเงิน · รอบโอน (PAYMENT_GATEWAY_DESIGN.md · รอบ 198 settlement เฟส 0)
+
+- **รอบ 219 เฟส 0 — เงินค่าบริการ NextAcc (คำตัดสินข้อ 178):** ชนิดต้นทาง `SubscriptionPayment`/`AddOnPurchase` = รายได้ของแพลตฟอร์ม (`Helpers/PlatformRevenueSource`) ·
+  `PaymentIntentService.StartAsync`/`RecordExternalSuccessAsync` ปฏิเสธเมื่อไม่อยู่ใต้บริษัทผู้ให้บริการหรือไม่ระบุ `PayerCompanyId` (ครอบ `pay/intents` · `public-pay` · ส่วนเสริม) ·
+  `DispatchSucceededAsync` ไม่ส่งต่อ handler (ประวัติ ⚠️ + แจ้ง) เมื่อเกิดใต้บริษัทร้าน/ไม่รู้ผู้จ่าย/โหมดทดสอบ · ยืนยันมือ/ส่งต่อใหม่/คืนเงิน(และตรวจ/บันทึกผล) บนชนิดนี้ = SystemAdmin
+  ใน tenant ผู้ให้บริการเท่านั้น (403) · handler ค่าแพ็กเกจ/ส่วนเสริมกรองแถวด้วยบริษัทผู้จ่าย · ส่วนเสริม "ชำระออนไลน์" ปิด (409 + วิธีโอน) จนกว่าเฟส 1 ·
+  ใบเอกสารค่าบริการยังออกตามเส้นเดิม (`PlatformBillingDocumentIssuer` เมื่อแอดมินอนุมัติ) · Last verified `commit <sha ในคอมมิตถัดไป>`
 - **รับเงินสำเร็จ**: ขา "เงินเข้า" ตัดสินที่ `IGatewayAccountResolver.ResolveMoneyInAccountAsync` ตัวเดียว (adapter ที่ไม่เข้าธนาคารทันที ⇒
   Dr **11340** หรือผังที่ตั้ง `PaymentProviderConfig.ClearingAccountId` · ตัวหาบัญชีพักตัวเดียว `ResolveClearingAccountAsync`) ผ่านตัวจัดการต้นทาง 6 ชนิด
 - **คืนเงิน** (`POST pay/intents/{id}/refund` → `GatewayRefundService.RefundAsync`): ตรวจ `GatewayRefundMath.Check` (สถานะรับเงินแล้ว · **ยอดคืนสะสม**

@@ -1,6 +1,5 @@
 # dead_helper_check baseline — public static method ใน Helpers ที่ยังไม่มีผู้เรียก ณ วันเขียน
 # ทุกแถวต้องถูกตัดสิน "ต่อสาย หรือ ลบ" แล้วตัดออก — ห้ามเพิ่มแถวใหม่เพื่อให้ checker เขียว
-AddOnPaymentPolicy.cs UsableWhilePending
 AiCallBilling.cs IsProviderAttemptStatus
 AiCallBilling.cs LooksLikeMislabelledLocalRow
 ArApScope.cs IsPayable

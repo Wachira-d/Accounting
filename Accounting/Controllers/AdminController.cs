@@ -1592,15 +1592,11 @@ public class AdminController : ControllerBase
         }
         else if (template != null)
         {
-            sub.PricePerCycle = sub.BillingCycle switch
-            {
-                BillingCycle.Monthly => template.MonthlyPrice,
-                BillingCycle.Quarterly => template.QuarterlyPrice,
-                BillingCycle.SemiAnnual => template.SemiAnnualPrice,
-                BillingCycle.Annual => template.AnnualPrice,
-                _ => template.MonthlyPrice
-            };
+            // รอบ 219 เฟส 0: ราคาต่อรอบจากตัวตั้งเดียว (PlatformPlanPricing)
+            sub.PricePerCycle = Accounting.Helpers.PlatformPlanPricing.CyclePrice(template, sub.BillingCycle);
         }
+        // แอดมินเปลี่ยนทันที = แทนที่การเปลี่ยนที่รอมีผล (ถ้ามี)
+        sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
 
         // Update limits from template if not overridden
         if (template != null && !request.KeepCurrentLimits)
@@ -1621,6 +1617,24 @@ public class AdminController : ControllerBase
             ToPlan = request.Plan,
             Notes = $"Admin changed plan from {oldPlan} to {request.Plan}" + (request.Notes != null ? $": {request.Notes}" : ""),
             PerformedBy = userId
+        });
+        // รอบ 219 เฟส 0 (G-0 · คำตัดสินข้อ 178): ทางเปิดแพ็กเกจทันทีโดยไม่ผ่านการชำระมีทางเดียวคือแอดมินแพลตฟอร์ม ⇒ ลง audit chain
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = JwtHelper.GetUserIdFromClaims(User),
+            UserEmail = User.FindFirstValue(ClaimTypes.Email) ?? "",
+            Action = AuditAction.Update,
+            EntityType = "Subscription",
+            EntityId = sub.Id.ToString(),
+            OldValues = JsonSerializer.Serialize(new { plan = oldPlan.ToString() }),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                action = "AdminPlanOverride", plan = request.Plan.ToString(), cycle = sub.BillingCycle.ToString(),
+                sub.PricePerCycle, request.Notes, ruleCode = "PLATFORM-ADMIN-PLAN-OVERRIDE",
+            }),
+            IpAddress = HttpContext?.Connection.RemoteIpAddress?.ToString(),
+            Timestamp = DateTime.UtcNow,
         });
 
         await _db.SaveChangesAsync();
@@ -2122,7 +2136,9 @@ public class AdminController : ControllerBase
         string? PlatformRevenueAccountCode = null,
         string? PlatformCashAccountCode = null,
         // read-only — ให้หน้า admin โชว์ว่ากำลังใช้ tenant ไหนอยู่
-        string? PlatformCompanyName = null);
+        string? PlatformCompanyName = null,
+        // รอบ 219 เฟส 0 (G-13): วิธีโอนเงินค่าบริการให้ NextAcc ที่ผู้เช่าเห็น · PUT: null = ไม่เปลี่ยน · "" = ล้าง
+        string? PlatformBankTransferInstructions = null);
 
     [HttpGet("platform-billing-settings")]
     public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> GetPlatformBilling()
@@ -2137,7 +2153,7 @@ public class AdminController : ControllerBase
             s?.PlatformSellerAddress, s?.PlatformSellerPhone, s?.PlatformSellerEmail,
             s?.PlatformIsVatRegistered ?? false, s?.PlatformPriceIncludesVat ?? true,
             s?.PlatformCompanyId, s?.PlatformRevenueAccountCode, s?.PlatformCashAccountCode,
-            tenantName)));
+            tenantName, s?.PlatformBankTransferInstructions)));
     }
 
     [HttpPut("platform-billing-settings")]
@@ -2175,6 +2191,9 @@ public class AdminController : ControllerBase
             ? null : request.PlatformRevenueAccountCode.Trim();
         s.PlatformCashAccountCode = string.IsNullOrWhiteSpace(request.PlatformCashAccountCode)
             ? null : request.PlatformCashAccountCode.Trim();
+        if (request.PlatformBankTransferInstructions != null)
+            s.PlatformBankTransferInstructions = string.IsNullOrWhiteSpace(request.PlatformBankTransferInstructions)
+                ? null : request.PlatformBankTransferInstructions.Trim();
         s.UpdatedAt = DateTime.UtcNow;
         s.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _db.SaveChangesAsync();

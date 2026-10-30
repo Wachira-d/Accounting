@@ -100,6 +100,11 @@ public class PaymentIntent : TenantEntity
     public Guid? SiteId { get; set; }
     public Guid? ContactId { get; set; }
 
+    /// <summary>รอบ 219 เฟส 0 (G-3 · PLATFORM_GATEWAY_REFUND_POLICY_DESIGN §2 ข้อ 3): <b>บริษัทผู้จ่าย</b>ของรายการค่าบริการ NextAcc —
+    /// intent อยู่ใต้บริษัทผู้ให้บริการ (<c>CompanyId</c>) แต่สิทธิ์/รายการชำระที่ต้นทางเป็นของบริษัทนี้ · handler ค่าบริการตรวจว่าแถวต้นทาง
+    /// เป็นของบริษัทนี้ (<c>PlatformRevenueSource.SourceBelongsToPayer</c>) · null บนรายการของร้าน</summary>
+    public Guid? PayerCompanyId { get; set; }
+
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "THB";
     public string? Description { get; set; }

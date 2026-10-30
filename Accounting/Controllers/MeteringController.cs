@@ -113,6 +113,11 @@ public class MeteringController : ControllerBase
                     state?.PaymentStatus ?? Models.Enums.AddOnPaymentStatus.NotRequired),
                 paymentRejectedReason = state?.PaymentRejectedReason,
                 slipUploadedAt = state?.SlipUploadedAt,
+                // รอบ 219 เฟส 0 (G-11): วันสิ้นสุดระยะผ่อนผันของส่วนเสริมที่ยังไม่ชำระ + ยังใช้ได้ไหม — ตัวตัดสินเดียวกับด่านสิทธิ์
+                paymentGraceUntil = state?.PaymentStatus == Models.Enums.AddOnPaymentStatus.AwaitingPayment
+                    ? Accounting.Helpers.AddOnPaymentPolicy.GraceEndsAt(state.PaymentAwaitingSince) : null,
+                usable = state == null || Accounting.Helpers.AddOnPaymentPolicy.UsableWhilePending(
+                    state.PaymentStatus, state.PaymentAwaitingSince, DateTime.UtcNow),
                 // สูตรเดียวกับ AddOnPurchaseService — เรียก policy ตัวเดียว ห้ามคัดลอกมา
                 amountDue = state == null ? 0m
                     : Accounting.Helpers.AddOnPaymentPolicy.AmountDue(state.PaymentStatus, state.AcceptedUnitPrice),
@@ -200,44 +205,37 @@ public class MeteringController : ControllerBase
     /// <summary>สร้างรายการชำระเงินออนไลน์ของส่วนเสริม — ยอดมาจากเซิร์ฟเวอร์เท่านั้น</summary>
     public record StartAddOnPaymentRequest(Models.Enums.PaymentMethodKind Method, string? ReturnUrl = null);
 
+    /// <summary>รอบ 219 เฟส 0 (G-1 · คำตัดสินข้อ 178): <b>ปิดชั่วคราว</b> — เดิมสร้าง intent ใต้บริษัทของร้าน ⇒ ใช้ gateway ของร้าน (เงินค่าส่วนเสริม
+    /// เข้ากระเป๋าร้าน แล้วระบบเปิดสิทธิ์ให้) · ช่องชำระออนไลน์ที่ถูกต้อง (intent ใต้บริษัทผู้ให้บริการ + <c>PayerCompanyId</c> ผ่าน
+    /// <c>IPlatformPaymentService</c>) เป็นงานเฟส 1 · ระหว่างนี้ตอบ 409 พร้อมวิธีโอนของ NextAcc (ทางไปต่อ = แนบสลิป)</summary>
     [HttpPost("features/{featureCode}/payment/intent")]
     public async Task<ActionResult<ApiResponse<object>>> StartAddOnPayment(
-        Guid companyId, string featureCode, [FromBody] StartAddOnPaymentRequest req,
-        [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
-        [FromServices] Accounting.Services.Payments.IPaymentIntentService intents,
-        CancellationToken ct)
+        Guid companyId, string featureCode, [FromBody] StartAddOnPaymentRequest req, CancellationToken ct)
     {
         var block = await RequireBillingAsync(companyId, "ชำระค่าส่วนเสริม");
         if (block != null) return block;
+        var pay = await PlatformPayInfoAsync(ct);
+        return StatusCode(409, new ApiResponse<object>(false, pay,
+            "ยังไม่เปิดชำระค่าบริการ NextAcc ออนไลน์ — กรุณาโอนเงินตามรายละเอียดแล้วแนบสลิป ผู้ดูแลระบบจะตรวจสอบและยืนยันให้"));
+    }
 
-        var due = await addons.AmountDueAsync(companyId, featureCode, ct);
-        if (due <= 0m)
-            return BadRequest(new ApiResponse<object>(false, null, "ส่วนเสริมนี้ไม่มียอดค้างชำระ"));
+    /// <summary>รอบ 219 เฟส 0 (G-1/G-13): วิธีชำระค่าบริการ NextAcc ที่หน้า "ส่วนเสริม"/"แพ็กเกจ" แสดง — <b>ไม่ถาม gateway ของร้าน</b>
+    /// (เดิมหน้าเว็บถาม <c>public-pay/methods</c> ของร้าน ⇒ ปุ่ม "ชำระออนไลน์" ส่งเงินเข้ากระเป๋าร้าน) · <c>online</c> = false จนกว่าเฟส 1</summary>
+    [HttpGet("platform-pay")]
+    public async Task<ActionResult<ApiResponse<object>>> PlatformPay(Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<object>(true, await PlatformPayInfoAsync(ct)));
 
-        var row = await _db.CompanyFeatures.AsNoTracking()
-            .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted, ct);
-        if (row == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบส่วนเสริมนี้"));
-        var name = await _db.ApiFeatures.AsNoTracking()
-            .Where(f => f.FeatureCode == featureCode).Select(f => f.Name).FirstOrDefaultAsync(ct) ?? featureCode;
-
-        try
+    private async Task<object> PlatformPayInfoAsync(CancellationToken ct)
+    {
+        var text = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt)
+            .Select(x => x.PlatformBankTransferInstructions).FirstOrDefaultAsync(ct);
+        return new
         {
-            // SourceId = CompanyFeature.Id (PaymentIntent.SourceId เป็น Guid)
-            var intent = await intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
-                Models.Enums.PaymentSourceKind.AddOnPurchase, row.Id, due, req.Method,
-                Description: $"ค่าส่วนเสริม {name}", ReturnUrl: req.ReturnUrl), ct: ct);
-            return Ok(new ApiResponse<object>(true, new
-            {
-                id = intent.Id, status = intent.Status.ToString(), amount = intent.Amount,
-                currency = intent.Currency, qrPayload = intent.QrPayload,
-                qrExpiresAt = intent.QrExpiresAt, authorizeUrl = intent.AuthorizeUrl,
-                failureMessage = intent.FailureMessage,
-            }));
-        }
-        catch (InvalidOperationException ex)
-        {
-            return BadRequest(new ApiResponse<object>(false, null, ex.Message));
-        }
+            online = false,
+            bankTransferInstructions = string.IsNullOrWhiteSpace(text) ? null : text.Trim(),
+            fallbackNote = string.IsNullOrWhiteSpace(text)
+                ? "ยังไม่ได้ประกาศเลขบัญชีรับโอน — กรุณาติดต่อผู้ดูแลระบบ NextAcc ก่อนโอนเงิน" : null,
+        };
     }
 
     /// <summary>แนบสลิปค่าส่วนเสริม — เส้นสำรองเมื่อยังไม่เปิด gateway</summary>

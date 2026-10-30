@@ -42,6 +42,12 @@ public class Subscription : BaseEntity
     /// <summary>เอกสารใบแจ้งหนี้จริงใน tenant ผู้ให้บริการ (ถ้าออกผ่าน pipeline เอกสาร)</summary>
     public Guid? RenewalInvoiceDocumentId { get; set; }
 
+    /// <summary>รอบ 219 เฟส 0 (G-0 · คำตัดสินข้อ 178): ดาวน์เกรด/เปลี่ยนรอบบิลที่<b>รอมีผลวันครบรอบ</b> — ไม่ตัดสิทธิ์แพ็กเกจที่จ่ายไปแล้ว ·
+    /// <c>ProcessExpiredSubscriptionsAsync</c> ใช้เมื่อถึง <see cref="ScheduledPlanEffectiveAt"/> · ใบแจ้งหนี้ต่ออายุคิดราคาจากแพ็กเกจนี้</summary>
+    public SubscriptionPlan? ScheduledPlan { get; set; }
+    public BillingCycle? ScheduledBillingCycle { get; set; }
+    public DateTime? ScheduledPlanEffectiveAt { get; set; }
+
     // Trial Management (ควบคุมการทดลองใช้อย่างละเอียด)
     public TrialConfig? TrialConfig { get; set; }
 
