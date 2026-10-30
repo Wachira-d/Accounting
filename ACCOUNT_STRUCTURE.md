@@ -702,7 +702,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 - **ข้อบังคับ deploy — IP จริงของผู้ใช้ (ด่านจำกัดอัตราทุกตัว):** หลัง reverse proxy ต้องตั้ง `Security:KnownProxies` (IP ของ proxy คั่นด้วย `,` · ค่าที่ไม่ใช่ IP = boot ไม่ขึ้น)
   และ `Security:ForwardLimit` = จำนวน proxy จริง (ตั้งต้น 2) — ไม่ตั้ง ⇒ ผู้ใช้ปลอม `X-Forwarded-For` ตัวซ้ายสุดได้ (หลบถังจำกัดอัตราต่อ IP ของลิงก์ชำระ/ล็อกอิน/แชท ·
   IP ใน audit ผิด) · `Security:TrustProxyHeaders=false` เมื่อไม่มี proxy
-  · **ฝ่ายค้านรอบสุดท้าย (<sha ในคอมมิตถัดไป>):** production + TrustProxyHeaders เปิด + ไม่ตั้ง `Security:KnownProxies`/`Security:KnownNetworks` (CIDR คั่นด้วย `,` เช่น
+  · **ฝ่ายค้านรอบสุดท้าย (d24ce956):** production + TrustProxyHeaders เปิด + ไม่ตั้ง `Security:KnownProxies`/`Security:KnownNetworks` (CIDR คั่นด้วย `,` เช่น
   `10.0.0.0/8`) ⇒ **boot ไม่ขึ้น** (fail-fast แบบ secret) · ยกเว้นตั้ง `Security:TrustAllForwarders=true` อย่างตั้งใจ (พอร์ต backend เปิดเฉพาะ proxy) — ⚠️ ก่อน deploy คอมมิตนี้ต้องตั้งค่าใดค่าหนึ่ง
 
 ### 6.3 Edge cases (ตัดสินใจแล้ว)
