@@ -5844,4 +5844,4 @@ _รอบ 216 ฝ่ายค้าน (ไม่ blocking · คำตัด�
 (S3) ธง `ContactFromProfile` — เซิร์ฟเวอร์เติมช่องว่างจากโปรไฟล์เฉพาะเมื่อหน้าเว็บยืนยัน + สมาชิกในโทเคนของเว็บนี้ (`StorefrontCustomerAuth.FillFromProfile`) ·
 ที่อยู่หลักต่อชนิดแถวเดียว (`Helpers/MemberProfileMigration` ล้างซ้ำ + partial unique index · ธุรกรรมสองจังหวะ) · แถว Both · ล้างคอลัมน์โครงเมื่อบรรทัดที่อยู่เปลี่ยน ·
 `portal/me` คืนเบอร์ normalize แล้ว + เทียบหลัง normalize ทั้งสองฝั่ง (ไม่มี "บันทึกแล้ว" ปลอม) · ผลการบันทึกเป็นข้อความจากเซิร์ฟเวอร์ (`SaveNote(saved, skipped)`) ·
-ฟอร์มติดต่อไม่เติมบริษัท/เลขภาษี/ช่องซ่อน · เทสต์ CMS216-13..19 · `member_prefill_sim` negative 6 ตัว · `required_call_site_check` +6 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+ฟอร์มติดต่อไม่เติมบริษัท/เลขภาษี/ช่องซ่อน · เทสต์ CMS216-13..19 · `member_prefill_sim` negative 6 ตัว · `required_call_site_check` +6 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c93341cc_

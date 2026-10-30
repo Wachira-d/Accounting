@@ -6105,7 +6105,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 216 — ข้อมู�
   controller ตัดผ่าน `StorefrontCustomerAuth.FillFromProfile` (สมาชิกในโทเคนของเว็บนี้เท่านั้น · พนักงาน/แขก/API ไม่ส่งธง ⇒ ไม่เติม) · ที่อยู่หลักต่อชนิดแถวเดียว (`Helpers/MemberProfileMigration` +
   ธุรกรรมสองจังหวะใน `ApplyProfileAsync`) · แถว Both · ล้างคอลัมน์โครงเมื่อบรรทัดที่อยู่เปลี่ยน · `portal/me` คืนเบอร์ normalize แล้ว · ผลการบันทึกเป็นข้อความจากเซิร์ฟเวอร์เท่านั้น
   (เช็กเอาต์แสดงที่หน้าสำเร็จ) · ฟอร์มติดต่อไม่เติมบริษัท/เลขภาษี/ช่องซ่อน
-_Last verified against codebase: 2026-10-30 (รอบ 216 ฝ่ายค้าน — S1–S3 + หมายเหตุที่อยู่/เบอร์/ข้อความ · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 216 ฝ่ายค้าน — S1–S3 + หมายเหตุที่อยู่/เบอร์/ข้อความ · ยังไม่ได้คอมไพล์ · commit c93341cc)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
