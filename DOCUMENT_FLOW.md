@@ -5902,6 +5902,33 @@ _Last verified against codebase: 2026-10-30 (รอบ 211 — ลูกค้�
 
 _Last verified against codebase: 2026-10-30 (รอบ 211 ฝ่ายค้าน — log ปิดบัง userId · เส้นปิดลิงก์เดียว + เผารหัส · เก็บกวาดรายคืน · BotUserId มีผล · อีเมลร้านล้มถอยไประบบ + ประทับ · webhook 401 แบบเดียว + จำกัด body · ธุรกรรมไถ่/ออกรหัส · ยินยอมด้วย hash · ยังไม่ได้คอมไพล์ · commit f19dac45)_
 
+- **รอบ 212 แพ็ก A · ค่าตั้งแจ้งลูกค้าต่อประเภท × ช่อง · ถอยอีเมล · โควตาข้อความช่องกลาง (คำตัดสินข้อ 171 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §8 แพ็ก A · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **ทางเดียว** — ทุกข้อความถึงลูกค้าปลายทาง 12 เส้น (ยืนยัน/ยกเลิก/เลื่อนการจอง · เตือนก่อนนัด · ได้คิว · คลาสยกเลิก/เปลี่ยนผู้สอน · ยืนยัน/สถานะออเดอร์ · บัตรใกล้หมดอายุ ·
+  **อีเมลแขกที่พัก** `LodgingService.Operations.TryNotifyAsync` · **อีเมลกู้ตะกร้า** `AbandonedCartService` · **ตอบกลับฟอร์ม** `CmsCustomerService.SubmitFormAsync`) ⇒
+  `IBookingNotifier.SendAsync(CustomerNotifyRequest)` พร้อม `EventKey` (`Helpers/CustomerNotifyEvents` — 18 ประเภท) + `MessageKey` (`Helpers/CustomerNotifyKeys`) ·
+  ข้อความถึงร้าน (`NotifyShopAsync` · อีเมลที่พักถึงเจ้าของ) ผ่านเส้นเดียวกันด้วยคีย์ `shop.notify`/`shop.payment-problem` (ไม่อยู่ในค่าตั้ง matrix) ·
+  ด่าน `tools/required_call_site_check.py` ห้ามเรียก `IEmailService`/`ILineNotifyService` ตรงในเส้นเหล่านี้ (แจ้งร้านของฟอร์มยังใช้อีเมลระบบเดิม)
+  (ข) **ลำดับใน `BookingNotifier.SendAsync`**: claim คีย์ข้อความ (`CustomerNotifyLogs` unique ต่อบริษัท + lease 2 นาที) — ส่งถึงแล้ว ⇒ `AlreadySent` (Sent=true ไม่ส่งซ้ำ) ·
+  กำลังส่งที่อื่น ⇒ ระงับ ⇒ `CustomerNotifyPolicy.Resolve` (เว็บ+คีย์ → เว็บ+`*` → บริษัท+คีย์ → บริษัท+`*` → **ค่าเริ่มต้นเปิดทั้งสอง = เดิม**) ⇒
+  `CustomerNotifyPolicy.Plan` (ลำดับช่องเดิม `CustomerNotifyChannel.Order` × ผู้ส่งอีเมลจาก `EmailPlan(configured, CompanySettings.CustomerEmailFallback)`) ⇒
+  ขั้นที่ออก **OA ของ NextAcc / SMTP ของระบบ** จองโควตาก่อนส่ง (`INotifyQuotaService.TryReserveAsync` · UPDATE…WHERE "Used" < limit RETURNING) · เต็ม ⇒ ข้ามไปช่องของร้าน (+ คำเตือน `[CMS-NOTIFY-FALLBACK]`) ·
+  ไม่มีช่องของร้าน ⇒ **ระงับ** (`BookingSendResult.IsSuppressed` · ผู้เรียกประทับเหตุบนการจอง/ออเดอร์/บัตรเหมือนส่งล้ม · ไม่ประทับ "ส่งแล้ว" ⇒ งานตามรอบส่งต่อได้เมื่อเติมโควตา) ·
+  ส่งล้ม ⇒ คืนหน่วย · ข้อความจำเป็น (`shop.payment-problem`) นับแต่ไม่ระงับ · ค่าตั้งปิดทั้งสองช่อง ⇒ ระงับ (งานเตือนก่อนนัดกรองก่อนวน)
+  (ค) **ถอยอีเมล 3 ค่า** (`CompanySettings.CustomerEmailFallback`): ว่าง/`system-on-fail-or-unset` = เดิม (ร้านล้ม/ไม่ตั้ง ⇒ อีเมลระบบ) · `system-when-unset-only` (ร้านตั้งแล้วล้ม ⇒ ไม่ถอย) ·
+  `tenant-only` (ไม่ตั้ง ⇒ ไม่ส่งอีเมล) · แก้ที่ `PUT customer-notify/fallback` (ไม่ล้าง "ทดสอบผ่าน" ของ email-config) · echo ใน `GET email-config` + `GET customer-notify/rules`
+  (ง) **โควตา**: นับเฉพาะช่องกลาง (`NotifyQuotaPolicy.IsMetered`) ต่อบริษัทต่องวดเดือนตามเวลาไทย (`NotifyUsageCounters` · ไม่มีงาน reset) · เพดาน = `Subscription.MaxSharedMessagesPerMonth`
+  (เฉพาะบริษัท) ⇒ `PlanTemplate.MaxSharedMessagesPerMonth` / `TrialMaxSharedMessagesPerMonth` (กลุ่มบัญชี = แม่แบบของกลุ่ม · ไม่ pool) ⇒ ไม่พบแม่แบบ = ไม่จำกัด ·
+  เต็ม ⇒ โบนัสที่ซื้อ (`Subscription.NotifyBonusQuota` ยังไม่หมดอายุ) · เตือนเจ้าของ 80%/100% ครั้งเดียวต่องวด (`notify.quota.80`/`.100` ผ่าน `INotificationEngine`) ·
+  **ไม่บล็อกงานธุรกิจใด ๆ** (บล็อกแค่การส่งข้อความผ่านช่องกลาง)
+  (จ) **ซื้อแพ็ก `notify.topup`** (500 ข้อความ · 60 วัน) — `POST metering/notify-quota/topup` (`RequireBillingAsync`) ⇒ `NotifyQuotaService.PurchaseTopUpAsync` ลอก `QuotaService.PurchaseTopUpAsync`:
+  advisory xact lock ต่อบริษัท ⇒ `UsageEvent notify.topup` (IdempotencyKey `topup:notify.topup:{งวด}:{ลำดับ}`) **ก่อน**ให้โบนัส ⇒ audit chain ·
+  **ใบแจ้งหนี้/ใบกำกับไหลเส้นเดิม** `UsageInvoicingJob` → `PlatformBillingDocumentIssuer.IssueUsageInvoiceAsync` (Postpaid) / ตัดเครดิตตอนบันทึก (Prepaid) — ไม่มีเส้นเอกสาร/ภาษีใหม่
+  (ฉ) **หน้าจอ**: ตั้งค่า → การแจ้งเตือน (ตารางลูกค้า + ถอยอีเมล + การ์ดโควตา) · ตั้งค่าร้านค้า แท็บ "แจ้งเตือนลูกค้า" (override ต่อเว็บ) · การใช้งาน · แพ็กเกจ · ส่วนเสริม (การ์ดโควตา + ซื้อแพ็ก) ·
+  แอดมิน plans (เพดานต่อแพ็กเกจ) · ทุกค่า/ป้ายจากเซิร์ฟเวอร์ (`/js/customer-notify.js` แสดงอย่างเดียว)
+  (ช) migration `DatabaseMigrationHelper.CmsRound212NotifyStatements` (บล็อกเดียวของรอบ · รวมตารางล่วงหน้าของแพ็ก B `LineOaSwitchEvents` และแพ็ก C `StaffDailySummary*`)
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก A — ค่าตั้งแจ้งลูกค้าต่อประเภท × ช่อง · ถอยอีเมล 3 ค่า · โควตาข้อความช่องกลาง + แพ็ก notify.topup · 12 เส้นผ่าน BookingNotifier · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

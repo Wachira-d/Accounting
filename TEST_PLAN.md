@@ -1,3 +1,30 @@
+## CMS212A — ค่าตั้งแจ้งลูกค้าต่อประเภท × ช่อง · ถอยอีเมล 3 ค่า · โควตาข้อความช่องกลาง + แพ็ก `notify.topup` (รอบ 212 แพ็ก A · คำตัดสินข้อ 171 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md`)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS212A-01 | ไม่มีแถวค่าตั้ง | ส่งทั้ง LINE/อีเมลเหมือนรอบ 211 (ค่าเริ่มต้น) | `CmsRound212PrefsQuotaTests.No_rows_means_both_channels_on_like_before` · `Without_quota_service_behaves_like_round_211` |
+| CMS212A-02 | เว็บ+คีย์ / เว็บ+ทั้งหมด / บริษัท+คีย์ / บริษัท+ทั้งหมด · ช่องละอิสระ | ชั้นที่ใกล้สุดชนะต่อช่อง + บอกชั้นที่ตัดสิน | `Site_beats_company_and_key_beats_all_per_channel` |
+| CMS212A-03 | ทิศตรงข้าม: เว็บ A ปิดทั้งหมด | เว็บ B ยังส่งตามค่าเริ่มต้น | `Opposite_site_A_off_does_not_touch_site_B` |
+| CMS212A-04 | ข้อความถึงร้าน (`shop.*`) เมื่อบริษัทปิด "ทั้งหมด" | ยังส่ง (ไม่อยู่ในค่าตั้งลูกค้า) · เงินค้าง = จำเป็น | `Shop_messages_ignore_customer_rules` · `Essential_shop_message_is_never_suppressed_by_quota` |
+| CMS212A-05 | ลำดับขั้น + ช่องนับโควตา | ลำดับเดิม (ผูก LINE ⇒ LINE ก่อน) · OA/SMTP ของร้านไม่นับ · ช่องกลางนับ | `Plan_keeps_old_order_and_marks_metered_sources` · `Only_shared_channels_are_metered` · `Tenant_channels_are_not_counted` |
+| CMS212A-06 | ปิด LINE แต่ลูกค้าผูก LINE | อีเมลอย่างเดียว | `Line_off_but_customer_linked_means_email_only` |
+| CMS212A-07 | ปิดทั้งสองช่อง / ร้านเท่านั้นแต่ไม่ตั้ง / ไม่มีช่องติดต่อ | ระงับ (เหตุคนละข้อความ) · ไม่มีช่อง = Fail เดิม · ไม่เรียกช่องส่ง | `Suppress_reasons_distinguish_policy_tenant_only_and_no_contact` · `Policy_off_suppresses_and_opposite_event_still_sends` |
+| CMS212A-08 | บันทึกค่าตั้งคีย์ผิด/ซ้ำ/คีย์ร้าน | 400 พร้อมเหตุ | `Validate_rejects_unknown_and_duplicate_keys` · rule `CustomerNotifyController.SaveRules` |
+| CMS212A-09 | แคตตาล็อก 18 ประเภท · สถานะออเดอร์/ที่พักที่มีข้อความ = มีคีย์ | ตรงกับ `CmsNotificationText.CustomerOrderStatus` ทุกสถานะ | `Catalog_keys_unique_and_mappings_cover_message_sources` |
+| CMS212A-10 | ถอยอีเมล 3 ค่า × ร้านตั้ง/ไม่ตั้ง (+ ว่าง/ค่าผิด) | ว่าง = เดิม (ถอยไประบบ) · ตั้งแล้วล้มไม่ถอย · ร้านเท่านั้น | `Email_plan_follows_fallback_setting` (10 เคส) · `Fallback_values_validate_and_default` · `Fallback_settings_change_email_sources` |
+| CMS212A-11 | เพดาน: ค่าเฉพาะบริษัท → แม่แบบ → ทดลองใช้ → ไม่มีแม่แบบ | ไม่มีแม่แบบ = ไม่จำกัด (เดิม) · -1 = ไม่จำกัด | `Plan_limit_override_then_template_then_unlimited` |
+| CMS212A-12 | เตือน 80/100 · ข้ามครั้งเดียว | ระดับเดียวกับโควตาเอกสาร · ไม่จำกัดไม่เตือน | `Warn_levels_80_and_100_and_crossing_once` · Db `Warn_80_is_stamped_once_per_period` |
+| CMS212A-13 | แพ็กเกจ → โบนัส (ยังไม่หมดอายุ) → ข้อความจำเป็น → เต็ม | โบนัสหมดอายุไม่นับ | `Decide_uses_plan_then_live_bonus_then_essential` · `Effective_limit_counts_only_live_bonus` · Db `Release_returns_unit_and_bonus_is_used_after_plan_then_expired_bonus_is_not` |
+| CMS212A-14 | งวดตามเวลาไทย (16:30 UTC 31 ต.ค. = ต.ค. · 17:30 UTC = พ.ย.) | งวดถูก | `Period_is_bangkok_month` |
+| CMS212A-15 | คีย์ข้อความภายใต้วัฒนธรรมไทย · ผู้สอนต่างกัน · ขั้นเตือนต่างกัน | ค.ศ. ไม่ใช่ พ.ศ. · คีย์ต่างกัน · ≤ 200 ตัว | `Message_keys_are_culture_invariant_and_distinct` |
+| CMS212A-16 | โควตาเต็ม + ลูกค้าผูก LINE (OA กลาง) + ร้านตั้งอีเมล | ส่งทางอีเมลของร้าน + คำเตือน `[CMS-NOTIFY-FALLBACK]` | `Quota_full_routes_to_tenant_channel_with_warning` |
+| CMS212A-17 | โควตาเต็ม ไม่มีช่องของร้าน | ระงับ + เหตุ "โควตา" · ไม่เรียกช่องส่ง · แจ้งเจ้าของระดับเต็ม | `Quota_full_without_tenant_channel_suppresses_and_sends_nothing` |
+| CMS212A-18 | ส่งทางช่องกลางล้ม | คืนหน่วย · บันทึก Failed | `Failed_shared_send_releases_the_unit` · Db `Release_returns_unit…` |
+| CMS212A-19 | คีย์ข้อความส่งถึงแล้ว / กำลังส่งที่อื่น | ไม่ส่งซ้ำ (Sent+Duplicate) / ระงับ | `Already_sent_key_is_not_sent_again` · `Key_in_flight_elsewhere_is_suppressed_not_sent` · Db `Same_message_key_is_claimed_once_and_lease_expiry_allows_takeover` |
+| CMS212A-20 | สองคำขอพร้อมกันที่ `Used = limit-1` (6 คำขอ) | ผ่าน 1 · ตัวนับ = limit | Db `NotifyQuotaDbTests.Concurrent_reservations_at_limit_minus_one_let_exactly_one_through` |
+| CMS212A-21 | ซื้อแพ็ก `notify.topup` | UsageEvent 1 แถว (คีย์ topup) ก่อนให้โบนัส 500 · ใช้โบนัสได้เมื่อเพดาน 0 | Db `Purchase_topup_records_one_usage_event_and_grants_bonus` · rule `PurchaseTopUpAsync` |
+| CMS212A-22 | ทุกเส้นข้อความถึงลูกค้า 12 เส้นผ่าน `BookingNotifier` พร้อม EventKey/MessageKey · จองโควตาก่อนส่ง · ห้ามเรียก `IEmailService`/`ILineNotifyService` ตรง | ด่านจุดเรียกล้มเมื่อถอด | `tools/required_call_site_check.py` (กติกา "รอบ 212") |
+
 ## CMS211 — ลูกค้าปลายทางผูก LINE รับแจ้งเตือน (สมาชิก/แขก) · OA ของร้าน/NextAcc · อีเมลของร้าน (รอบ 211 · คำตัดสินข้อ 170 · `erp-review/2026-10-30/LINE_CUSTOMER_NOTIFY_DESIGN.md`)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -47,7 +74,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **686 ไฟล์ · 6,966 `[Fact]` + 1,118 `[Theory]` (5,220 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **688 ไฟล์ · 6,999 `[Fact]` + 1,119 `[Theory]` (5,230 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

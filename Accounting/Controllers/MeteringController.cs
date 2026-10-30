@@ -25,10 +25,11 @@ public class MeteringController : ControllerBase
     private readonly IUsageMeteringService _metering;
     private readonly IQuotaService _quota;
     private readonly IPermissionService _permissions;
+    private readonly INotifyQuotaService? _notifyQuota;
 
     public MeteringController(AccountingDbContext db, IUsageMeteringService metering,
-        IQuotaService quota, IPermissionService permissions)
-    { _db = db; _metering = metering; _quota = quota; _permissions = permissions; }
+        IQuotaService quota, IPermissionService permissions, INotifyQuotaService? notifyQuota = null)
+    { _db = db; _metering = metering; _quota = quota; _permissions = permissions; _notifyQuota = notifyQuota; }
 
     /// <summary>
     /// **ด่านของทุก endpoint ที่ก่อค่าใช้จ่ายให้บริษัท**
@@ -296,6 +297,32 @@ public class MeteringController : ControllerBase
         var docs = req.Packs * Models.Constants.AddOnCodes.DocumentsPerTopUpPack;
         return Ok(new ApiResponse<DocumentQuotaStatus>(true, status,
             $"เพิ่มโควตา {docs} ฉบับแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));
+    }
+
+    // ═══════════════ รอบ 212 แพ็ก A: โควตาข้อความผ่านช่องกลาง (LINE OA/อีเมลของ NextAcc) ═══════════════
+
+    /// <summary>สถานะโควตาข้อความเดือนนี้ — เซิร์ฟเวอร์คำนวณ (NotifyQuotaPolicy) หน้าเว็บแสดงอย่างเดียว · ใช้ที่หน้า ตั้งค่า/การใช้งาน/แพ็กเกจ/ส่วนเสริม</summary>
+    [HttpGet("notify-quota")]
+    public async Task<ActionResult<ApiResponse<NotifyQuotaStatus>>> GetNotifyQuota(Guid companyId, CancellationToken ct)
+    {
+        if (_notifyQuota == null) return StatusCode(503, new ApiResponse<NotifyQuotaStatus>(false, null, "บริการโควตาข้อความไม่พร้อม"));
+        return Ok(new ApiResponse<NotifyQuotaStatus>(true, await _notifyQuota.GetStatusAsync(companyId, ct)));
+    }
+
+    /// <summary>ซื้อแพ็กข้อความเพิ่ม (<c>notify.topup</c>) — ด่านเดียวกับซื้อโควตาเอกสาร · คิดเงินผ่าน UsageEvent เส้นเดิม</summary>
+    [HttpPost("notify-quota/topup")]
+    public async Task<ActionResult<ApiResponse<NotifyQuotaStatus>>> NotifyTopUp(
+        Guid companyId, [FromBody] TopUpRequest req, CancellationToken ct)
+    {
+        var block = await RequireBillingAsync(companyId, "ซื้อแพ็กข้อความเพิ่ม");
+        if (block != null) return block;
+        if (_notifyQuota == null) return StatusCode(503, new ApiResponse<NotifyQuotaStatus>(false, null, "บริการโควตาข้อความไม่พร้อม"));
+
+        var actor = User.Identity?.Name ?? "unknown";
+        var status = await _notifyQuota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct);
+        var msgs = req.Packs * Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack;
+        return Ok(new ApiResponse<NotifyQuotaStatus>(true, status,
+            $"เพิ่มข้อความแจ้งเตือน {msgs} ข้อความแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));
     }
 
     /// <summary>ภารกิจแลกโควตาที่เปิดอยู่ (§12) — ว่างเปล่า = เจ้าของระบบปิดไว้

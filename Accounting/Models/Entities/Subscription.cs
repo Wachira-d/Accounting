@@ -95,6 +95,13 @@ public class Subscription : BaseEntity
     public int DocumentBonusQuota { get; set; }
     public DateTime? DocumentBonusExpiresAt { get; set; }
 
+    /// <summary>รอบ 212 (คำตัดสินข้อ 171): เพดานข้อความผ่านช่องกลาง (LINE OA/อีเมลของ NextAcc) ต่อเดือนเฉพาะบริษัทนี้ —
+    /// null = ตามแพ็กเกจ (<see cref="PlanTemplate.MaxSharedMessagesPerMonth"/>) · -1 = ไม่จำกัด · ตัวตัดสิน <c>Helpers/NotifyQuotaPolicy.PlanLimit</c></summary>
+    public int? MaxSharedMessagesPerMonth { get; set; }
+    /// <summary>รอบ 212: ข้อความช่องกลางที่ซื้อเพิ่ม (<c>notify.topup</c>) — ใช้เมื่อเกินเพดานแพ็กเกจ จนถึง <see cref="NotifyBonusExpiresAt"/> (แบบ <see cref="DocumentBonusQuota"/>)</summary>
+    public int NotifyBonusQuota { get; set; }
+    public DateTime? NotifyBonusExpiresAt { get; set; }
+
     /// <summary>ปิด "ทำภารกิจแลกโควตา" เฉพาะบริษัทนี้ (ชั้นที่ 3 ของสวิตช์ —
     /// ใช้กับบริษัทที่ใช้ในทางที่ผิด). ชั้น 1 = ปิดทุก QuotaRewardOption ·
     /// ชั้น 2 = PlanTemplate.AllowQuotaReward</summary>
@@ -226,6 +233,9 @@ public class PlanTemplate : BaseEntity
     public int MaxJournalEntriesPerMonth { get; set; }
     public long MaxStorageBytes { get; set; }
     public int MaxOcrPagesPerMonth { get; set; }
+    /// <summary>รอบ 212 (คำตัดสินข้อ 171): เพดานข้อความผ่านช่องกลาง (LINE OA/อีเมลของ NextAcc) ต่อบริษัทต่อเดือน · -1 = ไม่จำกัด ·
+    /// ค่าตั้งต้นจาก migration (ต่อระดับแพ็กเกจ) — เจ้าของแก้ได้ที่ /admin/plans.html · ตัวตัดสิน <c>Helpers/NotifyQuotaPolicy.PlanLimit</c></summary>
+    public int MaxSharedMessagesPerMonth { get; set; } = 300;
 
     // ─── Per-engine OCR quotas (split Azure DI vs local) ───
     // When set, override the single MaxOcrPagesPerMonth and let admins
@@ -253,6 +263,8 @@ public class PlanTemplate : BaseEntity
     public int TrialMaxDocumentsPerMonth { get; set; } = 20;
     public int TrialMaxJournalEntriesPerMonth { get; set; } = 50;
     public int TrialMaxOcrPagesPerMonth { get; set; } = 10;
+    /// <summary>รอบ 212: เพดานข้อความช่องกลาง/เดือนระหว่างทดลองใช้ (-1 = ไม่จำกัด) · ค่าตั้งต้นจาก migration — แก้ที่ /admin/plans.html</summary>
+    public int TrialMaxSharedMessagesPerMonth { get; set; } = 100;
     public bool TrialBlockOnExpiry { get; set; } = false;
     public int TrialGracePeriodDays { get; set; } = 7;
     /// <summary>แพ็กเกจนี้ให้ "ทำภารกิจแลกโควตาเอกสาร" ได้ไหม (LODGING_LICENSING_PLAN §12)

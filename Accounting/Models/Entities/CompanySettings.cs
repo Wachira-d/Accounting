@@ -201,6 +201,9 @@ public class CompanySettings : TenantEntity
     public EmailProvider EmailProvider { get; set; } = EmailProvider.Smtp;
     public string? EmailFromAddress { get; set; }
     public bool EmailConfigured { get; set; } = false;                // ตั้งค่าและ test ผ่านแล้ว
+    /// <summary>รอบ 212 (คำตัดสินข้อ 171): อีเมลถึงลูกค้าปลายทางเมื่อผู้ส่งของร้านล้ม/ยังไม่ตั้ง — ค่าใน <c>CustomerNotifyChannel.FallbackOptions</c> ·
+    /// null/ว่าง = ถอยไปอีเมลของระบบ + ประทับเหตุ (พฤติกรรมรอบ 211) · ผู้อ่าน: <c>BookingNotifier</c> → <c>CustomerNotifyChannel.EmailPlan</c></summary>
+    public string? CustomerEmailFallback { get; set; }
     public DateTime? EmailLastTestedAt { get; set; }
     public string? EmailLastTestStatus { get; set; }                  // "OK" or error message
 

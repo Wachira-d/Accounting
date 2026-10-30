@@ -55,7 +55,9 @@ public record EmailConfigResponse(
     /// <summary>ข้อความเตือนเมื่อมี "ความลับที่เก็บไว้แต่ถอดรหัสไม่ออก" (คีย์
     /// เข้ารหัสถูกเปลี่ยนหลังจากบันทึก) — null = ปกติ. ต้องบอกผู้ใช้ตรง ๆ ไม่งั้น
     /// หน้าจอจะโชว์ว่า "มีรหัสผ่านเก็บไว้แล้ว" แล้วส่งอีเมลไม่ออกโดยไม่มีใครรู้ว่าทำไม</summary>
-    string? SecretWarning = null);
+    string? SecretWarning = null,
+    /// <summary>รอบ 212 (คำตัดสินข้อ 171): ถอยไปอีเมลของระบบเมื่อส่งถึงลูกค้า (null = ค่าเริ่มต้น) — แก้ที่ PUT customer-notify/fallback</summary>
+    string? CustomerEmailFallback = null);
 
 public record SmtpConfigDto(
     string? Host,

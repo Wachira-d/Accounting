@@ -386,7 +386,14 @@ public partial class CourseCreditService
             if (_notifier == null) result = BookingSendResult.Fail("ระบบแจ้งเตือนไม่พร้อม (ไม่มีช่องส่งอีเมล/LINE)");
             else
             {
-                try { result = await _notifier.SendAsync(companyId, new BookingContact(contact?.Email, contact?.LineUserId) { LineTarget = CustomerLineTarget.ForContact(c.ContactId) }, $"บัตร {c.PassNumber} ใกล้หมดอายุ", text, ct); }
+                try
+                {
+                    // รอบ 212: ค่าตั้งช่องทาง/โควตา/กันซ้ำที่ BookingNotifier (บัตรไม่ผูกเว็บ ⇒ ค่าตั้งระดับบริษัท) · เปิด/ปิด+จำนวนวันยังเป็นของ ExpiryReminderDays
+                    result = await _notifier.SendAsync(new CustomerNotifyRequest(companyId, null, CustomerNotifyEvents.CreditExpiring,
+                        CustomerNotifyKeys.Credit(c.Id, DateOnly.FromDateTime(c.ExpiresOn.Value)),
+                        new BookingContact(contact?.Email, contact?.LineUserId) { LineTarget = CustomerLineTarget.ForContact(c.ContactId) },
+                        $"บัตร {c.PassNumber} ใกล้หมดอายุ", text) { TargetKind = "credit-pass", TargetId = c.Id }, ct);
+                }
                 catch (Exception ex) when (ex is not OperationCanceledException) { result = BookingSendResult.Fail(ex.Message); }
             }
             var row = await _db.CreditPasses.FirstAsync(p => p.Id == c.Id && p.CompanyId == companyId, ct);

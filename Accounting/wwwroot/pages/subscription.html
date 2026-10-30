@@ -45,6 +45,9 @@
       <div id="currentSubContent"><div class="text-center text-gray-400" style="padding:20px" data-i18n="common.loading">กำลังโหลด...</div></div>
     </div>
 
+    <!-- รอบ 212 แพ็ก A: โควตาข้อความผ่านช่องกลาง (เซิร์ฟเวอร์คำนวณ · /js/customer-notify.js) -->
+    <div class="card" style="margin-bottom:24px"><div id="notifyQuotaCard"></div></div>
+
     <!-- Usage -->
     <div class="card" style="margin-bottom:24px">
       <div class="card-header"><h3 class="card-title">การใช้งานเดือนนี้</h3></div>
@@ -114,6 +117,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/plan-display.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/customer-notify.js"></script>
   <script>
     const Sub = {
       subscription: null, trial: null, plans: [], cycle: 'monthly', selectedPlan: null,
@@ -171,6 +175,8 @@
       async init() {
         if (!Layout.init('subscription')) return;
         Layout.setTitle('แพ็กเกจและการสมัครสมาชิก');
+        if (window.CustomerNotify && Layout.getCompanyId())
+          CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: Layout.getCompanyId() });
         await this.load();
       },
 

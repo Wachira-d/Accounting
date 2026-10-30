@@ -691,6 +691,7 @@ builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.
 // resolver สิทธิ์ตัวเดียว (แพ็กเกจ + add-on) — ห้ามมีตัวที่สอง
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IQuotaService, QuotaService>();
+builder.Services.AddScoped<INotifyQuotaService, NotifyQuotaService>();   // รอบ 212 แพ็ก A — โควตาข้อความช่องกลาง + กันส่งซ้ำ (BookingNotifier ตัวเดียวเรียก) · ซื้อแพ็ก notify.topup
 builder.Services.AddScoped<CmsLeadService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();

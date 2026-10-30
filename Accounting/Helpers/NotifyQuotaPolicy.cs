@@ -1,0 +1,103 @@
+namespace Accounting.Helpers;
+
+/// <summary>
+/// **ตัวตัดสินโควตาข้อความผ่านช่องกลาง — ตัวเดียว** (รอบ 212 แพ็ก A · คำตัดสินข้อ 171 · design §2.3/§3.1)
+/// <list type="bullet">
+/// <item><b>นับอะไร</b>: push ผ่าน LINE OA ของ NextAcc + อีเมลผ่าน SMTP ของระบบในนามร้าน (<see cref="IsMetered"/>) ·
+///   <b>ไม่นับ</b>: OA/SMTP ของร้านเอง · reply API ของ LINE · ข้อความแพลตฟอร์ม→ร้าน (บิล/แจ้งเตือนโควตา/ความปลอดภัย) · แจ้งเตือนงานภายในของ NotificationEngine</item>
+/// <item>1 หน่วย = 1 คำขอ push ต่อผู้รับ หรือ 1 อีเมลต่อผู้รับ</item>
+/// <item>งวด = เดือนตามเวลาไทย (<see cref="AddOnBilling.PeriodOf"/> ตัวเดียวกับบิล add-on) — งวดใหม่ = แถวตัวนับใหม่ (ไม่มีงาน reset)</item>
+/// <item>เพดาน: ค่าเฉพาะบริษัท (<c>Subscription.MaxSharedMessagesPerMonth</c>) ชนะ ⇒ ค่าของแพ็กเกจ (<c>PlanTemplate.MaxSharedMessagesPerMonth</c> ·
+///   ทดลองใช้ <c>TrialMaxSharedMessagesPerMonth</c>) ⇒ ไม่พบแพ็กเกจ = ไม่จำกัด (พฤติกรรมเดิม) · <c>-1</c> = ไม่จำกัด · นับต่อบริษัท (ไม่ pool ข้ามกลุ่มบัญชี)</item>
+/// <item>เต็มแล้ว ⇒ ใช้โบนัสที่ซื้อ (<c>notify.topup</c>) ที่ยังไม่หมดอายุ ⇒ หมด = ไม่ส่งทางช่องกลาง (ลองช่องของร้านก่อน) · ข้อความจำเป็น (<see cref="CustomerNotifyEvents.IsEssential"/>) นับแต่ไม่ระงับ</item>
+/// <item>เตือนเจ้าของ 80% / 100% ครั้งเดียวต่อระดับต่องวด (ระดับเดียวกับ <see cref="DocumentQuotaPolicy.WarnLevel"/>)</item>
+/// </list>
+/// โควตาเต็ม<b>ไม่บล็อกงานธุรกิจ</b>ใด ๆ — บล็อกแค่การส่งข้อความผ่านช่องกลาง
+/// </summary>
+public static class NotifyQuotaPolicy
+{
+    public const int Unlimited = -1;
+
+    /// <summary>ช่องนี้นับโควตาไหม — เฉพาะช่องกลางของ NextAcc</summary>
+    public static bool IsMetered(string? source)
+        => source is CustomerNotifyPolicy.SrcNextAccOa or CustomerNotifyPolicy.SrcSystemSmtp;
+
+    /// <summary>งวด "yyyy-MM" ตามเวลาไทย — ตัวเดียวกับงวดบิล add-on</summary>
+    public static string PeriodOf(DateTime utc) => AddOnBilling.PeriodOf(utc);
+
+    /// <summary>เพดานของแพ็กเกจที่มีผลกับบริษัท · null ทุกชั้น = ไม่จำกัด (ไม่มีแม่แบบแพ็กเกจ — ไม่เปลี่ยนพฤติกรรมเดิม)</summary>
+    public static int PlanLimit(int? subscriptionOverride, int? templateLimit, int? templateTrialLimit, bool isTrial)
+    {
+        if (subscriptionOverride is int o) return o < 0 ? Unlimited : o;
+        var t = isTrial ? (templateTrialLimit ?? templateLimit) : templateLimit;
+        return t is int v ? (v < 0 ? Unlimited : v) : Unlimited;
+    }
+
+    /// <summary>โบนัสยังใช้ได้ไหม (มีเหลือ + ยังไม่หมดอายุ)</summary>
+    public static bool BonusAlive(int bonus, DateTime? expiresAtUtc, DateTime nowUtc)
+        => bonus > 0 && (expiresAtUtc == null || expiresAtUtc.Value > nowUtc);
+
+    /// <summary>เพดานรวมที่แสดง = แพ็กเกจ + โบนัสที่ใช้ไปแล้วงวดนี้ + โบนัสที่ยังเหลือ (หมดอายุ = ไม่นับ) · ไม่จำกัด ⇒ <see cref="Unlimited"/></summary>
+    public static int EffectiveLimit(int planLimit, int bonusUsedThisPeriod, int bonusRemaining, DateTime? bonusExpiresAtUtc, DateTime nowUtc)
+        => planLimit < 0 ? Unlimited
+            : planLimit + Math.Max(0, bonusUsedThisPeriod) + (BonusAlive(bonusRemaining, bonusExpiresAtUtc, nowUtc) ? bonusRemaining : 0);
+
+    /// <summary>0 = ปกติ · 1 = ≥ 80% · 2 = เต็ม · ไม่จำกัด = 0</summary>
+    public static int WarnLevel(int used, int limit) => limit < 0 ? 0 : DocumentQuotaPolicy.WarnLevel(used, limit);
+
+    /// <summary>ระดับที่<b>เพิ่งข้าม</b>จากข้อความนี้ (0 = ไม่ข้าม)</summary>
+    public static int CrossedLevel(int usedBefore, int usedAfter, int limit)
+    {
+        var after = WarnLevel(usedAfter, limit);
+        return after > WarnLevel(usedBefore, limit) ? after : 0;
+    }
+
+    /// <summary>ลองช่องกลางได้ไหม: ข้อความจำเป็น ⇒ ได้เสมอ (นับเกินได้) · ไม่จำกัด ⇒ ได้ · อยู่ในเพดานแพ็กเกจ ⇒ ใช้แพ็กเกจ · ไม่งั้นใช้โบนัสถ้ายังมี</summary>
+    public static NotifyQuotaDecision Decide(int planUsed, int planLimit, bool essential, int bonusRemaining, DateTime? bonusExpiresAtUtc, DateTime nowUtc)
+    {
+        if (planLimit < 0) return NotifyQuotaDecision.Plan;
+        if (planUsed < planLimit) return NotifyQuotaDecision.Plan;
+        if (BonusAlive(bonusRemaining, bonusExpiresAtUtc, nowUtc)) return NotifyQuotaDecision.Bonus;
+        return essential ? NotifyQuotaDecision.Essential : NotifyQuotaDecision.Full;
+    }
+
+    /// <summary>ป้ายนำหน้าคำเตือนเมื่อส่งทางช่องของร้านแทนเพราะโควตาเต็ม (ประเภท "ส่งถึงทางถอย" — <see cref="CmsNotificationText.FallbackTag"/>)</summary>
+    public static string RoutedToTenantWarning(int limit)
+        => $"{CmsNotificationText.FallbackTag} โควตาข้อความผ่านช่องกลางของ NextAcc เดือนนี้ครบแล้ว ({limit} ข้อความ) — ส่งผ่านช่องของร้านแทน";
+
+    /// <summary>เหตุที่ไม่ส่ง (ระงับ) เมื่อเหลือแต่ช่องกลางและโควตาเต็ม — บอกทางไปต่อ (F2 #8)</summary>
+    public static string FullReason(int limit)
+        => $"โควตาข้อความผ่านช่องกลางของ NextAcc เดือนนี้ครบแล้ว ({limit} ข้อความ) — ไม่ได้ส่ง · ซื้อแพ็กข้อความเพิ่มที่ \"ส่วนเสริม\" "
+           + "หรือตั้ง LINE OA / ผู้ส่งอีเมลของร้านเอง (ไม่นับโควตา)";
+
+    public static string CrossedTitle(int level) => level >= 2 ? "โควตาข้อความแจ้งเตือนเดือนนี้เต็มแล้ว" : "โควตาข้อความแจ้งเตือนใกล้เต็ม";
+
+    public static string CrossedMessage(int level, int used, int limit)
+        => level >= 2
+            ? $"ส่งข้อความผ่าน LINE OA/อีเมลของ NextAcc ครบ {limit} ข้อความแล้ว — ข้อความถัดไปจะส่งทางช่องของร้าน (ถ้าตั้งไว้) หรือไม่ถูกส่ง · ซื้อแพ็กข้อความเพิ่มได้ที่หน้า ส่วนเสริม"
+            : $"ส่งข้อความผ่าน LINE OA/อีเมลของ NextAcc ไปแล้ว {used}/{limit} ข้อความ (≥ {DocumentQuotaPolicy.WarnPercent}%) — ตั้ง LINE OA/อีเมลของร้านเอง (ไม่นับโควตา) หรือซื้อแพ็กข้อความเพิ่ม";
+
+    /// <summary>ข้อความแบนเนอร์ของหน้าเว็บ (เซิร์ฟเวอร์ประกอบ · null = ปกติ)</summary>
+    public static string? StatusMessage(int used, int limit)
+        => WarnLevel(used, limit) switch
+        {
+            2 => $"โควตาข้อความผ่านช่องกลางเดือนนี้เต็มแล้ว ({used}/{limit}) — ข้อความถึงลูกค้าจะส่งทางช่องของร้าน หรือไม่ถูกส่ง จนกว่าจะซื้อแพ็กเพิ่ม/ขึ้นเดือนใหม่",
+            1 => $"ใช้โควตาข้อความผ่านช่องกลางไปแล้ว {used}/{limit}",
+            _ => null,
+        };
+
+    public const string MeteredChannelsNote = "นับเฉพาะข้อความที่ส่งผ่าน LINE OA ของ NextAcc และอีเมลของระบบ NextAcc — LINE OA / ผู้ส่งอีเมลของร้านเองไม่นับ";
+}
+
+/// <summary>ผลตัดสินโควตาต่อข้อความ</summary>
+public enum NotifyQuotaDecision
+{
+    /// <summary>อยู่ในเพดานแพ็กเกจ (หรือไม่จำกัด)</summary>
+    Plan,
+    /// <summary>เกินเพดานแพ็กเกจ — ใช้โบนัสที่ซื้อ</summary>
+    Bonus,
+    /// <summary>เต็มแต่เป็นข้อความจำเป็น — นับเกินเพดาน</summary>
+    Essential,
+    /// <summary>เต็ม — ไม่ส่งทางช่องกลาง</summary>
+    Full,
+}

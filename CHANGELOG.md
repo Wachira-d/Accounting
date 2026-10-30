@@ -5718,3 +5718,11 @@ _รอบ 211 ฝ่ายค้าน (ลูกค้าผูก LINE · ไ
 `Line:BotUserId` ตั้งแล้วไม่ตรง ⇒ ไม่ผูก + log Error · (5) **ผู้ประสานงานตัดสิน**: ผู้ส่งอีเมลของร้านล้ม ⇒ ถอยไปอีเมลของระบบ + ประทับ `[CMS-NOTIFY-FALLBACK]` (`BookingSendResult.Warning`) ·
 (6) webhook ต่อบริษัท 401 แบบเดียว + ดูค่าตั้งก่อนอ่าน body + จำกัด 256 KB · (7) ไถ่รหัสในธุรกรรมเดียว · ออกรหัสใต้ advisory lock ต่อเป้าหมาย · (8) ยินยอมด้วย `line:`+hash เมื่อไม่มีอีเมล/เบอร์ ·
 เทสต์ +12 (CMS211-21..28) · `required_call_site_check` +11 กติกา/แก้ 6 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit f19dac45_
+
+_รอบ 212 แพ็ก A (คำตัดสินข้อ 171 · ค่าตั้งแจ้งลูกค้า · ถอยอีเมล · โควตาข้อความช่องกลาง): (1) `Helpers/CustomerNotifyEvents` (18 ประเภท + ป้าย) · `CustomerNotifyPolicy` (Resolve/Plan/SuppressReason) ·
+`CustomerNotifyKeys` · `NotifyQuotaPolicy` · `CustomerNotifyChannel.EmailPlan(configured, fallback)` 3 ค่า · (2) `IBookingNotifier.SendAsync(CustomerNotifyRequest)` ทางเดียว —
+claim คีย์ข้อความ (`CustomerNotifyLogs`) → ค่าตั้ง → จองโควตาก่อนส่งทางช่องกลาง → เต็ม ⇒ ช่องของร้าน/ระงับ · ส่งล้มคืนหน่วย · (3) 12 เส้นย้ายเข้า: การจอง 3 · เตือนก่อนนัด · ได้คิว · คลาส ·
+ออเดอร์ 2 · บัตร · อีเมลแขกที่พัก (+ อีเมลถึงที่พักนับโควตา · เงินค้าง = จำเป็น) · กู้ตะกร้า · ตอบกลับฟอร์ม · (4) `INotifyQuotaService` (UPDATE…RETURNING · scope แยก · เตือน 80/100 ครั้งเดียว) +
+`notify.topup` (เส้นบิลเดิม) · `GET/POST metering/notify-quota[/topup]` · `GET/PUT customer-notify/rules` · `PUT customer-notify/fallback` · (5) หน้า ตั้งค่า/ตั้งค่าร้านค้า/การใช้งาน/แพ็กเกจ/ส่วนเสริม/แอดมิน plans ·
+(6) migration `CmsRound212NotifyStatements` (+ ตารางล่วงหน้าแพ็ก B/C) · เทสต์ `CmsRound212PrefsQuotaTests` + Db `NotifyQuotaDbTests` (TEST_PLAN CMS212A-01..22) · `required_call_site_check` +23 กติกา/แก้ 4 (เส้นส่งย้ายเข้า `DeliverAsync`) ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
