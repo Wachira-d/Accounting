@@ -13,7 +13,8 @@ namespace Accounting.Helpers;
 public static class AddOnBilling
 {
     /// <summary>งวดของเวลา UTC ที่ให้มา ในรูป yyyy-MM ตามปฏิทินไทย (UTC+7)</summary>
-    public static string PeriodOf(DateTime utc) => utc.AddHours(7).ToString("yyyy-MM");
+    /// <remarks>รอบ 212: InvariantCulture เสมอ — เครื่องที่ตั้ง th-TH จะได้ปี พ.ศ. (2569-11) ⇒ คีย์รอบ/คีย์กันคิดซ้ำไม่ตรงกับเทสต์และเครื่องอื่น</remarks>
+    public static string PeriodOf(DateTime utc) => utc.AddHours(7).ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>คีย์กันคิดซ้ำของค่าเหมา 1 ฟีเจอร์ 1 งวด (unique ต่อ CompanyId ในตาราง)
     /// — deterministic ล้วน ไม่มีเวลา/สุ่ม (บทเรียน AdvisoryLockKey: คีย์ที่สุ่มต่อ

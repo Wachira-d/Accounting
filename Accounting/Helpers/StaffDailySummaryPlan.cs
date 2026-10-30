@@ -146,7 +146,7 @@ public static class StaffDailySummaryPlan
     };
 
     /// <summary>คีย์กันซ้ำของโควตาข้อความช่องกลาง (1 หน่วย/ผู้รับ/วัน · §10)</summary>
-    public static string MessageKey(Guid configId, DateOnly localDate, Guid userId) => $"staffsum:{configId:N}:{localDate:yyyyMMdd}:{userId:N}";
+    public static string MessageKey(Guid configId, DateOnly localDate, Guid userId) => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"staffsum:{configId:N}:{localDate:yyyyMMdd}:{userId:N}");   // InvariantCulture: th-TH ให้ปี พ.ศ.
 
     // ─────────────── ข้อมูล + การกรองต่อผู้รับ ───────────────
 

@@ -5953,7 +5953,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก A — �
   (`Helpers/CustomerNotifyLogRule`) · ลบเมื่อเกิน 90 วัน (`PdpaRetentionPurgeJob`) · DSR ลบตามเป้าหมาย · (S4) สรุปรายวันที่โควตาเต็มลองใหม่ได้จนถึง 23:00 ·
   lease ของ claim 10 นาที · มิเตอร์สรุปรายวันแจ้งเจ้าของเมื่อเต็ม · **เพดานแม่แบบ = ไม่จำกัด** (ผู้ประสานงาน: migration ไม่จำกัดลูกค้าเดิม · ตัวเลขแนะนำเป็นคำใบ้ที่หน้าแอดมิน)
 
-_Last verified against codebase: 2026-10-30 (รอบ 212 ฝ่ายค้าน A+C — โบนัส UPDATE เดียวหลังล็อก · งวดไทย · shop ไม่นับ · Idempotency-Key · ปิดบังหมายเหตุ/ล้าง/DSR · สรุปรายวันลองใหม่เมื่อโควตาเต็ม · เพดานเริ่มต้นไม่จำกัด · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 212 ฝ่ายค้าน A+C — โบนัส UPDATE เดียวหลังล็อก · งวดไทย · shop ไม่นับ · Idempotency-Key · ปิดบังหมายเหตุ/ล้าง/DSR · สรุปรายวันลองใหม่เมื่อโควตาเต็ม · เพดานเริ่มต้นไม่จำกัด · ยังไม่ได้คอมไพล์ · commit b9dcd595)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 

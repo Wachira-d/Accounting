@@ -561,4 +561,16 @@ public class CmsRound212PrefsQuotaTests
         Assert.True(r.Sent);
         Assert.Equal(new[] { "system" }, calls.Log);
     }
+
+    [Fact]
+    public void Period_key_is_gregorian_even_under_thai_culture()
+    {
+        var prev = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("th-TH");
+            Assert.Equal("2026-11", Accounting.Helpers.AddOnBilling.PeriodOf(new DateTime(2026, 10, 31, 17, 30, 0, DateTimeKind.Utc)));
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = prev; }
+    }
 }
