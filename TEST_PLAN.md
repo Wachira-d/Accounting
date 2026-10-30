@@ -1,3 +1,19 @@
+## CMS216 — ข้อมูลส่วนตัวของสมาชิกหน้าร้าน + เติมฟอร์มจอง/สั่งซื้อ/จองที่พักจากบัญชี (รอบ 216 · คำตัดสินข้อ 174)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS216-01 | แก้ข้อมูลส่วนตัว: เบอร์มีขีด/+66 · เลขภาษีมีขีด · ไม่ใส่สาขา | เบอร์ตัวเลขล้วนขึ้นต้น 0 · เลขภาษี 13 หลัก · สาขา 00000 | `CmsRound216MemberProfileTests`.Validate_NormalizesPhoneAndTaxId_DefaultsHeadOffice |
+| CMS216-02 | ชื่อว่าง · เบอร์สั้น · เลขภาษี checksum ผิด · สาขา 2 หลัก · รหัสไปรษณีย์ 4 หลัก · มีจังหวัดไม่มีบรรทัดที่อยู่ | ทุกข้อในข้อความเดียว · ไม่บันทึกอะไร | `CmsRound216MemberProfileTests`.Validate_RejectsBadValues_AllInOneMessage · `Db/MemberProfileDbTests`.UpdateProfile_InvalidValues_Throw_NothingSaved |
+| CMS216-03 | ทิศตรงข้าม: ช่องไม่บังคับว่าง · ที่อยู่ว่างทั้งชุด · สาขาไม่มีเลขภาษี | ล้างค่า ไม่ใช่ error · สาขาเดี่ยว ๆ = บอกให้กรอกเลขภาษี | `CmsRound216MemberProfileTests`.Validate_EmptyOptionalFields_ClearValues_NotErrors · .Validate_BranchWithoutTaxId_IsRejected |
+| CMS216-04 | แก้โปรไฟล์ → อ่านกลับ · แก้ซ้ำ · ล้างที่อยู่ใบกำกับ | echo ครบทุกช่อง (ข้อความที่อยู่ประกอบที่เซิร์ฟเวอร์) · ที่อยู่หลักแถวเดิมถูกแก้ ไม่งอก · ล้าง = ลบแถวหลักชนิดนั้น · audit chain เก็บชื่อช่องไม่ใช่ค่า | `Db/MemberProfileDbTests`.UpdateProfile_RoundTrip_EchoesAllFields_AndAudits · `CmsRound216MemberProfileTests`.ComposeAddress_CheckoutVsFull |
+| CMS216-05 | ผู้ติดต่อ ERP ที่ผูกกับสมาชิก | ไม่ถูกเขียนทับ (ชื่อ/เลขภาษีเดิม) | `Db/MemberProfileDbTests`.UpdateProfile_RoundTrip_EchoesAllFields_AndAudits · `required_call_site_check` (ApplyProfileAsync ห้าม `_db.Contacts`) |
+| CMS216-06 | ข้ามเว็บ (บริษัทเดียวกัน) · ข้ามบริษัท · โทเคนเว็บอื่น · แขก/พนักงาน | อ่าน/เขียนโปรไฟล์ไม่ได้ · "บันทึกเป็นข้อมูลของฉัน" ไม่มีผล | `Db/MemberProfileDbTests`.CrossSite_And_CrossTenant_CannotReadOrWrite · `CmsRound216MemberProfileTests`.ProfileOwner_OnlyTokenOfThisSite_AndOnlyWhenRequested |
+| CMS216-07 | สมาชิกจอง/สั่ง/จองที่พักโดยเว้นชื่อ/เบอร์/อีเมล | เซิร์ฟเวอร์เติมจากโปรไฟล์ก่อนด่านฟอร์ม/ยินยอม · ค่าที่พิมพ์ชนะ · โปรไฟล์ไม่มี = ไม่แต่งค่า | `CmsRound216MemberProfileTests`.FillContact_FillsBlanks_TypedValuesWin · `required_call_site_check` (FillContact ก่อน OrderFormFields.Check / CmsDataConsent.EnforceAsync / CreateReservationAsync) |
+| CMS216-08 | ติ๊ก "บันทึกเป็นข้อมูลของฉัน" หลังจอง: โปรไฟล์ไม่มีเบอร์ | บันทึกเบอร์ · ไม่มีข้อความปัญหา | `CmsRound216MemberProfileTests`.MergeCheckout_FillsEmptyProfile_FromBookingForm · `Db/MemberProfileDbTests`.SaveFromCheckout_FillsEmpty_ReportsSkipped_LeavesValidUntouched |
+| CMS216-09 | ติ๊กบันทึกแต่เบอร์/เลขภาษีผิดรูปแบบ | รายการสำเร็จ · ค่าเดิมในโปรไฟล์ไม่ถูกแตะ · คำตอบมี `errors` บอกช่องที่ไม่ได้บันทึก (ไม่ใช่ no-op เงียบ) | `CmsRound216MemberProfileTests`.MergeCheckout_InvalidPhone_SkippedAndReported_NotSilent · .MergeCheckout_TaxInvoice_OnlyWithValidChecksum |
+| CMS216-10 | ค่าที่ฟอร์มส่งตรงกับโปรไฟล์ (เว้นวรรคต่าง) · ที่อยู่ใหม่จากเช็กเอาต์ | ไม่เปลี่ยน (ที่อยู่มีโครงไม่ถูกยุบ) · ที่อยู่ใหม่ = บรรทัดที่อยู่ + จังหวัด/รหัสไปรษณีย์ | `CmsRound216MemberProfileTests`.MergeCheckout_SameValues_NoChange · .MergeCheckout_NewShippingText_ReplacesStructuredAddress |
+| CMS216-11 | หน้าเว็บ: `/portal/me` ตอบช้ากว่าที่ผู้ใช้เริ่มพิมพ์ · ช่องที่มีค่าอยู่แล้ว · รหัสสาขาค่าตั้งต้น 00000 · ช่องใบกำกับของที่พัก · ช่อง "บันทึกเป็นข้อมูลของฉัน" | ช่องที่ผู้ใช้แตะไม่ถูกทับ (`dataset.userTouched`) · ทับเฉพาะช่องว่าง/ช่องที่ระบบเติม (`dataset.autoSrc`) · สาขาจากโปรไฟล์ชนะค่าตั้งต้น · ช่อง "เทียบอย่างเดียว" ไม่เติม · ติ๊กไว้ก่อนเฉพาะเติมช่องที่โปรไฟล์ว่าง · ผู้ใช้เอาติ๊กออกแล้วไม่ติ๊กกลับ | `tools/member_prefill_sim.js` (โค้ดจริงจากหน้า บน DOM จำลอง · /portal/me ตอบช้า · ผู้ใช้ลบค่าที่เติม · ช่องบันทึกติ๊ก/ไม่ติ๊ก · negative test 4 ตัว) |
+
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -162,7 +178,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **693 ไฟล์ · 7,092 `[Fact]` + 1,130 `[Theory]` (5,297 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **695 ไฟล์ · 7,108 `[Fact]` + 1,130 `[Theory]` (5,297 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

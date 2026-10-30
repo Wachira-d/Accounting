@@ -323,6 +323,9 @@ public class CreateOrderRequest
     public string? IdempotencyKey { get; set; }
     /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มเช็กเอาต์ — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
     public bool ConsentGiven { get; set; }
+    /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังสั่งสำเร็จ controller บันทึกชื่อ/เบอร์/ที่อยู่/ข้อมูลใบกำกับลงโปรไฟล์ ·
+    /// สมาชิก = id ในโทเคนหน้าร้านของเว็บนี้เท่านั้น (ไม่ใช่ CustomerId ใน body) · แขก/โทเคนเว็บอื่น ⇒ ไม่มีผล</summary>
+    public bool SaveToProfile { get; set; }
 }
 
 public class CreateOrderLineRequest

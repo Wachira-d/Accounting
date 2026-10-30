@@ -194,7 +194,13 @@ public class CmsBookingController : ControllerBase
         }
         // รอบ 210: ด่าน "ต้องเป็นสมาชิกก่อนจอง" อยู่ใน service (ก่อน Decide) — ลูกค้า = request.CustomerId ที่แปลงจากโทเคนแล้วข้างบน · พนักงานจองแทนผ่าน
         var result = await _bookingService.CreateBookingAsync(companyId, siteId, request, userId, staffOnBehalf: staffOk);
-        return StatusCode(201, new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.created", Lang)));
+        // รอบ 216 (คำตัดสินข้อ 174): "บันทึกเป็นข้อมูลของฉัน" — เจ้าของ = สมาชิกในโทเคนของเว็บนี้เท่านั้น (sf เป็น null เมื่อเป็นพนักงาน) · หลังจองสำเร็จ
+        var profileNotes = await StorefrontProfileSaveBack.RunAsync(
+            HttpContext.RequestServices.GetService(typeof(IStorefrontCustomerService)) as IStorefrontCustomerService,
+            HttpContext.RequestServices.GetService(typeof(ILogger<CmsBookingController>)) as ILogger,
+            companyId, siteId, StorefrontCustomerAuth.ProfileOwner(request.SaveToProfile, sf, siteId),
+            new CheckoutProfileInput(request.GuestName, request.GuestPhone));
+        return StatusCode(201, new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.created", Lang), profileNotes));
     }
 
     [HttpGet("bookings")]

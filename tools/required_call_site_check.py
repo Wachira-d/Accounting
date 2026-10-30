@@ -10853,6 +10853,52 @@ RULES += [
 ]
 
 
+# ── รอบ 216 (คำตัดสินข้อ 174): ข้อมูลส่วนตัวสมาชิกหน้าร้าน — ตัวตรวจ/ตัวรวมค่าเดียว (StorefrontMemberProfile) · เจ้าของ = โทเคนของเว็บนี้ ·
+#    กรองบริษัท+เว็บ · ไม่แตะผู้ติดต่อ ERP · ตาข่ายเติมช่องว่างก่อนด่านฟอร์ม/ยินยอม · บันทึกกลับหลังรายการสำเร็จเท่านั้น ──
+_R216_WHY = "รอบ 216 (ข้อ 174): "
+_R216_PROFILE = "Services/Implementations/StorefrontCustomerService.Profile.cs"
+RULES += [
+    dict(file=_R216_PROFILE, method="UpdateProfileAsync",
+         must=["StorefrontMemberProfile.Validate(", "LoadProfileRowsAsync(", "ApplyProfileAsync("],
+         must_re=[r"if\s*\(\s*errs\.Count\s*>\s*0\s*\)\s*throw\b"],
+         before=[("StorefrontMemberProfile.Validate(", "ApplyProfileAsync(")],
+         why=_R216_WHY + "แก้โปรไฟล์ต้องผ่านตัวตรวจเดียว (เบอร์ normalize กลาง · เลขภาษี mod-11 · สาขา 5 หลัก) และผิด = โยนก่อนเขียน"),
+    dict(file=_R216_PROFILE, method="SaveFromCheckoutAsync",
+         must=["StorefrontMemberProfile.MergeCheckout(", "StorefrontMemberProfile.SaveNote(", "LoadProfileRowsAsync("],
+         why=_R216_WHY + "บันทึกจากฟอร์มจอง/สั่งซื้อผ่านตัวรวมค่าเดียว · ช่องที่ข้ามต้องถูกบอก (ไม่ใช่ no-op เงียบ)"),
+    dict(file=_R216_PROFILE, method="LoadProfileRowsAsync",
+         must=["c.CompanyId == companyId", "c.SiteId == siteId", "c.IsActive", "a.CompanyId == companyId", "a.CustomerId == customerId"],
+         why=_R216_WHY + "โปรไฟล์อ่าน/เขียนเฉพาะลูกค้าที่ใช้งานของบริษัท+เว็บนี้ (กันข้ามเว็บ/ข้ามบริษัท)"),
+    dict(file=_R216_PROFILE, method="ApplyProfileAsync",
+         must=["AddChainedAuditLog("], forbid=["_db.Contacts", "c.Contact."],
+         why=_R216_WHY + "audit chain ทุกการเปลี่ยน · ห้ามเขียนทับผู้ติดต่อ ERP ที่ผูกไว้ (ข้อมูลบัญชีของร้าน)"),
+    dict(file="Controllers/CmsStorefrontCustomerController.cs", method="UpdateMyProfile",
+         must=["Me(companyId, siteId)", "UpdateProfileAsync(companyId, siteId, me.CustomerId"], forbid=["request.CustomerId"],
+         before=[("Me(companyId, siteId)", "UpdateProfileAsync(")],
+         why=_R216_WHY + "สมาชิกแก้ได้เฉพาะโปรไฟล์ของ id ในโทเคนของเว็บนี้"),
+    dict(file="Controllers/CmsBookingController.cs", method="CreateBooking",
+         must=["StorefrontProfileSaveBack.RunAsync(", "StorefrontCustomerAuth.ProfileOwner(request.SaveToProfile, sf, siteId)"],
+         before=[("CreateBookingAsync(", "StorefrontProfileSaveBack.RunAsync(")],
+         why=_R216_WHY + "บันทึกกลับหลังจองสำเร็จ · เจ้าของ = โทเคนของเว็บนี้ (ไม่ใช่ CustomerId ใน body)"),
+    dict(file="Controllers/CmsCommerceController.cs", method="CreateOrder",
+         must=["StorefrontProfileSaveBack.RunAsync(", "StorefrontCustomerAuth.ProfileOwner(request.SaveToProfile, sf, siteId)"],
+         before=[("CreateOrderAsync(", "StorefrontProfileSaveBack.RunAsync(")],
+         why=_R216_WHY + "บันทึกกลับหลังสั่งสำเร็จ · เจ้าของ = โทเคนของเว็บนี้"),
+    dict(file="Controllers/LodgingPublicController.cs", method="Create",
+         must=["StorefrontMemberProfile.FillContact(", "StorefrontProfileSaveBack.RunAsync(", "ProfileOwner(req.SaveToProfile, member, siteId)",
+               "StorefrontCustomerAuth.ForSite("],
+         before=[("StorefrontMemberProfile.FillContact(", "CreateReservationAsync("), ("CreateReservationAsync(", "StorefrontProfileSaveBack.RunAsync(")],
+         why=_R216_WHY + "ที่พัก: เติมช่องว่างจากโปรไฟล์ก่อนสร้าง · บันทึกกลับหลังสร้างสำเร็จ · สมาชิก = โทเคนของเว็บนี้"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="CreateBookingAsync",
+         must=["StorefrontMemberProfile.FillContact("],
+         before=[("StorefrontMemberProfile.FillContact(", "CmsDataConsent.EnforceAsync(")],
+         why=_R216_WHY + "ตาข่ายเติมชื่อ/เบอร์/อีเมลจากโปรไฟล์ก่อนด่านยินยอม/บันทึก"),
+    dict(file="Services/Implementations/CmsCommerceService.Checkout.cs", method="ValidateCheckoutFormAsync",
+         must=["StorefrontMemberProfile.FillContact("],
+         before=[("StorefrontMemberProfile.FillContact(", "OrderFormFields.Check(")],
+         why=_R216_WHY + "ตาข่ายเติมชื่อ/เบอร์/อีเมลจากโปรไฟล์ก่อนด่านฟอร์มสั่งซื้อ (สมาชิกไม่ล้มเพราะช่องบังคับว่าง)"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

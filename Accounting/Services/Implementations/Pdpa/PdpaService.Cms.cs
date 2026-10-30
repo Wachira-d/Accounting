@@ -118,6 +118,9 @@ public partial class PdpaService
             {
                 ["label"] = a.Label, ["recipientName"] = a.RecipientName, ["phone"] = a.Phone, ["addressLine"] = a.AddressLine,
                 ["subDistrict"] = a.SubDistrict, ["district"] = a.District, ["province"] = a.Province, ["postalCode"] = a.PostalCode,
+                // รอบ 216 (ข้อ 174): ที่อยู่หลักจากหน้า "ข้อมูลส่วนตัว" ของสมาชิก — ม.30/31 ต้องเห็นว่าแถวไหนเป็นที่อยู่จัดส่ง/ใบกำกับ
+                ["buildingNumber"] = a.BuildingNumber, ["buildingName"] = a.BuildingName, ["streetName"] = a.StreetName, ["countryCode"] = a.CountryCode,
+                ["addressType"] = a.AddressType.ToString(), ["isDefault"] = a.IsDefault, ["updatedAt"] = a.UpdatedAt,
             }).ToList(),
         }).ToList();
         var orders = r.Orders.Select(o => new Dictionary<string, object?>

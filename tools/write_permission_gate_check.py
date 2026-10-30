@@ -248,6 +248,9 @@ SELF_SERVICE_POSTS = {
     # ผู้กดต้องเป็นผู้อนุมัติของขั้นปัจจุบันและไม่ใช่ผู้ยื่น (ApprovalService.SubmitActionAsync)
     ("ApprovalController.cs", "SubmitForApproval"),
     ("ApprovalController.cs", "SubmitAction"),
+    # รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้านแก้ข้อมูลส่วนตัวของตัวเอง — ไม่มีผู้ใช้ ERP ให้ตรวจสิทธิ์ (โทเคนหน้าร้าน) ·
+    # ด่าน = Me(companyId, siteId) (โทเคนของเว็บนี้ + ลูกค้ายังใช้งาน) แล้วเขียนเฉพาะ id ในโทเคน (required_call_site_check ล็อก)
+    ("CmsStorefrontCustomerController.cs", "UpdateMyProfile"),
 }
 
 ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]')
