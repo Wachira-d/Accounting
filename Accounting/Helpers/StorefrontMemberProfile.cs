@@ -11,11 +11,14 @@ public sealed record MemberProfile(
     string? FullName, string? Phone, string? CompanyName, string? TaxId, string? BranchCode,
     MemberAddress? Shipping, MemberAddress? Billing);
 
-/// <summary>ค่าที่ลูกค้าพิมพ์บนฟอร์มจอง/สั่งซื้อ/จองที่พัก แล้วติ๊ก "บันทึกเป็นข้อมูลของฉัน" — ช่องที่ฟอร์มนั้นไม่มี = null (ไม่แตะโปรไฟล์)</summary>
+/// <summary>ค่าที่ลูกค้าพิมพ์บนฟอร์มจอง/สั่งซื้อ/จองที่พัก แล้วติ๊กขอบันทึก — ช่องที่ฟอร์มนั้นไม่มี = null (ไม่แตะโปรไฟล์)
+/// <para><see cref="IdentityFromForm"/> = true (จอง/ที่พัก): ชื่อ/เบอร์บนฟอร์มเติมตัวตนสมาชิก<b>เฉพาะช่องที่บัญชียังว่าง</b> ·
+/// false (เช็กเอาต์): ชื่อ/เบอร์ = ผู้รับของที่อยู่จัดส่ง ไม่ใช่ตัวตนสมาชิก (ฝ่ายค้านรอบ 216 S2)</para></summary>
 public sealed record CheckoutProfileInput(
     string? FullName, string? Phone,
     string? ShippingAddressText = null, string? ShippingProvince = null, string? ShippingPostalCode = null,
-    string? BillingName = null, string? BillingTaxId = null, string? BillingBranchCode = null, string? BillingAddressText = null);
+    string? BillingName = null, string? BillingTaxId = null, string? BillingBranchCode = null, string? BillingAddressText = null,
+    bool IdentityFromForm = true);
 
 /// <summary>ผลรวมค่าที่ฟอร์มพิมพ์เข้ากับโปรไฟล์เดิม — <see cref="Saved"/>/<see cref="Skipped"/> เป็นชื่อช่องภาษาไทย (บอกผู้ใช้ตรง ๆ ว่าอะไรไม่ถูกบันทึก)</summary>
 public sealed record CheckoutProfileMerge(MemberProfile Next, IReadOnlyList<string> Saved, IReadOnlyList<string> Skipped);
@@ -126,11 +129,25 @@ public static class StorefrontMemberProfile
 
     private static string Squash(string? s) => string.Join(" ", (s ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
 
+    /// <summary>เบอร์เดิมในโปรไฟล์ในรูปที่เทียบได้ — แถวเก่าที่เก็บดิบ (มีขีด/+66) ⇒ normalize ก่อนเทียบ (ฝ่ายค้านรอบ 216: กันรายงาน "บันทึกแล้ว" ปลอม) ·
+    /// normalize ไม่ได้ ⇒ คงค่าดิบ</summary>
+    public static string? ComparablePhone(string? stored)
+    {
+        var (v, ok) = Phone(stored);
+        return ok && v != null ? v : stored;
+    }
+
     /// <summary>
-    /// "บันทึกเป็นข้อมูลของฉัน" — รวมค่าที่พิมพ์บนฟอร์มเข้ากับโปรไฟล์เดิม: ช่องว่าง/ไม่มีบนฟอร์ม = คงค่าเดิม · ค่าที่ผ่านตัวตรวจ = ทับ ·
-    /// ค่าที่ผิดรูปแบบ = คงค่าเดิม + ชื่อช่องใน <see cref="CheckoutProfileMerge.Skipped"/> ·
-    /// ที่อยู่จัดส่งจากเช็กเอาต์เป็นข้อความอิสระ ⇒ เก็บเป็นบรรทัดที่อยู่ (ตำบล/อำเภอเดิมถูกล้าง เพราะรวมอยู่ในข้อความแล้ว) เว้นแต่ข้อความตรงกับที่อยู่เดิม ·
-    /// ข้อมูลใบกำกับเปลี่ยนเฉพาะเมื่อเลขผู้เสียภาษีผ่าน mod-11 (ชื่อ/สาขา/ที่อยู่ใบกำกับไปด้วยกันเป็นชุด)
+    /// "บันทึกเป็นข้อมูลของฉัน" — รวมค่าที่พิมพ์บนฟอร์มเข้ากับโปรไฟล์เดิม (ฝ่ายค้านรอบ 216 S1/S2 แก้ความหมาย):
+    /// <list type="bullet">
+    /// <item><b>ตัวตนสมาชิก</b> (ชื่อ/เบอร์ของบัญชี) — มาจากฟอร์มจอง/ที่พัก (<see cref="CheckoutProfileInput.IdentityFromForm"/>) และเติม<b>เฉพาะช่องที่บัญชียังว่าง</b>
+    /// (จองแทนคนอื่นต้องไม่ทับชื่อเจ้าของบัญชี) · บัญชีมีค่าอื่นอยู่แล้ว ⇒ ไม่ทับ + บอกใน Skipped</item>
+    /// <item><b>เช็กเอาต์</b>: ชื่อ/เบอร์บนฟอร์ม = <b>ผู้รับ</b>ของที่อยู่จัดส่ง (ส่งของขวัญให้แม่ ≠ เปลี่ยนชื่อบัญชี) — ไปกับที่อยู่จัดส่งเท่านั้น</item>
+    /// <item>ที่อยู่จัดส่งเป็นข้อความอิสระ ⇒ เก็บเป็นบรรทัดที่อยู่ (ตำบล/อำเภอเดิมล้าง) เว้นแต่ข้อความตรงกับที่อยู่เดิม</item>
+    /// <item>ข้อมูลใบกำกับเปลี่ยนเฉพาะเมื่อเลขผ่าน mod-11 · สาขาไม่ส่งมา (ฟอร์มที่พักไม่มีช่องสาขา) + เลขเดิม ⇒ <b>คงสาขาเดิม</b> ·
+    /// เลขใหม่ไม่ส่งสาขา ⇒ สำนักงานใหญ่ (S1)</item>
+    /// <item>ค่าที่ผิดรูปแบบ = คงค่าเดิม + ชื่อช่องใน <see cref="CheckoutProfileMerge.Skipped"/></item>
+    /// </list>
     /// </summary>
     public static CheckoutProfileMerge MergeCheckout(MemberProfile current, CheckoutProfileInput typed)
     {
@@ -138,13 +155,22 @@ public static class StorefrontMemberProfile
         var skipped = new List<string>();
         var name = current.FullName;
         var phone = current.Phone;
-        var t = T(typed.FullName, MaxName);
-        if (t != null && t != name) { name = t; saved.Add("ชื่อ-นามสกุล"); }
-        if (!string.IsNullOrWhiteSpace(typed.Phone))
+        var typedName = T(typed.FullName, MaxName);
+        var (typedPhone, phoneOk) = Phone(typed.Phone);
+        if (!phoneOk) skipped.Add("เบอร์โทร (รูปแบบไม่ถูกต้อง)");
+
+        if (typed.IdentityFromForm)
         {
-            var (p, ok) = Phone(typed.Phone);
-            if (!ok) skipped.Add("เบอร์โทร (รูปแบบไม่ถูกต้อง)");
-            else if (p != phone) { phone = p; saved.Add("เบอร์โทร"); }
+            if (typedName != null && typedName != name)
+            {
+                if (string.IsNullOrWhiteSpace(name)) { name = typedName; saved.Add("ชื่อ-นามสกุล"); }
+                else skipped.Add("ชื่อ-นามสกุล (บัญชีมีชื่ออยู่แล้ว — แก้ที่หน้าข้อมูลส่วนตัว)");
+            }
+            if (typedPhone != null && typedPhone != ComparablePhone(phone))
+            {
+                if (string.IsNullOrWhiteSpace(phone)) { phone = typedPhone; saved.Add("เบอร์โทร"); }
+                else skipped.Add("เบอร์โทร (บัญชีมีเบอร์อยู่แล้ว — แก้ที่หน้าข้อมูลส่วนตัว)");
+            }
         }
 
         var ship = current.Shipping;
@@ -154,11 +180,17 @@ public static class StorefrontMemberProfile
             var province = T(typed.ShippingProvince, MaxPart);
             var postal = T(typed.ShippingPostalCode, 10);
             if (postal != null && !IsDigits(postal, 5)) { skipped.Add("รหัสไปรษณีย์ (ต้องเป็นตัวเลข 5 หลัก)"); postal = null; }
+            // เช็กเอาต์: ชื่อ/เบอร์บนฟอร์ม = ผู้รับ · ไม่ส่งมา ⇒ คงผู้รับเดิม (ไม่มี ⇒ ชื่อ/เบอร์ของบัญชี)
+            var recipient = typed.IdentityFromForm ? (ship?.RecipientName ?? name) : (typedName ?? ship?.RecipientName ?? name);
+            var recipientPhone = typed.IdentityFromForm ? (ship?.Phone ?? phone) : (typedPhone ?? ship?.Phone ?? phone);
             var same = Squash(shipText) == Squash(ComposeAddress(ship, false))
-                && (province ?? ship?.Province) == ship?.Province && (postal ?? ship?.PostalCode) == ship?.PostalCode;
+                && (province ?? ship?.Province) == ship?.Province && (postal ?? ship?.PostalCode) == ship?.PostalCode
+                && (typed.IdentityFromForm || (recipient == ship?.RecipientName && recipientPhone == ComparablePhone(ship?.Phone)));
             if (!same)
             {
-                ship = new MemberAddress(ship?.RecipientName ?? name, ship?.Phone ?? phone, shipText, null, null,
+                var textSame = Squash(shipText) == Squash(ComposeAddress(ship, false));
+                ship = new MemberAddress(recipient, recipientPhone, textSame ? ship!.AddressLine : shipText,
+                    textSame ? ship!.SubDistrict : null, textSame ? ship!.District : null,
                     province ?? ship?.Province, postal ?? ship?.PostalCode);
                 saved.Add("ที่อยู่จัดส่ง");
             }
@@ -168,20 +200,19 @@ public static class StorefrontMemberProfile
         if (!string.IsNullOrWhiteSpace(typed.BillingTaxId))
         {
             var digits = ThaiTaxId.Normalize(typed.BillingTaxId);
-            var br = T(typed.BillingBranchCode, 10) ?? HeadOffice;
+            // S1: ฟอร์มไม่มีช่องสาขา (ที่พัก) + เลขเดิม ⇒ คงสาขาเดิม · เลขใหม่ ⇒ สำนักงานใหญ่
+            var br = T(typed.BillingBranchCode, 10) ?? (digits == tax && branch != null ? branch : HeadOffice);
             if (digits.Length != 13 || !ThaiTaxId.IsValid(digits)) skipped.Add("ข้อมูลใบกำกับภาษี (เลขประจำตัวผู้เสียภาษีไม่ถูกต้อง)");
             else if (!IsDigits(br, 5)) skipped.Add("ข้อมูลใบกำกับภาษี (รหัสสาขาต้องเป็นตัวเลข 5 หลัก)");
             else
             {
                 var bName = T(typed.BillingName, MaxName) ?? company;
                 var bText = T(typed.BillingAddressText, MaxAddressLine);
-                var changed = digits != tax || br != branch || bName != company
-                    || (bText != null && Squash(bText) != Squash(ComposeAddress(bill, true)));
-                if (changed)
+                var addrChanged = bText != null && Squash(bText) != Squash(ComposeAddress(bill, true));
+                if (digits != tax || br != branch || bName != company || addrChanged)
                 {
                     tax = digits; branch = br; company = bName;
-                    if (bText != null && Squash(bText) != Squash(ComposeAddress(bill, true)))
-                        bill = new MemberAddress(bName, null, bText, null, null, null, null);
+                    if (addrChanged) bill = new MemberAddress(bName, null, bText, null, null, null, null);
                     saved.Add("ข้อมูลใบกำกับภาษี");
                 }
             }
@@ -189,10 +220,13 @@ public static class StorefrontMemberProfile
         return new CheckoutProfileMerge(new MemberProfile(name, phone, company, tax, branch, ship, bill), saved, skipped);
     }
 
-    /// <summary>ข้อความถึงผู้ใช้เมื่อมีช่องที่<b>ไม่ได้</b>บันทึกลงบัญชี (แนบใน <c>ApiResponse.Errors</c> ของการจอง/สั่งซื้อ — ไม่ใช่ no-op เงียบ) ·
-    /// บันทึกได้ครบ/ไม่มีอะไรเปลี่ยน ⇒ null (หน้าเว็บบอก "บันทึกแล้ว" เอง)</summary>
-    public static string? SaveNote(IReadOnlyList<string> skipped)
-        => skipped.Count > 0
-            ? "ไม่ได้บันทึกลงบัญชีของคุณ: " + string.Join(" · ", skipped) + " — แก้ได้ที่หน้า \"บัญชีของฉัน › ข้อมูลส่วนตัว\""
-            : null;
+    /// <summary>ข้อความผลการบันทึกลงบัญชี (แนบใน <c>ApiResponse.Errors</c> ของการจอง/สั่งซื้อ — หน้าเว็บแสดงตามนี้ ไม่ประกอบเอง) ·
+    /// มีช่องที่ไม่ได้บันทึก ⇒ บอกชื่อช่อง (ไม่ใช่ no-op เงียบ) · บันทึกแล้ว ⇒ บอกว่าบันทึกอะไร · ไม่มีอะไรเปลี่ยน ⇒ null (ไม่รายงาน "บันทึกแล้ว" ปลอม)</summary>
+    public static string? SaveNote(IReadOnlyList<string> saved, IReadOnlyList<string> skipped)
+    {
+        var parts = new List<string>();
+        if (saved.Count > 0) parts.Add("บันทึกลงบัญชีของคุณแล้ว: " + string.Join(" · ", saved));
+        if (skipped.Count > 0) parts.Add("ไม่ได้บันทึก: " + string.Join(" · ", skipped) + " — แก้ได้ที่หน้า \"บัญชีของฉัน › ข้อมูลส่วนตัว\"");
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
+    }
 }

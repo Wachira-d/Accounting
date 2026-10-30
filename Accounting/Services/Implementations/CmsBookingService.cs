@@ -847,7 +847,7 @@ public partial class CmsBookingService : ICmsBookingService
         var knownCustomer = member != null;
         // รอบ 216 (คำตัดสินข้อ 174): ลูกค้าของเว็บนี้เว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ (ตาข่ายฝั่งเซิร์ฟเวอร์ — ใบนัด/แจ้งร้าน/เอกสาร ERP ใช้ช่อง Guest*) ·
         // ค่าที่พิมพ์มาชนะเสมอ · ตัวตัดสินเดียว StorefrontMemberProfile.FillContact
-        if (member is { IsActive: true })
+        if (member is { IsActive: true } && request.ContactFromProfile)   // ฝ่ายค้าน S3: เฉพาะเมื่อหน้าเว็บยืนยัน (controller ตัดธงของพนักงาน/แขกแล้ว)
             (request.GuestName, request.GuestPhone, request.GuestEmail) = StorefrontMemberProfile.FillContact(
                 request.GuestName, request.GuestPhone, request.GuestEmail, member.FullName, member.Phone, member.Email);
         // ด่านทำงานเมื่อเว็บตั้งค่าฟอร์มแล้วเท่านั้น (FormFieldsJson ไม่ null) — เว็บที่ไม่เคยตั้ง = เซิร์ฟเวอร์ไม่บังคับเหมือนเดิม

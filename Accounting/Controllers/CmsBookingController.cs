@@ -186,6 +186,8 @@ public class CmsBookingController : ControllerBase
         // นิรนาม ⇒ ไม่มีลูกค้า (เดิมรับ CustomerId จาก body ⇒ ยัดการจองเข้า "การจองของฉัน" ของคนอื่น + ข้ามด่านยินยอมด้วย id ของคนอื่น) — ตัวตัดสินเดียวกับออเดอร์
         var bodyCustomerId = request.CustomerId;
         request.CustomerId = StorefrontCustomerAuth.OrderCustomerId(bodyCustomerId, staffOk, sf, siteId);
+        // รอบ 216 ฝ่ายค้าน S3: เติมช่องว่างจากโปรไฟล์เฉพาะสมาชิกในโทเคน + หน้าเว็บยืนยัน (sf เป็น null เมื่อเป็นพนักงาน ⇒ walk-in ไม่ถูกเติม)
+        request.ContactFromProfile = StorefrontCustomerAuth.FillFromProfile(request.ContactFromProfile, sf, siteId);
         if (request.PayWithCredit)
         {
             if (CreditBookingLink.PayWithCreditGate(staffOk, sf?.CustomerId, sf?.SiteId, siteId, bodyCustomerId ?? request.CustomerId) is string creditProblem)

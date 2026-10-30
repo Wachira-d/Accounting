@@ -60,6 +60,13 @@
 | CMS216-10 | ค่าที่ฟอร์มส่งตรงกับโปรไฟล์ (เว้นวรรคต่าง) · ที่อยู่ใหม่จากเช็กเอาต์ | ไม่เปลี่ยน (ที่อยู่มีโครงไม่ถูกยุบ) · ที่อยู่ใหม่ = บรรทัดที่อยู่ + จังหวัด/รหัสไปรษณีย์ | `CmsRound216MemberProfileTests`.MergeCheckout_SameValues_NoChange · .MergeCheckout_NewShippingText_ReplacesStructuredAddress |
 | CMS216-11 | หน้าเว็บ: `/portal/me` ตอบช้ากว่าที่ผู้ใช้เริ่มพิมพ์ · ช่องที่มีค่าอยู่แล้ว · รหัสสาขาค่าตั้งต้น 00000 · ช่องใบกำกับของที่พัก · ช่อง "บันทึกเป็นข้อมูลของฉัน" | ช่องที่ผู้ใช้แตะไม่ถูกทับ (`dataset.userTouched`) · ทับเฉพาะช่องว่าง/ช่องที่ระบบเติม (`dataset.autoSrc`) · สาขาจากโปรไฟล์ชนะค่าตั้งต้น · ช่อง "เทียบอย่างเดียว" ไม่เติม · ติ๊กไว้ก่อนเฉพาะเติมช่องที่โปรไฟล์ว่าง · ผู้ใช้เอาติ๊กออกแล้วไม่ติ๊กกลับ | `tools/member_prefill_sim.js` (โค้ดจริงจากหน้า บน DOM จำลอง · /portal/me ตอบช้า · ผู้ใช้ลบค่าที่เติม · ช่องบันทึกติ๊ก/ไม่ติ๊ก · negative test 4 ตัว) |
 | CMS216-12 | รวมกับรอบ 217: กดซ้ำได้ใบจองเดิม (`Reused`) · ออเดอร์คืนจากคีย์กันกดซ้ำ (`Replayed`) · ที่พักซ้ำ (409) · คำขอซ้ำคีย์เดิม (มิดเดิลแวร์ตอบจากแคช) | ไม่บันทึกโปรไฟล์ซ้ำ · หน้าเว็บไม่ขึ้น "บันทึกแล้ว" | `required_call_site_check` (`ProfileOwner(request.SaveToProfile && !result.Reused …)` / `!result.Replayed`) · ตรวจมือ storefront `_memberAfterSubmit(… && !booking.reused)` |
+| CMS216-13 | ฝ่ายค้าน S1: บันทึกจากฟอร์มที่พัก (ไม่มีช่องสาขา) ด้วยเลขภาษีเดิม · เลขใหม่ไม่ส่งสาขา | คงสาขา 00003 · เลขใหม่ = 00000 | `CmsRound216MemberProfileTests`.S1_LodgingSameTaxId_WithoutBranchField_KeepsBranch_NewTaxId_HeadOffice |
+| CMS216-14 | ฝ่ายค้าน S2: สั่งของขวัญถึงแม่ (ชื่อ/เบอร์ผู้รับต่างจากบัญชี) · จองแทนเพื่อนเมื่อบัญชีมีชื่อแล้ว | ชื่อ/เบอร์บัญชีไม่เปลี่ยน · ผู้รับของที่อยู่จัดส่ง = แม่ · จองแทน: ไม่ทับ + บอกเหตุ · บัญชีว่างเบอร์ ⇒ เติม | `CmsRound216MemberProfileTests`.S2_CheckoutGiftRecipient_DoesNotTouchMemberIdentity · .S2_BookingForm_FillsOnlyEmptyIdentity_NeverOverwrites · `Db/MemberProfileDbTests`.SaveFromCheckout_FillsEmpty_ReportsSkipped_LeavesValidUntouched |
+| CMS216-15 | ฝ่ายค้าน S2 หน้าเว็บ: ช่องขอบันทึก | ไม่ติ๊กให้เองเลย · บัญชีมีค่าแล้ว ⇒ ไม่ชวนบันทึกทับ · ผู้ใช้ติ๊กเอง ⇒ คงติ๊ก | `tools/member_prefill_sim.js` (e) + negative "ติ๊กให้เอง" |
+| CMS216-16 | ฝ่ายค้าน S3: ผู้ใช้ลบช่องที่เติมไว้แล้วส่ง · พนักงาน walk-in ระบุ CustomerId · ผู้เรียก API ไม่ส่งธง · โทเคนเว็บอื่น | ธง false ⇒ เซิร์ฟเวอร์ไม่เติมกลับ · พนักงาน/API/เว็บอื่นไม่เติม | `tools/member_prefill_sim.js` (g) + negative · `CmsRound216MemberProfileTests`.S3_FillFromProfile_OnlyPageConfirmedMemberOfThisSite · `required_call_site_check` (FillFromProfile ก่อน CreateBookingAsync/CreateOrderAsync · ธงก่อน FillContact) |
+| CMS216-17 | เบอร์ดิบของแถวเก่า (081-234-5678) กับค่าที่พิมพ์ 0812345678 · ส่งซ้ำค่าเดิม | ไม่นับว่าเปลี่ยน · ไม่มีข้อความ "บันทึกแล้ว" ปลอม | `CmsRound216MemberProfileTests`.LegacyRawPhone_SameNumber_IsNotAChange · .MergeCheckout_SameValues_NoChange · `Db/MemberProfileDbTests`.SaveFromCheckout_… |
+| CMS216-18 | แถว Both หลัก + แถว Shipping หลักเก่าซ้ำ → แก้ที่อยู่จัดส่ง/ใบกำกับต่างกัน | ที่อยู่หลักต่อชนิดแถวเดียว · ใบกำกับอ่านจาก Both ได้และไม่หายเมื่อแยกแถว · บรรทัดเปลี่ยน ⇒ ล้างถนน/บ้านเลขที่เดิม | `Db/MemberProfileDbTests`.BothRow_And_DuplicateDefaults_AreNormalizedOnSave · migration `MemberProfileMigration` (ตรวจมือ: ล้างซ้ำคงแถวล่าสุด + unique index บางส่วน) |
+| CMS216-19 | ฟอร์มติดต่อ: ช่องบริษัท/เลขภาษี · ช่อง type=hidden | ไม่เติม | `tools/member_prefill_sim.js` (h) + negative "เติมช่องซ่อน" |
 
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
 
@@ -225,7 +232,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **699 ไฟล์ · 7,180 `[Fact]` + 1,140 `[Theory]` (5,336 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **699 ไฟล์ · 7,186 `[Fact]` + 1,140 `[Theory]` (5,336 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

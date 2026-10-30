@@ -11029,6 +11029,34 @@ RULES += [
 ]
 
 
+# ── รอบ 216 ฝ่ายค้าน (S1–S3 + หมายเหตุ): เติมจากโปรไฟล์ต้องมีธงยืนยันจากหน้าเว็บ · เช็กเอาต์ไม่แตะตัวตนสมาชิก · ที่อยู่หลักต่อชนิดแถวเดียว ──
+_R216X_WHY = "รอบ 216 ฝ่ายค้าน: "
+RULES += [
+    dict(file="Controllers/CmsBookingController.cs", method="CreateBooking",
+         must=["StorefrontCustomerAuth.FillFromProfile(request.ContactFromProfile, sf, siteId)"],
+         before=[("StorefrontCustomerAuth.FillFromProfile(", "CreateBookingAsync(")],
+         why=_R216X_WHY + "S3 เติมจากโปรไฟล์เฉพาะสมาชิกในโทเคน + หน้าเว็บยืนยัน (พนักงาน walk-in ไม่ถูกเติม)"),
+    dict(file="Controllers/CmsCommerceController.cs", method="CreateOrder",
+         must=["StorefrontCustomerAuth.FillFromProfile(request.ContactFromProfile && !staffOk, sf, siteId)", "IdentityFromForm: false"],
+         before=[("StorefrontCustomerAuth.FillFromProfile(", "CreateOrderAsync(")],
+         why=_R216X_WHY + "S3 ธงยืนยัน · S2 ชื่อ/เบอร์บนเช็กเอาต์ = ผู้รับ ไม่ใช่ตัวตนสมาชิก"),
+    dict(file="Controllers/LodgingPublicController.cs", method="Create",
+         must=["req.ContactFromProfile"],
+         before=[("req.ContactFromProfile", "StorefrontMemberProfile.FillContact(")],
+         why=_R216X_WHY + "S3 ที่พัก: เติมเฉพาะเมื่อหน้าเว็บยืนยัน"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="CreateBookingAsync",
+         must=["request.ContactFromProfile"],
+         before=[("request.ContactFromProfile", "StorefrontMemberProfile.FillContact(")],
+         why=_R216X_WHY + "S3 ตาข่ายเติมทำงานเฉพาะเมื่อมีธง"),
+    dict(file="Services/Implementations/CmsCommerceService.Checkout.cs", method="ValidateCheckoutFormAsync",
+         must=["request.ContactFromProfile"],
+         before=[("request.ContactFromProfile", "StorefrontMemberProfile.FillContact(")],
+         why=_R216X_WHY + "S3 ตาข่ายเติมทำงานเฉพาะเมื่อมีธง"),
+    dict(file="Services/Implementations/StorefrontCustomerService.Profile.cs", method="ApplyProfileAsync",
+         must=["BeginTransactionAsync(", "tx.CommitAsync(", "ApplyAddresses("],
+         why=_R216X_WHY + "ที่อยู่หลักต่อชนิดแถวเดียว: ปลดแถวเดิมลงฐานก่อนตั้งแถวใหม่ในธุรกรรมเดียว"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
