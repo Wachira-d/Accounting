@@ -212,6 +212,87 @@ public class CmsRound212RelinkTests
         Assert.DoesNotContain("@", text);
     }
 
+    // ═════════ 4b. ฝ่ายค้าน (B+D) ข้อ 1–2: ปิด/เปิดไปมา · cooldown · secret ของ OA อื่น ═════════
+
+    [Fact]
+    public void Events_wait_to_settle_before_processing()
+    {
+        var detected = new DateTime(2026, 10, 30, 10, 0, 0, DateTimeKind.Utc);
+        Assert.False(CustomerRelinkInvitePlan.IsSettled(detected, detected.AddMinutes(44)));
+        Assert.True(CustomerRelinkInvitePlan.IsSettled(detected, detected.Add(CustomerRelinkInvitePlan.SettleDelay)));
+    }
+
+    [Fact]
+    public void Disable_then_enable_within_window_is_a_flip_pair_and_cancels_both()
+    {
+        var t1 = new DateTime(2026, 10, 30, 10, 0, 0, DateTimeKind.Utc);
+        var offKey = CustomerRelinkInvitePlan.DedupeKey(Co, "Ushop", Nx, "Ubot1");     // ปิด OA ร้าน
+        var onKey = CustomerRelinkInvitePlan.DedupeKey(Nx, "Ubot1", Co, "Ushop");      // เปิดกลับ
+        // แถว "ปิด" เห็นแถว "เปิด" 10 นาทีถัดมา และกลับกัน
+        Assert.True(CustomerRelinkInvitePlan.IsFlipPair(Co, "Ushop", Nx, "Ubot1", t1, onKey, t1.AddMinutes(10)));
+        Assert.True(CustomerRelinkInvitePlan.IsFlipPair(Nx, "Ubot1", Co, "Ushop", t1.AddMinutes(10), offKey, t1));
+        // ทิศตรงข้าม: สลับจริงแล้วเพิ่งกลับหลายวันต่อมา = สองการสลับจริง (ไม่ยกเลิก) · คีย์อื่นไม่ใช่คู่
+        Assert.False(CustomerRelinkInvitePlan.IsFlipPair(Co, "Ushop", Nx, "Ubot1", t1, onKey, t1.AddDays(3)));
+        Assert.False(CustomerRelinkInvitePlan.IsFlipPair(Co, "Ushop", Nx, "Ubot1", t1, CustomerRelinkInvitePlan.DedupeKey(Nx, "Ubot1", Co, "Ushop2"), t1.AddMinutes(5)));
+        // ตอนประมวล OA ปัจจุบัน = OA เดิมของแถว ⇒ ไม่ใช่การสลับแล้ว (ยกเลิก) · ยังต่าง ⇒ ยังเชิญ
+        Assert.False(CustomerRelinkInvitePlan.IsSwitch(Co, "Ushop", Co, "Ushop"));
+        Assert.True(CustomerRelinkInvitePlan.IsSwitch(Nx, "Ubot1", Co, "Ushop"));
+        Assert.StartsWith("ยกเลิก: สลับกลับแล้ว", CustomerRelinkInvitePlan.CancelledFlipBackNote);
+    }
+
+    [Fact]
+    public void Current_destination_falls_back_to_the_events_seen_bot_for_same_scope()
+    {
+        Assert.Equal("Ucur", CustomerRelinkInvitePlan.EffectiveCurrentDestination(Nx, "Ucur", Nx, "Ubot2"));
+        Assert.Equal("Ubot2", CustomerRelinkInvitePlan.EffectiveCurrentDestination(Nx, null, Nx, "Ubot2"));   // OA กลางยังไม่ตั้ง Bot User ID
+        Assert.Null(CustomerRelinkInvitePlan.EffectiveCurrentDestination(Co, null, Nx, "Ubot2"));
+        // ผลต่อแผน: bot กลางเปลี่ยน + ไม่ได้ตั้ง Bot User ID ⇒ ยังเชิญ (เดิมถือว่าลิงก์ยังใช้ได้ ⇒ ไม่มีใครได้คำเชิญ)
+        var plan = CustomerRelinkInvitePlan.Plan(new RelinkSwitch(SwitchId, Nx, "Ubot1"), Nx,
+            CustomerRelinkInvitePlan.EffectiveCurrentDestination(Nx, null, Nx, "Ubot2"), new[] { Link("Ua") }, true);
+        Assert.Single(plan.Invite);
+    }
+
+    [Fact]
+    public void Genuine_switch_invites_once_and_repeat_switches_within_30_days_do_not_reinvite()
+    {
+        var plan = PlanNxToCompany(new[] { Link("Ua"), Link("Ub") });
+        // การสลับจริงครั้งแรก — ยังไม่มีใครได้คำเชิญ ⇒ เชิญครบ
+        var first = CustomerRelinkInvitePlan.WithCooldown(plan, Array.Empty<string>());
+        Assert.Equal(2, first.Invite.Count);
+        Assert.Equal(0, first.SkippedCooldown);
+        // รอบถัดไปของการสลับเดียวกัน (คีย์ของตัวเองส่งแล้ว) ⇒ ไม่ถูกตัด (ความคืบหน้ายังนับครบ)
+        var ownSent = first.Invite.Select(c => c.MessageKey).ToList();
+        Assert.Equal(2, CustomerRelinkInvitePlan.WithCooldown(plan, ownSent).Invite.Count);
+        // การสลับครั้งใหม่ภายใน 30 วัน — Ua เคยได้แล้ว ⇒ ข้าม · Ub ยังไม่ได้ ⇒ เชิญ
+        var other = Guid.NewGuid();
+        var again = CustomerRelinkInvitePlan.Plan(new RelinkSwitch(other, Nx, "Ubot1"), Co, "Ushop", new[] { Link("Ua"), Link("Ub") }, true);
+        var cooled = CustomerRelinkInvitePlan.WithCooldown(again, new[] { CustomerNotifyKeys.Relink(SwitchId, "Ua") });
+        Assert.Equal(new[] { "Ub" }, cooled.Invite.Select(c => c.Link.LineUserId).ToArray());
+        Assert.Equal(1, cooled.SkippedCooldown);
+        Assert.Equal(1, cooled.Skipped);
+    }
+
+    [Fact]
+    public void Webhook_from_another_bot_is_foreign_only_when_both_known()
+    {
+        Assert.True(CustomerRelinkInvitePlan.IsForeignDestination("UbotB", "UbotA"));    // secret ของ OA A ค้าง ⇒ ไม่ทับ ไม่บันทึกการสลับ
+        Assert.False(CustomerRelinkInvitePlan.IsForeignDestination("UbotB", "UbotB"));
+        Assert.False(CustomerRelinkInvitePlan.IsForeignDestination(null, "UbotA"));       // ยังไม่จำ ⇒ จำ (เส้นเดิม)
+        Assert.False(CustomerRelinkInvitePlan.IsForeignDestination("UbotB", null));
+        Assert.Contains("Channel Secret", CustomerRelinkInvitePlan.SecretOfOtherOaProblem);
+    }
+
+    [Theory]
+    [InlineData(true, false, true, "UbotB", "UbotA", true)]    // token ใหม่ของ OA B + secret เดิมของ OA A ⇒ ปฏิเสธ
+    [InlineData(true, false, true, null, "UbotA", true)]       // ถาม LINE ไม่ได้ ⇒ ยืนยันไม่ได้ ⇒ ปฏิเสธ
+    [InlineData(true, false, true, "UbotA", null, true)]       // ยังไม่เคยจำบอท ⇒ ยืนยันไม่ได้
+    [InlineData(true, false, true, "UbotA", "UbotA", false)]   // ออก token ใหม่ของบอทเดิม ⇒ ผ่าน
+    [InlineData(true, true, true, "UbotB", "UbotA", false)]    // ใส่ secret ใหม่มาด้วย ⇒ ผ่าน
+    [InlineData(true, false, false, null, null, false)]        // ยังไม่มี secret เดิม ⇒ ผ่าน (ตั้งครั้งแรก)
+    [InlineData(false, false, true, null, "UbotA", false)]     // ไม่ได้เปลี่ยน token
+    public void Token_change_without_secret_needs_same_bot(bool tokenChanged, bool secretChanged, bool hasSecret, string? fetched, string? stamped, bool rejected)
+        => Assert.Equal(rejected, CustomerRelinkInvitePlan.TokenWithoutSecretProblem(tokenChanged, secretChanged, hasSecret, fetched, stamped) != null);
+
     // ═════════ 5. ส่งผ่านตัวส่งเดียว — OA เดิม · ปิดตามค่าตั้ง ═════════
 
     private sealed class TestNotifier : BookingNotifier

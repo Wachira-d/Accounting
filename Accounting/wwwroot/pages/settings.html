@@ -1945,7 +1945,7 @@
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
           this._renderLineCustomerChannel(c.customerChannel);
-          this._renderLineRelinkInvite(c.relinkInvite);
+          this._renderLineRelinkInvite(c.relinkInvite, c.webhookProblem);
           document.getElementById('lineToken').value = '';
           document.getElementById('lineSecret').value = '';
           document.getElementById('lineTokenStatus').textContent = c.hasAccessToken
@@ -1962,13 +1962,16 @@
       },
       // รอบ 211: แสดงผลที่เซิร์ฟเวอร์ตัดสิน (OA ที่ใช้ · ผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — ไม่มีกติกาฝั่งหน้าเว็บ
       // รอบ 212 แพ็ก B: "เชิญผูกใหม่: ส่งแล้ว N/M" — ป้ายทั้งก้อนเซิร์ฟเวอร์ประกอบ (CustomerRelinkInvitePlan.ProgressLabel) · หน้านี้แสดงอย่างเดียว
-      _renderLineRelinkInvite(p) {
+      _renderLineRelinkInvite(p, webhookProblem) {
         const box = document.getElementById('lineRelinkInvite');
         if (!box) return;
-        if (!p) { box.style.display = 'none'; box.textContent = ''; return; }
+        if (!p && !webhookProblem) { box.style.display = 'none'; box.textContent = ''; return; }
         const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (x) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x]));
         box.style.display = '';
-        box.innerHTML = `<div>📨 ${esc(p.label)}</div>`
+        // ฝ่ายค้าน (B+D) ข้อ 2: secret ของ OA อื่น — ข้อความจากเซิร์ฟเวอร์
+        const problem = webhookProblem ? `<div style="color:#b91c1c;font-size:12px;margin-bottom:4px">⚠️ ${esc(webhookProblem)}</div>` : '';
+        if (!p) { box.innerHTML = problem; return; }
+        box.innerHTML = problem + `<div>📨 ${esc(p.label)}</div>`
           + (p.lastError ? `<div style="color:#b45309;font-size:12px;margin-top:2px">ล่าสุด: ${esc(p.lastError)}</div>` : '')
           + (Number(p.pendingSwitches) > 1 ? `<div style="font-size:12px;color:#64748b;margin-top:2px">มีการเปลี่ยน OA ที่กำลังทยอยส่งอยู่ ${esc(p.pendingSwitches)} ครั้ง</div>` : '');
       },

@@ -6,11 +6,11 @@
 | CMS212D-02 | **ทิศตรงข้าม** หน้าแอดมินไม่มี token (มีแค่ secret/basic) · deployment เดิมตั้ง env | ใช้ config `Line:*` ทั้งชุด · ไม่มีแถว SiteSettings ก็ใช้ config | `No_admin_token_falls_back_to_config_entirely_so_env_deployments_keep_working` · `No_admin_row_at_all_uses_config` · `Resolver_without_db_reads_config_only` |
 | CMS212D-03 | ไม่มี token ทั้งสองที่ | HasToken=false · Source=none · ข้อความ `NotConfiguredMessage` | `Neither_has_token_reports_none_and_keeps_admin_values_visible` · `Resolver_with_nothing_configured_says_not_configured` |
 | CMS212D-04 | ช่องลับว่าง / ติ๊กล้าง / พิมพ์ค่าใหม่+ติ๊กล้าง | คงค่าเดิม / ล้าง / ค่าใหม่ชนะ (เข้ารหัส) | `Secret_blank_keeps_existing_value` · `Secret_clear_requires_explicit_flag` |
-| CMS212D-05 | token เข้ารหัสแล้ว round-trip · คีย์ระบบเปลี่ยน | ถอดได้ = ใช้ · ถอดไม่ได้ = ไม่ใช้ค่าว่าง (ถอยไป config + หน้าแอดมินเตือนให้กรอกใหม่) | `Secret_round_trips_through_secret_protector_into_resolved_settings` |
+| CMS212D-05 | token เข้ารหัสแล้ว round-trip · คีย์ระบบเปลี่ยน | ถอดได้ = ใช้ · ถอดไม่ได้ = **ไม่มี token (ไม่ถอยไป config — ฝ่ายค้าน B+D ข้อ 3)** + เหตุ `UndecryptableTokenMessage` บนหน้าแอดมิน | `Secret_round_trips_through_secret_protector_into_resolved_settings` · `Undecryptable_admin_token_does_not_fall_back_to_config_set` |
 | CMS212D-06 | ช่องไม่ลับ null / "" / ค่าใหม่ | คง / ล้าง / ค่าใหม่ | `Text_null_keeps_empty_clears` · `Blank_inputs_mean_clear_and_are_valid` |
 | CMS212D-07 | Basic ID `123abcde` · `@bad id` · URL · Bot User ID ตัวใหญ่ · Group ID ขึ้นต้น U | เติม `@` / ปฏิเสธพร้อมเหตุ | `Basic_id_valid_is_normalized` · `Basic_id_invalid_is_rejected` · `Bot_user_id_and_group_id_formats` · `Invalid_basic_id_in_storage_is_not_used` |
 | CMS212D-08 | พนักงานผูก "สลิป 123456" ผ่าน OA กลาง (หรือผูกบัญชี ERP) · ร้านตั้ง OA เอง | ส่งสลิปผ่าน **OA กลาง** · LINE ปฏิเสธ ⇒ `LineFailed` (ไม่กลืน) | `Payslip_recipient_bound_via_nextacc_goes_through_nextacc` · `Payslip_recipient_from_user_binding_is_nextacc_and_none_is_null` · rule `PayslipLineDeliveryService.SendPayslipAsync` |
-| CMS212D-09 | **ทิศตรงข้าม** LINE ID ที่ HR กรอกเอง (ไม่มีแถวรหัสผูก) | เส้นเดิม (OA ร้านถ้าตั้ง ไม่งั้น OA กลาง) | `Payslip_recipient_typed_by_hr_keeps_legacy_company_route` |
+| CMS212D-09 | **ทิศตรงข้าม** LINE ID ที่ HR กรอกเอง (ไม่มีแถวรหัสผูก) และไม่มีการผูกบัญชี ERP | เส้นเดิม (OA ร้านถ้าตั้ง ไม่งั้น OA กลาง) · มีการผูกบัญชี ERP ⇒ การผูกจริงชนะ (ฝ่ายค้าน B+D ข้อ 6) | `Payslip_recipient_typed_by_hr_keeps_legacy_company_route` · `Payslip_recipient_proven_user_binding_beats_hr_typed_id` |
 | CMS212D-10 | Flex ผ่าน OA กลาง: resolver ให้ token หน้าแอดมิน · ไม่ฉีด resolver · ไม่มี token · ผู้รับว่าง | ใช้ token หน้าแอดมิน / config / ล้มพร้อมเหตุไม่ยิง HTTP | `Flex_via_nextacc_uses_admin_token_over_config` · `Flex_via_nextacc_falls_back_to_config_token_when_not_injected` · `Flex_via_nextacc_without_any_token_fails_with_reason_and_sends_nothing` |
 | CMS212D-11 | โค้ดใหม่อ่าน `_config["Line:ChannelSecret"]` เอง | checker ฟ้อง (ยกเว้นไฟล์ resolver) | `tools/required_call_site_check.py` LINE_CONFIG_FORBID + self-test |
 | CMS212D-12 | (มือ) แอดมินกรอก token+secret → ทดสอบ → กดเติม Basic ID/Bot User ID → บันทึก → ส่ง "สลิป xxxxxx" ที่ OA | ป้าย "ตั้งแล้ว" · ระบบใช้: ค่าในหน้านี้ · ผูกสำเร็จ · ส่งสลิปถึง | manual |
@@ -31,6 +31,11 @@
 | CMS212B-10 | คีย์กันซ้ำ: รอบซ้ำ/สองเครื่อง · ไม่เก็บ userId | คีย์เดียวกันต่อคนต่อการสลับ · ไม่มี userId ดิบ · ล้มลอง ≤ 3 · ระงับ = จบ | `Message_key_is_idempotent_per_switch_and_person_without_raw_user_id` · `Terminal_log_states` · rules `ProcessEventAsync` · `CustomerNotifyOutboxJob.RunGuardedAsync` |
 | CMS212B-11 | ข้อความ + ป้ายความคืบหน้า | ลิงก์ `/account` · `my-booking/{token}` · `track-order/{token}` · ไม่มีลิงก์บอกทาง · "ไม่ต้องทำอะไร" · "เชิญผูกใหม่: ส่งแล้ว N/M" | `Progress_label_and_relink_link` · `Relevance_rules` |
 | CMS212B-12 | PUT ค่าตั้ง LINE เปลี่ยน OA | อ่าน OA ก่อนแก้ · ถาม bot ของ token ใหม่ · บันทึกการสลับหลัง SaveChanges · บันทึกไม่ได้บอกผู้กด | rules `LineConfigController.Update` · `RecordOaSwitchAsync` · ⏳ Db test (บันทึก→งาน→ความคืบหน้า) ยังไม่ได้เขียน |
+| CMS212B-13 | ฝ่ายค้าน (B+D) ข้อ 1: ปิด→เปิด LINE ภายใน 45 นาที / ตอนประมวล OA เป็นตัวเดิมแล้ว | ไม่ประมวลก่อน 45 นาที · คู่กลับทิศ/สลับกลับ ⇒ ยกเลิกแถว (`ProcessedAt` · Total 0 · "ยกเลิก: สลับกลับแล้ว") ไม่ส่ง · สลับจริงห่างหลายวัน = ยังเป็นการสลับ | `Events_wait_to_settle_before_processing` · `Disable_then_enable_within_window_is_a_flip_pair_and_cancels_both` · rules `ProcessPendingAsync` · `ProcessEventAsync` |
+| CMS212B-14 | ฝ่ายค้าน (B+D) ข้อ 1: สลับจริงครั้งแรก · สลับซ้ำภายใน 30 วัน | ครั้งแรกเชิญครบครั้งเดียว · คนที่ได้แล้วไม่ได้ซ้ำ (นับข้าม) · คีย์ของการสลับเดียวกันไม่ถูกตัด | `Genuine_switch_invites_once_and_repeat_switches_within_30_days_do_not_reinvite` · rule `RecentRelinkKeysAsync` |
+| CMS212B-15 | ฝ่ายค้าน (B+D) ข้อ 2: token ใหม่ของ OA B + secret เดิมของ OA A · webhook ของ A เข้ามา | PUT ปฏิเสธ (เว้นยืนยันได้ว่าบอทเดิม) · webhook จากบอทอื่นไม่ทับบอทที่จำไว้ ไม่บันทึกการสลับ · หน้า LINE แสดง "Channel Secret เป็นของ OA อื่น" | `Token_change_without_secret_needs_same_bot` · `Webhook_from_another_bot_is_foreign_only_when_both_known` · rules `LearnDestinationAsync` · `LineConfigController.Update` · `CustomerLineWebhookController.Receive` |
+| CMS212B-16 | ฝ่ายค้าน (B+D) ข้อ 4: bot ของ OA กลางเปลี่ยน · ยังไม่ตั้ง Bot User ID | webhook แค่ประทับ `LineOaDestinationSightings` · งานเบื้องหลังสแกนข้ามบริษัท · ใช้บอทที่เห็นเป็นบอทปัจจุบัน ⇒ ยังเชิญ | `Current_destination_falls_back_to_the_events_seen_bot_for_same_scope` · rules `NoteWebhookDestinationAsync` (forbid สแกนในคำขอ) · `ScanNextAccSightingsAsync` |
+| CMS212B-17 | ฝ่ายค้าน (B+D) ข้อ 3/5: token แอดมินถอดไม่ได้ · บันทึก token ไม่มี secret (หรือกลับกัน) | ไม่มี token (ไม่ถอยไป config ที่อาจเป็นคนละ OA) · PUT ปฏิเสธครึ่งชุด | `Undecryptable_admin_token_does_not_fall_back_to_config_set` · `Admin_token_and_secret_must_be_saved_as_a_pair` · rules `NextAccLineConfig.GetAsync` · `AdminLineMessagingController.Update` |
 
 ## CMS212C — แจ้งเตือนพนักงานผ่าน OA กลาง + สรุปประจำวันทาง LINE (รอบ 212 C · คำตัดสินข้อ 5 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §0/§5/§7)
 
@@ -136,7 +141,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **691 ไฟล์ · 7,064 `[Fact]` + 1,123 `[Theory]` (5,251 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **691 ไฟล์ · 7,071 `[Fact]` + 1,125 `[Theory]` (5,262 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

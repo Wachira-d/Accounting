@@ -5761,3 +5761,10 @@ IsTerminal · ข้อความ + ป้าย "เชิญผูกให�
 (นับโควตา · ล้มถอยอีเมล) · นอกนั้นอีเมล · ข้ามถอนยินยอม/บล็อก/ไม่มีรายการค้าง · ความคืบหน้าบนแถวนับจาก `CustomerNotifyLogs` · (4) หน้า ตั้งค่า → LINE แสดงป้ายจากเซิร์ฟเวอร์ ·
 (5) `Helpers/CustomerRelinkMigration` (คอลัมน์ความคืบหน้า + unique บางส่วน) · เทสต์ `CmsRound212RelinkTests` (TEST_PLAN CMS212B-01..12) · `required_call_site_check` +11 กติกา ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2f815caa_
+
+_รอบ 212 ฝ่ายค้าน (B+D) (ไม่มีข้อ blocking · แก้ 6 ข้อ): (1) ปิด→เปิด LINE ไม่เชิญลูกค้าผิด ๆ — แถวการสลับรอ 45 นาที · ตอนประมวลสลับกลับแล้ว/คู่กลับทิศ ⇒ ยกเลิก ·
+cooldown 1 คำเชิญ/คน/30 วัน (`CustomerRelinkInvitePlan.SettleDelay/IsFlipPair/WithCooldown`) · (2) webhook จากบอทอื่น (secret ของ OA อื่น) ไม่ทับบอทที่จำไว้ + ไม่บันทึกการสลับ +
+หน้า LINE แสดงปัญหา (`CompanySettings.LineWebhookDestinationMismatch`) · PUT เปลี่ยน token โดยไม่ใส่ secret ต้องเป็นบอทเดิม (`TokenWithoutSecretProblem`) · (3) token แอดมินของ OA กลางถอดไม่ได้ ⇒
+ไม่ถอยไป config (`NextAccLineConfigRule.UndecryptableTokenMessage`) · (4) สแกน OA กลางข้ามบริษัทย้ายจากคำขอ webhook ไป `CustomerNotifyOutboxJob` (`LineOaDestinationSightings` · ลบ static memo) ·
+(5) หน้าแอดมิน token/secret ต้องคู่กัน (`PairProblem`) · (6) สลิปเงินเดือน: การผูกบัญชี ERP ชนะ LINE ID ที่ HR พิมพ์ · เทสต์ CMS212B-13..17 + CMS212D-05/09 ·
+`required_call_site_check` +12 กติกา/แก้ 1 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

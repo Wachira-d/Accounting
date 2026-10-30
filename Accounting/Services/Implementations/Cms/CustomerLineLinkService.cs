@@ -286,12 +286,27 @@ public class CustomerLineLinkService : ICustomerLineLinkService
             : await q.Where(l => l.BlockedAt != null).ExecuteUpdateAsync(s => s.SetProperty(l => l.BlockedAt, (DateTime?)null).SetProperty(l => l.UpdatedAt, now), ct);
     }
 
-    public async Task LearnDestinationAsync(Guid companyId, string? destination, CancellationToken ct = default)
+    public async Task<bool> LearnDestinationAsync(Guid companyId, string? destination, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(destination) || destination.Length > 64) return;
+        if (string.IsNullOrWhiteSpace(destination) || destination.Length > 64) return true;
         var d = destination.Trim();
-        await _db.CompanySettings.Where(s => s.CompanyId == companyId && (s.LineOaDestination == null || s.LineOaDestination != d))
-            .ExecuteUpdateAsync(s => s.SetProperty(x => x.LineOaDestination, d), ct);
+        var stamped = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => new { s.LineOaDestination, s.LineWebhookDestinationMismatch }).FirstOrDefaultAsync(ct);
+        if (stamped == null) return true;
+        // รอบ 212 ฝ่ายค้าน (B+D) ข้อ 2: จำบอทไว้แล้ว (จาก /v2/bot/info ตอนบันทึก token หรือ webhook ก่อนหน้า) แต่ webhook มาจากบอทอื่น =
+        // secret ยังเป็นของ OA อื่น ⇒ ไม่ทับ (ไม่พลิกบอทกลับ) · จดไว้ให้หน้าตั้งค่าบอก · ผู้เรียกไม่บันทึกการสลับ
+        if (CustomerRelinkInvitePlan.IsForeignDestination(stamped.LineOaDestination, d))
+        {
+            if (stamped.LineWebhookDestinationMismatch != d)
+                await _db.CompanySettings.Where(s => s.CompanyId == companyId)
+                    .ExecuteUpdateAsync(s => s.SetProperty(x => x.LineWebhookDestinationMismatch, d), ct);
+            _logger.LogWarning("LINE webhook ของบริษัท {CompanyId} มาจากบอทอื่นที่ไม่ใช่บอทของ token — secret น่าจะเป็นของ OA อื่น (ไม่ทับบอทที่จำไว้)", companyId);
+            return false;
+        }
+        if (stamped.LineOaDestination != d || stamped.LineWebhookDestinationMismatch != null)
+            await _db.CompanySettings.Where(s => s.CompanyId == companyId)
+                .ExecuteUpdateAsync(s => s.SetProperty(x => x.LineOaDestination, d).SetProperty(x => x.LineWebhookDestinationMismatch, (string?)null), ct);
+        return true;
     }
 
     public async Task<bool> ReplyAsync(string scope, Guid? companyId, string replyToken, string text, CancellationToken ct = default)

@@ -56,6 +56,16 @@ public class LineConfigController : ControllerBase
         var s = await GetOrCreateSettings(companyId);
         // รอบ 212 แพ็ก B: OA ที่ "ส่งจริง" ก่อนบันทึก (ตัวตัดสินเดียว ResolveChannelAsync — อ่านจากฐาน ไม่ใช่ค่าที่กำลังแก้)
         var before = _customerLinks == null ? null : await _customerLinks.ResolveChannelAsync(companyId);
+        // ฝ่ายค้าน (B+D) ข้อ 2: token ใหม่ ⇒ ถาม LINE ว่าเป็นบอทไหน (ก่อนแก้อะไร) · เปลี่ยน token โดยไม่ใส่ secret ทั้งที่มี secret เดิม ⇒ ต้องเป็นบอทเดิมที่จำไว้
+        // ไม่งั้นปฏิเสธ (secret ของ OA เก่า + token ของ OA ใหม่ = webhook ของ OA เก่าผ่านลายเซ็นแล้วพลิกบอทกลับ/เชิญลูกค้าผิด ๆ)
+        var tokenChanged = !string.IsNullOrEmpty(req.ChannelAccessToken);
+        var secretChanged = !string.IsNullOrEmpty(req.ChannelSecret);
+        string? fetchedBot = null;
+        if (tokenChanged && _relink != null)
+            fetchedBot = await _relink.FetchBotUserIdAsync(req.ChannelAccessToken!, HttpContext?.RequestAborted ?? default);
+        var pairProblem = CustomerRelinkInvitePlan.TokenWithoutSecretProblem(tokenChanged, secretChanged, _secrets.IsUsable(s.LineChannelSecret),
+            fetchedBot, s.LineOaDestination);
+        if (pairProblem != null) return BadRequest(new ApiResponse<LineConfigResponse>(false, null, pairProblem));
         s.LineEnabled = req.Enabled;
         if (!string.IsNullOrEmpty(req.ChannelAccessToken))
             s.LineChannelAccessToken = _secrets.Protect(req.ChannelAccessToken);
@@ -69,10 +79,11 @@ public class LineConfigController : ControllerBase
             else if (CustomerLineLinkRule.NormalizeBasicId(req.OaBasicId) is string basic) s.LineOaBasicId = basic;
             else return BadRequest(new ApiResponse<LineConfigResponse>(false, null, "LINE OA Basic ID ไม่ถูกต้อง — ใช้รูป @xxxx (ตัวอักษรอังกฤษ/ตัวเลข/จุด/ขีด)"));
         }
-        // เปลี่ยน token ⇒ อาจเป็น OA ใหม่ ⇒ ถาม LINE ว่า token นี้เป็น bot ไหน (รอบ 212 แพ็ก B — รู้ทันทีว่าเปลี่ยน OA หรือแค่ออก token ใหม่) ·
+        // เปลี่ยน token ⇒ อาจเป็น OA ใหม่ ⇒ ใช้บอทที่ถามได้ข้างบน (รอบ 212 แพ็ก B — รู้ทันทีว่าเปลี่ยน OA หรือแค่ออก token ใหม่) ·
         // ถามไม่ได้ ⇒ ลืม bot userId เดิม (webhook ครั้งถัดไปประทับใหม่ + ตรวจการสลับ · ลิงก์ของ OA เดิมตัดสินด้วย scope จนกว่าจะรู้)
-        if (!string.IsNullOrEmpty(req.ChannelAccessToken))
-            s.LineOaDestination = _relink == null ? null : await _relink.FetchBotUserIdAsync(req.ChannelAccessToken, HttpContext?.RequestAborted ?? default);
+        if (tokenChanged) s.LineOaDestination = fetchedBot;
+        // ฝ่ายค้าน (B+D) ข้อ 2: เปลี่ยน token/secret แล้ว ⇒ ปัญหา "secret ของ OA อื่น" ที่จดไว้ต้องตรวจใหม่จาก webhook ครั้งถัดไป
+        if (tokenChanged || secretChanged) s.LineWebhookDestinationMismatch = null;
         s.UpdatedAt = DateTime.UtcNow;
         // Reset configured flag after change — admin must re-test
         s.LineConfigured = false;
@@ -151,6 +162,7 @@ public class LineConfigController : ControllerBase
         {
             CustomerChannel = _customerLinks == null ? null : await _customerLinks.GetChannelInfoAsync(companyId),
             RelinkInvite = _relink == null ? null : await _relink.GetProgressAsync(companyId),
+            WebhookProblem = string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch) ? null : CustomerRelinkInvitePlan.SecretOfOtherOaProblem,
         };
 
     private static LineConfigResponse Build(CompanySettings s) => new(

@@ -246,6 +246,9 @@ public class CompanySettings : TenantEntity
     /// <summary>รอบ 211: bot userId ของ OA ของบริษัท (ฟิลด์ <c>destination</c> ที่ webhook ต่อบริษัทได้รับล่าสุด — ระบบประทับเองจาก webhook ที่ลายเซ็นผ่านเท่านั้น) ·
     /// ใช้ตัดสินว่า LINE ที่ลูกค้าผูกไว้ยังเป็น OA เดียวกันไหม (<c>CustomerNotifyChannel.LinkUsable</c>) · null = ยังไม่เคยได้ webhook</summary>
     public string? LineOaDestination { get; set; }
+    /// <summary>รอบ 212 ฝ่ายค้าน (B+D) ข้อ 2: bot ที่ webhook ต่อบริษัทส่งมา (ลายเซ็นผ่าน) แต่<b>ไม่ตรง</b>กับ <see cref="LineOaDestination"/> ที่จำไว้ =
+    /// secret ยังเป็นของ OA อื่น · ระบบไม่ทับค่าที่จำไว้ + ไม่บันทึกการสลับ · หน้า ตั้งค่า → LINE แสดงปัญหา · ล้างเมื่อเปลี่ยน token/secret หรือ webhook ตรงกลับมา</summary>
+    public string? LineWebhookDestinationMismatch { get; set; }
     public bool LineConfigured { get; set; } = false;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }

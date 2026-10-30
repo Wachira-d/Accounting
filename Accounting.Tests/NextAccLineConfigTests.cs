@@ -76,6 +76,30 @@ public class NextAccLineConfigTests
     }
 
     [Fact]
+    public void Undecryptable_admin_token_does_not_fall_back_to_config_set()
+    {
+        // ฝ่ายค้าน (B+D) ข้อ 3: token ในหน้าแอดมินถอดไม่ได้ ⇒ ไม่สลับไปใช้ config (อาจเป็นคนละ OA) ⇒ ไม่มี token + เหตุชัด
+        var r = NextAccLineConfigRule.Merge(V(null, "S", "@adminoa", Bot), V("CFG-TOKEN", "CFG-SECRET", "@cfgoa"), adminTokenUndecryptable: true);
+        Assert.False(r.HasToken);
+        Assert.Equal(NextAccLineConfigRule.SourceNone, r.Source);
+        Assert.Equal(NextAccLineConfigRule.UndecryptableTokenMessage, r.Problem);
+        Assert.Null(r.ChannelSecret);
+        Assert.Equal("@adminoa", r.BasicId);
+        // ทิศตรงข้าม: ไม่มี token ในหน้าแอดมินเลย ⇒ ใช้ config ตามเดิม (deployment ที่ตั้งผ่าน env)
+        var cfg = NextAccLineConfigRule.Merge(V(null, null, "@adminoa"), V("CFG-TOKEN", "CFG-SECRET"));
+        Assert.Equal(NextAccLineConfigRule.SourceConfig, cfg.Source);
+        Assert.Null(cfg.Problem);
+    }
+
+    [Theory]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    public void Admin_token_and_secret_must_be_saved_as_a_pair(bool token, bool secret, bool problem)
+        => Assert.Equal(problem, NextAccLineConfigRule.PairProblem(token, secret) != null);
+
+    [Fact]
     public void Invalid_basic_id_in_storage_is_not_used()
         => Assert.Null(NextAccLineConfigRule.Merge(V("T", "S", "@bad id!"), null).BasicId);
 
@@ -197,9 +221,18 @@ public class NextAccLineConfigTests
     [Fact]
     public void Payslip_recipient_typed_by_hr_keeps_legacy_company_route()
     {
-        var r = NextAccLineConfigRule.PayslipRecipient("Uhr", employeeLineIdBoundViaNextAcc: false, userLineId: "Uuser");
+        var r = NextAccLineConfigRule.PayslipRecipient("Uhr", employeeLineIdBoundViaNextAcc: false, userLineId: null);
         Assert.Equal("Uhr", r!.LineUserId);
         Assert.False(r.ViaNextAcc);
+    }
+
+    [Fact]
+    public void Payslip_recipient_proven_user_binding_beats_hr_typed_id()
+    {
+        // ฝ่ายค้าน (B+D) ข้อ 6: ค่าที่ HR พิมพ์เอง (ไม่รู้ OA) แพ้การผูกที่พิสูจน์ได้กับ OA กลาง
+        var r = NextAccLineConfigRule.PayslipRecipient("Uhr", employeeLineIdBoundViaNextAcc: false, userLineId: "Uuser");
+        Assert.Equal("Uuser", r!.LineUserId);
+        Assert.True(r.ViaNextAcc);
     }
 
     [Fact]

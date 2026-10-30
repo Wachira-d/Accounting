@@ -60,8 +60,8 @@ public class AdminLineMessagingController : ControllerBase
         var admin = new NextAccLineValues(_secrets.Unprotect(s.LineMessagingChannelAccessToken), _secrets.Unprotect(s.LineMessagingChannelSecret),
             s.LineMessagingBasicId, s.LineMessagingBotUserId, s.LineMessagingGroupId);
         var cfg = Accounting.Services.Implementations.NextAccLineConfig.FromConfig(_config);
-        var eff = NextAccLineConfigRule.Merge(admin, cfg);
         var hasToken = _secrets.IsUsable(s.LineMessagingChannelAccessToken);
+        var eff = NextAccLineConfigRule.Merge(admin, cfg, !string.IsNullOrWhiteSpace(s.LineMessagingChannelAccessToken) && !hasToken);
         var hasSecret = _secrets.IsUsable(s.LineMessagingChannelSecret);
         var warnings = new List<string>();
         if (!string.IsNullOrEmpty(s.LineMessagingChannelAccessToken) && !hasToken)
@@ -76,7 +76,7 @@ public class AdminLineMessagingController : ControllerBase
                 : "ยังไม่มี Channel Access Token — ส่ง/ตอบ LINE จาก OA กลางไม่ได้");
         if (eff.HasToken && eff.BasicId == null)
             warnings.Add("ยังไม่มี Basic ID — ปุ่มเพิ่มเพื่อน/ลิงก์ผูก LINE ของลูกค้าและพนักงานแสดงไม่ได้");
-        if (!eff.HasToken) warnings.Add(NextAccLineConfigRule.NotConfiguredMessage);
+        if (!eff.HasToken) warnings.Add(eff.Problem ?? NextAccLineConfigRule.NotConfiguredMessage);
         var baseUrl = await _db.SiteSettings.AsNoTracking().Select(x => x.AppBaseUrl).FirstOrDefaultAsync(ct);
         return new NextAccLineAdminDto(hasToken, hasSecret, s.LineMessagingBasicId, s.LineMessagingBotUserId, s.LineMessagingGroupId,
             eff.Source, !string.IsNullOrWhiteSpace(cfg.AccessToken), NextAccLineConfigRule.WebhookUrl(baseUrl ?? _config["App:BaseUrl"]),
@@ -107,6 +107,9 @@ public class AdminLineMessagingController : ControllerBase
         s.LineMessagingBasicId = NextAccLineConfigRule.ApplyText(s.LineMessagingBasicId, basic, req.BasicId != null);
         s.LineMessagingBotUserId = NextAccLineConfigRule.ApplyText(s.LineMessagingBotUserId, bot, req.BotUserId != null);
         s.LineMessagingGroupId = NextAccLineConfigRule.ApplyText(s.LineMessagingGroupId, group, req.GroupId != null);
+        // ฝ่ายค้าน (B+D) ข้อ 5: token/secret ต้องคู่กัน — ไม่บันทึกครึ่งชุด (ยังไม่ SaveChanges ⇒ คำขอนี้ไม่มีผล)
+        var pair = NextAccLineConfigRule.PairProblem(!string.IsNullOrWhiteSpace(s.LineMessagingChannelAccessToken), !string.IsNullOrWhiteSpace(s.LineMessagingChannelSecret));
+        if (pair != null) return BadRequest(new ApiResponse<NextAccLineAdminDto>(false, null, pair));
         s.UpdatedAt = DateTime.UtcNow;
         s.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         await _db.SaveChangesAsync(ct);
@@ -125,8 +128,8 @@ public class AdminLineMessagingController : ControllerBase
     {
         var nx = await _lineConfig.GetAsync(ct);
         if (!nx.HasToken)
-            return Ok(new ApiResponse<NextAccLineTestDto>(false, new NextAccLineTestDto(false, NextAccLineConfigRule.NotConfiguredMessage, null, null, null, null, null),
-                NextAccLineConfigRule.NotConfiguredMessage));
+            return Ok(new ApiResponse<NextAccLineTestDto>(false, new NextAccLineTestDto(false, nx.Problem ?? NextAccLineConfigRule.NotConfiguredMessage, null, null, null, null, null),
+                nx.Problem ?? NextAccLineConfigRule.NotConfiguredMessage));
         var client = _http.CreateClient();
         client.Timeout = TimeSpan.FromSeconds(10);
         client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", nx.AccessToken);

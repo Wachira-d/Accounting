@@ -60,9 +60,10 @@ public class CustomerLineWebhookController : ControllerBase
         {
             using var doc = JsonDocument.Parse(body);
             var destination = doc.RootElement.TryGetProperty("destination", out var d) ? d.GetString() : null;
-            await _links.LearnDestinationAsync(companyId, destination, ct);
-            // รอบ 212 แพ็ก B: bot ใหม่ของ OA ร้าน (ร้านเปลี่ยน OA โดยใช้ช่อง/URL เดิม) ⇒ บันทึกการสลับ ให้งานเบื้องหลังเชิญลูกค้าที่ผูกกับ bot เดิมผูกใหม่ (ไม่โยน)
-            if (_relink != null) await _relink.NoteWebhookDestinationAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination, ct);
+            var destinationAccepted = await _links.LearnDestinationAsync(companyId, destination, ct);
+            // รอบ 212 แพ็ก B: bot ใหม่ของ OA ร้าน (ร้านเปลี่ยน OA โดยใช้ช่อง/URL เดิม) ⇒ บันทึกการสลับ ให้งานเบื้องหลังเชิญลูกค้าที่ผูกกับ bot เดิมผูกใหม่ (ไม่โยน) ·
+            // ฝ่ายค้าน (B+D) ข้อ 2: บอทไม่ตรงกับที่จำไว้ (secret ของ OA อื่น) ⇒ ไม่ใช่การสลับ — ไม่บันทึก
+            if (destinationAccepted && _relink != null) await _relink.NoteWebhookDestinationAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination, ct);
             if (!doc.RootElement.TryGetProperty("events", out var events)) return Ok();
             foreach (var ev in events.EnumerateArray())
             {

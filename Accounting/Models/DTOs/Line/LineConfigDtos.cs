@@ -15,7 +15,9 @@ public record LineConfigResponse(
     /// <summary>รอบ 211: ช่องทางแจ้ง<b>ลูกค้าปลายทาง</b> (OA ไหน · ลูกค้าผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — เซิร์ฟเวอร์ตัดสิน</summary>
     CustomerLineChannelInfo? CustomerChannel = null,
     /// <summary>รอบ 212 แพ็ก B: ความคืบหน้าคำเชิญผูก LINE ใหม่หลังเปลี่ยน OA (เซิร์ฟเวอร์ประกอบป้าย "เชิญผูกใหม่: ส่งแล้ว N/M") · null = ไม่มีการเปลี่ยน OA ล่าสุด</summary>
-    CustomerRelinkProgress? RelinkInvite = null);
+    CustomerRelinkProgress? RelinkInvite = null,
+    /// <summary>รอบ 212 ฝ่ายค้าน (B+D) ข้อ 2: webhook มาจากบอทอื่นที่ไม่ใช่บอทของ token (secret ของ OA อื่น) — ข้อความจากเซิร์ฟเวอร์ · null = ไม่มีปัญหา</summary>
+    string? WebhookProblem = null);
 
 /// <summary>รอบ 212 แพ็ก B: สถานะคำเชิญผูกใหม่ของการเปลี่ยน OA ล่าสุด — <c>Label</c> = ข้อความที่หน้าเว็บแสดงตรง ๆ (ไม่มีกติกาฝั่ง JS)</summary>
 public record CustomerRelinkProgress(

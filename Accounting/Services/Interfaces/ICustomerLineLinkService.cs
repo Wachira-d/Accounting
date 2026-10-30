@@ -38,8 +38,9 @@ public interface ICustomerLineLinkService
     /// <summary>webhook <c>unfollow</c> ⇒ ประทับ BlockedAt · <c>follow</c> ⇒ ล้าง (คืนจำนวนลิงก์ที่กลับมาใช้)</summary>
     Task<int> SetBlockedAsync(string scope, Guid? companyId, string lineUserId, bool blocked, CancellationToken ct = default);
 
-    /// <summary>webhook ต่อบริษัทที่ลายเซ็นผ่าน ⇒ จำ bot userId ของ OA ปัจจุบัน</summary>
-    Task LearnDestinationAsync(Guid companyId, string? destination, CancellationToken ct = default);
+    /// <summary>webhook ต่อบริษัทที่ลายเซ็นผ่าน ⇒ จำ bot userId ของ OA ปัจจุบัน (ยังไม่รู้ ⇒ จำ) · รอบ 212 ฝ่ายค้าน (B+D) ข้อ 2: จำไว้แล้วแต่เป็นบอทอื่น ⇒
+    /// ไม่ทับ + จด <c>CompanySettings.LineWebhookDestinationMismatch</c> + คืน false (ผู้เรียกห้ามบันทึกการสลับจาก webhook นี้)</summary>
+    Task<bool> LearnDestinationAsync(Guid companyId, string? destination, CancellationToken ct = default);
 
     /// <summary>ตอบกลับด้วย reply token (ไม่กินโควตา push) ผ่าน token ของ OA ตาม scope · ไม่สำเร็จ ⇒ false (log)</summary>
     Task<bool> ReplyAsync(string scope, Guid? companyId, string replyToken, string text, CancellationToken ct = default);

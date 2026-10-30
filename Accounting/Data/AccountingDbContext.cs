@@ -21,6 +21,7 @@ public class AccountingDbContext : DbContext
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
     public DbSet<LineOaSwitchEvent> LineOaSwitchEvents => Set<LineOaSwitchEvent>();   // รอบ 212 แพ็ก B
+    public DbSet<LineOaDestinationSighting> LineOaDestinationSightings => Set<LineOaDestinationSighting>();   // รอบ 212 ฝ่ายค้าน (B+D) ข้อ 4
     public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
@@ -3496,6 +3497,11 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.CompanyId, x.DedupeKey }).IsUnique()
                 .HasFilter("\"ProcessedAt\" IS NULL AND \"IsDeleted\" = false AND \"DedupeKey\" IS NOT NULL").HasDatabaseName("UX_LineOaSwitchEvents_Pending_Key");
             e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LineOaDestinationSighting>(e =>
+        {
+            e.HasKey(x => x.Destination);
+            e.Property(x => x.Destination).HasMaxLength(64);
         });
         // รอบ 209 P4: ตารางคลาส (ตาราง + index ต้องตรงกับ Helpers/ClassScheduleMigration)
         modelBuilder.Entity<SiteClassTerm>(e =>

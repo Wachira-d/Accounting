@@ -23,16 +23,20 @@ public class NextAccLineConfig : INextAccLineConfig
     {
         if (_loaded != null) return _loaded;
         NextAccLineValues? admin = null;
+        var adminTokenUndecryptable = false;
         if (_db != null)
         {
             var row = await _db.SiteSettings.AsNoTracking()
                 .Select(s => new { s.LineMessagingChannelAccessToken, s.LineMessagingChannelSecret, s.LineMessagingBasicId, s.LineMessagingBotUserId, s.LineMessagingGroupId })
                 .FirstOrDefaultAsync(ct);
+            // ฝ่ายค้าน (B+D) ข้อ 3: มี token เก็บไว้แต่ถอดไม่ได้ ⇒ ไม่ถอยไป config (อาจเป็นคนละ OA)
+            adminTokenUndecryptable = row != null && !string.IsNullOrWhiteSpace(row.LineMessagingChannelAccessToken)
+                && !_secrets.IsUsable(row.LineMessagingChannelAccessToken);
             if (row != null)
                 admin = new NextAccLineValues(_secrets.Unprotect(row.LineMessagingChannelAccessToken), _secrets.Unprotect(row.LineMessagingChannelSecret),
                     row.LineMessagingBasicId, row.LineMessagingBotUserId, row.LineMessagingGroupId);
         }
-        _loaded = NextAccLineConfigRule.Merge(admin, FromConfig(_config));
+        _loaded = NextAccLineConfigRule.Merge(admin, FromConfig(_config), adminTokenUndecryptable);
         return _loaded;
     }
 

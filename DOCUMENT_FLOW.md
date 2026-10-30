@@ -5994,7 +5994,14 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก D — �
   หน้า ตั้งค่า → LINE แสดงป้ายจากเซิร์ฟเวอร์ "เชิญผูกใหม่: ส่งแล้ว N/M" (`GET/PUT line-config` → `relinkInvite`) · ร้านสลับกลับก่อนงานเดิน ⇒ ลิงก์เดิมใช้ได้อีก ⇒ ไม่มีผู้รับ (จบทันที)
   (จ) migration: ตารางจากบล็อกของแพ็ก A + `Helpers/CustomerRelinkMigration` (คอลัมน์ความคืบหน้า + unique บางส่วน · ADD COLUMN IF NOT EXISTS)
 
-_Last verified against codebase: 2026-10-30 (รอบ 212 B — บันทึกการสลับ LINE OA 3 ทางเข้า · CustomerNotifyOutboxJob เชิญผูกใหม่ผ่าน BookingNotifier · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 2f815caa)_
+  (ฉ) **ฝ่ายค้าน (B+D)**: ① แถวการสลับประมวลหลังนิ่ง 45 นาที (`CustomerRelinkInvitePlan.SettleDelay`) · ตอนประมวล OA ที่ใช้คือ OA เดิมแล้ว หรือมีแถวกลับทิศห่าง ≤ 45 นาที
+  (ปิด→เปิด LINE) ⇒ ยกเลิกแถว ("ยกเลิก: สลับกลับแล้ว" · ไม่ส่ง) · 1 คนได้คำเชิญไม่เกิน 1 ฉบับ/30 วัน ข้ามทุกการสลับของบริษัท (`WithCooldown` จาก `CustomerNotifyLogs` ที่ส่งถึง) ·
+  ② webhook ร้านจากบอทอื่นที่ไม่ใช่บอทที่จำไว้ (secret ของ OA อื่น) ⇒ ไม่ทับ `LineOaDestination` ไม่บันทึกการสลับ · จด `CompanySettings.LineWebhookDestinationMismatch` ⇒ หน้า LINE
+  แสดง "Channel Secret เป็นของ OA อื่น" · PUT เปลี่ยน token โดยไม่ใส่ secret (มี secret เดิม) ⇒ ปฏิเสธ เว้นถาม LINE ได้ว่าเป็นบอทเดิม · ④ webhook OA กลางแค่ประทับ
+  `LineOaDestinationSightings` (ไม่สแกนในคำขอ · ไม่มี static memo) — `CustomerNotifyOutboxJob` สแกนข้ามบริษัทแล้วบันทึกต่อบริษัทที่ยังใช้ OA กลาง (เห็นซ้ำหลัง 6 ชม. สแกนใหม่) ·
+  ③⑤ (แพ็ก D) token แอดมินถอดไม่ได้ ⇒ ไม่มี token (ไม่ถอยไป config) + เหตุบนหน้าแอดมิน · token/secret ของ OA กลางต้องบันทึกคู่กัน · ⑥ สลิปเงินเดือน: การผูกบัญชี ERP ชนะ LINE ID ที่ HR พิมพ์เอง
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค้าน (B+D) — ปิด/เปิดไปมาไม่เชิญ · cooldown 30 วัน · secret ของ OA อื่น · สแกน OA กลางในงาน · token แอดมินถอดไม่ได้ไม่ถอย · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 

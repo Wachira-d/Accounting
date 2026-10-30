@@ -28,9 +28,6 @@ public class CustomerRelinkInviteService : ICustomerRelinkInviteService
     private readonly IHttpClientFactory? _http;
     private readonly ILogger<CustomerRelinkInviteService> _logger;
 
-    /// <summary>bot ของ OA กลางที่เครื่องนี้ตรวจแล้ว — <b>ตัวลดงานต่อเครื่องเท่านั้น</b> (ไม่ใช่สถานะที่ต้องตรงกันข้ามเครื่อง: เครื่องอื่นตรวจซ้ำได้ ·
-    /// ความถูกต้องมาจากคีย์กันซ้ำในฐาน) · กัน query ข้ามบริษัททุกข้อความที่ผู้ใช้ ERP ส่งถึง OA กลาง</summary>
-    private static string? _nextAccDestinationChecked;
 
     public CustomerRelinkInviteService(AccountingDbContext db, ICustomerLineLinkService links, INextAccLineConfig nextAcc,
         ILogger<CustomerRelinkInviteService> logger, IBookingNotifier? notifier = null, ICmsShopNotifier? shop = null, IHttpClientFactory? http = null)
@@ -99,24 +96,13 @@ public class CustomerRelinkInviteService : ICustomerRelinkInviteService
                 return n;
             }
 
-            // OA กลาง: bot ที่ไม่ตรงกับที่ตั้งไว้ = ค่าตั้งผิด ไม่ใช่การสลับ (ตัวตัดสินเดียวกับการผูก)
+            // OA กลาง: bot ที่ไม่ตรงกับที่ตั้งไว้ = ค่าตั้งผิด ไม่ใช่การสลับ (ตัวตัดสินเดียวกับการผูก) ·
+            // ฝ่ายค้าน (B+D) ข้อ 4: ในคำขอ webhook แค่ประทับ "เห็นบอทนี้" แถวเดียว — การสแกนข้ามบริษัทย้ายไป CustomerNotifyOutboxJob (ScanNextAccSightingsAsync)
             if (!CustomerNotifyChannel.AcceptDestination((await _nextAcc.GetAsync(ct)).BotUserId, d)) return 0;
-            if (string.Equals(Volatile.Read(ref _nextAccDestinationChecked), d, StringComparison.Ordinal)) return 0;
-            // OA เดียวทุกบริษัท ⇒ ค้นข้ามบริษัทแล้วแตกเป็นแถวต่อบริษัท (แต่ละแถวมี CompanyId ของตัวเอง)
-            var stale = await _db.CustomerLineLinks.AsNoTracking()
-                .Where(l => l.UnlinkedAt == null && l.OaScope == CustomerNotifyChannel.ScopeNextAcc && l.OaDestination != null && l.OaDestination != d)
-                .Select(l => new { l.CompanyId, Dest = l.OaDestination! })
-                .Distinct().Take(5000).ToListAsync(ct);
-            var recorded = 0;
-            foreach (var g in stale)
-            {
-                var ch = await _links.ResolveChannelAsync(g.CompanyId, ct);
-                if (ch.Scope != CustomerNotifyChannel.ScopeNextAcc) continue;   // บริษัทใช้ OA ของตัวเอง — การสลับของบริษัทบันทึกจากค่าตั้งแล้ว
-                if (await RecordSwitchAsync(g.CompanyId, CustomerNotifyChannel.ScopeNextAcc, g.Dest, CustomerNotifyChannel.ScopeNextAcc, d,
-                        CustomerRelinkInvitePlan.SourceWebhook, null, ct) != null) recorded++;
-            }
-            Volatile.Write(ref _nextAccDestinationChecked, d);
-            return recorded;
+            return await _db.Database.ExecuteSqlInterpolatedAsync($@"
+                INSERT INTO ""LineOaDestinationSightings"" (""Destination"", ""SeenAt"", ""ScannedAt"") VALUES ({d}, now(), NULL)
+                ON CONFLICT (""Destination"") DO UPDATE SET ""SeenAt"" = now(), ""ScannedAt"" = NULL
+                WHERE ""LineOaDestinationSightings"".""ScannedAt"" IS NOT NULL AND ""LineOaDestinationSightings"".""ScannedAt"" < now() - interval '6 hours'", ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -152,11 +138,45 @@ public class CustomerRelinkInviteService : ICustomerRelinkInviteService
 
     // ───────────── ทยอยส่ง ─────────────
 
+    /// <summary>ฝ่ายค้าน (B+D) ข้อ 4: bot ของ OA กลางที่ webhook เห็นแล้วยังไม่สแกน ⇒ ค้นลิงก์ข้ามบริษัท (OA เดียวทุกบริษัท) แล้วบันทึกการสลับ<b>ต่อบริษัท</b>
+    /// เฉพาะบริษัทที่ยังใช้ OA กลาง · ทำในงานเบื้องหลัง (JobLock) ไม่ใช่ในคำขอ webhook · คืนจำนวนแถวการสลับที่บันทึก</summary>
+    private async Task<int> ScanNextAccSightingsAsync(DateTime nowUtc, CancellationToken ct)
+    {
+        var sightings = await _db.LineOaDestinationSightings.Where(x => x.ScannedAt == null).OrderBy(x => x.SeenAt).Take(5).ToListAsync(ct);
+        if (sightings.Count == 0) return 0;
+        var botUserId = (await _nextAcc.GetAsync(ct)).BotUserId;
+        var recorded = 0;
+        foreach (var sighting in sightings)
+        {
+            var d = sighting.Destination;
+            if (CustomerNotifyChannel.AcceptDestination(botUserId, d))
+            {
+                var stale = await _db.CustomerLineLinks.AsNoTracking()
+                    .Where(l => l.UnlinkedAt == null && l.OaScope == CustomerNotifyChannel.ScopeNextAcc && l.OaDestination != null && l.OaDestination != d)
+                    .Select(l => new { l.CompanyId, Dest = l.OaDestination! })
+                    .Distinct().Take(5000).ToListAsync(ct);
+                foreach (var g in stale)
+                {
+                    var ch = await _links.ResolveChannelAsync(g.CompanyId, ct);
+                    if (ch.Scope != CustomerNotifyChannel.ScopeNextAcc) continue;   // บริษัทใช้ OA ของตัวเอง — การสลับของบริษัทบันทึกจากค่าตั้งแล้ว
+                    if (await RecordSwitchAsync(g.CompanyId, CustomerNotifyChannel.ScopeNextAcc, g.Dest, CustomerNotifyChannel.ScopeNextAcc, d,
+                            CustomerRelinkInvitePlan.SourceWebhook, null, ct) != null) recorded++;
+                }
+            }
+            sighting.ScannedAt = nowUtc;
+        }
+        await _db.SaveChangesAsync(ct);
+        return recorded;
+    }
+
     public async Task<RelinkRunResult> ProcessPendingAsync(DateTime nowUtc, CancellationToken ct = default, Guid? onlyCompanyId = null)
     {
         if (_notifier == null) return new RelinkRunResult(0, 0, 0, 0);
+        if (onlyCompanyId == null) await ScanNextAccSightingsAsync(nowUtc, ct);
+        // ฝ่ายค้าน (B+D) ข้อ 1: ประมวลเฉพาะแถวที่ "นิ่ง" แล้ว (ปิด→เปิด LINE ภายในช่วงนี้ ⇒ ตอนประมวลไม่ใช่การสลับ ⇒ ยกเลิก ไม่ส่ง)
+        var settledBefore = nowUtc - CustomerRelinkInvitePlan.SettleDelay;
         var pending = await _db.LineOaSwitchEvents
-            .Where(e => e.ProcessedAt == null && (onlyCompanyId == null || e.CompanyId == onlyCompanyId))
+            .Where(e => e.ProcessedAt == null && e.DetectedAt <= settledBefore && (onlyCompanyId == null || e.CompanyId == onlyCompanyId))
             .OrderBy(e => e.DetectedAt).ThenBy(e => e.Id)
             .Take(200)
             .ToListAsync(ct);
@@ -191,9 +211,35 @@ public class CustomerRelinkInviteService : ICustomerRelinkInviteService
         Dictionary<Guid, (string? Name, string? BaseUrl)> sites, DateTime nowUtc, CancellationToken ct)
     {
         var companyId = evt.CompanyId;
+        var currentDest = CustomerRelinkInvitePlan.EffectiveCurrentDestination(current.Scope, current.CurrentDestination, evt.ToScope, evt.ToDestination);
+        // ฝ่ายค้าน (B+D) ข้อ 1: ตอนประมวล OA ที่ใช้จริงยังต่างจาก OA เดิมไหม — สลับกลับแล้ว ⇒ ยกเลิกแถว (ไม่ส่งคำเชิญ "เปลี่ยนบัญชี LINE" ที่ไม่จริง)
+        var reverseKey = evt.FromScope == null || evt.ToScope == null ? null
+            : CustomerRelinkInvitePlan.DedupeKey(evt.ToScope, evt.ToDestination, evt.FromScope, evt.FromDestination);
+        var flippedBack = false;
+        if (reverseKey != null)
+        {
+            var flips = await _db.LineOaSwitchEvents.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && e.Id != evt.Id && e.DedupeKey == reverseKey)
+                .Select(e => e.DetectedAt).ToListAsync(ct);
+            flippedBack = flips.Any(at => CustomerRelinkInvitePlan.IsFlipPair(evt.FromScope, evt.FromDestination, evt.ToScope, evt.ToDestination,
+                evt.DetectedAt, reverseKey, at));
+        }
+        if (flippedBack || !CustomerRelinkInvitePlan.IsSwitch(evt.FromScope, evt.FromDestination, current.Scope, currentDest))
+        {
+            evt.Total = 0;
+            evt.LastError = CustomerRelinkInvitePlan.CancelledFlipBackNote;
+            evt.LastRunAt = nowUtc;
+            evt.ProcessedAt = nowUtc;
+            evt.UpdatedAt = nowUtc;
+            evt.UpdatedBy = "system:customer-notify-outbox";
+            await _db.SaveChangesAsync(ct);
+            return new EventRun(0, 0, 0);
+        }
         var facts = await LoadFactsAsync(companyId, evt.FromScope ?? "", today, ct);
-        var plan = CustomerRelinkInvitePlan.Plan(new RelinkSwitch(evt.Id, evt.FromScope ?? "", evt.FromDestination),
-            current.Scope, current.CurrentDestination, facts, nextAccCanPush);
+        var basePlan = CustomerRelinkInvitePlan.Plan(new RelinkSwitch(evt.Id, evt.FromScope ?? "", evt.FromDestination),
+            current.Scope, currentDest, facts, nextAccCanPush);
+        // ฝ่ายค้าน (B+D) ข้อ 1: คนที่ได้คำเชิญจากการสลับอื่นใน 30 วัน ⇒ ไม่เชิญซ้ำ
+        var plan = CustomerRelinkInvitePlan.WithCooldown(basePlan, await RecentRelinkKeysAsync(companyId, nowUtc, ct));
         var keys = plan.Invite.Select(c => c.MessageKey).ToList();
         var logs = await LoadLogsAsync(companyId, keys, ct);
 
@@ -243,6 +289,17 @@ public class CustomerRelinkInviteService : ICustomerRelinkInviteService
         if (lastError != null)
             _logger.LogWarning("เชิญผูก LINE ใหม่ (บริษัท {CompanyId} การสลับ {SwitchId}) มีรายการส่งไม่สำเร็จ: {Error}", companyId, evt.Id, lastError);
         return new EventRun(attempted, sent, failed);
+    }
+
+    /// <summary>คีย์คำเชิญที่ส่งถึงในบริษัทนี้ภายใน <see cref="CustomerRelinkInvitePlan.CooldownDays"/> วัน (ทุกการสลับ)</summary>
+    private async Task<List<string>> RecentRelinkKeysAsync(Guid companyId, DateTime nowUtc, CancellationToken ct)
+    {
+        var since = nowUtc.AddDays(-CustomerRelinkInvitePlan.CooldownDays);
+        return await _db.CustomerNotifyLogs.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.EventKey == CustomerNotifyEvents.LineRelink && l.Status == NotifyLogStatus.Sent
+                && l.SentAt != null && l.SentAt >= since)
+            .Select(l => l.MessageKey)
+            .ToListAsync(ct);
     }
 
     private sealed record LogRow(string Status, int Attempts);
