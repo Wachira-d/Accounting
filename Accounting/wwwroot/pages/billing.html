@@ -133,7 +133,9 @@
                 <td class="font-medium">${e(x.paymentNumber)}</td><td>${Layout.date(x.paymentDate)}</td><td>${e(x.purpose)}</td>
                 <td class="text-right">฿${Layout.money(x.amount)}</td>
                 <td>${e(x.statusLabel)}${x.rejectionReason ? `<div class="muted">${e(x.rejectionReason)}</div>` : ''}</td>
-                <td>${x.hasReceipt ? `<button class="btn btn-secondary btn-sm" onclick="Bill.receipt('${Layout.jsArg(x.id)}','${Layout.jsArg(x.receiptNumber)}')">${e(x.receiptNumber)}</button>` : '-'}</td>
+                <td>${x.hasReceipt ? `<button class="btn btn-secondary btn-sm" onclick="Bill.receipt('${Layout.jsArg(x.id)}','${Layout.jsArg(x.receiptNumber)}')">${e(x.receiptNumber)}</button>` : '-'}
+                  ${x.needsWhtCertificate ? `<div><label class="btn btn-secondary btn-sm" style="margin-top:4px">ส่ง 50 ทวิ (${Layout.money(x.withholdingTaxAmount)})
+                    <input type="file" accept="image/*,application/pdf" style="display:none" onchange="Bill.whtCert('${Layout.jsArg(x.id)}', this)"></label></div>` : ''}</td>
               </tr>`).join('')}
             </tbody></table></div>`;
 
@@ -149,6 +151,15 @@
       },
 
       async pdf(id, no) { try { await API.download(`${this.base()}/invoices/${id}/pdf`, `${no}.pdf`); } catch (e) { Layout.toast(e.message, 'error'); } },
+      // ฝ่ายค้านรอบสุดท้าย 4a: หนังสือรับรอง 50 ทวิ ของรายการที่หักภาษี (ชำระออนไลน์ไม่มีสลิปให้แนบ) — ไฟล์ไม่สาธารณะ
+      async whtCert(paymentId, input) {
+        if (!input.files || !input.files.length) return;
+        const fd = new FormData(); fd.append('file', input.files[0]);
+        try {
+          const res = await API.upload(`${this.base()}/payments/${paymentId}/wht-certificate`, fd);
+          Layout.toast(res?.message || 'ส่งแล้ว', 'success'); await this.load();
+        } catch (e) { Layout.toast(e.message || 'ส่งไม่สำเร็จ', 'error'); }
+      },
       async receipt(paymentId, no) {
         try { await API.download(`/api/subscription/${this.cid()}/payments/${paymentId}/receipt`, `${no || 'receipt'}.pdf`); }
         catch (e) { Layout.toast(e.message, 'error'); }

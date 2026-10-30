@@ -770,6 +770,7 @@ public class AccountingDbContext : DbContext
                 .HasFilter(Accounting.Helpers.PlatformBillingPhase2Migration.OpenPerInvoiceFilter);
             e.Property(p => p.AttentionReason).HasMaxLength(500);
             e.Property(p => p.AttentionRule).HasMaxLength(60);
+            e.Property(p => p.WhtCertificateFileName).HasMaxLength(500);
             e.Property(p => p.PaymentNumber).HasMaxLength(50);
             e.Property(p => p.Amount).HasPrecision(18, 2);
             e.Property(p => p.Currency).HasMaxLength(3);

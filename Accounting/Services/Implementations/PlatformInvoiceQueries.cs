@@ -9,7 +9,9 @@ namespace Accounting.Services.Implementations;
 /// <summary>ใบแจ้งหนี้ค่าบริการ NextAcc หนึ่งใบ (มุมผู้จ่าย) — ผลของ <see cref="PlatformInvoiceQueries"/></summary>
 public sealed record PlatformInvoiceRow(
     Guid Id, Guid BuyerCompanyId, string DocumentNumber, string? Reference, DocumentStatus Status,
-    DateTime DocumentDate, DateTime? DueDate, decimal TotalAmount, decimal BalanceDue);
+    DateTime DocumentDate, DateTime? DueDate, decimal TotalAmount, decimal BalanceDue,
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4b: ยอดก่อน VAT ของใบ — ฐานภาษีหัก ณ ที่จ่าย (0 = ไม่รู้ ⇒ ใช้ยอดรวม)</summary>
+    decimal SubTotal = 0m);
 
 /// <summary>
 /// รอบ 219 เฟส 2 (คำตัดสินข้อ 180) — <b>ตัวหาใบแจ้งหนี้ค่าบริการของบริษัทผู้เช่าตัวเดียว</b>: เอกสารชนิดใบแจ้งหนี้ใน tenant ผู้ให้บริการ
@@ -47,7 +49,7 @@ public static class PlatformInvoiceQueries
     /// <summary>project เป็นแถวมุมผู้จ่าย — ใช้เป็น<b>ขั้นสุดท้าย</b>ของ query เท่านั้น (ห้ามต่อ Where/OrderBy/Contains หลังจากนี้)</summary>
     public static IQueryable<PlatformInvoiceRow> AsRows(this IQueryable<Document> q, Guid buyerCompanyId)
         => q.Select(d => new PlatformInvoiceRow(d.Id, buyerCompanyId, d.DocumentNumber, d.Reference, d.Status,
-            d.DocumentDate, d.DueDate, d.TotalAmount, d.BalanceDue));
+            d.DocumentDate, d.DueDate, d.TotalAmount, d.BalanceDue, d.SubTotal));
 
     /// <summary>ใบที่ยังค้างของทุกบริษัทผู้เช่า (dunning · หน้าแอดมิน) — ผู้ติดต่อที่ไม่ได้ผูกกับบริษัทผู้เช่า (ลูกค้าทั่วไปของ NextAcc) ไม่อยู่ในชุดนี้</summary>
     public static async Task<List<PlatformInvoiceRow>> OpenForAllBuyersAsync(AccountingDbContext db, Guid platformId,
@@ -79,10 +81,10 @@ public static class PlatformInvoiceQueries
                        where d.Id == documentId && d.CompanyId == platformId && !d.IsDeleted && d.DocumentType == DocumentType.Invoice
                              && issued.Contains(d.Status)
                              && c.CompanyId == platformId && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem
-                       select new { d.Id, c.ExternalId, d.DocumentNumber, d.Reference, d.Status, d.DocumentDate, d.DueDate, d.TotalAmount, d.BalanceDue })
+                       select new { d.Id, c.ExternalId, d.DocumentNumber, d.Reference, d.Status, d.DocumentDate, d.DueDate, d.TotalAmount, d.BalanceDue, d.SubTotal })
             .FirstOrDefaultAsync(ct);
         if (r == null || !Guid.TryParse(r.ExternalId, out var buyer)) return null;
-        return new PlatformInvoiceRow(r.Id, buyer, r.DocumentNumber, r.Reference, r.Status, r.DocumentDate, r.DueDate, r.TotalAmount, r.BalanceDue);
+        return new PlatformInvoiceRow(r.Id, buyer, r.DocumentNumber, r.Reference, r.Status, r.DocumentDate, r.DueDate, r.TotalAmount, r.BalanceDue, r.SubTotal);
     }
 
     /// <summary>บรรทัดย่อของใบ (คำอธิบาย + ยอด) — หน้าลิงก์ชำระ/ศูนย์บิลแสดง "จ่ายค่าอะไร" โดยไม่เปิดเผยข้อมูลอื่นของใบ</summary>

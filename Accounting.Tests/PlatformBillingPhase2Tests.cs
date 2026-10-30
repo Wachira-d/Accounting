@@ -339,14 +339,21 @@ public class PlatformBillingPhase2Tests
     [Fact]
     public void WithholdingProblem_juristic_only_capped_at_statutory_service_rate()
     {
-        Assert.Null(PlatformInvoiceRules.WithholdingProblem(null, 1070m, false));
-        Assert.Null(PlatformInvoiceRules.WithholdingProblem(0m, 1070m, false));
-        Assert.Null(PlatformInvoiceRules.WithholdingProblem(30m, 1070m, true));     // 3% ของฐานก่อน VAT 1,000
-        Assert.Null(PlatformInvoiceRules.WithholdingProblem(32.10m, 1070m, true));  // ขอบบน 3% ของยอดรวม
-        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(30m, 1070m, false)); // บุคคลธรรมดาหักไม่ได้
-        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(50m, 1070m, true));  // เกินอัตรา
-        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(-1m, 1070m, true));
-        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(1070m, 1070m, true));
+        // ใบ 1,070 (ก่อน VAT 1,000) ค้างเต็ม
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(null, 1070m, 1070m, 1000m, false));
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(0m, 1070m, 1070m, 1000m, false));
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(30m, 1070m, 1070m, 1000m, true));     // 3% ของฐานก่อน VAT 1,000
+        // ฝ่ายค้านรอบสุดท้าย 4b: เดิมยอมถึง 32.10 (3% ของยอดรวม VAT) — ตอนนี้ฐานก่อน VAT ⇒ เกิน
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(32.10m, 1070m, 1070m, 1000m, true));
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(30m, 1070m, 1070m, 1000m, false)); // บุคคลธรรมดาหักไม่ได้
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(50m, 1070m, 1070m, 1000m, true));  // เกินอัตรา
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(-1m, 1070m, 1070m, 1000m, true));
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(1070m, 1070m, 1070m, 1000m, true));
+        // ค้างครึ่งใบ ⇒ ฐานก่อน VAT ตามสัดส่วน 500 ⇒ ไม่เกิน 15
+        Assert.Equal(500m, PlatformInvoiceRules.WithholdingBase(535m, 1070m, 1000m));
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(15m, 535m, 1070m, 1000m, true));
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(16m, 535m, 1070m, 1000m, true));
+        Assert.Equal(1070m, PlatformInvoiceRules.WithholdingBase(1070m, 1070m, 0m));   // ไม่รู้ยอดก่อน VAT ⇒ ยอดค้าง
     }
 
     [Fact]
@@ -428,5 +435,37 @@ public class PlatformBillingPhase2Tests
         Assert.True(PlatformPaymentLinkRules.IntentStatusAllowed(null, Now.AddDays(1), Now));
         Assert.False(PlatformPaymentLinkRules.IntentStatusAllowed(Now.AddHours(-1), Now.AddDays(1), Now));   // เพิกถอน
         Assert.False(PlatformPaymentLinkRules.IntentStatusAllowed(null, Now.AddMinutes(-1), Now));          // หมดอายุ
+    }
+
+    [Fact]
+    public void Admin_linked_amounts_never_exceed_balance_and_cash_must_be_positive()
+    {
+        Assert.Null(PlatformInvoiceRules.AdminLinkedAmountsProblem(1040m, 30m, 1070m));
+        Assert.Null(PlatformInvoiceRules.AdminLinkedAmountsProblem(535m, 0m, 1070m));     // จ่ายบางส่วน (แอดมินยืดหยุ่น)
+        Assert.NotNull(PlatformInvoiceRules.AdminLinkedAmountsProblem(1070m, 30m, 1070m)); // เกินยอดค้าง
+        Assert.NotNull(PlatformInvoiceRules.AdminLinkedAmountsProblem(0m, 30m, 1070m));
+        Assert.NotNull(PlatformInvoiceRules.AdminLinkedAmountsProblem(100m, -1m, 1070m));
+    }
+
+    [Fact]
+    public void Invoice_claim_paid_awaiting_platform_covers_slip_held_and_unsettled_approval()
+    {
+        Assert.True(PlatformInvoiceClaims.IsAwaitingPlatform(SubscriptionPaymentStatus.Pending, true, true, false, false));
+        Assert.True(PlatformInvoiceClaims.IsAwaitingPlatform(SubscriptionPaymentStatus.UnderReview, true, false, true, false));
+        Assert.True(PlatformInvoiceClaims.IsAwaitingPlatform(SubscriptionPaymentStatus.Approved, true, false, false, false));   // อนุมัติแล้วรอตัดชำระ
+        // ทิศตรงข้าม: ตัดชำระแล้ว · รายการไม่มีหลักฐาน · ปฏิเสธ · ไม่ผูกใบ
+        Assert.False(PlatformInvoiceClaims.IsAwaitingPlatform(SubscriptionPaymentStatus.Approved, true, false, false, true));
+        Assert.False(PlatformInvoiceClaims.IsAwaitingPlatform(SubscriptionPaymentStatus.Pending, true, false, false, false));
+        Assert.False(PlatformInvoiceClaims.IsAwaitingPlatform(SubscriptionPaymentStatus.Rejected, true, true, false, false));
+        Assert.False(PlatformInvoiceClaims.IsAwaitingPlatform(SubscriptionPaymentStatus.Approved, false, false, false, false));
+    }
+
+    [Fact]
+    public void Wht_certificate_outstanding_only_for_online_payment_with_withholding()
+    {
+        Assert.True(PlatformPaymentAttention.WhtCertificateOutstanding(true, 30m, null));
+        Assert.False(PlatformPaymentAttention.WhtCertificateOutstanding(false, 30m, null));   // แอดมินเห็น 50 ทวิ กับสลิปแล้ว
+        Assert.False(PlatformPaymentAttention.WhtCertificateOutstanding(true, 0m, null));
+        Assert.False(PlatformPaymentAttention.WhtCertificateOutstanding(true, 30m, "cert.pdf"));
     }
 }

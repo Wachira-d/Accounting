@@ -75,6 +75,10 @@ public interface ISubscriptionService
     // Subscription Payment (Slip Upload & Approval)
     Task<SubscriptionPaymentResponse> SubmitPaymentAsync(Guid companyId, SubmitSubscriptionPaymentRequest request, string performedBy);
     /// <summary>รอบ 219 เฟส 2: แจ้งชำระใบแจ้งหนี้ค่าบริการ (ศูนย์บิล/ลิงก์ชำระ) — ยอดจากใบ · ติ๊กยอมรับเงื่อนไขบังคับ</summary>
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 5: ตรวจว่าใบแจ้งชำระได้ (ด่านเดียวกับ SubmitInvoicePaymentAsync) ก่อนเก็บไฟล์สลิป</summary>
+    Task EnsureInvoicePayableAsync(Guid companyId, Guid invoiceDocumentId);
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ผูกไฟล์หนังสือรับรอง 50 ทวิ (เก็บแล้ว) กับรายการชำระของบริษัทนี้ที่มีภาษีหัก</summary>
+    Task<SubscriptionPaymentResponse> AttachWhtCertificateAsync(Guid companyId, Guid paymentId, string storedFileName, string performedBy);
     Task<SubscriptionPaymentResponse> SubmitInvoicePaymentAsync(Guid companyId, Guid invoiceDocumentId,
         SubmitInvoicePaymentRequest request, string performedBy);
     Task<SubscriptionPaymentResponse> UploadPaymentSlipAsync(Guid paymentId, string fileName, string originalFileName, string contentType, long fileSize, string storagePath, string performedBy);

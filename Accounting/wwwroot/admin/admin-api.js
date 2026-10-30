@@ -127,6 +127,7 @@ const AdminAPI = {
   platformPaymentExceptions() { return this.get('/platform-billing/payment-exceptions'); },
   platformRetrySettle(paymentId) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/retry-settle`, {}); },
   platformResolvePaymentException(paymentId, note) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/resolve`, { note }); },
+  platformWhtCertificate(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/wht-certificate`, `50tawi-${paymentId}`); },
   platformPaymentSlip(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/slip`, `slip-${paymentId}`); },
 
   // Customers
@@ -176,7 +177,7 @@ const AdminAPI = {
   exportPayments(params = '') { return this.downloadFile(`/subscription-payments/export${params}`, 'payments.xlsx'); },
   bulkApprovePayments(paymentIds) { return this.post('/subscription-payments/bulk-approve', { paymentIds }); },
   paymentDetail(id) { return this.get(`/subscription-payments/${id}`); },
-  reviewPayment(id, approve, notes, withholdingTaxAmount = null) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes, withholdingTaxAmount }); },
+  reviewPayment(id, approve, notes, withholdingTaxAmount = null, amountReceived = null) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes, withholdingTaxAmount, amountReceived }); },
   recordManualPayment(companyId, data) { return this.post(`/companies/${companyId}/subscription-payments/record`, data); },
 
   // Company specifics

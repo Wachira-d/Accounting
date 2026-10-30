@@ -285,6 +285,7 @@ public class AdminPlatformBillingController : ControllerBase
                 p.Id, p.PaymentNumber, p.Subscription.CompanyId, p.Amount, p.WithholdingTaxAmount, status = p.Status.ToString(),
                 p.AttentionReason, p.AttentionRule, p.AttentionAt, p.PlatformInvoiceDocumentId, p.ReceiptNumber, p.PaymentDate,
                 canRetrySettle = p.Status == SubscriptionPaymentStatus.Approved && p.PlatformInvoiceDocumentId != null && p.PlatformDocumentId == null,
+                hasWhtCertificate = p.WhtCertificateFileName != null,
             })
             .Take(500).ToListAsync(ct);
         var names = await CompanyNamesAsync(rows.Select(r => r.CompanyId), ct);
@@ -292,6 +293,7 @@ public class AdminPlatformBillingController : ControllerBase
         {
             r.Id, r.PaymentNumber, r.CompanyId, companyName = names.GetValueOrDefault(r.CompanyId, "(ไม่พบชื่อ)"), r.Amount, r.WithholdingTaxAmount,
             r.status, r.AttentionReason, r.AttentionRule, r.AttentionAt, r.PlatformInvoiceDocumentId, r.ReceiptNumber, r.PaymentDate, r.canRetrySettle,
+            r.hasWhtCertificate,
         }).ToList()));
     }
 
@@ -324,6 +326,17 @@ public class AdminPlatformBillingController : ControllerBase
         return PhysicalFile(f.Path, f.ContentType, p.SlipOriginalFileName ?? p.SlipFileName);
     }
 
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: หนังสือรับรอง 50 ทวิ ที่ผู้เช่าส่ง (SystemAdmin)</summary>
+    [HttpGet("subscription-payments/{paymentId:guid}/wht-certificate")]
+    public async Task<IActionResult> WhtCertificate(Guid paymentId, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    {
+        var name = await _db.SubscriptionPayments.AsNoTracking().Where(x => x.Id == paymentId).Select(x => x.WhtCertificateFileName).FirstOrDefaultAsync(ct);
+        if (SubscriptionSlipUpload.OpenStored(env, name) is not { } f)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบหนังสือรับรอง"));
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return PhysicalFile(f.Path, f.ContentType, "50tawi-" + System.IO.Path.GetFileName(f.Path));
+    }
+
     public record ResolveAttentionRequest(string? Note);
 
     /// <summary>แอดมินจัดการเรื่องค้างนอกระบบแล้ว (คืนเงินส่วนเกิน · ออกใบลดหนี้ · บันทึกด้วยมือ) — หมายเหตุบังคับ · audit chain</summary>
@@ -335,6 +348,14 @@ public class AdminPlatformBillingController : ControllerBase
         if (p == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระ"));
         if (p.Status is SubscriptionPaymentStatus.Pending or SubscriptionPaymentStatus.UnderReview)
             return StatusCode(409, new ApiResponse<object>(false, null, "รายการยังรอตรวจ — อนุมัติหรือปฏิเสธก่อน"));
+        // ฝ่ายค้านรอบสุดท้าย: อนุมัติแล้วแต่ยังไม่ตัดชำระ และใบยังค้าง ⇒ ห้ามปิดเรื่องเฉย ๆ (ใบถูกยกเว้นจากทวงหนี้ไปตลอดโดยไม่มีใครเห็น) —
+        // ต้องตัดชำระให้สำเร็จ หรือปิดใบในบริษัทผู้ให้บริการก่อน (ยกเลิก/ใบลดหนี้)
+        if (p.Status == SubscriptionPaymentStatus.Approved && p.PlatformInvoiceDocumentId is Guid invId && p.PlatformDocumentId == null
+            && await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct) is Guid platformId
+            && await PlatformInvoiceQueries.ByIdAsync(_db, platformId, invId, ct) is { } inv && PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue))
+            return StatusCode(409, new ApiResponse<object>(false, null,
+                $"ใบ {inv.DocumentNumber} ยังค้างและรายการนี้ยังไม่ได้ตัดชำระ — กด \"ตัดชำระอีกครั้ง\" (หรือบันทึกรับชำระด้วยมือในบริษัทผู้ให้บริการด้วยอ้างอิง "
+                + $"{SaasBillingDocumentService.SettlementReference(p.PaymentNumber)} แล้วกดตัดชำระอีกครั้ง) หรือยกเลิก/ออกใบลดหนี้ใบนั้นก่อน"));
         var note = req!.Note!.Trim();
         PlatformPaymentAttention.Clear(_db, p, p.Subscription.CompanyId, User.FindFirstValue(ClaimTypes.Email) ?? JwtHelper.GetUserIdFromClaims(User).ToString(),
             note.Length > 300 ? note[..300] : note);

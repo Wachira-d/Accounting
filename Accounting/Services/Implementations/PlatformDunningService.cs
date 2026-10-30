@@ -64,10 +64,8 @@ public class PlatformDunningService : IPlatformDunningService
         // ใบที่ไม่ทวง/ไม่นับระงับ (ตัวตัดสิน DunningExclusion): สลิปรอตรวจ · รายการพักให้แอดมิน · อนุมัติแล้วแต่ตัดชำระยังไม่สำเร็จ (ฝ่ายค้าน S2 —
         // ลูกค้าจ่ายแล้ว ห้ามระงับซ้ำเพราะเราลงบัญชีไม่สำเร็จ) · ใบต่ออายุของรอบที่ยกเลิก · ใบต่ออายุที่ถูกแทนที่ (N6)
         var linked = await _db.SubscriptionPayments.AsNoTracking()
-            .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId != null && ids.Contains(p.PlatformInvoiceDocumentId.Value)
-                && (((p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview)
-                        && (p.SlipFileName != null || p.AttentionReason != null))
-                    || (p.Status == SubscriptionPaymentStatus.Approved && p.PlatformDocumentId == null)))
+            .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId != null && ids.Contains(p.PlatformInvoiceDocumentId.Value))
+            .Where(PlatformInvoiceClaims.AwaitingPlatform)   // ตัวตัดสินเดียวกับศูนย์บิล/แจ้งชำระ/อนุมัติ (ฝ่ายค้านรอบสุดท้าย 3)
             .Select(p => p.PlatformInvoiceDocumentId!.Value).ToListAsync(ct);
         // ฝ่ายค้าน N5: แจ้งต่ออายุทางหน้าแพ็กเกจ (ไม่ผูกใบ) พร้อมสลิปรอตรวจ ⇒ ใบต่ออายุปัจจุบันไม่นับระงับระหว่างรอตรวจ
         var unlinkedRenewalSlip = sub.RenewalInvoiceDocumentId != null && await _db.SubscriptionPayments.AsNoTracking()

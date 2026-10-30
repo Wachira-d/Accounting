@@ -315,13 +315,19 @@ public class UsageMeteringService : IUsageMeteringService
             if (selfServePurchase && needPay)
             {
                 if (choice == null)
+                {
+                    RevertUnsaved(row);   // ฝ่ายค้านรอบสุดท้าย 1c: ห้ามทิ้งแถวที่ตั้ง IsEnabled แล้วไว้ใน context (คำขอถัดไปจะบันทึกส่วนเสริมที่ไม่มีวิธีชำระ)
                     throw new BusinessRuleException("กรุณาเลือกวิธีชำระ (จ่ายล่วงหน้า หรือรวมในใบแจ้งหนี้รายเดือน) ที่หน้า \"ส่วนเสริมของฉัน\"",
                         "ADDON-CHOICE-REQUIRED", 400);
+                }
             }
             var (choiceOutcome, choiceRefusal) = AddOnPaymentPolicy.ApplyChoice(needPay, effectiveChoice, statusBefore, row.LastBilledPeriod,
                 AddOnBilling.PeriodOf(now));
             if (choiceOutcome == AddOnPaymentPolicy.ChoiceOutcome.Refuse)
+            {
+                RevertUnsaved(row);
                 throw new BusinessRuleException(choiceRefusal!, "ADDON-CHOICE-CONFLICT", 409);
+            }
 
             // เคยจ่ายผ่านแล้วและเปิดใหม่ในงวดเดิม = ไม่เก็บซ้ำ (Paid ค้างไว้ได้)
             var wasAwaiting = row.PaymentStatus is AddOnPaymentStatus.AwaitingPayment or AddOnPaymentStatus.PendingReview;
@@ -371,6 +377,16 @@ public class UsageMeteringService : IUsageMeteringService
         row.UpdatedAt = DateTime.UtcNow;
         row.UpdatedBy = actor;
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 1c: คำขอเปิดส่วนเสริมถูกปฏิเสธหลังแก้แถวในหน่วยความจำ ⇒ คืนสภาพ (แถวใหม่ = ถอดออกจาก context · แถวเดิม = ค่าเดิมจากฐาน)
+    /// — ไม่งั้น SaveChanges ของคำขอ/ขั้นถัดไปใน context เดียวกันบันทึก "เปิดแล้ว" ทั้งที่ไม่ได้เลือกวิธีชำระ/ชนงวด</summary>
+    private void RevertUnsaved(CompanyFeature row)
+    {
+        var e = _db.Entry(row);
+        if (e.State == EntityState.Added) { e.State = EntityState.Detached; return; }
+        e.CurrentValues.SetValues(e.OriginalValues);
+        e.State = EntityState.Unchanged;
     }
 
     /// <summary>ฝ่ายค้าน S7: เก็บค่าเหมางวดปัจจุบันที่ถูกออกเป็น ฿0 เพราะ "จ่ายล่วงหน้าแต่ยังไม่จ่าย" แล้วผู้เช่าเปลี่ยนเป็นรวมใบรายเดือน —

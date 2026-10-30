@@ -72,7 +72,7 @@ public class MeteringAdminController : ControllerBase
     public async Task<IActionResult> AddOnSlip(Guid companyId, string featureCode, [FromServices] IWebHostEnvironment env, CancellationToken ct)
     {
         var url = await _db.CompanyFeatures.AsNoTracking().IgnoreQueryFilters()
-            .Where(f => f.CompanyId == companyId && f.FeatureCode == featureCode)
+            .Where(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted)
             .Select(f => f.PaymentSlipUrl).FirstOrDefaultAsync(ct);
         if (Accounting.Services.Implementations.SubscriptionSlipUpload.OpenStored(env, url) is not { } file)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));

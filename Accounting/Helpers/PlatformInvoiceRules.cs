@@ -139,19 +139,35 @@ public static class PlatformInvoiceRules
             decimal.Round(excess, 2, MidpointRounding.AwayFromZero));
     }
 
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4c: แอดมินอนุมัติรายการที่ผูกใบ — เงินที่รับจริง (ตามสลิป) &gt; 0 · ภาษีหัก ≥ 0 · รวมกันไม่เกินยอดค้าง (ไม่ลดยอดเงินแทนแอดมิน)</summary>
+    public static string? AdminLinkedAmountsProblem(decimal cash, decimal wht, decimal balanceDue)
+    {
+        if (cash <= 0m) return "เงินที่รับจริงต้องมากกว่า 0 (ตามสลิป)";
+        if (wht < 0m) return "ภาษีหัก ณ ที่จ่ายติดลบไม่ได้";
+        if (cash + wht > balanceDue + Epsilon)
+            return $"เงินที่รับ {cash:N2} + ภาษีหัก {wht:N2} = {cash + wht:N2} บาท เกินยอดค้างของใบ {balanceDue:N2} บาท — ตรวจยอดตามสลิป/50 ทวิ อีกครั้ง";
+        return null;
+    }
+
+    /// <summary>ฝ่ายค้าน S4 + รอบสุดท้าย 4b: ฐานภาษีหัก ณ ที่จ่ายของยอดที่จะจ่าย = ยอดก่อน VAT ของใบตามสัดส่วน (ยอดค้าง ÷ ยอดรวม) · ไม่รู้ยอดก่อน VAT ⇒ ยอดค้าง</summary>
+    public static decimal WithholdingBase(decimal balanceDue, decimal totalAmount, decimal subTotal)
+        => subTotal > 0m && totalAmount > 0m
+            ? decimal.Round(subTotal * Math.Min(1m, balanceDue / totalAmount), 2, MidpointRounding.AwayFromZero)
+            : balanceDue;
+
     /// <summary>ฝ่ายค้าน S4: ภาษีหัก ณ ที่จ่ายที่ผู้เช่านิติบุคคลหักจากค่าบริการ — อัตรา ม.40(2) ค่าบริการ นิติบุคคล จาก <c>ThaiWhtRateTable</c> (ตารางเดียว) ·
-    /// ไม่ระบุ/0 = ไม่หัก · ผู้จ่ายไม่ใช่นิติบุคคล = หักไม่ได้ · ต้อง &lt; ยอดค้าง · ไม่เกินอัตราคูณยอดค้าง (ยอดรวม VAT — ขอบบนที่หลวมกว่าฐานก่อน VAT)
-    /// ⇒ เงินโอน + ภาษีหัก = ยอดค้าง · null = ใช้ได้</summary>
-    public static string? WithholdingProblem(decimal? wht, decimal balanceDue, bool payerIsJuristic)
+    /// ไม่ระบุ/0 = ไม่หัก · ผู้จ่ายไม่ใช่นิติบุคคล = หักไม่ได้ · ต้อง &lt; ยอดค้าง · ไม่เกินอัตราคูณฐานก่อน VAT (<see cref="WithholdingBase"/> — รอบสุดท้าย 4b
+    /// เดิมคูณยอดรวม VAT ⇒ หักเกินได้ 7%) ⇒ เงินโอน + ภาษีหัก = ยอดค้าง · null = ใช้ได้</summary>
+    public static string? WithholdingProblem(decimal? wht, decimal balanceDue, decimal totalAmount, decimal subTotal, bool payerIsJuristic)
     {
         if (wht is not decimal w || w == 0m) return null;
         if (w < 0m) return "ภาษีหัก ณ ที่จ่ายติดลบไม่ได้";
         if (!payerIsJuristic) return "หักภาษี ณ ที่จ่ายได้เฉพาะผู้จ่ายที่เป็นนิติบุคคล (เลขผู้เสียภาษีของบริษัทต้องเป็นนิติบุคคล) — ถ้าไม่ได้หัก ให้เว้นว่าง";
         if (w >= balanceDue) return "ภาษีหัก ณ ที่จ่ายต้องน้อยกว่ายอดค้างของใบ";
         var rate = ThaiWhtRateTable.Find("40(2)")?.JuristicRate ?? 3m;
-        var cap = decimal.Round(balanceDue * rate / 100m, 2, MidpointRounding.AwayFromZero);
+        var cap = decimal.Round(WithholdingBase(balanceDue, totalAmount, subTotal) * rate / 100m, 2, MidpointRounding.AwayFromZero);
         if (w > cap)
-            return $"ภาษีหัก ณ ที่จ่าย {w:N2} บาท เกินอัตรา {rate:0.##}% ของค่าบริการ (ไม่เกิน {cap:N2} บาท · ม.40(2) ท.ป.4/2528) — ตรวจหนังสือรับรอง 50 ทวิ อีกครั้ง";
+            return $"ภาษีหัก ณ ที่จ่าย {w:N2} บาท เกินอัตรา {rate:0.##}% ของค่าบริการก่อน VAT (ไม่เกิน {cap:N2} บาท · ม.40(2) ท.ป.4/2528) — ตรวจหนังสือรับรอง 50 ทวิ อีกครั้ง";
         return null;
     }
 

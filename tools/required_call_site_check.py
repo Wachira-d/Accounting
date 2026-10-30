@@ -11641,9 +11641,12 @@ _R219P2_WHY = "รอบ 219 เฟส 2 (คำตัดสินข้อ 180)
 SUB_SVC = "Services/Implementations/SubscriptionService.cs"
 RULES += [
     dict(file=SUB_SVC, method="SubmitInvoicePaymentAsync",
-         must=["PlatformInvoiceQueries.ForBuyer(", "PlatformInvoiceRules.IsOpen(", "inv.BalanceDue"],
-         before=[("PlatformInvoiceQueries.ForBuyer(", "_db.SubscriptionPayments.Add(")],
+         must=["PayableInvoiceAsync(", "inv.BalanceDue"],
+         before=[("PayableInvoiceAsync(", "_db.SubscriptionPayments.Add(")],
          forbid=["request.Amount"],
+         why=_R219P2_WHY + "แจ้งชำระใบ: ผ่านด่านร่วม PayableInvoiceAsync ก่อนเกิดรายการ · ยอดจากใบ"),
+    dict(file=SUB_SVC, method="PayableInvoiceAsync",
+         must=["PlatformInvoiceQueries.ForBuyer(", "PlatformInvoiceRules.IsOpen("],
          why=_R219P2_WHY + "แจ้งชำระใบ: ใบของบริษัทนี้เท่านั้น · ยอดจากใบ (ติ๊กยอมรับนโยบายตรวจที่ผู้เรียก — กติกาของ controller ด้านล่าง)"),
     dict(file=SUB_SVC, method="ReviewPaymentLockedAsync",
          must=["PlatformInvoiceRules.IsInvoiceOnlyPayment(", "SettlePlatformInvoiceAsync(", "payment.PlatformInvoiceDocumentId"],
@@ -11735,7 +11738,7 @@ RULES += [
          before=[("tx.CommitAsync(", "InvoiceIssuedAsync(")],
          why=_R219P2_WHY + "ส่งใบค่าใช้งานถึงผู้เช่าหลัง commit"),
     # ── ขั้น 3: ยกเลิกเมื่อสิ้นรอบ · วิธีชำระส่วนเสริม · ใบต่ออายุล้าสมัย (S9) ──
-    dict(file=SUB_SVC, method="SubmitInvoicePaymentAsync",
+    dict(file=SUB_SVC, method="PayableInvoiceAsync",
          must=["PlatformInvoiceRules.RenewalNotPayableReason("],
          why=_R219P2_WHY + "ใบต่ออายุของรอบที่ยกเลิกไว้จ่ายไม่ได้ (จ่าย = ต่ออายุ ขัดกับการยกเลิก)"),
     dict(file="Services/Implementations/SaasBillingDocumentService.cs", method="GenerateRenewalInvoiceAsync",
@@ -11743,7 +11746,7 @@ RULES += [
          before=[("sub.CancelAtPeriodEnd", "_issuer.IssueRenewalInvoiceAsync(")],
          why=_R219P2_WHY + "ยกเลิกเมื่อสิ้นรอบ ⇒ ไม่ออกใบต่ออายุ"),
     dict(file="Services/Implementations/PlatformDunningService.cs", method="EvaluateCompanyAsync",
-         must=["sub.CancelAtPeriodEnd, sub.RenewalInvoiceDocumentId == r.Id", "p.PlatformDocumentId == null", "PlatformInvoiceRules.SupersededRenewalReason("],
+         must=["sub.CancelAtPeriodEnd, sub.RenewalInvoiceDocumentId == r.Id", "PlatformInvoiceClaims.AwaitingPlatform", "PlatformInvoiceRules.SupersededRenewalReason("],
          must_lit=["FOR UPDATE"],
          before=[("_db.Database.ExecuteSqlRawAsync(", "PlatformDunningPolicy.Decide("), ("tx.CommitAsync(", "_notifier.SendAsync(")],
          why=_R219P2_WHY + "ไม่ทวง/ไม่ระงับเพราะใบต่ออายุของรอบที่ยกเลิกไว้ · ฝ่ายค้าน S2/N4/N5/N6: อนุมัติแล้วแต่ตัดชำระยังไม่สำเร็จไม่นับ · "
@@ -11784,9 +11787,11 @@ RULES += [
     dict(file=SUB_SVC, method="StatusAfterPaymentAsync",
          must=["PlatformDunningPolicy.StatusAfterPayment(", "SuspendedByDunningAt != null"],
          why=_R219P2X_WHY + "S6 ข้อเท็จจริงของเหตุระงับส่งให้ตัวตัดสินเดียว"),
+    dict(file=SUB_SVC, method="PayableInvoiceAsync",
+         must=["PlatformInvoiceRules.SupersededRenewalReason(", "PlatformInvoiceClaims.AwaitingPlatform"],
+         why="ฝ่ายค้านรอบ 219 เฟส 2 N6 + รอบสุดท้าย 3: ใบต่ออายุที่ถูกแทนที่/ใบที่จ่ายแล้วรอฝั่งเรา ⇒ แจ้งชำระซ้ำไม่ได้ (ตัวตัดสินเดียว PlatformInvoiceClaims)"),
     dict(file=SUB_SVC, method="SubmitInvoicePaymentAsync",
-         must=["PlatformInvoiceRules.SupersededRenewalReason(", "PlatformInvoiceRules.WithholdingProblem(", "pending.Amount = cash",
-               "AttentionReason != null"],
+         must=["PlatformInvoiceRules.WithholdingProblem(", "pending.Amount = cash", "_db.PaymentIntents"],
          must_lit=['"UX_SubscriptionPayments_OpenPerInvoice"'],
          before=[("PlatformInvoiceRules.WithholdingProblem(", "_db.SubscriptionPayments.Add(")],
          why=_R219P2X_WHY + "N6 ใบต่ออายุที่ถูกแทนที่จ่ายเองไม่ได้ · S4 ภาษีหักของนิติบุคคล · S3 ยอดตามใบตอนนี้ + unique ต่อใบ (23505 ⇒ คืนรายการเดิม)"),
@@ -11848,6 +11853,37 @@ RULES += [
          must=["pay.Held", "pay.PlatformInvoiceDocumentId == null"],
          before=[("pay.Held", "StartAsync(")],
          why=_R219P2X_WHY + "N7 แนบสลิปแล้ว/พักให้แอดมิน ⇒ ห้ามจ่ายออนไลน์ซ้ำ"),
+]
+
+# ── ฝ่ายค้านรอบสุดท้าย รอบ 219 เฟส 2 (1c · 2 · 3 · 4 · 5 · 7) ──
+_R219P2F_WHY = "ฝ่ายค้านรอบสุดท้าย รอบ 219 เฟส 2: "
+RULES += [
+    dict(file="Services/Implementations/UsageMeteringService.cs", method="SetFeatureEnabledCoreAsync",
+         must=["RevertUnsaved("],
+         why=_R219P2F_WHY + "1c คำขอเปิดส่วนเสริมที่ถูกปฏิเสธต้องคืนสภาพแถว (ไม่ทิ้ง IsEnabled=true ใน context)"),
+    dict(file=SUB_SVC, method="ReviewPaymentLockedAsync",
+         must=["PlatformInvoiceClaims.PaidAwaitingPlatform", "PlatformInvoiceRules.AdminLinkedAmountsProblem(", "PlatformPaymentAttention.WhtCertificateOutstanding("],
+         before=[("PlatformPaymentAttention.RuleHeld", "PlatformInvoiceRules.ReviewLinked(")],
+         why=_R219P2F_WHY + "3 ใบที่มีรายการอนุมัติรอตัดชำระ = ปิด · 4c แอดมินกรอกเงินจริง+ภาษีหัก (ไม่ลดยอดเงียบ) · 4a ออนไลน์+ภาษีหัก = รอ 50 ทวิ · "
+             "รายการที่พักแล้ว ระบบไม่อนุมัติ/ไม่พักซ้ำ"),
+    dict(file="Services/Payments/Handlers/SubscriptionPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["PlatformPaymentAttention.Flag(", "PlatformPaymentAttention.NotifyAdminsAsync("],
+         why=_R219P2F_WHY + "2 เงินเข้าไม่ตรงยอด ⇒ พักให้แอดมิน + audit + กระดิ่ง (เดิม return เงียบ)"),
+    dict(file="Controllers/BillingCenterController.cs", method="PayBySlip",
+         must=["_subs.EnsureInvoicePayableAsync(", "SubscriptionSlipUpload.DeleteStored("],
+         before=[("_subs.EnsureInvoicePayableAsync(", "SubscriptionSlipUpload.StoreAsync(")],
+         why=_R219P2F_WHY + "5 ตรวจก่อนเก็บไฟล์ · สร้างรายการไม่สำเร็จ ⇒ ลบไฟล์"),
+    dict(file="Controllers/PlatformPayLinkController.cs", method="PayBySlip",
+         must=["subs.EnsureInvoicePayableAsync(", "SubscriptionSlipUpload.DeleteStored("],
+         before=[("subs.EnsureInvoicePayableAsync(", "SubscriptionSlipUpload.StoreAsync(")],
+         why=_R219P2F_WHY + "5 ตรวจก่อนเก็บไฟล์ · สร้างรายการไม่สำเร็จ ⇒ ลบไฟล์"),
+    dict(file=SUB_SVC, method="ProcessExpiredSubscriptionsAsync",
+         must=["SubscriptionPaymentLock.AcquireAsync("],
+         before=[("SubscriptionPaymentLock.AcquireAsync(", "sub.Status = SubscriptionStatus.Cancelled")],
+         why=_R219P2F_WHY + "7 ยกเลิกเมื่อสิ้นรอบใต้ล็อกเดียวกับการอนุมัติการชำระ + ตรวจซ้ำใต้ล็อก"),
+    dict(file="Controllers/AdminPlatformBillingController.cs", method="ResolveAttention",
+         must=["PlatformInvoiceRules.IsOpen("],
+         why=_R219P2F_WHY + "ปิดเรื่องค้างไม่ได้ขณะใบยังค้างและยังไม่ตัดชำระ (ไม่ยกเว้นทวงหนี้ไปตลอด)"),
 ]
 
 def main() -> int:

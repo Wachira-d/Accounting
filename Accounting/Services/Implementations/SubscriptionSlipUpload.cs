@@ -42,6 +42,14 @@ public static class SubscriptionSlipUpload
             Path.Combine("uploads", "slips", fileName), Path.Combine(dir, fileName));
     }
 
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 5: ลบไฟล์ที่เก็บไว้เมื่อสร้างรายการไม่สำเร็จ (ไม่ทิ้งไฟล์กำพร้าที่มี PII) — ลบไม่ได้ = ปล่อย (ไม่กลบ error เดิมของผู้เรียก)</summary>
+    public static void DeleteStored(StoredSlip slip)
+    {
+        try { if (File.Exists(slip.AbsolutePath)) File.Delete(slip.AbsolutePath); }
+        catch (IOException) { /* ไฟล์ถูกล็อก — งานเก็บกวาดภายหลัง · error เดิมของผู้เรียกสำคัญกว่า */ }
+        catch (UnauthorizedAccessException) { /* เช่นเดียวกัน */ }
+    }
+
     /// <summary>ผูกไฟล์ที่เก็บแล้วกับรายการชำระ + อ่านสลิปช่วยแอดมิน (advisory)</summary>
     public static async Task<SubscriptionPaymentResponse> AttachAsync(StoredSlip slip, Guid paymentId, string actor, ISubscriptionService subs,
         ISlipOcrAssistService? slipOcr, ILogger? logger = null)

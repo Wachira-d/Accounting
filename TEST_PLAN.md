@@ -30,6 +30,11 @@
 | P2-26 | ฝ่ายค้าน S5: บริษัทที่ถูกระงับเริ่ม/ถามสถานะชำระค่าแพ็กเกจออนไลน์ · เส้นอื่นของบริษัทเดียวกัน | ผ่านด่านแพ็กเกจเฉพาะ `platform-pay/subscription-payments/{id}/intents[/{id}]` (สิทธิ์ Billing.Manage ยังบังคับ) · เส้นอื่นยังถูกบล็อก | `PlatformBillingPhase2Tests`.Billing_payment_path_exempt_only_for_subscription_payment_intents |
 | P2-27 | ฝ่ายค้าน S10/N1/N2: เปิดลิงก์ซ้ำ · หลาย IP · ลิงก์เพิกถอน · ถามสถานะ intent ของใบอื่น | audit ครั้งแรกต่อ (ลิงก์·IP·วันไทย) · นับ atomic · เพิกถอนแล้ว audit ครั้งเดียว/ไม่นับ · intent ของใบอื่น/ลิงก์เพิกถอน = ไม่พบ · URL กลับไม่มีโทเคน | `PlatformBillingPhase2Tests`.Paylink_view_audit_window_* · Db Paylink_view_audits_once_per_ip_per_day_counts_atomically_and_intent_status_scoped_to_link |
 | P2-28 (มือ) | ฝ่ายค้าน S9: เปิด `/uploads/slips/<ไฟล์>` ตรง · ดาวน์โหลดสลิปจากหน้าแอดมิน/ศูนย์บิล | 404 ทาง URL ตรง · endpoint ที่ตรวจสิทธิ์คืนไฟล์ (`upload_route_check` PRIVATE_BY_DESIGN) | มือ + `tools/upload_route_check.py` |
+| P2-29 | ฝ่ายค้านรอบสุดท้าย 1c: เปิดส่วนเสริมถูกปฏิเสธ (ไม่เลือกวิธีชำระ/ชนงวด) แล้วบันทึกอะไรต่อใน context เดียวกัน | แถวไม่ถูกบันทึกเป็น "เปิดแล้ว" (RevertUnsaved) | Db Addon_purchase_requires_choice_monthly_invoice_skips_upfront |
+| P2-30 | รอบสุดท้าย 2: แจ้งชำระซ้ำขณะมี intent ค้างด้วยยอดเดิม · ผู้จ่ายผ่านลิงก์ส่งรายละเอียดโอนต่างจากผู้เช่า · เงินเข้าไม่ตรงยอด | 409 ไม่เปลี่ยนยอดใต้ intent (ยอดไม่เปลี่ยน = คืนรายการเดิม) · ไม่ทับรายละเอียดเดิม · พักให้แอดมิน + audit + กระดิ่ง | Db Pending_reuse_refuses_amount_change_under_open_intent_and_never_overwrites_transfer_details · Gateway_amount_mismatch_holds_payment_loudly_instead_of_silent_return |
+| P2-31 | รอบสุดท้าย 3: ใบมีรายการอนุมัติแล้วแต่ตัดชำระไม่สำเร็จ แล้วแจ้ง/จ่าย/อนุมัติรายการที่สอง · webhook ซ้ำบนรายการที่พัก | แจ้งชำระ 409 · ระบบพัก (ครั้งเดียว) · แอดมิน 409 — ไม่ต่ออายุซ้อน · ศูนย์บิลไม่ให้จ่าย · ทวงหนี้ไม่นับ | `PlatformBillingPhase2Tests`.Invoice_claim_* · Db Approved_unsettled_payment_blocks_second_payment_of_same_invoice_no_double_renewal |
+| P2-32 | รอบสุดท้าย 4: ฐานภาษีหัก = ยอดก่อน VAT ตามสัดส่วน · แอดมินกรอกเงินจริง + ภาษีหัก (รวม ≤ ยอดค้าง) · ออนไลน์หักภาษี ⇒ อนุมัติ + รอ 50 ทวิ (ส่งได้ที่ศูนย์บิล/ลิงก์ชำระ) | 32.10 บนใบ 1,070 เกินแล้ว · เงิน+ภาษีเกินยอดค้าง 400 · เรื่องค้าง `PLATFORM-WHT-CERT-PENDING` | `PlatformBillingPhase2Tests`.WithholdingProblem_* · Admin_linked_amounts_* · Wht_certificate_outstanding_* |
+| P2-33 (มือ) | รอบสุดท้าย 5–7: แนบสลิปกับใบที่จ่ายไม่ได้ · production ไม่ตั้ง KnownProxies/KnownNetworks · ผู้เช่าจ่ายพร้อมงานยกเลิกสิ้นรอบ | 409 ก่อนเก็บไฟล์ (ไม่มีไฟล์กำพร้า · สร้างรายการล้ม = ลบไฟล์) · boot ไม่ขึ้นพร้อมข้อความ (เว้น TrustAllForwarders=true) · งานยกเลิกล็อกต่อ subscription + ตรวจซ้ำ | มือ + required_call_site_check |
 
 ## PB219 — อุดรั่วเงินค่าบริการ NextAcc เฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` · `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2)
 
@@ -379,7 +384,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **711 ไฟล์ · 7,413 `[Fact]` + 1,163 `[Theory]` (5,461 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **711 ไฟล์ · 7,419 `[Fact]` + 1,163 `[Theory]` (5,461 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 

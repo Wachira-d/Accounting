@@ -16,6 +16,12 @@ public static class PlatformPaymentAttention
     public const string RuleSettleFailed = "PLATFORM-SETTLE-FAILED";
     public const string RuleHeld = "PLATFORM-PAYMENT-HELD";
     public const string RuleOverpaid = "PLATFORM-OVERPAYMENT";
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ชำระออนไลน์โดยหักภาษี ณ ที่จ่าย — อนุมัติแล้ว รอหนังสือรับรอง 50 ทวิ</summary>
+    public const string RuleWhtCertPending = "PLATFORM-WHT-CERT-PENDING";
+
+    /// <summary>ต้องรอหนังสือรับรอง 50 ทวิ ไหม — ชำระออนไลน์ (ไม่มีคนเห็นเอกสาร) + มีภาษีหัก + ยังไม่ได้รับไฟล์</summary>
+    public static bool WhtCertificateOutstanding(bool systemConfirmed, decimal withholdingTax, string? certificateFileName)
+        => systemConfirmed && withholdingTax > 0m && string.IsNullOrEmpty(certificateFileName);
 
     /// <summary>ประทับเรื่องค้าง + audit chain (ไม่บันทึก — ผู้เรียก SaveChanges) · เหตุเดิมที่ยังไม่ถูกเคลียร์ = ต่อท้าย (ไม่ทับ)</summary>
     public static void Flag(AccountingDbContext db, SubscriptionPayment p, Guid buyerCompanyId, string reason, string rule, string actor)

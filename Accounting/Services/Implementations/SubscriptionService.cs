@@ -2030,28 +2030,13 @@ public class SubscriptionService : ISubscriptionService
     public async Task<SubscriptionPaymentResponse> SubmitInvoicePaymentAsync(Guid companyId, Guid invoiceDocumentId,
         SubmitInvoicePaymentRequest request, string performedBy)
     {
-        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
-            ?? throw new KeyNotFoundException("ไม่พบ subscription");
-
         // ด่านติ๊กยอมรับนโยบาย (part B · PurchasePolicyAcceptance ช่อง platform-invoice) อยู่ที่ผู้เรียก <b>ก่อน</b>เมธอดนี้ (ต้องรู้ผู้ใช้/IP · ลิงก์ชำระไม่มีบัญชี) —
         // ล็อกด้วย required_call_site_check ทั้งศูนย์บิลและลิงก์ชำระ · แถวหลักฐานที่ผู้เรียกเพิ่มไว้ถูกบันทึกพร้อม SaveChanges ของเมธอดนี้
-        var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db)
-            ?? throw new BusinessRuleException(
-                "ยังไม่ได้ตั้งบริษัทผู้ให้บริการ — ใบแจ้งหนี้ค่าบริการยังชำระผ่านหน้านี้ไม่ได้ กรุณาชำระที่หน้าแพ็กเกจ", "PLATFORM-TENANT-NOT-SET", 409);
-        var inv = await PlatformInvoiceQueries.ForBuyer(_db, platformId, companyId)
-            .Where(d => d.Id == invoiceDocumentId).AsRows(companyId).FirstOrDefaultAsync()
-            ?? throw new KeyNotFoundException("ไม่พบใบแจ้งหนี้นี้ของบริษัท");
-        if (!PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue))
-            throw new BusinessRuleException($"ใบแจ้งหนี้ {inv.DocumentNumber} ไม่มียอดค้างชำระแล้ว", "PLATFORM-INVOICE-NOT-OPEN", 409);
-        if (inv.Id == sub.RenewalInvoiceDocumentId && PlatformInvoiceRules.RenewalNotPayableReason(sub.CancelAtPeriodEnd) is string cancelled)
-            throw new BusinessRuleException(cancelled, "PLATFORM-RENEWAL-CANCELLED", 409);
-        // ฝ่ายค้าน N6: ใบต่ออายุที่ถูกแทนที่แล้ว (ตัวชี้ใบต่ออายุไม่ใช่ใบนี้) ⇒ ไม่รับชำระเอง (เดิมกลายเป็น "ตัดหนี้อย่างเดียว" เงียบ ๆ = จ่ายซ้ำรอบที่จ่ายแล้ว) — ไปที่แอดมิน
-        if (PlatformInvoiceRules.SupersededRenewalReason(inv.Reference, inv.Id, sub.RenewalInvoiceDocumentId) is string superseded)
-            throw new BusinessRuleException(superseded, "PLATFORM-RENEWAL-SUPERSEDED", 409);
-        // ฝ่ายค้าน S4: ภาษีหัก ณ ที่จ่ายของผู้เช่านิติบุคคล — เงินโอน + ภาษีหัก = ยอดค้างของใบ
+        var (sub, inv) = await PayableInvoiceAsync(companyId, invoiceDocumentId);
+        // ฝ่ายค้าน S4 + รอบสุดท้าย 4b: ภาษีหัก ณ ที่จ่ายของผู้เช่านิติบุคคล — ฐาน = ยอดก่อน VAT ของใบตามสัดส่วนยอดค้าง · เงินโอน + ภาษีหัก = ยอดค้างของใบ
         var balance = decimal.Round(inv.BalanceDue, 2, MidpointRounding.AwayFromZero);
         var wht = request.WithholdingTaxAmount is decimal w && w > 0m ? decimal.Round(w, 2, MidpointRounding.AwayFromZero) : 0m;
-        if (PlatformInvoiceRules.WithholdingProblem(wht, balance, wht > 0m && await PayerIsJuristicAsync(companyId)) is string whtProblem)
+        if (PlatformInvoiceRules.WithholdingProblem(wht, balance, inv.TotalAmount, inv.SubTotal, wht > 0m && await PayerIsJuristicAsync(companyId)) is string whtProblem)
             throw new BusinessRuleException(whtProblem, "PLATFORM-WHT-INVALID", 400);
         var cash = balance - wht;
 
@@ -2060,32 +2045,33 @@ public class SubscriptionService : ISubscriptionService
         var cycle = isRenewal && sub.ScheduledPlan != null ? (sub.ScheduledBillingCycle ?? sub.BillingCycle) : sub.BillingCycle;
         var months = isRenewal ? PlatformPlanPricing.MonthsOf(cycle) : 0;
 
-        var open = await _db.SubscriptionPayments
-            .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId == inv.Id
+        var pending = await _db.SubscriptionPayments
+            .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId == inv.Id && p.AttentionReason == null
                 && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview))
             .OrderByDescending(p => p.CreatedAt)
-            .ToListAsync();
-        // รายการที่พักให้แอดมิน (เงินเข้าแล้วแต่ยังไม่อนุมัติ) ⇒ ห้ามแจ้ง/จ่ายซ้ำจนกว่าแอดมินตัดสิน
-        if (open.FirstOrDefault(p => p.AttentionReason != null) is { } held)
-            throw new BusinessRuleException(
-                $"ใบแจ้งหนี้ {inv.DocumentNumber} มีรายการ {held.PaymentNumber} รอผู้ดูแลระบบตรวจอยู่ — ไม่ต้องชำระซ้ำ", "PLATFORM-INVOICE-PENDING", 409);
-        var pending = open.FirstOrDefault();
+            .FirstOrDefaultAsync();
         if (pending != null)
         {
-            if (pending.SlipFileName != null)
+            // (สลิปแนบแล้ว/พัก/อนุมัติรอตัดชำระ ⇒ PayableInvoiceAsync ปฏิเสธไปแล้ว) — เหลือรายการที่ยังไม่มีหลักฐานเงิน
+            var changes = pending.Amount != cash || pending.WithholdingTaxAmount != wht || pending.RequestedPlan != plan
+                || pending.RequestedBillingCycle != cycle || pending.RequestedPeriodMonths != months;
+            // ฝ่ายค้านรอบสุดท้าย 2: มีรายการชำระออนไลน์เริ่มแล้วด้วยยอดเดิม ⇒ ห้ามเปลี่ยนยอดใต้ intent (เงินเข้าแล้ว handler เทียบยอดไม่ตรง ⇒ ค้าง)
+            if (changes && await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.SourceKind == PaymentSourceKind.SubscriptionPayment
+                    && i.SourceId == pending.Id && (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending
+                        || i.Status == PaymentIntentStatus.Succeeded)))
                 throw new BusinessRuleException(
-                    $"ใบแจ้งหนี้ {inv.DocumentNumber} มีรายการแจ้งชำระ {pending.PaymentNumber} รอผู้ดูแลระบบตรวจอยู่แล้ว", "PLATFORM-INVOICE-PENDING", 409);
-            // ฝ่ายค้าน S3: ใช้รายการเดิมซ้ำ ⇒ ยอด/แพ็กเกจ/รอบ ตามใบ "ตอนนี้" (เดิมคืนยอดเก่าที่ค้างจากวันสร้าง — ใบถูกตัดบางส่วน/แพ็กเกจที่ตั้งไว้เปลี่ยนแล้วก็ยังยอดเดิม)
+                    $"รายการ {pending.PaymentNumber} มีการชำระออนไลน์ที่เริ่มไว้ด้วยยอดเดิม — ทำรายการนั้นให้เสร็จ (หรือรอหมดอายุ) ก่อนเปลี่ยนยอด/ภาษีหัก",
+                    "PLATFORM-INVOICE-PENDING", 409);
+            // ฝ่ายค้าน S3: ใช้รายการเดิมซ้ำ ⇒ ยอด/แพ็กเกจ/รอบ ตามใบ "ตอนนี้"
             pending.Amount = cash;
             pending.WithholdingTaxAmount = wht;
             pending.RequestedPlan = plan; pending.RequestedBillingCycle = cycle; pending.RequestedPeriodMonths = months;
-            if (request.PaymentDate != null || request.TransferReference != null || request.FromBankName != null)
-            {
-                var n0 = DateTime.UtcNow;
-                pending.PaymentDate = PlatformPlanPricing.ClampPaymentDate(request.PaymentDate ?? n0, n0, n0);
-                pending.FromBankName = Trunc(request.FromBankName, 100) ?? pending.FromBankName;
-                pending.TransferReference = Trunc(request.TransferReference, 100) ?? pending.TransferReference;
-            }
+            // ฝ่ายค้านรอบสุดท้าย 2: เติมรายละเอียดการโอนเฉพาะช่องที่ยังว่าง — คำขอภายหลัง (เช่น ผู้จ่ายผ่านลิงก์ที่ไม่มีบัญชี) ไม่เขียนทับของที่ผู้เช่าแจ้งไว้
+            var n0 = DateTime.UtcNow;
+            if (pending.FromBankName == null && pending.TransferReference == null && request.PaymentDate != null)
+                pending.PaymentDate = PlatformPlanPricing.ClampPaymentDate(request.PaymentDate.Value, n0, n0);
+            pending.FromBankName ??= Trunc(request.FromBankName, 100);
+            pending.TransferReference ??= Trunc(request.TransferReference, 100);
             await _db.SaveChangesAsync();
             return MapPaymentToResponse(pending);
         }
@@ -2143,6 +2129,59 @@ public class SubscriptionService : ISubscriptionService
         return MapPaymentToResponse(payment);
     }
 
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 5: ตรวจล่วงหน้าว่าใบนี้แจ้งชำระได้ไหม (ด่านเดียวกับ <see cref="SubmitInvoicePaymentAsync"/>) — ผู้เรียกตรวจก่อนเก็บไฟล์สลิป
+    /// (ไม่ทิ้งไฟล์กำพร้าเมื่อจะถูกปฏิเสธอยู่แล้ว) · ไม่ผ่าน ⇒ โยน BusinessRuleException/KeyNotFoundException แบบเดียวกัน</summary>
+    public async Task EnsureInvoicePayableAsync(Guid companyId, Guid invoiceDocumentId) => await PayableInvoiceAsync(companyId, invoiceDocumentId);
+
+    public async Task<SubscriptionPaymentResponse> AttachWhtCertificateAsync(Guid companyId, Guid paymentId, string storedFileName, string performedBy)
+    {
+        var payment = await _db.SubscriptionPayments.Include(p => p.Subscription)
+            .FirstOrDefaultAsync(p => p.Id == paymentId && p.Subscription.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+        if (payment.WithholdingTaxAmount <= 0m)
+            throw new BusinessRuleException("รายการนี้ไม่ได้หักภาษี ณ ที่จ่าย — ไม่ต้องส่งหนังสือรับรอง", "PLATFORM-WHT-CERT-NOT-NEEDED", 409);
+        payment.WhtCertificateFileName = storedFileName;
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = payment.SubscriptionId, Action = "WhtCertificateSubmitted",
+            Notes = $"ส่งหนังสือรับรอง 50 ทวิ ของรายการ {payment.PaymentNumber} ({payment.WithholdingTaxAmount:N2} บาท)", PerformedBy = performedBy
+        });
+        if (payment.AttentionRule == PlatformPaymentAttention.RuleWhtCertPending)
+            PlatformPaymentAttention.Flag(_db, payment, companyId, "ผู้เช่าส่ง 50 ทวิ แล้ว — ตรวจเอกสารแล้วกด \"จัดการแล้ว\"",
+                PlatformPaymentAttention.RuleWhtCertPending, performedBy);
+        await _db.SaveChangesAsync();
+        return MapPaymentToResponse(payment);
+    }
+
+    /// <summary>ด่านร่วมของการแจ้งชำระใบ (ใบของบริษัทนี้ · ยังค้าง · ไม่ใช่ใบต่ออายุของรอบที่ยกเลิก/ถูกแทนที่ · ไม่มีรายการที่จ่ายแล้วรอฝั่งเรา)</summary>
+    private async Task<(Subscription Sub, PlatformInvoiceRow Inv)> PayableInvoiceAsync(Guid companyId, Guid invoiceDocumentId)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db)
+            ?? throw new BusinessRuleException(
+                "ยังไม่ได้ตั้งบริษัทผู้ให้บริการ — ใบแจ้งหนี้ค่าบริการยังชำระผ่านหน้านี้ไม่ได้ กรุณาชำระที่หน้าแพ็กเกจ", "PLATFORM-TENANT-NOT-SET", 409);
+        var inv = await PlatformInvoiceQueries.ForBuyer(_db, platformId, companyId)
+            .Where(d => d.Id == invoiceDocumentId).AsRows(companyId).FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบใบแจ้งหนี้นี้ของบริษัท");
+        if (!PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue))
+            throw new BusinessRuleException($"ใบแจ้งหนี้ {inv.DocumentNumber} ไม่มียอดค้างชำระแล้ว", "PLATFORM-INVOICE-NOT-OPEN", 409);
+        if (inv.Id == sub.RenewalInvoiceDocumentId && PlatformInvoiceRules.RenewalNotPayableReason(sub.CancelAtPeriodEnd) is string cancelled)
+            throw new BusinessRuleException(cancelled, "PLATFORM-RENEWAL-CANCELLED", 409);
+        // ฝ่ายค้าน N6: ใบต่ออายุที่ถูกแทนที่แล้ว (ตัวชี้ใบต่ออายุไม่ใช่ใบนี้) ⇒ ไม่รับชำระเอง (เดิมกลายเป็น "ตัดหนี้อย่างเดียว" เงียบ ๆ = จ่ายซ้ำรอบที่จ่ายแล้ว) — ไปที่แอดมิน
+        if (PlatformInvoiceRules.SupersededRenewalReason(inv.Reference, inv.Id, sub.RenewalInvoiceDocumentId) is string superseded)
+            throw new BusinessRuleException(superseded, "PLATFORM-RENEWAL-SUPERSEDED", 409);
+        // ฝ่ายค้านรอบสุดท้าย 3: มีรายการที่จ่ายแล้วรอฝั่งเรา (สลิปรอตรวจ · พักให้แอดมิน · อนุมัติแล้วรอตัดชำระ) ⇒ ห้ามแจ้ง/จ่ายซ้ำ — ตัวตัดสินเดียว PlatformInvoiceClaims
+        var claim = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId == inv.Id)
+            .Where(PlatformInvoiceClaims.AwaitingPlatform)
+            .Select(p => p.PaymentNumber).FirstOrDefaultAsync();
+        if (claim != null)
+            throw new BusinessRuleException(
+                $"ใบแจ้งหนี้ {inv.DocumentNumber} มีรายการ {claim} ที่ชำระ/แจ้งชำระแล้ว รอผู้ดูแลระบบดำเนินการ — ไม่ต้องชำระซ้ำ", "PLATFORM-INVOICE-PENDING", 409);
+        return (sub, inv);
+    }
+
     /// <summary>ฝ่ายค้าน S6: สถานะหลังอนุมัติการชำระแพ็กเกจ — ข้อเท็จจริง (ระงับโดย dunning? · เหตุระงับล่าสุดในประวัติ) แล้วให้ตัวตัดสินเดียวตัดสิน</summary>
     private async Task<SubscriptionStatus> StatusAfterPaymentAsync(Subscription sub)
     {
@@ -2150,7 +2189,9 @@ public class SubscriptionService : ISubscriptionService
         var byDunning = await _db.PlatformDunningStates.AsNoTracking()
             .AnyAsync(s => s.CompanyId == sub.CompanyId && s.SuspendedByDunningAt != null);
         var lastSuspendAction = await _db.SubscriptionHistories.AsNoTracking()
-            .Where(h => h.SubscriptionId == sub.Id && h.ToStatus == SubscriptionStatus.Suspended && h.FromStatus != SubscriptionStatus.Suspended)
+            // ฝ่ายค้านรอบสุดท้าย: แอดมินระงับซ้ำทับการระงับเพราะหมดอายุ (Suspended→Suspended) ต้องนับเป็นคำสั่งล่าสุด — ข้ามเฉพาะแถวที่การอนุมัติเขียนเอง
+            .Where(h => h.SubscriptionId == sub.Id && h.ToStatus == SubscriptionStatus.Suspended && h.Action != "PaymentApprovedSuspensionKept"
+                && h.Action != "PaymentApproved")
             .OrderByDescending(h => h.CreatedAt).Select(h => h.Action).FirstOrDefaultAsync();
         return PlatformDunningPolicy.StatusAfterPayment(sub.Status, byDunning, _dunning != null, lastSuspendAction);
     }
@@ -2253,6 +2294,12 @@ public class SubscriptionService : ISubscriptionService
 
         if (payment.Status != SubscriptionPaymentStatus.Pending && payment.Status != SubscriptionPaymentStatus.UnderReview)
             throw new InvalidOperationException("ไม่สามารถตรวจสอบรายการนี้ได้ เนื่องจากสถานะไม่ใช่รอตรวจสอบ");
+        // ฝ่ายค้านรอบสุดท้าย (หมายเหตุ): รายการที่พักให้แอดมินแล้ว — ระบบ (webhook/poll ซ้ำ) ไม่อนุมัติเอง และไม่เขียนประวัติ/audit/กระดิ่งซ้ำ · คนตัดสินเท่านั้น
+        if (systemConfirmed && payment.AttentionRule == PlatformPaymentAttention.RuleHeld)
+        {
+            _logger?.LogInformation("รายการ {Payment} พักให้แอดมินอยู่แล้ว — ข้ามการยืนยันอัตโนมัติซ้ำ", payment.PaymentNumber);
+            return MapPaymentToResponse(payment);
+        }
 
         // เส้น "ระบบยืนยันเอง" (เงินเข้าจริงผ่านช่องทางชำระออนไลน์) ไม่มีผู้ตรวจสอบ
         // ที่เป็นคน ⇒ เก็บ null แล้วบอกเหตุผลใน ReviewNotes · ห้ามแต่ง user id ปลอม
@@ -2272,7 +2319,12 @@ public class SubscriptionService : ISubscriptionService
         {
             var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db);
             var inv = platformId == null ? null : await PlatformInvoiceQueries.ByIdAsync(_db, platformId.Value, linkedId);
-            var open = inv != null && inv.BuyerCompanyId == payment.Subscription.CompanyId && PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue);
+            // ฝ่ายค้านรอบสุดท้าย 3: มีรายการอื่นของใบเดียวกันที่อนุมัติแล้วแต่ตัดชำระยังไม่สำเร็จ ⇒ ใบ "จ่ายแล้ว รอฝั่งเรา" = ถือว่าปิด (กันต่ออายุซ้อนจากใบเดียว)
+            var paidElsewhere = await _db.SubscriptionPayments.AsNoTracking()
+                .Where(p => p.Id != payment.Id && p.PlatformInvoiceDocumentId == linkedId)
+                .Where(PlatformInvoiceClaims.PaidAwaitingPlatform).AnyAsync();
+            var open = inv != null && inv.BuyerCompanyId == payment.Subscription.CompanyId && PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue)
+                && !paidElsewhere;
             var superseded = payment.RequestedPeriodMonths > 0 && linkedId != payment.Subscription.RenewalInvoiceDocumentId;
             var (action, message) = PlatformInvoiceRules.ReviewLinked(systemConfirmed, open, superseded, inv?.DocumentNumber);
             switch (action)
@@ -2299,20 +2351,29 @@ public class SubscriptionService : ISubscriptionService
                     forceInvoiceOnly = true; linkedNote = message;
                     break;
             }
-            // ฝ่ายค้าน S4: แอดมินระบุภาษีหัก ณ ที่จ่ายตอนอนุมัติ (ลูกค้าส่ง 50 ทวิ มากับสลิป) — ตัวตรวจเดียวกับฝั่งผู้เช่า · เงินโอน = ยอดค้าง − ภาษีหัก
-            if (request.WithholdingTaxAmount is decimal adminWht && inv != null)
+            // ฝ่ายค้าน S4 + รอบสุดท้าย 4c: แอดมินกรอกเงินที่รับจริง (ตามสลิป) + ภาษีหักจาก 50 ทวิ ตอนอนุมัติ — ไม่ลดยอดเงินเงียบ ๆ ·
+            // ตัวตรวจภาษีเดียวกับฝั่งผู้เช่า · เงินที่รับ + ภาษีหัก ≤ ยอดค้าง (น้อยกว่า = จ่ายบางส่วน ตามที่แอดมินยืดหยุ่นได้ — คำตัดสินเจ้าของ ①)
+            if ((request.WithholdingTaxAmount != null || request.AmountReceived != null) && inv != null)
             {
-                var juristic = await PayerIsJuristicAsync(payment.Subscription.CompanyId);
-                if (PlatformInvoiceRules.WithholdingProblem(adminWht, inv.BalanceDue, juristic) is string whtProblem)
+                var cash = request.AmountReceived ?? payment.Amount;
+                var adminWht = request.WithholdingTaxAmount ?? payment.WithholdingTaxAmount;
+                if (PlatformInvoiceRules.AdminLinkedAmountsProblem(cash, adminWht, inv.BalanceDue) is string amountProblem)
+                    throw new BusinessRuleException(amountProblem, "PLATFORM-WHT-INVALID", 400);
+                if (adminWht > 0m && PlatformInvoiceRules.WithholdingProblem(adminWht, inv.BalanceDue, inv.TotalAmount, inv.SubTotal,
+                        await PayerIsJuristicAsync(payment.Subscription.CompanyId)) is string whtProblem)
                     throw new BusinessRuleException(whtProblem, "PLATFORM-WHT-INVALID", 400);
-                payment.WithholdingTaxAmount = adminWht;
-                if (payment.Amount + adminWht > inv.BalanceDue + PlatformInvoiceRules.Epsilon)
-                    payment.Amount = decimal.Round(inv.BalanceDue - adminWht, 2, MidpointRounding.AwayFromZero);
+                payment.Amount = decimal.Round(cash, 2, MidpointRounding.AwayFromZero);
+                payment.WithholdingTaxAmount = decimal.Round(adminWht, 2, MidpointRounding.AwayFromZero);
             }
         }
-        else if (request.Approve && request.WithholdingTaxAmount is decimal plainWht)
+        else if (request.Approve && request.WithholdingTaxAmount is decimal plainWht && plainWht != payment.WithholdingTaxAmount)
         {
-            if (plainWht < 0m) throw new BusinessRuleException("ภาษีหัก ณ ที่จ่ายติดลบไม่ได้", "PLATFORM-WHT-INVALID", 400);
+            // ฝ่ายค้านรอบสุดท้าย 4c: รายการไม่ผูกใบ — ตัวตรวจเดียวกัน (นิติบุคคล · อัตรา ม.40(2) ของฐานก่อน VAT ของยอดรวมก่อนหัก)
+            var gross = payment.Amount + plainWht;
+            var vatRegistered = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt).Select(x => x.PlatformIsVatRegistered).FirstOrDefaultAsync();
+            var pre = vatRegistered ? decimal.Round(gross * 100m / 107m, 2, MidpointRounding.AwayFromZero) : gross;
+            if (PlatformInvoiceRules.WithholdingProblem(plainWht, gross, gross, pre, plainWht > 0m && await PayerIsJuristicAsync(payment.Subscription.CompanyId)) is string whtProblem)
+                throw new BusinessRuleException(whtProblem, "PLATFORM-WHT-INVALID", 400);
             payment.WithholdingTaxAmount = plainWht;
         }
 
@@ -2514,7 +2575,7 @@ public class SubscriptionService : ISubscriptionService
                 SubscriptionId = sub.Id,
                 Action = "PaymentApproved",
                 ToPlan = payment.RequestedPlan,
-                ToStatus = SubscriptionStatus.Active,
+                ToStatus = sub.Status,   // ฝ่ายค้านรอบสุดท้าย: สถานะจริงหลังอนุมัติ (การระงับของแอดมินคงอยู่ได้ — S6)
                 Notes = $"Payment {payment.PaymentNumber} approved. Subscription extended to {newEndDate:yyyy-MM-dd}",
                 PerformedBy = performedBy
             });
@@ -2576,6 +2637,14 @@ public class SubscriptionService : ISubscriptionService
             }
         }
 
+        // ฝ่ายค้านรอบสุดท้าย 4a: เงินเข้าออนไลน์โดยผู้เช่าหักภาษี ณ ที่จ่าย ⇒ อนุมัติตามปกติ (เงินเข้าแล้ว) + เรื่องค้าง "รอหนังสือรับรอง 50 ทวิ"
+        // จนกว่าผู้เช่าส่งหลักฐาน (ศูนย์บิล/ลิงก์ชำระ) และแอดมินตรวจ — ไม่พักการอนุมัติ (ลูกค้าจ่ายแล้วต้องได้ใช้)
+        if (payment.Status == SubscriptionPaymentStatus.Approved
+            && PlatformPaymentAttention.WhtCertificateOutstanding(systemConfirmed, payment.WithholdingTaxAmount, payment.WhtCertificateFileName))
+            PlatformPaymentAttention.Flag(_db, payment, payment.Subscription.CompanyId,
+                $"ผู้เช่าหักภาษี ณ ที่จ่าย {payment.WithholdingTaxAmount:N2} บาท — รอหนังสือรับรอง 50 ทวิ (ผู้เช่าส่งที่ศูนย์บิล/ลิงก์ชำระ)",
+                PlatformPaymentAttention.RuleWhtCertPending, performedBy);
+
         await _db.SaveChangesAsync();
         if (lockTx != null) await lockTx.CommitAsync();   // ปล่อยล็อก — ขั้นถัดไป idempotent (อ้างอิงต่อรายการ) และเรียกบริการที่มีธุรกรรมของตัวเอง
 
@@ -2590,7 +2659,7 @@ public class SubscriptionService : ISubscriptionService
         }
         // รอบ 219 เฟส 2 (S9): ใบต่ออายุของรอบเดิมที่ไม่ได้ถูกจ่าย ⇒ ยกเลิกผ่านเส้นยกเลิกเอกสาร (ยังไม่มีการชำระ) / บันทึกงานออกใบลดหนี้ (มีการชำระแล้ว)
         if (payment.Status == SubscriptionPaymentStatus.Approved && staleRenewalId is Guid stale && _billing != null)
-            await _billing.HandleStaleRenewalInvoiceAsync(payment.SubscriptionId, stale, payment.PaymentNumber);
+            await _billing.HandleStaleRenewalInvoiceAsync(payment.SubscriptionId, stale, $"รายการ {payment.PaymentNumber} เริ่ม/ต่อรอบใหม่");
 
         // รอบ 219 เฟส 2 ขั้น 2 (G-8): ชำระแล้ว ⇒ ประเมินค้างชำระของบริษัทนี้ใหม่ทันที (ไม่รอรอบงาน) — ระบบระงับไว้เพราะค้างชำระและไม่มีใบเกินผ่อนผันแล้ว ⇒ คืนสถานะ
         if (payment.Status == SubscriptionPaymentStatus.Approved && _dunning != null)
@@ -2823,8 +2892,14 @@ public class SubscriptionService : ISubscriptionService
         // ฝ่ายค้าน S8: ใบต่ออายุของรอบที่ยกเลิก (ออกไปก่อนผู้เช่ากดยกเลิก) ⇒ เมื่อการยกเลิกมีผล ยกเลิกใบผ่านเส้นยกเลิกเอกสาร (เส้นเดียวกับ S9 —
         // มีการชำระ/รายการค้าง ⇒ ไม่ยกเลิก ตั้งงานแอดมิน) + ล้างตัวชี้ (ไม่ทวง · ไม่ค้างเป็นหนี้เท็จ) · ตัวตัดสิน PlatformInvoiceRules.RenewalVoidOnCancel
         var renewalsToVoid = new List<(Guid SubId, Guid InvoiceId)>();
-        foreach (var sub in dueCancels.Where(x => SubscriptionCancelPolicy.DueForCancellation(x.CancelAtPeriodEnd, x.Status, x.EndDate, now)))
+        foreach (var due in dueCancels.Where(x => SubscriptionCancelPolicy.DueForCancellation(x.CancelAtPeriodEnd, x.Status, x.EndDate, now)))
         {
+            // ฝ่ายค้านรอบสุดท้าย 7: ล็อกเดียวกับการอนุมัติการชำระ (ต่อ subscription) แล้วอ่านใหม่ใต้ล็อก — ผู้เช่าจ่าย/กดใช้ต่อพร้อมกับงานนี้
+            // ⇒ การชำระที่อนุมัติก่อนชนะ (ล้างการยกเลิกแล้ว) ไม่ถูกตั้ง Cancelled ทับ
+            await using var lockTx = await SubscriptionPaymentLock.AcquireAsync(_db, due.Id);
+            if (_db.Database.IsRelational()) await _db.Entry(due).ReloadAsync();
+            var sub = due;
+            if (!SubscriptionCancelPolicy.DueForCancellation(sub.CancelAtPeriodEnd, sub.Status, sub.EndDate, now)) continue;
             if (PlatformInvoiceRules.RenewalVoidOnCancel(sub.RenewalInvoiceDocumentId, sub.RenewalInvoiceForEndDate, sub.EndDate) is Guid rid)
             {
                 renewalsToVoid.Add((sub.Id, rid));
@@ -2841,6 +2916,8 @@ public class SubscriptionService : ISubscriptionService
                 Notes = $"สิ้นรอบ {sub.EndDate:yyyy-MM-dd} ตามที่ขอยกเลิกไว้",
                 PerformedBy = "System"
             });
+            await _db.SaveChangesAsync();
+            if (lockTx != null) await lockTx.CommitAsync();
         }
 
         // Mark active subscriptions as expired (ยกเว้นที่ขอยกเลิกไว้ — ข้างบนจัดการแล้ว)
@@ -2982,7 +3059,10 @@ public class SubscriptionService : ISubscriptionService
             p.SlipOcrAmountMatches,
             p.SlipOcrReference,
             p.SlipOcrDate,
-            p.PlatformInvoiceDocumentId);
+            p.PlatformInvoiceDocumentId,
+            p.WithholdingTaxAmount,
+            p.AttentionReason,
+            p.WhtCertificateFileName != null);
     }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)

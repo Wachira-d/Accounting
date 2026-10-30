@@ -96,10 +96,16 @@ public class BillingCenterController : ControllerBase
             return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, bad));
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         await EnforcePolicyAsync(legal, companyId, documentId, policyAccepted, policyVersionShown, ct);
-        // ฝ่ายค้าน N3: เก็บ/ตรวจไฟล์ก่อนสร้างรายการ — ไฟล์เสียไม่ทิ้งรายการค้างที่ไม่มีสลิป
+        // ฝ่ายค้าน N3 + รอบสุดท้าย 5: ตรวจว่าแจ้งได้ก่อน (ไม่เก็บไฟล์ที่จะถูกปฏิเสธ) → เก็บ/ตรวจไฟล์ → สร้างรายการ · สร้างไม่สำเร็จ ⇒ ลบไฟล์ที่เก็บ
+        await _subs.EnsureInvoicePayableAsync(companyId, documentId);
         var stored = await SubscriptionSlipUpload.StoreAsync(file!, images, env);
-        var payment = await _subs.SubmitInvoicePaymentAsync(companyId, documentId,
-            new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes, withholdingTaxAmount), actor);
+        SubscriptionPaymentResponse payment;
+        try
+        {
+            payment = await _subs.SubmitInvoicePaymentAsync(companyId, documentId,
+                new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes, withholdingTaxAmount), actor);
+        }
+        catch { SubscriptionSlipUpload.DeleteStored(stored); throw; }
         var result = await SubscriptionSlipUpload.AttachAsync(stored, payment.Id, actor, _subs, slipOcr, logger);
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result,
             $"แจ้งชำระ {result.PaymentNumber} แล้ว — ผู้ดูแลระบบจะตรวจสอบและยืนยันให้"));
@@ -117,6 +123,24 @@ public class BillingCenterController : ControllerBase
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
         Response.Headers["Cache-Control"] = "private, no-store";
         return PhysicalFile(f.Path, f.ContentType, p.SlipOriginalFileName ?? p.SlipFileName);
+    }
+
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ส่งหนังสือรับรอง 50 ทวิ ของรายการที่หักภาษี ณ ที่จ่าย (ชำระออนไลน์ไม่มีสลิปให้แนบ) — Billing.Manage · ไฟล์ไม่สาธารณะ</summary>
+    [HttpPost("payments/{paymentId:guid}/wht-certificate")]
+    [RequestSizeLimit(SubscriptionSlipUpload.MaxBytes + 1024 * 1024)]
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> WhtCertificate(Guid companyId, Guid paymentId, IFormFile? file,
+        [FromServices] IImageProcessingService images, [FromServices] IWebHostEnvironment env)
+    {
+        if (await RequireBillingAsync(companyId, "ส่งหนังสือรับรองภาษีหัก ณ ที่จ่าย") is { } deny) return deny;
+        if (SubscriptionSlipUpload.Reject(file) is string bad)
+            return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, bad));
+        var stored = await SubscriptionSlipUpload.StoreAsync(file!, images, env);
+        try
+        {
+            var r = await _subs.AttachWhtCertificateAsync(companyId, paymentId, stored.FileName, JwtHelper.GetUserIdFromClaims(User).ToString());
+            return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, r, "ส่งหนังสือรับรองแล้ว — ผู้ดูแลระบบจะตรวจสอบ"));
+        }
+        catch { SubscriptionSlipUpload.DeleteStored(stored); throw; }
     }
 
     public record PrepareOnlineRequest(bool PolicyAccepted, string? PolicyVersionShown, decimal? WithholdingTaxAmount = null);

@@ -1020,6 +1020,22 @@ if (builder.Configuration.GetValue("Security:TrustProxyHeaders", true))
         if (System.Net.IPAddress.TryParse(raw, out var proxyIp)) fwdOptions.KnownProxies.Add(proxyIp);
         else throw new InvalidOperationException($"Security:KnownProxies มีค่าที่ไม่ใช่ IP: '{raw}'");
     }
+    // ฝ่ายค้านรอบสุดท้าย 6: proxy อยู่คนละ subnet ใน container network ⇒ ระบุเป็นช่วง CIDR ได้ (Security:KnownNetworks เช่น "10.0.0.0/8,172.16.0.0/12")
+    foreach (var raw in (builder.Configuration["Security:KnownNetworks"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        var parts = raw.Split('/');
+        if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var netIp) && int.TryParse(parts[1], out var prefix)
+            && prefix >= 0 && prefix <= (netIp.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 128 : 32))
+            fwdOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(netIp, prefix));
+        else throw new InvalidOperationException($"Security:KnownNetworks มีค่าที่ไม่ใช่ CIDR: '{raw}'");
+    }
+    // ฝ่ายค้านรอบสุดท้าย 6: production ที่เชื่อ X-Forwarded-For แต่ไม่ระบุ proxy ⇒ ผู้ใช้ปลอม IP ได้ (หลบถังจำกัดอัตราต่อ IP · audit IP ผิด) — boot ไม่ขึ้น
+    // (fail-fast แบบเดียวกับ secret) เว้นแต่ตั้ง Security:TrustAllForwarders=true อย่างตั้งใจ (เช่น backend ไม่เปิดออกนอก proxy เลย — ต้องรู้ความเสี่ยง)
+    if (app.Environment.IsProduction() && fwdOptions.KnownProxies.Count == 0 && fwdOptions.KnownNetworks.Count == 0
+        && !builder.Configuration.GetValue("Security:TrustAllForwarders", false))
+        throw new InvalidOperationException(
+            "Security:TrustProxyHeaders เปิดอยู่แต่ไม่ได้ตั้ง Security:KnownProxies/Security:KnownNetworks — ตั้ง IP/ช่วงของ reverse proxy "
+            + "(หรือ Security:TrustAllForwarders=true เมื่อแน่ใจว่าคำขอเข้าได้ทาง proxy เท่านั้น · หรือ Security:TrustProxyHeaders=false เมื่อไม่มี proxy) — ACCOUNT_STRUCTURE §6.2c");
     app.UseForwardedHeaders(fwdOptions);
 }
 

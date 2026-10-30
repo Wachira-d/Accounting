@@ -38,6 +38,8 @@ public interface IPlatformPaymentLinkService
     Task<Guid?> ResolveIntentPayerAsync(string token, Guid intentId, CancellationToken ct = default);
     /// <summary>ฝ่ายค้าน N2: URL กลับจากหน้าธนาคาร/บัตร — <b>ไม่มีโทเคน</b> (ไม่รั่วไปผู้ให้บริการชำระเงิน/ประวัติเบราว์เซอร์ฝั่งนั้น) · หน้าเว็บเก็บโทเคนใน sessionStorage เอง</summary>
     Task<string> ReturnUrlAsync(CancellationToken ct = default);
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: รายการล่าสุดของใบของลิงก์ที่หักภาษี ณ ที่จ่าย (รับหนังสือรับรอง) · null = โทเคนผิด/ลิงก์ใช้ไม่ได้/ไม่มีรายการ</summary>
+    Task<(Guid LinkId, Guid BuyerCompanyId, Guid PaymentId)?> WhtCertificateTargetAsync(string token, CancellationToken ct = default);
     Task RecordPaymentAuditAsync(Guid linkId, Guid buyerCompanyId, Guid paymentId, string paymentNumber, string? ip, CancellationToken ct = default);
     /// <summary>ด่านติ๊กยอมรับนโยบายของผู้จ่ายผ่านลิงก์ (ไม่มีบัญชีผู้ใช้) — ตัวตัดสิน/ผู้เขียนหลักฐานของ part B (<c>PurchasePolicyAcceptance.Problem/Create</c>) ·
     /// ไม่ผ่าน ⇒ BusinessRuleException · ผ่าน ⇒ แถวหลักฐานอยู่ใน context (บันทึกพร้อมรายการชำระ)</summary>
@@ -217,6 +219,17 @@ public class PlatformPaymentLinkService : IPlatformPaymentLinkService
         var ofThisInvoice = await _db.SubscriptionPayments.AsNoTracking()
             .AnyAsync(p => p.Id == source.Value && p.PlatformInvoiceDocumentId == link.DocumentId && p.Subscription.CompanyId == link.BuyerCompanyId, ct);
         return ofThisInvoice ? link.BuyerCompanyId : null;
+    }
+
+    public async Task<(Guid LinkId, Guid BuyerCompanyId, Guid PaymentId)?> WhtCertificateTargetAsync(string token, CancellationToken ct = default)
+    {
+        var link = await FindAsync(token, ct);
+        if (link == null || !PlatformPaymentLinkRules.IntentStatusAllowed(link.RevokedAt, link.ExpiresAt, DateTime.UtcNow)) return null;
+        var pid = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.PlatformInvoiceDocumentId == link.DocumentId && p.Subscription.CompanyId == link.BuyerCompanyId && p.WithholdingTaxAmount > 0m
+                && p.Status != SubscriptionPaymentStatus.Rejected && p.Status != SubscriptionPaymentStatus.Cancelled)
+            .OrderByDescending(p => p.CreatedAt).Select(p => (Guid?)p.Id).FirstOrDefaultAsync(ct);
+        return pid is Guid g ? (link.Id, link.BuyerCompanyId, g) : null;
     }
 
     public async Task<string> ReturnUrlAsync(CancellationToken ct = default)

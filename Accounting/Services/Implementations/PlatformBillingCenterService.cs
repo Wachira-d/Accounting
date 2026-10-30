@@ -63,10 +63,14 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
         var invIds = invoices.Select(i => i.Id).ToList();
         var pendingByInvoice = (await _db.SubscriptionPayments.AsNoTracking()
                 .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId != null && invIds.Contains(p.PlatformInvoiceDocumentId.Value)
-                    && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview))
-                // รายการที่พักให้แอดมิน (ฝ่ายค้าน B2) นับเป็น "มีหลักฐานแล้ว" — ห้ามจ่ายซ้ำจนแอดมินตัดสิน (ตรงกับด่านของ SubmitInvoicePaymentAsync)
-                .Select(p => new { InvoiceId = p.PlatformInvoiceDocumentId!.Value, p.PaymentNumber, HasSlip = p.SlipFileName != null || p.AttentionReason != null, p.CreatedAt })
+                    && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview
+                        || p.Status == SubscriptionPaymentStatus.Approved))
+                // ฝ่ายค้าน B2 + รอบสุดท้าย 3: "จ่ายแล้ว รอฝั่งเรา" (สลิป · พัก · อนุมัติแล้วรอตัดชำระ) = ตัวตัดสินเดียว PlatformInvoiceClaims — ห้ามจ่ายซ้ำ
+                .Select(p => new { InvoiceId = p.PlatformInvoiceDocumentId!.Value, p.PaymentNumber, p.CreatedAt,
+                    HasSlip = PlatformInvoiceClaims.IsAwaitingPlatform(p.Status, true, p.SlipFileName != null, p.AttentionReason != null, p.PlatformDocumentId != null),
+                    Open = p.Status != SubscriptionPaymentStatus.Approved || p.PlatformDocumentId == null })
                 .ToListAsync(ct))
+            .Where(p => p.Open)
             .GroupBy(p => p.InvoiceId)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedAt).First());
 
@@ -115,7 +119,10 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
                 PaymentStatusLabel(p.Status, p.SlipFileName != null),
                 PaymentPurpose(p.PlatformInvoiceDocumentId != null, invNo, p.Kind, p.RequestedPlan, p.RequestedPeriodMonths),
                 invNo, p.ReceiptNumber, p.ReceiptIsTaxInvoice, p.ReceiptNumber != null, p.SlipFileName != null,
-                p.Status == SubscriptionPaymentStatus.Rejected ? p.RejectionReason : null);
+                p.Status == SubscriptionPaymentStatus.Rejected ? p.RejectionReason : null,
+                p.WithholdingTaxAmount > 0m && p.WhtCertificateFileName == null
+                    && p.Status is not (SubscriptionPaymentStatus.Rejected or SubscriptionPaymentStatus.Cancelled),
+                p.WithholdingTaxAmount);
         }).ToList();
 
         // ── ส่วนเสริม ──

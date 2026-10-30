@@ -301,7 +301,9 @@ public record ReviewSubscriptionPaymentRequest(
     string? RejectionReason,
     /// <summary>ฝ่ายค้านรอบ 219 เฟส 2 (S4): ภาษีหัก ณ ที่จ่ายที่ลูกค้าหัก (แอดมินกรอกจาก 50 ทวิ ตอนอนุมัติ) — null = ไม่เปลี่ยน ·
     /// รายการที่ผูกใบ: ตรวจด้วย <c>PlatformInvoiceRules.WithholdingProblem</c> แล้วเงินโอน = ยอดค้าง − ภาษีหัก</summary>
-    decimal? WithholdingTaxAmount = null);
+    decimal? WithholdingTaxAmount = null,
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4c: เงินที่รับจริงตามสลิป (รายการที่ผูกใบ) — null = ยอดของรายการ · เงิน + ภาษีหัก ≤ ยอดค้าง</summary>
+    decimal? AmountReceived = null);
 
 /// <summary>WP-C1: admin บันทึกรับเงินเอง (เงินสด/โอนนอกระบบ) หรือยกเว้นค่าบริการ.
 /// สร้าง SubscriptionPayment แล้ววิ่งเข้าเส้น approve เดิม (ต่ออายุ+ประวัติ+ใบเสร็จ)
@@ -358,7 +360,11 @@ public record SubscriptionPaymentResponse(
     string? SlipOcrReference = null,
     DateTime? SlipOcrDate = null,
     // รอบ 219 เฟส 2: ใบแจ้งหนี้ที่รายการนี้ชำระ (null = รายการแบบเดิม) — หน้าตรวจสลิปของแอดมิน/ศูนย์บิลแยก "ชำระใบ" ออกจาก "ขอแพ็กเกจ"
-    Guid? PlatformInvoiceDocumentId = null);
+    Guid? PlatformInvoiceDocumentId = null,
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4: ภาษีหักที่ผู้เช่าแจ้ง (หน้าตรวจของแอดมินเติมให้) · เรื่องที่แอดมินต้องจัดการ · มีหนังสือรับรอง 50 ทวิ แล้วไหม</summary>
+    decimal WithholdingTaxAmount = 0m,
+    string? AttentionReason = null,
+    bool HasWhtCertificate = false);
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,

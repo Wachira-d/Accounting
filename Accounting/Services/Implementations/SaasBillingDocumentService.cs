@@ -338,7 +338,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
     public const string RuleStaleVoided = "PLATFORM-STALE-RENEWAL-VOIDED", RuleStaleCreditNote = "PLATFORM-STALE-RENEWAL-CREDIT-NOTE-NEEDED";
 
-    public async Task HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string paymentNumber)
+    public async Task HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string cause)
     {
         try
         {
@@ -348,14 +348,14 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             var (action, rule, note) = outcome switch
             {
                 StaleRenewalOutcome.Voided => ("StaleRenewalInvoiceVoided", RuleStaleVoided,
-                    $"ยกเลิกใบแจ้งหนี้ต่ออายุของรอบเดิมแล้ว (รายการ {paymentNumber} เริ่ม/ต่อรอบใหม่ — ใบเดิมไม่ต้องชำระ)"),
+                    $"ยกเลิกใบแจ้งหนี้ต่ออายุของรอบเดิมแล้ว (เหตุ: {cause} — ใบเดิมไม่ต้องชำระ)"),
                 StaleRenewalOutcome.NeedsCreditNote => ("StaleRenewalInvoiceNeedsCreditNote", RuleStaleCreditNote,
-                    $"⚠️ ใบแจ้งหนี้ต่ออายุของรอบเดิมมีการชำระแล้ว — ไม่ยกเลิก · ผู้ดูแลระบบต้องออกใบลดหนี้ (§86/10) หรือจัดการยอดในบริษัทผู้ให้บริการ (รายการ {paymentNumber})"),
+                    $"⚠️ ใบแจ้งหนี้ต่ออายุของรอบเดิมมีการชำระแล้ว — ไม่ยกเลิก · ผู้ดูแลระบบต้องออกใบลดหนี้ (§86/10) หรือจัดการยอดในบริษัทผู้ให้บริการ (เหตุ: {cause})"),
                 StaleRenewalOutcome.PendingPayment => ("StaleRenewalInvoiceNeedsAction", RuleStaleCreditNote,
                     $"⚠️ ใบแจ้งหนี้ต่ออายุของรอบเดิมมีรายการแจ้งชำระ/ชำระออนไลน์ค้างอยู่ — ไม่ยกเลิก (รายการนั้นถูกพักให้ผู้ดูแลระบบตรวจเมื่อเงินเข้า · ไม่ต่ออายุซ้ำ) · "
-                    + $"ผู้ดูแลระบบปฏิเสธ/คืนเงินรายการนั้นแล้วยกเลิกใบ (รายการ {paymentNumber})"),
+                    + $"ผู้ดูแลระบบปฏิเสธ/คืนเงินรายการนั้นแล้วยกเลิกใบ (เหตุ: {cause})"),
                 _ => ("StaleRenewalInvoiceNeedsAction", RuleStaleCreditNote,
-                    $"⚠️ ยกเลิกใบแจ้งหนี้ต่ออายุของรอบเดิมอัตโนมัติไม่สำเร็จ — ผู้ดูแลระบบต้องยกเลิกใบด้วยมือในบริษัทผู้ให้บริการ (รายการ {paymentNumber})"),
+                    $"⚠️ ยกเลิกใบแจ้งหนี้ต่ออายุของรอบเดิมอัตโนมัติไม่สำเร็จ — ผู้ดูแลระบบต้องยกเลิกใบด้วยมือในบริษัทผู้ให้บริการ (เหตุ: {cause})"),
             };
             _db.SubscriptionHistories.Add(new SubscriptionHistory
             {
@@ -368,7 +368,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                 Action = AuditAction.Update,
                 EntityType = "Document",
                 EntityId = invoiceDocumentId.ToString(),
-                NewValues = System.Text.Json.JsonSerializer.Serialize(new { outcome = outcome.ToString(), paymentNumber, ruleCode = rule }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { outcome = outcome.ToString(), cause, ruleCode = rule }),
                 Timestamp = DateTime.UtcNow,
             });
             await _db.SaveChangesAsync();

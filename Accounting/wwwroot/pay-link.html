@@ -78,7 +78,25 @@
           <button type="button" id="send" onclick="sendSlip()">ส่งสลิปแจ้งชำระ</button>
           ${po.online ? `<button type="button" style="margin-top:8px;background:#0f766e" onclick="payOnline()">ชำระออนไลน์</button>` : ''}
           <div id="online"></div>
-        </div>` : ''}`;
+        </div>` : ''}
+        <div class="card">
+          <div class="muted">หักภาษี ณ ที่จ่ายไว้? ส่งหนังสือรับรอง 50 ทวิ ของการชำระใบนี้</div>
+          <label>ไฟล์ 50 ทวิ (รูปหรือ PDF)<input type="file" id="whtFile" accept="image/*,application/pdf"></label>
+          <button type="button" style="background:#475569" onclick="sendWht()">ส่ง 50 ทวิ</button>
+        </div>`;
+    }
+
+    // ฝ่ายค้านรอบสุดท้าย 4a: หนังสือรับรอง 50 ทวิ ของรายการล่าสุดของใบนี้ที่หักภาษี (เซิร์ฟเวอร์เลือกรายการ — ไม่รับ id จากหน้าเว็บ)
+    async function sendWht() {
+      const f = document.getElementById('whtFile');
+      if (!f || !f.files.length) { alert('กรุณาเลือกไฟล์'); return; }
+      const fd = new FormData(); fd.append('file', f.files[0]);
+      try {
+        const r = await fetch(`${api}/wht-certificate`, { method: 'POST', body: fd });
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j?.success) throw new Error(j?.message || 'ส่งไม่สำเร็จ (ยังไม่มีรายการชำระที่หักภาษีของใบนี้)');
+        alert(j.message || 'ส่งแล้ว');
+      } catch (e) { alert(e.message); }
     }
 
     async function sendSlip() {

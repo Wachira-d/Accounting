@@ -27,7 +27,10 @@ public sealed record BillingCenterInvoice(
 public sealed record BillingCenterPayment(
     Guid Id, string PaymentNumber, decimal Amount, DateTime PaymentDate, string Status, string StatusLabel,
     string Purpose, string? InvoiceNumber, string? ReceiptNumber, bool ReceiptIsTaxInvoice, bool HasReceipt, bool SlipAttached,
-    string? RejectionReason);
+    string? RejectionReason,
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: หักภาษี ณ ที่จ่ายแล้วยังไม่ส่งหนังสือรับรอง 50 ทวิ (หน้าเว็บแสดงปุ่มส่ง) — เซิร์ฟเวอร์ตัดสิน</summary>
+    bool NeedsWhtCertificate = false,
+    decimal WithholdingTaxAmount = 0m);
 
 public sealed record BillingCenterAddOn(
     string FeatureCode, string Name, string PaymentStatus, string PaymentStatusLabel, string BillingChoice, string BillingChoiceLabel,

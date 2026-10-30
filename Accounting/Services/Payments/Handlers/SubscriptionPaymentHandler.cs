@@ -31,9 +31,11 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
     private readonly ISubscriptionService _subs;
     private readonly ILogger<SubscriptionPaymentHandler> _logger;
 
+    private readonly INotificationService? _notifications;
+
     public SubscriptionPaymentHandler(AccountingDbContext db, ISubscriptionService subs,
-        ILogger<SubscriptionPaymentHandler> logger)
-    { _db = db; _subs = subs; _logger = logger; }
+        ILogger<SubscriptionPaymentHandler> logger, INotificationService? notifications = null)
+    { _db = db; _subs = subs; _logger = logger; _notifications = notifications; }
 
     public PaymentSourceKind SourceKind => PaymentSourceKind.SubscriptionPayment;
 
@@ -94,6 +96,18 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
                 "ยอดเงินที่เข้า ({Paid:N2}) ไม่ตรงกับยอดของรายการ {No} ({Due:N2}) — "
                 + "ไม่อนุมัติอัตโนมัติ ให้แอดมินตรวจเอง (intent {Intent})",
                 intent.Amount, pay.PaymentNumber, pay.Amount, intent.Id);
+            // ฝ่ายค้านรอบสุดท้าย 2: เงินเข้าแล้วแต่ไม่อนุมัติ ⇒ ล้มดัง (เดิม return เงียบ ⇒ รายการค้าง · ผู้เช่าถูกทวงทั้งที่จ่ายแล้ว) —
+            // เรื่องค้าง "พักให้แอดมิน" (ทวงหนี้ไม่นับ · ห้ามจ่ายซ้ำ) + audit + กระดิ่ง
+            var row = await _db.SubscriptionPayments.FirstAsync(p => p.Id == pay.Id, ct);
+            if (row.AttentionRule != PlatformPaymentAttention.RuleHeld)
+            {
+                var why = $"เงินเข้าออนไลน์ {intent.Amount:N2} บาท ไม่ตรงยอดรายการ {pay.Amount:N2} บาท (intent {intent.Id:N}) — ตรวจแล้วอนุมัติ (กรอกเงินที่รับจริง) หรือคืนเงิน";
+                row.Status = SubscriptionPaymentStatus.UnderReview;
+                PlatformPaymentAttention.Flag(_db, row, pay.CompanyId, why, PlatformPaymentAttention.RuleHeld, intent.ConfirmedBy ?? "payment-gateway");
+                await _db.SaveChangesAsync(ct);
+                try { await PlatformPaymentAttention.NotifyAdminsAsync(_db, _notifications, $"เงินเข้าไม่ตรงยอด — รายการ {pay.PaymentNumber}", why, pay.Id, ct); }
+                catch (Exception ex) { _logger.LogError(ex, "ส่งกระดิ่งแอดมิน (ยอดไม่ตรง {Payment}) ไม่สำเร็จ — เรื่องค้างอยู่ในหน้าแอดมินแล้ว", pay.Id); }
+            }
             return;
         }
 

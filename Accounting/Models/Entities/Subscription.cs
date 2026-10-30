@@ -373,4 +373,6 @@ public class SubscriptionPayment : BaseEntity
     /// <summary>รหัสกฎของ <see cref="AttentionReason"/> (<c>PLATFORM-SETTLE-FAILED</c> / <c>PLATFORM-PAYMENT-HELD</c> / <c>PLATFORM-OVERPAYMENT</c>)</summary>
     public string? AttentionRule { get; set; }
     public DateTime? AttentionAt { get; set; }
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ไฟล์หนังสือรับรอง 50 ทวิ ที่ผู้เช่าส่ง (เก็บที่เดียวกับสลิป — ไม่เสิร์ฟตรง) · null = ยังไม่ส่ง</summary>
+    public string? WhtCertificateFileName { get; set; }
 }

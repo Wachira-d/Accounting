@@ -69,10 +69,16 @@ public class PlatformPayLinkController : ControllerBase
         var (linkId, buyerId, documentId) = target.Value;
         var actor = $"paylink:{linkId}";
         await _links.EnforcePolicyAsync(linkId, buyerId, documentId, policyAccepted, policyVersionShown, Ip, Request.Headers.UserAgent.ToString(), ct);
-        // ฝ่ายค้าน N3: เก็บ/ตรวจไฟล์ก่อนสร้างรายการ
+        // ฝ่ายค้าน N3 + รอบสุดท้าย 5: ตรวจว่าแจ้งได้ก่อน → เก็บไฟล์ → สร้างรายการ · สร้างไม่สำเร็จ ⇒ ลบไฟล์ที่เก็บ
+        await subs.EnsureInvoicePayableAsync(buyerId, documentId);
         var stored = await SubscriptionSlipUpload.StoreAsync(file!, images, env);
-        var payment = await subs.SubmitInvoicePaymentAsync(buyerId, documentId,
-            new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes, withholdingTaxAmount), actor);
+        Models.DTOs.Subscription.SubscriptionPaymentResponse payment;
+        try
+        {
+            payment = await subs.SubmitInvoicePaymentAsync(buyerId, documentId,
+                new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes, withholdingTaxAmount), actor);
+        }
+        catch { SubscriptionSlipUpload.DeleteStored(stored); throw; }
         var result = await SubscriptionSlipUpload.AttachAsync(stored, payment.Id, actor, subs, slipOcr, logger);
         await _links.RecordPaymentAuditAsync(linkId, buyerId, payment.Id, result.PaymentNumber, Ip, ct);
         return Ok(new ApiResponse<object>(true, new { result.PaymentNumber, result.Amount },
@@ -111,6 +117,26 @@ public class PlatformPayLinkController : ControllerBase
             }));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ผู้จ่ายผ่านลิงก์ส่งหนังสือรับรอง 50 ทวิ ของรายการล่าสุดของใบนี้ที่หักภาษี (สิทธิ์ = โทเคน · ลิงก์ต้องยังไม่ถูกเพิกถอน/หมดอายุ)</summary>
+    [HttpPost("wht-certificate")]
+    [RequestSizeLimit(SubscriptionSlipUpload.MaxBytes + 1024 * 1024)]
+    public async Task<IActionResult> WhtCertificate(string token, IFormFile? file, [FromServices] ISubscriptionService subs,
+        [FromServices] IImageProcessingService images, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    {
+        if (!await AllowedAsync("pay", token, ct)) return TooMany();
+        if (SubscriptionSlipUpload.Reject(file) is string bad) return BadRequest(new ApiResponse<object>(false, null, bad));
+        var target = await _links.WhtCertificateTargetAsync(token, ct);
+        if (target == null) return Missing();
+        var stored = await SubscriptionSlipUpload.StoreAsync(file!, images, env);
+        try
+        {
+            var r = await subs.AttachWhtCertificateAsync(target.Value.BuyerCompanyId, target.Value.PaymentId, stored.FileName, $"paylink:{target.Value.LinkId}");
+            await _links.RecordPaymentAuditAsync(target.Value.LinkId, target.Value.BuyerCompanyId, r.Id, r.PaymentNumber, Ip, ct);
+            return Ok(new ApiResponse<object>(true, new { r.PaymentNumber }, "ส่งหนังสือรับรองแล้ว — ผู้ดูแลระบบ NextAcc จะตรวจสอบ"));
+        }
+        catch { SubscriptionSlipUpload.DeleteStored(stored); throw; }
     }
 
     /// <summary>สถานะสดของรายการชำระออนไลน์ที่เริ่มจากลิงก์นี้ (เฉพาะรายการที่บริษัทผู้ซื้อของลิงก์เป็นผู้จ่าย)</summary>
