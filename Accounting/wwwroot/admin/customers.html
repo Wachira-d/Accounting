@@ -75,6 +75,7 @@
   <script src="/admin/admin-api.js"></script>
   <script src="/admin/admin-layout.js"></script>
   <script src="/admin/company-usage-audit.js"></script>
+  <script src="/admin/notify-quota-admin.js"></script>
   <script>
     AdminLayout.init('customers');
     let currentPage = 1;
@@ -383,6 +384,9 @@
                 </div>
                 ` : ''}
 
+                <!-- รอบ 213: เพดานข้อความช่องกลางเฉพาะบริษัท + ยอดใช้/โบนัส (/admin/notify-quota-admin.js · เซิร์ฟเวอร์ประกอบสรุป) -->
+                <div id="nqaCompany" style="margin-top:12px"></div>
+
                 <div class="action-card">
                   <h4>💳 การเงิน</h4>
                   <div class="action-row" style="flex-wrap:wrap;gap:8px">
@@ -517,6 +521,7 @@
       // Populate the License dropdown only when the company is NOT attached —
       // the select element only exists in that branch of the template.
       if (!ap) loadAttachLicenseOptions();
+      if (typeof NotifyQuotaAdmin !== 'undefined') NotifyQuotaAdmin.mount(document.getElementById('nqaCompany'), c.id);
     }
 
     // current = undefined/null แปลว่าเซิร์ฟเวอร์ยังไม่ส่งค่า → ต้องบอกว่า “ไม่มีข้อมูล”

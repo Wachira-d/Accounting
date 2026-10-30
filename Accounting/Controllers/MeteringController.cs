@@ -328,7 +328,8 @@ public class MeteringController : ControllerBase
 
         var actor = User.Identity?.Name ?? "unknown";
         var status = await _notifyQuota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader());
-        var msgs = req.Packs * Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack;
+        // รอบ 213: ขนาดแพ็กตั้งได้ที่หน้าแอดมิน ⇒ ใช้ขนาดที่มีผล (สถานะจาก NotifyQuotaPolicy.TopUpPack ตัวเดียวกับที่ให้โบนัส) ไม่ใช่ค่าคงที่
+        var msgs = req.Packs * status.PackSize;
         return Ok(new ApiResponse<NotifyQuotaStatus>(true, status,
             $"เพิ่มข้อความแจ้งเตือน {msgs} ข้อความแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));
     }

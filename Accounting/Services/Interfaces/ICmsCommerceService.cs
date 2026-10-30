@@ -79,4 +79,7 @@ public interface ICmsCommerceService
 
     /// <summary>รอบ 209 P2 — สวิตช์ร้านที่ตัดสินแล้ว (Helpers/CmsFeatureFlags) ให้คอนโทรลเลอร์ปฏิเสธฟังก์ชันที่ร้านปิด</summary>
     Task<Accounting.Helpers.CmsFeatureSet> GetFeatureFlagsAsync(Guid companyId, Guid siteId);
+
+    /// <summary>รอบ 213: ส่งซ้ำข้อความถึงลูกค้าที่ค้างเพราะโควตา (ยืนยันคำสั่งซื้อ/จัดส่ง/พร้อมรับ/ส่งมอบ) — ประกอบใหม่จากสถานะปัจจุบันผ่านเส้นเดิม · ผู้เรียกเดียว <c>CustomerNotifyResendService</c></summary>
+    Task<string?> ResendCustomerNotifyAsync(Guid companyId, Guid orderId, string eventKey);
 }

@@ -697,6 +697,7 @@ builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.
 builder.Services.AddScoped<IEntitlementService, EntitlementService>();
 builder.Services.AddScoped<IQuotaService, QuotaService>();
 builder.Services.AddScoped<INotifyQuotaService, NotifyQuotaService>();   // รอบ 212 แพ็ก A — โควตาข้อความช่องกลาง + กันส่งซ้ำ (BookingNotifier ตัวเดียวเรียก) · ซื้อแพ็ก notify.topup
+builder.Services.AddScoped<ICustomerNotifyResendService, Accounting.Services.Implementations.Cms.CustomerNotifyResendService>();   // รอบ 213 — ข้อความค้างเพราะโควตา + ส่งซ้ำหลังเติมโควตา (CustomerNotifyController)
 builder.Services.AddScoped<CmsLeadService>();
 builder.Services.AddScoped<ICmsCustomerService, CmsCustomerService>();
 builder.Services.AddScoped<ICmsRenderingService, CmsRenderingService>();

@@ -78,6 +78,9 @@ WATCHED = [
     # (มีแค่ [Authorize]) และเป็นขั้นที่ 2 ของเส้น "คีย์สวมเป็นเจ้าของ → ออกคีย์สิทธิ์เต็มไม่หมดอายุ" ·
     # ก่อนแก้ฟ้อง 7 จุด (settings · logo ×2 · stamp ×2 · number-series ×2) — api-keys ×2 มีด่านเจ้าของอยู่แล้ว
     "Accounting/Controllers/SettingsController.cs",
+    # เพิ่มรอบ 213 — "ส่งซ้ำข้อความถึงลูกค้า" ใช้โควตาที่บริษัทจ่ายเงินซื้อ + ส่งข้อความในนามร้าน · ค่าตั้งการแจ้งเตือนลูกค้าก็อยู่ที่นี่
+    # (มีด่าน RequirePermission ครบแล้ว — ratchet: ใส่ตอนที่ยังเขียว)
+    "Accounting/Controllers/CustomerNotifyController.cs",
     # เพิ่มรอบ 193 — ลงทะเบียน webhook = ส่งต่อเหตุการณ์การเงินทุกตัวของบริษัทออกไปข้างนอก · มีด่านเจ้าของครบแล้ว
     # (ratchet: ใส่ตอนที่ยังเขียว)
     "Accounting/Controllers/WebhookController.cs",

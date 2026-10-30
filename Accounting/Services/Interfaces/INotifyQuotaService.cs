@@ -48,8 +48,10 @@ public interface INotifyQuotaService
     /// <summary>ข้ามระดับ 80%/100% ⇒ ประทับครั้งเดียวต่องวด แล้วแจ้งเจ้าของ (ไม่โยน)</summary>
     Task AlertIfCrossedAsync(Guid companyId, NotifyReservation reservation, CancellationToken ct = default);
 
-    /// <summary>ปิดแถว claim (Sent/Failed/Suppressed) + ปล่อย lease · <paramref name="logId"/> null = ไม่มีแถว</summary>
-    Task CompleteAsync(Guid companyId, Guid? logId, string status, string? channel, string? source, bool metered, string? note, CancellationToken ct = default);
+    /// <summary>ปิดแถว claim (Sent/Failed/Suppressed) + ปล่อย lease · <paramref name="logId"/> null = ไม่มีแถว ·
+    /// <c>suppressReason</c> (รอบ 213) = รหัสเหตุของ <c>Helpers/NotifySuppressReason</c> เมื่อ <c>status</c> = Suppressed (อื่น ๆ ล้างเป็น null)</summary>
+    Task CompleteAsync(Guid companyId, Guid? logId, string status, string? channel, string? source, bool metered, string? note,
+        string? suppressReason = null, CancellationToken ct = default);
 
     Task<NotifyQuotaStatus> GetStatusAsync(Guid companyId, CancellationToken ct = default);
 

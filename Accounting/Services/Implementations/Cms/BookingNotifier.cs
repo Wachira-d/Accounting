@@ -60,13 +60,15 @@ public class BookingNotifier : IBookingNotifier
         return result.Result;
     }
 
-    private sealed record Delivery(BookingSendResult Result, string? Source, bool Metered);
+    /// <summary><c>SuppressReason</c> (รอบ 213) = รหัสเหตุระงับ (<see cref="NotifySuppressReason"/>) — หน้า "ข้อความที่ยังไม่ได้ส่ง" ใช้แยกแถวที่ส่งซ้ำได้</summary>
+    private sealed record Delivery(BookingSendResult Result, string? Source, bool Metered, string? SuppressReason = null);
 
     private async Task CompleteAsync(Guid companyId, Guid? logId, Delivery d, CancellationToken ct)
     {
         if (_quota == null || logId == null) return;
         var status = d.Result.Sent ? NotifyLogStatus.Sent : d.Result.IsSuppressed ? NotifyLogStatus.Suppressed : NotifyLogStatus.Failed;
-        await _quota.CompleteAsync(companyId, logId, status, d.Result.Channel, d.Source, d.Metered, d.Result.Error ?? d.Result.Warning, ct);
+        await _quota.CompleteAsync(companyId, logId, status, d.Result.Channel, d.Source, d.Metered, d.Result.Error ?? d.Result.Warning,
+            suppressReason: status == NotifyLogStatus.Suppressed ? d.SuppressReason : null, ct: ct);
     }
 
     private async Task<Delivery> DeliverAsync(CustomerNotifyRequest request, CancellationToken ct)
@@ -96,7 +98,7 @@ public class BookingNotifier : IBookingNotifier
         var settings = await LoadEmailSettingsAsync(companyId, ct);
         var emailPlan = CustomerNotifyChannel.EmailPlan(settings != null && _senders != null && settings.EmailConfigured, settings?.CustomerEmailFallback);
         var suppress = CustomerNotifyPolicy.SuppressReason(policy, hasEmail, hasLine, emailPlan);
-        if (suppress != null) return new Delivery(BookingSendResult.Suppressed(suppress), null, false);
+        if (suppress != null) return new Delivery(BookingSendResult.Suppressed(suppress), null, false, NotifySuppressReason.OfPolicyText(suppress));
 
         // 3) ลำดับขั้น + ช่องจริง (OA ที่ push ใช้ = ตัวตัดสินเดียวกับ LineNotifyService)
         // รอบ 212 แพ็ก B: คำเชิญผูกใหม่ผ่าน OA เดิม (NextAcc) — userId ผูกกับ OA กลาง ⇒ scope กลาง (นับโควตา) + ถือเป็นช่องที่ลูกค้าผูกเอง (LINE ก่อน)
@@ -176,7 +178,7 @@ public class BookingNotifier : IBookingNotifier
 
         // เหลือแต่ช่องกลางที่โควตาเต็ม (ไม่มีขั้นอื่นที่ลองแล้วล้ม) ⇒ ระงับโดยตั้งใจ + บอกทางไปต่อ
         if (quotaFullLimit is int limit && errors.Count == 0)
-            return new Delivery(BookingSendResult.Suppressed(NotifyQuotaPolicy.FullReason(limit)), null, false);
+            return new Delivery(BookingSendResult.Suppressed(NotifyQuotaPolicy.FullReason(limit)), null, false, NotifySuppressReason.QuotaFull);
         if (quotaFullLimit is int limit2) errors.Add(NotifyQuotaPolicy.FullReason(limit2));
         if (errors.Count == 0) errors.Add("ไม่มีช่องทางที่ส่งได้");
         var all = string.Join(" · ", errors);

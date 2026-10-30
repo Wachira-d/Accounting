@@ -1,6 +1,7 @@
 // รอบ 212 แพ็ก A (คำตัดสินข้อ 171) — ส่วนกลางของหน้า ตั้งค่า / ตั้งค่าร้านค้า / การใช้งาน / แพ็กเกจ / ส่วนเสริม
 //   CustomerNotify.mountRules(el, { companyId, siteId })  ตาราง ประเภทข้อความ × LINE/อีเมล + ถอยไปอีเมลของระบบ (เฉพาะระดับบริษัท)
-//   CustomerNotify.mountQuota(el, { companyId })          การ์ดโควตาข้อความผ่านช่องกลาง + ปุ่มซื้อแพ็ก
+//   CustomerNotify.mountQuota(el, { companyId })          การ์ดโควตาข้อความผ่านช่องกลาง + ปุ่มซื้อแพ็ก + จำนวนข้อความค้างส่ง (รอบ 213)
+//   CustomerNotify.mountPending(el, { companyId, onChange }) รอบ 213: ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำ (ไม่ส่งเองโดยไม่กด)
 // เซิร์ฟเวอร์ส่งแคตตาล็อก · ป้าย · ค่าที่ resolve แล้ว · ข้อความเตือน (F2 #5) — ไฟล์นี้แสดงอย่างเดียว ไม่มีสำเนากติกา
 (function () {
   'use strict';
@@ -41,7 +42,8 @@
 
   function renderRules(el, data, opts) {
     var siteMode = data.scope === 'site';
-    var html = '<div style="font-size:12px;color:#64748b;margin-bottom:8px">' + esc(data.note) + '</div>';
+    var html = '<div style="font-size:12px;color:#64748b;margin-bottom:8px">' + esc(data.note)
+      + ' · <a href="' + PENDING_HREF + '" style="color:#2563eb">ข้อความที่ค้างส่งเพราะโควตาเต็ม / ส่งซ้ำ</a></div>';
     if (siteMode) html += '<div style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:8px">'
       + 'ค่าของเว็บ "' + esc(data.siteName) + '" ทับค่าของบริษัท · "ตามค่าที่สืบทอด" = ใช้ค่าของบริษัท</div>';
     html += '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
@@ -113,7 +115,31 @@
     }
   }
 
-  function renderQuota(el, q, opts) {
+  var PENDING_HREF = '/pages/addons.html#notifyPending';
+
+  // รอบ 213: บรรทัด "มีข้อความค้างส่ง N รายการ" ใต้การ์ดโควตา — หลังซื้อแพ็กถามว่าจะส่งตอนนี้ไหม (พาไปหน้าจัดการ · ไม่ส่งเองโดยไม่กด)
+  async function renderPendingLine(el, opts, afterTopUp) {
+    var box = el.querySelector('.cn-pending-line');
+    if (!box) return;
+    try {
+      var res = await API.get('/api/companies/' + opts.companyId + '/customer-notify/pending');
+      var d = res && res.data;
+      if (!d || !d.resendableCount) { box.innerHTML = ''; return; }
+      var href = opts.pendingHref || PENDING_HREF;
+      box.innerHTML = '<div style="margin-top:8px;font-size:13px;padding:8px 10px;border-radius:8px;'
+        + (afterTopUp ? 'background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46' : 'background:#fffbeb;border:1px solid #fde68a;color:#92400e') + '">'
+        + (afterTopUp ? '✅ เติมโควตาแล้ว · ' : '⏳ ')
+        + 'มีข้อความถึงลูกค้าค้างส่ง <b>' + Number(d.resendableCount).toLocaleString('th-TH') + '</b> รายการ'
+        + (afterTopUp ? ' — ส่งตอนนี้ไหม? ' : ' (ค้างเพราะโควตาเต็ม) ')
+        + '<a href="' + esc(href) + '" style="color:#2563eb;font-weight:600">' + (afterTopUp ? 'ไปเลือกส่งซ้ำ' : 'จัดการ / ส่งซ้ำ') + '</a></div>';
+      if (afterTopUp && typeof opts.onPendingPrompt === 'function') opts.onPendingPrompt(d);
+    } catch (e) {
+      // ไม่มีสิทธิ์/โหลดไม่ได้ ⇒ การ์ดโควตายังใช้ได้ — แต่บอกเหตุ ไม่เงียบ
+      box.innerHTML = '<div style="font-size:11px;color:#94a3b8;margin-top:6px">ตรวจข้อความค้างส่งไม่ได้: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  function renderQuota(el, q, opts, afterTopUp) {
     var limitText = q.unlimited ? 'ไม่จำกัด' : Number(q.effectiveLimit).toLocaleString('th-TH');
     var pct = q.unlimited || !q.effectiveLimit ? 0 : Math.min(100, Math.round(q.used * 100 / q.effectiveLimit));
     var color = q.warnLevel >= 2 ? '#dc2626' : q.warnLevel === 1 ? '#d97706' : '#16a34a';
@@ -130,13 +156,15 @@
         + Number(q.packSize).toLocaleString('th-TH') + ' ข้อความ · ' + Number(q.packPrice).toLocaleString('th-TH', { minimumFractionDigits: 2 })
         + ' บาท (ใช้ได้ ' + q.packValidDays + ' วัน)</button>';
     }
+    html += '<div class="cn-pending-line"></div>';
     el.innerHTML = html;
+    renderPendingLine(el, opts, !!afterTopUp);
     var btn = el.querySelector('.cn-topup');
     if (btn) btn.addEventListener('click', async function () {
       if (!confirm('ซื้อแพ็กข้อความเพิ่ม ' + q.packSize + ' ข้อความ? ค่าใช้จ่ายจะเข้าบิลรอบถัดไป')) return;
       try {
         var res = await API.post('/api/companies/' + opts.companyId + '/metering/notify-quota/topup', { packs: 1 });
-        if (res && res.data) renderQuota(el, res.data, opts);
+        if (res && res.data) renderQuota(el, res.data, opts, true);
         if (window.Layout && Layout.toast) Layout.toast((res && res.message) || 'เพิ่มข้อความแล้ว', 'success');
       } catch (e) {
         if (window.Layout && Layout.toast) Layout.toast(e.message || 'ซื้อแพ็กไม่สำเร็จ', 'error');
@@ -155,5 +183,103 @@
     }
   }
 
-  window.CustomerNotify = { mountRules: mountRules, mountQuota: mountQuota };
+  // ═════════ รอบ 213: ข้อความที่ยังไม่ได้ส่ง (ค้างเพราะโควตาเต็ม) ═════════
+  // เซิร์ฟเวอร์ตัดสินว่าแถวไหนส่งซ้ำได้ + เหตุ + ป้ายทุกตัว (CustomerNotifyResend.Evaluate) — ที่นี่แสดง/กรองการแสดงผล/ส่งรหัสที่เลือกเท่านั้น
+  function fmtDate(v) {
+    try { return new Date(v).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return String(v || ''); }
+  }
+
+  function renderPending(el, d, opts, state) {
+    state = state || { onlyResendable: true, eventKey: '' };
+    var items = d.items || [];
+    var events = [];
+    items.forEach(function (i) { if (!events.some(function (e) { return e.key === i.eventKey; })) events.push({ key: i.eventKey, label: i.eventLabel }); });
+    var shown = items.filter(function (i) {
+      return (!state.onlyResendable || i.resendable) && (!state.eventKey || i.eventKey === state.eventKey);
+    });
+    var q = d.quota;
+    var html = '<div style="font-weight:600;margin-bottom:4px">📭 ข้อความถึงลูกค้าที่ยังไม่ได้ส่ง (ค้างเพราะโควตาเต็ม)</div>'
+      + '<div style="font-size:12px;color:#64748b;margin-bottom:8px">ทั้งหมด ' + d.total + ' รายการ · ส่งซ้ำได้ <b>' + d.resendableCount + '</b> รายการ'
+      + (q ? ' · โควตาเหลือ ' + (q.unlimited ? 'ไม่จำกัด' : Number(q.remaining).toLocaleString('th-TH') + ' ข้อความ') : '')
+      + ' · ระบบประกอบข้อความใหม่จากสถานะล่าสุดของการจอง/คำสั่งซื้อ (ไม่ส่งเองจนกว่าจะกด)</div>';
+    if (d.hint) html += '<div style="font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:8px">'
+      + esc(d.hint) + ' · <a href="/pages/addons.html#notifyQuotaWrap" style="color:#2563eb">ซื้อแพ็กข้อความ</a></div>';
+    if (!items.length) {
+      el.innerHTML = html + '<div style="font-size:13px;color:#94a3b8">ไม่มีข้อความค้างส่ง</div>';
+      return;
+    }
+    html += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'
+      + '<select class="form-input cn-p-event" style="max-width:240px;padding:4px 6px" aria-label="กรองประเภทข้อความ"><option value="">ทุกประเภท</option>'
+      + events.map(function (e) { return '<option value="' + esc(e.key) + '"' + (e.key === state.eventKey ? ' selected' : '') + '>' + esc(e.label) + '</option>'; }).join('')
+      + '</select>'
+      + '<label style="font-size:13px;display:flex;gap:4px;align-items:center"><input type="checkbox" class="cn-p-only"' + (state.onlyResendable ? ' checked' : '') + '> เฉพาะที่ส่งซ้ำได้</label>'
+      + '<button type="button" class="btn btn-primary cn-p-send-sel">ส่งซ้ำที่เลือก</button>'
+      + '<button type="button" class="btn btn-outline cn-p-send-all"' + (d.resendableCount ? '' : ' disabled') + '>ส่งซ้ำทั้งหมดที่ส่งได้ (' + d.resendableCount + ')</button>'
+      + '</div>'
+      + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">'
+      + '<thead><tr style="text-align:left;border-bottom:1px solid #e2e8f0"><th style="padding:6px 8px;width:28px"><input type="checkbox" class="cn-p-all" aria-label="เลือกทั้งหมด"></th>'
+      + '<th>ประเภท</th><th>รายการ</th><th>เมื่อ</th><th>สถานะ</th></tr></thead><tbody>'
+      + (shown.length ? shown.map(function (i) {
+        return '<tr style="border-bottom:1px solid #f1f5f9">'
+          + '<td style="padding:6px 8px">' + (i.resendable ? '<input type="checkbox" class="cn-p-chk" data-id="' + esc(i.logId) + '" aria-label="เลือก">' : '') + '</td>'
+          + '<td>' + esc(i.eventLabel) + '</td>'
+          + '<td>' + esc(i.targetLabel) + '</td>'
+          + '<td style="white-space:nowrap">' + esc(fmtDate(i.createdAt)) + '</td>'
+          + '<td style="font-size:12px;color:' + (i.resendable ? '#15803d' : '#b91c1c') + '">' + (i.resendable ? '✓ ' : '✗ ') + esc(i.verdictLabel)
+          + (i.resendCount ? '<div style="color:#64748b">กดส่งซ้ำแล้ว ' + i.resendCount + ' ครั้ง</div>' : '') + '</td></tr>';
+      }).join('') : '<tr><td colspan="5" style="padding:10px;color:#94a3b8">ไม่มีรายการตามตัวกรอง</td></tr>')
+      + '</tbody></table></div><div class="cn-p-result" style="margin-top:8px"></div>';
+    el.innerHTML = html;
+
+    el.querySelector('.cn-p-event').addEventListener('change', function (ev) { state.eventKey = ev.target.value; renderPending(el, d, opts, state); });
+    el.querySelector('.cn-p-only').addEventListener('change', function (ev) { state.onlyResendable = ev.target.checked; renderPending(el, d, opts, state); });
+    var all = el.querySelector('.cn-p-all');
+    if (all) all.addEventListener('change', function () {
+      el.querySelectorAll('.cn-p-chk').forEach(function (c) { c.checked = all.checked; });
+    });
+
+    async function send(ids, btn) {
+      var buttons = el.querySelectorAll('.cn-p-send-sel, .cn-p-send-all');
+      buttons.forEach(function (b) { b.disabled = true; });
+      btn.textContent = 'กำลังส่ง…';
+      try {
+        var res = await API.post('/api/companies/' + opts.companyId + '/customer-notify/pending/resend', { logIds: ids });
+        var r = res && res.data;
+        await mountPending(el, opts, state);
+        var box = el.querySelector('.cn-p-result');
+        if (box && r) box.innerHTML = '<div style="font-size:13px;padding:8px 10px;border-radius:8px;'
+          + (r.stoppedForQuota ? 'background:#fef2f2;border:1px solid #fecaca;color:#991b1b' : 'background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46') + '">'
+          + esc(r.message) + (r.topUpUrl ? ' · <a href="' + esc(r.topUpUrl) + '" style="color:#2563eb;font-weight:600">ซื้อแพ็กข้อความ</a>' : '') + '</div>';
+        if (typeof opts.onChange === 'function') opts.onChange(r);
+      } catch (e) {
+        buttons.forEach(function (b) { b.disabled = false; });
+        if (window.Layout && Layout.toast) Layout.toast(e.message || 'ส่งซ้ำไม่สำเร็จ', 'error');
+      }
+    }
+    var sel = el.querySelector('.cn-p-send-sel');
+    sel.addEventListener('click', function () {
+      var ids = [];
+      el.querySelectorAll('.cn-p-chk:checked').forEach(function (c) { ids.push(c.getAttribute('data-id')); });
+      if (!ids.length) { if (window.Layout && Layout.toast) Layout.toast('เลือกรายการที่จะส่งซ้ำก่อน', 'warning'); return; }
+      if (!confirm('ส่งซ้ำ ' + ids.length + ' รายการ? จะใช้โควตาข้อความตามปกติ')) return;
+      send(ids, sel);
+    });
+    var allBtn = el.querySelector('.cn-p-send-all');
+    allBtn.addEventListener('click', function () {
+      if (!confirm('ส่งซ้ำทุกรายการที่ส่งได้ (' + d.resendableCount + ' รายการ)? จะใช้โควตาข้อความตามปกติ และหยุดเมื่อโควตาหมด')) return;
+      send([], allBtn);
+    });
+  }
+
+  async function mountPending(el, opts, state) {
+    if (!el || !opts || !opts.companyId) return;
+    try {
+      var res = await API.get('/api/companies/' + opts.companyId + '/customer-notify/pending');
+      renderPending(el, (res && res.data) || { items: [], total: 0, resendableCount: 0 }, opts, state);
+    } catch (e) {
+      el.innerHTML = '<div style="color:#b91c1c;font-size:13px">โหลดข้อความค้างส่งไม่สำเร็จ: ' + esc(e.message) + '</div>';
+    }
+  }
+
+  window.CustomerNotify = { mountRules: mountRules, mountQuota: mountQuota, mountPending: mountPending };
 })();

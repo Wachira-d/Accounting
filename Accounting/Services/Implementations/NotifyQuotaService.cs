@@ -136,7 +136,8 @@ public class NotifyQuotaService : INotifyQuotaService
         }
     }
 
-    public async Task CompleteAsync(Guid companyId, Guid? logId, string status, string? channel, string? source, bool metered, string? note, CancellationToken ct = default)
+    public async Task CompleteAsync(Guid companyId, Guid? logId, string status, string? channel, string? source, bool metered, string? note,
+        string? suppressReason = null, CancellationToken ct = default)
     {
         if (logId is not Guid id) return;
         // ฝ่ายค้านรอบ 212 S3: ปิดบังอีเมล/เบอร์/LINE userId ในหมายเหตุก่อนเก็บ (ตัวเดียว CustomerNotifyLogRule.Redact)
@@ -148,12 +149,13 @@ public class NotifyQuotaService : INotifyQuotaService
                 const string sql = """
                     UPDATE "CustomerNotifyLogs"
                     SET "Status" = @s, "Channel" = @ch, "Source" = @src, "Metered" = @m, "Note" = @n, "ClaimedUntil" = NULL,
+                        "SuppressReason" = CASE WHEN @s = 'Suppressed' THEN @sr ELSE NULL END,
                         "SentAt" = CASE WHEN @s = 'Sent' THEN now() ELSE "SentAt" END, "UpdatedAt" = now()
                     WHERE "Id" = @id AND "CompanyId" = @c;
                     """;
                 return await ExecAsync(db, sql, ct,
                     P("s", status, NpgsqlDbType.Varchar), P("ch", channel, NpgsqlDbType.Varchar), P("src", source, NpgsqlDbType.Varchar),
-                    P("m", metered, NpgsqlDbType.Boolean), P("n", trimmed, NpgsqlDbType.Varchar),
+                    P("m", metered, NpgsqlDbType.Boolean), P("n", trimmed, NpgsqlDbType.Varchar), P("sr", suppressReason, NpgsqlDbType.Varchar),
                     P("id", id, NpgsqlDbType.Uuid), P("c", companyId, NpgsqlDbType.Uuid));
             });
         }
@@ -362,6 +364,7 @@ public class NotifyQuotaService : INotifyQuotaService
         var bonusUsed = counter?.BonusUsed ?? 0;
         var bonusAlive = NotifyQuotaPolicy.BonusAlive(bonusRemaining, bonusExp, now);
         var limit = NotifyQuotaPolicy.EffectiveLimit(planLimit, bonusUsed, bonusRemaining, bonusExp, now);
+        var pack = await LoadPackAsync(_db, ct);
         decimal? price = null;
         if (_metering != null)
         {
@@ -384,9 +387,20 @@ public class NotifyQuotaService : INotifyQuotaService
             WarnLevel: NotifyQuotaPolicy.WarnLevel(used, limit),
             Message: limit < 0 ? null : NotifyQuotaPolicy.StatusMessage(used, limit),
             MeteredNote: NotifyQuotaPolicy.MeteredChannelsNote,
-            PackSize: AddOnCodes.MessagesPerNotifyTopUpPack,
+            PackSize: pack.Size,
             PackPrice: price,
-            PackValidDays: AddOnCodes.TopUpValidDays);
+            PackValidDays: pack.ValidDays);
+    }
+
+    /// <summary>รอบ 213: ขนาด/อายุแพ็ก <c>notify.topup</c> ที่แอดมินตั้ง (แถว <c>ApiFeatures</c> ของรหัสนี้) → ตัวตัดสินเดียว <see cref="NotifyQuotaPolicy.TopUpPack"/> ·
+    /// ไม่มีแถว/ไม่ได้ตั้ง ⇒ 500 ข้อความ 60 วัน (เดิม)</summary>
+    private static async Task<NotifyTopUpPack> LoadPackAsync(AccountingDbContext db, CancellationToken ct)
+    {
+        var row = await db.ApiFeatures.AsNoTracking()
+            .Where(f => f.FeatureCode == AddOnCodes.NotifyTopUp)
+            .Select(f => new { f.PackSize, f.PackValidDays })
+            .FirstOrDefaultAsync(ct);
+        return NotifyQuotaPolicy.TopUpPack(row?.PackSize, row?.PackValidDays);
     }
 
     // ───────────────────────── ซื้อแพ็กเพิ่ม ─────────────────────────
@@ -438,8 +452,10 @@ public class NotifyQuotaService : INotifyQuotaService
                 "NOTIFY-TOPUP");
         }
 
-        var granted = packs * AddOnCodes.MessagesPerNotifyTopUpPack;
-        var expires = nowUtc.AddDays(AddOnCodes.TopUpValidDays);
+        // รอบ 213: ขนาด/อายุแพ็กอ่าน ณ ตอนซื้อ (ใต้ล็อก) — แอดมินเปลี่ยนค่าแล้วมีผลกับการซื้อครั้งถัดไปเท่านั้น · โบนัสเดิมคงวันหมดอายุเดิม (GREATEST ด้านล่าง)
+        var pack = await LoadPackAsync(_db, ct);
+        var granted = packs * pack.Size;
+        var expires = nowUtc.AddDays(pack.ValidDays);
         // ฝ่ายค้านรอบ 212 B1: ให้โบนัสด้วย UPDATE เดียวใต้ล็อก (ไม่เขียนค่าสัมบูรณ์จาก entity ที่อ่านไว้ — เดิมสองการซื้อพร้อมกันได้ 500 จ่าย 2 แพ็ก ·
         // และการหักโบนัสของ TryReserveAsync ที่เกิดระหว่างนั้นถูกเขียนทับ) · โบนัสเดิมหมดอายุแล้ว ⇒ เริ่มนับใหม่ · อายุยาวที่สุดชนะ
         var updated = await _db.Database.ExecuteSqlRawAsync("""
@@ -459,7 +475,7 @@ public class NotifyQuotaService : INotifyQuotaService
             EntityId = sid.ToString(),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
-                action = "NotifyTopUp", packs, granted,
+                action = "NotifyTopUp", packs, granted, packSize = pack.Size, packValidDays = pack.ValidDays,
                 charged = res.ChargedAmount, usageEventId = res.UsageEventId,
                 expiresAt = expires, by = actor,
             }),

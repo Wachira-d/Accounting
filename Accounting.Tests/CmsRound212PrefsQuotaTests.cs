@@ -300,8 +300,10 @@ public class CmsRound212PrefsQuotaTests
         }
         public Task ReleaseAsync(Guid companyId, NotifyReservation reservation, CancellationToken ct = default) { Calls.Add("release"); return Task.CompletedTask; }
         public Task AlertIfCrossedAsync(Guid companyId, NotifyReservation reservation, CancellationToken ct = default) { Calls.Add("alert"); return Task.CompletedTask; }
-        public Task CompleteAsync(Guid companyId, Guid? logId, string status, string? channel, string? source, bool metered, string? note, CancellationToken ct = default)
-        { Calls.Add("complete:" + status); CompletedStatus = status; CompletedSource = source; return Task.CompletedTask; }
+        public string? CompletedSuppressReason { get; private set; }
+        public Task CompleteAsync(Guid companyId, Guid? logId, string status, string? channel, string? source, bool metered, string? note,
+            string? suppressReason = null, CancellationToken ct = default)
+        { Calls.Add("complete:" + status); CompletedStatus = status; CompletedSource = source; CompletedSuppressReason = suppressReason; return Task.CompletedTask; }
         public Task<NotifyQuotaStatus> GetStatusAsync(Guid companyId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null) => throw new NotSupportedException();
     }
@@ -405,6 +407,29 @@ public class CmsRound212PrefsQuotaTests
         Assert.Empty(calls.Log);
         Assert.Equal(NotifyLogStatus.Suppressed, q.CompletedStatus);
         Assert.Contains("alert", q.Calls);   // แจ้งเจ้าของระดับเต็ม (ประทับกันซ้ำที่บริการ)
+    }
+
+    [Fact]
+    public async Task Round213_suppress_reason_code_separates_quota_full_from_shop_switched_off()
+    {
+        // รอบ 213: หน้า "ข้อความที่ยังไม่ได้ส่ง" ต้องแยกแถวที่ค้างเพราะโควตา (ส่งซ้ำได้) ออกจากแถวที่ร้านปิดเอง (ส่งซ้ำไม่ได้)
+        var full = new FakeQuota { Full = true };
+        await Build(new Calls(), full).SendAsync(Req());
+        Assert.Equal(NotifySuppressReason.QuotaFull, full.CompletedSuppressReason);
+
+        var off = new FakeQuota();
+        var rOff = await Build(new Calls(), off, rules: new[] { new CustomerNotifyRuleRow(null, CustomerNotifyEvents.BookingConfirmed, false, false) })
+            .SendAsync(Req());
+        Assert.True(rOff.IsSuppressed);
+        Assert.Equal(NotifySuppressReason.EventOff, off.CompletedSuppressReason);
+        Assert.Equal(NotifySuppressReason.EventOff, NotifySuppressReason.OfPolicyText(CustomerNotifyPolicy.SuppressedByPolicyReason));
+        Assert.Equal(NotifySuppressReason.TenantOnly, NotifySuppressReason.OfPolicyText(CustomerNotifyPolicy.SuppressedTenantOnlyReason));
+
+        // ทิศตรงข้าม: ส่งถึง ⇒ ไม่มีรหัสเหตุ (คอลัมน์ถูกล้าง)
+        var ok = new FakeQuota();
+        await Build(new Calls(), ok).SendAsync(Req());
+        Assert.Equal(NotifyLogStatus.Sent, ok.CompletedStatus);
+        Assert.Null(ok.CompletedSuppressReason);
     }
 
     [Fact]

@@ -3475,7 +3475,9 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Source).HasMaxLength(24);
             e.Property(x => x.Status).HasMaxLength(16);
             e.Property(x => x.Note).HasMaxLength(500);
+            e.Property(x => x.SuppressReason).HasMaxLength(24);   // รอบ 213
             e.HasIndex(x => new { x.CompanyId, x.MessageKey }).IsUnique().HasDatabaseName("UX_CustomerNotifyLogs_Company_Key");
+            e.HasIndex(x => new { x.CompanyId, x.Status, x.CreatedAt }).HasDatabaseName("IX_CustomerNotifyLogs_Company_Status");   // รอบ 213: หน้าข้อความค้างส่ง
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<NotifyUsageCounter>(e =>

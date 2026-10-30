@@ -237,6 +237,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(CmsRound211LineNotifyStatements());   // รอบ 211 — ลูกค้าผูก LINE เอง (สมาชิก/การจอง/ออเดอร์) + ปลายทาง OA ของบริษัท (บล็อกท้ายไฟล์)
         list.AddRange(CmsRound212NotifyStatements());   // รอบ 212 — ค่าตั้งแจ้งลูกค้า · โควตาข้อความช่องกลาง · ตารางของแพ็ก B/C (บล็อกท้ายไฟล์ · แพ็ก A เป็นเจ้าของ)
         list.AddRange(Accounting.Helpers.CustomerRelinkMigration.Statements());   // รอบ 212 แพ็ก B — ความคืบหน้า/คีย์กันซ้ำของ LineOaSwitchEvents (ต้องอยู่หลังบล็อกของแพ็ก A)
+        list.AddRange(Accounting.Helpers.CustomerNotifyResendMigration.Statements());   // รอบ 213 — เหตุระงับ/ส่งซ้ำของ CustomerNotifyLogs + แพ็ก notify.topup ที่แอดมินตั้ง (หลังบล็อกรอบ 212)
         return list;
     }
 
