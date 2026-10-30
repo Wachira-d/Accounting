@@ -35,6 +35,15 @@
         <span class="hint" id="settingsMeta" style="font-size:12px;color:#64748b"></span>
       </div>
     </div>
+    <!-- ขั้น 2: ใบค้างทุกบริษัท + สถานะทวงหนี้ (ค่าทุกช่องจากเซิร์ฟเวอร์ · esc ทุกช่องข้อความ) -->
+    <div class="admin-card">
+      <div class="section-title">🧾 ใบแจ้งหนี้ค่าบริการที่ค้าง (ทุกบริษัท)</div>
+      <div id="openInvoices">กำลังโหลด...</div>
+    </div>
+    <div class="admin-card">
+      <div class="section-title">✉️ ใบแจ้งหนี้/แจ้งเตือนที่ส่ง (ส่งไม่ถึงขึ้นก่อน)</div>
+      <div id="notices">กำลังโหลด...</div>
+    </div>
   </div>
 
   <script src="/admin/admin-api.js"></script>
@@ -86,7 +95,48 @@
         } catch (err) { AdminLayout.toast(err.message, 'error'); }
       },
     };
+    PB.table = (rows, head, cells, empty) => !rows || rows.length === 0
+      ? `<div style="text-align:center;color:#94a3b8;padding:24px">${empty}</div>`
+      : `<div class="admin-table-wrap"><table class="admin-table"><thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+          <tbody>${rows.map(r => `<tr>${cells(r).map(c => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    PB.loadOpen = async function () {
+      const e = AdminLayout.esc, el = document.getElementById('openInvoices');
+      try {
+        const r = await AdminAPI.platformOpenInvoices();
+        if (!r.data.configured) { el.innerHTML = `<div class="pb-note warn">${e(r.message)}</div>`; return; }
+        this.openRows = r.data.rows;
+        el.innerHTML = this.table(r.data.rows, ['บริษัท', 'ใบ', 'ชนิด', 'ครบกำหนด', 'ค้าง', 'สถานะ', 'ทวงหนี้', ''],
+          x => [e(x.companyName), e(x.documentNumber), e(x.kindLabel), AdminLayout.date(x.dueDate), AdminLayout.money(x.balanceDue),
+            e(x.stateLabel), e((x.suspendedByDunning ? '⛔ ระงับโดยระบบ · ' : (x.wouldSuspendSince ? '⚠️ จะระงับ (โหมดเงา) · ' : '')) + (x.lastDunningAction || '-')),
+            `<div style="display:flex;gap:4px;flex-wrap:wrap">
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.evaluate('${e(x.buyerCompanyId)}')">ประเมิน</button>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.exempt('${e(x.buyerCompanyId)}')">พักระงับ</button>
+              ${PB.linkButton ? PB.linkButton(x) : ''}</div>`],
+          'ไม่มีใบค้าง 🎉');
+      } catch (err) { el.textContent = err.message; }
+    };
+    PB.loadNotices = async function () {
+      const e = AdminLayout.esc, el = document.getElementById('notices');
+      try {
+        const r = await AdminAPI.platformBillingNotices();
+        el.innerHTML = this.table(r.data, ['บริษัท', 'ข้อความ', 'ช่อง', 'ผล', 'รายละเอียด', 'เมื่อ'],
+          x => [e(x.companyName), e(x.messageKey), e(x.channel), e(x.status), e(x.detail || '-'), AdminLayout.date(x.createdAt)], 'ยังไม่มีการส่ง');
+      } catch (err) { el.textContent = err.message; }
+    };
+    PB.evaluate = async function (cid) {
+      try { const r = await AdminAPI.platformDunningEvaluate(cid); AdminLayout.toast(r.message || 'ประเมินแล้ว'); this.loadOpen(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.exempt = async function (cid) {
+      const days = parseInt(prompt('พักการระงับอัตโนมัติกี่วัน (1–90)?', '7') || '0', 10);
+      if (!days) return;
+      const reason = prompt('เหตุผล (บันทึกใน audit)') || '';
+      try { const r = await AdminAPI.platformDunningExempt(cid, days, reason); AdminLayout.toast(r.message || 'บันทึกแล้ว'); this.loadOpen(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
     PB.loadSettings();
+    PB.loadOpen();
+    PB.loadNotices();
   </script>
 </body>
 </html>

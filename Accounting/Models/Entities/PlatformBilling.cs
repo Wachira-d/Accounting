@@ -53,3 +53,38 @@ public class PlatformPurchaseAcceptance : BaseEntity
     public string? UserAgent { get; set; }
     public string EvidenceHash { get; set; } = "";
 }
+
+/// <summary>
+/// รอบ 219 เฟส 2 ขั้น 2 (G-7) — ใบแจ้งหนี้/แจ้งเตือนค่าบริการที่ส่งถึงผู้เช่า หนึ่งแถวต่อ (คีย์ข้อความ · ช่อง) — <b>unique</b> ⇒ ส่งได้ครั้งเดียวแม้หลายเครื่อง ·
+/// จองแถว (Claimed) ก่อนส่งแล้วประทับผลจริง Sent/Failed/Skipped + เหตุ (แอดมินเห็นที่ <c>/admin/platform-billing.html</c>)
+/// </summary>
+public class PlatformBillingNotice : BaseEntity
+{
+    public Guid BuyerCompanyId { get; set; }
+    public Guid? DocumentId { get; set; }
+    /// <summary><c>PlatformDunningPolicy.Key</c> / <c>CompanyKey</c></summary>
+    public string MessageKey { get; set; } = "";
+    /// <summary>email | line</summary>
+    public string Channel { get; set; } = "";
+    public string Status { get; set; } = "Claimed";
+    public string? Detail { get; set; }
+    public DateTime? SentAt { get; set; }
+}
+
+/// <summary>
+/// รอบ 219 เฟส 2 ขั้น 2 (G-8) — สถานะทวงหนี้ต่อบริษัทผู้เช่า: <b>watermark ต่อบริษัท</b> (<see cref="LastEvaluatedAt"/>) ของ <c>PlatformDunningJob</c> ·
+/// ระบบระงับเอง (<see cref="SuspendedByDunningAt"/> + สถานะก่อนระงับ — คืนได้ถูกต้อง · ระงับด้วยเหตุอื่นไม่ถูกแตะ) · "จะระงับ" ในโหมดเงา ·
+/// แอดมินพักการระงับ (<see cref="SuspendExemptUntil"/>)
+/// </summary>
+public class PlatformDunningState : BaseEntity
+{
+    public Guid CompanyId { get; set; }
+    public DateTime? LastEvaluatedAt { get; set; }
+    public decimal OverdueAmount { get; set; }
+    public DateTime? OldestOverdueDueDate { get; set; }
+    public DateTime? SuspendedByDunningAt { get; set; }
+    public Accounting.Models.Enums.SubscriptionStatus? StatusBeforeSuspend { get; set; }
+    public DateTime? WouldSuspendSince { get; set; }
+    public DateTime? SuspendExemptUntil { get; set; }
+    public string? LastAction { get; set; }
+}

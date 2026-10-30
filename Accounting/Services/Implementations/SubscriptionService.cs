@@ -23,8 +23,10 @@ public class SubscriptionService : ISubscriptionService
 
     public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
         INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null,
-        ISubscriptionGateShadowLog? shadowLog = null, ILogger<SubscriptionService>? logger = null)
+        ISubscriptionGateShadowLog? shadowLog = null, ILogger<SubscriptionService>? logger = null,
+        IPlatformDunningService? dunning = null)
     {
+        _dunning = dunning;
         _db = db;
         _logger = logger;
         _notificationService = notificationService;
@@ -35,6 +37,9 @@ public class SubscriptionService : ISubscriptionService
 
     /// <summary>รอบ 201 ทีม PL (C-3): ที่บันทึก "จะถูกปิด" ของด่านเจ้าของปิดฟีเจอร์ระดับ service (โหมดเงา) · null ในเทสต์ที่สร้างเอง</summary>
     private readonly ISubscriptionGateShadowLog? _shadowLog;
+
+    /// <summary>รอบ 219 เฟส 2 ขั้น 2: ประเมินค้างชำระใหม่หลังอนุมัติการชำระ (คืนสถานะที่ระบบระงับเพราะค้างชำระทันที) · null ในเทสต์ที่สร้างเอง</summary>
+    private readonly IPlatformDunningService? _dunning;
 
     /// <summary>duplicate audit #7 phase 2: route subscription notification ผ่าน
     /// NotificationEngine (production) → กลับไป NotificationService legacy
@@ -2370,6 +2375,12 @@ public class SubscriptionService : ISubscriptionService
             else
                 await _billing.GenerateReceiptForApprovedPaymentAsync(payment.Id);
         }
+        // รอบ 219 เฟส 2 ขั้น 2 (G-8): ชำระแล้ว ⇒ ประเมินค้างชำระของบริษัทนี้ใหม่ทันที (ไม่รอรอบงาน) — ระบบระงับไว้เพราะค้างชำระและไม่มีใบเกินผ่อนผันแล้ว ⇒ คืนสถานะ
+        if (payment.Status == SubscriptionPaymentStatus.Approved && _dunning != null)
+        {
+            try { await _dunning.EvaluateCompanyAsync(payment.Subscription.CompanyId, sendReminders: false); }
+            catch (Exception ex) { _logger?.LogError(ex, "ประเมินค้างชำระหลังอนุมัติ {Payment} ไม่สำเร็จ — งานทวงหนี้จะประเมินรอบถัดไป", payment.Id); }
+        }
 
         return MapPaymentToResponse(payment);
     }
@@ -2558,6 +2569,7 @@ public class SubscriptionService : ISubscriptionService
     public async Task ProcessExpiredSubscriptionsAsync()
     {
         var now = DateTime.UtcNow;
+        var autoSuspend = (await PlatformBillingSettingsService.LoadPolicyAsync(_db)).AutoSuspendEnabled;
 
         // รอบ 219 เฟส 0 (G-0): ดาวน์เกรด/เปลี่ยนรอบที่ถึงวันมีผล — ใช้สิทธิ์ของแพ็กเกจใหม่ (ApplyTemplate ตัวเดียวกับการอนุมัติชำระ)
         var dueChanges = await _db.Subscriptions
@@ -2615,7 +2627,8 @@ public class SubscriptionService : ISubscriptionService
         foreach (var sub in pastDue)
         {
             var deactivationDate = sub.EndDate.AddDays(sub.DeactivationDaysAfterExpiry);
-            if (now >= deactivationDate)
+            // รอบ 219 เฟส 2 ขั้น 2 (คำตัดสินข้อ 180): สวิตช์ "ระงับอัตโนมัติ" ของแอดมินครอบเส้นหมดอายุด้วย (ปิด = คง PastDue ให้แอดมินตามเอง) · ค่าตั้งต้นเปิด = พฤติกรรมเดิม
+            if (now >= deactivationDate && autoSuspend)
             {
                 sub.Status = SubscriptionStatus.Suspended;
 

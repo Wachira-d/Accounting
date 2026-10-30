@@ -5,6 +5,7 @@ using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -232,5 +233,104 @@ public class PlatformBillingPhase2DbTests
             var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id);
             Assert.Equal(endBefore.AddMonths(1), after.EndDate);   // ต่อจากวันหมดอายุเดิม (ไม่เสียวันที่จ่ายไปแล้ว)
         });
+    }
+
+    // ═══════════════ ขั้น 2: dunning + ส่งใบ ═══════════════
+
+    private static ISubscriptionGateShadowLog Gate(SubscriptionEnforcementMode mode) =>
+        F4Proxy<ISubscriptionGateShadowLog>.Create((name, _) => name == nameof(ISubscriptionGateShadowLog.ReadAdminSwitchAsync)
+            ? new SubscriptionAdminSwitchRead(mode, SubscriptionAdminSwitchSource.Stored) : null);
+
+    private sealed class CountingNotifier : IPlatformBillingNotifier
+    {
+        public readonly List<string> Keys = new();
+        public Task InvoiceIssuedAsync(Guid buyerCompanyId, Guid invoiceDocumentId, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<int> SendAsync(Guid buyerCompanyId, Guid? documentId, string messageKey, string subject, string body, CancellationToken ct = default)
+        { Keys.Add(messageKey); return Task.FromResult(1); }
+    }
+
+    private static IConfiguration EmptyConfig() => new ConfigurationBuilder().Build();
+
+    [Fact]
+    public async Task Dunning_suspends_in_enforce_shadow_records_only_and_restores_after_payment()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var f = await SeedAsync(db);
+        var inv = await InvoiceAsync(db, f, PlatformInvoiceRules.UsageReferencePrefix + "OLD", 300m, DateTime.UtcNow.AddDays(-20));
+
+        await WithPlatformTenantAsync(db, f.PlatformId, async () =>
+        {
+            var notifier = new CountingNotifier();
+            // โหมดเงา ⇒ "จะระงับ" อย่างเดียว · สถานะไม่ขยับ
+            var shadow = new PlatformDunningService(db, notifier, Gate(SubscriptionEnforcementMode.Shadow), EmptyConfig(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformDunningService>.Instance);
+            var r1 = await shadow.EvaluateCompanyAsync(f.BuyerId, sendReminders: true);
+            Assert.Equal(DunningAction.WouldSuspend, r1!.Action);
+            Assert.Equal(SubscriptionStatus.Active, (await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id)).Status);
+            Assert.Contains(notifier.Keys, k => k == PlatformDunningPolicy.Key(inv.Id, "after", 7));
+
+            // บังคับ ⇒ ระงับจริง + ประวัติ + audit chain
+            var enforce = new PlatformDunningService(db, notifier, Gate(SubscriptionEnforcementMode.Enforce), EmptyConfig(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformDunningService>.Instance);
+            var r2 = await enforce.EvaluateCompanyAsync(f.BuyerId, sendReminders: false);
+            Assert.Equal(DunningAction.Suspend, r2!.Action);
+            Assert.Equal(SubscriptionStatus.Suspended, (await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id)).Status);
+            Assert.True(await db.AuditLogs.AnyAsync(a => a.CompanyId == f.BuyerId && a.NewValues!.Contains(PlatformDunningService.RuleSuspend)));
+
+            // ชำระครบ ⇒ คืนสถานะ (Active — รอบยังไม่หมด)
+            var doc = await db.Documents.FirstAsync(d => d.Id == inv.Id);
+            doc.BalanceDue = 0m; doc.PaidAmount = 300m; doc.Status = DocumentStatus.Paid;
+            await db.SaveChangesAsync();
+            var r3 = await enforce.EvaluateCompanyAsync(f.BuyerId, sendReminders: false);
+            Assert.Equal(DunningAction.Restore, r3!.Action);
+            Assert.Equal(SubscriptionStatus.Active, (await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id)).Status);
+            Assert.Null((await db.PlatformDunningStates.AsNoTracking().SingleAsync(s => s.CompanyId == f.BuyerId)).SuspendedByDunningAt);
+        });
+    }
+
+    [Fact]
+    public async Task Dunning_does_not_touch_suspension_by_other_cause_and_admin_exemption_restores()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var other = await SeedAsync(db, status: SubscriptionStatus.Suspended);
+        await InvoiceAsync(db, other, PlatformInvoiceRules.UsageReferencePrefix + "X", 300m, DateTime.UtcNow.AddDays(-30));
+        var f = await SeedAsync(db, other.PlatformId);
+        await InvoiceAsync(db, f, PlatformInvoiceRules.UsageReferencePrefix + "Y", 300m, DateTime.UtcNow.AddDays(-30));
+
+        await WithPlatformTenantAsync(db, f.PlatformId, async () =>
+        {
+            var svc = new PlatformDunningService(db, new CountingNotifier(), Gate(SubscriptionEnforcementMode.Enforce), EmptyConfig(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformDunningService>.Instance);
+            // ระงับโดยแอดมินอยู่ก่อน ⇒ ระบบไม่ถือว่าเป็นของตน (จ่ายแล้วก็ไม่ปลดให้เอง)
+            var r = await svc.EvaluateCompanyAsync(other.BuyerId, false);
+            Assert.Equal(DunningAction.None, r!.Action);
+            Assert.Null((await db.PlatformDunningStates.AsNoTracking().SingleAsync(s => s.CompanyId == other.BuyerId)).SuspendedByDunningAt);
+
+            Assert.Equal(DunningAction.Suspend, (await svc.EvaluateCompanyAsync(f.BuyerId, false))!.Action);
+            await Assert.ThrowsAsync<BusinessRuleException>(() => svc.ExemptAsync(f.BuyerId, 7, " ", new PlatformBillingActor(null, "a@x", null)));
+            await svc.ExemptAsync(f.BuyerId, 7, "ลูกค้าแจ้งโอนแล้วรอตรวจ", new PlatformBillingActor(null, "a@x", null));
+            Assert.Equal(SubscriptionStatus.Active, (await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id)).Status);
+            // ระหว่างพัก ⇒ ไม่ระงับซ้ำ
+            Assert.Equal(DunningAction.None, (await svc.EvaluateCompanyAsync(f.BuyerId, false))!.Action);
+        });
+    }
+
+    [Fact]
+    public async Task Notifier_claims_each_key_once_per_channel()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var f = await SeedAsync(db);
+        var notifier = new PlatformBillingNotifier(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformBillingNotifier>.Instance);
+        var key = "test:" + Guid.NewGuid().ToString("N");
+        await notifier.SendAsync(f.BuyerId, null, key, "หัวข้อ", "เนื้อความ");
+        await notifier.SendAsync(f.BuyerId, null, key, "หัวข้อ", "เนื้อความ");   // ซ้ำ ⇒ ไม่จองแถวใหม่
+        var rows = await db.PlatformBillingNotices.AsNoTracking().Where(n => n.MessageKey == key).ToListAsync();
+        Assert.True(rows.Count <= 2);   // ≤ 1 แถวต่อช่อง (อีเมล + LINE ตามค่าตั้ง)
+        Assert.Equal(rows.Count, rows.Select(r => r.Channel).Distinct().Count());
+        // ไม่มีบริการอีเมล/LINE ⇒ ประทับ "ข้าม" พร้อมเหตุ (ไม่ใช่ "ส่งแล้ว")
+        Assert.All(rows, r => Assert.Equal(PlatformBillingNotifier.StatusSkipped, r.Status));
     }
 }

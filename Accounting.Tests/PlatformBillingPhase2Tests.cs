@@ -190,4 +190,71 @@ public class PlatformBillingPhase2Tests
         Assert.Equal(PdpaConsentEvidence.EvidenceCheck.Invalid, PdpaConsentEvidence.Check(hash, "owner@example.com", PlatformPurchaseTerms.Purpose,
             "2020-01-01.1", at, "billing-center", "1.2.3.4", "UA"));
     }
+
+    // ═══ ขั้น 2: dunning (pure) ═══
+
+    private static DunningInvoice Inv(int dueInDays, int issuedDaysAgo = 10, decimal bal = 500m, bool excluded = false) =>
+        new(Guid.NewGuid(), "INV-1", Now.AddDays(dueInDays), Now.AddDays(-issuedDaysAgo), bal, excluded);
+
+    [Fact]
+    public void Dunning_reminders_send_latest_crossed_threshold_only()
+    {
+        var p = PlatformBillingSettingsRules.Defaults;   // before 7,3,1 · after 1,3,7
+        Assert.Contains(PlatformDunningPolicy.RemindersFor(Inv(5), Now, p), r => r.Kind == "before" && r.Days == 7);
+        Assert.Contains(PlatformDunningPolicy.RemindersFor(Inv(2), Now, p), r => r.Kind == "before" && r.Days == 3);
+        Assert.DoesNotContain(PlatformDunningPolicy.RemindersFor(Inv(10), Now, p), r => r.Kind == "before");
+        Assert.Contains(PlatformDunningPolicy.RemindersFor(Inv(0), Now, p), r => r.Kind == "due");
+        // job หยุด 5 วัน: เกิน 5 วัน ⇒ ส่งเกณฑ์ล่าสุด (3) ฉบับเดียว ไม่ส่งย้อน 1
+        var late = PlatformDunningPolicy.RemindersFor(Inv(-5), Now, p).Where(r => r.Kind == "after").ToList();
+        Assert.Single(late);
+        Assert.Equal(3, late[0].Days);
+        // ทิศตรงข้าม: ใบที่มีสลิปรอตรวจ/ยอดศูนย์ ไม่ถูกทวง
+        Assert.Empty(PlatformDunningPolicy.RemindersFor(Inv(-5, excluded: true), Now, p));
+        Assert.Empty(PlatformDunningPolicy.RemindersFor(Inv(-5, bal: 0m), Now, p));
+    }
+
+    [Fact]
+    public void Dunning_issued_notice_once_for_recent_invoices_and_keys_are_stable()
+    {
+        var p = PlatformBillingSettingsRules.Defaults;
+        var fresh = Inv(5, issuedDaysAgo: 0);
+        var r = PlatformDunningPolicy.RemindersFor(fresh, Now, p);
+        Assert.Contains(r, x => x.Kind == "issued");
+        Assert.DoesNotContain(r, x => x.Kind == "before");   // วันออกใบไม่ส่งเตือนซ้อน
+        Assert.DoesNotContain(PlatformDunningPolicy.RemindersFor(Inv(5, issuedDaysAgo: 40), Now, p), x => x.Kind == "issued");
+        Assert.Equal(PlatformDunningPolicy.Key(fresh.DocumentId, "after", 3), PlatformDunningPolicy.Key(fresh.DocumentId, "after", 3));
+        Assert.NotEqual(PlatformDunningPolicy.Key(fresh.DocumentId, "after", 3), PlatformDunningPolicy.Key(fresh.DocumentId, "after", 7));
+    }
+
+    [Theory]
+    [InlineData(SubscriptionEnforcementMode.Enforce, true, DunningAction.Suspend)]
+    [InlineData(SubscriptionEnforcementMode.Shadow, true, DunningAction.WouldSuspend)]
+    [InlineData(SubscriptionEnforcementMode.Off, true, DunningAction.WouldSuspend)]
+    [InlineData(SubscriptionEnforcementMode.Enforce, false, DunningAction.None)]
+    public void Dunning_suspends_only_in_enforce_mode_with_auto_suspend(SubscriptionEnforcementMode mode, bool auto, DunningAction expected)
+    {
+        var p = PlatformBillingSettingsRules.Defaults with { AutoSuspendEnabled = auto };
+        var d = PlatformDunningPolicy.Decide(Now, new[] { Inv(-20) }, p, mode, SubscriptionStatus.Active, false, null);
+        Assert.Equal(expected, d.Action);
+    }
+
+    [Fact]
+    public void Dunning_grace_exemption_status_and_restore_directions()
+    {
+        var p = PlatformBillingSettingsRules.Defaults;   // ผ่อนผัน 14 วัน
+        var E = SubscriptionEnforcementMode.Enforce;
+        Assert.Equal(DunningAction.None, PlatformDunningPolicy.Decide(Now, new[] { Inv(-14) }, p, E, SubscriptionStatus.Active, false, null).Action);
+        Assert.Equal(DunningAction.Suspend, PlatformDunningPolicy.Decide(Now, new[] { Inv(-15) }, p, E, SubscriptionStatus.Active, false, null).Action);
+        // ใบที่มีสลิปรอตรวจไม่นับ · แอดมินพักการระงับ · ทดลองใช้/ยกเลิก/ระงับด้วยเหตุอื่น ไม่ถูกแตะ
+        Assert.Equal(DunningAction.None, PlatformDunningPolicy.Decide(Now, new[] { Inv(-30, excluded: true) }, p, E, SubscriptionStatus.Active, false, null).Action);
+        Assert.Equal(DunningAction.None, PlatformDunningPolicy.Decide(Now, new[] { Inv(-30) }, p, E, SubscriptionStatus.Active, false, Now.AddDays(3)).Action);
+        Assert.Equal(DunningAction.None, PlatformDunningPolicy.Decide(Now, new[] { Inv(-30) }, p, E, SubscriptionStatus.Trial, false, null).Action);
+        Assert.Equal(DunningAction.None, PlatformDunningPolicy.Decide(Now, new[] { Inv(-30) }, p, E, SubscriptionStatus.Suspended, false, null).Action);
+        // จ่ายแล้ว (ไม่มีใบเกินผ่อนผัน) + ระบบระงับไว้ ⇒ คืน · ระงับอยู่แล้วยังค้าง ⇒ คงเดิม
+        Assert.Equal(DunningAction.Restore, PlatformDunningPolicy.Decide(Now, Array.Empty<DunningInvoice>(), p, E, SubscriptionStatus.Suspended, true, null).Action);
+        Assert.Equal(DunningAction.None, PlatformDunningPolicy.Decide(Now, new[] { Inv(-30) }, p, E, SubscriptionStatus.Suspended, true, null).Action);
+        Assert.Equal(SubscriptionStatus.PastDue, PlatformDunningPolicy.RestoreStatus(SubscriptionStatus.Active, Now.AddDays(-1), Now, false));
+        Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.RestoreStatus(SubscriptionStatus.Active, Now.AddDays(10), Now, false));
+        Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.RestoreStatus(SubscriptionStatus.Active, Now.AddDays(-1), Now, true));
+    }
 }

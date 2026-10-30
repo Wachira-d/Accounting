@@ -53,6 +53,7 @@ public class UsageInvoicingJob : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         var issuer = scope.ServiceProvider.GetService<IPlatformBillingDocumentIssuer>();
         var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+        var issuedDocs = new List<(Guid Buyer, Guid DocumentId)>();
         var startedAt = DateTime.UtcNow;
 
         if (issuer == null || !await issuer.IsEnabledAsync())
@@ -158,10 +159,16 @@ public class UsageInvoicingJob : BackgroundService
 
             foreach (var r in rows) { r.BilledPeriod = period; r.BilledDocumentId = doc.DocumentId; }
             issued++;
+            issuedDocs.Add((group.Key.CompanyId, doc.DocumentId));
         }
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+
+        // รอบ 219 เฟส 2 ขั้น 2 (G-7): ส่งใบแจ้งหนี้ถึงผู้เช่า <b>หลัง commit</b> (ใบมีจริงแล้ว) — คีย์กันซ้ำต่อใบ · ล้ม = งานทวงหนี้ส่งตามให้รอบหน้า
+        var notifier = scope.ServiceProvider.GetService<Accounting.Services.Implementations.IPlatformBillingNotifier>();
+        if (notifier != null)
+            foreach (var (buyer, docId) in issuedDocs) await notifier.InvoiceIssuedAsync(buyer, docId, ct);
 
         var summary = $"ออกใบแจ้งหนี้ {issued} ใบ · ปิดรอบ prepaid {closedPrepaid} รายการ · ยกยอดต่ำกว่าเกณฑ์ {carried} รายการ";
         if (issued > 0 || closedPrepaid > 0) _logger.LogInformation("ปิดรอบบิลค่าใช้งาน: {Summary}", summary);

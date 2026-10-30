@@ -10,6 +10,10 @@
 | P2-06 | แจ้งชำระใบต่ออายุแล้วอนุมัติ | ต่อจากวันหมดอายุเดิม 1 รอบ | Db `Renewal_invoice_payment_extends_from_current_end_date` |
 | P2-07 | ศูนย์บิล: จ่ายไม่ได้เพราะอะไร · ป้ายรายการชำระ | ข้อความจากเซิร์ฟเวอร์ | `Billing_center_pay_refusal_reasons` · `Billing_center_payment_purpose_labels` |
 | P2-08 (มือ) | `/pages/billing.html` + `/admin/platform-billing.html` · อนุมัติใบใน `/admin/payments.html` แล้วดูใบใน tenant ผู้ให้บริการ | ใบเปลี่ยนเป็นชำระแล้ว (ไม่มีใบขายสดใหม่) · ใบเสร็จดาวน์โหลดได้ | มือ (ยังไม่ได้คอมไพล์ในเครื่องนี้) |
+| P2-09 | dunning: เกณฑ์ล่าสุดที่ข้าม · job หยุดหลายวัน · ใบมีสลิปรอตรวจ/ยอด 0 · ใบใหม่ · คีย์คงที่ | ส่งฉบับเดียวต่อเกณฑ์ · ไม่ส่งย้อน · ไม่ทวง · "ใบใหม่" ครั้งเดียว | `Dunning_reminders_send_latest_crossed_threshold_only` · `Dunning_issued_notice_once_for_recent_invoices_and_keys_are_stable` |
+| P2-10 | ระงับ: Enforce/Shadow/Off × ระงับอัตโนมัติเปิด/ปิด · ผ่อนผัน 14/15 วัน · พักระงับ · ทดลองใช้/ระงับเหตุอื่น · คืนสถานะ | Suspend / "จะระงับ" / ไม่แตะ · คืน Active หรือ PastDue | `Dunning_suspends_only_in_enforce_mode_with_auto_suspend` · `Dunning_grace_exemption_status_and_restore_directions` |
+| P2-11 | ฐานจริง: เงา ⇒ จะระงับ · บังคับ ⇒ ระงับ + audit · ชำระครบ ⇒ คืน · ระงับโดยแอดมินไม่ถูกแตะ · พักระงับ (เหตุผลบังคับ) | ตามนั้น | Db `Dunning_suspends_in_enforce_shadow_records_only_and_restores_after_payment` · `Dunning_does_not_touch_suspension_by_other_cause_and_admin_exemption_restores` |
+| P2-12 | ผู้ส่งข้อความ: คีย์เดิมสองครั้ง · ไม่มีบริการอีเมล/LINE | 1 แถวต่อช่อง · "ข้าม" พร้อมเหตุ (ไม่ใช่ "ส่งแล้ว") | Db `Notifier_claims_each_key_once_per_channel` |
 
 ## PB219 — อุดรั่วเงินค่าบริการ NextAcc เฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` · `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2)
 
@@ -359,7 +363,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **709 ไฟล์ · 7,349 `[Fact]` + 1,160 `[Theory]` (5,442 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **709 ไฟล์ · 7,355 `[Fact]` + 1,161 `[Theory]` (5,446 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |

@@ -79,6 +79,8 @@ public class AccountingDbContext : DbContext
     public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)
     public DbSet<PlatformBillingSettings> PlatformBillingSettings => Set<PlatformBillingSettings>();   // รอบ 219 เฟส 2 — ค่าตั้งการเรียกเก็บค่าบริการ NextAcc (แถวเดียว)
     public DbSet<PlatformPurchaseAcceptance> PlatformPurchaseAcceptances => Set<PlatformPurchaseAcceptance>();   // รอบ 219 เฟส 2 — หลักฐานติ๊กยอมรับเงื่อนไขการซื้อ (append-only)
+    public DbSet<PlatformBillingNotice> PlatformBillingNotices => Set<PlatformBillingNotice>();   // รอบ 219 เฟส 2 ขั้น 2 — ใบแจ้งหนี้/แจ้งเตือนที่ส่ง (unique คีย์+ช่อง)
+    public DbSet<PlatformDunningState> PlatformDunningStates => Set<PlatformDunningState>();   // รอบ 219 เฟส 2 ขั้น 2 — สถานะทวงหนี้ต่อบริษัท (watermark)
     public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม (ไม่มี CompanyId)
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
@@ -1053,6 +1055,24 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.IpAddress).HasMaxLength(45);
             e.Property(x => x.UserAgent).HasMaxLength(500);
             e.Property(x => x.EvidenceHash).HasMaxLength(100);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<PlatformBillingNotice>(e =>
+        {
+            e.HasIndex(x => new { x.MessageKey, x.Channel }).IsUnique().HasDatabaseName("UX_PlatformBillingNotices_Key_Channel");
+            e.HasIndex(x => new { x.BuyerCompanyId, x.CreatedAt }).HasDatabaseName("IX_PlatformBillingNotices_Buyer_CreatedAt");
+            e.Property(x => x.MessageKey).HasMaxLength(200);
+            e.Property(x => x.Channel).HasMaxLength(20);
+            e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.Detail).HasMaxLength(500);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PlatformDunningState>(e =>
+        {
+            e.HasIndex(x => x.CompanyId).IsUnique().HasDatabaseName("UX_PlatformDunningStates_Company");
+            e.Property(x => x.OverdueAmount).HasPrecision(18, 2);
+            e.Property(x => x.LastAction).HasMaxLength(300);
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 

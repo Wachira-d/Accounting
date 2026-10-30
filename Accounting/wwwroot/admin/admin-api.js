@@ -117,6 +117,10 @@ const AdminAPI = {
   // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บค่าบริการ NextAcc
   platformBillingSettings() { return this.get('/platform-billing/settings'); },
   savePlatformBillingSettings(body) { return this.put('/platform-billing/settings', body); },
+  platformOpenInvoices() { return this.get('/platform-billing/open-invoices'); },
+  platformBillingNotices() { return this.get('/platform-billing/notices'); },
+  platformDunningEvaluate(companyId) { return this.post(`/platform-billing/dunning/${companyId}/evaluate`, {}); },
+  platformDunningExempt(companyId, days, reason) { return this.post(`/platform-billing/dunning/${companyId}/exempt`, { days, reason }); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },

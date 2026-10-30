@@ -5946,4 +5946,6 @@ _รอบ 219 เฟส 2 ขั้น 1 (2026-10-30 · คำตัดสิ�
 ใบต่ออายุล่วงหน้าตามค่าตั้ง (เดิมค่าคงที่ 15) · ศูนย์บิลของผู้เช่า `/pages/billing.html` + `BillingCenterController` (ใต้ `/api/subscription` — ผู้ถูกระงับเข้าได้) ·
 แจ้งชำระใบแจ้งหนี้ (`SubmitInvoicePaymentAsync` · ยอดจากใบ · ติ๊กยอมรับ `PlatformPurchaseTerms` + `PlatformPurchaseAcceptances`) · อนุมัติ = ตัดชำระใบเดิม (`SettleInvoiceAsync` ·
 G-10 บนเส้นนี้) · ใบค่าใช้งานไม่ต่ออายุ · ช่องเสียบชำระออนไลน์ `IPlatformOnlinePaymentPort` (ค่าตั้งต้นยังไม่เปิด) · ตัวรับสลิปเดียว `SubscriptionSlipUpload` ·
-ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 801c62c7_
+
+_รอบ 219 เฟส 2 ขั้น 2 (2026-10-30 · คำตัดสินข้อ 180 · G-7/G-8) — ผู้ส่งใบ/แจ้งเตือนตัวเดียว `PlatformBillingNotifier` (อีเมลระบบ + LINE OA กลาง · คีย์กันซ้ำ `PlatformBillingNotices`) · `PlatformDunningJob` (JobLock · watermark ต่อบริษัท) + `PlatformDunningService` + ตัวตัดสิน pure `PlatformDunningPolicy` (ระงับจริงเฉพาะ Enforce · คืนสถานะหลังชำระ · พักการระงับโดยแอดมิน) · ใบต่ออายุ/ค่าใช้งานส่งผ่านผู้ส่งตัวเดียว · สวิตช์ระงับอัตโนมัติครอบเส้นหมดอายุ · หน้าแอดมินใบค้างทุกบริษัท/ข้อความที่ส่ง · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

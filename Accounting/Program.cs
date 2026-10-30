@@ -327,6 +327,8 @@ builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentServi
 builder.Services.AddScoped<IPlatformBillingSettingsService, PlatformBillingSettingsService>();
 builder.Services.AddScoped<IPlatformPayOptionsService, PlatformPayOptionsService>();
 builder.Services.AddScoped<IPlatformBillingCenterService, PlatformBillingCenterService>();
+builder.Services.AddScoped<IPlatformBillingNotifier, PlatformBillingNotifier>();   // ขั้น 2 — ส่งใบ/แจ้งเตือน (อีเมลระบบ + LINE OA กลาง · คีย์กันซ้ำ)
+builder.Services.AddScoped<IPlatformDunningService, PlatformDunningService>();     // ขั้น 2 — ทวงหนี้/ระงับ/คืนสถานะต่อบริษัท
 // ช่องเสียบชำระออนไลน์ของ NextAcc — ค่าตั้งต้น "ยังไม่เปิด" (โอน+สลิป) · part B (IPlatformPaymentService · Omise ของ NextAcc) ลงทะเบียน adapter ของตัวเอง
 // หลังบรรทัดนี้ (ตัวที่ลงทะเบียนทีหลังชนะ) — ดู Services/Implementations/PlatformPayOptions.cs
 builder.Services.AddScoped<IPlatformOnlinePaymentPort, UnconfiguredPlatformOnlinePayment>();
@@ -802,6 +804,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAud
 // ปิดรอบบิลค่าใช้งาน — รวม UsageEvent ที่ยังไม่ออกบิลเป็นใบแจ้งหนี้หลายบรรทัด
 // (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
 builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.PlatformDunningJob>();   // รอบ 219 เฟส 2 ขั้น 2 — ทวงหนี้ค่าบริการ NextAcc ทุกชั่วโมง (JobLock · watermark ต่อบริษัท)
 // ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)

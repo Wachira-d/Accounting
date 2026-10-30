@@ -26,11 +26,14 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
     public SaasBillingDocumentService(AccountingDbContext db, IPdfGenerationService pdf,
         IFileAttachmentService files, ILogger<SaasBillingDocumentService> logger,
-        IEmailService? email = null, IPlatformBillingDocumentIssuer? issuer = null)
+        IEmailService? email = null, IPlatformBillingDocumentIssuer? issuer = null, IPlatformBillingNotifier? notifier = null)
     {
         _db = db; _pdf = pdf; _files = files; _logger = logger; _email = email;
-        _issuer = issuer; _docPdf = pdf;
+        _issuer = issuer; _docPdf = pdf; _notifier = notifier;
     }
+
+    /// <summary>รอบ 219 เฟส 2 ขั้น 2: ผู้ส่งใบแจ้งหนี้ค่าบริการตัวเดียว (อีเมล + LINE · คีย์กันซ้ำ) — null = เส้นอีเมลเดิม</summary>
+    private readonly IPlatformBillingNotifier? _notifier;
 
     public async Task GenerateReceiptForApprovedPaymentAsync(Guid paymentId)
     {
@@ -337,7 +340,9 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                     sub.RenewalInvoiceForEndDate = sub.EndDate;
                     sub.RenewalInvoiceDocumentId = invoiced.DocumentId;
                     await _db.SaveChangesAsync();
-                    await SendInvoiceEmailAsync(sub.CompanyId, invoiced.DocumentNumber, amount, sub.EndDate);
+                    // รอบ 219 เฟส 2 ขั้น 2 (G-7): ใบจริงใน tenant ผู้ให้บริการ ⇒ ส่งผ่านผู้ส่งตัวเดียว (อีเมล + LINE · คีย์ "ใบใหม่" ต่อใบ — งานทวงหนี้ไม่ส่งซ้ำ)
+                    if (_notifier != null) await _notifier.InvoiceIssuedAsync(sub.CompanyId, invoiced.DocumentId);
+                    else await SendInvoiceEmailAsync(sub.CompanyId, invoiced.DocumentNumber, amount, sub.EndDate);
                     return invoiced.DocumentNumber;
                 }
                 _logger.LogWarning("ออกใบแจ้งหนี้ต่ออายุจริงไม่สำเร็จ (sub {Sub}) — ใช้ PDF เดี่ยวแทน", subscriptionId);
