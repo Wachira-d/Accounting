@@ -231,6 +231,9 @@
               <input class="form-control" id="fPackDays" type="number" min="1" step="1">
             </div>
           </div>
+          <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13px">
+            <input type="checkbox" id="fPackReset"> คืนค่าตั้งต้น (ล้างค่าที่ตั้งไว้)
+          </label>
           <div class="muted" id="packHint" style="font-size:12px;margin-top:6px"></div>
         </div>
 
@@ -401,8 +404,9 @@
         document.getElementById('packBox').style.display = this._packEditable ? '' : 'none';
         document.getElementById('fPackSize').value = f.packSize ?? '';
         document.getElementById('fPackDays').value = f.packValidDays ?? '';
+        document.getElementById('fPackReset').checked = false;
         document.getElementById('packHint').textContent = this._packEditable && f.effectivePack
-          ? `ที่มีผลตอนนี้: ${this.n(f.effectivePack.size)} ข้อความ · ใช้ได้ ${f.effectivePack.validDays} วัน — เว้นว่าง = ไม่เปลี่ยน · มีผลกับการซื้อครั้งถัดไปเท่านั้น (แพ็กที่ซื้อแล้วคงวันหมดอายุเดิม) · หน่วยบนใบแจ้งหนี้ปรับตามจำนวนให้อัตโนมัติ · ราคาต่อแพ็กตั้งที่บล็อก "ตั้งราคาใหม่" ด้านล่าง`
+          ? `ที่มีผลตอนนี้: ${this.n(f.effectivePack.size)} ข้อความ · ใช้ได้ ${f.effectivePack.validDays} วัน — เว้นว่าง = ไม่เปลี่ยน · มีผลกับการซื้อครั้งถัดไปเท่านั้น · อายุนับจากวันซื้อ และโบนัสคงเหลือทั้งก้อนใช้ได้ถึงวันหมดอายุที่ช้ากว่า (ไม่หดอายุของที่ซื้อแล้ว) · หน่วยบนใบแจ้งหนี้ปรับตามจำนวนให้อัตโนมัติ · ราคาต่อแพ็กตั้งที่บล็อก "ตั้งราคาใหม่" ด้านล่าง`
           : '';
         // ราคาเริ่มต้นว่างเสมอ — การเปิดฟอร์มต้องไม่กลายเป็นการตั้งราคาใหม่โดยไม่ตั้งใจ
         document.getElementById('pMethod').value = '';
@@ -439,6 +443,7 @@
             // รอบ 213: ส่งเฉพาะรายการที่เซิร์ฟเวอร์บอกว่าแก้ได้ · ว่าง = null = ไม่เปลี่ยน
             packSize: this._packEditable && document.getElementById('fPackSize').value !== '' ? +document.getElementById('fPackSize').value : null,
             packValidDays: this._packEditable && document.getElementById('fPackDays').value !== '' ? +document.getElementById('fPackDays').value : null,
+            resetPack: this._packEditable && document.getElementById('fPackReset').checked,
           });
 
           if (method) {

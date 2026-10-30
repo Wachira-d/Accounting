@@ -116,10 +116,22 @@ public static class NotifyQuotaPolicy
 
     /// <summary>ขนาด/อายุแพ็ก <c>notify.topup</c> ที่มีผลกับการซื้อครั้งนี้ — ค่าที่แอดมินตั้ง (<c>ApiFeature.PackSize/PackValidDays</c> ของ
     /// <c>notify.topup</c>) ชนะ · null/นอกช่วง ⇒ ค่าตั้งต้น <see cref="Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack"/> / <see cref="Models.Constants.AddOnCodes.TopUpValidDays"/>
-    /// (<c>documents.topup</c> ไม่อ่านค่านี้ — คงพฤติกรรมเดิม) · มีผลกับการซื้อครั้งถัดไปเท่านั้น (โบนัสเดิมคงวันหมดอายุเดิม)</summary>
+    /// (<c>documents.topup</c> ไม่อ่านค่านี้ — คงพฤติกรรมเดิม) · มีผลกับการซื้อครั้งถัดไปเท่านั้น · อายุนับจากวันซื้อ และโบนัสคงเหลือทั้งก้อนใช้ได้ถึง
+    /// <b>วันหมดอายุที่ช้ากว่า</b> (GREATEST ของเดิมกับใหม่ — ไม่หดอายุของที่ซื้อไว้แล้ว · ฝ่ายค้านรอบ 213 (e))</summary>
     public static NotifyTopUpPack TopUpPack(int? packSize, int? validDays)
         => new(packSize is int s && s >= MinPackSize && s <= MaxPackSize ? s : Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack,
                validDays is int d && d >= MinPackValidDays && d <= MaxPackValidDays ? d : Models.Constants.AddOnCodes.TopUpValidDays);
+
+    /// <summary>ฝ่ายค้านรอบ 213 S4: ข้อเสนอที่ผู้ซื้อเห็น (ขนาดแพ็ก/ราคา) ยังตรงกับของจริง ณ ตอนซื้อไหม — ไม่ตรง ⇒ คืนข้อความ (ผู้เรียกตอบ 409 + สถานะใหม่ ให้ยืนยันอีกครั้ง) ·
+    /// ผู้เรียกไม่ส่งค่าคาดหวัง (หน้าเก่าที่แคชไว้) ⇒ ไม่ตรวจ (null)</summary>
+    public static string? TopUpOfferChanged(int? expectedPackSize, decimal? expectedPrice, NotifyTopUpPack pack, decimal? currentPrice)
+    {
+        if (expectedPackSize is int s && s != pack.Size)
+            return $"ขนาดแพ็กเปลี่ยนเป็น {N(pack.Size)} ข้อความแล้ว — กรุณาตรวจรายละเอียดแล้วยืนยันอีกครั้ง (ยังไม่ได้คิดเงิน)";
+        if (expectedPrice is decimal p && p != (currentPrice ?? 0m))
+            return $"ราคาแพ็กเปลี่ยนเป็น {(currentPrice ?? 0m).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} บาทแล้ว — กรุณาตรวจรายละเอียดแล้วยืนยันอีกครั้ง (ยังไม่ได้คิดเงิน)";
+        return null;
+    }
 
     /// <summary>ตรวจค่าที่แอดมินส่งมา (null = ไม่เปลี่ยน) · คืนข้อความไทย หรือ null = ผ่าน</summary>
     public static string? ValidatePack(int? packSize, int? validDays)

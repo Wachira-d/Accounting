@@ -134,8 +134,9 @@
         + '<a href="' + esc(href) + '" style="color:#2563eb;font-weight:600">' + (afterTopUp ? 'ไปเลือกส่งซ้ำ' : 'จัดการ / ส่งซ้ำ') + '</a></div>';
       if (afterTopUp && typeof opts.onPendingPrompt === 'function') opts.onPendingPrompt(d);
     } catch (e) {
-      // ไม่มีสิทธิ์/โหลดไม่ได้ ⇒ การ์ดโควตายังใช้ได้ — แต่บอกเหตุ ไม่เงียบ
-      box.innerHTML = '<div style="font-size:11px;color:#94a3b8;margin-top:6px">ตรวจข้อความค้างส่งไม่ได้: ' + esc(e.message) + '</div>';
+      // ไม่มีสิทธิ์ค่าตั้งการแจ้งเตือน (403) ⇒ ไม่ใช่เรื่องของผู้ใช้คนนี้ ไม่แสดงบรรทัด · ล้มอย่างอื่น ⇒ บอกเหตุ ไม่เงียบ
+      box.innerHTML = e && e.status === 403 ? ''
+        : '<div style="font-size:11px;color:#94a3b8;margin-top:6px">ตรวจข้อความค้างส่งไม่ได้: ' + esc(e.message) + '</div>';
     }
   }
 
@@ -161,12 +162,25 @@
     renderPendingLine(el, opts, !!afterTopUp);
     var btn = el.querySelector('.cn-topup');
     if (btn) btn.addEventListener('click', async function () {
-      if (!confirm('ซื้อแพ็กข้อความเพิ่ม ' + q.packSize + ' ข้อความ? ค่าใช้จ่ายจะเข้าบิลรอบถัดไป')) return;
+      if (!confirm('ซื้อแพ็กข้อความเพิ่ม ' + Number(q.packSize).toLocaleString('th-TH') + ' ข้อความ ราคา '
+        + Number(q.packPrice).toLocaleString('th-TH', { minimumFractionDigits: 2 }) + ' บาท? ค่าใช้จ่ายจะเข้าบิลรอบถัดไป')) return;
+      btn.disabled = true;
       try {
-        var res = await API.post('/api/companies/' + opts.companyId + '/metering/notify-quota/topup', { packs: 1 });
+        // ฝ่ายค้านรอบ 213 S4: ส่งข้อเสนอที่เห็นไปด้วย — เซิร์ฟเวอร์เทียบใต้ล็อก ไม่ตรง ⇒ 409 (ยังไม่คิดเงิน)
+        var res = await API.post('/api/companies/' + opts.companyId + '/metering/notify-quota/topup',
+          { packs: 1, expectedPackSize: q.packSize, expectedPackPrice: q.packPrice });
         if (res && res.data) renderQuota(el, res.data, opts, true);
         if (window.Layout && Layout.toast) Layout.toast((res && res.message) || 'เพิ่มข้อความแล้ว', 'success');
+        // ฝ่ายค้านรอบ 213 (f): ข้อความค้างส่งบนหน้าเดียวกันต้องเห็นโควตาใหม่
+        if (typeof opts.onTopUp === 'function') opts.onTopUp(res && res.data);
       } catch (e) {
+        btn.disabled = false;
+        if (e && e.status === 409 && e.body && e.body.data) {
+          // ขนาด/ราคาเปลี่ยน ⇒ วาดข้อเสนอใหม่ให้เห็นก่อน แล้วให้ผู้ใช้กดยืนยันอีกครั้งเอง
+          renderQuota(el, e.body.data, opts, false);
+          if (window.Layout && Layout.toast) Layout.toast(e.message || 'ขนาด/ราคาแพ็กเปลี่ยน — กรุณาตรวจแล้วกดซื้ออีกครั้ง', 'warning');
+          return;
+        }
         if (window.Layout && Layout.toast) Layout.toast(e.message || 'ซื้อแพ็กไม่สำเร็จ', 'error');
       }
     });
@@ -241,18 +255,27 @@
     async function send(ids, btn) {
       var buttons = el.querySelectorAll('.cn-p-send-sel, .cn-p-send-all');
       buttons.forEach(function (b) { b.disabled = true; });
+      var original = btn.textContent;
       btn.textContent = 'กำลังส่ง…';
       try {
         var res = await API.post('/api/companies/' + opts.companyId + '/customer-notify/pending/resend', { logIds: ids });
         var r = res && res.data;
         await mountPending(el, opts, state);
         var box = el.querySelector('.cn-p-result');
+        // ฝ่ายค้านรอบ 213 S5: แสดงรายการที่ไม่สำเร็จ/ข้าม/กำลังส่ง พร้อมเหตุจากเซิร์ฟเวอร์ (แถวที่ล้มยังอยู่ในรายการให้ลองใหม่)
+        var labels = {}; (d.items || []).forEach(function (i) { labels[i.logId] = i.eventLabel + ' · ' + i.targetLabel; });
+        var problems = (r && r.items || []).filter(function (x) { return x.outcome !== 'sent'; });
         if (box && r) box.innerHTML = '<div style="font-size:13px;padding:8px 10px;border-radius:8px;'
-          + (r.stoppedForQuota ? 'background:#fef2f2;border:1px solid #fecaca;color:#991b1b' : 'background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46') + '">'
-          + esc(r.message) + (r.topUpUrl ? ' · <a href="' + esc(r.topUpUrl) + '" style="color:#2563eb;font-weight:600">ซื้อแพ็กข้อความ</a>' : '') + '</div>';
+          + (r.stoppedForQuota || r.failed ? 'background:#fef2f2;border:1px solid #fecaca;color:#991b1b' : 'background:#ecfdf5;border:1px solid #a7f3d0;color:#065f46') + '">'
+          + esc(r.message) + (r.topUpUrl ? ' · <a href="' + esc(r.topUpUrl) + '" style="color:#2563eb;font-weight:600">ซื้อแพ็กข้อความ</a>' : '')
+          + (problems.length ? '<ul style="margin:6px 0 0 18px;font-size:12px">' + problems.map(function (x) {
+              return '<li>' + esc(labels[x.logId] || x.logId) + ' — ' + esc(x.detail || x.outcome) + '</li>';
+            }).join('') + '</ul>' : '')
+          + '</div>';
         if (typeof opts.onChange === 'function') opts.onChange(r);
       } catch (e) {
         buttons.forEach(function (b) { b.disabled = false; });
+        btn.textContent = original;   // ฝ่ายค้านรอบ 213 (f): ปุ่มกลับเป็นข้อความเดิม
         if (window.Layout && Layout.toast) Layout.toast(e.message || 'ส่งซ้ำไม่สำเร็จ', 'error');
       }
     }

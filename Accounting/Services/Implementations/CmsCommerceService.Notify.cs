@@ -118,7 +118,7 @@ public partial class CmsCommerceService
             _ => (SiteOrderStatus?)null,
         };
         if (status is not SiteOrderStatus st) return CustomerNotifyResend.UnsupportedReason(eventKey);
-        await NotifyOrderStatusAsync(companyId, sid, orderId, st);
+        await NotifyOrderStatusAsync(companyId, sid, orderId, st, stampNotes: false);
         return null;
     }
 
@@ -142,7 +142,7 @@ public partial class CmsCommerceService
     }
 
     /// <summary>สถานะที่ลูกค้าควรรู้ (จัดส่งแล้ว · พร้อมให้รับ · ส่งมอบแล้ว) — สถานะอื่นไม่ส่ง</summary>
-    private async Task NotifyOrderStatusAsync(Guid companyId, Guid siteId, Guid orderId, SiteOrderStatus status)
+    private async Task NotifyOrderStatusAsync(Guid companyId, Guid siteId, Guid orderId, SiteOrderStatus status, bool stampNotes = true)
     {
         if (_shopNotifier == null) return;
         try
@@ -157,7 +157,8 @@ public partial class CmsCommerceService
             if (msg == null || eventKey == null) return;
             msg = await WithOrderLinkAsync(companyId, siteId, f, msg);
             var err = await _shopNotifier.NotifyCustomerAsync(companyId, siteId, eventKey, CustomerNotifyKeys.Order(orderId, eventKey), CustomerContactOf(f), msg);
-            if (err != null)
+            // ฝ่ายค้านรอบ 213 (a): ส่งซ้ำจากหน้าข้อความค้าง ⇒ ไม่ต่อหมายเหตุบนออเดอร์ทุกครั้งที่ลอง
+            if (err != null && stampNotes)
                 await StampOrderNotesAsync(companyId, siteId, orderId, new[] { CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow) });
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

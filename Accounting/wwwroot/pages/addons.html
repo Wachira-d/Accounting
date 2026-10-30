@@ -120,12 +120,13 @@
         await Promise.all([this.loadFeatures(), this.loadQuota(), this.loadMissions()]);
         if (window.CustomerNotify) {
           const quotaEl = document.getElementById('notifyQuotaCard');
-          CustomerNotify.mountQuota(quotaEl, { companyId: this.cid(), pendingHref: '#notifyPending' });
-          // ส่งซ้ำแล้ว ⇒ วาดการ์ดโควตาใหม่ (ยอดใช้เปลี่ยน) · ไม่มีการส่งเองโดยไม่กด
-          CustomerNotify.mountPending(document.getElementById('notifyPendingBody'), {
-            companyId: this.cid(),
-            onChange: () => CustomerNotify.mountQuota(quotaEl, { companyId: this.cid(), pendingHref: '#notifyPending' }),
-          });
+          const pendingEl = document.getElementById('notifyPendingBody');
+          // ซื้อแพ็กแล้ว ⇒ วาดรายการค้างส่งใหม่ (โควตาที่เหลือ/คำใบ้เปลี่ยน — ฝ่ายค้านรอบ 213 (f)) · ส่งซ้ำแล้ว ⇒ วาดการ์ดโควตาใหม่ · ไม่มีการส่งเองโดยไม่กด
+          const pendingOpts = { companyId: this.cid() };
+          const quotaOpts = { companyId: this.cid(), pendingHref: '#notifyPending', onTopUp: () => CustomerNotify.mountPending(pendingEl, pendingOpts) };
+          pendingOpts.onChange = () => CustomerNotify.mountQuota(quotaEl, quotaOpts);
+          CustomerNotify.mountQuota(quotaEl, quotaOpts);
+          CustomerNotify.mountPending(pendingEl, pendingOpts);
         }
       },
 

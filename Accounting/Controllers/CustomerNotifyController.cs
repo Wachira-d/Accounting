@@ -126,6 +126,9 @@ public class CustomerNotifyController : ControllerBase
     /// <summary>รายการข้อความค้างเพราะโควตาเต็ม (ย้อนหลัง 60 วัน) + ส่งซ้ำได้ไหมพร้อมเหตุ + โควตาตอนนี้ — เซิร์ฟเวอร์ตัดสินทั้งหมด
     /// (<see cref="CustomerNotifyResend.Evaluate"/>) · ไม่มีเนื้อข้อความ/ที่อยู่ติดต่อ</summary>
     [HttpGet("pending")]
+    // ฝ่ายค้านรอบ 213 (c): รายการมีเลขการจอง/ออเดอร์ + ใช้ตัดสินใจส่งข้อความ ⇒ ด่านเดียวกับหน้าค่าตั้ง/ส่งซ้ำ (แบบเดียวกับ GET ของ StaffDailySummaryController)
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ดูข้อความถึงลูกค้าที่ค้างส่ง")]
     public async Task<ActionResult<ApiResponse<CustomerNotifyPendingList>>> GetPending(Guid companyId,
         [FromServices] ICustomerNotifyResendService resend, CancellationToken ct)
         => Ok(new ApiResponse<CustomerNotifyPendingList>(true, await resend.ListAsync(companyId, ct)));

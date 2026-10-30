@@ -16,7 +16,9 @@ public record UsageRecordRequest(
     Guid? BranchId = null,
     Guid? ApiClientId = null,
     string? RefEntityType = null,
-    Guid? RefEntityId = null);
+    Guid? RefEntityId = null,
+    // ฝ่ายค้านรอบ 213 S3: หน่วยที่ลูกค้าซื้อ ณ ตอนนั้น (เช่น "แพ็ก 500 ข้อความ") — ใบแจ้งหนี้ใช้ค่านี้แทนป้ายปัจจุบันของฟีเจอร์ · null = ใช้ป้ายของฟีเจอร์ (เดิม)
+    string? UnitLabel = null);
 
 /// <summary>ผลการบันทึก — บอกด้วยว่าคิดเงินไปเท่าไรและทำไม</summary>
 /// <param name="Recorded">false = ไม่ได้บันทึกใหม่ (ซ้ำ/ฟีเจอร์ปิด/ไม่มีราคา)</param>

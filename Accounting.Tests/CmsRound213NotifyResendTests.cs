@@ -148,7 +148,10 @@ public class CmsRound213NotifyResendTests
         Assert.Contains("\"SuppressReason\" IS NULL", sql);   // รันซ้ำไม่ทับแถวที่มีรหัสแล้ว
         Assert.Contains(NotifySuppressReason.QuotaFull, sql);
         Assert.Contains(CustomerNotifyPolicy.SuppressedByPolicyReason.Replace("'", "''"), sql);
-        Assert.DoesNotContain("UPDATE \"ApiFeatures\"", sql);   // ไม่ตั้งแพ็กให้เอง (ค่าตั้งต้น = เดิม)
+        Assert.DoesNotContain("\"PackSize\" =", sql);   // ไม่ตั้งแพ็กให้เอง (ค่าตั้งต้น = เดิม)
+        // ฝ่ายค้าน S3: คอลัมน์หน่วย ณ ตอนซื้อ + เติมเฉพาะช่องว่างของ notify.topup เก่า (= แพ็ก 500)
+        Assert.Contains("\"UnitLabelSnapshot\" varchar(50)", sql);
+        Assert.Contains("'แพ็ก 500 ข้อความ' WHERE \"FeatureCode\" = 'notify.topup' AND \"UnitLabelSnapshot\" IS NULL", sql);
     }
 
     // ═════════ 5. แพ็ก notify.topup ที่แอดมินตั้ง + เพดานเฉพาะบริษัท ═════════
@@ -207,4 +210,73 @@ public class CmsRound213NotifyResendTests
         Assert.Equal(50, NotifyQuotaPolicy.PlanLimit(50, 300, 100, isTrial: false));
         Assert.Equal(NotifyQuotaPolicy.Unlimited, NotifyQuotaPolicy.PlanLimit(-1, 300, 100, isTrial: false));
     }
+
+    // ═════════ 6. ฝ่ายค้านรอบ 213 ═════════
+
+    [Fact]
+    public void S2_newer_message_to_the_same_target_supersedes_older_pending_ones()
+    {
+        Assert.True(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.BookingRescheduled, CustomerNotifyEvents.BookingRescheduled));
+        Assert.True(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.BookingRescheduled, CustomerNotifyEvents.BookingConfirmed));
+        Assert.True(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.BookingWaitlistPromoted, CustomerNotifyEvents.BookingConfirmed));
+        Assert.True(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.BookingCancelled, CustomerNotifyEvents.BookingRescheduled));
+        Assert.True(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.OrderDelivered, CustomerNotifyEvents.OrderShipped));
+        Assert.True(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.OrderShipped, CustomerNotifyEvents.OrderConfirmation));
+        // ทิศตรงข้าม: ข้อความเก่ากว่าไม่แทนของใหม่ · ยกเลิกไม่ถูกแทน (ลูกค้าต้องรู้)
+        Assert.False(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.BookingConfirmed, CustomerNotifyEvents.BookingRescheduled));
+        Assert.False(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.BookingConfirmed, CustomerNotifyEvents.BookingCancelled));
+        Assert.False(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.OrderShipped, CustomerNotifyEvents.OrderDelivered));
+        Assert.False(CustomerNotifyResend.Supersedes(CustomerNotifyEvents.OrderConfirmation, CustomerNotifyEvents.OrderShipped));
+    }
+
+    [Theory]
+    [InlineData(NotifyLogStatus.Suppressed, NotifySuppressReason.QuotaFull, false, 0, true)]
+    [InlineData(NotifyLogStatus.Suppressed, NotifySuppressReason.EventOff, false, 0, false)]
+    [InlineData(NotifyLogStatus.Claimed, NotifySuppressReason.QuotaFull, true, 1, true)]     // S6 ค้างกลางทางเกิน lease
+    [InlineData(NotifyLogStatus.Claimed, NotifySuppressReason.QuotaFull, false, 1, false)]   // กำลังส่งอยู่
+    [InlineData(NotifyLogStatus.Claimed, null, true, 0, false)]                               // ค้างจากเส้นปกติ (ไม่ใช่โควตา)
+    [InlineData(NotifyLogStatus.Failed, null, false, 1, true)]                                // S5 ส่งซ้ำแล้วล้ม — ลองใหม่ได้
+    [InlineData(NotifyLogStatus.Failed, null, false, 0, false)]                               // ล้มจากเส้นปกติ
+    [InlineData(NotifyLogStatus.Sent, null, false, 1, false)]
+    public void Pending_definition(string status, string? reason, bool claimExpired, int resendCount, bool pending)
+    {
+        Assert.Equal(pending, CustomerNotifyResend.IsPending(status, reason, claimExpired, resendCount));
+        var v = Eval(new CustomerNotifyResendInput(CustomerNotifyEvents.BookingConfirmed, status, reason, Now.AddDays(-1), true, false, FutureBooking(), claimExpired, resendCount));
+        Assert.Equal(pending, v.Resendable);
+    }
+
+    [Theory]
+    [InlineData(SiteOrderStatus.Pending, true)]
+    [InlineData(SiteOrderStatus.Confirmed, true)]
+    [InlineData(SiteOrderStatus.Processing, true)]
+    [InlineData(SiteOrderStatus.Shipped, false)]
+    [InlineData(SiteOrderStatus.ReadyForPickup, false)]
+    [InlineData(SiteOrderStatus.Delivered, false)]
+    [InlineData(SiteOrderStatus.Refunded, false)]
+    [InlineData(SiteOrderStatus.PartiallyRefunded, false)]
+    public void Order_confirmation_only_before_fulfilment(SiteOrderStatus status, bool ok)
+        => Assert.Equal(ok, Eval(In(CustomerNotifyEvents.OrderConfirmation, new(true, Site, "คำสั่งซื้อ SO-1", OrderStatus: status))).Resendable);
+
+    [Fact]
+    public void S4_offer_change_is_detected_and_old_clients_are_not_blocked()
+    {
+        var pack = new NotifyTopUpPack(500, 60);
+        Assert.Null(NotifyQuotaPolicy.TopUpOfferChanged(500, 99m, pack, 99m));
+        Assert.Null(NotifyQuotaPolicy.TopUpOfferChanged(null, null, pack, 120m));   // หน้าเก่าไม่ส่งค่า ⇒ ไม่ตรวจ
+        Assert.Contains("1,000", NotifyQuotaPolicy.TopUpOfferChanged(500, 99m, new NotifyTopUpPack(1000, 60), 99m));
+        Assert.Contains("120.00", NotifyQuotaPolicy.TopUpOfferChanged(500, 99m, pack, 120m));
+        Assert.NotNull(NotifyQuotaPolicy.TopUpOfferChanged(null, 99m, pack, null));   // ราคาถูกถอด ⇒ ไม่ตรง
+    }
+
+    [Fact]
+    public void S3_invoice_unit_comes_from_purchase_snapshot()
+    {
+        Assert.Equal("แพ็ก 500 ข้อความ", AddOnBilling.InvoiceUnit("แพ็ก 500 ข้อความ", "แพ็ก 1,000 ข้อความ"));
+        Assert.Equal("แพ็ก 1,000 ข้อความ", AddOnBilling.InvoiceUnit(null, "แพ็ก 1,000 ข้อความ"));   // แถวเก่า/ฟีเจอร์อื่น ⇒ ป้ายของฟีเจอร์ (เดิม)
+        Assert.Equal("รายการ", AddOnBilling.InvoiceUnit(" ", null));
+    }
+
+    [Fact]
+    public void Resend_lease_matches_the_sender_claim_lease()
+        => Assert.Equal(Accounting.Services.Implementations.NotifyQuotaService.ClaimLease, CustomerNotifyResend.ResendLease);
 }

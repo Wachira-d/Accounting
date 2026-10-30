@@ -144,7 +144,7 @@ public class MeteringAdminController : ControllerBase
         string UnitLabel, string RequiredScopes, int SortOrder, bool IsPublished,
         string? Kind = null, string? Icon = null, string? ModuleCode = null,
         int? TrialDays = null, string? MinPlanCsv = null,
-        int? PackSize = null, int? PackValidDays = null);
+        int? PackSize = null, int? PackValidDays = null, bool ResetPack = false);
 
     [HttpPost("features")]
     public async Task<ActionResult<ApiResponse<object>>> UpsertFeature([FromBody] UpsertFeatureRequest req)
@@ -154,7 +154,7 @@ public class MeteringAdminController : ControllerBase
             return BadRequest(new ApiResponse<string>(false, null, "กรุณาระบุรหัสฟีเจอร์"));
 
         // รอบ 213 (คำตัดสินข้อ 172): ขนาด/อายุแพ็กมีผู้อ่านเฉพาะ notify.topup — ส่งมากับรหัสอื่น = ปฏิเสธ (ไม่ใช่เก็บเงียบ ๆ แล้วไม่มีผล)
-        if ((req.PackSize != null || req.PackValidDays != null) && code != Models.Constants.AddOnCodes.NotifyTopUp)
+        if ((req.PackSize != null || req.PackValidDays != null || req.ResetPack) && code != Models.Constants.AddOnCodes.NotifyTopUp)
             return BadRequest(new ApiResponse<string>(false, null, "ตั้งจำนวนต่อแพ็ก/อายุแพ็กได้เฉพาะแพ็กข้อความแจ้งเตือน (notify.topup)"));
         if (Accounting.Helpers.NotifyQuotaPolicy.ValidatePack(req.PackSize, req.PackValidDays) is string packErr)
             return BadRequest(new ApiResponse<string>(false, null, packErr));
@@ -179,8 +179,15 @@ public class MeteringAdminController : ControllerBase
         if (req.ModuleCode != null) row.ModuleCode = req.ModuleCode.Trim();
         if (req.TrialDays.HasValue) row.TrialDays = Math.Max(0, req.TrialDays.Value);
         if (req.MinPlanCsv != null) row.MinPlanCsv = req.MinPlanCsv.Trim();
-        if (req.PackValidDays != null) row.PackValidDays = req.PackValidDays;
-        if (req.PackSize != null)
+        if (req.ResetPack)
+        {
+            // ฝ่ายค้านรอบ 213 (d): คืนค่าตั้งต้น (500 ข้อความ · 60 วัน) — ล้างค่าที่ตั้งไว้ · หน่วยบนใบแจ้งหนี้กลับเป็นของค่าตั้งต้น · ช่องที่ส่งมาพร้อมกันถูกเพิกเฉย
+            row.PackSize = null;
+            row.PackValidDays = null;
+            row.UnitLabel = Accounting.Helpers.NotifyQuotaPolicy.PackUnitLabel(Accounting.Helpers.NotifyQuotaPolicy.TopUpPack(null, null).Size);
+        }
+        else if (req.PackValidDays != null) row.PackValidDays = req.PackValidDays;
+        if (req.PackSize != null && !req.ResetPack)
         {
             row.PackSize = req.PackSize;
             // หน่วยบนใบแจ้งหนี้ประกอบจากขนาดแพ็กเสมอ (เดิม "ต้องแก้สองที่พร้อมกัน" — ตอนนี้ที่เดียว)

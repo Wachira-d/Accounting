@@ -225,4 +225,8 @@ public class UsageEvent : TenantEntity
     public Guid? BilledDocumentId { get; set; }
 
     public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>ฝ่ายค้านรอบ 213 S3: หน่วย ณ ตอนเกิดรายการ (snapshot เหมือน <see cref="UnitPriceSnapshot"/>) — แพ็กที่ขนาดเปลี่ยนได้
+    /// (<c>notify.topup</c>) ต้องออกใบด้วยหน่วยที่ลูกค้าซื้อจริง · null = แถวเก่า/ฟีเจอร์ที่หน่วยไม่เปลี่ยน ⇒ <see cref="ApiFeature.UnitLabel"/></summary>
+    public string? UnitLabelSnapshot { get; set; }
 }

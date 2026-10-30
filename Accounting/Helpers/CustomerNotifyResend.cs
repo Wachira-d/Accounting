@@ -34,10 +34,11 @@ public sealed record CustomerNotifyResendTarget(bool Exists, Guid? SiteId, strin
     public static readonly CustomerNotifyResendTarget Missing = new(false, null, null);
 }
 
-/// <summary>ข้อเท็จจริงของแถวบันทึก 1 แถว — <c>SupersededBySent</c> = มีข้อความประเภทเดียวกันถึงรายการเดียวกันที่ส่งถึงแล้วหลังแถวนี้ ·
-/// <c>EventEnabledNow</c> = ค่าตั้งปัจจุบันยังเปิดอย่างน้อย 1 ช่อง (<see cref="CustomerNotifyPolicy.Resolve"/>)</summary>
+/// <summary>ข้อเท็จจริงของแถวบันทึก 1 แถว — <c>Superseded</c> = มีแถวที่ใหม่กว่าถึงรายการเดียวกันซึ่งแทนข้อความนี้ (<see cref="CustomerNotifyResend.Supersedes"/> ·
+/// ไม่ว่าแถวนั้นจะส่งถึง/ค้าง/ล้ม — ฝ่ายค้านรอบ 213 S2) · <c>EventEnabledNow</c> = ค่าตั้งปัจจุบันยังเปิดอย่างน้อย 1 ช่อง (<see cref="CustomerNotifyPolicy.Resolve"/>) ·
+/// <c>ClaimExpired</c> = แถว Claimed ที่ lease หมดแล้ว (ตัวส่งล้มกลางทาง — ฝ่ายค้าน S6) · <c>ResendCount</c> = ร้านเคยกดส่งซ้ำกี่ครั้ง (แถว Failed ที่ส่งซ้ำแล้วล้มยังลองใหม่ได้ — S5)</summary>
 public sealed record CustomerNotifyResendInput(string EventKey, string Status, string? SuppressReason, DateTime CreatedAtUtc,
-    bool EventEnabledNow, bool SupersededBySent, CustomerNotifyResendTarget Target);
+    bool EventEnabledNow, bool Superseded, CustomerNotifyResendTarget Target, bool ClaimExpired = false, int ResendCount = 0);
 
 /// <summary>ผลตัดสิน — <c>Code</c> คงที่ (ใช้ในเทสต์/กรอง) · <c>Reason</c> ภาษาไทยถึงผู้ใช้ (หน้าเว็บแสดงตรง ๆ)</summary>
 public sealed record CustomerNotifyResendVerdict(bool Resendable, string Code, string Reason);
@@ -45,8 +46,8 @@ public sealed record CustomerNotifyResendVerdict(bool Resendable, string Code, s
 /// <summary>
 /// **ตัวตัดสิน "ส่งซ้ำข้อความที่ค้างเพราะโควตา" — ตัวเดียว** (รอบ 213 · คำตัดสินข้อ 172 · เจ้าของ: "ถ้าเติมโควต้าแล้ว สามารถส่งซ้ำทีหลังได้")
 /// <list type="bullet">
-/// <item>ส่งซ้ำได้เฉพาะแถว <c>Suppressed</c> + <see cref="NotifySuppressReason.QuotaFull"/> · อายุ ≤ <see cref="MaxAge"/> · ค่าตั้งปัจจุบันยังเปิด ·
-///   ยังไม่มีข้อความประเภทเดียวกันส่งถึงรายการนั้นทีหลัง · รายการยังอยู่และสถานะยังตรงกับเนื้อข้อความ (<see cref="TargetStillMakesSense"/>)</item>
+/// <item>ส่งซ้ำได้เฉพาะแถวที่ <see cref="IsPending"/> (ค้างเพราะโควตา · ค้าง Claimed เกิน lease · ส่งซ้ำแล้วล้ม) · อายุ ≤ <see cref="MaxAge"/> · ค่าตั้งปัจจุบันยังเปิด ·
+///   ไม่มีแถวใหม่กว่าที่แทนข้อความนี้ (<see cref="Supersedes"/>) · รายการยังอยู่และสถานะยังตรงกับเนื้อข้อความ (<see cref="TargetStillMakesSense"/>)</item>
 /// <item>ไม่เก็บเนื้อข้อความ (PDPA · design §2.3) ⇒ เซิร์ฟเวอร์<b>ประกอบใหม่จากสถานะปัจจุบัน</b>ผ่านเส้นส่งเดิม — ประเภทที่ไม่มีเส้นประกอบใหม่ = <see cref="UnsupportedReason"/></item>
 /// <item>ส่งซ้ำใช้ <c>MessageKey</c> เดิม ⇒ <c>NotifyQuotaService.ClaimAsync</c> รับช่วงแถวเดิม (กันส่งซ้ำ/กดซ้ำด้วยกลไกเดิม) · จองโควตาตามปกติ (ไม่ใช่ข้อความจำเป็น)</item>
 /// </list>
@@ -61,6 +62,8 @@ public static class CustomerNotifyResend
     public const int MaxBatch = 200;
     /// <summary>หน้ารายการแสดงย้อนหลัง (เกิน <see cref="MaxAge"/> แสดงเป็น "เก่าเกินไป" อีกช่วงหนึ่ง)</summary>
     public static readonly TimeSpan ListWindow = TimeSpan.FromDays(60);
+    /// <summary>ฝ่ายค้านรอบ 213 S1: อ่าน/ตรวจได้ครั้งละไม่เกินนี้ — เรียง<b>ใหม่ก่อน</b>แล้วตัด (จำนวนทั้งหมดนับแยก บอกผู้ใช้ว่าแสดงบางส่วน)</summary>
+    public const int ListLimit = 500;
 
     public const string CodeOk = "ok";
     public const string CodeNotPending = "not-pending";
@@ -116,7 +119,9 @@ public static class CustomerNotifyResend
                 if (t.BookingStatus != BookingStatus.Cancelled) return "การจองไม่ได้อยู่ในสถานะยกเลิกแล้ว";
                 return future ? null : "เลยเวลานัดเดิมแล้ว";
             case CustomerNotifyEvents.OrderConfirmation:
-                return t.OrderStatus is SiteOrderStatus.Cancelled or SiteOrderStatus.Refunded ? "คำสั่งซื้อถูกยกเลิก/คืนเงินแล้ว" : null;
+                // ฝ่ายค้านรอบ 213 (b): ยืนยันคำสั่งซื้อส่งได้เฉพาะก่อนจัดส่ง/พร้อมรับ/ส่งมอบ/ยกเลิก/คืนเงิน (whitelist)
+                return t.OrderStatus is SiteOrderStatus.Pending or SiteOrderStatus.Confirmed or SiteOrderStatus.Processing
+                    ? null : "คำสั่งซื้อผ่านขั้นยืนยันไปแล้ว (จัดส่ง/ส่งมอบ/ยกเลิก/คืนเงิน)";
             case CustomerNotifyEvents.OrderShipped:
             case CustomerNotifyEvents.OrderReady:
             case CustomerNotifyEvents.OrderDelivered:
@@ -127,16 +132,50 @@ public static class CustomerNotifyResend
         }
     }
 
+    /// <summary>แถวนี้อยู่ในรายการ "ค้างส่ง" ไหม — (1) ระงับเพราะโควตาเต็ม (2) ตัวส่งล้มกลางทางจนค้าง Claimed เกิน lease (เหตุยังเป็น quota-full ·
+    /// ClaimAsync ไม่ล้างเหตุ) (3) ร้านกดส่งซ้ำแล้วช่องล้ม (Failed + ResendCount &gt; 0) — ลองใหม่ได้ · แถว Failed จากเส้นปกติ (ไม่เคยค้างเพราะโควตา) ไม่อยู่ในรายการ</summary>
+    public static bool IsPending(string status, string? suppressReason, bool claimExpired, int resendCount) => status switch
+    {
+        Accounting.Models.Entities.NotifyLogStatus.Suppressed => suppressReason == NotifySuppressReason.QuotaFull,
+        Accounting.Models.Entities.NotifyLogStatus.Claimed => claimExpired && suppressReason == NotifySuppressReason.QuotaFull,
+        Accounting.Models.Entities.NotifyLogStatus.Failed => resendCount > 0,
+        _ => false,
+    };
+
+    /// <summary>ฝ่ายค้านรอบ 213 S2: ข้อความ <paramref name="later"/> (ถึงรายการเดียวกัน · สร้างทีหลัง) แทนข้อความ <paramref name="earlier"/> ไหม —
+    /// ส่งเฉพาะฉบับล่าสุด (ไม่ส่ง "เลื่อนจาก A ไป B" ตามด้วย "เลื่อนจาก B ไป C" และไม่เสียโควตา 2 หน่วย) ·
+    /// <list type="bullet">
+    /// <item>ประเภทเดียวกัน ⇒ แทนเสมอ (เลื่อนนัดหลายรอบ)</item>
+    /// <item>ยืนยันการจอง ⇐ เลื่อนนัด · ยกเลิก · ได้คิวจากคิวสำรอง (ข้อความหลังบอกสถานะล่าสุดแล้ว)</item>
+    /// <item>เลื่อนนัด ⇐ ยกเลิก</item>
+    /// <item>ยืนยันคำสั่งซื้อ ⇐ จัดส่งแล้ว · พร้อมให้รับ · ส่งมอบแล้ว · จัดส่งแล้ว/พร้อมให้รับ ⇐ ส่งมอบแล้ว</item>
+    /// </list>
+    /// ยกเลิก ไม่ถูกแทนด้วยอะไร (ลูกค้าต้องรู้ว่าถูกยกเลิก — สถานะรายการตัดสินต่อที่ <see cref="TargetStillMakesSense"/>)</summary>
+    public static bool Supersedes(string later, string earlier)
+    {
+        if (later == earlier) return true;
+        return earlier switch
+        {
+            CustomerNotifyEvents.BookingConfirmed => later is CustomerNotifyEvents.BookingRescheduled or CustomerNotifyEvents.BookingCancelled
+                or CustomerNotifyEvents.BookingWaitlistPromoted,
+            CustomerNotifyEvents.BookingRescheduled => later == CustomerNotifyEvents.BookingCancelled,
+            CustomerNotifyEvents.OrderConfirmation => later is CustomerNotifyEvents.OrderShipped or CustomerNotifyEvents.OrderReady or CustomerNotifyEvents.OrderDelivered,
+            CustomerNotifyEvents.OrderShipped or CustomerNotifyEvents.OrderReady => later == CustomerNotifyEvents.OrderDelivered,
+            _ => false,
+        };
+    }
+
     public static CustomerNotifyResendVerdict Evaluate(CustomerNotifyResendInput i, DateTime nowUtc, DateTime nowLocal)
     {
-        if (i.Status != Accounting.Models.Entities.NotifyLogStatus.Suppressed)
-            return new(false, CodeNotPending, i.Status == Accounting.Models.Entities.NotifyLogStatus.Sent ? "ส่งถึงแล้ว" : "ไม่ได้ค้างส่ง");
-        if (i.SuppressReason != NotifySuppressReason.QuotaFull)
-            return new(false, CodeNotQuota, NotifySuppressReason.Label(i.SuppressReason) + " — ไม่ได้ค้างเพราะโควตา (ส่งซ้ำจากหน้านี้ไม่ได้)");
+        if (i.Status == Accounting.Models.Entities.NotifyLogStatus.Sent) return new(false, CodeNotPending, "ส่งถึงแล้ว");
+        if (!IsPending(i.Status, i.SuppressReason, i.ClaimExpired, i.ResendCount))
+            return i.Status == Accounting.Models.Entities.NotifyLogStatus.Suppressed
+                ? new(false, CodeNotQuota, NotifySuppressReason.Label(i.SuppressReason) + " — ไม่ได้ค้างเพราะโควตา (ส่งซ้ำจากหน้านี้ไม่ได้)")
+                : new(false, CodeNotPending, i.Status == Accounting.Models.Entities.NotifyLogStatus.Claimed ? "กำลังส่งอยู่" : "ไม่ได้ค้างส่ง");
         if (UnsupportedReason(i.EventKey) is string unsupported) return new(false, CodeUnsupported, unsupported);
         if (nowUtc - i.CreatedAtUtc > MaxAge) return new(false, CodeTooOld, $"เก่ากว่า {MaxAge.TotalDays:0} วัน — ไม่ส่งย้อนหลัง");
         if (!i.EventEnabledNow) return new(false, CodeEventOff, "ตอนนี้ปิดการแจ้งเตือนประเภทนี้ไว้ (ตั้งค่า → การแจ้งเตือนลูกค้า)");
-        if (i.SupersededBySent) return new(false, CodeSuperseded, "ลูกค้าได้ข้อความประเภทเดียวกันที่ใหม่กว่าแล้ว");
+        if (i.Superseded) return new(false, CodeSuperseded, "มีข้อความที่ใหม่กว่าถึงรายการนี้แล้ว (ส่งเฉพาะฉบับล่าสุด)");
         if (!i.Target.Exists) return new(false, CodeTargetMissing, "ไม่พบรายการ (ถูกลบแล้ว)");
         if (TargetStillMakesSense(i.EventKey, i.Target, nowLocal) is string stale) return new(false, CodeTargetStale, stale);
         return new(true, CodeOk, "ส่งซ้ำได้");

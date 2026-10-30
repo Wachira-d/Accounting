@@ -44,7 +44,7 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
     }
 
     private sealed record Row(Guid Id, string MessageKey, string EventKey, string? TargetKind, Guid? TargetId, string Status,
-        string? SuppressReason, DateTime CreatedAt, int ResendCount, DateTime? ResendRequestedAt);
+        string? SuppressReason, DateTime CreatedAt, int ResendCount, DateTime? ResendRequestedAt, DateTime? ClaimedUntil, string? Note);
 
     private sealed record Evaluated(Row Row, CustomerNotifyResendTarget Target, CustomerNotifyResendVerdict Verdict);
 
@@ -78,25 +78,37 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
         return map;
     }
 
-    private async Task<List<Evaluated>> EvaluateAsync(Guid companyId, IReadOnlyCollection<Guid>? onlyIds, CancellationToken ct)
+    /// <summary>แถวที่ "ค้างส่ง" ตามนิยามเดียว (<see cref="CustomerNotifyResend.IsPending"/>) — แปลเป็น SQL: ระงับเพราะโควตา · ค้าง Claimed เกิน lease (ตัวส่งล้มกลางทาง — ฝ่ายค้าน S6) ·
+    /// ส่งซ้ำแล้วล้ม (ฝ่ายค้าน S5 — ลองใหม่ได้)</summary>
+    private IQueryable<CustomerNotifyLog> PendingQuery(Guid companyId, DateTime since, DateTime nowUtc)
+    {
+        return _db.CustomerNotifyLogs.AsNoTracking()
+            .Where(l => l.CompanyId == companyId && l.CreatedAt >= since
+                && ((l.Status == NotifyLogStatus.Suppressed && l.SuppressReason == NotifySuppressReason.QuotaFull)
+                    || (l.Status == NotifyLogStatus.Claimed && l.SuppressReason == NotifySuppressReason.QuotaFull && l.ClaimedUntil < nowUtc)
+                    || (l.Status == NotifyLogStatus.Failed && l.ResendCount > 0)));
+    }
+
+    /// <summary><paramref name="onlyIds"/> = แถวที่ผู้ใช้เลือก · ไม่งั้น: รายการ (<paramref name="forResend"/> = false) ย้อนหลัง <see cref="CustomerNotifyResend.ListWindow"/> ·
+    /// ส่งซ้ำทั้งหมด (true) เฉพาะช่วงที่ส่งซ้ำได้ <see cref="CustomerNotifyResend.MaxAge"/> · <b>ใหม่ก่อน</b>แล้วค่อยตัด (ฝ่ายค้าน S1 — เดิมเก่าก่อน ⇒ แถวใหม่ที่ส่งได้ไม่เคยถูกตรวจ)</summary>
+    private async Task<(List<Evaluated> Items, int Total)> EvaluateAsync(Guid companyId, IReadOnlyCollection<Guid>? onlyIds, bool forResend, CancellationToken ct)
     {
         var nowUtc = DateTime.UtcNow;
         var nowLocal = BookingSlotEngine.BangkokNow(nowUtc);
-        var q = _db.CustomerNotifyLogs.AsNoTracking().Where(l => l.CompanyId == companyId);
+        IQueryable<CustomerNotifyLog> q;
         if (onlyIds is { Count: > 0 })
         {
             var ids = onlyIds.Distinct().ToList();
-            q = q.Where(l => ids.Contains(l.Id));
+            q = _db.CustomerNotifyLogs.AsNoTracking().Where(l => l.CompanyId == companyId && ids.Contains(l.Id));
         }
         else
-        {
-            var since = nowUtc - CustomerNotifyResend.ListWindow;
-            q = q.Where(l => l.Status == NotifyLogStatus.Suppressed && l.SuppressReason == NotifySuppressReason.QuotaFull && l.CreatedAt >= since);
-        }
-        var rows = await q.OrderBy(l => l.CreatedAt).Take(500)
-            .Select(l => new Row(l.Id, l.MessageKey, l.EventKey, l.TargetKind, l.TargetId, l.Status, l.SuppressReason, l.CreatedAt, l.ResendCount, l.ResendRequestedAt))
+            q = PendingQuery(companyId, nowUtc - (forResend ? CustomerNotifyResend.MaxAge : CustomerNotifyResend.ListWindow), nowUtc);
+        var total = await q.CountAsync(ct);
+        var rows = await q.OrderByDescending(l => l.CreatedAt).Take(CustomerNotifyResend.ListLimit)
+            .Select(l => new Row(l.Id, l.MessageKey, l.EventKey, l.TargetKind, l.TargetId, l.Status, l.SuppressReason, l.CreatedAt,
+                l.ResendCount, l.ResendRequestedAt, l.ClaimedUntil, l.Note))
             .ToListAsync(ct);
-        if (rows.Count == 0) return new List<Evaluated>();
+        if (rows.Count == 0) return (new List<Evaluated>(), total);
 
         var bookingIds = rows.Where(r => r.TargetKind == CustomerLineLinkRule.KindBooking && r.TargetId != null).Select(r => r.TargetId!.Value).Distinct().ToList();
         var orderIds = rows.Where(r => r.TargetKind == CustomerLineLinkRule.KindOrder && r.TargetId != null).Select(r => r.TargetId!.Value).Distinct().ToList();
@@ -108,25 +120,29 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
             .Select(r => new CustomerNotifyRuleRow(r.SiteId, r.EventKey, r.LineEnabled, r.EmailEnabled))
             .ToListAsync(ct);
 
-        // มีข้อความประเภทเดียวกันถึงรายการเดียวกันที่ส่งถึงแล้วหลังแถวนี้ (เช่น เลื่อนนัดรอบใหม่) ⇒ ไม่ส่งของเก่า
+        // ฝ่ายค้านรอบ 213 S2: ทุกแถวถึงรายการเดียวกัน (ไม่ว่าสถานะใด) — แถวที่ใหม่กว่าและแทนข้อความนี้ได้ (CustomerNotifyResend.Supersedes) ⇒ ส่งเฉพาะฉบับล่าสุด
         var targetIds = bookingIds.Concat(orderIds).ToList();
-        var sent = targetIds.Count == 0
-            ? new List<(Guid? TargetId, string EventKey, DateTime CreatedAt)>()
+        var siblings = targetIds.Count == 0
+            ? new List<(Guid Id, Guid? TargetId, string EventKey, DateTime CreatedAt)>()
             : (await _db.CustomerNotifyLogs.AsNoTracking()
-                .Where(l => l.CompanyId == companyId && l.Status == NotifyLogStatus.Sent && l.TargetId != null && targetIds.Contains(l.TargetId.Value))
-                .Select(l => new { l.TargetId, l.EventKey, l.CreatedAt })
+                .Where(l => l.CompanyId == companyId && l.TargetId != null && targetIds.Contains(l.TargetId.Value))
+                .Select(l => new { l.Id, l.TargetId, l.EventKey, l.CreatedAt })
                 .ToListAsync(ct))
-              .Select(x => (x.TargetId, x.EventKey, x.CreatedAt)).ToList();
+              .Select(x => (x.Id, x.TargetId, x.EventKey, x.CreatedAt)).ToList();
 
-        return rows.Select(r =>
+        var items = rows.Select(r =>
         {
             var target = r.TargetId is Guid tid && targets.TryGetValue(tid, out var t) ? t : CustomerNotifyResendTarget.Missing;
             var enabled = CustomerNotifyPolicy.Resolve(rules, target.SiteId, r.EventKey).AnyOn;
-            var superseded = sent.Any(s => s.TargetId == r.TargetId && s.EventKey == r.EventKey && s.CreatedAt > r.CreatedAt);
+            var superseded = r.TargetId != null && siblings.Any(o => o.Id != r.Id && o.TargetId == r.TargetId && o.CreatedAt > r.CreatedAt
+                && CustomerNotifyResend.Supersedes(o.EventKey, r.EventKey));
+            var claimExpired = r.ClaimedUntil is DateTime cu && cu < nowUtc;
             var verdict = CustomerNotifyResend.Evaluate(
-                new CustomerNotifyResendInput(r.EventKey, r.Status, r.SuppressReason, r.CreatedAt, enabled, superseded, target), nowUtc, nowLocal);
+                new CustomerNotifyResendInput(r.EventKey, r.Status, r.SuppressReason, r.CreatedAt, enabled, superseded, target, claimExpired, r.ResendCount),
+                nowUtc, nowLocal);
             return new Evaluated(r, target, verdict);
         }).ToList();
+        return (items, total);
     }
 
     private static string EventLabel(string key)
@@ -134,10 +150,10 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
 
     public async Task<CustomerNotifyPendingList> ListAsync(Guid companyId, CancellationToken ct = default)
     {
-        var all = await EvaluateAsync(companyId, null, ct);
+        var (all, total) = await EvaluateAsync(companyId, null, forResend: false, ct);
         var items = all.OrderByDescending(e => e.Row.CreatedAt).Select(e => new CustomerNotifyPendingItem(
             e.Row.Id, e.Row.EventKey, EventLabel(e.Row.EventKey), e.Target.Label ?? "รายการที่ถูกลบแล้ว", e.Row.CreatedAt,
-            NotifySuppressReason.Label(e.Row.SuppressReason), e.Verdict.Resendable, e.Verdict.Code, e.Verdict.Reason,
+            ReasonLabel(e.Row), e.Verdict.Resendable, e.Verdict.Code, e.Verdict.Reason,
             e.Row.ResendCount, e.Row.ResendRequestedAt)).ToList();
         var resendable = items.Count(i => i.Resendable);
 
@@ -155,8 +171,18 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
             hint = quota.Remaining == 0
                 ? $"โควตาข้อความเดือนนี้เหลือ 0 — ซื้อแพ็กข้อความเพิ่มก่อน แล้วค่อยกดส่งซ้ำ ({resendable} รายการรอส่ง)"
                 : $"โควตาเหลือ {quota.Remaining:N0} ข้อความ แต่มีรายการรอส่ง {resendable} รายการ — ส่งได้ไม่ครบ ระบบจะหยุดเมื่อโควตาหมด";
-        return new CustomerNotifyPendingList(items, items.Count, resendable, quota, hint);
+        if (total > items.Count)
+            hint = (hint == null ? "" : hint + " · ") + $"แสดง {items.Count} รายการล่าสุดจาก {total} รายการ";
+        return new CustomerNotifyPendingList(items, total, resendable, quota, hint);
     }
+
+    /// <summary>เหตุที่ค้าง — ส่งซ้ำแล้วล้ม (ฝ่ายค้าน S5) แสดงเหตุของช่องที่ล้ม (หมายเหตุถูกปิดบังข้อมูลติดต่อแล้วตอนเก็บ) · ค้างกลางทาง = บอกตรง ๆ</summary>
+    private static string ReasonLabel(Row r) => r.Status switch
+    {
+        NotifyLogStatus.Failed => "ส่งซ้ำแล้วไม่สำเร็จ" + (string.IsNullOrWhiteSpace(r.Note) ? "" : ": " + r.Note),
+        NotifyLogStatus.Claimed => "ส่งค้างกลางทาง (ระบบขัดข้อง) — ลองใหม่ได้",
+        _ => NotifySuppressReason.Label(r.SuppressReason),
+    };
 
     /// <summary>จองแถวสำหรับส่งซ้ำ (เงื่อนไขเดียว · หลาย instance/กดซ้ำได้ครั้งเดียว) — 0 แถว = คำขออื่นกำลังส่ง หรือส่งแล้ว</summary>
     private async Task<bool> TryLeaseAsync(Guid companyId, Guid logId, CancellationToken ct)
@@ -164,7 +190,8 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
         var n = await _db.Database.ExecuteSqlRawAsync("""
             UPDATE "CustomerNotifyLogs"
             SET "ResendRequestedAt" = now(), "ResendCount" = "ResendCount" + 1, "UpdatedAt" = now()
-            WHERE "Id" = {0} AND "CompanyId" = {1} AND "Status" = 'Suppressed'
+            WHERE "Id" = {0} AND "CompanyId" = {1}
+              AND ("Status" IN ('Suppressed', 'Failed') OR ("Status" = 'Claimed' AND "ClaimedUntil" < now()))
               AND ("ResendRequestedAt" IS NULL OR "ResendRequestedAt" < now() - make_interval(secs => {2}))
             """, new object[] { logId, companyId, CustomerNotifyResend.ResendLease.TotalSeconds }, ct);
         return n == 1;
@@ -195,7 +222,7 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
         if (explicitIds && logIds!.Count > CustomerNotifyResend.MaxBatch)
             throw new BusinessRuleException($"ส่งซ้ำได้ครั้งละไม่เกิน {CustomerNotifyResend.MaxBatch} รายการ", "NOTIFY-RESEND");
 
-        var evaluated = await EvaluateAsync(companyId, explicitIds ? logIds : null, ct);
+        var (evaluated, _) = await EvaluateAsync(companyId, explicitIds ? logIds : null, forResend: true, ct);
         var results = new List<CustomerNotifyResendItemResult>();
         int sent = 0, failed = 0, skipped = 0;
         var stopped = false;
@@ -224,11 +251,13 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
                 continue;
             }
             string? detail;
+            var crashed = false;
             try { detail = await RebuildAsync(companyId, c.Row); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "ส่งซ้ำข้อความ {LogId} ({EventKey}) ล้ม (company {CompanyId})", c.Row.Id, c.Row.EventKey, companyId);
                 detail = "เกิดข้อผิดพลาดภายในระหว่างส่ง (ดูบันทึกระบบ)";
+                crashed = true;
             }
 
             // ความจริงจากตัวส่ง (แถวที่ BookingNotifier ปิดให้) — ไม่ใช่ค่าที่ประทับเอง (F2 #3)
@@ -243,6 +272,22 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
                 continue;
             }
             await ReleaseLeaseAsync(companyId, c.Row.Id, ct);
+            // ฝ่ายค้านรอบ 213 S6 + (a): ยังค้าง Claimed — ล้มกลางทาง ⇒ ล้ม (แถวกลับเข้ารายการเองเมื่อ lease ของ claim หมด · PendingQuery) ·
+            // ไม่ได้ล้ม ⇒ คำขออื่นถือ claim อยู่ = "กำลังส่ง" ไม่ใช่ความล้มเหลว
+            if (after?.Status == NotifyLogStatus.Claimed)
+            {
+                if (crashed)
+                {
+                    failed++;
+                    results.Add(new(c.Row.Id, OutcomeFailed, detail + $" — จะกลับมาให้ลองใหม่ภายใน {CustomerNotifyResend.ResendLease.TotalMinutes:0} นาที"));
+                }
+                else
+                {
+                    skipped++;
+                    results.Add(new(c.Row.Id, OutcomeBusy, "กำลังส่งโดยคำขออื่น"));
+                }
+                continue;
+            }
             if (after?.Status == NotifyLogStatus.Suppressed && after.SuppressReason == NotifySuppressReason.QuotaFull)
             {
                 stopped = true;
@@ -253,7 +298,7 @@ public class CustomerNotifyResendService : ICustomerNotifyResendService
             results.Add(new(c.Row.Id, OutcomeFailed, after?.Note ?? detail ?? "ส่งไม่สำเร็จ"));
         }
 
-        var stillPending = candidates.Count - sent - failed - results.Count(r => r.Outcome == OutcomeBusy);
+        var stillPending = candidates.Count - sent - failed - results.Count(r => r.Outcome == OutcomeBusy && candidates.Any(c => c.Row.Id == r.LogId));
         var message = CustomerNotifyResend.ResultMessage(sent, failed, skipped, Math.Max(0, stillPending), stopped);
 
         if (candidates.Count > 0)

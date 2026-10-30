@@ -405,7 +405,8 @@ public class NotifyQuotaService : INotifyQuotaService
 
     // ───────────────────────── ซื้อแพ็กเพิ่ม ─────────────────────────
 
-    public async Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null)
+    public async Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null,
+        int? expectedPackSize = null, decimal? expectedPackPrice = null)
     {
         if (packs <= 0) throw new BusinessRuleException("จำนวนแพ็กต้องมากกว่า 0", "NOTIFY-TOPUP");
         if (packs > 50) throw new BusinessRuleException("ซื้อได้ครั้งละไม่เกิน 50 แพ็ก", "NOTIFY-TOPUP");
@@ -429,14 +430,33 @@ public class NotifyQuotaService : INotifyQuotaService
             .CountAsync(u => u.CompanyId == companyId && u.FeatureCode == AddOnCodes.NotifyTopUp
                           && u.IdempotencyKey != null && u.IdempotencyKey.StartsWith(prefix) && !u.IsDeleted, ct) + 1;
 
-        // คิดเงินก่อนให้ของ — บันทึกมิเตอร์ไม่สำเร็จ = ไม่แจกข้อความฟรี · ใบแจ้งหนี้ไหลเส้นเดิม (UsageInvoicingJob → PlatformBillingDocumentIssuer)
+        var usageKey = AddOnBilling.TopUpRequestKey(AddOnCodes.NotifyTopUp, period, idempotencyKey) ?? AddOnBilling.TopUpKey(AddOnCodes.NotifyTopUp, period, seq);
+
+        // รอบ 213: ขนาด/อายุแพ็กอ่าน ณ ตอนซื้อ (ใต้ล็อก) — แอดมินเปลี่ยนค่าแล้วมีผลกับการซื้อครั้งถัดไปเท่านั้น
+        var pack = await LoadPackAsync(_db, ct);
+        // ฝ่ายค้านรอบ 213 S4: ข้อเสนอที่ผู้ซื้อเห็นต้องตรงของจริง (ใต้ล็อก ก่อนคิดเงิน) · คำขอซ้ำที่สำเร็จไปแล้ว (คีย์เดิม) ไม่ถูกตรวจซ้ำ — คืนผลเดิม
+        var alreadyRecorded = !string.IsNullOrWhiteSpace(idempotencyKey) && await _db.UsageEvents.AsNoTracking()
+            .AnyAsync(u => u.CompanyId == companyId && u.IdempotencyKey == usageKey && !u.IsDeleted, ct);
+        if (!alreadyRecorded && (expectedPackSize != null || expectedPackPrice != null))
+        {
+            var currentPrice = (await _metering.ResolveEffectivePlanAsync(companyId, AddOnCodes.NotifyTopUp, ct))?.UnitPrice;
+            if (NotifyQuotaPolicy.TopUpOfferChanged(expectedPackSize, expectedPackPrice, pack, currentPrice) is string changed)
+            {
+                await tx.RollbackAsync(ct);
+                throw new NotifyTopUpOfferChangedException(changed);
+            }
+        }
+
+        // คิดเงินก่อนให้ของ — บันทึกมิเตอร์ไม่สำเร็จ = ไม่แจกข้อความฟรี · ใบแจ้งหนี้ไหลเส้นเดิม (UsageInvoicingJob → PlatformBillingDocumentIssuer) ·
+        // ฝ่ายค้านรอบ 213 S3: หน่วยของแพ็ก ณ ตอนซื้อถูกบันทึกลงแถว (ใบแจ้งหนี้ไม่อ่านป้ายปัจจุบันของฟีเจอร์ที่แอดมินแก้ทีหลัง)
         var res = await _metering.RecordAsync(new UsageRecordRequest(
             CompanyId: companyId,
             FeatureCode: AddOnCodes.NotifyTopUp,
             Quantity: packs,
-            IdempotencyKey: AddOnBilling.TopUpRequestKey(AddOnCodes.NotifyTopUp, period, idempotencyKey) ?? AddOnBilling.TopUpKey(AddOnCodes.NotifyTopUp, period, seq),
+            IdempotencyKey: usageKey,
             RefEntityType: "Subscription",
-            RefEntityId: sid), ct);
+            RefEntityId: sid,
+            UnitLabel: NotifyQuotaPolicy.PackUnitLabel(pack.Size)), ct);
         if (!res.Recorded)
         {
             // ฝ่ายค้าน S2: คำขอเดิม (Idempotency-Key เดียวกัน) ส่งซ้ำ ⇒ ผลเดิม (ให้ของไปแล้วตอนคำขอแรก · ไม่คิดเงิน/ไม่ให้ซ้ำ)
@@ -452,8 +472,7 @@ public class NotifyQuotaService : INotifyQuotaService
                 "NOTIFY-TOPUP");
         }
 
-        // รอบ 213: ขนาด/อายุแพ็กอ่าน ณ ตอนซื้อ (ใต้ล็อก) — แอดมินเปลี่ยนค่าแล้วมีผลกับการซื้อครั้งถัดไปเท่านั้น · โบนัสเดิมคงวันหมดอายุเดิม (GREATEST ด้านล่าง)
-        var pack = await LoadPackAsync(_db, ct);
+        // อายุนับจากวันซื้อ · โบนัสคงเหลือทั้งก้อนใช้ได้ถึงวันหมดอายุที่ช้ากว่า (GREATEST ด้านล่าง — ไม่หดอายุของที่ซื้อไว้)
         var granted = packs * pack.Size;
         var expires = nowUtc.AddDays(pack.ValidDays);
         // ฝ่ายค้านรอบ 212 B1: ให้โบนัสด้วย UPDATE เดียวใต้ล็อก (ไม่เขียนค่าสัมบูรณ์จาก entity ที่อ่านไว้ — เดิมสองการซื้อพร้อมกันได้ 500 จ่าย 2 แพ็ก ·
@@ -483,6 +502,6 @@ public class NotifyQuotaService : INotifyQuotaService
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         _logger.LogInformation("บริษัท {Cid} ซื้อแพ็กข้อความ {Packs} แพ็ก ({Msgs} ข้อความ) เป็นเงิน {Amt}", companyId, packs, granted, res.ChargedAmount);
-        return await GetStatusAsync(companyId, ct);
+        return (await GetStatusAsync(companyId, ct)) with { Granted = granted };
     }
 }

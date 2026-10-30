@@ -699,6 +699,7 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.IdempotencyKey).HasMaxLength(200);
             e.Property(x => x.RefEntityType).HasMaxLength(100);
             e.Property(x => x.BilledPeriod).HasMaxLength(7);
+            e.Property(x => x.UnitLabelSnapshot).HasMaxLength(50);   // ฝ่ายค้านรอบ 213 S3
             e.Property(x => x.UnitPriceSnapshot).HasPrecision(18, 4);
             e.Property(x => x.ChargedAmount).HasPrecision(18, 2);
             // รายงาน/บิลอ่านตามช่วงเวลาเสมอ — index นำด้วยวันที่

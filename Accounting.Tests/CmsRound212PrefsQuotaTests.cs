@@ -305,7 +305,8 @@ public class CmsRound212PrefsQuotaTests
             string? suppressReason = null, CancellationToken ct = default)
         { Calls.Add("complete:" + status); CompletedStatus = status; CompletedSource = source; CompletedSuppressReason = suppressReason; return Task.CompletedTask; }
         public Task<NotifyQuotaStatus> GetStatusAsync(Guid companyId, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null) => throw new NotSupportedException();
+        public Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null,
+            int? expectedPackSize = null, decimal? expectedPackPrice = null) => throw new NotSupportedException();
     }
 
     private sealed class TestNotifier : BookingNotifier
