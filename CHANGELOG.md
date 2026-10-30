@@ -5778,3 +5778,12 @@ _รอบ 213 (คำตัดสินข้อ 172 · เจ้าของ: 
 เทสต์ `CmsRound213NotifyResendTests` + `Db/NotifyResendDbTests` + 1 เคสใน `CmsRound212PrefsQuotaTests` (TEST_PLAN CMS213-01..10) · `required_call_site_check` +17 กติกา/ย้าย 6 ·
 `settings_reader_check` +ApiFeature · `write_permission_gate_check` +CustomerNotifyController · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
 
+_รอบ 213 ฝ่ายค้าน (ไม่มีข้อ blocking · แก้ 6 + หมายเหตุ 6): (S1) รายการ/ส่งซ้ำอ่านใหม่ก่อนแล้วตัด + นับทั้งหมดแยก · ส่งซ้ำทั้งหมดเฉพาะ 30 วัน ·
+(S2) แถวใหม่กว่าใด ๆ ถึงรายการเดียวกันแทนแถวเก่า (`CustomerNotifyResend.Supersedes` — ประเภทเดียวกัน · ยืนยัน⇐เลื่อน/ยกเลิก/ได้คิว · เลื่อน⇐ยกเลิก · ยืนยันออเดอร์⇐สถานะจัดส่ง) ·
+(S3) หน่วย ณ ตอนซื้อบน `UsageEvent.UnitLabelSnapshot` → ใบแจ้งหนี้ (`AddOnBilling.InvoiceUnit`) + เติมแถว notify.topup เก่า + ชื่อ seed ไม่ฝังเลข 500 ·
+(S4) ซื้อแพ็กส่งขนาด/ราคาที่เห็น → เทียบใต้ล็อกก่อนคิดเงิน (`NotifyQuotaPolicy.TopUpOfferChanged`) ไม่ตรง 409 + สถานะใหม่ · ข้อความแจ้งจำนวนที่ให้จริง ·
+(S5) แถวที่ส่งซ้ำแล้วล้มยังอยู่ในรายการ ลองใหม่ได้ + หน้าแสดงผลรายแถว · (S6) ค้าง Claimed เกิน lease กลับเข้ารายการ (`CustomerNotifyResend.IsPending`) ·
+(a) ส่งซ้ำไม่ต่อหมายเหตุบนการจอง/ออเดอร์ · claim ของคำขออื่น = "กำลังส่ง" (b) ยืนยันคำสั่งซื้อส่งซ้ำได้เฉพาะก่อนจัดส่ง (c) GET รายการค้างส่ง = CompanySettingsEdit + ปฏิเสธคีย์ ·
+(d) แอดมิน "คืนค่าตั้งต้น" แพ็ก (e) คำอธิบายอายุแพ็กตรงกับ GREATEST (f) ซื้อแพ็กแล้ววาดรายการค้างส่งใหม่ · ปุ่มกลับข้อความเดิมเมื่อล้ม ·
+(CI) Db test ล้ม: `ResendCount` NOT NULL ไม่มี default ในโมเดล ⇒ INSERT ดิบของ `ClaimAsync` ล้ม — ระบุคอลัมน์ใน INSERT + `HasDefaultValue(0)` · เทสต์ CMS213-11..16 · `required_call_site_check` +7 กติกา/แก้ 7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+

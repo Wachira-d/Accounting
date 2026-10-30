@@ -12,6 +12,12 @@
 | CMS213-08 | กดส่งซ้ำสองแท็บพร้อมกัน | ลูกค้าได้ข้อความเดียว | `Db/NotifyResendDbTests`.Double_click_resends_a_row_once |
 | CMS213-09 | แถวเก่าก่อนรอบ 213 (ไม่มีรหัส) | เติมรหัสจากหมายเหตุ · รันซ้ำได้ · แถว Failed ไม่ถูกแตะ | `Db/NotifyResendDbTests`.Legacy_suppressed_rows_get_their_reason_from_the_note · `CmsRound213NotifyResendTests`.Legacy_backfill_… |
 | CMS213-10 | แพ็ก notify.topup ที่แอดมินตั้ง / ว่าง / นอกช่วง · เพดานเฉพาะบริษัท | ว่าง = 500/60 · ค่าแอดมินชนะ · documents.topup ไม่เปลี่ยน · ตรวจช่วง · สรุปบอกแหล่งเพดาน | `CmsRound213NotifyResendTests`.Topup_pack_… · Admin_pack_validation · Company_override_validation · Admin_summary_… · `required_call_site_check` (PurchaseTopUpAsync ห้ามค่าคงที่) |
+| CMS213-11 | ฝ่ายค้าน S1: แถวค้างมากกว่าที่อ่านได้ครั้งเดียว | ใหม่ก่อนแล้วค่อยตัด · จำนวนทั้งหมดนับแยก (บอก "แสดง N จาก M") · ส่งซ้ำทั้งหมดเฉพาะช่วง 30 วัน | `required_call_site_check` (EvaluateAsync: OrderByDescending · CountAsync · ห้าม OrderBy เก่าก่อน) |
+| CMS213-12 | ฝ่ายค้าน S2: เลื่อนนัด A→B แล้ว B→C ขณะเต็ม · ยืนยันการจองแล้วมีเลื่อนนัด/ได้คิวตามมา | ส่งเฉพาะฉบับล่าสุด (1 หน่วยโควตา) · ทิศตรงข้าม: ยกเลิกไม่ถูกแทน · ข้อความเก่ากว่าไม่แทนของใหม่ | `CmsRound213NotifyResendTests`.S2_newer_message_… · `Db/NotifyResendDbTests`.Only_the_newest_of_two_pending_reschedules_is_resent |
+| CMS213-13 | ฝ่ายค้าน S3: ซื้อแพ็ก 500 แล้วแอดมินเปลี่ยนเป็น 1,000 ก่อนออกบิล | บรรทัดใบแจ้งหนี้ใช้หน่วย ณ ตอนซื้อ (`UsageEvent.UnitLabelSnapshot`) · แถวเก่าเติม "แพ็ก 500 ข้อความ" · ฟีเจอร์อื่นใช้ป้ายของฟีเจอร์ (เดิม) | `CmsRound213NotifyResendTests`.S3_invoice_unit_comes_from_purchase_snapshot · Legacy_backfill_… · `required_call_site_check` (UsageInvoicingJob.RunOnce) |
+| CMS213-14 | ฝ่ายค้าน S4: ขนาด/ราคาแพ็กเปลี่ยนระหว่างดูหน้า · หน้าเก่าไม่ส่งค่าคาดหวัง · คำขอซ้ำคีย์เดิม | 409 + สถานะใหม่ ไม่คิดเงิน → หน้าวาดข้อเสนอใหม่ให้กดยืนยันอีกครั้ง · หน้าเก่าไม่ถูกบล็อก · คำขอซ้ำได้ผลเดิม · ข้อความแจ้งจำนวนที่ให้จริง | `CmsRound213NotifyResendTests`.S4_offer_change_… · `required_call_site_check` (PurchaseTopUpAsync: เทียบก่อน RecordAsync · NotifyTopUp: 409) |
+| CMS213-15 | ฝ่ายค้าน S5/S6: ส่งซ้ำแล้วช่องล้ม · ตัวส่งล้มกลางทางจนค้าง Claimed | ยังอยู่ในรายการพร้อมเหตุ ลองใหม่ได้ · ค้างกลางทางกลับเข้ารายการเมื่อ lease หมด (ระหว่างนั้นไม่ส่งซ้อน) · ผลแต่ละแถวแสดงบนหน้า | `CmsRound213NotifyResendTests`.Pending_definition · `Db/NotifyResendDbTests`.Rows_stuck_claimed_or_failed_after_resend_stay_retriable |
+| CMS213-16 | ฝ่ายค้าน (a)(b): ส่งซ้ำซ้ำ ๆ · ยืนยันคำสั่งซื้อหลังจัดส่ง/พร้อมรับ/ส่งมอบ | ไม่ต่อหมายเหตุบนการจอง/ออเดอร์ทุกครั้งที่ลอง · claim ของคำขออื่น = "กำลังส่ง" ไม่ใช่ล้ม · ยืนยันคำสั่งซื้อส่งได้เฉพาะ รอ/ยืนยัน/กำลังเตรียม | `CmsRound213NotifyResendTests`.Order_confirmation_only_before_fulfilment · `required_call_site_check` (stampNotes) |
 
 ## CMS212D — ค่าตั้ง LINE OA กลางของ NextAcc บนหน้าแอดมิน + สลิปเงินเดือนผ่าน OA ที่ผูกจริง (รอบ 212 แพ็ก D)
 
@@ -156,7 +162,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **693 ไฟล์ · 7,086 `[Fact]` + 1,128 `[Theory]` (5,281 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **693 ไฟล์ · 7,092 `[Fact]` + 1,130 `[Theory]` (5,297 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

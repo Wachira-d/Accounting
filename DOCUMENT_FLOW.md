@@ -6019,6 +6019,10 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค�
   ตั้งขนาดแล้ว `UnitLabel` ประกอบใหม่) · `documents.topup` ไม่แตะ · (ฉ) `/admin/customers.html` + `/admin/account-subscriptions.html` → `AdminNotifyQuotaController`
   (`api/admin/companies/{id}/notify-quota` GET/PUT): เพดานเฉพาะบริษัท (ว่าง/-1/≥0) + ยอดใช้/โบนัส · SubscriptionHistory + audit chain
 
+  **ฝ่ายค้านรอบ 213**: รายการ = `CustomerNotifyResend.IsPending` (ระงับเพราะโควตา · ค้าง Claimed เกิน lease · ส่งซ้ำแล้วล้ม) ใหม่ก่อน + นับทั้งหมดแยก · ส่งเฉพาะฉบับล่าสุด (`Supersedes`) ·
+  ส่งซ้ำไม่ต่อหมายเหตุบนรายการ · ยืนยันคำสั่งซื้อเฉพาะก่อนจัดส่ง · GET รายการ = CompanySettingsEdit · ซื้อแพ็ก: ขนาด/ราคาที่เห็นเทียบใต้ล็อก ไม่ตรง 409 ·
+  หน่วยบนใบแจ้งหนี้ = `UsageEvent.UnitLabelSnapshot` (`UsageInvoicingJob` → `AddOnBilling.InvoiceUnit`) · แอดมินคืนค่าแพ็กตั้งต้นได้
+
 _Last verified against codebase: 2026-10-30 (รอบ 213 — ส่งซ้ำข้อความค้างเพราะโควตา · แพ็ก notify.topup ที่แอดมินตั้ง · เพดานเฉพาะบริษัท · ยังไม่ได้คอมไพล์ · ยังไม่ผ่านฝ่ายค้าน — commit <sha ในคอมมิตถัดไป>)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)

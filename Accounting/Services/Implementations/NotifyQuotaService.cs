@@ -99,8 +99,8 @@ public class NotifyQuotaService : INotifyQuotaService
             return await IsolatedAsync(async db =>
             {
                 const string insert = """
-                    INSERT INTO "CustomerNotifyLogs" ("Id","CompanyId","MessageKey","EventKey","TargetKind","TargetId","Metered","Status","Attempts","CreatedAt","IsDeleted")
-                    VALUES (@id, @c, @k, @e, @tk, @ti, false, 'Pending', 0, now(), false)
+                    INSERT INTO "CustomerNotifyLogs" ("Id","CompanyId","MessageKey","EventKey","TargetKind","TargetId","Metered","Status","Attempts","ResendCount","CreatedAt","IsDeleted")
+                    VALUES (@id, @c, @k, @e, @tk, @ti, false, 'Pending', 0, 0, now(), false)
                     ON CONFLICT ("CompanyId","MessageKey") DO NOTHING;
                     """;
                 await ExecAsync(db, insert, ct,

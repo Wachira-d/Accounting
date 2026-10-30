@@ -428,6 +428,8 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   (`AdminNotifyQuotaController` `api/admin/companies/{id}/notify-quota` · ว่าง = ตามแพ็กเกจ · -1 = ไม่จำกัด · SubscriptionHistory + audit chain · ยอดใช้/โบนัสอ่านอย่างเดียว) ·
   ขนาด/อายุแพ็ก `notify.topup` ตั้งที่ /pages/admin-addons.html (`ApiFeature.PackSize/PackValidDays` → `NotifyQuotaPolicy.TopUpPack` · ว่าง = 500/60 · มีผลกับการซื้อครั้งถัดไป ·
   `UnitLabel` ประกอบจากขนาด) · ข้อความที่ค้างเพราะโควตาเต็ม ⇒ ส่งซ้ำได้หลังเติม (`GET/POST …/customer-notify/pending[/resend]` · ใช้โควตาปกติ · DOCUMENT_FLOW §6.5)
+  **ฝ่ายค้านรอบ 213**: หน่วย ณ ตอนซื้อเก็บบน `UsageEvent.UnitLabelSnapshot` — `UsageInvoicingJob` แยกบรรทัดตามหน่วยนั้น (`AddOnBilling.InvoiceUnit` · แถวเก่า/ฟีเจอร์อื่น = ป้ายของฟีเจอร์) ·
+  ซื้อแพ็กส่งขนาด/ราคาที่เห็น เทียบใต้ล็อกก่อนคิดเงิน ไม่ตรง ⇒ 409 (ไม่คิดเงิน) · แอดมินคืนค่าแพ็กตั้งต้นได้
 
 ### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
 

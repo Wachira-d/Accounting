@@ -3477,6 +3477,9 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Status).HasMaxLength(16);
             e.Property(x => x.Note).HasMaxLength(500);
             e.Property(x => x.SuppressReason).HasMaxLength(24);   // รอบ 213
+            // CI รอบ 213: ฐานเทสต์สร้างจากโมเดล (EnsureCreated) — คอลัมน์ NOT NULL ใหม่ต้องมี default ในโมเดลด้วย
+            // (ตรงกับ migration "ResendCount" integer NOT NULL DEFAULT 0) ไม่งั้น INSERT ดิบของ ClaimAsync ที่ไม่ระบุคอลัมน์นี้ล้ม
+            e.Property(x => x.ResendCount).HasDefaultValue(0);
             e.HasIndex(x => new { x.CompanyId, x.MessageKey }).IsUnique().HasDatabaseName("UX_CustomerNotifyLogs_Company_Key");
             e.HasIndex(x => new { x.CompanyId, x.Status, x.CreatedAt }).HasDatabaseName("IX_CustomerNotifyLogs_Company_Status");   // รอบ 213: หน้าข้อความค้างส่ง
             e.HasQueryFilter(x => !x.IsDeleted);
