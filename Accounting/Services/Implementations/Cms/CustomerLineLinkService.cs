@@ -20,15 +20,17 @@ public class CustomerLineLinkService : ICustomerLineLinkService
     private readonly IHttpClientFactory _http;
     private readonly IChatRateLimiter _limiter;
     private readonly ILogger<CustomerLineLinkService> _logger;
+    /// <summary>รอบ 212 D: ค่าตั้ง OA กลาง — หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)</summary>
+    private readonly INextAccLineConfig _nextAcc;
 
     /// <summary>ความพยายามไถ่รหัสต่อ LINE user (DB-backed · หลาย instance) — เท่ากับเพดานผูกบัญชี ERP</summary>
     private const int RedeemPerMinute = 3;
     private const int RedeemPerDay = 10;
 
     public CustomerLineLinkService(AccountingDbContext db, IConfiguration config, ISecretProtector secrets,
-        IHttpClientFactory http, IChatRateLimiter limiter, ILogger<CustomerLineLinkService> logger)
+        IHttpClientFactory http, IChatRateLimiter limiter, ILogger<CustomerLineLinkService> logger, INextAccLineConfig nextAcc)
     {
-        _db = db; _config = config; _secrets = secrets; _http = http; _limiter = limiter; _logger = logger;
+        _db = db; _config = config; _secrets = secrets; _http = http; _limiter = limiter; _logger = logger; _nextAcc = nextAcc;
     }
 
     // ───────────── ช่องทาง ─────────────
@@ -38,11 +40,11 @@ public class CustomerLineLinkService : ICustomerLineLinkService
         var s = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
             .Select(x => new { x.LineEnabled, x.LineChannelAccessToken, x.LineChannelSecret, x.LineOaBasicId, x.LineOaDestination })
             .FirstOrDefaultAsync(ct);
+        var nx = await _nextAcc.GetAsync(ct);
         return CustomerNotifyChannel.ResolveLine(
             s?.LineEnabled == true, s != null && _secrets.IsUsable(s.LineChannelAccessToken), s != null && _secrets.IsUsable(s.LineChannelSecret),
             s?.LineOaBasicId, s?.LineOaDestination,
-            !string.IsNullOrWhiteSpace(_config["Line:ChannelAccessToken"]), !string.IsNullOrWhiteSpace(_config["Line:ChannelSecret"]),
-            _config["Line:BasicId"], _config["Line:BotUserId"]);
+            nx.HasToken, nx.HasSecret, nx.BasicId, nx.BotUserId);
     }
 
     public async Task<CustomerLineChannelInfo> GetChannelInfoAsync(Guid companyId, CancellationToken ct = default)
@@ -209,9 +211,9 @@ public class CustomerLineLinkService : ICustomerLineLinkService
         if (code == null) return CustomerLineLinkRule.Replies.BadFormat;
 
         // รอบ 211 ฝ่ายค้าน ข้อ 4: OA กลาง — ปลายทาง webhook ต้องตรงกับ Line:BotUserId เมื่อตั้งไว้ (ตั้งผิด = ล้มดัง ไม่เก็บลิงก์ที่จะใช้ไม่ได้)
-        if (scope == CustomerNotifyChannel.ScopeNextAcc && !CustomerNotifyChannel.AcceptDestination(_config["Line:BotUserId"], destination))
+        if (scope == CustomerNotifyChannel.ScopeNextAcc && !CustomerNotifyChannel.AcceptDestination((await _nextAcc.GetAsync(ct)).BotUserId, destination))
         {
-            _logger.LogError("Line:BotUserId ไม่ตรงกับ destination ของ webhook OA กลาง — ไม่ผูก LINE ลูกค้า (ตรวจค่าตั้ง)");
+            _logger.LogError("Bot User ID ของ OA กลาง (หน้าแอดมิน/Line:BotUserId) ไม่ตรงกับ destination ของ webhook — ไม่ผูก LINE ลูกค้า (ตรวจค่าตั้ง)");
             return CustomerLineLinkRule.Replies.WrongChannel;
         }
 
@@ -301,7 +303,7 @@ public class CustomerLineLinkService : ICustomerLineLinkService
             var enc = await _db.CompanySettings.AsNoTracking().Where(s => s.CompanyId == cid).Select(s => s.LineChannelAccessToken).FirstOrDefaultAsync(ct);
             token = _secrets.Unprotect(enc);
         }
-        else token = _config["Line:ChannelAccessToken"];
+        else token = (await _nextAcc.GetAsync(ct)).AccessToken;
         if (string.IsNullOrWhiteSpace(token)) return false;
         try
         {

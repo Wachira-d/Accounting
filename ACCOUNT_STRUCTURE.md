@@ -827,6 +827,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 | **Google OAuth** | ✅ | `POST /auth/sso` — เส้นหลักคือ **authorization-code redirect** เหมือน LINE (`ValidateGoogleTokenAsync` แลก code ที่ `oauth2.googleapis.com/token` ด้วย `SiteSettings.GoogleClientSecret` แล้ว verify id_token ที่ tokeninfo); One Tap (`gsi/client`) เหลือเป็นทางสำรองเมื่อยังไม่ได้ตั้ง secret |
 | Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) — ยังใช้ JS SDK |
 | **LINE Login** (OAuth2) | ✅ | authorization-code flow → `AuthService.ValidateLineTokenAsync` (channel secret ไม่ออกจาก server); คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
+| **LINE OA กลาง (Messaging API)** | ✅ รอบ 212 D | ค่าตั้งระดับแพลตฟอร์มบน `SiteSettings.LineMessaging*` (token/secret เข้ารหัส) ตั้งที่ `/admin/site-settings.html` แท็บ "LINE OA กลาง" (SystemAdmin) · ผู้อ่านตัวเดียว `INextAccLineConfig` — หน้าแอดมินก่อนทั้งชุด · ไม่มี token ⇒ config `Line:*` (deployment เดิม) · webhook `/api/line-webhook` · คนละ channel กับ LINE Login (userId ตรงกันเฉพาะเมื่ออยู่ provider เดียวกัน) |
 | **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
 
 - `AuthProvider` เพิ่มค่า `"Line"` (✅ ใช้งานแล้ว), `"Microsoft"` (📋) — โครงเดิมรองรับอยู่แล้ว

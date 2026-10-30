@@ -5470,6 +5470,49 @@ def notes_marker_self_test(files) -> list:
     return fails
 
 
+# ── รอบ 212 D: config LINE OA กลาง (Line:ChannelAccessToken · ChannelSecret · BasicId · BotUserId · GroupId) อ่านได้ที่ resolver ตัวเดียว ──
+#    เดิม 11 จุดใน 5 ไฟล์อ่าน `_config["Line:…"]` เอง ⇒ ค่าที่แอดมินตั้งในหน้าเว็บไม่มีผล · ทั้งเรพ (รวม Helpers/Controllers) ยกเว้นไฟล์ resolver
+LINE_CONFIG_FORBID = dict(
+    allow={"Services/Implementations/NextAccLineConfig.cs"},
+    literal_patterns=[r'"Line:(?:ChannelAccessToken|ChannelSecret|BasicId|BotUserId|GroupId)"', r'GetSection\(\s*"Line"\s*\)'],
+    why="รอบ 212 D: ค่าตั้ง LINE OA กลางอ่านผ่าน INextAccLineConfig (หน้าแอดมินก่อน · config Line:* fallback) เท่านั้น",
+)
+
+
+def line_config_errors(files) -> list:
+    errs = []
+    for rel, text in files:
+        if rel in LINE_CONFIG_FORBID["allow"]:
+            continue
+        code = mask(text, keep_strings=True)
+        for rx in LINE_CONFIG_FORBID["literal_patterns"]:
+            for m in re.finditer(rx, code):
+                line = code.count("\n", 0, m.start()) + 1
+                errs.append(f"{rel}:{line} อ่าน config LINE OA กลางเอง `{m.group(0)}` — {LINE_CONFIG_FORBID['why']}")
+    return errs
+
+
+def line_config_self_test(files) -> list:
+    fails = []
+    target = "Services/Implementations/LineBotService.cs"
+    base = dict(files).get(target)
+    if base is None:
+        return [f"self-test LINE_CONFIG_FORBID: ไม่พบ {target}"]
+    if line_config_errors([(target, base)]):
+        fails.append(f"self-test LINE_CONFIG_FORBID: {target} ปัจจุบันถูกฟ้อง (ต้องแก้โค้ดก่อน)")
+    for sample in ['var t = _config["Line:ChannelAccessToken"];', 'var s = cfg["Line:ChannelSecret"];', 'var b = _configuration["Line:BasicId"];',
+                   'var g = _config[ "Line:GroupId" ];', 'var x = _config.GetSection("Line");', 'var u = _config["Line:BotUserId"];']:
+        if not line_config_errors([(target, base + "\nclass __X { void F() { " + sample + " } }\n")]):
+            fails.append(f"self-test LINE_CONFIG_FORBID: ใส่ `{sample}` แล้วไม่ฟ้อง")
+    for ok in ['// เดิม _config["Line:ChannelAccessToken"]', 'var id = _config["OAuth:Line:ChannelId"];',
+               'var m = "ยังไม่ได้ตั้ง Line:ChannelAccessToken ใน config";', 'var nx = await _nextAccLine.GetAsync();']:
+        if line_config_errors([(target, "class __Y { async void F() { " + ok + " } }\n")]):
+            fails.append(f"self-test LINE_CONFIG_FORBID: `{ok}` ถูกฟ้องผิด")
+    if line_config_errors([("Services/Implementations/NextAccLineConfig.cs", 'class __Z { string F() => _config["Line:ChannelSecret"]; }\n')]):
+        fails.append("self-test LINE_CONFIG_FORBID: ไฟล์ resolver ถูกฟ้องผิด")
+    return fails
+
+
 @functools.lru_cache(maxsize=64)
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
@@ -10113,8 +10156,8 @@ RULES += [
          forbid=["{Ip}"],
          why="ฝ่ายค้านรอบ 210 ข้อ 1/3: ถังต่อผู้ติดต่อกันไล่เลขที่ด้วยเบอร์เหยื่อ · IPv6 รวม /64 · ตารางนับพัง ⇒ ปฏิเสธ (ไม่เปิดเงียบ)"),
     # ── รอบ 211 (คำตัดสินข้อ 170): ลูกค้าปลายทางผูก LINE เอง · webhook OA ต่อบริษัท · ช่องแจ้งลูกค้า ──
-    dict(file="Services/Implementations/LineBotService.cs", method="VerifySignature",
-         must=["LineWebhookSignature.Verify("], forbid=["HMACSHA256", "ComputeHash("],
+    dict(file="Services/Implementations/LineBotService.cs", method="VerifySignatureAsync",
+         must=["LineWebhookSignature.Verify(", "_nextAccLine.GetAsync("], forbid=["HMACSHA256", "ComputeHash("],
          why="รอบ 211: ลายเซ็น webhook LINE สูตรเดียว (Helpers/LineWebhookSignature) ใช้ร่วม OA กลาง + OA ต่อบริษัท — ห้ามเขียน HMAC ซ้ำ"),
     dict(file="Controllers/CustomerLineWebhookController.cs", method="Receive",
          must=["LineWebhookSignature.Verify(", "s.CompanyId == companyId", "CustomerNotifyChannel.ScopeCompany, companyId", "Unauthorized()"],
@@ -10218,7 +10261,7 @@ RULES += [
     dict(file="Services/Implementations/Pdpa/PdpaService.Cms.cs", method="GenerateCmsAccessReportAsync",
          must=["LoadCmsLineLinksAsync("], why="รอบ 211: DSR ขอดูข้อมูลแสดง LINE ที่ลูกค้าผูกไว้"),
     dict(file="Controllers/LineWebhookController.cs", method="Receive",
-         must=["_bot.VerifySignature(", "SetBlockedAsync("], must_lit=['TryGetProperty("destination"'],
+         must=["_bot.VerifySignatureAsync(", "SetBlockedAsync("], must_lit=['TryGetProperty("destination"'],
          must_re=[r"HandleMessageAsync\(userId,[^;]*destination\)"],
          why="รอบ 211: OA กลาง — บล็อก/เพิ่มเพื่อนกลับของลูกค้าหยุด/เปิดการส่ง (ไม่ใช่ส่งต่อไปเรื่อย ๆ ทั้งที่ถูกบล็อก)"),
     # ── รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน + push พนักงานผ่าน OA กลาง (บั๊กแฝง §0 ของ NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN) ──
@@ -10226,7 +10269,7 @@ RULES += [
          must=["_line.TryPushViaNextAccAsync("], forbid=["PushToUserAsync(", "TryPushToUserAsync("],
          why="รอบ 212 C: userId ของพนักงานผูกกับ OA กลางเท่านั้น — push ผ่าน OA ของร้าน (ResolveConfigAsync) ล้มทุกฉบับ"),
     dict(file="Services/Implementations/LineNotifyService.cs", method="TryPushViaNextAccAsync",
-         must=["NextAccToken()", "LineMessageLimits.Normalize(", "PushCoreAsync("], forbid=["ResolveConfigAsync("],
+         must=["NextAccTokenAsync()", "LineMessageLimits.Normalize(", "PushCoreAsync("], forbid=["ResolveConfigAsync("],
          why="รอบ 212 C: เส้นพนักงานระบุ OA กลางชัด ไม่เลือกตามค่าตั้งบริษัท · ไม่ถอยไป OA ร้าน · ≤5 ก้อน × ≤5,000 ตัว"),
     dict(file="Services/Background/StaffDailySummaryJob.cs", method="RunGuardedAsync",
          must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.BackgroundJob"],
@@ -10322,6 +10365,35 @@ RULES += [
     dict(file="Controllers/CustomerNotifyController.cs", method="SaveRules",
          must=["CustomerNotifyPolicy.Validate(", "r.CompanyId == companyId", "s.CompanyId == companyId"],
          why="รอบ 212: ค่าตั้งต้องอยู่ในแคตตาล็อก · แยกบริษัท · เว็บต้องเป็นของบริษัท"),
+    # ── รอบ 212 D: ค่าตั้ง LINE OA กลางบนหน้าแอดมิน — ผู้อ่านตัวเดียว (INextAccLineConfig) · สลิปพนักงานส่งผ่าน OA ที่ผูกจริง ──
+    dict(file="Services/Implementations/NextAccLineConfig.cs", method="GetAsync",
+         must=["NextAccLineConfigRule.Merge(", "FromConfig(_config)", "_secrets.Unprotect(row.LineMessagingChannelAccessToken)",
+               "_secrets.Unprotect(row.LineMessagingChannelSecret)"],
+         why="รอบ 212 D: ค่าหน้าแอดมินก่อน (ถอดรหัส) · ไม่มี token ⇒ config Line:* ทั้งชุด — กติกา Merge ตัวเดียว"),
+    dict(file="Services/Implementations/LineNotifyService.cs", method="TryPushFlexViaNextAccAsync",
+         must=["NextAccTokenAsync()", "PushCoreAsync("], forbid=["ResolveConfigAsync("],
+         why="รอบ 212 D: Flex ถึงพนักงานผ่าน OA กลางแบบระบุชัด (ไม่เลือกตามค่าตั้งบริษัท) · คืนเหตุเมื่อล้ม"),
+    dict(file="Services/Implementations/LineNotifyService.cs", method="ResolveConfigAsync",
+         must=["_nextAcc.GetAsync("], why="รอบ 212 D: fallback OA กลาง (token + group) ผ่าน resolver ตัวเดียว"),
+    dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="SendPayslipAsync",
+         must=["ResolveRecipientAsync(", "recipient.ViaNextAcc", "_line.TryPushFlexViaNextAccAsync(", "IsLineConfiguredAsync(companyId, recipient.ViaNextAcc"],
+         must_re=[r"if\s*\(\s*!\s*r\s*\.\s*Ok\s*\)"],
+         before=[("_line.TryPushFlexViaNextAccAsync(", "_line.PushFlexToUserAsync(")],
+         why="รอบ 212 D: พนักงานที่ผูก \"สลิป 123456\" กับ OA กลาง ต้องได้สลิปผ่าน OA กลาง (userId แยกตาม provider) · ผลล้มไม่ถูกกลืน"),
+    dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="ResolveRecipientAsync",
+         must=["NextAccLineConfigRule.PayslipRecipient(", "c.UsedByLineUserId == row.LineId", "c.CompanyId == companyId", "e.CompanyId == companyId"],
+         why="รอบ 212 D: หลักฐานการผูกผ่าน OA กลาง = แถวรหัสผูกของพนักงานคนนี้ในบริษัทนี้ (กฎ M)"),
+    dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="IssueBindCodeAsync",
+         must=["CustomerLineLinkRule.AddFriendUrl(", "_nextAcc.GetAsync("], forbid=["LineOaBasicId"],
+         why="รอบ 212 D: ปุ่มเพิ่มเพื่อนชี้ OA กลาง — คำสั่ง \"สลิป\" รับที่ webhook OA กลางเท่านั้น (เดิมชี้ OA บริษัท)"),
+    dict(file="Controllers/AdminLineMessagingController.cs", method="Update",
+         must=["NextAccLineConfigRule.ValidateBasicId(", "NextAccLineConfigRule.ValidateBotUserId(", "NextAccLineConfigRule.ValidateGroupId(",
+               "NextAccLineConfigRule.ApplySecret(", "_secrets.Protect("],
+         before=[("NextAccLineConfigRule.ValidateBasicId(", "SaveChangesAsync(")],
+         why="รอบ 212 D: ตรวจรูปแบบก่อนบันทึก · ความลับเข้ารหัส · ว่าง = คงค่าเดิม (ล้างต้องสั่งชัด)"),
+    dict(file="Controllers/AdminLineMessagingController.cs", method="Test",
+         must=["_lineConfig.GetAsync("], must_lit=["https://api.line.me/v2/bot/info"],
+         why="รอบ 212 D: ปุ่มทดสอบใช้ token ที่ระบบใช้จริง (หน้าแอดมินก่อน · config fallback)"),
     dict(file="Services/Payments/GatewaySourceEvidence.cs", method="RecordedPaymentsAsync",
          must=["db.SiteBookingPayments.AsNoTracking()", "p.CreatedAt"],
          why="รอบ 208 W2 ข้อ 5: หลักฐานรับเงินของการจองลงเวลาที่บันทึก (ไม่ใช่วันที่พนักงานกรอกย้อนหลัง) ⇒ gateway ไม่รับซ้ำ"),
@@ -10579,8 +10651,9 @@ def main() -> int:
     errs += settlement_folder_errors(settle_files)
     marker_files = notes_marker_files()
     errs += notes_marker_errors(marker_files)
+    errs += line_config_errors(marker_files)
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
-          + notes_marker_self_test(marker_files))
+          + notes_marker_self_test(marker_files) + line_config_self_test(marker_files))
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

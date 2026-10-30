@@ -19,7 +19,7 @@ public sealed record CustomerEmailFallbackOption(string Value, string Label);
 /// <summary>
 /// **ตัวตัดสินช่องทางแจ้งลูกค้าปลายทาง (LINE/อีเมล) ตัวเดียว** — รอบ 211 · คำตัดสินข้อ 170
 /// <list type="bullet">
-/// <item>LINE: บริษัทเปิด LINE + มี token ของตัวเอง ⇒ OA ของบริษัท · ไม่งั้น ⇒ OA ของ NextAcc (config <c>Line:*</c>) — <b>กติกาเดียวกับที่ push ใช้อยู่เดิม</b>
+/// <item>LINE: บริษัทเปิด LINE + มี token ของตัวเอง ⇒ OA ของบริษัท · ไม่งั้น ⇒ OA ของ NextAcc (หน้าแอดมิน → config <c>Line:*</c> · <c>INextAccLineConfig</c>) — <b>กติกาเดียวกับที่ push ใช้อยู่เดิม</b>
 ///   (<c>LineNotifyService.ResolveConfigAsync</c>) ⇒ ค่าเริ่มต้นไม่เปลี่ยนพฤติกรรมการส่ง</item>
 /// <item>userId ของ LINE ผูกกับ OA (provider) ⇒ ลิงก์ที่ผูกกับ OA อื่นใช้ไม่ได้ (<see cref="LinkUsable"/>) — ร้านสลับ OA = ลูกค้าต้องผูกใหม่</item>
 /// <item>อีเมล: ร้านตั้ง + ทดสอบผ่าน (<c>CompanySettings.EmailConfigured</c>) ⇒ ผู้ส่งของร้าน แล้วถอยไปอีเมลของระบบเมื่อล้ม (ฝ่ายค้าน) · ไม่งั้น ⇒ อีเมลของระบบ (เดิม)</item>
@@ -49,8 +49,8 @@ public static class CustomerNotifyChannel
         }
         var nb = CustomerLineLinkRule.NormalizeBasicId(nextAccBasicId);
         string? p2 = null;
-        if (!nextAccHasToken) p2 = "ระบบยังไม่ได้ตั้งค่า LINE OA กลาง (Line:ChannelAccessToken) และร้านยังไม่ได้ตั้ง LINE OA ของตัวเอง";
-        else if (!nextAccHasSecret || nb == null) p2 = "ระบบยังไม่ได้ตั้งค่า LINE OA กลางให้ผูกได้ (Line:ChannelSecret / Line:BasicId)";
+        if (!nextAccHasToken) p2 = NextAccLineConfigRule.NotConfiguredMessage + " และร้านยังไม่ได้ตั้ง LINE OA ของตัวเอง";
+        else if (!nextAccHasSecret || nb == null) p2 = "ระบบยังไม่ได้ตั้งค่า LINE OA กลางให้ผูกได้ (ขาด Channel Secret หรือ Basic ID — ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง)";
         return new CustomerLineChannel(ScopeNextAcc, nb, nextAccHasToken, p2 == null, p2, nextAccDestination);
     }
 

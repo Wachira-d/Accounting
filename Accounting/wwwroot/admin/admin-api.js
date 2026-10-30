@@ -205,6 +205,10 @@ const AdminAPI = {
   platformBilling() { return this.get('/platform-billing-settings'); },
   updatePlatformBilling(data) { return this.put('/platform-billing-settings', data); },
   updateSiteSettings(data) { return this.put('/site-settings', data); },
+  // LINE OA กลางของ NextAcc (Messaging API) — รอบ 212 D · ความลับไม่ถูกส่งกลับ
+  lineMessaging() { return this.get('/line-messaging'); },
+  updateLineMessaging(d) { return this.put('/line-messaging', d); },
+  testLineMessaging() { return this.post('/line-messaging/test', {}); },
 
   // System Email Configuration
   systemEmail() { return this.get('/system-email'); },
