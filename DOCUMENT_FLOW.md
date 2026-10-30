@@ -1802,7 +1802,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   **มีปุ่มเฉพาะเมื่อ config ของแพลตฟอร์ม active + โหมดใช้งานจริง** (`Helpers/PlatformPayAvailability`) · นอกนั้นโอน + แนบสลิป · ตั้งค่าที่ `/admin/platform-gateway.html`
   (`IPaymentProviderConfigService` ตัวเดียวกับหน้าร้าน · ด่าน `Helpers/PaymentLiveGate`) · ทดลองจ่าย ฿20 = `GatewaySelfTest` (handler ประทับเวลาอย่างเดียว · ไม่มี JE · รอบโอนไม่หยิบ) ·
   ก่อนทุกการชำระ/ยืนยันการซื้อ (แพลตฟอร์ม + ออเดอร์/จอง/ที่พักของร้าน) ต้องติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (`Helpers/PurchasePolicyAcceptance` · แถว `PolicyAcceptances`) ·
-  ยกเลิกแพ็กเกจมีผลสิ้นรอบ (`Subscription.CancelAtPeriodEnd`) · Last verified `commit <sha ในคอมมิตถัดไป>`
+  ยกเลิกแพ็กเกจมีผลสิ้นรอบ (`Subscription.CancelAtPeriodEnd`) · Last verified `commit a426a0ed`
 
 - **รอบ 219 เฟส 0 — เงินค่าบริการ NextAcc (คำตัดสินข้อ 178):** ชนิดต้นทาง `SubscriptionPayment`/`AddOnPurchase` = รายได้ของแพลตฟอร์ม (`Helpers/PlatformRevenueSource`) ·
   `PaymentIntentService.StartAsync`/`RecordExternalSuccessAsync` ปฏิเสธเมื่อไม่อยู่ใต้บริษัทผู้ให้บริการหรือไม่ระบุ `PayerCompanyId` (ครอบ `pay/intents` · `public-pay` · ส่วนเสริม) ·
