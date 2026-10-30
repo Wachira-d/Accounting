@@ -5898,7 +5898,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 210 — สมาชิ�
   อีเมลผ่านผู้ส่งของร้านเมื่อ `EmailConfigured` (ทดสอบผ่าน) ไม่งั้นของระบบ · ล้มทุกช่อง ⇒ ประทับเหตุบนรายการเหมือนเดิม ·
   (ง) DSR ขอดู/ลบครอบ `CustomerLineLinks` · หน้าตั้งค่า LINE แสดง OA ที่ใช้ + webhook URL + จำนวนลิงก์ (`line-config.customerChannel`)
 
-_Last verified against codebase: 2026-10-30 (รอบ 211 — ลูกค้าผูก LINE รับแจ้งเตือน · OA ของร้าน/NextAcc · อีเมลของร้าน · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 211 — ลูกค้าผูก LINE รับแจ้งเตือน · OA ของร้าน/NextAcc · อีเมลของร้าน · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 461eeea5)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 

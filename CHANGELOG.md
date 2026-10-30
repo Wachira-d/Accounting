@@ -5710,4 +5710,4 @@ _รอบ 211 — คำขอเจ้าของ "ลูกค้าขอ�
 (2) webhook ต่อบริษัท `POST /api/line/webhook/c/{companyId}` · OA กลางแยก "ผูก LN-" ก่อน "ผูก 123456" ของ ERP · follow/unfollow ·
 (3) `BookingNotifier` — LINE ที่ผูกเองก่อน (opt-in) · อีเมลผ่านผู้ส่งของร้านเมื่อทดสอบผ่าน · ทุกทางเข้าแจ้งลูกค้าส่ง `LineTarget` · (4) PDPA: ยินยอม/ถอน · DSR ขอดู/ลบ ·
 (5) หน้าร้าน 5 จุด + หน้าตั้งค่า LINE · เทสต์ `CmsRound211LineNotifyTests` (TEST_PLAN CMS211-01..20) · `required_call_site_check` +23 กติกา ·
-ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 461eeea5_
