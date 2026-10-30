@@ -74,6 +74,9 @@ public interface ISubscriptionService
 
     // Subscription Payment (Slip Upload & Approval)
     Task<SubscriptionPaymentResponse> SubmitPaymentAsync(Guid companyId, SubmitSubscriptionPaymentRequest request, string performedBy);
+    /// <summary>รอบ 219 เฟส 2: แจ้งชำระใบแจ้งหนี้ค่าบริการ (ศูนย์บิล/ลิงก์ชำระ) — ยอดจากใบ · ติ๊กยอมรับเงื่อนไขบังคับ</summary>
+    Task<SubscriptionPaymentResponse> SubmitInvoicePaymentAsync(Guid companyId, Guid invoiceDocumentId,
+        SubmitInvoicePaymentRequest request, string performedBy);
     Task<SubscriptionPaymentResponse> UploadPaymentSlipAsync(Guid paymentId, string fileName, string originalFileName, string contentType, long fileSize, string storagePath, string performedBy);
     Task<SubscriptionPaymentListResponse> GetPaymentsAsync(Guid companyId);
     Task<SubscriptionPaymentResponse> GetPaymentAsync(Guid paymentId);

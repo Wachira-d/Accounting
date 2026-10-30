@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ศูนย์บิลค่าบริการ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-bottom:16px }
+    .card h3 { margin:0 0 12px; font-size:15px; font-weight:700; color:#0f172a }
+    .kpis { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%, 200px),1fr)); gap:12px; margin-bottom:16px }
+    .kpi { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px }
+    .kpi .lbl { font-size:12px; color:#64748b }
+    .kpi .val { font-size:20px; font-weight:800; color:#0f172a }
+    .kpi.bad .val { color:#b91c1c }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; background:#f1f5f9; color:#475569 }
+    .pill.Overdue { background:#fee2e2; color:#991b1b } .pill.DueToday { background:#fef3c7; color:#92400e }
+    .pill.Open { background:#e0f2fe; color:#075985 } .pill.Paid { background:#dcfce7; color:#166534 }
+    .note { font-size:13px; padding:10px 12px; border-radius:8px; background:#f8fafc; border:1px solid #e2e8f0; color:#334155 }
+    .note.warn { background:#fffbeb; border-color:#fde68a; color:#78350f }
+    .note.bad { background:#fef2f2; border-color:#fecaca; color:#991b1b }
+    .muted { color:#64748b; font-size:12px }
+    .terms li { margin:4px 0 4px 18px; font-size:13px; color:#334155 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">ศูนย์บิลค่าบริการ NextAcc</h2>
+        <p class="page-subtitle">ใบแจ้งหนี้ · ชำระเงิน · ใบเสร็จ · แพ็กเกจและส่วนเสริมของบริษัทนี้</p></div>
+      <a href="/pages/subscription.html" class="btn btn-secondary">💎 แพ็กเกจ</a>
+    </div>
+    <div id="notice"></div>
+    <div class="kpis" id="kpis"></div>
+    <div class="card"><h3>แพ็กเกจปัจจุบัน</h3><div id="plan">กำลังโหลด...</div></div>
+    <div class="card"><h3>ใบแจ้งหนี้</h3><div id="invoices">กำลังโหลด...</div></div>
+    <div class="card"><h3>ประวัติการชำระ</h3><div id="payments">กำลังโหลด...</div></div>
+    <div class="card"><h3>ส่วนเสริม</h3><div id="addons">กำลังโหลด...</div>
+      <div style="margin-top:10px"><a href="/pages/addons.html" class="btn btn-secondary btn-sm">🧩 จัดการส่วนเสริม</a></div></div>
+  </div>
+
+  <div class="modal" id="payModal">
+    <div class="modal-content" style="max-width:560px">
+      <div class="modal-header">
+        <h3 id="payModalTitle">ชำระใบแจ้งหนี้</h3>
+        <button class="modal-close" onclick="Bill.closePay()">&times;</button>
+      </div>
+      <div class="modal-body" id="payModalBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Bill.closePay()">ยกเลิก</button>
+        <button class="btn btn-secondary" id="payOnlineBtn" style="display:none" onclick="Bill.payOnline()">ชำระออนไลน์</button>
+        <button class="btn btn-primary" id="paySubmit" onclick="Bill.submitSlip()">ส่งสลิป</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/pay-widget.js"></script>
+  <script src="/js/policy-accept.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // ทุกค่าที่แสดง (ยอด · สถานะ · ป้าย · จ่ายได้ไหม/เพราะอะไร · เงื่อนไข) มาจาก GET …/billing-center — หน้าเว็บไม่ตัดสินเอง
+    const Bill = {
+      data: null,
+      cid() { return Layout.getCompanyId(); },
+      base() { return `/api/subscription/${this.cid()}/billing-center`; },
+
+      async init() {
+        if (!Layout.init('billing')) return;
+        Layout.setTitle('ศูนย์บิลค่าบริการ');
+        await this.load();
+      },
+
+      async load() {
+        try {
+          const res = await API.get(this.base());
+          this.data = res.data;
+          this.render();
+        } catch (e) {
+          document.getElementById('plan').innerHTML = `<div class="note bad">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
+          ['invoices', 'payments', 'addons'].forEach(id => document.getElementById(id).innerHTML = '');
+        }
+      },
+
+      render() {
+        const d = this.data, e = Layout.esc;
+        document.getElementById('notice').innerHTML = d.notice ? `<div class="note warn" style="margin-bottom:12px">${e(d.notice)}</div>` : '';
+        document.getElementById('kpis').innerHTML = `
+          <div class="kpi"><div class="lbl">ยอดค้างชำระ</div><div class="val">฿${Layout.money(d.outstandingTotal)}</div></div>
+          <div class="kpi ${d.overdueCount ? 'bad' : ''}"><div class="lbl">เกินกำหนด (${d.overdueCount} ใบ)</div><div class="val">฿${Layout.money(d.overdueTotal)}</div></div>
+          <div class="kpi"><div class="lbl">นโยบายค้างชำระ</div><div style="font-size:12px;color:#334155">${e(d.suspensionPolicy)}</div></div>`;
+
+        const p = d.plan;
+        document.getElementById('plan').innerHTML = `
+          <div style="display:flex;gap:18px;flex-wrap:wrap">
+            <div><div class="muted">แพ็กเกจ</div><b>${e(p.planName || p.plan)}</b></div>
+            <div><div class="muted">สถานะ</div><b>${e(p.statusLabel)}</b></div>
+            <div><div class="muted">ราคา/รอบ</div><b>฿${Layout.money(p.pricePerCycle)}</b></div>
+            <div><div class="muted">ใช้ได้ถึง</div><b>${p.isPermanentFree ? 'ไม่หมดอายุ' : (p.endDate ? Layout.date(p.endDate) : '-')}</b></div>
+            <div><div class="muted">ออกใบแจ้งหนี้ต่ออายุ</div><b>${p.nextRenewalInvoiceAt ? Layout.date(p.nextRenewalInvoiceAt) : '-'}</b></div>
+          </div>
+          ${p.scheduledPlan ? `<div class="note" style="margin-top:10px">เปลี่ยนเป็น ${e(p.scheduledPlan)} มีผล ${Layout.date(p.scheduledPlanEffectiveAt)}</div>` : ''}
+          ${p.cancelNote ? `<div class="note warn" style="margin-top:10px">${e(p.cancelNote)}</div>` : ''}
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+            ${p.canCancel && d.canManagePlan ? `<button class="btn btn-secondary btn-sm" onclick="Bill.cancelPlan()">ยกเลิกแพ็กเกจ (ใช้ได้ถึงสิ้นรอบ)</button>` : ''}
+            ${p.canReactivate && d.canManagePlan ? `<button class="btn btn-primary btn-sm" onclick="Bill.reactivate()">ใช้ต่อ (ยกเลิกการยกเลิก)</button>` : ''}
+          </div>`;
+
+        const inv = d.invoices || [];
+        document.getElementById('invoices').innerHTML = inv.length === 0
+          ? '<div class="muted">ยังไม่มีใบแจ้งหนี้</div>'
+          : `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>ชนิด</th><th>วันที่</th><th>ครบกำหนด</th>
+              <th class="text-right">ยอด</th><th class="text-right">ค้าง</th><th>สถานะ</th><th></th></tr></thead><tbody>
+              ${inv.map(i => `<tr>
+                <td class="font-medium">${e(i.documentNumber)}</td><td>${e(i.kindLabel)}</td>
+                <td>${Layout.date(i.documentDate)}</td><td>${i.dueDate ? Layout.date(i.dueDate) : '-'}</td>
+                <td class="text-right">฿${Layout.money(i.totalAmount)}</td><td class="text-right"><b>฿${Layout.money(i.balanceDue)}</b></td>
+                <td><span class="pill ${e(i.state)}">${e(i.stateLabel)}</span></td>
+                <td style="white-space:nowrap">
+                  <button class="btn btn-secondary btn-sm" onclick="Bill.pdf('${Layout.jsArg(i.id)}','${Layout.jsArg(i.documentNumber)}')">PDF</button>
+                  ${i.canPay ? `<button class="btn btn-primary btn-sm" onclick="Bill.openPay('${Layout.jsArg(i.id)}')">ชำระ</button>`
+                    : (i.balanceDue > 0 && i.cannotPayReason ? `<div class="muted">${e(i.cannotPayReason)}</div>` : '')}
+                </td></tr>`).join('')}
+            </tbody></table></div>`;
+
+        const pays = d.payments || [];
+        document.getElementById('payments').innerHTML = pays.length === 0
+          ? '<div class="muted">ยังไม่มีการชำระ</div>'
+          : `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>วันที่</th><th>รายการ</th>
+              <th class="text-right">ยอด</th><th>สถานะ</th><th>ใบเสร็จ</th></tr></thead><tbody>
+              ${pays.map(x => `<tr>
+                <td class="font-medium">${e(x.paymentNumber)}</td><td>${Layout.date(x.paymentDate)}</td><td>${e(x.purpose)}</td>
+                <td class="text-right">฿${Layout.money(x.amount)}</td>
+                <td>${e(x.statusLabel)}${x.rejectionReason ? `<div class="muted">${e(x.rejectionReason)}</div>` : ''}</td>
+                <td>${x.hasReceipt ? `<button class="btn btn-secondary btn-sm" onclick="Bill.receipt('${Layout.jsArg(x.id)}','${Layout.jsArg(x.receiptNumber)}')">${e(x.receiptNumber)}</button>` : '-'}</td>
+              </tr>`).join('')}
+            </tbody></table></div>`;
+
+        const ad = d.addOns || [];
+        document.getElementById('addons').innerHTML = ad.length === 0
+          ? '<div class="muted">ยังไม่ได้เปิดส่วนเสริม</div>'
+          : `<div class="table-container"><table class="table"><thead><tr><th>ส่วนเสริม</th><th>วิธีชำระ</th><th>สถานะการชำระ</th><th class="text-right">ราคา/เดือน</th><th>ใช้งาน</th></tr></thead><tbody>
+              ${ad.map(a => `<tr><td>${e(a.name)}</td><td>${e(a.billingChoiceLabel || '-')}</td>
+                <td>${e(a.paymentStatusLabel || 'ไม่ต้องชำระล่วงหน้า')}${a.graceUntil ? `<div class="muted">ชำระก่อน ${Layout.date(a.graceUntil)}</div>` : ''}${a.trialUntil ? `<div class="muted">ทดลองใช้ถึง ${Layout.date(a.trialUntil)}</div>` : ''}</td>
+                <td class="text-right">${a.monthlyPrice != null ? '฿' + Layout.money(a.monthlyPrice) : '-'}</td>
+                <td>${a.usable ? '✅' : '⛔ ระงับ'}</td></tr>`).join('')}
+            </tbody></table></div>`;
+      },
+
+      async pdf(id, no) { try { await API.download(`${this.base()}/invoices/${id}/pdf`, `${no}.pdf`); } catch (e) { Layout.toast(e.message, 'error'); } },
+      async receipt(paymentId, no) {
+        try { await API.download(`/api/subscription/${this.cid()}/payments/${paymentId}/receipt`, `${no || 'receipt'}.pdf`); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      openPay(id) {
+        const d = this.data, e = Layout.esc, i = (d.invoices || []).find(x => x.id === id);
+        if (!i) return;
+        this._payId = id;
+        const po = d.payOptions || {};
+        document.getElementById('payModalTitle').textContent = `ชำระใบแจ้งหนี้ ${i.documentNumber}`;
+        document.getElementById('payOnlineBtn').style.display = po.online ? '' : 'none';
+        this._methods = po.methods || [];
+        document.getElementById('payModalBody').innerHTML = `
+          <div class="note" style="margin-bottom:10px"><b>ยอดที่ต้องชำระ ฿${Layout.money(i.balanceDue)}</b>
+            ${(i.lineSummary || []).length ? `<div class="muted" style="margin-top:4px">${i.lineSummary.map(e).join('<br>')}</div>` : ''}</div>
+          ${po.bankTransferInstructions
+            ? `<div class="note" style="white-space:pre-line;margin-bottom:10px"><b>โอนเงินค่าบริการให้ NextAcc</b>\n${e(po.bankTransferInstructions)}</div>`
+            : `<div class="note bad" style="margin-bottom:10px">${e(po.fallbackNote || '')}</div>`}
+          ${!po.online && po.onlineNote ? `<div class="muted" style="margin-bottom:10px">${e(po.onlineNote)}</div>` : ''}
+          <form id="billSlipForm" style="display:grid;gap:10px">
+            <label>ไฟล์สลิป (รูปหรือ PDF)<input type="file" name="file" accept="image/*,application/pdf" class="form-input"></label>
+            <label>วันที่โอน<input type="date" name="paymentDate" class="form-input"></label>
+            <label>อ้างอิงการโอน (ถ้ามี)<input name="transferReference" maxlength="100" class="form-input"></label>
+            <label>หมายเหตุ (เช่น หักภาษี ณ ที่จ่าย — แนบหนังสือรับรองกับสลิป)<input name="customerNotes" maxlength="500" class="form-input"></label>
+          </form>
+          <div id="billPolicy" style="margin-top:10px">${PolicyAccept.html(po.policy)}</div>`;
+        Layout.openModal('payModal');
+      },
+      closePay() { Layout.closeModal('payModal'); },
+
+      async submitSlip() {
+        const form = document.getElementById('billSlipForm');
+        if (!form.file.files.length) { Layout.toast('เลือกไฟล์สลิปก่อน', 'error'); return; }
+        let pol;
+        try { pol = PolicyAccept.require('billPolicy'); } catch (e) { Layout.toast(e.message, 'error'); return; }
+        const fd = new FormData(form);
+        fd.set('policyAccepted', String(pol.policyAccepted));
+        if (pol.policyVersionShown) fd.set('policyVersionShown', pol.policyVersionShown);
+        const btn = document.getElementById('paySubmit'); btn.disabled = true;
+        try {
+          const res = await API.upload(`${this.base()}/invoices/${this._payId}/slip`, fd);
+          Layout.toast(res?.message || 'ส่งสลิปแล้ว', 'success');
+          this.closePay(); await this.load();
+        } catch (e) { Layout.toast(e.message || 'ส่งสลิปไม่สำเร็จ', 'error'); }
+        finally { btn.disabled = false; }
+      },
+
+      // ชำระออนไลน์ = ช่องทางของ NextAcc (part B) ผ่าน PayWidget ตัวเดียว — เซิร์ฟเวอร์สร้างรายการชำระที่ผูกใบ (ยอดจากใบ) แล้วคืนเส้นทางของ part B
+      async payOnline() {
+        let pol;
+        try { pol = PolicyAccept.require('billPolicy'); } catch (e) { Layout.toast(e.message, 'error'); return; }
+        try {
+          const res = await API.post(`${this.base()}/invoices/${this._payId}/online-payment`, pol);
+          this.closePay();
+          PayWidget.open({
+            companyId: this.cid(),
+            publicBase: res.data.publicBase,
+            method: (res.data.methods || this._methods || [])[0] || 'PromptPay',
+            extraBody: pol,
+            onPaid: async () => { Layout.toast('ชำระเงินสำเร็จ — รอระบบยืนยัน', 'success'); await this.load(); },
+          });
+        } catch (e) { Layout.toast(e.message || 'ชำระออนไลน์ไม่สำเร็จ', 'error'); }
+      },
+
+      async cancelPlan() {
+        if (!confirm('ยกเลิกแพ็กเกจ? ใช้งานต่อได้จนสิ้นรอบที่ชำระแล้ว ไม่มีการคืนเงินตามสัดส่วน และจะไม่ออกใบแจ้งหนี้ต่ออายุ')) return;
+        try { const r = await API.post(`/api/subscription/${this.cid()}/cancel`, {}); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async reactivate() {
+        try { const r = await API.post(`/api/subscription/${this.cid()}/cancel/undo`, {}); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    Bill.init();
+  </script>
+</body>
+</html>

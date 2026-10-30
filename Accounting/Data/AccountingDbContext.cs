@@ -76,8 +76,12 @@ public class AccountingDbContext : DbContext
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
     public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
-    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();
-    public DbSet<PolicyAcceptance> PolicyAcceptances => Set<PolicyAcceptance>();   // รอบ 219 ส่วน B — หลักฐานติ๊กยอมรับข้อกำหนด+นโยบายคืนเงินก่อนชำระ (Helpers/PurchasePolicyAcceptance)   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)
+    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)
+    public DbSet<PlatformBillingSettings> PlatformBillingSettings => Set<PlatformBillingSettings>();   // รอบ 219 เฟส 2 — ค่าตั้งการเรียกเก็บค่าบริการ NextAcc (แถวเดียว)
+    public DbSet<PlatformBillingNotice> PlatformBillingNotices => Set<PlatformBillingNotice>();   // รอบ 219 เฟส 2 ขั้น 2 — ใบแจ้งหนี้/แจ้งเตือนที่ส่ง (unique คีย์+ช่อง)
+    public DbSet<PlatformDunningState> PlatformDunningStates => Set<PlatformDunningState>();
+    public DbSet<PlatformPaymentLink> PlatformPaymentLinks => Set<PlatformPaymentLink>();   // รอบ 219 เฟส 2 ขั้น 4 — ลิงก์ชำระใบแจ้งหนี้ค่าบริการ (เก็บ hash)   // รอบ 219 เฟส 2 ขั้น 2 — สถานะทวงหนี้ต่อบริษัท (watermark)
+    public DbSet<PolicyAcceptance> PolicyAcceptances => Set<PolicyAcceptance>();   // รอบ 219 ส่วน B — หลักฐานติ๊กยอมรับข้อกำหนด+นโยบายคืนเงินก่อนชำระ (Helpers/PurchasePolicyAcceptance)
     public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม (ไม่มี CompanyId)
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
@@ -757,6 +761,9 @@ public class AccountingDbContext : DbContext
         {
             e.HasIndex(p => p.PaymentNumber).IsUnique();
             e.HasIndex(p => new { p.SubscriptionId, p.Status });
+            // รอบ 219 เฟส 2: หา "รายการที่แจ้งชำระใบนี้อยู่" (กันแจ้งซ้อน · ศูนย์บิล · ลิงก์ชำระ) — ชื่อตรงกับ PlatformBillingPhase2Migration
+            e.HasIndex(p => p.PlatformInvoiceDocumentId).HasFilter("\"PlatformInvoiceDocumentId\" IS NOT NULL")
+                .HasDatabaseName("IX_SubscriptionPayments_PlatformInvoiceDocumentId");
             e.Property(p => p.PaymentNumber).HasMaxLength(50);
             e.Property(p => p.Amount).HasPrecision(18, 2);
             e.Property(p => p.Currency).HasMaxLength(3);
@@ -1043,6 +1050,42 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.EvidenceHash).HasMaxLength(100);
             e.Property(x => x.VersionShown).HasMaxLength(50);
             e.Property(x => x.UserAgent).HasMaxLength(500);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        // ===== รอบ 219 เฟส 2 (คำตัดสินข้อ 180) — ค่าตั้งการเรียกเก็บ · ทวงหนี้ · ลิงก์ชำระ (หลักฐานยอมรับนโยบาย = PolicyAcceptance ของ part B) · ชื่อ index ตรงกับ Helpers/PlatformBillingPhase2Migration =====
+        modelBuilder.Entity<PlatformBillingSettings>(e =>
+        {
+            e.Property(x => x.ReminderDaysBeforeDue).HasMaxLength(100);
+            e.Property(x => x.ReminderDaysAfterDue).HasMaxLength(100);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<PlatformBillingNotice>(e =>
+        {
+            e.HasIndex(x => new { x.MessageKey, x.Channel }).IsUnique().HasDatabaseName("UX_PlatformBillingNotices_Key_Channel");
+            e.HasIndex(x => new { x.BuyerCompanyId, x.CreatedAt }).HasDatabaseName("IX_PlatformBillingNotices_Buyer_CreatedAt");
+            e.Property(x => x.MessageKey).HasMaxLength(200);
+            e.Property(x => x.Channel).HasMaxLength(20);
+            e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.Detail).HasMaxLength(500);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PlatformPaymentLink>(e =>
+        {
+            e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("UX_PlatformPaymentLinks_TokenHash");
+            e.HasIndex(x => x.DocumentId).HasDatabaseName("IX_PlatformPaymentLinks_Document");
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.AmountSnapshot).HasPrecision(18, 2);
+            e.Property(x => x.RevokedBy).HasMaxLength(256);
+            e.Property(x => x.RevokedReason).HasMaxLength(300);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PlatformDunningState>(e =>
+        {
+            e.HasIndex(x => x.CompanyId).IsUnique().HasDatabaseName("UX_PlatformDunningStates_Company");
+            e.Property(x => x.OverdueAmount).HasPrecision(18, 2);
+            e.Property(x => x.LastAction).HasMaxLength(300);
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 
