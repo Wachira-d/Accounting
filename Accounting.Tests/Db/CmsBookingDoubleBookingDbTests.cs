@@ -34,9 +34,9 @@ public class CmsBookingDoubleBookingDbTests
     {
         public bool Succeed { get; set; } = true;
         public List<(BookingContact Contact, string Subject, string Text)> Sent { get; } = new();
-        public Task<BookingSendResult> SendAsync(Guid companyId, BookingContact contact, string subject, string text, CancellationToken ct = default)
+        public Task<BookingSendResult> SendAsync(CustomerNotifyRequest request, CancellationToken ct = default)
         {
-            Sent.Add((contact, subject, text));
+            Sent.Add((request.Contact, request.Subject, request.Text));
             return Task.FromResult(Succeed ? BookingSendResult.Ok("email") : BookingSendResult.Fail("SMTP ปลอมล้ม"));
         }
     }

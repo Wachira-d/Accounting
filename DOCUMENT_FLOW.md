@@ -5902,6 +5902,107 @@ _Last verified against codebase: 2026-10-30 (รอบ 211 — ลูกค้�
 
 _Last verified against codebase: 2026-10-30 (รอบ 211 ฝ่ายค้าน — log ปิดบัง userId · เส้นปิดลิงก์เดียว + เผารหัส · เก็บกวาดรายคืน · BotUserId มีผล · อีเมลร้านล้มถอยไประบบ + ประทับ · webhook 401 แบบเดียว + จำกัด body · ธุรกรรมไถ่/ออกรหัส · ยินยอมด้วย hash · ยังไม่ได้คอมไพล์ · commit f19dac45)_
 
+- **รอบ 212 C · แจ้งเตือนพนักงานผ่าน OA กลาง + สรุปประจำวันทาง LINE (คำตัดสินข้อ 5 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §0/§5/§8 C · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **บั๊กแฝงที่แก้** — `NotificationEngine.DispatchLineAsync` เดิม push `User.LineUserId`/`Employee.LineId` ผ่าน OA ที่ `LineNotifyService.ResolveConfigAsync` เลือก (OA ของร้านเมื่อร้านเปิด LINE)
+  แต่ userId ของพนักงานผูกผ่าน webhook ของ **OA กลาง** เท่านั้น ("ผูก 123456" · "สลิป 123456") และ userId ของ LINE แยกตาม provider ⇒ ร้านที่ตั้ง OA เองแจ้งเตือนพนักงานทาง LINE ล้มทุกฉบับ ·
+  ตอนนี้ใช้ `ILineNotifyService.TryPushViaNextAccAsync` (token `Line:ChannelAccessToken` ระบุชัด · ไม่อ่านค่าตั้งบริษัท · ไม่ถอยไป OA ร้าน · ≤ 5 ก้อน × ≤ 5,000 ตัวผ่าน `Helpers/LineMessageLimits`) · ล้ม ⇒ log Warning พร้อมเหตุ ·
+  แจ้งเตือนรายเหตุการณ์**ไม่นับ**โควตาข้อความช่องกลาง (§10) · ข้อความถึงลูกค้า (`TryPushToUserAsync`) ความหมายเดิม ·
+  (ข) **สรุปประจำวัน** — ตั้งที่ `settings.html` แท็บการแจ้งเตือน ส่วน "สรุปรายวันทาง LINE" (`js/staff-daily-summary.js` · `GET/POST/PUT/DELETE api/companies/{id}/notifications/daily-summary[/{configId}]` ·
+  `POST …/{configId}/test` ส่งถึงผู้กด · ทุกเส้นต้อง `CompanySettings.Edit` + ปฏิเสธ API key) · ชุด `StaffDailySummaryConfig` (บริษัท + เว็บเดียวถ้าเลือก · เวลาไทยปัด 5 นาที · หัวข้อ · ผู้รับรายคน ∪ ตามบทบาท) ·
+  งาน `StaffDailySummaryJob` รอบละ 5 นาที ใต้ `JobLock` · ถึงกำหนด = `StaffDailySummaryPlan.Due` (ถึงเวลา · ส่งตามหลังได้ถึง 23:00 · ไม่ backfill ข้ามวัน · watermark `LastSentLocalDate` ต่อชุด) ·
+  ต่อผู้รับ: claim แถว `StaffDailySummaryDeliveries` unique (ชุด, วัน, คน) ด้วย `INSERT … ON CONFLICT … WHERE` (ล้มลองใหม่ได้ 3 ครั้ง/วัน · "กำลังส่ง" ค้าง > 15 นาทีรับช่วงได้) →
+  สมาชิกที่ยังใช้งาน + ผูก LINE (ไม่ผูก ⇒ แถว "ยังไม่ผูก LINE" + หน้าตั้งค่าบอกวิธีผูก) → สิทธิ์ ณ วันส่ง (`IPermissionService` ต่อคีย์ของหัวข้อ + `CmsSiteScope.AllowedSiteIds`) →
+  `StaffDailySummaryPlan.FilterForRecipient` (ไม่มีสิทธิ์ = ไม่มีหัวข้อ · เว็บที่ไม่เห็น = ไม่มีแถว) → `Helpers/StaffDailySummaryBuilder` (ข้อความเดียว ≤ 5 ก้อน × ≤ 5,000 ตัว · เกิน ⇒ "…และอีก N รายการ — ดูเพิ่มเติม: ลิงก์หน้าหลังบ้าน") →
+  จองโควตาช่องกลาง `ISharedMessageMeter` (**นับ** 1 หน่วย/ผู้รับ/วัน · ตอนนี้ no-op จนกว่าโควตาแพ็ก A เข้า — ผู้ประสานงานต่อสาย) → push OA กลาง → ประทับผล/เหตุบนแถว (ล้ม ⇒ คืนหน่วย + `Error`) ·
+  ทุกผู้รับจบ ⇒ ขยับ watermark · สรุปผลรอบบน `LastRunNote` (หน้าตั้งค่าแสดง + ประวัติ 7 วัน) · หัวข้อ: การจองวันนี้/พรุ่งนี้ตามผู้ให้บริการ/บริการ · คลาส + ที่นั่ง · คิวผลิตตามสั่ง (วันพร้อมรับ ≤ 7 วัน/เลยกำหนด · ค้างชำระ) ·
+  ออเดอร์รอจัดส่ง · ที่พักเช็คอิน/เอาต์วันนี้ (เฉพาะบริษัทที่มีที่พัก) · บัตรคอร์สหมดอายุใน 7 วัน · ข้อมูลลูกค้าในข้อความ = ชื่อ + เวลา + บริการ/เลขที่ เท่านั้น (ไม่มีเบอร์/อีเมล · PDPA ม.37) ·
+  ตาราง `Helpers/StaffDailySummaryMigration` (ตารางใหม่ล้วน)
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 C — แจ้งเตือนพนักงานผ่าน OA กลาง · สรุปประจำวันทาง LINE · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 71d4f55c)_
+
+- **รอบ 212 แพ็ก A · ค่าตั้งแจ้งลูกค้าต่อประเภท × ช่อง · ถอยอีเมล · โควตาข้อความช่องกลาง (คำตัดสินข้อ 171 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §8 แพ็ก A · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **ทางเดียว** — ทุกข้อความถึงลูกค้าปลายทาง 12 เส้น (ยืนยัน/ยกเลิก/เลื่อนการจอง · เตือนก่อนนัด · ได้คิว · คลาสยกเลิก/เปลี่ยนผู้สอน · ยืนยัน/สถานะออเดอร์ · บัตรใกล้หมดอายุ ·
+  **อีเมลแขกที่พัก** `LodgingService.Operations.TryNotifyAsync` · **อีเมลกู้ตะกร้า** `AbandonedCartService` · **ตอบกลับฟอร์ม** `CmsCustomerService.SubmitFormAsync`) ⇒
+  `IBookingNotifier.SendAsync(CustomerNotifyRequest)` พร้อม `EventKey` (`Helpers/CustomerNotifyEvents` — 18 ประเภท) + `MessageKey` (`Helpers/CustomerNotifyKeys`) ·
+  ข้อความถึงร้าน (`NotifyShopAsync` · อีเมลที่พักถึงเจ้าของ) ผ่านเส้นเดียวกันด้วยคีย์ `shop.notify`/`shop.payment-problem` (ไม่อยู่ในค่าตั้ง matrix) ·
+  ด่าน `tools/required_call_site_check.py` ห้ามเรียก `IEmailService`/`ILineNotifyService` ตรงในเส้นเหล่านี้ (แจ้งร้านของฟอร์มยังใช้อีเมลระบบเดิม)
+  (ข) **ลำดับใน `BookingNotifier.SendAsync`**: claim คีย์ข้อความ (`CustomerNotifyLogs` unique ต่อบริษัท + lease 2 นาที) — ส่งถึงแล้ว ⇒ `AlreadySent` (Sent=true ไม่ส่งซ้ำ) ·
+  กำลังส่งที่อื่น ⇒ ระงับ ⇒ `CustomerNotifyPolicy.Resolve` (เว็บ+คีย์ → เว็บ+`*` → บริษัท+คีย์ → บริษัท+`*` → **ค่าเริ่มต้นเปิดทั้งสอง = เดิม**) ⇒
+  `CustomerNotifyPolicy.Plan` (ลำดับช่องเดิม `CustomerNotifyChannel.Order` × ผู้ส่งอีเมลจาก `EmailPlan(configured, CompanySettings.CustomerEmailFallback)`) ⇒
+  ขั้นที่ออก **OA ของ NextAcc / SMTP ของระบบ** จองโควตาก่อนส่ง (`INotifyQuotaService.TryReserveAsync` · UPDATE…WHERE "Used" < limit RETURNING) · เต็ม ⇒ ข้ามไปช่องของร้าน (+ คำเตือน `[CMS-NOTIFY-FALLBACK]`) ·
+  ไม่มีช่องของร้าน ⇒ **ระงับ** (`BookingSendResult.IsSuppressed` · ผู้เรียกประทับเหตุบนการจอง/ออเดอร์/บัตรเหมือนส่งล้ม · ไม่ประทับ "ส่งแล้ว" ⇒ งานตามรอบส่งต่อได้เมื่อเติมโควตา) ·
+  ส่งล้ม ⇒ คืนหน่วย · ข้อความจำเป็น (`lodging.slip-required` · ฝ่ายค้าน S1) นับแต่ไม่ระงับ · ข้อความถึงร้าน `shop.*` **ไม่นับ ไม่ระงับ** (ฝ่ายค้าน B3) · ค่าตั้งปิดทั้งสองช่อง ⇒ ระงับ (งานเตือนก่อนนัดกรองก่อนวน)
+  (ค) **ถอยอีเมล 3 ค่า** (`CompanySettings.CustomerEmailFallback`): ว่าง/`system-on-fail-or-unset` = เดิม (ร้านล้ม/ไม่ตั้ง ⇒ อีเมลระบบ) · `system-when-unset-only` (ร้านตั้งแล้วล้ม ⇒ ไม่ถอย) ·
+  `tenant-only` (ไม่ตั้ง ⇒ ไม่ส่งอีเมล) · แก้ที่ `PUT customer-notify/fallback` (ไม่ล้าง "ทดสอบผ่าน" ของ email-config) · echo ใน `GET email-config` + `GET customer-notify/rules`
+  (ง) **โควตา**: นับเฉพาะช่องกลาง (`NotifyQuotaPolicy.IsMetered`) ต่อบริษัทต่องวดเดือนตามเวลาไทย (`NotifyUsageCounters` · ไม่มีงาน reset) · เพดาน = `Subscription.MaxSharedMessagesPerMonth`
+  (เฉพาะบริษัท) ⇒ `PlanTemplate.MaxSharedMessagesPerMonth` / `TrialMaxSharedMessagesPerMonth` (กลุ่มบัญชี = แม่แบบของกลุ่ม · ไม่ pool) ⇒ ไม่พบแม่แบบ = ไม่จำกัด ·
+  เต็ม ⇒ โบนัสที่ซื้อ (`Subscription.NotifyBonusQuota` ยังไม่หมดอายุ) · เตือนเจ้าของ 80%/100% ครั้งเดียวต่องวด (`notify.quota.80`/`.100` ผ่าน `INotificationEngine`) ·
+  **ไม่บล็อกงานธุรกิจใด ๆ** (บล็อกแค่การส่งข้อความผ่านช่องกลาง)
+  (จ) **ซื้อแพ็ก `notify.topup`** (500 ข้อความ · 60 วัน) — `POST metering/notify-quota/topup` (`RequireBillingAsync`) ⇒ `NotifyQuotaService.PurchaseTopUpAsync` ลอก `QuotaService.PurchaseTopUpAsync`:
+  advisory xact lock ต่อบริษัท ⇒ `UsageEvent notify.topup` (IdempotencyKey `topup:notify.topup:{งวด}:{ลำดับ}`) **ก่อน**ให้โบนัส ⇒ audit chain ·
+  **ใบแจ้งหนี้/ใบกำกับไหลเส้นเดิม** `UsageInvoicingJob` → `PlatformBillingDocumentIssuer.IssueUsageInvoiceAsync` (Postpaid) / ตัดเครดิตตอนบันทึก (Prepaid) — ไม่มีเส้นเอกสาร/ภาษีใหม่
+  (ฉ) **หน้าจอ**: ตั้งค่า → การแจ้งเตือน (ตารางลูกค้า + ถอยอีเมล + การ์ดโควตา) · ตั้งค่าร้านค้า แท็บ "แจ้งเตือนลูกค้า" (override ต่อเว็บ) · การใช้งาน · แพ็กเกจ · ส่วนเสริม (การ์ดโควตา + ซื้อแพ็ก) ·
+  แอดมิน plans (เพดานต่อแพ็กเกจ) · ทุกค่า/ป้ายจากเซิร์ฟเวอร์ (`/js/customer-notify.js` แสดงอย่างเดียว)
+  (ช) migration `DatabaseMigrationHelper.CmsRound212NotifyStatements` (บล็อกเดียวของรอบ · รวมตารางล่วงหน้าของแพ็ก B `LineOaSwitchEvents` และแพ็ก C `StaffDailySummary*`)
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก A — ค่าตั้งแจ้งลูกค้าต่อประเภท × ช่อง · ถอยอีเมล 3 ค่า · โควตาข้อความช่องกลาง + แพ็ก notify.topup · 12 เส้นผ่าน BookingNotifier · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 40ff8f41)_
+
+- **รอบ 212 ฝ่ายค้าน (A+C · 3 blocking เงิน)**: (B1) ให้โบนัสแพ็กข้อความ/เอกสารด้วย `UPDATE "Subscriptions" SET … = CASE … + @g` เดียว**หลัง** advisory lock (เดิมอ่าน entity ก่อนล็อกแล้วเขียนค่าสัมบูรณ์ ⇒
+  ซื้อพร้อมกันได้ 500 จ่าย 2 แพ็ก · การหักโบนัสระหว่างนั้นหาย) · (B2) ลำดับการซื้อนับจากคำนำหน้าคีย์งวดไทย (`AddOnBilling.TopUpKeyPrefix`) · (B3) `shop.*` ไม่นับโควตา (ไม่ถูกระงับ) ·
+  (S1) แขกที่พักรอสลิป = จำเป็น + อีเมลถึงแขกระงับ/ล้ม ⇒ ประทับ `InternalNotes` ของการจอง · (S2) header `Idempotency-Key` ของการซื้อแพ็ก · (S3) หมายเหตุใน `CustomerNotifyLogs` ปิดบังอีเมล/เบอร์/LINE userId
+  (`Helpers/CustomerNotifyLogRule`) · ลบเมื่อเกิน 90 วัน (`PdpaRetentionPurgeJob`) · DSR ลบตามเป้าหมาย · (S4) สรุปรายวันที่โควตาเต็มลองใหม่ได้จนถึง 23:00 ·
+  lease ของ claim 10 นาที · มิเตอร์สรุปรายวันแจ้งเจ้าของเมื่อเต็ม · **เพดานแม่แบบ = ไม่จำกัด** (ผู้ประสานงาน: migration ไม่จำกัดลูกค้าเดิม · ตัวเลขแนะนำเป็นคำใบ้ที่หน้าแอดมิน)
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 ฝ่ายค้าน A+C — โบนัส UPDATE เดียวหลังล็อก · งวดไทย · shop ไม่นับ · Idempotency-Key · ปิดบังหมายเหตุ/ล้าง/DSR · สรุปรายวันลองใหม่เมื่อโควตาเต็ม · เพดานเริ่มต้นไม่จำกัด · ยังไม่ได้คอมไพล์ · commit b9dcd595)_
+
+- **รอบ 212 แพ็ก D · ค่าตั้ง LINE OA กลางของ NextAcc บนหน้าแอดมิน + สลิปเงินเดือนผ่าน OA ที่ผูกจริง (ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **ค่าตั้ง** — เดิมค่า Messaging API ของ OA กลางอ่านจาก config `Line:ChannelAccessToken/ChannelSecret/BasicId/BotUserId/GroupId` อย่างเดียว (11 จุดใน 5 ไฟล์) ⇒
+  แอดมินมองไม่เห็น/แก้ไม่ได้ · ตอนนี้ตั้งที่ `/admin/site-settings.html` แท็บ **"LINE OA กลาง"** (`GET/PUT /api/admin/line-messaging` · `POST …/test` · SystemAdmin + `[RejectApiKey]`) ·
+  เก็บบน `SiteSettings.LineMessaging*` (token/secret เข้ารหัส `ISecretProtector` · ไม่ส่งกลับ — บอกแค่ "ตั้งแล้ว" · ช่องลับว่าง = คงค่าเดิม · ล้างต้องติ๊ก ·
+  ช่องไม่ลับ "" = ล้าง · Basic ID ผ่าน `CustomerLineLinkRule.NormalizeBasicId` · Bot User ID `U`+32 hex · Group ID `C|R`+32 hex) · หน้าแสดง webhook URL `{AppBaseUrl}/api/line-webhook` ·
+  ปุ่มทดสอบเรียก LINE `GET /v2/bot/info` (+ `GET /v2/bot/channel/webhook/endpoint`) ด้วย token ที่ระบบใช้จริง แล้วเสนอเติม Basic ID / Bot User ID (ผู้ใช้กดบันทึกเอง) ·
+  migration `Helpers/NextAccLineConfigMigration` (คอลัมน์ NULL ล้วน)
+  (ข) **ผู้อ่านตัวเดียว** `INextAccLineConfig` (`Services/Implementations/NextAccLineConfig` · scoped · โหลดครั้งเดียวต่อคำขอ · ไม่มี cache ข้ามคำขอ) → กติกา `Helpers/NextAccLineConfigRule.Merge`:
+  หน้าแอดมินมี token ⇒ ใช้ชุดของหน้าแอดมิน**ทั้งชุด** · ไม่มี ⇒ config `Line:*` ทั้งชุด (deployment เดิมที่ตั้ง env ทำงานเหมือนเดิม) · ไม่ผสมรายช่อง (token กับ secret ต่าง channel = ลายเซ็นไม่ผ่าน) ·
+  ผู้ใช้: `LineBotService` (ตรวจลายเซ็น webhook `VerifySignatureAsync` ผ่าน `LineWebhookSignature` ตัวเดิม · reply · push flex · ดึงรูป) · `LineNotifyService` (fallback OA กลาง + Group ID ·
+  `TryPushViaNextAccAsync` · `TryPushFlexViaNextAccAsync` ใหม่) · `CustomerLineLinkService` (ช่องลูกค้า · ตรวจ destination · reply) · `PayslipLineDeliveryService` ·
+  ด่าน `tools/required_call_site_check.py` LINE_CONFIG_FORBID: `"Line:…"` ทั้งเรพนอกไฟล์ resolver = 0 จุด · ไม่มี token ทั้งสองที่ ⇒ ข้อความเดียว `NextAccLineConfigRule.NotConfiguredMessage`
+  (ไม่ fail-fast — LINE เป็นฟีเจอร์เสริม)
+  (ค) **สลิปเงินเดือนทาง LINE** — พนักงานผูก "สลิป 123456" ที่ webhook ของ OA กลางเท่านั้น (webhook ต่อบริษัทรับแค่ "ผูก LN-…") แต่เดิม push ผ่าน `PushFlexToUserAsync(companyId, …)`
+  (= OA ของร้านเมื่อร้านตั้ง) และปุ่มเพิ่มเพื่อนชี้ OA ของร้าน ⇒ ร้านที่ตั้ง OA เองส่งสลิปไม่ถึง (userId แยกตาม provider) · ตอนนี้ `NextAccLineConfigRule.PayslipRecipient`:
+  `Employee.LineId` ที่มีแถว `EmployeeLineBindCode.UsedByLineUserId` ตรงกัน (บริษัท+พนักงานเดียวกัน) หรือ `User.LineUserId` ⇒ **OA กลาง** (`TryPushFlexViaNextAccAsync` · ผลล้มไม่ถูกกลืน ⇒ `LineFailed`) ·
+  LINE ID ที่ HR กรอกเอง (ไม่มีหลักฐานการผูก) ⇒ เส้นเดิม (OA ร้านถ้าตั้ง ไม่งั้น OA กลาง) · ปุ่มเพิ่มเพื่อนตอนออกรหัส = Basic ID ของ OA กลาง
+  (ง) `DocumentLineDeliveryService` ตรวจแล้ว: ผู้รับคือ**ลูกค้า** (`Contact.LineUserId` · ไม่มีผู้เขียน · ไม่มีผู้เรียก) ⇒ ไม่อยู่ในบั๊กคลาสนี้ · ไม่แก้
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก D — ค่าตั้ง LINE OA กลางบนหน้าแอดมิน · ผู้อ่านตัวเดียว INextAccLineConfig · สลิปเงินเดือนผ่าน OA ที่ผูกจริง · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 9c792d9f)_
+
+- **รอบ 212 B · เชิญลูกค้าผูก LINE ใหม่เมื่อร้านเปลี่ยน OA (คำตัดสินข้อ 171 ข้อ 4 · เจ้าของ: "ส่ง" · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §2.4/§5/§8 แพ็ก B · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **บันทึกการสลับ** (`LineOaSwitchEvents` · ไม่ส่งอะไรในคำขอ HTTP) — ตัวตัดสิน `CustomerRelinkInvitePlan.IsSwitch` (scope ร้าน↔NextAcc เปลี่ยน หรือ scope เดิมแต่ bot ที่รู้ทั้งสองข้างไม่ตรง ·
+  ไม่รู้ข้างใดข้างหนึ่ง = ไม่ใช่การสลับ เช่นออก token ใหม่ของ OA เดิม) จาก 3 ทางเข้า: ① `PUT line-config` (`LineConfigController.Update` อ่าน `ResolveChannelAsync` ก่อน/หลังบันทึก ·
+  token ใหม่ ⇒ ถาม LINE `GET /v2/bot/info` เพื่อรู้ bot ทันที — ถามไม่ได้ ⇒ ลืม bot แบบเดิม) ② webhook OA ร้าน (`CustomerLineWebhookController` หลังลายเซ็นผ่าน — ลิงก์ที่ยังเปิดผูกกับ bot อื่น ⇒ สลับ)
+  ③ webhook OA กลาง (`LineWebhookController` — แตกต่อบริษัทที่ยังใช้ OA กลาง · bot ที่ไม่ตรง `Line:BotUserId` = ค่าตั้งผิด ไม่ใช่การสลับ) ·
+  กันซ้ำ: unique บางส่วน (บริษัท, `DedupeKey`) ขณะยังค้าง + webhook บันทึกคู่เดิมครั้งเดียวตลอดไป · บันทึกไม่ได้ ⇒ ข้อความตอบกลับ PUT บอก (ค่าตั้งบันทึกแล้ว)
+  (ข) **ส่ง** — `CustomerNotifyOutboxJob` (5 นาที · `JobLock` · ต่อบริษัท ≤ 100 คน/รอบ · รวม ≤ 500 · หน่วง 100ms) ⇒ `CustomerRelinkInviteService.ProcessPendingAsync` ⇒
+  ผู้รับ (`CustomerRelinkInvitePlan.Plan`): ลิงก์ที่ยังเปิดบน OA เดิมและใช้กับ OA **ปัจจุบัน**ไม่ได้ · **ข้าม** ถอนความยินยอม (`PdpaConsentRecord.WithdrawnAt` · แถวหาย = ถอน) / บล็อก OA /
+  ไม่มีรายการค้าง (สมาชิกไม่ active · การจองผ่าน/ยกเลิก · ออเดอร์จบ) · **1 คน 1 คำเชิญ**ต่อการสลับ (รวมตาม LINE userId · ตัวแทน = ลิงก์สมาชิกก่อน) ·
+  ช่อง: OA เดิม = NextAcc และตอนนี้ร้านใช้ OA ของตัวเอง ⇒ push ผ่าน OA กลางแบบระบุชัด (`CustomerNotifyRequest.LineViaNextAcc` → `TryPushViaNextAccAsync` · นับโควตา) แล้วถอยไปอีเมลเมื่อล้ม ·
+  นอกนั้น ⇒ อีเมล (ผู้ส่งร้าน/ระบบตาม `EmailPlan`) · ไม่มีอีเมล ⇒ ข้าม · **ทุกฉบับผ่าน `BookingNotifier.SendAsync`** ประเภท `line.relink` (`CustomerNotifyEvents` — 19 ประเภท · ร้านปิดได้ที่ตารางค่าตั้ง) ·
+  คีย์ `relink:{switchId}:{hash ของ userId}` (`CustomerNotifyKeys.Relink` · ไม่เก็บ userId) ⇒ ส่งครั้งเดียวข้ามรอบ/ข้ามเครื่อง · ล้มลองใหม่ ≤ 3 รอบ · ระงับ (ปิดตามค่าตั้ง/โควตาเต็ม) = จบ (นับเป็นข้าม)
+  (ค) **ข้อความ**: ลิงก์ผูกใหม่ `CmsStorefrontLink.RelinkLine` — สมาชิก ⇒ `/account` · การจอง ⇒ `my-booking/{token}` · ออเดอร์ ⇒ `track-order/{token}` · ไม่มีลิงก์ ⇒ บอกทางบนเว็บร้าน ·
+  มีประโยค "ไม่ต้องการรับทาง LINE — ไม่ต้องทำอะไร" · ไม่มีอีเมล/เบอร์ของลูกค้า · ฐาน PDPA = ความต่อเนื่องของบริการที่ยินยอมไว้ (ข้อความบริการ ไม่ใช่การตลาด)
+  (ง) **ความคืบหน้า** บนแถว (`Total/Invited/Failed/Skipped/LastError/LastRunAt` นับใหม่จาก `CustomerNotifyLogs` ทุกรอบ) · ครบ ⇒ `ProcessedAt` (watermark ต่อการสลับ) ·
+  หน้า ตั้งค่า → LINE แสดงป้ายจากเซิร์ฟเวอร์ "เชิญผูกใหม่: ส่งแล้ว N/M" (`GET/PUT line-config` → `relinkInvite`) · ร้านสลับกลับก่อนงานเดิน ⇒ ลิงก์เดิมใช้ได้อีก ⇒ ไม่มีผู้รับ (จบทันที)
+  (จ) migration: ตารางจากบล็อกของแพ็ก A + `Helpers/CustomerRelinkMigration` (คอลัมน์ความคืบหน้า + unique บางส่วน · ADD COLUMN IF NOT EXISTS)
+
+  (ฉ) **ฝ่ายค้าน (B+D)**: ① แถวการสลับประมวลหลังนิ่ง 45 นาที (`CustomerRelinkInvitePlan.SettleDelay`) · ตอนประมวล OA ที่ใช้คือ OA เดิมแล้ว หรือมีแถวกลับทิศห่าง ≤ 45 นาที
+  (ปิด→เปิด LINE) ⇒ ยกเลิกแถว ("ยกเลิก: สลับกลับแล้ว" · ไม่ส่ง) · 1 คนได้คำเชิญไม่เกิน 1 ฉบับ/30 วัน ข้ามทุกการสลับของบริษัท (`WithCooldown` จาก `CustomerNotifyLogs` ที่ส่งถึง) ·
+  ② webhook ร้านจากบอทอื่นที่ไม่ใช่บอทที่จำไว้ (secret ของ OA อื่น) ⇒ ไม่ทับ `LineOaDestination` ไม่บันทึกการสลับ · จด `CompanySettings.LineWebhookDestinationMismatch` ⇒ หน้า LINE
+  แสดง "Channel Secret เป็นของ OA อื่น" · PUT เปลี่ยน token โดยไม่ใส่ secret (มี secret เดิม) ⇒ ปฏิเสธ เว้นถาม LINE ได้ว่าเป็นบอทเดิม · ④ webhook OA กลางแค่ประทับ
+  `LineOaDestinationSightings` (ไม่สแกนในคำขอ · ไม่มี static memo) — `CustomerNotifyOutboxJob` สแกนข้ามบริษัทแล้วบันทึกต่อบริษัทที่ยังใช้ OA กลาง (เห็นซ้ำหลัง 6 ชม. สแกนใหม่) ·
+  ③⑤ (แพ็ก D) token แอดมินถอดไม่ได้ ⇒ ไม่มี token (ไม่ถอยไป config) + เหตุบนหน้าแอดมิน · token/secret ของ OA กลางต้องบันทึกคู่กัน · ⑥ สลิปเงินเดือน: การผูกบัญชี ERP ชนะ LINE ID ที่ HR พิมพ์เอง
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค้าน (B+D) — ปิด/เปิดไปมาไม่เชิญ · cooldown 30 วัน · secret ของ OA อื่น · สแกน OA กลางในงาน · token แอดมินถอดไม่ได้ไม่ถอย · ยังไม่ได้คอมไพล์ · commit a8cccb97 · 020f0d3f)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

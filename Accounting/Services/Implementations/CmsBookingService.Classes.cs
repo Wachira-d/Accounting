@@ -686,7 +686,9 @@ public partial class CmsBookingService
                 subject = ClassScheduleGenerator.SubstituteSubject(x.ServiceName, s.SessionDate, s.StartTime);
                 text = ClassScheduleGenerator.SubstituteMessage(name, x.ServiceName, siteName, s.SessionDate, s.StartTime, b.BookingNumber, teacher);
             }
-            var result = await _notifier.SendAsync(companyId, contact, subject, text);
+            var eventKey = kind == ClassMessageKind.Cancelled ? CustomerNotifyEvents.ClassCancelled : CustomerNotifyEvents.ClassSubstitute;
+            var result = await _notifier.SendAsync(new CustomerNotifyRequest(companyId, siteId, eventKey,
+                CustomerNotifyKeys.Class(sessionId, b.Id, eventKey, teacher), contact, subject, text));
             b.NotifyAttemptedAt = DateTime.UtcNow;
             if (result.Sent)
             {

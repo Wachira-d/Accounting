@@ -1293,7 +1293,9 @@ public class SubscriptionService : ISubscriptionService
             TrialMaxJournalEntriesPerMonth = request.TrialMaxJournalEntriesPerMonth,
             TrialBlockOnExpiry = request.TrialBlockOnExpiry,
             TrialGracePeriodDays = request.TrialGracePeriodDays,
-            IsPermanentFree = request.IsPermanentFree
+            IsPermanentFree = request.IsPermanentFree,
+            MaxSharedMessagesPerMonth = request.MaxSharedMessagesPerMonth,
+            TrialMaxSharedMessagesPerMonth = request.TrialMaxSharedMessagesPerMonth,
         };
 
         _db.PlanTemplates.Add(template);
@@ -1377,6 +1379,10 @@ public class SubscriptionService : ISubscriptionService
         // OCR per-engine quotas. Null preserves the existing value so a UI
         // that only sends the field for plans that customize it doesn't
         // accidentally zero out other plans.
+        // รอบ 212: เพดานข้อความช่องกลาง (ผู้อ่าน: NotifyQuotaService.LoadLimitAsync — อ่านจากแม่แบบตอนนับ ไม่คัดลอกลงบริษัท)
+        // ค่าติดลบ = กลับเป็นไม่จำกัด (null) — หน้าแอดมินส่ง -1 เมื่อช่องว่าง
+        if (request.MaxSharedMessagesPerMonth.HasValue) template.MaxSharedMessagesPerMonth = request.MaxSharedMessagesPerMonth.Value < 0 ? null : request.MaxSharedMessagesPerMonth.Value;
+        if (request.TrialMaxSharedMessagesPerMonth.HasValue) template.TrialMaxSharedMessagesPerMonth = request.TrialMaxSharedMessagesPerMonth.Value < 0 ? null : request.TrialMaxSharedMessagesPerMonth.Value;
         if (request.MaxOcrPagesPerMonth.HasValue) template.MaxOcrPagesPerMonth = request.MaxOcrPagesPerMonth.Value;
         if (request.AzureOcrPagesPerMonth.HasValue) template.AzureOcrPagesPerMonth = request.AzureOcrPagesPerMonth.Value;
         if (request.LocalOcrPagesPerMonth.HasValue) template.LocalOcrPagesPerMonth = request.LocalOcrPagesPerMonth.Value;
@@ -2484,7 +2490,11 @@ public class SubscriptionService : ISubscriptionService
             t.TrialBlockOnExpiry,
             t.TrialMaxUsers,
             t.TrialMaxDocumentsPerMonth,
-            t.TrialMaxJournalEntriesPerMonth);
+            t.TrialMaxJournalEntriesPerMonth,
+            t.MaxSharedMessagesPerMonth,
+            t.TrialMaxSharedMessagesPerMonth,
+            Accounting.Helpers.NotifyQuotaPolicy.SuggestedLimit(t.Plan),
+            Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialLimit);
     }
 }
 

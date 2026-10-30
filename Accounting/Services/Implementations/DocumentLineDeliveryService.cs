@@ -9,7 +9,11 @@ namespace Accounting.Services.Implementations;
 /// Contact ของเรา (ผ่าน LineBindCode workflow ที่มีอยู่). ใช้ flex message
 /// แสดง: เลขเอกสาร, ยอดรวม, due date, ลิงก์ดู PDF + จ่ายเงิน.
 ///
-/// FlowAccount/PEAK ยังไม่มี — เป็น Thai SME competitive moat.</summary>
+/// FlowAccount/PEAK ยังไม่มี — เป็น Thai SME competitive moat.
+///
+/// <para>รอบ 212 D ตรวจผู้รับแล้ว: ผู้รับคือ<b>ลูกค้า</b> (<c>Contact.LineUserId</c>) ไม่ใช่พนักงาน ⇒ ไม่อยู่ในบั๊ก "ส่งถึงพนักงานผ่าน OA ร้าน" ·
+/// วันนี้ไม่มีผู้เรียก (ดู <c>Helpers/DocumentDeliveryEvidence</c>) และ <c>Contact.LineUserId</c> ไม่มีผู้เขียนในเรพ · ถ้าวันหน้าต่อสาย ต้องหาผู้รับผ่าน
+/// <c>ICustomerLineLinkService.ResolveLineUserIdAsync</c> (OA ที่ลูกค้าผูกไว้จริง · <c>CustomerLineTarget.ForContact</c>) ไม่ใช่คอลัมน์นี้</para></summary>
 public interface IDocumentLineDeliveryService
 {
     /// <summary>ส่งใบเอกสารผ่าน LINE. คืน true ถ้าส่งสำเร็จ (Contact มี

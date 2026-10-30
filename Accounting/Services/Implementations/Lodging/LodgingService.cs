@@ -18,6 +18,8 @@ public partial class LodgingService : ILodgingService
     private readonly ILogger<LodgingService> _logger;
     private readonly IDocumentService _docService;
     private readonly IEmailService? _email;
+    /// <summary>รอบ 212 แพ็ก A: อีเมลถึงแขก/ที่พักผ่านช่องกลางเดียว (ค่าตั้ง · ผู้ส่งของร้าน · โควตา · กันซ้ำ) — <c>TryNotifyAsync</c> ไม่เรียก <c>IEmailService</c> ตรงอีกแล้ว</summary>
+    private readonly IBookingNotifier? _notifier;
     /// <summary>แจ้งกลุ่ม LINE ของที่พักเมื่อมีจอง/สลิปใหม่ — ที่พักไทยเช็ค LINE
     /// จริงกว่าอีเมล · ไม่ได้ตั้งค่า = เงียบ ไม่ error (LDG-P2-06)</summary>
     private readonly ILineNotifyService? _line;
@@ -35,8 +37,9 @@ public partial class LodgingService : ILodgingService
         IEmailService? email = null, IImageProcessingService? images = null,
         IUsageMeteringService? metering = null, IEntitlementService? entitlement = null,
         ILineNotifyService? line = null, INotificationEngine? notify = null,
-        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null)
+        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null, IBookingNotifier? notifier = null)
     {
+        _notifier = notifier;
         _notify = notify;
         _gatewayAccounts = gatewayAccounts;
         _db = db;

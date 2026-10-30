@@ -163,6 +163,20 @@ public class SiteSettings : BaseEntity
     public string? LineLoginChannelId { get; set; }
     public string? LineLoginChannelSecret { get; set; }
 
+    // ===== LINE OA กลางของ NextAcc (Messaging API) — รอบ 212 แพ็ก D =====
+    // เดิมอ่านจาก config (Line:*) อย่างเดียว ⇒ แอดมินมองไม่เห็น/แก้ไม่ได้จากหน้าเว็บ · ตอนนี้ตั้งที่ /admin/site-settings.html แท็บ "LINE OA กลาง"
+    // ผู้อ่านตัวเดียว: Services/Implementations/NextAccLineConfig (ค่าในหน้านี้ก่อน · ไม่มี token ⇒ ใช้ config Line:* ทั้งชุด — Helpers/NextAccLineConfigRule.Merge)
+    /// <summary>Channel Access Token (long-lived) — เข้ารหัสด้วย SecretProtector · ไม่ส่งกลับหน้าจอ (บอกแค่ "ตั้งแล้ว")</summary>
+    public string? LineMessagingChannelAccessToken { get; set; }
+    /// <summary>Channel Secret — ใช้ตรวจลายเซ็น webhook <c>/api/line-webhook</c> · เข้ารหัสด้วย SecretProtector</summary>
+    public string? LineMessagingChannelSecret { get; set; }
+    /// <summary>Basic ID รูป "@xxxx" (ปุ่มเพิ่มเพื่อน · ลิงก์ส่งรหัสผูก) — ตรวจรูปแบบด้วย <c>CustomerLineLinkRule.NormalizeBasicId</c></summary>
+    public string? LineMessagingBasicId { get; set; }
+    /// <summary>bot userId (U + 32 hex) — ตรวจกับ <c>destination</c> ของ webhook (ไม่ตั้ง = ตัดสินด้วย scope อย่างเดียว)</summary>
+    public string? LineMessagingBotUserId { get; set; }
+    /// <summary>กลุ่ม LINE (C/R + 32 hex) สำหรับข้อความกลุ่มของระบบเมื่อบริษัทไม่ได้ตั้ง OA เอง (เดิม Line:GroupId)</summary>
+    public string? LineMessagingGroupId { get; set; }
+
     // ===== OCR Provider Selection (System-wide, overrides appsettings) =====
     // Provider chain is strictly Azure DI v4 → Local (PaddleOCR + EasyOCR).
     // Legacy provider keys (Google Vision, Tesseract) were removed when those

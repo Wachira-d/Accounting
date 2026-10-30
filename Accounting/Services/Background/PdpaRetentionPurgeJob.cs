@@ -67,6 +67,13 @@ public class PdpaRetentionPurgeJob : BackgroundService
         if (codesDeleted + linksCleared > 0)
             _logger.LogInformation("PDPA retention purge: ลบรหัสผูก LINE หมดอายุ {Codes} · ล้าง LINE userId ของลิงก์ที่ปิดแล้ว {Links}", codesDeleted, linksCleared);
 
+        // ฝ่ายค้านรอบ 212 S3: บันทึกการส่งข้อความถึงลูกค้า (กันส่งซ้ำ/ร่องรอย) เก็บ CustomerNotifyLogRule.RetentionDays วันแล้วลบจริง
+        // (ไม่ใช่เอกสารบัญชี · ทุกบริษัท — งานเก็บกวาดใต้ JobLock เดียวกับงานนี้)
+        var notifyCutoff = Accounting.Helpers.CustomerNotifyLogRule.PurgeCutoff(DateTime.UtcNow);
+        var notifyDeleted = await db.CustomerNotifyLogs.IgnoreQueryFilters().Where(l => l.CreatedAt < notifyCutoff).ExecuteDeleteAsync(ct);
+        if (notifyDeleted > 0) _logger.LogInformation("PDPA retention purge: ลบบันทึกการส่งข้อความถึงลูกค้าเกิน {Days} วัน {Rows} แถว",
+            Accounting.Helpers.CustomerNotifyLogRule.RetentionDays, notifyDeleted);
+
         // contact ที่ถูก anonymize + ติดธง retained (ผู้ใช้ขอลบแล้ว แต่ค้างเพราะ legal-hold)
         var retained = await db.Contacts
             .Where(c => !c.IsDeleted && c.Address == RetainedMarker)

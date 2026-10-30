@@ -51,7 +51,9 @@ public class CmsShopNotifier : ICmsShopNotifier
             string? warning = null;
             foreach (var to in recipients)
             {
-                var r = await _channel.SendAsync(companyId, new BookingContact(to, null), message.Subject, message.Text, ct);
+                // รอบ 212: ข้อความถึงร้านไม่อยู่ในค่าตั้ง matrix (shop.notify) แต่นับโควตาเมื่อออกช่องกลาง · ไม่มีคีย์กันซ้ำ (ผู้เรียกเดิมไม่มีรหัสอ้างอิง)
+                var r = await _channel.SendAsync(new CustomerNotifyRequest(companyId, siteId, CustomerNotifyEvents.ShopNotify, null,
+                    new BookingContact(to, null), message.Subject, message.Text), ct);
                 if (!r.Sent) errors.Add($"{to}: {r.Error}");
                 else warning ??= r.Warning;
             }
@@ -65,12 +67,19 @@ public class CmsShopNotifier : ICmsShopNotifier
         }
     }
 
-    public async Task<string?> NotifyCustomerAsync(Guid companyId, BookingContact contact, CmsNotification message, CancellationToken ct = default)
+    public async Task<string?> NotifyCustomerAsync(Guid companyId, Guid? siteId, string eventKey, string messageKey, BookingContact contact, CmsNotification message,
+        CancellationToken ct = default)
     {
         try
         {
-            var r = await _channel.SendAsync(companyId, contact, message.Subject, message.Text, ct);
+            var r = await _channel.SendAsync(new CustomerNotifyRequest(companyId, siteId, eventKey, messageKey, contact, message.Subject, message.Text), ct);
             // รอบ 211 ฝ่ายค้าน: ส่งถึงทางถอย (อีเมลของระบบหลังผู้ส่งของร้านล้ม) ⇒ คืนคำเตือน (ขึ้นต้น FallbackTag) ให้ผู้เรียกประทับบนรายการ
+            // รอบ 212: ระงับโดยตั้งใจ (ค่าตั้ง/โควตาเต็ม) ⇒ คืนเหตุให้ประทับบนรายการ แต่ไม่ใช่ความล้มเหลว (log Information ไม่ใช่ Error)
+            if (r.IsSuppressed)
+            {
+                _logger.LogInformation("ไม่ส่งข้อความถึงลูกค้า ({EventKey}) company {CompanyId}: {Reason}", eventKey, companyId, r.Error);
+                return r.Error;
+            }
             return r.Sent ? r.Warning : Fail(companyId, message, r.Error ?? "ส่งไม่สำเร็จ");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -121,6 +121,7 @@
       <button onclick="switchTab('services')">แพ็กเกจบริการ</button>
       <button onclick="switchTab('system')">ระบบ</button>
       <button onclick="switchTab('billing')">ผู้ขาย / ใบเสร็จค่าบริการ</button>
+      <button onclick="switchTab('line')">LINE OA กลาง</button>
     </div>
 
     <!-- Tab 1: Branding -->
@@ -471,6 +472,53 @@
       </div>
     </div>
 
+    <!-- Tab: LINE OA กลาง (Messaging API) — รอบ 212 D · ผู้อ่านค่าตัวเดียวฝั่งเซิร์ฟเวอร์ INextAccLineConfig (หน้านี้ก่อน · config Line:* fallback) -->
+    <div class="tab-panel" id="tab-line">
+      <div class="admin-card">
+        <div class="section-title">LINE OA กลาง (Messaging API)</div>
+        <div class="help-text" style="margin-bottom:12px">OA ของ NextAcc ที่ผู้ใช้ ERP / พนักงาน (สลิปเงินเดือน · สรุปประจำวัน) และลูกค้าของร้านที่ไม่มี OA เองใช้ผูกและรับแจ้งเตือน ·
+          ค่าในหน้านี้มีผลก่อน config ของเซิร์ฟเวอร์ (<code>Line:*</code>) เมื่อมี Channel Access Token</div>
+        <div id="lnStatus" class="help-text" style="margin-bottom:12px"></div>
+        <div id="lnWarnings" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;background:#fef3c7;color:#92400e;font-size:13px"></div>
+        <div class="form-group">
+          <label>Webhook URL (วางใน LINE Developers → Messaging API → Webhook settings แล้วเปิด "Use webhook")</label>
+          <div style="display:flex;gap:8px"><input type="text" id="lnWebhookUrl" readonly><button type="button" class="preview-btn" onclick="lnCopyWebhook()">คัดลอก</button></div>
+        </div>
+        <div class="settings-grid">
+          <div class="form-group">
+            <label>Channel Access Token (long-lived) <span id="lnTokenBadge"></span></label>
+            <input type="password" id="lnToken" autocomplete="new-password" placeholder="เว้นว่าง = คงค่าเดิม">
+            <label style="font-weight:400;margin-top:6px"><input type="checkbox" id="lnClearToken" style="width:auto"> ล้างค่าที่บันทึกไว้</label>
+          </div>
+          <div class="form-group">
+            <label>Channel Secret <span id="lnSecretBadge"></span></label>
+            <input type="password" id="lnSecret" autocomplete="new-password" placeholder="เว้นว่าง = คงค่าเดิม">
+            <label style="font-weight:400;margin-top:6px"><input type="checkbox" id="lnClearSecret" style="width:auto"> ล้างค่าที่บันทึกไว้</label>
+          </div>
+          <div class="form-group">
+            <label>Basic ID</label>
+            <input type="text" id="lnBasicId" placeholder="@123abcde">
+            <div class="help-text">รูปแบบ @xxxx — ใช้ทำปุ่มเพิ่มเพื่อน/ลิงก์ส่งรหัสผูก · ลบให้ว่าง = ล้าง</div>
+          </div>
+          <div class="form-group">
+            <label>Bot User ID (ไม่บังคับ)</label>
+            <input type="text" id="lnBotUserId" placeholder="U + 32 ตัว">
+            <div class="help-text">ตั้งแล้วระบบตรวจว่า webhook มาจากบอทนี้จริงก่อนผูก LINE ของลูกค้า</div>
+          </div>
+          <div class="form-group">
+            <label>Group ID สำหรับข้อความกลุ่มของระบบ (ไม่บังคับ)</label>
+            <input type="text" id="lnGroupId" placeholder="C + 32 ตัว">
+          </div>
+        </div>
+        <div id="lnTestResult" class="help-text" style="margin-top:8px"></div>
+        <div id="lnFill" style="display:none;margin-top:8px"></div>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px">
+        <button class="preview-btn" id="lnTestBtn" onclick="lnTest()">ทดสอบกับ LINE</button>
+        <button class="btn-save" id="lnSaveBtn" onclick="lnSave()">บันทึก LINE OA กลาง</button>
+      </div>
+    </div>
+
     <!-- Save Button -->
     <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:24px;padding-bottom:24px" id="mainSaveBar">
       <button class="btn-save" id="saveBtn" onclick="saveSettings()">บันทึกการตั้งค่า</button>
@@ -498,13 +546,13 @@
 
     // ===== Tab Switching =====
     function switchTab(tab) {
-      const labels = { branding: 'แบรนด์', contact: 'ข้อมูลติดต่อ', services: 'แพ็กเกจบริการ', system: 'ระบบ', billing: 'ผู้ขาย' };
+      const labels = { branding: 'แบรนด์', contact: 'ข้อมูลติดต่อ', services: 'แพ็กเกจบริการ', system: 'ระบบ', billing: 'ผู้ขาย', line: 'LINE OA กลาง' };
       document.querySelectorAll('.tab-nav button').forEach((btn) => btn.classList.toggle('active', btn.textContent.includes(labels[tab] || '')));
       document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
       document.getElementById('tab-' + tab).classList.add('active');
       // แท็บ billing มีปุ่มบันทึกของตัวเอง → ซ่อนปุ่มบันทึก site-settings หลัก
       const mainBar = document.getElementById('mainSaveBar');
-      if (mainBar) mainBar.style.display = tab === 'billing' ? 'none' : '';
+      if (mainBar) mainBar.style.display = (tab === 'billing' || tab === 'line') ? 'none' : '';
     }
 
     // ===== Image Upload =====
@@ -897,9 +945,110 @@
       }
     }
 
+    // ===== LINE OA กลาง (รอบ 212 D) — ความลับไม่ถูกส่งกลับ: แสดงแค่ "ตั้งแล้ว" · ช่องว่าง = คงค่าเดิม · ล้างต้องติ๊ก =====
+    // ป้ายแหล่งที่มาเป็นคำอธิบายของค่า enum ที่เซิร์ฟเวอร์ส่งมา (admin/config/none) — ตัวตัดสินอยู่ที่ NextAccLineConfigRule.Merge
+    const lnSourceLabel = { admin: 'ค่าในหน้านี้', config: 'config ของเซิร์ฟเวอร์ (Line:*)', none: 'ยังไม่ได้ตั้ง' };
+
+    function lnBadge(set) {
+      return set ? '<span style="color:#16a34a;font-weight:600">· ตั้งแล้ว</span>' : '<span style="color:#9ca3af">· ยังไม่ตั้ง</span>';
+    }
+
+    function lnRender(d) {
+      d = d || {};
+      document.getElementById('lnWebhookUrl').value = d.webhookUrl || '';
+      document.getElementById('lnTokenBadge').innerHTML = lnBadge(d.hasAccessToken);
+      document.getElementById('lnSecretBadge').innerHTML = lnBadge(d.hasChannelSecret);
+      document.getElementById('lnToken').value = '';
+      document.getElementById('lnSecret').value = '';
+      document.getElementById('lnClearToken').checked = false;
+      document.getElementById('lnClearSecret').checked = false;
+      document.getElementById('lnBasicId').value = d.basicId || '';
+      document.getElementById('lnBotUserId').value = d.botUserId || '';
+      document.getElementById('lnGroupId').value = d.groupId || '';
+      const src = lnSourceLabel[d.effectiveSource] || (d.effectiveSource || '');
+      document.getElementById('lnStatus').innerHTML = 'ระบบใช้อยู่ตอนนี้: <strong>' + AdminLayout.esc(src) + '</strong>'
+        + (d.configHasToken ? ' · เซิร์ฟเวอร์มี Line:ChannelAccessToken ใน config ด้วย' : '')
+        + (d.addFriendUrl ? ' · <a href="' + AdminLayout.esc(d.addFriendUrl) + '" target="_blank" rel="noopener">ลิงก์เพิ่มเพื่อน</a>' : '');
+      const w = document.getElementById('lnWarnings');
+      const list = d.warnings || [];
+      w.style.display = list.length ? '' : 'none';
+      w.innerHTML = list.map(x => '⚠️ ' + AdminLayout.esc(x)).join('<br>');
+    }
+
+    async function loadLineMessaging() {
+      try {
+        const res = await AdminAPI.lineMessaging();
+        lnRender(res.data);
+      } catch (e) {
+        document.getElementById('lnStatus').textContent = 'โหลดค่าตั้ง LINE OA กลางไม่สำเร็จ: ' + e.message;
+      }
+    }
+
+    function lnCopyWebhook() {
+      const v = document.getElementById('lnWebhookUrl').value;
+      if (navigator.clipboard) navigator.clipboard.writeText(v).then(() => AdminLayout.toast('คัดลอกแล้ว'), () => {});
+    }
+
+    async function lnSave() {
+      const btn = document.getElementById('lnSaveBtn');
+      btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
+      try {
+        const payload = {
+          channelAccessToken: document.getElementById('lnToken').value.trim() || null,
+          channelSecret: document.getElementById('lnSecret').value.trim() || null,
+          clearAccessToken: document.getElementById('lnClearToken').checked,
+          clearChannelSecret: document.getElementById('lnClearSecret').checked,
+          // ช่องไม่ลับส่งเสมอ: "" = ล้าง (ไม่ใช่ "คงค่าเดิม") — ฟอร์มแสดงค่าปัจจุบันอยู่แล้ว
+          basicId: document.getElementById('lnBasicId').value.trim(),
+          botUserId: document.getElementById('lnBotUserId').value.trim(),
+          groupId: document.getElementById('lnGroupId').value.trim(),
+        };
+        const res = await AdminAPI.updateLineMessaging(payload);
+        lnRender(res.data);
+        AdminLayout.toast(res.message || 'บันทึกสำเร็จ');
+      } catch (e) {
+        AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error');
+      } finally {
+        btn.disabled = false; btn.textContent = 'บันทึก LINE OA กลาง';
+      }
+    }
+
+    async function lnTest() {
+      const btn = document.getElementById('lnTestBtn');
+      const out = document.getElementById('lnTestResult');
+      const fill = document.getElementById('lnFill');
+      btn.disabled = true; out.textContent = 'กำลังทดสอบกับ LINE...'; fill.style.display = 'none'; fill.innerHTML = '';
+      try {
+        const res = await AdminAPI.testLineMessaging();
+        const d = res.data || {};
+        out.innerHTML = (d.ok ? '✅ ' : '❌ ') + AdminLayout.esc(d.message || res.message || '')
+          + (d.webhookEndpoint ? '<br>Webhook ที่ตั้งใน LINE: <code>' + AdminLayout.esc(d.webhookEndpoint) + '</code>' : '');
+        if (d.ok && (d.basicId || d.botUserId)) {
+          fill.dataset.basicId = d.basicId || '';
+          fill.dataset.botUserId = d.botUserId || '';
+          fill.innerHTML = '<button type="button" class="preview-btn" onclick="lnFillFromTest()">เติม Basic ID / Bot User ID จากบอทนี้</button>'
+            + ' <span class="help-text">(เติมลงฟอร์ม — กดบันทึกเพื่อเก็บ)</span>';
+          fill.style.display = '';
+        }
+      } catch (e) {
+        out.textContent = '❌ ทดสอบไม่สำเร็จ: ' + e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function lnFillFromTest() {
+      const fill = document.getElementById('lnFill');
+      if (fill.dataset.basicId) document.getElementById('lnBasicId').value = fill.dataset.basicId;
+      if (fill.dataset.botUserId) document.getElementById('lnBotUserId').value = fill.dataset.botUserId;
+      AdminLayout.toast('เติมแล้ว — กด "บันทึก LINE OA กลาง" เพื่อเก็บ');
+    }
+
+
     // ===== Init =====
     loadSettings();
     loadPlatformBilling();
+    loadLineMessaging();
   </script>
 </body>
 </html>

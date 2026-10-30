@@ -1,5 +1,12 @@
 namespace Accounting.Services.Interfaces;
 
+/// <summary>ผล push ที่บอกเหตุ (รอบ 212 C) — <see cref="Error"/> ไม่มี LINE userId เต็ม (ปิดบังแล้ว) · ใช้ประทับบนแถว/ตอบผู้กด</summary>
+public sealed record LinePushResult(bool Ok, string? Error)
+{
+    public static LinePushResult Success { get; } = new(true, null);
+    public static LinePushResult Fail(string error) => new(false, error);
+}
+
 public interface ILineNotifyService
 {
     Task SendMessageAsync(string message);
@@ -18,6 +25,15 @@ public interface ILineNotifyService
     /// <summary>รอบ 205 W3: push แล้ว<b>บอกผล</b> (ไม่ตั้งค่า token / LINE ตอบไม่สำเร็จ / โยน ⇒ false · log แล้ว) — ผู้เรียกที่ต้อง
     /// "ประทับหลังส่งถึงจริง" (เตือนนัดหมาย · แจ้งได้คิว) ใช้ตัวนี้</summary>
     Task<bool> TryPushToUserAsync(Guid? companyId, string lineUserId, string message);
+
+    /// <summary>รอบ 212 C: push ถึง<b>พนักงาน/ผู้ใช้ ERP</b> ผ่าน OA กลางของ NextAcc แบบระบุชัด (userId ของพนักงานผูกกับ OA กลางเท่านั้น —
+    /// userId ของ LINE แยกตาม provider) · ไม่เลือก OA ตามค่าตั้งบริษัท · ≤ 5 ก้อน × ≤ 5,000 ตัว ในคำขอเดียว · คืนเหตุเมื่อล้ม ·
+    /// <b>ห้ามใช้ส่งถึงลูกค้าปลายทาง</b> (ลูกค้าใช้ <see cref="TryPushToUserAsync"/> ตาม OA ที่ผูกไว้)</summary>
+    Task<LinePushResult> TryPushViaNextAccAsync(string lineUserId, IReadOnlyList<string> messages);
+
+    /// <summary>รอบ 212 D: Flex ถึง<b>พนักงาน</b>ผ่าน OA กลางแบบระบุชัด (คู่ของ <see cref="TryPushViaNextAccAsync"/>) — สลิปเงินเดือนของพนักงานที่ผูก
+    /// "สลิป 123456" กับ OA กลาง · คืนเหตุเมื่อล้ม (ไม่กลืน) · ไม่ตั้ง token กลาง ⇒ ล้มพร้อมเหตุ (ไม่ถอยไป OA ร้าน)</summary>
+    Task<LinePushResult> TryPushFlexViaNextAccAsync(string lineUserId, string altText, object flexContents);
 
     /// <summary>Push a LINE Flex Message bubble to a specific user.
     /// <paramref name="flexContents"/> is the "contents" payload LINE

@@ -53,6 +53,9 @@
         <div id="quotaBody" class="muted">กำลังโหลด…</div>
       </div>
 
+      <!-- รอบ 212 แพ็ก A: โควตาข้อความผ่านช่องกลาง + ซื้อแพ็ก notify.topup (เส้นเดียวกับ quota/topup) -->
+      <div class="card" id="notifyQuotaWrap"><div id="notifyQuotaCard"></div></div>
+
       <div class="card" id="missionCard" style="display:none">
         <h3>🎁 แลกโควตาเพิ่มโดยไม่เสียเงิน</h3>
         <div id="missionBody"></div>
@@ -93,6 +96,7 @@
   <script src="/js/pay-widget.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/customer-notify.js"></script>
   <script>
     const Page = {
       features: [],
@@ -112,6 +116,7 @@
         // (ผลลัพธ์ขึ้นกับลำดับ response = defect class "ใครมาก่อนชนะ")
         await this.loadAccess();
         await Promise.all([this.loadFeatures(), this.loadQuota(), this.loadMissions()]);
+        if (window.CustomerNotify) CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: this.cid() });
       },
 
       async loadAccess() {
@@ -299,7 +304,7 @@
         const grid = document.getElementById('addonGrid');
         // มิเตอร์ของระบบไม่ใช่สวิตช์ — ห้ามโผล่ให้ลูกค้า "ปิด" แล้วเข้าใจว่าไม่ต้องจ่าย
         const items = this.features.filter(f => (f.featureCode || '').indexOf('.') > 0
-          && !['documents.overage', 'documents.topup', 'lodging.stay',
+          && !['documents.overage', 'documents.topup', 'notify.topup', 'lodging.stay',
                'lodging.email.overage', 'lodging.notify.sms'].includes(f.featureCode));
         if (!items.length) { grid.innerHTML = '<div class="muted">ยังไม่มีส่วนเสริมที่เปิดขาย</div>'; return; }
         // ไม่มีสิทธิ์ = บอกให้ชัดว่าต้องขออะไรจากใคร ไม่ใช่ปล่อยให้กดแล้วเจอ 403

@@ -15,6 +15,13 @@ public class AccountingDbContext : DbContext
     public DbSet<EmployeeLineBindCode> EmployeeLineBindCodes => Set<EmployeeLineBindCode>();
     public DbSet<CustomerLineLink> CustomerLineLinks => Set<CustomerLineLink>();   // รอบ 211
     public DbSet<CustomerLineLinkCode> CustomerLineLinkCodes => Set<CustomerLineLinkCode>();   // รอบ 211
+    public DbSet<StaffDailySummaryConfig> StaffDailySummaryConfigs => Set<StaffDailySummaryConfig>();   // รอบ 212 C
+    public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
+    public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
+    public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
+    public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
+    public DbSet<LineOaSwitchEvent> LineOaSwitchEvents => Set<LineOaSwitchEvent>();   // รอบ 212 แพ็ก B
+    public DbSet<LineOaDestinationSighting> LineOaDestinationSightings => Set<LineOaDestinationSighting>();   // รอบ 212 ฝ่ายค้าน (B+D) ข้อ 4
     public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
@@ -3431,6 +3438,70 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => x.CodeHash).IsUnique().HasDatabaseName("UX_CustomerLineLinkCodes_Hash");
             e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinkCodes_Company_Target");
             e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (ตาราง + index ต้องตรงกับ Helpers/StaffDailySummaryMigration)
+        modelBuilder.Entity<StaffDailySummaryConfig>(e =>
+        {
+            e.Property(x => x.Sections).HasMaxLength(200);
+            e.Property(x => x.RecipientRoles).HasMaxLength(200);
+            e.Property(x => x.LastRunNote).HasMaxLength(1000);
+            e.HasIndex(x => x.CompanyId).HasDatabaseName("IX_StaffDailySummaryConfigs_Company");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<StaffDailySummaryDelivery>(e =>
+        {
+            e.Property(x => x.Status).HasMaxLength(32);
+            e.Property(x => x.Error).HasMaxLength(1000);
+            e.HasIndex(x => new { x.ConfigId, x.LocalDate, x.UserId }).IsUnique().HasDatabaseName("UX_StaffDailySummaryDeliveries_Config_Date_User");
+            e.HasIndex(x => new { x.CompanyId, x.LocalDate }).HasDatabaseName("IX_StaffDailySummaryDeliveries_Company_Date");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 212 แพ็ก A: ค่าตั้งแจ้งลูกค้า · บันทึกการส่ง · ตัวนับโควตาช่องกลาง (ตาราง + index ต้องตรงกับ DatabaseMigrationHelper.CmsRound212NotifyStatements)
+        modelBuilder.Entity<CustomerNotifyRule>(e =>
+        {
+            e.Property(x => x.EventKey).HasMaxLength(64);
+            e.HasIndex(x => new { x.CompanyId, x.SiteId, x.EventKey }).IsUnique()
+                .HasFilter("\"SiteId\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_CustomerNotifyRules_Site_Event");
+            e.HasIndex(x => new { x.CompanyId, x.EventKey }).IsUnique()
+                .HasFilter("\"SiteId\" IS NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_CustomerNotifyRules_Company_Event");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<CustomerNotifyLog>(e =>
+        {
+            e.Property(x => x.MessageKey).HasMaxLength(200);
+            e.Property(x => x.EventKey).HasMaxLength(64);
+            e.Property(x => x.TargetKind).HasMaxLength(16);
+            e.Property(x => x.Channel).HasMaxLength(16);
+            e.Property(x => x.Source).HasMaxLength(24);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.Note).HasMaxLength(500);
+            e.HasIndex(x => new { x.CompanyId, x.MessageKey }).IsUnique().HasDatabaseName("UX_CustomerNotifyLogs_Company_Key");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<NotifyUsageCounter>(e =>
+        {
+            e.HasKey(x => new { x.CompanyId, x.Period });
+            e.Property(x => x.Period).HasMaxLength(7);
+        });
+        // รอบ 212 แพ็ก B: การสลับ LINE OA → คำเชิญผูกใหม่ (ตาราง/index ต้องตรงกับ CmsRound212NotifyStatements + Helpers/CustomerRelinkMigration)
+        modelBuilder.Entity<LineOaSwitchEvent>(e =>
+        {
+            e.Property(x => x.FromScope).HasMaxLength(16);
+            e.Property(x => x.FromDestination).HasMaxLength(64);
+            e.Property(x => x.ToScope).HasMaxLength(16);
+            e.Property(x => x.ToDestination).HasMaxLength(64);
+            e.Property(x => x.Source).HasMaxLength(32);
+            e.Property(x => x.DedupeKey).HasMaxLength(200);
+            e.Property(x => x.LastError).HasMaxLength(500);
+            e.HasIndex(x => new { x.CompanyId, x.ProcessedAt }).HasDatabaseName("IX_LineOaSwitchEvents_Pending");
+            e.HasIndex(x => new { x.CompanyId, x.DedupeKey }).IsUnique()
+                .HasFilter("\"ProcessedAt\" IS NULL AND \"IsDeleted\" = false AND \"DedupeKey\" IS NOT NULL").HasDatabaseName("UX_LineOaSwitchEvents_Pending_Key");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<LineOaDestinationSighting>(e =>
+        {
+            e.HasKey(x => x.Destination);
+            e.Property(x => x.Destination).HasMaxLength(64);
         });
         // รอบ 209 P4: ตารางคลาส (ตาราง + index ต้องตรงกับ Helpers/ClassScheduleMigration)
         modelBuilder.Entity<SiteClassTerm>(e =>

@@ -61,6 +61,9 @@ LODGING = "Services/Implementations/Lodging/LodgingService.cs"
 DOCSVC = "Services/Implementations/DocumentService.cs"
 INTEGRATION = "Services/Implementations/IntegrationService.cs"
 
+# รอบ 212 แพ็ก A: เส้นข้อความถึงลูกค้าห้ามเรียกช่องส่งตรง (ต้องผ่าน IBookingNotifier ตัวเดียว)
+_R212_DIRECT = ["_email.SendAsync(", "_email.TrySendAsync(", "emailService.SendAsync(", "TryPushToUserAsync(", "_line.PushToUserAsync("]
+
 SSO_INLINE = ["SsoWageBase.GrossWage(", "SsoWageBase.PeriodBase(", "SsoWageBase.Clamp(", "SsoWageBase.SalaryPaidThisPeriod("]
 
 RULES = [
@@ -5467,6 +5470,49 @@ def notes_marker_self_test(files) -> list:
     return fails
 
 
+# ── รอบ 212 D: config LINE OA กลาง (Line:ChannelAccessToken · ChannelSecret · BasicId · BotUserId · GroupId) อ่านได้ที่ resolver ตัวเดียว ──
+#    เดิม 11 จุดใน 5 ไฟล์อ่าน `_config["Line:…"]` เอง ⇒ ค่าที่แอดมินตั้งในหน้าเว็บไม่มีผล · ทั้งเรพ (รวม Helpers/Controllers) ยกเว้นไฟล์ resolver
+LINE_CONFIG_FORBID = dict(
+    allow={"Services/Implementations/NextAccLineConfig.cs"},
+    literal_patterns=[r'"Line:(?:ChannelAccessToken|ChannelSecret|BasicId|BotUserId|GroupId)"', r'GetSection\(\s*"Line"\s*\)'],
+    why="รอบ 212 D: ค่าตั้ง LINE OA กลางอ่านผ่าน INextAccLineConfig (หน้าแอดมินก่อน · config Line:* fallback) เท่านั้น",
+)
+
+
+def line_config_errors(files) -> list:
+    errs = []
+    for rel, text in files:
+        if rel in LINE_CONFIG_FORBID["allow"]:
+            continue
+        code = mask(text, keep_strings=True)
+        for rx in LINE_CONFIG_FORBID["literal_patterns"]:
+            for m in re.finditer(rx, code):
+                line = code.count("\n", 0, m.start()) + 1
+                errs.append(f"{rel}:{line} อ่าน config LINE OA กลางเอง `{m.group(0)}` — {LINE_CONFIG_FORBID['why']}")
+    return errs
+
+
+def line_config_self_test(files) -> list:
+    fails = []
+    target = "Services/Implementations/LineBotService.cs"
+    base = dict(files).get(target)
+    if base is None:
+        return [f"self-test LINE_CONFIG_FORBID: ไม่พบ {target}"]
+    if line_config_errors([(target, base)]):
+        fails.append(f"self-test LINE_CONFIG_FORBID: {target} ปัจจุบันถูกฟ้อง (ต้องแก้โค้ดก่อน)")
+    for sample in ['var t = _config["Line:ChannelAccessToken"];', 'var s = cfg["Line:ChannelSecret"];', 'var b = _configuration["Line:BasicId"];',
+                   'var g = _config[ "Line:GroupId" ];', 'var x = _config.GetSection("Line");', 'var u = _config["Line:BotUserId"];']:
+        if not line_config_errors([(target, base + "\nclass __X { void F() { " + sample + " } }\n")]):
+            fails.append(f"self-test LINE_CONFIG_FORBID: ใส่ `{sample}` แล้วไม่ฟ้อง")
+    for ok in ['// เดิม _config["Line:ChannelAccessToken"]', 'var id = _config["OAuth:Line:ChannelId"];',
+               'var m = "ยังไม่ได้ตั้ง Line:ChannelAccessToken ใน config";', 'var nx = await _nextAccLine.GetAsync();']:
+        if line_config_errors([(target, "class __Y { async void F() { " + ok + " } }\n")]):
+            fails.append(f"self-test LINE_CONFIG_FORBID: `{ok}` ถูกฟ้องผิด")
+    if line_config_errors([("Services/Implementations/NextAccLineConfig.cs", 'class __Z { string F() => _config["Line:ChannelSecret"]; }\n')]):
+        fails.append("self-test LINE_CONFIG_FORBID: ไฟล์ resolver ถูกฟ้องผิด")
+    return fails
+
+
 @functools.lru_cache(maxsize=64)
 def mask(text: str, keep_strings: bool = False) -> str:
     out = list(text)
@@ -10110,14 +10156,15 @@ RULES += [
          forbid=["{Ip}"],
          why="ฝ่ายค้านรอบ 210 ข้อ 1/3: ถังต่อผู้ติดต่อกันไล่เลขที่ด้วยเบอร์เหยื่อ · IPv6 รวม /64 · ตารางนับพัง ⇒ ปฏิเสธ (ไม่เปิดเงียบ)"),
     # ── รอบ 211 (คำตัดสินข้อ 170): ลูกค้าปลายทางผูก LINE เอง · webhook OA ต่อบริษัท · ช่องแจ้งลูกค้า ──
-    dict(file="Services/Implementations/LineBotService.cs", method="VerifySignature",
-         must=["LineWebhookSignature.Verify("], forbid=["HMACSHA256", "ComputeHash("],
+    dict(file="Services/Implementations/LineBotService.cs", method="VerifySignatureAsync",
+         must=["LineWebhookSignature.Verify(", "_nextAccLine.GetAsync("], forbid=["HMACSHA256", "ComputeHash("],
          why="รอบ 211: ลายเซ็น webhook LINE สูตรเดียว (Helpers/LineWebhookSignature) ใช้ร่วม OA กลาง + OA ต่อบริษัท — ห้ามเขียน HMAC ซ้ำ"),
     dict(file="Controllers/CustomerLineWebhookController.cs", method="Receive",
          must=["LineWebhookSignature.Verify(", "s.CompanyId == companyId", "CustomerNotifyChannel.ScopeCompany, companyId", "Unauthorized()"],
          forbid=["HMACSHA256", "ComputeHash(", "NotFound()"],
          before=[("LineWebhookSignature.Verify(", "TryRedeemAsync("), ("LineWebhookSignature.Verify(", "LearnDestinationAsync("),
-                 ("_secrets.Unprotect(", "ReadToEndAsync(")],
+                 ("_secrets.Unprotect(", "ReadToEndAsync("), ("if (!destinationAccepted) return Ok();", "TryRedeemAsync("),
+                 ("if (!destinationAccepted) return Ok();", "SetBlockedAsync(")],
          why="รอบ 211: webhook ต่อบริษัทตรวจลายเซ็นด้วย secret ของบริษัทใน URL ก่อนทำอะไร · ไถ่รหัสใน scope company ของบริษัทนั้นเท่านั้น"),
     dict(file="Services/Implementations/LineBotService.cs", method="HandleMessageAsync",
          must=["CustomerLineLinkRule.IsLinkAttempt(msg)", "TryRedeemAsync(CustomerNotifyChannel.ScopeNextAcc, null, destination"],
@@ -10143,15 +10190,23 @@ RULES += [
     dict(file="Services/Implementations/Cms/CustomerLineLinkService.cs", method="ResolveChannelAsync",
          must=["CustomerNotifyChannel.ResolveLine(", "_secrets.IsUsable("],
          why="รอบ 211: ตัดสิน OA ผ่านตัวเดียว (ตรงกับ LineNotifyService.ResolveConfigAsync)"),
-    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="SendAsync",
-         must=["ResolveLineUserIdAsync(", "CustomerNotifyChannel.Order(", "TrySendEmailAsync(", "TryPushToUserAsync("],
+    # รอบ 212 แพ็ก A: เส้นส่งย้ายเข้า DeliverAsync (SendAsync = claim → ส่ง → ปิดแถว) · ลำดับช่องอยู่ใน CustomerNotifyPolicy.Plan ซึ่งเรียก Order เดิม
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="DeliverAsync",
+         must=["ResolveLineUserIdAsync(", "CustomerNotifyPolicy.Plan(", "TrySendEmailAsync(", "TryPushToUserAsync("],
          why="รอบ 211: LINE ที่ลูกค้าผูกเองหาที่ตัวส่งตัวเดียว · ลำดับช่องจากตัวตัดสินเดียว (ไม่ผูก = อีเมลก่อนเหมือนเดิม)"),
+    dict(file="Helpers/CustomerNotifyPolicy.cs", method="Plan",
+         must=["CustomerNotifyChannel.Order(", "NotifyQuotaPolicy.IsMetered("],
+         why="รอบ 212: ขั้นส่งใช้ลำดับช่องเดิม (ไม่เขียนลำดับซ้ำ) + ทุกขั้นบอกว่านับโควตาไหมจากตัวตัดสินเดียว"),
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="DeliverAsync",
+         must=["CustomerNotifyChannel.EmailPlan(", "CustomerNotifyChannel.TenantEmailFallbackWarning(tenantError)", "TrySendTenantEmailAsync("],
+         why="รอบ 211 ฝ่ายค้าน ข้อ 5: ผู้ส่งของร้านล้ม ⇒ ถอยไปอีเมลของระบบ + คำเตือนให้ประทับ (ลูกค้าต้องได้รับ)"),
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="TrySendTenantEmailAsync",
+         must=["DocumentEmailService.ResolveFromAddress(", "GetSenderForSettings("],
+         why="รอบ 211: ที่อยู่ผู้ส่งตัวเดียวกับเอกสาร"),
     dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="TrySendEmailAsync",
-         must=["CustomerNotifyChannel.EmailPlan(", "DocumentEmailService.ResolveFromAddress(", "GetSenderForSettings(", "_email.TrySendAsync(",
-               "CustomerNotifyChannel.TenantEmailFallbackWarning(tenantError)"],
-         why="รอบ 211 ฝ่ายค้าน ข้อ 5: ผู้ส่งของร้านล้ม ⇒ ถอยไปอีเมลของระบบ + คำเตือนให้ประทับ (ลูกค้าต้องได้รับ) · ที่อยู่ผู้ส่งตัวเดียวกับเอกสาร"),
-    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="SendAsync",
-         must=["mail.Warning"], why="รอบ 211 ฝ่ายค้าน ข้อ 5: คำเตือนทางถอยส่งถึงผู้เรียก (ไม่ใช่แค่ log)"),
+         must=["_email.TrySendAsync("], why="รอบ 211: อีเมลของระบบ (เดิม)"),
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="DeliverAsync",
+         must=["with { Warning = warning }"], why="รอบ 211 ฝ่ายค้าน ข้อ 5 + รอบ 212: คำเตือนทางถอย (ผู้ส่งร้านล้ม / โควตาเต็ม) ส่งถึงผู้เรียก (ไม่ใช่แค่ log)"),
     dict(file="Services/Implementations/Cms/CmsShopNotifier.cs", method="NotifyCustomerAsync",
          must=["r.Sent ? r.Warning"], why="รอบ 211 ฝ่ายค้าน ข้อ 5: ส่งถึงทางถอย ⇒ คืนคำเตือนให้ผู้เรียกประทับบนการจอง/ออเดอร์"),
     dict(file="Services/Implementations/Cms/CmsShopNotifier.cs", method="NotifyShopAsync",
@@ -10201,14 +10256,260 @@ RULES += [
          why="รอบ 211 ฝ่ายค้าน ข้อ 2/3: ยกเลิกเดินเส้นปิดเดียวกับ DSR"),
     dict(file="Services/Implementations/LineNotifyService.cs", method="TryPushToUserAsync",
          must_lit=['$"user {CustomerLineLinkRule.Mask(lineUserId)}"'], forbid_lit=['$"user {lineUserId}"'], why="รอบ 211 ฝ่ายค้าน ข้อ 1: บริบท log ไม่มี LINE userId เต็ม"),
-    dict(file="Services/Implementations/LineNotifyService.cs", method="PushRawAsync",
-         must=["CustomerLineLinkRule.RedactForLog(body)"], why="รอบ 211 ฝ่ายค้าน ข้อ 1: body ตอบกลับของ LINE ลง log แบบปิดบัง userId"),
+    dict(file="Services/Implementations/LineNotifyService.cs", method="PushCoreAsync",
+         must=["CustomerLineLinkRule.RedactForLog(body)"], forbid=["resp.StatusCode, body)"],
+         why="รอบ 211 ฝ่ายค้าน ข้อ 1: body ตอบกลับของ LINE ลง log แบบปิดบัง userId (รอบ 212 C: ตัวยิงจริงย้ายมา PushCoreAsync — PushRawAsync ห่อ)"),
     dict(file="Services/Implementations/Pdpa/PdpaService.Cms.cs", method="GenerateCmsAccessReportAsync",
          must=["LoadCmsLineLinksAsync("], why="รอบ 211: DSR ขอดูข้อมูลแสดง LINE ที่ลูกค้าผูกไว้"),
     dict(file="Controllers/LineWebhookController.cs", method="Receive",
-         must=["_bot.VerifySignature(", "SetBlockedAsync("], must_lit=['TryGetProperty("destination"'],
+         must=["_bot.VerifySignatureAsync(", "SetBlockedAsync("], must_lit=['TryGetProperty("destination"'],
          must_re=[r"HandleMessageAsync\(userId,[^;]*destination\)"],
          why="รอบ 211: OA กลาง — บล็อก/เพิ่มเพื่อนกลับของลูกค้าหยุด/เปิดการส่ง (ไม่ใช่ส่งต่อไปเรื่อย ๆ ทั้งที่ถูกบล็อก)"),
+    # ── รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน + push พนักงานผ่าน OA กลาง (บั๊กแฝง §0 ของ NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN) ──
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchLineAsync",
+         must=["_line.TryPushViaNextAccAsync("], forbid=["PushToUserAsync(", "TryPushToUserAsync("],
+         why="รอบ 212 C: userId ของพนักงานผูกกับ OA กลางเท่านั้น — push ผ่าน OA ของร้าน (ResolveConfigAsync) ล้มทุกฉบับ"),
+    dict(file="Services/Implementations/LineNotifyService.cs", method="TryPushViaNextAccAsync",
+         must=["NextAccTokenAsync()", "LineMessageLimits.Normalize(", "PushCoreAsync("], forbid=["ResolveConfigAsync("],
+         why="รอบ 212 C: เส้นพนักงานระบุ OA กลางชัด ไม่เลือกตามค่าตั้งบริษัท · ไม่ถอยไป OA ร้าน · ≤5 ก้อน × ≤5,000 ตัว"),
+    dict(file="Services/Background/StaffDailySummaryJob.cs", method="RunGuardedAsync",
+         must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.BackgroundJob"],
+         why="รอบ 212 C (F4 #6): งานส่งข้อความเดินทีละเครื่อง"),
+    dict(file="Services/Implementations/StaffDailySummaryService.cs", method="RunDueAsync",
+         must=["StaffDailySummaryPlan.Due(", "cfg.LastSentLocalDate", "BookingSlotEngine.BangkokNow("],
+         why="รอบ 212 C: ถึงกำหนดตามเวลาไทย + watermark ต่อบริษัท/ชุด (ส่งแล้ววันนี้ = ข้าม)"),
+    dict(file="Services/Implementations/StaffDailySummaryService.cs", method="RunConfigAsync",
+         must=["ClaimAsync(", "BuildForRecipientAsync(", "_meter.TryReserveAsync(", "_meter.ReleaseAsync(", "_line.TryPushViaNextAccAsync(",
+               "StaffDailySummaryPlan.IsTerminal(", "cfg.LastSentLocalDate = today", "cfg.LastRunNote ="],
+         before=[("ClaimAsync(", "BuildForRecipientAsync("), ("BuildForRecipientAsync(", "_meter.TryReserveAsync("),
+                 ("_meter.TryReserveAsync(", "_line.TryPushViaNextAccAsync(")],
+         forbid=["PushToUserAsync(", "StaffDailySummaryBuilder.Build("],
+         why="รอบ 212 C: claim ต่อ (ชุด,วัน,คน) ก่อนประกอบ · ประกอบผ่านตัวกรองสิทธิ์ต่อผู้รับเท่านั้น · นับโควตาก่อนส่ง (§10) · push OA กลาง · ล้มคืนหน่วย · watermark เมื่อทุกคนจบ"),
+    dict(file="Services/Implementations/StaffDailySummaryService.cs", method="BuildForRecipientAsync",
+         must=["RecipientScopeAsync(", "StaffDailySummaryPlan.FilterForRecipient(round.Rows", "StaffDailySummaryBuilder.Build("],
+         before=[("RecipientScopeAsync(", "StaffDailySummaryPlan.FilterForRecipient("), ("StaffDailySummaryPlan.FilterForRecipient(", "StaffDailySummaryBuilder.Build(")],
+         forbid=["Build(today, round.CompanyName, round.ScopeName, round.Rows"],
+         why="รอบ 212 C: ข้อความประกอบจากข้อมูลที่กรองต่อผู้รับแล้วเท่านั้น (ไม่มีข้อมูลที่ผู้รับดูไม่ได้)"),
+    dict(file="Services/Implementations/StaffDailySummaryService.cs", method="RecipientScopeAsync",
+         must=["_perms.HasPermissionAsync(", "StaffDailySummaryPlan.PermissionKeysToCheck()", "CmsSiteScope.AllowedSiteIds(", "a.CompanyId == companyId", "CmsSiteScope.OrderRoles", "CmsSiteScope.AnyRole"],
+         why="รอบ 212 C: สิทธิ์ ณ วันส่ง กติกาเดียวกับด่าน endpoint + มุมมองทุกไซต์"),
+    dict(file="Services/Implementations/StaffDailySummaryService.cs", method="SendTestAsync",
+         must=["BuildForRecipientAsync(", "_meter.TryReserveAsync(", "_line.TryPushViaNextAccAsync("], forbid=["PushToUserAsync(", "StaffDailySummaryBuilder.Build("],
+         why="รอบ 212 C: ส่งทดสอบเดินตัวกรองสิทธิ์ของผู้กด + นับโควตา + OA กลาง เส้นเดียวกับงาน"),
+    dict(file="Services/Implementations/StaffDailySummaryService.cs", method="ClaimAsync",
+         must_lit=['ON CONFLICT (""ConfigId"", ""LocalDate"", ""UserId"") DO UPDATE', '""StaffDailySummaryDeliveries"".""CompanyId"" = {companyId}'],
+         must=["StaffDailySummaryPlan.MaxAttempts", "StaffDailySummaryPlan.StaleClaim", "return n == 1"],
+         why="รอบ 212 C: ไม่ส่งซ้ำต่อวันต่อผู้รับข้ามเครื่อง — claim ด้วย unique + ON CONFLICT ในคำสั่งเดียว"),
+    # ── รอบ 212 แพ็ก A (คำตัดสินข้อ 171): ทุกข้อความถึงลูกค้าผ่าน BookingNotifier ตัวเดียวพร้อม EventKey + MessageKey ·
+    #    จองโควตาก่อนส่งทางช่องกลาง · ห้ามเรียก IEmailService/ILineNotifyService ตรงในเส้นข้อความถึงลูกค้า ──
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="SendAsync",
+         must=["_quota.ClaimAsync(", "DeliverAsync(", "CompleteAsync("], before=[("_quota.ClaimAsync(", "DeliverAsync(")],
+         forbid=["_email.TrySendAsync(", "TryPushToUserAsync("],
+         why="รอบ 212: กันส่งซ้ำ (claim คีย์ข้อความ) ก่อนส่งทุกครั้ง · ปิดแถวบันทึกหลังส่ง"),
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="DeliverAsync",
+         must=["CustomerNotifyPolicy.Resolve(", "CustomerNotifyPolicy.SuppressReason(", "_quota.TryReserveAsync(", "_quota.ReleaseAsync(",
+               "settings?.CustomerEmailFallback", "CustomerNotifyEvents.IsEssential("],
+         before=[("_quota.TryReserveAsync(", "_line.TryPushToUserAsync("), ("_quota.TryReserveAsync(", "TrySendEmailAsync(contact")],
+         why="รอบ 212: ค่าตั้งต่อประเภท × ช่องจากตัวตัดสินเดียว · จองโควตาก่อนส่งทางช่องกลาง · ส่งล้มคืนหน่วย · ถอยอีเมลตามค่าตั้งของร้าน"),
+    dict(file="Services/Implementations/Cms/CmsShopNotifier.cs", method="NotifyCustomerAsync",
+         must=["new CustomerNotifyRequest(companyId, siteId, eventKey, messageKey", "r.IsSuppressed"],
+         why="รอบ 212: แจ้งลูกค้าส่ง EventKey/MessageKey ต่อ · ระงับโดยตั้งใจไม่ log เป็น Error"),
+    dict(file="Services/Implementations/Cms/CmsShopNotifier.cs", method="NotifyShopAsync",
+         must=["CustomerNotifyEvents.ShopNotify"], why="รอบ 212: ข้อความถึงร้านนับโควตาเมื่อออกช่องกลาง (ไม่อยู่ในค่าตั้งลูกค้า)"),
+    dict(file="Services/Implementations/CmsBookingService.ShopNotify.cs", method="NotifyBookingCreatedAsync",
+         must=["CustomerNotifyEvents.BookingConfirmed", "CustomerNotifyKeys.Booking(bookingId, CustomerNotifyEvents.BookingConfirmed)"], forbid=_R212_DIRECT,
+         why="รอบ 212: ยืนยันการจองผ่านช่องกลางพร้อมประเภท/คีย์กันซ้ำ"),
+    dict(file="Services/Implementations/CmsBookingService.ShopNotify.cs", method="NotifyBookingCancelledByShopAsync",
+         must=["CustomerNotifyEvents.BookingCancelled", "CustomerNotifyKeys.Booking(bookingId, CustomerNotifyEvents.BookingCancelled)"], forbid=_R212_DIRECT,
+         why="รอบ 212: ร้านยกเลิกผ่านช่องกลางพร้อมประเภท/คีย์กันซ้ำ"),
+    dict(file="Services/Implementations/CmsBookingService.ShopNotify.cs", method="NotifyBookingRescheduledAsync",
+         must=["CustomerNotifyEvents.BookingRescheduled", "CustomerNotifyKeys.BookingRescheduled("], forbid=_R212_DIRECT,
+         why="รอบ 212: เลื่อนนัดผ่านช่องกลางพร้อมประเภท/คีย์กันซ้ำ"),
+    dict(file="Services/Implementations/CmsBookingService.Notify.cs", method="NotifyWaitlistPromotedAsync",
+         must=["new CustomerNotifyRequest(", "CustomerNotifyEvents.BookingWaitlistPromoted", "CustomerNotifyKeys.Waitlist(b.Id)"], forbid=_R212_DIRECT,
+         why="รอบ 212: ได้คิวผ่านช่องกลาง · คีย์ต่อการจอง (job ส่งซ้ำไม่ส่งสองครั้ง)"),
+    dict(file="Services/Implementations/CmsBookingService.Classes.cs", method="NotifyClassBookingsAsync",
+         must=["new CustomerNotifyRequest(", "CustomerNotifyEvents.ClassCancelled", "CustomerNotifyEvents.ClassSubstitute", "CustomerNotifyKeys.Class(sessionId, b.Id"],
+         forbid=_R212_DIRECT, why="รอบ 212: คลาสยกเลิก/เปลี่ยนผู้สอนผ่านช่องกลาง"),
+    dict(file="Services/Implementations/CmsCommerceService.Notify.cs", method="NotifyOrderCreatedAsync",
+         must=["CustomerNotifyEvents.OrderConfirmation", "CustomerNotifyKeys.Order(orderId, CustomerNotifyEvents.OrderConfirmation)"], forbid=_R212_DIRECT,
+         why="รอบ 212: ยืนยันคำสั่งซื้อผ่านช่องกลาง"),
+    dict(file="Services/Implementations/CmsCommerceService.Notify.cs", method="NotifyOrderStatusAsync",
+         must=["CustomerNotifyEvents.OrderStatusKey(status)", "CustomerNotifyKeys.Order(orderId, eventKey)"], forbid=_R212_DIRECT,
+         why="รอบ 212: สถานะออเดอร์ผ่านช่องกลาง — คีย์ประเภทจากตัวตั้งเดียว"),
+    dict(file="Services/Implementations/CourseCredit/CourseCreditService.Membership.cs", method="SendExpiryRemindersAsync",
+         must=["new CustomerNotifyRequest(", "CustomerNotifyEvents.CreditExpiring", "CustomerNotifyKeys.Credit(c.Id"], forbid=_R212_DIRECT,
+         why="รอบ 212: บัตรใกล้หมดอายุผ่านช่องกลาง"),
+    dict(file="Services/Background/BookingReminderJob.cs", method="ProcessAsync",
+         must=["CustomerNotifyEvents.BookingReminder", "CustomerNotifyKeys.Reminder(b.Id, stage.Value)", "CustomerNotifyPolicy.Resolve("], forbid=_R212_DIRECT,
+         why="รอบ 212: เตือนก่อนนัดผ่านช่องกลาง · คีย์ต่อขั้น · ค่าตั้งปิดทั้งสองช่อง ⇒ ข้ามก่อนวน"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Operations.cs", method="TryNotifyAsync",
+         must=["_notifier.SendAsync(", "CustomerNotifyKeys.Lodging(", "CustomerNotifyEvents.ShopPaymentProblem", "CustomerNotifyEvents.LodgingSlipRejected"],
+         forbid=_R212_DIRECT, why="รอบ 212 (คำตัดสินผู้ประสานงาน): อีเมลแขก/ที่พักผ่านช่องกลางเดียว (ค่าตั้ง · ผู้ส่งร้าน · โควตา · เงินค้าง = จำเป็น)"),
+    dict(file="Services/Implementations/AbandonedCartService.cs", method="ProcessAbandonedCarts",
+         must=["CustomerNotifyEvents.CartAbandoned", "CustomerNotifyKeys.Cart(cart.Id)", "res.Sent"], forbid=_R212_DIRECT + ["GetService<IEmailService>("],
+         why="รอบ 212: อีเมลกู้ตะกร้าผ่านช่องกลาง (หลังด่านยินยอมการตลาดเดิม) · ประทับส่งแล้วเฉพาะเมื่อส่งถึงจริง"),
+    dict(file="Services/Implementations/CmsCustomerService.cs", method="SubmitFormAsync",
+         must=["CustomerNotifyEvents.FormAutoReply", "CustomerNotifyKeys.Form(sub.Id)", "_notifier.SendAsync("],
+         why="รอบ 212: ตอบกลับฟอร์มอัตโนมัติถึงผู้กรอกผ่านช่องกลาง (แจ้งร้านคงใช้อีเมลระบบเดิม)"),
+    dict(file="Services/Implementations/NotifyQuotaService.cs", method="TryReserveAsync",
+         must_lit=['"Used" < @limit', 'RETURNING "Used" + "BonusUsed"', '"NotifyBonusExpiresAt" > now()'],
+         must=["LoadLimitAsync(db, companyId, ct)"], forbid=["_metering.RecordAsync(", "SaveChangesAsync("],
+         why="รอบ 212: นับแบบ UPDATE…WHERE…RETURNING (หลาย instance ไม่นับเกิน) · โบนัสหมดอายุไม่นับ · ไม่สร้าง UsageEvent ต่อข้อความ"),
+    dict(file="Services/Implementations/NotifyQuotaService.cs", method="ClaimAsync",
+         must_lit=['ON CONFLICT ("CompanyId","MessageKey") DO NOTHING', '"Status" <> \'Sent\'', '"ClaimedUntil" < now()'],
+         why="รอบ 212: กันส่งซ้ำต่อบริษัท + lease (คำขอที่ค้างรับช่วงได้)"),
+    dict(file="Services/Implementations/NotifyQuotaService.cs", method="PurchaseTopUpAsync",
+         must=["AdvisoryLockKey.QuotaGrant", "_metering.RecordAsync(", "AddChainedAuditLog(", "AddOnBilling.TopUpRequestKey(AddOnCodes.NotifyTopUp", "AddOnBilling.TopUpKey(AddOnCodes.NotifyTopUp",
+               "AddOnBilling.TopUpKeyPrefix(AddOnCodes.NotifyTopUp, period)", "IdempotencyKey.StartsWith(prefix)"],
+         must_lit=["pg_advisory_xact_lock", 'THEN "NotifyBonusQuota" ELSE 0 END + {0}', 'GREATEST("NotifyBonusExpiresAt", {1})'],
+         before=[("AdvisoryLockKey.QuotaGrant", "_db.Subscriptions.AsNoTracking()"), ("_metering.RecordAsync(", "AddChainedAuditLog(")],
+         forbid=["sub.NotifyBonusQuota", "_db.Subscriptions.FirstOrDefaultAsync(", "monthStart"],
+         why="รอบ 212 + ฝ่ายค้าน B1/B2/S2: อ่านแพ็กเกจหลังล็อก · ให้โบนัสด้วย UPDATE เดียว (ไม่เขียนค่าสัมบูรณ์ — ซื้อ/หักพร้อมกันไม่หาย) · "
+             "ลำดับนับจากคำนำหน้าคีย์งวดไทย (ไม่ใช่ต้นเดือน UTC) · Idempotency-Key ของผู้เรียก · คิดเงินก่อนให้ของเส้นเดิม"),
+    dict(file="Services/Implementations/QuotaService.cs", method="PurchaseTopUpAsync",
+         must=["AdvisoryLockKey.QuotaGrant", "_metering.RecordAsync(", "AddOnBilling.TopUpRequestKey(AddOnCodes.DocumentsTopUp", "AddOnBilling.TopUpKey(AddOnCodes.DocumentsTopUp",
+               "AddOnBilling.TopUpKeyPrefix(AddOnCodes.DocumentsTopUp, period)", "IdempotencyKey.StartsWith(prefix)"],
+         must_lit=['"DocumentBonusQuota" = "DocumentBonusQuota" + {0}', 'GREATEST("DocumentBonusExpiresAt", {1})'],
+         before=[("AdvisoryLockKey.QuotaGrant", "_db.Subscriptions.AsNoTracking()")],
+         forbid=["sub.DocumentBonusQuota", "_db.Subscriptions.FirstOrDefaultAsync(", "monthStart"],
+         why="ฝ่ายค้านรอบ 212 B1/B2 (บั๊กเดียวกันใน documents.topup): ให้โบนัสด้วย UPDATE เดียวหลังล็อก · ลำดับนับจากงวดไทย"),
+    dict(file="Helpers/CustomerNotifyPolicy.cs", method="Plan",
+         must=["NotifyQuotaPolicy.CountsEvent(eventKey)"],
+         why="ฝ่ายค้านรอบ 212 B3: ข้อความถึงร้าน (shop.*) ไม่นับโควตา ⇒ ไม่ถูกระงับเมื่อเต็ม"),
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="DeliverAsync",
+         must=["emailPlan, request.EventKey)"], why="ฝ่ายค้านรอบ 212 B3: ส่งประเภทข้อความเข้าตัววางแผน (ตัดสินว่านับไหม)"),
+    dict(file="Services/Implementations/NotifyQuotaService.cs", method="CompleteAsync",
+         must=["CustomerNotifyLogRule.Redact(note)"], why="ฝ่ายค้านรอบ 212 S3: หมายเหตุไม่เก็บอีเมล/เบอร์/LINE userId"),
+    dict(file="Services/Background/PdpaRetentionPurgeJob.cs", method="RunAsync",
+         must=["CustomerNotifyLogRule.PurgeCutoff(", "db.CustomerNotifyLogs"], why="ฝ่ายค้านรอบ 212 S3: ล้างบันทึกการส่งตามอายุใต้ JobLock เดิม"),
+    dict(file="Services/Implementations/Pdpa/PdpaService.Cms.cs", method="ApplyCmsErasureAsync",
+         must=["_db.CustomerNotifyLogs", "l.CompanyId == companyId"], why="ฝ่ายค้านรอบ 212 S3: DSR ลบรวมบันทึกการส่งของเป้าหมาย"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Operations.cs", method="TryNotifyAsync",
+         must=["CmsNotificationText.FailureNote(", "ExecuteUpdateAsync(", "x.CompanyId == companyId"],
+         why="ฝ่ายค้านรอบ 212 S1: อีเมลถึงแขกระงับ/ล้ม ⇒ ประทับเหตุบนการจอง (ไม่ใช่แค่ log)"),
+    dict(file="Services/Implementations/NotifyQuotaSharedMessageMeter.cs", method="TryReserveAsync",
+         must=["_quota.AlertIfCrossedAsync("], before=[("_quota.AlertIfCrossedAsync(", "if (!r.Ok)")],
+         why="ฝ่ายค้านรอบ 212 (b): เต็มก็แจ้งเจ้าของ (ไม่ใช่แค่ตอนจองได้)"),
+    dict(file="Services/Implementations/StaffDailySummaryService.cs", method="ClaimAsync",
+         must=["StaffDailySummaryPlan.StatusQuotaExceeded"], why="ฝ่ายค้านรอบ 212 S4: โควตาเต็มรับช่วงลองใหม่ได้จนถึง 23:00 (เติมแพ็กแล้วไม่เสียวัน)"),
+    dict(file="Controllers/CustomerNotifyController.cs", method="SaveRules",
+         must=["CustomerNotifyPolicy.Validate(", "r.CompanyId == companyId", "s.CompanyId == companyId"],
+         why="รอบ 212: ค่าตั้งต้องอยู่ในแคตตาล็อก · แยกบริษัท · เว็บต้องเป็นของบริษัท"),
+    # ── รอบ 212 D: ค่าตั้ง LINE OA กลางบนหน้าแอดมิน — ผู้อ่านตัวเดียว (INextAccLineConfig) · สลิปพนักงานส่งผ่าน OA ที่ผูกจริง ──
+    dict(file="Services/Implementations/NextAccLineConfig.cs", method="GetAsync",
+         must=["NextAccLineConfigRule.Merge(", "FromConfig(_config)", "_secrets.Unprotect(row.LineMessagingChannelAccessToken)",
+               "_secrets.Unprotect(row.LineMessagingChannelSecret)"],
+         why="รอบ 212 D: ค่าหน้าแอดมินก่อน (ถอดรหัส) · ไม่มี token ⇒ config Line:* ทั้งชุด — กติกา Merge ตัวเดียว"),
+    dict(file="Services/Implementations/LineNotifyService.cs", method="TryPushFlexViaNextAccAsync",
+         must=["NextAccTokenAsync()", "PushCoreAsync("], forbid=["ResolveConfigAsync("],
+         why="รอบ 212 D: Flex ถึงพนักงานผ่าน OA กลางแบบระบุชัด (ไม่เลือกตามค่าตั้งบริษัท) · คืนเหตุเมื่อล้ม"),
+    dict(file="Services/Implementations/LineNotifyService.cs", method="ResolveConfigAsync",
+         must=["_nextAcc.GetAsync("], why="รอบ 212 D: fallback OA กลาง (token + group) ผ่าน resolver ตัวเดียว"),
+    dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="SendPayslipAsync",
+         must=["ResolveRecipientAsync(", "recipient.ViaNextAcc", "_line.TryPushFlexViaNextAccAsync(", "IsLineConfiguredAsync(companyId, recipient.ViaNextAcc"],
+         must_re=[r"if\s*\(\s*!\s*r\s*\.\s*Ok\s*\)"],
+         before=[("_line.TryPushFlexViaNextAccAsync(", "_line.PushFlexToUserAsync(")],
+         why="รอบ 212 D: พนักงานที่ผูก \"สลิป 123456\" กับ OA กลาง ต้องได้สลิปผ่าน OA กลาง (userId แยกตาม provider) · ผลล้มไม่ถูกกลืน"),
+    dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="ResolveRecipientAsync",
+         must=["NextAccLineConfigRule.PayslipRecipient(", "c.UsedByLineUserId == row.LineId", "c.CompanyId == companyId", "e.CompanyId == companyId"],
+         why="รอบ 212 D: หลักฐานการผูกผ่าน OA กลาง = แถวรหัสผูกของพนักงานคนนี้ในบริษัทนี้ (กฎ M)"),
+    dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="IssueBindCodeAsync",
+         must=["CustomerLineLinkRule.AddFriendUrl(", "_nextAcc.GetAsync("], forbid=["LineOaBasicId"],
+         why="รอบ 212 D: ปุ่มเพิ่มเพื่อนชี้ OA กลาง — คำสั่ง \"สลิป\" รับที่ webhook OA กลางเท่านั้น (เดิมชี้ OA บริษัท)"),
+    dict(file="Controllers/AdminLineMessagingController.cs", method="Update",
+         must=["NextAccLineConfigRule.ValidateBasicId(", "NextAccLineConfigRule.ValidateBotUserId(", "NextAccLineConfigRule.ValidateGroupId(",
+               "NextAccLineConfigRule.ApplySecret(", "_secrets.Protect("],
+         before=[("NextAccLineConfigRule.ValidateBasicId(", "SaveChangesAsync(")],
+         why="รอบ 212 D: ตรวจรูปแบบก่อนบันทึก · ความลับเข้ารหัส · ว่าง = คงค่าเดิม (ล้างต้องสั่งชัด)"),
+    dict(file="Controllers/AdminLineMessagingController.cs", method="Test",
+         must=["_lineConfig.GetAsync("], must_lit=["https://api.line.me/v2/bot/info"],
+         why="รอบ 212 D: ปุ่มทดสอบใช้ token ที่ระบบใช้จริง (หน้าแอดมินก่อน · config fallback)"),
+    # ── รอบ 212 แพ็ก B (คำตัดสินข้อ 171 ข้อ 4 · เจ้าของ: "ส่ง"): ร้านเปลี่ยน LINE OA ⇒ บันทึกการสลับ (PUT ค่าตั้ง · webhook) ⇒ งานเบื้องหลังเชิญลูกค้าผูกใหม่ ·
+    #    ส่งผ่าน BookingNotifier ตัวเดียว (ค่าตั้ง/โควตา/กันซ้ำของแพ็ก A) · ตัวตัดสิน Helpers/CustomerRelinkInvitePlan ──
+    dict(file="Controllers/LineConfigController.cs", method="Update",
+         must=["_customerLinks.ResolveChannelAsync(companyId)", "RecordOaSwitchAsync(companyId, before)", "_relink.FetchBotUserIdAsync("],
+         before=[("_customerLinks.ResolveChannelAsync(companyId)", "s.LineEnabled = req.Enabled"), ("_db.SaveChangesAsync(", "RecordOaSwitchAsync(companyId, before)")],
+         why="รอบ 212 B: อ่าน OA ที่ส่งจริงก่อนแก้ แล้วเทียบหลังบันทึก — token ใหม่ถาม LINE ว่าเป็น bot ไหน (ไม่ลืมเงียบจนเชิญไม่ได้)"),
+    dict(file="Controllers/LineConfigController.cs", method="RecordOaSwitchAsync",
+         must=["CustomerRelinkInvitePlan.IsSwitch(", "_relink.RecordSwitchAsync(", "CustomerRelinkInvitePlan.SourceConfigPut", "_logger?.LogError("],
+         forbid=["SendAsync(", "ProcessPendingAsync("],
+         why="รอบ 212 B: การสลับตัดสินที่ตัวเดียว · บันทึกอย่างเดียว ไม่ส่งในคำขอ HTTP · บันทึกไม่ได้ต้องบอกผู้กด"),
+    dict(file="Controllers/CustomerLineWebhookController.cs", method="Receive",
+         must=["_relink.NoteWebhookDestinationAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination"],
+         before=[("LineWebhookSignature.Verify(", "NoteWebhookDestinationAsync(")],
+         why="รอบ 212 B: bot ใหม่ของ OA ร้าน (ลายเซ็นผ่านแล้วเท่านั้น) ⇒ บันทึกการสลับ"),
+    dict(file="Controllers/LineWebhookController.cs", method="Receive",
+         must=["NoteWebhookDestinationAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, destination)"],
+         before=[("_bot.VerifySignatureAsync(", "NoteWebhookDestinationAsync(")],
+         why="รอบ 212 B: bot ของ OA กลางเปลี่ยน (ลายเซ็นผ่านแล้วเท่านั้น) ⇒ บันทึกการสลับต่อบริษัท"),
+    dict(file="Services/Implementations/Cms/CustomerRelinkInviteService.cs", method="RecordSwitchAsync",
+         must=["CustomerRelinkInvitePlan.IsSwitch(", "CustomerRelinkInvitePlan.DedupeKey(", "IsUniqueViolation(ex)", "e.CompanyId == companyId"],
+         why="รอบ 212 B: บันทึกเฉพาะการสลับจริง · คำขอซ้อนได้แถวเดียว (unique บางส่วน) · webhook บันทึกการสลับคู่เดียวกันครั้งเดียว"),
+    dict(file="Services/Implementations/Cms/CustomerRelinkInviteService.cs", method="NoteWebhookDestinationAsync",
+         must=["CustomerNotifyChannel.AcceptDestination(", "l.CompanyId == cid", "CustomerRelinkInvitePlan.SourceWebhook"],
+         must_lit=['INSERT INTO ""LineOaDestinationSightings""'],
+         forbid=["Take(5000)", "Volatile."],
+         why="รอบ 212 B: bot ที่ไม่ตรงค่าตั้ง = ค่าตั้งผิด ไม่ใช่การสลับ · OA ร้านกรองบริษัท · ฝ่ายค้าน (B+D) ข้อ 4: OA กลางแค่ประทับ sighting — ไม่สแกนข้ามบริษัทในคำขอ webhook"),
+    # ── รอบ 212 ฝ่ายค้าน (B+D): ปิด/เปิดไปมาไม่เชิญ · cooldown 30 วัน · secret ของ OA อื่น · token แอดมินถอดไม่ได้ไม่ถอยไป config · token/secret คู่กัน ──
+    dict(file="Services/Implementations/Cms/CustomerRelinkInviteService.cs", method="ScanNextAccSightingsAsync",
+         must=["x.ScannedAt == null", "CustomerNotifyChannel.AcceptDestination(", "ch.Scope != CustomerNotifyChannel.ScopeNextAcc", "RecordSwitchAsync(g.CompanyId", "sighting.ScannedAt = nowUtc"],
+         why="ฝ่ายค้าน (B+D) ข้อ 4: สแกนลิงก์ OA กลางข้ามบริษัทในงานเบื้องหลัง · บันทึกเฉพาะบริษัทที่ยังใช้ OA กลาง"),
+    dict(file="Services/Implementations/Cms/CustomerRelinkInviteService.cs", method="ProcessPendingAsync",
+         must=["CustomerRelinkInvitePlan.SettleDelay", "e.DetectedAt <= settledBefore", "ScanNextAccSightingsAsync("],
+         why="ฝ่ายค้าน (B+D) ข้อ 1: ประมวลเฉพาะแถวที่นิ่งแล้ว (ปิด→เปิดภายในช่วงนี้ไม่ส่ง)"),
+    dict(file="Services/Implementations/Cms/CustomerRelinkInviteService.cs", method="ProcessEventAsync",
+         must=["CustomerRelinkInvitePlan.IsSwitch(evt.FromScope", "CustomerRelinkInvitePlan.IsFlipPair(", "CustomerRelinkInvitePlan.CancelledFlipBackNote",
+               "CustomerRelinkInvitePlan.WithCooldown(", "RecentRelinkKeysAsync(companyId", "CustomerRelinkInvitePlan.EffectiveCurrentDestination("],
+         before=[("CustomerRelinkInvitePlan.IsSwitch(evt.FromScope", "LoadFactsAsync("), ("CustomerRelinkInvitePlan.WithCooldown(", "_notifier!.SendAsync(")],
+         why="ฝ่ายค้าน (B+D) ข้อ 1: ตอนประมวลสลับกลับแล้ว/คู่กลับทิศ ⇒ ยกเลิกไม่ส่ง · คนที่ได้คำเชิญใน 30 วันไม่เชิญซ้ำ"),
+    dict(file="Services/Implementations/Cms/CustomerRelinkInviteService.cs", method="RecentRelinkKeysAsync",
+         must=["l.CompanyId == companyId", "CustomerNotifyEvents.LineRelink", "NotifyLogStatus.Sent", "CustomerRelinkInvitePlan.CooldownDays"],
+         why="ฝ่ายค้าน (B+D) ข้อ 1: cooldown นับจากคำเชิญที่ส่งถึงจริงของบริษัทนี้"),
+    dict(file="Services/Implementations/Cms/CustomerLineLinkService.cs", method="LearnDestinationAsync",
+         must=["CustomerRelinkInvitePlan.IsForeignDestination(", "LineWebhookDestinationMismatch", "return false", "s.CompanyId == companyId"],
+         why="ฝ่ายค้าน (B+D) ข้อ 2: webhook จากบอทอื่น (secret ของ OA อื่น) ไม่ทับบอทที่จำไว้ + จดปัญหาให้หน้าตั้งค่า"),
+    dict(file="Controllers/CustomerLineWebhookController.cs", method="Receive",
+         must=["destinationAccepted && _relink != null"],
+         why="ฝ่ายค้าน (B+D) ข้อ 2: บอทไม่ตรงกับที่จำไว้ ⇒ ไม่บันทึกการสลับ"),
+    dict(file="Controllers/LineConfigController.cs", method="Update",
+         must=["CustomerRelinkInvitePlan.TokenWithoutSecretProblem(", "s.LineWebhookDestinationMismatch = null"],
+         before=[("CustomerRelinkInvitePlan.TokenWithoutSecretProblem(", "s.LineEnabled = req.Enabled"), ("CustomerRelinkInvitePlan.TokenWithoutSecretProblem(", "_db.SaveChangesAsync(")],
+         why="ฝ่ายค้าน (B+D) ข้อ 2: เปลี่ยน token โดยไม่ใส่ secret ⇒ ต้องเป็นบอทเดิม ไม่งั้นปฏิเสธก่อนแก้อะไร"),
+    dict(file="Services/Implementations/NextAccLineConfig.cs", method="GetAsync",
+         must=["_secrets.IsUsable(row.LineMessagingChannelAccessToken)", "adminTokenUndecryptable)"],
+         why="ฝ่ายค้าน (B+D) ข้อ 3: token แอดมินถอดไม่ได้ ⇒ ไม่ถอยไป config ทั้งชุด"),
+    dict(file="Helpers/NextAccLineConfigRule.cs", method="Merge",
+         must=["UndecryptableTokenMessage", "if (adminTokenUndecryptable)"],
+         before=[("if (adminTokenUndecryptable)", "Build(config, SourceConfig)")],
+         why="ฝ่ายค้าน (B+D) ข้อ 3: ตัดสินก่อนถอยไป config"),
+    dict(file="Controllers/AdminLineMessagingController.cs", method="Update",
+         must=["NextAccLineConfigRule.PairProblem("], before=[("NextAccLineConfigRule.PairProblem(", "_db.SaveChangesAsync(")],
+         why="ฝ่ายค้าน (B+D) ข้อ 5: token/secret ของ OA กลางต้องบันทึกคู่กัน"),
+    dict(file="Controllers/AdminLineMessagingController.cs", method="BuildAsync",
+         must=["NextAccLineConfigRule.Merge(admin, cfg,", "eff.Problem ??"],
+         why="ฝ่ายค้าน (B+D) ข้อ 3: หน้าแอดมินแสดงเหตุ \"ถอดรหัส token ไม่ได้\" ด้วยตัวตัดสินเดียวกับ resolver"),
+    dict(file="Services/Implementations/Cms/CustomerRelinkInviteService.cs", method="ProcessEventAsync",
+         must=["CustomerRelinkInvitePlan.Plan(", "CustomerRelinkInvitePlan.IsTerminal(", "_notifier!.SendAsync(", "CustomerNotifyEvents.LineRelink",
+               "c.MessageKey", "LineViaNextAcc = viaLine", "CmsStorefrontLink.RelinkLine(", "CustomerRelinkInvitePlan.Throttle", "evt.ProcessedAt = nowUtc",
+               "LoadLogsAsync(companyId, keys, ct)"],
+         before=[("CustomerRelinkInvitePlan.Plan(", "_notifier!.SendAsync("), ("_notifier!.SendAsync(", "evt.Invited = invited")],
+         forbid=["_email.", "_line.", "TryPushToUserAsync(", "TrySendAsync("],
+         why="รอบ 212 B: คำเชิญผ่านตัวส่งเดียว (ค่าตั้ง/โควตา/กันซ้ำ) ด้วยคีย์ต่อคนต่อการสลับ · ข้ามคนที่จบแล้ว · ความคืบหน้านับจากบันทึกการส่งจริง"),
+    dict(file="Services/Implementations/Cms/CustomerRelinkInviteService.cs", method="LoadFactsAsync",
+         must=["l.CompanyId == companyId", "l.UnlinkedAt == null", "c.WithdrawnAt == null", "c.CompanyId == companyId", "x.CompanyId == companyId",
+               "CustomerRelinkInvitePlan.IsRelevant("],
+         why="รอบ 212 B (PDPA): ลิงก์ที่ยังเปิด · ยังยินยอม · เป้าหมายยังใช้งาน · แยกบริษัททุก query"),
+    dict(file="Helpers/CustomerRelinkInvitePlan.cs", method="Plan",
+         must=["CustomerNotifyChannel.LinkUsable(", "l.BlockedAt != null || l.ConsentWithdrawn", "ChooseChannel(", "CustomerNotifyKeys.Relink("],
+         why="รอบ 212 B: ผู้รับ = ลิงก์ของ OA เดิมที่ใช้กับ OA ปัจจุบันไม่ได้ · ข้ามถอนยินยอม/บล็อก · 1 คน 1 คีย์"),
+    dict(file="Services/Background/CustomerNotifyOutboxJob.cs", method="RunGuardedAsync",
+         must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.BackgroundJob"],
+         why="รอบ 212 B (F4 #6): งานส่งข้อความเดินทีละเครื่อง"),
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="DeliverAsync",
+         must=["request.LineViaNextAcc ? CustomerNotifyChannel.ScopeNextAcc", "_line.TryPushViaNextAccAsync("],
+         before=[("_quota.TryReserveAsync(", "_line.TryPushViaNextAccAsync(")],
+         why="รอบ 212 B: คำเชิญผ่าน OA เดิม (NextAcc) push ผ่าน OA กลางแบบระบุชัด + นับโควตาก่อนส่ง (ไม่ใช่ OA ปัจจุบันของร้าน ซึ่ง userId ใช้ไม่ได้)"),
     dict(file="Services/Payments/GatewaySourceEvidence.cs", method="RecordedPaymentsAsync",
          must=["db.SiteBookingPayments.AsNoTracking()", "p.CreatedAt"],
          why="รอบ 208 W2 ข้อ 5: หลักฐานรับเงินของการจองลงเวลาที่บันทึก (ไม่ใช่วันที่พนักงานกรอกย้อนหลัง) ⇒ gateway ไม่รับซ้ำ"),
@@ -10399,7 +10700,7 @@ RULES += [
          why="รอบ 209 P6 ฑ/D7: ด่านยินยอมก่อนบันทึก · ฟอร์มเข้าเส้น lead (ห้ามสร้าง Document ตรง) · แจ้งอีเมลบอกผล"),
     dict(file="Services/Implementations/AbandonedCartService.cs", method="ProcessAbandonedCarts",
          must=["AbandonedCartEligibility.Decide(", "AbandonedCartEligibility.Hours(", "AbandonedCartEligibility.RuleCode"],
-         before=[("AbandonedCartEligibility.Decide(", "emailService.SendAsync(")],
+         before=[("AbandonedCartEligibility.Decide(", "notifier.SendAsync(")],
          why="รอบ 209 P6 ช: อีเมลกู้ตะกร้าเฉพาะร้านเปิด + ลูกค้ายินยอมการตลาด (PDPA ม.19/24)"),
 ]
 
@@ -10466,8 +10767,9 @@ def main() -> int:
     errs += settlement_folder_errors(settle_files)
     marker_files = notes_marker_files()
     errs += notes_marker_errors(marker_files)
+    errs += line_config_errors(marker_files)
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
-          + notes_marker_self_test(marker_files))
+          + notes_marker_self_test(marker_files) + line_config_self_test(marker_files))
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

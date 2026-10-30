@@ -17,6 +17,8 @@ public static class CmsStorefrontLink
     public const string BookingSlugPrefix = "my-booking/";
     public const string OrderSlugPrefix = "track-order/";
     public const string LookupPageName = "ตรวจสอบการจอง / คำสั่งซื้อ";
+    /// <summary>หน้า "บัญชีของฉัน" ของสมาชิก (storefront.html slug <c>account</c>) — มีปุ่ม "รับแจ้งเตือนทาง LINE" ของสมาชิก (รอบ 211)</summary>
+    public const string AccountSlug = "account";
 
     private static readonly Regex HostRx = new(@"^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$",
         RegexOptions.CultureInvariant);
@@ -58,6 +60,24 @@ public static class CmsStorefrontLink
         => !string.IsNullOrWhiteSpace(publicToken) && PageUrl(baseUrl, OrderSlugPrefix, publicToken.Trim()) is string url
             ? $"ติดตามสถานะคำสั่งซื้อ: {url}"
             : FallbackLine(baseUrl, "คำสั่งซื้อ", orderNumber);
+
+    /// <summary>รอบ 212 แพ็ก B: บรรทัด "ผูก LINE ใหม่" ในคำเชิญ — สมาชิก ⇒ หน้า "บัญชีของฉัน" · การจอง/ออเดอร์ ⇒ หน้าของรายการ (my-booking / track-order ด้วยโทเคน) ·
+    /// ไม่มีลิงก์ ⇒ บอกทางไปบนเว็บของร้าน (ไม่เงียบ)</summary>
+    public static string RelinkLine(string? baseUrl, string targetKind, string? publicToken)
+    {
+        string? url = targetKind switch
+        {
+            CustomerLineLinkRule.KindMember => PageUrl(baseUrl, AccountSlug),
+            CustomerLineLinkRule.KindBooking when !string.IsNullOrWhiteSpace(publicToken) => PageUrl(baseUrl, BookingSlugPrefix, publicToken.Trim()),
+            CustomerLineLinkRule.KindOrder when !string.IsNullOrWhiteSpace(publicToken) => PageUrl(baseUrl, OrderSlugPrefix, publicToken.Trim()),
+            _ => null,
+        };
+        if (url != null) return url;
+        var where = PageUrl(baseUrl, LookupSlug) is string lookup ? lookup : "เว็บไซต์ของร้าน";
+        return targetKind == CustomerLineLinkRule.KindMember
+            ? $"หน้า \"บัญชีของฉัน\" บน{where}"
+            : $"หน้าการจอง/คำสั่งซื้อของคุณ (ค้นได้ที่หน้า \"{LookupPageName}\" {where})";
+    }
 
     private static string FallbackLine(string? baseUrl, string what, string number)
     {

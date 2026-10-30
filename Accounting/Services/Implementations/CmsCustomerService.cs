@@ -17,10 +17,13 @@ public class CmsCustomerService : ICmsCustomerService
     // รอบ 209 P6 (D7): ฟอร์ม → lead · อีเมลแจ้งร้าน/ตอบกลับ (null = DI ไม่ครบในเทสต์เก่า — ฟอร์มที่ต้องใช้แจ้งผลบนแถว/โยนชัด)
     private readonly CmsLeadService? _leads;
     private readonly IEmailService? _email;
+    /// <summary>รอบ 212 แพ็ก A: ตอบกลับฟอร์มอัตโนมัติ (ถึงผู้กรอก = ลูกค้าปลายทาง) ผ่านช่องกลางเดียว (ค่าตั้ง form.autoreply · ผู้ส่งของร้าน · โควตา · กันซ้ำ)</summary>
+    private readonly IBookingNotifier? _notifier;
 
     public CmsCustomerService(AccountingDbContext db, ILogger<CmsCustomerService> logger, IConfiguration config,
-        CmsLeadService? leads = null, IEmailService? email = null)
+        CmsLeadService? leads = null, IEmailService? email = null, IBookingNotifier? notifier = null)
     {
+        _notifier = notifier;
         _db = db;
         _logger = logger;
         _config = config;
@@ -508,10 +511,18 @@ public class CmsCustomerService : ICmsCustomerService
             if (replyTo == null) notify.Add("ตอบกลับอัตโนมัติ: ไม่มีอีเมลผู้กรอก");
             else
             {
-                var ok = _email != null && await _email.TrySendAsync(replyTo,
-                    string.IsNullOrWhiteSpace(form.AutoReplySubject) ? $"ขอบคุณที่ติดต่อ {siteName}" : form.AutoReplySubject!,
-                    CmsFormLeadMapper.AutoReplyHtml(form.AutoReplyBody, siteName));
-                notify.Add(ok ? "ตอบกลับอัตโนมัติ ✓" : "ตอบกลับอัตโนมัติไม่สำเร็จ (ยังไม่ตั้งค่าอีเมลระบบ หรือส่งล้ม)");
+                var subject = string.IsNullOrWhiteSpace(form.AutoReplySubject) ? $"ขอบคุณที่ติดต่อ {siteName}" : form.AutoReplySubject!;
+                if (_notifier == null) notify.Add("ตอบกลับอัตโนมัติไม่สำเร็จ (ระบบส่งข้อความไม่พร้อม)");
+                else
+                {
+                    // รอบ 212: เปิด/ปิดยังเป็นของ SendAutoReply ของฟอร์ม · ช่องทาง/ผู้ส่ง/โควตา/กันซ้ำตัดสินที่ BookingNotifier
+                    var res = await _notifier.SendAsync(new CustomerNotifyRequest(companyId, siteId, CustomerNotifyEvents.FormAutoReply,
+                        CustomerNotifyKeys.Form(sub.Id), new BookingContact(replyTo, null), subject, subject)
+                        { Html = CmsFormLeadMapper.AutoReplyHtml(form.AutoReplyBody, siteName), TargetKind = "form", TargetId = sub.Id });
+                    notify.Add(res.Sent ? "ตอบกลับอัตโนมัติ ✓" + (res.Warning != null ? $" ({res.Warning})" : "")
+                        : res.IsSuppressed ? $"ไม่ได้ตอบกลับอัตโนมัติ: {res.Error}"
+                        : $"ตอบกลับอัตโนมัติไม่สำเร็จ ({res.Error})");
+                }
             }
         }
         if (notify.Count > 0) sub.NotifyResult = string.Join(" · ", notify);

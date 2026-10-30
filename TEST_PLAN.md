@@ -1,3 +1,97 @@
+## CMS212D — ค่าตั้ง LINE OA กลางของ NextAcc บนหน้าแอดมิน + สลิปเงินเดือนผ่าน OA ที่ผูกจริง (รอบ 212 แพ็ก D)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS212D-01 | หน้าแอดมินมี token · config มี token+secret อีกชุด | ใช้ชุดหน้าแอดมิน**ทั้งชุด** (ไม่ยืม secret ของ config) · Source=admin | `Admin_token_wins_as_a_whole_set_without_mixing_config_secret` |
+| CMS212D-02 | **ทิศตรงข้าม** หน้าแอดมินไม่มี token (มีแค่ secret/basic) · deployment เดิมตั้ง env | ใช้ config `Line:*` ทั้งชุด · ไม่มีแถว SiteSettings ก็ใช้ config | `No_admin_token_falls_back_to_config_entirely_so_env_deployments_keep_working` · `No_admin_row_at_all_uses_config` · `Resolver_without_db_reads_config_only` |
+| CMS212D-03 | ไม่มี token ทั้งสองที่ | HasToken=false · Source=none · ข้อความ `NotConfiguredMessage` | `Neither_has_token_reports_none_and_keeps_admin_values_visible` · `Resolver_with_nothing_configured_says_not_configured` |
+| CMS212D-04 | ช่องลับว่าง / ติ๊กล้าง / พิมพ์ค่าใหม่+ติ๊กล้าง | คงค่าเดิม / ล้าง / ค่าใหม่ชนะ (เข้ารหัส) | `Secret_blank_keeps_existing_value` · `Secret_clear_requires_explicit_flag` |
+| CMS212D-05 | token เข้ารหัสแล้ว round-trip · คีย์ระบบเปลี่ยน | ถอดได้ = ใช้ · ถอดไม่ได้ = **ไม่มี token (ไม่ถอยไป config — ฝ่ายค้าน B+D ข้อ 3)** + เหตุ `UndecryptableTokenMessage` บนหน้าแอดมิน | `Secret_round_trips_through_secret_protector_into_resolved_settings` · `Undecryptable_admin_token_does_not_fall_back_to_config_set` |
+| CMS212D-06 | ช่องไม่ลับ null / "" / ค่าใหม่ | คง / ล้าง / ค่าใหม่ | `Text_null_keeps_empty_clears` · `Blank_inputs_mean_clear_and_are_valid` |
+| CMS212D-07 | Basic ID `123abcde` · `@bad id` · URL · Bot User ID ตัวใหญ่ · Group ID ขึ้นต้น U | เติม `@` / ปฏิเสธพร้อมเหตุ | `Basic_id_valid_is_normalized` · `Basic_id_invalid_is_rejected` · `Bot_user_id_and_group_id_formats` · `Invalid_basic_id_in_storage_is_not_used` |
+| CMS212D-08 | พนักงานผูก "สลิป 123456" ผ่าน OA กลาง (หรือผูกบัญชี ERP) · ร้านตั้ง OA เอง | ส่งสลิปผ่าน **OA กลาง** · LINE ปฏิเสธ ⇒ `LineFailed` (ไม่กลืน) | `Payslip_recipient_bound_via_nextacc_goes_through_nextacc` · `Payslip_recipient_from_user_binding_is_nextacc_and_none_is_null` · rule `PayslipLineDeliveryService.SendPayslipAsync` |
+| CMS212D-09 | **ทิศตรงข้าม** LINE ID ที่ HR กรอกเอง (ไม่มีแถวรหัสผูก) และไม่มีการผูกบัญชี ERP | เส้นเดิม (OA ร้านถ้าตั้ง ไม่งั้น OA กลาง) · มีการผูกบัญชี ERP ⇒ การผูกจริงชนะ (ฝ่ายค้าน B+D ข้อ 6) | `Payslip_recipient_typed_by_hr_keeps_legacy_company_route` · `Payslip_recipient_proven_user_binding_beats_hr_typed_id` |
+| CMS212D-10 | Flex ผ่าน OA กลาง: resolver ให้ token หน้าแอดมิน · ไม่ฉีด resolver · ไม่มี token · ผู้รับว่าง | ใช้ token หน้าแอดมิน / config / ล้มพร้อมเหตุไม่ยิง HTTP | `Flex_via_nextacc_uses_admin_token_over_config` · `Flex_via_nextacc_falls_back_to_config_token_when_not_injected` · `Flex_via_nextacc_without_any_token_fails_with_reason_and_sends_nothing` |
+| CMS212D-11 | โค้ดใหม่อ่าน `_config["Line:ChannelSecret"]` เอง | checker ฟ้อง (ยกเว้นไฟล์ resolver) | `tools/required_call_site_check.py` LINE_CONFIG_FORBID + self-test |
+| CMS212D-12 | (มือ) แอดมินกรอก token+secret → ทดสอบ → กดเติม Basic ID/Bot User ID → บันทึก → ส่ง "สลิป xxxxxx" ที่ OA | ป้าย "ตั้งแล้ว" · ระบบใช้: ค่าในหน้านี้ · ผูกสำเร็จ · ส่งสลิปถึง | manual |
+
+## CMS212B — เชิญลูกค้าผูก LINE ใหม่เมื่อร้านเปลี่ยน OA (รอบ 212 แพ็ก B · คำตัดสินข้อ 171 ข้อ 4 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §2.4/§5/§6)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS212B-01 | NextAcc→ร้าน · ร้าน→NextAcc · bot ร้านใหม่ · bot กลางใหม่ | เป็นการสลับ (บันทึก `LineOaSwitchEvents`) | `CmsRound212RelinkTests.Switch_detection_matrix` |
+| CMS212B-02 | **ทิศตรงข้าม**: ออก token ใหม่ยังไม่รู้ bot · เพิ่งรู้ bot ครั้งแรก · แก้ Basic ID · ไม่รู้ค่าเดิม | ไม่ใช่การสลับ (ไม่เชิญ) | `Switch_detection_matrix` (แถว false) |
+| CMS212B-03 | PUT ซ้อน / webhook หลายครั้ง | แถวเดียว (unique บางส่วนขณะค้าง · webhook คู่เดิมครั้งเดียว) | `Dedupe_key_is_stable_and_direction_sensitive` · rules `RecordSwitchAsync` · `NoteWebhookDestinationAsync` |
+| CMS212B-04 | ผู้รับ: สมาชิก + การจองของคนเดียวกัน · ออเดอร์ | 1 คน 1 คำเชิญ · ตัวแทน = สมาชิก | `Previously_linked_customers_are_invited_once_per_person` |
+| CMS212B-05 | ถอนความยินยอม (แถวใดแถวหนึ่ง) · บล็อก OA · การจองผ่านไปแล้ว | ไม่เชิญ · นับเป็นข้าม | `Withdrawn_blocked_and_inactive_are_skipped` · rule `LoadFactsAsync` (`WithdrawnAt == null`) |
+| CMS212B-06 | ลิงก์ของ OA อื่น / ผูกกับ OA ปัจจุบันแล้ว / bot อื่น · ร้านสลับกลับก่อนงานเดิน | ไม่แตะ · ไม่มีผู้รับ | `Links_on_other_oa_or_still_usable_are_not_touched` · `Switch_back_makes_old_links_usable_and_nobody_is_invited` |
+| CMS212B-07 | ช่อง: OA เดิม = NextAcc (ร้านย้ายไป OA ตัวเอง) vs OA เดิม = ร้าน / bot กลางเปลี่ยน / ไม่มี token กลาง / ไม่มีอีเมล | LINE ผ่าน OA กลาง · ไม่งั้นอีเมล · ไม่มีช่อง = ข้าม | `Old_nextacc_oa_pushes_when_shop_moved_to_own_oa` · `Channel_choice` · `No_channel_is_counted_as_skipped` |
+| CMS212B-08 | ส่งผ่าน OA เดิม | `TryPushViaNextAccAsync` (ไม่ใช่ OA ร้าน) · จองโควตาก่อน · ล้ม ⇒ อีเมล · ช่องอีเมลไม่ push | `Invite_via_old_nextacc_oa_uses_explicit_central_push_and_is_metered` · `Failed_old_oa_push_falls_back_to_email` · `Email_invite_never_pushes` |
+| CMS212B-09 | ร้านปิดประเภท `line.relink` · **ทิศตรงข้าม** ปิดประเภทอื่น | ระงับ ไม่จองโควตา ไม่ส่ง · ประเภทอื่นไม่กระทบคำเชิญ | `Owner_can_disable_relink_invites_in_rules_matrix` · `CmsRound212PrefsQuotaTests.Catalog_keys_unique_and_mappings_cover_message_sources` (19 ประเภท) |
+| CMS212B-10 | คีย์กันซ้ำ: รอบซ้ำ/สองเครื่อง · ไม่เก็บ userId | คีย์เดียวกันต่อคนต่อการสลับ · ไม่มี userId ดิบ · ล้มลอง ≤ 3 · ระงับ = จบ | `Message_key_is_idempotent_per_switch_and_person_without_raw_user_id` · `Terminal_log_states` · rules `ProcessEventAsync` · `CustomerNotifyOutboxJob.RunGuardedAsync` |
+| CMS212B-11 | ข้อความ + ป้ายความคืบหน้า | ลิงก์ `/account` · `my-booking/{token}` · `track-order/{token}` · ไม่มีลิงก์บอกทาง · "ไม่ต้องทำอะไร" · "เชิญผูกใหม่: ส่งแล้ว N/M" | `Progress_label_and_relink_link` · `Relevance_rules` |
+| CMS212B-12 | PUT ค่าตั้ง LINE เปลี่ยน OA | อ่าน OA ก่อนแก้ · ถาม bot ของ token ใหม่ · บันทึกการสลับหลัง SaveChanges · บันทึกไม่ได้บอกผู้กด | rules `LineConfigController.Update` · `RecordOaSwitchAsync` · ⏳ Db test (บันทึก→งาน→ความคืบหน้า) ยังไม่ได้เขียน |
+| CMS212B-13 | ฝ่ายค้าน (B+D) ข้อ 1: ปิด→เปิด LINE ภายใน 45 นาที / ตอนประมวล OA เป็นตัวเดิมแล้ว | ไม่ประมวลก่อน 45 นาที · คู่กลับทิศ/สลับกลับ ⇒ ยกเลิกแถว (`ProcessedAt` · Total 0 · "ยกเลิก: สลับกลับแล้ว") ไม่ส่ง · สลับจริงห่างหลายวัน = ยังเป็นการสลับ | `Events_wait_to_settle_before_processing` · `Disable_then_enable_within_window_is_a_flip_pair_and_cancels_both` · rules `ProcessPendingAsync` · `ProcessEventAsync` |
+| CMS212B-14 | ฝ่ายค้าน (B+D) ข้อ 1: สลับจริงครั้งแรก · สลับซ้ำภายใน 30 วัน | ครั้งแรกเชิญครบครั้งเดียว · คนที่ได้แล้วไม่ได้ซ้ำ (นับข้าม) · คีย์ของการสลับเดียวกันไม่ถูกตัด | `Genuine_switch_invites_once_and_repeat_switches_within_30_days_do_not_reinvite` · rule `RecentRelinkKeysAsync` |
+| CMS212B-15 | ฝ่ายค้าน (B+D) ข้อ 2: token ใหม่ของ OA B + secret เดิมของ OA A · webhook ของ A เข้ามา | PUT ปฏิเสธ (เว้นยืนยันได้ว่าบอทเดิม) · webhook จากบอทอื่นไม่ทับบอทที่จำไว้ ไม่บันทึกการสลับ · ไม่ประมวลผลเหตุการณ์ (ไม่ผูก/ปลดลูกค้า) · หน้า LINE แสดง "Channel Secret เป็นของ OA อื่น" | `Token_change_without_secret_needs_same_bot` · `Webhook_from_another_bot_is_foreign_only_when_both_known` · rules `LearnDestinationAsync` · `LineConfigController.Update` · `CustomerLineWebhookController.Receive` |
+| CMS212B-16 | ฝ่ายค้าน (B+D) ข้อ 4: bot ของ OA กลางเปลี่ยน · ยังไม่ตั้ง Bot User ID | webhook แค่ประทับ `LineOaDestinationSightings` · งานเบื้องหลังสแกนข้ามบริษัท · ใช้บอทที่เห็นเป็นบอทปัจจุบัน ⇒ ยังเชิญ | `Current_destination_falls_back_to_the_events_seen_bot_for_same_scope` · rules `NoteWebhookDestinationAsync` (forbid สแกนในคำขอ) · `ScanNextAccSightingsAsync` |
+| CMS212B-17 | ฝ่ายค้าน (B+D) ข้อ 3/5: token แอดมินถอดไม่ได้ · บันทึก token ไม่มี secret (หรือกลับกัน) | ไม่มี token (ไม่ถอยไป config ที่อาจเป็นคนละ OA) · PUT ปฏิเสธครึ่งชุด | `Undecryptable_admin_token_does_not_fall_back_to_config_set` · `Admin_token_and_secret_must_be_saved_as_a_pair` · rules `NextAccLineConfig.GetAsync` · `AdminLineMessagingController.Update` |
+
+## CMS212C — แจ้งเตือนพนักงานผ่าน OA กลาง + สรุปประจำวันทาง LINE (รอบ 212 C · คำตัดสินข้อ 5 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §0/§5/§7)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS212C-01 | ร้านตั้ง OA เอง · แจ้งเตือนพนักงาน (engine) / สรุปประจำวัน | push ด้วย token ของ OA กลาง ไม่อ่านค่าตั้งบริษัท (DbContext null ในเทสต์) | `Staff_push_uses_nextacc_token_without_reading_company_settings` · rules `NotificationEngine.DispatchLineAsync` · `TryPushViaNextAccAsync` (forbid `ResolveConfigAsync`) |
+| CMS212C-02 | ไม่ได้ตั้ง token ของ OA กลาง | ล้มพร้อมเหตุ · ไม่ถอยไป OA ร้าน · ไม่ยิง HTTP | `Staff_push_without_nextacc_token_fails_with_reason_and_never_falls_back` |
+| CMS212C-03 | LINE ตอบ 400 · ส่ง 8 ก้อน · ผู้รับไม่ผูก | คืนเหตุ "LINE ตอบ 400" · ส่งแค่ 5 ก้อน · ไม่ผูก = ล้ม | `Staff_push_reports_line_error_and_caps_five_messages` · `Line_limits_normalize_drops_blank_truncates_and_caps` |
+| CMS212C-04 | **ทิศตรงข้าม** push ถึงลูกค้า (`TryPushToUserAsync`) | ความหมายเดิม (ResolveConfigAsync) | `Customer_push_without_company_keeps_global_resolution_unchanged` |
+| CMS212C-05 | ประกอบข้อความทุกหัวข้อ | ตัวเลข/การจัดกลุ่มผู้ให้บริการ/ที่นั่ง %/ค้างชำระ/เลยกำหนด ตรง | `Builder_renders_each_section_with_numbers_and_provider_grouping` |
+| CMS212C-06 | หัวข้อ null / ว่าง | null = ไม่มีหัวข้อ · ว่าง = "ไม่มีรายการ" | `Builder_omits_null_sections_and_says_empty_for_empty_ones` |
+| CMS212C-07 | 3,000 รายการ (เกินเพดาน LINE) | 5 ก้อน × ≤ 5,000 ตัว · ท้ายบอก "อีก N รายการ" + ลิงก์หน้าหลังบ้าน · แสดง + เหลือ = ทั้งหมด · ไม่มีฐานลิงก์ ⇒ บอกชื่อหน้า | `Builder_splits_within_line_limits_and_reports_omitted_items_with_link` · `Builder_without_base_url_names_the_page_instead_of_a_link` |
+| CMS212C-08 | ผู้รับไม่มีสิทธิ์ออเดอร์/ที่พัก | ไม่มีหัวข้อนั้นในข้อความ (ไม่ใช่หัวข้อว่าง) | `Recipient_without_order_permission_gets_no_order_sections` · rule `BuildForRecipientAsync` (Filter ก่อน Build) |
+| CMS212C-09 | ผู้รับเห็นเว็บ A เท่านั้น | ไม่มีแถวของเว็บ B · **ทิศตรงข้าม** สิทธิ์ครบเห็นทุกหัวข้อ | `Recipient_sees_only_rows_of_sites_they_can_access` · `Opposite_direction_full_permission_sees_everything_selected` · rule `RecipientScopeAsync` |
+| CMS212C-10 | ไม่ได้เลือก/บริษัทไม่มีที่พัก/ไม่มีเว็บที่เห็น · บัตรคอร์สคีย์ใดก็ได้ | ไม่อยู่ในข้อความ · ไม่มีหัวข้อเลย = ไม่ส่ง | `Unselected_or_inactive_modules_are_not_in_the_message` · `Credits_section_accepts_any_of_its_keys` |
+| CMS212C-11 | ผู้รับ = รายคน ∪ บทบาท · คนที่ไม่ใช่สมาชิกแล้ว · csv แปลก | เฉพาะสมาชิก · คีย์แปลกถูกปฏิเสธที่ endpoint | `Recipients_are_union_of_users_and_roles_among_members_only` · `Section_and_role_csv_round_trip_and_reject_unknown` |
+| CMS212C-12 | เวลาไทย: 07:29/07:30 · 22:59/23:00 · เที่ยงคืนไทย (17:10 UTC) · ปัด 5 นาที | ถึงกำหนดตามเวลาไทย · ส่งตามหลังถึง 23:00 · วันใหม่ตามเวลาไทย | `Due_uses_bangkok_time_window_and_watermark` · `Due_rolls_over_at_bangkok_midnight_not_utc` · `Send_time_rounds_down_to_five_minutes` |
+| CMS212C-13 | รันซ้ำวันเดียวกัน / สองเครื่อง / ล้มแล้วลองใหม่ | ไม่ส่งซ้ำ (unique + ON CONFLICT) · ล้มลองได้ 3 ครั้ง · watermark ขยับเมื่อทุกคนจบ | `Terminal_status_decides_when_watermark_may_move` · `Message_key_is_one_per_config_day_recipient` · rules `ClaimAsync` · `RunConfigAsync` · `RunDueAsync` · `StaffDailySummaryJob.RunGuardedAsync` |
+| CMS212C-14 | endpoint ตั้งค่า/ส่งทดสอบ | ต้อง `CompanySettings.Edit` + ปฏิเสธ API key | `write_permission_gate_check` (WATCHED `StaffDailySummaryController`) · ⏳ Db test `StaffDailySummaryDbTests` (บริษัท B ไม่โผล่ · รันซ้ำไม่ส่งซ้ำ) ยังไม่ได้เขียน |
+
+## CMS212A — ค่าตั้งแจ้งลูกค้าต่อประเภท × ช่อง · ถอยอีเมล 3 ค่า · โควตาข้อความช่องกลาง + แพ็ก `notify.topup` (รอบ 212 แพ็ก A · คำตัดสินข้อ 171 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md`)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS212A-01 | ไม่มีแถวค่าตั้ง | ส่งทั้ง LINE/อีเมลเหมือนรอบ 211 (ค่าเริ่มต้น) | `CmsRound212PrefsQuotaTests.No_rows_means_both_channels_on_like_before` · `Without_quota_service_behaves_like_round_211` |
+| CMS212A-02 | เว็บ+คีย์ / เว็บ+ทั้งหมด / บริษัท+คีย์ / บริษัท+ทั้งหมด · ช่องละอิสระ | ชั้นที่ใกล้สุดชนะต่อช่อง + บอกชั้นที่ตัดสิน | `Site_beats_company_and_key_beats_all_per_channel` |
+| CMS212A-03 | ทิศตรงข้าม: เว็บ A ปิดทั้งหมด | เว็บ B ยังส่งตามค่าเริ่มต้น | `Opposite_site_A_off_does_not_touch_site_B` |
+| CMS212A-04 | ข้อความถึงร้าน (`shop.*`) เมื่อบริษัทปิด "ทั้งหมด" | ยังส่ง (ไม่อยู่ในค่าตั้งลูกค้า) · เงินค้าง = จำเป็น | `Shop_messages_ignore_customer_rules` · `Essential_shop_message_is_never_suppressed_by_quota` |
+| CMS212A-05 | ลำดับขั้น + ช่องนับโควตา | ลำดับเดิม (ผูก LINE ⇒ LINE ก่อน) · OA/SMTP ของร้านไม่นับ · ช่องกลางนับ | `Plan_keeps_old_order_and_marks_metered_sources` · `Only_shared_channels_are_metered` · `Tenant_channels_are_not_counted` |
+| CMS212A-06 | ปิด LINE แต่ลูกค้าผูก LINE | อีเมลอย่างเดียว | `Line_off_but_customer_linked_means_email_only` |
+| CMS212A-07 | ปิดทั้งสองช่อง / ร้านเท่านั้นแต่ไม่ตั้ง / ไม่มีช่องติดต่อ | ระงับ (เหตุคนละข้อความ) · ไม่มีช่อง = Fail เดิม · ไม่เรียกช่องส่ง | `Suppress_reasons_distinguish_policy_tenant_only_and_no_contact` · `Policy_off_suppresses_and_opposite_event_still_sends` |
+| CMS212A-08 | บันทึกค่าตั้งคีย์ผิด/ซ้ำ/คีย์ร้าน | 400 พร้อมเหตุ | `Validate_rejects_unknown_and_duplicate_keys` · rule `CustomerNotifyController.SaveRules` |
+| CMS212A-09 | แคตตาล็อก 18 ประเภท · สถานะออเดอร์/ที่พักที่มีข้อความ = มีคีย์ | ตรงกับ `CmsNotificationText.CustomerOrderStatus` ทุกสถานะ | `Catalog_keys_unique_and_mappings_cover_message_sources` |
+| CMS212A-10 | ถอยอีเมล 3 ค่า × ร้านตั้ง/ไม่ตั้ง (+ ว่าง/ค่าผิด) | ว่าง = เดิม (ถอยไประบบ) · ตั้งแล้วล้มไม่ถอย · ร้านเท่านั้น | `Email_plan_follows_fallback_setting` (10 เคส) · `Fallback_values_validate_and_default` · `Fallback_settings_change_email_sources` |
+| CMS212A-11 | เพดาน: ค่าเฉพาะบริษัท → แม่แบบ → ทดลองใช้ → ไม่มีแม่แบบ | ไม่มีแม่แบบ = ไม่จำกัด (เดิม) · -1 = ไม่จำกัด | `Plan_limit_override_then_template_then_unlimited` |
+| CMS212A-12 | เตือน 80/100 · ข้ามครั้งเดียว | ระดับเดียวกับโควตาเอกสาร · ไม่จำกัดไม่เตือน | `Warn_levels_80_and_100_and_crossing_once` · Db `Warn_80_is_stamped_once_per_period` |
+| CMS212A-13 | แพ็กเกจ → โบนัส (ยังไม่หมดอายุ) → ข้อความจำเป็น → เต็ม | โบนัสหมดอายุไม่นับ | `Decide_uses_plan_then_live_bonus_then_essential` · `Effective_limit_counts_only_live_bonus` · Db `Release_returns_unit_and_bonus_is_used_after_plan_then_expired_bonus_is_not` |
+| CMS212A-14 | งวดตามเวลาไทย (16:30 UTC 31 ต.ค. = ต.ค. · 17:30 UTC = พ.ย.) | งวดถูก | `Period_is_bangkok_month` |
+| CMS212A-15 | คีย์ข้อความภายใต้วัฒนธรรมไทย · ผู้สอนต่างกัน · ขั้นเตือนต่างกัน | ค.ศ. ไม่ใช่ พ.ศ. · คีย์ต่างกัน · ≤ 200 ตัว | `Message_keys_are_culture_invariant_and_distinct` |
+| CMS212A-16 | โควตาเต็ม + ลูกค้าผูก LINE (OA กลาง) + ร้านตั้งอีเมล | ส่งทางอีเมลของร้าน + คำเตือน `[CMS-NOTIFY-FALLBACK]` | `Quota_full_routes_to_tenant_channel_with_warning` |
+| CMS212A-17 | โควตาเต็ม ไม่มีช่องของร้าน | ระงับ + เหตุ "โควตา" · ไม่เรียกช่องส่ง · แจ้งเจ้าของระดับเต็ม | `Quota_full_without_tenant_channel_suppresses_and_sends_nothing` |
+| CMS212A-18 | ส่งทางช่องกลางล้ม | คืนหน่วย · บันทึก Failed | `Failed_shared_send_releases_the_unit` · Db `Release_returns_unit…` |
+| CMS212A-19 | คีย์ข้อความส่งถึงแล้ว / กำลังส่งที่อื่น | ไม่ส่งซ้ำ (Sent+Duplicate) / ระงับ | `Already_sent_key_is_not_sent_again` · `Key_in_flight_elsewhere_is_suppressed_not_sent` · Db `Same_message_key_is_claimed_once_and_lease_expiry_allows_takeover` |
+| CMS212A-20 | สองคำขอพร้อมกันที่ `Used = limit-1` (6 คำขอ) | ผ่าน 1 · ตัวนับ = limit | Db `NotifyQuotaDbTests.Concurrent_reservations_at_limit_minus_one_let_exactly_one_through` |
+| CMS212A-21 | ซื้อแพ็ก `notify.topup` | UsageEvent 1 แถว (คีย์ topup) ก่อนให้โบนัส 500 · ใช้โบนัสได้เมื่อเพดาน 0 | Db `Purchase_topup_records_one_usage_event_and_grants_bonus` · rule `PurchaseTopUpAsync` |
+| CMS212A-22 | ทุกเส้นข้อความถึงลูกค้า 12 เส้นผ่าน `BookingNotifier` พร้อม EventKey/MessageKey · จองโควตาก่อนส่ง · ห้ามเรียก `IEmailService`/`ILineNotifyService` ตรง | ด่านจุดเรียกล้มเมื่อถอด | `tools/required_call_site_check.py` (กติกา "รอบ 212") |
+| CMS212A-23 | ซื้อแพ็กสองคำขอพร้อมกัน + หักโบนัส 5 ข้อความพร้อมกัน | โบนัส = เดิม + 2×500 − ที่หัก (ไม่มี lost update) | Db `NotifyQuotaDbTests.B1_concurrent_purchases_and_reserves_never_lose_an_update` · rule `PurchaseTopUpAsync` ×2 |
+| CMS212A-24 | ซื้อครั้งที่สองของงวด เมื่อครั้งแรกลงเวลาก่อนต้นเดือน UTC (00:30 ไทยวันที่ 1) | ลำดับ 2 (ไม่ซ้ำ) · คำนำหน้างวดไทย | Db `B2_sequence_counts_by_bangkok_period_key_prefix` · `Topup_key_prefix_follows_bangkok_period_at_month_boundary` |
+| CMS212A-25 | ส่งคำขอซื้อซ้ำด้วย `Idempotency-Key` เดิม | คีย์ UsageEvent เดิม · ไม่ให้โบนัสซ้ำ · ได้ผลเดิม (ไม่ error) | Db `S2_same_idempotency_key_returns_same_result_without_second_grant` · `Topup_client_key_is_stable_and_independent_of_sequence` |
+| CMS212A-26 | ข้อความถึงร้าน (`shop.notify`/`shop.payment-problem`) เมื่อโควตาเต็ม | ส่งทางอีเมลระบบ · ไม่จอง/ไม่นับ | `Shop_messages_are_never_metered_or_suppressed` · `Shop_messages_ignore_customer_rules` |
+| CMS212A-27 | แขกที่พักรอสลิป เมื่อโควตาเต็ม · ทิศตรงข้าม ยืนยันการจองที่พัก | รอสลิป = นับแต่ส่ง · ยืนยัน = ระงับ + ประทับบนการจอง | `Lodging_slip_required_is_essential_counted_but_never_suppressed` · rule `TryNotifyAsync` (FailureNote + ExecuteUpdate) |
+| CMS212A-28 | หมายเหตุบันทึกการส่งมีอีเมล/เบอร์/LINE userId · อายุบันทึก | ปิดบัง · ≤ 500 · ลบเมื่อเกิน 90 วัน · DSR ลบตามเป้าหมาย | `Log_note_redacts_contact_details` · rules `CompleteAsync` · `RunAsync` · `ApplyCmsErasureAsync` |
+| CMS212A-29 | แม่แบบที่ยังไม่ตั้งเพดาน (ลูกค้าเดิม) | ไม่จำกัด · ตัวเลขแนะนำเป็นแค่คำใบ้ | `Suggested_limits_are_hints_not_defaults` |
+| CMS212A-30 | สรุปรายวันโควตาเต็ม แล้วเติมแพ็กก่อน 23:00 | ไม่ใช่สถานะจบ (ทุกจำนวนครั้ง) · claim รับช่วงได้ | `CmsRound212DailySummaryTests.Terminal_status_decides_when_watermark_may_move` · rule `StaffDailySummaryService.ClaimAsync` |
+| CMS212A-31 | มิเตอร์สรุปรายวันจองไม่ได้ (เต็ม) | แจ้งเจ้าของระดับ 100% (ประทับครั้งเดียว) | rule `NotifyQuotaSharedMessageMeter.TryReserveAsync` |
+
 ## CMS211 — ลูกค้าปลายทางผูก LINE รับแจ้งเตือน (สมาชิก/แขก) · OA ของร้าน/NextAcc · อีเมลของร้าน (รอบ 211 · คำตัดสินข้อ 170 · `erp-review/2026-10-30/LINE_CUSTOMER_NOTIFY_DESIGN.md`)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -47,7 +141,10 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **686 ไฟล์ · 6,966 `[Fact]` + 1,118 `[Theory]` (5,220 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **691 ไฟล์ · 7,071 `[Fact]` + 1,125 `[Theory]` (5,262 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
+
+
 
 
 

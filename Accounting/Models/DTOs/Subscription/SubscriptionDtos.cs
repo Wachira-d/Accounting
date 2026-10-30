@@ -132,7 +132,10 @@ public record CreatePlanTemplateRequest(
     int TrialMaxJournalEntriesPerMonth = 50,
     bool TrialBlockOnExpiry = false,
     int TrialGracePeriodDays = 7,
-    bool IsPermanentFree = false);
+    bool IsPermanentFree = false,
+    // รอบ 212: เพดานข้อความช่องกลาง/เดือน (null/-1 = ไม่จำกัด · ไม่ตั้งให้อัตโนมัติ)
+    int? MaxSharedMessagesPerMonth = null,
+    int? TrialMaxSharedMessagesPerMonth = null);
 
 public record UpdatePlanTemplateRequest(
     string? Name,
@@ -168,7 +171,10 @@ public record UpdatePlanTemplateRequest(
     int? AzureOcrPagesPerMonth = null,
     int? LocalOcrPagesPerMonth = null,
     bool? FallbackToLocalWhenAzureExhausted = null,
-    int? TrialMaxOcrPagesPerMonth = null);
+    int? TrialMaxOcrPagesPerMonth = null,
+    // รอบ 212 (คำตัดสินข้อ 171): เพดานข้อความช่องกลาง/เดือน (-1 = ไม่จำกัด · null = ไม่แตะ)
+    int? MaxSharedMessagesPerMonth = null,
+    int? TrialMaxSharedMessagesPerMonth = null);
 
 public record PlanTemplateResponse(
     Guid Id,
@@ -204,7 +210,13 @@ public record PlanTemplateResponse(
     bool TrialBlockOnExpiry = false,
     int TrialMaxUsers = 2,
     int TrialMaxDocumentsPerMonth = 20,
-    int TrialMaxJournalEntriesPerMonth = 50);
+    int TrialMaxJournalEntriesPerMonth = 50,
+    // รอบ 212: เพดานข้อความช่องกลาง/เดือน (echo ให้หน้าแอดมิน hydrate · null = ไม่จำกัด)
+    int? MaxSharedMessagesPerMonth = null,
+    int? TrialMaxSharedMessagesPerMonth = null,
+    // ฝ่ายค้านรอบ 212 (c): ตัวเลขแนะนำจากเซิร์ฟเวอร์ (คำใบ้ — ไม่ถูกตั้งให้อัตโนมัติ)
+    int? SuggestedSharedMessagesPerMonth = null,
+    int? SuggestedTrialSharedMessagesPerMonth = null);
 
 /// <summary>1 ฟีเจอร์ในแคตตาล็อก — ป้ายไทย/อังกฤษ + หมวด + คำอธิบาย (จาก <c>Helpers/FeatureCatalog</c>)</summary>
 public record FeatureFlagInfo(string Name, string Category, string LabelTh, string LabelEn = "", string Description = "");

@@ -225,6 +225,8 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.CourseCreditMembershipMigration.Statements());   // รอบ 209 P5 — สมาชิกไม่จำกัด/พัก/โอน + ค่าตอบแทนผู้ให้บริการ (Helpers/CourseCreditMembershipMigration)
+        list.AddRange(Accounting.Helpers.StaffDailySummaryMigration.Statements());   // รอบ 212 C — สรุปประจำวันทาง LINE ถึงพนักงาน (Helpers/StaffDailySummaryMigration)
+        list.AddRange(Accounting.Helpers.NextAccLineConfigMigration.Statements());   // รอบ 212 D — ค่าตั้ง LINE OA กลางบนหน้าแอดมิน (Helpers/NextAccLineConfigMigration)
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
         list.AddRange(W9HygieneStatements());   // W9 R-58/R-59 — backfill ช่องทาง LINE + ตัด feedback ความหมายเก่าออกจากการสอน (บล็อกท้ายไฟล์)
         list.AddRange(PostVatDeductionStatements());   // ทีม U — หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง (บล็อกท้ายไฟล์)
@@ -233,6 +235,8 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round209P2StoreSettingsStatements());   // รอบ 209 P2 — ค่าตั้งร้าน/ฟอร์มสั่งซื้อ/COD (บล็อกท้ายไฟล์)
         list.AddRange(CmsRound209P6Statements());   // รอบ 209 P6 — variant บนตะกร้า/ออเดอร์ · ยินยอม PDPA ของเว็บ · ฟอร์ม → lead (บล็อกท้ายไฟล์)
         list.AddRange(CmsRound211LineNotifyStatements());   // รอบ 211 — ลูกค้าผูก LINE เอง (สมาชิก/การจอง/ออเดอร์) + ปลายทาง OA ของบริษัท (บล็อกท้ายไฟล์)
+        list.AddRange(CmsRound212NotifyStatements());   // รอบ 212 — ค่าตั้งแจ้งลูกค้า · โควตาข้อความช่องกลาง · ตารางของแพ็ก B/C (บล็อกท้ายไฟล์ · แพ็ก A เป็นเจ้าของ)
+        list.AddRange(Accounting.Helpers.CustomerRelinkMigration.Statements());   // รอบ 212 แพ็ก B — ความคืบหน้า/คีย์กันซ้ำของ LineOaSwitchEvents (ต้องอยู่หลังบล็อกของแพ็ก A)
         return list;
     }
 
@@ -7994,5 +7998,120 @@ public static class DatabaseMigrationHelper
         """,
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CustomerLineLinkCodes_Hash" ON "CustomerLineLinkCodes" ("CodeHash");""",
         """CREATE INDEX IF NOT EXISTS "IX_CustomerLineLinkCodes_Company_Target" ON "CustomerLineLinkCodes" ("CompanyId", "TargetKind", "TargetId");""",
+    };
+
+    /// <summary>รอบ 212 (คำตัดสินข้อ 171 · <c>erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md</c> §2) — <b>บล็อกเดียวของทั้งรอบ</b> (แพ็ก A เป็นเจ้าของ ·
+    /// มีตารางของแพ็ก B <c>LineOaSwitchEvents</c> และแพ็ก C <c>StaffDailySummary*</c> ล่วงหน้าตาม §8) · CREATE/ADD COLUMN IF NOT EXISTS ทุกคำสั่ง ⇒ รันทุกบูตได้ ·
+    /// <b>ไม่ UPDATE แถวเดิม</b> · เพดานข้อความของแม่แบบ = NULL (ไม่จำกัด — ผู้ประสานงานตัดสินหลังฝ่ายค้าน: ห้ามจำกัดลูกค้าเดิมผ่าน migration) ·
+    /// ตัวเลขแนะนำแสดงเป็นคำใบ้ที่ /admin/plans.html (<c>NotifyQuotaPolicy.SuggestedLimits</c>) · แพ็กเสริม <c>notify.topup</c> 500 ข้อความ 99 บาท อายุ 60 วัน (มีผลเมื่อเจ้าของตั้งเพดาน) · ชื่อ index ต้องตรงกับ <c>AccountingDbContext</c></summary>
+    internal static IReadOnlyList<string> CmsRound212NotifyStatements() => new List<string>
+    {
+        // ── ข้อ 2: ถอยไปอีเมลของระบบ ──
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "CustomerEmailFallback" varchar(32) NULL;""",
+
+        // ── ข้อ 3: เพดาน/โบนัสข้อความช่องกลาง ──
+        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "MaxSharedMessagesPerMonth" integer NULL;""",
+        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "NotifyBonusQuota" integer NOT NULL DEFAULT 0;""",
+        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "NotifyBonusExpiresAt" timestamptz NULL;""",
+        // ผู้ประสานงานตัดสินหลังฝ่ายค้านรอบ 212: เพดานแม่แบบ = NULL (ไม่จำกัด = พฤติกรรมเดิม) — ห้าม migration ตั้งเพดานให้ลูกค้าเดิม ·
+        // ตัวเลขแนะนำ (ทดลอง 100 · Basic 300 · Pro 1,000 · Enterprise 5,000) แสดงเป็นคำใบ้ที่ /admin/plans.html ให้เจ้าของตั้งเอง
+        """ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "MaxSharedMessagesPerMonth" integer NULL;""",
+        """ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxSharedMessagesPerMonth" integer NULL;""",
+
+        // ── ข้อ 1: ค่าตั้งต่อประเภทข้อความ ──
+        """
+        CREATE TABLE IF NOT EXISTS "CustomerNotifyRules" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "CompanyId" uuid NOT NULL,
+            "SiteId" uuid NULL,
+            "EventKey" varchar(64) NOT NULL,
+            "LineEnabled" boolean NULL,
+            "EmailEnabled" boolean NULL,
+            "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedBy" text NULL,
+            "UpdatedAt" timestamp with time zone NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false
+        );
+        """,
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CustomerNotifyRules_Site_Event" ON "CustomerNotifyRules" ("CompanyId", "SiteId", "EventKey") WHERE "SiteId" IS NOT NULL AND "IsDeleted" = false;""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CustomerNotifyRules_Company_Event" ON "CustomerNotifyRules" ("CompanyId", "EventKey") WHERE "SiteId" IS NULL AND "IsDeleted" = false;""",
+
+        // ── ข้อ 3: บันทึกการส่ง (กันซ้ำ) + ตัวนับต่องวด ──
+        """
+        CREATE TABLE IF NOT EXISTS "CustomerNotifyLogs" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "CompanyId" uuid NOT NULL,
+            "MessageKey" varchar(200) NOT NULL,
+            "EventKey" varchar(64) NOT NULL,
+            "TargetKind" varchar(16) NULL,
+            "TargetId" uuid NULL,
+            "Channel" varchar(16) NULL,
+            "Source" varchar(24) NULL,
+            "Metered" boolean NOT NULL DEFAULT false,
+            "Status" varchar(16) NOT NULL DEFAULT 'Pending',
+            "ClaimedUntil" timestamp with time zone NULL,
+            "Attempts" integer NOT NULL DEFAULT 0,
+            "SentAt" timestamp with time zone NULL,
+            "Note" varchar(500) NULL,
+            "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedBy" text NULL,
+            "UpdatedAt" timestamp with time zone NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false
+        );
+        """,
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CustomerNotifyLogs_Company_Key" ON "CustomerNotifyLogs" ("CompanyId", "MessageKey");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CustomerNotifyLogs_CreatedAt" ON "CustomerNotifyLogs" ("CreatedAt");""",
+        """
+        CREATE TABLE IF NOT EXISTS "NotifyUsageCounters" (
+            "CompanyId" uuid NOT NULL,
+            "Period" varchar(7) NOT NULL,
+            "Used" integer NOT NULL DEFAULT 0,
+            "BonusUsed" integer NOT NULL DEFAULT 0,
+            "Warned80At" timestamp with time zone NULL,
+            "Warned100At" timestamp with time zone NULL,
+            PRIMARY KEY ("CompanyId", "Period")
+        );
+        """,
+
+        // ── ข้อ 3: แพ็กข้อความเสริม — มิเตอร์ระบบ (Kind 3) ราคาตั้งต้นเสนอ 99 บาท/500 ข้อความ (แก้ได้ที่ /admin/addons.html) ·
+        //    UnitLabel ต้องตรงกับ AddOnCodes.MessagesPerNotifyTopUpPack · ใบแจ้งหนี้ไหลเส้นเดิม UsageEvent → UsageInvoicingJob → PlatformBillingDocumentIssuer
+        """
+        INSERT INTO "ApiFeatures" ("Id","FeatureCode","Name","NameEn","UnitLabel","RequiredScopes","SortOrder","Description","Kind","ModuleCode","Icon","TrialDays","IsPublished","CreatedBy")
+        SELECT gen_random_uuid(),'notify.topup','แพ็กข้อความแจ้งเตือน 500 ข้อความ','Notification message pack','แพ็ก 500 ข้อความ','',950,
+               'ข้อความแจ้งเตือนลูกค้าผ่าน LINE OA/อีเมลของ NextAcc เพิ่มจากเพดานของแพ็กเกจ (อายุ 60 วัน) — LINE OA/อีเมลของร้านเองไม่นับโควตา',3,'Billing','💬',0,true,'seed'
+        WHERE NOT EXISTS (SELECT 1 FROM "ApiFeatures" f WHERE f."FeatureCode" = 'notify.topup');
+        """,
+        """
+        INSERT INTO "ApiPricingPlans" ("Id","FeatureCode","Method","UnitPrice","FreeQuotaPerMonth","EffectiveFrom","AdminNote","CreatedBy")
+        SELECT gen_random_uuid(),'notify.topup',1,99.0,0,now(),'แพ็ก 500 ข้อความ — ราคาตั้งต้นเสนอ รอเจ้าของยืนยัน (รอบ 212)','seed'
+        WHERE NOT EXISTS (SELECT 1 FROM "ApiPricingPlans" p WHERE p."FeatureCode" = 'notify.topup' AND p."IsDeleted" = false);
+        """,
+
+        // ── แพ็ก B (เชิญผูก LINE ใหม่) — ตารางล่วงหน้า (design §2.4) ──
+        """
+        CREATE TABLE IF NOT EXISTS "LineOaSwitchEvents" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "CompanyId" uuid NOT NULL,
+            "FromScope" varchar(16) NULL,
+            "FromDestination" varchar(64) NULL,
+            "ToScope" varchar(16) NULL,
+            "ToDestination" varchar(64) NULL,
+            "DetectedAt" timestamp with time zone NOT NULL DEFAULT now(),
+            "Source" varchar(32) NULL,
+            "ProcessedAt" timestamp with time zone NULL,
+            "Invited" integer NOT NULL DEFAULT 0,
+            "Skipped" integer NOT NULL DEFAULT 0,
+            "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedBy" text NULL,
+            "UpdatedAt" timestamp with time zone NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false
+        );
+        """,
+        """CREATE INDEX IF NOT EXISTS "IX_LineOaSwitchEvents_Pending" ON "LineOaSwitchEvents" ("CompanyId", "ProcessedAt");""",
+
+        // ── แพ็ก C (สรุปประจำวันถึงพนักงาน) — ตารางล่วงหน้า (design §2.5) ──
     };
 }

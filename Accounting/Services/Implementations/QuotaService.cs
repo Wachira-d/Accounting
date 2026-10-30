@@ -92,13 +92,10 @@ public class QuotaService : IQuotaService
     // ───────────────────────── ซื้อเพิ่ม ─────────────────────────
 
     public async Task<DocumentQuotaStatus> PurchaseTopUpAsync(
-        Guid companyId, int packs, string actor, CancellationToken ct = default)
+        Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null)
     {
         if (packs <= 0) throw new BusinessRuleException("จำนวนแพ็กต้องมากกว่า 0", "QUOTA-TOPUP");
         if (packs > 50) throw new BusinessRuleException("ซื้อได้ครั้งละไม่เกิน 50 แพ็ก", "QUOTA-TOPUP");
-
-        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted, ct);
-        if (sub == null) throw new BusinessRuleException("บริษัทนี้ยังไม่มีแพ็กเกจ", "QUOTA-TOPUP");
 
         // ล็อกต่อบริษัท — ลำดับที่ของการซื้อในงวดคือส่วนหนึ่งของคีย์กันซ้ำ
         // ถ้าสองคำขอนับลำดับพร้อมกันจะได้เลขเดียวกัน แล้วคำขอที่สองถูกตีเป็น
@@ -111,11 +108,17 @@ public class QuotaService : IQuotaService
         await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
             new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.QuotaGrant, "topup") }, ct);
 
+        // ฝ่ายค้านรอบ 212 B1: อ่านแพ็กเกจ**หลัง**ล็อก และไม่ถือ entity ไว้เขียนค่าสัมบูรณ์ (ให้โบนัสด้วย UPDATE เดียวด้านล่าง)
+        var subId = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && !s.IsDeleted).Select(s => (Guid?)s.Id).FirstOrDefaultAsync(ct);
+        if (subId is not Guid sid) throw new BusinessRuleException("บริษัทนี้ยังไม่มีแพ็กเกจ", "QUOTA-TOPUP");
+
+        // ฝ่ายค้านรอบ 212 B2: งวดในคีย์เป็นเดือนไทย ⇒ นับลำดับด้วยคำนำหน้าคีย์ของงวดนั้น (เดิมนับจากต้นเดือน UTC ⇒ คีย์ลำดับซ้ำช่วงรอยต่อเดือน)
         var period = AddOnBilling.PeriodOf(DateTime.UtcNow);
-        var monthStart = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var prefix = AddOnBilling.TopUpKeyPrefix(AddOnCodes.DocumentsTopUp, period);
         var seq = await _db.UsageEvents.AsNoTracking()
             .CountAsync(u => u.CompanyId == companyId && u.FeatureCode == AddOnCodes.DocumentsTopUp
-                          && u.OccurredAt >= monthStart && !u.IsDeleted, ct) + 1;
+                          && u.IdempotencyKey != null && u.IdempotencyKey.StartsWith(prefix) && !u.IsDeleted, ct) + 1;
 
         // คิดเงินก่อนให้ของ — ถ้าบันทึกมิเตอร์ไม่สำเร็จต้องไม่แจกโควตาฟรี
         // (ต่างจากมิเตอร์ทั่วไปที่ "ล้มเหลวแล้วปล่อยผ่าน" เพราะที่นั่นงานหลักคือ
@@ -124,10 +127,16 @@ public class QuotaService : IQuotaService
             CompanyId: companyId,
             FeatureCode: AddOnCodes.DocumentsTopUp,
             Quantity: packs,
-            IdempotencyKey: AddOnBilling.TopUpKey(AddOnCodes.DocumentsTopUp, period, seq),
+            IdempotencyKey: AddOnBilling.TopUpRequestKey(AddOnCodes.DocumentsTopUp, period, idempotencyKey) ?? AddOnBilling.TopUpKey(AddOnCodes.DocumentsTopUp, period, seq),
             RefEntityType: "Subscription",
-            RefEntityId: sub.Id), ct);
+            RefEntityId: sid), ct);
 
+        // ฝ่ายค้าน S2: คำขอเดิม (Idempotency-Key เดียวกัน) ส่งซ้ำ ⇒ ผลเดิม ไม่คิดเงิน/ไม่ให้ซ้ำ
+        if (!res.Recorded && res.Duplicate && !string.IsNullOrWhiteSpace(idempotencyKey))
+        {
+            await tx.RollbackAsync(ct);
+            return await GetDocumentQuotaAsync(companyId, ct);
+        }
         if (!res.Recorded)
             throw new BusinessRuleException(
                 res.Duplicate
@@ -137,17 +146,22 @@ public class QuotaService : IQuotaService
 
         var granted = packs * AddOnCodes.DocumentsPerTopUpPack;
         var expires = DateTime.UtcNow.AddDays(AddOnCodes.TopUpValidDays);
-        sub.DocumentBonusQuota += granted;
-        // อายุยาวที่สุดชนะ — โบนัสที่ซื้อทีหลังต้องไม่ทำให้ของเดิมหมดอายุเร็วขึ้น
-        if (sub.DocumentBonusExpiresAt == null || sub.DocumentBonusExpiresAt < expires)
-            sub.DocumentBonusExpiresAt = expires;
+        // ฝ่ายค้านรอบ 212 B1: UPDATE เดียว (บวกเพิ่ม ไม่เขียนค่าสัมบูรณ์) — การหักโบนัสตอนออกใบที่เกิดพร้อมกันไม่ถูกเขียนทับ ·
+        // พฤติกรรมเดิมคงไว้: บวกเข้ายอดเดิม · อายุยาวที่สุดชนะ (โบนัสที่ซื้อทีหลังต้องไม่ทำให้ของเดิมหมดอายุเร็วขึ้น)
+        var updated = await _db.Database.ExecuteSqlRawAsync("""
+            UPDATE "Subscriptions"
+            SET "DocumentBonusQuota" = "DocumentBonusQuota" + {0},
+                "DocumentBonusExpiresAt" = GREATEST("DocumentBonusExpiresAt", {1})
+            WHERE "Id" = {2} AND "CompanyId" = {3};
+            """, new object[] { granted, expires, sid, companyId }, ct);
+        if (updated != 1) throw new BusinessRuleException("ให้โควตาไม่สำเร็จ — ไม่พบแพ็กเกจของบริษัท", "QUOTA-TOPUP");
 
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
             Action = AuditAction.Create,
             EntityType = "Subscription",
-            EntityId = sub.Id.ToString(),
+            EntityId = sid.ToString(),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
                 action = "DocumentTopUp", packs, granted,

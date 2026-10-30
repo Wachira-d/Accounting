@@ -413,6 +413,17 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   **ไฟล์แนบเกินเพดาน = บันทึกและเตือน** (`storageWarning` · `Helpers/AttachmentStorageNotice` Near ≥90%/Over พร้อม MB · ไม่รู้เพดาน = ไม่เตือน) · **CMS ยังบล็อก** ·
   ไฟล์ที่ soft-delete แต่เก็บไฟล์จริง (`AttachmentRetention`) ไม่ถูกนับ (คำถามเจ้าของ)
 
+- **ข้อความแจ้งเตือนผ่านช่องกลาง (รอบ 212 แพ็ก A · คำตัดสินข้อ 171)** 🔨 *(ยังไม่ได้คอมไพล์)* — นับ**ต่อบริษัท** (ไม่ pool ข้ามกลุ่มบัญชี) ต่องวดเดือนตามเวลาไทย
+  (`NotifyUsageCounters` PK บริษัท+งวด · ไม่มีงาน reset) · นับเฉพาะ push ผ่าน LINE OA ของ NextAcc + อีเมลผ่าน SMTP ของระบบ (`Helpers/NotifyQuotaPolicy.IsMetered`) —
+  OA/SMTP ของร้านเองไม่นับ · เพดาน resolve ที่ `NotifyQuotaService.LoadLimitAsync` ตัวเดียว: `Subscription.MaxSharedMessagesPerMonth` (เฉพาะบริษัท · null = ตามแพ็กเกจ · -1 = ไม่จำกัด)
+  ⇒ `PlanTemplate.MaxSharedMessagesPerMonth` (ทดลองใช้ `TrialMaxSharedMessagesPerMonth` · บริษัทใต้กลุ่มบัญชีใช้แม่แบบของกลุ่ม) ⇒ ไม่พบแม่แบบ = ไม่จำกัด ·
+  **อ่านจากแม่แบบตอนนับ ไม่คัดลอกลง Subscription** (ต่างจาก `MaxDocumentsPerMonth` — แก้ที่ /admin/plans.html มีผลทันทีทุกบริษัท) ·
+  **ค่าเริ่มต้น = ไม่จำกัด (NULL · พฤติกรรมเดิม)** — ผู้ประสานงานตัดสินหลังฝ่ายค้านรอบ 212: migration ห้ามจำกัดลูกค้าเดิม · ตัวเลข**แนะนำ** (ทดลอง 100 · Basic 300 · Pro 1,000 ·
+  Enterprise 5,000 · ทดลองใช้ 100 — `NotifyQuotaPolicy.SuggestedLimit`) แสดงเป็นคำใบ้ที่ /admin/plans.html ให้เจ้าของตั้งเอง (ช่องว่าง = ไม่จำกัด) ·
+  **ไม่นับ** ข้อความถึงร้าน `shop.*` (ออเดอร์/การจองใหม่ · สลิป · lead · ที่พัก · เงินค้าง — แจ้งเตือนงาน · ไม่ถูกระงับ) · ข้อความจำเป็น (นับแต่ไม่ระงับ) = แขกที่พักรอสลิป ·
+  เต็ม ⇒ โบนัส `Subscription.NotifyBonusQuota`/`NotifyBonusExpiresAt` (แพ็ก `notify.topup`) ⇒ หมด = ไม่ส่งทางช่องกลาง (ลองช่องของร้านก่อน) · เตือนเจ้าของ 80%/100% ครั้งเดียวต่องวด ·
+  **ไม่บล็อกงานธุรกิจ/เอกสาร** · สถานะ `GET metering/notify-quota` (เซิร์ฟเวอร์คำนวณ · หน้า ตั้งค่า/การใช้งาน/แพ็กเกจ/ส่วนเสริม)
+
 ### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
 
 เพดานของ **เว็บ** อยู่บน `Site` เอง (`MaxPages` · `MaxProducts` · `MaxStorageBytes`)
@@ -570,6 +581,13 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   วันที่คาดว่าจะเต็ม / ยอดส่วนเกินเดือนนี้ · **เซิร์ฟเวอร์คำนวณ หน้าเว็บแสดงอย่างเดียว**
   (`Layout.showQuotaBanner()` ใช้ในหน้าเอกสาร · ที่พัก · POS)
 - `POST …/quota/topup` — ซื้อโควตาเพิ่ม 100 ฉบับ/แพ็ก (อายุ 60 วัน) ผ่าน `documents.topup`
+- `GET/POST …/notify-quota[/topup]` (รอบ 212 แพ็ก A) — โควตาข้อความผ่านช่องกลาง + ซื้อแพ็ก `notify.topup` (500 ข้อความ/แพ็ก · อายุ 60 วัน ·
+  `AddOnCodes.MessagesPerNotifyTopUpPack` ต้องตรง `UnitLabel` ที่ seed) · ด่าน `RequireBillingAsync` เดิม · `NotifyQuotaService.PurchaseTopUpAsync` ลอก `QuotaService.PurchaseTopUpAsync`
+  (advisory xact lock ต่อบริษัท `AdvisoryLockKey.QuotaGrant` · UsageEvent ก่อนให้ของ · audit chain) · `notify.topup` อยู่ใน `AddOnCodes.SystemMeters` (ไม่ใช่สวิตช์ลูกค้า) ·
+  ราคาตั้งต้นเสนอ 99 บาท/แพ็ก (`ApiPricingPlan` seed · แก้ที่ /admin/addons.html) · **ใบแจ้งหนี้/ใบกำกับไหลเส้นเดิม** `UsageInvoicingJob` → `PlatformBillingDocumentIssuer`
+  ฝ่ายค้านรอบ 212: ให้โบนัสด้วย UPDATE เดียวหลังล็อก (ซื้อ/หักพร้อมกันไม่หาย — แก้ `documents.topup` ด้วย) · ลำดับการซื้อนับจากคำนำหน้าคีย์งวดไทย
+  (`AddOnBilling.TopUpKeyPrefix` — เดิมนับจากต้นเดือน UTC ⇒ "กดซ้ำ" ทั้งเดือน) · header `Idempotency-Key` บน `POST …/quota/topup` และ `…/notify-quota/topup` (ส่งซ้ำ = ผลเดิม คิดเงินครั้งเดียว)
+  (ไม่มีเลขเอกสาร/เส้นภาษีใหม่ · Prepaid ตัดเครดิตตอนบันทึก)
 - `POST …/quota/rewards/{id}/claim` — ภารกิจแลกโควตา (§12 ของ LODGING_LICENSING_PLAN),
   สวิตช์ 3 ชั้น: ไม่มี option ที่ `IsActive` · `PlanTemplate.AllowQuotaReward` ·
   `Subscription.QuotaRewardBlocked`
@@ -813,6 +831,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 | **Google OAuth** | ✅ | `POST /auth/sso` — เส้นหลักคือ **authorization-code redirect** เหมือน LINE (`ValidateGoogleTokenAsync` แลก code ที่ `oauth2.googleapis.com/token` ด้วย `SiteSettings.GoogleClientSecret` แล้ว verify id_token ที่ tokeninfo); One Tap (`gsi/client`) เหลือเป็นทางสำรองเมื่อยังไม่ได้ตั้ง secret |
 | Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) — ยังใช้ JS SDK |
 | **LINE Login** (OAuth2) | ✅ | authorization-code flow → `AuthService.ValidateLineTokenAsync` (channel secret ไม่ออกจาก server); คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
+| **LINE OA กลาง (Messaging API)** | ✅ รอบ 212 D | ค่าตั้งระดับแพลตฟอร์มบน `SiteSettings.LineMessaging*` (token/secret เข้ารหัส) ตั้งที่ `/admin/site-settings.html` แท็บ "LINE OA กลาง" (SystemAdmin) · ผู้อ่านตัวเดียว `INextAccLineConfig` — หน้าแอดมินก่อนทั้งชุด · ไม่มี token ⇒ config `Line:*` (deployment เดิม) · webhook `/api/line-webhook` · คนละ channel กับ LINE Login (userId ตรงกันเฉพาะเมื่ออยู่ provider เดียวกัน) |
 | **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
 
 - `AuthProvider` เพิ่มค่า `"Line"` (✅ ใช้งานแล้ว), `"Microsoft"` (📋) — โครงเดิมรองรับอยู่แล้ว
@@ -950,7 +969,7 @@ _Last verified against codebase: 2026-10-12 (rev 42 · รอบ 204 — **§3.1
 
 _Last verified against codebase: 2026-10-01 (rev 41 · รอบ 201 ทีม IN — **§ สาขา** เล่มเลขต่อสาขา: เครื่องออกเลขรับรหัสสาขาแล้ว (🔨) · สวิตช์บริษัท + ผู้เรียกส่งสาขา 📋 — commit a4dfa177)_
 
-_Last verified against codebase: 2026-09-29 (rev 40 · รอบ 200 ทีม Z — **§5.2** ฝ่ายค้านรอบสอง S2-3/S2-6/S2-7: `/api/v1` คำขออ่านไม่ผ่านด่าน + ไม่สร้าง FreeTrial (ข้อ 23 = กันการเขียน) · partner หลวมลงที่ `GET bank/accounts` = ตั้งใจ (ข้อ 21) · `pageFeatures` ให้หน้าเว็บรู้ฟีเจอร์ของ route ข้อมูลหลัก — commit <pending>)_
+_Last verified against codebase: 2026-09-29 (rev 40 · รอบ 200 ทีม Z — **§5.2** ฝ่ายค้านรอบสอง S2-3/S2-6/S2-7: `/api/v1` คำขออ่านไม่ผ่านด่าน + ไม่สร้าง FreeTrial (ข้อ 23 = กันการเขียน) · partner หลวมลงที่ `GET bank/accounts` = ตั้งใจ (ข้อ 21) · `pageFeatures` ให้หน้าเว็บรู้ฟีเจอร์ของ route ข้อมูลหลัก — commit 9c792d9f)_
 
 _ก่อนหน้า: 2026-09-29 (rev 39 · รอบ 200 ทีม S2 — **§5.2** คำตัดสินข้อ 21–24 + ฝ่ายค้าน S200-1..9: คีย์ `RouteFeatureMap` ตรง route จริง ·
 คีย์ใหม่เป็นเงาสำหรับทุกผู้เรียกจนกว่ากดบังคับ · `GET bank/accounts`/`warehouses` ไม่ผูก · `/api/v1` ตรวจสถานะผ่านสวิตช์เดียว · config เดิม Enforce ไม่หลวม ·
@@ -959,25 +978,25 @@ _ก่อนหน้า: 2026-09-29 (rev 39 · รอบ 200 ทีม S2 — 
 _ก่อนหน้า: 2026-09-29 (rev 38 · รอบ 200 ทีม P2 — **§3.1d** settlement เฟส 2: `PaymentIntent.SettlementBatchId` หนึ่งรายการหนึ่งเจ้าของ (`GatewayBatchIntentRules`) ·
 ช่องทางที่ผูก gateway config ต้องมีโหมดภาษีค่าธรรมเนียมตรงกับ config — commit 4d3b7ea9)_
 
-_ก่อนหน้า: 2026-09-28 (rev 37 · รอบ 198 ข้อ 5 ทีม G — **§5.2 gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ**: หาบริษัทจาก route ด้วย `TenantCompanyId` ตัวเดียวกับ TenantAccessMiddleware · สวิตช์ `SiteSettings.SubscriptionEnforcementMode` (ค่าตั้งต้น Shadow) · ตาราง `SubscriptionGateShadowHits` · หน้าแอดมิน — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 37 · รอบ 198 ข้อ 5 ทีม G — **§5.2 gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ**: หาบริษัทจาก route ด้วย `TenantCompanyId` ตัวเดียวกับ TenantAccessMiddleware · สวิตช์ `SiteSettings.SubscriptionEnforcementMode` (ค่าตั้งต้น Shadow) · ตาราง `SubscriptionGateShadowHits` · หน้าแอดมิน — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 36 · รอบ 199 ทีม H — `/api/v1/documents/{id}/approve` ปฏิเสธ 422 `APPROVE-SCAN-VAT-NOT-ON-PAPER` / `APPROVE-WARNINGS-NEED-ACK` (คำตัดสินเจ้าของรอบ 198 ข้อ 6 · ฝ่ายค้าน B-1) — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 36 · รอบ 199 ทีม H — `/api/v1/documents/{id}/approve` ปฏิเสธ 422 `APPROVE-SCAN-VAT-NOT-ON-PAPER` / `APPROVE-WARNINGS-NEED-ACK` (คำตัดสินเจ้าของรอบ 198 ข้อ 6 · ฝ่ายค้าน B-1) — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 35 · รอบ 198 ทีม S3 — **§3.1d** คอลัมน์ `SettlementLines.MatchDecidedByUser` · คีย์ `ExternalTxnId` v2 · ล็อกต่อช่องทางตัวเดียว · `PaymentIntent.SettlementBatchId` รอบแรกเป็นเจ้าของทั้งผู้นำเข้าและผู้ลงบัญชี — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 35 · รอบ 198 ทีม S3 — **§3.1d** คอลัมน์ `SettlementLines.MatchDecidedByUser` · คีย์ `ExternalTxnId` v2 · ล็อกต่อช่องทางตัวเดียว · `PaymentIntent.SettlementBatchId` รอบแรกเป็นเจ้าของทั้งผู้นำเข้าและผู้ลงบัญชี — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 34 · รอบ 198 เฟส 1 ทีม D — **§3.1d** 🔨→✅: `SettlementController` + หน้า `settlements`/`settlement-channels` · สิทธิ์ `Settlement.*` 4 คีย์ — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 34 · รอบ 198 เฟส 1 ทีม D — **§3.1d** 🔨→✅: `SettlementController` + หน้า `settlements`/`settlement-channels` · สิทธิ์ `Settlement.*` 4 คีย์ — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 33 · รอบ 198 เฟส 1 ทีม C — **§3.1d** ผู้ลงบัญชีรอบโอน `ISettlementPostingService` · `PaymentIntent.SettlementBatchId` มีผู้เขียน — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 33 · รอบ 198 เฟส 1 ทีม C — **§3.1d** ผู้ลงบัญชีรอบโอน `ISettlementPostingService` · `PaymentIntent.SettlementBatchId` มีผู้เขียน — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 32 · รอบ 198 เฟส 1 ทีม B — **§3.1d**: service ช่องทาง/นำเข้า · ผู้เขียน `PaymentIntent.SettlementBatchId` · R-A1/R-A2 — commit <pending>) · ก่อนหน้า 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 32 · รอบ 198 เฟส 1 ทีม B — **§3.1d**: service ช่องทาง/นำเข้า · ผู้เขียน `PaymentIntent.SettlementBatchId` · R-A1/R-A2 — commit 9c792d9f) · ก่อนหน้า 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit <pending>)_
+_ก่อนหน้า: 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-25 (rev 30 · รอบ 195 ทีม I3 — `/api/v1/documents/{id}/approve` คืน `scanVatNotOnPaper` แยกจาก `scanAmountGap` — commit <pending>)_
+_ก่อนหน้า: 2026-09-25 (rev 30 · รอบ 195 ทีม I3 — `/api/v1/documents/{id}/approve` คืน `scanVatNotOnPaper` แยกจาก `scanAmountGap` — commit 9c792d9f)_
 
 _ก่อนหน้า: 2026-09-25 (rev 29 · รอบ 194 ทีม C — **§4 ประเภทเงินมัดจำ** (`DepositKind` ต่อบริษัท · API `/deposit-kinds` ·_
 _สิทธิ์ `CompanySettings.Edit` + ปฏิเสธ API key · integration `depositKindCode` ไม่รู้จัก = 400 · เงินประกัน + ขับ JE = 400 `DEP-SEC-DEDUCT` ·_
-_หมายเหตุ mismatch ผ่าน `ResolveKind`) — commit <pending>)_
+_หมายเหตุ mismatch ผ่าน `ResolveKind`) — commit 9c792d9f)_
 
 _Last verified against codebase: 2026-09-24 (rev 28 · รอบ 193 — **§3.1c การเข้าถึงด้วย API key**: คีย์ `int_` สิทธิ์แยก อ่าน/เขียน/ลบ + legacy 90 วัน ·_
 _ออก/ผูกผู้ใช้เฉพาะเจ้าของ · `EnableApiAccess` คุมคีย์ `acc_` ที่ออกแล้ว · งานเจ้าของ/ทำลายหลักฐาน/ตั้งนโยบายปฏิเสธ API key (`OwnerActionGuard` ·_
