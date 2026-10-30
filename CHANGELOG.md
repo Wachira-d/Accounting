@@ -5797,7 +5797,7 @@ _รอบ 214 (คำตัดสินข้อ 173 · เจ้าของ: 
 (3) **ร้าน (CMS)** — `Helpers/CmsLegalPages.Resolve` (ลิงก์ร้าน > ข้อความร้าน `Sites.PrivacyPolicyMarkdown/TermsOfServiceMarkdown` > แม่แบบที่เติมตัวตนร้าน) ·
 หน้า storefront `legal/privacy|terms` + ลิงก์ท้ายเว็บ/ช่องยินยอม/สมัครสมาชิก/แบนเนอร์คุกกี้ · cms-edit สามโหมด + ช่องข้อกำหนดที่เดิมไม่มี UI + URL/คัดลอก/เปิด/ตัวอย่าง ·
 ลิงก์ร้านตรวจก่อนเก็บ + ซ่อมสตริงว่างเดิม (`Helpers/LegalDocumentMigration`) · (4) หน้าจองโต๊ะ → `/shop-policy.html` (`GET /api/public/reservations/legal/{companyId}/{kind}`) ·
-เทสต์ `LegalDocumentTests` + `Db/LegalDocumentDbTests` (TEST_PLAN LEGAL214-01..12) · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+เทสต์ `LegalDocumentTests` + `Db/LegalDocumentDbTests` (TEST_PLAN LEGAL214-01..12) · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e8da855_
 
 _รอบ 215 (2026-10-30 · ทีม UX/UI · คำตัดสินข้อ 176): ออกแบบ "พื้นที่ทำงานรายเว็บ" (`erp-review/2026-10-30/CMS_UX_REDESIGN.md` + mockups · c25cc7aa · 7a6b5fee)
 แล้วทำเฟส 1 — แถบซ้ายหมวดงานเว็บเหลือ "พื้นที่ทำงานเว็บไซต์" + "เว็บไซต์ทั้งหมด" (หน้ารายเว็บ 7 หน้าพับไว้ · id/สิทธิ์เดิม) · ชื่อหมวดจากเซิร์ฟเวอร์
@@ -5819,7 +5819,7 @@ _รอบ 214 ฝ่ายค้าน + CI (ไม่มีข้อ blocking 
 (`SiteResponse.LegalWarnings`) · (S5) audit ตอนเผยแพร่มี UserId/อีเมล/IP · หมายเหตุ: Status concurrency token + unique ร่างต่อชนิด ⇒ 409 ไทย · ปุ่มตั้งวันมีผลเป็นวันนี้ ·
 `LegalController` เลิก AllowAnonymous ระดับคลาส · ปุ่ม "เปิด" ของเว็บที่ยังไม่เผยแพร่ = ตัวอย่าง · doc comment ย้ายกลับที่ · audit `*Markdown` = length+sha256 ·
 (CI) Db test ล้ม FK `PdpaConsentRecords → Companies` (CompanyId ศูนย์) — บั๊กจริงตั้งแต่ก่อนรอบนี้ (หลักฐานตอนสมัครหายเงียบบนฐานที่มี FK) ⇒ ตารางระดับผู้ใช้
-`PlatformPolicyAcceptances` + คัดลอกแถวเดิม · เทสต์ทั้งผู้ใช้ไม่มีบริษัท/มีบริษัท · TEST_PLAN LEGAL214-14..21 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`PlatformPolicyAcceptances` + คัดลอกแถวเดิม · เทสต์ทั้งผู้ใช้ไม่มีบริษัท/มีบริษัท · TEST_PLAN LEGAL214-14..21 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a9420198_
 
 _รอบ 216 (คำตัดสินข้อ 174 · เจ้าของ: "ล็อคอินไว้แล้วควรมี ให้บันทึกข้อมูลส่วนตัวและดึงมาได้เลย"): ข้อมูลส่วนตัวของสมาชิกหน้าร้าน —
 `GET portal/me` คืนชื่อ/เบอร์/ข้อมูลใบกำกับ/ที่อยู่จัดส่ง+ใบกำกับ (ข้อความที่อยู่ประกอบที่เซิร์ฟเวอร์) · `PUT portal/me/profile` (ตัวตรวจเดียว `Helpers/StorefrontMemberProfile` ·
@@ -5838,12 +5838,12 @@ _รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ — ผู�
 RoPA ระดับแพลตฟอร์มไม่สร้าง (ตาราง RoPA เป็นของ tenant — บันทึกในนโยบายแพลตฟอร์มแทน) · (2) `PdpaConsentEvidence` สูตร v2 แบบ AuditHashChain v2 (เวลา UTC ไมโครวินาที ·
 ป้าย "v2:" · v1 ตรวจไม่ได้ = `LegacyUnverifiable` ไม่ใช่ผ่าน) ใช้กับตอนสมัคร/แถบยอมรับ/ฟอร์มเว็บร้าน · `PlatformPolicyAcceptances` เก็บ `VersionShown`/`UserAgent` ให้ตรวจจากแถวได้ ·
 เทสต์ `PdpaConsentEvidenceV2Tests` + Db round-trip (เขียน → อ่านกลับ → ตรวจผ่าน · แก้ในฐาน ⇒ ไม่ผ่าน) ใน `Db/LegalDocumentDbTests` · TEST_PLAN LEGAL214-22..27 ·
-`required_call_site_check` +4 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`required_call_site_check` +4 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4dcc6f06_
 
 _รอบ 214 ฝ่ายค้าน (ฎ) (ไม่มีข้อ blocking · คำตัดสินข้อ 173 ฏ): (S1) ลบตามคำขอทำไม่ให้ระบุตัวต้นฉบับใน `PdpaConsentRecords` ระดับแพลตฟอร์มด้วย (คงแถว · `PseudonymisedAt`) +
 ลบจริงพ้น 10 ปีกติกาเดียวกัน · (S2) รวมแถว soft-delete (`IgnoreQueryFilters`) · (S3) DSR ของบริษัทไม่ส่ง IP/UA ของหลักฐานยอมรับนโยบาย · เจ้าของดูเองที่ `GET /api/legal/my-data` ·
 (S4) รายงานลูกค้าเว็บมีผลตรวจหลักฐานรายแถว · (N1) เวอร์ชันที่เห็นว่าง = ฉบับปัจจุบัน · (N2) `PdpaConsentRecords.EvidenceSource` (system/staff) · (N3) ป้าย v2 ไม่สนตัวพิมพ์ ·
-เทสต์ `PdpaConsentEvidenceV2Tests` +2 · `Db/LegalDocumentDbTests` +1 · TEST_PLAN LEGAL214-28..31 · `required_call_site_check` +2 กติกา/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+เทสต์ `PdpaConsentEvidenceV2Tests` +2 · `Db/LegalDocumentDbTests` +1 · TEST_PLAN LEGAL214-28..31 · `required_call_site_check` +2 กติกา/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 30d0b7bc_
 
 _รอบ 217 ฝ่ายค้าน (ไม่มี blocking · แก้ครบ S1–S6 + ข้อสังเกต 1/3/6/9): (S1) ด่านซ้ำเทียบช่วง/จำนวนคน/ผู้ให้บริการ · ปุ่ม "จองเพิ่มอีกที่" บนหน้าผล · พนักงาน 409 + เลขที่ ·
 (S2) in-flight ตัดสินก่อนเทียบเนื้อ + multipart ไม่รวม boundary · (S3) Notify*CreatedAsync ไม่กลืนข้อยกเว้น ⇒ คิวลองใหม่จริง · (S4) ยกเลิก/คืนเงินก่อนถึงคิว ⇒ ไม่ส่ง + `Note` ·
@@ -5878,7 +5878,7 @@ _รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ — ปิ�
 คำขอลบระดับแพลตฟอร์มที่ผู้ใช้ยื่นเอง (`PlatformErasureRequests` · `POST /api/legal/my-data/erase-request` · ค้างฉบับเดียว · วันละครั้ง · SLA 30 วัน · กติกา `Helpers/PlatformErasureRequestPolicy`) ·
 SystemAdmin ดำเนินการ/ปฏิเสธที่ `/admin/legal.html` (`AdminPlatformErasureController`) → แกนลบตัวเดียว `PdpaService.AnonymiseUserCoreAsync` (แยกออกจาก `ApplyErasureAsync` — DSR ของบริษัทใช้ตัวเดียวกัน) + audit + อีเมลแจ้งผล ·
 เทสต์ `PlatformErasureRequestTests` + Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · TEST_PLAN LEGAL214-32..35 · `required_call_site_check` +4 กติกา/แก้ 1 ·
-`write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7f8f0acb_
 _รอบ 218 (คำตัดสินข้อ 177 · เจ้าของ: "ติ๊ก รับชำระมัดจำออนไลน์ แล้วตอนจองไม่มีให้ระบุเรื่องโอนมัดจำ · ต้องตั้งได้ว่าบังคับมัดจำ/จ่ายเต็มก่อน/ปิด · ตั้งเลขบัญชีหรือแนบ QR ได้" ·
 `erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`): ต้นเหตุ = ช่องติ๊กเดิมเปิดแค่ช่องทาง gateway แต่ยอดมาจากชนิด PrePayment + ช่องมัดจำของบริการ (ไม่ตรง ⇒ ยอด 0 เงียบ) ·
 ไม่มีช่องโอน/QR/สลิปของการจอง · ไม่บอกยอดก่อนกดจอง. (1) ตัวตัดสินเดียว `Helpers/BookingPaymentPolicy` (บริการ ?? เว็บ ?? แบบเดิม · ปิด/มัดจำบังคับ/มัดจำไม่บังคับ/เต็มยอด ·
@@ -5889,13 +5889,13 @@ min/max · กำหนดเวลา · เก็บได้เฉพาะ P
 แล้วเลขบัญชีว่าง ⇒ บันทึกซ้ำล้างเงียบ) · เทสต์ `BookingPaymentPolicyTests` (+CRC16 QR พร้อมเพย์) · `Db/BookingPaymentPolicyDbTests` (TEST_PLAN BKPAY-01..24) · `required_call_site_check` +14 กติกา ·
 `write_permission_gate_check` +CmsBookingPaymentController (WATCHED) · baseline +1 (แนบสลิปของแขก — โทเคน) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fe1a9f0e · c62e1809 · 03191135 · e98ca3e9 · 7cf933b1_
 
-_รอบ 218 ฝ่ายค้าน (คำตัดสินข้อ 177 ส่วนต่อ · `<sha ในคอมมิตถัดไป>` · ยังไม่ได้คอมไพล์ในเครื่องนี้): B1 ค่าตั้งเขียนเฉพาะแถวโอน/พร้อมเพย์ + ล้างต้องยืนยัน ·
+_รอบ 218 ฝ่ายค้าน (คำตัดสินข้อ 177 ส่วนต่อ · `80483fd5` · ยังไม่ได้คอมไพล์ในเครื่องนี้): B1 ค่าตั้งเขียนเฉพาะแถวโอน/พร้อมเพย์ + ล้างต้องยืนยัน ·
 B2 วันรับเงินของสลิป = วันที่โอน (`PaymentIntent.PaidAt` · `ProviderCharge.PaidAtUtc`) + วิธีชำระ = โอนเงิน · S1 สลิปที่ถูกแทนปิด Failed + ยืนยันด้วยมือต้องรอตรวจ ·
 S2 ยกเลิก/ไม่มาปิดสลิป · S3 ล็อกเดียว + บันทึก ≤ 300 · S4 จ่ายแล้วบอกก่อนเก็บไฟล์ + ยอดเปลี่ยน ⇒ 409 + อ่านไฟล์ตรงการจอง · S5 คิวสำรอง → `OnSeat` ·
 S6 งานยกเลิกข้ามรายการชำระออนไลน์ที่ยังไม่หมดอายุ · บริการเก็บเงินเองต้องมีช่องทาง/ยอด · PDPA ลบสลิปปฏิเสธ 90 วัน (`BookingSlipRetention`) ·
 เทสต์ `BookingPaymentPolicyTests` + `BookingPaymentPolicyDbTests` (ทั้งสองทิศ) · `required_call_site_check` +16 กฎ · รวม 215 เฟส 2: ฟอร์มค่าตั้งการชำระของการจองย้ายไป "ตั้งค่าเว็บ › การชำระเงิน" (`CmsSiteSettingsExt.payment` ใน `booking-payment-admin.js` · cms-edit เหลือกล่อง "ย้ายแล้ว" · ฟอร์มบริการยังตั้งทับได้)_
 
-_รอบ 218 ฝ่ายค้านรอบ 2 (คำตัดสินข้อ 177 ส่วนต่อ 2 · `<sha ในคอมมิตถัดไป>` · ยังไม่ได้คอมไพล์ในเครื่องนี้): K1 CS0234 (ผู้ประสานงานแก้บน branch แล้ว — คงรูปอ้างเต็ม) ·
+_รอบ 218 ฝ่ายค้านรอบ 2 (คำตัดสินข้อ 177 ส่วนต่อ 2 · `6e3ba749` · ยังไม่ได้คอมไพล์ในเครื่องนี้): K1 CS0234 (ผู้ประสานงานแก้บน branch แล้ว — คงรูปอ้างเต็ม) ·
 K2 ยืนยันด้วยมือของสลิปการจองที่หน้ารายการชำระ ⇒ 409 ไปหน้าการจอง + `ConfirmedBy` ตัด 200 ที่จุดเขียนเดียว · F1 งานล้างเงื่อนไขทั้งหมดใน SQL + `!IsDeleted` ·
 F2 สลิปเก็บ 6 ปีทุกใบ (ยกเลิกการลบ 90 วัน) + แนบไม่สำเร็จลบไฟล์ทันที · F3 คิวสำรองที่พนักงานสร้างไม่ถูกบังคับรอชำระ · F4 งวดปิดตรวจก่อนรับเงิน ·
 F5 หมายเหตุเตือนจ่ายซ้ำ · F6 ปิดรายการชำระไม่ได้ ⇒ หมายเหตุบนการจอง · โน้ต: ปิดใช้/แก้ชื่อบริการไม่ถูกขัง · ปิดช่องทางเว็บที่ทำให้บริการแตก ⇒ 409 พร้อมรายชื่อ ·
@@ -5907,7 +5907,7 @@ _รอบ 214 ฝ่ายค้าน (ฐ) — 2 blocking + 5 (คำตั�
 รายการบริษัทไม่มีเจ้าของนับเฉพาะเจ้าของที่ยังทำงานได้ · (S1) แกนลบ IgnoreQueryFilters · ไม่พบ = 404 ไม่ปิดคำขอ · (S2) ห้ามดำเนินการคำขอตัวเอง/ลบแอดมินแพลตฟอร์ม ·
 (S3) ล้างลายมือชื่อ + คำขอลบทุกฉบับ · ข้อความอีเมล/หน้าแก้ตามจริง · (S4) `OnTokenValidated` + `Helpers/TokenUserGate` · (S5) อีเมลแจ้งผล = อีเมลปัจจุบัน ·
 GET my-data ปฏิเสธคีย์ API · เวลาบนหน้า UTC→ไทย · คอมเมนต์ DbSet แยกบรรทัด · เทสต์ +3 pure +1 Db (+ตรวจ audit ไม่มี PII ใน Db เดิม) · TEST_PLAN LEGAL214-36..41 ·
-`required_call_site_check` +4/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`required_call_site_check` +4/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 16ffaccc_
 
 _รอบ 219 เฟส 0 (2026-10-30 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` + `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2) — อุดรั่วเงินค่าบริการ NextAcc:
 ตัวตัดสินเดียว `Helpers/PlatformRevenueSource` ที่ StartAsync/RecordExternalSuccessAsync/DispatchSucceededAsync + งานพนักงานทุกตัวใน `PaymentGatewayController` (ร้านยืนยัน/ส่งต่อ/คืนเงินค่าบริการไม่ได้ ·
@@ -5925,7 +5925,7 @@ _รอบ 214 ฝ่ายค้าน (ฑ) รอบสอง — 1 blocking 
 (B2-c) ป้าย "ติดต่อแอดมินให้ยกเลิกแพ็กเกจ" + `POST /api/admin/platform-erasure-requests/{id}/cancel-account-plans` (เฉพาะแพ็กเกจไม่มีบริษัทผูก · audit) + ปุ่มบน `/admin/legal.html` ·
 `OnTokenValidated` ผู้เรียกตัดการเชื่อมต่อ = จบเงียบ · **ผลข้างเคียงที่ตั้งใจของ (ฑ) S4: พนักงานที่ payroll ตั้งลาออก (Inactive) เสีย access ทันทีที่คำขอถัดไป** (เดิมใช้ token ได้จนหมดอายุ) ·
 SignalR socket ที่เปิดอยู่ก่อนปิดบัญชีใช้ต่อได้จนเชื่อมต่อใหม่ · `TokenUserGate.RejectMessage` ไปที่ log ไม่ได้แสดงบนหน้า · เทสต์ +7 pure (`ErasureAuditScopeTests`) +1 Db · แก้ 1 (HasOwner→ActingOwner) ·
-TEST_PLAN LEGAL214-42..48 · `required_call_site_check` +12/แก้ 4 · **CI Db แดง 2 ตัวของ (ฑ)**: fixture DSR ผู้ถูกลบเป็นเจ้าของคนสุดท้าย ⇒ เพิ่มเจ้าของร่วม (ด่านเจ้าของมีเทสต์แยก) · เทสต์คำขอลบเทียบ `PiiMask` กับ JSON ที่ escape อักษรไทยเป็น \uXXXX ⇒ เทียบทั้งสองรูป (ข้อตรวจ "ชื่อไทยไม่รั่ว" เดิมผ่านเพราะเทียบผิดรูป — แก้แล้ว) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+TEST_PLAN LEGAL214-42..48 · `required_call_site_check` +12/แก้ 4 · **CI Db แดง 2 ตัวของ (ฑ)**: fixture DSR ผู้ถูกลบเป็นเจ้าของคนสุดท้าย ⇒ เพิ่มเจ้าของร่วม (ด่านเจ้าของมีเทสต์แยก) · เทสต์คำขอลบเทียบ `PiiMask` กับ JSON ที่ escape อักษรไทยเป็น \uXXXX ⇒ เทียบทั้งสองรูป (ข้อตรวจ "ชื่อไทยไม่รั่ว" เดิมผ่านเพราะเทียบผิดรูป — แก้แล้ว) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 59be01cf · 0ff4594f_
 
 
 _รอบ 219 เฟส 0 ฝ่ายค้าน (2026-10-30 · คำตัดสินข้อ 178 ภาคผนวก) — B1 อัปเกรด/ฟรีถาวรเริ่มรอบจากวันอนุมัติ (`PlatformPlanPricing.PeriodStart` · เดิมฟรีถาวร→Pro ได้ 100 ปี) ·
@@ -5951,3 +5951,6 @@ G-10 บนเส้นนี้) · ใบค่าใช้งานไม่�
 _รอบ 219 เฟส 2 ขั้น 2 (2026-10-30 · คำตัดสินข้อ 180 · G-7/G-8) — ผู้ส่งใบ/แจ้งเตือนตัวเดียว `PlatformBillingNotifier` (อีเมลระบบ + LINE OA กลาง · คีย์กันซ้ำ `PlatformBillingNotices`) · `PlatformDunningJob` (JobLock · watermark ต่อบริษัท) + `PlatformDunningService` + ตัวตัดสิน pure `PlatformDunningPolicy` (ระงับจริงเฉพาะ Enforce · คืนสถานะหลังชำระ · พักการระงับโดยแอดมิน) · ใบต่ออายุ/ค่าใช้งานส่งผ่านผู้ส่งตัวเดียว · สวิตช์ระงับอัตโนมัติครอบเส้นหมดอายุ · หน้าแอดมินใบค้างทุกบริษัท/ข้อความที่ส่ง · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit becd3a57_
 
 _รอบ 219 เฟส 2 ขั้น 3 (2026-10-30 · คำตัดสินข้อ 180 · เจ้าของ ⑤⑥ + S9 ผู้ประสานงาน) — ยกเลิกเมื่อสิ้นรอบ `Subscription.CancelAtPeriodEnd` + ใช้ต่อ (`SubscriptionCancelPolicy`) · ใบต่ออายุไม่ออก/จ่ายไม่ได้/ไม่ทวงเมื่อยกเลิก · ส่วนเสริมเลือกวิธีชำระต่อการซื้อ `CompanyFeature.BillingChoice` + ติ๊กยอมรับ (`AddOnPaymentPolicy.ApplyChoice` กันเก็บซ้อน) · S9 ใบต่ออายุล้าสมัยหลังอัปเกรด/ต่ออายุแบบเดิม ⇒ ยกเลิกผ่านเส้นยกเลิกเอกสาร / งานใบลดหนี้เมื่อมีการชำระ · `PlatformDunningPolicy` ช่วยตัวเองเป็น private/internal (dead helper) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+_Last verified against codebase: 2026-10-30 (รอบ 219 ส่วน B (คำตัดสินข้อ 179 · `erp-review/2026-10-30/PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md`) — ช่องทางรับชำระของ NextAcc · นโยบายการยกเลิกและคืนเงิน · ติ๊กยอมรับนโยบายก่อนชำระ: §2.6b หน้าแอดมิน `/admin/platform-gateway.html` (`AdminPlatformGatewayController`) บน config ของบริษัทผู้ให้บริการ · งานคีย์/ทดสอบสองชุด/โหมด/ปิดฉุกเฉิน/ทดลองจ่าย ฿20 ผ่าน `IPaymentProviderConfigService` ตัวเดียวกับร้าน · ด่านเปิด live `Helpers/PaymentLiveGate` (คีย์ live ต้องตรวจผ่าน — ร้านด้วย · แพลตฟอร์มเพิ่มนโยบายคืนเงินเผยแพร่แล้ว + พิมพ์ยืนยัน) · `PaymentSourceKind.GatewaySelfTest` (โหมดทดสอบเท่านั้น · ไม่ลงบัญชี · ไม่เข้ารอบโอน) · webhook โหมดจริง `LastLiveWebhookAt` · ผู้เช่าชำระออนไลน์ผ่าน `IPlatformPaymentService`/`PlatformPaymentController` เฉพาะเมื่อแพลตฟอร์มเปิดรับเงินจริง · หน้าทดลองจ่าย `/platform-pay-test.html` (Off/AdminsOnly/Public) · เอกสารกฎหมายชนิด `refund` (switch โยนเมื่อไม่รู้จัก · `ConsentKinds` แยก) + `/refund-policy.html` + แท็บแอดมิน · นโยบายคืนเงินของร้าน (`Site.Refund*` · แม่แบบอ่านค่าตั้ง · เตือนข้อความขัดค่าตั้ง) · ติ๊กยอมรับบังคับ (`Helpers/PurchasePolicyAcceptance` · ตาราง `PolicyAcceptances`) บนขอแพ็กเกจ/แนบสลิป/ชำระออนไลน์ค่าบริการ · ออเดอร์ร้าน · จองบริการ · จองที่พัก · ยกเลิกแพ็กเกจมีผลสิ้นรอบ (`Helpers/SubscriptionCancelPolicy` · ไม่เข้า PastDue · ไม่ออกใบต่ออายุ) — เทสต์ `PlatformGatewayRefundPolicyTests` · `Db/PurchasePolicyAcceptanceDbTests` · แก้เทสต์ Db การจอง 6 ไฟล์ให้ติ๊ก · `required_call_site_check` +19/ย้าย 1 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a426a0ed)_
+
+_รอบ 219 เฟส 2 ขั้น 4 (2026-10-30 · คำตัดสินข้อ 180 · PLATFORM_BILLING_AUDIT §4) — ลิงก์ชำระใบแจ้งหนี้ (`PlatformPaymentLinks` เก็บ hash โทเคน 128 บิต · อายุตามค่าตั้ง · ใบเดียว · เพิกถอนได้ · audit ทุกการกระทำ) + หน้าสาธารณะ `/pay-link.html` (จำกัดอัตรา fail-closed · ข้อมูลขั้นต่ำ · โอน+สลิป/ออนไลน์) · **merge part B (49c325f5) แล้วปรับเข้าหา:** ยกเลิกเมื่อสิ้นรอบใช้ของ part B (ถอดของเฟส 2 ออก) · ติ๊กยอมรับใช้ `PurchasePolicyAcceptance` (ถอด `PlatformPurchaseTerms`/`PlatformPurchaseAcceptances` ที่ยังไม่เคย deploy) · ชำระออนไลน์ใบแจ้งหนี้ผ่าน `IPlatformPaymentService` + `PayWidget` (ถอดช่องเสียบ `IPlatformOnlinePaymentPort`) · `SubscriptionPaymentHandler` อนุมัติรายการผูกใบด้วยยอดรายการ (ไม่เทียบราคาแพ็กเกจ) · แก้ conflict marker ที่ค้างใน `SubscriptionController` ของ 49c325f5 (ConvertTrial/ChangePlan) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

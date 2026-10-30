@@ -10,7 +10,7 @@ namespace Accounting.Services.Implementations;
 /// <summary>
 /// รอบ 219 เฟส 2 (PLATFORM_BILLING_AUDIT §3.2 "ศูนย์บิลของผู้เช่า" · คำตัดสินข้อ 180) — ทุกอย่างที่หน้า <c>/pages/billing.html</c> แสดง ประกอบที่เซิร์ฟเวอร์:
 /// แพ็กเกจปัจจุบัน/รอบถัดไป/การเปลี่ยนที่รอมีผล · ใบแจ้งหนี้ค่าบริการ (tenant ผู้ให้บริการ · ตัวหาเดียว <see cref="PlatformInvoiceQueries"/>) พร้อม "จ่ายได้ไหม/ทำไม" ·
-/// ประวัติการชำระ + ใบเสร็จ · ส่วนเสริมพร้อมสถานะ · ช่องทางชำระ (<see cref="IPlatformPayOptionsService"/>) · เงื่อนไขการซื้อ (<see cref="PlatformPurchaseTerms"/>) ·
+/// ประวัติการชำระ + ใบเสร็จ · ส่วนเสริมพร้อมสถานะ · ช่องทางชำระ + นโยบายที่ต้องติ๊ก (<c>PlatformPayInfo.BuildAsync</c> ของ part B — ตัวเดียวกับหน้าแพ็กเกจ/ส่วนเสริม) ·
 /// นโยบายระงับ (<see cref="PlatformBillingSettingsRules.DescribeSuspension"/>)
 /// </summary>
 public interface IPlatformBillingCenterService
@@ -22,12 +22,14 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
 {
     private const int InvoiceTake = 60, PaymentTake = 60, LineTake = 5;
     private readonly AccountingDbContext _db;
-    private readonly IPlatformPayOptionsService _pay;
+    private readonly Accounting.Services.Payments.IPlatformPaymentService _platform;
+    private readonly ILegalDocumentService _legal;
     private readonly ISubscriptionGateShadowLog _gate;
     private readonly IConfiguration _config;
 
-    public PlatformBillingCenterService(AccountingDbContext db, IPlatformPayOptionsService pay, ISubscriptionGateShadowLog gate, IConfiguration config)
-    { _db = db; _pay = pay; _gate = gate; _config = config; }
+    public PlatformBillingCenterService(AccountingDbContext db, Accounting.Services.Payments.IPlatformPaymentService platform,
+        ILegalDocumentService legal, ISubscriptionGateShadowLog gate, IConfiguration config)
+    { _db = db; _platform = platform; _legal = legal; _gate = gate; _config = config; }
 
     public async Task<BillingCenterSummary> GetSummaryAsync(Guid companyId, bool canPay, bool canManagePlan, CancellationToken ct = default)
     {
@@ -49,8 +51,8 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             sub.CancelAtPeriodEnd ? null : nextRenewalAt, sub.ScheduledPlan?.ToString(), sub.ScheduledPlanEffectiveAt,
             sub.CancelAtPeriodEnd, sub.CancelAtPeriodEnd ? sub.EndDate : null,
             !sub.CancelAtPeriodEnd && sub.Status is SubscriptionStatus.Active or SubscriptionStatus.Trial or SubscriptionStatus.PastDue,
-            SubscriptionCancelPolicy.ReactivateRefusal(sub.CancelAtPeriodEnd, sub.Status, sub.EndDate, now) == null,
-            SubscriptionCancelPolicy.Note(sub.CancelAtPeriodEnd, sub.EndDate));
+            SubscriptionCancelPolicy.ResumeRefusal(sub.CancelAtPeriodEnd, sub.Status, sub.EndDate, now) == null,
+            sub.CancelAtPeriodEnd ? SubscriptionCancelPolicy.Message(SubscriptionCancelPolicy.Outcome.AtPeriodEnd, sub.EndDate) : null);
 
         // ── ใบแจ้งหนี้ ──
         var invoices = platformId is Guid pid
@@ -76,7 +78,7 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             var open = PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue);
             pendingByInvoice.TryGetValue(inv.Id, out var pending);
             var reason = inv.Id == sub.RenewalInvoiceDocumentId && open
-                    && SubscriptionCancelPolicy.RenewalNotPayableReason(sub.CancelAtPeriodEnd) is string cancelled
+                    && PlatformInvoiceRules.RenewalNotPayableReason(sub.CancelAtPeriodEnd) is string cancelled
                 ? cancelled : PayRefusal(open, canPay, pending?.HasSlip == true, pending?.PaymentNumber);
             var lines = open && platformId is Guid p2
                 ? (await PlatformInvoiceQueries.LineSummaryAsync(_db, p2, inv.Id, LineTake, ct))
@@ -127,7 +129,7 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             AddOnPaymentPolicy.UsableWhilePending(f.PaymentStatus, f.PaymentAwaitingSince, now),
             f.SnapshotUnitPrice ?? f.AcceptedUnitPrice)).ToList();
 
-        var pay = await _pay.GetAsync(ct);
+        var pay = await Accounting.Controllers.PlatformPayInfo.BuildAsync(_db, _platform, _legal, ct);
         return new BillingCenterSummary(
             platformId != null,
             platformId == null
@@ -138,8 +140,7 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             openList.Where(i => i.State == nameof(PlatformInvoiceState.Overdue)).Sum(i => i.BalanceDue),
             openList.Count(i => i.State == nameof(PlatformInvoiceState.Overdue)),
             invoiceDtos, paymentDtos, addOns,
-            new { online = pay.Online, onlineNote = pay.OnlineNote, bankTransferInstructions = pay.BankTransferInstructions, fallbackNote = pay.FallbackNote },
-            new BillingCenterTerms(PlatformPurchaseTerms.Version, PlatformPurchaseTerms.Lines, PlatformPurchaseTerms.TermsUrl),
+            pay,
             PlatformBillingSettingsRules.DescribeSuspension(policy, mode == SubscriptionEnforcementMode.Enforce),
             canPay, canManagePlan);
     }

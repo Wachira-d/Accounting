@@ -43,7 +43,7 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
         // (PayerCompanyId — intent อยู่ใต้บริษัทผู้ให้บริการ ตรวจแล้วใน DispatchSucceededAsync ด้วย PlatformRevenueSource)
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == intent.SourceId)
-            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.RequestedPlan, p.RequestedBillingCycle })
+            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.RequestedPlan, p.RequestedBillingCycle, p.PlatformInvoiceDocumentId })
             .FirstOrDefaultAsync(ct);
         if (pay != null && !Accounting.Helpers.PlatformRevenueSource.SourceBelongsToPayer(intent.PayerCompanyId, pay.CompanyId))
         {
@@ -80,16 +80,20 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
 
         // รอบ 219 เฟส 0 (G-4): ยอดของรายการเคยมาจาก body ของผู้เช่า — ยืนยันอัตโนมัติได้เฉพาะเมื่อยอดตรงราคาแพ็กเกจที่เซิร์ฟเวอร์คำนวณ
         // (ตัวตั้งเดียว PlatformPlanPricing · ยอดที่มีส่วนลดโปรโมชัน = ไม่ตรงราคาเต็ม ⇒ แอดมินตรวจเอง — ไม่เดาว่าส่วนลดถูกต้อง)
-        var template = await _db.PlanTemplates.AsNoTracking()
+        // รอบ 219 เฟส 2 (ศูนย์บิล/ลิงก์ชำระ): รายการที่ผูกใบแจ้งหนี้ — ยอดมาจากยอดค้างของใบ (เซิร์ฟเวอร์) ไม่ใช่ราคาแพ็กเกจ ⇒ ยอดเงินเข้าตรงยอดรายการ (ตรวจแล้วข้างบน) พอ ·
+        // รายการแบบเดิมยังต้องตรงราคาเต็มของแพ็กเกจ
+        var template = pay.PlatformInvoiceDocumentId != null ? null : await _db.PlanTemplates.AsNoTracking()
             .FirstOrDefaultAsync(t => t.Plan == pay.RequestedPlan && t.IsActive, ct);
         var listPrice = template == null ? 0m : Accounting.Helpers.PlatformPlanPricing.AmountDue(template, pay.RequestedBillingCycle);
-        if (template == null || listPrice <= 0m || !Accounting.Helpers.PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m)
+        if (pay.PlatformInvoiceDocumentId == null
+            && (template == null || listPrice <= 0m || !Accounting.Helpers.PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m))
         {
             _logger.LogError("ยอดรายการค่าบริการ {No} ({Amount:N2}) ไม่สอดคล้องกับราคาแพ็กเกจ ({List:N2}) — ไม่อนุมัติอัตโนมัติ (intent {Intent})",
                 pay.PaymentNumber, pay.Amount, listPrice, intent.Id);
             throw new BusinessRuleException("ยอดของรายการชำระไม่สอดคล้องกับราคาแพ็กเกจ — ให้ผู้ดูแลระบบตรวจและอนุมัติเอง");
         }
 
+        if (pay.Amount <= 0m) throw new BusinessRuleException("ยอดรายการชำระเป็นศูนย์ — ให้ผู้ดูแลระบบตรวจเอง");
         await _subs.ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(
             Approve: true,
             ReviewNotes: $"ยืนยันอัตโนมัติจากการชำระเงินออนไลน์ · อ้างอิง {intent.ProviderRef ?? intent.Id.ToString("N")}",

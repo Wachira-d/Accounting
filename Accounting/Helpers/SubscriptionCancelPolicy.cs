@@ -2,40 +2,39 @@ using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
 
-public enum SubscriptionCancelMode
-{
-    /// <summary>ยกเลิกทันที — ทดลองใช้/ฟรีถาวร/หมดอายุ/เกินกำหนด (ไม่มีรอบที่ชำระแล้วเหลือ)</summary>
-    Immediate = 1,
-    /// <summary>ยกเลิกเมื่อสิ้นรอบ — ใช้ได้ต่อจนวันหมดอายุของรอบที่ชำระแล้ว ไม่ออกใบต่ออายุ ไม่ prorate (คำตัดสินเจ้าของข้อ 178 ⑥)</summary>
-    AtPeriodEnd = 2,
-}
-
 /// <summary>
-/// รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑥ · ข้อ 180) — <b>ตัวตัดสินการยกเลิกแพ็กเกจตัวเดียว (pure)</b>: ยกเลิกแบบไหน · กลับมาใช้ต่อได้ไหม ·
-/// ใบต่ออายุของรอบที่ยกเลิกไว้ห้ามจ่าย/ห้ามทวง · ข้อความที่ผู้เช่าเห็น
+/// รอบ 219 ส่วน B (คำตัดสินข้อ 179 — เจ้าของ: "ยกเลิก = ใช้ได้ถึงสิ้นรอบ") — <b>ตัวตัดสินเดียว</b>ของการยกเลิกแพ็กเกจ · pure
+/// <para><b>ที่มา</b>: <c>CancelSubscriptionAsync</c> เดิมตั้ง Cancelled ทันที ⇒ ผู้ที่จ่ายรายปีแล้วกดยกเลิกเสียสิทธิ์ที่เหลือทันที
+/// ขัดกับนโยบายคืนเงินฉบับตั้งต้น ("ไม่คืนเงิน · ยกเลิกมีผลสิ้นรอบ") — นโยบายต้องตรงกับพฤติกรรมระบบจริง</para>
 /// </summary>
 public static class SubscriptionCancelPolicy
 {
-    public static SubscriptionCancelMode Decide(SubscriptionStatus status, bool permanentFree, DateTime endUtc, DateTime nowUtc) =>
-        status == SubscriptionStatus.Active && !permanentFree && endUtc > nowUtc
-            ? SubscriptionCancelMode.AtPeriodEnd : SubscriptionCancelMode.Immediate;
+    public enum Outcome { Immediate, AtPeriodEnd }
 
-    /// <summary>กลับมาใช้ต่อ (ยกเลิกการยกเลิก) ได้เฉพาะก่อนสิ้นรอบ ขณะยัง Active</summary>
-    public static string? ReactivateRefusal(bool cancelAtPeriodEnd, SubscriptionStatus status, DateTime endUtc, DateTime nowUtc)
+    /// <summary>แพ็กเกจที่ใช้งานอยู่และยังมีรอบที่ชำระแล้วเหลือ ⇒ มีผลสิ้นรอบ · ทดลองใช้/หมดอายุ/ค้างชำระ/ฟรีถาวร/สิ้นรอบแล้ว ⇒ ทันที</summary>
+    public static Outcome Decide(SubscriptionStatus status, DateTime endDateUtc, DateTime nowUtc, bool isPermanentFree)
+        => status == SubscriptionStatus.Active && !isPermanentFree && endDateUtc > nowUtc ? Outcome.AtPeriodEnd : Outcome.Immediate;
+
+    /// <summary>ถึงเวลาเปลี่ยนเป็น Cancelled แล้วไหม (งานรายวัน) — ต้องเป็นแพ็กเกจที่ขอยกเลิกไว้และพ้นสิ้นรอบ</summary>
+    public static bool DueForCancellation(bool cancelAtPeriodEnd, SubscriptionStatus status, DateTime endDateUtc, DateTime nowUtc)
+        => cancelAtPeriodEnd && status == SubscriptionStatus.Active && endDateUtc <= nowUtc;
+
+    /// <summary>กลับมาใช้ต่อ (ยกเลิกการยกเลิก) ได้ไหม — null = ได้</summary>
+    public static string? ResumeRefusal(bool cancelAtPeriodEnd, SubscriptionStatus status, DateTime endDateUtc, DateTime nowUtc)
+        => !cancelAtPeriodEnd ? "แพ็กเกจนี้ไม่ได้อยู่ระหว่างรอยกเลิก"
+            : status != SubscriptionStatus.Active || endDateUtc <= nowUtc ? "พ้นวันสิ้นรอบแล้ว — สมัครแพ็กเกจใหม่จากหน้าแพ็กเกจ"
+            : null;
+
+    /// <summary>ข้อความถึงผู้ใช้หลังกดยกเลิก (หน้าเว็บแสดงตรง ๆ)</summary>
+    public static string Message(Outcome o, DateTime endDateUtc)
+        => o == Outcome.AtPeriodEnd
+            ? $"รับคำขอยกเลิกแล้ว — ใช้งานได้ตามสิทธิ์จนถึง {ThaiDateText(endDateUtc)} แล้วแพ็กเกจจะสิ้นสุด ไม่มีการเรียกเก็บรอบถัดไป (กลับมาใช้ต่อได้ก่อนวันดังกล่าว)"
+            : "ยกเลิกแพ็กเกจแล้ว";
+
+    /// <summary>วันที่แบบไทย (พ.ศ. · เวลาไทย) สำหรับข้อความ</summary>
+    private static string ThaiDateText(DateTime utc)
     {
-        if (!cancelAtPeriodEnd) return "แพ็กเกจนี้ไม่ได้ตั้งยกเลิกไว้";
-        if (status != SubscriptionStatus.Active || endUtc <= nowUtc)
-            return "รอบนี้สิ้นสุดแล้ว — กรุณาเลือกแพ็กเกจใหม่ที่หน้าแพ็กเกจ";
-        return null;
+        var bkk = utc.AddHours(7);
+        return $"{bkk.Day}/{bkk.Month}/{bkk.Year + 543}";
     }
-
-    /// <summary>ใบต่ออายุของรอบที่ผู้เช่ายกเลิกไว้ — ห้ามจ่าย (จ่าย = ต่ออายุ ขัดกับการยกเลิก) · ทางไปต่อ = กด "ใช้ต่อ" ก่อน</summary>
-    public static string? RenewalNotPayableReason(bool cancelAtPeriodEnd) => cancelAtPeriodEnd
-        ? "ยกเลิกการต่ออายุไว้แล้ว — ถ้าต้องการใช้ต่อ กด \"ใช้ต่อ\" ที่ศูนย์บิลก่อนชำระใบต่ออายุ"
-        : null;
-
-    /// <summary>ข้อความสถานะที่ผู้เช่าเห็น (ศูนย์บิล · ผลการกดยกเลิก)</summary>
-    public static string? Note(bool cancelAtPeriodEnd, DateTime endUtc) => cancelAtPeriodEnd
-        ? $"ยกเลิกแล้ว — ใช้งานได้ถึง {PlatformInvoiceRules.ThaiDate(endUtc):dd/MM/yyyy} · ไม่ออกใบแจ้งหนี้ต่ออายุ · ไม่คืนเงินตามสัดส่วน"
-        : null;
 }

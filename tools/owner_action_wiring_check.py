@@ -90,8 +90,6 @@ RULES = [
     (C + 'SubscriptionController.cs', 'ConvertTrial', 'body', gate_used(r'RequireOwnerAsync')),
     (C + 'SubscriptionController.cs', 'ChangePlan', 'body', gate_used(r'RequireOwnerAsync')),
     (C + 'SubscriptionController.cs', 'Cancel', 'body', gate_used(r'RequireOwnerAsync')),
-    # รอบ 219 เฟส 2 ขั้น 3: ใช้ต่อ (ยกเลิกการยกเลิกเมื่อสิ้นรอบ) — ด่านเจ้าของเดียวกับยกเลิก
-    (C + 'SubscriptionController.cs', 'Reactivate', 'body', gate_used(r'RequireOwnerAsync')),
     (C + 'SubscriptionController.cs', 'RequireOwnerAsync', 'body',
      r'=>\s*await\s+(?:Accounting\.Filters\.)?RequireOwnerAttribute\.DenyAsync\s*\('),
     (S + 'SubscriptionService.cs', 'ExtendTrialAsync', 'body', value_used(r'(?:Accounting\.Helpers\.)?TrialExtensionPolicy\.ResolveDays')),

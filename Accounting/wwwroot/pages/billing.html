@@ -55,6 +55,8 @@
     </div>
   </div>
 
+  <script src="/js/pay-widget.js"></script>
+  <script src="/js/policy-accept.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
@@ -159,6 +161,7 @@
         const po = d.payOptions || {};
         document.getElementById('payModalTitle').textContent = `ชำระใบแจ้งหนี้ ${i.documentNumber}`;
         document.getElementById('payOnlineBtn').style.display = po.online ? '' : 'none';
+        this._methods = po.methods || [];
         document.getElementById('payModalBody').innerHTML = `
           <div class="note" style="margin-bottom:10px"><b>ยอดที่ต้องชำระ ฿${Layout.money(i.balanceDue)}</b>
             ${(i.lineSummary || []).length ? `<div class="muted" style="margin-top:4px">${i.lineSummary.map(e).join('<br>')}</div>` : ''}</div>
@@ -171,12 +174,8 @@
             <label>วันที่โอน<input type="date" name="paymentDate" class="form-input"></label>
             <label>อ้างอิงการโอน (ถ้ามี)<input name="transferReference" maxlength="100" class="form-input"></label>
             <label>หมายเหตุ (เช่น หักภาษี ณ ที่จ่าย — แนบหนังสือรับรองกับสลิป)<input name="customerNotes" maxlength="500" class="form-input"></label>
-            <div class="note"><b>เงื่อนไขการชำระค่าบริการ (ฉบับ ${e(d.terms.version)})</b>
-              <ul class="terms">${d.terms.lines.map(l => `<li>${e(l)}</li>`).join('')}</ul>
-              <a href="${e(d.terms.termsUrl)}" target="_blank" rel="noopener">อ่านข้อกำหนดการใช้งานฉบับเต็ม</a></div>
-            <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="acceptTerms" value="true">
-              <span>ข้าพเจ้าอ่านและยอมรับเงื่อนไขการชำระค่าบริการข้างต้น</span></label>
-          </form>`;
+          </form>
+          <div id="billPolicy" style="margin-top:10px">${PolicyAccept.html(po.policy)}</div>`;
         Layout.openModal('payModal');
       },
       closePay() { Layout.closeModal('payModal'); },
@@ -184,10 +183,11 @@
       async submitSlip() {
         const form = document.getElementById('billSlipForm');
         if (!form.file.files.length) { Layout.toast('เลือกไฟล์สลิปก่อน', 'error'); return; }
-        if (!form.acceptTerms.checked) { Layout.toast('กรุณาติ๊กยอมรับเงื่อนไขก่อนชำระ', 'error'); return; }
+        let pol;
+        try { pol = PolicyAccept.require('billPolicy'); } catch (e) { Layout.toast(e.message, 'error'); return; }
         const fd = new FormData(form);
-        fd.set('acceptTerms', 'true');
-        fd.set('termsVersion', this.data.terms.version);
+        fd.set('policyAccepted', String(pol.policyAccepted));
+        if (pol.policyVersionShown) fd.set('policyVersionShown', pol.policyVersionShown);
         const btn = document.getElementById('paySubmit'); btn.disabled = true;
         try {
           const res = await API.upload(`${this.base()}/invoices/${this._payId}/slip`, fd);
@@ -197,13 +197,20 @@
         finally { btn.disabled = false; }
       },
 
+      // ชำระออนไลน์ = ช่องทางของ NextAcc (part B) ผ่าน PayWidget ตัวเดียว — เซิร์ฟเวอร์สร้างรายการชำระที่ผูกใบ (ยอดจากใบ) แล้วคืนเส้นทางของ part B
       async payOnline() {
-        const form = document.getElementById('billSlipForm');
-        if (!form.acceptTerms.checked) { Layout.toast('กรุณาติ๊กยอมรับเงื่อนไขก่อนชำระ', 'error'); return; }
+        let pol;
+        try { pol = PolicyAccept.require('billPolicy'); } catch (e) { Layout.toast(e.message, 'error'); return; }
         try {
-          const res = await API.post(`${this.base()}/invoices/${this._payId}/pay-online`,
-            { method: 'PromptPay', returnUrl: location.href, acceptTerms: true, termsVersion: this.data.terms.version });
-          if (res?.data?.redirectUrl) location.href = res.data.redirectUrl;
+          const res = await API.post(`${this.base()}/invoices/${this._payId}/online-payment`, pol);
+          this.closePay();
+          PayWidget.open({
+            companyId: this.cid(),
+            publicBase: res.data.publicBase,
+            method: (res.data.methods || this._methods || [])[0] || 'PromptPay',
+            extraBody: pol,
+            onPaid: async () => { Layout.toast('ชำระเงินสำเร็จ — รอระบบยืนยัน', 'success'); await this.load(); },
+          });
         } catch (e) { Layout.toast(e.message || 'ชำระออนไลน์ไม่สำเร็จ', 'error'); }
       },
 
@@ -213,7 +220,7 @@
         catch (e) { Layout.toast(e.message, 'error'); }
       },
       async reactivate() {
-        try { const r = await API.post(`/api/subscription/${this.cid()}/reactivate`, {}); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load(); }
+        try { const r = await API.post(`/api/subscription/${this.cid()}/cancel/undo`, {}); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await this.load(); }
         catch (e) { Layout.toast(e.message, 'error'); }
       },
     };

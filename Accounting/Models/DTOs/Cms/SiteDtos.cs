@@ -76,6 +76,14 @@ public class UpdateSiteRequest
     /// <summary>รอบ 214: ข้อความนโยบาย/ข้อกำหนดที่ร้านเขียนเอง (markdown ชุดย่อย) · "" = กลับไปใช้แม่แบบของระบบ · null = ไม่เปลี่ยน</summary>
     public string? PrivacyPolicyMarkdown { get; set; }
     public string? TermsOfServiceMarkdown { get; set; }
+    /// <summary>รอบ 219 ส่วน B: นโยบายการยกเลิกและคืนเงินของร้าน — ลิงก์ ("" = ล้าง) · ข้อความที่เขียนเอง ("" = แม่แบบ) · null = ไม่เปลี่ยน</summary>
+    public string? RefundPolicyUrl { get; set; }
+    public string? RefundPolicyMarkdown { get; set; }
+    /// <summary>จำนวนวันแจ้งคืนสินค้า / วันดำเนินการคืนเงิน (1–365) · 0 = กลับไปค่าเริ่มต้น · null = ไม่เปลี่ยน</summary>
+    public int? RefundReturnWindowDays { get; set; }
+    public int? RefundProcessingDays { get; set; }
+    /// <summary>ข้อความช่องติ๊กยอมรับนโยบายบนหน้าเช็กเอาต์/จอง · "" = ข้อความมาตรฐาน · null = ไม่เปลี่ยน</summary>
+    public string? PolicyAcceptanceText { get; set; }
     /// <summary>รอบ 209 P6 (ฑ): บังคับติ๊กยินยอมบนฟอร์มหน้าเว็บ · null = ไม่เปลี่ยน</summary>
     public bool? RequireDataConsent { get; set; }
     /// <summary>ข้อความยินยอม · "" = กลับไปใช้ข้อความมาตรฐาน · null = ไม่เปลี่ยน</summary>
@@ -133,6 +141,14 @@ public class SiteResponse
     public DateTime? TermsOfServiceUpdatedAt { get; set; }
     public string PrivacyLegalMode { get; set; } = "default";
     public string TermsLegalMode { get; set; } = "default";
+    /// <summary>รอบ 219 ส่วน B: นโยบายคืนเงินของร้าน (echo ครบทุกช่องที่รับ) · <c>RefundLegalMode</c> = ผล <c>CmsLegalPages.Resolve</c></summary>
+    public string? RefundPolicyUrl { get; set; }
+    public string? RefundPolicyMarkdown { get; set; }
+    public DateTime? RefundPolicyUpdatedAt { get; set; }
+    public int? RefundReturnWindowDays { get; set; }
+    public int? RefundProcessingDays { get; set; }
+    public string? PolicyAcceptanceText { get; set; }
+    public string RefundLegalMode { get; set; } = "default";
     /// <summary>ฝ่ายค้านรอบ 214 S4 + หมายเหตุ: คำเตือนของส่วนนโยบายบน cms-edit (ตัวตนร้านที่ขาด · ลิงก์เดิมที่ใช้ไม่ได้) — เซิร์ฟเวอร์ประกอบ</summary>
     public List<string> LegalWarnings { get; set; } = new();
     public bool RequireDataConsent { get; set; }

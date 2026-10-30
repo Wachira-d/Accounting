@@ -325,14 +325,10 @@ builder.Services.AddScoped<IPlatformBillingDocumentIssuer, PlatformBillingDocume
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
 // รอบ 219 เฟส 2 (คำตัดสินข้อ 180) — เก็บค่าบริการ NextAcc ได้จริง: ค่าตั้งการเรียกเก็บ · ศูนย์บิลของผู้เช่า · ช่องทางชำระ
 builder.Services.AddScoped<IPlatformBillingSettingsService, PlatformBillingSettingsService>();
-builder.Services.AddScoped<IPlatformPayOptionsService, PlatformPayOptionsService>();
 builder.Services.AddScoped<IPlatformBillingCenterService, PlatformBillingCenterService>();
 builder.Services.AddScoped<IPlatformBillingNotifier, PlatformBillingNotifier>();   // ขั้น 2 — ส่งใบ/แจ้งเตือน (อีเมลระบบ + LINE OA กลาง · คีย์กันซ้ำ)
 builder.Services.AddScoped<IPlatformDunningService, PlatformDunningService>();
 builder.Services.AddScoped<IPlatformPaymentLinkService, PlatformPaymentLinkService>();   // ขั้น 4 — ลิงก์ชำระใบแจ้งหนี้ (โทเคน hash · audit)     // ขั้น 2 — ทวงหนี้/ระงับ/คืนสถานะต่อบริษัท
-// ช่องเสียบชำระออนไลน์ของ NextAcc — ค่าตั้งต้น "ยังไม่เปิด" (โอน+สลิป) · part B (IPlatformPaymentService · Omise ของ NextAcc) ลงทะเบียน adapter ของตัวเอง
-// หลังบรรทัดนี้ (ตัวที่ลงทะเบียนทีหลังชนะ) — ดู Services/Implementations/PlatformPayOptions.cs
-builder.Services.AddScoped<IPlatformOnlinePaymentPort, UnconfiguredPlatformOnlinePayment>();
 // นับ/คิดเงินการใช้งานรายหน่วย (ACCOUNT_STRUCTURE.md §6) — ไม่ throw ทุกกรณี
 // เพื่อไม่ให้ระบบเก็บเงินทำให้งานหลักของลูกค้าพัง
 builder.Services.AddScoped<IUsageMeteringService, UsageMeteringService>();
@@ -376,6 +372,12 @@ builder.Services.AddHttpClient(
     c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentIntentService,
     Accounting.Services.Payments.PaymentIntentService>();
+// รอบ 219 ส่วน B (คำตัดสินข้อ 179): งานตั้งค่าผู้ให้บริการรับชำระ (คีย์ · ทดสอบสองชุด · ด่านเปิด live · ปิดฉุกเฉิน · ทดลองจ่าย) ตัวเดียวของร้านและแพลตฟอร์ม
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentProviderConfigService,
+    Accounting.Services.Payments.PaymentProviderConfigService>();
+// รอบ 219 ส่วน B: ชำระค่าบริการ NextAcc ออนไลน์ผ่านช่องทางของแพลตฟอร์ม (intent ใต้บริษัทผู้ให้บริการ + ผู้จ่าย) — ไม่ใช่ gateway ของร้าน
+builder.Services.AddScoped<Accounting.Services.Payments.IPlatformPaymentService,
+    Accounting.Services.Payments.PlatformPaymentService>();
 // ผังบัญชีขา "เงินเข้า" (ธนาคาร vs บัญชีพัก 11340) — แยกเป็นบริการของตัวเองโดยตั้งใจ:
 // ถ้าอยู่ใน PaymentIntentService จะเกิด **วงกลม DI** เพราะ handler ต้องเรียกมัน
 // แต่ตัวมันรับ IEnumerable<IPaymentCompletionHandler> อยู่แล้ว
@@ -423,6 +425,9 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandle
 // รอบ 205 W2 (R-08): มัดจำการจองนัดหมาย (CMS booking) — เงินเข้า ⇒ CmsBookingService.RecordDepositPaymentAsync
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.SiteBookingPaymentHandler>();
+// รอบ 219 ส่วน B: ทดลองจ่าย ฿20 โหมดทดสอบ — ประทับผลอย่างเดียว ไม่ลงบัญชี
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.GatewaySelfTestPaymentHandler>();
 // (3-way match endpoint ProcurementController/GrnMatchService ถูกลบ 2026-10-08 ตามคำตัดสินเจ้าของ — ไม่มีหน้าใดเรียก และผิดบนเส้น GRN→PI ปกติ ·
 // ด่านจริงคือ F20 ตอนอนุมัติใบแจ้งหนี้ซื้อ + PurchaseReceiptRoute)
 // Cheque lifecycle — book ordering, issuance, clearing, bouncing,

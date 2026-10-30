@@ -27,6 +27,7 @@
   <!-- รอบ 219 เฟส 2 ขั้น 4 (คำตัดสินข้อ 180): ลิงก์ชำระใบแจ้งหนี้ค่าบริการ NextAcc — ทุกค่ามาจาก GET /api/platform-pay/links/{token} (เซิร์ฟเวอร์ตัดสิน) ·
        ไม่ขอรหัสผ่าน/ข้อมูลบัตรบนหน้านี้ · เนื้อหาจากเซิร์ฟเวอร์ escape ทุกช่อง -->
   <div class="wrap" id="app"><div class="card">กำลังโหลด...</div></div>
+  <script src="/js/policy-accept.js"></script>
   <script>
     const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     const money = n => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -66,22 +67,22 @@
             <label>วันที่โอน<input type="date" name="paymentDate"></label>
             <label>อ้างอิงการโอน (ถ้ามี)<input type="text" name="transferReference" maxlength="100"></label>
             <label>หมายเหตุ (เช่น หักภาษี ณ ที่จ่าย)<input type="text" name="customerNotes" maxlength="500"></label>
-            <div class="note"><b>เงื่อนไขการชำระค่าบริการ (ฉบับ ${esc(v.terms.version)})</b>
-              <ul class="terms">${v.terms.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul>
-              <a href="${esc(v.terms.termsUrl)}" target="_blank" rel="noopener">อ่านข้อกำหนดการใช้งานฉบับเต็ม</a></div>
-            <label style="flex-direction:row;align-items:flex-start;gap:8px"><input type="checkbox" name="acceptTerms" value="true">
-              <span>ข้าพเจ้าอ่านและยอมรับเงื่อนไขการชำระค่าบริการข้างต้น</span></label>
-            <button type="button" id="send" onclick="sendSlip()">ส่งสลิปแจ้งชำระ</button>
           </form>
+          <div id="pol" style="margin:10px 0">${PolicyAccept.html(po.policy)}</div>
+          <button type="button" id="send" onclick="sendSlip()">ส่งสลิปแจ้งชำระ</button>
+          ${po.online ? `<button type="button" style="margin-top:8px;background:#0f766e" onclick="payOnline()">ชำระออนไลน์</button>` : ''}
+          <div id="online"></div>
         </div>` : ''}`;
     }
 
     async function sendSlip() {
       const f = document.getElementById('f');
       if (!f.file.files.length) { alert('กรุณาเลือกไฟล์สลิป'); return; }
-      if (!f.acceptTerms.checked) { alert('กรุณาติ๊กยอมรับเงื่อนไขก่อนชำระ'); return; }
+      let pol;
+      try { pol = PolicyAccept.require('pol'); } catch (e) { alert(e.message); return; }
       const fd = new FormData(f);
-      fd.set('acceptTerms', 'true'); fd.set('termsVersion', view.terms.version);
+      fd.set('policyAccepted', String(pol.policyAccepted));
+      if (pol.policyVersionShown) fd.set('policyVersionShown', pol.policyVersionShown);
       const b = document.getElementById('send'); b.disabled = true;
       try {
         const r = await fetch(`${api}/slip`, { method: 'POST', body: fd });
@@ -89,6 +90,28 @@
         if (!r.ok || !j?.success) throw new Error(j?.message || 'ส่งไม่สำเร็จ');
         alert(j.message || 'ส่งแล้ว'); await load();
       } catch (e) { alert(e.message); } finally { b.disabled = false; }
+    }
+    // ชำระออนไลน์ผ่านช่องทางของ NextAcc (part B) — ไปหน้าธนาคาร/บัตร หรือแสดง QR แล้วถามสถานะจากเซิร์ฟเวอร์ (ไม่เชื่อ query string)
+    async function payOnline() {
+      let pol;
+      try { pol = PolicyAccept.require('pol'); } catch (e) { alert(e.message); return; }
+      const method = (view.payOptions.methods || [])[0] || 'PromptPay';
+      try {
+        const r = await fetch(`${api}/intents`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({ method, returnUrl: location.href }, pol)) });
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j?.success) throw new Error(j?.message || 'เริ่มชำระไม่สำเร็จ');
+        if (j.data.authorizeUrl) { location.href = j.data.authorizeUrl; return; }
+        document.getElementById('online').innerHTML = `<div class="note">สแกนจ่ายด้วยแอปธนาคาร (PromptPay) ยอด ฿${money(j.data.amount)}
+          <div style="word-break:break-all;font-family:monospace;font-size:11px;margin-top:6px">${esc(j.data.qrPayload || '')}</div>
+          <button type="button" style="margin-top:8px" onclick="checkIntent('${esc(j.data.id)}')">ตรวจสถานะการชำระ</button></div>`;
+      } catch (e) { alert(e.message); }
+    }
+    async function checkIntent(id) {
+      const r = await fetch(`${api}/intents/${encodeURIComponent(id)}`, { cache: 'no-store' });
+      const j = await r.json().catch(() => null);
+      if (j?.data?.status === 'Succeeded') { alert('ชำระสำเร็จ — ขอบคุณค่ะ'); load(); }
+      else alert(j?.data?.failureMessage || 'ยังไม่ได้รับเงิน — ลองตรวจสถานะอีกครั้งในอีกสักครู่');
     }
     load();
   </script>

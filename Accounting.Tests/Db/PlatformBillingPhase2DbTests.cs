@@ -24,8 +24,6 @@ public class PlatformBillingPhase2DbTests
 
     private static INotificationService Notifications() => F4Proxy<INotificationService>.Create((_, _) => null);
 
-    private static PlatformPurchaseAcceptanceInput Accept(bool ok = true, string? version = null) =>
-        new(ok, version ?? PlatformPurchaseTerms.Version, "owner@example.com", "billing-center", "10.0.0.1", "xunit");
 
     internal sealed record Fixture(Guid PlatformId, Guid BuyerId, Subscription Sub, Guid ContactId);
 
@@ -158,7 +156,7 @@ public class PlatformBillingPhase2DbTests
     // ═══════════════ ขั้น 1: แจ้งชำระใบแจ้งหนี้ (ศูนย์บิล) ═══════════════
 
     [Fact]
-    public async Task Invoice_payment_scoped_to_buyer_amount_from_server_terms_required_and_does_not_extend()
+    public async Task Invoice_payment_scoped_to_buyer_amount_from_server_and_does_not_extend()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
@@ -176,30 +174,20 @@ public class PlatformBillingPhase2DbTests
             var req = new SubmitInvoicePaymentRequest(DateTime.UtcNow, "REF-1", "กสิกร", null);
 
             // ใบของบริษัทอื่น = ไม่พบ (ไม่บอกว่ามีอยู่)
-            await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.SubmitInvoicePaymentAsync(a.BuyerId, invB.Id, req, Accept(), "owner"));
-            // ไม่ติ๊กยอมรับ ⇒ 400 · ฉบับเก่า ⇒ 409 · ไม่เกิดรายการ
-            var notAccepted = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.SubmitInvoicePaymentAsync(a.BuyerId, invA.Id, req, Accept(false), "owner"));
-            Assert.Equal(400, notAccepted.StatusCode);
-            var stale = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.SubmitInvoicePaymentAsync(a.BuyerId, invA.Id, req, Accept(true, "2020-01-01.1"), "owner"));
-            Assert.Equal(409, stale.StatusCode);
+            await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.SubmitInvoicePaymentAsync(a.BuyerId, invB.Id, req, "owner"));
             // ใบชำระครบแล้ว ⇒ 409
-            var closed = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.SubmitInvoicePaymentAsync(a.BuyerId, paid.Id, req, Accept(), "owner"));
+            var closed = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.SubmitInvoicePaymentAsync(a.BuyerId, paid.Id, req, "owner"));
             Assert.Equal(409, closed.StatusCode);
             Assert.Equal(0, await db.SubscriptionPayments.CountAsync(p => p.SubscriptionId == a.Sub.Id));
 
-            // ผ่าน: ยอดจากใบ · ผูกใบ · ไม่มีเดือนต่ออายุ · หลักฐานการยอมรับตรวจกลับได้
-            var pay = await svc.SubmitInvoicePaymentAsync(a.BuyerId, invA.Id, req, Accept(), "owner");
+            // ผ่าน: ยอดจากใบ · ผูกใบ · ไม่มีเดือนต่ออายุ (ติ๊กยอมรับนโยบายตรวจที่ผู้เรียก — part B · ล็อกด้วย required_call_site_check)
+            var pay = await svc.SubmitInvoicePaymentAsync(a.BuyerId, invA.Id, req, "owner");
             Assert.Equal(535m, pay.Amount);
             Assert.Equal(0, pay.RequestedPeriodMonths);
             Assert.Equal(invA.Id, pay.PlatformInvoiceDocumentId);
-            var row = await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == pay.Id);
-            var acc = await db.PlatformPurchaseAcceptances.AsNoTracking().SingleAsync(x => x.Id == row.PolicyAcceptanceId);
-            Assert.Equal(PlatformPurchaseTerms.KindInvoicePayment, acc.SubjectKind);
-            Assert.Equal(PdpaConsentEvidence.EvidenceCheck.Valid, PdpaConsentEvidence.Check(acc.EvidenceHash, acc.Subject,
-                PlatformPurchaseTerms.Purpose, acc.PolicyVersion, acc.AcceptedAt, acc.Channel, acc.IpAddress, acc.UserAgent));
 
             // กดซ้ำก่อนแนบสลิป = รายการเดิม (ไม่เกิดรายการซ้อน)
-            var again = await svc.SubmitInvoicePaymentAsync(a.BuyerId, invA.Id, req, Accept(), "owner");
+            var again = await svc.SubmitInvoicePaymentAsync(a.BuyerId, invA.Id, req, "owner");
             Assert.Equal(pay.Id, again.Id);
 
             // แอดมินอนุมัติ ⇒ ตัดหนี้อย่างเดียว: วันหมดอายุ/แพ็กเกจไม่ขยับ
@@ -227,7 +215,7 @@ public class PlatformBillingPhase2DbTests
         await WithPlatformTenantAsync(db, f.PlatformId, async () =>
         {
             var svc = new SubscriptionService(db, Notifications());
-            var pay = await svc.SubmitInvoicePaymentAsync(f.BuyerId, inv.Id, new SubmitInvoicePaymentRequest(null, null, null, null), Accept(), "owner");
+            var pay = await svc.SubmitInvoicePaymentAsync(f.BuyerId, inv.Id, new SubmitInvoicePaymentRequest(null, null, null, null), "owner");
             Assert.Equal(1, pay.RequestedPeriodMonths);   // ใบต่ออายุรายเดือน ⇒ 1 เดือน
             await svc.ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, null, null), "admin", systemConfirmed: true);
             var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id);
@@ -334,56 +322,36 @@ public class PlatformBillingPhase2DbTests
         Assert.All(rows, r => Assert.Equal(PlatformBillingNotifier.StatusSkipped, r.Status));
     }
 
-    // ═══════════════ ขั้น 3: ยกเลิกเมื่อสิ้นรอบ · วิธีชำระส่วนเสริม · ใบต่ออายุที่ล้าสมัย (S9) ═══════════════
+    // ═══════════════ ขั้น 3: ใบต่ออายุของรอบที่ยกเลิก (part B) · วิธีชำระส่วนเสริม · ใบต่ออายุที่ล้าสมัย (S9) ═══════════════
 
     [Fact]
-    public async Task Cancel_keeps_access_to_period_end_reactivate_and_expiry_cancels_without_renewal()
+    public async Task Renewal_invoice_of_cancelled_subscription_is_not_payable_and_not_dunned_until_resumed()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
-        var f = await SeedAsync(db);
-        var renewal = await InvoiceAsync(db, f, PlatformInvoiceRules.RenewalReferencePrefix + "C", 990m, f.Sub.EndDate);
+        var f = await SeedAsync(db, endInDays: 3);
+        var renewal = await InvoiceAsync(db, f, PlatformInvoiceRules.RenewalReferencePrefix + "C", 990m, DateTime.UtcNow.AddDays(-30));
         var sub = await db.Subscriptions.FirstAsync(s => s.Id == f.Sub.Id);
         sub.RenewalInvoiceDocumentId = renewal.Id; sub.RenewalInvoiceForEndDate = sub.EndDate; sub.RenewalInvoiceNumber = renewal.DocumentNumber;
         await db.SaveChangesAsync();
         var svc = new SubscriptionService(db, Notifications());
-
-        var msg = await svc.CancelSubscriptionAsync(f.BuyerId, "owner");
-        Assert.Contains("ใช้งานได้ถึง", msg);
-        var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id);
-        Assert.Equal(SubscriptionStatus.Active, after.Status);   // ใช้ได้ถึงสิ้นรอบ (ไม่ตัดทันที)
-        Assert.True(after.CancelAtPeriodEnd);
+        await svc.CancelSubscriptionAsync(f.BuyerId, "owner");   // part B: ใช้ได้ถึงสิ้นรอบ
+        Assert.True((await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id)).CancelAtPeriodEnd);
 
         await WithPlatformTenantAsync(db, f.PlatformId, async () =>
         {
-            // ใบต่ออายุของรอบที่ยกเลิกไว้ ⇒ จ่ายไม่ได้ (ทางไปต่อ = ใช้ต่อ)
             var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.SubmitInvoicePaymentAsync(f.BuyerId, renewal.Id,
-                new SubmitInvoicePaymentRequest(null, null, null, null), Accept(), "owner"));
+                new SubmitInvoicePaymentRequest(null, null, null, null), "owner"));
             Assert.Equal("PLATFORM-RENEWAL-CANCELLED", ex.RuleCode);
+            var dunning = new PlatformDunningService(db, new CountingNotifier(), Gate(SubscriptionEnforcementMode.Enforce), EmptyConfig(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<PlatformDunningService>.Instance);
+            Assert.Equal(DunningAction.None, (await dunning.EvaluateCompanyAsync(f.BuyerId, false))!.Action);   // ไม่ระงับเพราะใบของรอบที่ยกเลิก
+
+            // ทิศตรงข้าม: กลับมาใช้ต่อ ⇒ ใบต่ออายุกลับเป็นหนี้ปกติ (จ่ายได้ · นับทวงหนี้)
+            await svc.ResumeSubscriptionAsync(f.BuyerId, "owner");
+            var pay = await svc.SubmitInvoicePaymentAsync(f.BuyerId, renewal.Id, new SubmitInvoicePaymentRequest(null, null, null, null), "owner");
+            Assert.Equal(renewal.Id, pay.PlatformInvoiceDocumentId);
         });
-
-        // ใช้ต่อ ⇒ ล้างการยกเลิก · ใช้ต่อซ้ำ ⇒ 409
-        await svc.ReactivateSubscriptionAsync(f.BuyerId, "owner");
-        Assert.False((await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id)).CancelAtPeriodEnd);
-        await Assert.ThrowsAsync<BusinessRuleException>(() => svc.ReactivateSubscriptionAsync(f.BuyerId, "owner"));
-
-        // ยกเลิกอีกครั้งแล้วถึงวันครบรอบ ⇒ Cancelled (ไม่ใช่ PastDue)
-        await svc.CancelSubscriptionAsync(f.BuyerId, "owner");
-        var s2 = await db.Subscriptions.FirstAsync(s => s.Id == f.Sub.Id);
-        s2.EndDate = DateTime.UtcNow.AddMinutes(-5);
-        await db.SaveChangesAsync();
-        await svc.ProcessExpiredSubscriptionsAsync();
-        Assert.Equal(SubscriptionStatus.Cancelled, (await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id)).Status);
-    }
-
-    [Fact]
-    public async Task Trial_cancel_is_immediate()
-    {
-        using var db = DbTestDatabase.TryCreateContext();
-        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
-        var f = await SeedAsync(db, status: SubscriptionStatus.Trial, plan: SubscriptionPlan.FreeTrial);
-        await new SubscriptionService(db, Notifications()).CancelSubscriptionAsync(f.BuyerId, "owner");
-        Assert.Equal(SubscriptionStatus.Cancelled, (await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == f.Sub.Id)).Status);
     }
 
     private static async Task<(Guid CompanyId, string Code)> SeedPaidAddOnAsync(Accounting.Data.AccountingDbContext db)
@@ -398,26 +366,24 @@ public class PlatformBillingPhase2DbTests
     }
 
     [Fact]
-    public async Task Addon_purchase_requires_choice_and_terms_monthly_invoice_skips_upfront()
+    public async Task Addon_purchase_requires_choice_monthly_invoice_skips_upfront()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var (cid, code) = await SeedPaidAddOnAsync(db);
         var metering = new UsageMeteringService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<UsageMeteringService>.Instance);
 
-        // ไม่เลือกวิธีชำระ ⇒ 400 · ไม่ติ๊ก ⇒ 400 · ไม่มีแถวเปิดใช้
-        var noChoice = await Assert.ThrowsAsync<BusinessRuleException>(() => metering.SetFeatureEnabledAsync(cid, code, true, "owner", null, Accept()));
+        // ไม่เลือกวิธีชำระ ⇒ 400 · ไม่มีแถวเปิดใช้
+        var noChoice = await Assert.ThrowsAsync<BusinessRuleException>(() => metering.SetFeatureEnabledAsync(cid, code, true, "owner", (AddOnBillingChoice?)null));
         Assert.Equal("ADDON-CHOICE-REQUIRED", noChoice.RuleCode);
-        await Assert.ThrowsAsync<BusinessRuleException>(() => metering.SetFeatureEnabledAsync(cid, code, true, "owner", AddOnBillingChoice.MonthlyInvoice, Accept(false)));
         Assert.False(await db.CompanyFeatures.AnyAsync(x => x.CompanyId == cid && x.FeatureCode == code && x.IsEnabled));
 
         // รวมใบรายเดือน ⇒ ใช้ได้ทันที · ไม่มีงวดจ่ายล่วงหน้า · หลักฐานการยอมรับ
-        await metering.SetFeatureEnabledAsync(cid, code, true, "owner", AddOnBillingChoice.MonthlyInvoice, Accept());
+        await metering.SetFeatureEnabledAsync(cid, code, true, "owner", AddOnBillingChoice.MonthlyInvoice);
         var row = await db.CompanyFeatures.AsNoTracking().SingleAsync(x => x.CompanyId == cid && x.FeatureCode == code);
         Assert.Equal(AddOnPaymentStatus.NotRequired, row.PaymentStatus);
         Assert.Null(row.UpfrontPeriod);
         Assert.Equal(AddOnBillingChoice.MonthlyInvoice, row.BillingChoice);
-        Assert.True(await db.PlatformPurchaseAcceptances.AnyAsync(a => a.SubjectId == row.Id && a.SubjectKind == PlatformPurchaseTerms.KindAddOn));
         Assert.True(await metering.IsFeatureEnabledAsync(cid, code));
         // ค่าเหมาเดือนนี้เข้าใบรายเดือนเต็ม (ไม่ ฿0 — ไม่ได้จ่ายล่วงหน้า)
         var period = AddOnBilling.PeriodOf(DateTime.UtcNow);
@@ -425,8 +391,8 @@ public class PlatformBillingPhase2DbTests
         Assert.Equal(299m, charged.ChargedAmount);
 
         // ปิดแล้วเปิดใหม่เลือกจ่ายล่วงหน้างวดเดียวกัน ⇒ 409 (เก็บซ้ำ)
-        await metering.SetFeatureEnabledAsync(cid, code, false, "owner", null, null);
-        var dup = await Assert.ThrowsAsync<BusinessRuleException>(() => metering.SetFeatureEnabledAsync(cid, code, true, "owner", AddOnBillingChoice.Upfront, Accept()));
+        await metering.SetFeatureEnabledAsync(cid, code, false, "owner", (AddOnBillingChoice?)null);
+        var dup = await Assert.ThrowsAsync<BusinessRuleException>(() => metering.SetFeatureEnabledAsync(cid, code, true, "owner", AddOnBillingChoice.Upfront));
         Assert.Equal(409, dup.StatusCode);
     }
 
@@ -437,7 +403,7 @@ public class PlatformBillingPhase2DbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var (cid, code) = await SeedPaidAddOnAsync(db);
         var metering = new UsageMeteringService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<UsageMeteringService>.Instance);
-        await metering.SetFeatureEnabledAsync(cid, code, true, "owner", AddOnBillingChoice.Upfront, Accept());
+        await metering.SetFeatureEnabledAsync(cid, code, true, "owner", AddOnBillingChoice.Upfront);
         var row = await db.CompanyFeatures.AsNoTracking().SingleAsync(x => x.CompanyId == cid && x.FeatureCode == code);
         Assert.Equal(AddOnPaymentStatus.AwaitingPayment, row.PaymentStatus);
         Assert.NotNull(row.UpfrontPeriod);
@@ -496,6 +462,90 @@ public class PlatformBillingPhase2DbTests
             Assert.True(await db.SubscriptionHistories.AnyAsync(h => h.SubscriptionId == sub.Id && h.Action == "StaleRenewalInvoiceNeedsCreditNote"));
             Assert.True(await db.AuditLogs.AnyAsync(a => a.EntityId == partly.Id.ToString()
                 && a.NewValues!.Contains(SaasBillingDocumentService.RuleStaleCreditNote)));
+        });
+    }
+
+    // ═══════════════ ขั้น 4: ลิงก์ชำระ ═══════════════
+
+    private static ILegalDocumentService Legal() => F4Proxy<ILegalDocumentService>.Create((name, _) =>
+        name == nameof(ILegalDocumentService.GetPurchasePolicyVersionAsync) ? new LegalPurchasePolicyVersion("t1", "r1", "v-test", true) : null);
+
+    private static Accounting.Services.Payments.IPlatformPaymentService Platform() => F4Proxy<Accounting.Services.Payments.IPlatformPaymentService>.Create((name, _) =>
+        name == nameof(Accounting.Services.Payments.IPlatformPaymentService.StatusAsync)
+            ? new Accounting.Services.Payments.PlatformPayStatus(false, false, null, null, Array.Empty<string>(), "ยังไม่ตั้ง") : null);
+
+    private static PlatformPaymentLinkService Links(Accounting.Data.AccountingDbContext db) => new(db, Platform(), Legal());
+
+    [Fact]
+    public async Task Payment_link_hash_only_wrong_token_expired_revoked_paid_and_cross_invoice()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var f = await SeedAsync(db);
+        var invA = await InvoiceAsync(db, f, PlatformInvoiceRules.UsageReferencePrefix + "LA", 400m, DateTime.UtcNow.AddDays(5));
+        var invB = await InvoiceAsync(db, f, PlatformInvoiceRules.UsageReferencePrefix + "LB", 700m, DateTime.UtcNow.AddDays(5));
+        var admin = new PlatformBillingActor(null, "admin@example.com", "127.0.0.1");
+
+        await WithPlatformTenantAsync(db, f.PlatformId, async () =>
+        {
+            var svc = Links(db);
+            var created = await svc.CreateAsync(invA.Id, null, admin);
+            var row = await db.PlatformPaymentLinks.AsNoTracking().SingleAsync(l => l.Id == created.Id);
+            Assert.NotEqual(created.Token, row.TokenHash);                       // ฐานไม่มีโทเคนจริง
+            Assert.Equal(PlatformPaymentLinkRules.Hash(created.Token), row.TokenHash);
+            Assert.True(created.Token.Length >= 22);                             // 128 บิต
+            Assert.InRange((row.ExpiresAt - DateTime.UtcNow).TotalDays, 13.9, 14.1);   // ค่าตั้งต้น 14 วัน
+
+            // โทเคนผิด/รูปผิด = ไม่พบ
+            Assert.Null(await svc.ViewAsync("x" + created.Token[1..], null));
+            Assert.Null(await svc.ViewAsync("<script>", null));
+
+            var view = await svc.ViewAsync(created.Token, "10.0.0.9");
+            Assert.Equal(nameof(PaymentLinkState.Valid), view!.State);
+            Assert.Equal(400m, view.AmountDue);
+            Assert.Equal(invA.DocumentNumber, view.InvoiceNumber);   // ใบของลิงก์เท่านั้น
+            Assert.True(await db.AuditLogs.AnyAsync(a => a.EntityId == created.Id.ToString() && a.NewValues!.Contains(PlatformPaymentLinkService.RuleView)));
+
+            // แจ้งชำระผ่านลิงก์ ⇒ ใบ A เท่านั้น (ข้ามใบไม่ได้ — ใบมาจากลิงก์ ไม่ใช่ body)
+            var target = await svc.ResolveForPaymentAsync(created.Token);
+            Assert.Equal(invA.Id, target!.Value.DocumentId);
+            // ไม่ติ๊ก/ฉบับเก่า ⇒ ปฏิเสธ (ด่าน part B) · ติ๊กฉบับปัจจุบัน ⇒ หลักฐานผูกใบ ตรวจกลับได้
+            await Assert.ThrowsAsync<BusinessRuleException>(() => svc.EnforcePolicyAsync(created.Id, f.BuyerId, invA.Id, false, null, null, null));
+            await Assert.ThrowsAsync<BusinessRuleException>(() => svc.EnforcePolicyAsync(created.Id, f.BuyerId, invA.Id, true, "v-old", null, null));
+            await svc.EnforcePolicyAsync(created.Id, f.BuyerId, invA.Id, true, "v-test", "10.0.0.9", "xunit");
+            var subs = new SubscriptionService(db, Notifications());
+            var pay = await subs.SubmitInvoicePaymentAsync(target.Value.BuyerCompanyId, target.Value.DocumentId,
+                new SubmitInvoicePaymentRequest(null, null, null, null), $"paylink:{created.Id}");
+            Assert.Equal(invA.Id, pay.PlatformInvoiceDocumentId);
+            var acc = await db.PolicyAcceptances.AsNoTracking().SingleAsync(x => x.SourceId == invA.Id && x.Subject == $"paylink:{created.Id}");
+            Assert.Equal(PurchasePolicyAcceptance.ChannelPlatformInvoice, acc.Channel);
+            Assert.True(PurchasePolicyAcceptance.Verify(acc));
+
+            // ใบชำระครบ ⇒ ลิงก์ปิดเอง
+            var doc = await db.Documents.FirstAsync(d => d.Id == invA.Id);
+            doc.BalanceDue = 0m; doc.PaidAmount = 400m; doc.Status = DocumentStatus.Paid;
+            await db.SaveChangesAsync();
+            Assert.Equal(nameof(PaymentLinkState.Paid), (await svc.ViewAsync(created.Token, null))!.State);
+            await Assert.ThrowsAsync<BusinessRuleException>(() => svc.ResolveForPaymentAsync(created.Token));
+
+            // เพิกถอน ⇒ ใช้ไม่ได้ (เหตุผลบังคับ)
+            var l2 = await svc.CreateAsync(invB.Id, 3, admin);
+            await Assert.ThrowsAsync<BusinessRuleException>(() => svc.RevokeAsync(l2.Id, " ", admin));
+            await svc.RevokeAsync(l2.Id, "ส่งลิงก์ผิดคน", admin);
+            Assert.Equal(nameof(PaymentLinkState.Revoked), (await svc.ViewAsync(l2.Token, null))!.State);
+            var revoked = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.ResolveForPaymentAsync(l2.Token));
+            Assert.Equal(410, revoked.StatusCode);
+
+            // หมดอายุ
+            var l3 = await svc.CreateAsync(invB.Id, 1, admin);
+            var r3 = await db.PlatformPaymentLinks.FirstAsync(l => l.Id == l3.Id);
+            r3.ExpiresAt = DateTime.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+            Assert.Equal(nameof(PaymentLinkState.Expired), (await svc.ViewAsync(l3.Token, null))!.State);
+            Assert.Equal(0m, (await svc.ViewAsync(l3.Token, null))!.AmountDue);   // ลิงก์ที่ใช้ไม่ได้ไม่แสดงยอด/วิธีโอน
+
+            // ใบที่ไม่มียอดค้าง ⇒ สร้างลิงก์ไม่ได้
+            await Assert.ThrowsAsync<BusinessRuleException>(() => svc.CreateAsync(invA.Id, null, admin));
         });
     }
 }

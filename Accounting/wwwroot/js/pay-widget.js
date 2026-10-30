@@ -66,12 +66,13 @@
           : `/api/companies/${opts.companyId}/pay/intents`;
         // โหมดสาธารณะส่ง **เฉพาะวิธีจ่าย** — ตัวตนอยู่ใน URL แล้ว และยอดมาจาก
         // เซิร์ฟเวอร์เท่านั้น (ห้ามให้หน้าเว็บกำหนดจำนวนเงินที่ตัวเองจะจ่าย)
+        // รอบ 219 ส่วน B: extraBody = ช่องเพิ่มของทางเข้านั้น (เช่น ติ๊กยอมรับนโยบาย policyAccepted/policyVersionShown) — ไม่รับยอดเงิน
         const body = pub
-          ? {
+          ? Object.assign({}, opts.extraBody || {}, {
               method: opts.method || 'PromptPay',
               returnUrl: opts.returnUrl || (location.origin + location.pathname),
               cardToken: opts.cardToken || null,
-            }
+            })
           : {
               sourceKind: opts.sourceKind, sourceId: opts.sourceId,
               amount: opts.amount, method: opts.method || 'PromptPay',
@@ -108,6 +109,8 @@
     },
 
     _authHeader() {
+      // รอบ 219 ส่วน B: หน้าแอดมิน (โทเคน admin_token) ส่งตัวสร้าง header ของตัวเองมา
+      if (this._opts && typeof this._opts.authHeader === 'function') return this._opts.authHeader() || {};
       // หน้า storefront ของลูกค้าไม่มี token — โหมดสาธารณะจึงเดินผ่าน `/public-pay/...`
       // (คอมเมนต์เดิมตรงนี้เขียนว่า "endpoint ฝั่งนั้นเปิดสาธารณะอยู่แล้ว" ซึ่ง
       //  **ไม่จริง** — `/pay/*` เป็น [Authorize] ทั้งคลาส ⇒ widget นี้ใช้กับแขก

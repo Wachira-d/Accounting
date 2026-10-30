@@ -48,12 +48,14 @@ public class BillingCenterController : ControllerBase
         return _db.CompanyUsers.Any(cu => cu.CompanyId == companyId && cu.UserId == userId && cu.Role == UserRole.Owner);
     }
 
-    private PlatformPurchaseAcceptanceInput Acceptance(bool accepted, string? versionShown) => new(
-        accepted, versionShown,
-        User.FindFirstValue(ClaimTypes.Email) ?? JwtHelper.GetUserIdFromClaims(User).ToString(),
-        "billing-center",
-        HttpContext.Connection.RemoteIpAddress?.ToString(),
-        Request.Headers.UserAgent.ToString());
+    /// <summary>ด่านติ๊กยอมรับนโยบาย (part B — ตัวเดียวของทุกหน้าชำระค่าบริการ · ช่อง platform-invoice · ต้นทาง = ใบแจ้งหนี้) — ไม่ผ่าน ⇒ BusinessRuleException ·
+    /// ผ่าน ⇒ แถวหลักฐานอยู่ใน context (บันทึกพร้อมรายการชำระ)</summary>
+    private async Task EnforcePolicyAsync(ILegalDocumentService legal, Guid companyId, Guid documentId, bool accepted, string? versionShown, CancellationToken ct)
+    {
+        await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+            PurchasePolicyAcceptance.ChannelPlatformInvoice, documentId, accepted, versionShown,
+            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
+    }
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<BillingCenterSummary>>> Get(Guid companyId, CancellationToken ct)
@@ -84,43 +86,44 @@ public class BillingCenterController : ControllerBase
     [RequestSizeLimit(SubscriptionSlipUpload.MaxBytes + 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> PayBySlip(Guid companyId, Guid documentId,
         IFormFile? file, [FromForm] DateTime? paymentDate, [FromForm] string? transferReference, [FromForm] string? fromBankName,
-        [FromForm] string? customerNotes, [FromForm] bool acceptTerms, [FromForm] string? termsVersion,
-        [FromServices] IImageProcessingService images, [FromServices] IWebHostEnvironment env,
-        [FromServices] ISlipOcrAssistService slipOcr, [FromServices] ILogger<BillingCenterController> logger)
+        [FromForm] string? customerNotes, [FromForm] bool policyAccepted, [FromForm] string? policyVersionShown,
+        [FromServices] ILegalDocumentService legal, [FromServices] IImageProcessingService images, [FromServices] IWebHostEnvironment env,
+        [FromServices] ISlipOcrAssistService slipOcr, [FromServices] ILogger<BillingCenterController> logger, CancellationToken ct)
     {
         if (await RequireBillingAsync(companyId, "แจ้งชำระค่าบริการ") is { } deny) return deny;
         if (SubscriptionSlipUpload.Reject(file) is string bad)
             return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, bad));
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        await EnforcePolicyAsync(legal, companyId, documentId, policyAccepted, policyVersionShown, ct);
         var payment = await _subs.SubmitInvoicePaymentAsync(companyId, documentId,
-            new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes),
-            Acceptance(acceptTerms, termsVersion), actor);
+            new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes), actor);
         var result = await SubscriptionSlipUpload.SaveAsync(file!, payment.Id, actor, images, env, _subs, slipOcr, logger);
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result,
             $"แจ้งชำระ {result.PaymentNumber} แล้ว — ผู้ดูแลระบบจะตรวจสอบและยืนยันให้"));
     }
 
-    public record PayOnlineRequest(PaymentMethodKind Method, string? ReturnUrl, bool AcceptTerms, string? TermsVersion);
+    public record PrepareOnlineRequest(bool PolicyAccepted, string? PolicyVersionShown);
 
-    /// <summary>ชำระออนไลน์ผ่าน gateway ของ NextAcc — ผ่านช่องเสียบ <see cref="IPlatformOnlinePaymentPort"/> (งานของ part B) ·
-    /// ยังไม่เปิด = 409 + วิธีโอน (ทางไปต่อ = แนบสลิป)</summary>
-    [HttpPost("invoices/{documentId:guid}/pay-online")]
-    public async Task<ActionResult<ApiResponse<PlatformOnlinePayStart>>> PayOnline(Guid companyId, Guid documentId,
-        [FromBody] PayOnlineRequest req, [FromServices] IPlatformOnlinePaymentPort online, CancellationToken ct)
+    /// <summary>เตรียมชำระออนไลน์ผ่านช่องทางของ NextAcc (part B) — สร้าง/ใช้รายการชำระที่ผูกใบ (ยอด = ยอดค้างของใบ) แล้วคืนเส้นทางของ part B
+    /// (<c>api/companies/{cid}/platform-pay/subscription-payments/{paymentId}</c>) ให้ <c>PayWidget</c> เริ่ม intent ใต้บริษัทผู้ให้บริการ ·
+    /// เงินเข้า ⇒ <c>SubscriptionPaymentHandler</c> อนุมัติ ⇒ ตัดชำระใบเดิม · ช่องทางยังไม่เปิด ⇒ 409 + วิธีโอน (ทางไปต่อ = แนบสลิป)</summary>
+    [HttpPost("invoices/{documentId:guid}/online-payment")]
+    public async Task<ActionResult<ApiResponse<object>>> PrepareOnline(Guid companyId, Guid documentId, [FromBody] PrepareOnlineRequest req,
+        [FromServices] Accounting.Services.Payments.IPlatformPaymentService platform, [FromServices] ILegalDocumentService legal, CancellationToken ct)
     {
         if (await RequireBillingAsync(companyId, "ชำระค่าบริการ") is { } deny) return deny;
-        var acceptance = Acceptance(req.AcceptTerms, req.TermsVersion);
-        PlatformPurchaseAcceptanceWriter.EnsureAccepted(acceptance);
-        var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
-        var inv = platformId == null ? null : await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
-            PlatformInvoiceQueries.ForBuyer(_db, platformId.Value, companyId), d => d.Id == documentId, ct);
-        if (inv == null) return NotFound(new ApiResponse<PlatformOnlinePayStart>(false, null!, "ไม่พบใบแจ้งหนี้นี้ของบริษัท"));
-        if (!PlatformInvoiceRules.IsOpen(inv.Status, inv.BalanceDue))
-            return Conflict(new ApiResponse<PlatformOnlinePayStart>(false, null!, $"ใบแจ้งหนี้ {inv.DocumentNumber} ไม่มียอดค้างชำระแล้ว"));
-        var started = await online.StartInvoicePaymentAsync(companyId, documentId, req.Method, req.ReturnUrl,
-            JwtHelper.GetUserIdFromClaims(User).ToString(), ct);
-        PlatformPurchaseAcceptanceWriter.Add(_db, companyId, PlatformPurchaseTerms.KindInvoicePayment, started.IntentId, acceptance, DateTime.UtcNow);
+        var status = await platform.StatusAsync(ct);
+        if (!status.Online)
+            return StatusCode(409, new ApiResponse<object>(false, await PlatformPayInfo.BuildAsync(_db, platform, legal, ct),
+                status.OfflineReason ?? "ยังไม่เปิดชำระค่าบริการ NextAcc ออนไลน์ — กรุณาโอนเงินแล้วแนบสลิป"));
+        await EnforcePolicyAsync(legal, companyId, documentId, req.PolicyAccepted, req.PolicyVersionShown, ct);
+        var payment = await _subs.SubmitInvoicePaymentAsync(companyId, documentId,
+            new SubmitInvoicePaymentRequest(null, null, null, "ชำระออนไลน์"), JwtHelper.GetUserIdFromClaims(User).ToString());
         await _db.SaveChangesAsync(ct);
-        return Ok(new ApiResponse<PlatformOnlinePayStart>(true, started));
+        return Ok(new ApiResponse<object>(true, new
+        {
+            paymentId = payment.Id, amount = payment.Amount, methods = status.Methods,
+            publicBase = $"/api/companies/{companyId}/platform-pay/subscription-payments/{payment.Id}",
+        }));
     }
 }

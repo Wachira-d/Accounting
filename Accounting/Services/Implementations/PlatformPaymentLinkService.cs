@@ -18,7 +18,7 @@ public sealed record PaymentLinkRow(Guid Id, Guid DocumentId, string InvoiceNumb
 /// <summary>หน้าสาธารณะของลิงก์ — ข้อมูลขั้นต่ำของใบ (ไม่มีที่อยู่/เลขภาษี/อีเมล/โทร)</summary>
 public sealed record PaymentLinkPublicView(
     string State, string? Message, string SellerName, string BuyerName, string InvoiceNumber, DateTime InvoiceDate, DateTime? DueDate,
-    decimal AmountDue, List<string> Lines, object PayOptions, BillingCenterTerms Terms, bool CanPay, string? PendingPaymentNumber);
+    decimal AmountDue, List<string> Lines, object? PayOptions, bool CanPay, string? PendingPaymentNumber);
 
 /// <summary>
 /// รอบ 219 เฟส 2 ขั้น 4 (PLATFORM_BILLING_AUDIT §4 · คำตัดสินข้อ 180) — ลิงก์ชำระใบแจ้งหนี้ค่าบริการ: แอดมินสร้างให้ใบที่มีอยู่แล้ว (ห้ามยอดอิสระ) ·
@@ -33,7 +33,13 @@ public interface IPlatformPaymentLinkService
     /// <summary>null = โทเคนผิด/ไม่มี (ผู้เรียกตอบ 404 เหมือนกันทุกกรณี)</summary>
     Task<PaymentLinkPublicView?> ViewAsync(string token, string? ip, CancellationToken ct = default);
     Task<(Guid LinkId, Guid BuyerCompanyId, Guid DocumentId)?> ResolveForPaymentAsync(string token, CancellationToken ct = default);
+    /// <summary>บริษัทผู้ซื้อของลิงก์ (ไม่ตรวจอายุ — ใช้ดูสถานะรายการที่เริ่มไปแล้ว) · null = โทเคนผิด</summary>
+    Task<Guid?> ResolveBuyerAsync(string token, CancellationToken ct = default);
     Task RecordPaymentAuditAsync(Guid linkId, Guid buyerCompanyId, Guid paymentId, string paymentNumber, string? ip, CancellationToken ct = default);
+    /// <summary>ด่านติ๊กยอมรับนโยบายของผู้จ่ายผ่านลิงก์ (ไม่มีบัญชีผู้ใช้) — ตัวตัดสิน/ผู้เขียนหลักฐานของ part B (<c>PurchasePolicyAcceptance.Problem/Create</c>) ·
+    /// ไม่ผ่าน ⇒ BusinessRuleException · ผ่าน ⇒ แถวหลักฐานอยู่ใน context (บันทึกพร้อมรายการชำระ)</summary>
+    Task EnforcePolicyAsync(Guid linkId, Guid buyerCompanyId, Guid documentId, bool accepted, string? versionShown, string? ip, string? userAgent,
+        CancellationToken ct = default);
 }
 
 public class PlatformPaymentLinkService : IPlatformPaymentLinkService
@@ -44,8 +50,21 @@ public class PlatformPaymentLinkService : IPlatformPaymentLinkService
     private const int LineTake = 5;
 
     private readonly AccountingDbContext _db;
-    private readonly IPlatformPayOptionsService _pay;
-    public PlatformPaymentLinkService(AccountingDbContext db, IPlatformPayOptionsService pay) { _db = db; _pay = pay; }
+    private readonly Accounting.Services.Payments.IPlatformPaymentService _platform;
+    private readonly ILegalDocumentService _legal;
+    public PlatformPaymentLinkService(AccountingDbContext db, Accounting.Services.Payments.IPlatformPaymentService platform, ILegalDocumentService legal)
+    { _db = db; _platform = platform; _legal = legal; }
+
+    public async Task EnforcePolicyAsync(Guid linkId, Guid buyerCompanyId, Guid documentId, bool accepted, string? versionShown,
+        string? ip, string? userAgent, CancellationToken ct = default)
+    {
+        var current = await _legal.GetPurchasePolicyVersionAsync(ct);
+        if (PurchasePolicyAcceptance.Problem(false, accepted, versionShown, current.Version) is string problem)
+            throw new BusinessRuleException(problem, PurchasePolicyAcceptance.RuleCode);
+        _db.Set<PolicyAcceptance>().Add(PurchasePolicyAcceptance.Create(buyerCompanyId, PurchasePolicyAcceptance.ScopePlatform,
+            PurchasePolicyAcceptance.ChannelPlatformInvoice, documentId, null, current.Version, versionShown, $"paylink:{linkId}", null,
+            DateTime.UtcNow, ip, userAgent));
+    }
 
     public async Task<PaymentLinkCreated> CreateAsync(Guid documentId, int? expiryDays, PlatformBillingActor actor, CancellationToken ct = default)
     {
@@ -150,15 +169,12 @@ public class PlatformPaymentLinkService : IPlatformPaymentLinkService
                 .Where(p => p.PlatformInvoiceDocumentId == link.DocumentId && p.Subscription.CompanyId == link.BuyerCompanyId && p.SlipFileName != null
                     && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview))
                 .Select(p => p.PaymentNumber).FirstOrDefaultAsync(ct);
-        var pay = await _pay.GetAsync(ct);
+        var pay = valid ? await Accounting.Controllers.PlatformPayInfo.BuildAsync(_db, _platform, _legal, ct) : null;
         return new PaymentLinkPublicView(state.ToString(),
             pending != null ? $"แจ้งชำระแล้ว ({pending}) — รอผู้ดูแลระบบตรวจสอบ" : PlatformPaymentLinkRules.Message(state),
             string.IsNullOrWhiteSpace(seller) ? "NextAcc" : seller!, PlatformPaymentLinkRules.MaskedBuyerName(buyer),
             inv?.DocumentNumber ?? "-", inv?.DocumentDate ?? link.CreatedAt, inv?.DueDate,
-            valid ? inv!.BalanceDue : 0m, lines,
-            new { online = pay.Online && valid, onlineNote = pay.OnlineNote, bankTransferInstructions = valid ? pay.BankTransferInstructions : null, fallbackNote = pay.FallbackNote },
-            new BillingCenterTerms(PlatformPurchaseTerms.Version, PlatformPurchaseTerms.Lines, PlatformPurchaseTerms.TermsUrl),
-            valid && pending == null, pending);
+            valid ? inv!.BalanceDue : 0m, lines, pay, valid && pending == null, pending);
     }
 
     public async Task<(Guid LinkId, Guid BuyerCompanyId, Guid DocumentId)?> ResolveForPaymentAsync(string token, CancellationToken ct = default)
@@ -173,6 +189,9 @@ public class PlatformPaymentLinkService : IPlatformPaymentLinkService
             throw new BusinessRuleException(PlatformPaymentLinkRules.Message(state)!, "PLATFORM-PAYLINK-" + state.ToString().ToUpperInvariant(), 410);
         return (link.Id, link.BuyerCompanyId, link.DocumentId);
     }
+
+    public async Task<Guid?> ResolveBuyerAsync(string token, CancellationToken ct = default)
+        => (await FindAsync(token, ct))?.BuyerCompanyId;
 
     public async Task RecordPaymentAuditAsync(Guid linkId, Guid buyerCompanyId, Guid paymentId, string paymentNumber, string? ip, CancellationToken ct = default)
     {

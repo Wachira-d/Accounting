@@ -253,17 +253,18 @@ public class UsageMeteringService : IUsageMeteringService
     public Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
         string actor, AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
         CancellationToken ct = default)
-        => SetFeatureEnabledCoreAsync(companyId, featureCode, enabled, actor, grantSource, snapshotUnitPrice, null, null, false, ct);
+        => SetFeatureEnabledCoreAsync(companyId, featureCode, enabled, actor, grantSource, snapshotUnitPrice, null, false, ct);
 
     public Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled, string actor,
-        AddOnBillingChoice? choice, Models.DTOs.Subscription.PlatformPurchaseAcceptanceInput? acceptance, CancellationToken ct = default)
-        => SetFeatureEnabledCoreAsync(companyId, featureCode, enabled, actor, AddOnGrantSource.OwnerSelfServe, null, choice, acceptance, true, ct);
+        AddOnBillingChoice? choice, CancellationToken ct = default)
+        => SetFeatureEnabledCoreAsync(companyId, featureCode, enabled, actor, AddOnGrantSource.OwnerSelfServe, null, choice, true, ct);
 
-    /// <param name="selfServePurchase">ทางเข้าของผู้เช่ากดเอง (หน้าส่วนเสริม) — ต้องเลือกวิธีชำระ + ยอมรับเงื่อนไขเมื่อส่วนเสริมต้องจ่าย ·
+    /// <param name="selfServePurchase">ทางเข้าของผู้เช่ากดเอง (หน้าส่วนเสริม) — ต้องเลือกวิธีชำระเมื่อส่วนเสริมต้องจ่าย (ติ๊กยอมรับนโยบายตรวจที่ controller ·
+    /// part B <c>PurchasePolicyAcceptance</c> ช่อง platform-addon — ส่งวิธีชำระมา = ต้องติ๊ก) ·
     /// false = เส้นภายใน (ยืนยันการชำระ/แอดมิน) คงวิธีชำระเดิมของแถว</param>
     private async Task SetFeatureEnabledCoreAsync(Guid companyId, string featureCode, bool enabled,
         string actor, AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
-        AddOnBillingChoice? choice, Models.DTOs.Subscription.PlatformPurchaseAcceptanceInput? acceptance, bool selfServePurchase,
+        AddOnBillingChoice? choice, bool selfServePurchase,
         CancellationToken ct)
     {
         var row = await _db.CompanyFeatures
@@ -298,7 +299,7 @@ public class UsageMeteringService : IUsageMeteringService
             // เริ่มต้องทำให้รอบนี้ไม่ต้องจ่าย
             var needPay = Accounting.Helpers.AddOnPaymentPolicy.RequiresPayment(
                 grantSource, plan?.Method, row.AcceptedUnitPrice, row.TrialUntil, now);
-            // รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤⑧): ทางเข้าของผู้เช่า + ต้องจ่าย ⇒ เลือกวิธีชำระ + ติ๊กยอมรับเงื่อนไข (ก่อนเปลี่ยนสถานะใด ๆ)
+            // รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤): ทางเข้าของผู้เช่า + ต้องจ่าย ⇒ เลือกวิธีชำระ (ก่อนเปลี่ยนสถานะใด ๆ)
             var statusBefore = row.PaymentStatus;
             var effectiveChoice = choice ?? row.BillingChoice;
             if (selfServePurchase && needPay)
@@ -306,7 +307,6 @@ public class UsageMeteringService : IUsageMeteringService
                 if (choice == null)
                     throw new BusinessRuleException("กรุณาเลือกวิธีชำระ (จ่ายล่วงหน้า หรือรวมในใบแจ้งหนี้รายเดือน) ที่หน้า \"ส่วนเสริมของฉัน\"",
                         "ADDON-CHOICE-REQUIRED", 400);
-                PlatformPurchaseAcceptanceWriter.EnsureAccepted(acceptance!);
             }
             var (choiceOutcome, choiceRefusal) = AddOnPaymentPolicy.ApplyChoice(needPay, effectiveChoice, statusBefore, row.LastBilledPeriod,
                 AddOnBilling.PeriodOf(now));
@@ -336,8 +336,6 @@ public class UsageMeteringService : IUsageMeteringService
                 row.UpfrontPeriod = null;
             }
             row.BillingChoice = effectiveChoice;
-            if (selfServePurchase && needPay && acceptance != null)
-                PlatformPurchaseAcceptanceWriter.Add(_db, companyId, PlatformPurchaseTerms.KindAddOn, row.Id, acceptance, now);
 
             // ทดลองใช้ฟรีตามที่ตั้งไว้บนฟีเจอร์ — เริ่มนับ**ครั้งแรกที่เปิดเท่านั้น**
             // (ปิดแล้วเปิดใหม่ต้องไม่ได้ trial รอบสอง ไม่งั้นใช้ฟรีตลอดกาลด้วยการ

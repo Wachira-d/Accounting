@@ -856,6 +856,8 @@ public class PaymentWebhookController : ControllerBase
             if (verified == null) continue;
 
             cfg.LastWebhookAt = DateTime.UtcNow;
+            // รอบ 219 ส่วน B: webhook ขณะโหมดใช้งานจริง — หน้าตั้งค่าเตือนจนกว่าจะเคยได้รับ (endpoint ฝั่ง live ตั้งแยกในแดชบอร์ดผู้ให้บริการ)
+            if (cfg.Mode == PaymentProviderMode.Live) cfg.LastLiveWebhookAt = cfg.LastWebhookAt;
             // A-GW1: เส้นทางที่ webhook มาจริง — หน้าตั้งค่าเตือน "ยังใช้ URL เดิม" · URL เดิมเลิกลอง config นี้เมื่อโหมดนี้ย้ายแล้ว
             if (token != null) { cfg.LastTokenWebhookAt = cfg.LastWebhookAt; cfg.LastTokenWebhookMode = cfg.Mode; }
             else cfg.LastLegacyWebhookAt = cfg.LastWebhookAt;

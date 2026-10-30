@@ -132,6 +132,7 @@ public class BookingPaymentPolicyDbTests
     {
         BookingServiceId = serviceId, BookingDate = TargetDate().ToDateTime(TimeOnly.MinValue), StartTime = start,
         GuestName = "คุณลูกค้า", GuestEmail = "guest@example.test", GuestPhone = "0812345678", GuestCount = 1,
+        PolicyAccepted = true,   // รอบ 219 ส่วน B
     };
 
     [Fact]

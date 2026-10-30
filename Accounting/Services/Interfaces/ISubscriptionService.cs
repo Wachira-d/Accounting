@@ -26,9 +26,10 @@ public interface ISubscriptionService
     Task<SubscriptionGateState?> GetGateStateAsync(Guid companyId);
     /// <summary>รอบ 219 เฟส 0 (G-0): อัปเกรด = รายการชำระรอเงินเข้า · ดาวน์เกรด/เปลี่ยนรอบ = มีผลวันครบรอบ</summary>
     Task<PlanPurchaseResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy);
-    /// <summary>คืนข้อความผลการยกเลิก — มีรอบที่ชำระแล้วเหลือ ⇒ ยกเลิกเมื่อสิ้นรอบ (รอบ 219 เฟส 2 ขั้น 3)</summary>
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): แพ็กเกจที่ชำระแล้วและยังไม่สิ้นรอบ ⇒ ยกเลิกมีผลสิ้นรอบ (<c>SubscriptionCancelPolicy</c>) · คืนข้อความถึงผู้ใช้</summary>
     Task<string> CancelSubscriptionAsync(Guid companyId, string performedBy);
-    Task<string> ReactivateSubscriptionAsync(Guid companyId, string performedBy);
+    /// <summary>รอบ 219 ส่วน B: กลับมาใช้ต่อก่อนสิ้นรอบ (ยกเลิกการยกเลิก) · ไม่อยู่ระหว่างรอยกเลิก/พ้นรอบแล้ว ⇒ BusinessRuleException</summary>
+    Task<string> ResumeSubscriptionAsync(Guid companyId, string performedBy);
 
     // Usage Tracking
     /// <param name="recordShadow">false = เส้นอ่านอย่างเดียว (GET ของหน้าเว็บ) — ไม่บันทึกโหมดเงา "เจ้าของปิดฟีเจอร์" (PL-C2: เดิมทุกการเปิดหน้านับเป็น "จะถูกปิด")</param>
@@ -75,7 +76,7 @@ public interface ISubscriptionService
     Task<SubscriptionPaymentResponse> SubmitPaymentAsync(Guid companyId, SubmitSubscriptionPaymentRequest request, string performedBy);
     /// <summary>รอบ 219 เฟส 2: แจ้งชำระใบแจ้งหนี้ค่าบริการ (ศูนย์บิล/ลิงก์ชำระ) — ยอดจากใบ · ติ๊กยอมรับเงื่อนไขบังคับ</summary>
     Task<SubscriptionPaymentResponse> SubmitInvoicePaymentAsync(Guid companyId, Guid invoiceDocumentId,
-        SubmitInvoicePaymentRequest request, PlatformPurchaseAcceptanceInput acceptance, string performedBy);
+        SubmitInvoicePaymentRequest request, string performedBy);
     Task<SubscriptionPaymentResponse> UploadPaymentSlipAsync(Guid paymentId, string fileName, string originalFileName, string contentType, long fileSize, string storagePath, string performedBy);
     Task<SubscriptionPaymentListResponse> GetPaymentsAsync(Guid companyId);
     Task<SubscriptionPaymentResponse> GetPaymentAsync(Guid paymentId);

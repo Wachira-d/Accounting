@@ -303,4 +303,7 @@ public class SiteSettings : BaseEntity
     /// <summary>รอบ 219 เฟส 0 (G-1/G-13): วิธีโอนเงินค่าบริการให้ NextAcc (ชื่อบัญชี · ธนาคาร · เลขบัญชี · พร้อมเพย์) — แสดงบนหน้า
     /// "ส่วนเสริม"/"แพ็กเกจ" ระหว่างที่ยังไม่มีช่องชำระออนไลน์ของแพลตฟอร์ม (เฟส 1) · ว่าง = หน้าเว็บบอกให้ติดต่อผู้ดูแลระบบ</summary>
     public string? PlatformBankTransferInstructions { get; set; }
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): หน้าทดลองจ่ายของแพลตฟอร์ม <c>/platform-pay-test.html</c> —
+    /// "Off" | "AdminsOnly" | "Public" · null = AdminsOnly (ตัวตัดสินเดียว <c>Helpers/PlatformPayTestPage</c>) · ใช้คีย์โหมดทดสอบเท่านั้นเสมอ</summary>
+    public string? PlatformPayTestPageMode { get; set; }
 }

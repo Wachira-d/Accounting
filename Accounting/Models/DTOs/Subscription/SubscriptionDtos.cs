@@ -55,14 +55,20 @@ public record ConversionIncentive(
     string? PromoCode);
 
 // ===== Subscription Management =====
+/// <param name="PolicyAccepted">รอบ 219 ส่วน B (คำตัดสินข้อ 179): ติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงินของ NextAcc (บังคับที่ endpoint ของผู้เช่า)</param>
+/// <param name="PolicyVersionShown">ฉบับที่หน้าเว็บแสดง (<c>platform-pay</c> → <c>policy.version</c>)</param>
 public record ConvertTrialRequest(
     SubscriptionPlan Plan,
     BillingCycle BillingCycle,
-    string? PromoCode = null);
+    string? PromoCode = null,
+    bool PolicyAccepted = false,
+    string? PolicyVersionShown = null);
 
 public record ChangeSubscriptionRequest(
     SubscriptionPlan NewPlan,
-    BillingCycle? NewBillingCycle = null);
+    BillingCycle? NewBillingCycle = null,
+    bool PolicyAccepted = false,
+    string? PolicyVersionShown = null);
 
 /// <summary>รอบ 219 เฟส 0 (G-0 · คำตัดสินข้อ 178): ผลของการ "เลือกแพ็กเกจ" ของผู้เช่า — <b>ไม่เปิดแพ็กเกจจ่ายเงินทันที</b> ·
 /// อัปเกรด/แปลงจากทดลองใช้ = สร้างรายการชำระ (<paramref name="Payment"/>) รอเงินเข้า/แอดมินยืนยัน · ดาวน์เกรด/เปลี่ยนรอบ = รอมีผลวันครบรอบ
@@ -107,9 +113,8 @@ public record SubscriptionResponse(
     SubscriptionPlan? ScheduledPlan = null,
     BillingCycle? ScheduledBillingCycle = null,
     DateTime? ScheduledPlanEffectiveAt = null,
-    /// <summary>รอบ 219 เฟส 2 ขั้น 3: ยกเลิกเมื่อสิ้นรอบ (echo ของ <c>Subscription.CancelAtPeriodEnd</c>) + ข้อความจากตัวตัดสินเดียว</summary>
-    bool CancelAtPeriodEnd = false,
-    string? CancelNote = null);
+    /// <summary>รอบ 219 ส่วน B: ขอยกเลิกไว้ — ใช้ได้ถึง <c>EndDate</c> แล้วสิ้นสุด (หน้าเว็บแสดงปุ่ม "กลับมาใช้ต่อ")</summary>
+    bool CancelAtPeriodEnd = false);
 
 public record UsageLimits(
     int MaxUsers,

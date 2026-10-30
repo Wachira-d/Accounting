@@ -28,8 +28,10 @@ public class PlatformPayLinkController : ControllerBase
 
     private string? Ip => HttpContext.Connection.RemoteIpAddress?.ToString();
 
-    private async Task<bool> AllowedAsync(string bucket, CancellationToken ct) =>
-        await _rate.TryConsumeAsync($"paylink:{bucket}:{Ip ?? "unknown"}", PerMinute, PerDay, ct, failClosed: true);
+    private async Task<bool> AllowedAsync(string bucket, CancellationToken ct)
+    {
+        return await _rate.TryConsumeAsync($"paylink:{bucket}:{Ip ?? "unknown"}", PerMinute, PerDay, ct, failClosed: true);
+    }
 
     private ObjectResult TooMany() => StatusCode(429, new ApiResponse<object>(false, null, "เรียกบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่"));
     private NotFoundObjectResult Missing() => NotFound(new ApiResponse<object>(false, null, "ไม่พบลิงก์ชำระนี้ — ตรวจสอบลิงก์ที่ได้รับอีกครั้ง"));
@@ -49,7 +51,7 @@ public class PlatformPayLinkController : ControllerBase
     [RequestSizeLimit(SubscriptionSlipUpload.MaxBytes + 1024 * 1024)]
     public async Task<IActionResult> PayBySlip(string token, IFormFile? file, [FromForm] DateTime? paymentDate,
         [FromForm] string? transferReference, [FromForm] string? fromBankName, [FromForm] string? customerNotes,
-        [FromForm] bool acceptTerms, [FromForm] string? termsVersion,
+        [FromForm] bool policyAccepted, [FromForm] string? policyVersionShown,
         [FromServices] ISubscriptionService subs, [FromServices] IImageProcessingService images, [FromServices] IWebHostEnvironment env,
         [FromServices] ISlipOcrAssistService slipOcr, [FromServices] ILogger<PlatformPayLinkController> logger, CancellationToken ct)
     {
@@ -59,13 +61,57 @@ public class PlatformPayLinkController : ControllerBase
         if (target == null) return Missing();
         var (linkId, buyerId, documentId) = target.Value;
         var actor = $"paylink:{linkId}";
-        var acceptance = new PlatformPurchaseAcceptanceInput(acceptTerms, termsVersion, actor, "payment-link", Ip,
-            Request.Headers.UserAgent.ToString());
+        await _links.EnforcePolicyAsync(linkId, buyerId, documentId, policyAccepted, policyVersionShown, Ip, Request.Headers.UserAgent.ToString(), ct);
         var payment = await subs.SubmitInvoicePaymentAsync(buyerId, documentId,
-            new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes), acceptance, actor);
+            new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes), actor);
         var result = await SubscriptionSlipUpload.SaveAsync(file!, payment.Id, actor, images, env, subs, slipOcr, logger);
         await _links.RecordPaymentAuditAsync(linkId, buyerId, payment.Id, result.PaymentNumber, Ip, ct);
         return Ok(new ApiResponse<object>(true, new { result.PaymentNumber, result.Amount },
             $"แจ้งชำระ {result.PaymentNumber} แล้ว — ผู้ดูแลระบบ NextAcc จะตรวจสอบและยืนยันให้"));
+    }
+
+    public record PayOnlineRequest(Models.Enums.PaymentMethodKind Method, string? ReturnUrl, string? CardToken, bool PolicyAccepted, string? PolicyVersionShown);
+
+    /// <summary>ชำระออนไลน์ผ่านช่องทางของ NextAcc (part B) — ช่องทางยังไม่เปิด ⇒ 409 (ทางไปต่อ = โอน + แนบสลิป)</summary>
+    [HttpPost("intents")]
+    public async Task<IActionResult> PayOnline(string token, [FromBody] PayOnlineRequest req,
+        [FromServices] ISubscriptionService subs, [FromServices] Accounting.Services.Payments.IPlatformPaymentService platform, CancellationToken ct)
+    {
+        if (!await AllowedAsync("pay", ct)) return TooMany();
+        var target = await _links.ResolveForPaymentAsync(token, ct);
+        if (target == null) return Missing();
+        var (linkId, buyerId, documentId) = target.Value;
+        var status = await platform.StatusAsync(ct);
+        if (!status.Online)
+            return StatusCode(409, new ApiResponse<object>(false, null, status.OfflineReason ?? "ยังไม่เปิดชำระออนไลน์ — กรุณาโอนเงินแล้วแนบสลิป"));
+        await _links.EnforcePolicyAsync(linkId, buyerId, documentId, req.PolicyAccepted, req.PolicyVersionShown, Ip, Request.Headers.UserAgent.ToString(), ct);
+        var payment = await subs.SubmitInvoicePaymentAsync(buyerId, documentId,
+            new SubmitInvoicePaymentRequest(null, null, null, "ชำระออนไลน์ผ่านลิงก์"), $"paylink:{linkId}");
+        try
+        {
+            var intent = await platform.StartSubscriptionPaymentAsync(buyerId, payment.Id, req.Method, req.ReturnUrl, req.CardToken, ct);
+            await _links.RecordPaymentAuditAsync(linkId, buyerId, payment.Id, payment.PaymentNumber, Ip, ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                id = intent.Id, status = intent.Status.ToString(), amount = intent.Amount, currency = intent.Currency,
+                qrPayload = intent.QrPayload, qrExpiresAt = intent.QrExpiresAt, authorizeUrl = intent.AuthorizeUrl,
+                failureMessage = intent.FailureMessage,
+            }));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+    }
+
+    /// <summary>สถานะสดของรายการชำระออนไลน์ที่เริ่มจากลิงก์นี้ (เฉพาะรายการที่บริษัทผู้ซื้อของลิงก์เป็นผู้จ่าย)</summary>
+    [HttpGet("intents/{intentId:guid}")]
+    public async Task<IActionResult> IntentStatus(string token, Guid intentId,
+        [FromServices] Accounting.Services.Payments.IPlatformPaymentService platform, CancellationToken ct)
+    {
+        if (!await AllowedAsync("view", ct)) return TooMany();
+        var target = await _links.ResolveBuyerAsync(token, ct);
+        if (target == null) return Missing();
+        var intent = await platform.RefreshForPayerAsync(target.Value, intentId, ct);
+        if (intent == null) return Missing();
+        return Ok(new ApiResponse<object>(true, new { id = intent.Id, status = intent.Status.ToString(), amount = intent.Amount,
+            qrPayload = intent.QrPayload, authorizeUrl = intent.AuthorizeUrl, failureMessage = intent.FailureMessage }));
     }
 }

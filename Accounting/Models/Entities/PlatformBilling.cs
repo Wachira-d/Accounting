@@ -31,30 +31,6 @@ public class PlatformBillingSettings : BaseEntity
 }
 
 /// <summary>
-/// รอบ 219 เฟส 2 (คำตัดสินเจ้าของข้อ 178 ⑧) — หลักฐาน "ติ๊กยอมรับเงื่อนไขการซื้อ" ทุกครั้งก่อนจ่ายค่าบริการ NextAcc (ชำระใบแจ้งหนี้ ·
-/// ลิงก์ชำระ · ซื้อส่วนเสริม) · <b>append-only</b> · hash ด้วย <c>PdpaConsentEvidence.ComputeHash</c> ตัวเดียวของระบบ (ทุกช่องใน canonical ถูกเก็บ
-/// ⇒ ตรวจกลับได้) · ไม่มี FK ไป Companies (ผู้จ่ายผ่านลิงก์ไม่มีบัญชีผู้ใช้)
-/// <para><b>ชั่วคราว</b> จนตัวช่วยยอมรับนโยบายของทีม part B ลง — ตัวตั้งเงื่อนไข/ฉบับอยู่ที่ <c>Helpers/PlatformPurchaseTerms</c> ที่เดียว ·
-/// ย้ายไปตัวช่วยของ part B = เปลี่ยนผู้เขียนแถวนี้ ไม่ต้องย้ายข้อมูล</para>
-/// </summary>
-public class PlatformPurchaseAcceptance : BaseEntity
-{
-    public Guid BuyerCompanyId { get; set; }
-    /// <summary>ชนิดการซื้อ: invoice-payment · addon · paylink-payment (<c>PlatformPurchaseTerms.Kind*</c>)</summary>
-    public string SubjectKind { get; set; } = "";
-    /// <summary>แถวที่ยอมรับเพื่อ (SubscriptionPayment.Id / CompanyFeature.Id)</summary>
-    public Guid? SubjectId { get; set; }
-    /// <summary>ผู้ยอมรับใน canonical: อีเมลผู้ใช้ หรือ <c>paylink:{linkId}</c> (ไม่มีบัญชี)</summary>
-    public string Subject { get; set; } = "";
-    public string PolicyVersion { get; set; } = "";
-    public DateTime AcceptedAt { get; set; }
-    public string? Channel { get; set; }
-    public string? IpAddress { get; set; }
-    public string? UserAgent { get; set; }
-    public string EvidenceHash { get; set; } = "";
-}
-
-/// <summary>
 /// รอบ 219 เฟส 2 ขั้น 2 (G-7) — ใบแจ้งหนี้/แจ้งเตือนค่าบริการที่ส่งถึงผู้เช่า หนึ่งแถวต่อ (คีย์ข้อความ · ช่อง) — <b>unique</b> ⇒ ส่งได้ครั้งเดียวแม้หลายเครื่อง ·
 /// จองแถว (Claimed) ก่อนส่งแล้วประทับผลจริง Sent/Failed/Skipped + เหตุ (แอดมินเห็นที่ <c>/admin/platform-billing.html</c>)
 /// </summary>

@@ -74,6 +74,11 @@ public static class PlatformInvoiceRules
     public static bool IsInvoiceOnlyPayment(Guid? platformInvoiceDocumentId, int requestedPeriodMonths) =>
         platformInvoiceDocumentId != null && requestedPeriodMonths <= 0;
 
+    /// <summary>ใบต่ออายุของรอบที่ผู้เช่ายกเลิกไว้ (<c>CancelAtPeriodEnd</c> · part B) — ห้ามจ่าย (จ่าย = ต่ออายุ ขัดกับการยกเลิก) · ทางไปต่อ = กดใช้ต่อ</summary>
+    public static string? RenewalNotPayableReason(bool cancelAtPeriodEnd) => cancelAtPeriodEnd
+        ? "ยกเลิกการต่ออายุไว้แล้ว — ถ้าต้องการใช้ต่อ กด \"ใช้ต่อ\" ที่หน้าแพ็กเกจ/ศูนย์บิลก่อนชำระใบต่ออายุ"
+        : null;
+
     /// <summary>รอบ 219 เฟส 2 (S9): ใบต่ออายุที่ออกไว้ให้ "รอบที่กำลังจะถูกแทน" — การอนุมัติที่เริ่ม/ต่อรอบใหม่ (อัปเกรด · ต่ออายุแบบเดิม) โดยไม่ได้จ่ายใบนี้
     /// ⇒ ใบนี้ล้าสมัย (ค้างเป็นหนี้เท็จ/เก็บซ้ำ) · null = ไม่มีใบ/ใบออกให้รอบอื่น/การชำระนี้คือการจ่ายใบนั้นเอง</summary>
     public static Guid? StaleRenewalInvoice(Guid? renewalInvoiceDocumentId, DateTime? renewalInvoiceForEndUtc, DateTime currentEndUtc,

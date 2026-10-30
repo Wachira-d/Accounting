@@ -76,33 +76,6 @@ public class PlatformBillingPhase2Tests
         Assert.Contains("ไม่มีการระงับอัตโนมัติ", PlatformBillingSettingsRules.DescribeSuspension(p with { AutoSuspendEnabled = false }, true));
     }
 
-    // ═══ เงื่อนไขการซื้อ (คำตัดสินเจ้าของ ⑧) ═══
-
-    [Fact]
-    public void Purchase_terms_require_tick_and_current_version()
-    {
-        var none = PlatformPurchaseTerms.Refusal(false, PlatformPurchaseTerms.Version);
-        Assert.NotNull(none);
-        Assert.Equal(400, none!.StatusCode);
-        Assert.Equal(PlatformPurchaseTerms.NotAcceptedRuleCode, none.RuleCode);
-
-        var stale = PlatformPurchaseTerms.Refusal(true, "2020-01-01.1");
-        Assert.Equal(409, stale!.StatusCode);
-        Assert.NotNull(PlatformPurchaseTerms.Refusal(true, null));   // ไม่รู้ว่าเห็นฉบับไหน = ไม่ถือว่ายอมรับ
-
-        Assert.Null(PlatformPurchaseTerms.Refusal(true, " " + PlatformPurchaseTerms.Version + " "));
-    }
-
-    [Fact]
-    public void Purchase_terms_text_matches_owner_decisions()
-    {
-        var all = string.Join("\n", PlatformPurchaseTerms.Lines);
-        Assert.Contains("ไม่สามารถขอคืนเงิน", all);           // ⑦ ไม่คืนเงิน
-        Assert.Contains("จนสิ้นรอบ", all);                    // ⑥ ยกเลิก = ใช้ได้ถึงสิ้นรอบ
-        Assert.Contains("ไม่มีการคิดหรือคืนเงินตามสัดส่วน", all); // ⑥ ไม่ prorate
-        Assert.Contains("รวมในใบแจ้งหนี้รายเดือน", all);        // ⑤ ส่วนเสริมเลือกได้ต่อการซื้อ
-    }
-
     // ═══ กติกาใบแจ้งหนี้ ═══
 
     [Theory]
@@ -178,19 +151,6 @@ public class PlatformBillingPhase2Tests
         Assert.Equal("รอตรวจสอบ", PlatformBillingCenterService.PaymentStatusLabel(SubscriptionPaymentStatus.Pending, true));
     }
 
-    [Fact]
-    public void Acceptance_evidence_hash_round_trips_with_canonical_function()
-    {
-        var at = PdpaConsentEvidence.NormalizeTimestamp(Now);
-        var hash = PdpaConsentEvidence.ComputeHash("owner@example.com", PlatformPurchaseTerms.Purpose, PlatformPurchaseTerms.Version,
-            at, "billing-center", "1.2.3.4", "UA");
-        Assert.Equal(PdpaConsentEvidence.EvidenceCheck.Valid, PdpaConsentEvidence.Check(hash, "owner@example.com", PlatformPurchaseTerms.Purpose,
-            PlatformPurchaseTerms.Version, at, "billing-center", "1.2.3.4", "UA"));
-        // ฉบับต่าง = หลักฐานไม่ตรง (ไม่ใช่ "ยอมรับแล้ว" ของฉบับอื่น)
-        Assert.Equal(PdpaConsentEvidence.EvidenceCheck.Invalid, PdpaConsentEvidence.Check(hash, "owner@example.com", PlatformPurchaseTerms.Purpose,
-            "2020-01-01.1", at, "billing-center", "1.2.3.4", "UA"));
-    }
-
     // ═══ ขั้น 2: dunning (pure) ═══
 
     private static DunningInvoice Inv(int dueInDays, int issuedDaysAgo = 10, decimal bal = 500m, bool excluded = false) =>
@@ -258,26 +218,13 @@ public class PlatformBillingPhase2Tests
         Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.RestoreStatus(SubscriptionStatus.Active, Now.AddDays(-1), Now, true));
     }
 
-    // ═══ ขั้น 3: ยกเลิกเมื่อสิ้นรอบ · วิธีชำระส่วนเสริม · ใบต่ออายุที่ล้าสมัย (S9) ═══
-
-    [Theory]
-    [InlineData(SubscriptionStatus.Active, false, 10, SubscriptionCancelMode.AtPeriodEnd)]
-    [InlineData(SubscriptionStatus.Active, true, 10, SubscriptionCancelMode.Immediate)]      // ฟรีถาวร — ไม่มีรอบที่จ่าย
-    [InlineData(SubscriptionStatus.Trial, false, 10, SubscriptionCancelMode.Immediate)]
-    [InlineData(SubscriptionStatus.PastDue, false, -3, SubscriptionCancelMode.Immediate)]
-    [InlineData(SubscriptionStatus.Active, false, -1, SubscriptionCancelMode.Immediate)]
-    public void Cancel_is_at_period_end_only_with_paid_cycle_left(SubscriptionStatus st, bool free, int endInDays, SubscriptionCancelMode expected)
-        => Assert.Equal(expected, SubscriptionCancelPolicy.Decide(st, free, Now.AddDays(endInDays), Now));
+    // ═══ ขั้น 3: ใบต่ออายุของรอบที่ยกเลิก (ยกเลิกเมื่อสิ้นรอบเป็นของ part B) · วิธีชำระส่วนเสริม · ใบต่ออายุที่ล้าสมัย (S9) ═══
 
     [Fact]
-    public void Reactivate_and_renewal_payability_follow_cancellation()
+    public void Renewal_of_cancelled_subscription_is_not_payable()
     {
-        Assert.Null(SubscriptionCancelPolicy.ReactivateRefusal(true, SubscriptionStatus.Active, Now.AddDays(5), Now));
-        Assert.NotNull(SubscriptionCancelPolicy.ReactivateRefusal(false, SubscriptionStatus.Active, Now.AddDays(5), Now));
-        Assert.NotNull(SubscriptionCancelPolicy.ReactivateRefusal(true, SubscriptionStatus.Cancelled, Now.AddDays(-1), Now));
-        Assert.NotNull(SubscriptionCancelPolicy.RenewalNotPayableReason(true));
-        Assert.Null(SubscriptionCancelPolicy.RenewalNotPayableReason(false));
-        Assert.Contains("ไม่คืนเงินตามสัดส่วน", SubscriptionCancelPolicy.Note(true, Now.AddDays(5)));
+        Assert.NotNull(PlatformInvoiceRules.RenewalNotPayableReason(true));
+        Assert.Null(PlatformInvoiceRules.RenewalNotPayableReason(false));
     }
 
     [Fact]
@@ -306,5 +253,49 @@ public class PlatformBillingPhase2Tests
         Assert.Null(PlatformInvoiceRules.StaleRenewalInvoice(doc, end, end, doc));                    // จ่ายใบนั้นเอง
         Assert.Null(PlatformInvoiceRules.StaleRenewalInvoice(doc, end.AddMonths(-1), end, null));     // ใบของรอบอื่น
         Assert.Null(PlatformInvoiceRules.StaleRenewalInvoice(null, end, end, null));
+    }
+
+    // ═══ ขั้น 4: ลิงก์ชำระ ═══
+
+    [Fact]
+    public void Payment_link_token_is_128_bit_random_and_stored_only_as_hash()
+    {
+        var t1 = PlatformPaymentLinkRules.NewToken();
+        var t2 = PlatformPaymentLinkRules.NewToken();
+        Assert.NotEqual(t1, t2);
+        Assert.Equal(22, t1.Length);   // 16 ไบต์ base64url ไม่มี padding
+        Assert.True(PlatformPaymentLinkRules.LooksValid(t1));
+        var h = PlatformPaymentLinkRules.Hash(t1);
+        Assert.Equal(64, h.Length);
+        Assert.Equal(h, PlatformPaymentLinkRules.Hash(t1));   // canonical เดียว — เขียนและค้นได้ค่าเดียวกัน
+        Assert.DoesNotContain(t1, h);
+        Assert.False(PlatformPaymentLinkRules.LooksValid("short"));
+        Assert.False(PlatformPaymentLinkRules.LooksValid("<script>alert(1)</script>xxxxxxxx"));
+        Assert.False(PlatformPaymentLinkRules.LooksValid(null));
+    }
+
+    [Theory]
+    [InlineData(5, false, true, false, PaymentLinkState.Valid)]
+    [InlineData(-1, false, true, false, PaymentLinkState.Expired)]
+    [InlineData(5, true, true, false, PaymentLinkState.Revoked)]
+    [InlineData(5, false, false, true, PaymentLinkState.Paid)]
+    [InlineData(-1, false, false, true, PaymentLinkState.Paid)]           // ชำระครบแล้ว ⇒ บอกว่าชำระแล้ว แม้หมดอายุ
+    [InlineData(5, false, false, false, PaymentLinkState.InvoiceClosed)]  // ใบถูกยกเลิก
+    public void Payment_link_state(int expiresInDays, bool revoked, bool open, bool paid, PaymentLinkState expected)
+    {
+        var st = PlatformPaymentLinkRules.StateOf(Now.AddDays(expiresInDays), revoked ? Now : (DateTime?)null, open, paid, Now);
+        Assert.Equal(expected, st);
+        Assert.Equal(expected == PaymentLinkState.Valid, PlatformPaymentLinkRules.Message(st) == null);
+    }
+
+    [Fact]
+    public void Payment_link_expiry_defaults_from_settings_and_is_clamped()
+    {
+        var p = PlatformBillingSettingsRules.Defaults;
+        Assert.Equal(14, PlatformPaymentLinkRules.ExpiryDays(null, p));
+        Assert.Equal(3, PlatformPaymentLinkRules.ExpiryDays(3, p));
+        Assert.Equal(PlatformBillingSettingsRules.MaxPaymentLinkExpiryDays, PlatformPaymentLinkRules.ExpiryDays(1000, p));
+        Assert.Equal(PlatformBillingSettingsRules.MinPaymentLinkExpiryDays, PlatformPaymentLinkRules.ExpiryDays(0, p));
+        Assert.Equal(30, PlatformPaymentLinkRules.ExpiryDays(null, p with { PaymentLinkExpiryDays = 30 }));
     }
 }

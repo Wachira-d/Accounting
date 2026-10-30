@@ -342,6 +342,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         {
             var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.Id == subscriptionId);
             if (sub == null) return null;
+            // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ผู้ใช้ขอยกเลิกมีผลสิ้นรอบ ⇒ ไม่ออกใบแจ้งหนี้ต่ออายุรอบถัดไป
+            if (sub.CancelAtPeriodEnd) return null;
 
             // idempotent ต่อ EndDate ของรอบนี้
             if (sub.RenewalInvoiceForEndDate.HasValue

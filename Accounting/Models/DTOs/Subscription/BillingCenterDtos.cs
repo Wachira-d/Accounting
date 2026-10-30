@@ -3,10 +3,6 @@ namespace Accounting.Models.DTOs.Subscription;
 // รอบ 219 เฟส 2 (คำตัดสินข้อ 180) — ศูนย์บิลของผู้เช่า: ทุกค่าที่หน้าแสดง (สถานะ · ป้าย · จ่ายได้ไหม · เหตุที่จ่ายไม่ได้) มาจากเซิร์ฟเวอร์ ·
 // enum ออกเป็น "ชื่อ" เสมอ (F2 ข้อ 5)
 
-/// <summary>หลักฐานการติ๊กยอมรับเงื่อนไขการซื้อที่ controller ประกอบจากคำขอ (ผู้ยอมรับ · ช่องทาง · IP · UA)</summary>
-public sealed record PlatformPurchaseAcceptanceInput(
-    bool Accepted, string? VersionShown, string Subject, string Channel, string? IpAddress, string? UserAgent);
-
 /// <summary>แจ้งชำระใบแจ้งหนี้ค่าบริการด้วยการโอน (ยอด = ยอดค้างของใบ — เซิร์ฟเวอร์คำนวณ ไม่รับยอดจาก body)</summary>
 public sealed record SubmitInvoicePaymentRequest(
     DateTime? PaymentDate,
@@ -34,8 +30,6 @@ public sealed record BillingCenterAddOn(
     string FeatureCode, string Name, string PaymentStatus, string PaymentStatusLabel, string BillingChoice, string BillingChoiceLabel,
     DateTime? TrialUntil, DateTime? GraceUntil, bool Usable, decimal? MonthlyPrice);
 
-public sealed record BillingCenterTerms(string Version, IReadOnlyList<string> Lines, string TermsUrl);
-
 public sealed record BillingCenterSummary(
     bool PlatformTenantConfigured,
     string? Notice,
@@ -46,8 +40,8 @@ public sealed record BillingCenterSummary(
     List<BillingCenterInvoice> Invoices,
     List<BillingCenterPayment> Payments,
     List<BillingCenterAddOn> AddOns,
+    /// <summary>ช่องทางชำระ + นโยบายที่ต้องติ๊ก — ตัวเดียวกับหน้าแพ็กเกจ/ส่วนเสริม (<c>PlatformPayInfo.BuildAsync</c> ของ part B)</summary>
     object PayOptions,
-    BillingCenterTerms Terms,
     string SuspensionPolicy,
     bool CanPay,
     bool CanManagePlan);

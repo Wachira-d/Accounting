@@ -130,6 +130,9 @@
   <script src="/js/plan-display.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/customer-notify.js"></script>
+  <!-- รอบ 219 ส่วน B: ช่องติ๊กยอมรับนโยบาย (ตัวเดียว) + หน้าจ่ายกลางสำหรับชำระออนไลน์ผ่านช่องทางของ NextAcc -->
+  <script src="/js/policy-accept.js"></script>
+  <script src="/js/pay-widget.js"></script>
   <script>
     const Sub = {
       subscription: null, trial: null, plans: [], cycle: 'monthly', selectedPlan: null,
@@ -272,7 +275,8 @@
             <div><div class="text-xs text-gray-500">วันหมดอายุ</div><div class="font-medium ${!s.isPermanentFree && new Date(s.endDate) < new Date() ? 'text-danger' : ''}">${s.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : Layout.date(s.endDate)}</div></div>
             <div><div class="text-xs text-gray-500">บิลถัดไป</div><div class="font-medium">${s.isPermanentFree ? '-' : (s.nextBillingDate ? Layout.date(s.nextBillingDate) : '-')}</div></div>
             <div><div class="text-xs text-gray-500">วันที่เหลือ</div><div class="font-medium">${s.isPermanentFree ? '∞' : Math.max(0, Math.ceil((new Date(s.endDate) - new Date()) / 86400000)) + ' วัน'}</div></div>
-          </div>`;
+          </div>
+          ${this.cancelHtml(s)}`;
 
         // Usage
         const limits = s.limits || {};
@@ -294,6 +298,31 @@
             <div class="usage-bar"><div class="usage-bar-fill" style="width:${pct}%;background:${color}"></div></div>
           </div>`;
         }).join('');
+      },
+
+      // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ยกเลิกแพ็กเกจ = มีผลสิ้นรอบ (เซิร์ฟเวอร์ตัดสิน · ข้อความผลมาจากเซิร์ฟเวอร์) · กลับมาใช้ต่อได้ก่อนสิ้นรอบ
+      cancelHtml(s) {
+        if (s.isPermanentFree || s.status !== 'Active') return '';
+        if (s.cancelAtPeriodEnd)
+          return `<div style="margin-top:14px;padding:10px 12px;border-radius:8px;background:#FEF3C7;color:#92400E;font-size:13px">
+            ขอยกเลิกแล้ว — ใช้งานได้ถึง ${Layout.date(s.endDate)} แล้วแพ็กเกจจะสิ้นสุด (ไม่เรียกเก็บรอบถัดไป)
+            <button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="Sub.undoCancel()">กลับมาใช้ต่อ</button></div>`;
+        return `<div style="margin-top:14px;font-size:12px;color:var(--gray-500)">
+          ต้องการหยุดใช้? <a href="#" onclick="Sub.cancelSub();return false">ยกเลิกแพ็กเกจ</a> — มีผลเมื่อสิ้นรอบบิล ·
+          <a href="/refund-policy.html" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a></div>`;
+      },
+      async cancelSub() {
+        if (!confirm('ยกเลิกแพ็กเกจ? ใช้งานได้ถึงวันสิ้นรอบที่ชำระแล้ว และค่าบริการที่ชำระแล้วไม่คืนเงินตามนโยบาย')) return;
+        try {
+          const res = await API.post(`/api/subscription/${Layout.getCompanyId()}/cancel`, {});
+          Layout.toast(res?.message || 'บันทึกแล้ว'); setTimeout(() => location.reload(), 1500);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async undoCancel() {
+        try {
+          const res = await API.post(`/api/subscription/${Layout.getCompanyId()}/cancel/undo`, {});
+          Layout.toast(res?.message || 'บันทึกแล้ว'); setTimeout(() => location.reload(), 1200);
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       renderTrial() {
@@ -450,7 +479,7 @@
         this.openUpgrade('Pro');
       },
 
-      openUpgrade(plan) {
+      async openUpgrade(plan) {
         const p = this.plans.find(x => x.plan === plan);
         if (!p) return;
         this.selectedPlan = plan;
@@ -471,7 +500,8 @@
           </div>
           <div class="form-group"><label class="form-label">โค้ดส่วนลด (ถ้ามี)</label><input type="text" class="form-input" id="promoCode" placeholder="กรอกโค้ดส่วนลด"></div>
           <input type="hidden" id="upgradePlan" value="${Layout.esc(plan)}">
-          <input type="hidden" id="upgradeCycle" value="${cycleEnum}">`;
+          <input type="hidden" id="upgradeCycle" value="${cycleEnum}">
+          <div id="upgradePolicy">${PolicyAccept.html((await this.platformPayInfo())?.policy)}</div>`;
         Layout.openModal('upgradeModal');
       },
 
@@ -481,8 +511,11 @@
         const cycle = document.getElementById('upgradeCycle').value;
         const promo = document.getElementById('promoCode').value;
         try {
+          // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงินก่อนขอแพ็กเกจ (ด่านจริงที่เซิร์ฟเวอร์)
+          const pol = PolicyAccept.require('upgradePolicy');
           // รอบ 219 เฟส 0 (G-0): ไม่เปิดแพ็กเกจทันที — เซิร์ฟเวอร์คืนรายการชำระ (ยอดของเซิร์ฟเวอร์) หรือการเปลี่ยนที่รอมีผล + ข้อความ
-          const res = await API.post(`/api/subscription/${cid}/convert`, { plan, billingCycle: cycle, promoCode: promo || null });
+          const res = await API.post(`/api/subscription/${cid}/convert`, { plan, billingCycle: cycle, promoCode: promo || null,
+            policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown });
           Layout.closeModal('upgradeModal');
           const r = res?.data || {};
           if (r.payment) { await this.openPay(r.payment, res.message); }
@@ -493,8 +526,7 @@
       // รอบ 219 เฟส 0: วิธีโอนของ NextAcc + แนบสลิปของรายการชำระ (ยอดมาจากเซิร์ฟเวอร์ — หน้าเว็บแสดงอย่างเดียว)
       async openPay(p, message) {
         const cid = Layout.getCompanyId();
-        let info = null;
-        try { info = (await API.get(`/api/companies/${cid}/metering/platform-pay`))?.data; } catch { info = null; }
+        const info = await this.platformPayInfo();
         const bank = info?.bankTransferInstructions
           ? `<div class="sub-card" style="white-space:pre-line;margin-bottom:12px"><b>โอนเงินค่าบริการให้ NextAcc</b>\n${Layout.esc(info.bankTransferInstructions)}</div>`
           : `<div class="sub-card" style="margin-bottom:12px;color:var(--danger)">${Layout.esc(info?.fallbackNote || 'กรุณาติดต่อผู้ดูแลระบบ NextAcc ก่อนโอนเงิน')}</div>`;
@@ -505,16 +537,49 @@
             <div class="flex justify-between"><span>เลขที่รายการ</span><strong>${Layout.esc(p.paymentNumber)}</strong></div>
             <div class="flex justify-between"><span>ยอดที่ต้องโอน</span><strong class="text-primary">฿${Layout.money(p.amount)}</strong></div>
           </div>
+          <div id="payPolicy">${PolicyAccept.html(info?.policy)}</div>
+          ${info?.online ? `<div class="sub-card" style="margin-bottom:12px">
+            <div style="font-weight:600;margin-bottom:6px">💳 ชำระออนไลน์ — ยืนยันทันทีเมื่อเงินเข้า</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">${(info.methods || []).map(m =>
+              `<button class="btn btn-primary btn-sm" onclick="Sub.payOnline('${Layout.jsArg(p.id)}','${Layout.jsArg(m)}')">${Layout.esc(this.methodLabel(m))}</button>`).join('')}</div>
+          </div>` : (info?.offlineReason ? `<div class="text-xs text-gray-500" style="margin-bottom:8px">${Layout.esc(info.offlineReason)}</div>` : '')}
           ${bank}
           <div class="form-group"><label class="form-label">แนบสลิปการโอน (รูปหรือ PDF)</label><input type="file" id="paySlipFile" class="form-input" accept="image/*,application/pdf"></div>
           <div class="text-xs text-gray-500">แพ็กเกจเปิดใช้เมื่อผู้ดูแลระบบตรวจสลิปและยืนยันแล้ว</div>`;
         Layout.openModal('payModal');
       },
 
+      // รอบ 219 ส่วน B: วิธีชำระ/นโยบายจากเซิร์ฟเวอร์ (ตัวเดียวกับหน้าส่วนเสริม) — โหลดครั้งเดียวต่อหน้า
+      async platformPayInfo() {
+        if (this._payInfo !== undefined) return this._payInfo;
+        try { this._payInfo = (await API.get(`/api/companies/${Layout.getCompanyId()}/platform-pay`))?.data || null; }
+        catch { this._payInfo = null; }
+        return this._payInfo;
+      },
+      methodLabel(m) {
+        return ({ PromptPay: 'พร้อมเพย์ (QR)', Card: 'บัตรเครดิต/เดบิต', MobileBanking: 'โมบายแบงก์กิ้ง', InternetBanking: 'อินเทอร์เน็ตแบงก์กิ้ง', TrueMoney: 'TrueMoney' })[m] || m;
+      },
+      // ชำระออนไลน์ผ่านช่องทางของ NextAcc (ไม่ใช่ gateway ของร้าน) — ยอดมาจากเซิร์ฟเวอร์ · ติ๊กยอมรับนโยบายไปกับคำขอ
+      payOnline(paymentId, method) {
+        const pol = PolicyAccept.value('payPolicy');
+        Layout.closeModal('payModal');
+        PayWidget.open({
+          companyId: Layout.getCompanyId(),
+          publicBase: `/api/companies/${Layout.getCompanyId()}/platform-pay/subscription-payments/${encodeURIComponent(paymentId)}`,
+          method,
+          extraBody: { policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown },
+          onPaid: () => { Layout.toast('ชำระค่าแพ็กเกจสำเร็จ'); setTimeout(() => location.reload(), 1200); },
+        });
+      },
+
       async submitPaySlip() {
         const f = document.getElementById('paySlipFile');
         if (!this._payId || !f || !f.files.length) { Layout.toast('เลือกไฟล์สลิปก่อน', 'error'); return; }
         const fd = new FormData(); fd.append('file', f.files[0]);
+        // รอบ 219 ส่วน B: ติ๊กยอมรับนโยบายไปกับสลิป (ยอมรับไว้แล้วตอนขอแพ็กเกจ = เซิร์ฟเวอร์ผ่าน)
+        const pol = PolicyAccept.value('payPolicy');
+        fd.append('policyAccepted', pol.policyAccepted ? 'true' : 'false');
+        if (pol.policyVersionShown) fd.append('policyVersionShown', pol.policyVersionShown);
         try {
           const j = await API.upload(`/api/subscription/payments/${this._payId}/slip`, fd);
           Layout.closeModal('payModal');

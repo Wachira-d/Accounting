@@ -7,22 +7,15 @@ public static class PlatformBillingPhase2Migration
 {
     public static IReadOnlyList<string> Statements() => new[]
     {
-        // ── ขั้น 1: ค่าตั้งการเรียกเก็บ (แถวเดียว) · หลักฐานยอมรับเงื่อนไขการซื้อ · ผูกรายการชำระกับใบแจ้งหนี้ ──
+        // ── ขั้น 1: ค่าตั้งการเรียกเก็บ (แถวเดียว) · ผูกรายการชำระกับใบแจ้งหนี้ (หลักฐานยอมรับนโยบาย = ตาราง PolicyAcceptances ของ part B) ──
         """CREATE TABLE IF NOT EXISTS "PlatformBillingSettings" ("Id" uuid PRIMARY KEY, "RenewalInvoiceLeadDays" integer NOT NULL DEFAULT 15, "ReminderDaysBeforeDue" varchar(100) NOT NULL DEFAULT '7,3,1', "ReminderDaysAfterDue" varchar(100) NOT NULL DEFAULT '1,3,7', "SuspendGraceDays" integer NOT NULL DEFAULT 14, "AutoSuspendEnabled" boolean NOT NULL DEFAULT true, "PaymentLinkExpiryDays" integer NOT NULL DEFAULT 14, "ReminderEmailEnabled" boolean NOT NULL DEFAULT true, "ReminderLineEnabled" boolean NOT NULL DEFAULT true, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
-        """CREATE TABLE IF NOT EXISTS "PlatformPurchaseAcceptances" ("Id" uuid PRIMARY KEY, "BuyerCompanyId" uuid NOT NULL, "SubjectKind" varchar(40) NOT NULL DEFAULT '', "SubjectId" uuid NULL, "Subject" varchar(256) NOT NULL DEFAULT '', "PolicyVersion" varchar(50) NOT NULL DEFAULT '', "AcceptedAt" timestamp without time zone NOT NULL, "Channel" varchar(50) NULL, "IpAddress" varchar(45) NULL, "UserAgent" varchar(500) NULL, "EvidenceHash" varchar(100) NOT NULL DEFAULT '', "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
-        """CREATE INDEX IF NOT EXISTS "IX_PlatformPurchaseAcceptances_Buyer_AcceptedAt" ON "PlatformPurchaseAcceptances" ("BuyerCompanyId", "AcceptedAt");""",
-        """CREATE INDEX IF NOT EXISTS "IX_PlatformPurchaseAcceptances_Subject" ON "PlatformPurchaseAcceptances" ("SubjectKind", "SubjectId");""",
         """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "PlatformInvoiceDocumentId" uuid NULL;""",
-        """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "PolicyAcceptanceId" uuid NULL;""",
         """CREATE INDEX IF NOT EXISTS "IX_SubscriptionPayments_PlatformInvoiceDocumentId" ON "SubscriptionPayments" ("PlatformInvoiceDocumentId") WHERE "PlatformInvoiceDocumentId" IS NOT NULL;""",
         // ── ขั้น 4: ลิงก์ชำระ (เก็บเฉพาะ hash ของโทเคน) ──
         """CREATE TABLE IF NOT EXISTS "PlatformPaymentLinks" ("Id" uuid PRIMARY KEY, "PlatformCompanyId" uuid NOT NULL, "BuyerCompanyId" uuid NOT NULL, "DocumentId" uuid NOT NULL, "TokenHash" varchar(64) NOT NULL DEFAULT '', "AmountSnapshot" numeric(18,2) NOT NULL DEFAULT 0, "ExpiresAt" timestamp without time zone NOT NULL, "RevokedAt" timestamp without time zone NULL, "RevokedBy" varchar(256) NULL, "RevokedReason" varchar(300) NULL, "ViewCount" integer NOT NULL DEFAULT 0, "LastViewedAt" timestamp without time zone NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PlatformPaymentLinks_TokenHash" ON "PlatformPaymentLinks" ("TokenHash");""",
         """CREATE INDEX IF NOT EXISTS "IX_PlatformPaymentLinks_Document" ON "PlatformPaymentLinks" ("DocumentId");""",
-        // ── ขั้น 3: ยกเลิกเมื่อสิ้นรอบ · วิธีชำระส่วนเสริมต่อการซื้อ ──
-        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CancelAtPeriodEnd" boolean NOT NULL DEFAULT false;""",
-        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CancelRequestedAt" timestamp with time zone NULL;""",
-        """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "CancelRequestedBy" text NULL;""",
+        // ── ขั้น 3: วิธีชำระส่วนเสริมต่อการซื้อ (ยกเลิกเมื่อสิ้นรอบเป็นของ part B) ──
         """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "BillingChoice" integer NOT NULL DEFAULT 0;""",
         // ── ขั้น 2: ส่งใบ + ทวงหนี้ (คีย์ข้อความ unique ต่อช่อง · สถานะทวงหนี้ต่อบริษัท = watermark ของงาน) ──
         """CREATE TABLE IF NOT EXISTS "PlatformBillingNotices" ("Id" uuid PRIMARY KEY, "BuyerCompanyId" uuid NOT NULL, "DocumentId" uuid NULL, "MessageKey" varchar(200) NOT NULL DEFAULT '', "Channel" varchar(20) NOT NULL DEFAULT '', "Status" varchar(20) NOT NULL DEFAULT 'Claimed', "Detail" varchar(500) NULL, "SentAt" timestamp without time zone NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",

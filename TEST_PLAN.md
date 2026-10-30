@@ -4,9 +4,9 @@
 | --- | --- | --- | --- |
 | P2-01 | ค่าตั้งการเรียกเก็บ: ไม่มีแถว · ค่าหลุดช่วงในฐาน · ค่าผิดจากแอดมิน · รายการวันซ้ำ/สลับ | ค่าตั้งต้น = พฤติกรรมเดิม · บีบเข้าช่วง · ปฏิเสธข้อความไทย · จัดรูป | `PlatformBillingPhase2Tests`.Settings_* |
 | P2-02 | แอดมินบันทึกค่าตั้ง / ค่าผิด | อ่านกลับได้ · แถวเดียว · audit chain `PLATFORM-BILLING-SETTINGS` / ไม่เขียนทับ | Db `PlatformBillingPhase2DbTests`.Settings_update_round_trips_writes_audit_chain_and_rejects_invalid |
-| P2-03 | เงื่อนไขการซื้อ: ไม่ติ๊ก · ฉบับเก่า/ไม่ระบุ · ติ๊กฉบับปัจจุบัน · ข้อความตรงคำตัดสินเจ้าของ | 400 / 409 / ผ่าน · ไม่คืนเงิน · ยกเลิกใช้ถึงสิ้นรอบ · ไม่ prorate | `Purchase_terms_require_tick_and_current_version` · `Purchase_terms_text_matches_owner_decisions` · `Acceptance_evidence_hash_round_trips_with_canonical_function` |
+| P2-03 | เงื่อนไขการซื้อ: ติ๊กยอมรับนโยบายก่อนชำระใบ (ศูนย์บิล · ลิงก์ชำระ · ซื้อส่วนเสริม) | ด่านของ part B (`PurchasePolicyAcceptance`) ก่อนเกิดรายการ | required_call_site_check (BillingCenterController.PayBySlip/PrepareOnline · PlatformPayLinkController · MeteringController.ToggleFeature) + Db `Payment_link_hash_only_wrong_token_expired_revoked_paid_and_cross_invoice` |
 | P2-04 | ใบแจ้งหนี้: ชนิดจากอ้างอิง · ค้าง/ไม่ค้าง · เกินกำหนดนับวันไทย · ป้าย | ตัวตัดสินเดียว `PlatformInvoiceRules` | `Invoice_kind_from_reference` · `Invoice_open_only_when_issued_not_voided_and_balance_left` · `Days_past_due_counts_thai_calendar_days` · `Invoice_state_and_label` |
-| P2-05 | แจ้งชำระใบของบริษัทอื่น · ไม่ติ๊ก · ฉบับเก่า · ใบชำระครบ · ผ่าน · กดซ้ำ · อนุมัติ | 404 / 400 / 409 / 409 · ยอดจากใบ + หลักฐานตรวจกลับได้ · รายการเดิม · ไม่ขยับวันหมดอายุ | Db `Invoice_payment_scoped_to_buyer_amount_from_server_terms_required_and_does_not_extend` + `Invoice_only_payment_never_extends_subscription` |
+| P2-05 | แจ้งชำระใบของบริษัทอื่น · ใบชำระครบ · ผ่าน · กดซ้ำ · อนุมัติ | 404 / 409 · ยอดจากใบ · รายการเดิม · ไม่ขยับวันหมดอายุ | Db `Invoice_payment_scoped_to_buyer_amount_from_server_and_does_not_extend` + `Invoice_only_payment_never_extends_subscription` |
 | P2-06 | แจ้งชำระใบต่ออายุแล้วอนุมัติ | ต่อจากวันหมดอายุเดิม 1 รอบ | Db `Renewal_invoice_payment_extends_from_current_end_date` |
 | P2-07 | ศูนย์บิล: จ่ายไม่ได้เพราะอะไร · ป้ายรายการชำระ | ข้อความจากเซิร์ฟเวอร์ | `Billing_center_pay_refusal_reasons` · `Billing_center_payment_purpose_labels` |
 | P2-08 (มือ) | `/pages/billing.html` + `/admin/platform-billing.html` · อนุมัติใบใน `/admin/payments.html` แล้วดูใบใน tenant ผู้ให้บริการ | ใบเปลี่ยนเป็นชำระแล้ว (ไม่มีใบขายสดใหม่) · ใบเสร็จดาวน์โหลดได้ | มือ (ยังไม่ได้คอมไพล์ในเครื่องนี้) |
@@ -14,9 +14,11 @@
 | P2-10 | ระงับ: Enforce/Shadow/Off × ระงับอัตโนมัติเปิด/ปิด · ผ่อนผัน 14/15 วัน · พักระงับ · ทดลองใช้/ระงับเหตุอื่น · คืนสถานะ | Suspend / "จะระงับ" / ไม่แตะ · คืน Active หรือ PastDue | `Dunning_suspends_only_in_enforce_mode_with_auto_suspend` · `Dunning_grace_exemption_status_and_restore_directions` |
 | P2-11 | ฐานจริง: เงา ⇒ จะระงับ · บังคับ ⇒ ระงับ + audit · ชำระครบ ⇒ คืน · ระงับโดยแอดมินไม่ถูกแตะ · พักระงับ (เหตุผลบังคับ) | ตามนั้น | Db `Dunning_suspends_in_enforce_shadow_records_only_and_restores_after_payment` · `Dunning_does_not_touch_suspension_by_other_cause_and_admin_exemption_restores` |
 | P2-12 | ผู้ส่งข้อความ: คีย์เดิมสองครั้ง · ไม่มีบริการอีเมล/LINE | 1 แถวต่อช่อง · "ข้าม" พร้อมเหตุ (ไม่ใช่ "ส่งแล้ว") | Db `Notifier_claims_each_key_once_per_channel` |
-| P2-13 | ยกเลิก: Active มีรอบเหลือ · ฟรีถาวร · ทดลองใช้ · PastDue · ใช้ต่อ · ใช้ต่อซ้ำ · ครบรอบ · จ่ายใบต่ออายุของรอบที่ยกเลิก | สิ้นรอบ / ทันที · ล้าง · 409 · Cancelled · 409 | `Cancel_is_at_period_end_only_with_paid_cycle_left` · `Reactivate_and_renewal_payability_follow_cancellation` · Db `Cancel_keeps_access_to_period_end_reactivate_and_expiry_cancels_without_renewal` · `Trial_cancel_is_immediate` |
-| P2-14 | ส่วนเสริม: ไม่เลือกวิธี · ไม่ติ๊ก · รวมใบรายเดือน · จ่ายล่วงหน้า · จ่ายล่วงหน้าซ้ำงวดที่คิดแล้ว · สลิปรอตรวจ | 400 / 400 / ใช้ได้ทันที ค่าเหมาเต็มในใบ / รอชำระ ฿0 งวดนั้น / 409 / 409 | `Addon_choice_never_charges_same_period_twice` · Db `Addon_purchase_requires_choice_and_terms_monthly_invoice_skips_upfront` · `Addon_upfront_choice_keeps_phase0_upfront_flow` |
+| P2-13 | ใบต่ออายุของรอบที่ยกเลิก (part B): จ่าย · ทวง · กลับมาใช้ต่อ | 409 / ไม่ระงับ / จ่ายได้ | `Renewal_of_cancelled_subscription_is_not_payable` · Db `Renewal_invoice_of_cancelled_subscription_is_not_payable_and_not_dunned_until_resumed` |
+| P2-14 | ส่วนเสริม: ไม่เลือกวิธี · รวมใบรายเดือน · จ่ายล่วงหน้า · จ่ายล่วงหน้าซ้ำงวดที่คิดแล้ว · สลิปรอตรวจ | 400 / ใช้ได้ทันที ค่าเหมาเต็มในใบ / รอชำระ ฿0 งวดนั้น / 409 / 409 | `Addon_choice_never_charges_same_period_twice` · Db `Addon_purchase_requires_choice_monthly_invoice_skips_upfront` · `Addon_upfront_choice_keeps_phase0_upfront_flow` |
 | P2-15 | S9: ต่ออายุ/อัปเกรดอนุมัติหลังออกใบต่ออายุ · ใบยังไม่จ่าย · ใบจ่ายบางส่วน · จ่ายใบนั้นเอง | ล้างตัวชี้ · ยกเลิกผ่านเส้นยกเลิกเอกสาร · ไม่ยกเลิก + งานใบลดหนี้ (ประวัติ + audit) · ไม่แตะ | `Stale_renewal_invoice_only_when_issued_for_current_cycle_and_not_the_one_paid` · Db `Upgrade_approval_clears_stale_renewal_and_issuer_voids_only_unpaid` |
+| P2-16 | ลิงก์ชำระ: โทเคน 128 บิต · เก็บ hash · รูปผิด/โทเคนผิด · หมดอายุ · ยกเลิก (เหตุผลบังคับ) · ชำระครบ · ข้ามใบ · ใบไม่ค้าง · อายุตั้งต้น | ไม่มีโทเคนในฐาน · 404 · Expired/Revoked (410 ตอนจ่าย)/Paid · ใบของลิงก์เท่านั้น · 409 · 14 วัน | `Payment_link_token_is_128_bit_random_and_stored_only_as_hash` · `Payment_link_state` · `Payment_link_expiry_defaults_from_settings_and_is_clamped` · Db `Payment_link_hash_only_wrong_token_expired_revoked_paid_and_cross_invoice` |
+| P2-17 (มือ) | สร้างลิงก์ที่ `/admin/platform-billing.html` → เปิด `/pay-link.html?t=…` ในหน้าต่างไม่ล็อกอิน → แนบสลิป → อนุมัติ → เปิดลิงก์อีกครั้ง | แสดงข้อมูลขั้นต่ำ · ต้องติ๊ก · หลังชำระ = "ชำระครบแล้ว" · audit ครบ | มือ (ยังไม่ได้คอมไพล์ในเครื่องนี้) |
 
 ## PB219 — อุดรั่วเงินค่าบริการ NextAcc เฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` · `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2)
 
@@ -366,7 +368,48 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **709 ไฟล์ · 7,363 `[Fact]` + 1,162 `[Theory]` (5,451 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **711 ไฟล์ · 7,385 `[Fact]` + 1,162 `[Theory]` (5,452 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |
@@ -7277,4 +7320,23 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CMS215-23 | (S3) PUT booking/settings `defaultResourceMode: 99` | ปฏิเสธด้วยข้อความไทย ไม่บันทึก |
 | CMS215-24 | (S4) ผู้มีสิทธิ์ตั้งค่าร้านค้าแต่ไม่มีสิทธิ์เว็บไซต์ เปิดแท็บแจ้งเตือนลูกค้า | ตารางแจ้งลูกค้ารายเว็บยังแก้ได้ที่นี่ · เจ้าของเห็นกล่อง "ย้ายแล้ว" |
 | CMS215-25 | ศูนย์ตั้งค่าเปลี่ยนค่าเว็บโหมดผู้ให้บริการ ระหว่างอีกแท็บแก้ระยะเวลาเริ่มต้น | ระยะเวลาที่อีกแท็บบันทึกไม่ถูกทับ (ศูนย์ส่งเฉพาะช่องที่แก้) |
+
+## R219B — ช่องทางรับชำระของ NextAcc · นโยบายคืนเงิน · ติ๊กยอมรับนโยบาย (รอบ 219 ส่วน B · คำตัดสินข้อ 179 · `PlatformGatewayRefundPolicyTests` · `Db/PurchasePolicyAcceptanceDbTests`)
+
+| # | กรณี | ผลที่ต้องได้ |
+| --- | --- | --- |
+| R219B-1 | ชนิดเอกสาร privacy/terms/refund | ชื่อ/path/slug/แม่แบบไม่ซ้ำ · ชนิดไม่รู้จักโยน (ไม่ตกเป็น privacy) · `ConsentKinds` ไม่มี refund |
+| R219B-2 | นโยบายคืนเงินแพลตฟอร์มฉบับตั้งต้น | ไม่คืนเงิน · ยกเลิกมีผลสิ้นรอบ · ใบลดหนี้ในข้อยกเว้น · โทเคนรู้จักครบ |
+| R219B-3 | แม่แบบนโยบายคืนเงินร้าน | ตัวเลขจากค่าตั้ง (ริบมัดจำ % · วันคืนสินค้า · วันคืนเงิน) · ค่าเริ่ม 7/14 · ไม่ริบ = คืนเต็ม |
+| R219B-4 | ข้อความร้านขัดค่าตั้ง | เตือน (คืนเต็มแต่ตั้งริบ · พูดริบแต่ไม่ได้ตั้ง · "ไม่คืนทุกกรณี") · ข้อความตรงค่าตั้ง ⇒ ไม่เตือน |
+| R219B-5 | ฉบับนโยบายร้าน | เปลี่ยนเมื่อข้อความ/ลิงก์/ค่าตั้งเปลี่ยน · ว่าง = แม่แบบ (คงที่) |
+| R219B-6 | ด่านติ๊ก | ไม่ติ๊ก ⇒ ปฏิเสธ · ฉบับไม่ตรง ⇒ ขอโหลดใหม่ · ไม่ส่งฉบับ ⇒ ยอมรับฉบับปัจจุบัน · พนักงาน ⇒ ไม่บังคับ |
+| R219B-7 | หลักฐาน hash | ตรวจกลับได้หลังผ่าน PostgreSQL · แก้ช่องใด ⇒ ตรวจไม่ผ่าน · UA ตัดก่อน hash |
+| R219B-8 | จองบริการจากเว็บ (Db) | ไม่ติ๊ก ⇒ ไม่มีแถวการจอง/หลักฐาน · ติ๊ก ⇒ หลักฐานผูก SourceId = การจอง · พนักงานจองแทน ⇒ ผ่าน ไม่มีหลักฐาน |
+| R219B-9 | ค่าบริการแพลตฟอร์ม (Db) | ไม่ติ๊ก ⇒ ปฏิเสธ · ยอมรับแล้วสำหรับรายการเดียวกัน ⇒ ผ่านไม่เพิ่มแถว · รายการอื่น ⇒ ต้องติ๊ก |
+| R219B-10 | ด่านเปิด live | ต้องทดสอบผ่าน + คีย์ live ครบ + **คีย์ live ตรวจผ่าน** · แพลตฟอร์มเพิ่มนโยบายคืนเงินเผยแพร่ + พิมพ์ยืนยัน |
+| R219B-11 | ทดลองจ่าย | เฉพาะโหมดทดสอบ · ชนิดต้นทางอื่นไม่ถูกแตะ · ไม่ใช่รายได้แพลตฟอร์ม |
+| R219B-12 | ช่องทางค่าบริการออนไลน์ | ปุ่มเฉพาะ active + โหมดจริง + มีวิธีจ่าย · โหมดทดสอบ ⇒ ไม่มีปุ่ม |
+| R219B-13 | หน้าทดลองจ่าย | null/ไม่รู้จัก = AdminsOnly · Off ปิดทุกคน · Public เปิด · ช่องทางโหมดจริง ⇒ ปิดเอง |
+| R219B-14 | ยกเลิกแพ็กเกจ (pure + Db) | จ่ายแล้วยังไม่สิ้นรอบ ⇒ ใช้ต่อถึงสิ้นรอบแล้ว Cancelled (ไม่ PastDue) · ไม่ได้ขอยกเลิก ⇒ PastDue ตามเดิม · กลับมาใช้ต่อได้ก่อนสิ้นรอบ |
 
