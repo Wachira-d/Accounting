@@ -99,7 +99,7 @@ public static class CustomerNotifyResend
     public static bool IsSupported(string? eventKey) => TargetKindOf(eventKey) != null;
 
     /// <summary>สถานะของรายการตอนนี้ยังตรงกับเนื้อข้อความไหม (ห้ามส่ง "ยืนยันการจอง" ถึงการจองที่ยกเลิกแล้ว ฯลฯ) · null = ตรง · ไม่งั้นคืนเหตุ</summary>
-    public static string? TargetStillMakesSense(string eventKey, CustomerNotifyResendTarget t, DateTime nowLocal)
+    private static string? TargetStillMakesSense(string eventKey, CustomerNotifyResendTarget t, DateTime nowLocal)
     {
         var future = t.BookingStartLocal is DateTime start && start > nowLocal;
         switch (eventKey)
