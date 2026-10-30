@@ -236,6 +236,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(CmsRound209P6Statements());   // รอบ 209 P6 — variant บนตะกร้า/ออเดอร์ · ยินยอม PDPA ของเว็บ · ฟอร์ม → lead (บล็อกท้ายไฟล์)
         list.AddRange(CmsRound211LineNotifyStatements());   // รอบ 211 — ลูกค้าผูก LINE เอง (สมาชิก/การจอง/ออเดอร์) + ปลายทาง OA ของบริษัท (บล็อกท้ายไฟล์)
         list.AddRange(CmsRound212NotifyStatements());   // รอบ 212 — ค่าตั้งแจ้งลูกค้า · โควตาข้อความช่องกลาง · ตารางของแพ็ก B/C (บล็อกท้ายไฟล์ · แพ็ก A เป็นเจ้าของ)
+        list.AddRange(Accounting.Helpers.CustomerRelinkMigration.Statements());   // รอบ 212 แพ็ก B — ความคืบหน้า/คีย์กันซ้ำของ LineOaSwitchEvents (ต้องอยู่หลังบล็อกของแพ็ก A)
         return list;
     }
 

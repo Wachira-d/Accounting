@@ -25,14 +25,18 @@ public class LineConfigController : ControllerBase
     private readonly ISecretProtector _secrets;
     private readonly ILineNotifyService _line;
     private readonly ICustomerLineLinkService? _customerLinks;
+    private readonly ICustomerRelinkInviteService? _relink;
+    private readonly ILogger<LineConfigController>? _logger;
 
     public LineConfigController(AccountingDbContext db, ISecretProtector secrets, ILineNotifyService line,
-        ICustomerLineLinkService? customerLinks = null)
+        ICustomerLineLinkService? customerLinks = null, ICustomerRelinkInviteService? relink = null, ILogger<LineConfigController>? logger = null)
     {
         _db = db;
         _secrets = secrets;
         _line = line;
         _customerLinks = customerLinks;
+        _relink = relink;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -50,6 +54,8 @@ public class LineConfigController : ControllerBase
         Guid companyId, [FromBody] UpdateLineConfigRequest req)
     {
         var s = await GetOrCreateSettings(companyId);
+        // รอบ 212 แพ็ก B: OA ที่ "ส่งจริง" ก่อนบันทึก (ตัวตัดสินเดียว ResolveChannelAsync — อ่านจากฐาน ไม่ใช่ค่าที่กำลังแก้)
+        var before = _customerLinks == null ? null : await _customerLinks.ResolveChannelAsync(companyId);
         s.LineEnabled = req.Enabled;
         if (!string.IsNullOrEmpty(req.ChannelAccessToken))
             s.LineChannelAccessToken = _secrets.Protect(req.ChannelAccessToken);
@@ -63,13 +69,40 @@ public class LineConfigController : ControllerBase
             else if (CustomerLineLinkRule.NormalizeBasicId(req.OaBasicId) is string basic) s.LineOaBasicId = basic;
             else return BadRequest(new ApiResponse<LineConfigResponse>(false, null, "LINE OA Basic ID ไม่ถูกต้อง — ใช้รูป @xxxx (ตัวอักษรอังกฤษ/ตัวเลข/จุด/ขีด)"));
         }
-        // เปลี่ยน token ⇒ อาจเป็น OA ใหม่ ⇒ ลืม bot userId เดิม (webhook ครั้งถัดไปประทับใหม่ · ลิงก์ของ OA เดิมตัดสินด้วย scope จนกว่าจะรู้)
-        if (!string.IsNullOrEmpty(req.ChannelAccessToken)) s.LineOaDestination = null;
+        // เปลี่ยน token ⇒ อาจเป็น OA ใหม่ ⇒ ถาม LINE ว่า token นี้เป็น bot ไหน (รอบ 212 แพ็ก B — รู้ทันทีว่าเปลี่ยน OA หรือแค่ออก token ใหม่) ·
+        // ถามไม่ได้ ⇒ ลืม bot userId เดิม (webhook ครั้งถัดไปประทับใหม่ + ตรวจการสลับ · ลิงก์ของ OA เดิมตัดสินด้วย scope จนกว่าจะรู้)
+        if (!string.IsNullOrEmpty(req.ChannelAccessToken))
+            s.LineOaDestination = _relink == null ? null : await _relink.FetchBotUserIdAsync(req.ChannelAccessToken, HttpContext?.RequestAborted ?? default);
         s.UpdatedAt = DateTime.UtcNow;
         // Reset configured flag after change — admin must re-test
         s.LineConfigured = false;
         await _db.SaveChangesAsync();
-        return Ok(new ApiResponse<LineConfigResponse>(true, await BuildAsync(companyId, s), "บันทึกการตั้งค่า LINE เรียบร้อย"));
+
+        var message = "บันทึกการตั้งค่า LINE เรียบร้อย";
+        var relinkNote = await RecordOaSwitchAsync(companyId, before);
+        if (relinkNote != null) message += " · " + relinkNote;
+        return Ok(new ApiResponse<LineConfigResponse>(true, await BuildAsync(companyId, s), message));
+    }
+
+    /// <summary>รอบ 212 แพ็ก B: OA ที่ส่งจริงเปลี่ยน (ร้าน↔NextAcc หรือ bot ใหม่) ⇒ บันทึกการสลับให้งานเบื้องหลังเชิญลูกค้าที่ผูกไว้เดิมผูกใหม่ ·
+    /// ไม่ส่งในคำขอ HTTP · บันทึกไม่ได้ ⇒ บอกในข้อความตอบกลับ (ค่าตั้งบันทึกแล้ว — ไม่ล้มทั้งคำขอ) · คืนข้อความเพิ่มหรือ null</summary>
+    private async Task<string?> RecordOaSwitchAsync(Guid companyId, CustomerLineChannel? before)
+    {
+        if (_customerLinks == null || _relink == null || before == null) return null;
+        try
+        {
+            var after = await _customerLinks.ResolveChannelAsync(companyId);
+            if (!CustomerRelinkInvitePlan.IsSwitch(before.Scope, before.CurrentDestination, after.Scope, after.CurrentDestination)) return null;
+            var actor = User?.Identity?.Name;
+            await _relink.RecordSwitchAsync(companyId, before.Scope, before.CurrentDestination, after.Scope, after.CurrentDestination,
+                CustomerRelinkInvitePlan.SourceConfigPut, actor);
+            return "เปลี่ยนบัญชี LINE ที่ใช้แจ้งลูกค้าแล้ว — ระบบจะทยอยส่งคำเชิญให้ลูกค้าที่เคยผูกไว้ผูกใหม่ (ดูความคืบหน้าในส่วน \"แจ้งเตือนลูกค้าทาง LINE\" · ปิดได้ที่ตารางการแจ้งเตือนลูกค้า แถว \"เชิญผูก LINE ใหม่\")";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger?.LogError(ex, "บันทึกการเปลี่ยน LINE OA ของบริษัท {CompanyId} ไม่สำเร็จ", companyId);
+            return "⚠️ บันทึกการเปลี่ยนบัญชี LINE เพื่อเชิญลูกค้าผูกใหม่ไม่สำเร็จ — ลูกค้าที่ผูกไว้เดิมจะยังไม่ได้รับคำเชิญอัตโนมัติ กรุณาแจ้งผู้ดูแลระบบ";
+        }
     }
 
     [HttpPost("test")]
@@ -114,7 +147,11 @@ public class LineConfigController : ControllerBase
     }
 
     private async Task<LineConfigResponse> BuildAsync(Guid companyId, CompanySettings s)
-        => Build(s) with { CustomerChannel = _customerLinks == null ? null : await _customerLinks.GetChannelInfoAsync(companyId) };
+        => Build(s) with
+        {
+            CustomerChannel = _customerLinks == null ? null : await _customerLinks.GetChannelInfoAsync(companyId),
+            RelinkInvite = _relink == null ? null : await _relink.GetProgressAsync(companyId),
+        };
 
     private static LineConfigResponse Build(CompanySettings s) => new(
         Enabled: s.LineEnabled,

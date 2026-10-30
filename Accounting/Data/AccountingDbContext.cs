@@ -20,6 +20,7 @@ public class AccountingDbContext : DbContext
     public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
+    public DbSet<LineOaSwitchEvent> LineOaSwitchEvents => Set<LineOaSwitchEvent>();   // รอบ 212 แพ็ก B
     public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
@@ -3480,6 +3481,21 @@ public class AccountingDbContext : DbContext
         {
             e.HasKey(x => new { x.CompanyId, x.Period });
             e.Property(x => x.Period).HasMaxLength(7);
+        });
+        // รอบ 212 แพ็ก B: การสลับ LINE OA → คำเชิญผูกใหม่ (ตาราง/index ต้องตรงกับ CmsRound212NotifyStatements + Helpers/CustomerRelinkMigration)
+        modelBuilder.Entity<LineOaSwitchEvent>(e =>
+        {
+            e.Property(x => x.FromScope).HasMaxLength(16);
+            e.Property(x => x.FromDestination).HasMaxLength(64);
+            e.Property(x => x.ToScope).HasMaxLength(16);
+            e.Property(x => x.ToDestination).HasMaxLength(64);
+            e.Property(x => x.Source).HasMaxLength(32);
+            e.Property(x => x.DedupeKey).HasMaxLength(200);
+            e.Property(x => x.LastError).HasMaxLength(500);
+            e.HasIndex(x => new { x.CompanyId, x.ProcessedAt }).HasDatabaseName("IX_LineOaSwitchEvents_Pending");
+            e.HasIndex(x => new { x.CompanyId, x.DedupeKey }).IsUnique()
+                .HasFilter("\"ProcessedAt\" IS NULL AND \"IsDeleted\" = false AND \"DedupeKey\" IS NOT NULL").HasDatabaseName("UX_LineOaSwitchEvents_Pending_Key");
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 209 P4: ตารางคลาส (ตาราง + index ต้องตรงกับ Helpers/ClassScheduleMigration)
         modelBuilder.Entity<SiteClassTerm>(e =>

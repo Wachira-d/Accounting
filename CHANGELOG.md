@@ -5753,3 +5753,11 @@ _รอบ 212 แพ็ก D (ค่าตั้ง LINE OA กลางบน�
 (4) สลิปเงินเดือน: ผู้รับที่ผูกผ่าน OA กลางส่งผ่าน OA กลาง (`ILineNotifyService.TryPushFlexViaNextAccAsync` ใหม่ · ผลล้มไม่ถูกกลืน) · LINE ID ที่ HR กรอกเองคงเส้นเดิม · ปุ่มเพิ่มเพื่อนชี้ OA กลาง ·
 `DocumentLineDeliveryService` ผู้รับเป็นลูกค้า (ไม่ใช่บั๊กคลาสนี้ · ไม่แก้) · (5) เทสต์ `NextAccLineConfigTests` (TEST_PLAN CMS212D-01..10) · `required_call_site_check` +8 กติกา/แก้ 3 + สแกนทั้งเรพ 1 ชุด (negative test ในตัว) ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 9c792d9f_
+
+_รอบ 212 B (คำตัดสินข้อ 171 ข้อ 4 · เจ้าของ: "ส่ง" · เชิญลูกค้าผูก LINE ใหม่เมื่อร้านเปลี่ยน OA): (1) `Helpers/CustomerRelinkInvitePlan` (IsSwitch · Plan เลือกผู้รับ/ช่อง · IsRelevant ·
+IsTerminal · ข้อความ + ป้าย "เชิญผูกใหม่: ส่งแล้ว N/M") · `CustomerNotifyKeys.Relink` · `CustomerNotifyEvents.LineRelink` (19 ประเภท — ร้านปิดได้ในตารางค่าตั้ง) · `CmsStorefrontLink.RelinkLine` ·
+(2) บันทึกการสลับ `LineOaSwitchEvents` จาก PUT line-config (อ่าน OA ก่อน/หลัง · token ใหม่ถาม `GET /v2/bot/info`) + webhook OA ร้าน + webhook OA กลาง (`ICustomerRelinkInviteService`) ·
+(3) `CustomerNotifyOutboxJob` (JobLock · ≤100/บริษัท/รอบ) ส่งผ่าน `BookingNotifier.SendAsync` เท่านั้น · OA เดิม = NextAcc ⇒ `CustomerNotifyRequest.LineViaNextAcc` → `TryPushViaNextAccAsync`
+(นับโควตา · ล้มถอยอีเมล) · นอกนั้นอีเมล · ข้ามถอนยินยอม/บล็อก/ไม่มีรายการค้าง · ความคืบหน้าบนแถวนับจาก `CustomerNotifyLogs` · (4) หน้า ตั้งค่า → LINE แสดงป้ายจากเซิร์ฟเวอร์ ·
+(5) `Helpers/CustomerRelinkMigration` (คอลัมน์ความคืบหน้า + unique บางส่วน) · เทสต์ `CmsRound212RelinkTests` (TEST_PLAN CMS212B-01..12) · `required_call_site_check` +11 กติกา ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 2f815caa_

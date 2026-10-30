@@ -15,6 +15,23 @@
 | CMS212D-11 | โค้ดใหม่อ่าน `_config["Line:ChannelSecret"]` เอง | checker ฟ้อง (ยกเว้นไฟล์ resolver) | `tools/required_call_site_check.py` LINE_CONFIG_FORBID + self-test |
 | CMS212D-12 | (มือ) แอดมินกรอก token+secret → ทดสอบ → กดเติม Basic ID/Bot User ID → บันทึก → ส่ง "สลิป xxxxxx" ที่ OA | ป้าย "ตั้งแล้ว" · ระบบใช้: ค่าในหน้านี้ · ผูกสำเร็จ · ส่งสลิปถึง | manual |
 
+## CMS212B — เชิญลูกค้าผูก LINE ใหม่เมื่อร้านเปลี่ยน OA (รอบ 212 แพ็ก B · คำตัดสินข้อ 171 ข้อ 4 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §2.4/§5/§6)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS212B-01 | NextAcc→ร้าน · ร้าน→NextAcc · bot ร้านใหม่ · bot กลางใหม่ | เป็นการสลับ (บันทึก `LineOaSwitchEvents`) | `CmsRound212RelinkTests.Switch_detection_matrix` |
+| CMS212B-02 | **ทิศตรงข้าม**: ออก token ใหม่ยังไม่รู้ bot · เพิ่งรู้ bot ครั้งแรก · แก้ Basic ID · ไม่รู้ค่าเดิม | ไม่ใช่การสลับ (ไม่เชิญ) | `Switch_detection_matrix` (แถว false) |
+| CMS212B-03 | PUT ซ้อน / webhook หลายครั้ง | แถวเดียว (unique บางส่วนขณะค้าง · webhook คู่เดิมครั้งเดียว) | `Dedupe_key_is_stable_and_direction_sensitive` · rules `RecordSwitchAsync` · `NoteWebhookDestinationAsync` |
+| CMS212B-04 | ผู้รับ: สมาชิก + การจองของคนเดียวกัน · ออเดอร์ | 1 คน 1 คำเชิญ · ตัวแทน = สมาชิก | `Previously_linked_customers_are_invited_once_per_person` |
+| CMS212B-05 | ถอนความยินยอม (แถวใดแถวหนึ่ง) · บล็อก OA · การจองผ่านไปแล้ว | ไม่เชิญ · นับเป็นข้าม | `Withdrawn_blocked_and_inactive_are_skipped` · rule `LoadFactsAsync` (`WithdrawnAt == null`) |
+| CMS212B-06 | ลิงก์ของ OA อื่น / ผูกกับ OA ปัจจุบันแล้ว / bot อื่น · ร้านสลับกลับก่อนงานเดิน | ไม่แตะ · ไม่มีผู้รับ | `Links_on_other_oa_or_still_usable_are_not_touched` · `Switch_back_makes_old_links_usable_and_nobody_is_invited` |
+| CMS212B-07 | ช่อง: OA เดิม = NextAcc (ร้านย้ายไป OA ตัวเอง) vs OA เดิม = ร้าน / bot กลางเปลี่ยน / ไม่มี token กลาง / ไม่มีอีเมล | LINE ผ่าน OA กลาง · ไม่งั้นอีเมล · ไม่มีช่อง = ข้าม | `Old_nextacc_oa_pushes_when_shop_moved_to_own_oa` · `Channel_choice` · `No_channel_is_counted_as_skipped` |
+| CMS212B-08 | ส่งผ่าน OA เดิม | `TryPushViaNextAccAsync` (ไม่ใช่ OA ร้าน) · จองโควตาก่อน · ล้ม ⇒ อีเมล · ช่องอีเมลไม่ push | `Invite_via_old_nextacc_oa_uses_explicit_central_push_and_is_metered` · `Failed_old_oa_push_falls_back_to_email` · `Email_invite_never_pushes` |
+| CMS212B-09 | ร้านปิดประเภท `line.relink` · **ทิศตรงข้าม** ปิดประเภทอื่น | ระงับ ไม่จองโควตา ไม่ส่ง · ประเภทอื่นไม่กระทบคำเชิญ | `Owner_can_disable_relink_invites_in_rules_matrix` · `CmsRound212PrefsQuotaTests.Catalog_keys_unique_and_mappings_cover_message_sources` (19 ประเภท) |
+| CMS212B-10 | คีย์กันซ้ำ: รอบซ้ำ/สองเครื่อง · ไม่เก็บ userId | คีย์เดียวกันต่อคนต่อการสลับ · ไม่มี userId ดิบ · ล้มลอง ≤ 3 · ระงับ = จบ | `Message_key_is_idempotent_per_switch_and_person_without_raw_user_id` · `Terminal_log_states` · rules `ProcessEventAsync` · `CustomerNotifyOutboxJob.RunGuardedAsync` |
+| CMS212B-11 | ข้อความ + ป้ายความคืบหน้า | ลิงก์ `/account` · `my-booking/{token}` · `track-order/{token}` · ไม่มีลิงก์บอกทาง · "ไม่ต้องทำอะไร" · "เชิญผูกใหม่: ส่งแล้ว N/M" | `Progress_label_and_relink_link` · `Relevance_rules` |
+| CMS212B-12 | PUT ค่าตั้ง LINE เปลี่ยน OA | อ่าน OA ก่อนแก้ · ถาม bot ของ token ใหม่ · บันทึกการสลับหลัง SaveChanges · บันทึกไม่ได้บอกผู้กด | rules `LineConfigController.Update` · `RecordOaSwitchAsync` · ⏳ Db test (บันทึก→งาน→ความคืบหน้า) ยังไม่ได้เขียน |
+
 ## CMS212C — แจ้งเตือนพนักงานผ่าน OA กลาง + สรุปประจำวันทาง LINE (รอบ 212 C · คำตัดสินข้อ 5 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §0/§5/§7)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -119,7 +136,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **690 ไฟล์ · 7,049 `[Fact]` + 1,121 `[Theory]` (5,236 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **691 ไฟล์ · 7,064 `[Fact]` + 1,123 `[Theory]` (5,251 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 

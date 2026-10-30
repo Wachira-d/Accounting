@@ -149,7 +149,7 @@ public class CmsRound212PrefsQuotaTests
     {
         var keys = CustomerNotifyEvents.Catalog.Select(e => e.Key).ToList();
         Assert.Equal(keys.Count, keys.Distinct().Count());
-        Assert.Equal(18, keys.Count);
+        Assert.Equal(19, keys.Count);   // รอบ 212 แพ็ก B: + line.relink
         Assert.Equal(CustomerNotifyEvents.OrderShipped, CustomerNotifyEvents.OrderStatusKey(SiteOrderStatus.Shipped));
         Assert.Equal(CustomerNotifyEvents.OrderReady, CustomerNotifyEvents.OrderStatusKey(SiteOrderStatus.ReadyForPickup));
         Assert.Equal(CustomerNotifyEvents.OrderDelivered, CustomerNotifyEvents.OrderStatusKey(SiteOrderStatus.Delivered));
