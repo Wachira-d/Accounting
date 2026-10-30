@@ -30,6 +30,8 @@ public class BookingPaymentSettingsDto
     public string? PromptPayQrUrl { get; set; }
     /// <summary>PUT: true = บันทึกช่องทางโอนตามช่องด้านบน (ว่าง = ล้าง) · false = ไม่แตะแถวช่องทาง</summary>
     public bool UpdateTransfer { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 218 (B1): ยืนยันการล้างช่องบัญชีรับโอนที่มีค่าอยู่ (ใช้ร่วมกับคำสั่งซื้อ) · false + มีช่องถูกล้าง ⇒ 409 พร้อมรายชื่อช่อง</summary>
+    public bool ConfirmClearTransfer { get; set; }
 
     // ── อ่านอย่างเดียว ──
     public List<BookingPaymentModeOption> ModeOptions { get; set; } = new();
@@ -124,6 +126,8 @@ public class RejectBookingSlipRequest
 
 public class VerifyBookingSlipRequest
 {
-    /// <summary>บันทึกถึงผู้สอบบัญชี (เช่น "ตรวจยอดในบัญชีธนาคารแล้ว") — ว่าง = ข้อความมาตรฐาน</summary>
+    /// <summary>บันทึกถึงผู้สอบบัญชี (เช่น "ตรวจยอดในบัญชีธนาคารแล้ว") — ว่าง = ข้อความมาตรฐาน · ตัดที่ 300 ตัว · เก็บในหมายเหตุ ไม่ใช่ผู้ยืนยัน</summary>
     public string? Note { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 218 (B2): วันที่โอนตามสลิป (วันที่ไทย yyyy-MM-dd) = วันที่ใบรับมัดจำ (§78/1) · ว่าง = เวลาที่ลูกค้าแนบสลิป</summary>
+    public DateOnly? TransferDate { get; set; }
 }

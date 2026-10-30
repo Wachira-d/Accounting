@@ -43,7 +43,11 @@ public sealed record BookingPaymentFacts(
     decimal PaidAmount,
     bool SlipPending,
     DateTime? PaymentHoldUntilUtc,
-    string? SlipRejectedReason);
+    string? SlipRejectedReason,
+    bool PastStart = false);
+
+/// <summary>ผลตัดสินตอน "ได้ที่" (จองใหม่ · เลื่อนจากคิวสำรอง) — ตัวเดียว <see cref="BookingPaymentPolicy.OnSeat"/></summary>
+public sealed record BookingSeatPaymentDecision(bool ForcePending, DateTime? PaymentHoldUntil);
 
 /// <summary>ตัวเลือกโหมดที่หน้าตั้งค่าแสดง (server ส่ง — หน้าเว็บไม่มีสำเนา)</summary>
 public sealed record BookingPaymentModeOption(string Value, string Label, string Description);
@@ -136,7 +140,7 @@ public static class BookingPaymentPolicy
             : AmountDue(e, total, customerOptsIn);
 
     /// <summary>การจองใหม่ต้อง "รอยืนยัน" จนรับเงินครบไหม (ชนะ AutoConfirm) — เฉพาะโหมดบังคับที่ตั้งเอง (ไม่ใช่ Legacy) และมียอด</summary>
-    public static bool ForcePendingUntilPaid(BookingPaymentEffective e, decimal due)
+    private static bool ForcePendingUntilPaid(BookingPaymentEffective e, decimal due)
         => e.Required && !e.IsLegacy && due > 0.005m;
 
     /// <summary>ถือรอบให้จ่ายถึงเมื่อไร (UTC) — โหมดบังคับ + ยอด &gt; 0 + มีกำหนดเวลา + ลูกค้าจองเอง (พนักงานจองแทน = ไม่ถือ) ·
@@ -147,6 +151,20 @@ public static class BookingPaymentPolicy
         var until = nowUtc.AddMinutes(e.DeadlineMinutes);
         return until > startUtc ? startUtc : until;
     }
+
+    /// <summary>ฝ่ายค้านรอบ 218 (S5): ตัดสินตอนการจอง "ได้ที่" — ใช้ทั้งจองใหม่และเลื่อนจากคิวสำรอง (ตัวเดียว · ห้ามประกอบเองที่จุดเรียก) ·
+    /// พนักงานจองแทน = ไม่บังคับ/ไม่ถือ</summary>
+    public static BookingSeatPaymentDecision OnSeat(BookingPaymentEffective e, decimal deposit, DateTime nowUtc, DateTime startUtc, bool createdByStaff)
+        => createdByStaff || !ForcePendingUntilPaid(e, deposit)
+            ? new BookingSeatPaymentDecision(false, null)
+            : new BookingSeatPaymentDecision(true, HoldUntil(e, deposit, nowUtc, startUtc, false));
+
+    /// <summary>ฝ่ายค้านรอบ 218 (S6): ระยะผ่อนหลังรายการชำระออนไลน์หมดอายุ ก่อน job ยกเลิกใบที่ไม่ชำระในเวลา (ลูกค้ากำลังจ่ายอยู่ ⇒ ไม่ตัดกลางทาง)</summary>
+    public const int GatewayGraceMinutes = 10;
+
+    /// <summary>มีรายการชำระออนไลน์ที่ยังเปิด/ยังไม่หมดอายุ (+ระยะผ่อน) ⇒ ยังไม่ยกเลิก</summary>
+    public static bool GatewayPaymentInProgress(bool intentOpen, DateTime? qrExpiresAtUtc, DateTime intentCreatedAtUtc, DateTime nowUtc)
+        => intentOpen && (qrExpiresAtUtc ?? intentCreatedAtUtc.AddMinutes(30)).AddMinutes(GatewayGraceMinutes) > nowUtc;
 
     /// <summary>job ยกเลิกใบที่ไม่จ่ายในเวลาได้ไหม — รอยืนยัน + พ้นเวลา + ยังไม่มีเงิน + ไม่มีสลิปรอตรวจ (ลูกค้าโอนแล้ว ⇒ ให้คนตัดสิน)</summary>
     public static bool HoldLapsed(BookingStatus status, DateTime? holdUntilUtc, decimal paidAmount, bool slipPending, DateTime nowUtc)
@@ -173,7 +191,8 @@ public static class BookingPaymentPolicy
         new BookingPaymentModeOption(nameof(BookingPaymentMode.DepositOptional), ModeLabel(BookingPaymentMode.DepositOptional),
             "ลูกค้าติ๊กเลือกจ่ายมัดจำตอนจองได้ · ไม่จ่ายก็จองได้ (ไม่ยกเลิกอัตโนมัติ)"),
         new BookingPaymentModeOption(nameof(BookingPaymentMode.FullRequired), ModeLabel(BookingPaymentMode.FullRequired),
-            "ต้องจ่ายค่าบริการเต็มจำนวนก่อน · การจองรอยืนยันจนรับครบ · ใบรับเงินล่วงหน้าเต็มยอด (ตัดเป็นรายได้เมื่อให้บริการเสร็จ)"),
+            "ต้องจ่ายค่าบริการเต็มจำนวนก่อน · การจองรอยืนยันจนรับครบ · ออกใบรับมัดจำเต็มยอดลงวันที่รับเงิน (VAT ตอนรับเงิน §78/1) · "
+            + "รับรู้รายได้เมื่อพนักงานกด “เสร็จสิ้น” ที่หน้าการจอง (ระบบตัดใบมัดจำเป็นรายได้ตามค่าตั้งเอกสาร — ตรวจข้อความแจ้งบนหน้าการจอง)"),
     };
 
     /// <summary>"ค่า enum ที่หน้าตั้งค่าส่งมา" → โหมด ("" / "Inherit" = ไม่ตั้ง) · อ่านไม่ออก = ข้อความไทย</summary>
@@ -209,6 +228,17 @@ public static class BookingPaymentPolicy
                    + "หรือเปิดชำระออนไลน์ (ต้องตั้งค่าระบบรับชำระเงินของบริษัทก่อน)";
         if (m is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional && site.FixedAmount == null && site.Percent == null)
             return "โหมดมัดจำต้องตั้งยอดมัดจำตั้งต้นของเว็บ (บาท หรือ %) — บริการที่ตั้งยอดเองใช้ของตัวเอง";
+        return null;
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 218: ด่านบันทึกบริการที่ตั้งโหมดเก็บเงินเอง — ต้องมีช่องทางพร้อม + โหมดมัดจำต้องมียอด (บริการหรือเว็บ) · null = ผ่าน</summary>
+    public static string? ServiceChannelProblem(BookingPaymentEffective e, bool gatewayReady, bool transferReady)
+    {
+        if (e.Source != BookingPaymentModeSource.Service || !e.Collects) return null;
+        if (!gatewayReady && !transferReady)
+            return $"บริการนี้ตั้ง “{ModeLabel(e.Mode)}” แต่เว็บยังไม่มีช่องทางชำระ — ใส่เลขบัญชี/พร้อมเพย์/รูป QR หรือเปิดชำระออนไลน์ที่หมวด “การชำระเงินของการจอง” ก่อน";
+        if (e.Mode is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional && e.FixedAmount == null && e.Percent == null)
+            return "บริการนี้ตั้งโหมดมัดจำแต่ยังไม่มียอดมัดจำ — กรอก มัดจำ (บาท/%) ของบริการ หรือยอดตั้งต้นของเว็บ";
         return null;
     }
 
@@ -258,7 +288,7 @@ public static class BookingPaymentPolicy
     {
         if (f.DepositAmount <= 0.005m || f.Status is BookingStatus.Cancelled or BookingStatus.NoShow or BookingStatus.Waitlisted) return null;
         if (f.PaidAmount + 0.005m >= f.DepositAmount) return "ชำระแล้ว";
-        if (f.SlipPending) return "รอตรวจสลิป";
+        if (f.SlipPending) return f.PastStart ? "รอตรวจสลิป (เลยเวลานัดแล้ว — ตรวจด่วน)" : "รอตรวจสลิป";
         var remain = R2(f.DepositAmount - f.PaidAmount);
         var label = $"รอชำระ {Baht(remain)}";
         if (f.PaymentHoldUntilUtc is DateTime u)

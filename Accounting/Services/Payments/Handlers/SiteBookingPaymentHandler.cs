@@ -58,9 +58,11 @@ public class SiteBookingPaymentHandler : IPaymentCompletionHandler
         }
 
         var moneyIn = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
+        // ฝ่ายค้านรอบ 218 (B2): วันรับเงิน = เวลาที่เงินเข้าตามหลักฐาน (สลิป: วันที่โอนที่ร้านยืนยัน) ไม่ใช่วันที่กดยืนยัน — tax point §78/1 ของใบรับมัดจำ
+        var isSlip = intent.ProviderCode == Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code;
         await _bookings.RecordDepositPaymentAsync(intent.CompanyId, b.SiteId, b.Id,
-            new RecordBookingPaymentRequest(intent.Amount, intent.ConfirmedAt ?? DateTime.UtcNow, reference, null,
-                "ชำระมัดจำออนไลน์ผ่านระบบรับชำระเงิน"),
+            new RecordBookingPaymentRequest(intent.Amount, intent.PaidAt ?? intent.ConfirmedAt ?? DateTime.UtcNow, reference, null,
+                isSlip ? "โอนเงิน (ตรวจสลิป)" : "ชำระมัดจำออนไลน์ผ่านระบบรับชำระเงิน"),
             intent.ConfirmedBy ?? "payment-gateway", moneyInAccountId: moneyIn, fromOnlinePayment: true, ct: ct);
     }
 }

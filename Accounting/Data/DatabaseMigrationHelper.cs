@@ -6498,6 +6498,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundSettledAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundedAt" timestamptz NULL;""",
+            // ฝ่ายค้านรอบ 218 (B2): เวลาที่เงินเข้าตามหลักฐาน (สลิป: วันที่โอน) แยกจาก ConfirmedAt (เวลาที่คนกดยืนยัน) · NULL = ใช้ ConfirmedAt (เดิม)
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "PaidAt" timestamptz NULL;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundJournalEntryId" uuid NULL;""",
             """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "FeeVatMode" integer NOT NULL DEFAULT 0;""",
             // ฝ่ายค้านรอบ 198 (R-E2/R-E5/E-2) — ยอดคืนรายครั้ง (แยกก่อน/หลังวันเงินเข้า) · ยอดคืนที่ถูกหักในรอบโอนหลัง ·

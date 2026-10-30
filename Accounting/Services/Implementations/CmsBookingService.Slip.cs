@@ -12,6 +12,12 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public partial class CmsBookingService
 {
+    public Task<T> RunUnderBookingLockAsync<T>(Guid companyId, Guid bookingId, Func<Task<T>> body)
+        => WithBookingSessionLockAsync(companyId, BookingStatusLockPart(bookingId), body);
+
+    public Task AppendBookingNoteAsync(Guid companyId, Guid siteId, Guid bookingId, string note, string actor)
+        => AppendBookingNotesAsync(companyId, siteId, bookingId, new List<string> { note }, actor);
+
     public async Task<BookingResponse> MarkSlipUploadedAsync(Guid companyId, Guid siteId, Guid bookingId, Guid attachmentId, Guid intentId, decimal amount)
     {
         var now = DateTime.UtcNow;
@@ -25,6 +31,9 @@ public partial class CmsBookingService
             if (BookingSlipRule.UploadProblem(b.Status, due, transferReady: true, slipPending: b.SlipUploadedAt != null && b.SlipAttachmentId != null, fileBytes: 1)
                 is string problem)
                 throw new BusinessRuleException(problem, BookingSlipRule.RuleCode, 409);
+            // ฝ่ายค้านรอบ 218 (S4): ยอดค้างเปลี่ยนระหว่างแนบ (ร้านรับเงินบางส่วน/เปลี่ยนยอด) ⇒ ยอดของรายการชำระไม่ตรง ⇒ ปฏิเสธ (ผู้เรียกปิดรายการ)
+            if (Math.Abs(due - amount) > 0.005m)
+                throw new BusinessRuleException(BookingSlipRule.AmountChangedMessage, BookingSlipRule.RuleCode, 409);
             b.SlipAttachmentId = attachmentId;
             b.SlipUploadedAt = now;
             b.SlipIntentId = intentId;
@@ -65,6 +74,40 @@ public partial class CmsBookingService
         });
         await NotifyCustomerSlipRejectedAsync(companyId, siteId, bookingId, reason, holdAfter);
         return await GetBookingAsync(companyId, siteId, bookingId) ?? throw new InvalidOperationException("Failed.");
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 218 (S1): ปิดรายการชำระ manual-slip ที่ไม่ใช้แล้ว (ถูกแทน/การจองยกเลิก) ผ่าน <c>PaymentIntentService</c> ตัวเดียว ·
+    /// resolve ตอนใช้ (ไม่ใช่ constructor) — intent service → handler → booking service จะเป็นวงกลม DI ถ้าฉีดตรง · ล้ม = log (การจองบันทึกแล้ว ·
+    /// ด่าน confirm-manually กันรับซ้ำอยู่แล้วจาก <see cref="BookingSlipRule.ManualConfirmProblem"/>)</summary>
+    private async Task FailSlipIntentAsync(Guid companyId, Guid intentId, string rawStatus, string reason, string actor)
+    {
+        try
+        {
+            if (_services?.GetService(typeof(Payments.IPaymentIntentService)) is not Payments.IPaymentIntentService intents) return;
+            var intent = await intents.FindAsync(companyId, intentId);
+            if (intent == null || !PaymentIntentPolicy.IsOpen(intent.Status)) return;
+            await intents.ApplyChargeAsync(intentId,
+                new Payments.ProviderCharge(intent.ProviderRef ?? $"slip:{intentId:N}", PaymentIntentStatus.Failed, rawStatus, intent.Amount,
+                    FailureCode: rawStatus, FailureMessage: reason),
+                PaymentEventSource.Manual, actor.Length > 150 ? actor[..150] : actor);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "ปิดรายการชำระของสลิป {Intent} ไม่สำเร็จ (company {CompanyId})", intentId, companyId);
+        }
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 218 (S1/S2): การจองยกเลิก/ไม่มา ขณะมีสลิปรอตรวจ ⇒ ล้างสถานะรอตรวจ (ไฟล์คงไว้) + ปิดรายการชำระของสลิป ·
+    /// ลูกค้าโอนแล้วจริง ⇒ ร้านคืนเงินเอง (หมายเหตุบนการจองบอก)</summary>
+    private async Task CloseSlipOnBookingClosedAsync(Guid companyId, Guid siteId, Guid bookingId, string actor)
+    {
+        var b = await _db.SiteBookings.FirstOrDefaultAsync(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId);
+        if (b == null || b.SlipIntentId is not Guid intentId || b.SlipUploadedAt == null) return;
+        b.SlipUploadedAt = null;
+        b.InternalNotes = DepositPolicyResolver.AppendNoteOnce(b.InternalNotes,
+            $"[{BookingSlipRule.RuleCode}] การจองปิดขณะมีสลิปรอตรวจ — ปิดรายการชำระของสลิป · ถ้าลูกค้าโอนแล้วจริง ให้คืนเงินที่ธนาคาร (ไฟล์สลิปเก็บไว้เป็นหลักฐาน)");
+        await _db.SaveChangesAsync();
+        await FailSlipIntentAsync(companyId, intentId, BookingSlipRule.BookingClosedRaw, "การจองถูกยกเลิก/บันทึกไม่มา", actor);
     }
 
     /// <summary>บรรทัดวิธีชำระท้ายข้อความยืนยันการจอง (null = ไม่มียอดค้าง) — ตัวตัดสินเดียว <see cref="BookingPaymentPolicy.NotifyLine"/></summary>

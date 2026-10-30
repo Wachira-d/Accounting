@@ -17,6 +17,26 @@ public sealed record BookingTransferInfo(
 public static class BookingPaymentChannels
 {
     public const string RuleCode = "CMS-BOOKING-PAYMENT-CHANNEL";
+    public const string ClearConfirmRuleCode = "CMS-BOOKING-PAYMENT-CLEAR-CONFIRM";
+
+    /// <summary>ฝ่ายค้านรอบ 218 (B1): ช่องที่มีค่าอยู่แล้วแต่คำขอส่งมาว่าง (= จะถูกล้าง) — ใช้ร่วมกับคำสั่งซื้อ ⇒ ล้างต้องยืนยันชัด ๆ (ไม่ล้างเงียบ)</summary>
+    public static List<string> ClearedFields(BookingTransferInfo? before, string? bankName, string? accountNumber, string? accountName, string? branch,
+        string? promptPayId, string? qrUrl)
+    {
+        var list = new List<string>();
+        if (before == null) return list;
+        void Chk(string? had, string? now, string label) { if (!string.IsNullOrWhiteSpace(had) && string.IsNullOrWhiteSpace(now)) list.Add(label); }
+        Chk(before.BankName, bankName, "ธนาคาร");
+        Chk(before.AccountNumber, accountNumber, "เลขบัญชี");
+        Chk(before.AccountName, accountName, "ชื่อบัญชี");
+        Chk(before.Branch, branch, "สาขา");
+        Chk(before.PromptPayId, promptPayId, "พร้อมเพย์");
+        Chk(before.QrImageUrl, qrUrl, "รูป QR");
+        return list;
+    }
+
+    public static string ClearConfirmMessage(IReadOnlyCollection<string> fields)
+        => $"จะล้างช่อง {string.Join(" · ", fields)} ของบัญชีรับโอน (ใช้ร่วมกับหน้าคำสั่งซื้อด้วย) — ยืนยันการล้างก่อนบันทึก";
 
     public static bool GatewayReady(bool siteOnlineEnabled, bool companyGatewayActive) => siteOnlineEnabled && companyGatewayActive;
 

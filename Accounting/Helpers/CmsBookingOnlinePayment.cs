@@ -95,10 +95,10 @@ public static class CmsBookingOnlinePayment
            + $"{ThaiDate.CalendarDateUtc(paidAtUtc):dd/MM/yyyy}{(string.IsNullOrWhiteSpace(reference) ? "" : $" อ้างอิง {reference.Trim()}")} "
            + $"— รวมรับแล้ว {paidTotal:N2}/{depositAmount:N2}" + (DepositSettled(depositAmount, paidTotal) ? " (ครบมัดจำ ⇒ ยืนยันการจอง)" : "");
 
-    /// <summary>ใบเสร็จมัดจำออกแล้ว แต่มีเงินเข้าเพิ่ม (เช่น จ่ายสองงวด/จ่ายซ้ำ) — ระบบไม่ออกใบซ้ำ บอกทางไปต่อ</summary>
     /// <summary>รอบ 218: ข้อความเมื่อมีสลิปรอร้านตรวจ (ปิดช่องจ่ายออนไลน์ชั่วคราว)</summary>
     public const string SlipPendingNote = "แนบสลิปแล้ว — รอร้านตรวจสอบ (ปิดชำระออนไลน์ชั่วคราวเพื่อกันจ่ายซ้ำ · ร้านปฏิเสธสลิป ⇒ ชำระใหม่ได้)";
 
+    /// <summary>ใบเสร็จมัดจำออกแล้ว แต่มีเงินเข้าเพิ่ม (เช่น จ่ายสองงวด/จ่ายซ้ำ) — ระบบไม่ออกใบซ้ำ บอกทางไปต่อ</summary>
     public static string AlreadyIssuedNote(string documentNumber, decimal amount)
         => $"ใบเสร็จมัดจำ {documentNumber} ออกแล้ว — เงินเข้าเพิ่ม {amount:N2} บาท บันทึกบนการจองอย่างเดียว · ถ้าเป็นเงินที่ต้องออกใบ ให้ออกใบเสร็จเพิ่มที่หน้าเอกสาร (อ้างเลขการจอง) หรือคืนส่วนที่เกิน";
 }

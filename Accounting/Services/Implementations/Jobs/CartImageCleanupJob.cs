@@ -95,6 +95,34 @@ public class CartImageCleanupJob : BackgroundService
         }
         if (deleted > 0)
             _logger.LogInformation("CartImageCleanupJob: ลบรูปตะกร้าที่ไม่ได้สั่ง {Count} ไฟล์ (อายุเกิน {Days} วัน)", deleted, days);
-        return deleted;
+
+        // ── ฝ่ายค้านรอบ 218 (PDPA): สลิปการจองที่ถูกปฏิเสธ/แทน ของการจองที่ไม่มีเงินเข้า เก่ากว่า 90 วัน ⇒ ลบ (ตัวตัดสินเดียว BookingSlipRetention) ·
+        // สลิปของการจองที่รับเงินแล้ว = หลักฐานบัญชี (ม.10) ไม่ลบ · สลิปรอตรวจไม่ลบ
+        var slipCutoff = BookingSlipRetention.Cutoff(DateTime.UtcNow);
+        var slipRows = await db.FileAttachments.AsNoTracking()
+            .Where(f => f.EntityType == BookingSlipRule.AttachmentEntityType && f.CreatedAt < slipCutoff)
+            .OrderBy(f => f.CreatedAt)
+            .Take(BatchSize)
+            .Select(f => new
+            {
+                f.Id, f.CompanyId, f.CreatedAt,
+                Booking = db.SiteBookings.IgnoreQueryFilters()
+                    .Where(b => b.Id == f.EntityId && b.CompanyId == f.CompanyId)
+                    .Select(b => new { b.SlipAttachmentId, b.SlipUploadedAt, b.PaidAmount }).FirstOrDefault(),
+            })
+            .ToListAsync(ct);
+        var slipsDeleted = 0;
+        foreach (var r in slipRows)
+        {
+            ct.ThrowIfCancellationRequested();
+            var current = r.Booking != null && r.Booking.SlipAttachmentId == r.Id && r.Booking.SlipUploadedAt != null;
+            var hasMoney = r.Booking != null && r.Booking.PaidAmount > 0m;
+            if (!BookingSlipRetention.ShouldPurge(r.CreatedAt, current, hasMoney, slipCutoff)) continue;
+            try { await files.DeleteAsync(r.CompanyId, r.Id); slipsDeleted++; }
+            catch (KeyNotFoundException) { /* ถูกลบไปแล้วระหว่างรอบ */ }
+        }
+        if (slipsDeleted > 0)
+            _logger.LogInformation("CartImageCleanupJob: ลบสลิปการจองที่ถูกปฏิเสธ/แทน (ไม่มีเงินเข้า) {Count} ไฟล์ (อายุเกิน {Days} วัน)", slipsDeleted, BookingSlipRetention.RejectedRetentionDays);
+        return deleted + slipsDeleted;
     }
 }

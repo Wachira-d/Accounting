@@ -223,6 +223,13 @@ public class BookingReminderJob : BackgroundService
         {
             if (ct.IsCancellationRequested) break;
             if (!BookingPaymentPolicy.HoldLapsed(e.Status, e.PaymentHoldUntil, e.PaidAmount, e.Slip, nowUtc)) continue;
+            // ฝ่ายค้านรอบ 218 (S6): ลูกค้ากำลังจ่ายออนไลน์ (รายการเปิด · QR/ลิงก์ยังไม่หมดอายุ + ระยะผ่อน) ⇒ ยังไม่ยกเลิก (ตัวตัดสินเดียว GatewayPaymentInProgress)
+            var openIntents = await db.PaymentIntents.AsNoTracking()
+                .Where(i => i.CompanyId == e.CompanyId && i.SourceKind == PaymentSourceKind.SiteBooking && i.SourceId == e.Id
+                    && (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending))
+                .Select(i => new { i.QrExpiresAt, i.CreatedAt })
+                .ToListAsync(ct);
+            if (openIntents.Any(i => BookingPaymentPolicy.GatewayPaymentInProgress(true, i.QrExpiresAt, i.CreatedAt, nowUtc))) continue;
             try
             {
                 await bookings.UpdateBookingStatusAsync(e.CompanyId, e.SiteId, e.Id,

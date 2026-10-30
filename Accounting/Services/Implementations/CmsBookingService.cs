@@ -23,11 +23,15 @@ public partial class CmsBookingService : ICmsBookingService
     /// <summary>รอบ 209 P3 — แจ้งร้าน (การจองใหม่) + ลูกค้า (ยืนยันการจอง · ร้านยกเลิก) · null = ไม่ส่ง (CmsBookingService.ShopNotify.cs)</summary>
     private readonly ICmsShopNotifier? _shopNotifier;
     private readonly IPromptPayService _promptPay;
+    /// <summary>ฝ่ายค้านรอบ 218 (S1): resolve <c>IPaymentIntentService</c> ตอนใช้ (ปิดรายการชำระของสลิปที่ไม่ใช้แล้ว) — ฉีดตรงเป็นวงกลม DI</summary>
+    private readonly IServiceProvider? _services;
 
     public CmsBookingService(AccountingDbContext db, ILogger<CmsBookingService> logger,
         IDocumentService? docService = null, IBookingNotifier? notifier = null, ICreditBookingLedger? creditLedger = null,
-        IProductService? productService = null, ICmsShopNotifier? shopNotifier = null, IPromptPayService? promptPay = null)
+        IProductService? productService = null, ICmsShopNotifier? shopNotifier = null, IPromptPayService? promptPay = null,
+        IServiceProvider? services = null)
     {
+        _services = services;
         // รอบ 218: ตรวจรูปแบบพร้อมเพย์ของช่องโอน (stateless — เทสต์ที่ไม่ส่งใช้ตัวจริงได้)
         _promptPay = promptPay ?? new PromptPayService();
         _productService = productService;
@@ -47,6 +51,7 @@ public partial class CmsBookingService : ICmsBookingService
         var svc = new SiteBookingService { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
         await EnsureProductOfCompanyAsync(companyId, request.ProductId);   // รอบ 207: ผูกสินค้าข้ามบริษัทไม่ได้
         ApplySettings(svc, request);
+        await EnsureServicePaymentAsync(companyId, siteId, svc);   // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด
         svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, null);
         if (request.Schedule != null)
             foreach (var row in BuildSlotRows(companyId, svc, request.Schedule, userId)) svc.Slots.Add(row);
@@ -65,6 +70,7 @@ public partial class CmsBookingService : ICmsBookingService
         var oldSlug = svc.Slug;
         await EnsureProductOfCompanyAsync(companyId, request.ProductId);   // รอบ 207
         ApplySettings(svc, request);
+        await EnsureServicePaymentAsync(companyId, siteId, svc);   // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด
         if (svc.Slug != oldSlug) svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, svc.Id);
         if (request.IsActive.HasValue) svc.IsActive = request.IsActive.Value;
         // ตารางเวลา: null = ผู้เรียก API เดิมที่ไม่รู้จักฟิลด์นี้ ⇒ ไม่แตะ · ส่งมา = แทนที่ทั้งชุด (การจองเดิมไม่ถูกแตะ — แถวเวลาไม่ใช่ FK ของการจอง)
@@ -984,12 +990,13 @@ public partial class CmsBookingService : ICmsBookingService
             // R-39: จ่ายด้วยบัตรคอร์ส ⇒ ยอดเงิน 0 + กันเครดิตในธุรกรรมเดียวกับ Decide (ล้ม = ไม่มีการจอง) — CmsBookingService.Credits.cs
             var creditContactId = await PrepareCreditBookingAsync(companyId, booking, request, userId);
             // รอบ 218: โหมดบังคับ + ยอด > 0 (หลังหักบัตรคอร์ส) ⇒ รอยืนยันจนรับเงินครบ (ชนะ AutoConfirm) + ถือรอบถึงกำหนดชำระ (job ยกเลิกเมื่อพ้น)
-            if (!waitlist && !createdByStaff && BookingPaymentPolicy.ForcePendingUntilPaid(payEff, booking.DepositAmount))
+            var seatPay = BookingPaymentPolicy.OnSeat(payEff, booking.DepositAmount, DateTime.UtcNow,
+                CreditBookingLink.StartUtc(booking.BookingDate, booking.StartTime), createdByStaff);
+            if (!waitlist && seatPay.ForcePending)
             {
                 booking.Status = BookingStatus.Pending;
                 booking.ConfirmedAt = null;
-                booking.PaymentHoldUntil = BookingPaymentPolicy.HoldUntil(payEff, booking.DepositAmount, DateTime.UtcNow,
-                    CreditBookingLink.StartUtc(booking.BookingDate, booking.StartTime), createdByStaff);
+                booking.PaymentHoldUntil = seatPay.PaymentHoldUntil;
             }
             _db.SiteBookings.Add(booking);
             // รอบ 217 (ข้อ 175 ง): แจ้งเตือน "การจองใหม่" เข้าคิวในธุรกรรมเดียวกับการจอง ⇒ ตอบแขกทันที (ไม่รอ SMTP/LINE) · ส่งตามหลังโดย DeferredNotifyDispatcher
@@ -1113,6 +1120,7 @@ public partial class CmsBookingService : ICmsBookingService
             .ToListAsync();
         var now = BookingSlotEngine.BangkokNow(DateTime.UtcNow);
         var holdMinutes = (await SiteContextAsync(companyId, siteId)).Row?.WaitlistHoldMinutes ?? 0;   // R-13 ถือรอบ (0 = ไม่ถือ)
+        var promoteSiteRule = (await LoadPaymentContextAsync(companyId, siteId)).SiteRule;   // ฝ่ายค้านรอบ 218 S5: ตัดสินการชำระตอนได้ที่ด้วยตัวเดียวกับจองใหม่
         foreach (var w in queue)
         {
             if (date.ToDateTime(w.StartTime) < now) continue;   // รอบผ่านไปแล้ว — ไม่เลื่อน
@@ -1125,8 +1133,12 @@ public partial class CmsBookingService : ICmsBookingService
                 w.GuestCount, Math.Max(1, w.Units), ctx.Resources, requested, ignoreAdvance: true);
             if (!d.Allowed) continue;
             w.ResourceId = ClassScheduleGenerator.ResourceForBooking(d.Slot!.ResourceId, ctx.ClassSessions, date, w.StartTime);   // รอบ 209 P4: ครูของรอบคลาส
-            if (svc.AutoConfirm || svc.BookingType == BookingType.Lead) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
+            // ฝ่ายค้านรอบ 218 (S5): ได้ที่จากคิวสำรอง = ได้ที่ ⇒ นโยบายชำระล่วงหน้าเดียวกับจองใหม่ (BookingPaymentPolicy.OnSeat) · บังคับ ⇒ รอยืนยัน + กำหนดชำระ
+            var promoteEff = BookingPaymentPolicy.Resolve(svc.BookingType, promoteSiteRule, Cms.BookingPaymentContextLoader.ServiceRule(svc));
+            var promotePay = BookingPaymentPolicy.OnSeat(promoteEff, w.DepositAmount, DateTime.UtcNow, CreditBookingLink.StartUtc(w.BookingDate, w.StartTime), false);
+            if (!promotePay.ForcePending && (svc.AutoConfirm || svc.BookingType == BookingType.Lead)) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
             else w.Status = BookingStatus.Pending;
+            w.PaymentHoldUntil = promotePay.PaymentHoldUntil;
             // R-13: ประทับเวลาได้คิว + ถือรอบ (เฉพาะรอยืนยัน · BookingReminderPlan.HoldUntil) · แจ้งลูกค้า = NotifyWaitlistPromotedAsync (Notify.cs) หลัง commit —
             // WaitlistNotifiedAt ประทับหลังส่งถึงจริงเท่านั้น · ส่งไม่ถึง ⇒ BookingReminderJob ส่งซ้ำ
             w.WaitlistPromotedAt = DateTime.UtcNow;
@@ -1282,6 +1294,9 @@ public partial class CmsBookingService : ICmsBookingService
             noted.UpdatedBy = userId;
             await _db.SaveChangesAsync();
         }
+        // ฝ่ายค้านรอบ 218 (S1/S2): ยกเลิก/ไม่มา ขณะมีสลิปรอตรวจ ⇒ ปิดสลิป + รายการชำระของสลิป (ยืนยันภายหลังไม่ได้ = ไม่รับเงินเข้าการจองที่ปิดแล้ว)
+        if (request.Status is BookingStatus.Cancelled or BookingStatus.NoShow && oldStatus != request.Status)
+            await CloseSlipOnBookingClosedAsync(companyId, siteId, bookingId, userId);
 
         // แอดมินยืนยันใบในคิวสำรองเอง (นอกคิว) ⇒ ออกเอกสาร ERP เหมือนการจองปกติ
         if (oldStatus == BookingStatus.Waitlisted && request.Status is BookingStatus.Pending or BookingStatus.Confirmed)

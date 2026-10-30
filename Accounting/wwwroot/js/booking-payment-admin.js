@@ -101,7 +101,15 @@
         bankBranch: txt('bpayBankBranch'), promptPayId: txt('bpayPromptPay'), promptPayQrUrl: txt('bpayQrUrl'),
       };
       try {
-        const res = await API.put(`${base(this._siteId)}/payment-settings`, body);
+        let res;
+        try { res = await API.put(`${base(this._siteId)}/payment-settings`, body); }
+        catch (e1) {
+          // ฝ่ายค้านรอบ 218 (B1): ล้างช่องบัญชีรับโอนที่ใช้ร่วมกับคำสั่งซื้อ — เซิร์ฟเวอร์ตอบ 409 พร้อมรายชื่อช่อง ⇒ ถามก่อน แล้วส่งซ้ำพร้อมยืนยัน
+          if (e1 && e1.status === 409 && /ยืนยันการล้าง/.test(e1.message || '') && confirm(e1.message)) {
+            body.confirmClearTransfer = true;
+            res = await API.put(`${base(this._siteId)}/payment-settings`, body);
+          } else throw e1;
+        }
         Layout.toast(res.message || 'บันทึกแล้ว', 'success');
         await this.loadSettings(this._siteId);
         if (window.Page && typeof Page.loadBookingServices === 'function') await Page.loadBookingServices();
@@ -137,9 +145,13 @@
     slipBlock(b) {
       const p = b && b.payment; if (!p) return '';
       const head = p.statusLabel ? `<div style="margin-top:6px;font-size:12px"><strong>การชำระล่วงหน้า:</strong> ${esc(p.statusLabel)}</div>` : '';
-      if (!p.slipPending) return head;
+      // ฝ่ายค้านรอบ 218 (S2): การจองยกเลิก/ไม่มา ⇒ ไม่มีปุ่มตรวจสลิป (เซิร์ฟเวอร์ปฏิเสธด้วย)
+      if (!p.slipPending || b.status === 'Cancelled' || b.status === 'NoShow') return head;
+      const upBkk = p.slipUploadedAt ? new Date(new Date(p.slipUploadedAt).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '';
       return `${head}<div style="margin-top:6px;border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;padding:8px 10px;font-size:12px">
           🧾 ลูกค้าแนบสลิป${p.slipUploadedAt ? ' เมื่อ ' + esc(new Date(p.slipUploadedAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })) : ''} — ตรวจยอดในบัญชีธนาคารก่อนยืนยัน
+          <div style="margin-top:6px"><label style="font-size:12px">วันที่โอนตามสลิป (= วันที่ใบรับมัดจำ §78/1)
+            <input type="date" id="bkSlipTransferDate" class="form-input" style="width:auto;display:inline-block" value="${esc(upBkk)}"></label></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
             ${p.slipFileUrl ? `<button type="button" class="btn btn-sm btn-outline" onclick="BookingPayAdmin.viewSlip('${jsArg(p.slipFileUrl)}')">ดูสลิป</button>` : ''}
             <button type="button" class="btn btn-primary btn-sm" onclick="BookingPayAdmin.verify('${jsArg(b.id)}')">ยืนยันสลิป (บันทึกรับเงิน)</button>
@@ -168,11 +180,12 @@
       if (window.Page && typeof Page.load === 'function') await Page.load();
     },
     async verify(id) {
-      if (!confirm('ยืนยันว่าเงินเข้าบัญชีแล้วตามสลิป?\n\nระบบจะบันทึกรับเงิน · ยืนยันการจอง · ออกใบรับมัดจำลงวันที่วันนี้ (§78/1)')) return;
+      const transferDate = (($('bkSlipTransferDate') || {}).value || '') || null;
+      if (!confirm(`ยืนยันว่าเงินเข้าบัญชีแล้วตามสลิป?\n\nระบบจะบันทึกรับเงิน · ยืนยันการจอง · ออกใบรับมัดจำลงวันที่โอน ${transferDate || '(ตามเวลาที่แนบสลิป)'} (§78/1)`)) return;
       const note = prompt('บันทึกถึงผู้สอบบัญชี (ถ้ามี — เช่น ตรวจยอดในแอปธนาคารแล้ว)', '') ;
       if (note === null) return;
       try {
-        const res = await API.post(`${base(this._sid())}/bookings/${encodeURIComponent(id)}/slip/verify`, { note: note || null });
+        const res = await API.post(`${base(this._sid())}/bookings/${encodeURIComponent(id)}/slip/verify`, { note: note || null, transferDate });
         await this._after(id, res, 'ยืนยันสลิปแล้ว');
       } catch (e) { Layout.toast('ยืนยันสลิปไม่สำเร็จ: ' + e.message, 'error', 10000); }
     },

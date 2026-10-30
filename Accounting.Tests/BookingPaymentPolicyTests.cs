@@ -62,7 +62,7 @@ public class BookingPaymentPolicyTests
         Assert.True(e.IsLegacy);
         Assert.Equal(BookingPaymentMode.DepositRequired, e.Mode);
         Assert.Equal(0, e.DeadlineMinutes);
-        Assert.False(BookingPaymentPolicy.ForcePendingUntilPaid(e, 500m));   // แบบเดิม: AutoConfirm ตามเดิม
+        Assert.False(BookingPaymentPolicy.OnSeat(e, 500m, DateTime.UtcNow, DateTime.UtcNow.AddDays(1), false).ForcePending);   // แบบเดิม: AutoConfirm ตามเดิม
         Assert.Null(BookingPaymentPolicy.HoldUntil(e, 500m, DateTime.UtcNow, DateTime.UtcNow.AddDays(1), false));
     }
 
@@ -137,7 +137,7 @@ public class BookingPaymentPolicyTests
         var opt = BookingPaymentPolicy.Resolve(BookingType.PrePayment, Rule(BookingPaymentMode.DepositOptional, fx: 200), Rule());
         Assert.Equal(0m, BookingPaymentPolicy.AmountDue(opt, 1000m, false));
         Assert.Equal(200m, BookingPaymentPolicy.AmountDue(opt, 1000m, true));
-        Assert.False(BookingPaymentPolicy.ForcePendingUntilPaid(opt, 200m));   // ไม่บังคับ ⇒ ไม่บังคับรอยืนยัน/ไม่ยกเลิกอัตโนมัติ
+        Assert.False(BookingPaymentPolicy.OnSeat(opt, 200m, DateTime.UtcNow, DateTime.UtcNow.AddDays(1), false).ForcePending);   // ไม่บังคับ ⇒ ไม่บังคับรอยืนยัน/ไม่ยกเลิกอัตโนมัติ
     }
 
     [Fact]
@@ -161,7 +161,7 @@ public class BookingPaymentPolicyTests
         Assert.Null(BookingPaymentPolicy.HoldUntil(e, 0m, now, now.AddDays(1), false));   // ยอด 0 (จองด้วยบัตรคอร์ส) ไม่ถือ
         var noDeadline = e with { DeadlineMinutes = 0 };
         Assert.Null(BookingPaymentPolicy.HoldUntil(noDeadline, 100m, now, now.AddDays(1), false));
-        Assert.True(BookingPaymentPolicy.ForcePendingUntilPaid(noDeadline, 100m));   // ไม่ตั้งเวลา ⇒ ยังรอยืนยันจนจ่าย แต่ไม่ยกเลิกเอง
+        Assert.True(BookingPaymentPolicy.OnSeat(noDeadline, 100m, DateTime.UtcNow, DateTime.UtcNow.AddDays(1), false).ForcePending);   // ไม่ตั้งเวลา ⇒ ยังรอยืนยันจนจ่าย แต่ไม่ยกเลิกเอง
     }
 
     [Fact]
@@ -389,4 +389,106 @@ public class BookingPaymentPolicyTests
             CmsBookingOnlinePayment.BlockedNote(true, BookingType.PrePayment, BookingStatus.Pending, 150m, slipPending: true));
         Assert.Null(CmsBookingOnlinePayment.BlockedNote(true, BookingType.PrePayment, BookingStatus.Pending, 150m, slipPending: false));
     }
+
+    // ─────────────── ฝ่ายค้านรอบ 218 ───────────────
+
+    [Fact]
+    public void S5_ได้ที่_ตัวตัดสินเดียว_บังคับ_ถือรอบ_ทิศตรงข้ามพนักงานและแบบเดิม()
+    {
+        var now = new DateTime(2026, 10, 30, 3, 0, 0, DateTimeKind.Utc);
+        var forced = BookingPaymentPolicy.Resolve(BookingType.PrePayment, Rule(BookingPaymentMode.DepositRequired, fx: 100, deadline: 60), Rule());
+        var d = BookingPaymentPolicy.OnSeat(forced, 100m, now, now.AddDays(1), createdByStaff: false);
+        Assert.True(d.ForcePending);
+        Assert.Equal(now.AddMinutes(60), d.PaymentHoldUntil);
+        Assert.False(BookingPaymentPolicy.OnSeat(forced, 100m, now, now.AddDays(1), createdByStaff: true).ForcePending);
+        var legacy = BookingPaymentPolicy.Resolve(BookingType.PrePayment, Rule(), Rule(fx: 100));
+        Assert.Equal(new BookingSeatPaymentDecision(false, null), BookingPaymentPolicy.OnSeat(legacy, 100m, now, now.AddDays(1), false));
+    }
+
+    [Fact]
+    public void S6_รายการชำระออนไลน์ยังไม่หมดอายุ_ไม่ยกเลิก_หมดแล้วพ้นระยะผ่อน_ยกเลิกได้()
+    {
+        var now = new DateTime(2026, 10, 30, 3, 0, 0, DateTimeKind.Utc);
+        Assert.True(BookingPaymentPolicy.GatewayPaymentInProgress(true, now.AddMinutes(5), now.AddMinutes(-10), now));
+        Assert.True(BookingPaymentPolicy.GatewayPaymentInProgress(true, now.AddMinutes(-5), now.AddMinutes(-20), now));    // ระยะผ่อน 10 นาที
+        Assert.False(BookingPaymentPolicy.GatewayPaymentInProgress(true, now.AddMinutes(-15), now.AddMinutes(-30), now));
+        Assert.False(BookingPaymentPolicy.GatewayPaymentInProgress(false, now.AddMinutes(30), now, now));                 // ปิดแล้ว
+    }
+
+    [Fact]
+    public void B2_แนบ31ตุลา_ยืนยัน2พฤศจิกา_วันรับเงินคือ31ตุลา()
+    {
+        var uploaded = new DateTime(2026, 10, 31, 9, 30, 0, DateTimeKind.Utc);   // 16:30 น. 31 ต.ค. (ไทย)
+        var created = new DateTime(2026, 10, 30, 2, 0, 0, DateTimeKind.Utc);
+        var verifyNow = new DateTime(2026, 11, 2, 3, 0, 0, DateTimeKind.Utc);
+        var (paid, err) = BookingSlipRule.ResolvePaidAt(null, uploaded, created, verifyNow);
+        Assert.Null(err);
+        Assert.Equal(new DateOnly(2026, 10, 31), DateOnly.FromDateTime(paid.AddHours(7)));   // เดือนภาษี ต.ค. ไม่ใช่ พ.ย.
+        var (staffPick, err2) = BookingSlipRule.ResolvePaidAt(new DateOnly(2026, 10, 30), uploaded, created, verifyNow);
+        Assert.Null(err2);
+        Assert.Equal(new DateOnly(2026, 10, 30), DateOnly.FromDateTime(staffPick.AddHours(7)));
+        Assert.NotNull(BookingSlipRule.ResolvePaidAt(new DateOnly(2026, 11, 5), uploaded, created, verifyNow).Error);   // อนาคต
+        Assert.NotNull(BookingSlipRule.ResolvePaidAt(new DateOnly(2026, 10, 29), uploaded, created, verifyNow).Error);  // ก่อนวันที่จอง
+    }
+
+    [Fact]
+    public void S1_ยืนยันด้วยมือ_ได้เฉพาะสลิปที่ยังรอตรวจของรายการนี้()
+    {
+        var id = Guid.NewGuid();
+        Assert.Null(BookingSlipRule.ManualConfirmProblem(id, id, DateTime.UtcNow, BookingStatus.Pending));
+        Assert.NotNull(BookingSlipRule.ManualConfirmProblem(id, Guid.NewGuid(), DateTime.UtcNow, BookingStatus.Pending));   // ถูกแทน
+        Assert.NotNull(BookingSlipRule.ManualConfirmProblem(id, id, null, BookingStatus.Confirmed));                        // ตรวจแล้ว
+        Assert.NotNull(BookingSlipRule.ManualConfirmProblem(id, id, DateTime.UtcNow, BookingStatus.Cancelled));             // ยกเลิก
+    }
+
+    [Fact]
+    public void S2_ตรวจสลิปของการจองที่ยกเลิกหรือไม่มา_ปฏิเสธพร้อมทางไปต่อ()
+    {
+        Assert.Contains("คืนเงิน", BookingSlipRule.DecideProblem(Guid.NewGuid(), DateTime.UtcNow, BookingStatus.Cancelled));
+        Assert.NotNull(BookingSlipRule.DecideProblem(Guid.NewGuid(), DateTime.UtcNow, BookingStatus.NoShow));
+        Assert.Null(BookingSlipRule.DecideProblem(Guid.NewGuid(), DateTime.UtcNow, BookingStatus.Confirmed));
+    }
+
+    [Fact]
+    public void S3_บันทึกผู้ยืนยัน_ตัดความยาว_ว่างเป็นnull()
+    {
+        Assert.Null(BookingSlipRule.NormalizeVerifyNote("  "));
+        Assert.Equal(BookingSlipRule.MaxVerifyNoteLength, BookingSlipRule.NormalizeVerifyNote(new string('ก', 999))!.Length);
+    }
+
+    [Fact]
+    public void B1_ช่องที่ถูกล้างต้องยืนยัน()
+    {
+        var before = new BookingTransferInfo("กสิกรไทย", "1234567890", "ร้าน", null, "0812345678", null);
+        Assert.Equal(new[] { "พร้อมเพย์" }, BookingPaymentChannels.ClearedFields(before, "กสิกรไทย", "1234567890", "ร้าน", null, null, null));
+        Assert.Empty(BookingPaymentChannels.ClearedFields(before, "กสิกรไทย", "1234567890", "ร้าน", "สยาม", "0812345678", null));   // เพิ่มค่า = ไม่ใช่การล้าง
+        Assert.Empty(BookingPaymentChannels.ClearedFields(null, null, null, null, null, null, null));
+    }
+
+    [Fact]
+    public void บันทึกบริการเก็บเงินเอง_ต้องมีช่องทางและยอด_ทิศตรงข้ามตามเว็บไม่ตรวจ()
+    {
+        var own = BookingPaymentPolicy.Resolve(BookingType.PrePayment, Rule(), Rule(BookingPaymentMode.DepositRequired));
+        Assert.NotNull(BookingPaymentPolicy.ServiceChannelProblem(own, false, false));
+        Assert.Contains("ยอดมัดจำ", BookingPaymentPolicy.ServiceChannelProblem(own, false, true));
+        var ownWithAmount = BookingPaymentPolicy.Resolve(BookingType.PrePayment, Rule(), Rule(BookingPaymentMode.DepositRequired, fx: 100));
+        Assert.Null(BookingPaymentPolicy.ServiceChannelProblem(ownWithAmount, false, true));
+        var inherit = BookingPaymentPolicy.Resolve(BookingType.PrePayment, Rule(BookingPaymentMode.FullRequired), Rule());
+        Assert.Null(BookingPaymentPolicy.ServiceChannelProblem(inherit, false, false));   // ค่าเว็บถูกตรวจตอนบันทึกเว็บ
+    }
+
+    [Fact]
+    public void PDPA_สลิปที่ปฏิเสธของการจองไม่มีเงิน_ลบหลัง90วัน_สลิปที่มีเงินหรือรอตรวจไม่ลบ()
+    {
+        var now = new DateTime(2026, 10, 30, 3, 0, 0, DateTimeKind.Utc);
+        var cut = BookingSlipRetention.Cutoff(now);
+        Assert.True(BookingSlipRetention.ShouldPurge(now.AddDays(-91), isCurrentSlip: false, bookingHasMoney: false, cut));
+        Assert.False(BookingSlipRetention.ShouldPurge(now.AddDays(-91), false, bookingHasMoney: true, cut));   // หลักฐานบัญชี
+        Assert.False(BookingSlipRetention.ShouldPurge(now.AddDays(-91), isCurrentSlip: true, false, cut));    // รอตรวจ
+        Assert.False(BookingSlipRetention.ShouldPurge(now.AddDays(-30), false, false, cut));                   // ยังไม่ครบอายุ
+    }
+
+    [Fact]
+    public void สลิปค้างเลยเวลานัด_ป้ายตรวจด่วน()
+        => Assert.Contains("ตรวจด่วน", BookingPaymentPolicy.StatusLabel(new BookingPaymentFacts(BookingStatus.Pending, 300m, 0m, true, null, null, PastStart: true)));
 }

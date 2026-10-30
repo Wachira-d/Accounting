@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations.Cms;
@@ -43,7 +44,9 @@ public static class BookingPaymentContextLoader
         var row = await db.SiteBookingSettings.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted, ct);
         var gw = await db.SitePaymentGateways.AsNoTracking()
-            .Where(g => g.CompanyId == companyId && g.SiteId == siteId && g.IsActive && !g.IsDeleted)
+            // ฝ่ายค้านรอบ 218 (B1): เฉพาะแถวชนิดโอน/พร้อมเพย์ — แถว gateway อื่น (Omise ฯลฯ) ไม่ใช่ช่องโอน
+            .Where(g => g.CompanyId == companyId && g.SiteId == siteId && g.IsActive && !g.IsDeleted
+                && (g.GatewayType == PaymentGatewayType.BankTransfer || g.GatewayType == PaymentGatewayType.PromptPay))
             .OrderBy(g => g.SortOrder)
             .Select(g => new { g.Id, g.BankName, g.BankAccountNumber, g.BankAccountName, g.BankBranch, g.PromptPayId, g.PromptPayQrUrl })
             .FirstOrDefaultAsync(ct);

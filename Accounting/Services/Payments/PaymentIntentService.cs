@@ -344,6 +344,7 @@ public class PaymentIntentService : IPaymentIntentService
         {
             intent.ConfirmedAt ??= DateTime.UtcNow;
             intent.ConfirmedBy ??= confirmedBy;
+            intent.PaidAt ??= charge.PaidAtUtc;   // ฝ่ายค้านรอบ 218 (B2): วันที่เงินเข้าตามหลักฐาน (สลิป) — ไม่ระบุ = null (handler ใช้ ConfirmedAt)
         }
         AddEvent(intent, source, from, charge.Status, payload: charge.RawStatus,
             note: $"ยืนยันโดย {confirmedBy}");

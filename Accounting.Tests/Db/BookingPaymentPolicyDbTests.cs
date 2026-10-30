@@ -66,13 +66,22 @@ public class BookingPaymentPolicyDbTests
 
     private static CmsBookingService Svc(Accounting.Data.AccountingDbContext db) => new(db, NullLogger<CmsBookingService>.Instance);
 
+    /// <summary>ผู้ให้บริการ DI จิ๋ว — CmsBookingService resolve IPaymentIntentService ตอนใช้ (ฝ่ายค้านรอบ 218 S1 · กันวงกลม DI)</summary>
+    private sealed class LateProvider : IServiceProvider
+    {
+        public IPaymentIntentService? Intents { get; set; }
+        public object? GetService(Type serviceType) => serviceType == typeof(IPaymentIntentService) ? Intents : null;
+    }
+
     private static (BookingSlipService Slips, CmsBookingService Bookings) Slips(Accounting.Data.AccountingDbContext db)
     {
-        var bookings = Svc(db);
+        var sp = new LateProvider();
+        var bookings = new CmsBookingService(db, NullLogger<CmsBookingService>.Instance, services: sp);
         var providers = new IPaymentProvider[] { new ManualSlipPaymentProvider() };
         var handler = new SiteBookingPaymentHandler(db, bookings, new GatewayAccountResolver(db, providers, NullLogger<GatewayAccountResolver>.Instance),
             NullLogger<SiteBookingPaymentHandler>.Instance);
         var intents = new PaymentIntentService(db, providers, new IPaymentCompletionHandler[] { handler }, NullLogger<PaymentIntentService>.Instance);
+        sp.Intents = intents;
         return (new BookingSlipService(db, bookings, intents, Files, NullLogger<BookingSlipService>.Instance), bookings);
     }
 
@@ -290,5 +299,148 @@ public class BookingPaymentPolicyDbTests
         };
         var svcEx = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).UpdateServiceAsync(cid, sid, svcId, req, "owner"));
         Assert.Contains("ชำระมัดจำล่วงหน้า", svcEx.Message);
+    }
+
+    // ─────────────── ฝ่ายค้านรอบ 218 ───────────────
+
+    [Fact]
+    public async Task B1_แถวOmiseมาก่อน_บันทึกค่าตั้งการจองไม่แตะแถวOmise_และอ่านเฉพาะแถวโอน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, _) = await SeedAsync(db, siteMode: null, withBank: false);
+        var omise = new SitePaymentGateway
+        {
+            CompanyId = cid, SiteId = sid, GatewayType = PaymentGatewayType.Omise, Name = "Omise", SortOrder = 0, IsTestMode = true,
+            MerchantId = "m_1", WebhookSecret = "whsec",
+        };
+        var bank = new SitePaymentGateway
+        {
+            CompanyId = cid, SiteId = sid, GatewayType = PaymentGatewayType.BankTransfer, Name = "กสิกรไทย", SortOrder = 1, IsTestMode = false,
+            BankName = "กสิกรไทย", BankAccountNumber = "1234567890", BankAccountName = "คลินิก",
+        };
+        db.SitePaymentGateways.AddRange(omise, bank);
+        await db.SaveChangesAsync();
+
+        var got = await Svc(db).GetPaymentSettingsAsync(cid, sid);
+        Assert.Equal("1234567890", got.BankAccountNumber);   // ข้ามแถว Omise ที่มาก่อน
+
+        await Svc(db).UpdatePaymentSettingsAsync(cid, sid, new BookingPaymentSettingsDto
+        {
+            Mode = "DepositRequired", DepositPercent = 30, BankTransferEnabled = true, UpdateTransfer = true,
+            BankName = "กสิกรไทย", BankAccountNumber = "999-9-99999-9", BankAccountName = "คลินิก", BankBranch = "สยาม",
+        }, "owner");
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var o = await check.SitePaymentGateways.AsNoTracking().SingleAsync(g => g.Id == omise.Id);
+        Assert.Equal(PaymentGatewayType.Omise, o.GatewayType);
+        Assert.Equal("Omise", o.Name);
+        Assert.Equal("m_1", o.MerchantId);
+        Assert.Null(o.BankAccountNumber);
+        // webhook ของคำสั่งซื้อหาแถวด้วยชนิด — ยังเจอ
+        Assert.True(await check.SitePaymentGateways.AnyAsync(g => g.CompanyId == cid && g.SiteId == sid && g.GatewayType == PaymentGatewayType.Omise && g.IsActive));
+        var b = await check.SitePaymentGateways.AsNoTracking().SingleAsync(g => g.Id == bank.Id);
+        Assert.Equal("9999999999", b.BankAccountNumber);
+        Assert.Equal(PaymentGatewayType.BankTransfer, b.GatewayType);
+        Assert.Equal("กสิกรไทย", b.Name);   // ไม่เปลี่ยนชื่อแถวเดิม
+    }
+
+    [Fact]
+    public async Task B1_ล้างเลขบัญชีเดิมต้องยืนยัน_ยืนยันแล้วล้างได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, _) = await SeedAsync(db, siteMode: null);
+        var req = new BookingPaymentSettingsDto { BankTransferEnabled = true, UpdateTransfer = true, PromptPayId = "0812345678" };
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).UpdatePaymentSettingsAsync(cid, sid, req, "owner"));
+        Assert.Equal(409, ex.StatusCode);
+        Assert.Contains("เลขบัญชี", ex.Message);
+        using (var c1 = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal("1234567890", (await c1.SitePaymentGateways.AsNoTracking().SingleAsync(g => g.SiteId == sid && g.CompanyId == cid)).BankAccountNumber);
+        req.ConfirmClearTransfer = true;
+        using var db2 = DbTestDatabase.TryCreateContext()!;
+        var ok = await Svc(db2).UpdatePaymentSettingsAsync(cid, sid, req, "owner");
+        Assert.Null(ok.BankAccountNumber);
+        Assert.Equal("0812345678", ok.PromptPayId);
+    }
+
+    [Fact]
+    public async Task B2_แนบสลิปเมื่อสองวันก่อน_ยืนยันวันนี้_วันรับเงินเป็นวันที่โอน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        var created = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId), userId: null);
+        var (slips, _) = Slips(db);
+        await slips.UploadByTokenAsync(cid, sid, created.PublicToken!, PdfSlip());
+        var twoDaysAgo = DateTime.UtcNow.AddDays(-2);
+        await db.Database.ExecuteSqlRawAsync("UPDATE \"SiteBookings\" SET \"CreatedAt\" = {0}, \"SlipUploadedAt\" = {1} WHERE \"Id\" = {2}",
+            twoDaysAgo.AddHours(-1), twoDaysAgo, created.Id);
+        db.ChangeTracker.Clear();
+
+        await slips.VerifyAsync(cid, sid, created.Id, new VerifyBookingSlipRequest(), "staff-1");
+
+        var row = await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id);
+        Assert.Equal(DateOnly.FromDateTime(twoDaysAgo.AddHours(7)), DateOnly.FromDateTime(row.PaidAt!.Value.AddHours(7)));   // ไม่ใช่วันกดยืนยัน
+        var pay = await db.SiteBookingPayments.AsNoTracking().SingleAsync(p => p.BookingId == created.Id && p.CompanyId == cid);
+        Assert.Equal(PaymentMethod.BankTransfer, pay.PaymentMethod);   // โอนเงิน ไม่ใช่ "ออนไลน์"
+        var intent = await db.PaymentIntents.AsNoTracking().SingleAsync(i => i.Id == row.SlipIntentId);
+        Assert.Equal("manual:staff-1", intent.ConfirmedBy);           // S3: ไม่มีบันทึกอิสระใน ConfirmedBy
+        Assert.NotNull(intent.PaidAt);
+    }
+
+    [Fact]
+    public async Task B2_วันที่โอนอนาคต_ปฏิเสธ_ไม่รับเงิน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        var created = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId), userId: null);
+        var (slips, _) = Slips(db);
+        await slips.UploadByTokenAsync(cid, sid, created.PublicToken!, PdfSlip());
+        await Assert.ThrowsAsync<BusinessRuleException>(() => slips.VerifyAsync(cid, sid, created.Id,
+            new VerifyBookingSlipRequest { TransferDate = DateOnly.FromDateTime(DateTime.UtcNow.AddHours(7)).AddDays(3) }, "staff-1"));
+        Assert.Equal(0m, (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id)).PaidAmount);
+    }
+
+    [Fact]
+    public async Task S1_พนักงานบันทึกรับเงินครบระหว่างสลิปรอตรวจ_ปิดรายการของสลิป_ยืนยันสลิปไม่ได้อีก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        var created = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId), userId: null);
+        var (slips, bookings) = Slips(db);
+        await slips.UploadByTokenAsync(cid, sid, created.PublicToken!, PdfSlip());
+        var intentId = (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id)).SlipIntentId!.Value;
+
+        await bookings.RecordDepositPaymentAsync(cid, sid, created.Id, new RecordBookingPaymentRequest(150m, DateTime.UtcNow, "เงินสดหน้าร้าน", null, null), "staff-1");
+
+        Assert.Equal(PaymentIntentStatus.Failed, (await db.PaymentIntents.AsNoTracking().SingleAsync(i => i.Id == intentId)).Status);
+        await Assert.ThrowsAsync<BusinessRuleException>(() => slips.VerifyAsync(cid, sid, created.Id, new VerifyBookingSlipRequest(), "staff-1"));
+        Assert.Equal(150m, (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id)).PaidAmount);   // ไม่รับซ้ำ
+    }
+
+    [Fact]
+    public async Task S2_ยกเลิกขณะสลิปรอตรวจ_ปิดสลิป_ยืนยันไม่ได้_ทิศตรงข้ามใบที่ไม่ยกเลิกยืนยันได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        var cancelled = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "10:00"), userId: null);
+        var kept = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "11:00") , userId: null, staffOnBehalf: false);
+        var (slips, bookings) = Slips(db);
+        await slips.UploadByTokenAsync(cid, sid, cancelled.PublicToken!, PdfSlip());
+        await slips.UploadByTokenAsync(cid, sid, kept.PublicToken!, PdfSlip());
+        var intentId = (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == cancelled.Id)).SlipIntentId!.Value;
+
+        await bookings.UpdateBookingStatusAsync(cid, sid, cancelled.Id, new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = "ลูกค้าแจ้ง" }, "staff-1");
+
+        var row = await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == cancelled.Id);
+        Assert.Null(row.SlipUploadedAt);
+        Assert.Equal(PaymentIntentStatus.Failed, (await db.PaymentIntents.AsNoTracking().SingleAsync(i => i.Id == intentId)).Status);
+        await Assert.ThrowsAsync<BusinessRuleException>(() => slips.VerifyAsync(cid, sid, cancelled.Id, new VerifyBookingSlipRequest(), "staff-1"));
+        var ok = await slips.VerifyAsync(cid, sid, kept.Id, new VerifyBookingSlipRequest(), "staff-1");
+        Assert.Equal(BookingStatus.Confirmed, ok.Status);
     }
 }

@@ -5855,3 +5855,9 @@ min/max · กำหนดเวลา · เก็บได้เฉพาะ P
 + ฟอร์มบริการ "ตามค่าเว็บ/กำหนดเอง" + ตรวจสลิป (`js/booking-payment-admin.js`) · (5) `SitePaymentGateway.BankBranch` + echo `BankAccountNumber/PromptPayQrUrl` กลับ (เดิมเปิดแก้ที่ cms-orders
 แล้วเลขบัญชีว่าง ⇒ บันทึกซ้ำล้างเงียบ) · เทสต์ `BookingPaymentPolicyTests` (+CRC16 QR พร้อมเพย์) · `Db/BookingPaymentPolicyDbTests` (TEST_PLAN BKPAY-01..24) · `required_call_site_check` +14 กติกา ·
 `write_permission_gate_check` +CmsBookingPaymentController (WATCHED) · baseline +1 (แนบสลิปของแขก — โทเคน) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fe1a9f0e · c62e1809 · 03191135 · e98ca3e9 · 7cf933b1_
+
+_รอบ 218 ฝ่ายค้าน (คำตัดสินข้อ 177 ส่วนต่อ · `<sha ในคอมมิตถัดไป>` · ยังไม่ได้คอมไพล์ในเครื่องนี้): B1 ค่าตั้งเขียนเฉพาะแถวโอน/พร้อมเพย์ + ล้างต้องยืนยัน ·
+B2 วันรับเงินของสลิป = วันที่โอน (`PaymentIntent.PaidAt` · `ProviderCharge.PaidAtUtc`) + วิธีชำระ = โอนเงิน · S1 สลิปที่ถูกแทนปิด Failed + ยืนยันด้วยมือต้องรอตรวจ ·
+S2 ยกเลิก/ไม่มาปิดสลิป · S3 ล็อกเดียว + บันทึก ≤ 300 · S4 จ่ายแล้วบอกก่อนเก็บไฟล์ + ยอดเปลี่ยน ⇒ 409 + อ่านไฟล์ตรงการจอง · S5 คิวสำรอง → `OnSeat` ·
+S6 งานยกเลิกข้ามรายการชำระออนไลน์ที่ยังไม่หมดอายุ · บริการเก็บเงินเองต้องมีช่องทาง/ยอด · PDPA ลบสลิปปฏิเสธ 90 วัน (`BookingSlipRetention`) ·
+เทสต์ `BookingPaymentPolicyTests` + `BookingPaymentPolicyDbTests` (ทั้งสองทิศ) · `required_call_site_check` +16 กฎ_
