@@ -535,3 +535,4 @@ Accounting/Controllers/WithholdingTaxCertController.cs	Void	1
 # รอบ 219 เฟส 2 ขั้น 4: ลิงก์ชำระใบแจ้งหนี้ค่าบริการ NextAcc — ทางเข้าสาธารณะโดยตั้งใจ (สิทธิ์ = โทเคน 128 บิตของลิงก์ · จำกัดอัตรา fail-closed · ใบมาจากลิงก์เท่านั้น — required_call_site_check ล็อกลำดับด่าน)
 Accounting/Controllers/PlatformPayLinkController.cs	PayBySlip	1
 Accounting/Controllers/PlatformPayLinkController.cs	PayOnline	1
+Accounting/Controllers/PlatformPayLinkController.cs	WhtCertificate	1
