@@ -5873,3 +5873,8 @@ _รอบ 215 เฟส 2 ฝ่ายค้าน (ไม่มี blocking ·
 คำตัดสิน: คลาส — บริการตามค่าเว็บที่ค่าเว็บ ≠ None ⇒ รอบคลาสใช้ "ระบบจัดให้" (ครูของรอบ · `ClassScheduleGenerator.RulesFor`) ลูกค้าไม่เลือกเอง ไม่ว่าค่าเว็บเป็นอะไร ·
 ผู้เรียก API เดิมที่ไม่ส่ง `resourceMode` = None ตามเดิม (ไม่เปลี่ยนสัญญา) · เทสต์ +4 · required_call_site_check +1/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit faa61c71_
 
+_รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ — ปิดงานค้าง): หน้า `/pages/my-data.html` + เมนูผู้ใช้ "ข้อมูลส่วนบุคคลของฉัน" (แสดง/ดาวน์โหลดหลักฐานยอมรับนโยบาย · สถานะคำขอลบ) ·
+คำขอลบระดับแพลตฟอร์มที่ผู้ใช้ยื่นเอง (`PlatformErasureRequests` · `POST /api/legal/my-data/erase-request` · ค้างฉบับเดียว · วันละครั้ง · SLA 30 วัน · กติกา `Helpers/PlatformErasureRequestPolicy`) ·
+SystemAdmin ดำเนินการ/ปฏิเสธที่ `/admin/legal.html` (`AdminPlatformErasureController`) → แกนลบตัวเดียว `PdpaService.AnonymiseUserCoreAsync` (แยกออกจาก `ApplyErasureAsync` — DSR ของบริษัทใช้ตัวเดียวกัน) + audit + อีเมลแจ้งผล ·
+เทสต์ `PlatformErasureRequestTests` + Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · TEST_PLAN LEGAL214-32..35 · `required_call_site_check` +4 กติกา/แก้ 1 ·
+`write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

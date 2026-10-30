@@ -101,6 +101,13 @@
       <div class="admin-card-header"><span class="admin-card-title">🕘 ประวัติฉบับที่เผยแพร่</span></div>
       <div id="historyList">กำลังโหลด...</div>
     </div>
+
+    <!-- รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ): คำขอลบข้อมูล (ม.33) ที่ผู้ใช้ยื่นเองระดับแพลตฟอร์ม — "ดำเนินการลบ" = แกนลบตัวเดียวกับ DSR ของบริษัท -->
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🧹 คำขอลบข้อมูลส่วนบุคคล (ผู้ใช้ยื่นเอง · SLA 30 วัน)</span></div>
+      <div class="muted" style="margin-bottom:8px">ดำเนินการลบ = ทำบัญชีไม่ให้ระบุตัว ถอดการเข้าสู่ระบบทุกช่องทาง หลักฐานการยอมรับนโยบายคงไว้แบบไม่ระบุตัว (legal hold) และแจ้งผลทางอีเมล — ย้อนกลับไม่ได้ · ปฏิเสธต้องระบุเหตุผล</div>
+      <div id="erasureList">กำลังโหลด...</div>
+    </div>
   </div>
 
   <script src="/admin/admin-api.js"></script>
@@ -124,6 +131,48 @@
         document.getElementById('saveBtn').addEventListener('click', () => this.save());
         document.getElementById('publishBtn').addEventListener('click', () => this.publish());
         this.load();
+        this.loadErasures();
+        document.getElementById('erasureList').addEventListener('click', (ev) => {
+          const b = ev.target.closest('button[data-erase]');
+          if (b) this.resolveErasure(b.dataset.erase, b.dataset.act);
+        });
+      },
+
+      async loadErasures() {
+        const box = document.getElementById('erasureList');
+        try {
+          const res = await AdminAPI.get('/platform-erasure-requests');
+          const rows = res.data || [];
+          const esc = AdminLayout.esc;
+          const label = { Pending: 'ค้าง', Completed: 'ลบแล้ว', Rejected: 'ปฏิเสธ' };
+          box.innerHTML = rows.length === 0 ? '<div class="muted">ยังไม่มีคำขอ</div>'
+            : `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>ยื่นเมื่อ</th><th>ผู้ใช้</th><th>เหตุผล</th><th>กำหนด</th><th>สถานะ</th><th></th></tr></thead><tbody>`
+              + rows.map(r => `<tr>
+                <td>${esc(new Date(r.requestedAt).toLocaleString('th-TH'))}</td>
+                <td>${esc(r.requesterEmail)}<div class="muted">${esc(r.userId)}</div></td>
+                <td class="muted">${esc(r.reason || '-')}</td>
+                <td>${esc(this.thaiDate(r.dueAt))}${r.overdue ? ' <span class="pill" style="background:#fee2e2;color:#991b1b">เกินกำหนด</span>' : ''}</td>
+                <td><span class="pill">${esc(label[r.status] || r.status)}</span>${r.resolutionNote ? `<div class="muted">${esc(r.resolutionNote)}</div>` : ''}</td>
+                <td>${r.status === 'Pending' ? `<button class="admin-btn admin-btn-danger admin-btn-sm" data-erase="${esc(r.id)}" data-act="complete">ดำเนินการลบ</button>
+                  <button class="admin-btn admin-btn-outline admin-btn-sm" data-erase="${esc(r.id)}" data-act="reject">ปฏิเสธ</button>` : ''}</td>
+              </tr>`).join('') + `</tbody></table></div>`;
+        } catch (e) { box.textContent = 'โหลดไม่สำเร็จ: ' + e.message; }
+      },
+
+      async resolveErasure(id, act) {
+        let note = null;
+        if (act === 'complete') {
+          if (!confirm('ดำเนินการลบข้อมูลผู้ใช้รายนี้? ย้อนกลับไม่ได้ — ผู้ใช้จะเข้าสู่ระบบไม่ได้อีก')) return;
+          note = prompt('หมายเหตุ (ไม่บังคับ)') || null;
+        } else {
+          note = prompt('เหตุผลที่ปฏิเสธ (จะแจ้งผู้ใช้)');
+          if (!note || !note.trim()) return;
+        }
+        try {
+          const res = await AdminAPI.post(`/platform-erasure-requests/${encodeURIComponent(id)}/${act}`, { note });
+          AdminLayout.toast(res.message || 'ดำเนินการแล้ว');
+        } catch (e) { AdminLayout.toast('ไม่สำเร็จ: ' + e.message, 'error'); }
+        await this.loadErasures();
       },
 
       switchKind(k) {

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ข้อมูลส่วนบุคคลของฉัน - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .md-shell { max-width:860px; margin:0 auto; padding:24px 16px 60px; }
+    .md-hero { background:linear-gradient(135deg,#0ea5e9,#7c3aed); color:#fff; padding:22px 24px; border-radius:14px; margin-bottom:18px; }
+    .md-hero h1 { margin:0 0 6px; font-size:22px; }
+    .md-hero p { margin:0; opacity:.92; font-size:13px; line-height:1.6; }
+    .card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:18px 20px; margin-bottom:16px; }
+    .card h2 { font-size:16px; margin:0 0 10px; }
+    .muted { color:#64748b; font-size:13px; line-height:1.7; }
+    .tbl-wrap { overflow-x:auto; }
+    table.tbl { width:100%; border-collapse:collapse; font-size:13px; }
+    table.tbl th, table.tbl td { border:1px solid #e5e7eb; padding:6px 8px; text-align:left; vertical-align:top; word-break:break-word; }
+    table.tbl th { background:#f8fafc; }
+    .btn { padding:8px 16px; border-radius:8px; font-weight:600; font-size:14px; cursor:pointer; border:1px solid transparent; }
+    .btn-primary { background:#0ea5e9; color:#fff; }
+    .btn-danger { background:#dc2626; color:#fff; }
+    .btn-secondary { background:#f1f5f9; color:#334155; border-color:#cbd5e1; }
+    .status { background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a; border-radius:8px; padding:10px 12px; font-size:13px; margin-bottom:10px; }
+    textarea { width:100%; box-sizing:border-box; border:1px solid #cbd5e1; border-radius:8px; padding:8px; font-family:inherit; font-size:14px; }
+  </style>
+</head>
+<body>
+  <!-- รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ): DSR ของเจ้าของข้อมูลเองระดับแพลตฟอร์ม (ม.30/31/33) — ผู้ใช้ที่ไม่มีบริษัทก็เปิดได้ (ไม่ผูก Layout/บริษัท) ·
+       ข้อมูลจาก GET /api/legal/my-data (เซิร์ฟเวอร์ประกอบ · หน้านี้ escape ทุกค่า) · ยื่นลบ POST /api/legal/my-data/erase-request -->
+  <div class="md-shell">
+    <p style="margin:0 0 12px"><a href="/app.html">&larr; กลับเข้าระบบ</a></p>
+    <div class="md-hero">
+      <h1>🛡️ ข้อมูลส่วนบุคคลของฉัน</h1>
+      <p>หลักฐานการยอมรับข้อกำหนดการใช้งาน/นโยบายความเป็นส่วนตัวที่ระบบเก็บไว้ (ม.30) · ดาวน์โหลดเป็นไฟล์ (ม.31) · ยื่นคำขอลบข้อมูลบัญชี (ม.33) —
+        ข้อมูลในบริษัทที่ท่านเป็นสมาชิก ขอได้ที่ผู้ดูแลข้อมูลส่วนบุคคล (DPO) ของบริษัทนั้น</p>
+    </div>
+
+    <div class="card">
+      <h2>หลักฐานการยอมรับนโยบาย</h2>
+      <div id="accepts" class="muted">กำลังโหลด...</div>
+      <div style="margin-top:12px"><button class="btn btn-secondary" id="downloadBtn">⬇️ ดาวน์โหลด JSON</button></div>
+    </div>
+
+    <div class="card">
+      <h2>ขอลบข้อมูลบัญชีของฉัน</h2>
+      <div id="eraseStatus"></div>
+      <p class="muted">ผู้ดูแลระบบจะดำเนินการภายใน 30 วันและแจ้งผลทางอีเมล · หลังลบจะเข้าสู่ระบบด้วยบัญชีนี้ไม่ได้อีก ·
+        ข้อมูลที่กฎหมายกำหนดให้เก็บ (หลักฐานการยอมรับนโยบาย · เอกสารบัญชี/ภาษี) จะคงไว้ในรูปที่ไม่ระบุตัวตนจนพ้นกำหนด</p>
+      <textarea id="eraseReason" rows="2" maxlength="1000" placeholder="เหตุผล (ไม่บังคับ)"></textarea>
+      <div style="margin-top:10px"><button class="btn btn-danger" id="eraseBtn">ยื่นคำขอลบข้อมูล</button></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script>
+    const MyData = {
+      esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
+      dt(v) { return v ? new Date(v).toLocaleString('th-TH') : '-'; },
+
+      async init() {
+        if (!localStorage.getItem('token')) { window.location.href = '/login.html'; return; }
+        document.getElementById('downloadBtn').addEventListener('click', () => this.download());
+        document.getElementById('eraseBtn').addEventListener('click', () => this.requestErase());
+        await this.load();
+      },
+
+      async load() {
+        try {
+          const res = await API.get('/api/legal/my-data');
+          this.render(res.data || {});
+        } catch (e) {
+          document.getElementById('accepts').textContent = 'โหลดไม่สำเร็จ: ' + e.message;
+        }
+      },
+
+      render(d) {
+        const rows = d.policyAcceptances || [];
+        document.getElementById('accepts').innerHTML = rows.length === 0
+          ? 'ยังไม่มีหลักฐานการยอมรับในระบบ'
+          : `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>วันเวลา</th><th>วัตถุประสงค์</th><th>ฉบับ</th><th>ช่องทาง</th><th>IP</th><th>เบราว์เซอร์</th><th>ผลตรวจหลักฐาน</th></tr></thead><tbody>`
+            + rows.map(r => `<tr><td>${this.esc(this.dt(r.acceptedAt))}</td><td>${this.esc(r.purpose)}</td>`
+              + `<td>${this.esc(r.policyVersion)}${r.versionShown && r.versionShown !== r.policyVersion ? ' (หน้าแสดง ' + this.esc(r.versionShown) + ')' : ''}</td>`
+              + `<td>${this.esc(r.channel)}</td><td>${this.esc(r.ipAddress || '-')}</td><td>${this.esc(r.userAgent || '-')}</td><td>${this.esc(r.evidenceCheck)}</td></tr>`).join('')
+            + `</tbody></table></div>`;
+        const er = d.erasureRequest;
+        const box = document.getElementById('eraseStatus');
+        const labels = { Pending: 'กำลังดำเนินการ', Completed: 'ดำเนินการแล้ว', Rejected: 'ไม่สามารถดำเนินการได้' };
+        box.innerHTML = er
+          ? `<div class="status">คำขอล่าสุด: <b>${this.esc(labels[er.status] || er.status)}</b> · ยื่นเมื่อ ${this.esc(this.dt(er.requestedAt))}`
+            + (er.status === 'Pending' ? ` · กำหนดเสร็จ ${this.esc(this.dt(er.dueAt))}` : '')
+            + (er.resolutionNote ? ` · หมายเหตุ: ${this.esc(er.resolutionNote)}` : '') + `</div>`
+          : '';
+        document.getElementById('eraseBtn').disabled = !!(er && er.status === 'Pending');
+      },
+
+      async download() {
+        try { await API.download('/api/legal/my-data?download=true', 'my-data.json'); }
+        catch (e) { alert('ดาวน์โหลดไม่สำเร็จ: ' + e.message); }
+      },
+
+      async requestErase() {
+        if (!confirm('ยืนยันยื่นคำขอลบข้อมูลบัญชี?\n\nเมื่อดำเนินการแล้วจะเข้าสู่ระบบด้วยบัญชีนี้ไม่ได้อีก')) return;
+        const btn = document.getElementById('eraseBtn');
+        btn.disabled = true;
+        try {
+          const res = await API.post('/api/legal/my-data/erase-request', { reason: document.getElementById('eraseReason').value.trim() || null });
+          alert(res.message || 'รับคำขอแล้ว');
+          await this.load();
+        } catch (e) {
+          alert('ยื่นคำขอไม่สำเร็จ: ' + e.message);
+          btn.disabled = false;
+        }
+      },
+    };
+    document.addEventListener('DOMContentLoaded', () => MyData.init());
+  </script>
+</body>
+</html>

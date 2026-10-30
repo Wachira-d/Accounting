@@ -32,6 +32,10 @@
 | LEGAL214-29 | ฝ่ายค้าน S1: ต้นฉบับ PdpaConsentRecords ระดับแพลตฟอร์ม | ลบตามคำขอ = อีเมลนิรนาม/ล้าง IP/`PseudonymisedAt` · ลบจริงพ้น 10 ปี | `PdpaConsentEvidenceV2Tests`.Consent_record_labels_by_source_and_state · กติกา `ApplyErasureAsync`/`PdpaRetentionPurgeJob.RunAsync` |
 | LEGAL214-30 | ฝ่ายค้าน S4/N2: ผลตรวจหลักฐานบนรายงานลูกค้าเว็บ | ระบบ = ตรวจผ่าน/ไม่ตรง · เจ้าหน้าที่กรอก hash เอง = "บันทึกโดยเจ้าหน้าที่" (ไม่ใช่ไม่ตรง) · ลบแล้ว = ตรวจซ้ำไม่ได้ | `PdpaConsentEvidenceV2Tests`.Consent_record_labels_by_source_and_state |
 | LEGAL214-31 | ฝ่ายค้าน N3: ป้าย "V2:" ตัวพิมพ์ใหญ่ | ตรวจผ่าน | `PdpaConsentEvidenceV2Tests`.Prefix_is_case_insensitive |
+| LEGAL214-32 | ฐ: ยื่นคำขอลบซ้ำ · ยื่นใหม่ภายใน 24 ชม. · ผ่าน 24 ชม. | ค้าง = ฉบับเดิม (ไม่สร้างแถวใหม่) · ถี่ = 429 · ครบเวลา = ยื่นได้ · SLA 30 วัน | `PlatformErasureRequestTests`.Pending_request_is_returned_not_duplicated · Too_soon_… · Sla_… · Db `Platform_erasure_request_is_idempotent_…` |
+| LEGAL214-33 | ฐ: ผู้ใช้อื่น · ผู้ไม่ใช่ SystemAdmin · ไม่ล็อกอิน | ผู้ใช้อื่นไม่เห็น/ไม่แตะคำขอ · ดำเนินการลบต้อง SystemAdmin · ยื่นต้องล็อกอิน (ทิศตรงข้าม: หน้าเอกสารสาธารณะยังเปิดได้) | `PlatformErasureRequestTests`.Admin_erasure_endpoints_require_SystemAdmin · Self_service_endpoints_require_login_… · Db (ผู้ใช้ B) |
+| LEGAL214-34 | ฐ: SystemAdmin ดำเนินการลบ · ดำเนินการซ้ำ · ปฏิเสธไม่มีเหตุผล | แกนลบตัวเดียว (บัญชีไม่ระบุตัว · หลักฐาน legal hold) · แจ้งผลไปอีเมลเดิม · ซ้ำ = 409 · ปฏิเสธไม่มีเหตุผล = ไม่ได้ | Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · กติกา `CompletePlatformErasureAsync`/`ApplyErasureAsync` |
+| LEGAL214-35 (มือ) | ฐ: เมนูผู้ใช้ → ข้อมูลส่วนบุคคลของฉัน · ผู้ใช้ไม่มีบริษัท · ดาวน์โหลด JSON · แท็บคำขอลบบน /admin/legal.html | แสดงค่าที่ escape แล้ว · ปุ่มยื่นปิดเมื่อมีคำขอค้าง | ตรวจมือ |
 | LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
 
 ## SUB217 — กดซ้ำไม่บันทึกซ้ำ (Idempotency-Key + ด่านซ้ำเชิงความหมาย) · ตอบเร็ว แจ้งเตือนตามหลัง (รอบ 217 · คำตัดสินข้อ 175)
@@ -255,7 +259,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **701 ไฟล์ · 7,224 `[Fact]` + 1,145 `[Theory]` (5,364 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **702 ไฟล์ · 7,230 `[Fact]` + 1,145 `[Theory]` (5,364 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
