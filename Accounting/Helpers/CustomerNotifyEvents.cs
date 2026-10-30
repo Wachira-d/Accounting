@@ -25,6 +25,8 @@ public static class CustomerNotifyEvents
     public const string BookingRescheduled = "booking.rescheduled";
     public const string BookingReminder = "booking.reminder";
     public const string BookingWaitlistPromoted = "booking.waitlist-promoted";
+    /// <summary>รอบ 218: ร้านปฏิเสธสลิปชำระล่วงหน้าของการจอง (เหตุผล + ทางไปต่อ)</summary>
+    public const string BookingSlipRejected = "booking.slip-rejected";
     public const string ClassCancelled = "class.cancelled";
     public const string ClassSubstitute = "class.substitute";
     public const string OrderConfirmation = "order.confirmation";
@@ -60,6 +62,7 @@ public static class CustomerNotifyEvents
         new CustomerNotifyEvent(BookingRescheduled, "เลื่อนนัด", GBooking, true, null, null),
         new CustomerNotifyEvent(BookingReminder, "เตือนก่อนนัด", GBooking, true, "เปิด/ปิด + ชั่วโมงเตือน อยู่ที่ค่าตั้งการจองของเว็บ", "/pages/cms-edit.html"),
         new CustomerNotifyEvent(BookingWaitlistPromoted, "ได้คิวจากคิวสำรอง", GBooking, true, null, null),
+        new CustomerNotifyEvent(BookingSlipRejected, "สลิปชำระล่วงหน้าไม่ผ่าน", GBooking, true, "ส่งเมื่อร้านกด “ปฏิเสธสลิป” ที่หน้าการจอง", null),
         new CustomerNotifyEvent(ClassCancelled, "คลาสยกเลิก", GClass, true, "ติ๊ก \"แจ้งลูกค้า\" ทุกครั้งที่สั่งยกเลิกคลาส", null),
         new CustomerNotifyEvent(ClassSubstitute, "เปลี่ยนผู้สอน", GClass, true, "ติ๊ก \"แจ้งลูกค้า\" ทุกครั้งที่เปลี่ยนผู้สอน", null),
         new CustomerNotifyEvent(OrderConfirmation, "ยืนยันคำสั่งซื้อ", GOrder, true, null, null),

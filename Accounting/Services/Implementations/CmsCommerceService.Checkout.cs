@@ -335,6 +335,7 @@ public partial class CmsCommerceService
         result.BankName = gw.BankName;
         result.BankAccountNumber = gw.BankAccountNumber;
         result.BankAccountName = gw.BankAccountName;
+        result.BankBranch = gw.BankBranch;   // รอบ 218
         result.HasPaymentMethod = !string.IsNullOrEmpty(gw.PromptPayId) || !string.IsNullOrEmpty(gw.BankAccountNumber);
         return result;
     }

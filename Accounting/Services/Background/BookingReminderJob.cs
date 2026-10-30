@@ -209,6 +209,33 @@ public class BookingReminderJob : BackgroundService
                 db.ChangeTracker.Clear();
             }
         }
+
+        // ── 4. รอบ 218 (คำตัดสินข้อ 177): ไม่ชำระล่วงหน้าในเวลาที่กำหนด ⇒ ยกเลิกผ่านเส้นสถานะปกติ (เอกสารร่าง void · เลื่อนคิวสำรอง · แจ้งลูกค้า) ·
+        // ไม่แตะใบที่มีเงิน/มีสลิปรอตรวจ (ตัวตัดสินเดียว BookingPaymentPolicy.HoldLapsed — เส้นสถานะตัดสินซ้ำใต้ล็อกด้วย PaymentHoldLapsedAsOfUtc)
+        var unpaid = await db.SiteBookings.AsNoTracking()
+            .Where(b => onlyCompanyId == null || b.CompanyId == onlyCompanyId)
+            .Where(b => !b.IsDeleted && b.Status == BookingStatus.Pending && b.PaymentHoldUntil != null && b.PaymentHoldUntil <= nowUtc
+                && b.PaidAmount <= 0m && b.SlipUploadedAt == null)
+            .Select(b => new { b.CompanyId, b.SiteId, b.Id, b.BookingNumber, b.Status, b.PaymentHoldUntil, b.PaidAmount, Slip = b.SlipUploadedAt != null && b.SlipAttachmentId != null })
+            .Take(500)
+            .ToListAsync(ct);
+        foreach (var e in unpaid)
+        {
+            if (ct.IsCancellationRequested) break;
+            if (!BookingPaymentPolicy.HoldLapsed(e.Status, e.PaymentHoldUntil, e.PaidAmount, e.Slip, nowUtc)) continue;
+            try
+            {
+                await bookings.UpdateBookingStatusAsync(e.CompanyId, e.SiteId, e.Id,
+                    new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = BookingPaymentPolicy.HoldExpiredReason,
+                        ExpectedCurrentStatus = BookingStatus.Pending, PaymentHoldLapsedAsOfUtc = nowUtc }, SystemUser);
+                released++;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "ยกเลิกการจองที่ไม่ชำระล่วงหน้าในเวลา #{BookingNumber} (company {CompanyId}) ล้ม", e.BookingNumber, e.CompanyId);
+                db.ChangeTracker.Clear();
+            }
+        }
         return (sent, failed, retried, released);
     }
 }

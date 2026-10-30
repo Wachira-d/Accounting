@@ -1240,6 +1240,7 @@ public partial class CmsCommerceService : ICmsCommerceService
             PromptPayId = request.PromptPayId, PromptPayQrUrl = request.PromptPayQrUrl,
             BankName = request.BankName, BankAccountNumber = request.BankAccountNumber,
             BankAccountName = request.BankAccountName,
+            BankBranch = string.IsNullOrWhiteSpace(request.BankBranch) ? null : request.BankBranch.Trim(),   // รอบ 218
             IsTestMode = request.IsTestMode, SupportedCurrencies = request.SupportedCurrencies,
             CreatedBy = userId
         };
@@ -1264,6 +1265,8 @@ public partial class CmsCommerceService : ICmsCommerceService
         gw.BankName = request.BankName;
         gw.BankAccountNumber = request.BankAccountNumber;
         gw.BankAccountName = request.BankAccountName;
+        // รอบ 218: null = ผู้เรียกเดิมที่ไม่รู้จักช่องนี้ ⇒ ไม่แตะ (ไม่ล้างสาขาที่ตั้งจากหน้าการจองเงียบ ๆ)
+        if (request.BankBranch != null) gw.BankBranch = string.IsNullOrWhiteSpace(request.BankBranch) ? null : request.BankBranch.Trim();
         gw.IsTestMode = request.IsTestMode;
         gw.SupportedCurrencies = request.SupportedCurrencies;
         gw.UpdatedBy = userId;
@@ -1282,6 +1285,7 @@ public partial class CmsCommerceService : ICmsCommerceService
                 Id = g.Id, GatewayType = g.GatewayType, Name = g.Name, Description = g.Description,
                 HasApiKey = g.ApiKeyEncrypted != null, MerchantId = g.MerchantId,
                 PromptPayId = g.PromptPayId, BankName = g.BankName, BankAccountName = g.BankAccountName,
+                BankAccountNumber = g.BankAccountNumber, BankBranch = g.BankBranch, PromptPayQrUrl = g.PromptPayQrUrl,   // รอบ 218: echo ครบ
                 IsTestMode = g.IsTestMode, IsActive = g.IsActive, SortOrder = g.SortOrder,
                 SupportedCurrencies = g.SupportedCurrencies
             })
@@ -2084,6 +2088,7 @@ public partial class CmsCommerceService : ICmsCommerceService
         Id = g.Id, GatewayType = g.GatewayType, Name = g.Name, Description = g.Description,
         HasApiKey = g.ApiKeyEncrypted != null, MerchantId = g.MerchantId,
         PromptPayId = g.PromptPayId, BankName = g.BankName, BankAccountName = g.BankAccountName,
+        BankAccountNumber = g.BankAccountNumber, BankBranch = g.BankBranch, PromptPayQrUrl = g.PromptPayQrUrl,   // รอบ 218: echo ครบ
         IsTestMode = g.IsTestMode, IsActive = g.IsActive, SortOrder = g.SortOrder,
         SupportedCurrencies = g.SupportedCurrencies
     };

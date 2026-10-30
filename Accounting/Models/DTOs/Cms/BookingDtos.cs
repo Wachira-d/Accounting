@@ -49,6 +49,12 @@ public class CreateBookingServiceRequest
     public bool UseSiteDefaults { get; set; }
     /// <summary>รอบ 210: ต้องเป็นสมาชิกก่อนจอง (Inherit = ตามเว็บ · Required · NotRequired) — <b>null = ไม่แตะค่าเดิม</b> (ผู้เรียก API เดิม · สร้างใหม่ = ตามเว็บ)</summary>
     public BookingMemberAccess? MemberAccess { get; set; }
+    /// <summary>รอบ 218: โหมดรับชำระล่วงหน้าของบริการ ("Inherit" = ตามค่าเว็บ · ชื่อ <c>BookingPaymentMode</c>) — <b>null = ไม่แตะค่าชำระล่วงหน้าทั้งชุด</b>
+    /// (ผู้เรียก API เดิม) · ส่งมา ⇒ ขั้นต่ำ/สูงสุด/กำหนดเวลา ด้านล่างถูกตั้งตามที่ส่ง (null = ตามค่าเว็บ)</summary>
+    public string? PaymentMode { get; set; }
+    public decimal? DepositMinAmount { get; set; }
+    public decimal? DepositMaxAmount { get; set; }
+    public int? PaymentDeadlineMinutes { get; set; }
     /// <summary>เวลาทำการ + วันหยุด — <b>null = ไม่แตะตารางเวลาเดิม</b> (ผู้เรียก API เดิม) · ส่งมา = แทนที่ทั้งชุด</summary>
     public BookingScheduleDto? Schedule { get; set; }
 }
@@ -252,6 +258,13 @@ public class BookingServiceResponse
     public string? SlotSummary { get; set; }
     /// <summary>ข้อความนโยบายมัดจำ/ยกเลิกที่ server ประกอบ — หน้าเว็บแสดงตรง ๆ</summary>
     public string? PolicySummary { get; set; }
+    // ── รอบ 218: ชำระล่วงหน้า — ค่าที่ตั้ง (ฟอร์ม) + ค่าที่มีผล (server ตัดสินด้วย BookingPaymentPolicy) ──
+    public string PaymentMode { get; set; } = "Inherit";
+    public decimal? DepositMinAmount { get; set; }
+    public decimal? DepositMaxAmount { get; set; }
+    public int? PaymentDeadlineMinutes { get; set; }
+    public string? PaymentSummary { get; set; }
+    public string? PaymentProblem { get; set; }
     public bool IsActive { get; set; }
     public int UpcomingBookingsCount { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -320,6 +333,8 @@ public class CreateBookingRequest
 
     /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มจอง — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
     public bool ConsentGiven { get; set; }
+    /// <summary>รอบ 218: โหมดมัดจำไม่บังคับ — ลูกค้าเลือกจ่ายมัดจำตอนจอง (null/false = ไม่จ่าย) · โหมดอื่นไม่มีผล (server ตัดสิน)</summary>
+    public bool? PayDepositNow { get; set; }
 }
 
 public class UpdateBookingStatusRequest
@@ -333,6 +348,8 @@ public class UpdateBookingStatusRequest
     /// <summary>รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 1b): job ปล่อยที่ — ตรวจซ้ำใต้ล็อกว่ายังไม่รับเงิน + พ้นเวลาถือที่ ณ เวลาอ้างอิงของ job (เงินเข้าหลังคิวรีของ job ⇒ ไม่ยกเลิก) ·
     /// null = ไม่ตรวจ · ใช้เวลาของ job ไม่ใช่นาฬิกาเครื่อง (job/เทสต์ส่งเวลาอ้างอิงเอง)</summary>
     public DateTime? HoldLapsedAsOfUtc { get; set; }
+    /// <summary>รอบ 218: job ยกเลิกใบที่ไม่ชำระล่วงหน้าในเวลา — เส้นสถานะตัดสินซ้ำใต้ล็อกด้วย <c>BookingPaymentPolicy.HoldLapsed</c> · null = ไม่ใช่เส้นนี้</summary>
+    public DateTime? PaymentHoldLapsedAsOfUtc { get; set; }
 }
 
 public class BookingResponse
@@ -430,6 +447,8 @@ public class BookingResponse
     public string? ServiceProductName { get; set; }
     /// <summary>ป้ายสถานะที่ลูกค้าเห็น (BookingStatusLabels.Customer) — หน้าเว็บ/ใบยืนยันแสดงตรง</summary>
     public string CustomerStatusLabel { get; set; } = "";
+    /// <summary>รอบ 218: การชำระล่วงหน้า (ยอด · สถานะ · ช่องทาง · สลิป) — server ประกอบ (<c>BookingPaymentPolicy</c>) หน้าเว็บแสดงอย่างเดียว</summary>
+    public BookingPaymentInfoDto? Payment { get; set; }
 }
 
 public class BookingAssignmentDto
@@ -586,6 +605,8 @@ public class BookingListResponse
     public string? GuestPhone { get; set; }
     /// <summary>ผู้ให้บริการทุกคน (หลายคน = "ก 60% · ข 40%")</summary>
     public string? ProvidersLabel { get; set; }
+    /// <summary>รอบ 218: ป้ายการชำระล่วงหน้า (รอชำระ/รอตรวจสลิป/ชำระแล้ว) · null = ไม่มี</summary>
+    public string? PaymentStatusLabel { get; set; }
 }
 
 // ==================== Available Slots Query ====================

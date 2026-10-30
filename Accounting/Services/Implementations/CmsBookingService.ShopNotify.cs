@@ -75,8 +75,10 @@ public partial class CmsBookingService
     /// โดยไม่แจ้งร้านซ้ำ · คีย์กันซ้ำเดิม ⇒ ส่งซ้ำรับช่วงแถวบันทึกเดิม</summary>
     private async Task<(CmsNotification Message, string? Error)> SendBookingConfirmedToCustomerAsync(Guid companyId, Guid siteId, Guid bookingId, BookingNotifyFacts f, string site)
     {
-        var customer = await WithBookingLinkAsync(companyId, siteId, f,
-            CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), DateOnly.FromDateTime(f.BookingDate), f.StartTime, f.ResourceName, f.Status));
+        // รอบ 218: มียอดชำระล่วงหน้าค้าง ⇒ บรรทัดยอด/กำหนดเวลา/วิธีชำระก่อนลิงก์จัดการการจอง (BookingPaymentPolicy.NotifyLine)
+        var customer = await WithBookingLinkAsync(companyId, siteId, f, CmsNotificationText.WithLine(
+            CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), DateOnly.FromDateTime(f.BookingDate), f.StartTime, f.ResourceName, f.Status),
+            await PaymentNotifyLineAsync(companyId, siteId, bookingId)));
         var err = await _shopNotifier!.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.BookingConfirmed, CustomerNotifyKeys.Booking(bookingId, CustomerNotifyEvents.BookingConfirmed), ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), customer);
         return (customer, err);
     }

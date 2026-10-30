@@ -90,4 +90,13 @@ public interface ICmsBookingService
 
     /// <summary>รอบ 213: ส่งซ้ำข้อความถึงลูกค้าที่ค้างเพราะโควตา (ยืนยัน/ยกเลิก/เลื่อนนัด) — ประกอบใหม่จากสถานะปัจจุบันผ่านเส้นเดิม · ผู้เรียกเดียว <c>CustomerNotifyResendService</c></summary>
     Task<string?> ResendCustomerNotifyAsync(Guid companyId, Guid bookingId, string eventKey, string messageKey);
+
+    // ── รอบ 218 (คำตัดสินข้อ 177): ชำระล่วงหน้า (ตัวตัดสิน Helpers/BookingPaymentPolicy) ──
+    Task<BookingPaymentSettingsDto> GetPaymentSettingsAsync(Guid companyId, Guid siteId);
+    Task<BookingPaymentSettingsDto> UpdatePaymentSettingsAsync(Guid companyId, Guid siteId, BookingPaymentSettingsDto request, string userId);
+    /// <summary>ก่อนกดจอง: ยอด/บังคับไหม/กำหนดเวลา/ช่องทาง · null = ไม่พบบริการ</summary>
+    Task<BookingPaymentPreviewResponse?> PreviewPaymentAsync(Guid companyId, Guid siteId, BookingPaymentPreviewRequest request);
+    /// <summary>สถานะสลิปบนการจอง — ผู้เรียกเดียว <c>BookingSlipService</c> (ไฟล์ + PaymentIntent สร้างแล้ว)</summary>
+    Task<BookingResponse> MarkSlipUploadedAsync(Guid companyId, Guid siteId, Guid bookingId, Guid attachmentId, Guid intentId, decimal amount);
+    Task<BookingResponse> MarkSlipRejectedAsync(Guid companyId, Guid siteId, Guid bookingId, Guid expectedIntentId, string reason, string actor);
 }
