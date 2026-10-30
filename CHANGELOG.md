@@ -5798,3 +5798,11 @@ _รอบ 214 (คำตัดสินข้อ 173 · เจ้าของ: 
 หน้า storefront `legal/privacy|terms` + ลิงก์ท้ายเว็บ/ช่องยินยอม/สมัครสมาชิก/แบนเนอร์คุกกี้ · cms-edit สามโหมด + ช่องข้อกำหนดที่เดิมไม่มี UI + URL/คัดลอก/เปิด/ตัวอย่าง ·
 ลิงก์ร้านตรวจก่อนเก็บ + ซ่อมสตริงว่างเดิม (`Helpers/LegalDocumentMigration`) · (4) หน้าจองโต๊ะ → `/shop-policy.html` (`GET /api/public/reservations/legal/{companyId}/{kind}`) ·
 เทสต์ `LegalDocumentTests` + `Db/LegalDocumentDbTests` (TEST_PLAN LEGAL214-01..12) · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 214 ฝ่ายค้าน + CI (ไม่มีข้อ blocking · แก้ S1–S5 + หมายเหตุ + Db test แดง): (S1) ReDoS — `LegalMarkdown` regex ทุกตัวมีเพดานเวลา (`BookingRefPattern.MatchTimeout`)
+และเขียนไม่ย้อนรอยข้ามตัวคั่น · ย่อหน้า > 4,000 ไม่แปลง · เกินเวลา = encode ล้วน · ตัวอย่างรับ ≤ 100k · (S2) ฉบับประกาศล่วงหน้าไม่ถูกเรียก "ฉบับเก่า" (`isUpcoming`) ·
+(S3) เลขผู้เสียภาษีบนหน้านโยบายร้านเฉพาะนิติบุคคล · หน้าจองโต๊ะแสดงแค่ชื่อ+เบอร์ (`CmsLegalPages.BuildShopTokens`) · (S4) "ยังไม่ได้ระบุ" + ไม่มี mailto เสีย + cms-edit เตือน
+(`SiteResponse.LegalWarnings`) · (S5) audit ตอนเผยแพร่มี UserId/อีเมล/IP · หมายเหตุ: Status concurrency token + unique ร่างต่อชนิด ⇒ 409 ไทย · ปุ่มตั้งวันมีผลเป็นวันนี้ ·
+`LegalController` เลิก AllowAnonymous ระดับคลาส · ปุ่ม "เปิด" ของเว็บที่ยังไม่เผยแพร่ = ตัวอย่าง · doc comment ย้ายกลับที่ · audit `*Markdown` = length+sha256 ·
+(CI) Db test ล้ม FK `PdpaConsentRecords → Companies` (CompanyId ศูนย์) — บั๊กจริงตั้งแต่ก่อนรอบนี้ (หลักฐานตอนสมัครหายเงียบบนฐานที่มี FK) ⇒ ตารางระดับผู้ใช้
+`PlatformPolicyAcceptances` + คัดลอกแถวเดิม · เทสต์ทั้งผู้ใช้ไม่มีบริษัท/มีบริษัท · TEST_PLAN LEGAL214-14..21 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

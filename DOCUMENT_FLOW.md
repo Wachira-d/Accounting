@@ -4927,7 +4927,10 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   | ฟอร์มสมัคร (`POST /api/auth/register`) | `AcceptedTerms` ต้อง true | `web-form` |
   | รับคำเชิญเข้าบริษัท (`?invite=` บนฟอร์มเดียวกัน) | เหมือนกัน | `web-form` |
   | Google / Facebook / LINE (`POST /api/auth/sso`) | บังคับ**เฉพาะตอนสร้าง user ใหม่** — ผู้ใช้เดิมเข้าระบบไม่ถูกขวาง | `sso-google` / `sso-facebook` / `sso-line` |
-- แถวที่เขียน: `PdpaConsentRecord` scope **ระดับแพลตฟอร์ม**
+- **รอบ 214 หลัง CI (สถานะปัจจุบัน)**: แถวที่เขียน = `PlatformPolicyAcceptances` (ระดับผู้ใช้ · ไม่มี CompanyId/FK — ผู้ใช้ไม่ต้องมีบริษัท) ·
+  แถวเก่าใน `PdpaConsentRecords` (CompanyId ศูนย์) คัดลอกมาด้วย Id เดิม (`Helpers/LegalDocumentMigration`) · ข้อความ ~~ขีดฆ่า~~ ด้านล่างคือแบบเดิม ·
+  เหตุ: ฐานที่สร้างจากโมเดล (EnsureCreated) มี FK → Companies ⇒ แถว CompanyId ศูนย์ถูกปฏิเสธ ⇒ ตอนสมัคร error ถูกจับแล้ว log (หลักฐานหายเงียบ) · Db test จับได้
+- ~~แถวที่เขียน: `PdpaConsentRecord` scope **ระดับแพลตฟอร์ม**~~
   (`CompanyId = PdpaPolicy.PlatformScopeCompanyId` = `Guid.Empty` — ตอนสมัคร
   ผู้ควบคุมข้อมูลคือผู้ให้บริการ ไม่ใช่ tenant ที่ยังไม่เกิด; ทางรับคำเชิญไม่สร้าง
   บริษัทเลยด้วยซ้ำ) · `Purpose = PdpaPolicy.SignupPurpose`
@@ -4954,7 +4957,7 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   วันมีผล ≥ วันนี้ และ ≥ ฉบับล่าสุด · ฉบับปัจจุบัน = `PickCurrent` (เผยแพร่แล้ว · มีผล ≤ วันนี้ · ล่าสุด) · ประกาศล่วงหน้า = `PickUpcoming` ·
   เผยแพร่ ⇒ แถว audit (`LegalDocumentPublished` · ruleCode `PDPA-23-NOTICE-VERSION`) + audit อัตโนมัติของ BaseEntity
 - **ฉบับใหม่ = แจ้ง ไม่บล็อก**: `js/layout.js` `_showPolicyUpdateBannerIfNeeded` → `GET /api/legal/acceptance` (`NeedsAcknowledge`: ไม่มีแถวยอมรับ หรือฉบับล่าสุดที่ยอมรับ ≠ ปัจจุบัน ·
-  Purpose `account-signup:*` หรือ `policy-update:*` · ไม่นับแถวที่ถอน) → "รับทราบและยอมรับ" `POST /api/legal/acceptance` → `PdpaConsentRecord`
+  Purpose `account-signup:*` หรือ `policy-update:*` · ไม่นับแถวที่ถอน) → "รับทราบและยอมรับ" `POST /api/legal/acceptance` → `PlatformPolicyAcceptance` (หลัง CI — เดิม `PdpaConsentRecord`)
   (`policy-update:terms-and-privacy` · ช่องทาง `policy-update-banner` · hash `PdpaConsentEvidence` ตัวเดียว) · หน้าค้างฉบับเก่า = 409 ·
   โหมดเข้าดูในนามลูกค้า = ไม่แสดงแถบ + 403
 - ลิงก์: หน้าแรก (footer) · หน้าสมัคร (ช่องติ๊ก) · หน้าเข้าสู่ระบบ · เมนูผู้ใช้ในแอป · แถบแจ้ง · (อีเมลระบบไม่มี layout กลาง — ไม่ได้ใส่)
@@ -4971,6 +4974,13 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
 - หน้าจองโต๊ะ (`booking.html` · `booking-manage.html`): ลิงก์ `/shop-policy.html?c=&k=` → `GET /api/public/reservations/legal/{companyId}/{kind}`
   (แม่แบบ + ตัวตนบริษัท · เฉพาะบริษัทที่มีโต๊ะใช้งาน)
 
+- **ฝ่ายค้านรอบ 214**: (S1) `LegalMarkdown` regex มีเพดานเวลา + เขียนไม่ย้อนรอยข้ามตัวคั่น · ย่อหน้า > 4,000 ตัวอักษร encode ล้วน · เกินเวลา = ทั้งเอกสาร encode ล้วน ·
+  ตัวอย่างรับ ≤ 100k · (S2) `GET /api/legal/documents` แยก `isUpcoming` ออกจาก `isArchived` · (S3) หน้านโยบายร้านแสดงเลขผู้เสียภาษีเฉพาะนิติบุคคล
+  (`CmsLegalPages.BuildShopTokens` · `Company.JuristicId`) · หน้าจองโต๊ะแสดงแค่ชื่อ+เบอร์ (`bookingPageScope`) · (S4) ค่าที่ขาด = "ยังไม่ได้ระบุ" · mailto ที่ไม่มีอีเมล = ข้อความ ·
+  cms-edit เตือนตัวตนร้านที่ขาด + ลิงก์เดิมที่ใช้ไม่ได้ (`SiteResponse.LegalWarnings`) · (S5) แถว audit ตอนเผยแพร่มี UserId/อีเมล/IP ·
+  หมายเหตุ: `Status` = concurrency token + unique ร่างต่อชนิด (`UX_LegalDocumentVersions_Kind_Draft`) ⇒ กดพร้อมกัน 409 ไทย · ร่างที่วันมีผลเลยแล้วมีปุ่มตั้งเป็นวันนี้ ·
+  `LegalController` เลิก `[AllowAnonymous]` ระดับคลาส (เดิมลบล้าง `[Authorize]` ของ acceptance) · เว็บยังไม่เผยแพร่ ปุ่ม "เปิด" = ตัวอย่างในหน้า ·
+  audit ช่อง `*Markdown` เก็บความยาว + sha256 แทนเนื้อความ (`AuditRedaction.Value`)
 _Last verified against codebase: 2026-10-30 (รอบ 214 — นโยบาย/ข้อกำหนดแพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS/หน้าจองโต๊ะ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
 - **รอบ 200 ทีม R**: รายงาน ภ.ง.ด.1 / ปกส. (`GET payroll/pnd1|sso/{y}/{m}`) ปิดบังเลขบัตร/เลข ปกส. เมื่อไม่มี `Pii.View` (ตัวตัดสิน `CanViewPiiAsync`
   ตัวเดียวกับรายชื่อพนักงาน + `PiiAccessLog` เมื่อเปิดดูเต็ม · G2-05) · ไฟล์ยื่นแบบไม่ผ่านเส้นนี้ (ยังได้เลขเต็ม) · ตัวจับพนักงานซ้ำตอนนำเข้า

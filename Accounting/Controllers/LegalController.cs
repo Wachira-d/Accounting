@@ -26,7 +26,8 @@ namespace Accounting.Controllers;
 /// </summary>
 [ApiController]
 [Route("api/legal")]
-[AllowAnonymous]
+// ฝ่ายค้านรอบ 214: ไม่ใส่ [AllowAnonymous] ระดับคลาส — มันลบล้าง [Authorize] ของ action ⇒ endpoint ยอมรับนโยบายกลายเป็นไม่ต้องล็อกอิน ·
+// เปิดสาธารณะรายเมธอดแทน (policy · documents · history)
 public class LegalController : ControllerBase
 {
     private readonly AccountingDbContext _db;
@@ -53,6 +54,7 @@ public class LegalController : ControllerBase
 
     /// <summary>เวอร์ชันนโยบาย + ตัวตนผู้ควบคุมข้อมูล (ไม่ต้อง login)</summary>
     [HttpGet("policy")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<PolicyInfo>>> GetPolicy(CancellationToken ct)
     {
         var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
@@ -82,12 +84,14 @@ public class LegalController : ControllerBase
 
     public sealed record UpcomingInfo(string Version, string EffectiveDate, string? ChangeSummary);
 
+    /// <summary><c>IsArchived</c> = ฉบับที่หมดผลแล้ว · <c>IsUpcoming</c> = ฉบับที่ประกาศแล้วแต่ยังไม่ถึงวันมีผล (ฝ่ายค้าน S2 — เดิมเหมาเป็น "ฉบับเก่า")</summary>
     public sealed record LegalDocumentDto(
         string Kind, string Title, string Version, string EffectiveDate, string Html, string Source,
-        string? ChangeSummary, UpcomingInfo? Upcoming, string ConsentVersion, bool ControllerConfigured, bool IsArchived);
+        string? ChangeSummary, UpcomingInfo? Upcoming, string ConsentVersion, bool ControllerConfigured, bool IsArchived, bool IsUpcoming);
 
     /// <summary>เนื้อความเอกสาร (HTML ที่เซิร์ฟเวอร์แปลง + encode แล้ว) — ไม่ระบุ version = ฉบับที่มีผลวันนี้</summary>
     [HttpGet("documents/{kind}")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<LegalDocumentDto>>> GetDocument(string kind, [FromQuery] string? version, CancellationToken ct)
     {
         if (!LegalDocumentDefaults.IsKind(kind))
@@ -99,17 +103,20 @@ public class LegalController : ControllerBase
         var consent = await _legal.GetConsentVersionAsync(ct);
         var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
         var html = await _legal.RenderPlatformAsync(doc.BodyMarkdown, ct);
+        var isUpcoming = doc.EffectiveDate > LegalDocumentPolicy.TodayBangkok(DateTime.UtcNow);
         return Ok(new ApiResponse<LegalDocumentDto>(true, new LegalDocumentDto(
             doc.Kind, doc.Title, doc.Version, doc.EffectiveDate.ToString("yyyy-MM-dd"), html, doc.Source, doc.ChangeSummary,
             upcoming == null ? null : new UpcomingInfo(upcoming.Version, upcoming.EffectiveDate.ToString("yyyy-MM-dd"), upcoming.ChangeSummary),
             consent.ConsentVersion,
             ControllerConfigured: !string.IsNullOrWhiteSpace(s?.PlatformSellerName)
                                   && !string.IsNullOrWhiteSpace(FirstNonEmpty(s?.PlatformSellerEmail, s?.ContactEmail)),
-            IsArchived: doc.Version != current.Version)));
+            IsArchived: doc.Version != current.Version && !isUpcoming,
+            IsUpcoming: isUpcoming)));
     }
 
     /// <summary>ประวัติฉบับที่เผยแพร่ (สาธารณะ — โปร่งใสว่าเคยเปลี่ยนอะไรเมื่อไร · ไม่มีร่าง · ไม่มีชื่อผู้เผยแพร่)</summary>
     [HttpGet("documents/{kind}/history")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<object>>> GetHistory(string kind, CancellationToken ct)
     {
         if (!LegalDocumentDefaults.IsKind(kind))
@@ -126,8 +133,7 @@ public class LegalController : ControllerBase
     [Authorize]
     public async Task<ActionResult<ApiResponse<LegalAcceptanceStatus>>> GetAcceptance(CancellationToken ct)
     {
-        var uid = JwtHelper.GetUserIdFromClaims(User);
-        if (uid == Guid.Empty) return Unauthorized();
+        var uid = JwtHelper.GetUserIdFromClaims(User);   // [Authorize] มีผลจริงแล้ว (ไม่มี AllowAnonymous ระดับคลาส)
         return Ok(new ApiResponse<LegalAcceptanceStatus>(true, await _legal.GetAcceptanceStatusAsync(uid, ct)));
     }
 
@@ -139,8 +145,7 @@ public class LegalController : ControllerBase
     [Accounting.Filters.RejectApiKey("ยอมรับนโยบายแทนผู้ใช้")]
     public async Task<ActionResult<ApiResponse<LegalAcceptanceStatus>>> Accept([FromBody] AcceptRequest? req, CancellationToken ct)
     {
-        var uid = JwtHelper.GetUserIdFromClaims(User);
-        if (uid == Guid.Empty) return Unauthorized();
+        var uid = JwtHelper.GetUserIdFromClaims(User);   // [Authorize] มีผลจริงแล้ว (ไม่มี AllowAnonymous ระดับคลาส)
         // โหมดเข้าดูในนามลูกค้า (claim imp=true) — ผู้ดูแลห้ามยอมรับนโยบายแทนเจ้าของบัญชี (หลักฐานต้องเป็นการกระทำของเจ้าของข้อมูลเอง)
         if (User.FindFirst("imp")?.Value == "true")
             return StatusCode(403, new ApiResponse<LegalAcceptanceStatus>(false, null, "โหมดเข้าดูในนามลูกค้ายอมรับนโยบายแทนเจ้าของบัญชีไม่ได้"));

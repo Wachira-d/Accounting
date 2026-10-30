@@ -163,11 +163,11 @@ public class LegalDocumentService : ILegalDocumentService
         row.EffectiveDate = eff.ToDateTime(TimeOnly.MinValue);
         row.BodyMarkdown = body;
         row.ChangeSummary = summary;
-        await _db.SaveChangesAsync(ct);
+        await SaveGuardedAsync(ct);
         return DraftView(row);
     }
 
-    public async Task<LegalHistoryItem> PublishDraftAsync(string kind, string actor, CancellationToken ct = default)
+    public async Task<LegalHistoryItem> PublishDraftAsync(string kind, string actor, string? ipAddress = null, CancellationToken ct = default)
     {
         var k = RequireKind(kind);
         var row = await DraftRowAsync(k, ct)
@@ -182,9 +182,17 @@ public class LegalDocumentService : ILegalDocumentService
         row.UpdatedAt = row.PublishedAt;
         row.UpdatedBy = actor;
         // ร่องรอยเชิงกฎหมาย (นอกเหนือ audit อัตโนมัติของ BaseEntity) — ระบุเลขฉบับ/วันมีผล + ฐานกฎหมาย
+        // ฝ่ายค้านรอบ 214 S5: ผู้เผยแพร่ระบุตัวได้ในแถว audit เอง (UserId · อีเมล · IP) ไม่ใช่แค่ข้อความใน NewValues
+        Guid? actorId = Guid.TryParse(actor, out var aid) ? aid : null;
+        var actorEmail = actorId is Guid a2
+            ? await _db.Users.AsNoTracking().Where(u => u.Id == a2).Select(u => u.Email).FirstOrDefaultAsync(ct)
+            : null;
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = PdpaPolicy.PlatformScopeCompanyId,
+            UserId = actorId,
+            UserEmail = actorEmail,
+            IpAddress = ipAddress is { Length: > 45 } ? ipAddress[..45] : ipAddress,
             Action = AuditAction.Update,
             EntityType = nameof(LegalDocumentVersion),
             EntityId = row.Id.ToString(),
@@ -195,7 +203,7 @@ public class LegalDocumentService : ILegalDocumentService
                 ruleCode = LegalDocumentPolicy.RuleCode, legalReference = "PDPA ม.19 · ม.23",
             }),
         });
-        await _db.SaveChangesAsync(ct);
+        await SaveGuardedAsync(ct);
         _logger.LogWarning("เผยแพร่{Title} ฉบับ {Version} (มีผล {Eff:yyyy-MM-dd}) โดย {Actor}",
             LegalDocumentDefaults.Title(k), row.Version, row.EffectiveDate, actor);
         var today = Today;
@@ -215,8 +223,25 @@ public class LegalDocumentService : ILegalDocumentService
         row.IsDeleted = true;
         row.UpdatedAt = DateTime.UtcNow;
         row.UpdatedBy = actor;
-        await _db.SaveChangesAsync(ct);
+        await SaveGuardedAsync(ct);
         return true;
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 (หมายเหตุ): สองแท็บกดพร้อมกัน — เผยแพร่ซ้ำ (Status เป็น concurrency token: UPDATE … WHERE Status='Draft') /
+    /// ร่างแรกชนกัน (unique ร่าง 1 ฉบับต่อชนิด · เลขฉบับซ้ำ) ⇒ ข้อความไทย 409 ไม่ใช่ 500</summary>
+    private async Task SaveGuardedAsync(CancellationToken ct)
+    {
+        try { await _db.SaveChangesAsync(ct); }
+        catch (DbUpdateConcurrencyException)
+        {
+            _db.ChangeTracker.Clear();
+            throw new BusinessRuleException("ร่างนี้ถูกเผยแพร่/แก้จากอีกหน้าต่างไปแล้ว — โหลดหน้าใหม่", LegalDocumentPolicy.RuleCode, 409);
+        }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+        {
+            _db.ChangeTracker.Clear();
+            throw new BusinessRuleException("มีร่าง/ฉบับเลขนี้อยู่แล้ว (อาจบันทึกพร้อมกันจากอีกหน้าต่าง) — โหลดหน้าใหม่", LegalDocumentPolicy.RuleCode, 409);
+        }
     }
 
     public async Task<LegalAcceptanceStatus> GetAcceptanceStatusAsync(Guid userId, CancellationToken ct = default)
@@ -225,13 +250,13 @@ public class LegalDocumentService : ILegalDocumentService
         var t = await GetCurrentAsync(LegalDocumentDefaults.KindTerms, ct);
         var current = LegalDocumentPolicy.ConsentVersion(p.Version, t.Version);
         var purposes = PdpaPolicy.TermsAcceptancePurposes.ToList();
-        var last = await _db.PdpaConsentRecords.AsNoTracking()
-            .Where(c => c.CompanyId == PdpaPolicy.PlatformScopeCompanyId && c.SubjectUserId == userId
-                        && purposes.Contains(c.Purpose) && c.WithdrawnAt == null && !c.IsDeleted)
-            .OrderByDescending(c => c.GrantedAt)
-            .Select(c => new { c.PolicyVersion, c.GrantedAt })
+        // รอบ 214 หลัง CI: หลักฐานระดับผู้ใช้อยู่ที่ PlatformPolicyAcceptances (ไม่ผูกบริษัท) — แถวเดิมถูกคัดลอกมาแล้ว (LegalDocumentMigration)
+        var last = await _db.PlatformPolicyAcceptances.AsNoTracking()
+            .Where(c => c.UserId == userId && purposes.Contains(c.Purpose) && c.WithdrawnAt == null)
+            .OrderByDescending(c => c.AcceptedAt)
+            .Select(c => new { c.PolicyVersion, c.AcceptedAt })
             .FirstOrDefaultAsync(ct);
-        return new LegalAcceptanceStatus(current, last?.PolicyVersion, last?.GrantedAt,
+        return new LegalAcceptanceStatus(current, last?.PolicyVersion, last?.AcceptedAt,
             LegalDocumentPolicy.NeedsAcknowledge(last?.PolicyVersion, current),
             p.Version, t.Version, p.ChangeSummary, t.ChangeSummary);
     }
@@ -247,14 +272,13 @@ public class LegalDocumentService : ILegalDocumentService
         if (!string.IsNullOrEmpty(ip) && ip.Length > 45) ip = ip[..45];
         const string channel = "policy-update-banner";
         var grantedAt = DateTime.UtcNow;
-        _db.PdpaConsentRecords.Add(new PdpaConsentRecord
+        _db.PlatformPolicyAcceptances.Add(new PlatformPolicyAcceptance
         {
-            CompanyId = PdpaPolicy.PlatformScopeCompanyId,
-            SubjectUserId = userId,
-            SubjectContact = email,
+            UserId = userId,
+            Email = email,
             Purpose = PdpaPolicy.PolicyUpdatePurpose,
             PolicyVersion = current,
-            GrantedAt = grantedAt,
+            AcceptedAt = grantedAt,
             Channel = channel,
             IpAddress = ip,
             EvidenceHash = PdpaConsentEvidence.ComputeHash(email, PdpaPolicy.PolicyUpdatePurpose, current, grantedAt, channel, ip, userAgent),

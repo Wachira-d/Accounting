@@ -92,10 +92,13 @@ public class PublicReservationController : ControllerBase
             .AnyAsync(t => t.CompanyId == companyId && t.IsActive && !t.IsDeleted, ct);
         if (!takesBookings) return NotFound();
         var c = await _db.Companies.AsNoTracking().Where(x => x.Id == companyId)
-            .Select(x => new { x.Name, x.NameEn, x.Phone, x.Email, x.Address, x.TaxId, x.Website })
+            .Select(x => new { x.Name, x.NameEn, x.Phone, x.Website })
             .FirstOrDefaultAsync(ct);
         if (c == null) return NotFound();
-        var tokens = Accounting.Helpers.CmsContentTokens.BuildValues(c.Name, c.NameEn, c.Phone, c.Email, c.Address, c.TaxId, c.Website);
+        // ฝ่ายค้านรอบ 214 S3: หน้านี้เปิดได้ด้วย companyId อย่างเดียว ⇒ เปิดเผยเท่าที่หน้าจองแสดงอยู่แล้ว (ชื่อ · เบอร์) — ที่อยู่/อีเมล/เลขผู้เสียภาษีไม่ออก
+        var tokens = Accounting.Helpers.CmsLegalPages.BuildShopTokens(
+            Accounting.Helpers.CmsContentTokens.BuildValues(c.Name, c.NameEn, c.Phone, null, null, null, c.Website),
+            isJuristic: false, bookingPageScope: true);
         var html = Accounting.Helpers.LegalMarkdown.Render(Accounting.Helpers.LegalDocumentDefaults.ShopTemplate(kind), tokens);
         return Ok(new ApiResponse<ShopLegalDto>(true,
             new ShopLegalDto(kind, Accounting.Helpers.LegalDocumentDefaults.Title(kind), c.Name ?? "", html)));

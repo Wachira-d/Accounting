@@ -133,6 +133,8 @@ public class SiteResponse
     public DateTime? TermsOfServiceUpdatedAt { get; set; }
     public string PrivacyLegalMode { get; set; } = "default";
     public string TermsLegalMode { get; set; } = "default";
+    /// <summary>ฝ่ายค้านรอบ 214 S4 + หมายเหตุ: คำเตือนของส่วนนโยบายบน cms-edit (ตัวตนร้านที่ขาด · ลิงก์เดิมที่ใช้ไม่ได้) — เซิร์ฟเวอร์ประกอบ</summary>
+    public List<string> LegalWarnings { get; set; } = new();
     public bool RequireDataConsent { get; set; }
     public string? DataConsentText { get; set; }
     public long CurrentStorageUsed { get; set; }

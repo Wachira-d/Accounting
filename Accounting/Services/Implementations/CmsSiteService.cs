@@ -387,6 +387,20 @@ public class CmsSiteService : ICmsSiteService
             // รอบ 214: โหมดนโยบาย/ข้อกำหนด — ตัวตัดสินเดียวกับ storefront (หน้า cms-edit ไม่ตัดสินเอง)
             site.PrivacyLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindPrivacy, site.PrivacyPolicyUrl, site.PrivacyPolicyMarkdown).Mode;
             site.TermsLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindTerms, site.TermsOfServiceUrl, site.TermsOfServiceMarkdown).Mode;
+            // ฝ่ายค้านรอบ 214 S4: ตัวตนร้านที่แม่แบบต้องใช้แต่ยังว่าง (ค่าระดับเว็บชนะบริษัท — ตัวตั้งเดียวกับโทเคน) + ลิงก์เดิมที่ใช้ไม่ได้ (ไม่ลบเงียบ)
+            var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+                .Select(c => new { c.Name, c.Address, c.Phone, c.Email }).FirstOrDefaultAsync();
+            var gaps = CmsLegalPages.IdentityGaps(co?.Name, co?.Address,
+                string.IsNullOrWhiteSpace(site.ContactPhone) ? co?.Phone : site.ContactPhone,
+                string.IsNullOrWhiteSpace(site.ContactEmail) ? co?.Email : site.ContactEmail);
+            if (gaps.Count > 0)
+                site.LegalWarnings.Add($"ข้อมูลร้านที่ยังไม่ได้ระบุ: {string.Join(" · ", gaps)} — หน้านโยบาย/ข้อกำหนดจะแสดง \"{CmsLegalPages.NotSpecified}\" (กรอกที่ข้อมูลบริษัท หรือข้อมูลติดต่อของเว็บด้านบน)");
+            foreach (var w in new[]
+                     {
+                         CmsLegalPages.StoredLinkWarning(LegalDocumentDefaults.Title(LegalDocumentDefaults.KindPrivacy), site.PrivacyPolicyUrl),
+                         CmsLegalPages.StoredLinkWarning(LegalDocumentDefaults.Title(LegalDocumentDefaults.KindTerms), site.TermsOfServiceUrl),
+                     })
+                if (w != null) site.LegalWarnings.Add(w);
         }
         return site;
     }

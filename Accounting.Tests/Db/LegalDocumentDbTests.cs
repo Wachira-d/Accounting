@@ -37,14 +37,24 @@ public class LegalDocumentDbTests
         var v1 = $"{major}.0";
         var v2 = $"{major}.1";
 
-        // ผู้ใช้ที่ยอมรับฉบับปัจจุบันแล้ว
-        var user = new User { Email = $"legal-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ทดสอบนโยบาย" };
-        db.Users.Add(user);
+        // ผู้ใช้ที่ยอมรับฉบับปัจจุบันแล้ว — ทั้งสองแบบ (CI รอบ 214: เดิมเขียน PdpaConsentRecords ด้วย CompanyId ศูนย์ ⇒ FK ล้ม):
+        // (ก) ผู้ใช้ที่ยังไม่มีบริษัท (เพิ่งสมัคร/รับคำเชิญ/SystemAdmin) (ข) ผู้ใช้ที่เป็นสมาชิกบริษัท — การยอมรับเป็นระดับผู้ใช้ ไม่ผูกบริษัท
+        var user = new User { Email = $"legal-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ทดสอบนโยบาย (ไม่มีบริษัท)" };
+        var member = new User { Email = $"legal-m-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ทดสอบนโยบาย (มีบริษัท)" };
+        db.Users.AddRange(user, member);
+        var company = new Company { Name = "บริษัททดสอบนโยบาย", TaxId = "0105556000003" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = member.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner, IsDefault = true });
         await db.SaveChangesAsync();
         var before = await svc.GetAcceptanceStatusAsync(user.Id);
         Assert.True(before.NeedsAcknowledge);   // ยังไม่มีหลักฐานเลย
         var accepted = await svc.RecordAcceptanceAsync(user.Id, before.CurrentConsentVersion, "203.0.113.9", "xunit");
         Assert.False(accepted.NeedsAcknowledge);
+        Assert.True((await svc.GetAcceptanceStatusAsync(member.Id)).NeedsAcknowledge);
+        Assert.False((await svc.RecordAcceptanceAsync(member.Id, before.CurrentConsentVersion, "203.0.113.10", "xunit")).NeedsAcknowledge);
+        // ไม่มีแถวยินยอมระดับแพลตฟอร์มที่ CompanyId ศูนย์ถูกสร้างใหม่ (ห้ามกลับไปทางเดิม)
+        Assert.False(await db.PdpaConsentRecords.AsNoTracking().AnyAsync(c => c.SubjectUserId == user.Id || c.SubjectUserId == member.Id));
 
         // ร่าง → เผยแพร่ (มีผลวันนี้)
         await svc.SaveDraftAsync(kind, new Accounting.Services.Interfaces.LegalDraftInput(v1, today, "## 1. ทดสอบ\nเนื้อความ {{controller.name}}", "ทดสอบรอบ 214"), "tester");
@@ -79,9 +89,9 @@ public class LegalDocumentDbTests
         var done = await svc.RecordAcceptanceAsync(user.Id, after.CurrentConsentVersion, "203.0.113.9", "xunit");
         Assert.False(done.NeedsAcknowledge);
         db.ChangeTracker.Clear();
-        var rec = await db.PdpaConsentRecords.AsNoTracking()
-            .Where(c => c.SubjectUserId == user.Id && c.Purpose == PdpaPolicy.PolicyUpdatePurpose)
-            .OrderByDescending(c => c.GrantedAt).FirstAsync();
+        var rec = await db.PlatformPolicyAcceptances.AsNoTracking()
+            .Where(c => c.UserId == user.Id && c.Purpose == PdpaPolicy.PolicyUpdatePurpose)
+            .OrderByDescending(c => c.AcceptedAt).FirstAsync();
         Assert.Equal(after.CurrentConsentVersion, rec.PolicyVersion);
         Assert.Equal("policy-update-banner", rec.Channel);
         Assert.Equal(64, rec.EvidenceHash!.Length);   // SHA-256 hex จาก canonical ตัวเดียวกับตอนสมัคร (round-trip เวลาผ่าน PG: ดูหมายเหตุความเสี่ยงรอบ 214)

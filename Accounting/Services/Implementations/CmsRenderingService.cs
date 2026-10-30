@@ -112,10 +112,14 @@ public class CmsRenderingService : ICmsRenderingService
     }
 
 
-    /// <summary>ค่าของโทเคนเนื้อหาสำหรับเว็บนี้ — ค่าระดับเว็บชนะค่าระดับบริษัท
-    ///
-    /// **ตัวเดียวของระบบ** (ดู <see cref="Accounting.Helpers.CmsContentTokens"/>) — ห้ามหน้าใด
-    /// หน้าหนึ่งไปประกอบค่าเอง ไม่งั้นหน้า "ติดต่อเรา" กับ footer จะโชว์คนละเบอร์</summary>
+    /// <summary>ฝ่ายค้านรอบ 214 S3/S4: โทเคนของหน้านโยบายร้าน = โทเคนเนื้อหาเว็บ + กติกาเผยแพร่ (<c>CmsLegalPages.BuildShopTokens</c> —
+    /// เลขผู้เสียภาษีเฉพาะนิติบุคคล · ค่าที่ขาดบอก "ยังไม่ได้ระบุ")</summary>
+    private async Task<Dictionary<string, string?>> BuildLegalTokensAsync(Guid companyId, Models.Entities.Site site)
+    {
+        var juristicId = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.JuristicId).FirstOrDefaultAsync();
+        return Accounting.Helpers.CmsLegalPages.BuildShopTokens(await BuildContentTokensAsync(companyId, site), !string.IsNullOrWhiteSpace(juristicId));
+    }
+
     private static StorefrontLegalLink LegalLink(Accounting.Helpers.CmsLegalPages.Link l) => new()
     {
         Mode = l.Mode, Url = l.ExternalUrl, Slug = l.Slug, Title = Accounting.Helpers.LegalDocumentDefaults.Title(l.Kind),
@@ -133,7 +137,7 @@ public class CmsRenderingService : ICmsRenderingService
         var isTerms = kind == Accounting.Helpers.LegalDocumentDefaults.KindTerms;
         var custom = isTerms ? site.TermsOfServiceMarkdown : site.PrivacyPolicyMarkdown;
         var link = Accounting.Helpers.CmsLegalPages.Resolve(kind, isTerms ? site.TermsOfServiceUrl : site.PrivacyPolicyUrl, custom);
-        var tokens = await BuildContentTokensAsync(companyId, site);
+        var tokens = await BuildLegalTokensAsync(companyId, site);
         return new StorefrontLegalPageResponse
         {
             Kind = kind,
@@ -154,11 +158,15 @@ public class CmsRenderingService : ICmsRenderingService
         var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId);
         if (site == null) return null;
         var md = Accounting.Helpers.CmsLegalPages.EffectiveMarkdown(kind, markdown);
-        var tokens = await BuildContentTokensAsync(companyId, site);
+        var tokens = await BuildLegalTokensAsync(companyId, site);
         return (Accounting.Helpers.LegalMarkdown.Render(md, tokens), md,
             Accounting.Helpers.LegalMarkdown.Warnings(md, Accounting.Helpers.CmsContentTokens.Supported.Select(t => t.Token)));
     }
 
+    /// <summary>ค่าของโทเคนเนื้อหาสำหรับเว็บนี้ — ค่าระดับเว็บชนะค่าระดับบริษัท
+    ///
+    /// **ตัวเดียวของระบบ** (ดู <see cref="Accounting.Helpers.CmsContentTokens"/>) — ห้ามหน้าใด
+    /// หน้าหนึ่งไปประกอบค่าเอง ไม่งั้นหน้า "ติดต่อเรา" กับ footer จะโชว์คนละเบอร์</summary>
     private async Task<Dictionary<string, string?>> BuildContentTokensAsync(Guid companyId, Models.Entities.Site site)
     {
         var company = await _db.Companies.AsNoTracking()

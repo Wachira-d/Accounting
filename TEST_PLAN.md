@@ -14,6 +14,14 @@
 | LEGAL214-10 | ลิงก์ของร้าน: ลิงก์ร้าน + ข้อความร้าน · ข้อความอย่างเดียว · ว่าง · ค่าไม่ปลอดภัย · path ในเว็บร้าน | external > custom > default · ไม่ปลอดภัย = ใช้หน้าระบบ + บันทึกถูกปฏิเสธ · `/privacy` = หน้า CMS ของร้าน · slug ใต้ `legal/` | `LegalDocumentTests`.Resolve_* · Slugs_LiveUnderLegal_NoClashWithShopPages · EffectiveMarkdown_CustomOrTemplate |
 | LEGAL214-11 | แม่แบบของร้าน (นโยบาย/ข้อกำหนด) กับตัวตนร้านจริง | ชื่อ · ที่อยู่ · เลขผู้เสียภาษี · mailto · เบอร์ · ชื่อเว็บ ครบ · ไม่มีโทเคนค้าง · ระบุผู้ควบคุม/ผู้ประมวลผล · LINE · ชำระเงิน · จอง · สมาชิก | `LegalDocumentTests`.ShopTemplate_ContainsShopIdentity_AndProcessorStatement · ShopPrivacyTemplate_StatesControllerAndProcessorRoles_AndLineAndPayment |
 | LEGAL214-12 | ฉบับตั้งต้นของแพลตฟอร์มเทียบหน้าเดิม | ครบ 12 หัวข้อทั้งสองฉบับ · ตัวตนผู้ให้บริการแทนครบ · ค่าที่ยังไม่ตั้งบอกตรง ๆ · 1.0 = `PdpaPolicy.CurrentVersion` เดิม | `LegalDocumentTests`.PlatformBuiltIn_KeepsAllSectionsOfOldPages · PlatformTokens_Missing_… · BuiltInVersion_MatchesLegacyConsentVersion |
+| LEGAL214-14 | ฝ่ายค้าน S1: ข้อความ 100k ที่ทำให้ regex ย้อนรอย (`*a ` · `[` · `<a` · `{{ ` · หัวข้อช่องว่างยาว · ตาราง) | แปลง + ตรวจคำเตือนเสร็จ < 1.5 วินาที · ย่อหน้ายาวเกิน 4,000 = encode ล้วน · ทิศตรงข้ามย่อหน้าปกติยังแปลง | `LegalDocumentTests`.Render_PathologicalInput_IsFast · Render_OverlongParagraph_IsPlainEncoded_ShortOneStillFormatted · Heading_TrailingHashes_Stripped |
+| LEGAL214-15 | ฝ่ายค้าน S3: ร้านบุคคลธรรมดา vs นิติบุคคล · หน้าจองโต๊ะ | บุคคลธรรมดาไม่เผยแพร่เลขผู้เสียภาษี · นิติบุคคลแสดง · หน้าจองโต๊ะแสดงแค่ชื่อ+เบอร์ | `LegalDocumentTests`.ShopTokens_TaxId_OnlyForJuristic_AndMissingValuesExplicit · ShopTokens_BookingPageScope_RevealsOnlyNameAndPhone |
+| LEGAL214-16 | ฝ่ายค้าน S4: อีเมล/ที่อยู่ร้านว่าง · ลิงก์เดิมไม่ถูกต้อง | "ยังไม่ได้ระบุ" · ไม่มี `mailto:` เสีย (ทิศตรงข้าม: อีเมลจริงเป็นลิงก์) · cms-edit เตือนช่องที่ขาด/ลิงก์เดิม | `LegalDocumentTests`.MissingEmail_NoBrokenMailto_RealEmailStillLinked · IdentityGaps_And_StoredLinkWarning |
+| LEGAL214-17 | ฝ่ายค้าน S2: เปิด `?version=` ของฉบับประกาศล่วงหน้า | ป้าย "ฉบับที่จะมีผลตั้งแต่…" ไม่ใช่ "ฉบับเก่า" | ตรวจมือ (`isUpcoming` ใน `LegalController.GetDocument`) |
+| LEGAL214-18 | ฝ่ายค้าน S5 + หมายเหตุ: เผยแพร่ | แถว audit มี UserId/อีเมล/IP · ร่างที่บันทึกไม่คัดลอกเนื้อความทั้งก้อนลง audit | required_call_site_check `PublishDraftAsync` · `LegalDocumentTests`.AuditRedaction_Markdown_IsDigested_OthersUntouched |
+| LEGAL214-19 | หมายเหตุ: สองแท็บเผยแพร่/สร้างร่างแรกพร้อมกัน | แท็บที่สอง 409 ไทย (Status concurrency token · unique ร่างต่อชนิด) ไม่ใช่ 500 | ตรวจมือ (required_call_site_check `SaveGuardedAsync`) |
+| LEGAL214-20 | CI: ยอมรับนโยบาย — ผู้ใช้ไม่มีบริษัท / ผู้ใช้มีบริษัท | บันทึกที่ `PlatformPolicyAcceptances` ได้ทั้งคู่ · ไม่สร้างแถว PdpaConsentRecords CompanyId ศูนย์อีก | `Db/LegalDocumentDbTests`.Publish_is_append_only_and_drives_the_acceptance_banner |
+| LEGAL214-21 | หมายเหตุ: endpoint ยอมรับนโยบายโดยไม่ล็อกอิน | 401 (ไม่มี AllowAnonymous ระดับคลาสลบล้าง `[Authorize]`) | ตรวจมือ |
 | LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
 
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
@@ -180,7 +188,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **695 ไฟล์ · 7,117 `[Fact]` + 1,137 `[Theory]` (5,325 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **695 ไฟล์ · 7,124 `[Fact]` + 1,138 `[Theory]` (5,325 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

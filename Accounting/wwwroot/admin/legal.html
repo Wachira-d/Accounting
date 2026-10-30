@@ -213,7 +213,7 @@
         const parts = String(src.version).split('.').map(Number);
         parts[1] = (parts[1] || 0) + 1;
         document.getElementById('dVersion').value = `${parts[0] || 1}.${parts[1]}`;
-        document.getElementById('dEffective').value = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+        document.getElementById('dEffective').value = d.today;
         this._dirty = true;
         document.getElementById('publishBtn').disabled = true;
       },
@@ -253,6 +253,16 @@
       async publish() {
         const d = this.doc; if (!d || !d.draft) return;
         if (this._dirty) { AdminLayout.toast('มีการแก้ที่ยังไม่บันทึก — กด "บันทึกร่าง" ก่อน', 'error'); return; }
+        // ฝ่ายค้านรอบ 214: ร่างที่ค้างไว้จนวันมีผลเลยมาแล้ว — เซิร์ฟเวอร์จะปฏิเสธ (ห้ามย้อนหลัง) ⇒ เสนอ "ตั้งเป็นวันนี้" คลิกเดียว
+        if (d.draft.effectiveDate && d.today && d.draft.effectiveDate < d.today) {
+          if (!confirm(`วันมีผลของร่าง (${this.thaiDate(d.draft.effectiveDate)}) เลยมาแล้ว — ย้อนหลังเผยแพร่ไม่ได้\n\nตั้งเป็นวันนี้ (${this.thaiDate(d.today)}) แล้วเผยแพร่ต่อ?`)) return;
+          document.getElementById('dEffective').value = d.today;
+          try {
+            await AdminAPI.put(`${this.base}/${this.kind}/draft`, this.body());
+            await this.load();
+          } catch (e) { AdminLayout.toast('ตั้งวันมีผลไม่สำเร็จ: ' + e.message, 'error'); return; }
+          return this.publish();
+        }
         const v = d.draft.version || '?';
         if (!confirm(`เผยแพร่${d.title} ฉบับ ${v} (มีผล ${this.thaiDate(d.draft.effectiveDate)})?\n\nหลังเผยแพร่แก้ฉบับนี้ไม่ได้อีก — ต้องออกฉบับใหม่`)) return;
         const btn = document.getElementById('publishBtn');
