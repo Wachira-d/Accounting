@@ -5941,4 +5941,4 @@ _รอบ 219 เฟส 0 ฝ่ายค้านรอบ 2 (2026-10-30 · �
 S2 เปลี่ยนแพ็กเกจบนฟรีถาวรมีผลทันที · S5 IgnoreQueryFilters · S9 `RenewalInvoiceSuperseded` · ลบ `NeedsReprotect` · เทสต์ +6 pure/+3 Db (แก้ 3 pure ตามกติกาใหม่) · TEST_PLAN PB219-18 (แทน) · 23..30 ·
 **CI Db 5483434f แดง `Scheduled_downgrade_to_permanent_free_plan_stays_active`**: `ProcessExpiredSubscriptionsAsync` ใช้ ApplyTemplate (Active +100 ปี) ในหน่วยความจำ
 แต่คำค้น "หมดอายุ" กรองด้วยค่าใน DB ที่ยังไม่บันทึก แล้ว EF คืนตัวที่ track อยู่ ⇒ ตั้ง PastDue ทับ — บันทึกการเปลี่ยนแพ็กเกจก่อน + ลูปตรวจค่าปัจจุบัน (ข้ามฟรีถาวร/ยังไม่หมด) ·
-`required_call_site_check` +6 กติกา/แก้ 5 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`required_call_site_check` +6 กติกา/แก้ 5 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d4119b5a_
