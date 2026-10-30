@@ -208,10 +208,17 @@ function ctxSuite(src, quiet) {
   C.renderCrumb(el2, SITES, 's-hotel', 'Front desk', 'lodging');
   check('(S1) ทิศตรงข้าม: เจ้าของเห็นทุกเว็บในตัวสลับ', ['s-spa', 's-hotel', 's-shop'].every(id => el2.innerHTML.includes(`value="${id}"`)));
   // S4: วาดใหม่เมื่อสิทธิ์มาถึง
-  check('(S4) ก่อนรู้สิทธิ์: แท็บตั้งค่าที่พักแสดง', el2.innerHTML.includes('lodging-settings.html'));
+  check('(S4) ก่อนรู้สิทธิ์: แท็บตั้งค่าเว็บแสดง', el2.innerHTML.includes('cms-site-settings.html'));
   allowed = ['lodging'];
   (C.__ctx.__listeners['layout:permissions'] || []).forEach(f => f());
-  check('(S4) สิทธิ์มาถึง ⇒ หัววาดใหม่ ไม่มีแท็บที่ไม่มีสิทธิ์', !el2.innerHTML.includes('lodging-settings.html') && el2.innerHTML.includes('lodging.html'));
+  check('(S4) สิทธิ์มาถึง ⇒ หัววาดใหม่ ไม่มีแท็บที่ไม่มีสิทธิ์', !el2.innerHTML.includes('cms-site-settings.html') && el2.innerHTML.includes('lodging.html'));
+  // ── เฟส 2: ศูนย์ "ตั้งค่าเว็บ" ──
+  allowed = null;
+  const hubTabs = pages(SITES[2]);
+  check('(P2) ผู้เห็นศูนย์ตั้งค่า: มีแท็บ "ตั้งค่าเว็บ" และไม่มีแท็บตั้งค่าร้าน/ที่พักซ้ำ', hubTabs.includes('cms-site-settings') && !hubTabs.includes('cms-store-settings'), hubTabs.join(','));
+  allowed = ['cms-orders', 'cms-store-settings'];
+  const storeOnly = pages(SITES[2]);
+  check('(P2) ทิศตรงข้าม: ผู้มีสิทธิ์แค่ตั้งค่าร้าน ยังเห็นแท็บตั้งค่าร้านเดิม (ไม่หาย)', storeOnly.includes('cms-store-settings') && !storeOnly.includes('cms-site-settings'), storeOnly.join(','));
   allowed = null;
   last = { siteId: 's-hotel', page: 'lodging' };
   check('(จ) ไม่มีพารามิเตอร์ ⇒ ที่พักของเว็บล่าสุด', C.pickProperty([{ id: 'p0', siteId: null }].concat(props), null, null) === 'p1');
@@ -250,6 +257,7 @@ negs.push(negative('ตัวสลับแสดงทุกเว็บ', CTX
 negs.push(negative('ไม่มีแท็บแล้วพาไปหน้าเว็บ', CTX, s => s.replace("if (first) { location.href = first.href; return; }", "location.href = first ? first.href : CONTENT_LINK.href(target.id); return;"), ctxSuite));
 negs.push(negative('?siteId= ค้างเป็นทางตัน', CTX, s => s.replace('const known = !rawSiteId', 'const known = true || !rawSiteId'), ctxSuite));
 negs.push(negative('ไม่ล้างเว็บล่าสุดที่ค้าง', CTX, s => s.replace("if (last && !sites.some(s => s.id === last.siteId) && typeof Layout.clearCmsLastSite === 'function') Layout.clearCmsLastSite();", ''), ctxSuite));
+negs.push(negative('ซ่อนแท็บตั้งค่าร้านแม้ไม่มีสิทธิ์ศูนย์', CTX, s => s.replace('.filter(l => !(hub && HUB_COVERS.includes(l.page)))', '.filter(l => !HUB_COVERS.includes(l.page))'), ctxSuite));
 negs.push(negative('ไม่วาดใหม่เมื่อสิทธิ์มาถึง', CTX, s => s.replace("document.addEventListener('layout:permissions', () => CmsSiteContext.rerender());", ''), ctxSuite));
 const ok = f1 === 0 && f2 === 0 && f3 === 0 && negs.every(Boolean);
 console.log(ok ? 'ผ่าน' : `ล้ม (${f1 + f2} ข้อ · negative ${negs.filter(x => !x).length})`);

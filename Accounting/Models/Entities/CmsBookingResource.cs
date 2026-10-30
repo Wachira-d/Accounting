@@ -60,6 +60,9 @@ public class SiteBookingSettings : TenantEntity
     public bool BankTransferEnabled { get; set; } = true;
     /// <summary>ข้อความถึงลูกค้าเรื่องการชำระ/คืนเงิน (แสดงในกล่องชำระ) · null = ไม่มี</summary>
     public string? PaymentNote { get; set; }
+    /// <summary>รอบ 215 เฟส 2 (คำตัดสินข้อ 176): "ลูกค้าเลือกผู้ให้บริการได้ไหม" ค่าเริ่มต้นของทุกบริการที่ตั้ง "ตามค่าเว็บ" ·
+    /// null = ไม่ตั้ง ⇒ None (พฤติกรรมเดิม) · เว็บใหม่ตั้งตอนสร้าง (<c>BookingProviderAllocation.NewSiteDefaultMode</c>)</summary>
+    public BookingResourceMode? DefaultResourceMode { get; set; }
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>

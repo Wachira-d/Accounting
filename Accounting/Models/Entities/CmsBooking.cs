@@ -45,7 +45,9 @@ public class SiteBookingService : TenantEntity
     /// <summary>รอบเต็มแล้วรับเข้าคิวสำรอง (Waiting List) · เลื่อนขึ้นอัตโนมัติเมื่อมีคนยกเลิก</summary>
     public bool WaitlistEnabled { get; set; }
     /// <summary>จัดสรรผู้ให้บริการ/ห้อง/อุปกรณ์: ไม่ใช้ · บังคับระบุ · ลูกค้าเลือก · ระบบจัดให้</summary>
-    public BookingResourceMode ResourceMode { get; set; } = BookingResourceMode.None;
+    /// <summary>รอบ 215 เฟส 2: <c>null</c> = ตามค่าเว็บ (<c>SiteBookingSettings.DefaultResourceMode</c>) · มีค่า = กำหนดเอง ·
+    /// ค่าที่มีผลจริงผ่าน <c>BookingProviderAllocation.EffectiveMode</c> เท่านั้น (ห้ามอ่านช่องนี้ตรงไปตัดสิน)</summary>
+    public BookingResourceMode? ResourceMode { get; set; }
     /// <summary>true = ระยะเวลา/buffer/ล่วงหน้า ใช้ค่าตั้งของไซต์ (<see cref="SiteBookingSettings"/>) · false = ใช้ค่าของบริการนี้ (override · ข้อมูลเดิม)</summary>
     public bool UseSiteDefaults { get; set; }
     /// <summary>รอบ 210: ต้องเข้าสู่ระบบสมาชิกก่อนจองบริการนี้ไหม · null = ตามค่าของเว็บ (<see cref="SiteBookingSettings.RequireMemberToBook"/>) ·

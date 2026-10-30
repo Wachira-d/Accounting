@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าเว็บ - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .sg-wrap { display:grid; grid-template-columns:220px 1fr; gap:16px; align-items:start }
+    .sg-nav { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:4px; position:sticky; top:12px }
+    .sg-nav button { width:100%; text-align:left; display:flex; justify-content:space-between; gap:8px; padding:9px 12px; border:0; background:none;
+      border-radius:8px; font-size:14px; color:var(--gray-700); cursor:pointer }
+    .sg-nav button:hover { background:var(--gray-50) }
+    .sg-nav button[aria-selected="true"] { background:#eff6ff; color:#1d4ed8; font-weight:600 }
+    .sg-nav small { color:var(--gray-500); font-size:12px; font-weight:400 }
+    .sg-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:18px 20px; margin-bottom:14px }
+    .sg-card h3 { font-size:16px; font-weight:600; margin:0 0 4px }
+    .sg-hint { font-size:12px; color:var(--gray-500) }
+    .sg-link { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--gray-100); flex-wrap:wrap }
+    .sg-link:first-of-type { border-top:0 }
+    .sg-company { border:1px dashed var(--gray-300); background:var(--gray-50); border-radius:12px; padding:14px 16px }
+    .sg-preview { border:1px solid var(--gray-200); background:var(--gray-50); border-radius:10px; padding:12px 14px; font-size:13px }
+    .sg-mobile-pick { display:none }
+    @media (max-width: 760px) {
+      .sg-wrap { grid-template-columns:1fr }
+      .sg-nav { display:none }
+      .sg-mobile-pick { display:block; margin-bottom:12px }
+    }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb"></div>
+    <div class="page-header">
+      <div>
+        <h2 class="page-title">⚙️ ตั้งค่าเว็บ</h2>
+        <p class="page-subtitle">ค่าตั้งทุกเรื่องของเว็บนี้รวมไว้ที่เดียว — 🌐 = ใช้เฉพาะเว็บนี้ · 🏢 = ค่าระดับบริษัทที่ทุกเว็บใช้ร่วม (แก้ที่หน้าตั้งค่าบริษัท)</p>
+      </div>
+    </div>
+
+    <label class="sg-mobile-pick">กลุ่มค่าตั้ง
+      <select class="form-input" id="sgMobilePick" onchange="Page.go(this.value)"></select>
+    </label>
+    <div class="sg-wrap">
+      <nav class="sg-nav" role="tablist" aria-orientation="vertical" aria-label="กลุ่มค่าตั้ง" id="sgNav"></nav>
+      <div>
+        <section id="sgBody" role="tabpanel" aria-live="polite"><div class="sg-card sg-hint">กำลังโหลด…</div></section>
+        <section id="sgCompany" class="sg-company" style="margin-top:4px"></section>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
+  <script src="/js/customer-notify.js"></script>
+  <script src="/js/booking-payment-admin.js"></script><!-- รอบ 218: ลงทะเบียน CmsSiteSettingsExt.payment (มัดจำ/ชำระเต็ม/โอน-QR-สลิปของการจอง) -->
+  <script>
+    /* หน้า "ตั้งค่าเว็บ" (รอบ 215 เฟส 2 · erp-review/2026-10-30/CMS_UX_REDESIGN.md §4.4) — ศูนย์รวมค่าตั้งรายเว็บ
+     *
+     * กติกา: ค่าตั้งที่ "ย้ายมาแล้ว" แก้ที่นี่ที่เดียว (ที่เดิมเหลือกล่อง "ย้ายแล้ว") — ตอนนี้:
+     *   • การจอง/บริการ › "ลูกค้าเลือกผู้ให้บริการได้ไหม" (SiteBookingSettings.DefaultResourceMode · คำตัดสินข้อ 176)
+     *   • การชำระเงิน › มัดจำ/ชำระเต็ม/โอน-QR-สลิปของการจอง (รอบ 218 · /js/booking-payment-admin.js ผ่าน CmsSiteSettingsExt.payment)
+     *   • การแจ้งเตือน › ตารางแจ้งลูกค้ารายเว็บ (CustomerNotify.mountRules — ทุกประเภทเว็บ · เดิมมีแค่เว็บที่มีออเดอร์)
+     * กลุ่มอื่นเป็น "สรุป + ลิงก์ไปที่แก้จริง" (ยังไม่ย้าย — ไม่มีสองฟอร์มแก้ค่าเดียวกัน)
+     *
+     * จุดต่อขยาย (hook) ของทีมอื่น — เช่นรอบ 218 (มัดจำ/ชำระเต็ม · โอน/QR/สลิป):
+     *   window.CmsSiteSettingsExt = window.CmsSiteSettingsExt || {};
+     *   window.CmsSiteSettingsExt.payment = async (el, ctx) => { ... วาดลงใน el ... };
+     *   ctx = { companyId, siteId, site, sites, api, scopeBadge(kind) } · วางสคริปต์ก่อนสคริปต์หน้านี้ หรือเรียก Page.render() หลังลงทะเบียน
+     *   มีตัวต่อขยายของกลุ่มใด ⇒ ใช้แทนเนื้อหาเดิมของกลุ่มนั้น (ลิงก์เดิมยังแสดงท้ายเป็น "ที่ตั้งเดิม")
+     * ขอบเขตแสดงด้วย CmsSiteContext.scopeBadge ตัวเดียว · ตัวเลข/ข้อความผลมาจากเซิร์ฟเวอร์ (หน้าแค่แสดง) */
+    const esc = (s) => Layout.esc(s);
+    const enc = encodeURIComponent;
+
+    const Page = {
+      sites: [], site: null, siteId: null, group: null, bss: null,
+
+      groups() {
+        const s = this.site || {};
+        const mods = Array.isArray(s.modules) ? s.modules : [];
+        const id = enc(this.siteId || '');
+        return [
+          { key: 'general',  label: 'ทั่วไป', render: () => this.links('ทั่วไป', 'ชื่อ · ประเภทธุรกิจ · ข้อมูลติดต่อที่แสดงบนเว็บ · สาขาที่ออกเอกสาร/คลังที่ตัดสต็อก', [
+              ['ข้อมูลติดต่อ · สาขาและคลังของเว็บ', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › SEO (ส่วนข้อมูลติดต่อ / สาขาและคลัง)'],
+              ['ประเภทธุรกิจ / เติมเทมเพลต', '/pages/cms-sites.html', 'เว็บไซต์ทั้งหมด › การ์ดเว็บ › ⋯'],
+            ]) },
+          { key: 'seo',      label: 'โดเมน & SEO', render: () => this.links('โดเมน & SEO', 'โดเมน · meta · analytics · captcha · ภาษา', [
+              ['โดเมน', `/pages/cms-edit.html?siteId=${id}&tab=domain`, 'หน้าเว็บ › โดเมน'],
+              ['SEO · Analytics · CAPTCHA', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › SEO'],
+              ['ภาษา', `/pages/cms-edit.html?siteId=${id}&tab=languages`, 'หน้าเว็บ › ภาษา'],
+            ]) },
+          mods.includes('bookings') && { key: 'booking', label: 'การจอง / บริการ', render: () => this.renderBooking() },
+          mods.includes('lodging') && { key: 'lodging', label: 'ที่พัก', render: () => this.links('ที่พัก', 'เวลาเข้า-ออก · กติกา · มัดจำ · ภาษี · ข้อความถึงแขก · ห้อง/ราคา', [
+              ['ค่าตั้งที่พัก (ห้อง · ราคา · นโยบาย · มัดจำ)', `/pages/lodging-settings.html?siteId=${id}`, 'ตั้งค่าที่พัก'],
+            ]) },
+          mods.includes('orders') && { key: 'orders', label: 'การสั่งซื้อ', render: () => this.links('การสั่งซื้อ', 'รับคำสั่งซื้อ · ยืนยันอัตโนมัติ · ขอใบเสนอราคา · รีวิว · เลขคำสั่งซื้อ · ช่องฟอร์ม · คูปอง', [
+              ['สวิตช์ร้าน · เลขคำสั่งซื้อ', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › สวิตช์ร้าน'],
+              ['ฟอร์มสั่งซื้อ', `/pages/cms-store-settings.html?siteId=${id}&tab=form`, 'ตั้งค่าร้านค้า › ฟอร์มสั่งซื้อ'],
+              ['คูปอง', `/pages/cms-store-settings.html?siteId=${id}&tab=coupons`, 'ตั้งค่าร้านค้า › คูปอง'],
+            ]) },
+          { key: 'payment',  label: 'การชำระเงิน', render: () => this.renderPayment(mods) },
+          mods.includes('orders') && { key: 'shipping', label: 'การจัดส่ง', render: () => this.links('การจัดส่ง', 'วิธีรับสินค้า · โซนและอัตราค่าส่ง · ส่งฟรี', [
+              ['โซน/อัตราค่าส่ง', `/pages/cms-store-settings.html?siteId=${id}&tab=shipping`, 'ตั้งค่าร้านค้า › โซน/อัตราค่าส่ง'],
+              ['วิธีรับสินค้า (จัดส่ง/รับเอง)', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › สวิตช์ร้าน'],
+            ]) },
+          { key: 'notify',   label: 'การแจ้งเตือน / LINE', render: () => this.renderNotify(mods) },
+          { key: 'members',  label: 'สมาชิก', render: () => this.links('สมาชิก', 'สั่งซื้อ/จองโดยไม่ต้องสมัคร · ต้องเป็นสมาชิกก่อนจอง · รายชื่อสมาชิก', [
+              mods.includes('orders') && ['สั่งซื้อแบบแขก / ต้องมีบัญชี', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › สวิตช์ร้าน'],
+              mods.includes('bookings') && ['ต้องเป็นสมาชิกก่อนจอง', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › ค่าตั้งการจองของเว็บไซต์'],
+              ['รายชื่อลูกค้า/สมาชิกของเว็บ', `/pages/cms-edit.html?siteId=${id}&tab=customers`, 'หน้าเว็บ › ลูกค้า'],
+            ].filter(Boolean)) },
+          { key: 'legal',    label: 'กฎหมาย / นโยบาย', render: () => this.links('กฎหมาย / นโยบาย', 'นโยบายความเป็นส่วนตัว · ช่องยินยอม · แบนเนอร์คุกกี้ · นโยบายร้าน', [
+              ['ข้อมูลส่วนบุคคล (PDPA) · ลิงก์นโยบาย · ข้อความยินยอม', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › SEO (ส่วน PDPA)'],
+            ]) },
+          { key: 'team',     label: 'ทีมงานของเว็บ', render: () => this.links('ทีมงานของเว็บ', 'บทบาทรายเว็บ (แอดมิน · บรรณาธิการ · จัดการคำสั่งซื้อ …) — ต่างจาก "จัดการทีม" ของบริษัท', [
+              ['ทีมงาน & สิทธิ์ของเว็บนี้', `/pages/cms-edit.html?siteId=${id}&tab=team`, 'หน้าเว็บ › ทีม'],
+            ]) },
+          { key: 'advanced', label: 'ขั้นสูง', render: () => this.links('ขั้นสูง', 'URL Redirects · โค้ดหัวเว็บ', [
+              ['URL Redirects', `/pages/cms-edit.html?siteId=${id}&tab=redirects`, 'หน้าเว็บ › Redirects'],
+            ]) },
+        ].filter(Boolean);
+      },
+
+      async init() {
+        if (!Layout.init('cms-sites')) return;
+        Layout.setTitle('ตั้งค่าเว็บ');
+        const qs = new URLSearchParams(location.search);
+        try { this.sites = await CmsSiteContext.loadSites(); } catch (e) { Layout.toast(e.message, 'error'); this.sites = []; }
+        if (!this.sites.length) {
+          document.getElementById('sgBody').innerHTML = '<div class="sg-card">ยังไม่มีเว็บไซต์ที่คุณจัดการได้ — <a href="/pages/cms-sites.html" style="color:var(--primary)">ไปหน้าเว็บไซต์ทั้งหมด</a></div>';
+          return;
+        }
+        this.siteId = CmsSiteContext.pick(this.sites, qs.get('siteId'), {});
+        this.site = this.sites.find(s => s.id === this.siteId) || null;
+        CmsSiteContext.setUrl(this.siteId);
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites, this.siteId, 'ตั้งค่าเว็บ', 'cms-site-settings');
+        const want = qs.get('group');
+        this.group = this.groups().some(g => g.key === want) ? want : (this.groups().find(g => g.key === 'booking') || this.groups()[0]).key;
+        await this.render();
+        this.renderCompany();
+      },
+
+      async go(key) {
+        this.group = key;
+        try { const u = new URL(location.href); u.searchParams.set('group', key); history.replaceState(null, '', u.pathname + u.search); } catch (_) { /* เบราว์เซอร์เก่า */ }
+        await this.render();
+      },
+
+      ctx() {
+        return { companyId: Layout.getCompanyId(), siteId: this.siteId, site: this.site, sites: this.sites, api: Layout.api(),
+          scopeBadge: (k) => CmsSiteContext.scopeBadge(k, this.site && this.site.name) };
+      },
+
+      async render() {
+        const groups = this.groups();
+        const nav = document.getElementById('sgNav');
+        nav.innerHTML = groups.map(g => `<button type="button" role="tab" aria-selected="${g.key === this.group}" data-group="${esc(g.key)}">${esc(g.label)}</button>`).join('');
+        nav.querySelectorAll('button').forEach(b => {
+          b.addEventListener('click', () => this.go(b.dataset.group));
+          b.addEventListener('keydown', (e) => {
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+            e.preventDefault();
+            const i = groups.findIndex(g => g.key === b.dataset.group) + (e.key === 'ArrowDown' ? 1 : -1);
+            const next = groups[(i + groups.length) % groups.length];
+            this.go(next.key).then(() => nav.querySelector(`[data-group="${next.key}"]`)?.focus());
+          });
+        });
+        document.getElementById('sgMobilePick').innerHTML = groups.map(g => `<option value="${esc(g.key)}"${g.key === this.group ? ' selected' : ''}>${esc(g.label)}</option>`).join('');
+        const g = groups.find(x => x.key === this.group) || groups[0];
+        const body = document.getElementById('sgBody');
+        const ext = window.CmsSiteSettingsExt && window.CmsSiteSettingsExt[g.key];
+        if (typeof ext === 'function') {
+          body.innerHTML = '<div class="sg-card sg-hint">กำลังโหลด…</div>';
+          try { await ext(body, this.ctx()); }
+          catch (e) { body.innerHTML = `<div class="sg-card" style="color:#b91c1c">โหลดส่วนนี้ไม่สำเร็จ: ${esc(e.message || e)}</div>`; }
+          return;
+        }
+        body.innerHTML = await g.render();
+        if (g.key === 'booking') this.wireBooking();
+        if (g.key === 'notify') this.mountNotify();
+      },
+
+      /** กลุ่มที่ยังไม่ย้าย: สรุป + ลิงก์ไปที่แก้จริง · rows = [label, href, where] */
+      links(title, desc, rows) {
+        return `<div class="sg-card"><h3>${esc(title)} ${CmsSiteContext.scopeBadge('site', this.site && this.site.name)}</h3>
+          <div class="sg-hint" style="margin-bottom:8px">${esc(desc)}</div>
+          ${rows.map(r => `<div class="sg-link"><div><div style="font-weight:500">${esc(r[0])}</div><div class="sg-hint">แก้ที่: ${esc(r[2])}</div></div>
+            <a class="btn btn-sm btn-secondary" href="${esc(r[1])}">ไปที่นั่น →</a></div>`).join('')}
+        </div>`;
+      },
+
+      renderPayment(mods) {
+        // ทางสำรองเมื่อไม่มีตัวต่อขยาย — ปกติ /js/booking-payment-admin.js ลงทะเบียน CmsSiteSettingsExt.payment (รอบ 218) แทนเนื้อหานี้
+        const id = enc(this.siteId || '');
+        const rows = [
+          mods.includes('orders') && ['วิธีชำระของร้าน (โอน/ออนไลน์/ปลายทาง)', `/pages/cms-store-settings.html?siteId=${id}&tab=payment`, 'ตั้งค่าร้านค้า › วิธีชำระ'],
+          mods.includes('bookings') && ['มัดจำรายบริการ (ตั้งทับค่าเว็บ)', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › ฟอร์มบริการ'],
+          mods.includes('lodging') && ['มัดจำ & การยืนยันของที่พัก', `/pages/lodging-settings.html?siteId=${id}`, 'ตั้งค่าที่พัก › มัดจำ & การยืนยัน'],
+        ].filter(Boolean);
+        return this.links('การชำระเงิน', 'วิธีชำระ · มัดจำ · ชำระเต็ม — กำลังรวมมาไว้ที่นี่ (ตอนนี้แก้ที่เดิม)', rows.length ? rows : [['ยังไม่มีงานรับเงินบนเว็บนี้', '/pages/payment-settings.html', 'รับชำระเงินออนไลน์ (ระดับบริษัท)']]);
+      },
+
+      // ── การจอง / บริการ — "ลูกค้าเลือกผู้ให้บริการได้ไหม" (ย้ายมาแล้ว · แก้ที่นี่ที่เดียว) ──
+      async renderBooking() {
+        const api = Layout.api();
+        try { this.bss = (await api.cmsGetBookingSiteSettings(this.siteId)).data || {}; }
+        catch (e) { return `<div class="sg-card" style="color:#b91c1c">โหลดค่าตั้งการจองไม่สำเร็จ: ${esc(e.message)}</div>`; }
+        const d = this.bss;
+        const cur = d.defaultResourceMode || 'None';
+        const opts = ['CustomerChoice', 'Auto', 'Required', 'None'];
+        const label = (m) => Layout.enumLabel('bookingResourceMode', m);
+        const over = Array.isArray(d.resourceModeOverrides) ? d.resourceModeOverrides : [];
+        const id = enc(this.siteId || '');
+        return `<div class="sg-card"><h3>ผู้ให้บริการ / ห้อง / อุปกรณ์ ${CmsSiteContext.scopeBadge('site', this.site && this.site.name)}</h3>
+            <div class="sg-hint" style="margin-bottom:10px">การจัดสรรผู้ให้บริการของเว็บ: <b>${d.providerAllocationEnabled ? 'เปิดอยู่' : 'ปิดอยู่ — ทุกบริการนับความจุอย่างเดียว (ค่าด้านล่างมีผลเมื่อเปิด)'}</b>
+              · <a href="/pages/cms-edit.html?siteId=${id}&tab=booking" style="color:var(--primary)">เปิด/ปิด · ผู้ให้บริการ · ตรรกะแนะนำ →</a></div>
+            <fieldset style="border:0;padding:0;margin:0"><legend style="font-weight:600;font-size:14px;margin-bottom:4px">ลูกค้าเลือกผู้ให้บริการได้ไหม
+              <span class="sg-hint">(ค่าเริ่มต้นของทุกบริการที่ตั้ง "ตามค่าเว็บ")</span></legend>
+              ${opts.map(m => `<label style="display:flex;gap:8px;align-items:center;font-size:14px;padding:3px 0"><input type="radio" name="sgDefMode" value="${m}"${m === cur ? ' checked' : ''}> ${esc(label(m))}</label>`).join('')}
+            </fieldset>
+            <div class="sg-preview" style="margin-top:10px" id="sgPreview"><div class="sg-hint">ตัวอย่างที่ลูกค้าเห็นบนหน้าจอง (ค่าที่บันทึกแล้ว)</div>
+              <div style="margin-top:4px">${esc(d.defaultResourceModePreview || '')}</div></div>
+            <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" id="sgSaveMode">บันทึก</button></div>
+          </div>
+          <div class="sg-card"><h3>บริการที่กำหนดเอง (ไม่ตามค่าเว็บ) · ${over.length} บริการ</h3>
+            <div class="sg-hint" style="margin-bottom:8px">ตามค่าเว็บอยู่ ${Number(d.resourceModeInheritingCount || 0)} บริการ · บริการที่สร้างก่อนรอบนี้เป็น "กำหนดเอง" ทุกตัว (คงพฤติกรรมเดิม) — กด "ใช้ตามค่าเว็บ" เพื่อให้เปลี่ยนตามค่าด้านบน</div>
+            ${over.length ? over.map(o => `<div class="sg-link"><div>${esc(o.name)} — <b>${esc(label(o.resourceMode))}</b> <span class="sg-hint">กำหนดเอง</span></div>
+                <button class="btn btn-sm btn-secondary" data-inherit="${esc(o.serviceId)}">ใช้ตามค่าเว็บ</button></div>`).join('')
+              + `<div style="margin-top:10px"><button class="btn btn-sm btn-ghost" data-inherit-all="1">ให้ทุกบริการใช้ตามค่าเว็บ</button></div>`
+              : '<div class="sg-hint">ทุกบริการใช้ตามค่าเว็บ</div>'}
+          </div>
+          ${this.links('ค่าตั้งการจองอื่น', 'เวลาทำการ · วันหยุด · จองล่วงหน้า · เตือนก่อนนัด · ข้อมูลที่ลูกค้ากรอก · เอกสารแต่ละขั้น', [
+            ['ค่าตั้งการจองของเว็บไซต์', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › ค่าตั้งการจองของเว็บไซต์'],
+          ])}`;
+      },
+
+      wireBooking() {
+        const save = document.getElementById('sgSaveMode');
+        if (save) save.addEventListener('click', () => this.saveDefaultMode());
+        document.querySelectorAll('[data-inherit]').forEach(b => b.addEventListener('click', () => this.inherit([b.dataset.inherit])));
+        document.querySelectorAll('[data-inherit-all]').forEach(b => b.addEventListener('click', () => {
+          if (confirm('ให้ทุกบริการที่กำหนดเองกลับไปใช้ค่าของเว็บ? (บริการที่เคยบังคับให้ลูกค้าเลือกจะเปลี่ยนตามค่าเว็บ)')) this.inherit(null);
+        }));
+      },
+
+      async saveDefaultMode() {
+        const sel = document.querySelector('input[name="sgDefMode"]:checked');
+        if (!sel || !this.bss) return;
+        const d = this.bss;
+        // PUT รับทั้งชุด: ช่องตัวเลขต้องส่งค่าเดิมกลับ (ไม่งั้นถูกตั้งเป็น 0) · ช่อง null = คงค่าเดิม
+        const body = { durationMinutes: d.durationMinutes, bufferBeforeMinutes: d.bufferBeforeMinutes, bufferAfterMinutes: d.bufferAfterMinutes,
+          minAdvanceHours: d.minAdvanceHours, maxAdvanceDays: d.maxAdvanceDays, defaultResourceMode: sel.value };
+        try {
+          await Layout.api().cmsUpdateBookingSiteSettings(this.siteId, body);
+          Layout.toast('บันทึกแล้ว', 'success');
+          await this.render();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      async inherit(ids) {
+        try {
+          const r = await Layout.api().cmsInheritBookingResourceMode(this.siteId, { serviceIds: ids });
+          Layout.toast(r && r.message ? r.message : 'บันทึกแล้ว', 'success');
+          await this.render();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── การแจ้งเตือน — ตารางรายเว็บ (ย้ายมาแล้ว · ทุกประเภทเว็บ) ──
+      renderNotify(mods) {
+        const id = enc(this.siteId || '');
+        const more = [
+          mods.includes('bookings') && ['เตือนก่อนนัด · ข้อความเตือน · ถือคิวสำรอง', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › แจ้งเตือนลูกค้า'],
+          mods.includes('lodging') && ['ข้อความยืนยันถึงแขก · อีเมลผู้รับแจ้ง', `/pages/lodging-settings.html?siteId=${id}`, 'ตั้งค่าที่พัก › ข้อความ & การแจ้งเตือน'],
+        ].filter(Boolean);
+        return `<div class="sg-card"><h3>💬 แจ้งลูกค้าของเว็บนี้ ${CmsSiteContext.scopeBadge('site', this.site && this.site.name)}</h3>
+            <div class="sg-hint" style="margin-bottom:10px">ประเภทข้อความ × LINE/อีเมล — "ตามค่าที่สืบทอด" = ใช้ค่าของบริษัท (ตั้งที่ ตั้งค่าบริษัท › การแจ้งเตือน) · ป้ายและผลมาจากเซิร์ฟเวอร์</div>
+            <div id="sgNotifyRules"></div></div>
+          ${more.length ? this.links('การแจ้งเตือนเฉพาะงาน', 'เวลาเตือน/ข้อความ ของการจองและที่พัก', more) : ''}`;
+      },
+
+      mountNotify() {
+        const el = document.getElementById('sgNotifyRules');
+        if (el && window.CustomerNotify) CustomerNotify.mountRules(el, { companyId: Layout.getCompanyId(), siteId: this.siteId });
+      },
+
+      // ── 🏢 ค่าระดับบริษัท (ใช้กับทุกไซต์) — สถานะ + ลิงก์ · ไม่แก้ที่นี่ ──
+      async renderCompany() {
+        const el = document.getElementById('sgCompany');
+        el.innerHTML = `<div style="margin-bottom:8px">${CmsSiteContext.scopeBadge('company')} <span class="sg-hint">ทุกเว็บใช้ร่วม — แก้ที่หน้าบริษัท</span></div>
+          <div class="sg-link"><div><b>LINE OA ที่ใช้ส่งถึงลูกค้า</b><div class="sg-hint" id="sgLineStatus">กำลังตรวจ…</div></div><a class="btn btn-sm btn-secondary" href="/pages/settings.html?tab=line">ตั้งค่า LINE →</a></div>
+          <div class="sg-link"><div><b>ค่าเริ่มต้นการแจ้งลูกค้า · สรุปรายวันพนักงาน</b><div class="sg-hint">เว็บนี้ปรับทับได้ที่กลุ่ม "การแจ้งเตือน / LINE"</div></div><a class="btn btn-sm btn-secondary" href="/pages/settings.html?tab=notify">ตั้งค่าการแจ้งเตือน →</a></div>
+          <div class="sg-link"><div><b>อีเมลผู้ส่ง (SMTP)</b></div><a class="btn btn-sm btn-secondary" href="/pages/settings.html?tab=email">ตั้งค่าอีเมล →</a></div>
+          <div class="sg-link"><div><b>ช่องรับเงินออนไลน์ (บัตร/QR ผ่านผู้ให้บริการ)</b><div class="sg-hint">แต่ละเว็บเลือกเปิด "ชำระออนไลน์" เองที่กลุ่ม "การชำระเงิน"</div></div><a class="btn btn-sm btn-secondary" href="/pages/payment-settings.html">รับชำระเงินออนไลน์ →</a></div>
+          <div class="sg-link"><div style="flex:1;min-width:240px"><b>โควตาข้อความเดือนนี้</b><div id="sgQuota"></div></div></div>`;
+        const cid = Layout.getCompanyId();
+        try {
+          const j = await API.get(`/api/companies/${cid}/line-config`);
+          const ch = j && j.data && j.data.customerChannel;
+          document.getElementById('sgLineStatus').textContent = !ch ? 'ไม่มีข้อมูล (อาจไม่มีสิทธิ์ดูค่าตั้งบริษัท)'
+            : (ch.scope === 'company' ? 'LINE OA ของบริษัท' : 'LINE OA ของ NextAcc (ค่าเริ่มต้น)') + (ch.oaBasicId ? ' · ' + ch.oaBasicId : '')
+              + ' · ' + (ch.canLink ? 'ลูกค้าผูก LINE ได้' : 'ลูกค้ายังผูกไม่ได้');
+        } catch (_) { document.getElementById('sgLineStatus').textContent = 'ตรวจไม่ได้ตอนนี้'; }
+        if (window.CustomerNotify) CustomerNotify.mountQuota(document.getElementById('sgQuota'), { companyId: cid });
+      },
+    };
+
+    document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

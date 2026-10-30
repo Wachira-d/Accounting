@@ -5892,6 +5892,7 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
   (+ผ่อน 10 นาที · `GatewayPaymentInProgress`) · บันทึกบริการที่ตั้งเก็บเงินเอง ⇒ ต้องมีช่องทาง + ยอด (`ServiceChannelProblem`) ·
   PDPA: สลิปที่ถูกปฏิเสธ/แทน ของการจองที่ไม่มีเงินเข้า เก่ากว่า 90 วัน ⇒ `CartImageCleanupJob` ลบ (`BookingSlipRetention`) · สลิปของการจองที่มีเงิน = หลักฐาน ม.10 ไม่ลบ ·
   สลิปค้างเลยเวลานัด ⇒ ป้าย "ตรวจด่วน" (ไม่ยกเลิกเอง)
+  ที่ตั้งค่า (รวมรอบ 215 เฟส 2): ฟอร์มค่าตั้งการชำระของการจองอยู่ที่ "ตั้งค่าเว็บ › การชำระเงิน" ที่เดียว (`CmsSiteSettingsExt.payment`) · cms-edit เหลือกล่อง "ย้ายแล้ว" + ตั้งทับรายบริการที่ฟอร์มบริการ
   _Last verified against codebase: 2026-10-30 (รอบ 218 — นโยบายรับชำระล่วงหน้า + สลิปผ่าน PaymentIntent · เทสต์ `BookingPaymentPolicyTests` · `Db/BookingPaymentPolicyDbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fe1a9f0e · c62e1809 · 03191135 · e98ca3e9 · 7cf933b1)_
 - **ให้บริการเสร็จ (R-09)**: มัดจำออกใบแล้ว + ราคาเต็ม > มัดจำ ⇒ `SettleDepositOnCompleteAsync` ออกใบกำกับ (จด VAT) / ใบเสร็จ ส่วนที่เหลือ `DepositBaseDeducted` + `DepositAppliedRef` = ใบมัดจำ (ช่องเดียวกับเช็คเอาต์ที่พัก §6.5 / MTO ข้อ 156) · อนุมัติ ⇒ `RealizeTaxedDepositDeductionsAsync` รับรู้ฐานมัดจำ · `ServiceUsedDate` = เวลานัด (tax point §78/1) · มัดจำ = ราคาเต็ม / มัดจำ VAT รอ / เงินประกัน ⇒ เส้นเดิม `RealizeDepositOnCompleteAsync` + ข้อความเดิม
 - **ยกเลิกเอง (R-10) / ไม่มา (R-11)**: `Helpers/BookingCancellationFee.Plan` — หน้าต่างฟรี `FreeCancellationHours` (เฉพาะยกเลิกเอง) · ค่าธรรมเนียม = ค่าบริการรวม × `CancellationFeePercent` · ริบ ≤ มัดจำที่รับจริง (ข้อ 126) ผ่าน `RealizeDepositAsync(ForfeitAs: PriceOrFee)` เท่า**ฐาน**ของส่วนที่ริบ · ส่วนที่เหลือ "รอคืน" ที่ศูนย์มัดจำ (ใบลดหนี้ §86/10 · ระบบไม่คืนเอง R1) · ไม่ตั้ง % ⇒ ไม่ริบ/ไม่คืนเอง (มัดจำคงเป็นหนี้สินรอพนักงาน — เส้นเดิม) · พนักงานยกเลิกจากหลังบ้าน = ไม่คิดค่าธรรมเนียมอัตโนมัติ (เส้นเดิม `SettleErpDocumentOnCancelAsync`)
@@ -6775,7 +6776,19 @@ _Last verified against codebase: 2026-10-29 (รอบ 208 แก้ตามฝ
   (เดิมทุกเว็บ) — เว็บที่ไม่มีทางรับคำขอไม่มีแท็บ/ปุ่ม "คำขอ / Lead" (หน้า `cms-leads.html?siteId=` ยังเปิดได้)
 - **cms-sites**: ภาพรวม = `CmsSiteContext.allLinks` (`?siteId=all` จริง — เดิมการจองเปิดเว็บแรก) + Front desk รายเว็บพร้อมชื่อ · การ์ด = เปิดพื้นที่ทำงาน / หน้าเว็บ / 👁 / ⋯ (เผยแพร่ · เติมเทมเพลต · ลบ) + ชิปงานค้าง ·
   dropdown ประเภทธุรกิจสร้างจาก `Layout.ENUM_LABELS.siteIndustry` (ตารางป้ายเดียว)
-- ยังไม่ทำ (เฟส 2–3): `cms-edit.html` (ทีมอื่น) · รวมค่าตั้ง · ค่าเริ่มต้นผู้ให้บริการระดับเว็บ · หน้า "วันนี้" · เช็กลิสต์ · ที่พักโหมดทุกไซต์
+- **เฟส 2 (รอบ 215)**:
+  - **"ลูกค้าเลือกผู้ให้บริการได้ไหม" ระดับเว็บ** (คำตัดสินข้อ 176 ข): `SiteBookingSettings.DefaultResourceMode` (null = None = เดิม) · `SiteBookingService.ResourceMode` nullable
+    (null = ตามค่าเว็บ) · ตัวตัดสินเดียว `BookingProviderAllocation.EffectiveMode(serviceMode?, siteEnabled, siteDefault)` เรียกใน `BookingSlotEngine.RulesOf` ·
+    `CmsBookingService.GetBookingAsync` · `ProvidersEnabledAsync` (ทุกทางเข้าการจอง — หน้าเว็บ/POS/พนักงานจองแทน/เทอมคลาส — ผ่าน RulesOf) ·
+    migration `BookingEngineMigration` = ADD COLUMN NULL + DROP NOT NULL เท่านั้น ⇒ **บริการเดิมทุกแถวคงค่าเดิม** · เว็บใหม่ (`CreateSiteAsync`) ได้แถวค่าตั้งการจอง
+    `DefaultResourceMode = NewSiteDefaultMode(industry)` (ลูกค้าเลือกเอง · คลินิก/บริการวิชาชีพ/ที่ปรึกษา = ระบบจัดให้) · GET `booking/settings` ส่ง
+    `DefaultResourceModePreview` (ตัวอย่างที่ลูกค้าเห็น `CustomerPreview`) + `ResourceModeOverrides` (บริการกำหนดเอง) · POST `booking/settings/resource-mode/inherit`
+    (สิทธิ์ CmsSiteSettings · tenant) · ฟอร์มบริการใน cms-edit มีตัวเลือก "ตามค่าเว็บ (…)" + ป้าย ตามค่าเว็บ/กำหนดเอง
+  - **ศูนย์ "ตั้งค่าเว็บ"** `pages/cms-site-settings.html?siteId=&group=` (สิทธิ์เมนู cms-sites): กลุ่มตามโมดูลของเว็บ + การ์ด 🏢 ใช้กับทุกไซต์ ·
+    **ย้ายจริง**: ค่าเว็บโหมดผู้ให้บริการ · ตารางแจ้งลูกค้ารายเว็บ (`CustomerNotify.mountRules({siteId})` — ทุกประเภทเว็บ · แท็บแจ้งเตือนใน cms-store-settings เหลือกล่อง "ย้ายแล้ว") ·
+    กลุ่มอื่น = สรุป + ลิงก์ (`cms-store-settings?tab=` · `cms-edit?tab=` อ่านพารามิเตอร์ใหม่) · การชำระเงิน = ที่ว่างให้รอบ 218 ต่อผ่าน `window.CmsSiteSettingsExt.payment(el, ctx)` ·
+    แท็บ "⚙️ ตั้งค่าเว็บ" ในหัวพื้นที่ทำงานแทนแท็บตั้งค่าร้าน/ที่พักสำหรับผู้เห็นศูนย์ (ผู้มีสิทธิ์แค่หน้าเดิมยังเห็นแท็บเดิม) · cms-edit มีหัวพื้นที่ทำงานแล้ว (N6)
+- ยังไม่ทำ (เฟส 2 ต่อ–3): ย้ายข้อมูลติดต่อ/สาขา-คลัง/PDPA ออกจากแท็บ SEO · รวมกลุ่มชำระเงิน (รอรอบ 218) · หน้า "วันนี้" · เช็กลิสต์ · ที่พักโหมดทุกไซต์
 - **ฝ่ายค้านรอบ 215 (ไม่มี blocking · แก้แล้ว)**: (S1) `GET …/cms/sites` กรองด้วย `CmsSiteScope.ListableSiteIds` (เจ้าของ = ทุกเว็บ · คนอื่น = เว็บที่มีบทบาทใดก็ได้ ∪ เว็บที่ตัวเองสร้าง)
   และตัวสลับเว็บแสดงเฉพาะเว็บที่ผู้ใช้มีแท็บ (+ เว็บปัจจุบัน) · ไม่มีแท็บ ⇒ บอก + คืนค่า (ไม่พาไปหน้าที่ถูกปฏิเสธ) ·
   (S2) `?siteId=` ที่ไม่อยู่ในรายการเว็บ ⇒ `pickProperty` ตกไปลำดับถัดไป · `lodging-settings` ไม่เปิดกล่องสร้างที่พักให้เว็บที่ไม่มี · เว็บล่าสุดค้าง ⇒ ล้าง (`Layout.clearCmsLastSite`) ·

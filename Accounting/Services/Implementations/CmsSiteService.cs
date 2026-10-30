@@ -108,6 +108,17 @@ public class CmsSiteService : ICmsSiteService
             CreatedBy = userId
         });
 
+        // รอบ 215 เฟส 2 (คำตัดสินข้อ 176 ข): เว็บใหม่ตั้งค่าเริ่มต้น "ลูกค้าเลือกผู้ให้บริการได้ไหม" ตามประเภทธุรกิจ
+        // (ลูกค้าเลือกเอง · คลินิก/บริการวิชาชีพ/ที่ปรึกษา = ระบบจัดให้) — ค่าอื่นของแถว = ค่าเดียวกับ "ไม่มีแถว" (BookingSiteDefaults.Fallback) ·
+        // เว็บเดิมไม่ถูกตั้งย้อนหลัง
+        _db.SiteBookingSettings.Add(new SiteBookingSettings
+        {
+            CompanyId = companyId,
+            SiteId = site.Id,
+            DefaultResourceMode = BookingProviderAllocation.NewSiteDefaultMode(request.IndustryType),
+            CreatedBy = userId
+        });
+
         // Auto-create default subdomain entry
         _db.SiteDomains.Add(new SiteDomain
         {

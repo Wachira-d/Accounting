@@ -44,7 +44,8 @@ public class CreateBookingServiceRequest
     public bool EnforceSlotCapacity { get; set; } = true;
     public int? OverlapLimit { get; set; }
     public bool WaitlistEnabled { get; set; }
-    public BookingResourceMode ResourceMode { get; set; } = BookingResourceMode.None;
+    /// <summary>รอบ 215 เฟส 2: <c>null</c> = ตามค่าเว็บ · ไม่ส่งช่องนี้ (ผู้เรียกเดิม) = None ตามเดิม</summary>
+    public BookingResourceMode? ResourceMode { get; set; } = BookingResourceMode.None;
     /// <summary>true = ระยะเวลา/buffer/ล่วงหน้า ใช้ค่าตั้งของไซต์ · false = ค่าของบริการนี้ (override)</summary>
     public bool UseSiteDefaults { get; set; }
     /// <summary>รอบ 210: ต้องเป็นสมาชิกก่อนจอง (Inherit = ตามเว็บ · Required · NotRequired) — <b>null = ไม่แตะค่าเดิม</b> (ผู้เรียก API เดิม · สร้างใหม่ = ตามเว็บ)</summary>
@@ -107,6 +108,15 @@ public class BookingSiteSettingsDto
     // ── รอบ 210 (คำตัดสินข้อ 169) ──
     /// <summary>ต้องเข้าสู่ระบบสมาชิกก่อนจอง (ทุกบริการที่ไม่ตั้งเอง) · คำตอบมีค่าเสมอ · ตอนบันทึก null = คงค่าเดิม</summary>
     public bool? RequireMemberToBook { get; set; }
+    /// <summary>รอบ 215 เฟส 2: ค่าเริ่มต้นโหมดผู้ให้บริการของเว็บ (บริการ "ตามค่าเว็บ" รับไป) · ส่ง null = คงค่าเดิม · GET = ค่าที่มีผล (ไม่ตั้ง = None)</summary>
+    public BookingResourceMode? DefaultResourceMode { get; set; }
+    /// <summary>GET เท่านั้น: ลูกค้าเห็นอะไรบนหน้าจองตามค่าเว็บ (BookingProviderAllocation.CustomerPreview — หน้าแค่แสดง)</summary>
+    public string? DefaultResourceModePreview { get; set; }
+    public bool DefaultResourceModeShowsPicker { get; set; }
+    /// <summary>GET เท่านั้น: บริการที่ "กำหนดเอง" (ไม่ตามค่าเว็บ) — แสดงพร้อมปุ่ม "ใช้ตามค่าเว็บ"</summary>
+    public List<BookingServiceModeOverride> ResourceModeOverrides { get; set; } = new();
+    /// <summary>GET เท่านั้น: จำนวนบริการที่ใช้ "ตามค่าเว็บ"</summary>
+    public int ResourceModeInheritingCount { get; set; }
     /// <summary>ตัวเลือก "ต้องเป็นสมาชิก" ต่อบริการ (server ประกาศป้าย · <c>BookingAccessRule.Options</c>) — ไม่อ่านตอนบันทึก</summary>
     public List<BookingAccessRule.Option> MemberAccessOptions { get; set; } = new();
 }
@@ -235,7 +245,10 @@ public class BookingServiceResponse
     public bool EnforceSlotCapacity { get; set; } = true;
     public int? OverlapLimit { get; set; }
     public bool WaitlistEnabled { get; set; }
-    public BookingResourceMode ResourceMode { get; set; }
+    /// <summary>ค่าที่ตั้งบนบริการ (ฟอร์ม hydrate) · null = ตามค่าเว็บ (รอบ 215)</summary>
+    public BookingResourceMode? ResourceMode { get; set; }
+    /// <summary>รอบ 215: "site" = ตามค่าเว็บ · "service" = กำหนดเอง (ป้ายบนรายการบริการ)</summary>
+    public string ResourceModeSource { get; set; } = "service";
     public bool UseSiteDefaults { get; set; }
     /// <summary>รอบ 210: ค่าที่ตั้งบนบริการ (Inherit/Required/NotRequired — ฟอร์มแก้ไข hydrate จากตัวนี้)</summary>
     public BookingMemberAccess MemberAccess { get; set; }
@@ -662,3 +675,17 @@ public record CustomerCancelBookingRequest(string? Reason = null);
 
 /// <summary>เลื่อนนัด (พนักงาน หรือลูกค้าผ่านโทเคน · รอบ 206) — วันใหม่ + เวลาเริ่ม "HH:mm" จากรายการเวลาว่าง</summary>
 public record RescheduleBookingRequest(DateTime BookingDate, string StartTime, string? Reason = null);
+
+/// <summary>รอบ 215 เฟส 2: บริการที่ตั้งโหมดผู้ให้บริการเอง (ไม่ตามค่าเว็บ) — แสดงบนหน้าตั้งค่า › การจอง/บริการ</summary>
+public class BookingServiceModeOverride
+{
+    public Guid ServiceId { get; set; }
+    public string Name { get; set; } = "";
+    public BookingResourceMode ResourceMode { get; set; }
+}
+
+/// <summary>รอบ 215 เฟส 2: body ของ "ใช้ตามค่าเว็บ" — null = ทุกบริการที่กำหนดเอง</summary>
+public class InheritResourceModeRequest
+{
+    public List<Guid>? ServiceIds { get; set; }
+}

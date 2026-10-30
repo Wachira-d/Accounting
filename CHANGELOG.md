@@ -5845,6 +5845,10 @@ _รอบ 217 ฝ่ายค้าน (ไม่มี blocking · แก้�
 (1) ไม่เก็บ 200 success:false · (3) อายุแถว/ล้างแถวคำนวณใน SQL · (6) ธุรกรรมเดียวของออเดอร์ + คิวใน SaveChanges แรก · (9) บันทึกรับเงินหลังบ้านส่งคีย์ ·
 เทสต์ SUB-16..27 · required_call_site_check แก้/เพิ่มกติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a7fa9ea5_
 
+_รอบ 215 เฟส 2 (2026-10-30 · คำตัดสินข้อ 176 ข): ค่าเว็บ "ลูกค้าเลือกผู้ให้บริการได้ไหม" (`SiteBookingSettings.DefaultResourceMode` · บริการ null = ตามค่าเว็บ ·
+ตัวตัดสินเดียว `BookingProviderAllocation.EffectiveMode` · migration ไม่แตะค่าเดิม · เว็บใหม่ CustomerChoice / คลินิก-บริการวิชาชีพ Auto) + ศูนย์ "ตั้งค่าเว็บ" (`cms-site-settings.html`)
+พร้อมการ์ด 🏢 ค่าระดับบริษัท · แจ้งลูกค้ารายเว็บใช้ได้ทุกประเภทเว็บ (ย้ายจากตั้งค่าร้านค้า) · กลุ่มชำระเงินเป็นที่ว่างให้รอบ 218 (`CmsSiteSettingsExt.payment`) · cms-edit มีหัวพื้นที่ทำงาน ·
+เทสต์ `BookingRound215ProviderDefaultTests` · `required_call_site_check` +6 · sim +3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 639a0e1a · 2e0aee49 · c7fab68c (+ คอมมิตเอกสารตามหลัง)_
 
 _รอบ 218 (คำตัดสินข้อ 177 · เจ้าของ: "ติ๊ก รับชำระมัดจำออนไลน์ แล้วตอนจองไม่มีให้ระบุเรื่องโอนมัดจำ · ต้องตั้งได้ว่าบังคับมัดจำ/จ่ายเต็มก่อน/ปิด · ตั้งเลขบัญชีหรือแนบ QR ได้" ·
 `erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`): ต้นเหตุ = ช่องติ๊กเดิมเปิดแค่ช่องทาง gateway แต่ยอดมาจากชนิด PrePayment + ช่องมัดจำของบริการ (ไม่ตรง ⇒ ยอด 0 เงียบ) ·
@@ -5860,4 +5864,5 @@ _รอบ 218 ฝ่ายค้าน (คำตัดสินข้อ 177 �
 B2 วันรับเงินของสลิป = วันที่โอน (`PaymentIntent.PaidAt` · `ProviderCharge.PaidAtUtc`) + วิธีชำระ = โอนเงิน · S1 สลิปที่ถูกแทนปิด Failed + ยืนยันด้วยมือต้องรอตรวจ ·
 S2 ยกเลิก/ไม่มาปิดสลิป · S3 ล็อกเดียว + บันทึก ≤ 300 · S4 จ่ายแล้วบอกก่อนเก็บไฟล์ + ยอดเปลี่ยน ⇒ 409 + อ่านไฟล์ตรงการจอง · S5 คิวสำรอง → `OnSeat` ·
 S6 งานยกเลิกข้ามรายการชำระออนไลน์ที่ยังไม่หมดอายุ · บริการเก็บเงินเองต้องมีช่องทาง/ยอด · PDPA ลบสลิปปฏิเสธ 90 วัน (`BookingSlipRetention`) ·
-เทสต์ `BookingPaymentPolicyTests` + `BookingPaymentPolicyDbTests` (ทั้งสองทิศ) · `required_call_site_check` +16 กฎ_
+เทสต์ `BookingPaymentPolicyTests` + `BookingPaymentPolicyDbTests` (ทั้งสองทิศ) · `required_call_site_check` +16 กฎ · รวม 215 เฟส 2: ฟอร์มค่าตั้งการชำระของการจองย้ายไป "ตั้งค่าเว็บ › การชำระเงิน" (`CmsSiteSettingsExt.payment` ใน `booking-payment-admin.js` · cms-edit เหลือกล่อง "ย้ายแล้ว" · ฟอร์มบริการยังตั้งทับได้)_
+

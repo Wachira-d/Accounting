@@ -1,5 +1,7 @@
 /* รอบ 218 (คำตัดสินข้อ 177 · erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md) — การชำระล่วงหน้าของการจองนัดหมาย (ฝั่งร้าน)
- * - cms-edit: หมวด "💳 การชำระเงินของการจอง" (#bkSecPayment) + ฟอร์มบริการ (#bsPayWrap)
+ * - ตั้งค่าเว็บ › การชำระเงิน (cms-site-settings · window.CmsSiteSettingsExt.payment — รอบ 215 เฟส 2): ฟอร์ม "💳 การชำระเงินของการจอง"
+ *   (#bkSecPayment · ที่เดียว — cms-edit เหลือกล่อง "ย้ายแล้ว" #bkSecPaymentMoved)
+ * - cms-edit: ฟอร์มบริการ (#bsPayWrap · ตามค่าเว็บ/กำหนดเอง)
  * - cms-bookings: กล่องตรวจสลิปในรายละเอียดการจอง
  * ค่าทุกตัว/ตัวเลือก/ข้อความตัดสินที่เซิร์ฟเวอร์ (Helpers/BookingPaymentPolicy · BookingPaymentChannels) — ไฟล์นี้แสดง/ส่งค่าอย่างเดียว ·
  * แยกไฟล์เพื่อลดการชนกับทีมอื่นที่แก้หน้า cms-edit/cms-bookings */
@@ -18,6 +20,8 @@
     // ═══════════ cms-edit: ค่าตั้งเว็บ ═══════════
     async loadSettings(siteId) {
       this._siteId = siteId;
+      const moved = $('bkSecPaymentMovedLink');   // cms-edit: กล่อง "ย้ายแล้ว" ชี้ไปเว็บเดียวกัน
+      if (moved && siteId) moved.href = `/pages/cms-site-settings.html?siteId=${encodeURIComponent(siteId)}&group=payment`;
       const box = $('bkSecPayment'); if (!box) return;
       try {
         const d = (await API.get(`${base(siteId)}/payment-settings`)).data || {};
@@ -198,5 +202,85 @@
         await this._after(id, res, 'ปฏิเสธสลิปแล้ว');
       } catch (e) { Layout.toast('ปฏิเสธสลิปไม่สำเร็จ: ' + e.message, 'error', 10000); }
     },
+  };
+  // ═══════════ ตั้งค่าเว็บ › การชำระเงิน (รอบ 215 เฟส 2 hook) ═══════════
+  // ฟอร์มค่าตั้งการจองอยู่ที่นี่ที่เดียว · กลุ่มนี้ถูกแทนทั้งกลุ่ม ⇒ แสดงลิงก์วิธีชำระของคำสั่งซื้อ/ที่พักต่อท้าย (ไม่ให้หาย)
+  const STYLE_ID = 'bookingPayAdminStyle';
+  function ensureStyle() {
+    if ($(STYLE_ID)) return;
+    const st = document.createElement('style'); st.id = STYLE_ID;
+    st.textContent = '.bs-sec{font-size:13px;font-weight:700;color:var(--gray-700);margin:16px 0 8px;padding-top:10px;border-top:1px solid var(--gray-200)}'
+      + '.bs-hint{font-size:11px;color:var(--gray-500);font-weight:400}';
+    document.head.appendChild(st);
+  }
+  function settingsMarkup() {
+    return `
+<div id="bkSecPayment" style="border:1px solid var(--gray-200);border-radius:10px;padding:14px 16px;margin:16px 0">
+        <h3 style="font-size:16px;font-weight:600;margin:0 0 6px">💳 การชำระเงินของการจอง (มัดจำ / จ่ายเต็มก่อน)</h3>
+        <div class="bs-hint" style="margin-bottom:8px">ลูกค้าเห็นยอดที่ต้องจ่าย + กำหนดเวลา + วิธีชำระ <b>ก่อนกดจอง</b> · หลังจองโอน/สแกน QR แล้วแนบสลิป (ร้านตรวจที่หน้า "การจอง") หรือจ่ายออนไลน์ ·
+          เก็บเงินล่วงหน้าได้เฉพาะบริการชนิด "ชำระมัดจำล่วงหน้า (ใบรับมัดจำ)" — ใบรับมัดจำลงวันที่รับเงิน (§78/1) · บริการแต่ละตัวตั้งทับได้ที่ฟอร์มบริการ</div>
+        <div id="bpayProblem"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">โหมดของเว็บ</label><select class="form-input" id="bpayMode" onchange="BookingPayAdmin.onModeChange()"></select>
+            <div class="bs-hint" id="bpayModeHelp"></div></div>
+          <div class="form-group" id="bpayDeadlineRow"><label class="form-label">ต้องชำระภายใน (นาทีหลังจอง · ว่าง/0 = ไม่กำหนด)</label>
+            <input type="number" class="form-input" id="bpayDeadline" min="0" max="10080" placeholder="เช่น 30 · 120 · 1440">
+            <div class="bs-hint">ไม่ชำระ/ไม่แนบสลิปในเวลา ⇒ ระบบยกเลิกการจองและปล่อยรอบให้คนอื่น (ไม่เกินเวลานัด) · แนบสลิปแล้วไม่ถูกยกเลิกระหว่างรอร้านตรวจ</div></div>
+        </div>
+        <div class="form-row-3" id="bpayDepositRow">
+          <div class="form-group"><label class="form-label">มัดจำ (บาท)</label><input type="number" class="form-input" id="bpayFixed" min="0" step="0.01" placeholder="ใช้แทน %"></div>
+          <div class="form-group"><label class="form-label">หรือ มัดจำ (% ของค่าบริการ)</label><input type="number" class="form-input" id="bpayPercent" min="0" max="100" step="0.01"></div>
+          <div class="form-group"><label class="form-label">ขั้นต่ำ / สูงสุด (บาท)</label>
+            <div style="display:flex;gap:6px"><input type="number" class="form-input" id="bpayMin" min="0" step="0.01" placeholder="ขั้นต่ำ"><input type="number" class="form-input" id="bpayMax" min="0" step="0.01" placeholder="สูงสุด"></div></div>
+        </div>
+        <h4 class="bs-sec">ช่องทางรับเงิน</h4>
+        <div class="form-group"><label style="font-size:13px"><input type="checkbox" id="bpayGateway"> ชำระออนไลน์ (บัตร/QR ผ่านระบบรับชำระเงิน — ยืนยันการจองอัตโนมัติ)</label>
+          <div class="bs-hint" id="bpayGatewayHint"></div></div>
+        <div class="form-group"><label style="font-size:13px"><input type="checkbox" id="bpayTransfer" checked> โอนเงิน / สแกน QR แล้วแนบสลิป (ร้านตรวจสลิป)</label>
+          <div class="bs-hint">ใช้บัญชีเดียวกับ "ตั้งค่าการรับเงิน" ของคำสั่งซื้อ (แก้ที่นี่ = แก้ที่นั่นด้วย)</div></div>
+        <div class="form-row-3">
+          <div class="form-group"><label class="form-label">ธนาคาร</label><input type="text" class="form-input" id="bpayBankName" maxlength="128" placeholder="เช่น กสิกรไทย"></div>
+          <div class="form-group"><label class="form-label">เลขบัญชี</label><input type="text" class="form-input" id="bpayBankAcct" maxlength="30" inputmode="numeric" placeholder="xxx-x-xxxxx-x"></div>
+          <div class="form-group"><label class="form-label">ชื่อบัญชี</label><input type="text" class="form-input" id="bpayBankAcctName" maxlength="200"></div>
+        </div>
+        <div class="form-row-3">
+          <div class="form-group"><label class="form-label">สาขา (ถ้ามี)</label><input type="text" class="form-input" id="bpayBankBranch" maxlength="128"></div>
+          <div class="form-group"><label class="form-label">พร้อมเพย์ (เบอร์มือถือ / เลขผู้เสียภาษี)</label><input type="text" class="form-input" id="bpayPromptPay" maxlength="20" inputmode="numeric">
+            <div class="bs-hint">ใส่แล้วระบบสร้าง QR ที่มียอดเงินให้ลูกค้าอัตโนมัติ</div></div>
+          <div class="form-group"><label class="form-label">หรือ แนบรูป QR โอนเงิน</label>
+            <input type="hidden" id="bpayQrUrl">
+            <div id="bpayQrPreview" style="margin-bottom:6px"></div>
+            <input type="file" accept="image/*" onchange="BookingPayAdmin.uploadQr(this)">
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-top:4px" onclick="BookingPayAdmin.clearQr()">ลบรูป QR</button></div>
+        </div>
+        <div class="form-group"><label class="form-label">ข้อความถึงลูกค้า (เงื่อนไขการชำระ/คืนเงิน — แสดงในกล่องชำระเงิน)</label>
+          <textarea class="form-input" id="bpayNote" rows="2" maxlength="1000" placeholder="เช่น มัดจำไม่คืนเมื่อยกเลิกภายใน 24 ชม. ก่อนนัด · โอนแล้วร้านยืนยันภายใน 1 ชม."></textarea>
+          <div class="bs-hint">ค่าธรรมเนียมยกเลิก/คืนมัดจำตามจริงคิดจาก "ยกเลิกฟรีก่อนเวลานัด" + "% ค่าธรรมเนียม" ของแต่ละบริการ (ริบไม่เกินมัดจำ)</div></div>
+        <h4 class="bs-sec">ผลกับแต่ละบริการ</h4>
+        <div id="bpayServices" style="overflow-x:auto"><div class="bs-hint">กำลังโหลด…</div></div>
+        <button type="button" class="btn btn-primary btn-sm" style="margin-top:8px" onclick="BookingPayAdmin.save()">บันทึกการชำระเงิน</button>
+      </div>`;
+  }
+  function otherLinks(ctx) {
+    const mods = (ctx.site && Array.isArray(ctx.site.modules)) ? ctx.site.modules : [];
+    const id = encodeURIComponent(ctx.siteId || '');
+    const rows = [
+      mods.includes('orders') && ['วิธีชำระของร้าน (โอน/ออนไลน์/ปลายทาง)', `/pages/cms-store-settings.html?siteId=${id}&tab=payment`, 'ตั้งค่าร้านค้า › วิธีชำระ'],
+      mods.includes('lodging') && ['มัดจำ & การยืนยันของที่พัก', `/pages/lodging-settings.html?siteId=${id}`, 'ตั้งค่าที่พัก › มัดจำ & การยืนยัน'],
+      ['ระบบรับชำระเงินออนไลน์ของบริษัท (บัตร/QR)', '/pages/payment-settings.html', 'รับชำระเงินออนไลน์ (ระดับบริษัท)'],
+    ].filter(Boolean);
+    return `<div class="sg-card"><h3>การชำระเงินส่วนอื่น</h3>${rows.map(r => `<div class="sg-link"><div><div style="font-weight:500">${esc(r[0])}</div>
+      <div class="sg-hint">แก้ที่: ${esc(r[2])}</div></div><a class="btn btn-sm btn-secondary" href="${esc(r[1])}">ไปที่นั่น →</a></div>`).join('')}</div>`;
+  }
+  window.CmsSiteSettingsExt = window.CmsSiteSettingsExt || {};
+  window.CmsSiteSettingsExt.payment = async (el, ctx) => {
+    ensureStyle();
+    const mods = (ctx.site && Array.isArray(ctx.site.modules)) ? ctx.site.modules : [];
+    const badge = typeof ctx.scopeBadge === 'function' ? ctx.scopeBadge('site') : '';
+    el.innerHTML = (mods.includes('bookings')
+      ? `<div class="sg-card"><div class="sg-hint" style="margin-bottom:6px">${badge}</div>${settingsMarkup()}</div>`
+      : '<div class="sg-card sg-hint">เว็บนี้ยังไม่เปิดงานจอง — ค่าตั้งมัดจำ/ชำระก่อนของการจองจะแสดงเมื่อเปิดโมดูลการจอง</div>')
+      + otherLinks(ctx);
+    if (mods.includes('bookings')) await window.BookingPayAdmin.loadSettings(ctx.siteId);
   };
 })();
