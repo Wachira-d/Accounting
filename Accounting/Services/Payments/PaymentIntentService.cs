@@ -240,6 +240,10 @@ public class PaymentIntentService : IPaymentIntentService
             .OrderBy(c => c.SortOrder).ThenBy(c => c.CreatedAt)
             .FirstOrDefaultAsync(ct);
 
+        // รอบ 219 ส่วน B: ทดลองจ่าย (GatewaySelfTest) ได้เฉพาะ config โหมดทดสอบ — ไม่มีเงินจริงผ่านปุ่ม/หน้าทดสอบ (ด่านเดียว PaymentLiveGate)
+        if (PaymentLiveGate.SelfTestRefusal(request.SourceKind, config?.Mode) is string selfTestNo)
+            throw new InvalidOperationException(selfTestNo);
+
         // ไม่ได้ตั้งค่า gateway = ตกไปเส้นสลิปเดิม (พฤติกรรมเดิมทุกประการ)
         var code = providerCode ?? config?.ProviderCode ?? Providers.ManualSlipPaymentProvider.Code;
         var provider = Resolve(code);

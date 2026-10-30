@@ -85,7 +85,7 @@ public class CmsBookingDoubleBookingDbTests
             var r = await Svc(db).CreateBookingAsync(companyId, siteId, new CreateBookingRequest
             {
                 BookingServiceId = serviceId, BookingDate = TargetDate().ToDateTime(TimeOnly.MinValue), StartTime = start,
-                GuestName = $"ลูกค้า {n}", GuestEmail = $"guest{n}@example.test", GuestCount = 1,
+                GuestName = $"ลูกค้า {n}", GuestEmail = $"guest{n}@example.test", GuestCount = 1, PolicyAccepted = true,
             }, "db-test");
             return (r.Status != BookingStatus.Waitlisted, r.Status.ToString(), 201, r.Id);
         }

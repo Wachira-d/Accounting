@@ -33,6 +33,10 @@ public class Subscription : BaseEntity
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
     public DateTime? CancelledAt { get; set; }
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): ผู้ใช้กดยกเลิกระหว่างรอบที่ชำระแล้ว ⇒ ใช้ได้ถึง <see cref="EndDate"/> แล้วเปลี่ยนเป็น Cancelled
+    /// (ไม่เข้า PastDue · ไม่ออกใบต่ออายุ) · ตัวตัดสินเดียว <c>Helpers/SubscriptionCancelPolicy</c> · กลับมาใช้ต่อก่อนสิ้นรอบ = ล้างค่า</summary>
+    public bool CancelAtPeriodEnd { get; set; }
+    public DateTime? CancelRequestedAt { get; set; }
 
     // WP-B1: ใบแจ้งหนี้ต่ออายุที่ออกล่วงหน้าก่อนหมดอายุ. ผูกกับ EndDate ที่ออกให้
     // → รอบใหม่ (EndDate เปลี่ยนหลังจ่าย) จะออกใบใหม่ ไม่ออกซ้ำรอบเดิม (idempotent).

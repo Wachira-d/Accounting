@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ช่องทางรับชำระของ NextAcc - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .muted { color:#64748b; font-size:12px }
+    .mode-banner { border-radius:10px; padding:12px 14px; font-weight:600; margin-bottom:14px }
+    .mode-off { background:#f1f5f9; color:#334155; border:1px solid #cbd5e1 }
+    .mode-test { background:#fef3c7; color:#92400e; border:1px solid #f59e0b }
+    .mode-live { background:#dcfce7; color:#166534; border:1px solid #22c55e }
+    .kv { display:grid; grid-template-columns:200px 1fr; gap:8px 12px; align-items:center; font-size:13px }
+    .kv input, .kv select { width:100%; box-sizing:border-box; padding:7px 9px; border:1px solid #cbd5e1; border-radius:6px }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:12px }
+    .list { margin:6px 0 0 18px; font-size:13px; line-height:1.7 }
+    .ok { color:#166534 } .bad { color:#b91c1c }
+    code.url { font-size:12px; word-break:break-all; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:6px 8px; display:block }
+    @media (max-width: 720px) { .kv { grid-template-columns:1fr } }
+  </style>
+</head>
+<body>
+  <!-- รอบ 219 ส่วน B (คำตัดสินข้อ 179): ช่องทางรับชำระค่าบริการของ NextAcc — ทุกป้าย/ปุ่ม/เงื่อนไขมาจากเซิร์ฟเวอร์ (AdminPlatformGatewayController ·
+       ด่านเปิดรับเงินจริง Helpers/PaymentLiveGate ตัวเดียวกับหน้าตั้งค่าของร้าน) — หน้านี้แสดงและส่งค่าอย่างเดียว -->
+  <div id="pageContent">
+    <div class="admin-card" style="margin-bottom:14px">
+      <div class="muted" style="line-height:1.8">
+        เงินค่าแพ็กเกจ/ส่วนเสริมที่ผู้เช่าจ่าย<b>ออนไลน์</b>เข้าบัญชี Omise ของ NextAcc ผ่านหน้านี้เท่านั้น (ไม่ใช่ gateway ของร้าน) ·
+        ระหว่างยังไม่เปิดรับเงินจริง ผู้เช่าเห็นเส้น "โอนเงิน + แนบสลิป" ตามเดิม (เลขบัญชีตั้งที่ ตั้งค่าเว็บไซต์) ·
+        ขั้นตอน: บันทึกคีย์ทดสอบ → ตั้ง URL แจ้งเตือนในแดชบอร์ด Omise → ทดลองจ่าย ฿20 → ทดสอบการเชื่อมต่อ → กรอกคีย์จริง → ทดสอบอีกครั้ง →
+        เผยแพร่นโยบายการยกเลิกและคืนเงิน → เปิดรับเงินจริง
+      </div>
+    </div>
+    <div id="state">กำลังโหลด...</div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script src="/js/pay-widget.js"></script>
+  <script>
+    const Page = {
+      d: null,
+      init() { AdminLayout.init('platform-gateway'); this.load(); },
+      esc(s) { return AdminLayout.esc(s == null ? '' : String(s)); },
+      dt(v) { return v ? new Date(v).toLocaleString('th-TH') : '—'; },
+      async load() {
+        try { this.d = (await AdminAPI.get('/platform-gateway')).data; this.render(); }
+        catch (e) { document.getElementById('state').innerHTML = `<div class="admin-card bad">${this.esc(e.message)}</div>`; }
+      },
+      render() {
+        const d = this.d, c = d.config, e = this.esc.bind(this);
+        if (!d.platformCompanyId) {
+          document.getElementById('state').innerHTML = `<div class="admin-card"><b>ยังไม่ได้ตั้งบริษัทผู้ให้บริการ</b>
+            <div class="muted">ตั้งที่ <a href="/admin/site-settings.html">ตั้งค่าเว็บไซต์ → ใบเสร็จค่าบริการ</a> ก่อน — เงินค่าบริการลงสมุดของบริษัทนั้น</div></div>`;
+          return;
+        }
+        const mode = !c ? 'off' : !c.isActive ? 'off' : (c.mode === 'Live' ? 'live' : 'test');
+        const banner = { off: '⏸️ ปิด/ยังไม่ตั้งค่า — ผู้เช่าชำระด้วยการโอน + แนบสลิป', test: '🧪 โหมดทดสอบ — เงินไม่เข้าจริง · ผู้เช่ายังไม่เห็นปุ่มชำระออนไลน์', live: '✅ เปิดรับเงินจริงแล้ว — ผู้เช่าเห็นปุ่ม "ชำระออนไลน์"' }[mode];
+        const provOpts = d.providers.map(p => `<option value="${e(p.code)}" ${c && c.providerCode === p.code ? 'selected' : ''}>${e(p.code)}</option>`).join('');
+        const prov = d.providers.find(p => p.code === (c ? c.providerCode : (d.providers[0] || {}).code)) || { methods: [] };
+        const methodBoxes = prov.methods.map(m => `<label style="margin-right:12px"><input type="checkbox" data-m value="${e(m)}" ${c && c.enabledMethods.includes(m) ? 'checked' : ''}> ${e(m)}</label>`).join('');
+        const missing = d.liveGateMissing || [];
+        const displayName = c ? (c.displayName || '') : 'NextAcc Omise';
+        document.getElementById('state').innerHTML = `
+          <div class="mode-banner mode-${mode}">${banner}</div>
+          ${c && c.liveWebhookMissing ? `<div class="mode-banner mode-test">⚠️ ยังไม่เคยได้รับการแจ้งเตือน (webhook) ในโหมดใช้งานจริง — ตรวจ URL ในแดชบอร์ด Omise ฝั่งโหมดจริง</div>` : ''}
+          ${c && c.providerNotice ? `<div class="mode-banner mode-test" style="font-weight:400">⚠️ ${e(c.providerNotice)}</div>` : ''}
+          <div class="admin-card" style="margin-bottom:14px">
+            <div class="admin-card-header"><span class="admin-card-title">🔑 คีย์และวิธีชำระ</span><span class="muted">บริษัทผู้ให้บริการ: ${e(d.platformCompanyName || '-')}</span></div>
+            <div class="kv">
+              <b>ผู้ให้บริการ</b><select id="gProv">${provOpts}</select>
+              <b>ชื่อที่แสดง</b><input id="gName" value="${e(displayName)}">
+              <b>คีย์สาธารณะ (ทดสอบ)</b><input id="gTp" value="${e(c ? c.testPublicKey || '' : '')}">
+              <b>คีย์ลับ (ทดสอบ)</b><input id="gTs" type="password" autocomplete="off" placeholder="${c && c.testSecretHint ? 'บันทึกไว้แล้ว (' + e(c.testSecretHint) + ') — เว้นว่าง = ไม่เปลี่ยน' : ''}">
+              <b>คีย์สาธารณะ (ใช้งานจริง)</b><input id="gLp" value="${e(c ? c.livePublicKey || '' : '')}">
+              <b>คีย์ลับ (ใช้งานจริง)</b><input id="gLs" type="password" autocomplete="off" placeholder="${c && c.liveSecretHint ? 'บันทึกไว้แล้ว (' + e(c.liveSecretHint) + ') — เว้นว่าง = ไม่เปลี่ยน' : ''}">
+              <b>วิธีชำระที่เปิด</b><div>${methodBoxes || '<span class="muted">—</span>'}</div>
+            </div>
+            <div class="muted" style="margin-top:6px">คีย์ลับเข้ารหัสก่อนเก็บ และไม่ถูกส่งกลับมาที่หน้านี้ (แสดงแค่ 4 ตัวท้าย) · แก้คีย์ใด = ต้องทดสอบใหม่ก่อนเปิดรับเงินจริง</div>
+            <div class="row"><button class="admin-btn admin-btn-primary" onclick="Page.save()">บันทึก</button></div>
+          </div>
+          ${c ? `
+          <div class="admin-card" style="margin-bottom:14px">
+            <div class="admin-card-header"><span class="admin-card-title">🔗 URL แจ้งเตือน (webhook)</span></div>
+            <code class="url" id="gHook">${e(c.webhookUrl)}</code>
+            <div class="muted" style="margin-top:6px">ตั้ง URL นี้ในแดชบอร์ด Omise <b>ทั้งโหมดทดสอบและโหมดใช้งานจริง</b> · webhook ล่าสุด: ${this.dt(c.lastWebhookAt)} · โหมดจริงล่าสุด: ${this.dt(c.lastLiveWebhookAt)}</div>
+            <div class="row"><button class="admin-btn admin-btn-outline admin-btn-sm" onclick="Page.copyHook()">คัดลอก</button>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="Page.rotate()">ออกรหัสใหม่</button></div>
+          </div>
+          <div class="admin-card" style="margin-bottom:14px">
+            <div class="admin-card-header"><span class="admin-card-title">🧪 ทดสอบ</span></div>
+            <ul class="list">
+              <li>ทดสอบผ่าน (คีย์ทดสอบ + webhook): <b class="${c.lastTestPassedAt ? 'ok' : 'bad'}">${this.dt(c.lastTestPassedAt)}</b></li>
+              <li>คีย์ใช้งานจริงตรวจผ่าน: <b class="${c.liveKeyVerifiedAt ? 'ok' : 'bad'}">${this.dt(c.liveKeyVerifiedAt)}</b></li>
+              <li>ทดลองจ่าย ฿${e(d.selfTestAmount)} สำเร็จล่าสุด: <b>${this.dt(c.lastSelfTestPaidAt)}</b></li>
+            </ul>
+            <div class="row">
+              <button class="admin-btn admin-btn-outline" onclick="Page.test()">ทดสอบการเชื่อมต่อ</button>
+              ${c.mode === 'Test' ? `<button class="admin-btn admin-btn-outline" onclick="Page.selfTest()">ทดลองจ่าย ฿${e(d.selfTestAmount)} (โหมดทดสอบ)</button>` : ''}
+            </div>
+            <div class="muted" id="gTestResult" style="margin-top:8px"></div>
+          </div>
+          <div class="admin-card" style="margin-bottom:14px">
+            <div class="admin-card-header"><span class="admin-card-title">🚦 เปิดรับเงินจริง / ปิดฉุกเฉิน</span></div>
+            ${c.mode === 'Live'
+              ? `<div class="muted">เปิดรับเงินจริงเมื่อ ${this.dt(c.liveEnabledAt)}</div>
+                 <div class="row"><button class="admin-btn admin-btn-outline" onclick="Page.mode('Test')">กลับสู่โหมดทดสอบ</button></div>`
+              : `${missing.length ? `<div class="bad" style="font-size:13px">ยังเปิดรับเงินจริงไม่ได้:</div><ul class="list">${missing.map(m => `<li>${e(m)}</li>`).join('')}</ul>` : '<div class="ok" style="font-size:13px">พร้อมเปิดรับเงินจริง</div>'}
+                 <div class="row"><input id="gConfirm" placeholder="พิมพ์ &quot;${e(d.confirmPhrase)}&quot; เพื่อยืนยัน" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;min-width:240px">
+                 <button class="admin-btn admin-btn-primary" ${d.canEnableLive ? '' : 'disabled'} onclick="Page.mode('Live')">เปิดรับเงินจริง</button></div>`}
+            <div class="row">
+              ${c.isActive
+                ? `<input id="gReason" placeholder="เหตุผลที่ปิด (บังคับ)" style="padding:7px 9px;border:1px solid #cbd5e1;border-radius:6px;min-width:240px">
+                   <button class="admin-btn admin-btn-danger" onclick="Page.active(false)">⛔ ปิดฉุกเฉิน</button>`
+                : `<button class="admin-btn admin-btn-outline" onclick="Page.active(true)">เปิดช่องทางอีกครั้ง</button>`}
+            </div>
+            <div class="muted" style="margin-top:6px">นโยบายการยกเลิกและคืนเงิน: ฉบับ ${e(d.refundPolicy.version)} ${d.refundPolicy.published ? '(เผยแพร่แล้ว)' : '(ฉบับตั้งต้นของระบบ — ยังไม่ได้เผยแพร่ฉบับของ NextAcc)'} ·
+              <a href="/admin/legal.html?kind=refund">แก้/เผยแพร่</a> · <a href="${e(d.refundPolicy.url)}" target="_blank" rel="noopener">ดูหน้าสาธารณะ</a></div>
+          </div>` : ''}
+          <div class="admin-card">
+            <div class="admin-card-header"><span class="admin-card-title">🧾 หน้าทดลองจ่าย (<a href="${e(d.testPage.url)}" target="_blank" rel="noopener">${e(d.testPage.url)}</a>)</span></div>
+            <div class="muted" style="margin-bottom:8px">ใช้คีย์โหมดทดสอบเสมอ (ไม่มีเงินจริง) — เปิดให้ผู้ตรวจเว็บของผู้ให้บริการ/เดโมได้ · ปิดอัตโนมัติเมื่อช่องทางอยู่โหมดใช้งานจริง</div>
+            <select id="gTestPage">${d.testPage.modes.map(m => `<option value="${e(m)}" ${m === d.testPage.mode ? 'selected' : ''}>${e({ Off: 'ปิด', AdminsOnly: 'เฉพาะผู้ดูแลระบบ (ค่าเริ่มต้น)', Public: 'เปิดสาธารณะ' }[m] || m)}</option>`).join('')}</select>
+            <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="Page.saveTestPage()">บันทึก</button>
+          </div>`;
+      },
+      async save() {
+        const v = id => document.getElementById(id).value;
+        try {
+          const res = await AdminAPI.put('/platform-gateway', {
+            providerCode: v('gProv'), displayName: v('gName'),
+            testPublicKey: v('gTp'), testSecretKey: v('gTs') || null,
+            livePublicKey: v('gLp'), liveSecretKey: v('gLs') || null,
+            enabledMethods: [...document.querySelectorAll('input[data-m]:checked')].map(x => x.value),
+          });
+          AdminLayout.toast(res.message || 'บันทึกแล้ว'); await this.load();
+        } catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+      async test() {
+        const box = document.getElementById('gTestResult');
+        box.textContent = 'กำลังทดสอบ…';
+        try { const res = await AdminAPI.post('/platform-gateway/test', {}); box.textContent = res.message || ''; await this.load(); document.getElementById('gTestResult').textContent = res.message || ''; }
+        catch (e) { box.textContent = '❌ ' + e.message; }
+      },
+      selfTest() {
+        PayWidget.open({
+          publicBase: '/api/admin/platform-gateway/self-test',
+          method: 'PromptPay',
+          authHeader: () => { const t = localStorage.getItem('admin_token'); return t ? { Authorization: 'Bearer ' + t } : {}; },
+          onPaid: () => { AdminLayout.toast('ทดลองจ่ายสำเร็จ — กด "ทดสอบการเชื่อมต่อ" เพื่อยืนยันการแจ้งเตือน'); this.load(); },
+        });
+      },
+      async mode(m) {
+        const typed = m === 'Live' ? (document.getElementById('gConfirm') || {}).value : null;
+        try { const res = await AdminAPI.post('/platform-gateway/mode', { mode: m, typedConfirmation: typed }); AdminLayout.toast(res.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+      async active(on) {
+        const reason = on ? null : (document.getElementById('gReason') || {}).value;
+        if (!on && !confirm('ปิดช่องทางรับชำระออนไลน์ของ NextAcc ทันที? ผู้เช่าจะกลับไปใช้การโอน + แนบสลิป')) return;
+        try { const res = await AdminAPI.post('/platform-gateway/active', { active: on, reason }); AdminLayout.toast(res.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+      async rotate() {
+        if (!confirm('ออกรหัส URL แจ้งเตือนใหม่? URL เดิมจะใช้ไม่ได้ทันที ต้องตั้งใหม่ในแดชบอร์ด Omise ทั้งสองโหมด')) return;
+        try { const res = await AdminAPI.post('/platform-gateway/webhook-token/rotate', {}); AdminLayout.toast(res.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+      async copyHook() {
+        const t = document.getElementById('gHook').textContent;
+        try { await navigator.clipboard.writeText(t); AdminLayout.toast('คัดลอกแล้ว'); } catch (_) { prompt('คัดลอก URL นี้', t); }
+      },
+      async saveTestPage() {
+        try { const res = await AdminAPI.put('/platform-gateway/test-page', { mode: document.getElementById('gTestPage').value }); AdminLayout.toast(res.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

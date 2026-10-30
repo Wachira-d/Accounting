@@ -525,7 +525,8 @@ public class SubscriptionService : ISubscriptionService
             planName,
             ScheduledPlan: sub.ScheduledPlan,
             ScheduledBillingCycle: sub.ScheduledBillingCycle,
-            ScheduledPlanEffectiveAt: sub.ScheduledPlanEffectiveAt);
+            ScheduledPlanEffectiveAt: sub.ScheduledPlanEffectiveAt,
+            CancelAtPeriodEnd: sub.CancelAtPeriodEnd);
     }
 
     /// <summary>ผลของ overlay แพ็กเกจ (บริษัท ↔ User License) + mask ที่เจ้าของบริษัทปิดเอง — ตัวเดียวของ
@@ -749,16 +750,37 @@ public class SubscriptionService : ISubscriptionService
             sub.EndDate);
     }
 
-    public async Task CancelSubscriptionAsync(Guid companyId, string performedBy)
+    public async Task<string> CancelSubscriptionAsync(Guid companyId, string performedBy)
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
+
+        // รอบ 219 ส่วน B (คำตัดสินข้อ 179): แพ็กเกจที่ชำระแล้วยังไม่สิ้นรอบ ⇒ ใช้ได้ถึงสิ้นรอบ (นโยบายคืนเงินฉบับตั้งต้นสัญญาไว้เช่นนี้)
+        var now = DateTime.UtcNow;
+        var outcome = SubscriptionCancelPolicy.Decide(sub.Status, sub.EndDate, now, sub.IsPermanentFree);
+        if (outcome == SubscriptionCancelPolicy.Outcome.AtPeriodEnd)
+        {
+            sub.CancelAtPeriodEnd = true;
+            sub.CancelRequestedAt = now;
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id,
+                Action = "CancelScheduled",
+                FromStatus = sub.Status,
+                ToStatus = sub.Status,
+                Notes = $"ยกเลิกมีผลสิ้นรอบ {sub.EndDate:yyyy-MM-dd} (ใช้งานได้ถึงวันดังกล่าว · ไม่ต่ออายุ)",
+                PerformedBy = performedBy
+            });
+            await _db.SaveChangesAsync();
+            return SubscriptionCancelPolicy.Message(outcome, sub.EndDate);
+        }
 
         // เก็บสถานะเดิม "ก่อน" mutate — เดิมอ่านหลังตั้ง Cancelled ทำให้ history
         // ได้ From=Cancelled→Cancelled ทุกครั้ง audit สืบสถานะก่อนยกเลิกไม่ได้
         var cancelFromStatus = sub.Status;
         sub.Status = SubscriptionStatus.Cancelled;
-        sub.CancelledAt = DateTime.UtcNow;
+        sub.CancelledAt = now;
+        sub.CancelAtPeriodEnd = false;
 
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
@@ -770,6 +792,28 @@ public class SubscriptionService : ISubscriptionService
         });
 
         await _db.SaveChangesAsync();
+        return SubscriptionCancelPolicy.Message(outcome, sub.EndDate);
+    }
+
+    public async Task<string> ResumeSubscriptionAsync(Guid companyId, string performedBy)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        if (SubscriptionCancelPolicy.ResumeRefusal(sub.CancelAtPeriodEnd, sub.Status, sub.EndDate, DateTime.UtcNow) is string refusal)
+            throw new BusinessRuleException(refusal, "SUB-CANCEL-RESUME");
+        sub.CancelAtPeriodEnd = false;
+        sub.CancelRequestedAt = null;
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id,
+            Action = "CancelRevoked",
+            FromStatus = sub.Status,
+            ToStatus = sub.Status,
+            Notes = "กลับมาใช้ต่อก่อนสิ้นรอบ (ยกเลิกการยกเลิก)",
+            PerformedBy = performedBy
+        });
+        await _db.SaveChangesAsync();
+        return "กลับมาใช้แพ็กเกจต่อแล้ว — ต่ออายุตามรอบบิลเดิม";
     }
 
     // ==================== Usage Tracking ====================
@@ -2384,9 +2428,28 @@ public class SubscriptionService : ISubscriptionService
             sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
         }
 
-        // Mark active subscriptions as expired
+        // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ขอยกเลิกไว้และพ้นสิ้นรอบ ⇒ Cancelled (ไม่ใช่ PastDue — ไม่ทวงเงินรอบที่ผู้ใช้ยกเลิกแล้ว)
+        var dueCancels = await _db.Subscriptions
+            .Where(s => s.CancelAtPeriodEnd && s.Status == SubscriptionStatus.Active && s.EndDate <= now)
+            .ToListAsync();
+        foreach (var sub in dueCancels.Where(x => SubscriptionCancelPolicy.DueForCancellation(x.CancelAtPeriodEnd, x.Status, x.EndDate, now)))
+        {
+            sub.Status = SubscriptionStatus.Cancelled;
+            sub.CancelledAt = now;
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id,
+                Action = "CancelledAtPeriodEnd",
+                FromStatus = SubscriptionStatus.Active,
+                ToStatus = SubscriptionStatus.Cancelled,
+                Notes = $"สิ้นรอบ {sub.EndDate:yyyy-MM-dd} ตามที่ขอยกเลิกไว้",
+                PerformedBy = "System"
+            });
+        }
+
+        // Mark active subscriptions as expired (ยกเว้นที่ขอยกเลิกไว้ — ข้างบนจัดการแล้ว)
         var newlyExpired = await _db.Subscriptions
-            .Where(s => s.Status == SubscriptionStatus.Active && s.EndDate < now)
+            .Where(s => s.Status == SubscriptionStatus.Active && s.EndDate < now && !s.CancelAtPeriodEnd)
             .ToListAsync();
 
         foreach (var sub in newlyExpired)

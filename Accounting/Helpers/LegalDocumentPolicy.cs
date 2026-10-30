@@ -86,6 +86,11 @@ public static class LegalDocumentPolicy
     public static string ConsentVersion(string privacyVersion, string termsVersion)
         => privacyVersion == termsVersion ? privacyVersion : $"privacy {privacyVersion} · terms {termsVersion}";
 
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): เวอร์ชันเงื่อนไขการซื้อที่ผู้ซื้อยอมรับก่อนชำระค่าบริการ — ระบุทั้งสองฉบับเสมอ
+    /// (ต่างจาก <see cref="ConsentVersion"/> — นี่ไม่ใช่ความยินยอม PDPA และไม่กระทบแถบ "ฉบับใหม่")</summary>
+    public static string PurchasePolicyVersion(string termsVersion, string refundVersion)
+        => $"terms {termsVersion} · refund {refundVersion}";
+
     /// <summary>ผู้ใช้ต้องเห็นแถบ "นโยบายมีฉบับใหม่" ไหม — ไม่มีหลักฐานการยอมรับเลย หรือฉบับที่ยอมรับล่าสุดไม่ใช่ฉบับปัจจุบัน
     /// (แจ้ง + กดรับทราบ · ไม่บล็อกการใช้งาน — คำตัดสินข้อ 173)</summary>
     public static bool NeedsAcknowledge(string? acceptedConsentVersion, string currentConsentVersion)

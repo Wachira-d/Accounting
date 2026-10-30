@@ -43,6 +43,13 @@ public class PaymentProviderConfig : TenantEntity
     public DateTime? LastTestPassedAt { get; set; }
     /// <summary>ครั้งล่าสุดที่ได้รับ webhook จริงจาก provider — โชว์ในหน้าตั้งค่า</summary>
     public DateTime? LastWebhookAt { get; set; }
+    /// <summary>รอบ 219 ส่วน B: คีย์โหมดใช้งานจริงผ่านการตรวจกับผู้ให้บริการแล้ว (อ่านอย่างเดียว ไม่สร้างรายการเงิน) — ล้างเมื่อเปลี่ยนคีย์ live ·
+    /// ด่านเปิดรับเงินจริงต้องการค่านี้ (<c>Helpers/PaymentLiveGate</c>) · เดิมสลับ live ได้ทั้งที่คีย์ live ไม่เคยถูกตรวจเลย</summary>
+    public DateTime? LiveKeyVerifiedAt { get; set; }
+    /// <summary>รอบ 219 ส่วน B: webhook ล่าสุดที่มาถึงขณะอยู่โหมดใช้งานจริง — หน้าตั้งค่าเตือน "ยังไม่เคยได้รับ webhook โหมดจริง" จนกว่าจะมีค่า</summary>
+    public DateTime? LastLiveWebhookAt { get; set; }
+    /// <summary>รอบ 219 ส่วน B: การทดลองจ่าย ฿20 (โหมดทดสอบ · <c>PaymentSourceKind.GatewaySelfTest</c>) สำเร็จล่าสุด</summary>
+    public DateTime? LastSelfTestPaidAt { get; set; }
 
     /// <summary>รหัสลับต่อ config ใน URL แจ้งเตือน <c>api/pay/webhooks/{provider}/{token}</c> (รอบ 201 ทีม GW · A-GW1) — webhook ที่มาทาง URL นี้
     /// ถูกลองยืนยันกับ config นี้เท่านั้น (ไม่ยิงคำขอออกด้วยคีย์ของร้านอื่น) · ออกตอนบันทึกการตั้งค่า + migration เติมให้แถวเดิม ·

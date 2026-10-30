@@ -955,6 +955,11 @@ public partial class CmsBookingService : ICmsBookingService
         // ติ๊กแล้ว ⇒ PdpaConsentRecord บันทึกพร้อมการจอง
         await CmsDataConsent.EnforceAsync(_db, companyId, siteId, CmsDataConsent.BookingPurpose, request.ConsentGiven,
             userId, request.CustomerId, request.GuestEmail, request.GuestPhone, reference: "booking");
+        // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงินของร้าน (รวมการจองที่มีมัดจำ) — บังคับเมื่อลูกค้าจองเอง ·
+        // พนักงานจองแทน = ไม่บังคับ · ด่านเดียว PurchasePolicyAcceptance (ไม่ผ่าน = ยังไม่บันทึกอะไร) · หลักฐานบันทึกพร้อมการจอง
+        var policyRow = await PurchasePolicyAcceptance.EnforceShopAsync(_db, companyId, siteId, PurchasePolicyAcceptance.ChannelSiteBooking,
+            request.PolicyAccepted, request.PolicyVersionShown, exempt: staffOnBehalf || await IsCompanyStaffAsync(companyId, userId),
+            request.GuestEmail, request.GuestPhone, sourceId: null);
 
         var start = BookingSlotEngine.ParseTime(request.StartTime)
             ?? throw new BusinessRuleException("กรุณาเลือกเวลาจากรายการเวลาว่าง", "CMS-BOOKING-INVALID");
@@ -1059,6 +1064,7 @@ public partial class CmsBookingService : ICmsBookingService
                 booking.PaymentHoldUntil = seatPay.PaymentHoldUntil;
             }
             _db.SiteBookings.Add(booking);
+            if (policyRow != null) policyRow.SourceId = booking.Id;
             // รอบ 217 (ข้อ 175 ง): แจ้งเตือน "การจองใหม่" เข้าคิวในธุรกรรมเดียวกับการจอง ⇒ ตอบแขกทันที (ไม่รอ SMTP/LINE) · ส่งตามหลังโดย DeferredNotifyDispatcher
             _db.DeferredNotifications.Add(DeferredNotifyPolicy.New(companyId, siteId, DeferredNotifyPolicy.BookingCreated, booking.Id, DateTime.UtcNow));
             await _db.SaveChangesAsync();

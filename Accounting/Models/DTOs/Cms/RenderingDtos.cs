@@ -109,6 +109,12 @@ public class StorefrontSiteInfo
     /// (footer · ช่องยินยอม · สมัครสมาชิก · แบนเนอร์คุกกี้) จากสองช่องนี้เท่านั้น</summary>
     public StorefrontLegalLink PrivacyLink { get; set; } = new();
     public StorefrontLegalLink TermsLink { get; set; } = new();
+    /// <summary>รอบ 219 ส่วน B: นโยบายการยกเลิกและคืนเงินของร้าน (ตัวตัดสินเดียวกัน)</summary>
+    public StorefrontLegalLink RefundLink { get; set; } = new();
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): ช่องติ๊ก "ยอมรับข้อกำหนด + นโยบายคืนเงิน" บนเช็กเอาต์/จอง — บังคับเสมอ (ด่านจริงที่เซิร์ฟเวอร์
+    /// <c>Helpers/PurchasePolicyAcceptance</c>) · หน้าเว็บส่ง <c>PolicyVersion</c> กลับมาเป็น <c>policyVersionShown</c></summary>
+    public string PolicyAcceptanceText { get; set; } = "";
+    public string PolicyVersion { get; set; } = "";
     /// <summary>บังคับติ๊กยินยอมบนฟอร์ม (ไม่ติ๊ก = เซิร์ฟเวอร์ปฏิเสธ)</summary>
     public bool RequireDataConsent { get; set; }
     /// <summary>ข้อความยินยอมที่แสดง (resolve แล้ว — ข้อความร้าน หรือข้อความมาตรฐาน)</summary>

@@ -255,6 +255,39 @@
           <div id="lgWarn_terms" style="font-size:12px;color:#92400e"></div>
           <div id="lgPreview_terms" class="lg-preview" style="display:none;max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;line-height:1.8"></div>
         </div>
+        <div class="lg-box" style="border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-weight:600;margin-bottom:6px">↩️ นโยบายการยกเลิกและคืนเงิน</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_refund" value="default" onchange="Page.legalModeChanged('refund')"> ใช้แม่แบบของระบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_refund" value="custom" onchange="Page.legalModeChanged('refund')"> เขียนเอง / ปรับแม่แบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_refund" value="external" onchange="Page.legalModeChanged('refund')"> ใช้ลิงก์ของร้านเอง</label>
+          </div>
+          <div id="lgUrlWrap_refund" style="display:none;margin-bottom:8px"><input type="text" class="form-input" id="lgUrl_refund" maxlength="500" oninput="Page.legalModeChanged('refund', true)" placeholder="https://... หรือ /หน้าที่ร้านทำไว้"></div>
+          <div id="lgMdWrap_refund" style="display:none;margin-bottom:8px">
+            <textarea class="form-input" id="lgMd_refund" rows="12" spellcheck="false" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></textarea>
+            <div style="font-size:11px;color:var(--gray-500);margin-top:4px">## หัวข้อ · - รายการ · **ตัวหนา** · [ข้อความ](https://...) · ตาราง | ก | ข | · โทเคน เช่น {{company.name}} {{company.address}} {{company.taxId}} {{company.email}} {{company.phone}} · เฉพาะนโยบายคืนเงิน: {{shop.depositForfeit}} {{shop.returnWindowDays}} {{shop.refundProcessingDays}} (ตัวเลขจากค่าตั้งด้านล่าง — ไม่ต้องพิมพ์เอง) · ไม่รับ HTML</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;background:var(--gray-50);border-radius:8px;padding:8px 10px">
+            <span>🔗 URL ที่ลูกค้าเห็น:</span><code id="lgPub_refund" style="flex:1;min-width:200px;word-break:break-all">-</code>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalCopy('refund')">คัดลอก</button>
+            <a class="btn btn-secondary btn-sm" id="lgOpen_refund" href="#" target="_blank" rel="noopener">เปิด</a>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalPreview('refund')">ดูตัวอย่าง</button>
+          </div>
+          <div id="lgWarn_refund" style="font-size:12px;color:#92400e"></div>
+          <div id="lgPreview_refund" class="lg-preview" style="display:none;max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;line-height:1.8"></div>
+        </div>
+        <!-- รอบ 219 ส่วน B (คำตัดสินข้อ 179): ค่าตั้งที่แม่แบบนโยบายคืนเงินอ่าน + ข้อความช่องติ๊กยอมรับนโยบายบนเช็กเอาต์/จอง (บังคับเสมอ) -->
+        <div class="lg-box" style="border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-weight:600;margin-bottom:6px">⚙️ ค่าตั้งนโยบายคืนเงิน และช่องติ๊กยอมรับนโยบาย</div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;font-size:13px">
+            <label>แจ้งคืนสินค้าได้ภายใน (วัน)<input type="number" min="0" max="365" class="form-input" id="lgReturnDays" placeholder="7" style="width:110px"></label>
+            <label>คืนเงินภายใน (วันหลังอนุมัติ)<input type="number" min="0" max="365" class="form-input" id="lgRefundDays" placeholder="14" style="width:110px"></label>
+          </div>
+          <div style="font-size:11px;color:var(--gray-500);margin:4px 0 8px">เว้นว่าง/0 = ค่าเริ่มต้น · การริบมัดจำเมื่อยกเลิกตั้งที่ "การชำระเงิน" ของร้าน (แม่แบบอ่านค่านั้นเอง)</div>
+          <label style="font-size:13px;display:block">ข้อความช่องติ๊ก "ยอมรับนโยบาย" บนหน้าสั่งซื้อ/จอง (เว้นว่าง = ข้อความมาตรฐาน)
+            <input type="text" class="form-input" id="lgAcceptText" maxlength="500" placeholder="ข้าพเจ้าได้อ่านและยอมรับข้อกำหนดการใช้บริการ และนโยบายการยกเลิกและคืนเงินของร้าน"></label>
+          <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ลูกค้าต้องติ๊กช่องนี้ทุกครั้งก่อนยืนยันคำสั่งซื้อ/การจอง (ระบบเก็บฉบับที่ลูกค้ายอมรับไว้เป็นหลักฐาน) — พนักงานบันทึกแทนลูกค้าไม่ต้องติ๊ก</div>
+        </div>
         <div style="margin-top:16px">
           <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO, Analytics &amp; CAPTCHA</button>
         </div>
@@ -2191,11 +2224,14 @@
       },
 
       // ════ รอบ 214 (คำตัดสินข้อ 173 B): นโยบาย/ข้อกำหนดของร้าน ════
-      _legalKinds: ['privacy', 'terms'],
+      _legalKinds: ['privacy', 'terms', 'refund'],
       _legalField(kind) {
-        return kind === 'terms'
-          ? { url: 'termsOfServiceUrl', md: 'termsOfServiceMarkdown', mode: 'termsLegalMode' }
-          : { url: 'privacyPolicyUrl', md: 'privacyPolicyMarkdown', mode: 'privacyLegalMode' };
+        // รอบ 219 ส่วน B: + นโยบายการยกเลิกและคืนเงิน (ชื่อช่องตรงกับ SiteResponse/UpdateSiteRequest)
+        return ({
+          terms: { url: 'termsOfServiceUrl', md: 'termsOfServiceMarkdown', mode: 'termsLegalMode' },
+          privacy: { url: 'privacyPolicyUrl', md: 'privacyPolicyMarkdown', mode: 'privacyLegalMode' },
+          refund: { url: 'refundPolicyUrl', md: 'refundPolicyMarkdown', mode: 'refundLegalMode' },
+        })[kind];
       },
       _legalMode(kind) {
         const el = document.querySelector(`input[name="lgMode_${kind}"]:checked`);
@@ -2222,6 +2258,10 @@
           document.getElementById('lgWarn_' + kind).textContent = '';
           this.legalModeChanged(kind, true);
         }
+        // รอบ 219 ส่วน B: ค่าตั้งนโยบายคืนเงิน + ข้อความช่องติ๊ก (echo จาก SiteResponse · ฟอร์มใหม่ไม่ค้างค่าเว็บก่อน)
+        document.getElementById('lgReturnDays').value = this.site.refundReturnWindowDays ?? '';
+        document.getElementById('lgRefundDays').value = this.site.refundProcessingDays ?? '';
+        document.getElementById('lgAcceptText').value = this.site.policyAcceptanceText || '';
       },
       async legalModeChanged(kind, fromHydrate) {
         const mode = this._legalMode(kind);
@@ -2256,6 +2296,10 @@
           // ลิงก์ของร้าน: เก็บข้อความที่เขียนไว้ต่อ (สลับกลับมาไม่หาย) · แม่แบบ: ล้างข้อความ
           out[f.md] = mode === 'default' ? '' : md;
         }
+        // ว่าง = 0 (กลับค่าเริ่มต้น) · "" = ล้างข้อความ (ข้อความมาตรฐาน)
+        out.refundReturnWindowDays = Number(document.getElementById('lgReturnDays').value || 0);
+        out.refundProcessingDays = Number(document.getElementById('lgRefundDays').value || 0);
+        out.policyAcceptanceText = document.getElementById('lgAcceptText').value.trim();
         return out;
       },
       async legalCopy(kind) {

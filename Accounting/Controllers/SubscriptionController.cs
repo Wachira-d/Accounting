@@ -158,12 +158,35 @@ public class SubscriptionController : ControllerBase
     /// </summary>
     [HttpPost("{companyId:guid}/convert")]
     /// <remarks>รอบ 219 เฟส 0 (G-0): ไม่เปิดแพ็กเกจทันทีอีกต่อไป — คืนรายการชำระที่ต้องโอน (หรือการเปลี่ยนที่รอมีผล) + ข้อความให้หน้าเว็บแสดงตรง ๆ</remarks>
-    public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ConvertTrial(Guid companyId, [FromBody] ConvertTrialRequest request)
+    public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ConvertTrial(Guid companyId, [FromBody] ConvertTrialRequest request,
+        [FromServices] ILegalDocumentService legal)
     {
         if (await RequireOwnerAsync(companyId, "อัปเกรดแพ็กเกจ") is { } deny) return deny;
+        // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงินก่อนสร้างรายการชำระ — ตรวจก่อน (ไม่ผ่าน = ไม่สร้างอะไร) แล้วบันทึกหลักฐานผูกรายการชำระ
+        if (await PolicyProblemAsync(legal, request.PolicyAccepted, request.PolicyVersionShown) is { } policyDeny) return policyDeny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ConvertTrialAsync(companyId, request, userId);
+        await RecordPlanAcceptanceAsync(legal, companyId, result, request.PolicyVersionShown);
         return Ok(new ApiResponse<PlanPurchaseResponse>(true, result, result.Message));
+    }
+
+    /// <summary>รอบ 219 ส่วน B: ด่านติ๊กยอมรับนโยบายของ endpoint ขอแพ็กเกจ (pure check ก่อนสร้างรายการ) — null = ผ่าน</summary>
+    private async Task<ActionResult?> PolicyProblemAsync(ILegalDocumentService legal, bool accepted, string? versionShown)
+    {
+        var current = await legal.GetPurchasePolicyVersionAsync();
+        return PurchasePolicyAcceptance.Problem(false, accepted, versionShown, current.Version) is string problem
+            ? BadRequest(new ApiResponse<PlanPurchaseResponse>(false, null!, problem))
+            : null;
+    }
+
+    /// <summary>บันทึกหลักฐานการยอมรับผูกกับรายการชำระที่เพิ่งสร้าง (ไม่มีรายการชำระ เช่น ดาวน์เกรดรอครบรอบ ⇒ ไม่มีอะไรให้ผูก)</summary>
+    private async Task RecordPlanAcceptanceAsync(ILegalDocumentService legal, Guid companyId, PlanPurchaseResponse result, string? versionShown)
+    {
+        if (result.Payment == null) return;
+        await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+            PurchasePolicyAcceptance.ChannelPlatformSubscription, result.Payment.Id, accepted: true, versionShown,
+            HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());
+        await _db.SaveChangesAsync();
     }
 
     /// <summary>
@@ -171,11 +194,14 @@ public class SubscriptionController : ControllerBase
     /// </summary>
     [HttpPut("{companyId:guid}/plan")]
     /// <remarks>รอบ 219 เฟส 0 (G-0): อัปเกรด = รายการชำระรอเงินเข้า · ดาวน์เกรด/เปลี่ยนรอบ = มีผลวันครบรอบ</remarks>
-    public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ChangePlan(Guid companyId, [FromBody] ChangeSubscriptionRequest request)
+    public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ChangePlan(Guid companyId, [FromBody] ChangeSubscriptionRequest request,
+        [FromServices] ILegalDocumentService legal)
     {
         if (await RequireOwnerAsync(companyId, "เปลี่ยนแพ็กเกจ") is { } deny) return deny;
+        if (await PolicyProblemAsync(legal, request.PolicyAccepted, request.PolicyVersionShown) is { } policyDeny) return policyDeny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ChangeSubscriptionAsync(companyId, request, userId);
+        await RecordPlanAcceptanceAsync(legal, companyId, result, request.PolicyVersionShown);
         return Ok(new ApiResponse<PlanPurchaseResponse>(true, result, result.Message));
     }
 
@@ -187,8 +213,19 @@ public class SubscriptionController : ControllerBase
     {
         if (await RequireOwnerAsync(companyId, "ยกเลิก subscription") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        await _subscriptionService.CancelSubscriptionAsync(companyId, userId);
-        return Ok(new ApiResponse<string>(true, null, "ยกเลิก subscription สำเร็จ"));
+        // รอบ 219 ส่วน B: ข้อความจากตัวตัดสิน (มีผลสิ้นรอบ/ทันที) — หน้าเว็บแสดงตรง ๆ
+        var message = await _subscriptionService.CancelSubscriptionAsync(companyId, userId);
+        return Ok(new ApiResponse<string>(true, null, message));
+    }
+
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): กลับมาใช้ต่อก่อนสิ้นรอบ (ยกเลิกการยกเลิก) — เจ้าของเท่านั้น</summary>
+    [HttpPost("{companyId:guid}/cancel/undo")]
+    public async Task<ActionResult<ApiResponse<string>>> UndoCancel(Guid companyId)
+    {
+        if (await RequireOwnerAsync(companyId, "กลับมาใช้แพ็กเกจต่อ") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var message = await _subscriptionService.ResumeSubscriptionAsync(companyId, userId);
+        return Ok(new ApiResponse<string>(true, null, message));
     }
 
     // ===== Plan Templates (Public) =====
@@ -256,9 +293,18 @@ public class SubscriptionController : ControllerBase
     /// </summary>
     [HttpPost("payments/{paymentId:guid}/slip")]
     [RequestSizeLimit(10 * 1024 * 1024)] // 10MB max
-    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> UploadSlip(Guid paymentId, IFormFile file)
+    public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> UploadSlip(Guid paymentId, IFormFile file,
+        [FromServices] ILegalDocumentService legal,
+        [FromForm] bool policyAccepted = false, [FromForm] string? policyVersionShown = null)
     {
         var deny = await DenyForeignPaymentAsync(paymentId); if (deny != null) return deny;
+        // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ส่งสลิปค่าแพ็กเกจ = ชำระ ⇒ ต้องยอมรับข้อกำหนด + นโยบายคืนเงิน (ติ๊กไว้แล้วตอนขอแพ็กเกจ = ผ่าน)
+        var payerId = await _db.SubscriptionPayments.AsNoTracking().Where(p => p.Id == paymentId)
+            .Select(p => (Guid?)p.Subscription.CompanyId).FirstOrDefaultAsync();
+        if (payerId is Guid payer)
+            await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, payer, JwtHelper.GetUserIdFromClaims(User),
+                PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentId, policyAccepted, policyVersionShown,
+                HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, "กรุณาอัพโหลดไฟล์สลิป"));
 

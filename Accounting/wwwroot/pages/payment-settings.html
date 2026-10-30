@@ -53,6 +53,8 @@
 
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
+  <!-- รอบ 219 ส่วน B: หน้าจ่ายกลางสำหรับ "ทดลองจ่าย ฿20" (โหมดทดสอบ) -->
+  <script src="/js/pay-widget.js"></script>
   <script>
     // หน้าตั้งค่าการรับชำระเงิน (PAYMENT_GATEWAY_DESIGN.md §4.4)
     //
@@ -128,8 +130,12 @@
             <li class="${c ? 'done' : ''}">กรอกคีย์ <b>โหมดทดสอบ</b> จากแดชบอร์ดของผู้ให้บริการ แล้วกดบันทึก</li>
             <li class="${gotWebhook ? 'done' : ''}">นำ <b>URL แจ้งเตือน</b> ด้านล่างไปตั้งในแดชบอร์ดของผู้ให้บริการ</li>
             <li class="${testedOk ? 'done' : ''}">กด <b>ทดสอบเชื่อมต่อ</b> — ต้องผ่านทั้งคีย์และการแจ้งเตือน</li>
-            <li class="${isLive ? 'done' : ''}">กรอกคีย์ <b>ใช้งานจริง</b> แล้วกดเปิดใช้จริง</li>
+            <li class="${isLive ? 'done' : ''}">กรอกคีย์ <b>ใช้งานจริง</b> แล้วกดทดสอบอีกครั้ง (ตรวจคีย์ live) จากนั้นกดเปิดใช้จริง</li>
           </ol>
+          ${!isLive && (c?.liveGateMissing || []).length ? `<div class="hint" style="margin-bottom:10px">ยังเปิดรับเงินจริงไม่ได้:<br>${c.liveGateMissing.map(m => '• ' + Layout.esc(m)).join('<br>')}</div>` : ''}
+          ${c?.liveKeyVerifiedAt ? `<div class="hint" style="margin-bottom:6px">✅ คีย์ใช้งานจริงตรวจผ่านเมื่อ ${new Date(c.liveKeyVerifiedAt).toLocaleString('th-TH')}</div>` : ''}
+          ${c?.lastSelfTestPaidAt ? `<div class="hint" style="margin-bottom:6px">✅ ทดลองจ่ายสำเร็จล่าสุด ${new Date(c.lastSelfTestPaidAt).toLocaleString('th-TH')}</div>` : ''}
+          ${isLive && !c?.lastLiveWebhookAt ? `<div class="hint" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:8px 10px;color:#92400e;margin-bottom:10px">⚠️ ยังไม่เคยได้รับการแจ้งเตือน (webhook) ในโหมดใช้งานจริง — ตรวจว่าตั้ง URL แจ้งเตือนในแดชบอร์ดฝั่งโหมดจริงแล้ว</div>` : ''}
 
           <div class="kv">
             <b>ชื่อที่แสดง</b>
@@ -200,6 +206,7 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
             <button class="btn btn-primary" onclick="Page.save('${Layout.jsArg(p.code)}')">บันทึก</button>
             <button class="btn btn-secondary" onclick="Page.test('${Layout.jsArg(p.code)}')">ทดสอบเชื่อมต่อ</button>
+            ${c && !isLive ? `<button class="btn btn-secondary" onclick="Page.selfTest('${Layout.jsArg(p.code)}')" title="สร้าง QR ทดสอบ ฿20 ในโหมดทดสอบ — เงินไม่เข้าจริง ไม่ลงบัญชี">🧪 ทดลองจ่าย ฿20</button>` : ''}
             ${isLive
               ? `<button class="btn btn-ghost" onclick="Page.setMode('${Layout.jsArg(p.code)}','Test')">กลับสู่โหมดทดสอบ</button>`
               : `<button class="btn ${c?.canEnableLive ? 'btn-success' : 'btn-ghost'}"
@@ -271,6 +278,22 @@
         } catch (e) {
           if (box) box.innerHTML = '❌ ' + Layout.esc(e.message);
         }
+      },
+
+      // รอบ 219 ส่วน B: ทดลองจ่าย ฿20 โหมดทดสอบ (เซิร์ฟเวอร์ปฏิเสธถ้าอยู่โหมดจริง) — จ่ายด้วยแอปทดสอบของผู้ให้บริการแล้วกด "ทดสอบเชื่อมต่อ" อีกครั้ง
+      async selfTest(code) {
+        try {
+          const res = await API.post(`/api/companies/${Layout.getCompanyId()}/payment-settings/${encodeURIComponent(code)}/self-test`,
+            { returnUrl: location.href });
+          const i = res?.data;
+          if (!i) throw new Error('เริ่มทดลองจ่ายไม่สำเร็จ');
+          if (i.authorizeUrl) { location.href = i.authorizeUrl; return; }
+          PayWidget._opts = { companyId: Layout.getCompanyId(), onPaid: () => { Layout.toast('ทดลองจ่ายสำเร็จ — กด "ทดสอบเชื่อมต่อ" อีกครั้งเพื่อยืนยันการแจ้งเตือน', 'success'); this.load(); } };
+          PayWidget._intentId = i.id;
+          PayWidget._mount(); PayWidget._stopped = false;
+          PayWidget._renderPending(i);
+          PayWidget._poll(0, Date.now());
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async rotateToken(code) {

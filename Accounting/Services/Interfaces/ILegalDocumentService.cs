@@ -8,6 +8,10 @@ public sealed record LegalDocumentView(
 /// <summary>เวอร์ชันของสองเอกสาร + เวอร์ชันความยินยอมรวม (<c>LegalDocumentPolicy.ConsentVersion</c>)</summary>
 public sealed record LegalConsentVersion(string PrivacyVersion, string TermsVersion, string ConsentVersion);
 
+/// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): ฉบับของ "ข้อกำหนด + นโยบายการยกเลิกและคืนเงิน" ที่ผู้ซื้อยอมรับก่อนชำระค่าบริการ NextAcc ·
+/// <c>RefundPublished</c> = แอดมินเผยแพร่ฉบับของตัวเองแล้ว (ไม่ใช่ฉบับตั้งต้นในโค้ด — ด่านเปิดรับเงินจริงของแพลตฟอร์มต้องการค่านี้)</summary>
+public sealed record LegalPurchasePolicyVersion(string TermsVersion, string RefundVersion, string Version, bool RefundPublished);
+
 public sealed record LegalHistoryItem(
     string Version, DateOnly EffectiveDate, DateTime? PublishedAt, string? PublishedBy, string? ChangeSummary,
     bool IsCurrent, bool IsUpcoming, bool IsBuiltIn);
@@ -35,6 +39,9 @@ public interface ILegalDocumentService
 
     /// <summary>เวอร์ชันความยินยอมปัจจุบัน — ผู้เรียก: AuthService (บันทึก PdpaConsentRecord) · LegalController (หน้าเว็บ + แถบแจ้ง)</summary>
     Task<LegalConsentVersion> GetConsentVersionAsync(CancellationToken ct = default);
+
+    /// <summary>รอบ 219 ส่วน B: ฉบับเงื่อนไขการซื้อ (ข้อกำหนด + นโยบายคืนเงิน) — ตัวเดียวของหน้าชำระเงินแพลตฟอร์มและด่าน <c>PurchasePolicyAcceptance</c></summary>
+    Task<LegalPurchasePolicyVersion> GetPurchasePolicyVersionAsync(CancellationToken ct = default);
 
     /// <summary>แปลง markdown + แทนโทเคนผู้ควบคุมข้อมูลจาก SiteSettings (ตัวตั้งเดียวกับ /api/legal/policy)</summary>
     Task<string> RenderPlatformAsync(string markdown, CancellationToken ct = default);
