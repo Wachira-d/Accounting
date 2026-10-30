@@ -17,9 +17,30 @@ public static class BookingProviderAllocation
     public static bool Enabled(bool? setting, bool hasActiveResources, bool anyServiceUsesResources)
         => setting ?? (hasActiveResources || anyServiceUsesResources);
 
-    /// <summary>โหมดผู้ให้บริการที่ engine ใช้จริง — ไซต์ปิด ⇒ None (ค่ารายบริการยังเก็บไว้)</summary>
-    public static BookingResourceMode EffectiveMode(BookingResourceMode serviceMode, bool siteEnabled)
-        => siteEnabled ? serviceMode : BookingResourceMode.None;
+    /// <summary>โหมดผู้ให้บริการที่ engine ใช้จริง — <b>ตัวตัดสินเดียว</b> (รอบ 215 เฟส 2 · คำตัดสินข้อ 176):
+    /// ไซต์ปิดจัดสรร ⇒ None (ค่ารายบริการยังเก็บไว้) · บริการ <c>null</c> = "ตามค่าเว็บ" ⇒ <paramref name="siteDefault"/>
+    /// (<c>SiteBookingSettings.DefaultResourceMode</c> — ไม่ตั้ง = None = พฤติกรรมเดิม) · บริการตั้งเอง ⇒ ค่าของบริการ
+    /// (บริการเดิมทุกแถวมีค่าตั้งเอง — migration ไม่แปลงเป็น null ⇒ ไม่มีบริการเดิมใดเปลี่ยนพฤติกรรม)</summary>
+    public static BookingResourceMode EffectiveMode(BookingResourceMode? serviceMode, bool siteEnabled, BookingResourceMode siteDefault = BookingResourceMode.None)
+        => siteEnabled ? (serviceMode ?? siteDefault) : BookingResourceMode.None;
+
+    /// <summary>ที่มาของโหมดบริการ: "site" = ตามค่าเว็บ (บริการไม่ตั้ง) · "service" = กำหนดเอง — ป้ายบนรายการบริการ/ฟอร์ม</summary>
+    public static string ModeSource(BookingResourceMode? serviceMode) => serviceMode == null ? "site" : "service";
+
+    /// <summary>ค่าเริ่มต้นของ<b>เว็บใหม่</b> (คำตัดสินข้อ 176 ข): ลูกค้าเลือกเอง (ไม่เลือก = ระบบจัดให้) · คลินิก/บริการวิชาชีพ/ที่ปรึกษา ⇒ ระบบจัดให้ ·
+    /// เว็บเดิมไม่ถูกตั้งย้อนหลัง (ไม่มีแถว/ค่า null = None = พฤติกรรมเดิม)</summary>
+    public static BookingResourceMode NewSiteDefaultMode(IndustryType industry)
+        => industry is IndustryType.Healthcare or IndustryType.Service or IndustryType.Freelance
+            ? BookingResourceMode.Auto : BookingResourceMode.CustomerChoice;
+
+    /// <summary>ลูกค้าเห็นอะไรบนหน้าจอง ตามโหมดที่มีผลจริง (ตัวอย่างบนหน้าตั้งค่า — หน้าแค่แสดง)</summary>
+    public static (bool ShowPicker, bool Required, string Text) CustomerPreview(BookingResourceMode effective) => effective switch
+    {
+        BookingResourceMode.Required => (true, true, "ลูกค้าต้องเลือกผู้ให้บริการก่อนยืนยันการจอง"),
+        BookingResourceMode.CustomerChoice => (true, false, "ลูกค้าเลือกผู้ให้บริการได้ — ไม่เลือก ระบบจัดให้"),
+        BookingResourceMode.Auto => (false, false, "ลูกค้าไม่เห็นช่องเลือกผู้ให้บริการ — ระบบจัดให้อัตโนมัติ"),
+        _ => (false, false, "ไม่มีเรื่องผู้ให้บริการบนหน้าจอง (นับความจุของบริการอย่างเดียว)"),
+    };
 
     /// <summary>ตอน "เริ่มให้บริการ" ต้องเลือกผู้ให้บริการไหม — ไซต์เปิด + มีผู้ให้บริการที่รับบริการนี้ได้อย่างน้อย 1 คน
     /// (ไม่มีใครรับบริการนี้ = เริ่มได้โดยไม่ระบุ + คำเตือนให้ไปผูกบริการ)</summary>
