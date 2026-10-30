@@ -17,7 +17,7 @@ public partial class StorefrontCustomerService
         if (!GuestRecordLookup.IsValidRequest(bookingNumber, contact)) return null;
         var n = GuestRecordLookup.NormalizeNumber(bookingNumber)!;
         var rows = await _db.SiteBookings.AsNoTracking()
-            .Where(b => b.CompanyId == companyId && b.SiteId == siteId && b.BookingNumber.ToUpper() == n)
+            .Where(b => b.CompanyId == companyId && b.SiteId == siteId && b.BookingNumber == n   /* เลขที่สร้างเป็นตัวใหญ่เสมอ ⇒ ใช้ดัชนีได้ (เดิม ToUpper สแกนทั้งเว็บ) */)
             .Take(LookupCandidateCap)
             .Select(b => new
             {
@@ -37,7 +37,7 @@ public partial class StorefrontCustomerService
         if (!GuestRecordLookup.IsValidRequest(orderNumber, contact)) return null;
         var n = GuestRecordLookup.NormalizeNumber(orderNumber)!;
         var rows = await _db.SiteOrders.AsNoTracking()
-            .Where(o => o.CompanyId == companyId && o.SiteId == siteId && o.OrderNumber.ToUpper() == n)
+            .Where(o => o.CompanyId == companyId && o.SiteId == siteId && o.OrderNumber == n   /* prefix ผ่าน NormalizeOrderPrefix (ตัวใหญ่) */)
             .Take(LookupCandidateCap)
             .Select(o => new
             {

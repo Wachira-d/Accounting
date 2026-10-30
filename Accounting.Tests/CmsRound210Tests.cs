@@ -213,4 +213,29 @@ public class CmsRound210Tests
         Assert.Contains("14:30", n.Text);
         Assert.Contains("BK-1", n.Subject);
     }
+
+    // ═════════ ฝ่ายค้านรอบ 210: ถังต่อผู้ติดต่อ + IPv6 /64 ═════════
+
+    [Fact]
+    public void Contact_bucket_is_same_for_any_format_of_the_same_contact()
+    {
+        Assert.Equal(GuestRecordLookup.ContactBucket("081-234-5678"), GuestRecordLookup.ContactBucket("0812345678"));
+        Assert.Equal(GuestRecordLookup.ContactBucket(" A@X.com "), GuestRecordLookup.ContactBucket("a@x.com"));
+        Assert.NotEqual(GuestRecordLookup.ContactBucket("0812345678"), GuestRecordLookup.ContactBucket("0812345679"));
+        Assert.Null(GuestRecordLookup.ContactBucket("hello"));
+        Assert.Equal(16, GuestRecordLookup.ContactBucket("a@x.com")!.Length);   // พอดี BucketKey varchar(120)
+    }
+
+    [Fact]
+    public void Ip_bucket_groups_ipv6_by_64_and_keeps_ipv4()
+    {
+        var a = GuestRecordLookup.IpBucket(System.Net.IPAddress.Parse("2001:db8:1:2::1"));
+        var b = GuestRecordLookup.IpBucket(System.Net.IPAddress.Parse("2001:db8:1:2:ffff::9"));
+        var other = GuestRecordLookup.IpBucket(System.Net.IPAddress.Parse("2001:db8:1:3::1"));
+        Assert.Equal(a, b);
+        Assert.NotEqual(a, other);
+        Assert.Equal("203.0.113.5", GuestRecordLookup.IpBucket(System.Net.IPAddress.Parse("203.0.113.5")));
+        Assert.Equal("203.0.113.5", GuestRecordLookup.IpBucket(System.Net.IPAddress.Parse("::ffff:203.0.113.5")));
+        Assert.Equal("unknown", GuestRecordLookup.IpBucket(null));
+    }
 }

@@ -5699,4 +5699,6 @@ cms-edit ค่าเว็บ + ช่องต่อบริการ · ฝ�
 โควตาต่อ IP + ต่อเลขที่ (`IChatRateLimiter` · คีย์เลขที่เป็นแฮชเพราะ `BucketKey` varchar(120) — คีย์ยาวเกินจะ insert ล้มแล้ว limiter fail-open เงียบ) · หน้าร้าน `check`;
 (3) ลิงก์ my-booking/track-order ในข้อความถึงลูกค้าทุกฉบับของ `ICmsShopNotifier` (+ ข้อความเลื่อนนัดใหม่) ผ่าน `Helpers/CmsStorefrontLink` ตัวเดียว · ไม่มีฐาน ⇒ เลขที่ + หน้าตรวจสอบ ·
 เทสต์ `CmsRound210Tests` (TEST_PLAN CMS210-01..12) · `required_call_site_check` +16 กติกา · `write_permission_gate_check` ประกาศ lookup เป็น POST อ่านอย่างเดียว ·
-ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 24555e9d_
+
+_รอบ 210 — ฝ่ายค้าน (ค้นการจอง/ออเดอร์ของแขก): ไม่มี blocking · แก้ข้อ 1 ทิศกลับ (รู้เบอร์/อีเมลเหยื่อแล้วไล่เลขที่ตามลำดับ) ⇒ ถังต่อผู้ติดต่อ `GuestRecordLookup.ContactBucket` (5/นาที · 20/วัน) · IPv6 รวม /64 (`IpBucket`) · ข้อ 3 `IChatRateLimiter.TryConsumeAsync(failClosed: true)` ⇒ ตารางนับพัง = 429 + log Error (แชตยัง fail-open เดิม) · ข้อ 4 เทียบเลขที่ตรงตัว (ใช้ดัชนี) · ข้อ 2 (ใครก็กินโควตาต่อเลขที่ได้ 20/วัน) ยอมรับ — ลิงก์ในอีเมล/LINE ยังใช้ได้ · **ต้องตรวจตอน deploy**: จำนวน proxy hop จริง (`Program.cs` ForwardLimit=2 · KnownProxies ว่าง ⇒ ถ้ามี proxy ชั้นเดียว ลูกค้าปลอม X-Forwarded-For ได้ — ถังต่อผู้ติดต่อ/ต่อเลขที่ยังกันอยู่) · เทสต์ Contact_bucket_* · Ip_bucket_* · ยังไม่ได้คอมไพล์ในเครื่องนี้_

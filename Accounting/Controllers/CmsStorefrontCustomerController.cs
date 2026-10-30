@@ -63,7 +63,7 @@ public class CmsStorefrontCustomerController : ControllerBase
     public async Task<ActionResult<ApiResponse<GuestLookupResponse>>> LookupBooking(
         Guid companyId, Guid siteId, [FromBody] GuestBookingLookupRequest? request, [FromServices] IChatRateLimiter limiter)
     {
-        if (await LookupThrottledAsync(limiter, siteId, "booking", request?.BookingNumber) is ActionResult limited) return limited;
+        if (await LookupThrottledAsync(limiter, siteId, "booking", request?.BookingNumber, request?.Contact) is ActionResult limited) return limited;
         if (!GuestRecordLookup.IsValidRequest(request?.BookingNumber, request?.Contact))
             return BadRequest(new ApiResponse<GuestLookupResponse>(false, null, GuestRecordLookup.InputMessage));
         var token = await _svc.LookupBookingTokenAsync(companyId, siteId, request!.BookingNumber, request.Contact);
@@ -75,7 +75,7 @@ public class CmsStorefrontCustomerController : ControllerBase
     public async Task<ActionResult<ApiResponse<GuestLookupResponse>>> LookupOrder(
         Guid companyId, Guid siteId, [FromBody] GuestOrderLookupRequest? request, [FromServices] IChatRateLimiter limiter)
     {
-        if (await LookupThrottledAsync(limiter, siteId, "order", request?.OrderNumber) is ActionResult limited) return limited;
+        if (await LookupThrottledAsync(limiter, siteId, "order", request?.OrderNumber, request?.Contact) is ActionResult limited) return limited;
         if (!GuestRecordLookup.IsValidRequest(request?.OrderNumber, request?.Contact))
             return BadRequest(new ApiResponse<GuestLookupResponse>(false, null, GuestRecordLookup.InputMessage));
         var token = await _svc.LookupOrderTokenAsync(companyId, siteId, request!.OrderNumber, request.Contact);
@@ -83,14 +83,18 @@ public class CmsStorefrontCustomerController : ControllerBase
         return Ok(new ApiResponse<GuestLookupResponse>(true, new GuestLookupResponse(token, "order")));
     }
 
-    /// <summary>นับโควตาก่อนค้น: ต่อ IP ของเว็บนี้ (10/นาที · 100/วัน) แล้วต่อเลขที่ (5/นาที · 20/วัน — กันเดาเบอร์ของเลขเดียวจากหลาย IP) · เกิน ⇒ 429</summary>
-    private async Task<ActionResult?> LookupThrottledAsync(IChatRateLimiter limiter, Guid siteId, string kind, string? number)
+    /// <summary>นับโควตาก่อนค้น (fail-closed ทั้งหมด): ต่อ IP ของเว็บนี้ (IPv6 รวม /64 · 10/นาที · 100/วัน) · ต่อเลขที่ (5/นาที · 20/วัน — กันเดาเบอร์ของเลขเดียวจากหลาย IP) ·
+    /// ต่อผู้ติดต่อ (5/นาที · 20/วัน — ฝ่ายค้านรอบ 210: กันรู้เบอร์/อีเมลเหยื่อแล้วไล่เลขที่ตามลำดับ) · เกิน ⇒ 429</summary>
+    private async Task<ActionResult?> LookupThrottledAsync(IChatRateLimiter limiter, Guid siteId, string kind, string? number, string? contact)
     {
         var tooMany = StatusCode(429, new ApiResponse<GuestLookupResponse>(false, null, GuestRecordLookup.RateLimitedMessage));
-        // คีย์สั้นพอสำหรับ BucketKey varchar(120): siteId แบบ N (32) + IP (≤45) · เลขที่ = แฮช 16 ตัว (GuestRecordLookup.NumberBucket)
-        if (!await limiter.TryConsumeAsync($"cms-lookup:{siteId:N}:{Ip}", perMinute: 10, perDay: 100)) return tooMany;
+        // คีย์สั้นพอสำหรับ BucketKey varchar(120): siteId แบบ N (32) + IP (≤45) · เลขที่/ผู้ติดต่อ = แฮช 16 ตัว
+        var ip = GuestRecordLookup.IpBucket(HttpContext.Connection.RemoteIpAddress);
+        if (!await limiter.TryConsumeAsync($"cms-lookup:{siteId:N}:{ip}", perMinute: 10, perDay: 100, failClosed: true)) return tooMany;
         if (GuestRecordLookup.NumberBucket(GuestRecordLookup.NormalizeNumber(number)) is string n
-            && !await limiter.TryConsumeAsync($"cms-lookup-num:{siteId:N}:{kind}:{n}", perMinute: 5, perDay: 20)) return tooMany;
+            && !await limiter.TryConsumeAsync($"cms-lookup-num:{siteId:N}:{kind}:{n}", perMinute: 5, perDay: 20, failClosed: true)) return tooMany;
+        if (GuestRecordLookup.ContactBucket(contact) is string c
+            && !await limiter.TryConsumeAsync($"cms-lookup-c:{siteId:N}:{c}", perMinute: 5, perDay: 20, failClosed: true)) return tooMany;
         return null;
     }
 

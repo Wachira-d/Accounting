@@ -10104,6 +10104,11 @@ RULES += [
          must=["WithOrderLinkAsync("], why="รอบ 210: ยืนยันคำสั่งซื้อถึงลูกค้ามีลิงก์ติดตาม"),
     dict(file="Services/Implementations/CmsCommerceService.Notify.cs", method="NotifyOrderStatusAsync",
          must=["WithOrderLinkAsync("], why="รอบ 210: จัดส่งแล้ว/พร้อมให้รับ/ส่งมอบแล้ว มีลิงก์ติดตาม"),
+    # ── ฝ่ายค้านรอบ 210: ค้นของแขก ──
+    dict(file="Controllers/CmsStorefrontCustomerController.cs", method="LookupThrottledAsync",
+         must=["GuestRecordLookup.IpBucket(", "GuestRecordLookup.ContactBucket(contact)", "failClosed: true"],
+         forbid=["{Ip}"],
+         why="ฝ่ายค้านรอบ 210 ข้อ 1/3: ถังต่อผู้ติดต่อกันไล่เลขที่ด้วยเบอร์เหยื่อ · IPv6 รวม /64 · ตารางนับพัง ⇒ ปฏิเสธ (ไม่เปิดเงียบ)"),
     dict(file="Services/Payments/GatewaySourceEvidence.cs", method="RecordedPaymentsAsync",
          must=["db.SiteBookingPayments.AsNoTracking()", "p.CreatedAt"],
          why="รอบ 208 W2 ข้อ 5: หลักฐานรับเงินของการจองลงเวลาที่บันทึก (ไม่ใช่วันที่พนักงานกรอกย้อนหลัง) ⇒ gateway ไม่รับซ้ำ"),

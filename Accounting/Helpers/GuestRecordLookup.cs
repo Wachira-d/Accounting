@@ -28,6 +28,26 @@ public static class GuestRecordLookup
 
     /// <summary>คีย์โควตาต่อเลขที่ (ตาราง <c>ChatRateBuckets.BucketKey</c> varchar(120) — เลขยาว 64 ตัวต่อ GUID แล้วเกิน ⇒ insert ล้ม ⇒ limiter fail-open เงียบ) ·
     /// = SHA-256 ของเลขหลัง normalize 16 ตัวแรก · <paramref name="normalizedNumber"/> null ⇒ null</summary>
+    /// <summary>ฝ่ายค้านรอบ 210 ข้อ 1: ถังต่อ "ผู้ติดต่อ" (เบอร์/อีเมลที่ normalize แล้ว · แฮช 16 ตัว) — กันทิศกลับ: รู้เบอร์เหยื่อแล้วไล่เลขที่ทุกใบ ·
+    /// กรอกไม่ใช่เบอร์/อีเมล ⇒ null (ไม่มีถัง — คำขอนั้นไม่ตรงอะไรอยู่แล้ว)</summary>
+    public static string? ContactBucket(string? contact)
+    {
+        var key = CmsContactResolver.NormalizeEmail(contact) ?? CmsContactResolver.NormalizePhone(contact);
+        if (key == null) return null;
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key));
+        return Convert.ToHexString(hash)[..16].ToLowerInvariant();
+    }
+
+    /// <summary>คีย์ IP ของถังต่อผู้เรียก — IPv6 รวมเป็น /64 (เครื่องเดียวมีที่อยู่ในวงเดียวกันได้มหาศาล) · IPv4 (รวม IPv4-mapped) = ตัวมันเอง</summary>
+    public static string IpBucket(System.Net.IPAddress? ip)
+    {
+        if (ip == null) return "unknown";
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6) return ip.ToString();
+        var b = ip.GetAddressBytes();
+        return Convert.ToHexString(b, 0, 8).ToLowerInvariant() + "::/64";
+    }
+
     public static string? NumberBucket(string? normalizedNumber)
     {
         if (string.IsNullOrEmpty(normalizedNumber)) return null;
