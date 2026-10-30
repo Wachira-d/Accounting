@@ -10852,6 +10852,31 @@ RULES += [
          why=_R213_WHY + "ส่งซ้ำผ่านบริการเดียว (ตัวตัดสิน + lease + audit)"),
 ]
 
+# รอบ 215 (พื้นที่ทำงานเว็บ · ฝ่ายค้าน S1/S3/N2) — รายการเว็บกรองสิทธิ์ · ทางรับ lead ตัวหาเดียว · ชื่อหมวดเมนูจากตัวตัดสินเดียว
+_R215_WHY = "รอบ 215 erp-review/2026-10-30/CMS_UX_REDESIGN.md · คำตัดสินข้อ 176: "
+RULES += [
+    dict(file="Controllers/CmsSiteController.cs", method="GetAll",
+         must=["GetListableSiteIdsAsync(", "IsCompanyOwner()", "pageSize, visible)"],
+         before=[("GetListableSiteIdsAsync(", "GetSitesAsync(")],
+         why=_R215_WHY + "S1: รายการเว็บ (ตัวสลับเว็บ) ต้องกรองตามสิทธิ์รายเว็บ — ห้ามคืนทุกเว็บของบริษัทให้พนักงาน"),
+    dict(file="Services/Implementations/CmsSiteService.cs", method="GetListableSiteIdsAsync",
+         must=["CmsSiteScope.ListableSiteIds(", "s.CompanyId == companyId", "a.CompanyId == companyId"],
+         why=_R215_WHY + "S1: ตัวตัดสินเดียว ListableSiteIds (เจ้าของทุกเว็บ · คนอื่น = มีบทบาท ∪ ที่ตัวเองสร้าง) · tenant"),
+    dict(file="Services/Implementations/CmsSiteService.cs", method="LoadLeadSourceSiteIdsAsync",
+         must=["CmsModuleResolver.LeadBlockTypes.Contains(", "b.CompanyId == companyId", "f.CompanyId == companyId", "l.CompanyId == companyId"],
+         forbid=["CmsBlockType.ContactForm"],
+         why=_R215_WHY + "S3: ทางรับ lead = ชุดบล็อกเดียว LeadBlockTypes (ฟอร์มติดต่อ + สมัครรับข่าว) — ห้ามเขียนชุดเอง"),
+    dict(file="Services/Implementations/CmsSiteService.cs", method="LoadSiteModulesAsync",
+         must=["LoadLeadSourceSiteIdsAsync(", "HasLeadSource: withLeadSource.Contains(x.Id)"],
+         why=_R215_WHY + "lead รายเว็บผ่านตัวหาเดียว"),
+    dict(file="Services/Implementations/SettingsService.cs", method="ComputeCmsModulesAsync",
+         must=["LoadLeadSourceSiteIdsAsync(_db, companyId, sites.Select(s => s.Id).ToList())"],
+         why=_R215_WHY + "N2: lead ระดับบริษัทนับเฉพาะเว็บที่ยังอยู่ ผ่านตัวหาเดียวกับรายเว็บ"),
+    dict(file="Services/Implementations/SettingsService.cs", method="GetSettingsAsync",
+         must=["CmsModuleResolver.NavSectionLabel(cmsModules)"],
+         why=_R215_WHY + "ชื่อหมวดเมนูงานเว็บมาจากตัวตัดสินเดียว (หน้าแค่แสดง)"),
+]
+
 
 def main() -> int:
     errs = []

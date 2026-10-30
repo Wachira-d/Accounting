@@ -470,7 +470,7 @@
         list.innerHTML = this.sites.map(s => {
           const [statusLabel, statusClass] = STATUS_LABEL[s.status] || ['?','draft'];
           const typeLabel = typeLabelOf(s.siteType);
-          const pathUrl = `/site/${s.subdomain}`;
+          const pathUrl = `/site/${encodeURIComponent(s.subdomain || '')}`;   // ฝ่ายค้านรอบ 215 N7
           const displayUrl = `${location.origin}/site/${s.subdomain}`;
           const isPublished = isSitePublished(s.status);
           return `

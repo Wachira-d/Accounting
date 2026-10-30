@@ -82,7 +82,10 @@ public class CmsSiteController : ControllerBase
     public async Task<ActionResult<ApiResponse<PagedResponse<SiteListResponse>>>> GetAll(
         Guid companyId, [FromQuery] string? search = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
     {
-        var result = await _siteService.GetSitesAsync(companyId, search, page, pageSize);
+        // รอบ 215 ฝ่ายค้าน S1: รายการเว็บกรองตามสิทธิ์รายเว็บ (เจ้าของเห็นทุกเว็บ · คนอื่นเห็นเว็บที่มีบทบาท/ที่ตัวเองสร้าง) —
+        // เดิมคืนทุกเว็บของบริษัท ⇒ ตัวสลับเว็บบนหัวพื้นที่ทำงานเผยชื่อเว็บที่ไม่มีสิทธิ์ และพาไปหน้าที่ถูกปฏิเสธ
+        var visible = await _siteService.GetListableSiteIdsAsync(companyId, JwtHelper.GetUserIdFromClaims(User), IsCompanyOwner());
+        var result = await _siteService.GetSitesAsync(companyId, search, page, pageSize, visible);
         return Ok(new ApiResponse<PagedResponse<SiteListResponse>>(true, result));
     }
 

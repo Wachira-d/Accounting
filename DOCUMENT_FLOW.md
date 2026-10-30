@@ -6662,4 +6662,10 @@ _Last verified against codebase: 2026-10-29 (รอบ 208 แก้ตามฝ
 - **cms-sites**: ภาพรวม = `CmsSiteContext.allLinks` (`?siteId=all` จริง — เดิมการจองเปิดเว็บแรก) + Front desk รายเว็บพร้อมชื่อ · การ์ด = เปิดพื้นที่ทำงาน / หน้าเว็บ / 👁 / ⋯ (เผยแพร่ · เติมเทมเพลต · ลบ) + ชิปงานค้าง ·
   dropdown ประเภทธุรกิจสร้างจาก `Layout.ENUM_LABELS.siteIndustry` (ตารางป้ายเดียว)
 - ยังไม่ทำ (เฟส 2–3): `cms-edit.html` (ทีมอื่น) · รวมค่าตั้ง · ค่าเริ่มต้นผู้ให้บริการระดับเว็บ · หน้า "วันนี้" · เช็กลิสต์ · ที่พักโหมดทุกไซต์
-- sim `tools/cms_workspace_nav_sim.js` · เทสต์ `CmsModuleResolverTests` (lead ทั้งสองทิศ · ชื่อหมวด) · Last verified `commit e717d3b5`
+- **ฝ่ายค้านรอบ 215 (ไม่มี blocking · แก้แล้ว)**: (S1) `GET …/cms/sites` กรองด้วย `CmsSiteScope.ListableSiteIds` (เจ้าของ = ทุกเว็บ · คนอื่น = เว็บที่มีบทบาทใดก็ได้ ∪ เว็บที่ตัวเองสร้าง)
+  และตัวสลับเว็บแสดงเฉพาะเว็บที่ผู้ใช้มีแท็บ (+ เว็บปัจจุบัน) · ไม่มีแท็บ ⇒ บอก + คืนค่า (ไม่พาไปหน้าที่ถูกปฏิเสธ) ·
+  (S2) `?siteId=` ที่ไม่อยู่ในรายการเว็บ ⇒ `pickProperty` ตกไปลำดับถัดไป · `lodging-settings` ไม่เปิดกล่องสร้างที่พักให้เว็บที่ไม่มี · เว็บล่าสุดค้าง ⇒ ล้าง (`Layout.clearCmsLastSite`) ·
+  (S3) ทางรับ lead = `CmsModuleResolver.LeadBlockTypes` (ContactForm + Newsletter) · (S4) `Layout.loadMyPermissions` ประกาศ `layout:permissions` ⇒ หัวพื้นที่ทำงานวาดใหม่ ·
+  (N1) เว็บล่าสุดคีย์ `cmsLastSite:<companyId>:<userId>` · (N2) lead ระดับบริษัทนับเฉพาะเว็บที่ยังอยู่ · (N4) ไม่มี `data-nav-id="undefined"` · (N7) encode subdomain · (N11) ฟอร์มที่พักค้างแก้ ⇒ ถามก่อนสลับเว็บ ·
+  `required_call_site_check` +6 กติกา (`_R215_WHY`)
+- sim `tools/cms_workspace_nav_sim.js` · เทสต์ `CmsModuleResolverTests` (lead ทั้งสองทิศ · ชื่อหมวด · Newsletter) · `CmsSiteScopeTests` (รายการเว็บ 3 เคส) · Last verified `commit e717d3b5` (+ คอมมิตแก้ฝ่ายค้านตามหลัง)

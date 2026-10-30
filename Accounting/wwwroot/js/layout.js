@@ -760,15 +760,25 @@ const Layout = {
         try { localStorage.setItem('myPermissions', JSON.stringify(res.data)); } catch {}
         this._refreshNavMenu();
         this._enforceRoleAccess();
+        // ฝ่ายค้านรอบ 215 S4: หน้าที่วาดก่อนสิทธิ์มาถึง (hasMenuAccess = true ตอนยังไม่รู้) ต้องวาดใหม่ — เช่นแท็บหัวพื้นที่ทำงานเว็บ
+        try { document.dispatchEvent(new CustomEvent('layout:permissions')); } catch (_) { /* เบราว์เซอร์เก่า */ }
       }
     } catch (e) { /* no permissions data — allow all */ }
   },
 
   /** รอบ 215: เว็บ/แท็บล่าสุดในพื้นที่ทำงานเว็บไซต์ — ความสะดวกต่อเบราว์เซอร์เท่านั้น (URL `?siteId=` คือความจริง) ·
    *  เจ้าของคีย์ตัวเดียว: CmsSiteContext เรียก setCmsLastSite · อ่านไม่ได้/เสีย = null */
+  _cmsLastSiteKey() {
+    // ฝ่ายค้านรอบ 215 N1: ต่อบริษัท + ผู้ใช้ (เครื่องที่ใช้ร่วมกันหลายคนไม่ส่งเว็บล่าสุดข้ามคน)
+    if (!this.currentCompany) return null;
+    const uid = (this.user && (this.user.id || this.user.userId)) || 'anon';
+    return 'cmsLastSite:' + this.currentCompany.id + ':' + uid;
+  },
+
   cmsLastSite() {
     try {
-      const raw = this.currentCompany && localStorage.getItem('cmsLastSite:' + this.currentCompany.id);
+      const key = this._cmsLastSiteKey();
+      const raw = key && localStorage.getItem(key);
       const v = raw ? JSON.parse(raw) : null;
       return v && typeof v.siteId === 'string' ? v : null;
     } catch (_) { return null; }
@@ -776,9 +786,16 @@ const Layout = {
 
   setCmsLastSite(siteId, page) {
     try {
-      if (!this.currentCompany || !siteId || siteId === 'all') return;
-      localStorage.setItem('cmsLastSite:' + this.currentCompany.id, JSON.stringify({ siteId: String(siteId), page: page || null }));
+      const key = this._cmsLastSiteKey();
+      if (!key || !siteId || siteId === 'all') return;
+      localStorage.setItem(key, JSON.stringify({ siteId: String(siteId), page: page || null }));
     } catch (_) { /* private mode — ไม่กระทบการทำงาน */ }
+  },
+
+  /** ฝ่ายค้านรอบ 215 S2: ล้างเว็บล่าสุดที่ไม่อยู่ในรายการเว็บแล้ว (ถูกลบ/ถูกถอดสิทธิ์) — ไม่งั้นทางเข้าพาไปเว็บที่ไม่มีตลอดไป */
+  clearCmsLastSite() {
+    try { const key = this._cmsLastSiteKey(); if (key) localStorage.removeItem(key); } catch (_) { /* ไม่กระทบการทำงาน */ }
+    if (typeof this._refreshNavMenu === 'function') this._refreshNavMenu();
   },
 
   /** ลิงก์ของทางเข้า "พื้นที่ทำงานเว็บไซต์" — แท็บล่าสุดของเว็บล่าสุด (ถ้าผู้ใช้ยังเห็นแท็บนั้น) · ไม่งั้นแท็บงานแรกที่เห็น
@@ -1278,7 +1295,7 @@ const Layout = {
       const ttNotInPlan = ` title="${this._esc(this._t('layout.notInPlanYet', 'แพ็กเกจปัจจุบันไม่รวมฟีเจอร์นี้ — ยังใช้ได้ระหว่างที่ระบบยังไม่เปิดบังคับแพ็กเกจ') + ' — ' + (item.description || label))}"`;
       return `<a href="${item.href}" class="nav-item${active}" data-nav-id="${item.id}"${ttNotInPlan}><span class="icon">${item.icon}</span>${label}<span style="margin-left:auto;font-size:10px;opacity:0.7;white-space:nowrap">${this._esc(this._t('layout.notInPlanBadge', 'แพ็กเกจไม่รวม'))}</span></a>`;
     }
-    return `<a href="${this._esc(item.href)}" class="nav-item${active}" data-nav-id="${item.id || (item.cmsWorkspaceEntry ? 'cms-workspace' : '')}"${tt}><span class="icon">${item.icon}</span>${label}</a>`;
+    return `<a href="${this._esc(item.href)}" class="nav-item${active}" ${item.id || item.cmsWorkspaceEntry ? ` data-nav-id="${item.id || 'cms-workspace'}"` : ''}${tt}><span class="icon">${item.icon}</span>${label}</a>`;
   },
 
   _esc(s) {
