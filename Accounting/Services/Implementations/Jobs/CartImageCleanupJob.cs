@@ -61,6 +61,20 @@ public class CartImageCleanupJob : BackgroundService
             () => RunOnceAsync(ct), _logger, ct: ct);
     }
 
+    /// <summary>รูปตะกร้าที่ไม่ได้สั่งและครบอายุ — เงื่อนไขทั้งหมดใน SQL (ฝ่ายค้านรอบ 218 รอบ 2 F1) · <c>!IsDeleted</c> ระบุเอง (ไม่พึ่ง global filter)</summary>
+    public static IQueryable<Accounting.Models.Entities.FileAttachment> CartImageCandidates(AccountingDbContext db, DateTime cutoff)
+        => db.FileAttachments.AsNoTracking()
+            .Where(f => !f.IsDeleted && f.EntityType == CmsMediaUrl.OrderEntityType && f.CreatedAt < cutoff
+                && !db.SiteOrders.IgnoreQueryFilters().Any(o => o.Id == f.EntityId))
+            .OrderBy(f => f.CreatedAt).ThenBy(f => f.Id);
+
+    /// <summary>สลิปการจองที่ครบอายุเก็บ และไม่ใช่สลิปรอตรวจของการจองใด — เงื่อนไขทั้งหมดใน SQL · ตัวตัดสินอายุ <see cref="BookingSlipRetention"/></summary>
+    public static IQueryable<Accounting.Models.Entities.FileAttachment> SlipPurgeCandidates(AccountingDbContext db, DateTime cutoff)
+        => db.FileAttachments.AsNoTracking()
+            .Where(f => !f.IsDeleted && f.EntityType == BookingSlipRule.AttachmentEntityType && f.CreatedAt < cutoff
+                && !db.SiteBookings.IgnoreQueryFilters().Any(b => b.CompanyId == f.CompanyId && b.SlipAttachmentId == f.Id && b.SlipUploadedAt != null))
+            .OrderBy(f => f.CreatedAt).ThenBy(f => f.Id);
+
     /// <summary>หนึ่งรอบ — คืนจำนวนไฟล์ที่ลบ (ให้เทสต์/ผู้เรียกตรวจได้)</summary>
     public async Task<int> RunOnceAsync(CancellationToken ct)
     {
@@ -72,10 +86,7 @@ public class CartImageCleanupJob : BackgroundService
         var cutoff = CartImageRetention.Cutoff(DateTime.UtcNow, days);
 
         // ตะกร้าที่ไม่ได้สั่ง = EntityId ไม่ใช่ออเดอร์ใด ๆ (IgnoreQueryFilters: ออเดอร์ที่ถูก soft-delete ยังนับเป็นออเดอร์ — รูปเป็นหลักฐาน)
-        var candidates = await db.FileAttachments.AsNoTracking()
-            .Where(f => f.EntityType == CmsMediaUrl.OrderEntityType && f.CreatedAt < cutoff
-                && !db.SiteOrders.IgnoreQueryFilters().Any(o => o.Id == f.EntityId))
-            .OrderBy(f => f.CreatedAt)
+        var candidates = await CartImageCandidates(db, cutoff)
             .Take(BatchSize)
             .Select(f => new { f.Id, f.CompanyId, f.EntityId, f.CreatedAt })
             .ToListAsync(ct);
@@ -96,33 +107,23 @@ public class CartImageCleanupJob : BackgroundService
         if (deleted > 0)
             _logger.LogInformation("CartImageCleanupJob: ลบรูปตะกร้าที่ไม่ได้สั่ง {Count} ไฟล์ (อายุเกิน {Days} วัน)", deleted, days);
 
-        // ── ฝ่ายค้านรอบ 218 (PDPA): สลิปการจองที่ถูกปฏิเสธ/แทน ของการจองที่ไม่มีเงินเข้า เก่ากว่า 90 วัน ⇒ ลบ (ตัวตัดสินเดียว BookingSlipRetention) ·
-        // สลิปของการจองที่รับเงินแล้ว = หลักฐานบัญชี (ม.10) ไม่ลบ · สลิปรอตรวจไม่ลบ
+        // ── ฝ่ายค้านรอบ 218 รอบ 2 (F1/F2): สลิปการจองครบอายุเก็บ (BookingSlipRetention — 6 ปี · หลักฐานรับ/คืนเงิน) ⇒ ลบ · สลิปรอตรวจไม่ลบ ·
+        // เงื่อนไขทั้งหมดอยู่ใน SQL (ไม่ใช่ Take ก่อนกรองในหน่วยความจำ ⇒ ไม่ค้างที่ 200 แถวแรกที่เก็บไว้) · แถวที่ลบแล้ว (IsDeleted) ไม่ถูกหยิบซ้ำ
         var slipCutoff = BookingSlipRetention.Cutoff(DateTime.UtcNow);
-        var slipRows = await db.FileAttachments.AsNoTracking()
-            .Where(f => f.EntityType == BookingSlipRule.AttachmentEntityType && f.CreatedAt < slipCutoff)
-            .OrderBy(f => f.CreatedAt)
+        var slipRows = await SlipPurgeCandidates(db, slipCutoff)
             .Take(BatchSize)
-            .Select(f => new
-            {
-                f.Id, f.CompanyId, f.CreatedAt,
-                Booking = db.SiteBookings.IgnoreQueryFilters()
-                    .Where(b => b.Id == f.EntityId && b.CompanyId == f.CompanyId)
-                    .Select(b => new { b.SlipAttachmentId, b.SlipUploadedAt, b.PaidAmount }).FirstOrDefault(),
-            })
+            .Select(f => new { f.Id, f.CompanyId, f.CreatedAt })
             .ToListAsync(ct);
         var slipsDeleted = 0;
         foreach (var r in slipRows)
         {
             ct.ThrowIfCancellationRequested();
-            var current = r.Booking != null && r.Booking.SlipAttachmentId == r.Id && r.Booking.SlipUploadedAt != null;
-            var hasMoney = r.Booking != null && r.Booking.PaidAmount > 0m;
-            if (!BookingSlipRetention.ShouldPurge(r.CreatedAt, current, hasMoney, slipCutoff)) continue;
+            if (!BookingSlipRetention.ShouldPurge(r.CreatedAt, isPendingSlip: false, slipCutoff)) continue;
             try { await files.DeleteAsync(r.CompanyId, r.Id); slipsDeleted++; }
             catch (KeyNotFoundException) { /* ถูกลบไปแล้วระหว่างรอบ */ }
         }
         if (slipsDeleted > 0)
-            _logger.LogInformation("CartImageCleanupJob: ลบสลิปการจองที่ถูกปฏิเสธ/แทน (ไม่มีเงินเข้า) {Count} ไฟล์ (อายุเกิน {Days} วัน)", slipsDeleted, BookingSlipRetention.RejectedRetentionDays);
+            _logger.LogInformation("CartImageCleanupJob: ลบสลิปการจองที่ครบอายุเก็บ {Count} ไฟล์ (เกิน {Years} ปี)", slipsDeleted, BookingSlipRetention.RetentionYears);
         return deleted + slipsDeleted;
     }
 }

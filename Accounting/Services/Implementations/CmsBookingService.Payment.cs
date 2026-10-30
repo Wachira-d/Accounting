@@ -75,7 +75,13 @@ public partial class CmsBookingService
                     && BookingSlipRule.SettlesPendingSlip(booking.SlipIntentId, reference, booking.DepositAmount, booking.PaidAmount))
                 {
                     // ฝ่ายค้านรอบ 218 (S1): ครบด้วยเงินก้อนอื่น ⇒ รายการชำระของสลิปต้องปิด (ไม่งั้น "ยืนยันด้วยมือ" ภายหลัง = รับซ้ำ)
-                    if (!isSlipMoney) supersededSlipIntent = booking.SlipIntentId;
+                    if (!isSlipMoney)
+                    {
+                        supersededSlipIntent = booking.SlipIntentId;
+                        // ฝ่ายค้านรอบ 2 (F5): ลูกค้าแนบสลิปไว้แล้ว + รับเงินก้อนอื่นครบ ⇒ อาจจ่ายซ้ำ — บอกพนักงานให้ตรวจบัญชีธนาคาร/คืนเงิน
+                        booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes,
+                            BookingSlipRule.SupersededNote(reference, now));
+                    }
                     booking.SlipUploadedAt = null;
                 }
                 // รอบ 208 (ฝ่ายค้าน W2 ข้อ 5): แถวรับเงินรายก้อน — หลักฐานของ gateway re-dispatch อ่านเวลาที่บันทึก (กันรับซ้ำเมื่อพนักงานกรอกวันย้อนหลัง)
@@ -105,7 +111,7 @@ public partial class CmsBookingService
             await tx.CommitAsync(ct);
         }
         if (supersededSlipIntent is Guid sup)
-            await FailSlipIntentAsync(companyId, sup, BookingSlipRule.SupersededRaw, "การจองรับเงินครบด้วยรายการอื่นแล้ว — ปิดรายการของสลิป", actor);
+            await FailSlipIntentAsync(companyId, siteId, bookingId, sup, BookingSlipRule.SupersededRaw, "การจองรับเงินครบด้วยรายการอื่นแล้ว — ปิดรายการของสลิป", actor);
 
         if (duplicate)
         {

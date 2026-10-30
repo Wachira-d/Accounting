@@ -24,6 +24,16 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class PaymentIntentPolicy
 {
+    /// <summary>ฝ่ายค้านรอบ 218 รอบ 2 (K2): ความยาวสูงสุดของ <c>PaymentIntents.ConfirmedBy</c> (varchar(200)) — ทุกจุดเขียนผ่าน <see cref="CapConfirmedBy"/>
+    /// (เหตุผลยาวของผู้ยืนยันอยู่ในประวัติรายการ ไม่ใช่ในช่องนี้)</summary>
+    public const int ConfirmedByMaxLength = 200;
+
+    public static string CapConfirmedBy(string confirmedBy)
+    {
+        var t = (confirmedBy ?? "").Trim();
+        return t.Length > ConfirmedByMaxLength ? t[..ConfirmedByMaxLength] : t;
+    }
+
     /// <summary>ผลการตัดสินว่าจะรับการเปลี่ยนสถานะนี้ไหม</summary>
     public readonly record struct Decision(bool Apply, bool IsDuplicate, string? Reason)
     {

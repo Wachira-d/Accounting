@@ -51,7 +51,7 @@ public partial class CmsBookingService : ICmsBookingService
         var svc = new SiteBookingService { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
         await EnsureProductOfCompanyAsync(companyId, request.ProductId);   // รอบ 207: ผูกสินค้าข้ามบริษัทไม่ได้
         ApplySettings(svc, request);
-        await EnsureServicePaymentAsync(companyId, siteId, svc);   // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด
+        await EnsureServicePaymentAsync(companyId, siteId, svc, paymentChanged: true, wasActive: false);   // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด
         svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, null);
         if (request.Schedule != null)
             foreach (var row in BuildSlotRows(companyId, svc, request.Schedule, userId)) svc.Slots.Add(row);
@@ -68,11 +68,14 @@ public partial class CmsBookingService : ICmsBookingService
             ?? throw new KeyNotFoundException("Booking service not found.");
 
         var oldSlug = svc.Slug;
+        var payBefore = PaymentFieldsOf(svc);
+        var wasActive = svc.IsActive;
         await EnsureProductOfCompanyAsync(companyId, request.ProductId);   // รอบ 207
         ApplySettings(svc, request);
-        await EnsureServicePaymentAsync(companyId, siteId, svc);   // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด
         if (svc.Slug != oldSlug) svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, svc.Id);
         if (request.IsActive.HasValue) svc.IsActive = request.IsActive.Value;
+        // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด · รอบ 2: ปิดใช้บริการ/แก้ชื่อโดยไม่แตะค่าชำระ ⇒ ไม่ตรวจ (ไม่ขังผู้ใช้)
+        await EnsureServicePaymentAsync(companyId, siteId, svc, paymentChanged: !Equals(payBefore, PaymentFieldsOf(svc)), wasActive);
         // ตารางเวลา: null = ผู้เรียก API เดิมที่ไม่รู้จักฟิลด์นี้ ⇒ ไม่แตะ · ส่งมา = แทนที่ทั้งชุด (การจองเดิมไม่ถูกแตะ — แถวเวลาไม่ใช่ FK ของการจอง)
         if (request.Schedule != null)
         {
@@ -1192,7 +1195,11 @@ public partial class CmsBookingService : ICmsBookingService
             w.ResourceId = ClassScheduleGenerator.ResourceForBooking(d.Slot!.ResourceId, ctx.ClassSessions, date, w.StartTime);   // รอบ 209 P4: ครูของรอบคลาส
             // ฝ่ายค้านรอบ 218 (S5): ได้ที่จากคิวสำรอง = ได้ที่ ⇒ นโยบายชำระล่วงหน้าเดียวกับจองใหม่ (BookingPaymentPolicy.OnSeat) · บังคับ ⇒ รอยืนยัน + กำหนดชำระ
             var promoteEff = BookingPaymentPolicy.Resolve(svc.BookingType, promoteSiteRule, Cms.BookingPaymentContextLoader.ServiceRule(svc));
-            var promotePay = BookingPaymentPolicy.OnSeat(promoteEff, w.DepositAmount, DateTime.UtcNow, CreditBookingLink.StartUtc(w.BookingDate, w.StartTime), false);
+            // ฝ่ายค้านรอบ 2 (F3): ผู้สร้างใบคิวเป็นพนักงานของบริษัท ⇒ ไม่บังคับรอยืนยัน/ไม่ถือรอบ (ตัวตัดสินเดียวกับจองใหม่ IsCompanyStaffAsync) ·
+            // ยอด = มัดจำที่ยังค้าง (หักเงินที่รับไว้แล้ว) ไม่ใช่มัดจำเต็ม
+            var promoteByStaff = await IsCompanyStaffAsync(companyId, w.CreatedBy);
+            var promotePay = BookingPaymentPolicy.OnSeat(promoteEff, BookingPaymentPolicy.RemainingDeposit(w.DepositAmount, w.PaidAmount), DateTime.UtcNow,
+                CreditBookingLink.StartUtc(w.BookingDate, w.StartTime), promoteByStaff);
             if (!promotePay.ForcePending && (svc.AutoConfirm || svc.BookingType == BookingType.Lead)) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
             else w.Status = BookingStatus.Pending;
             w.PaymentHoldUntil = promotePay.PaymentHoldUntil;

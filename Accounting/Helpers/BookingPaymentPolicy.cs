@@ -159,6 +159,10 @@ public static class BookingPaymentPolicy
             ? new BookingSeatPaymentDecision(false, null)
             : new BookingSeatPaymentDecision(true, HoldUntil(e, deposit, nowUtc, startUtc, false));
 
+    /// <summary>ฝ่ายค้านรอบ 2 (โน้ต): มัดจำที่ยังค้าง ณ ตอนได้ที่ (หักเงินที่รับแล้ว · ไม่ติดลบ · ปัด 2 ตำแหน่ง AwayFromZero)</summary>
+    public static decimal RemainingDeposit(decimal depositAmount, decimal paidAmount)
+        => Math.Max(0m, Math.Round(depositAmount - paidAmount, 2, MidpointRounding.AwayFromZero));
+
     /// <summary>ฝ่ายค้านรอบ 218 (S6): ระยะผ่อนหลังรายการชำระออนไลน์หมดอายุ ก่อน job ยกเลิกใบที่ไม่ชำระในเวลา (ลูกค้ากำลังจ่ายอยู่ ⇒ ไม่ตัดกลางทาง)</summary>
     public const int GatewayGraceMinutes = 10;
 
@@ -241,6 +245,18 @@ public static class BookingPaymentPolicy
             return "บริการนี้ตั้งโหมดมัดจำแต่ยังไม่มียอดมัดจำ — กรอก มัดจำ (บาท/%) ของบริการ หรือยอดตั้งต้นของเว็บ";
         return null;
     }
+
+    /// <summary>ฝ่ายค้านรอบ 218 รอบ 2: ต้องตรวจช่องทาง/ยอดของบริการตอนบันทึกไหม — บริการใช้งานอยู่ และ (เพิ่งเปิดใช้ หรือแก้ค่าชำระ) ·
+    /// ปิดใช้/แก้ชื่อ/แก้ช่องอื่น ⇒ ไม่ตรวจ (ไม่ขังผู้ใช้ไว้กับค่าที่ตั้งก่อนช่องทางหาย)</summary>
+    public static bool ServiceChannelCheckRequired(bool isActive, bool wasActive, bool paymentChanged)
+        => isActive && (!wasActive || paymentChanged);
+
+    /// <summary>ฝ่ายค้านรอบ 218 รอบ 2: บันทึกค่าตั้งเว็บแล้วบริการที่ตั้งเก็บเงินเองจะเก็บไม่ได้ ⇒ ข้อความพร้อมรายชื่อ (null = ไม่มี)</summary>
+    public static string? SiteChannelsBreakServicesProblem(IReadOnlyCollection<string> serviceNames)
+        => serviceNames.Count == 0 ? null
+            : $"บริการต่อไปนี้ตั้งเก็บเงินล่วงหน้าเอง และจะไม่มีช่องทาง/ยอดหลังบันทึก: {string.Join(", ", serviceNames.Take(10))}"
+              + (serviceNames.Count > 10 ? $" และอีก {serviceNames.Count - 10} รายการ" : "")
+              + " — ตั้งบริการเหล่านี้เป็น “ตามค่าเว็บ” หรือ “ปิด” ก่อน หรือคงช่องทางชำระไว้";
 
     /// <summary>ด่านบันทึกบริการ: ตั้งโหมดเก็บเงินเอง แต่ชนิดบริการเก็บไม่ได้ ⇒ ปฏิเสธ (ไม่บันทึกค่าที่ไม่มีผล)</summary>
     public static string? ServiceSaveProblem(BookingType type, BookingPaymentMode? serviceMode)

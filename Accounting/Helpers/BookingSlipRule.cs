@@ -45,14 +45,27 @@ public static class BookingSlipRule
         return slipIntentId == null || slipUploadedAt == null ? "การจองนี้ไม่มีสลิปรอตรวจ (อาจถูกตรวจไปแล้ว — รีเฟรชหน้า)" : null;
     }
 
-    /// <summary>ฝ่ายค้านรอบ 218 (S1): "ยืนยันด้วยมือ" ที่หน้ารายการชำระของ intent สลิปการจอง — ได้เฉพาะเมื่อการจองยังรอตรวจสลิปของ intent นี้อยู่
-    /// (ไม่งั้น = เงินก้อนเดิมถูกบันทึกไปแล้ว/ถูกแทน/ยกเลิก ⇒ ยืนยันซ้ำ = รับเงินสองครั้ง) · null = ได้</summary>
-    public static string? ManualConfirmProblem(Guid intentId, Guid? bookingSlipIntentId, DateTime? bookingSlipUploadedAt, BookingStatus bookingStatus)
-    {
-        if (bookingSlipIntentId != intentId || bookingSlipUploadedAt == null)
-            return "รายการนี้เป็นสลิปของการจองที่ไม่ได้รอตรวจแล้ว (ถูกตรวจ/แทนด้วยการรับเงินอื่น/ยกเลิก) — ยืนยันซ้ำจะรับเงินสองครั้ง · ตรวจที่หน้าการจอง";
-        return DecideProblem(bookingSlipIntentId, bookingSlipUploadedAt, bookingStatus);
-    }
+    /// <summary>ฝ่ายค้านรอบ 2 (K2): "ยืนยันด้วยมือ" ที่หน้ารายการชำระ ใช้กับสลิปของการจองนัดหมายไม่ได้ — ต้องตรวจที่หน้าการจอง
+    /// (เส้นเดียวที่ลงวันรับเงิน = วันที่โอน §78/1 · ถือล็อกเดียวกับปฏิเสธ/ยกเลิก · ตรวจงวดปิด) · null = ยืนยันด้วยมือได้</summary>
+    public static string? GatewayManualConfirmProblem(bool isBookingSlipIntent)
+        => isBookingSlipIntent ? VerifyOnBookingPageMessage : null;
+
+    public const string VerifyOnBookingPageMessage =
+        "รายการนี้เป็นสลิปโอนเงินของการจองนัดหมาย — ตรวจที่เมนู “การจอง” › เปิดการจอง › “ยืนยันสลิป” (ระบบลงวันที่รับเงินตามวันที่โอน และกันชนกับการปฏิเสธ/ยกเลิก)";
+
+    /// <summary>ฝ่ายค้านรอบ 2 (F5): หมายเหตุบนการจองเมื่อสลิปรอตรวจถูกแทนด้วยเงินก้อนอื่น — อาจรับเงินซ้ำ</summary>
+    public static string SupersededNote(string? otherReference, DateTime nowUtc)
+        => $"[{RuleCode}] ⚠️ รับเงินครบด้วยรายการอื่น{(string.IsNullOrWhiteSpace(otherReference) ? "" : $" ({otherReference.Trim()})")} "
+           + $"เมื่อ {nowUtc.AddHours(7):dd/MM/yyyy HH:mm} ขณะลูกค้าแนบสลิปรอตรวจ — ปิดรายการของสลิปแล้ว · ตรวจบัญชีธนาคาร: ถ้าเงินตามสลิปเข้าด้วย = ลูกค้าจ่ายซ้ำ ให้คืนเงินส่วนนั้น";
+
+    /// <summary>ฝ่ายค้านรอบ 2 (F4): วันที่โอนอยู่ในงวดบัญชีที่ปิดแล้ว — บอกทางไปต่อ</summary>
+    public static string ClosedPeriodMessage(DateTime transferDateBkk, string periodName)
+        => $"วันที่โอน {transferDateBkk:dd/MM/yyyy} อยู่ในงวดบัญชี '{periodName}' ที่ปิดแล้ว — ใบรับมัดจำลงวันนั้นไม่ได้ · "
+           + "เลือกวันที่โอนในงวดที่เปิด (ถ้าเงินเข้าจริงวันนั้น ให้ผู้ทำบัญชีเปิดงวดชั่วคราว) แล้วกดยืนยันอีกครั้ง";
+
+    /// <summary>ฝ่ายค้านรอบ 2 (F6): ปิดรายการชำระของสลิปไม่สำเร็จ — หมายเหตุบนการจองให้พนักงานปิดเอง (ล้มดัง ไม่ใช่แค่ log)</summary>
+    public static string FailIntentFailedNote(Guid intentId, string why)
+        => $"[{RuleCode}] ⚠️ ปิดรายการชำระของสลิป {intentId:N} ไม่สำเร็จ ({why}) — เปิดเมนู “รายการรับชำระเงินออนไลน์” แล้วยกเลิกรายการนี้ (กันรับเงินซ้ำ)";
 
     /// <summary>ความยาวสูงสุดของบันทึกตอนยืนยันสลิป (ไม่ใส่ใน ConfirmedBy — ฝ่ายค้าน S3)</summary>
     public const int MaxVerifyNoteLength = 300;
@@ -85,8 +98,8 @@ public static class BookingSlipRule
 
     /// <summary>สถานะดิบ (ProviderStatusRaw) ตอนปิดรายการชำระของสลิปที่ไม่ใช้แล้ว</summary>
     public const string SupersededRaw = "slip_superseded";
-    public const string AmountChangedMessage = "ยอดที่ต้องชำระของการจองเปลี่ยนระหว่างแนบสลิป — รีเฟรชหน้าแล้วแนบใหม่ (ไฟล์ที่ส่งเก็บไว้ให้ร้านตรวจได้)";
-    public const string AttachFailedMessage = "บันทึกสลิปไม่สำเร็จ — ไฟล์ของคุณถูกเก็บไว้ให้ร้านตรวจแล้ว · รีเฟรชหน้าแล้วลองใหม่ หรือแจ้งร้านพร้อมเลขที่การจอง";
+    public const string AmountChangedMessage = "ยอดที่ต้องชำระของการจองเปลี่ยนระหว่างแนบสลิป — สลิปนี้ยังไม่ถูกบันทึก · รีเฟรชหน้าเพื่อดูยอดใหม่แล้วแนบอีกครั้ง";
+    public const string AttachFailedMessage = "บันทึกสลิปไม่สำเร็จ — สลิปนี้ยังไม่ถูกบันทึก · รีเฟรชหน้าแล้วแนบอีกครั้ง หรือแจ้งร้านพร้อมเลขที่การจอง";
     public const string AlreadyPaidMessage = "การจองนี้มีการชำระที่ยืนยันแล้ว — ติดต่อร้านเพื่อชำระส่วนที่เหลือ (ระบบไม่รับสลิปซ้อนรายการที่ยืนยันแล้ว)";
     public const string BookingClosedRaw = "slip_booking_closed";
     public const string AttachFailedRaw = "slip_attach_failed";

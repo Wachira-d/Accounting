@@ -432,13 +432,17 @@ public class BookingPaymentPolicyTests
     }
 
     [Fact]
-    public void S1_ยืนยันด้วยมือ_ได้เฉพาะสลิปที่ยังรอตรวจของรายการนี้()
+    public void K2_ยืนยันด้วยมือที่หน้ารายการชำระ_สลิปการจองต้องไปหน้าการจอง_รายการอื่นยืนยันได้()
     {
-        var id = Guid.NewGuid();
-        Assert.Null(BookingSlipRule.ManualConfirmProblem(id, id, DateTime.UtcNow, BookingStatus.Pending));
-        Assert.NotNull(BookingSlipRule.ManualConfirmProblem(id, Guid.NewGuid(), DateTime.UtcNow, BookingStatus.Pending));   // ถูกแทน
-        Assert.NotNull(BookingSlipRule.ManualConfirmProblem(id, id, null, BookingStatus.Confirmed));                        // ตรวจแล้ว
-        Assert.NotNull(BookingSlipRule.ManualConfirmProblem(id, id, DateTime.UtcNow, BookingStatus.Cancelled));             // ยกเลิก
+        Assert.Contains("การจอง", BookingSlipRule.GatewayManualConfirmProblem(isBookingSlipIntent: true));
+        Assert.Null(BookingSlipRule.GatewayManualConfirmProblem(isBookingSlipIntent: false));   // ทิศตรงข้าม: สลิปคำสั่งซื้อ/โอนอื่น ยืนยันด้วยมือได้ตามเดิม
+    }
+
+    [Fact]
+    public void K2_ConfirmedBy_ตัดที่200_ข้อความสั้นไม่ถูกแตะ()
+    {
+        Assert.Equal(PaymentIntentPolicy.ConfirmedByMaxLength, PaymentIntentPolicy.CapConfirmedBy("manual:" + new string('ก', 500)).Length);
+        Assert.Equal("manual:staff-1", PaymentIntentPolicy.CapConfirmedBy(" manual:staff-1 "));
     }
 
     [Fact]
@@ -478,17 +482,63 @@ public class BookingPaymentPolicyTests
     }
 
     [Fact]
-    public void PDPA_สลิปที่ปฏิเสธของการจองไม่มีเงิน_ลบหลัง90วัน_สลิปที่มีเงินหรือรอตรวจไม่ลบ()
+    public void F2_สลิปเก็บ6ปีทุกใบ_ปฏิเสธ90วันไม่ลบแล้ว_ครบอายุลบได้_รอตรวจไม่ลบ()
     {
         var now = new DateTime(2026, 10, 30, 3, 0, 0, DateTimeKind.Utc);
         var cut = BookingSlipRetention.Cutoff(now);
-        Assert.True(BookingSlipRetention.ShouldPurge(now.AddDays(-91), isCurrentSlip: false, bookingHasMoney: false, cut));
-        Assert.False(BookingSlipRetention.ShouldPurge(now.AddDays(-91), false, bookingHasMoney: true, cut));   // หลักฐานบัญชี
-        Assert.False(BookingSlipRetention.ShouldPurge(now.AddDays(-91), isCurrentSlip: true, false, cut));    // รอตรวจ
-        Assert.False(BookingSlipRetention.ShouldPurge(now.AddDays(-30), false, false, cut));                   // ยังไม่ครบอายุ
+        Assert.False(BookingSlipRetention.ShouldPurge(now.AddDays(-91), isPendingSlip: false, cut));        // เดิมลบ — หลักฐานคืนเงิน/ข้อพิพาท
+        Assert.False(BookingSlipRetention.ShouldPurge(now.AddYears(-5), isPendingSlip: false, cut));        // ยังอยู่ในอายุบัญชี
+        Assert.True(BookingSlipRetention.ShouldPurge(now.AddYears(-6).AddDays(-1), isPendingSlip: false, cut));
+        Assert.False(BookingSlipRetention.ShouldPurge(now.AddYears(-7), isPendingSlip: true, cut));          // รอตรวจ — ไม่ลบ
     }
 
     [Fact]
     public void สลิปค้างเลยเวลานัด_ป้ายตรวจด่วน()
         => Assert.Contains("ตรวจด่วน", BookingPaymentPolicy.StatusLabel(new BookingPaymentFacts(BookingStatus.Pending, 300m, 0m, true, null, null, PastStart: true)));
+
+    // ─────────────── ฝ่ายค้านรอบ 218 รอบ 2 ───────────────
+
+    [Fact]
+    public void F5_สลิปถูกแทน_หมายเหตุบอกตรวจจ่ายซ้ำและคืนเงิน()
+    {
+        var n = BookingSlipRule.SupersededNote("CASH-1", new DateTime(2026, 10, 30, 3, 0, 0, DateTimeKind.Utc));
+        Assert.Contains("จ่ายซ้ำ", n);
+        Assert.Contains("CASH-1", n);
+    }
+
+    [Fact]
+    public void F4_วันที่โอนในงวดปิด_ข้อความมีวันที่ชื่องวดและทางไปต่อ()
+    {
+        var m = BookingSlipRule.ClosedPeriodMessage(new DateTime(2026, 9, 30), "2569/09");
+        Assert.Contains("30/09/2026", m);
+        Assert.Contains("2569/09", m);
+        Assert.Contains("เปิดงวด", m);
+    }
+
+    [Fact]
+    public void F6_ปิดรายการชำระไม่ได้_หมายเหตุบอกพนักงานปิดเอง()
+        => Assert.Contains("รายการรับชำระเงินออนไลน์", BookingSlipRule.FailIntentFailedNote(Guid.NewGuid(), "ระบบรับชำระเงินไม่พร้อม"));
+
+    [Fact]
+    public void โน้ต_บันทึกบริการ_ปิดใช้หรือแก้ชื่อไม่ตรวจ_แก้ค่าชำระหรือเปิดใช้ตรวจ()
+    {
+        Assert.False(BookingPaymentPolicy.ServiceChannelCheckRequired(isActive: false, wasActive: true, paymentChanged: true));   // ปิดใช้
+        Assert.False(BookingPaymentPolicy.ServiceChannelCheckRequired(isActive: true, wasActive: true, paymentChanged: false));   // แก้ชื่อ
+        Assert.True(BookingPaymentPolicy.ServiceChannelCheckRequired(isActive: true, wasActive: true, paymentChanged: true));
+        Assert.True(BookingPaymentPolicy.ServiceChannelCheckRequired(isActive: true, wasActive: false, paymentChanged: false));   // เพิ่งเปิดใช้
+    }
+
+    [Fact]
+    public void โน้ต_ปิดช่องทางเว็บ_บริการเก็บเงินเองแตก_ปฏิเสธพร้อมรายชื่อ_ไม่มีบริการแตกผ่าน()
+    {
+        Assert.Null(BookingPaymentPolicy.SiteChannelsBreakServicesProblem(Array.Empty<string>()));
+        Assert.Contains("ทำฟัน", BookingPaymentPolicy.SiteChannelsBreakServicesProblem(new[] { "ทำฟัน", "ขูดหินปูน" }));
+    }
+
+    [Fact]
+    public void โน้ต_ได้ที่จากคิวสำรอง_ใช้มัดจำที่ยังค้าง()
+    {
+        Assert.Equal(200m, BookingPaymentPolicy.RemainingDeposit(300m, 100m));
+        Assert.Equal(0m, BookingPaymentPolicy.RemainingDeposit(300m, 350m));
+    }
 }
