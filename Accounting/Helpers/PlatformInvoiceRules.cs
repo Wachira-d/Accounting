@@ -150,7 +150,7 @@ public static class PlatformInvoiceRules
     }
 
     /// <summary>ฝ่ายค้าน S4 + รอบสุดท้าย 4b: ฐานภาษีหัก ณ ที่จ่ายของยอดที่จะจ่าย = ยอดก่อน VAT ของใบตามสัดส่วน (ยอดค้าง ÷ ยอดรวม) · ไม่รู้ยอดก่อน VAT ⇒ ยอดค้าง</summary>
-    public static decimal WithholdingBase(decimal balanceDue, decimal totalAmount, decimal subTotal)
+    private static decimal WithholdingBase(decimal balanceDue, decimal totalAmount, decimal subTotal)
         => subTotal > 0m && totalAmount > 0m
             ? decimal.Round(subTotal * Math.Min(1m, balanceDue / totalAmount), 2, MidpointRounding.AwayFromZero)
             : balanceDue;

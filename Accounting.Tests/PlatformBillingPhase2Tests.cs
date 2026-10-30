@@ -350,10 +350,9 @@ public class PlatformBillingPhase2Tests
         Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(-1m, 1070m, 1070m, 1000m, true));
         Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(1070m, 1070m, 1070m, 1000m, true));
         // ค้างครึ่งใบ ⇒ ฐานก่อน VAT ตามสัดส่วน 500 ⇒ ไม่เกิน 15
-        Assert.Equal(500m, PlatformInvoiceRules.WithholdingBase(535m, 1070m, 1000m));
         Assert.Null(PlatformInvoiceRules.WithholdingProblem(15m, 535m, 1070m, 1000m, true));
         Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(16m, 535m, 1070m, 1000m, true));
-        Assert.Equal(1070m, PlatformInvoiceRules.WithholdingBase(1070m, 1070m, 0m));   // ไม่รู้ยอดก่อน VAT ⇒ ยอดค้าง
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(32.10m, 1070m, 1070m, 0m, true));   // ไม่รู้ยอดก่อน VAT ⇒ ฐาน = ยอดค้าง
     }
 
     [Fact]
