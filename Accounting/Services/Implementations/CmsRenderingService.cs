@@ -112,6 +112,57 @@ public class CmsRenderingService : ICmsRenderingService
     }
 
 
+    /// <summary>ฝ่ายค้านรอบ 214 S3/S4: โทเคนของหน้านโยบายร้าน = โทเคนเนื้อหาเว็บ + กติกาเผยแพร่ (<c>CmsLegalPages.BuildShopTokens</c> —
+    /// เลขผู้เสียภาษีเฉพาะนิติบุคคล · ค่าที่ขาดบอก "ยังไม่ได้ระบุ")</summary>
+    private async Task<Dictionary<string, string?>> BuildLegalTokensAsync(Guid companyId, Models.Entities.Site site)
+    {
+        var juristicId = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.JuristicId).FirstOrDefaultAsync();
+        return Accounting.Helpers.CmsLegalPages.BuildShopTokens(await BuildContentTokensAsync(companyId, site), !string.IsNullOrWhiteSpace(juristicId));
+    }
+
+    private static StorefrontLegalLink LegalLink(Accounting.Helpers.CmsLegalPages.Link l) => new()
+    {
+        Mode = l.Mode, Url = l.ExternalUrl, Slug = l.Slug, Title = Accounting.Helpers.LegalDocumentDefaults.Title(l.Kind),
+    };
+
+    /// <summary>รอบ 214 (คำตัดสินข้อ 173 B): หน้านโยบายความเป็นส่วนตัว/ข้อกำหนดของร้าน — ข้อความที่ร้านเขียน หรือแม่แบบของระบบ
+    /// (ชื่อ/ที่อยู่/เลขผู้เสียภาษี/ช่องทางติดต่อจากโทเคนชุดเดียวกับเนื้อหาเว็บ — ค่าระดับเว็บชนะบริษัท) · เว็บต้องเผยแพร่แล้ว (เหมือน init) ·
+    /// CompanyId scope · โหมด external ก็ยังคืนเนื้อความ (สำรองเมื่อลิงก์ภายนอกล่ม) พร้อม URL ให้หน้าเว็บพาไป</summary>
+    public async Task<StorefrontLegalPageResponse?> GetLegalPageAsync(Guid companyId, Guid siteId, string kind)
+    {
+        if (!Accounting.Helpers.LegalDocumentDefaults.IsKind(kind)) return null;
+        var site = await _db.Sites.AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId && s.Status == SiteStatus.Published);
+        if (site == null) return null;
+        var isTerms = kind == Accounting.Helpers.LegalDocumentDefaults.KindTerms;
+        var custom = isTerms ? site.TermsOfServiceMarkdown : site.PrivacyPolicyMarkdown;
+        var link = Accounting.Helpers.CmsLegalPages.Resolve(kind, isTerms ? site.TermsOfServiceUrl : site.PrivacyPolicyUrl, custom);
+        var tokens = await BuildLegalTokensAsync(companyId, site);
+        return new StorefrontLegalPageResponse
+        {
+            Kind = kind,
+            Title = Accounting.Helpers.LegalDocumentDefaults.Title(kind),
+            Mode = link.Mode,
+            ExternalUrl = link.ExternalUrl,
+            Html = Accounting.Helpers.LegalMarkdown.Render(Accounting.Helpers.CmsLegalPages.EffectiveMarkdown(kind, custom), tokens),
+            UpdatedAt = string.IsNullOrWhiteSpace(custom) ? null : (isTerms ? site.TermsOfServiceUpdatedAt : site.PrivacyPolicyUpdatedAt),
+            SiteName = site.Name,
+        };
+    }
+
+    /// <summary>ตัวอย่างหน้านโยบาย/ข้อกำหนดของร้านจากข้อความที่กำลังแก้ (หลังบ้าน — เว็บยังไม่เผยแพร่ก็ดูได้) · markdown ว่าง = แม่แบบ ·
+    /// คืน (HTML, markdown ที่ใช้จริง, คำเตือน)</summary>
+    public async Task<(string Html, string Markdown, List<string> Warnings)?> PreviewLegalPageAsync(Guid companyId, Guid siteId, string kind, string? markdown)
+    {
+        if (!Accounting.Helpers.LegalDocumentDefaults.IsKind(kind)) return null;
+        var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId);
+        if (site == null) return null;
+        var md = Accounting.Helpers.CmsLegalPages.EffectiveMarkdown(kind, markdown);
+        var tokens = await BuildLegalTokensAsync(companyId, site);
+        return (Accounting.Helpers.LegalMarkdown.Render(md, tokens), md,
+            Accounting.Helpers.LegalMarkdown.Warnings(md, Accounting.Helpers.CmsContentTokens.Supported.Select(t => t.Token)));
+    }
+
     /// <summary>ค่าของโทเคนเนื้อหาสำหรับเว็บนี้ — ค่าระดับเว็บชนะค่าระดับบริษัท
     ///
     /// **ตัวเดียวของระบบ** (ดู <see cref="Accounting.Helpers.CmsContentTokens"/>) — ห้ามหน้าใด
@@ -213,7 +264,9 @@ public class CmsRenderingService : ICmsRenderingService
                 FacebookUrl = siteTokens.GetValueOrDefault("site.facebook"),
                 InstagramUrl = siteTokens.GetValueOrDefault("site.instagram"),
                 // รอบ 209 P6 (ฑ): ข้อความยินยอม/ลิงก์นโยบาย/บังคับ — ตัวตัดสินเดียว CmsDataConsent (ตัวเดียวกับที่ service บันทึกเวอร์ชัน)
-                PrivacyPolicyUrl = Accounting.Helpers.CmsGalleryBlock.IsSafeUrl(site.PrivacyPolicyUrl) ? site.PrivacyPolicyUrl : null,
+                // รอบ 214 (คำตัดสินข้อ 173 B): ลิงก์นโยบาย/ข้อกำหนด — ตัวตัดสินเดียว CmsLegalPages (มีค่าเสมอ · ค่าไม่ปลอดภัย = ใช้หน้าของระบบ)
+                PrivacyLink = LegalLink(Accounting.Helpers.CmsLegalPages.Resolve(Accounting.Helpers.LegalDocumentDefaults.KindPrivacy, site.PrivacyPolicyUrl, site.PrivacyPolicyMarkdown)),
+                TermsLink = LegalLink(Accounting.Helpers.CmsLegalPages.Resolve(Accounting.Helpers.LegalDocumentDefaults.KindTerms, site.TermsOfServiceUrl, site.TermsOfServiceMarkdown)),
                 RequireDataConsent = site.RequireDataConsent,
                 DataConsentText = Accounting.Helpers.CmsDataConsent.ResolveText(site.DataConsentText, site.Name)
             },

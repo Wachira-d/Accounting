@@ -238,6 +238,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(CmsRound212NotifyStatements());   // รอบ 212 — ค่าตั้งแจ้งลูกค้า · โควตาข้อความช่องกลาง · ตารางของแพ็ก B/C (บล็อกท้ายไฟล์ · แพ็ก A เป็นเจ้าของ)
         list.AddRange(Accounting.Helpers.CustomerRelinkMigration.Statements());   // รอบ 212 แพ็ก B — ความคืบหน้า/คีย์กันซ้ำของ LineOaSwitchEvents (ต้องอยู่หลังบล็อกของแพ็ก A)
         list.AddRange(Accounting.Helpers.CustomerNotifyResendMigration.Statements());   // รอบ 213 — เหตุระงับ/ส่งซ้ำของ CustomerNotifyLogs + แพ็ก notify.topup ที่แอดมินตั้ง (หลังบล็อกรอบ 212)
+        list.AddRange(Accounting.Helpers.LegalDocumentMigration.Statements());   // รอบ 214 — ฉบับนโยบาย/ข้อกำหนดของแพลตฟอร์ม + ข้อความนโยบายของร้าน (Helpers/LegalDocumentMigration)
         list.AddRange(Accounting.Helpers.SubmitOnceMigration.Statements());   // รอบ 217 — IdempotencyRecords (+RequestHash) · คิวแจ้งเตือนหลังสร้างการจอง/ออเดอร์
         return list;
     }

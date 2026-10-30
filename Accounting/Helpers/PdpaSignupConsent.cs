@@ -16,6 +16,12 @@ namespace Accounting.Helpers;
 /// ⚠️ แก้เนื้อความนโยบายเมื่อไร **ต้องขยับ <see cref="CurrentVersion"/> ด้วย**
 /// และ <see cref="EffectiveDate"/> ให้ตรงวันที่ฉบับใหม่มีผล — ไม่งั้นแถวเก่ากับ
 /// แถวใหม่จะอ้างเวอร์ชันเดียวกันทั้งที่คนละเนื้อความ
+///
+/// <para><b>รอบ 214 (คำตัดสินข้อ 173) — ความหมายเปลี่ยน</b>: เนื้อความย้ายไปอยู่ในตาราง <c>LegalDocumentVersions</c> ที่ SystemAdmin
+/// เผยแพร่ได้ (append-only) · <see cref="CurrentVersion"/>/<see cref="EffectiveDate"/> เหลือเป็น<b>ฉบับตั้งต้นในโค้ด</b>
+/// (<c>LegalDocumentDefaults</c> — ใช้เมื่อยังไม่มีฉบับเผยแพร่) · <b>ห้ามผู้เรียกใหม่อ่านค่าคงที่นี้เป็น "ฉบับปัจจุบัน"</b> —
+/// ใช้ <c>ILegalDocumentService.GetConsentVersionAsync</c> ตัวเดียว (ล็อกด้วย <c>tools/required_call_site_check.py</c>) ·
+/// เนื้อความเดิมใน terms.html/privacy.html ย้ายเข้า <c>LegalDocumentDefaults</c> แล้ว (หน้า HTML เหลือแค่โครงที่ดึงเนื้อความจาก API)</para>
 /// </summary>
 public static class PdpaPolicy
 {
@@ -29,11 +35,20 @@ public static class PdpaPolicy
     /// (ม.19 — ต้องระบุวัตถุประสงค์ที่ขอความยินยอมให้ชัด)</summary>
     public const string SignupPurpose = "account-signup:terms-and-privacy";
 
+    /// <summary>รอบ 214 (คำตัดสินข้อ 173): ผู้ใช้ที่มีบัญชีอยู่แล้วกด "รับทราบและยอมรับ" ฉบับใหม่บนแถบแจ้งในระบบ —
+    /// วัตถุประสงค์เดียวกับตอนสมัคร (ยอมรับข้อกำหนด + นโยบาย) แต่แยกช่องทางให้ตรวจย้อนได้ว่ายอมรับตอนไหน</summary>
+    public const string PolicyUpdatePurpose = "policy-update:terms-and-privacy";
+
+    /// <summary>วัตถุประสงค์ที่นับเป็น "ยอมรับข้อกำหนด + นโยบายฉบับนั้นแล้ว" — ใช้หาฉบับที่ผู้ใช้ยอมรับล่าสุด</summary>
+    public static readonly IReadOnlyList<string> TermsAcceptancePurposes = new[] { SignupPurpose, PolicyUpdatePurpose };
+
     /// <summary>ขอบเขตของ consent ตอนสมัคร = ระดับ **แพลตฟอร์ม** ไม่ใช่ระดับบริษัท
     /// (ผู้ควบคุมข้อมูลตอนสมัครคือผู้ให้บริการ ไม่ใช่ tenant ที่ยังไม่เกิด —
     /// ทางสมัครผ่านคำเชิญไม่สร้างบริษัทเลยด้วยซ้ำ). ใช้ค่าเดียวทุกทางสมัคร
     /// เพื่อให้ค้น "ผู้ใช้คนนี้ยอมรับนโยบายฉบับไหนแล้ว" ได้ด้วย query เดียว
     /// (แนวเดียวกับ <c>ChatbotService.PublicCompanyId</c> ที่มีอยู่แล้ว)</summary>
+    /// <para>รอบ 214 หลัง CI: <b>ไม่ใช้กับแถวความยินยอมแล้ว</b> — PdpaConsentRecords มี FK → Companies (Guid.Empty ถูกปฏิเสธบนฐานที่สร้างจากโมเดล) ·
+    /// หลักฐานยอมรับข้อกำหนด/นโยบายแพลตฟอร์มอยู่ที่ <c>PlatformPolicyAcceptances</c> (ระดับผู้ใช้) · ค่านี้เหลือใช้เป็น CompanyId ของแถว audit ระดับแพลตฟอร์ม</para>
     public static readonly Guid PlatformScopeCompanyId = Guid.Empty;
 }
 

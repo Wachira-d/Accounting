@@ -193,8 +193,8 @@
           ติ๊ก "บังคับ" ⇒ ไม่ติ๊กส่งไม่ได้ (ตรวจที่เซิร์ฟเวอร์)
         </p>
         <div class="grid-2">
-          <div class="form-group"><label class="form-label">ลิงก์นโยบายความเป็นส่วนตัว</label>
-            <input type="text" class="form-input" id="sPrivacyUrl" placeholder="https://... หรือ /privacy"></div>
+          <div class="form-group" style="font-size:12px;color:var(--gray-500);line-height:1.7">
+            ลิงก์นโยบาย/ข้อกำหนดบนฟอร์มและท้ายเว็บ ตั้งที่หัวข้อ <b>📜 นโยบายความเป็นส่วนตัว & ข้อกำหนดของร้าน</b> ด้านล่าง</div>
           <div class="form-group">
             <label style="font-size:13px;display:flex;gap:6px;align-items:center;margin-top:24px"><input type="checkbox" id="sRequireConsent"> บังคับติ๊กยินยอมก่อนส่งฟอร์ม</label>
             <label style="font-size:13px;display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="sCookieConsent" checked> แสดงแบนเนอร์คุกกี้ (สคริปต์วิเคราะห์โหลดหลังลูกค้ากดยอมรับ)</label>
@@ -202,6 +202,57 @@
         </div>
         <div class="form-group"><label class="form-label">ข้อความยินยอม (เว้นว่าง = ข้อความมาตรฐาน)</label>
           <textarea class="form-input" id="sConsentText" rows="2" placeholder="ข้าพเจ้ายินยอมให้ร้านเก็บและใช้ข้อมูลส่วนบุคคลเพื่อดำเนินการตามคำสั่งซื้อ/การจอง ตามนโยบายความเป็นส่วนตัว"></textarea></div>
+        <!-- รอบ 214 (คำตัดสินข้อ 173 B): นโยบาย/ข้อกำหนดของร้าน — ลำดับ ลิงก์ของร้าน > ข้อความที่ร้านเขียน > แม่แบบ (ตัวตัดสินเดียว Helpers/CmsLegalPages ·
+             โหมดที่เลือกไว้มาจาก SiteResponse.*LegalMode — หน้านี้ไม่ตัดสินเอง) · HTML ตัวอย่างแปลง/encode ที่เซิร์ฟเวอร์ (Helpers/LegalMarkdown) -->
+        <h4 style="margin:20px 0 6px;font-size:15px">📜 นโยบายความเป็นส่วนตัว &amp; ข้อกำหนดของร้าน</h4>
+        <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;line-height:1.7">
+          ร้านเป็น<b>ผู้ควบคุมข้อมูลส่วนบุคคล</b>ของลูกค้าที่สั่งซื้อ/จอง/สมัครสมาชิกผ่านเว็บนี้ (NextAcc เป็นผู้ประมวลผลข้อมูล) — PDPA ม.23 ต้องแจ้งนโยบายก่อนเก็บข้อมูล ·
+          ลิงก์แสดงท้ายเว็บทุกหน้า · บนช่องยินยอมของฟอร์มสั่งซื้อ/จอง/ติดต่อ · หน้าสมัครสมาชิก · แบนเนอร์คุกกี้ ·
+          <b>แม่แบบของระบบ</b>เติมชื่อร้าน ที่อยู่ อีเมล/เบอร์โทรจากข้อมูลบริษัท/ข้อมูลติดต่อด้านบนให้อัตโนมัติ (เลขผู้เสียภาษีแสดงเฉพาะนิติบุคคล) — ตรวจให้ครบก่อนเผยแพร่เว็บ
+        </p>
+        <div id="lgWarnings" style="display:none;background:#fffbeb;border:1px solid #fcd34d;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;line-height:1.7;margin-bottom:10px"></div>
+        <div class="lg-box" style="border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-weight:600;margin-bottom:6px">🔒 นโยบายความเป็นส่วนตัว</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_privacy" value="default" onchange="Page.legalModeChanged('privacy')"> ใช้แม่แบบของระบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_privacy" value="custom" onchange="Page.legalModeChanged('privacy')"> เขียนเอง / ปรับแม่แบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_privacy" value="external" onchange="Page.legalModeChanged('privacy')"> ใช้ลิงก์ของร้านเอง</label>
+          </div>
+          <div id="lgUrlWrap_privacy" style="display:none;margin-bottom:8px"><input type="text" class="form-input" id="lgUrl_privacy" maxlength="500" oninput="Page.legalModeChanged('privacy', true)" placeholder="https://... หรือ /หน้าที่ร้านทำไว้"></div>
+          <div id="lgMdWrap_privacy" style="display:none;margin-bottom:8px">
+            <textarea class="form-input" id="lgMd_privacy" rows="12" spellcheck="false" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></textarea>
+            <div style="font-size:11px;color:var(--gray-500);margin-top:4px">## หัวข้อ · - รายการ · **ตัวหนา** · [ข้อความ](https://...) · ตาราง | ก | ข | · โทเคน เช่น {{company.name}} {{company.address}} {{company.taxId}} {{company.email}} {{company.phone}} (ดูรายการโทเคนด้านบน) · ไม่รับ HTML</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;background:var(--gray-50);border-radius:8px;padding:8px 10px">
+            <span>🔗 URL ที่ลูกค้าเห็น:</span><code id="lgPub_privacy" style="flex:1;min-width:200px;word-break:break-all">-</code>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalCopy('privacy')">คัดลอก</button>
+            <a class="btn btn-secondary btn-sm" id="lgOpen_privacy" href="#" target="_blank" rel="noopener">เปิด</a>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalPreview('privacy')">ดูตัวอย่าง</button>
+          </div>
+          <div id="lgWarn_privacy" style="font-size:12px;color:#92400e"></div>
+          <div id="lgPreview_privacy" class="lg-preview" style="display:none;max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;line-height:1.8"></div>
+        </div>
+        <div class="lg-box" style="border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-weight:600;margin-bottom:6px">📄 ข้อกำหนดการใช้บริการ</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_terms" value="default" onchange="Page.legalModeChanged('terms')"> ใช้แม่แบบของระบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_terms" value="custom" onchange="Page.legalModeChanged('terms')"> เขียนเอง / ปรับแม่แบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_terms" value="external" onchange="Page.legalModeChanged('terms')"> ใช้ลิงก์ของร้านเอง</label>
+          </div>
+          <div id="lgUrlWrap_terms" style="display:none;margin-bottom:8px"><input type="text" class="form-input" id="lgUrl_terms" maxlength="500" oninput="Page.legalModeChanged('terms', true)" placeholder="https://... หรือ /หน้าที่ร้านทำไว้"></div>
+          <div id="lgMdWrap_terms" style="display:none;margin-bottom:8px">
+            <textarea class="form-input" id="lgMd_terms" rows="12" spellcheck="false" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></textarea>
+            <div style="font-size:11px;color:var(--gray-500);margin-top:4px">## หัวข้อ · - รายการ · **ตัวหนา** · [ข้อความ](https://...) · ตาราง | ก | ข | · โทเคน เช่น {{company.name}} {{company.address}} {{company.taxId}} {{company.email}} {{company.phone}} (ดูรายการโทเคนด้านบน) · ไม่รับ HTML</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;background:var(--gray-50);border-radius:8px;padding:8px 10px">
+            <span>🔗 URL ที่ลูกค้าเห็น:</span><code id="lgPub_terms" style="flex:1;min-width:200px;word-break:break-all">-</code>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalCopy('terms')">คัดลอก</button>
+            <a class="btn btn-secondary btn-sm" id="lgOpen_terms" href="#" target="_blank" rel="noopener">เปิด</a>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalPreview('terms')">ดูตัวอย่าง</button>
+          </div>
+          <div id="lgWarn_terms" style="font-size:12px;color:#92400e"></div>
+          <div id="lgPreview_terms" class="lg-preview" style="display:none;max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;line-height:1.8"></div>
+        </div>
         <div style="margin-top:16px">
           <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO, Analytics &amp; CAPTCHA</button>
         </div>
@@ -1340,7 +1391,7 @@
           document.getElementById('sFacebookUrl').value = this.site.facebookUrl || '';
           document.getElementById('sInstagramUrl').value = this.site.instagramUrl || '';
           // รอบ 209 P6: สาขา/คลัง + PDPA (echo จาก SiteResponse — เปิดแก้แล้วบันทึกค่าไม่หาย)
-          document.getElementById('sPrivacyUrl').value = this.site.privacyPolicyUrl || '';
+          this.hydrateLegal();
           document.getElementById('sRequireConsent').checked = !!this.site.requireDataConsent;
           document.getElementById('sCookieConsent').checked = this.site.cookieConsentEnabled !== false;
           document.getElementById('sConsentText').value = this.site.dataConsentText || '';
@@ -2100,10 +2151,98 @@
         } catch { el.textContent = 'โหลดรายการโทเคนไม่สำเร็จ'; }
       },
 
+      // ════ รอบ 214 (คำตัดสินข้อ 173 B): นโยบาย/ข้อกำหนดของร้าน ════
+      _legalKinds: ['privacy', 'terms'],
+      _legalField(kind) {
+        return kind === 'terms'
+          ? { url: 'termsOfServiceUrl', md: 'termsOfServiceMarkdown', mode: 'termsLegalMode' }
+          : { url: 'privacyPolicyUrl', md: 'privacyPolicyMarkdown', mode: 'privacyLegalMode' };
+      },
+      _legalMode(kind) {
+        const el = document.querySelector(`input[name="lgMode_${kind}"]:checked`);
+        return el ? el.value : 'default';
+      },
+      /** URL หน้าภายในของร้าน — แบบเส้นทางเดียวกับปุ่ม "ดูเว็บจริง" (/site/{key}/…) */
+      _legalInternalUrl(kind) {
+        return `${location.origin}/site/${encodeURIComponent(this.site.subdomain)}/legal/${kind}`;
+      },
+      hydrateLegal() {
+        // ฝ่ายค้านรอบ 214: คำเตือนจากเซิร์ฟเวอร์ (ตัวตนร้านที่ขาด · ลิงก์เดิมที่ใช้ไม่ได้ — ไม่ลบเงียบ)
+        const warns = this.site.legalWarnings || [];
+        const wbox = document.getElementById('lgWarnings');
+        wbox.innerHTML = warns.map(w => '⚠️ ' + Layout.esc(w)).join('<br>');
+        wbox.style.display = warns.length ? '' : 'none';
+        for (const kind of this._legalKinds) {
+          const f = this._legalField(kind);
+          const mode = this.site[f.mode] || 'default';   // ผลตัวตัดสินของเซิร์ฟเวอร์
+          const radio = document.querySelector(`input[name="lgMode_${kind}"][value="${mode}"]`);
+          if (radio) radio.checked = true;
+          document.getElementById('lgUrl_' + kind).value = this.site[f.url] || '';
+          document.getElementById('lgMd_' + kind).value = this.site[f.md] || '';
+          document.getElementById('lgPreview_' + kind).style.display = 'none';
+          document.getElementById('lgWarn_' + kind).textContent = '';
+          this.legalModeChanged(kind, true);
+        }
+      },
+      async legalModeChanged(kind, fromHydrate) {
+        const mode = this._legalMode(kind);
+        document.getElementById('lgUrlWrap_' + kind).style.display = mode === 'external' ? '' : 'none';
+        document.getElementById('lgMdWrap_' + kind).style.display = mode === 'custom' ? '' : 'none';
+        const ext = document.getElementById('lgUrl_' + kind).value.trim();
+        const shown = mode === 'external' && ext ? (ext.startsWith('/') ? `${location.origin}/site/${encodeURIComponent(this.site.subdomain)}${ext}` : ext) : this._legalInternalUrl(kind);
+        document.getElementById('lgPub_' + kind).textContent = shown;
+        const open = document.getElementById('lgOpen_' + kind);
+        open.href = shown;
+        // เว็บยังไม่เผยแพร่ ⇒ หน้าสาธารณะยังเปิดไม่ได้ — ปุ่ม "เปิด" แสดงตัวอย่างในหน้านี้แทน (ไม่พาไปหน้า 404)
+        open.onclick = (mode !== 'external' && !isPublished(this.site.status))
+          ? (ev) => { ev.preventDefault(); Layout.toast('เว็บยังไม่เผยแพร่ — แสดงตัวอย่างในหน้านี้แทน', 'info'); this.legalPreview(kind); }
+          : null;
+        // เลือก "เขียนเอง" ครั้งแรก ⇒ ตั้งต้นจากแม่แบบ (ไม่ต้องเริ่มจากหน้าว่าง)
+        const md = document.getElementById('lgMd_' + kind);
+        if (!fromHydrate && mode === 'custom' && !md.value.trim()) {
+          try {
+            const res = await Layout.api().cmsLegalPreview(this.siteId, kind, '');
+            md.value = (res.data && res.data.markdown) || '';
+          } catch (e) { Layout.toast('โหลดแม่แบบไม่สำเร็จ: ' + e.message, 'error'); }
+        }
+      },
+      legalPayload() {
+        const out = {};
+        for (const kind of this._legalKinds) {
+          const f = this._legalField(kind);
+          const mode = this._legalMode(kind);
+          const url = document.getElementById('lgUrl_' + kind).value.trim();
+          const md = document.getElementById('lgMd_' + kind).value;
+          out[f.url] = mode === 'external' ? url : '';
+          // ลิงก์ของร้าน: เก็บข้อความที่เขียนไว้ต่อ (สลับกลับมาไม่หาย) · แม่แบบ: ล้างข้อความ
+          out[f.md] = mode === 'default' ? '' : md;
+        }
+        return out;
+      },
+      async legalCopy(kind) {
+        const url = document.getElementById('lgPub_' + kind).textContent;
+        try { await navigator.clipboard.writeText(url); Layout.toast('คัดลอก URL แล้ว', 'success'); }
+        catch (_) { prompt('คัดลอก URL นี้', url); }
+      },
+      async legalPreview(kind) {
+        const mode = this._legalMode(kind);
+        const md = mode === 'custom' ? document.getElementById('lgMd_' + kind).value : '';
+        const box = document.getElementById('lgPreview_' + kind);
+        try {
+          const res = await Layout.api().cmsLegalPreview(this.siteId, kind, md);
+          // HTML แปลง + encode ที่เซิร์ฟเวอร์ (ตัวเดียวกับหน้าสาธารณะ)
+          box.innerHTML = (res.data && res.data.html) || '';
+          box.style.display = '';
+          const w = (res.data && res.data.warnings) || [];
+          document.getElementById('lgWarn_' + kind).innerHTML = w.map(x => '⚠️ ' + Layout.esc(x)).join('<br>');
+          if (mode === 'external') Layout.toast('ร้านเลือกใช้ลิงก์ของร้านเอง — ตัวอย่างนี้คือแม่แบบสำรองของระบบ', 'info');
+        } catch (e) { Layout.toast('ดูตัวอย่างไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
       async saveSeo() {
         const api = Layout.api(); if (!api) return;
         try {
-          await api.cmsUpdateSite(this.siteId, {
+          const saved = await api.cmsUpdateSite(this.siteId, {
             metaTitle: document.getElementById('sMetaTitle').value || null,
             metaDescription: document.getElementById('sMetaDescription').value || null,
             metaKeywords: document.getElementById('sMetaKeywords').value || null,
@@ -2125,11 +2264,14 @@
             branchId: this._erpMap?.branches ? (document.getElementById('sBranchId').value || '00000000-0000-0000-0000-000000000000') : undefined,
             defaultWarehouseId: this._erpMap?.warehouses ? (document.getElementById('sWarehouseId').value || '00000000-0000-0000-0000-000000000000') : undefined,
             useGlobalInventory: document.getElementById('sUseGlobalInventory').checked,
-            privacyPolicyUrl: document.getElementById('sPrivacyUrl').value.trim(),
+            // รอบ 214: นโยบาย/ข้อกำหนดของร้าน — ส่งสตริงเสมอ ("" = ล้าง) · โหมดแม่แบบ = ล้างทั้งลิงก์และข้อความ
+            ...this.legalPayload(),
             requireDataConsent: document.getElementById('sRequireConsent').checked,
             cookieConsentEnabled: document.getElementById('sCookieConsent').checked,
             dataConsentText: document.getElementById('sConsentText').value
           });
+          // รอบ 214: echo ค่าที่เซิร์ฟเวอร์เก็บจริง (โหมดนโยบายตัดสินที่เซิร์ฟเวอร์) — ไม่ค้างสถานะฝั่งหน้าเว็บ
+          if (saved && saved.data) { this.site = saved.data; this.hydrateLegal(); }
           Layout.toast('บันทึกสำเร็จ', 'success');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

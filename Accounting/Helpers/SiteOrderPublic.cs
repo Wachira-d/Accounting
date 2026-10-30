@@ -18,7 +18,7 @@ public static class SiteOrderPublic
         Id = full.Id, OrderNumber = full.OrderNumber, Status = full.Status, PublicToken = full.PublicToken,
         Currency = full.Currency, SubTotal = full.SubTotal, DiscountAmount = full.DiscountAmount, ShippingAmount = full.ShippingAmount,
         VatAmount = full.VatAmount, TotalAmount = full.TotalAmount, AmountDueNow = full.AmountDueNow, NextPayableAmount = full.NextPayableAmount,
-        CreatedAt = full.CreatedAt,
+        CreatedAt = full.CreatedAt, Replayed = full.Replayed,   // รอบ 216: หน้าเว็บรู้ว่าเป็นออเดอร์เดิม (ไม่ได้บันทึกโปรไฟล์ซ้ำ)
     };
 
     public const string RuleCode = "CMS-ORDER-PUBLIC";

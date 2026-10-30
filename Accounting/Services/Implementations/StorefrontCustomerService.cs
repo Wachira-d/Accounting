@@ -53,12 +53,6 @@ public partial class StorefrontCustomerService : IStorefrontCustomerService
         return !string.IsNullOrWhiteSpace(id) && _promptPay.ValidatePromptPayId(id) ? id : null;
     }
 
-    public async Task<StorefrontMeResponse?> GetMeAsync(Guid companyId, Guid siteId, Guid customerId)
-        => await _db.SiteCustomers.AsNoTracking()
-            .Where(c => c.Id == customerId && c.CompanyId == companyId && c.SiteId == siteId && c.IsActive)
-            .Select(c => new StorefrontMeResponse { CustomerId = c.Id, Email = c.Email, FullName = c.FullName, HasErpContact = c.ContactId != null })
-            .FirstOrDefaultAsync();
-
     public async Task<List<StorefrontMyOrderItem>> MyOrdersAsync(Guid companyId, Guid siteId, Guid customerId)
     {
         var rows = await _db.SiteOrders.AsNoTracking()

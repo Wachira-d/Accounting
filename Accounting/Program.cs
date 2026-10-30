@@ -230,6 +230,7 @@ builder.Services.AddMemoryCache();
 // ===== Services (DI) =====
 // Core
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<ILegalDocumentService, LegalDocumentService>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้ + resolver เวอร์ชันความยินยอม
 builder.Services.AddScoped<IAccountingService, AccountingService>();
 // ส่งออกรายงานบัญชี CSV/Excel (2026-10-14 ทีม X3) — ตัวเลขผ่าน IAccountingService ตัวเดียวกับหน้า
 builder.Services.AddScoped<AccountingReportExportService>();

@@ -41,6 +41,9 @@ public partial class CmsCommerceService
 
     /// <summary>A9: บันทึกครั้งแรกของออเดอร์ใหม่ — คำขอซ้อนที่ใช้คีย์เดียวกันชน unique index ⇒ ถอยของครึ่งทางออกจาก context แล้วคืนออเดอร์ของคำขอแรก ·
     /// ชนอย่างอื่น ⇒ โยนตามเดิม (ไม่กลืน)</summary>
+    /// <summary>รอบ 216: ติดป้าย "คืนออเดอร์เดิม" (คีย์กันกดซ้ำ) — controller ไม่บันทึกโปรไฟล์ซ้ำ</summary>
+    private static OrderResponse Replayed(OrderResponse r) { r.Replayed = true; return r; }
+
     private async Task<Guid?> SaveNewOrderOrReplayAsync(Guid companyId, Guid siteId, SiteOrder order,
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction tx)
     {

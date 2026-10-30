@@ -76,10 +76,26 @@ public class LodgingPublicController : ControllerBase
         }
         // ช่องฝั่งพนักงานถูกตัดทิ้งเสมอ — แขกกำหนด source/contact/ยืนยันทันทีเองไม่ได้
         var clean = req with { Source = null, SourceReference = null, ContactId = null, InternalNotes = null, ConfirmImmediately = false };
+        // รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้านที่ล็อกอิน (โทเคนของเว็บนี้) เว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ (ตาข่ายฝั่งเซิร์ฟเวอร์ · ค่าที่พิมพ์ชนะ) ·
+        // แขกนิรนาม = เส้นเดิมทุกตัว · การจองที่พักยังไม่ผูกบัญชีสมาชิก (ไม่มีคอลัมน์ลูกค้าบนการจองที่พัก — ข้อ 174 ฉ)
+        var cfg = HttpContext.RequestServices.GetService(typeof(IConfiguration)) as IConfiguration;
+        var member = cfg == null ? null : Accounting.Helpers.StorefrontCustomerAuth.ForSite(Accounting.Helpers.StorefrontCustomerAuth.FromRequest(Request, cfg), siteId);
+        var profiles = HttpContext.RequestServices.GetService(typeof(IStorefrontCustomerService)) as IStorefrontCustomerService;
+        if (member != null && profiles != null && await profiles.GetMeAsync(companyId, siteId, member.CustomerId) is { } me)
+        {
+            var (n, p, e) = Accounting.Helpers.StorefrontMemberProfile.FillContact(clean.GuestName, clean.GuestPhone, clean.GuestEmail, me.FullName, me.Phone, me.Email);
+            clean = clean with { GuestName = n ?? "", GuestPhone = p, GuestEmail = e };
+        }
         var r = await _svc.CreateReservationAsync(companyId, pid.Value, clean, LodgingReservationSource.Web, "storefront-guest", siteId);
         // คำตัดสินข้อ 128: โหมดส่งสลิปก่อน ⇒ ห้ามตอบ "จองสำเร็จ" — ข้อความจากตัวตัดสินเดียวกับหน้าแขก
         var msg = Accounting.Helpers.LodgingGuestConfirmPolicy.CreatedMessage(r.SlipRequired, r.GuestNote, r.Status, r.ReservationNumber, r.DepositRequired);
-        return StatusCode(201, new ApiResponse<LodgingReservationResponse>(true, r, msg));
+        // รอบ 216: "บันทึกเป็นข้อมูลของฉัน" — เจ้าของ = สมาชิกในโทเคนของเว็บนี้เท่านั้น · ที่อยู่บนฟอร์มที่พักเป็นที่อยู่ใบกำกับ (ไปกับเลขผู้เสียภาษี)
+        var profileNotes = await Accounting.Helpers.StorefrontProfileSaveBack.RunAsync(profiles,
+            HttpContext.RequestServices.GetService(typeof(ILogger<LodgingPublicController>)) as ILogger,
+            companyId, siteId, Accounting.Helpers.StorefrontCustomerAuth.ProfileOwner(req.SaveToProfile, member, siteId),
+            new Accounting.Helpers.CheckoutProfileInput(clean.GuestName, clean.GuestPhone,
+                BillingName: clean.GuestCompanyName, BillingTaxId: clean.GuestTaxId, BillingAddressText: clean.GuestAddress));
+        return StatusCode(201, new ApiResponse<LodgingReservationResponse>(true, r, msg, profileNotes));
     }
 
     [HttpGet("reservations/{token}")]

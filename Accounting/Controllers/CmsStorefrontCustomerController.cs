@@ -122,6 +122,22 @@ public class CmsStorefrontCustomerController : ControllerBase
         return Ok(new ApiResponse<StorefrontMeResponse>(true, me!));
     }
 
+    /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกแก้ "ข้อมูลส่วนตัว" ของตัวเอง — ลูกค้า = id ในโทเคนหน้าร้านของเว็บนี้ (ด่าน <see cref="Me"/>) ·
+    /// อีเมลเข้าระบบแก้ไม่ได้ · ตัวตรวจ <see cref="StorefrontMemberProfile.Validate"/> · ไม่แตะผู้ติดต่อ ERP · จำกัดความถี่ต่อสมาชิก</summary>
+    [HttpPut("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/portal/me/profile")]
+    public async Task<ActionResult> UpdateMyProfile(Guid companyId, Guid siteId, [FromBody] UpdateStorefrontProfileRequest? request,
+        [FromServices] IChatRateLimiter limiter)
+    {
+        var (me, fail) = await Me(companyId, siteId);
+        if (fail != null) return fail;
+        if (!await limiter.TryConsumeAsync($"cms-profile:{me!.CustomerId:N}", perMinute: 10, perDay: 100))
+            return StatusCode(429, new ApiResponse<object>(false, null, "บันทึกถี่เกินไป — รอสักครู่แล้วลองใหม่"));
+        var updated = await _svc.UpdateProfileAsync(companyId, siteId, me.CustomerId, request ?? new UpdateStorefrontProfileRequest());
+        if (updated == null)
+            return StatusCode(401, new ApiResponse<object>(false, null, "ไม่พบบัญชีสมาชิก หรือบัญชีถูกปิด — เข้าสู่ระบบใหม่"));
+        return Ok(new ApiResponse<StorefrontMeResponse>(true, updated, "บันทึกข้อมูลส่วนตัวแล้ว"));
+    }
+
     [HttpGet("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/portal/me/orders")]
     public async Task<ActionResult> MyOrders(Guid companyId, Guid siteId)
     {

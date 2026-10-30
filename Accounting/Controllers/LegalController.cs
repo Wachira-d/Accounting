@@ -1,6 +1,7 @@
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -18,19 +19,31 @@ namespace Accounting.Controllers;
 /// ถ้าหน้า terms/privacy ฝัง literal ไว้เอง วันที่ผู้ให้บริการย้ายที่อยู่/
 /// เปลี่ยนชื่อนิติบุคคล เอกสารทางกฎหมายจะค้างของเก่าเงียบ ๆ
 /// (defect class "สอง renderer ห้าม drift" — ที่เดียวคือแหล่งความจริง)
+///
+/// <para>รอบ 214 (คำตัดสินข้อ 173): เนื้อความทั้งฉบับมาจาก <see cref="ILegalDocumentService"/> (ฉบับที่ SystemAdmin เผยแพร่ หรือฉบับตั้งต้น)
+/// แปลงเป็น HTML ที่เซิร์ฟเวอร์ (<c>Helpers/LegalMarkdown</c> — encode ทุกตัว) · เวอร์ชันทุกจุดมาจาก resolver ตัวเดียว ·
+/// ผู้ใช้ที่ล็อกอินเห็นแถบ "มีฉบับใหม่" แล้วกดรับทราบ (ไม่บล็อก)</para>
 /// </summary>
 [ApiController]
 [Route("api/legal")]
-[AllowAnonymous]
+// ฝ่ายค้านรอบ 214: ไม่ใส่ [AllowAnonymous] ระดับคลาส — มันลบล้าง [Authorize] ของ action ⇒ endpoint ยอมรับนโยบายกลายเป็นไม่ต้องล็อกอิน ·
+// เปิดสาธารณะรายเมธอดแทน (policy · documents · history)
 public class LegalController : ControllerBase
 {
     private readonly AccountingDbContext _db;
+    private readonly ILegalDocumentService _legal;
 
-    public LegalController(AccountingDbContext db) => _db = db;
+    public LegalController(AccountingDbContext db, ILegalDocumentService legal)
+    {
+        _db = db;
+        _legal = legal;
+    }
 
     public sealed record PolicyInfo(
-        string Version,
-        string EffectiveDate,        // ISO yyyy-MM-dd (หน้าเว็บแปลงเป็น พ.ศ. เอง)
+        string Version,              // เวอร์ชันความยินยอม (นโยบาย + ข้อกำหนด) — หน้าสมัครส่งกลับมาเป็นหลักฐาน "ฉบับที่เห็น"
+        string EffectiveDate,        // ISO yyyy-MM-dd ของนโยบายความเป็นส่วนตัว (หน้าเว็บแปลงเป็น พ.ศ. เอง)
+        string PrivacyVersion,
+        string TermsVersion,
         string? ControllerName,
         string? ControllerTaxId,
         string? ControllerAddress,
@@ -41,9 +54,12 @@ public class LegalController : ControllerBase
 
     /// <summary>เวอร์ชันนโยบาย + ตัวตนผู้ควบคุมข้อมูล (ไม่ต้อง login)</summary>
     [HttpGet("policy")]
+    [AllowAnonymous]
     public async Task<ActionResult<ApiResponse<PolicyInfo>>> GetPolicy(CancellationToken ct)
     {
         var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+        var versions = await _legal.GetConsentVersionAsync(ct);
+        var privacy = await _legal.GetCurrentAsync(LegalDocumentDefaults.KindPrivacy, ct);
 
         // ชื่อผู้ควบคุมข้อมูล: ชื่อนิติบุคคลผู้ให้บริการ → ถ้ายังไม่ตั้ง ใช้ชื่อเว็บ
         // (ชื่อเว็บไม่ใช่ชื่อนิติบุคคล จึงยังนับว่า "ยังไม่ได้ตั้งค่า" ด้านล่าง)
@@ -52,8 +68,10 @@ public class LegalController : ControllerBase
         var email = FirstNonEmpty(s?.PlatformSellerEmail, s?.ContactEmail);
 
         return Ok(new ApiResponse<PolicyInfo>(true, new PolicyInfo(
-            Version: PdpaPolicy.CurrentVersion,
-            EffectiveDate: PdpaPolicy.EffectiveDate.ToString("yyyy-MM-dd"),
+            Version: versions.ConsentVersion,
+            EffectiveDate: privacy.EffectiveDate.ToString("yyyy-MM-dd"),
+            PrivacyVersion: versions.PrivacyVersion,
+            TermsVersion: versions.TermsVersion,
             ControllerName: name,
             ControllerTaxId: s?.PlatformSellerTaxId,
             ControllerAddress: s?.PlatformSellerAddress,
@@ -62,6 +80,80 @@ public class LegalController : ControllerBase
             SiteName: s?.SiteName,
             ControllerConfigured: !string.IsNullOrWhiteSpace(s?.PlatformSellerName)
                                   && !string.IsNullOrWhiteSpace(email))));
+    }
+
+    public sealed record UpcomingInfo(string Version, string EffectiveDate, string? ChangeSummary);
+
+    /// <summary><c>IsArchived</c> = ฉบับที่หมดผลแล้ว · <c>IsUpcoming</c> = ฉบับที่ประกาศแล้วแต่ยังไม่ถึงวันมีผล (ฝ่ายค้าน S2 — เดิมเหมาเป็น "ฉบับเก่า")</summary>
+    public sealed record LegalDocumentDto(
+        string Kind, string Title, string Version, string EffectiveDate, string Html, string Source,
+        string? ChangeSummary, UpcomingInfo? Upcoming, string ConsentVersion, bool ControllerConfigured, bool IsArchived, bool IsUpcoming);
+
+    /// <summary>เนื้อความเอกสาร (HTML ที่เซิร์ฟเวอร์แปลง + encode แล้ว) — ไม่ระบุ version = ฉบับที่มีผลวันนี้</summary>
+    [HttpGet("documents/{kind}")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<LegalDocumentDto>>> GetDocument(string kind, [FromQuery] string? version, CancellationToken ct)
+    {
+        if (!LegalDocumentDefaults.IsKind(kind))
+            return NotFound(new ApiResponse<LegalDocumentDto>(false, null, "ไม่พบเอกสาร"));
+        var current = await _legal.GetCurrentAsync(kind, ct);
+        var doc = string.IsNullOrWhiteSpace(version) ? current : await _legal.GetPublishedVersionAsync(kind, version, ct);
+        if (doc == null) return NotFound(new ApiResponse<LegalDocumentDto>(false, null, $"ไม่พบฉบับ {version}"));
+        var upcoming = await _legal.GetUpcomingAsync(kind, ct);
+        var consent = await _legal.GetConsentVersionAsync(ct);
+        var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
+        var html = await _legal.RenderPlatformAsync(doc.BodyMarkdown, ct);
+        var isUpcoming = doc.EffectiveDate > LegalDocumentPolicy.TodayBangkok(DateTime.UtcNow);
+        return Ok(new ApiResponse<LegalDocumentDto>(true, new LegalDocumentDto(
+            doc.Kind, doc.Title, doc.Version, doc.EffectiveDate.ToString("yyyy-MM-dd"), html, doc.Source, doc.ChangeSummary,
+            upcoming == null ? null : new UpcomingInfo(upcoming.Version, upcoming.EffectiveDate.ToString("yyyy-MM-dd"), upcoming.ChangeSummary),
+            consent.ConsentVersion,
+            ControllerConfigured: !string.IsNullOrWhiteSpace(s?.PlatformSellerName)
+                                  && !string.IsNullOrWhiteSpace(FirstNonEmpty(s?.PlatformSellerEmail, s?.ContactEmail)),
+            IsArchived: doc.Version != current.Version && !isUpcoming,
+            IsUpcoming: isUpcoming)));
+    }
+
+    /// <summary>ประวัติฉบับที่เผยแพร่ (สาธารณะ — โปร่งใสว่าเคยเปลี่ยนอะไรเมื่อไร · ไม่มีร่าง · ไม่มีชื่อผู้เผยแพร่)</summary>
+    [HttpGet("documents/{kind}/history")]
+    [AllowAnonymous]
+    public async Task<ActionResult<ApiResponse<object>>> GetHistory(string kind, CancellationToken ct)
+    {
+        if (!LegalDocumentDefaults.IsKind(kind))
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        var rows = await _legal.GetHistoryAsync(kind, ct);
+        return Ok(new ApiResponse<object>(true, rows.Select(r => new
+        {
+            r.Version, effectiveDate = r.EffectiveDate.ToString("yyyy-MM-dd"), r.ChangeSummary, r.IsCurrent, r.IsUpcoming, r.IsBuiltIn,
+        }).ToList()));
+    }
+
+    /// <summary>ผู้ใช้ที่ล็อกอินยอมรับฉบับปัจจุบันแล้วหรือยัง (แถบแจ้งในระบบ)</summary>
+    [HttpGet("acceptance")]
+    [Authorize]
+    public async Task<ActionResult<ApiResponse<LegalAcceptanceStatus>>> GetAcceptance(CancellationToken ct)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);   // [Authorize] มีผลจริงแล้ว (ไม่มี AllowAnonymous ระดับคลาส)
+        return Ok(new ApiResponse<LegalAcceptanceStatus>(true, await _legal.GetAcceptanceStatusAsync(uid, ct)));
+    }
+
+    public sealed record AcceptRequest(string? VersionShown);
+
+    /// <summary>กด "รับทราบและยอมรับ" ฉบับปัจจุบัน — บันทึกหลักฐาน (PdpaConsentRecord + evidence hash)</summary>
+    [HttpPost("acceptance")]
+    [Authorize]
+    [Accounting.Filters.RejectApiKey("ยอมรับนโยบายแทนผู้ใช้")]
+    public async Task<ActionResult<ApiResponse<LegalAcceptanceStatus>>> Accept([FromBody] AcceptRequest? req, CancellationToken ct)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);   // [Authorize] มีผลจริงแล้ว (ไม่มี AllowAnonymous ระดับคลาส)
+        // โหมดเข้าดูในนามลูกค้า (claim imp=true) — ผู้ดูแลห้ามยอมรับนโยบายแทนเจ้าของบัญชี (หลักฐานต้องเป็นการกระทำของเจ้าของข้อมูลเอง)
+        if (User.FindFirst("imp")?.Value == "true")
+            return StatusCode(403, new ApiResponse<LegalAcceptanceStatus>(false, null, "โหมดเข้าดูในนามลูกค้ายอมรับนโยบายแทนเจ้าของบัญชีไม่ได้"));
+        // X-Forwarded-For ตัวแรก = client จริงเมื่ออยู่หลัง reverse proxy (แบบเดียวกับ AuthService ตอนสมัคร)
+        var ip = Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
+        if (string.IsNullOrWhiteSpace(ip)) ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var status = await _legal.RecordAcceptanceAsync(uid, req?.VersionShown, ip, Request.Headers.UserAgent.ToString(), ct);
+        return Ok(new ApiResponse<LegalAcceptanceStatus>(true, status, "บันทึกการยอมรับแล้ว"));
     }
 
     private static string? FirstNonEmpty(params string?[] values)
