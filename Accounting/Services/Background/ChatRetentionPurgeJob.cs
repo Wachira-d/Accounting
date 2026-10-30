@@ -108,10 +108,10 @@ public class ChatRetentionPurgeJob : BackgroundService
         var idem = 0;
         try
         {
-            var idemCutoff = DateTime.UtcNow - Accounting.Middleware.IdempotencyMiddleware.Retention;
+            // รอบ 217 ข้อสังเกต 3: เทียบเวลาใน SQL (now()) — ค่า DateTime.UtcNow ภายใต้ EnableLegacyTimestampBehavior ถูกส่งเป็น timestamp ไม่มีโซน
             idem = await db.Database.ExecuteSqlRawAsync(
-                """DELETE FROM "IdempotencyRecords" WHERE "CreatedAt" < {0};""",
-                new object[] { idemCutoff }, ct);
+                """DELETE FROM "IdempotencyRecords" WHERE "CreatedAt" < now() - make_interval(secs => {0});""",
+                new object[] { Accounting.Helpers.IdempotencyKeyPolicy.Retention.TotalSeconds }, ct);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "ล้าง IdempotencyRecords ไม่สำเร็จ"); }
 

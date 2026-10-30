@@ -46,6 +46,8 @@ public static class SubmitOnceMigration
             "IsDeleted" boolean NOT NULL DEFAULT false
         );
         """,
+        // ฝ่ายค้าน S4: เหตุที่ปิดแถวโดยไม่ส่ง (ยกเลิกก่อนถึงคิว)
+        """ALTER TABLE "DeferredNotifications" ADD COLUMN IF NOT EXISTS "Note" varchar(300) NULL;""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_DeferredNotifications_Kind_Entity" ON "DeferredNotifications" ("Kind", "EntityId");""",
         """CREATE INDEX IF NOT EXISTS "IX_DeferredNotifications_Pending" ON "DeferredNotifications" ("DoneAt", "DueAt");""",
     };

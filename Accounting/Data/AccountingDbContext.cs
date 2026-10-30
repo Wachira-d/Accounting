@@ -3521,6 +3521,7 @@ public class AccountingDbContext : DbContext
             // รอบ 217 — ชื่อ index ตรงกับ Helpers/SubmitOnceMigration
             e.Property(x => x.Kind).HasMaxLength(32);
             e.Property(x => x.LastError).HasMaxLength(500);
+            e.Property(x => x.Note).HasMaxLength(300);
             e.Property(x => x.Attempts).HasDefaultValue(0);
             e.HasIndex(x => new { x.Kind, x.EntityId }).IsUnique().HasDatabaseName("UX_DeferredNotifications_Kind_Entity");
             e.HasIndex(x => new { x.DoneAt, x.DueAt }).HasDatabaseName("IX_DeferredNotifications_Pending");

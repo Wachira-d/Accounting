@@ -44,7 +44,8 @@ public partial class CmsCommerceService
     /// <summary>รอบ 216: ติดป้าย "คืนออเดอร์เดิม" (คีย์กันกดซ้ำ) — controller ไม่บันทึกโปรไฟล์ซ้ำ</summary>
     private static OrderResponse Replayed(OrderResponse r) { r.Replayed = true; return r; }
 
-    private async Task<Guid?> SaveNewOrderOrReplayAsync(Guid companyId, Guid siteId, SiteOrder order)
+    private async Task<Guid?> SaveNewOrderOrReplayAsync(Guid companyId, Guid siteId, SiteOrder order,
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction tx)
     {
         try
         {
@@ -55,11 +56,14 @@ public partial class CmsCommerceService
         {
             // รอบ 217 (ข้อ 175 ข · ออเดอร์): สองแท็บ/กดซ้ำคนละคีย์บนตะกร้าเดียวกัน — คำขอแรกตัดบรรทัดตะกร้าไปแล้ว ⇒ DELETE ของคำขอนี้กระทบ 0 แถว
             // (EF ล้มทั้งชุด = ไม่มีออเดอร์ที่สอง) · เดิมหลุดเป็น 500 ⇒ บอกเหตุตรง ๆ แทน (ตะกร้าเป็น "ตัวกันซ้ำเชิงความหมาย" ของออเดอร์)
+            await tx.RollbackAsync();
             _db.ChangeTracker.Clear();
             throw new BusinessRuleException(SiteOrderPublic.CartAlreadyOrderedMessage, SiteOrderPublic.RuleCode, 409);
         }
         catch (DbUpdateException) when (order.IdempotencyKey != null)
         {
+            // ธุรกรรมที่คำสั่งล้มใช้ต่อไม่ได้ (PostgreSQL) ⇒ ถอยก่อนอ่านออเดอร์ของคำขอแรก
+            await tx.RollbackAsync();
             _db.ChangeTracker.Clear();
             var existing = await FindIdempotentOrderIdAsync(companyId, siteId, order.IdempotencyKey);
             if (existing == null) throw;
