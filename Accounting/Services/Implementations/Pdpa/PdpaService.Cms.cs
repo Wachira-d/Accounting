@@ -150,6 +150,8 @@ public partial class PdpaService
         {
             ["id"] = c.Id, ["purpose"] = c.Purpose, ["policyVersion"] = c.PolicyVersion, ["grantedAt"] = c.GrantedAt,
             ["withdrawnAt"] = c.WithdrawnAt, ["channel"] = c.Channel, ["evidenceHash"] = c.EvidenceHash,
+            // รอบ 214 ฝ่ายค้าน S4: ผลตรวจหลักฐานรายแถว (ตัวตรวจเดียวกับแถวยอมรับนโยบาย)
+            ["evidenceCheck"] = Accounting.Helpers.PlatformPolicyAcceptanceRules.CheckLabel(c),
         }).ToList();
 
         return new CmsSubjectDataReport(DateTime.UtcNow, CmsContactResolver.NormalizeEmail(email), CmsContactResolver.NormalizePhone(phone),

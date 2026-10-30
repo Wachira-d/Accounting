@@ -5813,3 +5813,8 @@ RoPA ระดับแพลตฟอร์มไม่สร้าง (ตา�
 ป้าย "v2:" · v1 ตรวจไม่ได้ = `LegacyUnverifiable` ไม่ใช่ผ่าน) ใช้กับตอนสมัคร/แถบยอมรับ/ฟอร์มเว็บร้าน · `PlatformPolicyAcceptances` เก็บ `VersionShown`/`UserAgent` ให้ตรวจจากแถวได้ ·
 เทสต์ `PdpaConsentEvidenceV2Tests` + Db round-trip (เขียน → อ่านกลับ → ตรวจผ่าน · แก้ในฐาน ⇒ ไม่ผ่าน) ใน `Db/LegalDocumentDbTests` · TEST_PLAN LEGAL214-22..27 ·
 `required_call_site_check` +4 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 214 ฝ่ายค้าน (ฎ) (ไม่มีข้อ blocking · คำตัดสินข้อ 173 ฏ): (S1) ลบตามคำขอทำไม่ให้ระบุตัวต้นฉบับใน `PdpaConsentRecords` ระดับแพลตฟอร์มด้วย (คงแถว · `PseudonymisedAt`) +
+ลบจริงพ้น 10 ปีกติกาเดียวกัน · (S2) รวมแถว soft-delete (`IgnoreQueryFilters`) · (S3) DSR ของบริษัทไม่ส่ง IP/UA ของหลักฐานยอมรับนโยบาย · เจ้าของดูเองที่ `GET /api/legal/my-data` ·
+(S4) รายงานลูกค้าเว็บมีผลตรวจหลักฐานรายแถว · (N1) เวอร์ชันที่เห็นว่าง = ฉบับปัจจุบัน · (N2) `PdpaConsentRecords.EvidenceSource` (system/staff) · (N3) ป้าย v2 ไม่สนตัวพิมพ์ ·
+เทสต์ `PdpaConsentEvidenceV2Tests` +2 · `Db/LegalDocumentDbTests` +1 · TEST_PLAN LEGAL214-28..31 · `required_call_site_check` +2 กติกา/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

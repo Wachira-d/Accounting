@@ -410,10 +410,12 @@ public partial class PdpaService : IPdpaService
                 .Where(x => x.UserId == user.Id)
                 .OrderBy(x => x.AcceptedAt)
                 .ToListAsync(ct);
+            // ฝ่ายค้านรอบ 214 S3: รายงานนี้เปิดโดย DPO ของ**บริษัท** — IP/UA เป็นประวัติระดับแพลตฟอร์ม (ข้ามบริษัท) ⇒ ไม่ส่ง ·
+            // เจ้าของข้อมูลดูครบทุกช่องเองที่ GET /api/legal/my-data (ระดับแพลตฟอร์ม · ผู้ใช้ที่ไม่มีบริษัทก็ดูได้)
             acceptRows = accepts.Select(x => new Dictionary<string, object?> {
                 ["purpose"] = x.Purpose, ["policyVersion"] = x.PolicyVersion, ["versionShown"] = x.VersionShown,
-                ["acceptedAt"] = x.AcceptedAt, ["channel"] = x.Channel, ["ipAddress"] = x.IpAddress,
-                ["userAgent"] = x.UserAgent, ["withdrawnAt"] = x.WithdrawnAt, ["evidenceHash"] = x.EvidenceHash,
+                ["acceptedAt"] = x.AcceptedAt, ["channel"] = x.Channel,
+                ["withdrawnAt"] = x.WithdrawnAt, ["evidenceHash"] = x.EvidenceHash,
                 ["evidenceCheck"] = Accounting.Helpers.PlatformPolicyAcceptanceRules.CheckLabel(
                     Accounting.Helpers.PlatformPolicyAcceptanceRules.Check(x)),
             }).ToList();
@@ -521,9 +523,16 @@ public partial class PdpaService : IPdpaService
 
                 // รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ): หลักฐานยอมรับข้อกำหนด/นโยบาย = legal hold (ภาระพิสูจน์ ม.19 · สิทธิเรียกร้อง ม.33(5)) —
                 // คงแถว แต่ทำอีเมล/IP/UA ไม่ให้ระบุตัว · ลบจริงเมื่อพ้น 10 ปี (PdpaRetentionPurgeJob · PlatformPolicyAcceptanceRules)
-                var accepts = await _db.PlatformPolicyAcceptances.Where(x => x.UserId == u.Id).ToListAsync(ct);
+                // ฝ่ายค้านรอบ 214 S2: รวมแถวที่ soft-delete (IgnoreQueryFilters) — ไม่งั้น PII ค้างในแถวลบอ่อนตลอดไป
+                var accepts = await _db.PlatformPolicyAcceptances.IgnoreQueryFilters().Where(x => x.UserId == u.Id).ToListAsync(ct);
                 foreach (var a in accepts)
                     Accounting.Helpers.PlatformPolicyAcceptanceRules.Pseudonymise(a, u.Email, DateTime.UtcNow);
+                // ฝ่ายค้านรอบ 214 S1: ต้นฉบับใน PdpaConsentRecords (ระดับแพลตฟอร์ม CompanyId ศูนย์ — migration คัดลอกแต่ไม่ลบ) ทำแบบเดียวกัน
+                var platformConsents = await _db.PdpaConsentRecords.IgnoreQueryFilters()
+                    .Where(c => c.SubjectUserId == u.Id && c.CompanyId == Accounting.Helpers.PdpaPolicy.PlatformScopeCompanyId)
+                    .ToListAsync(ct);
+                foreach (var pc in platformConsents)
+                    Accounting.Helpers.PlatformPolicyAcceptanceRules.Pseudonymise(pc, u.Email, DateTime.UtcNow);
                 u.Phone = null;
                 u.LineUserId = null;
                 u.Status = Models.Enums.UserStatus.Inactive;
@@ -674,6 +683,8 @@ public partial class PdpaService : IPdpaService
             Channel = channel,
             IpAddress = ipAddress,
             EvidenceHash = evidenceHash,
+            // ฝ่ายค้านรอบ 214 N2: hash ที่เจ้าหน้าที่กรอกเอง ≠ hash ของระบบ (รายงานแยกที่มา)
+            EvidenceSource = string.IsNullOrWhiteSpace(evidenceHash) ? null : Accounting.Helpers.PdpaConsentEvidence.SourceStaff,
         };
         _db.PdpaConsentRecords.Add(row);
         await _db.SaveChangesAsync(ct);

@@ -103,4 +103,48 @@ public class PdpaConsentEvidenceV2Tests
         Assert.Equal(now.AddYears(-10), PlatformPolicyAcceptanceRules.PurgeCutoff(now));
         Assert.Contains("ตรวจซ้ำไม่ได้", PlatformPolicyAcceptanceRules.CheckLabel(PdpaConsentEvidence.EvidenceCheck.LegacyUnverifiable));
     }
+
+    // ═══════ ฝ่ายค้านรอบ 214 (ฏ) ═══════
+
+    [Fact]
+    public void Prefix_is_case_insensitive()
+    {
+        var h = PdpaConsentEvidence.ComputeHash(Email, Purpose, "1.0", Written, "web-form", null, null);
+        var upper = "V2:" + h[PdpaConsentEvidence.V2Prefix.Length..];
+        Assert.Equal(PdpaConsentEvidence.EvidenceCheck.Valid, PdpaConsentEvidence.Check(upper, Email, Purpose, "1.0", Written, "web-form", null, null));
+    }
+
+    private static PdpaConsentRecord ShopRow()
+    {
+        var at = PdpaConsentEvidence.NormalizeTimestamp(Written);
+        return new PdpaConsentRecord
+        {
+            SubjectContact = "guest@example.test", Purpose = "cms-order:personal-data", PolicyVersion = "abc", GrantedAt = at,
+            Channel = "web-form:WEB-1",
+            EvidenceHash = PdpaConsentEvidence.ComputeHash("guest@example.test", "cms-order:personal-data", "abc", at, "web-form:WEB-1", null, null),
+            EvidenceSource = PdpaConsentEvidence.SourceSystem,
+        };
+    }
+
+    /// <summary>S4/N2: แถวความยินยอมบนเว็บร้าน — ตรวจผ่าน · แก้แล้วไม่ตรง · ที่เจ้าหน้าที่กรอก hash เอง = บอกที่มา (ไม่ใช่ "ไม่ตรง") · ลบตามคำขอแล้ว = ตรวจซ้ำไม่ได้</summary>
+    [Fact]
+    public void Consent_record_labels_by_source_and_state()
+    {
+        var r = ShopRow();
+        Assert.Equal(PlatformPolicyAcceptanceRules.CheckLabel(PdpaConsentEvidence.EvidenceCheck.Valid), PlatformPolicyAcceptanceRules.CheckLabel(r));
+        r.GrantedAt = DateTime.SpecifyKind(r.GrantedAt, DateTimeKind.Unspecified);   // อ่านกลับจากฐาน — ยังผ่าน
+        Assert.Equal(PlatformPolicyAcceptanceRules.CheckLabel(PdpaConsentEvidence.EvidenceCheck.Valid), PlatformPolicyAcceptanceRules.CheckLabel(r));
+        r.SubjectContact = "other@example.test";
+        Assert.Equal(PlatformPolicyAcceptanceRules.CheckLabel(PdpaConsentEvidence.EvidenceCheck.Invalid), PlatformPolicyAcceptanceRules.CheckLabel(r));
+        var staff = ShopRow();
+        staff.EvidenceHash = "ABC123";
+        staff.EvidenceSource = PdpaConsentEvidence.SourceStaff;
+        Assert.Equal(PlatformPolicyAcceptanceRules.StaffEnteredLabel, PlatformPolicyAcceptanceRules.CheckLabel(staff));
+        var erased = ShopRow();
+        PlatformPolicyAcceptanceRules.Pseudonymise(erased, "anon@deleted.local", Written);
+        Assert.Equal("anon@deleted.local", erased.SubjectContact);
+        Assert.Null(erased.IpAddress);
+        Assert.NotNull(erased.PseudonymisedAt);
+        Assert.Equal(PlatformPolicyAcceptanceRules.CheckLabel(PdpaConsentEvidence.EvidenceCheck.LegacyUnverifiable), PlatformPolicyAcceptanceRules.CheckLabel(erased));
+    }
 }

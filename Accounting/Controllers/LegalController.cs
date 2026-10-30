@@ -137,6 +137,20 @@ public class LegalController : ControllerBase
         return Ok(new ApiResponse<LegalAcceptanceStatus>(true, await _legal.GetAcceptanceStatusAsync(uid, ct)));
     }
 
+    /// <summary>ฝ่ายค้านรอบ 214 S3: เจ้าของข้อมูลดู/ดาวน์โหลดหลักฐานยอมรับนโยบายของตัวเองครบทุกช่อง (ม.30/31 · ระดับแพลตฟอร์ม —
+    /// ผู้ใช้ที่ไม่มีบริษัทก็ใช้ได้) · DSR ของบริษัทไม่ส่ง IP/UA (ประวัติข้ามบริษัท) · ขอลบด้วยตัวเอง (ไม่มีบริษัท) = งานถัดไป</summary>
+    [HttpGet("my-data")]
+    [Authorize]
+    public async Task<IActionResult> MyData([FromQuery] bool download = false, CancellationToken ct = default)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var rows = await _legal.GetMyAcceptancesAsync(uid, ct);
+        var payload = new { generatedAt = DateTime.UtcNow, policyAcceptances = rows };
+        if (!download) return Ok(new ApiResponse<object>(true, payload));
+        var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        return File(json, "application/json", $"NextAcc-policy-acceptances-{DateTime.UtcNow:yyyyMMdd}.json");
+    }
+
     public sealed record AcceptRequest(string? VersionShown);
 
     /// <summary>กด "รับทราบและยอมรับ" ฉบับปัจจุบัน — บันทึกหลักฐาน (PdpaConsentRecord + evidence hash)</summary>

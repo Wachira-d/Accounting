@@ -16,6 +16,9 @@ public static class LegalDocumentMigration
         // รอบ 214 หลัง CI (คำตัดสินข้อ 173 ฌ): การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ — ไม่มี CompanyId/FK (เดิมเขียน PdpaConsentRecords ด้วย CompanyId ศูนย์
         // ⇒ ฐานที่มี FK ปฏิเสธ) · คัดลอกแถวเดิม (ฐานที่สร้างจาก migration ไม่มี FK จึงมีแถวอยู่) ด้วย Id เดิม · ON CONFLICT ⇒ รันซ้ำได้ · ไม่ลบแถวเดิม (append-only)
         """CREATE TABLE IF NOT EXISTS "PlatformPolicyAcceptances" ("Id" uuid PRIMARY KEY, "UserId" uuid NOT NULL, "Email" varchar(256) NOT NULL DEFAULT '', "Purpose" varchar(100) NOT NULL DEFAULT '', "PolicyVersion" varchar(50) NOT NULL DEFAULT '', "AcceptedAt" timestamp without time zone NOT NULL, "Channel" varchar(50) NULL, "IpAddress" varchar(45) NULL, "EvidenceHash" varchar(100) NULL, "WithdrawnAt" timestamp without time zone NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
+        // รอบ 214 ฝ่ายค้าน (ฏ): ที่มาของ hash ความยินยอม (N2) + เครื่องหมายลบตามคำขอบนแถวเดิม (S1)
+        """ALTER TABLE "PdpaConsentRecords" ADD COLUMN IF NOT EXISTS "EvidenceSource" varchar(20) NULL;""",
+        """ALTER TABLE "PdpaConsentRecords" ADD COLUMN IF NOT EXISTS "PseudonymisedAt" timestamp without time zone NULL;""",
         // รอบ 214 ต่อ (ฎ): ช่องใน canonical ของหลักฐาน + เครื่องหมายลบตามคำขอ (legal hold)
         """ALTER TABLE "PlatformPolicyAcceptances" ADD COLUMN IF NOT EXISTS "VersionShown" varchar(50) NULL;""",
         """ALTER TABLE "PlatformPolicyAcceptances" ADD COLUMN IF NOT EXISTS "UserAgent" varchar(500) NULL;""",

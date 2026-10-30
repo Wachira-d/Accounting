@@ -28,6 +28,10 @@
 | LEGAL214-25 | ฎ: round-trip บนฐานจริง — แถบยอมรับ + ฟอร์มเว็บร้าน | เขียน → อ่านกลับ → ตรวจผ่าน · แก้ IP ในฐาน ⇒ Invalid · อีเมลอื่น ⇒ ไม่ผ่าน | `Db/LegalDocumentDbTests`.Publish_is_append_only_… · Shop_form_consent_evidence_round_trips_through_postgres |
 | LEGAL214-26 | ฎ: ลบตามคำขอ (ม.33) | แถวคงอยู่ (legal hold) · อีเมลนิรนาม · IP/UA ล้าง · ผลตรวจ = ตรวจซ้ำไม่ได้ · วันลบครั้งแรกไม่เลื่อน · ลบจริงเมื่อพ้น 10 ปี | `PdpaConsentEvidenceV2Tests`.Erasure_pseudonymises_but_keeps_legal_hold_row · กติกา `ApplyErasureAsync`/`PdpaRetentionPurgeJob.RunAsync` |
 | LEGAL214-27 | ฎ: DSR เข้าถึง/โอนย้ายของผู้ใช้ที่ยอมรับนโยบายแล้ว | มี `policyAcceptances` พร้อมผลตรวจรายแถวทั้ง JSON และไฟล์ดาวน์โหลด | กติกา `GenerateAccessReportAsync` · ตรวจมือ |
+| LEGAL214-28 | ฝ่ายค้าน S2/S3: DSR ของบริษัท · เจ้าของดูเอง · ลบตามคำขอที่มีแถว soft-delete | บริษัทไม่เห็น IP/UA · `/api/legal/my-data` เห็นครบ · ลบแล้วทุกแถว (รวม soft-delete) ไม่ระบุตัว แถวคงอยู่ | `Db/LegalDocumentDbTests`.Dsr_hides_platform_ip_from_company_and_erasure_reaches_soft_deleted_rows |
+| LEGAL214-29 | ฝ่ายค้าน S1: ต้นฉบับ PdpaConsentRecords ระดับแพลตฟอร์ม | ลบตามคำขอ = อีเมลนิรนาม/ล้าง IP/`PseudonymisedAt` · ลบจริงพ้น 10 ปี | `PdpaConsentEvidenceV2Tests`.Consent_record_labels_by_source_and_state · กติกา `ApplyErasureAsync`/`PdpaRetentionPurgeJob.RunAsync` |
+| LEGAL214-30 | ฝ่ายค้าน S4/N2: ผลตรวจหลักฐานบนรายงานลูกค้าเว็บ | ระบบ = ตรวจผ่าน/ไม่ตรง · เจ้าหน้าที่กรอก hash เอง = "บันทึกโดยเจ้าหน้าที่" (ไม่ใช่ไม่ตรง) · ลบแล้ว = ตรวจซ้ำไม่ได้ | `PdpaConsentEvidenceV2Tests`.Consent_record_labels_by_source_and_state |
+| LEGAL214-31 | ฝ่ายค้าน N3: ป้าย "V2:" ตัวพิมพ์ใหญ่ | ตรวจผ่าน | `PdpaConsentEvidenceV2Tests`.Prefix_is_case_insensitive |
 | LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
 
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
@@ -194,7 +198,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **696 ไฟล์ · 7,130 `[Fact]` + 1,139 `[Theory]` (5,329 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **696 ไฟล์ · 7,133 `[Fact]` + 1,139 `[Theory]` (5,329 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Services.Implementations;
+using Accounting.Services.Implementations.Pdpa;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -123,5 +124,48 @@ public class LegalDocumentDbTests
             back.GrantedAt, back.Channel, null, null));
         Assert.False(PdpaConsentEvidence.Verify(back.EvidenceHash, "other@example.test", back.Purpose, back.PolicyVersion,
             back.GrantedAt, back.Channel, null, null));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 S2/S3: DSR ของบริษัทไม่ส่ง IP/UA (ประวัติข้ามบริษัท) แต่เจ้าของข้อมูลดูเองได้ครบ ·
+    /// ลบตามคำขอทำไม่ให้ระบุตัว**รวมแถวที่ soft-delete** · แถวคงอยู่ (legal hold)</summary>
+    [Fact]
+    public async Task Dsr_hides_platform_ip_from_company_and_erasure_reaches_soft_deleted_rows()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var user = new User { Email = $"dsr-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ทดสอบ DSR นโยบาย" };
+        var company = new Company { Name = "บริษัททดสอบ DSR นโยบาย", TaxId = "0105556000005" };
+        db.Users.Add(user);
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = user.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner, IsDefault = true });
+        var live = PlatformPolicyAcceptanceRules.Create(user.Id, user.Email, PdpaPolicy.SignupPurpose, "1.0", "1.0", DateTime.UtcNow, "web-form", "203.0.113.21", "ua-live");
+        var softDeleted = PlatformPolicyAcceptanceRules.Create(user.Id, user.Email, PdpaPolicy.PolicyUpdatePurpose, "1.0", "1.0", DateTime.UtcNow, "policy-update-banner", "203.0.113.22", "ua-old");
+        softDeleted.IsDeleted = true;
+        db.PlatformPolicyAcceptances.AddRange(live, softDeleted);
+        await db.SaveChangesAsync();
+
+        var pdpa = new PdpaService(db);
+        var report = await pdpa.GenerateAccessReportAsync(company.Id, user.Id, null);
+        var row = Assert.Single(report.PolicyAcceptances!);
+        Assert.False(row.ContainsKey("ipAddress"));                     // S3: DPO ของบริษัทไม่เห็นประวัติ IP/UA ระดับแพลตฟอร์ม
+        Assert.False(row.ContainsKey("userAgent"));
+        Assert.Equal(PlatformPolicyAcceptanceRules.CheckLabel(PdpaConsentEvidence.EvidenceCheck.Valid), row["evidenceCheck"]);
+        var mine = await Svc(db).GetMyAcceptancesAsync(user.Id);         // เจ้าของข้อมูลเองเห็นครบ
+        Assert.Equal("203.0.113.21", Assert.Single(mine)["ipAddress"]);
+
+        await pdpa.ApplyErasureAsync(company.Id, user.Id, null, "dpo-test");
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+        var after = await db.PlatformPolicyAcceptances.IgnoreQueryFilters().AsNoTracking().Where(x => x.UserId == user.Id).ToListAsync();
+        Assert.Equal(2, after.Count);                                     // legal hold: แถวคงอยู่
+        Assert.All(after, x =>
+        {
+            Assert.NotNull(x.PseudonymisedAt);
+            Assert.Null(x.IpAddress);
+            Assert.Null(x.UserAgent);
+            Assert.DoesNotContain("dsr-", x.Email);                       // S2: แถว soft-delete ก็ถูกทำไม่ให้ระบุตัว
+            Assert.False(string.IsNullOrEmpty(x.EvidenceHash));
+        });
     }
 }
