@@ -4985,6 +4985,10 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   เข้า DSR เข้าถึง/โอนย้าย (`PdpaService.GenerateAccessReportAsync` → `PolicyAcceptances` + ผลตรวจ) · ลบตามคำขอ = `Pseudonymise` (legal hold) ใน `ApplyErasureAsync` ·
   `PdpaRetentionPurgeJob` ลบจริงเมื่อ `PseudonymisedAt` เกิน 10 ปี · hash `PdpaConsentEvidence` v2 ("v2:" · `NormalizeTimestamp` ตัวเดียว ทั้งเขียน/ตรวจ ·
   v1 ตรวจไม่ได้ = `LegacyUnverifiable`) — ใช้กับตอนสมัคร · แถบยอมรับ · ฟอร์มเว็บร้าน (`CmsDataConsent.StageForSubject`)
+- **รอบ 214 ต่อ (ฐ)**: เจ้าของข้อมูล — `/pages/my-data.html` (เมนูผู้ใช้) → `GET /api/legal/my-data[?download=true]` · ยื่นลบ `POST /api/legal/my-data/erase-request`
+  → `PdpaService.RequestPlatformErasureAsync` (`PlatformErasureRequests` · `PlatformErasureRequestPolicy`: ค้างฉบับเดียว · วันละครั้ง · SLA 30 วัน) · SystemAdmin
+  `/admin/legal.html` → `api/admin/platform-erasure-requests` (`complete`/`reject`) → `CompletePlatformErasureAsync` → `AnonymiseUserCoreAsync` (แกนลบตัวเดียว —
+  `ApplyErasureAsync` ของ DSR บริษัทเรียกตัวเดียวกันหลังตรวจสมาชิก) + audit chain + อีเมลแจ้งผล
 _Last verified against codebase: 2026-10-30 (รอบ 214 — นโยบาย/ข้อกำหนดแพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS/หน้าจองโต๊ะ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
 - **รอบ 200 ทีม R**: รายงาน ภ.ง.ด.1 / ปกส. (`GET payroll/pnd1|sso/{y}/{m}`) ปิดบังเลขบัตร/เลข ปกส. เมื่อไม่มี `Pii.View` (ตัวตัดสิน `CanViewPiiAsync`
   ตัวเดียวกับรายชื่อพนักงาน + `PiiAccessLog` เมื่อเปิดดูเต็ม · G2-05) · ไฟล์ยื่นแบบไม่ผ่านเส้นนี้ (ยังได้เลขเต็ม) · ตัวจับพนักงานซ้ำตอนนำเข้า

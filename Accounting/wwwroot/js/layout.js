@@ -1840,6 +1840,7 @@ const Layout = {
             <div class="dropdown-divider"></div>
             <a class="dropdown-item" href="/terms.html" target="_blank" rel="noopener">📄 ข้อกำหนดการใช้งาน</a>
             <a class="dropdown-item" href="/privacy.html" target="_blank" rel="noopener">🔒 นโยบายความเป็นส่วนตัว</a>
+            <a class="dropdown-item" href="/pages/my-data.html">🛡️ ข้อมูลส่วนบุคคลของฉัน</a>
             <div class="dropdown-divider"></div>
             <a class="dropdown-item" href="#" onclick="Layout.logout();return false">🚪 ${this.esc(tLogout)}</a>
           </div>

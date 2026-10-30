@@ -5855,3 +5855,8 @@ _รอบ 215 เฟส 2 (2026-10-30 · คำตัดสินข้อ 176 
 พร้อมการ์ด 🏢 ค่าระดับบริษัท · แจ้งลูกค้ารายเว็บใช้ได้ทุกประเภทเว็บ (ย้ายจากตั้งค่าร้านค้า) · กลุ่มชำระเงินเป็นที่ว่างให้รอบ 218 (`CmsSiteSettingsExt.payment`) · cms-edit มีหัวพื้นที่ทำงาน ·
 เทสต์ `BookingRound215ProviderDefaultTests` · `required_call_site_check` +6 · sim +3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 639a0e1a · 2e0aee49 · c7fab68c (+ คอมมิตเอกสารตามหลัง)_
 
+_รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ — ปิดงานค้าง): หน้า `/pages/my-data.html` + เมนูผู้ใช้ "ข้อมูลส่วนบุคคลของฉัน" (แสดง/ดาวน์โหลดหลักฐานยอมรับนโยบาย · สถานะคำขอลบ) ·
+คำขอลบระดับแพลตฟอร์มที่ผู้ใช้ยื่นเอง (`PlatformErasureRequests` · `POST /api/legal/my-data/erase-request` · ค้างฉบับเดียว · วันละครั้ง · SLA 30 วัน · กติกา `Helpers/PlatformErasureRequestPolicy`) ·
+SystemAdmin ดำเนินการ/ปฏิเสธที่ `/admin/legal.html` (`AdminPlatformErasureController`) → แกนลบตัวเดียว `PdpaService.AnonymiseUserCoreAsync` (แยกออกจาก `ApplyErasureAsync` — DSR ของบริษัทใช้ตัวเดียวกัน) + audit + อีเมลแจ้งผล ·
+เทสต์ `PlatformErasureRequestTests` + Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · TEST_PLAN LEGAL214-32..35 · `required_call_site_check` +4 กติกา/แก้ 1 ·
+`write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

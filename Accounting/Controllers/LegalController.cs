@@ -32,11 +32,13 @@ public class LegalController : ControllerBase
 {
     private readonly AccountingDbContext _db;
     private readonly ILegalDocumentService _legal;
+    private readonly Accounting.Services.Implementations.Pdpa.IPdpaService _pdpa;
 
-    public LegalController(AccountingDbContext db, ILegalDocumentService legal)
+    public LegalController(AccountingDbContext db, ILegalDocumentService legal, Accounting.Services.Implementations.Pdpa.IPdpaService pdpa)
     {
         _db = db;
         _legal = legal;
+        _pdpa = pdpa;
     }
 
     public sealed record PolicyInfo(
@@ -145,10 +147,35 @@ public class LegalController : ControllerBase
     {
         var uid = JwtHelper.GetUserIdFromClaims(User);
         var rows = await _legal.GetMyAcceptancesAsync(uid, ct);
-        var payload = new { generatedAt = DateTime.UtcNow, policyAcceptances = rows };
+        // รอบ 214 ต่อ (ฐ): สถานะคำขอลบล่าสุดของผู้ใช้เอง (หน้า /my-data.html แสดง)
+        var erase = await _pdpa.GetMyPlatformErasureRequestAsync(uid, ct);
+        var payload = new
+        {
+            generatedAt = DateTime.UtcNow, policyAcceptances = rows,
+            erasureRequest = erase == null ? null : new { erase.Status, erase.RequestedAt, erase.DueAt, erase.ResolvedAt, erase.ResolutionNote },
+        };
         if (!download) return Ok(new ApiResponse<object>(true, payload));
         var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
         return File(json, "application/json", $"NextAcc-policy-acceptances-{DateTime.UtcNow:yyyyMMdd}.json");
+    }
+
+    public sealed record EraseRequestBody(string? Reason);
+
+    /// <summary>รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ): ผู้ใช้ยื่นคำขอลบข้อมูลของตัวเอง (ม.33) ระดับแพลตฟอร์ม — ใช้ได้แม้ไม่มีบริษัท ·
+    /// ค้างอยู่แล้ว = คืนฉบับเดิม (idempotent) · ยื่นได้วันละครั้ง (429) · โหมดเข้าดูในนามลูกค้า = 403 · ผู้ดูแลระบบดำเนินการภายใน 30 วัน</summary>
+    [HttpPost("my-data/erase-request")]
+    [Authorize]
+    [Accounting.Filters.RejectApiKey("ยื่นคำขอลบข้อมูลแทนผู้ใช้")]
+    public async Task<ActionResult<ApiResponse<object>>> RequestErasure([FromBody] EraseRequestBody? body, CancellationToken ct)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        if (User.FindFirst("imp")?.Value == "true")
+            return StatusCode(403, new ApiResponse<object>(false, null, "โหมดเข้าดูในนามลูกค้ายื่นคำขอลบแทนเจ้าของบัญชีไม่ได้"));
+        var ip = Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
+        if (string.IsNullOrWhiteSpace(ip)) ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var (row, created) = await _pdpa.RequestPlatformErasureAsync(uid, body?.Reason, ip, ct);
+        return Ok(new ApiResponse<object>(true, new { row.Status, row.RequestedAt, row.DueAt, created },
+            created ? "รับคำขอลบข้อมูลแล้ว — ผู้ดูแลระบบจะดำเนินการภายใน 30 วันและแจ้งผลทางอีเมล" : "มีคำขอลบที่กำลังดำเนินการอยู่แล้ว"));
     }
 
     public sealed record AcceptRequest(string? VersionShown);
