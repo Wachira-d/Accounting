@@ -5902,6 +5902,24 @@ _Last verified against codebase: 2026-10-30 (รอบ 211 — ลูกค้�
 
 _Last verified against codebase: 2026-10-30 (รอบ 211 ฝ่ายค้าน — log ปิดบัง userId · เส้นปิดลิงก์เดียว + เผารหัส · เก็บกวาดรายคืน · BotUserId มีผล · อีเมลร้านล้มถอยไประบบ + ประทับ · webhook 401 แบบเดียว + จำกัด body · ธุรกรรมไถ่/ออกรหัส · ยินยอมด้วย hash · ยังไม่ได้คอมไพล์ · commit f19dac45)_
 
+- **รอบ 212 C · แจ้งเตือนพนักงานผ่าน OA กลาง + สรุปประจำวันทาง LINE (คำตัดสินข้อ 5 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §0/§5/§8 C · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **บั๊กแฝงที่แก้** — `NotificationEngine.DispatchLineAsync` เดิม push `User.LineUserId`/`Employee.LineId` ผ่าน OA ที่ `LineNotifyService.ResolveConfigAsync` เลือก (OA ของร้านเมื่อร้านเปิด LINE)
+  แต่ userId ของพนักงานผูกผ่าน webhook ของ **OA กลาง** เท่านั้น ("ผูก 123456" · "สลิป 123456") และ userId ของ LINE แยกตาม provider ⇒ ร้านที่ตั้ง OA เองแจ้งเตือนพนักงานทาง LINE ล้มทุกฉบับ ·
+  ตอนนี้ใช้ `ILineNotifyService.TryPushViaNextAccAsync` (token `Line:ChannelAccessToken` ระบุชัด · ไม่อ่านค่าตั้งบริษัท · ไม่ถอยไป OA ร้าน · ≤ 5 ก้อน × ≤ 5,000 ตัวผ่าน `Helpers/LineMessageLimits`) · ล้ม ⇒ log Warning พร้อมเหตุ ·
+  แจ้งเตือนรายเหตุการณ์**ไม่นับ**โควตาข้อความช่องกลาง (§10) · ข้อความถึงลูกค้า (`TryPushToUserAsync`) ความหมายเดิม ·
+  (ข) **สรุปประจำวัน** — ตั้งที่ `settings.html` แท็บการแจ้งเตือน ส่วน "สรุปรายวันทาง LINE" (`js/staff-daily-summary.js` · `GET/POST/PUT/DELETE api/companies/{id}/notifications/daily-summary[/{configId}]` ·
+  `POST …/{configId}/test` ส่งถึงผู้กด · ทุกเส้นต้อง `CompanySettings.Edit` + ปฏิเสธ API key) · ชุด `StaffDailySummaryConfig` (บริษัท + เว็บเดียวถ้าเลือก · เวลาไทยปัด 5 นาที · หัวข้อ · ผู้รับรายคน ∪ ตามบทบาท) ·
+  งาน `StaffDailySummaryJob` รอบละ 5 นาที ใต้ `JobLock` · ถึงกำหนด = `StaffDailySummaryPlan.Due` (ถึงเวลา · ส่งตามหลังได้ถึง 23:00 · ไม่ backfill ข้ามวัน · watermark `LastSentLocalDate` ต่อชุด) ·
+  ต่อผู้รับ: claim แถว `StaffDailySummaryDeliveries` unique (ชุด, วัน, คน) ด้วย `INSERT … ON CONFLICT … WHERE` (ล้มลองใหม่ได้ 3 ครั้ง/วัน · "กำลังส่ง" ค้าง > 15 นาทีรับช่วงได้) →
+  สมาชิกที่ยังใช้งาน + ผูก LINE (ไม่ผูก ⇒ แถว "ยังไม่ผูก LINE" + หน้าตั้งค่าบอกวิธีผูก) → สิทธิ์ ณ วันส่ง (`IPermissionService` ต่อคีย์ของหัวข้อ + `CmsSiteScope.AllowedSiteIds`) →
+  `StaffDailySummaryPlan.FilterForRecipient` (ไม่มีสิทธิ์ = ไม่มีหัวข้อ · เว็บที่ไม่เห็น = ไม่มีแถว) → `Helpers/StaffDailySummaryBuilder` (ข้อความเดียว ≤ 5 ก้อน × ≤ 5,000 ตัว · เกิน ⇒ "…และอีก N รายการ — ดูเพิ่มเติม: ลิงก์หน้าหลังบ้าน") →
+  จองโควตาช่องกลาง `ISharedMessageMeter` (**นับ** 1 หน่วย/ผู้รับ/วัน · ตอนนี้ no-op จนกว่าโควตาแพ็ก A เข้า — ผู้ประสานงานต่อสาย) → push OA กลาง → ประทับผล/เหตุบนแถว (ล้ม ⇒ คืนหน่วย + `Error`) ·
+  ทุกผู้รับจบ ⇒ ขยับ watermark · สรุปผลรอบบน `LastRunNote` (หน้าตั้งค่าแสดง + ประวัติ 7 วัน) · หัวข้อ: การจองวันนี้/พรุ่งนี้ตามผู้ให้บริการ/บริการ · คลาส + ที่นั่ง · คิวผลิตตามสั่ง (วันพร้อมรับ ≤ 7 วัน/เลยกำหนด · ค้างชำระ) ·
+  ออเดอร์รอจัดส่ง · ที่พักเช็คอิน/เอาต์วันนี้ (เฉพาะบริษัทที่มีที่พัก) · บัตรคอร์สหมดอายุใน 7 วัน · ข้อมูลลูกค้าในข้อความ = ชื่อ + เวลา + บริการ/เลขที่ เท่านั้น (ไม่มีเบอร์/อีเมล · PDPA ม.37) ·
+  ตาราง `Helpers/StaffDailySummaryMigration` (ตารางใหม่ล้วน)
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 C — แจ้งเตือนพนักงานผ่าน OA กลาง · สรุปประจำวันทาง LINE · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

@@ -46,15 +46,19 @@ public class LineNotifyService : ILineNotifyService
                     return (token, s.LineDefaultGroupId);
             }
         }
-        return (_configuration["Line:ChannelAccessToken"], _configuration["Line:GroupId"]);
+        return (NextAccToken(), _configuration["Line:GroupId"]);
     }
 
     private async Task<bool> PushRawAsync(string? token, object payload, string context)
+        => (await PushCoreAsync(token, payload, context)).Ok;
+
+    /// <summary>ตัวยิง push จริงตัวเดียว — คืนผล + <b>เหตุ</b> (รอบ 212 C: ผู้เรียกที่ต้องประทับเหตุบนแถว เช่น สรุปประจำวัน) · log ปิดบัง userId</summary>
+    private async Task<LinePushResult> PushCoreAsync(string? token, object payload, string context)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
             _logger.LogInformation("LINE skipped ({Ctx}) — no token configured", context);
-            return false;
+            return LinePushResult.Fail("ยังไม่ได้ตั้งค่า Channel Access Token ของ LINE OA");
         }
         try
         {
@@ -66,17 +70,39 @@ public class LineNotifyService : ILineNotifyService
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync();
-                _logger.LogError("LINE push failed ({Ctx}): {Status} {Body}", context, resp.StatusCode, CustomerLineLinkRule.RedactForLog(body));   // รอบ 211 ฝ่ายค้าน: ห้าม log userId เต็ม
-                return false;
+                var redacted = CustomerLineLinkRule.RedactForLog(body);
+                _logger.LogError("LINE push failed ({Ctx}): {Status} {Body}", context, resp.StatusCode, redacted);   // รอบ 211 ฝ่ายค้าน: ห้าม log userId เต็ม
+                return LinePushResult.Fail($"LINE ตอบ {(int)resp.StatusCode}: {LineMessageLimits.Truncate(redacted, 200)}");
             }
-            return true;
+            return LinePushResult.Success;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "LINE push threw ({Ctx})", context);
-            return false;
+            return LinePushResult.Fail($"เรียก LINE ไม่สำเร็จ ({ex.GetType().Name})");
         }
     }
+
+    /// <summary>รอบ 212 C — push ถึง<b>พนักงาน/ผู้ใช้ ERP</b> ผ่าน OA กลางของ NextAcc <b>แบบระบุชัด</b> (ไม่ผ่าน <see cref="ResolveConfigAsync"/>):
+    /// userId ของพนักงานได้จาก webhook ของ OA กลางเท่านั้น ("ผูก 123456" · "สลิป 123456" ใน <c>LineBotService</c>) และ userId ของ LINE แยกตาม provider ⇒
+    /// ส่งผ่าน OA ของร้านไม่มีทางถึง (บั๊กแฝงที่แก้: ร้านที่ตั้ง OA เองแจ้งเตือนพนักงานล้มทุกฉบับ) · ไม่แตะค่าตั้งของบริษัทเลย ·
+    /// ข้อความผ่าน <see cref="LineMessageLimits.Normalize"/> (≤ 5 ก้อน × ≤ 5,000 ตัว) · ไม่ตั้ง token กลาง ⇒ ล้มพร้อมเหตุ (ไม่ถอยไป OA ร้าน)</summary>
+    public async Task<LinePushResult> TryPushViaNextAccAsync(string lineUserId, IReadOnlyList<string> messages)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
+        var texts = LineMessageLimits.Normalize(messages);
+        if (texts.Count == 0) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
+        var token = NextAccToken();
+        if (string.IsNullOrWhiteSpace(token)) return LinePushResult.Fail("ยังไม่ได้ตั้งค่า LINE OA ของ NextAcc (Line:ChannelAccessToken)");
+        return await PushCoreAsync(token, new
+        {
+            to = lineUserId,
+            messages = texts.Select(t => new { type = "text", text = t }).ToArray()
+        }, $"staff {CustomerLineLinkRule.Mask(lineUserId)}");
+    }
+
+    /// <summary>token ของ OA กลาง (NextAcc) — ที่เดียวที่ส่งถึงพนักงานอ่าน</summary>
+    private string? NextAccToken() => _configuration["Line:ChannelAccessToken"];
 
     public async Task SendMessageAsync(string message)
     {

@@ -1,3 +1,22 @@
+## CMS212C — แจ้งเตือนพนักงานผ่าน OA กลาง + สรุปประจำวันทาง LINE (รอบ 212 C · คำตัดสินข้อ 5 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §0/§5/§7)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS212C-01 | ร้านตั้ง OA เอง · แจ้งเตือนพนักงาน (engine) / สรุปประจำวัน | push ด้วย token ของ OA กลาง ไม่อ่านค่าตั้งบริษัท (DbContext null ในเทสต์) | `Staff_push_uses_nextacc_token_without_reading_company_settings` · rules `NotificationEngine.DispatchLineAsync` · `TryPushViaNextAccAsync` (forbid `ResolveConfigAsync`) |
+| CMS212C-02 | ไม่ได้ตั้ง token ของ OA กลาง | ล้มพร้อมเหตุ · ไม่ถอยไป OA ร้าน · ไม่ยิง HTTP | `Staff_push_without_nextacc_token_fails_with_reason_and_never_falls_back` |
+| CMS212C-03 | LINE ตอบ 400 · ส่ง 8 ก้อน · ผู้รับไม่ผูก | คืนเหตุ "LINE ตอบ 400" · ส่งแค่ 5 ก้อน · ไม่ผูก = ล้ม | `Staff_push_reports_line_error_and_caps_five_messages` · `Line_limits_normalize_drops_blank_truncates_and_caps` |
+| CMS212C-04 | **ทิศตรงข้าม** push ถึงลูกค้า (`TryPushToUserAsync`) | ความหมายเดิม (ResolveConfigAsync) | `Customer_push_without_company_keeps_global_resolution_unchanged` |
+| CMS212C-05 | ประกอบข้อความทุกหัวข้อ | ตัวเลข/การจัดกลุ่มผู้ให้บริการ/ที่นั่ง %/ค้างชำระ/เลยกำหนด ตรง | `Builder_renders_each_section_with_numbers_and_provider_grouping` |
+| CMS212C-06 | หัวข้อ null / ว่าง | null = ไม่มีหัวข้อ · ว่าง = "ไม่มีรายการ" | `Builder_omits_null_sections_and_says_empty_for_empty_ones` |
+| CMS212C-07 | 3,000 รายการ (เกินเพดาน LINE) | 5 ก้อน × ≤ 5,000 ตัว · ท้ายบอก "อีก N รายการ" + ลิงก์หน้าหลังบ้าน · แสดง + เหลือ = ทั้งหมด · ไม่มีฐานลิงก์ ⇒ บอกชื่อหน้า | `Builder_splits_within_line_limits_and_reports_omitted_items_with_link` · `Builder_without_base_url_names_the_page_instead_of_a_link` |
+| CMS212C-08 | ผู้รับไม่มีสิทธิ์ออเดอร์/ที่พัก | ไม่มีหัวข้อนั้นในข้อความ (ไม่ใช่หัวข้อว่าง) | `Recipient_without_order_permission_gets_no_order_sections` · rule `BuildForRecipientAsync` (Filter ก่อน Build) |
+| CMS212C-09 | ผู้รับเห็นเว็บ A เท่านั้น | ไม่มีแถวของเว็บ B · **ทิศตรงข้าม** สิทธิ์ครบเห็นทุกหัวข้อ | `Recipient_sees_only_rows_of_sites_they_can_access` · `Opposite_direction_full_permission_sees_everything_selected` · rule `RecipientScopeAsync` |
+| CMS212C-10 | ไม่ได้เลือก/บริษัทไม่มีที่พัก/ไม่มีเว็บที่เห็น · บัตรคอร์สคีย์ใดก็ได้ | ไม่อยู่ในข้อความ · ไม่มีหัวข้อเลย = ไม่ส่ง | `Unselected_or_inactive_modules_are_not_in_the_message` · `Credits_section_accepts_any_of_its_keys` |
+| CMS212C-11 | ผู้รับ = รายคน ∪ บทบาท · คนที่ไม่ใช่สมาชิกแล้ว · csv แปลก | เฉพาะสมาชิก · คีย์แปลกถูกปฏิเสธที่ endpoint | `Recipients_are_union_of_users_and_roles_among_members_only` · `Section_and_role_csv_round_trip_and_reject_unknown` |
+| CMS212C-12 | เวลาไทย: 07:29/07:30 · 22:59/23:00 · เที่ยงคืนไทย (17:10 UTC) · ปัด 5 นาที | ถึงกำหนดตามเวลาไทย · ส่งตามหลังถึง 23:00 · วันใหม่ตามเวลาไทย | `Due_uses_bangkok_time_window_and_watermark` · `Due_rolls_over_at_bangkok_midnight_not_utc` · `Send_time_rounds_down_to_five_minutes` |
+| CMS212C-13 | รันซ้ำวันเดียวกัน / สองเครื่อง / ล้มแล้วลองใหม่ | ไม่ส่งซ้ำ (unique + ON CONFLICT) · ล้มลองได้ 3 ครั้ง · watermark ขยับเมื่อทุกคนจบ | `Terminal_status_decides_when_watermark_may_move` · `Message_key_is_one_per_config_day_recipient` · rules `ClaimAsync` · `RunConfigAsync` · `RunDueAsync` · `StaffDailySummaryJob.RunGuardedAsync` |
+| CMS212C-14 | endpoint ตั้งค่า/ส่งทดสอบ | ต้อง `CompanySettings.Edit` + ปฏิเสธ API key | `write_permission_gate_check` (WATCHED `StaffDailySummaryController`) · ⏳ Db test `StaffDailySummaryDbTests` (บริษัท B ไม่โผล่ · รันซ้ำไม่ส่งซ้ำ) ยังไม่ได้เขียน |
+
 ## CMS211 — ลูกค้าปลายทางผูก LINE รับแจ้งเตือน (สมาชิก/แขก) · OA ของร้าน/NextAcc · อีเมลของร้าน (รอบ 211 · คำตัดสินข้อ 170 · `erp-review/2026-10-30/LINE_CUSTOMER_NOTIFY_DESIGN.md`)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -47,7 +66,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **686 ไฟล์ · 6,966 `[Fact]` + 1,118 `[Theory]` (5,220 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **687 ไฟล์ · 6,987 `[Fact]` + 1,118 `[Theory]` (5,220 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

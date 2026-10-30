@@ -225,6 +225,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.CourseCreditMembershipMigration.Statements());   // รอบ 209 P5 — สมาชิกไม่จำกัด/พัก/โอน + ค่าตอบแทนผู้ให้บริการ (Helpers/CourseCreditMembershipMigration)
+        list.AddRange(Accounting.Helpers.StaffDailySummaryMigration.Statements());   // รอบ 212 C — สรุปประจำวันทาง LINE ถึงพนักงาน (Helpers/StaffDailySummaryMigration)
         list.AddRange(PerLineWhtStatements());   // ทีม F — หัก ณ ที่จ่ายตามรายการ + ฐานบาทตามเอกสาร (บล็อกท้ายไฟล์)
         list.AddRange(W9HygieneStatements());   // W9 R-58/R-59 — backfill ช่องทาง LINE + ตัด feedback ความหมายเก่าออกจากการสอน (บล็อกท้ายไฟล์)
         list.AddRange(PostVatDeductionStatements());   // ทีม U — หักหลัง VAT + แยกยอดจ่ายจริงตามแหล่ง (บล็อกท้ายไฟล์)
