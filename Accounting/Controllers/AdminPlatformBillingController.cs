@@ -271,6 +271,65 @@ public class AdminPlatformBillingController : ControllerBase
             }).ToList()));
     }
 
+    // ═══════════ ฝ่ายค้านรอบ 219 เฟส 2 (S2/B2/S3): รายการชำระที่ต้องจัดการด้วยมือ — ล้มดัง (ไม่ใช่หมายเหตุใน ReviewNotes ที่ไม่มีใครเห็น) ═══════════
+
+    /// <summary>รายการชำระค่าบริการที่มีเรื่องค้าง (<c>AttentionReason</c>): ตัดชำระล้ม/ไม่มีใบเสร็จ · พักการอนุมัติอัตโนมัติ · รับเกินยอด — ใหม่สุดก่อน</summary>
+    [HttpGet("payment-exceptions")]
+    public async Task<ActionResult<ApiResponse<object>>> PaymentExceptions(CancellationToken ct)
+    {
+        var rows = await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.AttentionReason != null)
+            .OrderByDescending(p => p.AttentionAt)
+            .Select(p => new
+            {
+                p.Id, p.PaymentNumber, p.Subscription.CompanyId, p.Amount, p.WithholdingTaxAmount, status = p.Status.ToString(),
+                p.AttentionReason, p.AttentionRule, p.AttentionAt, p.PlatformInvoiceDocumentId, p.ReceiptNumber, p.PaymentDate,
+                canRetrySettle = p.Status == SubscriptionPaymentStatus.Approved && p.PlatformInvoiceDocumentId != null && p.PlatformDocumentId == null,
+            })
+            .Take(500).ToListAsync(ct);
+        var names = await CompanyNamesAsync(rows.Select(r => r.CompanyId), ct);
+        return Ok(new ApiResponse<object>(true, rows.Select(r => new
+        {
+            r.Id, r.PaymentNumber, r.CompanyId, companyName = names.GetValueOrDefault(r.CompanyId, "(ไม่พบชื่อ)"), r.Amount, r.WithholdingTaxAmount,
+            r.status, r.AttentionReason, r.AttentionRule, r.AttentionAt, r.PlatformInvoiceDocumentId, r.ReceiptNumber, r.PaymentDate, r.canRetrySettle,
+        }).ToList()));
+    }
+
+    /// <summary>ตัดชำระใบแจ้งหนี้อีกครั้ง (idempotent ด้วยอ้างอิงต่อรายการ — บันทึกรับเงินไปแล้วไม่ซ้ำ · หาใบเสร็จที่ออกภายหลังได้)</summary>
+    [HttpPost("payment-exceptions/{paymentId:guid}/retry-settle")]
+    public async Task<ActionResult<ApiResponse<object>>> RetrySettle(Guid paymentId, [FromServices] ISaasBillingDocumentService billing, CancellationToken ct)
+    {
+        var p = await _db.SubscriptionPayments.AsNoTracking().Where(x => x.Id == paymentId)
+            .Select(x => new { x.Status, x.PlatformInvoiceDocumentId, x.PlatformDocumentId }).FirstOrDefaultAsync(ct);
+        if (p == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระ"));
+        if (p.Status != SubscriptionPaymentStatus.Approved || p.PlatformInvoiceDocumentId == null)
+            return StatusCode(409, new ApiResponse<object>(false, null, "ตัดชำระได้เฉพาะรายการที่อนุมัติแล้วและผูกใบแจ้งหนี้ — รายการที่พักไว้ให้ใช้ปุ่มอนุมัติ/ปฏิเสธ"));
+        if (p.PlatformDocumentId != null) return Ok(new ApiResponse<object>(true, null, "ตัดชำระและออกใบเสร็จแล้ว"));
+        await billing.SettlePlatformInvoiceAsync(paymentId);
+        var after = await _db.SubscriptionPayments.AsNoTracking().Where(x => x.Id == paymentId)
+            .Select(x => new { x.PlatformDocumentId, x.ReceiptNumber, x.AttentionReason }).FirstAsync(ct);
+        return Ok(new ApiResponse<object>(after.PlatformDocumentId != null, after,
+            after.PlatformDocumentId != null ? $"ตัดชำระแล้ว · ใบเสร็จ {after.ReceiptNumber}" : (after.AttentionReason ?? "ยังตัดชำระไม่สำเร็จ")));
+    }
+
+    public record ResolveAttentionRequest(string? Note);
+
+    /// <summary>แอดมินจัดการเรื่องค้างนอกระบบแล้ว (คืนเงินส่วนเกิน · ออกใบลดหนี้ · บันทึกด้วยมือ) — หมายเหตุบังคับ · audit chain</summary>
+    [HttpPost("payment-exceptions/{paymentId:guid}/resolve")]
+    public async Task<ActionResult<ApiResponse<object>>> ResolveAttention(Guid paymentId, [FromBody] ResolveAttentionRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req?.Note)) return BadRequest(new ApiResponse<object>(false, null, "กรุณาระบุว่าจัดการอย่างไร"));
+        var p = await _db.SubscriptionPayments.Include(x => x.Subscription).FirstOrDefaultAsync(x => x.Id == paymentId, ct);
+        if (p == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระ"));
+        if (p.Status is SubscriptionPaymentStatus.Pending or SubscriptionPaymentStatus.UnderReview)
+            return StatusCode(409, new ApiResponse<object>(false, null, "รายการยังรอตรวจ — อนุมัติหรือปฏิเสธก่อน"));
+        var note = req!.Note!.Trim();
+        PlatformPaymentAttention.Clear(_db, p, p.Subscription.CompanyId, User.FindFirstValue(ClaimTypes.Email) ?? JwtHelper.GetUserIdFromClaims(User).ToString(),
+            note.Length > 300 ? note[..300] : note);
+        await _db.SaveChangesAsync(ct);
+        return Ok(new ApiResponse<object>(true, null, "บันทึกว่าจัดการแล้ว"));
+    }
+
     private async Task<Dictionary<Guid, string>> CompanyNamesAsync(IEnumerable<Guid> ids, CancellationToken ct)
     {
         var list = ids.Distinct().ToList();

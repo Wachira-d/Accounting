@@ -365,4 +365,12 @@ public class SubscriptionPayment : BaseEntity
     /// อนุมัติแล้ว <b>ตัดชำระใบเดิม</b> (ไม่ออกขายสดใบใหม่ = ไม่นับรายได้ซ้ำ G-10) · <c>RequestedPeriodMonths = 0</c> = ใบค่าใช้งาน (ไม่ต่ออายุ) ·
     /// &gt; 0 = ใบต่ออายุของรอบนี้ (ต่ออายุตามเส้นเดิม) · null = รายการแบบเดิม (ขอแพ็กเกจ/ต่ออายุโดยไม่มีใบ)</summary>
     public Guid? PlatformInvoiceDocumentId { get; set; }
+
+    /// <summary>รอบ 219 เฟส 2 (ฝ่ายค้าน S2/B2/S3): เหตุที่ผู้ดูแลระบบต้องจัดการรายการนี้ด้วยมือ (ตัดชำระใบอัตโนมัติไม่สำเร็จ ·
+    /// พักการอนุมัติอัตโนมัติเพราะใบที่ผูกไม่มียอดค้าง/เป็นใบต่ออายุที่ถูกแทนที่ · รับเกินยอดค้าง) — null = ไม่มีเรื่องค้าง ·
+    /// ตัวเขียนเดียว <c>Helpers/PlatformPaymentAttention</c> (audit chain ทุกครั้ง) · หน้าแอดมิน <c>payment-exceptions</c> แสดง</summary>
+    public string? AttentionReason { get; set; }
+    /// <summary>รหัสกฎของ <see cref="AttentionReason"/> (<c>PLATFORM-SETTLE-FAILED</c> / <c>PLATFORM-PAYMENT-HELD</c> / <c>PLATFORM-OVERPAYMENT</c>)</summary>
+    public string? AttentionRule { get; set; }
+    public DateTime? AttentionAt { get; set; }
 }

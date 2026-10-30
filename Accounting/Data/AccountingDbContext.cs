@@ -764,6 +764,12 @@ public class AccountingDbContext : DbContext
             // รอบ 219 เฟส 2: หา "รายการที่แจ้งชำระใบนี้อยู่" (กันแจ้งซ้อน · ศูนย์บิล · ลิงก์ชำระ) — ชื่อตรงกับ PlatformBillingPhase2Migration
             e.HasIndex(p => p.PlatformInvoiceDocumentId).HasFilter("\"PlatformInvoiceDocumentId\" IS NOT NULL")
                 .HasDatabaseName("IX_SubscriptionPayments_PlatformInvoiceDocumentId");
+            // ฝ่ายค้านรอบ 219 เฟส 2 (S3): ใบเดียวมีรายการ "รอชำระ/รอตรวจ" ได้ทีละรายการ (สองแท็บ/สองคนกดพร้อมกัน = ไม่เกิดรายการซ้อน) ·
+            // รายการที่พักไว้ให้แอดมิน (AttentionReason) อยู่นอกกติกานี้ · เงื่อนไข/ชื่อตรงกับ PlatformBillingPhase2Migration ทุกตัวอักษร
+            e.HasIndex(p => p.PlatformInvoiceDocumentId, "UX_SubscriptionPayments_OpenPerInvoice").IsUnique()
+                .HasFilter(Accounting.Helpers.PlatformBillingPhase2Migration.OpenPerInvoiceFilter);
+            e.Property(p => p.AttentionReason).HasMaxLength(500);
+            e.Property(p => p.AttentionRule).HasMaxLength(60);
             e.Property(p => p.PaymentNumber).HasMaxLength(50);
             e.Property(p => p.Amount).HasPrecision(18, 2);
             e.Property(p => p.Currency).HasMaxLength(3);

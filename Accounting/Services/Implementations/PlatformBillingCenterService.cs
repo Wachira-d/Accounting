@@ -58,13 +58,14 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
         var invoices = platformId is Guid pid
             ? await PlatformInvoiceQueries.ForBuyer(_db, pid, companyId)
                 .OrderByDescending(d => d.DocumentDate).ThenByDescending(d => d.DocumentNumber)
-                .Take(InvoiceTake).ToListAsync(ct)
+                .Take(InvoiceTake).AsRows(companyId).ToListAsync(ct)
             : new List<PlatformInvoiceRow>();
         var invIds = invoices.Select(i => i.Id).ToList();
         var pendingByInvoice = (await _db.SubscriptionPayments.AsNoTracking()
                 .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId != null && invIds.Contains(p.PlatformInvoiceDocumentId.Value)
                     && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview))
-                .Select(p => new { InvoiceId = p.PlatformInvoiceDocumentId!.Value, p.PaymentNumber, HasSlip = p.SlipFileName != null, p.CreatedAt })
+                // รายการที่พักให้แอดมิน (ฝ่ายค้าน B2) นับเป็น "มีหลักฐานแล้ว" — ห้ามจ่ายซ้ำจนแอดมินตัดสิน (ตรงกับด่านของ SubmitInvoicePaymentAsync)
+                .Select(p => new { InvoiceId = p.PlatformInvoiceDocumentId!.Value, p.PaymentNumber, HasSlip = p.SlipFileName != null || p.AttentionReason != null, p.CreatedAt })
                 .ToListAsync(ct))
             .GroupBy(p => p.InvoiceId)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedAt).First());
@@ -79,7 +80,11 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             pendingByInvoice.TryGetValue(inv.Id, out var pending);
             var reason = inv.Id == sub.RenewalInvoiceDocumentId && open
                     && PlatformInvoiceRules.RenewalNotPayableReason(sub.CancelAtPeriodEnd) is string cancelled
-                ? cancelled : PayRefusal(open, canPay, pending?.HasSlip == true, pending?.PaymentNumber);
+                ? cancelled
+                // ฝ่ายค้าน N6: ใบต่ออายุที่ถูกแทนที่ — ตัวตัดสินเดียวกับด่านแจ้งชำระ
+                : open && PlatformInvoiceRules.SupersededRenewalReason(inv.Reference, inv.Id, sub.RenewalInvoiceDocumentId) is string superseded
+                ? superseded
+                : PayRefusal(open, canPay, pending?.HasSlip == true, pending?.PaymentNumber);
             var lines = open && platformId is Guid p2
                 ? (await PlatformInvoiceQueries.LineSummaryAsync(_db, p2, inv.Id, LineTake, ct))
                     .Select(l => $"{l.Description} — {l.Amount:N2}").ToList()

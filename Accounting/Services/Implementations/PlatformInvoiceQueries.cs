@@ -30,8 +30,9 @@ public static class PlatformInvoiceQueries
         return alive ? id : null;
     }
 
-    /// <summary>ใบแจ้งหนี้ (ออกแล้ว) ของบริษัทผู้เช่ารายเดียว</summary>
-    public static IQueryable<PlatformInvoiceRow> ForBuyer(AccountingDbContext db, Guid platformId, Guid buyerCompanyId)
+    /// <summary>ใบแจ้งหนี้ (ออกแล้ว) ของบริษัทผู้เช่ารายเดียว — คืน<b>เอกสาร</b> (ผู้เรียกกรอง/เรียงด้วยคอลัมน์จริงก่อน แล้วค่อย <see cref="AsRows"/> เป็นขั้นสุดท้าย:
+    /// EF แปล Where/Contains ที่ต่อหลังการ project เข้า constructor ของ record ไม่ได้ — CI Db รอบ 219 เฟส 2 ล้ม 6 เทสต์)</summary>
+    public static IQueryable<Document> ForBuyer(AccountingDbContext db, Guid platformId, Guid buyerCompanyId)
     {
         var key = buyerCompanyId.ToString();
         var contactIds = db.Contacts.AsNoTracking()
@@ -40,10 +41,13 @@ public static class PlatformInvoiceQueries
         var issued = PlatformInvoiceRules.IssuedStatuses;
         return db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == platformId && !d.IsDeleted && d.DocumentType == DocumentType.Invoice
-                && issued.Contains(d.Status) && contactIds.Contains(d.ContactId))
-            .Select(d => new PlatformInvoiceRow(d.Id, buyerCompanyId, d.DocumentNumber, d.Reference, d.Status,
-                d.DocumentDate, d.DueDate, d.TotalAmount, d.BalanceDue));
+                && issued.Contains(d.Status) && contactIds.Contains(d.ContactId));
     }
+
+    /// <summary>project เป็นแถวมุมผู้จ่าย — ใช้เป็น<b>ขั้นสุดท้าย</b>ของ query เท่านั้น (ห้ามต่อ Where/OrderBy/Contains หลังจากนี้)</summary>
+    public static IQueryable<PlatformInvoiceRow> AsRows(this IQueryable<Document> q, Guid buyerCompanyId)
+        => q.Select(d => new PlatformInvoiceRow(d.Id, buyerCompanyId, d.DocumentNumber, d.Reference, d.Status,
+            d.DocumentDate, d.DueDate, d.TotalAmount, d.BalanceDue));
 
     /// <summary>ใบที่ยังค้างของทุกบริษัทผู้เช่า (dunning · หน้าแอดมิน) — ผู้ติดต่อที่ไม่ได้ผูกกับบริษัทผู้เช่า (ลูกค้าทั่วไปของ NextAcc) ไม่อยู่ในชุดนี้</summary>
     public static async Task<List<PlatformInvoiceRow>> OpenForAllBuyersAsync(AccountingDbContext db, Guid platformId,

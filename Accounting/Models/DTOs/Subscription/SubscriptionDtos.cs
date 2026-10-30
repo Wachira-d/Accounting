@@ -293,7 +293,10 @@ public record SubmitSubscriptionPaymentRequest(
 public record ReviewSubscriptionPaymentRequest(
     bool Approve,
     string? ReviewNotes,
-    string? RejectionReason);
+    string? RejectionReason,
+    /// <summary>ฝ่ายค้านรอบ 219 เฟส 2 (S4): ภาษีหัก ณ ที่จ่ายที่ลูกค้าหัก (แอดมินกรอกจาก 50 ทวิ ตอนอนุมัติ) — null = ไม่เปลี่ยน ·
+    /// รายการที่ผูกใบ: ตรวจด้วย <c>PlatformInvoiceRules.WithholdingProblem</c> แล้วเงินโอน = ยอดค้าง − ภาษีหัก</summary>
+    decimal? WithholdingTaxAmount = null);
 
 /// <summary>WP-C1: admin บันทึกรับเงินเอง (เงินสด/โอนนอกระบบ) หรือยกเว้นค่าบริการ.
 /// สร้าง SubscriptionPayment แล้ววิ่งเข้าเส้น approve เดิม (ต่ออายุ+ประวัติ+ใบเสร็จ)

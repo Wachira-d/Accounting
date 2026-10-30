@@ -44,8 +44,14 @@ public class PlatformDunningService : IPlatformDunningService
     {
         var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
         if (platformId == null) return null;
+        // ฝ่ายค้าน N4: งานรายชั่วโมง/หลังอนุมัติ/ปุ่มแอดมิน ประเมินบริษัทเดียวกันพร้อมกันได้ ⇒ ล็อกแถว subscription ก่อนอ่านสถานะ (ระงับ/คืนไม่ทับกัน)
+        await using var tx = _db.Database.IsRelational() && _db.Database.CurrentTransaction == null
+            ? await _db.Database.BeginTransactionAsync(ct) : null;
+        if (_db.Database.IsRelational())
+            await _db.Database.ExecuteSqlRawAsync("SELECT 1 FROM \"Subscriptions\" WHERE \"CompanyId\" = {0} FOR UPDATE", new object[] { companyId }, ct);
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId, ct);
         if (sub == null) return null;
+        if (_db.Database.IsRelational()) await _db.Entry(sub).ReloadAsync(ct);
         var now = DateTime.UtcNow;
         var policy = await PlatformBillingSettingsService.LoadPolicyAsync(_db, ct);
         var mode = SubscriptionEnforcementResolver.Resolve(await _gate.ReadAdminSwitchAsync(ct), _config).EffectiveMode;
@@ -53,15 +59,23 @@ public class PlatformDunningService : IPlatformDunningService
         var open = PlatformInvoiceRules.OpenStatuses;
         var rows = await PlatformInvoiceQueries.ForBuyer(_db, platformId.Value, companyId)
             .Where(d => open.Contains(d.Status) && d.BalanceDue > PlatformInvoiceRules.Epsilon)
-            .ToListAsync(ct);
+            .AsRows(companyId).ToListAsync(ct);
         var ids = rows.Select(r => r.Id).ToList();
-        var pendingSlip = await _db.SubscriptionPayments.AsNoTracking()
+        // ใบที่ไม่ทวง/ไม่นับระงับ (ตัวตัดสิน DunningExclusion): สลิปรอตรวจ · รายการพักให้แอดมิน · อนุมัติแล้วแต่ตัดชำระยังไม่สำเร็จ (ฝ่ายค้าน S2 —
+        // ลูกค้าจ่ายแล้ว ห้ามระงับซ้ำเพราะเราลงบัญชีไม่สำเร็จ) · ใบต่ออายุของรอบที่ยกเลิก · ใบต่ออายุที่ถูกแทนที่ (N6)
+        var linked = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId != null && ids.Contains(p.PlatformInvoiceDocumentId.Value)
-                && p.SlipFileName != null
-                && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview))
+                && (((p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview)
+                        && (p.SlipFileName != null || p.AttentionReason != null))
+                    || (p.Status == SubscriptionPaymentStatus.Approved && p.PlatformDocumentId == null)))
             .Select(p => p.PlatformInvoiceDocumentId!.Value).ToListAsync(ct);
+        // ฝ่ายค้าน N5: แจ้งต่ออายุทางหน้าแพ็กเกจ (ไม่ผูกใบ) พร้อมสลิปรอตรวจ ⇒ ใบต่ออายุปัจจุบันไม่นับระงับระหว่างรอตรวจ
+        var unlinkedRenewalSlip = sub.RenewalInvoiceDocumentId != null && await _db.SubscriptionPayments.AsNoTracking()
+            .AnyAsync(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId == null && p.RequestedPeriodMonths > 0 && p.SlipFileName != null
+                && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview), ct);
         var invoices = rows.Select(r => new DunningInvoice(r.Id, r.DocumentNumber, r.DueDate, r.DocumentDate, r.BalanceDue,
-            Excluded: pendingSlip.Contains(r.Id) || (sub.CancelAtPeriodEnd && sub.RenewalInvoiceDocumentId == r.Id))).ToList();
+            Excluded: PlatformDunningPolicy.Excluded(linked.Contains(r.Id), sub.CancelAtPeriodEnd, sub.RenewalInvoiceDocumentId == r.Id,
+                PlatformInvoiceRules.SupersededRenewalReason(r.Reference, r.Id, sub.RenewalInvoiceDocumentId) != null, unlinkedRenewalSlip))).ToList();
 
         var state = await _db.PlatformDunningStates.FirstOrDefaultAsync(s => s.CompanyId == companyId, ct);
         if (state == null) { state = new PlatformDunningState { CompanyId = companyId, CreatedBy = "system:dunning" }; _db.PlatformDunningStates.Add(state); }
@@ -71,13 +85,14 @@ public class PlatformDunningService : IPlatformDunningService
 
         var decision = PlatformDunningPolicy.Decide(now, invoices, policy, mode, sub.Status, state.SuspendedByDunningAt != null, state.SuspendExemptUntil);
 
-        var sent = 0;
+        // ส่งข้อความหลัง commit (ไม่ถือล็อกแถวระหว่างส่งอีเมล/LINE · คีย์กันซ้ำของผู้ส่งไม่ผูกกับธุรกรรมนี้)
+        var outbox = new List<(Guid? DocumentId, string Key, string Subject, string Body)>();
         if (sendReminders)
             foreach (var r in decision.Reminders)
             {
                 var row = rows.First(x => x.Id == r.DocumentId);
                 var (subject, body) = PlatformBillingMessages.For(r.Kind, r.Days, row);
-                sent += await _notifier.SendAsync(companyId, r.DocumentId, r.MessageKey, subject, body, ct) > 0 ? 1 : 0;
+                outbox.Add((r.DocumentId, r.MessageKey, subject, body));
             }
 
         switch (decision.Action)
@@ -87,16 +102,16 @@ public class PlatformDunningService : IPlatformDunningService
                 state.SuspendedByDunningAt = now;
                 Transition(sub, SubscriptionStatus.Suspended, "PlatformDunningSuspended", decision.Reason, RuleSuspend);
                 state.WouldSuspendSince = null;
-                await _notifier.SendAsync(companyId, null, PlatformDunningPolicy.CompanyKey(companyId, "suspended", now),
+                outbox.Add((null, PlatformDunningPolicy.CompanyKey(companyId, "suspended", now),
                     "ระงับการใช้งานชั่วคราว — ค้างชำระค่าบริการ NextAcc",
-                    $"{decision.Reason}\nชำระที่ศูนย์บิลค่าบริการแล้วระบบจะเปิดใช้งานคืนเมื่อผู้ดูแลระบบยืนยันการชำระ", ct);
+                    $"{decision.Reason}\nชำระที่ศูนย์บิลค่าบริการแล้วระบบจะเปิดใช้งานคืนเมื่อผู้ดูแลระบบยืนยันการชำระ"));
                 break;
             case DunningAction.Restore:
                 var to = PlatformDunningPolicy.RestoreStatus(state.StatusBeforeSuspend, sub.EndDate, now, sub.IsPermanentFree);
                 Transition(sub, to, "PlatformDunningRestored", decision.Reason, RuleRestore);
                 state.SuspendedByDunningAt = null; state.StatusBeforeSuspend = null;
-                await _notifier.SendAsync(companyId, null, PlatformDunningPolicy.CompanyKey(companyId, "restored", now),
-                    "เปิดใช้งานคืนแล้ว", "ได้รับชำระค่าบริการแล้ว — เปิดใช้งานตามปกติ", ct);
+                outbox.Add((null, PlatformDunningPolicy.CompanyKey(companyId, "restored", now),
+                    "เปิดใช้งานคืนแล้ว", "ได้รับชำระค่าบริการแล้ว — เปิดใช้งานตามปกติ"));
                 break;
             case DunningAction.WouldSuspend:
                 if (state.WouldSuspendSince == null)
@@ -114,6 +129,13 @@ public class PlatformDunningService : IPlatformDunningService
         state.LastAction = decision.Reason.Length > 300 ? decision.Reason[..300] : decision.Reason;
         state.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
+        if (tx != null) await tx.CommitAsync(ct);
+        var sent = 0;
+        foreach (var m in outbox)
+        {
+            var n = await _notifier.SendAsync(companyId, m.DocumentId, m.Key, m.Subject, m.Body, ct);
+            if (m.DocumentId != null && n > 0) sent++;
+        }
         return new DunningEvaluation(companyId, decision.Action, decision.Reason, sent, decision.OverdueAmount);
     }
 

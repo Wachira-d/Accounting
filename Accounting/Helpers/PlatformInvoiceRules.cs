@@ -85,6 +85,71 @@ public static class PlatformInvoiceRules
         Guid? paidInvoiceDocumentId) =>
         renewalInvoiceDocumentId is Guid id && renewalInvoiceForEndUtc == currentEndUtc && paidInvoiceDocumentId != id ? id : null;
 
+    /// <summary>ฝ่ายค้าน N6: ใบต่ออายุ (อ้างอิง <c>RENEW-</c>) ที่ไม่ใช่ใบต่ออายุปัจจุบันของ subscription (ถูกแทนด้วยการอัปเกรด/ต่ออายุทางอื่น/รอบใหม่) —
+    /// ไม่ใช่หนี้ที่ผู้เช่าต้องจ่ายแล้ว (คำตัดสินเจ้าของ ② ไม่เก็บย้อนหลัง) ⇒ ไม่รับชำระด้วยตัวเอง (จ่ายแล้วต่ออายุซ้อน/ตัดหนี้เงียบ) · ไม่ทวง ·
+    /// ผู้ดูแลระบบยกเลิก/ออกใบลดหนี้ · null = ไม่ใช่ใบต่ออายุ หรือเป็นใบปัจจุบัน</summary>
+    public static string? SupersededRenewalReason(string? reference, Guid invoiceId, Guid? currentRenewalInvoiceId) =>
+        KindOf(reference) == PlatformInvoiceKind.Renewal && invoiceId != currentRenewalInvoiceId
+            ? "ใบแจ้งหนี้ต่ออายุใบนี้ถูกแทนที่ด้วยรอบ/แพ็กเกจใหม่แล้ว — ไม่ต้องชำระ · ถ้าโอนไปแล้วกรุณาติดต่อผู้ดูแลระบบ NextAcc (จะยกเลิกใบหรือออกใบลดหนี้ให้)"
+            : null;
+
+    /// <summary>ผลตรวจรายการชำระที่ผูกใบแจ้งหนี้ ก่อนอนุมัติ (ฝ่ายค้าน B2/N6)</summary>
+    public enum LinkedReviewAction { Proceed = 0, InvoiceOnly = 1, Hold = 2, Refuse = 3 }
+
+    /// <summary>
+    /// ฝ่ายค้าน B2/N6 — <b>ตัวตัดสินเดียว</b>ว่ารายการชำระที่ผูกใบแจ้งหนี้อนุมัติได้แบบไหน (ห้ามต่ออายุซ้อน · ห้ามอนุมัติเงินที่ไม่มีใบให้ตัด):
+    /// <list type="bullet">
+    /// <item>ใบไม่มียอดค้างแล้ว (ถูกยกเลิก/ชำระครบโดยรายการอื่น): ระบบยืนยันเอง ⇒ <b>Hold</b> (พักให้แอดมิน) · แอดมินกด ⇒ <b>Refuse</b> + ทางไปต่อ
+    /// (ปฏิเสธรายการนี้แล้ว "บันทึกรับเงิน" ด้วยมือ — กำหนดแพ็กเกจ/เดือนเองได้ คำตัดสินเจ้าของ ①)</item>
+    /// <item>ใบต่ออายุที่ถูกแทนที่หลังแจ้งชำระ (รายการขอต่ออายุ แต่ใบไม่ใช่ใบปัจจุบันแล้ว): ระบบยืนยันเอง ⇒ Hold · แอดมินกด ⇒ <b>InvoiceOnly</b>
+    /// (ตัดหนี้ใบนั้นด้วยเงินที่รับ · ไม่ต่ออายุซ้ำ — ส่วนที่ซ้ำแอดมินออกใบลดหนี้/คืนเงิน)</item>
+    /// <item>อื่น ⇒ Proceed</item>
+    /// </list>
+    /// </summary>
+    public static (LinkedReviewAction Action, string? Message) ReviewLinked(bool systemConfirmed, bool invoiceOpen, bool supersededRenewal,
+        string? invoiceNumber)
+    {
+        var no = string.IsNullOrWhiteSpace(invoiceNumber) ? "ที่ผูกไว้" : invoiceNumber;
+        if (!invoiceOpen)
+            return systemConfirmed
+                ? (LinkedReviewAction.Hold, $"เงินเข้าแล้วแต่ใบแจ้งหนี้ {no} ไม่มียอดค้าง (ยกเลิก/ชำระครบแล้ว) — ไม่อนุมัติอัตโนมัติ (กันต่ออายุซ้อน) · ผู้ดูแลระบบตรวจ: บันทึกรับเงินด้วยมือ หรือคืนเงิน")
+                : (LinkedReviewAction.Refuse, $"ใบแจ้งหนี้ {no} ไม่มียอดค้างแล้ว (ยกเลิก/ชำระครบ) — อนุมัติรายการนี้ไม่ได้ (ไม่มีใบให้ตัด · กันต่ออายุซ้อน) · "
+                    + "ให้ปฏิเสธรายการนี้แล้วใช้ \"บันทึกรับเงิน\" ของบริษัทนี้ (กำหนดแพ็กเกจ/จำนวนเดือน/ยอดเองได้) หรือคืนเงินให้ลูกค้า");
+        if (supersededRenewal)
+            return systemConfirmed
+                ? (LinkedReviewAction.Hold, $"เงินเข้าสำหรับใบต่ออายุ {no} ที่ถูกแทนที่ด้วยรอบใหม่แล้ว — ไม่ต่ออายุซ้ำอัตโนมัติ · ผู้ดูแลระบบตรวจ (อนุมัติ = ตัดหนี้ใบนี้อย่างเดียว)")
+                : (LinkedReviewAction.InvoiceOnly, $"ใบต่ออายุ {no} ถูกแทนที่ด้วยรอบใหม่แล้ว — ตัดหนี้ใบนี้อย่างเดียว ไม่ต่ออายุซ้ำ (ส่วนที่ซ้ำ: ออกใบลดหนี้/คืนเงิน)");
+        return (LinkedReviewAction.Proceed, null);
+    }
+
+    /// <summary>ฝ่ายค้าน S3: ตัดชำระได้ไม่เกินยอดค้างของใบ — คืน (เงินสดที่ตัด · ภาษีหัก ณ ที่จ่ายที่ตัด · ส่วนเกินที่ไม่ตัด) · ภาษีหักตัดก่อน (ตามหนังสือรับรอง)
+    /// เงินสดตัดส่วนที่เหลือ · ปัดสตางค์แบบ AwayFromZero</summary>
+    public static (decimal Cash, decimal Wht, decimal Excess) CapToBalance(decimal cash, decimal wht, decimal balanceDue)
+    {
+        var bal = Math.Max(0m, balanceDue);
+        var w = Math.Min(Math.Max(0m, wht), bal);
+        var c = Math.Min(Math.Max(0m, cash), bal - w);
+        var excess = Math.Max(0m, cash) - c;
+        return (decimal.Round(c, 2, MidpointRounding.AwayFromZero), decimal.Round(w, 2, MidpointRounding.AwayFromZero),
+            decimal.Round(excess, 2, MidpointRounding.AwayFromZero));
+    }
+
+    /// <summary>ฝ่ายค้าน S4: ภาษีหัก ณ ที่จ่ายที่ผู้เช่านิติบุคคลหักจากค่าบริการ — อัตรา ม.40(2) ค่าบริการ นิติบุคคล จาก <c>ThaiWhtRateTable</c> (ตารางเดียว) ·
+    /// ไม่ระบุ/0 = ไม่หัก · ผู้จ่ายไม่ใช่นิติบุคคล = หักไม่ได้ · ต้อง &lt; ยอดค้าง · ไม่เกินอัตราคูณยอดค้าง (ยอดรวม VAT — ขอบบนที่หลวมกว่าฐานก่อน VAT)
+    /// ⇒ เงินโอน + ภาษีหัก = ยอดค้าง · null = ใช้ได้</summary>
+    public static string? WithholdingProblem(decimal? wht, decimal balanceDue, bool payerIsJuristic)
+    {
+        if (wht is not decimal w || w == 0m) return null;
+        if (w < 0m) return "ภาษีหัก ณ ที่จ่ายติดลบไม่ได้";
+        if (!payerIsJuristic) return "หักภาษี ณ ที่จ่ายได้เฉพาะผู้จ่ายที่เป็นนิติบุคคล (เลขผู้เสียภาษีของบริษัทต้องเป็นนิติบุคคล) — ถ้าไม่ได้หัก ให้เว้นว่าง";
+        if (w >= balanceDue) return "ภาษีหัก ณ ที่จ่ายต้องน้อยกว่ายอดค้างของใบ";
+        var rate = ThaiWhtRateTable.Find("40(2)")?.JuristicRate ?? 3m;
+        var cap = decimal.Round(balanceDue * rate / 100m, 2, MidpointRounding.AwayFromZero);
+        if (w > cap)
+            return $"ภาษีหัก ณ ที่จ่าย {w:N2} บาท เกินอัตรา {rate:0.##}% ของค่าบริการ (ไม่เกิน {cap:N2} บาท · ม.40(2) ท.ป.4/2528) — ตรวจหนังสือรับรอง 50 ทวิ อีกครั้ง";
+        return null;
+    }
+
     /// <summary>วันที่ตามปฏิทินไทย (UTC+7) — ครบกำหนด/เกินกำหนดนับเป็นวัน ไม่ใช่ชั่วโมง</summary>
     public static DateTime ThaiDate(DateTime utc) => utc.AddHours(7).Date;
 

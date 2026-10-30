@@ -35,6 +35,11 @@
         <span class="hint" id="settingsMeta" style="font-size:12px;color:#64748b"></span>
       </div>
     </div>
+    <!-- ฝ่ายค้านรอบ 219 เฟส 2 (S2/B2/S3): รายการชำระที่ต้องจัดการด้วยมือ — ตัดชำระล้ม · พักอนุมัติอัตโนมัติ · รับเกินยอด (ค่าทุกช่องจากเซิร์ฟเวอร์) -->
+    <div class="admin-card" id="exceptions">
+      <div class="section-title">🚨 รายการชำระที่ต้องจัดการ</div>
+      <div id="paymentExceptions">กำลังโหลด...</div>
+    </div>
     <!-- ขั้น 2: ใบค้างทุกบริษัท + สถานะทวงหนี้ (ค่าทุกช่องจากเซิร์ฟเวอร์ · esc ทุกช่องข้อความ) -->
     <div class="admin-card">
       <div class="section-title">🧾 ใบแจ้งหนี้ค่าบริการที่ค้าง (ทุกบริษัท)</div>
@@ -171,7 +176,30 @@
       try { await AdminAPI.platformRevokePaymentLink(id, reason); AdminLayout.toast('ยกเลิกลิงก์แล้ว'); this.loadLinks(); }
       catch (err) { AdminLayout.toast(err.message, 'error'); }
     };
+    PB.loadExceptions = async function () {
+      const e = AdminLayout.esc, el = document.getElementById('paymentExceptions');
+      try {
+        const r = await AdminAPI.platformPaymentExceptions();
+        el.innerHTML = this.table(r.data, ['บริษัท', 'รายการ', 'ยอด', 'สถานะ', 'เรื่อง', 'เมื่อ', ''],
+          x => [e(x.companyName), e(x.paymentNumber), AdminLayout.money(x.amount), e(x.status), e(x.attentionReason), AdminLayout.date(x.attentionAt),
+            `<div style="display:flex;gap:4px;flex-wrap:wrap">
+              ${x.canRetrySettle ? `<button class="admin-btn admin-btn-primary admin-btn-sm" onclick="PB.retrySettle('${PB.gid(x.id)}')">ตัดชำระอีกครั้ง</button>` : ''}
+              ${x.status === 'Approved' || x.status === 'Rejected' ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.resolve('${PB.gid(x.id)}')">จัดการแล้ว</button>` : '<span style="font-size:12px;color:#64748b">อนุมัติ/ปฏิเสธที่หน้าการชำระเงิน</span>'}</div>`],
+          'ไม่มีรายการค้าง ✅');
+      } catch (err) { el.textContent = err.message; }
+    };
+    PB.retrySettle = async function (id) {
+      try { const r = await AdminAPI.platformRetrySettle(id); AdminLayout.toast(r.message || 'ส่งแล้ว', r.success ? undefined : 'error'); this.loadExceptions(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.resolve = async function (id) {
+      const note = prompt('จัดการอย่างไร (เช่น คืนเงินส่วนเกินแล้ว · ออกใบลดหนี้ · บันทึกด้วยมือ) — บันทึกใน audit');
+      if (!note) return;
+      try { await AdminAPI.platformResolvePaymentException(id, note); AdminLayout.toast('บันทึกแล้ว'); this.loadExceptions(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
     PB.loadSettings();
+    PB.loadExceptions();
     PB.loadOpen();
     PB.loadLinks();
     PB.loadNotices();

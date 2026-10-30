@@ -48,7 +48,7 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
             var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
             if (platformId == null) return;
             var inv = await PlatformInvoiceQueries.ForBuyer(_db, platformId.Value, buyerCompanyId)
-                .FirstOrDefaultAsync(d => d.Id == invoiceDocumentId, ct);
+                .Where(d => d.Id == invoiceDocumentId).AsRows(buyerCompanyId).FirstOrDefaultAsync(ct);
             if (inv == null) return;
             var (subject, body) = PlatformBillingMessages.For(PlatformDunningPolicy.KindIssued, 0, inv);
             await SendAsync(buyerCompanyId, inv.Id, PlatformDunningPolicy.Key(inv.Id, PlatformDunningPolicy.KindIssued, 0), subject, body, ct);

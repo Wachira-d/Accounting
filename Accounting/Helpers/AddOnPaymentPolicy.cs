@@ -142,6 +142,13 @@ public static class AddOnPaymentPolicy
         return (ChoiceOutcome.Keep, null);
     }
 
+    /// <summary>ฝ่ายค้าน S7: เปลี่ยนเป็น "รวมใบรายเดือน" หลังเลือกจ่ายล่วงหน้าแต่ยังไม่จ่าย (รอชำระ/ถูกปฏิเสธ) และงวดนี้ถูกออกบิลแล้ว
+    /// (เป็น ฿0 "upfront-unpaid") ⇒ ต้องเก็บค่าเหมางวดนี้ตามจริง — ไม่งั้นได้ใช้ฟรีหนึ่งงวด · จ่ายแล้ว/รอตรวจสลิป/ยังไม่ออกบิล ⇒ ไม่ต้อง</summary>
+    public static bool NeedsCatchUpAfterSwitch(AddOnPaymentStatus statusBefore, string? upfrontPeriodBefore, string? lastBilledPeriod, string period)
+        => statusBefore is AddOnPaymentStatus.AwaitingPayment or AddOnPaymentStatus.Rejected
+           && !string.IsNullOrEmpty(upfrontPeriodBefore)
+           && AddOnBilling.AlreadyBilled(lastBilledPeriod, period);
+
     public static string ChoiceLabel(AddOnBillingChoice c) => c switch
     {
         AddOnBillingChoice.MonthlyInvoice => "รวมในใบแจ้งหนี้รายเดือน",

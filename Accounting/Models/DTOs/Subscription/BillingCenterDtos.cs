@@ -8,7 +8,10 @@ public sealed record SubmitInvoicePaymentRequest(
     DateTime? PaymentDate,
     string? TransferReference,
     string? FromBankName,
-    string? CustomerNotes);
+    string? CustomerNotes,
+    /// <summary>ฝ่ายค้านรอบ 219 เฟส 2 (S4): ภาษีหัก ณ ที่จ่ายที่ผู้เช่านิติบุคคลหัก (บาท) — null/0 = ไม่หัก · เงินโอน = ยอดค้าง − ค่านี้ ·
+    /// ตัวตรวจเดียว <c>PlatformInvoiceRules.WithholdingProblem</c> (นิติบุคคลเท่านั้น · ไม่เกินอัตรา ม.40(2) ของตาราง ThaiWhtRateTable)</summary>
+    decimal? WithholdingTaxAmount = null);
 
 public sealed record BillingCenterPlan(
     string Plan, string? PlanName, string Status, string StatusLabel, string BillingCycle, decimal PricePerCycle,

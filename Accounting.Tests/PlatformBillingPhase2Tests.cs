@@ -298,4 +298,101 @@ public class PlatformBillingPhase2Tests
         Assert.Equal(PlatformBillingSettingsRules.MinPaymentLinkExpiryDays, PlatformPaymentLinkRules.ExpiryDays(0, p));
         Assert.Equal(30, PlatformPaymentLinkRules.ExpiryDays(null, p with { PaymentLinkExpiryDays = 30 }));
     }
+    // ═══ ฝ่ายค้านรอบ 219 เฟส 2 (B2/N6/S2/S3/S4/S6) — ตัวตัดสิน pure · ทั้งทิศ "ปฏิเสธ/พัก" และ "ของถูกผ่าน" ═══
+
+    [Fact]
+    public void ReviewLinked_holds_system_refuses_admin_when_invoice_closed_and_never_double_extends_superseded()
+    {
+        // ใบไม่มียอดค้าง (ยกเลิก/จ่ายครบโดยรายการอื่น): เงินเข้าออนไลน์ = พักให้แอดมิน · แอดมินกด = ปฏิเสธพร้อมทางไปต่อ
+        Assert.Equal(PlatformInvoiceRules.LinkedReviewAction.Hold, PlatformInvoiceRules.ReviewLinked(true, false, false, "INV-1").Action);
+        var refuse = PlatformInvoiceRules.ReviewLinked(false, false, false, "INV-1");
+        Assert.Equal(PlatformInvoiceRules.LinkedReviewAction.Refuse, refuse.Action);
+        Assert.Contains("บันทึกรับเงิน", refuse.Message);
+        // ใบต่ออายุที่ถูกแทนที่: ระบบ = พัก · แอดมิน = ตัดหนี้อย่างเดียว (ไม่ต่ออายุซ้ำ)
+        Assert.Equal(PlatformInvoiceRules.LinkedReviewAction.Hold, PlatformInvoiceRules.ReviewLinked(true, true, true, "INV-2").Action);
+        Assert.Equal(PlatformInvoiceRules.LinkedReviewAction.InvoiceOnly, PlatformInvoiceRules.ReviewLinked(false, true, true, "INV-2").Action);
+        // ทิศตรงข้าม: ใบเปิด + ใบปัจจุบัน ⇒ ผ่านทั้งสองทาง
+        Assert.Equal(PlatformInvoiceRules.LinkedReviewAction.Proceed, PlatformInvoiceRules.ReviewLinked(true, true, false, "INV-3").Action);
+        Assert.Equal(PlatformInvoiceRules.LinkedReviewAction.Proceed, PlatformInvoiceRules.ReviewLinked(false, true, false, "INV-3").Action);
+    }
+
+    [Fact]
+    public void SupersededRenewal_only_for_renewal_reference_that_is_not_current_pointer()
+    {
+        var id = Guid.NewGuid();
+        Assert.NotNull(PlatformInvoiceRules.SupersededRenewalReason("RENEW-ABC", id, null));
+        Assert.NotNull(PlatformInvoiceRules.SupersededRenewalReason("RENEW-ABC", id, Guid.NewGuid()));
+        Assert.Null(PlatformInvoiceRules.SupersededRenewalReason("RENEW-ABC", id, id));          // ใบปัจจุบัน
+        Assert.Null(PlatformInvoiceRules.SupersededRenewalReason("USAGE-2026-09", id, null));     // ใบค่าใช้งานไม่เกี่ยว
+        Assert.Null(PlatformInvoiceRules.SupersededRenewalReason(null, id, null));
+    }
+
+    [Fact]
+    public void CapToBalance_never_settles_more_than_balance_and_reports_excess()
+    {
+        Assert.Equal((1040m, 30m, 0m), PlatformInvoiceRules.CapToBalance(1040m, 30m, 1070m));   // โอน + ภาษีหัก = ยอดค้างพอดี
+        Assert.Equal((500m, 0m, 100m), PlatformInvoiceRules.CapToBalance(600m, 0m, 500m));     // รับเกิน 100 ⇒ ไม่ตัดเกิน
+        Assert.Equal((0m, 0m, 990m), PlatformInvoiceRules.CapToBalance(990m, 0m, 0m));         // ใบไม่มียอดค้างแล้ว ⇒ เกินทั้งก้อน
+        Assert.Equal((300m, 0m, 0m), PlatformInvoiceRules.CapToBalance(300m, 0m, 990m));       // จ่ายบางส่วน (ไม่ใช่ส่วนเกิน)
+    }
+
+    [Fact]
+    public void WithholdingProblem_juristic_only_capped_at_statutory_service_rate()
+    {
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(null, 1070m, false));
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(0m, 1070m, false));
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(30m, 1070m, true));     // 3% ของฐานก่อน VAT 1,000
+        Assert.Null(PlatformInvoiceRules.WithholdingProblem(32.10m, 1070m, true));  // ขอบบน 3% ของยอดรวม
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(30m, 1070m, false)); // บุคคลธรรมดาหักไม่ได้
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(50m, 1070m, true));  // เกินอัตรา
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(-1m, 1070m, true));
+        Assert.NotNull(PlatformInvoiceRules.WithholdingProblem(1070m, 1070m, true));
+    }
+
+    [Fact]
+    public void StatusAfterPayment_keeps_admin_and_dunning_suspension_lifts_expiry_suspension()
+    {
+        Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.StatusAfterPayment(SubscriptionStatus.PastDue, false, true, null));
+        Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.StatusAfterPayment(SubscriptionStatus.Trial, false, true, null));
+        // ระงับโดยผู้ดูแลระบบ/ไม่รู้เหตุ ⇒ การจ่ายไม่ปลด
+        Assert.Equal(SubscriptionStatus.Suspended, PlatformDunningPolicy.StatusAfterPayment(SubscriptionStatus.Suspended, false, true, "AdminStatusChanged"));
+        Assert.Equal(SubscriptionStatus.Suspended, PlatformDunningPolicy.StatusAfterPayment(SubscriptionStatus.Suspended, false, true, null));
+        // ระงับโดยระบบทวงหนี้ ⇒ คงไว้ให้ dunning คืน (ทางคืนอัตโนมัติทางเดียว) · ไม่มีบริการทวงหนี้ ⇒ เปิด (เดิม)
+        Assert.Equal(SubscriptionStatus.Suspended, PlatformDunningPolicy.StatusAfterPayment(SubscriptionStatus.Suspended, true, true, "PlatformDunningSuspended"));
+        Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.StatusAfterPayment(SubscriptionStatus.Suspended, true, false, "PlatformDunningSuspended"));
+        // ระงับเพราะหมดอายุเกินกำหนด ⇒ จ่ายแล้วเปิด
+        Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.StatusAfterPayment(SubscriptionStatus.Suspended, false, true, PlatformDunningPolicy.ExpirySuspendAction));
+    }
+
+    [Fact]
+    public void RestoreStatus_follows_current_end_date_not_stale_status_before_suspend()
+    {
+        // เดิม PastDue ก่อนถูกระงับ แล้วจ่ายต่ออายุ (EndDate อนาคต) ⇒ Active (เดิมคืน PastDue)
+        Assert.Equal(SubscriptionStatus.Active, PlatformDunningPolicy.RestoreStatus(SubscriptionStatus.PastDue, Now.AddDays(30), Now, false));
+        Assert.Equal(SubscriptionStatus.PastDue, PlatformDunningPolicy.RestoreStatus(SubscriptionStatus.PastDue, Now.AddDays(-1), Now, false));
+    }
+
+    [Fact]
+    public void Dunning_excludes_paid_awaiting_us_superseded_and_pending_unlinked_renewal_slip()
+    {
+        Assert.True(PlatformDunningPolicy.Excluded(true, false, false, false, false));    // อนุมัติแล้วแต่ตัดชำระไม่สำเร็จ/สลิปรอตรวจ
+        Assert.True(PlatformDunningPolicy.Excluded(false, false, false, true, false));    // ใบต่ออายุที่ถูกแทนที่
+        Assert.True(PlatformDunningPolicy.Excluded(false, true, true, false, false));     // ใบต่ออายุของรอบที่ยกเลิก
+        Assert.True(PlatformDunningPolicy.Excluded(false, false, true, false, true));     // สลิปต่ออายุทางหน้าแพ็กเกจรอตรวจ
+        // ทิศตรงข้าม: ใบปกติที่ค้างจริงยังทวง · สลิปต่ออายุไม่ช่วยใบค่าใช้งาน
+        Assert.False(PlatformDunningPolicy.Excluded(false, false, true, false, false));
+        Assert.False(PlatformDunningPolicy.Excluded(false, false, false, false, true));
+        Assert.False(PlatformDunningPolicy.Excluded(false, true, false, false, false));
+    }
+    [Fact]
+    public void Addon_catch_up_only_after_unpaid_upfront_that_was_already_billed_this_period()
+    {
+        Assert.True(AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(AddOnPaymentStatus.AwaitingPayment, "2026-10", "2026-10", "2026-10"));
+        Assert.True(AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(AddOnPaymentStatus.Rejected, "2026-10", "2026-10", "2026-10"));
+        // ทิศตรงข้าม: ยังไม่ออกบิลงวดนี้ (งานรายเดือนจะเก็บเอง) · จ่ายแล้ว/สลิปรอตรวจ · ไม่เคยเลือกจ่ายล่วงหน้า
+        Assert.False(AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(AddOnPaymentStatus.AwaitingPayment, "2026-10", "2026-09", "2026-10"));
+        Assert.False(AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(AddOnPaymentStatus.Paid, "2026-10", "2026-10", "2026-10"));
+        Assert.False(AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(AddOnPaymentStatus.PendingReview, "2026-10", "2026-10", "2026-10"));
+        Assert.False(AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(AddOnPaymentStatus.AwaitingPayment, null, "2026-10", "2026-10"));
+    }
 }

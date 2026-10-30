@@ -3,7 +3,7 @@ using Accounting.Models.Enums;
 namespace Accounting.Helpers;
 
 /// <summary>ใบค้างหนึ่งใบที่ dunning พิจารณา</summary>
-/// <param name="Excluded">ไม่ทวง/ไม่นับระงับ — มีรายการแจ้งชำระพร้อมสลิปรอตรวจ · ใบต่ออายุของแพ็กเกจที่ผู้เช่ายกเลิกไว้แล้ว</param>
+/// <param name="Excluded">ไม่ทวง/ไม่นับระงับ — ตัวตัดสิน <see cref="PlatformDunningPolicy.Excluded"/></param>
 public sealed record DunningInvoice(Guid DocumentId, string Number, DateTime? DueDateUtc, DateTime IssuedAtUtc, decimal Balance, bool Excluded);
 
 public enum DunningAction
@@ -44,6 +44,11 @@ public static class PlatformDunningPolicy
 
     /// <summary>ชนิดสถานะที่ระบบระงับเพราะค้างชำระได้ (ทดลองใช้/ยกเลิก/หมดอายุ/ระงับด้วยเหตุอื่น = ไม่แตะ)</summary>
     private static bool Suspendable(SubscriptionStatus s) => s is SubscriptionStatus.Active or SubscriptionStatus.PastDue;
+
+    /// <summary>ใบนี้ไม่ทวง/ไม่นับระงับหรือไม่ — ตัวตัดสินเดียว (ฝ่ายค้าน S2/N5/N6): มีรายการผูกใบที่ "จ่ายแล้วรอเรา" (สลิปรอตรวจ · พักให้แอดมิน ·
+    /// อนุมัติแล้วแต่ตัดชำระยังไม่สำเร็จ) · ใบต่ออายุของรอบที่ผู้เช่ายกเลิก · ใบต่ออายุที่ถูกแทนที่ · ใบต่ออายุปัจจุบันขณะมีสลิปต่ออายุทางหน้าแพ็กเกจรอตรวจ</summary>
+    public static bool Excluded(bool paidAwaitingUs, bool cancelAtPeriodEnd, bool isCurrentRenewal, bool supersededRenewal, bool unlinkedRenewalSlipPending)
+        => paidAwaitingUs || supersededRenewal || (isCurrentRenewal && (cancelAtPeriodEnd || unlinkedRenewalSlipPending));
 
     internal static IReadOnlyList<DunningReminder> RemindersFor(DunningInvoice inv, DateTime nowUtc, PlatformBillingPolicy p)
     {
@@ -99,10 +104,24 @@ public static class PlatformDunningPolicy
         return new DunningDecision(reminders, DunningAction.Suspend, amount, oldest, maxDpd, why);
     }
 
-    /// <summary>สถานะที่คืนให้หลังพ้นการระงับเพราะค้างชำระ — สถานะเดิม แต่ถ้าเดิม Active และรอบหมดไปแล้วระหว่างถูกระงับ ⇒ PastDue (ไม่แต่งว่าจ่ายแล้ว)</summary>
+    /// <summary>สถานะที่คืนให้หลังพ้นการระงับเพราะค้างชำระ — ตามวันหมดอายุปัจจุบัน: รอบหมดแล้ว ⇒ PastDue (ไม่แต่งว่าจ่ายแล้ว) · ยังไม่หมด ⇒ Active
+    /// (ฝ่ายค้าน S6: เดิมคืน "สถานะก่อนระงับ" ตรง ๆ ⇒ เดิม PastDue แล้วจ่ายต่ออายุไปแล้วก็ยังได้ PastDue)</summary>
     public static SubscriptionStatus RestoreStatus(SubscriptionStatus? before, DateTime endDateUtc, DateTime nowUtc, bool permanentFree)
+        => !permanentFree && endDateUtc < nowUtc ? SubscriptionStatus.PastDue : SubscriptionStatus.Active;
+
+    /// <summary>action ในประวัติของการระงับเพราะหมดอายุเกินระยะ (<c>SubscriptionService.ProcessExpiredSubscriptionsAsync</c>) — ชื่อเดียวทั้งฝั่งเขียนและฝั่งอ่าน</summary>
+    public const string ExpirySuspendAction = "SubscriptionSuspended";
+
+    /// <summary>
+    /// ฝ่ายค้าน S6 — <b>สถานะหลังอนุมัติการชำระแพ็กเกจ</b> (ตัวตัดสินเดียว): ไม่ได้ถูกระงับ ⇒ Active ·
+    /// ระงับโดยระบบทวงหนี้ (และมีบริการทวงหนี้ให้ประเมินต่อ) ⇒ คง Suspended (dunning คืนสถานะหลังตัดชำระ = ทางคืนอัตโนมัติทางเดียว) ·
+    /// ระงับเพราะหมดอายุเกินกำหนด ⇒ Active (จ่ายแล้วเปิด — พฤติกรรมเดิม) · ระงับโดยผู้ดูแลระบบ/ไม่รู้เหตุ ⇒ คง Suspended (การจ่ายไม่ลบล้างคำสั่งของคน)
+    /// </summary>
+    public static SubscriptionStatus StatusAfterPayment(SubscriptionStatus current, bool suspendedByDunning, bool dunningAvailable,
+        string? lastSuspendAction)
     {
-        var s = before is SubscriptionStatus b && Suspendable(b) ? b : SubscriptionStatus.Active;
-        return s == SubscriptionStatus.Active && !permanentFree && endDateUtc < nowUtc ? SubscriptionStatus.PastDue : s;
+        if (current != SubscriptionStatus.Suspended) return SubscriptionStatus.Active;
+        if (suspendedByDunning) return dunningAvailable ? SubscriptionStatus.Suspended : SubscriptionStatus.Active;
+        return lastSuspendAction == ExpirySuspendAction ? SubscriptionStatus.Active : SubscriptionStatus.Suspended;
     }
 }

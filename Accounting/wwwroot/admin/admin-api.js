@@ -124,6 +124,11 @@ const AdminAPI = {
   platformPaymentLinks(documentId) { return this.get('/platform-billing/payment-links' + (documentId ? `?documentId=${documentId}` : '')); },
   platformRevokePaymentLink(linkId, reason) { return this.post(`/platform-billing/payment-links/${linkId}/revoke`, { reason }); },
   platformDunningExempt(companyId, days, reason) { return this.post(`/platform-billing/dunning/${companyId}/exempt`, { days, reason }); },
+  platformPaymentExceptions() { return this.get('/platform-billing/payment-exceptions'); },
+  platformRetrySettle(paymentId) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/retry-settle`, {}); },
+  platformResolvePaymentException(paymentId, note) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/resolve`, { note }); },
+  platformPaymentSlip(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/slip`, `slip-${paymentId}`); },
+  platformAddOnSlip(featureRowId) { return this.downloadFile(`/platform-billing/addons/${featureRowId}/slip`, `addon-slip-${featureRowId}`); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },
@@ -172,7 +177,7 @@ const AdminAPI = {
   exportPayments(params = '') { return this.downloadFile(`/subscription-payments/export${params}`, 'payments.xlsx'); },
   bulkApprovePayments(paymentIds) { return this.post('/subscription-payments/bulk-approve', { paymentIds }); },
   paymentDetail(id) { return this.get(`/subscription-payments/${id}`); },
-  reviewPayment(id, approve, notes) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes }); },
+  reviewPayment(id, approve, notes, withholdingTaxAmount = null) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes, withholdingTaxAmount }); },
   recordManualPayment(companyId, data) { return this.post(`/companies/${companyId}/subscription-payments/record`, data); },
 
   // Company specifics
