@@ -5726,4 +5726,4 @@ push ถึงพนักงานผ่าน OA ของร้าน (`Resol
 (หัวข้อ+สิทธิ์ · `Due` เวลาไทย · กรองต่อผู้รับ · สถานะแถว) · ตัวประกอบ `Helpers/StaffDailySummaryBuilder` · `StaffDailySummaryService` + `StaffDailySummaryJob` (JobLock · watermark ต่อชุด ·
 claim unique ต่อวันต่อผู้รับ) · มิเตอร์ `ISharedMessageMeter` (no-op — ผู้ประสานงานต่อเข้ากับโควตาแพ็ก A) · หน้า settings แท็บแจ้งเตือน + `js/staff-daily-summary.js` ·
 `StaffDailySummaryController` (CompanySettings.Edit · write_permission_gate_check เฝ้า) · เทสต์ CMS212C-01..14 (`CmsRound212DailySummaryTests`) ·
-`required_call_site_check` +9 กติกา/แก้ 1 (PushRawAsync → PushCoreAsync) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`required_call_site_check` +9 กติกา/แก้ 1 (PushRawAsync → PushCoreAsync) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 71d4f55c_
