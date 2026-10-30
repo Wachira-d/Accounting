@@ -115,7 +115,9 @@ public partial class CmsBookingService : ICmsBookingService
         svc.EnforceSlotCapacity = r.EnforceSlotCapacity;
         svc.OverlapLimit = r.EnforceSlotCapacity ? null : r.OverlapLimit;
         svc.WaitlistEnabled = r.WaitlistEnabled;
-        svc.ResourceMode = r.ResourceMode;
+        // รอบ 215 เฟส 2: null = ตามค่าเว็บ (SiteBookingSettings.DefaultResourceMode) · ค่าไม่รู้จัก = ข้อความไทย
+        if (r.ResourceMode is BookingResourceMode rm && !Enum.IsDefined(rm)) errs.Add("โหมดผู้ให้บริการไม่ถูกต้อง");
+        else svc.ResourceMode = r.ResourceMode;
         svc.UseSiteDefaults = r.UseSiteDefaults;
         // รอบ 210: null = ไม่แตะค่าเดิม (ผู้เรียก API เดิมไม่รีเซ็ตเงียบ) · ค่าไม่รู้จัก = ข้อความไทย
         if (r.MemberAccess is BookingMemberAccess memberAccess)
@@ -308,6 +310,7 @@ public partial class CmsBookingService : ICmsBookingService
             CapacityGroup = s.CapacityGroup,
             EnforceSlotCapacity = s.EnforceSlotCapacity, OverlapLimit = s.OverlapLimit, WaitlistEnabled = s.WaitlistEnabled,
             ResourceMode = s.ResourceMode, UseSiteDefaults = s.UseSiteDefaults,
+            ResourceModeSource = BookingProviderAllocation.ModeSource(s.ResourceMode),   // รอบ 215: ตามค่าเว็บ / กำหนดเอง
             // รอบ 210: ค่าที่ตั้ง (ฟอร์ม) + ค่าที่มีผลจริง (หน้าจอง) — ตัวตัดสินเดียว BookingAccessRule
             MemberAccess = BookingAccessRule.FromOverride(s.MemberOnly),
             MemberOnly = BookingAccessRule.RequiresMember(site.Row?.RequireMemberToBook ?? false, s.MemberOnly),
@@ -359,14 +362,16 @@ public partial class CmsBookingService : ICmsBookingService
     /// ⇒ ตัดสินจากข้อมูลเดิม: มีผู้ให้บริการที่ใช้งาน หรือมีบริการที่ตั้งโหมดผู้ให้บริการ</summary>
     private async Task<bool> ProvidersEnabledAsync(Guid companyId, Guid siteId)
     {
-        var setting = await _db.SiteBookingSettings.AsNoTracking()
+        var row = await _db.SiteBookingSettings.AsNoTracking()
             .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted)
-            .Select(x => x.ProviderAllocationEnabled).FirstOrDefaultAsync();
-        if (setting is bool b) return b;
+            .Select(x => new { x.ProviderAllocationEnabled, x.DefaultResourceMode }).FirstOrDefaultAsync();
+        if (row?.ProviderAllocationEnabled is bool b) return b;
         var hasRes = await _db.SiteBookingResources.AsNoTracking()
             .AnyAsync(r => r.CompanyId == companyId && r.SiteId == siteId && r.IsActive && !r.IsDeleted);
+        // รอบ 215: บริการ "ตามค่าเว็บ" (null) นับด้วยค่าเว็บ — กติกาเดียวกับ BookingProviderAllocation.EffectiveMode
+        var siteDefault = row?.DefaultResourceMode ?? BookingResourceMode.None;
         var anySvc = hasRes || await _db.SiteBookingServices.AsNoTracking()
-            .AnyAsync(s => s.CompanyId == companyId && s.SiteId == siteId && !s.IsDeleted && s.ResourceMode != BookingResourceMode.None);
+            .AnyAsync(s => s.CompanyId == companyId && s.SiteId == siteId && !s.IsDeleted && (s.ResourceMode ?? siteDefault) != BookingResourceMode.None);
         return BookingProviderAllocation.Enabled(null, hasRes, anySvc);
     }
 
@@ -374,6 +379,11 @@ public partial class CmsBookingService : ICmsBookingService
     {
         var ctx = await SiteContextAsync(companyId, siteId);
         var d = ctx.Defaults;
+        // รอบ 215 เฟส 2: บริการของเว็บนี้กับโหมดที่ตั้ง (null = ตามค่าเว็บ) · tenant + ไม่ลบ
+        var modes = await _db.SiteBookingServices.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted)
+            .OrderBy(x => x.Name).Select(x => new { x.Id, x.Name, x.ResourceMode }).ToListAsync();
+        var preview = BookingProviderAllocation.CustomerPreview(BookingProviderAllocation.EffectiveMode(null, await ProvidersEnabledAsync(companyId, siteId), d.DefaultResourceMode));
         return new BookingSiteSettingsDto
         {
             DurationMinutes = d.DurationMinutes, BufferBeforeMinutes = d.BufferBeforeMinutes, BufferAfterMinutes = d.BufferAfterMinutes,
@@ -404,7 +414,26 @@ public partial class CmsBookingService : ICmsBookingService
             // รอบ 210 — echo กลับ + ตัวเลือกต่อบริการจากเซิร์ฟเวอร์
             RequireMemberToBook = ctx.Row?.RequireMemberToBook ?? false,
             MemberAccessOptions = BookingAccessRule.Options(ctx.Row?.RequireMemberToBook ?? false).ToList(),
+            // รอบ 215 เฟส 2 — ค่าเว็บ + ตัวอย่างที่ลูกค้าเห็น + บริการที่ตั้งต่างจากค่าเว็บ (ตัวตัดสินเดียว BookingProviderAllocation)
+            DefaultResourceMode = d.DefaultResourceMode,
+            DefaultResourceModePreview = preview.Text,
+            DefaultResourceModeShowsPicker = preview.ShowPicker,
+            ResourceModeOverrides = modes.Where(m => m.ResourceMode != null)   // กำหนดเอง = ไม่ตามค่าเว็บ (ค่าเท่ากันก็ยังไม่ตามเมื่อค่าเว็บเปลี่ยน)
+                .Select(m => new BookingServiceModeOverride { ServiceId = m.Id, Name = m.Name, ResourceMode = m.ResourceMode!.Value }).ToList(),
+            ResourceModeInheritingCount = modes.Count(m => m.ResourceMode == null),
         };
+    }
+
+    public async Task<int> InheritResourceModeAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid>? serviceIds, string userId)
+    {
+        await EnsureSiteAsync(companyId, siteId);
+        // tenant + เว็บนี้ + ไม่ลบ · id ที่ไม่ใช่ของเว็บนี้ถูกตัดทิ้งเงียบ ๆ โดย WHERE (ไม่แตะเว็บอื่น)
+        var q = _db.SiteBookingServices.Where(s => s.CompanyId == companyId && s.SiteId == siteId && !s.IsDeleted && s.ResourceMode != null);
+        if (serviceIds != null) q = q.Where(s => serviceIds.Contains(s.Id));
+        var rows = await q.ToListAsync();
+        foreach (var s in rows) { s.ResourceMode = null; s.UpdatedBy = userId; s.UpdatedAt = DateTime.UtcNow; }
+        await _db.SaveChangesAsync();
+        return rows.Count;
     }
 
     /// <summary>จังหวะออกใบกำกับของ Guaranteed ของไซต์ (คำตัดสินข้อ 155) · ไม่มีแถวค่าตั้ง = ค่าเริ่มต้น (ใบกำกับตอนจอง — เดิม)</summary>
@@ -464,6 +493,7 @@ public partial class CmsBookingService : ICmsBookingService
         if (request.FormFields != null) row.FormFieldsJson = BookingFormFields.Serialize(request.FormFields);
         if (request.CompletionDocument is BookingCompletionDocument completion) row.CompletionDocument = completion;
         if (request.RequireMemberToBook is bool memberOnly) row.RequireMemberToBook = memberOnly;   // รอบ 210 — null = คงค่าเดิม
+        if (request.DefaultResourceMode is BookingResourceMode defMode) row.DefaultResourceMode = defMode;   // รอบ 215 — null = คงค่าเดิม
         await _db.SaveChangesAsync();
         return await GetSiteSettingsAsync(companyId, siteId);
     }
@@ -1691,7 +1721,6 @@ public partial class CmsBookingService : ICmsBookingService
                 CustomerNotes = b.CustomerNotes, InternalNotes = b.InternalNotes,
                 ConfirmedAt = b.ConfirmedAt, CompletedAt = b.CompletedAt,
                 CancelledAt = b.CancelledAt, CreatedAt = b.CreatedAt,
-                ResourceMode = b.BookingService.ResourceMode,
                 ReminderSentAt = b.ReminderSentAt, NotifyLastError = b.NotifyLastError,
                 WaitlistPromotedAt = b.WaitlistPromotedAt, WaitlistNotifiedAt = b.WaitlistNotifiedAt, WaitlistHoldUntil = b.WaitlistHoldUntil,
             })
@@ -1700,7 +1729,11 @@ public partial class CmsBookingService : ICmsBookingService
         if (resp != null)
         {
             var siteDefaults = await SiteDefaultsAsync(companyId, siteId);
-            resp.ResourceMode = BookingProviderAllocation.EffectiveMode(resp.ResourceMode, siteDefaults.ProvidersEnabled);
+            // รอบ 215: ค่าที่ตั้งบนบริการ (null = ตามค่าเว็บ) → ตัวตัดสินเดียว
+            var svcMode = await _db.SiteBookingServices.AsNoTracking()
+                .Where(s => s.Id == resp.BookingServiceId && s.CompanyId == companyId)
+                .Select(s => s.ResourceMode).FirstOrDefaultAsync();
+            resp.ResourceMode = BookingProviderAllocation.EffectiveMode(svcMode, siteDefaults.ProvidersEnabled, siteDefaults.DefaultResourceMode);
             resp.ProviderAllocationEnabled = await ProvidersEnabledAsync(companyId, siteId);
             resp.CanAssignResource = CanAssignResource(resp.ResourceMode, resp.Status, resp.BookingDate, resp.StartTime);
             await FillAssignmentsAsync(companyId, resp);

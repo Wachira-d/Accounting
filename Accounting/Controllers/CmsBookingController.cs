@@ -95,6 +95,16 @@ public class CmsBookingController : ControllerBase
         return Ok(new ApiResponse<BookingSiteSettingsDto>(true, result, "บันทึกค่าตั้งการจองของเว็บไซต์แล้ว"));
     }
 
+    /// <summary>รอบ 215 เฟส 2: ให้บริการกลับไป "ตามค่าเว็บ" ของโหมดผู้ให้บริการ (body: serviceIds · null = ทุกบริการ)</summary>
+    [HttpPost("settings/resource-mode/inherit")]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<int>>> InheritResourceMode(Guid companyId, Guid siteId, [FromBody] InheritResourceModeRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var n = await _bookingService.InheritResourceModeAsync(companyId, siteId, request?.ServiceIds, userId);
+        return Ok(new ApiResponse<int>(true, n, n == 0 ? "ไม่มีบริการที่ต้องเปลี่ยน" : $"ให้ {n} บริการใช้ตามค่าเว็บแล้ว"));
+    }
+
     [HttpGet("resources")]
     public async Task<ActionResult<ApiResponse<List<BookingResourceResponse>>>> GetResources(Guid companyId, Guid siteId)
         => Ok(new ApiResponse<List<BookingResourceResponse>>(true, await _bookingService.GetResourcesAsync(companyId, siteId)));

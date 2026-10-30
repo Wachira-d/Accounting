@@ -47,6 +47,8 @@
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <!-- รอบ 215 เฟส 2 (N6): หัวพื้นที่ทำงานเว็บ — ตัวสลับเว็บ + แท็บงานของเว็บนี้ (CmsSiteContext.renderCrumb ตัวเดียวกับหน้างานอื่น) -->
+    <div id="cmsCrumb"></div>
     <div class="page-header">
       <div>
         <a href="/pages/cms-sites.html" style="font-size:13px;color:var(--gray-500)">← กลับไปยังเว็บไซต์ทั้งหมด</a>
@@ -328,6 +330,8 @@
         </div>
         <div class="bs-hint" style="margin-top:4px">เปิดแล้ว: กด "เริ่มให้บริการ" ที่หน้าทำงานจะให้เลือกผู้ให้บริการที่ว่าง (ได้หลายคน + แบ่ง % งาน) · มีหน้าสรุปงาน/รายงานผู้ให้บริการ ·
           บริการแต่ละอันเลือกโหมด "ลูกค้าเลือก / ระบบจัดให้ / บังคับระบุ" ได้ในหน้าแก้ไขบริการ · ปิด = ทุกบริการนับความจุของบริการ (ค่าตั้งรายบริการยังเก็บไว้)</div>
+        <!-- รอบ 215 เฟส 2: ค่าเว็บ "ลูกค้าเลือกผู้ให้บริการได้ไหม" (ตั้งที่ ตั้งค่าเว็บ › การจอง/บริการ — ที่เดียว) · เติมโดย Page.renderDefaultModeLine -->
+        <div id="bssDefaultModeLine" class="bs-hint" style="margin-top:6px"></div>
         <div id="bssProvidersBody" style="display:none;margin-top:10px">
           <div class="form-row">
             <div class="form-group"><label class="form-label">ตรรกะแนะนำ / จัดผู้ให้บริการ</label>
@@ -1286,6 +1290,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
   <script>
     const BLOCK_TYPES = {
       1:{n:'Hero',i:'🎬',f:'hero'},
@@ -1355,7 +1360,19 @@
           return;
         }
         await this.loadSite();
+        this.renderWorkspaceHeader();
+        // รอบ 215 เฟส 2: ?tab= จากศูนย์ "ตั้งค่าเว็บ" — เปิดแท็บตรงเรื่อง (แท็บที่ไม่มี = คงแท็บหน้าเว็บ)
+        const wantTab = params.get('tab');
+        if (wantTab && document.querySelector(`.editor-tab[data-tab="${CSS.escape(wantTab)}"]`)) this.switchTab(wantTab);
         await this.loadPages();
+      },
+
+      // รอบ 215 เฟส 2 (N6): หัวพื้นที่ทำงาน — โหลดรายการเว็บที่ผู้ใช้เห็น (ล้ม = ไม่มีหัว ไม่ล้มหน้าแก้ไข)
+      async renderWorkspaceHeader() {
+        try {
+          const sites = await CmsSiteContext.loadSites();
+          if (sites.length) CmsSiteContext.renderCrumb('cmsCrumb', sites, this.siteId, 'หน้าเว็บ & เนื้อหา', 'cms-edit');
+        } catch (_) { /* ไม่มีสิทธิ์รายการเว็บ — แสดงหน้าแก้ไขตามเดิม */ }
       },
 
       async loadSite() {
@@ -2989,6 +3006,7 @@
                 <div style="font-size:12px;color:var(--gray-500)">฿${Number(s.price||0).toLocaleString('th-TH')} · ${Layout.esc(s.slotSummary||'')}</div>
                 ${s.policySummary ? `<div style="font-size:12px;color:var(--gray-500)">${Layout.esc(s.policySummary)}</div>` : ''}
                 ${s.productCode ? `<div style="font-size:12px;color:var(--gray-500)">📦 ${Layout.esc(s.productCode)} ${Layout.esc(s.productName || '')}</div>` : ''}
+                ${this._bssSettings && this._bssSettings.providerAllocationEnabled ? `<div style="font-size:12px;color:var(--gray-500)">👥 ผู้ให้บริการ: ${Layout.esc(Layout.enumLabel('bookingResourceMode', s.effectiveResourceMode || 'None'))} <span class="block-type-badge">${s.resourceModeSource === 'site' ? 'ตามค่าเว็บ' : 'กำหนดเอง'}</span></div>` : ''}
                 ${s.productWarning ? `<div style="font-size:12px;color:#b45309">⚠️ ${Layout.esc(s.productWarning)}</div>` : ''}
                 ${s.usesSiteHours ? '<div style="font-size:12px;color:var(--gray-500);margin-top:2px">🕒 ใช้เวลาทำการของเว็บไซต์ (ตั้งเวลาเองในบริการได้ที่ "แก้ไข" → ข้อ 4)</div>' : ''}
                 ${s.hasOpeningHours ? '' : '<div style="font-size:12px;color:#b45309;margin-top:2px">⚠️ ยังไม่ได้ตั้งเวลาทำการ (ทั้งของบริการและของเว็บไซต์) — ลูกค้าจะไม่เห็นเวลาว่างเลย (กด "แก้ไข" → ข้อ 4 หรือตั้ง "เวลาทำการของเว็บไซต์" ด้านล่าง)</div>'}
@@ -3011,6 +3029,22 @@
         };
         fill('bsBookingType', 'bookingType'); fill('bsMode', 'bookingSlotMode'); fill('bsCapacityUnit', 'bookingCapacityUnit');
         fill('bsResourceMode', 'bookingResourceMode');
+        // รอบ 215 เฟส 2: ตัวเลือกแรก = ตามค่าเว็บ (ส่ง null) — ข้อความระบุค่าเว็บปัจจุบัน (เติมตอน hydrate)
+        const rm = document.getElementById('bsResourceMode');
+        if (!rm.querySelector('option[value=""]')) rm.insertAdjacentHTML('afterbegin', '<option value="">ตามค่าเว็บ</option>');
+      },
+
+      /** รอบ 215 เฟส 2: ป้าย "ตามค่าเว็บ (…)" ของตัวเลือก + บรรทัดค่าเว็บในส่วนผู้ให้บริการ — ค่าและตัวอย่างมาจาก server */
+      renderDefaultModeLine() {
+        const d = this._bssSettings || {};
+        const label = Layout.enumLabel('bookingResourceMode', d.defaultResourceMode || 'None');
+        const opt = document.querySelector('#bsResourceMode option[value=""]');
+        if (opt) opt.textContent = `ตามค่าเว็บ (${label})`;
+        const el = document.getElementById('bssDefaultModeLine');
+        if (!el) return;
+        const href = '/pages/cms-site-settings.html?siteId=' + encodeURIComponent(this.siteId || '') + '&group=booking';
+        el.innerHTML = `🌐 ค่าเว็บ — ลูกค้าเลือกผู้ให้บริการได้ไหม: <b>${Layout.esc(label)}</b>${d.defaultResourceModePreview ? ' · ' + Layout.esc(d.defaultResourceModePreview) : ''}`
+          + ` · บริการที่กำหนดเอง ${Number((d.resourceModeOverrides || []).length)} · <a href="${Layout.esc(href)}" style="color:var(--primary)">เปลี่ยนที่ ตั้งค่าเว็บ › การจอง/บริการ →</a>`;
       },
 
       /** เติมฟอร์มจากค่าของ server (บริการเดิม หรือแม่แบบ) — ฟอร์มใหม่ใช้ค่าเริ่มต้นที่ตรงกับ DTO ฝั่ง server */
@@ -3048,7 +3082,9 @@
         document.getElementById('bsEnforce').checked = s.enforceSlotCapacity !== false;
         v('bsOverlap', s.overlapLimit);
         document.getElementById('bsWaitlist').checked = !!s.waitlistEnabled;
-        v('bsResourceMode', s.resourceMode || 'None');
+        // รอบ 215 เฟส 2: null/ไม่มี = ตามค่าเว็บ ('') · ค่าที่ตั้งไว้ = กำหนดเอง
+        this.renderDefaultModeLine();
+        v('bsResourceMode', s.resourceMode == null ? '' : s.resourceMode);
         this.schedLoad('bs', s.schedule);
         this.bsModeChanged();
         this.bsSiteDefaultsChanged();
@@ -3254,6 +3290,7 @@
       // รอบ 207: ค่าตั้งผู้ให้บริการ · ฟอร์มจอง · เอกสารแต่ละขั้น — ตัวเลือก/ป้าย/ตารางมาจากเซิร์ฟเวอร์ทั้งหมด (หน้าแสดงตรง)
       _bss207Render(d) {
         this._bssSettings = d;
+        this.renderDefaultModeLine();   // รอบ 215 เฟส 2
         const on = d.providerAllocationEnabled === true;
         document.getElementById('bssProvidersEnabled').checked = on;
         const strat = document.getElementById('bssStrategy');
@@ -3466,7 +3503,7 @@
           enforceSlotCapacity: document.getElementById('bsEnforce').checked,
           overlapLimit: document.getElementById('bsEnforce').checked ? null : this._bsNum('bsOverlap', null),
           waitlistEnabled: document.getElementById('bsWaitlist').checked,
-          resourceMode: document.getElementById('bsResourceMode').value,
+          resourceMode: document.getElementById('bsResourceMode').value || null,   // รอบ 215: '' = ตามค่าเว็บ
           schedule: this.schedPayload('bs')
         };
         // รอบ 210: ส่งเฉพาะเมื่อมีตัวเลือกจาก server (ไม่งั้น null = คงค่าเดิม · ไม่รีเซ็ตเงียบ)

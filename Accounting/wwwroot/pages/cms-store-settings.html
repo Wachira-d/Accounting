@@ -153,6 +153,9 @@
     <section data-pane="notify" style="display:none">
       <div class="ss-card">
         <h3>💬 การแจ้งเตือนลูกค้าของเว็บนี้</h3>
+        <!-- รอบ 215 เฟส 2: ย้ายไป ศูนย์ "ตั้งค่าเว็บ" › การแจ้งเตือน / LINE (ทุกประเภทเว็บ · ที่เดียว) — กล่องนี้บอกทางไปแทนตาราง -->
+        <div class="ss-warn" style="background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a">ย้ายแล้ว — ตั้งการแจ้งลูกค้ารายเว็บได้ที่ <b>ตั้งค่าเว็บ › การแจ้งเตือน / LINE</b> (ใช้ได้กับเว็บทุกประเภท)
+          <a class="btn btn-sm btn-primary" id="notifyMovedLink" href="/pages/cms-site-settings.html?group=notify" style="margin-left:8px">ไปที่นั่น →</a></div>
         <div class="ss-hint">ตั้งเฉพาะเว็บนี้ทับค่าของบริษัท (ตั้งค่า → การแจ้งเตือน) · ตาราง/ป้ายมาจากเซิร์ฟเวอร์</div>
         <div id="customerNotifyPanel"></div>
       </div>
@@ -185,7 +188,9 @@
 
       async init() {
         if (!Layout.init('cms-store-settings')) return;
-        this.tab('general');
+        // รอบ 215 เฟส 2: ?tab= จากศูนย์ "ตั้งค่าเว็บ" (cms-site-settings) เปิดแท็บตรงเรื่อง · ไม่รู้จัก = สวิตช์ร้าน
+        const wantTab = new URLSearchParams(location.search).get('tab');
+        this.tab(document.querySelector(`.ss-tab[data-tab="${CSS.escape(wantTab || '')}"]`) ? wantTab : 'general');
         try {
           const sites = this.sites = await CmsSiteContext.loadSites();
           const sel = document.getElementById('siteSelector');
@@ -216,8 +221,10 @@
       // รอบ 212 แพ็ก A: ตารางช่องทางแจ้งลูกค้าโหมดต่อเว็บ (/js/customer-notify.js)
       loadCustomerNotify() {
         const cid = Layout.getCompanyId();
-        if (!cid || !this.siteId || !window.CustomerNotify) return;
-        CustomerNotify.mountRules(document.getElementById('customerNotifyPanel'), { companyId: cid, siteId: this.siteId });
+        // รอบ 215 เฟส 2: ตารางย้ายไปศูนย์ตั้งค่าเว็บ — เหลือลิงก์ของเว็บที่เลือก (ห้ามมีสองฟอร์มแก้ค่าเดียวกัน)
+        const a = document.getElementById('notifyMovedLink');
+        if (a && this.siteId) a.href = '/pages/cms-site-settings.html?siteId=' + encodeURIComponent(this.siteId) + '&group=notify';
+        void cid;
       },
 
       // ───────── ค่าตั้งร้าน ─────────

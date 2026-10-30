@@ -16,6 +16,8 @@ public interface ICmsBookingService
     // ค่าตั้งการจองระดับไซต์ (บริการที่ "ใช้ค่าของไซต์" รับระยะเวลา/buffer/ล่วงหน้าจากที่นี่)
     Task<BookingSiteSettingsDto> GetSiteSettingsAsync(Guid companyId, Guid siteId);
     Task<BookingSiteSettingsDto> UpdateSiteSettingsAsync(Guid companyId, Guid siteId, BookingSiteSettingsDto request, string userId);
+    /// <summary>รอบ 215 เฟส 2: ให้บริการที่เลือก (null = ทุกบริการของเว็บ) กลับไป "ตามค่าเว็บ" (ResourceMode = null) — คืนจำนวนที่เปลี่ยน</summary>
+    Task<int> InheritResourceModeAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid>? serviceIds, string userId);
 
     // ผู้ให้บริการ / ห้อง / อุปกรณ์ (ตารางงานรายบุคคล + บริการที่รับได้)
     Task<List<BookingResourceResponse>> GetResourcesAsync(Guid companyId, Guid siteId);
