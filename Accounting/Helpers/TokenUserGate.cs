@@ -14,7 +14,11 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class TokenUserGate
 {
+    /// <summary>เหตุผลที่ส่งเข้า <c>context.Fail</c> (ลง log ของ authentication) — หน้าเว็บ<b>ไม่ได้</b>แสดงข้อความนี้ (OnChallenge ตอบข้อความ 401 กลาง)</summary>
     public const string RejectMessage = "บัญชีนี้ถูกปิดใช้งานหรือถูกลบแล้ว — เข้าสู่ระบบไม่ได้";
+
+    /// <summary>สองช่องที่ OnTokenValidated ค้นต่อคำขอ</summary>
+    public sealed record UserRow(UserStatus Status, bool IsDeleted);
 
     public static string? Reject(bool userExists, UserStatus status, bool isDeleted)
     {

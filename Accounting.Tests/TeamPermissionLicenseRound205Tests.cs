@@ -108,9 +108,12 @@ public class TeamPermissionLicenseRound205Tests
     [Fact]
     public void HasOwner_CountsOwnerAndSystemAdmin()
     {
-        Assert.True(OwnerlessCompanyRepair.HasOwner(new[] { UserRole.Staff, UserRole.Owner }));
-        Assert.True(OwnerlessCompanyRepair.HasOwner(new[] { UserRole.SystemAdmin }));
-        Assert.False(OwnerlessCompanyRepair.HasOwner(new[] { UserRole.PlatformSupport, UserRole.Accountant }));
+        // ฝ่ายค้านรอบ 214 (ฑ-2) B2-a: HasOwner(บทบาทอย่างเดียว) ถูกแทนด้วยนิยามเดียว ActingOwner (บทบาท + บัญชียังทำหน้าที่ได้)
+        static Accounting.Models.Entities.CompanyUser Cu(UserRole r) => new() { Role = r, User = new Accounting.Models.Entities.User { Status = UserStatus.Active, Email = "x", PasswordHash = "x", FullName = "x" } };
+        var acting = OwnerlessCompanyRepair.ActingOwner.Compile();
+        Assert.True(new[] { Cu(UserRole.Staff), Cu(UserRole.Owner) }.Any(acting));
+        Assert.True(new[] { Cu(UserRole.SystemAdmin) }.Any(acting));
+        Assert.False(new[] { Cu(UserRole.PlatformSupport), Cu(UserRole.Accountant) }.Any(acting));
     }
 
     [Fact]

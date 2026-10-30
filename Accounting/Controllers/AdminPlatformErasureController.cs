@@ -36,6 +36,8 @@ public class AdminPlatformErasureController : ControllerBase
         overdue = r.Status == PlatformErasureRequestPolicy.StatusPending && r.DueAt < DateTime.UtcNow,
         // ฝ่ายค้านรอบ 214 B2: คำขอค้างที่ลบไม่ได้จนกว่าจะโอนความเป็นเจ้าของ — แสดงก่อนกด (ไม่ใช่รอให้ 409)
         ownershipBlockers = blockers ?? new List<string>(),
+        // ฝ่ายค้านรอบ 214 (ฑ-2) B2-c: เซิร์ฟเวอร์บอกว่ามีแพ็กเกจบัญชีติดค้าง ⇒ หน้าแอดมินแสดงปุ่ม "ยกเลิกแพ็กเกจ" (หน้าไม่ตีความข้อความเอง)
+        canCancelAccountPlans = blockers?.Any(PlatformErasureRequestPolicy.IsAccountPlanBlocker) == true,
     };
 
     [HttpGet]
@@ -63,6 +65,17 @@ public class AdminPlatformErasureController : ControllerBase
             + "หลักฐานการยอมรับข้อกำหนด/นโยบายเก็บไว้ในรูปที่ไม่ระบุตัวตนจนพ้นอายุความ · เอกสารบัญชี/ภาษีที่ออกไปแล้วคงไว้ตามเดิมตามระยะเวลาที่กฎหมายกำหนด (พ.ร.บ.การบัญชี · ประมวลรัษฎากร) · "
             + "บันทึกร่องรอยการใช้งานที่เกิดก่อนหน้านี้ไม่สามารถแก้ไขย้อนหลังได้ (บันทึกแบบเพิ่มได้อย่างเดียว)");
         return Ok(new ApiResponse<object>(true, Dto(row), sent ? "ลบข้อมูลแล้ว · แจ้งผู้ใช้ทางอีเมลแล้ว" : "ลบข้อมูลแล้ว · ส่งอีเมลแจ้งผลไม่สำเร็จ (ตรวจอีเมลระบบ)"));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B2-c: ยกเลิกแพ็กเกจบัญชีที่ผู้ขอลบเป็นเจ้าของ (เฉพาะแพ็กเกจที่ไม่มีบริษัทผูก) — ทางไปต่อของด่าน "เจ้าของแพ็กเกจ"</summary>
+    [HttpPost("{id:guid}/cancel-account-plans")]
+    [Accounting.Filters.RejectApiKey("ยกเลิกแพ็กเกจบัญชีของผู้ขอลบข้อมูล")]
+    public async Task<ActionResult<ApiResponse<object>>> CancelAccountPlans(Guid id, CancellationToken ct)
+    {
+        var admin = JwtHelper.GetUserIdFromClaims(User);
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var n = await _pdpa.CancelErasureBlockingAccountPlansAsync(id, admin, ip, ct);
+        return Ok(new ApiResponse<object>(true, new { cancelled = n }, $"ยกเลิกแพ็กเกจบัญชีแล้ว {n} รายการ — ดำเนินการลบต่อได้เมื่อไม่มีรายการติดค้างอื่น"));
     }
 
     [HttpPost("{id:guid}/reject")]

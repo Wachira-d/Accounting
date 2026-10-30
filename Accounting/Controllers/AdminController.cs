@@ -502,26 +502,26 @@ public class AdminController : ControllerBase
         }));
     }
 
-    private sealed record OwnerlessMember(Guid UserId, string Email, string FullName, UserRole Role, DateTime JoinedAt, bool IsPlatformAdmin, UserStatus Status);
+    private sealed record OwnerlessMember(Guid UserId, string Email, string FullName, UserRole Role, DateTime JoinedAt, bool IsPlatformAdmin, UserStatus Status, bool IsDeleted);
     private sealed record OwnerlessRow(Guid Id, string Name, string? TaxId, DateTime CreatedAt, string? CreatedBy, List<OwnerlessMember> Members);
 
     private static List<OwnerlessCompanyRepair.Member> ToRepairMembers(IEnumerable<OwnerlessMember> ms)
-        => ms.Select(m => new OwnerlessCompanyRepair.Member(m.UserId, m.Role, m.JoinedAt, m.IsPlatformAdmin, m.Status == UserStatus.Active)).ToList();
+        => ms.Select(m => new OwnerlessCompanyRepair.Member(m.UserId, m.Role, m.JoinedAt, m.IsPlatformAdmin,
+            m.Status == UserStatus.Active && !m.IsDeleted, m.Status == UserStatus.Suspended && !m.IsDeleted)).ToList();
 
-    /// <summary>บริษัทที่ไม่มีสมาชิก Owner/SystemAdmin (นิยามเดียวกับ <c>OwnerlessCompanyRepair.IsOwnerRole</c> — EF แปลเมธอดไม่ได้ จึงเขียนเงื่อนไขตรงนี้ที่เดียว)</summary>
+    /// <summary>บริษัทที่ไม่มีเจ้าของที่ยังทำหน้าที่ได้ — นิยามเดียว <c>OwnerlessCompanyRepair.ActingOwner</c> (ฝ่ายค้านรอบ 214 ฑ-2 B2-a)</summary>
     private async Task<List<OwnerlessRow>> LoadOwnerlessCompaniesAsync(int take, Guid? onlyCompanyId = null)
     {
         var q = _db.Companies.AsNoTracking()
-            // ฝ่ายค้านรอบ 214 B2: นับเฉพาะเจ้าของที่ยังทำหน้าที่ได้ (เงื่อนไขเดียวกับ CompanyMembership.CanAct — EF แปลเมธอดไม่ได้) —
-            // เดิมนับเจ้าของที่บัญชีถูกปิด/ลบตามคำขอ ⇒ บริษัทกำพร้าไม่โผล่ในรายการซ่อม
-            .Where(c => !c.CompanyUsers.Any(cu => (cu.Role == UserRole.Owner || cu.Role == UserRole.SystemAdmin)
-                && !cu.User.IsDeleted && cu.User.Status != UserStatus.Inactive && cu.User.Status != UserStatus.Suspended));
+            // ฝ่ายค้านรอบ 214 B2: นับเฉพาะเจ้าของที่ยังทำหน้าที่ได้ — เดิมนับเจ้าของที่บัญชีถูกปิด/ลบตามคำขอ ⇒ บริษัทกำพร้าไม่โผล่ในรายการซ่อม ·
+            // เจ้าของที่แค่ถูกระงับ ⇒ โผล่แต่ Decide ให้แอดมินตัดสิน (ไม่ตั้งเอง)
+            .Where(c => !c.CompanyUsers.AsQueryable().Any(OwnerlessCompanyRepair.ActingOwner));
         if (onlyCompanyId is { } oc) q = q.Where(c => c.Id == oc);
         return await q.OrderBy(c => c.CreatedAt)
             .Take(take)
             .Select(c => new OwnerlessRow(c.Id, c.Name, c.TaxId, c.CreatedAt, c.CreatedBy,
                 c.CompanyUsers.Select(cu => new OwnerlessMember(cu.UserId, cu.User.Email, cu.User.FullName, cu.Role, cu.JoinedAt,
-                    cu.User.IsSystemAdmin, cu.User.Status)).ToList()))
+                    cu.User.IsSystemAdmin, cu.User.Status, cu.User.IsDeleted)).ToList()))
             .ToListAsync();
     }
 
@@ -585,8 +585,11 @@ public class AdminController : ControllerBase
             var members = await _db.CompanyUsers.AsNoTracking().Where(cu => cu.CompanyId == companyId)
                 .Select(cu => new { cu.UserId, cu.Role, cu.User.IsSystemAdmin }).ToListAsync();
             var target = members.FirstOrDefault(x => x.UserId == request.UserId);
+            // ฝ่ายค้านรอบ 214 (ฑ-2) B2-a: นิยามเดียวกับรายการ (เจ้าของที่ยังทำหน้าที่ได้) — เดิมดูบทบาทอย่างเดียว ⇒ บริษัทที่โผล่ในรายการตั้งเจ้าของไม่ได้
+            var hasActingOwner = await _db.CompanyUsers.AsNoTracking().Where(cu => cu.CompanyId == companyId)
+                .AnyAsync(OwnerlessCompanyRepair.ActingOwner);
             var b = OwnerlessCompanyRepair.AdminAssignBlock(
-                companyHasOwner: OwnerlessCompanyRepair.HasOwner(members.Select(x => x.Role)),
+                companyHasOwner: hasActingOwner,
                 targetIsMember: target != null,
                 targetIsPlatformSide: target != null && OwnerlessCompanyRepair.IsPlatformSide(target.Role, target.IsSystemAdmin),
                 targetIsCreator: createdBy.CreatedBy == request.UserId.ToString());
@@ -1077,13 +1080,16 @@ public class AdminController : ControllerBase
             .Where(c => c.Id == companyId).Select(c => new { c.Id, c.Name }).FirstOrDefaultAsync();
         if (company == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
 
-        // เลือกผู้ใช้จริงในบริษัท (Owner ก่อน) เป็นตัวตนที่จะเข้าดู
+        // เลือกผู้ใช้จริงในบริษัท (Owner ก่อน) เป็นตัวตนที่จะเข้าดู ·
+        // ฝ่ายค้านรอบ 214 (ฑ-2) S4-a: เฉพาะบัญชี Active ที่ไม่ถูกลบ — เดิมอาจเลือกบัญชีที่ปิด/ลบตามคำขอแล้ว ⇒ token ถูก TokenUserGate ปฏิเสธ (401)
         var target = await _db.CompanyUsers.AsNoTracking()
             .Where(cu => cu.CompanyId == companyId)
-            .OrderBy(cu => cu.Role == UserRole.Owner ? 0 : 1)
-            .Join(_db.Users, cu => cu.UserId, u => u.Id, (cu, u) => new { u.Id, u.Email, u.FullName })
+            .Join(_db.Users, cu => cu.UserId, u => u.Id, (cu, u) => new { cu.Role, u.Id, u.Email, u.FullName, u.Status, u.IsDeleted })
+            .Where(x => x.Status == UserStatus.Active && !x.IsDeleted)
+            .OrderBy(x => x.Role == UserRole.Owner ? 0 : 1)
+            .Select(x => new { x.Id, x.Email, x.FullName })
             .FirstOrDefaultAsync();
-        if (target == null) return BadRequest(new ApiResponse<object>(false, null, "บริษัทนี้ไม่มีผู้ใช้ให้เข้าดู"));
+        if (target == null) return BadRequest(new ApiResponse<object>(false, null, "บริษัทนี้ไม่มีผู้ใช้ที่ใช้งานอยู่ให้เข้าดู"));
 
         var adminId = JwtHelper.GetUserIdFromClaims(User);
         var (token, expiresAt) = JwtHelper.GenerateImpersonationToken(
@@ -1098,7 +1104,7 @@ public class AdminController : ControllerBase
             Action = AuditAction.View,
             EntityType = "Impersonation",
             EntityId = companyId.ToString(),
-            NewValues = JsonSerializer.Serialize(new { targetUserId = target.Id, targetEmail = target.Email, expiresAt }),
+            NewValues = JsonSerializer.Serialize(new { targetUserId = target.Id, expiresAt }),   // ฝ่ายค้านรอบ 214 (ฑ-2) B1-b: ไม่เก็บอีเมลเป้าหมาย (UserId พอ)
             Timestamp = DateTime.UtcNow
         });
         await _db.SaveChangesAsync();
@@ -1260,10 +1266,10 @@ public class AdminController : ControllerBase
             {
                 if (role == UserRole.Owner)
                 {
-                    var existingRoles = await _db.CompanyUsers.AsNoTracking()
-                        .Where(cu => cu.CompanyId == targetCompanyId).Select(cu => cu.Role).ToListAsync();
+                    var hasActingOwner = await _db.CompanyUsers.AsNoTracking()
+                        .Where(cu => cu.CompanyId == targetCompanyId).AnyAsync(OwnerlessCompanyRepair.ActingOwner);
                     var b = OwnerlessCompanyRepair.AdminAssignBlock(
-                        companyHasOwner: OwnerlessCompanyRepair.HasOwner(existingRoles),
+                        companyHasOwner: hasActingOwner,   // ฝ่ายค้านรอบ 214 (ฑ-2) B2-a: นิยามเดียวกับรายการ
                         targetIsMember: true,                              // กำลังถูกเพิ่มเป็นสมาชิกในธุรกรรมนี้
                         targetIsPlatformSide: request.MakeSystemAdmin,
                         targetIsCreator: createdBy == user.Id.ToString());   // ผู้ใช้ใหม่ไม่เคยสร้างบริษัท ⇒ false เสมอ
@@ -3671,8 +3677,8 @@ public class AdminController : ControllerBase
         // RV2-1 (รอบ 201 ทีม PL): แถวเก่าที่มีค่าลับ (ก่อนตัวปิดค่าตอนเขียน) — ปิดตอนแสดง · ค่าที่เก็บไม่ถูกแตะ (hash chain คงเดิม)
         var shown = items.Select(a => new {
             a.Id, a.CompanyId, a.UserEmail, a.Action, a.EntityType, a.EntityId, a.IpAddress, a.Timestamp,
-            OldValues = Accounting.Helpers.AuditRedaction.RedactJson(a.OldValues),
-            NewValues = Accounting.Helpers.AuditRedaction.RedactJson(a.NewValues) }).ToList();
+            OldValues = Accounting.Helpers.AuditRedaction.RedactJson(a.OldValues, a.EntityType),
+            NewValues = Accounting.Helpers.AuditRedaction.RedactJson(a.NewValues, a.EntityType) }).ToList();
         return Ok(new ApiResponse<object>(true, new {
             items = shown, total, page, pageSize,
             totalPages = (int)Math.Ceiling(total / (double)pageSize) }));

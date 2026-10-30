@@ -202,9 +202,21 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 var sub = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
                 if (!Guid.TryParse(sub, out var uid)) return;
                 var db = context.HttpContext.RequestServices.GetRequiredService<Accounting.Data.AccountingDbContext>();
-                var row = await db.Users.IgnoreQueryFilters().AsNoTracking()
-                    .Where(u => u.Id == uid).Select(u => new { u.Status, u.IsDeleted })
-                    .FirstOrDefaultAsync(context.HttpContext.RequestAborted);
+                // ฝ่ายค้านรอบ 214 (ฑ-2): ผู้เรียกตัดการเชื่อมต่อระหว่างตรวจ ⇒ จบเงียบ (ไม่ใช่ 500/log error) — ไม่มีใครรอคำตอบแล้ว
+                // หมายเหตุ: ตรวจตอนสร้างการเชื่อมต่อเท่านั้น — SignalR socket ที่เปิดค้างอยู่ก่อนบัญชีถูกปิด/ลบ ใช้ต่อได้จนกว่าจะเชื่อมต่อใหม่
+                var aborted = context.HttpContext.RequestAborted;
+                Accounting.Helpers.TokenUserGate.UserRow? row;
+                try
+                {
+                    row = await db.Users.IgnoreQueryFilters().AsNoTracking()
+                        .Where(u => u.Id == uid).Select(u => new Accounting.Helpers.TokenUserGate.UserRow(u.Status, u.IsDeleted))
+                        .FirstOrDefaultAsync(aborted);
+                }
+                catch (OperationCanceledException) when (aborted.IsCancellationRequested)
+                {
+                    context.Fail("request aborted");
+                    return;
+                }
                 var reason = Accounting.Helpers.TokenUserGate.Reject(row != null, row?.Status ?? default, row?.IsDeleted ?? false);
                 if (reason != null) context.Fail(reason);
             },

@@ -72,6 +72,7 @@ public interface IPdpaService
     Task<PlatformErasureRequest> RejectPlatformErasureAsync(Guid requestId, Guid adminUserId, string reason, CancellationToken ct = default);
     /// <summary>ฝ่ายค้านรอบ 214 B2: บริษัท/แพ็กเกจที่ต้องโอนความเป็นเจ้าของก่อนลบบัญชีนี้ (ว่าง = ลบได้)</summary>
     Task<List<string>> ErasureOwnershipBlockersAsync(Guid userId, CancellationToken ct = default);
+    Task<int> CancelErasureBlockingAccountPlansAsync(Guid requestId, Guid adminUserId, string? ip, CancellationToken ct = default);
 
     // ===== Wave 3 — RoPA / Consent / PiiAccessLog / Breach (PDPC audit-grade) =====
 
@@ -557,6 +558,16 @@ public partial class PdpaService : IPdpaService
         u.AuthProviderId = null;
         u.PasswordHash = string.Empty;
 
+        // ฝ่ายค้านรอบ 214 (ฑ-2) S4-b: การผูกผู้ใช้ภายนอก (X-Acting-User) ของทุกบริษัท — ถอด (soft-delete) + ล้างชื่อภายนอก ·
+        // คีย์ API ที่ผู้ใช้รายนี้สร้างไว้ = ทรัพย์สินของบริษัท ⇒ คงไว้ (ผู้สร้างแสดงเป็นบัญชีนิรนามแล้วเพราะ User ถูกทำไม่ให้ระบุตัว)
+        var mappings = await _db.IntegrationUserMappings.IgnoreQueryFilters().Where(m => m.UserId == u.Id && !m.IsDeleted).ToListAsync(ct);
+        foreach (var m in mappings)
+        {
+            m.IsDeleted = true;
+            m.ExternalUserName = null;
+            m.ExternalUserKey = $"erased-{m.Id:N}";   // คีย์มักเป็นอีเมล — ไม่ซ้ำกันต่อแถว (กันชน index Integration+Key)
+        }
+
         u.RefreshToken = null;
         u.PreviousRefreshToken = null;
         u.RefreshTokenExpiry = null;
@@ -586,15 +597,17 @@ public partial class PdpaService : IPdpaService
     {
         var blockers = new List<string>();
         var owned = await _db.CompanyUsers.AsNoTracking()
-            .Where(cu => cu.UserId == userId && cu.Role == Models.Enums.UserRole.Owner)
+            .Where(cu => cu.UserId == userId && (cu.Role == Models.Enums.UserRole.Owner || cu.Role == Models.Enums.UserRole.SystemAdmin))
             .Select(cu => new { cu.CompanyId, cu.Company.Name })
             .ToListAsync(ct);
         foreach (var c in owned)
         {
+            // ฝ่ายค้านรอบ 214 (ฑ-2) B2-a: นิยามเดียว OwnerlessCompanyRepair.ActingOwner (บทบาท Owner/SystemAdmin เหมือนรายการบริษัทไม่มีเจ้าของ)
+            // + ตัดแอดมินแพลตฟอร์ม (LastOwnerGuard เข้มกว่า: สิทธิ์แพลตฟอร์มไม่ใช่เจ้าของฝั่งลูกค้า)
             var others = await _db.CompanyUsers.AsNoTracking()
-                .CountAsync(cu => cu.CompanyId == c.CompanyId && cu.UserId != userId && cu.Role == Models.Enums.UserRole.Owner
-                                  && !cu.User.IsSystemAdmin && !cu.User.IsDeleted
-                                  && cu.User.Status != Models.Enums.UserStatus.Inactive && cu.User.Status != Models.Enums.UserStatus.Suspended, ct);
+                .Where(cu => cu.CompanyId == c.CompanyId && cu.UserId != userId && !cu.User.IsSystemAdmin)
+                .Where(Accounting.Helpers.OwnerlessCompanyRepair.ActingOwner)
+                .CountAsync(ct);
             if (Accounting.Helpers.LastOwnerGuard.Block(Models.Enums.UserRole.Owner, null, others) != null)
                 blockers.Add($"บริษัท \u201C{c.Name}\u201D (เจ้าของคนสุดท้าย)");
         }
@@ -603,8 +616,49 @@ public partial class PdpaService : IPdpaService
                         && s.Status != Models.Enums.SubscriptionStatus.Cancelled && s.Status != Models.Enums.SubscriptionStatus.Expired)
             .Select(s => s.PlanTemplate.Name)
             .ToListAsync(ct);
-        blockers.AddRange(subs.Select(n => $"แพ็กเกจบัญชี \u201C{n}\u201D (เจ้าของแพ็กเกจ)"));
+        blockers.AddRange(subs.Select(Accounting.Helpers.PlatformErasureRequestPolicy.AccountPlanBlockerLabel));
         return blockers;
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B2-c: ทางไปต่อของผู้ขอลบที่ยังเป็นเจ้าของแพ็กเกจบัญชี — SystemAdmin ยกเลิกแพ็กเกจที่<b>ไม่มีบริษัทผูก</b>ให้จากคิวคำขอ ·
+    /// ด่าน <see cref="Accounting.Helpers.PlatformErasureRequestPolicy.AccountPlanCancelBlock"/> (มีบริษัทผูก = ปฏิเสธทั้งชุด ไม่ยกเลิกครึ่ง ๆ) · audit hash chain ต่อแพ็กเกจ</summary>
+    public async Task<int> CancelErasureBlockingAccountPlansAsync(Guid requestId, Guid adminUserId, string? ip, CancellationToken ct = default)
+    {
+        var req = await PendingRequestAsync(requestId, ct);
+        var subs = await _db.AccountSubscriptions.Include(s => s.PlanTemplate)
+            .Where(s => s.OwnerUserId == req.UserId && !s.IsDeleted
+                        && s.Status != Models.Enums.SubscriptionStatus.Cancelled && s.Status != Models.Enums.SubscriptionStatus.Expired)
+            .ToListAsync(ct);
+        var plans = new List<(string? PlanName, int AttachedCompanies)>();
+        foreach (var s in subs)
+            plans.Add((s.PlanTemplate.Name, await _db.Subscriptions.CountAsync(x => x.AccountSubscriptionId == s.Id && !x.IsDeleted, ct)));
+        var block = Accounting.Helpers.PlatformErasureRequestPolicy.AccountPlanCancelBlock(plans);
+        if (block != null)
+            throw new Accounting.Helpers.BusinessRuleException(block, Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 409);
+        foreach (var s in subs)
+        {
+            var before = s.Status;
+            s.Status = Models.Enums.SubscriptionStatus.Cancelled;
+            s.UpdatedAt = DateTime.UtcNow;
+            s.UpdatedBy = adminUserId.ToString();
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = Accounting.Helpers.PdpaPolicy.PlatformScopeCompanyId,
+                UserId = adminUserId,
+                IpAddress = ip is { Length: > 45 } ? ip[..45] : ip,
+                Action = Models.Enums.AuditAction.Update,
+                EntityType = "AccountSubscription",
+                EntityId = s.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new { status = before.ToString() }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "ErasureCancelAccountPlan", status = nameof(Models.Enums.SubscriptionStatus.Cancelled), requestId = req.Id,
+                    ruleCode = Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode,
+                }),
+            });
+        }
+        await SaveResolutionAsync(ct);
+        return subs.Count;
     }
 
     // ===== รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ) — คำขอลบระดับแพลตฟอร์ม =====
@@ -666,9 +720,10 @@ public partial class PdpaService : IPdpaService
         return req;
     }
 
-    private async Task SaveResolutionAsync(CancellationToken ct)
+    private async Task SaveResolutionAsync(CancellationToken ct, bool erasureScope = false)
     {
-        try { await _db.SaveChangesAsync(ct); }
+        // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: การบันทึกที่ลบข้อมูลจริง ⇒ audit ไม่เก็บค่าเดิมที่ถูกขอให้ลบ
+        try { if (erasureScope) await _db.SaveUnderErasureScopeAsync(ct); else await _db.SaveChangesAsync(ct); }
         catch (DbUpdateConcurrencyException)
         {
             _db.ChangeTracker.Clear();
@@ -717,7 +772,7 @@ public partial class PdpaService : IPdpaService
                 legalReference = "PDPA ม.33 · ม.19 (legal hold หลักฐานยินยอม)",
             }),
         });
-        await SaveResolutionAsync(ct);
+        await SaveResolutionAsync(ct, erasureScope: true);
         return (req, notifyEmail);
     }
 
@@ -809,8 +864,8 @@ public partial class PdpaService : IPdpaService
 
         if (changed > 0)
         {
-            // Audit ลง log (NewValues เก็บ actor + ม.33 ref)
-            await _db.SaveChangesAsync(ct);
+            // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: บันทึกใต้ "ขอบเขตการลบ" — audit เห็นว่าช่องไหนถูกลบ แต่ไม่เก็บชื่อ/อีเมล/ที่อยู่/ข้อความสแกนเดิม
+            await _db.SaveUnderErasureScopeAsync(ct);
         }
         return changed;
     }

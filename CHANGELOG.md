@@ -5916,6 +5916,17 @@ _รอบ 219 เฟส 0 (2026-10-30 · คำตัดสินข้อ 178 
 แอดมินเปลี่ยนทันที + audit chain · ส่วนเสริมค้างชำระผ่อนผัน 7 วันแล้วระงับ · ค่าเหมาไม่เก็บซ้อนงวดที่จ่ายล่วงหน้า · BillingAccount ค่าตั้งต้น Postpaid · `SecretProtector`/`Program.cs`/`CmsCommerceService` ใช้
 `Helpers/EncryptionKeyResolver` (production ไม่มีคีย์/dev key ⇒ boot ไม่ขึ้น) · รายงานอ่านอย่างเดียว 3 ชุดที่ `/admin/revenue.html` · migration `Helpers/PlatformBillingPhase0Migration` (ADD COLUMN ล้วน ไม่แก้แถวเดิม) ·
 เทสต์ `PlatformBillingPhase0Tests` + Db `PlatformBillingPhase0DbTests` · TEST_PLAN PB219-01..13 · `required_call_site_check` +21 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit dec90eff_
+_รอบ 214 ฝ่ายค้าน (ฑ) รอบสอง — 1 blocking + should-fix (คำตัดสินข้อ 173 ฒ): **แก้คำกล่าวอ้างของรอบก่อน** — "(B1) audit ไม่เก็บค่า PII รายช่อง" ไม่ครอบผู้ติดต่อ/สแกน OCR และ
+`AuditMiddleware`/แถว audit ที่เขียนเองยังเก็บอีเมล ⇒ (B1-a) สแกน OCR เข้า `PiiFields` (รายชื่อเดียวกับ `OcrScanPii.PersonalDataFields`) + "ขอบเขตการลบ" บน DbContext
+(`SaveUnderErasureScopeAsync`) ทุกเส้นลบตามคำขอ: ปิดค่าข้อความทุกช่องใน audit ของการบันทึกนั้น (แก้ผู้ติดต่อตามปกติยังเห็นประวัติค่า) · (B1-c) ปิดช่อง PII ตอนแสดงตามชนิด entity
+(`RedactJson(json, entityType)` — แถวเก่าไม่โชว์ · hash ไม่เปลี่ยน) · (B1-b) `/api/legal/my-data*` + `/api/legal/acceptance` ไม่เก็บอีเมล/IP/UA ใน AuditMiddleware · audit เข้าดูในนามลูกค้าไม่เก็บอีเมลเป้าหมาย ·
+ข้อจำกัดที่ยังอยู่บันทึกใน DECISIONS 173 ฒ · (S4-a) เข้าดูในนามลูกค้าเลือกเฉพาะบัญชี Active ไม่ถูกลบ · (S4-b) คีย์ API สวมได้เฉพาะสมาชิกที่ยังทำหน้าที่ได้ (`CompanyMembership`) +
+ลบผู้ใช้ถอดการผูกผู้ใช้ภายนอก · คีย์ API ของบริษัทคงอยู่ · (B2-a) นิยามเดียว `OwnerlessCompanyRepair.ActingOwner` (ลบ `HasOwner`) · (B2-b) เจ้าของถูกระงับ ⇒ แอดมินตัดสิน ไม่ตั้งเอง ·
+(B2-c) ป้าย "ติดต่อแอดมินให้ยกเลิกแพ็กเกจ" + `POST /api/admin/platform-erasure-requests/{id}/cancel-account-plans` (เฉพาะแพ็กเกจไม่มีบริษัทผูก · audit) + ปุ่มบน `/admin/legal.html` ·
+`OnTokenValidated` ผู้เรียกตัดการเชื่อมต่อ = จบเงียบ · **ผลข้างเคียงที่ตั้งใจของ (ฑ) S4: พนักงานที่ payroll ตั้งลาออก (Inactive) เสีย access ทันทีที่คำขอถัดไป** (เดิมใช้ token ได้จนหมดอายุ) ·
+SignalR socket ที่เปิดอยู่ก่อนปิดบัญชีใช้ต่อได้จนเชื่อมต่อใหม่ · `TokenUserGate.RejectMessage` ไปที่ log ไม่ได้แสดงบนหน้า · เทสต์ +7 pure (`ErasureAuditScopeTests`) +1 Db · แก้ 1 (HasOwner→ActingOwner) ·
+TEST_PLAN LEGAL214-42..48 · `required_call_site_check` +12/แก้ 4 · **CI Db แดง 2 ตัวของ (ฑ)**: fixture DSR ผู้ถูกลบเป็นเจ้าของคนสุดท้าย ⇒ เพิ่มเจ้าของร่วม (ด่านเจ้าของมีเทสต์แยก) · เทสต์คำขอลบเทียบ `PiiMask` กับ JSON ที่ escape อักษรไทยเป็น \uXXXX ⇒ เทียบทั้งสองรูป (ข้อตรวจ "ชื่อไทยไม่รั่ว" เดิมผ่านเพราะเทียบผิดรูป — แก้แล้ว) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
 
 _รอบ 219 เฟส 0 ฝ่ายค้าน (2026-10-30 · คำตัดสินข้อ 178 ภาคผนวก) — B1 อัปเกรด/ฟรีถาวรเริ่มรอบจากวันอนุมัติ (`PlatformPlanPricing.PeriodStart` · เดิมฟรีถาวร→Pro ได้ 100 ปี) ·
 B2 `SecretProtector` ถอดด้วยคีย์เดิมได้ (`EncryptionKeyResolver.LegacyCandidates`) + `SecretReprotectJob`/`SecretReprotectPass` เข้ารหัสใหม่ครั้งเดียว (JobLock · audit) · S3 ไม่ Trim คีย์ · นิพจน์คีย์ PII คงเดิม ·

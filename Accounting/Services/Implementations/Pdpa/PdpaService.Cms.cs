@@ -246,7 +246,8 @@ public partial class PdpaService
             rows++;
         }
 
-        if (rows > 0) await _db.SaveChangesAsync(ct);
+        // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: ขอบเขตการลบ — audit ไม่เก็บค่าเดิมของลูกค้าเว็บไซต์
+        if (rows > 0) await _db.SaveUnderErasureScopeAsync(ct);
         var notes = new List<string>();
         if (held > 0)
             notes.Add($"{held} แถวผูกเอกสารบัญชีที่ยังอยู่ในงวดเก็บ {CmsPdpaErasure.RetentionYears} ปี (พ.ร.บ.การบัญชี ม.10 · ป.รัษฎากร §87/3) — คงชื่อ/ที่อยู่/เลขผู้เสียภาษีของผู้ซื้อไว้ ล้างช่องติดต่อแล้ว");

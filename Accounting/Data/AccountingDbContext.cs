@@ -3952,7 +3952,7 @@ public class AccountingDbContext : DbContext
     {
         UpdateTimestamps();
         var directAudit = DetachPendingAuditRows();
-        var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null);
+        var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null, AuditErasureScope);
         var chained = directAudit.Concat(auditEntries).ToList();
         if (chained.Count == 0) return base.SaveChanges();
         if (!Database.IsNpgsql())
@@ -4000,7 +4000,7 @@ public class AccountingDbContext : DbContext
     {
         UpdateTimestamps();
         var directAudit = DetachPendingAuditRows();
-        var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null);
+        var auditEntries = Services.Implementations.AuditTrailService.CaptureAuditEntries(ChangeTracker, null, null, null, AuditErasureScope);
         var chained = directAudit.Concat(auditEntries).ToList();
         if (chained.Count == 0) return await base.SaveChangesAsync(cancellationToken);
         if (!Database.IsNpgsql())
@@ -4051,6 +4051,19 @@ public class AccountingDbContext : DbContext
     /// <para>รอบ 201 ทีม PL (คำตัดสินข้อ 32/104): <b>ไม่ประทับตอน Add</b> — ประทับตอน commit ภายใต้ <c>pg_advisory_xact_lock</c> ของบริษัท
     /// (<see cref="DetachPendingAuditRows"/> → เก็บไว้ → <see cref="SealDeferredAuditAtCommitAsync"/>) · แถวที่ยังใช้ <c>AuditLogs.Add</c> ตรงถูกประทับ
     /// ด้วยเส้นเดียวกัน (กันพลาด) แต่ checker <c>tools/audit_direct_add_check.py</c> ห้ามจุดใหม่ — ให้เรียกเมธอดนี้ให้เห็นเจตนา</para></summary>
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: "ขอบเขตการลบตามคำขอ" — ระหว่างที่เป็น true ทุกการบันทึกปิดค่าข้อความทุกช่องใน audit อัตโนมัติ
+    /// (<c>AuditRedaction.ErasureValue</c>) · ตั้ง/คืนค่าผ่าน <see cref="SaveUnderErasureScopeAsync"/> เท่านั้น</summary>
+    public bool AuditErasureScope { get; private set; }
+
+    /// <summary>บันทึกการลบตามคำขอ (ม.33) — audit เห็นว่าเปลี่ยนช่องไหน แต่ไม่เก็บค่าเดิมที่ถูกขอให้ลบ · คืนสถานะเดิมเสมอ (finally)</summary>
+    public async Task<int> SaveUnderErasureScopeAsync(CancellationToken ct = default)
+    {
+        var prev = AuditErasureScope;
+        AuditErasureScope = true;
+        try { return await SaveChangesAsync(ct); }
+        finally { AuditErasureScope = prev; }
+    }
+
     public void AddChainedAuditLog(Models.Entities.AuditLog row)
     {
         AuditLogs.Add(row);
