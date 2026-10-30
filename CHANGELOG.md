@@ -5915,4 +5915,4 @@ _รอบ 219 เฟส 0 (2026-10-30 · คำตัดสินข้อ 178 
 `Helpers/PlatformPlanPricing` ตัวตั้งราคาเดียว (ยุบ switch 5 สำเนา) · แจ้งชำระ = ยอดของเซิร์ฟเวอร์ (409 เมื่อไม่ตรง) + ต้องเป็นเจ้าของ · อัปเกรด/แปลงทดลองใช้ = จ่ายก่อนเปิด · ดาวน์เกรดมีผลวันครบรอบ ·
 แอดมินเปลี่ยนทันที + audit chain · ส่วนเสริมค้างชำระผ่อนผัน 7 วันแล้วระงับ · ค่าเหมาไม่เก็บซ้อนงวดที่จ่ายล่วงหน้า · BillingAccount ค่าตั้งต้น Postpaid · `SecretProtector`/`Program.cs`/`CmsCommerceService` ใช้
 `Helpers/EncryptionKeyResolver` (production ไม่มีคีย์/dev key ⇒ boot ไม่ขึ้น) · รายงานอ่านอย่างเดียว 3 ชุดที่ `/admin/revenue.html` · migration `Helpers/PlatformBillingPhase0Migration` (ADD COLUMN ล้วน ไม่แก้แถวเดิม) ·
-เทสต์ `PlatformBillingPhase0Tests` + Db `PlatformBillingPhase0DbTests` · TEST_PLAN PB219-01..13 · `required_call_site_check` +21 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+เทสต์ `PlatformBillingPhase0Tests` + Db `PlatformBillingPhase0DbTests` · TEST_PLAN PB219-01..13 · `required_call_site_check` +21 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit dec90eff_
