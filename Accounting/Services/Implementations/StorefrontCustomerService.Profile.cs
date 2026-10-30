@@ -109,6 +109,8 @@ public partial class StorefrontCustomerService
         await using var tx = await _db.Database.BeginTransactionAsync();
         if (before.Shipping != p.Shipping || before.Billing != p.Billing)
         {
+            // คำขอพร้อมกันของลูกค้าคนเดียว (ฟอร์มสองแท็บ · พนักงานเพิ่มที่อยู่) เรียงคิวที่แถวลูกค้า — ทางเดียวกับ CmsCustomerService.AddAddressAsync
+            await CustomerAddressDefaults.LockCustomerAsync(_db, companyId, c.Id);
             var chosen = ApplyAddresses(companyId, c.Id, rows, p.Shipping, p.Billing, actor, now);
             // ด่านฐาน UX_SiteCustomerAddresses_Customer_Type_Default: ปลดแถวหลักเดิมให้ลงฐานก่อน แล้วค่อยตั้งแถวที่เลือก (ลำดับคำสั่งใน batch เดียวไม่แน่นอน)
             foreach (var r in chosen) r.IsDefault = false;

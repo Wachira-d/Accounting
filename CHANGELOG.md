@@ -5850,3 +5850,7 @@ _รอบ 216 ฝ่ายค้าน (ไม่ blocking · คำตัด�
 ที่อยู่หลักต่อชนิดแถวเดียว (`Helpers/MemberProfileMigration` ล้างซ้ำ + partial unique index · ธุรกรรมสองจังหวะ) · แถว Both · ล้างคอลัมน์โครงเมื่อบรรทัดที่อยู่เปลี่ยน ·
 `portal/me` คืนเบอร์ normalize แล้ว + เทียบหลัง normalize ทั้งสองฝั่ง (ไม่มี "บันทึกแล้ว" ปลอม) · ผลการบันทึกเป็นข้อความจากเซิร์ฟเวอร์ (`SaveNote(saved, skipped)`) ·
 ฟอร์มติดต่อไม่เติมบริษัท/เลขภาษี/ช่องซ่อน · เทสต์ CMS216-13..19 · `member_prefill_sim` negative 6 ตัว · `required_call_site_check` +6 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c93341cc_
+
+_รอบ 216 ฝ่ายค้าน (ต่อ · ความเสี่ยงค้างข้อ 3 ของผู้ประสานงาน): ทางเขียนที่อยู่หลักทุกทางไม่ชน partial unique index ใหม่ — ตัวกลาง `Helpers/CustomerAddressDefaults`
+(ล็อกแถวลูกค้า `FOR UPDATE` + ปลดแถวหลักเดิมด้วย UPDATE ตรงถึงฐานก่อน INSERT) · `CmsCustomerService.AddAddressAsync` (พนักงาน) ใช้ตัวกลางในธุรกรรม + กรองบริษัท/เว็บ (เดิมกรองแค่ customerId) ·
+`ApplyProfileAsync` ล็อกแถวลูกค้าก่อน · Db test รันคำสั่ง `MemberProfileMigration` ในฐานทดสอบเพื่อเดินบนด่านจริง (CMS216-20) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

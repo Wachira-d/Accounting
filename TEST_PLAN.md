@@ -85,6 +85,7 @@
 | CMS216-17 | เบอร์ดิบของแถวเก่า (081-234-5678) กับค่าที่พิมพ์ 0812345678 · ส่งซ้ำค่าเดิม | ไม่นับว่าเปลี่ยน · ไม่มีข้อความ "บันทึกแล้ว" ปลอม | `CmsRound216MemberProfileTests`.LegacyRawPhone_SameNumber_IsNotAChange · .MergeCheckout_SameValues_NoChange · `Db/MemberProfileDbTests`.SaveFromCheckout_… |
 | CMS216-18 | แถว Both หลัก + แถว Shipping หลักเก่าซ้ำ → แก้ที่อยู่จัดส่ง/ใบกำกับต่างกัน | ที่อยู่หลักต่อชนิดแถวเดียว · ใบกำกับอ่านจาก Both ได้และไม่หายเมื่อแยกแถว · บรรทัดเปลี่ยน ⇒ ล้างถนน/บ้านเลขที่เดิม | `Db/MemberProfileDbTests`.BothRow_And_DuplicateDefaults_AreNormalizedOnSave · migration `MemberProfileMigration` (ตรวจมือ: ล้างซ้ำคงแถวล่าสุด + unique index บางส่วน) |
 | CMS216-19 | ฟอร์มติดต่อ: ช่องบริษัท/เลขภาษี · ช่อง type=hidden | ไม่เติม | `tools/member_prefill_sim.js` (h) + negative "เติมช่องซ่อน" |
+| CMS216-20 | ด่านฐาน `UX_SiteCustomerAddresses_Customer_Type_Default` จริง (รัน `MemberProfileMigration` ในเทสต์): พนักงานเพิ่มที่อยู่หลักสองครั้ง → สมาชิกแก้โปรไฟล์ → บันทึกจากเช็กเอาต์ → พนักงานเพิ่มอีก · เพิ่มแถวหลักซ้ำตรง ๆ · พนักงานเพิ่มผ่าน URL เว็บอื่น | ไม่ชน index ทุกทางเขียน · แถวหลักต่อชนิดแถวเดียว · เพิ่มตรง = ฐานปฏิเสธ (ด่านมีจริง) · เว็บอื่น = ไม่พบ | `Db/MemberProfileDbTests`.DefaultAddressIndex_AllWriters_DoNotViolate_AndIndexIsReal · `required_call_site_check` (AddAddressAsync: ล็อก → ปลดก่อน INSERT) |
 
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
 
@@ -250,7 +251,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **700 ไฟล์ · 7,208 `[Fact]` + 1,144 `[Theory]` (5,358 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **700 ไฟล์ · 7,209 `[Fact]` + 1,144 `[Theory]` (5,358 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

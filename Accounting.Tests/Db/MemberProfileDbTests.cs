@@ -5,6 +5,8 @@ using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -195,5 +197,58 @@ public class MemberProfileDbTests
         Assert.Null(ship.StreetName);   // บรรทัดที่อยู่เปลี่ยน ⇒ คอลัมน์โครงเดิมถูกล้าง
         var me = await Svc(db).GetMeAsync(cid, siteA, custId);
         Assert.Equal("1 ถ.เดิม กรุงเทพมหานคร 10100", me!.BillingAddressText);   // ที่อยู่ใบกำกับไม่หายเมื่อแยกแถว Both
+    }
+
+    /// <summary>ฐานทดสอบสร้างด้วย EnsureCreated (ไม่มี index จาก DatabaseMigrationHelper) ⇒ รันคำสั่งของ <see cref="MemberProfileMigration"/> เอง
+    /// (idempotent · เหมือนตอนบูตจริง) เพื่อให้เทสต์เดินบนด่านฐานจริง</summary>
+    private static async Task EnsureDefaultIndexAsync(AccountingDbContext db)
+    {
+        foreach (var sql in MemberProfileMigration.Statements()) await db.Database.ExecuteSqlRawAsync(sql);
+    }
+
+    [Fact]
+    public async Task DefaultAddressIndex_AllWriters_DoNotViolate_AndIndexIsReal()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsureDefaultIndexAsync(db);
+        var (cid, siteA, siteB, custId, _) = await SeedAsync(db);
+        var staff = new CmsCustomerService(db, NullLogger<CmsCustomerService>.Instance, new ConfigurationBuilder().Build());
+
+        // พนักงานเพิ่มที่อยู่หลักสองครั้ง ⇒ ไม่ชน index · แถวหลักแถวเดียว (แถวใหม่)
+        await staff.AddAddressAsync(cid, siteA, custId, new CreateCustomerAddressRequest { AddressLine = "1 ถ.หนึ่ง", IsDefault = true });
+        db.ChangeTracker.Clear();
+        var second = await staff.AddAddressAsync(cid, siteA, custId, new CreateCustomerAddressRequest { AddressLine = "2 ถ.สอง", IsDefault = true });
+        db.ChangeTracker.Clear();
+        var defaults = await db.SiteCustomerAddresses.AsNoTracking()
+            .Where(a => a.CompanyId == cid && a.CustomerId == custId && a.IsDefault && a.AddressType == SiteAddressType.Shipping).ToListAsync();
+        Assert.Equal(second.Id, Assert.Single(defaults).Id);
+
+        // สมาชิกแก้โปรไฟล์ (แถวหลักเดิมถูกแก้) · บันทึกจากเช็กเอาต์ ⇒ ไม่ชน index
+        await Svc(db).UpdateProfileAsync(cid, siteA, custId, new UpdateStorefrontProfileRequest
+        {
+            FullName = "a", ShippingAddress = new StorefrontAddressDto { AddressLine = "3 ถ.สาม", Province = "เชียงใหม่", PostalCode = "50000" },
+            BillingAddress = new StorefrontAddressDto { AddressLine = "4 ถ.สี่" },
+        });
+        db.ChangeTracker.Clear();
+        await Svc(db).SaveFromCheckoutAsync(cid, siteA, custId, new CheckoutProfileInput("คุณแม่", "0899999999",
+            ShippingAddressText: "5 ถ.ห้า", ShippingProvince: "ลำปาง", ShippingPostalCode: "52000", IdentityFromForm: false));
+        db.ChangeTracker.Clear();
+        var rows = await db.SiteCustomerAddresses.AsNoTracking().Where(a => a.CompanyId == cid && a.CustomerId == custId).ToListAsync();
+        Assert.Equal("5 ถ.ห้า", Assert.Single(rows, a => a.IsDefault && a.AddressType == SiteAddressType.Shipping).AddressLine);
+        Assert.Single(rows, a => a.IsDefault && a.AddressType == SiteAddressType.Billing);
+
+        // พนักงานเพิ่มที่อยู่หลักหลังโปรไฟล์ ⇒ ยังไม่ชน
+        await staff.AddAddressAsync(cid, siteA, custId, new CreateCustomerAddressRequest { AddressLine = "6 ถ.หก", IsDefault = true });
+        db.ChangeTracker.Clear();
+        Assert.Equal(1, await db.SiteCustomerAddresses.CountAsync(a => a.CompanyId == cid && a.CustomerId == custId && a.IsDefault && a.AddressType == SiteAddressType.Shipping));
+
+        // ทิศตรงข้าม: ด่านฐานมีจริง — เพิ่มแถวหลักซ้ำตรง ๆ (ข้ามตัวกลาง) ⇒ ฐานปฏิเสธ
+        db.SiteCustomerAddresses.Add(new SiteCustomerAddress { CompanyId = cid, CustomerId = custId, AddressType = SiteAddressType.Shipping, IsDefault = true, AddressLine = "ซ้ำ" });
+        await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+        db.ChangeTracker.Clear();
+
+        // พนักงานเพิ่มที่อยู่ให้ลูกค้าผ่าน URL ของเว็บอื่น ⇒ ไม่พบ (กรองบริษัท+เว็บ)
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => staff.AddAddressAsync(cid, siteB, custId, new CreateCustomerAddressRequest { AddressLine = "x", IsDefault = true }));
     }
 }

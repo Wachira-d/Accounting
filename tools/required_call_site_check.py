@@ -11088,8 +11088,15 @@ RULES += [
          before=[("request.ContactFromProfile", "StorefrontMemberProfile.FillContact(")],
          why=_R216X_WHY + "S3 ตาข่ายเติมทำงานเฉพาะเมื่อมีธง"),
     dict(file="Services/Implementations/StorefrontCustomerService.Profile.cs", method="ApplyProfileAsync",
-         must=["BeginTransactionAsync(", "tx.CommitAsync(", "ApplyAddresses("],
+         must=["BeginTransactionAsync(", "tx.CommitAsync(", "ApplyAddresses(", "CustomerAddressDefaults.LockCustomerAsync("],
          why=_R216X_WHY + "ที่อยู่หลักต่อชนิดแถวเดียว: ปลดแถวเดิมลงฐานก่อนตั้งแถวใหม่ในธุรกรรมเดียว"),
+    dict(file="Services/Implementations/CmsCustomerService.cs", method="AddAddressAsync",
+         must=["c.CompanyId == companyId", "c.SiteId == siteId", "BeginTransactionAsync(", "CustomerAddressDefaults.LockCustomerAsync(",
+               "CustomerAddressDefaults.ClearDefaultsAsync(", "tx.CommitAsync("],
+         before=[("CustomerAddressDefaults.ClearDefaultsAsync(", "_db.SiteCustomerAddresses.Add("),
+                 ("CustomerAddressDefaults.LockCustomerAsync(", "CustomerAddressDefaults.ClearDefaultsAsync(")],
+         forbid=["existing.ForEach("],
+         why=_R216X_WHY + "พนักงานเพิ่มที่อยู่หลัก: ปลดแถวหลักเดิมด้วย UPDATE ตรงถึงฐานก่อน INSERT (unique index บางส่วน) · กรองบริษัท+เว็บ"),
 ]
 
 def main() -> int:
