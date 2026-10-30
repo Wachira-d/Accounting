@@ -5767,4 +5767,4 @@ cooldown 1 คำเชิญ/คน/30 วัน (`CustomerRelinkInvitePlan.Set
 หน้า LINE แสดงปัญหา (`CompanySettings.LineWebhookDestinationMismatch`) · PUT เปลี่ยน token โดยไม่ใส่ secret ต้องเป็นบอทเดิม (`TokenWithoutSecretProblem`) · (3) token แอดมินของ OA กลางถอดไม่ได้ ⇒
 ไม่ถอยไป config (`NextAccLineConfigRule.UndecryptableTokenMessage`) · (4) สแกน OA กลางข้ามบริษัทย้ายจากคำขอ webhook ไป `CustomerNotifyOutboxJob` (`LineOaDestinationSightings` · ลบ static memo) ·
 (5) หน้าแอดมิน token/secret ต้องคู่กัน (`PairProblem`) · (6) สลิปเงินเดือน: การผูกบัญชี ERP ชนะ LINE ID ที่ HR พิมพ์ · (ผู้ประสาน) webhook ร้านจากบอทไม่ตรง ⇒ ไม่ประมวลผลเหตุการณ์ (ไม่ผูก/ปลดลูกค้ากับ OA ที่ token ส่งไม่ถึง) · เทสต์ CMS212B-13..17 + CMS212D-05/09 ·
-`required_call_site_check` +12 กติกา/แก้ 1 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`required_call_site_check` +12 กติกา/แก้ 1 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a8cccb97 · 020f0d3f_

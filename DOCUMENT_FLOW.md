@@ -6001,7 +6001,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก D — �
   `LineOaDestinationSightings` (ไม่สแกนในคำขอ · ไม่มี static memo) — `CustomerNotifyOutboxJob` สแกนข้ามบริษัทแล้วบันทึกต่อบริษัทที่ยังใช้ OA กลาง (เห็นซ้ำหลัง 6 ชม. สแกนใหม่) ·
   ③⑤ (แพ็ก D) token แอดมินถอดไม่ได้ ⇒ ไม่มี token (ไม่ถอยไป config) + เหตุบนหน้าแอดมิน · token/secret ของ OA กลางต้องบันทึกคู่กัน · ⑥ สลิปเงินเดือน: การผูกบัญชี ERP ชนะ LINE ID ที่ HR พิมพ์เอง
 
-_Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค้าน (B+D) — ปิด/เปิดไปมาไม่เชิญ · cooldown 30 วัน · secret ของ OA อื่น · สแกน OA กลางในงาน · token แอดมินถอดไม่ได้ไม่ถอย · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค้าน (B+D) — ปิด/เปิดไปมาไม่เชิญ · cooldown 30 วัน · secret ของ OA อื่น · สแกน OA กลางในงาน · token แอดมินถอดไม่ได้ไม่ถอย · ยังไม่ได้คอมไพล์ · commit a8cccb97 · 020f0d3f)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
