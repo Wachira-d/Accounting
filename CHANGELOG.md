@@ -5702,3 +5702,12 @@ cms-edit ค่าเว็บ + ช่องต่อบริการ · ฝ�
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 24555e9d_
 
 _รอบ 210 — ฝ่ายค้าน (ค้นการจอง/ออเดอร์ของแขก): ไม่มี blocking · แก้ข้อ 1 ทิศกลับ (รู้เบอร์/อีเมลเหยื่อแล้วไล่เลขที่ตามลำดับ) ⇒ ถังต่อผู้ติดต่อ `GuestRecordLookup.ContactBucket` (5/นาที · 20/วัน) · IPv6 รวม /64 (`IpBucket`) · ข้อ 3 `IChatRateLimiter.TryConsumeAsync(failClosed: true)` ⇒ ตารางนับพัง = 429 + log Error (แชตยัง fail-open เดิม) · ข้อ 4 เทียบเลขที่ตรงตัว (ใช้ดัชนี) · ข้อ 2 (ใครก็กินโควตาต่อเลขที่ได้ 20/วัน) ยอมรับ — ลิงก์ในอีเมล/LINE ยังใช้ได้ · **ต้องตรวจตอน deploy**: จำนวน proxy hop จริง (`Program.cs` ForwardLimit=2 · KnownProxies ว่าง ⇒ ถ้ามี proxy ชั้นเดียว ลูกค้าปลอม X-Forwarded-For ได้ — ถังต่อผู้ติดต่อ/ต่อเลขที่ยังกันอยู่) · เทสต์ Contact_bucket_* · Ip_bucket_* · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 211 — คำขอเจ้าของ "ลูกค้าของร้านเลือกรับแจ้งเตือนการจอง/คำสั่งซื้อทาง LINE · ค่าเริ่มต้น OA ของ NextAcc · ร้านใช้ OA/SMTP ของตัวเองได้ · สมาชิกผูก LINE + ปุ่มเพิ่มเพื่อน · แขกได้ปุ่มเดียวกัน" (คำตัดสินข้อ 170):
+สภาพเดิม — `BookingNotifier` อ่าน LINE จาก `SiteCustomer.AuthProvider=="line"` ซึ่งไม่มีใครตั้ง (LINE ไม่เคยถูกใช้) · อีเมลถึงลูกค้าใช้ SMTP ของระบบเท่านั้น · webhook รับเฉพาะ OA กลาง ·
+ทำ: (1) ผูกด้วยรหัสใช้ครั้งเดียว `LN-XXXXXXXX` ผ่าน "เพิ่มเพื่อน + ส่งรหัส" (ไม่ใช้ LINE Login — userId ของ Login ใช้ push ได้เฉพาะ provider เดียวกัน) · ตาราง `CustomerLineLinks`/`CustomerLineLinkCodes` ·
+`Helpers/CustomerLineLinkRule` + `Helpers/CustomerNotifyChannel` + `Helpers/LineWebhookSignature` (ยก HMAC ออกจาก `LineBotService` — สูตรเดียวสองทางเข้า) · `CustomerLineLinkService` ·
+(2) webhook ต่อบริษัท `POST /api/line/webhook/c/{companyId}` · OA กลางแยก "ผูก LN-" ก่อน "ผูก 123456" ของ ERP · follow/unfollow ·
+(3) `BookingNotifier` — LINE ที่ผูกเองก่อน (opt-in) · อีเมลผ่านผู้ส่งของร้านเมื่อทดสอบผ่าน · ทุกทางเข้าแจ้งลูกค้าส่ง `LineTarget` · (4) PDPA: ยินยอม/ถอน · DSR ขอดู/ลบ ·
+(5) หน้าร้าน 5 จุด + หน้าตั้งค่า LINE · เทสต์ `CmsRound211LineNotifyTests` (TEST_PLAN CMS211-01..20) · `required_call_site_check` +23 กติกา ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

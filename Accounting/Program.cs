@@ -685,6 +685,7 @@ builder.Services.AddScoped<IStorefrontCustomerService, StorefrontCustomerService
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
 builder.Services.AddScoped<IBookingNotifier, Accounting.Services.Implementations.Cms.BookingNotifier>();   // รอบ 205 W3 — ช่องส่งข้อความถึงลูกค้าของเครื่องจอง (อีเมล/LINE · บอกผลจริง)
 builder.Services.AddScoped<ICmsShopNotifier, Accounting.Services.Implementations.Cms.CmsShopNotifier>();   // รอบ 209 P3 — แจ้งร้าน/ลูกค้าของหน้าเว็บ (ออเดอร์ · การจอง · lead) ผ่านช่องเดิม IBookingNotifier
+builder.Services.AddScoped<ICustomerLineLinkService, Accounting.Services.Implementations.Cms.CustomerLineLinkService>();   // รอบ 211 — ลูกค้าผูก LINE เอง (สมาชิก/แขก) + webhook OA ต่อบริษัท · BookingNotifier หา LINE ที่ผูกไว้
 // ธุรกิจที่พัก (โรงแรม/รีสอร์ท/บ้านพัก) — จอง · มัดจำ · เช็คอิน/เอาต์ · folio · แม่บ้าน
 builder.Services.AddScoped<ILodgingService, Accounting.Services.Implementations.Lodging.LodgingService>();
 // resolver สิทธิ์ตัวเดียว (แพ็กเกจ + add-on) — ห้ามมีตัวที่สอง

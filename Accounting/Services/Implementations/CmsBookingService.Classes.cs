@@ -672,7 +672,7 @@ public partial class CmsBookingService
         foreach (var x in rows)
         {
             var b = x.Booking;
-            var contact = ContactOf(b.GuestEmail, x.CustomerEmail, x.AuthProvider, x.AuthProviderId);
+            var contact = ContactOf(b.GuestEmail, x.CustomerEmail, x.AuthProvider, x.AuthProviderId, CustomerLineTarget.ForBooking(b.Id, b.CustomerId));
             var name = x.CustomerName ?? b.GuestName ?? "";
             string subject, text;
             if (kind == ClassMessageKind.Cancelled)

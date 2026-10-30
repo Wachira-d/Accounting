@@ -33,8 +33,10 @@ public class LineBotService : ILineBotService
         IHttpClientFactory httpFactory, ILogger<LineBotService> logger,
         IDocumentService docService, IPayslipLineDeliveryService payslipLine,
         IOcrService ocr, IOcrQuotaService ocrQuota, IChatbotService chat,
-        IPermissionService perms, IChatRateLimiter rateLimiter, IEmailService email)
+        IPermissionService perms, IChatRateLimiter rateLimiter, IEmailService email,
+        ICustomerLineLinkService? customerLinks = null)
     {
+        _customerLinks = customerLinks;
         _db = db; _config = config; _httpFactory = httpFactory;
         _logger = logger; _docService = docService; _payslipLine = payslipLine;
         _ocr = ocr; _ocrQuota = ocrQuota; _chat = chat; _perms = perms;
@@ -43,6 +45,8 @@ public class LineBotService : ILineBotService
     private readonly IPermissionService _perms;
     private readonly IChatRateLimiter _rateLimiter;
     private readonly IEmailService _email;
+    /// <summary>รอบ 211: ลูกค้าปลายทางผูก LINE ผ่าน OA กลาง ("ผูก LN-…") — แยกจากการผูกบัญชีผู้ใช้ ERP ("ผูก 123456")</summary>
+    private readonly ICustomerLineLinkService? _customerLinks;
 
     /// <summary>เพดานความพยายาม "ผูกบัญชี" ต่อ LINE user หนึ่งราย
     ///
@@ -79,16 +83,10 @@ public class LineBotService : ILineBotService
         return code;
     }
 
+    /// <summary>OA ของ NextAcc — secret จาก config · สูตรอยู่ที่ <see cref="LineWebhookSignature"/> ตัวเดียว (รอบ 211: ใช้ร่วมกับ webhook ต่อบริษัท)</summary>
     public bool VerifySignature(string body, string? headerSignature)
     {
-        var secret = _config["Line:ChannelSecret"];
-        if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(headerSignature)) return false;
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(secret));
-        var digest = hmac.ComputeHash(Encoding.UTF8.GetBytes(body));
-        var expected = Convert.ToBase64String(digest);
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.ASCII.GetBytes(expected),
-            Encoding.ASCII.GetBytes(headerSignature));
+        return LineWebhookSignature.Verify(_config["Line:ChannelSecret"], body, headerSignature);
     }
 
     private const string BindThrottledReply =
@@ -137,6 +135,11 @@ public class LineBotService : ILineBotService
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
         var msg = text.Trim();
+
+        // -1) รอบ 211: ลูกค้าปลายทางของร้าน (สมาชิกเว็บ/แขก) ผูก LINE รับแจ้งเตือน — "ผูก LN-XXXXXXXX" (มี LN ⇒ ไม่ใช่รหัส ERP 6 หลัก) ·
+        //     ต้องมาก่อนเส้น "ผูก" ของ ERP (ซึ่งดึงเฉพาะตัวเลข) · ตัวตัดสินรูปแบบเดียว CustomerLineLinkRule · ข้อความ ERP เดิมไม่ถูกแตะ
+        if (_customerLinks != null && CustomerLineLinkRule.IsLinkAttempt(msg))
+            return await _customerLinks.TryRedeemAsync(CustomerNotifyChannel.ScopeNextAcc, null, null, lineUserId, msg);
 
         // 0) Employee payslip-bind — "สลิป 123456" / "ผูกสลิป 123456" ผูก LINE นี้
         // กับ "พนักงาน" (ไม่ใช่ผู้ใช้ระบบ) เพื่อรับสลิปเงินเดือน. ต้องเช็คก่อน

@@ -14,7 +14,7 @@ public partial class CmsBookingService
 {
     private sealed record BookingNotifyFacts(string BookingNumber, string ServiceName, DateTime BookingDate, TimeOnly StartTime, BookingStatus Status,
         int GuestCount, string? GuestName, string? GuestEmail, string? GuestPhone, string? CancellationReason, string? CustomerName, string? CustomerEmail,
-        string? AuthProvider, string? AuthProviderId, string? ResourceName, string? PublicToken);
+        string? AuthProvider, string? AuthProviderId, string? ResourceName, string? PublicToken, Guid? CustomerId);
 
     private Task<BookingNotifyFacts?> LoadBookingNotifyFactsAsync(Guid companyId, Guid siteId, Guid bookingId)
         => _db.SiteBookings.AsNoTracking()
@@ -25,7 +25,7 @@ public partial class CmsBookingService
                 b.Customer != null ? b.Customer.AuthProvider : null, b.Customer != null ? b.Customer.AuthProviderId : null,
                 b.ResourceId == null ? null
                     : _db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == companyId).Select(r => r.Name).FirstOrDefault(),
-                b.PublicToken))
+                b.PublicToken, b.CustomerId))
             .FirstOrDefaultAsync();
 
     /// <summary>รอบ 210: บรรทัด "ดู/จัดการการจอง" ท้ายข้อความถึงลูกค้า — ลิงก์ my-booking จากฐานหน้าร้าน (<see cref="CmsStorefrontLink"/>) ·
@@ -56,7 +56,7 @@ public partial class CmsBookingService
 
             var customer = await WithBookingLinkAsync(companyId, siteId, f,
                 CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), date, f.StartTime, f.ResourceName, f.Status));
-            var custErr = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId), customer);
+            var custErr = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), customer);
             if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
             var shop = CmsNotificationText.ShopNewBooking(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), f.GuestPhone, date, f.StartTime,
@@ -85,7 +85,7 @@ public partial class CmsBookingService
             var msg = await WithBookingLinkAsync(companyId, siteId, f,
                 CmsNotificationText.CustomerBookingCancelledByShop(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f),
                     DateOnly.FromDateTime(f.BookingDate), f.StartTime, f.CancellationReason));
-            var err = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId), msg);
+            var err = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), msg);
             if (err == null) return null;
             var note = CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow);
             await StampBookingNotesAsync(companyId, siteId, bookingId, new[] { note });
@@ -110,7 +110,7 @@ public partial class CmsBookingService
             var msg = await WithBookingLinkAsync(companyId, siteId, f,
                 CmsNotificationText.CustomerBookingRescheduled(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f),
                     DateOnly.FromDateTime(oldDate), oldStart, DateOnly.FromDateTime(f.BookingDate), f.StartTime));
-            var err = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId), msg);
+            var err = await _shopNotifier.NotifyCustomerAsync(companyId, ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), msg);
             if (err == null) return null;
             var note = CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow);
             await StampBookingNotesAsync(companyId, siteId, bookingId, new[] { note });

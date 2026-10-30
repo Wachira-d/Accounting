@@ -18,7 +18,7 @@ public partial class CmsCommerceService
     private sealed record OrderNotifyFacts(string OrderNumber, string SiteName, decimal TotalAmount, decimal PaidAmount, string? PaymentTermMode,
         decimal DepositRequiredAmount, string? FulfillmentMethod, DateTime? EarliestReadyDate, string? ShippingName, string? ShippingPhone,
         string? ShippingEmail, string? ShippingMethod, string? TrackingNumber, string? CustomerName, string? CustomerEmail,
-        string? AuthProvider, string? AuthProviderId, int ItemCount, string? PublicToken);
+        string? AuthProvider, string? AuthProviderId, int ItemCount, string? PublicToken, Guid OrderId, Guid? CustomerId);
 
     private Task<OrderNotifyFacts?> LoadOrderNotifyFactsAsync(Guid companyId, Guid siteId, Guid orderId)
         => _db.SiteOrders.AsNoTracking()
@@ -28,7 +28,7 @@ public partial class CmsCommerceService
                 o.ShippingEmail, o.ShippingMethod, o.TrackingNumber,
                 o.Customer != null ? o.Customer.FullName : null, o.Customer != null ? o.Customer.Email : null,
                 o.Customer != null ? o.Customer.AuthProvider : null, o.Customer != null ? o.Customer.AuthProviderId : null,
-                o.Lines.Count, o.PublicToken))
+                o.Lines.Count, o.PublicToken, o.Id, o.CustomerId))
             .FirstOrDefaultAsync();
 
     /// <summary>รอบ 210: บรรทัด "ติดตามสถานะคำสั่งซื้อ" ท้ายข้อความถึงลูกค้า — ลิงก์ track-order จากฐานหน้าร้าน (<see cref="CmsStorefrontLink"/>) ·
@@ -40,7 +40,11 @@ public partial class CmsCommerceService
     }
 
     private static BookingContact CustomerContactOf(OrderNotifyFacts f)
-        => CmsBookingService.ContactOf(f.ShippingEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId);
+    {
+        // รอบ 211: LINE ที่ลูกค้าผูกเอง (ออเดอร์ > สมาชิก) — BookingNotifier หาให้
+        return CmsBookingService.ContactOf(f.ShippingEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId,
+            CustomerLineTarget.ForOrder(f.OrderId, f.CustomerId));
+    }
 
     private static string? DisplayNameOf(OrderNotifyFacts f) => !string.IsNullOrWhiteSpace(f.CustomerName) ? f.CustomerName : f.ShippingName;
 

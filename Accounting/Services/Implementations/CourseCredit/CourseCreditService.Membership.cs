@@ -386,7 +386,7 @@ public partial class CourseCreditService
             if (_notifier == null) result = BookingSendResult.Fail("ระบบแจ้งเตือนไม่พร้อม (ไม่มีช่องส่งอีเมล/LINE)");
             else
             {
-                try { result = await _notifier.SendAsync(companyId, new BookingContact(contact?.Email, contact?.LineUserId), $"บัตร {c.PassNumber} ใกล้หมดอายุ", text, ct); }
+                try { result = await _notifier.SendAsync(companyId, new BookingContact(contact?.Email, contact?.LineUserId) { LineTarget = CustomerLineTarget.ForContact(c.ContactId) }, $"บัตร {c.PassNumber} ใกล้หมดอายุ", text, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException) { result = BookingSendResult.Fail(ex.Message); }
             }
             var row = await _db.CreditPasses.FirstAsync(p => p.Id == c.Id && p.CompanyId == companyId, ct);

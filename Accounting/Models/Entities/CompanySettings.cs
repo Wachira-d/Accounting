@@ -240,6 +240,9 @@ public class CompanySettings : TenantEntity
     /// ให้พนักงานกดเพิ่ม OA แล้วผูก LINE รับสลิป. optional; ถ้าว่างจะแสดง
     /// คำแนะนำให้พนักงานค้นหา OA เอง.</summary>
     public string? LineOaBasicId { get; set; }
+    /// <summary>รอบ 211: bot userId ของ OA ของบริษัท (ฟิลด์ <c>destination</c> ที่ webhook ต่อบริษัทได้รับล่าสุด — ระบบประทับเองจาก webhook ที่ลายเซ็นผ่านเท่านั้น) ·
+    /// ใช้ตัดสินว่า LINE ที่ลูกค้าผูกไว้ยังเป็น OA เดียวกันไหม (<c>CustomerNotifyChannel.LinkUsable</c>) · null = ยังไม่เคยได้ webhook</summary>
+    public string? LineOaDestination { get; set; }
     public bool LineConfigured { get; set; } = false;
     public DateTime? LineLastTestedAt { get; set; }
     public string? LineLastTestStatus { get; set; }

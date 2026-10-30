@@ -1038,8 +1038,18 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(optional — เช่น @nextacc — ใช้ทำลิงก์เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิปเงินเดือน)</span></label>
-        <input type="text" class="form-input" id="lineOaBasicId" placeholder="@nextacc" />
+        <label class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(เช่น @myshop — ใช้ทำปุ่ม "เพิ่มเพื่อน/ส่งรหัส" ให้ลูกค้าหน้าเว็บผูก LINE รับแจ้งเตือน และให้พนักงานผูก LINE รับสลิป)</span></label>
+        <input type="text" class="form-input" id="lineOaBasicId" placeholder="@myshop" />
+      </div>
+
+      <!-- รอบ 211: ช่องทางแจ้งลูกค้าปลายทาง (การจอง/ออเดอร์/สมาชิกเว็บ) — เซิร์ฟเวอร์ตัดสินทุกค่า หน้านี้แสดงอย่างเดียว -->
+      <div class="form-group" style="border:1px solid #d1fae5;background:#f0fdf4;border-radius:8px;padding:12px 14px">
+        <div style="font-weight:600;margin-bottom:4px">💬 แจ้งเตือนลูกค้าทาง LINE (การจอง · คำสั่งซื้อ · สมาชิกเว็บ)</div>
+        <div class="text-gray-500" style="font-size:12px;margin-bottom:8px">
+          ค่าเริ่มต้น = ส่งผ่าน LINE OA ของ NextAcc · ติ๊ก "เปิดใช้งาน" + ใส่ Token/Secret/Basic ID = ส่งผ่าน OA ของบริษัทเอง
+          (ลูกค้าที่ผูกกับ OA เดิมต้องผูกใหม่ เพราะ LINE ให้รหัสผู้ใช้แยกตาม OA)
+        </div>
+        <div id="lineCustomerChannel" style="font-size:13px">—</div>
       </div>
 
       <div class="form-group">
@@ -1907,6 +1917,7 @@
           document.getElementById('lineEnabled').checked = !!c.enabled;
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
+          this._renderLineCustomerChannel(c.customerChannel);
           document.getElementById('lineToken').value = '';
           document.getElementById('lineSecret').value = '';
           document.getElementById('lineTokenStatus').textContent = c.hasAccessToken
@@ -1920,6 +1931,18 @@
                </div>`;
           }
         } catch (e) { Layout.toast('โหลดการตั้งค่า LINE ไม่สำเร็จ', 'error'); }
+      },
+      // รอบ 211: แสดงผลที่เซิร์ฟเวอร์ตัดสิน (OA ที่ใช้ · ผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — ไม่มีกติกาฝั่งหน้าเว็บ
+      _renderLineCustomerChannel(ch) {
+        const box = document.getElementById('lineCustomerChannel');
+        if (!box) return;
+        if (!ch) { box.textContent = 'ยังไม่มีข้อมูล'; return; }
+        const esc = (v) => String(v == null ? '' : v).replace(/[&<>"']/g, (x) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[x]));
+        const who = ch.scope === 'company' ? 'LINE OA ของบริษัท' : 'LINE OA ของ NextAcc (ค่าเริ่มต้น)';
+        box.innerHTML = `<div>ช่องที่ใช้ตอนนี้: <b>${esc(who)}</b>${ch.oaBasicId ? ' · ' + esc(ch.oaBasicId) : ''}</div>
+          <div style="margin-top:4px">${ch.canLink ? '✅ ลูกค้าผูก LINE จากหน้าเว็บได้' : '⚠️ ลูกค้ายังผูกไม่ได้: ' + esc(ch.problem || '')}</div>
+          <div style="margin-top:4px">ลูกค้าที่ผูกไว้และใช้ได้: <b>${esc(ch.activeLinks)}</b>${Number(ch.staleLinks) > 0 ? ` · ผูกกับ OA เดิม (ต้องผูกใหม่): <b>${esc(ch.staleLinks)}</b>` : ''}</div>
+          ${ch.scope === 'company' && ch.companyWebhookUrl ? `<div style="margin-top:6px">Webhook URL (ใส่ใน LINE Developers → Messaging API → Webhook settings แล้วเปิด "Use webhook"):<br><code style="user-select:all;word-break:break-all">${esc(ch.companyWebhookUrl)}</code></div>` : ''}`;
       },
       async saveLineConfig() {
         const cid = Layout.getCompanyId();

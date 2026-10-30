@@ -1662,6 +1662,7 @@
               <p style="color:var(--text-secondary)">เลขที่: <strong>${oNum}</strong> · ยอดรวม: <strong>฿${grand}</strong></p>
               ${this._orderStatusHtml(order)}
               <p style="font-size:13px;margin-top:10px"><a href="${this._pageUrl('track-order/' + encodeURIComponent(token))}">🔗 ลิงก์ติดตามคำสั่งซื้อ</a> — เก็บลิงก์นี้ไว้เพื่อดูสถานะ/เลขพัสดุภายหลัง</p>
+              <div id="sfOrderLineBox" style="text-align:left"></div>
               ${order && order.paymentTermMode && order.paymentTermMode !== 'full' ? `<p style="color:#16A34A;font-weight:600">${this.esc(order.paymentTermLabel || '')} · ชำระตอนนี้ ฿${total}</p>` : ''}
               ${order && order.depositInvoicingNote ? `<p style="color:#6B7280;font-size:13px">🧾 ${this.esc(order.depositInvoicingNote)}</p>` : ''}
               ${order && order.earliestReadyDate ? `<p style="color:#3730A3">🕒 ${this.esc(order.fulfillmentLabel || '')} · พร้อมเร็วสุด ${this.esc(this._thaiDate(order.earliestReadyDate))}</p>` : ''}
@@ -1740,6 +1741,7 @@
             `}
           </div>`;
         if (!isCancelled) await this._renderOrderPayOnline(orderId, order, pay);
+        if (token) this.renderLineBox('sfOrderLineBox', { kind: 'order', token });
         await this.refreshCartBadge();
       },
 
@@ -1873,12 +1875,14 @@
               <div><h1 style="margin:0">บัญชีของฉัน</h1><div style="color:var(--text-secondary);font-size:13px">${this.esc(me.fullName || '')} · ${this.esc(me.email || '')}</div></div>
               <button class="btn btn-secondary" onclick="Store.accountLogout()">ออกจากระบบ</button>
             </div>
+            <div id="sfLineBox"></div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin:18px 0">
               ${tabBtn('orders', '🧾 คำสั่งซื้อ')}${tabBtn('bookings', '📅 การจองของฉัน')}${tabBtn('credits', '🎟️ บัตรคอร์สของฉัน')}
             </div>
             <div id="sfAccountBody"><div class="sf-loader">กำลังโหลด...</div></div>
           </div>`;
         const body = document.getElementById('sfAccountBody');
+        this.renderLineBox('sfLineBox', { kind: 'member' });
         try {
           if (t === 'bookings') body.innerHTML = this._myBookingsHtml(await this._custFetch('/portal/me/bookings'));
           else if (t === 'credits') body.innerHTML = this._myCreditsHtml(await this._custFetch('/portal/me/credits'), me);
@@ -1997,6 +2001,72 @@
         await this.renderAccount();
       },
 
+      // ===== รอบ 211 (คำตัดสินข้อ 170): รับแจ้งเตือนทาง LINE — สมาชิก (portal/me/line) · แขก (storefront/line/{booking|order}/{token}) =====
+      // สถานะ · ลิงก์เพิ่มเพื่อน/ส่งรหัส · QR · ข้อความยินยอม มาจากเซิร์ฟเวอร์ทั้งหมด (ICustomerLineLinkService) — หน้าเว็บแสดง + หนีด้วย esc ทุกช่อง
+      _lineApiPath(scope) {
+        return scope.kind === 'member' ? '/portal/me/line' : '/storefront/line/' + encodeURIComponent(scope.kind) + '/' + encodeURIComponent(scope.token || '');
+      },
+      async _lineCall(scope, suffix, method) {
+        const r = await fetch(this._url(this._lineApiPath(scope) + (suffix || '')), { method: method || 'GET', headers: this._custHeaders() });
+        const j = await r.json().catch(() => null);
+        if (!r.ok) throw new Error((j && j.message) || 'ทำรายการไม่สำเร็จ');
+        return j;
+      },
+      async renderLineBox(boxId, scope) {
+        const box = document.getElementById(boxId);
+        if (!box || !scope) return;
+        this._lineScopes = this._lineScopes || {};
+        this._lineScopes[boxId] = scope;
+        let st = null;
+        try { st = (await this._lineCall(scope)).data; } catch (_) { box.innerHTML = ''; return; }
+        if (!st) { box.innerHTML = ''; return; }
+        const wrap = (inner) => `<div style="margin-top:14px;border:1px solid #A7F3D0;background:#F0FDF4;border-radius:12px;padding:12px 16px;text-align:left;font-size:13px">${inner}</div>`;
+        const id = this.jsArg(boxId);
+        if (st.linked) {
+          const viaMember = st.linkedVia === 'member' && scope.kind !== 'member';
+          box.innerHTML = wrap(`<div style="font-weight:600;color:#047857">✅ รับแจ้งเตือนทาง LINE แล้ว${st.maskedLineUserId ? ' (' + this.esc(st.maskedLineUserId) + ')' : ''}</div>
+            <div style="color:var(--text-secondary);margin-top:4px">${viaMember ? 'เชื่อมต่อผ่านบัญชีสมาชิก — ยกเลิกได้ที่ "บัญชีของฉัน"' : 'ข้อความแจ้งสถานะจะส่งไปที่ LINE นี้ก่อน แล้วจึงอีเมล'}</div>
+            ${viaMember ? '' : `<button class="btn btn-secondary" style="margin-top:8px" onclick="Store.lineUnlink('${id}')">ยกเลิกการเชื่อมต่อ LINE</button>`}`);
+          return;
+        }
+        if (st.blocked) {
+          box.innerHTML = wrap(`<div style="font-weight:600;color:#92400E">⚠️ บัญชี LINE ที่เชื่อมไว้บล็อก/ลบเพื่อน LINE ของร้านอยู่ — จะไม่ได้รับแจ้งเตือนทาง LINE</div>
+            ${st.addFriendUrl ? `<a class="btn btn-primary" style="margin-top:8px" href="${this.esc(st.addFriendUrl)}" target="_blank" rel="noopener">เพิ่มเพื่อนกลับ ${this.esc(st.oaBasicId || '')}</a>` : ''}
+            ${st.linkedVia === scope.kind ? `<button class="btn btn-secondary" style="margin-top:8px" onclick="Store.lineUnlink('${id}')">ยกเลิกการเชื่อมต่อ LINE</button>` : ''}`);
+          return;
+        }
+        if (!st.available) { box.innerHTML = ''; return; }
+        box.innerHTML = wrap(`<div style="font-weight:600">💬 รับแจ้งเตือนทาง LINE</div>
+          ${st.needsRelink ? '<div style="color:#92400E;margin-top:4px">ร้านเปลี่ยนบัญชี LINE ที่ใช้แจ้งเตือนแล้ว — กรุณาเชื่อมต่อใหม่</div>' : ''}
+          <div style="color:var(--text-secondary);margin-top:4px">${this.esc(st.consentText || '')}</div>
+          <button class="btn btn-primary" style="margin-top:8px;background:#06C755;border-color:#06C755" onclick="Store.lineStart('${id}')">รับแจ้งเตือนทาง LINE</button>
+          <div id="${this.esc(boxId)}Steps"></div>`);
+      },
+      async lineStart(boxId) {
+        const scope = (this._lineScopes || {})[boxId];
+        const steps = document.getElementById(boxId + 'Steps');
+        if (!scope || !steps) return;
+        steps.innerHTML = '<div style="margin-top:8px;color:var(--text-secondary)">กำลังขอรหัส...</div>';
+        try {
+          const d = (await this._lineCall(scope, '/start', 'POST')).data;
+          steps.innerHTML = `<ol style="margin:10px 0 0 18px;padding:0;line-height:1.9">
+              <li>${d.addFriendUrl ? `<a href="${this.esc(d.addFriendUrl)}" target="_blank" rel="noopener"><b>เพิ่มเพื่อน ${this.esc(d.oaBasicId || '')}</b></a>` : 'เพิ่มเพื่อน LINE ของร้าน'}</li>
+              <li>${d.sendCodeUrl ? `<a href="${this.esc(d.sendCodeUrl)}" target="_blank" rel="noopener"><b>กดส่งรหัสใน LINE</b></a>` : 'ส่งข้อความด้านล่างในแชตของร้าน'} — ข้อความ: <code style="user-select:all">${this.esc(d.messageText)}</code></li>
+              <li>รอข้อความตอบกลับ "เชื่อมต่อสำเร็จ" แล้วกด <a href="javascript:void(0)" onclick="Store.renderLineBox('${this.jsArg(boxId)}', Store._lineScopes['${this.jsArg(boxId)}'])">ตรวจสอบสถานะ</a></li>
+            </ol>
+            ${d.sendCodeQrDataUri ? `<div style="margin-top:8px"><div style="color:var(--text-secondary)">ใช้คอมพิวเตอร์อยู่? สแกน QR นี้ด้วยมือถือเพื่อส่งรหัส</div><img alt="QR ส่งรหัส LINE" src="${this.esc(d.sendCodeQrDataUri)}" style="width:160px;height:160px;margin-top:4px"></div>` : ''}
+            <div style="color:var(--text-secondary);margin-top:6px">รหัสใช้ได้ครั้งเดียว ถึง ${this.esc(new Date(d.expiresAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }))} น.</div>`;
+        } catch (e) {
+          steps.innerHTML = `<div style="margin-top:8px;color:#DC2626">${this.esc(e.message)}</div>`;
+        }
+      },
+      async lineUnlink(boxId) {
+        const scope = (this._lineScopes || {})[boxId];
+        if (!scope || !confirm('ยกเลิกการเชื่อมต่อ LINE? จะไม่ได้รับแจ้งเตือนทาง LINE อีก (ยังได้รับทางอีเมลถ้ามี)')) return;
+        try { await this._lineCall(scope, '', 'DELETE'); } catch (e) { alert(e.message); }
+        await this.renderLineBox(boxId, scope);
+      },
+
       // ===== รอบ 209 P1 (R-209-A1/B3): ติดตามคำสั่งซื้อด้วยโทเคน =====
       async renderTrackOrder(token) {
         const main = document.getElementById('sfMain');
@@ -2019,6 +2089,7 @@
             <h1 style="margin:0">คำสั่งซื้อ ${this.esc(o.orderNumber)}</h1>
             <div style="color:var(--text-secondary);font-size:13px">${this.esc(new Date(o.createdAt).toLocaleString('th-TH'))} · ${this.esc(o.fulfillmentLabel || '')}${o.earliestReadyDate ? ' · พร้อมเร็วสุด ' + this.esc(this._thaiDate(o.earliestReadyDate)) : ''}</div>
             ${this._orderStatusHtml(o)}
+            <div id="sfOrderLineBox"></div>
             <table style="width:100%;margin-top:18px;border-collapse:collapse;font-size:14px">
               ${(o.lines || []).map(l => `<tr style="border-bottom:1px solid #F3F4F6"><td style="padding:8px 0">${this.esc(l.productName)}${l.modifierSummary ? `<div style="font-size:12px;color:var(--text-secondary)">${this.esc(l.modifierSummary)}</div>` : ''}</td>
                 <td style="text-align:right;white-space:nowrap">${this.esc(String(l.quantity))} ${this.esc(l.unit || '')}</td><td style="text-align:right;white-space:nowrap;padding-left:12px">${m(l.totalAmount)}</td></tr>`).join('')}
@@ -2032,6 +2103,7 @@
             ${o.onlinePaymentBlockedNote ? `<div style="margin-top:12px;border:1px solid #FCD34D;background:#FFFBEB;border-radius:10px;padding:12px 16px;color:#78350F;font-size:13px">⏳ ${this.esc(o.onlinePaymentBlockedNote)}</div>` : ''}
             ${Number(o.nextPayableAmount) > 0 && !o.onlinePaymentBlockedNote ? `<div style="margin-top:16px"><a class="btn btn-primary" href="${this._pageUrl('order-success/' + encodeURIComponent(token))}">ชำระเงิน ${m(o.nextPayableAmount)}</a></div>` : ''}
           </div>`;
+        this.renderLineBox('sfOrderLineBox', { kind: 'order', token });
       },
       // ===== รอบ 210 (คำตัดสินข้อ 169): ตรวจสอบการจอง / คำสั่งซื้อ ด้วยเลขที่ + เบอร์โทรหรืออีเมล =====
       // เซิร์ฟเวอร์เทียบแบบตรงตัว + จำกัดความถี่ (storefront/lookup/*) · สำเร็จได้แค่โทเคน ⇒ ไปหน้า my-booking / track-order เดิม · ไม่ตรง = ข้อความกลางจากเซิร์ฟเวอร์
@@ -2295,6 +2367,7 @@
               </div>
               ${this._bookingDetailHtml(booking)}
               <div id="sfBookingPayBox"></div>
+              <div id="sfBookingLineBox"></div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px">
                 <button class="btn btn-primary" onclick="Store.downloadBookingConfirmation()">⬇️ ดาวน์โหลดใบยืนยันการจอง</button>
                 <button class="btn" onclick="Store.printBookingConfirmation()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
@@ -2304,6 +2377,7 @@
             </div>`;
           // รอบ 205 W2 (R-08): มัดจำออนไลน์ — ยอด/สิทธิ์จากเซิร์ฟเวอร์ (onlineDepositDue · onlinePaymentNote) หน้าเว็บแสดงอย่างเดียว
           await this._renderBookingPayOnline(booking);
+          if (booking.publicToken) this.renderLineBox('sfBookingLineBox', { kind: 'booking', token: booking.publicToken });
         } catch (e) { alert(e.message); }
       },
 
@@ -2419,6 +2493,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
               <button class="btn" onclick="Store.printBookingConfirmation()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
             </div>
             <div id="sfBookingPayBox"></div>
+            <div id="sfBookingLineBox"></div>
             ${b.canRescheduleOnline ? `<div style="margin-top:20px;border-top:1px solid #E5E7EB;padding-top:16px">
               <div style="font-weight:600;margin-bottom:6px">เลื่อนนัด</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2433,6 +2508,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
             </div>` : ''}
           </div>`;
         await this._renderBookingPayOnline(b);
+        this.renderLineBox('sfBookingLineBox', { kind: 'booking', token });
       },
       // รอบ 206: เลื่อนนัดเอง — เวลาว่างจากเซิร์ฟเวอร์ (available-slots เดิม) · ส่งแล้วเซิร์ฟเวอร์ตัดสินรอบใหม่ (ไม่นับการจองตัวเอง)
       async _loadRescheduleSlots(token, serviceId, guests, units) {

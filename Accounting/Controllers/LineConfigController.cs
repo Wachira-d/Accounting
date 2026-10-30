@@ -24,19 +24,22 @@ public class LineConfigController : ControllerBase
     private readonly AccountingDbContext _db;
     private readonly ISecretProtector _secrets;
     private readonly ILineNotifyService _line;
+    private readonly ICustomerLineLinkService? _customerLinks;
 
-    public LineConfigController(AccountingDbContext db, ISecretProtector secrets, ILineNotifyService line)
+    public LineConfigController(AccountingDbContext db, ISecretProtector secrets, ILineNotifyService line,
+        ICustomerLineLinkService? customerLinks = null)
     {
         _db = db;
         _secrets = secrets;
         _line = line;
+        _customerLinks = customerLinks;
     }
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<LineConfigResponse>>> Get(Guid companyId)
     {
         var s = await GetOrCreateSettings(companyId);
-        return Ok(new ApiResponse<LineConfigResponse>(true, Build(s)));
+        return Ok(new ApiResponse<LineConfigResponse>(true, await BuildAsync(companyId, s)));
     }
 
     // รอบ 193 (ฝ่ายค้าน W-C2): เดิมไม่มีด่านเลย — สมาชิกคนไหน/คีย์ไหนก็เปลี่ยน LINE channel token/secret ได้
@@ -53,12 +56,20 @@ public class LineConfigController : ControllerBase
         if (!string.IsNullOrEmpty(req.ChannelSecret))
             s.LineChannelSecret = _secrets.Protect(req.ChannelSecret);
         if (req.DefaultGroupId != null) s.LineDefaultGroupId = req.DefaultGroupId;
-        if (req.OaBasicId != null) s.LineOaBasicId = string.IsNullOrWhiteSpace(req.OaBasicId) ? null : req.OaBasicId.Trim();
+        // รอบ 211: Basic ID ใช้ทำปุ่มเพิ่มเพื่อน/ส่งรหัสของลูกค้า ⇒ รูปแบบผิดต้องบอก (ไม่เก็บเงียบแล้วปุ่มพัง)
+        if (req.OaBasicId != null)
+        {
+            if (string.IsNullOrWhiteSpace(req.OaBasicId)) s.LineOaBasicId = null;
+            else if (CustomerLineLinkRule.NormalizeBasicId(req.OaBasicId) is string basic) s.LineOaBasicId = basic;
+            else return BadRequest(new ApiResponse<LineConfigResponse>(false, null, "LINE OA Basic ID ไม่ถูกต้อง — ใช้รูป @xxxx (ตัวอักษรอังกฤษ/ตัวเลข/จุด/ขีด)"));
+        }
+        // เปลี่ยน token ⇒ อาจเป็น OA ใหม่ ⇒ ลืม bot userId เดิม (webhook ครั้งถัดไปประทับใหม่ · ลิงก์ของ OA เดิมตัดสินด้วย scope จนกว่าจะรู้)
+        if (!string.IsNullOrEmpty(req.ChannelAccessToken)) s.LineOaDestination = null;
         s.UpdatedAt = DateTime.UtcNow;
         // Reset configured flag after change — admin must re-test
         s.LineConfigured = false;
         await _db.SaveChangesAsync();
-        return Ok(new ApiResponse<LineConfigResponse>(true, Build(s), "บันทึกการตั้งค่า LINE เรียบร้อย"));
+        return Ok(new ApiResponse<LineConfigResponse>(true, await BuildAsync(companyId, s), "บันทึกการตั้งค่า LINE เรียบร้อย"));
     }
 
     [HttpPost("test")]
@@ -101,6 +112,9 @@ public class LineConfigController : ControllerBase
         }
         return s;
     }
+
+    private async Task<LineConfigResponse> BuildAsync(Guid companyId, CompanySettings s)
+        => Build(s) with { CustomerChannel = _customerLinks == null ? null : await _customerLinks.GetChannelInfoAsync(companyId) };
 
     private static LineConfigResponse Build(CompanySettings s) => new(
         Enabled: s.LineEnabled,
