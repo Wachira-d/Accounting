@@ -5795,4 +5795,4 @@ min/max · กำหนดเวลา · เก็บได้เฉพาะ P
 (`CmsBookingPaymentController` · ลูกค้า `CmsBookingPaymentPublicController`) · (4) หน้าเว็บ: ยอดก่อนกดจอง + กล่องชำระ (`js/storefront-booking-pay.js`) · หมวด "💳 การชำระเงินของการจอง"
 + ฟอร์มบริการ "ตามค่าเว็บ/กำหนดเอง" + ตรวจสลิป (`js/booking-payment-admin.js`) · (5) `SitePaymentGateway.BankBranch` + echo `BankAccountNumber/PromptPayQrUrl` กลับ (เดิมเปิดแก้ที่ cms-orders
 แล้วเลขบัญชีว่าง ⇒ บันทึกซ้ำล้างเงียบ) · เทสต์ `BookingPaymentPolicyTests` (+CRC16 QR พร้อมเพย์) · `Db/BookingPaymentPolicyDbTests` (TEST_PLAN BKPAY-01..24) · `required_call_site_check` +14 กติกา ·
-`write_permission_gate_check` +CmsBookingPaymentController (WATCHED) · baseline +1 (แนบสลิปของแขก — โทเคน) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+`write_permission_gate_check` +CmsBookingPaymentController (WATCHED) · baseline +1 (แนบสลิปของแขก — โทเคน) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fe1a9f0e · c62e1809 · 03191135 · e98ca3e9 · 7cf933b1_
