@@ -83,11 +83,11 @@ public partial class CmsBookingService
     {
         try
         {
-            if (_services?.GetService(typeof(Payments.IPaymentIntentService)) is not Payments.IPaymentIntentService intents) return;
+            if (_services?.GetService(typeof(Accounting.Services.Payments.IPaymentIntentService)) is not Accounting.Services.Payments.IPaymentIntentService intents) return;
             var intent = await intents.FindAsync(companyId, intentId);
             if (intent == null || !PaymentIntentPolicy.IsOpen(intent.Status)) return;
             await intents.ApplyChargeAsync(intentId,
-                new Payments.ProviderCharge(intent.ProviderRef ?? $"slip:{intentId:N}", PaymentIntentStatus.Failed, rawStatus, intent.Amount,
+                new Accounting.Services.Payments.ProviderCharge(intent.ProviderRef ?? $"slip:{intentId:N}", PaymentIntentStatus.Failed, rawStatus, intent.Amount,
                     FailureCode: rawStatus, FailureMessage: reason),
                 PaymentEventSource.Manual, actor.Length > 150 ? actor[..150] : actor);
         }
