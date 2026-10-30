@@ -81,6 +81,13 @@ public class Site : TenantEntity
     /// <summary>ข้อความยินยอมที่ลูกค้าเห็น (ว่าง = ข้อความมาตรฐานของระบบ) — เวอร์ชันความยินยอม = hash ของข้อความที่แสดงจริง</summary>
     public string? DataConsentText { get; set; }
     public string? TermsOfServiceUrl { get; set; }
+    /// <summary>รอบ 214 (คำตัดสินข้อ 173 B): ข้อความนโยบาย/ข้อกำหนดที่ร้านเขียนเอง (markdown ชุดย่อย <c>Helpers/LegalMarkdown</c>) ·
+    /// ว่าง = แม่แบบของระบบ · ลำดับ ลิงก์ที่ร้านตั้ง (<see cref="PrivacyPolicyUrl"/>/<see cref="TermsOfServiceUrl"/>) &gt; ข้อความนี้ &gt; แม่แบบ —
+    /// ตัวตัดสินเดียว <c>Helpers/CmsLegalPages.Resolve</c></summary>
+    public string? PrivacyPolicyMarkdown { get; set; }
+    public DateTime? PrivacyPolicyUpdatedAt { get; set; }
+    public string? TermsOfServiceMarkdown { get; set; }
+    public DateTime? TermsOfServiceUpdatedAt { get; set; }
 
     // Quotas (override from subscription tier)
     public long? MaxStorageBytes { get; set; }

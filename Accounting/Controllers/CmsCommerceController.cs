@@ -227,7 +227,7 @@ public class CmsCommerceController : ControllerBase
         var profileNotes = await StorefrontProfileSaveBack.RunAsync(
             HttpContext.RequestServices.GetService(typeof(IStorefrontCustomerService)) as IStorefrontCustomerService,
             HttpContext.RequestServices.GetService(typeof(ILogger<CmsCommerceController>)) as ILogger,
-            companyId, siteId, StorefrontCustomerAuth.ProfileOwner(request.SaveToProfile, sf, siteId),
+            companyId, siteId, StorefrontCustomerAuth.ProfileOwner(request.SaveToProfile && !result.Replayed, sf, siteId),
             new CheckoutProfileInput(request.ShippingName, request.ShippingPhone,
                 result.FulfillmentMethod == ShippingFeeRules.Pickup ? null : request.ShippingAddress, request.ShippingProvince, request.ShippingPostalCode,
                 request.RequestTaxInvoice ? request.BillingName : null, request.RequestTaxInvoice ? request.BillingTaxId : null,

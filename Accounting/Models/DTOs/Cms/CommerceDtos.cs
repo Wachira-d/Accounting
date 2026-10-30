@@ -425,6 +425,8 @@ public class StorefrontPaymentOptions
 public class OrderResponse
 {
     public Guid Id { get; set; }
+    /// <summary>รอบ 216 (ข้อ 174 · ต่อจากรอบ 217): คำขอนี้ไม่ได้สร้างออเดอร์ใหม่ — คืนออเดอร์เดิมด้วยคีย์กันกดซ้ำ ⇒ controller ไม่บันทึกโปรไฟล์ซ้ำ</summary>
+    public bool Replayed { get; set; }
     public string OrderNumber { get; set; } = "";
     public SiteOrderStatus Status { get; set; }
     public Guid? CustomerId { get; set; }

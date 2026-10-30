@@ -104,6 +104,14 @@ const Layout = {
     domainVerification: { Pending:'รอยืนยัน', Verifying:'กำลังตรวจสอบ', Verified:'ยืนยันแล้ว', Failed:'ล้มเหลว' },
     siteType: { Corporate:'เว็บบริษัท', Ecommerce:'ร้านค้าออนไลน์', Booking:'จองนัดหมาย',
       ServiceCatalog:'แค็ตตาล็อกบริการ', Hybrid:'ผสม' },
+    // รอบ 215: ป้ายบนหัวพื้นที่ทำงานเว็บ (CmsSiteContext) + การ์ดเว็บ — ชื่อ enum IndustryType / SiteStatus จากเซิร์ฟเวอร์
+    // ตารางเดียวของป้ายประเภทธุรกิจ (cms-sites.html สร้าง dropdown วิซาร์ดจากตารางนี้ — ลำดับ = ลำดับในวิซาร์ด)
+    siteIndustry: { General:'ทั่วไป / บริการ', Service:'บริการมืออาชีพ', Freelance:'ฟรีแลนซ์ / ที่ปรึกษา', Restaurant:'ร้านอาหาร',
+      Cafe:'คาเฟ่ / เครื่องดื่ม', Retail:'ค้าปลีก / Retail', Ecommerce:'ขายออนไลน์ / E-commerce', Trading:'ซื้อมาขายไป / Trading',
+      Agriculture:'เกษตร', Beauty:'สปา / ทำเล็บ / ความงาม', Healthcare:'คลินิก / สุขภาพ', Education:'การศึกษา / สอนพิเศษ',
+      Construction:'รับเหมาก่อสร้าง', RealEstate:'อสังหาริมทรัพย์', Technology:'เทคโนโลยี / SaaS', Transportation:'ขนส่ง / โลจิสติกส์',
+      Hotel:'โรงแรม / ที่พัก', Manufacturing:'โรงงาน / OEM', Other:'อื่น ๆ' },
+    siteStatus: { Draft:'ฉบับร่าง', Published:'เผยแพร่แล้ว', Maintenance:'ปิดปรับปรุง', Suspended:'ถูกระงับ' },
     lodgingAdjustMode: { Base:'ใช้ราคาฐาน', Absolute:'ราคาตายตัว (บาท/คืน)',
       Multiplier:'คูณราคาฐาน (0.90 = ลด 10%)', Delta:'บวก/ลบ (บาท/คืน)' },
     lodgingPricingMode: { PerUnit:'ต่อห้องต่อคืน', PerPerson:'ต่อคนต่อคืน (โฮสเทล/แคมป์)' },
@@ -508,7 +516,57 @@ const Layout = {
     this._showPasswordWeakBannerIfNeeded();
     // แถบเตือนใบรับรอง SSL ใกล้หมด — เฉพาะผู้ดูแลระบบ (ไม่ await: ห้ามหน่วงการโหลดหน้า)
     this._showTlsBannerIfNeeded();
+    // รอบ 214: นโยบาย/ข้อกำหนดมีฉบับใหม่ที่ผู้ใช้ยังไม่ได้รับทราบ — แจ้ง ไม่บล็อก (ไม่ await)
+    this._showPolicyUpdateBannerIfNeeded();
     return true;
+  },
+
+  /** รอบ 214 (คำตัดสินข้อ 173): แถบ "นโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งานมีฉบับใหม่" — เซิร์ฟเวอร์ตัดสินว่าต้องแจ้งไหม
+   *  (GET /api/legal/acceptance · ตัวตัดสิน Helpers/LegalDocumentPolicy.NeedsAcknowledge) · กด "รับทราบและยอมรับ" = บันทึกหลักฐาน
+   *  (POST · PdpaConsentRecord) · ปิดแถบได้ต่อแท็บ (แจ้งใหม่ครั้งหน้า) · ไม่แสดงในโหมดเข้าดูในนามลูกค้า (ห้ามยอมรับแทนเจ้าของบัญชี) ·
+   *  เรียกไม่สำเร็จ = ไม่วาด (แถบเป็นส่วนเสริม ห้ามทำหน้าพัง) */
+  async _showPolicyUpdateBannerIfNeeded() {
+    try {
+      if (document.getElementById('policyUpdateBanner')) return;
+      try {
+        const t = localStorage.getItem('token') || '';
+        const payload = JSON.parse(atob(t.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (payload && payload.imp === 'true') return;
+      } catch { /* token อ่านไม่ได้ ⇒ ปล่อยเซิร์ฟเวอร์ตัดสิน */ }
+      const res = await API.get('/api/legal/acceptance');
+      const st = res?.data;
+      if (!st || !st.needsAcknowledge) return;
+      try { if (sessionStorage.getItem('policyBannerDismissed') === st.currentConsentVersion) return; } catch { /* ignore */ }
+      const summary = [st.privacyChangeSummary, st.termsChangeSummary].filter(Boolean).join(' · ');
+      const banner = document.createElement('div');
+      banner.id = 'policyUpdateBanner';
+      banner.style.cssText = 'position:sticky;top:0;left:0;right:0;z-index:9998;background:#eff6ff;color:#1e3a8a;padding:10px 16px;font-size:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.08)';
+      banner.innerHTML = `
+        <span style="font-size:18px">📣</span>
+        <span style="flex:1;min-width:220px">${st.acceptedVersion
+            ? `นโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งานมีฉบับใหม่ (ฉบับที่ ${this.esc(st.currentConsentVersion)})`
+            : `กรุณาอ่านและรับทราบนโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งาน (ฉบับที่ ${this.esc(st.currentConsentVersion)})`}${summary ? ` — ${this.esc(summary)}` : ''}
+          · <a href="/privacy.html" target="_blank" rel="noopener" style="color:inherit;font-weight:600">อ่านนโยบาย</a>
+          · <a href="/terms.html" target="_blank" rel="noopener" style="color:inherit;font-weight:600">อ่านข้อกำหนด</a></span>
+        <button type="button" id="policyAcceptBtn" style="background:#1d4ed8;color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px">รับทราบและยอมรับ</button>
+        <button type="button" id="policyDismissBtn" style="background:transparent;border:none;color:inherit;font-size:20px;cursor:pointer;padding:0 4px" aria-label="ปิด">×</button>`;
+      document.body.insertBefore(banner, document.body.firstChild);
+      document.getElementById('policyDismissBtn').addEventListener('click', () => {
+        try { sessionStorage.setItem('policyBannerDismissed', st.currentConsentVersion); } catch { /* ignore */ }
+        banner.remove();
+      });
+      document.getElementById('policyAcceptBtn').addEventListener('click', async (ev) => {
+        ev.target.disabled = true;
+        try {
+          await API.post('/api/legal/acceptance', { versionShown: st.currentConsentVersion });
+          banner.remove();
+          if (typeof this.toast === 'function') this.toast('บันทึกการยอมรับแล้ว', 'success');
+        } catch (e) {
+          ev.target.disabled = false;
+          if (typeof this.toast === 'function') this.toast('บันทึกไม่สำเร็จ: ' + (e.message || e), 'error');
+        }
+      });
+    } catch { /* แถบแจ้งเป็นส่วนเสริม — ห้ามทำหน้าพัง */ }
   },
 
   /** แถบเตือนใบรับรอง SSL ของโดเมนระบบใกล้หมดอายุ — เฉพาะผู้ดูแลระบบ
@@ -688,6 +746,8 @@ const Layout = {
       if (cached !== null) this._vatRegistered = cached === 'true';
       const cachedEtax = localStorage.getItem('etaxOn:' + this.currentCompany.id);
       if (cachedEtax !== null) this._etaxEnabled = cachedEtax === 'true';
+      const cachedNavLabel = localStorage.getItem('cmsNavLabel:' + this.currentCompany.id);
+      if (cachedNavLabel) this._cmsNavLabel = cachedNavLabel;
       const cachedMods = localStorage.getItem('cmsMods:' + this.currentCompany.id);
       if (cachedMods !== null) {
         // ค่าที่เสียหายต้องแปลว่า "ยังไม่รู้" (แสดงเมนูไว้ก่อน) ไม่ใช่ "ไม่มีโมดูลเลย" (ซ่อนหมด)
@@ -705,6 +765,8 @@ const Layout = {
         // โมดูล CMS ที่บริษัทใช้จริง (orders/bookings/lodging/leads) — เซิร์ฟเวอร์คำนวณ
         // (CmsModuleResolver) หน้าเว็บแค่แสดง · null/ไม่มีฟิลด์ (เซิร์ฟเวอร์เก่า) = ไม่รู้ → แสดงไว้ก่อน
         if (Array.isArray(res.data.cmsModules)) this._cmsModules = new Set(res.data.cmsModules);
+        // รอบ 215: ชื่อหมวดเมนูงานเว็บ — เซิร์ฟเวอร์เลือกตามโมดูล (คำตัดสินข้อ 176) · ไม่มีฟิลด์ = ใช้ชื่อคงที่
+        if (typeof res.data.cmsNavLabel === 'string' && res.data.cmsNavLabel) this._cmsNavLabel = res.data.cmsNavLabel;
         // สถานะจด VAT ที่ยังไม่มีใครยืนยัน (บริษัทจากหน้าสมัคร/SSO ไม่เคยถูกถาม) — เซิร์ฟเวอร์ตัดสิน หน้าแค่แสดง
         // (รอบ 193 ฝ่ายค้าน C-9) · ไม่มีฟิลด์ (เซิร์ฟเวอร์เก่า) = ไม่รู้ → ไม่แสดง
         this._showVatStatusBanner(res.data.vatStatusConfirmed === false);
@@ -712,6 +774,7 @@ const Layout = {
           localStorage.setItem('vatReg:' + this.currentCompany.id, String(this._vatRegistered));
           localStorage.setItem('etaxOn:' + this.currentCompany.id, String(this._etaxEnabled));
           if (Array.isArray(res.data.cmsModules)) localStorage.setItem('cmsMods:' + this.currentCompany.id, JSON.stringify(res.data.cmsModules));
+          if (this._cmsNavLabel) localStorage.setItem('cmsNavLabel:' + this.currentCompany.id, this._cmsNavLabel);
         } catch {}
         this._refreshNavMenu();
       }
@@ -749,6 +812,35 @@ const Layout = {
         this._enforceRoleAccess();
       }
     } catch (e) { /* no permissions data — allow all */ }
+  },
+
+  /** รอบ 215: เว็บ/แท็บล่าสุดในพื้นที่ทำงานเว็บไซต์ — ความสะดวกต่อเบราว์เซอร์เท่านั้น (URL `?siteId=` คือความจริง) ·
+   *  เจ้าของคีย์ตัวเดียว: CmsSiteContext เรียก setCmsLastSite · อ่านไม่ได้/เสีย = null */
+  cmsLastSite() {
+    try {
+      const raw = this.currentCompany && localStorage.getItem('cmsLastSite:' + this.currentCompany.id);
+      const v = raw ? JSON.parse(raw) : null;
+      return v && typeof v.siteId === 'string' ? v : null;
+    } catch (_) { return null; }
+  },
+
+  setCmsLastSite(siteId, page) {
+    try {
+      if (!this.currentCompany || !siteId || siteId === 'all') return;
+      localStorage.setItem('cmsLastSite:' + this.currentCompany.id, JSON.stringify({ siteId: String(siteId), page: page || null }));
+    } catch (_) { /* private mode — ไม่กระทบการทำงาน */ }
+  },
+
+  /** ลิงก์ของทางเข้า "พื้นที่ทำงานเว็บไซต์" — แท็บล่าสุดของเว็บล่าสุด (ถ้าผู้ใช้ยังเห็นแท็บนั้น) · ไม่งั้นแท็บงานแรกที่เห็น
+   *  (ไม่แนบ siteId — หน้าปลายทางเลือกเว็บล่าสุดที่ใช้โมดูลนั้นเองผ่าน CmsSiteContext.pick) · `tabs` = รายการ workspaceTab ที่ผ่านตัวกรองแล้ว */
+  cmsWorkspaceHref(tabs) {
+    const list = tabs || [];
+    const last = this.cmsLastSite();
+    const lastTab = last && last.page ? list.find(t => t.id === last.page) : null;
+    if (lastTab) return lastTab.href + '?siteId=' + encodeURIComponent(last.siteId);
+    const order = ['cms-bookings', 'lodging', 'cms-orders', 'cms-leads', 'cms-booking-providers', 'cms-store-settings', 'lodging-settings'];
+    const first = order.map(id => list.find(t => t.id === id)).find(Boolean) || list[0];
+    return first ? first.href : '/pages/cms-sites.html';
   },
 
   hasMenuAccess(menuId) {
@@ -890,6 +982,18 @@ const Layout = {
       if (uiMode === 'simple' && !hasCustomGrants && item.id && !SIMPLE_ALLOWED.has(item.id)) return false;
       return true;
     });
+    // รอบ 215: ทางเข้า "พื้นที่ทำงานเว็บไซต์" — แสดงเมื่อผู้ใช้เห็นแท็บงานรายเว็บอย่างน้อย 1 ตัว (หลังตัวกรองสิทธิ์/โมดูล/โหมดง่ายครบแล้ว) ·
+    // ไม่มี id ของตัวเอง (ไม่ใช่กุญแจสิทธิ์ใหม่ — role เดิมที่ให้แค่ "ที่พัก · Front desk" ยังเข้าได้ทันที) · ลิงก์ = เว็บ/แท็บล่าสุดที่ใช้
+    const wsTabs = items.filter(i => i.workspaceTab);
+    const wsEntryIdx = items.findIndex(i => i.cmsWorkspaceEntry);
+    if (wsEntryIdx >= 0) {
+      if (wsTabs.length === 0) items.splice(wsEntryIdx, 1);
+      else items[wsEntryIdx] = Object.assign({}, items[wsEntryIdx], {
+        href: this.cmsWorkspaceHref(wsTabs),
+        _active: wsTabs.some(t => t.id === this.currentPage),
+      });
+    }
+    const wsEntryShown = wsEntryIdx >= 0 && wsTabs.length > 0;
 
     // Walk the list: top-level items (no section ancestor) render directly;
     // section markers open a collapsible <details> that wraps every
@@ -918,7 +1022,10 @@ const Layout = {
     const shownIds = new Set(items.filter(i => i.id).map(i => i.id));
     const curItem = this.navItems.find(n => n.id === this.currentPage);
     const openParent = (curItem && curItem.navParent) || this.currentPage;
-    const subOf = (it) => (it.navParent && shownIds.has(it.navParent))
+    // รอบ 215: แท็บงานรายเว็บ (`workspaceTab`) พับไว้เสมอเมื่อมีทางเข้าพื้นที่ทำงาน — ช่องค้นหาเมนูยังหาเจอ (คลาส nav-subhidden)
+    const subOf = (it) => (it.workspaceTab && wsEntryShown)
+      ? Object.assign({}, it, { _sub: true, _subHidden: true })
+      : (it.navParent && shownIds.has(it.navParent))
       ? Object.assign({}, it, { _sub: true, _subHidden: it.navParent !== openParent })
       : it;
 
@@ -943,7 +1050,9 @@ const Layout = {
         : explicit === true ? true
         : !hasCustomGrants;
       const sectionKey = this._sectionI18nKey(currentSection.section);
-      const label = sectionKey ? this._t(sectionKey, currentSection.section) : currentSection.section;
+      // รอบ 215 (คำตัดสินข้อ 176): ชื่อหมวดงานเว็บมาจากเซิร์ฟเวอร์ (CmsModuleResolver.NavSectionLabel) · ยังไม่โหลด = ชื่อคงที่
+      const label = (currentSection.cmsNavLabel && this._cmsNavLabel) ? this._cmsNavLabel
+        : sectionKey ? this._t(sectionKey, currentSection.section) : currentSection.section;
       const icon = currentSection.icon || '📁';
       const desc = currentSection.description ? ` title="${this._esc(currentSection.description)}"` : '';
       html.push(`<details class="nav-group" data-section="${currentSection.section}"${isCollapsed ? '' : ' open'}>
@@ -1201,7 +1310,7 @@ const Layout = {
       return `<div class="nav-section" data-section="${item.section}">${label}</div>`;
     }
     // เมนูย่อย (navParent) ติดคลาสเยื้อง · ที่พับไว้ซ่อนด้วยคลาส (ช่องค้นหายังเจอ) — ดู subOf ใน renderSidebar
-    const active = (item.id === this.currentPage ? ' active' : '')
+    const active = ((item.id === this.currentPage || item._active) ? ' active' : '')
       + (item._sub ? ' nav-subitem' : '') + (item._subHidden ? ' nav-subhidden' : '');
     const label = item._i18nKey ? this._t(item._i18nKey, item.label) : item.label;
     const lockState = this._navLockState(item);
@@ -1219,7 +1328,7 @@ const Layout = {
       const ttNotInPlan = ` title="${this._esc(this._t('layout.notInPlanYet', 'แพ็กเกจปัจจุบันไม่รวมฟีเจอร์นี้ — ยังใช้ได้ระหว่างที่ระบบยังไม่เปิดบังคับแพ็กเกจ') + ' — ' + (item.description || label))}"`;
       return `<a href="${item.href}" class="nav-item${active}" data-nav-id="${item.id}"${ttNotInPlan}><span class="icon">${item.icon}</span>${label}<span style="margin-left:auto;font-size:10px;opacity:0.7;white-space:nowrap">${this._esc(this._t('layout.notInPlanBadge', 'แพ็กเกจไม่รวม'))}</span></a>`;
     }
-    return `<a href="${item.href}" class="nav-item${active}" data-nav-id="${item.id}"${tt}><span class="icon">${item.icon}</span>${label}</a>`;
+    return `<a href="${this._esc(item.href)}" class="nav-item${active}" data-nav-id="${item.id || (item.cmsWorkspaceEntry ? 'cms-workspace' : '')}"${tt}><span class="icon">${item.icon}</span>${label}</a>`;
   },
 
   _esc(s) {
@@ -1337,6 +1446,9 @@ const Layout = {
       description: 'หน้าจอ mobile-first สำหรับร้านค้า — numpad + วิธีรับเงิน + พิมพ์ใบเสร็จ 1 click' },
     { id: 'revenue-recognition', label: 'รับรู้รายได้', icon: '📈', href: '/pages/revenue-recognition.html', feature: 'RevenueRecognition', _i18nKey: 'nav.revenueRecognition',
       description: 'ASC 606 / TFRS 15 — รับรู้รายได้ตาม performance obligation' },
+    // รอบ 215: ย้ายจากหมวดเว็บ — Portal เอกสารบัญชีของลูกค้า ไม่ใช่งานของเว็บไซต์ (CMS_UX_REDESIGN §4.1)
+    { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
+      description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },
 
     { section: 'ซื้อ / รายจ่าย', icon: '📥', description: 'ใบขอซื้อ → สั่งซื้อ → รับสินค้า → ใบแจ้งหนี้ซื้อ → จ่ายเงิน' },
     { id: 'purchases', label: 'ซื้อสินค้า', icon: '🛒', href: '/pages/purchases.html', feature: 'DocumentEngine', _i18nKey: 'nav.purchases',
@@ -1345,6 +1457,9 @@ const Layout = {
       description: 'ใบสำคัญจ่าย · ใบเสร็จรับเงินจากผู้ขาย · ใบลดหนี้/เพิ่มหนี้ฝั่งซื้อ' },
     { id: 'payments', label: 'ชำระเงิน / รวมจ่าย', icon: '💳', href: '/pages/payments.html', feature: 'DocumentEngine', _i18nKey: 'nav.payments',
       description: 'บันทึกการรับ-จ่ายเงิน · จ่ายชำระหลายบิลในใบเดียว · cheque payment' },
+    // รอบ 215: ย้ายจากหมวดเว็บ — portal ผู้ขาย (PO/invoice) ไม่ใช่งานของเว็บไซต์
+    { id: 'vendor-portal-admin', label: 'Vendor Portal — ออก token', icon: '🤝', href: '/pages/vendor-portal-admin.html', feature: 'MultiUser',
+      description: 'AP ออก magic-link ให้ vendor เข้าดู PO + invoice + status + อัปโหลด invoice ใหม่ — ไม่ต้องมี user' },
 
     { section: 'เงิน & ธนาคาร', icon: '🏦', description: 'บัญชีธนาคาร · กระทบยอด · เช็ค · เงินสดย่อย · เงินกู้ · FX' },
     { id: 'bank', label: 'บัญชีธนาคาร', icon: '🏦', href: '/pages/bank.html', feature: 'BankReconciliation', _i18nKey: 'nav.bank',
@@ -1465,29 +1580,31 @@ const Layout = {
     { id: 'pos-reports', label: 'รายงาน POS', icon: '📊', href: '/pages/pos-reports.html', feature: 'DocumentEngine', _i18nKey: 'nav.posReports',
       description: 'สรุปยอดขาย · X-Report · Z-Report · ยอดต่อพนักงาน' },
 
-    { section: 'ขายออนไลน์ & Portal', icon: '🌐', description: 'เว็บไซต์ · คำสั่งซื้อ/จองจากเว็บ · lead · portal ลูกค้า/vendor' },
-    { id: 'cms-sites', label: 'เว็บไซต์ของฉัน (CMS)', icon: '🌐', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites',
-      description: 'สร้างเว็บไซต์ multi-site · e-commerce · booking · เชื่อม ERP อัตโนมัติ' },
-    { id: 'cms-orders', navParent: 'cms-sites', label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders', cmsModule: 'orders',
+    // รอบ 215 (CMS_UX_REDESIGN · คำตัดสินข้อ 176): หมวดนี้เหลือ 2 ทางเข้า — "พื้นที่ทำงานเว็บไซต์" (เว็บล่าสุด) + "เว็บไซต์ทั้งหมด" ·
+    // หน้างานรายเว็บ 7 หน้า (`workspaceTab`) ไม่วาดบนแถบซ้ายแล้ว (ชื่อไม่บอกว่าเป็นของเว็บไหน) — วาดเป็นแท็บใน "หัวพื้นที่ทำงาน"
+    // (CmsSiteContext.renderCrumb) แทน · id เดิมยังอยู่ครบ = กุญแจสิทธิ์ (roles · settings-features · RoleTemplates · gate) + ช่องค้นหาเมนูยังหาเจอ ·
+    // ชื่อหมวดที่แสดง = `CmsNavLabel` จากเซิร์ฟเวอร์ (CmsModuleResolver.NavSectionLabel) — `section` เป็นแค่กุญแจคงที่
+    { section: 'เว็บไซต์ & การจอง', cmsNavLabel: true, icon: '🌐', description: 'เว็บไซต์ · งานที่เข้ามาจากเว็บ (คำสั่งซื้อ · การจอง · ที่พัก · คำขอ) · ตั้งค่ารายเว็บ' },
+    { cmsWorkspaceEntry: true, label: 'พื้นที่ทำงานเว็บไซต์', icon: '🧭', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder',
+      description: 'เปิดงานของเว็บล่าสุดที่ใช้ — สลับเว็บได้ที่หัวหน้า · แท็บตามประเภทธุรกิจของเว็บ' },
+    { id: 'cms-sites', label: 'เว็บไซต์ทั้งหมด · ภาพรวม', icon: '🗂', href: '/pages/cms-sites.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsSites',
+      description: 'รายการเว็บทั้งหมด · งานค้างรวมทุกไซต์ · สร้าง/เผยแพร่/ลบเว็บ' },
+    { id: 'cms-orders', navParent: 'cms-sites', workspaceTab: true, label: 'คำสั่งซื้อจากเว็บ', icon: '🛒', href: '/pages/cms-orders.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsOrders', cmsModule: 'orders',
       description: 'จัดการ order ที่ลูกค้าสั่งผ่านร้านค้าออนไลน์ — ยืนยัน · จัดส่ง · ติดตาม' },
     // รอบ 209 P2: ตั้งค่าร้านค้า (สวิตช์ · วิธีชำระ · ฟอร์มสั่งซื้อ · โซนค่าส่ง · คูปอง) — สิทธิ์ CmsSiteSettings (PaymentGatewayPermissionScope.MenuPermissionKeys)
-    { id: 'cms-store-settings', navParent: 'cms-sites', label: 'ตั้งค่าร้านค้า', icon: '⚙️', href: '/pages/cms-store-settings.html', feature: 'CmsWebsiteBuilder', cmsModule: 'orders',
+    { id: 'cms-store-settings', navParent: 'cms-sites', workspaceTab: true, label: 'ตั้งค่าร้านค้า', icon: '⚙️', href: '/pages/cms-store-settings.html', feature: 'CmsWebsiteBuilder', cmsModule: 'orders',
       description: 'วิธีรับ/จัดส่ง · วิธีชำระ (โอน/ออนไลน์/เก็บเงินปลายทาง) · ฟอร์มสั่งซื้อ + ช่องเพิ่มเอง · โซนค่าส่ง · คูปอง · เลขคำสั่งซื้อ' },
-    { id: 'cms-bookings', navParent: 'cms-sites', label: 'การจองคิวจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings', cmsModule: 'bookings',
+    { id: 'cms-bookings', navParent: 'cms-sites', workspaceTab: true, label: 'การจองคิวจากเว็บ', icon: '📅', href: '/pages/cms-bookings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsBookings', cmsModule: 'bookings',
       description: 'จัดการการจองคิว/นัดหมาย — ร้านอาหาร · สปา · คลินิก · ยืนยัน-ยกเลิก-No show (การจองห้องพักอยู่ที่ "ที่พัก · Front desk")' },
     // รอบ 207 (คำขอเจ้าของข้อ 4): สรุปการทำงาน/รายงานผู้ให้บริการ — มีข้อมูลเมื่อเว็บเปิด "จัดสรรผู้ให้บริการ"
-    { id: 'cms-booking-providers', navParent: 'cms-sites', label: 'สรุปงานผู้ให้บริการ', icon: '📊', href: '/pages/cms-booking-providers.html', feature: 'CmsWebsiteBuilder', cmsModule: 'bookings',
+    { id: 'cms-booking-providers', navParent: 'cms-sites', workspaceTab: true, label: 'สรุปงานผู้ให้บริการ', icon: '📊', href: '/pages/cms-booking-providers.html', feature: 'CmsWebsiteBuilder', cmsModule: 'bookings',
       description: 'ผู้ให้บริการแต่ละคน: จำนวนงาน · ชั่วโมงงาน · ยอดตาม % งาน · แยกบริการ/รายวัน · รายการงานละเอียด · ส่งออก CSV' },
-    { id: 'lodging', navParent: 'cms-sites', label: 'ที่พัก · Front desk', icon: '🏨', href: '/pages/lodging.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodging', cmsModule: 'lodging',
+    { id: 'lodging', navParent: 'cms-sites', workspaceTab: true, label: 'ที่พัก · Front desk', icon: '🏨', href: '/pages/lodging.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodging', cmsModule: 'lodging',
       description: 'จองห้องพัก · ยืนยันมัดจำ · เช็คอิน/เอาต์ · ปฏิทินห้อง · แม่บ้าน · โรงแรม/รีสอร์ท/บ้านพัก' },
-    { id: 'lodging-settings', navParent: 'cms-sites', label: 'ตั้งค่าที่พัก', icon: '🛏️', href: '/pages/lodging-settings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodgingSettings', cmsModule: 'lodging',
+    { id: 'lodging-settings', navParent: 'cms-sites', workspaceTab: true, label: 'ตั้งค่าที่พัก', icon: '🛏️', href: '/pages/lodging-settings.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.lodgingSettings', cmsModule: 'lodging',
       description: 'ประเภทห้อง · หมายเลขห้อง · แผนราคา · ฤดูกาล · ราคารายวัน · นโยบายยกเลิก · บริการเสริม · มัดจำ/VAT' },
-    { id: 'cms-leads', navParent: 'cms-sites', label: 'คำขอ / Lead', icon: '📨', href: '/pages/cms-leads.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsLeads', cmsModule: 'leads',
+    { id: 'cms-leads', navParent: 'cms-sites', workspaceTab: true, label: 'คำขอ / Lead', icon: '📨', href: '/pages/cms-leads.html', feature: 'CmsWebsiteBuilder', _i18nKey: 'nav.cmsLeads', cmsModule: 'leads',
       description: 'RFQ · นัดดูทรัพย์ · นัด demo · สมัครเรียน · ขอใบเสนอราคา — sales funnel ครบ' },
-    { id: 'customer-portal', label: 'Portal ลูกค้า', icon: '🏪', href: '/pages/customer-portal.html', feature: 'CustomerPortal', _i18nKey: 'nav.customerPortal',
-      description: 'ให้ลูกค้าเข้าดูใบแจ้งหนี้ · ชำระเงิน · ดาวน์โหลดเอกสาร' },
-    { id: 'vendor-portal-admin', label: 'Vendor Portal — ออก token', icon: '🤝', href: '/pages/vendor-portal-admin.html', feature: 'MultiUser',
-      description: 'AP ออก magic-link ให้ vendor เข้าดู PO + invoice + status + อัปโหลด invoice ใหม่ — ไม่ต้องมี user' },
 
     { section: 'HR & เงินเดือน', icon: '👤', description: 'พนักงาน · เงินเดือน/สปส. · ลา · เงินทดรอง · คอมมิชชัน' },
     { id: 'organization', label: 'โครงสร้างองค์กร', icon: '🏢', href: '/pages/organization.html', feature: 'Payroll', _i18nKey: 'nav.organization',
@@ -1576,6 +1693,9 @@ const Layout = {
     { section: 'ตั้งค่า & ผู้ใช้', icon: '⚙️', description: 'บริษัท · ทีม/สิทธิ์ · อนุมัติ · เทมเพลต · แจ้งเตือน · PDPA' },
     { id: 'settings', label: 'ตั้งค่าบริษัท', icon: '⚙️', href: '/pages/settings.html', _i18nKey: 'nav.settings',
       description: 'ข้อมูลบริษัท · logo · เลขผู้เสียภาษี · default บัญชี · เลขเอกสาร · SMTP' },
+    // รอบ 215: ย้ายจากหมวด "บัญชีผู้ใช้" (คู่ License) — ช่องรับเงินออนไลน์เป็นค่าตั้งระดับบริษัทที่ทุกเว็บใช้ร่วม
+    { id: 'payment-settings', label: 'รับชำระเงินออนไลน์', icon: '💳', href: '/pages/payment-settings.html',
+      description: 'เปิดให้ลูกค้าจ่ายผ่าน PromptPay/บัตร จากหน้าเว็บขายของ · ใบแจ้งหนี้ · การจองที่พัก — ระบบบันทึกรับเงินและลงบัญชีให้อัตโนมัติ' },
     // ทะเบียนสาขาอยู่ในหมวด "ตั้งค่า" เพราะเป็นข้อมูลนิติบุคคล (§86/4 บังคับรหัสสาขา
     // บนใบกำกับภาษี) ไม่ใช่ฟีเจอร์วิเคราะห์ — ไม่มี feature flag: กิจการหลายสาขา
     // ต้องออกเอกสารให้ถูกกฎหมายได้ทุกแพ็กเกจ. ชี้ไฟล์เดิม `dimensions.html`
@@ -1627,8 +1747,6 @@ const Layout = {
       description: 'แพ็กเกจระดับบริษัท (Company-level) — ใช้เมื่อต้องการแยกบิลแยกใบกำกับ' },
     { id: 'help', label: 'คู่มือ & วิดีโอสอนใช้งาน', icon: '🎓', href: '/pages/help.html',
       description: 'วิดีโอสอนใช้งานและคู่มือ แยกตามเรื่อง (บัญชี · ภาษี · เงินเดือน) และตามธุรกิจ (ที่พัก · POS · เว็บไซต์)' },
-    { id: 'payment-settings', label: 'รับชำระเงินออนไลน์', icon: '💳', href: '/pages/payment-settings.html',
-      description: 'เปิดให้ลูกค้าจ่ายผ่าน PromptPay/บัตร จากหน้าเว็บขายของ · ใบแจ้งหนี้ · การจองที่พัก — ระบบบันทึกรับเงินและลงบัญชีให้อัตโนมัติ' },
     { id: 'payment-intents', label: 'รายการรับชำระออนไลน์', icon: '💳', href: '/pages/payment-intents.html',
       description: 'ทุกครั้งที่ลูกค้ากดจ่ายผ่านระบบ — ตรวจสถานะสด · ยืนยันด้วยมือเมื่อ webhook หาย · คืนเงิน · ดูประวัติทีละรายการ' },
     { id: 'payment-settlements', label: 'กระทบยอดเงินรับออนไลน์', icon: '🏦', href: '/pages/payment-settlements.html',
@@ -1702,6 +1820,9 @@ const Layout = {
             <a class="dropdown-item" href="/pages/my-signature.html">✍️ ลายเซ็นของฉัน</a>
             <a class="dropdown-item" href="/pages/account-subscription.html">🎫 License ของฉัน</a>
             <a class="dropdown-item" href="/pages/settings.html">⚙️ ${this.esc(tSettings)}</a>
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item" href="/terms.html" target="_blank" rel="noopener">📄 ข้อกำหนดการใช้งาน</a>
+            <a class="dropdown-item" href="/privacy.html" target="_blank" rel="noopener">🔒 นโยบายความเป็นส่วนตัว</a>
             <div class="dropdown-divider"></div>
             <a class="dropdown-item" href="#" onclick="Layout.logout();return false">🚪 ${this.esc(tLogout)}</a>
           </div>

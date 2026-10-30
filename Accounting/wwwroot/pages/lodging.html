@@ -44,6 +44,7 @@
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <div id="cmsCrumb"></div>
     <div class="page-header">
       <div>
         <h2 class="page-title">🏨 ที่พัก · Front desk</h2>
@@ -127,6 +128,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
   <script src="/js/export.js"></script>
   <script>
     const ST = { Pending: 'รอมัดจำ', Confirmed: 'ยืนยันแล้ว', CheckedIn: 'เช็คอินแล้ว', CheckedOut: 'เช็คเอาต์แล้ว', Cancelled: 'ยกเลิก', NoShow: 'No-show' };
@@ -144,7 +146,7 @@
     const todayIso = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
 
     const Page = {
-      propertyId: null, props: [], units: [], roomTypes: [], extras: [], current: null, _t: null,
+      propertyId: null, props: [], sites: [], units: [], roomTypes: [], extras: [], current: null, _t: null,
       async init() {
         if (!Layout.init('lodging')) return;
         Layout.showQuotaBanner();
@@ -156,16 +158,30 @@
         const sel = document.getElementById('propSelector');
         if (!this.props.length) { sel.innerHTML = '<option value="">ยังไม่มีที่พัก</option>'; document.getElementById('dashStats').innerHTML = '<div class="card">ยังไม่มีที่พัก — <a href="/pages/lodging-settings.html">สร้างที่พักในหน้าตั้งค่า</a> หรือสร้างเว็บไซต์ประเภท "โรงแรม/ที่พัก" ใน CMS</div>'; return; }
         sel.innerHTML = this.props.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-        // ?siteId= จาก cms-edit/cms-sites → ที่พักที่ผูกเว็บนั้น (กติกาเดียวกับ lodging-settings)
+        // รอบ 215: หัวพื้นที่ทำงานเว็บ — รายการเว็บ (ผู้ใช้ role Front desk อาจไม่มีสิทธิ์ดูเว็บ ⇒ ว่าง = หัวไม่มีตัวสลับเว็บ ไม่ล้มหน้า)
+        try { this.sites = await CmsSiteContext.loadSites(); } catch (_) { this.sites = []; }
+        // ?propertyId= > ?siteId= (ที่พักที่ผูกเว็บนั้น) > เว็บล่าสุด > แห่งแรก — ตัวตัดสินเดียว CmsSiteContext.pickProperty (ใช้ร่วมกับ lodging-settings)
         const qs0 = new URLSearchParams(location.search);
-        const bySite = qs0.get('siteId') ? this.props.find(p => p.siteId === qs0.get('siteId')) : null;
-        this.propertyId = qs0.get('propertyId') || bySite?.id || this.props[0].id; sel.value = this.propertyId;
+        const rawProp = qs0.get('propertyId'), rawSite = qs0.get('siteId');
+        this.propertyId = CmsSiteContext.pickProperty(this.props, rawProp, rawSite);
+        if (!this.propertyId) {
+          // เว็บนี้ยังไม่มีที่พักผูก — เดิมตกไปที่พักแห่งแรกเงียบ ๆ (ทำงานผิดที่พัก) ⇒ บอกตรง ๆ + ทางไปสร้าง
+          const site = this.sites.find(x => x.id === rawSite);
+          CmsSiteContext.renderPropertyHeader('cmsCrumb', this.sites, null, this.props, 'Front desk', 'lodging', rawSite);
+          document.getElementById('dashStats').innerHTML = `<div class="card">เว็บไซต์ <b>${esc(site?.name || 'นี้')}</b> ยังไม่มีที่พักผูกอยู่ — <a href="/pages/lodging-settings.html?siteId=${encodeURIComponent(rawSite || '')}" style="color:var(--primary)">สร้าง/ผูกที่พักที่หน้าตั้งค่าที่พัก →</a> หรือเลือกที่พักจากรายการด้านบน</div>`;
+          sel.insertAdjacentHTML('afterbegin', '<option value="">— เลือกที่พัก —</option>'); sel.value = ''; sel.style.display = '';
+          return;
+        }
+        sel.value = this.propertyId;
         this.property = this.props.find(p => p.id === this.propertyId) || null;
+        CmsSiteContext.renderPropertyHeader('cmsCrumb', this.sites, this.property, this.props, 'Front desk', 'lodging');
         await this.loadRefs(); await this.loadDash();
         const open = new URLSearchParams(location.search).get('id'); if (open) await this.openReservation(open);
       },
       async onPropChange() { this.propertyId = document.getElementById('propSelector').value;
+        if (!this.propertyId) return;
         this.property = this.props.find(p => p.id === this.propertyId) || null;
+        CmsSiteContext.renderPropertyHeader('cmsCrumb', this.sites, this.property, this.props, 'Front desk', 'lodging');
         await this.loadRefs(); await this.loadDash(); await this.loadList(); },
       async loadRefs() {
         const api = Layout.api();

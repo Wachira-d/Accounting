@@ -1,3 +1,41 @@
+## LEGAL214 — นโยบายความเป็นส่วนตัว/ข้อกำหนด: แพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS (รอบ 214 · คำตัดสินข้อ 173)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| LEGAL214-01 | markdown ชุดย่อย: หัวข้อ · ย่อหน้า · รายการ · ตาราง · กล่องหมายเหตุ · หนา/เอียง/โค้ด | HTML ตามแบบที่หน้าแสดง · แถวตารางสั้นเติมช่อง | `LegalDocumentTests`.Render_BasicBlocks · Render_Table_WithHeaderAndPaddedRows |
+| LEGAL214-02 | XSS: `<script>` · `<img onerror>` · `"><svg>` · แท็กในหัวข้อ/ตาราง | encode เป็นข้อความ ไม่มีแท็ก | `LegalDocumentTests`.Render_RawHtml_IsEncoded_NeverATag |
+| LEGAL214-03 | ลิงก์ `javascript:` (ทุกตัวพิมพ์) · `data:` · `vbscript:` · `//host` · entity · แท็บกลางคำ | ไม่เป็น `<a>` (แสดงข้อความ) · **ทิศตรงข้าม** https/mailto/tel/path/สัมพัทธ์ เป็นลิงก์ · ภายนอกเปิดแท็บใหม่ noopener | `LegalDocumentTests`.Render_DangerousLinks_AreNotAnchors · Render_AllowedLinks · Render_ExternalLink_OpensNewTabWithNoopener |
+| LEGAL214-04 | ค่าโทเคน (ชื่อบริษัท/อีเมล) มี `<script>` · `**` · `[x](javascript:)` · `"` | encode · ไม่ถูกตีความเป็น markdown · ไม่หลุด attribute · โทเคนไม่รู้จักคงเดิม · อักขระ stash ของผู้ใช้ปลอมลิงก์ไม่ได้ | `LegalDocumentTests`.Tokens_AreEncoded_AndCannotInjectMarkupOrMarkdown · Tokens_Unknown_… · StashMarker_… |
+| LEGAL214-05 | ฉบับปัจจุบัน/ประกาศล่วงหน้า · ร่างไม่นับ · วันมีผลเท่ากัน · วันไทย | มีผล ≤ วันนี้ล่าสุด · ไม่มีแถว = ฉบับตั้งต้น 1.0 · เผยแพร่ทีหลังชนะ · 17:00 UTC = วันถัดไป | `LegalDocumentTests`.PickCurrent_* · TodayBangkok_UsesThaiCalendarDay |
+| LEGAL214-06 | เผยแพร่: เลขซ้ำ/ถอยหลัง/ชน 1.0 · วันมีผลย้อนหลัง · ก่อนฉบับประกาศล่วงหน้า · เนื้อความว่าง · รูปแบบเลขผิด | ปฏิเสธพร้อมเหตุ · **ทิศตรงข้าม** เลขถัดไปวันนี้/อนาคตผ่าน | `LegalDocumentTests`.ValidatePublish_Rules · ValidatePublish_EffectiveBeforeLatestAnnounced_Rejected |
+| LEGAL214-07 | append-only บนฐานจริง: เผยแพร่แล้วบันทึกร่างเลขเดิม · เผยแพร่ร่างที่ย้อนหลัง | ปฏิเสธ · แถวเผยแพร่ไม่เปลี่ยน · ร่างยังเป็นร่าง · ทิ้งร่างได้ | `Db/LegalDocumentDbTests`.Publish_is_append_only_and_drives_the_acceptance_banner · `LegalDocumentTests`.PublishedRows_AreNotEditable_DraftsAre |
+| LEGAL214-08 | เวอร์ชันความยินยอม · ผู้ใช้เดิม (ยอมรับ "1.0") ไม่มีฉบับใหม่ / มีฉบับใหม่ / ไม่มีแถว | สองฉบับเท่ากัน = เลขเดียว · ไม่รบกวนผู้ใช้เดิม · ฉบับใหม่ = แถบ · ≤ 50 ตัวอักษร | `LegalDocumentTests`.ConsentVersion_SameVersions_StaysBackwardCompatible · NeedsAcknowledge_OnlyWhenNoRecordOrDifferentVersion |
+| LEGAL214-09 | กด "รับทราบและยอมรับ" ด้วยฉบับปัจจุบัน / หน้าค้างฉบับเก่า / โหมดเข้าดูในนามลูกค้า | แถวยินยอม `policy-update:*` + hash · ฉบับเก่า = ปฏิเสธ (409) · imp = 403 (required_call_site_check) | `Db/LegalDocumentDbTests` · กติกา `LegalController.Accept` |
+| LEGAL214-10 | ลิงก์ของร้าน: ลิงก์ร้าน + ข้อความร้าน · ข้อความอย่างเดียว · ว่าง · ค่าไม่ปลอดภัย · path ในเว็บร้าน | external > custom > default · ไม่ปลอดภัย = ใช้หน้าระบบ + บันทึกถูกปฏิเสธ · `/privacy` = หน้า CMS ของร้าน · slug ใต้ `legal/` | `LegalDocumentTests`.Resolve_* · Slugs_LiveUnderLegal_NoClashWithShopPages · EffectiveMarkdown_CustomOrTemplate |
+| LEGAL214-11 | แม่แบบของร้าน (นโยบาย/ข้อกำหนด) กับตัวตนร้านจริง | ชื่อ · ที่อยู่ · เลขผู้เสียภาษี · mailto · เบอร์ · ชื่อเว็บ ครบ · ไม่มีโทเคนค้าง · ระบุผู้ควบคุม/ผู้ประมวลผล · LINE · ชำระเงิน · จอง · สมาชิก | `LegalDocumentTests`.ShopTemplate_ContainsShopIdentity_AndProcessorStatement · ShopPrivacyTemplate_StatesControllerAndProcessorRoles_AndLineAndPayment |
+| LEGAL214-12 | ฉบับตั้งต้นของแพลตฟอร์มเทียบหน้าเดิม | ครบ 12 หัวข้อทั้งสองฉบับ · ตัวตนผู้ให้บริการแทนครบ · ค่าที่ยังไม่ตั้งบอกตรง ๆ · 1.0 = `PdpaPolicy.CurrentVersion` เดิม | `LegalDocumentTests`.PlatformBuiltIn_KeepsAllSectionsOfOldPages · PlatformTokens_Missing_… · BuiltInVersion_MatchesLegacyConsentVersion |
+| LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
+
+## SUB217 — กดซ้ำไม่บันทึกซ้ำ (Idempotency-Key + ด่านซ้ำเชิงความหมาย) · ตอบเร็ว แจ้งเตือนตามหลัง (รอบ 217 · คำตัดสินข้อ 175)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| SUB-01 | แขกเบอร์เดิม (พิมพ์ 4 รูปแบบ) กดจองรอบเดิมพร้อมกัน 4 ครั้ง ไม่มีคีย์ | ใบเดียว · ที่เหลือ 409 `CMS-BOOKING-DUPLICATE` | `Db/SubmitOnceRound217DbTests`.SUB01_… |
+| SUB-02 | สมาชิกคนเดิมกดพร้อมกัน 3 ครั้ง | ใบเดียว · คำขออื่นได้ใบเดิม `reused=true` + `duplicateOf` | `Db/SubmitOnceRound217DbTests`.SUB02_… |
+| SUB-03 | ทิศตรงข้าม: คนละคน ความจุ 2 พร้อมกัน | ได้ทั้งสองใบ | `Db/SubmitOnceRound217DbTests`.SUB03_… |
+| SUB-04 | ทิศตรงข้าม: คนเดิมคนละรอบ · `ConfirmAdditional` · พ้น 10 นาที | จองได้ทุกกรณี (ความจุยังตรวจ) | `Db/SubmitOnceRound217DbTests`.SUB04_… |
+| SUB-05 | ใบเดิมถูกยกเลิก | จองรอบเดิมใหม่ได้ทันที | `Db/SubmitOnceRound217DbTests`.SUB05_… |
+| SUB-06 | สร้างการจอง | ไม่ส่งข้อความในคำขอ · แถวคิวหนึ่งแถว · dispatcher ส่งลูกค้า+ร้านครั้งเดียวแล้วปิดแถว · รอบสองไม่หยิบ | `Db/SubmitOnceRound217DbTests`.SUB06_… |
+| SUB-07 | คำขอซ้ำที่ได้ใบเดิม | ไม่เพิ่มแถวคิว (ไม่แจ้งซ้ำ) | `Db/SubmitOnceRound217DbTests`.SUB07_… |
+| SUB-08 | สองเครื่องหยิบคิวพร้อมกัน · lease หมด | หยิบได้ครั้งเดียว · หมด lease หยิบใหม่ได้ (Attempts 2) | `Db/SubmitOnceRound217DbTests`.SUB08_… |
+| SUB-09 | คีย์เดียวกันสองคำขอพร้อมกันผ่านมิดเดิลแวร์จริง · ยิงซ้ำหลังเสร็จ | ใบเดียว · อีกคำขอ 409 in-flight/replay · replay ได้ผลเดิมทุกไบต์ | `Db/SubmitOnceRound217DbTests`.SUB09_… |
+| SUB-10 | คีย์เดิมเนื้อต่าง · ทิศตรงข้าม คีย์ใหม่รอบอื่น | 409 mismatch ไม่สร้างใบ · คีย์ใหม่จองได้ | `Db/SubmitOnceRound217DbTests`.SUB10_… |
+| SUB-11 | กติกาคีย์: รูปคีย์ · namespace (แฮช credential ไม่เก็บดิบ) · แฮชสตรีม = แฮชก้อนเดียว · replay/in-flight/mismatch/หมดอายุ/แถวเก่าไม่มีแฮช | ตามตาราง | `SubmitOnceRound217Tests`.Normalize_… · Subject_… · RequestHash_… · Decide_… |
+| SUB-12 | ผู้จองคนเดียวกัน: เบอร์ต่างรูปแบบ · สมาชิกเดียวกัน · ทิศตรงข้าม สมาชิกคนละคนเบอร์เดียวกัน/คนละแขก · ไม่มีตัวตน = ไม่ตัดสิน · เปิดใบเดิมให้แขกไม่ได้ | ตามตาราง | `SubmitOnceRound217Tests`.IdentityOf_… · Same_… · Two_different_members_… · Reveal_… |
+| SUB-13 | คิวแจ้งเตือน: ชนิดไม่รู้จัก · ถอย 30 วิ/1 นาที · ยอมแพ้ครั้งที่ 5 · ข้อความผิดพลาดไม่ว่าง/ไม่ยาวเกิน | ตามตาราง | `SubmitOnceRound217Tests`.New_row_… · AfterFailure_… · Truncate_… |
+| SUB-14 | หน้าเว็บ: กดปุ่มจองซ้ำ/Enter ระหว่างรอ · 409 in-flight · mismatch | ส่งครั้งเดียว · ปุ่ม "กำลังจอง…" · รอแล้วได้ผลเดิม · หมุนคีย์ | `js/submit-once.js` (node --check) — ทดสอบมือบน storefront (ยังไม่มี sim) |
+| SUB-15 | จุดเรียกในเซอร์วิส (ถอดด่าน/ย้ายลำดับ/ส่งแจ้งเตือนในคำขอกลับมา) | checker ฟ้อง | `tools/required_call_site_check.py` กติกา `_R217_*` + แก้ CreateBookingAsync/CreateOrderAsync |
+
 ## CMS216 — ข้อมูลส่วนตัวของสมาชิกหน้าร้าน + เติมฟอร์มจอง/สั่งซื้อ/จองที่พักจากบัญชี (รอบ 216 · คำตัดสินข้อ 174)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -13,6 +51,7 @@
 | CMS216-09 | ติ๊กบันทึกแต่เบอร์/เลขภาษีผิดรูปแบบ | รายการสำเร็จ · ค่าเดิมในโปรไฟล์ไม่ถูกแตะ · คำตอบมี `errors` บอกช่องที่ไม่ได้บันทึก (ไม่ใช่ no-op เงียบ) | `CmsRound216MemberProfileTests`.MergeCheckout_InvalidPhone_SkippedAndReported_NotSilent · .MergeCheckout_TaxInvoice_OnlyWithValidChecksum |
 | CMS216-10 | ค่าที่ฟอร์มส่งตรงกับโปรไฟล์ (เว้นวรรคต่าง) · ที่อยู่ใหม่จากเช็กเอาต์ | ไม่เปลี่ยน (ที่อยู่มีโครงไม่ถูกยุบ) · ที่อยู่ใหม่ = บรรทัดที่อยู่ + จังหวัด/รหัสไปรษณีย์ | `CmsRound216MemberProfileTests`.MergeCheckout_SameValues_NoChange · .MergeCheckout_NewShippingText_ReplacesStructuredAddress |
 | CMS216-11 | หน้าเว็บ: `/portal/me` ตอบช้ากว่าที่ผู้ใช้เริ่มพิมพ์ · ช่องที่มีค่าอยู่แล้ว · รหัสสาขาค่าตั้งต้น 00000 · ช่องใบกำกับของที่พัก · ช่อง "บันทึกเป็นข้อมูลของฉัน" | ช่องที่ผู้ใช้แตะไม่ถูกทับ (`dataset.userTouched`) · ทับเฉพาะช่องว่าง/ช่องที่ระบบเติม (`dataset.autoSrc`) · สาขาจากโปรไฟล์ชนะค่าตั้งต้น · ช่อง "เทียบอย่างเดียว" ไม่เติม · ติ๊กไว้ก่อนเฉพาะเติมช่องที่โปรไฟล์ว่าง · ผู้ใช้เอาติ๊กออกแล้วไม่ติ๊กกลับ | `tools/member_prefill_sim.js` (โค้ดจริงจากหน้า บน DOM จำลอง · /portal/me ตอบช้า · ผู้ใช้ลบค่าที่เติม · ช่องบันทึกติ๊ก/ไม่ติ๊ก · negative test 4 ตัว) |
+| CMS216-12 | รวมกับรอบ 217: กดซ้ำได้ใบจองเดิม (`Reused`) · ออเดอร์คืนจากคีย์กันกดซ้ำ (`Replayed`) · ที่พักซ้ำ (409) · คำขอซ้ำคีย์เดิม (มิดเดิลแวร์ตอบจากแคช) | ไม่บันทึกโปรไฟล์ซ้ำ · หน้าเว็บไม่ขึ้น "บันทึกแล้ว" | `required_call_site_check` (`ProfileOwner(request.SaveToProfile && !result.Reused …)` / `!result.Replayed`) · ตรวจมือ storefront `_memberAfterSubmit(… && !booking.reused)` |
 
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
 
@@ -178,7 +217,9 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **695 ไฟล์ · 7,108 `[Fact]` + 1,130 `[Theory]` (5,297 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **699 ไฟล์ · 7,168 `[Fact]` + 1,139 `[Theory]` (5,336 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
+
 
 
 
@@ -7094,3 +7135,18 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CMS210-10 | ยิงเดาถี่ (IP เดียว / หลาย IP เลขเดียว) | 429 · คีย์โควตาพอดี `BucketKey` varchar(120) (ไม่ fail-open เงียบ) | `Request_validation_and_number_bucket` · rule `LookupThrottledAsync` |
 | CMS210-11 | ลิงก์ในแจ้งเตือน: มีโดเมนร้านที่ยืนยันแล้ว / ไม่มี ⇒ `App:BaseUrl/site/{key}` / ไม่มีทั้งคู่หรือใบเก่าไม่มีโทเคน | `https://โดเมน/my-booking/{token}` / path-based / เลขที่ + หน้า "ตรวจสอบการจอง / คำสั่งซื้อ" (ไม่เงียบ) | `Verified_custom_domain_wins` · `Falls_back_to_path_based_app_url` · `No_usable_base_gives_null` · `No_base_url_falls_back_to_number_and_lookup_page_not_silent` · `Booking_line_has_escaped_manage_link` · `Order_line_has_track_link` |
 | CMS210-12 | แจ้งเตือนถึงลูกค้าทุกฉบับ (ยืนยัน/ยกเลิก/เลื่อนการจอง · ยืนยัน/จัดส่ง/พร้อมรับ/ส่งมอบคำสั่งซื้อ) | มีบรรทัดลิงก์ · เลื่อนนัดมีข้อความใหม่ (เดิม/ใหม่) | `WithLine_appends_and_blank_keeps_message` · `Rescheduled_text_has_old_and_new_time` · rules `WithBookingLinkAsync`/`WithOrderLinkAsync` + ผู้เรียก |
+
+## CMS215 — พื้นที่ทำงานเว็บไซต์ (รอบ 215 เฟส 1)
+
+| # | ขั้นตอน | ผลที่ต้องได้ |
+| --- | --- | --- |
+| CMS215-01 | บริษัทมีสปา + โรงแรม + ร้าน · เปิดหน้า "เว็บไซต์ทั้งหมด" | แถบซ้ายหมวดเว็บมี 2 รายการ (พื้นที่ทำงาน · เว็บไซต์ทั้งหมด) — ไม่กาง 7 เมนูลูก · ค้นหาเมนู "Front desk" ยังเจอ |
+| CMS215-02 | ชื่อหมวด: บริษัทร้านอย่างเดียว / ที่พักอย่างเดียว / มีจอง | "เว็บไซต์ & ร้านออนไลน์" / "เว็บไซต์ & ที่พัก" / "เว็บไซต์ & การจอง" (`CmsModuleResolverTests`) |
+| CMS215-03 | role ที่ได้แค่ "ที่พัก · Front desk" กด "พื้นที่ทำงานเว็บไซต์" | ไป lodging.html ทันที · role ที่ไม่มีงานเว็บไม่เห็นทางเข้า (sim) |
+| CMS215-04 | เปิดการจองของ test-spa แล้วสลับเว็บที่หัวหน้าเป็นโรงแรม | ไป Front desk ของโรงแรม (เว็บไม่มีจองคิว ⇒ แท็บแรกของเว็บนั้น) · select เว็บในหน้าเดิมถูกซ่อน (ตัวเลือกเว็บมีตัวเดียว) |
+| CMS215-05 | แท็บของเว็บสปา | การจอง · สรุปผู้ให้บริการ · (คำขอ ถ้ามีฟอร์มติดต่อ) · หน้าเว็บ — ไม่มี Front desk/ตั้งค่าร้าน (sim) |
+| CMS215-06 | การ์ดภาพรวม "การจอง" บน เว็บไซต์ทั้งหมด (หลายเว็บ) | เปิด `cms-bookings.html?siteId=all` (เดิมเปิดเว็บแรก) · ที่พักแสดงปุ่มรายเว็บพร้อมชื่อ |
+| CMS215-07 | `lodging.html?siteId=<เว็บที่ยังไม่มีที่พัก>` | ข้อความ "ยังไม่มีที่พักผูกอยู่" + ลิงก์สร้าง — **ไม่**โหลดที่พักแห่งแรก (sim negative) · ทิศตรงข้าม: ?siteId= ของโรงแรม ⇒ ที่พักนั้น |
+| CMS215-08 | เว็บที่ไม่มีบล็อกฟอร์มติดต่อ/ฟอร์มส่งเข้าระบบ/lead | ไม่มีแท็บ/ปุ่ม "คำขอ / Lead" · เว็บที่เคยมี lead ยังมี (`CmsModuleResolverTests` ทั้งสองทิศ) |
+| CMS215-09 | เปิดหน้ารายเว็บโดยไม่มี ?siteId= หลังเคยทำงานเว็บ b3 | เลือก b3 ถ้า b3 ใช้งานของหน้านั้น · ไม่งั้นเว็บแรกที่ใช้ (sim) |
+

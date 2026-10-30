@@ -39,6 +39,16 @@ public class CmsStorefrontController : ControllerBase
         return Ok(new ApiResponse<StorefrontDataResponse>(true, result));
     }
 
+    // ===== รอบ 214: นโยบายความเป็นส่วนตัว / ข้อกำหนดของร้าน (หน้า /legal/privacy · /legal/terms บน storefront) =====
+
+    [HttpGet("legal/{kind}")]
+    public async Task<ActionResult<ApiResponse<StorefrontLegalPageResponse>>> LegalPage(Guid companyId, Guid siteId, string kind)
+    {
+        var result = await _renderingService.GetLegalPageAsync(companyId, siteId, kind);
+        if (result == null) return NotFound(new ApiResponse<StorefrontLegalPageResponse>(false, null, "ไม่พบเอกสาร"));
+        return Ok(new ApiResponse<StorefrontLegalPageResponse>(true, result));
+    }
+
     // ===== Theme CSS =====
 
     [HttpGet("theme.css")]

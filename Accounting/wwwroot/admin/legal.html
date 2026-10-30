@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>นโยบายความเป็นส่วนตัว / ข้อกำหนด - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .muted { color:#64748b; font-size:12px }
+    .kind-tabs { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap }
+    .kind-tabs button.active { background:#4f46e5; color:#fff; border-color:#4f46e5 }
+    .url-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px }
+    .url-row code { font-size:13px; word-break:break-all; flex:1; min-width:200px }
+    .form-row { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px }
+    .form-row label { display:flex; flex-direction:column; font-size:12px; color:#475569; gap:4px }
+    .editor { width:100%; min-height:420px; font-family:ui-monospace, Menlo, Consolas, monospace; font-size:13px; line-height:1.6;
+              padding:10px; border:1px solid #cbd5e1; border-radius:8px; box-sizing:border-box }
+    .preview { border:1px solid #e2e8f0; border-radius:8px; padding:16px 20px; max-height:620px; overflow:auto; background:#fff; line-height:1.8; font-size:14px }
+    .preview h2 { font-size:16px; margin:18px 0 8px; padding-top:10px; border-top:1px solid #e2e8f0 }
+    .preview h3 { font-size:14px; margin:12px 0 6px }
+    .preview table { border-collapse:collapse; width:100%; margin:8px 0; font-size:13px }
+    .preview th, .preview td { border:1px solid #e2e8f0; padding:6px 8px; text-align:left; vertical-align:top }
+    .preview .legal-note { background:#f8fafc; border-left:3px solid #4f46e5; padding:8px 12px; margin:10px 0 }
+    .preview .table-scroll { overflow-x:auto }
+    .warn-list { background:#fffbeb; border:1px solid #fcd34d; color:#92400e; border-radius:8px; padding:8px 12px; font-size:12px; margin-bottom:8px }
+    .pill { display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:9999px; background:#f1f5f9; color:#475569 }
+    .pill-green { background:#dcfce7; color:#166534 } .pill-blue { background:#dbeafe; color:#1e40af }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+    @media (max-width: 960px) { .grid-2 { grid-template-columns:1fr } }
+  </style>
+</head>
+<body>
+  <!-- รอบ 214 (คำตัดสินข้อ 173): เอกสารทางกฎหมายของแพลตฟอร์ม — ร่าง → ตัวอย่าง → เผยแพร่ (ฉบับเผยแพร่แล้วแก้ไม่ได้ · ออกฉบับใหม่แทน) ·
+       กติกา/การแปลง HTML อยู่ที่เซิร์ฟเวอร์ทั้งหมด (Helpers/LegalDocumentPolicy · LegalMarkdown) — หน้านี้แสดงและส่งค่าอย่างเดียว -->
+  <div id="pageContent">
+    <div class="info-box">
+      แก้เนื้อความ<b>นโยบายความเป็นส่วนตัว</b>และ<b>ข้อกำหนดการใช้งาน</b>ที่ลูกค้าเห็นบนเว็บ (หน้าแรก · หน้าสมัคร · หน้าเข้าสู่ระบบ · เมนูผู้ใช้ในระบบ) ·
+      บันทึกร่างได้หลายครั้ง — ลูกค้ายังเห็นฉบับเดิมจนกว่าจะกด <b>เผยแพร่</b> · ฉบับที่เผยแพร่แล้ว<b>แก้ไม่ได้</b> (เป็นหลักฐานว่าลูกค้ายอมรับข้อความใด — PDPA ม.19)
+      ต้องออกฉบับใหม่ที่เลขสูงกว่า · ตั้งวันมีผลในอนาคตได้ (ประกาศล่วงหน้า) · เมื่อถึงวันมีผล ผู้ใช้ที่ล็อกอินจะเห็นแถบ "มีฉบับใหม่" ให้กดรับทราบ (ไม่บล็อกการใช้งาน) ·
+      ชื่อ/ที่อยู่/อีเมลผู้ให้บริการใช้<b>โทเคน</b> (แก้ที่ ตั้งค่าเว็บไซต์ → ใบเสร็จค่าบริการ)
+    </div>
+
+    <div class="kind-tabs">
+      <button class="admin-btn admin-btn-outline" data-kind="privacy">🔒 นโยบายความเป็นส่วนตัว</button>
+      <button class="admin-btn admin-btn-outline" data-kind="terms">📄 ข้อกำหนดการใช้งาน</button>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title" id="docTitle">กำลังโหลด...</span><span id="docStatus"></span></div>
+      <div class="url-row">
+        <span>🔗 URL สาธารณะ:</span>
+        <code id="publicUrl">-</code>
+        <button class="admin-btn admin-btn-outline admin-btn-sm" id="copyUrlBtn">คัดลอก</button>
+        <a class="admin-btn admin-btn-outline admin-btn-sm" id="openUrlBtn" href="#" target="_blank" rel="noopener">เปิดดู</a>
+      </div>
+      <div class="muted" id="baseUrlNote" style="margin-top:6px"></div>
+      <div id="upcomingBox" class="muted" style="margin-top:8px"></div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <span class="admin-card-title">✏️ ร่างฉบับใหม่</span>
+        <span>
+          <button class="admin-btn admin-btn-outline admin-btn-sm" id="startFromCurrentBtn">เริ่มจากฉบับปัจจุบัน</button>
+          <button class="admin-btn admin-btn-outline admin-btn-sm" id="discardBtn">ทิ้งร่าง</button>
+        </span>
+      </div>
+      <div id="draftState" class="muted" style="margin-bottom:8px"></div>
+      <div class="form-row">
+        <label>เลขฉบับ (เช่น 1.1)<input type="text" class="admin-input" id="dVersion" maxlength="20" style="width:120px"></label>
+        <label>วันมีผล<input type="date" class="admin-input" id="dEffective" style="width:170px"></label>
+        <label style="flex:1;min-width:240px">สรุปสิ่งที่เปลี่ยน (แสดงให้ผู้ใช้เห็น)<input type="text" class="admin-input" id="dSummary" maxlength="500"></label>
+      </div>
+      <div class="grid-2">
+        <div>
+          <textarea class="editor" id="dBody" spellcheck="false" placeholder="## 1. หัวข้อ&#10;ย่อหน้า...&#10;- รายการ&#10;| หัวตาราง | ... |&#10;|---|---|"></textarea>
+          <details style="margin-top:6px">
+            <summary class="muted" style="cursor:pointer">วิธีเขียน + โทเคนที่ใช้ได้</summary>
+            <div class="muted" style="line-height:1.9;margin-top:6px">
+              <code>## หัวข้อ</code> · <code>### หัวข้อย่อย</code> · <code>- รายการ</code> · <code>1. รายการเลข</code> · <code>&gt; กล่องหมายเหตุ</code> ·
+              <code>**ตัวหนา**</code> · <code>*ตัวเอียง*</code> · <code>[ข้อความ](https://...)</code> (รับ https · mailto: · tel: · /path) ·
+              ตาราง <code>| ก | ข |</code> แล้วบรรทัดถัดไป <code>|---|---|</code> · ไม่รับ HTML (แสดงเป็นข้อความ)
+              <div id="tokenHelp" style="margin-top:6px"></div>
+            </div>
+          </details>
+        </div>
+        <div>
+          <div id="previewWarnings"></div>
+          <div class="preview" id="previewPane"><span class="muted">กด "ดูตัวอย่าง" เพื่อดูหน้าตาที่ลูกค้าจะเห็น</span></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button class="admin-btn admin-btn-outline" id="previewBtn">👁 ดูตัวอย่าง</button>
+        <button class="admin-btn admin-btn-primary" id="saveBtn">💾 บันทึกร่าง</button>
+        <button class="admin-btn admin-btn-success" id="publishBtn">🚀 เผยแพร่ฉบับนี้</button>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🕘 ประวัติฉบับที่เผยแพร่</span></div>
+      <div id="historyList">กำลังโหลด...</div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Page = {
+      base: '/legal-documents',
+      kind: 'privacy',
+      doc: null,
+
+      init() {
+        AdminLayout.init('legal');
+        let k = null;
+        try { k = new URLSearchParams(location.search).get('kind'); } catch (_) { /* ignore */ }
+        if (k === 'terms' || k === 'privacy') this.kind = k;
+        document.querySelectorAll('.kind-tabs button').forEach(b => b.addEventListener('click', () => this.switchKind(b.dataset.kind)));
+        document.getElementById('copyUrlBtn').addEventListener('click', () => this.copyUrl());
+        document.getElementById('startFromCurrentBtn').addEventListener('click', () => this.startFromCurrent());
+        document.getElementById('discardBtn').addEventListener('click', () => this.discard());
+        document.getElementById('previewBtn').addEventListener('click', () => this.preview());
+        document.getElementById('saveBtn').addEventListener('click', () => this.save());
+        document.getElementById('publishBtn').addEventListener('click', () => this.publish());
+        this.load();
+      },
+
+      switchKind(k) {
+        if (k === this.kind) return;
+        if (this._dirty && !confirm('มีการแก้ที่ยังไม่บันทึกร่าง — เปลี่ยนเอกสารแล้วการแก้จะหาย?')) return;
+        this.kind = k;
+        this.load();
+      },
+
+      thaiDate(iso) {
+        if (!iso) return '-';
+        const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
+        if (!y) return iso;
+        return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString('th-TH', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
+      },
+
+      async load() {
+        document.querySelectorAll('.kind-tabs button').forEach(b => b.classList.toggle('active', b.dataset.kind === this.kind));
+        try {
+          const res = await AdminAPI.get(`${this.base}/${this.kind}`);
+          this.doc = res.data;
+          this.render();
+        } catch (e) {
+          document.getElementById('docTitle').textContent = 'โหลดไม่สำเร็จ: ' + e.message;
+        }
+      },
+
+      render() {
+        const d = this.doc;
+        const esc = AdminLayout.esc;
+        document.getElementById('docTitle').textContent = d.title;
+        document.getElementById('docStatus').innerHTML =
+          `<span class="pill pill-green">ฉบับปัจจุบัน ${esc(d.current.version)} · มีผล ${esc(this.thaiDate(d.current.effectiveDate))}</span> `
+          + (d.current.source === 'builtin' ? '<span class="pill">ฉบับตั้งต้นของระบบ</span>' : '');
+        document.getElementById('publicUrl').textContent = d.publicUrl;
+        document.getElementById('openUrlBtn').href = d.publicUrl;
+        document.getElementById('baseUrlNote').textContent = d.baseUrlFromSettings
+          ? 'โดเมนมาจาก "URL ของระบบ" (ตั้งค่าเว็บไซต์)'
+          : 'ยังไม่ได้ตั้ง "URL ของระบบ" ที่หน้าตั้งค่าเว็บไซต์ — URL นี้ใช้โดเมนที่เปิดหน้าแอดมินอยู่';
+        document.getElementById('upcomingBox').innerHTML = d.upcoming
+          ? `📣 ประกาศล่วงหน้า: ฉบับ <b>${esc(d.upcoming.version)}</b> มีผล ${esc(this.thaiDate(d.upcoming.effectiveDate))}${d.upcoming.changeSummary ? ' — ' + esc(d.upcoming.changeSummary) : ''}`
+          : '';
+        document.getElementById('tokenHelp').innerHTML = (d.tokens || [])
+          .map(t => `<div><code>${esc(t.token)}</code> — ${esc(t.label)}</div>`).join('');
+
+        const dr = d.draft;
+        document.getElementById('draftState').textContent = dr
+          ? `มีร่างที่บันทึกไว้ (แก้ล่าสุด ${new Date(dr.updatedAt || dr.createdAt).toLocaleString('th-TH')})`
+          : 'ยังไม่มีร่าง — กด "เริ่มจากฉบับปัจจุบัน" เพื่อคัดลอกเนื้อความมาแก้';
+        document.getElementById('dVersion').value = dr ? (dr.version || '') : '';
+        document.getElementById('dEffective').value = dr ? (dr.effectiveDate || '') : '';
+        document.getElementById('dSummary').value = dr ? (dr.changeSummary || '') : '';
+        document.getElementById('dBody').value = dr ? (dr.bodyMarkdown || '') : '';
+        document.getElementById('discardBtn').disabled = !dr;
+        document.getElementById('publishBtn').disabled = !dr;
+        document.getElementById('previewPane').innerHTML = '<span class="muted">กด "ดูตัวอย่าง" เพื่อดูหน้าตาที่ลูกค้าจะเห็น</span>';
+        document.getElementById('previewWarnings').innerHTML = '';
+        this._dirty = false;
+        document.getElementById('dBody').oninput = () => { this._dirty = true; document.getElementById('publishBtn').disabled = true; };
+
+        const rows = d.history || [];
+        document.getElementById('historyList').innerHTML = `<div class="admin-table-wrap"><table class="admin-table">
+          <thead><tr><th>ฉบับ</th><th>มีผล</th><th>เผยแพร่เมื่อ</th><th>สรุปการเปลี่ยนแปลง</th><th></th></tr></thead>
+          <tbody>${rows.map(h => `<tr>
+            <td><strong>${esc(h.version)}</strong> ${h.isCurrent ? '<span class="pill pill-green">ปัจจุบัน</span>' : ''}${h.isUpcoming ? '<span class="pill pill-blue">ประกาศล่วงหน้า</span>' : ''}</td>
+            <td>${esc(this.thaiDate(h.effectiveDate))}</td>
+            <td class="muted">${h.isBuiltIn ? 'ฉบับตั้งต้นของระบบ' : esc(h.publishedAt ? new Date(h.publishedAt).toLocaleString('th-TH') : '-')}</td>
+            <td class="muted">${esc(h.changeSummary || '-')}</td>
+            <td><a class="admin-btn admin-btn-outline admin-btn-sm" target="_blank" rel="noopener" href="${esc(d.publicUrl)}?version=${encodeURIComponent(h.version)}">ดู</a></td>
+          </tr>`).join('')}</tbody></table></div>`;
+      },
+
+      async copyUrl() {
+        const url = this.doc && this.doc.publicUrl;
+        if (!url) return;
+        try { await navigator.clipboard.writeText(url); AdminLayout.toast('คัดลอก URL แล้ว'); }
+        catch (_) { prompt('คัดลอก URL นี้', url); }
+      },
+
+      /** คัดลอกฉบับปัจจุบันมาเป็นร่าง + เสนอเลขฉบับถัดไป (เซิร์ฟเวอร์ตรวจอีกครั้งตอนเผยแพร่) */
+      startFromCurrent() {
+        const d = this.doc; if (!d) return;
+        const body = document.getElementById('dBody');
+        if (body.value.trim() && !confirm('แทนที่เนื้อความในร่างด้วยฉบับปัจจุบัน?')) return;
+        const src = d.upcoming || d.current;
+        body.value = src.bodyMarkdown || '';
+        const parts = String(src.version).split('.').map(Number);
+        parts[1] = (parts[1] || 0) + 1;
+        document.getElementById('dVersion').value = `${parts[0] || 1}.${parts[1]}`;
+        document.getElementById('dEffective').value = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
+        this._dirty = true;
+        document.getElementById('publishBtn').disabled = true;
+      },
+
+      body() {
+        return {
+          version: document.getElementById('dVersion').value.trim(),
+          effectiveDate: document.getElementById('dEffective').value || null,
+          bodyMarkdown: document.getElementById('dBody').value,
+          changeSummary: document.getElementById('dSummary').value.trim() || null,
+        };
+      },
+
+      async preview() {
+        try {
+          const res = await AdminAPI.post(`${this.base}/${this.kind}/preview`, { bodyMarkdown: document.getElementById('dBody').value });
+          // HTML แปลง + encode ที่เซิร์ฟเวอร์ (ตัวเดียวกับหน้าสาธารณะ) — วางได้ตรง ๆ
+          document.getElementById('previewPane').innerHTML = res.data.html || '<span class="muted">(ว่าง)</span>';
+          const w = res.data.warnings || [];
+          document.getElementById('previewWarnings').innerHTML = w.length
+            ? `<div class="warn-list">${w.map(x => '⚠️ ' + AdminLayout.esc(x)).join('<br>')}</div>` : '';
+        } catch (e) { AdminLayout.toast('ดูตัวอย่างไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      async save() {
+        const btn = document.getElementById('saveBtn');
+        btn.disabled = true;
+        try {
+          const res = await AdminAPI.put(`${this.base}/${this.kind}/draft`, this.body());
+          AdminLayout.toast(res.message || 'บันทึกร่างแล้ว');
+          await this.load();
+          await this.preview();
+        } catch (e) { AdminLayout.toast('บันทึกร่างไม่สำเร็จ: ' + e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+
+      async publish() {
+        const d = this.doc; if (!d || !d.draft) return;
+        if (this._dirty) { AdminLayout.toast('มีการแก้ที่ยังไม่บันทึก — กด "บันทึกร่าง" ก่อน', 'error'); return; }
+        const v = d.draft.version || '?';
+        if (!confirm(`เผยแพร่${d.title} ฉบับ ${v} (มีผล ${this.thaiDate(d.draft.effectiveDate)})?\n\nหลังเผยแพร่แก้ฉบับนี้ไม่ได้อีก — ต้องออกฉบับใหม่`)) return;
+        const btn = document.getElementById('publishBtn');
+        btn.disabled = true;
+        try {
+          const res = await AdminAPI.post(`${this.base}/${this.kind}/publish`, {});
+          AdminLayout.toast(res.message || 'เผยแพร่แล้ว');
+          await this.load();
+        } catch (e) { AdminLayout.toast('เผยแพร่ไม่สำเร็จ: ' + e.message, 'error'); btn.disabled = false; }
+      },
+
+      async discard() {
+        if (!confirm('ทิ้งร่างนี้? (ฉบับที่เผยแพร่แล้วไม่ถูกแตะ)')) return;
+        try {
+          const res = await AdminAPI.del(`${this.base}/${this.kind}/draft`);
+          AdminLayout.toast(res.message || 'ทิ้งร่างแล้ว');
+          await this.load();
+        } catch (e) { AdminLayout.toast('ทิ้งร่างไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

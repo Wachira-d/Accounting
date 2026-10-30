@@ -487,6 +487,21 @@ public partial class LodgingService
                     pendingGuests.Select(x => (x.GuestPhone, x.GuestEmail)), request.GuestPhone, request.GuestEmail);
                 if (LodgingBookingGuards.PendingCapProblem(existing) is string capProblem)
                     throw new BusinessRuleException(capProblem, "LODGING-PENDING-CAP", 429);
+
+                // รอบ 217 (คำตัดสินข้อ 175 ข): กดจองเบิ้ล/สองแท็บ/หน้าเก่าไม่ส่ง Idempotency-Key — เบอร์/อีเมลเดิม · วันเข้า-ออกเดิม · ภายในหน้าต่าง ⇒ ไม่สร้างชุดที่สอง
+                // (ตรวจใต้ล็อกที่พักเดียวกับห้องว่าง ⇒ คำขอพร้อมกันเห็นกัน) · แขกนิรนามไม่ได้ใบเดิมคืน (เบอร์ใครก็พิมพ์ได้) · ตั้งใจจองเพิ่ม ⇒ ConfirmAdditional
+                if (!request.ConfirmAdditional
+                    && DuplicateSubmitGuard.IdentityOf(null, request.GuestPhone, request.GuestEmail) is { } requester)
+                {
+                    var since = DuplicateSubmitGuard.WindowStart(DateTime.UtcNow);
+                    var recent = await _db.LodgingReservations.AsNoTracking()
+                        .Where(x => x.CompanyId == companyId && x.PropertyId == propertyId && x.CheckInDate == checkIn && x.CheckOutDate == checkOut
+                            && x.CreatedAt >= since && x.Status != LodgingReservationStatus.Cancelled && x.Status != LodgingReservationStatus.NoShow)
+                        .OrderBy(x => x.CreatedAt)
+                        .Select(x => new { x.Id, x.GuestPhone, x.GuestEmail }).ToListAsync();
+                    if (DuplicateSubmitGuard.FindDuplicate(recent, x => DuplicateSubmitGuard.IdentityOf(null, x.GuestPhone, x.GuestEmail), requester) != null)
+                        throw new BusinessRuleException(DuplicateSubmitGuard.LodgingGuestMessage, DuplicateSubmitGuard.LodgingRuleCode, 409);
+                }
             }
 
             var contactId = request.ContactId ?? await FindOrCreateContactAsync(companyId, request, actor);

@@ -5787,6 +5787,31 @@ _รอบ 213 ฝ่ายค้าน (ไม่มีข้อ blocking · �
 (d) แอดมิน "คืนค่าตั้งต้น" แพ็ก (e) คำอธิบายอายุแพ็กตรงกับ GREATEST (f) ซื้อแพ็กแล้ววาดรายการค้างส่งใหม่ · ปุ่มกลับข้อความเดิมเมื่อล้ม ·
 (CI) Db test ล้ม: `ResendCount` NOT NULL ไม่มี default ในโมเดล ⇒ INSERT ดิบของ `ClaimAsync` ล้ม — ระบุคอลัมน์ใน INSERT + `HasDefaultValue(0)` · เทสต์ CMS213-11..16 · `required_call_site_check` +7 กติกา/แก้ 7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e877767d · 41bcab58_
 
+_รอบ 214 (คำตัดสินข้อ 173 · เจ้าของ: "นโยบายความเป็นส่วนตัว กับ ข้อกำหนดการใช้บริการ เรามีลิงค์ให้ลูกค้าอ่านรึยัง ... admin ปรับแต่ง เปลี่ยนได้ เห็น url"):
+(1) **แพลตฟอร์ม** — ตาราง `LegalDocumentVersions` (append-only หลังเผยแพร่ · ร่าง 1 ฉบับ/ชนิด · กติกา `Helpers/LegalDocumentPolicy`) + `ILegalDocumentService` +
+หน้า `/admin/legal.html` (`AdminLegalDocumentController`: ร่าง · ตัวอย่าง · เผยแพร่ · ทิ้งร่าง · ประวัติ · URL สาธารณะ + คัดลอก/เปิด) · เนื้อความเดิมของ privacy.html/terms.html
+ย้ายเป็นฉบับ 1.0 ใน `Helpers/LegalDocumentDefaults` (ไม่ seed แถว — ตารางว่าง = เหมือนเดิม) · หน้า privacy/terms ดึง `GET /api/legal/documents/{kind}` (HTML จาก
+`Helpers/LegalMarkdown` — markdown ชุดย่อย encode ทุกตัว · ลิงก์ allowlist · โทเคนแทนหลังแปลง) + ประวัติฉบับ/ประกาศล่วงหน้า ·
+(2) resolver เวอร์ชันตัวเดียว `GetConsentVersionAsync` แทน `PdpaPolicy.CurrentVersion` ที่ `AuthService` + `/api/legal/policy` · แถบ "มีฉบับใหม่" ใน `js/layout.js`
+→ `GET/POST /api/legal/acceptance` (แจ้ง ไม่บล็อก · หลักฐาน `PdpaConsentRecord` `policy-update:terms-and-privacy`) · ลิงก์ที่หน้าเข้าสู่ระบบ + เมนูผู้ใช้ ·
+(3) **ร้าน (CMS)** — `Helpers/CmsLegalPages.Resolve` (ลิงก์ร้าน > ข้อความร้าน `Sites.PrivacyPolicyMarkdown/TermsOfServiceMarkdown` > แม่แบบที่เติมตัวตนร้าน) ·
+หน้า storefront `legal/privacy|terms` + ลิงก์ท้ายเว็บ/ช่องยินยอม/สมัครสมาชิก/แบนเนอร์คุกกี้ · cms-edit สามโหมด + ช่องข้อกำหนดที่เดิมไม่มี UI + URL/คัดลอก/เปิด/ตัวอย่าง ·
+ลิงก์ร้านตรวจก่อนเก็บ + ซ่อมสตริงว่างเดิม (`Helpers/LegalDocumentMigration`) · (4) หน้าจองโต๊ะ → `/shop-policy.html` (`GET /api/public/reservations/legal/{companyId}/{kind}`) ·
+เทสต์ `LegalDocumentTests` + `Db/LegalDocumentDbTests` (TEST_PLAN LEGAL214-01..12) · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 215 (2026-10-30 · ทีม UX/UI · คำตัดสินข้อ 176): ออกแบบ "พื้นที่ทำงานรายเว็บ" (`erp-review/2026-10-30/CMS_UX_REDESIGN.md` + mockups · c25cc7aa · 7a6b5fee)
+แล้วทำเฟส 1 — แถบซ้ายหมวดงานเว็บเหลือ "พื้นที่ทำงานเว็บไซต์" + "เว็บไซต์ทั้งหมด" (หน้ารายเว็บ 7 หน้าพับไว้ · id/สิทธิ์เดิม) · ชื่อหมวดจากเซิร์ฟเวอร์
+(`CmsModuleResolver.NavSectionLabel`) · หัวพื้นที่ทำงาน (ตัวสลับเว็บเดียว · ป้ายขอบเขต · แท็บตาม `site.modules`) · lead เฉพาะเว็บที่รับคำขอได้ (`HasLeadSource`) ·
+ภาพรวมทุกไซต์เป็น `?siteId=all` จริง · Front desk/ตั้งค่าที่พักผ่าน `pickProperty` (?siteId= ไม่มีที่พัก ⇒ ไม่ตกไปแห่งแรก) · Portal/รับชำระออนไลน์ย้ายหมวด ·
+sim `cms_workspace_nav_sim.js` (negative 7) · ไม่แตะ cms-edit/storefront/booking · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5a0da695 · 2b0d6f2d · e717d3b5_
+
+
+_รอบ 217 (คำตัดสินข้อ 175): เจ้าของรายงาน "กดจองเบิ้ลสองที บันทึกการจองซ้ำได้" (BK-2610-0003/0004) + "กดยืนยันจองแล้วนิ่ง ไม่ขึ้นว่าโหลด" ·
+(ก) `IdempotencyMiddleware` เดิมครอบ `/api/*` อยู่แล้วแต่หน้าเว็บลูกค้าไม่เคยส่งคีย์ + ไม่ตรวจเนื้อคำขอ ⇒ กติกาย้ายเข้า `Helpers/IdempotencyKeyPolicy` + `RequestHash` (คีย์เดิมเนื้อต่าง 409 mismatch) ·
+namespace ด้วยแฮช credential header · ตาราง `IdempotencyRecords` ย้ายไป `Helpers/SubmitOnceMigration` · หน้าเว็บ `js/submit-once.js` (ปุ่มล็อก + คีย์ต่อฟอร์ม + รอ in-flight) ใช้ที่ storefront/booking/booking-manage/contact/pay-widget/cms-bookings ·
+(ข) `Helpers/DuplicateSubmitGuard` ใต้ล็อกไซต์/ที่พัก (ผู้จองเดิม + รอบเดิม 10 นาที · สมาชิกได้ใบเดิม · แขก 409 · `ConfirmAdditional`) · ออเดอร์สองแท็บ 500 ⇒ 409 ·
+(ค) ต้นเหตุ "นิ่ง" = `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` (SMTP/LINE ถึงลูกค้า + อีเมลร้านทีละผู้รับ) ในคำขอ ⇒ คิว `DeferredNotifications` + `DeferredNotifyDispatchJob` (10 วิ · JobLock · SKIP LOCKED · lease) ·
+เทสต์ SUB-01..15 · `required_call_site_check` +10 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74_
 
 _รอบ 216 (คำตัดสินข้อ 174 · เจ้าของ: "ล็อคอินไว้แล้วควรมี ให้บันทึกข้อมูลส่วนตัวและดึงมาได้เลย"): ข้อมูลส่วนตัวของสมาชิกหน้าร้าน —
 `GET portal/me` คืนชื่อ/เบอร์/ข้อมูลใบกำกับ/ที่อยู่จัดส่ง+ใบกำกับ (ข้อความที่อยู่ประกอบที่เซิร์ฟเวอร์) · `PUT portal/me/profile` (ตัวตรวจเดียว `Helpers/StorefrontMemberProfile` ·

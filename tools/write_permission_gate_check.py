@@ -233,6 +233,9 @@ READ_ONLY_POSTS_IN_FILE = {
     # เขียนแค่ตัวนับโควตา ChatRateBuckets) · POST เพื่อไม่ให้เบอร์/อีเมลไปอยู่ใน URL/log · ด่าน = โควตาต่อ IP + ต่อเลขที่ (required_call_site_check ล็อก)
     ("CmsStorefrontCustomerController.cs", "LookupBooking"),
     ("CmsStorefrontCustomerController.cs", "LookupOrder"),
+    # รอบ 214: ตัวอย่างหน้านโยบาย/ข้อกำหนดของร้าน — แปลง markdown คืน HTML (CmsRenderingService.PreviewLegalPageAsync ไม่มี SaveChanges ·
+    # AsNoTracking · ตรวจด้วยตาตอนเพิ่ม) · การเก็บจริงผ่าน PUT {siteId} เส้นเดิม
+    ("CmsSiteController.cs", "LegalPreview"),
 }
 
 # POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ
@@ -248,6 +251,9 @@ SELF_SERVICE_POSTS = {
     # ผู้กดต้องเป็นผู้อนุมัติของขั้นปัจจุบันและไม่ใช่ผู้ยื่น (ApprovalService.SubmitActionAsync)
     ("ApprovalController.cs", "SubmitForApproval"),
     ("ApprovalController.cs", "SubmitAction"),
+    # รอบ 214: ผู้ใช้กด "รับทราบและยอมรับ" นโยบายฉบับใหม่ของ**ตัวเอง** (SubjectUserId = ผู้ล็อกอิน · ไม่มีข้อมูลคนอื่นให้แตะ) ·
+    # ปฏิเสธคีย์ API + โหมดเข้าดูในนามลูกค้า (required_call_site_check ล็อก)
+    ("LegalController.cs", "Accept"),
     # รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้านแก้ข้อมูลส่วนตัวของตัวเอง — ไม่มีผู้ใช้ ERP ให้ตรวจสิทธิ์ (โทเคนหน้าร้าน) ·
     # ด่าน = Me(companyId, siteId) (โทเคนของเว็บนี้ + ลูกค้ายังใช้งาน) แล้วเขียนเฉพาะ id ในโทเคน (required_call_site_check ล็อก)
     ("CmsStorefrontCustomerController.cs", "UpdateMyProfile"),

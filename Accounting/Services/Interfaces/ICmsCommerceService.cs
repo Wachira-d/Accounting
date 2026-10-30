@@ -82,4 +82,6 @@ public interface ICmsCommerceService
 
     /// <summary>รอบ 213: ส่งซ้ำข้อความถึงลูกค้าที่ค้างเพราะโควตา (ยืนยันคำสั่งซื้อ/จัดส่ง/พร้อมรับ/ส่งมอบ) — ประกอบใหม่จากสถานะปัจจุบันผ่านเส้นเดิม · ผู้เรียกเดียว <c>CustomerNotifyResendService</c></summary>
     Task<string?> ResendCustomerNotifyAsync(Guid companyId, Guid orderId, string eventKey);
+    /// <summary>รอบ 217 (ข้อ 175 ง): ส่งแจ้งเตือน "ออเดอร์ใหม่" (ร้าน + ลูกค้า) — เรียกจาก <c>DeferredNotifyDispatcher</c> เท่านั้น (หลังคำขอสั่งซื้อตอบไปแล้ว)</summary>
+    Task DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid orderId);
 }

@@ -1,13 +1,12 @@
 /**
- * ตัวเติมข้อมูล "ผู้ควบคุมข้อมูลส่วนบุคคล" + เวอร์ชันนโยบาย บนหน้าเอกสาร
- * ทางกฎหมาย (terms.html / privacy.html) — **resolver กลางตัวเดียว**
+ * ตัวแสดงเอกสารทางกฎหมายของแพลตฟอร์ม (terms.html / privacy.html) — **resolver กลางตัวเดียว**
  *
- * ทำไมต้องรวมไว้ที่เดียว: สองหน้านี้ต้องแสดงชื่อ/ที่อยู่/เลขผู้เสียภาษี/อีเมล
- * ของผู้ให้บริการชุดเดียวกันเป๊ะ ถ้าต่างหน้าต่างเขียนโค้ดเติมเอง วันหนึ่งจะ
- * drift (defect class "สอง renderer ห้าม drift" ใน CLAUDE.md กฎเหล็ก #4 A)
+ * รอบ 214 (คำตัดสินข้อ 173): เนื้อความทั้งฉบับมาจากเซิร์ฟเวอร์ (GET /api/legal/documents/{kind}) —
+ * ฉบับที่ผู้ดูแลระบบเผยแพร่ที่ /admin/legal.html หรือฉบับตั้งต้นของระบบ · HTML ถูกแปลงและ encode ที่เซิร์ฟเวอร์แล้ว
+ * (Helpers/LegalMarkdown — ข้อความทุกตัว HtmlEncode · ลิงก์รับเฉพาะ http(s)/mailto/tel/path ภายใน) หน้านี้แค่วาง
+ * ชื่อ/ที่อยู่/อีเมลผู้ควบคุมข้อมูลถูกแทนในเนื้อความที่เซิร์ฟเวอร์แล้ว (SiteSettings.PlatformSeller* — ตัวตั้งเดียว)
  *
- * แหล่งข้อมูล: GET /api/legal/policy ← SiteSettings.PlatformSeller* ที่แอดมิน
- * กรอกไว้ที่ /admin/site-settings.html แท็บ "ใบเสร็จค่าบริการ"
+ * ?version=1.0 = ดูฉบับเก่า (ประวัติ) — แสดงป้าย "ฉบับเก่า" + ลิงก์กลับฉบับปัจจุบัน
  */
 window.LegalPolicy = {
   data: null,
@@ -17,7 +16,7 @@ window.LegalPolicy = {
     if (!iso) return '-';
     const months = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน',
                     'กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
-    const [y, m, d] = iso.split('-').map(Number);
+    const [y, m, d] = String(iso).split('-').map(Number);
     if (!y || !m || !d) return iso;
     return `${d} ${months[m - 1]} ${y + 543}`;
   },
@@ -27,40 +26,67 @@ window.LegalPolicy = {
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   },
 
-  /** เติมทุกจุดบนหน้า: [data-legal="version|effectiveDate|controllerName|…"] */
-  async load() {
-    let p = null;
+  /** โหลดเอกสาร kind = 'privacy' | 'terms' แล้ววางลง #legalBody + เติมหัว/ท้ายเอกสาร */
+  async loadDocument(kind) {
+    const params = new URLSearchParams(location.search);
+    const version = params.get('version');
+    const body = document.getElementById('legalBody');
+    let d = null;
     try {
-      const r = await fetch('/api/legal/policy');
-      const j = await r.json();
-      p = j.data || j;
-    } catch (e) { /* ออฟไลน์/เซิร์ฟเวอร์ล่ม — ยังต้องอ่านเนื้อนโยบายได้ */ }
-    this.data = p;
+      const url = `/api/legal/documents/${encodeURIComponent(kind)}` + (version ? `?version=${encodeURIComponent(version)}` : '');
+      const r = await fetch(url);
+      const j = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((j && j.message) || 'โหลดเอกสารไม่สำเร็จ');
+      d = j.data || j;
+    } catch (e) {
+      // ล้มดัง (F2 ข้อ 7): บอกตรง ๆ ว่าโหลดไม่ได้ — ไม่ปล่อยหน้าว่างที่ดูเหมือนเอกสารไม่มีเนื้อหา
+      if (body) body.innerHTML = `<div class="legal-warn">โหลดเนื้อความไม่สำเร็จ (${this.esc(e.message)}) — กรุณาลองใหม่อีกครั้ง</div>`;
+      return null;
+    }
+    this.data = d;
 
-    const put = (key, text) => document.querySelectorAll(`[data-legal="${key}"]`)
-      .forEach(el => el.textContent = text);
+    const put = (key, text) => document.querySelectorAll(`[data-legal="${key}"]`).forEach(el => { el.textContent = text; });
+    put('version', d.version || '-');
+    put('effectiveDate', this.thaiDate(d.effectiveDate));
+    // เซิร์ฟเวอร์แปลง + encode แล้ว (LegalMarkdown) — วางเป็น HTML ได้ ข้อความผู้ใช้ไม่มีทางเป็นแท็ก
+    if (body) body.innerHTML = d.html || '<p>-</p>';
 
-    put('version', p?.version || '-');
-    put('effectiveDate', this.thaiDate(p?.effectiveDate));
-    put('controllerName', p?.controllerName || 'ผู้ให้บริการ (ยังไม่ได้ตั้งค่า)');
-    put('controllerTaxId', p?.controllerTaxId || '-');
-    put('controllerAddress', p?.controllerAddress || '-');
-    put('controllerPhone', p?.controllerPhone || '-');
-    put('privacyEmail', p?.privacyContactEmail || '-');
-
-    // อีเมลติดต่อ — ทำเป็นลิงก์ mailto ให้กดได้จริง
-    document.querySelectorAll('[data-legal-mailto]').forEach(el => {
-      if (p?.privacyContactEmail) {
-        el.innerHTML = `<a href="mailto:${this.esc(p.privacyContactEmail)}">${this.esc(p.privacyContactEmail)}</a>`;
-      } else {
-        el.textContent = 'ยังไม่ได้ตั้งค่าอีเมลติดต่อ';
-      }
-    });
-
-    // ⚠️ แอดมินยังไม่ได้กรอกตัวตนผู้ควบคุมข้อมูล = นโยบายฉบับนี้ยัง "ไม่แจ้ง
-    // ผู้ควบคุมข้อมูล" ตาม ม.23(1) — ต้องเห็นชัด ไม่ใช่ปล่อยขีดกลางเงียบ ๆ
     const warn = document.getElementById('legalWarn');
-    if (warn) warn.style.display = p && p.controllerConfigured ? 'none' : 'block';
-    return p;
+    if (warn) warn.style.display = d.controllerConfigured ? 'none' : 'block';
+
+    const notice = document.getElementById('legalNotice');
+    if (notice) {
+      if (d.isArchived) {
+        notice.innerHTML = `ท่านกำลังดู<b>ฉบับเก่า</b> (ฉบับที่ ${this.esc(d.version)}) — <a href="${this.esc(location.pathname)}">ดูฉบับปัจจุบัน</a>`;
+        notice.style.display = 'block';
+      } else if (d.upcoming) {
+        notice.innerHTML = `📣 ประกาศ: ฉบับที่ ${this.esc(d.upcoming.version)} จะมีผลตั้งแต่ <b>${this.esc(this.thaiDate(d.upcoming.effectiveDate))}</b>`
+          + (d.upcoming.changeSummary ? ` — ${this.esc(d.upcoming.changeSummary)}` : '')
+          + ` · <a href="?version=${encodeURIComponent(d.upcoming.version)}">อ่านฉบับใหม่</a>`;
+        notice.style.display = 'block';
+      } else {
+        notice.style.display = 'none';
+      }
+    }
+    this.loadHistory(kind, d.version);
+    return d;
+  },
+
+  /** ประวัติฉบับ (สาธารณะ) — ซ่อนเมื่อมีฉบับเดียว */
+  async loadHistory(kind, shownVersion) {
+    const box = document.getElementById('legalHistory');
+    if (!box) return;
+    try {
+      const r = await fetch(`/api/legal/documents/${encodeURIComponent(kind)}/history`);
+      const j = await r.json();
+      const rows = (j && j.data) || [];
+      if (rows.length < 2) { box.style.display = 'none'; return; }
+      box.innerHTML = '<b>ประวัติฉบับ:</b> ' + rows.map(h => {
+        const label = `ฉบับที่ ${this.esc(h.version)} (มีผล ${this.esc(this.thaiDate(h.effectiveDate))})`
+          + (h.isCurrent ? ' · ปัจจุบัน' : h.isUpcoming ? ' · ประกาศล่วงหน้า' : '');
+        return h.version === shownVersion ? `<span>${label}</span>` : `<a href="?version=${encodeURIComponent(h.version)}">${label}</a>`;
+      }).join(' · ');
+      box.style.display = 'block';
+    } catch (_) { box.style.display = 'none'; /* ประวัติเป็นส่วนเสริม — เนื้อความหลักแสดงแล้ว */ }
   },
 };

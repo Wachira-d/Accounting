@@ -261,8 +261,30 @@ public class CmsSiteService : ICmsSiteService
         if (request.FacebookUrl != null) site.FacebookUrl = Blank(request.FacebookUrl);
         if (request.InstagramUrl != null) site.InstagramUrl = Blank(request.InstagramUrl);
         if (request.CookieConsentEnabled.HasValue) site.CookieConsentEnabled = request.CookieConsentEnabled.Value;
-        if (request.PrivacyPolicyUrl != null) site.PrivacyPolicyUrl = request.PrivacyPolicyUrl;
-        if (request.TermsOfServiceUrl != null) site.TermsOfServiceUrl = request.TermsOfServiceUrl;
+        // รอบ 214 (คำตัดสินข้อ 173 B): ลิงก์นโยบาย/ข้อกำหนดของร้าน — ตรวจก่อนเก็บ (เดิมเก็บค่าดิบ) · "" = ล้าง ⇒ ใช้หน้าของระบบ
+        if (request.PrivacyPolicyUrl != null)
+        {
+            if (CmsLegalPages.ValidateExternalUrl(request.PrivacyPolicyUrl) is string pErr) throw new BusinessRuleException(pErr, "PDPA-23-SHOP-POLICY");
+            site.PrivacyPolicyUrl = Blank(request.PrivacyPolicyUrl);
+        }
+        if (request.TermsOfServiceUrl != null)
+        {
+            if (CmsLegalPages.ValidateExternalUrl(request.TermsOfServiceUrl) is string tErr) throw new BusinessRuleException(tErr, "PDPA-23-SHOP-POLICY");
+            site.TermsOfServiceUrl = Blank(request.TermsOfServiceUrl);
+        }
+        // ข้อความที่ร้านเขียนเอง — "" = กลับไปใช้แม่แบบ · เปลี่ยนจริงเท่านั้นถึงขยับวันที่ปรับปรุง (หน้าสาธารณะแสดงวันที่นี้)
+        if (request.PrivacyPolicyMarkdown != null)
+        {
+            var md = Blank(request.PrivacyPolicyMarkdown);
+            if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"นโยบายความเป็นส่วนตัวยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
+            if (md != site.PrivacyPolicyMarkdown) { site.PrivacyPolicyMarkdown = md; site.PrivacyPolicyUpdatedAt = DateTime.UtcNow; }
+        }
+        if (request.TermsOfServiceMarkdown != null)
+        {
+            var md = Blank(request.TermsOfServiceMarkdown);
+            if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"ข้อกำหนดการใช้บริการยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
+            if (md != site.TermsOfServiceMarkdown) { site.TermsOfServiceMarkdown = md; site.TermsOfServiceUpdatedAt = DateTime.UtcNow; }
+        }
         // รอบ 209 P6 (ฑ): ยินยอม PDPA บนฟอร์มหน้าเว็บ — "" = ข้อความมาตรฐาน · null = ไม่เปลี่ยน (echo ใน SiteResponse · ผู้อ่าน: CmsDataConsent)
         if (request.RequireDataConsent.HasValue) site.RequireDataConsent = request.RequireDataConsent.Value;
         if (request.DataConsentText != null) site.DataConsentText = Blank(request.DataConsentText);
@@ -288,6 +310,7 @@ public class CmsSiteService : ICmsSiteService
         var withServices = (await _db.SiteBookingServices.Where(b => b.CompanyId == companyId && !b.IsDeleted && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
         var withBookings = (await _db.SiteBookings.Where(b => b.CompanyId == companyId && ids.Contains(b.SiteId)).Select(b => b.SiteId).Distinct().ToListAsync()).ToHashSet();
         var withLodging = (await _db.LodgingProperties.Where(p => p.CompanyId == companyId && p.SiteId != null && ids.Contains(p.SiteId.Value)).Select(p => p.SiteId!.Value).Distinct().ToListAsync()).ToHashSet();
+        var withLeadSource = await LoadLeadSourceSiteIdsAsync(_db, companyId, ids);
         return sites.ToDictionary(x => x.Id, x => CmsModuleResolver.Resolve(new CmsModuleFacts(
             HasCommerceSite: CmsModuleResolver.IsCommerceSiteType(x.SiteType),
             HasOrders: withOrders.Contains(x.Id),
@@ -295,7 +318,28 @@ public class CmsSiteService : ICmsSiteService
             HasBookings: withBookings.Contains(x.Id),
             HasLodgingProperty: withLodging.Contains(x.Id),
             HasHotelSite: x.Industry == IndustryType.Hotel,
-            HasAnySite: true)).ToList());
+            HasLeadSource: withLeadSource.Contains(x.Id))).ToList());
+    }
+
+    /// <summary>เว็บที่ "รับคำขอได้จริง" (รอบ 215 · fact <c>HasLeadSource</c> ของ <see cref="CmsModuleResolver"/>) — ตัวเดียวที่ทั้งระดับเว็บ
+    /// (ที่นี่) และระดับบริษัท (<c>SettingsService.ComputeCmsModulesAsync</c>) เรียก ห้ามเขียนเงื่อนไขซ้ำ: มีบล็อกฟอร์มติดต่อบนหน้าที่ยังไม่ลบ ·
+    /// ฟอร์มกำหนดเองที่เปิดและส่งเข้าระบบ · หรือมี lead แล้ว (เว็บที่เคยรับ lead ต้องไม่หายจากเมนู) · ทุก query กรอง CompanyId</summary>
+    internal static async Task<HashSet<Guid>> LoadLeadSourceSiteIdsAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid>? siteIds)
+    {
+        var blocks = db.PageBlocks.Where(b => b.CompanyId == companyId && !b.IsDeleted && b.BlockType == CmsBlockType.ContactForm
+            && !b.Page.IsDeleted && b.Page.CompanyId == companyId);
+        var forms = db.SiteForms.Where(f => f.CompanyId == companyId && !f.IsDeleted && f.IsActive && f.CreateErpDocument);
+        var leads = db.CmsLeads.Where(l => l.CompanyId == companyId);
+        if (siteIds != null)
+        {
+            blocks = blocks.Where(b => siteIds.Contains(b.Page.SiteId));
+            forms = forms.Where(f => siteIds.Contains(f.SiteId));
+            leads = leads.Where(l => siteIds.Contains(l.SiteId));
+        }
+        var set = (await blocks.Select(b => b.Page.SiteId).Distinct().ToListAsync()).ToHashSet();
+        set.UnionWith(await forms.Select(f => f.SiteId).Distinct().ToListAsync());
+        set.UnionWith(await leads.Select(l => l.SiteId).Distinct().ToListAsync());
+        return set;
     }
 
     public async Task<SiteResponse?> GetSiteAsync(Guid companyId, Guid siteId)
@@ -341,6 +385,11 @@ public class CmsSiteService : ICmsSiteService
                 InstagramUrl = s.InstagramUrl,
                 CookieConsentEnabled = s.CookieConsentEnabled,
                 PrivacyPolicyUrl = s.PrivacyPolicyUrl,
+                TermsOfServiceUrl = s.TermsOfServiceUrl,
+                PrivacyPolicyMarkdown = s.PrivacyPolicyMarkdown,
+                TermsOfServiceMarkdown = s.TermsOfServiceMarkdown,
+                PrivacyPolicyUpdatedAt = s.PrivacyPolicyUpdatedAt,
+                TermsOfServiceUpdatedAt = s.TermsOfServiceUpdatedAt,
                 RequireDataConsent = s.RequireDataConsent,
                 DataConsentText = s.DataConsentText,
                 CurrentStorageUsed = s.CurrentStorageUsed,
@@ -355,7 +404,12 @@ public class CmsSiteService : ICmsSiteService
             })
             .FirstOrDefaultAsync();
         if (site != null)
+        {
             site.Modules = (await LoadSiteModulesAsync(companyId, new[] { (Id: site.Id, SiteType: site.SiteType, Industry: site.IndustryType) })).GetValueOrDefault(site.Id) ?? new();
+            // รอบ 214: โหมดนโยบาย/ข้อกำหนด — ตัวตัดสินเดียวกับ storefront (หน้า cms-edit ไม่ตัดสินเอง)
+            site.PrivacyLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindPrivacy, site.PrivacyPolicyUrl, site.PrivacyPolicyMarkdown).Mode;
+            site.TermsLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindTerms, site.TermsOfServiceUrl, site.TermsOfServiceMarkdown).Mode;
+        }
         return site;
     }
 
