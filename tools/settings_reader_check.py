@@ -67,6 +67,8 @@ ENTITIES = {
     # payroll.html = หน้าแก้ตารางภาษีเงินได้ (แท็บ tax-rule) — ช่องที่แสดงค่าแบบล็อกไว้ไม่ใช่ผู้อ่าน (ฝ่ายค้านรอบ 193 W-C6)
     'TaxRuleConfig': ('Accounting/Models/Entities/Payroll.cs', None, ['Accounting/wwwroot/pages/payroll.html']),
     # รอบ 212 C: ชุดสรุปประจำวันทาง LINE — ค่าที่ผู้ใช้ตั้ง (สถานะ LastSent/LastRun เป็นของระบบ) · ผู้อ่าน = StaffDailySummaryService/Plan
+    # รอบ 213 (คำตัดสินข้อ 172): ขนาด/อายุแพ็ก notify.topup ที่แอดมินตั้ง — ผู้อ่าน = NotifyQuotaService.LoadPackAsync → NotifyQuotaPolicy.TopUpPack
+    'ApiFeature': ('Accounting/Models/Entities/Metering.cs', {'PackSize', 'PackValidDays'}, ['Accounting/wwwroot/pages/admin-addons.html']),
     'StaffDailySummaryConfig': ('Accounting/Models/Entities/StaffDailySummary.cs',
                                 {'Enabled', 'SendAtLocal', 'Sections', 'RecipientUserIds', 'RecipientRoles'},
                                 ['Accounting/wwwroot/pages/settings.html', 'Accounting/wwwroot/js/staff-daily-summary.js']),

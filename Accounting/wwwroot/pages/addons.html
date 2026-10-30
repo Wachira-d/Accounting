@@ -55,6 +55,8 @@
 
       <!-- รอบ 212 แพ็ก A: โควตาข้อความผ่านช่องกลาง + ซื้อแพ็ก notify.topup (เส้นเดียวกับ quota/topup) -->
       <div class="card" id="notifyQuotaWrap"><div id="notifyQuotaCard"></div></div>
+      <!-- รอบ 213 (คำตัดสินข้อ 172): ข้อความถึงลูกค้าที่ค้างเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา (/js/customer-notify.js · เซิร์ฟเวอร์ตัดสินทุกแถว) -->
+      <div class="card" id="notifyPending"><div id="notifyPendingBody" class="muted">กำลังโหลด…</div></div>
 
       <div class="card" id="missionCard" style="display:none">
         <h3>🎁 แลกโควตาเพิ่มโดยไม่เสียเงิน</h3>
@@ -116,7 +118,16 @@
         // (ผลลัพธ์ขึ้นกับลำดับ response = defect class "ใครมาก่อนชนะ")
         await this.loadAccess();
         await Promise.all([this.loadFeatures(), this.loadQuota(), this.loadMissions()]);
-        if (window.CustomerNotify) CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: this.cid() });
+        if (window.CustomerNotify) {
+          const quotaEl = document.getElementById('notifyQuotaCard');
+          const pendingEl = document.getElementById('notifyPendingBody');
+          // ซื้อแพ็กแล้ว ⇒ วาดรายการค้างส่งใหม่ (โควตาที่เหลือ/คำใบ้เปลี่ยน — ฝ่ายค้านรอบ 213 (f)) · ส่งซ้ำแล้ว ⇒ วาดการ์ดโควตาใหม่ · ไม่มีการส่งเองโดยไม่กด
+          const pendingOpts = { companyId: this.cid() };
+          const quotaOpts = { companyId: this.cid(), pendingHref: '#notifyPending', onTopUp: () => CustomerNotify.mountPending(pendingEl, pendingOpts) };
+          pendingOpts.onChange = () => CustomerNotify.mountQuota(quotaEl, quotaOpts);
+          CustomerNotify.mountQuota(quotaEl, quotaOpts);
+          CustomerNotify.mountPending(pendingEl, pendingOpts);
+        }
       },
 
       async loadAccess() {

@@ -12,6 +12,11 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class AddOnBilling
 {
+    /// <summary>ฝ่ายค้านรอบ 213 S3: หน่วยบนบรรทัดใบแจ้งหนี้ — หน่วย ณ ตอนซื้อ (<c>UsageEvent.UnitLabelSnapshot</c>) ชนะป้ายปัจจุบันของฟีเจอร์ ·
+    /// แถวเก่าไม่มี snapshot ⇒ ป้ายของฟีเจอร์ ⇒ "รายการ"</summary>
+    public static string InvoiceUnit(string? snapshot, string? featureLabel)
+        => !string.IsNullOrWhiteSpace(snapshot) ? snapshot.Trim() : !string.IsNullOrWhiteSpace(featureLabel) ? featureLabel : "รายการ";
+
     /// <summary>งวดของเวลา UTC ที่ให้มา ในรูป yyyy-MM ตามปฏิทินไทย (UTC+7)</summary>
     /// <remarks>รอบ 212: InvariantCulture เสมอ — เครื่องที่ตั้ง th-TH จะได้ปี พ.ศ. (2569-11) ⇒ คีย์รอบ/คีย์กันคิดซ้ำไม่ตรงกับเทสต์และเครื่องอื่น</remarks>
     public static string PeriodOf(DateTime utc) => utc.AddHours(7).ToString("yyyy-MM", System.Globalization.CultureInfo.InvariantCulture);

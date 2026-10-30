@@ -218,6 +218,25 @@
           <input type="checkbox" id="fPublished"> เปิดขาย (รับผู้ใช้ใหม่)
         </label>
 
+        <!-- รอบ 213 (คำตัดสินข้อ 172): ขนาด/อายุแพ็ก — เซิร์ฟเวอร์บอกว่าแก้ได้ไหม (packEditable · ตอนนี้เฉพาะ notify.topup) -->
+        <div id="packBox" style="display:none;margin-top:12px;padding:10px 12px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc">
+          <h4 style="margin:0 0 6px;font-size:14px">💬 ขนาดแพ็กข้อความ</h4>
+          <div class="grid2">
+            <div>
+              <label for="fPackSize">จำนวนข้อความต่อแพ็ก</label>
+              <input class="form-control" id="fPackSize" type="number" min="1" step="1">
+            </div>
+            <div>
+              <label for="fPackDays">อายุแพ็ก (วัน)</label>
+              <input class="form-control" id="fPackDays" type="number" min="1" step="1">
+            </div>
+          </div>
+          <label style="display:flex;gap:6px;align-items:center;margin-top:6px;font-size:13px">
+            <input type="checkbox" id="fPackReset"> คืนค่าตั้งต้น (ล้างค่าที่ตั้งไว้)
+          </label>
+          <div class="muted" id="packHint" style="font-size:12px;margin-top:6px"></div>
+        </div>
+
         <hr style="margin:16px 0;border:none;border-top:1px solid #e2e8f0">
         <h4 style="margin:0 0 8px;font-size:14px">ตั้งราคาใหม่</h4>
         <div class="muted" style="font-size:12px;margin-bottom:8px">
@@ -380,6 +399,15 @@
         document.getElementById('fTrial').value = f.trialDays ?? 0;
         this._setMinPlans(f.minPlanCsv || '');
         document.getElementById('fPublished').checked = !!f.isPublished;
+        // รอบ 213: ขนาด/อายุแพ็ก — hydrate ค่าที่ตั้งไว้ (ว่าง = ใช้ค่าที่มีผลตามที่เซิร์ฟเวอร์บอก) · รีเซ็ตทุกครั้งที่เปิดฟอร์ม (ห้ามค้างค่าของรายการก่อน)
+        this._packEditable = !!f.packEditable;
+        document.getElementById('packBox').style.display = this._packEditable ? '' : 'none';
+        document.getElementById('fPackSize').value = f.packSize ?? '';
+        document.getElementById('fPackDays').value = f.packValidDays ?? '';
+        document.getElementById('fPackReset').checked = false;
+        document.getElementById('packHint').textContent = this._packEditable && f.effectivePack
+          ? `ที่มีผลตอนนี้: ${this.n(f.effectivePack.size)} ข้อความ · ใช้ได้ ${f.effectivePack.validDays} วัน — เว้นว่าง = ไม่เปลี่ยน · มีผลกับการซื้อครั้งถัดไปเท่านั้น · อายุนับจากวันซื้อ และโบนัสคงเหลือทั้งก้อนใช้ได้ถึงวันหมดอายุที่ช้ากว่า (ไม่หดอายุของที่ซื้อแล้ว) · หน่วยบนใบแจ้งหนี้ปรับตามจำนวนให้อัตโนมัติ · ราคาต่อแพ็กตั้งที่บล็อก "ตั้งราคาใหม่" ด้านล่าง`
+          : '';
         // ราคาเริ่มต้นว่างเสมอ — การเปิดฟอร์มต้องไม่กลายเป็นการตั้งราคาใหม่โดยไม่ตั้งใจ
         document.getElementById('pMethod').value = '';
         document.getElementById('pPrice').value = '';
@@ -412,6 +440,10 @@
             moduleCode: this._module || null,
             trialDays: +document.getElementById('fTrial').value || 0,
             minPlanCsv: this._getMinPlans(),
+            // รอบ 213: ส่งเฉพาะรายการที่เซิร์ฟเวอร์บอกว่าแก้ได้ · ว่าง = null = ไม่เปลี่ยน
+            packSize: this._packEditable && document.getElementById('fPackSize').value !== '' ? +document.getElementById('fPackSize').value : null,
+            packValidDays: this._packEditable && document.getElementById('fPackDays').value !== '' ? +document.getElementById('fPackDays').value : null,
+            resetPack: this._packEditable && document.getElementById('fPackReset').checked,
           });
 
           if (method) {

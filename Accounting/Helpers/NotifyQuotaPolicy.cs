@@ -106,7 +106,69 @@ public static class NotifyQuotaPolicy
         };
 
     public const string MeteredChannelsNote = "นับเฉพาะข้อความที่ส่งผ่าน LINE OA ของ NextAcc และอีเมลของระบบ NextAcc — LINE OA / ผู้ส่งอีเมลของร้านเองไม่นับ";
+
+    // ───────── รอบ 213 (คำตัดสินข้อ 172): แพ็ก notify.topup ตั้งได้ที่หน้าแอดมิน + เพดานเฉพาะบริษัท ─────────
+
+    public const int MinPackSize = 1;
+    public const int MaxPackSize = 100_000;
+    public const int MinPackValidDays = 1;
+    public const int MaxPackValidDays = 730;
+
+    /// <summary>ขนาด/อายุแพ็ก <c>notify.topup</c> ที่มีผลกับการซื้อครั้งนี้ — ค่าที่แอดมินตั้ง (<c>ApiFeature.PackSize/PackValidDays</c> ของ
+    /// <c>notify.topup</c>) ชนะ · null/นอกช่วง ⇒ ค่าตั้งต้น <see cref="Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack"/> / <see cref="Models.Constants.AddOnCodes.TopUpValidDays"/>
+    /// (<c>documents.topup</c> ไม่อ่านค่านี้ — คงพฤติกรรมเดิม) · มีผลกับการซื้อครั้งถัดไปเท่านั้น · อายุนับจากวันซื้อ และโบนัสคงเหลือทั้งก้อนใช้ได้ถึง
+    /// <b>วันหมดอายุที่ช้ากว่า</b> (GREATEST ของเดิมกับใหม่ — ไม่หดอายุของที่ซื้อไว้แล้ว · ฝ่ายค้านรอบ 213 (e))</summary>
+    public static NotifyTopUpPack TopUpPack(int? packSize, int? validDays)
+        => new(packSize is int s && s >= MinPackSize && s <= MaxPackSize ? s : Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack,
+               validDays is int d && d >= MinPackValidDays && d <= MaxPackValidDays ? d : Models.Constants.AddOnCodes.TopUpValidDays);
+
+    /// <summary>ฝ่ายค้านรอบ 213 S4: ข้อเสนอที่ผู้ซื้อเห็น (ขนาดแพ็ก/ราคา) ยังตรงกับของจริง ณ ตอนซื้อไหม — ไม่ตรง ⇒ คืนข้อความ (ผู้เรียกตอบ 409 + สถานะใหม่ ให้ยืนยันอีกครั้ง) ·
+    /// ผู้เรียกไม่ส่งค่าคาดหวัง (หน้าเก่าที่แคชไว้) ⇒ ไม่ตรวจ (null)</summary>
+    public static string? TopUpOfferChanged(int? expectedPackSize, decimal? expectedPrice, NotifyTopUpPack pack, decimal? currentPrice)
+    {
+        if (expectedPackSize is int s && s != pack.Size)
+            return $"ขนาดแพ็กเปลี่ยนเป็น {N(pack.Size)} ข้อความแล้ว — กรุณาตรวจรายละเอียดแล้วยืนยันอีกครั้ง (ยังไม่ได้คิดเงิน)";
+        if (expectedPrice is decimal p && p != (currentPrice ?? 0m))
+            return $"ราคาแพ็กเปลี่ยนเป็น {(currentPrice ?? 0m).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} บาทแล้ว — กรุณาตรวจรายละเอียดแล้วยืนยันอีกครั้ง (ยังไม่ได้คิดเงิน)";
+        return null;
+    }
+
+    /// <summary>ตรวจค่าที่แอดมินส่งมา (null = ไม่เปลี่ยน) · คืนข้อความไทย หรือ null = ผ่าน</summary>
+    public static string? ValidatePack(int? packSize, int? validDays)
+    {
+        if (packSize is int s && (s < MinPackSize || s > MaxPackSize))
+            return $"จำนวนข้อความต่อแพ็กต้องอยู่ระหว่าง {MinPackSize:N0}–{MaxPackSize:N0}";
+        if (validDays is int d && (d < MinPackValidDays || d > MaxPackValidDays))
+            return $"อายุแพ็กต้องอยู่ระหว่าง {MinPackValidDays}–{MaxPackValidDays} วัน";
+        return null;
+    }
+
+    /// <summary>หน่วยบนใบแจ้งหนี้ (<c>ApiFeature.UnitLabel</c>) — ประกอบจากขนาดแพ็กเสมอ ⇒ "จ่ายราคาแพ็กหนึ่งแต่ได้อีกจำนวน" เกิดไม่ได้</summary>
+    public static string PackUnitLabel(int packSize) => $"แพ็ก {packSize.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} ข้อความ";
+
+    /// <summary>เพดานเฉพาะบริษัทที่แอดมินตั้ง (<c>Subscription.MaxSharedMessagesPerMonth</c>): null = ตามแพ็กเกจ · <see cref="Unlimited"/> = ไม่จำกัด · ≥ 0 = เพดาน ·
+    /// คืนข้อความไทย หรือ null = ผ่าน</summary>
+    public static string? ValidateOverride(int? value)
+        => value is int v && v < Unlimited ? "เพดานต้องเป็น -1 (ไม่จำกัด), 0 ขึ้นไป หรือเว้นว่าง (ตามแพ็กเกจ)" : null;
+
+    /// <summary>บรรทัดสรุปสำหรับหน้าแอดมิน (เซิร์ฟเวอร์ประกอบ · หน้าเว็บแสดงอย่างเดียว)</summary>
+    public static string AdminSummary(int? subscriptionOverride, int used, int planLimit, int bonusRemaining, DateTime? bonusExpiresAtUtc)
+    {
+        var source = subscriptionOverride is int o
+            ? (o < 0 ? "ค่าเฉพาะบริษัท: ไม่จำกัด" : $"ค่าเฉพาะบริษัท {N(o)}")
+            : "ตามแพ็กเกจ";
+        var limit = planLimit < 0 ? "ไม่จำกัด" : N(planLimit);
+        var bonus = bonusRemaining > 0
+            ? $" · โบนัสคงเหลือ {N(bonusRemaining)}" + (bonusExpiresAtUtc is DateTime e ? $" (ถึง {e.AddHours(7).ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)})" : "")
+            : "";
+        return $"ใช้ {N(used)} / {limit} ข้อความเดือนนี้ ({source}){bonus}";
+    }
+
+    private static string N(int v) => v.ToString("N0", System.Globalization.CultureInfo.InvariantCulture);
 }
+
+/// <summary>ขนาด/อายุแพ็ก <c>notify.topup</c> ที่มีผล (<see cref="NotifyQuotaPolicy.TopUpPack"/>)</summary>
+public sealed record NotifyTopUpPack(int Size, int ValidDays);
 
 /// <summary>ผลตัดสินโควตาต่อข้อความ</summary>
 public enum NotifyQuotaDecision

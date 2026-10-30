@@ -53,6 +53,12 @@ public class ApiFeature : BaseEntity
 
     /// <summary>โมดูลที่ add-on นี้สังกัด — ใช้จัดกลุ่มหน้าจอ ("Lodging", "Api")</summary>
     public string? ModuleCode { get; set; }
+
+    /// <summary>รอบ 213 (คำตัดสินข้อ 172): ขนาดแพ็ก (หน่วยต่อ 1 แพ็กที่ซื้อ) — <b>ใช้กับ <c>notify.topup</c> เท่านั้น</b> (ผู้อ่าน: <c>NotifyQuotaService</c>
+    /// ผ่าน <c>NotifyQuotaPolicy.TopUpPack</c>) · null = ค่าตั้งต้น 500 · ตั้งแล้ว <see cref="UnitLabel"/> ถูกประกอบใหม่ให้ตรง</summary>
+    public int? PackSize { get; set; }
+    /// <summary>รอบ 213: อายุแพ็ก (วัน) — <c>notify.topup</c> เท่านั้น · null = ค่าตั้งต้น 60 · มีผลกับการซื้อครั้งถัดไป (โบนัสเดิมคงวันหมดอายุเดิม)</summary>
+    public int? PackValidDays { get; set; }
 }
 
 /// <summary>
@@ -219,4 +225,8 @@ public class UsageEvent : TenantEntity
     public Guid? BilledDocumentId { get; set; }
 
     public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>ฝ่ายค้านรอบ 213 S3: หน่วย ณ ตอนเกิดรายการ (snapshot เหมือน <see cref="UnitPriceSnapshot"/>) — แพ็กที่ขนาดเปลี่ยนได้
+    /// (<c>notify.topup</c>) ต้องออกใบด้วยหน่วยที่ลูกค้าซื้อจริง · null = แถวเก่า/ฟีเจอร์ที่หน่วยไม่เปลี่ยน ⇒ <see cref="ApiFeature.UnitLabel"/></summary>
+    public string? UnitLabelSnapshot { get; set; }
 }

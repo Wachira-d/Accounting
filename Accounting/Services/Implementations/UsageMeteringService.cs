@@ -125,6 +125,7 @@ public class UsageMeteringService : IUsageMeteringService
                 RefEntityType = request.RefEntityType,
                 RefEntityId = request.RefEntityId,
                 OccurredAt = nowUtc,
+                UnitLabelSnapshot = string.IsNullOrWhiteSpace(request.UnitLabel) ? null : request.UnitLabel.Trim(),
             };
             _db.UsageEvents.Add(ev);
 

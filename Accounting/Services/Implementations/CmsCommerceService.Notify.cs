@@ -59,10 +59,6 @@ public partial class CmsCommerceService
             var f = await LoadOrderNotifyFactsAsync(companyId, siteId, orderId);
             if (f == null) return;
             var fulfil = FulfillmentMethod.Label(f.FulfillmentMethod ?? FulfillmentMethod.Delivery);
-            var due = MtoPaymentTerms.FromSnapshot(f.PaymentTermMode, f.TotalAmount, f.DepositRequiredAmount, f.PaidAmount);
-            var shopMessage = await _db.SiteCommerceConfigs.AsNoTracking()
-                .Where(c => c.SiteId == siteId && c.CompanyId == companyId && !c.IsDeleted)
-                .Select(c => c.OrderConfirmMessageTh).FirstOrDefaultAsync();
             var now = DateTime.UtcNow;
             var failures = new List<string>();
 
@@ -70,11 +66,7 @@ public partial class CmsCommerceService
             var shopErr = await _shopNotifier.NotifyShopAsync(companyId, siteId, shop, orderEvent: true);
             if (shopErr != null) failures.Add(CmsNotificationText.FailureNote("ร้าน", shop.Subject, shopErr, now));
 
-            var customer = await WithOrderLinkAsync(companyId, siteId, f,
-                CmsNotificationText.CustomerOrderConfirmation(f.SiteName, f.OrderNumber, DisplayNameOf(f), f.TotalAmount,
-                    due.DueNow, fulfil, ReadyDateOf(f), shopMessage));
-            var custErr = await _shopNotifier.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.OrderConfirmation,
-                CustomerNotifyKeys.Order(orderId, CustomerNotifyEvents.OrderConfirmation), CustomerContactOf(f), customer);
+            var (customer, custErr) = await SendOrderConfirmationToCustomerAsync(companyId, siteId, orderId, f);
             if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
             await StampOrderNotesAsync(companyId, siteId, orderId, failures);
@@ -84,6 +76,50 @@ public partial class CmsCommerceService
             // คำสั่งซื้อบันทึกแล้ว — ห้ามให้ขั้นแจ้งเตือนทำให้ลูกค้าเห็น "สั่งไม่สำเร็จ" แล้วสั่งซ้ำ · ล้มดังที่บันทึกระบบระดับ Error
             _logger.LogError(ex, "แจ้งเตือนออเดอร์ใหม่ {OrderId} ล้ม (company {CompanyId})", orderId, companyId);
         }
+    }
+
+    /// <summary>ยืนยันคำสั่งซื้อถึงลูกค้า (ส่วนลูกค้าของ <see cref="NotifyOrderCreatedAsync"/>) — แยกให้ "ส่งซ้ำ" (รอบ 213) เดินเส้นเดียวกันโดยไม่แจ้งร้านซ้ำ ·
+    /// ข้อความประกอบจากสถานะปัจจุบันของคำสั่งซื้อ · คีย์กันซ้ำเดิม</summary>
+    private async Task<(CmsNotification Message, string? Error)> SendOrderConfirmationToCustomerAsync(Guid companyId, Guid siteId, Guid orderId, OrderNotifyFacts f)
+    {
+        var fulfil = FulfillmentMethod.Label(f.FulfillmentMethod ?? FulfillmentMethod.Delivery);
+        var due = MtoPaymentTerms.FromSnapshot(f.PaymentTermMode, f.TotalAmount, f.DepositRequiredAmount, f.PaidAmount);
+        var shopMessage = await _db.SiteCommerceConfigs.AsNoTracking()
+            .Where(c => c.SiteId == siteId && c.CompanyId == companyId && !c.IsDeleted)
+            .Select(c => c.OrderConfirmMessageTh).FirstOrDefaultAsync();
+        var customer = await WithOrderLinkAsync(companyId, siteId, f,
+            CmsNotificationText.CustomerOrderConfirmation(f.SiteName, f.OrderNumber, DisplayNameOf(f), f.TotalAmount,
+                due.DueNow, fulfil, ReadyDateOf(f), shopMessage));
+        var err = await _shopNotifier!.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.OrderConfirmation,
+            CustomerNotifyKeys.Order(orderId, CustomerNotifyEvents.OrderConfirmation), CustomerContactOf(f), customer);
+        return (customer, err);
+    }
+
+    /// <summary>รอบ 213 (คำตัดสินข้อ 172): ส่งซ้ำข้อความถึงลูกค้าที่ค้างเพราะโควตา — ประกอบใหม่จากสถานะปัจจุบันผ่านเส้นส่งเดิม (ไม่เก็บเนื้อข้อความ) ·
+    /// ผู้ตัดสินว่าส่งซ้ำได้ไหม = <see cref="CustomerNotifyResend.Evaluate"/> ที่ผู้เรียก · คืนเหตุเมื่อส่งไม่ถึง (null = ส่งถึง/ไม่ทราบ — ผู้เรียกอ่านสถานะจากแถวบันทึก)</summary>
+    public async Task<string?> ResendCustomerNotifyAsync(Guid companyId, Guid orderId, string eventKey)
+    {
+        if (_shopNotifier == null) return "ระบบส่งข้อความไม่พร้อม";
+        var siteId = await _db.SiteOrders.AsNoTracking()
+            .Where(o => o.Id == orderId && o.CompanyId == companyId).Select(o => (Guid?)o.SiteId).FirstOrDefaultAsync();
+        if (siteId is not Guid sid) return "ไม่พบคำสั่งซื้อ";
+        if (eventKey == CustomerNotifyEvents.OrderConfirmation)
+        {
+            var f = await LoadOrderNotifyFactsAsync(companyId, sid, orderId);
+            if (f == null) return "ไม่พบคำสั่งซื้อ";
+            var (_, err) = await SendOrderConfirmationToCustomerAsync(companyId, sid, orderId, f);
+            return err;
+        }
+        var status = eventKey switch
+        {
+            CustomerNotifyEvents.OrderShipped => SiteOrderStatus.Shipped,
+            CustomerNotifyEvents.OrderReady => SiteOrderStatus.ReadyForPickup,
+            CustomerNotifyEvents.OrderDelivered => SiteOrderStatus.Delivered,
+            _ => (SiteOrderStatus?)null,
+        };
+        if (status is not SiteOrderStatus st) return CustomerNotifyResend.UnsupportedReason(eventKey);
+        await NotifyOrderStatusAsync(companyId, sid, orderId, st, stampNotes: false);
+        return null;
     }
 
     /// <summary>ลูกค้าแนบสลิป: แจ้งร้านให้ตรวจ</summary>
@@ -106,7 +142,7 @@ public partial class CmsCommerceService
     }
 
     /// <summary>สถานะที่ลูกค้าควรรู้ (จัดส่งแล้ว · พร้อมให้รับ · ส่งมอบแล้ว) — สถานะอื่นไม่ส่ง</summary>
-    private async Task NotifyOrderStatusAsync(Guid companyId, Guid siteId, Guid orderId, SiteOrderStatus status)
+    private async Task NotifyOrderStatusAsync(Guid companyId, Guid siteId, Guid orderId, SiteOrderStatus status, bool stampNotes = true)
     {
         if (_shopNotifier == null) return;
         try
@@ -121,7 +157,8 @@ public partial class CmsCommerceService
             if (msg == null || eventKey == null) return;
             msg = await WithOrderLinkAsync(companyId, siteId, f, msg);
             var err = await _shopNotifier.NotifyCustomerAsync(companyId, siteId, eventKey, CustomerNotifyKeys.Order(orderId, eventKey), CustomerContactOf(f), msg);
-            if (err != null)
+            // ฝ่ายค้านรอบ 213 (a): ส่งซ้ำจากหน้าข้อความค้าง ⇒ ไม่ต่อหมายเหตุบนออเดอร์ทุกครั้งที่ลอง
+            if (err != null && stampNotes)
                 await StampOrderNotesAsync(companyId, siteId, orderId, new[] { CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow) });
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -87,4 +87,7 @@ public interface ICmsBookingService
 
     // ERP Sync (event-driven)
     Task<Guid?> SyncBookingToErpAsync(Guid companyId, Guid siteId, Guid bookingId);
+
+    /// <summary>รอบ 213: ส่งซ้ำข้อความถึงลูกค้าที่ค้างเพราะโควตา (ยืนยัน/ยกเลิก/เลื่อนนัด) — ประกอบใหม่จากสถานะปัจจุบันผ่านเส้นเดิม · ผู้เรียกเดียว <c>CustomerNotifyResendService</c></summary>
+    Task<string?> ResendCustomerNotifyAsync(Guid companyId, Guid bookingId, string eventKey, string messageKey);
 }

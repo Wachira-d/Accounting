@@ -6003,6 +6003,28 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก D — �
 
 _Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค้าน (B+D) — ปิด/เปิดไปมาไม่เชิญ · cooldown 30 วัน · secret ของ OA อื่น · สแกน OA กลางในงาน · token แอดมินถอดไม่ได้ไม่ถอย · ยังไม่ได้คอมไพล์ · commit a8cccb97 · 020f0d3f)_
 
+- **รอบ 213 · ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (คำตัดสินข้อ 172)**:
+  (ก) `BookingNotifier` ปิดแถว `CustomerNotifyLogs` พร้อมรหัสเหตุ `SuppressReason` (`Helpers/NotifySuppressReason`: quota-full · event-off · tenant-only · ส่งถึง ⇒ null) ·
+  แถวเก่าเติมรหัสจากหมายเหตุที่ระบบเขียน (`Helpers/CustomerNotifyResendMigration` — เฉพาะ `SuppressReason IS NULL`) ·
+  (ข) `GET api/companies/{id}/customer-notify/pending` → `CustomerNotifyResendService.ListAsync`: แถว Suppressed+quota-full ย้อนหลัง 60 วัน ·
+  ทุกแถวผ่าน `CustomerNotifyResend.Evaluate` (≤ 30 วัน · ค่าตั้งปัจจุบันเปิด · ไม่มีข้อความประเภทเดียวกันถึงรายการเดียวกันที่ส่งทีหลัง · การจอง/ออเดอร์ยังอยู่และสถานะตรงเนื้อข้อความ) ·
+  ประเภทที่ไม่มีเส้นประกอบใหม่แสดงพร้อมเหตุ (ไม่ซ่อน) ·
+  (ค) `POST …/customer-notify/pending/resend` (`CompanySettingsEdit` · ปฏิเสธคีย์ API) → `ResendAsync`: lease ต่อแถว (`ResendRequestedAt` · 10 นาที) →
+  ประกอบใหม่จากสถานะปัจจุบันผ่านเส้นเดิม `ICmsBookingService.ResendCustomerNotifyAsync` (ยืนยัน/ยกเลิก/เลื่อนนัด — วันเดิมอ่านจากคีย์) /
+  `ICmsCommerceService.ResendCustomerNotifyAsync` (ยืนยันออเดอร์/จัดส่ง/พร้อมรับ/ส่งมอบ) → `BookingNotifier` ด้วย `MessageKey` เดิม (claim แถวเดิม · จองโควตาปกติ) →
+  อ่านสถานะแถวกลับ · ยังเต็ม ⇒ หยุดทั้งชุด + ลิงก์ซื้อแพ็ก · ไม่ถึงปล่อย lease · audit chain ต่อการกด · ไม่เก็บเนื้อข้อความ ·
+  ส่วนลูกค้าของ "การจองใหม่/ออเดอร์ใหม่" แยกเป็น `SendBookingConfirmedToCustomerAsync`/`SendOrderConfirmationToCustomerAsync` (เส้นปกติ + ส่งซ้ำใช้ตัวเดียว · ไม่แจ้งร้านซ้ำ) ·
+  (ง) หน้า: การ์ด `#notifyPending` ที่ `/pages/addons.html` (`CustomerNotify.mountPending`) · การ์ดโควตาทุกหน้าแสดง "ค้างส่ง N" · หลังซื้อแพ็กถาม "ส่งตอนนี้ไหม" (ไม่ส่งเอง) ·
+  (จ) `/pages/admin-addons.html`: `ApiFeature.PackSize/PackValidDays` เฉพาะ `notify.topup` (`NotifyQuotaPolicy.TopUpPack` — ว่าง = 500/60 · อ่านใต้ล็อกตอนซื้อ ·
+  ตั้งขนาดแล้ว `UnitLabel` ประกอบใหม่) · `documents.topup` ไม่แตะ · (ฉ) `/admin/customers.html` + `/admin/account-subscriptions.html` → `AdminNotifyQuotaController`
+  (`api/admin/companies/{id}/notify-quota` GET/PUT): เพดานเฉพาะบริษัท (ว่าง/-1/≥0) + ยอดใช้/โบนัส · SubscriptionHistory + audit chain
+
+  **ฝ่ายค้านรอบ 213**: รายการ = `CustomerNotifyResend.IsPending` (ระงับเพราะโควตา · ค้าง Claimed เกิน lease · ส่งซ้ำแล้วล้ม) ใหม่ก่อน + นับทั้งหมดแยก · ส่งเฉพาะฉบับล่าสุด (`Supersedes`) ·
+  ส่งซ้ำไม่ต่อหมายเหตุบนรายการ · ยืนยันคำสั่งซื้อเฉพาะก่อนจัดส่ง · GET รายการ = CompanySettingsEdit · ซื้อแพ็ก: ขนาด/ราคาที่เห็นเทียบใต้ล็อก ไม่ตรง 409 ·
+  หน่วยบนใบแจ้งหนี้ = `UsageEvent.UnitLabelSnapshot` (`UsageInvoicingJob` → `AddOnBilling.InvoiceUnit`) · แอดมินคืนค่าแพ็กตั้งต้นได้
+
+_Last verified against codebase: 2026-10-30 (รอบ 213 — ส่งซ้ำข้อความค้างเพราะโควตา · แพ็ก notify.topup ที่แอดมินตั้ง · เพดานเฉพาะบริษัท · ผ่านฝ่ายค้าน + CI เขียว — commit 2faabd48 · a6909467 · 41bcab58)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

@@ -119,16 +119,17 @@ public class UsageInvoicingJob : BackgroundService
                 continue;
             }
 
+            // ฝ่ายค้านรอบ 213 S3: แยกบรรทัดตามหน่วย ณ ตอนซื้อ (แพ็ก 500 กับแพ็ก 1,000 คนละบรรทัด) · หน่วยจาก snapshot ของแถวก่อน ⇒ ป้ายปัจจุบันของฟีเจอร์ (แถวเก่า)
             var lines = rows
-                .GroupBy(r => r.FeatureCode)
+                .GroupBy(r => new { r.FeatureCode, r.UnitLabelSnapshot })
                 .Select(g =>
                 {
-                    names.TryGetValue(g.Key, out var meta);
+                    names.TryGetValue(g.Key.FeatureCode, out var meta);
                     var qty = g.Sum(x => x.Quantity);
                     return new PlatformInvoiceLine(
-                        Description: $"{meta?.Name ?? g.Key} · งวด {period}",
+                        Description: $"{meta?.Name ?? g.Key.FeatureCode} · งวด {period}",
                         AmountNet: g.Sum(x => x.ChargedAmount),
-                        Unit: meta?.UnitLabel ?? "รายการ",
+                        Unit: AddOnBilling.InvoiceUnit(g.Key.UnitLabelSnapshot, meta?.UnitLabel),
                         Quantity: qty > 0 ? qty : 1m);
                 })
                 .OrderByDescending(l => l.AmountNet)

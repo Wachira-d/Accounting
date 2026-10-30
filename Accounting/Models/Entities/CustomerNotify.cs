@@ -34,6 +34,13 @@ public class CustomerNotifyLog : TenantEntity
     public int Attempts { get; set; }
     public DateTime? SentAt { get; set; }
     public string? Note { get; set; }
+    /// <summary>รอบ 213: เหตุที่ระงับ (<c>Helpers/NotifySuppressReason</c>: quota-full / event-off / tenant-only) — แยกแถวที่ส่งซ้ำได้ (โควตา) ออกจากแถวที่ร้านปิดเอง ·
+    /// ส่งถึงแล้ว ⇒ ล้างเป็น null</summary>
+    public string? SuppressReason { get; set; }
+    /// <summary>รอบ 213: เวลาที่ร้านกด "ส่งซ้ำ" ล่าสุด — ระหว่างส่งเป็น lease กันกดซ้ำ (<c>CustomerNotifyResend.ResendLease</c>) · ส่งถึง ⇒ คงไว้เป็นร่องรอย · ไม่ถึง ⇒ ปล่อย (null)</summary>
+    public DateTime? ResendRequestedAt { get; set; }
+    /// <summary>รอบ 213: จำนวนครั้งที่ร้านสั่งส่งซ้ำ (ร่องรอย)</summary>
+    public int ResendCount { get; set; }
 }
 
 /// <summary>

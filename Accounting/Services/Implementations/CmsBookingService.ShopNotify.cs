@@ -54,9 +54,7 @@ public partial class CmsBookingService
             var now = DateTime.UtcNow;
             var failures = new List<string>();
 
-            var customer = await WithBookingLinkAsync(companyId, siteId, f,
-                CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), date, f.StartTime, f.ResourceName, f.Status));
-            var custErr = await _shopNotifier.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.BookingConfirmed, CustomerNotifyKeys.Booking(bookingId, CustomerNotifyEvents.BookingConfirmed), ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), customer);
+            var (customer, custErr) = await SendBookingConfirmedToCustomerAsync(companyId, siteId, bookingId, f, site);
             if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
             var shop = CmsNotificationText.ShopNewBooking(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), f.GuestPhone, date, f.StartTime,
@@ -73,8 +71,47 @@ public partial class CmsBookingService
         }
     }
 
+    /// <summary>ยืนยันการจองถึงลูกค้า (ส่วนลูกค้าของ <see cref="NotifyBookingCreatedAsync"/>) — แยกออกมาให้ "ส่งซ้ำ" (รอบ 213) เดินเส้นเดียวกัน
+    /// โดยไม่แจ้งร้านซ้ำ · คีย์กันซ้ำเดิม ⇒ ส่งซ้ำรับช่วงแถวบันทึกเดิม</summary>
+    private async Task<(CmsNotification Message, string? Error)> SendBookingConfirmedToCustomerAsync(Guid companyId, Guid siteId, Guid bookingId, BookingNotifyFacts f, string site)
+    {
+        var customer = await WithBookingLinkAsync(companyId, siteId, f,
+            CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), DateOnly.FromDateTime(f.BookingDate), f.StartTime, f.ResourceName, f.Status));
+        var err = await _shopNotifier!.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.BookingConfirmed, CustomerNotifyKeys.Booking(bookingId, CustomerNotifyEvents.BookingConfirmed), ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), customer);
+        return (customer, err);
+    }
+
+    /// <summary>รอบ 213 (คำตัดสินข้อ 172): ส่งซ้ำข้อความถึงลูกค้าที่ค้างเพราะโควตา — ประกอบใหม่จาก<b>สถานะปัจจุบัน</b>ของการจองผ่านเส้นส่งเดิม
+    /// (ไม่เก็บเนื้อข้อความ) · ผู้ตัดสินว่าส่งซ้ำได้ไหม = <see cref="CustomerNotifyResend.Evaluate"/> ที่ผู้เรียก · คืนเหตุเมื่อส่งไม่ถึง (null = ส่งถึง/ไม่มีตัวส่ง)</summary>
+    public async Task<string?> ResendCustomerNotifyAsync(Guid companyId, Guid bookingId, string eventKey, string messageKey)
+    {
+        if (_shopNotifier == null) return "ระบบส่งข้อความไม่พร้อม";
+        var siteId = await _db.SiteBookings.AsNoTracking()
+            .Where(b => b.Id == bookingId && b.CompanyId == companyId).Select(b => (Guid?)b.SiteId).FirstOrDefaultAsync();
+        if (siteId is not Guid sid) return "ไม่พบการจอง";
+        switch (eventKey)
+        {
+            case CustomerNotifyEvents.BookingConfirmed:
+            {
+                var f = await LoadBookingNotifyFactsAsync(companyId, sid, bookingId);
+                if (f == null) return "ไม่พบการจอง";
+                var (_, err) = await SendBookingConfirmedToCustomerAsync(companyId, sid, bookingId, f, await SiteNameAsync(companyId, sid));
+                return err;
+            }
+            case CustomerNotifyEvents.BookingCancelled:
+                return await NotifyBookingCancelledByShopAsync(companyId, sid, bookingId, stampNotes: false);
+            case CustomerNotifyEvents.BookingRescheduled:
+                // วัน-เวลาเดิมอ่านกลับจากคีย์ (ตัวตั้งเดียวของรูปคีย์) ⇒ คีย์ที่ประกอบใหม่ = คีย์เดิมทุกตัวอักษร
+                return CustomerNotifyKeys.TryParseRescheduled(messageKey, out var oldDate, out var oldStart)
+                    ? await NotifyBookingRescheduledAsync(companyId, sid, bookingId, oldDate, oldStart, stampNotes: false)
+                    : "อ่านวัน-เวลาเดิมจากบันทึกไม่ได้";
+            default:
+                return CustomerNotifyResend.UnsupportedReason(eventKey);
+        }
+    }
+
     /// <summary>ร้าน/ระบบยกเลิก ⇒ แจ้งลูกค้า · คืนข้อความถึงผู้กดเมื่อส่งไม่ถึง (null = ส่งถึง/ไม่มีตัวส่ง)</summary>
-    private async Task<string?> NotifyBookingCancelledByShopAsync(Guid companyId, Guid siteId, Guid bookingId)
+    private async Task<string?> NotifyBookingCancelledByShopAsync(Guid companyId, Guid siteId, Guid bookingId, bool stampNotes = true)
     {
         if (_shopNotifier == null) return null;
         try
@@ -88,7 +125,8 @@ public partial class CmsBookingService
             var err = await _shopNotifier.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.BookingCancelled, CustomerNotifyKeys.Booking(bookingId, CustomerNotifyEvents.BookingCancelled), ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), msg);
             if (err == null) return null;
             var note = CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow);
-            await StampBookingNotesAsync(companyId, siteId, bookingId, new[] { note });
+            // ฝ่ายค้านรอบ 213 (a): ส่งซ้ำจากหน้าข้อความค้าง ⇒ ผลอยู่ที่หน้านั้น ไม่ต่อหมายเหตุบนการจองทุกครั้งที่ลอง
+            if (stampNotes) await StampBookingNotesAsync(companyId, siteId, bookingId, new[] { note });
             return note;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -99,7 +137,7 @@ public partial class CmsBookingService
     }
 
     /// <summary>รอบ 210: เลื่อนนัดแล้ว ⇒ แจ้งวัน-เวลาใหม่ + ลิงก์จัดการการจองถึงลูกค้า · คืนข้อความถึงผู้กดเมื่อส่งไม่ถึง (null = ส่งถึง/ไม่มีตัวส่ง) · ไม่โยน</summary>
-    private async Task<string?> NotifyBookingRescheduledAsync(Guid companyId, Guid siteId, Guid bookingId, DateTime oldDate, TimeOnly oldStart)
+    private async Task<string?> NotifyBookingRescheduledAsync(Guid companyId, Guid siteId, Guid bookingId, DateTime oldDate, TimeOnly oldStart, bool stampNotes = true)
     {
         if (_shopNotifier == null) return null;
         try
@@ -113,7 +151,8 @@ public partial class CmsBookingService
             var err = await _shopNotifier.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.BookingRescheduled, CustomerNotifyKeys.BookingRescheduled(bookingId, oldDate, oldStart), ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), msg);
             if (err == null) return null;
             var note = CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow);
-            await StampBookingNotesAsync(companyId, siteId, bookingId, new[] { note });
+            // ฝ่ายค้านรอบ 213 (a): ส่งซ้ำจากหน้าข้อความค้าง ⇒ ผลอยู่ที่หน้านั้น ไม่ต่อหมายเหตุบนการจองทุกครั้งที่ลอง
+            if (stampNotes) await StampBookingNotesAsync(companyId, siteId, bookingId, new[] { note });
             return note;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

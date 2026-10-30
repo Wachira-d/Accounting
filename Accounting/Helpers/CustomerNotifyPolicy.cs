@@ -30,6 +30,20 @@ public static class CustomerNotifyKeys
     public static string Booking(Guid bookingId, string eventKey) => $"booking:{N(bookingId)}:{eventKey}";
     public static string BookingRescheduled(Guid bookingId, DateTime oldDate, TimeOnly oldStart)
         => $"booking:{N(bookingId)}:{CustomerNotifyEvents.BookingRescheduled}:{oldDate.ToString("yyyyMMdd", CultureInfo.InvariantCulture)}{oldStart.ToString("HHmm", CultureInfo.InvariantCulture)}";
+    /// <summary>รอบ 213: อ่านวัน-เวลาเดิมกลับจากคีย์เลื่อนนัด (คู่ของ <see cref="BookingRescheduled"/> — ส่งซ้ำต้องได้คีย์เดิมทุกตัวอักษร
+    /// ⇒ claim แถวเดิม) · ไม่ใช่คีย์เลื่อนนัด = false</summary>
+    public static bool TryParseRescheduled(string? key, out DateTime oldDate, out TimeOnly oldStart)
+    {
+        oldDate = default;
+        oldStart = default;
+        var prefix = ":" + CustomerNotifyEvents.BookingRescheduled + ":";
+        var at = key?.LastIndexOf(prefix, StringComparison.Ordinal) ?? -1;
+        if (at < 0 || !key!.StartsWith("booking:", StringComparison.Ordinal)) return false;
+        var stamp = key[(at + prefix.Length)..];
+        if (stamp.Length != 12) return false;
+        if (!DateTime.TryParseExact(stamp[..8], "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out oldDate)) return false;
+        return TimeOnly.TryParseExact(stamp[8..], "HHmm", CultureInfo.InvariantCulture, DateTimeStyles.None, out oldStart);
+    }
     public static string Reminder(Guid bookingId, int stageHours) => $"booking:{N(bookingId)}:reminder:{stageHours}";
     public static string Waitlist(Guid bookingId) => $"booking:{N(bookingId)}:waitlist";
     /// <summary>คลาส: เปลี่ยนผู้สอนหลายครั้งได้ ⇒ คีย์รวม hash ของผู้สอนใหม่</summary>

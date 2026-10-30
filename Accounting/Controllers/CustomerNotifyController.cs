@@ -2,6 +2,7 @@ using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -116,6 +117,33 @@ public class CustomerNotifyController : ControllerBase
         s.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<object>(true, await BuildAsync(companyId, null, null, ct), "บันทึกการตั้งค่าอีเมลถึงลูกค้าแล้ว"));
+    }
+
+    // ═══════════ รอบ 213 (คำตัดสินข้อ 172): ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา ═══════════
+
+    public record ResendRequest(List<Guid>? LogIds);
+
+    /// <summary>รายการข้อความค้างเพราะโควตาเต็ม (ย้อนหลัง 60 วัน) + ส่งซ้ำได้ไหมพร้อมเหตุ + โควตาตอนนี้ — เซิร์ฟเวอร์ตัดสินทั้งหมด
+    /// (<see cref="CustomerNotifyResend.Evaluate"/>) · ไม่มีเนื้อข้อความ/ที่อยู่ติดต่อ</summary>
+    [HttpGet("pending")]
+    // ฝ่ายค้านรอบ 213 (c): รายการมีเลขการจอง/ออเดอร์ + ใช้ตัดสินใจส่งข้อความ ⇒ ด่านเดียวกับหน้าค่าตั้ง/ส่งซ้ำ (แบบเดียวกับ GET ของ StaffDailySummaryController)
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ดูข้อความถึงลูกค้าที่ค้างส่ง")]
+    public async Task<ActionResult<ApiResponse<CustomerNotifyPendingList>>> GetPending(Guid companyId,
+        [FromServices] ICustomerNotifyResendService resend, CancellationToken ct)
+        => Ok(new ApiResponse<CustomerNotifyPendingList>(true, await resend.ListAsync(companyId, ct)));
+
+    /// <summary>ส่งซ้ำรายการที่เลือก (<c>logIds</c>) หรือทุกรายการที่ส่งซ้ำได้ (ว่าง) — จองโควตาตามปกติ · โควตายังเต็ม ⇒ หยุด + บอกทางซื้อแพ็ก ·
+    /// ด่าน = เดียวกับค่าตั้งการแจ้งเตือนลูกค้า (CompanySettingsEdit) · กดซ้ำ/สองแท็บ = แถวละครั้ง (lease ต่อแถว + claim ของตัวส่ง)</summary>
+    [HttpPost("pending/resend")]
+    [Accounting.Filters.RequirePermission(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit)]
+    [Accounting.Filters.RejectApiKey("ส่งซ้ำข้อความถึงลูกค้า")]
+    public async Task<ActionResult<ApiResponse<CustomerNotifyResendResult>>> Resend(Guid companyId, [FromBody] ResendRequest req,
+        [FromServices] ICustomerNotifyResendService resend, CancellationToken ct)
+    {
+        var actor = User.Identity?.Name ?? "unknown";
+        var result = await resend.ResendAsync(companyId, req.LogIds, actor, ct);
+        return Ok(new ApiResponse<CustomerNotifyResendResult>(true, result, result.Message));
     }
 
     private async Task<object> BuildAsync(Guid companyId, Guid? siteId, string? siteName, CancellationToken ct)

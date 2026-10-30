@@ -77,6 +77,7 @@
 
   <script src="/admin/admin-api.js"></script>
   <script src="/admin/admin-layout.js"></script>
+  <script src="/admin/notify-quota-admin.js"></script>
   <script>
     AdminLayout.init('account-subs');
 
@@ -167,7 +168,8 @@
               <td>${(c.currentMonthJournalEntries||0).toLocaleString()}</td>
               <td>${(c.currentMonthOcrPages||0).toLocaleString()}</td>
               <td>${this._fmtBytes(c.currentStorageUsed||0)}</td>
-            </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;padding:18px;color:#94a3b8">ยังไม่มีบริษัทผูก</td></tr>';
+              <td><div class="nqa-slot" data-company="${AdminLayout.esc(c.companyId)}"></div></td>
+            </tr>`).join('') || '<tr><td colspan="7" style="text-align:center;padding:18px;color:#94a3b8">ยังไม่มีบริษัทผูก</td></tr>';
 
           const body = `
             <div class="as-section-title">ผู้ใช้ (License Holder)</div>
@@ -197,7 +199,7 @@
 
             <div class="as-section-title">บริษัทที่ผูก (${(d.attachedCompanies||[]).length})</div>
             <table class="admin-table" style="width:100%;font-size:13px">
-              <thead><tr><th>บริษัท</th><th>สถานะ</th><th>เอกสาร</th><th>JE</th><th>OCR</th><th>Storage</th></tr></thead>
+              <thead><tr><th>บริษัท</th><th>สถานะ</th><th>เอกสาร</th><th>JE</th><th>OCR</th><th>Storage</th><th>ข้อความช่องกลาง (ต่อบริษัท)</th></tr></thead>
               <tbody>${attached}</tbody>
             </table>
 
@@ -206,6 +208,9 @@
           document.getElementById('mTitle').textContent = '🎫 รายละเอียด Account Plan';
           document.getElementById('mBody').innerHTML = body;
           document.getElementById('detailModal').style.display = 'flex';
+          // รอบ 213: เพดานข้อความนับต่อบริษัท (ไม่ pool ทั้ง License) — ยอดใช้/โบนัส + ตั้งค่าเฉพาะบริษัท (/admin/notify-quota-admin.js)
+          if (typeof NotifyQuotaAdmin !== 'undefined')
+            document.querySelectorAll('#mBody .nqa-slot').forEach(el => NotifyQuotaAdmin.mount(el, el.dataset.company));
 
           // Lazy-load history so the detail modal opens fast even on accounts
           // with hundreds of audit rows.

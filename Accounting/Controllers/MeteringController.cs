@@ -281,7 +281,8 @@ public class MeteringController : ControllerBase
     public async Task<ActionResult<ApiResponse<DocumentQuotaStatus>>> GetQuota(Guid companyId, CancellationToken ct)
         => Ok(new ApiResponse<DocumentQuotaStatus>(true, await _quota.GetDocumentQuotaAsync(companyId, ct)));
 
-    public record TopUpRequest(int Packs = 1);
+    /// <summary>ฝ่ายค้านรอบ 213 S4: <c>ExpectedPackSize/ExpectedPackPrice</c> = ข้อเสนอที่ผู้ซื้อเห็น (ใช้กับ notify.topup — ไม่ตรงของจริง ⇒ 409) · documents.topup ไม่อ่าน</summary>
+    public record TopUpRequest(int Packs = 1, int? ExpectedPackSize = null, decimal? ExpectedPackPrice = null);
 
     /// <summary>header <c>Idempotency-Key</c> ของคำขอซื้อ (null = ไม่ได้ส่ง · ยาวเกิน 200 ตัดทิ้ง — ใช้แค่ hash)</summary>
     private string? IdempotencyKeyHeader()
@@ -327,10 +328,23 @@ public class MeteringController : ControllerBase
         if (_notifyQuota == null) return StatusCode(503, new ApiResponse<NotifyQuotaStatus>(false, null, "บริการโควตาข้อความไม่พร้อม"));
 
         var actor = User.Identity?.Name ?? "unknown";
-        var status = await _notifyQuota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader());
-        var msgs = req.Packs * Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack;
+        NotifyQuotaStatus status;
+        try
+        {
+            status = await _notifyQuota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader(),
+                req.ExpectedPackSize, req.ExpectedPackPrice);
+        }
+        catch (NotifyTopUpOfferChangedException ex)
+        {
+            // ฝ่ายค้านรอบ 213 S4: ขนาด/ราคาเปลี่ยนระหว่างที่ผู้ซื้อดูอยู่ ⇒ 409 + สถานะใหม่ (ยังไม่คิดเงิน) ให้หน้าเว็บแสดงข้อเสนอใหม่แล้วยืนยันอีกครั้ง
+            return StatusCode(409, new ApiResponse<NotifyQuotaStatus>(false, await _notifyQuota.GetStatusAsync(companyId, ct), ex.Message));
+        }
+        // ฝ่ายค้านรอบ 213 S4: จำนวนที่ให้จริงจากการซื้อครั้งนี้ (ขนาดแพ็ก ณ ตอนซื้อ) — คำขอซ้ำ (คีย์เดิม) ไม่มีค่า ⇒ ไม่อ้างจำนวน
+        var granted = status.Granted;
         return Ok(new ApiResponse<NotifyQuotaStatus>(true, status,
-            $"เพิ่มข้อความแจ้งเตือน {msgs} ข้อความแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));
+            granted is int g
+                ? $"เพิ่มข้อความแจ้งเตือน {g:N0} ข้อความแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"
+                : "คำขอนี้ดำเนินการไปแล้ว — แสดงสถานะล่าสุด"));
     }
 
     /// <summary>ภารกิจแลกโควตาที่เปิดอยู่ (§12) — ว่างเปล่า = เจ้าของระบบปิดไว้
