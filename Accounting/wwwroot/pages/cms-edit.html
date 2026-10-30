@@ -344,6 +344,11 @@
       <div id="ssExceptions"></div>
       <button type="button" class="btn btn-secondary btn-sm" onclick="Page.schedAddException('ss')">+ เพิ่มวันหยุด/วันพิเศษ</button>
 
+      <!-- รอบ 210 (คำตัดสินข้อ 169): ต้องเป็นสมาชิกก่อนจอง — ผู้อ่าน: CmsBookingService.CreateBookingAsync (Helpers/BookingAccessRule) · หน้าจองอ่าน memberOnly -->
+      <h4 class="bs-sec">สมาชิก</h4>
+      <div class="form-group"><label style="font-size:13px"><input type="checkbox" id="bssRequireMember"> ต้องเข้าสู่ระบบสมาชิกก่อนจอง (ทุกบริการที่ไม่ได้ตั้งเอง)</label>
+        <div class="bs-hint">ปิด (ค่าเริ่มต้น) = แขกจองได้โดยไม่ต้องสมัคร · แต่ละบริการตั้งแยกได้ที่ฟอร์มบริการ · พนักงานจองแทนลูกค้าได้เสมอ · แขกกลับมาดูการจองด้วยเลขที่ + เบอร์/อีเมลที่หน้า "ตรวจสอบการจอง / คำสั่งซื้อ"</div></div>
+
       <!-- รอบ 205 W3 R-12/R-13: เตือนก่อนนัด + ถือรอบคิวสำรอง (ผู้อ่าน: Services/Background/BookingReminderJob · CmsBookingService.PromoteWaitlistAsync) -->
       <h4 class="bs-sec">แจ้งเตือนลูกค้า (อีเมล / LINE)</h4>
       <div class="form-row-3">
@@ -811,6 +816,11 @@
           <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px;font-size:13px">
             <label><input type="checkbox" id="bsAutoConfirm"> ยืนยันการจองอัตโนมัติ</label>
             <label><input type="checkbox" id="bsActive" checked> เปิดให้จอง</label>
+          </div>
+          <!-- รอบ 210: ต้องเป็นสมาชิกก่อนจอง (ตามเว็บ/บังคับ/ไม่บังคับ) — ตัวเลือก+ป้ายจากเซิร์ฟเวอร์ (memberAccessOptions) · ยังโหลดไม่ได้ ⇒ ซ่อน + ไม่ส่ง (คงค่าเดิม) -->
+          <div class="form-group" id="bsMemberAccessWrap" style="display:none">
+            <label class="form-label">ต้องเป็นสมาชิกก่อนจอง</label>
+            <select class="form-input" id="bsMemberAccess"></select>
           </div>
 
           <h4 class="bs-sec">2. ความละเอียดของรอบ</h4>
@@ -2886,6 +2896,12 @@
         // รอบ 207: ไซต์ปิดจัดสรรผู้ให้บริการ ⇒ ซ่อนโหมดรายบริการ (ค่าเดิมยังส่งกลับไปตามเดิม — ไม่รีเซ็ตเงียบ)
         const provOn = !this._bssSettings || this._bssSettings.providerAllocationEnabled === true;
         document.getElementById('bsResourceModeWrap').style.display = provOn ? '' : 'none';
+        // รอบ 210: ต้องเป็นสมาชิกก่อนจอง — hydrate จากค่าที่ server echo (memberAccess) · ไม่มีตัวเลือกจาก server ⇒ ซ่อน (ไม่ส่ง = คงค่าเดิม)
+        const maOpts = (this._bssSettings && Array.isArray(this._bssSettings.memberAccessOptions)) ? this._bssSettings.memberAccessOptions : [];
+        const maSel = document.getElementById('bsMemberAccess');
+        maSel.innerHTML = maOpts.map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+        maSel.value = s.memberAccess || 'Inherit';
+        document.getElementById('bsMemberAccessWrap').style.display = maOpts.length ? '' : 'none';
         document.getElementById('bsUseSite').checked = !!s.useSiteDefaults;
         document.getElementById('bsEnforce').checked = s.enforceSlotCapacity !== false;
         v('bsOverlap', s.overlapLimit);
@@ -3085,6 +3101,7 @@
           const cd = document.querySelector('input[name="bssCompletionDoc"]:checked');
           if (cd) body.completionDocument = cd.value;
         }
+        if (this._bss210Loaded) body.requireMemberToBook = document.getElementById('bssRequireMember').checked;   // รอบ 210
         try {
           await api.cmsUpdateBookingSiteSettings(this.siteId, body);
           Layout.toast('บันทึกค่าตั้งของเว็บไซต์แล้ว', 'success');
@@ -3117,6 +3134,9 @@
           <td><strong>${Layout.esc(r.bookingTypeLabel)}</strong></td><td>${Layout.esc(r.atBooking)}</td><td>${Layout.esc(r.onPayment)}</td>
           <td>${Layout.esc(r.onComplete)}</td><td>${Layout.esc(r.onCancel)}</td></tr>`).join('');
         this._bss207Loaded = (d.providerStrategyOptions || []).length > 0 && (d.formFieldOptions || []).length > 0;
+        // รอบ 210: echo กลับ "ต้องเป็นสมาชิกก่อนจอง" · ส่งตอนบันทึกเฉพาะเมื่อโหลดค่าเดิมได้
+        document.getElementById('bssRequireMember').checked = d.requireMemberToBook === true;
+        this._bss210Loaded = typeof d.requireMemberToBook === 'boolean';
       },
       bssProvidersToggle() {
         const on = document.getElementById('bssProvidersEnabled').checked;
@@ -3307,6 +3327,8 @@
           resourceMode: document.getElementById('bsResourceMode').value,
           schedule: this.schedPayload('bs')
         };
+        // รอบ 210: ส่งเฉพาะเมื่อมีตัวเลือกจาก server (ไม่งั้น null = คงค่าเดิม · ไม่รีเซ็ตเงียบ)
+        if (document.getElementById('bsMemberAccessWrap').style.display !== 'none') body.memberAccess = document.getElementById('bsMemberAccess').value || 'Inherit';
         if (!body.name) { Layout.toast('กรุณากรอกชื่อบริการ', 'error'); return; }
         // ช่วงเวลาที่ผิดรูป/เริ่มไม่ก่อนจบ — server ตรวจและตอบข้อความไทยกลับมา (ไม่ตรวจซ้ำในหน้านี้)
         try {

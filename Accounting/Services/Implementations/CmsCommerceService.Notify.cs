@@ -18,7 +18,7 @@ public partial class CmsCommerceService
     private sealed record OrderNotifyFacts(string OrderNumber, string SiteName, decimal TotalAmount, decimal PaidAmount, string? PaymentTermMode,
         decimal DepositRequiredAmount, string? FulfillmentMethod, DateTime? EarliestReadyDate, string? ShippingName, string? ShippingPhone,
         string? ShippingEmail, string? ShippingMethod, string? TrackingNumber, string? CustomerName, string? CustomerEmail,
-        string? AuthProvider, string? AuthProviderId, int ItemCount);
+        string? AuthProvider, string? AuthProviderId, int ItemCount, string? PublicToken);
 
     private Task<OrderNotifyFacts?> LoadOrderNotifyFactsAsync(Guid companyId, Guid siteId, Guid orderId)
         => _db.SiteOrders.AsNoTracking()
@@ -28,8 +28,16 @@ public partial class CmsCommerceService
                 o.ShippingEmail, o.ShippingMethod, o.TrackingNumber,
                 o.Customer != null ? o.Customer.FullName : null, o.Customer != null ? o.Customer.Email : null,
                 o.Customer != null ? o.Customer.AuthProvider : null, o.Customer != null ? o.Customer.AuthProviderId : null,
-                o.Lines.Count))
+                o.Lines.Count, o.PublicToken))
             .FirstOrDefaultAsync();
+
+    /// <summary>รอบ 210: บรรทัด "ติดตามสถานะคำสั่งซื้อ" ท้ายข้อความถึงลูกค้า — ลิงก์ track-order จากฐานหน้าร้าน (<see cref="CmsStorefrontLink"/>) ·
+    /// ประกอบไม่ได้ ⇒ เลขที่ + หน้า "ตรวจสอบการจอง / คำสั่งซื้อ" (ไม่เงียบ)</summary>
+    private async Task<CmsNotification> WithOrderLinkAsync(Guid companyId, Guid siteId, OrderNotifyFacts f, CmsNotification message)
+    {
+        var baseUrl = _shopNotifier == null ? null : await _shopNotifier.StorefrontBaseUrlAsync(companyId, siteId);
+        return CmsNotificationText.WithLine(message, CmsStorefrontLink.OrderTrackLine(baseUrl, f.PublicToken, f.OrderNumber));
+    }
 
     private static BookingContact CustomerContactOf(OrderNotifyFacts f)
         => CmsBookingService.ContactOf(f.ShippingEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId);
@@ -58,8 +66,9 @@ public partial class CmsCommerceService
             var shopErr = await _shopNotifier.NotifyShopAsync(companyId, siteId, shop, orderEvent: true);
             if (shopErr != null) failures.Add(CmsNotificationText.FailureNote("ร้าน", shop.Subject, shopErr, now));
 
-            var customer = CmsNotificationText.CustomerOrderConfirmation(f.SiteName, f.OrderNumber, DisplayNameOf(f), f.TotalAmount,
-                due.DueNow, fulfil, ReadyDateOf(f), shopMessage);
+            var customer = await WithOrderLinkAsync(companyId, siteId, f,
+                CmsNotificationText.CustomerOrderConfirmation(f.SiteName, f.OrderNumber, DisplayNameOf(f), f.TotalAmount,
+                    due.DueNow, fulfil, ReadyDateOf(f), shopMessage));
             var custErr = await _shopNotifier.NotifyCustomerAsync(companyId, CustomerContactOf(f), customer);
             if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
@@ -104,6 +113,7 @@ public partial class CmsCommerceService
             var carrier = f.FulfillmentMethod == FulfillmentMethod.Pickup ? null : f.ShippingMethod;
             var msg = CmsNotificationText.CustomerOrderStatus(status, f.SiteName, f.OrderNumber, DisplayNameOf(f), carrier, f.TrackingNumber, due.Balance);
             if (msg == null) return;
+            msg = await WithOrderLinkAsync(companyId, siteId, f, msg);
             var err = await _shopNotifier.NotifyCustomerAsync(companyId, CustomerContactOf(f), msg);
             if (err != null)
                 await StampOrderNotesAsync(companyId, siteId, orderId, new[] { CmsNotificationText.FailureNote("ลูกค้า", msg.Subject, err, DateTime.UtcNow) });

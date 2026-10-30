@@ -224,6 +224,10 @@ READ_ONLY_POSTS_IN_FILE = {
     ("DocumentTemplateController.cs", "GenerateReceiptPdf"),
     # รอบ 204: พรีวิวผู้จ่ายออกภาษีแทน — pure (WhtGrossUp) ไม่แตะ _db/_whtService (ตรวจด้วยตาตอนเพิ่ม)
     ("WithholdingTaxCertController.cs", "GrossUpPreview"),
+    # รอบ 210: แขกค้นการจอง/คำสั่งซื้อด้วยเลขที่ + เบอร์/อีเมล — อ่านอย่างเดียว (StorefrontCustomerService.Lookup.cs ไม่มี SaveChanges ·
+    # เขียนแค่ตัวนับโควตา ChatRateBuckets) · POST เพื่อไม่ให้เบอร์/อีเมลไปอยู่ใน URL/log · ด่าน = โควตาต่อ IP + ต่อเลขที่ (required_call_site_check ล็อก)
+    ("CmsStorefrontCustomerController.cs", "LookupBooking"),
+    ("CmsStorefrontCustomerController.cs", "LookupOrder"),
 }
 
 # POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ

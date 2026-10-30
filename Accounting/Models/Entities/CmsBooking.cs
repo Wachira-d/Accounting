@@ -48,6 +48,9 @@ public class SiteBookingService : TenantEntity
     public BookingResourceMode ResourceMode { get; set; } = BookingResourceMode.None;
     /// <summary>true = ระยะเวลา/buffer/ล่วงหน้า ใช้ค่าตั้งของไซต์ (<see cref="SiteBookingSettings"/>) · false = ใช้ค่าของบริการนี้ (override · ข้อมูลเดิม)</summary>
     public bool UseSiteDefaults { get; set; }
+    /// <summary>รอบ 210: ต้องเข้าสู่ระบบสมาชิกก่อนจองบริการนี้ไหม · null = ตามค่าของเว็บ (<see cref="SiteBookingSettings.RequireMemberToBook"/>) ·
+    /// ตัวตัดสินเดียว <c>Helpers/BookingAccessRule.RequiresMember</c></summary>
+    public bool? MemberOnly { get; set; }
 
     // Pricing
     public decimal Price { get; set; }

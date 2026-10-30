@@ -14,4 +14,8 @@ public interface IStorefrontCustomerService
     Task<List<StorefrontMyOrderItem>> MyOrdersAsync(Guid companyId, Guid siteId, Guid customerId);
     Task<List<StorefrontMyBookingItem>> MyBookingsAsync(Guid companyId, Guid siteId, Guid customerId);
     Task<List<StorefrontMyCreditItem>> MyCreditsAsync(Guid companyId, Guid siteId, Guid customerId);
+    /// <summary>รอบ 210: แขกค้นการจองด้วยเลขที่ + เบอร์/อีเมล (ตัวตัดสิน <c>Helpers/GuestRecordLookup</c>) · ไม่ตรง ⇒ null · ตรง ⇒ โทเคนหน้า my-booking</summary>
+    Task<string?> LookupBookingTokenAsync(Guid companyId, Guid siteId, string? bookingNumber, string? contact);
+    /// <summary>รอบ 210: แขกค้นคำสั่งซื้อด้วยเลขที่ + เบอร์/อีเมล · ไม่ตรง ⇒ null · ตรง ⇒ โทเคนหน้า track-order</summary>
+    Task<string?> LookupOrderTokenAsync(Guid companyId, Guid siteId, string? orderNumber, string? contact);
 }

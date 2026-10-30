@@ -115,3 +115,14 @@ public class StorefrontMyCreditItem
     /// <summary>ใช้จองได้ตอนนี้ (Active · ไม่หมดอายุ · เหลือเครดิต) — เซิร์ฟเวอร์ตัดสินซ้ำตอนจองจริง</summary>
     public bool Usable { get; set; }
 }
+
+// ── รอบ 210 (คำตัดสินข้อ 169): แขกค้นการจอง/คำสั่งซื้อด้วยเลขที่ + เบอร์โทรหรืออีเมล (ตัวตัดสิน Helpers/GuestRecordLookup) ──
+
+/// <summary>ค้นการจอง — <see cref="Contact"/> = เบอร์โทรหรืออีเมลที่ใช้ตอนจอง</summary>
+public record GuestBookingLookupRequest(string? BookingNumber, string? Contact);
+
+/// <summary>ค้นคำสั่งซื้อ — <see cref="Contact"/> = เบอร์โทรหรืออีเมลที่ใช้ตอนสั่ง</summary>
+public record GuestOrderLookupRequest(string? OrderNumber, string? Contact);
+
+/// <summary>ผลค้นที่ตรง — เฉพาะโทเคนสาธารณะ + ชนิด ("booking" ⇒ หน้า my-booking · "order" ⇒ หน้า track-order) · ไม่มีข้อมูลรายการ</summary>
+public record GuestLookupResponse(string PublicToken, string Kind);

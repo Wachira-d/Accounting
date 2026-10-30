@@ -55,6 +55,49 @@ public class CmsStorefrontCustomerController : ControllerBase
         return File(png, "image/png");
     }
 
+    // ===== รอบ 210 (คำตัดสินข้อ 169): แขกค้นการจอง/คำสั่งซื้อด้วยเลขที่ + เบอร์โทรหรืออีเมล =====
+    // ตัวตัดสิน = Helpers/GuestRecordLookup (ตรงตัวหลัง normalize · ไม่ fuzzy) · สำเร็จคืนเฉพาะโทเคน · ไม่ตรง = ข้อความกลางเดียว (ไม่บอกว่าผิดที่ไหน) ·
+    // จำกัดความถี่ต่อ IP และต่อเลขที่ ด้วย IChatRateLimiter (DB-backed · หลาย instance — กฎ #4 D) — นับก่อนค้นทุกครั้ง
+
+    [HttpPost("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/storefront/lookup/booking")]
+    public async Task<ActionResult<ApiResponse<GuestLookupResponse>>> LookupBooking(
+        Guid companyId, Guid siteId, [FromBody] GuestBookingLookupRequest? request, [FromServices] IChatRateLimiter limiter)
+    {
+        if (await LookupThrottledAsync(limiter, siteId, "booking", request?.BookingNumber, request?.Contact) is ActionResult limited) return limited;
+        if (!GuestRecordLookup.IsValidRequest(request?.BookingNumber, request?.Contact))
+            return BadRequest(new ApiResponse<GuestLookupResponse>(false, null, GuestRecordLookup.InputMessage));
+        var token = await _svc.LookupBookingTokenAsync(companyId, siteId, request!.BookingNumber, request.Contact);
+        if (token == null) return NotFound(new ApiResponse<GuestLookupResponse>(false, null, GuestRecordLookup.NotFoundMessage));
+        return Ok(new ApiResponse<GuestLookupResponse>(true, new GuestLookupResponse(token, "booking")));
+    }
+
+    [HttpPost("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/storefront/lookup/order")]
+    public async Task<ActionResult<ApiResponse<GuestLookupResponse>>> LookupOrder(
+        Guid companyId, Guid siteId, [FromBody] GuestOrderLookupRequest? request, [FromServices] IChatRateLimiter limiter)
+    {
+        if (await LookupThrottledAsync(limiter, siteId, "order", request?.OrderNumber, request?.Contact) is ActionResult limited) return limited;
+        if (!GuestRecordLookup.IsValidRequest(request?.OrderNumber, request?.Contact))
+            return BadRequest(new ApiResponse<GuestLookupResponse>(false, null, GuestRecordLookup.InputMessage));
+        var token = await _svc.LookupOrderTokenAsync(companyId, siteId, request!.OrderNumber, request.Contact);
+        if (token == null) return NotFound(new ApiResponse<GuestLookupResponse>(false, null, GuestRecordLookup.NotFoundMessage));
+        return Ok(new ApiResponse<GuestLookupResponse>(true, new GuestLookupResponse(token, "order")));
+    }
+
+    /// <summary>นับโควตาก่อนค้น (fail-closed ทั้งหมด): ต่อ IP ของเว็บนี้ (IPv6 รวม /64 · 10/นาที · 100/วัน) · ต่อเลขที่ (5/นาที · 20/วัน — กันเดาเบอร์ของเลขเดียวจากหลาย IP) ·
+    /// ต่อผู้ติดต่อ (5/นาที · 20/วัน — ฝ่ายค้านรอบ 210: กันรู้เบอร์/อีเมลเหยื่อแล้วไล่เลขที่ตามลำดับ) · เกิน ⇒ 429</summary>
+    private async Task<ActionResult?> LookupThrottledAsync(IChatRateLimiter limiter, Guid siteId, string kind, string? number, string? contact)
+    {
+        var tooMany = StatusCode(429, new ApiResponse<GuestLookupResponse>(false, null, GuestRecordLookup.RateLimitedMessage));
+        // คีย์สั้นพอสำหรับ BucketKey varchar(120): siteId แบบ N (32) + IP (≤45) · เลขที่/ผู้ติดต่อ = แฮช 16 ตัว
+        var ip = GuestRecordLookup.IpBucket(HttpContext.Connection.RemoteIpAddress);
+        if (!await limiter.TryConsumeAsync($"cms-lookup:{siteId:N}:{ip}", perMinute: 10, perDay: 100, failClosed: true)) return tooMany;
+        if (GuestRecordLookup.NumberBucket(GuestRecordLookup.NormalizeNumber(number)) is string n
+            && !await limiter.TryConsumeAsync($"cms-lookup-num:{siteId:N}:{kind}:{n}", perMinute: 5, perDay: 20, failClosed: true)) return tooMany;
+        if (GuestRecordLookup.ContactBucket(contact) is string c
+            && !await limiter.TryConsumeAsync($"cms-lookup-c:{siteId:N}:{c}", perMinute: 5, perDay: 20, failClosed: true)) return tooMany;
+        return null;
+    }
+
     // ===== บัญชีของฉัน (โทเคนลูกค้าหน้าร้าน) =====
 
     /// <summary>ด่านเดียวของทุก action "ของฉัน": โทเคนถูกต้อง + ออกโดยเว็บนี้ + ลูกค้ายังมีอยู่/ใช้งานในบริษัท+เว็บนี้ · ไม่ผ่าน ⇒ (null, 401/403)</summary>

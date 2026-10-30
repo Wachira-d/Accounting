@@ -105,3 +105,12 @@ public enum ClassSessionStatus
     Scheduled = 0,
     Cancelled = 1,
 }
+
+/// <summary>รอบ 210 — ค่าตั้ง "ต้องเป็นสมาชิกก่อนจอง" ต่อบริการ (ตัวตัดสินเดียว <c>Helpers/BookingAccessRule</c>) ·
+/// Inherit = ตามค่าของเว็บ (<c>SiteBookingSettings.RequireMemberToBook</c>) — เก็บเป็น <c>SiteBookingService.MemberOnly</c> null/true/false</summary>
+public enum BookingMemberAccess
+{
+    Inherit = 0,
+    Required = 1,
+    NotRequired = 2,
+}

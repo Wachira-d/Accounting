@@ -47,6 +47,8 @@ public class CreateBookingServiceRequest
     public BookingResourceMode ResourceMode { get; set; } = BookingResourceMode.None;
     /// <summary>true = ระยะเวลา/buffer/ล่วงหน้า ใช้ค่าตั้งของไซต์ · false = ค่าของบริการนี้ (override)</summary>
     public bool UseSiteDefaults { get; set; }
+    /// <summary>รอบ 210: ต้องเป็นสมาชิกก่อนจอง (Inherit = ตามเว็บ · Required · NotRequired) — <b>null = ไม่แตะค่าเดิม</b> (ผู้เรียก API เดิม · สร้างใหม่ = ตามเว็บ)</summary>
+    public BookingMemberAccess? MemberAccess { get; set; }
     /// <summary>เวลาทำการ + วันหยุด — <b>null = ไม่แตะตารางเวลาเดิม</b> (ผู้เรียก API เดิม) · ส่งมา = แทนที่ทั้งชุด</summary>
     public BookingScheduleDto? Schedule { get; set; }
 }
@@ -95,6 +97,12 @@ public class BookingSiteSettingsDto
     public List<BookingDocumentFlow.Option> CompletionDocumentOptions { get; set; } = new();
     /// <summary>ตารางสรุป "ออกเอกสารอะไร ขั้นไหน" ต่อชนิดบริการ ตามค่าตั้งปัจจุบัน + สถานะ VAT ของบริษัท (server ประกอบ — หน้าเว็บแสดงตรง)</summary>
     public List<BookingDocumentFlow.StageRow> DocumentFlow { get; set; } = new();
+
+    // ── รอบ 210 (คำตัดสินข้อ 169) ──
+    /// <summary>ต้องเข้าสู่ระบบสมาชิกก่อนจอง (ทุกบริการที่ไม่ตั้งเอง) · คำตอบมีค่าเสมอ · ตอนบันทึก null = คงค่าเดิม</summary>
+    public bool? RequireMemberToBook { get; set; }
+    /// <summary>ตัวเลือก "ต้องเป็นสมาชิก" ต่อบริการ (server ประกาศป้าย · <c>BookingAccessRule.Options</c>) — ไม่อ่านตอนบันทึก</summary>
+    public List<BookingAccessRule.Option> MemberAccessOptions { get; set; } = new();
 }
 
 /// <summary>รอบ 207: บริการที่ผู้ให้บริการรับได้ + คนหลัก/ลำดับความสำคัญต่อบริการ</summary>
@@ -223,6 +231,10 @@ public class BookingServiceResponse
     public bool WaitlistEnabled { get; set; }
     public BookingResourceMode ResourceMode { get; set; }
     public bool UseSiteDefaults { get; set; }
+    /// <summary>รอบ 210: ค่าที่ตั้งบนบริการ (Inherit/Required/NotRequired — ฟอร์มแก้ไข hydrate จากตัวนี้)</summary>
+    public BookingMemberAccess MemberAccess { get; set; }
+    /// <summary>รอบ 210: ต้องเข้าสู่ระบบสมาชิกก่อนจองจริงไหม (server ตัดสินจากบริการ + เว็บ — <c>BookingAccessRule.RequiresMember</c>) · หน้าจองอ่านตัวนี้</summary>
+    public bool MemberOnly { get; set; }
     /// <summary>ระยะเวลาที่ใช้จริง (ของไซต์เมื่อ UseSiteDefaults) — หน้าเว็บแสดงตัวนี้</summary>
     public int EffectiveDurationMinutes { get; set; }
     /// <summary>รอบ 207: โหมดผู้ให้บริการที่มีผลจริง (ไซต์ปิดจัดสรร ⇒ None) — หน้าจองของลูกค้าอ่านช่องนี้</summary>
@@ -606,6 +618,8 @@ public class AvailableSlotResponse
     public string? ResourceName { get; set; }
     /// <summary>รอบ 209 P4: รอบเรียน (SiteClassSession) ของเวลานี้ · null = บริการไม่ใช้ตารางคลาส</summary>
     public Guid? ClassSessionId { get; set; }
+    /// <summary>รอบ 210: บริการนี้ต้องเข้าสู่ระบบสมาชิกก่อนจอง (server ตัดสิน · ด่านจริงตอนสร้างการจอง)</summary>
+    public bool MemberOnly { get; set; }
 }
 
 /// <summary>พนักงานบันทึกรับเงินมัดจำของการจอง (รอบ 205 W2 R-08) — ยอด/วันที่/อ้างอิง · ตัวตัดสิน Helpers/CmsBookingOnlinePayment</summary>

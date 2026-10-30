@@ -220,6 +220,8 @@
   <footer class="sf-footer" id="sfFooter" style="display:none">
     <div class="sf-container">
       <div id="sfFooterContent">© <span id="sfYear"></span> <span id="sfFooterName">เว็บไซต์</span></div>
+      <!-- รอบ 210: แขกกลับมาดูการจอง/คำสั่งซื้อด้วยเลขที่ + เบอร์/อีเมล (หน้า check) -->
+      <div style="margin-top:6px;font-size:13px"><a id="sfCheckLink" href="?slug=check" style="color:inherit">🔎 ตรวจสอบการจอง / คำสั่งซื้อ</a></div>
     </div>
   </footer>
 
@@ -464,6 +466,8 @@
         const site = this.data?.site || this.site || {};
         document.getElementById('sfYear').textContent = new Date().getFullYear();
         document.getElementById('sfFooterName').textContent = site.name || '';
+        const chk = document.getElementById('sfCheckLink');
+        if (chk) chk.href = this.pathBased ? `${this.basePath}/check` : '?slug=check';
         document.getElementById('sfFooter').style.display = '';
       },
 
@@ -1017,6 +1021,8 @@
           await this.renderTrackOrder(slug.startsWith('track-order/') ? decodeURIComponent(slug.substring('track-order/'.length)) : ''); return true;
         }
         if (slug === 'account') { await this.renderAccount(); return true; }
+        // รอบ 210: แขก (ไม่ล็อกอิน) ค้นการจอง/คำสั่งซื้อด้วยเลขที่ + เบอร์โทรหรืออีเมล — เซิร์ฟเวอร์ตัดสิน (GuestRecordLookup) แล้วพาไปหน้าโทเคน
+        if (slug === 'check') { await this.renderLookup(); return true; }
         // รอบ 205 W2: ลิงก์ลูกค้าของการจองนัดหมาย (จ่ายมัดจำ/ยกเลิกเอง) — คนละเส้นกับ /booking (ที่พัก)
         if (slug.startsWith('my-booking/')) {
           await this.renderBookingByToken(decodeURIComponent(slug.substring('my-booking/'.length))); return true;
@@ -1226,6 +1232,7 @@
           <div class="sf-container" style="padding:32px 20px;max-width:760px">
             <h1>📦 ข้อมูลจัดส่ง</h1>
             <p style="color:var(--text-secondary);margin-bottom:24px">ยอดสินค้า: <strong>฿${Number(cart.totalAmount||0).toLocaleString('th-TH', {minimumFractionDigits:2})}</strong></p>
+            <div id="sfMemberGate"></div>
             <form onsubmit="Store.submitOrder(event, '${cart.id}')" style="display:grid;gap:14px;background:#fff;padding:24px;border:1px solid #E5E7EB;border-radius:var(--radius,8px)">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
                 <div><label>ชื่อ-นามสกุล *</label><input name="shippingName" required style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
@@ -1274,6 +1281,16 @@
       _applyCheckoutForm(cartId, q) {
         const ff = q.formFields || {};
         const feat = q.features || {};
+        // รอบ 210: ร้านให้สั่งเฉพาะสมาชิก (features.guestCheckout=false จากเซิร์ฟเวอร์ · CmsFeatureFlags) + ยังไม่ล็อกอิน ⇒ บอกก่อนกรอก + ปุ่มเข้าสู่ระบบ/สมัคร
+        // (ด่านจริง = CmsFeatureFlags.AccountProblem ตอนสร้างออเดอร์)
+        const gate = document.getElementById('sfMemberGate');
+        if (gate) gate.innerHTML = feat.guestCheckout === false && !this._custSession()
+          ? `<div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#78350F;font-size:14px">
+              🔒 ร้านนี้ให้สั่งซื้อเฉพาะสมาชิก — เข้าสู่ระบบหรือสมัครสมาชิกก่อน แล้วกลับมาที่ตะกร้า
+              <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                <a class="btn btn-primary" href="${this._pageUrl('account')}">เข้าสู่ระบบ</a>
+                <a class="btn btn-secondary" href="${this._pageUrl('account')}">สมัครสมาชิก</a>
+              </div></div>` : '';
         const setField = (wrapId, inputId, req) => {
           const w = document.getElementById(wrapId), i = document.getElementById(inputId);
           if (!w || !i) return;
@@ -1589,7 +1606,7 @@
             <p style="color:var(--text-secondary)">ลิงก์อาจไม่ครบ หรือเป็นลิงก์รูปแบบเดิม — ดูคำสั่งซื้อของคุณได้จากหน้า "บัญชีของฉัน" หรือติดต่อร้านพร้อมเลขที่คำสั่งซื้อ</p>
             <div style="display:flex;gap:10px;justify-content:center;margin-top:18px;flex-wrap:wrap">
               <a class="btn btn-primary" href="${this._pageUrl('account')}">บัญชีของฉัน</a>
-              <a class="btn btn-secondary" href="${this._pageUrl('track-order')}">ติดตามคำสั่งซื้อ</a>
+              <a class="btn btn-secondary" href="${this._pageUrl('check')}">ค้นด้วยเลขที่ + เบอร์/อีเมล</a>
             </div></div>`;
       },
       // QR พร้อมเพย์สร้างที่เซิร์ฟเวอร์ (ไม่ส่งเลข/ยอดไปบริการภายนอก — คำตัดสินข้อ 168 ฑ) · ยอดมาจากเซิร์ฟเวอร์ทุกครั้ง
@@ -1992,7 +2009,7 @@
                 <input name="link" required maxlength="500" placeholder="ลิงก์ติดตามคำสั่งซื้อ" style="flex:1;min-width:220px;padding:10px;border:1px solid #D1D5DB;border-radius:6px">
                 <button type="submit" class="btn btn-primary">ดูสถานะ</button>
               </form>
-              <p style="margin-top:14px"><a href="${this._pageUrl('account')}">เข้าสู่ระบบ / บัญชีของฉัน</a></p></div>`;
+              <p style="margin-top:14px"><a href="${this._pageUrl('check')}">ไม่มีลิงก์? ค้นด้วยเลขที่คำสั่งซื้อ + เบอร์โทร/อีเมล</a> · <a href="${this._pageUrl('account')}">เข้าสู่ระบบ / บัญชีของฉัน</a></p></div>`;
           return;
         }
         const o = await this._publicOrder(token);
@@ -2016,6 +2033,46 @@
             ${Number(o.nextPayableAmount) > 0 && !o.onlinePaymentBlockedNote ? `<div style="margin-top:16px"><a class="btn btn-primary" href="${this._pageUrl('order-success/' + encodeURIComponent(token))}">ชำระเงิน ${m(o.nextPayableAmount)}</a></div>` : ''}
           </div>`;
       },
+      // ===== รอบ 210 (คำตัดสินข้อ 169): ตรวจสอบการจอง / คำสั่งซื้อ ด้วยเลขที่ + เบอร์โทรหรืออีเมล =====
+      // เซิร์ฟเวอร์เทียบแบบตรงตัว + จำกัดความถี่ (storefront/lookup/*) · สำเร็จได้แค่โทเคน ⇒ ไปหน้า my-booking / track-order เดิม · ไม่ตรง = ข้อความกลางจากเซิร์ฟเวอร์
+      async renderLookup() {
+        const main = document.getElementById('sfMain');
+        document.title = 'ตรวจสอบการจอง / คำสั่งซื้อ';
+        const inp = 'width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px';
+        main.innerHTML = `<div class="sf-container" style="padding:40px 20px;max-width:560px">
+            <h1 style="margin:0 0 8px">ตรวจสอบการจอง / คำสั่งซื้อ</h1>
+            <p style="color:var(--text-secondary)">กรอกเลขที่การจองหรือเลขที่คำสั่งซื้อ (อยู่ในอีเมล/ข้อความยืนยัน) พร้อมเบอร์โทรหรืออีเมลที่ใช้ตอนจอง/สั่งซื้อ</p>
+            <form onsubmit="Store.submitLookup(event)" style="display:grid;gap:12px;margin-top:14px;background:#fff;padding:20px;border:1px solid #E5E7EB;border-radius:var(--radius,8px)">
+              <div style="display:flex;gap:16px;flex-wrap:wrap">
+                <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="radio" name="kind" value="booking" checked> การจอง</label>
+                <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="radio" name="kind" value="order"> คำสั่งซื้อ</label>
+              </div>
+              <div><label>เลขที่ *</label><input name="number" required maxlength="64" autocomplete="off" style="${inp}"></div>
+              <div><label>เบอร์โทร หรือ อีเมล *</label><input name="contact" required maxlength="254" autocomplete="off" style="${inp}"></div>
+              <button type="submit" class="btn btn-primary">ตรวจสอบ</button>
+              <div class="sf-lookup-status" style="font-size:13px"></div>
+            </form>
+            <p style="margin-top:14px;font-size:13px">เป็นสมาชิก? <a href="${this._pageUrl('account')}">เข้าสู่ระบบ</a> เพื่อดูการจอง/คำสั่งซื้อทั้งหมด</p></div>`;
+      },
+      async submitLookup(ev) {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        const st = ev.target.querySelector('.sf-lookup-status');
+        const kind = fd.get('kind') === 'order' ? 'order' : 'booking';
+        const number = String(fd.get('number') || '').trim(), contact = String(fd.get('contact') || '').trim();
+        st.textContent = 'กำลังตรวจสอบ...'; st.style.color = 'var(--text-secondary)';
+        try {
+          const body = kind === 'order' ? { orderNumber: number, contact } : { bookingNumber: number, contact };
+          const r = await fetch(this._url('/storefront/lookup/' + kind), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+          });
+          const j = await r.json().catch(() => null);
+          if (!r.ok || !j || !j.data || !j.data.publicToken) throw new Error((j && j.message) || 'ตรวจสอบไม่สำเร็จ — ลองใหม่อีกครั้ง');
+          const prefix = j.data.kind === 'order' ? 'track-order/' : 'my-booking/';
+          window.location.href = this._pageUrl(prefix + encodeURIComponent(j.data.publicToken));
+        } catch (e) { st.textContent = '✗ ' + e.message; st.style.color = '#DC2626'; }
+      },
+
       submitTrackOrder(ev) {
         ev.preventDefault();
         const raw = String(new FormData(ev.target).get('link') || '').trim();
@@ -2076,6 +2133,7 @@
           </div>
           <p style="color:var(--text-secondary);margin-bottom:6px">บริการ: <strong>${this.esc(serviceName)}</strong></p>
           ${svc && svc.policySummary ? `<p style="color:var(--text-secondary);font-size:12px;margin-bottom:14px">${this.esc(svc.policySummary)}</p>` : ''}
+          ${this._bkMemberGateHtml(svc)}
           ${maxUnits > 1 ? `<label>จำนวนช่วงติดกัน</label>
             <select id="sfBookUnits" onchange="Store._loadSlots('${this.jsArg(serviceId)}')" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px;margin-bottom:14px">
               ${Array.from({ length: maxUnits }, (_, i) => `<option value="${i + 1}">${i + 1} ช่วง (${(i + 1) * (svc.durationMinutes || 0)} นาที)</option>`).join('')}
@@ -2104,8 +2162,11 @@
             ${fld('notes', 'หมายเหตุ', r => `<textarea name="notes" rows="2" ${r} style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea>`)}
             <div id="sfBookCreditBox"></div>
             ${this.p6ConsentHtml()}
-            <button type="button" onclick="Store._submitBooking()" class="btn btn-primary" style="padding:12px">ยืนยันการจอง</button>
-          </form>`;
+            <button type="button" id="sfBookSubmit" onclick="Store._submitBooking()" class="btn btn-primary" style="padding:12px">ยืนยันการจอง</button>
+          </form>
+          <p style="margin-top:12px;font-size:12px;color:var(--text-secondary);text-align:center">จองไว้แล้ว? <a href="${this._pageUrl('check')}">ตรวจสอบ/จัดการการจองเดิม</a></p>`;
+        // รอบ 210: บริการที่ต้องเป็นสมาชิก (เซิร์ฟเวอร์ตัดสิน memberOnly) + ยังไม่ล็อกอิน ⇒ ปิดปุ่มจอง (ด่านจริงที่เซิร์ฟเวอร์ — 401)
+        if (svc && svc.memberOnly && !this._custSession()) { const sb = document.getElementById('sfBookSubmit'); if (sb) sb.disabled = true; }
         await this._loadSlots(serviceId);
         await this._bookingCreditBox();
       },
@@ -2143,6 +2204,18 @@
         } catch(_) {
           box.innerHTML = '<div style="color:#DC2626;grid-column:1/-1">โหลดเวลาไม่สำเร็จ</div>';
         }
+      },
+
+      // รอบ 210 (คำตัดสินข้อ 169): ต้องเข้าสู่ระบบสมาชิกก่อนจอง — ค่าจากเซิร์ฟเวอร์ (svc.memberOnly · BookingAccessRule) · หน้าเว็บไม่ตัดสินเอง
+      _bkMemberGateHtml(svc) {
+        if (!svc || !svc.memberOnly) return '';
+        if (this._custSession()) return `<div style="font-size:12px;color:#065F46;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;padding:8px 12px;margin-bottom:12px">✓ จองในนามสมาชิกที่เข้าสู่ระบบอยู่</div>`;
+        return `<div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:12px 14px;margin-bottom:14px;color:#78350F;font-size:13px">
+            🔒 ต้องเข้าสู่ระบบสมาชิกก่อนจอง
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+              <a class="btn btn-primary" href="${this._pageUrl('account')}">เข้าสู่ระบบ</a>
+              <a class="btn btn-secondary" href="${this._pageUrl('account')}">สมัครสมาชิก</a>
+            </div></div>`;
       },
 
       _bkUnits() { const el = document.getElementById('sfBookUnits'); return el ? Math.max(1, parseInt(el.value, 10) || 1) : 1; },
@@ -2199,6 +2272,12 @@
           if (!r.ok) {
             let msg = 'จองไม่สำเร็จ — ลองอีกครั้ง';
             try { const j = await r.json(); if (j && j.message) msg = j.message; } catch (_) {}
+            // รอบ 210: 401 = ต้องเป็นสมาชิก/เซสชันหมดอายุ ⇒ ล้างเซสชันเก่า + พาไปหน้าเข้าสู่ระบบ (ข้อความจากเซิร์ฟเวอร์)
+            if (r.status === 401) {
+              this._custLogout();
+              if (confirm(msg + '\n\nไปหน้าเข้าสู่ระบบ/สมัครสมาชิกตอนนี้?')) window.location.href = this._pageUrl('account');
+              return;   // ข้อความแสดงแล้วใน confirm — ไม่ alert ซ้ำ
+            }
             await this._loadSlots(fd.get('serviceId'));
             document.getElementById('sfBookForm').style.display = 'none';
             document.getElementById('sfSlotStart').value = '';
