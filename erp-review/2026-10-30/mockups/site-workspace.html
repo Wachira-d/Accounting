@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>พื้นที่ทำงานเว็บไซต์ (mockup)</title>
+<!-- mockup แบบคงที่ของ CMS_UX_REDESIGN.md §4 — ข้อมูลสมมติ · ไม่เรียก API -->
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<style>
+  body { font-family: 'Sarabun', system-ui, sans-serif; background:#f8fafc; color:#0f172a }
+  .tabs { scroll-snap-type:x mandatory; scrollbar-width:none }
+  .tabs a { scroll-snap-align:start }
+  .tabs::-webkit-scrollbar { display:none }
+  [aria-current="page"] { border-color:#2563eb; color:#1d4ed8; font-weight:600 }
+  [role="tab"][aria-selected="true"] { background:#eff6ff; color:#1d4ed8; font-weight:600 }
+</style>
+</head>
+<body>
+<div class="flex min-h-screen">
+  <!-- แถบซ้าย (หลังออกแบบ) -->
+  <aside class="hidden md:block w-60 shrink-0 bg-white border-r border-slate-200 p-3 text-sm" aria-label="เมนูหลัก">
+    <div class="text-xs text-slate-400 px-2 mb-1">… หมวดอื่นพับไว้ …</div>
+    <div class="px-2 py-1 text-slate-600">🏪 POS หน้าร้าน ▸</div>
+    <div class="px-2 py-1 font-semibold text-slate-800 mt-2">🌐 เว็บไซต์ &amp; การจอง ▾</div>
+    <a href="#" onclick="M.go('ws');return false" class="block ml-3 px-2 py-1.5 rounded hover:bg-slate-100" id="navWs">🧭 พื้นที่ทำงานเว็บไซต์</a>
+    <a href="#" onclick="M.go('all');return false" class="block ml-3 px-2 py-1.5 rounded hover:bg-slate-100" id="navAll">🗂 ภาพรวมทุกไซต์</a>
+    <div class="px-2 py-1 text-slate-600 mt-2">⚙️ ตั้งค่า &amp; ผู้ใช้ ▸</div>
+    <p class="text-xs text-slate-400 px-2 mt-4 leading-relaxed">คำสั่งซื้อ · การจอง · Front desk · Lead · ตั้งค่า ไม่อยู่บนแถบนี้แล้ว — อยู่ในแท็บของเว็บที่เลือก (ช่องค้นหาเมนูยังหาเจอ)</p>
+  </aside>
+
+  <main class="flex-1 min-w-0 px-4 py-4 md:px-6">
+    <div id="ws">
+      <nav aria-label="breadcrumb" class="text-xs text-slate-500 mb-2">
+        <a href="#" onclick="M.go('all');return false" class="text-blue-700">🌐 เว็บไซต์ &amp; การจอง</a> ›
+        <span id="crumbSite"></span> › <span id="crumbTab"></span>
+      </nav>
+
+      <!-- หัวพื้นที่ทำงาน: ตัวสลับเว็บ -->
+      <div class="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
+        <div class="relative">
+          <button id="swBtn" class="flex items-center gap-2 border border-slate-300 rounded-lg px-3 py-2 hover:bg-slate-50"
+                  aria-haspopup="listbox" aria-expanded="false" onclick="M.toggleSw()">
+            <span id="swIcon" class="text-xl"></span><span id="swName" class="font-semibold"></span><span aria-hidden="true">▾</span>
+          </button>
+          <ul id="swList" role="listbox" aria-label="เลือกเว็บไซต์" class="hidden absolute z-10 mt-1 w-80 max-w-[calc(100vw-32px)] bg-white border border-slate-200 rounded-lg shadow-lg p-1"></ul>
+        </div>
+        <span id="swType" class="text-xs bg-violet-50 text-violet-700 border border-violet-200 rounded-full px-2 py-0.5"></span>
+        <span id="swStatus" class="text-xs"></span>
+        <a id="swUrl" href="#" class="text-xs text-blue-700 underline truncate max-w-[200px]"></a>
+        <a href="#" class="ml-auto text-sm border border-slate-300 rounded-lg px-3 py-1.5 hover:bg-slate-50">👁 ดูหน้าเว็บ</a>
+      </div>
+      <div aria-live="polite" class="sr-only" id="live"></div>
+
+      <!-- แท็บตามโมดูล (ลิงก์ข้ามหน้า ⇒ nav + aria-current) -->
+      <nav aria-label="งานของเว็บ" class="tabs flex gap-1 overflow-x-auto border-b border-slate-200 mt-3" id="tabs"></nav>
+      <section id="pane" class="mt-4"></section>
+    </div>
+
+    <div id="all" class="hidden">
+      <h1 class="text-xl font-bold">🗂 ภาพรวมทุกไซต์</h1>
+      <p class="text-sm text-slate-500 mb-3">ทุกตัวเลขรวมเฉพาะเว็บที่คุณมีสิทธิ์ · ทุกแถวมีคอลัมน์ "เว็บ"</p>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3" id="queue"></div>
+      <h2 class="font-semibold mt-6 mb-2">เว็บไซต์ (4)</h2>
+      <div class="grid sm:grid-cols-2 gap-3" id="cards"></div>
+    </div>
+  </main>
+</div>
+
+<script>
+const SITES = [
+  { id:'spa', name:'test-spa', icon:'💆', type:'สปา · จองคิว', status:'pub', url:'/site/test-spa', work:[['การจอง',3]], sell:'บริการ · ผู้ให้บริการ', report:'ผู้ให้บริการ', groups:['ทั่วไป','โดเมน & SEO','การจอง / บริการ','การชำระเงิน','การแจ้งเตือน / LINE','สมาชิก','กฎหมาย / นโยบาย','ทีมงานของเว็บ','ขั้นสูง'], done:6, total:8 },
+  { id:'b2', name:'b2 สำนักงานบัญชี', icon:'💼', type:'บริการวิชาชีพ · คำขอ', status:'pub', url:'/site/b2', work:[['คำขอ / Lead',2]], sell:'บริการ / แพ็กเกจ', report:null, groups:['ทั่วไป','โดเมน & SEO','การแจ้งเตือน / LINE','กฎหมาย / นโยบาย','ทีมงานของเว็บ','ขั้นสูง'], done:4, total:5 },
+  { id:'b1', name:'b1 Riverside Hotel', icon:'🏨', type:'โรงแรม · ที่พัก', status:'pub', url:'/site/b1', work:[['Front desk',5]], sell:'ห้องพัก & ราคา', report:'อัตราเข้าพัก', groups:['ทั่วไป','โดเมน & SEO','ที่พัก','การชำระเงิน','การแจ้งเตือน / LINE','สมาชิก','กฎหมาย / นโยบาย','ทีมงานของเว็บ','ขั้นสูง'], done:7, total:8 },
+  { id:'b3', name:'b3 Bake & Class', icon:'🧁', type:'ร้านสั่งทำ + คลาส', status:'draft', url:'/site/b3', work:[['คำสั่งซื้อ',4],['การจอง (คลาส)',1]], sell:'สินค้า · ตารางคลาส', report:'ยอดขายเว็บ', groups:['ทั่วไป','โดเมน & SEO','การสั่งซื้อ','การจอง / บริการ','การชำระเงิน','การจัดส่ง','การแจ้งเตือน / LINE','สมาชิก','กฎหมาย / นโยบาย','ทีมงานของเว็บ','ขั้นสูง'], done:3, total:7 },
+];
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const M = {
+  site: SITES[0], tab: 'today', group: null,
+  tabsOf(s) {
+    return [['today','วันนี้',null]].concat(s.work.map((w,i)=>['work'+i,w[0],w[1]]))
+      .concat([['cust','ลูกค้า & สมาชิก',null],['sell','สิ่งที่ขาย',null],['web','หน้าเว็บ',null]])
+      .concat(s.report ? [['report','รายงาน',null]] : [])
+      .concat([['set','ตั้งค่า', s.total - s.done || null]]);
+  },
+  go(v) {
+    document.getElementById('ws').classList.toggle('hidden', v !== 'ws');
+    document.getElementById('all').classList.toggle('hidden', v !== 'all');
+    if (v === 'all') this.renderAll(); else this.render();
+  },
+  toggleSw(force) {
+    const b = document.getElementById('swBtn'), l = document.getElementById('swList');
+    const open = force !== undefined ? force : b.getAttribute('aria-expanded') !== 'true';
+    b.setAttribute('aria-expanded', open); l.classList.toggle('hidden', !open);
+    if (open) l.querySelector('[role=option]')?.focus();
+  },
+  pick(id) {
+    const prev = this.tab;
+    this.site = SITES.find(s => s.id === id);
+    // คงแท็บเดิมถ้าเว็บใหม่มี — ไม่มีก็ลง "วันนี้" (ไม่ใช่หน้าว่าง)
+    if (!this.tabsOf(this.site).some(t => t[0] === prev)) this.tab = 'today';
+    this.group = null; this.toggleSw(false);
+    document.getElementById('live').textContent = 'กำลังดูเว็บ ' + this.site.name + ' — ' + this.site.type;
+    this.go('ws'); document.getElementById('swBtn').focus();
+  },
+  render() {
+    const s = this.site;
+    swIcon.textContent = s.icon; swName.textContent = s.name; swType.textContent = s.type;
+    swStatus.innerHTML = s.status === 'pub' ? '<span class="text-green-700">● เผยแพร่แล้ว</span>' : '<span class="text-amber-700">○ ฉบับร่าง</span>';
+    swUrl.textContent = s.url; swUrl.href = '#';
+    swList.innerHTML = SITES.map(x => `<li role="option" tabindex="0" aria-selected="${x===s}" class="flex items-center gap-2 px-3 py-2 rounded cursor-pointer hover:bg-slate-100 ${x===s?'bg-blue-50':''}"
+        onclick="M.pick('${x.id}')" onkeydown="if(event.key==='Enter')M.pick('${x.id}');if(event.key==='Escape'){M.toggleSw(false);swBtn.focus()}">
+        <span>${x.icon}</span><span class="flex-1"><b>${esc(x.name)}</b><br><span class="text-xs text-slate-500">${esc(x.type)}</span></span>
+        ${x.work.reduce((a,w)=>a+w[1],0) ? `<span class="text-xs bg-red-600 text-white rounded-full px-2">${x.work.reduce((a,w)=>a+w[1],0)}</span>`:''}</li>`).join('')
+      + `<li class="border-t border-slate-100 mt-1 pt-1"><a href="#" onclick="M.go('all');M.toggleSw(false);return false" class="block px-3 py-2 text-sm text-blue-700">🗂 ทุกไซต์ (ภาพรวม)</a></li>
+         <li><a href="#" class="block px-3 py-2 text-sm text-blue-700">＋ สร้างเว็บใหม่</a></li>`;
+    const tabs = this.tabsOf(s);
+    document.getElementById('tabs').innerHTML = tabs.map(t => `<a href="#" onclick="M.tab='${t[0]}';M.group=null;M.render();return false"
+        class="whitespace-nowrap px-3 py-2 border-b-2 border-transparent text-sm text-slate-600 hover:text-slate-900" ${t[0]===this.tab?'aria-current="page"':''}
+        ${t[2]?`aria-label="${t[1]} ${t[0]==='set'?'ค้างตั้งค่า':'รอดำเนินการ'} ${t[2]} รายการ"`:''}>${t[1]}${t[2]?` <span class="ml-1 text-xs ${t[0]==='set'?'bg-amber-100 text-amber-800':'bg-red-600 text-white'} rounded-full px-1.5">${t[0]==='set'?'⚠'+t[2]:t[2]}</span>`:''}</a>`).join('');
+    const cur = tabs.find(t => t[0] === this.tab);
+    crumbSite.textContent = s.name; crumbTab.textContent = cur[1];
+    pane.innerHTML = this.paneHtml(s, cur);
+  },
+  paneHtml(s, cur) {
+    const badge = '<span class="text-xs border border-blue-200 bg-blue-50 text-blue-800 rounded-full px-2 py-0.5">🌐 เฉพาะเว็บนี้: ' + esc(s.name) + '</span>';
+    if (cur[0] === 'today') return `
+      <div class="grid md:grid-cols-3 gap-3">
+        ${s.work.map(w => `<div class="bg-white border rounded-xl p-4"><div class="text-sm text-slate-500">${w[0]}</div><div class="text-2xl font-bold">${w[1]}</div>
+           <div class="text-xs text-slate-500">รอดำเนินการ</div><button class="mt-2 text-sm bg-blue-600 text-white rounded-lg px-3 py-1.5">ยืนยันรายการแรก</button></div>`).join('')}
+        <div class="bg-white border rounded-xl p-4 md:col-span-${3 - Math.min(2, s.work.length)}">
+          <div class="flex items-center justify-between"><b>ตั้งค่าให้ครบ ${s.done}/${s.total}</b><span class="text-xs text-slate-500">ระบบตรวจให้</span></div>
+          <div class="h-2 bg-slate-100 rounded mt-2"><div class="h-2 bg-green-500 rounded" style="width:${Math.round(s.done/s.total*100)}%"></div></div>
+          <ul class="text-sm mt-3 space-y-1">
+            <li>✓ มีสิ่งที่ขายอย่างน้อย 1 รายการ</li>
+            <li>✓ ข้อมูลติดต่อ</li>
+            <li>⚠ <a href="#" class="text-blue-700 underline" onclick="M.tab='set';M.group='กฎหมาย / นโยบาย';M.render();return false">นโยบายความเป็นส่วนตัว</a></li>
+            <li>⚠ <a href="#" class="text-blue-700 underline" onclick="M.tab='set';M.group='การแจ้งเตือน / LINE';M.render();return false">แจ้งเตือนลูกค้าทาง LINE</a> <span class="text-xs text-slate-500">🏢 ต้องเชื่อม LINE OA ของบริษัท</span></li>
+          </ul></div>
+      </div>`;
+    if (cur[0].startsWith('work')) return `<div class="mb-2">${badge}</div><div class="bg-white border rounded-xl p-4 text-sm text-slate-600">
+        เนื้อหาหน้าเดิม (${s.id==='b1'?'lodging.html':s.id==='b2'?'cms-leads.html':cur[1]==='คำสั่งซื้อ'?'cms-orders.html':'cms-bookings.html'}?siteId=…) — <b>ไม่มี select เว็บซ้ำ</b> ในหน้า เพราะหัวพื้นที่ทำงานเป็นตัวเลือกเว็บตัวเดียว</div>`;
+    if (cur[0] === 'set') return this.settingsHtml(s, badge);
+    return `<div class="mb-2">${badge}</div><div class="bg-white border rounded-xl p-4 text-sm text-slate-600">${cur[1]}${cur[0]==='sell'?' — '+esc(s.sell):''}${cur[0]==='report'?' — '+esc(s.report):''} (หน้าเดิม ย้ายมาอยู่ใต้แท็บนี้)</div>`;
+  },
+  settingsHtml(s, badge) {
+    const g = this.group || (s.groups.includes('การจอง / บริการ') ? 'การจอง / บริการ' : s.groups[0]);
+    const flag = n => ({'กฎหมาย / นโยบาย':'⚠','การแจ้งเตือน / LINE':'ปรับเอง 2'}[n] || '✓');
+    const list = s.groups.map(n => `<button role="tab" aria-selected="${n===g}" class="w-full text-left px-3 py-2 rounded flex justify-between text-sm hover:bg-slate-50"
+        onclick="M.group='${n}';M.render()"><span>${n}</span><span class="text-xs text-slate-500">${flag(n)}</span></button>`).join('');
+    const company = `<div class="mt-4 border border-slate-300 border-dashed rounded-xl p-3 bg-slate-50 text-sm">
+        <div class="mb-1"><span class="text-xs border border-slate-300 bg-white rounded-full px-2 py-0.5">🏢 ใช้กับทุกไซต์ (ระดับบริษัท)</span></div>
+        <div>LINE OA ของร้าน: <b class="text-green-700">✓ เชื่อมแล้ว @myshop</b> · ช่องรับเงินออนไลน์: <b class="text-amber-700">ยังไม่เปิด</b> · โควตาข้อความเดือนนี้ 312/500</div>
+        <a href="#" class="text-blue-700 underline text-xs">แก้ที่ ตั้งค่าบริษัท ↗</a></div>`;
+    let body = `<p class="text-sm text-slate-600">ฟอร์มของกลุ่ม "${g}" (ย้ายมาจากหน้าเดิม — ดูตาราง §6)</p>`;
+    if (g === 'การจอง / บริการ') body = this.providerHtml();
+    return `<div class="mb-2">${badge}</div>
+      <div class="grid md:grid-cols-[220px_1fr] gap-4">
+        <label class="md:hidden text-sm">กลุ่มค่าตั้ง <select class="w-full border rounded px-2 py-2 mt-1" onchange="M.group=this.value;M.render()">${s.groups.map(n=>`<option ${n===g?'selected':''}>${n}</option>`).join('')}</select></label>
+        <div role="tablist" aria-orientation="vertical" aria-label="กลุ่มค่าตั้ง" class="hidden md:block bg-white border rounded-xl p-1 h-fit">${list}</div>
+        <div class="bg-white border rounded-xl p-4">${body}${company}</div>
+      </div>`;
+  },
+  rm: 'Auto',
+  providerHtml() {
+    const opts = [['CustomerChoice','ให้ลูกค้าเลือกเอง — ไม่เลือก = ระบบจัดให้'],['Auto','ระบบจัดให้อัตโนมัติ — ลูกค้าไม่เห็นตัวเลือก'],['Required','ลูกค้าต้องเลือก'],['None','ไม่ใช้ (นับความจุของบริการอย่างเดียว)']];
+    const prev = { CustomerChoice:'<label class="block mt-1">ผู้ให้บริการ <select class="border rounded px-2 py-1 text-sm"><option>ไม่ระบุ (ระบบจัดให้)</option><option>คุณแนน</option><option>คุณพลอย</option></select></label>',
+      Auto:'<div class="mt-1">ผู้ให้บริการ: <b>ระบบจัดให้ ✓</b><div class="text-xs text-slate-500">(ไม่มีช่องเลือกพนักงาน)</div></div>',
+      Required:'<label class="block mt-1">ผู้ให้บริการ * <select class="border rounded px-2 py-1 text-sm"><option>— เลือก —</option><option>คุณแนน</option></select></label>',
+      None:'<div class="mt-1 text-xs text-slate-500">(ไม่มีเรื่องผู้ให้บริการบนหน้าจอง)</div>' }[this.rm];
+    return `<h3 class="font-semibold">ผู้ให้บริการ / ห้อง / อุปกรณ์</h3>
+      <label class="flex gap-2 items-center text-sm mt-2"><input type="checkbox" checked> เปิดใช้การจัดสรรผู้ให้บริการ</label>
+      <fieldset class="mt-3"><legend class="text-sm font-medium">ลูกค้าเลือกผู้ให้บริการได้ไหม <span class="text-xs text-slate-500">(ค่าเริ่มต้นของทุกบริการในเว็บนี้)</span></legend>
+        ${opts.map(o=>`<label class="flex gap-2 items-center text-sm mt-1"><input type="radio" name="rm" ${o[0]===this.rm?'checked':''} onchange="M.rm='${o[0]}';M.render()"> ${o[1]}</label>`).join('')}
+      </fieldset>
+      <div class="grid lg:grid-cols-2 gap-3 mt-3">
+        <div class="border rounded-lg p-3 bg-slate-50 text-sm"><div class="text-xs text-slate-500 mb-1">ตัวอย่างที่ลูกค้าเห็นบนหน้าจอง</div>
+          <b>นวดไทย 60 นาที</b> · พรุ่งนี้ 14:00${prev}</div>
+        <div class="text-sm"><div class="font-medium mb-1">บริการที่ตั้งต่างจากค่านี้ (2)</div>
+          <div class="flex flex-wrap items-center gap-2 py-1 border-b">นวดอโรมา — ลูกค้าต้องเลือก <span class="text-xs bg-amber-100 text-amber-800 rounded px-1">กำหนดเอง</span><button class="text-xs text-blue-700 underline">ใช้ตามค่าเว็บ</button></div>
+          <div class="flex flex-wrap items-center gap-2 py-1 border-b">สปาหน้า — ลูกค้าเลือกเอง <span class="text-xs bg-amber-100 text-amber-800 rounded px-1">กำหนดเอง</span><button class="text-xs text-blue-700 underline">ใช้ตามค่าเว็บ</button></div>
+          <div class="py-1 text-slate-500">อีก 6 บริการ <span class="text-xs bg-slate-100 rounded px-1">ตามค่าเว็บ</span></div></div>
+      </div>
+      <button class="mt-3 bg-blue-600 text-white rounded-lg px-4 py-2 text-sm">บันทึก</button>
+      <hr class="my-4"><p class="text-sm text-slate-600">เวลาทำการ · วันหยุด · จองล่วงหน้า · เตือนก่อนนัด · ข้อมูลที่ลูกค้ากรอก · เอกสารแต่ละขั้น (ย้ายจากท้ายแท็บ "บริการจอง")</p>`;
+  },
+  renderAll() {
+    const q = [['🛒 คำสั่งซื้อรอดำเนินการ',4,'b3'],['📅 การจองรอยืนยัน',4,'test-spa 3 · b3 1'],['🏨 เข้าพักวันนี้',5,'b1'],['📨 Lead ใหม่',2,'b2']];
+    queue.innerHTML = q.map(x => `<a href="#" class="bg-white border rounded-xl p-4 hover:border-blue-400"><div class="text-sm text-slate-600">${x[0]}</div><div class="text-2xl font-bold">${x[1]}</div><div class="text-xs text-slate-500">เว็บ: ${esc(x[2])}</div></a>`).join('');
+    cards.innerHTML = SITES.map(s => `<div class="bg-white border rounded-xl p-4">
+        <div class="flex items-start gap-3"><span class="text-2xl">${s.icon}</span><div class="flex-1"><b>${esc(s.name)}</b>
+          <div class="text-xs text-slate-500">${esc(s.type)} · ${s.status==='pub'?'● เผยแพร่แล้ว':'○ ฉบับร่าง'} · ${s.url}</div></div>
+          ${s.work.reduce((a,w)=>a+w[1],0)?`<span class="text-xs bg-red-600 text-white rounded-full px-2">${s.work.reduce((a,w)=>a+w[1],0)} งานค้าง</span>`:''}</div>
+        <div class="flex gap-2 mt-3"><button class="bg-blue-600 text-white rounded-lg px-3 py-1.5 text-sm" onclick="M.pick('${s.id}')">เปิดพื้นที่ทำงาน</button>
+          <button class="border rounded-lg px-3 py-1.5 text-sm" aria-label="ดูหน้าเว็บ">👁</button>
+          <button class="border rounded-lg px-3 py-1.5 text-sm ml-auto" aria-label="เมนูเพิ่มเติม: เผยแพร่ เติมเทมเพลต ลบ">⋯</button></div></div>`).join('');
+  },
+};
+document.addEventListener('click', e => { if (!e.target.closest('#swBtn') && !e.target.closest('#swList')) M.toggleSw(false); });
+M.go('ws');
+</script>
+</body>
+</html>
