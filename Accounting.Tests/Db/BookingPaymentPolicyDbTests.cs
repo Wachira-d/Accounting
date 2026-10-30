@@ -481,6 +481,25 @@ public class BookingPaymentPolicyDbTests
         var waitStaff = await Svc(db).CreateBookingAsync(cid, sid, Other(Req(svcId, "11:00"), 3), userId: staff.Id.ToString(), staffOnBehalf: true);
         Assert.Equal(BookingStatus.Waitlisted, waitCustomer.Status);
         Assert.Equal(BookingStatus.Waitlisted, waitStaff.Status);
+        // ฟิกซ์เจอร์: เทสต์นี้ล็อก "ตัวตัดสินการชำระตอนได้ที่" ไม่ใช่เส้นเอกสาร ERP — ฐานเทสต์ไม่มี IDocumentService ⇒ ผูกใบคิวกับเอกสารตั้งต้น
+        // (SyncBookingToErpAsync คืนทันทีเมื่อมี ErpDocumentId · production: ได้ที่แล้วออกเอกสารตามเดิม — เส้นนั้นไม่เปลี่ยนในรอบนี้)
+        var contact = new Contact { CompanyId = cid, Name = "ลูกค้าคิว", IsCustomer = true };
+        db.Contacts.Add(contact);
+        await db.SaveChangesAsync();
+        foreach (var wid in new[] { waitCustomer.Id, waitStaff.Id })
+        {
+            var doc = new Document
+            {
+                CompanyId = cid, ContactId = contact.Id, DocumentType = DocumentType.Quotation, DocumentNumber = "QT-" + Guid.NewGuid().ToString("N")[..8],
+                Status = DocumentStatus.Draft, DocumentDate = DateTime.UtcNow.Date, SubTotal = 150m, TotalAmount = 150m, BalanceDue = 150m, Currency = "THB",
+            };
+            db.Documents.Add(doc);
+            await db.SaveChangesAsync();
+            var row = await db.SiteBookings.SingleAsync(b => b.Id == wid && b.CompanyId == cid);
+            row.ErpDocumentId = doc.Id;
+            await db.SaveChangesAsync();
+        }
+        db.ChangeTracker.Clear();
 
         await Svc(db).UpdateBookingStatusAsync(cid, sid, firstA.Id, new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = "เทสต์" }, "staff-1");
         await Svc(db).UpdateBookingStatusAsync(cid, sid, firstB.Id, new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = "เทสต์" }, "staff-1");
