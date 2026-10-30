@@ -6,6 +6,10 @@ namespace Accounting.Helpers;
 /// <summary>ช่องทางติดต่อลูกค้าของการจอง (บัญชีลูกค้า → อีเมล/LINE · แขก → อีเมล) · ไม่มีทั้งคู่ = ส่งไม่ได้ (ต้องบอก ไม่ใช่ประทับว่าส่งแล้ว)</summary>
 public sealed record BookingContact(string? Email, string? LineUserId)
 {
+    /// <summary>รอบ 211: เป้าหมายสำหรับหา LINE ที่ลูกค้าผูกเอง (การจอง/ออเดอร์/สมาชิก/ผู้ติดต่อ) — <c>BookingNotifier</c> หาให้ผ่าน
+    /// <c>ICustomerLineLinkService.ResolveLineUserIdAsync</c> · null = เดิม (อีเมล/LINE ตามที่ผู้เรียกให้มา)</summary>
+    public CustomerLineTarget? LineTarget { get; init; }
+
     public bool HasChannel => !string.IsNullOrWhiteSpace(Email) || !string.IsNullOrWhiteSpace(LineUserId);
 }
 

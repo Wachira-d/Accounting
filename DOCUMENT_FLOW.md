@@ -5886,6 +5886,20 @@ _Last verified against codebase: 2026-10-29 (รอบ 209 · P4 — ตาร�
 
 _Last verified against codebase: 2026-10-30 (รอบ 210 — สมาชิกก่อนจอง · แขกค้นด้วยเลขที่ + เบอร์/อีเมล · ลิงก์ในแจ้งเตือน · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 24555e9d)_
 
+- **รอบ 211 · ลูกค้าปลายทางผูก LINE รับแจ้งเตือน (คำตัดสินข้อ 170 · `erp-review/2026-10-30/LINE_CUSTOMER_NOTIFY_DESIGN.md` · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **ผูกเอง** — สมาชิก (`account`: `GET/DELETE portal/me/line` · `POST …/start`) และแขก (จองสำเร็จ · `my-booking/{token}` · ออเดอร์สำเร็จ · `track-order/{token}`:
+  `GET/DELETE storefront/line/{booking|order}/{token}` · `POST …/start`) ⇒ รหัสใช้ครั้งเดียว `LN-XXXXXXXX` (30 นาที · hash) + ลิงก์เพิ่มเพื่อน/ส่งรหัส/QR ·
+  ลูกค้าส่ง "ผูก LN-…" ⇒ webhook ของ OA นั้น ⇒ `CustomerLineLinkService.TryRedeemAsync` ⇒ `CustomerLineLinks` + `PdpaConsentRecord` (`cms-line-notify:messaging`) + audit chain ·
+  OA กลาง: `LineBotService` แยก "ผูก LN-" ก่อน "ผูก 123456" ของ ERP · OA ของร้าน: `POST /api/line/webhook/c/{companyId}` (`CustomerLineWebhookController` · secret ของบริษัท ·
+  ลายเซ็น `Helpers/LineWebhookSignature` ตัวเดียว) · follow/unfollow ⇒ เปิด/ปิดลิงก์ ·
+  (ข) **ช่องทาง** `Helpers/CustomerNotifyChannel`: OA ของร้านเมื่อ `LineEnabled`+token ไม่งั้น OA ของ NextAcc (เดิม) · ลิงก์ผูกกับ OA (`OaScope`+`OaDestination`) ⇒ สลับ OA = ผูกใหม่ ·
+  (ค) **ส่ง** — `BookingNotifier` หา LINE ที่ผูกเอง (ระเบียน > สมาชิก > สมาชิกของผู้ติดต่อ) ผ่าน `BookingContact.LineTarget` ที่ทุกทางเข้าส่งมา
+  (ยืนยัน/ยกเลิก/เลื่อนการจอง · ได้คิว · คลาส · เตือนก่อนนัด · ออเดอร์ · บัตรใกล้หมดอายุ) · ผูกแล้ว ⇒ LINE ก่อนแล้วอีเมล · ไม่ผูก ⇒ อีเมลก่อน (เดิม) ·
+  อีเมลผ่านผู้ส่งของร้านเมื่อ `EmailConfigured` (ทดสอบผ่าน) ไม่งั้นของระบบ · ล้มทุกช่อง ⇒ ประทับเหตุบนรายการเหมือนเดิม ·
+  (ง) DSR ขอดู/ลบครอบ `CustomerLineLinks` · หน้าตั้งค่า LINE แสดง OA ที่ใช้ + webhook URL + จำนวนลิงก์ (`line-config.customerChannel`)
+
+_Last verified against codebase: 2026-10-30 (รอบ 211 — ลูกค้าผูก LINE รับแจ้งเตือน · OA ของร้าน/NextAcc · อีเมลของร้าน · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

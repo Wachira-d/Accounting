@@ -19,10 +19,11 @@ public class LineWebhookController : ControllerBase
 {
     private readonly ILineBotService _bot;
     private readonly ILogger<LineWebhookController> _logger;
+    private readonly ICustomerLineLinkService? _customerLinks;
 
-    public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger)
+    public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger, ICustomerLineLinkService? customerLinks = null)
     {
-        _bot = bot; _logger = logger;
+        _bot = bot; _logger = logger; _customerLinks = customerLinks;
     }
 
     [HttpPost]
@@ -47,6 +48,13 @@ public class LineWebhookController : ControllerBase
             foreach (var ev in events.EnumerateArray())
             {
                 var type = ev.TryGetProperty("type", out var t) ? t.GetString() : null;
+                // รอบ 211: ลูกค้าปลายทางบล็อก/เพิ่มเพื่อน OA กลางกลับ ⇒ หยุด/เปิดส่งแจ้งเตือนลูกค้าที่ผูกไว้ (เงียบ — ผู้ใช้ ERP ก็ follow OA นี้)
+                if (type is ("follow" or "unfollow") && _customerLinks != null
+                    && ev.TryGetProperty("source", out var fs) && fs.TryGetProperty("userId", out var fu) && !string.IsNullOrEmpty(fu.GetString()))
+                {
+                    await _customerLinks.SetBlockedAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, fu.GetString()!, blocked: type == "unfollow");
+                    continue;
+                }
                 if (type is not ("message" or "postback")) continue;
                 var src = ev.GetProperty("source");
                 if (src.GetProperty("type").GetString() != "user") continue; // ignore group/room for now

@@ -29,6 +29,8 @@ public static class CmsDataConsent
     public const string BookingPurpose = "cms-booking:personal-data";
     public const string LeadPurpose = "cms-lead:personal-data";
     public const string FormPurpose = "cms-form:personal-data";
+    /// <summary>รอบ 211: ลูกค้าผูก LINE เพื่อรับแจ้งเตือน (ถอนเมื่อยกเลิกการเชื่อมต่อ · <c>CustomerLineLinkService</c>)</summary>
+    public const string LineNotifyPurpose = "cms-line-notify:messaging";
     public const string Channel = "web-form";
 
     public const string MissingMessage = "กรุณาติ๊กยอมรับการเก็บและใช้ข้อมูลส่วนบุคคลตามนโยบายความเป็นส่วนตัวก่อนส่งข้อมูล";

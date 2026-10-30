@@ -410,7 +410,8 @@ public class DocumentEmailService : IDocumentEmailService
         return s;
     }
 
-    private string ResolveFromAddress(CompanySettings s)
+    /// <summary>ที่อยู่ผู้ส่งของบริษัท — ตัวเดียว (รอบ 211: <c>BookingNotifier</c> ใช้ร่วมเมื่อส่งแจ้งลูกค้าผ่านอีเมลของร้าน)</summary>
+    internal static string ResolveFromAddress(CompanySettings s)
     {
         if (!string.IsNullOrWhiteSpace(s.EmailFromAddress)) return s.EmailFromAddress;
         if (s.EmailProvider == EmailProvider.MicrosoftGraph && !string.IsNullOrWhiteSpace(s.EmailMsSenderUpn))

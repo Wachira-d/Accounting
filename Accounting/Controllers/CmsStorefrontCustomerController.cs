@@ -145,4 +145,83 @@ public class CmsStorefrontCustomerController : ControllerBase
         if (fail != null) return fail;
         return Ok(new ApiResponse<List<StorefrontMyCreditItem>>(true, await _svc.MyCreditsAsync(companyId, siteId, me!.CustomerId)));
     }
+
+    // ===== รอบ 211 (คำตัดสินข้อ 170): รับแจ้งเตือนทาง LINE — สมาชิก (โทเคนหน้าร้าน) + แขก (โทเคนสาธารณะของการจอง/ออเดอร์) =====
+    // เซิร์ฟเวอร์ตัดสินทุกอย่าง (ผูกได้ไหม · OA ไหน · ลิงก์/QR) ผ่าน ICustomerLineLinkService · หน้าเว็บแสดงอย่างเดียว · ออกรหัสนับโควตาก่อน (fail-closed)
+
+    [HttpGet("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/portal/me/line")]
+    public async Task<ActionResult> MyLineStatus(Guid companyId, Guid siteId, [FromServices] ICustomerLineLinkService links)
+    {
+        var (me, fail) = await Me(companyId, siteId);
+        if (fail != null) return fail;
+        return Ok(new ApiResponse<CustomerLineStatusResponse>(true,
+            await links.GetStatusAsync(companyId, siteId, CustomerLineLinkRule.KindMember, me!.CustomerId, me.CustomerId)));
+    }
+
+    [HttpPost("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/portal/me/line/start")]
+    public async Task<ActionResult> MyLineStart(Guid companyId, Guid siteId, [FromServices] ICustomerLineLinkService links, [FromServices] IChatRateLimiter limiter)
+    {
+        var (me, fail) = await Me(companyId, siteId);
+        if (fail != null) return fail;
+        if (await LineStartThrottledAsync(limiter, siteId, me!.CustomerId) is ActionResult limited) return limited;
+        return Ok(new ApiResponse<CustomerLineStartResponse>(true,
+            await links.StartAsync(companyId, siteId, CustomerLineLinkRule.KindMember, me.CustomerId)));
+    }
+
+    [HttpDelete("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/portal/me/line")]
+    public async Task<ActionResult> MyLineUnlink(Guid companyId, Guid siteId, [FromServices] ICustomerLineLinkService links)
+    {
+        var (me, fail) = await Me(companyId, siteId);
+        if (fail != null) return fail;
+        var n = await links.UnlinkAsync(companyId, siteId, CustomerLineLinkRule.KindMember, me!.CustomerId, "user");
+        return Ok(new ApiResponse<object>(true, new { unlinked = n }, n > 0 ? "ยกเลิกการเชื่อมต่อ LINE แล้ว" : "ไม่มีการเชื่อมต่อ LINE ของบัญชีนี้"));
+    }
+
+    [HttpGet("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/storefront/line/{kind}/{token}")]
+    public async Task<ActionResult> GuestLineStatus(Guid companyId, Guid siteId, string kind, string token,
+        [FromServices] ICustomerLineLinkService links, [FromServices] IChatRateLimiter limiter)
+    {
+        if (!await limiter.TryConsumeAsync($"cms-line-status:{siteId:N}:{GuestRecordLookup.IpBucket(HttpContext.Connection.RemoteIpAddress)}", perMinute: 30, perDay: 600))
+            return StatusCode(429, new ApiResponse<object>(false, null, "เปิดดูถี่เกินไป — รอสักครู่แล้วลองใหม่"));
+        var rec = await GuestRecordAsync(links, companyId, siteId, kind, token);
+        if (rec == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการ — ตรวจลิงก์อีกครั้ง"));
+        return Ok(new ApiResponse<CustomerLineStatusResponse>(true, await links.GetStatusAsync(companyId, siteId, kind, rec.Id, rec.CustomerId)));
+    }
+
+    [HttpPost("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/storefront/line/{kind}/{token}/start")]
+    public async Task<ActionResult> GuestLineStart(Guid companyId, Guid siteId, string kind, string token,
+        [FromServices] ICustomerLineLinkService links, [FromServices] IChatRateLimiter limiter)
+    {
+        var rec = await GuestRecordAsync(links, companyId, siteId, kind, token);
+        if (rec == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการ — ตรวจลิงก์อีกครั้ง"));
+        if (await LineStartThrottledAsync(limiter, siteId, rec.Id) is ActionResult limited) return limited;
+        return Ok(new ApiResponse<CustomerLineStartResponse>(true, await links.StartAsync(companyId, siteId, kind, rec.Id)));
+    }
+
+    [HttpDelete("api/companies/{companyId:guid}/cms/sites/{siteId:guid}/storefront/line/{kind}/{token}")]
+    public async Task<ActionResult> GuestLineUnlink(Guid companyId, Guid siteId, string kind, string token, [FromServices] ICustomerLineLinkService links)
+    {
+        var rec = await GuestRecordAsync(links, companyId, siteId, kind, token);
+        if (rec == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการ — ตรวจลิงก์อีกครั้ง"));
+        var n = await links.UnlinkAsync(companyId, siteId, kind, rec.Id, "user");
+        return Ok(new ApiResponse<object>(true, new { unlinked = n }, n > 0
+            ? "ยกเลิกการเชื่อมต่อ LINE ของรายการนี้แล้ว"
+            : "รายการนี้ไม่ได้เชื่อมต่อ LINE โดยตรง (ถ้าเชื่อมไว้ที่บัญชีสมาชิก ยกเลิกได้ที่ \"บัญชีของฉัน\")"));
+    }
+
+    /// <summary>แขก: เฉพาะการจอง/ออเดอร์ (สมาชิกใช้ portal/me/line) · โทเคนสาธารณะของรายการคือหลักฐานสิทธิ์ (เส้นเดียวกับหน้า my-booking/track-order)</summary>
+    private static async Task<CustomerLineRecordRef?> GuestRecordAsync(ICustomerLineLinkService links, Guid companyId, Guid siteId, string kind, string token)
+        => kind is CustomerLineLinkRule.KindBooking or CustomerLineLinkRule.KindOrder
+            ? await links.ResolveRecordByTokenAsync(companyId, siteId, kind, token)
+            : null;
+
+    /// <summary>ออกรหัสผูก: ต่อ IP ของเว็บ (10/นาที · 60/วัน) + ต่อเป้าหมาย (5/นาที · 20/วัน) · ตารางนับพัง ⇒ ปฏิเสธ (fail-closed)</summary>
+    private async Task<ActionResult?> LineStartThrottledAsync(IChatRateLimiter limiter, Guid siteId, Guid targetId)
+    {
+        var tooMany = StatusCode(429, new ApiResponse<object>(false, null, "ขอรหัสถี่เกินไป — รอสักครู่แล้วลองใหม่"));
+        var ip = GuestRecordLookup.IpBucket(HttpContext.Connection.RemoteIpAddress);
+        if (!await limiter.TryConsumeAsync($"cms-line-start:{siteId:N}:{ip}", perMinute: 10, perDay: 60, failClosed: true)) return tooMany;
+        if (!await limiter.TryConsumeAsync($"cms-line-start-t:{targetId:N}", perMinute: 5, perDay: 20, failClosed: true)) return tooMany;
+        return null;
+    }
 }

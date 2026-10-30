@@ -28,12 +28,14 @@ public partial class CmsBookingService
         return DateOnly.FromDateTime(bookingDate).ToDateTime(start.Value) > BookingSlotEngine.BangkokNow(DateTime.UtcNow);
     }
 
-    /// <summary>ช่องทางติดต่อของการจอง — บัญชีลูกค้า: อีเมล + LINE (ล็อกอินด้วย LINE ⇒ <c>AuthProviderId</c> = LINE userId) · แขก: อีเมล</summary>
-    internal static BookingContact ContactOf(string? guestEmail, string? customerEmail, string? authProvider, string? authProviderId)
+    /// <summary>ช่องทางติดต่อของการจอง — บัญชีลูกค้า: อีเมล + LINE (ล็อกอินด้วย LINE ⇒ <c>AuthProviderId</c> = LINE userId) · แขก: อีเมล ·
+    /// รอบ 211: <paramref name="lineTarget"/> = การจอง/ออเดอร์ + สมาชิก ⇒ <c>BookingNotifier</c> หา LINE ที่ลูกค้าผูกเอง (ชนะ + ส่งก่อนอีเมล)</summary>
+    internal static BookingContact ContactOf(string? guestEmail, string? customerEmail, string? authProvider, string? authProviderId,
+        CustomerLineTarget? lineTarget = null)
     {
         var email = !string.IsNullOrWhiteSpace(customerEmail) ? customerEmail : guestEmail;
         var line = string.Equals(authProvider, "line", StringComparison.OrdinalIgnoreCase) ? authProviderId : null;
-        return new BookingContact(string.IsNullOrWhiteSpace(email) ? null : email, string.IsNullOrWhiteSpace(line) ? null : line);
+        return new BookingContact(string.IsNullOrWhiteSpace(email) ? null : email, string.IsNullOrWhiteSpace(line) ? null : line) { LineTarget = lineTarget };
     }
 
     /// <summary>
@@ -68,7 +70,7 @@ public partial class CmsBookingService
         foreach (var x in rows)
         {
             var b = x.Booking;
-            var contact = ContactOf(b.GuestEmail, x.CustomerEmail, x.AuthProvider, x.AuthProviderId);
+            var contact = ContactOf(b.GuestEmail, x.CustomerEmail, x.AuthProvider, x.AuthProviderId, CustomerLineTarget.ForBooking(b.Id, b.CustomerId));
             var text = BookingReminderPlan.WaitlistPromotedMessage(x.CustomerName ?? b.GuestName ?? "", x.Name, siteName,
                 DateOnly.FromDateTime(b.BookingDate), b.StartTime, x.ResourceName, b.BookingNumber, b.WaitlistHoldUntil,
                 autoConfirmed: b.Status == BookingStatus.Confirmed);
