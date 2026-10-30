@@ -52,7 +52,7 @@ public class BillingCenterController : ControllerBase
     /// ผ่าน ⇒ แถวหลักฐานอยู่ใน context (บันทึกพร้อมรายการชำระ)</summary>
     private async Task EnforcePolicyAsync(ILegalDocumentService legal, Guid companyId, Guid documentId, bool accepted, string? versionShown, CancellationToken ct)
     {
-        await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+        await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, legal, companyId, User,
             PurchasePolicyAcceptance.ChannelPlatformInvoice, documentId, accepted, versionShown,
             HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
     }

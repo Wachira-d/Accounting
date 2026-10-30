@@ -27,9 +27,16 @@ public class PlatformPayTestController : ControllerBase
     private readonly IPaymentIntentService _intents;
     private readonly IChatRateLimiter _rate;
 
+    private readonly ILegalDocumentService _legal;
+
     public PlatformPayTestController(AccountingDbContext db, IPlatformPaymentService platform, IPaymentProviderConfigService configs,
-        IPaymentIntentService intents, IChatRateLimiter rate)
-    { _db = db; _platform = platform; _configs = configs; _intents = intents; _rate = rate; }
+        IPaymentIntentService intents, IChatRateLimiter rate, ILegalDocumentService legal)
+    { _db = db; _platform = platform; _configs = configs; _intents = intents; _rate = rate; _legal = legal; }
+
+    /// <summary>ฝ่ายค้าน (หมายเหตุ): โหมด Off = ไม่มีหน้านี้ (404 ไม่ใช่ข้อความปฏิเสธ)</summary>
+    private async Task<bool> PageOffAsync(CancellationToken ct)
+        => PlatformPayTestPage.Normalize(await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt)
+            .Select(s => s.PlatformPayTestPageMode).FirstOrDefaultAsync(ct)) == PlatformPayTestPage.Off;
 
     private async Task<string?> RefusalAsync(bool isSystemAdmin, CancellationToken ct)
     {
@@ -43,8 +50,15 @@ public class PlatformPayTestController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<ApiResponse<object>>> Info(CancellationToken ct)
     {
+        if (await PageOffAsync(ct)) return NotFound();
         var refusal = await RefusalAsync(User.IsInRole("SystemAdmin"), ct);
-        return Ok(new ApiResponse<object>(true, new { available = refusal == null, reason = refusal, amount = PaymentLiveGate.SelfTestAmount }));
+        // ข้อความช่องติ๊ก/ฉบับ/ลิงก์จากเอกสารที่เผยแพร่จริง (ตัวเดียวกับหน้าชำระค่าบริการ — ไม่พิมพ์ในหน้าเว็บ)
+        var policy = PurchasePolicyAcceptance.PlatformInfo((await _legal.GetPurchasePolicyVersionAsync(ct)).Version);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            available = refusal == null, reason = refusal, amount = PaymentLiveGate.SelfTestAmount,
+            policy = new { text = policy.Text, version = policy.Version, termsUrl = policy.TermsUrl, refundUrl = policy.RefundUrl },
+        }));
     }
 
     public sealed record StartRequest(string? ReturnUrl);
@@ -53,9 +67,12 @@ public class PlatformPayTestController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> Start([FromBody] StartRequest? req, CancellationToken ct)
     {
         // ด่าน = โหมดหน้า (Off · เฉพาะผู้ดูแลระบบ · สาธารณะ) + ช่องทางต้องอยู่โหมดทดสอบ (ไม่มีเงินจริง) + โควตาต่อ IP
+        if (await PageOffAsync(ct)) return NotFound();
         if (await RefusalAsync(User.IsInRole("SystemAdmin"), ct) is string refusal) return StatusCode(403, new ApiResponse<object>(false, null, refusal));
         var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        if (!await _rate.TryConsumeAsync($"platform-pay-test:{ip}", perMinute: 3, perDay: 30, ct, failClosed: true))
+        // ต่อ IP + เพดานรวมทั้งระบบ (ฝ่ายค้าน: เปิดสาธารณะแล้วถูกยิงจากหลาย IP)
+        if (!await _rate.TryConsumeAsync($"platform-pay-test:{ip}", perMinute: 3, perDay: 30, ct, failClosed: true)
+            || !await _rate.TryConsumeAsync("platform-pay-test:global", perMinute: 20, perDay: 300, ct, failClosed: true))
             return StatusCode(429, new ApiResponse<object>(false, null, "ทดลองจ่ายถี่เกินไป — รอสักครู่แล้วลองใหม่"));
         var cfg = await _platform.PlatformConfigAsync(ct);
         if (cfg == null) return StatusCode(403, new ApiResponse<object>(false, null, "ยังไม่ได้ตั้งค่าช่องทางรับชำระของ NextAcc"));
@@ -70,6 +87,7 @@ public class PlatformPayTestController : ControllerBase
     [HttpGet("intents/{intentId:guid}")]
     public async Task<ActionResult<ApiResponse<object>>> Status(Guid intentId, CancellationToken ct)
     {
+        if (await PageOffAsync(ct)) return NotFound();
         if (await _platform.PlatformCompanyIdAsync(ct) is not Guid pid) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการ"));
         // เฉพาะรายการทดลองจ่าย — id ของรายการค่าบริการจริงเปิดผ่านทางนี้ไม่ได้
         var isSelfTest = await _db.PaymentIntents.AsNoTracking()
@@ -82,6 +100,6 @@ public class PlatformPayTestController : ControllerBase
     {
         id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
         qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl, failureMessage = i.FailureMessage,
-        isTestMode = true,
+        isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
     };
 }

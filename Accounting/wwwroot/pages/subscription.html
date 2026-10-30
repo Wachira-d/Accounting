@@ -308,11 +308,12 @@
             ขอยกเลิกแล้ว — ใช้งานได้ถึง ${Layout.date(s.endDate)} แล้วแพ็กเกจจะสิ้นสุด (ไม่เรียกเก็บรอบถัดไป)
             <button class="btn btn-secondary btn-sm" style="margin-left:8px" onclick="Sub.undoCancel()">กลับมาใช้ต่อ</button></div>`;
         return `<div style="margin-top:14px;font-size:12px;color:var(--gray-500)">
-          ต้องการหยุดใช้? <a href="#" onclick="Sub.cancelSub();return false">ยกเลิกแพ็กเกจ</a> — มีผลเมื่อสิ้นรอบบิล ·
+          ต้องการหยุดใช้? <a href="#" onclick="Sub.cancelSub();return false">ยกเลิกแพ็กเกจ</a> ·
           <a href="/refund-policy.html" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a></div>`;
       },
       async cancelSub() {
-        if (!confirm('ยกเลิกแพ็กเกจ? ใช้งานได้ถึงวันสิ้นรอบที่ชำระแล้ว และค่าบริการที่ชำระแล้วไม่คืนเงินตามนโยบาย')) return;
+        // ข้อความจากเซิร์ฟเวอร์ (SubscriptionCancelPolicy.ConfirmText) — ไม่สรุปนโยบายในหน้าเว็บ
+        if (!confirm((this.subscription && this.subscription.cancelConfirmText) || 'ยกเลิกแพ็กเกจ?')) return;
         try {
           const res = await API.post(`/api/subscription/${Layout.getCompanyId()}/cancel`, {});
           Layout.toast(res?.message || 'บันทึกแล้ว'); setTimeout(() => location.reload(), 1500);

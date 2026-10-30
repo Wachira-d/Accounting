@@ -205,6 +205,8 @@ public class CmsBookingController : ControllerBase
             if (!staffOk && sf != null) userId = CreditBookingLink.StorefrontActor(sf.CustomerId);   // ผู้กระทำ = ลูกค้าคนนั้น (service ตรวจซ้ำ)
         }
         // รอบ 210: ด่าน "ต้องเป็นสมาชิกก่อนจอง" อยู่ใน service (ก่อน Decide) — ลูกค้า = request.CustomerId ที่แปลงจากโทเคนแล้วข้างบน · พนักงานจองแทนผ่าน
+        request.ClientIp = HttpContext.Connection.RemoteIpAddress?.ToString();   // รอบ 219 ส่วน B ฝ่ายค้าน S7
+        request.ClientUserAgent = Request.Headers.UserAgent.ToString();
         var result = await _bookingService.CreateBookingAsync(companyId, siteId, request, userId, staffOnBehalf: staffOk);
         // รอบ 216 (คำตัดสินข้อ 174): "บันทึกเป็นข้อมูลของฉัน" — เจ้าของ = สมาชิกในโทเคนของเว็บนี้เท่านั้น (sf เป็น null เมื่อเป็นพนักงาน) · หลังจองสำเร็จ ·
         // ใบเดิมที่ถูกคืน (รอบ 217 Reused — กดซ้ำ/สองแท็บ) ⇒ ไม่บันทึกซ้ำ · คำขอซ้ำคีย์เดิมถูก IdempotencyMiddleware ตอบจากแคชก่อนถึงที่นี่

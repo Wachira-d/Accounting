@@ -244,6 +244,8 @@ public static class GatewayBatchIntentRules
         DateTime? toUtc)
         => i => i.CompanyId == companyId && i.ProviderCode == providerCode
                 && i.SettlementJournalEntryId == null && i.SettlementBatchId == null && i.ConfirmedAt != null
+                // รอบ 219 ส่วน B ฝ่ายค้าน B1: ทดลองจ่าย/โหมดทดสอบ ไม่มีเงินจริงให้โอน — ห้ามเข้ารอบโอน (ตัวตัดสินเดียว IsSettleable)
+                && i.SourceKind != PaymentSourceKind.GatewaySelfTest && i.IsTestMode != true
                 && (i.Status == PaymentIntentStatus.Succeeded
                     || ((i.Status == PaymentIntentStatus.PartiallyRefunded || i.Status == PaymentIntentStatus.Refunded)
                         && i.RefundedAmount > 0m))
@@ -254,7 +256,8 @@ public static class GatewayBatchIntentRules
     /// intent ที่เส้นเดิมเป็นเจ้าของ (<c>SettlementJournalEntryId</c>) <b>ไม่เข้า</b> — เส้นเดิมหักเองในรอบถัดไปของมัน (ยอดคืนก้อนเดียวไม่ถูกหักสองเส้น)</summary>
     public static Expression<Func<PaymentIntent, bool>> LateRefundInBatch(Guid companyId, string providerCode)
         => i => i.CompanyId == companyId && i.ProviderCode == providerCode
-                && i.SettlementJournalEntryId == null && i.SettlementBatchId != null && i.RefundedAmount > 0m;
+                && i.SettlementJournalEntryId == null && i.SettlementBatchId != null && i.RefundedAmount > 0m
+                && i.SourceKind != PaymentSourceKind.GatewaySelfTest && i.IsTestMode != true;
 
     /// <summary>
     /// ตาข่ายใต้ล็อก: บรรทัดคืนเงินที่อ้าง intent (ทุกรอบโอน · ทุกช่องทาง) + บรรทัดคืนเงินที่กำลังจะเพิ่ม ต้อง<b>ไม่เกินยอดคืนผ่านระบบ</b>ของ intent นั้น —

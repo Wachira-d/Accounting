@@ -50,6 +50,10 @@ public class PaymentProviderConfig : TenantEntity
     public DateTime? LastLiveWebhookAt { get; set; }
     /// <summary>รอบ 219 ส่วน B: การทดลองจ่าย ฿20 (โหมดทดสอบ · <c>PaymentSourceKind.GatewaySelfTest</c>) สำเร็จล่าสุด</summary>
     public DateTime? LastSelfTestPaidAt { get; set; }
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน S1: เวลาที่<b>แอดมินแพลตฟอร์ม</b>เปิดรับเงินจริงผ่านด่านแพลตฟอร์ม (นโยบายคืนเงิน + พิมพ์ยืนยัน) —
+    /// ผู้เขียนเดียว <c>PaymentProviderConfigService.SetModeAsync</c> เมื่อมาจาก <c>AdminPlatformGatewayController</c> · ถอยกลับทดสอบ = ล้าง ·
+    /// ช่องทางค่าบริการ NextAcc ออนไลน์ต้องมีค่านี้ (<c>PlatformPayAvailability</c>) — config live ที่ไม่ได้ผ่านด่านแพลตฟอร์ม (สลับจากหน้าร้าน/ค่าเดิม) ใช้ไม่ได้</summary>
+    public DateTime? PlatformLiveConfirmedAt { get; set; }
 
     /// <summary>รหัสลับต่อ config ใน URL แจ้งเตือน <c>api/pay/webhooks/{provider}/{token}</c> (รอบ 201 ทีม GW · A-GW1) — webhook ที่มาทาง URL นี้
     /// ถูกลองยืนยันกับ config นี้เท่านั้น (ไม่ยิงคำขอออกด้วยคีย์ของร้านอื่น) · ออกตอนบันทึกการตั้งค่า + migration เติมให้แถวเดิม ·

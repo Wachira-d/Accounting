@@ -80,6 +80,7 @@ public class AdminPlatformGatewayController : ControllerBase
                 cfg.TestPublicKey, cfg.LivePublicKey,
                 testSecretHint = Hint(cfg.TestSecretKeyProtected), liveSecretHint = Hint(cfg.LiveSecretKeyProtected),
                 cfg.LastTestPassedAt, cfg.LiveKeyVerifiedAt, cfg.LastWebhookAt, cfg.LastLiveWebhookAt, cfg.LastSelfTestPaidAt, cfg.LiveEnabledAt,
+                cfg.PlatformLiveConfirmedAt,   // ฝ่ายค้าน S1: ผ่านด่านแพลตฟอร์มแล้ว (ผู้เช่าเห็นปุ่มออนไลน์เฉพาะเมื่อมีค่านี้)
                 webhookUrl = $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.Path(cfg.ProviderCode, cfg.WebhookToken)}",
                 enabledMethods = ParseMethods(cfg.EnabledMethodsJson),
                 providerNotice = _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode)?.PendingVerificationNotice,
@@ -184,7 +185,7 @@ public class AdminPlatformGatewayController : ControllerBase
         {
             id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
             qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl, failureMessage = i.FailureMessage,
-            isTestMode = true,
+            isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
             // webhook มาถึงหลังสร้างรายการนี้ไหม — ข้อที่ "ทดสอบเชื่อมต่อ" ต้องการ
             webhookReceivedSinceStart = cfg?.LastWebhookAt != null && cfg.LastWebhookAt >= i.CreatedAt,
         }));
@@ -269,6 +270,6 @@ public class AdminPlatformGatewayController : ControllerBase
     {
         id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
         qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl, failureMessage = i.FailureMessage,
-        isTestMode = true,
+        isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
     };
 }

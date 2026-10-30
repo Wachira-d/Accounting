@@ -11,7 +11,8 @@
  */
 (function (global) {
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const safeUrl = u => (typeof u === 'string' && /^(https?:\/\/|\/)/i.test(u.trim())) ? u.trim() : null;
+  // ฝ่ายค้าน (หมายเหตุ): path ในเว็บเดียวกันเท่านั้น หรือ https?:// — ไม่รับ //host (protocol-relative = ออกนอกเว็บ)
+  const safeUrl = u => (typeof u === 'string' && /^(https?:\/\/|\/(?!\/))/i.test(u.trim())) ? u.trim() : null;
   const MISSING = 'กรุณาติ๊กยอมรับข้อกำหนดและนโยบายการยกเลิก/คืนเงินก่อนดำเนินการต่อ';
 
   const PolicyAccept = {

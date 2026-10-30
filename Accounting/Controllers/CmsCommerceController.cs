@@ -220,6 +220,8 @@ public class CmsCommerceController : ControllerBase
         request.ContactFromProfile = StorefrontCustomerAuth.FillFromProfile(request.ContactFromProfile && !staffOk, sf, siteId);
         // A9: คีย์กันกดซ้ำจาก body หรือ header Idempotency-Key
         request.IdempotencyKey = SiteOrderPublic.PickIdempotencyKey(request.IdempotencyKey, Request.Headers[SiteOrderPublic.IdempotencyHeader].FirstOrDefault());
+        request.ClientIp = HttpContext.Connection.RemoteIpAddress?.ToString();   // รอบ 219 ส่วน B ฝ่ายค้าน S7: หลักฐานยอมรับนโยบาย
+        request.ClientUserAgent = Request.Headers.UserAgent.ToString();
         var result = await _commerceService.CreateOrderAsync(companyId, siteId, request, userId);
         // รอบ 209 P2: ร้านเปิด "ยืนยันออเดอร์อัตโนมัติ" ⇒ นับการใช้คูปองทันที (ทางเดียวกับพนักงานกดยืนยัน — idempotent)
         if (result.Status == SiteOrderStatus.Confirmed)

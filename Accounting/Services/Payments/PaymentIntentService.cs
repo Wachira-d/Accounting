@@ -297,6 +297,17 @@ public class PaymentIntentService : IPaymentIntentService
             ApplyChargeToEntity(intent, charge);
             AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Created, intent.Status,
                 note: "สร้าง charge ที่ผู้ให้บริการแล้ว");
+            // รอบ 219 ส่วน B ฝ่ายค้าน B3: โหมดของ charge ต้องตรงโหมดที่ประทับ — คีย์จริงในช่องทดสอบ ⇒ ไม่แสดง QR/ไม่ประมวลผล (ล้มดัง)
+            if (PaymentLiveModeGuard.Mismatch(charge.LiveMode, intent.IsTestMode == true) is string modeBad)
+            {
+                intent.Status = PaymentIntentStatus.Failed;
+                intent.FailureCode = "live_mode_mismatch";
+                intent.FailureMessage = modeBad;
+                intent.QrPayload = null;
+                intent.AuthorizeUrl = null;
+                AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Created, PaymentIntentStatus.Failed, note: "⚠️ " + modeBad);
+                _logger.LogError("โหมด charge ไม่ตรงโหมดของ intent {Intent} ({Provider}): {Why}", intent.Id, code, modeBad);
+            }
         }
         catch (Exception ex)
         {
@@ -329,6 +340,15 @@ public class PaymentIntentService : IPaymentIntentService
         await _db.Entry(intent).ReloadAsync(ct);   // อ่านซ้ำหลังได้ล็อก — คนอื่นอาจเพิ่งเขียน
 
         var from = intent.Status;
+        // รอบ 219 ส่วน B ฝ่ายค้าน B3: charge/event ที่ผู้ให้บริการรายงานโหมดไม่ตรงโหมดที่ประทับตอนสร้าง ⇒ ไม่เปลี่ยนสถานะ (ล้มดัง: ประวัติ + log)
+        if (PaymentLiveModeGuard.Mismatch(charge.LiveMode, await PaymentIntentTestMode.ResolveAsync(_db, intent, ct)) is string modeBad)
+        {
+            _logger.LogError("โหมดของผู้ให้บริการไม่ตรงโหมดของ intent {Intent} — ไม่ประมวลผล: {Why}", intent.Id, modeBad);
+            AddEvent(intent, source, from, charge.Status, note: "⚠️ ปฏิเสธการเปลี่ยนสถานะ: " + modeBad, payload: charge.RawStatus);
+            await _db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
+            return intent;
+        }
         var decision = PaymentIntentPolicy.Evaluate(from, charge.Status);
 
         if (decision.IsDuplicate)

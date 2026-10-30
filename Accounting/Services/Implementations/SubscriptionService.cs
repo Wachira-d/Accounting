@@ -544,7 +544,8 @@ public class SubscriptionService : ISubscriptionService
             ScheduledPlan: sub.ScheduledPlan,
             ScheduledBillingCycle: sub.ScheduledBillingCycle,
             ScheduledPlanEffectiveAt: sub.ScheduledPlanEffectiveAt,
-            CancelAtPeriodEnd: sub.CancelAtPeriodEnd);
+            CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
+            CancelConfirmText: SubscriptionCancelPolicy.ConfirmText(sub.Status, sub.EndDate, DateTime.UtcNow, sub.IsPermanentFree));
     }
 
     /// <summary>ผลของ overlay แพ็กเกจ (บริษัท ↔ User License) + mask ที่เจ้าของบริษัทปิดเอง — ตัวเดียวของ
@@ -785,6 +786,9 @@ public class SubscriptionService : ISubscriptionService
         {
             sub.CancelAtPeriodEnd = true;
             sub.CancelRequestedAt = now;
+            // ฝ่ายค้าน S5: ยกเลิกแล้ว ⇒ การเปลี่ยนแพ็กเกจที่รอมีผลไม่มีความหมาย · ใบแจ้งหนี้ต่ออายุที่ออกแล้ว<b>คงตัวชี้ไว้</b> — เฟส 2 ใช้ตัวชี้นี้
+            // ยกเว้นใบจากการทวงหนี้ (PlatformDunningService) + ห้ามจ่าย (PlatformInvoiceRules.RenewalNotPayableReason) + "ใช้ต่อ" แล้วจ่ายใบเดิมได้ (ล้าง = ใบซ้ำ/ทวงผิด)
+            sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
             _db.SubscriptionHistories.Add(new SubscriptionHistory
             {
                 SubscriptionId = sub.Id,
@@ -2145,14 +2149,25 @@ public class SubscriptionService : ISubscriptionService
         return MapPaymentToResponse(payment);
     }
 
-    public async Task<SubscriptionPaymentResponse> ReviewPaymentAsync(
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน S2: แอดมินอนุมัติสลิป กับ เงินออนไลน์เข้า บนรายการเดียวกันต้องไม่ผ่านพร้อมกัน (ต่ออายุสองรอบ/จ่ายซ้อน) —
+    /// ล็อก session ต่อรายการรอบงานทั้งก้อน (ไม่เปิดธุรกรรม — งานข้างในออกเอกสารด้วยธุรกรรมของตัวเอง) · อ่านสถานะใหม่หลังได้ล็อก</summary>
+    public Task<SubscriptionPaymentResponse> ReviewPaymentAsync(
         Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy,
         bool systemConfirmed = false, DateTime? gatewayPaidAtUtc = null)
+    {
+        return SessionAdvisoryLock.RunAsync(_db, AdvisoryLockKey.For(SessionAdvisoryLock.PlatformSubscriptionPayment, paymentId.ToString("N")),
+            () => ReviewPaymentLockedAsync(paymentId, request, performedBy, systemConfirmed, gatewayPaidAtUtc));
+    }
+
+    private async Task<SubscriptionPaymentResponse> ReviewPaymentLockedAsync(
+        Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy,
+        bool systemConfirmed, DateTime? gatewayPaidAtUtc)
     {
         var payment = await _db.SubscriptionPayments
             .Include(p => p.Subscription)
             .FirstOrDefaultAsync(p => p.Id == paymentId)
             ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+        await _db.Entry(payment).ReloadAsync();   // สถานะล่าสุดหลังได้ล็อก (แถวอาจถูกติดตามไว้ก่อนในคำขอเดียวกัน)
 
         if (payment.Status != SubscriptionPaymentStatus.Pending && payment.Status != SubscriptionPaymentStatus.UnderReview)
             throw new InvalidOperationException("ไม่สามารถตรวจสอบรายการนี้ได้ เนื่องจากสถานะไม่ใช่รอตรวจสอบ");
@@ -2256,10 +2271,7 @@ public class SubscriptionService : ISubscriptionService
                               + "ห้ามรับชำระใบเดิม · ผู้ดูแลระบบยกเลิกเอกสารใบเดิมในบริษัทผู้ให้บริการ",
                         PerformedBy = performedBy
                     });
-                    sub.RenewalInvoiceNumber = null;
-                    sub.RenewalInvoiceIssuedAt = null;
-                    sub.RenewalInvoiceForEndDate = null;
-                    sub.RenewalInvoiceDocumentId = null;
+                    RenewalInvoiceSupersede.Apply(sub);   // ตัวล้างตัวชี้ใบต่ออายุตัวเดียว (เดิมเขียน 4 บรรทัดเอง)
                 }
                 // ธง "ฟรีถาวร" ต้องตามแพ็กเกจใหม่เสมอ (ApplyTemplate ตั้งให้) — เดิมเส้นนี้เคยลืมธงนี้ ⇒ จ่ายแล้วยังโชว์ "ฟรีถาวร" และงานตัดหมดอายุไม่ตัด
                 ApplyTemplate(sub, template, payment.RequestedBillingCycle);
@@ -2549,6 +2561,7 @@ public class SubscriptionService : ISubscriptionService
             var daysUntilDeactivation = (int)(deactivationDate - now).TotalDays;
 
             // แจ้งเตือนก่อนหมดอายุ
+            // รอบ 219 ส่วน B ฝ่ายค้าน S5: ขอยกเลิกสิ้นรอบไว้ ⇒ ไม่เตือนให้ต่ออายุ/ไม่ออกใบต่ออายุ
             if (sub.NotifyBeforeExpiry && daysUntilExpiry > 0 && !sub.CancelAtPeriodEnd)
             {
                 var notifyDays = ParseDaysList(sub.NotifyDaysBeforeExpiry);

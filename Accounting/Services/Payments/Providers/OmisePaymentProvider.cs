@@ -207,7 +207,10 @@ public class OmisePaymentProvider : IPaymentProvider
             FailureMessage: el.TryGetProperty("failure_message", out var fm) ? fm.GetString() : null,
             // ยอดคืนสะสมของ charge — ใช้ตรวจการคืนเงินที่ผลไม่แน่ชัด (ฝ่ายค้าน E-2)
             RefundedTotal: refundedTotal,
-            Refunds: refunds);
+            Refunds: refunds,
+            // รอบ 219 ส่วน B ฝ่ายค้าน B3: โหมดของ charge ตามผู้ให้บริการ — เทียบกับโหมดของ intent ก่อนเปลี่ยนสถานะ
+            LiveMode: el.TryGetProperty("livemode", out var lmode) && lmode.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? lmode.GetBoolean() : null);
     }
 
     /// <summary>รายการคืนเงินที่ฝังมากับ charge (list object: <c>data</c> + <c>total</c>) — คืนเฉพาะเมื่อ<b>ครบทั้งชุด</b>
@@ -413,6 +416,9 @@ public class OmisePaymentProvider : IPaymentProvider
            && eventId.StartsWith("evnt_", StringComparison.Ordinal)
            && eventId.All(ch => ch is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_');
 
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน B3: คีย์ test ต้องเป็น pkey_test_/skey_test_ · คีย์ live ต้องไม่ใช่คีย์ทดสอบ (Services/Payments/Providers/OmiseKeyFormat)</summary>
+    public string? KeyModeProblem(bool live, bool secret, string? value) => OmiseKeyFormat.Problem(live, secret, value);
+
     public async Task<ProviderHealth> TestConnectionAsync(PaymentProviderConfig config,
         CancellationToken ct = default)
     {
@@ -426,6 +432,18 @@ public class OmisePaymentProvider : IPaymentProvider
                 return new ProviderHealth(false, false,
                     "คีย์ยังใช้ไม่ได้: " + FriendlyError(body, resp.StatusCode.ToString()));
             }
+            // รอบ 219 ส่วน B ฝ่ายค้าน B3: คีย์ใช้ได้ไม่พอ — โหมดของบัญชีที่คีย์นี้ชี้ต้องตรงกับช่อง (livemode) · ไม่มีช่องนี้ = ไม่ตัดสิน
+            var accountJson = await resp.Content.ReadAsStringAsync(ct);
+            bool? accountLive = null;
+            try
+            {
+                using var accDoc = JsonDocument.Parse(accountJson);
+                if (accDoc.RootElement.TryGetProperty("livemode", out var lm) && lm.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    accountLive = lm.GetBoolean();
+            }
+            catch (JsonException) { accountLive = null; }
+            if (Accounting.Helpers.PaymentLiveModeGuard.Mismatch(accountLive, config.Mode == PaymentProviderMode.Test) is string modeBad)
+                return new ProviderHealth(false, false, "คีย์นี้ไม่ตรงโหมด: " + modeBad);
         }
         catch (Exception ex)
         {

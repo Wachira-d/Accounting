@@ -45,9 +45,9 @@ public static class PurchasePolicyAcceptance
     public const string StaleMessage =
         "นโยบายมีการปรับปรุงระหว่างที่ท่านเปิดหน้านี้ — กรุณาโหลดหน้าใหม่ อ่านนโยบายฉบับล่าสุด แล้วติ๊กยอมรับอีกครั้ง";
 
-    /// <summary>ข้อความช่องติ๊กของแพลตฟอร์ม (ตรงกับฉบับตั้งต้น — ไม่คืนเงิน · ยกเลิกมีผลสิ้นรอบ)</summary>
-    public const string PlatformText =
-        "ข้าพเจ้าได้อ่านและยอมรับข้อกำหนดการใช้งาน และนโยบายการยกเลิกและคืนเงินของ NextAcc (ค่าบริการที่ชำระแล้วไม่คืนเงิน · ยกเลิกแพ็กเกจมีผลเมื่อสิ้นรอบบิล)";
+    /// <summary>ข้อความช่องติ๊กของแพลตฟอร์ม — อ้างชื่อเอกสาร + ฉบับที่เผยแพร่จริง (ฝ่ายค้าน: ไม่สรุปเนื้อหาเอง — แอดมินแก้นโยบายแล้วข้อความต้องไม่ขัด)</summary>
+    private static string PlatformText(string version)
+        => $"ข้าพเจ้าได้อ่านและยอมรับ{LegalDocumentDefaults.Title(LegalDocumentDefaults.KindTerms)} และ{LegalDocumentDefaults.Title(LegalDocumentDefaults.KindRefund)}ของ NextAcc (ฉบับ {version})";
 
     /// <summary>ข้อความช่องติ๊กของร้าน — ร้านตั้งเอง ⇒ ข้อความนั้น · ว่าง ⇒ ข้อความมาตรฐาน</summary>
     private static string ShopText(string? siteText, string? siteName)
@@ -77,8 +77,7 @@ public static class PurchasePolicyAcceptance
         if (shown is { Length: > 100 }) shown = shown[..100];
         var subj = string.IsNullOrWhiteSpace(subject) ? null : subject.Trim();
         if (subj is { Length: > 256 }) subj = subj[..256];
-        var ch = $"{scope}:{channel}";
-        return new PolicyAcceptance
+        var row = new PolicyAcceptance
         {
             CompanyId = companyId,
             Scope = scope,
@@ -92,15 +91,59 @@ public static class PurchasePolicyAcceptance
             AcceptedAt = at,
             IpAddress = ipT,
             UserAgent = uaT,
-            EvidenceHash = PdpaConsentEvidence.ComputeHash(subj, Purpose, shown ?? policyVersion, at, ch, ipT, uaT),
             CreatedBy = userId?.ToString() ?? scope,
         };
+        Seal(row);
+        return row;
     }
+
+    /// <summary>ฝ่ายค้าน S7: canonical ของช่องทางรวม <b>บริษัท · แถวต้นทาง · ฉบับที่เซิร์ฟเวอร์ใช้</b> — ย้ายหลักฐานไปผูกออเดอร์/บริษัทอื่น หรือแก้ฉบับ ⇒ ตรวจไม่ผ่าน</summary>
+    private static string CanonicalChannel(PolicyAcceptance r)
+        => $"{r.Scope}:{r.Channel}|{r.CompanyId:N}|{(r.SourceId is Guid s ? s.ToString("N") : "")}|{r.PolicyVersion}";
+
+    private static void Seal(PolicyAcceptance r)
+        => r.EvidenceHash = PdpaConsentEvidence.ComputeHash(r.Subject, Purpose, r.VersionShown ?? r.PolicyVersion, r.AcceptedAt,
+            CanonicalChannel(r), r.IpAddress, r.UserAgent);
+
+    /// <summary>ผูกแถวต้นทางที่เพิ่งได้ id (การจอง/การจองที่พัก) แล้วประทับ hash ใหม่ — ทางเดียวที่แก้ SourceId (ก่อนบันทึกครั้งแรกเท่านั้น)</summary>
+    public static void BindSource(PolicyAcceptance? r, Guid sourceId)
+    {
+        if (r == null) return;
+        r.SourceId = sourceId;
+        Seal(r);
+    }
+
+    /// <summary>ผู้ส่งเป็นสมาชิกที่ยังทำหน้าที่ได้ของบริษัท (บันทึกแทนลูกค้า) — ตัวตัดสินเดียว (<see cref="CompanyMembership.IsActiveMemberAsync"/>)</summary>
+    public static async Task<bool> IsStaffAsync(AccountingDbContext db, Guid companyId, string? actorUserId, CancellationToken ct = default)
+        => Guid.TryParse(actorUserId, out var uid) && uid != Guid.Empty && await CompanyMembership.IsActiveMemberAsync(db, companyId, uid, ct);
+
+    // ═══════════════ PDPA (ฝ่ายค้าน S4) ═══════════════
+
+    /// <summary>เก็บกี่ปี — MAX(เอกสารบัญชี/รายงานภาษี 5 ปี · พ.ร.บ.การบัญชี ม.10 / §87/3 · อายุความสัญญาทั่วไป 10 ปี ป.พ.พ. ม.193/30) = 10 ปีนับแต่วันยอมรับ</summary>
+    public const int RetentionYears = 10;
+
+    /// <summary>แถวที่ยอมรับก่อนเวลานี้พ้นอายุเก็บแล้ว (ลบจริงได้)</summary>
+    public static DateTime PurgeCutoff(DateTime nowUtc) => nowUtc.AddYears(-RetentionYears);
+
+    /// <summary>ลบตามคำขอ (ม.33): หลักฐานการยอมรับเงื่อนไขซื้อขายเป็นภาระพิสูจน์ของผู้ขาย ⇒ legal hold — คงแถว (ฉบับ · เวลา · ช่องทาง · hash)
+    /// แต่ทำผู้ยอมรับ/IP/UA ไม่ให้ระบุตัว · วันลบครั้งแรกไม่เลื่อน · ตรวจ hash ซ้ำไม่ได้แล้วโดยเจตนา</summary>
+    public static void Pseudonymise(PolicyAcceptance r, string anonymisedSubject, DateTime nowUtc)
+    {
+        r.Subject = anonymisedSubject;
+        r.IpAddress = null;
+        r.UserAgent = null;
+        r.PseudonymisedAt ??= nowUtc;
+    }
+
+    /// <summary>ป้ายผลตรวจหลักฐานรายแถว (รายงาน DSR) — แถวที่ทำไม่ให้ระบุตัวแล้วตรวจไม่ได้โดยเจตนา</summary>
+    public static string CheckLabel(PolicyAcceptance r)
+        => r.PseudonymisedAt != null ? "ทำไม่ให้ระบุตัวแล้ว (ลบตามคำขอ) — ตรวจซ้ำไม่ได้โดยเจตนา"
+            : Verify(r) ? "หลักฐานตรงกับค่าที่เก็บ" : "หลักฐานไม่ตรง — แถวอาจถูกแก้";
 
     /// <summary>ตรวจหลักฐานกลับ (round-trip) — ใช้ canonical ตัวเดียวกับ <see cref="Create"/></summary>
     public static bool Verify(PolicyAcceptance row)
         => PdpaConsentEvidence.Check(row.EvidenceHash, row.Subject, Purpose, row.VersionShown ?? row.PolicyVersion, row.AcceptedAt,
-               $"{row.Scope}:{row.Channel}", row.IpAddress, row.UserAgent) == PdpaConsentEvidence.EvidenceCheck.Valid;
+               CanonicalChannel(row), row.IpAddress, row.UserAgent) == PdpaConsentEvidence.EvidenceCheck.Valid;
 
     // ═══════════════ ร้านค้า (เว็บ CMS) ═══════════════
 
@@ -144,14 +187,15 @@ public static class PurchasePolicyAcceptance
     /// </summary>
     /// <param name="exempt">ผู้ส่งเป็นพนักงานของบริษัท/บันทึกแทนลูกค้า</param>
     public static async Task<PolicyAcceptance?> EnforceShopAsync(AccountingDbContext db, Guid companyId, Guid? siteId, string channel,
-        bool accepted, string? versionShown, bool exempt, string? email, string? phone, Guid? sourceId, CancellationToken ct = default)
+        bool accepted, string? versionShown, bool exempt, string? email, string? phone, Guid? sourceId,
+        string? ip = null, string? userAgent = null, CancellationToken ct = default)
     {
         if (exempt) return null;
         var facts = await LoadShopAsync(db, companyId, siteId, ct);
         if (Problem(false, accepted, versionShown, facts.Version) is string problem)
             throw new BusinessRuleException(problem, RuleCode);
         var subject = CmsContactResolver.NormalizeEmail(email) ?? CmsContactResolver.NormalizePhone(phone);
-        var row = Create(companyId, ScopeShop, channel, sourceId, siteId, facts.Version, versionShown, subject, null, DateTime.UtcNow, null, null);
+        var row = Create(companyId, ScopeShop, channel, sourceId, siteId, facts.Version, versionShown, subject, null, DateTime.UtcNow, ip, userAgent);
         db.Set<PolicyAcceptance>().Add(row);
         return row;
     }
@@ -160,11 +204,11 @@ public static class PurchasePolicyAcceptance
 
     /// <summary>
     /// <b>ด่านก่อนเริ่มชำระค่าบริการ NextAcc</b> (แพ็กเกจ · ส่วนเสริม · แพ็ก · ใบแจ้งหนี้แพลตฟอร์ม) — บังคับเสมอ ·
-    /// ผ่าน ⇒ เพิ่มแถวหลักฐาน (CompanyId = บริษัทผู้จ่าย) · ผู้เรียกบันทึก · <b>ทีมศูนย์ชำระค่าบริการเรียกตัวนี้</b>ด้วย <see cref="ChannelPlatformInvoice"/>
+    /// ผ่าน ⇒ เพิ่มแถวหลักฐาน (CompanyId = บริษัทผู้จ่าย) · ผู้เรียกบันทึก · ทุกทางเข้าเรียกผ่าน <see cref="EnforcePlatformForUserAsync"/> (ยกเว้นแอดมินที่ไม่ใช่สมาชิก) เช่นศูนย์ชำระค่าบริการด้วย <see cref="ChannelPlatformInvoice"/>
     /// <para>ผู้ซื้อยอมรับฉบับปัจจุบันไว้แล้วสำหรับรายการเดียวกัน (ติ๊กตอนขอแพ็กเกจ แล้วมาแนบสลิป/จ่ายออนไลน์ทีหลัง) ⇒ ไม่ต้องติ๊กซ้ำ
     /// (คืน null — ไม่เพิ่มแถว) · ฉบับเปลี่ยนระหว่างนั้น ⇒ ต้องติ๊กใหม่</para>
     /// </summary>
-    public static async Task<PolicyAcceptance?> EnforcePlatformAsync(AccountingDbContext db, ILegalDocumentService legal,
+    private static async Task<PolicyAcceptance?> EnforcePlatformAsync(AccountingDbContext db, ILegalDocumentService legal,
         Guid payerCompanyId, Guid userId, string channel, Guid? sourceId, bool accepted, string? versionShown,
         string? ip, string? userAgent, CancellationToken ct = default)
     {
@@ -180,6 +224,22 @@ public static class PurchasePolicyAcceptance
         return row;
     }
 
+    /// <summary>ฝ่ายค้าน S6: SystemAdmin ที่<b>ไม่ใช่สมาชิก</b>ของบริษัทผู้จ่าย (ทำแทนผู้เช่า — เข้าดูในนาม/ช่วยตั้งค่า) ไม่ใช่ผู้ซื้อ ⇒ ไม่บังคับติ๊ก และไม่แต่งหลักฐาน ·
+    /// สมาชิกจริง (รวมแอดมินที่เป็นสมาชิก) ⇒ บังคับตามปกติ</summary>
+    public static async Task<bool> IsPlatformAdminActingAsync(AccountingDbContext db, Guid payerCompanyId, Guid userId, bool isSystemAdmin,
+        CancellationToken ct = default)
+        => isSystemAdmin && !await CompanyMembership.IsActiveMemberAsync(db, payerCompanyId, userId, ct);
+
+    /// <summary>ทางเข้าจาก controller ตัวเดียว: ผู้ใช้ในคำขอ → (แอดมินทำแทน = ข้าม · ไม่มีแถว) → <see cref="EnforcePlatformAsync"/></summary>
+    public static async Task<PolicyAcceptance?> EnforcePlatformForUserAsync(AccountingDbContext db, ILegalDocumentService legal,
+        Guid payerCompanyId, System.Security.Claims.ClaimsPrincipal user, string channel, Guid? sourceId, bool accepted, string? versionShown,
+        string? ip, string? userAgent, CancellationToken ct = default)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(user);
+        if (await IsPlatformAdminActingAsync(db, payerCompanyId, userId, user.IsInRole("SystemAdmin"), ct)) return null;
+        return await EnforcePlatformAsync(db, legal, payerCompanyId, userId, channel, sourceId, accepted, versionShown, ip, userAgent, ct);
+    }
+
     /// <summary>บริษัทผู้จ่ายยอมรับฉบับนี้ไว้แล้วสำหรับรายการนี้ (กรองบริษัท)</summary>
     private static Task<bool> HasPlatformAcceptanceAsync(AccountingDbContext db, Guid payerCompanyId, string channel, Guid sourceId,
         string version, CancellationToken ct = default)
@@ -190,6 +250,6 @@ public static class PurchasePolicyAcceptance
     public sealed record PlatformPolicyInfo(string Text, string Version, string TermsUrl, string RefundUrl);
 
     public static PlatformPolicyInfo PlatformInfo(string version)
-        => new(PlatformText, version, LegalDocumentDefaults.PlatformPath(LegalDocumentDefaults.KindTerms),
+        => new(PlatformText(version), version, LegalDocumentDefaults.PlatformPath(LegalDocumentDefaults.KindTerms),
             LegalDocumentDefaults.PlatformPath(LegalDocumentDefaults.KindRefund));
 }

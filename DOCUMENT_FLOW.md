@@ -1803,7 +1803,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     อายุลิงก์ชำระ · ช่องอีเมล/LINE · ศูนย์บิลของผู้เช่า `/pages/billing.html` (`api/subscription/{cid}/billing-center` — อยู่ใต้ `/api/subscription` ⇒ ผู้ถูกระงับยังเข้ามาจ่ายได้ ·
     สิทธิ์ `Billing.Manage`) แสดงใบแจ้งหนี้ค่าบริการจาก tenant ผู้ให้บริการ (ตัวหาเดียว `PlatformInvoiceQueries.ForBuyer` — ผู้ติดต่อ `NextAccTenant`/CompanyId) ·
     **แจ้งชำระใบ** = `SubscriptionPayment.PlatformInvoiceDocumentId` (ยอด = ยอดค้างของใบ · ติ๊กยอมรับนโยบายบังคับด้วยด่านของ part B
-    `PurchasePolicyAcceptance.EnforcePlatformAsync` ช่อง `platform-invoice` ต้นทาง = ใบแจ้งหนี้) · อนุมัติแล้ว: ใบค่าใช้งาน (`RequestedPeriodMonths = 0`) **ไม่ต่ออายุ** · ใบต่ออายุต่ออายุตามเส้นเดิม ·
+    `PurchasePolicyAcceptance.EnforcePlatformForUserAsync` ช่อง `platform-invoice` ต้นทาง = ใบแจ้งหนี้) · อนุมัติแล้ว: ใบค่าใช้งาน (`RequestedPeriodMonths = 0`) **ไม่ต่ออายุ** · ใบต่ออายุต่ออายุตามเส้นเดิม ·
     ทั้งคู่ **ตัดชำระใบเดิม** (`PlatformBillingDocumentIssuer.SettleInvoiceAsync` → `IDocumentService.CreatePaymentAsync` · อ้างอิง `SUBPAY-{เลขรายการ}` กันซ้ำ) **ไม่ออกขายสดใบใหม่**
     (ปิด G-10 บนเส้นนี้) · ตัดไม่สำเร็จ = หมายเหตุ ⚠️ บนรายการ + log Error (ไม่ตกไปออกใบขายสด) · ชำระออนไลน์ = `POST …/invoices/{id}/online-payment` สร้างรายการผูกใบ แล้ว `PayWidget`
     เริ่ม intent ผ่าน `platform-pay/subscription-payments/{id}/intents` ของ part B (`IPlatformPaymentService` · ปุ่มเฉพาะช่องทางเปิดจริง) · เงินเข้า ⇒ `SubscriptionPaymentHandler`
@@ -1817,6 +1817,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   (`IPaymentProviderConfigService` ตัวเดียวกับหน้าร้าน · ด่าน `Helpers/PaymentLiveGate`) · ทดลองจ่าย ฿20 = `GatewaySelfTest` (handler ประทับเวลาอย่างเดียว · ไม่มี JE · รอบโอนไม่หยิบ) ·
   ก่อนทุกการชำระ/ยืนยันการซื้อ (แพลตฟอร์ม + ออเดอร์/จอง/ที่พักของร้าน) ต้องติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (`Helpers/PurchasePolicyAcceptance` · แถว `PolicyAcceptances`) ·
   ยกเลิกแพ็กเกจมีผลสิ้นรอบ (`Subscription.CancelAtPeriodEnd`) · Last verified `commit a426a0ed`
+  · **ฝ่ายค้าน:** ทดลองจ่าย/โหมดทดสอบไม่เข้ารอบโอน · คืนไม่ลง PV · ทดลองจ่ายคืนไม่ได้ · คีย์/livemode ตรงโหมด · ปุ่มออนไลน์ต้องมี `PlatformLiveConfirmedAt` ·
+  จ่ายซ้อนออนไลน์+สลิปกันตอนเริ่ม + ล็อก session + ล้มดัง · หลักฐานยอมรับ append-only + DSR · ยกเลิกสิ้นรอบล้างแพ็กเกจที่รอเปลี่ยน แต่คงตัวชี้ใบต่ออายุไว้ (เฟส 2 ทวงหนี้ยกเว้นใบนี้ · ห้ามจ่าย · "ใช้ต่อ" แล้วจ่ายใบเดิม — ล้าง = ใบซ้ำ/ทวงผิด) · Last verified `commit 410dde7a + รวมเฟส 2 8f868ee8`
 
 - **รอบ 219 เฟส 0 — เงินค่าบริการ NextAcc (คำตัดสินข้อ 178):** ชนิดต้นทาง `SubscriptionPayment`/`AddOnPurchase` = รายได้ของแพลตฟอร์ม (`Helpers/PlatformRevenueSource`) ·
   `PaymentIntentService.StartAsync`/`RecordExternalSuccessAsync` ปฏิเสธเมื่อไม่อยู่ใต้บริษัทผู้ให้บริการหรือไม่ระบุ `PayerCompanyId` (ครอบ `pay/intents` · `public-pay` · ส่วนเสริม) ·

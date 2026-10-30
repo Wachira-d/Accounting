@@ -114,7 +114,9 @@ public record SubscriptionResponse(
     BillingCycle? ScheduledBillingCycle = null,
     DateTime? ScheduledPlanEffectiveAt = null,
     /// <summary>รอบ 219 ส่วน B: ขอยกเลิกไว้ — ใช้ได้ถึง <c>EndDate</c> แล้วสิ้นสุด (หน้าเว็บแสดงปุ่ม "กลับมาใช้ต่อ")</summary>
-    bool CancelAtPeriodEnd = false);
+    bool CancelAtPeriodEnd = false,
+    /// <summary>ฝ่ายค้าน (หมายเหตุ): ข้อความยืนยันก่อนกดยกเลิก (SubscriptionCancelPolicy.ConfirmText) — หน้าเว็บแสดงอย่างเดียว</summary>
+    string? CancelConfirmText = null);
 
 public record UsageLimits(
     int MaxUsers,
@@ -288,7 +290,10 @@ public record SubmitSubscriptionPaymentRequest(
     SubscriptionPlan RequestedPlan,
     BillingCycle RequestedBillingCycle,
     int RequestedPeriodMonths,
-    string? CustomerNotes);
+    string? CustomerNotes,
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน S6: แจ้งชำระค่าแพ็กเกจ = ซื้อ ⇒ ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (บังคับที่ endpoint ผู้เช่า)</summary>
+    bool PolicyAccepted = false,
+    string? PolicyVersionShown = null);
 
 public record ReviewSubscriptionPaymentRequest(
     bool Approve,
