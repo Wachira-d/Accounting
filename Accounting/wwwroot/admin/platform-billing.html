@@ -57,6 +57,8 @@
   <script>
     AdminLayout.init('platform-billing');
     const PB = {
+      // id ในปุ่ม onclick = GUID จากเซิร์ฟเวอร์เท่านั้น — ตัดทุกอักขระที่ไม่ใช่ hex/ขีด (ไม่พึ่ง HTML escape ใน JS string)
+      gid(v) { return String(v || '').replace(/[^0-9a-fA-F-]/g, ''); },
       fillSettings(d) {
         const f = document.getElementById('settingsForm'), e = AdminLayout.esc;
         f.renewalInvoiceLeadDays.value = d.renewalInvoiceLeadDays;
@@ -115,8 +117,8 @@
           x => [e(x.companyName), e(x.documentNumber), e(x.kindLabel), AdminLayout.date(x.dueDate), AdminLayout.money(x.balanceDue),
             e(x.stateLabel), e((x.suspendedByDunning ? '⛔ ระงับโดยระบบ · ' : (x.wouldSuspendSince ? '⚠️ จะระงับ (โหมดเงา) · ' : '')) + (x.lastDunningAction || '-')),
             `<div style="display:flex;gap:4px;flex-wrap:wrap">
-              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.evaluate('${e(x.buyerCompanyId)}')">ประเมิน</button>
-              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.exempt('${e(x.buyerCompanyId)}')">พักระงับ</button>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.evaluate('${PB.gid(x.buyerCompanyId)}')">ประเมิน</button>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.exempt('${PB.gid(x.buyerCompanyId)}')">พักระงับ</button>
               ${PB.linkButton ? PB.linkButton(x) : ''}</div>`],
           'ไม่มีใบค้าง 🎉');
       } catch (err) { el.textContent = err.message; }
@@ -140,7 +142,7 @@
       try { const r = await AdminAPI.platformDunningExempt(cid, days, reason); AdminLayout.toast(r.message || 'บันทึกแล้ว'); this.loadOpen(); }
       catch (err) { AdminLayout.toast(err.message, 'error'); }
     };
-    PB.linkButton = x => `<button class="admin-btn admin-btn-primary admin-btn-sm" onclick="PB.createLink('${AdminLayout.esc(x.id)}')">สร้างลิงก์ชำระ</button>`;
+    PB.linkButton = x => `<button class="admin-btn admin-btn-primary admin-btn-sm" onclick="PB.createLink('${PB.gid(x.id)}')">สร้างลิงก์ชำระ</button>`;
     PB.createLink = async function (docId) {
       const days = prompt('อายุลิงก์ (วัน) — เว้นว่าง = ค่าตั้งต้น', '');
       try {
@@ -159,7 +161,7 @@
         el.innerHTML = this.table(r.data, ['บริษัท', 'ใบ', 'ยอดตอนสร้าง', 'หมดอายุ', 'สถานะ', 'เปิดดู', ''],
           x => [e(x.buyerName || '-'), e(x.invoiceNumber), AdminLayout.money(x.amountSnapshot), AdminLayout.date(x.expiresAt),
             e(x.stateMessage || 'ใช้ได้') + (x.revokedReason ? ` (${e(x.revokedReason)})` : ''), x.viewCount,
-            x.state === 'Valid' ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.revokeLink('${e(x.id)}')">ยกเลิกลิงก์</button>` : ''],
+            x.state === 'Valid' ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.revokeLink('${PB.gid(x.id)}')">ยกเลิกลิงก์</button>` : ''],
           'ยังไม่มีลิงก์');
       } catch (err) { el.textContent = err.message; }
     };

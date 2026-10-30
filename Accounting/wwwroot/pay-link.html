@@ -104,7 +104,7 @@
         if (j.data.authorizeUrl) { location.href = j.data.authorizeUrl; return; }
         document.getElementById('online').innerHTML = `<div class="note">สแกนจ่ายด้วยแอปธนาคาร (PromptPay) ยอด ฿${money(j.data.amount)}
           <div style="word-break:break-all;font-family:monospace;font-size:11px;margin-top:6px">${esc(j.data.qrPayload || '')}</div>
-          <button type="button" style="margin-top:8px" onclick="checkIntent('${esc(j.data.id)}')">ตรวจสถานะการชำระ</button></div>`;
+          <button type="button" style="margin-top:8px" onclick="checkIntent('${String(j.data.id || '').replace(/[^0-9a-fA-F-]/g, '')}')">ตรวจสถานะการชำระ</button></div>`;
       } catch (e) { alert(e.message); }
     }
     async function checkIntent(id) {
