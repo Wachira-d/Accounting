@@ -99,8 +99,12 @@ public class BookingNotifier : IBookingNotifier
         if (suppress != null) return new Delivery(BookingSendResult.Suppressed(suppress), null, false);
 
         // 3) ลำดับขั้น + ช่องจริง (OA ที่ push ใช้ = ตัวตัดสินเดียวกับ LineNotifyService)
-        var lineScope = hasLine && policy.LineOn ? await ResolveLineScopeAsync(companyId, ct) : null;
-        var steps = CustomerNotifyPolicy.Plan(policy, hasEmail, hasLine, lineOptedIn: !string.IsNullOrWhiteSpace(optedLine), lineScope, emailPlan);
+        // รอบ 212 แพ็ก B: คำเชิญผูกใหม่ผ่าน OA เดิม (NextAcc) — userId ผูกกับ OA กลาง ⇒ scope กลาง (นับโควตา) + ถือเป็นช่องที่ลูกค้าผูกเอง (LINE ก่อน)
+        string? lineScope = null;
+        if (hasLine && policy.LineOn)
+            lineScope = request.LineViaNextAcc ? CustomerNotifyChannel.ScopeNextAcc : await ResolveLineScopeAsync(companyId, ct);
+        var steps = CustomerNotifyPolicy.Plan(policy, hasEmail, hasLine,
+            lineOptedIn: !string.IsNullOrWhiteSpace(optedLine) || request.LineViaNextAcc, lineScope, emailPlan);
         var essential = CustomerNotifyEvents.IsEssential(request.EventKey);
         var html = request.Html ?? BookingReminderPlan.ToHtml(request.Text);
         string? tenantError = null;
@@ -126,6 +130,13 @@ public class BookingNotifier : IBookingNotifier
             if (step.Channel == CustomerNotifyChannel.ChannelLine)
             {
                 if (_line == null) { sent = false; stepError = "LINE: ระบบ LINE ไม่พร้อม"; }
+                else if (request.LineViaNextAcc)
+                {
+                    // OA เดิมของลูกค้า = OA กลาง (ระบุชัด ไม่เลือกตามค่าตั้งบริษัท — บริษัทเปลี่ยนไปใช้ OA ของตัวเองแล้ว)
+                    var pushed = await _line.TryPushViaNextAccAsync(line!.Trim(), new[] { request.Text });
+                    sent = pushed.Ok;
+                    stepError = sent ? null : $"LINE (OA ของ NextAcc): {pushed.Error ?? "ส่งไม่สำเร็จ"}";
+                }
                 else
                 {
                     sent = await _line.TryPushToUserAsync(companyId, line!.Trim(), request.Text);

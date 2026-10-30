@@ -20,10 +20,12 @@ public class LineWebhookController : ControllerBase
     private readonly ILineBotService _bot;
     private readonly ILogger<LineWebhookController> _logger;
     private readonly ICustomerLineLinkService? _customerLinks;
+    private readonly ICustomerRelinkInviteService? _relink;
 
-    public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger, ICustomerLineLinkService? customerLinks = null)
+    public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger, ICustomerLineLinkService? customerLinks = null,
+        ICustomerRelinkInviteService? relink = null)
     {
-        _bot = bot; _logger = logger; _customerLinks = customerLinks;
+        _bot = bot; _logger = logger; _customerLinks = customerLinks; _relink = relink;
     }
 
     [HttpPost]
@@ -46,6 +48,8 @@ public class LineWebhookController : ControllerBase
             using var doc = JsonDocument.Parse(body);
             // รอบ 211 ฝ่ายค้าน ข้อ 4: bot userId ของ OA กลาง (ลายเซ็นผ่านแล้ว) ⇒ ลิงก์ลูกค้าเก็บปลายทาง + ตรวจกับ Line:BotUserId
             var destination = doc.RootElement.TryGetProperty("destination", out var dst) ? dst.GetString() : null;
+            // รอบ 212 แพ็ก B: bot ของ OA กลางเปลี่ยน ⇒ บันทึกการสลับต่อบริษัทที่ยังใช้ OA กลาง (ตรวจครั้งเดียวต่อ bot ต่อเครื่อง · ไม่โยน)
+            if (_relink != null) await _relink.NoteWebhookDestinationAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, destination);
             if (!doc.RootElement.TryGetProperty("events", out var events)) return Ok();
             foreach (var ev in events.EnumerateArray())
             {

@@ -15,6 +15,9 @@ public sealed record CustomerNotifyRequest(Guid CompanyId, Guid? SiteId, string 
     /// <summary>ชนิด/รหัสรายการปลายทางสำหรับบันทึก (ไม่เก็บอีเมล/userId — PDPA) · null = หาจาก <c>Contact.LineTarget</c></summary>
     public string? TargetKind { get; init; }
     public Guid? TargetId { get; init; }
+    /// <summary>รอบ 212 แพ็ก B: <c>Contact.LineUserId</c> ผูกกับ <b>OA ของ NextAcc</b> (คำเชิญผูกใหม่ผ่าน OA เดิมหลังร้านเปลี่ยนไปใช้ OA ของตัวเอง) ⇒
+    /// push ผ่าน OA กลางแบบระบุชัด (นับโควตา) แทน OA ปัจจุบันของบริษัท · ถือเป็นช่องที่ลูกค้าผูกเอง (LINE ก่อน แล้วอีเมล) · ค่าเริ่มต้น false = เดิม</summary>
+    public bool LineViaNextAcc { get; init; }
 }
 
 /// <summary>รูปแบบคีย์กันส่งซ้ำต่อข้อความ (design §3.3) — ตัวตั้งเดียว · ยาวไม่เกิน 200 ตัวอักษร</summary>
@@ -39,6 +42,8 @@ public static class CustomerNotifyKeys
         => $"lodging:{N(reservationId)}:{eventKey}" + (string.IsNullOrEmpty(occurrence) ? "" : ":" + Short(occurrence));
     public static string Cart(Guid cartId) => $"cart:{N(cartId)}:abandoned";
     public static string Form(Guid submissionId) => $"form:{N(submissionId)}:autoreply";
+    /// <summary>รอบ 212 แพ็ก B: คำเชิญผูก LINE ใหม่ — 1 คน (LINE userId ของ OA เดิม · เก็บเป็น hash 12 ตัว ไม่เก็บ userId) ต่อการสลับ OA 1 ครั้ง</summary>
+    public static string Relink(Guid switchEventId, string lineUserId) => $"relink:{N(switchEventId)}:{Short(lineUserId.Trim())}";
 }
 
 /// <summary>แถวค่าตั้ง 1 แถว (บริษัท: <c>SiteId</c> null · เว็บ: มีค่า) · <c>null</c> ต่อช่อง = สืบทอดจากชั้นถัดไป</summary>

@@ -13,7 +13,26 @@ public record LineConfigResponse(
     /// <summary>LINE OA basic id (@xxx) — ใช้สร้างลิงก์เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป.</summary>
     string? OaBasicId = null,
     /// <summary>รอบ 211: ช่องทางแจ้ง<b>ลูกค้าปลายทาง</b> (OA ไหน · ลูกค้าผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — เซิร์ฟเวอร์ตัดสิน</summary>
-    CustomerLineChannelInfo? CustomerChannel = null);
+    CustomerLineChannelInfo? CustomerChannel = null,
+    /// <summary>รอบ 212 แพ็ก B: ความคืบหน้าคำเชิญผูก LINE ใหม่หลังเปลี่ยน OA (เซิร์ฟเวอร์ประกอบป้าย "เชิญผูกใหม่: ส่งแล้ว N/M") · null = ไม่มีการเปลี่ยน OA ล่าสุด</summary>
+    CustomerRelinkProgress? RelinkInvite = null);
+
+/// <summary>รอบ 212 แพ็ก B: สถานะคำเชิญผูกใหม่ของการเปลี่ยน OA ล่าสุด — <c>Label</c> = ข้อความที่หน้าเว็บแสดงตรง ๆ (ไม่มีกติกาฝั่ง JS)</summary>
+public record CustomerRelinkProgress(
+    Guid SwitchId,
+    string? FromScope,
+    string? ToScope,
+    DateTime DetectedAt,
+    DateTime? ProcessedAt,
+    int Total,
+    int Invited,
+    int Failed,
+    int Skipped,
+    bool Done,
+    string Label,
+    string? LastError,
+    /// <summary>การเปลี่ยน OA ที่ยังทยอยส่งอยู่ (รวมแถวนี้)</summary>
+    int PendingSwitches);
 
 public record UpdateLineConfigRequest(
     bool Enabled,

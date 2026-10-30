@@ -38,6 +38,8 @@ public static class CustomerNotifyEvents
     public const string LodgingSlipRejected = "lodging.slip-rejected";
     public const string CartAbandoned = "cart.abandoned";
     public const string FormAutoReply = "form.autoreply";
+    /// <summary>รอบ 212 แพ็ก B: ร้านเปลี่ยน LINE OA ⇒ เชิญลูกค้าที่ผูกไว้ให้ผูกใหม่ (ครั้งเดียวต่อการสลับ · <c>CustomerNotifyOutboxJob</c>)</summary>
+    public const string LineRelink = "line.relink";
 
     /// <summary>ข้อความถึงร้าน (ออเดอร์ใหม่ · การจองใหม่ · สลิป · lead · ที่พัก) — นับโควตาเมื่อออกช่องกลาง · ถูกระงับเมื่อเต็ม</summary>
     public const string ShopNotify = "shop.notify";
@@ -71,6 +73,7 @@ public static class CustomerNotifyEvents
         new CustomerNotifyEvent(LodgingSlipRejected, "ที่พัก: สลิปไม่ผ่าน", GLodging, false, null, null),
         new CustomerNotifyEvent(CartAbandoned, "ตะกร้าค้าง (การตลาด — ส่งเฉพาะลูกค้าที่ยินยอมรับข่าวสาร)", GOther, false, "เปิด/ปิด + ชั่วโมง อยู่ที่ตั้งค่าร้านค้าของเว็บ", "/pages/cms-store-settings.html"),
         new CustomerNotifyEvent(FormAutoReply, "ตอบกลับฟอร์มอัตโนมัติ", GOther, false, "เปิด/ปิดที่ตัวฟอร์มแต่ละฟอร์ม (ตอบกลับอัตโนมัติ)", null),
+        new CustomerNotifyEvent(LineRelink, "เชิญผูก LINE ใหม่เมื่อร้านเปลี่ยนบัญชี LINE OA (ส่งครั้งเดียวต่อการเปลี่ยน)", GOther, true, null, null),
     };
 
     private static bool IsCustomerEvent(string? key) => key != null && Catalog.Any(e => e.Key == key);

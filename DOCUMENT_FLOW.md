@@ -5947,6 +5947,26 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 C — แจ้งเ
 
 _Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก A — ค่าตั้งแจ้งลูกค้าต่อประเภท × ช่อง · ถอยอีเมล 3 ค่า · โควตาข้อความช่องกลาง + แพ็ก notify.topup · 12 เส้นผ่าน BookingNotifier · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 40ff8f41)_
 
+- **รอบ 212 B · เชิญลูกค้าผูก LINE ใหม่เมื่อร้านเปลี่ยน OA (คำตัดสินข้อ 171 ข้อ 4 · เจ้าของ: "ส่ง" · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §2.4/§5/§8 แพ็ก B · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **บันทึกการสลับ** (`LineOaSwitchEvents` · ไม่ส่งอะไรในคำขอ HTTP) — ตัวตัดสิน `CustomerRelinkInvitePlan.IsSwitch` (scope ร้าน↔NextAcc เปลี่ยน หรือ scope เดิมแต่ bot ที่รู้ทั้งสองข้างไม่ตรง ·
+  ไม่รู้ข้างใดข้างหนึ่ง = ไม่ใช่การสลับ เช่นออก token ใหม่ของ OA เดิม) จาก 3 ทางเข้า: ① `PUT line-config` (`LineConfigController.Update` อ่าน `ResolveChannelAsync` ก่อน/หลังบันทึก ·
+  token ใหม่ ⇒ ถาม LINE `GET /v2/bot/info` เพื่อรู้ bot ทันที — ถามไม่ได้ ⇒ ลืม bot แบบเดิม) ② webhook OA ร้าน (`CustomerLineWebhookController` หลังลายเซ็นผ่าน — ลิงก์ที่ยังเปิดผูกกับ bot อื่น ⇒ สลับ)
+  ③ webhook OA กลาง (`LineWebhookController` — แตกต่อบริษัทที่ยังใช้ OA กลาง · bot ที่ไม่ตรง `Line:BotUserId` = ค่าตั้งผิด ไม่ใช่การสลับ) ·
+  กันซ้ำ: unique บางส่วน (บริษัท, `DedupeKey`) ขณะยังค้าง + webhook บันทึกคู่เดิมครั้งเดียวตลอดไป · บันทึกไม่ได้ ⇒ ข้อความตอบกลับ PUT บอก (ค่าตั้งบันทึกแล้ว)
+  (ข) **ส่ง** — `CustomerNotifyOutboxJob` (5 นาที · `JobLock` · ต่อบริษัท ≤ 100 คน/รอบ · รวม ≤ 500 · หน่วง 100ms) ⇒ `CustomerRelinkInviteService.ProcessPendingAsync` ⇒
+  ผู้รับ (`CustomerRelinkInvitePlan.Plan`): ลิงก์ที่ยังเปิดบน OA เดิมและใช้กับ OA **ปัจจุบัน**ไม่ได้ · **ข้าม** ถอนความยินยอม (`PdpaConsentRecord.WithdrawnAt` · แถวหาย = ถอน) / บล็อก OA /
+  ไม่มีรายการค้าง (สมาชิกไม่ active · การจองผ่าน/ยกเลิก · ออเดอร์จบ) · **1 คน 1 คำเชิญ**ต่อการสลับ (รวมตาม LINE userId · ตัวแทน = ลิงก์สมาชิกก่อน) ·
+  ช่อง: OA เดิม = NextAcc และตอนนี้ร้านใช้ OA ของตัวเอง ⇒ push ผ่าน OA กลางแบบระบุชัด (`CustomerNotifyRequest.LineViaNextAcc` → `TryPushViaNextAccAsync` · นับโควตา) แล้วถอยไปอีเมลเมื่อล้ม ·
+  นอกนั้น ⇒ อีเมล (ผู้ส่งร้าน/ระบบตาม `EmailPlan`) · ไม่มีอีเมล ⇒ ข้าม · **ทุกฉบับผ่าน `BookingNotifier.SendAsync`** ประเภท `line.relink` (`CustomerNotifyEvents` — 19 ประเภท · ร้านปิดได้ที่ตารางค่าตั้ง) ·
+  คีย์ `relink:{switchId}:{hash ของ userId}` (`CustomerNotifyKeys.Relink` · ไม่เก็บ userId) ⇒ ส่งครั้งเดียวข้ามรอบ/ข้ามเครื่อง · ล้มลองใหม่ ≤ 3 รอบ · ระงับ (ปิดตามค่าตั้ง/โควตาเต็ม) = จบ (นับเป็นข้าม)
+  (ค) **ข้อความ**: ลิงก์ผูกใหม่ `CmsStorefrontLink.RelinkLine` — สมาชิก ⇒ `/account` · การจอง ⇒ `my-booking/{token}` · ออเดอร์ ⇒ `track-order/{token}` · ไม่มีลิงก์ ⇒ บอกทางบนเว็บร้าน ·
+  มีประโยค "ไม่ต้องการรับทาง LINE — ไม่ต้องทำอะไร" · ไม่มีอีเมล/เบอร์ของลูกค้า · ฐาน PDPA = ความต่อเนื่องของบริการที่ยินยอมไว้ (ข้อความบริการ ไม่ใช่การตลาด)
+  (ง) **ความคืบหน้า** บนแถว (`Total/Invited/Failed/Skipped/LastError/LastRunAt` นับใหม่จาก `CustomerNotifyLogs` ทุกรอบ) · ครบ ⇒ `ProcessedAt` (watermark ต่อการสลับ) ·
+  หน้า ตั้งค่า → LINE แสดงป้ายจากเซิร์ฟเวอร์ "เชิญผูกใหม่: ส่งแล้ว N/M" (`GET/PUT line-config` → `relinkInvite`) · ร้านสลับกลับก่อนงานเดิน ⇒ ลิงก์เดิมใช้ได้อีก ⇒ ไม่มีผู้รับ (จบทันที)
+  (จ) migration: ตารางจากบล็อกของแพ็ก A + `Helpers/CustomerRelinkMigration` (คอลัมน์ความคืบหน้า + unique บางส่วน · ADD COLUMN IF NOT EXISTS)
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 B — บันทึกการสลับ LINE OA 3 ทางเข้า · CustomerNotifyOutboxJob เชิญผูกใหม่ผ่าน BookingNotifier · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

@@ -5735,3 +5735,11 @@ claim คีย์ข้อความ (`CustomerNotifyLogs`) → ค่าต�
 `notify.topup` (เส้นบิลเดิม) · `GET/POST metering/notify-quota[/topup]` · `GET/PUT customer-notify/rules` · `PUT customer-notify/fallback` · (5) หน้า ตั้งค่า/ตั้งค่าร้านค้า/การใช้งาน/แพ็กเกจ/ส่วนเสริม/แอดมิน plans ·
 (6) migration `CmsRound212NotifyStatements` (+ ตารางล่วงหน้าแพ็ก B/C) · เทสต์ `CmsRound212PrefsQuotaTests` + Db `NotifyQuotaDbTests` (TEST_PLAN CMS212A-01..22) · `required_call_site_check` +23 กติกา/แก้ 4 (เส้นส่งย้ายเข้า `DeliverAsync`) ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 40ff8f41_
+
+_รอบ 212 B (คำตัดสินข้อ 171 ข้อ 4 · เจ้าของ: "ส่ง" · เชิญลูกค้าผูก LINE ใหม่เมื่อร้านเปลี่ยน OA): (1) `Helpers/CustomerRelinkInvitePlan` (IsSwitch · Plan เลือกผู้รับ/ช่อง · IsRelevant ·
+IsTerminal · ข้อความ + ป้าย "เชิญผูกใหม่: ส่งแล้ว N/M") · `CustomerNotifyKeys.Relink` · `CustomerNotifyEvents.LineRelink` (19 ประเภท — ร้านปิดได้ในตารางค่าตั้ง) · `CmsStorefrontLink.RelinkLine` ·
+(2) บันทึกการสลับ `LineOaSwitchEvents` จาก PUT line-config (อ่าน OA ก่อน/หลัง · token ใหม่ถาม `GET /v2/bot/info`) + webhook OA ร้าน + webhook OA กลาง (`ICustomerRelinkInviteService`) ·
+(3) `CustomerNotifyOutboxJob` (JobLock · ≤100/บริษัท/รอบ) ส่งผ่าน `BookingNotifier.SendAsync` เท่านั้น · OA เดิม = NextAcc ⇒ `CustomerNotifyRequest.LineViaNextAcc` → `TryPushViaNextAccAsync`
+(นับโควตา · ล้มถอยอีเมล) · นอกนั้นอีเมล · ข้ามถอนยินยอม/บล็อก/ไม่มีรายการค้าง · ความคืบหน้าบนแถวนับจาก `CustomerNotifyLogs` · (4) หน้า ตั้งค่า → LINE แสดงป้ายจากเซิร์ฟเวอร์ ·
+(5) `Helpers/CustomerRelinkMigration` (คอลัมน์ความคืบหน้า + unique บางส่วน) · เทสต์ `CmsRound212RelinkTests` (TEST_PLAN CMS212B-01..12) · `required_call_site_check` +11 กติกา ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
