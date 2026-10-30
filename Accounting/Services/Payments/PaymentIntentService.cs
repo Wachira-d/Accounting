@@ -263,6 +263,7 @@ public class PaymentIntentService : IPaymentIntentService
             SiteId = request.SiteId,
             ContactId = request.ContactId,
             PayerCompanyId = PlatformRevenueSource.IsPlatformRevenue(request.SourceKind) ? request.PayerCompanyId : null,
+            IsTestMode = config?.Mode == PaymentProviderMode.Test,   // ฝ่ายค้านรอบ 219 S8: โหมด ณ ตอนสร้าง
             Amount = request.Amount,
             Description = request.Description,
             CustomerEmail = request.CustomerEmail,
@@ -392,8 +393,9 @@ public class PaymentIntentService : IPaymentIntentService
         // ไม่ผ่าน = ไม่เรียก handler (ไม่ต่ออายุ/ไม่เปิดส่วนเสริม) แต่ล้มดัง: ประวัติ ⚠️ + log + แจ้ง (เหมือนไม่มี handler)
         if (PlatformRevenueSource.IsPlatformRevenue(intent.SourceKind))
         {
-            var isTest = intent.ProviderConfigId is Guid cfgId
-                && await _db.PaymentProviderConfigs.AsNoTracking().AnyAsync(c => c.Id == cfgId && c.Mode == PaymentProviderMode.Test, ct);
+            // ฝ่ายค้านรอบ 219 S8: โหมด ณ ตอนสร้างชนะ (config อาจสลับเป็น Live ภายหลัง) · แถวก่อนมีคอลัมน์ ⇒ อ่านโหมดของ config
+            var isTest = intent.IsTestMode || (intent.ProviderConfigId is Guid cfgId
+                && await _db.PaymentProviderConfigs.AsNoTracking().AnyAsync(c => c.Id == cfgId && c.Mode == PaymentProviderMode.Test, ct));
             var block = PlatformRevenueSource.EntitlementBlockReason(intent.SourceKind, intent.CompanyId,
                 await PlatformCompanyIdAsync(ct), intent.PayerCompanyId, isTest);
             if (block != null)

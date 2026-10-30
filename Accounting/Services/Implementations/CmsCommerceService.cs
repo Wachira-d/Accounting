@@ -49,7 +49,7 @@ public partial class CmsCommerceService : ICmsCommerceService
         _stock = stock;
         _db = db;
         _logger = logger;
-        _encryptionKey = Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), config["Security:EncryptionKey"]) ?? Accounting.Helpers.EncryptionKeyResolver.DevKey;   // รอบ 219 P0-4: แหล่งคีย์ตัวเดียว
+        _encryptionKey = config["Security:EncryptionKey"] ?? "default-dev-key-change-in-production";
         _images = images;
         _docService = docService;
         _productService = productService;

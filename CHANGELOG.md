@@ -5916,3 +5916,9 @@ _รอบ 219 เฟส 0 (2026-10-30 · คำตัดสินข้อ 178 
 แอดมินเปลี่ยนทันที + audit chain · ส่วนเสริมค้างชำระผ่อนผัน 7 วันแล้วระงับ · ค่าเหมาไม่เก็บซ้อนงวดที่จ่ายล่วงหน้า · BillingAccount ค่าตั้งต้น Postpaid · `SecretProtector`/`Program.cs`/`CmsCommerceService` ใช้
 `Helpers/EncryptionKeyResolver` (production ไม่มีคีย์/dev key ⇒ boot ไม่ขึ้น) · รายงานอ่านอย่างเดียว 3 ชุดที่ `/admin/revenue.html` · migration `Helpers/PlatformBillingPhase0Migration` (ADD COLUMN ล้วน ไม่แก้แถวเดิม) ·
 เทสต์ `PlatformBillingPhase0Tests` + Db `PlatformBillingPhase0DbTests` · TEST_PLAN PB219-01..13 · `required_call_site_check` +21 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit dec90eff_
+
+_รอบ 219 เฟส 0 ฝ่ายค้าน (2026-10-30 · คำตัดสินข้อ 178 ภาคผนวก) — B1 อัปเกรด/ฟรีถาวรเริ่มรอบจากวันอนุมัติ (`PlatformPlanPricing.PeriodStart` · เดิมฟรีถาวร→Pro ได้ 100 ปี) ·
+B2 `SecretProtector` ถอดด้วยคีย์เดิมได้ (`EncryptionKeyResolver.LegacyCandidates`) + `SecretReprotectJob`/`SecretReprotectPass` เข้ารหัสใหม่ครั้งเดียว (JobLock · audit) · S3 ไม่ Trim คีย์ · นิพจน์คีย์ PII คงเดิม ·
+S2 ฟรีถาวร Active · S4 ทดลองใช้บัญชีครั้งเดียวต่อระดับ · S5 cascade แพลนบัญชีเฉพาะแพ็กเกจตรง · S6 รายการเก่าใต้ร้าน: แอดมินจัดการ/ร้านคืนเงินได้ · S7 addOnCodes ตามระยะผ่อนผัน ·
+S8 `PaymentIntent.IsTestMode` · S9 บล็อกดาวน์เกรดหลังออกใบแจ้งหนี้ต่ออายุ · ขยายทดลองใช้เฉพาะ Trial · วันรับเงินบีบที่เซิร์ฟเวอร์ · ป้ายปุ่มเลือกแพ็กเกจเป็นกลาง ·
+เทสต์ +7 pure/+4 Db · TEST_PLAN PB219-14..22 · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

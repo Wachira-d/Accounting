@@ -52,8 +52,8 @@ public class PlatformBillingPhase0Tests
         // G-2: เจ้าของร้านยืนยันมือ/คืนเงินค่าบริการของตัวเอง ⇒ ปฏิเสธ
         Assert.Equal(PlatformRevenueSource.TenantSideMessage,
             PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.SubscriptionPayment, Tenant, Platform, isSystemAdmin: false));
-        // แม้เป็นแอดมินแพลตฟอร์ม แต่ทำงานใต้บริษัทของร้าน ⇒ ปฏิเสธ (เงินไม่ได้อยู่ในสมุดของเรา)
-        Assert.NotNull(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, isSystemAdmin: true));
+        // ฝ่ายค้านรอบ 219 S6: รายการเก่าใต้บริษัทร้าน — แอดมินแพลตฟอร์มจัดการได้ (ให้สิทธิ์ไม่ได้อยู่แล้วที่ EntitlementBlockReason)
+        Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, isSystemAdmin: true));
         // พนักงานของบริษัทผู้ให้บริการที่ไม่ใช่แอดมินแพลตฟอร์ม ⇒ ปฏิเสธ
         Assert.NotNull(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Platform, Platform, isSystemAdmin: false));
         // ไม่ได้ตั้งบริษัทผู้ให้บริการ ⇒ ไม่มีใครทำได้
@@ -63,6 +63,60 @@ public class PlatformBillingPhase0Tests
         // ทิศตรงข้าม: เจ้าของร้านยืนยันมือรายการของลูกค้าตัวเองได้ตามเดิม
         Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.Document, Tenant, Platform, isSystemAdmin: false));
         Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.LodgingReservation, Tenant, null, isSystemAdmin: false));
+    }
+
+    [Theory]
+    [InlineData(PlatformRevenueSource.StaffAction.Refund, true)]
+    [InlineData(PlatformRevenueSource.StaffAction.VerifyRefund, true)]
+    [InlineData(PlatformRevenueSource.StaffAction.ConfirmManually, false)]
+    [InlineData(PlatformRevenueSource.StaffAction.Redispatch, false)]
+    [InlineData(PlatformRevenueSource.StaffAction.ResolveRefundManually, false)]
+    [InlineData(PlatformRevenueSource.StaffAction.RecordLegacyRefund, false)]
+    public void Tenant_may_only_refund_or_verify_legacy_tenant_routed_platform_intents(PlatformRevenueSource.StaffAction action, bool allowed)
+    {
+        // S6: เงินของรายการเก่าอยู่ใน gateway ของร้าน ⇒ ทางคืนเงินลูกค้าต้องไม่ตัน แต่ยืนยัน/ส่งต่อ/บันทึกผลมือไม่ได้
+        Assert.Equal(allowed, PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, false, action) == null);
+        // ใต้บริษัทผู้ให้บริการ (ทางที่ถูก) ⇒ ร้าน/พนักงานที่ไม่ใช่แอดมินทำอะไรไม่ได้เลย
+        Assert.NotNull(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Platform, Platform, false, action));
+    }
+
+    [Fact]
+    public void Period_start_upgrade_and_permanent_free_start_now_renewal_extends()
+    {
+        var end = Now.AddDays(200);
+        // B1: ฟรีถาวร (EndDate +100 ปี) ⇒ เริ่มจากวันนี้ (เดิมได้ 100 ปี + 1 เดือน)
+        Assert.Equal(Now, PlatformPlanPricing.PeriodStart(PlatformPlanPricing.ChangeKind.Upgrade, false, true, Now.AddYears(100), Now));
+        Assert.Equal(Now, PlatformPlanPricing.PeriodStart(PlatformPlanPricing.ChangeKind.Same, true, true, Now.AddYears(100), Now));
+        // อัปเกรดทันทีกลางรอบ ⇒ วันนี้ (ส่วนที่เหลือสละ — นโยบายชั่วคราวจนกว่าจะมี proration)
+        Assert.Equal(Now, PlatformPlanPricing.PeriodStart(PlatformPlanPricing.ChangeKind.Upgrade, false, false, end, Now));
+        // ทิศตรงข้าม: ต่ออายุแพ็กเกจเดิม / ดาวน์เกรดรอครบรอบ ⇒ ต่อจากวันหมดอายุเดิม
+        Assert.Equal(end, PlatformPlanPricing.PeriodStart(PlatformPlanPricing.ChangeKind.Same, true, false, end, Now));
+        Assert.Equal(end, PlatformPlanPricing.PeriodStart(PlatformPlanPricing.ChangeKind.Downgrade, false, false, end, Now));
+        Assert.Equal(Now, PlatformPlanPricing.PeriodStart(PlatformPlanPricing.ChangeKind.Same, true, false, Now.AddDays(-5), Now));
+    }
+
+    [Fact]
+    public void Account_cascade_trial_once_and_renewal_window_rules()
+    {
+        Assert.True(PlatformPlanPricing.MayCascadeToAccountPlan(SubscriptionPlan.Pro, SubscriptionPlan.Pro));
+        Assert.False(PlatformPlanPricing.MayCascadeToAccountPlan(SubscriptionPlan.Basic, SubscriptionPlan.Enterprise));   // S5
+        Assert.False(PlatformPlanPricing.MayCascadeToAccountPlan(SubscriptionPlan.Pro, null));
+        Assert.True(PlatformPlanPricing.MayStartAccountTrial(Array.Empty<SubscriptionPlan>(), SubscriptionPlan.Pro));
+        Assert.False(PlatformPlanPricing.MayStartAccountTrial(new[] { SubscriptionPlan.Pro }, SubscriptionPlan.Pro));       // S4
+        Assert.True(PlatformPlanPricing.MayStartAccountTrial(new[] { SubscriptionPlan.Basic }, SubscriptionPlan.Pro));
+        // S9: ออกใบแจ้งหนี้ต่ออายุของรอบนี้แล้ว ⇒ ไม่รับดาวน์เกรด · ยังไม่ออก/ออกของรอบก่อน ⇒ ได้
+        Assert.NotNull(PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(Now.AddDays(10), Now.AddDays(10)));
+        Assert.Null(PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(null, Now.AddDays(10)));
+        Assert.Null(PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(Now.AddDays(-20), Now.AddDays(10)));
+    }
+
+    [Fact]
+    public void Payment_date_is_clamped_server_side()
+    {
+        Assert.Equal(Now, PlatformPlanPricing.ClampPaymentDate(default, Now, Now));
+        Assert.Equal(Now, PlatformPlanPricing.ClampPaymentDate(Now.AddDays(3), Now, Now));          // อนาคต
+        Assert.Equal(Now.AddDays(-31), PlatformPlanPricing.ClampPaymentDate(Now.AddYears(-1), Now, Now));
+        Assert.Equal(Now.AddDays(-2), PlatformPlanPricing.ClampPaymentDate(Now.AddDays(-2), Now, Now));
     }
 
     [Fact]
@@ -193,21 +247,50 @@ public class PlatformBillingPhase0Tests
         Assert.Equal("env-key", EncryptionKeyResolver.Resolve("env-key", "cfg-key"));
         Assert.Equal("cfg-key", EncryptionKeyResolver.Resolve("  ", "cfg-key"));
         Assert.Null(EncryptionKeyResolver.Resolve(null, ""));
+        // S3: คีย์ดิบไม่ถูก Trim (PBKDF2 ไวต่อช่องว่าง)
+        Assert.Equal(" env-key ", EncryptionKeyResolver.Resolve(" env-key ", null));
         Assert.Throws<InvalidOperationException>(() => EncryptionKeyResolver.RequireUsable(null, isProduction: true, "test"));
         Assert.Throws<InvalidOperationException>(() => EncryptionKeyResolver.RequireUsable(EncryptionKeyResolver.DevKey, isProduction: true, "test"));
-        Assert.Equal("real-key", EncryptionKeyResolver.RequireUsable(" real-key ", isProduction: true, "test"));
+        Assert.Equal(" real-key ", EncryptionKeyResolver.RequireUsable(" real-key ", isProduction: true, "test"));
+        Assert.Throws<InvalidOperationException>(() => EncryptionKeyResolver.RequireUsable(" " + EncryptionKeyResolver.DevKey + " ", isProduction: true, "test"));
         // เครื่องนักพัฒนา: ไม่มีคีย์ ⇒ dev key (พฤติกรรมเดิม)
         Assert.Equal(EncryptionKeyResolver.DevKey, EncryptionKeyResolver.RequireUsable(null, isProduction: false, "test"));
     }
 
     [Fact]
-    public void Secret_protector_round_trips_with_resolved_key_and_old_dev_key_values_need_reentry()
+    public void Legacy_key_candidates_cover_old_config_env_variants_and_dev_key()
     {
-        // ค่าเดิมที่เคยเข้ารหัสด้วย dev key จะถอดไม่ออกเมื่อใช้คีย์จริง ⇒ IsUsable = false (ผู้ใช้ต้องกรอกใหม่ — ดูหมายเหตุ migration ใน DECISIONS 178)
-        var dev = new SecretProtector(EncryptionKeyResolver.DevKey);
-        var real = new SecretProtector("production-key-219");
-        var legacy = dev.Protect("sk_live_123");
-        Assert.False(real.IsUsable(legacy));
-        Assert.Equal("sk_live_123", real.Unprotect(real.Protect("sk_live_123")));
+        var c = EncryptionKeyResolver.LegacyCandidates("env-key", "env-key", " cfg-key ");
+        Assert.Equal(new[] { " cfg-key ", "cfg-key", EncryptionKeyResolver.DevKey }, c);   // ไม่มีคีย์ปัจจุบัน/ซ้ำ
+        Assert.Contains("env-key", EncryptionKeyResolver.LegacyCandidates("env-key ", "env-key ", null));   // S3 ลองแบบตัดช่องว่าง
+    }
+
+    [Fact]
+    public void Secret_encrypted_with_dev_key_still_decrypts_after_switching_key_and_is_reprotected()
+    {
+        // B2: production ที่ตั้งแค่ ENCRYPTION_KEY — ค่าเดิมเข้ารหัสด้วย dev key (SecretProtector รุ่นเดิมไม่อ่าน env)
+        var legacy = new SecretProtector(EncryptionKeyResolver.DevKey).Protect("sk_live_123");
+        var current = new SecretProtector("production-key-219", null,
+            EncryptionKeyResolver.LegacyCandidates("production-key-219", "production-key-219", null));
+        Assert.True(current.IsUsable(legacy));
+        Assert.Equal("sk_live_123", current.Unprotect(legacy));
+        Assert.True(current.NeedsReprotect(legacy));
+        var migrated = current.Reprotect(legacy);
+        Assert.NotNull(migrated);
+        Assert.False(current.NeedsReprotect(migrated));
+        Assert.Equal("sk_live_123", new SecretProtector("production-key-219").Unprotect(migrated));   // ถอดด้วยคีย์ปัจจุบันอย่างเดียวได้แล้ว
+        // ค่าที่อยู่บนคีย์ปัจจุบันแล้ว ⇒ ไม่ต้องทำ
+        Assert.Null(current.Reprotect(current.Protect("x-value")));
+    }
+
+    [Fact]
+    public void Secret_with_unknown_key_stays_unusable_and_untouched()
+    {
+        var foreign = new SecretProtector("some-other-key").Protect("sk_live_999");
+        var current = new SecretProtector("production-key-219", null, new[] { EncryptionKeyResolver.DevKey });
+        Assert.False(current.IsUsable(foreign));
+        Assert.Equal(string.Empty, current.Unprotect(foreign));
+        Assert.False(current.NeedsReprotect(foreign));
+        Assert.Null(current.Reprotect(foreign));
     }
 }

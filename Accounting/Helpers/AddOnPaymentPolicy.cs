@@ -57,7 +57,7 @@ public static class AddOnPaymentPolicy
     /// <remarks>รอบ 219 เฟส 0 (G-11 · คำตัดสินข้อ 178): เดิม helper นี้ไม่มีผู้เรียกเลย ⇒ <c>AwaitingPayment</c> (กดเปิดแล้วไม่จ่าย ไม่แนบสลิป)
     /// ใช้ได้ตลอดกาล · ตอนนี้ต่อสายที่ <c>EntitlementService</c> + <c>UsageMeteringService.IsFeatureEnabledAsync</c> และให้ระยะผ่อนผัน
     /// <see cref="UnpaidGraceDays"/> วันนับจาก <paramref name="awaitingSinceUtc"/> (ครั้งแรกที่เข้าสถานะรอชำระ — ปิด/เปิดใหม่ไม่รีเซ็ต) ·
-    /// <c>PendingReview</c> (แนบสลิปแล้ว รอแอดมิน) ยังใช้ได้ · แถวเดิมก่อนเฟส 0 (<paramref name="awaitingSinceUtc"/> = null) = พฤติกรรมเดิม (ไม่ตัด — เจ้าของตัดสิน)</remarks>
+    /// <c>PendingReview</c> (แนบสลิปแล้ว รอแอดมิน) ยังใช้ได้ · <paramref name="awaitingSinceUtc"/> = null = ไม่ตัด (แถวค้างชำระก่อนเฟส 0 ได้เวลา deploy จาก migration — คำตัดสินเจ้าของข้อ 178 ④)</remarks>
     public static bool UsableWhilePending(AddOnPaymentStatus status, DateTime? awaitingSinceUtc = null, DateTime? nowUtc = null)
     {
         if (status == AddOnPaymentStatus.Rejected) return false;

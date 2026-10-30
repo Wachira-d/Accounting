@@ -37,11 +37,24 @@ public static class PlatformRevenueSource
         return null;
     }
 
-    /// <summary>งานพนักงานบน intent (ยืนยันรับเงินด้วยมือ · ส่งต่อใหม่ · คืนเงิน · ตรวจ/บันทึกผลคืนเงิน) — null = ได้</summary>
-    public static string? StaffActionDenyReason(PaymentSourceKind kind, Guid companyId, Guid? platformCompanyId, bool isSystemAdmin)
+    /// <summary>งานพนักงานบน intent — ชนิดของงาน (ฝ่ายค้านรอบ 219 S6: รายการเก่าใต้บริษัทร้านต้องคืนเงินได้)</summary>
+    public enum StaffAction { ConfirmManually, Redispatch, Refund, VerifyRefund, ResolveRefundManually, RecordLegacyRefund }
+
+    /// <summary>งานพนักงานบน intent — null = ได้
+    /// <list type="bullet">
+    ///   <item>ใต้บริษัทผู้ให้บริการ (ทางที่ถูก): SystemAdmin เท่านั้น</item>
+    ///   <item>ฝ่ายค้านรอบ 219 S6 — รายการเก่า (ก่อนเฟส 0) ที่เกิดใต้บริษัทร้าน (เงินอยู่ใน gateway ของร้าน): SystemAdmin จัดการได้ทุกงาน ·
+    ///     ร้าน<b>คืนเงิน/ตรวจผลคืนเงิน</b>ได้ (เงินอยู่ในบัญชีร้าน — ทางคืนลูกค้าต้องไม่ตัน) แต่ยืนยันรับเงิน/ส่งต่อ/บันทึกผลมือไม่ได้
+    ///     (ให้สิทธิ์ก็ไม่ได้อยู่แล้ว — <see cref="EntitlementBlockReason"/>)</item>
+    /// </list></summary>
+    public static string? StaffActionDenyReason(PaymentSourceKind kind, Guid companyId, Guid? platformCompanyId, bool isSystemAdmin,
+        StaffAction action = StaffAction.ConfirmManually)
     {
         if (!IsPlatformRevenue(kind)) return null;
-        return platformCompanyId is Guid p && p == companyId && isSystemAdmin ? null : TenantSideMessage;
+        if (isSystemAdmin) return null;
+        var tenantRouted = platformCompanyId is not Guid p || p != companyId;
+        if (tenantRouted && action is StaffAction.Refund or StaffAction.VerifyRefund) return null;
+        return TenantSideMessage;
     }
 
     /// <summary>เงินเข้าแล้ว — ให้สิทธิ์ (ต่ออายุ/เปิดส่วนเสริม) ได้ไหม · null = ได้ · ไม่ได้ = ไม่เรียก handler + บันทึกเหตุผลในประวัติ (ล้มดัง)</summary>

@@ -156,8 +156,8 @@ public class SubscriptionController : ControllerBase
     /// <summary>
     /// แปลง Trial → Paid
     /// </summary>
-    [HttpPost("{companyId:guid}/convert")]
     /// <remarks>รอบ 219 เฟส 0 (G-0): ไม่เปิดแพ็กเกจทันทีอีกต่อไป — คืนรายการชำระที่ต้องโอน (หรือการเปลี่ยนที่รอมีผล) + ข้อความให้หน้าเว็บแสดงตรง ๆ</remarks>
+    [HttpPost("{companyId:guid}/convert")]
     public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ConvertTrial(Guid companyId, [FromBody] ConvertTrialRequest request)
     {
         if (await RequireOwnerAsync(companyId, "อัปเกรดแพ็กเกจ") is { } deny) return deny;
@@ -169,8 +169,8 @@ public class SubscriptionController : ControllerBase
     /// <summary>
     /// เปลี่ยน Plan
     /// </summary>
-    [HttpPut("{companyId:guid}/plan")]
     /// <remarks>รอบ 219 เฟส 0 (G-0): อัปเกรด = รายการชำระรอเงินเข้า · ดาวน์เกรด/เปลี่ยนรอบ = มีผลวันครบรอบ</remarks>
+    [HttpPut("{companyId:guid}/plan")]
     public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ChangePlan(Guid companyId, [FromBody] ChangeSubscriptionRequest request)
     {
         if (await RequireOwnerAsync(companyId, "เปลี่ยนแพ็กเกจ") is { } deny) return deny;

@@ -299,6 +299,10 @@ public class SubscriptionService : ISubscriptionService
         var tc = sub.TrialConfig
             ?? throw new InvalidOperationException("ไม่มีข้อมูล trial config");
 
+        // ฝ่ายค้านรอบ 219 (หมายเหตุ): ขยายได้เฉพาะระหว่างทดลองใช้ — เดิมขยายบน sub ที่จ่ายแล้ว/หมดอายุได้ (เลื่อน EndDate โดยไม่จ่าย)
+        if (sub.Status != SubscriptionStatus.Trial)
+            throw new BusinessRuleException("ขยายเวลาได้เฉพาะช่วงทดลองใช้ — แพ็กเกจนี้ไม่ได้อยู่ในช่วงทดลองใช้แล้ว");
+
         if (!tc.AllowExtension)
             throw new InvalidOperationException("Trial นี้ไม่อนุญาตให้ขยายเวลา");
 
@@ -454,6 +458,13 @@ public class SubscriptionService : ISubscriptionService
         sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
         sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
         sub.IsPermanentFree = template.IsPermanentFree;
+        // ฝ่ายค้านรอบ 219 S2: แพ็กเกจฟรีถาวร = Active ไม่หมดอายุ (เหมือน ResyncSubscriptionsFromTemplateAsync) — ดาวน์เกรดไปแพ็กเกจฟรีห้ามตกเป็น PastDue
+        if (template.IsPermanentFree)
+        {
+            sub.Status = SubscriptionStatus.Active;
+            sub.EndDate = DateTime.UtcNow.AddYears(100);
+            sub.NextBillingDate = null;
+        }
     }
 
     public async Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId)
@@ -502,10 +513,15 @@ public class SubscriptionService : ISubscriptionService
 
         // add-on ที่ซื้อเพิ่ม (string code) เดินทางมากับแพ็กเกจ เพื่อให้หน้าเว็บมี
         // ตัวตัดสินสิทธิ์ตัวเดียว (`Layout.hasFeature`) ไม่ต้องยิง endpoint ที่สอง
-        var addOnCodes = await _db.CompanyFeatures.AsNoTracking()
+        // ฝ่ายค้านรอบ 219 S7: ส่วนเสริมที่ค้างชำระเกินระยะผ่อนผัน = ไม่อยู่ในรายการที่ใช้ได้ (ตัวตัดสินเดียวกับด่านสิทธิ์ — หน้าเว็บแสดงอย่างเดียว)
+        var addOnNow = DateTime.UtcNow;
+        var addOnCodes = (await _db.CompanyFeatures.AsNoTracking()
             .Where(f => f.CompanyId == companyId && f.IsEnabled && !f.IsDeleted)
+            .Select(f => new { f.FeatureCode, f.PaymentStatus, f.PaymentAwaitingSince })
+            .ToListAsync())
+            .Where(f => AddOnPaymentPolicy.UsableWhilePending(f.PaymentStatus, f.PaymentAwaitingSince, addOnNow))
             .Select(f => f.FeatureCode)
-            .ToListAsync();
+            .ToList();
 
         // ชื่อแพ็กเกจที่แอดมินตั้ง (ไม่ใช่ชื่อ enum) — หน้าเว็บแสดงค่านี้ตรง ๆ
         planName ??= await _db.PlanTemplates.AsNoTracking()
@@ -729,6 +745,10 @@ public class SubscriptionService : ISubscriptionService
 
         if (template.Plan == sub.Plan && cycle == sub.BillingCycle)
             return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), null, "แพ็กเกจและรอบบิลนี้คือแพ็กเกจปัจจุบันอยู่แล้ว");
+
+        // ฝ่ายค้านรอบ 219 S9: ใบแจ้งหนี้ต่ออายุของรอบนี้ออกไปแล้ว (ราคาแพ็กเกจเดิม) ⇒ ไม่รับดาวน์เกรดในช่วงนั้น (ไม่แก้ใบที่ออกแล้วเงียบ ๆ) — บอกวันที่เลือกได้
+        if (PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(sub.RenewalInvoiceForEndDate, sub.EndDate) is string blockMsg)
+            throw new BusinessRuleException(blockMsg);
 
         // ดาวน์เกรด / เปลี่ยนรอบบิล — ไม่ตัดสิทธิ์ที่จ่ายไปแล้ว: มีผลวันครบรอบปัจจุบัน
         sub.ScheduledPlan = template.Plan;
@@ -1899,7 +1919,8 @@ public class SubscriptionService : ISubscriptionService
             SubscriptionId = sub.Id,
             PaymentNumber = await NextPaymentNumberAsync(sub),
             Amount = due,
-            PaymentDate = request.PaymentDate == default ? DateTime.UtcNow : request.PaymentDate,
+            // ฝ่ายค้านรอบ 219 (หมายเหตุ): วันรับเงิน (= วันที่บนใบเสร็จ/ใบกำกับ) ถูกบีบที่เซิร์ฟเวอร์ — ไม่เป็นอนาคต ไม่ย้อนเกิน 31 วัน
+            PaymentDate = PlatformPlanPricing.ClampPaymentDate(request.PaymentDate, DateTime.UtcNow, DateTime.UtcNow),
             PaymentMethod = request.PaymentMethod,
             FromBankName = request.FromBankName,
             FromAccountNumber = request.FromAccountNumber,
@@ -1956,6 +1977,10 @@ public class SubscriptionService : ISubscriptionService
         if (payment.Status != SubscriptionPaymentStatus.Pending)
             throw new InvalidOperationException("ไม่สามารถอัพโหลดสลิปได้ เนื่องจากสถานะไม่ใช่รอตรวจสอบ");
 
+        // ฝ่ายค้านรอบ 219 (หมายเหตุ): รายการที่ระบบสร้างจากการเลือกแพ็กเกจ (ยังไม่โอน — ไม่มีรายละเอียดการโอน/สลิป) ⇒ วันรับเงิน = เวลาที่แนบสลิปครั้งแรก
+        // (ไม่ใช่วันที่กดเลือกแพ็กเกจ) · รายการที่ลูกค้าแจ้งวันที่โอนเองคงวันเดิม (บีบแล้วตอนแจ้ง)
+        if (payment.SlipFileName == null && payment.TransferReference == null && payment.FromBankName == null)
+            payment.PaymentDate = DateTime.UtcNow;
         payment.SlipFileName = fileName;
         payment.SlipOriginalFileName = originalFileName;
         payment.SlipContentType = contentType;
@@ -2028,14 +2053,16 @@ public class SubscriptionService : ISubscriptionService
             var sub = payment.Subscription;
             var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == payment.RequestedPlan && p.IsActive);
             var now = DateTime.UtcNow;
-            var baseDate = sub.EndDate > now ? sub.EndDate : now; // ต่อจากวันหมดอายุเดิม หรือจากวันนี้
-            var newEndDate = baseDate.AddMonths(payment.RequestedPeriodMonths);
             // รอบ 219 เฟส 0 (G-0): ดาวน์เกรดที่จ่ายระหว่างรอบที่ยังใช้งาน ⇒ ไม่ตัดสิทธิ์แพ็กเกจที่จ่ายไปแล้ว — ตั้งไว้มีผลวันครบรอบเดิม
             var currentTpl = sub.Plan == payment.RequestedPlan ? template
                 : await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.Plan && p.IsActive);
             var changeKind = PlatformPlanPricing.Classify(currentTpl?.MonthlyPrice ?? 0m, template?.MonthlyPrice ?? 0m);
             var defer = sub.Plan != payment.RequestedPlan
                 && PlatformPlanPricing.DeferToCycleEnd(changeKind, sub.Status, sub.EndDate, now);
+            // ฝ่ายค้านรอบ 219 B1: ต่อจากวันหมดอายุเดิมเฉพาะ "ต่ออายุแพ็กเกจเดิม/ดาวน์เกรดที่รอวันครบรอบ" · อัปเกรดทันที และ sub ฟรีถาวร (EndDate +100 ปี)
+            // ⇒ เริ่มรอบใหม่จากวันนี้ (เดิม: ฟรีถาวร → อัปเกรด ฿990 ได้ Pro 100 ปี) — ตัวตัดสินเดียว PlatformPlanPricing.PeriodStart
+            var baseDate = PlatformPlanPricing.PeriodStart(changeKind, sub.Plan == payment.RequestedPlan, sub.IsPermanentFree, sub.EndDate, now);
+            var newEndDate = baseDate.AddMonths(payment.RequestedPeriodMonths);
             var wasTrial = sub.Status == SubscriptionStatus.Trial;
             sub.Status = SubscriptionStatus.Active;
             sub.EndDate = newEndDate;
@@ -2065,6 +2092,8 @@ public class SubscriptionService : ISubscriptionService
                 if (trial != null) trial.TrialStatus = TrialStatus.Converted;
             }
             payment.SubscriptionExtendedTo = newEndDate;
+            // ฝ่ายค้านรอบ 219 (หมายเหตุ): วันที่บนใบเสร็จ/ใบกำกับ = PaymentDate ⇒ บีบอีกชั้นตอนอนุมัติ (ไม่เป็นอนาคต)
+            payment.PaymentDate = PlatformPlanPricing.ClampPaymentDate(payment.PaymentDate, payment.CreatedAt, now);
 
             // Cascade renewal to the AccountSubscription if this Company is
             // covered by one. Without this the user's License (the layer above
@@ -2076,6 +2105,22 @@ public class SubscriptionService : ISubscriptionService
             {
                 var acct = await _db.AccountSubscriptions
                     .FirstOrDefaultAsync(a => a.Id == sub.AccountSubscriptionId.Value && !a.IsDeleted);
+                // ฝ่ายค้านรอบ 219 S5: ต่ออายุแพลนระดับบัญชีได้เฉพาะเมื่อแพ็กเกจที่จ่าย = แพ็กเกจของแพลนบัญชี (ราคาของแพลนบัญชีอาจสูงกว่ามาก —
+                // จ่าย Basic ของบริษัทเดียวแล้วต่ออายุ Enterprise ทั้งกลุ่มไม่ได้) · ไม่ตรง = ไม่ cascade + ประวัติบอกเหตุ
+                var acctPlan = acct == null ? (SubscriptionPlan?)null
+                    : await _db.PlanTemplates.AsNoTracking().Where(t => t.Id == acct.PlanTemplateId).Select(t => (SubscriptionPlan?)t.Plan).FirstOrDefaultAsync();
+                if (acct != null && !PlatformPlanPricing.MayCascadeToAccountPlan(payment.RequestedPlan, acctPlan))
+                {
+                    _db.SubscriptionHistories.Add(new SubscriptionHistory
+                    {
+                        SubscriptionId = sub.Id,
+                        AccountSubscriptionId = acct.Id,
+                        Action = "AccountPlanCascadeSkipped",
+                        Notes = $"ไม่ต่ออายุแพลนบัญชี — รายการ {payment.PaymentNumber} จ่ายแพ็กเกจ {payment.RequestedPlan} ไม่ตรงแพลนบัญชี ({acctPlan?.ToString() ?? "ไม่ทราบ"})",
+                        PerformedBy = performedBy
+                    });
+                    acct = null;
+                }
                 if (acct != null)
                 {
                     var acctBase = acct.EndDate > now ? acct.EndDate : now;

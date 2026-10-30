@@ -123,12 +123,15 @@ builder.Configuration["Jwt:Secret"] = jwtSecret;
 // PDPA ม.26 — configure EncryptedColumnConverter ก่อน DbContext build
 // เพื่อให้ EF ValueConverter ใช้ key จริง (มิฉะนั้น default dev key)
 // รอบ 219 เฟส 0 (P0-4): แหล่งคีย์ตัวเดียว (EncryptionKeyResolver) ใช้ร่วมกับ SecretProtector — production ปฏิเสธทั้งค่าว่างและ dev key ·
-// เขียนค่าที่ได้กลับเข้า config ให้ผู้อ่าน Security:EncryptionKey ทุกตัว (CmsCommerceService ฯลฯ) ได้คีย์เดียวกัน
-var encryptionKey = Accounting.Helpers.EncryptionKeyResolver.Resolve(
-    Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]);
+// ฝ่ายค้านรอบ 219 B2/S3: ไม่เขียนค่ากลับเข้า config (SecretProtector ต้องเห็นค่า Security:EncryptionKey เดิมเพื่อถอดค่าที่เข้ารหัสไว้ก่อน) ·
+// ส่งคีย์ดิบเข้า EncryptedColumnConverter (ไม่ Trim — PBKDF2 ไวต่อช่องว่าง เหมือนพฤติกรรมเดิม)
+// (นิพจน์เลือกคีย์ของคอลัมน์ PII คงเดิมทุกตัวอักษร — เปลี่ยนแล้วข้อมูล PII เดิมถอดไม่ออก · ด่าน production ใช้ resolver ตัวเดียว)
+var encryptionKey = Environment.GetEnvironmentVariable("ENCRYPTION_KEY")
+    ?? builder.Configuration["Security:EncryptionKey"];
 if (builder.Environment.IsProduction())
-    Accounting.Helpers.EncryptionKeyResolver.RequireUsable(encryptionKey, true, "คอลัมน์ PII (PDPA ม.26) และความลับในฐานข้อมูล");
-if (encryptionKey != null) builder.Configuration["Security:EncryptionKey"] = encryptionKey;
+    Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
+        Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
+        true, "คอลัมน์ PII (PDPA ม.26) และความลับในฐานข้อมูล");
 // fail-fast ใน production เหมือน JWT — เดิมถ้าไม่ตั้ง key จะเงียบ ๆ ตกไปใช้
 // dev key ("default-dev-key-change-in-production") ที่อยู่ใน source ⇒ PII ตาม
 // PDPA ม.26 (เลขบัตร ปชช./passport/บัญชีธนาคาร) ถูกเข้ารหัสด้วยกุญแจสาธารณะ =
@@ -780,6 +783,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAud
 // ปิดรอบบิลค่าใช้งาน — รวม UsageEvent ที่ยังไม่ออกบิลเป็นใบแจ้งหนี้หลายบรรทัด
 // (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
 builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
+// ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
+builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)
 builder.Services.AddHostedService<Accounting.Services.Background.PaymentIntentReconcileJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,

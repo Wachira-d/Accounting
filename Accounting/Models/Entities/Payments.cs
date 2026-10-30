@@ -105,6 +105,10 @@ public class PaymentIntent : TenantEntity
     /// เป็นของบริษัทนี้ (<c>PlatformRevenueSource.SourceBelongsToPayer</c>) · null บนรายการของร้าน</summary>
     public Guid? PayerCompanyId { get; set; }
 
+    /// <summary>ฝ่ายค้านรอบ 219 S8: โหมดของผู้ให้บริการ <b>ณ ตอนสร้าง</b> (Test) — ตัดสิน "จ่ายโหมดทดสอบไม่ให้สิทธิ์จริง" จากค่านี้
+    /// (config อาจถูกสลับเป็น Live ภายหลัง ⇒ อ่านโหมดปัจจุบันของ config = ให้สิทธิ์กับเงินทดสอบ) · แถวเดิม false ⇒ ตกไปอ่าน config</summary>
+    public bool IsTestMode { get; set; }
+
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "THB";
     public string? Description { get; set; }
