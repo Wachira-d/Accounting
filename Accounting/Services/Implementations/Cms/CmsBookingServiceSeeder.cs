@@ -39,7 +39,8 @@ public static class CmsBookingServiceSeeder
         /// <summary>รอบเต็มรับคิวสำรอง</summary>
         public bool Waitlist { get; init; }
         /// <summary>การจัดสรรผู้ให้บริการ — ยังไม่มีผู้ให้บริการผูก = นับความจุของบริการ (เริ่มใช้ได้ทันที)</summary>
-        public BookingResourceMode ResourceMode { get; init; } = BookingResourceMode.None;
+        /// <summary>ฝ่ายค้านรอบ 215 เฟส 2 S2: null = ตามค่าเว็บ (ค่าเริ่มต้นของตัวอย่าง) · ตั้งเฉพาะตัวอย่างที่ต้องการโหมดเฉพาะจริง</summary>
+        public BookingResourceMode? ResourceMode { get; init; }
     }
 
     public sealed record Preset(string Key, string Label, string Description, IReadOnlyList<Sample> Samples);
