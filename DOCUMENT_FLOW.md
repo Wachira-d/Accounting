@@ -6023,7 +6023,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค�
   ส่งซ้ำไม่ต่อหมายเหตุบนรายการ · ยืนยันคำสั่งซื้อเฉพาะก่อนจัดส่ง · GET รายการ = CompanySettingsEdit · ซื้อแพ็ก: ขนาด/ราคาที่เห็นเทียบใต้ล็อก ไม่ตรง 409 ·
   หน่วยบนใบแจ้งหนี้ = `UsageEvent.UnitLabelSnapshot` (`UsageInvoicingJob` → `AddOnBilling.InvoiceUnit`) · แอดมินคืนค่าแพ็กตั้งต้นได้
 
-_Last verified against codebase: 2026-10-30 (รอบ 213 — ส่งซ้ำข้อความค้างเพราะโควตา · แพ็ก notify.topup ที่แอดมินตั้ง · เพดานเฉพาะบริษัท · ยังไม่ได้คอมไพล์ · ยังไม่ผ่านฝ่ายค้าน — commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 213 — ส่งซ้ำข้อความค้างเพราะโควตา · แพ็ก notify.topup ที่แอดมินตั้ง · เพดานเฉพาะบริษัท · ผ่านฝ่ายค้าน + CI เขียว — commit 2faabd48 · a6909467 · 41bcab58)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
