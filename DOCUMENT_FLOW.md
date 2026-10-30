@@ -4935,11 +4935,43 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   ของทั้งฝั่งเขียนและฝั่งตรวจ (`Helpers/PdpaSignupConsent.cs`), ผูก
   `Email|Purpose|เวอร์ชันที่หน้าเว็บแสดง|GrantedAt|Channel|IP|UserAgent`
   → round-trip test: `Accounting.Tests/PdpaSignupConsentTests.cs`
-- เวอร์ชันนโยบายอยู่ในโค้ด (`PdpaPolicy.CurrentVersion`) เพราะเนื้อความอยู่ใน
-  `wwwroot/terms.html` + `privacy.html` ซึ่งเปลี่ยนได้ด้วย deploy เท่านั้น —
-  **แก้เนื้อความเมื่อไรต้องขยับเวอร์ชันด้วย**
-- ตัวตนผู้ควบคุมข้อมูลบนหน้าเอกสาร ← `GET /api/legal/policy`
-  ← `SiteSettings.PlatformSeller*` (ชุดเดียวกับที่ใช้ออกใบกำกับค่าบริการ)
+- ~~เวอร์ชันนโยบายอยู่ในโค้ด (`PdpaPolicy.CurrentVersion`)~~ — **รอบ 214 (คำตัดสินข้อ 173) สถานะปัจจุบัน**: เวอร์ชันมาจาก resolver ตัวเดียว
+  `ILegalDocumentService.GetConsentVersionAsync` (ฉบับนโยบาย/ข้อกำหนดที่**มีผลวันนี้**ตามวันไทย · ไม่มีฉบับเผยแพร่ = ฉบับตั้งต้น 1.0 ใน
+  `Helpers/LegalDocumentDefaults` ซึ่งคือเนื้อความเดิมของ terms.html/privacy.html) · ผู้เรียก: `AuthService.RecordSignupConsentAsync` (แถวยินยอม) +
+  `GET /api/legal/policy` (`version` = เวอร์ชันความยินยอมที่หน้าสมัครส่งกลับ) · สองฉบับเท่ากัน ⇒ เลขเดียว (เข้ากันกับแถวเก่า "1.0") ไม่งั้น
+  `privacy x · terms y` (`LegalDocumentPolicy.ConsentVersion`) · `PdpaPolicy.CurrentVersion` เหลือเป็นฉบับตั้งต้น — ห้ามผู้เรียกใหม่ (required_call_site_check)
+- ตัวตนผู้ควบคุมข้อมูลบนหน้าเอกสาร ← `SiteSettings.PlatformSeller*` (ชุดเดียวกับที่ใช้ออกใบกำกับค่าบริการ) — รอบ 214: แทนลงเนื้อความเป็นโทเคน
+  `{{controller.*}}` ที่เซิร์ฟเวอร์ (`LegalDocumentService.RenderPlatformAsync`) · `GET /api/legal/policy` ยังคืนตัวตน + `privacyVersion`/`termsVersion`
+
+**เอกสารทางกฎหมายของแพลตฟอร์ม — แอดมินแก้ได้แบบมีฉบับ (รอบ 214 · คำตัดสินข้อ 173)**
+- หน้า `/privacy.html` · `/terms.html` = โครง + `js/legal-policy.js` → `GET /api/legal/documents/{privacy|terms}[?version=]` (ไม่ต้องล็อกอิน) →
+  ฉบับที่มีผล (หรือฉบับที่ขอ) แปลง markdown ชุดย่อยเป็น HTML ที่เซิร์ฟเวอร์ (`Helpers/LegalMarkdown` — encode ทุกตัว · ลิงก์ allowlist ·
+  โทเคนแทนหลังแปลง) + ฉบับที่ประกาศล่วงหน้า + `GET …/history` (ประวัติสาธารณะ ไม่มีร่าง/ชื่อผู้เผยแพร่) · โหลดไม่ได้ = ข้อความแจ้ง (ไม่ใช่หน้าว่าง)
+- แอดมิน `/admin/legal.html` → `AdminLegalDocumentController` (`api/admin/legal-documents/{kind}` · SystemAdmin · ปฏิเสธคีย์ API):
+  GET (ฉบับปัจจุบัน + markdown · ร่าง · ประวัติ · URL สาธารณะเต็มจาก `AppBaseUrl`/โฮสต์คำขอ · โทเคน) · PUT `draft` · POST `preview` (อ่านอย่างเดียว ·
+  คำเตือน `LegalMarkdown.Warnings`) · POST `publish` · DELETE `draft` → `LegalDocumentService` → ตาราง `LegalDocumentVersions` (ระดับแพลตฟอร์ม · ไม่มี CompanyId)
+- กติกา (`Helpers/LegalDocumentPolicy`): ร่าง 1 ฉบับ/ชนิด · **เผยแพร่แล้วแก้/ลบไม่ได้** (`CanEdit`) · `ValidatePublish`: เลขฉบับรูปแบบตัวเลข · มากกว่าทุกฉบับรวม 1.0 ·
+  วันมีผล ≥ วันนี้ และ ≥ ฉบับล่าสุด · ฉบับปัจจุบัน = `PickCurrent` (เผยแพร่แล้ว · มีผล ≤ วันนี้ · ล่าสุด) · ประกาศล่วงหน้า = `PickUpcoming` ·
+  เผยแพร่ ⇒ แถว audit (`LegalDocumentPublished` · ruleCode `PDPA-23-NOTICE-VERSION`) + audit อัตโนมัติของ BaseEntity
+- **ฉบับใหม่ = แจ้ง ไม่บล็อก**: `js/layout.js` `_showPolicyUpdateBannerIfNeeded` → `GET /api/legal/acceptance` (`NeedsAcknowledge`: ไม่มีแถวยอมรับ หรือฉบับล่าสุดที่ยอมรับ ≠ ปัจจุบัน ·
+  Purpose `account-signup:*` หรือ `policy-update:*` · ไม่นับแถวที่ถอน) → "รับทราบและยอมรับ" `POST /api/legal/acceptance` → `PdpaConsentRecord`
+  (`policy-update:terms-and-privacy` · ช่องทาง `policy-update-banner` · hash `PdpaConsentEvidence` ตัวเดียว) · หน้าค้างฉบับเก่า = 409 ·
+  โหมดเข้าดูในนามลูกค้า = ไม่แสดงแถบ + 403
+- ลิงก์: หน้าแรก (footer) · หน้าสมัคร (ช่องติ๊ก) · หน้าเข้าสู่ระบบ · เมนูผู้ใช้ในแอป · แถบแจ้ง · (อีเมลระบบไม่มี layout กลาง — ไม่ได้ใส่)
+
+**นโยบาย/ข้อกำหนดของร้าน (เว็บ CMS · หน้าจองโต๊ะ) — รอบ 214 คำตัดสินข้อ 173 (ข้อ ช–ซ)**
+- ตัวตัดสินเดียว `Helpers/CmsLegalPages.Resolve(kind, Sites.PrivacyPolicyUrl|TermsOfServiceUrl, Sites.PrivacyPolicyMarkdown|TermsOfServiceMarkdown)`:
+  ลิงก์ที่ร้านตั้ง (http(s) เต็ม หรือ path ในเว็บร้าน) > ข้อความที่ร้านเขียน > แม่แบบ `LegalDocumentDefaults.ShopTemplate` (ตัวตนร้านจาก `CmsContentTokens` ·
+  ร้าน = ผู้ควบคุมข้อมูล · NextAcc = ผู้ประมวลผล ม.40) · ผลไปที่ `StorefrontSiteInfo.PrivacyLink/TermsLink` (มีค่าเสมอ) + `SiteResponse.*LegalMode`
+- storefront: หน้า `legal/privacy` · `legal/terms` (`Store.renderLegalPage` → `GET …/storefront/legal/{kind}` → `CmsRenderingService.GetLegalPageAsync` ·
+  เว็บที่เผยแพร่แล้ว · CompanyId scope) · ลิงก์ท้ายเว็บทุกหน้า + ช่องยินยอม (`p6ConsentHtml`: สั่งซื้อ · จอง · ติดต่อ · รับข่าว) + สมัครสมาชิก + แบนเนอร์คุกกี้ ผ่าน
+  `Store.legalHref/legalAnchor` ตัวเดียว
+- หลังบ้าน `pages/cms-edit.html` (แท็บ SEO → 📜): สามโหมด · ตัวอย่าง `POST cms/sites/{id}/legal/{kind}/preview` (markdown ว่าง = แม่แบบ · อ่านอย่างเดียว) ·
+  เก็บผ่าน `PUT cms/sites/{id}` (`CmsSiteService.UpdateSiteAsync`: ลิงก์ตรวจ `ValidateExternalUrl` · ข้อความ ≤ 100k · เปลี่ยนจริงขยับ `*UpdatedAt`) · echo ครบใน `SiteResponse`
+- หน้าจองโต๊ะ (`booking.html` · `booking-manage.html`): ลิงก์ `/shop-policy.html?c=&k=` → `GET /api/public/reservations/legal/{companyId}/{kind}`
+  (แม่แบบ + ตัวตนบริษัท · เฉพาะบริษัทที่มีโต๊ะใช้งาน)
+
+_Last verified against codebase: 2026-10-30 (รอบ 214 — นโยบาย/ข้อกำหนดแพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS/หน้าจองโต๊ะ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
 - **รอบ 200 ทีม R**: รายงาน ภ.ง.ด.1 / ปกส. (`GET payroll/pnd1|sso/{y}/{m}`) ปิดบังเลขบัตร/เลข ปกส. เมื่อไม่มี `Pii.View` (ตัวตัดสิน `CanViewPiiAsync`
   ตัวเดียวกับรายชื่อพนักงาน + `PiiAccessLog` เมื่อเปิดดูเต็ม · G2-05) · ไฟล์ยื่นแบบไม่ผ่านเส้นนี้ (ยังได้เลขเต็ม) · ตัวจับพนักงานซ้ำตอนนำเข้า
   เทียบเลขบัตรหลังถอดรหัส (`EncryptedIdMatch` — คอลัมน์เข้ารหัส nonce สุ่มเทียบใน SQL ไม่มีวันเจอ · G2-06) · audit 50 ทวิรายปีเก็บเลขแบบปิดบัง (D-11)

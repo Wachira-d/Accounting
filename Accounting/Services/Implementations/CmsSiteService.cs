@@ -261,8 +261,30 @@ public class CmsSiteService : ICmsSiteService
         if (request.FacebookUrl != null) site.FacebookUrl = Blank(request.FacebookUrl);
         if (request.InstagramUrl != null) site.InstagramUrl = Blank(request.InstagramUrl);
         if (request.CookieConsentEnabled.HasValue) site.CookieConsentEnabled = request.CookieConsentEnabled.Value;
-        if (request.PrivacyPolicyUrl != null) site.PrivacyPolicyUrl = request.PrivacyPolicyUrl;
-        if (request.TermsOfServiceUrl != null) site.TermsOfServiceUrl = request.TermsOfServiceUrl;
+        // รอบ 214 (คำตัดสินข้อ 173 B): ลิงก์นโยบาย/ข้อกำหนดของร้าน — ตรวจก่อนเก็บ (เดิมเก็บค่าดิบ) · "" = ล้าง ⇒ ใช้หน้าของระบบ
+        if (request.PrivacyPolicyUrl != null)
+        {
+            if (CmsLegalPages.ValidateExternalUrl(request.PrivacyPolicyUrl) is string pErr) throw new BusinessRuleException(pErr, "PDPA-23-SHOP-POLICY");
+            site.PrivacyPolicyUrl = Blank(request.PrivacyPolicyUrl);
+        }
+        if (request.TermsOfServiceUrl != null)
+        {
+            if (CmsLegalPages.ValidateExternalUrl(request.TermsOfServiceUrl) is string tErr) throw new BusinessRuleException(tErr, "PDPA-23-SHOP-POLICY");
+            site.TermsOfServiceUrl = Blank(request.TermsOfServiceUrl);
+        }
+        // ข้อความที่ร้านเขียนเอง — "" = กลับไปใช้แม่แบบ · เปลี่ยนจริงเท่านั้นถึงขยับวันที่ปรับปรุง (หน้าสาธารณะแสดงวันที่นี้)
+        if (request.PrivacyPolicyMarkdown != null)
+        {
+            var md = Blank(request.PrivacyPolicyMarkdown);
+            if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"นโยบายความเป็นส่วนตัวยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
+            if (md != site.PrivacyPolicyMarkdown) { site.PrivacyPolicyMarkdown = md; site.PrivacyPolicyUpdatedAt = DateTime.UtcNow; }
+        }
+        if (request.TermsOfServiceMarkdown != null)
+        {
+            var md = Blank(request.TermsOfServiceMarkdown);
+            if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"ข้อกำหนดการใช้บริการยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
+            if (md != site.TermsOfServiceMarkdown) { site.TermsOfServiceMarkdown = md; site.TermsOfServiceUpdatedAt = DateTime.UtcNow; }
+        }
         // รอบ 209 P6 (ฑ): ยินยอม PDPA บนฟอร์มหน้าเว็บ — "" = ข้อความมาตรฐาน · null = ไม่เปลี่ยน (echo ใน SiteResponse · ผู้อ่าน: CmsDataConsent)
         if (request.RequireDataConsent.HasValue) site.RequireDataConsent = request.RequireDataConsent.Value;
         if (request.DataConsentText != null) site.DataConsentText = Blank(request.DataConsentText);
@@ -341,6 +363,11 @@ public class CmsSiteService : ICmsSiteService
                 InstagramUrl = s.InstagramUrl,
                 CookieConsentEnabled = s.CookieConsentEnabled,
                 PrivacyPolicyUrl = s.PrivacyPolicyUrl,
+                TermsOfServiceUrl = s.TermsOfServiceUrl,
+                PrivacyPolicyMarkdown = s.PrivacyPolicyMarkdown,
+                TermsOfServiceMarkdown = s.TermsOfServiceMarkdown,
+                PrivacyPolicyUpdatedAt = s.PrivacyPolicyUpdatedAt,
+                TermsOfServiceUpdatedAt = s.TermsOfServiceUpdatedAt,
                 RequireDataConsent = s.RequireDataConsent,
                 DataConsentText = s.DataConsentText,
                 CurrentStorageUsed = s.CurrentStorageUsed,
@@ -355,7 +382,12 @@ public class CmsSiteService : ICmsSiteService
             })
             .FirstOrDefaultAsync();
         if (site != null)
+        {
             site.Modules = (await LoadSiteModulesAsync(companyId, new[] { (Id: site.Id, SiteType: site.SiteType, Industry: site.IndustryType) })).GetValueOrDefault(site.Id) ?? new();
+            // รอบ 214: โหมดนโยบาย/ข้อกำหนด — ตัวตัดสินเดียวกับ storefront (หน้า cms-edit ไม่ตัดสินเอง)
+            site.PrivacyLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindPrivacy, site.PrivacyPolicyUrl, site.PrivacyPolicyMarkdown).Mode;
+            site.TermsLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindTerms, site.TermsOfServiceUrl, site.TermsOfServiceMarkdown).Mode;
+        }
         return site;
     }
 

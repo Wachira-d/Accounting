@@ -5787,3 +5787,14 @@ _รอบ 213 ฝ่ายค้าน (ไม่มีข้อ blocking · �
 (d) แอดมิน "คืนค่าตั้งต้น" แพ็ก (e) คำอธิบายอายุแพ็กตรงกับ GREATEST (f) ซื้อแพ็กแล้ววาดรายการค้างส่งใหม่ · ปุ่มกลับข้อความเดิมเมื่อล้ม ·
 (CI) Db test ล้ม: `ResendCount` NOT NULL ไม่มี default ในโมเดล ⇒ INSERT ดิบของ `ClaimAsync` ล้ม — ระบุคอลัมน์ใน INSERT + `HasDefaultValue(0)` · เทสต์ CMS213-11..16 · `required_call_site_check` +7 กติกา/แก้ 7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e877767d · 41bcab58_
 
+_รอบ 214 (คำตัดสินข้อ 173 · เจ้าของ: "นโยบายความเป็นส่วนตัว กับ ข้อกำหนดการใช้บริการ เรามีลิงค์ให้ลูกค้าอ่านรึยัง ... admin ปรับแต่ง เปลี่ยนได้ เห็น url"):
+(1) **แพลตฟอร์ม** — ตาราง `LegalDocumentVersions` (append-only หลังเผยแพร่ · ร่าง 1 ฉบับ/ชนิด · กติกา `Helpers/LegalDocumentPolicy`) + `ILegalDocumentService` +
+หน้า `/admin/legal.html` (`AdminLegalDocumentController`: ร่าง · ตัวอย่าง · เผยแพร่ · ทิ้งร่าง · ประวัติ · URL สาธารณะ + คัดลอก/เปิด) · เนื้อความเดิมของ privacy.html/terms.html
+ย้ายเป็นฉบับ 1.0 ใน `Helpers/LegalDocumentDefaults` (ไม่ seed แถว — ตารางว่าง = เหมือนเดิม) · หน้า privacy/terms ดึง `GET /api/legal/documents/{kind}` (HTML จาก
+`Helpers/LegalMarkdown` — markdown ชุดย่อย encode ทุกตัว · ลิงก์ allowlist · โทเคนแทนหลังแปลง) + ประวัติฉบับ/ประกาศล่วงหน้า ·
+(2) resolver เวอร์ชันตัวเดียว `GetConsentVersionAsync` แทน `PdpaPolicy.CurrentVersion` ที่ `AuthService` + `/api/legal/policy` · แถบ "มีฉบับใหม่" ใน `js/layout.js`
+→ `GET/POST /api/legal/acceptance` (แจ้ง ไม่บล็อก · หลักฐาน `PdpaConsentRecord` `policy-update:terms-and-privacy`) · ลิงก์ที่หน้าเข้าสู่ระบบ + เมนูผู้ใช้ ·
+(3) **ร้าน (CMS)** — `Helpers/CmsLegalPages.Resolve` (ลิงก์ร้าน > ข้อความร้าน `Sites.PrivacyPolicyMarkdown/TermsOfServiceMarkdown` > แม่แบบที่เติมตัวตนร้าน) ·
+หน้า storefront `legal/privacy|terms` + ลิงก์ท้ายเว็บ/ช่องยินยอม/สมัครสมาชิก/แบนเนอร์คุกกี้ · cms-edit สามโหมด + ช่องข้อกำหนดที่เดิมไม่มี UI + URL/คัดลอก/เปิด/ตัวอย่าง ·
+ลิงก์ร้านตรวจก่อนเก็บ + ซ่อมสตริงว่างเดิม (`Helpers/LegalDocumentMigration`) · (4) หน้าจองโต๊ะ → `/shop-policy.html` (`GET /api/public/reservations/legal/{companyId}/{kind}`) ·
+เทสต์ `LegalDocumentTests` + `Db/LegalDocumentDbTests` (TEST_PLAN LEGAL214-01..12) · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

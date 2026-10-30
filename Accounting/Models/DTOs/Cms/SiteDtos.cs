@@ -69,8 +69,13 @@ public class UpdateSiteRequest
     public string? InstagramUrl { get; set; }
 
     public bool? CookieConsentEnabled { get; set; }
+    /// <summary>ลิงก์นโยบาย/ข้อกำหนดที่ร้านตั้งเอง (URL เต็ม https หรือ path ในเว็บ) · "" = ล้าง (ใช้หน้าของระบบ) · null = ไม่เปลี่ยน ·
+    /// ตรวจด้วย <c>CmsLegalPages.ValidateExternalUrl</c></summary>
     public string? PrivacyPolicyUrl { get; set; }
     public string? TermsOfServiceUrl { get; set; }
+    /// <summary>รอบ 214: ข้อความนโยบาย/ข้อกำหนดที่ร้านเขียนเอง (markdown ชุดย่อย) · "" = กลับไปใช้แม่แบบของระบบ · null = ไม่เปลี่ยน</summary>
+    public string? PrivacyPolicyMarkdown { get; set; }
+    public string? TermsOfServiceMarkdown { get; set; }
     /// <summary>รอบ 209 P6 (ฑ): บังคับติ๊กยินยอมบนฟอร์มหน้าเว็บ · null = ไม่เปลี่ยน</summary>
     public bool? RequireDataConsent { get; set; }
     /// <summary>ข้อความยินยอม · "" = กลับไปใช้ข้อความมาตรฐาน · null = ไม่เปลี่ยน</summary>
@@ -119,6 +124,15 @@ public class SiteResponse
     public string? InstagramUrl { get; set; }
     public bool CookieConsentEnabled { get; set; }
     public string? PrivacyPolicyUrl { get; set; }
+    /// <summary>รอบ 214 (คำตัดสินข้อ 173): echo ครบทุกช่องที่รับใน UpdateSiteRequest (เปิดแก้แล้วบันทึกค่าไม่หาย) ·
+    /// <c>*LegalMode</c> = ผลตัวตัดสิน <c>CmsLegalPages.Resolve</c> ("external"/"custom"/"default") — หน้า cms-edit เลือกตัวเลือกตามนี้ ไม่ตัดสินเอง</summary>
+    public string? TermsOfServiceUrl { get; set; }
+    public string? PrivacyPolicyMarkdown { get; set; }
+    public string? TermsOfServiceMarkdown { get; set; }
+    public DateTime? PrivacyPolicyUpdatedAt { get; set; }
+    public DateTime? TermsOfServiceUpdatedAt { get; set; }
+    public string PrivacyLegalMode { get; set; } = "default";
+    public string TermsLegalMode { get; set; } = "default";
     public bool RequireDataConsent { get; set; }
     public string? DataConsentText { get; set; }
     public long CurrentStorageUsed { get; set; }

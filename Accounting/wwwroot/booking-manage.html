@@ -89,6 +89,9 @@
             <div class="mn-row"><span>สถานะ</span><span class="mn-status ${r.status}">${statusLabel}</span></div>
             ${policyHtml}
             ${isTerminal ? '' : '<button class="mn-btn mn-btn-cancel" onclick="Page.cancel()">🗑️ ยกเลิกการจอง</button>'}
+            ${r.companyId ? `<p style="text-align:center;font-size:12px;color:#64748b;margin-top:16px">
+              <a href="/shop-policy.html?c=${encodeURIComponent(r.companyId)}&k=privacy" target="_blank" rel="noopener" style="color:inherit">นโยบายความเป็นส่วนตัวของร้าน</a> ·
+              <a href="/shop-policy.html?c=${encodeURIComponent(r.companyId)}&k=terms" target="_blank" rel="noopener" style="color:inherit">ข้อกำหนดการใช้บริการ</a></p>` : ''}
           </div>`;
       },
       async cancel() {

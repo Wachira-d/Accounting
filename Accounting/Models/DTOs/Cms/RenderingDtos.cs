@@ -104,11 +104,38 @@ public class StorefrontSiteInfo
     public string? InstagramUrl { get; set; }
 
     // ── รอบ 209 P6 (ฑ) PDPA — เซิร์ฟเวอร์ตัดสินข้อความ/บังคับ (หน้าเว็บแสดงตามนี้ · ด่านจริงอยู่ที่ service) ──
-    public string? PrivacyPolicyUrl { get; set; }
+    /// <summary>รอบ 214 (คำตัดสินข้อ 173 B): ลิงก์นโยบายความเป็นส่วนตัว/ข้อกำหนดของร้าน — ผลตัวตัดสินเดียว <c>Helpers/CmsLegalPages.Resolve</c>
+    /// (ลิงก์ที่ร้านตั้ง &gt; ข้อความที่ร้านเขียน &gt; แม่แบบ) · <b>มีค่าเสมอ</b> (เดิม null = ไม่มีลิงก์บนฟอร์มเลย) · storefront วาดทุกจุด
+    /// (footer · ช่องยินยอม · สมัครสมาชิก · แบนเนอร์คุกกี้) จากสองช่องนี้เท่านั้น</summary>
+    public StorefrontLegalLink PrivacyLink { get; set; } = new();
+    public StorefrontLegalLink TermsLink { get; set; } = new();
     /// <summary>บังคับติ๊กยินยอมบนฟอร์ม (ไม่ติ๊ก = เซิร์ฟเวอร์ปฏิเสธ)</summary>
     public bool RequireDataConsent { get; set; }
     /// <summary>ข้อความยินยอมที่แสดง (resolve แล้ว — ข้อความร้าน หรือข้อความมาตรฐาน)</summary>
     public string DataConsentText { get; set; } = "";
+}
+
+/// <summary>ลิงก์เอกสารกฎหมายของร้าน — <c>Mode</c> "external" ⇒ ใช้ <c>Url</c> (URL เต็ม หรือ path ในเว็บร้าน) · อื่น ⇒ หน้าภายใน <c>Slug</c>
+/// (หน้าเว็บประกอบ URL ตามแบบเส้นทางของเว็บ /site/{key}/… หรือ ?slug=)</summary>
+public class StorefrontLegalLink
+{
+    public string Mode { get; set; } = "default";
+    public string? Url { get; set; }
+    public string Slug { get; set; } = "";
+    public string Title { get; set; } = "";
+}
+
+/// <summary>หน้าเอกสารกฎหมายของร้าน (GET storefront/legal/{kind}) — HTML แปลง + encode ที่เซิร์ฟเวอร์ (<c>Helpers/LegalMarkdown</c>)</summary>
+public class StorefrontLegalPageResponse
+{
+    public string Kind { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Mode { get; set; } = "default";
+    public string? ExternalUrl { get; set; }
+    public string Html { get; set; } = "";
+    /// <summary>วันที่ร้านแก้ข้อความล่าสุด (null = แม่แบบของระบบ)</summary>
+    public DateTime? UpdatedAt { get; set; }
+    public string SiteName { get; set; } = "";
 }
 
 public class StorefrontThemeInfo
