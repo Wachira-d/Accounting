@@ -49,7 +49,7 @@ public partial class CmsBookingService
             var b = await _db.SiteBookings
                 .FirstOrDefaultAsync(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("Booking not found.");
-            if (BookingSlipRule.DecideProblem(b.SlipIntentId, b.SlipUploadedAt) is string problem || b.SlipIntentId != expectedIntentId)
+            if (BookingSlipRule.DecideProblem(b.SlipIntentId, b.SlipUploadedAt) != null || b.SlipIntentId != expectedIntentId)
                 throw new BusinessRuleException("การจองนี้ไม่มีสลิปรอตรวจ (อาจถูกตรวจไปแล้ว — รีเฟรชหน้า)", BookingSlipRule.RuleCode, 409);
             b.SlipUploadedAt = null;      // ไม่ "รอตรวจ" แล้ว — ไฟล์ยังอยู่ในที่เก็บ (ผูกกับการจองนี้) เป็นหลักฐาน
             b.SlipAttachmentId = null;
