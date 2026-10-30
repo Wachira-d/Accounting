@@ -135,6 +135,9 @@ WATCHED = [
     "Accounting/Controllers/CmsOrderFulfilmentController.cs",
     # เพิ่มรอบ 212 C — ตั้ง "ใครได้รับข้อมูลธุรกิจทาง LINE" + ส่งทดสอบ (นับโควตาข้อความ) ⇒ ต้องมีสิทธิ์ตั้งค่าบริษัททุก write
     "Accounting/Controllers/StaffDailySummaryController.cs",
+    # รอบ 218 — ค่าตั้งการชำระล่วงหน้าของการจอง + ยืนยัน/ปฏิเสธสลิป (ยืนยัน = เงินเข้า + ใบรับมัดจำ) · ใส่ตอนเขียวตั้งแต่ไฟล์เกิด ·
+    # ฝั่งลูกค้า (AllowAnonymous · สิทธิ์ = โทเคน) แยกไฟล์ CmsBookingPaymentPublicController.cs แบบ LodgingPublicController (ไม่อยู่ในลิสต์นี้)
+    "Accounting/Controllers/CmsBookingPaymentController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -233,6 +236,11 @@ READ_ONLY_POSTS_IN_FILE = {
     # เขียนแค่ตัวนับโควตา ChatRateBuckets) · POST เพื่อไม่ให้เบอร์/อีเมลไปอยู่ใน URL/log · ด่าน = โควตาต่อ IP + ต่อเลขที่ (required_call_site_check ล็อก)
     ("CmsStorefrontCustomerController.cs", "LookupBooking"),
     ("CmsStorefrontCustomerController.cs", "LookupOrder"),
+    # รอบ 218: ตัวอย่างยอดชำระก่อนกดจอง — PreviewPaymentAsync อ่านอย่างเดียว (ไม่มี SaveChanges) · POST เพราะรับ body (บริการ+จำนวนช่วง)
+    ("CmsBookingPaymentPublicController.cs", "Preview"),
+    # รอบ 214: ตัวอย่างหน้านโยบาย/ข้อกำหนดของร้าน — แปลง markdown คืน HTML (CmsRenderingService.PreviewLegalPageAsync ไม่มี SaveChanges ·
+    # AsNoTracking · ตรวจด้วยตาตอนเพิ่ม) · การเก็บจริงผ่าน PUT {siteId} เส้นเดิม
+    ("CmsSiteController.cs", "LegalPreview"),
 }
 
 # POST ที่เป็น "งานของผู้ใช้เอง" (ไม่มีข้อมูลของคนอื่นให้แตะ) — ระบุเป็น (ไฟล์, เมธอด) ไม่ใช่ชื่อเมธอดลอย ๆ
@@ -248,6 +256,14 @@ SELF_SERVICE_POSTS = {
     # ผู้กดต้องเป็นผู้อนุมัติของขั้นปัจจุบันและไม่ใช่ผู้ยื่น (ApprovalService.SubmitActionAsync)
     ("ApprovalController.cs", "SubmitForApproval"),
     ("ApprovalController.cs", "SubmitAction"),
+    # รอบ 214: ผู้ใช้กด "รับทราบและยอมรับ" นโยบายฉบับใหม่ของ**ตัวเอง** (SubjectUserId = ผู้ล็อกอิน · ไม่มีข้อมูลคนอื่นให้แตะ) ·
+    # ปฏิเสธคีย์ API + โหมดเข้าดูในนามลูกค้า (required_call_site_check ล็อก)
+    ("LegalController.cs", "Accept"),
+    # รอบ 214 ต่อ (ฐ): ผู้ใช้ยื่นคำขอลบข้อมูลของ**ตัวเอง** (uid จาก token · ไม่ลบทันที — SystemAdmin ดำเนินการ) · ปฏิเสธคีย์ API + โหมดเข้าดูในนามลูกค้า
+    ("LegalController.cs", "RequestErasure"),
+    # รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้านแก้ข้อมูลส่วนตัวของตัวเอง — ไม่มีผู้ใช้ ERP ให้ตรวจสิทธิ์ (โทเคนหน้าร้าน) ·
+    # ด่าน = Me(companyId, siteId) (โทเคนของเว็บนี้ + ลูกค้ายังใช้งาน) แล้วเขียนเฉพาะ id ในโทเคน (required_call_site_check ล็อก)
+    ("CmsStorefrontCustomerController.cs", "UpdateMyProfile"),
 }
 
 ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]')

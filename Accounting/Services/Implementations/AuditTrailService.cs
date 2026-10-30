@@ -169,7 +169,11 @@ public class AuditTrailService : IAuditTrailService
     /// Captures audit log entries from EF Core ChangeTracker before SaveChanges.
     /// Call this from DbContext.SaveChangesAsync() override.
     /// </summary>
-    public static List<AuditLog> CaptureAuditEntries(ChangeTracker changeTracker, Guid? userId, string? userEmail, string? ipAddress)
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: ด่านช่องลับ/PII ปกติก่อนเสมอ แล้วใต้ขอบเขตการลบ ปิดข้อความที่เหลือทั้งหมด (ไม่ข้ามด่านช่องลับ)</summary>
+    private static object? AuditValue(object? redacted, bool erasureScope)
+        => erasureScope ? Accounting.Helpers.AuditRedaction.ErasureValue(redacted) : redacted;
+
+    public static List<AuditLog> CaptureAuditEntries(ChangeTracker changeTracker, Guid? userId, string? userEmail, string? ipAddress, bool erasureScope = false)
     {
         var auditEntries = new List<AuditLog>();
 
@@ -220,8 +224,8 @@ public class AuditTrailService : IAuditTrailService
                 // (append-only — ลบไม่ได้ · ทุกบทบาทอ่าน /audit/logs ได้) ⇒ ตัวตัดสินเดียว Helpers/AuditRedaction
                 foreach (var prop in entry.Properties.Where(p => p.IsModified))
                 {
-                    oldValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.OriginalValue);
-                    newValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.CurrentValue);
+                    oldValues[prop.Metadata.Name] = AuditValue(Accounting.Helpers.AuditRedaction.Value(entityType, prop.Metadata.Name, prop.OriginalValue), erasureScope);
+                    newValues[prop.Metadata.Name] = AuditValue(Accounting.Helpers.AuditRedaction.Value(entityType, prop.Metadata.Name, prop.CurrentValue), erasureScope);
                 }
 
                 auditLog.OldValues = JsonSerializer.Serialize(oldValues);
@@ -232,7 +236,7 @@ public class AuditTrailService : IAuditTrailService
                 var newValues = new Dictionary<string, object?>();
                 foreach (var prop in entry.Properties)
                 {
-                    newValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.CurrentValue);
+                    newValues[prop.Metadata.Name] = AuditValue(Accounting.Helpers.AuditRedaction.Value(entityType, prop.Metadata.Name, prop.CurrentValue), erasureScope);
                 }
                 auditLog.NewValues = JsonSerializer.Serialize(newValues);
             }
@@ -248,7 +252,7 @@ public class AuditTrailService : IAuditTrailService
     {
         return new AuditLogResponse(
             a.Id, a.CompanyId, a.UserId, a.UserEmail, a.Action, a.EntityType,
-            a.EntityId, Accounting.Helpers.AuditRedaction.RedactJson(a.OldValues), Accounting.Helpers.AuditRedaction.RedactJson(a.NewValues),
+            a.EntityId, Accounting.Helpers.AuditRedaction.RedactJson(a.OldValues, a.EntityType), Accounting.Helpers.AuditRedaction.RedactJson(a.NewValues, a.EntityType),
             a.IpAddress, a.UserAgent, a.Timestamp);
     }
 }

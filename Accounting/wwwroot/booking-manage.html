@@ -35,6 +35,7 @@
   <div class="mn">
     <div id="mnContent"><div class="mn-loading">กำลังโหลด...</div></div>
   </div>
+  <script src="/js/submit-once.js"></script>
   <script>
     const Page = {
       r: null,
@@ -88,13 +89,21 @@
             ${r.tableNumber ? `<div class="mn-row"><span>โต๊ะ</span><span>${this._esc(r.tableNumber)}</span></div>` : ''}
             <div class="mn-row"><span>สถานะ</span><span class="mn-status ${r.status}">${statusLabel}</span></div>
             ${policyHtml}
-            ${isTerminal ? '' : '<button class="mn-btn mn-btn-cancel" onclick="Page.cancel()">🗑️ ยกเลิกการจอง</button>'}
+            ${isTerminal ? '' : '<button class="mn-btn mn-btn-cancel" onclick="Page.cancel(event)">🗑️ ยกเลิกการจอง</button>'}
+            ${r.companyId ? `<p style="text-align:center;font-size:12px;color:#64748b;margin-top:16px">
+              <a href="/shop-policy.html?c=${encodeURIComponent(r.companyId)}&k=privacy" target="_blank" rel="noopener" style="color:inherit">นโยบายความเป็นส่วนตัวของร้าน</a> ·
+              <a href="/shop-policy.html?c=${encodeURIComponent(r.companyId)}&k=terms" target="_blank" rel="noopener" style="color:inherit">ข้อกำหนดการใช้บริการ</a></p>` : ''}
           </div>`;
       },
-      async cancel() {
+      async cancel(ev) {
         if (!confirm('ยืนยันยกเลิกการจอง?')) return;
+        // รอบ 217 (ข้อ 175): ล็อกปุ่ม + คีย์กันซ้ำ (js/submit-once.js) — กดซ้ำระหว่างรอ = ไม่ส่งซ้ำ
+        const btn = ev && ev.currentTarget ? ev.currentTarget : document.querySelector('.mn-btn-cancel');
+        return SubmitOnce.run(btn, () => this._cancelNow(), { busyText: 'กำลังยกเลิก…' });
+      },
+      async _cancelNow() {
         try {
-          const r = await fetch('/api/public/reservations/' + this._t + '/cancel', { method:'POST' });
+          const r = await SubmitOnce.fetch('/api/public/reservations/' + this._t + '/cancel', { method:'POST' }, this);
           const j = await r.json();
           if (!j.success) throw new Error(j.message);
           document.getElementById('mnContent').innerHTML = `

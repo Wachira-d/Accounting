@@ -122,8 +122,16 @@ builder.Configuration["Jwt:Secret"] = jwtSecret;
 
 // PDPA ม.26 — configure EncryptedColumnConverter ก่อน DbContext build
 // เพื่อให้ EF ValueConverter ใช้ key จริง (มิฉะนั้น default dev key)
+// รอบ 219 เฟส 0 (P0-4): แหล่งคีย์ตัวเดียว (EncryptionKeyResolver) ใช้ร่วมกับ SecretProtector — production ปฏิเสธทั้งค่าว่างและ dev key ·
+// ฝ่ายค้านรอบ 219 B2/S3: ไม่เขียนค่ากลับเข้า config (SecretProtector ต้องเห็นค่า Security:EncryptionKey เดิมเพื่อถอดค่าที่เข้ารหัสไว้ก่อน) ·
+// ส่งคีย์ดิบเข้า EncryptedColumnConverter (ไม่ Trim — PBKDF2 ไวต่อช่องว่าง เหมือนพฤติกรรมเดิม)
+// (นิพจน์เลือกคีย์ของคอลัมน์ PII คงเดิมทุกตัวอักษร — เปลี่ยนแล้วข้อมูล PII เดิมถอดไม่ออก · ด่าน production ใช้ resolver ตัวเดียว)
 var encryptionKey = Environment.GetEnvironmentVariable("ENCRYPTION_KEY")
     ?? builder.Configuration["Security:EncryptionKey"];
+if (builder.Environment.IsProduction())
+    Accounting.Helpers.EncryptionKeyResolver.RequireUsable(
+        Accounting.Helpers.EncryptionKeyResolver.Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), builder.Configuration["Security:EncryptionKey"]),
+        true, "คอลัมน์ PII (PDPA ม.26) และความลับในฐานข้อมูล");
 // fail-fast ใน production เหมือน JWT — เดิมถ้าไม่ตั้ง key จะเงียบ ๆ ตกไปใช้
 // dev key ("default-dev-key-change-in-production") ที่อยู่ใน source ⇒ PII ตาม
 // PDPA ม.26 (เลขบัตร ปชช./passport/บัญชีธนาคาร) ถูกเข้ารหัสด้วยกุญแจสาธารณะ =
@@ -187,6 +195,32 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 return Task.CompletedTask;
             },
 
+            // ฝ่ายค้านรอบ 214 S4 (คำตัดสินข้อ 173 ฑ): token ของบัญชีที่ลบตามคำขอ/ปิดใช้งานต้องใช้ไม่ได้ทันที — ค้นด้วย PK ต่อคำขอ (ไม่มี static cache ·
+            // CLAUDE.md §D) · ตัวตัดสินเดียว Helpers/TokenUserGate (ไม่พบแถว = ไม่ตัดสิน · token ชนิดอื่นไม่กระทบ) · ใช้กับ hub ด้วย (handler เดียวกัน)
+            OnTokenValidated = async context =>
+            {
+                var sub = context.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+                if (!Guid.TryParse(sub, out var uid)) return;
+                var db = context.HttpContext.RequestServices.GetRequiredService<Accounting.Data.AccountingDbContext>();
+                // ฝ่ายค้านรอบ 214 (ฑ-2): ผู้เรียกตัดการเชื่อมต่อระหว่างตรวจ ⇒ จบเงียบ (ไม่ใช่ 500/log error) — ไม่มีใครรอคำตอบแล้ว
+                // หมายเหตุ: ตรวจตอนสร้างการเชื่อมต่อเท่านั้น — SignalR socket ที่เปิดค้างอยู่ก่อนบัญชีถูกปิด/ลบ ใช้ต่อได้จนกว่าจะเชื่อมต่อใหม่
+                var aborted = context.HttpContext.RequestAborted;
+                Accounting.Helpers.TokenUserGate.UserRow? row;
+                try
+                {
+                    row = await db.Users.IgnoreQueryFilters().AsNoTracking()
+                        .Where(u => u.Id == uid).Select(u => new Accounting.Helpers.TokenUserGate.UserRow(u.Status, u.IsDeleted))
+                        .FirstOrDefaultAsync(aborted);
+                }
+                catch (OperationCanceledException) when (aborted.IsCancellationRequested)
+                {
+                    context.Fail("request aborted");
+                    return;
+                }
+                var reason = Accounting.Helpers.TokenUserGate.Reject(row != null, row?.Status ?? default, row?.IsDeleted ?? false);
+                if (reason != null) context.Fail(reason);
+            },
+
             // 401 ต้องมี **body ที่อ่านได้** — ค่าเริ่มต้นของ JwtBearer ตอบ 401 พร้อม
             // header WWW-Authenticate แต่ **body ว่างเปล่า** ⇒ ฝั่งเว็บที่เรียก
             // `response.json()` จะได้ "Unexpected end of JSON input" ซึ่งไม่บอกอะไร
@@ -230,6 +264,7 @@ builder.Services.AddMemoryCache();
 // ===== Services (DI) =====
 // Core
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<ILegalDocumentService, LegalDocumentService>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้ + resolver เวอร์ชันความยินยอม
 builder.Services.AddScoped<IAccountingService, AccountingService>();
 // ส่งออกรายงานบัญชี CSV/Excel (2026-10-14 ทีม X3) — ตัวเลขผ่าน IAccountingService ตัวเดียวกับหน้า
 builder.Services.AddScoped<AccountingReportExportService>();
@@ -687,6 +722,7 @@ builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<IStorefrontCustomerService, StorefrontCustomerService>();   // รอบ 209 P1 — หน้าสถานะออเดอร์ของแขก · QR พร้อมเพย์ · บัญชีของฉัน
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+builder.Services.AddScoped<IBookingSlipService, BookingSlipService>();   // รอบ 218 — สลิปชำระล่วงหน้าของการจอง (PaymentIntent manual-slip · แยกจาก CmsBookingService กันวงกลม DI)
 builder.Services.AddScoped<IBookingNotifier, Accounting.Services.Implementations.Cms.BookingNotifier>();   // รอบ 205 W3 — ช่องส่งข้อความถึงลูกค้าของเครื่องจอง (อีเมล/LINE · บอกผลจริง)
 builder.Services.AddScoped<ICmsShopNotifier, Accounting.Services.Implementations.Cms.CmsShopNotifier>();   // รอบ 209 P3 — แจ้งร้าน/ลูกค้าของหน้าเว็บ (ออเดอร์ · การจอง · lead) ผ่านช่องเดิม IBookingNotifier
 builder.Services.AddScoped<ICustomerLineLinkService, Accounting.Services.Implementations.Cms.CustomerLineLinkService>();   // รอบ 211 — ลูกค้าผูก LINE เอง (สมาชิก/แขก) + webhook OA ต่อบริษัท · BookingNotifier หา LINE ที่ผูกไว้
@@ -732,6 +768,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.BookingReminder
 // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน — Helpers/JobLock + watermark LastSentLocalDate ต่อชุด + unique (ชุด, วัน, คน)
 builder.Services.AddHostedService<Accounting.Services.Background.StaffDailySummaryJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.CustomerNotifyOutboxJob>();   // รอบ 212 แพ็ก B — ทยอยส่งคำเชิญผูก LINE ใหม่ (JobLock · ต่อบริษัท ≤100/รอบ)
+builder.Services.AddScoped<Accounting.Services.Background.DeferredNotifyDispatcher>();   // รอบ 217 (ข้อ 175 ง) — แจ้งเตือน "สร้างแล้ว" ของการจอง/ออเดอร์ส่งตามหลัง (คำขอตอบทันที)
+builder.Services.AddHostedService<Accounting.Services.Background.DeferredNotifyDispatchJob>();   // รอบ 217 — เดินคิว DeferredNotifications ทุก 10 วิ (JobLock · lease)
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
@@ -757,6 +795,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAud
 // ปิดรอบบิลค่าใช้งาน — รวม UsageEvent ที่ยังไม่ออกบิลเป็นใบแจ้งหนี้หลายบรรทัด
 // (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
 builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
+// ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
+builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)
 builder.Services.AddHostedService<Accounting.Services.Background.PaymentIntentReconcileJob>();
 builder.Services.AddScoped<Accounting.Services.Implementations.Payments.IUnifiedPaymentQueryService,
@@ -1107,7 +1147,7 @@ app.UseMiddleware<ApiKeyMiddleware>();
 
 // 5b. Idempotency — caches 2xx responses for 24h keyed by the
 // Idempotency-Key header so partner POST retries on network errors
-// don't double-post.
+// don't double-post. รอบ 217: หน้าเว็บลูกค้า/พนักงานส่งคีย์ผ่าน js/submit-once.js · คีย์เดิมเนื้อต่าง ⇒ 409 (Helpers/IdempotencyKeyPolicy)
 app.UseMiddleware<IdempotencyMiddleware>();
 
 // 6. Authentication & Authorization

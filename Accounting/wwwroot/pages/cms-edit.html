@@ -47,6 +47,8 @@
 </head>
 <body>
   <div id="pageContent" class="page-content fade-in">
+    <!-- รอบ 215 เฟส 2 (N6): หัวพื้นที่ทำงานเว็บ — ตัวสลับเว็บ + แท็บงานของเว็บนี้ (CmsSiteContext.renderCrumb ตัวเดียวกับหน้างานอื่น) -->
+    <div id="cmsCrumb"></div>
     <div class="page-header">
       <div>
         <a href="/pages/cms-sites.html" style="font-size:13px;color:var(--gray-500)">← กลับไปยังเว็บไซต์ทั้งหมด</a>
@@ -193,8 +195,8 @@
           ติ๊ก "บังคับ" ⇒ ไม่ติ๊กส่งไม่ได้ (ตรวจที่เซิร์ฟเวอร์)
         </p>
         <div class="grid-2">
-          <div class="form-group"><label class="form-label">ลิงก์นโยบายความเป็นส่วนตัว</label>
-            <input type="text" class="form-input" id="sPrivacyUrl" placeholder="https://... หรือ /privacy"></div>
+          <div class="form-group" style="font-size:12px;color:var(--gray-500);line-height:1.7">
+            ลิงก์นโยบาย/ข้อกำหนดบนฟอร์มและท้ายเว็บ ตั้งที่หัวข้อ <b>📜 นโยบายความเป็นส่วนตัว & ข้อกำหนดของร้าน</b> ด้านล่าง</div>
           <div class="form-group">
             <label style="font-size:13px;display:flex;gap:6px;align-items:center;margin-top:24px"><input type="checkbox" id="sRequireConsent"> บังคับติ๊กยินยอมก่อนส่งฟอร์ม</label>
             <label style="font-size:13px;display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="sCookieConsent" checked> แสดงแบนเนอร์คุกกี้ (สคริปต์วิเคราะห์โหลดหลังลูกค้ากดยอมรับ)</label>
@@ -202,6 +204,57 @@
         </div>
         <div class="form-group"><label class="form-label">ข้อความยินยอม (เว้นว่าง = ข้อความมาตรฐาน)</label>
           <textarea class="form-input" id="sConsentText" rows="2" placeholder="ข้าพเจ้ายินยอมให้ร้านเก็บและใช้ข้อมูลส่วนบุคคลเพื่อดำเนินการตามคำสั่งซื้อ/การจอง ตามนโยบายความเป็นส่วนตัว"></textarea></div>
+        <!-- รอบ 214 (คำตัดสินข้อ 173 B): นโยบาย/ข้อกำหนดของร้าน — ลำดับ ลิงก์ของร้าน > ข้อความที่ร้านเขียน > แม่แบบ (ตัวตัดสินเดียว Helpers/CmsLegalPages ·
+             โหมดที่เลือกไว้มาจาก SiteResponse.*LegalMode — หน้านี้ไม่ตัดสินเอง) · HTML ตัวอย่างแปลง/encode ที่เซิร์ฟเวอร์ (Helpers/LegalMarkdown) -->
+        <h4 style="margin:20px 0 6px;font-size:15px">📜 นโยบายความเป็นส่วนตัว &amp; ข้อกำหนดของร้าน</h4>
+        <p style="font-size:12px;color:var(--gray-500);margin:0 0 10px;line-height:1.7">
+          ร้านเป็น<b>ผู้ควบคุมข้อมูลส่วนบุคคล</b>ของลูกค้าที่สั่งซื้อ/จอง/สมัครสมาชิกผ่านเว็บนี้ (NextAcc เป็นผู้ประมวลผลข้อมูล) — PDPA ม.23 ต้องแจ้งนโยบายก่อนเก็บข้อมูล ·
+          ลิงก์แสดงท้ายเว็บทุกหน้า · บนช่องยินยอมของฟอร์มสั่งซื้อ/จอง/ติดต่อ · หน้าสมัครสมาชิก · แบนเนอร์คุกกี้ ·
+          <b>แม่แบบของระบบ</b>เติมชื่อร้าน ที่อยู่ อีเมล/เบอร์โทรจากข้อมูลบริษัท/ข้อมูลติดต่อด้านบนให้อัตโนมัติ (เลขผู้เสียภาษีแสดงเฉพาะนิติบุคคล) — ตรวจให้ครบก่อนเผยแพร่เว็บ
+        </p>
+        <div id="lgWarnings" style="display:none;background:#fffbeb;border:1px solid #fcd34d;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;line-height:1.7;margin-bottom:10px"></div>
+        <div class="lg-box" style="border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-weight:600;margin-bottom:6px">🔒 นโยบายความเป็นส่วนตัว</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_privacy" value="default" onchange="Page.legalModeChanged('privacy')"> ใช้แม่แบบของระบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_privacy" value="custom" onchange="Page.legalModeChanged('privacy')"> เขียนเอง / ปรับแม่แบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_privacy" value="external" onchange="Page.legalModeChanged('privacy')"> ใช้ลิงก์ของร้านเอง</label>
+          </div>
+          <div id="lgUrlWrap_privacy" style="display:none;margin-bottom:8px"><input type="text" class="form-input" id="lgUrl_privacy" maxlength="500" oninput="Page.legalModeChanged('privacy', true)" placeholder="https://... หรือ /หน้าที่ร้านทำไว้"></div>
+          <div id="lgMdWrap_privacy" style="display:none;margin-bottom:8px">
+            <textarea class="form-input" id="lgMd_privacy" rows="12" spellcheck="false" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></textarea>
+            <div style="font-size:11px;color:var(--gray-500);margin-top:4px">## หัวข้อ · - รายการ · **ตัวหนา** · [ข้อความ](https://...) · ตาราง | ก | ข | · โทเคน เช่น {{company.name}} {{company.address}} {{company.taxId}} {{company.email}} {{company.phone}} (ดูรายการโทเคนด้านบน) · ไม่รับ HTML</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;background:var(--gray-50);border-radius:8px;padding:8px 10px">
+            <span>🔗 URL ที่ลูกค้าเห็น:</span><code id="lgPub_privacy" style="flex:1;min-width:200px;word-break:break-all">-</code>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalCopy('privacy')">คัดลอก</button>
+            <a class="btn btn-secondary btn-sm" id="lgOpen_privacy" href="#" target="_blank" rel="noopener">เปิด</a>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalPreview('privacy')">ดูตัวอย่าง</button>
+          </div>
+          <div id="lgWarn_privacy" style="font-size:12px;color:#92400e"></div>
+          <div id="lgPreview_privacy" class="lg-preview" style="display:none;max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;line-height:1.8"></div>
+        </div>
+        <div class="lg-box" style="border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;margin-bottom:12px">
+          <div style="font-weight:600;margin-bottom:6px">📄 ข้อกำหนดการใช้บริการ</div>
+          <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px;margin-bottom:8px">
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_terms" value="default" onchange="Page.legalModeChanged('terms')"> ใช้แม่แบบของระบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_terms" value="custom" onchange="Page.legalModeChanged('terms')"> เขียนเอง / ปรับแม่แบบ</label>
+            <label style="display:flex;gap:6px;align-items:center"><input type="radio" name="lgMode_terms" value="external" onchange="Page.legalModeChanged('terms')"> ใช้ลิงก์ของร้านเอง</label>
+          </div>
+          <div id="lgUrlWrap_terms" style="display:none;margin-bottom:8px"><input type="text" class="form-input" id="lgUrl_terms" maxlength="500" oninput="Page.legalModeChanged('terms', true)" placeholder="https://... หรือ /หน้าที่ร้านทำไว้"></div>
+          <div id="lgMdWrap_terms" style="display:none;margin-bottom:8px">
+            <textarea class="form-input" id="lgMd_terms" rows="12" spellcheck="false" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></textarea>
+            <div style="font-size:11px;color:var(--gray-500);margin-top:4px">## หัวข้อ · - รายการ · **ตัวหนา** · [ข้อความ](https://...) · ตาราง | ก | ข | · โทเคน เช่น {{company.name}} {{company.address}} {{company.taxId}} {{company.email}} {{company.phone}} (ดูรายการโทเคนด้านบน) · ไม่รับ HTML</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;background:var(--gray-50);border-radius:8px;padding:8px 10px">
+            <span>🔗 URL ที่ลูกค้าเห็น:</span><code id="lgPub_terms" style="flex:1;min-width:200px;word-break:break-all">-</code>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalCopy('terms')">คัดลอก</button>
+            <a class="btn btn-secondary btn-sm" id="lgOpen_terms" href="#" target="_blank" rel="noopener">เปิด</a>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="Page.legalPreview('terms')">ดูตัวอย่าง</button>
+          </div>
+          <div id="lgWarn_terms" style="font-size:12px;color:#92400e"></div>
+          <div id="lgPreview_terms" class="lg-preview" style="display:none;max-height:420px;overflow:auto;border:1px solid var(--gray-200);border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;line-height:1.8"></div>
+        </div>
         <div style="margin-top:16px">
           <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO, Analytics &amp; CAPTCHA</button>
         </div>
@@ -277,6 +330,8 @@
         </div>
         <div class="bs-hint" style="margin-top:4px">เปิดแล้ว: กด "เริ่มให้บริการ" ที่หน้าทำงานจะให้เลือกผู้ให้บริการที่ว่าง (ได้หลายคน + แบ่ง % งาน) · มีหน้าสรุปงาน/รายงานผู้ให้บริการ ·
           บริการแต่ละอันเลือกโหมด "ลูกค้าเลือก / ระบบจัดให้ / บังคับระบุ" ได้ในหน้าแก้ไขบริการ · ปิด = ทุกบริการนับความจุของบริการ (ค่าตั้งรายบริการยังเก็บไว้)</div>
+        <!-- รอบ 215 เฟส 2: ค่าเว็บ "ลูกค้าเลือกผู้ให้บริการได้ไหม" (ตั้งที่ ตั้งค่าเว็บ › การจอง/บริการ — ที่เดียว) · เติมโดย Page.renderDefaultModeLine -->
+        <div id="bssDefaultModeLine" class="bs-hint" style="margin-top:6px"></div>
         <div id="bssProvidersBody" style="display:none;margin-top:10px">
           <div class="form-row">
             <div class="form-group"><label class="form-label">ตรรกะแนะนำ / จัดผู้ให้บริการ</label>
@@ -318,6 +373,14 @@
         <button class="btn btn-primary btn-sm" style="margin-top:6px" onclick="Page.saveBookingSiteSettings()">บันทึกค่าตั้งเอกสาร</button>
       </div>
 
+      <!-- รอบ 218 + 215 เฟส 2: ค่าตั้ง "การชำระเงินของการจอง" ย้ายไปหน้า ตั้งค่าเว็บ › การชำระเงิน (ที่เดียว · ไม่มีสองฟอร์มแก้ค่าเดียวกัน)
+           ฟอร์มวาดโดย /js/booking-payment-admin.js ผ่าน window.CmsSiteSettingsExt.payment · ฟอร์มบริการยังตั้งทับรายบริการได้ที่นี่ (#bsPayWrap) -->
+      <div id="bkSecPaymentMoved" style="border:1px dashed var(--gray-300);border-radius:10px;padding:12px 16px;margin:16px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div><div style="font-weight:600">💳 การชำระเงินของการจอง (มัดจำ / จ่ายเต็มก่อน / โอน-QR-สลิป) — ย้ายแล้ว</div>
+          <div class="bs-hint">แก้ที่ ตั้งค่าเว็บ › การชำระเงิน · บริการแต่ละตัวยังตั้งทับได้ที่ฟอร์มบริการด้านล่าง</div></div>
+        <a class="btn btn-secondary btn-sm" id="bkSecPaymentMovedLink" href="/pages/cms-site-settings.html?group=payment">ไปที่ตั้งค่าเว็บ →</a>
+      </div>
+
       <h3 id="bkSecSite" style="font-size:16px;font-weight:600;margin:24px 0 6px">ค่าตั้งการจองของเว็บไซต์ (ค่าเริ่มต้น)</h3>
       <div class="bs-hint" style="margin-bottom:8px">บริการที่ติ๊ก "ใช้ค่าของเว็บไซต์" ใช้ค่าเหล่านี้ · บริการอื่นใช้ค่าของตัวเอง (override)</div>
       <div class="form-row-3">
@@ -353,7 +416,7 @@
       <h4 class="bs-sec">แจ้งเตือนลูกค้า (อีเมล / LINE)</h4>
       <div class="form-row-3">
         <div class="form-group" style="align-self:end"><label style="font-size:13px"><input type="checkbox" id="bssReminderEnabled" checked> เตือนลูกค้าก่อนนัด</label></div>
-        <div class="form-group" style="align-self:end"><label style="font-size:13px" title="รอบ 205 W2 R-08 · คำตัดสิน Q5 = ข: ปิดเป็นค่าเริ่มต้น ไซต์เปิดเอง — ต้องตั้งค่าระบบรับชำระเงิน (gateway) ก่อน"><input type="checkbox" id="bssOnlineDeposit"> รับชำระมัดจำออนไลน์ (บริการชำระล่วงหน้า)</label></div>
+        <!-- รอบ 218: ช่อง "รับชำระมัดจำออนไลน์" ย้ายไปหมวด "💳 การชำระเงินของการจอง" (เดิมอยู่ใต้แจ้งเตือน + ไม่มีผลถ้าบริการไม่ใช่ชำระล่วงหน้า/ไม่มี gateway) -->
         <div class="form-group"><label class="form-label">เตือนก่อนนัดกี่ชั่วโมง (คั่นด้วยจุลภาค)</label><input type="text" class="form-input" id="bssReminderHours" placeholder="24,2"></div>
         <div class="form-group"><label class="form-label">คิวสำรองได้คิวแล้ว ถือรอบให้ยืนยัน (นาที · 0 = ไม่ถือ)</label><input type="number" class="form-input" id="bssHoldMinutes" min="0" max="10080"></div>
       </div>
@@ -953,6 +1016,19 @@
               <input type="number" class="form-input" id="bsCancelFee" min="0" max="100" step="0.01" placeholder="ไม่กำหนด">
             </div>
           </div>
+          <!-- รอบ 218: ชำระล่วงหน้ารายบริการ (ตามค่าเว็บ/กำหนดเอง) — /js/booking-payment-admin.js · ไม่มีตัวเลือกจากเซิร์ฟเวอร์ ⇒ ซ่อน (ไม่ส่ง = คงค่าเดิม) -->
+          <div id="bsPayWrap" style="display:none">
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">การชำระล่วงหน้าของบริการนี้</label><select class="form-input" id="bsPayMode"></select>
+                <div class="bs-hint" id="bsPayHint"></div><div class="bs-hint" id="bsPayProblem" style="color:#b45309"></div></div>
+              <div class="form-group"><label class="form-label">ต้องชำระภายใน (นาที · ว่าง = ตามค่าเว็บ · 0 = ไม่กำหนด)</label><input type="number" class="form-input" id="bsPayDeadline" min="0" max="10080"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">มัดจำขั้นต่ำ (บาท · ว่าง = ตามค่าเว็บ)</label><input type="number" class="form-input" id="bsPayMin" min="0" step="0.01"></div>
+              <div class="form-group"><label class="form-label">มัดจำสูงสุด (บาท · ว่าง = ตามค่าเว็บ)</label><input type="number" class="form-input" id="bsPayMax" min="0" step="0.01"></div>
+            </div>
+            <div class="bs-hint">ยอดมัดจำใช้ช่อง "มัดจำ (บาท / %)" ด้านบนของบริการนี้ก่อน — ว่างทั้งคู่ = ใช้ยอดตั้งต้นของเว็บ · เก็บเงินล่วงหน้าได้เฉพาะชนิด "ชำระมัดจำล่วงหน้า"</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('bookingServiceModal')">ยกเลิก</button>
@@ -1235,6 +1311,8 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/cms-site-context.js"></script>
+  <script src="/js/booking-payment-admin.js"></script>
   <script>
     const BLOCK_TYPES = {
       1:{n:'Hero',i:'🎬',f:'hero'},
@@ -1304,7 +1382,19 @@
           return;
         }
         await this.loadSite();
+        this.renderWorkspaceHeader();
+        // รอบ 215 เฟส 2: ?tab= จากศูนย์ "ตั้งค่าเว็บ" — เปิดแท็บตรงเรื่อง (แท็บที่ไม่มี = คงแท็บหน้าเว็บ)
+        const wantTab = params.get('tab');
+        if (wantTab && document.querySelector(`.editor-tab[data-tab="${CSS.escape(wantTab)}"]`)) this.switchTab(wantTab);
         await this.loadPages();
+      },
+
+      // รอบ 215 เฟส 2 (N6): หัวพื้นที่ทำงาน — โหลดรายการเว็บที่ผู้ใช้เห็น (ล้ม = ไม่มีหัว ไม่ล้มหน้าแก้ไข)
+      async renderWorkspaceHeader() {
+        try {
+          const sites = await CmsSiteContext.loadSites();
+          if (sites.length) CmsSiteContext.renderCrumb('cmsCrumb', sites, this.siteId, 'หน้าเว็บ & เนื้อหา', 'cms-edit');
+        } catch (_) { /* ไม่มีสิทธิ์รายการเว็บ — แสดงหน้าแก้ไขตามเดิม */ }
       },
 
       async loadSite() {
@@ -1340,7 +1430,7 @@
           document.getElementById('sFacebookUrl').value = this.site.facebookUrl || '';
           document.getElementById('sInstagramUrl').value = this.site.instagramUrl || '';
           // รอบ 209 P6: สาขา/คลัง + PDPA (echo จาก SiteResponse — เปิดแก้แล้วบันทึกค่าไม่หาย)
-          document.getElementById('sPrivacyUrl').value = this.site.privacyPolicyUrl || '';
+          this.hydrateLegal();
           document.getElementById('sRequireConsent').checked = !!this.site.requireDataConsent;
           document.getElementById('sCookieConsent').checked = this.site.cookieConsentEnabled !== false;
           document.getElementById('sConsentText').value = this.site.dataConsentText || '';
@@ -2100,10 +2190,98 @@
         } catch { el.textContent = 'โหลดรายการโทเคนไม่สำเร็จ'; }
       },
 
+      // ════ รอบ 214 (คำตัดสินข้อ 173 B): นโยบาย/ข้อกำหนดของร้าน ════
+      _legalKinds: ['privacy', 'terms'],
+      _legalField(kind) {
+        return kind === 'terms'
+          ? { url: 'termsOfServiceUrl', md: 'termsOfServiceMarkdown', mode: 'termsLegalMode' }
+          : { url: 'privacyPolicyUrl', md: 'privacyPolicyMarkdown', mode: 'privacyLegalMode' };
+      },
+      _legalMode(kind) {
+        const el = document.querySelector(`input[name="lgMode_${kind}"]:checked`);
+        return el ? el.value : 'default';
+      },
+      /** URL หน้าภายในของร้าน — แบบเส้นทางเดียวกับปุ่ม "ดูเว็บจริง" (/site/{key}/…) */
+      _legalInternalUrl(kind) {
+        return `${location.origin}/site/${encodeURIComponent(this.site.subdomain)}/legal/${kind}`;
+      },
+      hydrateLegal() {
+        // ฝ่ายค้านรอบ 214: คำเตือนจากเซิร์ฟเวอร์ (ตัวตนร้านที่ขาด · ลิงก์เดิมที่ใช้ไม่ได้ — ไม่ลบเงียบ)
+        const warns = this.site.legalWarnings || [];
+        const wbox = document.getElementById('lgWarnings');
+        wbox.innerHTML = warns.map(w => '⚠️ ' + Layout.esc(w)).join('<br>');
+        wbox.style.display = warns.length ? '' : 'none';
+        for (const kind of this._legalKinds) {
+          const f = this._legalField(kind);
+          const mode = this.site[f.mode] || 'default';   // ผลตัวตัดสินของเซิร์ฟเวอร์
+          const radio = document.querySelector(`input[name="lgMode_${kind}"][value="${mode}"]`);
+          if (radio) radio.checked = true;
+          document.getElementById('lgUrl_' + kind).value = this.site[f.url] || '';
+          document.getElementById('lgMd_' + kind).value = this.site[f.md] || '';
+          document.getElementById('lgPreview_' + kind).style.display = 'none';
+          document.getElementById('lgWarn_' + kind).textContent = '';
+          this.legalModeChanged(kind, true);
+        }
+      },
+      async legalModeChanged(kind, fromHydrate) {
+        const mode = this._legalMode(kind);
+        document.getElementById('lgUrlWrap_' + kind).style.display = mode === 'external' ? '' : 'none';
+        document.getElementById('lgMdWrap_' + kind).style.display = mode === 'custom' ? '' : 'none';
+        const ext = document.getElementById('lgUrl_' + kind).value.trim();
+        const shown = mode === 'external' && ext ? (ext.startsWith('/') ? `${location.origin}/site/${encodeURIComponent(this.site.subdomain)}${ext}` : ext) : this._legalInternalUrl(kind);
+        document.getElementById('lgPub_' + kind).textContent = shown;
+        const open = document.getElementById('lgOpen_' + kind);
+        open.href = shown;
+        // เว็บยังไม่เผยแพร่ ⇒ หน้าสาธารณะยังเปิดไม่ได้ — ปุ่ม "เปิด" แสดงตัวอย่างในหน้านี้แทน (ไม่พาไปหน้า 404)
+        open.onclick = (mode !== 'external' && !isPublished(this.site.status))
+          ? (ev) => { ev.preventDefault(); Layout.toast('เว็บยังไม่เผยแพร่ — แสดงตัวอย่างในหน้านี้แทน', 'info'); this.legalPreview(kind); }
+          : null;
+        // เลือก "เขียนเอง" ครั้งแรก ⇒ ตั้งต้นจากแม่แบบ (ไม่ต้องเริ่มจากหน้าว่าง)
+        const md = document.getElementById('lgMd_' + kind);
+        if (!fromHydrate && mode === 'custom' && !md.value.trim()) {
+          try {
+            const res = await Layout.api().cmsLegalPreview(this.siteId, kind, '');
+            md.value = (res.data && res.data.markdown) || '';
+          } catch (e) { Layout.toast('โหลดแม่แบบไม่สำเร็จ: ' + e.message, 'error'); }
+        }
+      },
+      legalPayload() {
+        const out = {};
+        for (const kind of this._legalKinds) {
+          const f = this._legalField(kind);
+          const mode = this._legalMode(kind);
+          const url = document.getElementById('lgUrl_' + kind).value.trim();
+          const md = document.getElementById('lgMd_' + kind).value;
+          out[f.url] = mode === 'external' ? url : '';
+          // ลิงก์ของร้าน: เก็บข้อความที่เขียนไว้ต่อ (สลับกลับมาไม่หาย) · แม่แบบ: ล้างข้อความ
+          out[f.md] = mode === 'default' ? '' : md;
+        }
+        return out;
+      },
+      async legalCopy(kind) {
+        const url = document.getElementById('lgPub_' + kind).textContent;
+        try { await navigator.clipboard.writeText(url); Layout.toast('คัดลอก URL แล้ว', 'success'); }
+        catch (_) { prompt('คัดลอก URL นี้', url); }
+      },
+      async legalPreview(kind) {
+        const mode = this._legalMode(kind);
+        const md = mode === 'custom' ? document.getElementById('lgMd_' + kind).value : '';
+        const box = document.getElementById('lgPreview_' + kind);
+        try {
+          const res = await Layout.api().cmsLegalPreview(this.siteId, kind, md);
+          // HTML แปลง + encode ที่เซิร์ฟเวอร์ (ตัวเดียวกับหน้าสาธารณะ)
+          box.innerHTML = (res.data && res.data.html) || '';
+          box.style.display = '';
+          const w = (res.data && res.data.warnings) || [];
+          document.getElementById('lgWarn_' + kind).innerHTML = w.map(x => '⚠️ ' + Layout.esc(x)).join('<br>');
+          if (mode === 'external') Layout.toast('ร้านเลือกใช้ลิงก์ของร้านเอง — ตัวอย่างนี้คือแม่แบบสำรองของระบบ', 'info');
+        } catch (e) { Layout.toast('ดูตัวอย่างไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
       async saveSeo() {
         const api = Layout.api(); if (!api) return;
         try {
-          await api.cmsUpdateSite(this.siteId, {
+          const saved = await api.cmsUpdateSite(this.siteId, {
             metaTitle: document.getElementById('sMetaTitle').value || null,
             metaDescription: document.getElementById('sMetaDescription').value || null,
             metaKeywords: document.getElementById('sMetaKeywords').value || null,
@@ -2125,11 +2303,14 @@
             branchId: this._erpMap?.branches ? (document.getElementById('sBranchId').value || '00000000-0000-0000-0000-000000000000') : undefined,
             defaultWarehouseId: this._erpMap?.warehouses ? (document.getElementById('sWarehouseId').value || '00000000-0000-0000-0000-000000000000') : undefined,
             useGlobalInventory: document.getElementById('sUseGlobalInventory').checked,
-            privacyPolicyUrl: document.getElementById('sPrivacyUrl').value.trim(),
+            // รอบ 214: นโยบาย/ข้อกำหนดของร้าน — ส่งสตริงเสมอ ("" = ล้าง) · โหมดแม่แบบ = ล้างทั้งลิงก์และข้อความ
+            ...this.legalPayload(),
             requireDataConsent: document.getElementById('sRequireConsent').checked,
             cookieConsentEnabled: document.getElementById('sCookieConsent').checked,
             dataConsentText: document.getElementById('sConsentText').value
           });
+          // รอบ 214: echo ค่าที่เซิร์ฟเวอร์เก็บจริง (โหมดนโยบายตัดสินที่เซิร์ฟเวอร์) — ไม่ค้างสถานะฝั่งหน้าเว็บ
+          if (saved && saved.data) { this.site = saved.data; this.hydrateLegal(); }
           Layout.toast('บันทึกสำเร็จ', 'success');
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -2847,6 +3028,7 @@
                 <div style="font-size:12px;color:var(--gray-500)">฿${Number(s.price||0).toLocaleString('th-TH')} · ${Layout.esc(s.slotSummary||'')}</div>
                 ${s.policySummary ? `<div style="font-size:12px;color:var(--gray-500)">${Layout.esc(s.policySummary)}</div>` : ''}
                 ${s.productCode ? `<div style="font-size:12px;color:var(--gray-500)">📦 ${Layout.esc(s.productCode)} ${Layout.esc(s.productName || '')}</div>` : ''}
+                ${this._bssSettings && this._bssSettings.providerAllocationEnabled ? `<div style="font-size:12px;color:var(--gray-500)">👥 ผู้ให้บริการ: ${Layout.esc(Layout.enumLabel('bookingResourceMode', s.effectiveResourceMode || 'None'))} <span class="block-type-badge">${s.resourceModeSource === 'site' ? 'ตามค่าเว็บ' : 'กำหนดเอง'}</span></div>` : ''}
                 ${s.productWarning ? `<div style="font-size:12px;color:#b45309">⚠️ ${Layout.esc(s.productWarning)}</div>` : ''}
                 ${s.usesSiteHours ? '<div style="font-size:12px;color:var(--gray-500);margin-top:2px">🕒 ใช้เวลาทำการของเว็บไซต์ (ตั้งเวลาเองในบริการได้ที่ "แก้ไข" → ข้อ 4)</div>' : ''}
                 ${s.hasOpeningHours ? '' : '<div style="font-size:12px;color:#b45309;margin-top:2px">⚠️ ยังไม่ได้ตั้งเวลาทำการ (ทั้งของบริการและของเว็บไซต์) — ลูกค้าจะไม่เห็นเวลาว่างเลย (กด "แก้ไข" → ข้อ 4 หรือตั้ง "เวลาทำการของเว็บไซต์" ด้านล่าง)</div>'}
@@ -2869,6 +3051,22 @@
         };
         fill('bsBookingType', 'bookingType'); fill('bsMode', 'bookingSlotMode'); fill('bsCapacityUnit', 'bookingCapacityUnit');
         fill('bsResourceMode', 'bookingResourceMode');
+        // รอบ 215 เฟส 2: ตัวเลือกแรก = ตามค่าเว็บ (ส่ง null) — ข้อความระบุค่าเว็บปัจจุบัน (เติมตอน hydrate)
+        const rm = document.getElementById('bsResourceMode');
+        if (!rm.querySelector('option[value=""]')) rm.insertAdjacentHTML('afterbegin', '<option value="">ตามค่าเว็บ</option>');
+      },
+
+      /** รอบ 215 เฟส 2: ป้าย "ตามค่าเว็บ (…)" ของตัวเลือก + บรรทัดค่าเว็บในส่วนผู้ให้บริการ — ค่าและตัวอย่างมาจาก server */
+      renderDefaultModeLine() {
+        const d = this._bssSettings || {};
+        const label = Layout.enumLabel('bookingResourceMode', d.defaultResourceMode || 'None');
+        const opt = document.querySelector('#bsResourceMode option[value=""]');
+        if (opt) opt.textContent = `ตามค่าเว็บ (${label})`;
+        const el = document.getElementById('bssDefaultModeLine');
+        if (!el) return;
+        const href = '/pages/cms-site-settings.html?siteId=' + encodeURIComponent(this.siteId || '') + '&group=booking';
+        el.innerHTML = `🌐 ค่าเว็บ — ลูกค้าเลือกผู้ให้บริการได้ไหม: <b>${Layout.esc(label)}</b>${d.defaultResourceModePreview ? ' · ' + Layout.esc(d.defaultResourceModePreview) : ''}`
+          + ` · บริการที่กำหนดเอง ${Number((d.resourceModeOverrides || []).length)} · <a href="${Layout.esc(href)}" style="color:var(--primary)">เปลี่ยนที่ ตั้งค่าเว็บ › การจอง/บริการ →</a>`;
       },
 
       /** เติมฟอร์มจากค่าของ server (บริการเดิม หรือแม่แบบ) — ฟอร์มใหม่ใช้ค่าเริ่มต้นที่ตรงกับ DTO ฝั่ง server */
@@ -2888,6 +3086,7 @@
         v('bsMinAdv', s.minAdvanceBookingHours ?? 1); v('bsMaxAdv', s.maxAdvanceBookingDays ?? 30);
         v('bsDepositAmount', s.depositAmount); v('bsDepositPercent', s.depositPercent);
         v('bsFreeCancel', s.freeCancellationHours); v('bsCancelFee', s.cancellationFeePercent);
+        if (window.BookingPayAdmin) BookingPayAdmin.hydrateService(s);   // รอบ 218: ชำระล่วงหน้า (ตามค่าเว็บ/กำหนดเอง) — ฟอร์มใหม่ได้ "ตามค่าเว็บ"
         document.getElementById('bsAutoConfirm').checked = !!s.autoConfirm;
         document.getElementById('bsActive').checked = s.isActive !== false;
         this._bsSlug = s.slug || null;
@@ -2906,7 +3105,9 @@
         document.getElementById('bsEnforce').checked = s.enforceSlotCapacity !== false;
         v('bsOverlap', s.overlapLimit);
         document.getElementById('bsWaitlist').checked = !!s.waitlistEnabled;
-        v('bsResourceMode', s.resourceMode || 'None');
+        // รอบ 215 เฟส 2: null/ไม่มี = ตามค่าเว็บ ('') · ค่าที่ตั้งไว้ = กำหนดเอง
+        this.renderDefaultModeLine();
+        v('bsResourceMode', s.resourceMode == null ? '' : s.resourceMode);
         this.schedLoad('bs', s.schedule);
         this.bsModeChanged();
         this.bsSiteDefaultsChanged();
@@ -3063,7 +3264,6 @@
           // รอบ 205 W3: เวลาทำการของเว็บ (ตัวแก้ตารางเดียวกับบริการ/ผู้ให้บริการ — prefix 'ss') · เตือนก่อนนัด · ถือรอบคิวสำรอง — hydrate ครบทุกช่องที่ server echo
           this.schedLoad('ss', d.schedule);
           document.getElementById('bssReminderEnabled').checked = d.reminderEnabled !== false;
-          document.getElementById('bssOnlineDeposit').checked = d.onlineDepositEnabled === true;   // รอบ 205 W2 R-08
           document.getElementById('bssReminderHours').value = d.reminderHoursBefore || '24,2';
           document.getElementById('bssHoldMinutes').value = d.waitlistHoldMinutes ?? 0;
           document.getElementById('bssReminderTemplate').value = d.reminderTemplate || '';
@@ -3073,6 +3273,7 @@
           document.getElementById('bssReminderHint').textContent = ph.length ? 'ตัวแทนที่ใช้ได้: ' + ph.join(' ') : '';
           this._bssAuxLoaded = true;
           this._bss207Render(d);
+          if (window.BookingPayAdmin) await BookingPayAdmin.loadSettings(this.siteId);   // รอบ 218
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async saveBookingSiteSettings() {
@@ -3088,14 +3289,15 @@
         if (this._bssAuxLoaded) {
           body.schedule = this.schedPayload('ss');
           body.reminderEnabled = document.getElementById('bssReminderEnabled').checked;
-          body.onlineDepositEnabled = document.getElementById('bssOnlineDeposit').checked;   // รอบ 205 W2 R-08
+          // รอบ 218: onlineDepositEnabled บันทึกที่หมวดการชำระเงิน (BookingPayAdmin) — ไม่ส่งที่นี่ (server คงค่าเดิม)
           body.reminderHoursBefore = document.getElementById('bssReminderHours').value.trim() || '24,2';
           body.waitlistHoldMinutes = this._bsNum('bssHoldMinutes', 0);
           body.reminderTemplate = document.getElementById('bssReminderTemplate').value;
         }
         // รอบ 207 — ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จ (ไม่งั้น server คงค่าเดิม · ไม่รีเซ็ตเงียบ)
         if (this._bss207Loaded) {
-          body.providerAllocationEnabled = document.getElementById('bssProvidersEnabled').checked;
+          // ฝ่ายค้านรอบ 215 เฟส 2 S1: ส่งเฉพาะเมื่อเจ้าของกดสวิตช์จริง — ค่าที่อนุมานได้ (เว็บใหม่ยังไม่มีผู้ให้บริการ) ห้ามถูกประทับเป็นค่าที่ตั้งเอง
+          if (this._bssProvidersDirty) body.providerAllocationEnabled = document.getElementById('bssProvidersEnabled').checked;
           body.providerRecommendStrategy = document.getElementById('bssStrategy').value;
           body.formFields = { phone: document.getElementById('bssFfPhone').value, email: document.getElementById('bssFfEmail').value, notes: document.getElementById('bssFfNotes').value };
           const cd = document.querySelector('input[name="bssCompletionDoc"]:checked');
@@ -3112,6 +3314,8 @@
       // รอบ 207: ค่าตั้งผู้ให้บริการ · ฟอร์มจอง · เอกสารแต่ละขั้น — ตัวเลือก/ป้าย/ตารางมาจากเซิร์ฟเวอร์ทั้งหมด (หน้าแสดงตรง)
       _bss207Render(d) {
         this._bssSettings = d;
+        this.renderDefaultModeLine();   // รอบ 215 เฟส 2
+        this._bssProvidersDirty = false;
         const on = d.providerAllocationEnabled === true;
         document.getElementById('bssProvidersEnabled').checked = on;
         const strat = document.getElementById('bssStrategy');
@@ -3139,6 +3343,7 @@
         this._bss210Loaded = typeof d.requireMemberToBook === 'boolean';
       },
       bssProvidersToggle() {
+        this._bssProvidersDirty = true;
         const on = document.getElementById('bssProvidersEnabled').checked;
         document.getElementById('bssProvidersBody').style.display = on ? '' : 'none';
         const rep = document.getElementById('bkLinkReport');
@@ -3324,11 +3529,12 @@
           enforceSlotCapacity: document.getElementById('bsEnforce').checked,
           overlapLimit: document.getElementById('bsEnforce').checked ? null : this._bsNum('bsOverlap', null),
           waitlistEnabled: document.getElementById('bsWaitlist').checked,
-          resourceMode: document.getElementById('bsResourceMode').value,
+          resourceMode: document.getElementById('bsResourceMode').value || null,   // รอบ 215: '' = ตามค่าเว็บ
           schedule: this.schedPayload('bs')
         };
         // รอบ 210: ส่งเฉพาะเมื่อมีตัวเลือกจาก server (ไม่งั้น null = คงค่าเดิม · ไม่รีเซ็ตเงียบ)
         if (document.getElementById('bsMemberAccessWrap').style.display !== 'none') body.memberAccess = document.getElementById('bsMemberAccess').value || 'Inherit';
+        if (window.BookingPayAdmin) Object.assign(body, BookingPayAdmin.servicePayload());   // รอบ 218: ไม่มีตัวเลือก ⇒ {} (คงค่าเดิม)
         if (!body.name) { Layout.toast('กรุณากรอกชื่อบริการ', 'error'); return; }
         // ช่วงเวลาที่ผิดรูป/เริ่มไม่ก่อนจบ — server ตรวจและตอบข้อความไทยกลับมา (ไม่ตรวจซ้ำในหน้านี้)
         try {

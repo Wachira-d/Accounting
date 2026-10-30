@@ -323,6 +323,12 @@ public class CreateOrderRequest
     public string? IdempotencyKey { get; set; }
     /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มเช็กเอาต์ — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
     public bool ConsentGiven { get; set; }
+    /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังสั่งสำเร็จ controller บันทึกชื่อ/เบอร์/ที่อยู่/ข้อมูลใบกำกับลงโปรไฟล์ ·
+    /// สมาชิก = id ในโทเคนหน้าร้านของเว็บนี้เท่านั้น (ไม่ใช่ CustomerId ใน body) · แขก/โทเคนเว็บอื่น ⇒ ไม่มีผล</summary>
+    public bool SaveToProfile { get; set; }
+    /// <summary>รอบ 216 ฝ่ายค้าน S3: หน้าเว็บยืนยันว่าชื่อ/เบอร์/อีเมลมาจากโปรไฟล์ (ผู้ใช้ไม่ได้ลบ/แก้เอง) ⇒ เซิร์ฟเวอร์เติมช่องที่ว่างจากโปรไฟล์ได้ ·
+    /// มีผลเฉพาะสมาชิกในโทเคนของเว็บนี้ (controller ตัดเป็น false สำหรับพนักงาน/แขก/ผู้เรียก API) · false = ไม่เติม (ช่องบังคับว่าง ⇒ ข้อความปกติ)</summary>
+    public bool ContactFromProfile { get; set; }
 }
 
 public class CreateOrderLineRequest
@@ -406,6 +412,8 @@ public class StorefrontPaymentOptions
     public string? BankName { get; set; }
     public string? BankAccountNumber { get; set; }
     public string? BankAccountName { get; set; }
+    /// <summary>รอบ 218: สาขาธนาคาร</summary>
+    public string? BankBranch { get; set; }
     /// <summary>True when at least one payment method is configured.
     /// When false the storefront falls back to "pay later only" mode
     /// and instructs the customer that the shop will contact them.</summary>
@@ -422,6 +430,8 @@ public class StorefrontPaymentOptions
 public class OrderResponse
 {
     public Guid Id { get; set; }
+    /// <summary>รอบ 216 (ข้อ 174 · ต่อจากรอบ 217): คำขอนี้ไม่ได้สร้างออเดอร์ใหม่ — คืนออเดอร์เดิมด้วยคีย์กันกดซ้ำ ⇒ controller ไม่บันทึกโปรไฟล์ซ้ำ</summary>
+    public bool Replayed { get; set; }
     public string OrderNumber { get; set; } = "";
     public SiteOrderStatus Status { get; set; }
     public Guid? CustomerId { get; set; }
@@ -673,6 +683,8 @@ public class CreatePaymentGatewayRequest
     public string? BankName { get; set; }
     public string? BankAccountNumber { get; set; }
     public string? BankAccountName { get; set; }
+    /// <summary>รอบ 218: สาขาธนาคาร · null = ไม่ระบุ</summary>
+    public string? BankBranch { get; set; }
     public bool IsTestMode { get; set; } = true;
     public string SupportedCurrencies { get; set; } = "THB";
 }
@@ -688,6 +700,10 @@ public class PaymentGatewayResponse
     public string? PromptPayId { get; set; }
     public string? BankName { get; set; }
     public string? BankAccountName { get; set; }
+    /// <summary>รอบ 218 (เก็บแล้วต้อง echo กลับ): เดิมไม่ส่งกลับ ⇒ หน้า cms-orders เปิดแก้แล้วช่องเลขบัญชีว่าง · บันทึกซ้ำ = ล้างเลขบัญชีเงียบ ๆ</summary>
+    public string? BankAccountNumber { get; set; }
+    public string? BankBranch { get; set; }
+    public string? PromptPayQrUrl { get; set; }
     public bool IsTestMode { get; set; }
     public bool IsActive { get; set; }
     public int SortOrder { get; set; }

@@ -78,6 +78,32 @@ public class PublicReservationController : ControllerBase
             new CompanyInfoDto(company.Id, company.Name, company.Phone, logoUrl, slots)));
     }
 
+    public record ShopLegalDto(string Kind, string Title, string CompanyName, string Html);
+
+    /// <summary>รอบ 214 (คำตัดสินข้อ 173 B): นโยบายความเป็นส่วนตัว/ข้อกำหนดของ<b>ร้าน</b>สำหรับหน้าจองโต๊ะ (ไม่ผูกเว็บ CMS) —
+    /// แม่แบบของระบบ (<c>LegalDocumentDefaults.ShopTemplate</c>) + ตัวตนของร้านจากข้อมูลบริษัท · ร้านเป็นผู้ควบคุมข้อมูลของลูกค้า
+    /// (PDPA ม.23 — ต้องแจ้งก่อน/ขณะเก็บชื่อ/เบอร์โทรตอนจอง) · เปิดเฉพาะบริษัทที่เปิดรับจองโต๊ะ (มีโต๊ะใช้งาน) — บริษัทอื่นตอบ 404
+    /// ไม่เปิดเผยที่อยู่/เลขผู้เสียภาษีของบริษัทที่ไม่ได้ใช้หน้าจองสาธารณะ</summary>
+    [HttpGet("legal/{companyId:guid}/{kind}")]
+    public async Task<ActionResult<ApiResponse<ShopLegalDto>>> ShopLegal(Guid companyId, string kind, CancellationToken ct)
+    {
+        if (!Accounting.Helpers.LegalDocumentDefaults.IsKind(kind)) return NotFound();
+        var takesBookings = await _db.PosTables.AsNoTracking()
+            .AnyAsync(t => t.CompanyId == companyId && t.IsActive && !t.IsDeleted, ct);
+        if (!takesBookings) return NotFound();
+        var c = await _db.Companies.AsNoTracking().Where(x => x.Id == companyId)
+            .Select(x => new { x.Name, x.NameEn, x.Phone, x.Website })
+            .FirstOrDefaultAsync(ct);
+        if (c == null) return NotFound();
+        // ฝ่ายค้านรอบ 214 S3: หน้านี้เปิดได้ด้วย companyId อย่างเดียว ⇒ เปิดเผยเท่าที่หน้าจองแสดงอยู่แล้ว (ชื่อ · เบอร์) — ที่อยู่/อีเมล/เลขผู้เสียภาษีไม่ออก
+        var tokens = Accounting.Helpers.CmsLegalPages.BuildShopTokens(
+            Accounting.Helpers.CmsContentTokens.BuildValues(c.Name, c.NameEn, c.Phone, null, null, null, c.Website),
+            isJuristic: false, bookingPageScope: true);
+        var html = Accounting.Helpers.LegalMarkdown.Render(Accounting.Helpers.LegalDocumentDefaults.ShopTemplate(kind), tokens);
+        return Ok(new ApiResponse<ShopLegalDto>(true,
+            new ShopLegalDto(kind, Accounting.Helpers.LegalDocumentDefaults.Title(kind), c.Name ?? "", html)));
+    }
+
     private static DateTime RoundToHalfHour(DateTime t)
     {
         var minutes = t.Minute;
@@ -145,7 +171,8 @@ public class PublicReservationController : ControllerBase
         DateTime ReservedAt, int DurationMinutes, ReservationStatus Status,
         string? TableNumber, decimal DepositAmount, bool DepositPaid,
         int FreeCancelHoursBefore, int LateCancelRefundPercent,
-        DateTime? FreeCancelDeadline, decimal CancelRefund);
+        DateTime? FreeCancelDeadline, decimal CancelRefund,
+        Guid CompanyId);   // รอบ 214: หน้าการจองลิงก์ไปนโยบาย/ข้อกำหนดของร้าน (legal/{companyId}/{kind})
 
     [HttpGet("{token}")]
     public async Task<ActionResult<ApiResponse<TokenLookupDto>>> GetByToken(string token)
@@ -164,7 +191,7 @@ public class PublicReservationController : ControllerBase
             r.Status, r.TableNumber,
             r.DepositAmount, r.DepositPaid,
             r.FreeCancelHoursBefore, r.LateCancelRefundPercent,
-            deadline, refund)));
+            deadline, refund, r.CompanyId)));
     }
 
     [HttpPost("{token}/cancel")]

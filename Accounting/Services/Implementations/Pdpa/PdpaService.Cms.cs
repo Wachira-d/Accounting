@@ -118,6 +118,9 @@ public partial class PdpaService
             {
                 ["label"] = a.Label, ["recipientName"] = a.RecipientName, ["phone"] = a.Phone, ["addressLine"] = a.AddressLine,
                 ["subDistrict"] = a.SubDistrict, ["district"] = a.District, ["province"] = a.Province, ["postalCode"] = a.PostalCode,
+                // รอบ 216 (ข้อ 174): ที่อยู่หลักจากหน้า "ข้อมูลส่วนตัว" ของสมาชิก — ม.30/31 ต้องเห็นว่าแถวไหนเป็นที่อยู่จัดส่ง/ใบกำกับ
+                ["buildingNumber"] = a.BuildingNumber, ["buildingName"] = a.BuildingName, ["streetName"] = a.StreetName, ["countryCode"] = a.CountryCode,
+                ["addressType"] = a.AddressType.ToString(), ["isDefault"] = a.IsDefault, ["updatedAt"] = a.UpdatedAt,
             }).ToList(),
         }).ToList();
         var orders = r.Orders.Select(o => new Dictionary<string, object?>
@@ -150,6 +153,8 @@ public partial class PdpaService
         {
             ["id"] = c.Id, ["purpose"] = c.Purpose, ["policyVersion"] = c.PolicyVersion, ["grantedAt"] = c.GrantedAt,
             ["withdrawnAt"] = c.WithdrawnAt, ["channel"] = c.Channel, ["evidenceHash"] = c.EvidenceHash,
+            // รอบ 214 ฝ่ายค้าน S4: ผลตรวจหลักฐานรายแถว (ตัวตรวจเดียวกับแถวยอมรับนโยบาย)
+            ["evidenceCheck"] = Accounting.Helpers.PlatformPolicyAcceptanceRules.CheckLabel(c),
         }).ToList();
 
         return new CmsSubjectDataReport(DateTime.UtcNow, CmsContactResolver.NormalizeEmail(email), CmsContactResolver.NormalizePhone(phone),
@@ -241,7 +246,8 @@ public partial class PdpaService
             rows++;
         }
 
-        if (rows > 0) await _db.SaveChangesAsync(ct);
+        // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: ขอบเขตการลบ — audit ไม่เก็บค่าเดิมของลูกค้าเว็บไซต์
+        if (rows > 0) await _db.SaveUnderErasureScopeAsync(ct);
         var notes = new List<string>();
         if (held > 0)
             notes.Add($"{held} แถวผูกเอกสารบัญชีที่ยังอยู่ในงวดเก็บ {CmsPdpaErasure.RetentionYears} ปี (พ.ร.บ.การบัญชี ม.10 · ป.รัษฎากร §87/3) — คงชื่อ/ที่อยู่/เลขผู้เสียภาษีของผู้ซื้อไว้ ล้างช่องติดต่อแล้ว");

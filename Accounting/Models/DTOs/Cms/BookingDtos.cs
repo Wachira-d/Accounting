@@ -44,11 +44,18 @@ public class CreateBookingServiceRequest
     public bool EnforceSlotCapacity { get; set; } = true;
     public int? OverlapLimit { get; set; }
     public bool WaitlistEnabled { get; set; }
-    public BookingResourceMode ResourceMode { get; set; } = BookingResourceMode.None;
+    /// <summary>รอบ 215 เฟส 2: <c>null</c> = ตามค่าเว็บ · ไม่ส่งช่องนี้ (ผู้เรียกเดิม) = None ตามเดิม</summary>
+    public BookingResourceMode? ResourceMode { get; set; } = BookingResourceMode.None;
     /// <summary>true = ระยะเวลา/buffer/ล่วงหน้า ใช้ค่าตั้งของไซต์ · false = ค่าของบริการนี้ (override)</summary>
     public bool UseSiteDefaults { get; set; }
     /// <summary>รอบ 210: ต้องเป็นสมาชิกก่อนจอง (Inherit = ตามเว็บ · Required · NotRequired) — <b>null = ไม่แตะค่าเดิม</b> (ผู้เรียก API เดิม · สร้างใหม่ = ตามเว็บ)</summary>
     public BookingMemberAccess? MemberAccess { get; set; }
+    /// <summary>รอบ 218: โหมดรับชำระล่วงหน้าของบริการ ("Inherit" = ตามค่าเว็บ · ชื่อ <c>BookingPaymentMode</c>) — <b>null = ไม่แตะค่าชำระล่วงหน้าทั้งชุด</b>
+    /// (ผู้เรียก API เดิม) · ส่งมา ⇒ ขั้นต่ำ/สูงสุด/กำหนดเวลา ด้านล่างถูกตั้งตามที่ส่ง (null = ตามค่าเว็บ)</summary>
+    public string? PaymentMode { get; set; }
+    public decimal? DepositMinAmount { get; set; }
+    public decimal? DepositMaxAmount { get; set; }
+    public int? PaymentDeadlineMinutes { get; set; }
     /// <summary>เวลาทำการ + วันหยุด — <b>null = ไม่แตะตารางเวลาเดิม</b> (ผู้เรียก API เดิม) · ส่งมา = แทนที่ทั้งชุด</summary>
     public BookingScheduleDto? Schedule { get; set; }
 }
@@ -56,11 +63,12 @@ public class CreateBookingServiceRequest
 /// <summary>ค่าตั้งการจองระดับไซต์ (บริการที่ "ใช้ค่าของไซต์" รับไป)</summary>
 public class BookingSiteSettingsDto
 {
-    public int DurationMinutes { get; set; } = 60;
-    public int BufferBeforeMinutes { get; set; }
-    public int BufferAfterMinutes { get; set; }
-    public int MinAdvanceHours { get; set; } = 1;
-    public int MaxAdvanceDays { get; set; } = 30;
+    // ฝ่ายค้านรอบ 215 เฟส 2: ตอนบันทึก null/ไม่ส่ง = คงค่าเดิม (เดิมไม่ส่ง = รีเซ็ตเป็นค่าเริ่มต้นเงียบ ๆ) · GET มีค่าเสมอ
+    public int? DurationMinutes { get; set; }
+    public int? BufferBeforeMinutes { get; set; }
+    public int? BufferAfterMinutes { get; set; }
+    public int? MinAdvanceHours { get; set; }
+    public int? MaxAdvanceDays { get; set; }
     /// <summary>จังหวะออกใบกำกับภาษีของบริการแบบ Guaranteed (คำตัดสินข้อ 155) · คำตอบมีค่าเสมอ · ตอนบันทึก null = คงค่าเดิม (ไม่รีเซ็ตเงียบ)</summary>
     public BookingInvoiceTiming? GuaranteedInvoiceTiming { get; set; }
     /// <summary>ตัวเลือก + ผลทางภาษี (server ประกอบจาก <c>BookingInvoiceTimingPolicy.Options</c> · หน้าเว็บแสดงตรง ๆ) — ไม่อ่านตอนบันทึก</summary>
@@ -101,6 +109,17 @@ public class BookingSiteSettingsDto
     // ── รอบ 210 (คำตัดสินข้อ 169) ──
     /// <summary>ต้องเข้าสู่ระบบสมาชิกก่อนจอง (ทุกบริการที่ไม่ตั้งเอง) · คำตอบมีค่าเสมอ · ตอนบันทึก null = คงค่าเดิม</summary>
     public bool? RequireMemberToBook { get; set; }
+    /// <summary>รอบ 215 เฟส 2: ค่าเริ่มต้นโหมดผู้ให้บริการของเว็บ (บริการ "ตามค่าเว็บ" รับไป) · ส่ง null = คงค่าเดิม · GET = ค่าที่มีผล (ไม่ตั้ง = None)</summary>
+    public BookingResourceMode? DefaultResourceMode { get; set; }
+    /// <summary>GET เท่านั้น: ลูกค้าเห็นอะไรบนหน้าจองตามค่าเว็บ (BookingProviderAllocation.CustomerPreview — หน้าแค่แสดง)</summary>
+    public string? DefaultResourceModePreview { get; set; }
+    public bool DefaultResourceModeShowsPicker { get; set; }
+    /// <summary>GET เท่านั้น: บริการที่ "กำหนดเอง" (ไม่ตามค่าเว็บ) — แสดงพร้อมปุ่ม "ใช้ตามค่าเว็บ"</summary>
+    public List<BookingServiceModeOverride> ResourceModeOverrides { get; set; } = new();
+    /// <summary>GET เท่านั้น: จำนวนบริการที่ใช้ "ตามค่าเว็บ"</summary>
+    public int ResourceModeInheritingCount { get; set; }
+    /// <summary>GET เท่านั้น: ผู้ให้บริการที่ใช้งานอยู่ (0 = ยังไม่มี — หน้าบอกทางไปเพิ่ม)</summary>
+    public int ActiveProviderCount { get; set; }
     /// <summary>ตัวเลือก "ต้องเป็นสมาชิก" ต่อบริการ (server ประกาศป้าย · <c>BookingAccessRule.Options</c>) — ไม่อ่านตอนบันทึก</summary>
     public List<BookingAccessRule.Option> MemberAccessOptions { get; set; } = new();
 }
@@ -229,7 +248,10 @@ public class BookingServiceResponse
     public bool EnforceSlotCapacity { get; set; } = true;
     public int? OverlapLimit { get; set; }
     public bool WaitlistEnabled { get; set; }
-    public BookingResourceMode ResourceMode { get; set; }
+    /// <summary>ค่าที่ตั้งบนบริการ (ฟอร์ม hydrate) · null = ตามค่าเว็บ (รอบ 215)</summary>
+    public BookingResourceMode? ResourceMode { get; set; }
+    /// <summary>รอบ 215: "site" = ตามค่าเว็บ · "service" = กำหนดเอง (ป้ายบนรายการบริการ)</summary>
+    public string ResourceModeSource { get; set; } = "service";
     public bool UseSiteDefaults { get; set; }
     /// <summary>รอบ 210: ค่าที่ตั้งบนบริการ (Inherit/Required/NotRequired — ฟอร์มแก้ไข hydrate จากตัวนี้)</summary>
     public BookingMemberAccess MemberAccess { get; set; }
@@ -252,6 +274,13 @@ public class BookingServiceResponse
     public string? SlotSummary { get; set; }
     /// <summary>ข้อความนโยบายมัดจำ/ยกเลิกที่ server ประกอบ — หน้าเว็บแสดงตรง ๆ</summary>
     public string? PolicySummary { get; set; }
+    // ── รอบ 218: ชำระล่วงหน้า — ค่าที่ตั้ง (ฟอร์ม) + ค่าที่มีผล (server ตัดสินด้วย BookingPaymentPolicy) ──
+    public string PaymentMode { get; set; } = "Inherit";
+    public decimal? DepositMinAmount { get; set; }
+    public decimal? DepositMaxAmount { get; set; }
+    public int? PaymentDeadlineMinutes { get; set; }
+    public string? PaymentSummary { get; set; }
+    public string? PaymentProblem { get; set; }
     public bool IsActive { get; set; }
     public int UpcomingBookingsCount { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -318,8 +347,20 @@ public class CreateBookingRequest
     /// <summary>บัตรที่ใช้ · ว่าง = ระบบเลือกบัตรที่หมดอายุก่อน (FEFO) ที่ใช้กับบริการนี้ได้</summary>
     public Guid? CreditPassId { get; set; }
 
+    /// <summary>รอบ 217 (คำตัดสินข้อ 175 ข): ผู้จองตั้งใจจองรอบเดิมเพิ่มอีกที่ (กดยืนยันหลังได้คำเตือน "คุณจองรอบนี้ไว้แล้ว") ⇒ ข้ามด่านซ้ำ
+    /// <c>DuplicateSubmitGuard</c> · ความจุ/ด่านอื่นยังตรวจครบ · ค่าเริ่มต้น false</summary>
+    public bool ConfirmAdditional { get; set; }
+
     /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มจอง — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
     public bool ConsentGiven { get; set; }
+    /// <summary>รอบ 218: โหมดมัดจำไม่บังคับ — ลูกค้าเลือกจ่ายมัดจำตอนจอง (null/false = ไม่จ่าย) · โหมดอื่นไม่มีผล (server ตัดสิน)</summary>
+    public bool? PayDepositNow { get; set; }
+    /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังจองสำเร็จบันทึกชื่อ/เบอร์ลงโปรไฟล์ ·
+    /// สมาชิก = id ในโทเคนหน้าร้านของเว็บนี้เท่านั้น · แขก/พนักงาน/โทเคนเว็บอื่น ⇒ ไม่มีผล</summary>
+    public bool SaveToProfile { get; set; }
+    /// <summary>รอบ 216 ฝ่ายค้าน S3: หน้าเว็บยืนยันว่าชื่อ/เบอร์/อีเมลมาจากโปรไฟล์ (ผู้ใช้ไม่ได้ลบ/แก้เอง) ⇒ เซิร์ฟเวอร์เติมช่องที่ว่างจากโปรไฟล์ได้ ·
+    /// มีผลเฉพาะสมาชิกในโทเคนของเว็บนี้ (controller ตัดเป็น false สำหรับพนักงาน/แขก/ผู้เรียก API) · false = ไม่เติม (ช่องบังคับว่าง ⇒ ข้อความปกติ)</summary>
+    public bool ContactFromProfile { get; set; }
 }
 
 public class UpdateBookingStatusRequest
@@ -333,6 +374,8 @@ public class UpdateBookingStatusRequest
     /// <summary>รอบ 208 (ฝ่ายค้านรอบ 2 ข้อ 1b): job ปล่อยที่ — ตรวจซ้ำใต้ล็อกว่ายังไม่รับเงิน + พ้นเวลาถือที่ ณ เวลาอ้างอิงของ job (เงินเข้าหลังคิวรีของ job ⇒ ไม่ยกเลิก) ·
     /// null = ไม่ตรวจ · ใช้เวลาของ job ไม่ใช่นาฬิกาเครื่อง (job/เทสต์ส่งเวลาอ้างอิงเอง)</summary>
     public DateTime? HoldLapsedAsOfUtc { get; set; }
+    /// <summary>รอบ 218: job ยกเลิกใบที่ไม่ชำระล่วงหน้าในเวลา — เส้นสถานะตัดสินซ้ำใต้ล็อกด้วย <c>BookingPaymentPolicy.HoldLapsed</c> · null = ไม่ใช่เส้นนี้</summary>
+    public DateTime? PaymentHoldLapsedAsOfUtc { get; set; }
 }
 
 public class BookingResponse
@@ -374,6 +417,10 @@ public class BookingResponse
     /// <summary>รอบ 194 (C-1): ผลของขั้น ERP อัตโนมัติตอนเปลี่ยนสถานะ (ยกเลิก/เสร็จ) ที่ผู้กดต้องรู้ — ใบมัดจำไม่ถูกยกเลิก ·
     /// ต้องออกใบกำกับเอง · ขั้นที่ล้มพร้อมเหตุ · ว่าง = ไม่มีอะไรต้องทำ (ข้อความเดียวกันถูกประทับบน <c>InternalNotes</c> ด้วย)</summary>
     public List<string> ErpNotices { get; set; } = new();
+    /// <summary>รอบ 217 (ข้อ 175 ข): คำขอนี้ไม่ได้สร้างใบใหม่ — คืนใบเดิมของผู้จองคนเดิม (กดซ้ำ/สองแท็บ) · หน้าเว็บแสดง "คุณจองรอบนี้ไว้แล้ว"</summary>
+    public bool Reused { get; set; }
+    /// <summary>เลขที่ใบเดิมเมื่อ <see cref="Reused"/></summary>
+    public string? DuplicateOf { get; set; }
     /// <summary>R-39: เลขบัตรคอร์สที่ใช้จ่ายการจองนี้ · null = การจองชำระปกติ</summary>
     public string? CreditPassNumber { get; set; }
     /// <summary>รอบ 209 P4 (คำตัดสินข้อ 168 ญ): นโยบายยกเลิกที่ใช้กับการจองนี้ — "CreditPass" (จองด้วยบัตร ⇒ กติกาของแพ็กเกจชนะ) / "Service" ·
@@ -430,6 +477,8 @@ public class BookingResponse
     public string? ServiceProductName { get; set; }
     /// <summary>ป้ายสถานะที่ลูกค้าเห็น (BookingStatusLabels.Customer) — หน้าเว็บ/ใบยืนยันแสดงตรง</summary>
     public string CustomerStatusLabel { get; set; } = "";
+    /// <summary>รอบ 218: การชำระล่วงหน้า (ยอด · สถานะ · ช่องทาง · สลิป) — server ประกอบ (<c>BookingPaymentPolicy</c>) หน้าเว็บแสดงอย่างเดียว</summary>
+    public BookingPaymentInfoDto? Payment { get; set; }
 }
 
 public class BookingAssignmentDto
@@ -586,6 +635,8 @@ public class BookingListResponse
     public string? GuestPhone { get; set; }
     /// <summary>ผู้ให้บริการทุกคน (หลายคน = "ก 60% · ข 40%")</summary>
     public string? ProvidersLabel { get; set; }
+    /// <summary>รอบ 218: ป้ายการชำระล่วงหน้า (รอชำระ/รอตรวจสลิป/ชำระแล้ว) · null = ไม่มี</summary>
+    public string? PaymentStatusLabel { get; set; }
 }
 
 // ==================== Available Slots Query ====================
@@ -630,3 +681,17 @@ public record CustomerCancelBookingRequest(string? Reason = null);
 
 /// <summary>เลื่อนนัด (พนักงาน หรือลูกค้าผ่านโทเคน · รอบ 206) — วันใหม่ + เวลาเริ่ม "HH:mm" จากรายการเวลาว่าง</summary>
 public record RescheduleBookingRequest(DateTime BookingDate, string StartTime, string? Reason = null);
+
+/// <summary>รอบ 215 เฟส 2: บริการที่ตั้งโหมดผู้ให้บริการเอง (ไม่ตามค่าเว็บ) — แสดงบนหน้าตั้งค่า › การจอง/บริการ</summary>
+public class BookingServiceModeOverride
+{
+    public Guid ServiceId { get; set; }
+    public string Name { get; set; } = "";
+    public BookingResourceMode ResourceMode { get; set; }
+}
+
+/// <summary>รอบ 215 เฟส 2: body ของ "ใช้ตามค่าเว็บ" — null = ทุกบริการที่กำหนดเอง</summary>
+public class InheritResourceModeRequest
+{
+    public List<Guid>? ServiceIds { get; set; }
+}

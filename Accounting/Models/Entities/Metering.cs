@@ -114,6 +114,15 @@ public class CompanyFeature : TenantEntity
     /// <summary>สถานะการชำระเงินของการเปิดใช้ครั้งนี้ — <see cref="AddOnPaymentStatus"/></summary>
     public AddOnPaymentStatus PaymentStatus { get; set; } = AddOnPaymentStatus.NotRequired;
 
+    /// <summary>รอบ 219 เฟส 0 (G-11): เวลาที่เข้าสถานะ "รอชำระ" ครั้งแรกของการเปิดรอบนี้ — นับระยะผ่อนผัน
+    /// (<c>AddOnPaymentPolicy.UnpaidGraceDays</c>) · ปิด/เปิดใหม่ระหว่างยังค้างชำระ<b>ไม่รีเซ็ต</b> (กันต่อระยะผ่อนผันไม่รู้จบ) ·
+    /// null = แถวที่ไม่ได้ค้างชำระ (แถวค้างชำระก่อนเฟส 0 ถูก migration ตั้งเป็นเวลา deploy — คำตัดสินเจ้าของข้อ 178 ④)</summary>
+    public DateTime? PaymentAwaitingSince { get; set; }
+
+    /// <summary>รอบ 219 เฟส 0 (G-5): งวด (yyyy-MM ไทย) ที่ค่าจ่ายล่วงหน้าครอบ — งวดนี้ <c>AddOnMonthlyBillingJob</c> ไม่ออกค่าเหมาซ้ำ
+    /// (<c>AddOnPaymentPolicy.UpfrontOverride</c>) · null = ไม่ได้เข้าเส้นจ่ายล่วงหน้าแบบใหม่</summary>
+    public string? UpfrontPeriod { get; set; }
+
     /// <summary>รายการชำระเงินออนไลน์ (ถ้าจ่ายผ่าน gateway) — ผูกกลับไปที่
     /// <c>PaymentIntent</c> ตัวเดียวของระบบ ไม่สร้างระบบรับเงินชุดที่สอง</summary>
     public Guid? PaymentIntentId { get; set; }

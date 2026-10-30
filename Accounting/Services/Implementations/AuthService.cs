@@ -23,6 +23,8 @@ public class AuthService : IAuthService
     /// <summary>ใช้อ่าน IP + user-agent ตอนบันทึกความยินยอม PDPA เท่านั้น
     /// (optional — งานเบื้องหลัง/เทสต์ที่เรียก service ตรงไม่มี HttpContext)</summary>
     private readonly IHttpContextAccessor? _http;
+    // รอบ 214 (คำตัดสินข้อ 173): เวอร์ชันนโยบายมาจาก resolver ตัวเดียว (ฉบับที่แอดมินเผยแพร่ หรือฉบับตั้งต้น 1.0) — ไม่อ่านค่าคงที่เอง
+    private readonly ILegalDocumentService _legal;
 
     // Account lockout settings (configurable via appsettings Security section)
     private readonly int _maxFailedAttempts;
@@ -37,9 +39,11 @@ public class AuthService : IAuthService
         ICompanyService companyService,
         ILogger<AuthService> logger,
         ISecretProtector? secrets = null,
-        IHttpContextAccessor? http = null)
+        IHttpContextAccessor? http = null,
+        ILegalDocumentService? legal = null)
     {
         _http = http;
+        _legal = legal ?? new LegalDocumentService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<LegalDocumentService>.Instance);
         _secrets = secrets;
         _db = db;
         _config = config;
@@ -85,31 +89,20 @@ public class AuthService : IAuthService
             var ua = ctx?.Request.Headers.UserAgent.ToString();
 
             var grantedAt = DateTime.UtcNow;
-            _db.PdpaConsentRecords.Add(new PdpaConsentRecord
-            {
-                CompanyId = PdpaPolicy.PlatformScopeCompanyId,
-                SubjectUserId = user.Id,
-                SubjectContact = user.Email,
-                Purpose = PdpaPolicy.SignupPurpose,
-                // เก็บเวอร์ชันที่ **server** ใช้อยู่เป็นเวอร์ชันของแถว ส่วนเวอร์ชันที่
-                // หน้าเว็บแสดงจริงอยู่ใน evidence hash — ต่างกันเมื่อไรแปลว่าเบราว์เซอร์
-                // ค้าง cache ฉบับเก่า (log เตือนด้านล่าง) ไม่ใช่ข้อมูลสูญหาย
-                PolicyVersion = PdpaPolicy.CurrentVersion,
-                GrantedAt = grantedAt,
-                Channel = channel,
-                IpAddress = ip,
-                EvidenceHash = PdpaConsentEvidence.ComputeHash(
-                    user.Email, PdpaPolicy.SignupPurpose, policyVersionShown,
-                    grantedAt, channel, ip, ua),
-            });
+            var currentVersion = (await _legal.GetConsentVersionAsync()).ConsentVersion;
+            // รอบ 214 หลัง CI (คำตัดสินข้อ 173 ฌ): ตารางระดับผู้ใช้ (ไม่มี CompanyId/FK) — เดิม PdpaConsentRecords + CompanyId ศูนย์ ถูก FK ปฏิเสธบนฐานที่สร้างจากโมเดล
+            // แล้วถูกจับใน catch ด้านล่าง ⇒ หลักฐานความยินยอมตอนสมัครหายเงียบ
+            // รอบ 214 ต่อ (ฎ): ตัวสร้างแถวเดียว — เวลา normalize + เก็บทุกช่องใน canonical (เวอร์ชันที่หน้าเว็บแสดง · UA) ⇒ ตรวจกลับจากแถวได้
+            _db.PlatformPolicyAcceptances.Add(PlatformPolicyAcceptanceRules.Create(
+                user.Id, user.Email, PdpaPolicy.SignupPurpose, currentVersion, policyVersionShown, grantedAt, channel, ip, ua));
             await _db.SaveChangesAsync();
 
             if (!string.IsNullOrWhiteSpace(policyVersionShown)
-                && policyVersionShown != PdpaPolicy.CurrentVersion)
+                && policyVersionShown != currentVersion)
             {
                 _logger.LogWarning(
                     "PDPA consent: หน้าเว็บแสดงนโยบายเวอร์ชัน {Shown} แต่ระบบใช้ {Current} — เบราว์เซอร์อาจค้าง cache (user={UserId})",
-                    policyVersionShown, PdpaPolicy.CurrentVersion, user.Id);
+                    policyVersionShown, currentVersion, user.Id);
             }
         }
         catch (Exception ex)

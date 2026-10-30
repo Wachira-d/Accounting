@@ -466,6 +466,11 @@
             <div class="help-text">เว้นว่าง = เงินสด (ค่าเริ่มต้นของระบบ)</div>
           </div>
         </div>
+        <div class="form-group">
+          <label>วิธีโอนเงินค่าบริการให้ NextAcc (ผู้เช่าเห็นบนหน้าแพ็กเกจ/ส่วนเสริม)</label>
+          <textarea id="pbBankInstructions" rows="4" placeholder="เช่น ธนาคารกสิกรไทย · ชื่อบัญชี บจก. ... · เลขที่ 123-4-56789-0 · พร้อมเพย์ 0105xxxxxxxxx"></textarea>
+          <div class="help-text">ระหว่างที่ยังไม่มีช่องชำระออนไลน์ของแพลตฟอร์ม (เฟส 1) ผู้เช่าโอนตามนี้แล้วแนบสลิป · เว้นว่าง = หน้าเว็บบอกให้ติดต่อผู้ดูแลระบบ</div>
+        </div>
       </div>
       <div style="display:flex;justify-content:flex-end;gap:12px;margin-top:16px">
         <button class="btn-save" id="pbSaveBtn" onclick="savePlatformBilling()">บันทึกข้อมูลผู้ขาย</button>
@@ -888,6 +893,7 @@
         document.getElementById('pbPriceInclVat').checked = d.platformPriceIncludesVat !== false;
         document.getElementById('pbRevenueAcc').value = d.platformRevenueAccountCode || '';
         document.getElementById('pbCashAcc').value = d.platformCashAccountCode || '';
+        document.getElementById('pbBankInstructions').value = d.platformBankTransferInstructions || '';
         await pbLoadTenants(d.platformCompanyId, d.platformCompanyName);
         pbToggleVat();
       } catch (e) { /* first-load empty is fine */ }
@@ -935,6 +941,8 @@
           platformCompanyId: document.getElementById('pbTenant').value || null,
           platformRevenueAccountCode: document.getElementById('pbRevenueAcc').value || null,
           platformCashAccountCode: document.getElementById('pbCashAcc').value || null,
+          // รอบ 219: ส่ง "" เมื่อลบข้อความ = ล้างค่า (null = ไม่เปลี่ยน ฝั่งเซิร์ฟเวอร์)
+          platformBankTransferInstructions: document.getElementById('pbBankInstructions').value,
         };
         const res = await AdminAPI.updatePlatformBilling(payload);
         AdminLayout.toast(res.message || 'บันทึกสำเร็จ');

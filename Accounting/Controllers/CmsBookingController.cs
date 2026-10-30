@@ -95,6 +95,16 @@ public class CmsBookingController : ControllerBase
         return Ok(new ApiResponse<BookingSiteSettingsDto>(true, result, "บันทึกค่าตั้งการจองของเว็บไซต์แล้ว"));
     }
 
+    /// <summary>รอบ 215 เฟส 2: ให้บริการกลับไป "ตามค่าเว็บ" ของโหมดผู้ให้บริการ (body: serviceIds · null = ทุกบริการ)</summary>
+    [HttpPost("settings/resource-mode/inherit")]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<int>>> InheritResourceMode(Guid companyId, Guid siteId, [FromBody] InheritResourceModeRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var n = await _bookingService.InheritResourceModeAsync(companyId, siteId, request?.ServiceIds, userId);
+        return Ok(new ApiResponse<int>(true, n, n == 0 ? "ไม่มีบริการที่ต้องเปลี่ยน" : $"ให้ {n} บริการใช้ตามค่าเว็บแล้ว"));
+    }
+
     [HttpGet("resources")]
     public async Task<ActionResult<ApiResponse<List<BookingResourceResponse>>>> GetResources(Guid companyId, Guid siteId)
         => Ok(new ApiResponse<List<BookingResourceResponse>>(true, await _bookingService.GetResourcesAsync(companyId, siteId)));
@@ -186,6 +196,8 @@ public class CmsBookingController : ControllerBase
         // นิรนาม ⇒ ไม่มีลูกค้า (เดิมรับ CustomerId จาก body ⇒ ยัดการจองเข้า "การจองของฉัน" ของคนอื่น + ข้ามด่านยินยอมด้วย id ของคนอื่น) — ตัวตัดสินเดียวกับออเดอร์
         var bodyCustomerId = request.CustomerId;
         request.CustomerId = StorefrontCustomerAuth.OrderCustomerId(bodyCustomerId, staffOk, sf, siteId);
+        // รอบ 216 ฝ่ายค้าน S3: เติมช่องว่างจากโปรไฟล์เฉพาะสมาชิกในโทเคน + หน้าเว็บยืนยัน (sf เป็น null เมื่อเป็นพนักงาน ⇒ walk-in ไม่ถูกเติม)
+        request.ContactFromProfile = StorefrontCustomerAuth.FillFromProfile(request.ContactFromProfile, sf, siteId);
         if (request.PayWithCredit)
         {
             if (CreditBookingLink.PayWithCreditGate(staffOk, sf?.CustomerId, sf?.SiteId, siteId, bodyCustomerId ?? request.CustomerId) is string creditProblem)
@@ -194,7 +206,14 @@ public class CmsBookingController : ControllerBase
         }
         // รอบ 210: ด่าน "ต้องเป็นสมาชิกก่อนจอง" อยู่ใน service (ก่อน Decide) — ลูกค้า = request.CustomerId ที่แปลงจากโทเคนแล้วข้างบน · พนักงานจองแทนผ่าน
         var result = await _bookingService.CreateBookingAsync(companyId, siteId, request, userId, staffOnBehalf: staffOk);
-        return StatusCode(201, new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.created", Lang)));
+        // รอบ 216 (คำตัดสินข้อ 174): "บันทึกเป็นข้อมูลของฉัน" — เจ้าของ = สมาชิกในโทเคนของเว็บนี้เท่านั้น (sf เป็น null เมื่อเป็นพนักงาน) · หลังจองสำเร็จ ·
+        // ใบเดิมที่ถูกคืน (รอบ 217 Reused — กดซ้ำ/สองแท็บ) ⇒ ไม่บันทึกซ้ำ · คำขอซ้ำคีย์เดิมถูก IdempotencyMiddleware ตอบจากแคชก่อนถึงที่นี่
+        var profileNotes = await StorefrontProfileSaveBack.RunAsync(
+            HttpContext.RequestServices.GetService(typeof(IStorefrontCustomerService)) as IStorefrontCustomerService,
+            HttpContext.RequestServices.GetService(typeof(ILogger<CmsBookingController>)) as ILogger,
+            companyId, siteId, StorefrontCustomerAuth.ProfileOwner(request.SaveToProfile && !result.Reused, sf, siteId),
+            new CheckoutProfileInput(request.GuestName, request.GuestPhone));
+        return StatusCode(201, new ApiResponse<BookingResponse>(true, result, CmsMessages.Get("booking.created", Lang), profileNotes));
     }
 
     [HttpGet("bookings")]

@@ -5787,3 +5787,158 @@ _รอบ 213 ฝ่ายค้าน (ไม่มีข้อ blocking · �
 (d) แอดมิน "คืนค่าตั้งต้น" แพ็ก (e) คำอธิบายอายุแพ็กตรงกับ GREATEST (f) ซื้อแพ็กแล้ววาดรายการค้างส่งใหม่ · ปุ่มกลับข้อความเดิมเมื่อล้ม ·
 (CI) Db test ล้ม: `ResendCount` NOT NULL ไม่มี default ในโมเดล ⇒ INSERT ดิบของ `ClaimAsync` ล้ม — ระบุคอลัมน์ใน INSERT + `HasDefaultValue(0)` · เทสต์ CMS213-11..16 · `required_call_site_check` +7 กติกา/แก้ 7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e877767d · 41bcab58_
 
+_รอบ 214 (คำตัดสินข้อ 173 · เจ้าของ: "นโยบายความเป็นส่วนตัว กับ ข้อกำหนดการใช้บริการ เรามีลิงค์ให้ลูกค้าอ่านรึยัง ... admin ปรับแต่ง เปลี่ยนได้ เห็น url"):
+(1) **แพลตฟอร์ม** — ตาราง `LegalDocumentVersions` (append-only หลังเผยแพร่ · ร่าง 1 ฉบับ/ชนิด · กติกา `Helpers/LegalDocumentPolicy`) + `ILegalDocumentService` +
+หน้า `/admin/legal.html` (`AdminLegalDocumentController`: ร่าง · ตัวอย่าง · เผยแพร่ · ทิ้งร่าง · ประวัติ · URL สาธารณะ + คัดลอก/เปิด) · เนื้อความเดิมของ privacy.html/terms.html
+ย้ายเป็นฉบับ 1.0 ใน `Helpers/LegalDocumentDefaults` (ไม่ seed แถว — ตารางว่าง = เหมือนเดิม) · หน้า privacy/terms ดึง `GET /api/legal/documents/{kind}` (HTML จาก
+`Helpers/LegalMarkdown` — markdown ชุดย่อย encode ทุกตัว · ลิงก์ allowlist · โทเคนแทนหลังแปลง) + ประวัติฉบับ/ประกาศล่วงหน้า ·
+(2) resolver เวอร์ชันตัวเดียว `GetConsentVersionAsync` แทน `PdpaPolicy.CurrentVersion` ที่ `AuthService` + `/api/legal/policy` · แถบ "มีฉบับใหม่" ใน `js/layout.js`
+→ `GET/POST /api/legal/acceptance` (แจ้ง ไม่บล็อก · หลักฐาน `PdpaConsentRecord` `policy-update:terms-and-privacy`) · ลิงก์ที่หน้าเข้าสู่ระบบ + เมนูผู้ใช้ ·
+(3) **ร้าน (CMS)** — `Helpers/CmsLegalPages.Resolve` (ลิงก์ร้าน > ข้อความร้าน `Sites.PrivacyPolicyMarkdown/TermsOfServiceMarkdown` > แม่แบบที่เติมตัวตนร้าน) ·
+หน้า storefront `legal/privacy|terms` + ลิงก์ท้ายเว็บ/ช่องยินยอม/สมัครสมาชิก/แบนเนอร์คุกกี้ · cms-edit สามโหมด + ช่องข้อกำหนดที่เดิมไม่มี UI + URL/คัดลอก/เปิด/ตัวอย่าง ·
+ลิงก์ร้านตรวจก่อนเก็บ + ซ่อมสตริงว่างเดิม (`Helpers/LegalDocumentMigration`) · (4) หน้าจองโต๊ะ → `/shop-policy.html` (`GET /api/public/reservations/legal/{companyId}/{kind}`) ·
+เทสต์ `LegalDocumentTests` + `Db/LegalDocumentDbTests` (TEST_PLAN LEGAL214-01..12) · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4e8da855_
+
+_รอบ 215 (2026-10-30 · ทีม UX/UI · คำตัดสินข้อ 176): ออกแบบ "พื้นที่ทำงานรายเว็บ" (`erp-review/2026-10-30/CMS_UX_REDESIGN.md` + mockups · c25cc7aa · 7a6b5fee)
+แล้วทำเฟส 1 — แถบซ้ายหมวดงานเว็บเหลือ "พื้นที่ทำงานเว็บไซต์" + "เว็บไซต์ทั้งหมด" (หน้ารายเว็บ 7 หน้าพับไว้ · id/สิทธิ์เดิม) · ชื่อหมวดจากเซิร์ฟเวอร์
+(`CmsModuleResolver.NavSectionLabel`) · หัวพื้นที่ทำงาน (ตัวสลับเว็บเดียว · ป้ายขอบเขต · แท็บตาม `site.modules`) · lead เฉพาะเว็บที่รับคำขอได้ (`HasLeadSource`) ·
+ภาพรวมทุกไซต์เป็น `?siteId=all` จริง · Front desk/ตั้งค่าที่พักผ่าน `pickProperty` (?siteId= ไม่มีที่พัก ⇒ ไม่ตกไปแห่งแรก) · Portal/รับชำระออนไลน์ย้ายหมวด ·
+sim `cms_workspace_nav_sim.js` (negative 7) · ไม่แตะ cms-edit/storefront/booking · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5a0da695 · 2b0d6f2d · e717d3b5_
+
+
+_รอบ 217 (คำตัดสินข้อ 175): เจ้าของรายงาน "กดจองเบิ้ลสองที บันทึกการจองซ้ำได้" (BK-2610-0003/0004) + "กดยืนยันจองแล้วนิ่ง ไม่ขึ้นว่าโหลด" ·
+(ก) `IdempotencyMiddleware` เดิมครอบ `/api/*` อยู่แล้วแต่หน้าเว็บลูกค้าไม่เคยส่งคีย์ + ไม่ตรวจเนื้อคำขอ ⇒ กติกาย้ายเข้า `Helpers/IdempotencyKeyPolicy` + `RequestHash` (คีย์เดิมเนื้อต่าง 409 mismatch) ·
+namespace ด้วยแฮช credential header · ตาราง `IdempotencyRecords` ย้ายไป `Helpers/SubmitOnceMigration` · หน้าเว็บ `js/submit-once.js` (ปุ่มล็อก + คีย์ต่อฟอร์ม + รอ in-flight) ใช้ที่ storefront/booking/booking-manage/contact/pay-widget/cms-bookings ·
+(ข) `Helpers/DuplicateSubmitGuard` ใต้ล็อกไซต์/ที่พัก (ผู้จองเดิม + รอบเดิม 10 นาที · สมาชิกได้ใบเดิม · แขก 409 · `ConfirmAdditional`) · ออเดอร์สองแท็บ 500 ⇒ 409 ·
+(ค) ต้นเหตุ "นิ่ง" = `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` (SMTP/LINE ถึงลูกค้า + อีเมลร้านทีละผู้รับ) ในคำขอ ⇒ คิว `DeferredNotifications` + `DeferredNotifyDispatchJob` (10 วิ · JobLock · SKIP LOCKED · lease) ·
+เทสต์ SUB-01..15 · `required_call_site_check` +10 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74_
+
+_รอบ 214 ฝ่ายค้าน + CI (ไม่มีข้อ blocking · แก้ S1–S5 + หมายเหตุ + Db test แดง): (S1) ReDoS — `LegalMarkdown` regex ทุกตัวมีเพดานเวลา (`BookingRefPattern.MatchTimeout`)
+และเขียนไม่ย้อนรอยข้ามตัวคั่น · ย่อหน้า > 4,000 ไม่แปลง · เกินเวลา = encode ล้วน · ตัวอย่างรับ ≤ 100k · (S2) ฉบับประกาศล่วงหน้าไม่ถูกเรียก "ฉบับเก่า" (`isUpcoming`) ·
+(S3) เลขผู้เสียภาษีบนหน้านโยบายร้านเฉพาะนิติบุคคล · หน้าจองโต๊ะแสดงแค่ชื่อ+เบอร์ (`CmsLegalPages.BuildShopTokens`) · (S4) "ยังไม่ได้ระบุ" + ไม่มี mailto เสีย + cms-edit เตือน
+(`SiteResponse.LegalWarnings`) · (S5) audit ตอนเผยแพร่มี UserId/อีเมล/IP · หมายเหตุ: Status concurrency token + unique ร่างต่อชนิด ⇒ 409 ไทย · ปุ่มตั้งวันมีผลเป็นวันนี้ ·
+`LegalController` เลิก AllowAnonymous ระดับคลาส · ปุ่ม "เปิด" ของเว็บที่ยังไม่เผยแพร่ = ตัวอย่าง · doc comment ย้ายกลับที่ · audit `*Markdown` = length+sha256 ·
+(CI) Db test ล้ม FK `PdpaConsentRecords → Companies` (CompanyId ศูนย์) — บั๊กจริงตั้งแต่ก่อนรอบนี้ (หลักฐานตอนสมัครหายเงียบบนฐานที่มี FK) ⇒ ตารางระดับผู้ใช้
+`PlatformPolicyAcceptances` + คัดลอกแถวเดิม · เทสต์ทั้งผู้ใช้ไม่มีบริษัท/มีบริษัท · TEST_PLAN LEGAL214-14..21 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a9420198_
+
+_รอบ 216 (คำตัดสินข้อ 174 · เจ้าของ: "ล็อคอินไว้แล้วควรมี ให้บันทึกข้อมูลส่วนตัวและดึงมาได้เลย"): ข้อมูลส่วนตัวของสมาชิกหน้าร้าน —
+`GET portal/me` คืนชื่อ/เบอร์/ข้อมูลใบกำกับ/ที่อยู่จัดส่ง+ใบกำกับ (ข้อความที่อยู่ประกอบที่เซิร์ฟเวอร์) · `PUT portal/me/profile` (ตัวตรวจเดียว `Helpers/StorefrontMemberProfile` ·
+เบอร์ normalize กลาง · เลขภาษี mod-11 · สาขา 5 หลัก · audit chain ชื่อช่อง) · ช่องเดิมของ `SiteCustomer` + `SiteCustomerAddress` (ไม่มี migration) · ไม่แตะผู้ติดต่อ ERP ·
+หน้าเว็บเติมฟอร์มจอง/คลาส/เช็กเอาต์/ที่พัก/ติดต่อจากโปรไฟล์ตามกฎ "ห้ามใครมาก่อนชนะ" (`userTouched` · `autoSrc`) + ป้าย "ใช้ข้อมูลจากบัญชีของฉัน · แก้ไขโปรไฟล์" ·
+"บันทึกเป็นข้อมูลของฉัน" (`SaveToProfile`) บันทึกหลังรายการสำเร็จ เจ้าของ = โทเคนของเว็บนี้ (`StorefrontCustomerAuth.ProfileOwner`) · ค่าผิดรูปแบบ/บันทึกล้มบอกใน `errors` ·
+ตาข่ายเซิร์ฟเวอร์เติมชื่อ/เบอร์/อีเมลที่เว้นว่างจากโปรไฟล์ก่อนด่านฟอร์ม/ยินยอม (เช็กเอาต์ · จอง · ที่พัก) · รายงาน DSR เพิ่มชนิด/ที่อยู่หลัก ·
+เทสต์ `CmsRound216MemberProfileTests` + `Db/MemberProfileDbTests` + `tools/member_prefill_sim.js` (CMS216-01..11) · `required_call_site_check` +10 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1fd81626_
+
+_รอบ 215 ฝ่ายค้านเฟส 1 (ไม่มี blocking · แก้ S1–S4 + N1/N2/N4/N7/N11): รายการเว็บกรองตามสิทธิ์รายเว็บ (`CmsSiteScope.ListableSiteIds`) + ตัวสลับเว็บเฉพาะเว็บที่มีแท็บ ·
+?siteId=/เว็บล่าสุดที่ค้างไม่เป็นทางตัน · Newsletter นับเป็นทางรับ lead · หัวพื้นที่ทำงานวาดใหม่เมื่อสิทธิ์โหลด · เว็บล่าสุดต่อผู้ใช้ · ยืนยันก่อนทิ้งฟอร์มที่พัก ·
+sim +17 เคส/+6 negative · `required_call_site_check` +6 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
+_รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ — ผู้ประสานงานอนุมัติข้อเสนอ): (1) หลักฐานยอมรับนโยบายแพลตฟอร์มเข้า DSR — รายงานเข้าถึง/ไฟล์โอนย้ายมี `PolicyAcceptances` + ผลตรวจรายแถว ·
+ลบตามคำขอ = legal hold (อีเมลนิรนาม · ล้าง IP/UA · `PseudonymisedAt`) · `PdpaRetentionPurgeJob` ลบจริงเมื่อพ้น 10 ปีหลังลบ (`Helpers/PlatformPolicyAcceptanceRules`) ·
+RoPA ระดับแพลตฟอร์มไม่สร้าง (ตาราง RoPA เป็นของ tenant — บันทึกในนโยบายแพลตฟอร์มแทน) · (2) `PdpaConsentEvidence` สูตร v2 แบบ AuditHashChain v2 (เวลา UTC ไมโครวินาที ·
+ป้าย "v2:" · v1 ตรวจไม่ได้ = `LegacyUnverifiable` ไม่ใช่ผ่าน) ใช้กับตอนสมัคร/แถบยอมรับ/ฟอร์มเว็บร้าน · `PlatformPolicyAcceptances` เก็บ `VersionShown`/`UserAgent` ให้ตรวจจากแถวได้ ·
+เทสต์ `PdpaConsentEvidenceV2Tests` + Db round-trip (เขียน → อ่านกลับ → ตรวจผ่าน · แก้ในฐาน ⇒ ไม่ผ่าน) ใน `Db/LegalDocumentDbTests` · TEST_PLAN LEGAL214-22..27 ·
+`required_call_site_check` +4 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 4dcc6f06_
+
+_รอบ 214 ฝ่ายค้าน (ฎ) (ไม่มีข้อ blocking · คำตัดสินข้อ 173 ฏ): (S1) ลบตามคำขอทำไม่ให้ระบุตัวต้นฉบับใน `PdpaConsentRecords` ระดับแพลตฟอร์มด้วย (คงแถว · `PseudonymisedAt`) +
+ลบจริงพ้น 10 ปีกติกาเดียวกัน · (S2) รวมแถว soft-delete (`IgnoreQueryFilters`) · (S3) DSR ของบริษัทไม่ส่ง IP/UA ของหลักฐานยอมรับนโยบาย · เจ้าของดูเองที่ `GET /api/legal/my-data` ·
+(S4) รายงานลูกค้าเว็บมีผลตรวจหลักฐานรายแถว · (N1) เวอร์ชันที่เห็นว่าง = ฉบับปัจจุบัน · (N2) `PdpaConsentRecords.EvidenceSource` (system/staff) · (N3) ป้าย v2 ไม่สนตัวพิมพ์ ·
+เทสต์ `PdpaConsentEvidenceV2Tests` +2 · `Db/LegalDocumentDbTests` +1 · TEST_PLAN LEGAL214-28..31 · `required_call_site_check` +2 กติกา/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 30d0b7bc_
+
+_รอบ 217 ฝ่ายค้าน (ไม่มี blocking · แก้ครบ S1–S6 + ข้อสังเกต 1/3/6/9): (S1) ด่านซ้ำเทียบช่วง/จำนวนคน/ผู้ให้บริการ · ปุ่ม "จองเพิ่มอีกที่" บนหน้าผล · พนักงาน 409 + เลขที่ ·
+(S2) in-flight ตัดสินก่อนเทียบเนื้อ + multipart ไม่รวม boundary · (S3) Notify*CreatedAsync ไม่กลืนข้อยกเว้น ⇒ คิวลองใหม่จริง · (S4) ยกเลิก/คืนเงินก่อนถึงคิว ⇒ ไม่ส่ง + `Note` ·
+(S5) ยึด InFlight ค้าง > 2 นาที แบบมีเงื่อนไข · (S6) ลายนิ้วมือ HMAC (กุญแจลูกจาก Jwt:Secret · fail-fast) + เส้นรหัสผ่าน/โทเคนไม่เข้าระบบคีย์ + หน้าสมัครไม่ส่งคีย์ ·
+(1) ไม่เก็บ 200 success:false · (3) อายุแถว/ล้างแถวคำนวณใน SQL · (6) ธุรกรรมเดียวของออเดอร์ + คิวใน SaveChanges แรก · (9) บันทึกรับเงินหลังบ้านส่งคีย์ ·
+เทสต์ SUB-16..27 · required_call_site_check แก้/เพิ่มกติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a7fa9ea5_
+
+_รอบ 215 เฟส 2 (2026-10-30 · คำตัดสินข้อ 176 ข): ค่าเว็บ "ลูกค้าเลือกผู้ให้บริการได้ไหม" (`SiteBookingSettings.DefaultResourceMode` · บริการ null = ตามค่าเว็บ ·
+ตัวตัดสินเดียว `BookingProviderAllocation.EffectiveMode` · migration ไม่แตะค่าเดิม · เว็บใหม่ CustomerChoice / คลินิก-บริการวิชาชีพ Auto) + ศูนย์ "ตั้งค่าเว็บ" (`cms-site-settings.html`)
+พร้อมการ์ด 🏢 ค่าระดับบริษัท · แจ้งลูกค้ารายเว็บใช้ได้ทุกประเภทเว็บ (ย้ายจากตั้งค่าร้านค้า) · กลุ่มชำระเงินเป็นที่ว่างให้รอบ 218 (`CmsSiteSettingsExt.payment`) · cms-edit มีหัวพื้นที่ทำงาน ·
+เทสต์ `BookingRound215ProviderDefaultTests` · `required_call_site_check` +6 · sim +3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 639a0e1a · 2e0aee49 · c7fab68c (+ คอมมิตเอกสารตามหลัง)_
+
+_รอบ 216 ฝ่ายค้าน (ไม่ blocking · คำตัดสินข้อ 174 ภาคผนวก): (S1) บันทึกจากฟอร์มที่พัก (ไม่มีช่องสาขา) ไม่รีเซ็ตสาขา 00003→00000 เมื่อเลขภาษีเดิม ·
+(S2) ชื่อ/เบอร์บนเช็กเอาต์ = ผู้รับของที่อยู่จัดส่ง (ไม่ทับชื่อ/เบอร์บัญชี) · ฟอร์มจอง/ที่พักเติมเฉพาะช่องที่บัญชียังว่าง · ไม่ติ๊กช่องขอบันทึกให้เอง + ข้อความบอกสิ่งที่บันทึก ·
+(S3) ธง `ContactFromProfile` — เซิร์ฟเวอร์เติมช่องว่างจากโปรไฟล์เฉพาะเมื่อหน้าเว็บยืนยัน + สมาชิกในโทเคนของเว็บนี้ (`StorefrontCustomerAuth.FillFromProfile`) ·
+ที่อยู่หลักต่อชนิดแถวเดียว (`Helpers/MemberProfileMigration` ล้างซ้ำ + partial unique index · ธุรกรรมสองจังหวะ) · แถว Both · ล้างคอลัมน์โครงเมื่อบรรทัดที่อยู่เปลี่ยน ·
+`portal/me` คืนเบอร์ normalize แล้ว + เทียบหลัง normalize ทั้งสองฝั่ง (ไม่มี "บันทึกแล้ว" ปลอม) · ผลการบันทึกเป็นข้อความจากเซิร์ฟเวอร์ (`SaveNote(saved, skipped)`) ·
+ฟอร์มติดต่อไม่เติมบริษัท/เลขภาษี/ช่องซ่อน · เทสต์ CMS216-13..19 · `member_prefill_sim` negative 6 ตัว · `required_call_site_check` +6 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit c93341cc_
+
+_รอบ 216 ฝ่ายค้าน (ต่อ · ความเสี่ยงค้างข้อ 3 ของผู้ประสานงาน): ทางเขียนที่อยู่หลักทุกทางไม่ชน partial unique index ใหม่ — ตัวกลาง `Helpers/CustomerAddressDefaults`
+(ล็อกแถวลูกค้า `FOR UPDATE` + ปลดแถวหลักเดิมด้วย UPDATE ตรงถึงฐานก่อน INSERT) · `CmsCustomerService.AddAddressAsync` (พนักงาน) ใช้ตัวกลางในธุรกรรม + กรองบริษัท/เว็บ (เดิมกรองแค่ customerId) ·
+`ApplyProfileAsync` ล็อกแถวลูกค้าก่อน · Db test รันคำสั่ง `MemberProfileMigration` ในฐานทดสอบเพื่อเดินบนด่านจริง (CMS216-20) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d0239edd_
+_รอบ 215 เฟส 2 ฝ่ายค้าน (ไม่มี blocking · แก้ S1–S4 + โน้ต): (S1) `BookingProviderAllocation.Enabled` นับค่าเว็บโหมดผู้ให้บริการ (≠ None) เป็นเจตนาเปิด —
+เว็บใหม่ไม่ถูกอนุมานเป็นปิด · cms-edit ส่ง `providerAllocationEnabled` เฉพาะเมื่อกดสวิตช์ · ยังไม่มีผู้ให้บริการ ⇒ ตัวอย่างบอกทางไปเพิ่ม (`NoProvidersYetNote` · `ActiveProviderCount`) ·
+(S2) ตัวอย่างบริการ (`CmsBookingServiceSeeder.Sample.ResourceMode`) ไม่ตั้ง = ตามค่าเว็บ · ข้อความศูนย์ตั้งค่าเป็นกลาง · (S3) `Enum.IsDefined` ของค่าเว็บ ·
+(S4) ผู้มีสิทธิ์ตั้งค่าร้านแต่ไม่มีสิทธิ์ cms-sites ยังตั้งแจ้งลูกค้ารายเว็บที่ตั้งค่าร้านค้าได้ · PUT booking/settings ช่องตัวเลข null = คงค่าเดิม (ศูนย์ส่งเฉพาะช่องที่แก้) ·
+ลิงก์ในศูนย์กรองตามสิทธิ์ + วาดใหม่เมื่อสิทธิ์โหลด · แท็บ "ตั้งค่าเว็บ" เป็นแท็บปัจจุบันบนหน้าตั้งค่าร้าน/ที่พัก · "ใช้ตามค่าเว็บ" เขียน audit chain พร้อมโหมดเดิมรายบริการ ·
+คำตัดสิน: คลาส — บริการตามค่าเว็บที่ค่าเว็บ ≠ None ⇒ รอบคลาสใช้ "ระบบจัดให้" (ครูของรอบ · `ClassScheduleGenerator.RulesFor`) ลูกค้าไม่เลือกเอง ไม่ว่าค่าเว็บเป็นอะไร ·
+ผู้เรียก API เดิมที่ไม่ส่ง `resourceMode` = None ตามเดิม (ไม่เปลี่ยนสัญญา) · เทสต์ +4 · required_call_site_check +1/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit faa61c71_
+
+_รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ — ปิดงานค้าง): หน้า `/pages/my-data.html` + เมนูผู้ใช้ "ข้อมูลส่วนบุคคลของฉัน" (แสดง/ดาวน์โหลดหลักฐานยอมรับนโยบาย · สถานะคำขอลบ) ·
+คำขอลบระดับแพลตฟอร์มที่ผู้ใช้ยื่นเอง (`PlatformErasureRequests` · `POST /api/legal/my-data/erase-request` · ค้างฉบับเดียว · วันละครั้ง · SLA 30 วัน · กติกา `Helpers/PlatformErasureRequestPolicy`) ·
+SystemAdmin ดำเนินการ/ปฏิเสธที่ `/admin/legal.html` (`AdminPlatformErasureController`) → แกนลบตัวเดียว `PdpaService.AnonymiseUserCoreAsync` (แยกออกจาก `ApplyErasureAsync` — DSR ของบริษัทใช้ตัวเดียวกัน) + audit + อีเมลแจ้งผล ·
+เทสต์ `PlatformErasureRequestTests` + Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · TEST_PLAN LEGAL214-32..35 · `required_call_site_check` +4 กติกา/แก้ 1 ·
+`write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 7f8f0acb_
+_รอบ 218 (คำตัดสินข้อ 177 · เจ้าของ: "ติ๊ก รับชำระมัดจำออนไลน์ แล้วตอนจองไม่มีให้ระบุเรื่องโอนมัดจำ · ต้องตั้งได้ว่าบังคับมัดจำ/จ่ายเต็มก่อน/ปิด · ตั้งเลขบัญชีหรือแนบ QR ได้" ·
+`erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`): ต้นเหตุ = ช่องติ๊กเดิมเปิดแค่ช่องทาง gateway แต่ยอดมาจากชนิด PrePayment + ช่องมัดจำของบริการ (ไม่ตรง ⇒ ยอด 0 เงียบ) ·
+ไม่มีช่องโอน/QR/สลิปของการจอง · ไม่บอกยอดก่อนกดจอง. (1) ตัวตัดสินเดียว `Helpers/BookingPaymentPolicy` (บริการ ?? เว็บ ?? แบบเดิม · ปิด/มัดจำบังคับ/มัดจำไม่บังคับ/เต็มยอด ·
+min/max · กำหนดเวลา · เก็บได้เฉพาะ PrePayment) + `Helpers/BookingPaymentChannels` + `Helpers/BookingSlipRule` · คอลัมน์ `Helpers/BookingPaymentMigration` (NULL = เดิม) ·
+(2) `CreateBookingAsync` ยอด/รอยืนยัน/ถือรอบ · `BookingReminderJob` ยกเลิกเมื่อพ้นกำหนด · (3) สลิป: `BookingSlipService` → PaymentIntent manual-slip → ร้านยืนยัน/ปฏิเสธ
+(`CmsBookingPaymentController` · ลูกค้า `CmsBookingPaymentPublicController`) · (4) หน้าเว็บ: ยอดก่อนกดจอง + กล่องชำระ (`js/storefront-booking-pay.js`) · หมวด "💳 การชำระเงินของการจอง"
++ ฟอร์มบริการ "ตามค่าเว็บ/กำหนดเอง" + ตรวจสลิป (`js/booking-payment-admin.js`) · (5) `SitePaymentGateway.BankBranch` + echo `BankAccountNumber/PromptPayQrUrl` กลับ (เดิมเปิดแก้ที่ cms-orders
+แล้วเลขบัญชีว่าง ⇒ บันทึกซ้ำล้างเงียบ) · เทสต์ `BookingPaymentPolicyTests` (+CRC16 QR พร้อมเพย์) · `Db/BookingPaymentPolicyDbTests` (TEST_PLAN BKPAY-01..24) · `required_call_site_check` +14 กติกา ·
+`write_permission_gate_check` +CmsBookingPaymentController (WATCHED) · baseline +1 (แนบสลิปของแขก — โทเคน) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fe1a9f0e · c62e1809 · 03191135 · e98ca3e9 · 7cf933b1_
+
+_รอบ 218 ฝ่ายค้าน (คำตัดสินข้อ 177 ส่วนต่อ · `80483fd5` · ยังไม่ได้คอมไพล์ในเครื่องนี้): B1 ค่าตั้งเขียนเฉพาะแถวโอน/พร้อมเพย์ + ล้างต้องยืนยัน ·
+B2 วันรับเงินของสลิป = วันที่โอน (`PaymentIntent.PaidAt` · `ProviderCharge.PaidAtUtc`) + วิธีชำระ = โอนเงิน · S1 สลิปที่ถูกแทนปิด Failed + ยืนยันด้วยมือต้องรอตรวจ ·
+S2 ยกเลิก/ไม่มาปิดสลิป · S3 ล็อกเดียว + บันทึก ≤ 300 · S4 จ่ายแล้วบอกก่อนเก็บไฟล์ + ยอดเปลี่ยน ⇒ 409 + อ่านไฟล์ตรงการจอง · S5 คิวสำรอง → `OnSeat` ·
+S6 งานยกเลิกข้ามรายการชำระออนไลน์ที่ยังไม่หมดอายุ · บริการเก็บเงินเองต้องมีช่องทาง/ยอด · PDPA ลบสลิปปฏิเสธ 90 วัน (`BookingSlipRetention`) ·
+เทสต์ `BookingPaymentPolicyTests` + `BookingPaymentPolicyDbTests` (ทั้งสองทิศ) · `required_call_site_check` +16 กฎ · รวม 215 เฟส 2: ฟอร์มค่าตั้งการชำระของการจองย้ายไป "ตั้งค่าเว็บ › การชำระเงิน" (`CmsSiteSettingsExt.payment` ใน `booking-payment-admin.js` · cms-edit เหลือกล่อง "ย้ายแล้ว" · ฟอร์มบริการยังตั้งทับได้)_
+
+_รอบ 218 ฝ่ายค้านรอบ 2 (คำตัดสินข้อ 177 ส่วนต่อ 2 · `6e3ba749` · ยังไม่ได้คอมไพล์ในเครื่องนี้): K1 CS0234 (ผู้ประสานงานแก้บน branch แล้ว — คงรูปอ้างเต็ม) ·
+K2 ยืนยันด้วยมือของสลิปการจองที่หน้ารายการชำระ ⇒ 409 ไปหน้าการจอง + `ConfirmedBy` ตัด 200 ที่จุดเขียนเดียว · F1 งานล้างเงื่อนไขทั้งหมดใน SQL + `!IsDeleted` ·
+F2 สลิปเก็บ 6 ปีทุกใบ (ยกเลิกการลบ 90 วัน) + แนบไม่สำเร็จลบไฟล์ทันที · F3 คิวสำรองที่พนักงานสร้างไม่ถูกบังคับรอชำระ · F4 งวดปิดตรวจก่อนรับเงิน ·
+F5 หมายเหตุเตือนจ่ายซ้ำ · F6 ปิดรายการชำระไม่ได้ ⇒ หมายเหตุบนการจอง · โน้ต: ปิดใช้/แก้ชื่อบริการไม่ถูกขัง · ปิดช่องทางเว็บที่ทำให้บริการแตก ⇒ 409 พร้อมรายชื่อ ·
+คิวสำรองใช้ยอดค้าง · หมายเหตุยืนยันหลังรับเงิน · เทสต์ pure 9 + Db 5 (`F1`/`F3`/`F4`/`F5`/`F6`) · `required_call_site_check` +10 กฎ_
+
+
+_รอบ 214 ฝ่ายค้าน (ฐ) — 2 blocking + 5 (คำตัดสินข้อ 173 ฑ): (B1) audit อัตโนมัติไม่เก็บค่า PII รายช่องต่อ entity (`AuditRedaction.PiiFields` · `Value(entityType, …)`) ·
+(B2) ลบเจ้าของบริษัทคนสุดท้าย/เจ้าของแพ็กเกจบัญชี = 409 พร้อมรายการ (`PdpaService.ErasureOwnershipBlockersAsync` · `LastOwnerGuard`) ทั้งคำขอแพลตฟอร์มและ DSR บริษัท + แสดงล่วงหน้า ·
+รายการบริษัทไม่มีเจ้าของนับเฉพาะเจ้าของที่ยังทำงานได้ · (S1) แกนลบ IgnoreQueryFilters · ไม่พบ = 404 ไม่ปิดคำขอ · (S2) ห้ามดำเนินการคำขอตัวเอง/ลบแอดมินแพลตฟอร์ม ·
+(S3) ล้างลายมือชื่อ + คำขอลบทุกฉบับ · ข้อความอีเมล/หน้าแก้ตามจริง · (S4) `OnTokenValidated` + `Helpers/TokenUserGate` · (S5) อีเมลแจ้งผล = อีเมลปัจจุบัน ·
+GET my-data ปฏิเสธคีย์ API · เวลาบนหน้า UTC→ไทย · คอมเมนต์ DbSet แยกบรรทัด · เทสต์ +3 pure +1 Db (+ตรวจ audit ไม่มี PII ใน Db เดิม) · TEST_PLAN LEGAL214-36..41 ·
+`required_call_site_check` +4/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 16ffaccc_
+
+_รอบ 219 เฟส 0 (2026-10-30 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` + `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2) — อุดรั่วเงินค่าบริการ NextAcc:
+ตัวตัดสินเดียว `Helpers/PlatformRevenueSource` ที่ StartAsync/RecordExternalSuccessAsync/DispatchSucceededAsync + งานพนักงานทุกตัวใน `PaymentGatewayController` (ร้านยืนยัน/ส่งต่อ/คืนเงินค่าบริการไม่ได้ ·
+โหมดทดสอบไม่ให้สิทธิ์) · `PaymentIntent.PayerCompanyId` · handler ค่าแพ็กเกจ/ส่วนเสริมกรองบริษัทผู้จ่าย + ยอดตรงราคาเซิร์ฟเวอร์ · ปิด "ชำระออนไลน์" ของส่วนเสริม (เคยเข้า gateway ของร้าน) + วิธีโอนของ NextAcc ที่แอดมินตั้ง ·
+`Helpers/PlatformPlanPricing` ตัวตั้งราคาเดียว (ยุบ switch 5 สำเนา) · แจ้งชำระ = ยอดของเซิร์ฟเวอร์ (409 เมื่อไม่ตรง) + ต้องเป็นเจ้าของ · อัปเกรด/แปลงทดลองใช้ = จ่ายก่อนเปิด · ดาวน์เกรดมีผลวันครบรอบ ·
+แอดมินเปลี่ยนทันที + audit chain · ส่วนเสริมค้างชำระผ่อนผัน 7 วันแล้วระงับ · ค่าเหมาไม่เก็บซ้อนงวดที่จ่ายล่วงหน้า · BillingAccount ค่าตั้งต้น Postpaid · `SecretProtector`/`Program.cs`/`CmsCommerceService` ใช้
+`Helpers/EncryptionKeyResolver` (production ไม่มีคีย์/dev key ⇒ boot ไม่ขึ้น) · รายงานอ่านอย่างเดียว 3 ชุดที่ `/admin/revenue.html` · migration `Helpers/PlatformBillingPhase0Migration` (ADD COLUMN ล้วน ไม่แก้แถวเดิม) ·
+เทสต์ `PlatformBillingPhase0Tests` + Db `PlatformBillingPhase0DbTests` · TEST_PLAN PB219-01..13 · `required_call_site_check` +21 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit dec90eff_
+_รอบ 214 ฝ่ายค้าน (ฑ) รอบสอง — 1 blocking + should-fix (คำตัดสินข้อ 173 ฒ): **แก้คำกล่าวอ้างของรอบก่อน** — "(B1) audit ไม่เก็บค่า PII รายช่อง" ไม่ครอบผู้ติดต่อ/สแกน OCR และ
+`AuditMiddleware`/แถว audit ที่เขียนเองยังเก็บอีเมล ⇒ (B1-a) สแกน OCR เข้า `PiiFields` (รายชื่อเดียวกับ `OcrScanPii.PersonalDataFields`) + "ขอบเขตการลบ" บน DbContext
+(`SaveUnderErasureScopeAsync`) ทุกเส้นลบตามคำขอ: ปิดค่าข้อความทุกช่องใน audit ของการบันทึกนั้น (แก้ผู้ติดต่อตามปกติยังเห็นประวัติค่า) · (B1-c) ปิดช่อง PII ตอนแสดงตามชนิด entity
+(`RedactJson(json, entityType)` — แถวเก่าไม่โชว์ · hash ไม่เปลี่ยน) · (B1-b) `/api/legal/my-data*` + `/api/legal/acceptance` ไม่เก็บอีเมล/IP/UA ใน AuditMiddleware · audit เข้าดูในนามลูกค้าไม่เก็บอีเมลเป้าหมาย ·
+ข้อจำกัดที่ยังอยู่บันทึกใน DECISIONS 173 ฒ · (S4-a) เข้าดูในนามลูกค้าเลือกเฉพาะบัญชี Active ไม่ถูกลบ · (S4-b) คีย์ API สวมได้เฉพาะสมาชิกที่ยังทำหน้าที่ได้ (`CompanyMembership`) +
+ลบผู้ใช้ถอดการผูกผู้ใช้ภายนอก · คีย์ API ของบริษัทคงอยู่ · (B2-a) นิยามเดียว `OwnerlessCompanyRepair.ActingOwner` (ลบ `HasOwner`) · (B2-b) เจ้าของถูกระงับ ⇒ แอดมินตัดสิน ไม่ตั้งเอง ·
+(B2-c) ป้าย "ติดต่อแอดมินให้ยกเลิกแพ็กเกจ" + `POST /api/admin/platform-erasure-requests/{id}/cancel-account-plans` (เฉพาะแพ็กเกจไม่มีบริษัทผูก · audit) + ปุ่มบน `/admin/legal.html` ·
+`OnTokenValidated` ผู้เรียกตัดการเชื่อมต่อ = จบเงียบ · **ผลข้างเคียงที่ตั้งใจของ (ฑ) S4: พนักงานที่ payroll ตั้งลาออก (Inactive) เสีย access ทันทีที่คำขอถัดไป** (เดิมใช้ token ได้จนหมดอายุ) ·
+SignalR socket ที่เปิดอยู่ก่อนปิดบัญชีใช้ต่อได้จนเชื่อมต่อใหม่ · `TokenUserGate.RejectMessage` ไปที่ log ไม่ได้แสดงบนหน้า · เทสต์ +7 pure (`ErasureAuditScopeTests`) +1 Db · แก้ 1 (HasOwner→ActingOwner) ·
+TEST_PLAN LEGAL214-42..48 · `required_call_site_check` +12/แก้ 4 · **CI Db แดง 2 ตัวของ (ฑ)**: fixture DSR ผู้ถูกลบเป็นเจ้าของคนสุดท้าย ⇒ เพิ่มเจ้าของร่วม (ด่านเจ้าของมีเทสต์แยก) · เทสต์คำขอลบเทียบ `PiiMask` กับ JSON ที่ escape อักษรไทยเป็น \uXXXX ⇒ เทียบทั้งสองรูป (ข้อตรวจ "ชื่อไทยไม่รั่ว" เดิมผ่านเพราะเทียบผิดรูป — แก้แล้ว) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 59be01cf · 0ff4594f_
+
+
+_รอบ 219 เฟส 0 ฝ่ายค้าน (2026-10-30 · คำตัดสินข้อ 178 ภาคผนวก) — B1 อัปเกรด/ฟรีถาวรเริ่มรอบจากวันอนุมัติ (`PlatformPlanPricing.PeriodStart` · เดิมฟรีถาวร→Pro ได้ 100 ปี) ·
+B2 `SecretProtector` ถอดด้วยคีย์เดิมได้ (`EncryptionKeyResolver.LegacyCandidates`) + `SecretReprotectJob`/`SecretReprotectPass` เข้ารหัสใหม่ครั้งเดียว (JobLock · audit) · S3 ไม่ Trim คีย์ · นิพจน์คีย์ PII คงเดิม ·
+S2 ฟรีถาวร Active · S4 ทดลองใช้บัญชีครั้งเดียวต่อระดับ · S5 cascade แพลนบัญชีเฉพาะแพ็กเกจตรง · S6 รายการเก่าใต้ร้าน: แอดมินจัดการ/ร้านคืนเงินได้ · S7 addOnCodes ตามระยะผ่อนผัน ·
+S8 `PaymentIntent.IsTestMode` · S9 บล็อกดาวน์เกรดหลังออกใบแจ้งหนี้ต่ออายุ · ขยายทดลองใช้เฉพาะ Trial · วันรับเงินบีบที่เซิร์ฟเวอร์ · ป้ายปุ่มเลือกแพ็กเกจเป็นกลาง ·
+เทสต์ +7 pure/+4 Db · TEST_PLAN PB219-14..22 · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 497e69fc_
+
+_รอบ 219 เฟส 0 ฝ่ายค้านรอบ 2 (2026-10-30 · ตรวจซ้ำ 497e69fc · คำตัดสินข้อ 178 ภาคผนวกรอบ 2) — (1) `SecretReprotectPass` อ่านทีละชุด + UPDATE มีเงื่อนไขค่าเดิม (ไม่ทับความลับที่ผู้ใช้หมุนระหว่างงาน) ·
+(2) แคชคีย์ PBKDF2 ใน `EncryptionHelper.DeriveKey` (≤ 64) · (3) `PaymentIntent.IsTestMode` nullable + migration ครั้งเดียวคืน false เดิมเป็น NULL · ตัวตัดสินเดียว `Helpers/PaymentIntentTestMode` (ด่านให้สิทธิ์ + หน้าจ่ายเงิน 2 หน้า) ·
+(4) งานพนักงานบนรายการค่าบริการรวมคืนเงิน = SystemAdmin เท่านั้น · คืนเงินชนิดนี้ไม่ตั้งลูกหนี้ร้าน (`RefundSkipsStoreReceivable`) · (5) วันรับเงิน `ApprovedPaymentDate` (gateway = PaidAt · แอดมิน = ตามกรอก ปฏิเสธอนาคต/งวดปิด) ·
+(6) `tools/secret_registry_check.py` (+ self-test ใน check_all) — เพิ่ม `SitePaymentGateway` 3 ช่องในทะเบียน · `CmsCommerceService` ใช้ `EncryptionKeyResolver.CurrentOrDev` · (7) ACCOUNT_STRUCTURE §6.2b ขั้นตอน rollback ·
+S2 เปลี่ยนแพ็กเกจบนฟรีถาวรมีผลทันที · S5 IgnoreQueryFilters · S9 `RenewalInvoiceSuperseded` · ลบ `NeedsReprotect` · เทสต์ +6 pure/+3 Db (แก้ 3 pure ตามกติกาใหม่) · TEST_PLAN PB219-18 (แทน) · 23..30 ·
+**CI Db 5483434f แดง `Scheduled_downgrade_to_permanent_free_plan_stays_active`**: `ProcessExpiredSubscriptionsAsync` ใช้ ApplyTemplate (Active +100 ปี) ในหน่วยความจำ
+แต่คำค้น "หมดอายุ" กรองด้วยค่าใน DB ที่ยังไม่บันทึก แล้ว EF คืนตัวที่ track อยู่ ⇒ ตั้ง PastDue ทับ — บันทึกการเปลี่ยนแพ็กเกจก่อน + ลูปตรวจค่าปัจจุบัน (ข้ามฟรีถาวร/ยังไม่หมด) ·
+`required_call_site_check` +6 กติกา/แก้ 5 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d4119b5a_

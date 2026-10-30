@@ -239,6 +239,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
+  <script src="/js/booking-payment-admin.js"></script>
   <script>
     // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว — ที่นี่แค่มอบต่อ
     const STATUS_LABEL = Layout.ENUM_LABELS.bookingStatus;
@@ -405,7 +406,7 @@
               <td class="font-medium">${Layout.esc(b.bookingNumber || b.id.substring(0, 8))}${b.siteName ? `<div style="font-size:11px;color:var(--gray-500);font-weight:400">🌐 ${Layout.esc(b.siteName)}</div>` : ''}</td>
               <td>${Layout.esc(b.customerName || '(ไม่ระบุ)')}${b.guestPhone ? `<div style="font-size:11px;color:var(--gray-500)">📱 ${Layout.esc(b.guestPhone)}</div>` : ''}${(b.guestCount || 1) > 1 ? `<div style="font-size:11px;color:var(--gray-500)">${Number(b.guestCount)} คน</div>` : ''}</td>
               <td>${Layout.esc(b.serviceName || '-')}${b.providersLabel ? `<div style="font-size:11px;color:var(--gray-500)">👤 ${Layout.esc(b.providersLabel)}</div>` : ''}</td>
-              <td class="text-right">${money(b.totalAmount)}<div style="font-size:11px;color:${Number(b.paidAmount || 0) + 0.005 >= Number(b.totalAmount || 0) ? '#059669' : 'var(--gray-500)'}">รับแล้ว ${money(b.paidAmount)}</div></td>
+              <td class="text-right">${money(b.totalAmount)}<div style="font-size:11px;color:${Number(b.paidAmount || 0) + 0.005 >= Number(b.totalAmount || 0) ? '#059669' : 'var(--gray-500)'}">รับแล้ว ${money(b.paidAmount)}</div>${b.paymentStatusLabel ? `<div style="font-size:11px;color:var(--gray-600)">💳 ${Layout.esc(b.paymentStatusLabel)}</div>` : ''}</td>
               <td><span class="status-pill status-${Layout.esc(b.status)}">${Layout.esc(STATUS_LABEL[b.status] || b.status)}${b.waitlistPosition ? ' #' + Number(b.waitlistPosition) : ''}</span></td>
               <td class="row-actions">${quick}</td>
             </tr>`; }).join('');
@@ -506,6 +507,7 @@
               ${b.creditPassNumber ? `<div style="margin-top:6px;font-size:11px;color:#6b21a8">🎟️ ชำระด้วยบัตรคอร์ส ${Layout.esc(b.creditPassNumber)} — ไม่มีเงินต้องเก็บ · ไม่ออกเอกสารใหม่</div>` : ''}
               ${b.cancellationPolicy ? `<div style="margin-top:4px;font-size:11px;color:${b.cancellationPolicySource === 'CreditPass' ? '#6b21a8' : 'var(--gray-600)'}">นโยบายยกเลิกที่ใช้กับการจองนี้: ${Layout.esc(b.cancellationPolicy)}</div>` : ''}
               <div style="margin-top:8px;font-weight:600;font-size:12px">ประวัติรับเงิน</div>${payBlock}
+              ${window.BookingPayAdmin ? BookingPayAdmin.slipBlock(b) : ''}
               ${this._depositForm(b)}
               ${this._rescheduleForm(b)}
               ${b.publicToken ? `<div style="margin-top:6px;font-size:11px"><button class="btn btn-sm" onclick="Page.copyBookingLink('${Layout.jsArg(b.publicToken)}')">📋 คัดลอกลิงก์ลูกค้า (ใบยืนยัน / จ่ายมัดจำ / เลื่อน / ยกเลิก)</button></div>` : ''}
@@ -534,7 +536,7 @@
             <input type="number" step="0.01" min="0" id="bkPayAmount" class="form-input" style="width:120px" value="${(Number(b.depositAmount || 0) - Number(b.paidAmount || 0)).toFixed(2)}">
             <input type="date" id="bkPayDate" class="form-input" style="width:auto" value="${this._todayBkk()}">
             <input type="text" id="bkPayRef" class="form-input" style="width:150px" placeholder="อ้างอิง/เลขโอน">
-            <button class="btn btn-primary btn-sm" onclick="Page.recordPayment('${Layout.jsArg(b.id)}')">บันทึกรับเงิน</button>
+            <button class="btn btn-primary btn-sm" onclick="Page.recordPayment('${Layout.jsArg(b.id)}', this)">บันทึกรับเงิน</button>
           </div>
           <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ครบมัดจำ = ยืนยันการจอง + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน (§78/1)</div>
         </div>`;
@@ -741,14 +743,20 @@
         } catch (e) { Layout.toast('ออกใบกำกับไม่สำเร็จ: ' + e.message, 'error'); }
       },
       // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ — ตัวตัดสิน/ผลอยู่ที่เซิร์ฟเวอร์ (RecordDepositPaymentAsync)
-      async recordPayment(id) {
+      // รอบ 217 (ข้อ 175): กดซ้ำระหว่างรอ = ไม่บันทึกรับเงินซ้ำ (ล็อกปุ่ม · js/submit-once.js)
+      recordPayment(id, btn) {
+        // ฝ่ายค้านข้อสังเกต 9: ส่ง Idempotency-Key ด้วย (คีย์ต่อปุ่มของแผงที่เปิด — ลองใหม่ = คีย์เดิม · เปิดแผงใหม่ = คีย์ใหม่)
+        const key = window.SubmitOnce && btn ? SubmitOnce.key(btn) : null;
+        return window.SubmitOnce ? SubmitOnce.run(btn, () => this._recordPaymentNow(id, key), { busyText: 'กำลังบันทึก…' }) : this._recordPaymentNow(id, key);
+      },
+      async _recordPaymentNow(id, idemKey) {
         const api = Layout.api(); if (!api) return;
         const amount = Number((document.getElementById('bkPayAmount') || {}).value || 0);
         const paidOn = (document.getElementById('bkPayDate') || {}).value || null;
         const reference = ((document.getElementById('bkPayRef') || {}).value || '').trim() || null;
         if (!(amount > 0)) { Layout.toast('ระบุยอดรับเงิน', 'error'); return; }
         try {
-          const res = await api.cmsRecordBookingPayment(this._sid(), id, { amount, paidAt: paidOn ? paidOn + 'T12:00:00Z' : null, reference });
+          const res = await api.cmsRecordBookingPayment(this._sid(), id, { amount, paidAt: paidOn ? paidOn + 'T12:00:00Z' : null, reference }, idemKey);
           (res?.data?.erpNotices || []).forEach(n => Layout.toast(n, 'warning', 15000));
           Layout.toast('บันทึกรับเงินแล้ว');
           await this.viewBooking(id);

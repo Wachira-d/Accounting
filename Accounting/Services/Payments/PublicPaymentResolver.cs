@@ -146,6 +146,7 @@ public class PublicPaymentResolver : IPublicPaymentResolver
             {
                 x.Id, x.BookingNumber, x.Status, x.DepositAmount, x.PaidAmount, x.GuestEmail, x.GuestPhone,
                 x.BookingService.BookingType,
+                HasSlip = x.SlipUploadedAt != null && x.SlipAttachmentId != null,   // รอบ 218: สลิปรอร้านตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว
                 CustomerEmail = x.Customer != null ? x.Customer.Email : null,
                 CustomerPhone = x.Customer != null ? x.Customer.Phone : null,
             })
@@ -156,7 +157,7 @@ public class PublicPaymentResolver : IPublicPaymentResolver
             .Select(s => (bool?)s.OnlineDepositEnabled).FirstOrDefaultAsync(ct) ?? false;
         // ยอดจากเซิร์ฟเวอร์เท่านั้น (ตัวตัดสินเดียว CmsBookingOnlinePayment) — ไซต์ไม่เปิด ⇒ 0 + เหตุผล
         var due = CmsBookingOnlinePayment.DepositDue(b.BookingType, b.Status, b.DepositAmount, b.PaidAmount);
-        var blocked = CmsBookingOnlinePayment.BlockedNote(onlineEnabled, b.BookingType, b.Status, due);
+        var blocked = CmsBookingOnlinePayment.BlockedNote(onlineEnabled, b.BookingType, b.Status, due, slipPending: b.HasSlip);
         return new PublicPayTarget(
             PaymentSourceKind.SiteBooking, b.Id, siteId, blocked == null ? due : 0m,
             $"มัดจำการจอง {b.BookingNumber}", b.CustomerEmail ?? b.GuestEmail, b.CustomerPhone ?? b.GuestPhone, b.BookingNumber,

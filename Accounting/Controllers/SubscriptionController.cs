@@ -156,25 +156,27 @@ public class SubscriptionController : ControllerBase
     /// <summary>
     /// แปลง Trial → Paid
     /// </summary>
+    /// <remarks>รอบ 219 เฟส 0 (G-0): ไม่เปิดแพ็กเกจทันทีอีกต่อไป — คืนรายการชำระที่ต้องโอน (หรือการเปลี่ยนที่รอมีผล) + ข้อความให้หน้าเว็บแสดงตรง ๆ</remarks>
     [HttpPost("{companyId:guid}/convert")]
-    public async Task<ActionResult<ApiResponse<SubscriptionResponse>>> ConvertTrial(Guid companyId, [FromBody] ConvertTrialRequest request)
+    public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ConvertTrial(Guid companyId, [FromBody] ConvertTrialRequest request)
     {
         if (await RequireOwnerAsync(companyId, "อัปเกรดแพ็กเกจ") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ConvertTrialAsync(companyId, request, userId);
-        return Ok(new ApiResponse<SubscriptionResponse>(true, result, "อัพเกรดสำเร็จ"));
+        return Ok(new ApiResponse<PlanPurchaseResponse>(true, result, result.Message));
     }
 
     /// <summary>
     /// เปลี่ยน Plan
     /// </summary>
+    /// <remarks>รอบ 219 เฟส 0 (G-0): อัปเกรด = รายการชำระรอเงินเข้า · ดาวน์เกรด/เปลี่ยนรอบ = มีผลวันครบรอบ</remarks>
     [HttpPut("{companyId:guid}/plan")]
-    public async Task<ActionResult<ApiResponse<SubscriptionResponse>>> ChangePlan(Guid companyId, [FromBody] ChangeSubscriptionRequest request)
+    public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ChangePlan(Guid companyId, [FromBody] ChangeSubscriptionRequest request)
     {
         if (await RequireOwnerAsync(companyId, "เปลี่ยนแพ็กเกจ") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.ChangeSubscriptionAsync(companyId, request, userId);
-        return Ok(new ApiResponse<SubscriptionResponse>(true, result, "เปลี่ยน plan สำเร็จ"));
+        return Ok(new ApiResponse<PlanPurchaseResponse>(true, result, result.Message));
     }
 
     /// <summary>
@@ -242,6 +244,8 @@ public class SubscriptionController : ControllerBase
     public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> SubmitPayment(
         Guid companyId, [FromBody] SubmitSubscriptionPaymentRequest request)
     {
+        // รอบ 219 เฟส 0 (G-4): แจ้งชำระค่าแพ็กเกจ = ขอแพ็กเกจ/ระยะเวลา ⇒ ด่านเจ้าของเดียวกับอัปเกรด (เดิมสมาชิกคนไหนก็ได้) · ยอดคำนวณที่เซิร์ฟเวอร์
+        if (await RequireOwnerAsync(companyId, "แจ้งชำระค่าแพ็กเกจ") is { } deny) return deny;
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _subscriptionService.SubmitPaymentAsync(companyId, request, userId);
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, "ส่งข้อมูลการชำระเงินสำเร็จ รอการตรวจสอบ"));

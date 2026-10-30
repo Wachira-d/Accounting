@@ -64,6 +64,15 @@ public record ChangeSubscriptionRequest(
     SubscriptionPlan NewPlan,
     BillingCycle? NewBillingCycle = null);
 
+/// <summary>รอบ 219 เฟส 0 (G-0 · คำตัดสินข้อ 178): ผลของการ "เลือกแพ็กเกจ" ของผู้เช่า — <b>ไม่เปิดแพ็กเกจจ่ายเงินทันที</b> ·
+/// อัปเกรด/แปลงจากทดลองใช้ = สร้างรายการชำระ (<paramref name="Payment"/>) รอเงินเข้า/แอดมินยืนยัน · ดาวน์เกรด/เปลี่ยนรอบ = รอมีผลวันครบรอบ
+/// (<paramref name="ScheduledEffectiveAt"/>) · <paramref name="Message"/> = ข้อความที่หน้าเว็บแสดงตรง ๆ</summary>
+public record PlanPurchaseResponse(
+    SubscriptionResponse Subscription,
+    SubscriptionPaymentResponse? Payment,
+    string Message,
+    DateTime? ScheduledEffectiveAt = null);
+
 public record SubscriptionResponse(
     Guid Id,
     Guid CompanyId,
@@ -93,7 +102,11 @@ public record SubscriptionResponse(
     string? FeatureGateMode = null,
     /// <summary>รอบ 200 ทีม Z (ฝ่ายค้านรอบสอง S2-3): หน้า → ฟีเจอร์ของ route ข้อมูลหลัก (<c>SubscriptionGatePolicy.PageMainFeatures</c>) — ให้
     /// <c>Layout.currentPageFeature()</c> ตรงกับสิ่งที่เซิร์ฟเวอร์ gate จริง (หน้าที่ไม่อยู่ในนี้ = ฟีเจอร์ของเมนู) · <c>null</c> = ไม่รู้</summary>
-    IReadOnlyDictionary<string, string?>? PageFeatures = null);
+    IReadOnlyDictionary<string, string?>? PageFeatures = null,
+    /// <summary>รอบ 219 เฟส 0: ดาวน์เกรด/เปลี่ยนรอบบิลที่รอมีผลวันครบรอบ (echo ของ <c>Subscription.Scheduled*</c>)</summary>
+    SubscriptionPlan? ScheduledPlan = null,
+    BillingCycle? ScheduledBillingCycle = null,
+    DateTime? ScheduledPlanEffectiveAt = null);
 
 public record UsageLimits(
     int MaxUsers,

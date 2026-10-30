@@ -361,6 +361,8 @@ public class SitePaymentGateway : TenantEntity
     public string? BankName { get; set; }
     public string? BankAccountNumber { get; set; }
     public string? BankAccountName { get; set; }
+    /// <summary>รอบ 218: สาขาธนาคาร (แสดงในกล่องโอนของการจอง/คำสั่งซื้อ) · null = ไม่ระบุ</summary>
+    public string? BankBranch { get; set; }
 
     public bool IsTestMode { get; set; } = true;
     public bool IsActive { get; set; } = true;

@@ -1,3 +1,5 @@
+using System.Linq.Expressions;
+using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
@@ -27,19 +29,26 @@ public static class OwnerlessCompanyRepair
 
     /// <param name="IsPlatformAdmin">บัญชีเป็นแอดมินแพลตฟอร์ม (<c>User.IsSystemAdmin</c>)</param>
     /// <param name="IsActive">บัญชีใช้งานได้ (<c>UserStatus.Active</c>)</param>
-    public sealed record Member(Guid UserId, UserRole Role, DateTime JoinedAt, bool IsPlatformAdmin = false, bool IsActive = true);
+    /// <param name="IsSuspended">บัญชีถูกระงับชั่วคราว (<c>UserStatus.Suspended</c> · ไม่ถูกลบ) — ฝ่ายค้านรอบ 214 (ฑ-2) B2-b</param>
+    public sealed record Member(Guid UserId, UserRole Role, DateTime JoinedAt, bool IsPlatformAdmin = false, bool IsActive = true, bool IsSuspended = false);
 
     public sealed record Proposal(Kind Kind, Guid? UserId, string Reason, IReadOnlyList<Guid> Candidates);
 
     /// <summary>บทบาทที่ผ่านด่านเจ้าของ — นิยามของ "บริษัทมีเจ้าของ" (กล่องแอดมิน · ตัวซ่อม)</summary>
     private static bool IsOwnerRole(UserRole role) => role is UserRole.Owner or UserRole.SystemAdmin;
 
-    public static bool HasOwner(IEnumerable<UserRole> roles) => roles.Any(IsOwnerRole);
+
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B2-a: <b>นิยามเดียว</b>ของ "เจ้าของที่ยังทำหน้าที่ได้" (บทบาทเจ้าของ · บัญชีไม่ถูกลบ · ไม่ Inactive/Suspended —
+    /// เงื่อนไขเดียวกับ <c>CompanyMembership.CanAct</c>) เป็น expression ที่ EF แปลได้ — ใช้ร่วม: รายการบริษัทไม่มีเจ้าของ · assign-owner ·
+    /// สร้างผู้ใช้เป็น Owner · ด่านเจ้าของคนสุดท้ายของการลบ (<c>PdpaService.ErasureOwnershipBlockersAsync</c> — กรองแอดมินแพลตฟอร์มเพิ่ม) ห้ามเขียนสำเนา inline</summary>
+    public static readonly Expression<Func<CompanyUser, bool>> ActingOwner = cu =>
+        (cu.Role == UserRole.Owner || cu.Role == UserRole.SystemAdmin)
+        && !cu.User.IsDeleted && cu.User.Status != UserStatus.Inactive && cu.User.Status != UserStatus.Suspended;
 
     /// <summary>ผู้ใช้นี้เป็นฝั่งแพลตฟอร์ม (บทบาท support หรือบัญชีแอดมินแพลตฟอร์ม) — ห้ามเป็นเจ้าของบริษัทลูกค้า เว้นแต่เป็นผู้สร้าง</summary>
     public static bool IsPlatformSide(UserRole role, bool isPlatformAdmin) => role == UserRole.PlatformSupport || isPlatformAdmin;
 
-    /// <summary>ตัดสินข้อเสนอเจ้าของของบริษัทหนึ่ง (ต้องเรียกเฉพาะบริษัทที่ <see cref="HasOwner"/> = false)</summary>
+    /// <summary>ตัดสินข้อเสนอเจ้าของของบริษัทหนึ่ง (ต้องเรียกเฉพาะบริษัทที่ไม่มีสมาชิกผ่าน <see cref="ActingOwner"/>)</summary>
     public static Proposal Decide(string? createdBy, IReadOnlyList<Member> members)
     {
         Guid? creatorId = Guid.TryParse(createdBy, out var g) && g != Guid.Empty ? g : null;
@@ -49,6 +58,11 @@ public static class OwnerlessCompanyRepair
         var cands = new List<Guid>();
         if (creator != null) cands.Add(creator.UserId);
         cands.AddRange(customers);
+
+        // ฝ่ายค้านรอบ 214 (ฑ-2) B2-b: เจ้าของเดิมแค่ "ถูกระงับ" (ไม่ใช่ปิด/ลบ) — ระงับคืนได้ ⇒ ระบบไม่ตั้งเจ้าของใหม่เอง แอดมินตัดสิน
+        if (members.Any(m => IsOwnerRole(m.Role) && m.IsSuspended))
+            return new(Kind.NeedsAdmin, null,
+                "เจ้าของเดิมถูกระงับบัญชีชั่วคราว (ไม่ได้ปิด/ลบ) — ระบบไม่ตั้งเจ้าของใหม่เอง: ปลดระงับเจ้าของเดิม หรือเลือกเจ้าของใหม่", cands);
 
         if (creator != null && creator.IsActive && creator.Role != UserRole.PlatformSupport)
             return new(Kind.AutoPromote, creator.UserId,

@@ -216,9 +216,9 @@ public class GatewayRefundService : IGatewayRefundService
             await tx.CommitAsync(ct);
 
             return new RefundStep(new GatewayRefundOutcome(true,
-                    $"คืนเงิน {check.Amount:N2} บาทเรียบร้อย — ลงบัญชีใบสำคัญ {je.EntryNumber}",
+                    $"คืนเงิน {check.Amount:N2} บาทเรียบร้อย — {BookedText(je)}",
                     result.ProviderRefundRef, check.Amount, check.IsFullRefund, check.NewRefundedTotal,
-                    je.Id, je.EntryNumber, "", NextStepText),
+                    je?.Id, je?.EntryNumber, "", NextStepText),
                 newStatus, result.ProviderRefundRef);
         }
         catch (Exception ex)
@@ -258,10 +258,43 @@ public class GatewayRefundService : IGatewayRefundService
     ///
     /// <para><paramref name="refundAtUtc"/> = เวลาที่เงินออกจริง (ตรวจผลทีหลัง = เวลาที่พยายามคืน ไม่ใช่เวลาที่กดตรวจ) —
     /// แผนรอบโอนใช้เวลานี้แยกยอดคืนก่อน/หลังวันเงินเข้า (R-E2)</para></summary>
-    private async Task<JournalEntry> BookRefundAsync(Guid companyId, PaymentIntent intent, Guid arAccountId, Guid clearingAccountId,
+    /// <summary>ข้อความผลการลงบัญชี — null = ชนิดที่ไม่ลงบัญชีของร้าน (<see cref="PlatformRevenueSource.RefundSkipsStoreReceivable"/>)</summary>
+    private static string BookedText(JournalEntry? je)
+        => je == null ? PlatformRevenueSource.RefundNotBookedNote : $"ลงบัญชีใบสำคัญ {je.EntryNumber}";
+
+    /// <returns>null = รายการค่าบริการ NextAcc (ฝ่ายค้านรอบ 219 รอบ 2 ข้อ 4) — บันทึกยอดคืน/เหตุการณ์/audit บนแถวสิทธิ์ แต่ไม่ลง JE ลูกหนี้ของร้าน</returns>
+    private async Task<JournalEntry?> BookRefundAsync(Guid companyId, PaymentIntent intent, Guid arAccountId, Guid clearingAccountId,
         DateTime entryDate, decimal amount, decimal newRefundedTotal, string refundRef, string reason, string actor,
         PaymentIntentStatus fromStatus, PaymentIntentStatus newStatus, DateTime refundAtUtc, CancellationToken ct)
     {
+        if (PlatformRevenueSource.RefundSkipsStoreReceivable(intent.SourceKind))
+        {
+            intent.RefundedAmount = newRefundedTotal;
+            intent.LastRefundedAt = refundAtUtc;
+            intent.UpdatedAt = DateTime.UtcNow;
+            _db.PaymentIntentEvents.Add(new PaymentIntentEvent
+            {
+                CompanyId = companyId, IntentId = intent.Id, At = refundAtUtc, Source = PaymentEventSource.Manual,
+                FromStatus = fromStatus, ToStatus = newStatus, RefundAmount = amount,
+                Note = $"คืนเงิน {amount:N2} (สะสม {newRefundedTotal:N2}) · อ้างอิง {refundRef} โดย {actor} · {reason} · "
+                     + PlatformRevenueSource.RefundNotBookedNote,
+            });
+            // ประวัติบนแถวสิทธิ์ต้นทาง (รายการชำระค่าแพ็กเกจ/ส่วนเสริม) — ผู้สอบบัญชีของแพลตฟอร์มตามจากต้นทางได้
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = intent.PayerCompanyId ?? companyId,
+                EntityType = intent.SourceKind.ToString(),
+                EntityId = intent.SourceId.ToString(),
+                Action = AuditAction.Update,
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "platform-revenue-refund", ruleCode = "PLATFORM-REFUND-GOODWILL", intentId = intent.Id,
+                    amount, refundedTotal = newRefundedTotal, refundRef, reason, actor,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            return null;
+        }
         var je = await JournalEntryBuilder.For(_db, companyId, entryDate)
             .Type(JournalType.CashPayments)
             .NumberPrefix("PV")
@@ -440,8 +473,8 @@ public class GatewayRefundService : IGatewayRefundService
         ClearOutcomeUnknown(intent);
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return (new GatewayRefundOutcome(true, $"{v.Message} — ใบสำคัญ {je.EntryNumber}", refundRef, v.AmountToBook, isFull,
-            newTotal, je.Id, je.EntryNumber, "", NextStepText), newStatus);
+        return (new GatewayRefundOutcome(true, $"{v.Message} — {BookedText(je)}", refundRef, v.AmountToBook, isFull,
+            newTotal, je?.Id, je?.EntryNumber, "", NextStepText), newStatus);
     }
 
     /// <summary>วันที่ใบสำคัญของเงินคืนที่ยืนยันทีหลัง — ถามงวดของวันที่เงินออกจริงแล้วให้ <see cref="GatewayRefundMath.PastRefundBooking"/> ตัดสิน</summary>
@@ -573,12 +606,12 @@ public class GatewayRefundService : IGatewayRefundService
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        if (je == null)
+        if (decision != GatewayRefundManualDecision.MoneyWentOut)
             return (new GatewayRefundOutcome(true, "บันทึกผลแล้ว: ไม่มีเงินออก — ปลดล็อกการคืนเงินของรายการนี้แล้ว คืนใหม่ได้",
                 null, 0m, false, intent.RefundedAmount, null, null, "", null), null);
         return (new GatewayRefundOutcome(true,
-                $"บันทึกผลแล้ว: ผู้ให้บริการคืนไป {check.AmountToBook:N2} บาท — ลงบัญชีใบสำคัญ {je.EntryNumber} · ปลดล็อกแล้ว",
-                refundRef, check.AmountToBook, newStatus == PaymentIntentStatus.Refunded, newTotal, je.Id, je.EntryNumber, "",
+                $"บันทึกผลแล้ว: ผู้ให้บริการคืนไป {check.AmountToBook:N2} บาท — {BookedText(je)} · ปลดล็อกแล้ว",
+                refundRef, check.AmountToBook, newStatus == PaymentIntentStatus.Refunded, newTotal, je?.Id, je?.EntryNumber, "",
                 NextStepText), newStatus);
     }
 
@@ -670,9 +703,9 @@ public class GatewayRefundService : IGatewayRefundService
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         return new GatewayRefundOutcome(true,
-            (je == null
+            (journal != GatewayLegacyRefundJournal.BookNow
                 ? $"บันทึกยอดคืน {check.AmountToBook:N2} บาทแล้ว (ไม่ลงบัญชีซ้ำ — ลงด้วยมือไว้แล้ว)"
-                : $"บันทึกยอดคืน {check.AmountToBook:N2} บาทและลงบัญชีใบสำคัญ {je.EntryNumber} แล้ว") + " · " + roundOutcome,
+                : $"บันทึกยอดคืน {check.AmountToBook:N2} บาท — {BookedText(je)}") + " · " + roundOutcome,
             refundRef, check.AmountToBook, intent.Status == PaymentIntentStatus.Refunded, check.AmountToBook,
             je?.Id, je?.EntryNumber, "", NextStepText);
     }

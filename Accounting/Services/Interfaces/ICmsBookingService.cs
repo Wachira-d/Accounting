@@ -16,6 +16,8 @@ public interface ICmsBookingService
     // ค่าตั้งการจองระดับไซต์ (บริการที่ "ใช้ค่าของไซต์" รับระยะเวลา/buffer/ล่วงหน้าจากที่นี่)
     Task<BookingSiteSettingsDto> GetSiteSettingsAsync(Guid companyId, Guid siteId);
     Task<BookingSiteSettingsDto> UpdateSiteSettingsAsync(Guid companyId, Guid siteId, BookingSiteSettingsDto request, string userId);
+    /// <summary>รอบ 215 เฟส 2: ให้บริการที่เลือก (null = ทุกบริการของเว็บ) กลับไป "ตามค่าเว็บ" (ResourceMode = null) — คืนจำนวนที่เปลี่ยน</summary>
+    Task<int> InheritResourceModeAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid>? serviceIds, string userId);
 
     // ผู้ให้บริการ / ห้อง / อุปกรณ์ (ตารางงานรายบุคคล + บริการที่รับได้)
     Task<List<BookingResourceResponse>> GetResourcesAsync(Guid companyId, Guid siteId);
@@ -90,4 +92,20 @@ public interface ICmsBookingService
 
     /// <summary>รอบ 213: ส่งซ้ำข้อความถึงลูกค้าที่ค้างเพราะโควตา (ยืนยัน/ยกเลิก/เลื่อนนัด) — ประกอบใหม่จากสถานะปัจจุบันผ่านเส้นเดิม · ผู้เรียกเดียว <c>CustomerNotifyResendService</c></summary>
     Task<string?> ResendCustomerNotifyAsync(Guid companyId, Guid bookingId, string eventKey, string messageKey);
+
+    // ── รอบ 218 (คำตัดสินข้อ 177): ชำระล่วงหน้า (ตัวตัดสิน Helpers/BookingPaymentPolicy) ──
+    Task<BookingPaymentSettingsDto> GetPaymentSettingsAsync(Guid companyId, Guid siteId);
+    Task<BookingPaymentSettingsDto> UpdatePaymentSettingsAsync(Guid companyId, Guid siteId, BookingPaymentSettingsDto request, string userId);
+    /// <summary>ก่อนกดจอง: ยอด/บังคับไหม/กำหนดเวลา/ช่องทาง · null = ไม่พบบริการ</summary>
+    Task<BookingPaymentPreviewResponse?> PreviewPaymentAsync(Guid companyId, Guid siteId, BookingPaymentPreviewRequest request);
+    /// <summary>สถานะสลิปบนการจอง — ผู้เรียกเดียว <c>BookingSlipService</c> (ไฟล์ + PaymentIntent สร้างแล้ว)</summary>
+    Task<BookingResponse> MarkSlipUploadedAsync(Guid companyId, Guid siteId, Guid bookingId, Guid attachmentId, Guid intentId, decimal amount);
+    Task<BookingResponse> MarkSlipRejectedAsync(Guid companyId, Guid siteId, Guid bookingId, Guid expectedIntentId, string reason, string actor);
+    /// <summary>ฝ่ายค้านรอบ 218: ล็อกเดียวกับเส้นสถานะ/รับเงินของการจอง (session · ล็อกซ้อนได้ในคำขอเดียว) — ยืนยัน/ปฏิเสธสลิปไม่ชนกัน</summary>
+    Task<T> RunUnderBookingLockAsync<T>(Guid companyId, Guid bookingId, Func<Task<T>> body);
+    /// <summary>ฝ่ายค้านรอบ 218 (S3): บันทึกของผู้ยืนยันสลิปลงหมายเหตุภายในของการจอง (ไม่ใช่ใน ConfirmedBy ของรายการชำระ)</summary>
+    Task AppendBookingNoteAsync(Guid companyId, Guid siteId, Guid bookingId, string note, string actor);
+    /// <summary>รอบ 217 (ข้อ 175 ง): ส่งแจ้งเตือน "การจองใหม่" (ลูกค้า + ร้าน) — เรียกจาก <c>DeferredNotifyDispatcher</c> เท่านั้น (หลังคำขอจองตอบไปแล้ว)</summary>
+    /// <returns>null = ส่งแล้ว (ผลรายผู้รับประทับบนรายการ) · ข้อความ = ข้ามเพราะสถานะ (ยกเลิก ฯลฯ — ฝ่ายค้าน S4)</returns>
+    Task<string?> DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid bookingId);
 }

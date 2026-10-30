@@ -100,6 +100,17 @@ public class PaymentIntent : TenantEntity
     public Guid? SiteId { get; set; }
     public Guid? ContactId { get; set; }
 
+    /// <summary>รอบ 219 เฟส 0 (G-3 · PLATFORM_GATEWAY_REFUND_POLICY_DESIGN §2 ข้อ 3): <b>บริษัทผู้จ่าย</b>ของรายการค่าบริการ NextAcc —
+    /// intent อยู่ใต้บริษัทผู้ให้บริการ (<c>CompanyId</c>) แต่สิทธิ์/รายการชำระที่ต้นทางเป็นของบริษัทนี้ · handler ค่าบริการตรวจว่าแถวต้นทาง
+    /// เป็นของบริษัทนี้ (<c>PlatformRevenueSource.SourceBelongsToPayer</c>) · null บนรายการของร้าน</summary>
+    public Guid? PayerCompanyId { get; set; }
+
+    /// <summary>ฝ่ายค้านรอบ 219 S8: โหมดของผู้ให้บริการ <b>ณ ตอนสร้าง</b> (Test) — ตัดสิน "จ่ายโหมดทดสอบไม่ให้สิทธิ์จริง" จากค่านี้
+    /// (config อาจถูกสลับเป็น Live ภายหลัง ⇒ อ่านโหมดปัจจุบันของ config = ให้สิทธิ์กับเงินทดสอบ) ·
+    /// รอบ 2: <b>nullable</b> — null = แถวก่อนมีคอลัมน์ ⇒ ตกไปอ่าน config · false = ประทับว่าเงินจริง (ห้ามตกไปอ่าน config) ·
+    /// อ่านผ่าน <c>Helpers/PaymentIntentTestMode</c> เท่านั้น</summary>
+    public bool? IsTestMode { get; set; }
+
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "THB";
     public string? Description { get; set; }
@@ -157,6 +168,9 @@ public class PaymentIntent : TenantEntity
     public string? SettlementRef { get; set; }
 
     public DateTime? ConfirmedAt { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 218 (B2): เวลาที่เงินเข้าจริงตามหลักฐาน (สลิปโอน = วันที่โอน) — ต่างจาก <see cref="ConfirmedAt"/> (เวลาที่คนกดยืนยัน) ·
+    /// ผู้อ่าน: handler ของต้นทางใช้เป็นวันรับเงิน (tax point §78/1) · null = ใช้ ConfirmedAt (เส้น gateway เดิม)</summary>
+    public DateTime? PaidAt { get; set; }
     /// <summary>"webhook:omise" · "poll" · "manual:{user}" — ต้องรู้ว่าใครยืนยัน
     /// เพราะการยืนยันด้วยมือคือจุดที่ผู้สอบบัญชีถามเสมอ</summary>
     public string? ConfirmedBy { get; set; }

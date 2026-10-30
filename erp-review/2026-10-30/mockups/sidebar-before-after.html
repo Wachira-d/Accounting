@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>แถบซ้ายก่อนและหลัง (mockup)</title>
+<!-- CMS_UX_REDESIGN.md §4.1 — แถบซ้ายก่อน (layout.js:1456-1490 ที่ 5eebec32) และหลังออกแบบ -->
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<style>body{font-family:'Sarabun',system-ui,sans-serif;background:#f8fafc;color:#0f172a}</style>
+</head>
+<body class="p-4">
+<h1 class="text-xl font-bold mb-1">แถบซ้าย: ก่อน → หลัง</h1>
+<p class="text-sm text-slate-500 mb-4">สถานะ "ก่อน" = ตอนเปิดหน้า เว็บไซต์ของฉัน (เมนูลูกกางทั้งหมด) ของบริษัทที่มีสปา + โรงแรม + บริการ — ตรงกับภาพหน้าจอของเจ้าของ</p>
+<div class="grid md:grid-cols-2 gap-4 max-w-4xl">
+  <section class="bg-white border rounded-xl p-3 text-sm" aria-labelledby="h1">
+    <h2 id="h1" class="font-semibold text-red-700 mb-2">ก่อน — 15 รายการ ไม่บอกว่าเป็นของเว็บไหน</h2>
+    <div class="font-semibold">🏪 POS หน้าร้าน</div>
+    <ul class="ml-4 text-slate-700"><li>หน้าขาย POS</li><li>แพ็คเกจบริการ</li><li>คอร์ส &amp; เครดิต <span class="text-xs text-red-600">(ตารางคลาสซ้ำกับการจอง)</span></li><li>ตัวเลือกสินค้า</li><li>รายงาน POS</li></ul>
+    <div class="font-semibold mt-2">🌐 ขายออนไลน์ &amp; Portal</div>
+    <ul class="ml-4 text-slate-700">
+      <li>เว็บไซต์ของฉัน (CMS)</li>
+      <li class="ml-3">คำสั่งซื้อจากเว็บ <span class="text-xs text-red-600">เว็บไหน?</span></li>
+      <li class="ml-3">ตั้งค่าร้านค้า <span class="text-xs text-red-600">ร้านไหน?</span></li>
+      <li class="ml-3">การจองคิวจากเว็บ</li>
+      <li class="ml-3">สรุปงานผู้ให้บริการ</li>
+      <li class="ml-3">ที่พัก · Front desk</li>
+      <li class="ml-3">ตั้งค่าที่พัก <span class="text-xs text-red-600">โผล่แม้ดูเว็บสปา</span></li>
+      <li class="ml-3">คำขอ / Lead</li>
+      <li>Portal ลูกค้า <span class="text-xs text-red-600">ไม่เกี่ยวกับเว็บ</span></li>
+      <li>Vendor Portal — ออก token <span class="text-xs text-red-600">ไม่เกี่ยวกับเว็บ</span></li>
+    </ul>
+    <div class="font-semibold mt-2">💎 บัญชีผู้ใช้</div>
+    <ul class="ml-4 text-slate-700"><li>… License · แพ็กเกจ …</li><li>รับชำระเงินออนไลน์ <span class="text-xs text-red-600">หมวดผิด</span></li></ul>
+  </section>
+  <section class="bg-white border rounded-xl p-3 text-sm" aria-labelledby="h2">
+    <h2 id="h2" class="font-semibold text-green-700 mb-2">หลัง — 2 รายการ · ขอบเขตอยู่ที่หัวหน้า</h2>
+    <div class="font-semibold">🏪 POS หน้าร้าน</div>
+    <ul class="ml-4 text-slate-700"><li>หน้าขาย POS</li><li>แพ็กเกจบริการ</li><li>คอร์ส &amp; เครดิตลูกค้า</li><li>ตัวเลือกสินค้า</li><li>รายงาน POS</li></ul>
+    <div class="font-semibold mt-2">🌐 เว็บไซต์ &amp; การจอง</div>
+    <ul class="ml-4 text-slate-700">
+      <li>🧭 พื้นที่ทำงานเว็บไซต์ <span class="text-xs text-slate-500">→ เว็บล่าสุด · แท็บแรกที่มีสิทธิ์</span></li>
+      <li>🗂 ภาพรวมทุกไซต์ <span class="text-xs text-slate-500">(ซ่อนเมื่อมีเว็บเดียว)</span></li>
+    </ul>
+    <div class="mt-2 border rounded-lg p-2 bg-slate-50">
+      <div class="text-xs text-slate-500 mb-1">ในหน้า: หัวพื้นที่ทำงาน</div>
+      <div class="flex flex-wrap gap-2 items-center"><span class="border rounded px-2 py-1 bg-white">💆 test-spa ▾</span><span class="text-xs bg-violet-50 border border-violet-200 rounded-full px-2">สปา · จองคิว</span><span class="text-xs text-green-700">● เผยแพร่แล้ว</span></div>
+      <div class="flex flex-wrap gap-3 mt-2 text-xs"><b class="text-blue-700 underline">วันนี้</b><span>การจอง 3</span><span>ลูกค้า&amp;สมาชิก</span><span>สิ่งที่ขาย</span><span>หน้าเว็บ</span><span>รายงาน</span><span>ตั้งค่า ⚠2</span></div>
+    </div>
+    <div class="font-semibold mt-2">📤 ขาย / รายรับ</div><ul class="ml-4 text-slate-700"><li>… · Portal เอกสารลูกค้า</li></ul>
+    <div class="font-semibold mt-2">📥 ซื้อ / รายจ่าย</div><ul class="ml-4 text-slate-700"><li>… · Vendor Portal</li></ul>
+    <div class="font-semibold mt-2">⚙️ ตั้งค่า &amp; ผู้ใช้</div><ul class="ml-4 text-slate-700"><li>… · รับชำระเงินออนไลน์ <span class="text-xs text-slate-500">(🏢 ใช้กับทุกไซต์)</span></li></ul>
+  </section>
+</div>
+<p class="text-xs text-slate-500 mt-4 max-w-4xl">id เมนูเดิมทั้ง 8 ยังอยู่ใน navItems (กุญแจสิทธิ์ · ช่องค้นหาเมนู) แต่วาดเป็นแท็บในหัวพื้นที่ทำงานแทนการวาดบนแถบซ้าย · <a class="text-blue-700 underline" href="site-workspace.html">เปิด mockup พื้นที่ทำงาน</a></p>
+</body>
+</html>

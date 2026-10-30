@@ -95,7 +95,6 @@
   </div>
 
   <!-- หน้าจ่ายเงินกลาง — ห้ามเขียน QR/poll เองซ้ำอีกชุด -->
-  <script src="/js/pay-widget.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/customer-notify.js"></script>
@@ -291,11 +290,12 @@
         try {
           const res = await API.get(`/api/companies/${this.cid()}/metering/features`);
           this.features = res?.data || [];
-          // เปิด gateway ไหม — ถามเซิร์ฟเวอร์ ห้ามเดา (ที่ยังไม่เปิดต้องเห็นเฉพาะเส้นสลิป)
+          // รอบ 219 เฟส 0 (G-1): วิธีชำระค่าบริการ NextAcc — ถามช่องของแพลตฟอร์ม ไม่ใช่ gateway ของร้าน
+          // (เดิมถาม public-pay/methods ของร้าน ⇒ ปุ่ม "ชำระออนไลน์" ส่งเงินค่าส่วนเสริมเข้ากระเป๋าร้าน) · ออนไลน์เปิดในเฟส 1
           try {
-            const m = await fetch(`/api/companies/${this.cid()}/public-pay/methods`);
-            this.gatewayOn = m.ok ? !!((await m.json()).data?.online) : false;
-          } catch { this.gatewayOn = false; }
+            const m = await API.get(`/api/companies/${this.cid()}/metering/platform-pay`);
+            this.platformPay = m?.data || null;
+          } catch { this.platformPay = null; }
         } catch { this.features = []; }
         this.renderFeatures();
       },
@@ -364,44 +364,29 @@
         return `${why}
           <div class="paybox">
             <div><b>ยอดที่ต้องชำระ ฿${due.toLocaleString('th-TH', {minimumFractionDigits: 2})}</b></div>
+            ${f.paymentGraceUntil ? `<div class="${f.usable === false ? 'paybox bad' : 'muted'}" style="margin-top:6px">${f.usable === false
+              ? '⛔ เกินระยะผ่อนผัน — ส่วนเสริมถูกระงับจนกว่าจะชำระ'
+              : 'ใช้งานได้ระหว่างรอชำระถึง ' + new Date(f.paymentGraceUntil).toLocaleDateString('th-TH')}</div>` : ''}
             ${canPay ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-              ${this.gatewayOn
-                ? `<button class="btn btn-primary btn-sm" onclick="Page.payOnline('${code}')">💳 ชำระออนไลน์</button>` : ''}
               <button class="btn btn-secondary btn-sm" onclick="Page.slipForm('${code}')">📎 แนบสลิปโอนเงิน</button>
             </div>` : '<div class="muted" style="margin-top:6px">แจ้งเจ้าของบริษัทให้ดำเนินการชำระเงิน</div>'}
-            <div class="muted" style="margin-top:6px">${!canPay ? '' : this.gatewayOn
-              ? 'ชำระออนไลน์ = ยืนยันทันที · แนบสลิป = รอผู้ดูแลระบบตรวจสอบ'
-              : 'ยังไม่เปิดรับชำระออนไลน์ — โอนแล้วแนบสลิป ผู้ดูแลระบบจะตรวจสอบให้'}</div>
+            <div class="muted" style="margin-top:6px">${!canPay ? '' : 'โอนเงินค่าบริการให้ NextAcc แล้วแนบสลิป — ผู้ดูแลระบบจะตรวจสอบให้'}</div>
           </div>`;
       },
-      async payOnline(code) {
-        try {
-          const res = await API.post(
-            `/api/companies/${this.cid()}/metering/features/${encodeURIComponent(code)}/payment/intent`,
-            { method: 'PromptPay', returnUrl: location.href });
-          const i = res?.data;
-          if (!i) throw new Error('เริ่มการชำระเงินไม่สำเร็จ');
-          if (i.authorizeUrl) { location.href = i.authorizeUrl; return; }
-          this.showQr(i, code);
-        } catch (e) { Layout.toast(e.message || 'เริ่มการชำระเงินไม่สำเร็จ', 'error'); }
-      },
-      showQr(intent, code) {
-        // ใช้หน้าจ่ายกลางถ้ามี — ไม่เขียน QR/poll เองซ้ำอีกชุด
-        if (window.PayWidget) {
-          PayWidget._opts = { companyId: this.cid() };
-          PayWidget._intentId = intent.id;
-          PayWidget._mount(); PayWidget._stopped = false;
-          PayWidget._renderPending(intent);
-          PayWidget._poll(0, Date.now());
-          return;
-        }
-        Layout.toast('เปิดหน้าชำระเงินไม่สำเร็จ — กรุณาแนบสลิปแทน', 'error');
+      // รอบ 219 เฟส 0: วิธีโอนของ NextAcc (ข้อความจากแอดมิน — แสดงเป็นข้อความล้วน esc แล้ว)
+      bankInfoHtml() {
+        const p = this.platformPay;
+        const text = p?.bankTransferInstructions;
+        return text
+          ? `<div class="paybox" style="white-space:pre-line"><b>โอนเงินค่าบริการให้ NextAcc</b>\n${Layout.esc(text)}</div>`
+          : `<div class="paybox bad">${Layout.esc(p?.fallbackNote || 'กรุณาติดต่อผู้ดูแลระบบ NextAcc ก่อนโอนเงิน')}</div>`;
       },
       slipForm(code) {
         const f = this.features.find(x => x.featureCode === code);
         this._slipCode = code;
         document.getElementById('slipModalTitle').textContent = 'แนบสลิปค่าส่วนเสริม — ' + (f?.name || code);
         document.getElementById('slipModalBody').innerHTML = `
+          ${this.bankInfoHtml()}
           <form id="addonSlipForm" style="display:grid;gap:10px">
             <label>ไฟล์สลิป (รูปหรือ PDF)<input type="file" name="file" accept="image/*,application/pdf" required class="form-input"></label>
             <label>ยอดที่โอน<input type="number" step="0.01" min="0" name="amount" value="${Number(f?.amountDue || 0)}" class="form-input"></label>

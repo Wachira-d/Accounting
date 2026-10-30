@@ -71,6 +71,11 @@ public class EntitlementService : IEntitlementService
         // เปิดอยู่แล้ว → ผ่าน (บอกด้วยว่าอยู่ใน trial ไหม เพื่อให้ UI ติดป้ายได้)
         if (row is { IsEnabled: true })
         {
+            // รอบ 219 เฟส 0 (G-11 · คำตัดสินข้อ 178): เปิดแล้วแต่ค้างชำระเกินระยะผ่อนผัน = ระงับจนกว่าจะชำระ (ตัวตัดสินเดียว AddOnPaymentPolicy)
+            if (!Accounting.Helpers.AddOnPaymentPolicy.UsableWhilePending(row.PaymentStatus, row.PaymentAwaitingSince, DateTime.UtcNow))
+                return new EntitlementResult(false,
+                    $"ส่วนเสริม \"{feature.Name}\" ถูกระงับ — ยังไม่ได้ชำระค่าบริการ (เกินระยะผ่อนผัน {Accounting.Helpers.AddOnPaymentPolicy.UnpaidGraceDays} วัน)",
+                    "โอนเงินแล้วแนบสลิปที่หน้า \"ส่วนเสริมของฉัน\" — ใช้ได้ทันทีเมื่อแนบสลิปแล้ว", code, price);
             var inTrial = row.TrialUntil is DateTime t && t > DateTime.UtcNow;
             return EntitlementResult.Ok(inTrial, inTrial ? row.TrialUntil : null);
         }

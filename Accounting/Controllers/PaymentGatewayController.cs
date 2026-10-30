@@ -40,6 +40,21 @@ public class PaymentGatewayController : ControllerBase
             ? null
             : $"ไม่มีสิทธิ์{verb} (ต้องการ {key.Replace("perm:", "")})";
 
+    /// <summary>รอบ 219 เฟส 0 (G-2 · part B (b)): งานพนักงานบนรายการค่าบริการ NextAcc (ยืนยันมือ · ส่งต่อใหม่ · คืนเงิน · ตรวจ/บันทึกผลคืนเงิน)
+    /// ทำได้เฉพาะแอดมินแพลตฟอร์มใน tenant ผู้ให้บริการ — ตัวตัดสินเดียว <see cref="PlatformRevenueSource.StaffActionDenyReason"/> ·
+    /// null = ผ่าน (รวมรายการของร้านทุกชนิด — ไม่แตะพฤติกรรมเดิม) · ไม่พบรายการ = ผ่าน (ให้ endpoint ตอบ 404 ตามเดิม)</summary>
+    private async Task<ActionResult?> DenyPlatformRevenueStaffAsync(Guid companyId, Guid intentId, PlatformRevenueSource.StaffAction action, CancellationToken ct)
+    {
+        var kind = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.Id == intentId && i.CompanyId == companyId)
+            .Select(i => (PaymentSourceKind?)i.SourceKind).FirstOrDefaultAsync(ct);
+        if (kind is not PaymentSourceKind k) return null;
+        var platformId = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt)
+            .Select(x => x.PlatformCompanyId).FirstOrDefaultAsync(ct);
+        var deny = PlatformRevenueSource.StaffActionDenyReason(k, companyId, platformId, User.IsInRole("SystemAdmin"), action);
+        return deny == null ? null : StatusCode(403, new ApiResponse<object>(false, null, deny));
+    }
+
     public sealed record CreateIntentRequest(
         PaymentSourceKind SourceKind, Guid SourceId, decimal Amount, PaymentMethodKind Method,
         string? Description, string? CustomerEmail, string? CustomerPhone,
@@ -55,10 +70,9 @@ public class PaymentGatewayController : ControllerBase
         i.Id, i.Status.ToString(), i.MethodKind.ToString(), i.Amount, i.Currency,
         i.QrPayload, i.QrExpiresAt, i.AuthorizeUrl, i.FailureMessage, testMode);
 
-    private async Task<bool> IsTestModeAsync(PaymentIntent i, CancellationToken ct)
-        => i.ProviderConfigId is Guid cid
-           && await _db.PaymentProviderConfigs.AsNoTracking()
-               .AnyAsync(c => c.Id == cid && c.Mode == PaymentProviderMode.Test, ct);
+    /// <summary>ฝ่ายค้านรอบ 219 รอบ 2: ตัวตัดสินเดียวกับด่านให้สิทธิ์ (โหมด ณ ตอนสร้างชนะ · แถวเดิมอ่าน config)</summary>
+    private Task<bool> IsTestModeAsync(PaymentIntent i, CancellationToken ct)
+        => PaymentIntentTestMode.ResolveAsync(_db, i, ct);
 
     [HttpPost("intents")]
     public async Task<ActionResult<ApiResponse<IntentResponse>>> Create(
@@ -66,6 +80,9 @@ public class PaymentGatewayController : ControllerBase
     {
         // สิทธิ์ของโมดูลต้นทาง (ใบแจ้งหนี้ · ออเดอร์เว็บ · การจอง · บิล POS · ค่าบริการ) — ลูกค้าปลายทางที่ไม่ล็อกอิน
         // เดินทาง PublicPaymentController ไม่ใช่ที่นี่
+        // รอบ 219 เฟส 0 (G-1 · part B (b)): รายการค่าบริการ NextAcc ห้ามเริ่มจาก body ของหน้านี้ (ยอด/บริษัทผู้จ่ายต้องมาจากเซิร์ฟเวอร์)
+        if (PlatformRevenueSource.IsPlatformRevenue(req.SourceKind))
+            return BadRequest(new ApiResponse<IntentResponse>(false, null, PlatformRevenueSource.TenantSideMessage));
         var deny = await DenyKeyAsync(companyId, PaymentGatewayPermissionScope.StartKeyFor(req.SourceKind),
             "เริ่มรับชำระเงินของรายการนี้");
         if (deny != null)
@@ -335,6 +352,7 @@ public class PaymentGatewayController : ControllerBase
         var intent = await _intents.FindAsync(companyId, intentId, ct);
         if (intent == null)
             return NotFound(new ApiResponse<IntentResponse>(false, null, "ไม่พบรายการชำระเงิน"));
+        if (await DenyPlatformRevenueStaffAsync(companyId, intentId, PlatformRevenueSource.StaffAction.ConfirmManually, ct) is { } platformDeny) return platformDeny;
 
         // รอบ 200 ทีม G: ช่องทางที่ผู้ให้บริการถือเงินไว้ก่อน แต่ไม่มี charge ที่ผู้ให้บริการเลย ⇒ ยืนยันที่นี่ = Dr บัญชีพักด้วยเงินที่ไม่มีวันถูกโอนมา
         var adapter = providers.FirstOrDefault(p => p.ProviderCode == intent.ProviderCode);
@@ -342,6 +360,11 @@ public class PaymentGatewayController : ControllerBase
             adapter != null && !adapter.SettlesDirectlyToBank, intent.ProviderRef);
         if (blocked != null)
             return BadRequest(new ApiResponse<IntentResponse>(false, null, blocked));
+        // ฝ่ายค้านรอบ 218 รอบ 2 (K2): สลิปของการจองนัดหมาย ⇒ ตรวจที่หน้าการจองเท่านั้น (BookingSlipService.VerifyAsync: วันรับเงิน = วันที่โอน · ล็อกเดียวกับ
+        // ปฏิเสธ/ยกเลิก · ตรวจงวดปิด) — ยืนยันที่นี่ = ใบรับมัดจำลงวันกด + ชนกับการปฏิเสธได้
+        if (BookingSlipRule.GatewayManualConfirmProblem(intent.SourceKind == PaymentSourceKind.SiteBooking
+                && intent.ProviderCode == Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code) is string slipProblem)
+            return Conflict(new ApiResponse<IntentResponse>(false, null, slipProblem));
 
         var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
         var updated = await _intents.ApplyChargeAsync(intentId,
@@ -369,6 +392,7 @@ public class PaymentGatewayController : ControllerBase
         var intent = await _intents.FindAsync(companyId, intentId, ct);
         if (intent == null)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระเงิน"));
+        if (await DenyPlatformRevenueStaffAsync(companyId, intentId, PlatformRevenueSource.StaffAction.Redispatch, ct) is { } platformDeny) return platformDeny;
         var actor = $"manual:{JwtHelper.GetUserIdFromClaims(User)}";
         var result = await _intents.RedispatchAsync(companyId, intentId, actor, ct);
         var body = new { ok = result.Ok, noOp = result.NoOp, state = result.State.ToString() };
@@ -392,6 +416,7 @@ public class PaymentGatewayController : ControllerBase
         Guid companyId, Guid intentId, [FromBody] RefundRequest req,
         [FromServices] IGatewayRefundService refunds, CancellationToken ct)
     {
+        if (await DenyPlatformRevenueStaffAsync(companyId, intentId, PlatformRevenueSource.StaffAction.Refund, ct) is { } platformDeny) return platformDeny;
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var r = await refunds.RefundAsync(companyId, intentId, req.Amount, req.Reason ?? string.Empty, actor, ct);
         var data = new
@@ -419,6 +444,7 @@ public class PaymentGatewayController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> VerifyRefund(
         Guid companyId, Guid intentId, [FromServices] IGatewayRefundService refunds, CancellationToken ct)
     {
+        if (await DenyPlatformRevenueStaffAsync(companyId, intentId, PlatformRevenueSource.StaffAction.VerifyRefund, ct) is { } platformDeny) return platformDeny;
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var r = await refunds.VerifyUnknownRefundAsync(companyId, intentId, actor, ct);
         var data = new
@@ -449,6 +475,7 @@ public class PaymentGatewayController : ControllerBase
         Guid companyId, Guid intentId, [FromBody] RefundManualResolutionRequest req,
         [FromServices] IGatewayRefundService refunds, CancellationToken ct)
     {
+        if (await DenyPlatformRevenueStaffAsync(companyId, intentId, PlatformRevenueSource.StaffAction.ResolveRefundManually, ct) is { } platformDeny) return platformDeny;
         var decision = Enum.TryParse<GatewayRefundManualDecision>(req.Decision?.Trim(), ignoreCase: true, out var d)
             && Enum.IsDefined(d) ? d : GatewayRefundManualDecision.Unspecified;
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
@@ -483,6 +510,7 @@ public class PaymentGatewayController : ControllerBase
         Guid companyId, Guid intentId, [FromBody] LegacyRefundRequest req,
         [FromServices] IGatewayRefundService refunds, CancellationToken ct)
     {
+        if (await DenyPlatformRevenueStaffAsync(companyId, intentId, PlatformRevenueSource.StaffAction.RecordLegacyRefund, ct) is { } platformDeny) return platformDeny;
         var journal = Enum.TryParse<GatewayLegacyRefundJournal>(req.Journal?.Trim(), ignoreCase: true, out var j)
             && Enum.IsDefined(j) ? j : GatewayLegacyRefundJournal.Unspecified;
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();

@@ -637,13 +637,44 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 โบนัสโควตาต่อแพ็กเกจแล้ว 404. กติกา: ค่าที่มีที่ให้ตั้งในระบบ ห้ามมีสำเนาบนหน้าใด ๆ · API ไม่ตอบ =
 ซ่อนส่วนนั้น/บอกว่าโหลดไม่ได้ ไม่ตกไปใช้ตารางราคาสำรองที่พิมพ์ไว้ (เดิม `renderFallback` โชว์ราคาเก่า)
 
-### 6.2 Prepaid (default) / Postpaid
+### 6.2 Prepaid / Postpaid (default — รอบ 219 เฟส 0)
+
+> **รอบ 219 เฟส 0 (คำตัดสินข้อ 178 · G-6):** ระบบ**ยังไม่มีทางเติมเครดิต** ⇒ Prepaid ทำให้ค่าใช้งานถูกตัดเครดิตจนติดลบแล้ว `UsageInvoicingJob`
+> ปิดรอบโดยไม่ออกใบ · ค่าตั้งต้นของ `BillingAccount.PaymentModel` (entity + DEFAULT ของคอลัมน์ ก่อน backfill) = **Postpaid** · แถวเดิมไม่ถูกแก้ —
+> รายงาน `GET api/admin/platform-billing/prepaid-accounts` (เจ้าของตัดสินว่าจะเปลี่ยน/ออกใบย้อนหลังไหม) · ข้อความด้านล่างคือดีไซน์เดิมของ Prepaid
 
 - **Prepaid**: ซื้อแพ็กเครดิตล่วงหน้า → `CreditBalance` ตัดตาม UsageEvent → เตือน 20%/หมด
   → หมดแล้ว block งานใหม่ (งานค้างคิวทำต่อจนจบ) — เหมาะตลาดไทย ตัดปัญหาตามเก็บเงิน
 - **Postpaid**: ใช้ก่อนจ่ายทีหลัง สิ้นเดือนออกใบแจ้งหนี้ — เฉพาะลูกค้าใหญ่ที่มีสัญญา + วงเงิน
 - ซื้อเครดิต = ออก "ใบเสร็จรับเงิน (มัดจำ)" ตาม flow เงินมัดจำที่มีอยู่ (deferred VAT
   ตามเคสที่ระบบรองรับแล้ว — ดู DOCUMENT_FLOW.md §2.3a)
+
+### 6.2b ค่าบริการ NextAcc ที่ผู้เช่าจ่าย — อุดรั่วเฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md`)
+
+- **เงินของแพลตฟอร์ม** = `PaymentSourceKind ∈ {SubscriptionPayment, AddOnPurchase}` (`Helpers/PlatformRevenueSource` ตัวเดียว) ⇒ intent ต้องอยู่ใต้บริษัทผู้ให้บริการ
+  (`SiteSettings.PlatformCompanyId`) + ระบุ `PaymentIntent.PayerCompanyId` · ร้านเริ่ม/ยืนยันมือ/ส่งต่อ/คืนเงินรายการเหล่านี้ไม่ได้ (SystemAdmin ใน tenant ผู้ให้บริการเท่านั้น) ·
+  จ่ายโหมดทดสอบไม่ให้สิทธิ์ · เฟส 0 **ยังไม่มีช่องชำระออนไลน์ของแพลตฟอร์ม** ⇒ โอน + แนบสลิป (วิธีโอน = `SiteSettings.PlatformBankTransferInstructions`)
+- **แพ็กเกจ: จ่ายก่อนเปิด** — "อัปเกรด"/แปลงจากทดลองใช้ = รายการชำระยอดจาก `Helpers/PlatformPlanPricing` (ทดลองใช้ต่อจนแอดมินอนุมัติ) · ดาวน์เกรด/เปลี่ยนรอบ =
+  `Subscription.ScheduledPlan/ScheduledBillingCycle/ScheduledPlanEffectiveAt` มีผลวันครบรอบ (`ProcessExpiredSubscriptionsAsync`) และใบแจ้งหนี้ต่ออายุคิดตามแพ็กเกจใหม่ ·
+  แอดมินเปลี่ยนทันทีได้ (`AdminChangePlan` + audit chain) · sub ที่เคยเปิดเองโดยไม่จ่าย = รายงาน `unpaid-activations` (ไม่ย้อนอัตโนมัติ)
+- **ส่วนเสริมเหมารายเดือน**: ค้างชำระใช้ได้ `AddOnPaymentPolicy.UnpaidGraceDays` (7) วันนับจาก `CompanyFeature.PaymentAwaitingSince` แล้วระงับ · งวดที่จ่ายล่วงหน้า
+  (`CompanyFeature.UpfrontPeriod`) ไม่ออกค่าเหมาซ้ำ · ยังไม่จ่าย = ไม่ออกค่าเดือน · แถวที่ค้างชำระก่อนเฟส 0 = ผ่อนผัน 7 วันนับจากวัน deploy (migration ตั้งเวลาให้ · คำตัดสินเจ้าของ ④)
+- รายงานอ่านอย่างเดียว `/admin/revenue.html` (`AdminPlatformBillingController`): unpaid-activations · prepaid-accounts · tenant-routed-intents
+- **หลังฝ่ายค้าน (ภาคผนวกข้อ 178):** อัปเกรดทันที/sub ฟรีถาวร = รอบใหม่เริ่มวันอนุมัติ (ส่วนที่เหลือสละ — ชั่วคราวจนมี proration) · ต่ออายุ/ดาวน์เกรดรอครบรอบ ต่อจากวันหมดอายุเดิม ·
+  แพ็กเกจฟรีถาวร = Active ไม่หมดอายุ · ทดลองใช้ Account Plan ครั้งเดียวต่อเจ้าของต่อระดับ · การจ่ายของบริษัทต่ออายุแพลนบัญชีเฉพาะเมื่อแพ็กเกจตรง · ออกใบแจ้งหนี้ต่ออายุแล้ว = ดาวน์เกรดได้หลังครบรอบ
+- **Deploy checklist — คีย์เข้ารหัส (B2):** (1) ตั้ง `ENCRYPTION_KEY` (หรือ `Security:EncryptionKey`) ใน production — ว่าง/dev key = แอปไม่บูต · (2) **อย่าลบค่า
+  `Security:EncryptionKey` เดิม**ในการ deploy แรกหลังเปลี่ยน (เป็นคีย์เดิมที่ใช้ถอดความลับเก่า) · (3) หลังบูต 3 นาทีดูผลงาน `SecretReprotect` ในหน้างานเบื้องหลัง
+  (จำนวนที่ย้าย) และทดสอบส่งอีเมล/Omise/LINE · (4) ค่าที่ไม่รู้คีย์ = หน้าตั้งค่าแสดง "ต้องกรอกใหม่" · คอลัมน์ PII ใช้นิพจน์คีย์เดิม (`ENCRYPTION_KEY ?? Security:EncryptionKey`) — ห้ามเปลี่ยนคีย์ PII โดยไม่มี migration
+  · (5) **⚠️ ห้าม rollback โค้ดย้อนไปก่อนคอมมิตนี้โดยไม่คืนคีย์** (ฝ่ายค้านรอบ 219 รอบ 2 ข้อ 7): หลัง `SecretReprotect` วิ่งแล้ว ความลับถูกเข้ารหัสด้วย
+  **คีย์ปัจจุบัน** (`ENCRYPTION_KEY` ชนะ config) แต่โค้ดรุ่นก่อนรอบ 219 อ่าน `Security:EncryptionKey ?? dev key` อย่างเดียว ⇒ rollback = ความลับทุกช่อง
+  (SMTP/Omise/LINE/OAuth/webhook/e-Tax/bank feed/คีย์ gateway เว็บ) ถอดไม่ออกทันที · **ขั้นตอน rollback ที่ถูก:** (ก) ตั้ง `Security:EncryptionKey` ให้เท่ากับค่า
+  `ENCRYPTION_KEY` ปัจจุบัน**ก่อน** deploy รุ่นเก่า (รุ่นเก่าอ่านคีย์นั้นจาก config ⇒ ถอดได้ทุกค่า) · (ข) ห้ามลบ `ENCRYPTION_KEY` ระหว่างนั้น (คอลัมน์ PII ใช้อยู่) ·
+  (ค) หลัง rollback ทดสอบส่งอีเมล/Omise/LINE · ถ้าทำ (ก) ไม่ได้ = อย่า rollback (แก้ไปข้างหน้าแทน) · ค่าที่ผู้ใช้หมุนระหว่างงานย้ายคีย์ไม่ถูกทับ
+  (งานเขียนแบบมีเงื่อนไขค่าเดิม) · ทะเบียนช่องความลับครบทุกผู้เขียน (`tools/secret_registry_check.py`)
+- **ฝ่ายค้านรอบ 219 รอบ 2:** โหมดทดสอบของรายการชำระ = `PaymentIntent.IsTestMode` (nullable — null = แถวเดิม ⇒ อ่าน config · ตัวตัดสินเดียว
+  `Helpers/PaymentIntentTestMode` ทั้งด่านให้สิทธิ์และหน้าจ่ายเงิน) · คืนเงินรายการค่าบริการ NextAcc = SystemAdmin เท่านั้น ไม่ตั้งลูกหนี้รอใบลดหนี้ในสมุดร้าน
+  (ประวัติ + audit บนแถวสิทธิ์) · วันรับเงินบนใบเสร็จค่าบริการ: gateway = เวลาเงินเข้าจริง · แอดมินกรอก = ตามที่กรอก (ไม่อนาคต · งวดผู้ให้บริการไม่ปิด) ·
+  อัปเกรดหลังออกใบแจ้งหนี้ต่ออายุ ⇒ ประวัติ `RenewalInvoiceSuperseded` + ล้างตัวชี้ (แอดมินยกเลิกเอกสารใบเดิมเอง) · เปลี่ยนแพ็กเกจบน sub ฟรีถาวร มีผลทันที
 
 ### 6.3 Edge cases (ตัดสินใจแล้ว)
 

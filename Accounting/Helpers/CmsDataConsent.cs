@@ -75,6 +75,8 @@ public static class CmsDataConsent
     {
         var version = Version(shownText);
         var channel = $"{Channel}:{reference}";
+        // รอบ 214 ต่อ (ฎ): เวลาที่เก็บ = เวลาที่ hash (normalize UTC ไมโครวินาที) ⇒ ตรวจกลับหลังผ่าน PostgreSQL ได้
+        grantedAtUtc = PdpaConsentEvidence.NormalizeTimestamp(grantedAtUtc);
         var row = new PdpaConsentRecord
         {
             CompanyId = companyId,
@@ -84,6 +86,7 @@ public static class CmsDataConsent
             GrantedAt = grantedAtUtc,
             Channel = channel,
             EvidenceHash = PdpaConsentEvidence.ComputeHash(subject, purpose, version, grantedAtUtc, channel, null, null),
+            EvidenceSource = PdpaConsentEvidence.SourceSystem,
             CreatedBy = "storefront",
         };
         db.Set<PdpaConsentRecord>().Add(row);

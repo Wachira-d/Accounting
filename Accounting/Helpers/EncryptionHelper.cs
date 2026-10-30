@@ -84,10 +84,31 @@ public static class EncryptionHelper
         catch (Exception ex) { System.Diagnostics.Trace.TraceWarning($"Encrypted-value format check failed: {ex.Message}"); return false; }
     }
 
+    /// <summary>ฝ่ายค้านรอบ 219 (ข้อ 2): แคชคีย์ที่ derive แล้ว — <c>SecretProtector</c> ลองคีย์ปัจจุบัน + คีย์เดิมได้ถึง 5 ตัวต่อค่า
+    /// ⇒ PBKDF2 100k รอบ × 5 ต่อคำขอ = ขยายภาระ CPU · salt เป็นค่าคงที่ที่ derive จาก passphrase เอง (ไม่ใช่ salt ต่อค่า) ⇒
+    /// กุญแจของแคช = SHA-256(passphrase) พอ (ไม่เก็บ passphrase ดิบในหน่วยความจำของแคช) · ผลเป็น pure/deterministic ⇒
+    /// ไม่ใช่ state ข้ามคำขอที่ต้องสอดคล้องข้ามเครื่อง (กฎเหล็ก #4 §D อนุญาต — ทุก instance คำนวณได้ค่าเดียวกัน) ·
+    /// จำกัดขนาด <see cref="MaxCachedKeys"/> (เต็ม = ล้างทั้งแคช — คีย์จริงในระบบมี ≤ 6 ตัว ⇒ ไม่เกิดในการใช้งานปกติ)</summary>
+    internal const int MaxCachedKeys = 64;
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte[]> DerivedKeys = new(StringComparer.Ordinal);
+
+    /// <summary>จำนวนคีย์ในแคช (เทสต์)</summary>
+    internal static int CachedKeyCount => DerivedKeys.Count;
+
     /// <summary>
-    /// Derive a 256-bit key from a passphrase using PBKDF2.
+    /// Derive a 256-bit key from a passphrase using PBKDF2 (cached — see <see cref="DerivedKeys"/>).
     /// </summary>
     private static byte[] DeriveKey(string passphrase)
+    {
+        var cacheKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(passphrase)));
+        if (DerivedKeys.TryGetValue(cacheKey, out var cached)) return cached;
+        var derived = DeriveKeyUncached(passphrase);
+        if (DerivedKeys.Count >= MaxCachedKeys) DerivedKeys.Clear();
+        DerivedKeys[cacheKey] = derived;
+        return derived;
+    }
+
+    private static byte[] DeriveKeyUncached(string passphrase)
     {
         // Use a fixed salt derived from the passphrase itself for deterministic key derivation
         // In production, consider storing a random salt alongside the ciphertext

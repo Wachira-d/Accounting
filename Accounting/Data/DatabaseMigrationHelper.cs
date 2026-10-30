@@ -221,6 +221,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
         list.AddRange(TeamKPosMtoStatements());   // ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่ง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.BookingEngineMigration.Statements());   // ทีม B — engine รอบจองคิว CMS (Helpers/BookingEngineMigration)
+        list.AddRange(Accounting.Helpers.BookingPaymentMigration.Statements());   // รอบ 218 — นโยบายรับชำระล่วงหน้า + สลิปของการจอง (Helpers/BookingPaymentMigration)
         list.AddRange(Accounting.Helpers.ClassScheduleMigration.Statements());   // รอบ 209 P4 — ตารางคลาส (เทอม/รอบเรียน) บนเครื่องจอง CMS
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
@@ -238,6 +239,10 @@ public static class DatabaseMigrationHelper
         list.AddRange(CmsRound212NotifyStatements());   // รอบ 212 — ค่าตั้งแจ้งลูกค้า · โควตาข้อความช่องกลาง · ตารางของแพ็ก B/C (บล็อกท้ายไฟล์ · แพ็ก A เป็นเจ้าของ)
         list.AddRange(Accounting.Helpers.CustomerRelinkMigration.Statements());   // รอบ 212 แพ็ก B — ความคืบหน้า/คีย์กันซ้ำของ LineOaSwitchEvents (ต้องอยู่หลังบล็อกของแพ็ก A)
         list.AddRange(Accounting.Helpers.CustomerNotifyResendMigration.Statements());   // รอบ 213 — เหตุระงับ/ส่งซ้ำของ CustomerNotifyLogs + แพ็ก notify.topup ที่แอดมินตั้ง (หลังบล็อกรอบ 212)
+        list.AddRange(Accounting.Helpers.LegalDocumentMigration.Statements());   // รอบ 214 — ฉบับนโยบาย/ข้อกำหนดของแพลตฟอร์ม + ข้อความนโยบายของร้าน (Helpers/LegalDocumentMigration)
+        list.AddRange(Accounting.Helpers.SubmitOnceMigration.Statements());   // รอบ 217 — IdempotencyRecords (+RequestHash) · คิวแจ้งเตือนหลังสร้างการจอง/ออเดอร์
+        list.AddRange(Accounting.Helpers.MemberProfileMigration.Statements());   // รอบ 216 ฝ่ายค้าน — ที่อยู่หลักของสมาชิกชนิดละแถว (ล้างซ้ำ + unique index บางส่วน)
+        list.AddRange(Accounting.Helpers.PlatformBillingPhase0Migration.Statements());   // รอบ 219 เฟส 0 — ผู้จ่ายของ intent ค่าบริการ · ระยะผ่อนผัน/งวดจ่ายล่วงหน้าของส่วนเสริม · ดาวน์เกรดรอครบรอบ · วิธีโอนให้ NextAcc
         return list;
     }
 
@@ -6122,6 +6127,9 @@ public static class DatabaseMigrationHelper
             );
             """,
             """CREATE INDEX IF NOT EXISTS "IX_BillingAccounts_TaxId" ON "BillingAccounts" ("TaxId") WHERE "IsDeleted" = false;""",
+            // รอบ 219 เฟส 0 (G-6 · คำตัดสินข้อ 178): ค่าตั้งต้น = Postpaid (2) — ต้องมาก่อน backfill ด้านล่าง (INSERT ไม่ระบุ PaymentModel) ·
+            // ระบบไม่มีทางเติมเครดิต ⇒ Prepaid = ค่าใช้งานถูกปิดรอบโดยไม่ออกใบ · แถวเดิมไม่ถูกแก้ (รายงานแอดมิน prepaid-accounts)
+            """ALTER TABLE "BillingAccounts" ALTER COLUMN "PaymentModel" SET DEFAULT 2;""",
             """
             CREATE TABLE IF NOT EXISTS "BillingAccountAdmins" (
                 "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -6495,6 +6503,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundSettledAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundedAt" timestamptz NULL;""",
+            // ฝ่ายค้านรอบ 218 (B2): เวลาที่เงินเข้าตามหลักฐาน (สลิป: วันที่โอน) แยกจาก ConfirmedAt (เวลาที่คนกดยืนยัน) · NULL = ใช้ ConfirmedAt (เดิม)
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "PaidAt" timestamptz NULL;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundJournalEntryId" uuid NULL;""",
             """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "FeeVatMode" integer NOT NULL DEFAULT 0;""",
             // ฝ่ายค้านรอบ 198 (R-E2/R-E5/E-2) — ยอดคืนรายครั้ง (แยกก่อน/หลังวันเงินเข้า) · ยอดคืนที่ถูกหักในรอบโอนหลัง ·
@@ -6960,22 +6970,7 @@ public static class DatabaseMigrationHelper
             // challenge (กันบอทยิงรัวซ้ำ) + คำถามที่ตอบไม่ได้ (feed หา KB gap)
             """ALTER TABLE "ChatConversations" ADD COLUMN IF NOT EXISTS "PendingChallenge" varchar(20) NULL;""",
             """ALTER TABLE "ChatMessages" ADD COLUMN IF NOT EXISTS "NoContextFound" boolean NOT NULL DEFAULT false;""",
-            // Idempotency-Key ที่ใช้ร่วมกันข้าม instance — เดิมเก็บใน IMemoryCache
-            // (in-process) ⇒ deploy 2 node แล้ว partner retry ไปโดนคนละ node =
-            // ลงเอกสาร/รับเงินซ้ำเงียบ ๆ. "Status" = InFlight/Done ใช้กัน request
-            // ที่เข้าพร้อมกันด้วยคีย์เดียวกัน (ตัวที่สองได้ 409 ไม่ใช่ยิงซ้ำ)
-            """
-            CREATE TABLE IF NOT EXISTS "IdempotencyRecords" (
-                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-                "CacheKey" varchar(400) NOT NULL,
-                "Status" varchar(16) NOT NULL DEFAULT 'InFlight',
-                "StatusCode" integer NOT NULL DEFAULT 0,
-                "ContentType" varchar(200) NULL,
-                "Body" bytea NULL,
-                "CreatedAt" timestamptz NOT NULL DEFAULT now(),
-                "CompletedAt" timestamptz NULL
-            );
-            """,
+            // IdempotencyRecords (Idempotency-Key ข้าม instance) — ย้ายไป Helpers/SubmitOnceMigration (รอบ 217 · ตัวตั้งเดียวของตาราง + RequestHash)
             // tax point การนำเข้า §78/2 — วันชำระอากรขาเข้า (เดิมไม่มีที่เก็บเลย
             // ทำให้ VAT นำเข้าตกไปใช้ issueDate = เข้า ภ.พ.30 ผิดงวดได้)
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "CustomsDutyPaidDate" timestamptz NULL;""",
@@ -6990,8 +6985,6 @@ public static class DatabaseMigrationHelper
             UPDATE "TaxReports" SET "CitAmount" = "TotalTaxWithheld"
              WHERE "CitAmount" IS NULL AND "TaxType" = 6;
             """,
-            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_IdempotencyRecords_Key" ON "IdempotencyRecords" ("CacheKey");""",
-            """CREATE INDEX IF NOT EXISTS "IX_IdempotencyRecords_CreatedAt" ON "IdempotencyRecords" ("CreatedAt");""",
 
             // ===== UserExternalLogins — บัญชี Google/Facebook/LINE ที่ผูกกับผู้ใช้ =====
             // เดิมเก็บใน Users.AuthProvider/AuthProviderId ซึ่งเป็นช่องเดี่ยว ⇒ ผูก

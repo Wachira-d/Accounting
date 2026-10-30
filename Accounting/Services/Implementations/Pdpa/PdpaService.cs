@@ -62,6 +62,18 @@ public interface IPdpaService
     Task<int> ApplyErasureAsync(Guid companyId, Guid? userId, Guid? contactId,
         string actor, CancellationToken ct = default);
 
+    // ===== รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ) — คำขอลบระดับแพลตฟอร์มที่ผู้ใช้ยื่นเอง =====
+    /// <summary>ยื่นคำขอลบของผู้ใช้เอง — ค้างอยู่แล้วคืนฉบับเดิม (Created=false) · ยื่นถี่เกิน = BusinessRuleException 429</summary>
+    Task<(PlatformErasureRequest Request, bool Created)> RequestPlatformErasureAsync(Guid userId, string? reason, string? ip, CancellationToken ct = default);
+    Task<PlatformErasureRequest?> GetMyPlatformErasureRequestAsync(Guid userId, CancellationToken ct = default);
+    Task<List<PlatformErasureRequest>> ListPlatformErasureRequestsAsync(string? status, CancellationToken ct = default);
+    /// <summary>SystemAdmin ดำเนินการลบ — แกนลบตัวเดียวกับ DSR ของบริษัท · คืน (คำขอ, อีเมลก่อนลบสำหรับแจ้งผล)</summary>
+    Task<(PlatformErasureRequest Request, string? NotifyEmail)> CompletePlatformErasureAsync(Guid requestId, Guid adminUserId, string? note, string? ip, CancellationToken ct = default);
+    Task<PlatformErasureRequest> RejectPlatformErasureAsync(Guid requestId, Guid adminUserId, string reason, CancellationToken ct = default);
+    /// <summary>ฝ่ายค้านรอบ 214 B2: บริษัท/แพ็กเกจที่ต้องโอนความเป็นเจ้าของก่อนลบบัญชีนี้ (ว่าง = ลบได้)</summary>
+    Task<List<string>> ErasureOwnershipBlockersAsync(Guid userId, CancellationToken ct = default);
+    Task<int> CancelErasureBlockingAccountPlansAsync(Guid requestId, Guid adminUserId, string? ip, CancellationToken ct = default);
+
     // ===== Wave 3 — RoPA / Consent / PiiAccessLog / Breach (PDPC audit-grade) =====
 
     /// <summary>RoPA (ม.39): list activities ของบริษัท</summary>
@@ -147,7 +159,10 @@ public sealed record DataSubjectAccessResult(
     /// (ชื่อ · ที่อยู่ · เลขผู้เสียภาษี) เดิมไม่เคยถูกรายงานเลย (ผลตรวจ T5) ·
     /// รายงานเป็น<b>สรุปรายแถว</b> ไม่ยกข้อความดิบมา เพราะกระดาษใบเดียวกันมี
     /// ข้อมูลของคู่ค้าอีกฝ่ายอยู่ด้วย</summary>
-    List<Dictionary<string, object?>>? OcrScans = null);
+    List<Dictionary<string, object?>>? OcrScans = null,
+    /// <summary>รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ): หลักฐานการยอมรับข้อกำหนด/นโยบายแพลตฟอร์ม (<c>PlatformPolicyAcceptances</c>) — ม.30/31
+    /// พร้อมผลตรวจหลักฐานรายแถว (<c>PlatformPolicyAcceptanceRules.Check</c>)</summary>
+    List<Dictionary<string, object?>>? PolicyAcceptances = null);
 
 public sealed record ErasureImpactReport(
     int UserRowsAffected,
@@ -399,8 +414,27 @@ public partial class PdpaService : IPdpaService
                 }).ToList()
             : new List<Dictionary<string, object?>>();
 
+        // รอบ 214 ต่อ (ฎ): หลักฐานยอมรับข้อกำหนด/นโยบายแพลตฟอร์ม (ระดับผู้ใช้) — ส่งค่าที่เก็บจริง + ผลตรวจ hash ต่อแถว
+        var acceptRows = new List<Dictionary<string, object?>>();
+        if (user != null)
+        {
+            var accepts = await _db.PlatformPolicyAcceptances.AsNoTracking()
+                .Where(x => x.UserId == user.Id)
+                .OrderBy(x => x.AcceptedAt)
+                .ToListAsync(ct);
+            // ฝ่ายค้านรอบ 214 S3: รายงานนี้เปิดโดย DPO ของ**บริษัท** — IP/UA เป็นประวัติระดับแพลตฟอร์ม (ข้ามบริษัท) ⇒ ไม่ส่ง ·
+            // เจ้าของข้อมูลดูครบทุกช่องเองที่ GET /api/legal/my-data (ระดับแพลตฟอร์ม · ผู้ใช้ที่ไม่มีบริษัทก็ดูได้)
+            acceptRows = accepts.Select(x => new Dictionary<string, object?> {
+                ["purpose"] = x.Purpose, ["policyVersion"] = x.PolicyVersion, ["versionShown"] = x.VersionShown,
+                ["acceptedAt"] = x.AcceptedAt, ["channel"] = x.Channel,
+                ["withdrawnAt"] = x.WithdrawnAt, ["evidenceHash"] = x.EvidenceHash,
+                ["evidenceCheck"] = Accounting.Helpers.PlatformPolicyAcceptanceRules.CheckLabel(
+                    Accounting.Helpers.PlatformPolicyAcceptanceRules.Check(x)),
+            }).ToList();
+        }
+
         var total = (userProfile.Count > 0 ? 1 : 0) + contactRows.Count
-            + docRows.Count + payRows.Count + logRows.Count + extRows.Count;
+            + docRows.Count + payRows.Count + logRows.Count + extRows.Count + acceptRows.Count;
 
         // ── ผลสแกน OCR ที่ผูกกับเจ้าของข้อมูล (ม.30) ──
         // แถวสแกนเก็บ RawTextContent = ข้อความทั้งหน้ากระดาษ (ชื่อ · ที่อยู่ ·
@@ -440,7 +474,7 @@ public partial class PdpaService : IPdpaService
             UserProfile: userProfile, Contacts: contactRows,
             Documents: docRows, Payments: payRows, AccessLogs: logRows,
             TotalRecords: total + scanRows.Count, ExternalLogins: extRows,
-            OcrScans: scanRows);
+            OcrScans: scanRows, PolicyAcceptances: acceptRows);
     }
 
     public async Task<int> ApplyRectificationAsync(Guid companyId,
@@ -478,6 +512,283 @@ public partial class PdpaService : IPdpaService
         return changed;
     }
 
+    /// <summary>รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ): <b>แกนลบผู้ใช้ตัวเดียว</b> (ม.33) — ทำบัญชีไม่ให้ระบุตัว · ถอดทุกทางเข้า (SSO/refresh/reset) ·
+    /// หลักฐานยอมรับนโยบาย = legal hold (ทำไม่ให้ระบุตัว ไม่ลบ) · ผู้เรียก: <see cref="ApplyErasureAsync"/> (DPO ของบริษัท · ตรวจสมาชิกก่อน) และ
+    /// <see cref="CompletePlatformErasureAsync"/> (SystemAdmin · คำขอระดับแพลตฟอร์ม) · ผู้เรียก SaveChanges เอง · ไม่พบ = false</summary>
+    private async Task<bool> AnonymiseUserCoreAsync(Guid userId, string hashed, CancellationToken ct)
+    {
+        // ฝ่ายค้านรอบ 214 S1: รวมบัญชีที่ soft-delete (IgnoreQueryFilters) — เดิมคืน false แต่คำขอยังถูกปิดว่า "ลบแล้ว" + ส่งอีเมล
+        var u = await _db.Users.IgnoreQueryFilters().FirstOrDefaultAsync(x => x.Id == userId, ct);
+        if (u == null) return false;
+        u.FullName = "[ANONYMIZED]";
+        u.Email = $"anon-{hashed}@deleted.local";
+
+        // รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ): หลักฐานยอมรับข้อกำหนด/นโยบาย = legal hold (ภาระพิสูจน์ ม.19 · สิทธิเรียกร้อง ม.33(5)) —
+        // คงแถว แต่ทำอีเมล/IP/UA ไม่ให้ระบุตัว · ลบจริงเมื่อพ้น 10 ปี (PdpaRetentionPurgeJob · PlatformPolicyAcceptanceRules)
+        // ฝ่ายค้านรอบ 214 S2: รวมแถวที่ soft-delete (IgnoreQueryFilters) — ไม่งั้น PII ค้างในแถวลบอ่อนตลอดไป
+        var accepts = await _db.PlatformPolicyAcceptances.IgnoreQueryFilters().Where(x => x.UserId == u.Id).ToListAsync(ct);
+        foreach (var a in accepts)
+            Accounting.Helpers.PlatformPolicyAcceptanceRules.Pseudonymise(a, u.Email, DateTime.UtcNow);
+        // ฝ่ายค้านรอบ 214 S1: ต้นฉบับใน PdpaConsentRecords (ระดับแพลตฟอร์ม CompanyId ศูนย์ — migration คัดลอกแต่ไม่ลบ) ทำแบบเดียวกัน
+        var platformConsents = await _db.PdpaConsentRecords.IgnoreQueryFilters()
+            .Where(c => c.SubjectUserId == u.Id && c.CompanyId == Accounting.Helpers.PdpaPolicy.PlatformScopeCompanyId)
+            .ToListAsync(ct);
+        foreach (var pc in platformConsents)
+            Accounting.Helpers.PlatformPolicyAcceptanceRules.Pseudonymise(pc, u.Email, DateTime.UtcNow);
+        u.Phone = null;
+        u.LineUserId = null;
+        u.Status = Models.Enums.UserStatus.Inactive;
+
+        // ⛔ ทางเข้าที่ยังเปิดอยู่ = การลบที่ยังไม่จบ
+        // บัญชีที่ anonymise แล้วแต่ยังผูก Google/LINE ไว้ กด SSO ก็เข้าได้
+        // ตามปกติ (เส้น SSO ค้นด้วย ProviderUserId ไม่ได้ดูอีเมล) ⇒ ต้อง
+        // ถอดทุกช่องทางพร้อมกัน: ตารางผูกบัญชี + ช่องเดี่ยวเดิมบน User
+        // + refresh token ที่ยังไม่หมดอายุ (ไม่งั้นเซสชันเดิมยังใช้ต่อได้)
+        var extLogins = await _db.UserExternalLogins
+            .Where(x => x.UserId == u.Id && !x.IsDeleted).ToListAsync(ct);
+        foreach (var e in extLogins)
+        {
+            e.IsDeleted = true;
+            e.ProviderEmail = null;
+            e.ConfirmToken = null;
+            e.ConfirmTokenExpiry = null;
+            e.LinkedIp = null;
+        }
+        u.AuthProvider = null;
+        u.AuthProviderId = null;
+        u.PasswordHash = string.Empty;
+
+        // ฝ่ายค้านรอบ 214 (ฑ-2) S4-b: การผูกผู้ใช้ภายนอก (X-Acting-User) ของทุกบริษัท — ถอด (soft-delete) + ล้างชื่อภายนอก ·
+        // คีย์ API ที่ผู้ใช้รายนี้สร้างไว้ = ทรัพย์สินของบริษัท ⇒ คงไว้ (ผู้สร้างแสดงเป็นบัญชีนิรนามแล้วเพราะ User ถูกทำไม่ให้ระบุตัว)
+        var mappings = await _db.IntegrationUserMappings.IgnoreQueryFilters().Where(m => m.UserId == u.Id && !m.IsDeleted).ToListAsync(ct);
+        foreach (var m in mappings)
+        {
+            m.IsDeleted = true;
+            m.ExternalUserName = null;
+            m.ExternalUserKey = $"erased-{m.Id:N}";   // คีย์มักเป็นอีเมล — ไม่ซ้ำกันต่อแถว (กันชน index Integration+Key)
+        }
+
+        u.RefreshToken = null;
+        u.PreviousRefreshToken = null;
+        u.RefreshTokenExpiry = null;
+        u.RefreshTokenRevokedAt = DateTime.UtcNow;
+        u.PasswordResetToken = null;
+        u.PasswordResetTokenExpiry = null;
+
+        // ฝ่ายค้านรอบ 214 S3: ลายมือชื่อ (ชีวมิติ) ล้าง — เอกสารที่พิมพ์ซ้ำภายหลังไม่มีลายเซ็น/ชื่อของผู้ใช้รายนี้ (เอกสารที่ออก/ส่งไปแล้วไม่เปลี่ยน) ·
+        // คำขอลบทุกฉบับของผู้ใช้ (รวมที่ปิดแล้ว/soft-delete) ไม่เก็บอีเมล/IP/เหตุผลอีก
+        u.SignatureImageBase64 = null;
+        u.SignatureName = null;
+        u.SignatureTitle = null;
+        var reqs = await _db.PlatformErasureRequests.IgnoreQueryFilters().Where(r => r.UserId == u.Id).ToListAsync(ct);
+        foreach (var r in reqs)
+        {
+            r.RequesterEmail = u.Email;
+            r.RequesterIp = null;
+            r.Reason = null;
+        }
+        return true;
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 B2 — ลบบัญชีไม่ได้ถ้าจะทำให้บริษัทไม่มีเจ้าของ หรือยังเป็นเจ้าของแพ็กเกจบัญชี (ต้องโอนความเป็นเจ้าของก่อน) ·
+    /// ตัวตัดสิน "เจ้าของคนสุดท้าย" = <see cref="Accounting.Helpers.LastOwnerGuard"/> ตัวเดียว · นับเฉพาะเจ้าของฝั่งลูกค้าที่ยังทำหน้าที่ได้
+    /// (ไม่ใช่แอดมินแพลตฟอร์ม · ไม่ Inactive/Suspended · ไม่ถูกลบ — เงื่อนไขเดียวกับ <c>CompanyMembership.CanAct</c>) · คืนรายการที่ต้องจัดการ (ว่าง = ลบได้)</summary>
+    public async Task<List<string>> ErasureOwnershipBlockersAsync(Guid userId, CancellationToken ct = default)
+    {
+        var blockers = new List<string>();
+        var owned = await _db.CompanyUsers.AsNoTracking()
+            .Where(cu => cu.UserId == userId && (cu.Role == Models.Enums.UserRole.Owner || cu.Role == Models.Enums.UserRole.SystemAdmin))
+            .Select(cu => new { cu.CompanyId, cu.Company.Name })
+            .ToListAsync(ct);
+        foreach (var c in owned)
+        {
+            // ฝ่ายค้านรอบ 214 (ฑ-2) B2-a: นิยามเดียว OwnerlessCompanyRepair.ActingOwner (บทบาท Owner/SystemAdmin เหมือนรายการบริษัทไม่มีเจ้าของ)
+            // + ตัดแอดมินแพลตฟอร์ม (LastOwnerGuard เข้มกว่า: สิทธิ์แพลตฟอร์มไม่ใช่เจ้าของฝั่งลูกค้า)
+            var others = await _db.CompanyUsers.AsNoTracking()
+                .Where(cu => cu.CompanyId == c.CompanyId && cu.UserId != userId && !cu.User.IsSystemAdmin)
+                .Where(Accounting.Helpers.OwnerlessCompanyRepair.ActingOwner)
+                .CountAsync(ct);
+            if (Accounting.Helpers.LastOwnerGuard.Block(Models.Enums.UserRole.Owner, null, others) != null)
+                blockers.Add($"บริษัท \u201C{c.Name}\u201D (เจ้าของคนสุดท้าย)");
+        }
+        var subs = await _db.AccountSubscriptions.AsNoTracking()
+            .Where(s => s.OwnerUserId == userId
+                        && s.Status != Models.Enums.SubscriptionStatus.Cancelled && s.Status != Models.Enums.SubscriptionStatus.Expired)
+            .Select(s => s.PlanTemplate.Name)
+            .ToListAsync(ct);
+        blockers.AddRange(subs.Select(Accounting.Helpers.PlatformErasureRequestPolicy.AccountPlanBlockerLabel));
+        return blockers;
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B2-c: ทางไปต่อของผู้ขอลบที่ยังเป็นเจ้าของแพ็กเกจบัญชี — SystemAdmin ยกเลิกแพ็กเกจที่<b>ไม่มีบริษัทผูก</b>ให้จากคิวคำขอ ·
+    /// ด่าน <see cref="Accounting.Helpers.PlatformErasureRequestPolicy.AccountPlanCancelBlock"/> (มีบริษัทผูก = ปฏิเสธทั้งชุด ไม่ยกเลิกครึ่ง ๆ) · audit hash chain ต่อแพ็กเกจ</summary>
+    public async Task<int> CancelErasureBlockingAccountPlansAsync(Guid requestId, Guid adminUserId, string? ip, CancellationToken ct = default)
+    {
+        var req = await PendingRequestAsync(requestId, ct);
+        var subs = await _db.AccountSubscriptions.Include(s => s.PlanTemplate)
+            .Where(s => s.OwnerUserId == req.UserId && !s.IsDeleted
+                        && s.Status != Models.Enums.SubscriptionStatus.Cancelled && s.Status != Models.Enums.SubscriptionStatus.Expired)
+            .ToListAsync(ct);
+        var plans = new List<(string? PlanName, int AttachedCompanies)>();
+        foreach (var s in subs)
+            plans.Add((s.PlanTemplate.Name, await _db.Subscriptions.CountAsync(x => x.AccountSubscriptionId == s.Id && !x.IsDeleted, ct)));
+        var block = Accounting.Helpers.PlatformErasureRequestPolicy.AccountPlanCancelBlock(plans);
+        if (block != null)
+            throw new Accounting.Helpers.BusinessRuleException(block, Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 409);
+        foreach (var s in subs)
+        {
+            var before = s.Status;
+            s.Status = Models.Enums.SubscriptionStatus.Cancelled;
+            s.UpdatedAt = DateTime.UtcNow;
+            s.UpdatedBy = adminUserId.ToString();
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = Accounting.Helpers.PdpaPolicy.PlatformScopeCompanyId,
+                UserId = adminUserId,
+                IpAddress = ip is { Length: > 45 } ? ip[..45] : ip,
+                Action = Models.Enums.AuditAction.Update,
+                EntityType = "AccountSubscription",
+                EntityId = s.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new { status = before.ToString() }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "ErasureCancelAccountPlan", status = nameof(Models.Enums.SubscriptionStatus.Cancelled), requestId = req.Id,
+                    ruleCode = Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode,
+                }),
+            });
+        }
+        await SaveResolutionAsync(ct);
+        return subs.Count;
+    }
+
+    // ===== รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ) — คำขอลบระดับแพลตฟอร์ม =====
+
+    public async Task<(PlatformErasureRequest Request, bool Created)> RequestPlatformErasureAsync(Guid userId, string? reason, string? ip, CancellationToken ct = default)
+    {
+        var email = await _db.Users.AsNoTracking().Where(u => u.Id == userId).Select(u => u.Email).FirstOrDefaultAsync(ct)
+            ?? throw new Accounting.Helpers.BusinessRuleException("ไม่พบผู้ใช้", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 404);
+        var mine = await _db.PlatformErasureRequests.Where(r => r.UserId == userId).OrderByDescending(r => r.RequestedAt).ToListAsync(ct);
+        var pending = mine.FirstOrDefault(r => r.Status == Accounting.Helpers.PlatformErasureRequestPolicy.StatusPending);
+        var now = DateTime.UtcNow;
+        switch (Accounting.Helpers.PlatformErasureRequestPolicy.Decide(pending != null, mine.FirstOrDefault()?.RequestedAt, now))
+        {
+            case Accounting.Helpers.PlatformErasureRequestPolicy.Outcome.ReturnExisting:
+                return (pending!, false);
+            case Accounting.Helpers.PlatformErasureRequestPolicy.Outcome.TooSoon:
+                throw new Accounting.Helpers.BusinessRuleException("ยื่นคำขอลบได้วันละครั้ง — ลองใหม่ภายหลัง", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 429);
+        }
+        var trimmed = string.IsNullOrWhiteSpace(reason) ? null : reason.Trim();
+        var row = new PlatformErasureRequest
+        {
+            UserId = userId,
+            RequesterEmail = email,
+            RequestedAt = now,
+            DueAt = Accounting.Helpers.PlatformErasureRequestPolicy.DueAt(now),
+            Status = Accounting.Helpers.PlatformErasureRequestPolicy.StatusPending,
+            Reason = trimmed is { Length: > 1000 } ? trimmed[..1000] : trimmed,
+            RequesterIp = ip is { Length: > 45 } ? ip[..45] : ip,
+            CreatedBy = userId.ToString(),
+        };
+        _db.PlatformErasureRequests.Add(row);
+        try { await _db.SaveChangesAsync(ct); }
+        catch (DbUpdateException ex) when (ex.InnerException is Npgsql.PostgresException { SqlState: "23505" })
+        {
+            // สองแท็บกดพร้อมกัน — unique "ค้างได้ฉบับเดียว" กันไว้ ⇒ คืนฉบับที่อีกแท็บสร้าง (idempotent)
+            _db.ChangeTracker.Clear();
+            var existing = await _db.PlatformErasureRequests.FirstAsync(r => r.UserId == userId && r.Status == Accounting.Helpers.PlatformErasureRequestPolicy.StatusPending, ct);
+            return (existing, false);
+        }
+        return (row, true);
+    }
+
+    public Task<PlatformErasureRequest?> GetMyPlatformErasureRequestAsync(Guid userId, CancellationToken ct = default)
+        => _db.PlatformErasureRequests.AsNoTracking().Where(r => r.UserId == userId)
+            .OrderByDescending(r => r.RequestedAt).FirstOrDefaultAsync(ct);
+
+    public Task<List<PlatformErasureRequest>> ListPlatformErasureRequestsAsync(string? status, CancellationToken ct = default)
+        => _db.PlatformErasureRequests.AsNoTracking()
+            .Where(r => status == null || r.Status == status)
+            .OrderBy(r => r.Status == Accounting.Helpers.PlatformErasureRequestPolicy.StatusPending ? 0 : 1).ThenBy(r => r.DueAt)
+            .Take(500).ToListAsync(ct);
+
+    private async Task<PlatformErasureRequest> PendingRequestAsync(Guid requestId, CancellationToken ct)
+    {
+        var req = await _db.PlatformErasureRequests.FirstOrDefaultAsync(r => r.Id == requestId, ct)
+            ?? throw new Accounting.Helpers.BusinessRuleException("ไม่พบคำขอ", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 404);
+        if (!Accounting.Helpers.PlatformErasureRequestPolicy.CanResolve(req.Status))
+            throw new Accounting.Helpers.BusinessRuleException("คำขอนี้ดำเนินการไปแล้ว", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 409);
+        return req;
+    }
+
+    private async Task SaveResolutionAsync(CancellationToken ct, bool erasureScope = false)
+    {
+        // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: การบันทึกที่ลบข้อมูลจริง ⇒ audit ไม่เก็บค่าเดิมที่ถูกขอให้ลบ
+        try { if (erasureScope) await _db.SaveUnderErasureScopeAsync(ct); else await _db.SaveChangesAsync(ct); }
+        catch (DbUpdateConcurrencyException)
+        {
+            _db.ChangeTracker.Clear();
+            throw new Accounting.Helpers.BusinessRuleException("คำขอนี้ถูกดำเนินการจากอีกหน้าต่างแล้ว — โหลดหน้าใหม่", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 409);
+        }
+    }
+
+    public async Task<(PlatformErasureRequest Request, string? NotifyEmail)> CompletePlatformErasureAsync(Guid requestId, Guid adminUserId, string? note, string? ip, CancellationToken ct = default)
+    {
+        var req = await PendingRequestAsync(requestId, ct);
+        // ฝ่ายค้านรอบ 214 S2: ห้ามดำเนินการคำขอของตัวเอง · ห้ามลบบัญชีแอดมินแพลตฟอร์ม (ลดสิทธิ์ก่อน)
+        if (req.UserId == adminUserId)
+            throw new Accounting.Helpers.BusinessRuleException("ดำเนินการคำขอลบของตัวเองไม่ได้ — ให้ผู้ดูแลระบบคนอื่นดำเนินการ", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 409);
+        var target = await _db.Users.IgnoreQueryFilters().AsNoTracking().Where(x => x.Id == req.UserId)
+            .Select(x => new { x.Email, x.IsSystemAdmin }).FirstOrDefaultAsync(ct)
+            ?? throw new Accounting.Helpers.BusinessRuleException("ไม่พบบัญชีผู้ใช้ของคำขอนี้ — ปฏิเสธคำขอพร้อมเหตุผลแทน", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 404);
+        if (target.IsSystemAdmin)
+            throw new Accounting.Helpers.BusinessRuleException("บัญชีนี้เป็นผู้ดูแลระบบแพลตฟอร์ม — ลดสิทธิ์ก่อนแล้วค่อยดำเนินการลบ", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 409);
+        // ฝ่ายค้านรอบ 214 B2: ลบแล้วบริษัท/แพ็กเกจไม่มีเจ้าของ ⇒ ปฏิเสธพร้อมรายการที่ต้องโอนความเป็นเจ้าของก่อน
+        var blockers = await ErasureOwnershipBlockersAsync(req.UserId, ct);
+        if (blockers.Count > 0)
+            throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.PlatformErasureRequestPolicy.OwnershipBlockMessage(blockers), Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 409);
+        // ฝ่ายค้านรอบ 214 S5: แจ้งผลไปอีเมลปัจจุบันของบัญชี (ผู้ใช้อาจเปลี่ยนอีเมลหลังยื่น) — ถ้าเป็นอีเมลนิรนามแล้ว ใช้อีเมล ณ ตอนยื่น
+        var notifyEmail = Accounting.Helpers.PlatformErasureRequestPolicy.NotifyAddress(target.Email, req.RequesterEmail);
+        var hashed = $"ANON-{Guid.NewGuid():N}".Substring(0, 16);
+        // แกนลบตัวเดียวกับ DSR ของบริษัท (legal hold ของหลักฐานยอมรับนโยบาย · ถอดทุกทางเข้า) — ไม่ตรวจสมาชิกบริษัท: ผู้ควบคุมคือผู้ให้บริการ
+        if (!await AnonymiseUserCoreAsync(req.UserId, hashed, ct))
+            throw new Accounting.Helpers.BusinessRuleException("ไม่พบบัญชีผู้ใช้ของคำขอนี้", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 404);
+        req.Status = Accounting.Helpers.PlatformErasureRequestPolicy.StatusCompleted;
+        req.ResolvedAt = DateTime.UtcNow;
+        req.ResolvedByUserId = adminUserId;
+        req.ResolutionNote = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        req.RequesterEmail = $"anon-{hashed}@deleted.local";   // คำขอเองก็ไม่เก็บอีเมลจริงหลังลบ
+        req.RequesterIp = null;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = Accounting.Helpers.PdpaPolicy.PlatformScopeCompanyId,
+            UserId = adminUserId,
+            IpAddress = ip is { Length: > 45 } ? ip[..45] : ip,
+            Action = Models.Enums.AuditAction.Delete,
+            EntityType = "User",
+            EntityId = req.UserId.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "PlatformErasureCompleted", requestId = req.Id, ruleCode = Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode,
+                legalReference = "PDPA ม.33 · ม.19 (legal hold หลักฐานยินยอม)",
+            }),
+        });
+        await SaveResolutionAsync(ct, erasureScope: true);
+        return (req, notifyEmail);
+    }
+
+    public async Task<PlatformErasureRequest> RejectPlatformErasureAsync(Guid requestId, Guid adminUserId, string reason, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new Accounting.Helpers.BusinessRuleException("ต้องระบุเหตุผลที่ปฏิเสธ (แจ้งเจ้าของข้อมูล)", Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode);
+        var req = await PendingRequestAsync(requestId, ct);
+        req.Status = Accounting.Helpers.PlatformErasureRequestPolicy.StatusRejected;
+        req.ResolvedAt = DateTime.UtcNow;
+        req.ResolvedByUserId = adminUserId;
+        req.ResolutionNote = reason.Trim();
+        await SaveResolutionAsync(ct);
+        return req;
+    }
+
     public async Task<int> ApplyErasureAsync(Guid companyId,
         Guid? userId, Guid? contactId, string actor, CancellationToken ct = default)
     {
@@ -493,43 +804,12 @@ public partial class PdpaService : IPdpaService
             // ข้อมูลที่บริษัทนี้ควบคุมจริง ไม่ใช่ GUID ของผู้ใช้บริษัทอื่น
             if (!await IsCompanyMemberAsync(companyId, userId.Value, ct))
                 throw new InvalidOperationException(NotInCompanyMessage);
-            var u = await _db.Users.FirstOrDefaultAsync(x => x.Id == userId.Value, ct);
-            if (u != null)
-            {
-                u.FullName = "[ANONYMIZED]";
-                u.Email = $"anon-{hashed}@deleted.local";
-                u.Phone = null;
-                u.LineUserId = null;
-                u.Status = Models.Enums.UserStatus.Inactive;
-
-                // ⛔ ทางเข้าที่ยังเปิดอยู่ = การลบที่ยังไม่จบ
-                // บัญชีที่ anonymise แล้วแต่ยังผูก Google/LINE ไว้ กด SSO ก็เข้าได้
-                // ตามปกติ (เส้น SSO ค้นด้วย ProviderUserId ไม่ได้ดูอีเมล) ⇒ ต้อง
-                // ถอดทุกช่องทางพร้อมกัน: ตารางผูกบัญชี + ช่องเดี่ยวเดิมบน User
-                // + refresh token ที่ยังไม่หมดอายุ (ไม่งั้นเซสชันเดิมยังใช้ต่อได้)
-                var extLogins = await _db.UserExternalLogins
-                    .Where(x => x.UserId == u.Id && !x.IsDeleted).ToListAsync(ct);
-                foreach (var e in extLogins)
-                {
-                    e.IsDeleted = true;
-                    e.ProviderEmail = null;
-                    e.ConfirmToken = null;
-                    e.ConfirmTokenExpiry = null;
-                    e.LinkedIp = null;
-                }
-                u.AuthProvider = null;
-                u.AuthProviderId = null;
-                u.PasswordHash = string.Empty;
-
-                u.RefreshToken = null;
-                u.PreviousRefreshToken = null;
-                u.RefreshTokenExpiry = null;
-                u.RefreshTokenRevokedAt = DateTime.UtcNow;
-                u.PasswordResetToken = null;
-                u.PasswordResetTokenExpiry = null;
-
-                changed++;
-            }
+            // รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ): แกนลบผู้ใช้ตัวเดียว — ใช้ร่วมกับคำขอลบระดับแพลตฟอร์ม (ผู้ใช้ไม่มีบริษัท) ห้ามสำเนา
+            // ฝ่ายค้านรอบ 214 B2: ด่านเดียวกับคำขอระดับแพลตฟอร์ม — ลบเจ้าของคนสุดท้าย/เจ้าของแพ็กเกจไม่ได้
+            var ownBlock = await ErasureOwnershipBlockersAsync(userId.Value, ct);
+            if (ownBlock.Count > 0)
+                throw new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.PlatformErasureRequestPolicy.OwnershipBlockMessage(ownBlock), Accounting.Helpers.PlatformErasureRequestPolicy.RuleCode, 409);
+            if (await AnonymiseUserCoreAsync(userId.Value, hashed, ct)) changed++;
         }
 
         if (contactId.HasValue)
@@ -584,8 +864,8 @@ public partial class PdpaService : IPdpaService
 
         if (changed > 0)
         {
-            // Audit ลง log (NewValues เก็บ actor + ม.33 ref)
-            await _db.SaveChangesAsync(ct);
+            // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: บันทึกใต้ "ขอบเขตการลบ" — audit เห็นว่าช่องไหนถูกลบ แต่ไม่เก็บชื่อ/อีเมล/ที่อยู่/ข้อความสแกนเดิม
+            await _db.SaveUnderErasureScopeAsync(ct);
         }
         return changed;
     }
@@ -648,6 +928,8 @@ public partial class PdpaService : IPdpaService
             Channel = channel,
             IpAddress = ipAddress,
             EvidenceHash = evidenceHash,
+            // ฝ่ายค้านรอบ 214 N2: hash ที่เจ้าหน้าที่กรอกเอง ≠ hash ของระบบ (รายงานแยกที่มา)
+            EvidenceSource = string.IsNullOrWhiteSpace(evidenceHash) ? null : Accounting.Helpers.PdpaConsentEvidence.SourceStaff,
         };
         _db.PdpaConsentRecords.Add(row);
         await _db.SaveChangesAsync(ct);

@@ -1,0 +1,103 @@
+using System.Net;
+using Accounting.Helpers;
+using Accounting.Models.DTOs;
+using Accounting.Models.Entities;
+using Accounting.Services.Implementations.Pdpa;
+using Accounting.Services.Interfaces;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Accounting.Controllers;
+
+/// <summary>
+/// รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ) — คำขอลบข้อมูล (PDPA ม.33) ที่ผู้ใช้ยื่นเองระดับแพลตฟอร์ม: SystemAdmin ดูรายการ (เรียงค้าง → ครบกำหนดก่อน) ·
+/// "ดำเนินการลบ" = แกนลบตัวเดียวกับ DSR ของบริษัท (<c>PdpaService.AnonymiseUserCoreAsync</c> — legal hold ของหลักฐานยอมรับนโยบาย) ·
+/// ปฏิเสธต้องมีเหตุผล · แจ้งผลทางอีเมล (อีเมล ณ ตอนยื่น — เก็บไว้ก่อนลบ) · หน้า <c>/admin/legal.html</c> แท็บคำขอลบ
+/// </summary>
+[ApiController]
+[Route("api/admin/platform-erasure-requests")]
+[Authorize(Roles = "SystemAdmin")]
+public class AdminPlatformErasureController : ControllerBase
+{
+    private readonly IPdpaService _pdpa;
+    private readonly IEmailService _email;
+    private readonly ILogger<AdminPlatformErasureController> _logger;
+
+    public AdminPlatformErasureController(IPdpaService pdpa, IEmailService email, ILogger<AdminPlatformErasureController> logger)
+    {
+        _pdpa = pdpa;
+        _email = email;
+        _logger = logger;
+    }
+
+    private static object Dto(PlatformErasureRequest r, List<string>? blockers = null) => new
+    {
+        r.Id, r.UserId, r.RequesterEmail, r.RequestedAt, r.DueAt, r.Status, r.Reason, r.ResolvedAt, r.ResolutionNote,
+        overdue = r.Status == PlatformErasureRequestPolicy.StatusPending && r.DueAt < DateTime.UtcNow,
+        // ฝ่ายค้านรอบ 214 B2: คำขอค้างที่ลบไม่ได้จนกว่าจะโอนความเป็นเจ้าของ — แสดงก่อนกด (ไม่ใช่รอให้ 409)
+        ownershipBlockers = blockers ?? new List<string>(),
+        // ฝ่ายค้านรอบ 214 (ฑ-2) B2-c: เซิร์ฟเวอร์บอกว่ามีแพ็กเกจบัญชีติดค้าง ⇒ หน้าแอดมินแสดงปุ่ม "ยกเลิกแพ็กเกจ" (หน้าไม่ตีความข้อความเอง)
+        canCancelAccountPlans = blockers?.Any(PlatformErasureRequestPolicy.IsAccountPlanBlocker) == true,
+    };
+
+    [HttpGet]
+    public async Task<ActionResult<ApiResponse<object>>> List([FromQuery] string? status, CancellationToken ct)
+    {
+        var rows = await _pdpa.ListPlatformErasureRequestsAsync(string.IsNullOrWhiteSpace(status) ? null : status, ct);
+        var list = new List<object>();
+        foreach (var r in rows)
+            list.Add(Dto(r, r.Status == PlatformErasureRequestPolicy.StatusPending ? await _pdpa.ErasureOwnershipBlockersAsync(r.UserId, ct) : null));
+        return Ok(new ApiResponse<object>(true, list));
+    }
+
+    public sealed record ResolveRequest(string? Note);
+
+    [HttpPost("{id:guid}/complete")]
+    [Accounting.Filters.RejectApiKey("ลบข้อมูลผู้ใช้ตามคำขอ")]
+    public async Task<ActionResult<ApiResponse<object>>> Complete(Guid id, [FromBody] ResolveRequest? req, CancellationToken ct)
+    {
+        var admin = JwtHelper.GetUserIdFromClaims(User);
+        var ip = Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
+        if (string.IsNullOrWhiteSpace(ip)) ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var (row, notify) = await _pdpa.CompletePlatformErasureAsync(id, admin, req?.Note, ip, ct);
+        var sent = await NotifyAsync(notify, "ดำเนินการลบข้อมูลส่วนบุคคลตามคำขอแล้ว",
+            "ระบบได้ลบ/ทำให้ไม่สามารถระบุตัวตนได้สำหรับข้อมูลบัญชีผู้ใช้ของท่านตามคำขอ (พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล ม.33) แล้ว · "
+            + "หลักฐานการยอมรับข้อกำหนด/นโยบายเก็บไว้ในรูปที่ไม่ระบุตัวตนจนพ้นอายุความ · เอกสารบัญชี/ภาษีที่ออกไปแล้วคงไว้ตามเดิมตามระยะเวลาที่กฎหมายกำหนด (พ.ร.บ.การบัญชี · ประมวลรัษฎากร) · "
+            + "บันทึกร่องรอยการใช้งานที่เกิดก่อนหน้านี้ไม่สามารถแก้ไขย้อนหลังได้ (บันทึกแบบเพิ่มได้อย่างเดียว)");
+        return Ok(new ApiResponse<object>(true, Dto(row), sent ? "ลบข้อมูลแล้ว · แจ้งผู้ใช้ทางอีเมลแล้ว" : "ลบข้อมูลแล้ว · ส่งอีเมลแจ้งผลไม่สำเร็จ (ตรวจอีเมลระบบ)"));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B2-c: ยกเลิกแพ็กเกจบัญชีที่ผู้ขอลบเป็นเจ้าของ (เฉพาะแพ็กเกจที่ไม่มีบริษัทผูก) — ทางไปต่อของด่าน "เจ้าของแพ็กเกจ"</summary>
+    [HttpPost("{id:guid}/cancel-account-plans")]
+    [Accounting.Filters.RejectApiKey("ยกเลิกแพ็กเกจบัญชีของผู้ขอลบข้อมูล")]
+    public async Task<ActionResult<ApiResponse<object>>> CancelAccountPlans(Guid id, CancellationToken ct)
+    {
+        var admin = JwtHelper.GetUserIdFromClaims(User);
+        var ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var n = await _pdpa.CancelErasureBlockingAccountPlansAsync(id, admin, ip, ct);
+        return Ok(new ApiResponse<object>(true, new { cancelled = n }, $"ยกเลิกแพ็กเกจบัญชีแล้ว {n} รายการ — ดำเนินการลบต่อได้เมื่อไม่มีรายการติดค้างอื่น"));
+    }
+
+    [HttpPost("{id:guid}/reject")]
+    [Accounting.Filters.RejectApiKey("ปฏิเสธคำขอลบข้อมูล")]
+    public async Task<ActionResult<ApiResponse<object>>> Reject(Guid id, [FromBody] ResolveRequest? req, CancellationToken ct)
+    {
+        var admin = JwtHelper.GetUserIdFromClaims(User);
+        var row = await _pdpa.RejectPlatformErasureAsync(id, admin, req?.Note ?? "", ct);
+        var sent = await NotifyAsync(row.RequesterEmail, "ผลคำขอลบข้อมูลส่วนบุคคล",
+            "คำขอลบข้อมูลของท่านไม่สามารถดำเนินการได้ เหตุผล: " + row.ResolutionNote);
+        return Ok(new ApiResponse<object>(true, Dto(row), sent ? "ปฏิเสธแล้ว · แจ้งผู้ใช้ทางอีเมลแล้ว" : "ปฏิเสธแล้ว · ส่งอีเมลแจ้งผลไม่สำเร็จ"));
+    }
+
+    /// <summary>แจ้งผล — ส่งไม่สำเร็จไม่ทำให้การลบล้ม (ลบไปแล้ว) แต่บอกแอดมินในข้อความตอบ (ล้มดัง ไม่เงียบ)</summary>
+    private async Task<bool> NotifyAsync(string? to, string subject, string text)
+    {
+        if (string.IsNullOrWhiteSpace(to) || !to.Contains('@') || to.EndsWith("@deleted.local")) return false;
+        try { return await _email.TrySendAsync(to, subject, $"<p>{WebUtility.HtmlEncode(text)}</p>"); }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "แจ้งผลคำขอลบข้อมูลทางอีเมลไม่สำเร็จ");
+            return false;
+        }
+    }
+}

@@ -30,22 +30,27 @@ public class AddOnPurchasePaymentHandler : IPaymentCompletionHandler
 
     public async Task HandleSucceededAsync(PaymentIntent intent, CancellationToken ct = default)
     {
-        var feature = await _db.CompanyFeatures.AsNoTracking()
-            .Where(f => f.Id == intent.SourceId && f.CompanyId == intent.CompanyId)
-            .Select(f => f.FeatureCode)
-            .FirstOrDefaultAsync(ct);
+        // รอบ 219 เฟส 0 (G-1/G-3): intent ค่าส่วนเสริมอยู่ใต้บริษัทผู้ให้บริการ (ตรวจแล้วใน DispatchSucceededAsync) — แถวสิทธิ์เป็นของ
+        // <b>บริษัทผู้จ่าย</b> (PayerCompanyId) ไม่ใช่ intent.CompanyId · เดิมกรอง intent.CompanyId ⇒ เงินต้องเข้า gateway ของร้านเอง
+        var payer = intent.PayerCompanyId;
+        var feature = payer is Guid payerId
+            ? await _db.CompanyFeatures.AsNoTracking()
+                .Where(f => f.Id == intent.SourceId && f.CompanyId == payerId)
+                .Select(f => f.FeatureCode)
+                .FirstOrDefaultAsync(ct)
+            : null;
 
         if (feature == null)
         {
             // เงินเข้าแล้วแต่หาสิทธิ์ไม่เจอ = ต้องดัง มีคนต้องคืนเงินหรือเปิดให้ด้วยมือ
             _logger.LogError(
-                "เงินค่าส่วนเสริมเข้าแล้วแต่หาแถวสิทธิ์ไม่พบ — intent {Intent} บริษัท {Company} "
+                "เงินค่าส่วนเสริมเข้าแล้วแต่หาแถวสิทธิ์ของบริษัทผู้จ่ายไม่พบ — intent {Intent} ผู้จ่าย {Company} "
                 + "source {Source} ยอด {Amount:N2}",
-                intent.Id, intent.CompanyId, intent.SourceId, intent.Amount);
+                intent.Id, intent.PayerCompanyId, intent.SourceId, intent.Amount);
             return;
         }
 
-        await _addons.MarkPaidByGatewayAsync(intent.CompanyId, feature, intent.Id,
+        await _addons.MarkPaidByGatewayAsync(payer!.Value, feature, intent.Id,
             intent.Amount, intent.ConfirmedBy ?? "payment-gateway", ct);
     }
 }

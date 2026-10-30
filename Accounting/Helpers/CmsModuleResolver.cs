@@ -11,7 +11,8 @@ public readonly record struct CmsModuleFacts(
     bool HasBookings,          // มีแถว SiteBooking แล้ว
     bool HasLodgingProperty,   // มี LodgingProperty (ผูกเว็บหรือไม่ก็ตาม)
     bool HasHotelSite,         // มีเว็บ IndustryType.Hotel (เจตนาเป็นที่พัก — property อาจถูกลบ/ยังไม่ seed)
-    bool HasAnySite);          // มีเว็บอย่างน้อย 1 (ฟอร์มติดต่อ/lead มีทุกเทมเพลต)
+    bool HasLeadSource);       // เว็บรับคำขอได้จริง: มีบล็อกฟอร์มติดต่อ (ContactForm) บนหน้าที่ยังไม่ลบ · ฟอร์มกำหนดเองที่ส่งเข้าระบบ · หรือมีแถว CmsLead แล้ว
+                               // (รอบ 215 — เดิม HasAnySite ⇒ ทุกเว็บได้ปุ่ม "คำขอ/Lead" แม้ไม่มีทางรับ · CMS_UX_REDESIGN §1 ข้อ 4)
 
 /// <summary>ตัวตัดสิน "โมดูล CMS ที่ใช้อยู่" ตัวเดียวของทั้งระบบ — แถบเมนูหลัก (`cmsModule:` ใน
 /// Layout.navItems ผ่าน `CompanySettingsResponse.CmsModules`) และแท็บใน cms-edit
@@ -43,7 +44,30 @@ public static class CmsModuleResolver
         if (f.HasCommerceSite || f.HasOrders) list.Add(Orders);
         if (f.HasBookingServices || f.HasBookings) list.Add(Bookings);
         if (f.HasLodgingProperty || f.HasHotelSite) list.Add(Lodging);
-        if (f.HasAnySite) list.Add(Leads);
+        if (f.HasLeadSource) list.Add(Leads);
         return list;
+    }
+
+    /// <summary>บล็อกหน้าเว็บที่ส่งคำขอเข้า <c>storefront/leads</c> (= ทางรับ lead) — ฟอร์มติดต่อ/RFQ/นัดดู (ContactForm) และ
+    /// สมัครรับข่าว (Newsletter ⇒ lead ชนิด Subscription · storefront case 17 · seed ใน 4 เทมเพลต — ฝ่ายค้านรอบ 215 S3) ·
+    /// ผู้ใช้: <c>CmsSiteService.LoadLeadSourceSiteIdsAsync</c> (query) — ห้ามเขียนชุดซ้ำ</summary>
+    public static readonly CmsBlockType[] LeadBlockTypes = { CmsBlockType.ContactForm, CmsBlockType.Newsletter };
+
+    public const string NavLabelBookings = "เว็บไซต์ & การจอง";
+    public const string NavLabelShop = "เว็บไซต์ & ร้านออนไลน์";
+    public const string NavLabelLodging = "เว็บไซต์ & ที่พัก";
+    public const string NavLabelPlain = "เว็บไซต์";
+
+    /// <summary>ชื่อหมวดเมนูซ้ายของงานเว็บ ตามโมดูลที่บริษัทใช้ (คำตัดสินข้อ 176 · รอบ 215) — ตัวตัดสินเดียว · layout.js แค่แสดง
+    /// (ผ่าน <c>CompanySettingsResponse.CmsNavLabel</c>) · มีจองคิว หรือมีที่พักปนกับร้าน ⇒ "การจอง" · ร้านอย่างเดียว ⇒ "ร้านออนไลน์" ·
+    /// ที่พักอย่างเดียว ⇒ "ที่พัก" · ไม่มีโมดูลงาน (มีแค่ lead/ยังไม่มีเว็บ) ⇒ "เว็บไซต์"</summary>
+    public static string NavSectionLabel(IReadOnlyCollection<string>? modules)
+    {
+        var m = modules ?? Array.Empty<string>();
+        bool orders = m.Contains(Orders), bookings = m.Contains(Bookings), lodging = m.Contains(Lodging);
+        if (bookings || (lodging && orders)) return NavLabelBookings;
+        if (lodging) return NavLabelLodging;
+        if (orders) return NavLabelShop;
+        return NavLabelPlain;
     }
 }

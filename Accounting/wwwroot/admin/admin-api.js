@@ -110,6 +110,10 @@ const AdminAPI = {
   dashboard() { return this.get('/dashboard'); },
   revenueDashboard(months = 12) { return this.get(`/revenue-dashboard?months=${months}`); },
   usageAlerts(threshold = 85) { return this.get(`/usage-alerts?thresholdPercent=${threshold}`); },
+  // รอบ 219 เฟส 0 — รายงานอ่านอย่างเดียวของรอยรั่วค่าบริการ (เจ้าของตัดสินว่าจะทำอะไรต่อ)
+  platformUnpaidActivations() { return this.get('/platform-billing/unpaid-activations'); },
+  platformPrepaidAccounts() { return this.get('/platform-billing/prepaid-accounts'); },
+  platformTenantRoutedIntents() { return this.get('/platform-billing/tenant-routed-intents'); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },

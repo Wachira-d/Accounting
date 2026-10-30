@@ -29,8 +29,9 @@ public class SettingsService : ISettingsService
         var settings = await GetOrCreateSettingsAsync(companyId);
         // เมนู CMS ที่ควรแสดง — คำนวณที่นี่ (request เดียวที่ layout.js ยิงอยู่แล้วตอนโหลดบริษัท
         // ตามกติกา "reuse /settings ไม่เพิ่ม request ต่อธง") — เส้น update อื่นคืน null = ไม่แตะเมนู
+        var cmsModules = await ComputeCmsModulesAsync(companyId);
         return await WithDepositVatInfoAsync(companyId,
-            MapToResponse(companyId, settings) with { CmsModules = await ComputeCmsModulesAsync(companyId) });
+            MapToResponse(companyId, settings) with { CmsModules = cmsModules, CmsNavLabel = CmsModuleResolver.NavSectionLabel(cmsModules) });
     }
 
     /// <summary>ป้าย + คำเตือนของแหล่งเงินเริ่มต้นที่บันทึกไว้ (PC#6 · ID#22) — ตัวตัดสินเดียวกับตอนใช้จริง
@@ -97,7 +98,7 @@ public class SettingsService : ISettingsService
     {
         var sites = await _db.Sites.AsNoTracking()
             .Where(s => s.CompanyId == companyId)
-            .Select(s => new { s.SiteType, s.IndustryType })
+            .Select(s => new { s.Id, s.SiteType, s.IndustryType })
             .ToListAsync();
         var facts = new CmsModuleFacts(
             HasCommerceSite: sites.Any(s => CmsModuleResolver.IsCommerceSiteType(s.SiteType)),
@@ -106,7 +107,8 @@ public class SettingsService : ISettingsService
             HasBookings: await _db.SiteBookings.AnyAsync(b => b.CompanyId == companyId),
             HasLodgingProperty: await _db.LodgingProperties.AnyAsync(p => p.CompanyId == companyId),
             HasHotelSite: sites.Any(s => s.IndustryType == IndustryType.Hotel),
-            HasAnySite: sites.Count > 0);
+            // ฝ่ายค้านรอบ 215 N2: เฉพาะเว็บที่ยังอยู่ (lead/ฟอร์มของเว็บที่ลบแล้วไม่ทำให้เมนู lead โผล่)
+            HasLeadSource: sites.Count > 0 && (await CmsSiteService.LoadLeadSourceSiteIdsAsync(_db, companyId, sites.Select(s => s.Id).ToList())).Count > 0);
         return CmsModuleResolver.Resolve(facts);
     }
 

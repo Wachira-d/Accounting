@@ -216,13 +216,26 @@ public class CmsCommerceController : ControllerBase
         var perms = HttpContext.RequestServices.GetService(typeof(IPermissionService)) as IPermissionService;
         var staffOk = userIdGuid != Guid.Empty && perms != null && await perms.HasPermissionAsync(companyId, userIdGuid, PermissionKeys.CmsOrderManage);
         request.CustomerId = StorefrontCustomerAuth.OrderCustomerId(request.CustomerId, staffOk, sf, siteId);
+        // รอบ 216 ฝ่ายค้าน S3: เติมช่องว่างจากโปรไฟล์เฉพาะสมาชิกในโทเคน + หน้าเว็บยืนยัน · พนักงาน/แขก/API ไม่ส่งธง ⇒ ไม่เติม
+        request.ContactFromProfile = StorefrontCustomerAuth.FillFromProfile(request.ContactFromProfile && !staffOk, sf, siteId);
         // A9: คีย์กันกดซ้ำจาก body หรือ header Idempotency-Key
         request.IdempotencyKey = SiteOrderPublic.PickIdempotencyKey(request.IdempotencyKey, Request.Headers[SiteOrderPublic.IdempotencyHeader].FirstOrDefault());
         var result = await _commerceService.CreateOrderAsync(companyId, siteId, request, userId);
         // รอบ 209 P2: ร้านเปิด "ยืนยันออเดอร์อัตโนมัติ" ⇒ นับการใช้คูปองทันที (ทางเดียวกับพนักงานกดยืนยัน — idempotent)
         if (result.Status == SiteOrderStatus.Confirmed)
             await _couponService.RecordCouponUsageAsync(companyId, siteId, result.Id);
-        return StatusCode(201, new ApiResponse<OrderResponse>(true, staffOk ? result : SiteOrderPublic.ForGuestCreate(result), CmsMessages.Get("order.created", Lang)));
+        // รอบ 216 (คำตัดสินข้อ 174): "บันทึกเป็นข้อมูลของฉัน" — เจ้าของ = สมาชิกในโทเคนของเว็บนี้เท่านั้น (ไม่ใช่ CustomerId ใน body) · หลังสั่งสำเร็จ ·
+        // ข้อมูลใบกำกับไปด้วยเฉพาะเมื่อขอใบกำกับ (ช่องที่ซ่อนอยู่ไม่ถูกบันทึก)
+        var profileNotes = await StorefrontProfileSaveBack.RunAsync(
+            HttpContext.RequestServices.GetService(typeof(IStorefrontCustomerService)) as IStorefrontCustomerService,
+            HttpContext.RequestServices.GetService(typeof(ILogger<CmsCommerceController>)) as ILogger,
+            companyId, siteId, StorefrontCustomerAuth.ProfileOwner(request.SaveToProfile && !result.Replayed, sf, siteId),
+            new CheckoutProfileInput(request.ShippingName, request.ShippingPhone,
+                result.FulfillmentMethod == FulfillmentMethod.Pickup ? null : request.ShippingAddress, request.ShippingProvince, request.ShippingPostalCode,
+                request.RequestTaxInvoice ? request.BillingName : null, request.RequestTaxInvoice ? request.BillingTaxId : null,
+                request.RequestTaxInvoice ? request.BillingBranchCode : null, request.RequestTaxInvoice ? request.BillingAddress : null,
+                IdentityFromForm: false));   // ฝ่ายค้านรอบ 216 S2: ชื่อ/เบอร์บนเช็กเอาต์ = ผู้รับ ไม่ใช่ตัวตนสมาชิก
+        return StatusCode(201, new ApiResponse<OrderResponse>(true, staffOk ? result : SiteOrderPublic.ForGuestCreate(result), CmsMessages.Get("order.created", Lang), profileNotes));
     }
 
     [HttpGet("orders")]

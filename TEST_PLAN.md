@@ -1,3 +1,187 @@
+## PB219 — อุดรั่วเงินค่าบริการ NextAcc เฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` · `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| PB219-01 | ชนิดที่เป็นเงินของแพลตฟอร์ม | SubscriptionPayment · AddOnPurchase เท่านั้น | `PlatformBillingPhase0Tests`.Platform_revenue_kinds_are_exactly_subscription_and_addon |
+| PB219-02 | G-1: ร้านเริ่ม intent ค่าบริการใต้บริษัทตัวเอง · ไม่ตั้งบริษัทผู้ให้บริการ · ไม่รู้ผู้จ่าย / ทิศตรงข้าม ออเดอร์-ใบแจ้งหนี้ของร้าน | ปฏิเสธ (ข้อความไทย) / ไม่ถูกแตะ | `PlatformBillingPhase0Tests`.Start_tenant_side_platform_intent_is_refused_store_intents_untouched |
+| PB219-03 | G-2: เจ้าของร้านยืนยันมือ/ส่งต่อ/คืนเงินค่าบริการ · SystemAdmin ใต้บริษัทร้าน · พนักงานบริษัทผู้ให้บริการ / SystemAdmin ใน tenant ผู้ให้บริการ · รายการของร้าน | 403 / ผ่าน · รายการของร้านผ่านเหมือนเดิม | `PlatformBillingPhase0Tests`.Staff_actions_on_platform_intents_only_for_system_admin_in_platform_tenant + required_call_site_check (ConfirmManually/Redispatch/Refund/VerifyRefund/ResolveRefundManually/RecordLegacyRefund) |
+| PB219-04 | part B (a): เงินเข้าแต่เกิดใต้บริษัทร้าน · ไม่รู้ผู้จ่าย · โหมดทดสอบ | ไม่เรียก handler · ประวัติ ⚠️ + แจ้ง · ออเดอร์ร้านโหมดทดสอบยังส่งต่อ | `PlatformBillingPhase0Tests`.Entitlement_blocked_for_tenant_routed_unknown_payer_and_test_mode |
+| PB219-05 | G-3: handler ค่าแพ็กเกจ — intent ไม่รู้ผู้จ่าย / ผู้จ่ายเป็นบริษัทอื่น | ไม่อนุมัติ · รายการยัง Pending | Db `PlatformBillingPhase0DbTests`.Subscription_handler_refuses_unknown_or_foreign_payer + `Source_must_belong_to_payer` |
+| PB219-06 | G-4: แจ้งชำระ ฿1 ขอรายปี · ขอ 120 เดือน · ไม่แจ้งยอด | 409 `PLATFORM-PRICE-MISMATCH` · 400 · ยอดของเซิร์ฟเวอร์ | Db `Submit_payment_with_wrong_amount_is_409_and_server_amount_is_stored` + `Claimed_amount_must_match_server_price` |
+| PB219-07 | G-0: ทดลองใช้กด "อัปเกรด" · กดซ้ำ | ยังเป็นทดลองใช้ · รายการชำระ Pending ยอดจากเซิร์ฟเวอร์ · กดซ้ำได้รายการเดิม | Db `Convert_trial_creates_pending_payment_and_does_not_activate_paid_plan` |
+| PB219-08 | ราคา/รอบ/ส่วนลด/อัป-ดาวน์เกรด/รายงานเปิดเองไม่จ่าย | ตัวตั้งเดียว `PlatformPlanPricing` | `Cycle_price_and_months` · `Amount_due_applies_discount_and_rounds_away_from_zero` · `Classify_and_defer_downgrade_to_cycle_end` · `Unpaid_self_activation_report_rule` |
+| PB219-09 | G-11: ส่วนเสริมค้างชำระ 1 วัน / 8 วัน · แนบสลิปแล้ว 30 วัน · แถวเดิมก่อนเฟส 0 | ใช้ได้ / ระงับ / ใช้ได้ / ใช้ได้ (พฤติกรรมเดิม) | `Unpaid_addon_usable_within_grace_then_blocked` + Db `Unpaid_addon_is_disabled_after_grace_but_legacy_and_pending_review_still_usable` |
+| PB219-10 | G-5: งวดที่จ่ายล่วงหน้า · งวดถัดไป · ยังไม่จ่าย · แถวเดิม | ฿0 / เต็ม / ฿0 ไม่ออกบิล / เต็มเหมือนเดิม | `Flat_monthly_not_double_charged_for_upfront_period` + Db `Flat_monthly_skips_period_paid_upfront_but_legacy_rows_still_charged` |
+| PB219-11 | part B (c): คีย์เข้ารหัส env/config · production ไม่มีคีย์/dev key · ค่าที่เข้ารหัสด้วย dev key เดิม | env ชนะ · boot ไม่ขึ้น · IsUsable=false (กรอกใหม่) | `Encryption_key_env_wins_and_production_refuses_missing_or_dev_key` · `Secret_protector_round_trips_with_resolved_key_and_old_dev_key_values_need_reentry` |
+| PB219-12 (มือ) | ส่วนเสริม: ไม่มีปุ่ม "ชำระออนไลน์" · โมดัลแนบสลิปแสดงวิธีโอนของ NextAcc (แอดมินตั้งที่ ตั้งค่าเว็บไซต์ → ข้อมูลผู้ขาย) · แพ็กเกจ: อัปเกรด → โมดัลชำระ + แนบสลิป · ประวัติ Pending มีปุ่ม "แนบสลิป" | ข้อความ escape · ยอดจากเซิร์ฟเวอร์ | ตรวจมือ |
+| PB219-13 (มือ) | `/admin/revenue.html` 3 ตารางรายงานรอยรั่ว (เปิดเองไม่จ่าย · prepaid ปิดรอบไม่ออกใบ · intent ค่าบริการใต้บริษัทร้าน) | อ่านอย่างเดียว ไม่มีปุ่มแก้ข้อมูล | ตรวจมือ |
+| PB219-14 | B1: ฟรีถาวร (EndDate +100 ปี) → เลือก Pro → อนุมัติ · Starter รายปีกลางรอบ → Pro รายเดือน · ต่ออายุ Pro เดิม | ≈ วันนี้+1 เดือน · ≈ วันนี้+1 เดือน · ต่อจากวันหมดอายุเดิม | `Period_start_upgrade_and_permanent_free_start_now_renewal_extends` + Db `Permanent_free_upgrade_approved_starts_period_from_now_not_after_100_years` · `Mid_cycle_upgrade_starts_now_but_same_plan_renewal_extends_from_end` |
+| PB219-15 | B2: ความลับที่เข้ารหัสด้วย dev key/คีย์ config เดิม หลังตั้ง ENCRYPTION_KEY · คีย์ที่ไม่รู้จัก | ถอดได้ + ถูกเข้ารหัสใหม่ / ไม่ถูกแตะ IsUsable=false | `Secret_encrypted_with_dev_key_still_decrypts_after_switching_key_and_is_reprotected` · `Secret_with_unknown_key_stays_unusable_and_untouched` · `Legacy_key_candidates_cover_old_config_env_variants_and_dev_key` + Db `Reprotect_pass_migrates_dev_key_secrets_and_leaves_unknown_key_untouched` |
+| PB219-16 | S2: ดาวน์เกรดรอครบรอบไปแพ็กเกจฟรีถาวร | Active · EndDate +100 ปี (ไม่ PastDue) | Db `Scheduled_downgrade_to_permanent_free_plan_stays_active` |
+| PB219-17 | S4/S5/S9: ทดลองใช้บัญชีซ้ำระดับเดิม · จ่าย Basic ของบริษัทใต้แพลนบัญชี Enterprise · ดาวน์เกรดหลังออกใบแจ้งหนี้ต่ออายุ | ปฏิเสธ · ไม่ต่ออายุแพลนบัญชี (ประวัติ) · ปฏิเสธพร้อมวัน | `Account_cascade_trial_once_and_renewal_window_rules` |
+| PB219-18 | S6 (แทนในรอบ 2): ร้านทำงานพนักงานใด ๆ (รวมคืนเงิน) บนรายการค่าบริการ — ใต้ร้าน/ใต้ผู้ให้บริการ · SystemAdmin · รายการของร้านเอง | ปฏิเสธ / ได้ / ได้ | `Platform_revenue_staff_actions_including_refund_are_system_admin_only` |
+| PB219-23 | รอบ 2 ข้อ 4: คืนเงินค่าบริการ vs รายการร้าน | ไม่ตั้งลูกหนี้ร้าน (ประวัติ + audit) / ตั้งลูกหนี้รอใบลดหนี้ตามเดิม | `Refund_of_platform_revenue_skips_store_receivable_but_store_kinds_still_book` |
+| PB219-24 | รอบ 2 ข้อ 1: ผู้ใช้หมุนความลับระหว่างงานย้ายคีย์ · แถวที่ไม่มีใครแตะ · มากกว่า 1 ชุด | ค่าผู้ใช้ไม่ถูกทับ / ย้ายคีย์ + audit / ครบทุกแถว | Db `Reprotect_pass_does_not_overwrite_secret_rotated_between_read_and_write` · `Reprotect_pass_streams_more_than_one_batch` |
+| PB219-25 | รอบ 2 ข้อ 2: แคชคีย์ PBKDF2 | ถอดกลับได้ · คีย์ผิดยังล้ม · ขนาดไม่เกินเพดาน | `Derived_key_cache_is_bounded_and_round_trips` |
+| PB219-26 | รอบ 2 ข้อ 3: intent ประทับ Live แล้ว config สลับเป็น Test · ประทับ Test · แถวเดิม null | เงินจริง / ทดสอบ / ตาม config | `Stamped_test_mode_wins_over_config_and_null_falls_back` · Db `Legacy_payment_intent_with_null_test_mode_falls_back_to_config_but_stamped_live_wins` |
+| PB219-27 | รอบ 2 ข้อ 5: gateway ยืนยันหลังเลือกแพ็กเกจ 5 วัน · แอดมินบันทึกย้อน 60 วัน · ลูกค้าแจ้งย้อน 60 วัน · แอดมินกรอกอนาคต | วันเงินเข้าจริง / ตามที่กรอก / บีบ 31 วัน / ปฏิเสธ | `Approved_payment_date_uses_gateway_paid_time_and_keeps_admin_backdate` · `Admin_payment_date_in_future_is_rejected_but_past_and_today_accepted` |
+| PB219-28 | รอบ 2 S2: เปลี่ยนแพ็กเกจที่รอครบรอบบน sub ฟรีถาวร · sub จ่ายรอบอยู่ | มีผลทันที / วันครบรอบ | `Scheduled_change_on_permanent_free_is_effective_now_not_in_100_years` |
+| PB219-29 (มือ) | รอบ 2 S9: ออกใบแจ้งหนี้ต่ออายุแล้วอัปเกรด → อนุมัติ · แอดมินบันทึกรับเงินวันที่อยู่ในงวดปิดของบริษัทผู้ให้บริการ | ประวัติ `RenewalInvoiceSuperseded` + ตัวชี้ใบแจ้งหนี้ว่าง (แอดมินยกเลิกเอกสารใบเดิม) / 400 ข้อความบอกงวดปิด | — |
+| PB219-30 | รอบ 2 ข้อ 6: ช่องใหม่ที่เขียนผ่าน Protect/Encrypt แต่ไม่ลงทะเบียน · delegate ไม่รู้จัก · ทะเบียนค้าง | checker ฟ้อง | `tools/secret_registry_check.py --self-test` |
+| PB219-19 | วันรับเงิน: ว่าง/อนาคต/ย้อน 1 ปี | วันนี้ / วันนี้ / ย้อน 31 วัน | `Payment_date_is_clamped_server_side` |
+| PB219-20 (มือ) | S7: ส่วนเสริมค้างชำระเกิน 7 วันหายจากเมนู (`Layout.hasFeature`) · S8: สร้าง intent ด้วย config ทดสอบแล้วสลับเป็น Live ก่อนจ่าย | ไม่แสดง · ไม่ให้สิทธิ์ | ตรวจมือ + required_call_site_check |
+| PB219-21 (มือ) | ขยายทดลองใช้บน sub ที่จ่ายแล้ว · ปุ่มเลือกแพ็กเกจ | 400 ข้อความไทย · ป้าย "เลือกแพ็กเกจนี้" | ตรวจมือ |
+| PB219-22 (มือ · deploy) | ตั้ง ENCRYPTION_KEY ใน production · บูต · ดูผล job `SecretReprotect` | จำนวนที่ย้าย > 0 ครั้งแรก · 0 ครั้งถัดไป · SMTP/Omise/LINE ยังใช้ได้ | ตรวจมือ (ดู ACCOUNT_STRUCTURE §6.2b deploy checklist) |
+
+## BKPAY — นโยบายรับชำระล่วงหน้าของการจอง + โอน/QR/สลิป (รอบ 218 · คำตัดสินข้อ 177 · `erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| BKPAY-01 | บริการตั้งโหมดเอง / ไม่ตั้ง (ทั้งสองทิศ) | บริการชนะเว็บ · ไม่ตั้ง = ค่าเว็บทั้งโหมดและสูตรยอด · ช่องที่ไม่ตั้งถอยทีละช่อง · บริการปิดเองชนะเว็บที่บังคับ | `BookingPaymentPolicyTests`.บริการตั้งเอง_ชนะค่าเว็บ · บริการไม่ตั้ง_ใช้ค่าเว็บ… · บริการตั้งยอดเอง… · บริการปิดเอง… |
+| BKPAY-02 | ไม่เคยตั้งทั้งสองชั้น (แบบเดิม) | ยอดเท่าสูตรเดิม `BookingSlotEngine.Deposit` ทุกตัวอักษร · ไม่บังคับรอยืนยัน · ไม่มีกำหนดเวลา · ชนิดอื่นยอดมัดจำบนการจองคงเดิม | `BookingPaymentPolicyTests`.แบบเดิม_* · `Db/BookingPaymentPolicyDbTests`.ทิศตรงข้าม_* |
+| BKPAY-03 | ตั้งเก็บเงินกับบริการ Lead/Appointment/Guaranteed | โหมดที่มีผล = ปิด + เหตุผลอ้าง §78/1 · บันทึกบริการที่ตั้งเองถูกปฏิเสธ · ทิศตรงข้าม PrePayment/ปิด/ตามเว็บ ผ่าน | `BookingPaymentPolicyTests`.ชนิดที่ไม่ใช่PrePayment_* · บันทึกบริการ_ทิศตรงข้าม_* · `Db/…`.บันทึกค่าตั้ง_* |
+| BKPAY-04 | % + ขั้นต่ำ/สูงสุด · ทศนิยมกลาง | ปัด AwayFromZero (10.025 ⇒ 10.03) · clamp ขั้นต่ำ/สูงสุด แล้วไม่เกินยอดรวม · ขั้นต่ำไม่สร้างยอดจากศูนย์ | `BookingPaymentPolicyTests`.มัดจำเปอร์เซ็นต์_* · มัดจำไม่ได้ตั้งยอด_* |
+| BKPAY-05 | เต็มยอด / มัดจำไม่บังคับ | เต็มยอด = ยอดรวม · ไม่บังคับ = 0 ถ้าลูกค้าไม่เลือก · ไม่บังคับรอยืนยัน | `BookingPaymentPolicyTests`.เต็มยอด_* |
+| BKPAY-06 | กำหนดเวลา | ถือรอบ = min(จอง + N, เวลานัด) · พนักงานจองแทน/ยอด 0/ไม่ตั้งเวลา ไม่ถือ | `BookingPaymentPolicyTests`.ถือรอบ_* |
+| BKPAY-07 | job ยกเลิกเมื่อพ้นเวลา | เฉพาะรอยืนยัน + ไม่มีเงิน + ไม่มีสลิปรอตรวจ | `BookingPaymentPolicyTests`.พ้นเวลา_* · `Db/…`.พ้นกำหนดชำระ_* |
+| BKPAY-08 | บันทึกค่าตั้งโหมดเก็บเงินโดยไม่มีช่องทาง | ปฏิเสธพร้อมทางไปต่อ · ปิด/ไม่ตั้ง ไม่ต้องมีช่องทาง · มัดจำต้องมียอดตั้งต้น | `BookingPaymentPolicyTests`.โหมดเก็บเงิน_ไม่มีช่องทาง_* · `Db/…`.บันทึกค่าตั้ง_* |
+| BKPAY-09 | ค่าตั้งผิดรูป | ติดลบ/ทศนิยมเกิน/%>100/ขั้นต่ำ>สูงสุด/เวลาเกิน 7 วัน ⇒ ข้อความ · โหมดตัวเลข/ไม่รู้จักถูกปฏิเสธ | `BookingPaymentPolicyTests`.ตรวจค่าตั้ง_* · ParseMode_* |
+| BKPAY-10 | ป้าย/ข้อความ | รอชำระ ฿x ภายใน (เวลาไทย) · รอตรวจสลิป · ชำระแล้ว · สลิปไม่ผ่าน + เหตุผล · ข้อความลูกค้ามียอด/กำหนดเวลา | `BookingPaymentPolicyTests`.ป้ายสถานะ_* · ข้อความลูกค้า_* |
+| BKPAY-11 | เลขบัญชี/ช่องทาง/URL รูป QR | 10–15 หลัก + ชื่อธนาคาร/ชื่อบัญชี · ช่องโอนพร้อมเมื่อเปิด + มีอย่างน้อยหนึ่งอย่าง · รูป QR รับเฉพาะภายใน/https | `BookingPaymentPolicyTests`.เลขบัญชี_* · ช่องทางโอนพร้อม_* · รูปQR_* |
+| BKPAY-12 | QR พร้อมเพย์ (`PromptPayService` ตัวเดียว) | มียอด = dynamic 010212 + แท็ก 54 · เบอร์ ⇒ 0066 · CRC16-CCITT ตรง (ตัวตรวจของเทสต์ยืนยันค่า 0x29B1) · ไม่มียอด = static | `BookingPaymentPolicyTests`.QRพร้อมเพย์_* · ตัวคำนวณCRC… |
+| BKPAY-13 | ด่านแนบสลิป | ไฟล์ว่าง/ใหญ่เกิน/ยกเลิกแล้ว/ชำระครบ/ร้านปิดโอน/สลิปค้าง ⇒ ข้อความ · ปกติผ่าน | `BookingPaymentPolicyTests`.แนบสลิป_* |
+| BKPAY-14 | ปฏิเสธ/ยืนยันสลิป (pure) | เหตุผลบังคับ + ตัดความยาว · ต้องมีสลิปรอตรวจ · เงินของสลิปนี้/รับครบ ⇒ ล้างรอตรวจ · ต่อเวลา 24 ชม. ไม่เกินนัด | `BookingPaymentPolicyTests`.ปฏิเสธสลิป_* · เงินที่บันทึก… · ตรวจสลิปได้… · ปฏิเสธแล้วต่อเวลา… |
+| BKPAY-15 | สลิปรอตรวจกับ gateway | ปิดช่องจ่ายออนไลน์พร้อมเหตุผล (คำตอบ + `PublicPaymentResolver`) | `BookingPaymentPolicyTests`.สลิปรอตรวจ_* · `required_call_site_check` (slipPending) |
+| BKPAY-20 | Db: มัดจำบังคับของเว็บ ลูกค้าจองเอง | Pending แม้ AutoConfirm · ยอด 30% · ถือรอบ 30 นาที · คำตอบมีบัญชี/ยอดค้าง · ไม่ส่ง id รายการชำระถึงลูกค้า | `Db/BookingPaymentPolicyDbTests`.มัดจำบังคับของเว็บ_* |
+| BKPAY-21 | Db: แนบสลิป · ข้ามบริษัท · ยืนยัน | โทเคน/บริษัทอื่นไม่พบ · intent manual-slip ยอดเซิร์ฟเวอร์ · ยืนยัน ⇒ handler รับเงิน + Confirmed · ยืนยันซ้ำถูกปฏิเสธ ไม่รับซ้ำ | `Db/BookingPaymentPolicyDbTests`.สลิป_แนบด้วยโทเคน_* |
+| BKPAY-22 | Db: ปฏิเสธสลิป | เหตุผลว่าง ⇒ ปฏิเสธ · intent Failed · ต่อเวลา · แนบใหม่ได้ (ล้างเหตุผลเดิม) | `Db/BookingPaymentPolicyDbTests`.สลิป_ปฏิเสธ_* |
+| BKPAY-23 | Db: ค่าตั้ง + echo กลับ | ไม่มีช่องทาง ⇒ ปฏิเสธ ไม่บันทึก · ใส่บัญชี ⇒ บันทึก + echo เลขบัญชี/สาขา · บริการ Appointment ตั้งเก็บเงินเอง ⇒ ปฏิเสธ | `Db/BookingPaymentPolicyDbTests`.บันทึกค่าตั้ง_* |
+| BKPAY-24 | หน้าเว็บ (ด้วยมือ) | modal จองแสดงยอด/บังคับ/กำหนดเวลา/ช่องทางก่อนกด · มัดจำไม่บังคับมีช่องติ๊ก · หลังจองมีเลขบัญชี+QR+แนบสลิป · my-booking/การจองของฉันแสดงสถานะ · cms-edit บังคับโดยไม่มีช่องทางขึ้นข้อความค้าง · cms-bookings ยืนยัน/ปฏิเสธสลิป | ตรวจมือ (ยังไม่มี sim) · `node --check` |
+| BKPAY-30 | B1 ค่าตั้งไม่แตะแถว Omise | มีแถว Omise ก่อน ⇒ บันทึกโอน สร้างแถวโอนใหม่ · แถว Omise เดิมไม่เปลี่ยน · ล้างเลขบัญชีต้องยืนยัน (409 → ยืนยัน ⇒ ผ่าน) |
+| BKPAY-31 | B2 วันรับเงินของสลิป | แนบ 31 ต.ค. ยืนยัน 2 พ.ย. ⇒ วันรับเงิน 31 ต.ค. · วิธีชำระ BankTransfer · ConfirmedBy manual:ผู้กด · วันอนาคต/ก่อนวันจอง ⇒ ปฏิเสธ |
+| BKPAY-32 | S1 รับเงินก้อนอื่นครบ | บันทึกเงินสดครบ ⇒ รายการของสลิป Failed · ยืนยันสลิป/ยืนยันด้วยมือไม่ได้ · ทิศตรงข้าม: สลิปรอตรวจยืนยันด้วยมือได้ |
+| BKPAY-33 | S2 ยกเลิก/ไม่มา | ยกเลิก ⇒ สลิปปิด · ตรวจไม่ได้ (บอกทางคืนเงิน) · การจองอื่นยืนยันได้ตามปกติ |
+| BKPAY-34 | S3/S4 แข่งกัน + แนบ | ยืนยัน/ปฏิเสธใต้ล็อกเดียว · บันทึก > 300 ตัวถูกตัด · จ่ายแล้วแนบ ⇒ บอกก่อนเก็บไฟล์ · ยอดเปลี่ยน ⇒ 409 |
+| BKPAY-35 | S5/S6 คิวสำรอง + กำลังจ่าย | ได้ที่จากคิวสำรอง ⇒ OnSeat (บังคับ/ถือรอบ) · พนักงาน/แบบเดิมไม่บังคับ · รายการออนไลน์ยังไม่หมดอายุ(+10 นาที) ⇒ ไม่ยกเลิก |
+| BKPAY-36 | บริการเก็บเงินเอง + PDPA | บริการบังคับมัดจำไม่มีช่องทาง/ยอด ⇒ ปฏิเสธ · ตามเว็บไม่ตรวจ · สลิปปฏิเสธไม่มีเงิน > 90 วัน ⇒ ลบ · มีเงิน/รอตรวจ ⇒ ไม่ลบ |
+| BKPAY-37 | หน้าตั้งค่าเว็บ (ด้วยมือ) | ตั้งค่าเว็บ › การชำระเงิน แสดงฟอร์มมัดจำ/โอน/QR + ลิงก์วิธีชำระของร้าน/ที่พัก · cms-edit แสดงกล่อง "ย้ายแล้ว" ลิงก์ไปเว็บเดียวกัน · เว็บไม่มีโมดูลจอง ⇒ ไม่มีฟอร์ม |
+| BKPAY-38 | K2 ยืนยันด้วยมือ (หน้ารายการชำระ) | รายการสลิปการจอง ⇒ 409 "ตรวจที่หน้าการจอง" · รายการอื่นยืนยันได้ตามเดิม · ConfirmedBy ≤ 200 |
+| BKPAY-39 | F1/F2 งานล้างไฟล์ | แถวที่ลบแล้ว > 200 ไม่ทำให้ค้าง · ได้เฉพาะไฟล์ครบอายุ · สลิปรอตรวจไม่ถูกหยิบ · สลิปปฏิเสธ 90 วันไม่ลบ (เก็บ 6 ปี) |
+| BKPAY-40 | F3 คิวสำรองได้ที่ | ใบคิวที่พนักงานจองแทน ⇒ ยืนยันทันที ไม่มีกำหนดชำระ · ใบคิวลูกค้า ⇒ รอชำระ + กำหนดเวลา · ยอด = มัดจำที่ค้าง |
+| BKPAY-41 | F4 งวดปิด | วันที่โอนในงวดปิด ⇒ 409 ชื่องวด · ไม่รับเงิน · สลิปยังรอตรวจ · ไม่มีหมายเหตุ "ยืนยันสลิปโดย" · เลือกวันงวดเปิด ⇒ ผ่าน |
+| BKPAY-42 | F5/F6 หมายเหตุ | รับเงินสดครบระหว่างสลิปรอตรวจ ⇒ หมายเหตุ "จ่ายซ้ำ" · ปิดรายการชำระไม่ได้ ⇒ หมายเหตุบอกพนักงานปิดเอง |
+| BKPAY-43 | โน้ตบันทึกบริการ/เว็บ | ปิดใช้/แก้ชื่อบริการ ⇒ บันทึกได้แม้ช่องทางหาย · ปิดช่องทางเว็บที่ทำให้บริการเก็บเงินเองแตก ⇒ 409 พร้อมรายชื่อ |
+
+## LEGAL214 — นโยบายความเป็นส่วนตัว/ข้อกำหนด: แพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS (รอบ 214 · คำตัดสินข้อ 173)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| LEGAL214-01 | markdown ชุดย่อย: หัวข้อ · ย่อหน้า · รายการ · ตาราง · กล่องหมายเหตุ · หนา/เอียง/โค้ด | HTML ตามแบบที่หน้าแสดง · แถวตารางสั้นเติมช่อง | `LegalDocumentTests`.Render_BasicBlocks · Render_Table_WithHeaderAndPaddedRows |
+| LEGAL214-02 | XSS: `<script>` · `<img onerror>` · `"><svg>` · แท็กในหัวข้อ/ตาราง | encode เป็นข้อความ ไม่มีแท็ก | `LegalDocumentTests`.Render_RawHtml_IsEncoded_NeverATag |
+| LEGAL214-03 | ลิงก์ `javascript:` (ทุกตัวพิมพ์) · `data:` · `vbscript:` · `//host` · entity · แท็บกลางคำ | ไม่เป็น `<a>` (แสดงข้อความ) · **ทิศตรงข้าม** https/mailto/tel/path/สัมพัทธ์ เป็นลิงก์ · ภายนอกเปิดแท็บใหม่ noopener | `LegalDocumentTests`.Render_DangerousLinks_AreNotAnchors · Render_AllowedLinks · Render_ExternalLink_OpensNewTabWithNoopener |
+| LEGAL214-04 | ค่าโทเคน (ชื่อบริษัท/อีเมล) มี `<script>` · `**` · `[x](javascript:)` · `"` | encode · ไม่ถูกตีความเป็น markdown · ไม่หลุด attribute · โทเคนไม่รู้จักคงเดิม · อักขระ stash ของผู้ใช้ปลอมลิงก์ไม่ได้ | `LegalDocumentTests`.Tokens_AreEncoded_AndCannotInjectMarkupOrMarkdown · Tokens_Unknown_… · StashMarker_… |
+| LEGAL214-05 | ฉบับปัจจุบัน/ประกาศล่วงหน้า · ร่างไม่นับ · วันมีผลเท่ากัน · วันไทย | มีผล ≤ วันนี้ล่าสุด · ไม่มีแถว = ฉบับตั้งต้น 1.0 · เผยแพร่ทีหลังชนะ · 17:00 UTC = วันถัดไป | `LegalDocumentTests`.PickCurrent_* · TodayBangkok_UsesThaiCalendarDay |
+| LEGAL214-06 | เผยแพร่: เลขซ้ำ/ถอยหลัง/ชน 1.0 · วันมีผลย้อนหลัง · ก่อนฉบับประกาศล่วงหน้า · เนื้อความว่าง · รูปแบบเลขผิด | ปฏิเสธพร้อมเหตุ · **ทิศตรงข้าม** เลขถัดไปวันนี้/อนาคตผ่าน | `LegalDocumentTests`.ValidatePublish_Rules · ValidatePublish_EffectiveBeforeLatestAnnounced_Rejected |
+| LEGAL214-07 | append-only บนฐานจริง: เผยแพร่แล้วบันทึกร่างเลขเดิม · เผยแพร่ร่างที่ย้อนหลัง | ปฏิเสธ · แถวเผยแพร่ไม่เปลี่ยน · ร่างยังเป็นร่าง · ทิ้งร่างได้ | `Db/LegalDocumentDbTests`.Publish_is_append_only_and_drives_the_acceptance_banner · `LegalDocumentTests`.PublishedRows_AreNotEditable_DraftsAre |
+| LEGAL214-08 | เวอร์ชันความยินยอม · ผู้ใช้เดิม (ยอมรับ "1.0") ไม่มีฉบับใหม่ / มีฉบับใหม่ / ไม่มีแถว | สองฉบับเท่ากัน = เลขเดียว · ไม่รบกวนผู้ใช้เดิม · ฉบับใหม่ = แถบ · ≤ 50 ตัวอักษร | `LegalDocumentTests`.ConsentVersion_SameVersions_StaysBackwardCompatible · NeedsAcknowledge_OnlyWhenNoRecordOrDifferentVersion |
+| LEGAL214-09 | กด "รับทราบและยอมรับ" ด้วยฉบับปัจจุบัน / หน้าค้างฉบับเก่า / โหมดเข้าดูในนามลูกค้า | แถวยินยอม `policy-update:*` + hash · ฉบับเก่า = ปฏิเสธ (409) · imp = 403 (required_call_site_check) | `Db/LegalDocumentDbTests` · กติกา `LegalController.Accept` |
+| LEGAL214-10 | ลิงก์ของร้าน: ลิงก์ร้าน + ข้อความร้าน · ข้อความอย่างเดียว · ว่าง · ค่าไม่ปลอดภัย · path ในเว็บร้าน | external > custom > default · ไม่ปลอดภัย = ใช้หน้าระบบ + บันทึกถูกปฏิเสธ · `/privacy` = หน้า CMS ของร้าน · slug ใต้ `legal/` | `LegalDocumentTests`.Resolve_* · Slugs_LiveUnderLegal_NoClashWithShopPages · EffectiveMarkdown_CustomOrTemplate |
+| LEGAL214-11 | แม่แบบของร้าน (นโยบาย/ข้อกำหนด) กับตัวตนร้านจริง | ชื่อ · ที่อยู่ · เลขผู้เสียภาษี · mailto · เบอร์ · ชื่อเว็บ ครบ · ไม่มีโทเคนค้าง · ระบุผู้ควบคุม/ผู้ประมวลผล · LINE · ชำระเงิน · จอง · สมาชิก | `LegalDocumentTests`.ShopTemplate_ContainsShopIdentity_AndProcessorStatement · ShopPrivacyTemplate_StatesControllerAndProcessorRoles_AndLineAndPayment |
+| LEGAL214-12 | ฉบับตั้งต้นของแพลตฟอร์มเทียบหน้าเดิม | ครบ 12 หัวข้อทั้งสองฉบับ · ตัวตนผู้ให้บริการแทนครบ · ค่าที่ยังไม่ตั้งบอกตรง ๆ · 1.0 = `PdpaPolicy.CurrentVersion` เดิม | `LegalDocumentTests`.PlatformBuiltIn_KeepsAllSectionsOfOldPages · PlatformTokens_Missing_… · BuiltInVersion_MatchesLegacyConsentVersion |
+| LEGAL214-14 | ฝ่ายค้าน S1: ข้อความ 100k ที่ทำให้ regex ย้อนรอย (`*a ` · `[` · `<a` · `{{ ` · หัวข้อช่องว่างยาว · ตาราง) | แปลง + ตรวจคำเตือนเสร็จ < 1.5 วินาที · ย่อหน้ายาวเกิน 4,000 = encode ล้วน · ทิศตรงข้ามย่อหน้าปกติยังแปลง | `LegalDocumentTests`.Render_PathologicalInput_IsFast · Render_OverlongParagraph_IsPlainEncoded_ShortOneStillFormatted · Heading_TrailingHashes_Stripped |
+| LEGAL214-15 | ฝ่ายค้าน S3: ร้านบุคคลธรรมดา vs นิติบุคคล · หน้าจองโต๊ะ | บุคคลธรรมดาไม่เผยแพร่เลขผู้เสียภาษี · นิติบุคคลแสดง · หน้าจองโต๊ะแสดงแค่ชื่อ+เบอร์ | `LegalDocumentTests`.ShopTokens_TaxId_OnlyForJuristic_AndMissingValuesExplicit · ShopTokens_BookingPageScope_RevealsOnlyNameAndPhone |
+| LEGAL214-16 | ฝ่ายค้าน S4: อีเมล/ที่อยู่ร้านว่าง · ลิงก์เดิมไม่ถูกต้อง | "ยังไม่ได้ระบุ" · ไม่มี `mailto:` เสีย (ทิศตรงข้าม: อีเมลจริงเป็นลิงก์) · cms-edit เตือนช่องที่ขาด/ลิงก์เดิม | `LegalDocumentTests`.MissingEmail_NoBrokenMailto_RealEmailStillLinked · IdentityGaps_And_StoredLinkWarning |
+| LEGAL214-17 | ฝ่ายค้าน S2: เปิด `?version=` ของฉบับประกาศล่วงหน้า | ป้าย "ฉบับที่จะมีผลตั้งแต่…" ไม่ใช่ "ฉบับเก่า" | ตรวจมือ (`isUpcoming` ใน `LegalController.GetDocument`) |
+| LEGAL214-18 | ฝ่ายค้าน S5 + หมายเหตุ: เผยแพร่ | แถว audit มี UserId/อีเมล/IP · ร่างที่บันทึกไม่คัดลอกเนื้อความทั้งก้อนลง audit | required_call_site_check `PublishDraftAsync` · `LegalDocumentTests`.AuditRedaction_Markdown_IsDigested_OthersUntouched |
+| LEGAL214-19 | หมายเหตุ: สองแท็บเผยแพร่/สร้างร่างแรกพร้อมกัน | แท็บที่สอง 409 ไทย (Status concurrency token · unique ร่างต่อชนิด) ไม่ใช่ 500 | ตรวจมือ (required_call_site_check `SaveGuardedAsync`) |
+| LEGAL214-20 | CI: ยอมรับนโยบาย — ผู้ใช้ไม่มีบริษัท / ผู้ใช้มีบริษัท | บันทึกที่ `PlatformPolicyAcceptances` ได้ทั้งคู่ · ไม่สร้างแถว PdpaConsentRecords CompanyId ศูนย์อีก | `Db/LegalDocumentDbTests`.Publish_is_append_only_and_drives_the_acceptance_banner |
+| LEGAL214-21 | หมายเหตุ: endpoint ยอมรับนโยบายโดยไม่ล็อกอิน | 401 (ไม่มี AllowAnonymous ระดับคลาสลบล้าง `[Authorize]`) | ตรวจมือ |
+| LEGAL214-22 | ฎ: หลักฐาน v2 หลังค่าผ่าน PostgreSQL (Kind หาย · ticks หลักที่ 7 หาย) | ตรวจผ่าน · แก้อีเมล/ฉบับ/เวลา/IP ⇒ Invalid | `PdpaConsentEvidenceV2Tests`.V2_verifies_after_postgres_round_trip · V2_tampered_field_is_invalid |
+| LEGAL214-23 | ฎ: แถว v1 เก่า | เวลาเต็มความละเอียด = ผ่าน · ผ่านฐานแล้ว = `LegacyUnverifiable` (ไม่ใช่ผ่านเงียบ) · ไม่มี hash = Missing | `PdpaConsentEvidenceV2Tests`.Legacy_v1_rows_are_reported_never_silently_ok |
+| LEGAL214-24 | ฎ: แถวยอมรับนโยบายเก็บทุกช่องใน canonical | เวลา normalize · UA ตัดก่อน hash · ตรวจจากแถวผ่าน · แก้ฉบับที่เห็น ⇒ ไม่ผ่าน | `PdpaConsentEvidenceV2Tests`.Acceptance_row_stores_every_canonical_field_and_verifies_from_the_row · NormalizeTimestamp_… |
+| LEGAL214-25 | ฎ: round-trip บนฐานจริง — แถบยอมรับ + ฟอร์มเว็บร้าน | เขียน → อ่านกลับ → ตรวจผ่าน · แก้ IP ในฐาน ⇒ Invalid · อีเมลอื่น ⇒ ไม่ผ่าน | `Db/LegalDocumentDbTests`.Publish_is_append_only_… · Shop_form_consent_evidence_round_trips_through_postgres |
+| LEGAL214-26 | ฎ: ลบตามคำขอ (ม.33) | แถวคงอยู่ (legal hold) · อีเมลนิรนาม · IP/UA ล้าง · ผลตรวจ = ตรวจซ้ำไม่ได้ · วันลบครั้งแรกไม่เลื่อน · ลบจริงเมื่อพ้น 10 ปี | `PdpaConsentEvidenceV2Tests`.Erasure_pseudonymises_but_keeps_legal_hold_row · กติกา `ApplyErasureAsync`/`PdpaRetentionPurgeJob.RunAsync` |
+| LEGAL214-27 | ฎ: DSR เข้าถึง/โอนย้ายของผู้ใช้ที่ยอมรับนโยบายแล้ว | มี `policyAcceptances` พร้อมผลตรวจรายแถวทั้ง JSON และไฟล์ดาวน์โหลด | กติกา `GenerateAccessReportAsync` · ตรวจมือ |
+| LEGAL214-28 | ฝ่ายค้าน S2/S3: DSR ของบริษัท · เจ้าของดูเอง · ลบตามคำขอที่มีแถว soft-delete | บริษัทไม่เห็น IP/UA · `/api/legal/my-data` เห็นครบ · ลบแล้วทุกแถว (รวม soft-delete) ไม่ระบุตัว แถวคงอยู่ | `Db/LegalDocumentDbTests`.Dsr_hides_platform_ip_from_company_and_erasure_reaches_soft_deleted_rows |
+| LEGAL214-29 | ฝ่ายค้าน S1: ต้นฉบับ PdpaConsentRecords ระดับแพลตฟอร์ม | ลบตามคำขอ = อีเมลนิรนาม/ล้าง IP/`PseudonymisedAt` · ลบจริงพ้น 10 ปี | `PdpaConsentEvidenceV2Tests`.Consent_record_labels_by_source_and_state · กติกา `ApplyErasureAsync`/`PdpaRetentionPurgeJob.RunAsync` |
+| LEGAL214-30 | ฝ่ายค้าน S4/N2: ผลตรวจหลักฐานบนรายงานลูกค้าเว็บ | ระบบ = ตรวจผ่าน/ไม่ตรง · เจ้าหน้าที่กรอก hash เอง = "บันทึกโดยเจ้าหน้าที่" (ไม่ใช่ไม่ตรง) · ลบแล้ว = ตรวจซ้ำไม่ได้ | `PdpaConsentEvidenceV2Tests`.Consent_record_labels_by_source_and_state |
+| LEGAL214-31 | ฝ่ายค้าน N3: ป้าย "V2:" ตัวพิมพ์ใหญ่ | ตรวจผ่าน | `PdpaConsentEvidenceV2Tests`.Prefix_is_case_insensitive |
+| LEGAL214-32 | ฐ: ยื่นคำขอลบซ้ำ · ยื่นใหม่ภายใน 24 ชม. · ผ่าน 24 ชม. | ค้าง = ฉบับเดิม (ไม่สร้างแถวใหม่) · ถี่ = 429 · ครบเวลา = ยื่นได้ · SLA 30 วัน | `PlatformErasureRequestTests`.Pending_request_is_returned_not_duplicated · Too_soon_… · Sla_… · Db `Platform_erasure_request_is_idempotent_…` |
+| LEGAL214-33 | ฐ: ผู้ใช้อื่น · ผู้ไม่ใช่ SystemAdmin · ไม่ล็อกอิน | ผู้ใช้อื่นไม่เห็น/ไม่แตะคำขอ · ดำเนินการลบต้อง SystemAdmin · ยื่นต้องล็อกอิน (ทิศตรงข้าม: หน้าเอกสารสาธารณะยังเปิดได้) | `PlatformErasureRequestTests`.Admin_erasure_endpoints_require_SystemAdmin · Self_service_endpoints_require_login_… · Db (ผู้ใช้ B) |
+| LEGAL214-34 | ฐ: SystemAdmin ดำเนินการลบ · ดำเนินการซ้ำ · ปฏิเสธไม่มีเหตุผล | แกนลบตัวเดียว (บัญชีไม่ระบุตัว · หลักฐาน legal hold) · แจ้งผลไปอีเมลเดิม · ซ้ำ = 409 · ปฏิเสธไม่มีเหตุผล = ไม่ได้ | Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · กติกา `CompletePlatformErasureAsync`/`ApplyErasureAsync` |
+| LEGAL214-35 (มือ) | ฐ: เมนูผู้ใช้ → ข้อมูลส่วนบุคคลของฉัน · ผู้ใช้ไม่มีบริษัท · ดาวน์โหลด JSON · แท็บคำขอลบบน /admin/legal.html | แสดงค่าที่ escape แล้ว · ปุ่มยื่นปิดเมื่อมีคำขอค้าง | ตรวจมือ |
+| LEGAL214-36 | ฑ B1: ยื่น + ดำเนินการลบ แล้วค้น AuditLogs | ไม่มีอีเมล/IP/ชื่อเดิม · ยังมีแถว audit ของ User ที่บอกว่าช่องเปลี่ยน (`PiiMask`) · entity/ช่องอื่นไม่ถูกปิด | Db `Platform_erasure_request_is_idempotent_…` · `PlatformErasureRequestTests`.Audit_redaction_masks_pii_fields_per_entity_only |
+| LEGAL214-37 | ฑ B2: เจ้าของบริษัทคนเดียวขอลบ · เพิ่มเจ้าของอีกคน | 409 พร้อมชื่อบริษัท · ทิศตรงข้าม: มีเจ้าของคนอื่นที่ทำงานได้ ⇒ ลบได้ | Db `Erasure_refuses_last_owner_self_and_platform_admin_and_handles_soft_deleted_users` |
+| LEGAL214-38 | ฑ S1/S2: บัญชี soft-delete · ไม่พบบัญชี · แอดมินลบคำขอตัวเอง · ลบแอดมินแพลตฟอร์ม | soft-delete ลบได้จริง · ไม่พบ = 404 คำขอยังค้าง · ตัวเอง/แอดมิน = 409 | Db ข้างบน |
+| LEGAL214-39 | ฑ S4: token ของบัญชีที่ลบ/ปิดใช้งาน | ปฏิเสธทันที · ไม่พบแถว (token ชนิดอื่น) ไม่ตัดสิน · Suspended คงเดิม | `PlatformErasureRequestTests`.Token_gate_rejects_erased_or_inactive_users_only · ตรวจมือ (hub/คีย์ API/เข้าดูในนามลูกค้า) |
+| LEGAL214-40 | ฑ S5: ผู้ใช้เปลี่ยนอีเมลหลังยื่น | แจ้งผลไปอีเมลปัจจุบัน · อีเมลนิรนามแล้ว ⇒ อีเมล ณ ตอนยื่น | `PlatformErasureRequestTests`.Notify_address_prefers_current_real_email |
+| LEGAL214-41 (มือ) | ฑ: การ์ดแอดมิน/หน้า my-data แสดง "ต้องโอนความเป็นเจ้าของก่อน" · เวลาแสดงเป็นเวลาไทย | ตามคำตัดสิน 173 ฑ | ตรวจมือ |
+| LEGAL214-42 | ฑ-2 B1-a: ลบผู้ติดต่อ + สแกน OCR + ผู้ใช้ตามคำขอ แล้วค้น AuditLogs (Update) | ไม่มีชื่อ/อีเมล/โทร/ที่อยู่/ข้อความสแกน/ชื่อภายนอก · ขอบเขตการลบคืนค่า · ทิศตรงข้าม: แก้ผู้ติดต่อปกติยังเห็นค่าเก่า/ใหม่ | Db `LegalDocumentDbTests`.Contact_and_ocr_erasure_leaves_no_original_pii_in_audit_but_ordinary_edits_keep_history · `ErasureAuditScopeTests`.Erasure_scope_masks_every_non_empty_string_but_keeps_non_text · .Ocr_scan_pii_list_is_the_same_list_as_the_eraser |
+| LEGAL214-43 | ฑ-2 B1-c: แถว audit เก่าที่มีอีเมล/ชื่อของ User | หน้าแสดงปิดค่า · ผู้ติดต่อ/ชนิดที่ไม่รู้จักไม่ถูกแตะ | `ErasureAuditScopeTests`.Read_time_redaction_masks_pii_of_that_entity_only |
+| LEGAL214-44 | ฑ-2 B1-b: ยื่นคำขอลบ/ยอมรับนโยบาย | แถว AuditMiddleware ไม่มีอีเมล/IP/UA · เส้นอื่นคงเดิม | `ErasureAuditScopeTests`.Privacy_self_service_paths_drop_email_ip_ua_from_middleware_audit |
+| LEGAL214-45 | ฑ-2 S4-b: ลบผู้ใช้ที่ถูกผูกกับคีย์ API (X-Acting-User) | การผูกถูกถอด · ชื่อ/คีย์อีเมลล้าง · คีย์ของบริษัทคงอยู่ | Db ข้างบน (LEGAL214-42) · ตรวจมือ: คีย์เดิมส่ง X-Acting-User ของผู้ใช้ที่ลบ ⇒ ไม่สวม |
+| LEGAL214-46 | ฑ-2 B2-a/b: เจ้าของที่ยังทำหน้าที่ได้ · เจ้าของถูกระงับ | นิยามเดียว (ปิด/ลบ/ระงับ ไม่นับ) · ระงับ ⇒ แอดมินตัดสิน · ปิด ⇒ ผู้สร้างถูกตั้งเองตามเดิม | `ErasureAuditScopeTests`.Acting_owner_is_one_definition_for_list_assign_and_erasure · .Suspended_owner_needs_admin_decision_not_auto_promote · `TeamPermissionLicenseRound205Tests`.HasOwner_CountsOwnerAndSystemAdmin |
+| LEGAL214-47 | ฑ-2 B2-c: ผู้ขอลบเป็นเจ้าของแพ็กเกจ · แพ็กเกจมีบริษัทผูก | ป้ายบอก "ติดต่อแอดมินให้ยกเลิกแพ็กเกจ" · ยกเลิกได้เมื่อไม่มีบริษัทผูก · มี ⇒ 409 ไม่ยกเลิกครึ่ง ๆ | `ErasureAuditScopeTests`.Account_plan_blocker_has_a_remedy_and_cancel_refuses_plans_with_companies |
+| LEGAL214-48 (มือ) | ฑ-2 S4-a + ปุ่ม: เข้าดูในนามบริษัทที่เจ้าของถูกปิด · ปุ่ม "ยกเลิกแพ็กเกจบัญชี" บน `/admin/legal.html` | เลือกผู้ใช้ Active คนถัดไป (ไม่ 401) · ปุ่มโผล่เฉพาะคำขอที่ติดแพ็กเกจ | ตรวจมือ |
+| LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
+
+## SUB217 — กดซ้ำไม่บันทึกซ้ำ (Idempotency-Key + ด่านซ้ำเชิงความหมาย) · ตอบเร็ว แจ้งเตือนตามหลัง (รอบ 217 · คำตัดสินข้อ 175)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| SUB-01 | แขกเบอร์เดิม (พิมพ์ 4 รูปแบบ) กดจองรอบเดิมพร้อมกัน 4 ครั้ง ไม่มีคีย์ | ใบเดียว · ที่เหลือ 409 `CMS-BOOKING-DUPLICATE` | `Db/SubmitOnceRound217DbTests`.SUB01_… |
+| SUB-02 | สมาชิกคนเดิมกดพร้อมกัน 3 ครั้ง | ใบเดียว · คำขออื่นได้ใบเดิม `reused=true` + `duplicateOf` | `Db/SubmitOnceRound217DbTests`.SUB02_… |
+| SUB-03 | ทิศตรงข้าม: คนละคน ความจุ 2 พร้อมกัน | ได้ทั้งสองใบ | `Db/SubmitOnceRound217DbTests`.SUB03_… |
+| SUB-04 | ทิศตรงข้าม: คนเดิมคนละรอบ · `ConfirmAdditional` · พ้น 10 นาที | จองได้ทุกกรณี (ความจุยังตรวจ) | `Db/SubmitOnceRound217DbTests`.SUB04_… |
+| SUB-05 | ใบเดิมถูกยกเลิก | จองรอบเดิมใหม่ได้ทันที | `Db/SubmitOnceRound217DbTests`.SUB05_… |
+| SUB-06 | สร้างการจอง | ไม่ส่งข้อความในคำขอ · แถวคิวหนึ่งแถว · dispatcher ส่งลูกค้า+ร้านครั้งเดียวแล้วปิดแถว · รอบสองไม่หยิบ | `Db/SubmitOnceRound217DbTests`.SUB06_… |
+| SUB-07 | คำขอซ้ำที่ได้ใบเดิม | ไม่เพิ่มแถวคิว (ไม่แจ้งซ้ำ) | `Db/SubmitOnceRound217DbTests`.SUB07_… |
+| SUB-08 | สองเครื่องหยิบคิวพร้อมกัน · lease หมด | หยิบได้ครั้งเดียว · หมด lease หยิบใหม่ได้ (Attempts 2) | `Db/SubmitOnceRound217DbTests`.SUB08_… |
+| SUB-09 | คีย์เดียวกันสองคำขอพร้อมกันผ่านมิดเดิลแวร์จริง · ยิงซ้ำหลังเสร็จ | ใบเดียว · อีกคำขอ 409 in-flight/replay · replay ได้ผลเดิมทุกไบต์ | `Db/SubmitOnceRound217DbTests`.SUB09_… |
+| SUB-10 | คีย์เดิมเนื้อต่าง · ทิศตรงข้าม คีย์ใหม่รอบอื่น | 409 mismatch ไม่สร้างใบ · คีย์ใหม่จองได้ | `Db/SubmitOnceRound217DbTests`.SUB10_… |
+| SUB-11 | กติกาคีย์: รูปคีย์ · namespace (แฮช credential ไม่เก็บดิบ) · แฮชสตรีม = แฮชก้อนเดียว · replay/in-flight/mismatch/หมดอายุ/แถวเก่าไม่มีแฮช | ตามตาราง | `SubmitOnceRound217Tests`.Normalize_… · Subject_… · RequestHash_… · Decide_… |
+| SUB-12 | ผู้จองคนเดียวกัน: เบอร์ต่างรูปแบบ · สมาชิกเดียวกัน · ทิศตรงข้าม สมาชิกคนละคนเบอร์เดียวกัน/คนละแขก · ไม่มีตัวตน = ไม่ตัดสิน · เปิดใบเดิมให้แขกไม่ได้ | ตามตาราง | `SubmitOnceRound217Tests`.IdentityOf_… · Same_… · Two_different_members_… · Reveal_… |
+| SUB-13 | คิวแจ้งเตือน: ชนิดไม่รู้จัก · ถอย 30 วิ/1 นาที · ยอมแพ้ครั้งที่ 5 · ข้อความผิดพลาดไม่ว่าง/ไม่ยาวเกิน | ตามตาราง | `SubmitOnceRound217Tests`.New_row_… · AfterFailure_… · Truncate_… |
+| SUB-14 | หน้าเว็บ: กดปุ่มจองซ้ำ/Enter ระหว่างรอ · 409 in-flight · mismatch | ส่งครั้งเดียว · ปุ่ม "กำลังจอง…" · รอแล้วได้ผลเดิม · หมุนคีย์ | `js/submit-once.js` (node --check) — ทดสอบมือบน storefront (ยังไม่มี sim) |
+| SUB-15 | จุดเรียกในเซอร์วิส (ถอดด่าน/ย้ายลำดับ/ส่งแจ้งเตือนในคำขอกลับมา) | checker ฟ้อง | `tools/required_call_site_check.py` กติกา `_R217_*` + แก้ CreateBookingAsync/CreateOrderAsync |
+| SUB-16 | ฝ่ายค้าน S1: สมาชิกจองที่นั่งที่สอง (จำนวนคนต่าง) · รูปเดียวกัน · ปุ่มจองเพิ่ม | ใบใหม่ · ใบเดิม reused · ConfirmAdditional ใบใหม่ | `Db/SubmitOnceRound217DbTests`.S1_สมาชิกจองที่นั่งที่สอง_… · `SubmitOnceRound217Tests`.S1_same_shape_… |
+| SUB-17 | ฝ่ายค้าน S1: พนักงานจองซ้ำแทนลูกค้า | 409 พร้อมเลขที่ใบเดิม (ไม่คืนเงียบ) | `Db/…`.S1_พนักงานจองซ้ำแทนลูกค้า_… · `SubmitOnceRound217Tests`.S1_outcome_… |
+| SUB-18 | ฝ่ายค้าน S2: สลิป multipart boundary ใหม่ทุกครั้ง · สลิปอีกใบด้วยคีย์เดิม | replay (ไม่ mismatch) · ใบอื่น = 409 mismatch | `Db/…`.S2_สลิปmultipart_… · `SubmitOnceRound217Tests`.S2_multipart_… |
+| SUB-19 | ฝ่ายค้าน S2: ยิงซ้ำเนื้อต่างระหว่างคำขอเดิมยังทำงาน | 409 in-flight (ไม่ใช่ mismatch) | `Db/…`.S2_คำขอเดิมยังทำงาน_… · `SubmitOnceRound217Tests`.S2_inflight_… |
+| SUB-20 | ฝ่ายค้าน S3: ตัวส่งโยน (โครงสร้างล่ม) | แถวไม่ปิด · Attempts 1 · LastError · รอบถัดไปก่อนเวลาถอยไม่หยิบ | `Db/…`.S3_ข้อยกเว้นโครงสร้าง_… |
+| SUB-21 | ฝ่ายค้าน S4: ยกเลิกก่อนถึงคิว · ออเดอร์ยกเลิก/คืนเงิน | ไม่ส่ง · ปิดแถวพร้อม Note · ทิศตรงข้าม รอ/ยืนยัน/คิวสำรอง/คืนบางส่วน ยังส่ง | `Db/…`.S4_ยกเลิกก่อนถึงคิว_… · `SubmitOnceRound217Tests`.S4_… |
+| SUB-22 | ฝ่ายค้าน S5: InFlight ค้าง < 2 นาที · > 2 นาที สองคำขอแย่งกัน | ยังกัน 409 · ยึดคืนได้คนเดียว ทำงานจริงครั้งเดียว | `Db/…`.S5_InFlightค้างเกินสองนาที_… · `SubmitOnceRound217Tests`.S5_… |
+| SUB-23 | ฝ่ายค้าน S6: ลายนิ้วมือ HMAC ต่างจาก SHA-256 เปล่า · กุญแจว่าง · เส้นสมัคร/ล็อกอิน/รหัสผ่าน | ต่าง · โยนตอนเริ่ม · ไม่เก็บแถว (ทิศตรงข้าม: เส้นจอง/ยกเลิกด้วยโทเคนยังเก็บ) | `SubmitOnceRound217Tests`.S6_… · `Db/…`.S6_เส้นสมัครสมาชิก_… |
+| SUB-24 | ข้อสังเกต 1: 200 + success:false · 409 · 500 · ไม่ใช่ JSON | ไม่เก็บ/ไม่เก็บ/ไม่เก็บ/เก็บ · ส่งคีย์เดิมหลังแก้ = ทำงานจริง | `SubmitOnceRound217Tests`.Note1_… · `Db/…`.Note1_… |
+| SUB-25 | ข้อสังเกต 6: ออเดอร์ + แถวคิวในธุรกรรมเดียว | กติกาจุดเรียก (BeginTransaction → คิว → บันทึก → Commit · Rollback ก่อนอ่านซ้ำ) | `tools/required_call_site_check.py` CreateOrderAsync/SaveNewOrderOrReplayAsync |
+| SUB-26 | ข้อสังเกต 9: หลังบ้านบันทึกรับเงินมัดจำ | ส่ง Idempotency-Key + ปุ่มล็อก | `pages/cms-bookings.html` + `js/api.js` (node --check) — ทดสอบมือ |
+| SUB-27 | จุดเรียกฝ่ายค้าน (ถอดด่านรูปคำขอ/ข้ามสถานะ/กลืนข้อยกเว้น/แฮชเปล่า) | checker ฟ้อง | `tools/required_call_site_check.py` กติกา `_R217_*` (เพิ่ม/แก้) |
+
+## CMS216 — ข้อมูลส่วนตัวของสมาชิกหน้าร้าน + เติมฟอร์มจอง/สั่งซื้อ/จองที่พักจากบัญชี (รอบ 216 · คำตัดสินข้อ 174)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS216-01 | แก้ข้อมูลส่วนตัว: เบอร์มีขีด/+66 · เลขภาษีมีขีด · ไม่ใส่สาขา | เบอร์ตัวเลขล้วนขึ้นต้น 0 · เลขภาษี 13 หลัก · สาขา 00000 | `CmsRound216MemberProfileTests`.Validate_NormalizesPhoneAndTaxId_DefaultsHeadOffice |
+| CMS216-02 | ชื่อว่าง · เบอร์สั้น · เลขภาษี checksum ผิด · สาขา 2 หลัก · รหัสไปรษณีย์ 4 หลัก · มีจังหวัดไม่มีบรรทัดที่อยู่ | ทุกข้อในข้อความเดียว · ไม่บันทึกอะไร | `CmsRound216MemberProfileTests`.Validate_RejectsBadValues_AllInOneMessage · `Db/MemberProfileDbTests`.UpdateProfile_InvalidValues_Throw_NothingSaved |
+| CMS216-03 | ทิศตรงข้าม: ช่องไม่บังคับว่าง · ที่อยู่ว่างทั้งชุด · สาขาไม่มีเลขภาษี | ล้างค่า ไม่ใช่ error · สาขาเดี่ยว ๆ = บอกให้กรอกเลขภาษี | `CmsRound216MemberProfileTests`.Validate_EmptyOptionalFields_ClearValues_NotErrors · .Validate_BranchWithoutTaxId_IsRejected |
+| CMS216-04 | แก้โปรไฟล์ → อ่านกลับ · แก้ซ้ำ · ล้างที่อยู่ใบกำกับ | echo ครบทุกช่อง (ข้อความที่อยู่ประกอบที่เซิร์ฟเวอร์) · ที่อยู่หลักแถวเดิมถูกแก้ ไม่งอก · ล้าง = ลบแถวหลักชนิดนั้น · audit chain เก็บชื่อช่องไม่ใช่ค่า | `Db/MemberProfileDbTests`.UpdateProfile_RoundTrip_EchoesAllFields_AndAudits · `CmsRound216MemberProfileTests`.ComposeAddress_CheckoutVsFull |
+| CMS216-05 | ผู้ติดต่อ ERP ที่ผูกกับสมาชิก | ไม่ถูกเขียนทับ (ชื่อ/เลขภาษีเดิม) | `Db/MemberProfileDbTests`.UpdateProfile_RoundTrip_EchoesAllFields_AndAudits · `required_call_site_check` (ApplyProfileAsync ห้าม `_db.Contacts`) |
+| CMS216-06 | ข้ามเว็บ (บริษัทเดียวกัน) · ข้ามบริษัท · โทเคนเว็บอื่น · แขก/พนักงาน | อ่าน/เขียนโปรไฟล์ไม่ได้ · "บันทึกเป็นข้อมูลของฉัน" ไม่มีผล | `Db/MemberProfileDbTests`.CrossSite_And_CrossTenant_CannotReadOrWrite · `CmsRound216MemberProfileTests`.ProfileOwner_OnlyTokenOfThisSite_AndOnlyWhenRequested |
+| CMS216-07 | สมาชิกจอง/สั่ง/จองที่พักโดยเว้นชื่อ/เบอร์/อีเมล | เซิร์ฟเวอร์เติมจากโปรไฟล์ก่อนด่านฟอร์ม/ยินยอม · ค่าที่พิมพ์ชนะ · โปรไฟล์ไม่มี = ไม่แต่งค่า | `CmsRound216MemberProfileTests`.FillContact_FillsBlanks_TypedValuesWin · `required_call_site_check` (FillContact ก่อน OrderFormFields.Check / CmsDataConsent.EnforceAsync / CreateReservationAsync) |
+| CMS216-08 | ติ๊ก "บันทึกเป็นข้อมูลของฉัน" หลังจอง: โปรไฟล์ไม่มีเบอร์ | บันทึกเบอร์ · ไม่มีข้อความปัญหา | `CmsRound216MemberProfileTests`.MergeCheckout_FillsEmptyProfile_FromBookingForm · `Db/MemberProfileDbTests`.SaveFromCheckout_FillsEmpty_ReportsSkipped_LeavesValidUntouched |
+| CMS216-09 | ติ๊กบันทึกแต่เบอร์/เลขภาษีผิดรูปแบบ | รายการสำเร็จ · ค่าเดิมในโปรไฟล์ไม่ถูกแตะ · คำตอบมี `errors` บอกช่องที่ไม่ได้บันทึก (ไม่ใช่ no-op เงียบ) | `CmsRound216MemberProfileTests`.MergeCheckout_InvalidPhone_SkippedAndReported_NotSilent · .MergeCheckout_TaxInvoice_OnlyWithValidChecksum |
+| CMS216-10 | ค่าที่ฟอร์มส่งตรงกับโปรไฟล์ (เว้นวรรคต่าง) · ที่อยู่ใหม่จากเช็กเอาต์ | ไม่เปลี่ยน (ที่อยู่มีโครงไม่ถูกยุบ) · ที่อยู่ใหม่ = บรรทัดที่อยู่ + จังหวัด/รหัสไปรษณีย์ | `CmsRound216MemberProfileTests`.MergeCheckout_SameValues_NoChange · .MergeCheckout_NewShippingText_ReplacesStructuredAddress |
+| CMS216-11 | หน้าเว็บ: `/portal/me` ตอบช้ากว่าที่ผู้ใช้เริ่มพิมพ์ · ช่องที่มีค่าอยู่แล้ว · รหัสสาขาค่าตั้งต้น 00000 · ช่องใบกำกับของที่พัก · ช่อง "บันทึกเป็นข้อมูลของฉัน" | ช่องที่ผู้ใช้แตะไม่ถูกทับ (`dataset.userTouched`) · ทับเฉพาะช่องว่าง/ช่องที่ระบบเติม (`dataset.autoSrc`) · สาขาจากโปรไฟล์ชนะค่าตั้งต้น · ช่อง "เทียบอย่างเดียว" ไม่เติม · ติ๊กไว้ก่อนเฉพาะเติมช่องที่โปรไฟล์ว่าง · ผู้ใช้เอาติ๊กออกแล้วไม่ติ๊กกลับ | `tools/member_prefill_sim.js` (โค้ดจริงจากหน้า บน DOM จำลอง · /portal/me ตอบช้า · ผู้ใช้ลบค่าที่เติม · ช่องบันทึกติ๊ก/ไม่ติ๊ก · negative test 4 ตัว) |
+| CMS216-12 | รวมกับรอบ 217: กดซ้ำได้ใบจองเดิม (`Reused`) · ออเดอร์คืนจากคีย์กันกดซ้ำ (`Replayed`) · ที่พักซ้ำ (409) · คำขอซ้ำคีย์เดิม (มิดเดิลแวร์ตอบจากแคช) | ไม่บันทึกโปรไฟล์ซ้ำ · หน้าเว็บไม่ขึ้น "บันทึกแล้ว" | `required_call_site_check` (`ProfileOwner(request.SaveToProfile && !result.Reused …)` / `!result.Replayed`) · ตรวจมือ storefront `_memberAfterSubmit(… && !booking.reused)` |
+| CMS216-13 | ฝ่ายค้าน S1: บันทึกจากฟอร์มที่พัก (ไม่มีช่องสาขา) ด้วยเลขภาษีเดิม · เลขใหม่ไม่ส่งสาขา | คงสาขา 00003 · เลขใหม่ = 00000 | `CmsRound216MemberProfileTests`.S1_LodgingSameTaxId_WithoutBranchField_KeepsBranch_NewTaxId_HeadOffice |
+| CMS216-14 | ฝ่ายค้าน S2: สั่งของขวัญถึงแม่ (ชื่อ/เบอร์ผู้รับต่างจากบัญชี) · จองแทนเพื่อนเมื่อบัญชีมีชื่อแล้ว | ชื่อ/เบอร์บัญชีไม่เปลี่ยน · ผู้รับของที่อยู่จัดส่ง = แม่ · จองแทน: ไม่ทับ + บอกเหตุ · บัญชีว่างเบอร์ ⇒ เติม | `CmsRound216MemberProfileTests`.S2_CheckoutGiftRecipient_DoesNotTouchMemberIdentity · .S2_BookingForm_FillsOnlyEmptyIdentity_NeverOverwrites · `Db/MemberProfileDbTests`.SaveFromCheckout_FillsEmpty_ReportsSkipped_LeavesValidUntouched |
+| CMS216-15 | ฝ่ายค้าน S2 หน้าเว็บ: ช่องขอบันทึก | ไม่ติ๊กให้เองเลย · บัญชีมีค่าแล้ว ⇒ ไม่ชวนบันทึกทับ · ผู้ใช้ติ๊กเอง ⇒ คงติ๊ก | `tools/member_prefill_sim.js` (e) + negative "ติ๊กให้เอง" |
+| CMS216-16 | ฝ่ายค้าน S3: ผู้ใช้ลบช่องที่เติมไว้แล้วส่ง · พนักงาน walk-in ระบุ CustomerId · ผู้เรียก API ไม่ส่งธง · โทเคนเว็บอื่น | ธง false ⇒ เซิร์ฟเวอร์ไม่เติมกลับ · พนักงาน/API/เว็บอื่นไม่เติม | `tools/member_prefill_sim.js` (g) + negative · `CmsRound216MemberProfileTests`.S3_FillFromProfile_OnlyPageConfirmedMemberOfThisSite · `required_call_site_check` (FillFromProfile ก่อน CreateBookingAsync/CreateOrderAsync · ธงก่อน FillContact) |
+| CMS216-17 | เบอร์ดิบของแถวเก่า (081-234-5678) กับค่าที่พิมพ์ 0812345678 · ส่งซ้ำค่าเดิม | ไม่นับว่าเปลี่ยน · ไม่มีข้อความ "บันทึกแล้ว" ปลอม | `CmsRound216MemberProfileTests`.LegacyRawPhone_SameNumber_IsNotAChange · .MergeCheckout_SameValues_NoChange · `Db/MemberProfileDbTests`.SaveFromCheckout_… |
+| CMS216-18 | แถว Both หลัก + แถว Shipping หลักเก่าซ้ำ → แก้ที่อยู่จัดส่ง/ใบกำกับต่างกัน | ที่อยู่หลักต่อชนิดแถวเดียว · ใบกำกับอ่านจาก Both ได้และไม่หายเมื่อแยกแถว · บรรทัดเปลี่ยน ⇒ ล้างถนน/บ้านเลขที่เดิม | `Db/MemberProfileDbTests`.BothRow_And_DuplicateDefaults_AreNormalizedOnSave · migration `MemberProfileMigration` (ตรวจมือ: ล้างซ้ำคงแถวล่าสุด + unique index บางส่วน) |
+| CMS216-19 | ฟอร์มติดต่อ: ช่องบริษัท/เลขภาษี · ช่อง type=hidden | ไม่เติม | `tools/member_prefill_sim.js` (h) + negative "เติมช่องซ่อน" |
+| CMS216-20 | ด่านฐาน `UX_SiteCustomerAddresses_Customer_Type_Default` จริง (รัน `MemberProfileMigration` ในเทสต์): พนักงานเพิ่มที่อยู่หลักสองครั้ง → สมาชิกแก้โปรไฟล์ → บันทึกจากเช็กเอาต์ → พนักงานเพิ่มอีก · เพิ่มแถวหลักซ้ำตรง ๆ · พนักงานเพิ่มผ่าน URL เว็บอื่น | ไม่ชน index ทุกทางเขียน · แถวหลักต่อชนิดแถวเดียว · เพิ่มตรง = ฐานปฏิเสธ (ด่านมีจริง) · เว็บอื่น = ไม่พบ | `Db/MemberProfileDbTests`.DefaultAddressIndex_AllWriters_DoNotViolate_AndIndexIsReal · `required_call_site_check` (AddAddressAsync: ล็อก → ปลดก่อน INSERT) |
+
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -162,7 +346,13 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **693 ไฟล์ · 7,092 `[Fact]` + 1,130 `[Theory]` (5,297 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **707 ไฟล์ · 7,335 `[Fact]` + 1,156 `[Theory]` (5,420 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
+
+
+
+
+
 
 
 
@@ -7078,3 +7268,34 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CMS210-10 | ยิงเดาถี่ (IP เดียว / หลาย IP เลขเดียว) | 429 · คีย์โควตาพอดี `BucketKey` varchar(120) (ไม่ fail-open เงียบ) | `Request_validation_and_number_bucket` · rule `LookupThrottledAsync` |
 | CMS210-11 | ลิงก์ในแจ้งเตือน: มีโดเมนร้านที่ยืนยันแล้ว / ไม่มี ⇒ `App:BaseUrl/site/{key}` / ไม่มีทั้งคู่หรือใบเก่าไม่มีโทเคน | `https://โดเมน/my-booking/{token}` / path-based / เลขที่ + หน้า "ตรวจสอบการจอง / คำสั่งซื้อ" (ไม่เงียบ) | `Verified_custom_domain_wins` · `Falls_back_to_path_based_app_url` · `No_usable_base_gives_null` · `No_base_url_falls_back_to_number_and_lookup_page_not_silent` · `Booking_line_has_escaped_manage_link` · `Order_line_has_track_link` |
 | CMS210-12 | แจ้งเตือนถึงลูกค้าทุกฉบับ (ยืนยัน/ยกเลิก/เลื่อนการจอง · ยืนยัน/จัดส่ง/พร้อมรับ/ส่งมอบคำสั่งซื้อ) | มีบรรทัดลิงก์ · เลื่อนนัดมีข้อความใหม่ (เดิม/ใหม่) | `WithLine_appends_and_blank_keeps_message` · `Rescheduled_text_has_old_and_new_time` · rules `WithBookingLinkAsync`/`WithOrderLinkAsync` + ผู้เรียก |
+
+## CMS215 — พื้นที่ทำงานเว็บไซต์ (รอบ 215 เฟส 1)
+
+| # | ขั้นตอน | ผลที่ต้องได้ |
+| --- | --- | --- |
+| CMS215-01 | บริษัทมีสปา + โรงแรม + ร้าน · เปิดหน้า "เว็บไซต์ทั้งหมด" | แถบซ้ายหมวดเว็บมี 2 รายการ (พื้นที่ทำงาน · เว็บไซต์ทั้งหมด) — ไม่กาง 7 เมนูลูก · ค้นหาเมนู "Front desk" ยังเจอ |
+| CMS215-02 | ชื่อหมวด: บริษัทร้านอย่างเดียว / ที่พักอย่างเดียว / มีจอง | "เว็บไซต์ & ร้านออนไลน์" / "เว็บไซต์ & ที่พัก" / "เว็บไซต์ & การจอง" (`CmsModuleResolverTests`) |
+| CMS215-03 | role ที่ได้แค่ "ที่พัก · Front desk" กด "พื้นที่ทำงานเว็บไซต์" | ไป lodging.html ทันที · role ที่ไม่มีงานเว็บไม่เห็นทางเข้า (sim) |
+| CMS215-04 | เปิดการจองของ test-spa แล้วสลับเว็บที่หัวหน้าเป็นโรงแรม | ไป Front desk ของโรงแรม (เว็บไม่มีจองคิว ⇒ แท็บแรกของเว็บนั้น) · select เว็บในหน้าเดิมถูกซ่อน (ตัวเลือกเว็บมีตัวเดียว) |
+| CMS215-05 | แท็บของเว็บสปา | การจอง · สรุปผู้ให้บริการ · (คำขอ ถ้ามีฟอร์มติดต่อ) · หน้าเว็บ — ไม่มี Front desk/ตั้งค่าร้าน (sim) |
+| CMS215-06 | การ์ดภาพรวม "การจอง" บน เว็บไซต์ทั้งหมด (หลายเว็บ) | เปิด `cms-bookings.html?siteId=all` (เดิมเปิดเว็บแรก) · ที่พักแสดงปุ่มรายเว็บพร้อมชื่อ |
+| CMS215-07 | `lodging.html?siteId=<เว็บที่ยังไม่มีที่พัก>` | ข้อความ "ยังไม่มีที่พักผูกอยู่" + ลิงก์สร้าง — **ไม่**โหลดที่พักแห่งแรก (sim negative) · ทิศตรงข้าม: ?siteId= ของโรงแรม ⇒ ที่พักนั้น |
+| CMS215-08 | เว็บที่ไม่มีบล็อกฟอร์มติดต่อ/ฟอร์มส่งเข้าระบบ/lead | ไม่มีแท็บ/ปุ่ม "คำขอ / Lead" · เว็บที่เคยมี lead ยังมี (`CmsModuleResolverTests` ทั้งสองทิศ) |
+| CMS215-09 | เปิดหน้ารายเว็บโดยไม่มี ?siteId= หลังเคยทำงานเว็บ b3 | เลือก b3 ถ้า b3 ใช้งานของหน้านั้น · ไม่งั้นเว็บแรกที่ใช้ (sim) |
+| CMS215-10 | (ฝ่ายค้าน S1) พนักงานที่มีบทบาทเฉพาะเว็บโรงแรม เปิด Front desk | ตัวสลับเว็บมีแค่โรงแรม (ไม่เห็นชื่อสปา/ร้าน) · `GET cms/sites` คืนเฉพาะเว็บที่มีบทบาท/ที่ตัวเองสร้าง (`CmsSiteScopeTests`) · เจ้าของเห็นทุกเว็บ |
+| CMS215-11 | (S2) ลบเว็บที่เคยเป็นเว็บล่าสุด แล้วกด "พื้นที่ทำงานเว็บไซต์" | ไม่ค้างที่ทางตัน — ตกไปที่พัก/เว็บถัดไป · เว็บล่าสุดถูกล้าง · ตั้งค่าที่พักไม่โชว์ GUID |
+| CMS215-12 | (S3) เว็บที่มีแต่บล็อกสมัครรับข่าว | มีแท็บ "คำขอ / Lead" |
+| CMS215-13 | (S4) ผู้ใช้ role จำกัดเปิดหน้าตั้งค่าที่พักแบบโหลดช้า | แท็บที่ไม่มีสิทธิ์หายหลังสิทธิ์โหลด (sim) |
+| CMS215-14 | (N11) แก้ข้อมูลที่พักแล้วสลับเว็บโดยไม่บันทึก | ถามยืนยัน · ยกเลิก = อยู่เว็บเดิม |
+| CMS215-15 | (เฟส 2) ตั้งค่าเว็บ › การจอง/บริการ เลือก "ระบบจัดให้อัตโนมัติ" แล้วสร้างบริการใหม่แบบ "ตามค่าเว็บ" | หน้าจองไม่มีช่องเลือกผู้ให้บริการ · ตัวอย่างบนหน้าตั้งค่าตรงกัน (`BookingRound215ProviderDefaultTests`) |
+| CMS215-16 | (เฟส 2 ทิศตรงข้าม) บริการเดิมที่ตั้ง "บังคับระบุ" ไว้ก่อนรอบนี้ แล้วเปลี่ยนค่าเว็บเป็น "ระบบจัดให้" | บริการนั้นยังบังคับเลือก (กำหนดเอง) · ขึ้นในรายการ "บริการที่กำหนดเอง" · กด "ใช้ตามค่าเว็บ" แล้วจึงเปลี่ยน |
+| CMS215-17 | (เฟส 2) สร้างเว็บคลินิก / สปา ใหม่ | ค่าเว็บ = ระบบจัดให้ / ลูกค้าเลือกเอง · เว็บเดิมค่าเว็บ = ไม่ใช้ (พฤติกรรมเดิม) |
+| CMS215-18 | (เฟส 2) เว็บสปา (ไม่มีออเดอร์) เปิด ตั้งค่าเว็บ › การแจ้งเตือน / LINE | ตั้งการแจ้งลูกค้ารายเว็บได้ (เดิมทำไม่ได้) · ตั้งค่าร้านค้า › แจ้งเตือนลูกค้า เหลือกล่อง "ย้ายแล้ว" |
+| CMS215-19 | (เฟส 2) ผู้มีสิทธิ์แค่ "ตั้งค่าร้านค้า" | หัวพื้นที่ทำงานยังมีแท็บตั้งค่าร้านค้า (ไม่เห็นศูนย์ตั้งค่าเว็บ) · เจ้าของเห็น "⚙️ ตั้งค่าเว็บ" แทน (sim) |
+| CMS215-20 | (เฟส 2) ลิงก์ในศูนย์ตั้งค่า (`cms-edit?tab=seo` · `cms-store-settings?tab=shipping`) | เปิดตรงแท็บ · `deep_link_param_check` 0 จุด |
+| CMS215-21 | (ฝ่ายค้าน S1) สร้างเว็บสปาใหม่ ยังไม่เพิ่มผู้ให้บริการ แล้วบันทึกค่าตั้งการจองใน cms-edit โดยไม่แตะสวิตช์ | การจัดสรรยังไม่ถูกบันทึกเป็นปิด · ศูนย์ตั้งค่าแสดง "ยังไม่มีผู้ให้บริการ — เพิ่มที่…" · ทิศตรงข้าม: เจ้าของกดปิดเอง ⇒ ปิดจริง |
+| CMS215-22 | (S2) เพิ่มบริการจากแม่แบบ "สปา / นวด" | นวดอโรมา = ตามค่าเว็บ · นวดไทย = ลูกค้าเลือกเอง (ตั้งในแม่แบบ) |
+| CMS215-23 | (S3) PUT booking/settings `defaultResourceMode: 99` | ปฏิเสธด้วยข้อความไทย ไม่บันทึก |
+| CMS215-24 | (S4) ผู้มีสิทธิ์ตั้งค่าร้านค้าแต่ไม่มีสิทธิ์เว็บไซต์ เปิดแท็บแจ้งเตือนลูกค้า | ตารางแจ้งลูกค้ารายเว็บยังแก้ได้ที่นี่ · เจ้าของเห็นกล่อง "ย้ายแล้ว" |
+| CMS215-25 | ศูนย์ตั้งค่าเปลี่ยนค่าเว็บโหมดผู้ให้บริการ ระหว่างอีกแท็บแก้ระยะเวลาเริ่มต้น | ระยะเวลาที่อีกแท็บบันทึกไม่ถูกทับ (ศูนย์ส่งเฉพาะช่องที่แก้) |
+

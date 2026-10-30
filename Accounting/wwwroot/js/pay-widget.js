@@ -82,11 +82,14 @@
               cardToken: opts.cardToken || null,
               siteId: opts.siteId || null, contactId: opts.contactId || null,
             };
-        const res = await fetch(url, {
+        // รอบ 217 (ข้อ 175): คีย์กันซ้ำต่อการเปิด widget หนึ่งครั้ง (js/submit-once.js ถ้าหน้าโหลดไว้) — เน็ตหลุด/กดซ้ำ = เริ่มจ่ายครั้งเดียว
+        const attempt = this._attempt = {};
+        const init = {
           method: 'POST',
           headers: Object.assign({ 'Content-Type': 'application/json' }, this._authHeader()),
           body: JSON.stringify(body),
-        });
+        };
+        const res = global.SubmitOnce ? await global.SubmitOnce.fetch(url, init, attempt) : await fetch(url, init);
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(json.message || 'เริ่มการชำระเงินไม่สำเร็จ');
 

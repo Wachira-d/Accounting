@@ -22,11 +22,18 @@ public partial class CmsBookingService : ICmsBookingService
     private readonly IProductService? _productService;
     /// <summary>รอบ 209 P3 — แจ้งร้าน (การจองใหม่) + ลูกค้า (ยืนยันการจอง · ร้านยกเลิก) · null = ไม่ส่ง (CmsBookingService.ShopNotify.cs)</summary>
     private readonly ICmsShopNotifier? _shopNotifier;
+    private readonly IPromptPayService _promptPay;
+    /// <summary>ฝ่ายค้านรอบ 218 (S1): resolve <c>IPaymentIntentService</c> ตอนใช้ (ปิดรายการชำระของสลิปที่ไม่ใช้แล้ว) — ฉีดตรงเป็นวงกลม DI</summary>
+    private readonly IServiceProvider? _services;
 
     public CmsBookingService(AccountingDbContext db, ILogger<CmsBookingService> logger,
         IDocumentService? docService = null, IBookingNotifier? notifier = null, ICreditBookingLedger? creditLedger = null,
-        IProductService? productService = null, ICmsShopNotifier? shopNotifier = null)
+        IProductService? productService = null, ICmsShopNotifier? shopNotifier = null, IPromptPayService? promptPay = null,
+        IServiceProvider? services = null)
     {
+        _services = services;
+        // รอบ 218: ตรวจรูปแบบพร้อมเพย์ของช่องโอน (stateless — เทสต์ที่ไม่ส่งใช้ตัวจริงได้)
+        _promptPay = promptPay ?? new PromptPayService();
         _productService = productService;
         _shopNotifier = shopNotifier;
         _db = db;
@@ -44,6 +51,7 @@ public partial class CmsBookingService : ICmsBookingService
         var svc = new SiteBookingService { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
         await EnsureProductOfCompanyAsync(companyId, request.ProductId);   // รอบ 207: ผูกสินค้าข้ามบริษัทไม่ได้
         ApplySettings(svc, request);
+        await EnsureServicePaymentAsync(companyId, siteId, svc, paymentChanged: true, wasActive: false);   // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด
         svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, null);
         if (request.Schedule != null)
             foreach (var row in BuildSlotRows(companyId, svc, request.Schedule, userId)) svc.Slots.Add(row);
@@ -60,10 +68,14 @@ public partial class CmsBookingService : ICmsBookingService
             ?? throw new KeyNotFoundException("Booking service not found.");
 
         var oldSlug = svc.Slug;
+        var payBefore = PaymentFieldsOf(svc);
+        var wasActive = svc.IsActive;
         await EnsureProductOfCompanyAsync(companyId, request.ProductId);   // รอบ 207
         ApplySettings(svc, request);
         if (svc.Slug != oldSlug) svc.Slug = await UniqueSlugAsync(companyId, siteId, svc.Slug, svc.Id);
         if (request.IsActive.HasValue) svc.IsActive = request.IsActive.Value;
+        // ฝ่ายค้านรอบ 218: โหมดเก็บเงินของบริการต้องมีช่องทาง + ยอด · รอบ 2: ปิดใช้บริการ/แก้ชื่อโดยไม่แตะค่าชำระ ⇒ ไม่ตรวจ (ไม่ขังผู้ใช้)
+        await EnsureServicePaymentAsync(companyId, siteId, svc, paymentChanged: !Equals(payBefore, PaymentFieldsOf(svc)), wasActive);
         // ตารางเวลา: null = ผู้เรียก API เดิมที่ไม่รู้จักฟิลด์นี้ ⇒ ไม่แตะ · ส่งมา = แทนที่ทั้งชุด (การจองเดิมไม่ถูกแตะ — แถวเวลาไม่ใช่ FK ของการจอง)
         if (request.Schedule != null)
         {
@@ -115,7 +127,9 @@ public partial class CmsBookingService : ICmsBookingService
         svc.EnforceSlotCapacity = r.EnforceSlotCapacity;
         svc.OverlapLimit = r.EnforceSlotCapacity ? null : r.OverlapLimit;
         svc.WaitlistEnabled = r.WaitlistEnabled;
-        svc.ResourceMode = r.ResourceMode;
+        // รอบ 215 เฟส 2: null = ตามค่าเว็บ (SiteBookingSettings.DefaultResourceMode) · ค่าไม่รู้จัก = ข้อความไทย
+        if (r.ResourceMode is BookingResourceMode rm && !Enum.IsDefined(rm)) errs.Add("โหมดผู้ให้บริการไม่ถูกต้อง");
+        else svc.ResourceMode = r.ResourceMode;
         svc.UseSiteDefaults = r.UseSiteDefaults;
         // รอบ 210: null = ไม่แตะค่าเดิม (ผู้เรียก API เดิมไม่รีเซ็ตเงียบ) · ค่าไม่รู้จัก = ข้อความไทย
         if (r.MemberAccess is BookingMemberAccess memberAccess)
@@ -123,6 +137,22 @@ public partial class CmsBookingService : ICmsBookingService
             if (!Enum.IsDefined(memberAccess)) errs.Add("ค่าตั้ง \"ต้องเป็นสมาชิกก่อนจอง\" ไม่ถูกต้อง");
             else svc.MemberOnly = BookingAccessRule.ToOverride(memberAccess);
         }
+        // รอบ 218 (คำตัดสินข้อ 177): ชำระล่วงหน้ารายบริการ — null = ไม่แตะทั้งชุด (ผู้เรียก API เดิม/seed) · ตัวตัดสินเดียว BookingPaymentPolicy
+        if (r.PaymentMode != null)
+        {
+            var (payMode, payModeErr) = BookingPaymentPolicy.ParseMode(r.PaymentMode);
+            if (payModeErr != null) errs.Add(payModeErr);
+            else
+            {
+                svc.PaymentMode = payMode;
+                svc.DepositMinAmount = r.DepositMinAmount; svc.DepositMaxAmount = r.DepositMaxAmount;
+                svc.PaymentDeadlineMinutes = r.PaymentDeadlineMinutes;
+                errs.AddRange(BookingPaymentPolicy.ValidateRule(new BookingPaymentRuleInput(payMode, null, null,
+                    r.DepositMinAmount, r.DepositMaxAmount, r.PaymentDeadlineMinutes)));
+            }
+        }
+        // ทุกครั้ง (รวมเปลี่ยนชนิดบริการโดยไม่ส่งช่องชำระ): ตั้งเก็บเงินเองแต่ชนิดเก็บไม่ได้ ⇒ ปฏิเสธ ไม่บันทึกค่าที่ไม่มีผล
+        if (BookingPaymentPolicy.ServiceSaveProblem(svc.BookingType, svc.PaymentMode) is string payProblem) errs.Add(payProblem);
 
         errs.AddRange(BookingSlotEngine.ValidateRules(BookingSlotEngine.RulesOf(svc)));
         if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), "CMS-BOOKING-SETTINGS");
@@ -308,6 +338,7 @@ public partial class CmsBookingService : ICmsBookingService
             CapacityGroup = s.CapacityGroup,
             EnforceSlotCapacity = s.EnforceSlotCapacity, OverlapLimit = s.OverlapLimit, WaitlistEnabled = s.WaitlistEnabled,
             ResourceMode = s.ResourceMode, UseSiteDefaults = s.UseSiteDefaults,
+            ResourceModeSource = BookingProviderAllocation.ModeSource(s.ResourceMode),   // รอบ 215: ตามค่าเว็บ / กำหนดเอง
             // รอบ 210: ค่าที่ตั้ง (ฟอร์ม) + ค่าที่มีผลจริง (หน้าจอง) — ตัวตัดสินเดียว BookingAccessRule
             MemberAccess = BookingAccessRule.FromOverride(s.MemberOnly),
             MemberOnly = BookingAccessRule.RequiresMember(site.Row?.RequireMemberToBook ?? false, s.MemberOnly),
@@ -321,6 +352,11 @@ public partial class CmsBookingService : ICmsBookingService
             UsesSiteHours = usesSiteHours,
             SlotSummary = BookingSlotEngine.Summary(rules),
             PolicySummary = BookingSlotEngine.PolicySummary(rules, s.DepositAmount, s.DepositPercent, s.FreeCancellationHours, s.CancellationFeePercent),
+            // รอบ 218: ค่าที่ตั้ง (ฟอร์ม) + ผลที่มีจริง (ตัวตัดสินเดียว BookingPaymentPolicy · ค่าเว็บจาก SiteBookingSettings แถวเดียวกับ site.Row)
+            PaymentMode = s.PaymentMode?.ToString() ?? "Inherit",
+            DepositMinAmount = s.DepositMinAmount, DepositMaxAmount = s.DepositMaxAmount, PaymentDeadlineMinutes = s.PaymentDeadlineMinutes,
+            PaymentSummary = BookingPaymentPolicy.Describe(PaymentOf(s, site.Row)),
+            PaymentProblem = PaymentOf(s, site.Row).Problem,
             IsActive = s.IsActive,
             UpcomingBookingsCount = upcoming,
             CreatedAt = s.CreatedAt
@@ -359,21 +395,32 @@ public partial class CmsBookingService : ICmsBookingService
     /// ⇒ ตัดสินจากข้อมูลเดิม: มีผู้ให้บริการที่ใช้งาน หรือมีบริการที่ตั้งโหมดผู้ให้บริการ</summary>
     private async Task<bool> ProvidersEnabledAsync(Guid companyId, Guid siteId)
     {
-        var setting = await _db.SiteBookingSettings.AsNoTracking()
+        var row = await _db.SiteBookingSettings.AsNoTracking()
             .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted)
-            .Select(x => x.ProviderAllocationEnabled).FirstOrDefaultAsync();
-        if (setting is bool b) return b;
+            .Select(x => new { x.ProviderAllocationEnabled, x.DefaultResourceMode }).FirstOrDefaultAsync();
+        if (row?.ProviderAllocationEnabled is bool b) return b;
         var hasRes = await _db.SiteBookingResources.AsNoTracking()
             .AnyAsync(r => r.CompanyId == companyId && r.SiteId == siteId && r.IsActive && !r.IsDeleted);
+        // รอบ 215: บริการ "ตามค่าเว็บ" (null) นับด้วยค่าเว็บ — กติกาเดียวกับ BookingProviderAllocation.EffectiveMode
+        var siteDefault = row?.DefaultResourceMode ?? BookingResourceMode.None;
         var anySvc = hasRes || await _db.SiteBookingServices.AsNoTracking()
-            .AnyAsync(s => s.CompanyId == companyId && s.SiteId == siteId && !s.IsDeleted && s.ResourceMode != BookingResourceMode.None);
-        return BookingProviderAllocation.Enabled(null, hasRes, anySvc);
+            .AnyAsync(s => s.CompanyId == companyId && s.SiteId == siteId && !s.IsDeleted && (s.ResourceMode ?? siteDefault) != BookingResourceMode.None);
+        return BookingProviderAllocation.Enabled(null, hasRes, anySvc, row?.DefaultResourceMode);
     }
 
     public async Task<BookingSiteSettingsDto> GetSiteSettingsAsync(Guid companyId, Guid siteId)
     {
         var ctx = await SiteContextAsync(companyId, siteId);
         var d = ctx.Defaults;
+        // รอบ 215 เฟส 2: บริการของเว็บนี้กับโหมดที่ตั้ง (null = ตามค่าเว็บ) · tenant + ไม่ลบ
+        var modes = await _db.SiteBookingServices.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted)
+            .OrderBy(x => x.Name).Select(x => new { x.Id, x.Name, x.ResourceMode }).ToListAsync();
+        var activeProviders = await _db.SiteBookingResources.AsNoTracking()
+            .CountAsync(r => r.CompanyId == companyId && r.SiteId == siteId && r.IsActive && !r.IsDeleted);
+        var preview = BookingProviderAllocation.CustomerPreview(BookingProviderAllocation.EffectiveMode(null, await ProvidersEnabledAsync(companyId, siteId), d.DefaultResourceMode));
+        // ฝ่ายค้าน S1: เปิดจัดสรรแต่ยังไม่มีผู้ให้บริการ ⇒ บอกทางไปเพิ่ม (ไม่ใช่ "ปิดอยู่")
+        if (activeProviders == 0 && d.DefaultResourceMode != BookingResourceMode.None) preview = (false, false, BookingProviderAllocation.NoProvidersYetNote);
         return new BookingSiteSettingsDto
         {
             DurationMinutes = d.DurationMinutes, BufferBeforeMinutes = d.BufferBeforeMinutes, BufferAfterMinutes = d.BufferAfterMinutes,
@@ -404,7 +451,41 @@ public partial class CmsBookingService : ICmsBookingService
             // รอบ 210 — echo กลับ + ตัวเลือกต่อบริการจากเซิร์ฟเวอร์
             RequireMemberToBook = ctx.Row?.RequireMemberToBook ?? false,
             MemberAccessOptions = BookingAccessRule.Options(ctx.Row?.RequireMemberToBook ?? false).ToList(),
+            // รอบ 215 เฟส 2 — ค่าเว็บ + ตัวอย่างที่ลูกค้าเห็น + บริการที่ตั้งต่างจากค่าเว็บ (ตัวตัดสินเดียว BookingProviderAllocation)
+            DefaultResourceMode = d.DefaultResourceMode,
+            DefaultResourceModePreview = preview.Text,
+            DefaultResourceModeShowsPicker = preview.ShowPicker,
+            ResourceModeOverrides = modes.Where(m => m.ResourceMode != null)   // กำหนดเอง = ไม่ตามค่าเว็บ (ค่าเท่ากันก็ยังไม่ตามเมื่อค่าเว็บเปลี่ยน)
+                .Select(m => new BookingServiceModeOverride { ServiceId = m.Id, Name = m.Name, ResourceMode = m.ResourceMode!.Value }).ToList(),
+            ResourceModeInheritingCount = modes.Count(m => m.ResourceMode == null),
+            ActiveProviderCount = activeProviders,
         };
+    }
+
+    public async Task<int> InheritResourceModeAsync(Guid companyId, Guid siteId, IReadOnlyCollection<Guid>? serviceIds, string userId)
+    {
+        await EnsureSiteAsync(companyId, siteId);
+        // tenant + เว็บนี้ + ไม่ลบ · id ที่ไม่ใช่ของเว็บนี้ถูกตัดทิ้งเงียบ ๆ โดย WHERE (ไม่แตะเว็บอื่น)
+        var q = _db.SiteBookingServices.Where(s => s.CompanyId == companyId && s.SiteId == siteId && !s.IsDeleted && s.ResourceMode != null);
+        if (serviceIds != null) q = q.Where(s => serviceIds.Contains(s.Id));
+        var rows = await q.ToListAsync();
+        if (rows.Count == 0) return 0;
+        var before = System.Text.Json.JsonSerializer.Serialize(rows.Select(s => new { s.Id, s.Name, ResourceMode = s.ResourceMode?.ToString() }));
+        foreach (var s in rows) { s.ResourceMode = null; s.UpdatedBy = userId; s.UpdatedAt = DateTime.UtcNow; }
+        // ฝ่ายค้านเฟส 2: ร่องรอยว่าใครให้บริการไหนกลับไปตามค่าเว็บ (โหมดเดิมของแต่ละบริการอยู่ใน OldValues — ย้อนดูได้)
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = Guid.TryParse(userId, out var uid) ? uid : null,
+            EntityType = nameof(SiteBookingService),
+            EntityId = siteId.ToString(),
+            Action = AuditAction.Update,
+            OldValues = before,
+            NewValues = "{\"ResourceMode\":\"ตามค่าเว็บ\",\"RuleCode\":\"" + BookingProviderAllocation.RuleCode + "\"}",
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+        return rows.Count;
     }
 
     /// <summary>จังหวะออกใบกำกับของ Guaranteed ของไซต์ (คำตัดสินข้อ 155) · ไม่มีแถวค่าตั้ง = ค่าเริ่มต้น (ใบกำกับตอนจอง — เดิม)</summary>
@@ -417,12 +498,20 @@ public partial class CmsBookingService : ICmsBookingService
     public async Task<BookingSiteSettingsDto> UpdateSiteSettingsAsync(Guid companyId, Guid siteId, BookingSiteSettingsDto request, string userId)
     {
         await EnsureSiteAsync(companyId, siteId);
+        // ฝ่ายค้านรอบ 215 เฟส 2: ช่องตัวเลข null = คงค่าเดิม (ผู้เรียกที่แก้แค่ช่องเดียวไม่เขียนทับค่าที่คนอื่นเพิ่งแก้)
+        var current = BookingSlotEngine.DefaultsOf(await _db.SiteBookingSettings.AsNoTracking()
+            .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted));
+        int duration = request.DurationMinutes ?? current.DurationMinutes, bufBefore = request.BufferBeforeMinutes ?? current.BufferBeforeMinutes,
+            bufAfter = request.BufferAfterMinutes ?? current.BufferAfterMinutes, minAdv = request.MinAdvanceHours ?? current.MinAdvanceHours,
+            maxAdv = request.MaxAdvanceDays ?? current.MaxAdvanceDays;
         var errs = BookingSlotEngine.ValidateRules(new BookingSlotRules
         {
-            Mode = BookingSlotMode.Interval, DurationMinutes = request.DurationMinutes,
-            BufferBeforeMinutes = request.BufferBeforeMinutes, BufferAfterMinutes = request.BufferAfterMinutes,
-            MinAdvanceHours = request.MinAdvanceHours, MaxAdvanceDays = request.MaxAdvanceDays,
+            Mode = BookingSlotMode.Interval, DurationMinutes = duration,
+            BufferBeforeMinutes = bufBefore, BufferAfterMinutes = bufAfter,
+            MinAdvanceHours = minAdv, MaxAdvanceDays = maxAdv,
         }).ToList();
+        // ฝ่ายค้าน S3: ค่าตัวเลขของ enum ที่ไม่รู้จัก (JSON ส่งเลขได้) ⇒ ข้อความไทย ไม่บันทึกค่าเพี้ยน
+        if (request.DefaultResourceMode is BookingResourceMode dm && !Enum.IsDefined(dm)) errs.Add("ค่าเริ่มต้นโหมดผู้ให้บริการของเว็บไม่ถูกต้อง");
         if (request.GuaranteedInvoiceTiming is BookingInvoiceTiming t && !Enum.IsDefined(t))
             errs.Add("จังหวะออกใบกำกับภาษีไม่ถูกต้อง");
         // รอบ 205 W3: เวลาทำการระดับเว็บ (ตรวจด้วยตัวเดียวกับของบริการ — ParseSchedule โยนข้อความไทย) · ถือรอบ/เตือน (BookingReminderPlan.Validate)
@@ -444,9 +533,9 @@ public partial class CmsBookingService : ICmsBookingService
             row = new SiteBookingSettings { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
             _db.SiteBookingSettings.Add(row);
         }
-        row.DurationMinutes = request.DurationMinutes; row.BufferBeforeMinutes = request.BufferBeforeMinutes;
-        row.BufferAfterMinutes = request.BufferAfterMinutes; row.MinAdvanceHours = request.MinAdvanceHours;
-        row.MaxAdvanceDays = request.MaxAdvanceDays; row.UpdatedBy = userId;
+        row.DurationMinutes = duration; row.BufferBeforeMinutes = bufBefore;
+        row.BufferAfterMinutes = bufAfter; row.MinAdvanceHours = minAdv;
+        row.MaxAdvanceDays = maxAdv; row.UpdatedBy = userId;
         // null = คงค่าเดิม (ผู้เรียกที่ไม่รู้จักช่องนี้ไม่รีเซ็ตเงียบ) · มีผลกับการจองใหม่เท่านั้น — การจองเดิมตัดสินจากเอกสารที่ผูกจริง (BookingInvoiceTimingPolicy)
         if (request.GuaranteedInvoiceTiming is BookingInvoiceTiming timing) row.GuaranteedInvoiceTiming = timing;
         // รอบ 205 W3 — null = คงค่าเดิมทุกช่อง (ผู้เรียกเก่าไม่รีเซ็ตเงียบ) · ตารางว่าง = ล้างเวลาทำการของเว็บ · เทมเพลต "" = กลับไปใช้ข้อความระบบ
@@ -464,6 +553,7 @@ public partial class CmsBookingService : ICmsBookingService
         if (request.FormFields != null) row.FormFieldsJson = BookingFormFields.Serialize(request.FormFields);
         if (request.CompletionDocument is BookingCompletionDocument completion) row.CompletionDocument = completion;
         if (request.RequireMemberToBook is bool memberOnly) row.RequireMemberToBook = memberOnly;   // รอบ 210 — null = คงค่าเดิม
+        if (request.DefaultResourceMode is BookingResourceMode defMode) row.DefaultResourceMode = defMode;   // รอบ 215 — null = คงค่าเดิม
         await _db.SaveChangesAsync();
         return await GetSiteSettingsAsync(companyId, siteId);
     }
@@ -840,8 +930,16 @@ public partial class CmsBookingService : ICmsBookingService
         // รอบ 207 (คำขอเจ้าของข้อ 7): ช่องบังคับของฟอร์มจอง — ด่านจริงอยู่ที่นี่ (หน้าเว็บแสดงตามค่าเดียวกัน) · ตัวตัดสินเดียว BookingFormFields ·
         // พนักงานของบริษัทสร้างเอง (walk-in) และลูกค้าที่ล็อกอิน (CustomerId — ข้อมูลอยู่ที่บัญชีลูกค้า) ไม่ผ่านด่านนี้
         // ฝ่ายค้านรอบ 207 ข้อ 9: CustomerId มาจาก body ของคำขอนิรนาม ⇒ ยกเว้นเฉพาะลูกค้าที่เป็นของเว็บนี้จริง
-        var knownCustomer = request.CustomerId is Guid custId
-            && await _db.SiteCustomers.AsNoTracking().AnyAsync(c => c.Id == custId && c.CompanyId == companyId && c.SiteId == siteId);
+        var member = request.CustomerId is Guid custId
+            ? await _db.SiteCustomers.AsNoTracking().Where(c => c.Id == custId && c.CompanyId == companyId && c.SiteId == siteId)
+                .Select(c => new { c.FullName, c.Phone, c.Email, c.IsActive }).FirstOrDefaultAsync()
+            : null;
+        var knownCustomer = member != null;
+        // รอบ 216 (คำตัดสินข้อ 174): ลูกค้าของเว็บนี้เว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ (ตาข่ายฝั่งเซิร์ฟเวอร์ — ใบนัด/แจ้งร้าน/เอกสาร ERP ใช้ช่อง Guest*) ·
+        // ค่าที่พิมพ์มาชนะเสมอ · ตัวตัดสินเดียว StorefrontMemberProfile.FillContact
+        if (member is { IsActive: true } && request.ContactFromProfile)   // ฝ่ายค้าน S3: เฉพาะเมื่อหน้าเว็บยืนยัน (controller ตัดธงของพนักงาน/แขกแล้ว)
+            (request.GuestName, request.GuestPhone, request.GuestEmail) = StorefrontMemberProfile.FillContact(
+                request.GuestName, request.GuestPhone, request.GuestEmail, member.FullName, member.Phone, member.Email);
         // ด่านทำงานเมื่อเว็บตั้งค่าฟอร์มแล้วเท่านั้น (FormFieldsJson ไม่ null) — เว็บที่ไม่เคยตั้ง = เซิร์ฟเวอร์ไม่บังคับเหมือนเดิม
         // (ผู้เรียก API/ช่องทางอื่นที่ไม่ส่งเบอร์ไม่พังเงียบหลังอัปเดต · หน้าเว็บเดิมยังบังคับชื่อ+เบอร์ที่ฝั่งฟอร์ม)
         var formJson = (await SiteContextAsync(companyId, siteId)).Row?.FormFieldsJson;
@@ -863,11 +961,43 @@ public partial class CmsBookingService : ICmsBookingService
         var date = DateOnly.FromDateTime(request.BookingDate);
         var units = request.Units;
         var guests = request.GuestCount;
+        // รอบ 218 (คำตัดสินข้อ 177): นโยบายรับชำระล่วงหน้า — ตัวตัดสินเดียว BookingPaymentPolicy (บริการ ?? เว็บ ?? แบบเดิม) · อ่านก่อนเปิดธุรกรรม ·
+        // พนักงานจองแทน = ไม่บังคับรอยืนยัน/ไม่ถือรอบ (พนักงานรับเงินเองหน้างาน)
+        var payEff = BookingPaymentPolicy.Resolve(svc.BookingType, (await LoadPaymentContextAsync(companyId, siteId)).SiteRule,
+            Cms.BookingPaymentContextLoader.ServiceRule(svc));
+        var createdByStaff = staffOnBehalf || await IsCompanyStaffAsync(companyId, userId);
 
         SiteBooking booking;
+        Guid? duplicateOfId = null;
         await using (var tx = await _db.Database.BeginTransactionAsync())
         {
             await LockSiteBookingsAsync(companyId, siteId);
+
+            // รอบ 217 (คำตัดสินข้อ 175 ข): กดจองเบิ้ล/สองแท็บ/หน้าเก่าที่ไม่ส่ง Idempotency-Key — ผู้จองคนเดิม (สมาชิก/เบอร์/อีเมล) จองรอบเดิมของบริการเดิม
+            // ภายใน DuplicateSubmitGuard.Window ⇒ ไม่สร้างใบที่สอง · ตรวจใต้ล็อกไซต์เดียวกับ Decide ⇒ คำขอพร้อมกันเห็นใบของกันและกัน ·
+            // ตั้งใจจองเพิ่ม (คนละที่นั่ง) ⇒ ConfirmAdditional
+            if (!request.ConfirmAdditional
+                && DuplicateSubmitGuard.IdentityOf(request.CustomerId, request.GuestPhone, request.GuestEmail) is { } requester)
+            {
+                var since = DuplicateSubmitGuard.WindowStart(DateTime.UtcNow);
+                var bookingDay = date.ToDateTime(TimeOnly.MinValue);
+                var recent = await _db.SiteBookings.AsNoTracking()
+                    .Where(b => b.CompanyId == companyId && b.SiteId == siteId && b.BookingServiceId == svc.Id
+                        && b.BookingDate == bookingDay && b.StartTime == start && b.CreatedAt >= since
+                        && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)
+                    .OrderBy(b => b.CreatedAt)
+                    .Select(b => new { b.Id, b.CustomerId, b.GuestPhone, b.GuestEmail, b.Units, b.GuestCount, b.ResourceId })
+                    .ToListAsync();
+                // ฝ่ายค้าน S1: "กดซ้ำ" = คำขอรูปเดียวกัน (ช่วง · จำนวนคน · ผู้ให้บริการที่ขอ) — ต่างกัน = ตั้งใจจองอีกแบบ ไม่ใช่ซ้ำ
+                var sameShape = recent.Where(b => DuplicateSubmitGuard.SameBookingShape(units, guests, request.ResourceId, b.Units, b.GuestCount, b.ResourceId)).ToList();
+                duplicateOfId = DuplicateSubmitGuard.FindDuplicate(sameShape, b => DuplicateSubmitGuard.IdentityOf(b.CustomerId, b.GuestPhone, b.GuestEmail), requester)?.Id;
+            }
+
+            if (duplicateOfId is Guid dupId)
+            {
+                await tx.RollbackAsync();
+                return await DuplicateBookingResultAsync(companyId, siteId, dupId, request.CustomerId, userId, staffOnBehalf);
+            }
 
             var ctx = await LoadDayAsync(companyId, siteId, svc, date);
             var requested = ctx.Rules.ResourceMode == BookingResourceMode.Auto ? null : request.ResourceId;
@@ -883,7 +1013,9 @@ public partial class CmsBookingService : ICmsBookingService
             var slot = decision.Slot!;
 
             var total = BookingSlotEngine.TotalPrice(ctx.Rules, svc.Price, units);
-            var depositAmount = BookingSlotEngine.Deposit(total, svc.DepositAmount, svc.DepositPercent);
+            // รอบ 218: ยอดมัดจำผ่านตัวตัดสินเดียว (แบบเดิม = สูตรเดิมทุกตัวอักษร · มัดจำไม่บังคับ = ตามที่ลูกค้าเลือก)
+            var depositAmount = BookingPaymentPolicy.BookingDeposit(svc.BookingType, payEff, total, svc.DepositAmount, svc.DepositPercent,
+                customerOptsIn: request.PayDepositNow == true);
 
             booking = new SiteBooking
             {
@@ -917,7 +1049,18 @@ public partial class CmsBookingService : ICmsBookingService
 
             // R-39: จ่ายด้วยบัตรคอร์ส ⇒ ยอดเงิน 0 + กันเครดิตในธุรกรรมเดียวกับ Decide (ล้ม = ไม่มีการจอง) — CmsBookingService.Credits.cs
             var creditContactId = await PrepareCreditBookingAsync(companyId, booking, request, userId);
+            // รอบ 218: โหมดบังคับ + ยอด > 0 (หลังหักบัตรคอร์ส) ⇒ รอยืนยันจนรับเงินครบ (ชนะ AutoConfirm) + ถือรอบถึงกำหนดชำระ (job ยกเลิกเมื่อพ้น)
+            var seatPay = BookingPaymentPolicy.OnSeat(payEff, booking.DepositAmount, DateTime.UtcNow,
+                CreditBookingLink.StartUtc(booking.BookingDate, booking.StartTime), createdByStaff);
+            if (!waitlist && seatPay.ForcePending)
+            {
+                booking.Status = BookingStatus.Pending;
+                booking.ConfirmedAt = null;
+                booking.PaymentHoldUntil = seatPay.PaymentHoldUntil;
+            }
             _db.SiteBookings.Add(booking);
+            // รอบ 217 (ข้อ 175 ง): แจ้งเตือน "การจองใหม่" เข้าคิวในธุรกรรมเดียวกับการจอง ⇒ ตอบแขกทันที (ไม่รอ SMTP/LINE) · ส่งตามหลังโดย DeferredNotifyDispatcher
+            _db.DeferredNotifications.Add(DeferredNotifyPolicy.New(companyId, siteId, DeferredNotifyPolicy.BookingCreated, booking.Id, DateTime.UtcNow));
             await _db.SaveChangesAsync();
             if (creditContactId is Guid creditCid)
                 await HoldCreditForBookingAsync(companyId, svc, booking, creditCid, request.CreditPassId, total, userId);
@@ -963,14 +1106,36 @@ public partial class CmsBookingService : ICmsBookingService
             }
         }
 
-        // รอบ 209 P3 (C4/E2): ยืนยันการจองถึงลูกค้า + แจ้งร้าน หลัง commit — ส่งไม่ถึง = ประทับบนการจอง ไม่ล้มการจอง (ShopNotify.cs)
-        await NotifyBookingCreatedAsync(companyId, siteId, booking.Id);
+        // รอบ 209 P3 (C4/E2): ยืนยันการจองถึงลูกค้า + แจ้งร้าน — รอบ 217: ไม่ส่งในคำขอแล้ว (แถวคิวเขียนพร้อมการจองข้างบน ·
+        // DeferredNotifyDispatcher → DispatchCreatedNotifyAsync → NotifyBookingCreatedAsync หลังตอบแขก · ส่งไม่ถึงยังประทับบนการจองเหมือนเดิม)
 
         var created = await GetBookingAsync(companyId, siteId, booking.Id) ?? throw new InvalidOperationException("Failed.");
         created.ErpNotices = createNotices;
         // รอบ 207: ลูกค้าหน้าเว็บ (ไม่ใช่พนักงานของบริษัท) ได้มุมมองลูกค้า — ไม่มีหมายเหตุภายใน/เอกสาร/ประวัติรับเงิน (เดิมคืนทั้งก้อน)
         if (!await IsCompanyStaffAsync(companyId, userId)) created = ForCustomer(created);
         return created;
+    }
+
+    /// <summary>รอบ 217 (คำตัดสินข้อ 175 ข · ฝ่ายค้าน S1): คำตอบเมื่อพบการจองซ้ำของผู้จองคนเดิม — <see cref="DuplicateSubmitGuard.Decide"/>:
+    /// สมาชิกที่เป็นเจ้าของใบเดิม (CustomerId จากโทเคนหน้าร้าน) ⇒ คืนใบเดิม (<c>Reused=true</c> · หน้าเว็บมีปุ่ม "จองเพิ่มอีกที่") · พนักงาน ⇒ 409 + เลขที่ ·
+    /// แขกนิรนามที่ตรงด้วยเบอร์/อีเมล ⇒ 409 ไม่เปิดใบ/โทเคนของใบเดิม (เบอร์/อีเมลใครก็พิมพ์ได้ — กันดึงลิงก์จัดการการจองของคนอื่น)</summary>
+    private async Task<BookingResponse> DuplicateBookingResultAsync(Guid companyId, Guid siteId, Guid duplicateId, Guid? requesterCustomerId,
+        string? userId, bool staffOnBehalf)
+    {
+        var staff = staffOnBehalf || await IsCompanyStaffAsync(companyId, userId);
+        var existing = await GetBookingAsync(companyId, siteId, duplicateId) ?? throw new KeyNotFoundException("Booking not found.");
+        _logger.LogInformation("Booking create deduplicated → {BookingNumber} (site {SiteId})", existing.BookingNumber, siteId);
+        switch (DuplicateSubmitGuard.Decide(staff, requesterCustomerId, existing.CustomerId))
+        {
+            case DuplicateSubmitGuard.Outcome.ConflictForStaff:
+                // ฝ่ายค้าน S1: พนักงาน/หลังบ้านไม่คืนใบเดิมเงียบ ๆ — บอกเลขที่ + ทางไปต่อ (ConfirmAdditional)
+                throw new BusinessRuleException(DuplicateSubmitGuard.BookingStaffMessage(existing.BookingNumber), DuplicateSubmitGuard.BookingRuleCode, 409);
+            case DuplicateSubmitGuard.Outcome.ConflictForGuest:
+                throw new BusinessRuleException(DuplicateSubmitGuard.BookingGuestMessage, DuplicateSubmitGuard.BookingRuleCode, 409);
+        }
+        existing.Reused = true;
+        existing.DuplicateOf = existing.BookingNumber;
+        return ForCustomer(existing);
     }
 
     /// <summary>รอบ 210: บริการนี้ต้องเป็นสมาชิกก่อนจองไหม (ค่าบริการชนะ · null = ค่าของเว็บ) — ตัวตัดสินเดียว <see cref="BookingAccessRule.RequiresMember"/></summary>
@@ -1015,6 +1180,7 @@ public partial class CmsBookingService : ICmsBookingService
             .ToListAsync();
         var now = BookingSlotEngine.BangkokNow(DateTime.UtcNow);
         var holdMinutes = (await SiteContextAsync(companyId, siteId)).Row?.WaitlistHoldMinutes ?? 0;   // R-13 ถือรอบ (0 = ไม่ถือ)
+        var promoteSiteRule = (await LoadPaymentContextAsync(companyId, siteId)).SiteRule;   // ฝ่ายค้านรอบ 218 S5: ตัดสินการชำระตอนได้ที่ด้วยตัวเดียวกับจองใหม่
         foreach (var w in queue)
         {
             if (date.ToDateTime(w.StartTime) < now) continue;   // รอบผ่านไปแล้ว — ไม่เลื่อน
@@ -1027,8 +1193,16 @@ public partial class CmsBookingService : ICmsBookingService
                 w.GuestCount, Math.Max(1, w.Units), ctx.Resources, requested, ignoreAdvance: true);
             if (!d.Allowed) continue;
             w.ResourceId = ClassScheduleGenerator.ResourceForBooking(d.Slot!.ResourceId, ctx.ClassSessions, date, w.StartTime);   // รอบ 209 P4: ครูของรอบคลาส
-            if (svc.AutoConfirm || svc.BookingType == BookingType.Lead) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
+            // ฝ่ายค้านรอบ 218 (S5): ได้ที่จากคิวสำรอง = ได้ที่ ⇒ นโยบายชำระล่วงหน้าเดียวกับจองใหม่ (BookingPaymentPolicy.OnSeat) · บังคับ ⇒ รอยืนยัน + กำหนดชำระ
+            var promoteEff = BookingPaymentPolicy.Resolve(svc.BookingType, promoteSiteRule, Cms.BookingPaymentContextLoader.ServiceRule(svc));
+            // ฝ่ายค้านรอบ 2 (F3): ผู้สร้างใบคิวเป็นพนักงานของบริษัท ⇒ ไม่บังคับรอยืนยัน/ไม่ถือรอบ (ตัวตัดสินเดียวกับจองใหม่ IsCompanyStaffAsync) ·
+            // ยอด = มัดจำที่ยังค้าง (หักเงินที่รับไว้แล้ว) ไม่ใช่มัดจำเต็ม
+            var promoteByStaff = await IsCompanyStaffAsync(companyId, w.CreatedBy);
+            var promotePay = BookingPaymentPolicy.OnSeat(promoteEff, BookingPaymentPolicy.RemainingDeposit(w.DepositAmount, w.PaidAmount), DateTime.UtcNow,
+                CreditBookingLink.StartUtc(w.BookingDate, w.StartTime), promoteByStaff);
+            if (!promotePay.ForcePending && (svc.AutoConfirm || svc.BookingType == BookingType.Lead)) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
             else w.Status = BookingStatus.Pending;
+            w.PaymentHoldUntil = promotePay.PaymentHoldUntil;
             // R-13: ประทับเวลาได้คิว + ถือรอบ (เฉพาะรอยืนยัน · BookingReminderPlan.HoldUntil) · แจ้งลูกค้า = NotifyWaitlistPromotedAsync (Notify.cs) หลัง commit —
             // WaitlistNotifiedAt ประทับหลังส่งถึงจริงเท่านั้น · ส่งไม่ถึง ⇒ BookingReminderJob ส่งซ้ำ
             w.WaitlistPromotedAt = DateTime.UtcNow;
@@ -1095,6 +1269,11 @@ public partial class CmsBookingService : ICmsBookingService
         if (request.HoldLapsedAsOfUtc is DateTime asOf
             && (booking.PaidAmount > 0m || booking.WaitlistHoldUntil is not DateTime holdUntil || holdUntil > asOf))
             throw new BusinessRuleException("การจองรับเงินแล้ว/ยังอยู่ในเวลาถือที่ — ไม่ปล่อยที่อัตโนมัติ", BookingStatusTransition.RuleCode, 409);
+        // รอบ 218: job ยกเลิกใบที่ไม่ชำระล่วงหน้าในเวลา — ตัดสินซ้ำใต้ล็อก (ลูกค้าจ่าย/แนบสลิประหว่างทาง ⇒ ไม่ยกเลิก) · ตัวตัดสินเดียว BookingPaymentPolicy.HoldLapsed
+        if (request.PaymentHoldLapsedAsOfUtc is DateTime payAsOf
+            && !BookingPaymentPolicy.HoldLapsed(booking.Status, booking.PaymentHoldUntil, booking.PaidAmount,
+                booking.SlipUploadedAt != null && booking.SlipAttachmentId != null, payAsOf))
+            throw new BusinessRuleException("การจองชำระแล้ว/แนบสลิปแล้ว/ยังไม่พ้นกำหนดชำระ — ไม่ยกเลิกอัตโนมัติ", BookingPaymentPolicy.RuleCode, 409);
         // รอบ 208 (ฝ่ายค้าน W2 ข้อ 1/3 blocking): กดซ้ำ = ไม่ทำซ้ำ · สถานะปลายทางเปลี่ยนต่อไม่ได้ (ขั้นเงินห้ามรันซ้ำ)
         var (transition, transitionMsg) = BookingStatusTransition.Check(oldStatus, request.Status);
         if (transition == BookingTransitionResult.Rejected)
@@ -1118,7 +1297,7 @@ public partial class CmsBookingService : ICmsBookingService
 
         switch (request.Status)
         {
-            case BookingStatus.Confirmed: booking.ConfirmedAt = DateTime.UtcNow; booking.WaitlistHoldUntil = null; break;   // ยืนยันแล้ว = เลิกถือรอบ (R-13)
+            case BookingStatus.Confirmed: booking.ConfirmedAt = DateTime.UtcNow; booking.WaitlistHoldUntil = null; booking.PaymentHoldUntil = null; break;   // ยืนยันแล้ว = เลิกถือรอบ (R-13) · ร้านยืนยันเอง = เลิกกำหนดชำระ (รอบ 218)
             case BookingStatus.InProgress: booking.StartedAt ??= DateTime.UtcNow; break;   // รอบ 207: ไทม์ไลน์ + รายงานผู้ให้บริการ
             case BookingStatus.Completed: booking.CompletedAt = DateTime.UtcNow; break;
             case BookingStatus.Cancelled: booking.CancelledAt = DateTime.UtcNow; break;
@@ -1179,6 +1358,9 @@ public partial class CmsBookingService : ICmsBookingService
             noted.UpdatedBy = userId;
             await _db.SaveChangesAsync();
         }
+        // ฝ่ายค้านรอบ 218 (S1/S2): ยกเลิก/ไม่มา ขณะมีสลิปรอตรวจ ⇒ ปิดสลิป + รายการชำระของสลิป (ยืนยันภายหลังไม่ได้ = ไม่รับเงินเข้าการจองที่ปิดแล้ว)
+        if (request.Status is BookingStatus.Cancelled or BookingStatus.NoShow && oldStatus != request.Status)
+            await CloseSlipOnBookingClosedAsync(companyId, siteId, bookingId, userId);
 
         // แอดมินยืนยันใบในคิวสำรองเอง (นอกคิว) ⇒ ออกเอกสาร ERP เหมือนการจองปกติ
         if (oldStatus == BookingStatus.Waitlisted && request.Status is BookingStatus.Pending or BookingStatus.Confirmed)
@@ -1632,7 +1814,6 @@ public partial class CmsBookingService : ICmsBookingService
                 CustomerNotes = b.CustomerNotes, InternalNotes = b.InternalNotes,
                 ConfirmedAt = b.ConfirmedAt, CompletedAt = b.CompletedAt,
                 CancelledAt = b.CancelledAt, CreatedAt = b.CreatedAt,
-                ResourceMode = b.BookingService.ResourceMode,
                 ReminderSentAt = b.ReminderSentAt, NotifyLastError = b.NotifyLastError,
                 WaitlistPromotedAt = b.WaitlistPromotedAt, WaitlistNotifiedAt = b.WaitlistNotifiedAt, WaitlistHoldUntil = b.WaitlistHoldUntil,
             })
@@ -1641,7 +1822,11 @@ public partial class CmsBookingService : ICmsBookingService
         if (resp != null)
         {
             var siteDefaults = await SiteDefaultsAsync(companyId, siteId);
-            resp.ResourceMode = BookingProviderAllocation.EffectiveMode(resp.ResourceMode, siteDefaults.ProvidersEnabled);
+            // รอบ 215: ค่าที่ตั้งบนบริการ (null = ตามค่าเว็บ) → ตัวตัดสินเดียว
+            var svcMode = await _db.SiteBookingServices.AsNoTracking()
+                .Where(s => s.Id == resp.BookingServiceId && s.CompanyId == companyId)
+                .Select(s => s.ResourceMode).FirstOrDefaultAsync();
+            resp.ResourceMode = BookingProviderAllocation.EffectiveMode(svcMode, siteDefaults.ProvidersEnabled, siteDefaults.DefaultResourceMode);
             resp.ProviderAllocationEnabled = await ProvidersEnabledAsync(companyId, siteId);
             resp.CanAssignResource = CanAssignResource(resp.ResourceMode, resp.Status, resp.BookingDate, resp.StartTime);
             await FillAssignmentsAsync(companyId, resp);
@@ -1756,6 +1941,7 @@ public partial class CmsBookingService : ICmsBookingService
                 : BookingProviderShare.Describe(g.OrderByDescending(x => x.SharePercent).Select(x => (x.ResourceName, x.SharePercent)));
         }
         foreach (var i in items.Where(i => i.ProvidersLabel == null)) i.ProvidersLabel = i.ResourceName;
+        await FillListPaymentLabelsAsync(companyId, items);   // รอบ 218: ป้ายรอชำระ/รอตรวจสลิป/ชำระแล้ว (ตัวตัดสินเดียว BookingPaymentPolicy)
     }
 
     public async Task<PagedResponse<BookingListResponse>> GetBookingsAcrossSitesAsync(Guid companyId, IReadOnlyCollection<Guid> siteIds, string? status, DateTime? fromDate, DateTime? toDate, string? search, int page, int pageSize)

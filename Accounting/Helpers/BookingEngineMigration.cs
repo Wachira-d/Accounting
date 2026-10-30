@@ -85,6 +85,10 @@ public static class BookingEngineMigration
 
         // รอบ 210 (คำตัดสินข้อ 169): ต้องเป็นสมาชิกก่อนจอง — DEFAULT false / NULL = พฤติกรรมเดิม (แขกจองได้)
         """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "RequireMemberToBook" boolean NOT NULL DEFAULT false;""",
+        // รอบ 215 เฟส 2 (คำตัดสินข้อ 176): ค่าเริ่มต้น "ลูกค้าเลือกผู้ให้บริการได้ไหม" ระดับเว็บ (NULL = None = เดิม) ·
+        // บริการ NULL = ตามค่าเว็บ — **แถวเดิมคงค่าเดิมทุกแถว** (DROP NOT NULL ไม่แตะข้อมูล · ไม่มี UPDATE) ⇒ ไม่มีบริการเดิมใดเปลี่ยนพฤติกรรม
+        """ALTER TABLE "SiteBookingSettings" ADD COLUMN IF NOT EXISTS "DefaultResourceMode" integer NULL;""",
+        """ALTER TABLE "SiteBookingServices" ALTER COLUMN "ResourceMode" DROP NOT NULL;""",
         """ALTER TABLE "SiteBookingServices" ADD COLUMN IF NOT EXISTS "MemberOnly" boolean NULL;""",
     };
 }

@@ -92,6 +92,7 @@
     <section data-pane="payment" style="display:none">
       <div class="ss-card">
         <h3>💳 วิธีชำระเงิน</h3>
+        <div class="ss-hint">🌐 เปิด/ปิดเฉพาะเว็บนี้ · ช่องรับเงินออนไลน์ (บัญชีผู้ให้บริการชำระเงิน) เป็นค่า 🏢 ระดับบริษัทที่ทุกเว็บใช้ร่วม — ตั้งที่ <a href="/pages/payment-settings.html" style="color:var(--primary)">รับชำระเงินออนไลน์</a></div>
         <div class="ss-hint">ต้องเปิดอย่างน้อย 1 วิธี · เลขบัญชี/PromptPay ตั้งที่ ⚙️ ในหน้าคำสั่งซื้อ · ชำระออนไลน์ใช้ผู้ให้บริการรับชำระของบริษัท (หน้า "ระบบรับชำระเงิน")</div>
         <div class="ss-row"><input type="checkbox" id="sw_enableOnlinePayment"><label for="sw_enableOnlinePayment">ชำระออนไลน์ (บัตร/QR ผ่านผู้ให้บริการ — ยืนยันอัตโนมัติ)</label></div>
         <div class="ss-row"><input type="checkbox" id="sw_enableBankTransfer"><label for="sw_enableBankTransfer">โอน/PromptPay แล้วแนบสลิป (ร้านตรวจสลิป)</label></div>
@@ -152,6 +153,9 @@
     <section data-pane="notify" style="display:none">
       <div class="ss-card">
         <h3>💬 การแจ้งเตือนลูกค้าของเว็บนี้</h3>
+        <!-- รอบ 215 เฟส 2: ย้ายไป ศูนย์ "ตั้งค่าเว็บ" › การแจ้งเตือน / LINE (ทุกประเภทเว็บ · ที่เดียว) — กล่องนี้บอกทางไปแทนตาราง -->
+        <div class="ss-warn" id="notifyMovedBox" style="background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a">ย้ายแล้ว — ตั้งการแจ้งลูกค้ารายเว็บได้ที่ <b>ตั้งค่าเว็บ › การแจ้งเตือน / LINE</b> (ใช้ได้กับเว็บทุกประเภท)
+          <a class="btn btn-sm btn-primary" id="notifyMovedLink" href="/pages/cms-site-settings.html?group=notify" style="margin-left:8px">ไปที่นั่น →</a></div>
         <div class="ss-hint">ตั้งเฉพาะเว็บนี้ทับค่าของบริษัท (ตั้งค่า → การแจ้งเตือน) · ตาราง/ป้ายมาจากเซิร์ฟเวอร์</div>
         <div id="customerNotifyPanel"></div>
       </div>
@@ -184,7 +188,12 @@
 
       async init() {
         if (!Layout.init('cms-store-settings')) return;
-        this.tab('general');
+        document.addEventListener('layout:permissions', () => {
+          if (document.querySelector('[data-pane="notify"]')?.style.display !== 'none') this.loadCustomerNotify();
+        });
+        // รอบ 215 เฟส 2: ?tab= จากศูนย์ "ตั้งค่าเว็บ" (cms-site-settings) เปิดแท็บตรงเรื่อง · ไม่รู้จัก = สวิตช์ร้าน
+        const wantTab = new URLSearchParams(location.search).get('tab');
+        this.tab(document.querySelector(`.ss-tab[data-tab="${CSS.escape(wantTab || '')}"]`) ? wantTab : 'general');
         try {
           const sites = this.sites = await CmsSiteContext.loadSites();
           const sel = document.getElementById('siteSelector');
@@ -215,8 +224,17 @@
       // รอบ 212 แพ็ก A: ตารางช่องทางแจ้งลูกค้าโหมดต่อเว็บ (/js/customer-notify.js)
       loadCustomerNotify() {
         const cid = Layout.getCompanyId();
-        if (!cid || !this.siteId || !window.CustomerNotify) return;
-        CustomerNotify.mountRules(document.getElementById('customerNotifyPanel'), { companyId: cid, siteId: this.siteId });
+        // รอบ 215 เฟส 2: ตารางย้ายไปศูนย์ตั้งค่าเว็บ (ห้ามมีสองฟอร์มแก้ค่าเดียวกัน) — ฝ่ายค้าน S4: ผู้ที่ไม่เห็นศูนย์ (ไม่มีสิทธิ์ cms-sites)
+        // ยังแก้ได้ที่นี่ตามเดิม (ไม่งั้นผู้มีสิทธิ์ตั้งค่าร้านแต่ไม่มีสิทธิ์เว็บไซต์จะตั้งไม่ได้เลย) · ตัดสินใหม่เมื่อสิทธิ์โหลด
+        const hub = Layout.hasMenuAccess('cms-sites');
+        const box = document.getElementById('notifyMovedBox');
+        const panel = document.getElementById('customerNotifyPanel');
+        if (box) box.style.display = hub ? '' : 'none';
+        const a = document.getElementById('notifyMovedLink');
+        if (a && this.siteId) a.href = '/pages/cms-site-settings.html?siteId=' + encodeURIComponent(this.siteId) + '&group=notify';
+        if (hub) { if (panel) panel.innerHTML = ''; return; }
+        if (!cid || !this.siteId || !window.CustomerNotify || !panel) return;
+        CustomerNotify.mountRules(panel, { companyId: cid, siteId: this.siteId });
       },
 
       // ───────── ค่าตั้งร้าน ─────────

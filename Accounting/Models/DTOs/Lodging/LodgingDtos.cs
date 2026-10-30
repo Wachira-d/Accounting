@@ -556,7 +556,13 @@ public record LodgingCreateReservationRequest(
     Guid? ContactId = null,
     string? InternalNotes = null,
     /// <summary>ยืนยันทันทีโดยไม่รอมัดจำ (พนักงานรับจองทางโทรศัพท์/OTA ที่จ่ายผ่านช่องทางอื่น)</summary>
-    bool ConfirmImmediately = false);
+    bool ConfirmImmediately = false,
+    /// <summary>รอบ 217 (คำตัดสินข้อ 175 ข): แขกตั้งใจจองช่วงเดิมเพิ่มอีกชุด (กดยืนยันหลังได้คำเตือนจองซ้ำ) ⇒ ข้ามด่าน DuplicateSubmitGuard · ห้องว่าง/เพดานยังตรวจครบ</summary>
+    bool ConfirmAdditional = false,
+    /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้าน (โทเคนของเว็บนี้) ติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังจองสำเร็จบันทึกลงโปรไฟล์ · แขก ⇒ ไม่มีผล</summary>
+    bool SaveToProfile = false,
+    /// <summary>รอบ 216 ฝ่ายค้าน S3: ชื่อ/เบอร์/อีเมลมาจากโปรไฟล์ (ผู้ใช้ไม่ได้ลบ/แก้เอง) ⇒ เติมช่องว่างจากโปรไฟล์ได้ · มีผลเฉพาะสมาชิกในโทเคนของเว็บนี้</summary>
+    bool ContactFromProfile = false);
 
 public class LodgingReservationResponse
 {

@@ -74,6 +74,18 @@ public class PdpaRetentionPurgeJob : BackgroundService
         if (notifyDeleted > 0) _logger.LogInformation("PDPA retention purge: ลบบันทึกการส่งข้อความถึงลูกค้าเกิน {Days} วัน {Rows} แถว",
             Accounting.Helpers.CustomerNotifyLogRule.RetentionDays, notifyDeleted);
 
+        // รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ): หลักฐานยอมรับนโยบายของผู้ใช้ที่ลบตามคำขอแล้ว — พ้น legal hold (10 ปีหลังลบ) ⇒ ลบจริง
+        // (บัญชียังอยู่ = ไม่แตะ · ตลอดอายุบัญชี) · ใต้ JobLock เดียวกับงานนี้
+        var acceptCutoff = Accounting.Helpers.PlatformPolicyAcceptanceRules.PurgeCutoff(DateTime.UtcNow);
+        var acceptsDeleted = await db.PlatformPolicyAcceptances.IgnoreQueryFilters()
+            .Where(x => x.PseudonymisedAt != null && x.PseudonymisedAt < acceptCutoff).ExecuteDeleteAsync(ct);
+        // ฝ่ายค้านรอบ 214 S1: ต้นฉบับเดิมใน PdpaConsentRecords (ระดับแพลตฟอร์ม) — กติกาเดียวกัน
+        acceptsDeleted += await db.PdpaConsentRecords.IgnoreQueryFilters()
+            .Where(c => c.CompanyId == Accounting.Helpers.PdpaPolicy.PlatformScopeCompanyId
+                        && c.PseudonymisedAt != null && c.PseudonymisedAt < acceptCutoff)
+            .ExecuteDeleteAsync(ct);
+        if (acceptsDeleted > 0) _logger.LogInformation("PDPA retention purge: ลบหลักฐานยอมรับนโยบายที่พ้น legal hold {Rows} แถว", acceptsDeleted);
+
         // contact ที่ถูก anonymize + ติดธง retained (ผู้ใช้ขอลบแล้ว แต่ค้างเพราะ legal-hold)
         var retained = await db.Contacts
             .Where(c => !c.IsDeleted && c.Address == RetainedMarker)

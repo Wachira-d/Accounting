@@ -86,6 +86,8 @@ const AdminLayout = {
     { id: 'coa-template', label: 'ผังบัญชีต้นแบบ', icon: '📒', href: '/admin/coa-template.html' },
     { section: 'ตั้งค่า' },
     { id: 'site-settings', label: 'ตั้งค่าเว็บไซต์', icon: '⚙️', href: '/admin/site-settings.html' },
+    // รอบ 214 (คำตัดสินข้อ 173): นโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งานของแพลตฟอร์ม — แก้ร่าง · เผยแพร่ (append-only) · URL สาธารณะ
+    { id: 'legal', label: 'นโยบาย/ข้อกำหนดการใช้งาน', icon: '⚖️', href: '/admin/legal.html' },
     { id: 'system-email', label: 'อีเมลระบบ (SMTP)', icon: '📧', href: '/admin/system-email.html' },
     { id: 'sso-config', label: 'เข้าสู่ระบบ (Google/Facebook/LINE)', icon: '🔐', href: '/admin/sso-config.html' },
     { id: 'ocr-config', label: 'ตั้งค่า OCR / Azure DI', icon: '🔍', href: '/admin/ocr-config.html' },
