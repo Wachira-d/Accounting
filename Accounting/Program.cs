@@ -733,6 +733,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.BookingReminder
 // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน — Helpers/JobLock + watermark LastSentLocalDate ต่อชุด + unique (ชุด, วัน, คน)
 builder.Services.AddHostedService<Accounting.Services.Background.StaffDailySummaryJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.CustomerNotifyOutboxJob>();   // รอบ 212 แพ็ก B — ทยอยส่งคำเชิญผูก LINE ใหม่ (JobLock · ต่อบริษัท ≤100/รอบ)
+builder.Services.AddScoped<Accounting.Services.Background.DeferredNotifyDispatcher>();   // รอบ 217 (ข้อ 175 ง) — แจ้งเตือน "สร้างแล้ว" ของการจอง/ออเดอร์ส่งตามหลัง (คำขอตอบทันที)
+builder.Services.AddHostedService<Accounting.Services.Background.DeferredNotifyDispatchJob>();   // รอบ 217 — เดินคิว DeferredNotifications ทุก 10 วิ (JobLock · lease)
 builder.Services.AddHostedService<Accounting.Services.Background.AuditChainVerifyJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.OverdueDunningJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.RecurringLateFeeAccrualJob>();
@@ -1108,7 +1110,7 @@ app.UseMiddleware<ApiKeyMiddleware>();
 
 // 5b. Idempotency — caches 2xx responses for 24h keyed by the
 // Idempotency-Key header so partner POST retries on network errors
-// don't double-post.
+// don't double-post. รอบ 217: หน้าเว็บลูกค้า/พนักงานส่งคีย์ผ่าน js/submit-once.js · คีย์เดิมเนื้อต่าง ⇒ 409 (Helpers/IdempotencyKeyPolicy)
 app.UseMiddleware<IdempotencyMiddleware>();
 
 // 6. Authentication & Authorization

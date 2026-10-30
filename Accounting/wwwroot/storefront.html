@@ -230,6 +230,7 @@
   <!-- หน้าจ่ายเงินตัวเดียวที่ทุกทางเข้าใช้ร่วมกัน (โหมดสาธารณะ = ไม่ต้องล็อกอิน) —
        ห้ามเขียน QR/poll เองในหน้านี้ ไม่งั้นได้สำเนาชุดที่สองที่ drift แน่นอน -->
   <script src="/js/pay-widget.js"></script>
+  <script src="/js/submit-once.js"></script>
 
   <script>
     /**
@@ -876,6 +877,11 @@
        */
       async submitContact(e, form) {
         e.preventDefault();
+        // รอบ 217 (ข้อ 175): Enter/กดซ้ำระหว่างรอ = ไม่ส่งซ้ำ · คีย์กันซ้ำต่อฟอร์ม (js/submit-once.js)
+        if (!SubmitOnce.claim(form)) return;
+        try { return await this._submitContactNow(form); } finally { SubmitOnce.release(form); }
+      },
+      async _submitContactNow(form) {
         const status = form.querySelector('.form-status');
         status.textContent = 'กำลังส่ง...';
         status.style.color = 'var(--text-secondary)';
@@ -923,17 +929,18 @@
         let posted = false;
         if (companyId && siteId) {
           try {
-            const r = await fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/leads`, {
+            const r = await SubmitOnce.fetch(`/api/companies/${companyId}/cms/sites/${siteId}/storefront/leads`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
-            });
+            }, form);
             if (r.ok) {
               posted = true;
               const j = await r.json().catch(() => null);
               status.textContent = j?.message || '✓ ส่งคำขอเรียบร้อย ทีมงานจะติดต่อกลับเร็วๆ นี้';
               status.style.color = 'var(--success-color,#10B981)';
               form.reset();
+              SubmitOnce.reset(form);   // รอบ 217: ส่งข้อความถัดไป = คำขอใหม่
               return;
             }
             // รอบ 209 P6: เซิร์ฟเวอร์ปฏิเสธพร้อมเหตุ (เช่น ยังไม่ติ๊กยินยอม) ⇒ แสดงเหตุ ไม่เปิด mailto แทน
@@ -1821,9 +1828,10 @@
         status.textContent = 'กำลังอัปโหลด...';
         status.style.color = 'var(--text-secondary)';
         try {
-          const r = await fetch(this._url(`/commerce/orders/${orderId}/upload-slip`), { method: 'POST', body: fd });
+          const r = await SubmitOnce.fetch(this._url(`/commerce/orders/${orderId}/upload-slip`), { method: 'POST', body: fd }, form);
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.message || 'อัปโหลดไม่สำเร็จ');
+          SubmitOnce.reset(form);   // รอบ 217: สลิปใบถัดไป = คำขอใหม่
           status.textContent = '✓ ส่งสลิปแล้ว — ร้านจะตรวจสอบและแจ้งยืนยัน';
           status.style.color = 'var(--success-color,#10B981)';
           form.querySelector('input[type=file]').value = '';
@@ -2008,17 +2016,21 @@
       },
       async accountRegister(ev) {
         ev.preventDefault();
+        if (!SubmitOnce.claim(ev.target)) return;   // รอบ 217: Enter/กดซ้ำระหว่างรอ = ไม่สมัครซ้ำ
+        try { return await this._accountRegisterNow(ev); } finally { SubmitOnce.release(ev.target); }
+      },
+      async _accountRegisterNow(ev) {
         const fd = new FormData(ev.target);
         const st = ev.target.querySelector('.sf-acc-status');
         st.textContent = 'กำลังสมัคร...'; st.style.color = 'var(--text-secondary)';
         try {
-          const r = await fetch(this._url('/portal/register'), {
+          const r = await SubmitOnce.fetch(this._url('/portal/register'), {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               fullName: fd.get('fullName'), email: fd.get('email'), phone: fd.get('phone') || null,
               password: fd.get('password'), consentGiven: !!fd.get('consentGiven'), acceptMarketing: !!fd.get('acceptMarketing')
             })
-          });
+          }, ev.target);
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error((j && j.message) || 'สมัครไม่สำเร็จ');
           await this._accountLoginWith(fd.get('email'), fd.get('password'));
@@ -2332,7 +2344,12 @@
         if (btn) { btn.style.background = 'var(--primary,#4F46E5)'; btn.style.color = '#fff'; }
       },
 
-      async _submitBooking() {
+      // รอบ 217 (ข้อ 175): กดซ้ำ/Enter ซ้ำระหว่างรอ = ไม่ส่งซ้ำ · ปุ่มขึ้น "กำลังจอง…" ทันที · คีย์กันซ้ำต่อฟอร์มที่เปิด (js/submit-once.js)
+      _submitBooking(confirmAdditional) {
+        return SubmitOnce.run(document.getElementById('sfBookSubmit'), () => this._submitBookingNow(confirmAdditional === true), { busyText: 'กำลังจอง…' });
+      },
+
+      async _submitBookingNow(confirmAdditional) {
         const form = document.getElementById('sfBookForm');
         const fd = new FormData(form);
         if (!fd.get('slotStart')) { alert('กรุณาเลือกเวลา'); return; }
@@ -2352,7 +2369,8 @@
           guestCount: this._bkGuests(),
           units: this._bkUnits(),
           resourceId: this._bkResource(),
-          consentGiven: this.p6ConsentValue(form)   // รอบ 209 P6 (PDPA)
+          consentGiven: this.p6ConsentValue(form),   // รอบ 209 P6 (PDPA)
+          confirmAdditional: !!confirmAdditional      // รอบ 217: ตั้งใจจองรอบเดิมเพิ่มอีกที่ (ผู้ใช้กดยืนยันหลังคำเตือนจองซ้ำ)
         };
         // รอบ 209 P1 (C3): จองด้วยบัตร — ส่ง id ลูกค้าของตัวเอง + โทเคนหน้าร้าน (เซิร์ฟเวอร์เทียบ id ในโทเคนกับ customerId)
         const useCredit = document.getElementById('sfBookUseCredit');
@@ -2365,10 +2383,21 @@
           body.creditPassId = passSel && passSel.value ? passSel.value : null;
         }
         try {
-          const r = await fetch(this._url('/booking/bookings'), {
+          const r = await SubmitOnce.fetch(this._url('/booking/bookings'), {
             method: 'POST', headers: this._custHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(body)
-          });
+          }, form);
+          // รอบ 217 (ข้อ 175 ข): ผู้จองคนเดิมจองรอบนี้ไว้แล้วเมื่อสักครู่ (เซิร์ฟเวอร์ตัดสิน) — ถามก่อนว่าตั้งใจจองเพิ่มจริงไหม
+          if (r.status === 409) {
+            const j = await r.clone().json().catch(() => null);
+            if (j && j.data && j.data.ruleCode === 'CMS-BOOKING-DUPLICATE') {
+              if (confirm((j.message || 'คุณจองรอบนี้ไว้แล้ว') + '\n\nต้องการจองเพิ่มอีก 1 ที่ในรอบเดียวกันจริงไหม?')) {
+                SubmitOnce.reset(form);
+                return this._submitBookingNow(true);
+              }
+              return false;
+            }
+          }
           // server ตัดสินรอบอีกครั้งตอนจอง (เต็ม/ปิด/ล่วงหน้าไม่พอ) — แสดงเหตุผลของ server แล้วโหลดเวลาว่างใหม่
           if (!r.ok) {
             let msg = 'จองไม่สำเร็จ — ลองอีกครั้ง';
@@ -2391,7 +2420,8 @@
             <div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:92vh;overflow:auto;padding:28px">
               <div style="text-align:center">
                 <div style="font-size:56px">✅</div>
-                <h2 style="margin:4px 0">${booking.status === 'Waitlisted' ? 'ลงคิวสำรองแล้ว' : 'จองสำเร็จ'}</h2>
+                <h2 style="margin:4px 0">${booking.reused ? 'คุณจองรอบนี้ไว้แล้ว' : booking.status === 'Waitlisted' ? 'ลงคิวสำรองแล้ว' : 'จองสำเร็จ'}</h2>
+                ${booking.reused ? `<p style="color:var(--text-secondary)">ระบบไม่บันทึกซ้ำ — นี่คือการจองเดิมของคุณ (เลขที่ ${this.esc(booking.duplicateOf || booking.bookingNumber || '')})</p>` : ''}
                 ${booking.status === 'Waitlisted' ? `<p style="color:var(--text-secondary)">คิวสำรองลำดับที่ ${this.esc(String(booking.waitlistPosition || '-'))} — มีที่ว่างเมื่อไรร้านจะแจ้งกลับ</p>` : ''}
               </div>
               ${this._bookingDetailHtml(booking)}
@@ -3244,8 +3274,14 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
         });
         btn.disabled = true; btn.textContent = 'กำลังจอง...';
         try {
-          const r = await fetch(this._lurl('/reservations'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-          const j = await r.json().catch(() => null);
+          // รอบ 217 (ข้อ 175): คีย์กันซ้ำต่อฟอร์ม (js/submit-once.js) · เซิร์ฟเวอร์ตัดสิน "จองช่วงเดิมซ้ำ" ⇒ ถามก่อนว่าตั้งใจจองเพิ่มจริงไหม
+          let r = await SubmitOnce.fetch(this._lurl('/reservations'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, form);
+          let j = await r.json().catch(() => null);
+          if (r.status === 409 && j?.data?.ruleCode === 'LODGING-DUPLICATE' && confirm((j.message || 'มีการจองช่วงนี้แล้ว') + '\n\nต้องการจองเพิ่มอีกชุดจริงไหม?')) {
+            SubmitOnce.reset(form); body.confirmAdditional = true;
+            r = await SubmitOnce.fetch(this._lurl('/reservations'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, form);
+            j = await r.json().catch(() => null);
+          }
           if (!r.ok) throw new Error(j?.message || 'จองไม่สำเร็จ');
           const res = j.data;
           this._lgState.sel = {}; this._lgState.extras = {}; this._lgState.roomGuests = {}; this._lgState.guestTouched = {};
@@ -3439,7 +3475,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
         const form = ev.target; const status = form.querySelector('.sf-slip-status');
         status.textContent = 'กำลังอัปโหลด...';
         try {
-          const r = await fetch(this._lurl('/reservations/' + encodeURIComponent(token) + '/slip'), { method: 'POST', body: new FormData(form) });
+          const r = await SubmitOnce.fetch(this._lurl('/reservations/' + encodeURIComponent(token) + '/slip'), { method: 'POST', body: new FormData(form) }, form);
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.message || 'อัปโหลดไม่สำเร็จ');
           await this.renderLodgingReservation(token, j.message);
@@ -3448,13 +3484,14 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
       async lodgingGuestRequest(ev, token) {
         ev.preventDefault();
         const fd = new FormData(ev.target);
+        if (!SubmitOnce.claim(ev.target)) return;   // รอบ 217: Enter/กดซ้ำระหว่างรอ = ไม่ส่งซ้ำ
         try {
-          const r = await fetch(this._lurl('/reservations/' + encodeURIComponent(token) + '/requests'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ requestType: fd.get('requestType'), details: fd.get('details') }) });
+          const r = await SubmitOnce.fetch(this._lurl('/reservations/' + encodeURIComponent(token) + '/requests'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestType: fd.get('requestType'), details: fd.get('details') }) }, ev.target);
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error(j?.message || 'ส่งไม่สำเร็จ');
           await this.renderLodgingReservation(token, j.message);
-        } catch (e) { this._toast('❌ ' + e.message); }
+        } catch (e) { this._toast('❌ ' + e.message); } finally { SubmitOnce.release(ev.target); }
       },
       async lodgingCancel(token) {
         if (!confirm('ยืนยันยกเลิกการจอง? ค่าปรับ (ถ้ามี) คิดตามนโยบายยกเลิกที่แสดง')) return;

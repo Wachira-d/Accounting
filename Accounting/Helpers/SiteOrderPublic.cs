@@ -22,7 +22,10 @@ public static class SiteOrderPublic
     };
 
     public const string RuleCode = "CMS-ORDER-PUBLIC";
-    public const string IdempotencyHeader = "Idempotency-Key";
+    public const string IdempotencyHeader = IdempotencyKeyPolicy.Header;   // รอบ 217: ตัวตั้งเดียวของชื่อ header
+    /// <summary>รอบ 217 (ข้อ 175 ข): สองแท็บ/กดซ้ำบนตะกร้าเดียวกัน — คำขอแรกสั่งไปแล้ว</summary>
+    public const string CartAlreadyOrderedMessage =
+        "ตะกร้านี้เพิ่งถูกสั่งซื้อไปแล้ว (ระบบไม่บันทึกซ้ำ) — ตรวจคำสั่งซื้อของคุณจากข้อความยืนยัน หรือหน้า \"ตรวจสอบคำสั่งซื้อ\"";
     public const int IdempotencyKeyMinLength = 16;
     public const int IdempotencyKeyMaxLength = 80;
 

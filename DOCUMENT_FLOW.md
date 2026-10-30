@@ -6057,6 +6057,23 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 B + ฝ่ายค�
 
 _Last verified against codebase: 2026-10-30 (รอบ 213 — ส่งซ้ำข้อความค้างเพราะโควตา · แพ็ก notify.topup ที่แอดมินตั้ง · เพดานเฉพาะบริษัท · ผ่านฝ่ายค้าน + CI เขียว — commit 2faabd48 · a6909467 · 41bcab58)_
 
+- **รอบ 217 · กดซ้ำไม่บันทึกซ้ำ + ตอบเร็ว แจ้งเตือนตามหลัง (คำตัดสินข้อ 175 · เจ้าของรายงาน BK-2610-0003/0004 กดจองเบิ้ล + "กดยืนยันแล้วนิ่ง")**:
+  (ก) **ชั้นคีย์** — หน้าเว็บส่ง `Idempotency-Key` ผ่าน `wwwroot/js/submit-once.js` (คีย์ต่อฟอร์มที่เปิด · ปุ่มล็อก + "กำลังจอง…") → `IdempotencyMiddleware` (ทุก POST/PUT/PATCH `/api/*`)
+  ตัดสินด้วย `Helpers/IdempotencyKeyPolicy`: แถว `IdempotencyRecords` (+`RequestHash`) · คีย์เดิมเนื้อเดิม ⇒ ผลเดิม (`Idempotency-Status: replayed`) · เนื้อต่าง ⇒ 409 `mismatch` ·
+  กำลังทำ ⇒ 409 `in-flight` (หน้าเว็บรอแล้วยิงซ้ำ) · 4xx/5xx ปล่อยคีย์ · ทางเข้าที่หน้าเว็บส่งคีย์: จองคิว · ที่พัก (จอง/สลิป/คำขอ) · lead/ฟอร์มติดต่อ · สมัครสมาชิก · สลิปออเดอร์ ·
+  จองโต๊ะ (booking.html/booking-manage.html) · /contact · pay-widget · (เช็กเอาต์ออเดอร์ใช้คีย์ใน body เดิม รอบ 209 A9)
+  (ข) **ชั้นความหมาย** `Helpers/DuplicateSubmitGuard` — `CmsBookingService.CreateBookingAsync` ใต้ล็อกไซต์ (ก่อน Decide): ผู้จองคนเดิม (สมาชิก/เบอร์/อีเมล) + บริการ + วัน + เวลาเริ่มเดิม
+  ภายใน 10 นาที (ไม่นับยกเลิก/ไม่มา) ⇒ ไม่สร้างใบ: สมาชิกเจ้าของ/พนักงาน ได้ใบเดิม `reused=true` · แขก ⇒ 409 `CMS-BOOKING-DUPLICATE` (ไม่เปิดใบ/โทเคน) ·
+  `ConfirmAdditional` = ตั้งใจจองเพิ่ม · ที่พัก `CreateReservationAsync` (เส้นเว็บ) เบอร์/อีเมล + วันเข้า-ออกเดิม ใต้ล็อกที่พัก ⇒ 409 `LODGING-DUPLICATE` ·
+  ออเดอร์: ตะกร้าถูกตัดในธุรกรรมเดียวกับออเดอร์ · สองแท็บคนละคีย์ ⇒ 409 `CartAlreadyOrderedMessage` (เดิม 500)
+  (ค) **แจ้งเตือน "สร้างแล้ว" ไม่อยู่ในคำขอแล้ว** — การจอง: แถว `DeferredNotifications` (booking.created) ในธุรกรรมเดียวกับการจอง · ออเดอร์: (order.created) ใน SaveChanges ของยอดสุดท้าย ·
+  `DeferredNotifyDispatchJob` ทุก 10 วิ (JobLock · `FOR UPDATE SKIP LOCKED` · lease 2 นาที) → `DispatchCreatedNotifyAsync` → `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` เดิม
+  (ลูกค้า: คีย์กันซ้ำ CustomerNotifyLogs · ส่งไม่ถึงประทับบนรายการเหมือนเดิม) · ข้อยกเว้น ⇒ ถอย ≤ 5 ครั้ง แล้วปิดพร้อม `LastError` · ขั้น ERP ของการจองคงในคำขอ
+  (ง) **การจองซ้ำที่บันทึกไปก่อนรอบนี้ไม่ถูกยกเลิกอัตโนมัติ** — ร้านเปิดหน้าการจอง ค้นด้วยชื่อ/เบอร์ เห็นสองใบรอบเดียวกัน ⇒ ยกเลิกใบที่สร้างทีหลัง (สถานะ "ยกเลิก" + เหตุผล "จองซ้ำ") ·
+  ใบรอร้านยืนยันยังไม่ออกเอกสาร/ไม่มีเงิน ⇒ ยกเลิกได้เลย · ใบที่มีมัดจำแล้วเดินเส้นยกเลิก/คืนเงินเดิม
+
+_Last verified against codebase: 2026-10-30 (รอบ 217 — Idempotency-Key ทุกฟอร์มลูกค้า + RequestHash · DuplicateSubmitGuard การจอง/ที่พัก · แจ้งเตือนตามหลังผ่าน DeferredNotifications · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

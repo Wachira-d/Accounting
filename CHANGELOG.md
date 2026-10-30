@@ -5805,3 +5805,10 @@ _รอบ 215 (2026-10-30 · ทีม UX/UI · คำตัดสินข้�
 ภาพรวมทุกไซต์เป็น `?siteId=all` จริง · Front desk/ตั้งค่าที่พักผ่าน `pickProperty` (?siteId= ไม่มีที่พัก ⇒ ไม่ตกไปแห่งแรก) · Portal/รับชำระออนไลน์ย้ายหมวด ·
 sim `cms_workspace_nav_sim.js` (negative 7) · ไม่แตะ cms-edit/storefront/booking · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5a0da695 · 2b0d6f2d · e717d3b5_
 
+
+_รอบ 217 (คำตัดสินข้อ 175): เจ้าของรายงาน "กดจองเบิ้ลสองที บันทึกการจองซ้ำได้" (BK-2610-0003/0004) + "กดยืนยันจองแล้วนิ่ง ไม่ขึ้นว่าโหลด" ·
+(ก) `IdempotencyMiddleware` เดิมครอบ `/api/*` อยู่แล้วแต่หน้าเว็บลูกค้าไม่เคยส่งคีย์ + ไม่ตรวจเนื้อคำขอ ⇒ กติกาย้ายเข้า `Helpers/IdempotencyKeyPolicy` + `RequestHash` (คีย์เดิมเนื้อต่าง 409 mismatch) ·
+namespace ด้วยแฮช credential header · ตาราง `IdempotencyRecords` ย้ายไป `Helpers/SubmitOnceMigration` · หน้าเว็บ `js/submit-once.js` (ปุ่มล็อก + คีย์ต่อฟอร์ม + รอ in-flight) ใช้ที่ storefront/booking/booking-manage/contact/pay-widget/cms-bookings ·
+(ข) `Helpers/DuplicateSubmitGuard` ใต้ล็อกไซต์/ที่พัก (ผู้จองเดิม + รอบเดิม 10 นาที · สมาชิกได้ใบเดิม · แขก 409 · `ConfirmAdditional`) · ออเดอร์สองแท็บ 500 ⇒ 409 ·
+(ค) ต้นเหตุ "นิ่ง" = `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` (SMTP/LINE ถึงลูกค้า + อีเมลร้านทีละผู้รับ) ในคำขอ ⇒ คิว `DeferredNotifications` + `DeferredNotifyDispatchJob` (10 วิ · JobLock · SKIP LOCKED · lease) ·
+เทสต์ SUB-01..15 · `required_call_site_check` +10 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74_

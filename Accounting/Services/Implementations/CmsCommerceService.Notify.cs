@@ -50,6 +50,13 @@ public partial class CmsCommerceService
 
     private static DateOnly? ReadyDateOf(OrderNotifyFacts f) => f.EarliestReadyDate is DateTime d ? DateOnly.FromDateTime(d) : null;
 
+    /// <summary>รอบ 217 (ข้อ 175 ง): จุดเข้าของคิวแจ้งเตือนตามหลัง (<c>DeferredNotifyDispatcher</c>) — เดิม CreateOrderAsync เรียก
+    /// <see cref="NotifyOrderCreatedAsync"/> ในคำขอ ⇒ ลูกค้ารอ SMTP/LINE ก่อนเห็นหน้าสำเร็จ</summary>
+    public Task DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid orderId)
+    {
+        return NotifyOrderCreatedAsync(companyId, siteId, orderId);
+    }
+
     /// <summary>ออเดอร์ใหม่: แจ้งร้าน + ยืนยันถึงลูกค้า</summary>
     private async Task NotifyOrderCreatedAsync(Guid companyId, Guid siteId, Guid orderId)
     {

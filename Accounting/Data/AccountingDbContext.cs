@@ -19,6 +19,7 @@ public class AccountingDbContext : DbContext
     public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
     public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
+    public DbSet<DeferredNotification> DeferredNotifications => Set<DeferredNotification>();   // รอบ 217 — แจ้งเตือนตามหลัง (Helpers/DeferredNotifyPolicy)
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
     public DbSet<LineOaSwitchEvent> LineOaSwitchEvents => Set<LineOaSwitchEvent>();   // รอบ 212 แพ็ก B
     public DbSet<LineOaDestinationSighting> LineOaDestinationSightings => Set<LineOaDestinationSighting>();   // รอบ 212 ฝ่ายค้าน (B+D) ข้อ 4
@@ -3495,6 +3496,16 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.ResendCount).HasDefaultValue(0);
             e.HasIndex(x => new { x.CompanyId, x.MessageKey }).IsUnique().HasDatabaseName("UX_CustomerNotifyLogs_Company_Key");
             e.HasIndex(x => new { x.CompanyId, x.Status, x.CreatedAt }).HasDatabaseName("IX_CustomerNotifyLogs_Company_Status");   // รอบ 213: หน้าข้อความค้างส่ง
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<DeferredNotification>(e =>
+        {
+            // รอบ 217 — ชื่อ index ตรงกับ Helpers/SubmitOnceMigration
+            e.Property(x => x.Kind).HasMaxLength(32);
+            e.Property(x => x.LastError).HasMaxLength(500);
+            e.Property(x => x.Attempts).HasDefaultValue(0);
+            e.HasIndex(x => new { x.Kind, x.EntityId }).IsUnique().HasDatabaseName("UX_DeferredNotifications_Kind_Entity");
+            e.HasIndex(x => new { x.DoneAt, x.DueAt }).HasDatabaseName("IX_DeferredNotifications_Pending");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<NotifyUsageCounter>(e =>
