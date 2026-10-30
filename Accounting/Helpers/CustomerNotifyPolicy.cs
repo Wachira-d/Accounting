@@ -46,6 +46,9 @@ public static class CustomerNotifyKeys
     }
     public static string Reminder(Guid bookingId, int stageHours) => $"booking:{N(bookingId)}:reminder:{stageHours}";
     public static string Waitlist(Guid bookingId) => $"booking:{N(bookingId)}:waitlist";
+    /// <summary>รอบ 218: สลิปถูกปฏิเสธได้หลายครั้งต่อการจอง ⇒ คีย์รวมเวลาที่ปฏิเสธ (ครั้งละหนึ่งข้อความ)</summary>
+    public static string BookingSlipRejected(Guid bookingId, DateTime rejectedAtUtc)
+        => $"booking:{N(bookingId)}:{CustomerNotifyEvents.BookingSlipRejected}:{rejectedAtUtc.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture)}";
     /// <summary>คลาส: เปลี่ยนผู้สอนหลายครั้งได้ ⇒ คีย์รวม hash ของผู้สอนใหม่</summary>
     public static string Class(Guid sessionId, Guid bookingId, string eventKey, string? teacher)
         => $"class:{N(sessionId)}:{N(bookingId)}:{eventKey}" + (eventKey == CustomerNotifyEvents.ClassSubstitute ? ":" + Short(teacher) : "");

@@ -5850,6 +5850,7 @@ _รอบ 217 ฝ่ายค้าน (ไม่มี blocking · แก้�
 (S5) ยึด InFlight ค้าง > 2 นาที แบบมีเงื่อนไข · (S6) ลายนิ้วมือ HMAC (กุญแจลูกจาก Jwt:Secret · fail-fast) + เส้นรหัสผ่าน/โทเคนไม่เข้าระบบคีย์ + หน้าสมัครไม่ส่งคีย์ ·
 (1) ไม่เก็บ 200 success:false · (3) อายุแถว/ล้างแถวคำนวณใน SQL · (6) ธุรกรรมเดียวของออเดอร์ + คิวใน SaveChanges แรก · (9) บันทึกรับเงินหลังบ้านส่งคีย์ ·
 เทสต์ SUB-16..27 · required_call_site_check แก้/เพิ่มกติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a7fa9ea5_
+
 _รอบ 215 เฟส 2 (2026-10-30 · คำตัดสินข้อ 176 ข): ค่าเว็บ "ลูกค้าเลือกผู้ให้บริการได้ไหม" (`SiteBookingSettings.DefaultResourceMode` · บริการ null = ตามค่าเว็บ ·
 ตัวตัดสินเดียว `BookingProviderAllocation.EffectiveMode` · migration ไม่แตะค่าเดิม · เว็บใหม่ CustomerChoice / คลินิก-บริการวิชาชีพ Auto) + ศูนย์ "ตั้งค่าเว็บ" (`cms-site-settings.html`)
 พร้อมการ์ด 🏢 ค่าระดับบริษัท · แจ้งลูกค้ารายเว็บใช้ได้ทุกประเภทเว็บ (ย้ายจากตั้งค่าร้านค้า) · กลุ่มชำระเงินเป็นที่ว่างให้รอบ 218 (`CmsSiteSettingsExt.payment`) · cms-edit มีหัวพื้นที่ทำงาน ·
@@ -5878,3 +5879,19 @@ _รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ — ปิ�
 SystemAdmin ดำเนินการ/ปฏิเสธที่ `/admin/legal.html` (`AdminPlatformErasureController`) → แกนลบตัวเดียว `PdpaService.AnonymiseUserCoreAsync` (แยกออกจาก `ApplyErasureAsync` — DSR ของบริษัทใช้ตัวเดียวกัน) + audit + อีเมลแจ้งผล ·
 เทสต์ `PlatformErasureRequestTests` + Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · TEST_PLAN LEGAL214-32..35 · `required_call_site_check` +4 กติกา/แก้ 1 ·
 `write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+_รอบ 218 (คำตัดสินข้อ 177 · เจ้าของ: "ติ๊ก รับชำระมัดจำออนไลน์ แล้วตอนจองไม่มีให้ระบุเรื่องโอนมัดจำ · ต้องตั้งได้ว่าบังคับมัดจำ/จ่ายเต็มก่อน/ปิด · ตั้งเลขบัญชีหรือแนบ QR ได้" ·
+`erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`): ต้นเหตุ = ช่องติ๊กเดิมเปิดแค่ช่องทาง gateway แต่ยอดมาจากชนิด PrePayment + ช่องมัดจำของบริการ (ไม่ตรง ⇒ ยอด 0 เงียบ) ·
+ไม่มีช่องโอน/QR/สลิปของการจอง · ไม่บอกยอดก่อนกดจอง. (1) ตัวตัดสินเดียว `Helpers/BookingPaymentPolicy` (บริการ ?? เว็บ ?? แบบเดิม · ปิด/มัดจำบังคับ/มัดจำไม่บังคับ/เต็มยอด ·
+min/max · กำหนดเวลา · เก็บได้เฉพาะ PrePayment) + `Helpers/BookingPaymentChannels` + `Helpers/BookingSlipRule` · คอลัมน์ `Helpers/BookingPaymentMigration` (NULL = เดิม) ·
+(2) `CreateBookingAsync` ยอด/รอยืนยัน/ถือรอบ · `BookingReminderJob` ยกเลิกเมื่อพ้นกำหนด · (3) สลิป: `BookingSlipService` → PaymentIntent manual-slip → ร้านยืนยัน/ปฏิเสธ
+(`CmsBookingPaymentController` · ลูกค้า `CmsBookingPaymentPublicController`) · (4) หน้าเว็บ: ยอดก่อนกดจอง + กล่องชำระ (`js/storefront-booking-pay.js`) · หมวด "💳 การชำระเงินของการจอง"
++ ฟอร์มบริการ "ตามค่าเว็บ/กำหนดเอง" + ตรวจสลิป (`js/booking-payment-admin.js`) · (5) `SitePaymentGateway.BankBranch` + echo `BankAccountNumber/PromptPayQrUrl` กลับ (เดิมเปิดแก้ที่ cms-orders
+แล้วเลขบัญชีว่าง ⇒ บันทึกซ้ำล้างเงียบ) · เทสต์ `BookingPaymentPolicyTests` (+CRC16 QR พร้อมเพย์) · `Db/BookingPaymentPolicyDbTests` (TEST_PLAN BKPAY-01..24) · `required_call_site_check` +14 กติกา ·
+`write_permission_gate_check` +CmsBookingPaymentController (WATCHED) · baseline +1 (แนบสลิปของแขก — โทเคน) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fe1a9f0e · c62e1809 · 03191135 · e98ca3e9 · 7cf933b1_
+
+_รอบ 218 ฝ่ายค้าน (คำตัดสินข้อ 177 ส่วนต่อ · `<sha ในคอมมิตถัดไป>` · ยังไม่ได้คอมไพล์ในเครื่องนี้): B1 ค่าตั้งเขียนเฉพาะแถวโอน/พร้อมเพย์ + ล้างต้องยืนยัน ·
+B2 วันรับเงินของสลิป = วันที่โอน (`PaymentIntent.PaidAt` · `ProviderCharge.PaidAtUtc`) + วิธีชำระ = โอนเงิน · S1 สลิปที่ถูกแทนปิด Failed + ยืนยันด้วยมือต้องรอตรวจ ·
+S2 ยกเลิก/ไม่มาปิดสลิป · S3 ล็อกเดียว + บันทึก ≤ 300 · S4 จ่ายแล้วบอกก่อนเก็บไฟล์ + ยอดเปลี่ยน ⇒ 409 + อ่านไฟล์ตรงการจอง · S5 คิวสำรอง → `OnSeat` ·
+S6 งานยกเลิกข้ามรายการชำระออนไลน์ที่ยังไม่หมดอายุ · บริการเก็บเงินเองต้องมีช่องทาง/ยอด · PDPA ลบสลิปปฏิเสธ 90 วัน (`BookingSlipRetention`) ·
+เทสต์ `BookingPaymentPolicyTests` + `BookingPaymentPolicyDbTests` (ทั้งสองทิศ) · `required_call_site_check` +16 กฎ · รวม 215 เฟส 2: ฟอร์มค่าตั้งการชำระของการจองย้ายไป "ตั้งค่าเว็บ › การชำระเงิน" (`CmsSiteSettingsExt.payment` ใน `booking-payment-admin.js` · cms-edit เหลือกล่อง "ย้ายแล้ว" · ฟอร์มบริการยังตั้งทับได้)_
+

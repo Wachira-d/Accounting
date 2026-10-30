@@ -230,6 +230,7 @@
   <!-- หน้าจ่ายเงินตัวเดียวที่ทุกทางเข้าใช้ร่วมกัน (โหมดสาธารณะ = ไม่ต้องล็อกอิน) —
        ห้ามเขียน QR/poll เองในหน้านี้ ไม่งั้นได้สำเนาชุดที่สองที่ drift แน่นอน -->
   <script src="/js/pay-widget.js"></script>
+  <script src="/js/storefront-booking-pay.js"></script>
   <script src="/js/submit-once.js"></script>
 
   <script>
@@ -2150,6 +2151,7 @@
                 <b>${this.esc(b.serviceName)}</b><span style="color:#3730A3;font-weight:600">${this.esc(b.statusLabel)}</span>
               </div>
               <div style="font-size:13px;color:var(--text-secondary);margin-top:4px">${this.esc(b.bookingNumber)} · ${this.esc(this._thaiDate(b.bookingDate))} ${this.esc(b.startTime)}–${this.esc(b.endTime)}</div>
+              ${b.paymentStatusLabel ? `<div style="font-size:13px;margin-top:4px">💳 ${this.esc(b.paymentStatusLabel)}</div>` : ''}
               ${b.publicToken ? `<a style="font-size:13px" href="${this._pageUrl('my-booking/' + encodeURIComponent(b.publicToken))}">จัดการการจอง (เลื่อน/ยกเลิก/ชำระมัดจำ)</a>` : ''}
             </div>`).join('')}</div>`;
       },
@@ -2577,6 +2579,7 @@
           contactFromProfile: this._memberContactFromProfile(form, ['customerName', 'customerPhone', 'customerEmail']),   // ฝ่ายค้าน S3
           confirmAdditional: !!confirmAdditional      // รอบ 217: ตั้งใจจองรอบเดิมเพิ่มอีกที่ (ผู้ใช้กดยืนยันหลังคำเตือนจองซ้ำ)
         };
+        if (typeof this._bkPayExtras === 'function') Object.assign(body, this._bkPayExtras());   // รอบ 218: มัดจำไม่บังคับ — ลูกค้าเลือกจ่ายไหม
         // รอบ 209 P1 (C3): จองด้วยบัตร — ส่ง id ลูกค้าของตัวเอง + โทเคนหน้าร้าน (เซิร์ฟเวอร์เทียบ id ในโทเคนกับ customerId)
         const useCredit = document.getElementById('sfBookUseCredit');
         const meForCredit = useCredit && useCredit.checked ? await this._custMeLoad() : null;
@@ -3855,6 +3858,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
       },
     });
 
+    if (window.StoreBookingPay) StoreBookingPay.install(Store);   // รอบ 218: ยอดชำระก่อนกดจอง + กล่องโอน/QR/สลิป (js/storefront-booking-pay.js)
     Store.init();
   </script>
 </body>

@@ -53,6 +53,14 @@ public class SiteBookingService : TenantEntity
     /// <summary>รอบ 210: ต้องเข้าสู่ระบบสมาชิกก่อนจองบริการนี้ไหม · null = ตามค่าของเว็บ (<see cref="SiteBookingSettings.RequireMemberToBook"/>) ·
     /// ตัวตัดสินเดียว <c>Helpers/BookingAccessRule.RequiresMember</c></summary>
     public bool? MemberOnly { get; set; }
+    /// <summary>รอบ 218: โหมดรับชำระล่วงหน้าของบริการนี้ · null = ตามค่าเว็บ (<see cref="SiteBookingSettings.PaymentMode"/>) ·
+    /// ตัวตัดสินเดียว <c>Helpers/BookingPaymentPolicy.Resolve</c> · ยอดใช้ <see cref="DepositAmount"/>/<see cref="DepositPercent"/> ของบริการก่อน</summary>
+    public BookingPaymentMode? PaymentMode { get; set; }
+    /// <summary>รอบ 218: มัดจำขั้นต่ำ/สูงสุดของบริการ · null = ตามค่าเว็บ</summary>
+    public decimal? DepositMinAmount { get; set; }
+    public decimal? DepositMaxAmount { get; set; }
+    /// <summary>รอบ 218: ต้องชำระภายในกี่นาทีหลังจอง · null = ตามค่าเว็บ · 0 = ไม่กำหนด</summary>
+    public int? PaymentDeadlineMinutes { get; set; }
 
     // Pricing
     public decimal Price { get; set; }
@@ -199,6 +207,18 @@ public class SiteBooking : TenantEntity
     /// <summary>ช่าง/พนักงานที่ลูกค้าจองไว้ (UserId) — POS เติมให้ทุกบรรทัด · null = ไม่ระบุ</summary>
     public Guid? AssignedStaffId { get; set; }
     public string? AssignedStaffName { get; set; }
+
+    // ── รอบ 218 (คำตัดสินข้อ 177): ชำระล่วงหน้า + สลิป (ความจริงเรื่องเงิน = PaymentIntent · ช่องเหล่านี้คือสถานะงานบนการจอง) ──
+    /// <summary>ต้องชำระภายในเวลา (UTC) · พ้นแล้วยังไม่จ่าย/ไม่มีสลิปรอตรวจ ⇒ <c>BookingReminderJob</c> ยกเลิกผ่านเส้นสถานะปกติ · null = ไม่ถือ</summary>
+    public DateTime? PaymentHoldUntil { get; set; }
+    /// <summary>สลิปล่าสุดที่ลูกค้าแนบ (<c>FileAttachment</c> ชนิด <c>SiteBooking</c>) · null = ไม่มี/ถูกปฏิเสธแล้ว</summary>
+    public Guid? SlipAttachmentId { get; set; }
+    public DateTime? SlipUploadedAt { get; set; }
+    /// <summary>รายการชำระ (manual-slip) ของสลิปนี้ — ยืนยัน/ปฏิเสธเดินผ่าน <c>PaymentIntentService.ApplyChargeAsync</c></summary>
+    public Guid? SlipIntentId { get; set; }
+    /// <summary>เหตุผลที่ร้านปฏิเสธสลิปครั้งล่าสุด (ลูกค้าเห็นตรง ๆ) · ล้างเมื่อแนบใหม่</summary>
+    public string? SlipRejectedReason { get; set; }
+    public DateTime? SlipRejectedAt { get; set; }
 
     public ICollection<SiteBookingPayment> Payments { get; set; } = new List<SiteBookingPayment>();
 }

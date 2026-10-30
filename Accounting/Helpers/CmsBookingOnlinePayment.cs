@@ -35,13 +35,15 @@ public static class CmsBookingOnlinePayment
     }
 
     /// <summary>ข้อความเมื่อจ่ายออนไลน์ไม่ได้ (null = จ่ายได้) — หน้าเว็บแสดงตรง ๆ ไม่คิดเอง</summary>
-    public static string? BlockedNote(bool siteOnlineDepositEnabled, BookingType type, BookingStatus status, decimal due)
+    /// <param name="slipPending">รอบ 218: ลูกค้าแนบสลิปแล้วรอร้านตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว (กันจ่ายซ้ำ · แบบเดียวกับคำสั่งซื้อ R-06)</param>
+    public static string? BlockedNote(bool siteOnlineDepositEnabled, BookingType type, BookingStatus status, decimal due, bool slipPending = false)
     {
         if (type != BookingType.PrePayment) return null;   // ไม่ใช่บริการชำระล่วงหน้า — ไม่มีมัดจำให้จ่าย (ไม่ใช่การบล็อก)
         if (status == BookingStatus.Cancelled) return "การจองนี้ถูกยกเลิกแล้ว";
         if (status == BookingStatus.Waitlisted) return "การจองนี้อยู่ในคิวสำรอง — ชำระมัดจำได้เมื่อได้คิว";
         if (status is BookingStatus.Completed or BookingStatus.NoShow) return null;
         if (due <= 0.005m) return null;   // รับครบแล้ว = ไม่มียอดค้าง
+        if (slipPending) return SlipPendingNote;
         if (!siteOnlineDepositEnabled)
             return "เว็บนี้ยังไม่เปิดรับชำระมัดจำออนไลน์ — โอนแล้วแจ้งร้าน ร้านจะบันทึกรับเงินและยืนยันการจองให้";
         return null;
@@ -92,6 +94,9 @@ public static class CmsBookingOnlinePayment
         => $"[{RuleCode}] รับเงิน {amount:N2} บาท {(online ? "ออนไลน์ผ่านระบบรับชำระเงิน" : "(พนักงานบันทึก)")} "
            + $"{ThaiDate.CalendarDateUtc(paidAtUtc):dd/MM/yyyy}{(string.IsNullOrWhiteSpace(reference) ? "" : $" อ้างอิง {reference.Trim()}")} "
            + $"— รวมรับแล้ว {paidTotal:N2}/{depositAmount:N2}" + (DepositSettled(depositAmount, paidTotal) ? " (ครบมัดจำ ⇒ ยืนยันการจอง)" : "");
+
+    /// <summary>รอบ 218: ข้อความเมื่อมีสลิปรอร้านตรวจ (ปิดช่องจ่ายออนไลน์ชั่วคราว)</summary>
+    public const string SlipPendingNote = "แนบสลิปแล้ว — รอร้านตรวจสอบ (ปิดชำระออนไลน์ชั่วคราวเพื่อกันจ่ายซ้ำ · ร้านปฏิเสธสลิป ⇒ ชำระใหม่ได้)";
 
     /// <summary>ใบเสร็จมัดจำออกแล้ว แต่มีเงินเข้าเพิ่ม (เช่น จ่ายสองงวด/จ่ายซ้ำ) — ระบบไม่ออกใบซ้ำ บอกทางไปต่อ</summary>
     public static string AlreadyIssuedNote(string documentNumber, decimal amount)

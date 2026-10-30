@@ -221,6 +221,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
         list.AddRange(TeamKPosMtoStatements());   // ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่ง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.BookingEngineMigration.Statements());   // ทีม B — engine รอบจองคิว CMS (Helpers/BookingEngineMigration)
+        list.AddRange(Accounting.Helpers.BookingPaymentMigration.Statements());   // รอบ 218 — นโยบายรับชำระล่วงหน้า + สลิปของการจอง (Helpers/BookingPaymentMigration)
         list.AddRange(Accounting.Helpers.ClassScheduleMigration.Statements());   // รอบ 209 P4 — ตารางคลาส (เทอม/รอบเรียน) บนเครื่องจอง CMS
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
@@ -6498,6 +6499,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundSettledAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundedAt" timestamptz NULL;""",
+            // ฝ่ายค้านรอบ 218 (B2): เวลาที่เงินเข้าตามหลักฐาน (สลิป: วันที่โอน) แยกจาก ConfirmedAt (เวลาที่คนกดยืนยัน) · NULL = ใช้ ConfirmedAt (เดิม)
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "PaidAt" timestamptz NULL;""",
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "LastRefundJournalEntryId" uuid NULL;""",
             """ALTER TABLE "PaymentProviderConfigs" ADD COLUMN IF NOT EXISTS "FeeVatMode" integer NOT NULL DEFAULT 0;""",
             // ฝ่ายค้านรอบ 198 (R-E2/R-E5/E-2) — ยอดคืนรายครั้ง (แยกก่อน/หลังวันเงินเข้า) · ยอดคืนที่ถูกหักในรอบโอนหลัง ·

@@ -5872,6 +5872,32 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 - **มัดจำ (PrePayment)**: จอง ⇒ ใบเสร็จมัดจำ**ร่าง** (เดิม) · ลูกค้าจ่ายออนไลน์ `public-pay/bookings/{siteId}/{token}` (โทเคน `SiteBooking.PublicToken` ออกตอนจอง · ไซต์ต้องเปิด `SiteBookingSettings.OnlineDepositEnabled` — คำตัดสินข้อ 164) หรือพนักงานบันทึก `POST …/bookings/{id}/payments`
   ⇒ `CmsBookingService.RecordDepositPaymentAsync` (ตัวเดียว · ล็อกต่อการจอง · กันซ้ำด้วยเลขอ้างอิง `GatewayPaymentRecord.Reference`) ⇒ `PaidAmount` · ครบมัดจำ ⇒ Pending→Confirmed · ใบเสร็จมัดจำร่างอนุมัติ**ลงวันที่รับเงินจริง** (§78/1) ·
   ยอดที่จ่ายได้/ข้อความบล็อกจาก `Helpers/CmsBookingOnlinePayment` ตัวเดียว (resolver · handler · คำตอบ `BookingResponse.OnlineDepositDue/OnlinePaymentNote`)
+- **รอบ 218 · นโยบายรับชำระล่วงหน้า + โอน/QR/สลิป (คำตัดสินข้อ 177 · `erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`)**: โหมด = บริการ
+  (`SiteBookingService.PaymentMode`) ?? เว็บ (`SiteBookingSettings.PaymentMode`) ?? แบบเดิม — ตัวตัดสินเดียว `Helpers/BookingPaymentPolicy` (ปิด · มัดจำบังคับ · มัดจำไม่บังคับ
+  (ลูกค้าติ๊ก `PayDepositNow`) · เต็มยอดก่อน) · ยอด = ช่องมัดจำของบริการ ?? ของเว็บ · min/max · ปัด AwayFromZero · **เก็บเงินได้เฉพาะชนิด PrePayment** (ชนิดอื่น ⇒ ปิดพร้อมเหตุผล ·
+  บันทึกบริการที่ตั้งเก็บเงินเองแต่ชนิดไม่ใช่ ⇒ ปฏิเสธ) · เอกสาร = เส้น PrePayment เดิมทุกตัวอักษร (ใบรับมัดจำร่าง → อนุมัติลงวันที่รับเงิน §78/1 · เต็มยอด = ใบมัดจำเต็มยอด
+  → ตอนเสร็จ `RealizeDepositOnCompleteAsync`) · โหมดบังคับ + ลูกค้าจองเอง ⇒ รอยืนยัน (ชนะ AutoConfirm) + `SiteBooking.PaymentHoldUntil` = min(จอง + N นาที, เวลานัด) ⇒
+  `BookingReminderJob` ส่วนที่ 4 ยกเลิกผ่านเส้นสถานะ (`PaymentHoldLapsedAsOfUtc` ตัดสินซ้ำใต้ล็อก · ไม่แตะใบที่มีเงิน/สลิปรอตรวจ) · พนักงานจองแทน = ไม่บังคับ/ไม่ถือ ·
+  ไม่เคยตั้ง (NULL ทั้งสองชั้น) = พฤติกรรมเดิม · ช่องทาง (`Helpers/BookingPaymentChannels`): gateway = `OnlineDepositEnabled` + `PaymentProviderConfig` ของบริษัท · โอน/QR =
+  `BankTransferEnabled` + แถว `SitePaymentGateway` แรกของเว็บ (ตารางเดียวกับคำสั่งซื้อ · + `BankBranch`) — QR มียอดจาก `PromptPayService` (EMVCo/CRC16 ตัวเดียว) หรือรูป QR ที่อัปโหลด ·
+  โหมดเก็บเงินที่ไม่มีช่องทาง ⇒ บันทึกค่าตั้งไม่ได้ · **สลิป**: ลูกค้าแนบด้วยโทเคน ⇒ `BookingSlipService` ⇒ `PaymentIntentService.StartAsync(manual-slip)` ยอดจากเซิร์ฟเวอร์ +
+  ไฟล์ `IFileAttachmentService` ชนิด `SiteBooking` (ด่านอ่าน CmsOrderManage) ⇒ `SlipAttachmentId/SlipUploadedAt/SlipIntentId` (ใต้ล็อกสถานะ) · ร้าน **ยืนยัน** ⇒ `ApplyChargeAsync(Succeeded, Manual)`
+  ⇒ `SiteBookingPaymentHandler` ⇒ `RecordDepositPaymentAsync` (เส้นเดียวกับ gateway — ยืนยันการจอง + ใบรับมัดจำลงวันที่รับเงิน · ล้าง "รอตรวจ" ผ่าน `BookingSlipRule.SettlesPendingSlip`) ·
+  **ปฏิเสธ** (ต้องมีเหตุผล) ⇒ intent `Failed` + เหตุผลบนการจอง + ต่อเวลา 24 ชม. + แจ้งลูกค้า `booking.slip-rejected` · ไฟล์ไม่ถูกลบ (หลักฐาน) · สลิปรอตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว ·
+  คำตอบ `BookingResponse.Payment` + `payment-preview` (ก่อนกดจอง) + ป้ายรอชำระ/รอตรวจสลิป/ชำระแล้ว (รายการพนักงาน · "การจองของฉัน") · ข้อความยืนยันการจองต่อท้ายยอด/กำหนดเวลา/วิธีชำระ
+  **ฝ่ายค้านรอบ 218**: (B1) ค่าตั้งการจ่ายเขียน/อ่านเฉพาะแถว `SitePaymentGateway` ชนิดโอน/พร้อมเพย์ (`BookingPaymentContextLoader` · ไม่แตะแถว Omise ·
+  ไม่เปลี่ยนชนิด/ชื่อแถวเดิม) · ล้างเลขบัญชี/พร้อมเพย์ที่มีอยู่ ⇒ 409 จนกว่าผู้ตั้งยืนยัน (`BookingPaymentChannels.ClearedFields` + `ConfirmClearTransfer`) ·
+  (B2) ยืนยันสลิป ⇒ วันรับเงิน = วันที่โอน (`BookingSlipRule.ResolvePaidAt` — พนักงานเลือกได้ · ค่าเริ่มต้น = วันแนบ · ห้ามอนาคต/ก่อนวันจอง) ⇒
+  `PaymentIntent.PaidAt` (คอลัมน์ใหม่) ⇒ handler ใช้ `PaidAt ?? ConfirmedAt` · เงินจากสลิป = `PaymentMethod.BankTransfer` · `ConfirmedBy = manual:{ผู้กด}` ·
+  (S1) บันทึกรับเงินก้อนอื่นครบ ⇒ รายการชำระของสลิปที่ถูกแทนปิดเป็น Failed หลัง commit · ยืนยันด้วยมือที่ PaymentGateway ได้เฉพาะสลิปที่ยังรอตรวจ
+  (`ManualConfirmProblem`) · (S2) ยกเลิก/ไม่มา ⇒ ปิดสลิปรอตรวจ · ตรวจสลิปของการจองที่ปิดแล้วไม่ได้ · (S3) ยืนยัน/ปฏิเสธ/ยกเลิกใต้ล็อกการจองเดียวกัน ·
+  บันทึกผู้ยืนยัน ≤ 300 ตัว · (S4) จ่ายแล้วบอกก่อนเขียนไฟล์ · ยอดเปลี่ยนระหว่างแนบ ⇒ 409 + ปิดรายการชำระ · อ่านสลิปต้องเป็นไฟล์ของการจองนี้ ·
+  (S5) ได้ที่จากคิวสำรอง ⇒ ตัวตัดสิน `BookingPaymentPolicy.OnSeat` เดียวกับจองใหม่ · (S6) งานยกเลิกค้างจ่ายข้ามการจองที่มีรายการชำระออนไลน์ยังไม่หมดอายุ
+  (+ผ่อน 10 นาที · `GatewayPaymentInProgress`) · บันทึกบริการที่ตั้งเก็บเงินเอง ⇒ ต้องมีช่องทาง + ยอด (`ServiceChannelProblem`) ·
+  PDPA: สลิปที่ถูกปฏิเสธ/แทน ของการจองที่ไม่มีเงินเข้า เก่ากว่า 90 วัน ⇒ `CartImageCleanupJob` ลบ (`BookingSlipRetention`) · สลิปของการจองที่มีเงิน = หลักฐาน ม.10 ไม่ลบ ·
+  สลิปค้างเลยเวลานัด ⇒ ป้าย "ตรวจด่วน" (ไม่ยกเลิกเอง)
+  ที่ตั้งค่า (รวมรอบ 215 เฟส 2): ฟอร์มค่าตั้งการชำระของการจองอยู่ที่ "ตั้งค่าเว็บ › การชำระเงิน" ที่เดียว (`CmsSiteSettingsExt.payment`) · cms-edit เหลือกล่อง "ย้ายแล้ว" + ตั้งทับรายบริการที่ฟอร์มบริการ
+  _Last verified against codebase: 2026-10-30 (รอบ 218 — นโยบายรับชำระล่วงหน้า + สลิปผ่าน PaymentIntent · เทสต์ `BookingPaymentPolicyTests` · `Db/BookingPaymentPolicyDbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fe1a9f0e · c62e1809 · 03191135 · e98ca3e9 · 7cf933b1)_
 - **ให้บริการเสร็จ (R-09)**: มัดจำออกใบแล้ว + ราคาเต็ม > มัดจำ ⇒ `SettleDepositOnCompleteAsync` ออกใบกำกับ (จด VAT) / ใบเสร็จ ส่วนที่เหลือ `DepositBaseDeducted` + `DepositAppliedRef` = ใบมัดจำ (ช่องเดียวกับเช็คเอาต์ที่พัก §6.5 / MTO ข้อ 156) · อนุมัติ ⇒ `RealizeTaxedDepositDeductionsAsync` รับรู้ฐานมัดจำ · `ServiceUsedDate` = เวลานัด (tax point §78/1) · มัดจำ = ราคาเต็ม / มัดจำ VAT รอ / เงินประกัน ⇒ เส้นเดิม `RealizeDepositOnCompleteAsync` + ข้อความเดิม
 - **ยกเลิกเอง (R-10) / ไม่มา (R-11)**: `Helpers/BookingCancellationFee.Plan` — หน้าต่างฟรี `FreeCancellationHours` (เฉพาะยกเลิกเอง) · ค่าธรรมเนียม = ค่าบริการรวม × `CancellationFeePercent` · ริบ ≤ มัดจำที่รับจริง (ข้อ 126) ผ่าน `RealizeDepositAsync(ForfeitAs: PriceOrFee)` เท่า**ฐาน**ของส่วนที่ริบ · ส่วนที่เหลือ "รอคืน" ที่ศูนย์มัดจำ (ใบลดหนี้ §86/10 · ระบบไม่คืนเอง R1) · ไม่ตั้ง % ⇒ ไม่ริบ/ไม่คืนเอง (มัดจำคงเป็นหนี้สินรอพนักงาน — เส้นเดิม) · พนักงานยกเลิกจากหลังบ้าน = ไม่คิดค่าธรรมเนียมอัตโนมัติ (เส้นเดิม `SettleErpDocumentOnCancelAsync`)
 - **เลื่อนนัด (รอบ 206 · ข้อ 165 ค)**: `RescheduleCoreAsync` — แถวเดิมเปลี่ยนวัน/เวลา ตัดสินรอบใหม่ด้วย `BookingSlotEngine.Decide` ใต้ล็อกไซต์โดยไม่นับตัวเอง · เอกสารมัดจำ/ใบยืนยัน/เงินคงผูก (จดหมายเหตุบนใบ ไม่แก้บรรทัด §86/4) · ลูกค้าเลื่อนเองเฉพาะหน้าต่างยกเลิกฟรี · รอบเดิมว่าง ⇒ เลื่อนคิวสำรอง · รีเซ็ตเตือนก่อนนัด

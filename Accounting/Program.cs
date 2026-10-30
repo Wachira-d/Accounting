@@ -688,6 +688,7 @@ builder.Services.AddScoped<ICmsContentService, CmsContentService>();
 builder.Services.AddScoped<ICmsCommerceService, CmsCommerceService>();
 builder.Services.AddScoped<IStorefrontCustomerService, StorefrontCustomerService>();   // รอบ 209 P1 — หน้าสถานะออเดอร์ของแขก · QR พร้อมเพย์ · บัญชีของฉัน
 builder.Services.AddScoped<ICmsBookingService, CmsBookingService>();
+builder.Services.AddScoped<IBookingSlipService, BookingSlipService>();   // รอบ 218 — สลิปชำระล่วงหน้าของการจอง (PaymentIntent manual-slip · แยกจาก CmsBookingService กันวงกลม DI)
 builder.Services.AddScoped<IBookingNotifier, Accounting.Services.Implementations.Cms.BookingNotifier>();   // รอบ 205 W3 — ช่องส่งข้อความถึงลูกค้าของเครื่องจอง (อีเมล/LINE · บอกผลจริง)
 builder.Services.AddScoped<ICmsShopNotifier, Accounting.Services.Implementations.Cms.CmsShopNotifier>();   // รอบ 209 P3 — แจ้งร้าน/ลูกค้าของหน้าเว็บ (ออเดอร์ · การจอง · lead) ผ่านช่องเดิม IBookingNotifier
 builder.Services.AddScoped<ICustomerLineLinkService, Accounting.Services.Implementations.Cms.CustomerLineLinkService>();   // รอบ 211 — ลูกค้าผูก LINE เอง (สมาชิก/แขก) + webhook OA ต่อบริษัท · BookingNotifier หา LINE ที่ผูกไว้

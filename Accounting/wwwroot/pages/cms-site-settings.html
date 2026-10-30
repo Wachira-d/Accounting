@@ -57,11 +57,13 @@
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
   <script src="/js/customer-notify.js"></script>
+  <script src="/js/booking-payment-admin.js"></script><!-- รอบ 218: ลงทะเบียน CmsSiteSettingsExt.payment (มัดจำ/ชำระเต็ม/โอน-QR-สลิปของการจอง) -->
   <script>
     /* หน้า "ตั้งค่าเว็บ" (รอบ 215 เฟส 2 · erp-review/2026-10-30/CMS_UX_REDESIGN.md §4.4) — ศูนย์รวมค่าตั้งรายเว็บ
      *
      * กติกา: ค่าตั้งที่ "ย้ายมาแล้ว" แก้ที่นี่ที่เดียว (ที่เดิมเหลือกล่อง "ย้ายแล้ว") — ตอนนี้:
      *   • การจอง/บริการ › "ลูกค้าเลือกผู้ให้บริการได้ไหม" (SiteBookingSettings.DefaultResourceMode · คำตัดสินข้อ 176)
+     *   • การชำระเงิน › มัดจำ/ชำระเต็ม/โอน-QR-สลิปของการจอง (รอบ 218 · /js/booking-payment-admin.js ผ่าน CmsSiteSettingsExt.payment)
      *   • การแจ้งเตือน › ตารางแจ้งลูกค้ารายเว็บ (CustomerNotify.mountRules — ทุกประเภทเว็บ · เดิมมีแค่เว็บที่มีออเดอร์)
      * กลุ่มอื่นเป็น "สรุป + ลิงก์ไปที่แก้จริง" (ยังไม่ย้าย — ไม่มีสองฟอร์มแก้ค่าเดียวกัน)
      *
@@ -202,11 +204,11 @@
       },
 
       renderPayment(mods) {
-        // รอบ 218 กำลังพัฒนาค่าตั้งมัดจำ/ชำระเต็ม/โอน-QR-สลิป — กลุ่มนี้เป็นที่ว่างให้ต่อผ่าน CmsSiteSettingsExt.payment (ดูหัวไฟล์)
+        // ทางสำรองเมื่อไม่มีตัวต่อขยาย — ปกติ /js/booking-payment-admin.js ลงทะเบียน CmsSiteSettingsExt.payment (รอบ 218) แทนเนื้อหานี้
         const id = enc(this.siteId || '');
         const rows = [
           mods.includes('orders') && ['วิธีชำระของร้าน (โอน/ออนไลน์/ปลายทาง)', `/pages/cms-store-settings.html?siteId=${id}&tab=payment`, 'ตั้งค่าร้านค้า › วิธีชำระ'],
-          mods.includes('bookings') && ['มัดจำของการจอง (รายบริการ) · รับมัดจำออนไลน์', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง'],
+          mods.includes('bookings') && ['มัดจำรายบริการ (ตั้งทับค่าเว็บ)', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › ฟอร์มบริการ'],
           mods.includes('lodging') && ['มัดจำ & การยืนยันของที่พัก', `/pages/lodging-settings.html?siteId=${id}`, 'ตั้งค่าที่พัก › มัดจำ & การยืนยัน'],
         ].filter(Boolean);
         return this.links('การชำระเงิน', 'วิธีชำระ · มัดจำ · ชำระเต็ม — กำลังรวมมาไว้ที่นี่ (ตอนนี้แก้ที่เดิม)', rows.length ? rows : [['ยังไม่มีงานรับเงินบนเว็บนี้', '/pages/payment-settings.html', 'รับชำระเงินออนไลน์ (ระดับบริษัท)']]);
