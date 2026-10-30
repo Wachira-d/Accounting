@@ -4981,6 +4981,10 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   หมายเหตุ: `Status` = concurrency token + unique ร่างต่อชนิด (`UX_LegalDocumentVersions_Kind_Draft`) ⇒ กดพร้อมกัน 409 ไทย · ร่างที่วันมีผลเลยแล้วมีปุ่มตั้งเป็นวันนี้ ·
   `LegalController` เลิก `[AllowAnonymous]` ระดับคลาส (เดิมลบล้าง `[Authorize]` ของ acceptance) · เว็บยังไม่เผยแพร่ ปุ่ม "เปิด" = ตัวอย่างในหน้า ·
   audit ช่อง `*Markdown` เก็บความยาว + sha256 แทนเนื้อความ (`AuditRedaction.Value`)
+- **รอบ 214 ต่อ (ฎ)**: หลักฐานยอมรับนโยบาย (`PlatformPolicyAcceptances` — สร้างผ่าน `PlatformPolicyAcceptanceRules.Create` ตัวเดียว · เก็บ `VersionShown`/`UserAgent`)
+  เข้า DSR เข้าถึง/โอนย้าย (`PdpaService.GenerateAccessReportAsync` → `PolicyAcceptances` + ผลตรวจ) · ลบตามคำขอ = `Pseudonymise` (legal hold) ใน `ApplyErasureAsync` ·
+  `PdpaRetentionPurgeJob` ลบจริงเมื่อ `PseudonymisedAt` เกิน 10 ปี · hash `PdpaConsentEvidence` v2 ("v2:" · `NormalizeTimestamp` ตัวเดียว ทั้งเขียน/ตรวจ ·
+  v1 ตรวจไม่ได้ = `LegacyUnverifiable`) — ใช้กับตอนสมัคร · แถบยอมรับ · ฟอร์มเว็บร้าน (`CmsDataConsent.StageForSubject`)
 _Last verified against codebase: 2026-10-30 (รอบ 214 — นโยบาย/ข้อกำหนดแพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS/หน้าจองโต๊ะ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
 - **รอบ 200 ทีม R**: รายงาน ภ.ง.ด.1 / ปกส. (`GET payroll/pnd1|sso/{y}/{m}`) ปิดบังเลขบัตร/เลข ปกส. เมื่อไม่มี `Pii.View` (ตัวตัดสิน `CanViewPiiAsync`
   ตัวเดียวกับรายชื่อพนักงาน + `PiiAccessLog` เมื่อเปิดดูเต็ม · G2-05) · ไฟล์ยื่นแบบไม่ผ่านเส้นนี้ (ยังได้เลขเต็ม) · ตัวจับพนักงานซ้ำตอนนำเข้า

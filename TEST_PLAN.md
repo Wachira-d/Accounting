@@ -22,6 +22,12 @@
 | LEGAL214-19 | หมายเหตุ: สองแท็บเผยแพร่/สร้างร่างแรกพร้อมกัน | แท็บที่สอง 409 ไทย (Status concurrency token · unique ร่างต่อชนิด) ไม่ใช่ 500 | ตรวจมือ (required_call_site_check `SaveGuardedAsync`) |
 | LEGAL214-20 | CI: ยอมรับนโยบาย — ผู้ใช้ไม่มีบริษัท / ผู้ใช้มีบริษัท | บันทึกที่ `PlatformPolicyAcceptances` ได้ทั้งคู่ · ไม่สร้างแถว PdpaConsentRecords CompanyId ศูนย์อีก | `Db/LegalDocumentDbTests`.Publish_is_append_only_and_drives_the_acceptance_banner |
 | LEGAL214-21 | หมายเหตุ: endpoint ยอมรับนโยบายโดยไม่ล็อกอิน | 401 (ไม่มี AllowAnonymous ระดับคลาสลบล้าง `[Authorize]`) | ตรวจมือ |
+| LEGAL214-22 | ฎ: หลักฐาน v2 หลังค่าผ่าน PostgreSQL (Kind หาย · ticks หลักที่ 7 หาย) | ตรวจผ่าน · แก้อีเมล/ฉบับ/เวลา/IP ⇒ Invalid | `PdpaConsentEvidenceV2Tests`.V2_verifies_after_postgres_round_trip · V2_tampered_field_is_invalid |
+| LEGAL214-23 | ฎ: แถว v1 เก่า | เวลาเต็มความละเอียด = ผ่าน · ผ่านฐานแล้ว = `LegacyUnverifiable` (ไม่ใช่ผ่านเงียบ) · ไม่มี hash = Missing | `PdpaConsentEvidenceV2Tests`.Legacy_v1_rows_are_reported_never_silently_ok |
+| LEGAL214-24 | ฎ: แถวยอมรับนโยบายเก็บทุกช่องใน canonical | เวลา normalize · UA ตัดก่อน hash · ตรวจจากแถวผ่าน · แก้ฉบับที่เห็น ⇒ ไม่ผ่าน | `PdpaConsentEvidenceV2Tests`.Acceptance_row_stores_every_canonical_field_and_verifies_from_the_row · NormalizeTimestamp_… |
+| LEGAL214-25 | ฎ: round-trip บนฐานจริง — แถบยอมรับ + ฟอร์มเว็บร้าน | เขียน → อ่านกลับ → ตรวจผ่าน · แก้ IP ในฐาน ⇒ Invalid · อีเมลอื่น ⇒ ไม่ผ่าน | `Db/LegalDocumentDbTests`.Publish_is_append_only_… · Shop_form_consent_evidence_round_trips_through_postgres |
+| LEGAL214-26 | ฎ: ลบตามคำขอ (ม.33) | แถวคงอยู่ (legal hold) · อีเมลนิรนาม · IP/UA ล้าง · ผลตรวจ = ตรวจซ้ำไม่ได้ · วันลบครั้งแรกไม่เลื่อน · ลบจริงเมื่อพ้น 10 ปี | `PdpaConsentEvidenceV2Tests`.Erasure_pseudonymises_but_keeps_legal_hold_row · กติกา `ApplyErasureAsync`/`PdpaRetentionPurgeJob.RunAsync` |
+| LEGAL214-27 | ฎ: DSR เข้าถึง/โอนย้ายของผู้ใช้ที่ยอมรับนโยบายแล้ว | มี `policyAcceptances` พร้อมผลตรวจรายแถวทั้ง JSON และไฟล์ดาวน์โหลด | กติกา `GenerateAccessReportAsync` · ตรวจมือ |
 | LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
 
 ## SUB217 — กดซ้ำไม่บันทึกซ้ำ (Idempotency-Key + ด่านซ้ำเชิงความหมาย) · ตอบเร็ว แจ้งเตือนตามหลัง (รอบ 217 · คำตัดสินข้อ 175)
@@ -232,7 +238,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **699 ไฟล์ · 7,186 `[Fact]` + 1,140 `[Theory]` (5,336 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **700 ไฟล์ · 7,192 `[Fact]` + 1,141 `[Theory]` (5,340 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 

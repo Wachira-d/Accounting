@@ -26,4 +26,13 @@ public class PlatformPolicyAcceptance : BaseEntity
     /// <summary><c>PdpaConsentEvidence.ComputeHash</c> — canonical ตัวเดียวกับเดิม</summary>
     public string? EvidenceHash { get; set; }
     public DateTime? WithdrawnAt { get; set; }
+
+    // ── รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ): ทุกช่องที่อยู่ใน canonical ของ EvidenceHash ต้องเก็บไว้ ไม่งั้นตรวจกลับไม่ได้ (round-trip) ──
+    /// <summary>เวอร์ชันที่หน้าเว็บแสดงตอนกด (หน้าสมัครส่งกลับมา · อาจต่างจาก <see cref="PolicyVersion"/> เมื่อเบราว์เซอร์ค้าง cache)</summary>
+    public string? VersionShown { get; set; }
+    /// <summary>user-agent (ตัดที่ <c>PlatformPolicyAcceptanceRules.MaxUserAgent</c> ก่อน hash)</summary>
+    public string? UserAgent { get; set; }
+    /// <summary>ลบข้อมูลตามคำขอ (ม.33) แล้ว — อีเมล/IP/UA ถูกทำให้ไม่ระบุตัว · แถวคงไว้เป็นหลักฐานตามอายุความ
+    /// (legal hold · <c>PlatformPolicyAcceptanceRules</c>) แล้วลบจริงเมื่อพ้นกำหนด</summary>
+    public DateTime? PseudonymisedAt { get; set; }
 }

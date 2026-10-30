@@ -147,7 +147,10 @@ public sealed record DataSubjectAccessResult(
     /// (ชื่อ · ที่อยู่ · เลขผู้เสียภาษี) เดิมไม่เคยถูกรายงานเลย (ผลตรวจ T5) ·
     /// รายงานเป็น<b>สรุปรายแถว</b> ไม่ยกข้อความดิบมา เพราะกระดาษใบเดียวกันมี
     /// ข้อมูลของคู่ค้าอีกฝ่ายอยู่ด้วย</summary>
-    List<Dictionary<string, object?>>? OcrScans = null);
+    List<Dictionary<string, object?>>? OcrScans = null,
+    /// <summary>รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ): หลักฐานการยอมรับข้อกำหนด/นโยบายแพลตฟอร์ม (<c>PlatformPolicyAcceptances</c>) — ม.30/31
+    /// พร้อมผลตรวจหลักฐานรายแถว (<c>PlatformPolicyAcceptanceRules.Check</c>)</summary>
+    List<Dictionary<string, object?>>? PolicyAcceptances = null);
 
 public sealed record ErasureImpactReport(
     int UserRowsAffected,
@@ -399,8 +402,25 @@ public partial class PdpaService : IPdpaService
                 }).ToList()
             : new List<Dictionary<string, object?>>();
 
+        // รอบ 214 ต่อ (ฎ): หลักฐานยอมรับข้อกำหนด/นโยบายแพลตฟอร์ม (ระดับผู้ใช้) — ส่งค่าที่เก็บจริง + ผลตรวจ hash ต่อแถว
+        var acceptRows = new List<Dictionary<string, object?>>();
+        if (user != null)
+        {
+            var accepts = await _db.PlatformPolicyAcceptances.AsNoTracking()
+                .Where(x => x.UserId == user.Id)
+                .OrderBy(x => x.AcceptedAt)
+                .ToListAsync(ct);
+            acceptRows = accepts.Select(x => new Dictionary<string, object?> {
+                ["purpose"] = x.Purpose, ["policyVersion"] = x.PolicyVersion, ["versionShown"] = x.VersionShown,
+                ["acceptedAt"] = x.AcceptedAt, ["channel"] = x.Channel, ["ipAddress"] = x.IpAddress,
+                ["userAgent"] = x.UserAgent, ["withdrawnAt"] = x.WithdrawnAt, ["evidenceHash"] = x.EvidenceHash,
+                ["evidenceCheck"] = Accounting.Helpers.PlatformPolicyAcceptanceRules.CheckLabel(
+                    Accounting.Helpers.PlatformPolicyAcceptanceRules.Check(x)),
+            }).ToList();
+        }
+
         var total = (userProfile.Count > 0 ? 1 : 0) + contactRows.Count
-            + docRows.Count + payRows.Count + logRows.Count + extRows.Count;
+            + docRows.Count + payRows.Count + logRows.Count + extRows.Count + acceptRows.Count;
 
         // ── ผลสแกน OCR ที่ผูกกับเจ้าของข้อมูล (ม.30) ──
         // แถวสแกนเก็บ RawTextContent = ข้อความทั้งหน้ากระดาษ (ชื่อ · ที่อยู่ ·
@@ -440,7 +460,7 @@ public partial class PdpaService : IPdpaService
             UserProfile: userProfile, Contacts: contactRows,
             Documents: docRows, Payments: payRows, AccessLogs: logRows,
             TotalRecords: total + scanRows.Count, ExternalLogins: extRows,
-            OcrScans: scanRows);
+            OcrScans: scanRows, PolicyAcceptances: acceptRows);
     }
 
     public async Task<int> ApplyRectificationAsync(Guid companyId,
@@ -498,6 +518,12 @@ public partial class PdpaService : IPdpaService
             {
                 u.FullName = "[ANONYMIZED]";
                 u.Email = $"anon-{hashed}@deleted.local";
+
+                // รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ): หลักฐานยอมรับข้อกำหนด/นโยบาย = legal hold (ภาระพิสูจน์ ม.19 · สิทธิเรียกร้อง ม.33(5)) —
+                // คงแถว แต่ทำอีเมล/IP/UA ไม่ให้ระบุตัว · ลบจริงเมื่อพ้น 10 ปี (PdpaRetentionPurgeJob · PlatformPolicyAcceptanceRules)
+                var accepts = await _db.PlatformPolicyAcceptances.Where(x => x.UserId == u.Id).ToListAsync(ct);
+                foreach (var a in accepts)
+                    Accounting.Helpers.PlatformPolicyAcceptanceRules.Pseudonymise(a, u.Email, DateTime.UtcNow);
                 u.Phone = null;
                 u.LineUserId = null;
                 u.Status = Models.Enums.UserStatus.Inactive;
