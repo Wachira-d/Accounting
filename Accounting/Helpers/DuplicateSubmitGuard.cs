@@ -51,8 +51,29 @@ public static class DuplicateSubmitGuard
     public static T? FindDuplicate<T>(IEnumerable<T> candidates, Func<T, Requester?> identityOf, Requester? requester) where T : class
         => requester == null ? null : candidates.FirstOrDefault(c => SameRequester(identityOf(c), requester));
 
-    /// <summary>เปิดใบเดิมให้ผู้ขอได้ไหม — พนักงาน · หรือสมาชิกที่เป็นเจ้าของใบเดิม (id จากโทเคนตรงกับใบ) · แขกนิรนาม ⇒ ไม่เปิด
-    /// (เบอร์/อีเมลใครก็พิมพ์ได้ — ห้ามคืนโทเคนจัดการการจองของคนอื่น)</summary>
-    public static bool Reveal(bool staff, Guid? requesterCustomerId, Guid? existingCustomerId)
-        => staff || (requesterCustomerId is Guid r && existingCustomerId == r);
+    /// <summary>ฝ่ายค้าน S1: "คำขอรูปเดียวกัน" — จำนวนช่วง · จำนวนคน ตรงกัน · ผู้ให้บริการที่ขอ (ถ้าระบุ) ตรงกับใบเดิม ·
+    /// ต่างข้อใดข้อหนึ่ง = ตั้งใจจองอีกแบบ (เช่น ที่นั่งที่สองกับผู้ให้บริการอีกคน) ⇒ ไม่ใช่การกดซ้ำ</summary>
+    public static bool SameBookingShape(int requestedUnits, int requestedGuests, Guid? requestedResource, int units, int guests, Guid? resource)
+        => requestedUnits == units && requestedGuests == guests && (requestedResource == null || requestedResource == resource);
+
+    public enum Outcome
+    {
+        /// <summary>สมาชิกเจ้าของใบเดิม (โทเคนหน้าร้าน) — คืนใบเดิม <c>Reused=true</c> + หน้าเว็บมีปุ่ม "จองเพิ่มอีกที่"</summary>
+        ReturnExisting,
+        /// <summary>พนักงาน/ผู้เรียกฝั่งหลังบ้าน — 409 พร้อมเลขที่ใบเดิม (ฝ่ายค้าน S1: ไม่คืนเงียบ ๆ · ตั้งใจจองเพิ่มส่ง ConfirmAdditional)</summary>
+        ConflictForStaff,
+        /// <summary>แขกนิรนาม/ผู้เรียก API ที่ไม่ใช่เจ้าของ — 409 ไม่เปิดใบ/โทเคนของใบเดิม (เบอร์/อีเมลใครก็พิมพ์ได้)</summary>
+        ConflictForGuest,
+    }
+
+    /// <summary>ผลเมื่อพบใบซ้ำ — ตัวตัดสินเดียว</summary>
+    public static Outcome Decide(bool staff, Guid? requesterCustomerId, Guid? existingCustomerId)
+        => staff ? Outcome.ConflictForStaff
+            : requesterCustomerId is Guid r && existingCustomerId == r ? Outcome.ReturnExisting
+            : Outcome.ConflictForGuest;
+
+    /// <summary>ข้อความ 409 ถึงพนักงาน (เห็นเลขที่ได้ — พนักงานเปิดดูการจองทุกใบอยู่แล้ว)</summary>
+    public static string BookingStaffMessage(string bookingNumber)
+        => $"ลูกค้าคนนี้มีการจองรอบเดียวกันแบบเดียวกันอยู่แล้ว (เลขที่ {bookingNumber} · สร้างภายใน {Window.TotalMinutes:0} นาที) — "
+           + "ถ้าตั้งใจจองเพิ่มอีกที่ ให้ยืนยันจองเพิ่ม";
 }

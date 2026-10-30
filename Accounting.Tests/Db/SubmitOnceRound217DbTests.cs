@@ -12,6 +12,7 @@ using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
@@ -316,7 +317,7 @@ public class SubmitOnceRound217DbTests
             var r = await new CmsBookingService(appDb, NullLogger<CmsBookingService>.Instance).CreateBookingAsync(cid, sid, req!, null);
             http.Response.StatusCode = 201;
             await http.Response.WriteAsJsonAsync(new { success = true, data = new { r.Id, r.BookingNumber } });
-        }, NullLogger<IdempotencyMiddleware>.Instance);
+        }, NullLogger<IdempotencyMiddleware>.Instance, TestConfig);
         await mw.InvokeAsync(ctx, db);
         return new HttpResult(ctx.Response.StatusCode, Encoding.UTF8.GetString(responseBody.ToArray()),
             ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader].FirstOrDefault());
@@ -372,5 +373,258 @@ public class SubmitOnceRound217DbTests
         var fresh = await PostAsync(cid, sid, Guid.NewGuid().ToString(), BookingJson(svcId, "16:00", "0866666666"), 0);
         Assert.Equal(201, fresh.Status);
         Assert.Equal(2, await ActiveBookingsAsync(cid, sid));
+    }
+
+    // ═════════ ฝ่ายค้านรอบ 217 ═════════
+
+    private static readonly Microsoft.Extensions.Configuration.IConfiguration TestConfig =
+        new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?> { ["Jwt:Secret"] = "db-test-secret-0123456789-0123456789-abcdef" })
+            .Build();
+
+    /// <summary>คำขอทั่วไปผ่านมิดเดิลแวร์จริง — next นับจำนวนครั้งที่ทำงานจริง (replay ไม่นับ)</summary>
+    private static async Task<HttpResult> InvokeAsync(string path, string key, byte[] body, string contentType, Func<HttpContext, Task> next)
+    {
+        using var db = DbTestDatabase.TryCreateContext()!;
+        var ctx = new DefaultHttpContext();
+        ctx.RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider();
+        ctx.Request.Method = "POST";
+        ctx.Request.Path = path;
+        ctx.Request.Headers[IdempotencyKeyPolicy.Header] = key;
+        ctx.Request.ContentType = contentType;
+        ctx.Request.ContentLength = body.Length;
+        ctx.Request.Body = new MemoryStream(body);
+        ctx.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.9");
+        var responseBody = new MemoryStream();
+        ctx.Response.Body = responseBody;
+        await new IdempotencyMiddleware(http => next(http), NullLogger<IdempotencyMiddleware>.Instance, TestConfig).InvokeAsync(ctx, db);
+        return new HttpResult(ctx.Response.StatusCode, Encoding.UTF8.GetString(responseBody.ToArray()),
+            ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader].FirstOrDefault());
+    }
+
+    private static Func<HttpContext, Task> Counting(Box counter, int status = 201, bool success = true, Func<HttpContext, Task>? before = null)
+        => async http =>
+        {
+            if (before != null) await before(http);
+            var n = Interlocked.Increment(ref counter.Value);
+            http.Response.StatusCode = status;
+            await http.Response.WriteAsJsonAsync(new { success, data = n });
+        };
+
+    private sealed class Box { public int Value; }
+
+    private static byte[] Multipart(string boundary, string amount, string fileContent)
+        => Encoding.UTF8.GetBytes(
+            $"--{boundary}\r\nContent-Disposition: form-data; name=\"amount\"\r\n\r\n{amount}\r\n" +
+            $"--{boundary}\r\nContent-Disposition: form-data; name=\"slip\"; filename=\"slip.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n{fileContent}\r\n" +
+            $"--{boundary}--\r\n");
+
+    [Fact]
+    public async Task S2_สลิปmultipart_boundaryใหม่ทุกครั้ง_ยิงซ้ำได้ผลเดิม_ไม่ใช่mismatch_สลิปอื่นเป็นคำขอใหม่()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsureIdempotencyTableAsync(seedDb);
+        var path = $"/api/companies/{Guid.NewGuid()}/cms/sites/{Guid.NewGuid()}/commerce/orders/{Guid.NewGuid()}/upload-slip";
+        var key = Guid.NewGuid().ToString();
+        var counter = new Box();
+
+        var first = await InvokeAsync(path, key, Multipart("b1aaaa", "500", "IMG-A"), "multipart/form-data; boundary=b1aaaa", Counting(counter));
+        var retry = await InvokeAsync(path, key, Multipart("b2zzzzzz", "500", "IMG-A"), "multipart/form-data; boundary=b2zzzzzz", Counting(counter));
+        Assert.Equal(201, first.Status);
+        Assert.Equal((201, IdempotencyKeyPolicy.StatusReplayed), (retry.Status, retry.IdemStatus));
+        Assert.Equal(first.Body, retry.Body);
+        Assert.Equal(1, counter.Value);
+
+        // ทิศตรงข้าม: สลิปอีกใบด้วยคีย์เดิม = คำขออื่น ⇒ 409 mismatch (ไม่ replay สลิปใบแรกให้)
+        var other = await InvokeAsync(path, key, Multipart("b3", "500", "IMG-B"), "multipart/form-data; boundary=b3", Counting(counter));
+        Assert.Equal((409, IdempotencyKeyPolicy.StatusMismatch), (other.Status, other.IdemStatus));
+        Assert.Equal(1, counter.Value);
+    }
+
+    [Fact]
+    public async Task S2_คำขอเดิมยังทำงาน_ยิงซ้ำเนื้อต่าง_ได้inflightไม่ใช่mismatch()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsureIdempotencyTableAsync(seedDb);
+        var path = $"/api/companies/{Guid.NewGuid()}/x/{Guid.NewGuid()}";
+        var key = Guid.NewGuid().ToString();
+        var counter = new Box();
+        var slow = Task.Run(() => InvokeAsync(path, key, Encoding.UTF8.GetBytes("{\"a\":1}"), "application/json", Counting(counter, before: _ => Task.Delay(800))));
+        await Task.Delay(200);
+        var during = await InvokeAsync(path, key, Encoding.UTF8.GetBytes("{\"a\":2}"), "application/json", Counting(counter));
+        await slow;
+        Assert.Equal((409, IdempotencyKeyPolicy.StatusInFlight), (during.Status, during.IdemStatus));
+        Assert.Equal(1, counter.Value);
+    }
+
+    [Fact]
+    public async Task S5_InFlightค้างเกินสองนาที_ยึดคืนได้_ทำงานจริงครั้งเดียว_ของสดยังกันอยู่()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsureIdempotencyTableAsync(seedDb);
+        var path = $"/api/companies/{Guid.NewGuid()}/y/{Guid.NewGuid()}";
+        var key = Guid.NewGuid().ToString();
+        var counter = new Box();
+        var body = Encoding.UTF8.GetBytes("{\"a\":1}");
+        // คำขอแรกค้าง InFlight (จำลองเครื่องล้มกลางคัน — next โยนก่อนปล่อยคีย์ไม่ได้ ⇒ เขียนแถวตรง)
+        var subject = IdempotencyKeyPolicy.Subject(null, null, null, "203.0.113.9");
+        var cacheKey = IdempotencyKeyPolicy.CacheKey(subject, "POST", path, key);
+        await seedDb.Database.ExecuteSqlRawAsync(
+            """INSERT INTO "IdempotencyRecords" ("Id","CacheKey","Status","CreatedAt") VALUES (gen_random_uuid(), {0}, 'InFlight', now())""", cacheKey);
+
+        var fresh = await InvokeAsync(path, key, body, "application/json", Counting(counter));
+        Assert.Equal((409, IdempotencyKeyPolicy.StatusInFlight), (fresh.Status, fresh.IdemStatus));   // ยังไม่ถึง 2 นาที = ยังกัน
+
+        await seedDb.Database.ExecuteSqlRawAsync(
+            """UPDATE "IdempotencyRecords" SET "CreatedAt" = now() - interval '3 minutes' WHERE "CacheKey" = {0}""", cacheKey);
+        var pair = await Task.WhenAll(
+            Task.Run(() => InvokeAsync(path, key, body, "application/json", Counting(counter, before: _ => Task.Delay(300)))),
+            Task.Run(() => InvokeAsync(path, key, body, "application/json", Counting(counter, before: _ => Task.Delay(300)))));
+        Assert.Equal(1, counter.Value);   // ยึดคืนแบบมีเงื่อนไข — สองคำขอแย่งกันได้ทำงานจริงครั้งเดียว
+        Assert.Contains(pair, r => r.Status == 201);
+    }
+
+    [Fact]
+    public async Task Note1_ตอบ200แต่successเป็นfalse_ไม่เก็บ_แก้แล้วส่งคีย์เดิมได้()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsureIdempotencyTableAsync(seedDb);
+        var path = $"/api/companies/{Guid.NewGuid()}/z/{Guid.NewGuid()}";
+        var key = Guid.NewGuid().ToString();
+        var counter = new Box();
+        var failed = await InvokeAsync(path, key, Encoding.UTF8.GetBytes("{\"a\":1}"), "application/json", Counting(counter, status: 200, success: false));
+        var again = await InvokeAsync(path, key, Encoding.UTF8.GetBytes("{\"a\":1}"), "application/json", Counting(counter));
+        Assert.Equal(200, failed.Status);
+        Assert.Equal(201, again.Status);
+        Assert.Null(again.IdemStatus);   // ทำงานจริงอีกครั้ง ไม่ใช่ replay ความล้มเหลว
+        Assert.Equal(2, counter.Value);
+    }
+
+    [Fact]
+    public async Task S6_เส้นสมัครสมาชิก_ไม่เก็บอะไรแม้ส่งคีย์มา()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsureIdempotencyTableAsync(seedDb);
+        var path = $"/api/companies/{Guid.NewGuid()}/cms/sites/{Guid.NewGuid()}/portal/register";
+        var key = Guid.NewGuid().ToString();
+        var counter = new Box();
+        var body = Encoding.UTF8.GetBytes("{\"email\":\"a@x.th\",\"password\":\"hunter2\"}");
+        await InvokeAsync(path, key, body, "application/json", Counting(counter));
+        var second = await InvokeAsync(path, key, body, "application/json", Counting(counter));
+        Assert.Null(second.IdemStatus);
+        Assert.Equal(2, counter.Value);
+        var subject = IdempotencyKeyPolicy.Subject(null, null, null, "203.0.113.9");
+        Assert.Equal(0, await seedDb.Database.SqlQueryRaw<int>(
+            """SELECT COUNT(*)::int AS "Value" FROM "IdempotencyRecords" WHERE "CacheKey" = {0}""",
+            IdempotencyKeyPolicy.CacheKey(subject, "POST", path, key)).SingleAsync());
+    }
+
+    [Fact]
+    public async Task S1_สมาชิกจองที่นั่งที่สอง_จำนวนคนต่าง_ได้ใบใหม่_รูปเดียวกันได้ใบเดิม()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(seedDb, capacity: 5);
+        var member = await SeedMemberAsync(seedDb, cid, sid, "0877777777");
+        var first = await TryBookAsync(cid, sid, Req(svcId, phone: null, customerId: member));
+        var twoGuests = Req(svcId, phone: null, customerId: member);
+        twoGuests.GuestCount = 2;
+        var second = await TryBookAsync(cid, sid, twoGuests);
+        var same = await TryBookAsync(cid, sid, Req(svcId, phone: null, customerId: member));
+        Assert.False(second.Result!.Reused);
+        Assert.NotEqual(first.Result!.Id, second.Result.Id);
+        Assert.True(same.Result!.Reused);
+        Assert.Equal(first.Result.Id, same.Result.Id);
+        // ทางไปต่อ: ปุ่ม "จองเพิ่มอีกที่" = ConfirmAdditional ⇒ ใบใหม่
+        var more = await TryBookAsync(cid, sid, Req(svcId, phone: null, customerId: member, confirmAdditional: true));
+        Assert.False(more.Result!.Reused);
+        Assert.Equal(3, await ActiveBookingsAsync(cid, sid));
+    }
+
+    [Fact]
+    public async Task S1_พนักงานจองซ้ำแทนลูกค้า_ได้409พร้อมเลขที่ใบเดิม_ไม่คืนใบเงียบๆ()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(seedDb, capacity: 5);
+        using var db1 = DbTestDatabase.TryCreateContext()!;
+        var first = await new CmsBookingService(db1, NullLogger<CmsBookingService>.Instance)
+            .CreateBookingAsync(cid, sid, Req(svcId, phone: "0888888888"), null, staffOnBehalf: true);
+        using var db2 = DbTestDatabase.TryCreateContext()!;
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => new CmsBookingService(db2, NullLogger<CmsBookingService>.Instance)
+            .CreateBookingAsync(cid, sid, Req(svcId, phone: "0888888888"), null, staffOnBehalf: true));
+        Assert.Equal((DuplicateSubmitGuard.BookingRuleCode, 409), (ex.RuleCode, ex.StatusCode));
+        Assert.Contains(first.BookingNumber, ex.Message);
+        Assert.Equal(1, await ActiveBookingsAsync(cid, sid));
+    }
+
+    private ServiceProvider DispatcherProvider(ICmsShopNotifier shop)
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddScoped(_ => DbTestDatabase.TryCreateContext()!);
+        services.AddScoped<ICmsBookingService>(sp => new CmsBookingService(sp.GetRequiredService<AccountingDbContext>(),
+            NullLogger<CmsBookingService>.Instance, shopNotifier: shop));
+        services.AddScoped<DeferredNotifyDispatcher>();
+        return services.BuildServiceProvider();
+    }
+
+    [Fact]
+    public async Task S4_ยกเลิกก่อนถึงคิว_ไม่ส่งยืนยัน_ปิดแถวพร้อมหมายเหตุ()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(seedDb, capacity: 5);
+        var created = await TryBookAsync(cid, sid, Req(svcId, phone: "0899990000"));
+        using (var db = DbTestDatabase.TryCreateContext()!)
+            await db.SiteBookings.Where(b => b.Id == created.Result!.Id && b.CompanyId == cid)
+                .ExecuteUpdateAsync(u => u.SetProperty(b => b.Status, BookingStatus.Cancelled));
+        var shop = new FakeShop();
+        using var provider = DispatcherProvider(shop);
+        using var scope = provider.CreateScope();
+        var r = await scope.ServiceProvider.GetRequiredService<DeferredNotifyDispatcher>().RunOnceAsync(DateTime.UtcNow, default, cid);
+        Assert.Equal((1, 0, 1), (r.Claimed, r.Done, r.Skipped));
+        Assert.Equal((0, 0), (shop.Customer, shop.Shop));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var row = await check.DeferredNotifications.AsNoTracking().SingleAsync(d => d.CompanyId == cid && d.EntityId == created.Result!.Id);
+        Assert.NotNull(row.DoneAt);
+        Assert.Equal(DeferredNotifyPolicy.BookingSkipReason(BookingStatus.Cancelled), row.Note);
+    }
+
+    /// <summary>ตัวส่งที่โยน (โครงสร้างล่ม) — ฝ่ายค้าน S3</summary>
+    private sealed class ThrowingShop : ICmsShopNotifier
+    {
+        public Task<string?> NotifyShopAsync(Guid companyId, Guid? siteId, CmsNotification message, bool orderEvent, CancellationToken ct = default)
+            => throw new InvalidOperationException("ฐานข้อมูลปลอมล่ม");
+        public Task<string?> NotifyCustomerAsync(Guid companyId, Guid? siteId, string eventKey, string messageKey, BookingContact contact, CmsNotification message,
+            CancellationToken ct = default) => throw new InvalidOperationException("ฐานข้อมูลปลอมล่ม");
+        public Task<string?> StorefrontBaseUrlAsync(Guid companyId, Guid siteId, CancellationToken ct = default) => Task.FromResult<string?>(null);
+    }
+
+    [Fact]
+    public async Task S3_ข้อยกเว้นโครงสร้าง_แถวไม่ปิด_ถอยแล้วลองใหม่_พร้อมLastError()
+    {
+        using var seedDb = DbTestDatabase.TryCreateContext();
+        if (seedDb == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(seedDb, capacity: 5);
+        var created = await TryBookAsync(cid, sid, Req(svcId, phone: "0899991111"));
+        using var provider = DispatcherProvider(new ThrowingShop());
+        using var scope = provider.CreateScope();
+        var now = DateTime.UtcNow;
+        var r = await scope.ServiceProvider.GetRequiredService<DeferredNotifyDispatcher>().RunOnceAsync(now, default, cid);
+        Assert.Equal((1, 0, 1), (r.Claimed, r.Done, r.Retried));
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var row = await check.DeferredNotifications.AsNoTracking().SingleAsync(d => d.CompanyId == cid && d.EntityId == created.Result!.Id);
+        Assert.Null(row.DoneAt);
+        Assert.Equal(1, row.Attempts);
+        Assert.Contains("ปลอมล่ม", row.LastError);
+        // ทิศตรงข้าม: ยังไม่ถึงเวลาถอย ⇒ รอบถัดไปทันทีไม่หยิบ · ถึงเวลาแล้วหยิบใหม่
+        var soon = await scope.ServiceProvider.GetRequiredService<DeferredNotifyDispatcher>().RunOnceAsync(DateTime.UtcNow, default, cid);
+        Assert.Equal(0, soon.Claimed);
     }
 }

@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using Accounting.Data;
 using Accounting.Helpers;
 using Microsoft.EntityFrameworkCore;
@@ -27,11 +28,15 @@ public class IdempotencyMiddleware
     private readonly RequestDelegate _next;
     private readonly ILogger<IdempotencyMiddleware> _logger;
 
-    /// <summary>อายุของ record — ตัวตั้งอยู่ที่ <see cref="IdempotencyKeyPolicy.Retention"/> (คงชื่อนี้ไว้ให้ ChatRetentionPurgeJob)</summary>
-    public static TimeSpan Retention => IdempotencyKeyPolicy.Retention;
+    /// <summary>กุญแจลูกของลายนิ้วมือคำขอ (HMAC) — ฝ่ายค้าน S6: ห้ามเก็บแฮชเปล่าของเนื้อคำขอ · ว่าง ⇒ โยนตอนสร้าง (§4C fail-fast)</summary>
+    private readonly byte[] _hashKey;
 
-    public IdempotencyMiddleware(RequestDelegate next, ILogger<IdempotencyMiddleware> logger)
-    { _next = next; _logger = logger; }
+    public IdempotencyMiddleware(RequestDelegate next, ILogger<IdempotencyMiddleware> logger, IConfiguration config)
+    {
+        _next = next;
+        _logger = logger;
+        _hashKey = IdempotencyKeyPolicy.DeriveHashKey(config["Jwt:Secret"]);
+    }
 
     public async Task InvokeAsync(HttpContext ctx, AccountingDbContext db)
     {
@@ -53,7 +58,8 @@ public class IdempotencyMiddleware
             await ctx.Response.WriteAsJsonAsync(new { success = false, message = keyProblem });
             return;
         }
-        if (key == null)
+        // ฝ่ายค้าน S6: เส้นล็อกอิน/สมัคร/รหัสผ่าน/โทเคน ไม่เข้าระบบคีย์ (ไม่เก็บลายนิ้วมือของรหัสผ่าน · ไม่เก็บโทเคนไว้ replay)
+        if (key == null || IdempotencyKeyPolicy.IsCredentialPath(path))
         {
             await _next(ctx);
             return;
@@ -94,33 +100,41 @@ public class IdempotencyMiddleware
 
         if (inserted == 0)
         {
+            // อายุคำนวณใน SQL (now() - CreatedAt) — ข้อสังเกต 3: ไม่พึ่ง DateTimeKind ของค่าที่อ่านกลับภายใต้ EnableLegacyTimestampBehavior
             var existing = await db.Database
                 .SqlQueryRaw<IdemRow>(
                     """
                     SELECT "Status" AS "Status", "StatusCode" AS "StatusCode",
                            "ContentType" AS "ContentType", "Body" AS "Body",
-                           "RequestHash" AS "RequestHash", "CreatedAt" AS "CreatedAt"
+                           "RequestHash" AS "RequestHash", "CreatedAt" AS "CreatedAt",
+                           EXTRACT(EPOCH FROM (now() - "CreatedAt"))::float8 AS "AgeSeconds"
                     FROM "IdempotencyRecords" WHERE "CacheKey" = {0}
                     """, cacheKey)
                 .FirstOrDefaultAsync();
 
             var decision = existing == null
                 ? IdempotencyKeyPolicy.Decision.InFlight   // แถวถูกปล่อยระหว่างอ่าน (รอบก่อนล้ม) — ให้ลองใหม่
-                : IdempotencyKeyPolicy.Decide(existing.Status, existing.RequestHash, existing.Body != null,
-                    DateTime.SpecifyKind(existing.CreatedAt, DateTimeKind.Utc), requestHash, DateTime.UtcNow);
+                : IdempotencyKeyPolicy.Decide(existing.Status, existing.RequestHash, existing.Body != null, existing.AgeSeconds, requestHash);
+
+            // ฝ่ายค้าน S5: ยึดคืนแบบมีเงื่อนไขในคำสั่งเดียว (หมดอายุ หรือ InFlight ค้าง) — สองคำขอแย่งกัน ได้ 1 แถวคนเดียว ที่เหลือ = InFlight
+            if (decision == IdempotencyKeyPolicy.Decision.Reclaim)
+            {
+                var reclaimed = await db.Database.ExecuteSqlRawAsync(
+                    """
+                    UPDATE "IdempotencyRecords"
+                       SET "Status"='InFlight', "StatusCode"=0, "ContentType"=NULL,
+                           "Body"=NULL, "RequestHash"={1}, "CreatedAt"=now(), "CompletedAt"=NULL
+                     WHERE "CacheKey" = {0}
+                       AND ("CreatedAt" < now() - make_interval(secs => {2})
+                            OR (("Status" <> 'Done' OR "Body" IS NULL) AND "CreatedAt" < now() - make_interval(secs => {3})))
+                    """, cacheKey, requestHash, IdempotencyKeyPolicy.Retention.TotalSeconds, IdempotencyKeyPolicy.StaleInFlightAfter.TotalSeconds);
+                if (reclaimed != 1) decision = IdempotencyKeyPolicy.Decision.InFlight;
+            }
 
             switch (decision)
             {
                 case IdempotencyKeyPolicy.Decision.Reclaim:
-                    // แถวเก่าเกิน retention → ถือว่าหมดอายุ ยึดคีย์มาทำใหม่
-                    await db.Database.ExecuteSqlRawAsync(
-                        """
-                        UPDATE "IdempotencyRecords"
-                           SET "Status"='InFlight', "StatusCode"=0, "ContentType"=NULL,
-                               "Body"=NULL, "RequestHash"={1}, "CreatedAt"=now(), "CompletedAt"=NULL
-                         WHERE "CacheKey" = {0}
-                        """, cacheKey, requestHash);
-                    break;
+                    break;   // ได้คีย์คืนแล้ว — ทำงานจริงด้านล่าง
                 case IdempotencyKeyPolicy.Decision.Replay:
                     _logger.LogInformation("Idempotency replay key={Key}", key);
                     ctx.Response.StatusCode = existing!.StatusCode;
@@ -128,7 +142,7 @@ public class IdempotencyMiddleware
                     ctx.Response.Headers["Idempotency-Replayed"] = "true";
                     ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader] = IdempotencyKeyPolicy.StatusReplayed;
                     ctx.Response.Headers["Idempotency-Original-At"] = existing.CreatedAt.ToString("o");
-                    await ctx.Response.Body.WriteAsync(existing.Body);
+                    await ctx.Response.Body.WriteAsync(existing.Body!);
                     return;
                 case IdempotencyKeyPolicy.Decision.Mismatch:
                     ctx.Response.StatusCode = 409;
@@ -136,8 +150,8 @@ public class IdempotencyMiddleware
                     await ctx.Response.WriteAsJsonAsync(new { success = false, message = IdempotencyKeyPolicy.MismatchMessage });
                     return;
                 default:
-                    // ยังทำอยู่ (หรือรอบก่อนล้มกลางคัน) — ตอบ 409 ให้ลองใหม่ทีหลัง ดีกว่าปล่อยให้ทำงานคู่ขนาน
-                    // จนเกิดเอกสาร/การจองซ้ำ · หน้าเว็บ (submit-once.js) รอ Retry-After แล้วยิงคีย์เดิม ⇒ ได้ผลเดิม
+                    // ยังทำอยู่ — ตอบ 409 ให้ลองใหม่ทีหลัง ดีกว่าปล่อยให้ทำงานคู่ขนานจนเกิดเอกสาร/การจองซ้ำ ·
+                    // หน้าเว็บ (submit-once.js) รอ Retry-After แล้วยิงคีย์เดิม ⇒ ได้ผลเดิม
                     ctx.Response.StatusCode = 409;
                     ctx.Response.Headers["Retry-After"] = IdempotencyKeyPolicy.InFlightRetryAfterSeconds.ToString();
                     ctx.Response.Headers[IdempotencyKeyPolicy.StatusHeader] = IdempotencyKeyPolicy.StatusInFlight;
@@ -157,8 +171,9 @@ public class IdempotencyMiddleware
             buffer.Position = 0;
             await buffer.CopyToAsync(original);
 
-            // เก็บเฉพาะ 2xx — 4xx/5xx เป็น error ที่ผู้เรียกควรแก้แล้วยิงใหม่ ไม่ใช่ replay ของเดิม
-            if (ctx.Response.StatusCode is >= 200 and < 300)
+            // เก็บเฉพาะผลสำเร็จ (2xx ที่ไม่ใช่ success:false — ข้อสังเกต 1) · นอกนั้นปล่อยคีย์ให้แก้แล้วยิงใหม่ ไม่ replay ความล้มเหลว
+            var bodyBytes = buffer.ToArray();
+            if (IdempotencyKeyPolicy.ShouldStore(ctx.Response.StatusCode, ctx.Response.ContentType, bodyBytes))
             {
                 await db.Database.ExecuteSqlRawAsync(
                     """
@@ -167,7 +182,7 @@ public class IdempotencyMiddleware
                            "Body"={3}, "CompletedAt"=now()
                      WHERE "CacheKey" = {0}
                     """, cacheKey, ctx.Response.StatusCode,
-                    (object?)ctx.Response.ContentType ?? DBNull.Value, buffer.ToArray());
+                    (object?)ctx.Response.ContentType ?? DBNull.Value, bodyBytes);
                 completed = true;
             }
         }
@@ -192,11 +207,25 @@ public class IdempotencyMiddleware
         }
     }
 
-    /// <summary>แฮชเนื้อคำขอแบบสตรีม (ไฟล์แนบใหญ่ไม่ต้องอยู่ในหน่วยความจำก้อนเดียว) แล้วกรอกลับให้ controller อ่านต่อได้</summary>
-    private static async Task<string> HashRequestAsync(HttpRequest request, string method, string pathAndQuery, CancellationToken ct)
+    /// <summary>ลายนิ้วมือของคำขอ (HMAC) — multipart: ช่อง + เนื้อไฟล์ ไม่รวม boundary (ฝ่ายค้าน S2) · อื่น ๆ: เนื้อดิบแบบสตรีม ·
+    /// กรอกสตรีมกลับให้ controller อ่านต่อได้ (multipart อ่านผ่าน ReadFormAsync ⇒ แคชไว้ที่ Form feature ให้ model binding ใช้ต่อ)</summary>
+    private async Task<string> HashRequestAsync(HttpRequest request, string method, string pathAndQuery, CancellationToken ct)
     {
-        using var h = IdempotencyKeyPolicy.BeginRequestHash(method, pathAndQuery);
         request.EnableBuffering();
+        if (IdempotencyKeyPolicy.IsMultipart(request.ContentType))
+        {
+            var form = await request.ReadFormAsync(ct);
+            var fields = form.SelectMany(kv => kv.Value.Select(v => new IdempotencyKeyPolicy.MultipartField(kv.Key, v ?? ""))).ToList();
+            var files = new List<IdempotencyKeyPolicy.MultipartFile>();
+            foreach (var f in form.Files)
+            {
+                await using var fs = f.OpenReadStream();
+                files.Add(new IdempotencyKeyPolicy.MultipartFile(f.Name, f.FileName, f.ContentType, await SHA256.HashDataAsync(fs, ct)));
+            }
+            request.Body.Position = 0;
+            return IdempotencyKeyPolicy.MultipartHash(_hashKey, method, pathAndQuery, fields, files);
+        }
+        using var h = IdempotencyKeyPolicy.BeginRequestHash(_hashKey, method, pathAndQuery);
         var buf = new byte[16 * 1024];
         int n;
         while ((n = await request.Body.ReadAsync(buf.AsMemory(0, buf.Length), ct)) > 0) h.AppendData(buf, 0, n);
@@ -213,5 +242,6 @@ public class IdempotencyMiddleware
         public byte[]? Body { get; set; }
         public string? RequestHash { get; set; }
         public DateTime CreatedAt { get; set; }
+        public double AgeSeconds { get; set; }
     }
 }

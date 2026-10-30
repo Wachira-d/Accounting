@@ -883,9 +883,11 @@ public partial class CmsBookingService : ICmsBookingService
                         && b.BookingDate == bookingDay && b.StartTime == start && b.CreatedAt >= since
                         && b.Status != BookingStatus.Cancelled && b.Status != BookingStatus.NoShow)
                     .OrderBy(b => b.CreatedAt)
-                    .Select(b => new { b.Id, b.CustomerId, b.GuestPhone, b.GuestEmail })
+                    .Select(b => new { b.Id, b.CustomerId, b.GuestPhone, b.GuestEmail, b.Units, b.GuestCount, b.ResourceId })
                     .ToListAsync();
-                duplicateOfId = DuplicateSubmitGuard.FindDuplicate(recent, b => DuplicateSubmitGuard.IdentityOf(b.CustomerId, b.GuestPhone, b.GuestEmail), requester)?.Id;
+                // ฝ่ายค้าน S1: "กดซ้ำ" = คำขอรูปเดียวกัน (ช่วง · จำนวนคน · ผู้ให้บริการที่ขอ) — ต่างกัน = ตั้งใจจองอีกแบบ ไม่ใช่ซ้ำ
+                var sameShape = recent.Where(b => DuplicateSubmitGuard.SameBookingShape(units, guests, request.ResourceId, b.Units, b.GuestCount, b.ResourceId)).ToList();
+                duplicateOfId = DuplicateSubmitGuard.FindDuplicate(sameShape, b => DuplicateSubmitGuard.IdentityOf(b.CustomerId, b.GuestPhone, b.GuestEmail), requester)?.Id;
             }
 
             if (duplicateOfId is Guid dupId)
@@ -1000,8 +1002,8 @@ public partial class CmsBookingService : ICmsBookingService
         return created;
     }
 
-    /// <summary>รอบ 217 (คำตัดสินข้อ 175 ข): คำตอบเมื่อพบการจองซ้ำของผู้จองคนเดิม — <see cref="DuplicateSubmitGuard.Reveal"/> ตัดสินว่าเปิดใบเดิมให้ได้ไหม:
-    /// พนักงาน หรือสมาชิกที่เป็นเจ้าของใบเดิม (CustomerId ตรง — ยืนยันจากโทเคนแล้ว) ⇒ คืนใบเดิม (<c>Reused=true</c>) ·
+    /// <summary>รอบ 217 (คำตัดสินข้อ 175 ข · ฝ่ายค้าน S1): คำตอบเมื่อพบการจองซ้ำของผู้จองคนเดิม — <see cref="DuplicateSubmitGuard.Decide"/>:
+    /// สมาชิกที่เป็นเจ้าของใบเดิม (CustomerId จากโทเคนหน้าร้าน) ⇒ คืนใบเดิม (<c>Reused=true</c> · หน้าเว็บมีปุ่ม "จองเพิ่มอีกที่") · พนักงาน ⇒ 409 + เลขที่ ·
     /// แขกนิรนามที่ตรงด้วยเบอร์/อีเมล ⇒ 409 ไม่เปิดใบ/โทเคนของใบเดิม (เบอร์/อีเมลใครก็พิมพ์ได้ — กันดึงลิงก์จัดการการจองของคนอื่น)</summary>
     private async Task<BookingResponse> DuplicateBookingResultAsync(Guid companyId, Guid siteId, Guid duplicateId, Guid? requesterCustomerId,
         string? userId, bool staffOnBehalf)
@@ -1009,11 +1011,17 @@ public partial class CmsBookingService : ICmsBookingService
         var staff = staffOnBehalf || await IsCompanyStaffAsync(companyId, userId);
         var existing = await GetBookingAsync(companyId, siteId, duplicateId) ?? throw new KeyNotFoundException("Booking not found.");
         _logger.LogInformation("Booking create deduplicated → {BookingNumber} (site {SiteId})", existing.BookingNumber, siteId);
-        if (!DuplicateSubmitGuard.Reveal(staff, requesterCustomerId, existing.CustomerId))
-            throw new BusinessRuleException(DuplicateSubmitGuard.BookingGuestMessage, DuplicateSubmitGuard.BookingRuleCode, 409);
+        switch (DuplicateSubmitGuard.Decide(staff, requesterCustomerId, existing.CustomerId))
+        {
+            case DuplicateSubmitGuard.Outcome.ConflictForStaff:
+                // ฝ่ายค้าน S1: พนักงาน/หลังบ้านไม่คืนใบเดิมเงียบ ๆ — บอกเลขที่ + ทางไปต่อ (ConfirmAdditional)
+                throw new BusinessRuleException(DuplicateSubmitGuard.BookingStaffMessage(existing.BookingNumber), DuplicateSubmitGuard.BookingRuleCode, 409);
+            case DuplicateSubmitGuard.Outcome.ConflictForGuest:
+                throw new BusinessRuleException(DuplicateSubmitGuard.BookingGuestMessage, DuplicateSubmitGuard.BookingRuleCode, 409);
+        }
         existing.Reused = true;
         existing.DuplicateOf = existing.BookingNumber;
-        return staff ? existing : ForCustomer(existing);
+        return ForCustomer(existing);
     }
 
     /// <summary>รอบ 210: บริการนี้ต้องเป็นสมาชิกก่อนจองไหม (ค่าบริการชนะ · null = ค่าของเว็บ) — ตัวตัดสินเดียว <see cref="BookingAccessRule.RequiresMember"/></summary>

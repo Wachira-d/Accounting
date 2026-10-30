@@ -1,4 +1,5 @@
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
 
@@ -37,6 +38,25 @@ public static class DeferredNotifyPolicy
     /// <summary>หลังล้ม: ปิดแถว (เกินจำนวนครั้ง) หรือเลื่อนเวลาลองใหม่</summary>
     public static (bool GiveUp, DateTime NextDueAt) AfterFailure(int attempts, DateTime nowUtc)
         => attempts >= MaxAttempts ? (true, nowUtc) : (false, nowUtc + Backoff(attempts));
+
+    /// <summary>ฝ่ายค้าน S4: ถึงคิวแล้วการจองไม่ควรได้ "ยืนยันการจอง"/ร้านไม่ควรได้ "การจองใหม่" — ยกเลิก · ไม่มา · ถูกลบ ⇒ เหตุ (ปิดแถวพร้อมหมายเหตุ) ·
+    /// null = ส่งตามปกติ (รอยืนยัน · ยืนยันแล้ว · คิวสำรอง · กำลังให้บริการ · เสร็จแล้ว — ข้อความประกอบจากสถานะปัจจุบัน)</summary>
+    public static string? BookingSkipReason(BookingStatus? status) => status switch
+    {
+        null => "ไม่ส่ง: ไม่พบการจอง (ถูกลบก่อนถึงคิวแจ้งเตือน)",
+        BookingStatus.Cancelled => "ไม่ส่ง: การจองถูกยกเลิกก่อนถึงคิวแจ้งเตือน (ไม่ส่ง \"ยืนยันการจอง\"/\"การจองใหม่\")",
+        BookingStatus.NoShow => "ไม่ส่ง: การจองถูกบันทึกว่าไม่มาก่อนถึงคิวแจ้งเตือน",
+        _ => null,
+    };
+
+    /// <summary>ฝ่ายค้าน S4 (ออเดอร์): ยกเลิก · คืนเงินเต็ม · ถูกลบ ⇒ ไม่ส่ง "ออเดอร์ใหม่"/"ยืนยันคำสั่งซื้อ" · คืนเงินบางส่วนยังส่ง (ออเดอร์ยังเดินอยู่)</summary>
+    public static string? OrderSkipReason(SiteOrderStatus? status) => status switch
+    {
+        null => "ไม่ส่ง: ไม่พบคำสั่งซื้อ (ถูกลบก่อนถึงคิวแจ้งเตือน)",
+        SiteOrderStatus.Cancelled => "ไม่ส่ง: คำสั่งซื้อถูกยกเลิกก่อนถึงคิวแจ้งเตือน",
+        SiteOrderStatus.Refunded => "ไม่ส่ง: คำสั่งซื้อคืนเงินแล้วก่อนถึงคิวแจ้งเตือน",
+        _ => null,
+    };
 
     public static string Truncate(string? error)
     {

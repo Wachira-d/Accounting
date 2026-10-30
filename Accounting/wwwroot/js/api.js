@@ -398,23 +398,25 @@ const API = {
     try { return fn(); } finally { ApiBusy._quiet--; }
   },
 
-  async request(method, url, data = null, isFormData = false, signal = null) {
+  // รอบ 217 (ข้อ 175 · ฝ่ายค้านข้อสังเกต 9): extraHeaders = header เพิ่มต่อคำขอ (เช่น Idempotency-Key จาก js/submit-once.js) — ค่าเดิม null = เหมือนเดิมทุกจุด
+  async request(method, url, data = null, isFormData = false, signal = null, extraHeaders = null) {
     // ตัวแสดง "กำลังทำงาน" กลาง — เริ่มก่อน await แรก จบใน finally เสมอ (ล้ม/redirect ก็ซ่อน)
     const busyTok = ApiBusy.begin(method, url);
     try {
-      return await this._requestCore(method, url, data, isFormData, signal);
+      return await this._requestCore(method, url, data, isFormData, signal, extraHeaders);
     } finally {
       ApiBusy.end(busyTok);
     }
   },
 
-  async _requestCore(method, url, data = null, isFormData = false, signal = null) {
+  async _requestCore(method, url, data = null, isFormData = false, signal = null, extraHeaders = null) {
     // Re-read token from localStorage on each request (handles token refresh by other tabs)
     this.token = localStorage.getItem('token');
     const headers = {};
     if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
     if (!isFormData) headers['Content-Type'] = 'application/json';
     headers['Accept-Language'] = (typeof I18n !== 'undefined' && I18n.lang) ? I18n.lang : (localStorage.getItem('nextacc_lang') || 'th');
+    if (extraHeaders) Object.assign(headers, extraHeaders);
 
     // no-store: API JSON ต้องสดเสมอ — กัน browser/proxy/CDN cache GET response
     // (เคยเจอหน้าเงินมัดจำโชว์ 0 เพราะ document/deposits ถูก cache ตอนยังว่าง
@@ -1005,7 +1007,9 @@ const API = {
       // คำตัดสินข้อ 155: รับเงินแล้ว — ออกใบกำกับภาษีของการจอง Guaranteed (server ตัดสิน · ออกแล้วไม่ออกซ้ำ)
       cmsIssueBookingTaxInvoice: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/issue-tax-invoice`, d || {}),
       // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ (ครบ = ยืนยัน + ใบเสร็จมัดจำอนุมัติลงวันที่รับเงิน)
-      cmsRecordBookingPayment: (siteId, id, d) => API.post(`${base}/cms/sites/${siteId}/booking/bookings/${id}/payments`, d || {}),
+      // รอบ 217: idemKey (ไม่บังคับ) ⇒ header Idempotency-Key — กดซ้ำ/ลองใหม่ด้วยคีย์เดิม = บันทึกรับเงินครั้งเดียว
+      cmsRecordBookingPayment: (siteId, id, d, idemKey) => API.request('POST', `${base}/cms/sites/${siteId}/booking/bookings/${id}/payments`, d || {}, false, null,
+        idemKey ? { 'Idempotency-Key': idemKey } : null),
       cmsRescheduleBooking: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/reschedule`, d || {}),   // รอบ 206
       // รอบ 205 W3 R-16 — เลือก/เปลี่ยนผู้ให้บริการ (resourceId null = ระบบจัดให้)
       cmsAssignBookingResource: (siteId, id, d) => API.put(`${base}/cms/sites/${siteId}/booking/bookings/${id}/resource`, d || {}),

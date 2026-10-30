@@ -5793,3 +5793,9 @@ namespace ด้วยแฮช credential header · ตาราง `Idempotenc
 (ข) `Helpers/DuplicateSubmitGuard` ใต้ล็อกไซต์/ที่พัก (ผู้จองเดิม + รอบเดิม 10 นาที · สมาชิกได้ใบเดิม · แขก 409 · `ConfirmAdditional`) · ออเดอร์สองแท็บ 500 ⇒ 409 ·
 (ค) ต้นเหตุ "นิ่ง" = `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` (SMTP/LINE ถึงลูกค้า + อีเมลร้านทีละผู้รับ) ในคำขอ ⇒ คิว `DeferredNotifications` + `DeferredNotifyDispatchJob` (10 วิ · JobLock · SKIP LOCKED · lease) ·
 เทสต์ SUB-01..15 · `required_call_site_check` +10 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74_
+
+_รอบ 217 ฝ่ายค้าน (ไม่มี blocking · แก้ครบ S1–S6 + ข้อสังเกต 1/3/6/9): (S1) ด่านซ้ำเทียบช่วง/จำนวนคน/ผู้ให้บริการ · ปุ่ม "จองเพิ่มอีกที่" บนหน้าผล · พนักงาน 409 + เลขที่ ·
+(S2) in-flight ตัดสินก่อนเทียบเนื้อ + multipart ไม่รวม boundary · (S3) Notify*CreatedAsync ไม่กลืนข้อยกเว้น ⇒ คิวลองใหม่จริง · (S4) ยกเลิก/คืนเงินก่อนถึงคิว ⇒ ไม่ส่ง + `Note` ·
+(S5) ยึด InFlight ค้าง > 2 นาที แบบมีเงื่อนไข · (S6) ลายนิ้วมือ HMAC (กุญแจลูกจาก Jwt:Secret · fail-fast) + เส้นรหัสผ่าน/โทเคนไม่เข้าระบบคีย์ + หน้าสมัครไม่ส่งคีย์ ·
+(1) ไม่เก็บ 200 success:false · (3) อายุแถว/ล้างแถวคำนวณใน SQL · (6) ธุรกรรมเดียวของออเดอร์ + คิวใน SaveChanges แรก · (9) บันทึกรับเงินหลังบ้านส่งคีย์ ·
+เทสต์ SUB-16..27 · required_call_site_check แก้/เพิ่มกติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
