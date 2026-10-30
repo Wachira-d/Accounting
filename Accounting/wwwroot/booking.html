@@ -58,6 +58,7 @@
     <p style="text-align:center;color:#94a3b8;font-size:11px;margin-top:14px">Powered by Next Acc</p>
   </div>
 
+  <script src="/js/submit-once.js"></script>
   <script>
     const Page = {
       info: null,
@@ -185,9 +186,11 @@
           err.style.display = 'block'; return;
         }
         const btn = document.getElementById('bkSubmit');
+        if (btn.disabled) return;   // รอบ 217: กดซ้ำ/Enter ระหว่างรอ = ไม่ส่งซ้ำ
         btn.disabled = true; btn.textContent = 'กำลังจอง...';
         try {
-          const r = await fetch('/api/public/reservations', {
+          // รอบ 217 (ข้อ 175): คีย์กันซ้ำต่อหน้า (js/submit-once.js) — เน็ตหลุดแล้วกดใหม่ = เซิร์ฟเวอร์คืนผลเดิม
+          const r = await SubmitOnce.fetch('/api/public/reservations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -198,7 +201,7 @@
               durationMinutes: 90,
               notes: notes || null
             })
-          });
+          }, this);
           const j = await r.json();
           if (!j.success) throw new Error(j.message || 'จองไม่สำเร็จ');
           this.renderSuccess(j.data);

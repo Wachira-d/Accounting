@@ -41,34 +41,42 @@ public partial class CmsBookingService
 
     private static string? BookingDisplayName(BookingNotifyFacts f) => !string.IsNullOrWhiteSpace(f.CustomerName) ? f.CustomerName : f.GuestName;
 
+    /// <summary>รอบ 217 (ข้อ 175 ง): จุดเข้าของคิวแจ้งเตือนตามหลัง (<c>DeferredNotifyDispatcher</c>) — เดิม CreateBookingAsync เรียก
+    /// <see cref="NotifyBookingCreatedAsync"/> ในคำขอ ⇒ "กดยืนยันจองแล้วนิ่งไปพักนึง" (รอ SMTP/LINE ถึงลูกค้า + อีเมลร้านทีละผู้รับ) ·
+    /// ฝ่ายค้าน S4: ถึงคิวแล้วการจองถูกยกเลิก/ไม่มา/ถูกลบ ⇒ ไม่ส่ง "ยืนยันการจอง"/"การจองใหม่" — คืนเหตุ (dispatcher ปิดแถวพร้อมหมายเหตุ) ·
+    /// ฝ่ายค้าน S3: ข้อยกเว้นของโครงสร้าง (ฐานข้อมูล ฯลฯ) <b>โยนออก</b> ให้ dispatcher ถอยแล้วลองใหม่ (ผู้รับที่ส่งไม่ถึงยังประทับรายคนตามเดิม)</summary>
+    public async Task<string?> DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid bookingId)
+    {
+        var status = await _db.SiteBookings.AsNoTracking()
+            .Where(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId)
+            .Select(b => (BookingStatus?)b.Status).FirstOrDefaultAsync();
+        if (DeferredNotifyPolicy.BookingSkipReason(status) is string skip) return skip;
+        await NotifyBookingCreatedAsync(companyId, siteId, bookingId);
+        return null;
+    }
+
     /// <summary>การจองใหม่: ยืนยันถึงลูกค้า + แจ้งร้าน (คิวสำรองบอกว่าเป็นคิวสำรอง)</summary>
     private async Task NotifyBookingCreatedAsync(Guid companyId, Guid siteId, Guid bookingId)
     {
         if (_shopNotifier == null) return;
-        try
-        {
-            var f = await LoadBookingNotifyFactsAsync(companyId, siteId, bookingId);
-            if (f == null) return;
-            var site = await SiteNameAsync(companyId, siteId);
-            var date = DateOnly.FromDateTime(f.BookingDate);
-            var now = DateTime.UtcNow;
-            var failures = new List<string>();
+        // รอบ 217 ฝ่ายค้าน S3: ไม่กลืนข้อยกเว้นแล้ว — ผู้เรียกเดียวคือคิวแจ้งเตือนตามหลัง (ถอย/ลองใหม่ + LastError) · การจองบันทึกไปก่อนแล้ว
+        // ⇒ ไม่มีทางทำให้แขกเห็น "จองไม่สำเร็จ" · ผู้รับที่ส่งไม่ถึง (ผลจากตัวส่ง ไม่ใช่ข้อยกเว้น) ยังประทับบนการจองเหมือนเดิม
+        var f = await LoadBookingNotifyFactsAsync(companyId, siteId, bookingId);
+        if (f == null) return;
+        var site = await SiteNameAsync(companyId, siteId);
+        var date = DateOnly.FromDateTime(f.BookingDate);
+        var now = DateTime.UtcNow;
+        var failures = new List<string>();
 
-            var (customer, custErr) = await SendBookingConfirmedToCustomerAsync(companyId, siteId, bookingId, f, site);
-            if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
+        var (customer, custErr) = await SendBookingConfirmedToCustomerAsync(companyId, siteId, bookingId, f, site);
+        if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
-            var shop = CmsNotificationText.ShopNewBooking(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), f.GuestPhone, date, f.StartTime,
-                f.GuestCount, waitlisted: f.Status == BookingStatus.Waitlisted);
-            var shopErr = await _shopNotifier.NotifyShopAsync(companyId, siteId, shop, orderEvent: false);
-            if (shopErr != null) failures.Add(CmsNotificationText.FailureNote("ร้าน", shop.Subject, shopErr, now));
+        var shop = CmsNotificationText.ShopNewBooking(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), f.GuestPhone, date, f.StartTime,
+            f.GuestCount, waitlisted: f.Status == BookingStatus.Waitlisted);
+        var shopErr = await _shopNotifier.NotifyShopAsync(companyId, siteId, shop, orderEvent: false);
+        if (shopErr != null) failures.Add(CmsNotificationText.FailureNote("ร้าน", shop.Subject, shopErr, now));
 
-            await StampBookingNotesAsync(companyId, siteId, bookingId, failures);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // การจองบันทึกแล้ว — ห้ามให้ขั้นแจ้งเตือนทำให้แขกเห็น "จองไม่สำเร็จ" แล้วจองซ้ำ (B-3) · ล้มดังที่บันทึกระบบระดับ Error
-            _logger.LogError(ex, "แจ้งเตือนการจองใหม่ {BookingId} ล้ม (company {CompanyId})", bookingId, companyId);
-        }
+        await StampBookingNotesAsync(companyId, siteId, bookingId, failures);
     }
 
     /// <summary>ยืนยันการจองถึงลูกค้า (ส่วนลูกค้าของ <see cref="NotifyBookingCreatedAsync"/>) — แยกออกมาให้ "ส่งซ้ำ" (รอบ 213) เดินเส้นเดียวกัน

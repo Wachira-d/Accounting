@@ -5799,6 +5799,20 @@ _รอบ 214 (คำตัดสินข้อ 173 · เจ้าของ: 
 ลิงก์ร้านตรวจก่อนเก็บ + ซ่อมสตริงว่างเดิม (`Helpers/LegalDocumentMigration`) · (4) หน้าจองโต๊ะ → `/shop-policy.html` (`GET /api/public/reservations/legal/{companyId}/{kind}`) ·
 เทสต์ `LegalDocumentTests` + `Db/LegalDocumentDbTests` (TEST_PLAN LEGAL214-01..12) · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
 
+_รอบ 215 (2026-10-30 · ทีม UX/UI · คำตัดสินข้อ 176): ออกแบบ "พื้นที่ทำงานรายเว็บ" (`erp-review/2026-10-30/CMS_UX_REDESIGN.md` + mockups · c25cc7aa · 7a6b5fee)
+แล้วทำเฟส 1 — แถบซ้ายหมวดงานเว็บเหลือ "พื้นที่ทำงานเว็บไซต์" + "เว็บไซต์ทั้งหมด" (หน้ารายเว็บ 7 หน้าพับไว้ · id/สิทธิ์เดิม) · ชื่อหมวดจากเซิร์ฟเวอร์
+(`CmsModuleResolver.NavSectionLabel`) · หัวพื้นที่ทำงาน (ตัวสลับเว็บเดียว · ป้ายขอบเขต · แท็บตาม `site.modules`) · lead เฉพาะเว็บที่รับคำขอได้ (`HasLeadSource`) ·
+ภาพรวมทุกไซต์เป็น `?siteId=all` จริง · Front desk/ตั้งค่าที่พักผ่าน `pickProperty` (?siteId= ไม่มีที่พัก ⇒ ไม่ตกไปแห่งแรก) · Portal/รับชำระออนไลน์ย้ายหมวด ·
+sim `cms_workspace_nav_sim.js` (negative 7) · ไม่แตะ cms-edit/storefront/booking · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5a0da695 · 2b0d6f2d · e717d3b5_
+
+
+_รอบ 217 (คำตัดสินข้อ 175): เจ้าของรายงาน "กดจองเบิ้ลสองที บันทึกการจองซ้ำได้" (BK-2610-0003/0004) + "กดยืนยันจองแล้วนิ่ง ไม่ขึ้นว่าโหลด" ·
+(ก) `IdempotencyMiddleware` เดิมครอบ `/api/*` อยู่แล้วแต่หน้าเว็บลูกค้าไม่เคยส่งคีย์ + ไม่ตรวจเนื้อคำขอ ⇒ กติกาย้ายเข้า `Helpers/IdempotencyKeyPolicy` + `RequestHash` (คีย์เดิมเนื้อต่าง 409 mismatch) ·
+namespace ด้วยแฮช credential header · ตาราง `IdempotencyRecords` ย้ายไป `Helpers/SubmitOnceMigration` · หน้าเว็บ `js/submit-once.js` (ปุ่มล็อก + คีย์ต่อฟอร์ม + รอ in-flight) ใช้ที่ storefront/booking/booking-manage/contact/pay-widget/cms-bookings ·
+(ข) `Helpers/DuplicateSubmitGuard` ใต้ล็อกไซต์/ที่พัก (ผู้จองเดิม + รอบเดิม 10 นาที · สมาชิกได้ใบเดิม · แขก 409 · `ConfirmAdditional`) · ออเดอร์สองแท็บ 500 ⇒ 409 ·
+(ค) ต้นเหตุ "นิ่ง" = `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` (SMTP/LINE ถึงลูกค้า + อีเมลร้านทีละผู้รับ) ในคำขอ ⇒ คิว `DeferredNotifications` + `DeferredNotifyDispatchJob` (10 วิ · JobLock · SKIP LOCKED · lease) ·
+เทสต์ SUB-01..15 · `required_call_site_check` +10 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74_
+
 _รอบ 214 ฝ่ายค้าน + CI (ไม่มีข้อ blocking · แก้ S1–S5 + หมายเหตุ + Db test แดง): (S1) ReDoS — `LegalMarkdown` regex ทุกตัวมีเพดานเวลา (`BookingRefPattern.MatchTimeout`)
 และเขียนไม่ย้อนรอยข้ามตัวคั่น · ย่อหน้า > 4,000 ไม่แปลง · เกินเวลา = encode ล้วน · ตัวอย่างรับ ≤ 100k · (S2) ฉบับประกาศล่วงหน้าไม่ถูกเรียก "ฉบับเก่า" (`isUpcoming`) ·
 (S3) เลขผู้เสียภาษีบนหน้านโยบายร้านเฉพาะนิติบุคคล · หน้าจองโต๊ะแสดงแค่ชื่อ+เบอร์ (`CmsLegalPages.BuildShopTokens`) · (S4) "ยังไม่ได้ระบุ" + ไม่มี mailto เสีย + cms-edit เตือน
@@ -5806,6 +5820,18 @@ _รอบ 214 ฝ่ายค้าน + CI (ไม่มีข้อ blocking 
 `LegalController` เลิก AllowAnonymous ระดับคลาส · ปุ่ม "เปิด" ของเว็บที่ยังไม่เผยแพร่ = ตัวอย่าง · doc comment ย้ายกลับที่ · audit `*Markdown` = length+sha256 ·
 (CI) Db test ล้ม FK `PdpaConsentRecords → Companies` (CompanyId ศูนย์) — บั๊กจริงตั้งแต่ก่อนรอบนี้ (หลักฐานตอนสมัครหายเงียบบนฐานที่มี FK) ⇒ ตารางระดับผู้ใช้
 `PlatformPolicyAcceptances` + คัดลอกแถวเดิม · เทสต์ทั้งผู้ใช้ไม่มีบริษัท/มีบริษัท · TEST_PLAN LEGAL214-14..21 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 216 (คำตัดสินข้อ 174 · เจ้าของ: "ล็อคอินไว้แล้วควรมี ให้บันทึกข้อมูลส่วนตัวและดึงมาได้เลย"): ข้อมูลส่วนตัวของสมาชิกหน้าร้าน —
+`GET portal/me` คืนชื่อ/เบอร์/ข้อมูลใบกำกับ/ที่อยู่จัดส่ง+ใบกำกับ (ข้อความที่อยู่ประกอบที่เซิร์ฟเวอร์) · `PUT portal/me/profile` (ตัวตรวจเดียว `Helpers/StorefrontMemberProfile` ·
+เบอร์ normalize กลาง · เลขภาษี mod-11 · สาขา 5 หลัก · audit chain ชื่อช่อง) · ช่องเดิมของ `SiteCustomer` + `SiteCustomerAddress` (ไม่มี migration) · ไม่แตะผู้ติดต่อ ERP ·
+หน้าเว็บเติมฟอร์มจอง/คลาส/เช็กเอาต์/ที่พัก/ติดต่อจากโปรไฟล์ตามกฎ "ห้ามใครมาก่อนชนะ" (`userTouched` · `autoSrc`) + ป้าย "ใช้ข้อมูลจากบัญชีของฉัน · แก้ไขโปรไฟล์" ·
+"บันทึกเป็นข้อมูลของฉัน" (`SaveToProfile`) บันทึกหลังรายการสำเร็จ เจ้าของ = โทเคนของเว็บนี้ (`StorefrontCustomerAuth.ProfileOwner`) · ค่าผิดรูปแบบ/บันทึกล้มบอกใน `errors` ·
+ตาข่ายเซิร์ฟเวอร์เติมชื่อ/เบอร์/อีเมลที่เว้นว่างจากโปรไฟล์ก่อนด่านฟอร์ม/ยินยอม (เช็กเอาต์ · จอง · ที่พัก) · รายงาน DSR เพิ่มชนิด/ที่อยู่หลัก ·
+เทสต์ `CmsRound216MemberProfileTests` + `Db/MemberProfileDbTests` + `tools/member_prefill_sim.js` (CMS216-01..11) · `required_call_site_check` +10 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1fd81626_
+
+_รอบ 215 ฝ่ายค้านเฟส 1 (ไม่มี blocking · แก้ S1–S4 + N1/N2/N4/N7/N11): รายการเว็บกรองตามสิทธิ์รายเว็บ (`CmsSiteScope.ListableSiteIds`) + ตัวสลับเว็บเฉพาะเว็บที่มีแท็บ ·
+?siteId=/เว็บล่าสุดที่ค้างไม่เป็นทางตัน · Newsletter นับเป็นทางรับ lead · หัวพื้นที่ทำงานวาดใหม่เมื่อสิทธิ์โหลด · เว็บล่าสุดต่อผู้ใช้ · ยืนยันก่อนทิ้งฟอร์มที่พัก ·
+sim +17 เคส/+6 negative · `required_call_site_check` +6 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
 
 _รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ — ผู้ประสานงานอนุมัติข้อเสนอ): (1) หลักฐานยอมรับนโยบายแพลตฟอร์มเข้า DSR — รายงานเข้าถึง/ไฟล์โอนย้ายมี `PolicyAcceptances` + ผลตรวจรายแถว ·
 ลบตามคำขอ = legal hold (อีเมลนิรนาม · ล้าง IP/UA · `PseudonymisedAt`) · `PdpaRetentionPurgeJob` ลบจริงเมื่อพ้น 10 ปีหลังลบ (`Helpers/PlatformPolicyAcceptanceRules`) ·
@@ -5818,3 +5844,14 @@ _รอบ 214 ฝ่ายค้าน (ฎ) (ไม่มีข้อ blocking
 ลบจริงพ้น 10 ปีกติกาเดียวกัน · (S2) รวมแถว soft-delete (`IgnoreQueryFilters`) · (S3) DSR ของบริษัทไม่ส่ง IP/UA ของหลักฐานยอมรับนโยบาย · เจ้าของดูเองที่ `GET /api/legal/my-data` ·
 (S4) รายงานลูกค้าเว็บมีผลตรวจหลักฐานรายแถว · (N1) เวอร์ชันที่เห็นว่าง = ฉบับปัจจุบัน · (N2) `PdpaConsentRecords.EvidenceSource` (system/staff) · (N3) ป้าย v2 ไม่สนตัวพิมพ์ ·
 เทสต์ `PdpaConsentEvidenceV2Tests` +2 · `Db/LegalDocumentDbTests` +1 · TEST_PLAN LEGAL214-28..31 · `required_call_site_check` +2 กติกา/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 217 ฝ่ายค้าน (ไม่มี blocking · แก้ครบ S1–S6 + ข้อสังเกต 1/3/6/9): (S1) ด่านซ้ำเทียบช่วง/จำนวนคน/ผู้ให้บริการ · ปุ่ม "จองเพิ่มอีกที่" บนหน้าผล · พนักงาน 409 + เลขที่ ·
+(S2) in-flight ตัดสินก่อนเทียบเนื้อ + multipart ไม่รวม boundary · (S3) Notify*CreatedAsync ไม่กลืนข้อยกเว้น ⇒ คิวลองใหม่จริง · (S4) ยกเลิก/คืนเงินก่อนถึงคิว ⇒ ไม่ส่ง + `Note` ·
+(S5) ยึด InFlight ค้าง > 2 นาที แบบมีเงื่อนไข · (S6) ลายนิ้วมือ HMAC (กุญแจลูกจาก Jwt:Secret · fail-fast) + เส้นรหัสผ่าน/โทเคนไม่เข้าระบบคีย์ + หน้าสมัครไม่ส่งคีย์ ·
+(1) ไม่เก็บ 200 success:false · (3) อายุแถว/ล้างแถวคำนวณใน SQL · (6) ธุรกรรมเดียวของออเดอร์ + คิวใน SaveChanges แรก · (9) บันทึกรับเงินหลังบ้านส่งคีย์ ·
+เทสต์ SUB-16..27 · required_call_site_check แก้/เพิ่มกติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a7fa9ea5_
+_รอบ 215 เฟส 2 (2026-10-30 · คำตัดสินข้อ 176 ข): ค่าเว็บ "ลูกค้าเลือกผู้ให้บริการได้ไหม" (`SiteBookingSettings.DefaultResourceMode` · บริการ null = ตามค่าเว็บ ·
+ตัวตัดสินเดียว `BookingProviderAllocation.EffectiveMode` · migration ไม่แตะค่าเดิม · เว็บใหม่ CustomerChoice / คลินิก-บริการวิชาชีพ Auto) + ศูนย์ "ตั้งค่าเว็บ" (`cms-site-settings.html`)
+พร้อมการ์ด 🏢 ค่าระดับบริษัท · แจ้งลูกค้ารายเว็บใช้ได้ทุกประเภทเว็บ (ย้ายจากตั้งค่าร้านค้า) · กลุ่มชำระเงินเป็นที่ว่างให้รอบ 218 (`CmsSiteSettingsExt.payment`) · cms-edit มีหัวพื้นที่ทำงาน ·
+เทสต์ `BookingRound215ProviderDefaultTests` · `required_call_site_check` +6 · sim +3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 639a0e1a · 2e0aee49 · c7fab68c (+ คอมมิตเอกสารตามหลัง)_
+

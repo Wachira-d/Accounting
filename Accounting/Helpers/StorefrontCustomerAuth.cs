@@ -72,4 +72,9 @@ public static class StorefrontCustomerAuth
         if (ForSite(storefront, routeSiteId) is { } me) return me.CustomerId;
         return isErpUser ? bodyCustomerId : null;
     }
+
+    /// <summary>รอบ 216 (คำตัดสินข้อ 174): โปรไฟล์ของใครที่ "บันทึกเป็นข้อมูลของฉัน" จะเขียน — <b>เฉพาะ</b>สมาชิกในโทเคนหน้าร้านที่ออกโดยเว็บนี้
+    /// และติ๊กขอบันทึก · ไม่ใช้ <c>CustomerId</c> จาก body เด็ดขาด (พนักงานสร้างแทน/แขกนิรนาม/โทเคนเว็บอื่น ⇒ null = ไม่เขียน)</summary>
+    public static Guid? ProfileOwner(bool saveRequested, StorefrontCustomerIdentity? storefront, Guid routeSiteId)
+        => saveRequested ? ForSite(storefront, routeSiteId)?.CustomerId : null;
 }

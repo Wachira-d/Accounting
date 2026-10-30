@@ -620,7 +620,7 @@ public partial class CmsCommerceService : ICmsCommerceService
         var (idemKey, idemProblem) = SiteOrderPublic.NormalizeIdempotencyKey(request.IdempotencyKey);
         if (idemProblem != null) throw new BusinessRuleException(idemProblem, SiteOrderPublic.RuleCode);
         if (await FindIdempotentOrderIdAsync(companyId, siteId, idemKey) is Guid replayId)
-            return await GetOrderAsync(companyId, siteId, replayId) ?? throw new InvalidOperationException("Failed.");
+            return Replayed(await GetOrderAsync(companyId, siteId, replayId) ?? throw new InvalidOperationException("Failed."));
         // รอบ 209 P2 (คำตัดสินข้อ 168 ก/ง · A10): สวิตช์ร้าน + ฟอร์มสั่งซื้อ + ผู้ซื้อใบกำกับ ตรวจก่อนสร้าง/บันทึกอะไร (CmsCommerceService.Checkout.cs)
         var formCtx = await ValidateCheckoutFormAsync(companyId, siteId, request);
 
@@ -762,9 +762,15 @@ public partial class CmsCommerceService : ICmsCommerceService
         order.DepositInvoicingMode = checkout.DepositInvoicing;
         order.ShippingVatAllocation = checkout.ShippingVatAllocation;   // รอบ 206 R-32: ตรึงวิธีคิด VAT ค่าส่งตอนสั่ง (ข้อ 165)
 
+        // รอบ 217 ฝ่ายค้านข้อสังเกต 6: ออเดอร์ + ตัดตะกร้า + ยอดสุดท้าย + แถวคิวแจ้งเตือน อยู่ในธุรกรรมเดียว — คิวไม่มีทางเห็นออเดอร์ที่ยอดยังไม่ครบ
+        // และไม่มีออเดอร์ที่ไม่มีแถวคิว (เดิมคิวอยู่ใน SaveChanges ที่สอง — ล้มระหว่างสองครั้ง = ไม่มีใครแจ้ง)
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        // รอบ 209 P3 (A4/E2) + รอบ 217 (ข้อ 175 ง): แจ้งร้าน/ลูกค้า "ออเดอร์ใหม่" เข้าคิวใน SaveChanges เดียวกับการสร้างออเดอร์ ⇒ DeferredNotifyDispatcher ส่งตามหลัง
+        // (ลูกค้าไม่รอ SMTP/LINE ก่อนเห็นหน้าสำเร็จ) · คำขอซ้อนคีย์เดียวกัน ⇒ ChangeTracker.Clear ทิ้งแถวคิวไปพร้อมออเดอร์
+        _db.DeferredNotifications.Add(DeferredNotifyPolicy.New(companyId, siteId, DeferredNotifyPolicy.OrderCreated, order.Id, DateTime.UtcNow));
         // รอบ 209 P1 (A9): คำขอซ้อนคีย์เดียวกันชน unique index ⇒ คืนออเดอร์ของคำขอแรก (ตะกร้าไม่ถูกตัดซ้ำ — บันทึกครั้งนี้ถอยทั้งก้อน)
-        if (await SaveNewOrderOrReplayAsync(companyId, siteId, order) is Guid racedId)
-            return await GetOrderAsync(companyId, siteId, racedId) ?? throw new InvalidOperationException("Failed.");
+        if (await SaveNewOrderOrReplayAsync(companyId, siteId, order, tx) is Guid racedId)
+            return Replayed(await GetOrderAsync(companyId, siteId, racedId) ?? throw new InvalidOperationException("Failed."));
 
         // Recalculate order totals
         var lines = await _db.SiteOrderLines.Where(l => l.OrderId == order.Id).ToListAsync();
@@ -792,10 +798,9 @@ public partial class CmsCommerceService : ICmsCommerceService
             foreach (var a in atts) a.EntityId = order.Id;
         }
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         _logger.LogInformation("Order {OrderNumber} created for site {SiteId}", order.OrderNumber, siteId);
-        // รอบ 209 P3 (A4/E2): แจ้งร้าน (ออเดอร์ใหม่) + ยืนยันถึงลูกค้า หลังบันทึกแล้ว — ส่งไม่ถึง = ประทับบนออเดอร์ ไม่ล้มคำสั่งซื้อ (Notify.cs)
-        await NotifyOrderCreatedAsync(companyId, siteId, order.Id);
         return await GetOrderAsync(companyId, siteId, order.Id) ?? throw new InvalidOperationException("Failed.");
     }
 

@@ -46,6 +46,23 @@ public static class CmsSiteScope
         return company.Where(ok.Contains).ToList();
     }
 
+    /// <summary>รอบ 215 ฝ่ายค้าน S1 — เว็บที่ "รายการเว็บไซต์" (<c>GET …/cms/sites</c>) แสดงให้ผู้ใช้คนนี้: เจ้าของ ⇒ ทุกเว็บ ·
+    /// คนอื่น ⇒ เว็บที่มีบทบาท (บทบาทใดก็ได้ — กติกาเดียวกับ <see cref="AllowedSiteIds"/> + <see cref="AnyRole"/>) ∪ เว็บที่ตัวเองสร้าง
+    /// (ผู้สร้างต้องไม่หาเว็บของตัวเองไม่เจอ — การสร้างเว็บไม่ได้มอบบทบาทให้) · เดิมคืนทุกเว็บของบริษัท ⇒ พนักงาน Front desk
+    /// เห็นชื่อเว็บอื่นในตัวสลับเว็บ เลือกแล้วชนหน้าที่ไม่มีสิทธิ์ · ตัดด้วยรายการเว็บของบริษัทเสมอ</summary>
+    public static IReadOnlyList<Guid> ListableSiteIds(
+        bool isCompanyOwner,
+        IEnumerable<Guid> companySiteIds,
+        IEnumerable<AccessRow> access,
+        IEnumerable<Guid> createdByUser)
+    {
+        var company = companySiteIds.Where(id => id != Guid.Empty).Distinct().ToList();
+        if (isCompanyOwner) return company;
+        var ok = AllowedSiteIds(false, company, access, AnyRole).ToHashSet();
+        ok.UnionWith(createdByUser);
+        return company.Where(ok.Contains).ToList();
+    }
+
     /// <summary>ขนาดหน้าของมุมมองทุกไซต์ — บีบเข้าช่วง (ค่าผิดจาก query string ไม่ทำให้ดึงทั้งฐาน)</summary>
     public static int ClampPageSize(int pageSize) => Math.Clamp(pageSize, 1, 200);
 

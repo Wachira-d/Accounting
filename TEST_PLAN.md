@@ -34,6 +34,55 @@
 | LEGAL214-31 | ฝ่ายค้าน N3: ป้าย "V2:" ตัวพิมพ์ใหญ่ | ตรวจผ่าน | `PdpaConsentEvidenceV2Tests`.Prefix_is_case_insensitive |
 | LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
 
+## SUB217 — กดซ้ำไม่บันทึกซ้ำ (Idempotency-Key + ด่านซ้ำเชิงความหมาย) · ตอบเร็ว แจ้งเตือนตามหลัง (รอบ 217 · คำตัดสินข้อ 175)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| SUB-01 | แขกเบอร์เดิม (พิมพ์ 4 รูปแบบ) กดจองรอบเดิมพร้อมกัน 4 ครั้ง ไม่มีคีย์ | ใบเดียว · ที่เหลือ 409 `CMS-BOOKING-DUPLICATE` | `Db/SubmitOnceRound217DbTests`.SUB01_… |
+| SUB-02 | สมาชิกคนเดิมกดพร้อมกัน 3 ครั้ง | ใบเดียว · คำขออื่นได้ใบเดิม `reused=true` + `duplicateOf` | `Db/SubmitOnceRound217DbTests`.SUB02_… |
+| SUB-03 | ทิศตรงข้าม: คนละคน ความจุ 2 พร้อมกัน | ได้ทั้งสองใบ | `Db/SubmitOnceRound217DbTests`.SUB03_… |
+| SUB-04 | ทิศตรงข้าม: คนเดิมคนละรอบ · `ConfirmAdditional` · พ้น 10 นาที | จองได้ทุกกรณี (ความจุยังตรวจ) | `Db/SubmitOnceRound217DbTests`.SUB04_… |
+| SUB-05 | ใบเดิมถูกยกเลิก | จองรอบเดิมใหม่ได้ทันที | `Db/SubmitOnceRound217DbTests`.SUB05_… |
+| SUB-06 | สร้างการจอง | ไม่ส่งข้อความในคำขอ · แถวคิวหนึ่งแถว · dispatcher ส่งลูกค้า+ร้านครั้งเดียวแล้วปิดแถว · รอบสองไม่หยิบ | `Db/SubmitOnceRound217DbTests`.SUB06_… |
+| SUB-07 | คำขอซ้ำที่ได้ใบเดิม | ไม่เพิ่มแถวคิว (ไม่แจ้งซ้ำ) | `Db/SubmitOnceRound217DbTests`.SUB07_… |
+| SUB-08 | สองเครื่องหยิบคิวพร้อมกัน · lease หมด | หยิบได้ครั้งเดียว · หมด lease หยิบใหม่ได้ (Attempts 2) | `Db/SubmitOnceRound217DbTests`.SUB08_… |
+| SUB-09 | คีย์เดียวกันสองคำขอพร้อมกันผ่านมิดเดิลแวร์จริง · ยิงซ้ำหลังเสร็จ | ใบเดียว · อีกคำขอ 409 in-flight/replay · replay ได้ผลเดิมทุกไบต์ | `Db/SubmitOnceRound217DbTests`.SUB09_… |
+| SUB-10 | คีย์เดิมเนื้อต่าง · ทิศตรงข้าม คีย์ใหม่รอบอื่น | 409 mismatch ไม่สร้างใบ · คีย์ใหม่จองได้ | `Db/SubmitOnceRound217DbTests`.SUB10_… |
+| SUB-11 | กติกาคีย์: รูปคีย์ · namespace (แฮช credential ไม่เก็บดิบ) · แฮชสตรีม = แฮชก้อนเดียว · replay/in-flight/mismatch/หมดอายุ/แถวเก่าไม่มีแฮช | ตามตาราง | `SubmitOnceRound217Tests`.Normalize_… · Subject_… · RequestHash_… · Decide_… |
+| SUB-12 | ผู้จองคนเดียวกัน: เบอร์ต่างรูปแบบ · สมาชิกเดียวกัน · ทิศตรงข้าม สมาชิกคนละคนเบอร์เดียวกัน/คนละแขก · ไม่มีตัวตน = ไม่ตัดสิน · เปิดใบเดิมให้แขกไม่ได้ | ตามตาราง | `SubmitOnceRound217Tests`.IdentityOf_… · Same_… · Two_different_members_… · Reveal_… |
+| SUB-13 | คิวแจ้งเตือน: ชนิดไม่รู้จัก · ถอย 30 วิ/1 นาที · ยอมแพ้ครั้งที่ 5 · ข้อความผิดพลาดไม่ว่าง/ไม่ยาวเกิน | ตามตาราง | `SubmitOnceRound217Tests`.New_row_… · AfterFailure_… · Truncate_… |
+| SUB-14 | หน้าเว็บ: กดปุ่มจองซ้ำ/Enter ระหว่างรอ · 409 in-flight · mismatch | ส่งครั้งเดียว · ปุ่ม "กำลังจอง…" · รอแล้วได้ผลเดิม · หมุนคีย์ | `js/submit-once.js` (node --check) — ทดสอบมือบน storefront (ยังไม่มี sim) |
+| SUB-15 | จุดเรียกในเซอร์วิส (ถอดด่าน/ย้ายลำดับ/ส่งแจ้งเตือนในคำขอกลับมา) | checker ฟ้อง | `tools/required_call_site_check.py` กติกา `_R217_*` + แก้ CreateBookingAsync/CreateOrderAsync |
+| SUB-16 | ฝ่ายค้าน S1: สมาชิกจองที่นั่งที่สอง (จำนวนคนต่าง) · รูปเดียวกัน · ปุ่มจองเพิ่ม | ใบใหม่ · ใบเดิม reused · ConfirmAdditional ใบใหม่ | `Db/SubmitOnceRound217DbTests`.S1_สมาชิกจองที่นั่งที่สอง_… · `SubmitOnceRound217Tests`.S1_same_shape_… |
+| SUB-17 | ฝ่ายค้าน S1: พนักงานจองซ้ำแทนลูกค้า | 409 พร้อมเลขที่ใบเดิม (ไม่คืนเงียบ) | `Db/…`.S1_พนักงานจองซ้ำแทนลูกค้า_… · `SubmitOnceRound217Tests`.S1_outcome_… |
+| SUB-18 | ฝ่ายค้าน S2: สลิป multipart boundary ใหม่ทุกครั้ง · สลิปอีกใบด้วยคีย์เดิม | replay (ไม่ mismatch) · ใบอื่น = 409 mismatch | `Db/…`.S2_สลิปmultipart_… · `SubmitOnceRound217Tests`.S2_multipart_… |
+| SUB-19 | ฝ่ายค้าน S2: ยิงซ้ำเนื้อต่างระหว่างคำขอเดิมยังทำงาน | 409 in-flight (ไม่ใช่ mismatch) | `Db/…`.S2_คำขอเดิมยังทำงาน_… · `SubmitOnceRound217Tests`.S2_inflight_… |
+| SUB-20 | ฝ่ายค้าน S3: ตัวส่งโยน (โครงสร้างล่ม) | แถวไม่ปิด · Attempts 1 · LastError · รอบถัดไปก่อนเวลาถอยไม่หยิบ | `Db/…`.S3_ข้อยกเว้นโครงสร้าง_… |
+| SUB-21 | ฝ่ายค้าน S4: ยกเลิกก่อนถึงคิว · ออเดอร์ยกเลิก/คืนเงิน | ไม่ส่ง · ปิดแถวพร้อม Note · ทิศตรงข้าม รอ/ยืนยัน/คิวสำรอง/คืนบางส่วน ยังส่ง | `Db/…`.S4_ยกเลิกก่อนถึงคิว_… · `SubmitOnceRound217Tests`.S4_… |
+| SUB-22 | ฝ่ายค้าน S5: InFlight ค้าง < 2 นาที · > 2 นาที สองคำขอแย่งกัน | ยังกัน 409 · ยึดคืนได้คนเดียว ทำงานจริงครั้งเดียว | `Db/…`.S5_InFlightค้างเกินสองนาที_… · `SubmitOnceRound217Tests`.S5_… |
+| SUB-23 | ฝ่ายค้าน S6: ลายนิ้วมือ HMAC ต่างจาก SHA-256 เปล่า · กุญแจว่าง · เส้นสมัคร/ล็อกอิน/รหัสผ่าน | ต่าง · โยนตอนเริ่ม · ไม่เก็บแถว (ทิศตรงข้าม: เส้นจอง/ยกเลิกด้วยโทเคนยังเก็บ) | `SubmitOnceRound217Tests`.S6_… · `Db/…`.S6_เส้นสมัครสมาชิก_… |
+| SUB-24 | ข้อสังเกต 1: 200 + success:false · 409 · 500 · ไม่ใช่ JSON | ไม่เก็บ/ไม่เก็บ/ไม่เก็บ/เก็บ · ส่งคีย์เดิมหลังแก้ = ทำงานจริง | `SubmitOnceRound217Tests`.Note1_… · `Db/…`.Note1_… |
+| SUB-25 | ข้อสังเกต 6: ออเดอร์ + แถวคิวในธุรกรรมเดียว | กติกาจุดเรียก (BeginTransaction → คิว → บันทึก → Commit · Rollback ก่อนอ่านซ้ำ) | `tools/required_call_site_check.py` CreateOrderAsync/SaveNewOrderOrReplayAsync |
+| SUB-26 | ข้อสังเกต 9: หลังบ้านบันทึกรับเงินมัดจำ | ส่ง Idempotency-Key + ปุ่มล็อก | `pages/cms-bookings.html` + `js/api.js` (node --check) — ทดสอบมือ |
+| SUB-27 | จุดเรียกฝ่ายค้าน (ถอดด่านรูปคำขอ/ข้ามสถานะ/กลืนข้อยกเว้น/แฮชเปล่า) | checker ฟ้อง | `tools/required_call_site_check.py` กติกา `_R217_*` (เพิ่ม/แก้) |
+
+## CMS216 — ข้อมูลส่วนตัวของสมาชิกหน้าร้าน + เติมฟอร์มจอง/สั่งซื้อ/จองที่พักจากบัญชี (รอบ 216 · คำตัดสินข้อ 174)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS216-01 | แก้ข้อมูลส่วนตัว: เบอร์มีขีด/+66 · เลขภาษีมีขีด · ไม่ใส่สาขา | เบอร์ตัวเลขล้วนขึ้นต้น 0 · เลขภาษี 13 หลัก · สาขา 00000 | `CmsRound216MemberProfileTests`.Validate_NormalizesPhoneAndTaxId_DefaultsHeadOffice |
+| CMS216-02 | ชื่อว่าง · เบอร์สั้น · เลขภาษี checksum ผิด · สาขา 2 หลัก · รหัสไปรษณีย์ 4 หลัก · มีจังหวัดไม่มีบรรทัดที่อยู่ | ทุกข้อในข้อความเดียว · ไม่บันทึกอะไร | `CmsRound216MemberProfileTests`.Validate_RejectsBadValues_AllInOneMessage · `Db/MemberProfileDbTests`.UpdateProfile_InvalidValues_Throw_NothingSaved |
+| CMS216-03 | ทิศตรงข้าม: ช่องไม่บังคับว่าง · ที่อยู่ว่างทั้งชุด · สาขาไม่มีเลขภาษี | ล้างค่า ไม่ใช่ error · สาขาเดี่ยว ๆ = บอกให้กรอกเลขภาษี | `CmsRound216MemberProfileTests`.Validate_EmptyOptionalFields_ClearValues_NotErrors · .Validate_BranchWithoutTaxId_IsRejected |
+| CMS216-04 | แก้โปรไฟล์ → อ่านกลับ · แก้ซ้ำ · ล้างที่อยู่ใบกำกับ | echo ครบทุกช่อง (ข้อความที่อยู่ประกอบที่เซิร์ฟเวอร์) · ที่อยู่หลักแถวเดิมถูกแก้ ไม่งอก · ล้าง = ลบแถวหลักชนิดนั้น · audit chain เก็บชื่อช่องไม่ใช่ค่า | `Db/MemberProfileDbTests`.UpdateProfile_RoundTrip_EchoesAllFields_AndAudits · `CmsRound216MemberProfileTests`.ComposeAddress_CheckoutVsFull |
+| CMS216-05 | ผู้ติดต่อ ERP ที่ผูกกับสมาชิก | ไม่ถูกเขียนทับ (ชื่อ/เลขภาษีเดิม) | `Db/MemberProfileDbTests`.UpdateProfile_RoundTrip_EchoesAllFields_AndAudits · `required_call_site_check` (ApplyProfileAsync ห้าม `_db.Contacts`) |
+| CMS216-06 | ข้ามเว็บ (บริษัทเดียวกัน) · ข้ามบริษัท · โทเคนเว็บอื่น · แขก/พนักงาน | อ่าน/เขียนโปรไฟล์ไม่ได้ · "บันทึกเป็นข้อมูลของฉัน" ไม่มีผล | `Db/MemberProfileDbTests`.CrossSite_And_CrossTenant_CannotReadOrWrite · `CmsRound216MemberProfileTests`.ProfileOwner_OnlyTokenOfThisSite_AndOnlyWhenRequested |
+| CMS216-07 | สมาชิกจอง/สั่ง/จองที่พักโดยเว้นชื่อ/เบอร์/อีเมล | เซิร์ฟเวอร์เติมจากโปรไฟล์ก่อนด่านฟอร์ม/ยินยอม · ค่าที่พิมพ์ชนะ · โปรไฟล์ไม่มี = ไม่แต่งค่า | `CmsRound216MemberProfileTests`.FillContact_FillsBlanks_TypedValuesWin · `required_call_site_check` (FillContact ก่อน OrderFormFields.Check / CmsDataConsent.EnforceAsync / CreateReservationAsync) |
+| CMS216-08 | ติ๊ก "บันทึกเป็นข้อมูลของฉัน" หลังจอง: โปรไฟล์ไม่มีเบอร์ | บันทึกเบอร์ · ไม่มีข้อความปัญหา | `CmsRound216MemberProfileTests`.MergeCheckout_FillsEmptyProfile_FromBookingForm · `Db/MemberProfileDbTests`.SaveFromCheckout_FillsEmpty_ReportsSkipped_LeavesValidUntouched |
+| CMS216-09 | ติ๊กบันทึกแต่เบอร์/เลขภาษีผิดรูปแบบ | รายการสำเร็จ · ค่าเดิมในโปรไฟล์ไม่ถูกแตะ · คำตอบมี `errors` บอกช่องที่ไม่ได้บันทึก (ไม่ใช่ no-op เงียบ) | `CmsRound216MemberProfileTests`.MergeCheckout_InvalidPhone_SkippedAndReported_NotSilent · .MergeCheckout_TaxInvoice_OnlyWithValidChecksum |
+| CMS216-10 | ค่าที่ฟอร์มส่งตรงกับโปรไฟล์ (เว้นวรรคต่าง) · ที่อยู่ใหม่จากเช็กเอาต์ | ไม่เปลี่ยน (ที่อยู่มีโครงไม่ถูกยุบ) · ที่อยู่ใหม่ = บรรทัดที่อยู่ + จังหวัด/รหัสไปรษณีย์ | `CmsRound216MemberProfileTests`.MergeCheckout_SameValues_NoChange · .MergeCheckout_NewShippingText_ReplacesStructuredAddress |
+| CMS216-11 | หน้าเว็บ: `/portal/me` ตอบช้ากว่าที่ผู้ใช้เริ่มพิมพ์ · ช่องที่มีค่าอยู่แล้ว · รหัสสาขาค่าตั้งต้น 00000 · ช่องใบกำกับของที่พัก · ช่อง "บันทึกเป็นข้อมูลของฉัน" | ช่องที่ผู้ใช้แตะไม่ถูกทับ (`dataset.userTouched`) · ทับเฉพาะช่องว่าง/ช่องที่ระบบเติม (`dataset.autoSrc`) · สาขาจากโปรไฟล์ชนะค่าตั้งต้น · ช่อง "เทียบอย่างเดียว" ไม่เติม · ติ๊กไว้ก่อนเฉพาะเติมช่องที่โปรไฟล์ว่าง · ผู้ใช้เอาติ๊กออกแล้วไม่ติ๊กกลับ | `tools/member_prefill_sim.js` (โค้ดจริงจากหน้า บน DOM จำลอง · /portal/me ตอบช้า · ผู้ใช้ลบค่าที่เติม · ช่องบันทึกติ๊ก/ไม่ติ๊ก · negative test 4 ตัว) |
+| CMS216-12 | รวมกับรอบ 217: กดซ้ำได้ใบจองเดิม (`Reused`) · ออเดอร์คืนจากคีย์กันกดซ้ำ (`Replayed`) · ที่พักซ้ำ (409) · คำขอซ้ำคีย์เดิม (มิดเดิลแวร์ตอบจากแคช) | ไม่บันทึกโปรไฟล์ซ้ำ · หน้าเว็บไม่ขึ้น "บันทึกแล้ว" | `required_call_site_check` (`ProfileOwner(request.SaveToProfile && !result.Reused …)` / `!result.Replayed`) · ตรวจมือ storefront `_memberAfterSubmit(… && !booking.reused)` |
+
 ## CMS213 — ข้อความที่ยังไม่ได้ส่งเพราะโควตาเต็ม + ส่งซ้ำหลังเติมโควตา · แพ็ก `notify.topup`/เพดานเฉพาะบริษัทที่หน้าแอดมิน (รอบ 213 · คำตัดสินข้อ 172)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -198,7 +247,13 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **696 ไฟล์ · 7,133 `[Fact]` + 1,139 `[Theory]` (5,329 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **701 ไฟล์ · 7,213 `[Fact]` + 1,145 `[Theory]` (5,364 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
+
+
+
+
+
 
 
 
@@ -7114,3 +7169,29 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | CMS210-10 | ยิงเดาถี่ (IP เดียว / หลาย IP เลขเดียว) | 429 · คีย์โควตาพอดี `BucketKey` varchar(120) (ไม่ fail-open เงียบ) | `Request_validation_and_number_bucket` · rule `LookupThrottledAsync` |
 | CMS210-11 | ลิงก์ในแจ้งเตือน: มีโดเมนร้านที่ยืนยันแล้ว / ไม่มี ⇒ `App:BaseUrl/site/{key}` / ไม่มีทั้งคู่หรือใบเก่าไม่มีโทเคน | `https://โดเมน/my-booking/{token}` / path-based / เลขที่ + หน้า "ตรวจสอบการจอง / คำสั่งซื้อ" (ไม่เงียบ) | `Verified_custom_domain_wins` · `Falls_back_to_path_based_app_url` · `No_usable_base_gives_null` · `No_base_url_falls_back_to_number_and_lookup_page_not_silent` · `Booking_line_has_escaped_manage_link` · `Order_line_has_track_link` |
 | CMS210-12 | แจ้งเตือนถึงลูกค้าทุกฉบับ (ยืนยัน/ยกเลิก/เลื่อนการจอง · ยืนยัน/จัดส่ง/พร้อมรับ/ส่งมอบคำสั่งซื้อ) | มีบรรทัดลิงก์ · เลื่อนนัดมีข้อความใหม่ (เดิม/ใหม่) | `WithLine_appends_and_blank_keeps_message` · `Rescheduled_text_has_old_and_new_time` · rules `WithBookingLinkAsync`/`WithOrderLinkAsync` + ผู้เรียก |
+
+## CMS215 — พื้นที่ทำงานเว็บไซต์ (รอบ 215 เฟส 1)
+
+| # | ขั้นตอน | ผลที่ต้องได้ |
+| --- | --- | --- |
+| CMS215-01 | บริษัทมีสปา + โรงแรม + ร้าน · เปิดหน้า "เว็บไซต์ทั้งหมด" | แถบซ้ายหมวดเว็บมี 2 รายการ (พื้นที่ทำงาน · เว็บไซต์ทั้งหมด) — ไม่กาง 7 เมนูลูก · ค้นหาเมนู "Front desk" ยังเจอ |
+| CMS215-02 | ชื่อหมวด: บริษัทร้านอย่างเดียว / ที่พักอย่างเดียว / มีจอง | "เว็บไซต์ & ร้านออนไลน์" / "เว็บไซต์ & ที่พัก" / "เว็บไซต์ & การจอง" (`CmsModuleResolverTests`) |
+| CMS215-03 | role ที่ได้แค่ "ที่พัก · Front desk" กด "พื้นที่ทำงานเว็บไซต์" | ไป lodging.html ทันที · role ที่ไม่มีงานเว็บไม่เห็นทางเข้า (sim) |
+| CMS215-04 | เปิดการจองของ test-spa แล้วสลับเว็บที่หัวหน้าเป็นโรงแรม | ไป Front desk ของโรงแรม (เว็บไม่มีจองคิว ⇒ แท็บแรกของเว็บนั้น) · select เว็บในหน้าเดิมถูกซ่อน (ตัวเลือกเว็บมีตัวเดียว) |
+| CMS215-05 | แท็บของเว็บสปา | การจอง · สรุปผู้ให้บริการ · (คำขอ ถ้ามีฟอร์มติดต่อ) · หน้าเว็บ — ไม่มี Front desk/ตั้งค่าร้าน (sim) |
+| CMS215-06 | การ์ดภาพรวม "การจอง" บน เว็บไซต์ทั้งหมด (หลายเว็บ) | เปิด `cms-bookings.html?siteId=all` (เดิมเปิดเว็บแรก) · ที่พักแสดงปุ่มรายเว็บพร้อมชื่อ |
+| CMS215-07 | `lodging.html?siteId=<เว็บที่ยังไม่มีที่พัก>` | ข้อความ "ยังไม่มีที่พักผูกอยู่" + ลิงก์สร้าง — **ไม่**โหลดที่พักแห่งแรก (sim negative) · ทิศตรงข้าม: ?siteId= ของโรงแรม ⇒ ที่พักนั้น |
+| CMS215-08 | เว็บที่ไม่มีบล็อกฟอร์มติดต่อ/ฟอร์มส่งเข้าระบบ/lead | ไม่มีแท็บ/ปุ่ม "คำขอ / Lead" · เว็บที่เคยมี lead ยังมี (`CmsModuleResolverTests` ทั้งสองทิศ) |
+| CMS215-09 | เปิดหน้ารายเว็บโดยไม่มี ?siteId= หลังเคยทำงานเว็บ b3 | เลือก b3 ถ้า b3 ใช้งานของหน้านั้น · ไม่งั้นเว็บแรกที่ใช้ (sim) |
+| CMS215-10 | (ฝ่ายค้าน S1) พนักงานที่มีบทบาทเฉพาะเว็บโรงแรม เปิด Front desk | ตัวสลับเว็บมีแค่โรงแรม (ไม่เห็นชื่อสปา/ร้าน) · `GET cms/sites` คืนเฉพาะเว็บที่มีบทบาท/ที่ตัวเองสร้าง (`CmsSiteScopeTests`) · เจ้าของเห็นทุกเว็บ |
+| CMS215-11 | (S2) ลบเว็บที่เคยเป็นเว็บล่าสุด แล้วกด "พื้นที่ทำงานเว็บไซต์" | ไม่ค้างที่ทางตัน — ตกไปที่พัก/เว็บถัดไป · เว็บล่าสุดถูกล้าง · ตั้งค่าที่พักไม่โชว์ GUID |
+| CMS215-12 | (S3) เว็บที่มีแต่บล็อกสมัครรับข่าว | มีแท็บ "คำขอ / Lead" |
+| CMS215-13 | (S4) ผู้ใช้ role จำกัดเปิดหน้าตั้งค่าที่พักแบบโหลดช้า | แท็บที่ไม่มีสิทธิ์หายหลังสิทธิ์โหลด (sim) |
+| CMS215-14 | (N11) แก้ข้อมูลที่พักแล้วสลับเว็บโดยไม่บันทึก | ถามยืนยัน · ยกเลิก = อยู่เว็บเดิม |
+| CMS215-15 | (เฟส 2) ตั้งค่าเว็บ › การจอง/บริการ เลือก "ระบบจัดให้อัตโนมัติ" แล้วสร้างบริการใหม่แบบ "ตามค่าเว็บ" | หน้าจองไม่มีช่องเลือกผู้ให้บริการ · ตัวอย่างบนหน้าตั้งค่าตรงกัน (`BookingRound215ProviderDefaultTests`) |
+| CMS215-16 | (เฟส 2 ทิศตรงข้าม) บริการเดิมที่ตั้ง "บังคับระบุ" ไว้ก่อนรอบนี้ แล้วเปลี่ยนค่าเว็บเป็น "ระบบจัดให้" | บริการนั้นยังบังคับเลือก (กำหนดเอง) · ขึ้นในรายการ "บริการที่กำหนดเอง" · กด "ใช้ตามค่าเว็บ" แล้วจึงเปลี่ยน |
+| CMS215-17 | (เฟส 2) สร้างเว็บคลินิก / สปา ใหม่ | ค่าเว็บ = ระบบจัดให้ / ลูกค้าเลือกเอง · เว็บเดิมค่าเว็บ = ไม่ใช้ (พฤติกรรมเดิม) |
+| CMS215-18 | (เฟส 2) เว็บสปา (ไม่มีออเดอร์) เปิด ตั้งค่าเว็บ › การแจ้งเตือน / LINE | ตั้งการแจ้งลูกค้ารายเว็บได้ (เดิมทำไม่ได้) · ตั้งค่าร้านค้า › แจ้งเตือนลูกค้า เหลือกล่อง "ย้ายแล้ว" |
+| CMS215-19 | (เฟส 2) ผู้มีสิทธิ์แค่ "ตั้งค่าร้านค้า" | หัวพื้นที่ทำงานยังมีแท็บตั้งค่าร้านค้า (ไม่เห็นศูนย์ตั้งค่าเว็บ) · เจ้าของเห็น "⚙️ ตั้งค่าเว็บ" แทน (sim) |
+| CMS215-20 | (เฟส 2) ลิงก์ในศูนย์ตั้งค่า (`cms-edit?tab=seo` · `cms-store-settings?tab=shipping`) | เปิดตรงแท็บ · `deep_link_param_check` 0 จุด |
+

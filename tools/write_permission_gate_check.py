@@ -254,6 +254,9 @@ SELF_SERVICE_POSTS = {
     # รอบ 214: ผู้ใช้กด "รับทราบและยอมรับ" นโยบายฉบับใหม่ของ**ตัวเอง** (SubjectUserId = ผู้ล็อกอิน · ไม่มีข้อมูลคนอื่นให้แตะ) ·
     # ปฏิเสธคีย์ API + โหมดเข้าดูในนามลูกค้า (required_call_site_check ล็อก)
     ("LegalController.cs", "Accept"),
+    # รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้านแก้ข้อมูลส่วนตัวของตัวเอง — ไม่มีผู้ใช้ ERP ให้ตรวจสิทธิ์ (โทเคนหน้าร้าน) ·
+    # ด่าน = Me(companyId, siteId) (โทเคนของเว็บนี้ + ลูกค้ายังใช้งาน) แล้วเขียนเฉพาะ id ในโทเคน (required_call_site_check ล็อก)
+    ("CmsStorefrontCustomerController.cs", "UpdateMyProfile"),
 }
 
 ACTION_RE = re.compile(r'^\s*\[Http(Get|Post|Put|Delete|Patch)(\("([^"]*)"\))?\]')
