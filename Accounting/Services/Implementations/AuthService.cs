@@ -92,22 +92,9 @@ public class AuthService : IAuthService
             var currentVersion = (await _legal.GetConsentVersionAsync()).ConsentVersion;
             // รอบ 214 หลัง CI (คำตัดสินข้อ 173 ฌ): ตารางระดับผู้ใช้ (ไม่มี CompanyId/FK) — เดิม PdpaConsentRecords + CompanyId ศูนย์ ถูก FK ปฏิเสธบนฐานที่สร้างจากโมเดล
             // แล้วถูกจับใน catch ด้านล่าง ⇒ หลักฐานความยินยอมตอนสมัครหายเงียบ
-            _db.PlatformPolicyAcceptances.Add(new PlatformPolicyAcceptance
-            {
-                UserId = user.Id,
-                Email = user.Email,
-                Purpose = PdpaPolicy.SignupPurpose,
-                // เก็บเวอร์ชันที่ **server** ใช้อยู่เป็นเวอร์ชันของแถว ส่วนเวอร์ชันที่
-                // หน้าเว็บแสดงจริงอยู่ใน evidence hash — ต่างกันเมื่อไรแปลว่าเบราว์เซอร์
-                // ค้าง cache ฉบับเก่า (log เตือนด้านล่าง) ไม่ใช่ข้อมูลสูญหาย
-                PolicyVersion = currentVersion,
-                AcceptedAt = grantedAt,
-                Channel = channel,
-                IpAddress = ip,
-                EvidenceHash = PdpaConsentEvidence.ComputeHash(
-                    user.Email, PdpaPolicy.SignupPurpose, policyVersionShown,
-                    grantedAt, channel, ip, ua),
-            });
+            // รอบ 214 ต่อ (ฎ): ตัวสร้างแถวเดียว — เวลา normalize + เก็บทุกช่องใน canonical (เวอร์ชันที่หน้าเว็บแสดง · UA) ⇒ ตรวจกลับจากแถวได้
+            _db.PlatformPolicyAcceptances.Add(PlatformPolicyAcceptanceRules.Create(
+                user.Id, user.Email, PdpaPolicy.SignupPurpose, currentVersion, policyVersionShown, grantedAt, channel, ip, ua));
             await _db.SaveChangesAsync();
 
             if (!string.IsNullOrWhiteSpace(policyVersionShown)

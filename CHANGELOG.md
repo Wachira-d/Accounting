@@ -5806,3 +5806,10 @@ _รอบ 214 ฝ่ายค้าน + CI (ไม่มีข้อ blocking 
 `LegalController` เลิก AllowAnonymous ระดับคลาส · ปุ่ม "เปิด" ของเว็บที่ยังไม่เผยแพร่ = ตัวอย่าง · doc comment ย้ายกลับที่ · audit `*Markdown` = length+sha256 ·
 (CI) Db test ล้ม FK `PdpaConsentRecords → Companies` (CompanyId ศูนย์) — บั๊กจริงตั้งแต่ก่อนรอบนี้ (หลักฐานตอนสมัครหายเงียบบนฐานที่มี FK) ⇒ ตารางระดับผู้ใช้
 `PlatformPolicyAcceptances` + คัดลอกแถวเดิม · เทสต์ทั้งผู้ใช้ไม่มีบริษัท/มีบริษัท · TEST_PLAN LEGAL214-14..21 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 214 ต่อ (คำตัดสินข้อ 173 ฎ — ผู้ประสานงานอนุมัติข้อเสนอ): (1) หลักฐานยอมรับนโยบายแพลตฟอร์มเข้า DSR — รายงานเข้าถึง/ไฟล์โอนย้ายมี `PolicyAcceptances` + ผลตรวจรายแถว ·
+ลบตามคำขอ = legal hold (อีเมลนิรนาม · ล้าง IP/UA · `PseudonymisedAt`) · `PdpaRetentionPurgeJob` ลบจริงเมื่อพ้น 10 ปีหลังลบ (`Helpers/PlatformPolicyAcceptanceRules`) ·
+RoPA ระดับแพลตฟอร์มไม่สร้าง (ตาราง RoPA เป็นของ tenant — บันทึกในนโยบายแพลตฟอร์มแทน) · (2) `PdpaConsentEvidence` สูตร v2 แบบ AuditHashChain v2 (เวลา UTC ไมโครวินาที ·
+ป้าย "v2:" · v1 ตรวจไม่ได้ = `LegacyUnverifiable` ไม่ใช่ผ่าน) ใช้กับตอนสมัคร/แถบยอมรับ/ฟอร์มเว็บร้าน · `PlatformPolicyAcceptances` เก็บ `VersionShown`/`UserAgent` ให้ตรวจจากแถวได้ ·
+เทสต์ `PdpaConsentEvidenceV2Tests` + Db round-trip (เขียน → อ่านกลับ → ตรวจผ่าน · แก้ในฐาน ⇒ ไม่ผ่าน) ใน `Db/LegalDocumentDbTests` · TEST_PLAN LEGAL214-22..27 ·
+`required_call_site_check` +4 กติกา/แก้ 2 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

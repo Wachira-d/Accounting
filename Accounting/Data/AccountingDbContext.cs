@@ -1010,6 +1010,8 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Channel).HasMaxLength(50);
             e.Property(x => x.IpAddress).HasMaxLength(45);
             e.Property(x => x.EvidenceHash).HasMaxLength(100);
+            e.Property(x => x.VersionShown).HasMaxLength(50);
+            e.Property(x => x.UserAgent).HasMaxLength(500);
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 
