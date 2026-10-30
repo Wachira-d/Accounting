@@ -8,7 +8,8 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Implementations;
 
 /// <summary>ส่งสลิปเงินเดือนทาง LINE — ดู <see cref="IPayslipLineDeliveryService"/>.
-/// นโยบาย: (1) พนักงานผูก LINE เองผ่าน OA บริษัท (รหัส 6 หลัก); (2) ข้อความ LINE
+/// นโยบาย: (1) พนักงานผูก LINE เองผ่าน <b>OA กลางของ NextAcc</b> (ส่ง "สลิป 123456" — webhook <c>/api/line-webhook</c> ที่เดียวที่รับคำสั่งนี้ ·
+/// แก้รอบ 212 D: เดิมเขียนว่า OA บริษัท และปุ่มเพิ่มเพื่อนชี้ OA บริษัท ซึ่ง webhook ของบริษัทไม่รับคำสั่งนี้); (2) ข้อความ LINE
 /// ซ่อนยอดเงิน โชว์แค่งวด + ปุ่ม; (3) ปุ่มลิงก์ไป secure token (หมดอายุ 7 วัน)
 /// ที่ stream PDF + log การเข้าถึงตาม PDPA ม.37.</summary>
 public class PayslipLineDeliveryService : IPayslipLineDeliveryService
@@ -18,6 +19,8 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
     private readonly IPayrollService _payroll;
     private readonly IConfiguration _config;
     private readonly ILogger<PayslipLineDeliveryService> _logger;
+    /// <summary>รอบ 212 D: ค่าตั้ง OA กลาง (หน้าแอดมินก่อน · config Line:* fallback)</summary>
+    private readonly INextAccLineConfig _nextAcc;
 
     private static readonly string[] _thMonths = { "", "มกราคม", "กุมภาพันธ์", "มีนาคม",
         "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม",
@@ -28,9 +31,9 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
 
     public PayslipLineDeliveryService(AccountingDbContext db, ILineNotifyService line,
         IPayrollService payroll, IConfiguration config,
-        ILogger<PayslipLineDeliveryService> logger)
+        ILogger<PayslipLineDeliveryService> logger, INextAccLineConfig nextAcc)
     {
-        _db = db; _line = line; _payroll = payroll; _config = config; _logger = logger;
+        _db = db; _line = line; _payroll = payroll; _config = config; _logger = logger; _nextAcc = nextAcc;
     }
 
     // ===== 1) Self-service bind code =====
@@ -61,17 +64,8 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
         });
         await _db.SaveChangesAsync();
 
-        var basicId = await _db.Set<CompanySettings>().AsNoTracking()
-            .Where(s => s.CompanyId == companyId)
-            .Select(s => s.LineOaBasicId)
-            .FirstOrDefaultAsync();
-        string? addFriendUrl = null;
-        if (!string.IsNullOrWhiteSpace(basicId))
-        {
-            // basic id เก็บแบบ "@xxx" หรือ "xxx" ก็ได้ — line.me ต้องการไม่มี '@'
-            var id = basicId.TrimStart('@');
-            addFriendUrl = $"https://line.me/R/ti/p/@{id}";
-        }
+        // รอบ 212 D: ปุ่มเพิ่มเพื่อนต้องชี้ OA กลาง — คำสั่ง "สลิป {รหัส}" รับที่ webhook ของ OA กลางเท่านั้น (เดิมชี้ OA บริษัท ⇒ พนักงานส่งรหัสไปแล้วไม่มีใครตอบ)
+        var addFriendUrl = Accounting.Helpers.CustomerLineLinkRule.AddFriendUrl((await _nextAcc.GetAsync()).BasicId);
         return (code, addFriendUrl);
     }
 
@@ -116,8 +110,9 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
     public async Task<PayslipLineSendResult> SendPayslipAsync(Guid companyId,
         Guid payrollRunId, Guid employeeId, string? actorEmail, CancellationToken ct = default)
     {
-        var lineId = await ResolveLineUserIdAsync(companyId, employeeId, ct);
-        if (string.IsNullOrWhiteSpace(lineId)) return PayslipLineSendResult.NotBound;
+        var recipient = await ResolveRecipientAsync(companyId, employeeId, ct);
+        if (recipient == null) return PayslipLineSendResult.NotBound;
+        var lineId = recipient.LineUserId;
 
         // ต้องมี payroll detail ในงวดนี้จริง
         var detail = await _db.Set<PayrollDetail>().AsNoTracking()
@@ -127,7 +122,7 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
                 && d.EmployeeId == employeeId && d.CompanyId == companyId, ct);
         if (detail == null) return PayslipLineSendResult.NoPayrollDetail;
 
-        if (!await IsLineConfiguredAsync(companyId, ct))
+        if (!await IsLineConfiguredAsync(companyId, recipient.ViaNextAcc, ct))
             return PayslipLineSendResult.LineNotConfigured;
 
         // สร้าง secure token (หมดอายุ 7 วัน). ยกเลิก token เก่าของงวด+คนเดียวกัน
@@ -163,7 +158,21 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
 
         try
         {
-            await _line.PushFlexToUserAsync(companyId, lineId, alt, flex);
+            if (recipient.ViaNextAcc)
+            {
+                // รอบ 212 D: ผูกผ่าน OA กลาง ⇒ ส่งผ่าน OA กลาง (userId แยกตาม provider — ส่งผ่าน OA บริษัทไม่มีทางถึง) · ผลล้มไม่ถูกกลืน
+                var r = await _line.TryPushFlexViaNextAccAsync(lineId, alt, flex);
+                if (!r.Ok)
+                {
+                    _logger.LogWarning("ส่งสลิป LINE (OA กลาง) ล้มเหลว run {Run} emp {Emp}: {Err}", payrollRunId, employeeId, r.Error);
+                    return PayslipLineSendResult.LineFailed;
+                }
+            }
+            else
+            {
+                // LINE id ที่ HR กรอกเอง (ไม่มีหลักฐานการผูก) — ไม่รู้ provider ⇒ เส้นเดิม (OA บริษัทถ้าตั้ง ไม่งั้น OA กลาง)
+                await _line.PushFlexToUserAsync(companyId, lineId, alt, flex);
+            }
             _logger.LogInformation("ส่งสลิป LINE run {Run} emp {Emp} สำเร็จ", payrollRunId, employeeId);
             return PayslipLineSendResult.Sent;
         }
@@ -247,23 +256,33 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
     /// User.LineUserId ที่ผูกกับพนักงาน (กรณีพนักงานมีบัญชีล็อกอินและผูก LINE ไว้).</summary>
     private async Task<string?> ResolveLineUserIdAsync(Guid companyId, Guid employeeId,
         CancellationToken ct = default)
+        => (await ResolveRecipientAsync(companyId, employeeId, ct))?.LineUserId;
+
+    /// <summary>รอบ 212 D — ผู้รับ + OA ที่ต้องใช้ (กติกา <see cref="Accounting.Helpers.NextAccLineConfigRule.PayslipRecipient"/>):
+    /// หลักฐานการผูกผ่าน OA กลาง = แถว <c>EmployeeLineBindCode</c> ของพนักงานคนนี้ที่ <c>UsedByLineUserId</c> ตรงกับ <c>Employee.LineId</c></summary>
+    private async Task<Accounting.Helpers.StaffLineRecipient?> ResolveRecipientAsync(Guid companyId, Guid employeeId, CancellationToken ct)
     {
         var row = await _db.Employees.AsNoTracking()
             .Where(e => e.Id == employeeId && e.CompanyId == companyId)
             .Select(e => new { e.LineId, UserLine = e.User != null ? e.User.LineUserId : null })
             .FirstOrDefaultAsync(ct);
         if (row == null) return null;
-        return !string.IsNullOrWhiteSpace(row.LineId) ? row.LineId : row.UserLine;
+        var boundViaNextAcc = !string.IsNullOrWhiteSpace(row.LineId) && await _db.EmployeeLineBindCodes.AsNoTracking()
+            .AnyAsync(c => c.CompanyId == companyId && c.EmployeeId == employeeId && c.UsedByLineUserId == row.LineId, ct);
+        return Accounting.Helpers.NextAccLineConfigRule.PayslipRecipient(row.LineId, boundViaNextAcc, row.UserLine);
     }
 
-    private async Task<bool> IsLineConfiguredAsync(Guid companyId, CancellationToken ct)
+    private async Task<bool> IsLineConfiguredAsync(Guid companyId, bool viaNextAcc, CancellationToken ct)
     {
-        var s = await _db.Set<CompanySettings>().AsNoTracking()
-            .FirstOrDefaultAsync(x => x.CompanyId == companyId, ct);
-        if (s != null && s.LineEnabled && !string.IsNullOrWhiteSpace(s.LineChannelAccessToken))
-            return true;
-        // fallback: global token (การตั้งค่าเก่า)
-        return !string.IsNullOrWhiteSpace(_config["Line:ChannelAccessToken"]);
+        if (!viaNextAcc)
+        {
+            var s = await _db.Set<CompanySettings>().AsNoTracking()
+                .FirstOrDefaultAsync(x => x.CompanyId == companyId, ct);
+            if (s != null && s.LineEnabled && !string.IsNullOrWhiteSpace(s.LineChannelAccessToken))
+                return true;
+        }
+        // OA กลาง (ผู้รับที่ผูกผ่าน OA กลาง หรือ fallback ของเส้นเดิม) — หน้าแอดมินก่อน · config Line:* fallback
+        return (await _nextAcc.GetAsync(ct)).HasToken;
     }
 
     private string BuildPublicUrl(string token)

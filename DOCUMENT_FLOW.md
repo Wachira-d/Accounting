@@ -5955,6 +5955,27 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก A — �
 
 _Last verified against codebase: 2026-10-30 (รอบ 212 ฝ่ายค้าน A+C — โบนัส UPDATE เดียวหลังล็อก · งวดไทย · shop ไม่นับ · Idempotency-Key · ปิดบังหมายเหตุ/ล้าง/DSR · สรุปรายวันลองใหม่เมื่อโควตาเต็ม · เพดานเริ่มต้นไม่จำกัด · ยังไม่ได้คอมไพล์ · commit b9dcd595)_
 
+- **รอบ 212 แพ็ก D · ค่าตั้ง LINE OA กลางของ NextAcc บนหน้าแอดมิน + สลิปเงินเดือนผ่าน OA ที่ผูกจริง (ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **ค่าตั้ง** — เดิมค่า Messaging API ของ OA กลางอ่านจาก config `Line:ChannelAccessToken/ChannelSecret/BasicId/BotUserId/GroupId` อย่างเดียว (11 จุดใน 5 ไฟล์) ⇒
+  แอดมินมองไม่เห็น/แก้ไม่ได้ · ตอนนี้ตั้งที่ `/admin/site-settings.html` แท็บ **"LINE OA กลาง"** (`GET/PUT /api/admin/line-messaging` · `POST …/test` · SystemAdmin + `[RejectApiKey]`) ·
+  เก็บบน `SiteSettings.LineMessaging*` (token/secret เข้ารหัส `ISecretProtector` · ไม่ส่งกลับ — บอกแค่ "ตั้งแล้ว" · ช่องลับว่าง = คงค่าเดิม · ล้างต้องติ๊ก ·
+  ช่องไม่ลับ "" = ล้าง · Basic ID ผ่าน `CustomerLineLinkRule.NormalizeBasicId` · Bot User ID `U`+32 hex · Group ID `C|R`+32 hex) · หน้าแสดง webhook URL `{AppBaseUrl}/api/line-webhook` ·
+  ปุ่มทดสอบเรียก LINE `GET /v2/bot/info` (+ `GET /v2/bot/channel/webhook/endpoint`) ด้วย token ที่ระบบใช้จริง แล้วเสนอเติม Basic ID / Bot User ID (ผู้ใช้กดบันทึกเอง) ·
+  migration `Helpers/NextAccLineConfigMigration` (คอลัมน์ NULL ล้วน)
+  (ข) **ผู้อ่านตัวเดียว** `INextAccLineConfig` (`Services/Implementations/NextAccLineConfig` · scoped · โหลดครั้งเดียวต่อคำขอ · ไม่มี cache ข้ามคำขอ) → กติกา `Helpers/NextAccLineConfigRule.Merge`:
+  หน้าแอดมินมี token ⇒ ใช้ชุดของหน้าแอดมิน**ทั้งชุด** · ไม่มี ⇒ config `Line:*` ทั้งชุด (deployment เดิมที่ตั้ง env ทำงานเหมือนเดิม) · ไม่ผสมรายช่อง (token กับ secret ต่าง channel = ลายเซ็นไม่ผ่าน) ·
+  ผู้ใช้: `LineBotService` (ตรวจลายเซ็น webhook `VerifySignatureAsync` ผ่าน `LineWebhookSignature` ตัวเดิม · reply · push flex · ดึงรูป) · `LineNotifyService` (fallback OA กลาง + Group ID ·
+  `TryPushViaNextAccAsync` · `TryPushFlexViaNextAccAsync` ใหม่) · `CustomerLineLinkService` (ช่องลูกค้า · ตรวจ destination · reply) · `PayslipLineDeliveryService` ·
+  ด่าน `tools/required_call_site_check.py` LINE_CONFIG_FORBID: `"Line:…"` ทั้งเรพนอกไฟล์ resolver = 0 จุด · ไม่มี token ทั้งสองที่ ⇒ ข้อความเดียว `NextAccLineConfigRule.NotConfiguredMessage`
+  (ไม่ fail-fast — LINE เป็นฟีเจอร์เสริม)
+  (ค) **สลิปเงินเดือนทาง LINE** — พนักงานผูก "สลิป 123456" ที่ webhook ของ OA กลางเท่านั้น (webhook ต่อบริษัทรับแค่ "ผูก LN-…") แต่เดิม push ผ่าน `PushFlexToUserAsync(companyId, …)`
+  (= OA ของร้านเมื่อร้านตั้ง) และปุ่มเพิ่มเพื่อนชี้ OA ของร้าน ⇒ ร้านที่ตั้ง OA เองส่งสลิปไม่ถึง (userId แยกตาม provider) · ตอนนี้ `NextAccLineConfigRule.PayslipRecipient`:
+  `Employee.LineId` ที่มีแถว `EmployeeLineBindCode.UsedByLineUserId` ตรงกัน (บริษัท+พนักงานเดียวกัน) หรือ `User.LineUserId` ⇒ **OA กลาง** (`TryPushFlexViaNextAccAsync` · ผลล้มไม่ถูกกลืน ⇒ `LineFailed`) ·
+  LINE ID ที่ HR กรอกเอง (ไม่มีหลักฐานการผูก) ⇒ เส้นเดิม (OA ร้านถ้าตั้ง ไม่งั้น OA กลาง) · ปุ่มเพิ่มเพื่อนตอนออกรหัส = Basic ID ของ OA กลาง
+  (ง) `DocumentLineDeliveryService` ตรวจแล้ว: ผู้รับคือ**ลูกค้า** (`Contact.LineUserId` · ไม่มีผู้เขียน · ไม่มีผู้เรียก) ⇒ ไม่อยู่ในบั๊กคลาสนี้ · ไม่แก้
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก D — ค่าตั้ง LINE OA กลางบนหน้าแอดมิน · ผู้อ่านตัวเดียว INextAccLineConfig · สลิปเงินเดือนผ่าน OA ที่ผูกจริง · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 9c792d9f)_
+
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

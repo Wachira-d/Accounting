@@ -15,19 +15,24 @@ public class LineNotifyService : ILineNotifyService
     private readonly ILogger<LineNotifyService> _logger;
     private readonly AccountingDbContext _db;
     private readonly ISecretProtector _secrets;
+    /// <summary>รอบ 212 D: ค่าตั้ง OA กลาง (หน้าแอดมินก่อน · config Line:* fallback) — ผู้อ่านตัวเดียว</summary>
+    private readonly INextAccLineConfig _nextAcc;
 
     public LineNotifyService(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
         ILogger<LineNotifyService> logger,
         AccountingDbContext db,
-        ISecretProtector secrets)
+        ISecretProtector secrets,
+        INextAccLineConfig? nextAcc = null)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _logger = logger;
         _db = db;
         _secrets = secrets;
+        // ไม่ได้ฉีดมา (เทสต์ที่สร้างตรง) ⇒ resolver ตัวเดียวกันจาก dependency เดิม (db null = config อย่างเดียว)
+        _nextAcc = nextAcc ?? new NextAccLineConfig(db, configuration, secrets);
     }
 
     /// <summary>หา (token, defaultGroupId) สำหรับบริษัท — ใช้ของบริษัทถ้าตั้ง
@@ -46,7 +51,8 @@ public class LineNotifyService : ILineNotifyService
                     return (token, s.LineDefaultGroupId);
             }
         }
-        return (NextAccToken(), _configuration["Line:GroupId"]);
+        var nx = await _nextAcc.GetAsync();
+        return (nx.AccessToken, nx.GroupId);
     }
 
     private async Task<bool> PushRawAsync(string? token, object payload, string context)
@@ -92,8 +98,8 @@ public class LineNotifyService : ILineNotifyService
         if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
         var texts = LineMessageLimits.Normalize(messages);
         if (texts.Count == 0) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
-        var token = NextAccToken();
-        if (string.IsNullOrWhiteSpace(token)) return LinePushResult.Fail("ยังไม่ได้ตั้งค่า LINE OA ของ NextAcc (Line:ChannelAccessToken)");
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage);
         return await PushCoreAsync(token, new
         {
             to = lineUserId,
@@ -101,8 +107,30 @@ public class LineNotifyService : ILineNotifyService
         }, $"staff {CustomerLineLinkRule.Mask(lineUserId)}");
     }
 
-    /// <summary>token ของ OA กลาง (NextAcc) — ที่เดียวที่ส่งถึงพนักงานอ่าน</summary>
-    private string? NextAccToken() => _configuration["Line:ChannelAccessToken"];
+    /// <summary>รอบ 212 D — Flex ถึง<b>พนักงาน</b>ผ่าน OA กลางแบบระบุชัด (คู่ของ <see cref="TryPushViaNextAccAsync"/>) · ใช้กับสลิปเงินเดือนที่ผูกผ่าน OA กลาง ·
+    /// คืนเหตุเมื่อล้ม (เดิม <see cref="PushFlexToUserAsync(Guid?, string, string, object)"/> กลืนผลล้ม ⇒ ผู้เรียกรายงาน "ส่งแล้ว" ทั้งที่ LINE ปฏิเสธ)</summary>
+    public async Task<LinePushResult> TryPushFlexViaNextAccAsync(string lineUserId, string altText, object flexContents)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage);
+        return await PushCoreAsync(token, new
+        {
+            to = lineUserId,
+            messages = new[]
+            {
+                new
+                {
+                    type = "flex",
+                    altText = LineMessageLimits.Truncate(string.IsNullOrEmpty(altText) ? "การแจ้งเตือนจาก NextAcc" : altText, 400),
+                    contents = flexContents
+                }
+            }
+        }, $"staff flex {CustomerLineLinkRule.Mask(lineUserId)}");
+    }
+
+    /// <summary>token ของ OA กลาง (NextAcc) — ที่เดียวที่ส่งถึงพนักงานอ่าน · ผ่าน resolver ตัวเดียว (รอบ 212 D)</summary>
+    private async Task<string?> NextAccTokenAsync() => (await _nextAcc.GetAsync()).AccessToken;
 
     public async Task SendMessageAsync(string message)
     {

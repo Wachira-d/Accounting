@@ -31,6 +31,10 @@ public interface ILineNotifyService
     /// <b>ห้ามใช้ส่งถึงลูกค้าปลายทาง</b> (ลูกค้าใช้ <see cref="TryPushToUserAsync"/> ตาม OA ที่ผูกไว้)</summary>
     Task<LinePushResult> TryPushViaNextAccAsync(string lineUserId, IReadOnlyList<string> messages);
 
+    /// <summary>รอบ 212 D: Flex ถึง<b>พนักงาน</b>ผ่าน OA กลางแบบระบุชัด (คู่ของ <see cref="TryPushViaNextAccAsync"/>) — สลิปเงินเดือนของพนักงานที่ผูก
+    /// "สลิป 123456" กับ OA กลาง · คืนเหตุเมื่อล้ม (ไม่กลืน) · ไม่ตั้ง token กลาง ⇒ ล้มพร้อมเหตุ (ไม่ถอยไป OA ร้าน)</summary>
+    Task<LinePushResult> TryPushFlexViaNextAccAsync(string lineUserId, string altText, object flexContents);
+
     /// <summary>Push a LINE Flex Message bubble to a specific user.
     /// <paramref name="flexContents"/> is the "contents" payload LINE
     /// expects (the bubble shape with header / body / footer / actions

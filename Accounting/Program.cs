@@ -664,6 +664,7 @@ builder.Services.AddScoped<IDocumentEmailService, DocumentEmailService>();
 // Error logging service
 builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
 builder.Services.AddScoped<IPosService, PosService>();
+builder.Services.AddScoped<INextAccLineConfig, NextAccLineConfig>();   // รอบ 212 D — ค่าตั้ง LINE OA กลาง: หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (push ผ่าน OA กลาง) · มิเตอร์ช่องกลาง = no-op จนกว่าโควตาแพ็ก A เข้า (ผู้ประสานงานต่อสายตอน merge)
 builder.Services.AddScoped<ISharedMessageMeter, NotifyQuotaSharedMessageMeter>();   // รอบ 212: สรุปรายวันนับโควตาช่องกลางของแพ็ก A (คำตัดสิน §10)

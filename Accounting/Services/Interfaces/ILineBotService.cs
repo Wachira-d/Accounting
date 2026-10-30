@@ -23,8 +23,9 @@ public interface ILineBotService
     Task<string?> HandlePostbackAsync(string lineUserId, string data);
 
     /// <summary>Verify the X-Line-Signature header matches the body
-    /// signed by the channel secret. Used by the webhook controller.</summary>
-    bool VerifySignature(string body, string? headerSignature);
+    /// signed by the channel secret. Used by the webhook controller.
+    /// รอบ 212 D: async — secret มาจาก <c>INextAccLineConfig</c> (หน้าแอดมินก่อน · config Line:* fallback)</summary>
+    Task<bool> VerifySignatureAsync(string body, string? headerSignature);
 
     /// <summary>Reply to a user via the LINE Messaging API push endpoint
     /// using the configured ChannelAccessToken.</summary>

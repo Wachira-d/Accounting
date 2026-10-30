@@ -1,3 +1,20 @@
+## CMS212D — ค่าตั้ง LINE OA กลางของ NextAcc บนหน้าแอดมิน + สลิปเงินเดือนผ่าน OA ที่ผูกจริง (รอบ 212 แพ็ก D)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS212D-01 | หน้าแอดมินมี token · config มี token+secret อีกชุด | ใช้ชุดหน้าแอดมิน**ทั้งชุด** (ไม่ยืม secret ของ config) · Source=admin | `Admin_token_wins_as_a_whole_set_without_mixing_config_secret` |
+| CMS212D-02 | **ทิศตรงข้าม** หน้าแอดมินไม่มี token (มีแค่ secret/basic) · deployment เดิมตั้ง env | ใช้ config `Line:*` ทั้งชุด · ไม่มีแถว SiteSettings ก็ใช้ config | `No_admin_token_falls_back_to_config_entirely_so_env_deployments_keep_working` · `No_admin_row_at_all_uses_config` · `Resolver_without_db_reads_config_only` |
+| CMS212D-03 | ไม่มี token ทั้งสองที่ | HasToken=false · Source=none · ข้อความ `NotConfiguredMessage` | `Neither_has_token_reports_none_and_keeps_admin_values_visible` · `Resolver_with_nothing_configured_says_not_configured` |
+| CMS212D-04 | ช่องลับว่าง / ติ๊กล้าง / พิมพ์ค่าใหม่+ติ๊กล้าง | คงค่าเดิม / ล้าง / ค่าใหม่ชนะ (เข้ารหัส) | `Secret_blank_keeps_existing_value` · `Secret_clear_requires_explicit_flag` |
+| CMS212D-05 | token เข้ารหัสแล้ว round-trip · คีย์ระบบเปลี่ยน | ถอดได้ = ใช้ · ถอดไม่ได้ = ไม่ใช้ค่าว่าง (ถอยไป config + หน้าแอดมินเตือนให้กรอกใหม่) | `Secret_round_trips_through_secret_protector_into_resolved_settings` |
+| CMS212D-06 | ช่องไม่ลับ null / "" / ค่าใหม่ | คง / ล้าง / ค่าใหม่ | `Text_null_keeps_empty_clears` · `Blank_inputs_mean_clear_and_are_valid` |
+| CMS212D-07 | Basic ID `123abcde` · `@bad id` · URL · Bot User ID ตัวใหญ่ · Group ID ขึ้นต้น U | เติม `@` / ปฏิเสธพร้อมเหตุ | `Basic_id_valid_is_normalized` · `Basic_id_invalid_is_rejected` · `Bot_user_id_and_group_id_formats` · `Invalid_basic_id_in_storage_is_not_used` |
+| CMS212D-08 | พนักงานผูก "สลิป 123456" ผ่าน OA กลาง (หรือผูกบัญชี ERP) · ร้านตั้ง OA เอง | ส่งสลิปผ่าน **OA กลาง** · LINE ปฏิเสธ ⇒ `LineFailed` (ไม่กลืน) | `Payslip_recipient_bound_via_nextacc_goes_through_nextacc` · `Payslip_recipient_from_user_binding_is_nextacc_and_none_is_null` · rule `PayslipLineDeliveryService.SendPayslipAsync` |
+| CMS212D-09 | **ทิศตรงข้าม** LINE ID ที่ HR กรอกเอง (ไม่มีแถวรหัสผูก) | เส้นเดิม (OA ร้านถ้าตั้ง ไม่งั้น OA กลาง) | `Payslip_recipient_typed_by_hr_keeps_legacy_company_route` |
+| CMS212D-10 | Flex ผ่าน OA กลาง: resolver ให้ token หน้าแอดมิน · ไม่ฉีด resolver · ไม่มี token · ผู้รับว่าง | ใช้ token หน้าแอดมิน / config / ล้มพร้อมเหตุไม่ยิง HTTP | `Flex_via_nextacc_uses_admin_token_over_config` · `Flex_via_nextacc_falls_back_to_config_token_when_not_injected` · `Flex_via_nextacc_without_any_token_fails_with_reason_and_sends_nothing` |
+| CMS212D-11 | โค้ดใหม่อ่าน `_config["Line:ChannelSecret"]` เอง | checker ฟ้อง (ยกเว้นไฟล์ resolver) | `tools/required_call_site_check.py` LINE_CONFIG_FORBID + self-test |
+| CMS212D-12 | (มือ) แอดมินกรอก token+secret → ทดสอบ → กดเติม Basic ID/Bot User ID → บันทึก → ส่ง "สลิป xxxxxx" ที่ OA | ป้าย "ตั้งแล้ว" · ระบบใช้: ค่าในหน้านี้ · ผูกสำเร็จ · ส่งสลิปถึง | manual |
+
 ## CMS212C — แจ้งเตือนพนักงานผ่าน OA กลาง + สรุปประจำวันทาง LINE (รอบ 212 C · คำตัดสินข้อ 5 · `erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md` §0/§5/§7)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -102,7 +119,8 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **689 ไฟล์ · 7,029 `[Fact]` + 1,119 `[Theory]` (5,230 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **690 ไฟล์ · 7,049 `[Fact]` + 1,121 `[Theory]` (5,236 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+
 
 
 

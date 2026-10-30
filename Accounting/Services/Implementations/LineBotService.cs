@@ -34,9 +34,11 @@ public class LineBotService : ILineBotService
         IDocumentService docService, IPayslipLineDeliveryService payslipLine,
         IOcrService ocr, IOcrQuotaService ocrQuota, IChatbotService chat,
         IPermissionService perms, IChatRateLimiter rateLimiter, IEmailService email,
+        INextAccLineConfig nextAccLine,
         ICustomerLineLinkService? customerLinks = null)
     {
         _customerLinks = customerLinks;
+        _nextAccLine = nextAccLine;
         _db = db; _config = config; _httpFactory = httpFactory;
         _logger = logger; _docService = docService; _payslipLine = payslipLine;
         _ocr = ocr; _ocrQuota = ocrQuota; _chat = chat; _perms = perms;
@@ -47,6 +49,8 @@ public class LineBotService : ILineBotService
     private readonly IEmailService _email;
     /// <summary>รอบ 211: ลูกค้าปลายทางผูก LINE ผ่าน OA กลาง ("ผูก LN-…") — แยกจากการผูกบัญชีผู้ใช้ ERP ("ผูก 123456")</summary>
     private readonly ICustomerLineLinkService? _customerLinks;
+    /// <summary>รอบ 212 D: token/secret ของ OA กลาง — หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)</summary>
+    private readonly INextAccLineConfig _nextAccLine;
 
     /// <summary>เพดานความพยายาม "ผูกบัญชี" ต่อ LINE user หนึ่งราย
     ///
@@ -83,10 +87,12 @@ public class LineBotService : ILineBotService
         return code;
     }
 
-    /// <summary>OA ของ NextAcc — secret จาก config · สูตรอยู่ที่ <see cref="LineWebhookSignature"/> ตัวเดียว (รอบ 211: ใช้ร่วมกับ webhook ต่อบริษัท)</summary>
-    public bool VerifySignature(string body, string? headerSignature)
+    /// <summary>OA ของ NextAcc — secret จาก <see cref="INextAccLineConfig"/> (หน้าแอดมินก่อน · config fallback · รอบ 212 D) ·
+    /// สูตรอยู่ที่ <see cref="LineWebhookSignature"/> ตัวเดียว (รอบ 211: ใช้ร่วมกับ webhook ต่อบริษัท)</summary>
+    public async Task<bool> VerifySignatureAsync(string body, string? headerSignature)
     {
-        return LineWebhookSignature.Verify(_config["Line:ChannelSecret"], body, headerSignature);
+        var nx = await _nextAccLine.GetAsync();
+        return LineWebhookSignature.Verify(nx.ChannelSecret, body, headerSignature);
     }
 
     private const string BindThrottledReply =
@@ -469,7 +475,7 @@ public class LineBotService : ILineBotService
         }
 
         // ── 1) ดึงไฟล์จริงจาก LINE Content API ──
-        var token = _config["Line:ChannelAccessToken"];
+        var token = (await _nextAccLine.GetAsync()).AccessToken;
         if (string.IsNullOrEmpty(token))
         {
             _logger.LogWarning("LINE ChannelAccessToken not configured — image intake skipped");
@@ -891,7 +897,7 @@ public class LineBotService : ILineBotService
     /// ผู้ใช้แชทกับบอทช่องนี้ ใช้ token บริษัท (LINE Notify OA) จะส่งไม่ถึง.</summary>
     private async Task<bool> PushFlexAsync(string lineUserId, string altText, object contents)
     {
-        var token = _config["Line:ChannelAccessToken"];
+        var token = (await _nextAccLine.GetAsync()).AccessToken;
         if (string.IsNullOrEmpty(token)) return false;
         var client = _httpFactory.CreateClient();
         client.DefaultRequestHeaders.Add("Authorization", "Bearer " + token);
@@ -1018,7 +1024,7 @@ public class LineBotService : ILineBotService
 
     public async Task ReplyAsync(string lineUserId, string text)
     {
-        var token = _config["Line:ChannelAccessToken"];
+        var token = (await _nextAccLine.GetAsync()).AccessToken;
         if (string.IsNullOrEmpty(token))
         {
             _logger.LogWarning("LINE ChannelAccessToken not configured — bot reply skipped.");

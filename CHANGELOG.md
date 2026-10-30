@@ -5140,7 +5140,7 @@ _DECISIONS 153a + Makro หน้า 2/2 สแกนซ้ำ (2026-10-16 · �
 `KeepItemsReason` ผังต่างกัน (แถวที่ไม่มีผังของตัวเอง → ผังหัวใบ) บล็อกตารางชนะ · `DiscountRows` ไม่รับเมื่อทุกแถวเป็นส่วนลดหรือ Σ ≠ รวมส่วนลด · `OcrTotalAnchor.Plan` สาขา Confirmed
 ไม่แก้ฐาน · คำตัดสินเจ้าของ 153a: รายการลงยอด ⇒ รายการ · ไม่ลง + ตารางลงยอด ⇒ ตาราง (ถอนเลขหน้า P2-5 · ผัง/โครงการต่างกัน = ยอดมากสุด + หมายเหตุ) · ไม่ลงทั้งคู่ ⇒ รายการ + [Σ-GAP] ·
 `AllDiscountRows` · แถวส่วนลดบางส่วน · ด่านตารางเทียบยอดที่กระดาษพิสูจน์ (`paperTotal`) · `OcrExtractionVersion` 6 → 7 (รวมหลังทีม OCR 8 ซึ่งใช้ 6) · Corpus +3 ใบ · ใบเดิมที่เปลี่ยน 1 ใบ (`makro-p1p2-no-row-codes-synthetic`
-⇒ ตาราง · ตั้งใจ) + ช่องใหม่ `PlannedHeaderSubTotal`/`SummaryDims` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit <pending>_
+⇒ ตาราง · ตั้งใจ) + ช่องใหม่ `PlannedHeaderSubTotal`/`SummaryDims` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 9c792d9f_
 `AllDiscountRows` · แถวส่วนลดบางส่วน · ด่านตารางเทียบยอดที่กระดาษพิสูจน์ (`paperTotal`) · `OcrExtractionVersion` 5 → 6 · Corpus +3 ใบ · ใบเดิมที่เปลี่ยน 1 ใบ (`makro-p1p2-no-row-codes-synthetic`
 ⇒ ตาราง · ตั้งใจ) + ช่องใหม่ `PlannedHeaderSubTotal`/`SummaryDims` — คอมไพล์และรันเทสต์ในเครื่องนี้แล้ว — commit 9809b71b_
 
@@ -5744,3 +5744,12 @@ _รอบ 212 ฝ่ายค้าน (A+C) — blocking เงิน 3 ข้
 (S4) สรุปรายวันที่โควตาเต็มไม่ใช่สถานะจบ (ลองใหม่จนถึง 23:00) · lease claim 10 นาที · มิเตอร์สรุปรายวันแจ้งเจ้าของเมื่อเต็ม ·
 **ผู้ประสานงาน**: เพดานแม่แบบเริ่มต้น = ไม่จำกัด (ถอด DO block ที่ตั้ง 100/300/1000/5000 · ตัวเลขเป็นคำใบ้ที่หน้าแอดมิน) · เทสต์ +9 (CMS212A-23..31) · `required_call_site_check` +10/แก้ 1 ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit b9dcd595_
+
+_รอบ 212 แพ็ก D (ค่าตั้ง LINE OA กลางบนหน้าแอดมิน — เจ้าของถาม "Basic ID ของ LINE OA NextAcc ตั้งในส่วนผู้ดูแลระบบไหม" คำตอบเดิม: ไม่ — อ่านจาก config อย่างเดียว):
+(1) `SiteSettings.LineMessaging{ChannelAccessToken,ChannelSecret,BasicId,BotUserId,GroupId}` (ความลับเข้ารหัส) + `Helpers/NextAccLineConfigMigration` ·
+(2) ผู้อ่านตัวเดียว `INextAccLineConfig`/`NextAccLineConfig` + กติกา `Helpers/NextAccLineConfigRule` (หน้าแอดมินก่อนทั้งชุด · config `Line:*` fallback · ว่าง/ล้าง · ตัวตรวจรูปแบบ) —
+แทนการอ่าน `_config["Line:…"]` เดิม 11 จุดใน `LineBotService`/`LineNotifyService`/`PayslipLineDeliveryService`/`CustomerLineLinkService` (เหลือ 0 นอก resolver · ด่าน LINE_CONFIG_FORBID) ·
+`ILineBotService.VerifySignature` → `VerifySignatureAsync` · (3) `AdminLineMessagingController` (`GET/PUT /api/admin/line-messaging` · `POST …/test` → LINE `/v2/bot/info`) + แท็บ "LINE OA กลาง" ใน `admin/site-settings.html` ·
+(4) สลิปเงินเดือน: ผู้รับที่ผูกผ่าน OA กลางส่งผ่าน OA กลาง (`ILineNotifyService.TryPushFlexViaNextAccAsync` ใหม่ · ผลล้มไม่ถูกกลืน) · LINE ID ที่ HR กรอกเองคงเส้นเดิม · ปุ่มเพิ่มเพื่อนชี้ OA กลาง ·
+`DocumentLineDeliveryService` ผู้รับเป็นลูกค้า (ไม่ใช่บั๊กคลาสนี้ · ไม่แก้) · (5) เทสต์ `NextAccLineConfigTests` (TEST_PLAN CMS212D-01..10) · `required_call_site_check` +8 กติกา/แก้ 3 + สแกนทั้งเรพ 1 ชุด (negative test ในตัว) ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 9c792d9f_

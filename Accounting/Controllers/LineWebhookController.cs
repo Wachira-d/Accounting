@@ -35,7 +35,7 @@ public class LineWebhookController : ControllerBase
         var body = await reader.ReadToEndAsync();
 
         var sig = Request.Headers["X-Line-Signature"].FirstOrDefault();
-        if (!_bot.VerifySignature(body, sig))
+        if (!await _bot.VerifySignatureAsync(body, sig))
         {
             _logger.LogWarning("LINE webhook signature mismatch");
             return Unauthorized();
@@ -44,7 +44,7 @@ public class LineWebhookController : ControllerBase
         try
         {
             using var doc = JsonDocument.Parse(body);
-            // รอบ 211 ฝ่ายค้าน ข้อ 4: bot userId ของ OA กลาง (ลายเซ็นผ่านแล้ว) ⇒ ลิงก์ลูกค้าเก็บปลายทาง + ตรวจกับ Line:BotUserId
+            // รอบ 211 ฝ่ายค้าน ข้อ 4: bot userId ของ OA กลาง (ลายเซ็นผ่านแล้ว) ⇒ ลิงก์ลูกค้าเก็บปลายทาง + ตรวจกับ bot userId ของ OA กลาง (INextAccLineConfig)
             var destination = doc.RootElement.TryGetProperty("destination", out var dst) ? dst.GetString() : null;
             if (!doc.RootElement.TryGetProperty("events", out var events)) return Ok();
             foreach (var ev in events.EnumerateArray())

@@ -2485,11 +2485,11 @@ const Page = {
       const res = await api.issueEmployeeLineBindCode(empId);
       const d = res?.data || res;
       const addLink = d?.addFriendUrl
-        ? `<div style="margin-top:12px"><a class="btn btn-secondary" href="${d.addFriendUrl}" target="_blank" rel="noopener">➕ เพิ่มเพื่อน LINE OA บริษัท</a></div>`
-        : `<div class="text-xs text-gray-400" style="margin-top:12px">* ยังไม่ได้ตั้งค่า LINE OA ของบริษัท — ให้พนักงานค้นหา/เพิ่มเพื่อน OA เอง แล้วตั้งค่า LINE OA Basic ID ที่หน้าตั้งค่า</div>`;
+        ? `<div style="margin-top:12px"><a class="btn btn-secondary" href="${d.addFriendUrl}" target="_blank" rel="noopener">➕ เพิ่มเพื่อน LINE OA ของ NextAcc</a></div>`
+        : `<div class="text-xs text-gray-400" style="margin-top:12px">* ระบบยังไม่ได้ตั้ง Basic ID ของ LINE OA กลาง (NextAcc) — แจ้งผู้ดูแลระบบให้ตั้งที่ ตั้งค่าเว็บไซต์ → LINE OA กลาง</div>`;
       const html = `
         <div style="text-align:center;padding:8px">
-          <div class="text-sm text-gray-500">ให้พนักงานเพิ่มเพื่อน LINE OA บริษัท แล้วพิมพ์ข้อความ:</div>
+          <div class="text-sm text-gray-500">ให้พนักงานเพิ่มเพื่อน LINE OA ของ NextAcc แล้วพิมพ์ข้อความ:</div>
           <div style="font-size:15px;margin:10px 0"><b>สลิป ${d.code}</b></div>
           <div style="font-size:34px;font-weight:800;letter-spacing:6px;color:#1e40af">${d.code}</div>
           <div class="text-xs text-gray-400" style="margin-top:8px">รหัสหมดอายุใน ${d.expiresInHours || 24} ชั่วโมง · ใช้ได้ครั้งเดียว</div>

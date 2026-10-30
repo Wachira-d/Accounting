@@ -591,7 +591,7 @@ public class PayrollController : ControllerBase
             PayslipLineSendResult.Sent => (true, "ส่งสลิปทาง LINE สำเร็จ"),
             PayslipLineSendResult.NotBound => (false, "พนักงานยังไม่ได้ผูก LINE — สร้างรหัสให้พนักงานผูกก่อน"),
             PayslipLineSendResult.NoPayrollDetail => (false, "ไม่พบรายละเอียดเงินเดือนของพนักงานในงวดนี้"),
-            PayslipLineSendResult.LineNotConfigured => (false, "ยังไม่ได้ตั้งค่า LINE Messaging API ของบริษัท"),
+            PayslipLineSendResult.LineNotConfigured => (false, "ยังไม่ได้ตั้งค่า LINE OA ที่ใช้ส่ง — พนักงานที่ผูกผ่าน LINE ของ NextAcc ใช้ OA กลาง (ผู้ดูแลระบบตั้งที่ ตั้งค่าเว็บไซต์ → LINE OA กลาง) · LINE ID ที่ HR กรอกเองใช้ OA ของบริษัท"),
             _ => (false, "ส่งไม่สำเร็จ กรุณาลองใหม่"),
         };
         return Ok(new ApiResponse<object>(ok, new { result = result.ToString(), message = msg }));

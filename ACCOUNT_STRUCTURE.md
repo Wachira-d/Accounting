@@ -831,6 +831,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 | **Google OAuth** | ✅ | `POST /auth/sso` — เส้นหลักคือ **authorization-code redirect** เหมือน LINE (`ValidateGoogleTokenAsync` แลก code ที่ `oauth2.googleapis.com/token` ด้วย `SiteSettings.GoogleClientSecret` แล้ว verify id_token ที่ tokeninfo); One Tap (`gsi/client`) เหลือเป็นทางสำรองเมื่อยังไม่ได้ตั้ง secret |
 | Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) — ยังใช้ JS SDK |
 | **LINE Login** (OAuth2) | ✅ | authorization-code flow → `AuthService.ValidateLineTokenAsync` (channel secret ไม่ออกจาก server); คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
+| **LINE OA กลาง (Messaging API)** | ✅ รอบ 212 D | ค่าตั้งระดับแพลตฟอร์มบน `SiteSettings.LineMessaging*` (token/secret เข้ารหัส) ตั้งที่ `/admin/site-settings.html` แท็บ "LINE OA กลาง" (SystemAdmin) · ผู้อ่านตัวเดียว `INextAccLineConfig` — หน้าแอดมินก่อนทั้งชุด · ไม่มี token ⇒ config `Line:*` (deployment เดิม) · webhook `/api/line-webhook` · คนละ channel กับ LINE Login (userId ตรงกันเฉพาะเมื่ออยู่ provider เดียวกัน) |
 | **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
 
 - `AuthProvider` เพิ่มค่า `"Line"` (✅ ใช้งานแล้ว), `"Microsoft"` (📋) — โครงเดิมรองรับอยู่แล้ว
@@ -968,7 +969,7 @@ _Last verified against codebase: 2026-10-12 (rev 42 · รอบ 204 — **§3.1
 
 _Last verified against codebase: 2026-10-01 (rev 41 · รอบ 201 ทีม IN — **§ สาขา** เล่มเลขต่อสาขา: เครื่องออกเลขรับรหัสสาขาแล้ว (🔨) · สวิตช์บริษัท + ผู้เรียกส่งสาขา 📋 — commit a4dfa177)_
 
-_Last verified against codebase: 2026-09-29 (rev 40 · รอบ 200 ทีม Z — **§5.2** ฝ่ายค้านรอบสอง S2-3/S2-6/S2-7: `/api/v1` คำขออ่านไม่ผ่านด่าน + ไม่สร้าง FreeTrial (ข้อ 23 = กันการเขียน) · partner หลวมลงที่ `GET bank/accounts` = ตั้งใจ (ข้อ 21) · `pageFeatures` ให้หน้าเว็บรู้ฟีเจอร์ของ route ข้อมูลหลัก — commit <pending>)_
+_Last verified against codebase: 2026-09-29 (rev 40 · รอบ 200 ทีม Z — **§5.2** ฝ่ายค้านรอบสอง S2-3/S2-6/S2-7: `/api/v1` คำขออ่านไม่ผ่านด่าน + ไม่สร้าง FreeTrial (ข้อ 23 = กันการเขียน) · partner หลวมลงที่ `GET bank/accounts` = ตั้งใจ (ข้อ 21) · `pageFeatures` ให้หน้าเว็บรู้ฟีเจอร์ของ route ข้อมูลหลัก — commit 9c792d9f)_
 
 _ก่อนหน้า: 2026-09-29 (rev 39 · รอบ 200 ทีม S2 — **§5.2** คำตัดสินข้อ 21–24 + ฝ่ายค้าน S200-1..9: คีย์ `RouteFeatureMap` ตรง route จริง ·
 คีย์ใหม่เป็นเงาสำหรับทุกผู้เรียกจนกว่ากดบังคับ · `GET bank/accounts`/`warehouses` ไม่ผูก · `/api/v1` ตรวจสถานะผ่านสวิตช์เดียว · config เดิม Enforce ไม่หลวม ·
@@ -977,25 +978,25 @@ _ก่อนหน้า: 2026-09-29 (rev 39 · รอบ 200 ทีม S2 — 
 _ก่อนหน้า: 2026-09-29 (rev 38 · รอบ 200 ทีม P2 — **§3.1d** settlement เฟส 2: `PaymentIntent.SettlementBatchId` หนึ่งรายการหนึ่งเจ้าของ (`GatewayBatchIntentRules`) ·
 ช่องทางที่ผูก gateway config ต้องมีโหมดภาษีค่าธรรมเนียมตรงกับ config — commit 4d3b7ea9)_
 
-_ก่อนหน้า: 2026-09-28 (rev 37 · รอบ 198 ข้อ 5 ทีม G — **§5.2 gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ**: หาบริษัทจาก route ด้วย `TenantCompanyId` ตัวเดียวกับ TenantAccessMiddleware · สวิตช์ `SiteSettings.SubscriptionEnforcementMode` (ค่าตั้งต้น Shadow) · ตาราง `SubscriptionGateShadowHits` · หน้าแอดมิน — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 37 · รอบ 198 ข้อ 5 ทีม G — **§5.2 gate แพ็กเกจ/ระงับบริษัทบนหน้าเว็บ**: หาบริษัทจาก route ด้วย `TenantCompanyId` ตัวเดียวกับ TenantAccessMiddleware · สวิตช์ `SiteSettings.SubscriptionEnforcementMode` (ค่าตั้งต้น Shadow) · ตาราง `SubscriptionGateShadowHits` · หน้าแอดมิน — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 36 · รอบ 199 ทีม H — `/api/v1/documents/{id}/approve` ปฏิเสธ 422 `APPROVE-SCAN-VAT-NOT-ON-PAPER` / `APPROVE-WARNINGS-NEED-ACK` (คำตัดสินเจ้าของรอบ 198 ข้อ 6 · ฝ่ายค้าน B-1) — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 36 · รอบ 199 ทีม H — `/api/v1/documents/{id}/approve` ปฏิเสธ 422 `APPROVE-SCAN-VAT-NOT-ON-PAPER` / `APPROVE-WARNINGS-NEED-ACK` (คำตัดสินเจ้าของรอบ 198 ข้อ 6 · ฝ่ายค้าน B-1) — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 35 · รอบ 198 ทีม S3 — **§3.1d** คอลัมน์ `SettlementLines.MatchDecidedByUser` · คีย์ `ExternalTxnId` v2 · ล็อกต่อช่องทางตัวเดียว · `PaymentIntent.SettlementBatchId` รอบแรกเป็นเจ้าของทั้งผู้นำเข้าและผู้ลงบัญชี — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 35 · รอบ 198 ทีม S3 — **§3.1d** คอลัมน์ `SettlementLines.MatchDecidedByUser` · คีย์ `ExternalTxnId` v2 · ล็อกต่อช่องทางตัวเดียว · `PaymentIntent.SettlementBatchId` รอบแรกเป็นเจ้าของทั้งผู้นำเข้าและผู้ลงบัญชี — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 34 · รอบ 198 เฟส 1 ทีม D — **§3.1d** 🔨→✅: `SettlementController` + หน้า `settlements`/`settlement-channels` · สิทธิ์ `Settlement.*` 4 คีย์ — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 34 · รอบ 198 เฟส 1 ทีม D — **§3.1d** 🔨→✅: `SettlementController` + หน้า `settlements`/`settlement-channels` · สิทธิ์ `Settlement.*` 4 คีย์ — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 33 · รอบ 198 เฟส 1 ทีม C — **§3.1d** ผู้ลงบัญชีรอบโอน `ISettlementPostingService` · `PaymentIntent.SettlementBatchId` มีผู้เขียน — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 33 · รอบ 198 เฟส 1 ทีม C — **§3.1d** ผู้ลงบัญชีรอบโอน `ISettlementPostingService` · `PaymentIntent.SettlementBatchId` มีผู้เขียน — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-28 (rev 32 · รอบ 198 เฟส 1 ทีม B — **§3.1d**: service ช่องทาง/นำเข้า · ผู้เขียน `PaymentIntent.SettlementBatchId` · R-A1/R-A2 — commit <pending>) · ก่อนหน้า 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit <pending>)_
+_ก่อนหน้า: 2026-09-28 (rev 32 · รอบ 198 เฟส 1 ทีม B — **§3.1d**: service ช่องทาง/นำเข้า · ผู้เขียน `PaymentIntent.SettlementBatchId` · R-A1/R-A2 — commit 9c792d9f) · ก่อนหน้า 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit <pending>)_
+_ก่อนหน้า: 2026-09-25 (rev 31 · รอบ 198 เฟส 1 ทีม A — **§3.1d Settlement**: `SettlementChannel/Batch/Line` · ผังพักย่อย 11341–11349 ผ่าน `SettlementChannelAccounts` · ผัง 11350/53170/57140 — commit 9c792d9f)_
 
-_ก่อนหน้า: 2026-09-25 (rev 30 · รอบ 195 ทีม I3 — `/api/v1/documents/{id}/approve` คืน `scanVatNotOnPaper` แยกจาก `scanAmountGap` — commit <pending>)_
+_ก่อนหน้า: 2026-09-25 (rev 30 · รอบ 195 ทีม I3 — `/api/v1/documents/{id}/approve` คืน `scanVatNotOnPaper` แยกจาก `scanAmountGap` — commit 9c792d9f)_
 
 _ก่อนหน้า: 2026-09-25 (rev 29 · รอบ 194 ทีม C — **§4 ประเภทเงินมัดจำ** (`DepositKind` ต่อบริษัท · API `/deposit-kinds` ·_
 _สิทธิ์ `CompanySettings.Edit` + ปฏิเสธ API key · integration `depositKindCode` ไม่รู้จัก = 400 · เงินประกัน + ขับ JE = 400 `DEP-SEC-DEDUCT` ·_
-_หมายเหตุ mismatch ผ่าน `ResolveKind`) — commit <pending>)_
+_หมายเหตุ mismatch ผ่าน `ResolveKind`) — commit 9c792d9f)_
 
 _Last verified against codebase: 2026-09-24 (rev 28 · รอบ 193 — **§3.1c การเข้าถึงด้วย API key**: คีย์ `int_` สิทธิ์แยก อ่าน/เขียน/ลบ + legacy 90 วัน ·_
 _ออก/ผูกผู้ใช้เฉพาะเจ้าของ · `EnableApiAccess` คุมคีย์ `acc_` ที่ออกแล้ว · งานเจ้าของ/ทำลายหลักฐาน/ตั้งนโยบายปฏิเสธ API key (`OwnerActionGuard` ·_
