@@ -1488,6 +1488,21 @@ public enum BookingType
     PrePayment = 4
 }
 
+/// <summary>รอบ 218 (คำตัดสินข้อ 177): นโยบายรับชำระล่วงหน้าของการจองนัดหมาย — ตั้งที่เว็บ (<c>SiteBookingSettings.PaymentMode</c>) และทับรายบริการได้
+/// (<c>SiteBookingService.PaymentMode</c>) · NULL ทั้งสองชั้น = แบบเดิม (ตามชนิดบริการ) · ตัวตัดสินเดียว <c>Helpers/BookingPaymentPolicy</c> ·
+/// เก็บเงินได้เฉพาะบริการชนิด <see cref="BookingType.PrePayment"/> (ใบรับมัดจำลงวันที่รับเงิน §78/1)</summary>
+public enum BookingPaymentMode
+{
+    /// <summary>ไม่รับชำระล่วงหน้า</summary>
+    Off = 0,
+    /// <summary>มัดจำ — บังคับ (ไม่จ่ายในเวลา ⇒ ยกเลิกอัตโนมัติเมื่อตั้งกำหนดเวลา)</summary>
+    DepositRequired = 1,
+    /// <summary>มัดจำ — ไม่บังคับ (ลูกค้าเลือกจ่ายตอนจองหรือไม่)</summary>
+    DepositOptional = 2,
+    /// <summary>ชำระเต็มจำนวนก่อน — บังคับ</summary>
+    FullRequired = 3,
+}
+
 /// <summary>จังหวะออกใบกำกับภาษีของการจองแบบ <see cref="BookingType.Guaranteed"/> (ค่าตั้งระดับไซต์ · คำตัดสินเจ้าของ 2026-10-22 ข้อ 155 ·
 /// ตัวตัดสินเดียว <c>Helpers/BookingInvoiceTimingPolicy</c>) · 0 = พฤติกรรมเดิม (คอลัมน์ DEFAULT 0 ⇒ ไซต์เดิมไม่เปลี่ยน)</summary>
 public enum BookingInvoiceTiming
