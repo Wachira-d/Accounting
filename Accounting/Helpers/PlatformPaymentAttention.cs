@@ -74,7 +74,7 @@ public static class PlatformPaymentAttention
     }
 
     /// <summary>ผู้รับกระดิ่ง: ผู้ดูแลระบบแพลตฟอร์มที่เป็นสมาชิกบริษัทผู้ให้บริการ · ไม่มี = รายการว่าง (ยังมีหน้าแอดมิน + audit)</summary>
-    public static async Task<List<Guid>> PlatformAdminUserIdsAsync(AccountingDbContext db, Guid platformCompanyId, CancellationToken ct = default)
+    private static async Task<List<Guid>> PlatformAdminUserIdsAsync(AccountingDbContext db, Guid platformCompanyId, CancellationToken ct = default)
         => await db.CompanyUsers.AsNoTracking()
             .Where(cu => cu.CompanyId == platformCompanyId && cu.User.IsSystemAdmin)
             .Select(cu => cu.UserId).Distinct().ToListAsync(ct);
