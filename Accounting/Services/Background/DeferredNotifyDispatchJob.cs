@@ -24,7 +24,8 @@ public class DeferredNotifyDispatcher
     }
 
     public sealed record Claimed(Guid Id, Guid CompanyId, Guid SiteId, string Kind, Guid EntityId, int Attempts);
-    public sealed record RunResult(int Claimed, int Done, int Retried, int GaveUp);
+    /// <summary>Done = ส่งแล้ว · Skipped = ปิดโดยไม่ส่ง (ฝ่ายค้าน S4 — ยกเลิกก่อนถึงคิว · เหตุอยู่ที่ Note)</summary>
+    public sealed record RunResult(int Claimed, int Done, int Retried, int GaveUp, int Skipped = 0);
 
     /// <summary>หยิบแถวที่ถึงกำหนดพร้อมประทับ lease ในคำสั่งเดียว (หลายเครื่อง/สองรอบซ้อนไม่ได้แถวเดียวกัน) ·
     /// <paramref name="onlyCompanyId"/> = เดินเฉพาะบริษัทเดียว (Db test บนฐานร่วม · เครื่องมือซ่อม) — job ส่ง null (ทุกบริษัท)</summary>
@@ -85,11 +86,11 @@ public class DeferredNotifyDispatcher
         using (var claimScope = _scopeFactory.CreateScope())
             batch = await ClaimAsync(claimScope.ServiceProvider.GetRequiredService<AccountingDbContext>(), nowUtc, ct, onlyCompanyId);
 
-        int done = 0, retried = 0, gaveUp = 0;
+        int done = 0, retried = 0, gaveUp = 0, skipped = 0;
         foreach (var row in batch)
         {
             ct.ThrowIfCancellationRequested();
-            string? error = null;
+            string? error = null, skipNote = null;
             using (var scope = _scopeFactory.CreateScope())
             {
                 try
@@ -98,10 +99,10 @@ public class DeferredNotifyDispatcher
                     switch (row.Kind)
                     {
                         case DeferredNotifyPolicy.BookingCreated:
-                            await sp.GetRequiredService<ICmsBookingService>().DispatchCreatedNotifyAsync(row.CompanyId, row.SiteId, row.EntityId);
+                            skipNote = await sp.GetRequiredService<ICmsBookingService>().DispatchCreatedNotifyAsync(row.CompanyId, row.SiteId, row.EntityId);
                             break;
                         case DeferredNotifyPolicy.OrderCreated:
-                            await sp.GetRequiredService<ICmsCommerceService>().DispatchCreatedNotifyAsync(row.CompanyId, row.SiteId, row.EntityId);
+                            skipNote = await sp.GetRequiredService<ICmsCommerceService>().DispatchCreatedNotifyAsync(row.CompanyId, row.SiteId, row.EntityId);
                             break;
                         default:
                             error = $"ไม่รู้จักชนิดคิว '{row.Kind}'";
@@ -122,8 +123,8 @@ public class DeferredNotifyDispatcher
             {
                 await db.DeferredNotifications.Where(d => d.Id == row.Id && d.CompanyId == row.CompanyId)
                     .ExecuteUpdateAsync(u => u.SetProperty(d => d.DoneAt, (DateTime?)DateTime.UtcNow).SetProperty(d => d.ClaimedUntil, (DateTime?)null)
-                        .SetProperty(d => d.LastError, (string?)null), ct);
-                done++;
+                        .SetProperty(d => d.LastError, (string?)null).SetProperty(d => d.Note, skipNote), ct);
+                if (skipNote == null) done++; else skipped++;
                 continue;
             }
             var (giveUp, next) = DeferredNotifyPolicy.AfterFailure(row.Attempts, DateTime.UtcNow);
@@ -138,7 +139,7 @@ public class DeferredNotifyDispatcher
             }
             else retried++;
         }
-        return new RunResult(batch.Count, done, retried, gaveUp);
+        return new RunResult(batch.Count, done, retried, gaveUp, skipped);
     }
 }
 

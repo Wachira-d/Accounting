@@ -51,38 +51,37 @@ public partial class CmsCommerceService
     private static DateOnly? ReadyDateOf(OrderNotifyFacts f) => f.EarliestReadyDate is DateTime d ? DateOnly.FromDateTime(d) : null;
 
     /// <summary>รอบ 217 (ข้อ 175 ง): จุดเข้าของคิวแจ้งเตือนตามหลัง (<c>DeferredNotifyDispatcher</c>) — เดิม CreateOrderAsync เรียก
-    /// <see cref="NotifyOrderCreatedAsync"/> ในคำขอ ⇒ ลูกค้ารอ SMTP/LINE ก่อนเห็นหน้าสำเร็จ</summary>
-    public Task DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid orderId)
+    /// <see cref="NotifyOrderCreatedAsync"/> ในคำขอ ⇒ ลูกค้ารอ SMTP/LINE ก่อนเห็นหน้าสำเร็จ ·
+    /// ฝ่ายค้าน S4: ถึงคิวแล้วออเดอร์ยกเลิก/คืนเงิน/ถูกลบ ⇒ ไม่ส่ง — คืนเหตุ · ฝ่ายค้าน S3: ข้อยกเว้นโยนออกให้ dispatcher ลองใหม่</summary>
+    public async Task<string?> DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid orderId)
     {
-        return NotifyOrderCreatedAsync(companyId, siteId, orderId);
+        var status = await _db.SiteOrders.AsNoTracking()
+            .Where(o => o.Id == orderId && o.SiteId == siteId && o.CompanyId == companyId)
+            .Select(o => (SiteOrderStatus?)o.Status).FirstOrDefaultAsync();
+        if (DeferredNotifyPolicy.OrderSkipReason(status) is string skip) return skip;
+        await NotifyOrderCreatedAsync(companyId, siteId, orderId);
+        return null;
     }
 
-    /// <summary>ออเดอร์ใหม่: แจ้งร้าน + ยืนยันถึงลูกค้า</summary>
+    /// <summary>ออเดอร์ใหม่: แจ้งร้าน + ยืนยันถึงลูกค้า — รอบ 217 ฝ่ายค้าน S3: ไม่กลืนข้อยกเว้น (ผู้เรียกเดียว = คิวแจ้งเตือนตามหลัง · ถอย/ลองใหม่) ·
+    /// ผู้รับที่ส่งไม่ถึงยังประทับบนออเดอร์เหมือนเดิม</summary>
     private async Task NotifyOrderCreatedAsync(Guid companyId, Guid siteId, Guid orderId)
     {
         if (_shopNotifier == null) return;
-        try
-        {
-            var f = await LoadOrderNotifyFactsAsync(companyId, siteId, orderId);
-            if (f == null) return;
-            var fulfil = FulfillmentMethod.Label(f.FulfillmentMethod ?? FulfillmentMethod.Delivery);
-            var now = DateTime.UtcNow;
-            var failures = new List<string>();
+        var f = await LoadOrderNotifyFactsAsync(companyId, siteId, orderId);
+        if (f == null) return;
+        var fulfil = FulfillmentMethod.Label(f.FulfillmentMethod ?? FulfillmentMethod.Delivery);
+        var now = DateTime.UtcNow;
+        var failures = new List<string>();
 
-            var shop = CmsNotificationText.ShopNewOrder(f.SiteName, f.OrderNumber, DisplayNameOf(f), f.ShippingPhone, f.TotalAmount, fulfil, ReadyDateOf(f), f.ItemCount);
-            var shopErr = await _shopNotifier.NotifyShopAsync(companyId, siteId, shop, orderEvent: true);
-            if (shopErr != null) failures.Add(CmsNotificationText.FailureNote("ร้าน", shop.Subject, shopErr, now));
+        var shop = CmsNotificationText.ShopNewOrder(f.SiteName, f.OrderNumber, DisplayNameOf(f), f.ShippingPhone, f.TotalAmount, fulfil, ReadyDateOf(f), f.ItemCount);
+        var shopErr = await _shopNotifier.NotifyShopAsync(companyId, siteId, shop, orderEvent: true);
+        if (shopErr != null) failures.Add(CmsNotificationText.FailureNote("ร้าน", shop.Subject, shopErr, now));
 
-            var (customer, custErr) = await SendOrderConfirmationToCustomerAsync(companyId, siteId, orderId, f);
-            if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
+        var (customer, custErr) = await SendOrderConfirmationToCustomerAsync(companyId, siteId, orderId, f);
+        if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
-            await StampOrderNotesAsync(companyId, siteId, orderId, failures);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // คำสั่งซื้อบันทึกแล้ว — ห้ามให้ขั้นแจ้งเตือนทำให้ลูกค้าเห็น "สั่งไม่สำเร็จ" แล้วสั่งซ้ำ · ล้มดังที่บันทึกระบบระดับ Error
-            _logger.LogError(ex, "แจ้งเตือนออเดอร์ใหม่ {OrderId} ล้ม (company {CompanyId})", orderId, companyId);
-        }
+        await StampOrderNotesAsync(companyId, siteId, orderId, failures);
     }
 
     /// <summary>ยืนยันคำสั่งซื้อถึงลูกค้า (ส่วนลูกค้าของ <see cref="NotifyOrderCreatedAsync"/>) — แยกให้ "ส่งซ้ำ" (รอบ 213) เดินเส้นเดียวกันโดยไม่แจ้งร้านซ้ำ ·

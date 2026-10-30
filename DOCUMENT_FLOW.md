@@ -6115,6 +6115,19 @@ _Last verified against codebase: 2026-10-30 (รอบ 217 — Idempotency-Key �
   ช่องที่ร้านเพิ่มเอง (MTO) ไม่เติม · PDPA: รายงาน DSR เข้าถึง/โอนย้ายเพิ่มชนิด/ที่อยู่หลักของที่อยู่ · ลบ/ล้างครอบช่องเดิมอยู่แล้ว
 _Last verified against codebase: 2026-10-30 (รอบ 216 — ข้อมูลส่วนตัวสมาชิก · เติมฟอร์มจอง/สั่งซื้อ/ที่พัก · บันทึกกลับจากฟอร์ม · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 1fd81626)_
 
+  **ฝ่ายค้านรอบ 217** (สถานะปัจจุบัน — ทับข้อความข้างบนที่ขัดกัน):
+  (S1) ด่านซ้ำของการจองเทียบ "รูปคำขอ" ด้วย (จำนวนช่วง · จำนวนคน · ผู้ให้บริการที่ขอ — `DuplicateSubmitGuard.SameBookingShape`) · สมาชิกเจ้าของใบได้ใบเดิม `reused` +
+  ปุ่ม "จองเพิ่มอีกที่" บนหน้าผล (ส่งซ้ำพร้อม `ConfirmAdditional`) · **พนักงาน/หลังบ้านได้ 409 พร้อมเลขที่ใบเดิม** (ไม่คืนใบเงียบ ๆ — `DuplicateSubmitGuard.Decide`) ·
+  (S2) คำขอเดิมยังทำงาน ⇒ 409 in-flight **ก่อน**เทียบเนื้อ · multipart (สลิป) ลายนิ้วมือ = ช่อง + SHA-256 ของไฟล์ ไม่รวม boundary ·
+  (S5) InFlight ค้างเกิน 2 นาที (เครื่องล้ม) ยึดคืนด้วย UPDATE มีเงื่อนไขคำสั่งเดียว (แย่งกัน ได้คนเดียว) · อายุแถวคำนวณใน SQL (`now() - "CreatedAt"`) ·
+  (S6) ลายนิ้วมือ = HMAC-SHA256 ด้วยกุญแจลูกของ `Jwt:Secret` (ว่าง ⇒ โยนตอนเริ่ม) · เส้นล็อกอิน/สมัคร/รหัสผ่าน/โทเคน (`IdempotencyKeyPolicy.IsCredentialPath`) ไม่เข้าระบบคีย์ ·
+  หน้าสมัครสมาชิกไม่ส่งคีย์ · (ข้อสังเกต 1) เก็บไว้ replay เฉพาะ 2xx ที่ไม่ใช่ `success:false` (`IdempotencyKeyPolicy.ShouldStore`) ·
+  (S3) `NotifyBookingCreatedAsync`/`NotifyOrderCreatedAsync` ไม่กลืนข้อยกเว้นแล้ว ⇒ คิวถอย 30 วิ…8 นาที ≤ 5 ครั้งจริง (ผู้รับที่ส่งไม่ถึงยังประทับรายคน) ·
+  (S4) ถึงคิวแล้วการจองยกเลิก/ไม่มา/ถูกลบ · ออเดอร์ยกเลิก/คืนเงิน/ถูกลบ ⇒ **ไม่ส่ง** ปิดแถวพร้อม `DeferredNotifications.Note` (`DeferredNotifyPolicy.*SkipReason`) ·
+  (ข้อสังเกต 6) ออเดอร์: แถวคิวอยู่ใน SaveChanges เดียวกับการสร้างออเดอร์ และ SaveChanges ทั้งสองครั้ง (สร้าง + ยอดสุดท้าย) อยู่ในธุรกรรมเดียว ·
+  (ข้อสังเกต 9) หลังบ้าน "บันทึกรับเงิน" มัดจำการจองส่ง Idempotency-Key (`API.request(..., extraHeaders)`)
+
+_Last verified against codebase: 2026-10-30 (รอบ 217 ฝ่ายค้าน — รูปคำขอ/409 พนักงาน · in-flight ก่อนเทียบเนื้อ · multipart · ยึด InFlight ค้าง · HMAC · ไม่เก็บ success:false · คิวถอยจริง · ไม่ส่งเมื่อยกเลิก · ธุรกรรมออเดอร์ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit a7fa9ea5)_
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 
 **ทางเข้า**: หน้า `/pages/course-credits.html` → `CourseCreditController` (`api/companies/{id}/course-credits`) → `CourseCreditService` ·

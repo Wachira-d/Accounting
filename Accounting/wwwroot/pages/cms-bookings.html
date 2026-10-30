@@ -745,16 +745,18 @@
       // รอบ 205 W2 R-08: พนักงานบันทึกรับเงินมัดจำ — ตัวตัดสิน/ผลอยู่ที่เซิร์ฟเวอร์ (RecordDepositPaymentAsync)
       // รอบ 217 (ข้อ 175): กดซ้ำระหว่างรอ = ไม่บันทึกรับเงินซ้ำ (ล็อกปุ่ม · js/submit-once.js)
       recordPayment(id, btn) {
-        return window.SubmitOnce ? SubmitOnce.run(btn, () => this._recordPaymentNow(id), { busyText: 'กำลังบันทึก…' }) : this._recordPaymentNow(id);
+        // ฝ่ายค้านข้อสังเกต 9: ส่ง Idempotency-Key ด้วย (คีย์ต่อปุ่มของแผงที่เปิด — ลองใหม่ = คีย์เดิม · เปิดแผงใหม่ = คีย์ใหม่)
+        const key = window.SubmitOnce && btn ? SubmitOnce.key(btn) : null;
+        return window.SubmitOnce ? SubmitOnce.run(btn, () => this._recordPaymentNow(id, key), { busyText: 'กำลังบันทึก…' }) : this._recordPaymentNow(id, key);
       },
-      async _recordPaymentNow(id) {
+      async _recordPaymentNow(id, idemKey) {
         const api = Layout.api(); if (!api) return;
         const amount = Number((document.getElementById('bkPayAmount') || {}).value || 0);
         const paidOn = (document.getElementById('bkPayDate') || {}).value || null;
         const reference = ((document.getElementById('bkPayRef') || {}).value || '').trim() || null;
         if (!(amount > 0)) { Layout.toast('ระบุยอดรับเงิน', 'error'); return; }
         try {
-          const res = await api.cmsRecordBookingPayment(this._sid(), id, { amount, paidAt: paidOn ? paidOn + 'T12:00:00Z' : null, reference });
+          const res = await api.cmsRecordBookingPayment(this._sid(), id, { amount, paidAt: paidOn ? paidOn + 'T12:00:00Z' : null, reference }, idemKey);
           (res?.data?.erpNotices || []).forEach(n => Layout.toast(n, 'warning', 15000));
           Layout.toast('บันทึกรับเงินแล้ว');
           await this.viewBooking(id);
