@@ -5787,3 +5787,9 @@ _รอบ 213 ฝ่ายค้าน (ไม่มีข้อ blocking · �
 (d) แอดมิน "คืนค่าตั้งต้น" แพ็ก (e) คำอธิบายอายุแพ็กตรงกับ GREATEST (f) ซื้อแพ็กแล้ววาดรายการค้างส่งใหม่ · ปุ่มกลับข้อความเดิมเมื่อล้ม ·
 (CI) Db test ล้ม: `ResendCount` NOT NULL ไม่มี default ในโมเดล ⇒ INSERT ดิบของ `ClaimAsync` ล้ม — ระบุคอลัมน์ใน INSERT + `HasDefaultValue(0)` · เทสต์ CMS213-11..16 · `required_call_site_check` +7 กติกา/แก้ 7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e877767d · 41bcab58_
 
+_รอบ 215 (2026-10-30 · ทีม UX/UI · คำตัดสินข้อ 176): ออกแบบ "พื้นที่ทำงานรายเว็บ" (`erp-review/2026-10-30/CMS_UX_REDESIGN.md` + mockups · c25cc7aa · 7a6b5fee)
+แล้วทำเฟส 1 — แถบซ้ายหมวดงานเว็บเหลือ "พื้นที่ทำงานเว็บไซต์" + "เว็บไซต์ทั้งหมด" (หน้ารายเว็บ 7 หน้าพับไว้ · id/สิทธิ์เดิม) · ชื่อหมวดจากเซิร์ฟเวอร์
+(`CmsModuleResolver.NavSectionLabel`) · หัวพื้นที่ทำงาน (ตัวสลับเว็บเดียว · ป้ายขอบเขต · แท็บตาม `site.modules`) · lead เฉพาะเว็บที่รับคำขอได้ (`HasLeadSource`) ·
+ภาพรวมทุกไซต์เป็น `?siteId=all` จริง · Front desk/ตั้งค่าที่พักผ่าน `pickProperty` (?siteId= ไม่มีที่พัก ⇒ ไม่ตกไปแห่งแรก) · Portal/รับชำระออนไลน์ย้ายหมวด ·
+sim `cms_workspace_nav_sim.js` (negative 7) · ไม่แตะ cms-edit/storefront/booking · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5a0da695 · 2b0d6f2d · e717d3b5_
+

@@ -6642,3 +6642,24 @@ _Last verified against codebase: 2026-10-29 (รอบ 208 แก้ตามฝ
 - **ตัวเลือกย่อย (variant)**: สินค้ามี variant ที่เปิดขาย ⇒ ต้องเลือก · ราคา variant แทนราคาฐาน (+ตัวเลือกตามสั่ง) · ชื่อบรรทัด "ชื่อ - ตัวเลือก [SKU x]" ไหลไปคำอธิบายบรรทัดเอกสาร · สต็อกจากสินค้า ERP ที่ผูก (ไม่ผูก = สินค้าแม่) · สินค้าไม่มี variant = เดิม
 - Last verified `commit e9801193`
 
+## CMS215 — พื้นที่ทำงานเว็บไซต์ (รอบ 215 เฟส 1 · สถานะปัจจุบัน · `erp-review/2026-10-30/CMS_UX_REDESIGN.md`)
+
+ไม่เปลี่ยนเส้นเอกสาร/เงิน — เปลี่ยน**ทางเข้าและขอบเขตบนจอ**ของหน้ารายเว็บ (คำตัดสินข้อ 176)
+- **แถบซ้าย** (`layout.js` navItems): หมวดงานเว็บ = "🧭 พื้นที่ทำงานเว็บไซต์" (ไม่มี id = ไม่ใช่กุญแจสิทธิ์ใหม่ · แสดงเมื่อผู้ใช้เห็นแท็บรายเว็บ ≥ 1 ·
+  ลิงก์ = แท็บล่าสุดของเว็บล่าสุด `Layout.cmsWorkspaceHref` / `cmsLastSite` ใน localStorage — ความสะดวก, URL `?siteId=` คือความจริง) + "🗂 เว็บไซต์ทั้งหมด · ภาพรวม" (`cms-sites`) ·
+  หน้ารายเว็บ 7 หน้า (`workspaceTab: true` — id เดิม `cms-orders` `cms-store-settings` `cms-bookings` `cms-booking-providers` `lodging` `lodging-settings` `cms-leads`)
+  พับไว้เสมอ (ช่องค้นหาเมนูยังเจอ · roles/settings-features/RoleTemplates/gate ใช้ id เดิม) · ชื่อหมวด = `CompanySettingsResponse.CmsNavLabel`
+  (`CmsModuleResolver.NavSectionLabel`) · Portal ลูกค้า → หมวดขาย · Vendor Portal → หมวดซื้อ · รับชำระเงินออนไลน์ → หมวดตั้งค่า
+- **หัวพื้นที่ทำงาน** (`CmsSiteContext.renderCrumb` — ชื่อเดิม ทุกหน้าที่เรียกได้ของใหม่): ตัวสลับเว็บตัวเดียว (หน้าที่มี `#siteSelector` ⇒ สั่ง select เดิมแล้วซ่อน ·
+  เว็บปลายทางไม่มีงานของหน้านี้ ⇒ ไปแท็บแรกของเว็บนั้น) · ป้ายขอบเขต `scopeBadge` (🌐 เฉพาะเว็บนี้ / 🗂 ทุกไซต์ / 🏢 ระดับบริษัท) ·
+  แท็บ = `site.modules` จากเซิร์ฟเวอร์ (`MODULE_LINKS` + หน้าเว็บ `cms-edit`) กรองด้วย `Layout.hasMenuAccess` เรียง งานเข้า → รายงาน → ตั้งค่า → หน้าเว็บ
+- **เลือกเว็บเมื่อไม่มี `?siteId=`** (`CmsSiteContext.pick`): เว็บล่าสุดถ้าใช้งานของหน้านั้น ⇒ ไม่งั้นเว็บแรกที่ใช้ · `?siteId=` ชนะเสมอ
+- **ที่พัก** (`lodging.html` · `lodging-settings.html`): ตัวเลือกที่พักเดียว `CmsSiteContext.pickProperty` (?propertyId= > ที่พักของ ?siteId= > ของเว็บล่าสุด > แห่งแรก) ·
+  **?siteId= ที่ยังไม่มีที่พักผูก ⇒ บอกตรง ๆ + ลิงก์สร้าง (เดิม Front desk ตกไปที่พักแห่งแรกเงียบ ๆ)** · หัวพื้นที่ทำงานแสดงเว็บที่ที่พักผูก · ที่พักไม่ผูกเว็บ ⇒ หมายเหตุ ·
+  `#propSelector` ซ่อนเมื่อทุกที่พักผูกเว็บแล้ว
+- **lead** (`CmsModuleResolver` fact `HasLeadSource` · ตัวหาเดียว `CmsSiteService.LoadLeadSourceSiteIdsAsync`): บล็อกฟอร์มติดต่อบนหน้าที่ยังไม่ลบ · ฟอร์มส่งเข้าระบบที่เปิดอยู่ · หรือมี lead แล้ว
+  (เดิมทุกเว็บ) — เว็บที่ไม่มีทางรับคำขอไม่มีแท็บ/ปุ่ม "คำขอ / Lead" (หน้า `cms-leads.html?siteId=` ยังเปิดได้)
+- **cms-sites**: ภาพรวม = `CmsSiteContext.allLinks` (`?siteId=all` จริง — เดิมการจองเปิดเว็บแรก) + Front desk รายเว็บพร้อมชื่อ · การ์ด = เปิดพื้นที่ทำงาน / หน้าเว็บ / 👁 / ⋯ (เผยแพร่ · เติมเทมเพลต · ลบ) + ชิปงานค้าง ·
+  dropdown ประเภทธุรกิจสร้างจาก `Layout.ENUM_LABELS.siteIndustry` (ตารางป้ายเดียว)
+- ยังไม่ทำ (เฟส 2–3): `cms-edit.html` (ทีมอื่น) · รวมค่าตั้ง · ค่าเริ่มต้นผู้ให้บริการระดับเว็บ · หน้า "วันนี้" · เช็กลิสต์ · ที่พักโหมดทุกไซต์
+- sim `tools/cms_workspace_nav_sim.js` · เทสต์ `CmsModuleResolverTests` (lead ทั้งสองทิศ · ชื่อหมวด) · Last verified `commit e717d3b5`
