@@ -28,7 +28,7 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">เว็บไซต์ของฉัน</h2><p class="page-subtitle">สร้างเว็บไซต์ ร้านค้าออนไลน์ หรือระบบจองนัดหมายสำหรับธุรกิจของคุณ</p></div>
+      <div><h2 class="page-title">เว็บไซต์ทั้งหมด</h2><p class="page-subtitle">งานค้างรวมทุกไซต์ · เปิด "พื้นที่ทำงาน" ของแต่ละเว็บเพื่อจัดการงาน/ตั้งค่าของเว็บนั้น · สร้างเว็บไซต์ ร้านค้าออนไลน์ หรือระบบจอง</p></div>
       <div class="flex gap-2">
         <button class="btn btn-primary" onclick="Page.openCreate()"
                 data-tour-step="1"
@@ -36,7 +36,7 @@
       </div>
     </div>
 
-    <!-- ภาพรวมทุกไซต์ (คำสั่งซื้อ · จองคิว · ที่พัก · Lead) — เติมโดย Page.renderOverview -->
+    <!-- ภาพรวมทุกไซต์ (คำสั่งซื้อ · จองคิว · Lead = ?siteId=all จริง · ที่พัก = รายเว็บ) — เติมโดย Page.renderOverview -->
     <div id="sitesOverview" style="display:none;margin-bottom:14px"></div>
 
     <!-- Site list -->
@@ -124,25 +124,7 @@
             <div class="form-group" id="industryWrap">
               <label class="form-label">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(ตั้งให้ตามเทมเพลตที่เลือก — เปลี่ยนได้ถ้าเทมเพลตกับธุรกิจจริงไม่ตรงกัน)</span></label>
               <select class="form-input" id="fIndustry" onchange="Page.onIndustryChange(this)">
-                <option value="General">ทั่วไป / บริการ</option>
-                <option value="Service">บริการมืออาชีพ</option>
-                <option value="Freelance">ฟรีแลนซ์ / ที่ปรึกษา</option>
-                <option value="Restaurant">ร้านอาหาร</option>
-                <option value="Cafe">คาเฟ่ / เครื่องดื่ม</option>
-                <option value="Retail">ค้าปลีก / Retail</option>
-                <option value="Ecommerce">ขายออนไลน์ / E-commerce</option>
-                <option value="Trading">ซื้อมาขายไป / Trading</option>
-                <option value="Agriculture">เกษตร</option>
-                <option value="Beauty">สปา / ทำเล็บ / ความงาม</option>
-                <option value="Healthcare">คลินิก / สุขภาพ</option>
-                <option value="Education">การศึกษา / สอนพิเศษ</option>
-                <option value="Construction">รับเหมาก่อสร้าง</option>
-                <option value="RealEstate">อสังหาริมทรัพย์</option>
-                <option value="Technology">เทคโนโลยี / SaaS</option>
-                <option value="Transportation">ขนส่ง / โลจิสติกส์</option>
-                <option value="Hotel">โรงแรม / ที่พัก</option>
-                <option value="Manufacturing">โรงงาน / OEM</option>
-                <option value="Other">อื่น ๆ</option>
+                <!-- รอบ 215: ตัวเลือกสร้างจาก Layout.enumOptions('siteIndustry') ตอน init (ตารางป้ายเดียว) -->
               </select>
               <p id="industryHint" style="font-size:12px;color:var(--gray-500);margin-top:4px"></p>
             </div>
@@ -377,16 +359,14 @@
     // ป้ายประเภทธุรกิจอ่านจาก dropdown ในวิซาร์ด (แหล่งเดียว — ไม่พิมพ์ตารางซ้ำ)
     // ชื่อไทยของประเภทธุรกิจอ่านจาก dropdown ในวิซาร์ด (แหล่งเดียว — ไม่พิมพ์ตารางซ้ำ)
     // ค่าที่ API ส่งมาเป็นชื่อ enum ("Hotel") ไม่ใช่ตัวเลข
-    const industryLabel = (v) => {
-      if (!v) return '—';
-      const opt = document.querySelector(`#fIndustry option[value="${CSS.escape(String(v))}"]`);
-      return opt ? opt.textContent.trim() : String(v);
-    };
+    // รอบ 215: ป้ายประเภทธุรกิจจากตารางเดียว Layout.ENUM_LABELS.siteIndustry (dropdown วิซาร์ดสร้างจากตารางเดียวกันตอน init)
+    const industryLabel = (v) => v ? Layout.enumLabel('siteIndustry', v, String(v)) : '—';
     // ปุ่มงานรายเว็บ (คำสั่งซื้อ · จองคิว · Front desk/ตั้งค่าที่พัก · Lead) — จาก site.modules ที่เซิร์ฟเวอร์คำนวณ
     // (CmsModuleResolver) ผ่านตารางลิงก์ตัวเดียว CmsSiteContext.MODULE_LINKS (breadcrumb ของหน้าปลายทางใช้ตารางเดียวกัน)
     // เมนูซ้ายพับงานพวกนี้ไว้ใต้ "เว็บไซต์ของฉัน" แล้ว ⇒ การ์ดเว็บคือทางเข้าหลัก · data-badge = ตัวเลขงานค้าง (loadBadges)
-    const moduleButtons = (s) => CmsSiteContext.moduleLinks(s)
-      .map(l => `<a class="btn btn-sm btn-secondary" href="${Layout.esc(l.href)}" data-badge-site="${Layout.esc(s.id)}" data-badge-page="${Layout.esc(l.page)}">${Layout.esc(l.label)}</a>`).join('');
+    // รอบ 215: การ์ดไม่เป็นแผงปุ่มแล้ว (เดิม 8–10 ปุ่ม/ใบ) — งานของเว็บเปิดจาก "พื้นที่ทำงาน" · เหลือชิปงานค้างที่ซ่อนไว้จนมีตัวเลข (loadBadges)
+    const moduleButtons = (s) => CmsSiteContext.moduleLinks(s).filter(l => BADGE_SOURCES[l.page])
+      .map(l => `<a class="btn btn-sm btn-ghost" style="display:none;font-size:12px" href="${Layout.esc(l.href)}" data-badge-site="${Layout.esc(s.id)}" data-badge-page="${Layout.esc(l.page)}">${Layout.esc(l.label)}</a>`).join('');
     // ตัวนับงานค้างต่อเว็บ (ใช้ endpoint รายเว็บเดิม — สิทธิ์รายเว็บยังบังคับครบ) · ไม่มีหน้า lodging (Front desk มีแดชบอร์ดของตัวเอง)
     const BADGE_SOURCES = {
       'cms-orders':   { module: 'orders',   label: 'รอดำเนินการ', fetch: (api, id) => api.cmsListOrders(id, '?status=Pending&pageSize=1') },
@@ -400,7 +380,10 @@
 
       async init() {
         if (!Layout.init('cms-sites')) return;
-        Layout.setTitle('เว็บไซต์ของฉัน');
+        const ind = document.getElementById('fIndustry');
+        if (ind) ind.innerHTML = Object.entries(Layout.enumOptions('siteIndustry'))
+          .map(([v, l]) => `<option value="${Layout.esc(v)}">${Layout.esc(l)}</option>`).join('');
+        Layout.setTitle('เว็บไซต์ทั้งหมด');
         await this.load();
       },
 
@@ -420,20 +403,20 @@
       renderOverview() {
         const el = document.getElementById('sitesOverview');
         if (!el) return;
-        const mods = new Set(this.sites.flatMap(s => Array.isArray(s.modules) ? s.modules : []));
+        // รอบ 215 (CMS_UX_REDESIGN §1 ข้อ 3): ป้ายต้องตรงขอบเขตจริง — เดิม "ภาพรวมทุกไซต์" แต่การจองเปิดเว็บแรก/ที่พักไม่มี siteId ·
+        // งานที่มีโหมดทุกไซต์ (CmsSiteContext.allLinks = ?siteId=all จริง) · ที่พักยังไม่มีโหมดรวม ⇒ ปุ่มรายเว็บพร้อมชื่อเว็บ
         const multi = this.sites.length > 1;
-        const firstWith = (m) => (CmsSiteContext.sitesWith(this.sites, m)[0] || this.sites[0] || {}).id || '';
-        const tiles = [
-          mods.has('orders') && { page: 'cms-orders', label: '🛒 คำสั่งซื้อ', href: multi ? '/pages/cms-orders.html?siteId=all' : `/pages/cms-orders.html?siteId=${encodeURIComponent(firstWith('orders'))}` },
-          mods.has('bookings') && { page: 'cms-bookings', label: '📅 การจองคิว', href: `/pages/cms-bookings.html?siteId=${encodeURIComponent(firstWith('bookings'))}` },
-          mods.has('lodging') && { page: 'lodging', label: '🏨 ที่พัก · Front desk', href: '/pages/lodging.html' },
-          mods.has('leads') && { page: 'cms-leads', label: '📨 คำขอ / Lead', href: multi ? '/pages/cms-leads.html?siteId=all' : `/pages/cms-leads.html?siteId=${encodeURIComponent(firstWith('leads'))}` },
-        ].filter(Boolean);
+        const tiles = CmsSiteContext.allLinks(this.sites).map(l => ({ page: l.page, label: l.label, href: l.href }))
+          .concat(CmsSiteContext.sitesWith(this.sites, 'lodging')
+            .filter(s => Layout.hasMenuAccess('lodging'))
+            .map(s => ({ page: null, label: '🏨 Front desk' + (multi ? ': ' + s.name : ''), href: '/pages/lodging.html?siteId=' + encodeURIComponent(s.id) })));
         if (!tiles.length) { el.style.display = 'none'; return; }
         el.style.display = '';
+        const title = multi ? 'งานค้างรวมทุกไซต์' : 'งานของเว็บ ' + (this.sites[0] ? this.sites[0].name : '');
         el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:#fff;border:1px solid var(--gray-200);border-radius:10px;padding:10px 14px">
-            <span style="font-size:13px;font-weight:600;color:var(--gray-700);margin-right:4px">${multi ? 'ภาพรวมทุกไซต์' : 'งานของเว็บไซต์'}:</span>
-            ${tiles.map(t => `<a class="btn btn-sm btn-ghost" href="${Layout.esc(t.href)}" data-overview-page="${t.page}">${Layout.esc(t.label)}<span class="ov-count" style="margin-left:6px;font-size:11px;color:var(--gray-500)"></span></a>`).join('')}
+            <span style="font-size:13px;font-weight:600;color:var(--gray-700);margin-right:4px">${Layout.esc(title)}:</span>
+            ${multi ? CmsSiteContext.scopeBadge('all') : ''}
+            ${tiles.map(t => `<a class="btn btn-sm btn-ghost" href="${Layout.esc(t.href)}"${t.page ? ` data-overview-page="${t.page}"` : ''}>${Layout.esc(t.label)}<span class="ov-count" style="margin-left:6px;font-size:11px;color:var(--gray-500)"></span></a>`).join('')}
           </div>`;
       },
 
@@ -464,6 +447,7 @@
         const a = document.querySelector(`[data-badge-site="${CSS.escape(siteId)}"][data-badge-page="${CSS.escape(page)}"]`);
         if (!a) return;
         a.querySelector('.badge-count')?.remove();
+        a.style.display = text ? '' : 'none';   // รอบ 215: ชิปงานค้างโผล่เฉพาะเมื่อมีตัวเลข (หรือ "?" เมื่อโหลดไม่ได้)
         if (!text) { a.title = title; return; }
         const b = document.createElement('span');
         b.className = 'badge-count';
@@ -514,14 +498,22 @@
                 สร้างเมื่อ ${new Date(s.createdAt).toLocaleDateString('th-TH', { day:'numeric', month:'short', year:'numeric' })}
                 ${s.publishedAt ? ` · เผยแพร่ ${new Date(s.publishedAt).toLocaleDateString('th-TH',{ day:'numeric', month:'short', year:'numeric' })}` : ''}
               </div>
-              <div class="flex gap-2" style="flex-wrap:wrap">
-                <a href="/pages/cms-edit.html?siteId=${s.id}" class="btn btn-sm btn-primary">✏️ แก้ไข</a>
-                <a href="${pathUrl}/home${!isPublished?'?preview=1':''}" target="_blank" class="btn btn-sm btn-secondary" title="ดูตัวอย่างเว็บไซต์">👁 ดูตัวอย่าง</a>
-                ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publish('${s.id}')">🚀 เผยแพร่</button>` : ''}
-                ${isPublished ? `<a href="${pathUrl}" target="_blank" class="btn btn-sm btn-secondary" title="URL ที่เผยแพร่">🔗 ${Layout.esc(s.subdomain)}</a>` : ''}
+              <div class="flex gap-2" style="flex-wrap:wrap;align-items:center">
+                ${(() => { const first = CmsSiteContext.workspaceTabs(s)[0]; return first
+                  ? `<a href="${Layout.esc(first.href)}" class="btn btn-sm btn-primary" title="งาน · ตั้งค่า · หน้าเว็บ ของเว็บนี้ (สลับเว็บได้ที่หัวหน้า)">🧭 เปิดพื้นที่ทำงาน</a>`
+                  : ''; })()}
+                <a href="/pages/cms-edit.html?siteId=${encodeURIComponent(s.id)}" class="btn btn-sm btn-secondary">✏️ หน้าเว็บ</a>
+                <a href="${pathUrl}/home${!isPublished?'?preview=1':''}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost" title="ดูตัวอย่างเว็บไซต์" aria-label="ดูตัวอย่างเว็บไซต์ ${Layout.esc(s.name)}">👁</a>
+                ${!isPublished ? `<button class="btn btn-sm btn-success" onclick="Page.publish('${Layout.jsArg(s.id)}')">🚀 เผยแพร่</button>` : ''}
                 ${moduleButtons(s)}
-                <button class="btn btn-sm btn-ghost" onclick="Page.openApplyTemplate('${s.id}')" title="เติมหน้าเทมเพลต / เปลี่ยนประเภทธุรกิจของเว็บนี้ (ใช้ซ่อมเว็บที่สร้างผิดประเภท)">🧩 เติมเทมเพลต</button>
-                <button class="btn btn-sm btn-danger" onclick="Page.deleteSite('${s.id}','${Layout.jsArg(s.name)}')" style="margin-left:auto">🗑</button>
+                <details class="site-more" style="margin-left:auto;position:relative">
+                  <summary class="btn btn-sm btn-ghost" style="list-style:none" aria-label="เมนูเพิ่มเติมของเว็บ ${Layout.esc(s.name)}">⋯</summary>
+                  <div style="position:absolute;right:0;z-index:5;background:#fff;border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.08);padding:4px;min-width:200px;display:flex;flex-direction:column">
+                    ${isPublished ? `<a href="${pathUrl}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost" style="justify-content:flex-start">🔗 เปิด ${Layout.esc(s.subdomain)}</a>` : ''}
+                    <button class="btn btn-sm btn-ghost" style="justify-content:flex-start" onclick="Page.openApplyTemplate('${Layout.jsArg(s.id)}')" title="เติมหน้าเทมเพลต / เปลี่ยนประเภทธุรกิจของเว็บนี้ (ใช้ซ่อมเว็บที่สร้างผิดประเภท)">🧩 เติมเทมเพลต</button>
+                    <button class="btn btn-sm btn-ghost" style="justify-content:flex-start;color:#b91c1c" onclick="Page.deleteSite('${Layout.jsArg(s.id)}','${Layout.jsArg(s.name)}')">🗑 ลบเว็บไซต์</button>
+                  </div>
+                </details>
               </div>
             </div>`;
         }).join('');
