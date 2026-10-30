@@ -318,6 +318,55 @@
         <button class="btn btn-primary btn-sm" style="margin-top:6px" onclick="Page.saveBookingSiteSettings()">บันทึกค่าตั้งเอกสาร</button>
       </div>
 
+      <!-- ═══════════ รอบ 218 (คำตัดสินข้อ 177): การชำระเงินของการจอง — บล็อกนี้ทั้งหมดเป็นของ /js/booking-payment-admin.js (BookingPayAdmin) ═══════════
+           ผู้อ่านค่าทั้งหมด: Helpers/BookingPaymentPolicy (โหมด/ยอด/กำหนดเวลา) · BookingPaymentChannels (ช่องทาง) · ช่องทางโอนเก็บที่แถวเดียวกับ "ตั้งค่าการรับเงิน" ของคำสั่งซื้อ -->
+      <div id="bkSecPayment" style="border:1px solid var(--gray-200);border-radius:10px;padding:14px 16px;margin:16px 0">
+        <h3 style="font-size:16px;font-weight:600;margin:0 0 6px">💳 การชำระเงินของการจอง (มัดจำ / จ่ายเต็มก่อน)</h3>
+        <div class="bs-hint" style="margin-bottom:8px">ลูกค้าเห็นยอดที่ต้องจ่าย + กำหนดเวลา + วิธีชำระ <b>ก่อนกดจอง</b> · หลังจองโอน/สแกน QR แล้วแนบสลิป (ร้านตรวจที่หน้า "การจอง") หรือจ่ายออนไลน์ ·
+          เก็บเงินล่วงหน้าได้เฉพาะบริการชนิด "ชำระมัดจำล่วงหน้า (ใบรับมัดจำ)" — ใบรับมัดจำลงวันที่รับเงิน (§78/1) · บริการแต่ละตัวตั้งทับได้ที่ฟอร์มบริการ</div>
+        <div id="bpayProblem"></div>
+        <div class="form-row">
+          <div class="form-group"><label class="form-label">โหมดของเว็บ</label><select class="form-input" id="bpayMode" onchange="BookingPayAdmin.onModeChange()"></select>
+            <div class="bs-hint" id="bpayModeHelp"></div></div>
+          <div class="form-group" id="bpayDeadlineRow"><label class="form-label">ต้องชำระภายใน (นาทีหลังจอง · ว่าง/0 = ไม่กำหนด)</label>
+            <input type="number" class="form-input" id="bpayDeadline" min="0" max="10080" placeholder="เช่น 30 · 120 · 1440">
+            <div class="bs-hint">ไม่ชำระ/ไม่แนบสลิปในเวลา ⇒ ระบบยกเลิกการจองและปล่อยรอบให้คนอื่น (ไม่เกินเวลานัด) · แนบสลิปแล้วไม่ถูกยกเลิกระหว่างรอร้านตรวจ</div></div>
+        </div>
+        <div class="form-row-3" id="bpayDepositRow">
+          <div class="form-group"><label class="form-label">มัดจำ (บาท)</label><input type="number" class="form-input" id="bpayFixed" min="0" step="0.01" placeholder="ใช้แทน %"></div>
+          <div class="form-group"><label class="form-label">หรือ มัดจำ (% ของค่าบริการ)</label><input type="number" class="form-input" id="bpayPercent" min="0" max="100" step="0.01"></div>
+          <div class="form-group"><label class="form-label">ขั้นต่ำ / สูงสุด (บาท)</label>
+            <div style="display:flex;gap:6px"><input type="number" class="form-input" id="bpayMin" min="0" step="0.01" placeholder="ขั้นต่ำ"><input type="number" class="form-input" id="bpayMax" min="0" step="0.01" placeholder="สูงสุด"></div></div>
+        </div>
+        <h4 class="bs-sec">ช่องทางรับเงิน</h4>
+        <div class="form-group"><label style="font-size:13px"><input type="checkbox" id="bpayGateway"> ชำระออนไลน์ (บัตร/QR ผ่านระบบรับชำระเงิน — ยืนยันการจองอัตโนมัติ)</label>
+          <div class="bs-hint" id="bpayGatewayHint"></div></div>
+        <div class="form-group"><label style="font-size:13px"><input type="checkbox" id="bpayTransfer" checked> โอนเงิน / สแกน QR แล้วแนบสลิป (ร้านตรวจสลิป)</label>
+          <div class="bs-hint">ใช้บัญชีเดียวกับ "ตั้งค่าการรับเงิน" ของคำสั่งซื้อ (แก้ที่นี่ = แก้ที่นั่นด้วย)</div></div>
+        <div class="form-row-3">
+          <div class="form-group"><label class="form-label">ธนาคาร</label><input type="text" class="form-input" id="bpayBankName" maxlength="128" placeholder="เช่น กสิกรไทย"></div>
+          <div class="form-group"><label class="form-label">เลขบัญชี</label><input type="text" class="form-input" id="bpayBankAcct" maxlength="30" inputmode="numeric" placeholder="xxx-x-xxxxx-x"></div>
+          <div class="form-group"><label class="form-label">ชื่อบัญชี</label><input type="text" class="form-input" id="bpayBankAcctName" maxlength="200"></div>
+        </div>
+        <div class="form-row-3">
+          <div class="form-group"><label class="form-label">สาขา (ถ้ามี)</label><input type="text" class="form-input" id="bpayBankBranch" maxlength="128"></div>
+          <div class="form-group"><label class="form-label">พร้อมเพย์ (เบอร์มือถือ / เลขผู้เสียภาษี)</label><input type="text" class="form-input" id="bpayPromptPay" maxlength="20" inputmode="numeric">
+            <div class="bs-hint">ใส่แล้วระบบสร้าง QR ที่มียอดเงินให้ลูกค้าอัตโนมัติ</div></div>
+          <div class="form-group"><label class="form-label">หรือ แนบรูป QR โอนเงิน</label>
+            <input type="hidden" id="bpayQrUrl">
+            <div id="bpayQrPreview" style="margin-bottom:6px"></div>
+            <input type="file" accept="image/*" onchange="BookingPayAdmin.uploadQr(this)">
+            <button type="button" class="btn btn-secondary btn-sm" style="margin-top:4px" onclick="BookingPayAdmin.clearQr()">ลบรูป QR</button></div>
+        </div>
+        <div class="form-group"><label class="form-label">ข้อความถึงลูกค้า (เงื่อนไขการชำระ/คืนเงิน — แสดงในกล่องชำระเงิน)</label>
+          <textarea class="form-input" id="bpayNote" rows="2" maxlength="1000" placeholder="เช่น มัดจำไม่คืนเมื่อยกเลิกภายใน 24 ชม. ก่อนนัด · โอนแล้วร้านยืนยันภายใน 1 ชม."></textarea>
+          <div class="bs-hint">ค่าธรรมเนียมยกเลิก/คืนมัดจำตามจริงคิดจาก "ยกเลิกฟรีก่อนเวลานัด" + "% ค่าธรรมเนียม" ของแต่ละบริการ (ริบไม่เกินมัดจำ)</div></div>
+        <h4 class="bs-sec">ผลกับแต่ละบริการ</h4>
+        <div id="bpayServices" style="overflow-x:auto"><div class="bs-hint">กำลังโหลด…</div></div>
+        <button type="button" class="btn btn-primary btn-sm" style="margin-top:8px" onclick="BookingPayAdmin.save()">บันทึกการชำระเงิน</button>
+      </div>
+      <!-- ═══════════ /รอบ 218 ═══════════ -->
+
       <h3 id="bkSecSite" style="font-size:16px;font-weight:600;margin:24px 0 6px">ค่าตั้งการจองของเว็บไซต์ (ค่าเริ่มต้น)</h3>
       <div class="bs-hint" style="margin-bottom:8px">บริการที่ติ๊ก "ใช้ค่าของเว็บไซต์" ใช้ค่าเหล่านี้ · บริการอื่นใช้ค่าของตัวเอง (override)</div>
       <div class="form-row-3">
@@ -353,7 +402,7 @@
       <h4 class="bs-sec">แจ้งเตือนลูกค้า (อีเมล / LINE)</h4>
       <div class="form-row-3">
         <div class="form-group" style="align-self:end"><label style="font-size:13px"><input type="checkbox" id="bssReminderEnabled" checked> เตือนลูกค้าก่อนนัด</label></div>
-        <div class="form-group" style="align-self:end"><label style="font-size:13px" title="รอบ 205 W2 R-08 · คำตัดสิน Q5 = ข: ปิดเป็นค่าเริ่มต้น ไซต์เปิดเอง — ต้องตั้งค่าระบบรับชำระเงิน (gateway) ก่อน"><input type="checkbox" id="bssOnlineDeposit"> รับชำระมัดจำออนไลน์ (บริการชำระล่วงหน้า)</label></div>
+        <!-- รอบ 218: ช่อง "รับชำระมัดจำออนไลน์" ย้ายไปหมวด "💳 การชำระเงินของการจอง" (เดิมอยู่ใต้แจ้งเตือน + ไม่มีผลถ้าบริการไม่ใช่ชำระล่วงหน้า/ไม่มี gateway) -->
         <div class="form-group"><label class="form-label">เตือนก่อนนัดกี่ชั่วโมง (คั่นด้วยจุลภาค)</label><input type="text" class="form-input" id="bssReminderHours" placeholder="24,2"></div>
         <div class="form-group"><label class="form-label">คิวสำรองได้คิวแล้ว ถือรอบให้ยืนยัน (นาที · 0 = ไม่ถือ)</label><input type="number" class="form-input" id="bssHoldMinutes" min="0" max="10080"></div>
       </div>
@@ -953,6 +1002,19 @@
               <input type="number" class="form-input" id="bsCancelFee" min="0" max="100" step="0.01" placeholder="ไม่กำหนด">
             </div>
           </div>
+          <!-- รอบ 218: ชำระล่วงหน้ารายบริการ (ตามค่าเว็บ/กำหนดเอง) — /js/booking-payment-admin.js · ไม่มีตัวเลือกจากเซิร์ฟเวอร์ ⇒ ซ่อน (ไม่ส่ง = คงค่าเดิม) -->
+          <div id="bsPayWrap" style="display:none">
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">การชำระล่วงหน้าของบริการนี้</label><select class="form-input" id="bsPayMode"></select>
+                <div class="bs-hint" id="bsPayHint"></div><div class="bs-hint" id="bsPayProblem" style="color:#b45309"></div></div>
+              <div class="form-group"><label class="form-label">ต้องชำระภายใน (นาที · ว่าง = ตามค่าเว็บ · 0 = ไม่กำหนด)</label><input type="number" class="form-input" id="bsPayDeadline" min="0" max="10080"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">มัดจำขั้นต่ำ (บาท · ว่าง = ตามค่าเว็บ)</label><input type="number" class="form-input" id="bsPayMin" min="0" step="0.01"></div>
+              <div class="form-group"><label class="form-label">มัดจำสูงสุด (บาท · ว่าง = ตามค่าเว็บ)</label><input type="number" class="form-input" id="bsPayMax" min="0" step="0.01"></div>
+            </div>
+            <div class="bs-hint">ยอดมัดจำใช้ช่อง "มัดจำ (บาท / %)" ด้านบนของบริการนี้ก่อน — ว่างทั้งคู่ = ใช้ยอดตั้งต้นของเว็บ · เก็บเงินล่วงหน้าได้เฉพาะชนิด "ชำระมัดจำล่วงหน้า"</div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('bookingServiceModal')">ยกเลิก</button>
@@ -1235,6 +1297,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/booking-payment-admin.js"></script>
   <script>
     const BLOCK_TYPES = {
       1:{n:'Hero',i:'🎬',f:'hero'},
@@ -2888,6 +2951,7 @@
         v('bsMinAdv', s.minAdvanceBookingHours ?? 1); v('bsMaxAdv', s.maxAdvanceBookingDays ?? 30);
         v('bsDepositAmount', s.depositAmount); v('bsDepositPercent', s.depositPercent);
         v('bsFreeCancel', s.freeCancellationHours); v('bsCancelFee', s.cancellationFeePercent);
+        if (window.BookingPayAdmin) BookingPayAdmin.hydrateService(s);   // รอบ 218: ชำระล่วงหน้า (ตามค่าเว็บ/กำหนดเอง) — ฟอร์มใหม่ได้ "ตามค่าเว็บ"
         document.getElementById('bsAutoConfirm').checked = !!s.autoConfirm;
         document.getElementById('bsActive').checked = s.isActive !== false;
         this._bsSlug = s.slug || null;
@@ -3063,7 +3127,6 @@
           // รอบ 205 W3: เวลาทำการของเว็บ (ตัวแก้ตารางเดียวกับบริการ/ผู้ให้บริการ — prefix 'ss') · เตือนก่อนนัด · ถือรอบคิวสำรอง — hydrate ครบทุกช่องที่ server echo
           this.schedLoad('ss', d.schedule);
           document.getElementById('bssReminderEnabled').checked = d.reminderEnabled !== false;
-          document.getElementById('bssOnlineDeposit').checked = d.onlineDepositEnabled === true;   // รอบ 205 W2 R-08
           document.getElementById('bssReminderHours').value = d.reminderHoursBefore || '24,2';
           document.getElementById('bssHoldMinutes').value = d.waitlistHoldMinutes ?? 0;
           document.getElementById('bssReminderTemplate').value = d.reminderTemplate || '';
@@ -3073,6 +3136,7 @@
           document.getElementById('bssReminderHint').textContent = ph.length ? 'ตัวแทนที่ใช้ได้: ' + ph.join(' ') : '';
           this._bssAuxLoaded = true;
           this._bss207Render(d);
+          if (window.BookingPayAdmin) await BookingPayAdmin.loadSettings(this.siteId);   // รอบ 218
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async saveBookingSiteSettings() {
@@ -3088,7 +3152,7 @@
         if (this._bssAuxLoaded) {
           body.schedule = this.schedPayload('ss');
           body.reminderEnabled = document.getElementById('bssReminderEnabled').checked;
-          body.onlineDepositEnabled = document.getElementById('bssOnlineDeposit').checked;   // รอบ 205 W2 R-08
+          // รอบ 218: onlineDepositEnabled บันทึกที่หมวดการชำระเงิน (BookingPayAdmin) — ไม่ส่งที่นี่ (server คงค่าเดิม)
           body.reminderHoursBefore = document.getElementById('bssReminderHours').value.trim() || '24,2';
           body.waitlistHoldMinutes = this._bsNum('bssHoldMinutes', 0);
           body.reminderTemplate = document.getElementById('bssReminderTemplate').value;
@@ -3329,6 +3393,7 @@
         };
         // รอบ 210: ส่งเฉพาะเมื่อมีตัวเลือกจาก server (ไม่งั้น null = คงค่าเดิม · ไม่รีเซ็ตเงียบ)
         if (document.getElementById('bsMemberAccessWrap').style.display !== 'none') body.memberAccess = document.getElementById('bsMemberAccess').value || 'Inherit';
+        if (window.BookingPayAdmin) Object.assign(body, BookingPayAdmin.servicePayload());   // รอบ 218: ไม่มีตัวเลือก ⇒ {} (คงค่าเดิม)
         if (!body.name) { Layout.toast('กรุณากรอกชื่อบริการ', 'error'); return; }
         // ช่วงเวลาที่ผิดรูป/เริ่มไม่ก่อนจบ — server ตรวจและตอบข้อความไทยกลับมา (ไม่ตรวจซ้ำในหน้านี้)
         try {

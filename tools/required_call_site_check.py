@@ -10853,6 +10853,68 @@ RULES += [
 ]
 
 
+# ── รอบ 218 (คำตัดสินข้อ 177 · erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md): ชำระล่วงหน้าของการจองนัดหมาย ──
+# ยอด/บังคับ/กำหนดเวลา ผ่านตัวตัดสินเดียว BookingPaymentPolicy · สลิปทุกก้อนเดินผ่าน PaymentIntent (manual-slip) · ยืนยันสลิปไม่มีสำเนาเส้นเงิน
+_R218_WHY = "รอบ 218 (ข้อ 177): "
+BOOK_SLIP_SVC = "Services/Implementations/BookingSlipService.cs"
+BOOK_SLIP_STATE = "Services/Implementations/CmsBookingService.Slip.cs"
+BOOK_PAY_POLICY = "Services/Implementations/CmsBookingService.PaymentPolicy.cs"
+BOOK_JOB = "Services/Background/BookingReminderJob.cs"
+RULES += [
+    dict(file=CMS_BOOK, method="CreateBookingAsync",
+         must=["BookingPaymentPolicy.Resolve(", "BookingPaymentPolicy.BookingDeposit(", "BookingPaymentPolicy.ForcePendingUntilPaid(",
+               "BookingPaymentPolicy.HoldUntil("],
+         before=[("PrepareCreditBookingAsync(", "BookingPaymentPolicy.ForcePendingUntilPaid(")],
+         forbid=["BookingSlotEngine.Deposit("],
+         why=_R218_WHY + "ยอดมัดจำจากตัวตัดสินเดียว (แบบเดิม = สูตรเดิมภายใน helper) · บังคับ/ถือรอบตัดสินหลังหักบัตรคอร์ส"),
+    dict(file=CMS_BOOK, method="UpdateBookingStatusLockedAsync",
+         must=["BookingPaymentPolicy.HoldLapsed(", "request.PaymentHoldLapsedAsOfUtc"],
+         why=_R218_WHY + "job ยกเลิกใบไม่ชำระในเวลา — ตัดสินซ้ำใต้ล็อก (จ่าย/แนบสลิประหว่างทาง ⇒ ไม่ยกเลิก)"),
+    dict(file=CMS_BOOK, method="ApplySettings",
+         must=["BookingPaymentPolicy.ParseMode(", "BookingPaymentPolicy.ServiceSaveProblem(", "BookingPaymentPolicy.ValidateRule("],
+         why=_R218_WHY + "บริการตั้งเก็บเงินเองแต่ชนิดเก็บไม่ได้ ⇒ ปฏิเสธ (ไม่บันทึกค่าที่ไม่มีผล)"),
+    dict(file=BOOK_JOB, method="ProcessAsync",
+         must=["BookingPaymentPolicy.HoldLapsed(", "PaymentHoldLapsedAsOfUtc = nowUtc", "b.SlipUploadedAt == null"],
+         why=_R218_WHY + "พ้นกำหนดชำระ ⇒ ยกเลิกผ่านเส้นสถานะ · ไม่แตะใบที่มีเงิน/สลิปรอตรวจ"),
+    dict(file=BOOK_SLIP_SVC, method="UploadByTokenAsync",
+         must=["BookingSlipRule.UploadProblem(", "_intents.StartAsync(", "ManualSlipPaymentProvider.Code", "PaymentMethodKind.ManualSlip",
+               "MarkSlipUploadedAsync(", "GetBookingByTokenAsync("],
+         before=[("BookingSlipRule.UploadProblem(", "UploadAnonymousBytesAsync("), ("_intents.StartAsync(", "MarkSlipUploadedAsync(")],
+         why=_R218_WHY + "สลิปผ่าน PaymentIntent (manual-slip) ยอดจากเซิร์ฟเวอร์ · ด่านก่อนเขียนไฟล์ · สิทธิ์ = โทเคน"),
+    dict(file=BOOK_SLIP_SVC, method="VerifyAsync",
+         must=["BookingSlipRule.DecideProblem(", "_intents.ApplyChargeAsync(", "PaymentIntentStatus.Succeeded", "PaymentEventSource.Manual",
+               "intent.SourceId != bookingId"],
+         forbid=["RecordDepositPaymentAsync(", "PaidAmount ="],
+         why=_R218_WHY + "ยืนยันสลิป = เส้นเดียวกับ webhook/ยืนยันด้วยมือ (handler บันทึกรับเงิน) — ห้ามเขียนยอดเงินเอง"),
+    dict(file=BOOK_SLIP_SVC, method="RejectAsync",
+         must=["BookingSlipRule.NormalizeRejectReason(", "MarkSlipRejectedAsync(", "PaymentIntentStatus.Failed"],
+         before=[("BookingSlipRule.NormalizeRejectReason(", "MarkSlipRejectedAsync(")],
+         why=_R218_WHY + "ปฏิเสธต้องมีเหตุผล (ลูกค้าเห็น) · รายการชำระของสลิปปิดเป็น Failed"),
+    dict(file=BOOK_SLIP_SVC, method="ReadSlipByTokenAsync",
+         must=["b.CompanyId == companyId", "b.PublicToken == token", "BookingSlipRule.AttachmentEntityType"],
+         why=_R218_WHY + "สลิป (PII) เปิดได้เฉพาะเจ้าของโทเคน ภายในบริษัท/เว็บเดียวกัน"),
+    dict(file=BOOK_SLIP_STATE, method="MarkSlipUploadedAsync",
+         must=["WithBookingSessionLockAsync(", "BookingSlipRule.UploadProblem(", "x.CompanyId == companyId"],
+         why=_R218_WHY + "สถานะสลิปเขียนใต้ล็อกเดียวกับเส้นสถานะ/รับเงิน · ตัดสินซ้ำใต้ล็อก"),
+    dict(file=BOOK_SLIP_STATE, method="MarkSlipRejectedAsync",
+         must=["WithBookingSessionLockAsync(", "BookingSlipRule.DecideProblem(", "BookingSlipRule.HoldAfterReject("],
+         why=_R218_WHY + "ปฏิเสธสลิปใต้ล็อก + ต่อเวลาให้ส่งใหม่จากตัวตัดสินเดียว"),
+    dict(file=BOOK_PAY_POLICY, method="UpdatePaymentSettingsAsync",
+         must=["BookingPaymentPolicy.ValidateRule(", "BookingPaymentChannels.ValidateBankAccount(", "BookingPaymentPolicy.SiteSaveProblem("],
+         before=[("BookingPaymentPolicy.SiteSaveProblem(", "SaveChangesAsync(")],
+         why=_R218_WHY + "โหมดเก็บเงินที่ไม่มีช่องทาง ⇒ ปฏิเสธก่อนบันทึก (ไม่ silent no-op)"),
+    dict(file=BOOK_PAY_POLICY, method="FillPaymentInfoAsync",
+         must=["BookingPaymentPolicy.StatusLabel(", "BookingPaymentPolicy.CustomerSummary(", "x.CompanyId == companyId"],
+         why=_R218_WHY + "ข้อมูลชำระบนคำตอบจากตัวตัดสินเดียว (หน้าเว็บแสดงอย่างเดียว)"),
+    dict(file=BOOK_PAY, method="RecordDepositPaymentAsync",
+         must=["BookingSlipRule.SettlesPendingSlip(", "booking.PaymentHoldUntil = null"],
+         why=_R218_WHY + "รับเงินแล้ว = เลิกกำหนดชำระ · เงินของสลิปนี้/รับครบ ⇒ สลิปไม่ค้าง 'รอตรวจ'"),
+    dict(file=PUBLIC_PAY_RESOLVER, method="ResolveBookingAsync",
+         must=["slipPending: b.HasSlip"],
+         why=_R218_WHY + "สลิปรอตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว (กันจ่ายซ้ำ)"),
+]
+
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

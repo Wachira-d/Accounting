@@ -120,6 +120,7 @@ Accounting/Controllers/CmsBookingController.cs	RescheduleByToken	1
 Accounting/Controllers/CmsBookingController.cs	SyncBookingToErp	1
 Accounting/Controllers/CmsBookingController.cs	UpdateBookingStatus	1
 Accounting/Controllers/CmsBookingController.cs	UpdateService	1
+Accounting/Controllers/CmsBookingPaymentPublicController.cs	UploadSlip	1
 Accounting/Controllers/CmsCommerceConfigController.cs	UpdateConfig	1
 Accounting/Controllers/CmsCommerceController.cs	AddProduct	1
 Accounting/Controllers/CmsCommerceController.cs	AddToCart	1

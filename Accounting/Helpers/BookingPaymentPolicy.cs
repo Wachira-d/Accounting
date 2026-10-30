@@ -97,7 +97,7 @@ public static class BookingPaymentPolicy
     }
 
     /// <summary>ข้อความ "ชนิดบริการนี้เก็บเงินล่วงหน้าไม่ได้" — ตัวเดียวกับที่ด่านบันทึกบริการใช้</summary>
-    public static string TypeMismatchProblem(BookingType type)
+    private static string TypeMismatchProblem(BookingType type)
         => $"บริการชนิด “{TypeLabel(type)}” ไม่เก็บเงินล่วงหน้า — เปลี่ยนชนิดบริการเป็น “ชำระมัดจำล่วงหน้า (ใบรับมัดจำ)” ก่อน "
            + "(เงินล่วงหน้าค่าบริการเป็นจุดเกิดภาษี §78/1 ต้องออกใบรับมัดจำลงวันที่รับเงิน)";
 
@@ -235,7 +235,7 @@ public static class BookingPaymentPolicy
         return $"{ModeLabel(e.Mode)} {amount}{bounds}{deadline} ({src})";
     }
 
-    public static string DeadlineText(int minutes)
+    private static string DeadlineText(int minutes)
         => minutes >= 1440 && minutes % 1440 == 0 ? $"{minutes / 1440} วัน"
          : minutes >= 60 && minutes % 60 == 0 ? $"{minutes / 60} ชั่วโมง"
          : $"{minutes} นาที";

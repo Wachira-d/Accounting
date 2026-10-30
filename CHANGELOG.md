@@ -5787,3 +5787,12 @@ _รอบ 213 ฝ่ายค้าน (ไม่มีข้อ blocking · �
 (d) แอดมิน "คืนค่าตั้งต้น" แพ็ก (e) คำอธิบายอายุแพ็กตรงกับ GREATEST (f) ซื้อแพ็กแล้ววาดรายการค้างส่งใหม่ · ปุ่มกลับข้อความเดิมเมื่อล้ม ·
 (CI) Db test ล้ม: `ResendCount` NOT NULL ไม่มี default ในโมเดล ⇒ INSERT ดิบของ `ClaimAsync` ล้ม — ระบุคอลัมน์ใน INSERT + `HasDefaultValue(0)` · เทสต์ CMS213-11..16 · `required_call_site_check` +7 กติกา/แก้ 7 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit e877767d · 41bcab58_
 
+_รอบ 218 (คำตัดสินข้อ 177 · เจ้าของ: "ติ๊ก รับชำระมัดจำออนไลน์ แล้วตอนจองไม่มีให้ระบุเรื่องโอนมัดจำ · ต้องตั้งได้ว่าบังคับมัดจำ/จ่ายเต็มก่อน/ปิด · ตั้งเลขบัญชีหรือแนบ QR ได้" ·
+`erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`): ต้นเหตุ = ช่องติ๊กเดิมเปิดแค่ช่องทาง gateway แต่ยอดมาจากชนิด PrePayment + ช่องมัดจำของบริการ (ไม่ตรง ⇒ ยอด 0 เงียบ) ·
+ไม่มีช่องโอน/QR/สลิปของการจอง · ไม่บอกยอดก่อนกดจอง. (1) ตัวตัดสินเดียว `Helpers/BookingPaymentPolicy` (บริการ ?? เว็บ ?? แบบเดิม · ปิด/มัดจำบังคับ/มัดจำไม่บังคับ/เต็มยอด ·
+min/max · กำหนดเวลา · เก็บได้เฉพาะ PrePayment) + `Helpers/BookingPaymentChannels` + `Helpers/BookingSlipRule` · คอลัมน์ `Helpers/BookingPaymentMigration` (NULL = เดิม) ·
+(2) `CreateBookingAsync` ยอด/รอยืนยัน/ถือรอบ · `BookingReminderJob` ยกเลิกเมื่อพ้นกำหนด · (3) สลิป: `BookingSlipService` → PaymentIntent manual-slip → ร้านยืนยัน/ปฏิเสธ
+(`CmsBookingPaymentController` · ลูกค้า `CmsBookingPaymentPublicController`) · (4) หน้าเว็บ: ยอดก่อนกดจอง + กล่องชำระ (`js/storefront-booking-pay.js`) · หมวด "💳 การชำระเงินของการจอง"
++ ฟอร์มบริการ "ตามค่าเว็บ/กำหนดเอง" + ตรวจสลิป (`js/booking-payment-admin.js`) · (5) `SitePaymentGateway.BankBranch` + echo `BankAccountNumber/PromptPayQrUrl` กลับ (เดิมเปิดแก้ที่ cms-orders
+แล้วเลขบัญชีว่าง ⇒ บันทึกซ้ำล้างเงียบ) · เทสต์ `BookingPaymentPolicyTests` (+CRC16 QR พร้อมเพย์) · `Db/BookingPaymentPolicyDbTests` (TEST_PLAN BKPAY-01..24) · `required_call_site_check` +14 กติกา ·
+`write_permission_gate_check` +CmsBookingPaymentController (WATCHED) · baseline +1 (แนบสลิปของแขก — โทเคน) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
