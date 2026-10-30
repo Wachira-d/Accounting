@@ -98,15 +98,6 @@ public static class CmsPdpaErasure
 
     /// <summary>ล้างบัญชีลูกค้าเว็บ (ตัวเดียวกับ <c>CmsCustomerService.ProcessDataDeletionAsync</c>) — บัญชีไม่ใช่เอกสารบัญชี ⇒ ไม่มี legal hold ·
     /// ปิดบัญชี + ถอดรหัสผ่าน/โทเคน (ทางเข้าที่ยังเปิดอยู่ = การลบที่ยังไม่จบ)</summary>
-    /// <summary>รอบ 211: ลิงก์ LINE ที่ลูกค้าผูกเอง — ปิดการเชื่อมต่อ (reason "erase") + ล้าง LINE userId · คืนจำนวนช่องที่เปลี่ยน (0 = ล้างไปแล้ว)</summary>
-    public static int EraseLineLink(CustomerLineLink l, DateTime nowUtc)
-    {
-        var n = 0;
-        if (l.LineUserId.Length > 0) { l.LineUserId = ""; n++; }
-        if (l.UnlinkedAt == null) { l.UnlinkedAt = nowUtc; l.UnlinkReason = "erase"; n++; }
-        return n;
-    }
-
     public static int AnonymizeCustomer(SiteCustomer c, DateTime nowUtc)
     {
         c.RightToBeforgotten = true;

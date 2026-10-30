@@ -391,7 +391,7 @@ public partial class CourseCreditService
             }
             var row = await _db.CreditPasses.FirstAsync(p => p.Id == c.Id && p.CompanyId == companyId, ct);
             row.ExpiryNotifyAttemptedAt = now;
-            if (result.Sent) { row.ExpiryNotifiedAt = now; row.ExpiryNotifyError = null; sent++; }
+            if (result.Sent) { row.ExpiryNotifiedAt = now; row.ExpiryNotifyError = result.Warning; sent++; }   // รอบ 211 ฝ่ายค้าน: ทางถอยประทับคำเตือน
             else { row.ExpiryNotifyError = result.Error; failed++; messages.Add($"{c.PassNumber}: {result.Error}"); }
             await _db.SaveChangesAsync(ct);
         }

@@ -65,6 +65,14 @@ public static class CmsDataConsent
     {
         var subject = CmsContactResolver.NormalizeEmail(email) ?? CmsContactResolver.NormalizePhone(phone);
         if (subject == null) return null;
+        return StageForSubject(db, companyId, purpose, shownText, subject, reference, grantedAtUtc);
+    }
+
+    /// <summary>รอบ 211 ฝ่ายค้าน: เตรียมแถวยินยอมด้วยตัวระบุที่ผู้เรียกให้มาเอง (เช่น <c>CustomerLineLinkRule.ConsentSubject</c> เมื่อเป้าหมายไม่มีอีเมล/เบอร์) ·
+    /// หลักฐานใช้สูตรเดียวกับ <see cref="Stage"/> (<see cref="PdpaConsentEvidence"/>)</summary>
+    public static PdpaConsentRecord StageForSubject(AccountingDbContext db, Guid companyId, string purpose, string shownText,
+        string subject, string reference, DateTime grantedAtUtc)
+    {
         var version = Version(shownText);
         var channel = $"{Channel}:{reference}";
         var row = new PdpaConsentRecord

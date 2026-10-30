@@ -7,7 +7,7 @@ namespace Accounting.Services.Implementations.Cms;
 
 /// <summary>ส่งข้อความถึงลูกค้าของการจอง/ออเดอร์/บัตรคอร์ส — ลำดับช่องตัดสินที่ <see cref="CustomerNotifyChannel.Order"/> ตัวเดียว:
 /// ลูกค้า<b>ผูก LINE เอง</b> (รอบ 211 · <see cref="ICustomerLineLinkService.ResolveLineUserIdAsync"/>) ⇒ LINE ก่อนแล้วอีเมล · ไม่ได้ผูก ⇒ อีเมลก่อน (เดิม) ·
-/// อีเมลผ่านผู้ส่งของร้านเมื่อร้านตั้งและทดสอบผ่าน (<see cref="CustomerNotifyChannel.EmailSource"/>) ไม่งั้นอีเมลของระบบ (เดิม) ·
+/// อีเมลผ่านผู้ส่งของร้านเมื่อร้านตั้งและทดสอบผ่าน แล้วถอยไปอีเมลของระบบเมื่อล้ม (<see cref="CustomerNotifyChannel.EmailPlan"/> · ประทับคำเตือน) ไม่งั้นอีเมลของระบบ (เดิม) ·
 /// LINE ผ่าน OA ที่ <see cref="ILineNotifyService.TryPushToUserAsync"/> ตัดสิน (ของร้าน ⇒ ไม่งั้น NextAcc) ·
 /// ทุกช่องล้ม/ไม่มี ⇒ <c>Error</c> พร้อมเหตุ (ไม่โยน — งานเบื้องหลังเดินต่อแถวถัดไป · ผู้เรียกประทับบนรายการ) ·
 /// SMS: ยังไม่มีผู้ให้บริการในระบบ (ทะเบียน R-12 ระบุ "อีเมล/LINE/SMS" — SMS รอผู้ให้บริการ · บอกตรง ๆ ในร่องรอยแทนเงียบ)</summary>
@@ -54,9 +54,10 @@ public class BookingNotifier : IBookingNotifier
         {
             if (channel == CustomerNotifyChannel.ChannelEmail)
             {
-                var err = await TrySendEmailAsync(companyId, contact.Email!.Trim(), subject, BookingReminderPlan.ToHtml(text), ct);
-                if (err == null) return BookingSendResult.Ok("email");
-                errors.Add(err);
+                var mail = await TrySendEmailAsync(companyId, contact.Email!.Trim(), subject, BookingReminderPlan.ToHtml(text), ct);
+                // ส่งถึงทางอีเมลของระบบหลังผู้ส่งของร้านล้ม ⇒ สำเร็จ + Warning (ผู้เรียกประทับบนรายการ — ไม่ใช่แค่ log)
+                if (mail.Sent) return BookingSendResult.Ok("email") with { Warning = mail.Warning };
+                errors.Add(mail.Error!);
             }
             else
             {
@@ -70,36 +71,51 @@ public class BookingNotifier : IBookingNotifier
         return BookingSendResult.Fail(all);
     }
 
-    /// <summary>อีเมล: ผู้ส่งของร้าน (ตั้ง + ทดสอบผ่าน) ไม่งั้นของระบบ · คืน null = ส่งแล้ว · ข้อความ = เหตุที่ไม่สำเร็จ ·
-    /// ร้านตั้งผู้ส่งของตัวเองแล้วส่งล้ม ⇒ ไม่สลับไปอีเมลของระบบ (ร้านเลือกแบรนด์ผู้ส่งเอง — คำตัดสินข้อ 170) แต่ไปช่องถัดไป/ประทับเหตุ</summary>
-    private async Task<string?> TrySendEmailAsync(Guid companyId, string to, string subject, string html, CancellationToken ct)
+    /// <summary>ค่าตั้งอีเมลของบริษัท (null = ไม่มี/ไม่มี DB) — แยกเป็นเมธอดให้เทสต์แทนค่าได้โดยไม่ต้องมีฐานข้อมูล</summary>
+    protected virtual async Task<Models.Entities.CompanySettings?> LoadEmailSettingsAsync(Guid companyId, CancellationToken ct)
+        => _db == null ? null : await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(x => x.CompanyId == companyId, ct);
+
+    /// <summary>อีเมล — ลำดับจาก <see cref="CustomerNotifyChannel.EmailPlan"/>: ร้านตั้ง+ทดสอบผ่าน ⇒ ผู้ส่งของร้านก่อน ⇒ ล้ม ⇒ <b>ถอยไปอีเมลของระบบ</b>
+    /// (คำตัดสินข้อ 170 แก้ตามฝ่ายค้าน: ลูกค้าต้องไม่ได้อะไรเลยไม่ได้) + คืน Warning ให้ผู้เรียกประทับ <see cref="CmsNotificationText.FallbackTag"/> ·
+    /// ไม่ได้ตั้ง ⇒ อีเมลของระบบ (เดิม)</summary>
+    private async Task<(bool Sent, string? Error, string? Warning)> TrySendEmailAsync(Guid companyId, string to, string subject, string html, CancellationToken ct)
     {
         Models.Entities.CompanySettings? s = null;
-        if (_db != null && _senders != null)
-            s = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(x => x.CompanyId == companyId, ct);
-        if (s != null && _senders != null && CustomerNotifyChannel.EmailSource(s.EmailConfigured) == CustomerNotifyChannel.EmailTenant)
+        if (_senders != null) s = await LoadEmailSettingsAsync(companyId, ct);
+        string? tenantError = null;
+        foreach (var source in CustomerNotifyChannel.EmailPlan(s != null && _senders != null && s.EmailConfigured))
         {
-            try
+            if (source == CustomerNotifyChannel.EmailTenant)
             {
-                var sender = _senders.GetSenderForSettings(s);
-                var msg = new EmailMessage
+                try
                 {
-                    FromAddress = DocumentEmailService.ResolveFromAddress(s),
-                    FromName = s.EmailFromName,
-                    Subject = subject,
-                    HtmlBody = html,
-                };
-                msg.To.Add(to);
-                var r = await sender.SendAsync(msg, ct);
-                return r.Success ? null : $"อีเมล (ผู้ส่งของร้าน): {r.ErrorMessage ?? "ส่งไม่สำเร็จ"}";
+                    var sender = _senders!.GetSenderForSettings(s!);
+                    var msg = new EmailMessage
+                    {
+                        FromAddress = DocumentEmailService.ResolveFromAddress(s!),
+                        FromName = s!.EmailFromName,
+                        Subject = subject,
+                        HtmlBody = html,
+                    };
+                    msg.To.Add(to);
+                    var r = await sender.SendAsync(msg, ct);
+                    if (r.Success) return (true, null, null);
+                    tenantError = r.ErrorMessage ?? "ส่งไม่สำเร็จ";
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "ส่งอีเมลผ่านผู้ส่งของร้านล้ม (company {CompanyId})", companyId);
+                    tenantError = "เกิดข้อผิดพลาด (ดูบันทึกระบบ)";
+                }
+                _logger.LogError("ผู้ส่งอีเมลของร้านล้ม (company {CompanyId}): {Error} — ถอยไปอีเมลของระบบ", companyId, tenantError);
+                continue;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.LogError(ex, "ส่งอีเมลผ่านผู้ส่งของร้านล้ม (company {CompanyId})", companyId);
-                return "อีเมล (ผู้ส่งของร้าน): เกิดข้อผิดพลาด (ดูบันทึกระบบ)";
-            }
+            var systemOk = _email != null && await _email.TrySendAsync(to, subject, html);
+            if (systemOk)
+                return (true, null, tenantError == null ? null : CustomerNotifyChannel.TenantEmailFallbackWarning(tenantError));
+            var sysErr = _email == null ? "อีเมล: ระบบอีเมลไม่พร้อม" : "อีเมล: ส่งไม่สำเร็จหรือยังไม่ตั้งค่า SMTP";
+            return (false, tenantError == null ? sysErr : $"อีเมล (ผู้ส่งของร้าน): {tenantError} · {sysErr}", null);
         }
-        if (_email == null) return "อีเมล: ระบบอีเมลไม่พร้อม";
-        return await _email.TrySendAsync(to, subject, html) ? null : "อีเมล: ส่งไม่สำเร็จหรือยังไม่ตั้งค่า SMTP";
+        return (false, "อีเมล: ไม่มีผู้ส่ง", null);
     }
 }

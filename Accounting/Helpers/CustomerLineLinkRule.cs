@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Accounting.Models.Entities;
 
 namespace Accounting.Helpers;
 
@@ -92,6 +93,36 @@ public static class CustomerLineLinkRule
     /// <summary>แสดง userId แบบปิดบัง (U123••••ab) — ห้ามแสดง/บันทึก log เต็ม</summary>
     public static string Mask(string? lineUserId)
         => string.IsNullOrEmpty(lineUserId) ? "" : lineUserId.Length > 8 ? $"{lineUserId[..4]}••••{lineUserId[^2..]}" : "••••";
+
+    /// <summary>รอบ 211 ฝ่ายค้าน: ตัวระบุเจ้าของข้อมูลในแถวยินยอมเมื่อเป้าหมายไม่มีอีเมล/เบอร์ — "line:" + SHA-256 (32 hex) ของ userId (ไม่เก็บ userId ดิบในหลักฐาน)</summary>
+    public static string ConsentSubject(string lineUserId)
+        => "line:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes((lineUserId ?? "").Trim()))).Substring(0, 32).ToLowerInvariant();
+
+    /// <summary>รหัสที่หมดอายุ/ใช้แล้วเก่ากว่านี้ถูกลบทิ้งโดย <c>PdpaRetentionPurgeJob</c> (ไม่ให้ hash ค้างใน unique index ตลอดไป)</summary>
+    public static readonly TimeSpan CodeRetention = TimeSpan.FromDays(7);
+
+    /// <summary>เส้นตัดของการลบรหัส — ExpiresAt ก่อนเวลานี้ = ลบได้ (รหัสที่ยังใช้ได้ไม่มีทางผ่านเงื่อนไขนี้ เพราะอายุรหัส 30 นาที &lt; 7 วัน)</summary>
+    public static DateTime CodePurgeCutoff(DateTime nowUtc) => nowUtc - CodeRetention;
+
+    /// <summary>ปิดลิงก์ (ยกเลิก/ผูกใหม่/ลบตาม DSR) — ล้าง LINE userId ทิ้ง (ร่องรอยเก็บแบบปิดบังใน audit) · คืนจำนวนช่องที่เปลี่ยน (0 = ปิด+ล้างไปแล้ว)</summary>
+    public static int Close(CustomerLineLink link, string reason, DateTime nowUtc)
+    {
+        var n = 0;
+        if (link.LineUserId.Length > 0) { link.LineUserId = ""; n++; }
+        if (link.UnlinkedAt == null) { link.UnlinkedAt = nowUtc; link.UnlinkReason = reason; n++; }
+        if (n > 0) link.UpdatedAt = nowUtc;
+        return n;
+    }
+
+    private static readonly Regex UserIdRe = new(@"\b[UCR][0-9a-f]{32}\b", RegexOptions.CultureInvariant);
+
+    /// <summary>รอบ 211 ฝ่ายค้าน: ข้อความที่จะลง log (เช่น body ตอบกลับจาก LINE) — แทน userId/groupId/roomId เต็มด้วยรูปปิดบัง · ตัดที่ 500 ตัว</summary>
+    public static string RedactForLog(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        var r = UserIdRe.Replace(text, m => Mask(m.Value));
+        return r.Length > 500 ? r[..500] + "…" : r;
+    }
 
     /// <summary>ข้อความยินยอม (PDPA ม.19) ที่แสดงข้างปุ่ม — เวอร์ชันบันทึกผ่าน <see cref="CmsDataConsent.Version"/></summary>
     public static string ConsentText(string? shopName)

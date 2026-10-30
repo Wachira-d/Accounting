@@ -16,6 +16,9 @@ public sealed record BookingContact(string? Email, string? LineUserId)
 /// <summary>ผลการส่งข้อความถึงลูกค้า — <see cref="Sent"/> จริงเฉพาะเมื่อช่องทางใดช่องทางหนึ่งตอบว่าส่งสำเร็จ · <see cref="Error"/> = ร่องรอยต่อแถวเมื่อไม่สำเร็จ</summary>
 public sealed record BookingSendResult(bool Sent, string? Channel, string? Error)
 {
+    /// <summary>รอบ 211 ฝ่ายค้าน: ส่งถึงแล้วแต่ผ่านทางถอย (ผู้ส่งอีเมลของร้านล้ม ⇒ อีเมลของระบบ) — ผู้เรียกต้องประทับบนรายการ (ไม่เงียบ) · null = ปกติ</summary>
+    public string? Warning { get; init; }
+
     public static BookingSendResult Ok(string channel) => new(true, channel, null);
     public static BookingSendResult Fail(string error) => new(false, null, error);
 }

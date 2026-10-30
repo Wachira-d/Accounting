@@ -216,9 +216,16 @@ public partial class PdpaService
             _db.SiteCustomerAddresses.RemoveRange(addresses);
             rows += addresses.Count;
         }
-        // รอบ 211: LINE ที่ลูกค้าผูกเอง — ไม่ใช่เอกสารบัญชี (ไม่มี legal hold) ⇒ ปิดการเชื่อมต่อ + ล้าง LINE userId ทุกแถว
-        foreach (var l in await LoadCmsLineLinksAsync(companyId, r, track: true, ct))
-            if (CmsPdpaErasure.EraseLineLink(l, now) > 0) { l.UpdatedAt = now; l.UpdatedBy = actor; rows++; }
+        // รอบ 211: LINE ที่ลูกค้าผูกเอง — ไม่ใช่เอกสารบัญชี (ไม่มี legal hold) ⇒ เส้นปิดเดียวกับการยกเลิก (ฝ่ายค้าน ข้อ 2):
+        // ถอนยินยอม · ปิด + ล้าง LINE userId · audit · เผารหัสผูกที่ค้าง (รวมเป้าหมายที่ยังไม่เคยผูก — รหัสที่ออกก่อนลบต้องผูกกลับไม่ได้)
+        var lineLinks = await LoadCmsLineLinksAsync(companyId, r, track: true, ct);
+        foreach (var l in lineLinks) l.UpdatedBy = actor;
+        rows += await CustomerLineLinkClosure.CloseAsync(_db, companyId, lineLinks, "erase", now, ct);
+        var lineTargets = r.Customers.Select(c => (Kind: CustomerLineLinkRule.KindMember, Id: c.Id))
+            .Concat(r.Orders.Select(o => (Kind: CustomerLineLinkRule.KindOrder, Id: o.Id)))
+            .Concat(r.Bookings.Select(b => (Kind: CustomerLineLinkRule.KindBooking, Id: b.Id)));
+        foreach (var (kind, id) in lineTargets)
+            await CustomerLineLinkClosure.BurnPendingCodesAsync(_db, companyId, kind, id, now, ct);
         // ความยินยอมเป็น "หลักฐาน" ของการประมวลผลที่ผ่านมา (ม.19 ภาระพิสูจน์ของผู้ควบคุม) ⇒ ไม่ลบ แต่ถอนความยินยอมทุกแถวที่ยังไม่ถอน
         foreach (var cr in r.Consents.Where(x => x.WithdrawnAt == null))
         {

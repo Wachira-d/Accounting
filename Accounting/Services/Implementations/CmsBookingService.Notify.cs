@@ -79,7 +79,7 @@ public partial class CmsBookingService
             if (result.Sent)
             {
                 b.WaitlistNotifiedAt = DateTime.UtcNow;   // ประทับหลังส่งถึงจริงเท่านั้น (F2 #3)
-                b.NotifyLastError = null;
+                b.NotifyLastError = result.Warning;   // รอบ 211 ฝ่ายค้าน: ส่งถึงทางถอย ⇒ ประทับคำเตือน (null = ปกติ)
                 notices.Add($"#{b.BookingNumber} ได้คิวแล้ว — แจ้งลูกค้าทาง {(result.Channel == "line" ? "LINE" : "อีเมล")} แล้ว");
             }
             else

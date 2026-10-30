@@ -20,6 +20,8 @@ public static class CmsNotificationText
     public const string RuleCode = "CMS-NOTIFY";
     /// <summary>ป้ายบนหมายเหตุภายในของออเดอร์/การจอง/lead เมื่อแจ้งไม่ถึง (ค้นหาได้)</summary>
     public const string FailureTag = "[CMS-NOTIFY-FAILED]";
+    /// <summary>รอบ 211 ฝ่ายค้าน: ส่งถึงแล้วแต่ผ่านทางถอย (ผู้ส่งอีเมลของร้านล้ม ⇒ อีเมลของระบบ) — ประทับให้ร้านเห็น ไม่ใช่ "ส่งไม่สำเร็จ"</summary>
+    public const string FallbackTag = "[CMS-NOTIFY-FALLBACK]";
     public const int MaxShopRecipients = 10;
 
     private static readonly char[] Separators = { ',', ';', ' ', '\n', '\r', '\t' };
@@ -174,7 +176,10 @@ public static class CmsNotificationText
     public static CmsNotification WithLine(CmsNotification message, string? line)
         => string.IsNullOrWhiteSpace(line) ? message : message with { Text = message.Text + "\n" + line.Trim() };
 
-    /// <summary>หมายเหตุภายในเมื่อแจ้งไม่ถึง — "ใคร" (ร้าน/ลูกค้า) + เรื่อง + เหตุจริงจากช่องส่ง</summary>
+    /// <summary>หมายเหตุภายในเมื่อแจ้งไม่ถึง — "ใคร" (ร้าน/ลูกค้า) + เรื่อง + เหตุจริงจากช่องส่ง ·
+    /// รอบ 211 ฝ่ายค้าน: ข้อความที่ขึ้นต้น <see cref="FallbackTag"/> (ส่งถึงทางถอย) ⇒ หมายเหตุ "แจ้งแล้วทางอีเมลของระบบ" (ไม่ใช่ "ไม่สำเร็จ")</summary>
     public static string FailureNote(string target, string subject, string error, DateTime atUtc)
-        => $"{FailureTag} [{atUtc:yyyy-MM-dd HH:mm}Z] แจ้ง{target}ไม่สำเร็จ ({subject}): {error} — กรุณาติดต่อเอง";
+        => error.StartsWith(FallbackTag, StringComparison.Ordinal)
+            ? $"{FallbackTag} [{atUtc:yyyy-MM-dd HH:mm}Z] แจ้ง{target}แล้ว ({subject}): {error[FallbackTag.Length..].Trim()}"
+            : $"{FailureTag} [{atUtc:yyyy-MM-dd HH:mm}Z] แจ้ง{target}ไม่สำเร็จ ({subject}): {error} — กรุณาติดต่อเอง";
 }

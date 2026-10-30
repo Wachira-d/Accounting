@@ -130,7 +130,7 @@ public class BookingReminderJob : BackgroundService
                     {
                         b.ReminderSent = true;
                         b.ReminderSentAt = nowUtc;   // หลังส่งถึงจริงเท่านั้น
-                        b.NotifyLastError = null;
+                        b.NotifyLastError = r.Warning;   // รอบ 211 ฝ่ายค้าน: ส่งถึงทางถอย ⇒ ประทับคำเตือน (null = ปกติ)
                         sent++;
                     }
                     else { b.NotifyLastError = r.Error; failed++; }

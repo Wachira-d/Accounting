@@ -5895,10 +5895,12 @@ _Last verified against codebase: 2026-10-30 (รอบ 210 — สมาชิ�
   (ข) **ช่องทาง** `Helpers/CustomerNotifyChannel`: OA ของร้านเมื่อ `LineEnabled`+token ไม่งั้น OA ของ NextAcc (เดิม) · ลิงก์ผูกกับ OA (`OaScope`+`OaDestination`) ⇒ สลับ OA = ผูกใหม่ ·
   (ค) **ส่ง** — `BookingNotifier` หา LINE ที่ผูกเอง (ระเบียน > สมาชิก > สมาชิกของผู้ติดต่อ) ผ่าน `BookingContact.LineTarget` ที่ทุกทางเข้าส่งมา
   (ยืนยัน/ยกเลิก/เลื่อนการจอง · ได้คิว · คลาส · เตือนก่อนนัด · ออเดอร์ · บัตรใกล้หมดอายุ) · ผูกแล้ว ⇒ LINE ก่อนแล้วอีเมล · ไม่ผูก ⇒ อีเมลก่อน (เดิม) ·
-  อีเมลผ่านผู้ส่งของร้านเมื่อ `EmailConfigured` (ทดสอบผ่าน) ไม่งั้นของระบบ · ล้มทุกช่อง ⇒ ประทับเหตุบนรายการเหมือนเดิม ·
-  (ง) DSR ขอดู/ลบครอบ `CustomerLineLinks` · หน้าตั้งค่า LINE แสดง OA ที่ใช้ + webhook URL + จำนวนลิงก์ (`line-config.customerChannel`)
+  อีเมลผ่านผู้ส่งของร้านเมื่อ `EmailConfigured` (ทดสอบผ่าน) ไม่งั้นของระบบ · **ร้านล้ม ⇒ ถอยไปอีเมลของระบบ + ประทับ `[CMS-NOTIFY-FALLBACK]`** (ฝ่ายค้าน) · ล้มทุกช่อง ⇒ ประทับเหตุบนรายการเหมือนเดิม ·
+  (ง) ปิดลิงก์ทุกทาง (ยกเลิก/ผูกใหม่/DSR ลบ) ผ่าน `Helpers/CustomerLineLinkClosure` เส้นเดียว: ถอนยินยอม · ล้าง userId · audit · เผารหัสค้าง · `PdpaRetentionPurgeJob` ลบรหัสหมดอายุ > 7 วัน · DSR ขอดู/ลบครอบ `CustomerLineLinks` · หน้าตั้งค่า LINE แสดง OA ที่ใช้ + webhook URL + จำนวนลิงก์ (`line-config.customerChannel`)
 
-_Last verified against codebase: 2026-10-30 (รอบ 211 — ลูกค้าผูก LINE รับแจ้งเตือน · OA ของร้าน/NextAcc · อีเมลของร้าน · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
+_Last verified against codebase: 2026-10-30 (รอบ 211 — ลูกค้าผูก LINE รับแจ้งเตือน · OA ของร้าน/NextAcc · อีเมลของร้าน · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 461eeea5)_
+
+_Last verified against codebase: 2026-10-30 (รอบ 211 ฝ่ายค้าน — log ปิดบัง userId · เส้นปิดลิงก์เดียว + เผารหัส · เก็บกวาดรายคืน · BotUserId มีผล · อีเมลร้านล้มถอยไประบบ + ประทับ · webhook 401 แบบเดียว + จำกัด body · ธุรกรรมไถ่/ออกรหัส · ยินยอมด้วย hash · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 

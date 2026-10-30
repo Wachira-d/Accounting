@@ -131,7 +131,7 @@ public class LineBotService : ILineBotService
         }
     }
 
-    public async Task<string?> HandleMessageAsync(string lineUserId, string text)
+    public async Task<string?> HandleMessageAsync(string lineUserId, string text, string? destination = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
         var msg = text.Trim();
@@ -139,7 +139,7 @@ public class LineBotService : ILineBotService
         // -1) รอบ 211: ลูกค้าปลายทางของร้าน (สมาชิกเว็บ/แขก) ผูก LINE รับแจ้งเตือน — "ผูก LN-XXXXXXXX" (มี LN ⇒ ไม่ใช่รหัส ERP 6 หลัก) ·
         //     ต้องมาก่อนเส้น "ผูก" ของ ERP (ซึ่งดึงเฉพาะตัวเลข) · ตัวตัดสินรูปแบบเดียว CustomerLineLinkRule · ข้อความ ERP เดิมไม่ถูกแตะ
         if (_customerLinks != null && CustomerLineLinkRule.IsLinkAttempt(msg))
-            return await _customerLinks.TryRedeemAsync(CustomerNotifyChannel.ScopeNextAcc, null, null, lineUserId, msg);
+            return await _customerLinks.TryRedeemAsync(CustomerNotifyChannel.ScopeNextAcc, null, destination, lineUserId, msg);
 
         // 0) Employee payslip-bind — "สลิป 123456" / "ผูกสลิป 123456" ผูก LINE นี้
         // กับ "พนักงาน" (ไม่ใช่ผู้ใช้ระบบ) เพื่อรับสลิปเงินเดือน. ต้องเช็คก่อน
@@ -905,7 +905,7 @@ public class LineBotService : ILineBotService
         {
             var res = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
             if (!res.IsSuccessStatusCode)
-                _logger.LogWarning("LINE flex push returned {Status} for {User}", res.StatusCode, lineUserId);
+                _logger.LogWarning("LINE flex push returned {Status} for {User}", res.StatusCode, CustomerLineLinkRule.Mask(lineUserId));
             return res.IsSuccessStatusCode;
         }
         catch (Exception ex)
@@ -1036,7 +1036,7 @@ public class LineBotService : ILineBotService
         {
             var res = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
             if (!res.IsSuccessStatusCode)
-                _logger.LogWarning("LINE push returned {Status} for {User}", res.StatusCode, lineUserId);
+                _logger.LogWarning("LINE push returned {Status} for {User}", res.StatusCode, CustomerLineLinkRule.Mask(lineUserId));
         }
         catch (Exception ex) { _logger.LogError(ex, "LINE push failed"); }
     }
