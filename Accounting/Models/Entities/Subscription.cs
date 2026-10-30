@@ -233,9 +233,10 @@ public class PlanTemplate : BaseEntity
     public int MaxJournalEntriesPerMonth { get; set; }
     public long MaxStorageBytes { get; set; }
     public int MaxOcrPagesPerMonth { get; set; }
-    /// <summary>รอบ 212 (คำตัดสินข้อ 171): เพดานข้อความผ่านช่องกลาง (LINE OA/อีเมลของ NextAcc) ต่อบริษัทต่อเดือน · -1 = ไม่จำกัด ·
-    /// ค่าตั้งต้นจาก migration (ต่อระดับแพ็กเกจ) — เจ้าของแก้ได้ที่ /admin/plans.html · ตัวตัดสิน <c>Helpers/NotifyQuotaPolicy.PlanLimit</c></summary>
-    public int MaxSharedMessagesPerMonth { get; set; } = 300;
+    /// <summary>รอบ 212 (คำตัดสินข้อ 171): เพดานข้อความผ่านช่องกลาง (LINE OA/อีเมลของ NextAcc) ต่อบริษัทต่อเดือน · <b>null/-1 = ไม่จำกัด (ค่าเริ่มต้น = พฤติกรรมเดิม)</b> ·
+    /// ผู้ประสานงานตัดสินหลังฝ่ายค้าน: migration ไม่ตั้งตัวเลขให้ — เจ้าของตั้งเองที่ /admin/plans.html (ค่าแนะนำ <c>NotifyQuotaPolicy.SuggestedLimits</c>) ·
+    /// ตัวตัดสิน <c>Helpers/NotifyQuotaPolicy.PlanLimit</c></summary>
+    public int? MaxSharedMessagesPerMonth { get; set; }
 
     // ─── Per-engine OCR quotas (split Azure DI vs local) ───
     // When set, override the single MaxOcrPagesPerMonth and let admins
@@ -263,8 +264,8 @@ public class PlanTemplate : BaseEntity
     public int TrialMaxDocumentsPerMonth { get; set; } = 20;
     public int TrialMaxJournalEntriesPerMonth { get; set; } = 50;
     public int TrialMaxOcrPagesPerMonth { get; set; } = 10;
-    /// <summary>รอบ 212: เพดานข้อความช่องกลาง/เดือนระหว่างทดลองใช้ (-1 = ไม่จำกัด) · ค่าตั้งต้นจาก migration — แก้ที่ /admin/plans.html</summary>
-    public int TrialMaxSharedMessagesPerMonth { get; set; } = 100;
+    /// <summary>รอบ 212: เพดานข้อความช่องกลาง/เดือนระหว่างทดลองใช้ (null = ใช้ค่าของแพ็กเกจ · -1 = ไม่จำกัด) — เจ้าของตั้งที่ /admin/plans.html</summary>
+    public int? TrialMaxSharedMessagesPerMonth { get; set; }
     public bool TrialBlockOnExpiry { get; set; } = false;
     public int TrialGracePeriodDays { get; set; } = 7;
     /// <summary>แพ็กเกจนี้ให้ "ทำภารกิจแลกโควตาเอกสาร" ได้ไหม (LODGING_LICENSING_PLAN §12)

@@ -37,7 +37,6 @@ public static class SeedPlanTemplates
                 MaxUsers = 2,
                 MaxCompanies = 1,
                 MaxDocumentsPerMonth = 100,
-                MaxSharedMessagesPerMonth = 300,   // รอบ 212: ข้อความช่องกลาง/เดือน (ค่าตั้งต้นเดียวกับ migration CmsRound212NotifyStatements)
                 MaxJournalEntriesPerMonth = 200,
                 MaxStorageBytes = 500L * 1024 * 1024, // 500 MB
 
@@ -78,7 +77,6 @@ public static class SeedPlanTemplates
                 MaxUsers = 10,
                 MaxCompanies = 3,
                 MaxDocumentsPerMonth = 1_000,
-                MaxSharedMessagesPerMonth = 1000,   // รอบ 212: ข้อความช่องกลาง/เดือน (ค่าตั้งต้นเดียวกับ migration CmsRound212NotifyStatements)
                 MaxJournalEntriesPerMonth = 2_000,
                 MaxStorageBytes = 5L * 1024 * 1024 * 1024, // 5 GB
 
@@ -119,7 +117,6 @@ public static class SeedPlanTemplates
                 MaxUsers = 999,  // ไม่จำกัดในทางปฏิบัติ
                 MaxCompanies = 99,
                 MaxDocumentsPerMonth = 99_999,
-                MaxSharedMessagesPerMonth = 5000,   // รอบ 212: ข้อความช่องกลาง/เดือน (ค่าตั้งต้นเดียวกับ migration CmsRound212NotifyStatements)
                 MaxJournalEntriesPerMonth = 99_999,
                 MaxStorageBytes = 50L * 1024 * 1024 * 1024, // 50 GB
 
@@ -161,7 +158,6 @@ public static class SeedPlanTemplates
                 MaxUsers = 1,
                 MaxCompanies = 1,
                 MaxDocumentsPerMonth = 30,
-                MaxSharedMessagesPerMonth = 100,   // รอบ 212: ข้อความช่องกลาง/เดือน (ค่าตั้งต้นเดียวกับ migration CmsRound212NotifyStatements)
                 MaxJournalEntriesPerMonth = 50,
                 MaxStorageBytes = 100L * 1024 * 1024, // 100 MB
 

@@ -21,7 +21,20 @@ public static class AddOnBilling
     public static string FlatKey(string featureCode, string period) => $"flat:{featureCode}:{period}";
 
     /// <summary>คีย์ของ top-up ที่ซื้อครั้งที่ n ในงวดนั้น (ซื้อซ้ำได้ ต่างจากค่าเหมา)</summary>
-    public static string TopUpKey(string featureCode, string period, int seq) => $"topup:{featureCode}:{period}:{seq}";
+    public static string TopUpKey(string featureCode, string period, int seq) => TopUpKeyPrefix(featureCode, period) + seq;
+
+    /// <summary>รอบ 212 ฝ่ายค้าน B2: คำนำหน้าคีย์ top-up ของงวด (เดือนไทย) — นับลำดับการซื้อด้วยคำนำหน้านี้
+    /// (เดิมนับ UsageEvent ตั้งแต่ต้นเดือน <b>UTC</b> ขณะที่งวดในคีย์เป็นเดือน<b>ไทย</b> ⇒ คืนวันที่ 1 ตี 0-7 คีย์ลำดับซ้ำงวดก่อน ⇒ ถูกปฏิเสธว่า "กดซ้ำ" ทั้งเดือน)</summary>
+    public static string TopUpKeyPrefix(string featureCode, string period) => $"topup:{featureCode}:{period}:";
+
+    /// <summary>รอบ 212 ฝ่ายค้าน S2: คีย์ของการซื้อตาม <c>Idempotency-Key</c> ที่ผู้เรียกส่งมา (กดซ้ำ/เครือข่ายส่งซ้ำ = คำขอเดียวกัน ⇒ คิดเงินครั้งเดียว) ·
+    /// null = ผู้เรียกไม่ได้ส่งคีย์ ⇒ ผู้เรียกใช้ลำดับในงวด (<c>TopUpRequestKey(...) ?? TopUpKey(...)</c>) · hash ให้สั้นคงที่ (ไม่เก็บค่าดิบ)</summary>
+    public static string? TopUpRequestKey(string featureCode, string period, string? clientKey)
+    {
+        if (string.IsNullOrWhiteSpace(clientKey)) return null;
+        var h = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(clientKey.Trim())))[..24].ToLowerInvariant();
+        return TopUpKeyPrefix(featureCode, period) + "req-" + h;
+    }
 
     /// <summary>ค่าเหมาของงวดนี้ควรเป็นเท่าไร
     ///

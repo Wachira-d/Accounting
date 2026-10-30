@@ -418,7 +418,9 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   OA/SMTP ของร้านเองไม่นับ · เพดาน resolve ที่ `NotifyQuotaService.LoadLimitAsync` ตัวเดียว: `Subscription.MaxSharedMessagesPerMonth` (เฉพาะบริษัท · null = ตามแพ็กเกจ · -1 = ไม่จำกัด)
   ⇒ `PlanTemplate.MaxSharedMessagesPerMonth` (ทดลองใช้ `TrialMaxSharedMessagesPerMonth` · บริษัทใต้กลุ่มบัญชีใช้แม่แบบของกลุ่ม) ⇒ ไม่พบแม่แบบ = ไม่จำกัด ·
   **อ่านจากแม่แบบตอนนับ ไม่คัดลอกลง Subscription** (ต่างจาก `MaxDocumentsPerMonth` — แก้ที่ /admin/plans.html มีผลทันทีทุกบริษัท) ·
-  ค่าตั้งต้นจาก migration `CmsRound212NotifyStatements` (เติมครั้งเดียวตอนเพิ่มคอลัมน์): ทดลอง 100 · Basic 300 · Pro 1,000 · Enterprise 5,000 · ทดลองใช้ของทุกแม่แบบ 100 ·
+  **ค่าเริ่มต้น = ไม่จำกัด (NULL · พฤติกรรมเดิม)** — ผู้ประสานงานตัดสินหลังฝ่ายค้านรอบ 212: migration ห้ามจำกัดลูกค้าเดิม · ตัวเลข**แนะนำ** (ทดลอง 100 · Basic 300 · Pro 1,000 ·
+  Enterprise 5,000 · ทดลองใช้ 100 — `NotifyQuotaPolicy.SuggestedLimit`) แสดงเป็นคำใบ้ที่ /admin/plans.html ให้เจ้าของตั้งเอง (ช่องว่าง = ไม่จำกัด) ·
+  **ไม่นับ** ข้อความถึงร้าน `shop.*` (ออเดอร์/การจองใหม่ · สลิป · lead · ที่พัก · เงินค้าง — แจ้งเตือนงาน · ไม่ถูกระงับ) · ข้อความจำเป็น (นับแต่ไม่ระงับ) = แขกที่พักรอสลิป ·
   เต็ม ⇒ โบนัส `Subscription.NotifyBonusQuota`/`NotifyBonusExpiresAt` (แพ็ก `notify.topup`) ⇒ หมด = ไม่ส่งทางช่องกลาง (ลองช่องของร้านก่อน) · เตือนเจ้าของ 80%/100% ครั้งเดียวต่องวด ·
   **ไม่บล็อกงานธุรกิจ/เอกสาร** · สถานะ `GET metering/notify-quota` (เซิร์ฟเวอร์คำนวณ · หน้า ตั้งค่า/การใช้งาน/แพ็กเกจ/ส่วนเสริม)
 
@@ -583,6 +585,8 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   `AddOnCodes.MessagesPerNotifyTopUpPack` ต้องตรง `UnitLabel` ที่ seed) · ด่าน `RequireBillingAsync` เดิม · `NotifyQuotaService.PurchaseTopUpAsync` ลอก `QuotaService.PurchaseTopUpAsync`
   (advisory xact lock ต่อบริษัท `AdvisoryLockKey.QuotaGrant` · UsageEvent ก่อนให้ของ · audit chain) · `notify.topup` อยู่ใน `AddOnCodes.SystemMeters` (ไม่ใช่สวิตช์ลูกค้า) ·
   ราคาตั้งต้นเสนอ 99 บาท/แพ็ก (`ApiPricingPlan` seed · แก้ที่ /admin/addons.html) · **ใบแจ้งหนี้/ใบกำกับไหลเส้นเดิม** `UsageInvoicingJob` → `PlatformBillingDocumentIssuer`
+  ฝ่ายค้านรอบ 212: ให้โบนัสด้วย UPDATE เดียวหลังล็อก (ซื้อ/หักพร้อมกันไม่หาย — แก้ `documents.topup` ด้วย) · ลำดับการซื้อนับจากคำนำหน้าคีย์งวดไทย
+  (`AddOnBilling.TopUpKeyPrefix` — เดิมนับจากต้นเดือน UTC ⇒ "กดซ้ำ" ทั้งเดือน) · header `Idempotency-Key` บน `POST …/quota/topup` และ `…/notify-quota/topup` (ส่งซ้ำ = ผลเดิม คิดเงินครั้งเดียว)
   (ไม่มีเลขเอกสาร/เส้นภาษีใหม่ · Prepaid ตัดเครดิตตอนบันทึก)
 - `POST …/quota/rewards/{id}/claim` — ภารกิจแลกโควตา (§12 ของ LODGING_LICENSING_PLAN),
   สวิตช์ 3 ชั้น: ไม่มี option ที่ `IsActive` · `PlanTemplate.AllowQuotaReward` ·

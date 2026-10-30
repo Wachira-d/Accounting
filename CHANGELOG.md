@@ -5735,3 +5735,12 @@ claim คีย์ข้อความ (`CustomerNotifyLogs`) → ค่าต�
 `notify.topup` (เส้นบิลเดิม) · `GET/POST metering/notify-quota[/topup]` · `GET/PUT customer-notify/rules` · `PUT customer-notify/fallback` · (5) หน้า ตั้งค่า/ตั้งค่าร้านค้า/การใช้งาน/แพ็กเกจ/ส่วนเสริม/แอดมิน plans ·
 (6) migration `CmsRound212NotifyStatements` (+ ตารางล่วงหน้าแพ็ก B/C) · เทสต์ `CmsRound212PrefsQuotaTests` + Db `NotifyQuotaDbTests` (TEST_PLAN CMS212A-01..22) · `required_call_site_check` +23 กติกา/แก้ 4 (เส้นส่งย้ายเข้า `DeliverAsync`) ·
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 40ff8f41_
+
+_รอบ 212 ฝ่ายค้าน (A+C) — blocking เงิน 3 ข้อ: (B1) ให้โบนัสแพ็กข้อความด้วย UPDATE เดียวหลัง advisory lock (เดิมอ่าน `Subscription` ก่อนล็อกแล้วเขียนค่าสัมบูรณ์ ⇒ ซื้อพร้อมกัน
+ได้ 500 จ่าย 2 แพ็ก · การหักโบนัสของ `TryReserveAsync` ระหว่างนั้นถูกเขียนทับ) — แก้บั๊กเดียวกันใน `QuotaService.PurchaseTopUpAsync` (documents.topup · พฤติกรรมอื่นคงเดิม) ·
+(B2) ลำดับการซื้อนับจากคำนำหน้าคีย์งวดไทย `AddOnBilling.TopUpKeyPrefix` (เดิมต้นเดือน UTC ⇒ คืนวันที่ 1 ตี 0-7 คีย์ซ้ำ ⇒ "กดซ้ำ" ทั้งเดือน) ทั้งสองแพ็ก ·
+(B3) ข้อความถึงร้าน `shop.*` ไม่นับโควตา/ไม่ถูกระงับ (`NotifyQuotaPolicy.CountsEvent`) · (S1) `lodging.slip-required` จำเป็น + อีเมลถึงแขกระงับ/ล้ม ⇒ ประทับ `InternalNotes` ·
+(S2) header `Idempotency-Key` บนการซื้อแพ็กทั้งสอง (`AddOnBilling.TopUpRequestKey`) · (S3) `Helpers/CustomerNotifyLogRule` ปิดบังหมายเหตุ + ลบ > 90 วันใน `PdpaRetentionPurgeJob` + DSR ลบตามเป้าหมาย ·
+(S4) สรุปรายวันที่โควตาเต็มไม่ใช่สถานะจบ (ลองใหม่จนถึง 23:00) · lease claim 10 นาที · มิเตอร์สรุปรายวันแจ้งเจ้าของเมื่อเต็ม ·
+**ผู้ประสานงาน**: เพดานแม่แบบเริ่มต้น = ไม่จำกัด (ถอด DO block ที่ตั้ง 100/300/1000/5000 · ตัวเลขเป็นคำใบ้ที่หน้าแอดมิน) · เทสต์ +9 (CMS212A-23..31) · `required_call_site_check` +10/แก้ 1 ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

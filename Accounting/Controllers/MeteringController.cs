@@ -283,6 +283,13 @@ public class MeteringController : ControllerBase
 
     public record TopUpRequest(int Packs = 1);
 
+    /// <summary>header <c>Idempotency-Key</c> ของคำขอซื้อ (null = ไม่ได้ส่ง · ยาวเกิน 200 ตัดทิ้ง — ใช้แค่ hash)</summary>
+    private string? IdempotencyKeyHeader()
+    {
+        var v = Request?.Headers["Idempotency-Key"].ToString();
+        return string.IsNullOrWhiteSpace(v) ? null : (v.Length > 200 ? v[..200] : v);
+    }
+
     /// <summary>ซื้อโควตาเอกสารเพิ่ม — ทางไปต่อทางที่ 1 เมื่อชนเพดาน (§11)</summary>
     [HttpPost("quota/topup")]
     public async Task<ActionResult<ApiResponse<DocumentQuotaStatus>>> TopUp(
@@ -293,7 +300,8 @@ public class MeteringController : ControllerBase
         if (block != null) return block;
 
         var actor = User.Identity?.Name ?? "unknown";
-        var status = await _quota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct);
+        // ฝ่ายค้านรอบ 212 S2: header Idempotency-Key — กดซ้ำ/ส่งซ้ำด้วยคีย์เดิม = คำขอเดียว (คิดเงินครั้งเดียว · ได้ผลเดิม)
+        var status = await _quota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader());
         var docs = req.Packs * Models.Constants.AddOnCodes.DocumentsPerTopUpPack;
         return Ok(new ApiResponse<DocumentQuotaStatus>(true, status,
             $"เพิ่มโควตา {docs} ฉบับแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));
@@ -319,7 +327,7 @@ public class MeteringController : ControllerBase
         if (_notifyQuota == null) return StatusCode(503, new ApiResponse<NotifyQuotaStatus>(false, null, "บริการโควตาข้อความไม่พร้อม"));
 
         var actor = User.Identity?.Name ?? "unknown";
-        var status = await _notifyQuota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct);
+        var status = await _notifyQuota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader());
         var msgs = req.Packs * Models.Constants.AddOnCodes.MessagesPerNotifyTopUpPack;
         return Ok(new ApiResponse<NotifyQuotaStatus>(true, status,
             $"เพิ่มข้อความแจ้งเตือน {msgs} ข้อความแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));

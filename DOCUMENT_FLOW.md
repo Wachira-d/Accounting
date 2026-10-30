@@ -5931,7 +5931,7 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 C — แจ้งเ
   `CustomerNotifyPolicy.Plan` (ลำดับช่องเดิม `CustomerNotifyChannel.Order` × ผู้ส่งอีเมลจาก `EmailPlan(configured, CompanySettings.CustomerEmailFallback)`) ⇒
   ขั้นที่ออก **OA ของ NextAcc / SMTP ของระบบ** จองโควตาก่อนส่ง (`INotifyQuotaService.TryReserveAsync` · UPDATE…WHERE "Used" < limit RETURNING) · เต็ม ⇒ ข้ามไปช่องของร้าน (+ คำเตือน `[CMS-NOTIFY-FALLBACK]`) ·
   ไม่มีช่องของร้าน ⇒ **ระงับ** (`BookingSendResult.IsSuppressed` · ผู้เรียกประทับเหตุบนการจอง/ออเดอร์/บัตรเหมือนส่งล้ม · ไม่ประทับ "ส่งแล้ว" ⇒ งานตามรอบส่งต่อได้เมื่อเติมโควตา) ·
-  ส่งล้ม ⇒ คืนหน่วย · ข้อความจำเป็น (`shop.payment-problem`) นับแต่ไม่ระงับ · ค่าตั้งปิดทั้งสองช่อง ⇒ ระงับ (งานเตือนก่อนนัดกรองก่อนวน)
+  ส่งล้ม ⇒ คืนหน่วย · ข้อความจำเป็น (`lodging.slip-required` · ฝ่ายค้าน S1) นับแต่ไม่ระงับ · ข้อความถึงร้าน `shop.*` **ไม่นับ ไม่ระงับ** (ฝ่ายค้าน B3) · ค่าตั้งปิดทั้งสองช่อง ⇒ ระงับ (งานเตือนก่อนนัดกรองก่อนวน)
   (ค) **ถอยอีเมล 3 ค่า** (`CompanySettings.CustomerEmailFallback`): ว่าง/`system-on-fail-or-unset` = เดิม (ร้านล้ม/ไม่ตั้ง ⇒ อีเมลระบบ) · `system-when-unset-only` (ร้านตั้งแล้วล้ม ⇒ ไม่ถอย) ·
   `tenant-only` (ไม่ตั้ง ⇒ ไม่ส่งอีเมล) · แก้ที่ `PUT customer-notify/fallback` (ไม่ล้าง "ทดสอบผ่าน" ของ email-config) · echo ใน `GET email-config` + `GET customer-notify/rules`
   (ง) **โควตา**: นับเฉพาะช่องกลาง (`NotifyQuotaPolicy.IsMetered`) ต่อบริษัทต่องวดเดือนตามเวลาไทย (`NotifyUsageCounters` · ไม่มีงาน reset) · เพดาน = `Subscription.MaxSharedMessagesPerMonth`
@@ -5946,6 +5946,14 @@ _Last verified against codebase: 2026-10-30 (รอบ 212 C — แจ้งเ
   (ช) migration `DatabaseMigrationHelper.CmsRound212NotifyStatements` (บล็อกเดียวของรอบ · รวมตารางล่วงหน้าของแพ็ก B `LineOaSwitchEvents` และแพ็ก C `StaffDailySummary*`)
 
 _Last verified against codebase: 2026-10-30 (รอบ 212 แพ็ก A — ค่าตั้งแจ้งลูกค้าต่อประเภท × ช่อง · ถอยอีเมล 3 ค่า · โควตาข้อความช่องกลาง + แพ็ก notify.topup · 12 เส้นผ่าน BookingNotifier · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 40ff8f41)_
+
+- **รอบ 212 ฝ่ายค้าน (A+C · 3 blocking เงิน)**: (B1) ให้โบนัสแพ็กข้อความ/เอกสารด้วย `UPDATE "Subscriptions" SET … = CASE … + @g` เดียว**หลัง** advisory lock (เดิมอ่าน entity ก่อนล็อกแล้วเขียนค่าสัมบูรณ์ ⇒
+  ซื้อพร้อมกันได้ 500 จ่าย 2 แพ็ก · การหักโบนัสระหว่างนั้นหาย) · (B2) ลำดับการซื้อนับจากคำนำหน้าคีย์งวดไทย (`AddOnBilling.TopUpKeyPrefix`) · (B3) `shop.*` ไม่นับโควตา (ไม่ถูกระงับ) ·
+  (S1) แขกที่พักรอสลิป = จำเป็น + อีเมลถึงแขกระงับ/ล้ม ⇒ ประทับ `InternalNotes` ของการจอง · (S2) header `Idempotency-Key` ของการซื้อแพ็ก · (S3) หมายเหตุใน `CustomerNotifyLogs` ปิดบังอีเมล/เบอร์/LINE userId
+  (`Helpers/CustomerNotifyLogRule`) · ลบเมื่อเกิน 90 วัน (`PdpaRetentionPurgeJob`) · DSR ลบตามเป้าหมาย · (S4) สรุปรายวันที่โควตาเต็มลองใหม่ได้จนถึง 23:00 ·
+  lease ของ claim 10 นาที · มิเตอร์สรุปรายวันแจ้งเจ้าของเมื่อเต็ม · **เพดานแม่แบบ = ไม่จำกัด** (ผู้ประสานงาน: migration ไม่จำกัดลูกค้าเดิม · ตัวเลขแนะนำเป็นคำใบ้ที่หน้าแอดมิน)
+
+_Last verified against codebase: 2026-10-30 (รอบ 212 ฝ่ายค้าน A+C — โบนัส UPDATE เดียวหลังล็อก · งวดไทย · shop ไม่นับ · Idempotency-Key · ปิดบังหมายเหตุ/ล้าง/DSR · สรุปรายวันลองใหม่เมื่อโควตาเต็ม · เพดานเริ่มต้นไม่จำกัด · ยังไม่ได้คอมไพล์ · commit <sha ในคอมมิตถัดไป>)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 

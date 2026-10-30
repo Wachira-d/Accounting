@@ -286,6 +286,7 @@ public class StaffDailySummaryService : IStaffDailySummaryService
         var sending = StaffDailySummaryPlan.StatusSending;
         var failedStatus = StaffDailySummaryPlan.StatusFailed;
         var max = StaffDailySummaryPlan.MaxAttempts;
+        var quotaStatus = StaffDailySummaryPlan.StatusQuotaExceeded;   // ฝ่ายค้านรอบ 212 S4: โควตาเต็มลองใหม่ได้ (เติมแพ็กแล้วส่งต่อ) จนถึง 23:00
         var n = await _db.Database.ExecuteSqlInterpolatedAsync($@"
             INSERT INTO ""StaffDailySummaryDeliveries"" (""Id"", ""CompanyId"", ""ConfigId"", ""LocalDate"", ""UserId"", ""Status"", ""Attempts"", ""ClaimedAt"", ""CreatedAt"", ""IsDeleted"")
             VALUES ({id}, {companyId}, {configId}, {localDate}, {userId}, {sending}, 1, {now}, {now}, false)
@@ -293,6 +294,7 @@ public class StaffDailySummaryService : IStaffDailySummaryService
                SET ""Status"" = {sending}, ""Attempts"" = ""StaffDailySummaryDeliveries"".""Attempts"" + 1, ""ClaimedAt"" = {now}, ""Error"" = NULL
              WHERE ""StaffDailySummaryDeliveries"".""CompanyId"" = {companyId}
                AND ((""StaffDailySummaryDeliveries"".""Status"" = {failedStatus} AND ""StaffDailySummaryDeliveries"".""Attempts"" < {max})
+                 OR ""StaffDailySummaryDeliveries"".""Status"" = {quotaStatus}
                  OR (""StaffDailySummaryDeliveries"".""Status"" = {sending} AND ""StaffDailySummaryDeliveries"".""ClaimedAt"" < {stale}))", ct);
         return n == 1;
     }

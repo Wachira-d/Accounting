@@ -247,7 +247,9 @@ public class CmsRound212DailySummaryTests
         Assert.True(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusSent, 1));
         Assert.True(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusNoLine, 1));
         Assert.True(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusNothingVisible, 1));
-        Assert.True(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusQuotaExceeded, 1));
+        // ฝ่ายค้านรอบ 212 S4: โควตาเต็มไม่ใช่จุดจบของวัน (เติมแพ็กแล้วรอบถัดไปส่งต่อจนถึง 23:00) — ไม่ขึ้นกับจำนวนครั้งที่ลอง
+        Assert.False(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusQuotaExceeded, 1));
+        Assert.False(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusQuotaExceeded, StaffDailySummaryPlan.MaxAttempts + 5));
         Assert.False(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusFailed, StaffDailySummaryPlan.MaxAttempts - 1));   // ยังลองใหม่ได้
         Assert.True(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusFailed, StaffDailySummaryPlan.MaxAttempts));
         Assert.False(StaffDailySummaryPlan.IsTerminal(StaffDailySummaryPlan.StatusSending, 1));   // กำลังส่ง ⇒ ยังไม่จบ

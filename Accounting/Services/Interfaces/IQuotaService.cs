@@ -48,7 +48,7 @@ public interface IQuotaService
 
     /// <summary>ซื้อโควตาเพิ่ม (top-up) — 1 แพ็ก = `documents.topup` 1 หน่วย
     /// คิดเงินผ่าน UsageEvent ปกติ (เข้าบิลรอบเดือน/ตัดเครดิต Prepaid)</summary>
-    Task<DocumentQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default);
+    Task<DocumentQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null);
 
     Task<List<QuotaRewardOptionDto>> ListRewardOptionsAsync(Guid companyId, CancellationToken ct = default);
 

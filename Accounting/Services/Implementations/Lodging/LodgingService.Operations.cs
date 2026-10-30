@@ -537,14 +537,18 @@ public partial class LodgingService
 ยอดรวม {r.TotalAmount:N2} บาท · มัดจำ {r.DepositRequired:N2} บาท{(r.DepositPaid > 0 ? $" (รับแล้ว {r.DepositPaid:N2})" : "")}</p>"
                 + (link != null ? $@"<p><a href=""{enc(link)}"">ดูรายละเอียด / อัปโหลดสลิป / ยกเลิก</a></p>" : "");
 
-            // ถึงแขก (อีเมลอย่างเดียว · ไม่มี LINE ของแขกที่พัก) — ระงับ/ล้ม ⇒ log (เดิม best-effort) · คีย์กันส่งซ้ำต่อเหตุการณ์
+            // ถึงแขก (อีเมลอย่างเดียว · ไม่มี LINE ของแขกที่พัก) · คีย์กันส่งซ้ำต่อเหตุการณ์ ·
+            // ฝ่ายค้านรอบ 212 S1: ระงับ/ล้ม ⇒ ประทับเหตุบนหมายเหตุภายในของการจอง (พนักงานเห็นบนรายการ — ไม่ใช่แค่ log · F2 #7)
+            var guestNotes = new List<string>();
             async Task GuestAsync(string eventKey, string? occurrence, string subject, string html)
             {
                 var res = await _notifier.SendAsync(new CustomerNotifyRequest(companyId, null, eventKey,
                     CustomerNotifyKeys.Lodging(reservationId, eventKey, occurrence), new BookingContact(r.GuestEmail, null), subject, subject)
                     { Html = html, TargetKind = "lodging", TargetId = reservationId });
-                if (!res.Sent)
-                    _logger.LogWarning("อีเมลถึงแขกของการจองที่พัก {No} ({Evt}) ไม่ได้ส่ง: {Error}", r.ReservationNumber, eventKey, res.Error);
+                if (res.Sent && res.Warning != null) guestNotes.Add(CmsNotificationText.FailureNote("แขก", subject, res.Warning, DateTime.UtcNow));
+                if (res.Sent) return;
+                _logger.LogWarning("อีเมลถึงแขกของการจองที่พัก {No} ({Evt}) ไม่ได้ส่ง: {Error}", r.ReservationNumber, eventKey, res.Error);
+                guestNotes.Add(CmsNotificationText.FailureNote("แขก", subject, res.Error ?? "ส่งไม่สำเร็จ", DateTime.UtcNow));
             }
             // ถึงที่พัก (ข้อความถึงร้าน — ไม่อยู่ในค่าตั้งลูกค้า · นับโควตาเมื่อออกช่องกลาง · เงินค้าง = จำเป็น ไม่ถูกระงับ)
             async Task OwnerAsync(string eventKey, string addr, string subject, string html)
@@ -611,6 +615,14 @@ public partial class LodgingService
                 var slipHeadline = LodgingGuestConfirmPolicy.OwnerSlipHeadline(LodgingGuestConfirmPolicy.IsSlipConfirmed(r.Status, r.ConfirmedBy, r.DepositPaid));
                 var body = $"<p>{(evt == "slip" ? enc(slipHeadline) : "มีการจองใหม่จากเว็บไซต์")}</p>{summary}<p>ติดต่อ: {enc(r.GuestPhone)} {enc(r.GuestEmail)}</p>";
                 foreach (var addr in to) await OwnerAsync(CustomerNotifyEvents.ShopNotify, addr, subject, body);
+            }
+            if (guestNotes.Count > 0)
+            {
+                // UPDATE ตรง (ไม่แตะ change tracker ของผู้เรียก) · ต่อท้ายแบบไม่ซ้ำ
+                var notes = r.InternalNotes;
+                foreach (var n in guestNotes) notes = DepositPolicyResolver.AppendNoteOnce(notes, n);
+                await _db.LodgingReservations.Where(x => x.Id == reservationId && x.CompanyId == companyId)
+                    .ExecuteUpdateAsync(u => u.SetProperty(x => x.InternalNotes, notes));
             }
         }
         catch (Exception ex) { _logger.LogWarning(ex, "ส่งอีเมลแจ้งการจองที่พัก {Id} ({Evt}) ไม่สำเร็จ", reservationId, evt); }

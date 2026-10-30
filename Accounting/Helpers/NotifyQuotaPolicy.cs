@@ -4,7 +4,8 @@ namespace Accounting.Helpers;
 /// **ตัวตัดสินโควตาข้อความผ่านช่องกลาง — ตัวเดียว** (รอบ 212 แพ็ก A · คำตัดสินข้อ 171 · design §2.3/§3.1)
 /// <list type="bullet">
 /// <item><b>นับอะไร</b>: push ผ่าน LINE OA ของ NextAcc + อีเมลผ่าน SMTP ของระบบในนามร้าน (<see cref="IsMetered"/>) ·
-///   <b>ไม่นับ</b>: OA/SMTP ของร้านเอง · reply API ของ LINE · ข้อความแพลตฟอร์ม→ร้าน (บิล/แจ้งเตือนโควตา/ความปลอดภัย) · แจ้งเตือนงานภายในของ NotificationEngine</item>
+///   <b>ไม่นับ</b>: OA/SMTP ของร้านเอง · reply API ของ LINE · ข้อความแพลตฟอร์ม→ร้าน (บิล/แจ้งเตือนโควตา/ความปลอดภัย) · แจ้งเตือนงานภายในของ NotificationEngine ·
+///   ข้อความถึงร้าน `shop.*` (ฝ่ายค้านรอบ 212 B3 · <see cref="CountsEvent"/>)</item>
 /// <item>1 หน่วย = 1 คำขอ push ต่อผู้รับ หรือ 1 อีเมลต่อผู้รับ</item>
 /// <item>งวด = เดือนตามเวลาไทย (<see cref="AddOnBilling.PeriodOf"/> ตัวเดียวกับบิล add-on) — งวดใหม่ = แถวตัวนับใหม่ (ไม่มีงาน reset)</item>
 /// <item>เพดาน: ค่าเฉพาะบริษัท (<c>Subscription.MaxSharedMessagesPerMonth</c>) ชนะ ⇒ ค่าของแพ็กเกจ (<c>PlanTemplate.MaxSharedMessagesPerMonth</c> ·
@@ -21,6 +22,24 @@ public static class NotifyQuotaPolicy
     /// <summary>ช่องนี้นับโควตาไหม — เฉพาะช่องกลางของ NextAcc</summary>
     public static bool IsMetered(string? source)
         => source is CustomerNotifyPolicy.SrcNextAccOa or CustomerNotifyPolicy.SrcSystemSmtp;
+
+    /// <summary>ผู้ประสานงานตัดสินหลังฝ่ายค้านรอบ 212 (c): ตัวเลข<b>แนะนำ</b>ต่อระดับแพ็กเกจ — ไม่ถูกตั้งให้อัตโนมัติ (ค่าเริ่มต้น = ไม่จำกัด = พฤติกรรมเดิม) ·
+    /// หน้าแอดมิน plans แสดงเป็นคำใบ้ให้เจ้าของตั้งเอง · null = ไม่มีคำแนะนำ</summary>
+    public static int? SuggestedLimit(Accounting.Models.Enums.SubscriptionPlan plan) => plan switch
+    {
+        Accounting.Models.Enums.SubscriptionPlan.FreeTrial => 100,
+        Accounting.Models.Enums.SubscriptionPlan.Basic => 300,
+        Accounting.Models.Enums.SubscriptionPlan.Pro => 1000,
+        Accounting.Models.Enums.SubscriptionPlan.Enterprise => 5000,
+        _ => null,
+    };
+
+    /// <summary>ตัวเลขแนะนำสำหรับช่วงทดลองใช้ของทุกแม่แบบ</summary>
+    public const int SuggestedTrialLimit = 100;
+
+    /// <summary>ฝ่ายค้านรอบ 212 B3: ประเภทข้อความนี้นับโควตาไหม — ข้อความถึงร้าน (<c>shop.*</c>: ออเดอร์/การจองใหม่ · สลิป · lead · ที่พัก · เงินค้าง)
+    /// เป็นแจ้งเตือนงาน ⇒ <b>ไม่นับและไม่ถูกระงับ</b> (คำตัดสิน §10 "แจ้งเตือนเหตุการณ์ไม่นับ") · ข้อความถึงลูกค้า = นับ</summary>
+    public static bool CountsEvent(string? eventKey) => !CustomerNotifyEvents.IsShopEvent(eventKey);
 
     /// <summary>งวด "yyyy-MM" ตามเวลาไทย — ตัวเดียวกับงวดบิล add-on</summary>
     public static string PeriodOf(DateTime utc) => AddOnBilling.PeriodOf(utc);

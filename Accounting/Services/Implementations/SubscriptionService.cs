@@ -1380,8 +1380,9 @@ public class SubscriptionService : ISubscriptionService
         // that only sends the field for plans that customize it doesn't
         // accidentally zero out other plans.
         // รอบ 212: เพดานข้อความช่องกลาง (ผู้อ่าน: NotifyQuotaService.LoadLimitAsync — อ่านจากแม่แบบตอนนับ ไม่คัดลอกลงบริษัท)
-        if (request.MaxSharedMessagesPerMonth.HasValue) template.MaxSharedMessagesPerMonth = Math.Max(-1, request.MaxSharedMessagesPerMonth.Value);
-        if (request.TrialMaxSharedMessagesPerMonth.HasValue) template.TrialMaxSharedMessagesPerMonth = Math.Max(-1, request.TrialMaxSharedMessagesPerMonth.Value);
+        // ค่าติดลบ = กลับเป็นไม่จำกัด (null) — หน้าแอดมินส่ง -1 เมื่อช่องว่าง
+        if (request.MaxSharedMessagesPerMonth.HasValue) template.MaxSharedMessagesPerMonth = request.MaxSharedMessagesPerMonth.Value < 0 ? null : request.MaxSharedMessagesPerMonth.Value;
+        if (request.TrialMaxSharedMessagesPerMonth.HasValue) template.TrialMaxSharedMessagesPerMonth = request.TrialMaxSharedMessagesPerMonth.Value < 0 ? null : request.TrialMaxSharedMessagesPerMonth.Value;
         if (request.MaxOcrPagesPerMonth.HasValue) template.MaxOcrPagesPerMonth = request.MaxOcrPagesPerMonth.Value;
         if (request.AzureOcrPagesPerMonth.HasValue) template.AzureOcrPagesPerMonth = request.AzureOcrPagesPerMonth.Value;
         if (request.LocalOcrPagesPerMonth.HasValue) template.LocalOcrPagesPerMonth = request.LocalOcrPagesPerMonth.Value;
@@ -2491,7 +2492,9 @@ public class SubscriptionService : ISubscriptionService
             t.TrialMaxDocumentsPerMonth,
             t.TrialMaxJournalEntriesPerMonth,
             t.MaxSharedMessagesPerMonth,
-            t.TrialMaxSharedMessagesPerMonth);
+            t.TrialMaxSharedMessagesPerMonth,
+            Accounting.Helpers.NotifyQuotaPolicy.SuggestedLimit(t.Plan),
+            Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialLimit);
     }
 }
 

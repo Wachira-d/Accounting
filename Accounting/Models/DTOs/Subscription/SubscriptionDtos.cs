@@ -133,9 +133,9 @@ public record CreatePlanTemplateRequest(
     bool TrialBlockOnExpiry = false,
     int TrialGracePeriodDays = 7,
     bool IsPermanentFree = false,
-    // รอบ 212: เพดานข้อความช่องกลาง/เดือน (-1 = ไม่จำกัด) — ค่าตั้งต้นเดียวกับ migration
-    int MaxSharedMessagesPerMonth = 300,
-    int TrialMaxSharedMessagesPerMonth = 100);
+    // รอบ 212: เพดานข้อความช่องกลาง/เดือน (null/-1 = ไม่จำกัด · ไม่ตั้งให้อัตโนมัติ)
+    int? MaxSharedMessagesPerMonth = null,
+    int? TrialMaxSharedMessagesPerMonth = null);
 
 public record UpdatePlanTemplateRequest(
     string? Name,
@@ -211,9 +211,12 @@ public record PlanTemplateResponse(
     int TrialMaxUsers = 2,
     int TrialMaxDocumentsPerMonth = 20,
     int TrialMaxJournalEntriesPerMonth = 50,
-    // รอบ 212: เพดานข้อความช่องกลาง/เดือน (echo ให้หน้าแอดมิน hydrate · -1 = ไม่จำกัด)
-    int MaxSharedMessagesPerMonth = 300,
-    int TrialMaxSharedMessagesPerMonth = 100);
+    // รอบ 212: เพดานข้อความช่องกลาง/เดือน (echo ให้หน้าแอดมิน hydrate · null = ไม่จำกัด)
+    int? MaxSharedMessagesPerMonth = null,
+    int? TrialMaxSharedMessagesPerMonth = null,
+    // ฝ่ายค้านรอบ 212 (c): ตัวเลขแนะนำจากเซิร์ฟเวอร์ (คำใบ้ — ไม่ถูกตั้งให้อัตโนมัติ)
+    int? SuggestedSharedMessagesPerMonth = null,
+    int? SuggestedTrialSharedMessagesPerMonth = null);
 
 /// <summary>1 ฟีเจอร์ในแคตตาล็อก — ป้ายไทย/อังกฤษ + หมวด + คำอธิบาย (จาก <c>Helpers/FeatureCatalog</c>)</summary>
 public record FeatureFlagInfo(string Name, string Category, string LabelTh, string LabelEn = "", string Description = "");

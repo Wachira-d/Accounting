@@ -121,22 +121,24 @@ public static class CustomerNotifyPolicy
     /// <summary>ขั้นส่งตามลำดับ (หยุดที่ขั้นแรกที่สำเร็จ — สัญญาเดิมของ <c>IBookingNotifier</c>) · ช่องที่ค่าตั้งปิด = ไม่มีขั้นของช่องนั้น ·
     /// <paramref name="emailPlan"/> ว่าง (ร้านตั้ง "ผู้ส่งของร้านเท่านั้น" แต่ยังไม่ตั้ง) ⇒ ไม่มีขั้นอีเมล</summary>
     public static IReadOnlyList<CustomerNotifyStep> Plan(CustomerNotifyChannelPolicy policy, bool hasEmail, bool hasLine, bool lineOptedIn,
-        string? lineScope, IReadOnlyList<string> emailPlan)
+        string? lineScope, IReadOnlyList<string> emailPlan, string? eventKey = null)
     {
+        // ฝ่ายค้านรอบ 212 B3: ข้อความถึงร้าน/พนักงาน (shop.*) ไม่นับโควตา (§10 — แจ้งเตือนงานไม่นับ) ⇒ ไม่มีวันถูกระงับเพราะโควตา
+        var counts = NotifyQuotaPolicy.CountsEvent(eventKey);
         var steps = new List<CustomerNotifyStep>(3);
         foreach (var channel in CustomerNotifyChannel.Order(hasEmail && policy.EmailOn, hasLine && policy.LineOn, lineOptedIn))
         {
             if (channel == CustomerNotifyChannel.ChannelLine)
             {
                 var src = LineSource(lineScope);
-                steps.Add(new CustomerNotifyStep(channel, src, NotifyQuotaPolicy.IsMetered(src)));
+                steps.Add(new CustomerNotifyStep(channel, src, counts && NotifyQuotaPolicy.IsMetered(src)));
             }
             else
             {
                 foreach (var e in emailPlan)
                 {
                     var src = EmailSource(e);
-                    steps.Add(new CustomerNotifyStep(channel, src, NotifyQuotaPolicy.IsMetered(src)));
+                    steps.Add(new CustomerNotifyStep(channel, src, counts && NotifyQuotaPolicy.IsMetered(src)));
                 }
             }
         }

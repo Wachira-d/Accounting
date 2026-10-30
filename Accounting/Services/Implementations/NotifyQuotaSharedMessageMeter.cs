@@ -16,9 +16,10 @@ public sealed class NotifyQuotaSharedMessageMeter : ISharedMessageMeter
     {
         if (_held.ContainsKey(messageKey)) return true;   // คีย์เดิมใน scope เดียว ⇒ ไม่นับซ้ำ
         var r = await _quota.TryReserveAsync(companyId, essential: false, ct);
+        // ฝ่ายค้านรอบ 212 (b): เต็มก็ต้องแจ้งเจ้าของระดับ 100% (ประทับครั้งเดียวต่องวดที่บริการ) — เดิมแจ้งเฉพาะตอนจองได้
+        await _quota.AlertIfCrossedAsync(companyId, r, ct);
         if (!r.Ok) return false;
         _held[messageKey] = r;
-        await _quota.AlertIfCrossedAsync(companyId, r, ct);
         return true;
     }
 

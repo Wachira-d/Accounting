@@ -226,6 +226,13 @@ public partial class PdpaService
             .Concat(r.Bookings.Select(b => (Kind: CustomerLineLinkRule.KindBooking, Id: b.Id)));
         foreach (var (kind, id) in lineTargets)
             await CustomerLineLinkClosure.BurnPendingCodesAsync(_db, companyId, kind, id, now, ct);
+        // ฝ่ายค้านรอบ 212 S3: บันทึกการส่งข้อความถึงเป้าหมายของเจ้าของข้อมูล (สมาชิก/ออเดอร์/การจอง/ฟอร์ม) — ไม่ใช่เอกสารบัญชี ⇒ ลบจริง
+        var notifyTargets = r.Customers.Select(c => c.Id).Concat(r.Orders.Select(o => o.Id)).Concat(r.Bookings.Select(b => b.Id))
+            .Concat(r.Submissions.Select(x => x.Id)).Distinct().ToList();
+        if (notifyTargets.Count > 0)
+            rows += await _db.CustomerNotifyLogs.IgnoreQueryFilters()
+                .Where(l => l.CompanyId == companyId && l.TargetId != null && notifyTargets.Contains(l.TargetId.Value))
+                .ExecuteDeleteAsync(ct);
         // ความยินยอมเป็น "หลักฐาน" ของการประมวลผลที่ผ่านมา (ม.19 ภาระพิสูจน์ของผู้ควบคุม) ⇒ ไม่ลบ แต่ถอนความยินยอมทุกแถวที่ยังไม่ถอน
         foreach (var cr in r.Consents.Where(x => x.WithdrawnAt == null))
         {

@@ -43,6 +43,15 @@
 | CMS212A-20 | สองคำขอพร้อมกันที่ `Used = limit-1` (6 คำขอ) | ผ่าน 1 · ตัวนับ = limit | Db `NotifyQuotaDbTests.Concurrent_reservations_at_limit_minus_one_let_exactly_one_through` |
 | CMS212A-21 | ซื้อแพ็ก `notify.topup` | UsageEvent 1 แถว (คีย์ topup) ก่อนให้โบนัส 500 · ใช้โบนัสได้เมื่อเพดาน 0 | Db `Purchase_topup_records_one_usage_event_and_grants_bonus` · rule `PurchaseTopUpAsync` |
 | CMS212A-22 | ทุกเส้นข้อความถึงลูกค้า 12 เส้นผ่าน `BookingNotifier` พร้อม EventKey/MessageKey · จองโควตาก่อนส่ง · ห้ามเรียก `IEmailService`/`ILineNotifyService` ตรง | ด่านจุดเรียกล้มเมื่อถอด | `tools/required_call_site_check.py` (กติกา "รอบ 212") |
+| CMS212A-23 | ซื้อแพ็กสองคำขอพร้อมกัน + หักโบนัส 5 ข้อความพร้อมกัน | โบนัส = เดิม + 2×500 − ที่หัก (ไม่มี lost update) | Db `NotifyQuotaDbTests.B1_concurrent_purchases_and_reserves_never_lose_an_update` · rule `PurchaseTopUpAsync` ×2 |
+| CMS212A-24 | ซื้อครั้งที่สองของงวด เมื่อครั้งแรกลงเวลาก่อนต้นเดือน UTC (00:30 ไทยวันที่ 1) | ลำดับ 2 (ไม่ซ้ำ) · คำนำหน้างวดไทย | Db `B2_sequence_counts_by_bangkok_period_key_prefix` · `Topup_key_prefix_follows_bangkok_period_at_month_boundary` |
+| CMS212A-25 | ส่งคำขอซื้อซ้ำด้วย `Idempotency-Key` เดิม | คีย์ UsageEvent เดิม · ไม่ให้โบนัสซ้ำ · ได้ผลเดิม (ไม่ error) | Db `S2_same_idempotency_key_returns_same_result_without_second_grant` · `Topup_client_key_is_stable_and_independent_of_sequence` |
+| CMS212A-26 | ข้อความถึงร้าน (`shop.notify`/`shop.payment-problem`) เมื่อโควตาเต็ม | ส่งทางอีเมลระบบ · ไม่จอง/ไม่นับ | `Shop_messages_are_never_metered_or_suppressed` · `Shop_messages_ignore_customer_rules` |
+| CMS212A-27 | แขกที่พักรอสลิป เมื่อโควตาเต็ม · ทิศตรงข้าม ยืนยันการจองที่พัก | รอสลิป = นับแต่ส่ง · ยืนยัน = ระงับ + ประทับบนการจอง | `Lodging_slip_required_is_essential_counted_but_never_suppressed` · rule `TryNotifyAsync` (FailureNote + ExecuteUpdate) |
+| CMS212A-28 | หมายเหตุบันทึกการส่งมีอีเมล/เบอร์/LINE userId · อายุบันทึก | ปิดบัง · ≤ 500 · ลบเมื่อเกิน 90 วัน · DSR ลบตามเป้าหมาย | `Log_note_redacts_contact_details` · rules `CompleteAsync` · `RunAsync` · `ApplyCmsErasureAsync` |
+| CMS212A-29 | แม่แบบที่ยังไม่ตั้งเพดาน (ลูกค้าเดิม) | ไม่จำกัด · ตัวเลขแนะนำเป็นแค่คำใบ้ | `Suggested_limits_are_hints_not_defaults` |
+| CMS212A-30 | สรุปรายวันโควตาเต็ม แล้วเติมแพ็กก่อน 23:00 | ไม่ใช่สถานะจบ (ทุกจำนวนครั้ง) · claim รับช่วงได้ | `CmsRound212DailySummaryTests.Terminal_status_decides_when_watermark_may_move` · rule `StaffDailySummaryService.ClaimAsync` |
+| CMS212A-31 | มิเตอร์สรุปรายวันจองไม่ได้ (เต็ม) | แจ้งเจ้าของระดับ 100% (ประทับครั้งเดียว) | rule `NotifyQuotaSharedMessageMeter.TryReserveAsync` |
 
 ## CMS211 — ลูกค้าปลายทางผูก LINE รับแจ้งเตือน (สมาชิก/แขก) · OA ของร้าน/NextAcc · อีเมลของร้าน (รอบ 211 · คำตัดสินข้อ 170 · `erp-review/2026-10-30/LINE_CUSTOMER_NOTIFY_DESIGN.md`)
 
@@ -93,7 +102,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **689 ไฟล์ · 7,020 `[Fact]` + 1,119 `[Theory]` (5,230 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **689 ไฟล์ · 7,028 `[Fact]` + 1,119 `[Theory]` (5,230 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

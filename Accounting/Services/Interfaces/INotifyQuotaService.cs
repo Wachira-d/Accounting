@@ -53,6 +53,6 @@ public interface INotifyQuotaService
 
     Task<NotifyQuotaStatus> GetStatusAsync(Guid companyId, CancellationToken ct = default);
 
-    /// <summary>ซื้อแพ็กข้อความเพิ่ม — ลอก <c>QuotaService.PurchaseTopUpAsync</c>: ล็อกต่อบริษัท → UsageEvent <c>notify.topup</c> ก่อนให้ของ → โบนัส + อายุ → audit chain</summary>
-    Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default);
+    /// <summary>ซื้อแพ็กข้อความเพิ่ม (<paramref name="idempotencyKey"/> = header Idempotency-Key — ส่งซ้ำได้ผลเดิม) — ลอก <c>QuotaService.PurchaseTopUpAsync</c>: ล็อกต่อบริษัท → UsageEvent <c>notify.topup</c> ก่อนให้ของ → โบนัส + อายุ → audit chain</summary>
+    Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null);
 }

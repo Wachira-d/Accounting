@@ -100,7 +100,7 @@ public class BookingNotifier : IBookingNotifier
 
         // 3) ลำดับขั้น + ช่องจริง (OA ที่ push ใช้ = ตัวตัดสินเดียวกับ LineNotifyService)
         var lineScope = hasLine && policy.LineOn ? await ResolveLineScopeAsync(companyId, ct) : null;
-        var steps = CustomerNotifyPolicy.Plan(policy, hasEmail, hasLine, lineOptedIn: !string.IsNullOrWhiteSpace(optedLine), lineScope, emailPlan);
+        var steps = CustomerNotifyPolicy.Plan(policy, hasEmail, hasLine, lineOptedIn: !string.IsNullOrWhiteSpace(optedLine), lineScope, emailPlan, request.EventKey);
         var essential = CustomerNotifyEvents.IsEssential(request.EventKey);
         var html = request.Html ?? BookingReminderPlan.ToHtml(request.Text);
         string? tenantError = null;

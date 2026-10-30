@@ -89,7 +89,7 @@
                     <span>รายการบัญชี/เดือน</span><strong>${p.maxJournalEntriesPerMonth?.toLocaleString() || '-'}</strong>
                   </div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
-                    <span title="LINE OA/อีเมลของ NextAcc ที่ส่งถึงลูกค้าของร้าน (OA/อีเมลของร้านเองไม่นับ)">ข้อความช่องกลาง/เดือน</span><strong>${p.maxSharedMessagesPerMonth < 0 ? 'ไม่จำกัด' : (p.maxSharedMessagesPerMonth ?? 0).toLocaleString()}</strong>
+                    <span title="LINE OA/อีเมลของ NextAcc ที่ส่งถึงลูกค้าของร้าน (OA/อีเมลของร้านเองไม่นับ)">ข้อความช่องกลาง/เดือน</span><strong>${p.maxSharedMessagesPerMonth == null || p.maxSharedMessagesPerMonth < 0 ? 'ไม่จำกัด' : p.maxSharedMessagesPerMonth.toLocaleString()}</strong>
                   </div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
                     <span>พื้นที่จัดเก็บ</span><strong>${formatBytes(p.maxStorageBytes)}</strong>
@@ -289,8 +289,8 @@
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">ข้อความแจ้งเตือนช่องกลาง/เดือน</label>
-                  <input type="number" min="-1" class="admin-input" id="ep_shared_msgs" value="${p.maxSharedMessagesPerMonth ?? 300}">
-                  <div style="font-size:11px;color:#64748b;margin-top:4px">LINE OA/อีเมลของ NextAcc ถึงลูกค้าของร้าน · -1 = ไม่จำกัด · OA/อีเมลของร้านเองไม่นับ</div>
+                  <input type="number" min="0" class="admin-input" id="ep_shared_msgs" value="${p.maxSharedMessagesPerMonth ?? ''}" placeholder="ว่าง = ไม่จำกัด">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">LINE OA/อีเมลของ NextAcc ถึงลูกค้าของร้าน · ว่าง = ไม่จำกัด (ค่าเริ่มต้น) · OA/อีเมลของร้านเองไม่นับ${p.suggestedSharedMessagesPerMonth != null ? ' · แนะนำ ' + p.suggestedSharedMessagesPerMonth.toLocaleString() : ''}</div>
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">พื้นที่จัดเก็บ (MB)</label>
@@ -368,7 +368,8 @@
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">ข้อความแจ้งเตือนช่องกลาง/เดือน (Trial)</label>
-                  <input type="number" min="-1" class="admin-input" id="ep_trial_shared_msgs" value="${p.trialMaxSharedMessagesPerMonth ?? 100}">
+                  <input type="number" min="0" class="admin-input" id="ep_trial_shared_msgs" value="${p.trialMaxSharedMessagesPerMonth ?? ''}" placeholder="ว่าง = ตามแพ็กเกจ">
+                  <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ใช้ค่าของแพ็กเกจ${p.suggestedTrialSharedMessagesPerMonth != null ? ' · แนะนำ ' + p.suggestedTrialSharedMessagesPerMonth.toLocaleString() : ''}</div>
                 </div>
                 <div class="admin-form-group">
                   <label class="admin-label">รายการบัญชี/เดือน (Trial)</label>
@@ -416,7 +417,8 @@
           maxCompanies: parseInt(document.getElementById('ep_companies').value),
           maxDocumentsPerMonth: parseInt(document.getElementById('ep_docs').value),
           maxJournalEntriesPerMonth: parseInt(document.getElementById('ep_journals').value),
-          maxSharedMessagesPerMonth: parseInt(document.getElementById('ep_shared_msgs').value),
+          // ว่าง = ไม่จำกัด (ส่ง -1 ⇒ เซิร์ฟเวอร์เก็บ null)
+          maxSharedMessagesPerMonth: document.getElementById('ep_shared_msgs').value === '' ? -1 : parseInt(document.getElementById('ep_shared_msgs').value),
           maxStorageBytes: storageMB * 1048576,
           // Trial settings
           trialDurationDays: parseInt(document.getElementById('ep_trial_days').value),
@@ -425,7 +427,7 @@
           trialMaxUsers: parseInt(document.getElementById('ep_trial_users').value),
           trialMaxDocumentsPerMonth: parseInt(document.getElementById('ep_trial_docs').value),
           trialMaxJournalEntriesPerMonth: parseInt(document.getElementById('ep_trial_journals').value),
-          trialMaxSharedMessagesPerMonth: parseInt(document.getElementById('ep_trial_shared_msgs').value),
+          trialMaxSharedMessagesPerMonth: document.getElementById('ep_trial_shared_msgs').value === '' ? -1 : parseInt(document.getElementById('ep_trial_shared_msgs').value),
           trialGracePeriodDays: parseInt(document.getElementById('ep_trial_grace').value),
           trialBlockOnExpiry: document.getElementById('ep_trial_block').value === 'true',
           // Permanent free flag

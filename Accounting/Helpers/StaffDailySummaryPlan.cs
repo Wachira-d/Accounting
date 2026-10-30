@@ -126,7 +126,9 @@ public static class StaffDailySummaryPlan
     public static bool IsTerminal(string? status, int attempts)
         => status switch
         {
-            StatusSent or StatusNoLine or StatusNothingVisible or StatusQuotaExceeded => true,
+            // ฝ่ายค้านรอบ 212 S4: โควตาเต็ม ≠ จบวัน — เติมแพ็กแล้วรอบถัดไปส่งต่อได้ถึง CatchUpUntil (Due ปิดเองหลัง 23:00 · ไม่ backfill ข้ามวัน)
+            StatusSent or StatusNoLine or StatusNothingVisible => true,
+            StatusQuotaExceeded => false,
             StatusFailed => attempts >= MaxAttempts,
             _ => false,
         };

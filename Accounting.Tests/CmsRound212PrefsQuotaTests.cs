@@ -77,8 +77,12 @@ public class CmsRound212PrefsQuotaTests
         var rules = new[] { new CustomerNotifyRuleRow(null, CustomerNotifyEvents.All, false, false) };
         Assert.True(CustomerNotifyPolicy.Resolve(rules, null, CustomerNotifyEvents.ShopNotify).AnyOn);
         Assert.True(CustomerNotifyPolicy.Resolve(rules, null, CustomerNotifyEvents.ShopPaymentProblem).EmailOn);
-        Assert.True(CustomerNotifyEvents.IsEssential(CustomerNotifyEvents.ShopPaymentProblem));
-        Assert.False(CustomerNotifyEvents.IsEssential(CustomerNotifyEvents.ShopNotify));
+        // ฝ่ายค้านรอบ 212 B3: ข้อความถึงร้านไม่นับโควตาเลย (แทนที่จะเป็น "จำเป็น") · S1: แขกที่พักต้องส่งสลิป = จำเป็น
+        Assert.False(NotifyQuotaPolicy.CountsEvent(CustomerNotifyEvents.ShopPaymentProblem));
+        Assert.False(NotifyQuotaPolicy.CountsEvent(CustomerNotifyEvents.ShopNotify));
+        Assert.True(NotifyQuotaPolicy.CountsEvent(CustomerNotifyEvents.BookingConfirmed));
+        Assert.True(CustomerNotifyEvents.IsEssential(CustomerNotifyEvents.LodgingSlipRequired));
+        Assert.False(CustomerNotifyEvents.IsEssential(CustomerNotifyEvents.LodgingConfirmed));
         Assert.False(CustomerNotifyEvents.IsConfigurable(CustomerNotifyEvents.ShopNotify));
     }
 
@@ -299,7 +303,7 @@ public class CmsRound212PrefsQuotaTests
         public Task CompleteAsync(Guid companyId, Guid? logId, string status, string? channel, string? source, bool metered, string? note, CancellationToken ct = default)
         { Calls.Add("complete:" + status); CompletedStatus = status; CompletedSource = source; return Task.CompletedTask; }
         public Task<NotifyQuotaStatus> GetStatusAsync(Guid companyId, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null) => throw new NotSupportedException();
     }
 
     private sealed class TestNotifier : BookingNotifier
@@ -404,12 +408,80 @@ public class CmsRound212PrefsQuotaTests
     }
 
     [Fact]
-    public async Task Essential_shop_message_is_never_suppressed_by_quota()
+    public async Task Shop_messages_are_never_metered_or_suppressed()
+    {
+        // ฝ่ายค้านรอบ 212 B3: ออเดอร์/การจองใหม่ถึงร้าน · อีเมลถึงที่พัก ⇒ ไม่จองโควตา ไม่ถูกระงับแม้เต็ม (ส่งทางอีเมลระบบ)
+        foreach (var key in new[] { CustomerNotifyEvents.ShopNotify, CustomerNotifyEvents.ShopPaymentProblem })
+        {
+            var calls = new Calls(); var q = new FakeQuota { Full = true };
+            var r = await Build(calls, q).SendAsync(Req(key, null));
+            Assert.True(r.Sent);
+            Assert.Equal(new[] { "system" }, calls.Log);
+            Assert.DoesNotContain("reserve", q.Calls);
+        }
+    }
+
+    [Fact]
+    public async Task Lodging_slip_required_is_essential_counted_but_never_suppressed()
     {
         var calls = new Calls(); var q = new FakeQuota { Full = true };
-        var r = await Build(calls, q).SendAsync(Req(CustomerNotifyEvents.ShopPaymentProblem, null));
+        var r = await Build(calls, q).SendAsync(Req(CustomerNotifyEvents.LodgingSlipRequired, "lodging:x:slip"));
         Assert.True(r.Sent);
-        Assert.Equal(new[] { true }, q.EssentialFlags);
+        Assert.Equal(new[] { true }, q.EssentialFlags);   // นับ (จองแบบจำเป็น) แต่ไม่ถูกระงับ
+        // ทิศตรงข้าม: ยืนยันการจองที่พักไม่ใช่ข้อความจำเป็น ⇒ เต็มแล้วระงับ
+        var r2 = await Build(new Calls(), new FakeQuota { Full = true }).SendAsync(Req(CustomerNotifyEvents.LodgingConfirmed, "lodging:x:confirmed"));
+        Assert.True(r2.IsSuppressed);
+    }
+
+    // ═════════ 5. ฝ่ายค้านรอบ 212: คีย์ซื้อแพ็ก · ปิดบังหมายเหตุ ═════════
+
+    [Fact]
+    public void Topup_key_prefix_follows_bangkok_period_at_month_boundary()
+    {
+        // 31 ต.ค. 17:30 UTC = 1 พ.ย. 00:30 ไทย ⇒ งวด พ.ย. — ลำดับต้องนับจากคำนำหน้าของงวด พ.ย. (เดิมนับจากต้นเดือน UTC = ต.ค. ⇒ ลำดับซ้ำ)
+        var period = AddOnBilling.PeriodOf(new DateTime(2026, 10, 31, 17, 30, 0, DateTimeKind.Utc));
+        Assert.Equal("2026-11", period);
+        var prefix = AddOnBilling.TopUpKeyPrefix("notify.topup", period);
+        Assert.Equal("topup:notify.topup:2026-11:", prefix);
+        Assert.StartsWith(prefix, AddOnBilling.TopUpKey("notify.topup", period, 3));
+        Assert.Null(AddOnBilling.TopUpRequestKey("notify.topup", period, null));   // ไม่ส่งคีย์ ⇒ ผู้เรียกใช้ลำดับ
+        Assert.Null(AddOnBilling.TopUpRequestKey("notify.topup", period, "  "));
+        Assert.Equal("topup:notify.topup:2026-10:1", AddOnBilling.TopUpKey("notify.topup", "2026-10", 1));   // รูปเดิมไม่เปลี่ยน
+    }
+
+    [Fact]
+    public void Topup_client_key_is_stable_and_independent_of_sequence()
+    {
+        var a = AddOnBilling.TopUpRequestKey("notify.topup", "2026-11", "req-abc");
+        Assert.Equal(a, AddOnBilling.TopUpRequestKey("notify.topup", "2026-11", "req-abc"));   // ส่งซ้ำ = คีย์เดิม (คิดเงินครั้งเดียว)
+        Assert.NotEqual(a, AddOnBilling.TopUpRequestKey("notify.topup", "2026-11", "req-xyz"));
+        Assert.StartsWith("topup:notify.topup:2026-11:req-", a);
+        Assert.DoesNotContain("abc", a);   // ไม่เก็บค่าดิบ
+    }
+
+    [Fact]
+    public void Log_note_redacts_contact_details()
+    {
+        var n = CustomerNotifyLogRule.Redact("อีเมล (ผู้ส่งของร้าน): 550 mailbox somchai.k@example.co.th not found · โทร 081-234-5678 · U0123456789abcdef0123456789abcdef");
+        Assert.DoesNotContain("somchai", n);
+        Assert.DoesNotContain("081-234-5678", n);
+        Assert.DoesNotContain("U0123456789abcdef", n);
+        Assert.Contains("550", n);    // รหัสผิดพลาดสั้น ๆ ไม่ถูกแตะ
+        Assert.Null(CustomerNotifyLogRule.Redact(null));
+        Assert.True(CustomerNotifyLogRule.Redact(new string('x', 900))!.Length <= CustomerNotifyLogRule.MaxNoteLength);
+        Assert.Equal(new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc), CustomerNotifyLogRule.PurgeCutoff(new DateTime(2026, 10, 30, 0, 0, 0, DateTimeKind.Utc)));
+    }
+
+    [Fact]
+    public void Suggested_limits_are_hints_not_defaults()
+    {
+        // ผู้ประสานงานตัดสิน (c): แม่แบบไม่ตั้ง = ไม่จำกัด (พฤติกรรมเดิม) · ตัวเลขแนะนำเป็นแค่คำใบ้
+        Assert.Equal(NotifyQuotaPolicy.Unlimited, NotifyQuotaPolicy.PlanLimit(null, null, null, isTrial: false));
+        Assert.Equal(NotifyQuotaPolicy.Unlimited, NotifyQuotaPolicy.PlanLimit(null, null, null, isTrial: true));
+        Assert.Equal(300, NotifyQuotaPolicy.SuggestedLimit(SubscriptionPlan.Basic));
+        Assert.Equal(5000, NotifyQuotaPolicy.SuggestedLimit(SubscriptionPlan.Enterprise));
+        Assert.Equal(100, NotifyQuotaPolicy.SuggestedLimit(SubscriptionPlan.FreeTrial));
+        Assert.Equal(1000, NotifyQuotaPolicy.SuggestedLimit(SubscriptionPlan.Pro));
     }
 
     [Fact]

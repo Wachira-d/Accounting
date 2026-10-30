@@ -29,8 +29,9 @@ public class NotifyQuotaService : INotifyQuotaService
     public const string KindEssential = "essential";
     public const string KindFull = "full";
     public const string KindUntracked = "untracked";
-    /// <summary>อายุ claim — คำขอที่ค้าง/ล้มกลางทางเกินนี้ ⇒ คำขอถัดไปรับช่วงได้</summary>
-    public static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(2);
+    /// <summary>อายุ claim — คำขอที่ค้าง/ล้มกลางทางเกินนี้ ⇒ คำขอถัดไปรับช่วงได้ ·
+    /// ฝ่ายค้านรอบ 212 (a): ต้องยาวกว่าผลรวม timeout ของทุกขั้น (LINE push + SMTP ร้าน + SMTP ระบบ) — ไม่งั้นคำขอที่ยังส่งอยู่ถูกรับช่วงแล้วส่งซ้ำ</summary>
+    public static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(10);
 
     private readonly AccountingDbContext _db;
     private readonly ILogger<NotifyQuotaService> _logger;
@@ -138,7 +139,8 @@ public class NotifyQuotaService : INotifyQuotaService
     public async Task CompleteAsync(Guid companyId, Guid? logId, string status, string? channel, string? source, bool metered, string? note, CancellationToken ct = default)
     {
         if (logId is not Guid id) return;
-        var trimmed = note == null ? null : (note.Length > 500 ? note[..500] : note);
+        // ฝ่ายค้านรอบ 212 S3: ปิดบังอีเมล/เบอร์/LINE userId ในหมายเหตุก่อนเก็บ (ตัวเดียว CustomerNotifyLogRule.Redact)
+        var trimmed = CustomerNotifyLogRule.Redact(note);
         try
         {
             await IsolatedAsync(async db =>
@@ -389,56 +391,72 @@ public class NotifyQuotaService : INotifyQuotaService
 
     // ───────────────────────── ซื้อแพ็กเพิ่ม ─────────────────────────
 
-    public async Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default)
+    public async Task<NotifyQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null)
     {
         if (packs <= 0) throw new BusinessRuleException("จำนวนแพ็กต้องมากกว่า 0", "NOTIFY-TOPUP");
         if (packs > 50) throw new BusinessRuleException("ซื้อได้ครั้งละไม่เกิน 50 แพ็ก", "NOTIFY-TOPUP");
         if (_metering == null) throw new BusinessRuleException("ระบบคิดค่าบริการไม่พร้อม — ลองใหม่ภายหลัง", "NOTIFY-TOPUP");
 
-        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted, ct);
-        if (sub == null) throw new BusinessRuleException("บริษัทนี้ยังไม่มีแพ็กเกจ", "NOTIFY-TOPUP");
-
-        // ล็อกต่อบริษัท (ตัวเรียกเดียวกับ QuotaService.PurchaseTopUpAsync) — ลำดับการซื้อในงวดเป็นส่วนของคีย์กันซ้ำ ·
+        // ล็อกต่อบริษัท (ตัวเรียกเดียวกับ QuotaService.PurchaseTopUpAsync) **ก่อน**อ่านอะไรทั้งนั้น — ลำดับการซื้อในงวดเป็นส่วนของคีย์กันซ้ำ ·
         // pg_advisory_xact_lock ต้องอยู่ในธุรกรรม ไม่งั้นหลุดทันที
         await using var tx = await _db.Database.BeginTransactionAsync(ct);
         await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
             new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.QuotaGrant, "notify-topup") }, ct);
 
+        var subId = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && !s.IsDeleted).Select(s => (Guid?)s.Id).FirstOrDefaultAsync(ct);
+        if (subId is not Guid sid) throw new BusinessRuleException("บริษัทนี้ยังไม่มีแพ็กเกจ", "NOTIFY-TOPUP");
+
+        // ฝ่ายค้านรอบ 212 B2: ลำดับนับจากคำนำหน้าคีย์ของงวดไทย (ไม่ใช่ต้นเดือน UTC)
         var nowUtc = DateTime.UtcNow;
         var period = AddOnBilling.PeriodOf(nowUtc);
-        var monthStart = new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+        var prefix = AddOnBilling.TopUpKeyPrefix(AddOnCodes.NotifyTopUp, period);
         var seq = await _db.UsageEvents.AsNoTracking()
             .CountAsync(u => u.CompanyId == companyId && u.FeatureCode == AddOnCodes.NotifyTopUp
-                          && u.OccurredAt >= monthStart && !u.IsDeleted, ct) + 1;
+                          && u.IdempotencyKey != null && u.IdempotencyKey.StartsWith(prefix) && !u.IsDeleted, ct) + 1;
 
         // คิดเงินก่อนให้ของ — บันทึกมิเตอร์ไม่สำเร็จ = ไม่แจกข้อความฟรี · ใบแจ้งหนี้ไหลเส้นเดิม (UsageInvoicingJob → PlatformBillingDocumentIssuer)
         var res = await _metering.RecordAsync(new UsageRecordRequest(
             CompanyId: companyId,
             FeatureCode: AddOnCodes.NotifyTopUp,
             Quantity: packs,
-            IdempotencyKey: AddOnBilling.TopUpKey(AddOnCodes.NotifyTopUp, period, seq),
+            IdempotencyKey: AddOnBilling.TopUpRequestKey(AddOnCodes.NotifyTopUp, period, idempotencyKey) ?? AddOnBilling.TopUpKey(AddOnCodes.NotifyTopUp, period, seq),
             RefEntityType: "Subscription",
-            RefEntityId: sub.Id), ct);
+            RefEntityId: sid), ct);
         if (!res.Recorded)
+        {
+            // ฝ่ายค้าน S2: คำขอเดิม (Idempotency-Key เดียวกัน) ส่งซ้ำ ⇒ ผลเดิม (ให้ของไปแล้วตอนคำขอแรก · ไม่คิดเงิน/ไม่ให้ซ้ำ)
+            if (res.Duplicate && !string.IsNullOrWhiteSpace(idempotencyKey))
+            {
+                await tx.RollbackAsync(ct);
+                return await GetStatusAsync(companyId, ct);
+            }
             throw new BusinessRuleException(
                 res.Duplicate
                     ? "เพิ่งซื้อแพ็กข้อความไปเมื่อครู่ — กรุณารอสักครู่แล้วลองใหม่ (ระบบกันการกดซ้ำ)"
                     : $"ซื้อแพ็กข้อความไม่สำเร็จ: {res.Reason ?? "ไม่ทราบสาเหตุ"}",
                 "NOTIFY-TOPUP");
+        }
 
         var granted = packs * AddOnCodes.MessagesPerNotifyTopUpPack;
         var expires = nowUtc.AddDays(AddOnCodes.TopUpValidDays);
-        // โบนัสเดิมหมดอายุแล้ว ⇒ เริ่มนับใหม่ (ของหมดอายุไม่ถูกต่ออายุด้วยการซื้อใหม่)
-        if (!NotifyQuotaPolicy.BonusAlive(sub.NotifyBonusQuota, sub.NotifyBonusExpiresAt, nowUtc)) sub.NotifyBonusQuota = 0;
-        sub.NotifyBonusQuota += granted;
-        if (sub.NotifyBonusExpiresAt == null || sub.NotifyBonusExpiresAt < expires) sub.NotifyBonusExpiresAt = expires;
+        // ฝ่ายค้านรอบ 212 B1: ให้โบนัสด้วย UPDATE เดียวใต้ล็อก (ไม่เขียนค่าสัมบูรณ์จาก entity ที่อ่านไว้ — เดิมสองการซื้อพร้อมกันได้ 500 จ่าย 2 แพ็ก ·
+        // และการหักโบนัสของ TryReserveAsync ที่เกิดระหว่างนั้นถูกเขียนทับ) · โบนัสเดิมหมดอายุแล้ว ⇒ เริ่มนับใหม่ · อายุยาวที่สุดชนะ
+        var updated = await _db.Database.ExecuteSqlRawAsync("""
+            UPDATE "Subscriptions"
+            SET "NotifyBonusQuota" = CASE WHEN "NotifyBonusQuota" > 0 AND ("NotifyBonusExpiresAt" IS NULL OR "NotifyBonusExpiresAt" > now())
+                                          THEN "NotifyBonusQuota" ELSE 0 END + {0},
+                "NotifyBonusExpiresAt" = GREATEST("NotifyBonusExpiresAt", {1})
+            WHERE "Id" = {2} AND "CompanyId" = {3};
+            """, new object[] { granted, expires, sid, companyId }, ct);
+        if (updated != 1) throw new BusinessRuleException("ให้แพ็กข้อความไม่สำเร็จ — ไม่พบแพ็กเกจของบริษัท", "NOTIFY-TOPUP");
 
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId,
             Action = AuditAction.Create,
             EntityType = "Subscription",
-            EntityId = sub.Id.ToString(),
+            EntityId = sid.ToString(),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
                 action = "NotifyTopUp", packs, granted,

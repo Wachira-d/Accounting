@@ -39,9 +39,9 @@ public static class CustomerNotifyEvents
     public const string CartAbandoned = "cart.abandoned";
     public const string FormAutoReply = "form.autoreply";
 
-    /// <summary>ข้อความถึงร้าน (ออเดอร์ใหม่ · การจองใหม่ · สลิป · lead · ที่พัก) — นับโควตาเมื่อออกช่องกลาง · ถูกระงับเมื่อเต็ม</summary>
+    /// <summary>ข้อความถึงร้าน (ออเดอร์ใหม่ · การจองใหม่ · สลิป · lead · ที่พัก) — ไม่อยู่ในค่าตั้งลูกค้า · <b>ไม่นับโควตา ไม่ถูกระงับ</b> (ฝ่ายค้านรอบ 212 B3)</summary>
     public const string ShopNotify = "shop.notify";
-    /// <summary>เงินเข้าแต่ยืนยันไม่ได้ (เงินของลูกค้าค้าง) — นับโควตาแต่<b>ไม่ถูกระงับ</b>เมื่อเต็ม (<see cref="IsEssential"/>)</summary>
+    /// <summary>เงินเข้าแต่ยืนยันไม่ได้ (เงินของลูกค้าค้าง) — ข้อความถึงร้าน ไม่นับโควตา ไม่ถูกระงับ</summary>
     public const string ShopPaymentProblem = "shop.payment-problem";
 
     private const string GBooking = "การจอง";
@@ -80,8 +80,9 @@ public static class CustomerNotifyEvents
     /// <summary>คีย์ที่ส่งได้ (ลูกค้า + ร้าน) — คีย์อื่น = บั๊กของผู้เรียก</summary>
     public static bool IsKnown(string? key) => IsCustomerEvent(key) || IsShopEvent(key);
 
-    /// <summary>ข้อความที่ต้องถึงแม้โควตาช่องกลางเต็ม (เงินลูกค้าค้าง) — ยังนับโควตา</summary>
-    public static bool IsEssential(string? key) => key == ShopPaymentProblem;
+    /// <summary>ข้อความถึงลูกค้าที่ต้องถึงแม้โควตาช่องกลางเต็ม — ยังนับโควตา (ฝ่ายค้านรอบ 212 S1: แขกที่พักต้องส่งสลิปให้ทันเวลาถือห้อง
+    /// ไม่งั้นห้องหลุด ⇒ <see cref="LodgingSlipRequired"/>) · ข้อความถึงร้าน (<c>shop.*</c>) ไม่นับอยู่แล้ว (<c>NotifyQuotaPolicy.CountsEvent</c>)</summary>
+    public static bool IsEssential(string? key) => key == LodgingSlipRequired;
 
     /// <summary>คีย์ที่ตั้งค่าได้ในตาราง (แถว "ทั้งหมด" + ทุกประเภทลูกค้า)</summary>
     public static bool IsConfigurable(string? key) => key == All || IsCustomerEvent(key);

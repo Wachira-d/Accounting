@@ -8000,9 +8000,8 @@ public static class DatabaseMigrationHelper
 
     /// <summary>รอบ 212 (คำตัดสินข้อ 171 · <c>erp-review/2026-10-30/NOTIFY_PREFS_QUOTA_DAILY_SUMMARY_DESIGN.md</c> §2) — <b>บล็อกเดียวของทั้งรอบ</b> (แพ็ก A เป็นเจ้าของ ·
     /// มีตารางของแพ็ก B <c>LineOaSwitchEvents</c> และแพ็ก C <c>StaffDailySummary*</c> ล่วงหน้าตาม §8) · CREATE/ADD COLUMN IF NOT EXISTS ทุกคำสั่ง ⇒ รันทุกบูตได้ ·
-    /// <b>ไม่ UPDATE แถวเดิม</b> ยกเว้นค่าตั้งต้นเพดานข้อความต่อระดับแพ็กเกจ ซึ่งเติม<b>ครั้งเดียวตอนเพิ่มคอลัมน์</b> (DO block — รันซ้ำไม่ทับค่าที่แอดมินแก้) ·
-    /// ตัวเลขตั้งต้น (เจ้าของปรับได้ที่ /admin/plans.html · /admin/addons.html): ทดลอง 100 · Basic 300 · Pro 1,000 · Enterprise 5,000 ข้อความ/เดือน ·
-    /// แพ็กเสริม <c>notify.topup</c> 500 ข้อความ 99 บาท อายุ 60 วัน · ชื่อ index ต้องตรงกับ <c>AccountingDbContext</c></summary>
+    /// <b>ไม่ UPDATE แถวเดิม</b> · เพดานข้อความของแม่แบบ = NULL (ไม่จำกัด — ผู้ประสานงานตัดสินหลังฝ่ายค้าน: ห้ามจำกัดลูกค้าเดิมผ่าน migration) ·
+    /// ตัวเลขแนะนำแสดงเป็นคำใบ้ที่ /admin/plans.html (<c>NotifyQuotaPolicy.SuggestedLimits</c>) · แพ็กเสริม <c>notify.topup</c> 500 ข้อความ 99 บาท อายุ 60 วัน (มีผลเมื่อเจ้าของตั้งเพดาน) · ชื่อ index ต้องตรงกับ <c>AccountingDbContext</c></summary>
     internal static IReadOnlyList<string> CmsRound212NotifyStatements() => new List<string>
     {
         // ── ข้อ 2: ถอยไปอีเมลของระบบ ──
@@ -8012,17 +8011,10 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "MaxSharedMessagesPerMonth" integer NULL;""",
         """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "NotifyBonusQuota" integer NOT NULL DEFAULT 0;""",
         """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "NotifyBonusExpiresAt" timestamptz NULL;""",
-        """
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'PlanTemplates' AND column_name = 'MaxSharedMessagesPerMonth') THEN
-                ALTER TABLE "PlanTemplates" ADD COLUMN "MaxSharedMessagesPerMonth" integer NOT NULL DEFAULT 300;
-                -- ค่าตั้งต้นต่อระดับ (SubscriptionPlan: 0 FreeTrial · 1 Basic · 2 Pro · 3 Enterprise) — ครั้งเดียวตอนเพิ่มคอลัมน์
-                UPDATE "PlanTemplates" SET "MaxSharedMessagesPerMonth" = CASE "Plan" WHEN 0 THEN 100 WHEN 1 THEN 300 WHEN 2 THEN 1000 WHEN 3 THEN 5000 ELSE 300 END;
-            END IF;
-        END $$;
-        """,
-        """ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxSharedMessagesPerMonth" integer NOT NULL DEFAULT 100;""",
+        // ผู้ประสานงานตัดสินหลังฝ่ายค้านรอบ 212: เพดานแม่แบบ = NULL (ไม่จำกัด = พฤติกรรมเดิม) — ห้าม migration ตั้งเพดานให้ลูกค้าเดิม ·
+        // ตัวเลขแนะนำ (ทดลอง 100 · Basic 300 · Pro 1,000 · Enterprise 5,000) แสดงเป็นคำใบ้ที่ /admin/plans.html ให้เจ้าของตั้งเอง
+        """ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "MaxSharedMessagesPerMonth" integer NULL;""",
+        """ALTER TABLE "PlanTemplates" ADD COLUMN IF NOT EXISTS "TrialMaxSharedMessagesPerMonth" integer NULL;""",
 
         // ── ข้อ 1: ค่าตั้งต่อประเภทข้อความ ──
         """
