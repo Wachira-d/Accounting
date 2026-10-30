@@ -324,6 +324,9 @@ public class CreateBookingRequest
 
     /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มจอง — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
     public bool ConsentGiven { get; set; }
+    /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังจองสำเร็จบันทึกชื่อ/เบอร์ลงโปรไฟล์ ·
+    /// สมาชิก = id ในโทเคนหน้าร้านของเว็บนี้เท่านั้น · แขก/พนักงาน/โทเคนเว็บอื่น ⇒ ไม่มีผล</summary>
+    public bool SaveToProfile { get; set; }
 }
 
 public class UpdateBookingStatusRequest

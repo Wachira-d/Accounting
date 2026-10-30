@@ -577,6 +577,8 @@
 
           // Pre-fill product grid + booking after rendering
           this.hydrateBlocks(companyId, siteId, blocks);
+          // รอบ 216 (ข้อ 174): ฟอร์มติดต่อ/ขอใบเสนอราคา — สมาชิกที่ล็อกอินได้ชื่อ/อีเมล/เบอร์/บริษัท/เลขภาษีเติมให้ (ไม่บันทึกกลับ)
+          this._memberPrefillContactForms(main);
           // แกลเลอรี/สไลด์โชว์ — HTML มาจากเซิร์ฟเวอร์ (CmsGalleryBlock) · ที่นี่แค่ติดพฤติกรรม (เลื่อน · autoplay · lightbox)
           this.initGalleries(main);
         } catch (e) {
@@ -1299,7 +1301,7 @@
               <div id="billingBlock" style="display:none;grid-template-columns:1fr 1fr;gap:14px;padding:14px;background:#FFFBEB;border-radius:6px">
                 <div style="grid-column:1/-1"><label>ชื่อผู้รับใบกำกับ</label><input name="billingName" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
                 <div><label>เลขผู้เสียภาษี (13 หลัก)</label><input name="billingTaxId" maxlength="13" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
-                <div><label>รหัสสาขา (สำนักงานใหญ่ = 00000)</label><input name="billingBranchCode" value="00000" placeholder="00000" maxlength="5" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
+                <div><label>รหัสสาขา (สำนักงานใหญ่ = 00000)</label><input name="billingBranchCode" value="00000" data-auto-src="default" placeholder="00000" maxlength="5" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></div>
                 <div style="grid-column:1/-1"><label>ที่อยู่ใบกำกับ</label><textarea name="billingAddress" rows="2" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea></div>
               </div>
               ${this.p6ConsentHtml()}
@@ -1311,6 +1313,16 @@
         this._checkout = { fulfillment: null, rateId: null, payChoice: null, reqDate: null };
         this._cfKeys = null;
         await this.refreshQuote(cart.id);
+        // รอบ 216 (ข้อ 174): สมาชิกที่ล็อกอิน ⇒ เติมชื่อ/เบอร์/อีเมล/ที่อยู่จัดส่ง/ข้อมูลใบกำกับจากโปรไฟล์ (ไม่ติ๊กขอใบกำกับให้เอง) ·
+        // เติมจังหวัด/รหัสไปรษณีย์แล้วคิดค่าส่งใหม่ (ตัวคิดเดียวที่เซิร์ฟเวอร์) · ช่องที่ร้านเพิ่มเองไม่เติม (ไม่มีการจับคู่กับช่องมาตรฐาน — ข้อ 174 ช)
+        await this._memberPrefill(main.querySelector('form'), me => {
+          const sa = me.shippingAddress || {};
+          const tax = !!(document.getElementById('reqTaxInv') || {}).checked;
+          return [['shippingName', me.fullName, 'text', true], ['shippingPhone', me.phone, 'phone', true], ['shippingEmail', me.email, 'text', false],
+            ['shippingAddress', me.shippingAddressText, 'text', true], ['shippingProvince', sa.province, 'text', true], ['shippingPostalCode', sa.postalCode, 'text', true],
+            ['billingName', me.companyName, 'text', tax], ['billingTaxId', me.taxId, 'digits', tax], ['billingBranchCode', me.branchCode, 'text', tax],
+            ['billingAddress', me.billingAddressText, 'text', tax]];
+        }, { afterFill: () => this.refreshQuote(cart.id) });
       },
 
       // ===== รอบ 209 P2: ฟอร์มสั่งซื้อจากค่าที่เซิร์ฟเวอร์ส่ง (ช่องบังคับ/ซ่อน · วันรับ · ช่องเพิ่มเอง · วิธีชำระ · คูปอง · ใบกำกับ) =====
@@ -1589,6 +1601,7 @@
           customFields: Object.fromEntries(((this._quote && this._quote.customFields) || []).map(f => [f.key,
             f.type === 'checkbox' ? (fd.get('cf_' + f.key) ? 'true' : null) : (fd.get('cf_' + f.key) || null)])),
           consentGiven: this.p6ConsentValue(ev.target),   // รอบ 209 P6 (PDPA)
+          saveToProfile: this._memberSaveValue(ev.target),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
         };
         // เหตุที่ยังสั่งไม่ได้มาจากเซิร์ฟเวอร์ (ต้องกรอกจังหวัด/เลือกวิธีส่ง) — บอกก่อนกดส่ง ด่านจริงยังอยู่ที่ CreateOrder
         if (this._quote && this._quote.problem) { alert(this._quote.problem); return; }
@@ -1613,7 +1626,11 @@
             const j = await r.json().catch(() => null);
             throw new Error((j && j.message) || 'สั่งซื้อไม่สำเร็จ — กรุณาลองอีกครั้ง');
           }
-          const order = (await r.json()).data;
+          const orderJson = await r.json();
+          const order = orderJson.data;
+          // รอบ 216: กำลังเปลี่ยนหน้า ⇒ บอกเฉพาะช่องที่ไม่ได้บันทึกลงบัญชี (ข้อความจากเซิร์ฟเวอร์)
+          const profileNotes = this._memberAfterSubmit(body.saveToProfile && !order.replayed, orderJson, true);
+          if (profileNotes.length) alert(profileNotes.join('\n'));
           // Clear local cart reference — backend marks cart closed too.
           localStorage.removeItem('sf_session_' + this._ctx.siteId);
           try { sessionStorage.removeItem(idemStore); } catch (_) {}
@@ -1900,12 +1917,175 @@
       },
       openAccount() { window.location.href = this._pageUrl('account'); },
 
+      // ===== รอบ 216 (คำตัดสินข้อ 174): ข้อมูลส่วนตัวของสมาชิก + เติมฟอร์มจอง/สั่งซื้อ/จองที่พัก/ติดต่อ =====
+      // โปรไฟล์มาจาก GET portal/me (เซิร์ฟเวอร์ประกอบข้อความที่อยู่แล้ว) · ตัวตรวจจริงอยู่ที่เซิร์ฟเวอร์ (Helpers/StorefrontMemberProfile) ·
+      // ตัวเติมเป็น async ⇒ กติกา "ห้ามใครมาก่อนชนะ" (กฎ #4 A): ช่องที่ผู้ใช้แตะแล้ว (dataset.userTouched) ไม่ถูกทับ · ทับได้เฉพาะช่องว่าง
+      // หรือช่องที่ระบบเติมเอง (dataset.autoSrc) · ผลไม่ขึ้นกับว่า /portal/me ตอบก่อนหรือหลังผู้ใช้เริ่มพิมพ์
+      _profileUrl() { return this._pageUrl('account') + '#profile'; },
+      async _custSend(method, path, payload) {
+        const r = await fetch(this._url(path), { method, headers: this._custHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(payload) });
+        const j = await r.json().catch(() => null);
+        if (r.status === 401) { this._custLogout(); throw Object.assign(new Error((j && j.message) || 'กรุณาเข้าสู่ระบบใหม่'), { auth: true }); }
+        if (!r.ok) throw new Error((j && j.message) || 'บันทึกไม่สำเร็จ');
+        return j;
+      },
+      _myProfileHtml(me) {
+        const inp = 'width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px';
+        const sa = me.shippingAddress || {}, ba = me.billingAddress || {};
+        const addr = (p, a) => `
+            <div style="grid-column:1/-1"><label>บ้านเลขที่ · หมู่บ้าน/อาคาร · ถนน</label><input name="${p}AddressLine" maxlength="500" value="${this.esc(a.addressLine || '')}" style="${inp}"></div>
+            <div><label>ตำบล/แขวง</label><input name="${p}SubDistrict" maxlength="100" value="${this.esc(a.subDistrict || '')}" style="${inp}"></div>
+            <div><label>อำเภอ/เขต</label><input name="${p}District" maxlength="100" value="${this.esc(a.district || '')}" style="${inp}"></div>
+            <div><label>จังหวัด</label><input name="${p}Province" maxlength="100" value="${this.esc(a.province || '')}" style="${inp}"></div>
+            <div><label>รหัสไปรษณีย์</label><input name="${p}PostalCode" maxlength="5" inputmode="numeric" value="${this.esc(a.postalCode || '')}" style="${inp}"></div>`;
+        return `<form onsubmit="Store.saveMyProfile(event)" style="display:grid;gap:14px;background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:20px">
+            <p style="margin:0;font-size:13px;color:var(--text-secondary)">ข้อมูลนี้ใช้เติมฟอร์มจองและสั่งซื้อให้อัตโนมัติ — แก้ไขได้ทุกเมื่อ (คุณยังแก้ค่าบนฟอร์มแต่ละครั้งได้ตามปกติ)
+              ${me.hasErpContact ? '<br>การแก้ที่นี่ไม่เปลี่ยนข้อมูลลูกค้าในระบบบัญชีของร้าน (เอกสารที่ออกไปแล้วไม่เปลี่ยน) — ถ้าต้องการให้ร้านแก้ข้อมูลในเอกสาร กรุณาติดต่อร้าน' : ''}</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px">
+              <div><label>ชื่อ-นามสกุล *</label><input name="fullName" required maxlength="200" value="${this.esc(me.fullName || '')}" style="${inp}"></div>
+              <div><label>เบอร์โทร</label><input name="phone" type="tel" maxlength="20" value="${this.esc(me.phone || '')}" style="${inp}"></div>
+              <div><label>อีเมล (ใช้เข้าสู่ระบบ — แก้ไม่ได้)</label><input type="email" value="${this.esc(me.email || '')}" readonly disabled style="${inp};background:#F3F4F6"></div>
+            </div>
+            <fieldset style="border:1px solid #E5E7EB;border-radius:8px;padding:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+              <legend style="font-weight:600;padding:0 6px">📦 ที่อยู่จัดส่งหลัก</legend>
+              <div><label>ชื่อผู้รับ</label><input name="shipRecipientName" maxlength="200" value="${this.esc(sa.recipientName || '')}" style="${inp}"></div>
+              <div><label>เบอร์ผู้รับ</label><input name="shipPhone" type="tel" maxlength="20" value="${this.esc(sa.phone || '')}" style="${inp}"></div>
+              ${addr('ship', sa)}
+            </fieldset>
+            <fieldset style="border:1px solid #E5E7EB;border-radius:8px;padding:12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px">
+              <legend style="font-weight:600;padding:0 6px">📑 ข้อมูลใบกำกับภาษี (ไม่บังคับ)</legend>
+              <div style="grid-column:1/-1"><label>ชื่อผู้รับใบกำกับ (บุคคล/บริษัท)</label><input name="companyName" maxlength="200" value="${this.esc(me.companyName || '')}" style="${inp}"></div>
+              <div><label>เลขประจำตัวผู้เสียภาษี (13 หลัก)</label><input name="taxId" maxlength="17" inputmode="numeric" value="${this.esc(me.taxId || '')}" style="${inp}"></div>
+              <div><label>รหัสสาขา (สำนักงานใหญ่ = 00000)</label><input name="branchCode" maxlength="5" inputmode="numeric" value="${this.esc(me.branchCode || '')}" placeholder="00000" style="${inp}"></div>
+              ${addr('bill', ba)}
+            </fieldset>
+            <button type="submit" class="btn btn-primary">บันทึกข้อมูลส่วนตัว</button>
+            <div class="sf-acc-status" style="font-size:13px"></div>
+          </form>`;
+      },
+      async saveMyProfile(ev) {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        const g = (k) => String(fd.get(k) || '').trim() || null;
+        const a = (p) => ({ recipientName: g(p + 'RecipientName'), phone: g(p + 'Phone'), addressLine: g(p + 'AddressLine'),
+          subDistrict: g(p + 'SubDistrict'), district: g(p + 'District'), province: g(p + 'Province'), postalCode: g(p + 'PostalCode') });
+        const st = ev.target.querySelector('.sf-acc-status');
+        st.textContent = 'กำลังบันทึก...'; st.style.color = 'var(--text-secondary)';
+        try {
+          const j = await this._custSend('PUT', '/portal/me/profile', {
+            fullName: g('fullName'), phone: g('phone'), companyName: g('companyName'), taxId: g('taxId'), branchCode: g('branchCode'),
+            shippingAddress: a('ship'), billingAddress: a('bill'),
+          });
+          this._custMe = j && j.data ? j.data : null;
+          st.textContent = '✓ ' + ((j && j.message) || 'บันทึกแล้ว'); st.style.color = '#047857';
+        } catch (e) {
+          if (e.auth) { document.getElementById('sfMain').innerHTML = this._accountLoginHtml(e.message); return; }
+          st.textContent = '✗ ' + e.message; st.style.color = '#DC2626';
+        }
+      },
+
+      /** เติมฟอร์มจากโปรไฟล์ — spec(me) คืน [[ชื่อช่อง, ค่าจากโปรไฟล์, ชนิด('text'|'phone'|'digits'), บันทึกได้?, เติมให้? (false = เทียบอย่างเดียว)]] ·
+       *  ช่องที่ "บันทึกได้" ถูกเทียบกับโปรไฟล์เพื่อแสดงช่อง "บันทึกเป็นข้อมูลของฉัน" (เซิร์ฟเวอร์ตัดสินซ้ำว่าบันทึกอะไรได้จริง) */
+      async _memberPrefill(form, spec, opts) {
+        if (!form || !this._custSession()) return;
+        const o = opts || {};
+        form._sfMemberSpec = spec;
+        if (!form._sfMemberWired) {
+          form._sfMemberWired = true;
+          const touch = (e) => {
+            const el = e.target;
+            if (!el || !el.name) return;
+            if (el.name === 'saveToProfile') { el.dataset.userTouched = '1'; return; }
+            el.dataset.userTouched = '1'; delete el.dataset.autoSrc;
+            this._memberSaveRefresh(form);
+          };
+          form.addEventListener('input', touch);
+          form.addEventListener('change', (e) => { if (e.target && e.target.type === 'checkbox' && e.target.name !== 'saveToProfile') this._memberSaveRefresh(form); else touch(e); });
+        }
+        const me = await this._custMeLoad();
+        if (!me || !form.isConnected) return;
+        let filled = false;
+        for (const [name, val] of spec(me).filter(x => x[4] !== false).map(x => [x[0], x[1]])) {
+          const el = form.querySelector(`[name="${name}"]`);
+          if (!el || val == null || val === '') continue;
+          if (el.dataset.userTouched === '1') continue;                 // ผู้ใช้พิมพ์แล้ว ⇒ ค่าผู้ใช้ชนะ
+          if (el.value && !el.dataset.autoSrc) continue;                // มีค่าอยู่แล้วที่ระบบไม่ได้เติม ⇒ ไม่ทับ
+          if (el.value !== String(val)) filled = true;
+          el.value = String(val); el.dataset.autoSrc = 'member';
+        }
+        if (o.hint !== false) {
+          let h = form.querySelector('.sf-member-hint');
+          if (!h) { h = document.createElement('div'); h.className = 'sf-member-hint'; form.insertBefore(h, form.firstChild); }
+          h.style.cssText = 'font-size:12px;color:#065F46;background:#ECFDF5;border:1px solid #A7F3D0;border-radius:8px;padding:6px 10px';
+          h.innerHTML = `👤 ใช้ข้อมูลจากบัญชีของฉัน · <a href="${this.esc(this._profileUrl())}">แก้ไขโปรไฟล์</a>`;
+        }
+        if (o.save !== false) this._memberSaveRefresh(form);
+        if (filled && typeof o.afterFill === 'function') o.afterFill();
+      },
+      _memberNorm(kind, v) {
+        const s = String(v == null ? '' : v).trim();
+        if (kind === 'phone') { let d = s.replace(/\D/g, ''); if (d.length === 11 && d.startsWith('66')) d = '0' + d.slice(2); return d; }
+        if (kind === 'digits') return s.replace(/\D/g, '');
+        return s.replace(/\s+/g, ' ');
+      },
+      /** แสดง/ซ่อนช่อง "บันทึกเป็นข้อมูลของฉัน": มีช่องที่พิมพ์ต่างจากโปรไฟล์ ⇒ แสดง · ติ๊กไว้ก่อนเฉพาะเมื่อทุกช่องที่ต่างเป็นช่องที่โปรไฟล์ยังว่าง ·
+       *  ผู้ใช้กดเองแล้ว (userTouched) ⇒ ไม่เปลี่ยนสถานะติ๊กให้อีก */
+      _memberSaveRefresh(form) {
+        const me = this._custMe;
+        if (!form || !me || typeof form._sfMemberSpec !== 'function') return;
+        let fillsEmpty = false, changesExisting = false;
+        for (const [name, val, kind, savable] of form._sfMemberSpec(me)) {
+          if (!savable) continue;
+          const el = form.querySelector(`[name="${name}"]`);
+          if (!el) continue;
+          const typed = this._memberNorm(kind, el.value), cur = this._memberNorm(kind, val);
+          if (!typed || typed === cur) continue;
+          if (!cur) fillsEmpty = true; else changesExisting = true;
+        }
+        let box = form.querySelector('.sf-save-profile');
+        if (!fillsEmpty && !changesExisting) { if (box) box.style.display = 'none'; return; }
+        if (!box) {
+          box = document.createElement('label');
+          box.className = 'sf-save-profile';
+          box.style.cssText = 'display:flex;gap:8px;align-items:flex-start;font-size:13px;cursor:pointer';
+          box.innerHTML = `<input type="checkbox" name="saveToProfile" style="margin-top:3px;width:auto"><span>บันทึกเป็นข้อมูลของฉัน (ใช้เติมให้ครั้งหน้า)</span>`;
+          const submit = form.querySelector('button[type="submit"], #sfBookSubmit');
+          form.insertBefore(box, submit || null);
+        }
+        box.style.display = 'flex';
+        const cb = box.querySelector('input');
+        if (cb.dataset.userTouched !== '1') cb.checked = fillsEmpty && !changesExisting;
+      },
+      /** ส่ง saveToProfile เฉพาะเมื่อช่องแสดงอยู่และติ๊ก (ซ่อน = ไม่มีอะไรต่าง = ไม่ขอบันทึก) */
+      _memberSaveValue(form) {
+        const box = form && form.querySelector('.sf-save-profile');
+        const cb = box && box.querySelector('input');
+        return !!(cb && box.style.display !== 'none' && cb.checked);
+      },
+      /** หลังส่งสำเร็จ: ล้างโปรไฟล์ที่จำไว้ (โหลดใหม่ครั้งถัดไป) · ข้อความ "ไม่ได้บันทึก…" มาจากเซิร์ฟเวอร์ (ApiResponse.errors) — คืนไว้ให้ผู้เรียกแสดง ·
+       *  quiet=true (หน้าที่กำลังเปลี่ยนหน้า) ไม่แสดง toast เอง */
+      _memberAfterSubmit(saved, j, quiet) {
+        if (!saved) return [];
+        this._custMe = null;
+        const notes = (j && Array.isArray(j.errors)) ? j.errors.filter(Boolean) : [];
+        if (!quiet) this._toast(notes.length ? '⚠️ ' + notes.join(' · ') : '✓ บันทึกข้อมูลลงบัญชีของคุณแล้ว');
+        return notes;
+      },
+      _memberPrefillContactForms(root) {
+        if (!this._custSession()) return;
+        (root || document).querySelectorAll('form.blk-form').forEach(f => {
+          if (!f.querySelector('[name="name"]')) return;   // ฟอร์มสมัครรับข่าวสาร (อีเมลอย่างเดียว) — เติมอีเมลอย่างเดียวไม่จำเป็นต้องมีป้าย
+          this._memberPrefill(f, me => [['name', me.fullName, 'text', false], ['email', me.email, 'text', false], ['phone', me.phone, 'phone', false],
+            ['company', me.companyName, 'text', false], ['taxId', me.taxId, 'text', false]], { save: false });
+        });
+      },
+
       async renderAccount(tab) {
         const main = document.getElementById('sfMain');
         document.title = 'บัญชีของฉัน';
         const me = await this._custMeLoad();
         if (!me) { main.innerHTML = this._accountLoginHtml(); await this.refreshCartBadge(); return; }
-        const t = tab || 'orders';
+        const t = tab || (location.hash === '#profile' ? 'profile' : 'orders');
         const tabBtn = (k, label) => `<button class="btn ${t === k ? 'btn-primary' : 'btn-secondary'}" onclick="Store.renderAccount('${k}')">${label}</button>`;
         main.innerHTML = `<div class="sf-container" style="padding:32px 20px;max-width:860px">
             <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
@@ -1914,14 +2094,15 @@
             </div>
             <div id="sfLineBox"></div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin:18px 0">
-              ${tabBtn('orders', '🧾 คำสั่งซื้อ')}${tabBtn('bookings', '📅 การจองของฉัน')}${tabBtn('credits', '🎟️ บัตรคอร์สของฉัน')}
+              ${tabBtn('orders', '🧾 คำสั่งซื้อ')}${tabBtn('bookings', '📅 การจองของฉัน')}${tabBtn('credits', '🎟️ บัตรคอร์สของฉัน')}${tabBtn('profile', '👤 ข้อมูลส่วนตัว')}
             </div>
             <div id="sfAccountBody"><div class="sf-loader">กำลังโหลด...</div></div>
           </div>`;
         const body = document.getElementById('sfAccountBody');
         this.renderLineBox('sfLineBox', { kind: 'member' });
         try {
-          if (t === 'bookings') body.innerHTML = this._myBookingsHtml(await this._custFetch('/portal/me/bookings'));
+          if (t === 'profile') body.innerHTML = this._myProfileHtml(me);
+          else if (t === 'bookings') body.innerHTML = this._myBookingsHtml(await this._custFetch('/portal/me/bookings'));
           else if (t === 'credits') body.innerHTML = this._myCreditsHtml(await this._custFetch('/portal/me/credits'), me);
           else body.innerHTML = this._myOrdersHtml(await this._custFetch('/portal/me/orders'));
         } catch (e) {
@@ -2282,6 +2463,9 @@
         if (svc && svc.memberOnly && !this._custSession()) { const sb = document.getElementById('sfBookSubmit'); if (sb) sb.disabled = true; }
         await this._loadSlots(serviceId);
         await this._bookingCreditBox();
+        // รอบ 216 (ข้อ 174): สมาชิกที่ล็อกอิน ⇒ เติมชื่อ/เบอร์/อีเมลจากโปรไฟล์ (ช่องที่ผู้ใช้แตะแล้วไม่ถูกทับ) · อีเมลเข้าระบบไม่บันทึกกลับ
+        await this._memberPrefill(document.getElementById('sfBookForm'), me => [
+          ['customerName', me.fullName, 'text', true], ['customerPhone', me.phone, 'phone', true], ['customerEmail', me.email, 'text', false]]);
       },
 
       async _loadSlots(serviceId) {
@@ -2370,6 +2554,7 @@
           units: this._bkUnits(),
           resourceId: this._bkResource(),
           consentGiven: this.p6ConsentValue(form),   // รอบ 209 P6 (PDPA)
+          saveToProfile: this._memberSaveValue(form),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
           confirmAdditional: !!confirmAdditional      // รอบ 217: ตั้งใจจองรอบเดิมเพิ่มอีกที่ (ผู้ใช้กดยืนยันหลังคำเตือนจองซ้ำ)
         };
         // รอบ 209 P1 (C3): จองด้วยบัตร — ส่ง id ลูกค้าของตัวเอง + โทเคนหน้าร้าน (เซิร์ฟเวอร์เทียบ id ในโทเคนกับ customerId)
@@ -2413,7 +2598,9 @@
             document.getElementById('sfSlotStart').value = '';
             throw new Error(msg);
           }
-          const booking = (await r.json()).data;
+          const bookingJson = await r.json();
+          const booking = bookingJson.data;
+          this._memberAfterSubmit(body.saveToProfile && !booking.reused, bookingJson);   // ใบเดิมที่ถูกคืน (รอบ 217) = ไม่ได้บันทึก
           // รอบ 207 (ข้อ 6): หน้าจองสำเร็จแสดงรายละเอียดครบ + ดาวน์โหลด/พิมพ์ใบยืนยันการจองเก็บไว้
           this._lastBooking = booking;
           document.getElementById('sfBookingModal').innerHTML = `
@@ -3216,6 +3403,11 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
             const el = box.querySelector(`#lgBookForm [name="${k}"]`);
             if (el) { if (el.type === 'checkbox') el.checked = v === 'on'; else el.value = v; }
           }
+          // รอบ 216 (ข้อ 174): สมาชิกที่ล็อกอิน ⇒ เติมชื่อ/เบอร์/อีเมล/ข้อมูลใบกำกับจากโปรไฟล์ — ค่าที่พิมพ์ค้างจากการวาดใหม่ (ข้างบน) ไม่ถูกทับ
+          this._memberPrefill(document.getElementById('lgBookForm'), me => [
+            ['guestName', me.fullName, 'text', true], ['guestPhone', me.phone, 'phone', true], ['guestEmail', me.email, 'text', false],
+            // ช่องใบกำกับในนามบริษัท = คำขอใบกำกับของแขก ⇒ ไม่เติมให้เอง (เทียบเพื่อบันทึกกลับอย่างเดียว — ข้อ 174 ช)
+            ['guestCompanyName', me.companyName, 'text', true, false], ['guestTaxId', me.taxId, 'digits', true, false], ['guestAddress', me.billingAddressText, 'text', true, false]]);
           if (scroll) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
         } catch (e) { box.innerHTML = `<div class="sf-loader" style="color:#DC2626">${this.esc(e.message)}</div>`; }
       },
@@ -3271,19 +3463,22 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
           guestIdNumber: fd.get('guestIdNumber') || null, arrivalTime: fd.get('arrivalTime') || null, guestNationality: fd.get('guestNationality') || null,
           specialRequests: fd.get('specialRequests') || null, guestCompanyName: fd.get('guestCompanyName') || null,
           guestTaxId: fd.get('guestTaxId') || null, guestAddress: fd.get('guestAddress') || null, acceptHouseRules: fd.get('acceptHouseRules') === 'on',
+          saveToProfile: this._memberSaveValue(form),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
         });
         btn.disabled = true; btn.textContent = 'กำลังจอง...';
         try {
           // รอบ 217 (ข้อ 175): คีย์กันซ้ำต่อฟอร์ม (js/submit-once.js) · เซิร์ฟเวอร์ตัดสิน "จองช่วงเดิมซ้ำ" ⇒ ถามก่อนว่าตั้งใจจองเพิ่มจริงไหม
-          let r = await SubmitOnce.fetch(this._lurl('/reservations'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, form);
+          // รอบ 216: แนบโทเคนสมาชิก (ถ้าล็อกอิน) — เซิร์ฟเวอร์เติมช่องว่างจากโปรไฟล์ + บันทึกกลับเมื่อติ๊ก · แขกนิรนาม = เส้นเดิม
+          let r = await SubmitOnce.fetch(this._lurl('/reservations'), { method: 'POST', headers: this._custHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) }, form);
           let j = await r.json().catch(() => null);
           if (r.status === 409 && j?.data?.ruleCode === 'LODGING-DUPLICATE' && confirm((j.message || 'มีการจองช่วงนี้แล้ว') + '\n\nต้องการจองเพิ่มอีกชุดจริงไหม?')) {
             SubmitOnce.reset(form); body.confirmAdditional = true;
-            r = await SubmitOnce.fetch(this._lurl('/reservations'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, form);
+            r = await SubmitOnce.fetch(this._lurl('/reservations'), { method: 'POST', headers: this._custHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body) }, form);
             j = await r.json().catch(() => null);
           }
           if (!r.ok) throw new Error(j?.message || 'จองไม่สำเร็จ');
           const res = j.data;
+          this._memberAfterSubmit(body.saveToProfile, j);
           this._lgState.sel = {}; this._lgState.extras = {}; this._lgState.roomGuests = {}; this._lgState.guestTouched = {};
           const url = this._pageUrl('reservation/' + res.publicToken);
           history.pushState({}, '', url);

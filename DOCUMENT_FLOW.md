@@ -6083,6 +6083,19 @@ _Last verified against codebase: 2026-10-30 (รอบ 213 — ส่งซ้�
   ใบรอร้านยืนยันยังไม่ออกเอกสาร/ไม่มีเงิน ⇒ ยกเลิกได้เลย · ใบที่มีมัดจำแล้วเดินเส้นยกเลิก/คืนเงินเดิม
 
 _Last verified against codebase: 2026-10-30 (รอบ 217 — Idempotency-Key ทุกฟอร์มลูกค้า + RequestHash · DuplicateSubmitGuard การจอง/ที่พัก · แจ้งเตือนตามหลังผ่าน DeferredNotifications · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 5fcc6e74)_
+- **รอบ 216 · ข้อมูลส่วนตัวของสมาชิกหน้าร้าน + เติมฟอร์มจาก "บัญชีของฉัน" (คำตัดสินข้อ 174 · เจ้าของ: "ล็อคอินไว้แล้วควรมี ให้บันทึกข้อมูลส่วนตัวและดึงมาได้เลย" · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+  (ก) **ที่เก็บเดิม ไม่มี migration**: `SiteCustomer.FullName/Phone/CompanyName/TaxId/BranchCode` + `SiteCustomerAddress` แถวหลักชนิดละแถว (Shipping · Billing) · อีเมลเข้าระบบอ่านอย่างเดียว ·
+  ตัวตรวจ/ตัวรวมค่าเดียว `Helpers/StorefrontMemberProfile` (`Validate` · `FillContact` · `MergeCheckout` · `ComposeAddress` · `SaveNote`) — เบอร์ผ่าน `CmsContactResolver.NormalizePhone` · เลขภาษี `ThaiTaxId.IsValid` · สาขาว่าง = 00000 ·
+  (ข) **API** (`Controllers/CmsStorefrontCustomerController` → `StorefrontCustomerService.Profile.cs`): `GET portal/me` คืนโปรไฟล์ + `ShippingAddressText`/`BillingAddressText` ที่เซิร์ฟเวอร์ประกอบ ·
+  `PUT portal/me/profile` (ด่าน `Me` = โทเคนของเว็บนี้ · จำกัด 10/นาที 100/วันต่อสมาชิก · ผิด ⇒ `BusinessRuleException` `CMS-MEMBER-PROFILE` ทุกข้อในข้อความเดียว · audit chain ชื่อช่องที่เปลี่ยน ไม่ใส่ค่า) ·
+  **ไม่แตะผู้ติดต่อ ERP** ที่ผูกไว้ (ข้อ 174 ข) ·
+  (ค) **ตาข่ายเซิร์ฟเวอร์** — สมาชิกที่ใช้งานเว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ (ค่าที่พิมพ์ชนะ): เช็กเอาต์ใน `ValidateCheckoutFormAsync` ก่อน `OrderFormFields.Check` · จองนัด/คลาสใน `CreateBookingAsync` ก่อน `CmsDataConsent.EnforceAsync` ·
+  จองที่พักใน `LodgingPublicController.Create` ก่อน `CreateReservationAsync` (หน้าเว็บส่ง `X-Storefront-Token` แล้ว · การจองที่พักยังไม่ผูกบัญชี — ข้อ 174 ฉ) · ที่อยู่จัดส่งไม่เติมฝั่งเซิร์ฟเวอร์ (ค่าส่งคิดจากจังหวัดที่ลูกค้าเห็น) ·
+  (ง) **"บันทึกเป็นข้อมูลของฉัน"** — `SaveToProfile` บน `CreateBookingRequest`/`CreateOrderRequest`/`LodgingCreateReservationRequest` · เจ้าของ `StorefrontCustomerAuth.ProfileOwner` (โทเคนของเว็บนี้เท่านั้น) ·
+  บันทึกหลังรายการสำเร็จในคำขอเดียวกัน (`Helpers/StorefrontProfileSaveBack`) · ค่าผิดรูปแบบ/บันทึกล้ม ⇒ รายการยังสำเร็จ + ข้อความใน `ApiResponse.Errors` (หน้าเว็บแสดง) · ข้อมูลใบกำกับเข้าโปรไฟล์เฉพาะเลขผ่าน mod-11 และ (เช็กเอาต์) เมื่อติ๊กขอใบกำกับ ·
+  (จ) **หน้าเว็บ** `storefront.html`: แท็บ "👤 ข้อมูลส่วนตัว" ในบัญชีของฉัน (`#profile`) · `_memberPrefill` เติมฟอร์มจอง/คลาส · เช็กเอาต์ (แล้วคิดค่าส่งใหม่) · ฟอร์มที่พัก (หลังวาดใหม่ทุกครั้ง · ช่องใบกำกับในนามบริษัทไม่เติมให้ = คำขอของแขก) · ฟอร์มติดต่อ (ไม่บันทึกกลับ) ตามกฎ #4 A (`userTouched` ชนะ · ทับเฉพาะช่องว่าง/`autoSrc`) ·
+  ช่องที่ร้านเพิ่มเอง (MTO) ไม่เติม · PDPA: รายงาน DSR เข้าถึง/โอนย้ายเพิ่มชนิด/ที่อยู่หลักของที่อยู่ · ลบ/ล้างครอบช่องเดิมอยู่แล้ว
+_Last verified against codebase: 2026-10-30 (รอบ 216 — ข้อมูลส่วนตัวสมาชิก · เติมฟอร์มจอง/สั่งซื้อ/ที่พัก · บันทึกกลับจากฟอร์ม · ยังไม่ผ่านฝ่ายค้าน · ยังไม่ได้คอมไพล์ · commit 1fd81626)_
 
 ### 6.6 คอร์ส · Class Credits · Hour Pass (ทีม L · 2026-10-22 · `docs/COURSE_CREDIT_DESIGN.md`)
 

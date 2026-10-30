@@ -65,6 +65,46 @@ public class StorefrontMeResponse
     public string? FullName { get; set; }
     /// <summary>ผูกผู้ติดต่อในระบบบัญชีแล้ว (จำเป็นสำหรับบัตรคอร์ส)</summary>
     public bool HasErpContact { get; set; }
+
+    // ── รอบ 216 (คำตัดสินข้อ 174): ข้อมูลส่วนตัวของสมาชิก — ใช้เติมฟอร์มจอง/สั่งซื้อ/จองที่พัก · แก้ที่ PUT portal/me/profile ──
+    /// <summary>เบอร์โทร (ตัวเลขล้วน · normalize แล้ว)</summary>
+    public string? Phone { get; set; }
+    /// <summary>ชื่อผู้รับใบกำกับภาษี (บุคคล/นิติบุคคล)</summary>
+    public string? CompanyName { get; set; }
+    public string? TaxId { get; set; }
+    public string? BranchCode { get; set; }
+    public StorefrontAddressDto? ShippingAddress { get; set; }
+    public StorefrontAddressDto? BillingAddress { get; set; }
+    /// <summary>ที่อยู่จัดส่งเป็นข้อความ (ไม่รวมจังหวัด/รหัสไปรษณีย์ — เช็กเอาต์มีช่องแยก) · เซิร์ฟเวอร์ประกอบ (<c>StorefrontMemberProfile.ComposeAddress</c>)</summary>
+    public string? ShippingAddressText { get; set; }
+    /// <summary>ที่อยู่ใบกำกับเป็นข้อความเต็มบรรทัดเดียว (รวมจังหวัด/รหัสไปรษณีย์)</summary>
+    public string? BillingAddressText { get; set; }
+}
+
+/// <summary>ที่อยู่ของสมาชิก (โครงเดียวกับ <c>SiteCustomerAddress</c>)</summary>
+public class StorefrontAddressDto
+{
+    public string? RecipientName { get; set; }
+    public string? Phone { get; set; }
+    /// <summary>บ้านเลขที่ · หมู่บ้าน/อาคาร · ถนน</summary>
+    public string? AddressLine { get; set; }
+    public string? SubDistrict { get; set; }
+    public string? District { get; set; }
+    public string? Province { get; set; }
+    public string? PostalCode { get; set; }
+}
+
+/// <summary>รอบ 216: สมาชิกแก้ข้อมูลส่วนตัวของตัวเอง (<c>PUT portal/me/profile</c>) — ส่งครบทุกช่อง · ว่าง = ล้างค่า · อีเมลเข้าระบบแก้ไม่ได้ ·
+/// ตัวตรวจ <c>Helpers/StorefrontMemberProfile.Validate</c></summary>
+public class UpdateStorefrontProfileRequest
+{
+    public string? FullName { get; set; }
+    public string? Phone { get; set; }
+    public string? CompanyName { get; set; }
+    public string? TaxId { get; set; }
+    public string? BranchCode { get; set; }
+    public StorefrontAddressDto? ShippingAddress { get; set; }
+    public StorefrontAddressDto? BillingAddress { get; set; }
 }
 
 public class StorefrontMyOrderItem

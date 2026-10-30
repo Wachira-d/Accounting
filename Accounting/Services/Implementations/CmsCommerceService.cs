@@ -620,7 +620,7 @@ public partial class CmsCommerceService : ICmsCommerceService
         var (idemKey, idemProblem) = SiteOrderPublic.NormalizeIdempotencyKey(request.IdempotencyKey);
         if (idemProblem != null) throw new BusinessRuleException(idemProblem, SiteOrderPublic.RuleCode);
         if (await FindIdempotentOrderIdAsync(companyId, siteId, idemKey) is Guid replayId)
-            return await GetOrderAsync(companyId, siteId, replayId) ?? throw new InvalidOperationException("Failed.");
+            return Replayed(await GetOrderAsync(companyId, siteId, replayId) ?? throw new InvalidOperationException("Failed."));
         // รอบ 209 P2 (คำตัดสินข้อ 168 ก/ง · A10): สวิตช์ร้าน + ฟอร์มสั่งซื้อ + ผู้ซื้อใบกำกับ ตรวจก่อนสร้าง/บันทึกอะไร (CmsCommerceService.Checkout.cs)
         var formCtx = await ValidateCheckoutFormAsync(companyId, siteId, request);
 
@@ -764,7 +764,7 @@ public partial class CmsCommerceService : ICmsCommerceService
 
         // รอบ 209 P1 (A9): คำขอซ้อนคีย์เดียวกันชน unique index ⇒ คืนออเดอร์ของคำขอแรก (ตะกร้าไม่ถูกตัดซ้ำ — บันทึกครั้งนี้ถอยทั้งก้อน)
         if (await SaveNewOrderOrReplayAsync(companyId, siteId, order) is Guid racedId)
-            return await GetOrderAsync(companyId, siteId, racedId) ?? throw new InvalidOperationException("Failed.");
+            return Replayed(await GetOrderAsync(companyId, siteId, racedId) ?? throw new InvalidOperationException("Failed."));
 
         // Recalculate order totals
         var lines = await _db.SiteOrderLines.Where(l => l.OrderId == order.Id).ToListAsync();

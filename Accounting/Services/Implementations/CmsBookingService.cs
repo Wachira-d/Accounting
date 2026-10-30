@@ -840,8 +840,16 @@ public partial class CmsBookingService : ICmsBookingService
         // รอบ 207 (คำขอเจ้าของข้อ 7): ช่องบังคับของฟอร์มจอง — ด่านจริงอยู่ที่นี่ (หน้าเว็บแสดงตามค่าเดียวกัน) · ตัวตัดสินเดียว BookingFormFields ·
         // พนักงานของบริษัทสร้างเอง (walk-in) และลูกค้าที่ล็อกอิน (CustomerId — ข้อมูลอยู่ที่บัญชีลูกค้า) ไม่ผ่านด่านนี้
         // ฝ่ายค้านรอบ 207 ข้อ 9: CustomerId มาจาก body ของคำขอนิรนาม ⇒ ยกเว้นเฉพาะลูกค้าที่เป็นของเว็บนี้จริง
-        var knownCustomer = request.CustomerId is Guid custId
-            && await _db.SiteCustomers.AsNoTracking().AnyAsync(c => c.Id == custId && c.CompanyId == companyId && c.SiteId == siteId);
+        var member = request.CustomerId is Guid custId
+            ? await _db.SiteCustomers.AsNoTracking().Where(c => c.Id == custId && c.CompanyId == companyId && c.SiteId == siteId)
+                .Select(c => new { c.FullName, c.Phone, c.Email, c.IsActive }).FirstOrDefaultAsync()
+            : null;
+        var knownCustomer = member != null;
+        // รอบ 216 (คำตัดสินข้อ 174): ลูกค้าของเว็บนี้เว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ (ตาข่ายฝั่งเซิร์ฟเวอร์ — ใบนัด/แจ้งร้าน/เอกสาร ERP ใช้ช่อง Guest*) ·
+        // ค่าที่พิมพ์มาชนะเสมอ · ตัวตัดสินเดียว StorefrontMemberProfile.FillContact
+        if (member is { IsActive: true })
+            (request.GuestName, request.GuestPhone, request.GuestEmail) = StorefrontMemberProfile.FillContact(
+                request.GuestName, request.GuestPhone, request.GuestEmail, member.FullName, member.Phone, member.Email);
         // ด่านทำงานเมื่อเว็บตั้งค่าฟอร์มแล้วเท่านั้น (FormFieldsJson ไม่ null) — เว็บที่ไม่เคยตั้ง = เซิร์ฟเวอร์ไม่บังคับเหมือนเดิม
         // (ผู้เรียก API/ช่องทางอื่นที่ไม่ส่งเบอร์ไม่พังเงียบหลังอัปเดต · หน้าเว็บเดิมยังบังคับชื่อ+เบอร์ที่ฝั่งฟอร์ม)
         var formJson = (await SiteContextAsync(companyId, siteId)).Row?.FormFieldsJson;

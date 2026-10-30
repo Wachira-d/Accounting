@@ -11,6 +11,12 @@ public interface IStorefrontCustomerService
     Task<byte[]?> PromptPayQrPngAsync(Guid companyId, Guid siteId, decimal? amount);
     /// <summary>ลูกค้ามีอยู่ในบริษัท+เว็บนี้และยังใช้งาน · ไม่ใช่ ⇒ null (controller ตอบ 401)</summary>
     Task<StorefrontMeResponse?> GetMeAsync(Guid companyId, Guid siteId, Guid customerId);
+    /// <summary>รอบ 216 (ข้อ 174): สมาชิกแก้ข้อมูลส่วนตัวของตัวเอง (ตัวตรวจ <c>Helpers/StorefrontMemberProfile.Validate</c> · ผิด ⇒ BusinessRuleException) ·
+    /// ไม่พบลูกค้าในบริษัท+เว็บนี้ ⇒ null</summary>
+    Task<StorefrontMeResponse?> UpdateProfileAsync(Guid companyId, Guid siteId, Guid customerId, UpdateStorefrontProfileRequest request);
+    /// <summary>รอบ 216: "บันทึกเป็นข้อมูลของฉัน" หลังจอง/สั่งสำเร็จ — รวมค่าด้วย <c>StorefrontMemberProfile.MergeCheckout</c> ·
+    /// คืนข้อความเมื่อมีช่องที่ไม่ได้บันทึก (รูปแบบผิด) · บันทึกครบ/ไม่มีอะไรเปลี่ยน/ไม่พบลูกค้า ⇒ null</summary>
+    Task<string?> SaveFromCheckoutAsync(Guid companyId, Guid siteId, Guid customerId, Accounting.Helpers.CheckoutProfileInput input);
     Task<List<StorefrontMyOrderItem>> MyOrdersAsync(Guid companyId, Guid siteId, Guid customerId);
     Task<List<StorefrontMyBookingItem>> MyBookingsAsync(Guid companyId, Guid siteId, Guid customerId);
     Task<List<StorefrontMyCreditItem>> MyCreditsAsync(Guid companyId, Guid siteId, Guid customerId);
