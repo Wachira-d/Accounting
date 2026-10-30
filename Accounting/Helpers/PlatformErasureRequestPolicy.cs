@@ -26,4 +26,15 @@ public static class PlatformErasureRequestPolicy
     public static DateTime DueAt(DateTime requestedAtUtc) => requestedAtUtc.AddDays(SlaDays);
 
     public static bool CanResolve(string status) => status == StatusPending;
+
+    /// <summary>ฝ่ายค้านรอบ 214 B2: ข้อความ "ต้องโอนความเป็นเจ้าของก่อน" (หน้าแอดมิน · หน้าของผู้ใช้ · ข้อผิดพลาด 409 ใช้ตัวเดียว)</summary>
+    public static string OwnershipBlockMessage(IReadOnlyCollection<string> blockers)
+        => "ต้องโอนความเป็นเจ้าของก่อนลบบัญชี: " + string.Join(" · ", blockers);
+
+    /// <summary>ฝ่ายค้านรอบ 214 S5: อีเมลแจ้งผล — อีเมลปัจจุบันของบัญชี (ยังไม่เป็นอีเมลนิรนาม) ก่อน · ไม่งั้นอีเมล ณ ตอนยื่น · ไม่มีทั้งคู่ = null</summary>
+    public static string? NotifyAddress(string? currentEmail, string? requestedEmail)
+    {
+        static bool Real(string? e) => !string.IsNullOrWhiteSpace(e) && e.Contains('@') && !e.EndsWith("@deleted.local", StringComparison.OrdinalIgnoreCase);
+        return Real(currentEmail) ? currentEmail!.Trim() : Real(requestedEmail) ? requestedEmail!.Trim() : null;
+    }
 }

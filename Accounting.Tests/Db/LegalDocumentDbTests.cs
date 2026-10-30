@@ -209,11 +209,77 @@ public class LegalDocumentDbTests
         var reqAfter = await db.PlatformErasureRequests.AsNoTracking().SingleAsync(x => x.Id == r1.Id);
         Assert.EndsWith("@deleted.local", reqAfter.RequesterEmail);       // คำขอเองไม่เก็บอีเมลจริงหลังลบ
 
+        // ฝ่ายค้านรอบ 214 B1: audit chain (append-only) ไม่มีค่า PII เดิมของผู้ใช้จากขั้นยื่น/ลบ — มีแค่ "ช่องไหนเปลี่ยน"
+        var leaked = await db.AuditLogs.AsNoTracking()
+            .Where(x => (x.OldValues != null && (x.OldValues.Contains(originalEmail) || x.OldValues.Contains("203.0.113.31") || x.OldValues.Contains("ผู้ขอลบ (ไม่มีบริษัท)")))
+                     || (x.NewValues != null && (x.NewValues.Contains(originalEmail) || x.NewValues.Contains("203.0.113.31") || x.NewValues.Contains("ผู้ขอลบ (ไม่มีบริษัท)"))))
+            .CountAsync();
+        Assert.Equal(0, leaked);
+        Assert.True(await db.AuditLogs.AsNoTracking().AnyAsync(x => x.EntityType == "User" && x.EntityId == a.Id.ToString()
+            && x.NewValues != null && x.NewValues.Contains(AuditRedaction.PiiMask)));   // ทิศตรงข้าม: ยังเห็นว่ามีการเปลี่ยน
         var again = await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(r1.Id, admin, null, null));
         Assert.Equal(409, again.StatusCode);
         var tooSoon = await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.RequestPlatformErasureAsync(a.Id, null, null));
         Assert.Equal(429, tooSoon.StatusCode);
         // ทิศตรงข้าม: ผู้ใช้อื่นไม่ถูกแตะ
         Assert.StartsWith("erase-b-", (await db.Users.AsNoTracking().SingleAsync(u => u.Id == b.Id)).Email);
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 B2/S1/S2: ลบเจ้าของคนสุดท้าย = 409 พร้อมรายชื่อบริษัท (ทิศตรงข้าม: มีเจ้าของคนอื่นที่ยังทำงานได้ ⇒ ลบได้) ·
+    /// แอดมินดำเนินการคำขอตัวเอง/ลบแอดมินแพลตฟอร์ม = 409 · บัญชี soft-delete ยังลบได้ (ไม่ปิดคำขอว่าเสร็จทั้งที่ไม่ได้ลบ)</summary>
+    [Fact]
+    public async Task Erasure_refuses_last_owner_self_and_platform_admin_and_handles_soft_deleted_users()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        User U(string tag) => new() { Email = $"{tag}-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = tag };
+        var owner = U("owner"); var other = U("other"); var sysAdmin = U("sysadmin"); var ghost = U("ghost");
+        sysAdmin.IsSystemAdmin = true;
+        ghost.IsDeleted = true;
+        db.Users.AddRange(owner, other, sysAdmin, ghost);
+        var company = new Company { Name = "บริษัทเจ้าของคนเดียว", TaxId = "0105556000006" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = owner.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner, IsDefault = true });
+        await db.SaveChangesAsync();
+        var pdpa = new PdpaService(db);
+        var admin = Guid.NewGuid();
+
+        var (rOwner, _) = await pdpa.RequestPlatformErasureAsync(owner.Id, null, null);
+        var blocked = await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(rOwner.Id, admin, null, null));
+        Assert.Equal(409, blocked.StatusCode);
+        Assert.Contains("บริษัทเจ้าของคนเดียว", blocked.Message);
+        Assert.Contains("บริษัทเจ้าของคนเดียว", string.Join("|", await pdpa.ErasureOwnershipBlockersAsync(owner.Id)));
+        // ทิศตรงข้าม: เพิ่มเจ้าของอีกคนที่ยังทำงานได้ ⇒ ลบได้
+        db.CompanyUsers.Add(new CompanyUser { UserId = other.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner });
+        await db.SaveChangesAsync();
+        Assert.Empty(await pdpa.ErasureOwnershipBlockersAsync(owner.Id));
+        var (done, notify) = await pdpa.CompletePlatformErasureAsync(rOwner.Id, admin, null, null);
+        Assert.Equal(PlatformErasureRequestPolicy.StatusCompleted, done.Status);
+        Assert.StartsWith("owner-", notify);
+
+        // S2: ดำเนินการคำขอของตัวเอง · ลบแอดมินแพลตฟอร์ม
+        var (rOther, _) = await pdpa.RequestPlatformErasureAsync(other.Id, null, null);
+        Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(rOther.Id, other.Id, null, null))).StatusCode);
+        var (rAdmin, _) = await pdpa.RequestPlatformErasureAsync(sysAdmin.Id, null, null);
+        Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(rAdmin.Id, admin, null, null))).StatusCode);
+
+        // S1: บัญชี soft-delete ยังถูกลบจริง (ไม่ใช่ปิดคำขอว่าเสร็จเงียบ ๆ)
+        db.PlatformErasureRequests.Add(new PlatformErasureRequest { UserId = ghost.Id, RequesterEmail = ghost.Email, RequestedAt = DateTime.UtcNow,
+            DueAt = DateTime.UtcNow.AddDays(30), Status = PlatformErasureRequestPolicy.StatusPending });
+        await db.SaveChangesAsync();
+        var rGhost = await db.PlatformErasureRequests.AsNoTracking().SingleAsync(x => x.UserId == ghost.Id);
+        await pdpa.CompletePlatformErasureAsync(rGhost.Id, admin, null, null);
+        db.ChangeTracker.Clear();
+        Assert.Equal("[ANONYMIZED]", (await db.Users.IgnoreQueryFilters().AsNoTracking().SingleAsync(x => x.Id == ghost.Id)).FullName);
+
+        // ไม่พบบัญชี ⇒ 404 และคำขอยังค้าง (ไม่ปิดว่าเสร็จ)
+        var orphan = new PlatformErasureRequest { UserId = Guid.NewGuid(), RequesterEmail = "x@example.test", RequestedAt = DateTime.UtcNow,
+            DueAt = DateTime.UtcNow.AddDays(30), Status = PlatformErasureRequestPolicy.StatusPending };
+        db.PlatformErasureRequests.Add(orphan);
+        await db.SaveChangesAsync();
+        Assert.Equal(404, (await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(orphan.Id, admin, null, null))).StatusCode);
+        db.ChangeTracker.Clear();
+        Assert.Equal(PlatformErasureRequestPolicy.StatusPending, (await db.PlatformErasureRequests.AsNoTracking().SingleAsync(x => x.Id == orphan.Id)).Status);
     }
 }

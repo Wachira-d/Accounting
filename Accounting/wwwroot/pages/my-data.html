@@ -47,7 +47,9 @@
       <h2>ขอลบข้อมูลบัญชีของฉัน</h2>
       <div id="eraseStatus"></div>
       <p class="muted">ผู้ดูแลระบบจะดำเนินการภายใน 30 วันและแจ้งผลทางอีเมล · หลังลบจะเข้าสู่ระบบด้วยบัญชีนี้ไม่ได้อีก ·
-        ข้อมูลที่กฎหมายกำหนดให้เก็บ (หลักฐานการยอมรับนโยบาย · เอกสารบัญชี/ภาษี) จะคงไว้ในรูปที่ไม่ระบุตัวตนจนพ้นกำหนด</p>
+        หลักฐานการยอมรับนโยบายเก็บไว้ในรูปที่ไม่ระบุตัวตนจนพ้นอายุความ · เอกสารบัญชี/ภาษีที่ออกไปแล้วคงไว้ตามเดิมตามระยะเวลาที่กฎหมายกำหนด ·
+        บันทึกร่องรอยการใช้งานก่อนหน้านี้แก้ย้อนหลังไม่ได้ (เพิ่มได้อย่างเดียว)</p>
+      <div id="ownerBlock" class="status" style="display:none;background:#fffbeb;border-color:#fcd34d;color:#92400e"></div>
       <textarea id="eraseReason" rows="2" maxlength="1000" placeholder="เหตุผล (ไม่บังคับ)"></textarea>
       <div style="margin-top:10px"><button class="btn btn-danger" id="eraseBtn">ยื่นคำขอลบข้อมูล</button></div>
     </div>
@@ -57,7 +59,9 @@
   <script>
     const MyData = {
       esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); },
-      dt(v) { return v ? new Date(v).toLocaleString('th-TH') : '-'; },
+      // เวลาจากเซิร์ฟเวอร์ไม่มี "Z" (Kind Unspecified จาก PostgreSQL) แต่เป็น UTC — แบบเดียวกับ Layout.asUtc (หน้านี้ไม่โหลด layout.js)
+      asUtc(s) { const str = String(s); return /[zZ]$|[+-]\d{2}:?\d{2}$/.test(str) ? new Date(str) : new Date(str + 'Z'); },
+      dt(v) { return v ? this.asUtc(v).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) : '-'; },
 
       async init() {
         if (!localStorage.getItem('token')) { window.location.href = '/login.html'; return; }
@@ -92,6 +96,11 @@
             + (er.status === 'Pending' ? ` · กำหนดเสร็จ ${this.esc(this.dt(er.dueAt))}` : '')
             + (er.resolutionNote ? ` · หมายเหตุ: ${this.esc(er.resolutionNote)}` : '') + `</div>`
           : '';
+        // ฝ่ายค้านรอบ 214 B2: ยังเป็นเจ้าของบริษัท/แพ็กเกจคนสุดท้าย ⇒ ต้องโอนความเป็นเจ้าของก่อน (เซิร์ฟเวอร์ตัดสิน · หน้านี้แสดง)
+        const blockers = d.ownershipBlockers || [];
+        const ob = document.getElementById('ownerBlock');
+        ob.innerHTML = blockers.length ? '<b>ต้องโอนความเป็นเจ้าของก่อน</b>: ' + blockers.map(b => this.esc(b)).join(' · ') : '';
+        ob.style.display = blockers.length ? '' : 'none';
         document.getElementById('eraseBtn').disabled = !!(er && er.status === 'Pending');
       },
 

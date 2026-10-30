@@ -4989,6 +4989,10 @@ SaveChanges → rollback ทั้งทรานแซกชัน = **อน�
   → `PdpaService.RequestPlatformErasureAsync` (`PlatformErasureRequests` · `PlatformErasureRequestPolicy`: ค้างฉบับเดียว · วันละครั้ง · SLA 30 วัน) · SystemAdmin
   `/admin/legal.html` → `api/admin/platform-erasure-requests` (`complete`/`reject`) → `CompletePlatformErasureAsync` → `AnonymiseUserCoreAsync` (แกนลบตัวเดียว —
   `ApplyErasureAsync` ของ DSR บริษัทเรียกตัวเดียวกันหลังตรวจสมาชิก) + audit chain + อีเมลแจ้งผล
+- **รอบ 214 ฝ่ายค้าน (ฑ)**: audit อัตโนมัติ (`AuditTrailService.CaptureAuditEntries`) ปิดค่า PII รายช่องต่อ entity (`AuditRedaction.PiiFields`) — แถว audit เก่าก่อนรอบนี้แก้ไม่ได้ (append-only · แจ้งผู้ใช้) ·
+  ลบ (คำขอแพลตฟอร์ม + DSR บริษัท) ⇒ `ErasureOwnershipBlockersAsync` ก่อน (เจ้าของคนสุดท้าย/เจ้าของแพ็กเกจ = 409) · แกนลบ IgnoreQueryFilters + ล้างลายมือชื่อ + คำขอทุกฉบับ ·
+  `CompletePlatformErasureAsync`: ห้ามตัวเอง/แอดมินแพลตฟอร์ม · ไม่พบ = 404 · แจ้งผลอีเมลปัจจุบัน · `Program.cs` `OnTokenValidated` → `TokenUserGate` (ลบ/Inactive ⇒ token ใช้ไม่ได้ทันที) ·
+  เอกสารพิมพ์ซ้ำของผู้ใช้ที่ลบแล้ว: ไม่มีลายเซ็น · ชื่อ [ANONYMIZED] (ฉบับที่ออก/ส่งแล้วไม่เปลี่ยน)
 _Last verified against codebase: 2026-10-30 (รอบ 214 — นโยบาย/ข้อกำหนดแพลตฟอร์มแก้ได้แบบมีฉบับ + แถบยอมรับฉบับใหม่ + นโยบายของร้าน CMS/หน้าจองโต๊ะ · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
 - **รอบ 200 ทีม R**: รายงาน ภ.ง.ด.1 / ปกส. (`GET payroll/pnd1|sso/{y}/{m}`) ปิดบังเลขบัตร/เลข ปกส. เมื่อไม่มี `Pii.View` (ตัวตัดสิน `CanViewPiiAsync`
   ตัวเดียวกับรายชื่อพนักงาน + `PiiAccessLog` เมื่อเปิดดูเต็ม · G2-05) · ไฟล์ยื่นแบบไม่ผ่านเส้นนี้ (ยังได้เลขเต็ม) · ตัวจับพนักงานซ้ำตอนนำเข้า

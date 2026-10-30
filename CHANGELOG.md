@@ -5878,3 +5878,10 @@ _รอบ 214 ต่อ (คำตัดสินข้อ 173 ฐ — ปิ�
 SystemAdmin ดำเนินการ/ปฏิเสธที่ `/admin/legal.html` (`AdminPlatformErasureController`) → แกนลบตัวเดียว `PdpaService.AnonymiseUserCoreAsync` (แยกออกจาก `ApplyErasureAsync` — DSR ของบริษัทใช้ตัวเดียวกัน) + audit + อีเมลแจ้งผล ·
 เทสต์ `PlatformErasureRequestTests` + Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · TEST_PLAN LEGAL214-32..35 · `required_call_site_check` +4 กติกา/แก้ 1 ·
 `write_permission_gate_check` +RequestErasure (งานของผู้ใช้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+
+_รอบ 214 ฝ่ายค้าน (ฐ) — 2 blocking + 5 (คำตัดสินข้อ 173 ฑ): (B1) audit อัตโนมัติไม่เก็บค่า PII รายช่องต่อ entity (`AuditRedaction.PiiFields` · `Value(entityType, …)`) ·
+(B2) ลบเจ้าของบริษัทคนสุดท้าย/เจ้าของแพ็กเกจบัญชี = 409 พร้อมรายการ (`PdpaService.ErasureOwnershipBlockersAsync` · `LastOwnerGuard`) ทั้งคำขอแพลตฟอร์มและ DSR บริษัท + แสดงล่วงหน้า ·
+รายการบริษัทไม่มีเจ้าของนับเฉพาะเจ้าของที่ยังทำงานได้ · (S1) แกนลบ IgnoreQueryFilters · ไม่พบ = 404 ไม่ปิดคำขอ · (S2) ห้ามดำเนินการคำขอตัวเอง/ลบแอดมินแพลตฟอร์ม ·
+(S3) ล้างลายมือชื่อ + คำขอลบทุกฉบับ · ข้อความอีเมล/หน้าแก้ตามจริง · (S4) `OnTokenValidated` + `Helpers/TokenUserGate` · (S5) อีเมลแจ้งผล = อีเมลปัจจุบัน ·
+GET my-data ปฏิเสธคีย์ API · เวลาบนหน้า UTC→ไทย · คอมเมนต์ DbSet แยกบรรทัด · เทสต์ +3 pure +1 Db (+ตรวจ audit ไม่มี PII ใน Db เดิม) · TEST_PLAN LEGAL214-36..41 ·
+`required_call_site_check` +4/แก้ 3 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

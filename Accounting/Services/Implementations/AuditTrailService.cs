@@ -220,8 +220,8 @@ public class AuditTrailService : IAuditTrailService
                 // (append-only — ลบไม่ได้ · ทุกบทบาทอ่าน /audit/logs ได้) ⇒ ตัวตัดสินเดียว Helpers/AuditRedaction
                 foreach (var prop in entry.Properties.Where(p => p.IsModified))
                 {
-                    oldValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.OriginalValue);
-                    newValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.CurrentValue);
+                    oldValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(entityType, prop.Metadata.Name, prop.OriginalValue);
+                    newValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(entityType, prop.Metadata.Name, prop.CurrentValue);
                 }
 
                 auditLog.OldValues = JsonSerializer.Serialize(oldValues);
@@ -232,7 +232,7 @@ public class AuditTrailService : IAuditTrailService
                 var newValues = new Dictionary<string, object?>();
                 foreach (var prop in entry.Properties)
                 {
-                    newValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(prop.Metadata.Name, prop.CurrentValue);
+                    newValues[prop.Metadata.Name] = Accounting.Helpers.AuditRedaction.Value(entityType, prop.Metadata.Name, prop.CurrentValue);
                 }
                 auditLog.NewValues = JsonSerializer.Serialize(newValues);
             }

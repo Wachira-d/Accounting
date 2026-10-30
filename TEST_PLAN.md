@@ -36,6 +36,12 @@
 | LEGAL214-33 | ฐ: ผู้ใช้อื่น · ผู้ไม่ใช่ SystemAdmin · ไม่ล็อกอิน | ผู้ใช้อื่นไม่เห็น/ไม่แตะคำขอ · ดำเนินการลบต้อง SystemAdmin · ยื่นต้องล็อกอิน (ทิศตรงข้าม: หน้าเอกสารสาธารณะยังเปิดได้) | `PlatformErasureRequestTests`.Admin_erasure_endpoints_require_SystemAdmin · Self_service_endpoints_require_login_… · Db (ผู้ใช้ B) |
 | LEGAL214-34 | ฐ: SystemAdmin ดำเนินการลบ · ดำเนินการซ้ำ · ปฏิเสธไม่มีเหตุผล | แกนลบตัวเดียว (บัญชีไม่ระบุตัว · หลักฐาน legal hold) · แจ้งผลไปอีเมลเดิม · ซ้ำ = 409 · ปฏิเสธไม่มีเหตุผล = ไม่ได้ | Db `Platform_erasure_request_is_idempotent_scoped_to_user_and_uses_the_single_erasure_core` · กติกา `CompletePlatformErasureAsync`/`ApplyErasureAsync` |
 | LEGAL214-35 (มือ) | ฐ: เมนูผู้ใช้ → ข้อมูลส่วนบุคคลของฉัน · ผู้ใช้ไม่มีบริษัท · ดาวน์โหลด JSON · แท็บคำขอลบบน /admin/legal.html | แสดงค่าที่ escape แล้ว · ปุ่มยื่นปิดเมื่อมีคำขอค้าง | ตรวจมือ |
+| LEGAL214-36 | ฑ B1: ยื่น + ดำเนินการลบ แล้วค้น AuditLogs | ไม่มีอีเมล/IP/ชื่อเดิม · ยังมีแถว audit ของ User ที่บอกว่าช่องเปลี่ยน (`PiiMask`) · entity/ช่องอื่นไม่ถูกปิด | Db `Platform_erasure_request_is_idempotent_…` · `PlatformErasureRequestTests`.Audit_redaction_masks_pii_fields_per_entity_only |
+| LEGAL214-37 | ฑ B2: เจ้าของบริษัทคนเดียวขอลบ · เพิ่มเจ้าของอีกคน | 409 พร้อมชื่อบริษัท · ทิศตรงข้าม: มีเจ้าของคนอื่นที่ทำงานได้ ⇒ ลบได้ | Db `Erasure_refuses_last_owner_self_and_platform_admin_and_handles_soft_deleted_users` |
+| LEGAL214-38 | ฑ S1/S2: บัญชี soft-delete · ไม่พบบัญชี · แอดมินลบคำขอตัวเอง · ลบแอดมินแพลตฟอร์ม | soft-delete ลบได้จริง · ไม่พบ = 404 คำขอยังค้าง · ตัวเอง/แอดมิน = 409 | Db ข้างบน |
+| LEGAL214-39 | ฑ S4: token ของบัญชีที่ลบ/ปิดใช้งาน | ปฏิเสธทันที · ไม่พบแถว (token ชนิดอื่น) ไม่ตัดสิน · Suspended คงเดิม | `PlatformErasureRequestTests`.Token_gate_rejects_erased_or_inactive_users_only · ตรวจมือ (hub/คีย์ API/เข้าดูในนามลูกค้า) |
+| LEGAL214-40 | ฑ S5: ผู้ใช้เปลี่ยนอีเมลหลังยื่น | แจ้งผลไปอีเมลปัจจุบัน · อีเมลนิรนามแล้ว ⇒ อีเมล ณ ตอนยื่น | `PlatformErasureRequestTests`.Notify_address_prefers_current_real_email |
+| LEGAL214-41 (มือ) | ฑ: การ์ดแอดมิน/หน้า my-data แสดง "ต้องโอนความเป็นเจ้าของก่อน" · เวลาแสดงเป็นเวลาไทย | ตามคำตัดสิน 173 ฑ | ตรวจมือ |
 | LEGAL214-13 (มือ) | `/privacy.html` · `/terms.html` · `?version=1.0` · `/admin/legal.html` ร่าง→ตัวอย่าง→เผยแพร่ · storefront `/site/{key}/legal/privacy` + ลิงก์ท้ายเว็บ/ฟอร์ม · cms-edit สามโหมด · `/shop-policy.html?c=&k=` | ตามคำตัดสินข้อ 173 | ตรวจมือหลัง deploy |
 
 ## SUB217 — กดซ้ำไม่บันทึกซ้ำ (Idempotency-Key + ด่านซ้ำเชิงความหมาย) · ตอบเร็ว แจ้งเตือนตามหลัง (รอบ 217 · คำตัดสินข้อ 175)
@@ -259,7 +265,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **702 ไฟล์ · 7,230 `[Fact]` + 1,145 `[Theory]` (5,364 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **702 ไฟล์ · 7,234 `[Fact]` + 1,145 `[Theory]` (5,364 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 
