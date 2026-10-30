@@ -77,10 +77,9 @@ public class PublicPaymentController : ControllerBase
         i.Id, i.Status.ToString(), i.MethodKind.ToString(), i.Amount, i.Currency,
         i.QrPayload, i.QrExpiresAt, i.AuthorizeUrl, i.FailureMessage, testMode);
 
-    private async Task<bool> IsTestModeAsync(PaymentIntent i, CancellationToken ct)
-        => i.ProviderConfigId is Guid cid
-           && await _db.PaymentProviderConfigs.AsNoTracking()
-               .AnyAsync(c => c.Id == cid && c.Mode == PaymentProviderMode.Test, ct);
+    /// <summary>ฝ่ายค้านรอบ 219 รอบ 2: ตัวตัดสินเดียวกับด่านให้สิทธิ์ (โหมด ณ ตอนสร้างชนะ · แถวเดิมอ่าน config)</summary>
+    private Task<bool> IsTestModeAsync(PaymentIntent i, CancellationToken ct)
+        => PaymentIntentTestMode.ResolveAsync(_db, i, ct);
 
     /// <summary>ช่องทางที่ **เปิดใช้จริง** ของบริษัทนี้ — หน้าเว็บต้องถามที่นี่
     /// ห้ามเดาเอง (ที่พักที่ยังไม่เปิด gateway ต้องเห็นเฉพาะเส้นแนบสลิป)</summary>

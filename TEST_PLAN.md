@@ -19,7 +19,15 @@
 | PB219-15 | B2: ความลับที่เข้ารหัสด้วย dev key/คีย์ config เดิม หลังตั้ง ENCRYPTION_KEY · คีย์ที่ไม่รู้จัก | ถอดได้ + ถูกเข้ารหัสใหม่ / ไม่ถูกแตะ IsUsable=false | `Secret_encrypted_with_dev_key_still_decrypts_after_switching_key_and_is_reprotected` · `Secret_with_unknown_key_stays_unusable_and_untouched` · `Legacy_key_candidates_cover_old_config_env_variants_and_dev_key` + Db `Reprotect_pass_migrates_dev_key_secrets_and_leaves_unknown_key_untouched` |
 | PB219-16 | S2: ดาวน์เกรดรอครบรอบไปแพ็กเกจฟรีถาวร | Active · EndDate +100 ปี (ไม่ PastDue) | Db `Scheduled_downgrade_to_permanent_free_plan_stays_active` |
 | PB219-17 | S4/S5/S9: ทดลองใช้บัญชีซ้ำระดับเดิม · จ่าย Basic ของบริษัทใต้แพลนบัญชี Enterprise · ดาวน์เกรดหลังออกใบแจ้งหนี้ต่ออายุ | ปฏิเสธ · ไม่ต่ออายุแพลนบัญชี (ประวัติ) · ปฏิเสธพร้อมวัน | `Account_cascade_trial_once_and_renewal_window_rules` |
-| PB219-18 | S6: ร้านคืนเงิน/ตรวจผลคืนเงินรายการค่าบริการเก่าใต้บริษัทร้าน · ยืนยัน/ส่งต่อ/บันทึกผลมือ | ได้ / ไม่ได้ | `Tenant_may_only_refund_or_verify_legacy_tenant_routed_platform_intents` |
+| PB219-18 | S6 (แทนในรอบ 2): ร้านทำงานพนักงานใด ๆ (รวมคืนเงิน) บนรายการค่าบริการ — ใต้ร้าน/ใต้ผู้ให้บริการ · SystemAdmin · รายการของร้านเอง | ปฏิเสธ / ได้ / ได้ | `Platform_revenue_staff_actions_including_refund_are_system_admin_only` |
+| PB219-23 | รอบ 2 ข้อ 4: คืนเงินค่าบริการ vs รายการร้าน | ไม่ตั้งลูกหนี้ร้าน (ประวัติ + audit) / ตั้งลูกหนี้รอใบลดหนี้ตามเดิม | `Refund_of_platform_revenue_skips_store_receivable_but_store_kinds_still_book` |
+| PB219-24 | รอบ 2 ข้อ 1: ผู้ใช้หมุนความลับระหว่างงานย้ายคีย์ · แถวที่ไม่มีใครแตะ · มากกว่า 1 ชุด | ค่าผู้ใช้ไม่ถูกทับ / ย้ายคีย์ + audit / ครบทุกแถว | Db `Reprotect_pass_does_not_overwrite_secret_rotated_between_read_and_write` · `Reprotect_pass_streams_more_than_one_batch` |
+| PB219-25 | รอบ 2 ข้อ 2: แคชคีย์ PBKDF2 | ถอดกลับได้ · คีย์ผิดยังล้ม · ขนาดไม่เกินเพดาน | `Derived_key_cache_is_bounded_and_round_trips` |
+| PB219-26 | รอบ 2 ข้อ 3: intent ประทับ Live แล้ว config สลับเป็น Test · ประทับ Test · แถวเดิม null | เงินจริง / ทดสอบ / ตาม config | `Stamped_test_mode_wins_over_config_and_null_falls_back` · Db `Legacy_payment_intent_with_null_test_mode_falls_back_to_config_but_stamped_live_wins` |
+| PB219-27 | รอบ 2 ข้อ 5: gateway ยืนยันหลังเลือกแพ็กเกจ 5 วัน · แอดมินบันทึกย้อน 60 วัน · ลูกค้าแจ้งย้อน 60 วัน · แอดมินกรอกอนาคต | วันเงินเข้าจริง / ตามที่กรอก / บีบ 31 วัน / ปฏิเสธ | `Approved_payment_date_uses_gateway_paid_time_and_keeps_admin_backdate` · `Admin_payment_date_in_future_is_rejected_but_past_and_today_accepted` |
+| PB219-28 | รอบ 2 S2: เปลี่ยนแพ็กเกจที่รอครบรอบบน sub ฟรีถาวร · sub จ่ายรอบอยู่ | มีผลทันที / วันครบรอบ | `Scheduled_change_on_permanent_free_is_effective_now_not_in_100_years` |
+| PB219-29 (มือ) | รอบ 2 S9: ออกใบแจ้งหนี้ต่ออายุแล้วอัปเกรด → อนุมัติ · แอดมินบันทึกรับเงินวันที่อยู่ในงวดปิดของบริษัทผู้ให้บริการ | ประวัติ `RenewalInvoiceSuperseded` + ตัวชี้ใบแจ้งหนี้ว่าง (แอดมินยกเลิกเอกสารใบเดิม) / 400 ข้อความบอกงวดปิด | — |
+| PB219-30 | รอบ 2 ข้อ 6: ช่องใหม่ที่เขียนผ่าน Protect/Encrypt แต่ไม่ลงทะเบียน · delegate ไม่รู้จัก · ทะเบียนค้าง | checker ฟ้อง | `tools/secret_registry_check.py --self-test` |
 | PB219-19 | วันรับเงิน: ว่าง/อนาคต/ย้อน 1 ปี | วันนี้ / วันนี้ / ย้อน 31 วัน | `Payment_date_is_clamped_server_side` |
 | PB219-20 (มือ) | S7: ส่วนเสริมค้างชำระเกิน 7 วันหายจากเมนู (`Layout.hasFeature`) · S8: สร้าง intent ด้วย config ทดสอบแล้วสลับเป็น Live ก่อนจ่าย | ไม่แสดง · ไม่ให้สิทธิ์ | ตรวจมือ + required_call_site_check |
 | PB219-21 (มือ) | ขยายทดลองใช้บน sub ที่จ่ายแล้ว · ปุ่มเลือกแพ็กเกจ | 400 ข้อความไทย · ป้าย "เลือกแพ็กเกจนี้" | ตรวจมือ |
@@ -338,7 +346,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **707 ไฟล์ · 7,326 `[Fact]` + 1,156 `[Theory]` (5,420 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **707 ไฟล์ · 7,335 `[Fact]` + 1,156 `[Theory]` (5,420 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

@@ -40,22 +40,26 @@ public static class PlatformRevenueSource
     /// <summary>งานพนักงานบน intent — ชนิดของงาน (ฝ่ายค้านรอบ 219 S6: รายการเก่าใต้บริษัทร้านต้องคืนเงินได้)</summary>
     public enum StaffAction { ConfirmManually, Redispatch, Refund, VerifyRefund, ResolveRefundManually, RecordLegacyRefund }
 
-    /// <summary>งานพนักงานบน intent — null = ได้
-    /// <list type="bullet">
-    ///   <item>ใต้บริษัทผู้ให้บริการ (ทางที่ถูก): SystemAdmin เท่านั้น</item>
-    ///   <item>ฝ่ายค้านรอบ 219 S6 — รายการเก่า (ก่อนเฟส 0) ที่เกิดใต้บริษัทร้าน (เงินอยู่ใน gateway ของร้าน): SystemAdmin จัดการได้ทุกงาน ·
-    ///     ร้าน<b>คืนเงิน/ตรวจผลคืนเงิน</b>ได้ (เงินอยู่ในบัญชีร้าน — ทางคืนลูกค้าต้องไม่ตัน) แต่ยืนยันรับเงิน/ส่งต่อ/บันทึกผลมือไม่ได้
-    ///     (ให้สิทธิ์ก็ไม่ได้อยู่แล้ว — <see cref="EntitlementBlockReason"/>)</item>
-    /// </list></summary>
+    /// <summary>งานพนักงานบน intent — null = ได้ · <b>รายการค่าบริการ NextAcc ทุกงาน (รวมคืนเงิน) = SystemAdmin เท่านั้น</b>
+    /// ไม่ว่า intent จะอยู่ใต้บริษัทผู้ให้บริการ (ทางที่ถูก) หรือใต้บริษัทร้าน (รายการเก่าก่อนเฟส 0)
+    ///
+    /// <para>ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 4 · คำตัดสินเจ้าของ: <b>ค่าบริการไม่คืนเงิน</b> — คืนได้เฉพาะแอดมินทำเป็น goodwill): รอบแรกเปิดให้ร้าน
+    /// คืนเงิน/ตรวจผลคืนเงินรายการเก่าใต้บริษัทร้านเอง ⇒ ลงบัญชี "ลูกหนี้รอใบลดหนี้" ในสมุดร้านที่ไม่มีวันล้าง (ไม่มีใบกำกับของร้านให้ลดหนี้) ·
+    /// ตอนนี้ปิดฝั่งร้านทั้งหมด · การลงบัญชีคืนเงินของชนิดนี้ไม่แตะลูกหนี้/ใบลดหนี้ของร้าน (<see cref="RefundSkipsStoreReceivable"/>)</para></summary>
     public static string? StaffActionDenyReason(PaymentSourceKind kind, Guid companyId, Guid? platformCompanyId, bool isSystemAdmin,
         StaffAction action = StaffAction.ConfirmManually)
     {
         if (!IsPlatformRevenue(kind)) return null;
-        if (isSystemAdmin) return null;
-        var tenantRouted = platformCompanyId is not Guid p || p != companyId;
-        if (tenantRouted && action is StaffAction.Refund or StaffAction.VerifyRefund) return null;
-        return TenantSideMessage;
+        return isSystemAdmin ? null : TenantSideMessage;
     }
+
+    /// <summary>ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 4): คืนเงินรายการชนิดนี้ <b>ไม่ตั้งลูกหนี้รอใบลดหนี้ในสมุดของบริษัทที่ถือ intent</b> — รายได้ค่าบริการไม่ใช่รายได้ของร้าน
+    /// (ไม่มีใบกำกับของร้านให้ออกใบลดหนี้ ⇒ ลูกหนี้ค้างตลอดกาล) · บันทึกยอดคืน + ประวัติรายการ + audit บนแถวสิทธิ์ต้นทางแทน</summary>
+    public static bool RefundSkipsStoreReceivable(PaymentSourceKind kind) => IsPlatformRevenue(kind);
+
+    /// <summary>ข้อความในประวัติ/ผลคืนเงินเมื่อไม่ลงบัญชีของร้าน (ข้อความเดียว)</summary>
+    public const string RefundNotBookedNote =
+        "รายการค่าบริการ NextAcc — ไม่ลงบัญชีลูกหนี้/ใบลดหนี้ในสมุดของบริษัทนี้ (คำตัดสินข้อ 178 รอบ 2) · บันทึกในประวัติสิทธิ์แทน";
 
     /// <summary>เงินเข้าแล้ว — ให้สิทธิ์ (ต่ออายุ/เปิดส่วนเสริม) ได้ไหม · null = ได้ · ไม่ได้ = ไม่เรียก handler + บันทึกเหตุผลในประวัติ (ล้มดัง)</summary>
     public static string? EntitlementBlockReason(PaymentSourceKind kind, Guid intentCompanyId, Guid? platformCompanyId,

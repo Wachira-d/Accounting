@@ -5933,3 +5933,12 @@ B2 `SecretProtector` ถอดด้วยคีย์เดิมได้ (`En
 S2 ฟรีถาวร Active · S4 ทดลองใช้บัญชีครั้งเดียวต่อระดับ · S5 cascade แพลนบัญชีเฉพาะแพ็กเกจตรง · S6 รายการเก่าใต้ร้าน: แอดมินจัดการ/ร้านคืนเงินได้ · S7 addOnCodes ตามระยะผ่อนผัน ·
 S8 `PaymentIntent.IsTestMode` · S9 บล็อกดาวน์เกรดหลังออกใบแจ้งหนี้ต่ออายุ · ขยายทดลองใช้เฉพาะ Trial · วันรับเงินบีบที่เซิร์ฟเวอร์ · ป้ายปุ่มเลือกแพ็กเกจเป็นกลาง ·
 เทสต์ +7 pure/+4 Db · TEST_PLAN PB219-14..22 · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 497e69fc_
+
+_รอบ 219 เฟส 0 ฝ่ายค้านรอบ 2 (2026-10-30 · ตรวจซ้ำ 497e69fc · คำตัดสินข้อ 178 ภาคผนวกรอบ 2) — (1) `SecretReprotectPass` อ่านทีละชุด + UPDATE มีเงื่อนไขค่าเดิม (ไม่ทับความลับที่ผู้ใช้หมุนระหว่างงาน) ·
+(2) แคชคีย์ PBKDF2 ใน `EncryptionHelper.DeriveKey` (≤ 64) · (3) `PaymentIntent.IsTestMode` nullable + migration ครั้งเดียวคืน false เดิมเป็น NULL · ตัวตัดสินเดียว `Helpers/PaymentIntentTestMode` (ด่านให้สิทธิ์ + หน้าจ่ายเงิน 2 หน้า) ·
+(4) งานพนักงานบนรายการค่าบริการรวมคืนเงิน = SystemAdmin เท่านั้น · คืนเงินชนิดนี้ไม่ตั้งลูกหนี้ร้าน (`RefundSkipsStoreReceivable`) · (5) วันรับเงิน `ApprovedPaymentDate` (gateway = PaidAt · แอดมิน = ตามกรอก ปฏิเสธอนาคต/งวดปิด) ·
+(6) `tools/secret_registry_check.py` (+ self-test ใน check_all) — เพิ่ม `SitePaymentGateway` 3 ช่องในทะเบียน · `CmsCommerceService` ใช้ `EncryptionKeyResolver.CurrentOrDev` · (7) ACCOUNT_STRUCTURE §6.2b ขั้นตอน rollback ·
+S2 เปลี่ยนแพ็กเกจบนฟรีถาวรมีผลทันที · S5 IgnoreQueryFilters · S9 `RenewalInvoiceSuperseded` · ลบ `NeedsReprotect` · เทสต์ +6 pure/+3 Db (แก้ 3 pure ตามกติกาใหม่) · TEST_PLAN PB219-18 (แทน) · 23..30 ·
+**CI Db 5483434f แดง `Scheduled_downgrade_to_permanent_free_plan_stays_active`**: `ProcessExpiredSubscriptionsAsync` ใช้ ApplyTemplate (Active +100 ปี) ในหน่วยความจำ
+แต่คำค้น "หมดอายุ" กรองด้วยค่าใน DB ที่ยังไม่บันทึก แล้ว EF คืนตัวที่ track อยู่ ⇒ ตั้ง PastDue ทับ — บันทึกการเปลี่ยนแพ็กเกจก่อน + ลูปตรวจค่าปัจจุบัน (ข้ามฟรีถาวร/ยังไม่หมด) ·
+`required_call_site_check` +6 กติกา/แก้ 5 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

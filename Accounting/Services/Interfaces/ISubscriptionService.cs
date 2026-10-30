@@ -79,8 +79,9 @@ public interface ISubscriptionService
     /// และเหตุผลถูกเขียนลง <c>ReviewNotes</c> แทน
     /// <para>เส้นที่คนกดยังต้องส่ง <paramref name="performedBy"/> เป็น Guid เหมือนเดิม —
     /// พารามิเตอร์นี้<b>ไม่ผ่อนด่านของเส้นนั้น</b> (ผู้สอบบัญชีต้องแยกออกว่าใครอนุมัติ)</para></param>
+    /// <param name="gatewayPaidAtUtc">ฝ่ายค้านรอบ 219 รอบ 2: เวลาที่เงินเข้าจริงจาก gateway (เส้น systemConfirmed) ⇒ วันรับเงินบนใบเสร็จ</param>
     Task<SubscriptionPaymentResponse> ReviewPaymentAsync(Guid paymentId,
-        ReviewSubscriptionPaymentRequest request, string performedBy, bool systemConfirmed = false);
+        ReviewSubscriptionPaymentRequest request, string performedBy, bool systemConfirmed = false, DateTime? gatewayPaidAtUtc = null);
     /// <summary>WP-C1: admin บันทึกรับเงินเอง/ยกเว้น — สร้าง payment แล้วอนุมัติ
     /// ทันทีผ่านเส้น renewal เดิม (ต่ออายุ+ประวัติ+ใบเสร็จ). ทุกบาทมี record.</summary>
     Task<SubscriptionPaymentResponse> RecordManualPaymentAsync(Guid companyId, RecordManualPaymentRequest request, string performedBy);

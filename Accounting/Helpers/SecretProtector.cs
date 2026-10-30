@@ -28,9 +28,6 @@ public interface ISecretProtector
     /// </summary>
     bool IsUsable(string? value);
 
-    /// <summary>ฝ่ายค้านรอบ 219 B2: ค่านี้ถอดได้ด้วย<b>คีย์เดิม</b>เท่านั้น (ต้องเข้ารหัสใหม่ด้วยคีย์ปัจจุบัน) · ตัวจำลองในเทสต์ไม่ต้อง implement</summary>
-    bool NeedsReprotect(string? value) => false;
-
     /// <summary>ฝ่ายค้านรอบ 219 B2: ถอดด้วยคีย์เดิมแล้วเข้ารหัสใหม่ด้วยคีย์ปัจจุบัน · null = ไม่ต้องทำ (คีย์ปัจจุบันอยู่แล้ว/plaintext/ถอดไม่ออก)</summary>
     string? Reprotect(string? value) => null;
 }
@@ -109,9 +106,6 @@ public class SecretProtector : ISecretProtector
         if (!EncryptionHelper.IsEncrypted(value)) return true;   // legacy plaintext
         return TryDecrypt(value) is { } r && !string.IsNullOrEmpty(r.Plain);
     }
-
-    public bool NeedsReprotect(string? value)
-        => !string.IsNullOrEmpty(value) && EncryptionHelper.IsEncrypted(value) && TryDecrypt(value) is { ByLegacy: true };
 
     public string? Reprotect(string? value)
         => !string.IsNullOrEmpty(value) && EncryptionHelper.IsEncrypted(value) && TryDecrypt(value) is { ByLegacy: true } r

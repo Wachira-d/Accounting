@@ -9,7 +9,21 @@ public static class PlatformBillingPhase0Migration
     public static IReadOnlyList<string> Statements() => new[]
     {
         """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "PayerCompanyId" uuid NULL;""",
-        """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "IsTestMode" boolean NOT NULL DEFAULT false;""",   // ฝ่ายค้านรอบ 219 S8
+        """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "IsTestMode" boolean NULL;""",   // ฝ่ายค้านรอบ 219 S8 (รอบ 2: nullable)
+        // ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 3): รุ่นแรกสร้าง NOT NULL DEFAULT false ⇒ แถวเดิมทุกแถวได้ false (= "เงินจริง") แยกจากแถวที่ประทับจริงไม่ได้ ·
+        // ครั้งเดียว (เฉพาะตอนคอลัมน์ยังเป็น NOT NULL): ปลด NOT NULL/DEFAULT แล้วคืน false ⇒ NULL ("ไม่รู้" ⇒ อ่าน config แบบก่อน S8) · true คงไว้ ·
+        // รันซ้ำ = ไม่ทำอะไร (คอลัมน์ nullable แล้ว ⇒ false ที่ประทับหลังจากนี้ไม่ถูกแตะ)
+        """
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns
+                      WHERE table_name = 'PaymentIntents' AND column_name = 'IsTestMode' AND is_nullable = 'NO') THEN
+            ALTER TABLE "PaymentIntents" ALTER COLUMN "IsTestMode" DROP DEFAULT;
+            ALTER TABLE "PaymentIntents" ALTER COLUMN "IsTestMode" DROP NOT NULL;
+            UPDATE "PaymentIntents" SET "IsTestMode" = NULL WHERE "IsTestMode" = false;
+          END IF;
+        END $$;
+        """,
         """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentAwaitingSince" timestamp with time zone NULL;""",
         """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "UpfrontPeriod" varchar(7) NULL;""",
         """ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "ScheduledPlan" integer NULL;""",

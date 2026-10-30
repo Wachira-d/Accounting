@@ -1804,6 +1804,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ใบเอกสารค่าบริการยังออกตามเส้นเดิม (`PlatformBillingDocumentIssuer` เมื่อแอดมินอนุมัติ) · Last verified `commit dec90eff`
   หลังฝ่ายค้าน: โหมดทดสอบตัดสินจาก `PaymentIntent.IsTestMode` (ประทับตอนสร้าง) · รายการค่าบริการเก่าใต้บริษัทร้าน: แอดมินแพลตฟอร์มจัดการได้ · ร้านคืนเงิน/ตรวจผลคืนเงินได้ ·
   วันรับเงินบนใบเสร็จ/ใบกำกับค่าแพ็กเกจบีบที่เซิร์ฟเวอร์ · Last verified `commit 497e69fc`
+  ฝ่ายค้านรอบ 2 (แทนข้อความ "ร้านคืนเงิน/ตรวจผลคืนเงินได้" ข้างบน): งานพนักงานทุกงานรวมคืนเงินบนชนิดนี้ = SystemAdmin เท่านั้น · คืนเงินชนิดนี้
+  **ไม่ลง JE ลูกหนี้รอใบลดหนี้**ในสมุดของบริษัทที่ถือ intent (`PlatformRevenueSource.RefundSkipsStoreReceivable`) — บันทึกยอดคืน + ประวัติ intent + audit
+  `PLATFORM-REFUND-GOODWILL` บนแถวสิทธิ์ต้นทาง · โหมดทดสอบ: `IsTestMode` nullable (null = แถวเดิม ⇒ config) ผ่าน `Helpers/PaymentIntentTestMode` ทั้งด่านให้สิทธิ์และหน้าจ่ายเงิน ·
+  วันรับเงิน: gateway = `PaidAt` · แอดมิน = ตามที่กรอก (ปฏิเสธอนาคต/งวดปิดของผู้ให้บริการ) · Last verified `commit <sha ในคอมมิตถัดไป>`
 - **รับเงินสำเร็จ**: ขา "เงินเข้า" ตัดสินที่ `IGatewayAccountResolver.ResolveMoneyInAccountAsync` ตัวเดียว (adapter ที่ไม่เข้าธนาคารทันที ⇒
   Dr **11340** หรือผังที่ตั้ง `PaymentProviderConfig.ClearingAccountId` · ตัวหาบัญชีพักตัวเดียว `ResolveClearingAccountAsync`) ผ่านตัวจัดการต้นทาง 6 ชนิด
 - **คืนเงิน** (`POST pay/intents/{id}/refund` → `GatewayRefundService.RefundAsync`): ตรวจ `GatewayRefundMath.Check` (สถานะรับเงินแล้ว · **ยอดคืนสะสม**

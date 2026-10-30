@@ -95,6 +95,7 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
             ReviewNotes: $"ยืนยันอัตโนมัติจากการชำระเงินออนไลน์ · อ้างอิง {intent.ProviderRef ?? intent.Id.ToString("N")}",
             RejectionReason: null),
             performedBy: intent.ConfirmedBy ?? "payment-gateway",
-            systemConfirmed: true);
+            systemConfirmed: true,
+            gatewayPaidAtUtc: intent.PaidAt);   // ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 5): วันรับเงิน = เวลาเงินเข้าจริง ไม่ใช่วันเลือกแพ็กเกจ
     }
 }

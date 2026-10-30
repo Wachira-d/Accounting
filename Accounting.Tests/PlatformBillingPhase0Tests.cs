@@ -56,8 +56,10 @@ public class PlatformBillingPhase0Tests
         Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, isSystemAdmin: true));
         // พนักงานของบริษัทผู้ให้บริการที่ไม่ใช่แอดมินแพลตฟอร์ม ⇒ ปฏิเสธ
         Assert.NotNull(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Platform, Platform, isSystemAdmin: false));
-        // ไม่ได้ตั้งบริษัทผู้ให้บริการ ⇒ ไม่มีใครทำได้
-        Assert.NotNull(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Platform, null, isSystemAdmin: true));
+        // ฝ่ายค้านรอบ 219 รอบ 2: ยังไม่ได้ตั้งบริษัทผู้ให้บริการ ⇒ รายการทั้งหมดเป็นรายการเก่าใต้ร้าน — แอดมินแพลตฟอร์มยังจัดการได้ (goodwill)
+        // (เดิม assert NotNull ขัดกับ S6 ที่ปล่อย SystemAdmin ก่อนตรวจบริษัทผู้ให้บริการ)
+        Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Platform, null, isSystemAdmin: true));
+        Assert.NotNull(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Tenant, null, isSystemAdmin: false));
         // ทางที่ถูก ⇒ ผ่าน
         Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.SubscriptionPayment, Platform, Platform, isSystemAdmin: true));
         // ทิศตรงข้าม: เจ้าของร้านยืนยันมือรายการของลูกค้าตัวเองได้ตามเดิม
@@ -66,18 +68,34 @@ public class PlatformBillingPhase0Tests
     }
 
     [Theory]
-    [InlineData(PlatformRevenueSource.StaffAction.Refund, true)]
-    [InlineData(PlatformRevenueSource.StaffAction.VerifyRefund, true)]
-    [InlineData(PlatformRevenueSource.StaffAction.ConfirmManually, false)]
-    [InlineData(PlatformRevenueSource.StaffAction.Redispatch, false)]
-    [InlineData(PlatformRevenueSource.StaffAction.ResolveRefundManually, false)]
-    [InlineData(PlatformRevenueSource.StaffAction.RecordLegacyRefund, false)]
-    public void Tenant_may_only_refund_or_verify_legacy_tenant_routed_platform_intents(PlatformRevenueSource.StaffAction action, bool allowed)
+    [InlineData(PlatformRevenueSource.StaffAction.Refund)]
+    [InlineData(PlatformRevenueSource.StaffAction.VerifyRefund)]
+    [InlineData(PlatformRevenueSource.StaffAction.ConfirmManually)]
+    [InlineData(PlatformRevenueSource.StaffAction.Redispatch)]
+    [InlineData(PlatformRevenueSource.StaffAction.ResolveRefundManually)]
+    [InlineData(PlatformRevenueSource.StaffAction.RecordLegacyRefund)]
+    public void Platform_revenue_staff_actions_including_refund_are_system_admin_only(PlatformRevenueSource.StaffAction action)
     {
-        // S6: เงินของรายการเก่าอยู่ใน gateway ของร้าน ⇒ ทางคืนเงินลูกค้าต้องไม่ตัน แต่ยืนยัน/ส่งต่อ/บันทึกผลมือไม่ได้
-        Assert.Equal(allowed, PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, false, action) == null);
-        // ใต้บริษัทผู้ให้บริการ (ทางที่ถูก) ⇒ ร้าน/พนักงานที่ไม่ใช่แอดมินทำอะไรไม่ได้เลย
-        Assert.NotNull(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Platform, Platform, false, action));
+        // ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 4 · คำตัดสินเจ้าของ: ค่าบริการไม่คืนเงิน — แอดมินทำ goodwill เท่านั้น): รอบแรกให้ร้านคืน/ตรวจผลคืนรายการเก่าเองได้
+        // ⇒ ตั้งลูกหนี้รอใบลดหนี้ในสมุดร้านที่ไม่มีวันล้าง · ตอนนี้ร้านทำไม่ได้ทุกงาน ทั้งรายการเก่าใต้ร้านและรายการใต้บริษัทผู้ให้บริการ
+        Assert.Equal(PlatformRevenueSource.TenantSideMessage,
+            PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, false, action));
+        Assert.NotNull(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.SubscriptionPayment, Platform, Platform, false, action));
+        // ทิศตรงข้าม: แอดมินแพลตฟอร์มทำได้ทุกงาน (ทั้งสองที่อยู่) · รายการของร้านเอง ร้านทำได้ตามเดิม
+        Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, true, action));
+        Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.SubscriptionPayment, Platform, Platform, true, action));
+        Assert.Null(PlatformRevenueSource.StaffActionDenyReason(PaymentSourceKind.SiteOrder, Tenant, Platform, false, action));
+    }
+
+    [Fact]
+    public void Refund_of_platform_revenue_skips_store_receivable_but_store_kinds_still_book()
+    {
+        Assert.True(PlatformRevenueSource.RefundSkipsStoreReceivable(PaymentSourceKind.SubscriptionPayment));
+        Assert.True(PlatformRevenueSource.RefundSkipsStoreReceivable(PaymentSourceKind.AddOnPurchase));
+        // ทิศตรงข้าม: รายการของร้านยังตั้งลูกหนี้รอใบลดหนี้ตามเดิม (รอบ 198 G-1)
+        Assert.False(PlatformRevenueSource.RefundSkipsStoreReceivable(PaymentSourceKind.SiteOrder));
+        Assert.False(PlatformRevenueSource.RefundSkipsStoreReceivable(PaymentSourceKind.Document));
+        Assert.False(PlatformRevenueSource.RefundSkipsStoreReceivable(PaymentSourceKind.LodgingReservation));
     }
 
     [Fact]
@@ -274,10 +292,9 @@ public class PlatformBillingPhase0Tests
             EncryptionKeyResolver.LegacyCandidates("production-key-219", "production-key-219", null));
         Assert.True(current.IsUsable(legacy));
         Assert.Equal("sk_live_123", current.Unprotect(legacy));
-        Assert.True(current.NeedsReprotect(legacy));
         var migrated = current.Reprotect(legacy);
         Assert.NotNull(migrated);
-        Assert.False(current.NeedsReprotect(migrated));
+        Assert.Null(current.Reprotect(migrated));   // ย้ายแล้ว = ไม่ต้องทำซ้ำ (เดิม NeedsReprotect — ถูกลบเพราะไม่มีผู้เรียกในโค้ดจริง)
         Assert.Equal("sk_live_123", new SecretProtector("production-key-219").Unprotect(migrated));   // ถอดด้วยคีย์ปัจจุบันอย่างเดียวได้แล้ว
         // ค่าที่อยู่บนคีย์ปัจจุบันแล้ว ⇒ ไม่ต้องทำ
         Assert.Null(current.Reprotect(current.Protect("x-value")));
@@ -290,7 +307,69 @@ public class PlatformBillingPhase0Tests
         var current = new SecretProtector("production-key-219", null, new[] { EncryptionKeyResolver.DevKey });
         Assert.False(current.IsUsable(foreign));
         Assert.Equal(string.Empty, current.Unprotect(foreign));
-        Assert.False(current.NeedsReprotect(foreign));
         Assert.Null(current.Reprotect(foreign));
+    }
+
+    // ═══ ฝ่ายค้านรอบ 219 รอบ 2 ═══
+
+    [Fact]
+    public void Approved_payment_date_uses_gateway_paid_time_and_keeps_admin_backdate()
+    {
+        var selectedAt = Now.AddDays(-5);   // วันที่เลือกแพ็กเกจ (RequestPlanPaymentAsync)
+        var paidAt = Now.AddHours(-1);
+        // ข้อ 5: ระบบยืนยันจาก gateway ⇒ เวลาเงินเข้าจริง (เดิมคงวันที่เลือกแพ็กเกจ)
+        Assert.Equal(paidAt, PlatformPlanPricing.ApprovedPaymentDate(true, paidAt, false, selectedAt, selectedAt, Now));
+        Assert.Equal(Now, PlatformPlanPricing.ApprovedPaymentDate(true, null, false, selectedAt, selectedAt, Now));
+        Assert.Equal(Now, PlatformPlanPricing.ApprovedPaymentDate(true, Now.AddDays(2), false, selectedAt, selectedAt, Now));   // นาฬิกาเพี้ยน
+        // แอดมินบันทึกย้อนหลัง 60 วัน ⇒ คงตามที่กรอก (เดิมถูกบีบเป็น 31 วันเงียบ ๆ)
+        Assert.Equal(Now.AddDays(-60), PlatformPlanPricing.ApprovedPaymentDate(false, null, true, Now.AddDays(-60), Now, Now));
+        // ทิศตรงข้าม: ลูกค้าแจ้งโอนย้อน 60 วัน ⇒ ยังบีบที่ 31 วัน
+        Assert.Equal(Now.AddDays(-31), PlatformPlanPricing.ApprovedPaymentDate(false, null, false, Now.AddDays(-60), Now, Now));
+    }
+
+    [Fact]
+    public void Admin_payment_date_in_future_is_rejected_but_past_and_today_accepted()
+    {
+        Assert.NotNull(PlatformPlanPricing.AdminPaymentDateProblem(Now.AddDays(1), Now));
+        Assert.Null(PlatformPlanPricing.AdminPaymentDateProblem(Now.AddDays(-90), Now));
+        Assert.Null(PlatformPlanPricing.AdminPaymentDateProblem(Now, Now));
+        Assert.Null(PlatformPlanPricing.AdminPaymentDateProblem(default, Now));
+    }
+
+    [Fact]
+    public void Scheduled_change_on_permanent_free_is_effective_now_not_in_100_years()
+    {
+        Assert.Equal(Now, PlatformPlanPricing.ScheduledChangeEffectiveAt(true, Now.AddYears(100), Now));
+        // ทิศตรงข้าม: แพ็กเกจที่จ่ายรอบอยู่ ⇒ มีผลวันครบรอบ
+        Assert.Equal(Now.AddDays(20), PlatformPlanPricing.ScheduledChangeEffectiveAt(false, Now.AddDays(20), Now));
+        Assert.Equal(Now, PlatformPlanPricing.ScheduledChangeEffectiveAt(false, Now.AddDays(-1), Now));
+    }
+
+    [Fact]
+    public void Stamped_test_mode_wins_over_config_and_null_falls_back()
+    {
+        // ข้อ 3: intent ประทับว่าเงินจริง (false) แล้ว config ถูกสลับเป็น Test ⇒ ยังเป็นเงินจริง (เดิม false = "ไม่รู้" ⇒ บล็อก)
+        Assert.False(PaymentIntentTestMode.Decide(false, PaymentProviderMode.Test));
+        Assert.True(PaymentIntentTestMode.Decide(true, PaymentProviderMode.Live));
+        // แถวเดิม (null) ⇒ อ่าน config
+        Assert.True(PaymentIntentTestMode.Decide(null, PaymentProviderMode.Test));
+        Assert.False(PaymentIntentTestMode.Decide(null, PaymentProviderMode.Live));
+        Assert.False(PaymentIntentTestMode.Decide(null, null));
+        Assert.Null(PaymentIntentTestMode.StampAtCreate(null));
+        Assert.True(PaymentIntentTestMode.StampAtCreate(new PaymentProviderConfig { Mode = PaymentProviderMode.Test }));
+        Assert.False(PaymentIntentTestMode.StampAtCreate(new PaymentProviderConfig { Mode = PaymentProviderMode.Live }));
+    }
+
+    [Fact]
+    public void Derived_key_cache_is_bounded_and_round_trips()
+    {
+        // ข้อ 2: คีย์ที่ derive แล้วถูกแคช (PBKDF2 100k ต่อคีย์ครั้งเดียว) — ผลต้องเหมือนไม่แคชทุกประการ (เข้ารหัส→ถอดข้ามคีย์ละตัว)
+        var a = EncryptionHelper.Encrypt("secret-a", "cache-key-a");
+        Assert.Equal("secret-a", EncryptionHelper.Decrypt(a, "cache-key-a"));
+        Assert.Equal("secret-a", EncryptionHelper.Decrypt(a, "cache-key-a"));
+        Assert.ThrowsAny<System.Security.Cryptography.CryptographicException>(() => EncryptionHelper.Decrypt(a, "cache-key-b"));
+        for (var i = 0; i < EncryptionHelper.MaxCachedKeys + 5; i++) EncryptionHelper.Encrypt("x", "cache-flood-" + i);
+        Assert.True(EncryptionHelper.CachedKeyCount <= EncryptionHelper.MaxCachedKeys);
+        Assert.Equal("secret-a", EncryptionHelper.Decrypt(a, "cache-key-a"));   // ถูกล้างแล้วก็ derive ใหม่ได้ค่าเดิม
     }
 }

@@ -335,4 +335,87 @@ public class PlatformBillingPhase0DbTests
         // รันซ้ำ = ไม่มีอะไรให้ทำ (idempotent)
         Assert.Equal(0, (await Accounting.Services.Background.SecretReprotectPass.RunAsync(check, current, default, company.Id)).Reprotected);
     }
+
+    // ═══ ฝ่ายค้านรอบ 219 รอบ 2 ═══
+
+    [Fact]
+    public async Task Reprotect_pass_does_not_overwrite_secret_rotated_between_read_and_write()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var company = new Company { Name = "บริษัททดสอบหมุนคีย์พร้อมงาน", TaxId = "0105556000002" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var current = new SecretProtector("prod-key-219-r2", null, new[] { EncryptionKeyResolver.DevKey });
+        var devCipher = new SecretProtector(EncryptionKeyResolver.DevKey).Protect("whsec_old");
+        var rotated = new WebhookRegistration { CompanyId = company.Id, Name = "rotated", Url = "https://example.com/r", Secret = devCipher };
+        var quiet = new WebhookRegistration { CompanyId = company.Id, Name = "quiet", Url = "https://example.com/q",
+            Secret = new SecretProtector(EncryptionKeyResolver.DevKey).Protect("whsec_quiet") };
+        db.WebhookRegistrations.AddRange(rotated, quiet);
+        await db.SaveChangesAsync();
+        var userNewCipher = current.Protect("whsec_user_rotated");
+
+        // ผู้ใช้บันทึกความลับใหม่ "ระหว่าง" งานอ่านแล้วกำลังจะเขียน (บริบทแยก = คำขออื่น)
+        var r = await Accounting.Services.Background.SecretReprotectPass.RunAsync(db, current, default, company.Id,
+            beforeWrite: async id =>
+            {
+                if (id != rotated.Id) return;
+                using var user = DbTestDatabase.TryCreateContext()!;
+                var w = await user.WebhookRegistrations.SingleAsync(x => x.Id == id);
+                w.Secret = userNewCipher;
+                await user.SaveChangesAsync();
+            });
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var after = await check.WebhookRegistrations.AsNoTracking().SingleAsync(w => w.Id == rotated.Id);
+        Assert.Equal(userNewCipher, after.Secret);                                    // ค่าของผู้ใช้ชนะ — ไม่ถูกทับด้วยค่าเก่าที่เข้ารหัสใหม่
+        Assert.Equal("whsec_user_rotated", current.Unprotect(after.Secret));
+        Assert.Equal(1, r.SkippedConcurrent);
+        // ทิศตรงข้าม: แถวที่ไม่มีใครแตะ ⇒ ย้ายไปคีย์ปัจจุบันตามปกติ + มี audit ต่อแถว
+        var quietAfter = await check.WebhookRegistrations.AsNoTracking().SingleAsync(w => w.Id == quiet.Id);
+        Assert.Equal("whsec_quiet", new SecretProtector("prod-key-219-r2").Unprotect(quietAfter.Secret));
+        Assert.Equal(1, r.Reprotected);
+        Assert.True(await check.AuditLogs.AsNoTracking().AnyAsync(a => a.EntityType == "WebhookRegistrations" && a.EntityId == quiet.Id.ToString()));
+        Assert.False(await check.AuditLogs.AsNoTracking().AnyAsync(a => a.EntityType == "WebhookRegistrations" && a.EntityId == rotated.Id.ToString()));
+    }
+
+    [Fact]
+    public async Task Reprotect_pass_streams_more_than_one_batch()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var company = new Company { Name = "บริษัททดสอบหลายชุด", TaxId = "0105556000002" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var dev = new SecretProtector(EncryptionKeyResolver.DevKey);
+        var n = Accounting.Services.Background.SecretReprotectPass.BatchSize + 3;
+        for (var i = 0; i < n; i++)
+            db.WebhookRegistrations.Add(new WebhookRegistration { CompanyId = company.Id, Name = "b" + i, Url = "https://example.com/" + i, Secret = dev.Protect("s" + i) });
+        await db.SaveChangesAsync();
+        var current = new SecretProtector("prod-key-219-r2b", null, new[] { EncryptionKeyResolver.DevKey });
+        var r = await Accounting.Services.Background.SecretReprotectPass.RunAsync(db, current, default, company.Id);
+        Assert.Equal(n, r.Reprotected);   // ชุดที่สองถูกอ่านต่อ (keyset) ไม่ตกหล่น
+    }
+
+    [Fact]
+    public async Task Legacy_payment_intent_with_null_test_mode_falls_back_to_config_but_stamped_live_wins()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var company = new Company { Name = "บริษัททดสอบโหมดทดสอบ", TaxId = "0105556000002" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var cfg = new PaymentProviderConfig { CompanyId = company.Id, ProviderCode = "omise", DisplayName = "Omise", Mode = PaymentProviderMode.Test, IsActive = true };
+        db.PaymentProviderConfigs.Add(cfg);
+        await db.SaveChangesAsync();
+        PaymentIntent Make(bool? stamped) => new()
+        {
+            CompanyId = company.Id, ProviderConfigId = cfg.Id, ProviderCode = "omise", SourceKind = PaymentSourceKind.Document,
+            SourceId = Guid.NewGuid(), Amount = 100m, IsTestMode = stamped,
+        };
+        // S8 รอบ 2: config ถูกสลับเป็น Test ภายหลัง — intent ที่ประทับ Live (false) ต้องยังเป็นเงินจริง (เดิม: false = "ไม่รู้" ⇒ อ่าน config ⇒ บล็อก)
+        Assert.False(await PaymentIntentTestMode.ResolveAsync(db, Make(false), default));
+        Assert.True(await PaymentIntentTestMode.ResolveAsync(db, Make(true), default));
+        Assert.True(await PaymentIntentTestMode.ResolveAsync(db, Make(null), default));   // แถวเดิม ⇒ อ่าน config
+    }
 }

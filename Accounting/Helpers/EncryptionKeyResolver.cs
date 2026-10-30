@@ -21,6 +21,12 @@ public static class EncryptionKeyResolver
     public static string? Resolve(string? envKey, string? configKey)
         => !string.IsNullOrWhiteSpace(envKey) ? envKey : !string.IsNullOrWhiteSpace(configKey) ? configKey : null;
 
+    /// <summary>ฝ่ายค้านรอบ 219 รอบ 2: คีย์ปัจจุบันจาก env <c>ENCRYPTION_KEY</c> แล้ว config — ไม่มี = dev key (เครื่องนักพัฒนา) ·
+    /// production ไม่มีทางได้ dev key เพราะ <c>Program.cs</c> fail-fast ตอนบูตด้วย <see cref="RequireUsable"/> แล้ว ·
+    /// ใช้กับผู้เขียนความลับที่ไม่ได้ถือ <c>ISecretProtector</c> (เช่น <c>SitePaymentGateway.ApiKeyEncrypted</c>) ⇒ คีย์เดียวกับ SecretProtector</summary>
+    public static string CurrentOrDev(string? configKey)
+        => Resolve(Environment.GetEnvironmentVariable("ENCRYPTION_KEY"), configKey) ?? DevKey;
+
     /// <summary>คีย์นี้ใช้ไม่ได้ใน production (ว่าง หรือเป็น dev key)</summary>
     private static bool IsUnsafe(string? key) => string.IsNullOrWhiteSpace(key) || key.Trim() == DevKey;
 

@@ -49,7 +49,9 @@ public partial class CmsCommerceService : ICmsCommerceService
         _stock = stock;
         _db = db;
         _logger = logger;
-        _encryptionKey = config["Security:EncryptionKey"] ?? "default-dev-key-change-in-production";
+        // ฝ่ายค้านรอบ 219 รอบ 2: คีย์เดียวกับ SecretProtector (env ENCRYPTION_KEY ชนะ config) — เดิมอ่าน config อย่างเดียว ⇒ production ที่ตั้งแค่ env
+        // เข้ารหัสคีย์ gateway ของเว็บด้วย dev key สาธารณะ · ค่าเดิมถูกเข้ารหัสใหม่ด้วย SecretReprotectJob (อยู่ในทะเบียนช่องความลับ)
+        _encryptionKey = EncryptionKeyResolver.CurrentOrDev(config["Security:EncryptionKey"]);
         _images = images;
         _docService = docService;
         _productService = productService;

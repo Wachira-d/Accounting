@@ -750,23 +750,24 @@ public class SubscriptionService : ISubscriptionService
         if (PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(sub.RenewalInvoiceForEndDate, sub.EndDate) is string blockMsg)
             throw new BusinessRuleException(blockMsg);
 
-        // ดาวน์เกรด / เปลี่ยนรอบบิล — ไม่ตัดสิทธิ์ที่จ่ายไปแล้ว: มีผลวันครบรอบปัจจุบัน
+        // ดาวน์เกรด / เปลี่ยนรอบบิล — ไม่ตัดสิทธิ์ที่จ่ายไปแล้ว: มีผลวันครบรอบปัจจุบัน · ฝ่ายค้านรอบ 219 รอบ 2 (S2): ฟรีถาวร ⇒ มีผลทันที (ไม่ใช่ +100 ปี)
+        var effectiveAt = PlatformPlanPricing.ScheduledChangeEffectiveAt(sub.IsPermanentFree, sub.EndDate, DateTime.UtcNow);
         sub.ScheduledPlan = template.Plan;
         sub.ScheduledBillingCycle = cycle;
-        sub.ScheduledPlanEffectiveAt = sub.EndDate;
+        sub.ScheduledPlanEffectiveAt = effectiveAt;
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
             SubscriptionId = sub.Id,
             Action = "PlanChangeScheduled",
             FromPlan = sub.Plan,
             ToPlan = template.Plan,
-            Notes = $"เปลี่ยนเป็น {template.Plan} ({cycle}) มีผลวันครบรอบ {sub.EndDate:yyyy-MM-dd}",
+            Notes = $"เปลี่ยนเป็น {template.Plan} ({cycle}) มีผล {effectiveAt:yyyy-MM-dd}",
             PerformedBy = performedBy
         });
         await _db.SaveChangesAsync();
         return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), null,
-            $"บันทึกแล้ว — เปลี่ยนเป็น {template.Name} มีผลวันครบรอบ {sub.EndDate.AddHours(7):dd/MM/yyyy} (ใช้สิทธิ์แพ็กเกจเดิมได้จนถึงวันนั้น)",
-            sub.EndDate);
+            $"บันทึกแล้ว — เปลี่ยนเป็น {template.Name} มีผล {effectiveAt.AddHours(7):dd/MM/yyyy} (ใช้สิทธิ์แพ็กเกจเดิมได้จนถึงวันนั้น)",
+            effectiveAt);
     }
 
     public async Task CancelSubscriptionAsync(Guid companyId, string performedBy)
@@ -2020,7 +2021,7 @@ public class SubscriptionService : ISubscriptionService
 
     public async Task<SubscriptionPaymentResponse> ReviewPaymentAsync(
         Guid paymentId, ReviewSubscriptionPaymentRequest request, string performedBy,
-        bool systemConfirmed = false)
+        bool systemConfirmed = false, DateTime? gatewayPaidAtUtc = null)
     {
         var payment = await _db.SubscriptionPayments
             .Include(p => p.Subscription)
@@ -2077,6 +2078,26 @@ public class SubscriptionService : ISubscriptionService
             }
             else if (template != null)
             {
+                // ฝ่ายค้านรอบ 219 รอบ 2 (S9): เปลี่ยนแพ็กเกจทันที (อัปเกรด) หลังออกใบแจ้งหนี้ต่ออายุของแพ็กเกจเดิมแล้ว ⇒ ใบนั้นล้าสมัย
+                // (จ่ายทีหลัง = ดาวน์เกรดที่รอวันครบรอบ) — ประทับ "ถูกแทนที่" ในประวัติ + ล้างตัวชี้ ⇒ รอบถัดไปออกใบใหม่ตามแพ็กเกจใหม่ ·
+                // เอกสารใบเดิมใน tenant ผู้ให้บริการ: แอดมินยกเลิกผ่านเส้นยกเลิกเอกสารเดิม (บอกในประวัติ — ไม่ยกเลิกเอกสารภาษีเงียบ ๆ จากที่นี่)
+                if (sub.Plan != payment.RequestedPlan && sub.RenewalInvoiceNumber != null)
+                {
+                    _db.SubscriptionHistories.Add(new SubscriptionHistory
+                    {
+                        SubscriptionId = sub.Id,
+                        Action = "RenewalInvoiceSuperseded",
+                        FromPlan = sub.Plan,
+                        ToPlan = payment.RequestedPlan,
+                        Notes = $"ใบแจ้งหนี้ต่ออายุ {sub.RenewalInvoiceNumber} (แพ็กเกจ {sub.Plan}) ถูกแทนที่ด้วยการเปลี่ยนแพ็กเกจ {payment.PaymentNumber} — "
+                              + "ห้ามรับชำระใบเดิม · ผู้ดูแลระบบยกเลิกเอกสารใบเดิมในบริษัทผู้ให้บริการ",
+                        PerformedBy = performedBy
+                    });
+                    sub.RenewalInvoiceNumber = null;
+                    sub.RenewalInvoiceIssuedAt = null;
+                    sub.RenewalInvoiceForEndDate = null;
+                    sub.RenewalInvoiceDocumentId = null;
+                }
                 // ธง "ฟรีถาวร" ต้องตามแพ็กเกจใหม่เสมอ (ApplyTemplate ตั้งให้) — เดิมเส้นนี้เคยลืมธงนี้ ⇒ จ่ายแล้วยังโชว์ "ฟรีถาวร" และงานตัดหมดอายุไม่ตัด
                 ApplyTemplate(sub, template, payment.RequestedBillingCycle);
                 sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
@@ -2092,8 +2113,12 @@ public class SubscriptionService : ISubscriptionService
                 if (trial != null) trial.TrialStatus = TrialStatus.Converted;
             }
             payment.SubscriptionExtendedTo = newEndDate;
-            // ฝ่ายค้านรอบ 219 (หมายเหตุ): วันที่บนใบเสร็จ/ใบกำกับ = PaymentDate ⇒ บีบอีกชั้นตอนอนุมัติ (ไม่เป็นอนาคต)
-            payment.PaymentDate = PlatformPlanPricing.ClampPaymentDate(payment.PaymentDate, payment.CreatedAt, now);
+            // ฝ่ายค้านรอบ 219 (หมายเหตุ) + รอบ 2 (ข้อ 5): วันที่บนใบเสร็จ/ใบกำกับ = PaymentDate — ระบบยืนยัน ⇒ เวลาเงินเข้าจริง ·
+            // แอดมินกรอก ⇒ คงวันที่กรอก (ตรวจที่ RecordManualPaymentAsync แล้ว) · ลูกค้าแจ้ง ⇒ บีบ (ClampPaymentDate) — ตัวตัดสินเดียว
+            payment.PaymentDate = PlatformPlanPricing.ApprovedPaymentDate(systemConfirmed, gatewayPaidAtUtc,
+                payment.Kind is SubscriptionPaymentKind.ManualByAdmin or SubscriptionPaymentKind.Waived,
+                payment.PaymentDate, payment.CreatedAt, now);
+            sub.LastPaymentDate = payment.PaymentDate;
 
             // Cascade renewal to the AccountSubscription if this Company is
             // covered by one. Without this the user's License (the layer above
@@ -2108,7 +2133,8 @@ public class SubscriptionService : ISubscriptionService
                 // ฝ่ายค้านรอบ 219 S5: ต่ออายุแพลนระดับบัญชีได้เฉพาะเมื่อแพ็กเกจที่จ่าย = แพ็กเกจของแพลนบัญชี (ราคาของแพลนบัญชีอาจสูงกว่ามาก —
                 // จ่าย Basic ของบริษัทเดียวแล้วต่ออายุ Enterprise ทั้งกลุ่มไม่ได้) · ไม่ตรง = ไม่ cascade + ประวัติบอกเหตุ
                 var acctPlan = acct == null ? (SubscriptionPlan?)null
-                    : await _db.PlanTemplates.AsNoTracking().Where(t => t.Id == acct.PlanTemplateId).Select(t => (SubscriptionPlan?)t.Plan).FirstOrDefaultAsync();
+                    // ฝ่ายค้านรอบ 219 รอบ 2: แม่แบบของแพลนบัญชีอาจถูกลบ (soft delete) แล้ว — ยังต้องรู้ระดับเดิม ⇒ IgnoreQueryFilters (ตารางระดับแพลตฟอร์ม ไม่มี tenant)
+                    : await _db.PlanTemplates.AsNoTracking().IgnoreQueryFilters().Where(t => t.Id == acct.PlanTemplateId).Select(t => (SubscriptionPlan?)t.Plan).FirstOrDefaultAsync();
                 if (acct != null && !PlatformPlanPricing.MayCascadeToAccountPlan(payment.RequestedPlan, acctPlan))
                 {
                     _db.SubscriptionHistories.Add(new SubscriptionHistory
@@ -2256,6 +2282,18 @@ public class SubscriptionService : ISubscriptionService
             throw new InvalidOperationException("ยอดรับเงินต้องมากกว่า 0 (หรือเลือกยกเว้นค่าบริการ)");
         }
 
+        // ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 5): วันรับเงินที่แอดมินกรอก = วันที่บนใบเสร็จ/ใบกำกับ (tax point) — คงตามที่กรอก (เดิมถูกบีบเงียบ ๆ เมื่อย้อนเกิน 31 วัน)
+        // แต่ไม่รับอนาคต และไม่รับวันที่อยู่ในงวดที่ปิดแล้วของบริษัทผู้ให้บริการ (ใบเสร็จลงวันนั้นในสมุดที่ปิดแล้วไม่ได้) — บอกเหตุผลชัด
+        var nowUtc = DateTime.UtcNow;
+        if (PlatformPlanPricing.AdminPaymentDateProblem(request.PaymentDate, nowUtc) is string dateProblem)
+            throw new BusinessRuleException(dateProblem);
+        var paidOn = request.PaymentDate == default ? nowUtc : request.PaymentDate;
+        var platformCompanyId = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt)
+            .Select(x => x.PlatformCompanyId).FirstOrDefaultAsync();
+        if (platformCompanyId is Guid pcid
+            && await Journal.JournalEntryBuilder.ClosedPeriodReasonAsync(_db, pcid, ThaiDate.CalendarDateUtc(paidOn)) is string closedReason)
+            throw new BusinessRuleException($"วันรับเงิน {paidOn.AddHours(7):dd/MM/yyyy} อยู่ในงวดบัญชีที่ปิดแล้วของบริษัทผู้ให้บริการ — {closedReason}");
+
         var paymentNumber = await NextPaymentNumberAsync(sub);
 
         var kindLabel = request.IsWaived ? "ยกเว้นค่าบริการ" : "บันทึกรับเงินโดย admin";
@@ -2264,7 +2302,7 @@ public class SubscriptionService : ISubscriptionService
             SubscriptionId = sub.Id,
             PaymentNumber = paymentNumber,
             Amount = request.IsWaived ? 0m : request.Amount,
-            PaymentDate = request.PaymentDate,
+            PaymentDate = paidOn,
             PaymentMethod = request.PaymentMethod,
             TransferReference = request.TransferReference,
             RequestedPlan = request.RequestedPlan,
@@ -2428,6 +2466,10 @@ public class SubscriptionService : ISubscriptionService
             });
             sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
         }
+        // ฝ่ายค้านรอบ 219 รอบ 2 (CI Db Scheduled_downgrade_to_permanent_free_plan_stays_active): คำค้นถัดไปกรองด้วยค่าใน DB —
+        // ยังไม่บันทึก ⇒ DB ยังเห็น EndDate เดิม (หมดแล้ว) แล้ว EF คืนตัวที่ track อยู่ (ApplyTemplate ตั้ง Active + EndDate +100 ปีแล้วในหน่วยความจำ)
+        // ⇒ ลูปตั้ง PastDue ทับ · บันทึกการเปลี่ยนแพ็กเกจก่อน + ตรวจซ้ำจากค่าในหน่วยความจำในลูปถัดไป
+        if (dueChanges.Count > 0) await _db.SaveChangesAsync();
 
         // Mark active subscriptions as expired
         var newlyExpired = await _db.Subscriptions
@@ -2436,6 +2478,8 @@ public class SubscriptionService : ISubscriptionService
 
         foreach (var sub in newlyExpired)
         {
+            // ตัวที่ track อยู่อาจถูกเปลี่ยนในรอบนี้แล้ว (แพ็กเกจฟรีถาวร = ไม่หมดอายุ) — ตัดสินจากค่าปัจจุบัน ไม่ใช่ค่าที่ DB ใช้กรอง
+            if (sub.Status != SubscriptionStatus.Active || sub.EndDate >= now || sub.IsPermanentFree) continue;
             sub.Status = SubscriptionStatus.PastDue;
 
             _db.SubscriptionHistories.Add(new SubscriptionHistory

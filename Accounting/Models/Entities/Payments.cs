@@ -106,8 +106,10 @@ public class PaymentIntent : TenantEntity
     public Guid? PayerCompanyId { get; set; }
 
     /// <summary>ฝ่ายค้านรอบ 219 S8: โหมดของผู้ให้บริการ <b>ณ ตอนสร้าง</b> (Test) — ตัดสิน "จ่ายโหมดทดสอบไม่ให้สิทธิ์จริง" จากค่านี้
-    /// (config อาจถูกสลับเป็น Live ภายหลัง ⇒ อ่านโหมดปัจจุบันของ config = ให้สิทธิ์กับเงินทดสอบ) · แถวเดิม false ⇒ ตกไปอ่าน config</summary>
-    public bool IsTestMode { get; set; }
+    /// (config อาจถูกสลับเป็น Live ภายหลัง ⇒ อ่านโหมดปัจจุบันของ config = ให้สิทธิ์กับเงินทดสอบ) ·
+    /// รอบ 2: <b>nullable</b> — null = แถวก่อนมีคอลัมน์ ⇒ ตกไปอ่าน config · false = ประทับว่าเงินจริง (ห้ามตกไปอ่าน config) ·
+    /// อ่านผ่าน <c>Helpers/PaymentIntentTestMode</c> เท่านั้น</summary>
+    public bool? IsTestMode { get; set; }
 
     public decimal Amount { get; set; }
     public string Currency { get; set; } = "THB";

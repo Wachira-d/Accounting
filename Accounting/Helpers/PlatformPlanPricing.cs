@@ -93,6 +93,33 @@ public static class PlatformPlanPricing
         return requestedUtc < floor ? floor : requestedUtc;
     }
 
+    /// <summary>ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 5): <b>วันรับเงินตอนอนุมัติ</b> (= วันที่บนใบเสร็จ/ใบกำกับ = tax point §78/1) — ตัวตัดสินเดียว
+    /// <list type="bullet">
+    ///   <item>ระบบยืนยันจาก gateway ⇒ เวลาที่เงินเข้าจริง (<c>PaymentIntent.PaidAt</c>) — เดิมคงวันที่ตอนเลือกแพ็กเกจ (อาจหลายวันก่อนจ่าย)</item>
+    ///   <item>แอดมินบันทึกเอง/ยกเว้น ⇒ วันที่แอดมินกรอก (ตรวจที่ทางเข้าแล้ว: ไม่เป็นอนาคต + งวดไม่ปิด) — เดิมถูกบีบเงียบ ๆ เมื่อย้อนเกิน 31 วัน</item>
+    ///   <item>ลูกค้าแจ้งโอน ⇒ บีบ (<see cref="ClampPaymentDate"/>) ตามเดิม</item>
+    /// </list></summary>
+    public static DateTime ApprovedPaymentDate(bool systemConfirmed, DateTime? gatewayPaidAtUtc, bool adminEntered,
+        DateTime recordedUtc, DateTime createdUtc, DateTime nowUtc)
+    {
+        if (systemConfirmed)
+            return gatewayPaidAtUtc is DateTime p && p != default && p <= nowUtc ? p : nowUtc;
+        if (adminEntered)
+            return recordedUtc == default || recordedUtc > nowUtc ? nowUtc : recordedUtc;
+        return ClampPaymentDate(recordedUtc, createdUtc, nowUtc);
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 5): วันรับเงินที่แอดมินกรอก — อนาคต = ปฏิเสธพร้อมข้อความ (null = ใช้ได้ · ค่าว่าง = วันนี้)</summary>
+    public static string? AdminPaymentDateProblem(DateTime requestedUtc, DateTime nowUtc)
+        => requestedUtc != default && requestedUtc > nowUtc.AddMinutes(5)
+            ? $"วันรับเงิน {requestedUtc.AddHours(7):dd/MM/yyyy HH:mm} อยู่ในอนาคต — กรอกวันที่ได้รับเงินจริง"
+            : null;
+
+    /// <summary>ฝ่ายค้านรอบ 219 รอบ 2 (S2): วันมีผลของการเปลี่ยนแพ็กเกจที่รอครบรอบ — sub ฟรีถาวร (EndDate +100 ปี) / หมดรอบแล้ว ⇒ มีผลทันที
+    /// (เดิมตั้งวันมีผล = EndDate ⇒ ฟรีถาวรรอ 100 ปี) · อื่น ๆ = วันครบรอบ</summary>
+    public static DateTime ScheduledChangeEffectiveAt(bool isPermanentFree, DateTime endUtc, DateTime nowUtc)
+        => isPermanentFree || endUtc <= nowUtc ? nowUtc : endUtc;
+
     /// <summary>รายงานแอดมิน: แพ็กเกจที่ผู้เช่าเปิดเอง (Convert/เปลี่ยนแพ็กเกจรุ่นก่อนเฟส 0) หลังการชำระที่อนุมัติครั้งล่าสุด = ยังไม่ได้จ่าย</summary>
     public static bool IsUnpaidSelfActivation(DateTime? lastSelfActivationAt, DateTime? lastApprovedPaymentAt)
         => lastSelfActivationAt is DateTime a && (lastApprovedPaymentAt is not DateTime p || p < a);
