@@ -443,4 +443,155 @@ public class BookingPaymentPolicyDbTests
         var ok = await slips.VerifyAsync(cid, sid, kept.Id, new VerifyBookingSlipRequest(), "staff-1");
         Assert.Equal(BookingStatus.Confirmed, ok.Status);
     }
+
+    // ─────────────── ฝ่ายค้านรอบ 218 รอบ 2 ───────────────
+
+    /// <summary>ผู้จองอีกคน (ด่านกดซ้ำรอบ 217 ไม่รวมเป็นใบเดิม)</summary>
+    private static CreateBookingRequest Other(CreateBookingRequest r, int n)
+    {
+        r.GuestName = $"ลูกค้าคิว {n}"; r.GuestEmail = $"wait{n}@example.test"; r.GuestPhone = $"08900000{n:D2}";
+        return r;
+    }
+
+    private static async Task MakeWaitlistOneSeatAsync(Accounting.Data.AccountingDbContext db, Guid svcId)
+    {
+        var svc = await db.SiteBookingServices.Include(x => x.Slots).SingleAsync(x => x.Id == svcId);
+        svc.MaxCapacity = 1; svc.WaitlistEnabled = true;
+        foreach (var sl in svc.Slots) sl.MaxCapacity = 1;
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+    }
+
+    [Fact]
+    public async Task F3_คิวสำรองที่พนักงานจองแทน_ได้ที่แล้วไม่ถูกบังคับรอชำระ_ทิศตรงข้ามลูกค้าจองเองถูกบังคับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        await MakeWaitlistOneSeatAsync(db, svcId);
+        var staff = new User { Email = $"bkpay-staff-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "พนักงานหน้าร้าน" };
+        db.Users.Add(staff);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = staff.Id, CompanyId = cid, Role = UserRole.Staff });
+        await db.SaveChangesAsync();
+
+        var firstA = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "10:00"), userId: null);
+        var firstB = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "11:00"), userId: null);
+        var waitCustomer = await Svc(db).CreateBookingAsync(cid, sid, Other(Req(svcId, "10:00"), 2), userId: null);
+        var waitStaff = await Svc(db).CreateBookingAsync(cid, sid, Other(Req(svcId, "11:00"), 3), userId: staff.Id.ToString(), staffOnBehalf: true);
+        Assert.Equal(BookingStatus.Waitlisted, waitCustomer.Status);
+        Assert.Equal(BookingStatus.Waitlisted, waitStaff.Status);
+
+        await Svc(db).UpdateBookingStatusAsync(cid, sid, firstA.Id, new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = "เทสต์" }, "staff-1");
+        await Svc(db).UpdateBookingStatusAsync(cid, sid, firstB.Id, new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = "เทสต์" }, "staff-1");
+
+        var s = await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == waitStaff.Id);
+        Assert.Equal(BookingStatus.Confirmed, s.Status);   // พนักงานจองแทน ⇒ ไม่บังคับรอชำระ (เหมือนจองใหม่)
+        Assert.Null(s.PaymentHoldUntil);
+        var c = await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == waitCustomer.Id);
+        Assert.Equal(BookingStatus.Pending, c.Status);     // ทิศตรงข้าม: ลูกค้าจองเอง ⇒ รอชำระ + กำหนดเวลา
+        Assert.NotNull(c.PaymentHoldUntil);
+    }
+
+    [Fact]
+    public async Task F4_วันที่โอนอยู่ในงวดปิด_ปฏิเสธก่อนรับเงิน_รายการชำระยังเปิด_เลือกวันในงวดเปิดผ่าน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        var created = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId), userId: null);
+        var (slips, _) = Slips(db);
+        await slips.UploadByTokenAsync(cid, sid, created.PublicToken!, PdfSlip());
+        var twoDaysAgo = DateTime.UtcNow.AddDays(-2);
+        await db.Database.ExecuteSqlRawAsync("UPDATE \"SiteBookings\" SET \"CreatedAt\" = {0}, \"SlipUploadedAt\" = {1} WHERE \"Id\" = {2}",
+            twoDaysAgo.AddHours(-1), twoDaysAgo, created.Id);
+        var closedDay = DateTime.SpecifyKind(twoDaysAgo.AddHours(7).Date, DateTimeKind.Utc);
+        db.FiscalPeriods.Add(new FiscalPeriod
+        {
+            CompanyId = cid, Name = "งวดปิดทดสอบ", Year = closedDay.Year, Month = closedDay.Month,
+            StartDate = closedDay, EndDate = closedDay, Status = FiscalPeriodStatus.Closed,
+        });
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => slips.VerifyAsync(cid, sid, created.Id,
+            new VerifyBookingSlipRequest { TransferDate = DateOnly.FromDateTime(closedDay) }, "staff-1"));
+        Assert.Contains("งวดปิดทดสอบ", ex.Message);
+        var row = await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id);
+        Assert.Equal(0m, row.PaidAmount);
+        Assert.NotNull(row.SlipUploadedAt);                                     // ยังรอตรวจ — แก้วันแล้วยืนยันใหม่ได้
+        Assert.Equal(PaymentIntentStatus.Pending, (await db.PaymentIntents.AsNoTracking().SingleAsync(i => i.Id == row.SlipIntentId)).Status);
+        Assert.DoesNotContain("ยืนยันสลิปโดย", row.InternalNotes ?? "");      // หมายเหตุเขียนหลังรับเงินสำเร็จเท่านั้น
+
+        db.ChangeTracker.Clear();
+        var ok = await slips.VerifyAsync(cid, sid, created.Id,
+            new VerifyBookingSlipRequest { TransferDate = DateOnly.FromDateTime(closedDay).AddDays(1) }, "staff-1");   // ทิศตรงข้าม: งวดเปิด
+        Assert.Equal(BookingStatus.Confirmed, ok.Status);
+    }
+
+    [Fact]
+    public async Task F5_รับเงินสดครบระหว่างสลิปรอตรวจ_หมายเหตุเตือนจ่ายซ้ำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        var created = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId), userId: null);
+        var (slips, bookings) = Slips(db);
+        await slips.UploadByTokenAsync(cid, sid, created.PublicToken!, PdfSlip());
+        await bookings.RecordDepositPaymentAsync(cid, sid, created.Id, new RecordBookingPaymentRequest(150m, DateTime.UtcNow, "เงินสดหน้าร้าน", null, null), "staff-1");
+        Assert.Contains("จ่ายซ้ำ", (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id)).InternalNotes ?? "");
+    }
+
+    [Fact]
+    public async Task F6_ปิดรายการของสลิปไม่ได้_หมายเหตุบนการจองบอกพนักงาน_ไม่เงียบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        var created = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId), userId: null);
+        var (slips, _) = Slips(db);
+        await slips.UploadByTokenAsync(cid, sid, created.PublicToken!, PdfSlip());
+        // booking service ที่ไม่มีตัว resolve IPaymentIntentService (สาย DI ขาด) ⇒ ต้องบอกบนการจอง
+        await Svc(db).UpdateBookingStatusAsync(cid, sid, created.Id, new UpdateBookingStatusRequest { Status = BookingStatus.Cancelled, CancellationReason = "ลูกค้าแจ้ง" }, "staff-1");
+        Assert.Contains("รายการรับชำระเงินออนไลน์", (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id)).InternalNotes ?? "");
+    }
+
+    private static FileAttachment OldFile(Guid cid, string entityType, Guid entityId, DateTime createdAt, bool deleted) => new()
+    {
+        CompanyId = cid, FileName = "f", OriginalFileName = "f.pdf", ContentType = "application/pdf", FileSize = 1, StoragePath = "mem",
+        EntityType = entityType, EntityId = entityId, CreatedAt = createdAt, IsDeleted = deleted,
+    };
+
+    [Fact]
+    public async Task F1_งานล้าง_แถวที่ลบแล้วเกิน200_ไม่ค้าง_ได้ไฟล์ที่ครบอายุ_สลิปรอตรวจไม่ถูกหยิบ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedAsync(db, BookingPaymentMode.DepositRequired);
+        var pendingBooking = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId), userId: null);
+        var veryOld = DateTime.UtcNow.AddYears(-12);
+        for (var i = 0; i < 205; i++)   // เกิน BatchSize — แถวที่ลบแล้วต้องไม่ถูกหยิบซ้ำทุกรอบ
+        {
+            db.FileAttachments.Add(OldFile(cid, BookingSlipRule.AttachmentEntityType, Guid.NewGuid(), veryOld.AddMinutes(-i), deleted: true));
+            db.FileAttachments.Add(OldFile(cid, CmsMediaUrl.OrderEntityType, Guid.NewGuid(), veryOld.AddMinutes(-i), deleted: true));
+        }
+        var pendingSlip = OldFile(cid, BookingSlipRule.AttachmentEntityType, pendingBooking.Id, veryOld.AddYears(-1), deleted: false);
+        var purgeSlip = OldFile(cid, BookingSlipRule.AttachmentEntityType, Guid.NewGuid(), veryOld, deleted: false);
+        var youngSlip = OldFile(cid, BookingSlipRule.AttachmentEntityType, Guid.NewGuid(), DateTime.UtcNow.AddYears(-5), deleted: false);
+        var purgeCart = OldFile(cid, CmsMediaUrl.OrderEntityType, Guid.NewGuid(), veryOld, deleted: false);
+        db.FileAttachments.AddRange(pendingSlip, purgeSlip, youngSlip, purgeCart);
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlRawAsync("UPDATE \"SiteBookings\" SET \"SlipAttachmentId\" = {0}, \"SlipUploadedAt\" = {1} WHERE \"Id\" = {2}",
+            pendingSlip.Id, DateTime.UtcNow, pendingBooking.Id);
+        db.ChangeTracker.Clear();
+
+        var slipIds = await Accounting.Services.Implementations.Jobs.CartImageCleanupJob
+            .SlipPurgeCandidates(db, BookingSlipRetention.Cutoff(DateTime.UtcNow))
+            .Where(f => f.CompanyId == cid).Take(Accounting.Services.Implementations.Jobs.CartImageCleanupJob.BatchSize).Select(f => f.Id).ToListAsync();
+        Assert.Equal(new[] { purgeSlip.Id }, slipIds);   // ไม่มีแถวลบแล้ว · ไม่มีสลิปรอตรวจ · ไม่มีไฟล์อายุยังไม่ครบ
+        var cartIds = await Accounting.Services.Implementations.Jobs.CartImageCleanupJob
+            .CartImageCandidates(db, DateTime.UtcNow.AddDays(-14))
+            .Where(f => f.CompanyId == cid).Take(Accounting.Services.Implementations.Jobs.CartImageCleanupJob.BatchSize).Select(f => f.Id).ToListAsync();
+        Assert.Equal(new[] { purgeCart.Id }, cartIds);
+    }
 }

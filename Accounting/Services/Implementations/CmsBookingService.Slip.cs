@@ -77,24 +77,35 @@ public partial class CmsBookingService
     }
 
     /// <summary>ฝ่ายค้านรอบ 218 (S1): ปิดรายการชำระ manual-slip ที่ไม่ใช้แล้ว (ถูกแทน/การจองยกเลิก) ผ่าน <c>PaymentIntentService</c> ตัวเดียว ·
-    /// resolve ตอนใช้ (ไม่ใช่ constructor) — intent service → handler → booking service จะเป็นวงกลม DI ถ้าฉีดตรง · ล้ม = log (การจองบันทึกแล้ว ·
-    /// ด่าน confirm-manually กันรับซ้ำอยู่แล้วจาก <see cref="BookingSlipRule.ManualConfirmProblem"/>)</summary>
-    private async Task FailSlipIntentAsync(Guid companyId, Guid intentId, string rawStatus, string reason, string actor)
+    /// resolve ตอนใช้ (ไม่ใช่ constructor) — intent service → handler → booking service จะเป็นวงกลม DI ถ้าฉีดตรง ·
+    /// ฝ่ายค้านรอบ 2 (F6): resolve ไม่ได้/ล้ม ⇒ ล้มดัง: LogError + หมายเหตุบนการจองบอกพนักงานให้ปิดรายการเอง (ไม่ return เงียบ)</summary>
+    private async Task FailSlipIntentAsync(Guid companyId, Guid siteId, Guid bookingId, Guid intentId, string rawStatus, string reason, string actor)
     {
+        string? failure = null;
         try
         {
-            if (_services?.GetService(typeof(Accounting.Services.Payments.IPaymentIntentService)) is not Accounting.Services.Payments.IPaymentIntentService intents) return;
-            var intent = await intents.FindAsync(companyId, intentId);
-            if (intent == null || !PaymentIntentPolicy.IsOpen(intent.Status)) return;
-            await intents.ApplyChargeAsync(intentId,
-                new Accounting.Services.Payments.ProviderCharge(intent.ProviderRef ?? $"slip:{intentId:N}", PaymentIntentStatus.Failed, rawStatus, intent.Amount,
-                    FailureCode: rawStatus, FailureMessage: reason),
-                PaymentEventSource.Manual, actor.Length > 150 ? actor[..150] : actor);
+            if (_services?.GetService(typeof(Accounting.Services.Payments.IPaymentIntentService)) is not Accounting.Services.Payments.IPaymentIntentService intents)
+            {
+                failure = "ระบบรับชำระเงินไม่พร้อม";
+                _logger.LogError("ปิดรายการชำระของสลิป {Intent} ไม่ได้ — resolve IPaymentIntentService ไม่ได้ (company {CompanyId})", intentId, companyId);
+            }
+            else
+            {
+                var intent = await intents.FindAsync(companyId, intentId);
+                if (intent == null || !PaymentIntentPolicy.IsOpen(intent.Status)) return;
+                await intents.ApplyChargeAsync(intentId,
+                    new Accounting.Services.Payments.ProviderCharge(intent.ProviderRef ?? $"slip:{intentId:N}", PaymentIntentStatus.Failed, rawStatus, intent.Amount,
+                        FailureCode: rawStatus, FailureMessage: reason),
+                    PaymentEventSource.Manual, PaymentIntentPolicy.CapConfirmedBy(actor));
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "ปิดรายการชำระของสลิป {Intent} ไม่สำเร็จ (company {CompanyId})", intentId, companyId);
+            failure = "ข้อผิดพลาดของระบบ";
         }
+        if (failure != null)
+            await StampBookingNotesAsync(companyId, siteId, bookingId, new[] { BookingSlipRule.FailIntentFailedNote(intentId, failure) });
     }
 
     /// <summary>ฝ่ายค้านรอบ 218 (S1/S2): การจองยกเลิก/ไม่มา ขณะมีสลิปรอตรวจ ⇒ ล้างสถานะรอตรวจ (ไฟล์คงไว้) + ปิดรายการชำระของสลิป ·
@@ -107,7 +118,7 @@ public partial class CmsBookingService
         b.InternalNotes = DepositPolicyResolver.AppendNoteOnce(b.InternalNotes,
             $"[{BookingSlipRule.RuleCode}] การจองปิดขณะมีสลิปรอตรวจ — ปิดรายการชำระของสลิป · ถ้าลูกค้าโอนแล้วจริง ให้คืนเงินที่ธนาคาร (ไฟล์สลิปเก็บไว้เป็นหลักฐาน)");
         await _db.SaveChangesAsync();
-        await FailSlipIntentAsync(companyId, intentId, BookingSlipRule.BookingClosedRaw, "การจองถูกยกเลิก/บันทึกไม่มา", actor);
+        await FailSlipIntentAsync(companyId, siteId, bookingId, intentId, BookingSlipRule.BookingClosedRaw, "การจองถูกยกเลิก/บันทึกไม่มา", actor);
     }
 
     /// <summary>บรรทัดวิธีชำระท้ายข้อความยืนยันการจอง (null = ไม่มียอดค้าง) — ตัวตัดสินเดียว <see cref="BookingPaymentPolicy.NotifyLine"/></summary>

@@ -77,10 +77,16 @@ public class BookingSlipService : IBookingSlipService
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // ฝ่ายค้านรอบ 218 (S4): ขั้นใต้ล็อกปฏิเสธ/ล้ม ⇒ ปิดรายการชำระที่เพิ่งเปิด (ไม่ให้ค้างเป็น "รอสลิป") · ไฟล์คงไว้เป็นหลักฐาน (ผูกกับการจองนี้) ·
+            // ฝ่ายค้านรอบ 218 (S4): ขั้นใต้ล็อกปฏิเสธ/ล้ม ⇒ ปิดรายการชำระที่เพิ่งเปิด (ไม่ให้ค้างเป็น "รอสลิป") · ไฟล์ลบ (รอบ 2 F2) ·
             // ลูกค้าได้ข้อความเฉพาะ ไม่ใช่ข้อผิดพลาดกลาง
             _logger.LogWarning(ex, "แนบสลิปการจอง {Booking} ไม่สำเร็จหลังเก็บไฟล์ {File} — ปิดรายการชำระ {Intent}", view.BookingNumber, saved.Id, intent.Id);
             await FailIntentQuietlyAsync(companyId, intent.Id, BookingSlipRule.AttachFailedRaw, ex.Message, "storefront-slip", ct);
+            // ฝ่ายค้านรอบ 218 รอบ 2 (F2): สลิปนี้ไม่ถูกบันทึกบนการจอง (พนักงานมองไม่เห็น) ⇒ ลบไฟล์ (ไม่เก็บข้อมูลผู้โอนกำพร้า) · ลูกค้าได้ข้อความ "แนบอีกครั้ง"
+            try { await _files.DeleteAsync(companyId, saved.Id); }
+            catch (Exception delEx) when (delEx is not OperationCanceledException)
+            {
+                _logger.LogError(delEx, "ลบไฟล์สลิปที่แนบไม่สำเร็จ {File} ของการจอง {Booking} ไม่ได้", saved.Id, view.BookingNumber);
+            }
             if (ex is BusinessRuleException bre) throw new BusinessRuleException(bre.Message, BookingSlipRule.RuleCode, 409);
             throw new BusinessRuleException(BookingSlipRule.AttachFailedMessage, BookingSlipRule.RuleCode, 409);
         }
@@ -160,14 +166,22 @@ public class BookingSlipService : IBookingSlipService
             // ฝ่ายค้านรอบ 218 (B2): วันรับเงิน = วันที่โอนตามสลิป (tax point §78/1 ของใบรับมัดจำ) ไม่ใช่วันที่กดยืนยัน
             var (paidAtUtc, dateErr) = BookingSlipRule.ResolvePaidAt(request.TransferDate, b.SlipUploadedAt!.Value, b.CreatedAt, DateTime.UtcNow);
             if (dateErr != null) throw new BusinessRuleException(dateErr, BookingSlipRule.RuleCode);
-            // ฝ่ายค้านรอบ 218 (S3): บันทึกของผู้ยืนยันลงหมายเหตุของการจอง — ConfirmedBy = ผู้กดเท่านั้น
-            await _bookings.AppendBookingNoteAsync(companyId, siteId, bookingId,
-                $"[{BookingSlipRule.RuleCode}] ยืนยันสลิปโดย {actor} · วันที่โอน {paidAtUtc.AddHours(7):dd/MM/yyyy} · {note}", actor);
-            // เส้นเดียวกับ webhook/ยืนยันด้วยมือ ⇒ handler ของการจองบันทึกรับเงิน (กันซ้ำด้วยเลขอ้างอิง) — ไม่มีสำเนาเส้นเงินที่นี่
+            // ฝ่ายค้านรอบ 218 รอบ 2 (F4): วันที่โอนอยู่ในงวดบัญชีที่ปิด ⇒ บอกก่อนรับเงิน (ไม่ใช่ปล่อยให้ใบรับมัดจำล้มหลังเงินยืนยันแล้ว) ·
+            // กติกาเดียวกับ AccountingService.ValidateFiscalPeriodOpenForDateAsync (งวดครอบวันนั้นและไม่ใช่ Open)
+            var transferDay = paidAtUtc.AddHours(7).Date;
+            var closedPeriod = await _db.FiscalPeriods.AsNoTracking()
+                .Where(f => f.CompanyId == companyId && f.StartDate <= transferDay && f.EndDate >= transferDay && f.Status != FiscalPeriodStatus.Open)
+                .Select(f => f.Name).FirstOrDefaultAsync(ct);
+            if (closedPeriod != null)
+                throw new BusinessRuleException(BookingSlipRule.ClosedPeriodMessage(transferDay, closedPeriod), BookingSlipRule.RuleCode, 409);
+            // เส้นเดียวกับ webhook ⇒ handler ของการจองบันทึกรับเงิน (กันซ้ำด้วยเลขอ้างอิง) — ไม่มีสำเนาเส้นเงินที่นี่
             await _intents.ApplyChargeAsync(intent.Id,
                 new ProviderCharge(intent.ProviderRef ?? $"slip:{intent.Id:N}", PaymentIntentStatus.Succeeded, "slip_verified", intent.Amount,
                     PaidAtUtc: paidAtUtc),
                 PaymentEventSource.Manual, $"manual:{actor}", ct);
+            // ฝ่ายค้านรอบ 218 (S3) + รอบ 2: บันทึกของผู้ยืนยันลงหมายเหตุ <b>หลัง</b>รับเงินสำเร็จ (ล้ม = ไม่มีหมายเหตุ "ยืนยันแล้ว" ค้าง) · ConfirmedBy = ผู้กดเท่านั้น
+            await _bookings.AppendBookingNoteAsync(companyId, siteId, bookingId,
+                $"[{BookingSlipRule.RuleCode}] ยืนยันสลิปโดย {actor} · วันที่โอน {paidAtUtc.AddHours(7):dd/MM/yyyy} · {note}", actor);
             return (b.BookingNumber, intent.Id);
         });
 

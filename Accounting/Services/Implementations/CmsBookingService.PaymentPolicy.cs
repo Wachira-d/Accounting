@@ -23,14 +23,19 @@ public partial class CmsBookingService
         => BookingPaymentContextLoader.LoadAsync(_db, companyId, siteId, _promptPay.ValidatePromptPayId);
 
     /// <summary>ฝ่ายค้านรอบ 218: บริการตั้งโหมดเก็บเงินเอง ⇒ ต้องมีช่องทาง + ยอด (ไม่บันทึกค่าที่ไม่มีผล) — เรียกจากสร้าง/แก้บริการ</summary>
-    private async Task EnsureServicePaymentAsync(Guid companyId, Guid siteId, SiteBookingService svc)
+    private async Task EnsureServicePaymentAsync(Guid companyId, Guid siteId, SiteBookingService svc, bool paymentChanged, bool wasActive)
     {
+        if (!BookingPaymentPolicy.ServiceChannelCheckRequired(svc.IsActive, wasActive, paymentChanged)) return;
         if (svc.PaymentMode is not BookingPaymentMode m || m == BookingPaymentMode.Off) return;
         var ctx = await LoadPaymentContextAsync(companyId, siteId);
         var eff = BookingPaymentPolicy.Resolve(svc.BookingType, ctx.SiteRule, BookingPaymentContextLoader.ServiceRule(svc));
         if (BookingPaymentPolicy.ServiceChannelProblem(eff, ctx.GatewayReady, ctx.TransferReady) is string problem)
             throw new BusinessRuleException(problem, BookingPaymentChannels.RuleCode);
     }
+
+    /// <summary>ค่าที่มีผลต่อนโยบายชำระของบริการ (เทียบก่อน/หลังแก้ — ฝ่ายค้านรอบ 2)</summary>
+    private static (BookingType, BookingPaymentMode?, decimal?, decimal?, decimal?, decimal?, int?) PaymentFieldsOf(SiteBookingService s)
+        => (s.BookingType, s.PaymentMode, s.DepositAmount, s.DepositPercent, s.DepositMinAmount, s.DepositMaxAmount, s.PaymentDeadlineMinutes);
 
     // ═══════════════ ค่าตั้งเว็บ ═══════════════
 
@@ -148,6 +153,17 @@ public partial class CmsBookingService
         var transferReady = BookingPaymentChannels.TransferReady(request.BankTransferEnabled, transferAfter, ppValidAfter);
         if (BookingPaymentPolicy.SiteSaveProblem(rule, gatewayReady, transferReady) is string problem)
             throw new BusinessRuleException(problem, BookingPaymentChannels.RuleCode);
+        // ฝ่ายค้านรอบ 218 รอบ 2: ปิด/ล้างช่องทาง ⇒ บริการที่ตั้งเก็บเงินเอง (ใช้งานอยู่) จะเก็บไม่ได้ ⇒ ปฏิเสธพร้อมรายชื่อ (ไม่ปล่อยให้แตกเงียบที่หน้าจอง)
+        var ownCollecting = await _db.SiteBookingServices.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && x.IsActive && !x.IsDeleted
+                && x.PaymentMode != null && x.PaymentMode != BookingPaymentMode.Off)
+            .ToListAsync();
+        var broken = ownCollecting
+            .Where(x => BookingPaymentPolicy.ServiceChannelProblem(
+                BookingPaymentPolicy.Resolve(x.BookingType, rule, BookingPaymentContextLoader.ServiceRule(x)), gatewayReady, transferReady) != null)
+            .Select(x => x.Name).ToList();
+        if (BookingPaymentPolicy.SiteChannelsBreakServicesProblem(broken) is string svcProblem)
+            throw new BusinessRuleException(svcProblem, BookingPaymentChannels.RuleCode, 409);
         if (request.OnlineGatewayEnabled && !before.CompanyGatewayActive)
             throw new BusinessRuleException("บริษัทยังไม่ได้ตั้งค่าระบบรับชำระเงินออนไลน์ — ตั้งที่ “ตั้งค่า → รับชำระเงินออนไลน์” ก่อน หรือปิดตัวเลือกชำระออนไลน์",
                 BookingPaymentChannels.RuleCode);
