@@ -43,7 +43,8 @@ public sealed record BookingSlotRules
 /// <summary>ค่าตั้งระดับไซต์ที่บริการ "ใช้ค่าของไซต์" รับไป (ระยะเวลา · buffer · ล่วงหน้า)
 /// <para>รอบ 207: <see cref="Strategy"/> ตรรกะแนะนำผู้ให้บริการ · <see cref="ProvidersEnabled"/> ไซต์เปิดจัดสรรผู้ให้บริการ (ตัดสินแล้วโดย <c>BookingProviderAllocation.Enabled</c>)</para></summary>
 public sealed record BookingSiteDefaults(int DurationMinutes, int BufferBeforeMinutes, int BufferAfterMinutes, int MinAdvanceHours, int MaxAdvanceDays,
-    BookingRecommendStrategy Strategy = BookingRecommendStrategy.LeastLoadedDay, bool ProvidersEnabled = true)
+    BookingRecommendStrategy Strategy = BookingRecommendStrategy.LeastLoadedDay, bool ProvidersEnabled = true,
+    BookingResourceMode DefaultResourceMode = BookingResourceMode.None)
 {
     /// <summary>ไซต์ที่ยังไม่เคยตั้ง — ค่าเดียวกับค่าเริ่มต้นของบริการเดิม</summary>
     public static readonly BookingSiteDefaults Fallback = new(60, 0, 0, 1, 30);
@@ -517,7 +518,8 @@ public static class BookingSlotEngine
             OverlapLimit = s.OverlapLimit,
             WaitlistEnabled = s.WaitlistEnabled,
             // รอบ 207: ไซต์ปิดจัดสรรผู้ให้บริการ ⇒ None (ค่ารายบริการยังเก็บไว้) · ไม่มีค่าตั้งไซต์ = ค่าของบริการ (เดิม)
-            ResourceMode = BookingProviderAllocation.EffectiveMode(s.ResourceMode, site?.ProvidersEnabled ?? true),
+            ResourceMode = BookingProviderAllocation.EffectiveMode(s.ResourceMode, site?.ProvidersEnabled ?? true,
+                site?.DefaultResourceMode ?? BookingResourceMode.None),   // รอบ 215: บริการ null = ตามค่าเว็บ
             Strategy = site?.Strategy ?? BookingRecommendStrategy.LeastLoadedDay,
         };
     }
@@ -525,7 +527,7 @@ public static class BookingSlotEngine
     public static BookingSiteDefaults DefaultsOf(SiteBookingSettings? x)
         => x == null ? BookingSiteDefaults.Fallback
             : new BookingSiteDefaults(x.DurationMinutes, x.BufferBeforeMinutes, x.BufferAfterMinutes, x.MinAdvanceHours, x.MaxAdvanceDays,
-                x.ProviderRecommendStrategy, x.ProviderAllocationEnabled ?? true);
+                x.ProviderRecommendStrategy, x.ProviderAllocationEnabled ?? true, x.DefaultResourceMode ?? BookingResourceMode.None);
 
     /// <summary>
     /// <b>ตัวตัดสินเดียว</b> "เวลาทำการของบริการนี้คือตารางไหน" (รอบ 205 W3 · R-14 · B13): บริการที่ตั้งเวลาทำการเอง (มีแถว <c>SiteBookingSlot</c> ≥ 1)

@@ -41,6 +41,10 @@
   const KIND_ORDER = ['work', 'report', 'settings', 'content'];
   // แท็บ "หน้าเว็บ" (cms-edit) — ทุกเว็บมี · สิทธิ์ = เมนู cms-sites (cms-edit เรียก Layout.init('cms-sites'))
   const CONTENT_LINK = { module: null, page: 'cms-edit', menuId: 'cms-sites', kind: 'content', label: '✏️ หน้าเว็บ & เนื้อหา', href: (id) => `/pages/cms-edit.html?siteId=${enc(id)}` };
+  // รอบ 215 เฟส 2: ศูนย์ "ตั้งค่าเว็บ" (cms-site-settings) — ทุกเว็บมี · สิทธิ์ = เมนู cms-sites (หน้าเรียก Layout.init('cms-sites')) ·
+  // ผู้ที่เห็นศูนย์นี้ไม่ต้องเห็นแท็บ "ตั้งค่าร้านค้า"/"ตั้งค่าที่พัก" ซ้ำ (เข้าจากกลุ่มในศูนย์ได้) · ผู้ที่มีสิทธิ์แค่หน้าเดิม ⇒ ยังเห็นแท็บเดิม
+  const SETTINGS_LINK = { module: null, page: 'cms-site-settings', menuId: 'cms-sites', kind: 'settings', label: '⚙️ ตั้งค่าเว็บ', href: (id) => `/pages/cms-site-settings.html?siteId=${enc(id)}` };
+  const HUB_COVERS = ['cms-store-settings', 'lodging-settings'];
   // หน้าที่มีโหมด "ทุกไซต์" (?siteId=all ผ่าน cms/overview/*) — cms-sites ใช้ชุดเดียวกันสร้างลิงก์ภาพรวม
   const ALL_PAGES = { 'cms-orders': 'orders', 'cms-bookings': 'bookings', 'cms-leads': 'leads' };
   const ALL_LINKS = {
@@ -66,7 +70,10 @@
     /** แท็บของพื้นที่ทำงานเว็บนี้ — โมดูลจากเซิร์ฟเวอร์ + หน้าเว็บ · กรองด้วยสิทธิ์เมนูเดิม · เรียง งานเข้า → รายงาน → ตั้งค่า → หน้าเว็บ */
     workspaceTabs(site) {
       if (!site) return [];
-      const links = this.moduleLinks(site).concat([{ module: null, page: CONTENT_LINK.page, menuId: CONTENT_LINK.menuId, kind: 'content', label: CONTENT_LINK.label, href: CONTENT_LINK.href(site.id) }]);
+      const hub = canSee(SETTINGS_LINK.menuId);
+      const links = this.moduleLinks(site).filter(l => !(hub && HUB_COVERS.includes(l.page)))
+        .concat([{ module: null, page: SETTINGS_LINK.page, menuId: SETTINGS_LINK.menuId, kind: 'settings', label: SETTINGS_LINK.label, href: SETTINGS_LINK.href(site.id) }])
+        .concat([{ module: null, page: CONTENT_LINK.page, menuId: CONTENT_LINK.menuId, kind: 'content', label: CONTENT_LINK.label, href: CONTENT_LINK.href(site.id) }]);
       return links.filter(l => canSee(l.menuId || l.page))
         .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
     },

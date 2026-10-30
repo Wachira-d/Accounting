@@ -11061,6 +11061,27 @@ RULES += [
     dict(file="Services/Implementations/SettingsService.cs", method="GetSettingsAsync",
          must=["CmsModuleResolver.NavSectionLabel(cmsModules)"],
          why=_R215_WHY + "ชื่อหมวดเมนูงานเว็บมาจากตัวตัดสินเดียว (หน้าแค่แสดง)"),
+    # เฟส 2 — "ลูกค้าเลือกผู้ให้บริการได้ไหม" ระดับเว็บ: บริการ null = ตามค่าเว็บ · ทุกจุดที่ตัดสินโหมดผ่าน EffectiveMode ตัวเดียว
+    dict(file="Helpers/BookingSlotEngine.cs", method="RulesOf",
+         must=["BookingProviderAllocation.EffectiveMode(s.ResourceMode, ", "site?.DefaultResourceMode"],
+         why=_R215_WHY + "เฟส 2: กติกาบริการประกอบโหมดผ่านตัวตัดสินเดียว (ค่าเว็บ + เปิด/ปิดจัดสรร)"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="GetBookingAsync",
+         must=["BookingProviderAllocation.EffectiveMode(svcMode, siteDefaults.ProvidersEnabled, siteDefaults.DefaultResourceMode)"],
+         forbid=["ResourceMode = b.BookingService.ResourceMode"],
+         why=_R215_WHY + "เฟส 2: รายละเอียดการจองคิดโหมดผ่านตัวตัดสินเดียว (ห้ามคัดค่าบริการดิบ — null = ตามค่าเว็บ)"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="ProvidersEnabledAsync",
+         must=["(s.ResourceMode ?? siteDefault) != BookingResourceMode.None"],
+         forbid=["s.ResourceMode != BookingResourceMode.None"],
+         why=_R215_WHY + "เฟส 2: บริการตามค่าเว็บนับด้วยค่าเว็บ"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="GetSiteSettingsAsync",
+         must=["BookingProviderAllocation.CustomerPreview(", "DefaultResourceMode = d.DefaultResourceMode", "x.CompanyId == companyId"],
+         why=_R215_WHY + "เฟส 2: ตัวอย่างที่ลูกค้าเห็น = เซิร์ฟเวอร์ประกอบ (หน้าแค่แสดง) · echo ค่าเว็บ"),
+    dict(file="Services/Implementations/CmsSiteService.cs", method="CreateSiteAsync",
+         must=["BookingProviderAllocation.NewSiteDefaultMode(request.IndustryType)"],
+         why=_R215_WHY + "เฟส 2 ข้อ ข: เว็บใหม่ตั้งค่าเริ่มต้นตามประเภทธุรกิจ (เว็บเดิมไม่แตะ)"),
+    dict(file="Services/Implementations/CmsBookingService.cs", method="InheritResourceModeAsync",
+         must=["s.CompanyId == companyId && s.SiteId == siteId", "s.ResourceMode = null"],
+         why=_R215_WHY + "เฟส 2: กลับไปตามค่าเว็บได้เฉพาะบริการของเว็บนี้ (tenant)"),
 ]
 
 

@@ -45,6 +45,9 @@ public class SiteBookingSettings : TenantEntity
     // ── รอบ 210 (คำตัดสินข้อ 169) ──
     /// <summary>ต้องเข้าสู่ระบบสมาชิกของเว็บก่อนจอง (ทุกบริการที่ไม่ตั้งเอง) · false = แขกจองได้ (เดิม) · ตัวตัดสินเดียว <c>Helpers/BookingAccessRule</c></summary>
     public bool RequireMemberToBook { get; set; }
+    /// <summary>รอบ 215 เฟส 2 (คำตัดสินข้อ 176): "ลูกค้าเลือกผู้ให้บริการได้ไหม" ค่าเริ่มต้นของทุกบริการที่ตั้ง "ตามค่าเว็บ" ·
+    /// null = ไม่ตั้ง ⇒ None (พฤติกรรมเดิม) · เว็บใหม่ตั้งตอนสร้าง (<c>BookingProviderAllocation.NewSiteDefaultMode</c>)</summary>
+    public BookingResourceMode? DefaultResourceMode { get; set; }
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>
