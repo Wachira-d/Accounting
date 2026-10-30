@@ -81,7 +81,8 @@ public class LodgingPublicController : ControllerBase
         var cfg = HttpContext.RequestServices.GetService(typeof(IConfiguration)) as IConfiguration;
         var member = cfg == null ? null : Accounting.Helpers.StorefrontCustomerAuth.ForSite(Accounting.Helpers.StorefrontCustomerAuth.FromRequest(Request, cfg), siteId);
         var profiles = HttpContext.RequestServices.GetService(typeof(IStorefrontCustomerService)) as IStorefrontCustomerService;
-        if (member != null && profiles != null && await profiles.GetMeAsync(companyId, siteId, member.CustomerId) is { } me)
+        // ฝ่ายค้านรอบ 216 S3: เติมเฉพาะเมื่อหน้าเว็บยืนยันว่าค่ามาจากโปรไฟล์ (ผู้ใช้ไม่ได้ลบเอง) — ผู้เรียก API ที่ไม่ส่งธง ⇒ ไม่เติม
+        if (member != null && req.ContactFromProfile && profiles != null && await profiles.GetMeAsync(companyId, siteId, member.CustomerId) is { } me)
         {
             var (n, p, e) = Accounting.Helpers.StorefrontMemberProfile.FillContact(clean.GuestName, clean.GuestPhone, clean.GuestEmail, me.FullName, me.Phone, me.Email);
             clean = clean with { GuestName = n ?? "", GuestPhone = p, GuestEmail = e };

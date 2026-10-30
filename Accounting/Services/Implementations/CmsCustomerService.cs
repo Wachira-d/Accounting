@@ -214,11 +214,14 @@ public class CmsCustomerService : ICmsCustomerService
 
     public async Task<CustomerAddressResponse> AddAddressAsync(Guid companyId, Guid siteId, Guid customerId, CreateCustomerAddressRequest request)
     {
+        // รอบ 216 ฝ่ายค้าน: ลูกค้าต้องเป็นของบริษัท+เว็บนี้ (เดิมกรองแค่ customerId) · ที่อยู่หลักต่อชนิดแถวเดียว (unique index บางส่วน) ⇒
+        // ล็อกแถวลูกค้า + ปลดแถวหลักเดิมด้วย UPDATE ตรงถึงฐาน "ก่อน" INSERT ในธุรกรรมเดียว (ตัวกลาง Helpers/CustomerAddressDefaults)
+        if (!await _db.SiteCustomers.AnyAsync(c => c.Id == customerId && c.CompanyId == companyId && c.SiteId == siteId))
+            throw new KeyNotFoundException("Customer not found.");
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await CustomerAddressDefaults.LockCustomerAsync(_db, companyId, customerId);
         if (request.IsDefault)
-        {
-            var existing = await _db.SiteCustomerAddresses.Where(a => a.CustomerId == customerId && a.IsDefault && a.AddressType == request.AddressType).ToListAsync();
-            existing.ForEach(a => a.IsDefault = false);
-        }
+            await CustomerAddressDefaults.ClearDefaultsAsync(_db, companyId, customerId, request.AddressType);
 
         var addr = new SiteCustomerAddress
         {
@@ -233,6 +236,7 @@ public class CmsCustomerService : ICmsCustomerService
         };
         _db.SiteCustomerAddresses.Add(addr);
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         return MapAddressResponse(addr);
     }

@@ -77,4 +77,9 @@ public static class StorefrontCustomerAuth
     /// และติ๊กขอบันทึก · ไม่ใช้ <c>CustomerId</c> จาก body เด็ดขาด (พนักงานสร้างแทน/แขกนิรนาม/โทเคนเว็บอื่น ⇒ null = ไม่เขียน)</summary>
     public static Guid? ProfileOwner(bool saveRequested, StorefrontCustomerIdentity? storefront, Guid routeSiteId)
         => saveRequested ? ForSite(storefront, routeSiteId)?.CustomerId : null;
+
+    /// <summary>รอบ 216 ฝ่ายค้าน S3: เติมชื่อ/เบอร์/อีเมลที่ว่างจากโปรไฟล์ได้ไหม — หน้าเว็บยืนยัน (<c>ContactFromProfile</c>) <b>และ</b>เป็นสมาชิกในโทเคนของเว็บนี้ ·
+    /// พนักงานจองแทน (walk-in · CustomerId ใน body) / แขก / ผู้เรียก API ที่ไม่ส่งธง ⇒ false (ไม่เติมอีเมล/เบอร์ของลูกค้าเงียบ ๆ)</summary>
+    public static bool FillFromProfile(bool pageConfirmed, StorefrontCustomerIdentity? storefront, Guid routeSiteId)
+        => pageConfirmed && ForSite(storefront, routeSiteId) != null;
 }
