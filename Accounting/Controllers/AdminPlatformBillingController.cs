@@ -312,6 +312,18 @@ public class AdminPlatformBillingController : ControllerBase
             after.PlatformDocumentId != null ? $"ตัดชำระแล้ว · ใบเสร็จ {after.ReceiptNumber}" : (after.AttentionReason ?? "ยังตัดชำระไม่สำเร็จ")));
     }
 
+    /// <summary>ฝ่ายค้าน S9: สลิปของรายการชำระค่าบริการ (SystemAdmin) — ไม่เสิร์ฟเป็นไฟล์สาธารณะแล้ว</summary>
+    [HttpGet("subscription-payments/{paymentId:guid}/slip")]
+    public async Task<IActionResult> PaymentSlip(Guid paymentId, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    {
+        var p = await _db.SubscriptionPayments.AsNoTracking().Where(x => x.Id == paymentId)
+            .Select(x => new { x.SlipFileName, x.SlipOriginalFileName }).FirstOrDefaultAsync(ct);
+        if (p == null || SubscriptionSlipUpload.OpenStored(env, p.SlipFileName) is not { } f)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return PhysicalFile(f.Path, f.ContentType, p.SlipOriginalFileName ?? p.SlipFileName);
+    }
+
     public record ResolveAttentionRequest(string? Note);
 
     /// <summary>แอดมินจัดการเรื่องค้างนอกระบบแล้ว (คืนเงินส่วนเกิน · ออกใบลดหนี้ · บันทึกด้วยมือ) — หมายเหตุบังคับ · audit chain</summary>

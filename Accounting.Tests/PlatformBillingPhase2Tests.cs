@@ -395,4 +395,38 @@ public class PlatformBillingPhase2Tests
         Assert.False(AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(AddOnPaymentStatus.PendingReview, "2026-10", "2026-10", "2026-10"));
         Assert.False(AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(AddOnPaymentStatus.AwaitingPayment, null, "2026-10", "2026-10"));
     }
+    [Fact]
+    public void Billing_payment_path_exempt_only_for_subscription_payment_intents()
+    {
+        var c = Guid.NewGuid(); var p = Guid.NewGuid(); var i = Guid.NewGuid();
+        Assert.True(SubscriptionGatePolicy.IsBillingPaymentPath($"/api/companies/{c}/platform-pay/subscription-payments/{p}/intents"));
+        Assert.True(SubscriptionGatePolicy.IsBillingPaymentPath($"/api/companies/{c}/platform-pay/subscription-payments/{p}/intents/{i}"));
+        // ทิศตรงข้าม: เส้นอื่นของบริษัทที่ถูกระงับยังถูกด่านแพ็กเกจตามเดิม
+        Assert.False(SubscriptionGatePolicy.IsBillingPaymentPath($"/api/companies/{c}/platform-pay/addons/x/intents"));
+        Assert.False(SubscriptionGatePolicy.IsBillingPaymentPath($"/api/companies/{c}/platform-pay/policy-acceptance"));
+        Assert.False(SubscriptionGatePolicy.IsBillingPaymentPath($"/api/companies/{c}/documents"));
+        Assert.False(SubscriptionGatePolicy.IsBillingPaymentPath($"/api/companies/{c}/platform-pay/subscription-payments/{p}/intents/{i}/refund"));
+        Assert.False(SubscriptionGatePolicy.IsBillingPaymentPath(null));
+    }
+
+    [Fact]
+    public void Renewal_void_on_cancel_only_for_invoice_of_the_cancelled_cycle()
+    {
+        var id = Guid.NewGuid(); var end = Now.AddDays(-1);
+        Assert.Equal(id, PlatformInvoiceRules.RenewalVoidOnCancel(id, end, end));
+        Assert.Null(PlatformInvoiceRules.RenewalVoidOnCancel(id, end.AddMonths(-1), end));   // ใบของรอบอื่น
+        Assert.Null(PlatformInvoiceRules.RenewalVoidOnCancel(null, end, end));
+    }
+
+    [Fact]
+    public void Paylink_view_audit_window_and_intent_status_scope()
+    {
+        // ลิงก์ใช้ได้ ⇒ audit ครั้งแรกต่อวันไทย (เที่ยงคืนไทย = 17:00 UTC ของวันก่อน)
+        Assert.Equal(new DateTime(2026, 10, 29, 17, 0, 0, DateTimeKind.Utc), PlatformPaymentLinkRules.ViewAuditSince(true, Now));
+        Assert.Equal(DateTime.MinValue, PlatformPaymentLinkRules.ViewAuditSince(false, Now));      // ใช้ไม่ได้ ⇒ ครั้งเดียวตลอด
+        Assert.Equal("\"state\":\"Valid\"", PlatformPaymentLinkRules.ViewAuditMarker("Valid"));
+        Assert.True(PlatformPaymentLinkRules.IntentStatusAllowed(null, Now.AddDays(1), Now));
+        Assert.False(PlatformPaymentLinkRules.IntentStatusAllowed(Now.AddHours(-1), Now.AddDays(1), Now));   // เพิกถอน
+        Assert.False(PlatformPaymentLinkRules.IntentStatusAllowed(null, Now.AddMinutes(-1), Now));          // หมดอายุ
+    }
 }

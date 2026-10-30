@@ -32,7 +32,12 @@
     const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     const money = n => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const date = d => d ? new Date(d).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' }) : '-';
-    const token = new URLSearchParams(location.search).get('t') || '';
+    // ฝ่ายค้าน N2: กลับจากหน้าธนาคาร/บัตร URL ไม่มีโทเคน (?return=1) — โทเคนอยู่ใน sessionStorage ของแท็บนี้เท่านั้น
+    const qs = new URLSearchParams(location.search);
+    const ssGet = k => { try { return sessionStorage.getItem(k); } catch { return null; } };
+    const ssSet = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* ไม่มี storage — กลับมาแล้วเปิดลิงก์เดิมอีกครั้ง */ } };
+    const token = qs.get('t') || (qs.get('return') ? (ssGet('paylinkToken') || '') : '');
+    if (qs.get('t')) ssSet('paylinkToken', qs.get('t'));
     const api = `/api/platform-pay/links/${encodeURIComponent(token)}`;
     let view = null;
 
@@ -66,7 +71,8 @@
             <label>ไฟล์สลิป (รูปหรือ PDF)<input type="file" name="file" accept="image/*,application/pdf"></label>
             <label>วันที่โอน<input type="date" name="paymentDate"></label>
             <label>อ้างอิงการโอน (ถ้ามี)<input type="text" name="transferReference" maxlength="100"></label>
-            <label>หมายเหตุ (เช่น หักภาษี ณ ที่จ่าย)<input type="text" name="customerNotes" maxlength="500"></label>
+            <label>ภาษีหัก ณ ที่จ่าย (บาท · เฉพาะนิติบุคคล — โอน = ยอดค้าง − ภาษีหัก)<input type="number" name="withholdingTaxAmount" min="0" step="0.01" placeholder="เว้นว่าง = ไม่หัก"></label>
+            <label>หมายเหตุ<input type="text" name="customerNotes" maxlength="500"></label>
           </form>
           <div id="pol" style="margin:10px 0">${PolicyAccept.html(po.policy)}</div>
           <button type="button" id="send" onclick="sendSlip()">ส่งสลิปแจ้งชำระ</button>
@@ -81,6 +87,7 @@
       let pol;
       try { pol = PolicyAccept.require('pol'); } catch (e) { alert(e.message); return; }
       const fd = new FormData(f);
+      if (!String(fd.get('withholdingTaxAmount') || '').trim()) fd.delete('withholdingTaxAmount');
       fd.set('policyAccepted', String(pol.policyAccepted));
       if (pol.policyVersionShown) fd.set('policyVersionShown', pol.policyVersionShown);
       const b = document.getElementById('send'); b.disabled = true;
@@ -98,10 +105,10 @@
       const method = (view.payOptions.methods || [])[0] || 'PromptPay';
       try {
         const r = await fetch(`${api}/intents`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(Object.assign({ method, returnUrl: location.href }, pol)) });
+          body: JSON.stringify(Object.assign({ method, withholdingTaxAmount: (() => { const w = String(document.getElementById('f')?.withholdingTaxAmount?.value || '').trim(); return w ? Number(w) : null; })() }, pol)) });
         const j = await r.json().catch(() => null);
         if (!r.ok || !j?.success) throw new Error(j?.message || 'เริ่มชำระไม่สำเร็จ');
-        if (j.data.authorizeUrl) { location.href = j.data.authorizeUrl; return; }
+        if (j.data.authorizeUrl) { ssSet('paylinkIntent', String(j.data.id || '')); location.href = j.data.authorizeUrl; return; }
         document.getElementById('online').innerHTML = `<div class="note">สแกนจ่ายด้วยแอปธนาคาร (PromptPay) ยอด ฿${money(j.data.amount)}
           <div style="word-break:break-all;font-family:monospace;font-size:11px;margin-top:6px">${esc(j.data.qrPayload || '')}</div>
           <button type="button" style="margin-top:8px" onclick="checkIntent('${String(j.data.id || '').replace(/[^0-9a-fA-F-]/g, '')}')">ตรวจสถานะการชำระ</button></div>`;
@@ -113,7 +120,11 @@
       if (j?.data?.status === 'Succeeded') { alert('ชำระสำเร็จ — ขอบคุณค่ะ'); load(); }
       else alert(j?.data?.failureMessage || 'ยังไม่ได้รับเงิน — ลองตรวจสถานะอีกครั้งในอีกสักครู่');
     }
-    load();
+    load().then(() => {
+      // กลับจากหน้าธนาคาร ⇒ ถามสถานะรายการที่เพิ่งเริ่ม (เซิร์ฟเวอร์ตัดสิน — ไม่เชื่อ query string)
+      const intent = qs.get('return') ? ssGet('paylinkIntent') : null;
+      if (intent && token) checkIntent(intent.replace(/[^0-9a-fA-F-]/g, ''));
+    });
   </script>
 </body>
 </html>

@@ -85,6 +85,7 @@ public class PlatformPaymentController : ControllerBase
     }
 
     [HttpGet("subscription-payments/{paymentId:guid}/intents/{intentId:guid}")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.BillingManage)]   // ฝ่ายค้าน S5: เส้นนี้ผ่านด่านแพ็กเกจของผู้ถูกระงับ ⇒ สิทธิ์ต้องตรวจเอง
     public async Task<ActionResult<ApiResponse<object>>> SubscriptionStatus(Guid companyId, Guid paymentId, Guid intentId, CancellationToken ct)
         => await StatusAsync(companyId, intentId, ct);
 

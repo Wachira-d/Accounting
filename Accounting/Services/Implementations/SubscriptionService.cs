@@ -2808,8 +2808,16 @@ public class SubscriptionService : ISubscriptionService
         var dueCancels = await _db.Subscriptions
             .Where(s => s.CancelAtPeriodEnd && s.Status == SubscriptionStatus.Active && s.EndDate <= now)
             .ToListAsync();
+        // ฝ่ายค้าน S8: ใบต่ออายุของรอบที่ยกเลิก (ออกไปก่อนผู้เช่ากดยกเลิก) ⇒ เมื่อการยกเลิกมีผล ยกเลิกใบผ่านเส้นยกเลิกเอกสาร (เส้นเดียวกับ S9 —
+        // มีการชำระ/รายการค้าง ⇒ ไม่ยกเลิก ตั้งงานแอดมิน) + ล้างตัวชี้ (ไม่ทวง · ไม่ค้างเป็นหนี้เท็จ) · ตัวตัดสิน PlatformInvoiceRules.RenewalVoidOnCancel
+        var renewalsToVoid = new List<(Guid SubId, Guid InvoiceId)>();
         foreach (var sub in dueCancels.Where(x => SubscriptionCancelPolicy.DueForCancellation(x.CancelAtPeriodEnd, x.Status, x.EndDate, now)))
         {
+            if (PlatformInvoiceRules.RenewalVoidOnCancel(sub.RenewalInvoiceDocumentId, sub.RenewalInvoiceForEndDate, sub.EndDate) is Guid rid)
+            {
+                renewalsToVoid.Add((sub.Id, rid));
+                sub.RenewalInvoiceNumber = null; sub.RenewalInvoiceIssuedAt = null; sub.RenewalInvoiceForEndDate = null; sub.RenewalInvoiceDocumentId = null;
+            }
             sub.Status = SubscriptionStatus.Cancelled;
             sub.CancelledAt = now;
             _db.SubscriptionHistories.Add(new SubscriptionHistory
@@ -2875,6 +2883,11 @@ public class SubscriptionService : ISubscriptionService
         }
 
         await _db.SaveChangesAsync();
+
+        // S8: หลังบันทึกสถานะ — เส้นยกเลิกเอกสารของ tenant ผู้ให้บริการมีธุรกรรมของตัวเอง · ผลทุกทางลงประวัติ + audit (HandleStaleRenewalInvoiceAsync)
+        if (_billing != null)
+            foreach (var (subId, invoiceId) in renewalsToVoid)
+                await _billing.HandleStaleRenewalInvoiceAsync(subId, invoiceId, "ยกเลิกเมื่อสิ้นรอบ");
     }
 
     // ==================== Private Helpers ====================

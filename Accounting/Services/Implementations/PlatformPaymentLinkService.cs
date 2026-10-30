@@ -33,8 +33,11 @@ public interface IPlatformPaymentLinkService
     /// <summary>null = โทเคนผิด/ไม่มี (ผู้เรียกตอบ 404 เหมือนกันทุกกรณี)</summary>
     Task<PaymentLinkPublicView?> ViewAsync(string token, string? ip, CancellationToken ct = default);
     Task<(Guid LinkId, Guid BuyerCompanyId, Guid DocumentId)?> ResolveForPaymentAsync(string token, CancellationToken ct = default);
-    /// <summary>บริษัทผู้ซื้อของลิงก์ (ไม่ตรวจอายุ — ใช้ดูสถานะรายการที่เริ่มไปแล้ว) · null = โทเคนผิด</summary>
-    Task<Guid?> ResolveBuyerAsync(string token, CancellationToken ct = default);
+    /// <summary>ฝ่ายค้าน N1: บริษัทผู้ซื้อของลิงก์ <b>เมื่อ intent นี้เริ่มจากใบของลิงก์นี้</b> (รายการชำระที่ผูกใบเดียวกัน · ผู้จ่ายเดียวกัน) และลิงก์ยังไม่ถูกเพิกถอน/หมดอายุ ·
+    /// null = โทเคนผิด/ลิงก์ใช้ไม่ได้/intent ไม่ใช่ของลิงก์ (ผู้เรียกตอบ 404 เหมือนกัน)</summary>
+    Task<Guid?> ResolveIntentPayerAsync(string token, Guid intentId, CancellationToken ct = default);
+    /// <summary>ฝ่ายค้าน N2: URL กลับจากหน้าธนาคาร/บัตร — <b>ไม่มีโทเคน</b> (ไม่รั่วไปผู้ให้บริการชำระเงิน/ประวัติเบราว์เซอร์ฝั่งนั้น) · หน้าเว็บเก็บโทเคนใน sessionStorage เอง</summary>
+    Task<string> ReturnUrlAsync(CancellationToken ct = default);
     Task RecordPaymentAuditAsync(Guid linkId, Guid buyerCompanyId, Guid paymentId, string paymentNumber, string? ip, CancellationToken ct = default);
     /// <summary>ด่านติ๊กยอมรับนโยบายของผู้จ่ายผ่านลิงก์ (ไม่มีบัญชีผู้ใช้) — ตัวตัดสิน/ผู้เขียนหลักฐานของ part B (<c>PurchasePolicyAcceptance.Problem/Create</c>) ·
     /// ไม่ผ่าน ⇒ BusinessRuleException · ผ่าน ⇒ แถวหลักฐานอยู่ใน context (บันทึกพร้อมรายการชำระ)</summary>
@@ -47,6 +50,7 @@ public class PlatformPaymentLinkService : IPlatformPaymentLinkService
     public const string RuleCreate = "PLATFORM-PAYLINK-CREATE", RuleView = "PLATFORM-PAYLINK-VIEW",
         RuleRevoke = "PLATFORM-PAYLINK-REVOKE", RulePay = "PLATFORM-PAYLINK-PAY";
     public const string PublicPath = "/pay-link.html?t=";
+    public const string ReturnPath = "/pay-link.html?return=1";
     private const int LineTake = 5;
 
     private readonly AccountingDbContext _db;
@@ -152,10 +156,22 @@ public class PlatformPaymentLinkService : IPlatformPaymentLinkService
         if (inv != null && inv.BuyerCompanyId != link.BuyerCompanyId) { open = false; paid = false; }
         var state = PlatformPaymentLinkRules.StateOf(link.ExpiresAt, link.RevokedAt, open, paid, now);
 
-        link.ViewCount++;
-        link.LastViewedAt = now;
-        Audit(link.BuyerCompanyId, link.Id, null, "paylink", ip, AuditAction.View, RuleView, new { state = state.ToString() });
-        await _db.SaveChangesAsync(ct);
+        // ฝ่ายค้าน S10: นับการเปิดแบบ atomic (UPDATE … +1 — ไม่ทับกันข้ามเครื่อง) เฉพาะลิงก์ที่ยังใช้ได้ · audit ครั้งแรกต่อ (ลิงก์ · IP · วันไทย) —
+        // ลิงก์ที่เพิกถอน/หมดอายุ audit ครั้งเดียวต่อสถานะ (เปิดซ้ำ/สคริปต์ยิงไม่เขียนฐานเพิ่ม)
+        if (state == PaymentLinkState.Valid)
+            await _db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE \"PlatformPaymentLinks\" SET \"ViewCount\" = \"ViewCount\" + 1, \"LastViewedAt\" = (now() at time zone 'utc') WHERE \"Id\" = {link.Id}", ct);
+        var key = PlatformPaymentLinkRules.ViewAuditMarker(state.ToString());
+        var since = PlatformPaymentLinkRules.ViewAuditSince(state == PaymentLinkState.Valid, now);
+        var idStr = link.Id.ToString();
+        var already = await _db.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == link.BuyerCompanyId && a.EntityType == nameof(PlatformPaymentLink)
+            && a.EntityId == idStr && a.Timestamp >= since && a.NewValues!.Contains(key)
+            && (state != PaymentLinkState.Valid || a.IpAddress == ip), ct);
+        if (!already)
+        {
+            Audit(link.BuyerCompanyId, link.Id, null, "paylink", ip, AuditAction.View, RuleView, new { state = state.ToString() });
+            await _db.SaveChangesAsync(ct);
+        }
 
         var buyer = await _db.Companies.IgnoreQueryFilters().AsNoTracking().Where(c => c.Id == link.BuyerCompanyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
         var seller = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt)
@@ -190,8 +206,24 @@ public class PlatformPaymentLinkService : IPlatformPaymentLinkService
         return (link.Id, link.BuyerCompanyId, link.DocumentId);
     }
 
-    public async Task<Guid?> ResolveBuyerAsync(string token, CancellationToken ct = default)
-        => (await FindAsync(token, ct))?.BuyerCompanyId;
+    public async Task<Guid?> ResolveIntentPayerAsync(string token, Guid intentId, CancellationToken ct = default)
+    {
+        var link = await FindAsync(token, ct);
+        if (link == null || !PlatformPaymentLinkRules.IntentStatusAllowed(link.RevokedAt, link.ExpiresAt, DateTime.UtcNow)) return null;
+        var source = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.Id == intentId && i.PayerCompanyId == link.BuyerCompanyId && i.SourceKind == PaymentSourceKind.SubscriptionPayment)
+            .Select(i => (Guid?)i.SourceId).FirstOrDefaultAsync(ct);
+        if (source == null) return null;
+        var ofThisInvoice = await _db.SubscriptionPayments.AsNoTracking()
+            .AnyAsync(p => p.Id == source.Value && p.PlatformInvoiceDocumentId == link.DocumentId && p.Subscription.CompanyId == link.BuyerCompanyId, ct);
+        return ofThisInvoice ? link.BuyerCompanyId : null;
+    }
+
+    public async Task<string> ReturnUrlAsync(CancellationToken ct = default)
+    {
+        var baseUrl = (await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct))?.TrimEnd('/');
+        return (baseUrl ?? "") + ReturnPath;
+    }
 
     public async Task RecordPaymentAuditAsync(Guid linkId, Guid buyerCompanyId, Guid paymentId, string paymentNumber, string? ip, CancellationToken ct = default)
     {

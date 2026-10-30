@@ -88,21 +88,38 @@ public class BillingCenterController : ControllerBase
         IFormFile? file, [FromForm] DateTime? paymentDate, [FromForm] string? transferReference, [FromForm] string? fromBankName,
         [FromForm] string? customerNotes, [FromForm] bool policyAccepted, [FromForm] string? policyVersionShown,
         [FromServices] ILegalDocumentService legal, [FromServices] IImageProcessingService images, [FromServices] IWebHostEnvironment env,
-        [FromServices] ISlipOcrAssistService slipOcr, [FromServices] ILogger<BillingCenterController> logger, CancellationToken ct)
+        [FromServices] ISlipOcrAssistService slipOcr, [FromServices] ILogger<BillingCenterController> logger, CancellationToken ct,
+        [FromForm] decimal? withholdingTaxAmount = null)
     {
         if (await RequireBillingAsync(companyId, "แจ้งชำระค่าบริการ") is { } deny) return deny;
         if (SubscriptionSlipUpload.Reject(file) is string bad)
             return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, bad));
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         await EnforcePolicyAsync(legal, companyId, documentId, policyAccepted, policyVersionShown, ct);
+        // ฝ่ายค้าน N3: เก็บ/ตรวจไฟล์ก่อนสร้างรายการ — ไฟล์เสียไม่ทิ้งรายการค้างที่ไม่มีสลิป
+        var stored = await SubscriptionSlipUpload.StoreAsync(file!, images, env);
         var payment = await _subs.SubmitInvoicePaymentAsync(companyId, documentId,
-            new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes), actor);
-        var result = await SubscriptionSlipUpload.SaveAsync(file!, payment.Id, actor, images, env, _subs, slipOcr, logger);
+            new SubmitInvoicePaymentRequest(paymentDate, transferReference, fromBankName, customerNotes, withholdingTaxAmount), actor);
+        var result = await SubscriptionSlipUpload.AttachAsync(stored, payment.Id, actor, _subs, slipOcr, logger);
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result,
             $"แจ้งชำระ {result.PaymentNumber} แล้ว — ผู้ดูแลระบบจะตรวจสอบและยืนยันให้"));
     }
 
-    public record PrepareOnlineRequest(bool PolicyAccepted, string? PolicyVersionShown);
+    /// <summary>ฝ่ายค้าน S9: สลิปของรายการชำระค่าบริการของบริษัทนี้ — สิทธิ์ Billing.Manage · รายการของบริษัทอื่น = 404 · ไม่เสิร์ฟเป็นไฟล์สาธารณะแล้ว</summary>
+    [HttpGet("payments/{paymentId:guid}/slip")]
+    public async Task<IActionResult> PaymentSlip(Guid companyId, Guid paymentId, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    {
+        if (await RequireBillingAsync(companyId, "ดูสลิป") is { } deny) return deny;
+        var p = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
+            _db.SubscriptionPayments.Where(x => x.Id == paymentId && x.Subscription.CompanyId == companyId)
+                .Select(x => new { x.SlipFileName, x.SlipOriginalFileName }), ct);
+        if (p == null || SubscriptionSlipUpload.OpenStored(env, p.SlipFileName) is not { } f)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return PhysicalFile(f.Path, f.ContentType, p.SlipOriginalFileName ?? p.SlipFileName);
+    }
+
+    public record PrepareOnlineRequest(bool PolicyAccepted, string? PolicyVersionShown, decimal? WithholdingTaxAmount = null);
 
     /// <summary>เตรียมชำระออนไลน์ผ่านช่องทางของ NextAcc (part B) — สร้าง/ใช้รายการชำระที่ผูกใบ (ยอด = ยอดค้างของใบ) แล้วคืนเส้นทางของ part B
     /// (<c>api/companies/{cid}/platform-pay/subscription-payments/{paymentId}</c>) ให้ <c>PayWidget</c> เริ่ม intent ใต้บริษัทผู้ให้บริการ ·
@@ -118,7 +135,7 @@ public class BillingCenterController : ControllerBase
                 status.OfflineReason ?? "ยังไม่เปิดชำระค่าบริการ NextAcc ออนไลน์ — กรุณาโอนเงินแล้วแนบสลิป"));
         await EnforcePolicyAsync(legal, companyId, documentId, req.PolicyAccepted, req.PolicyVersionShown, ct);
         var payment = await _subs.SubmitInvoicePaymentAsync(companyId, documentId,
-            new SubmitInvoicePaymentRequest(null, null, null, "ชำระออนไลน์"), JwtHelper.GetUserIdFromClaims(User).ToString());
+            new SubmitInvoicePaymentRequest(null, null, null, "ชำระออนไลน์", req.WithholdingTaxAmount), JwtHelper.GetUserIdFromClaims(User).ToString());
         await _db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<object>(true, new
         {

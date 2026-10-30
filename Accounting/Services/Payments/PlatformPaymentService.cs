@@ -118,11 +118,14 @@ public class PlatformPaymentService : IPlatformPaymentService
     {
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == subscriptionPaymentId && p.Subscription.CompanyId == payerCompanyId)
-            .Select(p => new { p.Id, p.Amount, p.Status, p.PaymentNumber })
+            .Select(p => new { p.Id, p.Amount, p.Status, p.PaymentNumber, HasSlip = p.SlipFileName != null, Held = p.AttentionReason != null })
             .FirstOrDefaultAsync(ct)
             ?? throw new InvalidOperationException("ไม่พบรายการชำระค่าแพ็กเกจของบริษัทนี้");
         if (pay.Status is not (SubscriptionPaymentStatus.Pending or SubscriptionPaymentStatus.UnderReview))
             throw new InvalidOperationException("รายการนี้ไม่อยู่ในสถานะรอชำระ");
+        // ฝ่ายค้านรอบ 219 เฟส 2 (N7 · ประสานกับ part B S2): แนบสลิปแล้ว (โอนแล้ว) หรือพักให้แอดมินตรวจ ⇒ ห้ามจ่ายออนไลน์ซ้ำ (เงินเข้าสองทาง)
+        if (pay.HasSlip || pay.Held)
+            throw new InvalidOperationException($"รายการ {pay.PaymentNumber} แจ้งโอนแล้ว/รอผู้ดูแลระบบตรวจ — ไม่ต้องชำระออนไลน์ซ้ำ");
         // ยอด = ยอดของรายการชำระที่เซิร์ฟเวอร์คำนวณตอนสร้าง (PlatformPlanPricing.AmountDue) — handler ตรวจกับตารางราคาอีกชั้น
         return await StartAsync(payerCompanyId, PaymentSourceKind.SubscriptionPayment, pay.Id, pay.Amount, method,
             $"ค่าแพ็กเกจ {pay.PaymentNumber}", returnUrl, cardToken, ct);

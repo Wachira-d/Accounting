@@ -128,7 +128,6 @@ const AdminAPI = {
   platformRetrySettle(paymentId) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/retry-settle`, {}); },
   platformResolvePaymentException(paymentId, note) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/resolve`, { note }); },
   platformPaymentSlip(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/slip`, `slip-${paymentId}`); },
-  platformAddOnSlip(featureRowId) { return this.downloadFile(`/platform-billing/addons/${featureRowId}/slip`, `addon-slip-${featureRowId}`); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },

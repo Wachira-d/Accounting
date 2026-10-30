@@ -93,6 +93,11 @@ public static class PlatformInvoiceRules
             ? "ใบแจ้งหนี้ต่ออายุใบนี้ถูกแทนที่ด้วยรอบ/แพ็กเกจใหม่แล้ว — ไม่ต้องชำระ · ถ้าโอนไปแล้วกรุณาติดต่อผู้ดูแลระบบ NextAcc (จะยกเลิกใบหรือออกใบลดหนี้ให้)"
             : null;
 
+    /// <summary>ฝ่ายค้าน S8: การยกเลิกเมื่อสิ้นรอบมีผล ⇒ ใบต่ออายุที่ออกให้ "รอบถัดไปของรอบที่ยกเลิก" (ForEndDate = วันสิ้นรอบปัจจุบัน) ต้องยกเลิก ·
+    /// ใบของรอบอื่น/ไม่มีใบ ⇒ null (ไม่แตะ)</summary>
+    public static Guid? RenewalVoidOnCancel(Guid? renewalInvoiceDocumentId, DateTime? renewalInvoiceForEndUtc, DateTime currentEndUtc) =>
+        renewalInvoiceDocumentId is Guid id && renewalInvoiceForEndUtc == currentEndUtc ? id : null;
+
     /// <summary>ผลตรวจรายการชำระที่ผูกใบแจ้งหนี้ ก่อนอนุมัติ (ฝ่ายค้าน B2/N6)</summary>
     public enum LinkedReviewAction { Proceed = 0, InvoiceOnly = 1, Hold = 2, Refuse = 3 }
 

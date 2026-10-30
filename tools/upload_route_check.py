@@ -29,6 +29,8 @@ PRIVATE_BY_DESIGN = {
     # สลิปโอนเงินของแขกที่พัก — มีชื่อผู้โอน/เลขบัญชี/ยอด = PII
     # เสิร์ฟผ่าน `reservations/{id|token}/slip` ที่ตรวจสิทธิ์ (LDG-P2-06)
     "/uploads/lodging-slips",
+    # สลิปโอนค่าบริการ NextAcc + ค่าส่วนเสริม — PII · เสิร์ฟผ่าน endpoint ที่ตรวจสิทธิ์ (ฝ่ายค้านรอบ 219 เฟส 2 S9)
+    "/uploads/slips",
 }
 
 

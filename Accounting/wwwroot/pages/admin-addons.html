@@ -278,6 +278,15 @@
   <script src="/js/layout.js"></script>
   <script>
     const Page = {
+      // ฝ่ายค้านรอบ 219 เฟส 2 (S9): สลิปไม่เสิร์ฟเป็นไฟล์สาธารณะแล้ว — โหลดผ่าน endpoint ที่ตรวจสิทธิ์ (JWT) แล้วเปิดเป็น blob
+      async openSlip(companyId, featureCode) {
+        try {
+          const f = await API.fetchFile(`/api/admin/metering/addon-payments/${encodeURIComponent(companyId)}/${encodeURIComponent(featureCode)}/slip`, 'slip');
+          const u = URL.createObjectURL(f.blob);
+          window.open(u, '_blank', 'noopener');
+          setTimeout(() => URL.revokeObjectURL(u), 60000);
+        } catch (e) { Layout.toast ? Layout.toast(e.message, 'error') : alert(e.message); }
+      },
       rows: [],
 
       async init() {
@@ -310,7 +319,7 @@
             <td>${Layout.esc(r.featureName)}<div class="muted" style="font-size:11px">${Layout.esc(r.featureCode)}</div></td>
             <td class="num">${this.money(r.paidAmount ?? r.acceptedUnitPrice)}</td>
             <td>${r.paymentSlipUrl
-                  ? `<a href="${Layout.esc(r.paymentSlipUrl)}" target="_blank" rel="noopener">เปิดดูสลิป</a>
+                  ? `<a href="#" onclick="event.preventDefault(); Page.openSlip('${Layout.jsArg(r.companyId)}', '${Layout.jsArg(r.featureCode)}')">เปิดดูสลิป</a>
                      <div class="muted" style="font-size:11px">${r.slipUploadedAt ? new Date(r.slipUploadedAt).toLocaleString('th-TH') : ''}
                      ${r.paymentReference ? ' · ' + Layout.esc(r.paymentReference) : ''}</div>`
                   : '<span class="muted">—</span>'}</td>

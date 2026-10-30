@@ -173,7 +173,8 @@
             <label>ไฟล์สลิป (รูปหรือ PDF)<input type="file" name="file" accept="image/*,application/pdf" class="form-input"></label>
             <label>วันที่โอน<input type="date" name="paymentDate" class="form-input"></label>
             <label>อ้างอิงการโอน (ถ้ามี)<input name="transferReference" maxlength="100" class="form-input"></label>
-            <label>หมายเหตุ (เช่น หักภาษี ณ ที่จ่าย — แนบหนังสือรับรองกับสลิป)<input name="customerNotes" maxlength="500" class="form-input"></label>
+            <label>ภาษีหัก ณ ที่จ่าย (บาท · เฉพาะนิติบุคคล — โอน = ยอดค้าง − ภาษีหัก · แนบ 50 ทวิ กับสลิป)<input type="number" name="withholdingTaxAmount" min="0" step="0.01" class="form-input" placeholder="เว้นว่าง = ไม่หัก"></label>
+            <label>หมายเหตุ<input name="customerNotes" maxlength="500" class="form-input"></label>
           </form>
           <div id="billPolicy" style="margin-top:10px">${PolicyAccept.html(po.policy)}</div>`;
         Layout.openModal('payModal');
@@ -186,6 +187,7 @@
         let pol;
         try { pol = PolicyAccept.require('billPolicy'); } catch (e) { Layout.toast(e.message, 'error'); return; }
         const fd = new FormData(form);
+        if (!String(fd.get('withholdingTaxAmount') || '').trim()) fd.delete('withholdingTaxAmount');   // ว่าง = ไม่หัก (ไม่ส่งสตริงว่างให้ binder)
         fd.set('policyAccepted', String(pol.policyAccepted));
         if (pol.policyVersionShown) fd.set('policyVersionShown', pol.policyVersionShown);
         const btn = document.getElementById('paySubmit'); btn.disabled = true;
@@ -202,7 +204,9 @@
         let pol;
         try { pol = PolicyAccept.require('billPolicy'); } catch (e) { Layout.toast(e.message, 'error'); return; }
         try {
-          const res = await API.post(`${this.base()}/invoices/${this._payId}/online-payment`, pol);
+          const whtRaw = String(document.getElementById('billSlipForm')?.withholdingTaxAmount?.value || '').trim();
+          const res = await API.post(`${this.base()}/invoices/${this._payId}/online-payment`,
+            Object.assign({}, pol, { withholdingTaxAmount: whtRaw ? Number(whtRaw) : null }));
           this.closePay();
           PayWidget.open({
             companyId: this.cid(),

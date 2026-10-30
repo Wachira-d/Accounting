@@ -1008,10 +1008,18 @@ if (builder.Configuration.GetValue("Security:TrustProxyHeaders", true))
     {
         ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
             | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
-        ForwardLimit = 2,
+        // ฝ่ายค้านรอบ 219 เฟส 2: ทุกด่านจำกัดอัตราต่อ IP (ลิงก์ชำระสาธารณะ · ล็อกอิน · แชท) อ่าน RemoteIpAddress หลังขั้นนี้ —
+        // ไม่ระบุ proxy ที่เชื่อถือ + ForwardLimit 2 ⇒ ลูกค้าปลอม X-Forwarded-For ตัวซ้ายสุดได้ (หลบถังต่อ IP) ·
+        // ข้อบังคับ deploy (ACCOUNT_STRUCTURE §6.2c): ตั้ง Security:KnownProxies (IP คั่นด้วย ,) และ Security:ForwardLimit = จำนวน proxy จริง
+        ForwardLimit = Math.Clamp(builder.Configuration.GetValue("Security:ForwardLimit", 2), 1, 5),
     };
     fwdOptions.KnownNetworks.Clear();
     fwdOptions.KnownProxies.Clear();
+    foreach (var raw in (builder.Configuration["Security:KnownProxies"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (System.Net.IPAddress.TryParse(raw, out var proxyIp)) fwdOptions.KnownProxies.Add(proxyIp);
+        else throw new InvalidOperationException($"Security:KnownProxies มีค่าที่ไม่ใช่ IP: '{raw}'");
+    }
     app.UseForwardedHeaders(fwdOptions);
 }
 
@@ -1072,8 +1080,9 @@ var publicUploadPrefixes = new[]
     "/uploads/order-slips", "/uploads/portal-slips",
     // โลโก้ของ "ชื่อทางการค้า" — ต้องฝังลงหัวเอกสาร/PDF และแสดงบนหน้าตั้งค่า
     "/uploads/brand-logos",
-    // สลิปโอนค่าบริการ (แอดมินเปิดดูตอนตรวจสอบการชำระเงิน) ชื่อไฟล์เป็น GUID
-    "/uploads/slips",
+    // ⚠️ "/uploads/slips" (สลิปโอนค่าบริการ NextAcc + ค่าส่วนเสริม) **ถูกถอดออกแล้ว** (ฝ่ายค้านรอบ 219 เฟส 2 S9) — สลิปมีชื่อผู้โอน/เลขบัญชี/ยอด
+    // = ข้อมูลส่วนบุคคล · ลิงก์ชำระสาธารณะทำให้คนนอกอัปโหลดได้ด้วย ⇒ เสิร์ฟผ่าน endpoint ที่ตรวจสิทธิ์เท่านั้น
+    // (ผู้เช่า: billing-center/payments/{id}/slip · แอดมิน: platform-billing/subscription-payments/{id}/slip · metering/addon-payments/.../slip)
     // ⚠️ "/uploads/lodging-slips" **ถูกถอดออกจากลิสต์นี้แล้ว** (LDG-P2-06) —
     // สลิปโอนเงินมีชื่อผู้โอน + เลขบัญชี + ยอด = ข้อมูลส่วนบุคคลของแขก ไม่ใช่ของ
     // สาธารณะ · ชื่อไฟล์เป็น GUID ก็จริง แต่ URL ถูกส่งกลับใน API response ของหน้า

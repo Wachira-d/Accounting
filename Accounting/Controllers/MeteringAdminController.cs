@@ -67,6 +67,19 @@ public class MeteringAdminController : ControllerBase
         return Ok(new ApiResponse<object>(true, data));
     }
 
+    /// <summary>ฝ่ายค้านรอบ 219 เฟส 2 (S9): สลิปค่าส่วนเสริม (SystemAdmin) — <c>/uploads/slips</c> ไม่เสิร์ฟตรงแล้ว</summary>
+    [HttpGet("addon-payments/{companyId:guid}/{featureCode}/slip")]
+    public async Task<IActionResult> AddOnSlip(Guid companyId, string featureCode, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    {
+        var url = await _db.CompanyFeatures.AsNoTracking().IgnoreQueryFilters()
+            .Where(f => f.CompanyId == companyId && f.FeatureCode == featureCode)
+            .Select(f => f.PaymentSlipUrl).FirstOrDefaultAsync(ct);
+        if (Accounting.Services.Implementations.SubscriptionSlipUpload.OpenStored(env, url) is not { } file)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return PhysicalFile(file.Path, file.ContentType, System.IO.Path.GetFileName(file.Path));
+    }
+
     public record ReviewAddOnPaymentRequest(bool Approve, string? Reason);
 
     /// <summary>อนุมัติ/ปฏิเสธการชำระเงินของส่วนเสริม —

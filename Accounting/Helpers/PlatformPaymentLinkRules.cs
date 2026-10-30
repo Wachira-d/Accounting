@@ -61,4 +61,15 @@ public static class PlatformPaymentLinkRules
 
     /// <summary>ชื่อผู้ซื้อแบบย่อบนหน้าสาธารณะ (ไม่มีที่อยู่/เลขภาษี — ข้อมูลขั้นต่ำ)</summary>
     public static string MaskedBuyerName(string? name) => string.IsNullOrWhiteSpace(name) ? "-" : name.Trim().Length > 80 ? name.Trim()[..80] : name.Trim();
+
+    /// <summary>ฝ่ายค้าน S10: เครื่องหมายใน audit ของการเปิดดู (สถานะ) — ตัวเดียวทั้งฝั่งเขียน (Serialize ของ detail) และฝั่งค้นซ้ำ</summary>
+    public static string ViewAuditMarker(string state) => $"\"state\":\"{state}\"";
+
+    /// <summary>ฝ่ายค้าน S10: audit การเปิดดูซ้ำได้เมื่อไหร่ — ลิงก์ใช้ได้ = ครั้งแรกต่อวันไทย (ต่อ IP) · ลิงก์ใช้ไม่ได้ = ครั้งเดียวตลอด (ต่อสถานะ)</summary>
+    public static DateTime ViewAuditSince(bool linkValid, DateTime nowUtc)
+        => linkValid ? DateTime.SpecifyKind(nowUtc.AddHours(7).Date.AddHours(-7), DateTimeKind.Utc) : DateTime.MinValue;
+
+    /// <summary>ฝ่ายค้าน N1: ถามสถานะการชำระผ่านลิงก์ได้เมื่อลิงก์ยังไม่ถูกเพิกถอนและยังไม่หมดอายุ (ใบชำระครบแล้วยังถามได้ — ผู้จ่ายต้องเห็นผล)</summary>
+    public static bool IntentStatusAllowed(DateTime? revokedAtUtc, DateTime expiresAtUtc, DateTime nowUtc)
+        => revokedAtUtc == null && expiresAtUtc > nowUtc;
 }

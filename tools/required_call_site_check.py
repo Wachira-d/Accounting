@@ -11729,6 +11729,46 @@ RULES += [
          why="CI Db รอบ 219 เฟส 2: unique (CompanyId, FeatureCode) ⇒ ฟื้นแถวเดิม/แถวที่ Add ค้างไว้ ไม่สร้างซ้ำ (23505)"),
 ]
 
+# ── ฝ่ายค้านรอบ 219 เฟส 2 (S5/S8/S9/S10/N1–N3/N7) ──
+RULES += [
+    dict(file="Middleware/SubscriptionMiddleware.cs", method="InvokeAsync",
+         must=["SubscriptionGatePolicy.IsBillingPaymentPath("],
+         why=_R219P2X_WHY + "S5 ผู้ถูกระงับจ่ายค่าบริการออนไลน์ได้ (ข้อยกเว้นแคบ ตัวตัดสินเดียว · สิทธิ์ตรวจที่ controller)"),
+    dict(file=SUB_SVC, method="ProcessExpiredSubscriptionsAsync",
+         must=["PlatformInvoiceRules.RenewalVoidOnCancel(", "HandleStaleRenewalInvoiceAsync("],
+         before=[("_db.SaveChangesAsync(", "HandleStaleRenewalInvoiceAsync(")],
+         why=_R219P2X_WHY + "S8 ยกเลิกมีผล ⇒ ใบต่ออายุของรอบนั้นยกเลิกผ่านเส้นยกเลิกเอกสาร + ล้างตัวชี้ (ไม่ทวง)"),
+    dict(file="Controllers/BillingCenterController.cs", method="PayBySlip",
+         must=["SubscriptionSlipUpload.StoreAsync(", "SubscriptionSlipUpload.AttachAsync("],
+         before=[("SubscriptionSlipUpload.StoreAsync(", "_subs.SubmitInvoicePaymentAsync(")],
+         why=_R219P2X_WHY + "N3 เก็บ/ตรวจไฟล์ก่อนเกิดรายการ"),
+    dict(file="Controllers/PlatformPayLinkController.cs", method="PayBySlip",
+         must=["SubscriptionSlipUpload.StoreAsync("],
+         before=[("SubscriptionSlipUpload.StoreAsync(", "subs.SubmitInvoicePaymentAsync(")],
+         why=_R219P2X_WHY + "N3 เก็บ/ตรวจไฟล์ก่อนเกิดรายการ"),
+    dict(file="Controllers/PlatformPayLinkController.cs", method="PayOnline",
+         must=["_links.ReturnUrlAsync("], forbid=["req.ReturnUrl"],
+         why=_R219P2X_WHY + "N2 URL กลับไม่มีโทเคน (ไม่ใช้ค่าจากหน้าเว็บ)"),
+    dict(file="Controllers/PlatformPayLinkController.cs", method="IntentStatus",
+         must=["_links.ResolveIntentPayerAsync("],
+         before=[("_links.ResolveIntentPayerAsync(", "platform.RefreshForPayerAsync(")],
+         why=_R219P2X_WHY + "N1 ถามสถานะได้เฉพาะ intent ของใบนี้ · ลิงก์เพิกถอน/หมดอายุ = ไม่พบ"),
+    dict(file="Controllers/PlatformPayLinkController.cs", method="AllowedAsync",
+         must=["PlatformPaymentLinkRules.Hash("],
+         why=_R219P2X_WHY + "S10 ถังจำกัดอัตราต่อโทเคน (นอกจากต่อ IP)"),
+    dict(file="Services/Implementations/PlatformPaymentLinkService.cs", method="ViewAsync",
+         must=["PlatformPaymentLinkRules.ViewAuditSince(", "PlatformPaymentLinkRules.ViewAuditMarker(", "ExecuteSqlInterpolatedAsync("],
+         forbid=["link.ViewCount++"],
+         why=_R219P2X_WHY + "S10 นับแบบ atomic · audit ครั้งแรกต่อ (ลิงก์ · IP · วัน) · ลิงก์ใช้ไม่ได้ audit ครั้งเดียว"),
+    dict(file="Services/Implementations/PlatformPaymentLinkService.cs", method="ResolveIntentPayerAsync",
+         must=["PlatformPaymentLinkRules.IntentStatusAllowed(", "p.PlatformInvoiceDocumentId == link.DocumentId"],
+         why=_R219P2X_WHY + "N1 ขอบเขตของ intent = ใบของลิงก์"),
+    dict(file="Services/Payments/PlatformPaymentService.cs", method="StartSubscriptionPaymentAsync",
+         must=["pay.HasSlip", "pay.Held"],
+         before=[("pay.HasSlip", "StartAsync(")],
+         why=_R219P2X_WHY + "N7 แนบสลิปแล้ว/พักให้แอดมิน ⇒ ห้ามจ่ายออนไลน์ซ้ำ"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
