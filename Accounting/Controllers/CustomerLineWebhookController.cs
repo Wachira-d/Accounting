@@ -64,6 +64,9 @@ public class CustomerLineWebhookController : ControllerBase
             // รอบ 212 แพ็ก B: bot ใหม่ของ OA ร้าน (ร้านเปลี่ยน OA โดยใช้ช่อง/URL เดิม) ⇒ บันทึกการสลับ ให้งานเบื้องหลังเชิญลูกค้าที่ผูกกับ bot เดิมผูกใหม่ (ไม่โยน) ·
             // ฝ่ายค้าน (B+D) ข้อ 2: บอทไม่ตรงกับที่จำไว้ (secret ของ OA อื่น) ⇒ ไม่ใช่การสลับ — ไม่บันทึก
             if (destinationAccepted && _relink != null) await _relink.NoteWebhookDestinationAsync(CustomerNotifyChannel.ScopeCompany, companyId, destination, ct);
+            // ปิดความเสี่ยงค้างของฝ่ายค้าน (B+D) ข้อ 2: เหตุการณ์จากบอทที่ไม่ตรง (secret ของ OA อื่น) ห้ามผูก/ปลดลูกค้า —
+            // userId ของ OA นั้นส่งด้วย token ปัจจุบันไม่ได้ ⇒ ไม่ประมวลผล (หน้า LINE ตั้งค่าแสดงปัญหาให้ร้านแก้ secret แล้ว)
+            if (!destinationAccepted) return Ok();
             if (!doc.RootElement.TryGetProperty("events", out var events)) return Ok();
             foreach (var ev in events.EnumerateArray())
             {
