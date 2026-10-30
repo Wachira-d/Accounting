@@ -229,7 +229,7 @@ public class CmsCommerceController : ControllerBase
             HttpContext.RequestServices.GetService(typeof(ILogger<CmsCommerceController>)) as ILogger,
             companyId, siteId, StorefrontCustomerAuth.ProfileOwner(request.SaveToProfile && !result.Replayed, sf, siteId),
             new CheckoutProfileInput(request.ShippingName, request.ShippingPhone,
-                result.FulfillmentMethod == ShippingFeeRules.Pickup ? null : request.ShippingAddress, request.ShippingProvince, request.ShippingPostalCode,
+                result.FulfillmentMethod == FulfillmentMethod.Pickup ? null : request.ShippingAddress, request.ShippingProvince, request.ShippingPostalCode,
                 request.RequestTaxInvoice ? request.BillingName : null, request.RequestTaxInvoice ? request.BillingTaxId : null,
                 request.RequestTaxInvoice ? request.BillingBranchCode : null, request.RequestTaxInvoice ? request.BillingAddress : null));
         return StatusCode(201, new ApiResponse<OrderResponse>(true, staffOk ? result : SiteOrderPublic.ForGuestCreate(result), CmsMessages.Get("order.created", Lang), profileNotes));
