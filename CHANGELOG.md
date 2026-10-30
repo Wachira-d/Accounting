@@ -5794,4 +5794,4 @@ _รอบ 216 (คำตัดสินข้อ 174 · เจ้าของ: 
 หน้าเว็บเติมฟอร์มจอง/คลาส/เช็กเอาต์/ที่พัก/ติดต่อจากโปรไฟล์ตามกฎ "ห้ามใครมาก่อนชนะ" (`userTouched` · `autoSrc`) + ป้าย "ใช้ข้อมูลจากบัญชีของฉัน · แก้ไขโปรไฟล์" ·
 "บันทึกเป็นข้อมูลของฉัน" (`SaveToProfile`) บันทึกหลังรายการสำเร็จ เจ้าของ = โทเคนของเว็บนี้ (`StorefrontCustomerAuth.ProfileOwner`) · ค่าผิดรูปแบบ/บันทึกล้มบอกใน `errors` ·
 ตาข่ายเซิร์ฟเวอร์เติมชื่อ/เบอร์/อีเมลที่เว้นว่างจากโปรไฟล์ก่อนด่านฟอร์ม/ยินยอม (เช็กเอาต์ · จอง · ที่พัก) · รายงาน DSR เพิ่มชนิด/ที่อยู่หลัก ·
-เทสต์ `CmsRound216MemberProfileTests` + `Db/MemberProfileDbTests` + `tools/member_prefill_sim.js` (CMS216-01..11) · `required_call_site_check` +10 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+เทสต์ `CmsRound216MemberProfileTests` + `Db/MemberProfileDbTests` + `tools/member_prefill_sim.js` (CMS216-01..11) · `required_call_site_check` +10 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1fd81626_
