@@ -80,6 +80,8 @@ const AdminLayout = {
     { section: 'การเงิน' },
     { id: 'revenue', label: 'รายรับ/ธุรกิจ', icon: '📈', href: '/admin/revenue.html' },
     { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },
+    // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ช่องทางรับชำระค่าบริการของ NextAcc (Omise) — คีย์ · ทดสอบ · ทดลองจ่าย · เปิดรับเงินจริง · ปิดฉุกเฉิน · หน้าทดลองจ่าย
+    { id: 'platform-gateway', label: 'ช่องทางรับชำระของ NextAcc', icon: '🏦', href: '/admin/platform-gateway.html' },
     { section: 'เชื่อมต่อระบบ' },
     { id: 'integrations', label: 'Integration', icon: '🔗', href: '/admin/integrations.html' },
     { section: 'ตั้งค่าระบบบัญชี' },
@@ -87,7 +89,7 @@ const AdminLayout = {
     { section: 'ตั้งค่า' },
     { id: 'site-settings', label: 'ตั้งค่าเว็บไซต์', icon: '⚙️', href: '/admin/site-settings.html' },
     // รอบ 214 (คำตัดสินข้อ 173): นโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งานของแพลตฟอร์ม — แก้ร่าง · เผยแพร่ (append-only) · URL สาธารณะ
-    { id: 'legal', label: 'นโยบาย/ข้อกำหนดการใช้งาน', icon: '⚖️', href: '/admin/legal.html' },
+    { id: 'legal', label: 'นโยบาย/ข้อกำหนด/คืนเงิน', icon: '⚖️', href: '/admin/legal.html' },
     { id: 'system-email', label: 'อีเมลระบบ (SMTP)', icon: '📧', href: '/admin/system-email.html' },
     { id: 'sso-config', label: 'เข้าสู่ระบบ (Google/Facebook/LINE)', icon: '🔐', href: '/admin/sso-config.html' },
     { id: 'ocr-config', label: 'ตั้งค่า OCR / Azure DI', icon: '🔍', href: '/admin/ocr-config.html' },

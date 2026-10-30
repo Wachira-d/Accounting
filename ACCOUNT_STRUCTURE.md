@@ -649,6 +649,14 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 - ซื้อเครดิต = ออก "ใบเสร็จรับเงิน (มัดจำ)" ตาม flow เงินมัดจำที่มีอยู่ (deferred VAT
   ตามเคสที่ระบบรองรับแล้ว — ดู DOCUMENT_FLOW.md §2.3a)
 
+### 6.2c ช่องทางรับชำระของ NextAcc + นโยบายคืนเงิน (รอบ 219 ส่วน B · คำตัดสินข้อ 179)
+
+- **ไม่มีตาราง config ที่สอง:** gateway ของแพลตฟอร์ม = `PaymentProviderConfig` ของ `SiteSettings.PlatformCompanyId` · แอดมินตั้งที่ `/admin/platform-gateway.html` (SystemAdmin) ·
+  เงินค่าบริการออนไลน์เข้าบัญชี Omise ของ NextAcc เท่านั้น · ยังไม่ตั้ง/โหมดทดสอบ/ปิด ⇒ ผู้เช่าเห็นแค่โอน + แนบสลิป
+- **นโยบาย:** ค่าบริการไม่คืนเงิน · ยกเลิกแพ็กเกจใช้ได้ถึงสิ้นรอบ (`Subscription.CancelAtPeriodEnd` → Cancelled เมื่อพ้น `EndDate` · ไม่ออกใบต่ออายุ) · กลับมาใช้ต่อได้ก่อนสิ้นรอบ (`POST subscription/{id}/cancel/undo`)
+- **หลักฐานยอมรับ:** `PolicyAcceptances` (Scope=platform · CompanyId = บริษัทผู้จ่าย · SourceId = รายการชำระ/สิทธิ์ส่วนเสริม) — เก็บตามอายุเอกสารบัญชี
+- **หน้าทดลองจ่าย:** `SiteSettings.PlatformPayTestPageMode` (null = AdminsOnly)
+
 ### 6.2b ค่าบริการ NextAcc ที่ผู้เช่าจ่าย — อุดรั่วเฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md`)
 
 - **เงินของแพลตฟอร์ม** = `PaymentSourceKind ∈ {SubscriptionPayment, AddOnPurchase}` (`Helpers/PlatformRevenueSource` ตัวเดียว) ⇒ intent ต้องอยู่ใต้บริษัทผู้ให้บริการ

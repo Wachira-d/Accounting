@@ -27,7 +27,7 @@
   <!-- รอบ 214 (คำตัดสินข้อ 173 B): นโยบาย/ข้อกำหนดของร้านสำหรับหน้าจองโต๊ะ (booking.html · booking-manage.html — ไม่ผูกเว็บ CMS) ·
        เนื้อความ = แม่แบบของระบบ + ตัวตนร้าน แปลง/encode ที่เซิร์ฟเวอร์ (GET /api/public/reservations/legal/{companyId}/{kind}) — หน้านี้แค่วาง -->
   <div class="sp">
-    <div class="tabs"><a id="tabPrivacy" href="#">นโยบายความเป็นส่วนตัว</a><a id="tabTerms" href="#">ข้อกำหนดการใช้บริการ</a></div>
+    <div class="tabs"><a id="tabPrivacy" href="#">นโยบายความเป็นส่วนตัว</a><a id="tabTerms" href="#">ข้อกำหนดการใช้บริการ</a><a id="tabRefund" href="#">นโยบายการยกเลิกและคืนเงิน</a></div>
     <h1 id="spTitle">กำลังโหลด...</h1>
     <div class="meta" id="spMeta"></div>
     <div id="spBody"></div>
@@ -38,10 +38,12 @@
       const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
       const params = new URLSearchParams(location.search);
       const c = params.get('c') || '';
-      const k = params.get('k') === 'terms' ? 'terms' : 'privacy';
+      // รอบ 219 ส่วน B: + นโยบายการยกเลิกและคืนเงิน (refund)
+      const k = ['terms', 'refund'].includes(params.get('k')) ? params.get('k') : 'privacy';
       const href = kind => `?c=${encodeURIComponent(c)}&k=${kind}`;
       document.getElementById('tabPrivacy').href = href('privacy');
       document.getElementById('tabTerms').href = href('terms');
+      document.getElementById('tabRefund').href = href('refund');
       const body = document.getElementById('spBody');
       try {
         const r = await fetch(`/api/public/reservations/legal/${encodeURIComponent(c)}/${k}`);
@@ -54,7 +56,7 @@
         // เซิร์ฟเวอร์แปลง + encode แล้ว (Helpers/LegalMarkdown)
         body.innerHTML = d.html || '';
         // ลิงก์สัมพัทธ์ในแม่แบบ ("privacy"/"terms") → แท็บของหน้านี้
-        body.querySelectorAll('a[href="privacy"],a[href="terms"]').forEach(a => { a.href = href(a.getAttribute('href')); });
+        body.querySelectorAll('a[href="privacy"],a[href="terms"],a[href="refund"]').forEach(a => { a.href = href(a.getAttribute('href')); });
       } catch (e) {
         document.getElementById('spTitle').textContent = 'นโยบายของร้าน';
         body.innerHTML = `<div class="err">${esc(e.message)}</div>`;

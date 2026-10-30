@@ -76,7 +76,8 @@ public class AccountingDbContext : DbContext
     /// <summary>วันหยุดราชการระดับแพลตฟอร์ม (รอบ 201 ทีม PL · B-9) — เลื่อนกำหนดยื่น/นับวันทำการ · ว่าง = เสาร์/อาทิตย์อย่างเดียว</summary>
     public DbSet<PlatformHoliday> PlatformHolidays => Set<PlatformHoliday>();
     public DbSet<LegalDocumentVersion> LegalDocumentVersions => Set<LegalDocumentVersion>();   // รอบ 214 — นโยบาย/ข้อกำหนดของแพลตฟอร์มที่แอดมินแก้ได้
-    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)
+    public DbSet<PlatformPolicyAcceptance> PlatformPolicyAcceptances => Set<PlatformPolicyAcceptance>();
+    public DbSet<PolicyAcceptance> PolicyAcceptances => Set<PolicyAcceptance>();   // รอบ 219 ส่วน B — หลักฐานติ๊กยอมรับข้อกำหนด+นโยบายคืนเงินก่อนชำระ (Helpers/PurchasePolicyAcceptance)   // รอบ 214 หลัง CI — การยอมรับนโยบายแพลตฟอร์มระดับผู้ใช้ (ไม่มี CompanyId)
     public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม (ไม่มี CompanyId)
     public DbSet<JobRunLog> JobRunLogs => Set<JobRunLog>();
     public DbSet<ErrorLog> ErrorLogs => Set<ErrorLog>();
@@ -1012,6 +1013,21 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.Reason).HasMaxLength(1000);
             e.Property(x => x.RequesterIp).HasMaxLength(45);
             e.Property(x => x.ResolutionNote).HasMaxLength(1000);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        // ===== PolicyAcceptance (รอบ 219 ส่วน B · คำตัดสินข้อ 179) — append-only · ชื่อ index ตรงกับ Helpers/PurchasePolicyAcceptanceMigration =====
+        modelBuilder.Entity<PolicyAcceptance>(e =>
+        {
+            e.HasIndex(x => new { x.CompanyId, x.Channel, x.SourceId }).HasDatabaseName("IX_PolicyAcceptances_Company_Channel_Source");
+            e.Property(x => x.Scope).HasMaxLength(20);
+            e.Property(x => x.Channel).HasMaxLength(50);
+            e.Property(x => x.PolicyVersion).HasMaxLength(100);
+            e.Property(x => x.VersionShown).HasMaxLength(100);
+            e.Property(x => x.Subject).HasMaxLength(256);
+            e.Property(x => x.IpAddress).HasMaxLength(45);
+            e.Property(x => x.UserAgent).HasMaxLength(500);
+            e.Property(x => x.EvidenceHash).HasMaxLength(100);
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 

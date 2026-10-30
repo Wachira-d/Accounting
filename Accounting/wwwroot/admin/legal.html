@@ -44,6 +44,8 @@
     <div class="kind-tabs">
       <button class="admin-btn admin-btn-outline" data-kind="privacy">🔒 นโยบายความเป็นส่วนตัว</button>
       <button class="admin-btn admin-btn-outline" data-kind="terms">📄 ข้อกำหนดการใช้งาน</button>
+      <!-- รอบ 219 ส่วน B (คำตัดสินข้อ 179): นโยบายการยกเลิกและคืนเงิน — เงื่อนไขการซื้อ (ไม่เปลี่ยนเวอร์ชันความยินยอม PDPA) · ต้องเผยแพร่ก่อนเปิดรับเงินจริง -->
+      <button class="admin-btn admin-btn-outline" data-kind="refund">↩️ นโยบายการยกเลิกและคืนเงิน</button>
     </div>
 
     <div class="admin-card">
@@ -122,7 +124,7 @@
         AdminLayout.init('legal');
         let k = null;
         try { k = new URLSearchParams(location.search).get('kind'); } catch (_) { /* ignore */ }
-        if (k === 'terms' || k === 'privacy') this.kind = k;
+        if (k === 'terms' || k === 'privacy' || k === 'refund') this.kind = k;
         document.querySelectorAll('.kind-tabs button').forEach(b => b.addEventListener('click', () => this.switchKind(b.dataset.kind)));
         document.getElementById('copyUrlBtn').addEventListener('click', () => this.copyUrl());
         document.getElementById('startFromCurrentBtn').addEventListener('click', () => this.startFromCurrent());

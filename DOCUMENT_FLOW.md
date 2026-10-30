@@ -1797,6 +1797,13 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ### 2.6b Payment gateway — รับเงิน · คืนเงิน · รอบโอน (PAYMENT_GATEWAY_DESIGN.md · รอบ 198 settlement เฟส 0)
 
+- **รอบ 219 ส่วน B — ช่องทางรับชำระของ NextAcc + ติ๊กยอมรับนโยบาย (คำตัดสินข้อ 179):** ผู้เช่าชำระค่าแพ็กเกจ/ส่วนเสริมออนไลน์ผ่าน `IPlatformPaymentService`
+  (`platform-pay/addons/{code}/intents` · `platform-pay/subscription-payments/{id}/intents` · intent ใต้บริษัทผู้ให้บริการ + `PayerCompanyId` · ยอดจากเซิร์ฟเวอร์) —
+  **มีปุ่มเฉพาะเมื่อ config ของแพลตฟอร์ม active + โหมดใช้งานจริง** (`Helpers/PlatformPayAvailability`) · นอกนั้นโอน + แนบสลิป · ตั้งค่าที่ `/admin/platform-gateway.html`
+  (`IPaymentProviderConfigService` ตัวเดียวกับหน้าร้าน · ด่าน `Helpers/PaymentLiveGate`) · ทดลองจ่าย ฿20 = `GatewaySelfTest` (handler ประทับเวลาอย่างเดียว · ไม่มี JE · รอบโอนไม่หยิบ) ·
+  ก่อนทุกการชำระ/ยืนยันการซื้อ (แพลตฟอร์ม + ออเดอร์/จอง/ที่พักของร้าน) ต้องติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (`Helpers/PurchasePolicyAcceptance` · แถว `PolicyAcceptances`) ·
+  ยกเลิกแพ็กเกจมีผลสิ้นรอบ (`Subscription.CancelAtPeriodEnd`) · Last verified `commit a426a0ed`
+
 - **รอบ 219 เฟส 0 — เงินค่าบริการ NextAcc (คำตัดสินข้อ 178):** ชนิดต้นทาง `SubscriptionPayment`/`AddOnPurchase` = รายได้ของแพลตฟอร์ม (`Helpers/PlatformRevenueSource`) ·
   `PaymentIntentService.StartAsync`/`RecordExternalSuccessAsync` ปฏิเสธเมื่อไม่อยู่ใต้บริษัทผู้ให้บริการหรือไม่ระบุ `PayerCompanyId` (ครอบ `pay/intents` · `public-pay` · ส่วนเสริม) ·
   `DispatchSucceededAsync` ไม่ส่งต่อ handler (ประวัติ ⚠️ + แจ้ง) เมื่อเกิดใต้บริษัทร้าน/ไม่รู้ผู้จ่าย/โหมดทดสอบ · ยืนยันมือ/ส่งต่อใหม่/คืนเงิน(และตรวจ/บันทึกผล) บนชนิดนี้ = SystemAdmin

@@ -56,7 +56,7 @@ public class LodgingSlipConfirmDbTests
     {
         var checkIn = DateTime.UtcNow.AddHours(7).Date.AddDays(7);
         return new LodgingCreateReservationRequest(checkIn, checkIn.AddDays(1), new List<LodgingQuoteRoomRequest> { new(roomTypeId, 2) },
-            "แขกทดสอบ", null, "0861489669");
+            "แขกทดสอบ", null, "0861489669", PolicyAccepted: true);   // รอบ 219 ส่วน B: แขกจองเองต้องติ๊กยอมรับนโยบาย
     }
 
     private static IFormFile PngSlip()

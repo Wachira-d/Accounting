@@ -29,10 +29,12 @@ public class PaymentSettingsController : ControllerBase
     private readonly ISecretProtector _secrets;
     private readonly IEnumerable<IPaymentProvider> _providers;
     private readonly ILogger<PaymentSettingsController> _logger;
+    private readonly IPaymentProviderConfigService _configs;
 
     public PaymentSettingsController(AccountingDbContext db, ISecretProtector secrets,
-        IEnumerable<IPaymentProvider> providers, ILogger<PaymentSettingsController> logger)
-    { _db = db; _secrets = secrets; _providers = providers; _logger = logger; }
+        IEnumerable<IPaymentProvider> providers, ILogger<PaymentSettingsController> logger,
+        IPaymentProviderConfigService configs)
+    { _db = db; _secrets = secrets; _providers = providers; _logger = logger; _configs = configs; }
 
     public sealed record ProviderOption(string Code, string DisplayName,
         List<string> Methods, bool SupportsRefund, bool SupportsWebhook,
@@ -59,7 +61,12 @@ public class PaymentSettingsController : ControllerBase
         // B-1: สิ่งที่ adapter ยังไม่ได้ยืนยันกับระบบทดสอบของผู้ให้บริการ (IPaymentProvider.PendingVerificationNotice)
         string? ProviderNotice = null,
         // ฝ่ายค้าน GWO-6: true = ผู้ดูไม่ใช่เจ้าของ ⇒ WebhookUrl ปิดบังรหัสลับ (เหลือ 4 ตัวท้าย) · หน้าเว็บซ่อนปุ่มคัดลอก
-        bool WebhookTokenMasked = false);
+        bool WebhookTokenMasked = false,
+        // รอบ 219 ส่วน B: ด่านเปิด live เข้มขึ้น (PaymentLiveGate — ตัวเดียวกับแพลตฟอร์ม) · ข้อที่ยังขาด (ไทย · หน้าเว็บแสดงอย่างเดียว)
+        DateTime? LiveKeyVerifiedAt = null,
+        DateTime? LastLiveWebhookAt = null,
+        DateTime? LastSelfTestPaidAt = null,
+        List<string>? LiveGateMissing = null);
 
     private static string? Hint(ISecretProtector p, string? protectedValue)
     {
@@ -88,10 +95,8 @@ public class PaymentSettingsController : ControllerBase
         c.TestPublicKey, c.LivePublicKey,
         Hint(_secrets, c.TestSecretKeyProtected), Hint(_secrets, c.LiveSecretKeyProtected),
         c.LastTestPassedAt, c.LastWebhookAt, c.LiveEnabledAt,
-        // ด่าน: เปิด live ได้ก็ต่อเมื่อทดสอบผ่านแล้ว **และ** มีคีย์ live ครบ
-        CanEnableLive: c.LastTestPassedAt != null
-                       && !string.IsNullOrWhiteSpace(c.LivePublicKey)
-                       && _secrets.IsUsable(c.LiveSecretKeyProtected),
+        // ด่าน: ตัวเดียวกับ SetMode (PaymentLiveGate ผ่าน IPaymentProviderConfigService) — ทดสอบผ่านหลังแก้คีย์ · คีย์ live ครบและตรวจผ่าน
+        CanEnableLive: PaymentLiveGate.CanEnableLive(_configs.GateFacts(c)),
         WebhookUrl: showToken ? WebhookUrl(c.ProviderCode, c.WebhookToken) : MaskedWebhookUrl(c.ProviderCode, c.WebhookToken),
         EnabledMethods: ParseMethods(c.EnabledMethodsJson),
         IsActive: c.IsActive,
@@ -105,7 +110,11 @@ public class PaymentSettingsController : ControllerBase
             ? null : WebhookUrl(c.ProviderCode, null),
         WebhookUrlWarning: GatewayWebhookRoute.LegacyUrlWarning(c.LastLegacyWebhookAt, c.LastLegacySkippedAt, WebhookFacts(c), DateTime.UtcNow),
         ProviderNotice: _providers.FirstOrDefault(p => p.ProviderCode == c.ProviderCode)?.PendingVerificationNotice,
-        WebhookTokenMasked: !showToken && !string.IsNullOrEmpty(c.WebhookToken));
+        WebhookTokenMasked: !showToken && !string.IsNullOrEmpty(c.WebhookToken),
+        LiveKeyVerifiedAt: c.LiveKeyVerifiedAt,
+        LastLiveWebhookAt: c.LastLiveWebhookAt,
+        LastSelfTestPaidAt: c.LastSelfTestPaidAt,
+        LiveGateMissing: PaymentLiveGate.Missing(_configs.GateFacts(c)));
     }
 
     private static List<string> ParseMethods(string? json)
@@ -183,21 +192,8 @@ public class PaymentSettingsController : ControllerBase
         // รอบ 201 ทีม GW (A-GW1): รหัสลับของ URL แจ้งเตือน — ออกครั้งเดียว (ไม่เปลี่ยนตอนบันทึกครั้งถัดไป: URL ที่ผู้ใช้ตั้งในแดชบอร์ดต้องไม่ตาย)
         cfg.WebhookToken ??= GatewayWebhookRoute.NewToken();
         if (req.DisplayName != null) cfg.DisplayName = req.DisplayName.Trim();
-        if (req.TestPublicKey != null) cfg.TestPublicKey = req.TestPublicKey.Trim();
-        if (req.LivePublicKey != null) cfg.LivePublicKey = req.LivePublicKey.Trim();
-
-        // เปลี่ยนคีย์ = การทดสอบครั้งก่อนใช้ไม่ได้แล้ว ต้องทดสอบใหม่ก่อนเปิด live
-        // (ไม่งั้นเปลี่ยนคีย์เป็นของผิดแล้วยัง "ผ่าน" อยู่จากผลเก่า)
-        if (!string.IsNullOrWhiteSpace(req.TestSecretKey))
-        {
-            cfg.TestSecretKeyProtected = _secrets.Protect(req.TestSecretKey.Trim());
-            cfg.LastTestPassedAt = null;
-        }
-        if (!string.IsNullOrWhiteSpace(req.LiveSecretKey))
-        {
-            cfg.LiveSecretKeyProtected = _secrets.Protect(req.LiveSecretKey.Trim());
-            cfg.LastTestPassedAt = null;
-        }
+        // รอบ 219 ส่วน B: คีย์ผ่านตัวเดียวกับหน้าแอดมินแพลตฟอร์ม — แก้คีย์ใด ⇒ ล้างผลทดสอบ · แก้คีย์ live ⇒ ล้างผลตรวจคีย์ live
+        _configs.ApplyKeys(cfg, req.TestPublicKey, req.TestSecretKey, req.LivePublicKey, req.LiveSecretKey);
 
         if (req.EnabledMethods != null)
             cfg.EnabledMethodsJson = System.Text.Json.JsonSerializer.Serialize(req.EnabledMethods);
@@ -245,21 +241,36 @@ public class PaymentSettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<ProviderHealth>>> Test(
         Guid companyId, string providerCode, CancellationToken ct)
     {
-        var cfg = await _db.PaymentProviderConfigs
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId
-                                   && c.ProviderCode == providerCode && !c.IsDeleted, ct);
+        var cfg = await _configs.FindAsync(companyId, providerCode, ct);
         if (cfg == null) return NotFound(new ApiResponse<ProviderHealth>(false, null, "ยังไม่ได้ตั้งค่าผู้ให้บริการนี้"));
+        // รอบ 219 ส่วน B: ทดสอบคีย์ทั้งสองชุด (คีย์ทดสอบ + webhook · คีย์ live อ่านอย่างเดียว) — ตัวเดียวกับแพลตฟอร์ม
+        var result = await _configs.TestAsync(cfg, ct);
+        return Ok(new ApiResponse<ProviderHealth>(true, result.Test with { Message = result.Message }, result.Message));
+    }
 
-        var provider = _providers.First(p => p.ProviderCode == providerCode);
-        var health = await provider.TestConnectionAsync(cfg, ct);
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): ทดลองจ่าย ฿20 โหมดทดสอบ — พิสูจน์ว่าคีย์ + webhook ใช้ได้จริงก่อนเปิดรับเงินจริง ·
+    /// ไม่ลงบัญชี ไม่เข้ารอบโอน · โหมดใช้งานจริง = ปฏิเสธ (ไม่มีเงินจริงผ่านปุ่มนี้) · หน้าเว็บ poll ที่ <c>pay/intents/{id}/status</c></summary>
+    public sealed record SelfTestRequest(string? ReturnUrl);
 
-        // "ผ่าน" ต้องครบทั้งคีย์และ webhook — คีย์ถูกอย่างเดียวยังเปิด live ไม่ได้
-        if (health.KeysValid && health.WebhookReceived)
+    [HttpPost("{providerCode}/self-test")]
+    [Accounting.Filters.RejectApiKey("ทดลองจ่าย")]
+    [Accounting.Filters.RequireOwner("ทดลองจ่าย", "ทดลองจ่ายในโหมดทดสอบเพื่อพิสูจน์การแจ้งเตือนก่อนเปิดรับเงินจริง")]
+    public async Task<ActionResult<ApiResponse<object>>> SelfTest(
+        Guid companyId, string providerCode, [FromBody] SelfTestRequest? req, CancellationToken ct)
+    {
+        var cfg = await _configs.FindAsync(companyId, providerCode, ct);
+        if (cfg == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้ตั้งค่าผู้ให้บริการนี้"));
+        try
         {
-            cfg.LastTestPassedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync(ct);
+            var i = await _configs.StartSelfTestAsync(cfg, req?.ReturnUrl, ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
+                qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl,
+                failureMessage = i.FailureMessage, isTestMode = true,
+            }));
         }
-        return Ok(new ApiResponse<ProviderHealth>(true, health, health.Message));
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
     /// <summary>ออกรหัสลับใน URL แจ้งเตือนใหม่ (ฝ่ายค้าน GWO-6) — ใช้เมื่อ URL รั่ว · URL ที่มีรหัสเก่า<b>ใช้ไม่ได้ทันที</b> ⇒ ต้องตั้ง URL ใหม่ในแดชบอร์ด
@@ -320,48 +331,12 @@ public class PaymentSettingsController : ControllerBase
     public async Task<ActionResult<ApiResponse<ConfigResponse>>> SetMode(
         Guid companyId, string providerCode, [FromBody] SetModeRequest req, CancellationToken ct)
     {
-        var cfg = await _db.PaymentProviderConfigs
-            .FirstOrDefaultAsync(c => c.CompanyId == companyId
-                                   && c.ProviderCode == providerCode && !c.IsDeleted, ct);
+        var cfg = await _configs.FindAsync(companyId, providerCode, ct);
         if (cfg == null) return NotFound(new ApiResponse<ConfigResponse>(false, null, "ยังไม่ได้ตั้งค่าผู้ให้บริการนี้"));
-
-        if (req.Mode == PaymentProviderMode.Live)
-        {
-            if (cfg.LastTestPassedAt == null)
-                return BadRequest(new ApiResponse<ConfigResponse>(false, null,
-                    "ต้องกด \"ทดสอบเชื่อมต่อ\" ให้ผ่านก่อน — รวมถึงต้องเคยได้รับการแจ้งเตือน "
-                    + "(webhook) จากผู้ให้บริการจริง มิฉะนั้นลูกค้าจ่ายเงินแล้วออเดอร์จะไม่อัปเดต"));
-            if (string.IsNullOrWhiteSpace(cfg.LivePublicKey)
-                || !_secrets.IsUsable(cfg.LiveSecretKeyProtected))
-                return BadRequest(new ApiResponse<ConfigResponse>(false, null,
-                    "ยังไม่ได้กรอกคีย์สำหรับโหมดใช้งานจริงให้ครบทั้งคู่"));
-
-            cfg.LiveEnabledAt = DateTime.UtcNow;
-            // การเปลี่ยนแปลงที่กระทบ "เงินจริง" ห้ามเงียบ — ต้องมีร่องรอยที่ผู้สอบบัญชีเห็น
-            // W2-C3: เข้า hash chain (เดิม AuditLogs.Add ตรง ⇒ RowHash=null อยู่นอก chain)
-            _db.AddChainedAuditLog(new AuditLog
-            {
-                CompanyId = companyId,
-                EntityType = nameof(PaymentProviderConfig),
-                EntityId = cfg.Id.ToString(),
-                Action = AuditAction.Update,
-                UserEmail = User?.Identity?.Name,
-                NewValues = System.Text.Json.JsonSerializer.Serialize(new
-                {
-                    action = "enable-live-payments",
-                    provider = providerCode,
-                    lastTestPassedAt = cfg.LastTestPassedAt,
-                }),
-                IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
-                Timestamp = DateTime.UtcNow,
-            });
-            _logger.LogWarning("บริษัท {Company} เปิดใช้งานรับชำระเงินจริงผ่าน {Provider}",
-                companyId, providerCode);
-        }
-
-        cfg.Mode = req.Mode;
-        cfg.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync(ct);
+        // รอบ 219 ส่วน B: ด่านเดียวกับแพลตฟอร์ม (PaymentLiveGate ผ่าน IPaymentProviderConfigService) — ไม่ผ่าน ⇒ BusinessRuleException (400 ข้อความไทย) ·
+        // ถอยกลับโหมดทดสอบทำได้เสมอ · audit hash chain ทั้งสองทาง
+        await _configs.SetModeAsync(cfg, req.Mode, platform: null,
+            new PaymentConfigActor(User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString()), ct);
         return Ok(new ApiResponse<ConfigResponse>(true, Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true),
             req.Mode == PaymentProviderMode.Live
                 ? "เปิดใช้งานรับชำระเงินจริงแล้ว"

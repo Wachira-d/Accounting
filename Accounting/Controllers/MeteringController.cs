@@ -202,41 +202,53 @@ public class MeteringController : ControllerBase
         return Ok(new ApiResponse<object>(true, st));
     }
 
-    /// <summary>สร้างรายการชำระเงินออนไลน์ของส่วนเสริม — ยอดมาจากเซิร์ฟเวอร์เท่านั้น</summary>
-    public record StartAddOnPaymentRequest(Models.Enums.PaymentMethodKind Method, string? ReturnUrl = null);
+    /// <summary>สร้างรายการชำระเงินออนไลน์ของส่วนเสริม — ยอดมาจากเซิร์ฟเวอร์เท่านั้น ·
+    /// รอบ 219 ส่วน B: + ช่องติ๊กยอมรับข้อกำหนด/นโยบายคืนเงิน (<c>PurchasePolicyAcceptance</c>)</summary>
+    public record StartAddOnPaymentRequest(Models.Enums.PaymentMethodKind Method, string? ReturnUrl = null,
+        bool PolicyAccepted = false, string? PolicyVersionShown = null, string? CardToken = null);
 
-    /// <summary>รอบ 219 เฟส 0 (G-1 · คำตัดสินข้อ 178): <b>ปิดชั่วคราว</b> — เดิมสร้าง intent ใต้บริษัทของร้าน ⇒ ใช้ gateway ของร้าน (เงินค่าส่วนเสริม
-    /// เข้ากระเป๋าร้าน แล้วระบบเปิดสิทธิ์ให้) · ช่องชำระออนไลน์ที่ถูกต้อง (intent ใต้บริษัทผู้ให้บริการ + <c>PayerCompanyId</c> ผ่าน
-    /// <c>IPlatformPaymentService</c>) เป็นงานเฟส 1 · ระหว่างนี้ตอบ 409 พร้อมวิธีโอนของ NextAcc (ทางไปต่อ = แนบสลิป)</summary>
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179 · ต่อจากเฟส 0 ข้อ 178): ชำระออนไลน์ผ่าน<b>ช่องทางของแพลตฟอร์ม</b> (<c>IPlatformPaymentService</c> — intent
+    /// ใต้บริษัทผู้ให้บริการ + บริษัทผู้จ่าย) เฉพาะเมื่อแพลตฟอร์มเปิดรับเงินจริงแล้ว · ยังไม่เปิด ⇒ 409 + วิธีโอนของ NextAcc (ทางไปต่อ = แนบสลิป) ·
+    /// ไม่ใช้ gateway ของร้านเด็ดขาด · เส้นหลักของหน้าเว็บคือ <c>platform-pay/addons/{code}/intents</c> (PayWidget) — ตัวนี้คงไว้ให้ผู้เรียกเดิม</summary>
     [HttpPost("features/{featureCode}/payment/intent")]
     public async Task<ActionResult<ApiResponse<object>>> StartAddOnPayment(
-        Guid companyId, string featureCode, [FromBody] StartAddOnPaymentRequest req, CancellationToken ct)
+        Guid companyId, string featureCode, [FromBody] StartAddOnPaymentRequest req,
+        [FromServices] Accounting.Services.Payments.IPlatformPaymentService platform,
+        [FromServices] ILegalDocumentService legal, CancellationToken ct)
     {
         var block = await RequireBillingAsync(companyId, "ชำระค่าส่วนเสริม");
         if (block != null) return block;
-        var pay = await PlatformPayInfoAsync(ct);
-        return StatusCode(409, new ApiResponse<object>(false, pay,
-            "ยังไม่เปิดชำระค่าบริการ NextAcc ออนไลน์ — กรุณาโอนเงินตามรายละเอียดแล้วแนบสลิป ผู้ดูแลระบบจะตรวจสอบและยืนยันให้"));
-    }
-
-    /// <summary>รอบ 219 เฟส 0 (G-1/G-13): วิธีชำระค่าบริการ NextAcc ที่หน้า "ส่วนเสริม"/"แพ็กเกจ" แสดง — <b>ไม่ถาม gateway ของร้าน</b>
-    /// (เดิมหน้าเว็บถาม <c>public-pay/methods</c> ของร้าน ⇒ ปุ่ม "ชำระออนไลน์" ส่งเงินเข้ากระเป๋าร้าน) · <c>online</c> = false จนกว่าเฟส 1</summary>
-    [HttpGet("platform-pay")]
-    public async Task<ActionResult<ApiResponse<object>>> PlatformPay(Guid companyId, CancellationToken ct)
-        => Ok(new ApiResponse<object>(true, await PlatformPayInfoAsync(ct)));
-
-    private async Task<object> PlatformPayInfoAsync(CancellationToken ct)
-    {
-        var text = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt)
-            .Select(x => x.PlatformBankTransferInstructions).FirstOrDefaultAsync(ct);
-        return new
+        var status = await platform.StatusAsync(ct);
+        if (!status.Online)
+            return StatusCode(409, new ApiResponse<object>(false, await PlatformPayInfo.BuildAsync(_db, platform, legal, ct),
+                status.OfflineReason ?? "ยังไม่เปิดชำระค่าบริการ NextAcc ออนไลน์ — กรุณาโอนเงินตามรายละเอียดแล้วแนบสลิป ผู้ดูแลระบบจะตรวจสอบและยืนยันให้"));
+        var sourceId = await platform.AddOnSourceIdAsync(companyId, featureCode, ct);
+        if (sourceId == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้เปิดใช้ส่วนเสริมนี้"));
+        try
         {
-            online = false,
-            bankTransferInstructions = string.IsNullOrWhiteSpace(text) ? null : text.Trim(),
-            fallbackNote = string.IsNullOrWhiteSpace(text)
-                ? "ยังไม่ได้ประกาศเลขบัญชีรับโอน — กรุณาติดต่อผู้ดูแลระบบ NextAcc ก่อนโอนเงิน" : null,
-        };
+            await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+                PurchasePolicyAcceptance.ChannelPlatformAddOn, sourceId, req.PolicyAccepted, req.PolicyVersionShown,
+                HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
+            var intent = await platform.StartAddOnAsync(companyId, featureCode, req.Method, req.ReturnUrl, req.CardToken, ct);
+            await _db.SaveChangesAsync(ct);
+            return Ok(new ApiResponse<object>(true, new
+            {
+                id = intent.Id, status = intent.Status.ToString(), amount = intent.Amount,
+                currency = intent.Currency, qrPayload = intent.QrPayload,
+                qrExpiresAt = intent.QrExpiresAt, authorizeUrl = intent.AuthorizeUrl,
+                failureMessage = intent.FailureMessage, isTestMode = false,
+            }));
+        }
+        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
+
+    /// <summary>รอบ 219 เฟส 0 (G-1/G-13) + ส่วน B: วิธีชำระค่าบริการ NextAcc ที่หน้า "ส่วนเสริม"/"แพ็กเกจ" แสดง — <b>ไม่ถาม gateway ของร้าน</b> ·
+    /// <c>online</c> = ช่องทางของแพลตฟอร์มเปิดรับเงินจริงแล้ว · <c>policy</c> = ข้อความ/ฉบับ/ลิงก์ของช่องติ๊กยอมรับนโยบาย (ตัวเดียว <c>PlatformPayInfo</c>)</summary>
+    [HttpGet("platform-pay")]
+    public async Task<ActionResult<ApiResponse<object>>> PlatformPay(Guid companyId,
+        [FromServices] Accounting.Services.Payments.IPlatformPaymentService platform,
+        [FromServices] ILegalDocumentService legal, CancellationToken ct)
+        => Ok(new ApiResponse<object>(true, await PlatformPayInfo.BuildAsync(_db, platform, legal, ct)));
 
     /// <summary>แนบสลิปค่าส่วนเสริม — เส้นสำรองเมื่อยังไม่เปิด gateway</summary>
     [HttpPost("features/{featureCode}/payment/slip")]
@@ -247,10 +259,17 @@ public class MeteringController : ControllerBase
         [FromServices] Accounting.Services.Payments.IAddOnPurchaseService addons,
         [FromServices] IImageProcessingService images,
         [FromServices] IWebHostEnvironment env,
-        CancellationToken ct)
+        [FromServices] Accounting.Services.Payments.IPlatformPaymentService platform,
+        [FromServices] ILegalDocumentService legal,
+        CancellationToken ct,
+        [FromForm] bool policyAccepted = false, [FromForm] string? policyVersionShown = null)
     {
         var block = await RequireBillingAsync(companyId, "ส่งหลักฐานการชำระเงิน");
         if (block != null) return block;
+        // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ส่งสลิป = ชำระค่าบริการ ⇒ ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงินก่อน (ยอมรับไว้แล้วสำหรับรายการนี้ = ผ่าน)
+        await PurchasePolicyAcceptance.EnforcePlatformAsync(_db, legal, companyId, JwtHelper.GetUserIdFromClaims(User),
+            PurchasePolicyAcceptance.ChannelPlatformAddOn, await platform.AddOnSourceIdAsync(companyId, featureCode, ct),
+            policyAccepted, policyVersionShown, HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
 
         if (file == null || file.Length == 0)
             return BadRequest(new ApiResponse<object>(false, null, "กรุณาเลือกไฟล์สลิป"));

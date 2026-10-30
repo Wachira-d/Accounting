@@ -296,6 +296,36 @@ public class CmsSiteService : ICmsSiteService
             if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"ข้อกำหนดการใช้บริการยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
             if (md != site.TermsOfServiceMarkdown) { site.TermsOfServiceMarkdown = md; site.TermsOfServiceUpdatedAt = DateTime.UtcNow; }
         }
+        // รอบ 219 ส่วน B (คำตัดสินข้อ 179): นโยบายการยกเลิกและคืนเงินของร้าน — ด่าน/ความหมายเดียวกับนโยบาย/ข้อกำหนดข้างบน
+        if (request.RefundPolicyUrl != null)
+        {
+            if (CmsLegalPages.ValidateExternalUrl(request.RefundPolicyUrl) is string rErr) throw new BusinessRuleException(rErr, "PDPA-23-SHOP-POLICY");
+            site.RefundPolicyUrl = Blank(request.RefundPolicyUrl);
+        }
+        if (request.RefundPolicyMarkdown != null)
+        {
+            var md = Blank(request.RefundPolicyMarkdown);
+            if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"นโยบายการยกเลิกและคืนเงินยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
+            if (md != site.RefundPolicyMarkdown) { site.RefundPolicyMarkdown = md; site.RefundPolicyUpdatedAt = DateTime.UtcNow; }
+        }
+        if (request.RefundReturnWindowDays.HasValue)
+        {
+            var d = request.RefundReturnWindowDays.Value;
+            if (d != 0 && (d < 1 || d > 365)) throw new BusinessRuleException("จำนวนวันแจ้งคืนสินค้าต้องอยู่ระหว่าง 1–365 วัน (0 = ค่าเริ่มต้น 7 วัน)", PurchasePolicyAcceptance.RuleCode);
+            site.RefundReturnWindowDays = d == 0 ? null : d;
+        }
+        if (request.RefundProcessingDays.HasValue)
+        {
+            var d = request.RefundProcessingDays.Value;
+            if (d != 0 && (d < 1 || d > 365)) throw new BusinessRuleException("จำนวนวันดำเนินการคืนเงินต้องอยู่ระหว่าง 1–365 วัน (0 = ค่าเริ่มต้น 14 วัน)", PurchasePolicyAcceptance.RuleCode);
+            site.RefundProcessingDays = d == 0 ? null : d;
+        }
+        if (request.PolicyAcceptanceText != null)
+        {
+            var t = Blank(request.PolicyAcceptanceText);
+            if (t is { Length: > 500 }) throw new BusinessRuleException("ข้อความช่องยอมรับนโยบายยาวเกิน 500 ตัวอักษร", PurchasePolicyAcceptance.RuleCode);
+            site.PolicyAcceptanceText = t;
+        }
         // รอบ 209 P6 (ฑ): ยินยอม PDPA บนฟอร์มหน้าเว็บ — "" = ข้อความมาตรฐาน · null = ไม่เปลี่ยน (echo ใน SiteResponse · ผู้อ่าน: CmsDataConsent)
         if (request.RequireDataConsent.HasValue) site.RequireDataConsent = request.RequireDataConsent.Value;
         if (request.DataConsentText != null) site.DataConsentText = Blank(request.DataConsentText);
@@ -401,6 +431,12 @@ public class CmsSiteService : ICmsSiteService
                 TermsOfServiceMarkdown = s.TermsOfServiceMarkdown,
                 PrivacyPolicyUpdatedAt = s.PrivacyPolicyUpdatedAt,
                 TermsOfServiceUpdatedAt = s.TermsOfServiceUpdatedAt,
+                RefundPolicyUrl = s.RefundPolicyUrl,
+                RefundPolicyMarkdown = s.RefundPolicyMarkdown,
+                RefundPolicyUpdatedAt = s.RefundPolicyUpdatedAt,
+                RefundReturnWindowDays = s.RefundReturnWindowDays,
+                RefundProcessingDays = s.RefundProcessingDays,
+                PolicyAcceptanceText = s.PolicyAcceptanceText,
                 RequireDataConsent = s.RequireDataConsent,
                 DataConsentText = s.DataConsentText,
                 CurrentStorageUsed = s.CurrentStorageUsed,
@@ -420,6 +456,7 @@ public class CmsSiteService : ICmsSiteService
             // รอบ 214: โหมดนโยบาย/ข้อกำหนด — ตัวตัดสินเดียวกับ storefront (หน้า cms-edit ไม่ตัดสินเอง)
             site.PrivacyLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindPrivacy, site.PrivacyPolicyUrl, site.PrivacyPolicyMarkdown).Mode;
             site.TermsLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindTerms, site.TermsOfServiceUrl, site.TermsOfServiceMarkdown).Mode;
+            site.RefundLegalMode = CmsLegalPages.Resolve(LegalDocumentDefaults.KindRefund, site.RefundPolicyUrl, site.RefundPolicyMarkdown).Mode;
             // ฝ่ายค้านรอบ 214 S4: ตัวตนร้านที่แม่แบบต้องใช้แต่ยังว่าง (ค่าระดับเว็บชนะบริษัท — ตัวตั้งเดียวกับโทเคน) + ลิงก์เดิมที่ใช้ไม่ได้ (ไม่ลบเงียบ)
             var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
                 .Select(c => new { c.Name, c.Address, c.Phone, c.Email }).FirstOrDefaultAsync();
@@ -432,8 +469,14 @@ public class CmsSiteService : ICmsSiteService
                      {
                          CmsLegalPages.StoredLinkWarning(LegalDocumentDefaults.Title(LegalDocumentDefaults.KindPrivacy), site.PrivacyPolicyUrl),
                          CmsLegalPages.StoredLinkWarning(LegalDocumentDefaults.Title(LegalDocumentDefaults.KindTerms), site.TermsOfServiceUrl),
+                         CmsLegalPages.StoredLinkWarning(LegalDocumentDefaults.Title(LegalDocumentDefaults.KindRefund), site.RefundPolicyUrl),
                      })
                 if (w != null) site.LegalWarnings.Add(w);
+            // รอบ 219 ส่วน B: ข้อความนโยบายคืนเงินที่ร้านเขียนเองขัดกับค่าตั้งมัดจำ (สองความจริง) — เตือน ไม่บล็อก
+            var forfeit = await _db.SiteCommerceConfigs.AsNoTracking()
+                .Where(c => c.SiteId == site.Id && c.CompanyId == companyId)
+                .Select(c => c.DepositForfeitOnCancelPercent).FirstOrDefaultAsync();
+            site.LegalWarnings.AddRange(CmsLegalPages.RefundContradictions(site.RefundPolicyMarkdown, forfeit));
         }
         return site;
     }

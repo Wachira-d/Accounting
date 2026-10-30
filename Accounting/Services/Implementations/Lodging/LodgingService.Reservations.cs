@@ -472,6 +472,11 @@ public partial class LodgingService
                 throw new BusinessRuleException("ที่พักนี้ต้องการเลขบัตรประชาชน/พาสปอร์ตของผู้เข้าพัก");
             if (!isStaff && !string.IsNullOrWhiteSpace(ctx.Property.HouseRules) && !request.AcceptHouseRules)
                 throw new BusinessRuleException("กรุณายอมรับกติกาที่พักก่อนจอง");
+            // รอบ 219 ส่วน B (คำตัดสินข้อ 179): แขกจองเองทางเว็บต้องติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงินของร้าน (ด่านเดียว
+            // PurchasePolicyAcceptance) · นโยบายยกเลิกของห้อง/แพ็กเกจยังตรึงลง CancellationPolicySnapshotJson ตามเดิม · พนักงาน = ไม่บังคับ
+            var policyRow = isStaff ? null : await PurchasePolicyAcceptance.EnforceShopAsync(_db, companyId, siteId,
+                PurchasePolicyAcceptance.ChannelLodging, request.PolicyAccepted, request.PolicyVersionShown, exempt: false,
+                request.GuestEmail, request.GuestPhone, sourceId: null);
 
             var quote = BuildQuote(ctx, checkIn, checkOut, request.Rooms, request.Extras, request.RatePlanId, isStaff, null,
                 infants: Math.Max(0, request.Infants));
@@ -569,6 +574,7 @@ public partial class LodgingService
             created.ReservationNumber = Accounting.Helpers.SequenceNumber.Format(
                 prefix, Accounting.Helpers.SequenceNumber.NextSequence(seqSuffixes));
             _db.LodgingReservations.Add(created);
+            if (policyRow != null) policyRow.SourceId = created.Id;
             await _db.SaveChangesAsync();
             return created;
         });
