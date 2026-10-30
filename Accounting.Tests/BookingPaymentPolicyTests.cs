@@ -331,4 +331,62 @@ public class BookingPaymentPolicyTests
         Assert.DoesNotContain("5406", payload);
         Assert.Equal(Crc16Ccitt(payload[..^4]).ToString("X4"), payload[^4..]);
     }
+
+    // ─────────────── สลิป (BookingSlipRule) ───────────────
+
+    [Fact]
+    public void แนบสลิป_ด่านครบ_และทิศตรงข้ามผ่าน()
+    {
+        Assert.Null(BookingSlipRule.UploadProblem(BookingStatus.Pending, 150m, true, false, 1000));
+        Assert.NotNull(BookingSlipRule.UploadProblem(BookingStatus.Pending, 150m, true, false, 0));                         // ไม่มีไฟล์
+        Assert.NotNull(BookingSlipRule.UploadProblem(BookingStatus.Pending, 150m, true, false, BookingSlipRule.MaxBytes + 1)); // ใหญ่เกิน
+        Assert.Contains("ยกเลิก", BookingSlipRule.UploadProblem(BookingStatus.Cancelled, 150m, true, false, 1000));
+        Assert.Contains("ชำระครบ", BookingSlipRule.UploadProblem(BookingStatus.Confirmed, 0m, true, false, 1000));
+        Assert.Contains("ไม่รับชำระด้วยการโอน", BookingSlipRule.UploadProblem(BookingStatus.Pending, 150m, false, false, 1000));
+        Assert.Contains("รอร้านตรวจ", BookingSlipRule.UploadProblem(BookingStatus.Pending, 150m, true, true, 1000));
+    }
+
+    [Fact]
+    public void ปฏิเสธสลิป_ต้องมีเหตุผล_ตัดความยาว()
+    {
+        Assert.NotNull(BookingSlipRule.NormalizeRejectReason("  ").Error);
+        Assert.NotNull(BookingSlipRule.NormalizeRejectReason(null).Error);
+        Assert.Equal("ยอดไม่ตรง", BookingSlipRule.NormalizeRejectReason(" ยอดไม่ตรง ").Reason);
+        Assert.Equal(BookingSlipRule.MaxReasonLength, BookingSlipRule.NormalizeRejectReason(new string('ก', 900)).Reason!.Length);
+    }
+
+    [Fact]
+    public void เงินที่บันทึกปิดสถานะรอตรวจ_เฉพาะเงินของสลิปนี้หรือรับครบ()
+    {
+        var intent = Guid.NewGuid();
+        Assert.True(BookingSlipRule.SettlesPendingSlip(intent, GatewayPaymentRecord.Reference(intent), 150m, 0m));
+        Assert.False(BookingSlipRule.SettlesPendingSlip(intent, GatewayPaymentRecord.Reference(Guid.NewGuid()), 150m, 50m));   // เงินก้อนอื่น บางส่วน
+        Assert.True(BookingSlipRule.SettlesPendingSlip(intent, "เงินสด", 150m, 150m));                                       // รับครบแล้ว
+        Assert.False(BookingSlipRule.SettlesPendingSlip(null, null, 150m, 0m));
+    }
+
+    [Fact]
+    public void ตรวจสลิปได้เฉพาะเมื่อมีสลิปรอตรวจ()
+    {
+        Assert.Null(BookingSlipRule.DecideProblem(Guid.NewGuid(), DateTime.UtcNow));
+        Assert.NotNull(BookingSlipRule.DecideProblem(null, DateTime.UtcNow));
+        Assert.NotNull(BookingSlipRule.DecideProblem(Guid.NewGuid(), null));
+    }
+
+    [Fact]
+    public void ปฏิเสธแล้วต่อเวลา24ชม_ไม่เกินเวลานัด_ใบที่ไม่ถือไม่ต่อ()
+    {
+        var now = new DateTime(2026, 10, 30, 3, 0, 0, DateTimeKind.Utc);
+        Assert.Equal(now.AddHours(24), BookingSlipRule.HoldAfterReject(now.AddMinutes(10), now, now.AddDays(3)));
+        Assert.Equal(now.AddHours(5), BookingSlipRule.HoldAfterReject(now.AddMinutes(10), now, now.AddHours(5)));
+        Assert.Null(BookingSlipRule.HoldAfterReject(null, now, now.AddDays(3)));
+    }
+
+    [Fact]
+    public void สลิปรอตรวจ_ปิดช่องจ่ายออนไลน์พร้อมเหตุผล_ไม่มีสลิป_จ่ายได้()
+    {
+        Assert.Equal(CmsBookingOnlinePayment.SlipPendingNote,
+            CmsBookingOnlinePayment.BlockedNote(true, BookingType.PrePayment, BookingStatus.Pending, 150m, slipPending: true));
+        Assert.Null(CmsBookingOnlinePayment.BlockedNote(true, BookingType.PrePayment, BookingStatus.Pending, 150m, slipPending: false));
+    }
 }
