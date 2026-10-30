@@ -80,6 +80,8 @@ const AdminLayout = {
     { section: 'การเงิน' },
     { id: 'revenue', label: 'รายรับ/ธุรกิจ', icon: '📈', href: '/admin/revenue.html' },
     { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },
+    // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บ · ใบค้างชำระทุกบริษัท · ทวงหนี้/ระงับ · ลิงก์ชำระ
+    { id: 'platform-billing', label: 'เรียกเก็บค่าบริการ', icon: '🧾', href: '/admin/platform-billing.html' },
     { section: 'เชื่อมต่อระบบ' },
     { id: 'integrations', label: 'Integration', icon: '🔗', href: '/admin/integrations.html' },
     { section: 'ตั้งค่าระบบบัญชี' },

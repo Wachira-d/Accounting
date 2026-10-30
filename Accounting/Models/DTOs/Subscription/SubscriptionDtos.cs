@@ -340,7 +340,9 @@ public record SubscriptionPaymentResponse(
     decimal? SlipOcrAmount = null,
     bool? SlipOcrAmountMatches = null,
     string? SlipOcrReference = null,
-    DateTime? SlipOcrDate = null);
+    DateTime? SlipOcrDate = null,
+    // รอบ 219 เฟส 2: ใบแจ้งหนี้ที่รายการนี้ชำระ (null = รายการแบบเดิม) — หน้าตรวจสลิปของแอดมิน/ศูนย์บิลแยก "ชำระใบ" ออกจาก "ขอแพ็กเกจ"
+    Guid? PlatformInvoiceDocumentId = null);
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,

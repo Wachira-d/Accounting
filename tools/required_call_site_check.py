@@ -11478,6 +11478,48 @@ RULES += [
 ]
 
 
+# ── รอบ 219 เฟส 2 (PLATFORM_BILLING_AUDIT §5 · คำตัดสินข้อ 180): เก็บค่าบริการ NextAcc ได้จริง ──
+_R219P2_WHY = "รอบ 219 เฟส 2 (คำตัดสินข้อ 180): "
+SUB_SVC = "Services/Implementations/SubscriptionService.cs"
+RULES += [
+    dict(file=SUB_SVC, method="SubmitInvoicePaymentAsync",
+         must=["PlatformPurchaseAcceptanceWriter.EnsureAccepted(", "PlatformInvoiceQueries.ForBuyer(", "PlatformInvoiceRules.IsOpen(",
+               "PlatformPurchaseAcceptanceWriter.Add(", "inv.BalanceDue", "PolicyAcceptanceId"],
+         before=[("PlatformPurchaseAcceptanceWriter.EnsureAccepted(", "_db.SubscriptionPayments.Add("),
+                 ("PlatformInvoiceQueries.ForBuyer(", "_db.SubscriptionPayments.Add(")],
+         forbid=["request.Amount"],
+         why=_R219P2_WHY + "แจ้งชำระใบ: ใบของบริษัทนี้เท่านั้น · ยอดจากใบ · ติ๊กยอมรับเงื่อนไขก่อนเกิดรายการ"),
+    dict(file=SUB_SVC, method="ReviewPaymentAsync",
+         must=["PlatformInvoiceRules.IsInvoiceOnlyPayment(", "SettlePlatformInvoiceAsync(", "payment.PlatformInvoiceDocumentId"],
+         before=[("PlatformInvoiceRules.IsInvoiceOnlyPayment(", "sub.EndDate = newEndDate")],
+         why=_R219P2_WHY + "ใบค่าใช้งานไม่ต่ออายุ · รายการผูกใบตัดชำระใบเดิม (ไม่ออกขายสดซ้ำ G-10)"),
+    dict(file="Services/Implementations/SaasBillingDocumentService.cs", method="SettlePlatformInvoiceAsync",
+         must=["SettleInvoiceAsync(", "SettlementReference("],
+         forbid=["IssuePaidReceiptAsync("],
+         why=_R219P2_WHY + "G-10 รายการผูกใบห้ามตกไปออกใบขายสด"),
+    dict(file="Services/Implementations/PlatformBillingDocumentIssuer.cs", method="SettleInvoiceAsync",
+         must=["Documents.CreatePaymentAsync(", "p.Reference == reference", "d.CompanyId == tenantId.Value"],
+         before=[("p.Reference == reference", "Documents.CreatePaymentAsync(")],
+         why=_R219P2_WHY + "ตัดชำระใบเดิมใน tenant ผู้ให้บริการ · กันบันทึกซ้ำด้วยอ้างอิงคงที่"),
+    dict(file="Controllers/BillingCenterController.cs", method="PayBySlip",
+         before=[("RequireBillingAsync(", "_subs.SubmitInvoicePaymentAsync("),
+                 ("SubscriptionSlipUpload.Reject(", "_subs.SubmitInvoicePaymentAsync(")],
+         why=_R219P2_WHY + "ศูนย์บิล: สิทธิ์ Billing.Manage + ตรวจไฟล์ก่อนเกิดรายการ"),
+    dict(file="Controllers/BillingCenterController.cs", method="PayOnline",
+         must=["PlatformInvoiceQueries.ForBuyer("],
+         before=[("RequireBillingAsync(", "online.StartInvoicePaymentAsync("),
+                 ("PlatformPurchaseAcceptanceWriter.EnsureAccepted(", "online.StartInvoicePaymentAsync(")],
+         why=_R219P2_WHY + "ชำระออนไลน์ผ่านช่องเสียบเดียว · ใบของบริษัทนี้ · ติ๊กยอมรับก่อน"),
+    dict(file="Controllers/BillingCenterController.cs", method="InvoicePdf",
+         must=["PlatformInvoiceQueries.ForBuyer("],
+         before=[("RequireBillingAsync(", "pdf.GenerateDocumentPdfAsync(")],
+         why=_R219P2_WHY + "ดาวน์โหลดใบได้เฉพาะใบของบริษัทตัวเอง"),
+    dict(file=SUB_SVC, method="ProcessSubscriptionNotificationsAsync",
+         must=["PlatformBillingSettingsService.LoadPolicyAsync(", "renewalLeadDays"],
+         forbid=["RenewalInvoiceLeadDays = 15"],
+         why=_R219P2_WHY + "ออกใบต่ออายุล่วงหน้าตามค่าตั้งของแอดมิน (ไม่ใช่ค่าคงที่)"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง

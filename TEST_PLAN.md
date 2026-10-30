@@ -1,3 +1,16 @@
+## PB219P2 — เก็บค่าบริการ NextAcc ได้จริง เฟส 2 (รอบ 219 · คำตัดสินข้อ 180 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` §5)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| P2-01 | ค่าตั้งการเรียกเก็บ: ไม่มีแถว · ค่าหลุดช่วงในฐาน · ค่าผิดจากแอดมิน · รายการวันซ้ำ/สลับ | ค่าตั้งต้น = พฤติกรรมเดิม · บีบเข้าช่วง · ปฏิเสธข้อความไทย · จัดรูป | `PlatformBillingPhase2Tests`.Settings_* |
+| P2-02 | แอดมินบันทึกค่าตั้ง / ค่าผิด | อ่านกลับได้ · แถวเดียว · audit chain `PLATFORM-BILLING-SETTINGS` / ไม่เขียนทับ | Db `PlatformBillingPhase2DbTests`.Settings_update_round_trips_writes_audit_chain_and_rejects_invalid |
+| P2-03 | เงื่อนไขการซื้อ: ไม่ติ๊ก · ฉบับเก่า/ไม่ระบุ · ติ๊กฉบับปัจจุบัน · ข้อความตรงคำตัดสินเจ้าของ | 400 / 409 / ผ่าน · ไม่คืนเงิน · ยกเลิกใช้ถึงสิ้นรอบ · ไม่ prorate | `Purchase_terms_require_tick_and_current_version` · `Purchase_terms_text_matches_owner_decisions` · `Acceptance_evidence_hash_round_trips_with_canonical_function` |
+| P2-04 | ใบแจ้งหนี้: ชนิดจากอ้างอิง · ค้าง/ไม่ค้าง · เกินกำหนดนับวันไทย · ป้าย | ตัวตัดสินเดียว `PlatformInvoiceRules` | `Invoice_kind_from_reference` · `Invoice_open_only_when_issued_not_voided_and_balance_left` · `Days_past_due_counts_thai_calendar_days` · `Invoice_state_and_label` |
+| P2-05 | แจ้งชำระใบของบริษัทอื่น · ไม่ติ๊ก · ฉบับเก่า · ใบชำระครบ · ผ่าน · กดซ้ำ · อนุมัติ | 404 / 400 / 409 / 409 · ยอดจากใบ + หลักฐานตรวจกลับได้ · รายการเดิม · ไม่ขยับวันหมดอายุ | Db `Invoice_payment_scoped_to_buyer_amount_from_server_terms_required_and_does_not_extend` + `Invoice_only_payment_never_extends_subscription` |
+| P2-06 | แจ้งชำระใบต่ออายุแล้วอนุมัติ | ต่อจากวันหมดอายุเดิม 1 รอบ | Db `Renewal_invoice_payment_extends_from_current_end_date` |
+| P2-07 | ศูนย์บิล: จ่ายไม่ได้เพราะอะไร · ป้ายรายการชำระ | ข้อความจากเซิร์ฟเวอร์ | `Billing_center_pay_refusal_reasons` · `Billing_center_payment_purpose_labels` |
+| P2-08 (มือ) | `/pages/billing.html` + `/admin/platform-billing.html` · อนุมัติใบใน `/admin/payments.html` แล้วดูใบใน tenant ผู้ให้บริการ | ใบเปลี่ยนเป็นชำระแล้ว (ไม่มีใบขายสดใหม่) · ใบเสร็จดาวน์โหลดได้ | มือ (ยังไม่ได้คอมไพล์ในเครื่องนี้) |
+
 ## PB219 — อุดรั่วเงินค่าบริการ NextAcc เฟส 0 (รอบ 219 · คำตัดสินข้อ 178 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` · `PLATFORM_GATEWAY_REFUND_POLICY_DESIGN.md` §2)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -346,48 +359,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **707 ไฟล์ · 7,335 `[Fact]` + 1,156 `[Theory]` (5,420 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+| เทสต์ที่มี | **709 ไฟล์ · 7,349 `[Fact]` + 1,160 `[Theory]` (5,442 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 | ครอบคลุมแล้ว | DepositReversalMath, DocumentConversion matrix, ExpenseCategoryResolver, OcrLineReconcile, Section65TerValidator, TaxPointResolver, WhtFormTypeGuard, **DocumentLabels (ภาษาเอกสาร)**, **ImportReviewHeuristics (local path ของ ImportDataReview)**, **ThaiAddressParser**, **VatClaimPeriod (§82/3 + กันดึงย้อนงวด)**, **ReceiptFormRule (รูปแบบกระดาษหลักฐานรับเงิน · รอบ 203)** |
 | Integration tests | ❌ ยังไม่มี (ต้องใช้ Testcontainers PostgreSQL — ระบบใช้ raw SQL + `information_schema` จึง **ห้ามใช้** EF InMemory/SQLite แทน) |
 | System/E2E tests | ❌ ยังไม่มี (แนวทาง: `WebApplicationFactory` + Playwright — Chromium มีใน env นี้แล้ว) |

@@ -355,4 +355,12 @@ public class SubscriptionPayment : BaseEntity
     public string? SlipOcrReference { get; set; }         // เลขอ้างอิง/รายการที่อ่านได้
     public bool? SlipOcrAmountMatches { get; set; }       // ยอดในสลิปตรงกับที่ลูกค้าแจ้งไหม
     public DateTime? SlipOcrParsedAt { get; set; }
+
+    /// <summary>รอบ 219 เฟส 2 (คำตัดสินข้อ 180): รายการนี้คือการชำระ <b>ใบแจ้งหนี้</b> ใน tenant ผู้ให้บริการ (Billing Center / ลิงก์ชำระ) —
+    /// อนุมัติแล้ว <b>ตัดชำระใบเดิม</b> (ไม่ออกขายสดใบใหม่ = ไม่นับรายได้ซ้ำ G-10) · <c>RequestedPeriodMonths = 0</c> = ใบค่าใช้งาน (ไม่ต่ออายุ) ·
+    /// &gt; 0 = ใบต่ออายุของรอบนี้ (ต่ออายุตามเส้นเดิม) · null = รายการแบบเดิม (ขอแพ็กเกจ/ต่ออายุโดยไม่มีใบ)</summary>
+    public Guid? PlatformInvoiceDocumentId { get; set; }
+
+    /// <summary>หลักฐานการติ๊กยอมรับเงื่อนไขการซื้อ (<see cref="PlatformPurchaseAcceptance"/>) — บังคับกับทางเข้าใหม่ของเฟส 2</summary>
+    public Guid? PolicyAcceptanceId { get; set; }
 }

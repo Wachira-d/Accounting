@@ -323,6 +323,13 @@ builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 // ต้อง register ก่อน SaasBillingDocumentService ที่รับตัวนี้เป็น optional dependency
 builder.Services.AddScoped<IPlatformBillingDocumentIssuer, PlatformBillingDocumentIssuer>();
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
+// รอบ 219 เฟส 2 (คำตัดสินข้อ 180) — เก็บค่าบริการ NextAcc ได้จริง: ค่าตั้งการเรียกเก็บ · ศูนย์บิลของผู้เช่า · ช่องทางชำระ
+builder.Services.AddScoped<IPlatformBillingSettingsService, PlatformBillingSettingsService>();
+builder.Services.AddScoped<IPlatformPayOptionsService, PlatformPayOptionsService>();
+builder.Services.AddScoped<IPlatformBillingCenterService, PlatformBillingCenterService>();
+// ช่องเสียบชำระออนไลน์ของ NextAcc — ค่าตั้งต้น "ยังไม่เปิด" (โอน+สลิป) · part B (IPlatformPaymentService · Omise ของ NextAcc) ลงทะเบียน adapter ของตัวเอง
+// หลังบรรทัดนี้ (ตัวที่ลงทะเบียนทีหลังชนะ) — ดู Services/Implementations/PlatformPayOptions.cs
+builder.Services.AddScoped<IPlatformOnlinePaymentPort, UnconfiguredPlatformOnlinePayment>();
 // นับ/คิดเงินการใช้งานรายหน่วย (ACCOUNT_STRUCTURE.md §6) — ไม่ throw ทุกกรณี
 // เพื่อไม่ให้ระบบเก็บเงินทำให้งานหลักของลูกค้าพัง
 builder.Services.AddScoped<IUsageMeteringService, UsageMeteringService>();

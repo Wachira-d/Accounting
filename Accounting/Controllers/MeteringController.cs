@@ -225,16 +225,17 @@ public class MeteringController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> PlatformPay(Guid companyId, CancellationToken ct)
         => Ok(new ApiResponse<object>(true, await PlatformPayInfoAsync(ct)));
 
+    /// <remarks>รอบ 219 เฟส 2: วิธีโอน/ข้อความสำรองมาจากตัวประกอบเดียวกับศูนย์บิล (<c>IPlatformPayOptionsService</c>) · ช่องออนไลน์ของส่วนเสริม
+    /// <b>ยังปิด</b> แม้ part B เปิดช่องออนไลน์ของใบแจ้งหนี้แล้ว — การจ่ายส่วนเสริมล่วงหน้าออนไลน์ต้องต่อสาย <c>IPlatformPaymentService</c> ที่นี่ก่อน</remarks>
     private async Task<object> PlatformPayInfoAsync(CancellationToken ct)
     {
-        var text = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt)
-            .Select(x => x.PlatformBankTransferInstructions).FirstOrDefaultAsync(ct);
+        var opts = await HttpContext.RequestServices
+            .GetRequiredService<Accounting.Services.Implementations.IPlatformPayOptionsService>().GetAsync(ct);
         return new
         {
             online = false,
-            bankTransferInstructions = string.IsNullOrWhiteSpace(text) ? null : text.Trim(),
-            fallbackNote = string.IsNullOrWhiteSpace(text)
-                ? "ยังไม่ได้ประกาศเลขบัญชีรับโอน — กรุณาติดต่อผู้ดูแลระบบ NextAcc ก่อนโอนเงิน" : null,
+            bankTransferInstructions = opts.BankTransferInstructions,
+            fallbackNote = opts.FallbackNote,
         };
     }
 

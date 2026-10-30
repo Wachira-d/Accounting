@@ -1797,6 +1797,17 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ### 2.6b Payment gateway — รับเงิน · คืนเงิน · รอบโอน (PAYMENT_GATEWAY_DESIGN.md · รอบ 198 settlement เฟส 0)
 
+- **รอบ 219 เฟส 2 — เก็บค่าบริการ NextAcc ได้จริง (คำตัดสินข้อ 180 · `erp-review/2026-10-30/PLATFORM_BILLING_AUDIT.md` §5):**
+  - **ขั้น 1 ค่าตั้ง + ศูนย์บิล:** ค่าตั้งแถวเดียว `PlatformBillingSettings` (แอดมิน `/admin/platform-billing.html` · audit chain `PLATFORM-BILLING-SETTINGS` · ตัวแปลงเดียว
+    `Helpers/PlatformBillingSettingsRules`) — ออกใบต่ออายุล่วงหน้ากี่วัน (เดิมค่าคงที่ 15) · วันแจ้งเตือนก่อน/หลังครบกำหนด · ผ่อนผันก่อนระงับ · ระงับอัตโนมัติ ·
+    อายุลิงก์ชำระ · ช่องอีเมล/LINE · ศูนย์บิลของผู้เช่า `/pages/billing.html` (`api/subscription/{cid}/billing-center` — อยู่ใต้ `/api/subscription` ⇒ ผู้ถูกระงับยังเข้ามาจ่ายได้ ·
+    สิทธิ์ `Billing.Manage`) แสดงใบแจ้งหนี้ค่าบริการจาก tenant ผู้ให้บริการ (ตัวหาเดียว `PlatformInvoiceQueries.ForBuyer` — ผู้ติดต่อ `NextAccTenant`/CompanyId) ·
+    **แจ้งชำระใบ** = `SubscriptionPayment.PlatformInvoiceDocumentId` (ยอด = ยอดค้างของใบ · ติ๊กยอมรับเงื่อนไขบังคับ `Helpers/PlatformPurchaseTerms` + หลักฐาน
+    `PlatformPurchaseAcceptances` hash `PdpaConsentEvidence`) · อนุมัติแล้ว: ใบค่าใช้งาน (`RequestedPeriodMonths = 0`) **ไม่ต่ออายุ** · ใบต่ออายุต่ออายุตามเส้นเดิม ·
+    ทั้งคู่ **ตัดชำระใบเดิม** (`PlatformBillingDocumentIssuer.SettleInvoiceAsync` → `IDocumentService.CreatePaymentAsync` · อ้างอิง `SUBPAY-{เลขรายการ}` กันซ้ำ) **ไม่ออกขายสดใบใหม่**
+    (ปิด G-10 บนเส้นนี้) · ตัดไม่สำเร็จ = หมายเหตุ ⚠️ บนรายการ + log Error (ไม่ตกไปออกใบขายสด) · ชำระออนไลน์ผ่านช่องเสียบ `IPlatformOnlinePaymentPort`
+    (ค่าตั้งต้น "ยังไม่เปิด" 409 + วิธีโอน — part B ลงทะเบียน adapter) · ใบแจ้งหนี้/ใบเสร็จดาวน์โหลดจากตัวเรนเดอร์เอกสารเดิม — Last verified `commit <sha ในคอมมิตถัดไป>`
+
 - **รอบ 219 เฟส 0 — เงินค่าบริการ NextAcc (คำตัดสินข้อ 178):** ชนิดต้นทาง `SubscriptionPayment`/`AddOnPurchase` = รายได้ของแพลตฟอร์ม (`Helpers/PlatformRevenueSource`) ·
   `PaymentIntentService.StartAsync`/`RecordExternalSuccessAsync` ปฏิเสธเมื่อไม่อยู่ใต้บริษัทผู้ให้บริการหรือไม่ระบุ `PayerCompanyId` (ครอบ `pay/intents` · `public-pay` · ส่วนเสริม) ·
   `DispatchSucceededAsync` ไม่ส่งต่อ handler (ประวัติ ⚠️ + แจ้ง) เมื่อเกิดใต้บริษัทร้าน/ไม่รู้ผู้จ่าย/โหมดทดสอบ · ยืนยันมือ/ส่งต่อใหม่/คืนเงิน(และตรวจ/บันทึกผล) บนชนิดนี้ = SystemAdmin

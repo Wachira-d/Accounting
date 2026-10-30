@@ -144,7 +144,7 @@ public class UsageInvoicingJob : BackgroundService
                 lines: lines,
                 issueDate: issueDate,
                 dueDate: issueDate.AddDays(7),
-                reference: $"USAGE-{period}-{shortId}",
+                reference: $"{Accounting.Helpers.PlatformInvoiceRules.UsageReferencePrefix}{period}-{shortId}",
                 notes: $"ค่าใช้งานตามจริงงวด {period} — รายละเอียดแยกตามรายการด้านล่าง");
 
             // ออกใบไม่สำเร็จ = **ห้ามตีตรา** ปล่อยให้รอบหน้าลองใหม่

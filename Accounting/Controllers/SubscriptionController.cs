@@ -259,37 +259,11 @@ public class SubscriptionController : ControllerBase
     public async Task<ActionResult<ApiResponse<SubscriptionPaymentResponse>>> UploadSlip(Guid paymentId, IFormFile file)
     {
         var deny = await DenyForeignPaymentAsync(paymentId); if (deny != null) return deny;
-        if (file == null || file.Length == 0)
-            return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, "กรุณาอัพโหลดไฟล์สลิป"));
-
-        var allowedTypes = new[] { "image/jpeg", "image/png", "image/webp", "application/pdf" };
-        if (!allowedTypes.Contains(file.ContentType.ToLower()))
-            return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, "รองรับเฉพาะไฟล์ JPG, PNG, WebP, PDF"));
-
-        // Compress + downsize slips. PDF passes through (we can't compress PDF here).
-        var dir = Path.Combine(_env.WebRootPath, "uploads", "slips");
-        await using var s = file.OpenReadStream();
-        var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, dir, "/uploads/slips", ImageProfile.Slip);
-        var fileName = Path.GetFileName(processed.AbsolutePath);
-        var storagePath = Path.Combine("uploads", "slips", fileName);
-        var finalSize = processed.FinalBytes > 0 ? processed.FinalBytes : file.Length;
-
+        // รอบ 219 เฟส 2: ตัวรับสลิปตัวเดียวกับศูนย์บิล/ลิงก์ชำระ (ชนิดไฟล์ · ย่อรูป · ผูกรายการ · อ่านสลิปช่วยแอดมิน)
+        if (SubscriptionSlipUpload.Reject(file) is string bad)
+            return BadRequest(new ApiResponse<SubscriptionPaymentResponse>(false, null!, bad));
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
-        var result = await _subscriptionService.UploadPaymentSlipAsync(
-            paymentId, fileName, file.FileName, file.ContentType, finalSize, storagePath, userId);
-
-        // WP-C3: อ่านสลิป (local OCR) เทียบยอด → ช่วย admin review. best-effort ไม่ block.
-        // ใช้ dir + fileName (path จริงบน filesystem ที่เพิ่งเซฟ) ตรง ๆ กันความกำกวม
-        try
-        {
-            var savedPath = Path.Combine(dir, fileName);
-            if (System.IO.File.Exists(savedPath))
-            {
-                var bytes = await System.IO.File.ReadAllBytesAsync(savedPath);
-                await _slipOcr.ParseAndStoreAsync(paymentId, bytes, file.ContentType);
-            }
-        }
-        catch { /* advisory only */ }
+        var result = await SubscriptionSlipUpload.SaveAsync(file, paymentId, userId, _images, _env, _subscriptionService, _slipOcr);
 
         return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, result, "อัพโหลดสลิปสำเร็จ"));
     }

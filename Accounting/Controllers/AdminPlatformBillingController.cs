@@ -2,9 +2,12 @@ using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Enums;
+using Accounting.Services.Implementations;
+using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace Accounting.Controllers;
 
@@ -130,6 +133,29 @@ public class AdminPlatformBillingController : ControllerBase
             mode = r.ProviderConfigId is Guid g ? modes.GetValueOrDefault(g) : null,
             r.CreatedAt, r.ConfirmedBy,
         }).ToList()));
+    }
+
+    // ═══════════ รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บ — SystemAdmin แก้ได้ · ทุกการแก้ลง audit chain ═══════════
+
+    private async Task<SubscriptionEnforcementMode> EffectiveModeAsync(ISubscriptionGateShadowLog gate, IConfiguration config, CancellationToken ct)
+        => SubscriptionEnforcementResolver.Resolve(await gate.ReadAdminSwitchAsync(ct), config).EffectiveMode;
+
+    [HttpGet("settings")]
+    public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> GetSettings(
+        [FromServices] IPlatformBillingSettingsService settings, [FromServices] ISubscriptionGateShadowLog gate,
+        [FromServices] IConfiguration config, CancellationToken ct)
+        => Ok(new ApiResponse<PlatformBillingSettingsDto>(true, await settings.GetAsync(await EffectiveModeAsync(gate, config, ct), ct)));
+
+    [HttpPut("settings")]
+    public async Task<ActionResult<ApiResponse<PlatformBillingSettingsDto>>> UpdateSettings(
+        [FromBody] UpdatePlatformBillingSettingsRequest req,
+        [FromServices] IPlatformBillingSettingsService settings, [FromServices] ISubscriptionGateShadowLog gate,
+        [FromServices] IConfiguration config, CancellationToken ct)
+    {
+        var actor = new PlatformBillingActor(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(ClaimTypes.Email),
+            HttpContext.Connection.RemoteIpAddress?.ToString());
+        var dto = await settings.UpdateAsync(req, actor, await EffectiveModeAsync(gate, config, ct), ct);
+        return Ok(new ApiResponse<PlatformBillingSettingsDto>(true, dto, "บันทึกค่าตั้งการเรียกเก็บแล้ว"));
     }
 
     private async Task<Dictionary<Guid, string>> CompanyNamesAsync(IEnumerable<Guid> ids, CancellationToken ct)

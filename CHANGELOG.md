@@ -5942,3 +5942,8 @@ S2 เปลี่ยนแพ็กเกจบนฟรีถาวรมี�
 **CI Db 5483434f แดง `Scheduled_downgrade_to_permanent_free_plan_stays_active`**: `ProcessExpiredSubscriptionsAsync` ใช้ ApplyTemplate (Active +100 ปี) ในหน่วยความจำ
 แต่คำค้น "หมดอายุ" กรองด้วยค่าใน DB ที่ยังไม่บันทึก แล้ว EF คืนตัวที่ track อยู่ ⇒ ตั้ง PastDue ทับ — บันทึกการเปลี่ยนแพ็กเกจก่อน + ลูปตรวจค่าปัจจุบัน (ข้ามฟรีถาวร/ยังไม่หมด) ·
 `required_call_site_check` +6 กติกา/แก้ 5 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit d4119b5a_
+_รอบ 219 เฟส 2 ขั้น 1 (2026-10-30 · คำตัดสินข้อ 180) — ค่าตั้งการเรียกเก็บแถวเดียว `PlatformBillingSettings` + หน้าแอดมิน `/admin/platform-billing.html` (audit chain) ·
+ใบต่ออายุล่วงหน้าตามค่าตั้ง (เดิมค่าคงที่ 15) · ศูนย์บิลของผู้เช่า `/pages/billing.html` + `BillingCenterController` (ใต้ `/api/subscription` — ผู้ถูกระงับเข้าได้) ·
+แจ้งชำระใบแจ้งหนี้ (`SubmitInvoicePaymentAsync` · ยอดจากใบ · ติ๊กยอมรับ `PlatformPurchaseTerms` + `PlatformPurchaseAcceptances`) · อนุมัติ = ตัดชำระใบเดิม (`SettleInvoiceAsync` ·
+G-10 บนเส้นนี้) · ใบค่าใช้งานไม่ต่ออายุ · ช่องเสียบชำระออนไลน์ `IPlatformOnlinePaymentPort` (ค่าตั้งต้นยังไม่เปิด) · ตัวรับสลิปเดียว `SubscriptionSlipUpload` ·
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_

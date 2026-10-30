@@ -11,6 +11,10 @@ public interface ISaasBillingDocumentService
     /// ห้าม throw ขึ้นไปทำให้ approval พัง — จับ error ภายใน.</summary>
     Task GenerateReceiptForApprovedPaymentAsync(Guid paymentId);
 
+    /// <summary>รอบ 219 เฟส 2 (G-10): รายการชำระที่ผูกใบแจ้งหนี้ (<c>PlatformInvoiceDocumentId</c>) อนุมัติแล้ว ⇒ <b>ตัดชำระใบเดิม</b>
+    /// ใน tenant ผู้ให้บริการ (ไม่ออกขายสดใบใหม่) · idempotent (อ้างอิงการชำระคงที่ต่อรายการ) · ล้ม ⇒ หมายเหตุบนรายการ (ดัง) ไม่โยน</summary>
+    Task SettlePlatformInvoiceAsync(Guid paymentId);
+
     /// <summary>ดึง PDF ที่ออกแล้วสำหรับดาวน์โหลด (regenerate ถ้าไฟล์หาย).</summary>
     Task<(byte[] Bytes, string FileName)?> GetReceiptPdfAsync(Guid paymentId);
 

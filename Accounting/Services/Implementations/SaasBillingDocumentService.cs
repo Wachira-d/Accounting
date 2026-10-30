@@ -254,6 +254,45 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             string.IsNullOrWhiteSpace(s?.PlatformSellerBranchCode) ? "00000" : s!.PlatformSellerBranchCode!,
             s?.PlatformSellerPhone, s?.PlatformSellerEmail ?? s?.ContactEmail);
 
+    /// <summary>รอบ 219 เฟส 2 (G-10): รายการที่ผูกใบแจ้งหนี้ ⇒ ตัดชำระใบเดิมใน tenant ผู้ให้บริการ · ไม่ออกขายสดใบใหม่ (ไม่มีทางตกไปโหมด PDF
+    /// ใบเสร็จเดี่ยว — นั่นคือรายได้ซ้ำ) · ล้ม ⇒ หมายเหตุบนรายการชำระที่แอดมินเห็น (ดัง) + log Error ไม่โยน (เงินเข้าแล้วการอนุมัติต้องไม่พัง)</summary>
+    public async Task SettlePlatformInvoiceAsync(Guid paymentId)
+    {
+        try
+        {
+            var payment = await _db.SubscriptionPayments.FirstOrDefaultAsync(p => p.Id == paymentId);
+            if (payment?.PlatformInvoiceDocumentId is not Guid invoiceId) return;
+            if (payment.Status != SubscriptionPaymentStatus.Approved) return;
+            if (payment.PlatformDocumentId != null) return;   // ตัดชำระแล้ว (idempotent)
+
+            var res = _issuer == null ? null : await _issuer.SettleInvoiceAsync(invoiceId, payment.Amount, payment.WithholdingTaxAmount,
+                payment.PaymentDate, SettlementReference(payment.PaymentNumber),
+                $"รับชำระค่าบริการ NextAcc — {payment.PaymentNumber}"
+                    + (string.IsNullOrWhiteSpace(payment.TransferReference) ? "" : $" · อ้างอิงโอน {payment.TransferReference}"));
+            if (res != null)
+            {
+                payment.PlatformDocumentId = res.DocumentId;
+                payment.ReceiptNumber = res.DocumentNumber;
+                payment.ReceiptIssuedAt = DateTime.UtcNow;
+                payment.ReceiptIsTaxInvoice = res.IsTaxInvoice;
+                await _db.SaveChangesAsync();
+                return;
+            }
+            var note = $"⚠️ ตัดชำระใบแจ้งหนี้อัตโนมัติไม่สำเร็จ — บันทึกรับชำระใบนี้ด้วยมือในบริษัทผู้ให้บริการ (อ้างอิง {SettlementReference(payment.PaymentNumber)})";
+            var merged = string.IsNullOrWhiteSpace(payment.ReviewNotes) ? note : $"{payment.ReviewNotes} · {note}";
+            payment.ReviewNotes = merged.Length > 1000 ? merged[..1000] : merged;
+            await _db.SaveChangesAsync();
+            _logger.LogError("ตัดชำระใบแจ้งหนี้ค่าบริการไม่สำเร็จ (payment {PaymentId} · ใบ {InvoiceId}) — ต้องบันทึกด้วยมือ", paymentId, invoiceId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SettlePlatformInvoiceAsync ล้มเหลว payment {PaymentId}", paymentId);
+        }
+    }
+
+    /// <summary>อ้างอิงการรับชำระใบแจ้งหนี้ค่าบริการต่อรายการ — ตัวเดียวทั้งฝั่งเขียนและฝั่งกันซ้ำ</summary>
+    public static string SettlementReference(string paymentNumber) => $"SUBPAY-{paymentNumber}";
+
     // ---- WP-B1: renewal invoice ----
     public async Task<string?> GenerateRenewalInvoiceAsync(Guid subscriptionId)
     {
@@ -290,7 +329,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                 var invoiced = await _issuer.IssueRenewalInvoiceAsync(sub.CompanyId,
                     $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {renewPlan} ({months} เดือน) "
                         + $"— รอบถัดไปถึง {sub.EndDate.AddMonths(months):dd/MM/yyyy}",
-                    amount, now, sub.EndDate, $"RENEW-{sub.Id.ToString()[..8].ToUpper()}");
+                    amount, now, sub.EndDate, Accounting.Helpers.PlatformInvoiceRules.RenewalReferencePrefix + sub.Id.ToString()[..8].ToUpper());
                 if (invoiced != null)
                 {
                     sub.RenewalInvoiceNumber = invoiced.DocumentNumber;

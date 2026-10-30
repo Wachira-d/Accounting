@@ -114,6 +114,9 @@ const AdminAPI = {
   platformUnpaidActivations() { return this.get('/platform-billing/unpaid-activations'); },
   platformPrepaidAccounts() { return this.get('/platform-billing/prepaid-accounts'); },
   platformTenantRoutedIntents() { return this.get('/platform-billing/tenant-routed-intents'); },
+  // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บค่าบริการ NextAcc
+  platformBillingSettings() { return this.get('/platform-billing/settings'); },
+  savePlatformBillingSettings(body) { return this.put('/platform-billing/settings', body); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },
