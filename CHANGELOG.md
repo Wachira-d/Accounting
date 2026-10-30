@@ -5932,4 +5932,4 @@ _รอบ 219 เฟส 0 ฝ่ายค้าน (2026-10-30 · คำตั�
 B2 `SecretProtector` ถอดด้วยคีย์เดิมได้ (`EncryptionKeyResolver.LegacyCandidates`) + `SecretReprotectJob`/`SecretReprotectPass` เข้ารหัสใหม่ครั้งเดียว (JobLock · audit) · S3 ไม่ Trim คีย์ · นิพจน์คีย์ PII คงเดิม ·
 S2 ฟรีถาวร Active · S4 ทดลองใช้บัญชีครั้งเดียวต่อระดับ · S5 cascade แพลนบัญชีเฉพาะแพ็กเกจตรง · S6 รายการเก่าใต้ร้าน: แอดมินจัดการ/ร้านคืนเงินได้ · S7 addOnCodes ตามระยะผ่อนผัน ·
 S8 `PaymentIntent.IsTestMode` · S9 บล็อกดาวน์เกรดหลังออกใบแจ้งหนี้ต่ออายุ · ขยายทดลองใช้เฉพาะ Trial · วันรับเงินบีบที่เซิร์ฟเวอร์ · ป้ายปุ่มเลือกแพ็กเกจเป็นกลาง ·
-เทสต์ +7 pure/+4 Db · TEST_PLAN PB219-14..22 · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+เทสต์ +7 pure/+4 Db · TEST_PLAN PB219-14..22 · `required_call_site_check` +11 กติกา · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 497e69fc_
