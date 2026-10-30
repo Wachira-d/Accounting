@@ -672,7 +672,7 @@ public partial class CmsBookingService
         foreach (var x in rows)
         {
             var b = x.Booking;
-            var contact = ContactOf(b.GuestEmail, x.CustomerEmail, x.AuthProvider, x.AuthProviderId);
+            var contact = ContactOf(b.GuestEmail, x.CustomerEmail, x.AuthProvider, x.AuthProviderId, CustomerLineTarget.ForBooking(b.Id, b.CustomerId));
             var name = x.CustomerName ?? b.GuestName ?? "";
             string subject, text;
             if (kind == ClassMessageKind.Cancelled)
@@ -690,7 +690,7 @@ public partial class CmsBookingService
             b.NotifyAttemptedAt = DateTime.UtcNow;
             if (result.Sent)
             {
-                b.NotifyLastError = null;
+                b.NotifyLastError = result.Warning;   // รอบ 211 ฝ่ายค้าน: ส่งถึงทางถอย ⇒ ประทับคำเตือน (null = ปกติ)
                 b.InternalNotes = DepositPolicyResolver.AppendNoteOnce(b.InternalNotes,
                     $"[{ClassRule}] แจ้งลูกค้า ({(kind == ClassMessageKind.Cancelled ? "คลาสยกเลิก" : "เปลี่ยนผู้สอน")}) ทาง {(result.Channel == "line" ? "LINE" : "อีเมล")} แล้ว");
                 sent++;

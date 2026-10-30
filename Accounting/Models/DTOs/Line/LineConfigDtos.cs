@@ -1,3 +1,5 @@
+using Accounting.Models.DTOs.Cms;
+
 namespace Accounting.Models.DTOs.Line;
 
 public record LineConfigResponse(
@@ -9,7 +11,9 @@ public record LineConfigResponse(
     DateTime? LastTestedAt,
     string? LastTestStatus,
     /// <summary>LINE OA basic id (@xxx) — ใช้สร้างลิงก์เพิ่มเพื่อนให้พนักงานผูก LINE รับสลิป.</summary>
-    string? OaBasicId = null);
+    string? OaBasicId = null,
+    /// <summary>รอบ 211: ช่องทางแจ้ง<b>ลูกค้าปลายทาง</b> (OA ไหน · ลูกค้าผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — เซิร์ฟเวอร์ตัดสิน</summary>
+    CustomerLineChannelInfo? CustomerChannel = null);
 
 public record UpdateLineConfigRequest(
     bool Enabled,

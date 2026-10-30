@@ -222,6 +222,10 @@ Accounting/Controllers/CmsSiteController.cs	Update	1
 Accounting/Controllers/CmsSiteController.cs	UpdateTheme	1
 Accounting/Controllers/CmsSiteController.cs	VerifyDomain	1
 Accounting/Controllers/CmsStorefrontController.cs	AvailableSlots	1
+Accounting/Controllers/CmsStorefrontCustomerController.cs	GuestLineStart	1
+Accounting/Controllers/CmsStorefrontCustomerController.cs	GuestLineUnlink	1
+Accounting/Controllers/CmsStorefrontCustomerController.cs	MyLineStart	1
+Accounting/Controllers/CmsStorefrontCustomerController.cs	MyLineUnlink	1
 Accounting/Controllers/CmsWebhookController.cs	ReceivePaymentWebhook	1
 Accounting/Controllers/CommissionController.cs	Approve	1
 Accounting/Controllers/CommissionController.cs	Assign	1
@@ -260,6 +264,7 @@ Accounting/Controllers/CurrencyController.cs	AddCurrency	1
 Accounting/Controllers/CurrencyController.cs	AddRate	1
 Accounting/Controllers/CurrencyController.cs	DeleteCurrency	1
 Accounting/Controllers/CurrencyController.cs	UpdateCurrency	1
+Accounting/Controllers/CustomerLineWebhookController.cs	Receive	1
 Accounting/Controllers/DimensionController.cs	AssignDimensions	1
 Accounting/Controllers/DimensionController.cs	Create	1
 Accounting/Controllers/DimensionController.cs	CreateBranch	1

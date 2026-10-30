@@ -120,7 +120,8 @@ public class BookingReminderJob : BackgroundService
                 if (!BookingReminderPlan.MayAttempt(b.NotifyAttemptedAt, nowUtc)) continue;
                 try
                 {
-                    var contact = Implementations.CmsBookingService.ContactOf(b.GuestEmail, x.CustomerEmail, x.AuthProvider, x.AuthProviderId);
+                    var contact = Implementations.CmsBookingService.ContactOf(b.GuestEmail, x.CustomerEmail, x.AuthProvider, x.AuthProviderId,
+                        Accounting.Helpers.CustomerLineTarget.ForBooking(b.Id, b.CustomerId));
                     var text = BookingReminderPlan.Render(cfg?.ReminderTemplate, x.CustomerName ?? b.GuestName ?? "", x.ServiceName, x.SiteName,
                         date, b.StartTime, x.ResourceName, b.BookingNumber);
                     var r = await notifier.SendAsync(b.CompanyId, contact, BookingReminderPlan.ReminderSubject(stage.Value, x.ServiceName, b.BookingNumber), text, ct);
@@ -129,7 +130,7 @@ public class BookingReminderJob : BackgroundService
                     {
                         b.ReminderSent = true;
                         b.ReminderSentAt = nowUtc;   // หลังส่งถึงจริงเท่านั้น
-                        b.NotifyLastError = null;
+                        b.NotifyLastError = r.Warning;   // รอบ 211 ฝ่ายค้าน: ส่งถึงทางถอย ⇒ ประทับคำเตือน (null = ปกติ)
                         sent++;
                     }
                     else { b.NotifyLastError = r.Error; failed++; }

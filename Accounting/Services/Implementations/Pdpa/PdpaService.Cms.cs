@@ -78,12 +78,34 @@ public partial class PdpaService
         return new CmsSubjectRows(customers, orders, bookings, leads, submissions, consents);
     }
 
+    /// <summary>รอบ 211: ลิงก์ LINE ของสมาชิก/ออเดอร์/การจองของเจ้าของข้อมูล (กรองบริษัท)</summary>
+    private async Task<List<CustomerLineLink>> LoadCmsLineLinksAsync(Guid companyId, CmsSubjectRows r, bool track, CancellationToken ct)
+    {
+        var mem = r.Customers.Select(c => c.Id).ToList();
+        var ord = r.Orders.Select(o => o.Id).ToList();
+        var bkg = r.Bookings.Select(b => b.Id).ToList();
+        if (mem.Count + ord.Count + bkg.Count == 0) return new List<CustomerLineLink>();
+        var q = _db.CustomerLineLinks.Where(l => l.CompanyId == companyId
+            && ((l.TargetKind == CustomerLineLinkRule.KindMember && mem.Contains(l.TargetId))
+                || (l.TargetKind == CustomerLineLinkRule.KindOrder && ord.Contains(l.TargetId))
+                || (l.TargetKind == CustomerLineLinkRule.KindBooking && bkg.Contains(l.TargetId))));
+        return await (track ? q : q.AsNoTracking()).ToListAsync(ct);
+    }
+
     public async Task<CmsSubjectDataReport> GenerateCmsAccessReportAsync(Guid companyId, string? email, string? phone, CancellationToken ct = default)
     {
         var r = await LoadCmsSubjectRowsAsync(companyId, email, phone, track: false, ct);
         var custIds = r.Customers.Select(c => c.Id).ToList();
         var addresses = custIds.Count == 0 ? new List<SiteCustomerAddress>()
             : await _db.SiteCustomerAddresses.AsNoTracking().Where(a => a.CompanyId == companyId && custIds.Contains(a.CustomerId)).ToListAsync(ct);
+        // รอบ 211: LINE ที่ลูกค้าผูกเอง (สมาชิก/การจอง/ออเดอร์) — ม.30 ต้องเห็นว่าระบบถือ LINE userId ของเขาไว้
+        var lineLinks = await LoadCmsLineLinksAsync(companyId, r, track: false, ct);
+        List<Dictionary<string, object?>> LinesOf(string kind, Guid id) => lineLinks.Where(l => l.TargetKind == kind && l.TargetId == id)
+            .Select(l => new Dictionary<string, object?>
+            {
+                ["lineUserId"] = l.LineUserId, ["oaScope"] = l.OaScope, ["linkedAt"] = l.LinkedAt, ["unlinkedAt"] = l.UnlinkedAt,
+                ["unlinkReason"] = l.UnlinkReason, ["blockedAt"] = l.BlockedAt,
+            }).ToList();
 
         var customers = r.Customers.Select(c => new Dictionary<string, object?>
         {
@@ -91,6 +113,7 @@ public partial class PdpaService
             ["taxId"] = c.TaxId, ["branchCode"] = c.BranchCode, ["companyName"] = c.CompanyName,
             ["acceptMarketing"] = c.AcceptMarketing, ["consentGiven"] = c.ConsentGiven, ["consentGivenAt"] = c.ConsentGivenAt,
             ["consentWithdrawnAt"] = c.ConsentWithdrawnAt, ["createdAt"] = c.CreatedAt, ["lastLoginAt"] = c.LastLoginAt,
+            ["lineLinks"] = LinesOf(CustomerLineLinkRule.KindMember, c.Id),
             ["addresses"] = addresses.Where(a => a.CustomerId == c.Id).Select(a => new Dictionary<string, object?>
             {
                 ["label"] = a.Label, ["recipientName"] = a.RecipientName, ["phone"] = a.Phone, ["addressLine"] = a.AddressLine,
@@ -104,12 +127,14 @@ public partial class PdpaService
             ["shippingName"] = o.ShippingName, ["shippingAddress"] = o.ShippingAddress, ["shippingPhone"] = o.ShippingPhone,
             ["shippingEmail"] = o.ShippingEmail, ["billingName"] = o.BillingName, ["billingAddress"] = o.BillingAddress,
             ["billingTaxId"] = o.BillingTaxId, ["customerNotes"] = o.CustomerNotes, ["erpDocumentId"] = o.ErpDocumentId,
+            ["lineLinks"] = LinesOf(CustomerLineLinkRule.KindOrder, o.Id),
         }).ToList();
         var bookings = r.Bookings.Select(b => new Dictionary<string, object?>
         {
             ["id"] = b.Id, ["bookingNumber"] = b.BookingNumber, ["bookingDate"] = b.BookingDate, ["status"] = b.Status.ToString(),
             ["guestName"] = b.GuestName, ["guestEmail"] = b.GuestEmail, ["guestPhone"] = b.GuestPhone,
             ["customerNotes"] = b.CustomerNotes, ["totalAmount"] = b.TotalAmount, ["erpDocumentId"] = b.ErpDocumentId,
+            ["lineLinks"] = LinesOf(CustomerLineLinkRule.KindBooking, b.Id),
         }).ToList();
         var leads = r.Leads.Select(l => new Dictionary<string, object?>
         {
@@ -191,6 +216,16 @@ public partial class PdpaService
             _db.SiteCustomerAddresses.RemoveRange(addresses);
             rows += addresses.Count;
         }
+        // รอบ 211: LINE ที่ลูกค้าผูกเอง — ไม่ใช่เอกสารบัญชี (ไม่มี legal hold) ⇒ เส้นปิดเดียวกับการยกเลิก (ฝ่ายค้าน ข้อ 2):
+        // ถอนยินยอม · ปิด + ล้าง LINE userId · audit · เผารหัสผูกที่ค้าง (รวมเป้าหมายที่ยังไม่เคยผูก — รหัสที่ออกก่อนลบต้องผูกกลับไม่ได้)
+        var lineLinks = await LoadCmsLineLinksAsync(companyId, r, track: true, ct);
+        foreach (var l in lineLinks) l.UpdatedBy = actor;
+        rows += await CustomerLineLinkClosure.CloseAsync(_db, companyId, lineLinks, "erase", now, ct);
+        var lineTargets = r.Customers.Select(c => (Kind: CustomerLineLinkRule.KindMember, Id: c.Id))
+            .Concat(r.Orders.Select(o => (Kind: CustomerLineLinkRule.KindOrder, Id: o.Id)))
+            .Concat(r.Bookings.Select(b => (Kind: CustomerLineLinkRule.KindBooking, Id: b.Id)));
+        foreach (var (kind, id) in lineTargets)
+            await CustomerLineLinkClosure.BurnPendingCodesAsync(_db, companyId, kind, id, now, ct);
         // ความยินยอมเป็น "หลักฐาน" ของการประมวลผลที่ผ่านมา (ม.19 ภาระพิสูจน์ของผู้ควบคุม) ⇒ ไม่ลบ แต่ถอนความยินยอมทุกแถวที่ยังไม่ถอน
         foreach (var cr in r.Consents.Where(x => x.WithdrawnAt == null))
         {

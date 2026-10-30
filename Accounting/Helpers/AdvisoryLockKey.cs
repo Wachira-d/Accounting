@@ -160,6 +160,8 @@ public static class AdvisoryLockKey
     /// สองตัวหลังอยู่ในธุรกรรม ⇒ <c>pg_advisory_xact_lock</c> คีย์เดียวกัน (session กับ xact lock ของคีย์เดียวกันรอกันเองตามปกติ ·
     /// session เดียวกันถือซ้ำได้ ⇒ เส้นริบที่ถือ session lock แล้วเรียกตัดชำระไม่ติดตัวเอง) · ต้องได้ล็อกนี้<b>ก่อน</b>ล็อกแถว (กัน deadlock)</summary>
     public static long DepositRealizeKey(Guid companyId, Guid depositId) => For(companyId, DepositRealize, depositId.ToString());
+    /// <summary>รอบ 211 ฝ่ายค้าน: ออกรหัสผูก LINE ของลูกค้า — part = "{kind}:{targetId}" (มีรหัสค้างได้ทีละรหัสต่อเป้าหมาย)</summary>
+    public const string CustomerLineCode = "cust-line-code";
     /// <summary>เลขคำสั่งซื้อ/การจองจากหน้าเว็บ (CMS) — part = prefix รวมงวด</summary>
     public const string StorefrontSequence = "store-seq";
     /// <summary>ตัดสิน "รอบนี้ยังว่างไหม" + บันทึกการจองคิว CMS (Helpers/BookingSlotEngine) — part = บริการ หรือกลุ่มทรัพยากรร่วมของเว็บ</summary>

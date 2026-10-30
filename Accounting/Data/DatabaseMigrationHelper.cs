@@ -232,6 +232,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.StorefrontP1Migration.Statements());   // รอบ 209 P1 — โทเคนสถานะออเดอร์/ผู้ขนส่ง/คีย์กันสั่งซ้ำ (Helpers/StorefrontP1Migration)
         list.AddRange(Round209P2StoreSettingsStatements());   // รอบ 209 P2 — ค่าตั้งร้าน/ฟอร์มสั่งซื้อ/COD (บล็อกท้ายไฟล์)
         list.AddRange(CmsRound209P6Statements());   // รอบ 209 P6 — variant บนตะกร้า/ออเดอร์ · ยินยอม PDPA ของเว็บ · ฟอร์ม → lead (บล็อกท้ายไฟล์)
+        list.AddRange(CmsRound211LineNotifyStatements());   // รอบ 211 — ลูกค้าผูก LINE เอง (สมาชิก/การจอง/ออเดอร์) + ปลายทาง OA ของบริษัท (บล็อกท้ายไฟล์)
         return list;
     }
 
@@ -7941,5 +7942,57 @@ public static class DatabaseMigrationHelper
         """ALTER TABLE "Sites" ADD COLUMN IF NOT EXISTS "DataConsentText" text NULL;""",
         """ALTER TABLE "SiteFormSubmissions" ADD COLUMN IF NOT EXISTS "LeadId" uuid NULL;""",
         """ALTER TABLE "SiteFormSubmissions" ADD COLUMN IF NOT EXISTS "NotifyResult" text NULL;""",
+    };
+
+    /// <summary>รอบ 211 (คำตัดสินข้อ 170 · <c>erp-review/2026-10-30/LINE_CUSTOMER_NOTIFY_DESIGN.md</c>) — ตารางใหม่ล้วน + คอลัมน์ NULL ⇒ ทุกแถวเดิมไม่ถูกแตะ ·
+    /// ไม่มีลิงก์ = พฤติกรรมเดิม (อีเมลก่อน) · รันทุกบูตได้ (IF NOT EXISTS ทุกคำสั่ง) · ชื่อ index ต้องตรงกับ <c>AccountingDbContext</c></summary>
+    internal static IReadOnlyList<string> CmsRound211LineNotifyStatements() => new List<string>
+    {
+        """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "LineOaDestination" varchar(64) NULL;""",
+        """
+        CREATE TABLE IF NOT EXISTS "CustomerLineLinks" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "CompanyId" uuid NOT NULL,
+            "SiteId" uuid NOT NULL,
+            "TargetKind" varchar(16) NOT NULL,
+            "TargetId" uuid NOT NULL,
+            "LineUserId" varchar(64) NOT NULL,
+            "OaScope" varchar(16) NOT NULL,
+            "OaDestination" varchar(64) NULL,
+            "LinkedAt" timestamp with time zone NOT NULL DEFAULT now(),
+            "UnlinkedAt" timestamp with time zone NULL,
+            "UnlinkReason" varchar(32) NULL,
+            "BlockedAt" timestamp with time zone NULL,
+            "ConsentRecordId" uuid NULL,
+            "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedBy" text NULL,
+            "UpdatedAt" timestamp with time zone NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false
+        );
+        """,
+        """CREATE INDEX IF NOT EXISTS "IX_CustomerLineLinks_Company_Target" ON "CustomerLineLinks" ("CompanyId", "TargetKind", "TargetId");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CustomerLineLinks_LineUser" ON "CustomerLineLinks" ("LineUserId");""",
+        """
+        CREATE TABLE IF NOT EXISTS "CustomerLineLinkCodes" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "CompanyId" uuid NOT NULL,
+            "SiteId" uuid NOT NULL,
+            "TargetKind" varchar(16) NOT NULL,
+            "TargetId" uuid NOT NULL,
+            "CodeHash" varchar(64) NOT NULL,
+            "OaScope" varchar(16) NOT NULL,
+            "ExpiresAt" timestamp with time zone NOT NULL,
+            "UsedAt" timestamp with time zone NULL,
+            "LinkId" uuid NULL,
+            "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedBy" text NULL,
+            "UpdatedAt" timestamp with time zone NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false
+        );
+        """,
+        """CREATE UNIQUE INDEX IF NOT EXISTS "UX_CustomerLineLinkCodes_Hash" ON "CustomerLineLinkCodes" ("CodeHash");""",
+        """CREATE INDEX IF NOT EXISTS "IX_CustomerLineLinkCodes_Company_Target" ON "CustomerLineLinkCodes" ("CompanyId", "TargetKind", "TargetId");""",
     };
 }

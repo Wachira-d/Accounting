@@ -48,12 +48,15 @@ public class CmsShopNotifier : ICmsShopNotifier
             if (recipients.Count == 0)
                 return Fail(companyId, message, "ไม่มีอีเมลผู้รับฝั่งร้าน (ตั้งอีเมลแจ้งเตือนออเดอร์ของร้าน หรืออีเมลติดต่อของเว็บ/บริษัท)");
             var errors = new List<string>();
+            string? warning = null;
             foreach (var to in recipients)
             {
                 var r = await _channel.SendAsync(companyId, new BookingContact(to, null), message.Subject, message.Text, ct);
                 if (!r.Sent) errors.Add($"{to}: {r.Error}");
+                else warning ??= r.Warning;
             }
-            return errors.Count == 0 ? null : Fail(companyId, message, string.Join(" · ", errors));
+            if (errors.Count > 0) return Fail(companyId, message, string.Join(" · ", errors));
+            return warning;   // รอบ 211 ฝ่ายค้าน: ส่งถึงทางถอย ⇒ ผู้เรียกประทับ FallbackTag (FailureNote แยกให้)
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -67,7 +70,8 @@ public class CmsShopNotifier : ICmsShopNotifier
         try
         {
             var r = await _channel.SendAsync(companyId, contact, message.Subject, message.Text, ct);
-            return r.Sent ? null : Fail(companyId, message, r.Error ?? "ส่งไม่สำเร็จ");
+            // รอบ 211 ฝ่ายค้าน: ส่งถึงทางถอย (อีเมลของระบบหลังผู้ส่งของร้านล้ม) ⇒ คืนคำเตือน (ขึ้นต้น FallbackTag) ให้ผู้เรียกประทับบนรายการ
+            return r.Sent ? r.Warning : Fail(companyId, message, r.Error ?? "ส่งไม่สำเร็จ");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

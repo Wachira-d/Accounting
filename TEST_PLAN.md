@@ -1,3 +1,36 @@
+## CMS211 — ลูกค้าปลายทางผูก LINE รับแจ้งเตือน (สมาชิก/แขก) · OA ของร้าน/NextAcc · อีเมลของร้าน (รอบ 211 · คำตัดสินข้อ 170 · `erp-review/2026-10-30/LINE_CUSTOMER_NOTIFY_DESIGN.md`)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| CMS211-01 | ออกรหัสผูก | 8 ตัวจาก alphabet 32 ตัว (ไม่มี 0/O/1/I) · สุ่ม CSPRNG · เก็บแค่ SHA-256 | `NewCode_is_8_chars_from_alphabet_and_random` · `Hash_is_stable_case_insensitive_and_not_the_code` · rule `StartAsync` |
+| CMS211-02 | ข้อความ "ผูก LN-…" (ตัวเล็ก/ไม่มีขีด/bind/link) | แยกได้ + ดึงรหัสตัวใหญ่ | `Message_round_trips_through_parser` · `Parser_accepts_customer_codes` |
+| CMS211-03 | **ทิศตรงข้าม** "ผูก 123456" (ERP) · "สลิป 123456" (พนักงาน) · คำสั่งอื่น | ไม่ใช่ข้อความผูกลูกค้า ⇒ เส้นเดิมทำงานเหมือนเดิม | `Erp_and_payslip_commands_are_not_customer_link_attempts` · rule `HandleMessageAsync` (before `_db.LineBindCodes`) |
+| CMS211-04 | รหัสผิดรูปแบบ (7/9 ตัว · มี 1/O · มีคำต่อท้าย) | ตอบ "รูปแบบไม่ถูก" ไม่ตกไปเส้น ERP | `Malformed_attempts_are_detected_but_not_parsed` |
+| CMS211-05 | รหัสหมดอายุ / ใช้แล้ว / ไถ่พร้อมกันสอง instance | ปฏิเสธ · ได้ลิงก์แถวเดียว (update มีเงื่อนไข `UsedAt IS NULL` นับแถว = 1) | `Redeemable_only_unused_and_unexpired` · rule `TryRedeemAsync` |
+| CMS211-06 | เดารหัสถี่ (LINE user เดียว) | 3/นาที · 10/วัน · ตารางนับพัง ⇒ ปฏิเสธ | rule `TryRedeemAsync` (failClosed · TryConsume ก่อน TryParse) |
+| CMS211-07 | **ค่าเริ่มต้น** ร้านไม่ได้ตั้ง LINE | ใช้ OA ของ NextAcc (กติกาเดียวกับ push เดิม) | `Default_company_uses_nextacc_oa` · `Scope_matrix_matches_push_resolution` |
+| CMS211-08 | ร้านเปิด LINE + token แต่ไม่มี secret/Basic ID | ยัง push ได้ · ลูกค้าผูกไม่ได้ (ปุ่มไม่ขึ้น · หน้าตั้งค่าบอกเหตุ) | `Company_oa_needs_secret_and_basic_id_to_link_but_still_pushes` · `Nextacc_without_config_cannot_link_or_push` |
+| CMS211-09 | ร้านสลับ OA (กลาง↔ร้าน · OA ร้านตัวใหม่) | ลิงก์เดิม "ต้องผูกใหม่" ไม่ push ข้าม OA · ไม่รู้ปลายทาง ⇒ ตัดสินด้วย scope | `Link_usable_matrix` · rule `ResolveLineUserIdAsync` |
+| CMS211-10 | ลำดับช่อง: ไม่ผูก / ผูกแล้ว / LINE ล้ม | อีเมลก่อน (เดิม) / LINE ก่อน / ตกไปอีเมล · ไม่มีช่อง ⇒ บอกเหตุ | `Order_keeps_email_first_without_opt_in` · `Order_puts_line_first_when_customer_opted_in` · `No_link_keeps_email_first_like_before` · `Opted_in_line_goes_first_then_email_on_failure` · `Linked_line_without_email_is_enough_and_failure_is_reported` |
+| CMS211-11 | อีเมล: ร้านตั้ง+ทดสอบผ่าน / ไม่ได้ตั้ง | ผู้ส่งของร้าน (ผู้ส่งตัวเดียวกับเอกสาร) / ของระบบ (เดิม) · ร้านล้ม ⇒ ดู CMS211-26 | `Email_plan_tenant_then_system_fallback_only_when_tested` · rule `TrySendEmailAsync` |
+| CMS211-12 | webhook ต่อบริษัท: ไม่มี secret / ลายเซ็นผิด / ผ่าน | 404 / 401 / ประมวลผล (ไถ่เฉพาะรหัสของบริษัทนั้น) | `Signature_matches_independent_hmac_and_rejects_tampering` · rule `CustomerLineWebhookController.Receive` |
+| CMS211-13 | ลายเซ็นสูตรเดียว | OA กลาง + OA ร้าน เรียก `LineWebhookSignature.Verify` · ไม่มี HMAC ที่อื่น | rule `LineBotService.VerifySignature` (forbid HMACSHA256) |
+| CMS211-14 | unfollow / follow กลับ | หยุดส่ง (BlockedAt) / เปิดกลับ + ตอบต้อนรับ | rule `LineWebhookController.Receive` · ตรวจด้วยตา (OA ร้าน: ตอบวิธีผูก) |
+| CMS211-15 | ทุกข้อความถึงลูกค้า (ยืนยัน/ยกเลิก/เลื่อนการจอง · ได้คิว · คลาส · เตือนก่อนนัด · ออเดอร์ · บัตรใกล้หมดอายุ) | ส่งเป้าหมาย LINE (ระเบียน > สมาชิก > ผู้ติดต่อ) ให้ตัวส่ง | rules `NotifyBookingCreatedAsync` · `…CancelledByShopAsync` · `…RescheduledAsync` · `NotifyWaitlistPromotedAsync` · `NotifyClassBookingsAsync` · `ProcessAsync` · `CustomerContactOf` · `SendExpiryRemindersAsync` |
+| CMS211-16 | ยกเลิกการเชื่อมต่อ / DSR ลบ / DSR ขอดู | ปิดลิงก์ + ถอนความยินยอม / ล้าง LINE userId / แสดง `lineLinks` | `Close_clears_line_user_and_closes_link_once` · rules `ApplyCmsErasureAsync` · `GenerateCmsAccessReportAsync` |
+| CMS211-17 | หน้าร้าน: บัญชีของฉัน · จองสำเร็จ · my-booking · ออเดอร์สำเร็จ · track-order | กล่อง "รับแจ้งเตือนทาง LINE" (ยินยอม · เพิ่มเพื่อน · ส่งรหัส · QR · สถานะ/ยกเลิก) · ร้านยังผูกไม่ได้ ⇒ ไม่แสดง | ตรวจด้วยตา (`Store.renderLineBox`) · node --check |
+| CMS211-18 | ออกรหัสถี่ (IP/เป้าหมาย) | 429 · fail-closed | rules `LineStartThrottledAsync` · `GuestLineStart` · `MyLineStart` |
+| CMS211-19 | ตั้งค่า LINE: Basic ID ผิดรูปแบบ / เปลี่ยน token | 400 ข้อความไทย / ลืม bot userId เดิม · หน้าตั้งค่าแสดง OA ที่ใช้ + webhook URL + จำนวนลิงก์ | `BasicId_normalisation` · `Urls_are_built_server_side_and_encoded` · ตรวจด้วยตา |
+| CMS211-20 | BookingContact เดิม | `LineTarget` null · `HasChannel` ความหมายเดิม | `Contact_defaults_unchanged` · `Mask_never_reveals_full_user_id` |
+| CMS211-21 | ปิดลิงก์ (ยกเลิก/ผูกใหม่/DSR) · แถวเก่าที่ปิดแล้วแต่ยังถือ userId | ล้าง userId · ปิดครั้งเดียว ไม่ทับเวลา/เหตุ · ถอนยินยอม · audit · เผารหัสค้าง | `Close_clears_line_user_and_closes_link_once` · `Close_clears_legacy_unlinked_row_that_still_holds_user_id` · rules `CustomerLineLinkClosure.CloseAsync` · `UnlinkAsync` · `ApplyCmsErasureAsync` |
+| CMS211-22 | เก็บกวาดรายคืน | รหัสหมดอายุเกิน 7 วันถูกลบ · รหัสที่ยังใช้ได้ไม่ถูกแตะ · ใต้ JobLock ของ `PdpaRetentionPurgeJob` | `Code_purge_cutoff_never_touches_live_codes` · rules `PurgeAsync` · `PdpaRetentionPurgeJob.RunAsync` |
+| CMS211-23 | ยินยอมเมื่อเป้าหมายไม่มีอีเมล/เบอร์ | แถวยินยอมด้วย `line:`+hash (ไม่มี userId ดิบ) | `Consent_subject_is_hashed_line_id` · rule `TryRedeemAsync` (forbid `consent?.Id`) |
+| CMS211-24 | OA กลาง: `Line:BotUserId` ไม่ตั้ง / ตรง / ไม่ตรง | ผูกได้ / ผูกได้ + เก็บปลายทาง / ปฏิเสธ + log Error | `Destination_check_against_configured_bot` · rules `LineWebhookController.Receive` · `HandleMessageAsync` |
+| CMS211-25 | log ของ LINE | ไม่มี userId เต็ม (บริบท + body ตอบกลับ) | `Redact_for_log_masks_line_ids_and_truncates` · rules `TryPushToUserAsync` · `PushRawAsync` |
+| CMS211-26 | อีเมลร้าน: ผ่าน / ล้มแต่ระบบผ่าน / ล้มทั้งคู่ / ไม่ได้ตั้ง | ร้านเท่านั้น / ถอยไประบบ + `[CMS-NOTIFY-FALLBACK]` / ไม่สำเร็จพร้อมเหตุทั้งสอง / ระบบ (เดิม) | `Tenant_email_ok_uses_tenant_only` · `Tenant_email_failure_falls_back_to_system_and_warns` · `Tenant_and_system_both_fail_reports_both` · `Tenant_not_configured_uses_system_like_before` · `Email_plan_tenant_then_system_fallback_only_when_tested` · `Failure_note_distinguishes_fallback_from_failure` |
+| CMS211-27 | webhook ต่อบริษัท: ไม่ได้ตั้ง / ลายเซ็นผิด / body > 256 KB | 401 แบบเดียวกัน (ไม่อ่าน body ก่อนรู้ค่าตั้ง) / 401 / 413 | rule `CustomerLineWebhookController.Receive` (forbid `NotFound()`) |
+| CMS211-28 | ไถ่รหัสแล้วบันทึกลิงก์ล้ม · ออกรหัสพร้อมกันสองคำขอ | rollback รหัสยังใช้ได้ · มีรหัสใช้ได้ตัวเดียว (advisory lock ต่อเป้าหมาย) | rules `TryRedeemAsync` (BeginTransaction ก่อน claim) · `StartAsync` |
+
 # TEST_PLAN.md — แคตตาล็อกเคสทดสอบทั้งระบบ (Unit / Integration / System)
 
 > **จุดประสงค์**: เป็น source of truth ของ "เคสที่ต้องทดสอบ" ทุกโมดูล ตั้งแต่ต้นจนจบ
@@ -14,7 +47,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **685 ไฟล์ · 6,940 `[Fact]` + 1,110 `[Theory]` (5,178 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **686 ไฟล์ · 6,966 `[Fact]` + 1,118 `[Theory]` (5,220 `InlineData`)** ณ 2026-10-22 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

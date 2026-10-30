@@ -19,10 +19,11 @@ public class LineWebhookController : ControllerBase
 {
     private readonly ILineBotService _bot;
     private readonly ILogger<LineWebhookController> _logger;
+    private readonly ICustomerLineLinkService? _customerLinks;
 
-    public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger)
+    public LineWebhookController(ILineBotService bot, ILogger<LineWebhookController> logger, ICustomerLineLinkService? customerLinks = null)
     {
-        _bot = bot; _logger = logger;
+        _bot = bot; _logger = logger; _customerLinks = customerLinks;
     }
 
     [HttpPost]
@@ -43,10 +44,19 @@ public class LineWebhookController : ControllerBase
         try
         {
             using var doc = JsonDocument.Parse(body);
+            // รอบ 211 ฝ่ายค้าน ข้อ 4: bot userId ของ OA กลาง (ลายเซ็นผ่านแล้ว) ⇒ ลิงก์ลูกค้าเก็บปลายทาง + ตรวจกับ Line:BotUserId
+            var destination = doc.RootElement.TryGetProperty("destination", out var dst) ? dst.GetString() : null;
             if (!doc.RootElement.TryGetProperty("events", out var events)) return Ok();
             foreach (var ev in events.EnumerateArray())
             {
                 var type = ev.TryGetProperty("type", out var t) ? t.GetString() : null;
+                // รอบ 211: ลูกค้าปลายทางบล็อก/เพิ่มเพื่อน OA กลางกลับ ⇒ หยุด/เปิดส่งแจ้งเตือนลูกค้าที่ผูกไว้ (เงียบ — ผู้ใช้ ERP ก็ follow OA นี้)
+                if (type is ("follow" or "unfollow") && _customerLinks != null
+                    && ev.TryGetProperty("source", out var fs) && fs.TryGetProperty("userId", out var fu) && !string.IsNullOrEmpty(fu.GetString()))
+                {
+                    await _customerLinks.SetBlockedAsync(Accounting.Helpers.CustomerNotifyChannel.ScopeNextAcc, null, fu.GetString()!, blocked: type == "unfollow");
+                    continue;
+                }
                 if (type is not ("message" or "postback")) continue;
                 var src = ev.GetProperty("source");
                 if (src.GetProperty("type").GetString() != "user") continue; // ignore group/room for now
@@ -67,7 +77,7 @@ public class LineWebhookController : ControllerBase
                     var msgType = msg.GetProperty("type").GetString();
                     if (msgType == "text")
                     {
-                        reply = await _bot.HandleMessageAsync(userId, msg.GetProperty("text").GetString() ?? "");
+                        reply = await _bot.HandleMessageAsync(userId, msg.GetProperty("text").GetString() ?? "", destination);
                     }
                     else if (msgType is "image" or "file")
                     {

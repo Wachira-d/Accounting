@@ -13,6 +13,8 @@ public class AccountingDbContext : DbContext
     public DbSet<LineBindCode> LineBindCodes => Set<LineBindCode>();
     public DbSet<LineUserState> LineUserStates => Set<LineUserState>();
     public DbSet<EmployeeLineBindCode> EmployeeLineBindCodes => Set<EmployeeLineBindCode>();
+    public DbSet<CustomerLineLink> CustomerLineLinks => Set<CustomerLineLink>();   // รอบ 211
+    public DbSet<CustomerLineLinkCode> CustomerLineLinkCodes => Set<CustomerLineLinkCode>();   // รอบ 211
     public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
     public DbSet<Company> Companies => Set<Company>();
     public DbSet<CompanyUser> CompanyUsers => Set<CompanyUser>();
@@ -3407,6 +3409,27 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.SharePercent).HasPrecision(5, 2);
             e.HasIndex(x => new { x.BookingId, x.ResourceId }).IsUnique().HasDatabaseName("UX_SiteBookingAssignments_Booking_Resource");
             e.HasIndex(x => new { x.CompanyId, x.ResourceId }).HasDatabaseName("IX_SiteBookingAssignments_Company_Resource");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 211: ลูกค้าผูก LINE เอง (ตาราง + index ต้องตรงกับ DatabaseMigrationHelper.CmsRound211LineNotifyStatements)
+        modelBuilder.Entity<CustomerLineLink>(e =>
+        {
+            e.Property(x => x.TargetKind).HasMaxLength(16);
+            e.Property(x => x.LineUserId).HasMaxLength(64);
+            e.Property(x => x.OaScope).HasMaxLength(16);
+            e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.UnlinkReason).HasMaxLength(32);
+            e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinks_Company_Target");
+            e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<CustomerLineLinkCode>(e =>
+        {
+            e.Property(x => x.TargetKind).HasMaxLength(16);
+            e.Property(x => x.CodeHash).HasMaxLength(64);
+            e.Property(x => x.OaScope).HasMaxLength(16);
+            e.HasIndex(x => x.CodeHash).IsUnique().HasDatabaseName("UX_CustomerLineLinkCodes_Hash");
+            e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinkCodes_Company_Target");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 209 P4: ตารางคลาส (ตาราง + index ต้องตรงกับ Helpers/ClassScheduleMigration)
