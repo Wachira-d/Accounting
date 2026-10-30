@@ -57,11 +57,12 @@ public class CreateBookingServiceRequest
 /// <summary>ค่าตั้งการจองระดับไซต์ (บริการที่ "ใช้ค่าของไซต์" รับไป)</summary>
 public class BookingSiteSettingsDto
 {
-    public int DurationMinutes { get; set; } = 60;
-    public int BufferBeforeMinutes { get; set; }
-    public int BufferAfterMinutes { get; set; }
-    public int MinAdvanceHours { get; set; } = 1;
-    public int MaxAdvanceDays { get; set; } = 30;
+    // ฝ่ายค้านรอบ 215 เฟส 2: ตอนบันทึก null/ไม่ส่ง = คงค่าเดิม (เดิมไม่ส่ง = รีเซ็ตเป็นค่าเริ่มต้นเงียบ ๆ) · GET มีค่าเสมอ
+    public int? DurationMinutes { get; set; }
+    public int? BufferBeforeMinutes { get; set; }
+    public int? BufferAfterMinutes { get; set; }
+    public int? MinAdvanceHours { get; set; }
+    public int? MaxAdvanceDays { get; set; }
     /// <summary>จังหวะออกใบกำกับภาษีของบริการแบบ Guaranteed (คำตัดสินข้อ 155) · คำตอบมีค่าเสมอ · ตอนบันทึก null = คงค่าเดิม (ไม่รีเซ็ตเงียบ)</summary>
     public BookingInvoiceTiming? GuaranteedInvoiceTiming { get; set; }
     /// <summary>ตัวเลือก + ผลทางภาษี (server ประกอบจาก <c>BookingInvoiceTimingPolicy.Options</c> · หน้าเว็บแสดงตรง ๆ) — ไม่อ่านตอนบันทึก</summary>
@@ -111,6 +112,8 @@ public class BookingSiteSettingsDto
     public List<BookingServiceModeOverride> ResourceModeOverrides { get; set; } = new();
     /// <summary>GET เท่านั้น: จำนวนบริการที่ใช้ "ตามค่าเว็บ"</summary>
     public int ResourceModeInheritingCount { get; set; }
+    /// <summary>GET เท่านั้น: ผู้ให้บริการที่ใช้งานอยู่ (0 = ยังไม่มี — หน้าบอกทางไปเพิ่ม)</summary>
+    public int ActiveProviderCount { get; set; }
     /// <summary>ตัวเลือก "ต้องเป็นสมาชิก" ต่อบริการ (server ประกาศป้าย · <c>BookingAccessRule.Options</c>) — ไม่อ่านตอนบันทึก</summary>
     public List<BookingAccessRule.Option> MemberAccessOptions { get; set; } = new();
 }

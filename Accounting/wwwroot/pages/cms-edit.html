@@ -3273,7 +3273,8 @@
         }
         // รอบ 207 — ส่งเฉพาะเมื่อโหลดค่าเดิมสำเร็จ (ไม่งั้น server คงค่าเดิม · ไม่รีเซ็ตเงียบ)
         if (this._bss207Loaded) {
-          body.providerAllocationEnabled = document.getElementById('bssProvidersEnabled').checked;
+          // ฝ่ายค้านรอบ 215 เฟส 2 S1: ส่งเฉพาะเมื่อเจ้าของกดสวิตช์จริง — ค่าที่อนุมานได้ (เว็บใหม่ยังไม่มีผู้ให้บริการ) ห้ามถูกประทับเป็นค่าที่ตั้งเอง
+          if (this._bssProvidersDirty) body.providerAllocationEnabled = document.getElementById('bssProvidersEnabled').checked;
           body.providerRecommendStrategy = document.getElementById('bssStrategy').value;
           body.formFields = { phone: document.getElementById('bssFfPhone').value, email: document.getElementById('bssFfEmail').value, notes: document.getElementById('bssFfNotes').value };
           const cd = document.querySelector('input[name="bssCompletionDoc"]:checked');
@@ -3291,6 +3292,7 @@
       _bss207Render(d) {
         this._bssSettings = d;
         this.renderDefaultModeLine();   // รอบ 215 เฟส 2
+        this._bssProvidersDirty = false;
         const on = d.providerAllocationEnabled === true;
         document.getElementById('bssProvidersEnabled').checked = on;
         const strat = document.getElementById('bssStrategy');
@@ -3318,6 +3320,7 @@
         this._bss210Loaded = typeof d.requireMemberToBook === 'boolean';
       },
       bssProvidersToggle() {
+        this._bssProvidersDirty = true;
         const on = document.getElementById('bssProvidersEnabled').checked;
         document.getElementById('bssProvidersBody').style.display = on ? '' : 'none';
         const rep = document.getElementById('bkLinkReport');
