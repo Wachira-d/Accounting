@@ -201,4 +201,138 @@ public class PlatformBillingPhase0DbTests
         var (legacyCid, legacyCode) = await SeedFlatAddOnAsync(db, AddOnPaymentStatus.AwaitingPayment, null, null);
         Assert.True(await metering.IsFeatureEnabledAsync(legacyCid, legacyCode));
     }
+
+    // ═══ ฝ่ายค้านรอบ 219 ═══
+
+    /// <summary>แม่แบบที่ service จะเลือก (คำค้นเดียวกับ service) — ฐานร่วมอาจมีหลายแถว ⇒ เทสต์ตัดสินจากแถวที่ service เห็นจริง</summary>
+    private static Task<PlanTemplate?> TemplateAsync(Accounting.Data.AccountingDbContext db, SubscriptionPlan plan)
+        => db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == plan && p.IsActive);
+
+    [Fact]
+    public async Task Permanent_free_upgrade_approved_starts_period_from_now_not_after_100_years()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsurePricedTemplateAsync(db, SubscriptionPlan.Pro);
+        var (cid, sub) = await SeedAsync(db, SubscriptionStatus.Active, SubscriptionPlan.FreeTrial);
+        sub.IsPermanentFree = true;
+        sub.EndDate = DateTime.UtcNow.AddYears(100);
+        await db.SaveChangesAsync();
+
+        var svc = new SubscriptionService(db, Notifications());
+        var res = await svc.ConvertTrialAsync(cid, new ConvertTrialRequest(SubscriptionPlan.Pro, BillingCycle.Monthly), "owner");
+        Assert.NotNull(res.Payment);
+        await svc.ReviewPaymentAsync(res.Payment!.Id, new ReviewSubscriptionPaymentRequest(true, "test", null), "system", systemConfirmed: true);
+
+        var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
+        var tpl = await TemplateAsync(db, SubscriptionPlan.Pro);
+        Assert.Equal(SubscriptionPlan.Pro, after.Plan);
+        if (tpl is { IsPermanentFree: false })
+        {
+            Assert.False(after.IsPermanentFree);
+            // B1: ≈ วันนี้ + 1 เดือน (เดิม +100 ปี +1 เดือน)
+            Assert.True(after.EndDate < DateTime.UtcNow.AddDays(32), $"EndDate {after.EndDate:O}");
+            Assert.True(after.EndDate > DateTime.UtcNow.AddDays(27));
+        }
+    }
+
+    [Fact]
+    public async Task Mid_cycle_upgrade_starts_now_but_same_plan_renewal_extends_from_end()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsurePricedTemplateAsync(db, SubscriptionPlan.Pro);
+        var basic = await TemplateAsync(db, SubscriptionPlan.Basic);
+        var pro = await TemplateAsync(db, SubscriptionPlan.Pro);
+        var svc = new SubscriptionService(db, Notifications());
+
+        async Task<Subscription> PayAsync(SubscriptionPlan from, SubscriptionPlan to)
+        {
+            var (_, sub) = await SeedAsync(db, SubscriptionStatus.Active, from);
+            sub.BillingCycle = BillingCycle.Annual;
+            sub.EndDate = DateTime.UtcNow.AddDays(200);
+            var pay = new SubscriptionPayment
+            {
+                SubscriptionId = sub.Id, PaymentNumber = "SP-B1-" + Guid.NewGuid().ToString("N")[..6], Amount = 990m, PaymentDate = DateTime.UtcNow,
+                RequestedPlan = to, RequestedBillingCycle = BillingCycle.Monthly, RequestedPeriodMonths = 1, Status = SubscriptionPaymentStatus.Pending,
+            };
+            db.SubscriptionPayments.Add(pay);
+            await db.SaveChangesAsync();
+            await svc.ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "test", null), "system", systemConfirmed: true);
+            return await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
+        }
+
+        // ทิศตรงข้าม: ต่ออายุแพ็กเกจเดิม ⇒ ต่อจากวันหมดอายุเดิม (200 วัน + 1 เดือน)
+        var renewed = await PayAsync(SubscriptionPlan.Pro, SubscriptionPlan.Pro);
+        Assert.True(renewed.EndDate > DateTime.UtcNow.AddDays(220));
+
+        // Starter รายปีกลางรอบ → Pro รายเดือน (อัปเกรด) ⇒ ≈ วันนี้ + 1 เดือน
+        if (basic != null && pro != null
+            && PlatformPlanPricing.Classify(basic.MonthlyPrice, pro.MonthlyPrice) == PlatformPlanPricing.ChangeKind.Upgrade && !pro.IsPermanentFree)
+        {
+            var upgraded = await PayAsync(SubscriptionPlan.Basic, SubscriptionPlan.Pro);
+            Assert.Equal(SubscriptionPlan.Pro, upgraded.Plan);
+            Assert.True(upgraded.EndDate < DateTime.UtcNow.AddDays(32), $"EndDate {upgraded.EndDate:O}");
+        }
+    }
+
+    [Fact]
+    public async Task Scheduled_downgrade_to_permanent_free_plan_stays_active()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        if (!await db.PlanTemplates.AnyAsync(t => t.Plan == SubscriptionPlan.FreeTrial && t.IsActive))
+        {
+            db.PlanTemplates.Add(new PlanTemplate { Name = "ฟรีถาวร (ทดสอบ)", Plan = SubscriptionPlan.FreeTrial, IsActive = true, IsPermanentFree = true, MaxUsers = 1, MaxCompanies = 1 });
+            await db.SaveChangesAsync();
+        }
+        var tpl = await TemplateAsync(db, SubscriptionPlan.FreeTrial);
+        var (_, sub) = await SeedAsync(db, SubscriptionStatus.Active, SubscriptionPlan.Pro);
+        sub.EndDate = DateTime.UtcNow.AddMinutes(-5);
+        sub.ScheduledPlan = SubscriptionPlan.FreeTrial;
+        sub.ScheduledBillingCycle = BillingCycle.Monthly;
+        sub.ScheduledPlanEffectiveAt = DateTime.UtcNow.AddMinutes(-5);
+        await db.SaveChangesAsync();
+
+        await new SubscriptionService(db, Notifications()).ProcessExpiredSubscriptionsAsync();
+
+        var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
+        Assert.Null(after.ScheduledPlan);
+        Assert.Equal(SubscriptionPlan.FreeTrial, after.Plan);
+        if (tpl is { IsPermanentFree: true })
+        {
+            // S2: ฟรีถาวร ⇒ Active ไม่หมดอายุ (เดิมตกเป็น PastDue ในรอบเดียวกัน)
+            Assert.Equal(SubscriptionStatus.Active, after.Status);
+            Assert.True(after.EndDate > DateTime.UtcNow.AddYears(50));
+        }
+    }
+
+    [Fact]
+    public async Task Reprotect_pass_migrates_dev_key_secrets_and_leaves_unknown_key_untouched()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var company = new Company { Name = "บริษัททดสอบเข้ารหัสใหม่", TaxId = "0105556000002" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var devCipher = new SecretProtector(EncryptionKeyResolver.DevKey).Protect("whsec_dev");
+        var foreignCipher = new SecretProtector("unknown-key-xyz").Protect("whsec_foreign");
+        var a = new WebhookRegistration { CompanyId = company.Id, Name = "a", Url = "https://example.com/a", Secret = devCipher };
+        var b = new WebhookRegistration { CompanyId = company.Id, Name = "b", Url = "https://example.com/b", Secret = foreignCipher };
+        db.WebhookRegistrations.AddRange(a, b);
+        await db.SaveChangesAsync();
+
+        var current = new SecretProtector("prod-key-219-db", null, new[] { EncryptionKeyResolver.DevKey });
+        var r = await Accounting.Services.Background.SecretReprotectPass.RunAsync(db, current, default, company.Id);
+        Assert.Equal(1, r.Reprotected);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var a2 = await check.WebhookRegistrations.AsNoTracking().SingleAsync(w => w.Id == a.Id);
+        var b2 = await check.WebhookRegistrations.AsNoTracking().SingleAsync(w => w.Id == b.Id);
+        Assert.Equal("whsec_dev", new SecretProtector("prod-key-219-db").Unprotect(a2.Secret));   // ย้ายไปคีย์ปัจจุบันแล้ว
+        Assert.Equal(foreignCipher, b2.Secret);                                                   // ไม่รู้คีย์ = ไม่แตะ
+        Assert.False(current.IsUsable(b2.Secret));
+        // รันซ้ำ = ไม่มีอะไรให้ทำ (idempotent)
+        Assert.Equal(0, (await Accounting.Services.Background.SecretReprotectPass.RunAsync(check, current, default, company.Id)).Reprotected);
+    }
 }

@@ -260,7 +260,7 @@ doc ที่ต้องขยับพร้อมโค้ด: `PAYMENT_GATEW
 | §4.2 นโยบายคืนเงินของร้าน | ✅ | `Site.Refund*`/`PolicyAcceptanceText` · `CmsLegalPages` (โทเคน `shop.*` · `RefundContradictions` · `ShopPolicyVersion`) · `cms-edit.html` · `shop-policy.html` · footer storefront |
 | §4.3 ติ๊ก + หลักฐาน | ✅ | `Helpers/PurchasePolicyAcceptance` · ตาราง `PolicyAcceptances` · ออเดอร์/จองบริการ/ที่พัก/ขอแพ็กเกจ/สลิปค่าแพ็กเกจ/ส่วนเสริม/ชำระออนไลน์ · component `js/policy-accept.js` (ศูนย์ชำระค่าบริการเรียก `EnforcePlatformAsync(…ChannelPlatformInvoice…)` หรือ `POST platform-pay/policy-acceptance`) |
 | ชำระค่าบริการออนไลน์ผ่านแพลตฟอร์ม | ✅ | `IPlatformPaymentService` · `PlatformPaymentController` · ปุ่มเฉพาะเมื่อแพลตฟอร์มเปิด live (`Helpers/PlatformPayAvailability`) |
-| §2 P0-4 SecretProtector fail-fast | ⏳ ไม่อยู่ในรอบนี้ | ต้องย้ายคีย์เดิม (migration เข้ารหัสใหม่) — ค้างให้รอบถัดไป |
+| §2 P0-4 SecretProtector fail-fast | ✅ (เฟส 0 ฝ่ายค้าน `497e69fc`) | `Helpers/EncryptionKeyResolver` · `SecretReprotectJob` — ไม่ใช่งานของรอบนี้ |
 | §4.4 คืนเงิน + ใบลดหนี้ค่าบริการแพลตฟอร์ม | ⏳ | นโยบายไม่คืนเงิน — ข้อยกเว้นทำด้วยมือ · เส้นอัตโนมัติรอศูนย์ชำระค่าบริการ |
 | หน้าจองโต๊ะ (ไม่มีชำระเงิน) | ลิงก์อย่างเดียว | `booking.html` ลิงก์นโยบายคืนเงิน — ไม่มีขั้นจ่ายจึงไม่บังคับติ๊ก |
 

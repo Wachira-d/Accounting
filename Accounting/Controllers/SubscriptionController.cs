@@ -156,10 +156,14 @@ public class SubscriptionController : ControllerBase
     /// <summary>
     /// แปลง Trial → Paid
     /// </summary>
-    [HttpPost("{companyId:guid}/convert")]
     /// <remarks>รอบ 219 เฟส 0 (G-0): ไม่เปิดแพ็กเกจทันทีอีกต่อไป — คืนรายการชำระที่ต้องโอน (หรือการเปลี่ยนที่รอมีผล) + ข้อความให้หน้าเว็บแสดงตรง ๆ</remarks>
+<<<<<<< HEAD
     public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ConvertTrial(Guid companyId, [FromBody] ConvertTrialRequest request,
         [FromServices] ILegalDocumentService legal)
+=======
+    [HttpPost("{companyId:guid}/convert")]
+    public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ConvertTrial(Guid companyId, [FromBody] ConvertTrialRequest request)
+>>>>>>> 5483434f
     {
         if (await RequireOwnerAsync(companyId, "อัปเกรดแพ็กเกจ") is { } deny) return deny;
         // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงินก่อนสร้างรายการชำระ — ตรวจก่อน (ไม่ผ่าน = ไม่สร้างอะไร) แล้วบันทึกหลักฐานผูกรายการชำระ
@@ -192,10 +196,14 @@ public class SubscriptionController : ControllerBase
     /// <summary>
     /// เปลี่ยน Plan
     /// </summary>
-    [HttpPut("{companyId:guid}/plan")]
     /// <remarks>รอบ 219 เฟส 0 (G-0): อัปเกรด = รายการชำระรอเงินเข้า · ดาวน์เกรด/เปลี่ยนรอบ = มีผลวันครบรอบ</remarks>
+<<<<<<< HEAD
     public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ChangePlan(Guid companyId, [FromBody] ChangeSubscriptionRequest request,
         [FromServices] ILegalDocumentService legal)
+=======
+    [HttpPut("{companyId:guid}/plan")]
+    public async Task<ActionResult<ApiResponse<PlanPurchaseResponse>>> ChangePlan(Guid companyId, [FromBody] ChangeSubscriptionRequest request)
+>>>>>>> 5483434f
     {
         if (await RequireOwnerAsync(companyId, "เปลี่ยนแพ็กเกจ") is { } deny) return deny;
         if (await PolicyProblemAsync(legal, request.PolicyAccepted, request.PolicyVersionShown) is { } policyDeny) return policyDeny;

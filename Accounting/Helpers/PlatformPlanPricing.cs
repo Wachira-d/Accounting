@@ -58,6 +58,41 @@ public static class PlatformPlanPricing
     public static bool DeferToCycleEnd(ChangeKind kind, SubscriptionStatus status, DateTime currentEndUtc, DateTime nowUtc)
         => kind != ChangeKind.Upgrade && status == SubscriptionStatus.Active && currentEndUtc > nowUtc;
 
+    /// <summary>ฝ่ายค้านรอบ 219 B1 (นโยบายชั่วคราวจนกว่าจะมี proration · คำตัดสินข้อ 178 ภาคผนวก): วันเริ่มรอบที่จ่าย —
+    /// <b>ต่ออายุแพ็กเกจเดิม</b>/ดาวน์เกรดที่รอวันครบรอบ ⇒ ต่อจากวันหมดอายุเดิม (ถ้ายังไม่หมด) · <b>อัปเกรดทันที</b> หรือ sub <b>ฟรีถาวร</b>
+    /// (EndDate +100 ปี) ⇒ เริ่มจากวันนี้ (ส่วนที่เหลือของรอบเดิมสละ) · เดิมทุกกรณีต่อจาก EndDate ⇒ ฟรีถาวรอัปเกรด ฿990 ได้ Pro 100 ปี</summary>
+    public static DateTime PeriodStart(ChangeKind kind, bool samePlan, bool currentIsPermanentFree, DateTime currentEndUtc, DateTime nowUtc)
+    {
+        if (currentIsPermanentFree) return nowUtc;
+        if (!samePlan && kind == ChangeKind.Upgrade) return nowUtc;
+        return currentEndUtc > nowUtc ? currentEndUtc : nowUtc;
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 219 S5: การชำระของบริษัทต่ออายุแพลนระดับบัญชีได้เฉพาะเมื่อแพ็กเกจตรงกัน (ไม่รู้แพ็กเกจของแพลนบัญชี = ไม่ต่อ)</summary>
+    public static bool MayCascadeToAccountPlan(SubscriptionPlan paidPlan, SubscriptionPlan? accountPlan)
+        => accountPlan is SubscriptionPlan a && a == paidPlan;
+
+    /// <summary>ฝ่ายค้านรอบ 219 S9: ใบแจ้งหนี้ต่ออายุของรอบนี้ออกแล้ว (ราคาแพ็กเกจเดิม) ⇒ ไม่รับการเปลี่ยนที่รอวันครบรอบ — คืนข้อความบอกว่าเลือกได้เมื่อไร ·
+    /// null = ทำได้ · ทางเลือกที่ถูกกว่า (ยกเลิก/ออกใบแจ้งหนี้ใหม่ผ่านใบลดหนี้) เป็นงานเฟส 1–3</summary>
+    public static string? ScheduleBlockedByIssuedRenewal(DateTime? renewalInvoiceForEndUtc, DateTime currentEndUtc)
+        => renewalInvoiceForEndUtc is DateTime f && f == currentEndUtc
+            ? $"ออกใบแจ้งหนี้ต่ออายุรอบถัดไปตามแพ็กเกจปัจจุบันแล้ว — เปลี่ยนแพ็กเกจที่ถูกลงได้หลังวันครบรอบ {currentEndUtc.AddHours(7):dd/MM/yyyy} "
+              + "(หรือติดต่อผู้ดูแลระบบให้ออกใบแจ้งหนี้ใหม่)"
+            : null;
+
+    /// <summary>ฝ่ายค้านรอบ 219 S4: ทดลองใช้ Account Plan ได้ครั้งเดียวต่อเจ้าของต่อระดับแพ็กเกจ (เคยมีแถวของระดับนี้ ไม่ว่าสถานะใด = ไม่ได้)</summary>
+    public static bool MayStartAccountTrial(IEnumerable<SubscriptionPlan> previousPlans, SubscriptionPlan requested)
+        => !previousPlans.Contains(requested);
+
+    /// <summary>ฝ่ายค้านรอบ 219 (หมายเหตุ): วันรับเงินของรายการค่าแพ็กเกจ (เป็นวันที่บนใบเสร็จ/ใบกำกับ) — ค่าว่าง/อนาคต ⇒ <paramref name="nowUtc"/> ·
+    /// ย้อนเกิน 31 วันก่อน <paramref name="createdUtc"/> ⇒ ตัดที่ 31 วัน (กันลงวันที่ย้อนหลังเกินจริง)</summary>
+    public static DateTime ClampPaymentDate(DateTime requestedUtc, DateTime createdUtc, DateTime nowUtc)
+    {
+        if (requestedUtc == default || requestedUtc > nowUtc) return nowUtc;
+        var floor = createdUtc.AddDays(-31);
+        return requestedUtc < floor ? floor : requestedUtc;
+    }
+
     /// <summary>รายงานแอดมิน: แพ็กเกจที่ผู้เช่าเปิดเอง (Convert/เปลี่ยนแพ็กเกจรุ่นก่อนเฟส 0) หลังการชำระที่อนุมัติครั้งล่าสุด = ยังไม่ได้จ่าย</summary>
     public static bool IsUnpaidSelfActivation(DateTime? lastSelfActivationAt, DateTime? lastApprovedPaymentAt)
         => lastSelfActivationAt is DateTime a && (lastApprovedPaymentAt is not DateTime p || p < a);

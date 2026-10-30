@@ -666,8 +666,13 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   `Subscription.ScheduledPlan/ScheduledBillingCycle/ScheduledPlanEffectiveAt` มีผลวันครบรอบ (`ProcessExpiredSubscriptionsAsync`) และใบแจ้งหนี้ต่ออายุคิดตามแพ็กเกจใหม่ ·
   แอดมินเปลี่ยนทันทีได้ (`AdminChangePlan` + audit chain) · sub ที่เคยเปิดเองโดยไม่จ่าย = รายงาน `unpaid-activations` (ไม่ย้อนอัตโนมัติ)
 - **ส่วนเสริมเหมารายเดือน**: ค้างชำระใช้ได้ `AddOnPaymentPolicy.UnpaidGraceDays` (7) วันนับจาก `CompanyFeature.PaymentAwaitingSince` แล้วระงับ · งวดที่จ่ายล่วงหน้า
-  (`CompanyFeature.UpfrontPeriod`) ไม่ออกค่าเหมาซ้ำ · ยังไม่จ่าย = ไม่ออกค่าเดือน · แถวก่อนเฟส 0 พฤติกรรมเดิม
+  (`CompanyFeature.UpfrontPeriod`) ไม่ออกค่าเหมาซ้ำ · ยังไม่จ่าย = ไม่ออกค่าเดือน · แถวที่ค้างชำระก่อนเฟส 0 = ผ่อนผัน 7 วันนับจากวัน deploy (migration ตั้งเวลาให้ · คำตัดสินเจ้าของ ④)
 - รายงานอ่านอย่างเดียว `/admin/revenue.html` (`AdminPlatformBillingController`): unpaid-activations · prepaid-accounts · tenant-routed-intents
+- **หลังฝ่ายค้าน (ภาคผนวกข้อ 178):** อัปเกรดทันที/sub ฟรีถาวร = รอบใหม่เริ่มวันอนุมัติ (ส่วนที่เหลือสละ — ชั่วคราวจนมี proration) · ต่ออายุ/ดาวน์เกรดรอครบรอบ ต่อจากวันหมดอายุเดิม ·
+  แพ็กเกจฟรีถาวร = Active ไม่หมดอายุ · ทดลองใช้ Account Plan ครั้งเดียวต่อเจ้าของต่อระดับ · การจ่ายของบริษัทต่ออายุแพลนบัญชีเฉพาะเมื่อแพ็กเกจตรง · ออกใบแจ้งหนี้ต่ออายุแล้ว = ดาวน์เกรดได้หลังครบรอบ
+- **Deploy checklist — คีย์เข้ารหัส (B2):** (1) ตั้ง `ENCRYPTION_KEY` (หรือ `Security:EncryptionKey`) ใน production — ว่าง/dev key = แอปไม่บูต · (2) **อย่าลบค่า
+  `Security:EncryptionKey` เดิม**ในการ deploy แรกหลังเปลี่ยน (เป็นคีย์เดิมที่ใช้ถอดความลับเก่า) · (3) หลังบูต 3 นาทีดูผลงาน `SecretReprotect` ในหน้างานเบื้องหลัง
+  (จำนวนที่ย้าย) และทดสอบส่งอีเมล/Omise/LINE · (4) ค่าที่ไม่รู้คีย์ = หน้าตั้งค่าแสดง "ต้องกรอกใหม่" · คอลัมน์ PII ใช้นิพจน์คีย์เดิม (`ENCRYPTION_KEY ?? Security:EncryptionKey`) — ห้ามเปลี่ยนคีย์ PII โดยไม่มี migration
 
 ### 6.3 Edge cases (ตัดสินใจแล้ว)
 

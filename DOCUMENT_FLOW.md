@@ -1809,6 +1809,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `DispatchSucceededAsync` ไม่ส่งต่อ handler (ประวัติ ⚠️ + แจ้ง) เมื่อเกิดใต้บริษัทร้าน/ไม่รู้ผู้จ่าย/โหมดทดสอบ · ยืนยันมือ/ส่งต่อใหม่/คืนเงิน(และตรวจ/บันทึกผล) บนชนิดนี้ = SystemAdmin
   ใน tenant ผู้ให้บริการเท่านั้น (403) · handler ค่าแพ็กเกจ/ส่วนเสริมกรองแถวด้วยบริษัทผู้จ่าย · ส่วนเสริม "ชำระออนไลน์" ปิด (409 + วิธีโอน) จนกว่าเฟส 1 ·
   ใบเอกสารค่าบริการยังออกตามเส้นเดิม (`PlatformBillingDocumentIssuer` เมื่อแอดมินอนุมัติ) · Last verified `commit dec90eff`
+  หลังฝ่ายค้าน: โหมดทดสอบตัดสินจาก `PaymentIntent.IsTestMode` (ประทับตอนสร้าง) · รายการค่าบริการเก่าใต้บริษัทร้าน: แอดมินแพลตฟอร์มจัดการได้ · ร้านคืนเงิน/ตรวจผลคืนเงินได้ ·
+  วันรับเงินบนใบเสร็จ/ใบกำกับค่าแพ็กเกจบีบที่เซิร์ฟเวอร์ · Last verified `commit 497e69fc`
 - **รับเงินสำเร็จ**: ขา "เงินเข้า" ตัดสินที่ `IGatewayAccountResolver.ResolveMoneyInAccountAsync` ตัวเดียว (adapter ที่ไม่เข้าธนาคารทันที ⇒
   Dr **11340** หรือผังที่ตั้ง `PaymentProviderConfig.ClearingAccountId` · ตัวหาบัญชีพักตัวเดียว `ResolveClearingAccountAsync`) ผ่านตัวจัดการต้นทาง 6 ชนิด
 - **คืนเงิน** (`POST pay/intents/{id}/refund` → `GatewayRefundService.RefundAsync`): ตรวจ `GatewayRefundMath.Check` (สถานะรับเงินแล้ว · **ยอดคืนสะสม**

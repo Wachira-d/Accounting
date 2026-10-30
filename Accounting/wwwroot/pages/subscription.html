@@ -114,11 +114,11 @@
     <!-- Convert/Upgrade Modal -->
     <div class="modal-overlay" id="upgradeModal">
       <div class="modal" style="max-width:500px">
-        <div class="modal-header"><h3 class="modal-title">อัปเกรดแพ็กเกจ</h3><button class="modal-close" onclick="Layout.closeModal('upgradeModal')">&times;</button></div>
+        <div class="modal-header"><h3 class="modal-title">เลือกแพ็กเกจ</h3><button class="modal-close" onclick="Layout.closeModal('upgradeModal')">&times;</button></div>
         <div class="modal-body" id="upgradeContent"></div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('upgradeModal')" data-i18n="common.cancel">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Sub.confirmUpgrade()">ยืนยันและไปชำระเงิน</button>
+          <button class="btn btn-primary" onclick="Sub.confirmUpgrade()">ยืนยัน</button>
         </div>
       </div>
     </div>
@@ -411,7 +411,7 @@
             </div>
             ${isCurrent ? '<button class="btn btn-secondary w-full" disabled>แพ็กเกจปัจจุบัน</button>' :
               `<button class="btn btn-primary w-full" onclick="Sub.selectPlan('${Layout.jsArg(p.plan)}')">
-                ${!currentPlan || currentPlan === 'FreeTrial' ? 'เริ่มทดลองฟรี' : 'อัปเกรด'}
+                เลือกแพ็กเกจนี้
               </button>`}
           </div>`;
         }).join('');
@@ -489,7 +489,8 @@
         document.getElementById('upgradeContent').innerHTML = `
           <div class="text-center" style="margin-bottom:16px">
             <div style="font-size:48px">&#x1F680;</div>
-            <h4>อัปเกรดเป็น ${Layout.esc(p.name)}</h4>
+            <h4>เลือกแพ็กเกจ ${Layout.esc(p.name)}</h4>
+            <div class="text-xs text-gray-500">อัปเกรด = ชำระก่อนแล้วเปิดใช้ทันทีเมื่อยืนยัน (เริ่มรอบใหม่จากวันที่ยืนยัน) · แพ็กเกจที่ถูกลง = มีผลวันครบรอบปัจจุบัน — ระบบแจ้งผลหลังกดยืนยัน</div>
           </div>
           <div class="sub-card" style="margin-bottom:16px">
             <div class="flex justify-between"><span>แพ็กเกจ</span><strong>${Layout.esc(p.name)}</strong></div>

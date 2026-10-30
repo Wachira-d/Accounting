@@ -147,7 +147,7 @@ public class CompanyOwnershipDbTests
 
         // ตัวเลือก: ผู้สร้างอยู่ · แอดมินที่ไม่ใช่ผู้สร้างไม่อยู่ · ข้อเสนอ = AutoPromote ผู้สร้าง
         var members = await db.CompanyUsers.AsNoTracking().Where(cu => cu.CompanyId == cid)
-            .Select(cu => new OwnerlessCompanyRepair.Member(cu.UserId, cu.Role, cu.JoinedAt, cu.User.IsSystemAdmin, cu.User.Status == UserStatus.Active))
+            .Select(cu => new OwnerlessCompanyRepair.Member(cu.UserId, cu.Role, cu.JoinedAt, cu.User.IsSystemAdmin, cu.User.Status == UserStatus.Active, cu.User.Status == UserStatus.Suspended))
             .ToListAsync();
         var proposal = OwnerlessCompanyRepair.Decide(creator.ToString(), members);
         Assert.Equal(OwnerlessCompanyRepair.Kind.AutoPromote, proposal.Kind);

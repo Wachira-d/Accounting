@@ -133,6 +133,16 @@ public class AccountSubscriptionController : ControllerBase
         var tpl = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Id == req.PlanTemplateId && p.IsActive);
         if (tpl == null) return BadRequest(new ApiResponse<AccountSubDto>(false, null!, "ไม่พบ plan template"));
 
+        // ฝ่ายค้านรอบ 219 S4: ทดลองใช้ระดับบัญชีได้ครั้งเดียวต่อเจ้าของต่อระดับแพ็กเกจ — เดิมหมดอายุ/ยกเลิกแล้วเริ่มใหม่ได้ไม่จำกัด (ใช้ฟรีตลอดกาล) ·
+        // นับแถวที่ถูกลบด้วย (ลบแล้วเริ่มใหม่ = ทางเลี่ยงเดิม)
+        var previousPlans = await _db.AccountSubscriptions.IgnoreQueryFilters().AsNoTracking()
+            .Where(a => a.OwnerUserId == userId)
+            .Join(_db.PlanTemplates.IgnoreQueryFilters().AsNoTracking(), a => a.PlanTemplateId, t => t.Id, (a, t) => t.Plan)
+            .ToListAsync();
+        if (!Accounting.Helpers.PlatformPlanPricing.MayStartAccountTrial(previousPlans, tpl.Plan))
+            return BadRequest(new ApiResponse<AccountSubDto>(false, null!,
+                "บัญชีนี้เคยทดลองใช้แพ็กเกจระดับนี้แล้ว — เลือกแพ็กเกจจ่ายเงิน หรือติดต่อผู้ดูแลระบบ NextAcc"));
+
         var acct = new AccountSubscription
         {
             OwnerUserId = userId,

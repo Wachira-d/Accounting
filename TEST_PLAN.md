@@ -15,6 +15,15 @@
 | PB219-11 | part B (c): คีย์เข้ารหัส env/config · production ไม่มีคีย์/dev key · ค่าที่เข้ารหัสด้วย dev key เดิม | env ชนะ · boot ไม่ขึ้น · IsUsable=false (กรอกใหม่) | `Encryption_key_env_wins_and_production_refuses_missing_or_dev_key` · `Secret_protector_round_trips_with_resolved_key_and_old_dev_key_values_need_reentry` |
 | PB219-12 (มือ) | ส่วนเสริม: ไม่มีปุ่ม "ชำระออนไลน์" · โมดัลแนบสลิปแสดงวิธีโอนของ NextAcc (แอดมินตั้งที่ ตั้งค่าเว็บไซต์ → ข้อมูลผู้ขาย) · แพ็กเกจ: อัปเกรด → โมดัลชำระ + แนบสลิป · ประวัติ Pending มีปุ่ม "แนบสลิป" | ข้อความ escape · ยอดจากเซิร์ฟเวอร์ | ตรวจมือ |
 | PB219-13 (มือ) | `/admin/revenue.html` 3 ตารางรายงานรอยรั่ว (เปิดเองไม่จ่าย · prepaid ปิดรอบไม่ออกใบ · intent ค่าบริการใต้บริษัทร้าน) | อ่านอย่างเดียว ไม่มีปุ่มแก้ข้อมูล | ตรวจมือ |
+| PB219-14 | B1: ฟรีถาวร (EndDate +100 ปี) → เลือก Pro → อนุมัติ · Starter รายปีกลางรอบ → Pro รายเดือน · ต่ออายุ Pro เดิม | ≈ วันนี้+1 เดือน · ≈ วันนี้+1 เดือน · ต่อจากวันหมดอายุเดิม | `Period_start_upgrade_and_permanent_free_start_now_renewal_extends` + Db `Permanent_free_upgrade_approved_starts_period_from_now_not_after_100_years` · `Mid_cycle_upgrade_starts_now_but_same_plan_renewal_extends_from_end` |
+| PB219-15 | B2: ความลับที่เข้ารหัสด้วย dev key/คีย์ config เดิม หลังตั้ง ENCRYPTION_KEY · คีย์ที่ไม่รู้จัก | ถอดได้ + ถูกเข้ารหัสใหม่ / ไม่ถูกแตะ IsUsable=false | `Secret_encrypted_with_dev_key_still_decrypts_after_switching_key_and_is_reprotected` · `Secret_with_unknown_key_stays_unusable_and_untouched` · `Legacy_key_candidates_cover_old_config_env_variants_and_dev_key` + Db `Reprotect_pass_migrates_dev_key_secrets_and_leaves_unknown_key_untouched` |
+| PB219-16 | S2: ดาวน์เกรดรอครบรอบไปแพ็กเกจฟรีถาวร | Active · EndDate +100 ปี (ไม่ PastDue) | Db `Scheduled_downgrade_to_permanent_free_plan_stays_active` |
+| PB219-17 | S4/S5/S9: ทดลองใช้บัญชีซ้ำระดับเดิม · จ่าย Basic ของบริษัทใต้แพลนบัญชี Enterprise · ดาวน์เกรดหลังออกใบแจ้งหนี้ต่ออายุ | ปฏิเสธ · ไม่ต่ออายุแพลนบัญชี (ประวัติ) · ปฏิเสธพร้อมวัน | `Account_cascade_trial_once_and_renewal_window_rules` |
+| PB219-18 | S6: ร้านคืนเงิน/ตรวจผลคืนเงินรายการค่าบริการเก่าใต้บริษัทร้าน · ยืนยัน/ส่งต่อ/บันทึกผลมือ | ได้ / ไม่ได้ | `Tenant_may_only_refund_or_verify_legacy_tenant_routed_platform_intents` |
+| PB219-19 | วันรับเงิน: ว่าง/อนาคต/ย้อน 1 ปี | วันนี้ / วันนี้ / ย้อน 31 วัน | `Payment_date_is_clamped_server_side` |
+| PB219-20 (มือ) | S7: ส่วนเสริมค้างชำระเกิน 7 วันหายจากเมนู (`Layout.hasFeature`) · S8: สร้าง intent ด้วย config ทดสอบแล้วสลับเป็น Live ก่อนจ่าย | ไม่แสดง · ไม่ให้สิทธิ์ | ตรวจมือ + required_call_site_check |
+| PB219-21 (มือ) | ขยายทดลองใช้บน sub ที่จ่ายแล้ว · ปุ่มเลือกแพ็กเกจ | 400 ข้อความไทย · ป้าย "เลือกแพ็กเกจนี้" | ตรวจมือ |
+| PB219-22 (มือ · deploy) | ตั้ง ENCRYPTION_KEY ใน production · บูต · ดูผล job `SecretReprotect` | จำนวนที่ย้าย > 0 ครั้งแรก · 0 ครั้งถัดไป · SMTP/Omise/LINE ยังใช้ได้ | ตรวจมือ (ดู ACCOUNT_STRUCTURE §6.2b deploy checklist) |
 
 ## BKPAY — นโยบายรับชำระล่วงหน้าของการจอง + โอน/QR/สลิป (รอบ 218 · คำตัดสินข้อ 177 · `erp-review/2026-10-30/BOOKING_PAYMENT_DESIGN.md`)
 
@@ -329,7 +338,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **709 ไฟล์ · 7,340 `[Fact]` + 1,155 `[Theory]` (5,414 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
+| เทสต์ที่มี | **709 ไฟล์ · 7,349 `[Fact]` + 1,156 `[Theory]` (5,420 `InlineData`)** ณ 2026-10-30 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`)
 
 
 

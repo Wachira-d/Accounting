@@ -116,7 +116,7 @@ public class CompanyFeature : TenantEntity
 
     /// <summary>รอบ 219 เฟส 0 (G-11): เวลาที่เข้าสถานะ "รอชำระ" ครั้งแรกของการเปิดรอบนี้ — นับระยะผ่อนผัน
     /// (<c>AddOnPaymentPolicy.UnpaidGraceDays</c>) · ปิด/เปิดใหม่ระหว่างยังค้างชำระ<b>ไม่รีเซ็ต</b> (กันต่อระยะผ่อนผันไม่รู้จบ) ·
-    /// null = แถวก่อนเฟส 0 (พฤติกรรมเดิม — เจ้าของตัดสิน)</summary>
+    /// null = แถวที่ไม่ได้ค้างชำระ (แถวค้างชำระก่อนเฟส 0 ถูก migration ตั้งเป็นเวลา deploy — คำตัดสินเจ้าของข้อ 178 ④)</summary>
     public DateTime? PaymentAwaitingSince { get; set; }
 
     /// <summary>รอบ 219 เฟส 0 (G-5): งวด (yyyy-MM ไทย) ที่ค่าจ่ายล่วงหน้าครอบ — งวดนี้ <c>AddOnMonthlyBillingJob</c> ไม่ออกค่าเหมาซ้ำ
