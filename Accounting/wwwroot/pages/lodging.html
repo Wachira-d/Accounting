@@ -163,7 +163,7 @@
         // ?propertyId= > ?siteId= (ที่พักที่ผูกเว็บนั้น) > เว็บล่าสุด > แห่งแรก — ตัวตัดสินเดียว CmsSiteContext.pickProperty (ใช้ร่วมกับ lodging-settings)
         const qs0 = new URLSearchParams(location.search);
         const rawProp = qs0.get('propertyId'), rawSite = qs0.get('siteId');
-        this.propertyId = CmsSiteContext.pickProperty(this.props, rawProp, rawSite);
+        this.propertyId = CmsSiteContext.pickProperty(this.props, rawProp, rawSite, this.sites);
         if (!this.propertyId) {
           // เว็บนี้ยังไม่มีที่พักผูก — เดิมตกไปที่พักแห่งแรกเงียบ ๆ (ทำงานผิดที่พัก) ⇒ บอกตรง ๆ + ทางไปสร้าง
           const site = this.sites.find(x => x.id === rawSite);

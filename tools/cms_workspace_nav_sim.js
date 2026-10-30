@@ -41,12 +41,17 @@ function loadLayout(src) {
 }
 
 function loadCtx(src, layoutStub) {
-  const ctx = { console, window: {}, document: { getElementById: () => null }, location: { href: '' } };
+  const listeners = {};
+  const ctx = { console, window: {}, location: { href: '' },
+    document: { getElementById: () => null, addEventListener: (t, f) => { (listeners[t] = listeners[t] || []).push(f); } } };
+  ctx.__listeners = listeners;
   ctx.window.Layout = layoutStub;
   ctx.Layout = layoutStub;
   vm.createContext(ctx);
   try { vm.runInContext(src, ctx); } catch (e) { return null; }
-  return ctx.window.CmsSiteContext;
+  const C = ctx.window.CmsSiteContext;
+  if (C) { C.__ctx = ctx; }
+  return C;
 }
 
 function navHtml(L, nav, opts) {
@@ -104,14 +109,33 @@ function layoutSuite(src, quiet) {
   html = navHtml(L, nav, { perms: { isOwnerOrAdmin: false, allowedMenuIds: ['documents'] }, modules: ['lodging'] });
   check('(ข) role ที่ไม่มีงานเว็บเลย ⇒ ไม่มีทางเข้า (ไม่ใช่กุญแจสิทธิ์ใหม่ที่ทุกคนเห็น)', !anchor(html, 'cms-workspace'));
   // เว็บ/แท็บล่าสุด
-  ctx.localStorage.setItem('cmsLastSite:c1', JSON.stringify({ siteId: 's-spa', page: 'cms-bookings' }));
+  ctx.localStorage.setItem('cmsLastSite:c1:anon', JSON.stringify({ siteId: 's-spa', page: 'cms-bookings' }));
   html = navHtml(L, nav, { perms: owner, modules: ['bookings', 'leads'] });
   check('ทางเข้า = แท็บล่าสุดของเว็บล่าสุด', /href="\/pages\/cms-bookings\.html\?siteId=s-spa"/.test(anchor(html, 'cms-workspace') || ''), anchor(html, 'cms-workspace'));
   html = navHtml(L, nav, { perms: owner, modules: ['bookings', 'leads'], page: 'cms-bookings' });
   check('อยู่หน้างานเว็บ ⇒ ทางเข้าเป็น active', /class="nav-item active"/.test(anchor(html, 'cms-workspace') || ''));
-  ctx.localStorage.setItem('cmsLastSite:c1', JSON.stringify({ siteId: 's-x', page: 'lodging' }));
+  ctx.localStorage.setItem('cmsLastSite:c1:anon', JSON.stringify({ siteId: 's-x', page: 'lodging' }));
   html = navHtml(L, nav, { perms: owner, modules: ['bookings'] });
+  check('(N1) เว็บล่าสุดแยกต่อผู้ใช้', (() => { L.user = { id: 'u2' }; const v = L.cmsLastSite(); L.user = null; return v === null; })());
+  check('(N4) ไม่มี data-nav-id="undefined"', !/data-nav-id="undefined"/.test(html));
   check('แท็บล่าสุดที่ผู้ใช้ไม่เห็นแล้ว ⇒ ไม่ใช้ (ไปแท็บงานแรกที่เห็น)', /href="\/pages\/cms-bookings\.html"/.test(anchor(html, 'cms-workspace') || ''), anchor(html, 'cms-workspace'));
+  return fail;
+}
+
+/** S4: Layout ประกาศ 'layout:permissions' หลังโหลดสิทธิ์ (หัวพื้นที่ทำงานวาดใหม่ตามนั้น) */
+async function permEventSuite(src, quiet) {
+  let fail = 0;
+  const check = (name, cond) => { if (!quiet) console.log(`  ${cond ? '✓' : '✗'} ${name}`); if (!cond) fail++; };
+  const r = loadLayout(src);
+  if (!r.L) return 99;
+  const fired = [];
+  r.ctx.document.dispatchEvent = (e) => fired.push(e && e.type);
+  r.ctx.CustomEvent = function (type) { this.type = type; };
+  r.ctx.API = { get: async () => ({ success: true, data: { isOwnerOrAdmin: false, allowedMenuIds: ['lodging'] } }) };
+  vm.runInContext('globalThis.API = API; globalThis.CustomEvent = CustomEvent;', r.ctx);
+  r.L.currentCompany = { id: 'c1' }; r.L.loadVatRegistration = () => {};
+  await r.L.loadMyPermissions();
+  check('(S4) โหลดสิทธิ์แล้วประกาศ layout:permissions', fired.includes('layout:permissions'));
   return fail;
 }
 
@@ -124,10 +148,11 @@ const SITES = [
 function ctxSuite(src, quiet) {
   let fail = 0;
   const check = (name, cond, extra = '') => { if (!quiet) console.log(`  ${cond ? '✓' : '✗'} ${name}${!cond && extra ? ' — ' + extra : ''}`); if (!cond) fail++; };
-  let allowed = null; let last = null;
+  let allowed = null; let last = null; let cleared = 0; const toasts = [];
   const stub = {
     hasMenuAccess: (id) => !allowed || allowed.includes(id),
-    cmsLastSite: () => last, setCmsLastSite() {}, toast() {}, esc: s => String(s), enumLabel: (k, v) => String(v),
+    cmsLastSite: () => last, setCmsLastSite() {}, clearCmsLastSite() { cleared++; last = null; }, toast(m) { toasts.push(m); },
+    esc: s => String(s), enumLabel: (k, v) => String(v),
   };
   const C = loadCtx(src, stub);
   if (!C) { if (!quiet) console.log('  ✗ โหลด cms-site-context.js ไม่ได้'); return 99; }
@@ -156,6 +181,39 @@ function ctxSuite(src, quiet) {
   check('(จ) ?siteId= ที่มีที่พัก ⇒ ที่พักนั้น', C.pickProperty(props, null, 's-hotel') === 'p1');
   check('(จ) ?propertyId= ชนะ', C.pickProperty(props, 'p2', 's-hotel') === 'p2');
   last = { siteId: 's-hotel', page: 'lodging' };
+  // ── ฝ่ายค้านรอบ 215 ──
+  last = null;
+  check('(S2) ?siteId= ที่ไม่อยู่ในรายการเว็บ (ค้าง/ลบ) ⇒ ตกไปลำดับถัดไป ไม่ใช่ทางตัน', C.pickProperty(props, null, 's-gone', SITES) === 'p1');
+  check('(S2) ทิศตรงข้าม: ?siteId= ที่อยู่ในรายการแต่ไม่มีที่พัก ⇒ null (บอกให้สร้าง)', C.pickProperty(props, null, 's-spa', SITES) === null);
+  last = { siteId: 's-gone', page: 'lodging' }; cleared = 0;
+  C.pickProperty(props, null, null, SITES);
+  check('(S2) เว็บล่าสุดที่ไม่อยู่ในรายการ ⇒ ล้าง', cleared === 1);
+  last = { siteId: 's-gone', page: 'cms-bookings' }; cleared = 0;
+  C.pick(SITES, null, { module: 'bookings' });
+  check('(S2) pick: เว็บล่าสุดค้าง ⇒ ล้าง', cleared === 1);
+  last = { siteId: 's-hotel', page: 'lodging' }; cleared = 0;
+  C.pick(SITES, null, { module: 'bookings' });
+  check('(S2) ทิศตรงข้าม: เว็บล่าสุดที่ยังอยู่แต่ไม่ใช้งานนี้ ⇒ ไม่ล้าง', cleared === 0);
+  // S1: ตัวสลับเว็บ — ผู้ใช้ Front desk
+  allowed = ['lodging'];
+  let wsHandler = null; const wsEl = { value: 's-hotel', addEventListener: (t, f) => { wsHandler = f; } };
+  const el = { innerHTML: '', isConnected: true, querySelector: (q) => (q === '#cmsWsSite' ? wsEl : null) };
+  C.renderCrumb(el, SITES, 's-hotel', 'Front desk', 'lodging');
+  check('(S1) ตัวสลับของผู้ใช้ Front desk ไม่มีชื่อเว็บสปา/ร้าน', el.innerHTML.includes('value="s-hotel"') && !el.innerHTML.includes('value="s-spa"') && !el.innerHTML.includes('value="s-shop"'));
+  wsEl.value = 's-spa'; C.__ctx.location.href = ''; toasts.length = 0;
+  if (wsHandler) wsHandler();
+  check('(S1) เลือกเว็บที่ไม่มีแท็บ ⇒ ไม่พาไปหน้าเว็บ (ถูกปฏิเสธ) + บอก + คืนค่า', C.__ctx.location.href === '' && toasts.length === 1 && wsEl.value === 's-hotel');
+  allowed = null;
+  const el2 = { innerHTML: '', isConnected: true, querySelector: () => null };
+  C.renderCrumb(el2, SITES, 's-hotel', 'Front desk', 'lodging');
+  check('(S1) ทิศตรงข้าม: เจ้าของเห็นทุกเว็บในตัวสลับ', ['s-spa', 's-hotel', 's-shop'].every(id => el2.innerHTML.includes(`value="${id}"`)));
+  // S4: วาดใหม่เมื่อสิทธิ์มาถึง
+  check('(S4) ก่อนรู้สิทธิ์: แท็บตั้งค่าที่พักแสดง', el2.innerHTML.includes('lodging-settings.html'));
+  allowed = ['lodging'];
+  (C.__ctx.__listeners['layout:permissions'] || []).forEach(f => f());
+  check('(S4) สิทธิ์มาถึง ⇒ หัววาดใหม่ ไม่มีแท็บที่ไม่มีสิทธิ์', !el2.innerHTML.includes('lodging-settings.html') && el2.innerHTML.includes('lodging.html'));
+  allowed = null;
+  last = { siteId: 's-hotel', page: 'lodging' };
   check('(จ) ไม่มีพารามิเตอร์ ⇒ ที่พักของเว็บล่าสุด', C.pickProperty([{ id: 'p0', siteId: null }].concat(props), null, null) === 'p1');
   return fail;
 }
@@ -181,6 +239,19 @@ const negs = [
   negative('ภาพรวมการจองกลับไปเปิดเว็บแรก', CTX, s => s.replace("'cms-bookings': { label: '📅 การจอง',     href: '/pages/cms-bookings.html?siteId=all' }", "'cms-bookings': { label: '📅 การจอง', href: '/pages/cms-bookings.html' }"), ctxSuite),
   negative('?siteId= ที่ไม่มีที่พักตกไปแห่งแรก', CTX, s => s.replace('return b ? b.id : null; }', 'if (b) return b.id; }'), ctxSuite),
 ];
-const ok = f1 === 0 && f2 === 0 && negs.every(Boolean);
+(async () => {
+console.log('layout.js — ประกาศเมื่อสิทธิ์โหลดเสร็จ (ฝ่ายค้าน S4)');
+const f3 = await permEventSuite(LAYOUT, false);
+const brokenPerm = LAYOUT.replace("document.dispatchEvent(new CustomEvent('layout:permissions'))", 'void 0');
+const negPerm = brokenPerm !== LAYOUT && (await permEventSuite(brokenPerm, true)) > 0;
+console.log(negPerm ? '✓ negative test (ไม่ประกาศสิทธิ์): ล้ม' : '✗ negative test (ไม่ประกาศสิทธิ์): ยังผ่าน — sim ไม่มีด่าน');
+negs.push(negPerm);
+negs.push(negative('ตัวสลับแสดงทุกเว็บ', CTX, s => s.replace('const usable = sites.filter(s => (site && s.id === site.id) || this.workspaceTabs(s).length > 0);', 'const usable = sites;'), ctxSuite));
+negs.push(negative('ไม่มีแท็บแล้วพาไปหน้าเว็บ', CTX, s => s.replace("if (first) { location.href = first.href; return; }", "location.href = first ? first.href : CONTENT_LINK.href(target.id); return;"), ctxSuite));
+negs.push(negative('?siteId= ค้างเป็นทางตัน', CTX, s => s.replace('const known = !rawSiteId', 'const known = true || !rawSiteId'), ctxSuite));
+negs.push(negative('ไม่ล้างเว็บล่าสุดที่ค้าง', CTX, s => s.replace("if (last && !sites.some(s => s.id === last.siteId) && typeof Layout.clearCmsLastSite === 'function') Layout.clearCmsLastSite();", ''), ctxSuite));
+negs.push(negative('ไม่วาดใหม่เมื่อสิทธิ์มาถึง', CTX, s => s.replace("document.addEventListener('layout:permissions', () => CmsSiteContext.rerender());", ''), ctxSuite));
+const ok = f1 === 0 && f2 === 0 && f3 === 0 && negs.every(Boolean);
 console.log(ok ? 'ผ่าน' : `ล้ม (${f1 + f2} ข้อ · negative ${negs.filter(x => !x).length})`);
 process.exit(ok ? 0 : 1);
+})();

@@ -79,10 +79,14 @@
 
     /** ที่พักที่หน้า Front desk/ตั้งค่าที่พักควรเปิด: ?propertyId= (ของบริษัทนี้) > ที่พักของ ?siteId= > ที่พักของเว็บล่าสุด > แห่งแรก ·
      *  มี ?siteId= แต่เว็บนั้นยังไม่มีที่พัก ⇒ null (ห้ามตกไปที่พักแห่งอื่นเงียบ ๆ — หน้าแสดงทางไปสร้าง) */
-    pickProperty(props, rawPropertyId, rawSiteId) {
+    pickProperty(props, rawPropertyId, rawSiteId, sites) {
       const list = props || [];
       if (rawPropertyId && list.some(p => p.id === rawPropertyId)) return rawPropertyId;
-      if (rawSiteId) { const b = list.find(p => p.siteId === rawSiteId); return b ? b.id : null; }
+      // ฝ่ายค้านรอบ 215 S2: ?siteId= ที่ไม่อยู่ในรายการเว็บที่ผู้ใช้เห็น (ลบแล้ว/ค้างจากเว็บล่าสุด/ไม่มีสิทธิ์) = ไม่มี ⇒ ตกไปลำดับถัดไป
+      // (เดิม ⇒ null ⇒ ทางตันถาวร) · รายการเว็บโหลดไม่ได้ (ว่าง) ⇒ เชื่อ siteId ตามเดิม
+      const known = !rawSiteId || !Array.isArray(sites) || !sites.length || sites.some(s => s.id === rawSiteId);
+      if (rawSiteId && known) { const b = list.find(p => p.siteId === rawSiteId); return b ? b.id : null; }
+      this._dropStaleLast(sites);
       const last = (window.Layout && typeof Layout.cmsLastSite === 'function') ? Layout.cmsLastSite() : null;
       const bound = last ? list.find(p => p.siteId === last.siteId) : null;
       return (bound || list[0] || {}).id || null;
@@ -90,14 +94,14 @@
 
     /** หัวพื้นที่ทำงานของหน้าที่พัก (เลือกด้วยที่พัก ไม่ใช่เว็บ) — เว็บ = เว็บที่ที่พักผูกอยู่ · ที่พักไม่ผูกเว็บ ⇒ บอกตรง ๆ ·
      *  ตัวเลือกที่พักในหน้า (#propSelector) ซ่อนเมื่อทุกที่พักผูกเว็บแล้ว (ตัวสลับเว็บพอ) · มีที่พักไม่ผูก ⇒ คงไว้ */
-    renderPropertyHeader(el, sites, prop, props, section, currentPage, fallbackSiteId) {
+    renderPropertyHeader(el, sites, prop, props, section, currentPage, fallbackSiteId, beforeLeave) {
       sites = sites || [];
       const boundSite = prop && prop.siteId && sites.some(s => s.id === prop.siteId) ? prop.siteId : null;
       const siteId = boundSite || (!prop && fallbackSiteId && sites.some(s => s.id === fallbackSiteId) ? fallbackSiteId : null);
       const note = prop && !prop.siteId
         ? `ที่พัก "${prop.name || ''}" ยังไม่ผูกกับเว็บไซต์ — งานของที่พักนี้ไม่ขึ้นบนเว็บใด (ผูกได้ที่ ตั้งค่าที่พัก › ข้อมูลที่พัก › เว็บไซต์ที่ผูก)`
         : null;
-      this.renderCrumb(el, sites, siteId, section, currentPage, { unboundNote: note });
+      this.renderCrumb(el, sites, siteId, section, currentPage, { unboundNote: note, beforeLeave });
       const ps = document.getElementById('propSelector');
       const allBound = (props || []).length > 0 && props.every(p => p.siteId && sites.some(s => s.id === p.siteId));
       if (ps) ps.style.display = allBound ? 'none' : '';
@@ -132,7 +136,16 @@
       // รอบ 215: จำเว็บล่าสุด (ความสะดวก — URL ยังเป็นความจริง) · เว็บล่าสุดที่ไม่ใช้งานนี้ ⇒ ไม่เลือก (กันตารางว่าง)
       const last = (!raw && window.Layout && typeof Layout.cmsLastSite === 'function') ? Layout.cmsLastSite() : null;
       if (last && withMod.some(s => s.id === last.siteId)) return last.siteId;
+      this._dropStaleLast(sites);
       return (withMod[0] || sites[0] || {}).id || null;
+    },
+
+    /** ฝ่ายค้านรอบ 215 S2: เว็บล่าสุดที่จำไว้ไม่อยู่ในรายการเว็บที่ผู้ใช้เห็นแล้ว (ถูกลบ/ถูกถอดสิทธิ์) ⇒ ล้าง
+     *  (ทางเข้า "พื้นที่ทำงานเว็บไซต์" จะไม่พาไปเว็บที่ไม่มีซ้ำ ๆ) · รายการว่าง = ยังโหลดไม่ได้ ⇒ ไม่ตัดสิน */
+    _dropStaleLast(sites) {
+      if (!window.Layout || typeof Layout.cmsLastSite !== 'function' || !Array.isArray(sites) || !sites.length) return;
+      const last = Layout.cmsLastSite();
+      if (last && !sites.some(s => s.id === last.siteId) && typeof Layout.clearCmsLastSite === 'function') Layout.clearCmsLastSite();
     },
 
     /** เติม dropdown เว็บ — เว็บที่ใช้โมดูลนี้ขึ้นก่อน · "ทุกไซต์" อยู่บนสุดเมื่อหน้ารองรับ */
@@ -177,10 +190,13 @@
       const sep = '<span aria-hidden="true" style="color:var(--gray-400);margin:0 6px">›</span>';
       const lbl = (kind, v) => (window.Layout && Layout.enumLabel) ? Layout.enumLabel(kind, v, '') : '';
 
+      // ฝ่ายค้านรอบ 215 S1: ตัวสลับแสดงเฉพาะเว็บที่ผู้ใช้มีแท็บให้ทำงาน (+ เว็บปัจจุบัน) — ไม่พาไปหน้าที่ไม่มีสิทธิ์
+      this._last = { el, sites, siteId, section, currentPage, opts: o };
+      const usable = sites.filter(s => (site && s.id === site.id) || this.workspaceTabs(s).length > 0);
       const allowAll = Object.prototype.hasOwnProperty.call(ALL_PAGES, currentPage) && sites.length > 1;
       const options = (allowAll ? `<option value="${ALL}"${isAll ? ' selected' : ''}>🗂 ทุกไซต์ (ภาพรวม)</option>` : '')
         + (!site && !isAll ? `<option value="" selected>— เลือกเว็บไซต์ —</option>` : '')
-        + sites.map(s => `<option value="${esc(s.id)}"${site && s.id === site.id ? ' selected' : ''}>${esc(s.name)}${s.industryType ? ' · ' + esc(lbl('siteIndustry', s.industryType)) : ''}</option>`).join('');
+        + usable.map(s => `<option value="${esc(s.id)}"${site && s.id === site.id ? ' selected' : ''}>${esc(s.name)}${s.industryType ? ' · ' + esc(lbl('siteIndustry', s.industryType)) : ''}</option>`).join('');
 
       const published = site && (site.status === 'Published' || site.status === 1);
       const meta = site ? [
@@ -217,12 +233,17 @@
       if (ws) ws.addEventListener('change', () => {
         const v = ws.value;
         if (!v) return;
+        // N11: หน้าที่มีฟอร์มค้างแก้ (เช่น ตั้งค่าที่พัก) ถามก่อนทิ้ง · ไม่ยืนยัน ⇒ กลับไปเว็บเดิม
+        if (typeof o.beforeLeave === 'function' && !o.beforeLeave()) { ws.value = site ? site.id : (isAll ? ALL : ''); return; }
         // เว็บปลายทางไม่มีงานของหน้านี้ (เช่น จาก Front desk ไปเว็บสปา) ⇒ ไปแท็บแรกของเว็บนั้น ไม่ใช่หน้าว่าง
         const target = sites.find(s => s.id === v);
         const mod = this.pageModule(currentPage);
         if (target && mod && !(Array.isArray(target.modules) && target.modules.includes(mod))) {
+          // workspaceTabs กรองสิทธิ์แล้ว (หน้าเว็บ = สิทธิ์ cms-sites) ⇒ ไม่มีแท็บ = ไม่มีที่ให้ไป — ห้ามพาไปหน้าที่จะถูกปฏิเสธ
           const first = this.workspaceTabs(target)[0];
-          location.href = first ? first.href : CONTENT_LINK.href(target.id);
+          if (first) { location.href = first.href; return; }
+          if (window.Layout) Layout.toast('คุณไม่มีสิทธิ์ทำงานบนเว็บนี้', 'error');
+          ws.value = site ? site.id : (isAll ? ALL : '');
           return;
         }
         if (pageSel && Array.from(pageSel.options).some(op => op.value === v)) {
@@ -252,6 +273,14 @@
         </div>`;
     },
   };
+
+  // ฝ่ายค้านรอบ 215 S4: หัวที่วาดก่อนสิทธิ์โหลด (hasMenuAccess = true ตอนยังไม่รู้) ⇒ วาดใหม่เมื่อ Layout ได้สิทธิ์
+  CmsSiteContext.rerender = function () {
+    const l = this._last;
+    if (!l || !l.el || !l.el.isConnected) return;
+    this.renderCrumb(l.el, l.sites, l.siteId, l.section, l.currentPage, l.opts);
+  };
+  try { document.addEventListener('layout:permissions', () => CmsSiteContext.rerender()); } catch (_) { /* ไม่มี DOM (sim) */ }
 
   window.CmsSiteContext = CmsSiteContext;
 })();

@@ -105,4 +105,21 @@ public class CmsModuleResolverTests
     {
         Assert.Equal(CmsModuleResolver.NavLabelPlain, CmsModuleResolver.NavSectionLabel(null));
     }
+
+    // ── ฝ่ายค้านรอบ 215 S3: บล็อกสมัครรับข่าว (Newsletter) ก็เป็นทางรับ lead ──
+
+    [Fact]
+    public void เว็บที่มีแต่บล็อกสมัครรับข่าว_นับเป็นทางรับคำขอ()
+    {
+        // storefront case 17 (Newsletter) ส่ง lead ชนิด Subscription — ชุดเดียวที่ query ของ LoadLeadSourceSiteIdsAsync ใช้
+        Assert.Contains(CmsBlockType.Newsletter, CmsModuleResolver.LeadBlockTypes);
+        Assert.Contains(CmsBlockType.ContactForm, CmsModuleResolver.LeadBlockTypes);
+    }
+
+    [Fact]
+    public void บล็อกที่ไม่ส่งคำขอ_ไม่นับเป็นทางรับคำขอ_ทิศตรงข้าม()
+    {
+        Assert.DoesNotContain(CmsBlockType.Hero, CmsModuleResolver.LeadBlockTypes);
+        Assert.Equal(2, CmsModuleResolver.LeadBlockTypes.Length);
+    }
 }

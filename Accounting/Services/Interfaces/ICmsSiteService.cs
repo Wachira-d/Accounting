@@ -9,7 +9,10 @@ public interface ICmsSiteService
     Task<SiteResponse> CreateSiteAsync(Guid companyId, CreateSiteRequest request, string userId);
     Task<SiteResponse> UpdateSiteAsync(Guid companyId, Guid siteId, UpdateSiteRequest request, string userId);
     Task<SiteResponse?> GetSiteAsync(Guid companyId, Guid siteId);
-    Task<PagedResponse<SiteListResponse>> GetSitesAsync(Guid companyId, string? search = null, int page = 1, int pageSize = 20);
+    /// <param name="visibleSiteIds">รอบ 215 S1: เว็บที่ผู้เรียกเห็นได้ (<see cref="GetListableSiteIdsAsync"/>) · null = ทุกเว็บของบริษัท (เส้นภายในเท่านั้น)</param>
+    Task<PagedResponse<SiteListResponse>> GetSitesAsync(Guid companyId, string? search = null, int page = 1, int pageSize = 20, IReadOnlyCollection<Guid>? visibleSiteIds = null);
+    /// <summary>รอบ 215 S1 — เว็บที่รายการเว็บไซต์แสดงให้ผู้ใช้คนนี้ (ตัวตัดสิน <c>Helpers/CmsSiteScope.ListableSiteIds</c>)</summary>
+    Task<IReadOnlyList<Guid>> GetListableSiteIdsAsync(Guid companyId, Guid userId, bool isCompanyOwner);
     /// <summary>R-45 — เว็บที่ผู้ใช้เห็นในมุมมองทุกไซต์ (ตัวตัดสิน <c>Helpers/CmsSiteScope.AllowedSiteIds</c> · กติกาเดียวกับ <c>[RequireSiteRole]</c> รายเว็บ)</summary>
     Task<IReadOnlyList<Guid>> GetAccessibleSiteIdsAsync(Guid companyId, Guid userId, bool isCompanyOwner, IReadOnlyCollection<Models.Enums.SiteStaffRole> allowedRoles);
     Task<bool> DeleteSiteAsync(Guid companyId, Guid siteId);

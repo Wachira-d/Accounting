@@ -326,7 +326,7 @@ public class CmsSiteService : ICmsSiteService
     /// ฟอร์มกำหนดเองที่เปิดและส่งเข้าระบบ · หรือมี lead แล้ว (เว็บที่เคยรับ lead ต้องไม่หายจากเมนู) · ทุก query กรอง CompanyId</summary>
     internal static async Task<HashSet<Guid>> LoadLeadSourceSiteIdsAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid>? siteIds)
     {
-        var blocks = db.PageBlocks.Where(b => b.CompanyId == companyId && !b.IsDeleted && b.BlockType == CmsBlockType.ContactForm
+        var blocks = db.PageBlocks.Where(b => b.CompanyId == companyId && !b.IsDeleted && CmsModuleResolver.LeadBlockTypes.Contains(b.BlockType)
             && !b.Page.IsDeleted && b.Page.CompanyId == companyId);
         var forms = db.SiteForms.Where(f => f.CompanyId == companyId && !f.IsDeleted && f.IsActive && f.CreateErpDocument);
         var leads = db.CmsLeads.Where(l => l.CompanyId == companyId);
@@ -427,9 +427,10 @@ public class CmsSiteService : ICmsSiteService
         return site;
     }
 
-    public async Task<PagedResponse<SiteListResponse>> GetSitesAsync(Guid companyId, string? search, int page, int pageSize)
+    public async Task<PagedResponse<SiteListResponse>> GetSitesAsync(Guid companyId, string? search, int page, int pageSize, IReadOnlyCollection<Guid>? visibleSiteIds = null)
     {
         var query = _db.Sites.AsNoTracking().Where(s => s.CompanyId == companyId);
+        if (visibleSiteIds != null) query = query.Where(s => visibleSiteIds.Contains(s.Id));
 
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(s => s.Name.Contains(search) || s.Subdomain.Contains(search) || (s.CustomDomain != null && s.CustomDomain.Contains(search)));
@@ -586,6 +587,19 @@ public class CmsSiteService : ICmsSiteService
 
         result.Site = await GetSiteAsync(companyId, site.Id) ?? throw new InvalidOperationException("Failed to retrieve site.");
         return result;
+    }
+
+    public async Task<IReadOnlyList<Guid>> GetListableSiteIdsAsync(Guid companyId, Guid userId, bool isCompanyOwner)
+    {
+        var siteIds = await _db.Sites.AsNoTracking().Where(s => s.CompanyId == companyId).Select(s => s.Id).ToListAsync();
+        if (isCompanyOwner) return siteIds;
+        var uid = userId.ToString();
+        var access = await _db.SiteStaffAccesses.AsNoTracking()
+            .Where(a => a.UserId == userId && a.CompanyId == companyId && a.Site.CompanyId == companyId)
+            .Select(a => new Accounting.Helpers.CmsSiteScope.AccessRow(a.SiteId, a.Role, a.IsActive))
+            .ToListAsync();
+        var created = await _db.Sites.AsNoTracking().Where(s => s.CompanyId == companyId && s.CreatedBy == uid).Select(s => s.Id).ToListAsync();
+        return Accounting.Helpers.CmsSiteScope.ListableSiteIds(false, siteIds, access, created);
     }
 
     public async Task<IReadOnlyList<Guid>> GetAccessibleSiteIdsAsync(Guid companyId, Guid userId, bool isCompanyOwner, IReadOnlyCollection<SiteStaffRole> allowedRoles)

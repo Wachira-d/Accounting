@@ -48,6 +48,11 @@ public static class CmsModuleResolver
         return list;
     }
 
+    /// <summary>บล็อกหน้าเว็บที่ส่งคำขอเข้า <c>storefront/leads</c> (= ทางรับ lead) — ฟอร์มติดต่อ/RFQ/นัดดู (ContactForm) และ
+    /// สมัครรับข่าว (Newsletter ⇒ lead ชนิด Subscription · storefront case 17 · seed ใน 4 เทมเพลต — ฝ่ายค้านรอบ 215 S3) ·
+    /// ผู้ใช้: <c>CmsSiteService.LoadLeadSourceSiteIdsAsync</c> (query) — ห้ามเขียนชุดซ้ำ</summary>
+    public static readonly CmsBlockType[] LeadBlockTypes = { CmsBlockType.ContactForm, CmsBlockType.Newsletter };
+
     public const string NavLabelBookings = "เว็บไซต์ & การจอง";
     public const string NavLabelShop = "เว็บไซต์ & ร้านออนไลน์";
     public const string NavLabelLodging = "เว็บไซต์ & ที่พัก";
