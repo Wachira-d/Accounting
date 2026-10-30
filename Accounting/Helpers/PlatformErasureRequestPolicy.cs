@@ -31,6 +31,26 @@ public static class PlatformErasureRequestPolicy
     public static string OwnershipBlockMessage(IReadOnlyCollection<string> blockers)
         => "ต้องโอนความเป็นเจ้าของก่อนลบบัญชี: " + string.Join(" · ", blockers);
 
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B2-c: แพ็กเกจบัญชี "โอน" ไม่ได้ (ผู้ใช้ไม่มีปุ่มเอง) — บอกทางไปต่อที่ทำได้จริง: แอดมินยกเลิกให้</summary>
+    public static string AccountPlanBlockerLabel(string? planName)
+        => $"{AccountPlanBlockerPrefix}\u201C{planName}\u201D (เจ้าของแพ็กเกจ — ติดต่อแอดมินให้ยกเลิกแพ็กเกจ)";
+
+    private const string AccountPlanBlockerPrefix = "แพ็กเกจบัญชี ";
+
+    /// <summary>รายการติดค้างนี้คือ "เจ้าของแพ็กเกจบัญชี" (ป้ายที่ <see cref="AccountPlanBlockerLabel"/> สร้าง) — หน้าแอดมินใช้แสดงปุ่มยกเลิกแพ็กเกจ</summary>
+    public static bool IsAccountPlanBlocker(string? blocker) => blocker != null && blocker.StartsWith(AccountPlanBlockerPrefix, StringComparison.Ordinal);
+
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B2-c: แอดมินยกเลิกแพ็กเกจของผู้ขอลบได้เฉพาะแพ็กเกจที่<b>ไม่มีบริษัทผูกอยู่</b> — ยกเลิกแพ็กเกจที่ยังมีบริษัท
+    /// ใช้โควตา = ตัดบริการของบริษัทนั้นทั้งบริษัท (ต้องย้ายบริษัทออกจากแพ็กเกจก่อน) · null = ยกเลิกได้ทั้งหมด · ไม่มีแพ็กเกจ = ข้อความบอกตรง ๆ</summary>
+    public static string? AccountPlanCancelBlock(IReadOnlyCollection<(string? PlanName, int AttachedCompanies)> plans)
+    {
+        if (plans.Count == 0) return "ผู้ใช้นี้ไม่มีแพ็กเกจบัญชีที่ยังใช้งานอยู่";
+        var busy = plans.Where(p => p.AttachedCompanies > 0).ToList();
+        if (busy.Count == 0) return null;
+        return "แพ็กเกจยังมีบริษัทผูกอยู่ — ย้ายบริษัทออกจากแพ็กเกจก่อน (หน้าแอดมิน › แพ็กเกจบัญชี): "
+            + string.Join(" · ", busy.Select(p => $"\u201C{p.PlanName}\u201D {p.AttachedCompanies} บริษัท"));
+    }
+
     /// <summary>ฝ่ายค้านรอบ 214 S5: อีเมลแจ้งผล — อีเมลปัจจุบันของบัญชี (ยังไม่เป็นอีเมลนิรนาม) ก่อน · ไม่งั้นอีเมล ณ ตอนยื่น · ไม่มีทั้งคู่ = null</summary>
     public static string? NotifyAddress(string? currentEmail, string? requestedEmail)
     {

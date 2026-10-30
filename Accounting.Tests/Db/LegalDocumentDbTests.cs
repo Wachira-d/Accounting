@@ -139,6 +139,11 @@ public class LegalDocumentDbTests
         db.Companies.Add(company);
         await db.SaveChangesAsync();
         db.CompanyUsers.Add(new CompanyUser { UserId = user.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner, IsDefault = true });
+        // ฝ่ายค้านรอบ 214 B2 (CI): ผู้ถูกลบต้องไม่ใช่เจ้าของคนสุดท้าย — เทสต์นี้ตรวจ DSR/legal hold ไม่ใช่ด่านเจ้าของ (ด่านอยู่ที่ Erasure_refuses_last_owner_…)
+        var coOwner = new User { Email = $"dsr-co-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "เจ้าของร่วม" };
+        db.Users.Add(coOwner);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.Add(new CompanyUser { UserId = coOwner.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner });
         var live = PlatformPolicyAcceptanceRules.Create(user.Id, user.Email, PdpaPolicy.SignupPurpose, "1.0", "1.0", DateTime.UtcNow, "web-form", "203.0.113.21", "ua-live");
         var softDeleted = PlatformPolicyAcceptanceRules.Create(user.Id, user.Email, PdpaPolicy.PolicyUpdatePurpose, "1.0", "1.0", DateTime.UtcNow, "policy-update-banner", "203.0.113.22", "ua-old");
         softDeleted.IsDeleted = true;
@@ -176,6 +181,7 @@ public class LegalDocumentDbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var testStart = DateTime.UtcNow.AddSeconds(-5);
         var a = new User { Email = $"erase-a-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ผู้ขอลบ (ไม่มีบริษัท)" };
         var b = new User { Email = $"erase-b-{Guid.NewGuid():N}@example.test", PasswordHash = "x", FullName = "ผู้ใช้อื่น" };
         db.Users.AddRange(a, b);
@@ -210,13 +216,13 @@ public class LegalDocumentDbTests
         Assert.EndsWith("@deleted.local", reqAfter.RequesterEmail);       // คำขอเองไม่เก็บอีเมลจริงหลังลบ
 
         // ฝ่ายค้านรอบ 214 B1: audit chain (append-only) ไม่มีค่า PII เดิมของผู้ใช้จากขั้นยื่น/ลบ — มีแค่ "ช่องไหนเปลี่ยน"
-        var leaked = await db.AuditLogs.AsNoTracking()
-            .Where(x => (x.OldValues != null && (x.OldValues.Contains(originalEmail) || x.OldValues.Contains("203.0.113.31") || x.OldValues.Contains("ผู้ขอลบ (ไม่มีบริษัท)")))
-                     || (x.NewValues != null && (x.NewValues.Contains(originalEmail) || x.NewValues.Contains("203.0.113.31") || x.NewValues.Contains("ผู้ขอลบ (ไม่มีบริษัท)"))))
-            .CountAsync();
-        Assert.Equal(0, leaked);
-        Assert.True(await db.AuditLogs.AsNoTracking().AnyAsync(x => x.EntityType == "User" && x.EntityId == a.Id.ToString()
-            && x.NewValues != null && x.NewValues.Contains(AuditRedaction.PiiMask)));   // ทิศตรงข้าม: ยังเห็นว่ามีการเปลี่ยน
+        // CI: ค่าใน audit เป็น JSON ที่ escape อักษรไทยเป็น \uXXXX ⇒ เทียบทั้งรูปดิบและรูปที่ escape แล้ว (เดิมเทียบรูปดิบ ⇒ PiiMask ไม่เจอ · ชื่อไทย "ไม่รั่ว" เพราะเทียบผิดรูป)
+        static string J(string v) => System.Text.Json.JsonSerializer.Serialize(v).Trim('"');
+        var recent = await db.AuditLogs.AsNoTracking().Where(x => x.Timestamp >= testStart).ToListAsync();
+        var needles = new[] { originalEmail, "203.0.113.31", "ผู้ขอลบ (ไม่มีบริษัท)", J("ผู้ขอลบ (ไม่มีบริษัท)") };
+        Assert.DoesNotContain(recent, x => needles.Any(n => (x.OldValues ?? "").Contains(n) || (x.NewValues ?? "").Contains(n)));
+        Assert.Contains(recent, x => x.EntityType == "User" && x.EntityId == a.Id.ToString()
+            && ((x.NewValues ?? "").Contains(AuditRedaction.PiiMask) || (x.NewValues ?? "").Contains(J(AuditRedaction.PiiMask))));   // ทิศตรงข้าม: ยังเห็นว่ามีการเปลี่ยน
         var again = await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(r1.Id, admin, null, null));
         Assert.Equal(409, again.StatusCode);
         var tooSoon = await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.RequestPlatformErasureAsync(a.Id, null, null));
@@ -281,5 +287,76 @@ public class LegalDocumentDbTests
         Assert.Equal(404, (await Assert.ThrowsAsync<BusinessRuleException>(() => pdpa.CompletePlatformErasureAsync(orphan.Id, admin, null, null))).StatusCode);
         db.ChangeTracker.Clear();
         Assert.Equal(PlatformErasureRequestPolicy.StatusPending, (await db.PlatformErasureRequests.AsNoTracking().SingleAsync(x => x.Id == orphan.Id)).Status);
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B1-a/S4-b: ลบผู้ติดต่อ + สแกน OCR ตามคำขอ ⇒ แถว audit ของการบันทึกนั้น<b>ไม่มีค่าเดิม</b> (ชื่อ/อีเมล/โทร/ที่อยู่/ข้อความสแกน) ·
+    /// ลบผู้ใช้ ⇒ การผูกผู้ใช้ภายนอก (X-Acting-User) ถูกถอด · ทิศตรงข้าม: แก้ผู้ติดต่อตามปกติยังเก็บประวัติค่าใน audit · ขอบเขตการลบคืนค่าหลังบันทึก</summary>
+    [Fact]
+    public async Task Contact_and_ocr_erasure_leaves_no_original_pii_in_audit_but_ordinary_edits_keep_history()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL (ACCOUNTING_TEST_PG) — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var tag = Guid.NewGuid().ToString("N")[..10];
+        var company = new Company { Name = "บริษัททดสอบลบผู้ติดต่อ", TaxId = "0105556000007" };
+        var staff = new User { Email = $"staff-{tag}@example.test", PasswordHash = "x", FullName = "staff" };
+        var owner2 = new User { Email = $"own2-{tag}@example.test", PasswordHash = "x", FullName = "owner2" };
+        db.Companies.Add(company);
+        db.Users.AddRange(staff, owner2);
+        await db.SaveChangesAsync();
+        db.CompanyUsers.AddRange(
+            new CompanyUser { UserId = staff.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Staff },
+            new CompanyUser { UserId = owner2.Id, CompanyId = company.Id, Role = Accounting.Models.Enums.UserRole.Owner, IsDefault = true });
+        var victim = new Contact { CompanyId = company.Id, Name = $"EraseName-{tag}", Email = $"erase-{tag}@example.test",
+            Phone = "0899990001", Address = $"EraseRoad-{tag}", IsCustomer = true };
+        var keeper = new Contact { CompanyId = company.Id, Name = $"Keeper-{tag}", Phone = "0811110000", IsCustomer = true };
+        db.Contacts.AddRange(victim, keeper);
+        var integration = new ExternalIntegration { CompanyId = company.Id, SystemName = "TakeTime", SystemType = "PMS" };
+        db.Set<ExternalIntegration>().Add(integration);
+        await db.SaveChangesAsync();
+        db.Set<IntegrationUserMapping>().Add(new IntegrationUserMapping { CompanyId = company.Id, IntegrationId = integration.Id,
+            UserId = staff.Id, ExternalUserKey = staff.Email, ExternalUserName = $"ExtName-{tag}" });
+        var scan = new OcrScanResult { CompanyId = company.Id, OriginalFileName = $"ScanFile-{tag}.pdf", ScanStatus = "Completed",
+            MatchedContactId = victim.Id, RawTextContent = $"RawText-{tag} EraseName-{tag}", ExtractedVendorName = $"EraseName-{tag}" };
+        db.Set<OcrScanResult>().Add(scan);
+        await db.SaveChangesAsync();
+        // สแกนพ้นงวดเก็บ 5 ปี (ถึงลบช่อง PII ได้จริง) — ตั้งวันที่ตรงในฐาน
+        await db.Set<OcrScanResult>().Where(x => x.Id == scan.Id)
+            .ExecuteUpdateAsync(u => u.SetProperty(x => x.CreatedAt, DateTime.UtcNow.AddYears(-6)));
+        db.ChangeTracker.Clear();
+
+        var pdpa = new PdpaService(db);
+        Assert.True(await pdpa.ApplyErasureAsync(company.Id, null, victim.Id, "dpo-test") > 0);
+        Assert.False(db.AuditErasureScope);                              // ขอบเขตคืนค่าหลังบันทึก
+        await pdpa.ApplyErasureAsync(company.Id, staff.Id, null, "dpo-test");
+        Assert.False(db.AuditErasureScope);
+
+        // ทิศตรงข้าม: แก้ผู้ติดต่ออีกรายตามปกติ ⇒ audit ยังเก็บค่าใหม่
+        var k = await db.Contacts.SingleAsync(x => x.Id == keeper.Id);
+        k.Phone = "0822220000";
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
+
+        var audits = await db.AuditLogs.AsNoTracking()
+            .Where(a => a.EntityId == victim.Id.ToString() || a.EntityId == scan.Id.ToString() || a.EntityId == staff.Id.ToString()
+                        || a.EntityType == nameof(IntegrationUserMapping))
+            .Where(a => a.Action == Accounting.Models.Enums.AuditAction.Update)
+            .ToListAsync();
+        Assert.Contains(audits, a => a.EntityType == nameof(Contact));
+        Assert.Contains(audits, a => a.EntityType == nameof(OcrScanResult));
+        foreach (var a in audits)
+        {
+            var text = (a.OldValues ?? "") + (a.NewValues ?? "");
+            Assert.DoesNotContain(tag, text);                             // ชื่อ/อีเมล/ที่อยู่/ข้อความสแกน/ชื่อไฟล์/ชื่อภายนอก
+            Assert.DoesNotContain("0899990001", text);
+        }
+        var keeperAudit = await db.AuditLogs.AsNoTracking()
+            .Where(a => a.EntityId == keeper.Id.ToString() && a.Action == Accounting.Models.Enums.AuditAction.Update).ToListAsync();
+        Assert.Contains(keeperAudit, a => (a.NewValues ?? "").Contains("0822220000") && (a.OldValues ?? "").Contains("0811110000"));
+
+        // S4-b: การผูกผู้ใช้ภายนอกถูกถอด + ไม่เหลือคีย์อีเมล
+        var mapping = await db.Set<IntegrationUserMapping>().IgnoreQueryFilters().AsNoTracking().SingleAsync(m => m.IntegrationId == integration.Id);
+        Assert.True(mapping.IsDeleted);
+        Assert.Null(mapping.ExternalUserName);
+        Assert.DoesNotContain(tag, mapping.ExternalUserKey);
     }
 }

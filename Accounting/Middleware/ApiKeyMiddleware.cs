@@ -378,22 +378,22 @@ public class ApiKeyMiddleware
                         && m.ExternalUserKey.ToLower() == key.ToLower())
             .Select(m => (Guid?)m.UserId)
             .FirstOrDefaultAsync();
-        if (mapped.HasValue)
-        {
-            var isMember = await db.Set<Models.Entities.CompanyUser>()
-                .AnyAsync(cu => cu.CompanyId == companyId && cu.UserId == mapped.Value);
-            if (isMember) mappedMember = mapped.Value;
-        }
+        // ฝ่ายค้านรอบ 214 (ฑ-2) S4-b: ต้องเป็นสมาชิกที่ "ยังทำหน้าที่ได้" (ไม่ถูกลบ/ปิด/ระงับ) — ตัวตัดสินเดียว CompanyMembership ·
+        // เดิมนับแค่มีแถว CompanyUsers ⇒ บัญชีที่ถูกลบตามคำขอ (Inactive) ยังถูกสวมผ่านคีย์ API ได้ ข้ามด่าน TokenUserGate
+        if (mapped.HasValue && await Helpers.CompanyMembership.IsActiveMemberAsync(db, companyId, mapped.Value))
+            mappedMember = mapped.Value;
 
         // 2) Direct email match against a company member — legacy keys only.
         Guid? emailMember = null;
         if (Helpers.IntegrationKeyPolicy.ShouldTryLegacyEmailMatch(legacyActive, mappedMember, key))
         {
-            emailMember = await (
+            var candidates = await (
                 from u in db.Set<Models.Entities.User>()
                 join cu in db.Set<Models.Entities.CompanyUser>() on u.Id equals cu.UserId
                 where cu.CompanyId == companyId && u.Email.ToLower() == key.ToLower()
-                select (Guid?)u.Id).FirstOrDefaultAsync();
+                select u.Id).ToListAsync();
+            var active = await Helpers.CompanyMembership.ActiveMemberIdsAsync(db, companyId, candidates);
+            emailMember = candidates.Where(active.Contains).Select(id => (Guid?)id).FirstOrDefault();
         }
 
         return Helpers.IntegrationKeyPolicy.ResolveActingUser(true, mappedMember, legacyActive, emailMember);
