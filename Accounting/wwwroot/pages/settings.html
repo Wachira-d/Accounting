@@ -1308,6 +1308,15 @@
           const tabEl = Array.from(document.querySelectorAll('.tab'))
             .find(t => (t.getAttribute('onclick') || '').includes("showTab('" + wantTab + "'"));
           if (tabEl) this.showTab(wantTab, tabEl);
+          // ?focus=<id> → เลื่อนไปช่องนั้น + ไฮไลต์ (ลิงก์ "ไปตั้งค่า" จากหน้าอื่นพาถึงช่องจริง ไม่ใช่แค่แท็บ)
+          const focusId = new URLSearchParams(window.location.search).get('focus');
+          const focusEl = focusId && /^[A-Za-z][\w-]*$/.test(focusId) ? document.getElementById(focusId) : null;
+          if (focusEl) {
+            focusEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            focusEl.focus();
+            focusEl.style.boxShadow = '0 0 0 3px #fcd34d';
+            setTimeout(() => { focusEl.style.boxShadow = ''; }, 4000);
+          }
         }
         // Toggle e-Tax section visibility
         document.getElementById('sEtaxEnabled').addEventListener('change', function() {

@@ -1793,6 +1793,10 @@ const Page = {
           <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e">
             ⚠️ <b>แหล่งจ่ายเริ่มต้นใช้ไม่ได้</b> — ${Layout.esc(r.defaultPaymentSourceWarning)}<br>
             <span style="font-size:12px">แถวที่ช่อง "แหล่งจ่าย" เป็นค่าเริ่มต้นจะกด "จ่าย" ไม่ได้จนกว่าจะแก้</span>
+            <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:8px;font-size:12px">
+              <a href="/pages/settings.html?tab=tax&focus=sDefaultPaymentAccount" target="_blank" rel="noopener" style="color:#4f46e5;font-weight:600">⚙️ ตั้ง "แหล่งเงินเริ่มต้น" (ตั้งค่า › ภาษี) ↗</a>
+              <span>หรือเลือกบัญชีที่ช่อง "แหล่งจ่าย" ของแต่ละแถวด้านล่าง ↓</span>
+            </div>
           </div>` : ''}
         <div style="display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/export','xlsx')" title="ทะเบียนเงินเดือนรายคน (ทุกช่องรายได้/รายการหัก + ฝั่งนายจ้าง + เงินโอนจริง) พร้อมแถวรวม">📊 ทะเบียนเงินเดือน Excel</button>
