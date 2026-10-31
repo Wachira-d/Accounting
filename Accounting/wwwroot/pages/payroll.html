@@ -2663,7 +2663,11 @@ const Page = {
         res = await api.getSso(year, month);
         const d = res.data || {};
         content.innerHTML = `
-          <h3 style="margin-bottom:16px">ประกันสังคม - ${month}/${parseInt(year)+543}</h3>
+          <h3 style="margin-bottom:8px">ประกันสังคม - ${month}/${parseInt(year)+543}</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+            <button class="btn btn-primary btn-sm" onclick="Page.downloadSso110()" title="ไฟล์เดียวกับหน้า Export ยื่นภาษี/ประกันสังคม — แนบใน e-Service เมนู &quot;ส่งข้อมูลเงินสมทบ&quot;">📥 ดาวน์โหลด สปส.1-10 Excel (แนบ e-Service)</button>
+            <a class="btn btn-secondary btn-sm" href="/pages/tax-export.html" title="ตรวจก่อนยื่น (ช่องว่าง/เลขบัตรไม่ถูกต้อง) และไฟล์ยื่นแบบอื่น">ดูตัวอย่าง / ตรวจก่อนยื่น ↗</a>
+          </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.totalEmployees ?? d.employeeCount ?? 0}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.totalEmployeeContribution ?? d.employeeContribution)}</div></div>
@@ -2693,6 +2697,16 @@ const Page = {
   /** ดาวน์โหลดไฟล์ ภ.ง.ด.1 ของงวดที่ดูอยู่ — ตัวสร้างไฟล์เดียวกับเมนู Export ยื่นภาษี (TaxFilingExportService.ExportPnd1Async)
    *  ผ่านตัวดึงไฟล์กลาง API.download (ข้อความผิดพลาดของเซิร์ฟเวอร์ถึงผู้ใช้ · มือถือได้ไฟล์) · fmt = xlsx | txt | txt-tis620 | csv | review
    *  ชื่อไฟล์จริงมาจากเซิร์ฟเวอร์ (.txt = PND1.txt ตามสเปก) — ชื่อข้างล่างเป็นค่าสำรองเท่านั้น */
+  /** สปส.1-10 Excel — endpoint เดียวกับหน้า tax-export (ไฟล์/การตรวจมาจากเซิร์ฟเวอร์ตัวเดียว ไม่มีสำเนา) */
+  async downloadSso110() {
+    const api = Layout.api(); if (!api) return;
+    const year = document.getElementById('reportYear')?.value || new Date().getFullYear();
+    const month = document.getElementById('reportMonth')?.value || 1;
+    try {
+      if (await API.download(api.exportSso110Excel(year, month), `SSO110EXCEL_${year}${String(month).padStart(2, '0')}.xlsx`))
+        Layout.toast('ดาวน์โหลดสำเร็จ');
+    } catch (err) { Layout.toast(err.message || 'ดาวน์โหลดไม่สำเร็จ', 'error', 8000); }
+  },
   async downloadPnd1(fmt) {
     const api = Layout.api(); if (!api) return;
     const year = document.getElementById('reportYear')?.value || new Date().getFullYear();
