@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ทดลองชำระเงิน | NextAcc</title>
+  <meta name="robots" content="noindex">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family:'Noto Sans Thai',system-ui,sans-serif; background:#f8fafc; margin:0; color:#0f172a; padding:24px 16px }
+    .box { max-width:520px; margin:0 auto; background:#fff; border-radius:14px; box-shadow:0 4px 18px rgba(0,0,0,.06); padding:24px }
+    h1 { font-size:1.4rem; margin:0 0 6px }
+    .test { background:#fef3c7; color:#92400e; border:1px solid #f59e0b; border-radius:8px; padding:10px 12px; font-size:13px; font-weight:600; margin:12px 0 }
+    .line { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #e2e8f0; font-size:14px }
+    .btn { background:#4f46e5; color:#fff; border:0; border-radius:8px; padding:12px 18px; font-size:15px; font-weight:600; cursor:pointer; width:100%; margin-top:14px }
+    .err { color:#991b1b; background:#fee2e2; border-radius:8px; padding:12px; font-size:14px }
+    .muted { color:#64748b; font-size:12px; line-height:1.7 }
+    a { color:#4f46e5 }
+  </style>
+</head>
+<body>
+  <!-- รอบ 219 ส่วน B (คำตัดสินข้อ 179): หน้าทดลองจ่ายของแพลตฟอร์ม — ใครเปิดได้ = ค่าตั้งแอดมิน (Off · AdminsOnly ค่าเริ่มต้น · Public) ตัดสินที่เซิร์ฟเวอร์
+       (Helpers/PlatformPayTestPage) · ใช้คีย์โหมดทดสอบเท่านั้น (ไม่มีเงินจริง · ไม่ลงบัญชี) · หน้าจ่ายกลาง js/pay-widget.js -->
+  <div class="box" id="box">กำลังโหลด...</div>
+  <script src="/js/policy-accept.js"></script>
+  <script src="/js/pay-widget.js"></script>
+  <script>
+    (function () {
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      // ผู้ดูแลระบบใช้โทเคนของหน้าแอดมิน (โหมด "เฉพาะผู้ดูแลระบบ")
+      const auth = () => {
+        let t = null;
+        try { t = localStorage.getItem('admin_token') || localStorage.getItem('token'); } catch { t = null; }
+        return t ? { Authorization: 'Bearer ' + t } : {};
+      };
+      const box = document.getElementById('box');
+      fetch('/api/platform-pay-test', { headers: auth() }).then(r => {
+        if (r.status === 404) return { data: { available: false, reason: 'ไม่พบหน้านี้' } };
+        return r.json();
+      }).then(j => {
+        const d = (j && j.data) || {};
+        if (!d.available) {
+          box.innerHTML = `<h1>ทดลองชำระเงิน</h1><div class="err">${esc(d.reason || 'หน้านี้ยังไม่เปิด')}</div>`;
+          return;
+        }
+        box.innerHTML = `
+          <h1>ทดลองชำระเงิน — NextAcc</h1>
+          <div class="test">⚠️ โหมดทดสอบ — เงินไม่เข้าจริง (ใช้แอป/บัตรทดสอบของผู้ให้บริการรับชำระเงิน)</div>
+          <div class="line"><span>รายการ</span><b>ทดสอบการชำระค่าบริการ</b></div>
+          <div class="line"><span>ยอดชำระ</span><b>฿${esc(Number(d.amount || 0).toFixed(2))}</b></div>
+          <div id="testPolicy">${PolicyAccept.html(d.policy)}</div>
+          <button class="btn" id="payBtn">ชำระด้วยพร้อมเพย์ (QR ทดสอบ)</button>
+          <p class="muted">หน้านี้แสดงขั้นตอนชำระเงินเหมือนหน้าจริงของผู้ใช้ — ข้อกำหนดและนโยบายการยกเลิกและคืนเงินแสดงก่อนชำระทุกครั้ง ·
+            <a href="/terms.html" target="_blank" rel="noopener">ข้อกำหนด</a> · <a href="/refund-policy.html" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a> ·
+            <a href="/privacy.html" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a></p>`;
+        document.getElementById('payBtn').addEventListener('click', () => {
+          try { PolicyAccept.require('testPolicy'); } catch (e) { alert(e.message); return; }
+          PayWidget.open({ publicBase: '/api/platform-pay-test', method: 'PromptPay', authHeader: auth,
+            onPaid: () => { box.insertAdjacentHTML('beforeend', '<p class="muted">✅ ทดลองชำระสำเร็จ</p>'); } });
+        });
+      }).catch(() => { box.innerHTML = '<div class="err">โหลดไม่สำเร็จ — กรุณาลองใหม่</div>'; });
+    })();
+  </script>
+</body>
+</html>

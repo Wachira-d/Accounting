@@ -323,6 +323,12 @@ builder.Services.AddScoped<ISubscriptionService, SubscriptionService>();
 // ต้อง register ก่อน SaasBillingDocumentService ที่รับตัวนี้เป็น optional dependency
 builder.Services.AddScoped<IPlatformBillingDocumentIssuer, PlatformBillingDocumentIssuer>();
 builder.Services.AddScoped<ISaasBillingDocumentService, SaasBillingDocumentService>();
+// รอบ 219 เฟส 2 (คำตัดสินข้อ 180) — เก็บค่าบริการ NextAcc ได้จริง: ค่าตั้งการเรียกเก็บ · ศูนย์บิลของผู้เช่า · ช่องทางชำระ
+builder.Services.AddScoped<IPlatformBillingSettingsService, PlatformBillingSettingsService>();
+builder.Services.AddScoped<IPlatformBillingCenterService, PlatformBillingCenterService>();
+builder.Services.AddScoped<IPlatformBillingNotifier, PlatformBillingNotifier>();   // ขั้น 2 — ส่งใบ/แจ้งเตือน (อีเมลระบบ + LINE OA กลาง · คีย์กันซ้ำ)
+builder.Services.AddScoped<IPlatformDunningService, PlatformDunningService>();
+builder.Services.AddScoped<IPlatformPaymentLinkService, PlatformPaymentLinkService>();   // ขั้น 4 — ลิงก์ชำระใบแจ้งหนี้ (โทเคน hash · audit)     // ขั้น 2 — ทวงหนี้/ระงับ/คืนสถานะต่อบริษัท
 // นับ/คิดเงินการใช้งานรายหน่วย (ACCOUNT_STRUCTURE.md §6) — ไม่ throw ทุกกรณี
 // เพื่อไม่ให้ระบบเก็บเงินทำให้งานหลักของลูกค้าพัง
 builder.Services.AddScoped<IUsageMeteringService, UsageMeteringService>();
@@ -366,6 +372,12 @@ builder.Services.AddHttpClient(
     c => c.Timeout = TimeSpan.FromSeconds(20));
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentIntentService,
     Accounting.Services.Payments.PaymentIntentService>();
+// รอบ 219 ส่วน B (คำตัดสินข้อ 179): งานตั้งค่าผู้ให้บริการรับชำระ (คีย์ · ทดสอบสองชุด · ด่านเปิด live · ปิดฉุกเฉิน · ทดลองจ่าย) ตัวเดียวของร้านและแพลตฟอร์ม
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentProviderConfigService,
+    Accounting.Services.Payments.PaymentProviderConfigService>();
+// รอบ 219 ส่วน B: ชำระค่าบริการ NextAcc ออนไลน์ผ่านช่องทางของแพลตฟอร์ม (intent ใต้บริษัทผู้ให้บริการ + ผู้จ่าย) — ไม่ใช่ gateway ของร้าน
+builder.Services.AddScoped<Accounting.Services.Payments.IPlatformPaymentService,
+    Accounting.Services.Payments.PlatformPaymentService>();
 // ผังบัญชีขา "เงินเข้า" (ธนาคาร vs บัญชีพัก 11340) — แยกเป็นบริการของตัวเองโดยตั้งใจ:
 // ถ้าอยู่ใน PaymentIntentService จะเกิด **วงกลม DI** เพราะ handler ต้องเรียกมัน
 // แต่ตัวมันรับ IEnumerable<IPaymentCompletionHandler> อยู่แล้ว
@@ -413,6 +425,9 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandle
 // รอบ 205 W2 (R-08): มัดจำการจองนัดหมาย (CMS booking) — เงินเข้า ⇒ CmsBookingService.RecordDepositPaymentAsync
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.SiteBookingPaymentHandler>();
+// รอบ 219 ส่วน B: ทดลองจ่าย ฿20 โหมดทดสอบ — ประทับผลอย่างเดียว ไม่ลงบัญชี
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.GatewaySelfTestPaymentHandler>();
 // (3-way match endpoint ProcurementController/GrnMatchService ถูกลบ 2026-10-08 ตามคำตัดสินเจ้าของ — ไม่มีหน้าใดเรียก และผิดบนเส้น GRN→PI ปกติ ·
 // ด่านจริงคือ F20 ตอนอนุมัติใบแจ้งหนี้ซื้อ + PurchaseReceiptRoute)
 // Cheque lifecycle — book ordering, issuance, clearing, bouncing,
@@ -795,6 +810,7 @@ builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAud
 // ปิดรอบบิลค่าใช้งาน — รวม UsageEvent ที่ยังไม่ออกบิลเป็นใบแจ้งหนี้หลายบรรทัด
 // (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
 builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.PlatformDunningJob>();   // รอบ 219 เฟส 2 ขั้น 2 — ทวงหนี้ค่าบริการ NextAcc ทุกชั่วโมง (JobLock · watermark ต่อบริษัท)
 // ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)
@@ -992,10 +1008,34 @@ if (builder.Configuration.GetValue("Security:TrustProxyHeaders", true))
     {
         ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
             | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
-        ForwardLimit = 2,
+        // ฝ่ายค้านรอบ 219 เฟส 2: ทุกด่านจำกัดอัตราต่อ IP (ลิงก์ชำระสาธารณะ · ล็อกอิน · แชท) อ่าน RemoteIpAddress หลังขั้นนี้ —
+        // ไม่ระบุ proxy ที่เชื่อถือ + ForwardLimit 2 ⇒ ลูกค้าปลอม X-Forwarded-For ตัวซ้ายสุดได้ (หลบถังต่อ IP) ·
+        // ข้อบังคับ deploy (ACCOUNT_STRUCTURE §6.2c): ตั้ง Security:KnownProxies (IP คั่นด้วย ,) และ Security:ForwardLimit = จำนวน proxy จริง
+        ForwardLimit = Math.Clamp(builder.Configuration.GetValue("Security:ForwardLimit", 2), 1, 5),
     };
     fwdOptions.KnownNetworks.Clear();
     fwdOptions.KnownProxies.Clear();
+    foreach (var raw in (builder.Configuration["Security:KnownProxies"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        if (System.Net.IPAddress.TryParse(raw, out var proxyIp)) fwdOptions.KnownProxies.Add(proxyIp);
+        else throw new InvalidOperationException($"Security:KnownProxies มีค่าที่ไม่ใช่ IP: '{raw}'");
+    }
+    // ฝ่ายค้านรอบสุดท้าย 6: proxy อยู่คนละ subnet ใน container network ⇒ ระบุเป็นช่วง CIDR ได้ (Security:KnownNetworks เช่น "10.0.0.0/8,172.16.0.0/12")
+    foreach (var raw in (builder.Configuration["Security:KnownNetworks"] ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    {
+        var parts = raw.Split('/');
+        if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var netIp) && int.TryParse(parts[1], out var prefix)
+            && prefix >= 0 && prefix <= (netIp.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 128 : 32))
+            fwdOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(netIp, prefix));
+        else throw new InvalidOperationException($"Security:KnownNetworks มีค่าที่ไม่ใช่ CIDR: '{raw}'");
+    }
+    // ฝ่ายค้านรอบสุดท้าย 6: production ที่เชื่อ X-Forwarded-For แต่ไม่ระบุ proxy ⇒ ผู้ใช้ปลอม IP ได้ (หลบถังจำกัดอัตราต่อ IP · audit IP ผิด) — boot ไม่ขึ้น
+    // (fail-fast แบบเดียวกับ secret) เว้นแต่ตั้ง Security:TrustAllForwarders=true อย่างตั้งใจ (เช่น backend ไม่เปิดออกนอก proxy เลย — ต้องรู้ความเสี่ยง)
+    if (app.Environment.IsProduction() && fwdOptions.KnownProxies.Count == 0 && fwdOptions.KnownNetworks.Count == 0
+        && !builder.Configuration.GetValue("Security:TrustAllForwarders", false))
+        throw new InvalidOperationException(
+            "Security:TrustProxyHeaders เปิดอยู่แต่ไม่ได้ตั้ง Security:KnownProxies/Security:KnownNetworks — ตั้ง IP/ช่วงของ reverse proxy "
+            + "(หรือ Security:TrustAllForwarders=true เมื่อแน่ใจว่าคำขอเข้าได้ทาง proxy เท่านั้น · หรือ Security:TrustProxyHeaders=false เมื่อไม่มี proxy) — ACCOUNT_STRUCTURE §6.2c");
     app.UseForwardedHeaders(fwdOptions);
 }
 
@@ -1056,8 +1096,9 @@ var publicUploadPrefixes = new[]
     "/uploads/order-slips", "/uploads/portal-slips",
     // โลโก้ของ "ชื่อทางการค้า" — ต้องฝังลงหัวเอกสาร/PDF และแสดงบนหน้าตั้งค่า
     "/uploads/brand-logos",
-    // สลิปโอนค่าบริการ (แอดมินเปิดดูตอนตรวจสอบการชำระเงิน) ชื่อไฟล์เป็น GUID
-    "/uploads/slips",
+    // ⚠️ "/uploads/slips" (สลิปโอนค่าบริการ NextAcc + ค่าส่วนเสริม) **ถูกถอดออกแล้ว** (ฝ่ายค้านรอบ 219 เฟส 2 S9) — สลิปมีชื่อผู้โอน/เลขบัญชี/ยอด
+    // = ข้อมูลส่วนบุคคล · ลิงก์ชำระสาธารณะทำให้คนนอกอัปโหลดได้ด้วย ⇒ เสิร์ฟผ่าน endpoint ที่ตรวจสิทธิ์เท่านั้น
+    // (ผู้เช่า: billing-center/payments/{id}/slip · แอดมิน: platform-billing/subscription-payments/{id}/slip · metering/addon-payments/.../slip)
     // ⚠️ "/uploads/lodging-slips" **ถูกถอดออกจากลิสต์นี้แล้ว** (LDG-P2-06) —
     // สลิปโอนเงินมีชื่อผู้โอน + เลขบัญชี + ยอด = ข้อมูลส่วนบุคคลของแขก ไม่ใช่ของ
     // สาธารณะ · ชื่อไฟล์เป็น GUID ก็จริง แต่ URL ถูกส่งกลับใน API response ของหน้า

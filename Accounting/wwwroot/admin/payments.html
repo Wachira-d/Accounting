@@ -240,7 +240,8 @@
                 <div><div class="admin-label">วันที่ส่ง</div>${AdminLayout.datetime(p.createdAt)}</div>
               </div>
 
-              ${p.slipFileName ? `<div class="admin-mb"><div class="admin-label">สลิปการโอน</div><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;text-align:center">${AdminLayout.esc(p.slipFileName)}</div></div>` : ''}
+              ${p.slipFileName ? `<div class="admin-mb"><div class="admin-label">สลิปการโอน</div><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;text-align:center">${AdminLayout.esc(p.slipFileName)}
+                <div style="margin-top:6px"><button class="admin-btn admin-btn-outline admin-btn-sm" onclick="downloadSlip('${String(p.id || '').replace(/[^0-9a-fA-F-]/g, '')}')">ดาวน์โหลดสลิป</button></div></div></div>` : ''}
 
               ${p.slipOcrAmount != null || p.slipOcrAmountMatches != null ? `
                 <div style="border:1px solid ${p.slipOcrAmountMatches ? '#86efac' : '#fde68a'};background:${p.slipOcrAmountMatches ? '#f0fdf4' : '#fffbeb'};border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
@@ -261,6 +262,14 @@
               </div>
 
               <div class="admin-form-group">
+                <label class="admin-label">ภาษีหัก ณ ที่จ่าย (บาท · ตาม 50 ทวิ ของลูกค้า — เว้นว่าง = ไม่มี/ไม่เปลี่ยน)</label>
+                <input class="admin-input" id="reviewWht" type="number" min="0" step="0.01" placeholder="0.00" value="${Number(p.withholdingTaxAmount || 0) > 0 ? Number(p.withholdingTaxAmount) : ''}">
+              </div>
+              <div class="admin-form-group">
+                <label class="admin-label">เงินที่รับจริงตามสลิป (บาท · เว้นว่าง = ยอดของรายการ) — เงิน + ภาษีหัก ต้องไม่เกินยอดค้างของใบ</label>
+                <input class="admin-input" id="reviewAmountReceived" type="number" min="0" step="0.01" placeholder="${Number(p.amount || 0).toFixed(2)}">
+              </div>
+              <div class="admin-form-group">
                 <label class="admin-label">หมายเหตุ Admin</label>
                 <textarea class="admin-input" id="reviewNotes" rows="3" placeholder="บันทึกเพิ่มเติม (ถ้ามี)"></textarea>
               </div>
@@ -278,13 +287,23 @@
       }
     }
 
+    // ฝ่ายค้าน S9: สลิปไม่เสิร์ฟเป็นไฟล์สาธารณะแล้ว — ดาวน์โหลดผ่าน endpoint ที่ตรวจสิทธิ์ SystemAdmin
+    async function downloadSlip(paymentId) {
+      try { await AdminAPI.platformPaymentSlip(paymentId); } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
     async function reviewPayment(paymentId, approve) {
       const action = approve ? 'อนุมัติ' : 'ปฏิเสธ';
       if (!confirm(`ต้องการ${action}การชำระเงินนี้?`)) return;
 
       const notes = document.getElementById('reviewNotes')?.value || '';
+      // ฝ่ายค้าน S4: ภาษีหัก ณ ที่จ่ายจาก 50 ทวิ ของลูกค้า (เว้นว่าง = ไม่เปลี่ยน) — เซิร์ฟเวอร์ตรวจอัตรา/สิทธิ์หัก
+      const whtRaw = document.getElementById('reviewWht')?.value || '';
+      const wht = whtRaw.trim() === '' ? null : Number(whtRaw);
+      const amtRaw = document.getElementById('reviewAmountReceived')?.value || '';
+      const amountReceived = amtRaw.trim() === '' ? null : Number(amtRaw);
       try {
-        await AdminAPI.reviewPayment(paymentId, approve, notes);
+        await AdminAPI.reviewPayment(paymentId, approve, notes, wht, amountReceived);
         AdminLayout.toast(`${action}การชำระเงินสำเร็จ`);
         closeReview();
         loadPending();

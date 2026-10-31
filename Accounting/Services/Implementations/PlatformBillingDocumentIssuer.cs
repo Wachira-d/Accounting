@@ -28,6 +28,19 @@ public interface IPlatformBillingDocumentIssuer
     Task<PlatformDocResult?> IssueRenewalInvoiceAsync(Guid buyerCompanyId, string description,
         decimal amountNet, DateTime issueDate, DateTime dueDate, string reference);
 
+    /// <summary>รอบ 219 เฟส 2 (G-10 · คำตัดสินข้อ 180): บันทึก "รับชำระใบแจ้งหนี้เดิม" ใน tenant ผู้ให้บริการ (Dr เงินสด/ธนาคาร / Cr ลูกหนี้ ผ่าน
+    /// <c>IDocumentService.CreatePaymentAsync</c> ตัวเดียวกับเส้นอื่น) — <b>ไม่ออกขายสดใบใหม่</b> (เดิมรับเงินค่าต่ออายุ = ใบแจ้งหนี้ + ใบขายสด ⇒ รายได้ซ้ำ) ·
+    /// idempotent ด้วย <paramref name="reference"/> (ชำระแล้ว = คืนผลเดิม) · คืน null เมื่อยังไม่ตั้ง tenant/ใบไม่ใช่ของ tenant/ล้ม (ไม่โยน)
+    /// <para>ฝ่ายค้าน S1: ออก<b>ใบเสร็จรับเงินจริง</b>คู่การรับชำระ (<c>IssueReceiptDocument: true</c> — ใบแจ้งหนี้บริการรับครบงวดเดียว ⇒ ใบเสร็จถือ VAT
+    /// = ใบกำกับภาษี/ใบเสร็จ ณ วันรับเงิน §78/1) แล้วคืนเลขใบเสร็จ + ธงใบกำกับ (เดิมคืนเลขใบแจ้งหนี้ ⇒ ผู้เช่า "ดาวน์โหลดใบเสร็จ" ได้ใบแจ้งหนี้) ·
+    /// ฝ่ายค้าน S3: รับไม่เกินยอดค้างของใบ (ส่วนเกิน = <c>Excess</c> ให้แอดมินจัดการ · ไม่ตัดเกินหนี้)</para></summary>
+    Task<PlatformSettleResult?> SettleInvoiceAsync(Guid invoiceDocumentId, decimal amountReceived, decimal withholdingTax,
+        DateTime paymentDate, string reference, string notes);
+
+    /// <summary>รอบ 219 เฟส 2 (S9): ยกเลิกใบแจ้งหนี้ต่ออายุที่ไม่มีการชำระเลย ผ่าน <c>IDocumentService.VoidDocumentAsync</c> (เก็บใบ + JE กลับรายการ ·
+    /// ห้ามแก้ใบย้อนหลัง §86/4) · มีการชำระแล้ว ⇒ NeedsCreditNote (ไม่แตะ) · มีรายการชำระที่ผูกใบค้างอยู่ ⇒ PendingPayment (ไม่แตะ · ฝ่ายค้าน B2) · ไม่โยน</summary>
+    Task<StaleRenewalOutcome> VoidStaleRenewalInvoiceAsync(Guid invoiceDocumentId);
+
     /// <summary>ออก "ใบแจ้งหนี้ค่าใช้งานตามจริง" หลายบรรทัดในใบเดียว
     /// (ค่าเหมา add-on · เอกสารเกินโควตา · การเข้าพัก · SMS ฯลฯ ของงวดนั้น)
     ///
@@ -40,6 +53,15 @@ public interface IPlatformBillingDocumentIssuer
     /// <summary>tenant ผู้ให้บริการถูกตั้งค่าไว้แล้วหรือยัง (ใช้เลือกเส้นทาง)</summary>
     Task<bool> IsEnabledAsync();
 }
+
+/// <summary>ผลการจัดการใบต่ออายุที่ล้าสมัย (S9) · ฝ่ายค้าน B2: <c>PendingPayment</c> = มีรายการแจ้งชำระ/ชำระออนไลน์ที่ผูกใบนี้ค้างอยู่ ⇒ ไม่ยกเลิก
+/// (ยกเลิกแล้วเงินที่ตามมาจะไม่มีใบให้ตัด · อนุมัติแล้วต่ออายุซ้อน)</summary>
+public enum StaleRenewalOutcome { Voided = 1, NeedsCreditNote = 2, NotFound = 3, Failed = 4, PendingPayment = 5 }
+
+/// <summary>ผลตัดชำระใบแจ้งหนี้ค่าบริการ (ฝ่ายค้าน S1/S3) — <paramref name="ReceiptDocumentId"/> null = รับชำระแล้วแต่ใบเสร็จออกไม่สำเร็จ (ต้องออกด้วยมือ) ·
+/// <paramref name="Applied"/> = ยอดเงินที่ตัดหนี้จริง · <paramref name="Excess"/> = ส่วนที่เกินยอดค้าง (ไม่ตัด · แอดมินจัดการ)</summary>
+public sealed record PlatformSettleResult(Guid InvoiceId, string InvoiceNumber, Guid? ReceiptDocumentId, string? ReceiptNumber,
+    bool ReceiptIsTaxInvoice, decimal Applied, decimal Excess);
 
 public sealed record PlatformDocResult(Guid DocumentId, string DocumentNumber, bool IsTaxInvoice);
 
@@ -214,6 +236,97 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         }
     }
 
+    public async Task<PlatformSettleResult?> SettleInvoiceAsync(Guid invoiceDocumentId, decimal amountReceived, decimal withholdingTax,
+        DateTime paymentDate, string reference, string notes)
+    {
+        try
+        {
+            var (settings, tenantId) = await ResolveTenantAsync();
+            if (settings == null || tenantId == null || amountReceived <= 0m) return null;
+            var doc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == invoiceDocumentId && d.CompanyId == tenantId.Value && !d.IsDeleted)
+                .Select(d => new { d.Id, d.DocumentNumber, d.BalanceDue, d.Status })
+                .FirstOrDefaultAsync();
+            if (doc == null) return null;
+            // กันซ้ำ: อนุมัติซ้ำ/เรียกซ้ำหลังล้มกลางทาง ⇒ ไม่บันทึกรับเงินสองครั้ง (และหาใบเสร็จของการรับครั้งเดิม)
+            var existing = await _db.Payments.AsNoTracking()
+                .Where(p => p.CompanyId == tenantId.Value && !p.IsDeleted && p.Reference == reference)
+                .Select(p => new { p.Amount, p.ReceiptDocumentId })
+                .FirstOrDefaultAsync();
+            decimal applied, excess;
+            Guid? receiptId;
+            if (existing != null)
+            {
+                applied = existing.Amount;
+                excess = Math.Max(0m, amountReceived - existing.Amount);
+                receiptId = existing.ReceiptDocumentId;
+            }
+            else
+            {
+                (applied, var whtApplied, excess) = Accounting.Helpers.PlatformInvoiceRules.CapToBalance(amountReceived, withholdingTax,
+                    doc.Status == DocumentStatus.Voided ? 0m : doc.BalanceDue);
+                receiptId = null;
+                if (applied > 0m || whtApplied > 0m)
+                {
+                    var res = await Documents.CreatePaymentAsync(tenantId.Value, new CreatePaymentRequest(
+                        DocumentId: doc.Id,
+                        PaymentDate: paymentDate == default ? DateTime.UtcNow : paymentDate,
+                        Amount: applied,
+                        PaymentMethod: PaymentMethod.BankTransfer,
+                        Reference: reference,
+                        BankAccount: null,
+                        Notes: notes,
+                        OverridePaymentAccountId: await ResolveCashAccountIdAsync(tenantId.Value, settings),
+                        WithholdingTaxAmount: whtApplied > 0m ? whtApplied : null,
+                        IssueReceiptDocument: true), Actor);
+                    receiptId = res.ReceiptDocumentId;
+                }
+            }
+            var receipt = receiptId is Guid rid
+                ? await _db.Documents.AsNoTracking().Where(d => d.Id == rid && d.CompanyId == tenantId.Value)
+                    .Select(d => new { d.Id, d.DocumentNumber, d.IsTaxInvoiceByLaw }).FirstOrDefaultAsync()
+                : null;
+            _logger.LogInformation("ตัดชำระใบแจ้งหนี้ค่าบริการ {DocNo} ({Amount:N2} · ตัดจริง {Applied:N2} · เกิน {Excess:N2} · ใบเสร็จ {Receipt} · อ้างอิง {Ref} · ซ้ำ={Dup})",
+                doc.DocumentNumber, amountReceived, applied, excess, receipt?.DocumentNumber ?? "-", reference, existing != null);
+            return new PlatformSettleResult(doc.Id, doc.DocumentNumber, receipt?.Id, receipt?.DocumentNumber,
+                receipt?.IsTaxInvoiceByLaw ?? false, applied, excess);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ตัดชำระใบแจ้งหนี้ค่าบริการไม่สำเร็จ (ใบ {DocId} · อ้างอิง {Ref})", invoiceDocumentId, reference);
+            return null;
+        }
+    }
+
+    public async Task<StaleRenewalOutcome> VoidStaleRenewalInvoiceAsync(Guid invoiceDocumentId)
+    {
+        try
+        {
+            var (_, tenantId) = await ResolveTenantAsync();
+            if (tenantId == null) return StaleRenewalOutcome.NotFound;
+            var doc = await _db.Documents.AsNoTracking()
+                .Where(d => d.Id == invoiceDocumentId && d.CompanyId == tenantId.Value && !d.IsDeleted)
+                .Select(d => new { d.Id, d.Status, d.PaidAmount, d.BalanceDue, d.TotalAmount })
+                .FirstOrDefaultAsync();
+            if (doc == null) return StaleRenewalOutcome.NotFound;
+            if (doc.Status == DocumentStatus.Voided) return StaleRenewalOutcome.Voided;
+            if (doc.PaidAmount > 0m || doc.BalanceDue < doc.TotalAmount - Accounting.Helpers.PlatformInvoiceRules.Epsilon)
+                return StaleRenewalOutcome.NeedsCreditNote;
+            // ฝ่ายค้าน B2: มีรายการชำระที่ผูกใบนี้ค้างอยู่ (สลิปรอตรวจ · รอเงินเข้าออนไลน์) ⇒ ไม่ยกเลิก — เงินที่ตามมาต้องมีใบให้ตัด ·
+            // การอนุมัติรายการนั้นภายหลังถูกพักให้แอดมิน (ใบต่ออายุที่ถูกแทนที่ — ReviewPaymentAsync) ไม่ต่ออายุซ้อน
+            if (await _db.SubscriptionPayments.AsNoTracking().AnyAsync(p => p.PlatformInvoiceDocumentId == doc.Id
+                    && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview)))
+                return StaleRenewalOutcome.PendingPayment;
+            await Documents.VoidDocumentAsync(tenantId.Value, doc.Id);
+            return StaleRenewalOutcome.Voided;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ยกเลิกใบต่ออายุที่ล้าสมัยไม่สำเร็จ (ใบ {DocId})", invoiceDocumentId);
+            return StaleRenewalOutcome.Failed;
+        }
+    }
+
     public async Task<PlatformDocResult?> IssueUsageInvoiceAsync(Guid buyerCompanyId,
         IReadOnlyList<PlatformInvoiceLine> lines, DateTime issueDate, DateTime dueDate,
         string reference, string? notes = null)
@@ -320,7 +433,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         //     (ลูกหนี้/ประวัติใบกำกับแยกสองแถว แถวเก่าไม่เคยได้เลข) · ข้ามแถวนี้เฉพาะเมื่อมันถือเลข/สาขา**อื่น**แล้ว
         //     (ลูกค้าเปลี่ยนสาขาที่ลงทะเบียน ⇒ ต้องเป็นผู้ติดต่อของสาขาใหม่ §86/4)
         var existing = await _db.Contacts.FirstOrDefaultAsync(c => c.CompanyId == tenantId && !c.IsDeleted
-            && c.ExternalSystem == "NextAccTenant" && c.ExternalId == buyerKey);
+            && c.ExternalSystem == Accounting.Helpers.PlatformInvoiceRules.TenantContactSystem && c.ExternalId == buyerKey);
         if (existing != null && taxId != null && Accounting.Helpers.ContactTaxBranchKey.HasTaxId(existing.TaxId)
             && !Accounting.Helpers.ContactTaxBranchKey.Pick(
                 new[] { new Accounting.Helpers.ContactKeyCandidate(existing.Id, existing.TaxId, existing.BranchCode) },
@@ -346,7 +459,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             matchedBy = Accounting.Helpers.ContactMatchKind.ExactName;
             existing = await softScope
                 .Where(c => !c.IsDeleted && c.Name == buyer.Name
-                    && !(c.ExternalSystem == "NextAccTenant" && c.ExternalId != buyerKey))
+                    && !(c.ExternalSystem == Accounting.Helpers.PlatformInvoiceRules.TenantContactSystem && c.ExternalId != buyerKey))
                 .OrderByDescending(c => c.IsCustomer)
                 .FirstOrDefaultAsync();
         }
@@ -365,7 +478,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             // ผูกกุญแจ tenant ให้แถวที่จับได้ด้วยเลข/ชื่อ (ถ้ายังไม่ผูกกับระบบใด) — รอบหน้าเจอด้วยกุญแจ (1) ทันที
             if (string.IsNullOrWhiteSpace(existing.ExternalSystem) && string.IsNullOrWhiteSpace(existing.ExternalId))
             {
-                existing.ExternalSystem = "NextAccTenant";
+                existing.ExternalSystem = Accounting.Helpers.PlatformInvoiceRules.TenantContactSystem;
                 existing.ExternalId = buyerKey;
                 dirty = true;
             }
@@ -391,7 +504,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             Email = buyer.Email,
             CountryCode = "TH",
             // ผูกกลับไปยัง tenant ลูกค้า — ตามรอยได้ว่าผู้ติดต่อรายนี้คือบริษัทไหนในระบบ
-            ExternalSystem = "NextAccTenant",
+            ExternalSystem = Accounting.Helpers.PlatformInvoiceRules.TenantContactSystem,
             ExternalId = buyer.Id.ToString(),
             CreatedBy = Actor,
         };

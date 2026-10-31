@@ -138,6 +138,9 @@ public static class AdvisoryLockKey
     /// <summary>บันทึก "คืนเงินแขกแล้ว" ของการจองที่พัก — part = id การจอง (รอบ 193 ฝ่ายค้าน: สองคำขอพร้อมกันผ่านด่านทั้งคู่
     /// แล้ว RefundPaidAmount ถูกเขียนทับ)</summary>
     public const string LodgingRefundPaid = "lodging-refund";
+    /// <summary>รอบ 219 เฟส 2 (ฝ่ายค้าน S3): ตรวจ/อนุมัติรายการชำระค่าบริการ NextAcc — part = SubscriptionId (ทุกรายการของบริษัทเดียวเรียงกัน:
+    /// อนุมัติซ้ำ/สองรายการของใบเดียว/ต่ออายุซ้อน ไม่แทรกกัน) · ผู้ใช้เดียว <c>Helpers/SubscriptionPaymentLock</c></summary>
+    public const string SubscriptionPaymentReview = "sub-pay-review";
     /// <summary>เช็คเอาต์ / ออกใบเช็คเอาต์ใหม่ของการจองที่พัก — part = id การจอง (รอบ 201 ฝ่ายค้าน X7: สองคำขอพร้อมกันผ่านด่าน
     /// "ยังไม่มีใบ/ใบเดิมถูกยกเลิก" ทั้งคู่ ⇒ ใบกำกับสองใบ) · session lock (<c>JobLock.RunExclusiveAsync</c>) เพราะเส้นออกเอกสาร/ใช้มัดจำ
     /// เปิดธุรกรรมของตัวเองหลายขั้น (xact lock จะหลุดตั้งแต่ขั้นแรก)</summary>

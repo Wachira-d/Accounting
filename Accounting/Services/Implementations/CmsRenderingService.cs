@@ -114,10 +114,16 @@ public class CmsRenderingService : ICmsRenderingService
 
     /// <summary>ฝ่ายค้านรอบ 214 S3/S4: โทเคนของหน้านโยบายร้าน = โทเคนเนื้อหาเว็บ + กติกาเผยแพร่ (<c>CmsLegalPages.BuildShopTokens</c> —
     /// เลขผู้เสียภาษีเฉพาะนิติบุคคล · ค่าที่ขาดบอก "ยังไม่ได้ระบุ")</summary>
-    private async Task<Dictionary<string, string?>> BuildLegalTokensAsync(Guid companyId, Models.Entities.Site site)
+    private async Task<Dictionary<string, string?>> BuildLegalTokensAsync(Guid companyId, Models.Entities.Site site, string? kind = null)
     {
         var juristicId = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.JuristicId).FirstOrDefaultAsync();
-        return Accounting.Helpers.CmsLegalPages.BuildShopTokens(await BuildContentTokensAsync(companyId, site), !string.IsNullOrWhiteSpace(juristicId));
+        var tokens = Accounting.Helpers.CmsLegalPages.BuildShopTokens(await BuildContentTokensAsync(companyId, site), !string.IsNullOrWhiteSpace(juristicId));
+        // รอบ 219 ส่วน B: นโยบายคืนเงินอ่านตัวเลขจากค่าตั้งของร้าน (ตัวเดียวกับเลขฉบับ — CmsLegalPages.BuildRefundTokens)
+        if (kind == Accounting.Helpers.LegalDocumentDefaults.KindRefund)
+            foreach (var kv in Accounting.Helpers.CmsLegalPages.BuildRefundTokens(await ForfeitPercentAsync(companyId, site.Id),
+                         site.RefundReturnWindowDays, site.RefundProcessingDays))
+                tokens[kv.Key] = kv.Value;
+        return tokens;
     }
 
     private static StorefrontLegalLink LegalLink(Accounting.Helpers.CmsLegalPages.Link l) => new()
@@ -134,10 +140,9 @@ public class CmsRenderingService : ICmsRenderingService
         var site = await _db.Sites.AsNoTracking()
             .FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId && s.Status == SiteStatus.Published);
         if (site == null) return null;
-        var isTerms = kind == Accounting.Helpers.LegalDocumentDefaults.KindTerms;
-        var custom = isTerms ? site.TermsOfServiceMarkdown : site.PrivacyPolicyMarkdown;
-        var link = Accounting.Helpers.CmsLegalPages.Resolve(kind, isTerms ? site.TermsOfServiceUrl : site.PrivacyPolicyUrl, custom);
-        var tokens = await BuildLegalTokensAsync(companyId, site);
+        var (url, custom, updatedAt) = LegalFields(site, kind);
+        var link = Accounting.Helpers.CmsLegalPages.Resolve(kind, url, custom);
+        var tokens = await BuildLegalTokensAsync(companyId, site, kind);
         return new StorefrontLegalPageResponse
         {
             Kind = kind,
@@ -145,12 +150,21 @@ public class CmsRenderingService : ICmsRenderingService
             Mode = link.Mode,
             ExternalUrl = link.ExternalUrl,
             Html = Accounting.Helpers.LegalMarkdown.Render(Accounting.Helpers.CmsLegalPages.EffectiveMarkdown(kind, custom), tokens),
-            UpdatedAt = string.IsNullOrWhiteSpace(custom) ? null : (isTerms ? site.TermsOfServiceUpdatedAt : site.PrivacyPolicyUpdatedAt),
+            UpdatedAt = string.IsNullOrWhiteSpace(custom) ? null : updatedAt,
             SiteName = site.Name,
         };
     }
 
-    /// <summary>ตัวอย่างหน้านโยบาย/ข้อกำหนดของร้านจากข้อความที่กำลังแก้ (หลังบ้าน — เว็บยังไม่เผยแพร่ก็ดูได้) · markdown ว่าง = แม่แบบ ·
+    /// <summary>ช่องของเว็บตามชนิดเอกสาร — ตัวเดียวของหน้าแสดง (เดิม ternary สองทาง: ชนิดที่สามตกเป็น privacy เงียบ ๆ)</summary>
+    private static (string? Url, string? Markdown, DateTime? UpdatedAt) LegalFields(Models.Entities.Site site, string kind) => kind switch
+    {
+        Accounting.Helpers.LegalDocumentDefaults.KindPrivacy => (site.PrivacyPolicyUrl, site.PrivacyPolicyMarkdown, site.PrivacyPolicyUpdatedAt),
+        Accounting.Helpers.LegalDocumentDefaults.KindTerms => (site.TermsOfServiceUrl, site.TermsOfServiceMarkdown, site.TermsOfServiceUpdatedAt),
+        Accounting.Helpers.LegalDocumentDefaults.KindRefund => (site.RefundPolicyUrl, site.RefundPolicyMarkdown, site.RefundPolicyUpdatedAt),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "ชนิดเอกสารกฎหมายไม่รู้จัก"),
+    };
+
+    /// <summary>ตัวอย่างหน้านโยบาย/ข้อกำหนดของร้านจากข้อความที่กำลังแก้ (หลังบ้าน — เว็บยังไม่เผยแพร่ก็ดูได้) ·
     /// คืน (HTML, markdown ที่ใช้จริง, คำเตือน)</summary>
     public async Task<(string Html, string Markdown, List<string> Warnings)?> PreviewLegalPageAsync(Guid companyId, Guid siteId, string kind, string? markdown)
     {
@@ -158,10 +172,18 @@ public class CmsRenderingService : ICmsRenderingService
         var site = await _db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId);
         if (site == null) return null;
         var md = Accounting.Helpers.CmsLegalPages.EffectiveMarkdown(kind, markdown);
-        var tokens = await BuildLegalTokensAsync(companyId, site);
-        return (Accounting.Helpers.LegalMarkdown.Render(md, tokens), md,
-            Accounting.Helpers.LegalMarkdown.Warnings(md, Accounting.Helpers.CmsContentTokens.Supported.Select(t => t.Token)));
+        var tokens = await BuildLegalTokensAsync(companyId, site, kind);
+        var warnings = Accounting.Helpers.LegalMarkdown.Warnings(md, Accounting.Helpers.CmsLegalPages.KnownTokens(kind));
+        if (kind == Accounting.Helpers.LegalDocumentDefaults.KindRefund && !string.IsNullOrWhiteSpace(markdown))
+            warnings.AddRange(Accounting.Helpers.CmsLegalPages.RefundContradictions(markdown, await ForfeitPercentAsync(companyId, siteId)));
+        return (Accounting.Helpers.LegalMarkdown.Render(md, tokens), md, warnings);
     }
+
+    /// <summary>ค่าตั้ง "ริบมัดจำเมื่อยกเลิก %" ของเว็บ (กรองบริษัท)</summary>
+    private Task<decimal?> ForfeitPercentAsync(Guid companyId, Guid siteId)
+        => _db.SiteCommerceConfigs.AsNoTracking()
+            .Where(c => c.SiteId == siteId && c.CompanyId == companyId)
+            .Select(c => c.DepositForfeitOnCancelPercent).FirstOrDefaultAsync();
 
     /// <summary>ค่าของโทเคนเนื้อหาสำหรับเว็บนี้ — ค่าระดับเว็บชนะค่าระดับบริษัท
     ///
@@ -240,6 +262,8 @@ public class CmsRenderingService : ICmsRenderingService
         // P2-4 (รอบ 202 LW): ที่พัก (ไม่ลบ · ปิดอยู่ก็นับ) ผูกเว็บนี้ = เว็บที่พัก — CompanyId scope
         var hasBoundLodging = await _db.LodgingProperties.AsNoTracking()
             .AnyAsync(p => p.CompanyId == companyId && p.SiteId == siteId && !p.IsDeleted);
+        // รอบ 219 ส่วน B: ข้อความ + ฉบับของช่องติ๊กยอมรับนโยบาย — ตัวเดียวกับด่าน (หน้าเว็บแสดงอย่างเดียว)
+        var policyFacts = await Accounting.Helpers.PurchasePolicyAcceptance.LoadShopAsync(_db, companyId, siteId);
 
         return new StorefrontDataResponse
         {
@@ -267,6 +291,10 @@ public class CmsRenderingService : ICmsRenderingService
                 // รอบ 214 (คำตัดสินข้อ 173 B): ลิงก์นโยบาย/ข้อกำหนด — ตัวตัดสินเดียว CmsLegalPages (มีค่าเสมอ · ค่าไม่ปลอดภัย = ใช้หน้าของระบบ)
                 PrivacyLink = LegalLink(Accounting.Helpers.CmsLegalPages.Resolve(Accounting.Helpers.LegalDocumentDefaults.KindPrivacy, site.PrivacyPolicyUrl, site.PrivacyPolicyMarkdown)),
                 TermsLink = LegalLink(Accounting.Helpers.CmsLegalPages.Resolve(Accounting.Helpers.LegalDocumentDefaults.KindTerms, site.TermsOfServiceUrl, site.TermsOfServiceMarkdown)),
+                RefundLink = LegalLink(Accounting.Helpers.CmsLegalPages.Resolve(Accounting.Helpers.LegalDocumentDefaults.KindRefund, site.RefundPolicyUrl, site.RefundPolicyMarkdown)),
+                // รอบ 219 ส่วน B: ช่องติ๊กยอมรับนโยบาย + ฉบับ — ตัวเดียวกับด่าน (PurchasePolicyAcceptance.ShopFacts)
+                PolicyAcceptanceText = policyFacts.Text,
+                PolicyVersion = policyFacts.Version,
                 RequireDataConsent = site.RequireDataConsent,
                 DataConsentText = Accounting.Helpers.CmsDataConsent.ResolveText(site.DataConsentText, site.Name)
             },

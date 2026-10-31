@@ -126,12 +126,22 @@ public class AddOnPurchaseService : IAddOnPurchaseService
         return Map(f, x.Name, await AmountDueAsync(companyId, featureCode, ct));
     }
 
-    public async Task<AddOnPaymentState> ApproveAsync(Guid companyId, string featureCode,
+    public Task<AddOnPaymentState> ApproveAsync(Guid companyId, string featureCode,
         string actor, CancellationToken ct = default)
+    {
+        return SessionAdvisoryLock.RunAsync(_db, AdvisoryLockKey.For(companyId, SessionAdvisoryLock.PlatformAddOnPayment, featureCode),
+            () => ApproveLockedAsync(companyId, featureCode, actor, ct), ct);
+    }
+
+    private async Task<AddOnPaymentState> ApproveLockedAsync(Guid companyId, string featureCode, string actor, CancellationToken ct)
     {
         var loaded = await LoadAsync(companyId, featureCode, tracked: true, ct);
         if (loaded is not { } x) throw new BusinessRuleException("ไม่พบส่วนเสริมของบริษัทนี้");
         var f = x.Row;
+        await _db.Entry(f).ReloadAsync(ct);
+        // รอบ 219 ส่วน B ฝ่ายค้าน S2: ชำระออนไลน์สำเร็จไปแล้ว ⇒ อนุมัติสลิปซ้ำไม่ได้ (เงินโอนต้องคืน/ปฏิเสธสลิป)
+        if (f.PaymentStatus == AddOnPaymentStatus.Paid && f.PaymentIntentId != null)
+            throw new BusinessRuleException(PlatformDoublePayment.SlipAfterOnlineMessage, PlatformDoublePayment.RuleCode);
         f.PaymentStatus = AddOnPaymentStatus.Paid;
         f.PaymentRejectedReason = null;
         f.PaymentReviewedAt = DateTime.UtcNow;
@@ -200,8 +210,17 @@ public class AddOnPurchaseService : IAddOnPurchaseService
         return Map(f, x.Name, await AmountDueAsync(companyId, featureCode, ct));
     }
 
-    public async Task MarkPaidByGatewayAsync(Guid companyId, string featureCode,
+    public Task MarkPaidByGatewayAsync(Guid companyId, string featureCode,
         Guid intentId, decimal amount, string actor, CancellationToken ct = default)
+    {
+        return SessionAdvisoryLock.RunAsync(_db, AdvisoryLockKey.For(companyId, SessionAdvisoryLock.PlatformAddOnPayment, featureCode),
+            () => MarkPaidByGatewayLockedAsync(companyId, featureCode, intentId, amount, actor, ct), ct);
+    }
+
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน S2: ใต้ล็อกเดียวกับแอดมินอนุมัติสลิป — จ่ายแล้วด้วยรายการอื่น ⇒ ล้มดัง (audit + ข้อผิดพลาดถึงผู้ส่งต่อ ⇒ ประวัติ ⚠️ + แจ้ง) ·
+    /// สลิปรอตรวจอยู่ ⇒ ยังเปิดสิทธิ์ (เงินออนไลน์ยืนยันแล้ว) แต่บันทึก audit ให้แอดมินปฏิเสธสลิป/คืนเงินโอน</summary>
+    private async Task MarkPaidByGatewayLockedAsync(Guid companyId, string featureCode,
+        Guid intentId, decimal amount, string actor, CancellationToken ct)
     {
         var loaded = await LoadAsync(companyId, featureCode, tracked: true, ct);
         if (loaded is not { } x)
@@ -214,8 +233,30 @@ public class AddOnPurchaseService : IAddOnPurchaseService
             return;
         }
         var f = x.Row;
+        await _db.Entry(f).ReloadAsync(ct);
         if (f.PaymentStatus == AddOnPaymentStatus.Paid && f.PaymentIntentId == intentId)
             return;   // webhook ซ้ำ — ไม่ใช่ error
+        var settle = PlatformDoublePayment.OnGatewaySuccess(f.PaymentStatus == AddOnPaymentStatus.Paid, f.PaymentIntentId, intentId,
+            f.PaymentStatus == AddOnPaymentStatus.PendingReview);
+        if (settle != PlatformDoublePayment.Outcome.Apply)
+        {
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, EntityType = "CompanyFeature", EntityId = f.Id.ToString(), Action = AuditAction.Update,
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = PlatformDoublePayment.AuditAction, ruleCode = PlatformDoublePayment.RuleCode, featureCode, intentId, amount,
+                    paidBy = f.PaymentIntentId, slipPending = f.PaymentStatus == AddOnPaymentStatus.PendingReview,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            _logger.LogError("ค่าส่วนเสริม {Feature} บริษัท {Company} ชำระซ้อน (intent {Intent}): {Outcome}", featureCode, companyId, intentId, settle);
+            if (settle == PlatformDoublePayment.Outcome.AlreadySettled)
+            {
+                await _db.SaveChangesAsync(ct);
+                throw new BusinessRuleException(PlatformDoublePayment.AlreadySettledMessage, PlatformDoublePayment.RuleCode);
+            }
+        }
 
         f.PaymentStatus = AddOnPaymentStatus.Paid;
         f.PaymentIntentId = intentId;

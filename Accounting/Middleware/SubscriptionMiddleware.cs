@@ -71,7 +71,9 @@ public class SubscriptionCheckMiddleware
 
         // Skip for excluded paths
         if (ExcludedPaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase))
-            || IsExactCompanyListPath(path))
+            || IsExactCompanyListPath(path)
+            // ฝ่ายค้านรอบ 219 เฟส 2 (S5): ผู้ถูกระงับต้องจ่ายออนไลน์ได้ — ตัวตัดสินเดียว SubscriptionGatePolicy.IsBillingPaymentPath (สิทธิ์ยังตรวจที่ controller)
+            || SubscriptionGatePolicy.IsBillingPaymentPath(path))
         {
             await _next(context);
             return;

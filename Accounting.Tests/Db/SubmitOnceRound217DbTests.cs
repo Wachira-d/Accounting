@@ -94,6 +94,7 @@ public class SubmitOnceRound217DbTests
         {
             BookingServiceId = serviceId, BookingDate = TargetDate().ToDateTime(TimeOnly.MinValue), StartTime = start,
             GuestName = name, GuestPhone = phone, GuestCount = 1, CustomerId = customerId, ConfirmAdditional = confirmAdditional,
+            PolicyAccepted = true,   // รอบ 219 ส่วน B: ลูกค้าจองเองต้องติ๊กยอมรับนโยบาย (เทสต์ด่านอยู่ที่ PurchasePolicyAcceptanceDbTests)
         };
 
     private sealed record Attempt(BookingResponse? Result, string? Code, int Status);
@@ -327,7 +328,7 @@ public class SubmitOnceRound217DbTests
         => JsonSerializer.Serialize(new
         {
             bookingServiceId = svcId, bookingDate = TargetDate().ToDateTime(TimeOnly.MinValue), startTime = start,
-            guestName = "คุณคีย์", guestPhone = phone, guestCount = 1,
+            guestName = "คุณคีย์", guestPhone = phone, guestCount = 1, policyAccepted = true,
         });
 
     [Fact]

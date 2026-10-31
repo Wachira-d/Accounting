@@ -432,6 +432,8 @@ public class GatewaySettlementService : IGatewaySettlementService
                 // รอบ 198 ทีม B: intent ที่อยู่ในรอบโอนของเส้น settlement ใหม่แล้ว (SettlementBatch) ห้ามเส้นเดิมหยิบซ้ำ — ธนาคารจะเกินสองเท่า
                 && i.SettlementBatchId == null
                 && i.ConfirmedAt != null
+                // รอบ 219 ส่วน B: ทดลองจ่าย (โหมดทดสอบ) ไม่ใช่เงินที่ต้องกระทบยอด/ลงบัญชีรอบโอน
+                && i.SourceKind != PaymentSourceKind.GatewaySelfTest && i.IsTestMode != true
                 && (i.Status == PaymentIntentStatus.Succeeded
                     || ((i.Status == PaymentIntentStatus.PartiallyRefunded || i.Status == PaymentIntentStatus.Refunded)
                         && i.RefundedAmount > 0m)));

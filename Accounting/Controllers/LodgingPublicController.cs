@@ -75,7 +75,9 @@ public class LodgingPublicController : ControllerBase
                 "ส่งคำขอจองถี่เกินไป — กรุณารอสักครู่แล้วลองใหม่ หรือติดต่อที่พักโดยตรง"));
         }
         // ช่องฝั่งพนักงานถูกตัดทิ้งเสมอ — แขกกำหนด source/contact/ยืนยันทันทีเองไม่ได้
-        var clean = req with { Source = null, SourceReference = null, ContactId = null, InternalNotes = null, ConfirmImmediately = false };
+        var clean = req with { Source = null, SourceReference = null, ContactId = null, InternalNotes = null, ConfirmImmediately = false,
+            // รอบ 219 ส่วน B ฝ่ายค้าน S7: IP/UA ของผู้ติ๊กยอมรับนโยบาย (หลักฐาน)
+            ClientIp = HttpContext.Connection.RemoteIpAddress?.ToString(), ClientUserAgent = Request.Headers.UserAgent.ToString() };
         // รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้านที่ล็อกอิน (โทเคนของเว็บนี้) เว้นชื่อ/เบอร์/อีเมล ⇒ เติมจากโปรไฟล์ (ตาข่ายฝั่งเซิร์ฟเวอร์ · ค่าที่พิมพ์ชนะ) ·
         // แขกนิรนาม = เส้นเดิมทุกตัว · การจองที่พักยังไม่ผูกบัญชีสมาชิก (ไม่มีคอลัมน์ลูกค้าบนการจองที่พัก — ข้อ 174 ฉ)
         var cfg = HttpContext.RequestServices.GetService(typeof(IConfiguration)) as IConfiguration;

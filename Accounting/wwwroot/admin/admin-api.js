@@ -114,6 +114,21 @@ const AdminAPI = {
   platformUnpaidActivations() { return this.get('/platform-billing/unpaid-activations'); },
   platformPrepaidAccounts() { return this.get('/platform-billing/prepaid-accounts'); },
   platformTenantRoutedIntents() { return this.get('/platform-billing/tenant-routed-intents'); },
+  // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บค่าบริการ NextAcc
+  platformBillingSettings() { return this.get('/platform-billing/settings'); },
+  savePlatformBillingSettings(body) { return this.put('/platform-billing/settings', body); },
+  platformOpenInvoices() { return this.get('/platform-billing/open-invoices'); },
+  platformBillingNotices() { return this.get('/platform-billing/notices'); },
+  platformDunningEvaluate(companyId) { return this.post(`/platform-billing/dunning/${companyId}/evaluate`, {}); },
+  platformCreatePaymentLink(documentId, expiryDays) { return this.post(`/platform-billing/invoices/${documentId}/payment-links`, { expiryDays }); },
+  platformPaymentLinks(documentId) { return this.get('/platform-billing/payment-links' + (documentId ? `?documentId=${documentId}` : '')); },
+  platformRevokePaymentLink(linkId, reason) { return this.post(`/platform-billing/payment-links/${linkId}/revoke`, { reason }); },
+  platformDunningExempt(companyId, days, reason) { return this.post(`/platform-billing/dunning/${companyId}/exempt`, { days, reason }); },
+  platformPaymentExceptions() { return this.get('/platform-billing/payment-exceptions'); },
+  platformRetrySettle(paymentId) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/retry-settle`, {}); },
+  platformResolvePaymentException(paymentId, note) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/resolve`, { note }); },
+  platformWhtCertificate(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/wht-certificate`, `50tawi-${paymentId}`); },
+  platformPaymentSlip(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/slip`, `slip-${paymentId}`); },
 
   // Customers
   customers(params = '') { return this.get(`/customers${params}`); },
@@ -162,7 +177,7 @@ const AdminAPI = {
   exportPayments(params = '') { return this.downloadFile(`/subscription-payments/export${params}`, 'payments.xlsx'); },
   bulkApprovePayments(paymentIds) { return this.post('/subscription-payments/bulk-approve', { paymentIds }); },
   paymentDetail(id) { return this.get(`/subscription-payments/${id}`); },
-  reviewPayment(id, approve, notes) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes }); },
+  reviewPayment(id, approve, notes, withholdingTaxAmount = null, amountReceived = null) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes, withholdingTaxAmount, amountReceived }); },
   recordManualPayment(companyId, data) { return this.post(`/companies/${companyId}/subscription-payments/record`, data); },
 
   // Company specifics

@@ -26,7 +26,7 @@ window.LegalPolicy = {
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   },
 
-  /** โหลดเอกสาร kind = 'privacy' | 'terms' แล้ววางลง #legalBody + เติมหัว/ท้ายเอกสาร */
+  /** โหลดเอกสาร kind = 'privacy' | 'terms' | 'refund' (รอบ 219 ส่วน B) แล้ววางลง #legalBody + เติมหัว/ท้ายเอกสาร */
   async loadDocument(kind) {
     const params = new URLSearchParams(location.search);
     const version = params.get('version');

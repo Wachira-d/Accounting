@@ -223,7 +223,7 @@
       <!-- รอบ 210: แขกกลับมาดูการจอง/คำสั่งซื้อด้วยเลขที่ + เบอร์/อีเมล (หน้า check) -->
       <div style="margin-top:6px;font-size:13px"><a id="sfCheckLink" href="?slug=check" style="color:inherit">🔎 ตรวจสอบการจอง / คำสั่งซื้อ</a></div>
       <!-- รอบ 214 (คำตัดสินข้อ 173 B): ลิงก์นโยบาย/ข้อกำหนดของร้านทุกหน้า — ปลายทางจากตัวตัดสินเดียว (site.privacyLink/termsLink · CmsLegalPages) -->
-      <div style="margin-top:6px;font-size:13px"><a id="sfPrivacyLink" href="#" style="color:inherit">นโยบายความเป็นส่วนตัว</a> · <a id="sfTermsLink" href="#" style="color:inherit">ข้อกำหนดการใช้บริการ</a></div>
+      <div style="margin-top:6px;font-size:13px"><a id="sfPrivacyLink" href="#" style="color:inherit">นโยบายความเป็นส่วนตัว</a> · <a id="sfTermsLink" href="#" style="color:inherit">ข้อกำหนดการใช้บริการ</a> · <a id="sfRefundLink" href="#" style="color:inherit">นโยบายการยกเลิกและคืนเงิน</a></div>
     </div>
   </footer>
 
@@ -472,7 +472,7 @@
         document.getElementById('sfFooterName').textContent = site.name || '';
         const chk = document.getElementById('sfCheckLink');
         if (chk) chk.href = this.pathBased ? `${this.basePath}/check` : '?slug=check';
-        for (const [id, kind] of [['sfPrivacyLink', 'privacy'], ['sfTermsLink', 'terms']]) {
+        for (const [id, kind] of [['sfPrivacyLink', 'privacy'], ['sfTermsLink', 'terms'], ['sfRefundLink', 'refund']]) {
           const a = document.getElementById(id);
           if (!a) continue;
           a.href = this.legalHref(kind);
@@ -485,7 +485,8 @@
       // Helpers/CmsLegalPages) หน้านี้แค่ประกอบ URL ตามแบบเส้นทางของเว็บ (/site/{key}/… หรือ ?slug=) — ไม่มีโหมด "ไม่มีลิงก์" แล้ว
       _legalLink(kind) {
         const site = (this.data && this.data.site) || {};
-        return (kind === 'terms' ? site.termsLink : site.privacyLink) || { mode: 'default', slug: 'legal/' + kind };
+        // รอบ 219 ส่วน B: + นโยบายการยกเลิกและคืนเงิน (refundLink — ตัวตัดสินเดียวกัน)
+        return ({ terms: site.termsLink, privacy: site.privacyLink, refund: site.refundLink })[kind] || { mode: 'default', slug: 'legal/' + kind };
       },
       legalIsExternal(kind) { const l = this._legalLink(kind); return l.mode === 'external' && !!l.url; },
       legalHref(kind) {
@@ -1063,7 +1064,7 @@
         // รอบ 210: แขก (ไม่ล็อกอิน) ค้นการจอง/คำสั่งซื้อด้วยเลขที่ + เบอร์โทรหรืออีเมล — เซิร์ฟเวอร์ตัดสิน (GuestRecordLookup) แล้วพาไปหน้าโทเคน
         if (slug === 'check') { await this.renderLookup(); return true; }
         // รอบ 214: หน้านโยบายความเป็นส่วนตัว/ข้อกำหนดของร้าน (อยู่ใต้ legal/ — ไม่ชนหน้า CMS ที่ร้านทำเอง)
-        if (slug === 'legal/privacy' || slug === 'legal/terms') { await this.renderLegalPage(slug.substring('legal/'.length)); return true; }
+        if (slug === 'legal/privacy' || slug === 'legal/terms' || slug === 'legal/refund') { await this.renderLegalPage(slug.substring('legal/'.length)); return true; }
         // รอบ 205 W2: ลิงก์ลูกค้าของการจองนัดหมาย (จ่ายมัดจำ/ยกเลิกเอง) — คนละเส้นกับ /booking (ที่พัก)
         if (slug.startsWith('my-booking/')) {
           await this.renderBookingByToken(decodeURIComponent(slug.substring('my-booking/'.length))); return true;
@@ -1309,6 +1310,7 @@
               </div>
               ${this.p6ConsentHtml()}
               </div>
+              ${this.policyAcceptHtml()}
               <button type="submit" class="btn btn-primary" style="padding:16px;font-size:17px;margin-top:8px">ยืนยันสั่งซื้อ</button>
             </form>
           </div>`;
@@ -1605,6 +1607,7 @@
           customFields: Object.fromEntries(((this._quote && this._quote.customFields) || []).map(f => [f.key,
             f.type === 'checkbox' ? (fd.get('cf_' + f.key) ? 'true' : null) : (fd.get('cf_' + f.key) || null)])),
           consentGiven: this.p6ConsentValue(ev.target),   // รอบ 209 P6 (PDPA)
+          ...this.policyAcceptValue(ev.target),   // รอบ 219 ส่วน B: ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (บังคับ · ด่านที่เซิร์ฟเวอร์)
           saveToProfile: this._memberSaveValue(ev.target),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
           contactFromProfile: this._memberContactFromProfile(ev.target, ['shippingName', 'shippingPhone', 'shippingEmail']),   // ฝ่ายค้าน S3
         };
@@ -2477,6 +2480,7 @@
             ${fld('notes', 'หมายเหตุ', r => `<textarea name="notes" rows="2" ${r} style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea>`)}
             <div id="sfBookCreditBox"></div>
             ${this.p6ConsentHtml()}
+            ${this.policyAcceptHtml()}
             <button type="button" id="sfBookSubmit" onclick="Store._submitBooking()" class="btn btn-primary" style="padding:12px">ยืนยันการจอง</button>
           </form>
           <p style="margin-top:12px;font-size:12px;color:var(--text-secondary);text-align:center">จองไว้แล้ว? <a href="${this._pageUrl('check')}">ตรวจสอบ/จัดการการจองเดิม</a></p>`;
@@ -2575,6 +2579,7 @@
           units: this._bkUnits(),
           resourceId: this._bkResource(),
           consentGiven: this.p6ConsentValue(form),   // รอบ 209 P6 (PDPA)
+          ...this.policyAcceptValue(form),   // รอบ 219 ส่วน B: ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (รวมมัดจำ)
           saveToProfile: this._memberSaveValue(form),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
           contactFromProfile: this._memberContactFromProfile(form, ['customerName', 'customerPhone', 'customerEmail']),   // ฝ่ายค้าน S3
           confirmAdditional: !!confirmAdditional      // รอบ 217: ตั้งใจจองรอบเดิมเพิ่มอีกที่ (ผู้ใช้กดยืนยันหลังคำเตือนจองซ้ำ)
@@ -3485,6 +3490,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
               <div style="display:grid;gap:8px;margin-top:8px"><input name="guestCompanyName" class="lg-input" placeholder="ชื่อบริษัท"><input name="guestTaxId" class="lg-input" placeholder="เลขประจำตัวผู้เสียภาษี 13 หลัก" maxlength="13"><input name="guestAddress" class="lg-input" placeholder="ที่อยู่"></div></details>
             ${extras ? `<h3 style="margin:8px 0 0">บริการเสริม</h3>${extras}` : ''}
             ${info.houseRules ? `<label style="font-size:13px;display:flex;gap:8px;align-items:flex-start"><input type="checkbox" name="acceptHouseRules" required style="margin-top:3px"><span>ยอมรับกติกาที่พัก:<br><span style="white-space:pre-wrap;color:var(--text-secondary)">${this.esc(info.houseRules)}</span></span></label>` : ''}
+            ${this.policyAcceptHtml()}
             ${q.confirmModeNote ? `<div class="lg-badge" style="display:block;padding:10px;font-size:13px;font-weight:500">${this.esc(q.confirmModeNote)}</div>` : ''}
             <button type="submit" class="btn btn-primary" style="padding:14px" ${errs ? 'disabled' : ''}>ยืนยันการจอง${q.depositRequired > 0 ? ` · ${this.esc(q.amountDueLabel || 'มัดจำ')} ฿${this._money(q.depositRequired)}` : ''}</button>
           </form>
@@ -3513,6 +3519,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
           guestIdNumber: fd.get('guestIdNumber') || null, arrivalTime: fd.get('arrivalTime') || null, guestNationality: fd.get('guestNationality') || null,
           specialRequests: fd.get('specialRequests') || null, guestCompanyName: fd.get('guestCompanyName') || null,
           guestTaxId: fd.get('guestTaxId') || null, guestAddress: fd.get('guestAddress') || null, acceptHouseRules: fd.get('acceptHouseRules') === 'on',
+          ...this.policyAcceptValue(form),   // รอบ 219 ส่วน B: ติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิก/คืนเงินของร้าน
           saveToProfile: this._memberSaveValue(form),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
           contactFromProfile: this._memberContactFromProfile(form, ['guestName', 'guestPhone', 'guestEmail']),   // ฝ่ายค้าน S3
         });
@@ -3801,7 +3808,21 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
         // เซิร์ฟเวอร์แปลง + encode แล้ว — วางเป็น HTML ได้ (ข้อความของร้านไม่มีทางเป็นแท็ก/สคริปต์)
         const body = document.getElementById('sfLegalBody');
         body.innerHTML = d.html || '';
-        body.querySelectorAll('a[href="privacy"],a[href="terms"]').forEach(a => { a.href = this.legalHref(a.getAttribute('href')); });
+        body.querySelectorAll('a[href="privacy"],a[href="terms"],a[href="refund"]').forEach(a => { a.href = this.legalHref(a.getAttribute('href')); });
+      },
+      // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ช่องติ๊ก "ยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงิน" — บังคับทุกเช็กเอาต์/จอง (ด่านจริงที่เซิร์ฟเวอร์
+      // Helpers/PurchasePolicyAcceptance) · ข้อความ/ฉบับจากเซิร์ฟเวอร์ (site.policyAcceptanceText/policyVersion) · ฉบับไปกับคำขอ (policyVersionShown)
+      policyAcceptHtml() {
+        const site = (this.data && this.data.site) || {};
+        if (!site.policyAcceptanceText) return '';
+        return `<label class="policy-accept" data-policy-version="${this.esc(site.policyVersion || '')}" style="display:flex;gap:8px;align-items:flex-start;font-size:13px;line-height:1.5;margin:6px 0;text-align:left">`
+          + `<input type="checkbox" name="policyAccepted" value="1" required style="margin-top:3px;width:auto">`
+          + `<span>${this.esc(site.policyAcceptanceText)} (${this.legalAnchor('terms', 'ข้อกำหนด')} · ${this.legalAnchor('refund', 'นโยบายการยกเลิกและคืนเงิน')}) <b style="color:#DC2626">*</b></span></label>`;
+      },
+      policyAcceptValue(form) {
+        const box = form && form.querySelector('.policy-accept');
+        const cb = box && box.querySelector('input[name="policyAccepted"]');
+        return { policyAccepted: !!(cb && cb.checked), policyVersionShown: (box && box.getAttribute('data-policy-version')) || null };
       },
       p6ConsentValue(form) {
         const el = form && form.querySelector('input[name="pdpaConsent"]');

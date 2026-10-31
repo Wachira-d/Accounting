@@ -162,6 +162,7 @@ public static class PaymentIntentPolicy
         PaymentSourceKind.PosOrder => "บิล POS",
         PaymentSourceKind.AddOnPurchase => "ส่วนเสริม",
         PaymentSourceKind.SiteBooking => "มัดจำการจองนัดหมาย",
+        PaymentSourceKind.GatewaySelfTest => "ทดลองจ่าย (ทดสอบการเชื่อมต่อ)",
         _ => kind.ToString(),
     };
 

@@ -24,7 +24,7 @@ public class LegalDocumentService : ILegalDocumentService
     {
         var k = (kind ?? "").Trim().ToLowerInvariant();
         if (!LegalDocumentDefaults.IsKind(k))
-            throw new BusinessRuleException("ชนิดเอกสารต้องเป็น privacy หรือ terms", LegalDocumentPolicy.RuleCode);
+            throw new BusinessRuleException("ชนิดเอกสารต้องเป็น privacy · terms หรือ refund", LegalDocumentPolicy.RuleCode);
         return k;
     }
 
@@ -78,6 +78,14 @@ public class LegalDocumentService : ILegalDocumentService
         var p = await GetCurrentAsync(LegalDocumentDefaults.KindPrivacy, ct);
         var t = await GetCurrentAsync(LegalDocumentDefaults.KindTerms, ct);
         return new LegalConsentVersion(p.Version, t.Version, LegalDocumentPolicy.ConsentVersion(p.Version, t.Version));
+    }
+
+    public async Task<LegalPurchasePolicyVersion> GetPurchasePolicyVersionAsync(CancellationToken ct = default)
+    {
+        var t = await GetCurrentAsync(LegalDocumentDefaults.KindTerms, ct);
+        var r = await GetCurrentAsync(LegalDocumentDefaults.KindRefund, ct);
+        return new LegalPurchasePolicyVersion(t.Version, r.Version, LegalDocumentPolicy.PurchasePolicyVersion(t.Version, r.Version),
+            RefundPublished: r.Source == "published");
     }
 
     public async Task<string> RenderPlatformAsync(string markdown, CancellationToken ct = default)

@@ -315,6 +315,15 @@ public static class SubscriptionGatePolicy
         return key.Length > EndpointMaxLength ? key[..EndpointMaxLength] : key;
     }
 
+    /// <summary>ฝ่ายค้านรอบ 219 เฟส 2 (S5): เส้นชำระค่าบริการ NextAcc ออนไลน์ของผู้เช่า (เริ่มชำระ + ถามสถานะ ของรายการค่าแพ็กเกจ/ใบแจ้งหนี้) —
+    /// ทางไปต่อของบริษัทที่ถูกระงับ/หมดอายุ ⇒ <b>ไม่ผ่านด่านแพ็กเกจ</b> (เหมือน <c>/api/subscription</c> ที่ศูนย์บิลอยู่) · สิทธิ์ยังบังคับที่ controller
+    /// (<c>[Authorize]</c> + สมาชิกบริษัท + <c>Billing.Manage</c>) · แคบเฉพาะรูปนี้เท่านั้น: ส่วนเสริม/ยอมรับนโยบาย/เส้นอื่นของ platform-pay ยังผ่านด่านตามเดิม</summary>
+    private static readonly System.Text.RegularExpressions.Regex PlatformBillingPayRoute = new(
+        @"^/api/companies/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/platform-pay/subscription-payments/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/intents(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?/?$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    public static bool IsBillingPaymentPath(string? path) => PlatformBillingPayRoute.IsMatch(path ?? "");
+
     /// <summary>Subscription สถานะนี้ถูกปฏิเสธทุกคำขอ (อ่าน+เขียน) หรือไม่</summary>
     private static bool IsInactive(SubscriptionStatus status) =>
         status == SubscriptionStatus.Cancelled || status == SubscriptionStatus.Suspended;

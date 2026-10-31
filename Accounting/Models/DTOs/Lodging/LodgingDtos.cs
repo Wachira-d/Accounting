@@ -562,7 +562,15 @@ public record LodgingCreateReservationRequest(
     /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกหน้าร้าน (โทเคนของเว็บนี้) ติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังจองสำเร็จบันทึกลงโปรไฟล์ · แขก ⇒ ไม่มีผล</summary>
     bool SaveToProfile = false,
     /// <summary>รอบ 216 ฝ่ายค้าน S3: ชื่อ/เบอร์/อีเมลมาจากโปรไฟล์ (ผู้ใช้ไม่ได้ลบ/แก้เอง) ⇒ เติมช่องว่างจากโปรไฟล์ได้ · มีผลเฉพาะสมาชิกในโทเคนของเว็บนี้</summary>
-    bool ContactFromProfile = false);
+    bool ContactFromProfile = false,
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): แขกติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงินของร้าน — บังคับเมื่อแขกจองเองทางเว็บ
+    /// (ด่าน <c>Helpers/PurchasePolicyAcceptance</c>) · พนักงานจองแทน ⇒ ไม่มีผล</summary>
+    bool PolicyAccepted = false,
+    /// <summary>ฉบับที่หน้าเว็บแสดงตอนติ๊ก (<c>StorefrontSiteInfo.PolicyVersion</c>) — ไม่ตรงฉบับปัจจุบัน ⇒ ขอให้โหลดหน้าใหม่</summary>
+    string? PolicyVersionShown = null,
+    /// <summary>ฝ่ายค้าน S7: IP/UA ของผู้ติ๊ก — controller เติม (ไม่รับจาก body)</summary>
+    [property: System.Text.Json.Serialization.JsonIgnore] string? ClientIp = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] string? ClientUserAgent = null);
 
 public class LodgingReservationResponse
 {

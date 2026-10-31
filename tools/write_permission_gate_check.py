@@ -34,6 +34,8 @@ WATCHED = [
     # ซื้อโควตา · ส่งหลักฐานชำระเงิน) แต่มีแค่ [Authorize] ระดับคลาสมาตลอด
     # ⇒ สมาชิกคนไหนก็กดแทนบริษัทได้ · checker ไม่เคยมองเพราะไม่อยู่ในลิสต์นี้
     "Accounting/Controllers/MeteringController.cs",
+    # รอบ 219 เฟส 2 — ศูนย์บิลค่าบริการ NextAcc: แจ้งชำระ/ชำระออนไลน์ = จ่ายเงินแทนบริษัท (สิทธิ์ Billing.Manage)
+    "Accounting/Controllers/BillingCenterController.cs",
     # เพิ่มรอบ 147 — ทุก write ที่นี่ "ยื่นเอกสารต่อกรมสรรพากรแทนบริษัท"
     # (ออก/ลงนาม/นำส่ง/ยกเลิก e-Tax · ส่งอีเมลที่มี timestamp ของ ETDA) แต่มีแค่
     # [Authorize] ระดับคลาส ⇒ สมาชิกคนไหนก็ยื่นแทนบริษัทได้ · checker รายงานเขียว

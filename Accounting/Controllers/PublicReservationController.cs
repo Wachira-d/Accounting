@@ -99,6 +99,9 @@ public class PublicReservationController : ControllerBase
         var tokens = Accounting.Helpers.CmsLegalPages.BuildShopTokens(
             Accounting.Helpers.CmsContentTokens.BuildValues(c.Name, c.NameEn, c.Phone, null, null, null, c.Website),
             isJuristic: false, bookingPageScope: true);
+        // รอบ 219 ส่วน B: นโยบายคืนเงินบนหน้าจองโต๊ะ — ไม่มีค่าตั้งของเว็บ ⇒ โทเคนชี้ไปเงื่อนไขบนหน้าจอง (ไม่เดาตัวเลข)
+        if (kind == Accounting.Helpers.LegalDocumentDefaults.KindRefund)
+            foreach (var kv in Accounting.Helpers.CmsLegalPages.BookingPageRefundTokens()) tokens[kv.Key] = kv.Value;
         var html = Accounting.Helpers.LegalMarkdown.Render(Accounting.Helpers.LegalDocumentDefaults.ShopTemplate(kind), tokens);
         return Ok(new ApiResponse<ShopLegalDto>(true,
             new ShopLegalDto(kind, Accounting.Helpers.LegalDocumentDefaults.Title(kind), c.Name ?? "", html)));

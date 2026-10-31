@@ -353,6 +353,14 @@ public class CreateBookingRequest
 
     /// <summary>รอบ 209 P6 (ฑ): ลูกค้าติ๊กยินยอม PDPA บนฟอร์มจอง — บังคับเมื่อเว็บตั้ง RequireDataConsent (ตรวจที่เซิร์ฟเวอร์)</summary>
     public bool ConsentGiven { get; set; }
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): ลูกค้าติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงินของร้าน — <b>บังคับเสมอ</b>เมื่อลูกค้าทำเองทางเว็บ
+    /// (พนักงานบันทึกแทน = ไม่บังคับ · ด่าน <c>Helpers/PurchasePolicyAcceptance</c>)</summary>
+    public bool PolicyAccepted { get; set; }
+    /// <summary>ฉบับที่หน้าเว็บแสดงตอนติ๊ก (<c>StorefrontSiteInfo.PolicyVersion</c>) — ไม่ตรงฉบับปัจจุบัน ⇒ ขอให้โหลดหน้าใหม่ · null = ยอมรับฉบับปัจจุบัน</summary>
+    public string? PolicyVersionShown { get; set; }
+    /// <summary>ฝ่ายค้าน S7: IP/UA ของผู้ติ๊ก — controller เติม (ไม่รับจาก body)</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public string? ClientIp { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public string? ClientUserAgent { get; set; }
     /// <summary>รอบ 218: โหมดมัดจำไม่บังคับ — ลูกค้าเลือกจ่ายมัดจำตอนจอง (null/false = ไม่จ่าย) · โหมดอื่นไม่มีผล (server ตัดสิน)</summary>
     public bool? PayDepositNow { get; set; }
     /// <summary>รอบ 216 (คำตัดสินข้อ 174): สมาชิกติ๊ก "บันทึกเป็นข้อมูลของฉัน" ⇒ หลังจองสำเร็จบันทึกชื่อ/เบอร์ลงโปรไฟล์ ·

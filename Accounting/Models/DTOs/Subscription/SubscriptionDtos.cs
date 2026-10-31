@@ -55,14 +55,20 @@ public record ConversionIncentive(
     string? PromoCode);
 
 // ===== Subscription Management =====
+/// <param name="PolicyAccepted">รอบ 219 ส่วน B (คำตัดสินข้อ 179): ติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงินของ NextAcc (บังคับที่ endpoint ของผู้เช่า)</param>
+/// <param name="PolicyVersionShown">ฉบับที่หน้าเว็บแสดง (<c>platform-pay</c> → <c>policy.version</c>)</param>
 public record ConvertTrialRequest(
     SubscriptionPlan Plan,
     BillingCycle BillingCycle,
-    string? PromoCode = null);
+    string? PromoCode = null,
+    bool PolicyAccepted = false,
+    string? PolicyVersionShown = null);
 
 public record ChangeSubscriptionRequest(
     SubscriptionPlan NewPlan,
-    BillingCycle? NewBillingCycle = null);
+    BillingCycle? NewBillingCycle = null,
+    bool PolicyAccepted = false,
+    string? PolicyVersionShown = null);
 
 /// <summary>รอบ 219 เฟส 0 (G-0 · คำตัดสินข้อ 178): ผลของการ "เลือกแพ็กเกจ" ของผู้เช่า — <b>ไม่เปิดแพ็กเกจจ่ายเงินทันที</b> ·
 /// อัปเกรด/แปลงจากทดลองใช้ = สร้างรายการชำระ (<paramref name="Payment"/>) รอเงินเข้า/แอดมินยืนยัน · ดาวน์เกรด/เปลี่ยนรอบ = รอมีผลวันครบรอบ
@@ -106,7 +112,11 @@ public record SubscriptionResponse(
     /// <summary>รอบ 219 เฟส 0: ดาวน์เกรด/เปลี่ยนรอบบิลที่รอมีผลวันครบรอบ (echo ของ <c>Subscription.Scheduled*</c>)</summary>
     SubscriptionPlan? ScheduledPlan = null,
     BillingCycle? ScheduledBillingCycle = null,
-    DateTime? ScheduledPlanEffectiveAt = null);
+    DateTime? ScheduledPlanEffectiveAt = null,
+    /// <summary>รอบ 219 ส่วน B: ขอยกเลิกไว้ — ใช้ได้ถึง <c>EndDate</c> แล้วสิ้นสุด (หน้าเว็บแสดงปุ่ม "กลับมาใช้ต่อ")</summary>
+    bool CancelAtPeriodEnd = false,
+    /// <summary>ฝ่ายค้าน (หมายเหตุ): ข้อความยืนยันก่อนกดยกเลิก (SubscriptionCancelPolicy.ConfirmText) — หน้าเว็บแสดงอย่างเดียว</summary>
+    string? CancelConfirmText = null);
 
 public record UsageLimits(
     int MaxUsers,
@@ -280,12 +290,20 @@ public record SubmitSubscriptionPaymentRequest(
     SubscriptionPlan RequestedPlan,
     BillingCycle RequestedBillingCycle,
     int RequestedPeriodMonths,
-    string? CustomerNotes);
+    string? CustomerNotes,
+    /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน S6: แจ้งชำระค่าแพ็กเกจ = ซื้อ ⇒ ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (บังคับที่ endpoint ผู้เช่า)</summary>
+    bool PolicyAccepted = false,
+    string? PolicyVersionShown = null);
 
 public record ReviewSubscriptionPaymentRequest(
     bool Approve,
     string? ReviewNotes,
-    string? RejectionReason);
+    string? RejectionReason,
+    /// <summary>ฝ่ายค้านรอบ 219 เฟส 2 (S4): ภาษีหัก ณ ที่จ่ายที่ลูกค้าหัก (แอดมินกรอกจาก 50 ทวิ ตอนอนุมัติ) — null = ไม่เปลี่ยน ·
+    /// รายการที่ผูกใบ: ตรวจด้วย <c>PlatformInvoiceRules.WithholdingProblem</c> แล้วเงินโอน = ยอดค้าง − ภาษีหัก</summary>
+    decimal? WithholdingTaxAmount = null,
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4c: เงินที่รับจริงตามสลิป (รายการที่ผูกใบ) — null = ยอดของรายการ · เงิน + ภาษีหัก ≤ ยอดค้าง</summary>
+    decimal? AmountReceived = null);
 
 /// <summary>WP-C1: admin บันทึกรับเงินเอง (เงินสด/โอนนอกระบบ) หรือยกเว้นค่าบริการ.
 /// สร้าง SubscriptionPayment แล้ววิ่งเข้าเส้น approve เดิม (ต่ออายุ+ประวัติ+ใบเสร็จ)
@@ -340,7 +358,13 @@ public record SubscriptionPaymentResponse(
     decimal? SlipOcrAmount = null,
     bool? SlipOcrAmountMatches = null,
     string? SlipOcrReference = null,
-    DateTime? SlipOcrDate = null);
+    DateTime? SlipOcrDate = null,
+    // รอบ 219 เฟส 2: ใบแจ้งหนี้ที่รายการนี้ชำระ (null = รายการแบบเดิม) — หน้าตรวจสลิปของแอดมิน/ศูนย์บิลแยก "ชำระใบ" ออกจาก "ขอแพ็กเกจ"
+    Guid? PlatformInvoiceDocumentId = null,
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4: ภาษีหักที่ผู้เช่าแจ้ง (หน้าตรวจของแอดมินเติมให้) · เรื่องที่แอดมินต้องจัดการ · มีหนังสือรับรอง 50 ทวิ แล้วไหม</summary>
+    decimal WithholdingTaxAmount = 0m,
+    string? AttentionReason = null,
+    bool HasWhtCertificate = false);
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,

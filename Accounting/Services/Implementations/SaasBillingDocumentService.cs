@@ -26,11 +26,18 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
     public SaasBillingDocumentService(AccountingDbContext db, IPdfGenerationService pdf,
         IFileAttachmentService files, ILogger<SaasBillingDocumentService> logger,
-        IEmailService? email = null, IPlatformBillingDocumentIssuer? issuer = null)
+        IEmailService? email = null, IPlatformBillingDocumentIssuer? issuer = null, IPlatformBillingNotifier? notifier = null,
+        INotificationService? notifications = null)
     {
         _db = db; _pdf = pdf; _files = files; _logger = logger; _email = email;
-        _issuer = issuer; _docPdf = pdf;
+        _issuer = issuer; _docPdf = pdf; _notifier = notifier; _notifications = notifications;
     }
+
+    /// <summary>ฝ่ายค้าน S2: กระดิ่งถึงผู้ดูแลระบบแพลตฟอร์มเมื่อการตัดชำระ/จัดการใบต้องทำด้วยมือ (null = เทสต์/ยังไม่ register)</summary>
+    private readonly INotificationService? _notifications;
+
+    /// <summary>รอบ 219 เฟส 2 ขั้น 2: ผู้ส่งใบแจ้งหนี้ค่าบริการตัวเดียว (อีเมล + LINE · คีย์กันซ้ำ) — null = เส้นอีเมลเดิม</summary>
+    private readonly IPlatformBillingNotifier? _notifier;
 
     public async Task GenerateReceiptForApprovedPaymentAsync(Guid paymentId)
     {
@@ -254,6 +261,126 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             string.IsNullOrWhiteSpace(s?.PlatformSellerBranchCode) ? "00000" : s!.PlatformSellerBranchCode!,
             s?.PlatformSellerPhone, s?.PlatformSellerEmail ?? s?.ContactEmail);
 
+    /// <summary>รอบ 219 เฟส 2 (G-10): รายการที่ผูกใบแจ้งหนี้ ⇒ ตัดชำระใบเดิมใน tenant ผู้ให้บริการ · ไม่ออกขายสดใบใหม่ (ไม่มีทางตกไปโหมด PDF
+    /// ใบเสร็จเดี่ยว — นั่นคือรายได้ซ้ำ) · ไม่โยน (เงินเข้าแล้วการอนุมัติต้องไม่พัง)
+    /// <para>ฝ่ายค้าน S1: เก็บ<b>ใบเสร็จจริง</b> (เลข + ธงใบกำกับ) บนรายการ ⇒ ผู้เช่าดาวน์โหลดได้ใบเสร็จ ไม่ใช่ใบแจ้งหนี้ ·
+    /// ฝ่ายค้าน S2: ล้ม/ไม่มีใบเสร็จ/รับเกิน ⇒ <b>ล้มดัง 3 ที่</b> (<see cref="PlatformPaymentAttention"/>: เรื่องค้างบนรายการ + audit chain + กระดิ่งแอดมิน)
+    /// และงานทวงหนี้ไม่นับใบที่มีรายการอนุมัติแล้วแต่ยังตัดไม่สำเร็จ (ไม่ระงับลูกค้าที่จ่ายแล้ว) · เรียกซ้ำได้ (ปุ่ม "ตัดชำระอีกครั้ง" ของแอดมิน)</para></summary>
+    public async Task SettlePlatformInvoiceAsync(Guid paymentId)
+    {
+        try
+        {
+            var payment = await _db.SubscriptionPayments.Include(p => p.Subscription).FirstOrDefaultAsync(p => p.Id == paymentId);
+            if (payment?.PlatformInvoiceDocumentId is not Guid invoiceId) return;
+            if (payment.Status != SubscriptionPaymentStatus.Approved) return;
+            if (payment.PlatformDocumentId != null) return;   // ตัดชำระ + มีใบเสร็จแล้ว (idempotent)
+            var buyerId = payment.Subscription.CompanyId;
+            var reference = SettlementReference(payment.PaymentNumber);
+
+            var res = _issuer == null ? null : await _issuer.SettleInvoiceAsync(invoiceId, payment.Amount, payment.WithholdingTaxAmount,
+                payment.PaymentDate, reference,
+                $"รับชำระค่าบริการ NextAcc — {payment.PaymentNumber}"
+                    + (string.IsNullOrWhiteSpace(payment.TransferReference) ? "" : $" · อ้างอิงโอน {payment.TransferReference}"));
+            string? problem = null, rule = null;
+            if (res == null)
+            {
+                problem = $"ตัดชำระใบแจ้งหนี้อัตโนมัติไม่สำเร็จ — กด \"ตัดชำระอีกครั้ง\" หรือบันทึกรับชำระใบนี้ด้วยมือในบริษัทผู้ให้บริการ (อ้างอิง {reference})";
+                rule = Accounting.Helpers.PlatformPaymentAttention.RuleSettleFailed;
+            }
+            else
+            {
+                if (res.ReceiptDocumentId is Guid rid)
+                {
+                    payment.PlatformDocumentId = rid;
+                    payment.ReceiptNumber = res.ReceiptNumber;
+                    payment.ReceiptIssuedAt = DateTime.UtcNow;
+                    payment.ReceiptIsTaxInvoice = res.ReceiptIsTaxInvoice;
+                    if (payment.AttentionRule == Accounting.Helpers.PlatformPaymentAttention.RuleSettleFailed)
+                        Accounting.Helpers.PlatformPaymentAttention.Clear(_db, payment, buyerId, "system:platform-billing", $"ตัดชำระสำเร็จ · ใบเสร็จ {res.ReceiptNumber}");
+                }
+                else if (res.Applied > 0m)
+                {
+                    problem = $"รับชำระใบ {res.InvoiceNumber} แล้วแต่ออกใบเสร็จไม่สำเร็จ — ออกใบเสร็จจากหน้ารับชำระในบริษัทผู้ให้บริการ แล้วกด \"ตัดชำระอีกครั้ง\" (อ้างอิง {reference})";
+                    rule = Accounting.Helpers.PlatformPaymentAttention.RuleSettleFailed;
+                }
+                if (res.Excess > Accounting.Helpers.PlatformInvoiceRules.Epsilon)
+                {
+                    var excess = res.Applied > 0m
+                        ? $"รับเงินเกินยอดค้างของใบ {res.InvoiceNumber} {res.Excess:N2} บาท (ตัดได้ {res.Applied:N2}) — คืนเงินหรือออกใบให้ส่วนเกิน"
+                        : $"ใบ {res.InvoiceNumber} ไม่มียอดค้างให้ตัดแล้ว — เงิน {res.Excess:N2} บาท ของรายการนี้ยังไม่ได้ลงบัญชี (คืนเงิน/บันทึกรับเงินด้วยมือ)";
+                    Accounting.Helpers.PlatformPaymentAttention.Flag(_db, payment, buyerId, excess, Accounting.Helpers.PlatformPaymentAttention.RuleOverpaid, "system:platform-billing");
+                    await NotifyAttentionAsync(payment, excess);
+                }
+            }
+            if (problem != null)
+            {
+                Accounting.Helpers.PlatformPaymentAttention.Flag(_db, payment, buyerId, problem, rule!, "system:platform-billing");
+                await NotifyAttentionAsync(payment, problem);
+                _logger.LogError("ตัดชำระใบแจ้งหนี้ค่าบริการต้องทำด้วยมือ (payment {PaymentId} · ใบ {InvoiceId}): {Problem}", paymentId, invoiceId, problem);
+            }
+            await _db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "SettlePlatformInvoiceAsync ล้มเหลว payment {PaymentId}", paymentId);
+        }
+    }
+
+    private async Task NotifyAttentionAsync(SubscriptionPayment payment, string message)
+    {
+        try
+        {
+            await Accounting.Helpers.PlatformPaymentAttention.NotifyAdminsAsync(_db, _notifications,
+                $"รายการชำระค่าบริการ {payment.PaymentNumber} ต้องจัดการด้วยมือ", message, payment.Id);
+        }
+        catch (Exception ex) { _logger.LogError(ex, "ส่งกระดิ่งแอดมินไม่สำเร็จ (payment {PaymentId}) — เรื่องค้างอยู่ในหน้าแอดมินแล้ว", payment.Id); }
+    }
+
+    public const string RuleStaleVoided = "PLATFORM-STALE-RENEWAL-VOIDED", RuleStaleCreditNote = "PLATFORM-STALE-RENEWAL-CREDIT-NOTE-NEEDED";
+
+    public async Task HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string cause)
+    {
+        try
+        {
+            var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == subscriptionId);
+            if (sub == null) return;
+            var outcome = _issuer == null ? StaleRenewalOutcome.Failed : await _issuer.VoidStaleRenewalInvoiceAsync(invoiceDocumentId);
+            var (action, rule, note) = outcome switch
+            {
+                StaleRenewalOutcome.Voided => ("StaleRenewalInvoiceVoided", RuleStaleVoided,
+                    $"ยกเลิกใบแจ้งหนี้ต่ออายุของรอบเดิมแล้ว (เหตุ: {cause} — ใบเดิมไม่ต้องชำระ)"),
+                StaleRenewalOutcome.NeedsCreditNote => ("StaleRenewalInvoiceNeedsCreditNote", RuleStaleCreditNote,
+                    $"⚠️ ใบแจ้งหนี้ต่ออายุของรอบเดิมมีการชำระแล้ว — ไม่ยกเลิก · ผู้ดูแลระบบต้องออกใบลดหนี้ (§86/10) หรือจัดการยอดในบริษัทผู้ให้บริการ (เหตุ: {cause})"),
+                StaleRenewalOutcome.PendingPayment => ("StaleRenewalInvoiceNeedsAction", RuleStaleCreditNote,
+                    $"⚠️ ใบแจ้งหนี้ต่ออายุของรอบเดิมมีรายการแจ้งชำระ/ชำระออนไลน์ค้างอยู่ — ไม่ยกเลิก (รายการนั้นถูกพักให้ผู้ดูแลระบบตรวจเมื่อเงินเข้า · ไม่ต่ออายุซ้ำ) · "
+                    + $"ผู้ดูแลระบบปฏิเสธ/คืนเงินรายการนั้นแล้วยกเลิกใบ (เหตุ: {cause})"),
+                _ => ("StaleRenewalInvoiceNeedsAction", RuleStaleCreditNote,
+                    $"⚠️ ยกเลิกใบแจ้งหนี้ต่ออายุของรอบเดิมอัตโนมัติไม่สำเร็จ — ผู้ดูแลระบบต้องยกเลิกใบด้วยมือในบริษัทผู้ให้บริการ (เหตุ: {cause})"),
+            };
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = subscriptionId, Action = action, Notes = note, PerformedBy = "system:platform-billing",
+            });
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = sub.CompanyId,
+                UserEmail = "system:platform-billing",
+                Action = AuditAction.Update,
+                EntityType = "Document",
+                EntityId = invoiceDocumentId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { outcome = outcome.ToString(), cause, ruleCode = rule }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            if (outcome != StaleRenewalOutcome.Voided)
+                _logger.LogError("ใบต่ออายุที่ล้าสมัย {Doc} ต้องจัดการด้วยมือ ({Outcome}) — sub {Sub}", invoiceDocumentId, outcome, subscriptionId);
+        }
+        catch (Exception ex) { _logger.LogError(ex, "จัดการใบต่ออายุที่ล้าสมัยไม่สำเร็จ (sub {Sub} · ใบ {Doc})", subscriptionId, invoiceDocumentId); }
+    }
+
+    /// <summary>อ้างอิงการรับชำระใบแจ้งหนี้ค่าบริการต่อรายการ — ตัวเดียวทั้งฝั่งเขียนและฝั่งกันซ้ำ</summary>
+    public static string SettlementReference(string paymentNumber) => $"SUBPAY-{paymentNumber}";
+
     // ---- WP-B1: renewal invoice ----
     public async Task<string?> GenerateRenewalInvoiceAsync(Guid subscriptionId)
     {
@@ -261,12 +388,17 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         {
             var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.Id == subscriptionId);
             if (sub == null) return null;
+            // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ผู้ใช้ขอยกเลิกมีผลสิ้นรอบ ⇒ ไม่ออกใบแจ้งหนี้ต่ออายุรอบถัดไป
+            if (sub.CancelAtPeriodEnd) return null;
 
             // idempotent ต่อ EndDate ของรอบนี้
             if (sub.RenewalInvoiceForEndDate.HasValue
                 && sub.RenewalInvoiceForEndDate.Value == sub.EndDate
                 && !string.IsNullOrEmpty(sub.RenewalInvoiceNumber))
                 return sub.RenewalInvoiceNumber;
+
+            // รอบ 219 เฟส 2 ขั้น 3: ผู้เช่ายกเลิกเมื่อสิ้นรอบ ⇒ ไม่ออกใบต่ออายุ (ใช้ได้ถึงสิ้นรอบ ไม่ต่อ)
+            if (sub.CancelAtPeriodEnd) return null;
 
             var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sub.CompanyId);
             if (buyer == null) return null;
@@ -290,7 +422,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                 var invoiced = await _issuer.IssueRenewalInvoiceAsync(sub.CompanyId,
                     $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {renewPlan} ({months} เดือน) "
                         + $"— รอบถัดไปถึง {sub.EndDate.AddMonths(months):dd/MM/yyyy}",
-                    amount, now, sub.EndDate, $"RENEW-{sub.Id.ToString()[..8].ToUpper()}");
+                    amount, now, sub.EndDate, Accounting.Helpers.PlatformInvoiceRules.RenewalReferencePrefix + sub.Id.ToString()[..8].ToUpper());
                 if (invoiced != null)
                 {
                     sub.RenewalInvoiceNumber = invoiced.DocumentNumber;
@@ -298,7 +430,9 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                     sub.RenewalInvoiceForEndDate = sub.EndDate;
                     sub.RenewalInvoiceDocumentId = invoiced.DocumentId;
                     await _db.SaveChangesAsync();
-                    await SendInvoiceEmailAsync(sub.CompanyId, invoiced.DocumentNumber, amount, sub.EndDate);
+                    // รอบ 219 เฟส 2 ขั้น 2 (G-7): ใบจริงใน tenant ผู้ให้บริการ ⇒ ส่งผ่านผู้ส่งตัวเดียว (อีเมล + LINE · คีย์ "ใบใหม่" ต่อใบ — งานทวงหนี้ไม่ส่งซ้ำ)
+                    if (_notifier != null) await _notifier.InvoiceIssuedAsync(sub.CompanyId, invoiced.DocumentId);
+                    else await SendInvoiceEmailAsync(sub.CompanyId, invoiced.DocumentNumber, amount, sub.EndDate);
                     return invoiced.DocumentNumber;
                 }
                 _logger.LogWarning("ออกใบแจ้งหนี้ต่ออายุจริงไม่สำเร็จ (sub {Sub}) — ใช้ PDF เดี่ยวแทน", subscriptionId);

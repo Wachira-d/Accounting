@@ -634,6 +634,7 @@ public enum PaymentSourceKind
     PosOrder = 5,              // บิล POS (แสดง QR บนจอลูกค้า)
     AddOnPurchase = 6,         // ซื้อส่วนเสริม (add-on) รายเดือน — LDG-P0-03
     SiteBooking = 7,           // มัดจำการจองนัดหมาย (CMS booking) — รอบ 205 W2 R-08 (Helpers/CmsBookingOnlinePayment)
+    GatewaySelfTest = 8,       // รอบ 219 ส่วน B: ทดลองจ่าย ฿20 โหมดทดสอบ (ตรวจคีย์+webhook ก่อนเปิด live) — ไม่ลงบัญชี ไม่เข้ารอบโอน (Helpers/PaymentLiveGate)
 }
 
 /// <summary>สถานะการชำระเงินของการเปิดใช้ add-on หนึ่งครั้ง (LDG-P0-03)
@@ -641,6 +642,16 @@ public enum PaymentSourceKind
 /// <para>แยกจาก <c>CompanyFeature.IsEnabled</c> โดยตั้งใจ: "เปิดใช้อยู่ไหม" กับ
 /// "จ่ายเงินแล้วหรือยัง" เป็นคนละคำถาม — ระหว่างรอแอดมินตรวจสลิป ฟีเจอร์เปิดใช้ได้
 /// แต่ต้องติดป้ายว่ายังไม่ยืนยันการชำระเงิน</para></summary>
+/// <summary>รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤): ผู้เช่าเลือก "ต่อการซื้อ" ว่าจะจ่ายค่าเหมาส่วนเสริมอย่างไร — ตัวตัดสิน
+/// <c>Helpers/AddOnPaymentPolicy.ApplyChoice</c> (กันเก็บซ้อนงวดเดียวกัน)</summary>
+public enum AddOnBillingChoice
+{
+    /// <summary>จ่ายล่วงหน้างวดแรก (โอน+สลิป) — งวดนั้นค่าเหมาในใบรายเดือน ฿0 · งวดถัดไปเข้าใบรายเดือน (ค่าเดิมของทุกแถว)</summary>
+    Upfront = 0,
+    /// <summary>รวมในใบแจ้งหนี้รายเดือน — ไม่มีขั้นจ่ายล่วงหน้า · ใช้ได้ทันที · ค้างชำระ = ทวงหนี้/ระงับตามค่าตั้ง</summary>
+    MonthlyInvoice = 1,
+}
+
 public enum AddOnPaymentStatus
 {
     /// <summary>ไม่ต้องจ่าย — ยังไม่ตั้งราคา · แถมจากแพ็กเกจ · admin ยัดให้ · อยู่ในช่วง trial</summary>

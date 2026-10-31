@@ -649,6 +649,11 @@ public partial class CmsCommerceService : ICmsCommerceService
         // รอบ 209 P6 (ฑ): ด่านยินยอม PDPA ก่อนบันทึก (Helpers/CmsDataConsent) · ติ๊กแล้ว ⇒ PdpaConsentRecord บันทึกพร้อมออเดอร์
         await CmsDataConsent.EnforceAsync(_db, companyId, siteId, CmsDataConsent.OrderPurpose, request.ConsentGiven,
             userId, request.CustomerId, request.ShippingEmail, request.ShippingPhone, order.OrderNumber);
+        // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงินของร้าน (รวมสินค้าสั่งทำ/มัดจำ) — บังคับเมื่อลูกค้าสั่งเอง ·
+        // พนักงานของบริษัทบันทึกแทน = ไม่บังคับ · ด่านเดียว PurchasePolicyAcceptance · หลักฐานบันทึกพร้อมออเดอร์ (SourceId = ออเดอร์)
+        await PurchasePolicyAcceptance.EnforceShopAsync(_db, companyId, siteId, PurchasePolicyAcceptance.ChannelSiteOrder,
+            request.PolicyAccepted, request.PolicyVersionShown, exempt: await PurchasePolicyAcceptance.IsStaffAsync(_db, companyId, userId),
+            request.ShippingEmail, request.ShippingPhone, sourceId: order.Id, request.ClientIp, request.ClientUserAgent);
         _db.SiteOrders.Add(order);
         // ทีม K — บรรทัดที่จะใช้คิดค่าส่ง/วันรับ/เงื่อนไขชำระ (ตัวเดียวกับหน้าเช็กเอาต์ — ComputeCheckoutAsync)
         var checkoutLines = new List<CheckoutLine>();

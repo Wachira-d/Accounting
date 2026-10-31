@@ -250,17 +250,40 @@ public class UsageMeteringService : IUsageMeteringService
 
     /// <summary>เปิด/ปิด add-on — เส้นทางเดียวของทั้งลูกค้ากดเอง (OwnerSelfServe)
     /// และ admin ยัดให้ (AdminGranted/BundledInPlan) ห้ามมีตัวที่สอง</summary>
-    public async Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
+    public Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled,
         string actor, AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
         CancellationToken ct = default)
+        => SetFeatureEnabledCoreAsync(companyId, featureCode, enabled, actor, grantSource, snapshotUnitPrice, null, false, ct);
+
+    public Task SetFeatureEnabledAsync(Guid companyId, string featureCode, bool enabled, string actor,
+        AddOnBillingChoice? choice, CancellationToken ct = default)
+        => SetFeatureEnabledCoreAsync(companyId, featureCode, enabled, actor, AddOnGrantSource.OwnerSelfServe, null, choice, true, ct);
+
+    /// <param name="selfServePurchase">ทางเข้าของผู้เช่ากดเอง (หน้าส่วนเสริม) — ต้องเลือกวิธีชำระเมื่อส่วนเสริมต้องจ่าย (ติ๊กยอมรับนโยบายตรวจที่ controller ·
+    /// part B <c>PurchasePolicyAcceptance</c> ช่อง platform-addon — ส่งวิธีชำระมา = ต้องติ๊ก) ·
+    /// false = เส้นภายใน (ยืนยันการชำระ/แอดมิน) คงวิธีชำระเดิมของแถว</param>
+    private async Task SetFeatureEnabledCoreAsync(Guid companyId, string featureCode, bool enabled,
+        string actor, AddOnGrantSource grantSource, decimal? snapshotUnitPrice,
+        AddOnBillingChoice? choice, bool selfServePurchase,
+        CancellationToken ct)
     {
-        var row = await _db.CompanyFeatures
-            .FirstOrDefaultAsync(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted, ct);
+        // CI Db รอบ 219 เฟส 2 (23505 IX_CompanyFeatures_CompanyId_FeatureCode): unique (CompanyId, FeatureCode) ไม่กรองแถวที่ลบ ⇒ หาแถวเดิมรวมที่ลบแล้ว
+        // (ฟื้นแทนสร้างใหม่) และแถวที่เพิ่ม Add ไว้ใน context เดียวกันแต่ยังไม่บันทึก (คำขอก่อนหน้าถูกปฏิเสธหลัง Add — เช่น ยังไม่เลือกวิธีชำระ)
+        var row = _db.CompanyFeatures.Local.FirstOrDefault(f => f.CompanyId == companyId && f.FeatureCode == featureCode)
+            ?? await _db.CompanyFeatures.IgnoreQueryFilters()
+                .Where(f => f.CompanyId == companyId && f.FeatureCode == featureCode)
+                .OrderBy(f => f.IsDeleted).FirstOrDefaultAsync(ct);
 
         if (row == null)
         {
             row = new CompanyFeature { CompanyId = companyId, FeatureCode = featureCode, CreatedBy = actor };
             _db.CompanyFeatures.Add(row);
+        }
+        else if (row.IsDeleted)
+        {
+            // แถวที่ลบไว้ = เคยเปิดแล้วถูกลบ ⇒ ฟื้นเป็นปิดอยู่ แล้วเดินเส้นเปิดตามปกติ (ทดลองใช้ไม่เริ่มใหม่ — DisabledAt คงค่าเดิม)
+            row.IsDeleted = false;
+            row.IsEnabled = false;
         }
 
         if (row.IsEnabled == enabled) { await _db.SaveChangesAsync(ct); return; }
@@ -286,6 +309,26 @@ public class UsageMeteringService : IUsageMeteringService
             // เริ่มต้องทำให้รอบนี้ไม่ต้องจ่าย
             var needPay = Accounting.Helpers.AddOnPaymentPolicy.RequiresPayment(
                 grantSource, plan?.Method, row.AcceptedUnitPrice, row.TrialUntil, now);
+            // รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤): ทางเข้าของผู้เช่า + ต้องจ่าย ⇒ เลือกวิธีชำระ (ก่อนเปลี่ยนสถานะใด ๆ)
+            var statusBefore = row.PaymentStatus;
+            var effectiveChoice = choice ?? row.BillingChoice;
+            if (selfServePurchase && needPay)
+            {
+                if (choice == null)
+                {
+                    RevertUnsaved(row);   // ฝ่ายค้านรอบสุดท้าย 1c: ห้ามทิ้งแถวที่ตั้ง IsEnabled แล้วไว้ใน context (คำขอถัดไปจะบันทึกส่วนเสริมที่ไม่มีวิธีชำระ)
+                    throw new BusinessRuleException("กรุณาเลือกวิธีชำระ (จ่ายล่วงหน้า หรือรวมในใบแจ้งหนี้รายเดือน) ที่หน้า \"ส่วนเสริมของฉัน\"",
+                        "ADDON-CHOICE-REQUIRED", 400);
+                }
+            }
+            var (choiceOutcome, choiceRefusal) = AddOnPaymentPolicy.ApplyChoice(needPay, effectiveChoice, statusBefore, row.LastBilledPeriod,
+                AddOnBilling.PeriodOf(now));
+            if (choiceOutcome == AddOnPaymentPolicy.ChoiceOutcome.Refuse)
+            {
+                RevertUnsaved(row);
+                throw new BusinessRuleException(choiceRefusal!, "ADDON-CHOICE-CONFLICT", 409);
+            }
+
             // เคยจ่ายผ่านแล้วและเปิดใหม่ในงวดเดิม = ไม่เก็บซ้ำ (Paid ค้างไว้ได้)
             var wasAwaiting = row.PaymentStatus is AddOnPaymentStatus.AwaitingPayment or AddOnPaymentStatus.PendingReview;
             if (row.PaymentStatus != AddOnPaymentStatus.Paid || !needPay)
@@ -301,6 +344,19 @@ public class UsageMeteringService : IUsageMeteringService
             {
                 row.PaymentRejectedReason = null;
             }
+            // รวมในใบรายเดือน ⇒ ไม่มีขั้นรอชำระ/งวดจ่ายล่วงหน้า (ค่าเหมาเข้าใบรายเดือนตามปกติ — ไม่ ฿0 · ไม่ซ้อนเพราะไม่มีการจ่ายล่วงหน้า)
+            if (choiceOutcome == AddOnPaymentPolicy.ChoiceOutcome.MonthlyInvoice)
+            {
+                // ฝ่ายค้าน S7: เปลี่ยนจาก "จ่ายล่วงหน้า (ยังไม่จ่าย)" ⇒ ค่าเหมางวดนี้ที่ออกบิลไปแล้วเป็น ฿0 ("upfront-unpaid") ต้องถูกเก็บตามจริง
+                // (เดิม LastBilledPeriod = งวดนี้ ⇒ งานรายเดือนข้าม = ฟรีหนึ่งเดือน) — ตัวตัดสินเดียว AddOnPaymentPolicy.NeedsCatchUpAfterSwitch
+                var catchUp = AddOnPaymentPolicy.NeedsCatchUpAfterSwitch(statusBefore, row.UpfrontPeriod, row.LastBilledPeriod, AddOnBilling.PeriodOf(now));
+                row.PaymentStatus = AddOnPaymentStatus.NotRequired;
+                row.PaymentAwaitingSince = null;
+                row.UpfrontPeriod = null;
+                if (catchUp && plan is { Method: PricingMethod.FlatMonthly })
+                    await CatchUpFlatChargeAsync(row, plan, AddOnBilling.PeriodOf(now), now, actor, ct);
+            }
+            row.BillingChoice = effectiveChoice;
 
             // ทดลองใช้ฟรีตามที่ตั้งไว้บนฟีเจอร์ — เริ่มนับ**ครั้งแรกที่เปิดเท่านั้น**
             // (ปิดแล้วเปิดใหม่ต้องไม่ได้ trial รอบสอง ไม่งั้นใช้ฟรีตลอดกาลด้วยการ
@@ -321,6 +377,44 @@ public class UsageMeteringService : IUsageMeteringService
         row.UpdatedAt = DateTime.UtcNow;
         row.UpdatedBy = actor;
         await _db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 1c: คำขอเปิดส่วนเสริมถูกปฏิเสธหลังแก้แถวในหน่วยความจำ ⇒ คืนสภาพ (แถวใหม่ = ถอดออกจาก context · แถวเดิม = ค่าเดิมจากฐาน)
+    /// — ไม่งั้น SaveChanges ของคำขอ/ขั้นถัดไปใน context เดียวกันบันทึก "เปิดแล้ว" ทั้งที่ไม่ได้เลือกวิธีชำระ/ชนงวด</summary>
+    private void RevertUnsaved(CompanyFeature row)
+    {
+        var e = _db.Entry(row);
+        if (e.State == EntityState.Added) { e.State = EntityState.Detached; return; }
+        e.CurrentValues.SetValues(e.OriginalValues);
+        e.State = EntityState.Unchanged;
+    }
+
+    /// <summary>ฝ่ายค้าน S7: เก็บค่าเหมางวดปัจจุบันที่ถูกออกเป็น ฿0 เพราะ "จ่ายล่วงหน้าแต่ยังไม่จ่าย" แล้วผู้เช่าเปลี่ยนเป็นรวมใบรายเดือน —
+    /// แถวงวดนี้ยังไม่เข้าใบ ⇒ แก้ยอดในแถวเดิม · เข้าใบไปแล้ว ⇒ เพิ่มแถวเก็บตาม (คีย์แยก — ไม่ชน unique ของแถวเดิม) · ไม่บันทึก (ผู้เรียก SaveChanges)</summary>
+    private async Task CatchUpFlatChargeAsync(CompanyFeature row, ApiPricingPlan plan, string period, DateTime nowUtc, string actor, CancellationToken ct)
+    {
+        var (amount, _) = AddOnBilling.FlatAmount(plan.UnitPrice, row.SnapshotUnitPrice, row.TrialUntil,
+            row.GrantSource != AddOnGrantSource.OwnerSelfServe, nowUtc, AddOnPaymentStatus.NotRequired, null, period);
+        if (amount <= 0m) return;
+        var key = AddOnBilling.FlatKey(row.FeatureCode, period);
+        var ev = await _db.UsageEvents.FirstOrDefaultAsync(u => u.CompanyId == row.CompanyId && u.IdempotencyKey == key, ct);
+        if (ev != null && ev.ChargedAmount > 0m) return;   // คิดเต็มไปแล้ว — ไม่ซ้ำ
+        if (ev != null && ev.BilledDocumentId == null && ev.BilledPeriod == null)
+        {
+            ev.ChargedAmount = amount;
+            ev.UnitPriceSnapshot = plan.UnitPrice;
+            return;
+        }
+        var catchKey = key + ":catchup";
+        if (await _db.UsageEvents.AnyAsync(u => u.CompanyId == row.CompanyId && u.IdempotencyKey == catchKey, ct)) return;
+        var account = await _db.Companies.AsNoTracking().Where(c => c.Id == row.CompanyId).Select(c => c.BillingAccountId).FirstOrDefaultAsync(ct);
+        _db.UsageEvents.Add(new UsageEvent
+        {
+            CompanyId = row.CompanyId, BillingAccountId = account, FeatureCode = row.FeatureCode, Quantity = 1,
+            UnitPriceSnapshot = plan.UnitPrice, ChargedAmount = amount, IdempotencyKey = ev == null ? key : catchKey,
+            RefEntityType = "CompanyFeature", RefEntityId = row.Id, OccurredAt = nowUtc, CreatedBy = actor,
+        });
+        if (AddOnBilling.AlreadyBilled(row.LastBilledPeriod, period) == false) row.LastBilledPeriod = period;
     }
 
     /// <summary>ค่าเหมารายเดือน 1 ฟีเจอร์ 1 งวด — เรียกจาก AddOnMonthlyBillingJob เท่านั้น

@@ -433,6 +433,18 @@ public partial class PdpaService : IPdpaService
             }).ToList();
         }
 
+        // รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับนโยบายก่อนชำระค่าบริการของผู้ใช้นี้ ในบริษัทนี้ (กรองบริษัท · ไม่ส่ง IP/UA เหตุผลเดียวกับข้างบน)
+        if (user != null)
+        {
+            var purchase = await _db.PolicyAcceptances.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.UserId == user.Id).OrderBy(x => x.AcceptedAt).ToListAsync(ct);
+            acceptRows.AddRange(purchase.Select(x => new Dictionary<string, object?> {
+                ["purpose"] = Accounting.Helpers.PurchasePolicyAcceptance.Purpose, ["policyVersion"] = x.PolicyVersion, ["versionShown"] = x.VersionShown,
+                ["acceptedAt"] = x.AcceptedAt, ["channel"] = x.Channel, ["sourceId"] = x.SourceId, ["evidenceHash"] = x.EvidenceHash,
+                ["evidenceCheck"] = Accounting.Helpers.PurchasePolicyAcceptance.CheckLabel(x),
+            }));
+        }
+
         var total = (userProfile.Count > 0 ? 1 : 0) + contactRows.Count
             + docRows.Count + payRows.Count + logRows.Count + extRows.Count + acceptRows.Count;
 
@@ -529,6 +541,10 @@ public partial class PdpaService : IPdpaService
         var accepts = await _db.PlatformPolicyAcceptances.IgnoreQueryFilters().Where(x => x.UserId == u.Id).ToListAsync(ct);
         foreach (var a in accepts)
             Accounting.Helpers.PlatformPolicyAcceptanceRules.Pseudonymise(a, u.Email, DateTime.UtcNow);
+        // รอบ 219 ส่วน B ฝ่ายค้าน S4: หลักฐานยอมรับนโยบายก่อนชำระค่าบริการ (ผู้ใช้คนนี้กด) — legal hold แบบเดียวกัน
+        var purchaseAccepts = await _db.PolicyAcceptances.Where(x => x.UserId == u.Id).ToListAsync(ct);
+        foreach (var pa in purchaseAccepts)
+            Accounting.Helpers.PurchasePolicyAcceptance.Pseudonymise(pa, u.Email, DateTime.UtcNow);
         // ฝ่ายค้านรอบ 214 S1: ต้นฉบับใน PdpaConsentRecords (ระดับแพลตฟอร์ม CompanyId ศูนย์ — migration คัดลอกแต่ไม่ลบ) ทำแบบเดียวกัน
         var platformConsents = await _db.PdpaConsentRecords.IgnoreQueryFilters()
             .Where(c => c.SubjectUserId == u.Id && c.CompanyId == Accounting.Helpers.PdpaPolicy.PlatformScopeCompanyId)

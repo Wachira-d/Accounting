@@ -104,7 +104,7 @@ public class ClassScheduleDbTests
         async Task<Guid> Book(int n) => (await service.CreateBookingAsync(cid, sid, new CreateBookingRequest
         {
             BookingServiceId = svc.Id, BookingDate = TargetDate().ToDateTime(TimeOnly.MinValue), StartTime = "18:00",
-            GuestName = $"สมาชิก {n}", GuestEmail = $"member{n}@example.test", GuestCount = 1,
+            GuestName = $"สมาชิก {n}", GuestEmail = $"member{n}@example.test", GuestCount = 1, PolicyAccepted = true,
         }, "db-test")).Id;
         var paid = await Book(1);
         var credit = await Book(2);

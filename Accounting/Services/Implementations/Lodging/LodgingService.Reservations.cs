@@ -472,6 +472,11 @@ public partial class LodgingService
                 throw new BusinessRuleException("ที่พักนี้ต้องการเลขบัตรประชาชน/พาสปอร์ตของผู้เข้าพัก");
             if (!isStaff && !string.IsNullOrWhiteSpace(ctx.Property.HouseRules) && !request.AcceptHouseRules)
                 throw new BusinessRuleException("กรุณายอมรับกติกาที่พักก่อนจอง");
+            // รอบ 219 ส่วน B (คำตัดสินข้อ 179): แขกจองเองทางเว็บต้องติ๊กยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงินของร้าน (ด่านเดียว
+            // PurchasePolicyAcceptance) · นโยบายยกเลิกของห้อง/แพ็กเกจยังตรึงลง CancellationPolicySnapshotJson ตามเดิม · พนักงาน = ไม่บังคับ
+            // (ฝ่ายค้าน S7: ตรวจติ๊กก่อน แต่สร้างแถวหลักฐานหลังผ่านด่านอื่นครบ — เส้นกดซ้ำ/เพดานไม่ทิ้งแถวกำพร้า)
+            if (!isStaff && PurchasePolicyAcceptance.Problem(false, request.PolicyAccepted, null, "-") is string policyMissing)
+                throw new BusinessRuleException(policyMissing, PurchasePolicyAcceptance.RuleCode);
 
             var quote = BuildQuote(ctx, checkIn, checkOut, request.Rooms, request.Extras, request.RatePlanId, isStaff, null,
                 infants: Math.Max(0, request.Infants));
@@ -514,6 +519,9 @@ public partial class LodgingService
             var immediateConfirm = initial.Status == LodgingReservationStatus.Confirmed;
             var policy = quote.CancellationPolicyId is Guid polId ? ctx.Policies.FirstOrDefault(p => p.Id == polId) : null;
 
+            var policyRow = isStaff ? null : await PurchasePolicyAcceptance.EnforceShopAsync(_db, companyId, siteId,
+                PurchasePolicyAcceptance.ChannelLodging, request.PolicyAccepted, request.PolicyVersionShown, exempt: false,
+                request.GuestEmail, request.GuestPhone, sourceId: null, request.ClientIp, request.ClientUserAgent);
             var created = new LodgingReservation
             {
                 CompanyId = companyId, PropertyId = propertyId, SiteId = siteId ?? prop.SiteId,
@@ -569,6 +577,7 @@ public partial class LodgingService
             created.ReservationNumber = Accounting.Helpers.SequenceNumber.Format(
                 prefix, Accounting.Helpers.SequenceNumber.NextSequence(seqSuffixes));
             _db.LodgingReservations.Add(created);
+            PurchasePolicyAcceptance.BindSource(policyRow, created.Id);
             await _db.SaveChangesAsync();
             return created;
         });

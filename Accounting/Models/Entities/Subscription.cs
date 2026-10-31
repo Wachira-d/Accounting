@@ -33,6 +33,11 @@ public class Subscription : BaseEntity
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
     public DateTime? CancelledAt { get; set; }
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): ผู้ใช้กดยกเลิกระหว่างรอบที่ชำระแล้ว ⇒ ใช้ได้ถึง <see cref="EndDate"/> แล้วเปลี่ยนเป็น Cancelled
+    /// (ไม่เข้า PastDue · ไม่ออกใบต่ออายุ) · ตัวตัดสินเดียว <c>Helpers/SubscriptionCancelPolicy</c> · กลับมาใช้ต่อก่อนสิ้นรอบ = ล้างค่า</summary>
+    public bool CancelAtPeriodEnd { get; set; }
+    public DateTime? CancelRequestedAt { get; set; }
+
 
     // WP-B1: ใบแจ้งหนี้ต่ออายุที่ออกล่วงหน้าก่อนหมดอายุ. ผูกกับ EndDate ที่ออกให้
     // → รอบใหม่ (EndDate เปลี่ยนหลังจ่าย) จะออกใบใหม่ ไม่ออกซ้ำรอบเดิม (idempotent).
@@ -355,4 +360,19 @@ public class SubscriptionPayment : BaseEntity
     public string? SlipOcrReference { get; set; }         // เลขอ้างอิง/รายการที่อ่านได้
     public bool? SlipOcrAmountMatches { get; set; }       // ยอดในสลิปตรงกับที่ลูกค้าแจ้งไหม
     public DateTime? SlipOcrParsedAt { get; set; }
+
+    /// <summary>รอบ 219 เฟส 2 (คำตัดสินข้อ 180): รายการนี้คือการชำระ <b>ใบแจ้งหนี้</b> ใน tenant ผู้ให้บริการ (Billing Center / ลิงก์ชำระ) —
+    /// อนุมัติแล้ว <b>ตัดชำระใบเดิม</b> (ไม่ออกขายสดใบใหม่ = ไม่นับรายได้ซ้ำ G-10) · <c>RequestedPeriodMonths = 0</c> = ใบค่าใช้งาน (ไม่ต่ออายุ) ·
+    /// &gt; 0 = ใบต่ออายุของรอบนี้ (ต่ออายุตามเส้นเดิม) · null = รายการแบบเดิม (ขอแพ็กเกจ/ต่ออายุโดยไม่มีใบ)</summary>
+    public Guid? PlatformInvoiceDocumentId { get; set; }
+
+    /// <summary>รอบ 219 เฟส 2 (ฝ่ายค้าน S2/B2/S3): เหตุที่ผู้ดูแลระบบต้องจัดการรายการนี้ด้วยมือ (ตัดชำระใบอัตโนมัติไม่สำเร็จ ·
+    /// พักการอนุมัติอัตโนมัติเพราะใบที่ผูกไม่มียอดค้าง/เป็นใบต่ออายุที่ถูกแทนที่ · รับเกินยอดค้าง) — null = ไม่มีเรื่องค้าง ·
+    /// ตัวเขียนเดียว <c>Helpers/PlatformPaymentAttention</c> (audit chain ทุกครั้ง) · หน้าแอดมิน <c>payment-exceptions</c> แสดง</summary>
+    public string? AttentionReason { get; set; }
+    /// <summary>รหัสกฎของ <see cref="AttentionReason"/> (<c>PLATFORM-SETTLE-FAILED</c> / <c>PLATFORM-PAYMENT-HELD</c> / <c>PLATFORM-OVERPAYMENT</c>)</summary>
+    public string? AttentionRule { get; set; }
+    public DateTime? AttentionAt { get; set; }
+    /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ไฟล์หนังสือรับรอง 50 ทวิ ที่ผู้เช่าส่ง (เก็บที่เดียวกับสลิป — ไม่เสิร์ฟตรง) · null = ยังไม่ส่ง</summary>
+    public string? WhtCertificateFileName { get; set; }
 }

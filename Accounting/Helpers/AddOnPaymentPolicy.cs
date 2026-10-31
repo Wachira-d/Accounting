@@ -110,6 +110,51 @@ public static class AddOnPaymentPolicy
             ? 0m
             : Math.Max(0m, acceptedUnitPrice ?? 0m);
 
+    /// <summary>ผลของการเลือกวิธีชำระตอนเปิดส่วนเสริม</summary>
+    public enum ChoiceOutcome
+    {
+        /// <summary>คงเส้นเดิม (ไม่ต้องจ่าย · จ่ายล่วงหน้า · จ่ายงวดนี้ไปแล้ว)</summary>
+        Keep = 0,
+        /// <summary>รวมในใบรายเดือน — ไม่รอชำระ ไม่มีงวดจ่ายล่วงหน้า (ค่าเหมาไปเข้าใบรายเดือนตามปกติ)</summary>
+        MonthlyInvoice = 1,
+        Refuse = 2,
+    }
+
+    /// <summary>
+    /// รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤) — <b>ตัวตัดสินวิธีชำระต่อการซื้อ</b> ที่กันเก็บซ้อนงวดเดียวกัน:
+    /// <list type="bullet">
+    /// <item>ไม่ต้องจ่าย (ทดลองใช้/ไม่มีราคา/ของแถม) ⇒ Keep</item>
+    /// <item>จ่ายล่วงหน้างวดนี้ไปแล้ว (<c>Paid</c>) ⇒ Keep ทั้งสองทาง (งวดนี้ ฿0 · งวดหน้าเข้าใบรายเดือน)</item>
+    /// <item>รวมใบรายเดือน: มีสลิปรอตรวจ ⇒ ปฏิเสธ (รอผลก่อน) · อื่น ⇒ MonthlyInvoice</item>
+    /// <item>จ่ายล่วงหน้า: งวดนี้ถูกคิดในใบรายเดือนแล้ว (<paramref name="lastBilledPeriod"/> = งวดนี้) ⇒ ปฏิเสธ (จ่ายล่วงหน้าซ้ำ = เก็บสองครั้ง)</item>
+    /// </list>
+    /// </summary>
+    public static (ChoiceOutcome Outcome, string? Refusal) ApplyChoice(bool requiresPayment, AddOnBillingChoice choice,
+        AddOnPaymentStatus statusBefore, string? lastBilledPeriod, string period)
+    {
+        if (!requiresPayment || statusBefore == AddOnPaymentStatus.Paid) return (ChoiceOutcome.Keep, null);
+        if (choice == AddOnBillingChoice.MonthlyInvoice)
+            return statusBefore == AddOnPaymentStatus.PendingReview
+                ? (ChoiceOutcome.Refuse, "มีสลิปค่าส่วนเสริมรอผู้ดูแลระบบตรวจ — รอผลก่อนเปลี่ยนวิธีชำระ")
+                : (ChoiceOutcome.MonthlyInvoice, null);
+        if (AddOnBilling.AlreadyBilled(lastBilledPeriod, period))
+            return (ChoiceOutcome.Refuse, $"งวด {period} รวมในใบแจ้งหนี้รายเดือนแล้ว — เลือก \"รวมในใบแจ้งหนี้รายเดือน\" (ไม่เก็บซ้ำ)");
+        return (ChoiceOutcome.Keep, null);
+    }
+
+    /// <summary>ฝ่ายค้าน S7: เปลี่ยนเป็น "รวมใบรายเดือน" หลังเลือกจ่ายล่วงหน้าแต่ยังไม่จ่าย (รอชำระ/ถูกปฏิเสธ) และงวดนี้ถูกออกบิลแล้ว
+    /// (เป็น ฿0 "upfront-unpaid") ⇒ ต้องเก็บค่าเหมางวดนี้ตามจริง — ไม่งั้นได้ใช้ฟรีหนึ่งงวด · จ่ายแล้ว/รอตรวจสลิป/ยังไม่ออกบิล ⇒ ไม่ต้อง</summary>
+    public static bool NeedsCatchUpAfterSwitch(AddOnPaymentStatus statusBefore, string? upfrontPeriodBefore, string? lastBilledPeriod, string period)
+        => statusBefore is AddOnPaymentStatus.AwaitingPayment or AddOnPaymentStatus.Rejected
+           && !string.IsNullOrEmpty(upfrontPeriodBefore)
+           && AddOnBilling.AlreadyBilled(lastBilledPeriod, period);
+
+    public static string ChoiceLabel(AddOnBillingChoice c) => c switch
+    {
+        AddOnBillingChoice.MonthlyInvoice => "รวมในใบแจ้งหนี้รายเดือน",
+        _ => "จ่ายล่วงหน้า",
+    };
+
     /// <summary>ข้อความสถานะที่หน้าเว็บ<b>แสดงอย่างเดียว</b> — ห้ามให้ JS แต่งเอง</summary>
     public static string StatusLabel(AddOnPaymentStatus status) => status switch
     {

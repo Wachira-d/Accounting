@@ -3,7 +3,7 @@
 > คำถามเจ้าของ: "ช่องทางเชื่อมต่อ payment gateway Omise และ เปิด ปิด หน้าการทดสอบ · ทำหน้า policy ยกเลิกและคืนเงิน
 > มีให้ตั้งค่า เตรียมพร้อมในส่วน admin รึยัง หน้าก่อนการชำระเงินมีแสดง policy ให้ลูกค้าเห็น"
 >
-> สถานะ: **ออกแบบ/ตรวจอย่างเดียว — ยังไม่แก้โค้ด** · ตรวจจากโค้ดที่ `c18ca0ce` · ยังไม่ได้คอมไพล์/รันในเครื่องนี้ (ไม่มี .NET SDK) ·
+> สถานะ: ออกแบบรอบแรก (ตรวจอย่างเดียว) · **§2 ทำแล้วโดยเฟส 0 (ข้อ 178) · §3–§4 ทำแล้วในรอบ 219 ส่วน B (ข้อ 179) — ดู §7** · · ตรวจจากโค้ดที่ `c18ca0ce` · ยังไม่ได้คอมไพล์/รันในเครื่องนี้ (ไม่มี .NET SDK) ·
 > ข้อเท็จจริงเชิง API/สัญญาของ Omise (Opn Payments) และข้อกฎหมายผู้บริโภคในเอกสารนี้**มาจากความรู้ทั่วไป ต้องยืนยันกับเอกสารทางการ/นักกฎหมายก่อนลงมือ**
 > (เขียนกำกับ "ต้องยืนยัน" ไว้ทุกจุด) · ยังไม่ผ่านฝ่ายค้าน
 
@@ -241,3 +241,28 @@ doc ที่ต้องขยับพร้อมโค้ด: `PAYMENT_GATEW
 3. หน้าทดสอบแพลตฟอร์มค่าเริ่ม `AdminsOnly` ใช่ไหม (เปิด `Public` เฉพาะช่วงที่ Omise ตรวจเว็บ)
 4. เช็กเอาต์สินค้าทั่วไปของร้าน: แสดงลิงก์อย่างเดียว (แนะนำ) หรือบังคับติ๊กทุกออเดอร์
 5. ระหว่างรอ P1-1: ปิดปุ่ม "ชำระออนไลน์" ของส่วนเสริมทันที (แนะนำ · P0-3) ได้ไหม
+
+---
+
+## 7. สิ่งที่ทำจริงในรอบ 219 ส่วน B (คำตัดสินข้อ 179 · ยังไม่ได้คอมไพล์ในเครื่องนี้)
+
+คำตัดสินเจ้าของ: ไม่คืนเงินค่าบริการ · ยกเลิก = ใช้ถึงสิ้นรอบ · ติ๊กยอมรับนโยบายบังคับทุกหน้าชำระ (แพลตฟอร์ม + ร้าน) พร้อมเก็บฉบับ · ยังไม่ตั้ง Omise ของ NextAcc (ระบบพร้อม) ·
+ไม่มีบริษัททดสอบ · หน้าทดลองจ่ายค่าเริ่ม AdminsOnly · ตั้งค่าได้ยืดหยุ่น
+
+| ข้อออกแบบ | สถานะ | ที่อยู่ |
+| --- | --- | --- |
+| §3.1 config ตัวเดียว + service ร่วม | ✅ | `Services/Payments/PaymentProviderConfigService.cs` (ร้าน `PaymentSettingsController` + แอดมิน `AdminPlatformGatewayController`) |
+| §3.2 หน้าแอดมิน | ✅ | `wwwroot/admin/platform-gateway.html` · เมนู "ช่องทางรับชำระของ NextAcc" |
+| §3.3 ด่าน live เข้มขึ้นฝั่งร้าน + ทดลองจ่าย | ✅ | `Helpers/PaymentLiveGate` · `payment-settings/{code}/self-test` · `pages/payment-settings.html` |
+| §3.4 หน้าทดลองจ่าย | ✅ | `wwwroot/platform-pay-test.html` · `PlatformPayTestController` · `Helpers/PlatformPayTestPage` (ช่องทางโหมดจริง ⇒ หน้าปิดเอง — ไม่มีเงินจริงผ่านหน้าทดสอบ) · ไม่มี "บริษัททดสอบ" (คำตัดสินเจ้าของ) |
+| §4.1 legal kind `refund` | ✅ | `LegalDocumentDefaults` (switch โยน · `ConsentKinds`) · `/refund-policy.html` · แท็บ `admin/legal.html` · ฉบับตั้งต้น = ไม่คืนเงิน + ยกเลิกสิ้นรอบ |
+| §4.1 ยกเลิกสิ้นรอบ | ✅ | `Helpers/SubscriptionCancelPolicy` · `Subscription.CancelAtPeriodEnd` · `cancel/undo` · ไม่เข้า PastDue · ไม่ออกใบต่ออายุ |
+| §4.2 นโยบายคืนเงินของร้าน | ✅ | `Site.Refund*`/`PolicyAcceptanceText` · `CmsLegalPages` (โทเคน `shop.*` · `RefundContradictions` · `ShopPolicyVersion`) · `cms-edit.html` · `shop-policy.html` · footer storefront |
+| §4.3 ติ๊ก + หลักฐาน | ✅ | `Helpers/PurchasePolicyAcceptance` · ตาราง `PolicyAcceptances` · ออเดอร์/จองบริการ/ที่พัก/ขอแพ็กเกจ/สลิปค่าแพ็กเกจ/ส่วนเสริม/ชำระออนไลน์ · component `js/policy-accept.js` (ศูนย์ชำระค่าบริการเรียก `EnforcePlatformAsync(…ChannelPlatformInvoice…)` หรือ `POST platform-pay/policy-acceptance`) |
+| ชำระค่าบริการออนไลน์ผ่านแพลตฟอร์ม | ✅ | `IPlatformPaymentService` · `PlatformPaymentController` · ปุ่มเฉพาะเมื่อแพลตฟอร์มเปิด live (`Helpers/PlatformPayAvailability`) |
+| §2 P0-4 SecretProtector fail-fast | ✅ (เฟส 0 ฝ่ายค้าน `497e69fc`) | `Helpers/EncryptionKeyResolver` · `SecretReprotectJob` — ไม่ใช่งานของรอบนี้ |
+| §4.4 คืนเงิน + ใบลดหนี้ค่าบริการแพลตฟอร์ม | ⏳ | นโยบายไม่คืนเงิน — ข้อยกเว้นทำด้วยมือ · เส้นอัตโนมัติรอศูนย์ชำระค่าบริการ |
+| หน้าจองโต๊ะ (ไม่มีชำระเงิน) | ลิงก์อย่างเดียว | `booking.html` ลิงก์นโยบายคืนเงิน — ไม่มีขั้นจ่ายจึงไม่บังคับติ๊ก |
+
+ทิศตรงข้ามที่ล็อกด้วยเทสต์: พนักงานบันทึกแทนไม่ถูกบังคับ · ชนิดต้นทางอื่นไม่ถูกด่านทดลองจ่าย · แพ็กเกจที่ไม่ได้ขอยกเลิกยังเข้า PastDue · ค่าบริการที่ยอมรับแล้วไม่ต้องติ๊กซ้ำ
+แต่รายการอื่นต้องติ๊ก · ข้อความนโยบายที่ตรงค่าตั้งไม่ถูกเตือน — `PlatformGatewayRefundPolicyTests` · `Db/PurchasePolicyAcceptanceDbTests`

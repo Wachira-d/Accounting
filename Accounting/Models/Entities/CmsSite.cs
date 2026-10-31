@@ -88,6 +88,18 @@ public class Site : TenantEntity
     public DateTime? PrivacyPolicyUpdatedAt { get; set; }
     public string? TermsOfServiceMarkdown { get; set; }
     public DateTime? TermsOfServiceUpdatedAt { get; set; }
+    /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): นโยบายการยกเลิกและคืนเงินของร้าน — ลำดับเดียวกับนโยบาย/ข้อกำหนด
+    /// (ลิงก์ที่ร้านตั้ง &gt; ข้อความที่ร้านเขียน &gt; แม่แบบที่อ่านค่าตั้งด้านล่าง) · ตัวตัดสินเดียว <c>Helpers/CmsLegalPages.Resolve</c></summary>
+    public string? RefundPolicyUrl { get; set; }
+    public string? RefundPolicyMarkdown { get; set; }
+    public DateTime? RefundPolicyUpdatedAt { get; set; }
+    /// <summary>จำนวนวันที่ลูกค้าแจ้งคืนสินค้าได้ (โทเคน <c>shop.returnWindowDays</c>) · null = 7</summary>
+    public int? RefundReturnWindowDays { get; set; }
+    /// <summary>จำนวนวันที่ร้านคืนเงินหลังอนุมัติ (โทเคน <c>shop.refundProcessingDays</c>) · null = 14</summary>
+    public int? RefundProcessingDays { get; set; }
+    /// <summary>ข้อความช่องติ๊ก "ยอมรับนโยบาย" บนหน้าเช็กเอาต์/จอง (ว่าง = ข้อความมาตรฐาน <c>PurchasePolicyAcceptance.DefaultShopText</c>) ·
+    /// การติ๊กบังคับเสมอสำหรับลูกค้าที่สั่ง/จองเองทางเว็บ (คำตัดสินข้อ 179)</summary>
+    public string? PolicyAcceptanceText { get; set; }
 
     // Quotas (override from subscription tier)
     public long? MaxStorageBytes { get; set; }
