@@ -193,7 +193,7 @@ public class PlatformBillingPhase2DbTests
             // แอดมินอนุมัติ ⇒ ตัดหนี้อย่างเดียว: วันหมดอายุ/แพ็กเกจไม่ขยับ
             await svc.ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "ok", null), "admin", systemConfirmed: true);
             var subAfter = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == a.Sub.Id);
-            Assert.Equal(endBefore, subAfter.EndDate);
+            Assert.True(Math.Abs((subAfter.EndDate - endBefore).TotalMilliseconds) < 1, $"EndDate ขยับ: {endBefore:O} → {subAfter.EndDate:O}");   // PostgreSQL เก็บถึงไมโครวินาที
             Assert.Equal(SubscriptionPlan.Pro, subAfter.Plan);
             Assert.Equal(SubscriptionPaymentStatus.Approved, (await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == pay.Id)).Status);
         });
