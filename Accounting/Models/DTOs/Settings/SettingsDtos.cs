@@ -144,7 +144,9 @@ public record UpdateCompanySettingsRequest(
     bool? PerLineWhtEnabled = null,
     // คำตัดสินเจ้าของข้อ 162 (Q2): อัตราที่ใช้กับฐาน WHT ของใบต่างสกุลที่จ่ายเป็นงวด + อัตรา ธปท. ที่ใช้ (null = ไม่แก้) · ค่าตั้งต้น = เดิมทุกสตางค์
     WhtFxRateBasis? WhtFxRateBasis = null,
-    BotRateType? FxBotRateType = null);
+    BotRateType? FxBotRateType = null,
+    // รอบ 220 (คำตัดสินข้อ 181): ผังเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ตอนนำส่งภาษี-ประกันสังคม — "" = ล้าง (ใช้ 54820) · null = ไม่แก้ · ต้องเป็นผังค่าใช้จ่ายที่มีจริง
+    string? PenaltyExpenseAccountCode = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -302,6 +304,9 @@ public record CompanySettingsResponse(
     public string WhtFxRateBasis { get; init; } = nameof(Models.Enums.WhtFxRateBasis.DocumentDate);
     /// <summary>คำตัดสินข้อ 162 — อัตรา ธปท. ที่ใช้ (ชื่อ enum) · echo กลับ</summary>
     public string FxBotRateType { get; init; } = nameof(Models.Enums.BotRateType.Mid);
+    /// <summary>รอบ 220 — ผังเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ที่ตั้งไว้ (null = ค่าแนะนำ) + รหัสที่ระบบใช้จริง (Helpers/PenaltyExpenseAccount)</summary>
+    public string? PenaltyExpenseAccountCode { get; init; }
+    public string? PenaltyExpenseAccountCodeEffective { get; init; }
 }
 
 // ===== Landing Page Services (Public) =====

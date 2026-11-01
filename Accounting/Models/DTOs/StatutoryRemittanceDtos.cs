@@ -11,7 +11,7 @@ public record PendingRemittanceItem(
     DateTime PaperDueDate,        // กำหนดยื่นกระดาษ
     DateTime EFilingDueDate,      // กำหนดยื่น e-Filing (ขยายแล้ว)
     bool IsOverdue,               // วันนี้ > EFilingDueDate
-    decimal LateFeePreview,       // เงินเพิ่มประมาณการถ้าจ่ายวันนี้ (ปกส. §49 · ภ.พ.36 §89/1 ค่าแนะนำ; อื่น ๆ = 0)
+    decimal LateFeePreview,       // เงินเพิ่มที่ระบบเสนอถ้าจ่ายวันนี้ — ทุกแบบ (Helpers/LatePaymentPenaltyPolicy · รอบ 220): ปกส. ม.49 · ภ.ง.ด. ม.27 · ภ.พ.30/36 ม.89/1
     string PayableAccountCode,    // ผังหนี้ค้างจ่าย (21815/21914/21916/21917/21911)
     // breakdown (nullable — เฉพาะบางประเภท)
     decimal? EmployeeAmount,      // SSO: ส่วนลูกจ้าง
@@ -34,7 +34,12 @@ public record PendingRemittanceItem(
     // รอบ 201 ทีม TX (B-7): วันที่ใช้เตือน/ตัดสินเลยกำหนด (TaxFilingDeadline.WarnBy) — ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันว่ามาตรการ
     // e-Filing ครอบ · null = เท่ากับ EFilingDueDate · WarnNote = ข้อความกำกับ (null = ไม่มี)
     DateTime? WarnDueDate = null,
-    string? WarnNote = null);
+    string? WarnNote = null,
+    // รอบ 220 (คำตัดสินข้อ 181): เบี้ยปรับที่ระบบเสนอ (ภ.พ.30 ม.89 ลดตามระเบียบ · แบบอื่น 0) + เหตุผลต่อก้อน (tooltip) — ค่าเสนอ แก้ได้ตอนนำส่ง
+    decimal PenaltyPreview = 0m,
+    string? LateFeeNote = null,
+    string? PenaltyNote = null,
+    string? FineNote = null);
 
 /// <summary>สรุปหน้านำส่ง — ยอดรวมรอนำส่ง + รายการ.</summary>
 public record RemittanceDashboardResponse(
@@ -77,7 +82,10 @@ public record RemittanceHistoryItem(
     // ภ.พ.36 เท่านั้น: งวดนี้ "รับรู้ภาษีซื้อ" (11640→11610 เข้า ภ.พ.30) แล้ว
     // หรือยัง — null = ไม่ใช่ ภ.พ.36. UI ใช้สลับปุ่ม "รับรู้" ↔ ป้าย ✓
     // (เดิมปุ่มโชว์ตลอดไม่มีสถานะ ผู้ใช้ไม่รู้ว่ากดแล้วหรือยัง)
-    bool? Pp36Recognized = null);
+    bool? Pp36Recognized = null,
+    // รอบ 220: เบี้ยปรับ + ค่าปรับอื่น ที่ลงบัญชี (แถวเดิม = 0)
+    decimal Penalty = 0m,
+    decimal OtherFine = 0m);
 
 /// <summary>ภ.พ.36 ที่นำส่งแล้วแต่ยัง "ไม่ได้กดรับรู้ภาษีซื้อ" — ภาษีซื้อจึงยัง
 /// ไม่ขึ้นใน ภ.พ.30 (ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่
@@ -121,17 +129,22 @@ public record RemitRequest(
     Guid? BankGlAccountId = null, // ChartOfAccount.Id (เงินสด/ธนาคาร/ช่องจ่ายอื่น) → ใช้เป็นผัง Cr ตรง ๆ
     string? FilingNumber = null,
     Guid? ReceiptAttachmentId = null,
-    bool IncludeLateFee = true,   // ปกส. — รวมเงินเพิ่ม §49 · ภ.พ.36 — false = ไม่ลงเงินเพิ่ม §89/1
+    bool IncludeLateFee = true,   // false = ไม่ลงเงินเพิ่ม (ทุกแบบ)
     string? Note = null,
-    // รอบ 203 (คำตัดสินข้อ 135): เงินเพิ่ม §89/1 ของ ภ.พ.36 ที่ผู้ใช้แก้ — null = ใช้ค่าที่ระบบเสนอ (LateFeePreview ของงวด ตามวันที่จ่าย)
-    decimal? LateSurcharge = null);
+    // เงินเพิ่มที่ผู้ใช้แก้ (ทุกแบบ · รอบ 220) — null = ปกส./ภ.พ.36 ใช้ค่าที่ระบบเสนอ (พฤติกรรมเดิม) · แบบอื่น = 0 (ห้ามประทับค่าที่ผู้ใช้ไม่เห็น)
+    decimal? LateSurcharge = null,
+    // รอบ 220 (คำตัดสินข้อ 181): เบี้ยปรับ / ค่าปรับอาญา-อื่น ๆ ที่จ่ายจริง — null = 0 · ลงผังค่าปรับ (รายจ่ายต้องห้าม §65 ตรี(6))
+    decimal? Penalty = null,
+    decimal? OtherFine = null);
 
 public record RemitResult(
     Guid Id,
     Guid? JournalEntryId,
     decimal Amount,
     decimal LateFee,
-    string Message);
+    string Message,
+    decimal Penalty = 0m,
+    decimal OtherFine = 0m);
 
 // ══════════════════════════════════════════════════════════════════════════
 //  ปฏิทินนำส่ง (Filing calendar) — "เดือนไหนยื่นแล้ว/ยัง" แบบตาราง แบบ × เดือน
@@ -152,7 +165,7 @@ public record FilingCalendarCell(
     // Filed | Partial | Pending | Unknown | NotRequired
     string Status,
     decimal Amount,               // ยอดที่ต้องนำส่ง (ติดลบ = ขอคืน)
-    decimal LateFee,              // เงินเพิ่มประมาณการถ้าจ่ายวันนี้ (ปกส.)
+    decimal LateFee,              // เงินเพิ่มประมาณการถ้าจ่ายวันนี้ (ทุกแบบ · Helpers/LatePaymentPenaltyPolicy · รอบ 220)
     DateTime PaperDueDate,
     DateTime EFilingDueDate,
     bool Overdue,                 // เลยกำหนด (WarnDueDate — ปกติ = e-Filing) และยังไม่ครบ

@@ -5226,7 +5226,8 @@ public class PayrollService : IPayrollService
     // เดียวกัน. payDate ≤ deadline → late fee = 0.
     public async Task<PayrollRunResponse> SettleSocialSecurityAsync(
         Guid companyId, Guid payrollRunId,
-        DateTime payDate, Guid? bankAccountId, Guid? bankGlAccountId, string? filingNumber, string performedBy)
+        DateTime payDate, Guid? bankAccountId, Guid? bankGlAccountId, string? filingNumber, string performedBy,
+        decimal? lateSurcharge = null)
     {
         if (_accountingService == null)
             throw new InvalidOperationException("ระบบบัญชียังไม่พร้อม — ไม่สามารถลง JE นำส่งประกันสังคม");
@@ -5285,7 +5286,15 @@ public class PayrollService : IPayrollService
         // ── late fee §49 (2%/เดือนของยอดที่นำส่งช้า, เริ่มนับวันที่ 16 ของเดือนถัดไป) ──
         // เพดาน late fee = 100% ของยอดที่นำส่ง (ตามคำพิพากษาสรรพากร — ใช้
         // เกณฑ์เดียวกัน เพราะ พ.ร.บ.ประกันสังคมไม่ระบุ cap → ใช้ practice).
-        var lateFee = ComputeSsoLateFee(run.Year, run.Month, payDate, totalSso);
+        // รอบ 220 (คำตัดสินข้อ 181): ค่าเสนอ + ค่าที่ผู้ใช้แก้ ผ่านตัวตั้งเดียวกับหน้านำส่งรวม (Helpers/LatePaymentPenaltyPolicy) ·
+        // ไม่ส่ง = ค่าเสนอ (เดิม) · ติดลบ = ปฏิเสธ · ค่าปรับอื่น/เบี้ยปรับ ⇒ หน้า "นำส่งภาษี/ประกันสังคม" (หน้านี้ไม่มีที่เก็บ)
+        var lateFee = Accounting.Helpers.LatePaymentPenaltyPolicy.Resolve("SsoSps110",
+            Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest("SsoSps110", run.Year, run.Month, totalSso, payDate, null),
+            includeSurcharge: true, lateSurcharge, null, null).Surcharge;
+        // ผังเงินเพิ่มตัวเดียว (ตั้งค่าได้ · 54820 · สร้างให้ถ้าไม่มี) — เดิมสำเนาตัวหาที่ตก 58xxx และถ้าไม่เจอ JE ไม่ดุล (Cr รวมเงินเพิ่ม แต่ไม่มีขา Dr)
+        var lateFeeAccount = lateFee > 0
+            ? await Accounting.Helpers.PenaltyExpenseAccount.ResolveOrCreateAsync(_db, companyId)
+            : null;
 
         // ── post JE: Dr 21815 / Cr Bank (+ late fee ถ้ามี) ──
         await using var tx = await _db.Database.BeginTransactionAsync();
@@ -5298,20 +5307,10 @@ public class PayrollService : IPayrollService
                 new(ssoPayableAccount.Id, totalSso, 0,
                     "ล้างประกันสังคมค้างจ่าย (Dr 21815)"),
             };
-            if (lateFee > 0)
-            {
-                var lateFeeAccount = await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
-                    a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                    && a.AccountCode.StartsWith("54")
-                    && (a.AccountName.Contains("เงินเพิ่ม") || a.AccountName.Contains("ค่าปรับ")))
-                    ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
-                        a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-                        && a.AccountCode.StartsWith("58"));   // ค่าใช้จ่ายอื่น
-                if (lateFeeAccount != null)
-                    jeLines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        lateFeeAccount.Id, lateFee, 0,
-                        $"เงินเพิ่มประกันสังคม 2%/เดือน (§49) — นำส่งช้า"));
-            }
+            if (lateFeeAccount != null)
+                jeLines.Add(new Models.DTOs.Accounting.JournalLineRequest(
+                    lateFeeAccount.Id, lateFee, 0,
+                    $"เงินเพิ่มประกันสังคม 2%/เดือน (ม.49) — นำส่งช้า · รายจ่ายต้องห้าม §65 ตรี(6)"));
             jeLines.Add(new Models.DTOs.Accounting.JournalLineRequest(
                 bankGlId.Value, 0, totalSso + lateFee, $"จ่ายเงินสมทบประกันสังคม {run.Month:D2}/{run.Year}"));
 

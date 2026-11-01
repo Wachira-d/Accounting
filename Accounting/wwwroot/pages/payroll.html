@@ -415,6 +415,12 @@
             </div>
           </div>
           <div id="settleSsoLateFee" style="font-size:12px;color:#dc2626;margin-bottom:8px;display:none"></div>
+          <!-- รอบ 220 (คำตัดสินข้อ 181): เงินเพิ่ม ม.49 แก้ได้ตามใบเสร็จ — ค่าเสนอจากเซิร์ฟเวอร์ · เว้นว่าง = ค่าเสนอ -->
+          <div class="form-group" id="settleSsoSurchargeRow" style="display:none">
+            <label class="form-label" for="settleSsoSurcharge">เงินเพิ่ม ม.49 (แก้ได้ตามใบเสร็จ)</label>
+            <input type="number" class="form-input" id="settleSsoSurcharge" min="0" step="0.01" style="max-width:180px;text-align:right">
+            <div class="text-xs text-gray-500" style="margin-top:4px">ลงผังเงินเพิ่ม/ค่าปรับ (รายจ่ายต้องห้าม §65 ตรี(6)) · มีค่าปรับอื่นด้วย ⇒ นำส่งที่หน้า <a href="/pages/tax-remittance.html" class="text-blue-600 underline">นำส่งภาษี / ประกันสังคม</a> (มีช่องเบี้ยปรับ/ค่าปรับ)</div>
+          </div>
           <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
             ⚠️ ระบบจะสร้าง JE: <b>Dr 21815 ประกันสังคมค้างจ่าย / Cr Bank</b> ลงงวดเดือนที่เลือก — ล้างหนี้ 21815 จากการจ่ายเงินเดือน
           </div>
@@ -1466,9 +1472,13 @@ const Page = {
         try {
           const res = await Layout.api().ssoLateFeePreview(this._ssoCtx.year, this._ssoCtx.month, ymd, this._ssoCtx.total);
           const p = res && res.data;
-          if (!p || !(Number(p.fee) > 0)) { lateBox.style.display = 'none'; return; }
+          const sRow = document.getElementById('settleSsoSurchargeRow');
+          const sIn = document.getElementById('settleSsoSurcharge');
+          if (!p || !(Number(p.fee) > 0)) { lateBox.style.display = 'none'; if (sRow) sRow.style.display = 'none'; if (sIn) sIn.value = ''; return; }
           lateBox.style.display = 'block';
-          lateBox.innerHTML = `⚠️ เลยกำหนด ${p.daysLate} วัน → ระบบจะคำนวณเงินเพิ่ม 2% × ${p.monthsLate} เดือน = <b>${Layout.money(p.fee)}</b> (Dr ค่าใช้จ่ายอื่น)`;
+          lateBox.innerHTML = `⚠️ เลยกำหนด ${p.daysLate} วัน → ระบบเสนอเงินเพิ่ม 2% × ${p.monthsLate} เดือน = <b>${Layout.money(p.fee)}</b> (Dr ผังเงินเพิ่ม/ค่าปรับ)`;
+          if (sRow) sRow.style.display = 'block';
+          if (sIn) sIn.value = Number(p.fee).toFixed(2);
         } catch (e) {
           lateBox.style.display = 'block';
           lateBox.innerHTML = `คำนวณเงินเพิ่มตัวอย่างไม่ได้ (${Layout.esc(e.message || '')}) — ระบบจะคำนวณตอนบันทึกนำส่ง`;
@@ -1496,6 +1506,10 @@ const Page = {
         bankAccountId,
         bankGlAccountId,
         filingNumber: document.getElementById('settleSsoFilingNumber').value.trim() || null,
+        // รอบ 220: เงินเพิ่มที่ผู้ใช้เห็น/แก้ — ช่องซ่อน/ว่าง = ไม่ส่ง (เซิร์ฟเวอร์ใช้ค่าเสนอ)
+        ...((() => { const el = document.getElementById('settleSsoSurcharge');
+          const row = document.getElementById('settleSsoSurchargeRow');
+          return (el && row && row.style.display !== 'none' && el.value.trim() !== '') ? { lateSurcharge: Math.max(0, parseFloat(el.value) || 0) } : {}; })()),
       });
       // แนบสลิป/ใบเสร็จ (ถ้าเลือกไว้) — ผูกกับรอบเงินเดือนเป็นหลักฐานการจ่ายจริง
       // ทำหลังนำส่งสำเร็จ และล้มเหลวได้โดยไม่ย้อนการนำส่ง (JE ลงไปแล้ว) —

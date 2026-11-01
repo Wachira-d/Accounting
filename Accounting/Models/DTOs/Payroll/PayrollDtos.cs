@@ -434,7 +434,9 @@ public record SettleSsoRequest(
     DateTime PayDate,
     Guid? BankAccountId = null,
     Guid? BankGlAccountId = null,   // ChartOfAccount.Id (เงินสด/เงินทดรองกรรมการ/ช่องจ่ายอื่น) → ใช้เป็นผัง Cr ตรง ๆ
-    string? FilingNumber = null);
+    string? FilingNumber = null,
+    // รอบ 220 (คำตัดสินข้อ 181): เงินเพิ่ม ม.49 ที่ผู้ใช้แก้ตามใบเสร็จ — null = ค่าที่ระบบเสนอ (เดิม)
+    decimal? LateSurcharge = null);
 
 /// <summary>ตั้งแหล่งจ่ายเงินสุทธิรายคน — AccountCode = ผังเงินสด/ธนาคาร/ช่อง
 /// จ่าย (null/ว่าง = ใช้ค่าระดับ run/default).</summary>

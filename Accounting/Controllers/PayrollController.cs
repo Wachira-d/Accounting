@@ -400,7 +400,7 @@ public class PayrollController : ControllerBase
         return Ok(new ApiResponse<PayrollRunResponse>(true,
             await _service.SettleSocialSecurityAsync(companyId, runId,
                 request.PayDate, request.BankAccountId, request.BankGlAccountId, request.FilingNumber,
-                User.Identity?.Name ?? "")));
+                User.Identity?.Name ?? "", request.LateSurcharge)));
     }
 
     /// <summary>รอบ 200 (D-04): preview วันครบกำหนด + เงินเพิ่ม §49 ตามวันที่จ่ายที่เลือก — สูตรเดียวกับตอนนำส่งจริง

@@ -5502,6 +5502,12 @@ public static class DatabaseMigrationHelper
             // ต่อการจ่ายเงิน — ด่านกันซ้ำของ ภ.พ.36 คือ "ใบหนึ่งนับได้ครั้งเดียว" ที่ตาราง Pp36RemittanceDocuments) · index เดิมถูกแทนด้วย _v2
             """DROP INDEX IF EXISTS "UX_StatutoryRemittances_Period";""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "UX_StatutoryRemittances_Period_v2" ON "StatutoryRemittances" ("CompanyId", "RemittanceType", "PeriodYear", "PeriodMonth") WHERE "IsDeleted" = false AND "RemittanceType" <> 'VatPp36';""",
+            // รอบ 220 (คำตัดสินข้อ 181): เบี้ยปรับ + ค่าปรับอื่น + ค่าที่ระบบเสนอ — แถวเดิม = 0/NULL (ไม่กระทบยอดเดิม)
+            """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "Penalty" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "OtherFine" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "SuggestedLateFee" decimal(18,2) NULL;""",
+            """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "SuggestedPenalty" decimal(18,2) NULL;""",
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PenaltyExpenseAccountCode" varchar(20) NULL;""",
 
             // ===== Pp36RemittanceDocuments: ใบ ↔ รายการนำส่ง ภ.พ.36 (รอบ 203 ทีม F3 · คำตัดสินข้อ 133/134) =====
             """

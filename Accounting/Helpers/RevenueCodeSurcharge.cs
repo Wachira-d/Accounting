@@ -22,8 +22,8 @@ public static class RevenueCodeSurcharge
 
     public const string LegalReference = "RD-27";
 
-    /// <summary>จำนวน "เดือน" ที่ใช้คิดเงินเพิ่ม — เศษของเดือนนับเป็น 1 เดือน</summary>
-    private static int MonthsLate(DateTime dueDate, DateTime paidDate)
+    /// <summary>จำนวน "เดือน" ที่ใช้คิดเงินเพิ่ม — เศษของเดือนนับเป็น 1 เดือน (public รอบ 220 — <see cref="LatePaymentPenaltyPolicy"/> แสดงจำนวนเดือนบนจอจากตัวนับเดียวกัน)</summary>
+    public static int MonthsLate(DateTime dueDate, DateTime paidDate)
     {
         var due = dueDate.Date;
         var paid = paidDate.Date;

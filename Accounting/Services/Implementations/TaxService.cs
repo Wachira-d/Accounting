@@ -2207,6 +2207,23 @@ public partial class TaxService : ITaxService
             }
             catch { addBack += nd.NonDeductibleAmount; }   // JSON เพี้ยน → fallback ทั้งก้อน
         }
+
+        // ── รอบ 220 (คำตัดสินข้อ 181): เงินเพิ่ม/เบี้ยปรับ/ค่าปรับจากการนำส่งภาษี-ประกันสังคม = §65 ตรี(6) ──
+        // ลงเป็น JE ตรง (Dr ผังค่าปรับ 54820) ไม่มีเอกสาร ⇒ ลูปข้างบนมองไม่เห็น · เดิมเงินเพิ่ม สปส./ภ.พ.36 ถูกหักเป็นรายจ่ายเต็ม ไม่เคยบวกกลับ
+        var remitPenalties = await _db.StatutoryRemittances.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.JournalEntryId != null
+                && r.PayDate >= fromDate && r.PayDate <= toDate
+                && (r.LateFee > 0 || r.Penalty > 0 || r.OtherFine > 0))
+            .Select(r => new { r.JournalEntryId, Total = r.LateFee + r.Penalty + r.OtherFine })
+            .ToListAsync();
+        var payrollSsoFees = await _db.PayrollRuns.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.SsoSettledAt != null
+                && r.SsoSettledAt >= fromDate && r.SsoSettledAt <= toDate && r.SsoLateFeeAmount > 0)
+            .Select(r => new { r.SsoSettlementJournalEntryId, r.SsoLateFeeAmount })
+            .ToListAsync();
+        addBack += Accounting.Helpers.LatePaymentPenaltyPolicy.AddBackTotal(
+            remitPenalties.Select(r => (r.JournalEntryId, r.Total)),
+            payrollSsoFees.Select(r => (r.SsoSettlementJournalEntryId, r.SsoLateFeeAmount)));
         return addBack;
     }
 

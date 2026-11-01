@@ -303,6 +303,23 @@ public class SettingsService : ISettingsService
         // คำตัดสินเจ้าของข้อ 162 (Q2) — ผู้อ่าน: DocumentFx.WhtRateFor (CreatePaymentJournalAsync + 50 ทวิ รายงวด) · DocumentFx.PickBotRate (ResolveExchangeRateAsync + OCR)
         if (request.WhtFxRateBasis.HasValue)
             settings.WhtFxRateBasis = request.WhtFxRateBasis.Value;
+        // รอบ 220 (คำตัดสินข้อ 181) — ผู้อ่าน: Helpers/PenaltyExpenseAccount.ResolveOrCreateAsync (นำส่งภาษี/ประกันสังคม · นำส่ง สปส. หน้าเงินเดือน)
+        // "" = ล้างกลับค่าแนะนำ 54820 · ต้องเป็นผังค่าใช้จ่ายที่ลงรายการได้ (ห้ามรับรหัสที่ไม่มีจริง — ไม่งั้นนำส่งล้มทีหลัง)
+        if (request.PenaltyExpenseAccountCode != null)
+        {
+            var pcode = request.PenaltyExpenseAccountCode.Trim();
+            if (pcode.Length == 0) settings.PenaltyExpenseAccountCode = null;
+            else
+            {
+                var pok = await _db.ChartOfAccounts.WhereNotControlAccount(_db).AsNoTracking().AnyAsync(a => a.CompanyId == companyId
+                    && a.AccountCode == pcode && a.IsActive && !a.IsDeleted && a.AccountType == AccountType.Expense);
+                if (!pok)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบผังค่าใช้จ่าย {pcode} ที่ลงรายการได้ — เลือกผังค่าใช้จ่าย \"ค่าปรับ/เบี้ยปรับ/เงินเพิ่ม\" ที่มีอยู่จริง (เช่น 54820) หรือเว้นว่าง",
+                        Accounting.Helpers.PenaltyExpenseAccount.RuleCode);
+                settings.PenaltyExpenseAccountCode = pcode;
+            }
+        }
         // รอบ 208 (ฝ่ายค้าน W7 ข้อ 7): Accrual + อัตราวันจ่าย ขัดกันเอง (GL ตั้งภาษีที่อัตราใบแล้ว) — ปฏิเสธพร้อมทางเลือก (ตัวตัดสินเดียว DocumentFx) ·
         // ตรวจเฉพาะเมื่อคำขอแตะสองค่านี้ (ค่าตั้งอื่นบันทึกได้ตามเดิม) · ข้อมูลเดิมที่เป็นคู่นี้ runtime บังคับอัตราใบอยู่แล้ว (DocumentFx.WhtRateFor)
         if ((request.WhtFxRateBasis.HasValue || request.WhtRecognitionBasis.HasValue)
@@ -780,6 +797,8 @@ public class SettingsService : ISettingsService
         PerLineWhtEnabled = s.PerLineWhtEnabled,
         WhtFxRateBasis = s.WhtFxRateBasis.ToString(),
         FxBotRateType = s.FxBotRateType.ToString(),
+        PenaltyExpenseAccountCode = s.PenaltyExpenseAccountCode,
+        PenaltyExpenseAccountCodeEffective = Accounting.Helpers.PenaltyExpenseAccount.EffectiveCode(s.PenaltyExpenseAccountCode),
     };
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(

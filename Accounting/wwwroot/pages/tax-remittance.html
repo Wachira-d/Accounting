@@ -362,7 +362,7 @@
         const rows = d.pending || [];
         const due7 = rows.filter(r => { const k = this._urgency(r).key; return k === 'today' || k === 'soon'; });
         const due7Amt = due7.reduce((s, r) => s + (r.amount || 0), 0);
-        const paidAmt = (d.recentHistory || []).reduce((s, r) => s + (r.amount || 0) + (r.lateFee || 0), 0);
+        const paidAmt = (d.recentHistory || []).reduce((s, r) => s + (r.amount || 0) + (r.lateFee || 0) + (r.penalty || 0) + (r.otherFine || 0), 0);
         const card = (label, value, sub, color, onclick, title) => `
           <div class="kpi-card" ${onclick ? `onclick="${onclick}" style="cursor:pointer" title="${Layout.esc(title || '')}"` : ''}>
             <div class="kpi-label">${label}</div>
@@ -469,8 +469,8 @@
       _rowHtml(r, showType) {
         const u = this._urgency(r);
         const g = this.gstyle(r.remittanceType);
-        const fee = r.lateFeePreview > 0
-          ? `<div class="text-xs" style="color:#dc2626">+ เงินเพิ่ม ${Layout.money(r.lateFeePreview)}</div>` : '';
+        const fee = (r.lateFeePreview > 0 ? `<div class="text-xs" style="color:#dc2626">+ เงินเพิ่ม ${Layout.money(r.lateFeePreview)}</div>` : '')
+          + (r.penaltyPreview > 0 ? `<div class="text-xs" style="color:#dc2626" title="${Layout.esc(r.penaltyNote || '')}">+ เบี้ยปรับ (ประมาณ) ${Layout.money(r.penaltyPreview)}</div>` : '');
         const sub = r.remittanceType === 'SsoSps110'
           ? `<div class="text-xs text-gray-400">ลูกจ้าง ${Layout.money(r.employeeAmount)} · นายจ้าง ${Layout.money(r.employerAmount)}</div>`
           : (r.remittanceType === 'VatPp30' || r.remittanceType === 'VatPp36'
@@ -628,11 +628,11 @@
           c.innerHTML = '<div class="text-center text-gray-400" style="padding:24px">ไม่มีรายการตรงกับตัวกรอง</div>';
           return;
         }
-        const total = rows.reduce((s, r) => s + (r.amount || 0) + (r.lateFee || 0), 0);
+        const total = rows.reduce((s, r) => s + (r.amount || 0) + (r.lateFee || 0) + (r.penalty || 0) + (r.otherFine || 0), 0);
         c.innerHTML = `
           <div class="table-container" style="border:none">
             <table class="table rm-table">
-              <thead><tr><th>แบบ</th><th>งวด</th><th class="text-right">ยอด</th><th class="text-right">เงินเพิ่ม</th><th>วันที่จ่าย</th><th>เลขรับ</th><th class="text-center">ใบเสร็จ</th><th></th></tr></thead>
+              <thead><tr><th>แบบ</th><th>งวด</th><th class="text-right">ยอด</th><th class="text-right">เงินเพิ่ม/เบี้ยปรับ/ค่าปรับ</th><th>วันที่จ่าย</th><th>เลขรับ</th><th class="text-center">ใบเสร็จ</th><th></th></tr></thead>
               <tbody>${rows.map(r => {
                 const g = this.gstyle(r.remittanceType);
                 return `
@@ -640,7 +640,10 @@
                   <td data-label="แบบ"><span class="rm-type-badge" style="color:${g.fg};background:${g.bg};border-color:${g.bd}">${Layout.esc(r.formCode)}</span></td>
                   <td data-label="งวด">${this.period(r.periodYear, r.periodMonth)}</td>
                   <td class="text-right" data-label="ยอด" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</td>
-                  <td class="text-right" data-label="เงินเพิ่ม" style="font-variant-numeric:tabular-nums">${r.lateFee > 0 ? Layout.money(r.lateFee) : '-'}</td>
+                  <td class="text-right" data-label="เงินเพิ่ม/เบี้ยปรับ/ค่าปรับ" style="font-variant-numeric:tabular-nums" title="เงินเพิ่ม ${Layout.money(r.lateFee || 0)} · เบี้ยปรับ ${Layout.money(r.penalty || 0)} · ค่าปรับ ${Layout.money(r.otherFine || 0)}">${((r.lateFee || 0) + (r.penalty || 0) + (r.otherFine || 0)) > 0
+                    ? Layout.money((r.lateFee || 0) + (r.penalty || 0) + (r.otherFine || 0))
+                      + (((r.penalty || 0) + (r.otherFine || 0)) > 0 ? `<div class="text-xs text-gray-400">เพิ่ม ${Layout.money(r.lateFee || 0)} · ปรับ ${Layout.money((r.penalty || 0) + (r.otherFine || 0))}</div>` : '')
+                    : '-'}</td>
                   <td data-label="วันที่จ่าย">${Layout.date(r.payDate)}</td>
                   <td data-label="เลขรับ">${Layout.esc(r.filingNumber || '-')}</td>
                   <td class="text-center" data-label="ใบเสร็จ">${r.receiptAttachmentId
@@ -657,7 +660,7 @@
           </div>
           <div style="padding:10px 16px;border-top:1px solid var(--gray-200);font-size:13px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px">
             <span class="text-gray-500">แสดง ${rows.length} จาก ${all.length} รายการ</span>
-            <span>รวมที่นำส่งแล้ว (รวมเงินเพิ่ม) <b style="font-variant-numeric:tabular-nums">${Layout.money(total)}</b></span>
+            <span>รวมที่นำส่งแล้ว (รวมเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ) <b style="font-variant-numeric:tabular-nums">${Layout.money(total)}</b></span>
           </div>`;
       },
 
@@ -789,9 +792,10 @@
             + glChannels.map(a => `<option value="account:${a.id}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('')
             + '</optgroup>';
         }
-        const isSso = r.remittanceType === 'SsoSps110';
-        // ภ.พ.36 (คำตัดสินข้อ 135): เงินเพิ่ม §89/1 ที่เซิร์ฟเวอร์เสนอ (lateFeePreview) — ผู้ใช้แก้ได้ · ลงผังค่าปรับ/เงินเพิ่ม (รายจ่ายต้องห้าม §65 ตรี(6))
-        const isPp36 = r.remittanceType === 'VatPp36';
+        // รอบ 220 (คำตัดสินข้อ 181): เงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ทุกแบบ — ค่าเสนอจากเซิร์ฟเวอร์ (Helpers/LatePaymentPenaltyPolicy) แก้ได้ · หน้านี้ไม่มีสูตรเอง
+        const penRow = (id, label, note, val) => `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:8px">`
+          + `<span class="text-gray-500" title="${Layout.esc(note || '')}">${label} (แก้ได้)</span>`
+          + `<input type="number" id="${id}" class="form-input" min="0" step="0.01" style="width:130px;text-align:right" value="${Number(val || 0).toFixed(2)}" oninput="Page._updateTotal()"></div>`;
         const u = this._urgency(r);
         const bodyEl = this._byId('remitBody');
         if (!bodyEl) { Layout.toast('เปิดหน้าต่างนำส่งไม่ได้ — โหลดหน้าใหม่', 'error'); return; }
@@ -803,9 +807,15 @@
           </div>
           <div style="background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px">
             <div style="display:flex;justify-content:space-between"><span class="text-gray-500">ยอดเงินสมทบ/ภาษี</span><b style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</b></div>
-            ${isSso ? `<div style="display:flex;justify-content:space-between;margin-top:4px"><span class="text-gray-500">เงินเพิ่มนำส่งช้า §49</span><b id="feeLbl" style="color:#dc2626;font-variant-numeric:tabular-nums">${Layout.money(r.lateFeePreview)}</b></div>` : ''}
-            ${isPp36 ? `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:8px"><span class="text-gray-500" title="1.5% ต่อเดือนหรือเศษของเดือน ไม่เกินภาษี — ระบบเสนอตามวันที่จ่าย แก้ได้ · ลงผังค่าปรับ/เงินเพิ่ม (รายจ่ายต้องห้าม §65 ตรี(6))">เงินเพิ่ม §89/1 (แก้ได้)</span><input type="number" id="rmSurcharge" class="form-input" min="0" step="0.01" style="width:130px;text-align:right" value="${(r.lateFeePreview || 0).toFixed(2)}" oninput="Page._updateTotal()"></div>` : ''}
-            <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:6px"><span>รวมจ่าย</span><b id="totLbl" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount + ((isSso || isPp36) ? r.lateFeePreview : 0))}</b></div>
+            ${penRow('rmSurcharge', 'เงินเพิ่ม', r.lateFeeNote, r.lateFeePreview)}
+            ${penRow('rmPenalty', 'เบี้ยปรับ', r.penaltyNote, r.penaltyPreview)}
+            ${penRow('rmFine', 'ค่าปรับ (อาญา/อื่น ๆ)', r.fineNote, 0)}
+            <div style="display:flex;justify-content:flex-end;margin-top:4px;gap:8px;align-items:center">
+              <span id="rmPenNote" class="text-xs text-gray-500" style="flex:1;line-height:1.5">${Layout.esc(r.lateFeeNote || '')}</span>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="Page._recalc(true)" title="ระบบคำนวณเงินเพิ่ม/เบี้ยปรับตามวันที่จ่าย (ไม่แตะช่องค่าปรับ)">คำนวณให้</button>
+            </div>
+            <div class="text-xs text-gray-400" style="margin-top:2px">ยอดในสามช่องนี้ลงผังเงินเพิ่ม/ค่าปรับ = รายจ่ายต้องห้าม §65 ตรี(6) (บวกกลับ ภ.ง.ด.50 ให้เอง) · แก้ให้ตรงใบเสร็จได้</div>
+            <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:6px"><span>รวมจ่าย</span><b id="totLbl" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount + (r.lateFeePreview || 0) + (r.penaltyPreview || 0))}</b></div>
           </div>
           <div class="form-row"><label class="form-label">วันที่จ่าย</label>
             <input type="date" id="rmPayDate" class="form-input" value="${today}" onchange="Page._recalc()"></div>
@@ -824,23 +834,29 @@
         Layout.openModal('remitModal');
       },
 
-      async _recalc() {
-        const r = this._sel; if (!r || (r.remittanceType !== 'SsoSps110' && r.remittanceType !== 'VatPp36')) return;
+      async _recalc(fromButton) {
+        const r = this._sel; if (!r) return;
         const dateEl = this._byId('rmPayDate'); if (!dateEl) return;
         try {
-          // ยอดเสนอคำนวณที่เซิร์ฟเวอร์ (ปกส. §49 · ภ.พ.36 §89/1) — หน้านี้ไม่มีสูตรเอง
+          // ยอดเสนอคำนวณที่เซิร์ฟเวอร์ทุกแบบ (ปกส. ม.49 · ภ.ง.ด. ม.27 · ภ.พ.30/36 ม.89/1 · เบี้ยปรับ ภ.พ.30) — หน้านี้ไม่มีสูตรเอง
+          // เปลี่ยนวันที่/กด "คำนวณให้" = เขียนทับช่องเงินเพิ่ม+เบี้ยปรับด้วยค่าเสนอ · ช่องค่าปรับไม่แตะ (ระบบไม่เดา)
           const res = await Layout.api().remitPreview(r.remittanceType, r.periodYear, r.periodMonth, dateEl.value);
-          const fee = (res.data && res.data.lateFeePreview) || 0;
-          const feeEl = this._byId('feeLbl'); if (feeEl) feeEl.textContent = Layout.money(fee);
-          const sEl = this._byId('rmSurcharge'); if (sEl) sEl.value = fee.toFixed(2);
-          this._updateTotal(fee);
-        } catch { /* preview ล้มเหลว — คงค่าเดิม */ }
+          const d = res.data || {};
+          const sEl = this._byId('rmSurcharge'); if (sEl) sEl.value = Number(d.lateFeePreview || 0).toFixed(2);
+          const pEl = this._byId('rmPenalty'); if (pEl) pEl.value = Number(d.penaltyPreview || 0).toFixed(2);
+          const nEl = this._byId('rmPenNote');
+          if (nEl) nEl.textContent = [d.lateFeeNote, d.penaltyNote].filter(Boolean).join(' · ');
+          this._updateTotal();
+        } catch (e) {
+          if (fromButton) Layout.toast('คำนวณไม่สำเร็จ — กรอกตามใบเสร็จได้เลย (' + (e.message || '') + ')', 'error');
+        }
       },
 
-      _updateTotal(fee) {
+      _num(id) { const el = this._byId(id); return el ? Math.max(0, parseFloat(el.value) || 0) : 0; },
+
+      _updateTotal() {
         const r = this._sel; if (!r) return;
-        const sEl = this._byId('rmSurcharge');
-        const f = sEl ? (parseFloat(sEl.value) || 0) : (fee || 0);
+        const f = this._num('rmSurcharge') + this._num('rmPenalty') + this._num('rmFine');
         const totEl = this._byId('totLbl'); if (totEl) totEl.textContent = Layout.money(r.amount + f);
       },
 
@@ -866,9 +882,11 @@
             filingNumber: (this._byId('rmFiling') && this._byId('rmFiling').value) || null,
             includeLateFee: true,
           };
-          // ภ.พ.36: เงินเพิ่มที่ผู้ใช้เห็น/แก้ (เว้นว่าง = ตัดคีย์ทิ้ง ⇒ เซิร์ฟเวอร์ใช้ค่าที่เสนอ)
+          // รอบ 220: ยอดที่ผู้ใช้เห็น/แก้ทุกช่อง (เว้นว่างเงินเพิ่ม = ตัดคีย์ ⇒ ปกส./ภ.พ.36 ใช้ค่าเสนอ · แบบอื่น 0)
           const sEl = this._byId('rmSurcharge');
-          if (sEl && sEl.value.trim() !== '') body.lateSurcharge = Math.max(0, parseFloat(sEl.value) || 0);
+          if (sEl && sEl.value.trim() !== '') body.lateSurcharge = this._num('rmSurcharge');
+          body.penalty = this._num('rmPenalty');
+          body.otherFine = this._num('rmFine');
           const res = await Layout.api().remit(body);
           const rid = res.data && res.data.id;
           // ถ้าเลือกไฟล์เอกสารที่จ่ายไว้ในฟอร์ม → แนบอัตโนมัติทันที (1 flow)

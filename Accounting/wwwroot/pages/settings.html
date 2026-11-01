@@ -774,6 +774,14 @@
           ทำงานเสมอไม่ว่าเปิด/ปิด: กรอกหัก ณ ที่จ่ายรายบรรทัดเองในฟอร์ม · 50 ทวิ/ภ.ง.ด.3/53/54 แยกตามประเภทเงินได้ของแต่ละบรรทัด และเป็นบาทเสมอ
         </div>
       </div>
+      <!-- รอบ 220 (คำตัดสินข้อ 181): ผังเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ตอนนำส่งภาษี-ประกันสังคม (CompanySettings.PenaltyExpenseAccountCode · Helpers/PenaltyExpenseAccount) -->
+      <div class="form-group" style="max-width:640px">
+        <label class="form-label" for="sPenaltyAccountCode">ผังเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ (นำส่งภาษี/ประกันสังคมช้า)</label>
+        <input class="form-input" id="sPenaltyAccountCode" placeholder="เว้นว่าง = ใช้ค่าแนะนำ 54820 (สร้างให้ถ้ายังไม่มี)" maxlength="20">
+        <div id="sPenaltyAccountCodeHint" class="text-xs text-gray-500" style="margin-top:6px;line-height:1.6">
+          ต้องเป็นผังค่าใช้จ่ายที่ลงรายการได้ · ยอดในผังนี้จากหน้านำส่งเป็นรายจ่ายต้องห้าม §65 ตรี(6) — ระบบบวกกลับตอนคำนวณ ภ.ง.ด.50/51 ให้เอง
+        </div>
+      </div>
       <!-- คำตัดสินเจ้าของข้อ 162 (Q2 · 2026-10-26): อัตราแลกเปลี่ยนของใบต่างสกุล — ตั้งค่าได้ต่อบริษัท · ค่าตั้งต้น = เดิมทุกสตางค์ -->
       <div class="form-group">
         <label class="form-label">อัตราแลกเปลี่ยนที่ใช้กับฐานหัก ณ ที่จ่ายของใบต่างสกุลที่จ่ายเป็นงวด</label>
@@ -2790,6 +2798,16 @@
                 (s.posTipPayableAccountCode ? '' : ' (ค่าแนะนำ — เว้นว่างอยู่)') +
                 ' · ต้องเป็นบัญชีหนี้สินที่มีอยู่ในผังบัญชี ห้ามใช้ 216xx เงินมัดจำ';
           }
+          // รอบ 220 — ผังเงินเพิ่ม/ค่าปรับ: ว่าง = ค่าแนะนำ · แสดงรหัสที่ระบบใช้จริง (server ตัดสิน)
+          const _penEl = document.getElementById('sPenaltyAccountCode');
+          if (_penEl) {
+            _penEl.value = s.penaltyExpenseAccountCode || '';
+            const _penHint = document.getElementById('sPenaltyAccountCodeHint');
+            if (_penHint && s.penaltyExpenseAccountCodeEffective)
+              _penHint.textContent = `ตอนนี้ระบบลงเงินเพิ่ม/เบี้ยปรับ/ค่าปรับที่ผัง ${s.penaltyExpenseAccountCodeEffective}` +
+                (s.penaltyExpenseAccountCode ? '' : ' (ค่าแนะนำ — เว้นว่างอยู่)') +
+                ' · รายจ่ายต้องห้าม §65 ตรี(6) บวกกลับ ภ.ง.ด.50/51 ให้เอง';
+          }
           // null/undefined = ยังไม่เคยตั้ง → ค่าแนะนำคือ **เปิด** (ไม่ใช่ปิด)
           // ต้องตรงกับ TaxInvoiceSeriesPolicy.IsUnifiedSeriesEnabled ฝั่งเซิร์ฟเวอร์
           const _uniCb = document.getElementById('sUnifyTaxInvoiceSeries');
@@ -3131,6 +3149,8 @@
             cashSaleStockPolicy: Layout.intOrNull('sCashSaleStockPolicy'),
             // "" = ล้างกลับค่าแนะนำ (server: null=ไม่แก้ · ""=ล้าง · ค่าอื่นต้องมีในผัง)
             posTipPayableAccountCode: (document.getElementById('sPosTipAccountCode')?.value ?? '').trim(),
+            // รอบ 220 — "" = ล้างกลับ 54820 · ช่องไม่อยู่บนจอ = ไม่ส่ง (null ⇒ server ไม่แก้)
+            ...(document.getElementById('sPenaltyAccountCode') ? { penaltyExpenseAccountCode: document.getElementById('sPenaltyAccountCode').value.trim() } : {}),
             unifyTaxInvoiceNumberSeries: document.getElementById('sUnifyTaxInvoiceSeries')?.checked || false,
             // รูปแบบใบเสร็จต่อกรณี (รอบ 203) — null = matrix ยังไม่โหลด ⇒ เซิร์ฟเวอร์ไม่แตะ · "{}" = ล้างทั้งหมด (กลับค่าแนะนำ)
             receiptFormPolicyJson: this.collectReceiptFormPolicy(),
