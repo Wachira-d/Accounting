@@ -498,7 +498,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         var overdue = today > warnBy.Date && reportFiledAt == null;
         // เงินเพิ่ม/เบี้ยปรับ preview ทุกแบบ — ตัวตั้งตัวเดียว Helpers/LatePaymentPenaltyPolicy (รอบ 220 · คำตัดสินข้อ 181) · ค่าเสนอ แก้ได้ตอนนำส่ง
         // (เดิมเฉพาะ ปกส. ม.49 + ภ.พ.36 ม.89/1 · ภ.พ.30/ภ.ง.ด. = 0 ตายตัว)
-        var sug = SuggestPenalties(type, year, month, amount, today);
+        var sug = SuggestPenalties(type, year, month, amount, today, filedAt: reportFiledAt);
         return new PendingRemittanceItem(type, label, form, year, month, amount,
             paper, efiling, overdue, sug.Surcharge, code,
             employee, employer, payeeCount, outputVat, inputVat, relatedRunId,
@@ -1135,14 +1135,14 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     }
 
     public async Task<PendingRemittanceItem?> PreviewAsync(Guid companyId, string remittanceType,
-        int periodYear, int periodMonth, DateTime payDate)
+        int periodYear, int periodMonth, DateTime payDate, bool paperFiling = false)
     {
         var dash = await GetDashboardAsync(companyId, 18);
         var item = dash.Pending.FirstOrDefault(p => p.RemittanceType == remittanceType
             && p.PeriodYear == periodYear && p.PeriodMonth == periodMonth);
         if (item == null) return null;
         // คำนวณเงินเพิ่ม/เบี้ยปรับใหม่ตาม payDate ที่เลือก — ทุกแบบ (ปุ่ม "คำนวณให้" บนหน้านำส่ง · ตัวเดียวกับตอนลงบัญชี)
-        var sug = SuggestPenalties(remittanceType, periodYear, periodMonth, item.Amount, payDate);
+        var sug = SuggestPenalties(remittanceType, periodYear, periodMonth, item.Amount, payDate, paperFiling, item.ReportFiledAt);
         return item with { LateFeePreview = sug.Surcharge, PenaltyPreview = sug.Penalty,
             LateFeeNote = sug.SurchargeNote, PenaltyNote = sug.PenaltyNote, FineNote = sug.FineNote };
     }
@@ -1217,13 +1217,13 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // ══ เงินเพิ่ม / เบี้ยปรับ / ค่าปรับ (รอบ 220 · คำตัดสินข้อ 181) ══ ทุกแบบ — ค่าที่ผู้ใช้เห็น/แก้บนจอชนะ ·
         // ไม่ส่งเงินเพิ่ม = ปกส./ภ.พ.36 ใช้ค่าเสนอ (เดิม) · แบบอื่น 0 · ไม่ส่งเบี้ยปรับ/ค่าปรับ = 0 · ติดลบ = ปฏิเสธ
         // ⚠️ ภ.พ.30 คิดจากยอดที่ต้องชำระสุทธิ (amount = NetVat) — งวดเครดิตไม่มียอดค้าง จึงไม่ถึงบรรทัดนี้
-        var suggested = SuggestPenalties(type, req.PeriodYear, req.PeriodMonth, amount, req.PayDate);
+        var suggested = SuggestPenalties(type, req.PeriodYear, req.PeriodMonth, amount, req.PayDate, req.PaperFiling, item.ReportFiledAt);
         var applied = Accounting.Helpers.LatePaymentPenaltyPolicy.Resolve(type, suggested, req.IncludeLateFee,
             req.LateSurcharge, req.Penalty, req.OtherFine);
         var lateFee = applied.Surcharge;
         // ผังค่าปรับตัวเดียว (ตั้งค่าได้ · ค่าแนะนำ 54820 · สร้างให้ถ้าไม่มี) — เดิม ปกส. ไม่พบผัง ⇒ ทิ้งเงินเพิ่มเงียบ + ตก 58xxx (ภาษีเงินได้)
         var penaltyAcc = applied.Total > 0
-            ? await Accounting.Helpers.PenaltyExpenseAccount.ResolveOrCreateAsync(_db, companyId)
+            ? await Accounting.Helpers.PenaltyExpenseAccount.ResolveOrCreateAsync(_db, companyId, performedBy)
             : null;
 
         // ผัง Cr (แหล่งเงิน)
@@ -1368,6 +1368,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 OtherFine = applied.OtherFine,
                 SuggestedLateFee = suggested.Surcharge,
                 SuggestedPenalty = suggested.Penalty,
+                PaperFiling = req.PaperFiling,
                 PayDate = req.PayDate,
                 BankGlAccountId = bankGlId,
                 JournalEntryId = je.Id,
@@ -1485,9 +1486,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
     /// <summary>เงินเพิ่ม/เบี้ยปรับที่ระบบเสนอ — ตัวตั้งตัวเดียว <see cref="Accounting.Helpers.LatePaymentPenaltyPolicy"/> (รอบ 220) ·
     /// วันครบกำหนดจาก <c>TaxFilingDeadline.WarnBy</c> + วันหยุดราชการชุดเดียวกับป้ายเลยกำหนด (ปกส. = <c>SsoLateFee.DueDate</c> ตัวเดียวกับหน้าเงินเดือน)</summary>
-    private Accounting.Helpers.LatePaymentPenaltyPolicy.Suggestion SuggestPenalties(string type, int year, int month, decimal amount, DateTime payDate)
+    private Accounting.Helpers.LatePaymentPenaltyPolicy.Suggestion SuggestPenalties(string type, int year, int month, decimal amount, DateTime payDate,
+        bool paperFiling = false, DateTime? filedAt = null)
     {
-        return Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest(type, year, month, amount, payDate, _holidays);
+        return Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest(type, year, month, amount, payDate, _holidays, paperFiling, filedAt);
     }
 
     /// <summary>
@@ -1835,6 +1837,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 OldValues = System.Text.Json.JsonSerializer.Serialize(new
                 {
                     rec.RemittanceType, rec.PeriodYear, rec.PeriodMonth, rec.Amount, rec.LateFee,
+                    rec.Penalty, rec.OtherFine,   // รอบ 220 ฝ่ายค้าน — ยอดค่าปรับที่ถูกกลับรายการต้องตรวจย้อนได้
                     JournalEntryId = jeId, rec.FilingNumber,
                 }),
                 NewValues = System.Text.Json.JsonSerializer.Serialize(new

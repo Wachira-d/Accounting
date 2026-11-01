@@ -34,6 +34,9 @@ public class StatutoryRemittance : TenantEntity
     public decimal? SuggestedLateFee { get; set; }
     public decimal? SuggestedPenalty { get; set; }
 
+    /// <summary>รอบ 220 ฝ่ายค้านข้อ 1: ผู้ใช้แจ้งว่ายื่นแบบกระดาษ (ค่าเสนอคิดจากวันกระดาษ) — แถวเดิม = false</summary>
+    public bool PaperFiling { get; set; }
+
     public DateTime PayDate { get; set; }
 
     /// <summary>ผังบัญชี Cr (แหล่งเงินที่จ่ายออก) — เงินสด/ธนาคาร</summary>

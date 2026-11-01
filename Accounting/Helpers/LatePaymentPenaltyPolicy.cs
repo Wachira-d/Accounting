@@ -24,8 +24,9 @@ namespace Accounting.Helpers;
 /// </list>
 /// ทั้งสามก้อน = รายจ่ายต้องห้าม §65 ตรี(6) (บวกกลับ ภ.ง.ด.50 ผ่าน <c>TaxService.ComputeSection65TerAddBackAsync</c>)</para>
 ///
-/// <para>วันครบกำหนด: สปส. = <see cref="SsoLateFee.DueDate"/> (ตัวเดียวกับหน้าเงินเดือน) · แบบสรรพากร = <see cref="TaxFilingDeadline.WarnBy(string,int,int,IReadOnlySet{DateTime}?)"/>
-/// (วัน e-Filing ที่เลื่อนวันหยุดแล้ว · ภ.พ.36/ภ.ง.ด.54 = วันกระดาษจนกว่ายืนยันมาตรการ) — ยื่นกระดาษ (วันที่ 7) ผู้ใช้แก้ตัวเลขเอง</para>
+/// <para>วันครบกำหนด: สปส. = <see cref="SsoLateFee.DueDate"/> + วันหยุดราชการ (ตัวเดียวกับหน้าเงินเดือน) · แบบสรรพากร = วัน e-Filing
+/// (<see cref="TaxFilingDeadline.WarnBy(string,int,int,IReadOnlySet{DateTime}?)"/>) หรือวันกระดาษเมื่อ "ยื่นแบบกระดาษ" ·
+/// <b>พ้นวันขยายแล้วนับจากวันกระดาษ</b> (<see cref="CountFrom"/> · ฝ่ายค้านข้อ 1 · ต้องยืนยันกับนักบัญชี)</para>
 /// </summary>
 public static class LatePaymentPenaltyPolicy
 {
@@ -60,33 +61,47 @@ public static class LatePaymentPenaltyPolicy
     private static bool AutoAppliesSurchargeWhenOmitted(string remittanceType)
         => remittanceType is "SsoSps110" or "VatPp36";
 
-    /// <summary>วันครบกำหนดที่ใช้คิดเงินเพิ่ม (ตัวเดียวกับป้าย "เลยกำหนด" บนหน้านำส่ง)</summary>
-    public static DateTime DueDate(string remittanceType, int periodYear, int periodMonth, IReadOnlySet<DateTime>? holidays)
+    /// <summary>วันสุดท้ายที่ยังไม่ช้า (ตัวเดียวกับป้าย "เลยกำหนด" บนหน้านำส่ง) — ยื่นออนไลน์ = วัน e-Filing (ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ
+    /// จนกว่ายืนยันมาตรการ) · <paramref name="paperFiling"/> = วันกระดาษ · สปส. = <see cref="SsoLateFee.DueDate"/> (ไม่มีมาตรการ e-Filing)</summary>
+    public static DateTime DueDate(string remittanceType, int periodYear, int periodMonth, IReadOnlySet<DateTime>? holidays, bool paperFiling = false)
         => remittanceType == "SsoSps110"
-            ? SsoLateFee.DueDate(periodYear, periodMonth)
-            : TaxFilingDeadline.WarnBy(remittanceType, periodYear, periodMonth, holidays).Date;
+            ? SsoLateFee.DueDate(periodYear, periodMonth, holidays)
+            : paperFiling
+                ? TaxFilingDeadline.For(remittanceType, periodYear, periodMonth, holidays).Paper.Date
+                : TaxFilingDeadline.WarnBy(remittanceType, periodYear, periodMonth, holidays).Date;
 
-    /// <summary>ค่าที่ระบบเสนอสำหรับการจ่ายวันที่ <paramref name="payDate"/> · ภาษี ≤ 0 / จ่ายทันกำหนด ⇒ 0 ทุกก้อน</summary>
+    /// <summary><b>วันเริ่มนับเงินเพิ่ม/เบี้ยปรับเมื่อช้าแล้ว</b> (ฝ่ายค้านรอบ 220 ข้อ 1) — มาตรการขยายเวลา e-Filing ให้เฉพาะผู้ที่ยื่น<b>ทัน</b>วันขยาย ·
+    /// พ้นวันขยายแล้ว = เสียสิทธิ์ขยาย ⇒ นับจาก<b>วันครบกำหนดตามกฎหมาย (วันกระดาษ)</b> · ⚠️ ต้องยืนยันกับนักบัญชี (TAX_PENALTY_AUDIT §3)</summary>
+    private static DateTime CountFrom(string remittanceType, int periodYear, int periodMonth, IReadOnlySet<DateTime>? holidays)
+        => remittanceType == "SsoSps110"
+            ? SsoLateFee.DueDate(periodYear, periodMonth, holidays)
+            : TaxFilingDeadline.For(remittanceType, periodYear, periodMonth, holidays).Paper.Date;
+
+    /// <summary>ค่าที่ระบบเสนอสำหรับการจ่ายวันที่ <paramref name="payDate"/> · ภาษี ≤ 0 / จ่ายทันกำหนด ⇒ 0 ทุกก้อน ·
+    /// <paramref name="paperFiling"/> = ยื่นแบบกระดาษ (ไม่มีสิทธิ์ขยาย e-Filing) · <paramref name="filedAt"/> = วันที่ยื่นแบบจริง (ถ้ารู้ —
+    /// เบี้ยปรับคิดจากการ<b>ยื่น</b>ช้า: ยื่นทันแต่จ่ายช้า ⇒ มีแต่เงินเพิ่ม ไม่มีเบี้ยปรับ · ฝ่ายค้านข้อ 7)</summary>
     public static Suggestion Suggest(string remittanceType, int periodYear, int periodMonth,
-        decimal taxAmount, DateTime payDate, IReadOnlySet<DateTime>? holidays)
+        decimal taxAmount, DateTime payDate, IReadOnlySet<DateTime>? holidays, bool paperFiling = false, DateTime? filedAt = null)
     {
-        var due = DueDate(remittanceType, periodYear, periodMonth, holidays);
+        var grace = DueDate(remittanceType, periodYear, periodMonth, holidays, paperFiling);
+        var from = CountFrom(remittanceType, periodYear, periodMonth, holidays);
         var pay = payDate.Date;
-        var late = pay > due;
-        var daysLate = late ? (int)(pay - due).TotalDays : 0;
+        var late = pay > grace;
+        var daysLate = late ? (int)(pay - from).TotalDays : 0;
         var fineNote = FineNote(remittanceType);
 
         if (!late || taxAmount <= 0)
-            return new Suggestion(due, daysLate, 0, 0m, false, null,
+            return new Suggestion(grace, daysLate, 0, 0m, false, null,
                 late ? "ไม่มียอดภาษีต้องชำระ — ไม่มีเงินเพิ่ม" : "ชำระทันกำหนด — ไม่มีเงินเพิ่ม",
                 0m, null, late ? "ไม่มียอดภาษีต้องชำระ" : "ชำระทันกำหนด — ไม่มีเบี้ยปรับ", fineNote);
 
+        var lostExtension = !paperFiling && from < grace;
         decimal surcharge; bool capped; int months; string? sRef; string sNote;
         switch (remittanceType)
         {
             case "SsoSps110":
             {
-                var r = SsoLateFee.Compute(periodYear, periodMonth, payDate, taxAmount);
+                var r = SsoLateFee.Compute(periodYear, periodMonth, payDate, taxAmount, holidays);
                 surcharge = r.Fee; months = r.MonthsLate;
                 capped = taxAmount * 0.02m * months > taxAmount;
                 sRef = "SSA-49";
@@ -94,34 +109,39 @@ public static class LatePaymentPenaltyPolicy
                 break;
             }
             case "WhtPnd1": case "WhtPnd2": case "WhtPnd3": case "WhtPnd53": case "WhtPnd54":
-                surcharge = RevenueCodeSurcharge.Compute(taxAmount, due, pay);
-                capped = RevenueCodeSurcharge.IsCapped(taxAmount, due, pay);
-                months = RevenueCodeSurcharge.MonthsLate(due, pay);
+                surcharge = RevenueCodeSurcharge.Compute(taxAmount, from, pay);
+                capped = RevenueCodeSurcharge.IsCapped(taxAmount, from, pay);
+                months = RevenueCodeSurcharge.MonthsLate(from, pay);
                 sRef = RevenueCodeSurcharge.LegalReference;
                 sNote = $"เงินเพิ่ม 1.5% ต่อเดือน × {months} เดือน (ป.รัษฎากร ม.27 · เศษของเดือนนับเป็นหนึ่งเดือน · ไม่เกินภาษี)";
                 break;
             case "VatPp30":
-                surcharge = RevenueCodeSurcharge.Compute(taxAmount, due, pay);
-                capped = RevenueCodeSurcharge.IsCapped(taxAmount, due, pay);
-                months = RevenueCodeSurcharge.MonthsLate(due, pay);
+                surcharge = RevenueCodeSurcharge.Compute(taxAmount, from, pay);
+                capped = RevenueCodeSurcharge.IsCapped(taxAmount, from, pay);
+                months = RevenueCodeSurcharge.MonthsLate(from, pay);
                 sRef = "RD-89/1";
                 sNote = $"เงินเพิ่ม 1.5% ต่อเดือน × {months} เดือน (ป.รัษฎากร ม.89/1 · เศษของเดือนนับเป็นหนึ่งเดือน · ไม่เกินภาษี)";
                 break;
             case "VatPp36":
-                surcharge = Pp36Lifecycle.SuggestedSurcharge(taxAmount, due, pay);
-                capped = RevenueCodeSurcharge.IsCapped(taxAmount, due, pay);
-                months = RevenueCodeSurcharge.MonthsLate(due, pay);
+                surcharge = Pp36Lifecycle.SuggestedSurcharge(taxAmount, from, pay);
+                capped = RevenueCodeSurcharge.IsCapped(taxAmount, from, pay);
+                months = RevenueCodeSurcharge.MonthsLate(from, pay);
                 sRef = "RD-89/1";
                 sNote = $"เงินเพิ่ม 1.5% ต่อเดือน × {months} เดือน (ป.รัษฎากร ม.89/1 · คำตัดสินข้อ 135 · ไม่เกินภาษี)";
                 break;
             default:
-                return new Suggestion(due, daysLate, 0, 0m, false, null, "แบบนี้ไม่มีสูตรเงินเพิ่มในระบบ — กรอกตามใบเสร็จ",
+                return new Suggestion(grace, daysLate, 0, 0m, false, null, "แบบนี้ไม่มีสูตรเงินเพิ่มในระบบ — กรอกตามใบเสร็จ",
                     0m, null, "กรอกตามใบเสร็จ", fineNote);
         }
         if (capped) sNote += " — ชนเพดานแล้ว (ไม่เกินจำนวนภาษี)";
+        if (lostExtension) sNote += $" · พ้นวันขยาย e-Filing ({grace:dd/MM/yyyy}) ⇒ นับจากวันครบกำหนดตามกฎหมาย {from:dd/MM/yyyy} (ต้องยืนยันกับนักบัญชี)";
 
-        var (penalty, pRef, pNote) = PenaltyFor(remittanceType, taxAmount, daysLate);
-        return new Suggestion(due, daysLate, months, surcharge, capped, sRef, sNote, penalty, pRef, pNote, fineNote);
+        // เบี้ยปรับคิดจากการ "ยื่น" ช้า — รู้วันยื่นจริง ⇒ ใช้วันนั้น · ยังไม่ยื่น ⇒ สมมติยื่นพร้อมวันจ่าย
+        var filing = (filedAt ?? payDate).Date;
+        var (penalty, pRef, pNote) = filing <= grace
+            ? (0m, (string?)null, $"ยื่นแบบทันกำหนด ({filing:dd/MM/yyyy}) — ไม่มีเบี้ยปรับยื่นช้า (มีเฉพาะเงินเพิ่มจากการชำระช้า)")
+            : PenaltyFor(remittanceType, taxAmount, (int)(filing - from).TotalDays);
+        return new Suggestion(grace, daysLate, months, surcharge, capped, sRef, sNote, penalty, pRef, pNote, fineNote);
     }
 
     /// <summary>อัตราเบี้ยปรับ ภ.พ.30 ที่ลดแล้ว (ยื่นเองช้า) ตามจำนวนวันที่พ้นกำหนด — 2% / 5% / 10% / 20%</summary>
@@ -180,20 +200,20 @@ public static class LatePaymentPenaltyPolicy
             Math.Round(otherFineOverride ?? 0m, 2, MidpointRounding.AwayFromZero));
     }
 
-    /// <summary><b>ยอดบวกกลับ §65 ตรี(6)</b> ของเงินเพิ่ม/เบี้ยปรับ/ค่าปรับที่ลงผ่านการนำส่ง (JE ตรง ไม่มีเอกสาร ⇒ ตัวบวกกลับจากเอกสารมองไม่เห็น) —
-    /// แถวนำส่ง (เงินเพิ่ม+เบี้ยปรับ+ค่าปรับ) + เงินเพิ่ม สปส. ที่นำส่งจากหน้าเงินเดือน <b>เฉพาะ JE ที่ไม่ใช่ของแถวนำส่ง</b>
-    /// (หน้านำส่งรวมประทับ <c>SsoLateFeeAmount</c> ลงทุกรอบของเดือนด้วย JE เดียวกัน ⇒ ห้ามนับซ้ำ)</summary>
-    public static decimal AddBackTotal(IEnumerable<(Guid? JournalEntryId, decimal Total)> remittances,
-        IEnumerable<(Guid? JournalEntryId, decimal LateFee)> payrollSsoSettlements)
+    /// <summary>เติม JE id ต่อท้ายเครื่องหมาย "JE ที่มีเงินเพิ่ม" (คั่น ",") — ไม่ซ้ำ · ใช้กับ <c>PayrollRun.SsoLateFeeJournalEntryIds</c> (ฝ่ายค้านข้อ 3)</summary>
+    public static string AppendJournalId(string? existing, Guid journalEntryId)
     {
-        var rem = remittances.ToList();
-        var remJe = rem.Where(r => r.JournalEntryId != null).Select(r => r.JournalEntryId!.Value).ToHashSet();
-        var payrollOnly = payrollSsoSettlements
-            .Where(p => p.LateFee > 0 && p.JournalEntryId != null && !remJe.Contains(p.JournalEntryId.Value))
-            .GroupBy(p => p.JournalEntryId!.Value)
-            .Sum(g => g.First().LateFee);
-        return rem.Where(r => r.Total > 0).Sum(r => r.Total) + payrollOnly;
+        var ids = ParseJournalIds(existing).ToList();
+        if (!ids.Contains(journalEntryId)) ids.Add(journalEntryId);
+        return string.Join(",", ids);
     }
+
+    /// <summary>อ่านเครื่องหมาย JE id (ข้ามค่าขยะ) — คู่กับ <see cref="AppendJournalId"/></summary>
+    public static IEnumerable<Guid> ParseJournalIds(string? stored)
+        => (stored ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => Guid.TryParse(x, out var g) ? g : Guid.Empty)
+            .Where(g => g != Guid.Empty)
+            .Distinct();
 
     /// <summary>คำอธิบายบรรทัด JE ต่อก้อน (ผังค่าปรับ/เงินเพิ่ม · รายจ่ายต้องห้าม §65 ตรี(6))</summary>
     public static IEnumerable<(decimal Amount, string Description)> JournalLines(string form, Applied a, string? surchargeReference)

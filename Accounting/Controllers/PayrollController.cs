@@ -413,7 +413,7 @@ public class PayrollController : ControllerBase
         if (month is < 1 or > 12 || year < 2000)
             return BadRequest(new ApiResponse<Accounting.Helpers.SsoLateFee.Result>(false, null, "งวดไม่ถูกต้อง"));
         return Ok(new ApiResponse<Accounting.Helpers.SsoLateFee.Result>(true,
-            Accounting.Helpers.SsoLateFee.Compute(year, month, payDate, amount)));
+            Accounting.Helpers.SsoLateFee.Compute(year, month, payDate, amount, await _service.SsoHolidaysAsync())));
     }
 
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}")]

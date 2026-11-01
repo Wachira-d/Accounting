@@ -184,6 +184,10 @@ public class PayrollRun : TenantEntity
     public string? SsoFilingNumber { get; set; }
     public decimal SsoLateFeeAmount { get; set; }
 
+    /// <summary>รอบ 220 ฝ่ายค้านข้อ 3: JE นำส่ง สปส. จากหน้าเงินเดือนที่มีเงินเพิ่ม (คั่นด้วย ",") — เติมท้ายอย่างเดียว <b>ไม่ล้างตอนกลับรายการ</b>
+    /// (ต่างจาก <see cref="SsoSettlementJournalEntryId"/>) ⇒ ตัวบวกกลับ §65 ตรี(6) หา JE เดิม + ใบกลับรายการได้เสมอ</summary>
+    public string? SsoLateFeeJournalEntryIds { get; set; }
+
     // กองทุนเงินทดแทน (กท.20ก) — นายจ้างฝ่ายเดียว 0.2%–1.0% ตามประเภทกิจการ
     // cap 240,000/คน/ปี ยื่นรายปี (มี.ค.). เก็บยอดที่บันทึกในรอบนี้เพื่อทำ
     // รายงานสรุปสิ้นปี.

@@ -384,7 +384,7 @@
         const filing = await this.filingData(12);
         if (filing && filing.overdueCount > 0) {
           const fee = filing.overdueLateFee > 0
-            ? ` + เงินเพิ่มประมาณ ${Layout.money(filing.overdueLateFee)} บาท` : '';
+            ? ` + เงินเพิ่ม (ประมาณการ) ${Layout.money(filing.overdueLateFee)} บาท` : '';
           alerts.push({
             icon: '🗓️', tone: 'danger',
             title: `เลยกำหนดยื่นแบบ/นำส่ง ${filing.overdueCount} งวด`,
@@ -514,7 +514,7 @@
             const s = this.filingStyle(c);
             const tip = `${r.formCode} ${String(c.month).padStart(2, '0')}/${c.year}\n${c.hint}`
               + (c.amount ? `\nยอด: ${Layout.money(c.amount)} บาท` : '')
-              + (c.lateFee ? `\nเงินเพิ่มประมาณ: ${Layout.money(c.lateFee)} บาท` : '')
+              + (c.lateFee ? `\nเงินเพิ่ม (ประมาณการ): ${Layout.money(c.lateFee)} บาท` : '')
               + (c.hasReceipt ? '\n📎 แนบใบเสร็จแล้ว' : '');
             const click = c.actionUrl ? `onclick="location.href='${c.actionUrl}'" style="cursor:pointer;"` : '';
             return `<td style="text-align:center;padding:3px 2px">

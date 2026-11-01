@@ -5507,7 +5507,12 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "OtherFine" decimal(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "SuggestedLateFee" decimal(18,2) NULL;""",
             """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "SuggestedPenalty" decimal(18,2) NULL;""",
+            """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "PaperFiling" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PenaltyExpenseAccountCode" varchar(20) NULL;""",
+            // รอบ 220 ฝ่ายค้านข้อ 3: เครื่องหมาย JE นำส่ง สปส. หน้าเงินเดือนที่มีเงินเพิ่ม (ไม่ล้างตอนกลับรายการ) + เติมจากข้อมูลเดิม
+            // (รอบที่ยังผูก JE อยู่และมีเงินเพิ่ม — รอบที่กลับรายการไปก่อนรอบ 220 ถูกล้าง id แล้ว กู้ไม่ได้ ⇒ บันทึกใน TAX_PENALTY_AUDIT §3)
+            """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoLateFeeJournalEntryIds" text NULL;""",
+            """UPDATE "PayrollRuns" SET "SsoLateFeeJournalEntryIds" = "SsoSettlementJournalEntryId"::text WHERE "SsoLateFeeJournalEntryIds" IS NULL AND "SsoLateFeeAmount" > 0 AND "SsoSettlementJournalEntryId" IS NOT NULL;""",
 
             // ===== Pp36RemittanceDocuments: ใบ ↔ รายการนำส่ง ภ.พ.36 (รอบ 203 ทีม F3 · คำตัดสินข้อ 133/134) =====
             """

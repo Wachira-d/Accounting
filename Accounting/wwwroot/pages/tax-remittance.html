@@ -469,8 +469,8 @@
       _rowHtml(r, showType) {
         const u = this._urgency(r);
         const g = this.gstyle(r.remittanceType);
-        const fee = (r.lateFeePreview > 0 ? `<div class="text-xs" style="color:#dc2626">+ เงินเพิ่ม ${Layout.money(r.lateFeePreview)}</div>` : '')
-          + (r.penaltyPreview > 0 ? `<div class="text-xs" style="color:#dc2626" title="${Layout.esc(r.penaltyNote || '')}">+ เบี้ยปรับ (ประมาณ) ${Layout.money(r.penaltyPreview)}</div>` : '');
+        const fee = (r.lateFeePreview > 0 ? `<div class="text-xs" style="color:#dc2626" title="${Layout.esc(r.lateFeeNote || '')}">+ เงินเพิ่ม (ประมาณการ) ${Layout.money(r.lateFeePreview)}</div>` : '')
+          + (r.penaltyPreview > 0 ? `<div class="text-xs" style="color:#dc2626" title="${Layout.esc(r.penaltyNote || '')}">+ เบี้ยปรับ (ประมาณการ) ${Layout.money(r.penaltyPreview)}</div>` : '');
         const sub = r.remittanceType === 'SsoSps110'
           ? `<div class="text-xs text-gray-400">ลูกจ้าง ${Layout.money(r.employeeAmount)} · นายจ้าง ${Layout.money(r.employerAmount)}</div>`
           : (r.remittanceType === 'VatPp30' || r.remittanceType === 'VatPp36'
@@ -795,7 +795,7 @@
         // รอบ 220 (คำตัดสินข้อ 181): เงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ทุกแบบ — ค่าเสนอจากเซิร์ฟเวอร์ (Helpers/LatePaymentPenaltyPolicy) แก้ได้ · หน้านี้ไม่มีสูตรเอง
         const penRow = (id, label, note, val) => `<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:8px">`
           + `<span class="text-gray-500" title="${Layout.esc(note || '')}">${label} (แก้ได้)</span>`
-          + `<input type="number" id="${id}" class="form-input" min="0" step="0.01" style="width:130px;text-align:right" value="${Number(val || 0).toFixed(2)}" oninput="Page._updateTotal()"></div>`;
+          + `<input type="number" id="${id}" class="form-input" min="0" step="0.01" style="width:130px;text-align:right" value="${Number(val || 0).toFixed(2)}" oninput="this.dataset.userTouched='1';Page._updateTotal()"></div>`;
         const u = this._urgency(r);
         const bodyEl = this._byId('remitBody');
         if (!bodyEl) { Layout.toast('เปิดหน้าต่างนำส่งไม่ได้ — โหลดหน้าใหม่', 'error'); return; }
@@ -819,6 +819,8 @@
           </div>
           <div class="form-row"><label class="form-label">วันที่จ่าย</label>
             <input type="date" id="rmPayDate" class="form-input" value="${today}" onchange="Page._recalc()"></div>
+          <div class="form-group form-checkbox" style="margin-bottom:8px"><input type="checkbox" id="rmPaper" onchange="Page._recalc()">
+            <label for="rmPaper" title="ยื่นแบบกระดาษไม่มีสิทธิ์ขยายเวลา e-Filing — ระบบคิดเงินเพิ่ม/เบี้ยปรับจากวันครบกำหนดตามกฎหมาย (ต้องยืนยันกับนักบัญชี)">ยื่นแบบกระดาษ (ไม่ได้ยื่นทางอินเทอร์เน็ต)</label></div>
           <div class="form-row"><label class="form-label">แหล่งเงิน (บัญชีจ่าย)</label>
             <select id="rmBank" class="form-input">${bankOpts}</select></div>
           <div class="form-row"><label class="form-label">เลขรับ / เลขอ้างอิงการยื่น (ถ้ามี)</label>
@@ -837,33 +839,56 @@
       async _recalc(fromButton) {
         const r = this._sel; if (!r) return;
         const dateEl = this._byId('rmPayDate'); if (!dateEl) return;
+        const ids = ['rmSurcharge', 'rmPenalty'];
+        // ค่าที่ผู้ใช้พิมพ์เองชนะ (dataset.userTouched) — เปลี่ยนวันที่ = คำนวณเฉพาะช่องที่ยังไม่แตะ · ปุ่ม "คำนวณให้" = เขียนทับทุกช่องหลังยืนยัน
+        if (fromButton && ids.some(id => this._byId(id) && this._byId(id).dataset.userTouched === '1')
+            && !confirm('มีช่องที่กรอกเองแล้ว — ให้ระบบเขียนทับเงินเพิ่ม/เบี้ยปรับด้วยค่าที่คำนวณใหม่ไหม? (ช่องค่าปรับไม่ถูกแตะ)')) return;
+        const seq = (this._recalcSeq = (this._recalcSeq || 0) + 1);
         try {
           // ยอดเสนอคำนวณที่เซิร์ฟเวอร์ทุกแบบ (ปกส. ม.49 · ภ.ง.ด. ม.27 · ภ.พ.30/36 ม.89/1 · เบี้ยปรับ ภ.พ.30) — หน้านี้ไม่มีสูตรเอง
-          // เปลี่ยนวันที่/กด "คำนวณให้" = เขียนทับช่องเงินเพิ่ม+เบี้ยปรับด้วยค่าเสนอ · ช่องค่าปรับไม่แตะ (ระบบไม่เดา)
-          const res = await Layout.api().remitPreview(r.remittanceType, r.periodYear, r.periodMonth, dateEl.value);
+          const paper = !!(this._byId('rmPaper') && this._byId('rmPaper').checked);
+          const res = await Layout.api().remitPreview(r.remittanceType, r.periodYear, r.periodMonth, dateEl.value, paper);
+          if (seq !== this._recalcSeq) return;   // คำตอบเก่ามาช้า (เปลี่ยนวันที่/ติ๊กซ้ำระหว่างรอ) — ทิ้ง
           const d = res.data || {};
-          const sEl = this._byId('rmSurcharge'); if (sEl) sEl.value = Number(d.lateFeePreview || 0).toFixed(2);
-          const pEl = this._byId('rmPenalty'); if (pEl) pEl.value = Number(d.penaltyPreview || 0).toFixed(2);
+          const vals = { rmSurcharge: d.lateFeePreview, rmPenalty: d.penaltyPreview };
+          for (const id of ids) {
+            const el = this._byId(id); if (!el) continue;
+            if (fromButton || el.dataset.userTouched !== '1') { el.value = Number(vals[id] || 0).toFixed(2); delete el.dataset.userTouched; }
+          }
           const nEl = this._byId('rmPenNote');
           if (nEl) nEl.textContent = [d.lateFeeNote, d.penaltyNote].filter(Boolean).join(' · ');
           this._updateTotal();
         } catch (e) {
-          if (fromButton) Layout.toast('คำนวณไม่สำเร็จ — กรอกตามใบเสร็จได้เลย (' + (e.message || '') + ')', 'error');
+          if (seq === this._recalcSeq && fromButton) Layout.toast('คำนวณไม่สำเร็จ — กรอกตามใบเสร็จได้เลย (' + (e.message || '') + ')', 'error');
         }
       },
 
-      _num(id) { const el = this._byId(id); return el ? Math.max(0, parseFloat(el.value) || 0) : 0; },
+      /** ช่องเงิน: ว่าง = 0 · ติดลบ/ไม่ใช่ตัวเลข = null (ให้ผู้เรียกแสดงข้อผิดพลาด — ห้ามตัดเป็น 0 เงียบ) */
+      _num(id) {
+        const el = this._byId(id); if (!el || el.value.trim() === '') return 0;
+        const v = parseFloat(el.value);
+        return (isFinite(v) && v >= 0) ? v : null;
+      },
+
+      _penaltyError() {
+        const bad = [['rmSurcharge', 'เงินเพิ่ม'], ['rmPenalty', 'เบี้ยปรับ'], ['rmFine', 'ค่าปรับ']].filter(([id]) => this._num(id) === null);
+        return bad.length ? `${bad.map(b => b[1]).join(' / ')} ต้องเป็นตัวเลขไม่ติดลบ` : '';
+      },
 
       _updateTotal() {
         const r = this._sel; if (!r) return;
-        const f = this._num('rmSurcharge') + this._num('rmPenalty') + this._num('rmFine');
-        const totEl = this._byId('totLbl'); if (totEl) totEl.textContent = Layout.money(r.amount + f);
+        const err = this._penaltyError();
+        const msg = this._byId('rmMsg'); if (msg) msg.textContent = err;
+        const f = (this._num('rmSurcharge') || 0) + (this._num('rmPenalty') || 0) + (this._num('rmFine') || 0);
+        const totEl = this._byId('totLbl'); if (totEl) totEl.textContent = err ? '—' : Layout.money(r.amount + f);
       },
 
       async _submit() {
         const r = this._sel; if (!r) return;
         const btn = this._byId('rmGo');
         const msg = this._byId('rmMsg');
+        const penErr = this._penaltyError();
+        if (penErr) { if (msg) msg.textContent = penErr; return; }
         if (msg) msg.textContent = '';
         if (btn) { btn.disabled = true; btn.textContent = 'กำลังลง JE…'; }
         try {
@@ -881,6 +906,7 @@
             bankGlAccountId,
             filingNumber: (this._byId('rmFiling') && this._byId('rmFiling').value) || null,
             includeLateFee: true,
+            paperFiling: !!(this._byId('rmPaper') && this._byId('rmPaper').checked),
           };
           // รอบ 220: ยอดที่ผู้ใช้เห็น/แก้ทุกช่อง (เว้นว่างเงินเพิ่ม = ตัดคีย์ ⇒ ปกส./ภ.พ.36 ใช้ค่าเสนอ · แบบอื่น 0)
           const sEl = this._byId('rmSurcharge');

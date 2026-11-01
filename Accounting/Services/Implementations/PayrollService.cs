@@ -2181,8 +2181,9 @@ public class PayrollService : IPayrollService
         // หลักฐาน "ยื่น/นำส่ง/ปันต้นทุนแล้ว" ทั้งหน้าในรอบเดียว (batch) — ปุ่มคำนวณใหม่บนจอต้องตัดสิน
         // จากหลักฐานชุดเดียวกับด่านใน CalculatePayrollAsync
         var lockEvidence = await LoadRecalculateLockEvidenceAsync(companyId, items);
+        var ssoHolidays = await SsoHolidaysAsync();
         return new PagedResponse<PayrollRunResponse>(
-            items.Select(r => MapToPayrollRunResponse(r, lockEvidence[r.Id])).ToList(),
+            items.Select(r => MapToPayrollRunResponse(r, lockEvidence[r.Id], ssoHolidays)).ToList(),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -5167,13 +5168,21 @@ public class PayrollService : IPayrollService
     private async Task<PayrollRunResponse> ToRunResponseAsync(Guid companyId, PayrollRun run)
     {
         var evidence = await LoadRecalculateLockEvidenceAsync(companyId, new[] { run });
-        return MapToPayrollRunResponse(run, evidence[run.Id]);
+        return MapToPayrollRunResponse(run, evidence[run.Id], await SsoHolidaysAsync());
+    }
+
+    /// <summary>รอบ 220 ฝ่ายค้านข้อ 2: วันหยุดราชการของแพลตฟอร์มชุดเดียวกับหน้านำส่ง (StatutoryRemittanceService) —
+    /// วันครบกำหนด สปส. บนหน้าเงินเดือน = ป้ายเลยกำหนด = เงินเพิ่มที่ลงบัญชี (เดิมเลื่อนแค่เสาร์/อาทิตย์ ⇒ สงกรานต์ 13–15 เม.ย. ถูกคิดเงินเพิ่ม)</summary>
+    public async Task<IReadOnlySet<DateTime>> SsoHolidaysAsync()
+    {
+        var y = DateTime.UtcNow.Year;
+        return await PlatformHolidayStore.LoadSetAsync(_db, y - 3, y + 1, _logger);
     }
 
     /// <summary>แปลงรอบเป็น response — <paramref name="lockEvidence"/> ต้องมาจาก
     /// <see cref="LoadRecalculateLockEvidenceAsync"/> (บังคับ ไม่มีค่าเริ่มต้น: ปุ่ม "คำนวณใหม่" บนจอ
     /// ต้องตัดสินจากหลักฐานชุดเดียวกับที่ <c>CalculatePayrollAsync</c> ใช้ปฏิเสธ)</summary>
-    private static PayrollRunResponse MapToPayrollRunResponse(PayrollRun r, PayrollRunLockEvidence lockEvidence)
+    private static PayrollRunResponse MapToPayrollRunResponse(PayrollRun r, PayrollRunLockEvidence lockEvidence, IReadOnlySet<DateTime>? ssoHolidays = null)
     {
         // ตัดสินสิทธิ์แก้ไขที่เซิร์ฟเวอร์ตัวเดียว (Helpers/PayrollRunEditPolicy)
         // แล้วส่ง "เหตุผลพร้อมทางแก้" ไปด้วย — หน้าเว็บห้ามคำนวณเองและห้ามซ่อน
@@ -5200,7 +5209,7 @@ public class PayrollService : IPayrollService
             RecalculateWarning: PayrollRunEditPolicy.RecalculateWarning(lockEvidence, r.ManualRosterChangedAt),
             CanSetPaymentAccount: PayrollRunEditPolicy.CanSetPaymentAccount(r.Status).Can,
             // รอบ 200 (D-04): วันครบกำหนดนำส่ง สปส. (เลื่อนวันหยุดแล้ว) — หน้าเว็บห้ามคิดเอง
-            SsoDueDate: Accounting.Helpers.SsoLateFee.DueDate(r.Year, r.Month),
+            SsoDueDate: Accounting.Helpers.SsoLateFee.DueDate(r.Year, r.Month, ssoHolidays),
             PeriodStart: r.PeriodStart, PeriodEnd: r.PeriodEnd,
             CanVoid: canVoid, VoidBlockReason: voidBlockReason,
             FilingAttachmentWarning: r.FilingAttachmentWarning);
@@ -5289,11 +5298,11 @@ public class PayrollService : IPayrollService
         // รอบ 220 (คำตัดสินข้อ 181): ค่าเสนอ + ค่าที่ผู้ใช้แก้ ผ่านตัวตั้งเดียวกับหน้านำส่งรวม (Helpers/LatePaymentPenaltyPolicy) ·
         // ไม่ส่ง = ค่าเสนอ (เดิม) · ติดลบ = ปฏิเสธ · ค่าปรับอื่น/เบี้ยปรับ ⇒ หน้า "นำส่งภาษี/ประกันสังคม" (หน้านี้ไม่มีที่เก็บ)
         var lateFee = Accounting.Helpers.LatePaymentPenaltyPolicy.Resolve("SsoSps110",
-            Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest("SsoSps110", run.Year, run.Month, totalSso, payDate, null),
+            Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest("SsoSps110", run.Year, run.Month, totalSso, payDate, await SsoHolidaysAsync()),
             includeSurcharge: true, lateSurcharge, null, null).Surcharge;
         // ผังเงินเพิ่มตัวเดียว (ตั้งค่าได้ · 54820 · สร้างให้ถ้าไม่มี) — เดิมสำเนาตัวหาที่ตก 58xxx และถ้าไม่เจอ JE ไม่ดุล (Cr รวมเงินเพิ่ม แต่ไม่มีขา Dr)
         var lateFeeAccount = lateFee > 0
-            ? await Accounting.Helpers.PenaltyExpenseAccount.ResolveOrCreateAsync(_db, companyId)
+            ? await Accounting.Helpers.PenaltyExpenseAccount.ResolveOrCreateAsync(_db, companyId, performedBy)
             : null;
 
         // ── post JE: Dr 21815 / Cr Bank (+ late fee ถ้ามี) ──
@@ -5327,6 +5336,10 @@ public class PayrollService : IPayrollService
             run.SsoSettlementJournalEntryId = je.Id;
             run.SsoFilingNumber = filingNumber;
             run.SsoLateFeeAmount = lateFee;
+            // รอบ 220 ฝ่ายค้านข้อ 3: เครื่องหมาย "JE นี้มีเงินเพิ่ม" แบบเติมท้าย ไม่ล้างตอนกลับรายการ — ตัวบวกกลับ §65 ตรี(6) อ่านบรรทัดจริงของ JE เหล่านี้
+            // (+ ใบกลับรายการของมัน) ตามวันที่ลงบัญชี ⇒ กลับรายการปีถัดไปได้ยอดติดลบในปีถัดไป ไม่ย้อนไปลบปีเดิม
+            if (lateFee > 0)
+                run.SsoLateFeeJournalEntryIds = Accounting.Helpers.LatePaymentPenaltyPolicy.AppendJournalId(run.SsoLateFeeJournalEntryIds, je.Id);
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
 

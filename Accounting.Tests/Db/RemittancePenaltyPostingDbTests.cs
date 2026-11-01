@@ -13,7 +13,8 @@ namespace Accounting.Tests.Db;
 /// <summary>
 /// รอบ 220 (คำตัดสินข้อ 181) — <b>นำส่งช้าพร้อมเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ลงบัญชีจริงบน PostgreSQL</b>:
 /// บรรทัดแยกที่ผังค่าปรับ (54820) · Cr ธนาคาร = ภาษี + สามก้อน · แถวนำส่งเก็บยอดจริง + ค่าที่ระบบเสนอ (ผู้ใช้แก้แล้วยังตรวจย้อนได้) ·
-/// ยอดเข้าบวกกลับ §65 ตรี(6) · ทิศตรงข้าม: นำส่งทันกำหนดไม่มีบรรทัดค่าปรับ และบริษัทที่ไม่มีผัง 54820 ได้ผังสร้างให้ใต้หมวด 548
+/// ยอดเข้าบวกกลับ §65 ตรี(6) จากบรรทัดที่ลงบัญชีจริงตามวันที่ (กลับรายการวันเดียวกัน = 0 · ยกเลิกงวดถัดไป = งวดเดิมเต็ม/งวดใหม่ติดลบ) ·
+/// ทิศตรงข้าม: นำส่งทันกำหนดไม่มีบรรทัดค่าปรับ และบริษัทที่ไม่มีผัง 54820 ได้ผังสร้างให้ใต้หมวด 548
 /// </summary>
 [Trait("Category", "Db")]
 public class RemittancePenaltyPostingDbTests
@@ -153,6 +154,50 @@ public class RemittancePenaltyPostingDbTests
         Assert.Equal(AccountType.Expense, created.AccountType);
         var lines = await LinesAsync(check, r.JournalEntryId!.Value);
         Assert.Equal(100m, lines.Where(l => l.AccountId == created.Id).Sum(l => l.DebitAmount));
+    }
+
+    // ═══ ฝ่ายค้านข้อ 3: บวกกลับจากบรรทัดที่ลงบัญชีจริง ตามวันที่ลงบัญชี ═══
+
+    private async Task<(Seed S, RemitResult R, DateTime Pay)> RemitLateAsync(Accounting.Data.AccountingDbContext db)
+    {
+        var s = await SeedAsync(db, withPenaltyAccount: true);
+        var pay = Period.AddMonths(2).AddDays(10);
+        var r = await Svc(db).RemitAsync(s.CompanyId, new RemitRequest("VatPp36", Period.Year, Period.Month, pay,
+            BankGlAccountId: s.Acc["11120"], LateSurcharge: 12.34m, Penalty: 50m, OtherFine: 200m), "tester");
+        return (s, r, pay);
+    }
+
+    [Fact]
+    public async Task กลับรายการด้วยมือวันเดียวกัน_บวกกลับสุทธิศูนย์()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (s, r, pay) = await RemitLateAsync(db);
+        await new AccountingService(db).ReverseJournalEntryAsync(s.CompanyId, r.JournalEntryId!.Value, reversalDate: pay, description: "กลับรายการทดสอบ");
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(0m, await new TaxService(check).ComputeSection65TerAddBackAsync(s.CompanyId, Period, DateTime.UtcNow.Date.AddDays(1)));
+    }
+
+    [Fact]
+    public async Task ยกเลิกการนำส่งในงวดถัดไป_งวดเดิมบวกกลับเต็ม_งวดที่กลับติดลบเท่ากัน()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (s, r, pay) = await RemitLateAsync(db);
+        // ปิดงวดของวันที่จ่าย ⇒ VoidRemittanceAsync กลับรายการลงวันนี้ (งวดถัดไป)
+        db.FiscalPeriods.Add(new FiscalPeriod { CompanyId = s.CompanyId, Name = "ปิดแล้ว", Year = pay.Year, Month = pay.Month,
+            StartDate = new DateTime(pay.Year, pay.Month, 1), EndDate = new DateTime(pay.Year, pay.Month, 1).AddMonths(1).AddDays(-1),
+            Status = FiscalPeriodStatus.Closed });
+        await db.SaveChangesAsync();
+        await Svc(db).VoidRemittanceAsync(s.CompanyId, r.Id, "ทดสอบยกเลิกข้ามงวด", "tester");
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var tax = new TaxService(check);
+        var monthEnd = new DateTime(pay.Year, pay.Month, 1).AddMonths(1).AddDays(-1);
+        Assert.Equal(262.34m, await tax.ComputeSection65TerAddBackAsync(s.CompanyId, Period, monthEnd));                       // งวดเดิมไม่ถูกย้อนลบ
+        Assert.Equal(-262.34m, await tax.ComputeSection65TerAddBackAsync(s.CompanyId, monthEnd.AddDays(1), DateTime.UtcNow.Date.AddDays(1)));
+        Assert.True(await check.StatutoryRemittances.IgnoreQueryFilters().AnyAsync(x => x.Id == r.Id && x.IsDeleted));
     }
 
     [Fact]

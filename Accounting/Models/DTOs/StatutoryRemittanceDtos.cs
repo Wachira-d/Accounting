@@ -135,7 +135,9 @@ public record RemitRequest(
     decimal? LateSurcharge = null,
     // รอบ 220 (คำตัดสินข้อ 181): เบี้ยปรับ / ค่าปรับอาญา-อื่น ๆ ที่จ่ายจริง — null = 0 · ลงผังค่าปรับ (รายจ่ายต้องห้าม §65 ตรี(6))
     decimal? Penalty = null,
-    decimal? OtherFine = null);
+    decimal? OtherFine = null,
+    // รอบ 220 ฝ่ายค้านข้อ 1: ยื่นแบบกระดาษ ⇒ ครบกำหนดวันกระดาษเสมอ (ไม่มีสิทธิ์ขยาย e-Filing)
+    bool PaperFiling = false);
 
 public record RemitResult(
     Guid Id,

@@ -27,7 +27,7 @@ public interface IStatutoryRemittanceService
 
     /// <summary>ประมาณการยอด + เงินเพิ่มของงวดหนึ่งก่อนกดจ่าย (ให้ UI preview).</summary>
     Task<PendingRemittanceItem?> PreviewAsync(Guid companyId, string remittanceType,
-        int periodYear, int periodMonth, DateTime payDate);
+        int periodYear, int periodMonth, DateTime payDate, bool paperFiling = false);
 
     /// <summary>ผูกไฟล์ใบเสร็จ/หลักฐาน (FileAttachment ที่อัปโหลดแล้ว) กับการนำส่ง.</summary>
     Task AttachReceiptAsync(Guid companyId, Guid remittanceId, Guid attachmentId);
