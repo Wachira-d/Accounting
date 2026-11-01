@@ -415,6 +415,12 @@
             </div>
           </div>
           <div id="settleSsoLateFee" style="font-size:12px;color:#dc2626;margin-bottom:8px;display:none"></div>
+          <!-- รอบ 220 (คำตัดสินข้อ 181): เงินเพิ่ม ม.49 แก้ได้ตามใบเสร็จ — ค่าเสนอจากเซิร์ฟเวอร์ · เว้นว่าง = ค่าเสนอ -->
+          <div class="form-group" id="settleSsoSurchargeRow" style="display:none">
+            <label class="form-label" for="settleSsoSurcharge">เงินเพิ่ม ม.49 (แก้ได้ตามใบเสร็จ)</label>
+            <input type="number" class="form-input" id="settleSsoSurcharge" min="0" step="0.01" style="max-width:180px;text-align:right">
+            <div class="text-xs text-gray-500" style="margin-top:4px">ลงผังเงินเพิ่ม/ค่าปรับ (รายจ่ายต้องห้าม §65 ตรี(6)) · มีค่าปรับอื่นด้วย ⇒ นำส่งที่หน้า <a href="/pages/tax-remittance.html" class="text-blue-600 underline">นำส่งภาษี / ประกันสังคม</a> (มีช่องเบี้ยปรับ/ค่าปรับ)</div>
+          </div>
           <div style="font-size:11px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:8px;border-radius:6px">
             ⚠️ ระบบจะสร้าง JE: <b>Dr 21815 ประกันสังคมค้างจ่าย / Cr Bank</b> ลงงวดเดือนที่เลือก — ล้างหนี้ 21815 จากการจ่ายเงินเดือน
           </div>
@@ -1466,9 +1472,13 @@ const Page = {
         try {
           const res = await Layout.api().ssoLateFeePreview(this._ssoCtx.year, this._ssoCtx.month, ymd, this._ssoCtx.total);
           const p = res && res.data;
-          if (!p || !(Number(p.fee) > 0)) { lateBox.style.display = 'none'; return; }
+          const sRow = document.getElementById('settleSsoSurchargeRow');
+          const sIn = document.getElementById('settleSsoSurcharge');
+          if (!p || !(Number(p.fee) > 0)) { lateBox.style.display = 'none'; if (sRow) sRow.style.display = 'none'; if (sIn) sIn.value = ''; return; }
           lateBox.style.display = 'block';
-          lateBox.innerHTML = `⚠️ เลยกำหนด ${p.daysLate} วัน → ระบบจะคำนวณเงินเพิ่ม 2% × ${p.monthsLate} เดือน = <b>${Layout.money(p.fee)}</b> (Dr ค่าใช้จ่ายอื่น)`;
+          lateBox.innerHTML = `⚠️ เลยกำหนด ${p.daysLate} วัน → ระบบเสนอเงินเพิ่ม 2% × ${p.monthsLate} เดือน = <b>${Layout.money(p.fee)}</b> (Dr ผังเงินเพิ่ม/ค่าปรับ)`;
+          if (sRow) sRow.style.display = 'block';
+          if (sIn) sIn.value = Number(p.fee).toFixed(2);
         } catch (e) {
           lateBox.style.display = 'block';
           lateBox.innerHTML = `คำนวณเงินเพิ่มตัวอย่างไม่ได้ (${Layout.esc(e.message || '')}) — ระบบจะคำนวณตอนบันทึกนำส่ง`;
@@ -1496,6 +1506,10 @@ const Page = {
         bankAccountId,
         bankGlAccountId,
         filingNumber: document.getElementById('settleSsoFilingNumber').value.trim() || null,
+        // รอบ 220: เงินเพิ่มที่ผู้ใช้เห็น/แก้ — ช่องซ่อน/ว่าง = ไม่ส่ง (เซิร์ฟเวอร์ใช้ค่าเสนอ)
+        ...((() => { const el = document.getElementById('settleSsoSurcharge');
+          const row = document.getElementById('settleSsoSurchargeRow');
+          return (el && row && row.style.display !== 'none' && el.value.trim() !== '') ? { lateSurcharge: Math.max(0, parseFloat(el.value) || 0) } : {}; })()),
       });
       // แนบสลิป/ใบเสร็จ (ถ้าเลือกไว้) — ผูกกับรอบเงินเดือนเป็นหลักฐานการจ่ายจริง
       // ทำหลังนำส่งสำเร็จ และล้มเหลวได้โดยไม่ย้อนการนำส่ง (JE ลงไปแล้ว) —
@@ -1793,6 +1807,10 @@ const Page = {
           <div style="margin-bottom:12px;padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;font-size:13px;color:#92400e">
             ⚠️ <b>แหล่งจ่ายเริ่มต้นใช้ไม่ได้</b> — ${Layout.esc(r.defaultPaymentSourceWarning)}<br>
             <span style="font-size:12px">แถวที่ช่อง "แหล่งจ่าย" เป็นค่าเริ่มต้นจะกด "จ่าย" ไม่ได้จนกว่าจะแก้</span>
+            <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:8px;font-size:12px">
+              <a href="/pages/settings.html?tab=tax&focus=sDefaultPaymentAccount" target="_blank" rel="noopener" style="color:#4f46e5;font-weight:600">⚙️ ตั้ง "แหล่งเงินเริ่มต้น" (ตั้งค่า › ภาษี) ↗</a>
+              <span>หรือเลือกบัญชีที่ช่อง "แหล่งจ่าย" ของแต่ละแถวด้านล่าง ↓</span>
+            </div>
           </div>` : ''}
         <div style="display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           <button class="btn btn-sm btn-secondary" onclick="Page.exportFile('payroll/runs/${id}/export','xlsx')" title="ทะเบียนเงินเดือนรายคน (ทุกช่องรายได้/รายการหัก + ฝั่งนายจ้าง + เงินโอนจริง) พร้อมแถวรวม">📊 ทะเบียนเงินเดือน Excel</button>
@@ -2659,7 +2677,11 @@ const Page = {
         res = await api.getSso(year, month);
         const d = res.data || {};
         content.innerHTML = `
-          <h3 style="margin-bottom:16px">ประกันสังคม - ${month}/${parseInt(year)+543}</h3>
+          <h3 style="margin-bottom:8px">ประกันสังคม - ${month}/${parseInt(year)+543}</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+            <button class="btn btn-primary btn-sm" onclick="Page.downloadSso110()" title="ไฟล์เดียวกับหน้า Export ยื่นภาษี/ประกันสังคม — แนบใน e-Service เมนู &quot;ส่งข้อมูลเงินสมทบ&quot;">📥 ดาวน์โหลด สปส.1-10 Excel (แนบ e-Service)</button>
+            <a class="btn btn-secondary btn-sm" href="/pages/tax-export.html" title="ตรวจก่อนยื่น (ช่องว่าง/เลขบัตรไม่ถูกต้อง) และไฟล์ยื่นแบบอื่น">ดูตัวอย่าง / ตรวจก่อนยื่น ↗</a>
+          </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:16px;margin-bottom:20px">
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">จำนวนพนักงาน</div><div class="font-medium text-lg">${d.totalEmployees ?? d.employeeCount ?? 0}</div></div>
             <div class="card" style="padding:16px;text-align:center"><div class="text-xs text-gray-500">สมทบพนักงาน</div><div class="font-medium text-lg">${Layout.money(d.totalEmployeeContribution ?? d.employeeContribution)}</div></div>
@@ -2689,6 +2711,16 @@ const Page = {
   /** ดาวน์โหลดไฟล์ ภ.ง.ด.1 ของงวดที่ดูอยู่ — ตัวสร้างไฟล์เดียวกับเมนู Export ยื่นภาษี (TaxFilingExportService.ExportPnd1Async)
    *  ผ่านตัวดึงไฟล์กลาง API.download (ข้อความผิดพลาดของเซิร์ฟเวอร์ถึงผู้ใช้ · มือถือได้ไฟล์) · fmt = xlsx | txt | txt-tis620 | csv | review
    *  ชื่อไฟล์จริงมาจากเซิร์ฟเวอร์ (.txt = PND1.txt ตามสเปก) — ชื่อข้างล่างเป็นค่าสำรองเท่านั้น */
+  /** สปส.1-10 Excel — endpoint เดียวกับหน้า tax-export (ไฟล์/การตรวจมาจากเซิร์ฟเวอร์ตัวเดียว ไม่มีสำเนา) */
+  async downloadSso110() {
+    const api = Layout.api(); if (!api) return;
+    const year = document.getElementById('reportYear')?.value || new Date().getFullYear();
+    const month = document.getElementById('reportMonth')?.value || 1;
+    try {
+      if (await API.download(api.exportSso110Excel(year, month), `SSO110EXCEL_${year}${String(month).padStart(2, '0')}.xlsx`))
+        Layout.toast('ดาวน์โหลดสำเร็จ');
+    } catch (err) { Layout.toast(err.message || 'ดาวน์โหลดไม่สำเร็จ', 'error', 8000); }
+  },
   async downloadPnd1(fmt) {
     const api = Layout.api(); if (!api) return;
     const year = document.getElementById('reportYear')?.value || new Date().getFullYear();

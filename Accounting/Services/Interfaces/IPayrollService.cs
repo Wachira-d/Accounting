@@ -101,7 +101,10 @@ public interface IPayrollService
     /// **บล็อกเมื่อยอดสองฝั่งไม่สอดคล้องกันตามอัตราของปีนั้น** — กันลง JE ยอดหนึ่ง
     /// แล้วจ่ายจริงอีกยอด (เคสจริง: ลง 8,784 แต่ สปส. เก็บ 8,762).</summary>
     Task<PayrollRunResponse> SettleSocialSecurityAsync(Guid companyId, Guid payrollRunId,
-        DateTime payDate, Guid? bankAccountId, Guid? bankGlAccountId, string? filingNumber, string performedBy);
+        DateTime payDate, Guid? bankAccountId, Guid? bankGlAccountId, string? filingNumber, string performedBy,
+        decimal? lateSurcharge = null);
+    /// <summary>รอบ 220 ฝ่ายค้านข้อ 2 — วันหยุดราชการของแพลตฟอร์ม (ชุดเดียวกับหน้านำส่ง) สำหรับวันครบกำหนด/เงินเพิ่ม สปส.</summary>
+    Task<IReadOnlySet<DateTime>> SsoHolidaysAsync();
     /// <summary>ออกใบ 50 ทวิรายปีให้พนักงาน (ภงด.1 §40(1)) — รวบรวม WHT
     /// ทั้งปีต่อพนักงาน 1 ใบ คืน PDF เดียวเมื่อระบุ employee, คืน Zip
     /// เมื่อต้องการทุกคน.</summary>

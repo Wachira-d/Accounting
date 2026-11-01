@@ -12,13 +12,14 @@ public static class SsoLateFee
     public sealed record Result(DateTime DueDate, int DaysLate, int MonthsLate, decimal Fee);
 
     /// <summary>วันครบกำหนดนำส่ง (เลื่อนวันหยุดแล้ว) — จากตารางกำหนดยื่นตัวเดียว (<see cref="TaxFilingDeadline"/>)</summary>
-    public static DateTime DueDate(int periodYear, int periodMonth)
-        => TaxFilingDeadline.For("SsoSps110", periodYear, periodMonth).EFiling.Date;
+    /// <param name="holidays">วันหยุดราชการของแพลตฟอร์ม (รอบ 220 ฝ่ายค้านข้อ 2 — ชุดเดียวกับป้ายเลยกำหนดบนหน้านำส่ง · null = เสาร์/อาทิตย์)</param>
+    public static DateTime DueDate(int periodYear, int periodMonth, IReadOnlySet<DateTime>? holidays = null)
+        => TaxFilingDeadline.For("SsoSps110", periodYear, periodMonth, holidays).EFiling.Date;
 
     /// <summary>เงินเพิ่ม 2% ต่อเดือน (เศษเดือนนับเป็นเดือน · ช้าแม้วันเดียว = 1 เดือน) · เพดาน 100% ของยอด · ปัด AwayFromZero</summary>
-    public static Result Compute(int periodYear, int periodMonth, DateTime payDate, decimal totalSso)
+    public static Result Compute(int periodYear, int periodMonth, DateTime payDate, decimal totalSso, IReadOnlySet<DateTime>? holidays = null)
     {
-        var deadline = DueDate(periodYear, periodMonth);
+        var deadline = DueDate(periodYear, periodMonth, holidays);
         var pay = payDate.Date;
         if (totalSso <= 0 || pay <= deadline) return new Result(deadline, 0, 0, 0m);
 

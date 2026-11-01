@@ -400,7 +400,7 @@ public class PayrollController : ControllerBase
         return Ok(new ApiResponse<PayrollRunResponse>(true,
             await _service.SettleSocialSecurityAsync(companyId, runId,
                 request.PayDate, request.BankAccountId, request.BankGlAccountId, request.FilingNumber,
-                User.Identity?.Name ?? "")));
+                User.Identity?.Name ?? "", request.LateSurcharge)));
     }
 
     /// <summary>รอบ 200 (D-04): preview วันครบกำหนด + เงินเพิ่ม §49 ตามวันที่จ่ายที่เลือก — สูตรเดียวกับตอนนำส่งจริง
@@ -413,7 +413,7 @@ public class PayrollController : ControllerBase
         if (month is < 1 or > 12 || year < 2000)
             return BadRequest(new ApiResponse<Accounting.Helpers.SsoLateFee.Result>(false, null, "งวดไม่ถูกต้อง"));
         return Ok(new ApiResponse<Accounting.Helpers.SsoLateFee.Result>(true,
-            Accounting.Helpers.SsoLateFee.Compute(year, month, payDate, amount)));
+            Accounting.Helpers.SsoLateFee.Compute(year, month, payDate, amount, await _service.SsoHolidaysAsync())));
     }
 
     [HttpGet("runs/{runId:guid}/employees/{employeeId:guid}")]

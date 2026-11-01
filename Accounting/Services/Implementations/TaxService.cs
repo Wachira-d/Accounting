@@ -2207,6 +2207,33 @@ public partial class TaxService : ITaxService
             }
             catch { addBack += nd.NonDeductibleAmount; }   // JSON เพี้ยน → fallback ทั้งก้อน
         }
+
+        // ── รอบ 220 (คำตัดสินข้อ 181 · ฝ่ายค้านข้อ 3): เงินเพิ่ม/เบี้ยปรับ/ค่าปรับจากการนำส่งภาษี-ประกันสังคม = §65 ตรี(6) ──
+        // ลงเป็น JE ตรง (Dr ผังค่าปรับ) ไม่มีเอกสาร ⇒ ลูปข้างบนมองไม่เห็น · คิดจาก "บรรทัดค่าใช้จ่ายที่ลงบัญชีจริง" ของ JE นำส่ง
+        // (+ ใบกลับรายการของมัน) ตามวันที่ลงบัญชี — ฐานเดียวกับรายจ่ายใน ภ.ง.ด.50 (WherePeriodActivity: Posted + Reversed) ⇒
+        // กลับรายการเดือนเดียวกัน = สุทธิ 0 · ยกเลิกปีถัดไป = ปีเดิมบวกกลับเต็ม ปีถัดไปติดลบเท่ากัน (ไม่ย้อนลบปีที่ยื่นแล้ว)
+        // แหล่ง JE: แถวนำส่ง **รวมที่ยกเลิกแล้ว** (IgnoreQueryFilters — ยกเลิก = IsDeleted แต่ JE เดิมยังอยู่ในสมุด) + เครื่องหมายบนรอบเงินเดือน
+        var remitJeIds = await _db.StatutoryRemittances.IgnoreQueryFilters().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.JournalEntryId != null
+                && (r.LateFee > 0 || r.Penalty > 0 || r.OtherFine > 0))
+            .Select(r => r.JournalEntryId!.Value)
+            .ToListAsync();
+        var payrollMarks = await _db.PayrollRuns.IgnoreQueryFilters().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.SsoLateFeeJournalEntryIds != null)
+            .Select(r => r.SsoLateFeeJournalEntryIds)
+            .ToListAsync();
+        var penaltyJeIds = remitJeIds
+            .Concat(payrollMarks.SelectMany(m => Accounting.Helpers.LatePaymentPenaltyPolicy.ParseJournalIds(m)))
+            .Distinct().ToList();
+        if (penaltyJeIds.Count > 0)
+            addBack += await _db.JournalEntryLines.AsNoTracking()
+                .WherePeriodActivity()
+                .Where(l => l.JournalEntry.CompanyId == companyId
+                    && (penaltyJeIds.Contains(l.JournalEntryId)
+                        || (l.JournalEntry.OriginalEntryId != null && penaltyJeIds.Contains(l.JournalEntry.OriginalEntryId.Value)))
+                    && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate
+                    && l.Account!.AccountType == AccountType.Expense)
+                .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
         return addBack;
     }
 

@@ -47,9 +47,10 @@ public class StatutoryRemittanceController : ControllerBase
     [HttpGet("preview")]
     public async Task<ActionResult<ApiResponse<PendingRemittanceItem>>> Preview(
         Guid companyId, [FromQuery] string type, [FromQuery] int year,
-        [FromQuery] int month, [FromQuery] DateTime? payDate = null)
+        [FromQuery] int month, [FromQuery] DateTime? payDate = null, [FromQuery] bool paper = false)
     {
-        var item = await _service.PreviewAsync(companyId, type, year, month, payDate ?? DateTime.UtcNow);
+        // paper = ยื่นแบบกระดาษ (ไม่มีสิทธิ์ขยาย e-Filing — รอบ 220 ฝ่ายค้านข้อ 1)
+        var item = await _service.PreviewAsync(companyId, type, year, month, payDate ?? DateTime.UtcNow, paper);
         return item == null
             ? NotFound(new ApiResponse<PendingRemittanceItem>(false, null, "ไม่มียอดค้างของงวดนี้"))
             : Ok(new ApiResponse<PendingRemittanceItem>(true, item));

@@ -400,4 +400,8 @@ public class CompanySettings : TenantEntity
     // ── บัญชีทิปพนักงานค้างจ่าย (POS รับทิป Cr · TipPayout จ่าย Dr) ──
     // null = ใช้ค่าแนะนำจาก Helpers/TipAccountResolver (21814 → 21819) — ห้ามตก 216xx เงินมัดจำ
     public string? PosTipPayableAccountCode { get; set; }
+
+    // ── ผังค่าใช้จ่ายเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ตอนนำส่งภาษี-ประกันสังคม (รอบ 220 · คำตัดสินข้อ 181) ──
+    // null = ค่าแนะนำ 54820 (สร้างให้ถ้าไม่มี) · ตัวหาตัวเดียว Helpers/PenaltyExpenseAccount · รายจ่ายต้องห้าม §65 ตรี(6)
+    public string? PenaltyExpenseAccountCode { get; set; }
 }

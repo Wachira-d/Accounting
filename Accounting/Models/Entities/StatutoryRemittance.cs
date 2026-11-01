@@ -21,8 +21,21 @@ public class StatutoryRemittance : TenantEntity
     /// <summary>ยอดเงินสมทบ/ภาษีที่นำส่ง (ไม่รวมเงินเพิ่ม/ค่าปรับ)</summary>
     public decimal Amount { get; set; }
 
-    /// <summary>เงินเพิ่ม/ค่าปรับนำส่งช้า (ปกส. §49 2%/เดือน ฯลฯ)</summary>
+    /// <summary>เงินเพิ่มนำส่งช้า (ปกส. ม.49 2%/เดือน · ม.27/ม.89/1 1.5%/เดือน) — ยอดที่ลงบัญชีจริง (ผู้ใช้แก้ได้)</summary>
     public decimal LateFee { get; set; }
+
+    /// <summary>รอบ 220 (คำตัดสินข้อ 181): เบี้ยปรับ (เช่น ภ.พ.30 ม.89 ที่ลดตามระเบียบ) — ยอดที่ลงบัญชีจริง · แถวเดิม = 0</summary>
+    public decimal Penalty { get; set; }
+
+    /// <summary>รอบ 220: ค่าปรับอาญา/ค่าปรับอื่น (เปรียบเทียบปรับ ม.35 ฯลฯ) — ระบบไม่เดา ผู้ใช้กรอก · แถวเดิม = 0</summary>
+    public decimal OtherFine { get; set; }
+
+    /// <summary>รอบ 220: เงินเพิ่ม/เบี้ยปรับที่ระบบ<b>เสนอ</b> ณ วันที่จ่าย (Helpers/LatePaymentPenaltyPolicy) — เก็บคู่ยอดจริงเพื่อให้ตรวจย้อนได้ว่าผู้ใช้แก้ไหม · null = แถวก่อนรอบ 220</summary>
+    public decimal? SuggestedLateFee { get; set; }
+    public decimal? SuggestedPenalty { get; set; }
+
+    /// <summary>รอบ 220 ฝ่ายค้านข้อ 1: ผู้ใช้แจ้งว่ายื่นแบบกระดาษ (ค่าเสนอคิดจากวันกระดาษ) — แถวเดิม = false</summary>
+    public bool PaperFiling { get; set; }
 
     public DateTime PayDate { get; set; }
 

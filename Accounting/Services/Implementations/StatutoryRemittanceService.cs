@@ -437,7 +437,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             .Select(r => new RemittanceHistoryItem(r.Id, r.RemittanceType, Meta(r.RemittanceType).Form,
                 r.PeriodYear, r.PeriodMonth, r.Amount, r.LateFee, r.PayDate, r.FilingNumber,
                 r.JournalEntryId, r.ReceiptAttachmentId, r.CreatedBy, r.CreatedAt,
-                Pp36Recognized: r.RemittanceType == "VatPp36" ? Pp36RecognizedOf(r) : (bool?)null))
+                Pp36Recognized: r.RemittanceType == "VatPp36" ? Pp36RecognizedOf(r) : (bool?)null,
+                Penalty: r.Penalty, OtherFine: r.OtherFine))
             .ToList();
 
         pending = pending.OrderByDescending(p => p.IsOverdue)
@@ -495,18 +496,15 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // "ยื่นแบบแล้ว" ตัดธงเลยกำหนดออก — ยอดยังค้างได้ (ยังไม่จ่ายเงิน) แต่ผู้ใช้
         // ไม่ได้ทำผิดกำหนดยื่น จึงห้ามขึ้นสีแดง/นับใน OverdueCount
         var overdue = today > warnBy.Date && reportFiledAt == null;
-        // เงินเพิ่ม preview: ปกส. (§49 2%/เดือน) · ภ.พ.36 (§89/1 1.5%/เดือนหรือเศษ — คำตัดสินข้อ 135 · ค่าแนะนำ แก้ได้ตอนนำส่ง)
-        var lateFee = type switch
-        {
-            "SsoSps110" => PayrollService.ComputeSsoLateFee(year, month, today, amount),
-            "VatPp36" => Accounting.Helpers.Pp36Lifecycle.SuggestedSurcharge(amount, warnBy, today),
-            _ => 0m,
-        };
+        // เงินเพิ่ม/เบี้ยปรับ preview ทุกแบบ — ตัวตั้งตัวเดียว Helpers/LatePaymentPenaltyPolicy (รอบ 220 · คำตัดสินข้อ 181) · ค่าเสนอ แก้ได้ตอนนำส่ง
+        // (เดิมเฉพาะ ปกส. ม.49 + ภ.พ.36 ม.89/1 · ภ.พ.30/ภ.ง.ด. = 0 ตายตัว)
+        var sug = SuggestPenalties(type, year, month, amount, today, filedAt: reportFiledAt);
         return new PendingRemittanceItem(type, label, form, year, month, amount,
-            paper, efiling, overdue, lateFee, code,
+            paper, efiling, overdue, sug.Surcharge, code,
             employee, employer, payeeCount, outputVat, inputVat, relatedRunId,
             reportFiledAt, unissuedCount, unissuedAmount,
-            WarnDueDate: warnBy, WarnNote: Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type, (paper, efiling), today));
+            WarnDueDate: warnBy, WarnNote: Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type, (paper, efiling), today),
+            PenaltyPreview: sug.Penalty, LateFeeNote: sug.SurchargeNote, PenaltyNote: sug.PenaltyNote, FineNote: sug.FineNote);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1124,8 +1122,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
         var incomplete = status is "Pending" or "Partial" or "Unknown";
         var overdueFlag = incomplete && today > warnBy.Date;
-        var lateFee = (overdueFlag && type == "SsoSps110" && amount > 0)
-            ? PayrollService.ComputeSsoLateFee(y, m, today, amount)
+        // เงินเพิ่มประมาณการถ้าจ่ายวันนี้ — ทุกแบบจากตัวตั้งเดียวกับหน้านำส่ง (รอบ 220 · เดิมเฉพาะ ปกส.)
+        var lateFee = (overdueFlag && amount > 0)
+            ? SuggestPenalties(type, y, m, amount, today).Surcharge
             : 0m;
         if (overdueFlag)
             hint += $" · เลยกำหนดมาแล้ว {Math.Abs(daysToDue)} วัน";
@@ -1136,21 +1135,16 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     }
 
     public async Task<PendingRemittanceItem?> PreviewAsync(Guid companyId, string remittanceType,
-        int periodYear, int periodMonth, DateTime payDate)
+        int periodYear, int periodMonth, DateTime payDate, bool paperFiling = false)
     {
         var dash = await GetDashboardAsync(companyId, 18);
         var item = dash.Pending.FirstOrDefault(p => p.RemittanceType == remittanceType
             && p.PeriodYear == periodYear && p.PeriodMonth == periodMonth);
         if (item == null) return null;
-        // คำนวณเงินเพิ่มใหม่ตาม payDate ที่เลือก (ปกส. §49 · ภ.พ.36 §89/1)
-        if (remittanceType == "SsoSps110")
-        {
-            var lf = PayrollService.ComputeSsoLateFee(periodYear, periodMonth, payDate, item.Amount);
-            item = item with { LateFeePreview = lf };
-        }
-        else if (remittanceType == "VatPp36")
-            item = item with { LateFeePreview = Pp36SurchargeFor(periodYear, periodMonth, item.Amount, payDate) };
-        return item;
+        // คำนวณเงินเพิ่ม/เบี้ยปรับใหม่ตาม payDate ที่เลือก — ทุกแบบ (ปุ่ม "คำนวณให้" บนหน้านำส่ง · ตัวเดียวกับตอนลงบัญชี)
+        var sug = SuggestPenalties(remittanceType, periodYear, periodMonth, item.Amount, payDate, paperFiling, item.ReportFiledAt);
+        return item with { LateFeePreview = sug.Surcharge, PenaltyPreview = sug.Penalty,
+            LateFeeNote = sug.SurchargeNote, PenaltyNote = sug.PenaltyNote, FineNote = sug.FineNote };
     }
 
     public async Task<RemitResult> RemitAsync(Guid companyId, RemitRequest req, string performedBy)
@@ -1220,16 +1214,17 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 Accounting.Helpers.WhtUnissuedCertGate.RuleCode);
 
         var amount = item.Amount;
-        var lateFee = !req.IncludeLateFee ? 0m : type switch
-        {
-            "SsoSps110" => PayrollService.ComputeSsoLateFee(req.PeriodYear, req.PeriodMonth, req.PayDate, amount),
-            // §89/1 (คำตัดสินข้อ 135) — ค่าที่ระบบเสนอ แก้ได้ (ผู้ใช้เห็นยอดก่อนกด) · ไม่บังคับ
-            "VatPp36" => req.LateSurcharge ?? Pp36SurchargeFor(req.PeriodYear, req.PeriodMonth, amount, req.PayDate),
-            _ => 0m,
-        };
-        if (lateFee < 0m)
-            throw new Accounting.Helpers.BusinessRuleException("เงินเพิ่มต้องไม่ติดลบ", "REMIT-LATEFEE-NEGATIVE");
-        lateFee = Math.Round(lateFee, 2, MidpointRounding.AwayFromZero);
+        // ══ เงินเพิ่ม / เบี้ยปรับ / ค่าปรับ (รอบ 220 · คำตัดสินข้อ 181) ══ ทุกแบบ — ค่าที่ผู้ใช้เห็น/แก้บนจอชนะ ·
+        // ไม่ส่งเงินเพิ่ม = ปกส./ภ.พ.36 ใช้ค่าเสนอ (เดิม) · แบบอื่น 0 · ไม่ส่งเบี้ยปรับ/ค่าปรับ = 0 · ติดลบ = ปฏิเสธ
+        // ⚠️ ภ.พ.30 คิดจากยอดที่ต้องชำระสุทธิ (amount = NetVat) — งวดเครดิตไม่มียอดค้าง จึงไม่ถึงบรรทัดนี้
+        var suggested = SuggestPenalties(type, req.PeriodYear, req.PeriodMonth, amount, req.PayDate, req.PaperFiling, item.ReportFiledAt);
+        var applied = Accounting.Helpers.LatePaymentPenaltyPolicy.Resolve(type, suggested, req.IncludeLateFee,
+            req.LateSurcharge, req.Penalty, req.OtherFine);
+        var lateFee = applied.Surcharge;
+        // ผังค่าปรับตัวเดียว (ตั้งค่าได้ · ค่าแนะนำ 54820 · สร้างให้ถ้าไม่มี) — เดิม ปกส. ไม่พบผัง ⇒ ทิ้งเงินเพิ่มเงียบ + ตก 58xxx (ภาษีเงินได้)
+        var penaltyAcc = applied.Total > 0
+            ? await Accounting.Helpers.PenaltyExpenseAccount.ResolveOrCreateAsync(_db, companyId, performedBy)
+            : null;
 
         // ผัง Cr (แหล่งเงิน)
         var bankGlId = await ResolveBankGlAsync(companyId, req.BankAccountId, req.BankGlAccountId);
@@ -1273,28 +1268,20 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 lines.Add(new JournalLineRequest(inputAcc.Id, 0, plan.ClearInputVat, desc));
             }
 
-            lines.Add(new JournalLineRequest(bankGlId, 0, plan.PayFromBank,
+            if (penaltyAcc != null)
+                foreach (var (amt, desc) in Accounting.Helpers.LatePaymentPenaltyPolicy.JournalLines(form, applied, suggested.SurchargeReference))
+                    lines.Add(new JournalLineRequest(penaltyAcc.Id, amt, 0, desc));
+            lines.Add(new JournalLineRequest(bankGlId, 0, plan.PayFromBank + applied.Total,
                 $"จ่ายภาษีมูลค่าเพิ่ม {req.PeriodMonth:D2}/{req.PeriodYear}"));
         }
         else
         {
             lines.Add(new JournalLineRequest(payable.Id, amount, 0, $"ล้าง{label}ค้างจ่าย (Dr {payableCode})"));
-            if (lateFee > 0)
-            {
-                var feeAcc = await ResolveLateFeeAccountAsync(companyId);
-                if (feeAcc != null)
-                    lines.Add(new JournalLineRequest(feeAcc.Id, lateFee, 0, isPp36
-                        // ผังค่าปรับ/เงินเพิ่ม (54820) = รายจ่ายต้องห้าม §65 ตรี(6) — บวกกลับ ภ.ง.ด.50
-                        ? "เงินเพิ่มนำส่ง ภ.พ.36 ช้า §89/1 (1.5%/เดือนหรือเศษ) — รายจ่ายต้องห้าม §65 ตรี(6)"
-                        : "เงินเพิ่มนำส่งช้า (§49 2%/เดือน)"));
-                else if (isPp36)
-                    // ห้ามทิ้งยอดเงียบ (เดิมเส้น ปกส. ตั้ง 0 เมื่อไม่พบผัง) — ผู้ใช้กรอก/เห็นยอดแล้ว ต้องบอกทางไปต่อ
-                    throw new Accounting.Helpers.BusinessRuleException(
-                        $"ไม่พบผังค่าปรับ/เงินเพิ่ม (54xxx ชื่อมีคำว่า \"เงินเพิ่ม\" หรือ \"ค่าปรับ\" เช่น 54820) สำหรับเงินเพิ่ม §89/1 {lateFee:N2} บาท — "
-                        + "สร้างผังที่หน้า “ผังบัญชี” ก่อน หรือนำส่งโดยไม่ลงเงินเพิ่ม (ใส่ 0)", "PP36-LATEFEE-NO-ACCOUNT");
-                else lateFee = 0m;
-            }
-            lines.Add(new JournalLineRequest(bankGlId, 0, amount + lateFee, $"นำส่ง{form} {req.PeriodMonth:D2}/{req.PeriodYear}"));
+            // ผังค่าปรับ/เงินเพิ่ม (54820) = รายจ่ายต้องห้าม §65 ตรี(6) — บวกกลับ ภ.ง.ด.50 (TaxService.ComputeSection65TerAddBackAsync อ่านจากแถวนำส่ง)
+            if (penaltyAcc != null)
+                foreach (var (amt, desc) in Accounting.Helpers.LatePaymentPenaltyPolicy.JournalLines(form, applied, suggested.SurchargeReference))
+                    lines.Add(new JournalLineRequest(penaltyAcc.Id, amt, 0, desc));
+            lines.Add(new JournalLineRequest(bankGlId, 0, amount + applied.Total, $"นำส่ง{form} {req.PeriodMonth:D2}/{req.PeriodYear}"));
         }
 
         // ══ ด่านคู่ (ค่าจ้าง, เงินสมทบ) ก่อนเงินออก — ม.33/ม.46 ══
@@ -1377,6 +1364,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 PeriodMonth = req.PeriodMonth,
                 Amount = amount,
                 LateFee = lateFee,
+                Penalty = applied.Penalty,
+                OtherFine = applied.OtherFine,
+                SuggestedLateFee = suggested.Surcharge,
+                SuggestedPenalty = suggested.Penalty,
+                PaperFiling = req.PaperFiling,
                 PayDate = req.PayDate,
                 BankGlAccountId = bankGlId,
                 JournalEntryId = je.Id,
@@ -1436,8 +1428,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             await _db.SaveChangesAsync();
             await tx.CommitAsync();
 
-            _logger.LogInformation("Remitted {Type} {Month}/{Year} amount {Amt} (+fee {Fee}) → JE {Je}",
-                type, req.PeriodMonth, req.PeriodYear, amount, lateFee, je.Id);
+            _logger.LogInformation("Remitted {Type} {Month}/{Year} amount {Amt} (+fee {Fee} +penalty {Pen} +fine {Fine}) → JE {Je}",
+                type, req.PeriodMonth, req.PeriodYear, amount, lateFee, applied.Penalty, applied.OtherFine, je.Id);
 
             // ── ภ.พ.36: สร้าง "รายงานภาษี" ของงวดให้อัตโนมัติ ───────────────
             // ผู้ใช้เจอจริง: นำส่งไปแล้วหลายเดือน แต่เปิดแท็บ ภ.พ.36 ในหน้ารายงาน
@@ -1450,7 +1442,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 : "";
 
             return new RemitResult(rec.Id, je.Id, amount, lateFee,
-                $"นำส่ง{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} สำเร็จ ({amount + lateFee:N2} บาท){reportNote}");
+                $"นำส่ง{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} สำเร็จ ({amount + applied.Total:N2} บาท"
+                + (applied.Total > 0 ? $" · ภาษี {amount:N2} + เงินเพิ่ม {applied.Surcharge:N2} + เบี้ยปรับ {applied.Penalty:N2} + ค่าปรับ {applied.OtherFine:N2}" : "")
+                + $"){reportNote}", applied.Penalty, applied.OtherFine);
         }
         catch
         {
@@ -1490,10 +1484,13 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
     }
 
-    /// <summary>เงินเพิ่ม §89/1 ที่ระบบเสนอ — วันครบกำหนดจากตาราง <c>TaxFilingDeadline.WarnBy</c> ตัวเดียว (ภ.พ.36 = วันกระดาษ เลื่อนพ้นวันหยุด)</summary>
-    private decimal Pp36SurchargeFor(int year, int month, decimal amount, DateTime payDate)
-        => Accounting.Helpers.Pp36Lifecycle.SuggestedSurcharge(amount,
-            Accounting.Helpers.TaxFilingDeadline.WarnBy("VatPp36", year, month, _holidays), payDate);
+    /// <summary>เงินเพิ่ม/เบี้ยปรับที่ระบบเสนอ — ตัวตั้งตัวเดียว <see cref="Accounting.Helpers.LatePaymentPenaltyPolicy"/> (รอบ 220) ·
+    /// วันครบกำหนดจาก <c>TaxFilingDeadline.WarnBy</c> + วันหยุดราชการชุดเดียวกับป้ายเลยกำหนด (ปกส. = <c>SsoLateFee.DueDate</c> ตัวเดียวกับหน้าเงินเดือน)</summary>
+    private Accounting.Helpers.LatePaymentPenaltyPolicy.Suggestion SuggestPenalties(string type, int year, int month, decimal amount, DateTime payDate,
+        bool paperFiling = false, DateTime? filedAt = null)
+    {
+        return Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest(type, year, month, amount, payDate, _holidays, paperFiling, filedAt);
+    }
 
     /// <summary>
     /// <b>รับรู้ภาษีซื้อ ภ.พ.36</b> หลังได้ใบเสร็จกรมสรรพากร — JE: Dr 11610 ภาษีซื้อ / Cr 11640 ยังไม่ถึงกำหนด + ประทับวันเคลมลงเอกสาร
@@ -1840,6 +1837,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 OldValues = System.Text.Json.JsonSerializer.Serialize(new
                 {
                     rec.RemittanceType, rec.PeriodYear, rec.PeriodMonth, rec.Amount, rec.LateFee,
+                    rec.Penalty, rec.OtherFine,   // รอบ 220 ฝ่ายค้าน — ยอดค่าปรับที่ถูกกลับรายการต้องตรวจย้อนได้
                     JournalEntryId = jeId, rec.FilingNumber,
                 }),
                 NewValues = System.Text.Json.JsonSerializer.Serialize(new
@@ -1884,15 +1882,6 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     private async Task<ChartOfAccount?> ResolveAccountAsync(Guid companyId, string code) =>
         await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.AccountCode == code && !a.IsDeleted);
-
-    private async Task<ChartOfAccount?> ResolveLateFeeAccountAsync(Guid companyId) =>
-        await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-            && a.AccountCode.StartsWith("54")
-            && (a.AccountName.Contains("เงินเพิ่ม") || a.AccountName.Contains("ค่าปรับ")))
-        ?? await _db.ChartOfAccounts.DefaultFallbackCandidates(_db).FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.IsActive && !a.IsDeleted
-            && a.AccountCode.StartsWith("58"));
 
     /// <summary>แหล่งเงินของการนำส่ง — ตัวหาตัวเดียวของระบบ <see cref="MoneyAccountDirectory.ResolveSourceGlAsync"/> (2026-10-14 · PC#6/#17 · ID#19):
     /// ผังที่เลือกตรง → บัญชีธนาคาร → แหล่งเงินเริ่มต้นของบริษัท (ตรวจบริษัท/เปิดใช้/ลงรายการได้) → ผังเงินสด/ธนาคารรหัสต่ำสุด ·
