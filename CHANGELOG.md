@@ -5974,4 +5974,4 @@ _รอบ 220 (2026-11-01 · คำตัดสินข้อ 181 · `erp-revi
 แก้: ตัวตั้งเดียว `Helpers/LatePaymentPenaltyPolicy` (ม.49 · ม.27 · ม.89/1 · เบี้ยปรับ ภ.พ.30 2/5/10/20% ต้องยืนยัน · ค่าปรับอาญาไม่เดา) + `Helpers/PenaltyExpenseAccount`
 (`CompanySettings.PenaltyExpenseAccountCode` · 54820 · สร้างให้) · สามช่อง + ปุ่ม "คำนวณให้" ทุกแบบ · บรรทัด JE แยกก้อน · `StatutoryRemittance.Penalty/OtherFine/Suggested*` (ADD COLUMN) ·
 บวกกลับ ภ.ง.ด.50/51 จากแถวนำส่ง (`AddBackTotal` ไม่นับซ้ำ) · `required_call_site_check` +6 กติกา/แก้ 2 · เทสต์ `LatePaymentPenaltyPolicyTests` + `Db/RemittancePenaltyPostingDbTests` ·
-ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>_
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 12b1b63e_

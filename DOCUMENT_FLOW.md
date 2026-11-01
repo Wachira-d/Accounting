@@ -6447,7 +6447,7 @@ retention ช่วงนี้เทียบช่วงก่อน + เส�
 
 _Last verified against codebase: 2026-11-01 (รอบ 220 · คำตัดสินข้อ 181 — §5.3a-2 เงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ทุกแบบในหน้านำส่ง · `Helpers/LatePaymentPenaltyPolicy` ·
 ผังค่าปรับตัวเดียว `Helpers/PenaltyExpenseAccount` (ตั้งค่าได้ · สร้าง 54820) · บวกกลับ §65 ตรี(6) จากแถวนำส่ง — เทสต์ `LatePaymentPenaltyPolicyTests` ·
-`Db/RemittancePenaltyPostingDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <sha ในคอมมิตถัดไป>)_
+`Db/RemittancePenaltyPostingDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 12b1b63e)_
 
 _ก่อนหน้า: 2026-10-01 (รอบ 201 ทีม PR2 ฝ่ายค้านรอบสาม — บันทึกนำส่ง ภ.ง.ด. นับเป็นยื่นแล้วเฉพาะ 50 ทวิ/รอบเงินเดือนที่เกิดก่อนเวลานำส่ง (`RemittanceInclusion`) + ข้อความ "อยู่ในการนำส่ง ณ วันที่" · ภ.ง.ด.54 · ล้าง ChangeTracker หลังย้อนธุรกรรมออกใบ (§3.8) — commit 9e51756e)_
 
