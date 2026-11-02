@@ -344,7 +344,9 @@ public partial class CmsBookingService : ICmsBookingService
             MemberOnly = BookingAccessRule.RequiresMember(site.Row?.RequireMemberToBook ?? false, s.MemberOnly),
             // รอบ 207: โหมดที่มีผลจริง (ไซต์ปิดจัดสรรผู้ให้บริการ ⇒ None) — หน้าจองของลูกค้าอ่านช่องนี้ · ResourceMode = ค่าที่ตั้ง (ฟอร์มแก้ไข)
             EffectiveResourceMode = rules.ResourceMode,
-            FormFields = BookingFormFields.Parse(site.Row?.FormFieldsJson),
+            // รอบ 222: ช่องมาตรฐาน (ค่าของไซต์ — ไม่ส่งรายการช่องเพิ่มเองของทุกบริการ) + ช่องเพิ่มเองที่ลูกค้าเห็นของบริการนี้ (server กรองขอบเขต/ช่องซ่อน)
+            FormFields = BookingFormFields.Parse(site.Row?.FormFieldsJson) with { CustomFields = null },
+            CustomFields = BookingFormFields.FieldsForService(BookingFormFields.Parse(site.Row?.FormFieldsJson), s.Id).ToList(),
             EffectiveDurationMinutes = rules.DurationMinutes,
             Resources = rules.ResourceMode == BookingResourceMode.None ? new() : resources,
             Schedule = ScheduleDtoOf(slots.Select(BookingSlotEngine.RowOf), s.MaxCapacity),
@@ -442,6 +444,7 @@ public partial class CmsBookingService : ICmsBookingService
             ProviderStrategyOptions = BookingProviderAllocation.StrategyOptions().ToList(),
             FormFields = BookingFormFields.Parse(ctx.Row?.FormFieldsJson),
             FormFieldOptions = BookingFormFields.RequirementOptions().ToList(),
+            CustomFieldTypeOptions = CustomFormFields.TypeOptions().ToList(),   // รอบ 222
             CompletionDocument = ctx.Row?.CompletionDocument ?? BookingCompletionDocument.None,
             CompletionDocumentOptions = BookingDocumentFlow.CompletionOptions().ToList(),
             DocumentFlow = BookingDocumentFlow.Describe(
@@ -525,9 +528,21 @@ public partial class CmsBookingService : ICmsBookingService
         // รอบ 207
         if (request.ProviderRecommendStrategy is BookingRecommendStrategy st && !Enum.IsDefined(st)) errs.Add("ตรรกะแนะนำผู้ให้บริการไม่ถูกต้อง");
         if (request.CompletionDocument is BookingCompletionDocument cd && !Enum.IsDefined(cd)) errs.Add("เอกสารตอนให้บริการเสร็จไม่ถูกต้อง");
-        if (request.FormFields != null && BookingFormFields.ValidateConfig(request.FormFields) is string ffErr) errs.Add(ffErr);
-        if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), "CMS-BOOKING-SETTINGS");
         var row = await _db.SiteBookingSettings.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted);
+        // รอบ 222: ช่องเพิ่มเอง — CustomFields null = คงรายการเดิม (ผู้เรียกที่ส่งแค่ เบอร์/อีเมล/หมายเหตุ ไม่ลบช่องของเจ้าของเงียบ ๆ) · [] = ลบทั้งหมด ·
+        // ขอบเขตบริการต้องเป็นบริการของเว็บนี้ที่ยังไม่ถูกลบ
+        var formFields = request.FormFields == null ? null
+            : request.FormFields.CustomFields == null
+                ? request.FormFields with { CustomFields = BookingFormFields.Parse(row?.FormFieldsJson).CustomFields }
+                : request.FormFields;
+        if (formFields != null)
+        {
+            // คงรายการเดิม ⇒ ไม่ตรวจขอบเขตบริการซ้ำ (บริการที่ถูกลบภายหลังต้องไม่ทำให้บันทึกค่าตั้งอื่นไม่ได้) · ส่งรายการใหม่ ⇒ ตรวจครบ
+            var siteServiceIds = request.FormFields!.CustomFields == null ? null : await _db.SiteBookingServices.AsNoTracking()
+                .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted).Select(x => x.Id).ToListAsync();
+            if (BookingFormFields.ValidateConfig(formFields, siteServiceIds) is string ffErr) errs.Add(ffErr);
+        }
+        if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), "CMS-BOOKING-SETTINGS");
         if (row == null)
         {
             row = new SiteBookingSettings { CompanyId = companyId, SiteId = siteId, CreatedBy = userId };
@@ -550,7 +565,7 @@ public partial class CmsBookingService : ICmsBookingService
         // รอบ 207 — null = คงค่าเดิม (ผู้เรียกเก่าไม่รีเซ็ตเงียบ)
         if (request.ProviderAllocationEnabled is bool providers) row.ProviderAllocationEnabled = providers;
         if (request.ProviderRecommendStrategy is BookingRecommendStrategy strategy) row.ProviderRecommendStrategy = strategy;
-        if (request.FormFields != null) row.FormFieldsJson = BookingFormFields.Serialize(request.FormFields);
+        if (formFields != null) row.FormFieldsJson = BookingFormFields.Serialize(formFields);
         if (request.CompletionDocument is BookingCompletionDocument completion) row.CompletionDocument = completion;
         if (request.RequireMemberToBook is bool memberOnly) row.RequireMemberToBook = memberOnly;   // รอบ 210 — null = คงค่าเดิม
         if (request.DefaultResourceMode is BookingResourceMode defMode) row.DefaultResourceMode = defMode;   // รอบ 215 — null = คงค่าเดิม
@@ -943,13 +958,19 @@ public partial class CmsBookingService : ICmsBookingService
         // ด่านทำงานเมื่อเว็บตั้งค่าฟอร์มแล้วเท่านั้น (FormFieldsJson ไม่ null) — เว็บที่ไม่เคยตั้ง = เซิร์ฟเวอร์ไม่บังคับเหมือนเดิม
         // (ผู้เรียก API/ช่องทางอื่นที่ไม่ส่งเบอร์ไม่พังเงียบหลังอัปเดต · หน้าเว็บเดิมยังบังคับชื่อ+เบอร์ที่ฝั่งฟอร์ม)
         var formJson = (await SiteContextAsync(companyId, siteId)).Row?.FormFieldsJson;
-        if (formJson != null && !knownCustomer && !await IsCompanyStaffAsync(companyId, userId))
+        var staffActor = await IsCompanyStaffAsync(companyId, userId);
+        if (formJson != null && !knownCustomer && !staffActor)
         {
             var formCfg = BookingFormFields.Parse(formJson);
             var (formErrs, clean) = BookingFormFields.Check(formCfg, request.GuestName, request.GuestPhone, request.GuestEmail, request.CustomerNotes);
             if (formErrs.Count > 0) throw new BusinessRuleException(string.Join(" · ", formErrs), BookingFormFields.RuleCode);
             request.GuestName = clean.Name; request.GuestPhone = clean.Phone; request.GuestEmail = clean.Email; request.CustomerNotes = clean.Notes;
         }
+        // รอบ 222: ช่องที่เจ้าของเพิ่มเอง — ทุกทางเข้า (แขก · สมาชิก · พนักงานจองแทน) ตรวจที่ตัวตัดสินเดียว ก่อนบันทึกอะไร ·
+        // พนักงานจองแทน = ไม่บังคับช่องบังคับ (walk-in) แต่ค่าที่ส่งต้องถูกรูป · ส่งคีย์ของช่องที่ไม่แสดง/บริการอื่น = ไม่เก็บ
+        var (customErrs, customFieldsJson) = BookingFormFields.CheckCustom(BookingFormFields.Parse(formJson), svc.Id, request.CustomFields,
+            byStaff: staffOnBehalf || staffActor);
+        if (customErrs.Count > 0) throw new BusinessRuleException(string.Join(" · ", customErrs), BookingFormFields.RuleCode);
 
         // รอบ 209 P6 (ฑ): ด่านยินยอม PDPA ก่อนบันทึก (พนักงาน/ลูกค้าที่ยินยอมไว้แล้วยกเว้น — ตัวตัดสินเดียว CmsDataConsent) ·
         // ติ๊กแล้ว ⇒ PdpaConsentRecord บันทึกพร้อมการจอง
@@ -969,7 +990,7 @@ public partial class CmsBookingService : ICmsBookingService
         // พนักงานจองแทน = ไม่บังคับรอยืนยัน/ไม่ถือรอบ (พนักงานรับเงินเองหน้างาน)
         var payEff = BookingPaymentPolicy.Resolve(svc.BookingType, (await LoadPaymentContextAsync(companyId, siteId)).SiteRule,
             Cms.BookingPaymentContextLoader.ServiceRule(svc));
-        var createdByStaff = staffOnBehalf || await IsCompanyStaffAsync(companyId, userId);
+        var createdByStaff = staffOnBehalf || staffActor;
 
         SiteBooking booking;
         Guid? duplicateOfId = null;
@@ -1042,6 +1063,7 @@ public partial class CmsBookingService : ICmsBookingService
                 TotalAmount = total, DepositAmount = depositAmount,
                 Currency = svc.Currency,
                 CustomerNotes = request.CustomerNotes,
+                CustomFieldsJson = customFieldsJson,   // รอบ 222
                 PublicToken = CmsBookingOnlinePayment.NewPublicToken(),   // รอบ 205 W2: ลิงก์จ่ายมัดจำ/จัดการการจองของลูกค้า
                 CreatedBy = userId
             };
@@ -1820,6 +1842,7 @@ public partial class CmsBookingService : ICmsBookingService
                 BookingType = b.BookingService.BookingType,
                 ErpDocumentType = b.ErpDocumentType, ErpDocumentId = b.ErpDocumentId,
                 CustomerNotes = b.CustomerNotes, InternalNotes = b.InternalNotes,
+                CustomFieldsRaw = b.CustomFieldsJson,   // รอบ 222 — แปลงหลังดึง (CustomFormFields.ParseAnswers)
                 ConfirmedAt = b.ConfirmedAt, CompletedAt = b.CompletedAt,
                 CancelledAt = b.CancelledAt, CreatedAt = b.CreatedAt,
                 ReminderSentAt = b.ReminderSentAt, NotifyLastError = b.NotifyLastError,
@@ -1829,6 +1852,8 @@ public partial class CmsBookingService : ICmsBookingService
         // รอบ 207: โหมดที่มีผลจริง (ไซต์ปิดจัดสรรผู้ให้บริการ ⇒ None) · ผู้ให้บริการหลายคน/สัดส่วน (Assignments.cs)
         if (resp != null)
         {
+            resp.CustomFields = CustomFormFields.ParseAnswers(resp.CustomFieldsRaw).ToList();   // รอบ 222 — คำตอบช่องที่เจ้าของเพิ่มเอง
+            resp.CustomFieldsRaw = null;
             var siteDefaults = await SiteDefaultsAsync(companyId, siteId);
             // รอบ 215: ค่าที่ตั้งบนบริการ (null = ตามค่าเว็บ) → ตัวตัดสินเดียว
             var svcMode = await _db.SiteBookingServices.AsNoTracking()

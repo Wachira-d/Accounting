@@ -56,7 +56,19 @@ public partial class CmsBookingService
             CompanyGatewayConfigured = ctx.CompanyGatewayActive, CompanyGatewayName = ctx.CompanyGatewayName,
             GatewayReady = ctx.GatewayReady, TransferReady = ctx.TransferReady, PromptPayIdValid = ctx.PromptPayValid,
             Problem = BookingPaymentPolicy.SiteSaveProblem(r, ctx.GatewayReady, ctx.TransferReady),
+            ChannelWarnings = ctx.ChannelWarnings,
         };
+        // รอบ 223 (BOOKING_PAYMENT_AUDIT): บัญชีรับโอนของหน้าร้านค้าอยู่ในแถวชนิดอื่น (ไม่ใช่โอน/พร้อมเพย์) — คำสั่งซื้อเห็น แต่การจองไม่อ่านแถวนั้น ⇒ บอกตรง ๆ
+        if (ctx.Transfer == null && ctx.TransferEnabled)
+        {
+            var other = await _db.SitePaymentGateways.AsNoTracking()
+                .Where(g => g.CompanyId == companyId && g.SiteId == siteId && g.IsActive && !g.IsDeleted
+                    && g.GatewayType != PaymentGatewayType.BankTransfer && g.GatewayType != PaymentGatewayType.PromptPay
+                    && (g.BankAccountNumber != null || g.PromptPayId != null))
+                .Select(g => g.Name).FirstOrDefaultAsync();
+            if (other != null)
+                dto.ChannelWarnings.Add($"บัญชีรับโอนของหน้าร้านค้าอยู่ในช่องทาง “{other}” ซึ่งไม่ใช่ชนิดโอน/พร้อมเพย์ — การจองไม่ใช้ช่องนั้น · กรอกเลขบัญชี/พร้อมเพย์ในหัวข้อ “ช่องทางรับเงิน” ด้านล่างแล้วบันทึก");
+        }
         var siteRow = await _db.SiteBookingSettings.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted);
         var services = await _db.SiteBookingServices.AsNoTracking()
@@ -206,6 +218,12 @@ public partial class CmsBookingService
             // นโยบายยกเลิก/คืนเงิน — ข้อความเดียวกับการจองจริง (CreditBookingLink.CancellationPolicy · ริบ ≤ มัดจำ ข้อ 126)
             CancellationPolicy = CreditBookingLink.CancellationPolicy(null, null, svc.FreeCancellationHours, svc.CancellationFeePercent).Text,
             PaymentNote = ctx.PaymentNote,
+            // รอบ 223: ที่มาของยอด + หลังกดจองจะไปขั้นชำระเงิน + ป้ายปุ่ม (ค่าจากตัวตัดสินเดียว — หน้าเว็บแสดงอย่างเดียว)
+            AmountBasis = BookingPaymentPolicy.AmountBasis(eff, total, amount),
+            NextStepNote = BookingPaymentStep.PreviewNextStep(eff.Required && amount > 0m, eff.Mode == BookingPaymentMode.DepositOptional && amount > 0m,
+                ctx.GatewayReady, ctx.TransferReady),
+            SubmitLabel = BookingPaymentStep.SubmitLabel(eff.Required, amount),
+            SubmitLabelIfPay = eff.Mode == BookingPaymentMode.DepositOptional ? BookingPaymentStep.SubmitLabel(true, amount) : null,
         };
     }
 
@@ -227,6 +245,8 @@ public partial class CmsBookingService
         var slipPending = b.SlipUploadedAt != null && b.SlipAttachmentId != null;
         var open = resp.Status is BookingStatus.Pending or BookingStatus.Confirmed;
         var hold = open ? b.PaymentHoldUntil : null;
+        // รอบ 223: ขั้นของลูกค้า (หัวข้อหน้าผลการจอง · ป้ายสถานะ · ขั้นชำระมาก่อนคำยืนยัน) — ตัวตัดสินเดียว BookingPaymentStep
+        var step = BookingPaymentStep.Decide(resp.Status, eff.Mode, due, slipPending, hold);
         resp.Payment = new BookingPaymentInfoDto
         {
             Mode = eff.IsLegacy ? null : eff.Mode.ToString(),
@@ -249,9 +269,14 @@ public partial class CmsBookingService
                 : null,
             Summary = due > 0.005m ? BookingPaymentPolicy.CustomerSummary(eff, due, hold != null) : null,
             PaymentNote = ctx.PaymentNote,
+            AmountBasis = resp.DepositAmount > 0.005m ? BookingPaymentPolicy.AmountBasis(eff, resp.TotalAmount, resp.DepositAmount) : null,
+            Step = step.Kind.ToString(), Headline = step.Headline, StepDetail = step.Detail, StepIcon = step.Icon, PaymentFirst = step.PaymentFirst,
+            // รอบ 223: สลิปที่ยืนยันแล้วยังอยู่ในแฟ้ม (ไฟล์ไม่ถูกลบ) ⇒ พนักงานเปิดดูย้อนหลังได้ (ลิงก์ล็อกอิน + ด่านสิทธิ์ · คำตอบลูกค้าถูกล้างใน ForCustomer)
+            SlipOnFile = b.SlipAttachmentId != null,
             SlipIntentId = slipPending ? b.SlipIntentId : null,
-            SlipFileUrl = slipPending && b.SlipAttachmentId is Guid aid ? CmsMediaUrl.SlipDownloadUrl(companyId, aid) : null,
+            SlipFileUrl = b.SlipAttachmentId is Guid aid ? CmsMediaUrl.SlipDownloadUrl(companyId, aid) : null,
         };
+        if (step.CustomerStatusLabel != null) resp.CustomerStatusLabel = step.CustomerStatusLabel;
         return slipPending;
     }
 

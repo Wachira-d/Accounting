@@ -27,7 +27,8 @@ public sealed record BookingPaymentEffective(
     decimal? MinAmount,
     decimal? MaxAmount,
     int DeadlineMinutes,
-    string? Problem)
+    string? Problem,
+    BookingPaymentModeSource AmountSource = BookingPaymentModeSource.Legacy)
 {
     /// <summary>มีการเก็บเงินล่วงหน้า (ไม่ใช่ปิด)</summary>
     public bool Collects => Mode != BookingPaymentMode.Off;
@@ -79,26 +80,37 @@ public static class BookingPaymentPolicy
     {
         site ??= BookingPaymentRuleInput.None;
         service ??= BookingPaymentRuleInput.None;
-        var serviceAmount = service.FixedAmount != null || service.Percent != null;
         var mode = service.Mode ?? site.Mode;
         if (mode is not BookingPaymentMode m)
         {
             // Legacy: ช่องมัดจำของบริการตามเดิม · ไม่มี min/max/กำหนดเวลา (ไม่เปลี่ยนพฤติกรรมเว็บที่ไม่เคยตั้ง)
             return new BookingPaymentEffective(type == BookingType.PrePayment ? BookingPaymentMode.DepositRequired : BookingPaymentMode.Off,
-                BookingPaymentModeSource.Legacy, service.FixedAmount, service.Percent, null, null, 0, null);
+                BookingPaymentModeSource.Legacy, service.FixedAmount, service.Percent, null, null, 0, null,
+                service.FixedAmount != null || service.Percent != null ? BookingPaymentModeSource.Service : BookingPaymentModeSource.Legacy);
         }
         var source = service.Mode != null ? BookingPaymentModeSource.Service : BookingPaymentModeSource.Site;
-        var fixedAmt = serviceAmount ? service.FixedAmount : site.FixedAmount;
-        var percent = serviceAmount ? service.Percent : site.Percent;
+        // รอบ 223 (BOOKING_PAYMENT_AUDIT): ช่องยอดที่กรอก 0 = "ไม่ได้ตั้ง" (เดิม 0 ของบริการทับ % ของเว็บ ⇒ ลูกค้าไม่ถูกเก็บเงินเงียบ ๆ ·
+        // บาท 0 + % 20 ⇒ ได้ 0 เพราะบาทมาก่อน) — ไม่เก็บมัดจำที่บริการนี้ให้ตั้งโหมด "ไม่รับชำระล่วงหน้า"
+        var svcFixed = Positive(service.FixedAmount);
+        var svcPercent = Positive(service.Percent);
+        var serviceAmount = svcFixed != null || svcPercent != null;
+        var fixedAmt = serviceAmount ? svcFixed : Positive(site.FixedAmount);
+        var percent = serviceAmount ? svcPercent : Positive(site.Percent);
         var deadline = Math.Clamp(service.DeadlineMinutes ?? site.DeadlineMinutes ?? 0, 0, MaxDeadlineMinutes);
+        // รอบ 223 (BOOKING_PAYMENT_AUDIT): ที่มาของ "สูตรยอด" แยกจากที่มาของโหมด — โหมดตามเว็บแต่บริการกรอกมัดจำบาท/% ไว้ ⇒ ยอดของบริการชนะ
+        // (เจ้าของเห็น 50% ที่เว็บ แต่ลูกค้าถูกเก็บ ฿10 ของบริการ) ⇒ ต้องบอกที่มาให้เห็นทั้งหน้าตั้งค่าและลูกค้า
+        var amountSource = serviceAmount ? BookingPaymentModeSource.Service
+            : fixedAmt != null || percent != null ? BookingPaymentModeSource.Site : BookingPaymentModeSource.Legacy;
         var eff = new BookingPaymentEffective(m, source, fixedAmt, percent, service.MinAmount ?? site.MinAmount,
-            service.MaxAmount ?? site.MaxAmount, deadline, null);
+            service.MaxAmount ?? site.MaxAmount, deadline, null, amountSource);
         if (m != BookingPaymentMode.Off && type != BookingType.PrePayment)
             return eff with { Mode = BookingPaymentMode.Off, Problem = TypeMismatchProblem(type) };
         if (m is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional && fixedAmt == null && percent == null)
             return eff with { Problem = "ยังไม่ได้ตั้งยอดมัดจำ (บาท หรือ %) — ลูกค้าจะไม่ถูกเรียกเก็บเงิน" };
         return eff;
     }
+
+    private static decimal? Positive(decimal? v) => v is > 0m ? v : null;
 
     /// <summary>ข้อความ "ชนิดบริการนี้เก็บเงินล่วงหน้าไม่ได้" — ตัวเดียวกับที่ด่านบันทึกบริการใช้</summary>
     private static string TypeMismatchProblem(BookingType type)
@@ -230,7 +242,7 @@ public static class BookingPaymentPolicy
         if (!gatewayReady && !transferReady)
             return $"โหมด “{ModeLabel(m)}” ต้องมีช่องทางชำระอย่างน้อย 1 ทาง — ใส่เลขบัญชี/พร้อมเพย์/รูป QR ในหัวข้อ “ช่องทางรับเงิน” "
                    + "หรือเปิดชำระออนไลน์ (ต้องตั้งค่าระบบรับชำระเงินของบริษัทก่อน)";
-        if (m is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional && site.FixedAmount == null && site.Percent == null)
+        if (m is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional && Positive(site.FixedAmount) == null && Positive(site.Percent) == null)
             return "โหมดมัดจำต้องตั้งยอดมัดจำตั้งต้นของเว็บ (บาท หรือ %) — บริการที่ตั้งยอดเองใช้ของตัวเอง";
         return null;
     }
@@ -278,7 +290,35 @@ public static class BookingPaymentPolicy
             : e.Percent is decimal p ? $"{p.ToString("0.##", CultureInfo.InvariantCulture)}%" : "ยังไม่ได้ตั้งยอด";
         var bounds = (e.MinAmount is decimal mn && mn > 0m ? $" ขั้นต่ำ {Baht(mn)}" : "") + (e.MaxAmount is decimal mx && mx > 0m ? $" สูงสุด {Baht(mx)}" : "");
         var deadline = e.DeadlineMinutes > 0 ? $" · ชำระภายใน {DeadlineText(e.DeadlineMinutes)}" : "";
-        return $"{ModeLabel(e.Mode)} {amount}{bounds}{deadline} ({src})";
+        return $"{ModeLabel(e.Mode)} {amount}{bounds}{deadline} ({src}{AmountSourceNote(e)})";
+    }
+
+    /// <summary>รอบ 223: โหมดตามค่าเว็บ แต่ยอดมัดจำมาจากช่อง "มัดจำ (บาท/%)" ของบริการ ⇒ บอกชัด (เดิมขึ้น "ตามค่าเว็บ" ทั้งที่ยอดไม่ใช่ของเว็บ)</summary>
+    private static string AmountSourceNote(BookingPaymentEffective e)
+        => e.Mode is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional
+           && e.Source == BookingPaymentModeSource.Site && e.AmountSource == BookingPaymentModeSource.Service
+            ? " · ยอดมัดจำใช้ช่อง “มัดจำ (บาท/%)” ของบริการนี้แทนยอดตั้งต้นของเว็บ — ล้างช่องนั้นในฟอร์มบริการถ้าต้องการใช้ยอดของเว็บ"
+            : "";
+
+    /// <summary>รอบ 223: ที่มาของยอดที่ลูกค้าเห็น (เช่น "50% ของค่าบริการ ฿35.00" · "ยอดคงที่ของบริการนี้" · "ปรับเป็นขั้นต่ำ") — null = ไม่เก็บ</summary>
+    public static string? AmountBasis(BookingPaymentEffective e, decimal total, decimal amount)
+    {
+        if (!e.Collects || amount <= 0m) return null;
+        if (e.Mode == BookingPaymentMode.FullRequired) return $"ค่าบริการเต็มจำนวน {Baht(amount)}";
+        string raw;
+        decimal rawAmt;
+        if (e.FixedAmount is decimal f) { raw = $"มัดจำคงที่ {Baht(f)}"; rawAmt = f; }
+        else if (e.Percent is decimal p)
+        {
+            rawAmt = R2(R2(Math.Max(0m, total)) * p / 100m);
+            raw = $"มัดจำ {p.ToString("0.##", CultureInfo.InvariantCulture)}% ของค่าบริการ {Baht(R2(Math.Max(0m, total)))}";
+        }
+        else return null;
+        if (amount == R2(rawAmt)) return e.FixedAmount != null ? raw : $"{raw} = {Baht(amount)}";
+        var why = e.MinAmount is decimal mn && mn > 0m && amount == R2(Math.Min(mn, R2(Math.Max(0m, total)))) && rawAmt < mn ? "ขั้นต่ำ"
+            : e.MaxAmount is decimal mx && mx > 0m && amount == R2(mx) && rawAmt > mx ? "สูงสุด"
+            : "ไม่เกินค่าบริการ";
+        return $"{raw} → ปรับตาม{why} = {Baht(amount)}";
     }
 
     private static string DeadlineText(int minutes)

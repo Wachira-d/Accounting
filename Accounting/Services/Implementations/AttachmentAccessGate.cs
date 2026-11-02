@@ -419,6 +419,8 @@ public class AttachmentAccessGate : IAttachmentAccessGate
         "StatutoryRemittance" => _db.StatutoryRemittances.AsNoTracking()
             .AnyAsync(x => x.Id == entityId && x.CompanyId == companyId && !x.IsDeleted),
         "SettlementBatch" => _db.SettlementBatches.AsNoTracking().AnyAsync(x => x.Id == entityId && x.CompanyId == companyId),
+        PettyCashEvidence.EntityType => _db.PettyCashTransactions.AsNoTracking()
+            .AnyAsync(x => x.Id == entityId && x.CompanyId == companyId && !x.IsDeleted),
         _ => Task.FromResult(true),
     };
 

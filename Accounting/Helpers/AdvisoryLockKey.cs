@@ -222,4 +222,8 @@ public static class AdvisoryLockKey
 
     /// <summary>ขายคอร์ส 1 คำขอ (idempotency key ของหน้าจอ) — part = key · session lock ผ่าน <c>JobLock.RunExclusiveAsync</c> ครอบการออกใบ+อนุมัติ+เปิดบัตร</summary>
     public const string CreditSale = "credit-sale";
+
+    /// <summary>ระบุกองทุน / ทำเครื่องหมาย "ปรับเฉพาะ GL" ให้ใบสำคัญจากทางอื่น (PETTY_CASH_AUDIT · ฝ่ายค้านข้อ 2) — part = JournalEntryId ·
+    /// ล็อกต่อ<b>ใบสำคัญ</b> (ไม่ใช่ต่อกองทุน) ⇒ สองกองทุนที่ใช้ผังร่วมกันระบุใบเดียวกันพร้อมกันไม่ได้สองแถว</summary>
+    public const string PettyCashEntry = "petty-entry";
 }

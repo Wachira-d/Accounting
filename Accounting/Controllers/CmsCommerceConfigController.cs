@@ -177,6 +177,8 @@ public class CmsCommerceConfigController : ControllerBase
         FormFieldRequirementOptions = BookingFormFields.RequirementOptions()
             .Select(o => new CommerceOptionValue { Value = o.Value, Label = o.Label }).ToList(),
         FormFieldTypes = OrderFormFields.FieldTypes.ToList(),
+        // รอบ 222: ป้ายไทยของชนิดช่อง (ตัวตั้งเดียวกับฟอร์มจอง — CustomFormFields.TypeOptions) · หน้าตั้งค่าแสดงตรง
+        FormFieldTypeOptions = CustomFormFields.TypeOptions().Select(o => new CommerceOptionValue { Value = o.Value, Label = o.Label }).ToList(),
         EnableOnlinePayment = c.EnableOnlinePayment, EnableCod = c.EnableCod, EnableBankTransfer = c.EnableBankTransfer,
         OrderConfirmMessageTh = c.OrderConfirmMessageTh, OrderConfirmMessageEn = c.OrderConfirmMessageEn,
         QuotationMessageTh = c.QuotationMessageTh, QuotationMessageEn = c.QuotationMessageEn,

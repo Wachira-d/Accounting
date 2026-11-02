@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Accounting.Models.Enums;
@@ -13,7 +12,7 @@ public sealed record OrderCustomField(
     string Key, string Label, string? LabelEn = null, string Type = "text",
     IReadOnlyList<string>? Options = null,
     BookingFieldRequirement Requirement = BookingFieldRequirement.Optional,
-    int? MaxLength = null, string AppliesTo = "all");
+    int? MaxLength = null, string AppliesTo = "all") : ICustomFormField;
 
 /// <summary>ค่าตั้งฟอร์มสั่งซื้อของเว็บ — ชื่อบังคับเสมอ · ที่อยู่บังคับเสมอเมื่อจัดส่ง · ผู้ซื้อใบกำกับบังคับเสมอเมื่อขอใบกำกับ (§86/4 ตั้งปิดไม่ได้)</summary>
 /// <param name="RequestedDate">ช่อง "วันที่ต้องการรับสินค้า" · ค่าเริ่มต้นไม่แสดง (ฟอร์มเดิม)</param>
@@ -36,9 +35,6 @@ public sealed record OrderFormCleaned(
     string? BillingName, string? BillingAddress, string? BillingTaxId, string? BillingBranchCode,
     string? CustomFieldsJson);
 
-/// <summary>คำตอบช่องเพิ่มเองหนึ่งข้อที่ตรึงบนออเดอร์</summary>
-public sealed record OrderCustomAnswer(string Key, string Label, string Value);
-
 /// <summary>
 /// <b>ตัวตัดสินเดียว</b>ของ "ฟอร์มสั่งซื้อหน้าร้านต้องกรอกอะไร" (รอบ 209 · คำตัดสินข้อ 168 ง · R-209-A2 / A10) — แบบแผนเดียวกับ <see cref="BookingFormFields"/>
 ///
@@ -59,13 +55,11 @@ public static class OrderFormFields
 {
     public const string RuleCode = "CMS-ORDER-FORM";
     public const string LegalReference = "RD-86/4 · ประกาศอธิบดีฯ 199";
-    public const int MaxCustomFields = 10;
-    public const int MaxTextLength = 500;
     public const int MaxNotesLength = 1000;
-    public const int MaxOptions = 20;
 
     public static readonly OrderFormFieldsConfig Default = new();
-    public static readonly IReadOnlyList<string> FieldTypes = new[] { "text", "textarea", "date", "select", "checkbox" };
+    /// <summary>ชนิดช่องเพิ่มเอง — ตัวตั้งอยู่ที่ <see cref="CustomFormFields.FieldTypes"/> (ใช้ร่วมกับฟอร์มจอง)</summary>
+    public static IReadOnlyList<string> FieldTypes => CustomFormFields.FieldTypes;
     public static readonly IReadOnlyList<string> AppliesToValues = new[] { "all", "delivery", "pickup" };
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -91,12 +85,12 @@ public static class OrderFormFields
     {
         CustomFields = c.CustomFields?.Select(f => f with
         {
-            Key = (f.Key ?? "").Trim().ToLowerInvariant(),
-            Label = (f.Label ?? "").Trim(),
-            LabelEn = string.IsNullOrWhiteSpace(f.LabelEn) ? null : f.LabelEn.Trim(),
-            Type = string.IsNullOrWhiteSpace(f.Type) ? "text" : f.Type.Trim().ToLowerInvariant(),
+            Key = CustomFormFields.NormKey(f.Key),
+            Label = CustomFormFields.NormLabel(f.Label),
+            LabelEn = CustomFormFields.NormLabelEn(f.LabelEn),
+            Type = CustomFormFields.NormType(f.Type),
             AppliesTo = string.IsNullOrWhiteSpace(f.AppliesTo) ? "all" : f.AppliesTo.Trim().ToLowerInvariant(),
-            Options = f.Options?.Select(o => (o ?? "").Trim()).Where(o => o.Length > 0).ToList(),
+            Options = CustomFormFields.NormOptions(f.Options),
         }).ToList(),
     };
 
@@ -109,26 +103,10 @@ public static class OrderFormFields
         if (c.Phone == BookingFieldRequirement.Hidden && c.Email == BookingFieldRequirement.Hidden)
             return "ซ่อนทั้งเบอร์โทรและอีเมลไม่ได้ — ร้านจะติดต่อลูกค้าไม่ได้ (เปิดอย่างน้อย 1 ช่อง)";
         var fields = c.CustomFields ?? Array.Empty<OrderCustomField>();
-        if (fields.Count > MaxCustomFields) return $"เพิ่มช่องเองได้ไม่เกิน {MaxCustomFields} ช่อง";
-        var keys = new HashSet<string>(StringComparer.Ordinal);
+        // ชนิด/รหัส/ป้าย/ตัวเลือก/ความยาว — กติกากลาง (CustomFormFields) · ขอบเขต "ใช้กับวิธีรับ" เป็นของฟอร์มสั่งซื้อ
+        if (CustomFormFields.ValidateFields(fields.Cast<ICustomFormField>().ToList()) is string fieldErr) return fieldErr;
         foreach (var f in fields)
-        {
-            if (f.Key.Length is 0 or > 30 || !f.Key.All(ch => ch is >= 'a' and <= 'z' or >= '0' and <= '9' or '_'))
-                return $"รหัสช่อง \"{f.Key}\" ใช้ได้เฉพาะ a–z 0–9 และ _ ไม่เกิน 30 ตัว";
-            if (!keys.Add(f.Key)) return $"รหัสช่อง \"{f.Key}\" ซ้ำ";
-            if (f.Label.Length is 0 or > 100) return $"ช่อง \"{f.Key}\" ต้องมีชื่อที่แสดง (ไม่เกิน 100 ตัวอักษร)";
-            if (!FieldTypes.Contains(f.Type)) return $"ชนิดช่อง \"{f.Type}\" ไม่รู้จัก (ได้: {string.Join(" · ", FieldTypes)})";
             if (!AppliesToValues.Contains(f.AppliesTo)) return $"ช่อง \"{f.Label}\": ใช้กับ \"{f.AppliesTo}\" ไม่รู้จัก (ได้: all · delivery · pickup)";
-            if (!Enum.IsDefined(f.Requirement)) return $"ช่อง \"{f.Label}\": ค่าบังคับไม่ถูกต้อง";
-            if (f.MaxLength is int ml && (ml < 1 || ml > MaxTextLength)) return $"ช่อง \"{f.Label}\": ความยาวสูงสุดต้องอยู่ระหว่าง 1–{MaxTextLength}";
-            if (f.Type == "select")
-            {
-                var opts = f.Options ?? Array.Empty<string>();
-                if (opts.Count is 0 or > MaxOptions) return $"ช่อง \"{f.Label}\": ตัวเลือกต้องมี 1–{MaxOptions} ข้อ";
-                if (opts.Any(o => o.Length > 100)) return $"ช่อง \"{f.Label}\": ตัวเลือกยาวเกิน 100 ตัวอักษร";
-                if (opts.Distinct(StringComparer.Ordinal).Count() != opts.Count) return $"ช่อง \"{f.Label}\": ตัวเลือกซ้ำ";
-            }
-        }
         return null;
     }
 
@@ -195,51 +173,17 @@ public static class OrderFormFields
         }
 
         // ช่องเพิ่มเองของร้าน (เฉพาะที่ใช้กับวิธีรับนี้ · ซ่อน = ไม่เก็บ)
-        var answers = new List<OrderCustomAnswer>();
-        foreach (var f in ApplicableFields(c, fulfillment))
-        {
-            string? v = null;
-            input.Custom?.TryGetValue(f.Key, out v);
-            v = T(v);
-            if (f.Type == "checkbox")
-            {
-                var on = v != null && (v.Equals("true", StringComparison.OrdinalIgnoreCase) || v == "1" || v.Equals("on", StringComparison.OrdinalIgnoreCase));
-                if (f.Requirement == BookingFieldRequirement.Required && !on) errs.Add($"กรุณาติ๊ก \"{f.Label}\"");
-                if (on) answers.Add(new OrderCustomAnswer(f.Key, f.Label, "ใช่"));
-                continue;
-            }
-            if (v == null)
-            {
-                if (f.Requirement == BookingFieldRequirement.Required) errs.Add($"กรุณากรอก \"{f.Label}\"");
-                continue;
-            }
-            var max = f.MaxLength ?? MaxTextLength;
-            if (v.Length > max) { errs.Add($"\"{f.Label}\" ยาวเกิน {max} ตัวอักษร"); continue; }
-            if (f.Type == "select" && !(f.Options ?? Array.Empty<string>()).Contains(v, StringComparer.Ordinal))
-            { errs.Add($"\"{f.Label}\": ตัวเลือกไม่ถูกต้อง"); continue; }
-            if (f.Type == "date")
-            {
-                if (!DateOnly.TryParseExact(v, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
-                { errs.Add($"\"{f.Label}\": วันที่ไม่ถูกต้อง"); continue; }
-                v = d.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            }
-            answers.Add(new OrderCustomAnswer(f.Key, f.Label, v));
-        }
+        var answers = CustomFormFields.CheckAnswers(ApplicableFields(c, fulfillment), input.Custom, errs);
 
-        var customJson = answers.Count == 0 ? null : JsonSerializer.Serialize(answers, Json);
+        var customJson = CustomFormFields.SerializeAnswers(answers);
         return (errs, new OrderFormCleaned(name ?? "", phone, email, address, notes, bName, bAddr, bTax, bBranch, customJson));
     }
 
     /// <summary>รหัสสาขา 5 หลักตามประกาศอธิบดีฯ 199 (regex <c>^[0-9]{5}$</c> · ASCII เท่านั้น)</summary>
     private static bool IsBranchCode(string? s) => s is { Length: 5 } && s.All(ch => ch is >= '0' and <= '9');
 
-    /// <summary>คำตอบช่องเพิ่มเองที่ตรึงบนออเดอร์ — อ่านไม่ออก = ว่าง (ไม่แต่ง)</summary>
-    public static IReadOnlyList<OrderCustomAnswer> ParseAnswers(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return Array.Empty<OrderCustomAnswer>();
-        try { return JsonSerializer.Deserialize<List<OrderCustomAnswer>>(json, Json) ?? new List<OrderCustomAnswer>(); }
-        catch (JsonException) { return Array.Empty<OrderCustomAnswer>(); }
-    }
+    /// <summary>คำตอบช่องเพิ่มเองที่ตรึงบนออเดอร์ — อ่านไม่ออก = ว่าง (ไม่แต่ง) · ตัวอ่านกลาง <see cref="CustomFormFields.ParseAnswers"/></summary>
+    public static IReadOnlyList<CustomFormAnswer> ParseAnswers(string? json) => CustomFormFields.ParseAnswers(json);
 
     /// <summary>หมายเหตุบนเอกสารขายของออเดอร์ — เดิม "Online order #เลข" ทุกตัวอักษร · มีวันที่ต้องการรับ/ช่องเพิ่มเอง ⇒ ต่อท้ายบรรทัดเดียว
     /// (ตัวสรุปเดียว — หลังบ้าน/เอกสารเห็นข้อความเดียวกัน · ค่าเป็นข้อความล้วน renderer เป็นผู้ encode)</summary>

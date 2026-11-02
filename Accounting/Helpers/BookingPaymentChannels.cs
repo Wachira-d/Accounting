@@ -44,6 +44,23 @@ public static class BookingPaymentChannels
         => siteTransferEnabled && t != null
            && (!string.IsNullOrWhiteSpace(t.AccountNumber) || promptPayIdValid || !string.IsNullOrWhiteSpace(t.QrImageUrl));
 
+    /// <summary>รอบ 223 (BOOKING_PAYMENT_AUDIT): ช่องทางที่ร้าน "ติ๊กเปิด" แต่ลูกค้าจะไม่เห็น — เดิมเงียบ (ลูกค้าเห็น "รอชำระ" แต่ไม่มีเลขบัญชี/QR/ช่องแนบสลิป) ·
+    /// คืนรายการข้อความไทย (ว่าง = ทุกช่องทางที่เปิดใช้ได้จริง)</summary>
+    public static List<string> Warnings(bool siteTransferEnabled, BookingTransferInfo? t, bool promptPayIdValid, bool siteOnlineEnabled, bool companyGatewayActive,
+        string? rawQrUrl = null)
+    {
+        var list = new List<string>();
+        if (siteTransferEnabled && !TransferReady(true, t, promptPayIdValid))
+            list.Add("ติ๊ก “โอนเงิน / สแกน QR แล้วแนบสลิป” แล้ว แต่ยังไม่มีเลขบัญชี พร้อมเพย์ที่ถูกต้อง หรือรูป QR — ลูกค้าจะไม่เห็นเลขบัญชี/QR และแนบสลิปไม่ได้");
+        if (siteTransferEnabled && !string.IsNullOrWhiteSpace(t?.PromptPayId) && !promptPayIdValid)
+            list.Add("เลขพร้อมเพย์ที่บันทึกไว้ไม่ถูกรูปแบบ — ระบบไม่สร้าง QR พร้อมยอดให้ลูกค้า (แก้เป็นเบอร์มือถือ 10 หลัก หรือเลขผู้เสียภาษี 13 หลัก)");
+        if (siteTransferEnabled && !string.IsNullOrWhiteSpace(rawQrUrl) && !QrImageUrlAcceptable(rawQrUrl))
+            list.Add("รูป QR ที่บันทึกไว้ไม่ใช่ไฟล์จากคลังสื่อของเว็บหรือลิงก์ https — ลูกค้าจะไม่เห็นรูปนี้ (อัปโหลดใหม่)");
+        if (siteOnlineEnabled && !companyGatewayActive)
+            list.Add("ติ๊ก “ชำระออนไลน์” แล้ว แต่บริษัทยังไม่มีระบบรับชำระเงินออนไลน์ที่ใช้งาน — ลูกค้าจะไม่เห็นปุ่มชำระออนไลน์ (ตั้งที่ ตั้งค่า → รับชำระเงินออนไลน์)");
+        return list;
+    }
+
     /// <summary>เลขบัญชีเหลือเฉพาะตัวเลข (ตัดขีด/ช่องว่าง) · ว่าง = null</summary>
     public static string? NormalizeAccountNumber(string? raw)
     {

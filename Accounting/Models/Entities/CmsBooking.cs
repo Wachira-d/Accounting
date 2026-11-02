@@ -176,6 +176,8 @@ public class SiteBooking : TenantEntity
     public ErpBookingDocumentType? ErpDocumentType { get; set; }
 
     public string? CustomerNotes { get; set; }
+    /// <summary>รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเองบนฟอร์มจอง (JSON ป้าย+ค่า ณ ตอนจอง — <c>CustomFormFields.ParseAnswers</c>) · null = ไม่มี/การจองก่อนรอบ 222</summary>
+    public string? CustomFieldsJson { get; set; }
     public string? InternalNotes { get; set; }
     public string? CancellationReason { get; set; }
 

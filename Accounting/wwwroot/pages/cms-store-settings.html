@@ -253,7 +253,8 @@
             const el = document.getElementById('ff_' + k); el.innerHTML = opts; el.value = ff[k] || 'Optional';
           });
           document.getElementById('formState').textContent = c.orderFormFieldsConfigured ? ' · ตั้งค่าแล้ว' : ' · ใช้ฟอร์มเดิม (ยังไม่ได้ตั้ง)';
-          this.formTypes = c.formFieldTypes || ['text'];
+          // รอบ 222: ชนิดช่อง + ป้ายไทยจากเซิร์ฟเวอร์ (ตัวตั้งเดียวกับฟอร์มจอง) — เซิร์ฟเวอร์เก่าไม่มีป้าย ⇒ ใช้ชื่อชนิด
+          this.formTypes = (c.formFieldTypeOptions && c.formFieldTypeOptions.length) ? c.formFieldTypeOptions.map(o => [o.value, o.label]) : (c.formFieldTypes || ['text']).map(t => [t, t]);
           this.reqOptions = c.formFieldRequirementOptions || [];
           this.customFields = (ff.customFields || []).map(f => Object.assign({}, f));
           this.resetFormFlag = false;
@@ -263,7 +264,7 @@
 
       renderCustomFields() {
         const sel = (list, v) => list.map(([val, lbl]) => `<option value="${Layout.esc(val)}" ${val === v ? 'selected' : ''}>${Layout.esc(lbl)}</option>`).join('');
-        const typeList = (this.formTypes || []).map(t => [t, t]);
+        const typeList = this.formTypes || [];
         const reqList = (this.reqOptions || []).map(o => [o.value, o.label]);
         document.getElementById('cfRows').innerHTML = this.customFields.map((f, i) => `<tr>
             <td><input value="${Layout.esc(f.key || '')}" maxlength="30" onchange="Page.cf(${i}, 'key', this.value)"></td>

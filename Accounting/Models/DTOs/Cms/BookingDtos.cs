@@ -100,6 +100,8 @@ public class BookingSiteSettingsDto
     /// <summary>ช่องบังคับของฟอร์มจอง (<c>BookingFormFields</c>)</summary>
     public BookingFormFieldsConfig? FormFields { get; set; }
     public List<BookingFormFields.FieldOption> FormFieldOptions { get; set; } = new();
+    /// <summary>รอบ 222: ชนิดช่องที่เจ้าของเพิ่มเองได้ + ป้ายไทย (<c>CustomFormFields.TypeOptions</c>) — หน้าตั้งค่าแสดงตรง</summary>
+    public List<CustomFormFields.TypeOption> CustomFieldTypeOptions { get; set; } = new();
     /// <summary>เอกสารตอนให้บริการเสร็จ (บริการแบบนัดหมาย/Lead ที่มียอด)</summary>
     public BookingCompletionDocument? CompletionDocument { get; set; }
     public List<BookingDocumentFlow.Option> CompletionDocumentOptions { get; set; } = new();
@@ -263,6 +265,8 @@ public class BookingServiceResponse
     public BookingResourceMode EffectiveResourceMode { get; set; }
     /// <summary>รอบ 207: ช่องบังคับ/ซ่อนของฟอร์มจอง (ค่าของไซต์) — หน้าจองแสดงตาม · ด่านจริงอยู่ที่เซิร์ฟเวอร์</summary>
     public BookingFormFieldsConfig FormFields { get; set; } = BookingFormFields.Default;
+    /// <summary>รอบ 222: ช่องที่เจ้าของเพิ่มเองที่ลูกค้าเห็นบนฟอร์มจองบริการนี้ (server กรองขอบเขตบริการ + ช่องซ่อนแล้ว — <c>BookingFormFields.FieldsForService</c>)</summary>
+    public List<BookingCustomField> CustomFields { get; set; } = new();
     /// <summary>ผู้ให้บริการที่ทำบริการนี้ได้ (เปิดใช้อยู่) — ลูกค้าเลือกเมื่อโหมด "บังคับระบุ"/"ลูกค้าเลือก"</summary>
     public List<BookingResourceBrief> Resources { get; set; } = new();
     public BookingScheduleDto Schedule { get; set; } = new();
@@ -336,6 +340,8 @@ public class CreateBookingRequest
     /// <summary>ผู้ให้บริการที่ลูกค้าเลือก (โหมดบังคับระบุ/ลูกค้าเลือก) · โหมดระบบจัดให้ ⇒ ไม่ใช้ค่านี้</summary>
     public Guid? ResourceId { get; set; }
     public string? CustomerNotes { get; set; }
+    /// <summary>รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเอง (key → ค่า · ช่องติ๊ก = "true") — ด่าน <c>BookingFormFields.CheckCustom</c></summary>
+    public Dictionary<string, string?>? CustomFields { get; set; }
 
     // Payment info
     public Guid? PaymentGatewayId { get; set; }
@@ -417,6 +423,11 @@ public class BookingResponse
     public ErpBookingDocumentType? ErpDocumentType { get; set; }
     public Guid? ErpDocumentId { get; set; }
     public string? CustomerNotes { get; set; }
+    /// <summary>รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเอง ณ ตอนจอง (ป้าย+ค่าที่ตรึงไว้ — <c>CustomFormFields.ParseAnswers</c>)</summary>
+    public List<CustomFormAnswer> CustomFields { get; set; } = new();
+    /// <summary>JSON ดิบจาก query (EF แปลงฟังก์ชันใน projection ไม่ได้) — ไม่ส่งออก</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? CustomFieldsRaw { get; set; }
     public string? InternalNotes { get; set; }
     public DateTime? ConfirmedAt { get; set; }
     public DateTime? CompletedAt { get; set; }

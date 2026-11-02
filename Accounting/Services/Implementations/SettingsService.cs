@@ -300,6 +300,9 @@ public class SettingsService : ISettingsService
         // ทีม F — หัก ณ ที่จ่ายตามรายการ (ผู้อ่านเดียว: OcrService.PerLineWhtEnabledAsync — แผนต่อบรรทัดตอนสร้างบรรทัด + ยอดบาทบนใบต่างสกุลตอนสร้างเอกสารจากสแกน)
         if (request.PerLineWhtEnabled.HasValue)
             settings.PerLineWhtEnabled = request.PerLineWhtEnabled.Value;
+        // 2026-11-02 PETTY_CASH_AUDIT ส่วน C — ผู้อ่าน: PettyCashService.IsTopUpEvidenceRequiredAsync (ด่านของการเติมเงินสดย่อยทุกทางเข้า)
+        if (request.PettyCashTopUpEvidenceRequired.HasValue)
+            settings.PettyCashTopUpEvidenceRequired = request.PettyCashTopUpEvidenceRequired.Value;
         // คำตัดสินเจ้าของข้อ 162 (Q2) — ผู้อ่าน: DocumentFx.WhtRateFor (CreatePaymentJournalAsync + 50 ทวิ รายงวด) · DocumentFx.PickBotRate (ResolveExchangeRateAsync + OCR)
         if (request.WhtFxRateBasis.HasValue)
             settings.WhtFxRateBasis = request.WhtFxRateBasis.Value;
@@ -799,6 +802,7 @@ public class SettingsService : ISettingsService
         FxBotRateType = s.FxBotRateType.ToString(),
         PenaltyExpenseAccountCode = s.PenaltyExpenseAccountCode,
         PenaltyExpenseAccountCodeEffective = Accounting.Helpers.PenaltyExpenseAccount.EffectiveCode(s.PenaltyExpenseAccountCode),
+        PettyCashTopUpEvidenceRequired = s.PettyCashTopUpEvidenceRequired,
     };
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(

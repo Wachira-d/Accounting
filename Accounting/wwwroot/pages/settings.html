@@ -734,6 +734,14 @@
           (บัญชีที่ผูกกับบัญชีธนาคารแสดงเสมอไม่ว่ารหัสอะไร) · ที่ใช้อยู่ตอนนี้: <b id="sMoneyAccountPrefixesEffective">-</b>
         </div>
       </div>
+      <!-- 2026-11-02 PETTY_CASH_AUDIT ส่วน C: CompanySettings.PettyCashTopUpEvidenceRequired · ผู้อ่าน PettyCashService (ด่านเติมเงินทุกทางเข้า) -->
+      <div class="form-group form-checkbox">
+        <input type="checkbox" id="sPettyTopUpEvidenceRequired">
+        <label for="sPettyTopUpEvidenceRequired">เติมเงินสดย่อยต้องแนบสลิป</label>
+        <div style="font-size:11px;color:#94a3b8;margin-top:4px;line-height:1.5">
+          ปิด (ค่าเริ่มต้น) = แนบสลิป/หลักฐานการโอนได้แต่ไม่บังคับ · เปิด = ทุกการเติมเงินสดย่อย (หน้าเงินสดย่อยและ API) ต้องแนบรูปหรือ PDF ไม่งั้นบันทึกไม่ได้
+        </div>
+      </div>
 
       <h3 class="card-title" style="margin:24px 0 12px">กองทุนเงินทดแทน (กท.20ก) — สมทบนายจ้างฝ่ายเดียว</h3>
       <div class="form-group form-checkbox">
@@ -2717,6 +2725,8 @@
         if (pre) { pre.value = s?.moneyAccountCodePrefixes || ''; this._moneyPrefixesLoaded = !!s; }
         const eff = document.getElementById('sMoneyAccountPrefixesEffective');
         if (eff) eff.textContent = s?.moneyAccountCodePrefixesEffective || '-';
+        const pev = document.getElementById('sPettyTopUpEvidenceRequired');
+        if (pev) { pev.checked = !!s?.pettyCashTopUpEvidenceRequired; this._pettyEvidenceLoaded = !!s; }
       },
       /** canEdit มาจาก server (สิทธิ์ CompanySettings.Edit / คำขอจากคีย์) · undefined/null = ไม่ได้ตรวจ ⇒ ไม่ล็อก
        *  (ไม่เดาแทน server) · false = บอกเหตุผล+ทางไปต่อ และปิดปุ่มบันทึกของฟอร์มหลัก */
@@ -3189,6 +3199,8 @@
             } : {}),
             // รหัสผังเงินสด/ธนาคารของบริษัท — "" = ล้าง (ผังมาตรฐาน) · โหลดค่าเดิมไม่สำเร็จ = ไม่ส่ง
             ...(this._moneyPrefixesLoaded ? { moneyAccountCodePrefixes: (document.getElementById('sMoneyAccountPrefixes')?.value || '').trim() } : {}),
+            // โหลดค่าเดิมไม่ได้ ⇒ ไม่ส่ง (ไม่บันทึก false ทับค่าที่ตั้งไว้)
+            ...(this._pettyEvidenceLoaded ? { pettyCashTopUpEvidenceRequired: !!document.getElementById('sPettyTopUpEvidenceRequired')?.checked } : {}),
             // กองทุนเงินทดแทน (กท.20ก)
             workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
             workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),

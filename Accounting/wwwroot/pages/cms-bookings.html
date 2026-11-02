@@ -521,6 +521,7 @@
               </div>
             </div>` : ''}
             ${b.customerNotes ? `<div style="font-size:12px;margin-bottom:10px"><strong>หมายเหตุจากลูกค้า:</strong><br><span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(b.customerNotes)}</span></div>` : ''}
+            ${(b.customFields || []).length ? `<div style="font-size:12px;margin-bottom:10px"><strong>ข้อมูลเพิ่มเติมจากลูกค้า:</strong>${b.customFields.map(a => `<div><span style="color:var(--gray-500)">${Layout.esc(a.label)}:</span> <span style="color:var(--gray-700);white-space:pre-wrap">${Layout.esc(a.value)}</span></div>`).join('')}</div>` : ''}
             ${b.internalNotes ? `<details style="font-size:12px;margin-bottom:10px"><summary style="cursor:pointer;font-weight:600">บันทึกภายใน / ร่องรอยระบบ</summary><div style="white-space:pre-wrap;color:var(--gray-700);margin-top:4px">${Layout.esc(b.internalNotes)}</div></details>` : ''}
             ${timeline ? `<div class="bk-sec"><h4>ไทม์ไลน์</h4>${timeline}</div>` : ''}
             ${workflow ? `<h4 style="margin-top:12px;margin-bottom:6px;font-size:13px">ดำเนินการ</h4><div style="display:flex;gap:8px;flex-wrap:wrap">${workflow}</div>` : ''}`;

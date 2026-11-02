@@ -41,7 +41,7 @@
           ? `ระบบรับชำระเงินของบริษัท: ${d.companyGatewayName || 'ตั้งค่าแล้ว'} — ลูกค้าจ่ายแล้วยืนยันการจองอัตโนมัติ`
           : 'บริษัทยังไม่ได้ตั้งค่าระบบรับชำระเงินออนไลน์ (ตั้งค่า → รับชำระเงินออนไลน์) — เปิดช่องนี้ไม่ได้จนกว่าจะตั้ง';
         $('bpayGateway').disabled = !d.companyGatewayConfigured && !d.onlineGatewayEnabled;
-        this._renderProblem(d.problem);
+        this._renderProblem(d.problem, d.channelWarnings);
         this._renderServices(d.services || []);
         this.onModeChange();
         this._optsLoaded = opts.length > 0;
@@ -59,9 +59,12 @@
       const opt = ((this._s && this._s.modeOptions) || []).find(o => o.value === m);
       $('bpayModeHelp').textContent = opt ? opt.description : '';
     },
-    _renderProblem(p) {
+    // รอบ 223: คำเตือนช่องทาง (เซิร์ฟเวอร์ตัดสิน — BookingPaymentChannels.Warnings) แสดงค้างใต้ปัญหาหลัก — ติ๊กแล้วแต่ลูกค้าไม่เห็น ต้องไม่เงียบ
+    _renderProblem(p, warnings) {
       const el = $('bpayProblem'); if (!el) return;
-      el.innerHTML = p ? `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:8px">⚠️ ${esc(p)}</div>` : '';
+      const ws = Array.isArray(warnings) ? warnings : (this._s && Array.isArray(this._s.channelWarnings) ? this._s.channelWarnings : []);
+      el.innerHTML = (p ? `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:8px">⚠️ ${esc(p)}</div>` : '')
+        + ws.map(w => `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#78350f;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:6px">⚠️ ${esc(w)}</div>`).join('');
     },
     _renderServices(rows) {
       const el = $('bpayServices'); if (!el) return;
@@ -146,18 +149,32 @@
     },
 
     // ═══════════ cms-bookings: ตรวจสลิป ═══════════
+    // รอบ 223 (BOOKING_PAYMENT_AUDIT ข้อ 4): หน้าทำงานของพนักงานเห็นการชำระครบ — โหมด · ที่มาของยอด · ยอดค้าง · กำหนดชำระ · ขั้นของลูกค้า ·
+    // สลิป (รอตรวจ/ยืนยันแล้ว — เปิดดูผ่านลิงก์ที่ต้องล็อกอิน + สิทธิ์ CmsOrderManage) · ค่าทุกตัวจากเซิร์ฟเวอร์
     slipBlock(b) {
       const p = b && b.payment; if (!p) return '';
-      const head = p.statusLabel ? `<div style="margin-top:6px;font-size:12px"><strong>การชำระล่วงหน้า:</strong> ${esc(p.statusLabel)}</div>` : '';
+      const rows = [
+        p.statusLabel ? ['การชำระล่วงหน้า', p.statusLabel] : null,
+        p.mode ? ['โหมด', p.modeLabel] : null,
+        p.amountBasis ? ['ที่มาของยอด', p.amountBasis] : null,
+        Number(p.amountDue) > 0 ? ['ยอดค้างชำระล่วงหน้า', '฿' + Number(p.amountDue).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })] : null,
+        p.holdUntil ? ['ต้องชำระภายใน', new Date(p.holdUntil).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) + ' (ไม่ชำระ ⇒ ระบบยกเลิกอัตโนมัติ)'] : null,
+        p.headline && p.step && p.step !== 'None' ? ['ลูกค้าเห็น', p.headline] : null,
+        p.slipRejectedReason && !p.slipPending ? ['สลิปล่าสุดไม่ผ่าน', p.slipRejectedReason] : null,
+      ].filter(Boolean);
+      const head = rows.length ? `<div style="margin-top:6px;font-size:12px;border:1px solid var(--gray-200);border-radius:8px;padding:6px 10px">${rows.map(r =>
+        `<div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--gray-500)">${esc(r[0])}</span><span style="text-align:right">${esc(r[1])}</span></div>`).join('')}</div>` : '';
+      const fileBtn = p.slipFileUrl ? `<button type="button" class="btn btn-sm btn-outline" onclick="BookingPayAdmin.viewSlip('${jsArg(p.slipFileUrl)}')">ดูสลิป</button>` : '';
       // ฝ่ายค้านรอบ 218 (S2): การจองยกเลิก/ไม่มา ⇒ ไม่มีปุ่มตรวจสลิป (เซิร์ฟเวอร์ปฏิเสธด้วย)
-      if (!p.slipPending || b.status === 'Cancelled' || b.status === 'NoShow') return head;
+      if (!p.slipPending || b.status === 'Cancelled' || b.status === 'NoShow')
+        return head + (p.slipOnFile && fileBtn ? `<div style="margin-top:6px;font-size:12px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">🧾 สลิปในแฟ้มของการจอง ${fileBtn}</div><div id="bkSlipView"></div>` : '');
       const upBkk = p.slipUploadedAt ? new Date(new Date(p.slipUploadedAt).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10) : '';
       return `${head}<div style="margin-top:6px;border:1px solid #fcd34d;background:#fffbeb;border-radius:8px;padding:8px 10px;font-size:12px">
           🧾 ลูกค้าแนบสลิป${p.slipUploadedAt ? ' เมื่อ ' + esc(new Date(p.slipUploadedAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' })) : ''} — ตรวจยอดในบัญชีธนาคารก่อนยืนยัน
           <div style="margin-top:6px"><label style="font-size:12px">วันที่โอนตามสลิป (= วันที่ใบรับมัดจำ §78/1)
             <input type="date" id="bkSlipTransferDate" class="form-input" style="width:auto;display:inline-block" value="${esc(upBkk)}"></label></div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
-            ${p.slipFileUrl ? `<button type="button" class="btn btn-sm btn-outline" onclick="BookingPayAdmin.viewSlip('${jsArg(p.slipFileUrl)}')">ดูสลิป</button>` : ''}
+            ${fileBtn}
             <button type="button" class="btn btn-primary btn-sm" onclick="BookingPayAdmin.verify('${jsArg(b.id)}')">ยืนยันสลิป (บันทึกรับเงิน)</button>
             <button type="button" class="btn btn-sm" style="border:1px solid #dc2626;color:#dc2626" onclick="BookingPayAdmin.reject('${jsArg(b.id)}')">ปฏิเสธสลิป</button>
           </div>

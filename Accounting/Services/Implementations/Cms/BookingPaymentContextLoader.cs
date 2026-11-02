@@ -16,10 +16,13 @@ public sealed record BookingPaymentSiteContext(
     bool PromptPayValid,
     bool CompanyGatewayActive,
     string? CompanyGatewayName,
-    Guid? TransferGatewayRowId)
+    Guid? TransferGatewayRowId,
+    string? RawQrUrl = null)
 {
     public bool GatewayReady => BookingPaymentChannels.GatewayReady(OnlineEnabled, CompanyGatewayActive);
     public bool TransferReady => BookingPaymentChannels.TransferReady(TransferEnabled, Transfer, PromptPayValid);
+    /// <summary>รอบ 223: ช่องทางที่ติ๊กแต่ลูกค้าจะไม่เห็น (หน้าตั้งค่าแสดง) — ตัวตัดสิน <see cref="BookingPaymentChannels.Warnings"/></summary>
+    public List<string> ChannelWarnings => BookingPaymentChannels.Warnings(TransferEnabled, Transfer, PromptPayValid, OnlineEnabled, CompanyGatewayActive, RawQrUrl);
 }
 
 /// <summary>
@@ -62,6 +65,6 @@ public static class BookingPaymentContextLoader
         // manual-slip ไม่ใช่ gateway ออนไลน์ (หน้า public-pay/methods ตัดออกเช่นกัน)
         var gatewayActive = cfg != null && cfg.ProviderCode != Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code;
         return new BookingPaymentSiteContext(SiteRule(row), row?.OnlineDepositEnabled ?? false, row?.BankTransferEnabled ?? true,
-            row?.PaymentNote, transfer, ppValid, gatewayActive, gatewayActive ? cfg!.DisplayName : null, gw?.Id);
+            row?.PaymentNote, transfer, ppValid, gatewayActive, gatewayActive ? cfg!.DisplayName : null, gw?.Id, gw?.PromptPayQrUrl);
     }
 }

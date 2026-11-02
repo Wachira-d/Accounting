@@ -245,6 +245,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PlatformBillingPhase0Migration.Statements());   // รอบ 219 เฟส 0 — ผู้จ่ายของ intent ค่าบริการ · ระยะผ่อนผัน/งวดจ่ายล่วงหน้าของส่วนเสริม · ดาวน์เกรดรอครบรอบ · วิธีโอนให้ NextAcc
         list.AddRange(Accounting.Helpers.PlatformBillingPhase2Migration.Statements());   // รอบ 219 เฟส 2 — ค่าตั้งการเรียกเก็บ · หลักฐานยอมรับเงื่อนไข · ผูกการชำระกับใบแจ้งหนี้ · dunning · ลิงก์ชำระ (หลังเฟส 0)
         list.AddRange(Accounting.Helpers.PurchasePolicyAcceptanceMigration.Statements());   // รอบ 219 ส่วน B — หลักฐานยอมรับนโยบายก่อนชำระ · นโยบายคืนเงินของร้าน · ด่าน live เข้มขึ้น · ยกเลิกสิ้นรอบ · หน้าทดลองจ่าย
+        list.AddRange(Accounting.Helpers.BookingFormFields.MigrationStatements());   // รอบ 222 — คำตอบช่องที่เจ้าของเพิ่มเองบนฟอร์มจอง (SiteBookings.CustomFieldsJson)
         return list;
     }
 
@@ -5036,6 +5037,8 @@ public static class DatabaseMigrationHelper
             // 2026-10-14 (PC#11): รหัสขึ้นต้นของผังเงินสด/ธนาคารสำหรับบริษัทที่ใช้ผังบัญชีของตัวเอง
             // (null = ผังมาตรฐาน 111/1133/2123 — Helpers/MoneyAccountRule ตัวเดียว)
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "MoneyAccountCodePrefixes" varchar(200) NULL;""",
+            // 2026-11-02 (PETTY_CASH_AUDIT ส่วน C): เติมเงินสดย่อยต้องแนบสลิป (ค่าตั้งต้น = ไม่บังคับ — บริษัทเดิมไม่เปลี่ยนพฤติกรรม)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PettyCashTopUpEvidenceRequired" boolean NOT NULL DEFAULT false;""",
 
             // ===== CompanySettings: กองทุนเงินทดแทน (กท.20ก) =====
             // อัตราสมทบนายจ้างฝ่ายเดียว 0.2–1.0% ตามประเภทกิจการ. default 0.2%

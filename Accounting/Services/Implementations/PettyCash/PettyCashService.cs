@@ -2,6 +2,7 @@ using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
+using Accounting.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations.PettyCash;
@@ -20,14 +21,16 @@ public interface IPettyCashService
 {
     /// <param name="linkedAccountId">ผังบัญชีของกองทุน (null = ใช้ผังมาตรฐาน <c>PettyCashJePlan.DefaultFundAccountCode</c>
     /// เมื่อมีและใช้งานได้ · ไม่มี = ล้มพร้อมบอกให้เลือก)</param>
+    /// <param name="allowSharedAccount">true = ยอมให้ผูกผังที่กองทุนอื่นใช้อยู่ (ผู้ใช้ติ๊กเอง) · false (ค่าตั้งต้น) = ผัง 1 ผัง ↔ กองทุน 1 กองทุน
+    /// (<see cref="PettyCashFundGlRule.SharedAccountProblem"/>)</param>
     Task<PettyCashFund> CreateFundAsync(Guid companyId, string name,
         Guid? custodianUserId, decimal imprestAmount, Guid? linkedAccountId,
-        CancellationToken ct = default);
+        bool allowSharedAccount = false, CancellationToken ct = default);
 
     /// <summary>แก้กองทุน — ชื่อ · วงเงิน · <b>ผังบัญชีของกองทุน</b> (ทางออกของกองทุนเก่าที่เปิดโดยไม่มีผัง ⇒ ทุกการเบิก/เติมล้ม ·
     /// PAYMENT_CHANNEL_AUDIT ส่วนที่ 1 ข้อ 1 "ทางตัน") · null = ไม่เปลี่ยนช่องนั้น</summary>
     Task<PettyCashFund> UpdateFundAsync(Guid companyId, Guid fundId, string? name,
-        decimal? imprestAmount, Guid? linkedAccountId, CancellationToken ct = default);
+        decimal? imprestAmount, Guid? linkedAccountId, bool allowSharedAccount = false, CancellationToken ct = default);
 
     /// <summary>ผังที่เสนอเป็นค่าตั้งต้นของกองทุน (11112 เงินสดย่อย ถ้ามีและใช้งานได้) — null = ผังบริษัทไม่มี</summary>
     Task<PettyCashFundAccountOption?> GetDefaultFundAccountAsync(Guid companyId, CancellationToken ct = default);
@@ -44,6 +47,24 @@ public interface IPettyCashService
         decimal amount, string? notes, DateTime txnDate,
         Guid? sourceAccountId = null, Guid? sourceBankAccountId = null, CancellationToken ct = default);
 
+    /// <summary>เติมเงิน + แนบสลิป/หลักฐาน (ไม่บังคับ เว้นแต่บริษัทตั้ง <c>CompanySettings.PettyCashTopUpEvidenceRequired</c>) — รายการ + JE + ไฟล์ +
+    /// audit อยู่ในธุรกรรมเดียว (ไฟล์ล้ม = ไม่มีรายการเกิด) · <see cref="ReplenishAsync"/> = ตัวนี้แบบไม่มีไฟล์ (ด่านบังคับสลิปเดินเหมือนกัน)</summary>
+    Task<PettyCashTransaction> ReplenishWithEvidenceAsync(Guid companyId, Guid fundId,
+        decimal amount, string? notes, DateTime txnDate, Guid? sourceAccountId, Guid? sourceBankAccountId,
+        PettyCashEvidenceFile? evidence, Guid? actorUserId, CancellationToken ct = default);
+
+    /// <summary>เบิก + แนบใบเสร็จ (ไม่บังคับ — ไม่มีใบเสร็จยังติดธง §65 ตรี(9) ตามช่องเลขที่ใบเสร็จเหมือนเดิม) · กลไกเดียวกับการเติม</summary>
+    Task<PettyCashTransaction> DisburseWithEvidenceAsync(Guid companyId, Guid fundId,
+        decimal amount, string description, Guid? expenseAccountId, string? receiptRef, DateTime txnDate, Guid? projectId,
+        PettyCashEvidenceFile? evidence, Guid? actorUserId, CancellationToken ct = default);
+
+    /// <summary>แนบหลักฐานเพิ่มให้รายการที่บันทึกแล้ว (เติม/เบิก/รายการจากทางอื่น) — ตรวจบริษัท · audit</summary>
+    Task<PettyCashEvidenceRef> AttachEvidenceAsync(Guid companyId, Guid transactionId, PettyCashEvidenceFile evidence,
+        Guid? actorUserId, CancellationToken ct = default);
+
+    /// <summary>ค่าตั้งบริษัท "เติมเงินสดย่อยต้องแนบสลิป" (หน้าเงินสดย่อยใช้แสดงช่องเป็นบังคับ — ด่านจริงอยู่ฝั่งเซิร์ฟเวอร์)</summary>
+    Task<bool> IsTopUpEvidenceRequiredAsync(Guid companyId, CancellationToken ct = default);
+
     Task<IReadOnlyList<PettyCashFundResponse>> ListAsync(Guid companyId, CancellationToken ct = default);
     Task<IReadOnlyList<PettyCashTransaction>> ListTransactionsAsync(Guid companyId, Guid fundId,
         DateTime? fromDate, DateTime? toDate, CancellationToken ct = default);
@@ -53,14 +74,56 @@ public interface IPettyCashService
     /// (2026-10-15 ทีม X5 · เดิมหน้าแสดงแค่การ์ดกองทุน ไม่มีรายการให้ตรวจ/ส่งออก)</summary>
     Task<PettyCashRegister> GetRegisterAsync(Guid companyId, Guid fundId,
         DateTime? fromDate, DateTime? toDate, CancellationToken ct = default);
+
+    /// <summary>กระทบยอด "ผังของกองทุน (GL) ↔ ยอดกองทุน" ต่อผัง + ใบสำคัญจากทางอื่น (ใบสำคัญจ่าย/ใบเบิก/สมุดรายวัน/กลับรายการ …)
+    /// ที่แตะผังกองทุนแต่ยังไม่อยู่ในทะเบียนกองทุนไหน (2026-11-02 · PETTY_CASH_AUDIT)</summary>
+    Task<IReadOnlyList<PettyCashGlRecon>> GetGlReconciliationAsync(Guid companyId, CancellationToken ct = default);
+
+    /// <summary>ระบุว่าใบสำคัญจากทางอื่นเป็นของกองทุนไหน — เพิ่มแถวในทะเบียนกองทุน (อ้างใบสำคัญเดิม · <b>ไม่ลง JE ใหม่</b> เพราะ GL ขยับไปแล้ว)
+    /// และปรับยอดกองทุนตามยอดสุทธิที่ใบนั้นลงผังกองทุน</summary>
+    Task<PettyCashTransaction> AttributeExternalEntryAsync(Guid companyId, Guid fundId, Guid journalEntryId,
+        Guid? actorUserId = null, CancellationToken ct = default);
+
+    /// <summary>ทำเครื่องหมายใบสำคัญจากทางอื่นว่า "ไม่กระทบกองทุน (ปรับเฉพาะ GL)" (เช่น ปรับปรุงยอดยกมา/แก้ผังผิด) — ออกจากรายการรอระบุ ·
+    /// ไม่ขยับยอดกองทุน · audit · ยกเลิกได้ด้วย <see cref="UndoGlOnlyAsync"/></summary>
+    Task<PettyCashTransaction> MarkGlOnlyAsync(Guid companyId, Guid accountId, Guid journalEntryId, string? note,
+        Guid? actorUserId = null, CancellationToken ct = default);
+
+    /// <summary>ยกเลิกเครื่องหมาย "ปรับเฉพาะ GL" — ใบกลับไปอยู่ในรายการรอระบุ · audit</summary>
+    Task UndoGlOnlyAsync(Guid companyId, Guid transactionId, Guid? actorUserId = null, CancellationToken ct = default);
 }
+
+/// <summary>ใบสำคัญจากทางอื่นที่แตะผังกองทุน แต่ยังไม่อยู่ในทะเบียนกองทุนใด · <c>NetDebit</c> = เดบิต − เครดิต ที่ลงผังนี้ ·
+/// <c>Type</c>/<c>Amount</c> = แถวทะเบียนที่จะเกิดเมื่อระบุกองทุน · <c>SuggestedFundId</c> = มีกองทุนเดียวบนผังนี้ (คนยังต้องกดยืนยัน)</summary>
+public sealed record PettyCashExternalEntry(Guid JournalEntryId, string EntryNumber, DateTime EntryDate, string? Description, string? Reference,
+    decimal NetDebit, string Type, string TypeLabel, decimal Amount, Guid? SuggestedFundId);
+
+public sealed record PettyCashGlFund(Guid FundId, string Name, decimal CurrentBalance, bool IsActive);
+
+/// <summary>ผลกระทบยอดของผังหนึ่ง · <c>Difference</c> = ยอด GL − ผลรวมยอดกองทุน − ยอดที่ทำเครื่องหมาย "ปรับเฉพาะ GL" (<c>GlOnlyNet</c>) · <c>Status</c> = ชื่อ enum <see cref="PettyCashGlReconStatus"/> ·
+/// <c>UnattributedEntries</c> แสดงล่าสุดไม่เกิน <see cref="PettyCashService.MaxExternalEntriesShown"/> ใบ (นับครบใน <c>UnattributedCount</c>)</summary>
+public sealed record PettyCashGlRecon(Guid AccountId, string AccountCode, string AccountName, decimal GlBalance, decimal FundsTotal,
+    decimal Difference, string Status, string StatusLabel, bool SharedByMultipleFunds, IReadOnlyList<PettyCashGlFund> Funds,
+    int UnattributedCount, decimal UnattributedNet, IReadOnlyList<PettyCashExternalEntry> UnattributedEntries,
+    decimal GlOnlyNet = 0m, IReadOnlyList<PettyCashGlOnlyEntry>? GlOnlyEntries = null);
+
+/// <summary>ใบสำคัญที่ทำเครื่องหมาย "ไม่กระทบกองทุน (ปรับเฉพาะ GL)" แล้ว — <c>TransactionId</c> ใช้ยกเลิกเครื่องหมาย</summary>
+public sealed record PettyCashGlOnlyEntry(Guid TransactionId, Guid JournalEntryId, string? EntryNumber, DateTime EntryDate, decimal NetDebit,
+    string? Description);
+
+/// <summary>ไฟล์หลักฐานที่ผ่าน <see cref="PettyCashEvidence.Check"/> แล้ว (ชนิด/นามสกุลจากไบต์จริง)</summary>
+public sealed record PettyCashEvidenceFile(string DisplayName, string ContentType, byte[] Content);
+
+/// <summary>หลักฐานที่แนบกับรายการ — ดาวน์โหลดผ่าน <c>GET attachments/{AttachmentId}/download</c></summary>
+public sealed record PettyCashEvidenceRef(Guid AttachmentId, string FileName, string ContentType);
 
 /// <summary>หนึ่งรายการในทะเบียนเงินสดย่อย · <c>AmountIn</c> = เติมเงิน · <c>AmountOut</c> = เบิกจ่าย ·
 /// <c>TypeLabel</c> = ป้ายไทยจาก <see cref="PettyCashRegister.TypeLabel"/></summary>
 public sealed record PettyCashRegisterRow(Guid Id, DateTime TransactionDate, string Type, string TypeLabel, string Description,
     string? ReceiptReference, decimal Amount, decimal AmountIn, decimal AmountOut,
     string? ExpenseAccountCode, string? ExpenseAccountName, string? ProjectLabel,
-    Guid? JournalEntryId, string? JournalEntryNumber, bool IsNonDeductible, string? NonDeductibleRuleCode, DateTime CreatedAt);
+    Guid? JournalEntryId, string? JournalEntryNumber, bool IsNonDeductible, string? NonDeductibleRuleCode, DateTime CreatedAt,
+    IReadOnlyList<PettyCashEvidenceRef>? Evidence = null);
 
 /// <summary>ทะเบียนเงินสดย่อยของกองทุนหนึ่ง (เรียงวันที่เก่า → ใหม่ ตามสมุดเงินสด)</summary>
 public sealed record PettyCashRegister(Guid FundId, string FundName, decimal ImprestAmount, decimal CurrentBalance,
@@ -73,6 +136,7 @@ public sealed record PettyCashRegister(Guid FundId, string FundName, decimal Imp
         "Disbursement" => "เบิกจ่าย",
         "Replenishment" => "เติมเงิน",
         "Adjustment" => "ปรับปรุง",
+        PettyCashFundGlRule.GlOnlyType => "ปรับเฉพาะ GL (ไม่กระทบกองทุน)",
         _ => type ?? "",
     };
 }
@@ -89,14 +153,15 @@ public sealed record PettyCashFundAccountOption(Guid AccountId, string AccountCo
 public class PettyCashService : IPettyCashService
 {
     private readonly AccountingDbContext _db;
+    private readonly IFileAttachmentService? _files;
 
-    public PettyCashService(AccountingDbContext db) { _db = db; }
+    public PettyCashService(AccountingDbContext db, IFileAttachmentService? files = null) { _db = db; _files = files; }
 
     private const string FundAccountField = "ผังบัญชีของกองทุน";
 
     public async Task<PettyCashFund> CreateFundAsync(Guid companyId, string name,
         Guid? custodianUserId, decimal imprestAmount, Guid? linkedAccountId,
-        CancellationToken ct = default)
+        bool allowSharedAccount = false, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new BusinessRuleException("กรอก “ชื่อกองทุน” ก่อนบันทึก", "PETTY-FUND-NAME");
@@ -123,6 +188,7 @@ public class PettyCashService : IPettyCashService
                     + "(เพิ่มที่หน้า “ผังบัญชี” หรือเลือกผังสินทรัพย์อื่นที่ใช้เป็นเงินสดย่อย)", PettyCashJePlan.RuleNoFundAccount);
             fundAccountId = def.AccountId;
         }
+        await RequireAccountNotSharedAsync(companyId, null, fundAccountId, allowSharedAccount, ct);
 
         var fund = new PettyCashFund
         {
@@ -139,7 +205,7 @@ public class PettyCashService : IPettyCashService
     }
 
     public async Task<PettyCashFund> UpdateFundAsync(Guid companyId, Guid fundId, string? name,
-        decimal? imprestAmount, Guid? linkedAccountId, CancellationToken ct = default)
+        decimal? imprestAmount, Guid? linkedAccountId, bool allowSharedAccount = false, CancellationToken ct = default)
     {
         var fund = await FindFundAsync(companyId, fundId, ct);
         if (name != null)
@@ -166,6 +232,7 @@ public class PettyCashService : IPettyCashService
                     "กองทุนนี้มีรายการที่ลงบัญชีไปแล้ว — เปลี่ยน “ผังบัญชีของกองทุน” ไม่ได้ เพราะยอดเดิมอยู่ในผังเก่า "
                     + "· ถ้าต้องย้ายผังจริง: บันทึกโอนยอดที่หน้า “สมุดรายวันทั่วไป” (เดบิตผังใหม่ / เครดิตผังเดิม) แล้วเปิดกองทุนใหม่ที่ผูกผังใหม่",
                     "PETTY-FUND-ACCOUNT-LOCKED");
+            await RequireAccountNotSharedAsync(companyId, fund.Id, linkedAccountId!.Value, allowSharedAccount, ct);
             fund.LinkedAccountId = linkedAccountId;
         }
         fund.UpdatedAt = DateTime.UtcNow;
@@ -180,6 +247,32 @@ public class PettyCashService : IPettyCashService
             .Select(a => new PettyCashFundAccountOption(a.Id, a.AccountCode, a.AccountName))
             .FirstOrDefaultAsync(ct);
 
+    /// <summary>ผัง 1 ผัง ↔ กองทุน 1 กองทุน (เว้นแต่ผู้ใช้ติ๊กยอมใช้ผังร่วม) — กติกาที่ <see cref="PettyCashFundGlRule.SharedAccountProblem"/></summary>
+    private async Task RequireAccountNotSharedAsync(Guid companyId, Guid? selfFundId, Guid accountId, bool allowShared, CancellationToken ct)
+    {
+        if (allowShared) return;
+        var others = await _db.PettyCashFunds.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted && f.LinkedAccountId == accountId && (selfFundId == null || f.Id != selfFundId))
+            .OrderBy(f => f.Name).Select(f => f.Name).ToListAsync(ct);
+        if (others.Count == 0) return;
+        var label = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.Id == accountId && a.CompanyId == companyId)
+            .Select(a => a.AccountCode + " " + a.AccountName).FirstOrDefaultAsync(ct) ?? "ที่เลือก";
+        var problem = PettyCashFundGlRule.SharedAccountProblem(label, others, allowShared);
+        if (problem != null) throw new BusinessRuleException(problem, PettyCashFundGlRule.RuleSharedAccount);
+    }
+
+    /// <summary>ล็อกแถวกองทุน (<c>FOR UPDATE</c>) — ตัวเดียวของทุกเส้นที่แก้ <c>CurrentBalance</c> (เบิก · เติม · ระบุกองทุน) ·
+    /// <b>ผู้เรียกต้องถือธุรกรรม</b> (นอกธุรกรรม = autocommit ล็อกหลุดทันที) · ต้องเรียกก่อน <see cref="FindFundAsync"/> เพื่อให้อ่านยอดหลังล็อก</summary>
+    private Task LockFundRowAsync(Guid companyId, Guid fundId, CancellationToken ct)
+        => _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"PettyCashFunds\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", new object[] { fundId, companyId }, ct);
+
+    /// <summary>ล็อกต่อใบสำคัญ (advisory xact) — ระบุกองทุน/ปรับเฉพาะ GL ของใบเดียวกันพร้อมกันได้แถวเดียว แม้ต่างกองทุนบนผังร่วม (ฝ่ายค้านข้อ 2)</summary>
+    private Task LockEntryAsync(Guid companyId, Guid journalEntryId, CancellationToken ct)
+        => _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+            new object[] { AdvisoryLockKey.For(companyId, AdvisoryLockKey.PettyCashEntry, journalEntryId.ToString("N")) }, ct);
+
     private async Task<PettyCashFund> FindFundAsync(Guid companyId, Guid fundId, CancellationToken ct)
         => await _db.PettyCashFunds.FirstOrDefaultAsync(
                f => f.Id == fundId && f.CompanyId == companyId && !f.IsDeleted, ct)
@@ -190,14 +283,33 @@ public class PettyCashService : IPettyCashService
         => await PickedAccountGuard.RequirePostingAccountAsync(_db, companyId, fund.LinkedAccountId!.Value,
             FundAccountField + $" ของกองทุน {fund.Name}", new[] { AccountType.Asset }, ct);
 
-    public async Task<PettyCashTransaction> DisburseAsync(Guid companyId, Guid fundId,
+    public Task<PettyCashTransaction> DisburseAsync(Guid companyId, Guid fundId,
         decimal amount, string description, Guid? expenseAccountId,
         string? receiptRef, DateTime txnDate, Guid? projectId = null,
         CancellationToken ct = default)
+        => DisburseWithEvidenceAsync(companyId, fundId, amount, description, expenseAccountId, receiptRef, txnDate, projectId,
+            null, null, ct);
+
+    public async Task<PettyCashTransaction> DisburseWithEvidenceAsync(Guid companyId, Guid fundId,
+        decimal amount, string description, Guid? expenseAccountId, string? receiptRef, DateTime txnDate, Guid? projectId,
+        PettyCashEvidenceFile? evidence, Guid? actorUserId, CancellationToken ct = default)
+    {
+        // ธุรกรรมเสมอ — ล็อกแถวกองทุน (LockFundRowAsync) ใน core ต้องอยู่ใต้ธุรกรรมจึงมีผล (ฝ่ายค้านข้อ 1: lost update ของ CurrentBalance)
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var txn = await DisburseCoreAsync(companyId, fundId, amount, description, expenseAccountId, receiptRef, txnDate, projectId, ct);
+        if (evidence != null) await SaveEvidenceAsync(companyId, txn, evidence, actorUserId, ct);
+        await tx.CommitAsync(ct);
+        return txn;
+    }
+
+    private async Task<PettyCashTransaction> DisburseCoreAsync(Guid companyId, Guid fundId,
+        decimal amount, string description, Guid? expenseAccountId,
+        string? receiptRef, DateTime txnDate, Guid? projectId, CancellationToken ct)
     {
         if (amount <= 0) throw new BusinessRuleException("“จำนวนเงิน” ต้องมากกว่า 0", PettyCashJePlan.RuleBadAmount);
         if (string.IsNullOrWhiteSpace(description))
             throw new BusinessRuleException("กรอก “คำอธิบาย” ว่าจ่ายค่าอะไร ก่อนบันทึก", "PETTY-NO-DESCRIPTION");
+        await LockFundRowAsync(companyId, fundId, ct);   // อ่านยอดใต้ล็อก — สองคนเบิกพร้อมกันต้องไม่ทับยอดกัน
         var fund = await FindFundAsync(companyId, fundId, ct);
 
         // ── ลงบัญชี: Dr ค่าใช้จ่าย / Cr ผังของกองทุน ────────────────────
@@ -283,11 +395,82 @@ public class PettyCashService : IPettyCashService
     /// ไม่ขยับทั้งสองขา = ยอดธนาคารในงบไม่ลด ยอดเงินสดย่อยในงบไม่ขึ้น
     /// (`DECISION_AUDIT_2026-09-18.md` §3 D4-7 — "เงินออกธนาคารเข้าถังโดย GL ไม่รู้")
     /// </summary>
-    public async Task<PettyCashTransaction> ReplenishAsync(Guid companyId, Guid fundId,
+    public Task<PettyCashTransaction> ReplenishAsync(Guid companyId, Guid fundId,
         decimal amount, string? notes, DateTime txnDate,
         Guid? sourceAccountId = null, Guid? sourceBankAccountId = null, CancellationToken ct = default)
+        => ReplenishWithEvidenceAsync(companyId, fundId, amount, notes, txnDate, sourceAccountId, sourceBankAccountId, null, null, ct);
+
+    public async Task<PettyCashTransaction> ReplenishWithEvidenceAsync(Guid companyId, Guid fundId,
+        decimal amount, string? notes, DateTime txnDate, Guid? sourceAccountId, Guid? sourceBankAccountId,
+        PettyCashEvidenceFile? evidence, Guid? actorUserId, CancellationToken ct = default)
+    {
+        // ด่านค่าตั้งบริษัท — ทุกทางเข้าของการเติม (หน้าเว็บ/JSON API เดิม) เดินผ่านที่นี่ ⇒ บังคับครบ ไม่ใช่แค่หน้าจอ
+        if (evidence == null && await IsTopUpEvidenceRequiredAsync(companyId, ct))
+            throw new BusinessRuleException(PettyCashEvidence.RequiredMessage, PettyCashEvidence.RuleRequired);
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var txn = await ReplenishCoreAsync(companyId, fundId, amount, notes, txnDate, sourceAccountId, sourceBankAccountId, ct);
+        if (evidence != null) await SaveEvidenceAsync(companyId, txn, evidence, actorUserId, ct);
+        await tx.CommitAsync(ct);
+        return txn;
+    }
+
+    public async Task<bool> IsTopUpEvidenceRequiredAsync(Guid companyId, CancellationToken ct = default)
+        => await _db.CompanySettings.AsNoTracking()
+            .Where(s => s.CompanyId == companyId)
+            .Select(s => (bool?)s.PettyCashTopUpEvidenceRequired)
+            .FirstOrDefaultAsync(ct) ?? false;
+
+    public async Task<PettyCashEvidenceRef> AttachEvidenceAsync(Guid companyId, Guid transactionId, PettyCashEvidenceFile evidence,
+        Guid? actorUserId, CancellationToken ct = default)
+    {
+        var txn = await _db.PettyCashTransactions.AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == transactionId && t.CompanyId == companyId && !t.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบรายการเงินสดย่อยนี้ในบริษัท — รีเฟรชทะเบียนแล้วลองใหม่");
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        var r = await SaveEvidenceAsync(companyId, txn, evidence, actorUserId, ct);
+        await tx.CommitAsync(ct);
+        return r;
+    }
+
+    /// <summary>เก็บไฟล์ผ่านที่เก็บไฟล์แนบกลาง + audit (hash chain) — ผู้เรียกถือธุรกรรมไว้ (ล้ม = ย้อนทั้งรายการ)</summary>
+    private async Task<PettyCashEvidenceRef> SaveEvidenceAsync(Guid companyId, PettyCashTransaction txn, PettyCashEvidenceFile evidence,
+        Guid? actorUserId, CancellationToken ct)
+    {
+        if (_files == null)
+            throw new InvalidOperationException("ที่เก็บไฟล์แนบไม่พร้อม (PettyCashService ไม่ได้รับ IFileAttachmentService)");
+        var saved = actorUserId is Guid uid && uid != Guid.Empty
+            ? await _files.UploadBytesAsync(companyId, PettyCashEvidence.EntityType, txn.Id, evidence.DisplayName, evidence.ContentType, evidence.Content, uid)
+            : await _files.UploadAnonymousBytesAsync(companyId, PettyCashEvidence.EntityType, txn.Id, evidence.DisplayName, evidence.ContentType, evidence.Content);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = actorUserId,
+            EntityType = nameof(PettyCashTransaction),
+            EntityId = txn.Id.ToString(),
+            Action = AuditAction.Create,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "petty-cash-evidence-attached",
+                transactionType = txn.Type,
+                fundId = txn.FundId,
+                amount = txn.Amount,
+                journalEntryId = txn.JournalEntryId,
+                attachmentId = saved.Id,
+                fileName = evidence.DisplayName,
+                contentType = evidence.ContentType,
+                size = evidence.Content.LongLength,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        return new PettyCashEvidenceRef(saved.Id, evidence.DisplayName, evidence.ContentType);
+    }
+
+    private async Task<PettyCashTransaction> ReplenishCoreAsync(Guid companyId, Guid fundId,
+        decimal amount, string? notes, DateTime txnDate, Guid? sourceAccountId, Guid? sourceBankAccountId, CancellationToken ct)
     {
         if (amount <= 0) throw new BusinessRuleException("“จำนวนเติม” ต้องมากกว่า 0", PettyCashJePlan.RuleBadAmount);
+        await LockFundRowAsync(companyId, fundId, ct);   // อ่านยอดใต้ล็อก — กัน lost update กับเบิก/ระบุกองทุนที่ทำพร้อมกัน
         var fund = await FindFundAsync(companyId, fundId, ct);
         if (!fund.LinkedAccountId.HasValue)
             throw new BusinessRuleException(PettyCashJePlan.NoFundAccountMessage, PettyCashJePlan.RuleNoFundAccount);
@@ -415,6 +598,15 @@ public class PettyCashService : IPettyCashService
             : await _db.Projects.AsNoTracking()
                 .Where(p => p.CompanyId == companyId && projectIds.Contains(p.Id))
                 .ToDictionaryAsync(p => p.Id, p => p.Code + " " + p.Name, ct);
+        var txnIds = txns.Select(t => t.Id).ToList();
+        var evidence = txnIds.Count == 0 ? new Dictionary<Guid, List<PettyCashEvidenceRef>>()
+            : (await _db.FileAttachments.AsNoTracking()
+                .Where(a => a.CompanyId == companyId && a.EntityType == PettyCashEvidence.EntityType && txnIds.Contains(a.EntityId))
+                .OrderBy(a => a.CreatedAt)
+                .Select(a => new { a.EntityId, a.Id, a.OriginalFileName, a.ContentType })
+                .ToListAsync(ct))
+              .GroupBy(a => a.EntityId)
+              .ToDictionary(g => g.Key, g => g.Select(a => new PettyCashEvidenceRef(a.Id, a.OriginalFileName, a.ContentType)).ToList());
         var rows = txns.Select(t => new PettyCashRegisterRow(
             t.Id, t.TransactionDate, t.Type, PettyCashRegister.TypeLabel(t.Type), t.Description, t.ReceiptReference, t.Amount,
             t.Type == "Replenishment" ? t.Amount : 0m,
@@ -423,7 +615,8 @@ public class PettyCashService : IPettyCashService
             t.ProjectId.HasValue && projects.TryGetValue(t.ProjectId.Value, out var pl) ? pl : null,
             t.JournalEntryId,
             t.JournalEntryId.HasValue && jeNumbers.TryGetValue(t.JournalEntryId.Value, out var jn) ? jn : null,
-            t.IsNonDeductible, t.NonDeductibleRuleCode, t.CreatedAt)).ToList();
+            t.IsNonDeductible, t.NonDeductibleRuleCode, t.CreatedAt,
+            evidence.TryGetValue(t.Id, out var ev) ? ev : new List<PettyCashEvidenceRef>())).ToList();
         return new PettyCashRegister(fund.Id, fund.Name, fund.ImprestAmount, fund.CurrentBalance, fund.Account,
             fromDate, toDate, rows, rows.Sum(r => r.AmountIn), rows.Sum(r => r.AmountOut));
     }
@@ -437,5 +630,252 @@ public class PettyCashService : IPettyCashService
         if (toDate.HasValue) q = q.Where(t => t.TransactionDate <= toDate.Value);
         return q.OrderByDescending(t => t.TransactionDate).Take(500).ToListAsync(ct)
             .ContinueWith(t => (IReadOnlyList<PettyCashTransaction>)t.Result, ct);
+    }
+
+    /// <summary>จำนวนใบสำคัญจากทางอื่นที่แสดงต่อผัง (ล่าสุดก่อน) — นับครบเสมอใน <c>UnattributedCount</c></summary>
+    public const int MaxExternalEntriesShown = 200;
+
+    /// <summary>ใบสำคัญที่นับยอด — เหมือนยอดผังที่หน้าบัญชีธนาคาร (<c>BankService.GetBankAccountsAsync</c>): ลงบัญชีแล้ว + ถูกกลับรายการ
+    /// (ใบกลับรายการเองก็ Posted ⇒ สุทธิเป็นศูนย์)</summary>
+    private IQueryable<Guid> CountedEntryIds(Guid companyId) => _db.JournalEntries
+        .Where(j => j.CompanyId == companyId && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed))
+        .Select(j => j.Id);
+
+    public async Task<IReadOnlyList<PettyCashGlRecon>> GetGlReconciliationAsync(Guid companyId, CancellationToken ct = default)
+    {
+        var funds = await _db.PettyCashFunds.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted && f.LinkedAccountId != null)
+            .OrderBy(f => f.Name)
+            .Select(f => new { f.Id, f.Name, f.CurrentBalance, f.IsActive, Gl = f.LinkedAccountId!.Value })
+            .ToListAsync(ct);
+        if (funds.Count == 0) return Array.Empty<PettyCashGlRecon>();
+        var glIds = funds.Select(f => f.Gl).Distinct().ToList();
+        var accounts = await _db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && glIds.Contains(a.Id))
+            .Select(a => new { a.Id, a.AccountCode, a.AccountName })
+            .ToDictionaryAsync(a => a.Id, ct);
+        var counted = CountedEntryIds(companyId);
+        var balances = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => glIds.Contains(l.AccountId) && counted.Contains(l.JournalEntryId))
+            .GroupBy(l => l.AccountId)
+            .Select(g => new { AccountId = g.Key, Net = g.Sum(l => l.DebitAmount - l.CreditAmount) })
+            .ToDictionaryAsync(x => x.AccountId, x => x.Net, ct);
+        // ใบที่แตะผังกองทุน แต่ไม่มีแถวทะเบียนของ "กองทุนที่ผูกผังนั้น" อ้างถึง (ใบเติมเงินที่ใช้ผังกองทุนอื่นเป็นต้นทาง ก็โผล่ที่ผังต้นทางด้วย)
+        var external = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => glIds.Contains(l.AccountId) && counted.Contains(l.JournalEntryId)
+                && !_db.PettyCashTransactions.Any(t => t.CompanyId == companyId && !t.IsDeleted
+                    && t.JournalEntryId == l.JournalEntryId && t.Fund.LinkedAccountId == l.AccountId))
+            .GroupBy(l => new { l.AccountId, l.JournalEntryId })
+            .Select(g => new { g.Key.AccountId, g.Key.JournalEntryId, Net = g.Sum(l => l.DebitAmount - l.CreditAmount) })
+            .ToListAsync(ct);
+        external = external.Where(e => e.Net != 0m).ToList();
+        var jeIds = external.Select(e => e.JournalEntryId).Distinct().ToList();
+        var headers = new Dictionary<Guid, (string No, DateTime Date, string? Desc, string? Ref)>();
+        if (jeIds.Count > 0)
+            foreach (var j in await _db.JournalEntries.AsNoTracking()
+                         .Where(x => x.CompanyId == companyId && jeIds.Contains(x.Id))
+                         .Select(x => new { x.Id, x.EntryNumber, x.EntryDate, x.Description, x.Reference })
+                         .ToListAsync(ct))
+                headers[j.Id] = (j.EntryNumber, j.EntryDate, j.Description, j.Reference);
+
+        var glOnly = await _db.PettyCashTransactions.AsNoTracking()
+            .Where(t => t.CompanyId == companyId && !t.IsDeleted && t.Type == PettyCashFundGlRule.GlOnlyType
+                && t.Fund.LinkedAccountId != null && glIds.Contains(t.Fund.LinkedAccountId.Value))
+            .OrderByDescending(t => t.TransactionDate)
+            .Select(t => new { t.Id, Gl = t.Fund.LinkedAccountId!.Value, t.JournalEntryId, t.ReceiptReference, t.TransactionDate, t.Amount, t.Description })
+            .ToListAsync(ct);
+
+        var result = new List<PettyCashGlRecon>();
+        foreach (var gl in glIds)
+        {
+            var glFunds = funds.Where(f => f.Gl == gl).Select(f => new PettyCashGlFund(f.Id, f.Name, f.CurrentBalance, f.IsActive)).ToList();
+            var activeFunds = glFunds.Where(f => f.IsActive).ToList();
+            Guid? suggested = activeFunds.Count == 1 ? activeFunds[0].FundId : null;
+            var ext = external.Where(e => e.AccountId == gl)
+                .Select(e =>
+                {
+                    headers.TryGetValue(e.JournalEntryId, out var h);
+                    var mv = PettyCashFundGlRule.ExternalMovement(e.Net)!.Value;
+                    return new PettyCashExternalEntry(e.JournalEntryId, h.No ?? "(ไม่พบเลขใบสำคัญ)", h.Date, h.Desc, h.Ref, e.Net,
+                        mv.Type, PettyCashRegister.TypeLabel(mv.Type), mv.Amount, suggested);
+                })
+                .OrderByDescending(e => e.EntryDate).ThenBy(e => e.EntryNumber)
+                .ToList();
+            var glBalance = balances.TryGetValue(gl, out var b) ? b : 0m;
+            var fundsTotal = glFunds.Sum(f => f.CurrentBalance);
+            var glOnlyRows = glOnly.Where(g => g.Gl == gl)
+                .Select(g => new PettyCashGlOnlyEntry(g.Id, g.JournalEntryId ?? Guid.Empty, g.ReceiptReference, g.TransactionDate, g.Amount, g.Description))
+                .ToList();
+            var glOnlyNet = glOnlyRows.Sum(g => g.NetDebit);
+            // ส่วนที่ทำเครื่องหมาย "ปรับเฉพาะ GL" = GL ต่างจากกองทุนโดยตั้งใจ ⇒ เทียบ GL กับ (ยอดกองทุน + ส่วนนั้น)
+            var status = PettyCashFundGlRule.Classify(glBalance, fundsTotal + glOnlyNet, ext.Count);
+            accounts.TryGetValue(gl, out var acc);
+            result.Add(new PettyCashGlRecon(gl, acc?.AccountCode ?? "", acc?.AccountName ?? "(ไม่พบผัง — อาจถูกลบ)",
+                glBalance, fundsTotal, glBalance - fundsTotal - glOnlyNet, status.ToString(), PettyCashFundGlRule.StatusLabel(status),
+                glFunds.Count > 1, glFunds, ext.Count, ext.Sum(e => e.NetDebit), ext.Take(MaxExternalEntriesShown).ToList(),
+                glOnlyNet, glOnlyRows));
+        }
+        return result.OrderBy(r => r.AccountCode).ToList();
+    }
+
+    public async Task<PettyCashTransaction> AttributeExternalEntryAsync(Guid companyId, Guid fundId, Guid journalEntryId,
+        Guid? actorUserId = null, CancellationToken ct = default)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        // ล็อกใบสำคัญก่อน (กันสองกองทุนบนผังร่วมระบุใบเดียวกัน) แล้วล็อกแถวกองทุน (กัน lost update กับเบิก/เติม) — ตรวจซ้ำใต้ล็อกทั้งคู่
+        await LockEntryAsync(companyId, journalEntryId, ct);
+        await LockFundRowAsync(companyId, fundId, ct);
+        var fund = await FindFundAsync(companyId, fundId, ct);
+        if (!fund.LinkedAccountId.HasValue)
+            throw new BusinessRuleException(PettyCashJePlan.NoFundAccountMessage, PettyCashJePlan.RuleNoFundAccount);
+        var gl = fund.LinkedAccountId.Value;
+        var je = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.Id == journalEntryId && j.CompanyId == companyId
+                && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed))
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.Description })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("ไม่พบใบสำคัญนี้ในบริษัท (หรือยังไม่ได้ลงบัญชี) — รีเฟรชส่วน “กระทบยอดกับผังบัญชี” แล้วเลือกใหม่");
+        var net = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntryId == je.Id && l.AccountId == gl)
+            .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount), ct) ?? 0m;
+        var mv = PettyCashFundGlRule.ExternalMovement(net)
+            ?? throw new BusinessRuleException(
+                $"ใบสำคัญ {je.EntryNumber} ไม่ได้ลงผังของกองทุน {fund.Name} (หรือยอดสุทธิเป็นศูนย์) — เลือกกองทุนที่ผูกผังเดียวกับใบสำคัญ",
+                PettyCashFundGlRule.RuleAttribute);
+        if (await _db.PettyCashTransactions.AnyAsync(t => t.CompanyId == companyId && !t.IsDeleted
+                && t.JournalEntryId == je.Id && t.Fund.LinkedAccountId == gl, ct))
+            throw new BusinessRuleException(
+                $"ใบสำคัญ {je.EntryNumber} อยู่ในทะเบียนกองทุนที่ใช้ผังนี้แล้ว — ไม่ต้องระบุซ้ำ (รีเฟรชหน้า)", PettyCashFundGlRule.RuleAttribute, 409);
+
+        fund.CurrentBalance += mv.Type == "Replenishment" ? mv.Amount : -mv.Amount;
+        fund.UpdatedAt = DateTime.UtcNow;
+        var txn = new PettyCashTransaction
+        {
+            CompanyId = companyId,
+            FundId = fund.Id,
+            TransactionDate = je.EntryDate,
+            Amount = mv.Amount,
+            Type = mv.Type,
+            Description = $"รายการจากทางอื่น ({je.EntryNumber}): {je.Description}".Trim(),
+            ReceiptReference = je.EntryNumber,
+            JournalEntryId = je.Id,   // อ้างใบเดิม — ไม่ลง JE ใหม่ (GL ขยับไปแล้วตอนออกใบ)
+        };
+        _db.PettyCashTransactions.Add(txn);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = actorUserId,
+            EntityType = nameof(PettyCashTransaction),
+            EntityId = txn.Id.ToString(),
+            Action = AuditAction.Create,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "petty-cash-entry-attributed",
+                journalEntryId = je.Id,
+                entryNumber = je.EntryNumber,
+                net,
+                type = mv.Type,
+                amount = mv.Amount,
+                fundId = fund.Id,
+                fundBalanceAfter = fund.CurrentBalance,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return txn;
+    }
+
+    public async Task<PettyCashTransaction> MarkGlOnlyAsync(Guid companyId, Guid accountId, Guid journalEntryId, string? note,
+        Guid? actorUserId = null, CancellationToken ct = default)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await LockEntryAsync(companyId, journalEntryId, ct);
+        // แถวต้องผูกกองทุน (FK) — ใช้กองทุนบนผังนั้น (เปิดใช้ก่อน · ชื่อ) เป็นที่เก็บเครื่องหมาย · ยอดกองทุนไม่ขยับ
+        var fund = await _db.PettyCashFunds.AsNoTracking()
+            .Where(f => f.CompanyId == companyId && !f.IsDeleted && f.LinkedAccountId == accountId)
+            .OrderByDescending(f => f.IsActive).ThenBy(f => f.Name)
+            .Select(f => new { f.Id, f.Name })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new BusinessRuleException("ผังนี้ไม่ได้เป็นผังของกองทุนเงินสดย่อยใด — รีเฟรชส่วน “กระทบยอดกับผังบัญชี”", PettyCashFundGlRule.RuleAttribute);
+        var je = await _db.JournalEntries.AsNoTracking()
+            .Where(j => j.Id == journalEntryId && j.CompanyId == companyId
+                && (j.Status == JournalEntryStatus.Posted || j.Status == JournalEntryStatus.Reversed))
+            .Select(j => new { j.Id, j.EntryNumber, j.EntryDate, j.Description })
+            .FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("ไม่พบใบสำคัญนี้ในบริษัท (หรือยังไม่ได้ลงบัญชี) — รีเฟรชส่วน “กระทบยอดกับผังบัญชี” แล้วเลือกใหม่");
+        var net = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => l.JournalEntryId == je.Id && l.AccountId == accountId)
+            .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount), ct) ?? 0m;
+        if (net == 0m)
+            throw new BusinessRuleException($"ใบสำคัญ {je.EntryNumber} ไม่ได้ลงผังนี้ (หรือยอดสุทธิเป็นศูนย์) — ไม่ต้องทำเครื่องหมาย", PettyCashFundGlRule.RuleAttribute);
+        if (await _db.PettyCashTransactions.AnyAsync(t => t.CompanyId == companyId && !t.IsDeleted
+                && t.JournalEntryId == je.Id && t.Fund.LinkedAccountId == accountId, ct))
+            throw new BusinessRuleException(
+                $"ใบสำคัญ {je.EntryNumber} ถูกระบุกองทุน/ทำเครื่องหมายบนผังนี้แล้ว (รีเฟรชหน้า)", PettyCashFundGlRule.RuleAttribute, 409);
+        var txn = new PettyCashTransaction
+        {
+            CompanyId = companyId,
+            FundId = fund.Id,
+            TransactionDate = je.EntryDate,
+            Amount = net,   // มีเครื่องหมาย — ไม่ใช่เงินเข้า/ออกกองทุน (ทะเบียนไม่นับเข้า/ออก)
+            Type = PettyCashFundGlRule.GlOnlyType,
+            Description = $"ไม่กระทบกองทุน — ปรับเฉพาะ GL ({je.EntryNumber})" + (string.IsNullOrWhiteSpace(note) ? "" : ": " + note.Trim()),
+            ReceiptReference = je.EntryNumber,
+            JournalEntryId = je.Id,
+        };
+        _db.PettyCashTransactions.Add(txn);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = actorUserId,
+            EntityType = nameof(PettyCashTransaction),
+            EntityId = txn.Id.ToString(),
+            Action = AuditAction.Create,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "petty-cash-entry-gl-only",
+                journalEntryId = je.Id,
+                entryNumber = je.EntryNumber,
+                accountId,
+                net,
+                fundId = fund.Id,
+                note = note?.Trim(),
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return txn;
+    }
+
+    public async Task UndoGlOnlyAsync(Guid companyId, Guid transactionId, Guid? actorUserId = null, CancellationToken ct = default)
+    {
+        var txn = await _db.PettyCashTransactions
+            .FirstOrDefaultAsync(t => t.Id == transactionId && t.CompanyId == companyId && !t.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบเครื่องหมายนี้ (อาจถูกยกเลิกไปแล้ว) — รีเฟรชหน้า");
+        if (txn.Type != PettyCashFundGlRule.GlOnlyType)
+            throw new BusinessRuleException("ยกเลิกได้เฉพาะเครื่องหมาย “ไม่กระทบกองทุน (ปรับเฉพาะ GL)” — รายการเบิก/เติม/ระบุกองทุนกลับรายการด้วยใบสำคัญ",
+                PettyCashFundGlRule.RuleAttribute);
+        txn.IsDeleted = true;
+        txn.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = actorUserId,
+            EntityType = nameof(PettyCashTransaction),
+            EntityId = txn.Id.ToString(),
+            Action = AuditAction.Delete,
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "petty-cash-entry-gl-only-undone",
+                journalEntryId = txn.JournalEntryId,
+                entryNumber = txn.ReceiptReference,
+                net = txn.Amount,
+                fundId = txn.FundId,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
     }
 }

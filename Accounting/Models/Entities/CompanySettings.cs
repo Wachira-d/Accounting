@@ -305,6 +305,10 @@ public class CompanySettings : TenantEntity
     [System.ComponentModel.DataAnnotations.MaxLength(200)]
     public string? MoneyAccountCodePrefixes { get; set; }
 
+    /// <summary>เติมเงินสดย่อยต้องแนบสลิป/หลักฐานทุกครั้ง (ค่าตั้งต้น false = ไม่บังคับ) — 2026-11-02 PETTY_CASH_AUDIT ส่วน C ·
+    /// ผู้อ่านเดียว: <c>PettyCashService.IsTopUpEvidenceRequiredAsync</c> (ด่านใน <c>ReplenishWithEvidenceAsync</c> — ทุกทางเข้าของการเติม)</summary>
+    public bool PettyCashTopUpEvidenceRequired { get; set; } = false;
+
     // ── พ.ร.บ.การบัญชี ม.7 — ผู้ทำบัญชี (Bookkeeper / CPD) ──
     // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)
     // ที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี. ไม่มี = ยื่นไม่ได้ (ผู้บริหารรับผิด

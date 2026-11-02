@@ -109,6 +109,7 @@ public class CommerceConfigResponse
     public bool OrderFormFieldsConfigured { get; set; }
     public List<CommerceOptionValue> FormFieldRequirementOptions { get; set; } = new();
     public List<string> FormFieldTypes { get; set; } = new();
+    public List<CommerceOptionValue> FormFieldTypeOptions { get; set; } = new();
     public bool EnableOnlinePayment { get; set; }
     public bool EnableCod { get; set; }
     public bool EnableBankTransfer { get; set; }

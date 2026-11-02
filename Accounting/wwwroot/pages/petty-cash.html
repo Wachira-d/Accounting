@@ -22,6 +22,10 @@
 
     <div id="funds"></div>
 
+    <!-- กระทบยอด "ผังของกองทุน (GL) ↔ ยอดกองทุน" (PETTY_CASH_AUDIT 2026-11-02) — ใบสำคัญจ่าย/ใบเบิก/สมุดรายวันที่เลือกผังเงินสดย่อย
+         ไม่ได้ลดยอดกองทุน ⇒ ส่วนนี้แสดงใบเหล่านั้นให้ระบุกองทุน · ตัวเลข/สถานะ/ป้ายมาจากเซิร์ฟเวอร์ (GET sme/petty-cash/reconciliation) -->
+    <div id="recon"></div>
+
     <!-- ทะเบียนเบิกจ่าย/เติมเงินของกองทุน (ทีม X5 2026-10-15 — เดิมหน้านี้ไม่มีรายการให้ตรวจ/ส่งออกเลย มีแต่การ์ดยอดคงเหลือ)
          แถว + ยอดรวมจากเซิร์ฟเวอร์ (GET sme/petty-cash/funds/{id}/register) · ไฟล์ส่งออกใช้ service ตัวเดียวกัน -->
     <div id="registerModal" class="modal-overlay">
@@ -52,6 +56,11 @@
         <div id="fAccountHint" style="font-size:11px;color:#64748b;margin-top:4px">
           ผังที่เงินสดย่อยของกองทุนนี้อยู่ (ปกติคือผังเงินสดย่อยในหมวดเงินสด) — การเบิก/เติมเงินลงบัญชีที่ผังนี้
         </div>
+        <label style="display:flex;gap:6px;align-items:flex-start;font-size:12px;margin-top:8px;font-weight:normal">
+          <input type="checkbox" id="fAllowShared" style="margin-top:2px">
+          <span>ใช้ผังร่วมกับกองทุนอื่น — ปกติระบบให้ 1 ผังต่อ 1 กองทุน เพื่อให้รู้ว่าใบสำคัญจ่าย/ใบเบิก/สมุดรายวันที่เลือกผังนี้หักกองทุนไหน ·
+            ถ้าใช้ผังร่วม รายการจากทางอื่นต้องระบุกองทุนเองที่ส่วน “กระทบยอดกับผังบัญชี” ท้ายหน้านี้</span>
+        </label>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
           <button class="btn btn-secondary" onclick="Page.closeFund()">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.saveFund()">บันทึก</button>
@@ -79,6 +88,8 @@
         <div id="dExpenseHint" style="font-size:11px;color:#64748b;margin-top:4px">ทุกการเบิกลงบัญชีอัตโนมัติ: เดบิตบัญชีค่าใช้จ่ายนี้ / เครดิตผังของกองทุน</div>
         <label>โครงการ (ไม่บังคับ)</label>
         <select id="dProject" class="form-input"><option value="">— ไม่ระบุ —</option></select>
+        <label>ใบเสร็จ / หลักฐาน (รูปหรือ PDF · ไม่บังคับ)</label>
+        <input id="dEvidence" type="file" accept="image/*,application/pdf" class="form-input">
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
           <button class="btn btn-secondary" onclick="Page.closeDisburse()">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.submitDisburse()">บันทึก</button>
@@ -97,6 +108,8 @@
         <div style="font-size:11px;color:#64748b;margin-top:4px">ลงบัญชีอัตโนมัติ: เดบิตผังของกองทุน / เครดิตบัญชีที่เลือก</div>
         <label>หมายเหตุ</label>
         <input id="rNotes" class="form-input">
+        <label id="rEvidenceLabel">สลิป / หลักฐานการโอน (รูปหรือ PDF · ไม่บังคับ)</label>
+        <input id="rEvidence" type="file" accept="image/*,application/pdf" class="form-input">
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
           <button class="btn btn-secondary" onclick="Page.closeReplenish()">ยกเลิก</button>
           <button class="btn btn-primary" onclick="Page.submitReplenish()">บันทึก</button>
@@ -127,6 +140,7 @@
         if (reg) reg.innerHTML = ExportUtil.renderServerButtons('(f)=>Page.exportRegister(f)');
         await this.loadProjects();
         await this.loadAccounts();
+        await this.loadOptions();
         await this.load();
       },
       async aiSuggestAccount(slot, selectId, hintId) {
@@ -199,6 +213,46 @@
           sel.innerHTML = '<option value="">— ไม่ระบุ —</option>' + opts;
         } catch (e) { /* โครงการไม่บังคับ — ไม่มีรายการก็บันทึกได้ */ }
       },
+      // ค่าตั้ง "เติมเงินต้องแนบสลิป" — แสดงช่องเป็นบังคับเท่านั้น · ด่านจริงอยู่ที่เซิร์ฟเวอร์ (PettyCashService)
+      _topUpEvidenceRequired: false,
+      async loadOptions() {
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/sme/petty-cash/options`);
+          this._topUpEvidenceRequired = !!(r && r.data && r.data.topUpEvidenceRequired);
+        } catch (e) { this._topUpEvidenceRequired = false; }
+        const lbl = document.getElementById('rEvidenceLabel');
+        if (lbl) lbl.textContent = this._topUpEvidenceRequired
+          ? 'สลิป / หลักฐานการโอน (รูปหรือ PDF) * บริษัทตั้งให้ต้องแนบ'
+          : 'สลิป / หลักฐานการโอน (รูปหรือ PDF · ไม่บังคับ)';
+      },
+      /** ส่งเบิก/เติมเป็น multipart (payload = JSON เดิม + evidence = ไฟล์) — endpoint เดิมรับทั้ง JSON และ multipart */
+      _form(payload, fileInputId) {
+        const fd = new FormData();
+        fd.append('payload', JSON.stringify(payload));
+        const inp = document.getElementById(fileInputId);
+        if (inp && inp.files && inp.files[0]) fd.append('evidence', inp.files[0]);
+        return fd;
+      },
+      async downloadEvidence(attachmentId, name) {
+        try { await API.download(`/api/companies/${Layout.getCompanyId()}/attachments/${attachmentId}/download`, name || 'หลักฐาน'); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // แนบหลักฐานเพิ่มให้รายการที่บันทึกแล้ว (เซิร์ฟเวอร์ต้องการสิทธิ์ “จัดการใบสำคัญ”)
+      attachLater(transactionId) {
+        const inp = document.createElement('input');
+        inp.type = 'file'; inp.accept = 'image/*,application/pdf';
+        inp.onchange = async () => {
+          if (!inp.files || !inp.files[0]) return;
+          const fd = new FormData(); fd.append('evidence', inp.files[0]);
+          try {
+            await API.upload(`/api/companies/${Layout.getCompanyId()}/sme/petty-cash/transactions/${transactionId}/evidence`, fd);
+            Layout.toast('แนบหลักฐานแล้ว');
+            await this.loadRegister();
+          } catch (e) { Layout.toast(e.message, 'error'); }
+        };
+        inp.click();
+      },
       _fmt(n) { return (n||0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
       async load() {
         const el = document.getElementById('funds');
@@ -236,6 +290,97 @@
         } catch (e) {
           el.innerHTML = `<div class="card" style="padding:40px;text-align:center;color:#dc2626">${Layout.esc(e.message)}</div>`;
         }
+        await this.loadRecon();
+      },
+      // ── กระทบยอดกับผังบัญชี — ทุกตัวเลข/สถานะ/ป้ายจากเซิร์ฟเวอร์ (PettyCashFundGlRule) · หน้าแค่แสดง + ส่งกองทุนที่ผู้ใช้เลือก ──
+      async loadRecon() {
+        const box = document.getElementById('recon');
+        if (!box) return;
+        let rows = [];
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/sme/petty-cash/reconciliation`);
+          rows = Array.isArray(r && r.data) ? r.data : [];
+        } catch (e) {
+          box.innerHTML = `<div class="card" style="color:#dc2626;font-size:13px">โหลด “กระทบยอดกับผังบัญชี” ไม่สำเร็จ: ${Layout.esc(e.message)}</div>`;
+          return;
+        }
+        if (!rows.length) { box.innerHTML = ''; return; }
+        box.innerHTML = `<h3 style="margin:18px 0 8px">กระทบยอดกับผังบัญชี</h3>
+          <div style="font-size:12px;color:#64748b;margin-bottom:8px">ยอดตามผังบัญชี (ทุกใบสำคัญที่ลงผังของกองทุน) เทียบยอดคงเหลือของกองทุน ·
+            ใบสำคัญจ่าย/ใบเบิก/สมุดรายวันที่เลือกผังเงินสดย่อยจะโผล่ที่นี่จนกว่าจะระบุว่าเป็นของกองทุนไหน</div>`
+          + rows.map(g => {
+            const ok = g.status === 'Matched';
+            const fundOpts = (g.funds || []).map(f => `<option value="${Layout.esc(f.fundId)}">${Layout.esc(f.name)}${f.isActive ? '' : ' (ปิดใช้)'}</option>`).join('');
+            const entries = (g.unattributedEntries || []).map(x => `<tr>
+                <td style="white-space:nowrap">${Layout.date(x.entryDate)}</td>
+                <td><a href="/pages/journals.html?entryId=${Layout.esc(x.journalEntryId)}">${Layout.esc(x.entryNumber)}</a></td>
+                <td>${Layout.esc(x.description || '-')}${x.reference ? ' · ' + Layout.esc(x.reference) : ''}</td>
+                <td>${Layout.esc(x.typeLabel)}</td>
+                <td class="text-right">${Layout.money(x.amount)}</td>
+                <td><select class="form-input" style="min-width:140px" id="att-${Layout.esc(g.accountId)}-${Layout.esc(x.journalEntryId)}">
+                  ${x.suggestedFundId ? '' : '<option value="">— เลือกกองทุน —</option>'}${fundOpts}</select></td>
+                <td style="white-space:nowrap"><button class="btn btn-sm btn-primary" onclick="Page.attribute('${Layout.jsArg(g.accountId)}','${Layout.jsArg(x.journalEntryId)}')">บันทึกเข้ากองทุน</button>
+                  <button class="btn btn-sm btn-secondary" title="ใบนี้ไม่ใช่เงินเข้า/ออกจากลิ้นชัก (เช่น ปรับยอดยกมา/แก้ผังผิด) — ไม่ขยับยอดกองทุน ยกเลิกได้"
+                    onclick="Page.markGlOnly('${Layout.jsArg(g.accountId)}','${Layout.jsArg(x.journalEntryId)}')">ไม่กระทบกองทุน (ปรับเฉพาะ GL)</button></td>
+              </tr>`).join('');
+            const glOnly = (g.glOnlyEntries || []).map(x => `<tr>
+                <td style="white-space:nowrap">${Layout.date(x.entryDate)}</td>
+                <td><a href="/pages/journals.html?entryId=${Layout.esc(x.journalEntryId)}">${Layout.esc(x.entryNumber || '-')}</a></td>
+                <td>${Layout.esc(x.description || '')}</td>
+                <td class="text-right">${Layout.money(x.netDebit)}</td>
+                <td><button class="btn btn-sm btn-ghost" onclick="Page.undoGlOnly('${Layout.jsArg(x.transactionId)}')">ยกเลิกเครื่องหมาย</button></td></tr>`).join('');
+            const more = g.unattributedCount > (g.unattributedEntries || []).length
+              ? `<div style="font-size:12px;color:#64748b;margin-top:4px">แสดง ${(g.unattributedEntries || []).length} จาก ${g.unattributedCount} ใบ (ล่าสุดก่อน)</div>` : '';
+            return `<div class="card" style="margin-bottom:12px">
+              <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+                <div><b>${Layout.esc(g.accountCode)} ${Layout.esc(g.accountName)}</b>
+                  ${g.sharedByMultipleFunds ? '<span class="badge badge-warning" style="margin-left:6px">ผังร่วมหลายกองทุน</span>' : ''}
+                  <div style="font-size:12px;color:#64748b">กองทุน: ${(g.funds || []).map(f => Layout.esc(f.name) + ' ' + Layout.money(f.currentBalance)).join(' · ')}</div></div>
+                <div style="font-size:13px;text-align:right">ยอดตามผังบัญชี <b>${Layout.money(g.glBalance)}</b> · ยอดกองทุนรวม <b>${Layout.money(g.fundsTotal)}</b>
+                  · ผลต่าง <b style="color:${g.difference ? '#dc2626' : '#16a34a'}">${Layout.money(g.difference)}</b>
+                  <div style="color:${ok ? '#16a34a' : '#b45309'}">${ok ? '✓ ' : '⚠ '}${Layout.esc(g.statusLabel)}</div></div>
+              </div>
+              ${entries ? `<div style="overflow:auto;margin-top:8px"><table class="table" style="font-size:13px"><thead><tr>
+                <th>วันที่</th><th>ใบสำคัญ</th><th>รายละเอียด</th><th>ผลต่อกองทุน</th><th class="text-right">จำนวน</th><th>กองทุน</th><th></th></tr></thead>
+                <tbody>${entries}</tbody></table>${more}</div>` : ''}
+              ${glOnly ? `<details style="margin-top:8px"><summary style="font-size:12px;cursor:pointer">ใบที่ทำเครื่องหมาย “ไม่กระทบกองทุน (ปรับเฉพาะ GL)” ${(g.glOnlyEntries || []).length} ใบ · รวม ${Layout.money(g.glOnlyNet)}</summary>
+                <table class="table" style="font-size:13px"><thead><tr><th>วันที่</th><th>ใบสำคัญ</th><th>รายละเอียด</th><th class="text-right">ยอดลงผัง (เดบิต−เครดิต)</th><th></th></tr></thead>
+                <tbody>${glOnly}</tbody></table></details>` : ''}
+            </div>`;
+          }).join('');
+        rows.forEach(g => (g.unattributedEntries || []).forEach(x => {
+          const sel = document.getElementById(`att-${g.accountId}-${x.journalEntryId}`);
+          if (sel && x.suggestedFundId) sel.value = x.suggestedFundId;
+        }));
+      },
+      async markGlOnly(accountId, journalEntryId) {
+        const note = prompt('เหตุผลที่ใบนี้ไม่กระทบกองทุน (เช่น ปรับยอดยกมา / แก้ผังผิด) — เว้นว่างได้');
+        if (note === null) return;
+        try {
+          const r = await API.post(`/api/companies/${Layout.getCompanyId()}/sme/petty-cash/gl-only`, { accountId, journalEntryId, note: note.trim() || null });
+          Layout.toast((r && r.message) || 'ทำเครื่องหมายแล้ว');
+          await this.loadRecon();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async undoGlOnly(transactionId) {
+        if (!confirm('ยกเลิกเครื่องหมาย “ไม่กระทบกองทุน”? ใบสำคัญจะกลับไปรอระบุกองทุน')) return;
+        try {
+          const r = await API.post(`/api/companies/${Layout.getCompanyId()}/sme/petty-cash/gl-only/${transactionId}/undo`, {});
+          Layout.toast((r && r.message) || 'ยกเลิกแล้ว');
+          await this.loadRecon();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async attribute(accountId, journalEntryId) {
+        const sel = document.getElementById(`att-${accountId}-${journalEntryId}`);
+        const fundId = sel ? sel.value : '';
+        if (!fundId) { Layout.toast('เลือก “กองทุน” ของใบสำคัญนี้ก่อน', 'error'); return; }
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${fundId}/attribute-entry`, { journalEntryId });
+          Layout.toast((r && r.message) || 'บันทึกเข้าทะเบียนกองทุนแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
       _registerFundId: null,
       openRegister(fundId) {
@@ -267,7 +412,7 @@
           if (!rows.length) { box.innerHTML = '<div style="padding:24px;text-align:center;color:#94a3b8">ไม่มีรายการในช่วงนี้</div>'; return; }
           box.innerHTML = `<table class="table" style="font-size:13px"><thead><tr>
               <th>วันที่</th><th>ชนิด</th><th>รายละเอียด</th><th>ใบเสร็จ/หลักฐาน</th><th class="text-right">รับเข้า</th><th class="text-right">จ่ายออก</th>
-              <th>บัญชีค่าใช้จ่าย</th><th>โครงการ</th><th>ใบสำคัญ</th></tr></thead>
+              <th>บัญชีค่าใช้จ่าย</th><th>โครงการ</th><th>ใบสำคัญ</th><th>ไฟล์หลักฐาน</th></tr></thead>
             <tbody>${rows.map(x => `<tr>
               <td style="white-space:nowrap">${Layout.date(x.transactionDate)}</td>
               <td>${Layout.esc(x.typeLabel)}</td>
@@ -278,9 +423,13 @@
               <td>${Layout.esc(x.expenseAccountCode ? x.expenseAccountCode + ' ' + (x.expenseAccountName || '') : '-')}</td>
               <td>${Layout.esc(x.projectLabel || '-')}</td>
               <td>${x.journalEntryId ? `<a href="/pages/journals.html?entryId=${Layout.esc(x.journalEntryId)}">${Layout.esc(x.journalEntryNumber || 'เปิด')}</a>` : '-'}</td>
+              <td style="white-space:nowrap">${(x.evidence || []).map(ev =>
+                  `<button class="btn btn-sm btn-ghost" style="padding:1px 6px" onclick="Page.downloadEvidence('${Layout.jsArg(ev.attachmentId)}', this.dataset.name)" data-name="${Layout.esc(ev.fileName)}">📎 ${Layout.esc(ev.fileName)}</button>`).join('<br>')}
+                ${x.type === 'Replenishment' && !(x.evidence || []).length ? '<span style="font-size:11px;color:#b45309">ไม่มีสลิป</span>' : ''}
+                <button class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.attachLater('${Layout.jsArg(x.id)}')">+ แนบ</button></td>
             </tr>`).join('')}</tbody>
             <tfoot><tr style="font-weight:600"><td colspan="4">รวม ${rows.length.toLocaleString()} รายการ</td>
-              <td class="text-right">${Layout.money(d.totalIn)}</td><td class="text-right">${Layout.money(d.totalOut)}</td><td colspan="3"></td></tr></tfoot></table>`;
+              <td class="text-right">${Layout.money(d.totalIn)}</td><td class="text-right">${Layout.money(d.totalOut)}</td><td colspan="4"></td></tr></tfoot></table>`;
         } catch (e) {
           box.innerHTML = `<div style="padding:24px;text-align:center;color:#dc2626">${Layout.esc(e.message)}</div>`;
         }
@@ -297,6 +446,8 @@
         // ค่าตั้งต้นมาจากเซิร์ฟเวอร์ (ผังมาตรฐานเงินสดย่อย) — หน้าไม่มีรหัสผังของตัวเอง
         this._fillFundAccountSelect(this._defaultFundAccount ? this._defaultFundAccount.accountId : '');
         document.getElementById('fAccount').disabled = false;
+        document.getElementById('fAllowShared').checked = false;
+        document.getElementById('fAllowShared').disabled = false;
         document.getElementById('fAccountHint').textContent = 'ผังที่เงินสดย่อยของกองทุนนี้อยู่ — การเบิก/เติมเงินลงบัญชีที่ผังนี้';
         document.getElementById('fundModal').classList.add('active');
       },
@@ -311,6 +462,8 @@
         // เปลี่ยนผังไม่ได้เมื่อมีรายการลงบัญชีแล้ว (ยอดเดิมอยู่ในผังเก่า) — ล็อกช่อง + บอกเหตุผล (ห้าม silent no-op)
         const locked = !!(f.linkedAccountId && f.hasPostedTransactions);
         document.getElementById('fAccount').disabled = locked;
+        document.getElementById('fAllowShared').checked = false;
+        document.getElementById('fAllowShared').disabled = locked;   // มีผลเฉพาะตอนเปลี่ยนผัง
         document.getElementById('fAccountHint').textContent = locked
           ? 'กองทุนนี้มีรายการที่ลงบัญชีไปแล้ว — เปลี่ยนผังไม่ได้ (ยอดเดิมอยู่ในผังนี้) · ถ้าผังผิด: โอนยอดที่หน้า “สมุดรายวันทั่วไป” แล้วเปิดกองทุนใหม่'
           : 'ผังที่เงินสดย่อยของกองทุนนี้อยู่ — การเบิก/เติมเงินลงบัญชีที่ผังนี้';
@@ -322,16 +475,17 @@
         const imprest = +document.getElementById('fImprest').value;
         const accSel = document.getElementById('fAccount');
         const linkedAccountId = accSel.value || null;
+        const allowSharedAccount = !!document.getElementById('fAllowShared').checked;
         if (!name) { Layout.toast('กรอก “ชื่อกองทุน”', 'error'); return; }
         if (!(imprest > 0)) { Layout.toast('“วงเงินกองทุน” ต้องมากกว่า 0', 'error'); return; }
         try {
           const cid = Layout.getCompanyId();
           if (this._editFundId) {
             await API.put(`/api/companies/${cid}/sme/petty-cash/funds/${this._editFundId}`,
-              { name, imprestAmount: imprest, linkedAccountId: accSel.disabled ? null : linkedAccountId });
+              { name, imprestAmount: imprest, linkedAccountId: accSel.disabled ? null : linkedAccountId, allowSharedAccount });
           } else {
             await API.post(`/api/companies/${cid}/sme/petty-cash/funds`,
-              { name, custodianUserId: null, imprestAmount: imprest, linkedAccountId });
+              { name, custodianUserId: null, imprestAmount: imprest, linkedAccountId, allowSharedAccount });
           }
           this.closeFund();
           Layout.toast('บันทึกกองทุนแล้ว');
@@ -343,6 +497,7 @@
         document.getElementById('dAmount').value = '';
         document.getElementById('dDesc').value = '';
         document.getElementById('dReceipt').value = '';
+        document.getElementById('dEvidence').value = '';
         document.getElementById('dExpense').value = '';
         document.getElementById('dProject').value = '';
         document.getElementById('disburseModal').classList.add('active');
@@ -358,9 +513,9 @@
         if (!expenseAccountId) { Layout.toast('เลือก “บัญชีค่าใช้จ่าย”', 'error'); return; }
         try {
           const cid = Layout.getCompanyId();
-          await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/disburse`,
-            { amount, description: desc, expenseAccountId, receiptReference: receipt,
-              txnDate: new Date().toISOString(), projectId });
+          await API.upload(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/disburse`,
+            this._form({ amount, description: desc, expenseAccountId, receiptReference: receipt,
+              txnDate: new Date().toISOString(), projectId }, 'dEvidence'));
           this.closeDisburse();
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -373,6 +528,7 @@
         const suggested = f ? Math.max(0, (f.imprestAmount || 0) - (f.currentBalance || 0)) : 0;
         document.getElementById('rAmount').value = suggested ? suggested.toFixed(2) : '';
         document.getElementById('rNotes').value = '';
+        document.getElementById('rEvidence').value = '';
         document.getElementById('replenishModal').classList.add('active');
         const r = await MoneyChannel.fill(document.getElementById('rSource'), { placeholder: '— เลือกบัญชีที่โอนเงินออก —' });
         // มีบัญชีธนาคารที่ผูกผังใบเดียว = คำตอบเดียวที่เป็นไปได้ (เซิร์ฟเวอร์ใช้กติกาเดียวกันเมื่อไม่ส่ง)
@@ -385,11 +541,13 @@
         if (!(amount > 0)) { Layout.toast('“จำนวนเติม” ต้องมากกว่า 0', 'error'); return; }
         const ch = MoneyChannel.read(document.getElementById('rSource'));
         if (!ch.bankAccountId && !ch.accountId) { Layout.toast('เลือก “เติมจากบัญชี”', 'error'); return; }
+        const ev = document.getElementById('rEvidence');
+        if (this._topUpEvidenceRequired && !(ev && ev.files && ev.files[0])) { Layout.toast('บริษัทตั้งให้ต้องแนบสลิป/หลักฐานการโอน — เลือกไฟล์ก่อนบันทึก', 'error'); return; }
         try {
           const cid = Layout.getCompanyId();
-          await API.post(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/replenish`,
-            { amount, notes: document.getElementById('rNotes').value.trim() || null, txnDate: new Date().toISOString(),
-              sourceBankAccountId: ch.bankAccountId, sourceAccountId: ch.accountId });
+          await API.upload(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/replenish`,
+            this._form({ amount, notes: document.getElementById('rNotes').value.trim() || null, txnDate: new Date().toISOString(),
+              sourceBankAccountId: ch.bankAccountId, sourceAccountId: ch.accountId }, 'rEvidence'));
           this.closeReplenish();
           Layout.toast('เติมเงินสดย่อยแล้ว');
           await this.load();

@@ -134,6 +134,9 @@ public static class AttachmentPermissionScope
             ["PayrollRun"] = Rule("PayrollRun", AttachmentOwnerKind.PayrollRun, new[] { PermissionKeys.PayrollRun }, None, true, "รอบเงินเดือน"),
             ["JournalEntry"] = Rule("JournalEntry", AttachmentOwnerKind.JournalEntry, new[] { PermissionKeys.JournalManage }, None, true, "ใบสำคัญ (สมุดรายวัน)"),
             ["FixedAsset"] = Rule("FixedAsset", AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.AssetManage }, None, true, "สินทรัพย์ถาวร"),
+            // 2026-11-02 (PETTY_CASH_AUDIT ส่วน C): สลิปเติม/ใบเสร็จเบิกเงินสดย่อย — แนบผ่านเส้นของเงินสดย่อยเท่านั้น (audit + ด่าน "ต้องแนบสลิป")
+            // · ดู/ดาวน์โหลด = สมาชิกบริษัท (เท่าหน้าเงินสดย่อย) · ถอดจากรายการ = Journal.Manage (ไฟล์จริงยังเก็บ — AttachmentRetention)
+            [PettyCashEvidence.EntityType] = Rule(PettyCashEvidence.EntityType, AttachmentOwnerKind.KeyGated, new[] { PermissionKeys.JournalManage }, None, false, "รายการเงินสดย่อย"),
             ["Contact"] = contact,
             ["contacts"] = contact,
             ["Product"] = product,

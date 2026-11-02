@@ -390,6 +390,13 @@
           <div class="form-group"><label class="form-label">อีเมล</label><select class="form-input" id="bssFfEmail"></select></div>
           <div class="form-group"><label class="form-label">หมายเหตุ / รายละเอียดเพิ่มเติม</label><select class="form-input" id="bssFfNotes"></select></div>
         </div>
+        <!-- รอบ 222: ช่องที่เจ้าของเพิ่มเอง (ข้อความ/ตัวเลข/วันที่/dropdown/ช่องติ๊ก) — กติกาชุดเดียวกับฟอร์มสั่งซื้อ (Helpers/CustomFormFields) · ด่านจริง BookingFormFields.CheckCustom -->
+        <div style="margin:4px 0 10px">
+          <strong style="font-size:14px">➕ ช่องที่เพิ่มเอง</strong>
+          <span class="bs-hint">(ไม่เกิน 10 ช่อง · เลือกได้ว่าใช้กับบริการไหน · คำตอบแสดงในรายละเอียดการจอง หน้าทำงาน และข้อความแจ้งร้าน/ลูกค้า)</span>
+          <div id="bssCustomFields" style="margin-top:8px"></div>
+          <button class="btn btn-secondary btn-sm" onclick="Page.bkCfAdd()">+ เพิ่มช่อง</button>
+        </div>
         <button class="btn btn-primary btn-sm" onclick="Page.saveBookingSiteSettings()">บันทึกฟอร์มจอง</button>
       </div>
 
@@ -3344,6 +3351,8 @@
           if (this._bssProvidersDirty) body.providerAllocationEnabled = document.getElementById('bssProvidersEnabled').checked;
           body.providerRecommendStrategy = document.getElementById('bssStrategy').value;
           body.formFields = { phone: document.getElementById('bssFfPhone').value, email: document.getElementById('bssFfEmail').value, notes: document.getElementById('bssFfNotes').value };
+          // รอบ 222: ส่งรายการช่องเพิ่มเองเฉพาะเมื่อโหลดค่าเดิมได้ (ไม่ส่ง = เซิร์ฟเวอร์คงรายการเดิม · [] = ลบทั้งหมด)
+          if (this._bkCfLoaded) body.formFields.customFields = (this._bkCf || []).map(f => Object.assign({}, f, { serviceIds: (f.serviceIds || []).length ? f.serviceIds : null }));
           const cd = document.querySelector('input[name="bssCompletionDoc"]:checked');
           if (cd) body.completionDocument = cd.value;
         }
@@ -3372,6 +3381,12 @@
         [['bssFfPhone', ff.phone || 'Required'], ['bssFfEmail', ff.email || 'Optional'], ['bssFfNotes', ff.notes || 'Optional']].forEach(([id, v]) => {
           const el = document.getElementById(id); el.innerHTML = ffOpts; el.value = v;
         });
+        // รอบ 222: ช่องที่เจ้าของเพิ่มเอง — echo กลับจากเซิร์ฟเวอร์ (ชนิด+ป้ายไทยจากเซิร์ฟเวอร์ · หน้าไม่มีสำเนากติกา)
+        this._bkCfTypes = (d.customFieldTypeOptions || []).map(o => [o.value, o.label]);
+        this._bkCfReq = (d.formFieldOptions || []).map(o => [o.value, o.label]);
+        this._bkCf = ((d.formFields || {}).customFields || []).map(f => Object.assign({}, f, { options: f.options || [], serviceIds: f.serviceIds || [] }));
+        this._bkCfLoaded = this._bkCfTypes.length > 0;
+        this.bkCfRender();
         const cur = d.completionDocument || 'Auto';
         document.getElementById('bssCompletionDoc').innerHTML = (d.completionDocumentOptions || []).map(o => `
           <label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;cursor:pointer;color:inherit">
@@ -3386,6 +3401,61 @@
         document.getElementById('bssRequireMember').checked = d.requireMemberToBook === true;
         this._bss210Loaded = typeof d.requireMemberToBook === 'boolean';
       },
+      // ── รอบ 222: ช่องที่เจ้าของเพิ่มเองบนฟอร์มจอง (ตรวจจริงที่เซิร์ฟเวอร์ตอนบันทึก — BookingFormFields.ValidateConfig) ──
+      bkCfRender() {
+        const wrap = document.getElementById('bssCustomFields'); if (!wrap) return;
+        const sel = (list, v) => list.map(([val, lbl]) => `<option value="${Layout.esc(val)}" ${val === v ? 'selected' : ''}>${Layout.esc(lbl)}</option>`).join('');
+        const svcs = this.bookingServices || [];
+        if (!this._bkCfLoaded) { wrap.innerHTML = '<div class="bs-hint">โหลดค่าตั้งช่องเพิ่มเองไม่สำเร็จ — ลองรีเฟรชหน้า</div>'; return; }
+        wrap.innerHTML = (this._bkCf || []).map((f, i) => {
+          const known = (f.serviceIds || []).filter(id => svcs.some(s => s.id === id));
+          const stale = (f.serviceIds || []).length > 0 && known.length === 0;
+          const scope = (f.serviceIds || []).length ? `${known.length} บริการ` : 'ทุกบริการ';
+          return `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px;margin-bottom:8px">
+            <div class="form-row-3">
+              <div class="form-group"><label class="form-label">ชื่อช่องที่ลูกค้าเห็น</label><input class="form-input" maxlength="100" value="${Layout.esc(f.label || '')}" placeholder="เช่น ความยาวผม" onchange="Page.bkCf(${i}, 'label', this.value)"></div>
+              <div class="form-group"><label class="form-label">ชนิด</label><select class="form-input" onchange="Page.bkCf(${i}, 'type', this.value)">${sel(this._bkCfTypes, f.type || 'text')}</select></div>
+              <div class="form-group"><label class="form-label">บังคับกรอก</label><select class="form-input" onchange="Page.bkCf(${i}, 'requirement', this.value)">${sel(this._bkCfReq, f.requirement || 'Optional')}</select></div>
+            </div>
+            ${f.type === 'select' ? `<div class="form-group"><label class="form-label">ตัวเลือกใน dropdown (คั่นด้วย ,)</label><input class="form-input" value="${Layout.esc((f.options || []).join(', '))}" placeholder="เช่น สั้น, กลาง, ยาว" onchange="Page.bkCf(${i}, 'options', this.value)"></div>` : ''}
+            <div class="form-row-3">
+              <div class="form-group"><label class="form-label">รหัสช่อง (a-z 0-9 _)</label><input class="form-input" maxlength="30" value="${Layout.esc(f.key || '')}" onchange="Page.bkCf(${i}, 'key', this.value)"></div>
+              <div class="form-group"><label class="form-label">ยาวสุด (ตัวอักษร · ว่าง = 500)</label><input class="form-input" type="number" min="1" max="500" value="${f.maxLength == null ? '' : Number(f.maxLength)}" onchange="Page.bkCf(${i}, 'maxLength', this.value)"></div>
+              <div class="form-group"><label class="form-label">ใช้กับบริการ</label>
+                <details><summary id="bkCfScope${i}" style="cursor:pointer">${Layout.esc(scope)}${stale ? ' <span style="color:#DC2626">· บริการที่เลือกถูกลบแล้ว — เลือกใหม่</span>' : ''}</summary>
+                  <div class="bs-hint">ไม่ติ๊กเลย = ทุกบริการ</div>
+                  ${svcs.map(s => `<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" ${(f.serviceIds || []).includes(s.id) ? 'checked' : ''} onchange="Page.bkCfSvc(${i}, '${Layout.jsArg(s.id)}', this.checked)"> ${Layout.esc(s.name || '')}</label>`).join('') || '<div class="bs-hint">ยังไม่มีบริการ</div>'}
+                </details></div>
+            </div>
+            <button class="btn btn-sm btn-danger" onclick="Page.bkCfRemove(${i})">🗑 ลบช่องนี้</button>
+          </div>`;
+        }).join('') || '<div class="bs-hint" style="margin-bottom:8px">ยังไม่มีช่องที่เพิ่มเอง</div>';
+      },
+      bkCf(i, k, v) {
+        const f = (this._bkCf || [])[i]; if (!f) return;
+        if (k === 'options') f.options = String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+        else if (k === 'maxLength') f.maxLength = v === '' ? null : Number(v);
+        else f[k] = v;
+        if (k === 'type') this.bkCfRender();   // ชนิด dropdown ⇒ แสดงช่องตัวเลือก
+      },
+      bkCfSvc(i, id, on) {
+        const f = (this._bkCf || [])[i]; if (!f) return;
+        const svcs = (this.bookingServices || []).map(s => s.id);
+        const cur = (f.serviceIds || []).filter(x => svcs.includes(x) && x !== id);   // บริการที่ถูกลบหลุดออกเมื่อเจ้าของแก้ขอบเขต
+        f.serviceIds = on ? cur.concat([id]) : cur;
+        // ไม่วาดใหม่ทั้งก้อน (กล่องเลือกบริการจะหุบ) — อัปเดตเฉพาะสรุปขอบเขต
+        const sum = document.getElementById('bkCfScope' + i);
+        if (sum) sum.textContent = f.serviceIds.length ? `${f.serviceIds.length} บริการ` : 'ทุกบริการ';
+      },
+      bkCfAdd() {
+        if (!this._bkCfLoaded) return;
+        this._bkCf = this._bkCf || [];
+        let n = this._bkCf.length + 1;
+        while (this._bkCf.some(f => f.key === 'field' + n)) n++;
+        this._bkCf.push({ key: 'field' + n, label: '', type: 'text', options: [], requirement: 'Optional', maxLength: null, serviceIds: [] });
+        this.bkCfRender();
+      },
+      bkCfRemove(i) { (this._bkCf || []).splice(i, 1); this.bkCfRender(); },
       bssProvidersToggle() {
         this._bssProvidersDirty = true;
         const on = document.getElementById('bssProvidersEnabled').checked;

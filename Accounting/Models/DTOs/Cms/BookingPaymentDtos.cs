@@ -42,6 +42,8 @@ public class BookingPaymentSettingsDto
     public bool PromptPayIdValid { get; set; }
     /// <summary>ปัญหาของค่าตั้งปัจจุบัน (เช่น โหมดบังคับแต่ไม่มีช่องทาง) · null = ไม่มี</summary>
     public string? Problem { get; set; }
+    /// <summary>รอบ 223: คำเตือนช่องทาง (ติ๊กแล้วแต่ลูกค้าจะไม่เห็น — เช่น ติ๊กโอนแต่ไม่มีเลขบัญชี/พร้อมเพย์/QR) · ตัวตัดสิน <c>BookingPaymentChannels.Warnings</c></summary>
+    public List<string> ChannelWarnings { get; set; } = new();
     /// <summary>ผลกับแต่ละบริการ (ตัวตัดสินเดียว) — บริการที่ "ไม่มีผล" แสดงเหตุผล</summary>
     public List<BookingPaymentServiceEffectDto> Services { get; set; } = new();
 }
@@ -81,6 +83,13 @@ public class BookingPaymentPreviewResponse
     public bool TransferAvailable { get; set; }
     public string? CancellationPolicy { get; set; }
     public string? PaymentNote { get; set; }
+    /// <summary>รอบ 223: ที่มาของยอด (เช่น "มัดจำ 50% ของค่าบริการ ฿35.00 = ฿17.50" / "มัดจำคงที่ ฿10.00") — <c>BookingPaymentPolicy.AmountBasis</c></summary>
+    public string? AmountBasis { get; set; }
+    /// <summary>รอบ 223: หลังกดจองจะเกิดอะไร (ไปขั้นชำระเงิน · ช่องทาง) — <c>BookingPaymentStep.PreviewNextStep</c></summary>
+    public string? NextStepNote { get; set; }
+    /// <summary>รอบ 223: ป้ายปุ่มกดจองเมื่อบังคับจ่าย / เมื่อลูกค้าติ๊กจ่ายมัดจำ (null = ป้ายเดิม)</summary>
+    public string? SubmitLabel { get; set; }
+    public string? SubmitLabelIfPay { get; set; }
 }
 
 public class BookingTransferInfoDto
@@ -113,6 +122,17 @@ public class BookingPaymentInfoDto
     public BookingTransferInfoDto? Transfer { get; set; }
     public string? Summary { get; set; }
     public string? PaymentNote { get; set; }
+    /// <summary>รอบ 223: ที่มาของยอดมัดจำ (สูตร % / ยอดคงที่ / ปรับขั้นต่ำ-สูงสุด) — <c>BookingPaymentPolicy.AmountBasis</c></summary>
+    public string? AmountBasis { get; set; }
+    /// <summary>รอบ 223: ขั้นของลูกค้า (ชื่อ <c>BookingPaymentStepKind</c>) + หัวข้อ/รายละเอียด/ไอคอนหน้าผลการจอง — <c>BookingPaymentStep.Decide</c></summary>
+    public string Step { get; set; } = nameof(BookingPaymentStepKind.None);
+    public string? Headline { get; set; }
+    public string? StepDetail { get; set; }
+    public string? StepIcon { get; set; }
+    /// <summary>true = หน้าผลการจองวาดกล่องชำระเงินก่อนรายละเอียด (ขั้นชำระมาก่อนคำยืนยัน)</summary>
+    public bool PaymentFirst { get; set; }
+    /// <summary>true = มีสลิปแนบอยู่ในแฟ้มของการจอง (รอตรวจ หรือยืนยันแล้ว) — พนักงานเปิดดูได้ผ่าน <see cref="SlipFileUrl"/></summary>
+    public bool SlipOnFile { get; set; }
     /// <summary>พนักงานเท่านั้น (คำตอบลูกค้าถูกล้าง) — รายการชำระ manual-slip ของสลิปที่รอตรวจ</summary>
     public Guid? SlipIntentId { get; set; }
     /// <summary>พนักงานเท่านั้น — URL ดาวน์โหลดสลิป (ต้องล็อกอิน + สิทธิ์)</summary>
