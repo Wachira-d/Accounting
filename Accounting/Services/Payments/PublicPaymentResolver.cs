@@ -145,7 +145,7 @@ public class PublicPaymentResolver : IPublicPaymentResolver
             .Select(x => new
             {
                 x.Id, x.BookingNumber, x.Status, x.DepositAmount, x.PaidAmount, x.GuestEmail, x.GuestPhone,
-                x.BookingService.BookingType,
+                x.BookingType,   // รอบ 226: ชนิดที่ตรึงบนการจอง
                 HasSlip = x.SlipUploadedAt != null && x.SlipAttachmentId != null,   // รอบ 218: สลิปรอร้านตรวจ ⇒ ปิดช่องจ่ายออนไลน์ชั่วคราว
                 CustomerEmail = x.Customer != null ? x.Customer.Email : null,
                 CustomerPhone = x.Customer != null ? x.Customer.Phone : null,

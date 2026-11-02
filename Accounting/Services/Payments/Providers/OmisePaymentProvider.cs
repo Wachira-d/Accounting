@@ -179,7 +179,10 @@ public class OmisePaymentProvider : IPaymentProvider
                 && sc.TryGetProperty("image", out var img)
                 && img.TryGetProperty("download_uri", out var uri))
                 qr = uri.GetString();
-            if (src.TryGetProperty("expires_at", out var ex)) expires = ex.GetString();
+            if (src.TryGetProperty("expires_at", out var ex) && ex.ValueKind == JsonValueKind.String) expires = ex.GetString();
+            // รอบ 227 (PLATFORM_OMISE_AUDIT A-7): วันหมดอายุของ QR อยู่ที่ระดับ charge (<c>expires_at</c>) — source ไม่มีช่องนี้ ⇒ เดิม QrExpiresAt = null เสมอ
+            // (หน้าจ่ายไม่รู้เวลาหมด · รายการค้าง Pending จนผู้ให้บริการตอบ expired) · อ่านเฉพาะ charge ที่มี source (ไม่ใช่บัตร — บัตรไม่มี QR)
+            if (expires == null && el.TryGetProperty("expires_at", out var cex) && cex.ValueKind == JsonValueKind.String) expires = cex.GetString();
         }
         if (el.TryGetProperty("authorize_uri", out var au)) authorize = au.GetString();
 
@@ -203,8 +206,11 @@ public class OmisePaymentProvider : IPaymentProvider
             QrPayload: qr,
             QrExpiresAt: expiresAt,
             AuthorizeUrl: authorize,
-            FailureCode: el.TryGetProperty("failure_code", out var fc) ? fc.GetString() : null,
-            FailureMessage: el.TryGetProperty("failure_message", out var fm) ? fm.GetString() : null,
+            FailureCode: el.TryGetProperty("failure_code", out var fc) && fc.ValueKind == JsonValueKind.String ? fc.GetString() : null,
+            // รอบ 227 (A-10): ข้อความถึงผู้จ่ายเป็นไทยจากรหัส (OmiseFailureText ตัวเดียว) — เดิมเก็บ failure_message ภาษาอังกฤษตรง ๆ
+            FailureMessage: OmiseFailureText.Describe(
+                el.TryGetProperty("failure_code", out var fc2) && fc2.ValueKind == JsonValueKind.String ? fc2.GetString() : null,
+                el.TryGetProperty("failure_message", out var fm) && fm.ValueKind == JsonValueKind.String ? fm.GetString() : null),
             // ยอดคืนสะสมของ charge — ใช้ตรวจการคืนเงินที่ผลไม่แน่ชัด (ฝ่ายค้าน E-2)
             RefundedTotal: refundedTotal,
             Refunds: refunds,
@@ -269,6 +275,10 @@ public class OmisePaymentProvider : IPaymentProvider
         else
         {
             form.Add(new("source[type]", SourceType(req.Kind)));
+            // รอบ 227 (A-4): วอลเล็ทต้องระบุเบอร์ของผู้จ่ายใน source — ไม่ส่ง = ผู้ให้บริการปฏิเสธทุกครั้ง (หน้าชำระของ NextAcc ยังไม่เปิดวิธีนี้ · Helpers/PlatformPayMethods)
+            // ฝ่ายค้าน N6: ตัวเลขล้วน ("081-234 5678" ⇒ "0812345678") · ไม่มีตัวเลขเลย = ไม่ส่ง
+            if (req.Kind == PaymentMethodKind.TrueMoney && PhoneDigits(req.CustomerPhone) is { Length: > 0 } phone)
+                form.Add(new("source[phone_number]", phone));
             if (!string.IsNullOrWhiteSpace(req.ReturnUrl))
                 form.Add(new("return_uri", req.ReturnUrl));
         }
@@ -409,6 +419,10 @@ public class OmisePaymentProvider : IPaymentProvider
         }
     }
 
+    /// <summary>เบอร์โทรเป็นตัวเลขล้วน (ฝ่ายค้านรอบ 227 N6) · pure</summary>
+    internal static string PhoneDigits(string? phone)
+        => string.IsNullOrWhiteSpace(phone) ? "" : new string(phone.Where(char.IsAsciiDigit).ToArray());
+
     /// <summary>รูปเลข event ของผู้ให้บริการนี้ (<c>evnt_</c> + ตัวอักษร/ตัวเลข/ขีดล่าง · โหมดทดสอบ = <c>evnt_test_…</c>) —
     /// ด่านก่อนต่อเข้า path (ไม่มี <c>/</c> <c>.</c> <c>?</c> <c>%</c>) · pure</summary>
     internal static bool IsWellFormedEventId(string? eventId)
@@ -477,14 +491,8 @@ public class OmisePaymentProvider : IPaymentProvider
             using var doc = JsonDocument.Parse(body);
             var code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetString() : null;
             var message = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : null;
-            return code switch
-            {
-                "authentication_failure" => "คีย์ไม่ถูกต้องหรือหมดอายุ — ตรวจคีย์ในหน้าตั้งค่าการรับชำระเงิน",
-                "insufficient_fund" => "ยอดเงินในบัญชี/วงเงินบัตรไม่พอ",
-                "invalid_card" => "ข้อมูลบัตรไม่ถูกต้อง",
-                "payment_rejected" => "ธนาคารผู้ออกบัตรปฏิเสธรายการนี้",
-                _ => message ?? $"ผู้ให้บริการตอบกลับผิดพลาด ({httpStatus})",
-            };
+            // รอบ 227 (A-10): ตารางรหัส → ไทย ตัวเดียวกับ failure_code ของ charge (OmiseFailureText) — เดิม switch 4 รหัสในไฟล์นี้
+            return OmiseFailureText.Describe(code, message) ?? $"ผู้ให้บริการตอบกลับผิดพลาด ({httpStatus})";
         }
         catch (JsonException)
         {

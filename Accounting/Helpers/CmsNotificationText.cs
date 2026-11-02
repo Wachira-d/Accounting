@@ -158,6 +158,15 @@ public static class CmsNotificationText
             + (string.IsNullOrWhiteSpace(resourceName) ? "" : $" กับ {resourceName.Trim()}") + $"\nเลขที่จอง {bookingNumber}\n{tail}");
     }
 
+    /// <summary>รอบ 226: รับเงินล่วงหน้าครบ (ร้านยืนยันสลิป / ชำระออนไลน์) ⇒ การจองเปลี่ยนเป็น "ยืนยันแล้ว" — แจ้งลูกค้าอีกรอบ
+    /// (ข้อความตอนจองบอก "ได้รับการจองแล้ว — ร้านจะยืนยันอีกครั้ง")</summary>
+    public static CmsNotification CustomerBookingPaidConfirmed(string siteName, string bookingNumber, string serviceName, string? customerName,
+        DateOnly date, TimeOnly start, string? resourceName, decimal paidAmount)
+        => new($"ชำระแล้ว — ยืนยันการจอง #{bookingNumber} — {serviceName}",
+            $"เรียน {Who(customerName)}\n{siteName}: ได้รับเงิน ฿{paidAmount.ToString("#,##0.00", System.Globalization.CultureInfo.InvariantCulture)} แล้ว — ยืนยันการจองแล้ว\n"
+            + $"{serviceName} วันที่ {BookingReminderPlan.ThaiDate(date)} เวลา {Time(start)}"
+            + (string.IsNullOrWhiteSpace(resourceName) ? "" : $" กับ {resourceName.Trim()}") + $"\nเลขที่จอง {bookingNumber}");
+
     public static CmsNotification CustomerBookingCancelledByShop(string siteName, string bookingNumber, string serviceName, string? customerName,
         DateOnly date, TimeOnly start, string? reason)
         => new($"การจอง #{bookingNumber} ถูกยกเลิก — {serviceName}",
@@ -175,6 +184,13 @@ public static class CmsNotificationText
     /// บรรทัดว่าง = ข้อความเดิม</summary>
     public static CmsNotification WithLine(CmsNotification message, string? line)
         => string.IsNullOrWhiteSpace(line) ? message : message with { Text = message.Text + "\n" + line.Trim() };
+
+    /// <summary>รอบ 226: รวมบรรทัดที่มีค่า (ว่าง/null ถูกข้าม) — null เมื่อไม่มีบรรทัดใดเลย (ใช้กับ <see cref="WithLine"/>)</summary>
+    public static string? JoinLines(params string?[] lines)
+    {
+        var kept = lines.Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l!.Trim()).ToList();
+        return kept.Count == 0 ? null : string.Join("\n", kept);
+    }
 
     /// <summary>หมายเหตุภายในเมื่อแจ้งไม่ถึง — "ใคร" (ร้าน/ลูกค้า) + เรื่อง + เหตุจริงจากช่องส่ง ·
     /// รอบ 211 ฝ่ายค้าน: ข้อความที่ขึ้นต้น <see cref="FallbackTag"/> (ส่งถึงทางถอย) ⇒ หมายเหตุ "แจ้งแล้วทางอีเมลของระบบ" (ไม่ใช่ "ไม่สำเร็จ")</summary>

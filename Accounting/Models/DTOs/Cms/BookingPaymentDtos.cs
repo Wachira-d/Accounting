@@ -46,6 +46,20 @@ public class BookingPaymentSettingsDto
     public List<string> ChannelWarnings { get; set; } = new();
     /// <summary>ผลกับแต่ละบริการ (ตัวตัดสินเดียว) — บริการที่ "ไม่มีผล" แสดงเหตุผล</summary>
     public List<BookingPaymentServiceEffectDto> Services { get; set; } = new();
+    /// <summary>รอบ 226 (คำตัดสิน 226-2): ค่าตั้งต้นของ "ต้องชำระภายใน" เมื่อโหมดบังคับแต่ไม่ได้กรอก (นาที)</summary>
+    public int DefaultDeadlineMinutes { get; set; } = BookingPaymentPolicy.DefaultRequiredDeadlineMinutes;
+    /// <summary>รอบ 226 (คำตัดสิน 226-1): โหมดบังคับ + บริการที่เก็บเงินล่วงหน้าไม่ได้ ⇒ กล่องแดงพร้อมรายชื่อ (null = ไม่มี) ·
+    /// บริการในรายการดูที่ <see cref="Services"/> ที่ <c>RequiredButUncollectable</c></summary>
+    public string? UncollectableProblem { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 226 ข้อ 3: คำแนะนำ (ไม่ใช่ข้อผิดพลาด) — เว็บเดิมที่ไม่เคยกรอกกำหนดชำระถูกคงเป็น "ไม่กำหนด" (0) · null = ไม่มี</summary>
+    public string? DeadlineNote { get; set; }
+}
+
+/// <summary>รอบ 226: แก้บริการที่โหมดบังคับเก็บเงินไม่ได้ในคลิกเดียว — "convert" = เปลี่ยนชนิดเป็นชำระมัดจำล่วงหน้า · "exempt" = ยกเว้น (บริการนี้ไม่รับชำระล่วงหน้า)</summary>
+public class FixUncollectableServicesRequest
+{
+    public string Action { get; set; } = "";
+    public List<Guid> ServiceIds { get; set; } = new();
 }
 
 public class BookingPaymentServiceEffectDto
@@ -57,12 +71,74 @@ public class BookingPaymentServiceEffectDto
     public string? Problem { get; set; }
     public bool Collects { get; set; }
     public bool UsesSiteSetting { get; set; }
+    /// <summary>รอบ 226: โหมดบังคับแต่ชนิดบริการเก็บเงินไม่ได้ ⇒ การจองรอร้านยืนยัน (ปุ่มแก้: เปลี่ยนชนิด / ยกเว้น)</summary>
+    public bool RequiredButUncollectable { get; set; }
+    public bool IsActive { get; set; }
 }
 
 public class BookingPaymentPreviewRequest
 {
     public Guid BookingServiceId { get; set; }
     public int Units { get; set; } = 1;
+    /// <summary>รอบ 226: วิธีรับที่ลูกค้าเลือก + ที่อยู่ (คิดค่าส่งก่อนกดจอง — ตัวคิดเดียวกับตอนสร้างการจอง)</summary>
+    public string? FulfillmentMethod { get; set; }
+    public string? DeliveryProvince { get; set; }
+    public string? DeliveryPostalCode { get; set; }
+    public Guid? DeliveryRateId { get; set; }
+}
+
+/// <summary>รอบ 226: ขั้น "จัดส่ง / รับเอง" ก่อนกดจอง — server ตัดสินทั้งหมด (วิธีที่เปิด · ค่าส่ง · ปัญหา) หน้าเว็บแสดงอย่างเดียว</summary>
+public class BookingFulfillmentQuoteDto
+{
+    public bool Enabled { get; set; }
+    public bool DeliveryEnabled { get; set; }
+    public bool PickupEnabled { get; set; }
+    public string? DefaultMethod { get; set; }
+    /// <summary>วิธีที่ใช้คิด (null = ยังไม่เลือก — เปิดสองแบบและไม่มีค่าตั้งต้น)</summary>
+    public string? Method { get; set; }
+    public string? MethodLabel { get; set; }
+    public decimal DeliveryFee { get; set; }
+    public List<BookingDeliveryRateOptionDto> RateOptions { get; set; } = new();
+    public Guid? SelectedRateId { get; set; }
+    /// <summary>ข้อความถึงลูกค้า (กรอกจังหวัด/รหัสไปรษณีย์ · ไม่มีวิธีส่งสำหรับพื้นที่นี้ · ยอดไม่ถึงขั้นต่ำ) · null = คิดได้</summary>
+    public string? Problem { get; set; }
+    public string? PickupNote { get; set; }
+    public decimal? DeliveryMinAmount { get; set; }
+}
+
+public class BookingDeliveryRateOptionDto
+{
+    public Guid RateId { get; set; }
+    public string Name { get; set; } = "";
+    public string? ZoneName { get; set; }
+    public decimal Fee { get; set; }
+    public bool IsFree { get; set; }
+}
+
+/// <summary>รอบ 226: ค่าตั้งจัดส่ง/รับเองของการจองระดับเว็บ (GET/PUT <c>…/booking/fulfillment-settings</c>) · อัตราค่าส่งใช้โซน/อัตราของร้าน
+/// (ตั้งค่าร้านค้า › โซน/อัตราค่าส่ง) + ค่าส่งเหมาจ่าย/ส่งฟรีเมื่อครบของร้าน — ช่องท้ายอ่านอย่างเดียว</summary>
+public class BookingFulfillmentSettingsDto
+{
+    public bool DeliveryEnabled { get; set; }
+    public bool PickupEnabled { get; set; }
+    public string? DefaultMethod { get; set; }
+    public string? PickupNote { get; set; }
+    public decimal? DeliveryMinAmount { get; set; }
+    // ── อ่านอย่างเดียว ──
+    public int ShippingZoneCount { get; set; }
+    public decimal? ShopFlatShippingRate { get; set; }
+    public decimal? ShopFreeShippingThreshold { get; set; }
+    /// <summary>ข้อความสรุปว่าค่าส่งของการจองคิดอย่างไร (โซนของร้าน / เหมาจ่าย / ฟรี)</summary>
+    public string? FeeSourceSummary { get; set; }
+    public List<BookingFulfillmentServiceEffectDto> Services { get; set; } = new();
+}
+
+public class BookingFulfillmentServiceEffectDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = "";
+    public bool UsesSiteSetting { get; set; }
+    public string Summary { get; set; } = "";
 }
 
 /// <summary>สิ่งที่ลูกค้าต้องรู้ก่อนกดจอง — ยอด/บังคับไหม/กำหนดเวลา/ช่องทาง/นโยบายยกเลิก (server ตัดสิน · หน้าเว็บแสดงอย่างเดียว)</summary>
@@ -90,6 +166,12 @@ public class BookingPaymentPreviewResponse
     /// <summary>รอบ 223: ป้ายปุ่มกดจองเมื่อบังคับจ่าย / เมื่อลูกค้าติ๊กจ่ายมัดจำ (null = ป้ายเดิม)</summary>
     public string? SubmitLabel { get; set; }
     public string? SubmitLabelIfPay { get; set; }
+    /// <summary>รอบ 226: ขั้นจัดส่ง/รับเอง (null = บริการไม่มีขั้นนี้) · ยอดรวมที่ลูกค้าจ่าย = ค่าบริการ + ค่าจัดส่ง</summary>
+    public BookingFulfillmentQuoteDto? Fulfillment { get; set; }
+    public decimal DeliveryFee { get; set; }
+    public decimal GrandTotal { get; set; }
+    /// <summary>รอบ 226 (คำตัดสิน 226-1): ร้านตั้งชำระล่วงหน้าแบบบังคับแต่บริการนี้เก็บในระบบไม่ได้ ⇒ กดจองแล้ว "รอร้านยืนยัน" (ไม่ยืนยันทันที)</summary>
+    public bool ShopArrangesPayment { get; set; }
 }
 
 public class BookingTransferInfoDto
@@ -137,6 +219,8 @@ public class BookingPaymentInfoDto
     public Guid? SlipIntentId { get; set; }
     /// <summary>พนักงานเท่านั้น — URL ดาวน์โหลดสลิป (ต้องล็อกอิน + สิทธิ์)</summary>
     public string? SlipFileUrl { get; set; }
+    /// <summary>รอบ 226: พนักงานเท่านั้น — นโยบายชำระที่ตั้งไว้ใช้กับการจองนี้ไม่ได้ (โหมดบังคับ + ชนิดบริการเก็บเงินไม่ได้) พร้อมทางแก้</summary>
+    public string? ShopPolicyWarning { get; set; }
 }
 
 public class RejectBookingSlipRequest

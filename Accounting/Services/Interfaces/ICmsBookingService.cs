@@ -108,4 +108,11 @@ public interface ICmsBookingService
     /// <summary>รอบ 217 (ข้อ 175 ง): ส่งแจ้งเตือน "การจองใหม่" (ลูกค้า + ร้าน) — เรียกจาก <c>DeferredNotifyDispatcher</c> เท่านั้น (หลังคำขอจองตอบไปแล้ว)</summary>
     /// <returns>null = ส่งแล้ว (ผลรายผู้รับประทับบนรายการ) · ข้อความ = ข้ามเพราะสถานะ (ยกเลิก ฯลฯ — ฝ่ายค้าน S4)</returns>
     Task<string?> DispatchCreatedNotifyAsync(Guid companyId, Guid siteId, Guid bookingId);
+
+    // ── รอบ 226: จัดส่ง/รับเอง · แก้บริการที่โหมดบังคับเก็บเงินไม่ได้ · ชำระแล้ว ⇒ ยืนยันการจอง (CmsBookingService.Fulfillment.cs) ──
+    Task<BookingFulfillmentSettingsDto> GetFulfillmentSettingsAsync(Guid companyId, Guid siteId);
+    Task<BookingFulfillmentSettingsDto> UpdateFulfillmentSettingsAsync(Guid companyId, Guid siteId, BookingFulfillmentSettingsDto request, string userId);
+    Task<BookingPaymentSettingsDto> FixUncollectableServicesAsync(Guid companyId, Guid siteId, FixUncollectableServicesRequest request, string userId);
+    /// <summary>คิวตามหลัง: "ชำระแล้ว — ยืนยันการจอง" ถึงลูกค้า · null = ส่งแล้ว · ข้อความ = ข้ามเพราะสถานะ</summary>
+    Task<string?> DispatchPaidConfirmedNotifyAsync(Guid companyId, Guid siteId, Guid bookingId);
 }

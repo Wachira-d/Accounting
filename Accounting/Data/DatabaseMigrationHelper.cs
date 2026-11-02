@@ -222,6 +222,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(TeamKPosMtoStatements());   // ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่ง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.BookingEngineMigration.Statements());   // ทีม B — engine รอบจองคิว CMS (Helpers/BookingEngineMigration)
         list.AddRange(Accounting.Helpers.BookingPaymentMigration.Statements());   // รอบ 218 — นโยบายรับชำระล่วงหน้า + สลิปของการจอง (Helpers/BookingPaymentMigration)
+        list.AddRange(Accounting.Helpers.BookingFulfillmentMigration.Statements());   // รอบ 226 — จัดส่ง/รับเองของการจอง (Helpers/BookingFulfillmentMigration)
         list.AddRange(Accounting.Helpers.ClassScheduleMigration.Statements());   // รอบ 209 P4 — ตารางคลาส (เทอม/รอบเรียน) บนเครื่องจอง CMS
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)

@@ -1353,6 +1353,7 @@
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
   <script src="/js/booking-payment-admin.js"></script>
+  <script src="/js/booking-fulfillment-admin.js"></script><!-- รอบ 226: จัดส่ง/รับเองรายบริการ -->
   <script>
     const BLOCK_TYPES = {
       1:{n:'Hero',i:'🎬',f:'hero'},
@@ -3138,6 +3139,7 @@
         v('bsDepositAmount', s.depositAmount); v('bsDepositPercent', s.depositPercent);
         v('bsFreeCancel', s.freeCancellationHours); v('bsCancelFee', s.cancellationFeePercent);
         if (window.BookingPayAdmin) BookingPayAdmin.hydrateService(s);   // รอบ 218: ชำระล่วงหน้า (ตามค่าเว็บ/กำหนดเอง) — ฟอร์มใหม่ได้ "ตามค่าเว็บ"
+        if (window.BookingFulfillAdmin) BookingFulfillAdmin.hydrateService(s);   // รอบ 226: จัดส่ง/รับเอง (ตามค่าเว็บ/กำหนดเอง) — ฟอร์มใหม่ได้ "ตามค่าเว็บ"
         document.getElementById('bsAutoConfirm').checked = !!s.autoConfirm;
         document.getElementById('bsActive').checked = s.isActive !== false;
         this._bsSlug = s.slug || null;
@@ -3649,6 +3651,7 @@
         // รอบ 210: ส่งเฉพาะเมื่อมีตัวเลือกจาก server (ไม่งั้น null = คงค่าเดิม · ไม่รีเซ็ตเงียบ)
         if (document.getElementById('bsMemberAccessWrap').style.display !== 'none') body.memberAccess = document.getElementById('bsMemberAccess').value || 'Inherit';
         if (window.BookingPayAdmin) Object.assign(body, BookingPayAdmin.servicePayload());   // รอบ 218: ไม่มีตัวเลือก ⇒ {} (คงค่าเดิม)
+        if (window.BookingFulfillAdmin) Object.assign(body, BookingFulfillAdmin.servicePayload());   // รอบ 226: จัดส่ง/รับเอง
         if (!body.name) { Layout.toast('กรุณากรอกชื่อบริการ', 'error'); return; }
         // ช่วงเวลาที่ผิดรูป/เริ่มไม่ก่อนจบ — server ตรวจและตอบข้อความไทยกลับมา (ไม่ตรวจซ้ำในหน้านี้)
         try {

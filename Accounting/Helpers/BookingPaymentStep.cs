@@ -44,9 +44,14 @@ public static class BookingPaymentStep
 {
     private static string Baht(decimal v) => "฿" + v.ToString("#,##0.00", CultureInfo.InvariantCulture);
 
-    public static BookingPaymentStepResult Decide(BookingStatus status, BookingPaymentMode mode, decimal due, bool slipPending, DateTime? holdUntilUtc)
+    /// <param name="shopArrangesPayment">รอบ 226 (คำตัดสิน 226-1): โหมดบังคับแต่ชนิดบริการเก็บเงินล่วงหน้าไม่ได้
+    /// (<see cref="BookingPaymentEffective.RequiredButUncollectable"/>) ⇒ ใบ "รอยืนยัน" บอกว่าร้านจะติดต่อเรื่องชำระเงิน (ไม่ใช่ "จองสำเร็จ")</param>
+    public static BookingPaymentStepResult Decide(BookingStatus status, BookingPaymentMode mode, decimal due, bool slipPending, DateTime? holdUntilUtc,
+        bool shopArrangesPayment = false)
     {
         var open = status is BookingStatus.Pending or BookingStatus.Confirmed;
+        if (shopArrangesPayment && status == BookingStatus.Pending && due <= 0.005m)
+            return new(BookingPaymentStepKind.None, "ได้รับการจองแล้ว — รอร้านยืนยัน", BookingPaymentPolicy.ShopArrangesPaymentDetail, "📨", "รอร้านยืนยัน", false);
         if (!open || due <= 0.005m) return Plain(status);
         if (slipPending)
             return status == BookingStatus.Pending

@@ -74,6 +74,9 @@ public static class AdvisoryLockKey
     /// **ต้องผูก companyId**: งานทำรายบริษัท เดิมใช้ค่าคงที่ 828003 ทั้งระบบ ⇒
     /// ผู้ใช้บริษัท A กดปุ่มแล้วผู้ใช้บริษัท B ต้องรอจนเสร็จ ทั้งที่คนละชุดข้อมูล</summary>
     public const string UndueVatExpiry = "undue-vat";
+    /// <summary>รอบ 225: งานเขียนรายงาน ภ.พ.30 ของบริษัท (ดึงเอกสาร · บันทึกบรรทัด · ยื่น · สร้างใหม่) — part = "vat" ·
+    /// ต่อบริษัทไม่ใช่ต่อรายงาน: ด่าน "ใบนี้ถูกใช้ในงวดอื่นไหม" ข้ามรายงาน ⇒ ดึงใบเดียวกันเข้าสองงวดพร้อมกันต้องไม่ผ่านทั้งคู่ (เคลมซ้ำ)</summary>
+    public const string TaxVatReportWrite = "tax-vat-report";
     /// <summary>ปิดรอบบิลค่าใช้งาน (รวม UsageEvent เป็นใบแจ้งหนี้) — part = งวดที่รัน
     /// · คีย์ระดับระบบไม่ผูกบริษัท เพราะงานเดินทีเดียวทุก tenant</summary>
     public const string UsageInvoicing = "usage-invoice";

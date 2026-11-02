@@ -83,7 +83,7 @@ public partial class StorefrontCustomerService : IStorefrontCustomerService
                           orderby b.BookingDate descending, b.StartTime descending
                           select new { b.BookingNumber, s.Name, b.BookingDate, b.StartTime, b.EndTime, b.Status, b.PublicToken,
                               // รอบ 218: ป้ายการชำระล่วงหน้า (ตัวตัดสินเดียว BookingPaymentPolicy.StatusLabel)
-                              s.BookingType, b.DepositAmount, b.PaidAmount, b.PaymentHoldUntil, b.SlipRejectedReason,
+                              b.BookingType, b.DepositAmount, b.PaidAmount, b.PaymentHoldUntil, b.SlipRejectedReason,
                               SlipPending = b.SlipUploadedAt != null && b.SlipAttachmentId != null })
             .Take(100).ToListAsync();
         return rows.Select(b => new StorefrontMyBookingItem

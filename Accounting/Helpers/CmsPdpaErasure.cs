@@ -65,6 +65,8 @@ public static class CmsPdpaErasure
         n += Clear(b.GuestEmail, v => b.GuestEmail = v, null);
         n += Clear(b.GuestPhone, v => b.GuestPhone = v, null);
         n += Clear(b.CustomerNotes, v => b.CustomerNotes = v, null);
+        // รอบ 226: ที่อยู่จัดส่งของการจอง = ข้อมูลส่วนบุคคล (ล้างเสมอ · จังหวัด/รหัสไปรษณีย์คงไว้ไม่ได้ระบุตัวบุคคล — ใช้ตรวจย้อนค่าส่ง)
+        n += Clear(b.DeliveryAddress, v => b.DeliveryAddress = v, null);
         return n;
     }
 

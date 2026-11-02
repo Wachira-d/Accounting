@@ -11,7 +11,9 @@ public sealed record AddOnPaymentState(
     string FeatureCode, string FeatureName, bool IsEnabled,
     AddOnPaymentStatus PaymentStatus, string StatusLabel,
     decimal? AmountDue, string? SlipUrl, DateTime? SlipUploadedAt,
-    string? RejectedReason, DateTime? ReviewedAt);
+    string? RejectedReason, DateTime? ReviewedAt,
+    // รอบ 227 (C-3): ใบเสร็จ/ใบกำกับของการชำระล่วงหน้า (เฉพาะสถานะ "ชำระแล้ว" — งวดใหม่ที่ยังไม่จ่ายไม่โชว์ใบของงวดก่อน)
+    string? ReceiptNumber = null, Guid? ReceiptDocumentId = null);
 
 public interface IAddOnPurchaseService
 {
@@ -31,6 +33,9 @@ public interface IAddOnPurchaseService
     /// <summary>เงินเข้าผ่าน gateway แล้ว — เรียกจาก handler เท่านั้น</summary>
     Task MarkPaidByGatewayAsync(Guid companyId, string featureCode,
         Guid intentId, decimal amount, string actor, CancellationToken ct = default);
+
+    /// <summary>ฝ่ายค้านรอบ 227 S3: ออกใบเสร็จของการชำระออนไลน์ครั้งนี้อีกครั้ง (แอดมินแพลตฟอร์ม) — เลขอ้างอิงเดิม ⇒ ได้ใบเดิมถ้าเคยออกแล้ว · null = ออกไม่ได้</summary>
+    Task<string?> ReissueGatewayReceiptAsync(Guid payerCompanyId, Guid featureRowId, Guid intentId, CancellationToken ct = default);
 
     /// <summary>ยอดที่ต้องชำระของ add-on นี้ (0 = ไม่ต้องจ่าย)</summary>
     Task<decimal> AmountDueAsync(Guid companyId, string featureCode, CancellationToken ct = default);
@@ -61,10 +66,13 @@ public class AddOnPurchaseService : IAddOnPurchaseService
     private readonly IUsageMeteringService _metering;
     private readonly ILogger<AddOnPurchaseService> _logger;
     private readonly IEmailService? _email;
+    /// <summary>รอบ 227 (C-3): ออกใบเสร็จ/ใบกำกับของเงินที่รับแล้วใน tenant ผู้ให้บริการ · null (เทสต์เดิม) = ไม่ออก (พฤติกรรมเดิม)</summary>
+    private readonly Accounting.Services.Implementations.IPlatformBillingDocumentIssuer? _issuer;
 
     public AddOnPurchaseService(AccountingDbContext db, IUsageMeteringService metering,
-        ILogger<AddOnPurchaseService> logger, IEmailService? email = null)
-    { _db = db; _metering = metering; _logger = logger; _email = email; }
+        ILogger<AddOnPurchaseService> logger, IEmailService? email = null,
+        Accounting.Services.Implementations.IPlatformBillingDocumentIssuer? issuer = null)
+    { _db = db; _metering = metering; _logger = logger; _email = email; _issuer = issuer; }
 
     private async Task<(CompanyFeature Row, string Name)?> LoadAsync(
         Guid companyId, string featureCode, bool tracked, CancellationToken ct)
@@ -81,7 +89,66 @@ public class AddOnPurchaseService : IAddOnPurchaseService
     private static AddOnPaymentState Map(CompanyFeature f, string name, decimal? due) => new(
         f.FeatureCode, name, f.IsEnabled, f.PaymentStatus,
         AddOnPaymentPolicy.StatusLabel(f.PaymentStatus), due,
-        f.PaymentSlipUrl, f.SlipUploadedAt, f.PaymentRejectedReason, f.PaymentReviewedAt);
+        f.PaymentSlipUrl, f.SlipUploadedAt, f.PaymentRejectedReason, f.PaymentReviewedAt,
+        f.PaymentStatus == AddOnPaymentStatus.Paid ? f.PaymentReceiptNumber : null,
+        f.PaymentStatus == AddOnPaymentStatus.Paid ? f.PaymentReceiptDocumentId : null);
+
+    /// <summary>รอบ 227 (PLATFORM_OMISE_AUDIT C-3): ออกใบกำกับภาษี/ใบเสร็จรับเงินของเงินค่าส่วนเสริมที่รับแล้ว (ออนไลน์/สลิปที่อนุมัติ) แล้วผูกกับแถวสิทธิ์ ·
+    /// idempotent ด้วยเลขอ้างอิงของการรับเงินครั้งนั้น · ล้ม/ยังไม่ตั้ง tenant ผู้ให้บริการ ⇒ ไม่โยน (สิทธิ์เปิดแล้ว) แต่ล้มดัง: audit chain + log ให้แอดมินออกเอง</summary>
+    /// <returns>เลขใบที่ออก (หรือใบเดิมของเลขอ้างอิงนี้) · null = ไม่ได้ออก</returns>
+    private async Task<string?> IssueReceiptAsync(CompanyFeature f, string name, decimal amount, DateTime paidAt, string reference, Guid? intentId,
+        CancellationToken ct)
+    {
+        if (_issuer == null || amount <= 0m) return null;
+        // กันซ้ำ = เลขอ้างอิงของการรับเงินครั้งนี้ (ตัวออกใบคืนใบเดิมเมื่อมีแล้ว) — ไม่ใช้ "มีเลขใบแล้ว" เพราะเลขของงวดก่อนค้างอยู่ได้
+        var period = string.IsNullOrWhiteSpace(f.UpfrontPeriod) ? "" : $" งวด {f.UpfrontPeriod}";
+        var doc = await _issuer.IssueAddOnReceiptAsync(f.CompanyId, $"ค่าส่วนเสริม {name}{period}", amount, paidAt, reference, intentId);
+        if (doc != null)
+        {
+            f.PaymentReceiptDocumentId = doc.DocumentId;
+            f.PaymentReceiptNumber = doc.DocumentNumber;
+            f.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync(ct);
+            return doc.DocumentNumber;
+        }
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = f.CompanyId, EntityType = "CompanyFeature", EntityId = f.Id.ToString(), Action = AuditAction.Update,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "addon-receipt-not-issued", ruleCode = AddOnReceiptRuleCode, featureCode = f.FeatureCode, amount, reference, intentId,
+                note = "รับเงินค่าส่วนเสริมแล้วแต่ออกใบเสร็จ/ใบกำกับใน tenant ผู้ให้บริการไม่สำเร็จ (ยังไม่ตั้งบริษัทผู้ให้บริการ/ผังบัญชี) — ออกด้วยมือในบริษัทผู้ให้บริการ",
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        _logger.LogError("รับเงินค่าส่วนเสริม {Feature} บริษัท {Company} ยอด {Amount:N2} แล้วแต่ออกใบเสร็จไม่สำเร็จ (อ้างอิง {Ref}) — ต้องออกด้วยมือ",
+            f.FeatureCode, f.CompanyId, amount, reference);
+        return null;
+    }
+
+    public async Task<string?> ReissueGatewayReceiptAsync(Guid payerCompanyId, Guid featureRowId, Guid intentId, CancellationToken ct = default)
+    {
+        var f = await _db.CompanyFeatures.FirstOrDefaultAsync(x => x.Id == featureRowId && x.CompanyId == payerCompanyId && !x.IsDeleted, ct);
+        // ใบของการชำระครั้งนี้เท่านั้น: แถวต้องถูกจ่ายด้วย intent นี้ (งวดถัดไป/สลิป = คนละการรับเงิน)
+        if (f == null || f.PaymentStatus != AddOnPaymentStatus.Paid || f.PaymentIntentId != intentId) return null;
+        var intent = await _db.PaymentIntents.AsNoTracking()
+            .Where(i => i.Id == intentId && i.PayerCompanyId == payerCompanyId && i.SourceId == featureRowId)
+            .Select(i => new { i.Amount, PaidAt = i.PaidAt ?? i.ConfirmedAt })
+            .FirstOrDefaultAsync(ct);
+        if (intent == null) return null;
+        var name = await _db.ApiFeatures.AsNoTracking().Where(a => a.FeatureCode == f.FeatureCode).Select(a => a.Name).FirstOrDefaultAsync(ct) ?? f.FeatureCode;
+        return await IssueReceiptAsync(f, name, intent.Amount, intent.PaidAt ?? DateTime.UtcNow, ReceiptReference(f.Id, intentId, null), intentId, ct);
+    }
+
+    /// <summary>รอบ 227: รหัสกฎของ "รับเงินแล้วแต่ไม่มีใบเสร็จ" (audit) — §86/4 · §78/1 จุดรับเงินค่าบริการ</summary>
+    public const string AddOnReceiptRuleCode = "RD-86/4-ADDON-RECEIPT";
+
+    /// <summary>เลขอ้างอิงของการรับเงินค่าส่วนเสริมหนึ่งครั้ง — ตัวกันออกใบซ้ำ (ออนไลน์ = ต่อ intent · สลิป = ต่อไฟล์สลิปที่อนุมัติ) · pure</summary>
+    /// <remarks>ฝ่ายค้านรอบ 227 S5: สลิปใส่งวด (<c>UpfrontPeriod</c>) ด้วย — งวดใหม่ที่ไม่มีเวลาแนบสลิป (แอดมินอนุมัติตรง) ต้องไม่ได้ "ใบเดิม" ของงวดก่อน</remarks>
+    public static string ReceiptReference(Guid featureRowId, Guid? intentId, DateTime? slipUploadedAt, string? upfrontPeriod = null)
+        => intentId is Guid i ? $"ADDON-{i:N}"
+            : $"ADDON-SLIP-{featureRowId:N}-{(string.IsNullOrWhiteSpace(upfrontPeriod) ? "-" : upfrontPeriod.Trim())}-{(slipUploadedAt ?? DateTime.MinValue):yyyyMMddHHmmss}";
 
     public async Task<decimal> AmountDueAsync(Guid companyId, string featureCode, CancellationToken ct = default)
     {
@@ -142,6 +209,8 @@ public class AddOnPurchaseService : IAddOnPurchaseService
         // รอบ 219 ส่วน B ฝ่ายค้าน S2: ชำระออนไลน์สำเร็จไปแล้ว ⇒ อนุมัติสลิปซ้ำไม่ได้ (เงินโอนต้องคืน/ปฏิเสธสลิป)
         if (f.PaymentStatus == AddOnPaymentStatus.Paid && f.PaymentIntentId != null)
             throw new BusinessRuleException(PlatformDoublePayment.SlipAfterOnlineMessage, PlatformDoublePayment.RuleCode);
+        // รอบ 227 (C-3): ยอดที่ต้องชำระ ณ ก่อนอนุมัติ (ราคาที่ผู้เช่ายอมรับ — เซิร์ฟเวอร์) = ยอดบนใบเสร็จ · อนุมัติซ้ำของแถวที่ชำระแล้ว = 0 (ไม่ออกใบเพิ่ม)
+        var receiptAmount = AddOnPaymentPolicy.AmountDue(f.PaymentStatus, f.AcceptedUnitPrice);
         f.PaymentStatus = AddOnPaymentStatus.Paid;
         f.PaymentRejectedReason = null;
         f.PaymentReviewedAt = DateTime.UtcNow;
@@ -153,6 +222,9 @@ public class AddOnPurchaseService : IAddOnPurchaseService
         // เปิดสิทธิ์ให้แน่ใจ (เผื่อเคยถูกปิดจากการปฏิเสธรอบก่อน)
         if (!f.IsEnabled)
             await _metering.SetFeatureEnabledAsync(companyId, featureCode, true, actor, ct);
+
+        // รอบ 227 (C-3): เงินโอนที่อนุมัติแล้ว ⇒ ใบกำกับภาษี/ใบเสร็จรับเงินใน tenant ผู้ให้บริการ (วันที่ = วันอนุมัติ — สลิปค่าส่วนเสริมไม่มีช่องวันที่โอน)
+        await IssueReceiptAsync(f, x.Name, receiptAmount, DateTime.UtcNow, ReceiptReference(f.Id, null, f.SlipUploadedAt, f.UpfrontPeriod), null, ct);
 
         await NotifyOwnerAsync(companyId, x.Name,
             $"ยืนยันการชำระเงินส่วนเสริม “{x.Name}” แล้ว",
@@ -270,6 +342,16 @@ public class AddOnPurchaseService : IAddOnPurchaseService
 
         if (!f.IsEnabled)
             await _metering.SetFeatureEnabledAsync(companyId, featureCode, true, actor, ct);
+
+        // รอบ 227 (C-3): เงินออนไลน์เข้าแล้ว ⇒ ใบกำกับภาษี/ใบเสร็จรับเงิน (ขาเงินเข้า = บัญชีพักผู้ให้บริการรับชำระ) + แจ้งเจ้าของบริษัท (เดิมเงียบทั้งคู่)
+        // ฝ่ายค้าน N5: ขอบเขต = รายการของบริษัทผู้จ่ายนี้ (intent อยู่ใต้บริษัทผู้ให้บริการ — กรองด้วย PayerCompanyId)
+        var paidAt = await _db.PaymentIntents.AsNoTracking().Where(i => i.Id == intentId && i.PayerCompanyId == companyId)
+            .Select(i => i.PaidAt ?? i.ConfirmedAt).FirstOrDefaultAsync(ct) ?? DateTime.UtcNow;
+        var receiptNo = await IssueReceiptAsync(f, x.Name, amount, paidAt, ReceiptReference(f.Id, intentId, null), intentId, ct);
+        await NotifyOwnerAsync(companyId, x.Name,
+            $"ชำระค่าส่วนเสริม “{x.Name}” เรียบร้อยแล้ว",
+            $"<p>ได้รับเงินค่าส่วนเสริม <b>{System.Net.WebUtility.HtmlEncode(x.Name)}</b> จำนวน {amount:N2} บาทแล้ว — ใช้งานได้ตามปกติ</p>"
+            + (receiptNo == null ? "" : $"<p>เลขที่ใบเสร็จ/ใบกำกับภาษี: <b>{System.Net.WebUtility.HtmlEncode(receiptNo)}</b></p>"), ct);
     }
 
     /// <summary>แจ้งเจ้าของบริษัท — การเปลี่ยนแปลงที่กระทบสิทธิ์ห้ามเงียบ</summary>

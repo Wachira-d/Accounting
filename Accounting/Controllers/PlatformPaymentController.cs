@@ -62,6 +62,7 @@ public class PlatformPaymentController : ControllerBase
     }
 
     [HttpGet("addons/{featureCode}/intents/{intentId:guid}")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.BillingManage)]   // รอบ 227 (D-4): สมมาตรกับสถานะค่าแพ็กเกจ (ฝ่ายค้าน S5) — เดิมไม่ตรวจสิทธิ์
     public async Task<ActionResult<ApiResponse<object>>> AddOnStatus(Guid companyId, string featureCode, Guid intentId, CancellationToken ct)
         => await StatusAsync(companyId, intentId, ct);
 

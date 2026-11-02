@@ -151,6 +151,25 @@ public partial class CmsBookingService : ICmsBookingService
                     r.DepositMinAmount, r.DepositMaxAmount, r.PaymentDeadlineMinutes)));
             }
         }
+        // รอบ 226: จัดส่ง/รับเองรายบริการ — null = ไม่แตะ (ผู้เรียก API เดิม) · "Inherit" = ตามเว็บ (ล้างทั้งชุด) · "Custom" = ค่าที่ส่งมา
+        if (r.FulfillmentMode != null)
+        {
+            if (r.FulfillmentMode == "Inherit")
+            {
+                svc.FulfillmentDeliveryEnabled = null; svc.FulfillmentPickupEnabled = null; svc.FulfillmentDefault = null;
+            }
+            else if (r.FulfillmentMode == "Custom")
+            {
+                errs.AddRange(BookingFulfillment.ValidateSettings(r.FulfillmentDefault, null, null));
+                // ฝ่ายค้านรอบ 226: ค่าตั้งต้นต้องชี้วิธีที่เปิด (ไม่บันทึกค่าที่ไม่มีผล)
+                if (BookingFulfillment.DefaultPointsToDisabled(r.FulfillmentDefault, r.FulfillmentDeliveryEnabled, r.FulfillmentPickupEnabled) is string defErr)
+                    errs.Add(defErr);
+                svc.FulfillmentDeliveryEnabled = r.FulfillmentDeliveryEnabled;
+                svc.FulfillmentPickupEnabled = r.FulfillmentPickupEnabled;
+                svc.FulfillmentDefault = BookingFulfillment.StoredDefault(r.FulfillmentDefault);
+            }
+            else errs.Add("ค่าตั้ง \"จัดส่ง/รับเอง\" ของบริการไม่ถูกต้อง (ได้: Inherit / Custom)");
+        }
         // ทุกครั้ง (รวมเปลี่ยนชนิดบริการโดยไม่ส่งช่องชำระ): ตั้งเก็บเงินเองแต่ชนิดเก็บไม่ได้ ⇒ ปฏิเสธ ไม่บันทึกค่าที่ไม่มีผล
         if (BookingPaymentPolicy.ServiceSaveProblem(svc.BookingType, svc.PaymentMode) is string payProblem) errs.Add(payProblem);
 
@@ -359,6 +378,11 @@ public partial class CmsBookingService : ICmsBookingService
             DepositMinAmount = s.DepositMinAmount, DepositMaxAmount = s.DepositMaxAmount, PaymentDeadlineMinutes = s.PaymentDeadlineMinutes,
             PaymentSummary = BookingPaymentPolicy.Describe(PaymentOf(s, site.Row)),
             PaymentProblem = PaymentOf(s, site.Row).Problem,
+            // รอบ 226: จัดส่ง/รับเอง — ค่าที่ตั้ง (ฟอร์ม) + ผลที่มีจริง (ตัวตัดสินเดียว BookingFulfillment)
+            FulfillmentMode = BookingFulfillment.ServiceMode(s.FulfillmentDeliveryEnabled, s.FulfillmentPickupEnabled, s.FulfillmentDefault),
+            FulfillmentDeliveryEnabled = s.FulfillmentDeliveryEnabled, FulfillmentPickupEnabled = s.FulfillmentPickupEnabled,
+            FulfillmentDefault = s.FulfillmentDefault,
+            FulfillmentSummary = BookingFulfillment.Describe(FulfillmentOf(s, site.Row)),
             IsActive = s.IsActive,
             UpcomingBookingsCount = upcoming,
             CreatedAt = s.CreatedAt
@@ -991,6 +1015,11 @@ public partial class CmsBookingService : ICmsBookingService
         var payEff = BookingPaymentPolicy.Resolve(svc.BookingType, (await LoadPaymentContextAsync(companyId, siteId)).SiteRule,
             Cms.BookingPaymentContextLoader.ServiceRule(svc));
         var createdByStaff = staffOnBehalf || staffActor;
+        // รอบ 226: จัดส่ง/รับเอง — วิธี + ที่อยู่ตรวจก่อนบันทึกอะไร (ตัวตัดสินเดียว BookingFulfillment) · ค่าส่งคิดในธุรกรรมหลังรู้ค่าบริการ
+        var fulSiteRow = (await SiteContextAsync(companyId, siteId)).Row;
+        var fulMethod = BookingFulfillment.ResolveMethod(FulfillmentOf(svc, fulSiteRow), request.FulfillmentMethod);
+        var addrErrs = BookingFulfillment.AddressProblems(fulMethod, request.DeliveryAddress, request.DeliveryProvince, request.DeliveryPostalCode);
+        if (addrErrs.Count > 0) throw new BusinessRuleException(string.Join(" · ", addrErrs), BookingFulfillment.RuleCode);
 
         SiteBooking booking;
         Guid? duplicateOfId = null;
@@ -1038,9 +1067,16 @@ public partial class CmsBookingService : ICmsBookingService
             var slot = decision.Slot!;
 
             var total = BookingSlotEngine.TotalPrice(ctx.Rules, svc.Price, units);
-            // รอบ 218: ยอดมัดจำผ่านตัวตัดสินเดียว (แบบเดิม = สูตรเดิมทุกตัวอักษร · มัดจำไม่บังคับ = ตามที่ลูกค้าเลือก)
+            // รอบ 226: ค่าจัดส่งคิดที่เซิร์ฟเวอร์ (ตัวคิดของร้าน ShopDeliveryFee ผ่าน QuoteFulfillmentAsync ตัวเดียวกับตัวอย่างก่อนจอง) — ไม่รับยอดจาก client ·
+            // ปัญหา (ไม่มีวิธีส่งสำหรับพื้นที่ · ยอดไม่ถึงขั้นต่ำ · ต้องเลือกอัตรา) ⇒ โยนก่อนบันทึก
+            var ful = await QuoteFulfillmentAsync(companyId, siteId, svc, fulSiteRow, total, fulMethod, request.DeliveryProvince,
+                request.DeliveryPostalCode, request.DeliveryRateId, strict: true);
+            if (request.PayWithCredit && ful.Fee > 0m)
+                throw new BusinessRuleException("บัตรคอร์สไม่ครอบคลุมค่าจัดส่ง — เลือก “รับเอง” หรือจองแบบชำระเงิน", BookingFulfillment.RuleCode);
+            // รอบ 218: ยอดมัดจำผ่านตัวตัดสินเดียว (แบบเดิม = สูตรเดิมทุกตัวอักษร · มัดจำไม่บังคับ = ตามที่ลูกค้าเลือก) ·
+            // รอบ 226 (คำตัดสิน 226-4): มัดจำคิดจากค่าบริการ · ชำระเต็ม = ค่าบริการ + ค่าจัดส่ง
             var depositAmount = BookingPaymentPolicy.BookingDeposit(svc.BookingType, payEff, total, svc.DepositAmount, svc.DepositPercent,
-                customerOptsIn: request.PayDepositNow == true);
+                customerOptsIn: request.PayDepositNow == true, deliveryFee: ful.Fee);
 
             var policyRow = await PurchasePolicyAcceptance.EnforceShopAsync(_db, companyId, siteId, PurchasePolicyAcceptance.ChannelSiteBooking,
                 request.PolicyAccepted, request.PolicyVersionShown, exempt: policyExempt,
@@ -1064,6 +1100,13 @@ public partial class CmsBookingService : ICmsBookingService
                 Currency = svc.Currency,
                 CustomerNotes = request.CustomerNotes,
                 CustomFieldsJson = customFieldsJson,   // รอบ 222
+                BookingType = svc.BookingType,   // รอบ 226 (ฝ่ายค้าน ข้อ 1): ตรึงชนิด ณ ตอนจอง
+                // รอบ 226: วิธีรับ + ค่าส่งที่เซิร์ฟเวอร์คิด + ที่อยู่ (ตรึง ณ ตอนจอง)
+                FulfillmentMethod = ful.Method, DeliveryFee = ful.Fee,
+                DeliveryAddress = ful.Method == Accounting.Helpers.FulfillmentMethod.Delivery ? request.DeliveryAddress?.Trim() : null,
+                DeliveryProvince = ful.Method == Accounting.Helpers.FulfillmentMethod.Delivery ? request.DeliveryProvince?.Trim() : null,
+                DeliveryPostalCode = ful.Method == Accounting.Helpers.FulfillmentMethod.Delivery ? request.DeliveryPostalCode?.Trim() : null,
+                DeliveryRateId = ful.Rate?.RateId, DeliveryRateName = ful.Rate?.Name,
                 PublicToken = CmsBookingOnlinePayment.NewPublicToken(),   // รอบ 205 W2: ลิงก์จ่ายมัดจำ/จัดการการจองของลูกค้า
                 CreatedBy = userId
             };
@@ -1224,13 +1267,15 @@ public partial class CmsBookingService : ICmsBookingService
             if (!d.Allowed) continue;
             w.ResourceId = ClassScheduleGenerator.ResourceForBooking(d.Slot!.ResourceId, ctx.ClassSessions, date, w.StartTime);   // รอบ 209 P4: ครูของรอบคลาส
             // ฝ่ายค้านรอบ 218 (S5): ได้ที่จากคิวสำรอง = ได้ที่ ⇒ นโยบายชำระล่วงหน้าเดียวกับจองใหม่ (BookingPaymentPolicy.OnSeat) · บังคับ ⇒ รอยืนยัน + กำหนดชำระ
-            var promoteEff = BookingPaymentPolicy.Resolve(svc.BookingType, promoteSiteRule, Cms.BookingPaymentContextLoader.ServiceRule(svc));
+            // รอบ 226 (ฝ่ายค้าน ข้อ 1): ชนิดที่ตรึงบนการจอง (ไม่ใช่ชนิดปัจจุบันของบริการ) · ข้อ 4: กำหนดชำระ "ค่าตั้งต้น" ไม่ใช้ตอนได้ที่จากคิว
+            var promoteEff = BookingPaymentPolicy.ForWaitlistPromotion(
+                BookingPaymentPolicy.Resolve(w.BookingType, promoteSiteRule, Cms.BookingPaymentContextLoader.ServiceRule(svc)));
             // ฝ่ายค้านรอบ 2 (F3): ผู้สร้างใบคิวเป็นพนักงานของบริษัท ⇒ ไม่บังคับรอยืนยัน/ไม่ถือรอบ (ตัวตัดสินเดียวกับจองใหม่ IsCompanyStaffAsync) ·
             // ยอด = มัดจำที่ยังค้าง (หักเงินที่รับไว้แล้ว) ไม่ใช่มัดจำเต็ม
             var promoteByStaff = await IsCompanyStaffAsync(companyId, w.CreatedBy);
             var promotePay = BookingPaymentPolicy.OnSeat(promoteEff, BookingPaymentPolicy.RemainingDeposit(w.DepositAmount, w.PaidAmount), DateTime.UtcNow,
                 CreditBookingLink.StartUtc(w.BookingDate, w.StartTime), promoteByStaff);
-            if (!promotePay.ForcePending && (svc.AutoConfirm || svc.BookingType == BookingType.Lead)) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
+            if (!promotePay.ForcePending && (svc.AutoConfirm || w.BookingType == BookingType.Lead)) { w.Status = BookingStatus.Confirmed; w.ConfirmedAt = DateTime.UtcNow; }
             else w.Status = BookingStatus.Pending;
             w.PaymentHoldUntil = promotePay.PaymentHoldUntil;
             // R-13: ประทับเวลาได้คิว + ถือรอบ (เฉพาะรอยืนยัน · BookingReminderPlan.HoldUntil) · แจ้งลูกค้า = NotifyWaitlistPromotedAsync (Notify.cs) หลัง commit —
@@ -1456,7 +1501,7 @@ public partial class CmsBookingService : ICmsBookingService
     {
         var b = await _db.SiteBookings.AsNoTracking()
             .Where(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId)
-            .Select(x => new { x.ErpDocumentId, x.BookingService.BookingType, x.Status })
+            .Select(x => new { x.ErpDocumentId, x.BookingType, x.Status })   // รอบ 226: ชนิดที่ตรึงบนการจอง
             .FirstOrDefaultAsync();
         if (b == null) return null;
         DocumentType? linkedType = null; DocumentStatus? linkedStatus = null; string? linkedNo = null;
@@ -1721,7 +1766,7 @@ public partial class CmsBookingService : ICmsBookingService
     {
         var type = await _db.SiteBookings.AsNoTracking()
             .Where(b => b.Id == bookingId && b.CompanyId == companyId && b.SiteId == siteId)
-            .Select(b => (BookingType?)b.BookingService.BookingType).FirstOrDefaultAsync();
+            .Select(b => (BookingType?)b.BookingType).FirstOrDefaultAsync();   // รอบ 226: ชนิดที่ตรึงบนการจอง
         if (type is BookingType t && t != BookingType.Lead
             && CreditBookingLink.ShouldSyncErp(await IsPaidWithCreditAsync(companyId, bookingId)))
             await SyncBookingToErpAsync(companyId, siteId, bookingId);
@@ -1839,7 +1884,7 @@ public partial class CmsBookingService : ICmsBookingService
                 TotalAmount = b.TotalAmount, DepositAmount = b.DepositAmount,
                 PaidAmount = b.PaidAmount, Currency = b.Currency,
                 PaidAt = b.PaidAt, PaymentReference = b.PaymentReference, PublicToken = b.PublicToken,   // รอบ 205 W2
-                BookingType = b.BookingService.BookingType,
+                BookingType = b.BookingType,   // รอบ 226: ชนิดที่ตรึงบนการจอง
                 ErpDocumentType = b.ErpDocumentType, ErpDocumentId = b.ErpDocumentId,
                 CustomerNotes = b.CustomerNotes, InternalNotes = b.InternalNotes,
                 CustomFieldsRaw = b.CustomFieldsJson,   // รอบ 222 — แปลงหลังดึง (CustomFormFields.ParseAnswers)
@@ -2046,9 +2091,11 @@ public partial class CmsBookingService : ICmsBookingService
         if (booking == null || booking.ErpDocumentId.HasValue) return booking?.ErpDocumentId;
 
         var svc = booking.BookingService;
+        // รอบ 226 (ฝ่ายค้าน ข้อ 1): ชนิดที่ตรึงบนการจอง — เปลี่ยนชนิดบริการภายหลังไม่ทำให้การจองเดิมเดินเส้นเอกสารใหม่
+        var bookingType = booking.BookingType;
 
         // ฝ่ายค้านรอบ 205 ข้อ 6: PrePayment ที่ไม่มียอดมัดจำ ⇒ ไม่มีเงินให้ออกใบเสร็จ (เดิมได้ใบเสร็จ 0.00) — หมายเหตุแทน
-        if (!CmsBookingErpPolicy.NeedsErpDocument(svc.BookingType, booking.DepositAmount))
+        if (!CmsBookingErpPolicy.NeedsErpDocument(bookingType, booking.DepositAmount))
         {
             booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, CmsBookingErpPolicy.NoDepositNote);
             await _db.SaveChangesAsync();
@@ -2058,7 +2105,7 @@ public partial class CmsBookingService : ICmsBookingService
         // ชนิดเอกสารตอนจอง — ตัวตัดสินเดียว BookingInvoiceTimingPolicy (คำตัดสินข้อ 155 · B-2): Guaranteed + ค่าตั้งไซต์ "ออกใบกำกับเมื่อรับเงิน/ให้บริการ"
         // ⇒ ใบยืนยันการจอง (ใบเสนอราคา · ไม่ลงบัญชี) · ค่าเริ่มต้น/ชนิดอื่น = ชนิดเดิมทุกตัว
         var atBooking = BookingInvoiceTimingPolicy.Decide(new BookingInvoiceFacts(
-            svc.BookingType, await InvoiceTimingAsync(companyId, siteId), BookingInvoiceEvent.Booked,
+            bookingType, await InvoiceTimingAsync(companyId, siteId), BookingInvoiceEvent.Booked,
             LinkedDocumentType: null, LinkedStatus: null, HasIssuedTaxDocument: false, VatRegistered: true));
         var docType = taxDocumentNow ?? atBooking.DocumentType ?? DocumentType.Quotation;
         var erpDocType = taxDocumentNow is DocumentType forced ? CmsBookingErpPolicy.ErpTypeOf(forced)
@@ -2080,7 +2127,7 @@ public partial class CmsBookingService : ICmsBookingService
         // เข้าเส้นเอกสาร **เฉพาะเมื่อบริษัทตั้งค่ามัดจำเองแล้ว** (ประเภทเริ่มต้นมีโหมด หรือ ตั้งค่า → ภาษี ถูกตั้ง) ⇒ บริษัทที่ไม่เคยแตะ
         // ได้ใบแบบเดิมทุกตัวอักษร (VAT ทันที §78/1) · ตั้งแล้ว ⇒ DocumentService จัดรูปใบผ่าน DepositDocumentShaping ตัวเดียว
         Guid? bookingDepositKindId = null;
-        if (svc.BookingType == BookingType.PrePayment)
+        if (bookingType == BookingType.PrePayment)
         {
             var kindCtx = await DepositKindCatalog.LoadContextAsync(_db, companyId);
             // ฝ่ายค้าน C1: ค่าเริ่มต้นที่เป็นเงินประกันถูกข้าม (ใบจองเป็นราคาเสมอ — ไม่งั้นตอนใช้บริการไม่รับรู้รายได้)
@@ -2091,7 +2138,7 @@ public partial class CmsBookingService : ICmsBookingService
         // (ขายรอรับรู้). tax point §78/1 รับชำระแล้ว = เกิดทันที (default
         // DepositOutputVatDeferred=false) → ภาษีขายเข้า ภพ.30 เดือนนี้.
         // เมื่อลูกค้าใช้บริการจริง → ใช้ RealizeDepositAsync ตัด 217xx → 41000
-        var isDeposit = svc.BookingType == BookingType.PrePayment;
+        var isDeposit = bookingType == BookingType.PrePayment;
 
         // บริษัทไม่จด VAT → ไม่คิด VAT ขายในเอกสารจอง (§90/2) มิฉะนั้นเอกสาร
         // จะติด hard-block ตอน approve และการจองจะ sync ไม่ผ่าน
@@ -2103,6 +2150,10 @@ public partial class CmsBookingService : ICmsBookingService
         // บริษัทไม่จด VAT ยังได้ 0 เสมอ (§90/2) · ใบมัดจำไม่ใช้บัญชีรายได้ (ลง 217xx ผ่าน IsDeposit)
         var product = svc.Product is { IsDeleted: false } pr && pr.CompanyId == companyId ? pr : null;
         var lineVatRate = BookingProductLink.VatRate(bookingVatRegistered, bookingVatRate, product?.VatRate);
+        // รอบ 226 (คำตัดสิน 226-4): ค่าจัดส่งเป็นบรรทัดแยก อัตรา VAT แบบคำสั่งซื้อ (ShippingVatAllocation อัตราสูงสุดในบิล §79) ·
+        // ใบรับมัดจำ: ส่วนที่เกินค่าบริการ (ชำระเต็มที่รวมค่าส่ง) = ค่าจัดส่ง · ใบเต็ม (ใบเสนอราคา/ใบกำกับ) = ค่าส่งทั้งหมด
+        var prepaySplit = BookingFulfillment.SplitPrepayment(booking.DepositAmount, booking.TotalAmount, booking.DeliveryFee);
+        var deliveryInDoc = isDeposit ? prepaySplit.Delivery : booking.DeliveryFee;
 
         var request = new Models.DTOs.Document.CreateDocumentRequest(
             DocumentType: docType,
@@ -2124,13 +2175,13 @@ public partial class CmsBookingService : ICmsBookingService
                     Unit: !isDeposit && booking.Units > 1 ? "ช่วง" : "ครั้ง",
                     // มัดจำ (PrePayment): เอกสารต้องเป็น "ยอดมัดจำที่รับ" ไม่ใช่ราคาเต็ม
                     // เดิมใช้ svc.Price เต็ม → เงินสด/หนี้สินรอรับรู้สูงเกินจริง.
-                    UnitPrice: isDeposit ? booking.DepositAmount : svc.Price,
+                    UnitPrice: isDeposit ? prepaySplit.Service : svc.Price,
                     DiscountPercent: 0m,
                     VatRate: lineVatRate,
                     WithholdingTaxRate: 0m,
                     AccountId: isDeposit ? null : product?.SalesAccountId,
                     ProductCode: product?.Code)
-            },
+            }.Concat(DeliveryErpLines(bookingVatRegistered, deliveryInDoc, booking.TotalAmount, lineVatRate)).ToList(),
             Currency: svc.Currency,
             PricesIncludeVat: true,           // ราคา CMS เป็น gross
             BookingNumber: booking.BookingNumber,
@@ -2148,7 +2199,7 @@ public partial class CmsBookingService : ICmsBookingService
             originModule: Accounting.Helpers.DocumentQuotaPolicy.CmsBookingOrigin);
         booking.ErpDocumentId = created.Id;
         booking.ErpDocumentType = erpDocType;
-        if (svc.BookingType == BookingType.Guaranteed && docType == DocumentType.Quotation)
+        if (bookingType == BookingType.Guaranteed && docType == DocumentType.Quotation)
         {
             booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, BookingInvoiceTimingPolicy.DeferredNote);
             var qtDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
@@ -2158,15 +2209,15 @@ public partial class CmsBookingService : ICmsBookingService
         // Auto-approve: ตัดสินที่ CmsBookingErpPolicy ตัวเดียว (lead = quotation รออนุมัติ — admin ต้อง confirm slot ก่อน) ·
         // รอบ 205 ทีม E (B-1): PrePayment อนุมัติเฉพาะเมื่อเงินเข้าแล้ว — เดิม "prepayment มีเงินจริง" ไม่จริง: การจองหน้าเว็บยังไม่มีใครจ่าย
         // ⇒ ใบเสร็จมัดจำ + JE เงินสด + ภาษีขาย ของเงินที่ไม่เคยได้รับ · ตอนนี้ใบคงเป็นร่าง + หมายเหตุให้พนักงานอนุมัติเมื่อรับเงินจริง
-        if (!CmsBookingErpPolicy.AutoApprove(svc.BookingType, booking.DepositAmount, booking.PaidAmount)
-            && svc.BookingType == BookingType.PrePayment)
+        if (!CmsBookingErpPolicy.AutoApprove(bookingType, booking.DepositAmount, booking.PaidAmount)
+            && bookingType == BookingType.PrePayment)
         {
             var waitNote = CmsBookingErpPolicy.AwaitingPaymentNote(booking.DepositAmount);
             booking.InternalNotes = DepositPolicyResolver.AppendNoteOnce(booking.InternalNotes, waitNote);
             var draftDoc = await _db.Documents.FirstOrDefaultAsync(d => d.Id == created.Id && d.CompanyId == companyId);
             if (draftDoc != null) draftDoc.InternalNotes = DepositPolicyResolver.AppendNoteOnce(draftDoc.InternalNotes, waitNote);
         }
-        else if (CmsBookingErpPolicy.AutoApprove(svc.BookingType, booking.DepositAmount, booking.PaidAmount))
+        else if (CmsBookingErpPolicy.AutoApprove(bookingType, booking.DepositAmount, booking.PaidAmount))
         {
             // รอบ 194 R3 (P-1) — อนุมัติล้ม (เช่น "รอสักครู่" ของล็อกยอดมัดจำ · ด่านอนุมัติ) ⇒ ธุรกรรมอนุมัติ rollback ฝั่ง DB แล้ว
             // แต่ entity ใน context ยังถูกแก้ค้าง (Status=Approved · เลขเอกสาร · JE ที่ Added) ⇒ SaveChanges ด้านล่างเคยบันทึก "ใบ Approved ไม่มี JE"

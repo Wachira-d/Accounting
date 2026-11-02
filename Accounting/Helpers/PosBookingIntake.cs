@@ -103,6 +103,13 @@ public static class PosBookingIntake
     /// ⇒ ห้ามรับรู้มัดจำซ้ำ (มัดจำคงเป็นหนี้สิน ให้คืน/ตัดที่หน้ามัดจำ) · ผู้เรียก: <c>CmsBookingService.UpdateBookingStatusAsync</c></summary>
     public static bool MayRealizeDepositOnComplete(bool hasCompletedPosOrder) => !hasCompletedPosOrder;
 
+    /// <summary>รอบ 226: ชื่อบรรทัดค่าจัดส่งบนบิลที่เปิดจากการจองแบบจัดส่ง (ตัวตั้งเดียวกับเอกสาร — <c>ShippingVatAllocation.LineDescription</c> ส่วนเดียว)</summary>
+    public const string DeliveryLineName = "ค่าจัดส่ง";
+
+    /// <summary>รอบ 226 (ฝ่ายค้าน ข้อ 2): บิลจากการจองแบบจัดส่งต้องมีบรรทัดค่าจัดส่ง (เดิมบิล = ค่าบริการอย่างเดียว ⇒ เก็บค่าส่งไม่ได้) · ≤ 0 = ไม่มีบรรทัด</summary>
+    public static decimal? DeliveryLine(decimal deliveryFee)
+        => deliveryFee > 0m ? Math.Round(deliveryFee, 2, MidpointRounding.AwayFromZero) : null;
+
     /// <summary>หมายเหตุบนการจองเมื่อข้ามการรับรู้มัดจำเพราะ POS เก็บเงินไปแล้ว</summary>
     public static string SkippedDepositRealizationNote(string? posOrderNumber)
         => $"ไม่รับรู้มัดจำเป็นรายได้ตอนปิดงาน — รายได้ของการจองนี้รับรู้แล้วที่บิล POS #{posOrderNumber} · "

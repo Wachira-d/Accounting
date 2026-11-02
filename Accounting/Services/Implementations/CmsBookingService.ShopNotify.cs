@@ -78,7 +78,8 @@ public partial class CmsBookingService
 
         // รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเอง ⇒ บรรทัดเดียวท้ายข้อความถึงร้าน (ร้านเตรียมงานได้โดยไม่ต้องเปิดหลังบ้าน)
         var shop = CmsNotificationText.WithLine(CmsNotificationText.ShopNewBooking(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), f.GuestPhone, date, f.StartTime,
-            f.GuestCount, waitlisted: f.Status == BookingStatus.Waitlisted), CustomAnswersLine(f));
+            f.GuestCount, waitlisted: f.Status == BookingStatus.Waitlisted),
+            CmsNotificationText.JoinLines(CustomAnswersLine(f), await FulfillmentNotifyLineAsync(companyId, siteId, bookingId)));   // รอบ 226: วิธีรับ
         var shopErr = await _shopNotifier.NotifyShopAsync(companyId, siteId, shop, orderEvent: false);
         if (shopErr != null) failures.Add(CmsNotificationText.FailureNote("ร้าน", shop.Subject, shopErr, now));
 
@@ -94,7 +95,8 @@ public partial class CmsBookingService
         var customer = await WithBookingLinkAsync(companyId, siteId, f, CmsNotificationText.WithLine(CmsNotificationText.WithLine(
             CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), DateOnly.FromDateTime(f.BookingDate), f.StartTime, f.ResourceName, f.Status),
             CustomAnswersLine(f)),
-            await PaymentNotifyLineAsync(companyId, siteId, bookingId)));
+            // รอบ 226: วิธีรับ (จัดส่ง + ที่อยู่ + ค่าส่ง / รับเอง + ที่อยู่-เวลารับ) ก่อนบรรทัดชำระ
+            CmsNotificationText.JoinLines(await FulfillmentNotifyLineAsync(companyId, siteId, bookingId), await PaymentNotifyLineAsync(companyId, siteId, bookingId))));
         var err = await _shopNotifier!.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.BookingConfirmed, CustomerNotifyKeys.Booking(bookingId, CustomerNotifyEvents.BookingConfirmed), ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), customer);
         return (customer, err);
     }

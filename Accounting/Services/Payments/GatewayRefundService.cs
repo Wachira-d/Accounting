@@ -180,8 +180,11 @@ public class GatewayRefundService : IGatewayRefundService
         string? unknownError = null;
         try
         {
+            // รอบ 227 (A-12): คีย์ของโหมดที่รายการถูกสร้าง (PaymentConfigForIntent) — ช่องทางอาจถูกสลับโหมดหลังรับเงิน
             result = await provider.RefundAsync(intent, check.Amount, reason.Trim(), attemptMarker,
-                config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode },
+                config == null
+                    ? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }
+                    : PaymentConfigForIntent.For(config, intent.IsTestMode),
                 CancellationToken.None);
             // E2-1: ผู้ให้บริการตอบ 5xx/408 = ไม่รู้ผล (ไม่ใช่ "ปฏิเสธ") ⇒ ล็อกเหมือนหมดเวลา
             if (result.OutcomeUnknown) unknownError = result.FailureMessage ?? "ผู้ให้บริการตอบผิดพลาด";
@@ -431,7 +434,9 @@ public class GatewayRefundService : IGatewayRefundService
         try
         {
             charge = await provider.GetChargeAsync(intent,
-                config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }, ct);
+                config == null
+                    ? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }
+                    : PaymentConfigForIntent.For(config, intent.IsTestMode), ct);   // รอบ 227 (A-12)
         }
         catch (Exception ex)
         {

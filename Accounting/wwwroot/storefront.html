@@ -231,6 +231,7 @@
        ห้ามเขียน QR/poll เองในหน้านี้ ไม่งั้นได้สำเนาชุดที่สองที่ drift แน่นอน -->
   <script src="/js/pay-widget.js"></script>
   <script src="/js/storefront-booking-pay.js"></script>
+  <script src="/js/storefront-booking-fulfillment.js"></script>
   <script src="/js/submit-once.js"></script>
 
   <script>
@@ -2593,6 +2594,7 @@
           confirmAdditional: !!confirmAdditional      // รอบ 217: ตั้งใจจองรอบเดิมเพิ่มอีกที่ (ผู้ใช้กดยืนยันหลังคำเตือนจองซ้ำ)
         };
         if (typeof this._bkPayExtras === 'function') Object.assign(body, this._bkPayExtras());   // รอบ 218: มัดจำไม่บังคับ — ลูกค้าเลือกจ่ายไหม
+        if (typeof this._bkFulfillExtras === 'function') Object.assign(body, this._bkFulfillExtras());   // รอบ 226: จัดส่ง/รับเอง + ที่อยู่ (ค่าส่งเซิร์ฟเวอร์คิดเอง)
         // รอบ 209 P1 (C3): จองด้วยบัตร — ส่ง id ลูกค้าของตัวเอง + โทเคนหน้าร้าน (เซิร์ฟเวอร์เทียบ id ในโทเคนกับ customerId)
         const useCredit = document.getElementById('sfBookUseCredit');
         const meForCredit = useCredit && useCredit.checked ? await this._custMeLoad() : null;
@@ -2712,6 +2714,10 @@
           ['เบอร์โทร', b.guestPhone || ''],
           ['อีเมล', b.guestEmail || b.customerEmail || ''],
           ['ค่าบริการ', '฿' + this._money(b.totalAmount)],
+          // รอบ 226: วิธีรับ + ค่าจัดส่ง + ยอดรวม (ค่าจากเซิร์ฟเวอร์ — BookingFulfillment) · ไม่มีขั้นนี้ = แถวว่าง (ถูกกรองทิ้ง)
+          ['วิธีรับ', b.fulfillmentSummary || ''],
+          ['ค่าจัดส่ง', Number(b.deliveryFee) > 0 ? '฿' + this._money(b.deliveryFee) + (b.deliveryRateName ? ' (' + b.deliveryRateName + ')' : '') : ''],
+          ['ยอดรวม', Number(b.deliveryFee) > 0 ? '฿' + this._money(b.grandTotal) : ''],
           // รอบ 223: แถวมัดจำบอกสถานะการชำระจากเซิร์ฟเวอร์ (รอชำระ/รอตรวจสลิป/ชำระแล้ว) + ที่มาของยอด — ใบยืนยัน/พิมพ์ใช้แถวชุดเดียวกัน
           ['มัดจำ', Number(b.depositAmount) > 0 ? `฿${this._money(b.depositAmount)} (ชำระแล้ว ฿${this._money(b.paidAmount)})${b.payment && b.payment.statusLabel ? ' · ' + b.payment.statusLabel : ''}` : ''],
           ['ที่มาของยอดมัดจำ', (b.payment && b.payment.amountBasis) || ''],
@@ -3897,6 +3903,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
       },
     });
 
+    if (window.StoreBookingFulfill) StoreBookingFulfill.install(Store);   // รอบ 226: ขั้นจัดส่ง/รับเองของการจอง (js/storefront-booking-fulfillment.js)
     if (window.StoreBookingPay) StoreBookingPay.install(Store);   // รอบ 218: ยอดชำระก่อนกดจอง + กล่องโอน/QR/สลิป (js/storefront-booking-pay.js)
     Store.init();
   </script>

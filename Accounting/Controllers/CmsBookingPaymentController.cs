@@ -44,6 +44,33 @@ public class CmsBookingPaymentController : ControllerBase
         return Ok(new ApiResponse<BookingPaymentSettingsDto>(true, result, "บันทึกการชำระเงินของการจองแล้ว"));
     }
 
+    /// <summary>รอบ 226 (คำตัดสิน 226-1): แก้บริการที่โหมดบังคับเก็บเงินไม่ได้ในคลิกเดียว — "convert" (เปลี่ยนชนิดเป็นชำระมัดจำล่วงหน้า) / "exempt" (ไม่รับชำระล่วงหน้า)</summary>
+    [HttpPost("payment-settings/fix-services")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]   // ฝ่ายค้านรอบ 226 ข้อ 8: แก้บริการ = บทบาทที่แก้เว็บได้ + สิทธิ์ตั้งค่าเว็บ
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<BookingPaymentSettingsDto>>> FixUncollectableServices(Guid companyId, Guid siteId,
+        [FromBody] FixUncollectableServicesRequest request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookings.FixUncollectableServicesAsync(companyId, siteId, request, userId);
+        return Ok(new ApiResponse<BookingPaymentSettingsDto>(true, result, "แก้บริการแล้ว — บันทึกโหมดการชำระได้"));
+    }
+
+    /// <summary>รอบ 226: จัดส่ง/รับเองของการจอง (ค่าส่งใช้โซน/อัตราของร้าน)</summary>
+    [HttpGet("fulfillment-settings")]
+    public async Task<ActionResult<ApiResponse<BookingFulfillmentSettingsDto>>> GetFulfillmentSettings(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<BookingFulfillmentSettingsDto>(true, await _bookings.GetFulfillmentSettingsAsync(companyId, siteId)));
+
+    [HttpPut("fulfillment-settings")]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<BookingFulfillmentSettingsDto>>> UpdateFulfillmentSettings(Guid companyId, Guid siteId,
+        [FromBody] BookingFulfillmentSettingsDto request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookings.UpdateFulfillmentSettingsAsync(companyId, siteId, request, userId);
+        return Ok(new ApiResponse<BookingFulfillmentSettingsDto>(true, result, "บันทึกการจัดส่ง/รับเองของการจองแล้ว"));
+    }
+
     /// <summary>ร้านยืนยันสลิป ⇒ เส้นเงินเดียวกับ gateway (ยืนยันการจอง + ใบรับมัดจำลงวันที่รับเงิน) · ล้มหลังยืนยัน ⇒ ErpNotices บอกทางไปต่อ</summary>
     [HttpPost("bookings/{bookingId:guid}/slip/verify")]
     [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.OrderManager)]

@@ -17,7 +17,11 @@ public partial class CmsBookingService
 {
     /// <summary>นโยบายที่มีผลของบริการ (ค่าเว็บจากแถว <paramref name="siteRow"/>) — ตัวประกอบเดียวในไฟล์บริการ</summary>
     private static BookingPaymentEffective PaymentOf(SiteBookingService s, SiteBookingSettings? siteRow)
-        => BookingPaymentPolicy.Resolve(s.BookingType, BookingPaymentContextLoader.SiteRule(siteRow), BookingPaymentContextLoader.ServiceRule(s));
+        => PaymentOf(s, siteRow, s.BookingType);
+
+    /// <summary>รอบ 226 (ฝ่ายค้าน ข้อ 1): การจองที่มีอยู่ใช้ชนิดที่ตรึงบนการจอง (<c>SiteBooking.BookingType</c>) — ไม่ใช่ชนิดปัจจุบันของบริการ</summary>
+    private static BookingPaymentEffective PaymentOf(SiteBookingService s, SiteBookingSettings? siteRow, BookingType bookingType)
+        => BookingPaymentPolicy.Resolve(bookingType, BookingPaymentContextLoader.SiteRule(siteRow), BookingPaymentContextLoader.ServiceRule(s));
 
     private Task<BookingPaymentSiteContext> LoadPaymentContextAsync(Guid companyId, Guid siteId)
         => BookingPaymentContextLoader.LoadAsync(_db, companyId, siteId, _promptPay.ValidatePromptPayId);
@@ -81,8 +85,15 @@ public partial class CmsBookingService
             {
                 Id = s.Id, Name = s.Name, BookingType = s.BookingType.ToString(), Summary = BookingPaymentPolicy.Describe(eff),
                 Problem = eff.Problem, Collects = eff.Collects, UsesSiteSetting = s.PaymentMode == null,
+                RequiredButUncollectable = s.IsActive && eff.RequiredButUncollectable, IsActive = s.IsActive,
             };
         }).ToList();
+        // รอบ 226 (คำตัดสิน 226-1): โหมดบังคับ + บริการที่เก็บเงินไม่ได้ ⇒ กล่องแดงพร้อมรายชื่อ + ปุ่มแก้ (หน้าเว็บอ่าน RequiredButUncollectable)
+        // ฝ่ายค้านรอบ 226 ข้อ 3: เว็บเดิมที่ไม่เคยกรอกกำหนดชำระถูกตั้งเป็น 0 (คงพฤติกรรมเดิม) ⇒ แนะนำให้ตั้ง (ไม่เปลี่ยนให้เงียบ ๆ)
+        if (siteRow?.PaymentDeadlineLegacyNote == true && r.Mode is BookingPaymentMode.DepositRequired or BookingPaymentMode.FullRequired && r.DeadlineMinutes == 0)
+            dto.DeadlineNote = BookingPaymentPolicy.LegacyDeadlineNote;
+        dto.UncollectableProblem = BookingPaymentPolicy.SiteRequiredUncollectableProblem(r.Mode,
+            dto.Services.Where(x => x.RequiredButUncollectable).Select(x => x.Name).ToList());
         return dto;
     }
 
@@ -176,6 +187,11 @@ public partial class CmsBookingService
             .Select(x => x.Name).ToList();
         if (BookingPaymentPolicy.SiteChannelsBreakServicesProblem(broken) is string svcProblem)
             throw new BusinessRuleException(svcProblem, BookingPaymentChannels.RuleCode, 409);
+        // รอบ 226 (คำตัดสิน 226-1): โหมดบังคับที่บริการ (ตามค่าเว็บ) เก็บเงินไม่ได้ ⇒ ไม่บันทึก — ลูกค้าจะเห็น "รอร้านยืนยัน" แทนขั้นชำระ ·
+        // ทางไปต่อ = ปุ่มแก้ในตาราง (เปลี่ยนชนิดเป็นชำระมัดจำล่วงหน้า / ยกเว้น) แล้วบันทึกใหม่ · โหมดไม่บังคับ/ปิด ไม่ถูกกัน (ทิศตรงข้าม)
+        var uncollectable = await UncollectableServicesAsync(companyId, siteId, rule);
+        if (BookingPaymentPolicy.SiteRequiredUncollectableProblem(mode, uncollectable.Select(x => x.Name).ToList()) is string uncProblem)
+            throw new BusinessRuleException(uncProblem, BookingPaymentPolicy.UncollectableRuleCode, 409);
         if (request.OnlineGatewayEnabled && !before.CompanyGatewayActive)
             throw new BusinessRuleException("บริษัทยังไม่ได้ตั้งค่าระบบรับชำระเงินออนไลน์ — ตั้งที่ “ตั้งค่า → รับชำระเงินออนไลน์” ก่อน หรือปิดตัวเลือกชำระออนไลน์",
                 BookingPaymentChannels.RuleCode);
@@ -183,7 +199,9 @@ public partial class CmsBookingService
         row.PaymentMode = mode;
         row.PaymentDepositFixedAmount = request.DepositFixedAmount; row.PaymentDepositPercent = request.DepositPercent;
         row.PaymentDepositMinAmount = request.DepositMinAmount; row.PaymentDepositMaxAmount = request.DepositMaxAmount;
-        row.PaymentDeadlineMinutes = request.DeadlineMinutes is > 0 ? request.DeadlineMinutes : null;
+        // ฝ่ายค้านรอบ 226 ข้อ 3: 0 = "ไม่กำหนด" โดยตั้งใจ (เก็บ 0) · ว่าง = ค่าตั้งต้น 1440 นาทีในโหมดบังคับ (เก็บ null) · บันทึกแล้วไม่ต้องแนะนำต่อ
+        row.PaymentDeadlineMinutes = request.DeadlineMinutes is int dm && dm >= 0 ? dm : null;
+        row.PaymentDeadlineLegacyNote = false;
         row.OnlineDepositEnabled = request.OnlineGatewayEnabled;
         row.BankTransferEnabled = request.BankTransferEnabled;
         row.PaymentNote = string.IsNullOrWhiteSpace(request.PaymentNote) ? null : request.PaymentNote.Trim();
@@ -204,10 +222,15 @@ public partial class CmsBookingService
         var rules = BookingSlotEngine.RulesOf(svc, site.Defaults);
         var total = BookingSlotEngine.TotalPrice(rules, svc.Price, Math.Clamp(request.Units, 1, Math.Max(1, svc.MaxUnitsPerBooking)));
         var eff = PaymentOf(svc, site.Row);
-        var amount = BookingPaymentPolicy.AmountDue(eff, total, customerOptsIn: true);
+        // รอบ 226: ขั้นจัดส่ง/รับเอง — ตัวคิดเดียวกับตอนสร้างการจอง (ไม่เข้ม: ปัญหาเป็นข้อความถึงลูกค้า)
+        var ful = await QuoteFulfillmentAsync(companyId, siteId, svc, site.Row, total, request.FulfillmentMethod, request.DeliveryProvince,
+            request.DeliveryPostalCode, request.DeliveryRateId, strict: false);
+        var amount = BookingPaymentPolicy.AmountDue(eff, total, customerOptsIn: true, ful.Fee);
         var hasHold = eff.Required && !eff.IsLegacy && eff.DeadlineMinutes > 0;
         return new BookingPaymentPreviewResponse
         {
+            Fulfillment = ful.Dto.Enabled ? ful.Dto : null, DeliveryFee = ful.Fee, GrandTotal = BookingFulfillment.GrandTotal(total, ful.Fee),
+            ShopArrangesPayment = eff.RequiredButUncollectable,
             Mode = eff.Mode.ToString(), ModeLabel = BookingPaymentPolicy.ModeLabel(eff.Mode),
             Collects = eff.Collects && amount > 0m, Required = eff.Required && amount > 0m,
             Optional = eff.Mode == BookingPaymentMode.DepositOptional && amount > 0m,
@@ -219,9 +242,10 @@ public partial class CmsBookingService
             CancellationPolicy = CreditBookingLink.CancellationPolicy(null, null, svc.FreeCancellationHours, svc.CancellationFeePercent).Text,
             PaymentNote = ctx.PaymentNote,
             // รอบ 223: ที่มาของยอด + หลังกดจองจะไปขั้นชำระเงิน + ป้ายปุ่ม (ค่าจากตัวตัดสินเดียว — หน้าเว็บแสดงอย่างเดียว)
-            AmountBasis = BookingPaymentPolicy.AmountBasis(eff, total, amount),
-            NextStepNote = BookingPaymentStep.PreviewNextStep(eff.Required && amount > 0m, eff.Mode == BookingPaymentMode.DepositOptional && amount > 0m,
-                ctx.GatewayReady, ctx.TransferReady),
+            AmountBasis = BookingPaymentPolicy.AmountBasis(eff, total, amount, ful.Fee),
+            NextStepNote = eff.RequiredButUncollectable ? BookingPaymentPolicy.ShopArrangesPaymentPreview
+                : BookingPaymentStep.PreviewNextStep(eff.Required && amount > 0m, eff.Mode == BookingPaymentMode.DepositOptional && amount > 0m,
+                    ctx.GatewayReady, ctx.TransferReady),
             SubmitLabel = BookingPaymentStep.SubmitLabel(eff.Required, amount),
             SubmitLabelIfPay = eff.Mode == BookingPaymentMode.DepositOptional ? BookingPaymentStep.SubmitLabel(true, amount) : null,
         };
@@ -235,18 +259,19 @@ public partial class CmsBookingService
     {
         var b = await _db.SiteBookings.AsNoTracking()
             .Where(x => x.Id == resp.Id && x.SiteId == siteId && x.CompanyId == companyId)
-            .Select(x => new { x.PaymentHoldUntil, x.SlipAttachmentId, x.SlipUploadedAt, x.SlipIntentId, x.SlipRejectedReason, Service = x.BookingService })
+            .Select(x => new { x.PaymentHoldUntil, x.SlipAttachmentId, x.SlipUploadedAt, x.SlipIntentId, x.SlipRejectedReason, Service = x.BookingService, x.BookingType })
             .FirstOrDefaultAsync();
         if (b == null) return false;
         var ctx = await LoadPaymentContextAsync(companyId, siteId);
         var siteRow = await _db.SiteBookingSettings.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted);
-        var eff = PaymentOf(b.Service, siteRow);
+        var eff = PaymentOf(b.Service, siteRow, b.BookingType);
         var slipPending = b.SlipUploadedAt != null && b.SlipAttachmentId != null;
         var open = resp.Status is BookingStatus.Pending or BookingStatus.Confirmed;
         var hold = open ? b.PaymentHoldUntil : null;
         // รอบ 223: ขั้นของลูกค้า (หัวข้อหน้าผลการจอง · ป้ายสถานะ · ขั้นชำระมาก่อนคำยืนยัน) — ตัวตัดสินเดียว BookingPaymentStep
-        var step = BookingPaymentStep.Decide(resp.Status, eff.Mode, due, slipPending, hold);
+        // รอบ 226 (คำตัดสิน 226-1): โหมดบังคับที่บริการเก็บเงินไม่ได้ ⇒ "รอร้านยืนยัน — ร้านจะติดต่อเรื่องชำระเงิน" (ไม่ใช่ "จองสำเร็จ")
+        var step = BookingPaymentStep.Decide(resp.Status, eff.Mode, due, slipPending, hold, shopArrangesPayment: eff.RequiredButUncollectable);
         resp.Payment = new BookingPaymentInfoDto
         {
             Mode = eff.IsLegacy ? null : eff.Mode.ToString(),
@@ -269,7 +294,11 @@ public partial class CmsBookingService
                 : null,
             Summary = due > 0.005m ? BookingPaymentPolicy.CustomerSummary(eff, due, hold != null) : null,
             PaymentNote = ctx.PaymentNote,
-            AmountBasis = resp.DepositAmount > 0.005m ? BookingPaymentPolicy.AmountBasis(eff, resp.TotalAmount, resp.DepositAmount) : null,
+            AmountBasis = resp.DepositAmount > 0.005m ? BookingPaymentPolicy.AmountBasis(eff, resp.TotalAmount, resp.DepositAmount, resp.DeliveryFee) : null,
+            ShopPolicyWarning = eff.RequiredButUncollectable && resp.Status == BookingStatus.Pending
+                ? $"เว็บตั้ง “{BookingPaymentPolicy.ModeLabel(eff.ConfiguredMode!.Value)}” แต่บริการนี้เก็บเงินล่วงหน้าในระบบไม่ได้ — ระบบจึงไม่ยืนยันอัตโนมัติ: "
+                  + "ติดต่อลูกค้าเรื่องชำระเงินแล้วกดยืนยันเอง · แก้ถาวรที่ ตั้งค่าเว็บ › การชำระเงิน (เปลี่ยนชนิดบริการ / ยกเว้น) · " + eff.Problem
+                : null,
             Step = step.Kind.ToString(), Headline = step.Headline, StepDetail = step.Detail, StepIcon = step.Icon, PaymentFirst = step.PaymentFirst,
             // รอบ 223: สลิปที่ยืนยันแล้วยังอยู่ในแฟ้ม (ไฟล์ไม่ถูกลบ) ⇒ พนักงานเปิดดูย้อนหลังได้ (ลิงก์ล็อกอิน + ด่านสิทธิ์ · คำตอบลูกค้าถูกล้างใน ForCustomer)
             SlipOnFile = b.SlipAttachmentId != null,
@@ -287,12 +316,14 @@ public partial class CmsBookingService
         var ids = items.Select(i => i.Id).ToList();
         var rows = await _db.SiteBookings.AsNoTracking()
             .Where(b => b.CompanyId == companyId && ids.Contains(b.Id))
-            .Select(b => new { b.Id, b.Status, b.DepositAmount, b.PaidAmount, b.PaymentHoldUntil, b.SlipUploadedAt, b.SlipAttachmentId, b.SlipRejectedReason, b.BookingService.BookingType,
-                b.BookingDate, b.StartTime })
+            .Select(b => new { b.Id, b.Status, b.DepositAmount, b.PaidAmount, b.PaymentHoldUntil, b.SlipUploadedAt, b.SlipAttachmentId, b.SlipRejectedReason, b.BookingType,
+                b.BookingDate, b.StartTime, b.FulfillmentMethod })
             .ToListAsync();
         foreach (var it in items)
         {
             var r = rows.FirstOrDefault(x => x.Id == it.Id);
+            // รอบ 226: ป้ายวิธีรับ (จัดส่ง/รับเอง) — ตัวตั้งเดียว BookingFulfillment.Label
+            if (r?.FulfillmentMethod != null) it.FulfillmentLabel = BookingFulfillment.Label(r.FulfillmentMethod);
             if (r == null || r.BookingType != BookingType.PrePayment) continue;
             it.PaymentStatusLabel = BookingPaymentPolicy.StatusLabel(new BookingPaymentFacts(r.Status, r.DepositAmount, r.PaidAmount,
                 r.SlipUploadedAt != null && r.SlipAttachmentId != null, r.PaymentHoldUntil, r.SlipRejectedReason,

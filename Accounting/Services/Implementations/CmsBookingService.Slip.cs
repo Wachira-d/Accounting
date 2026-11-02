@@ -27,7 +27,7 @@ public partial class CmsBookingService
                 .FirstOrDefaultAsync(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId)
                 ?? throw new KeyNotFoundException("Booking not found.");
             // ตัดสินซ้ำใต้ล็อก (สองแท็บแนบพร้อมกัน / ร้านยกเลิกระหว่างแนบ)
-            var due = CmsBookingOnlinePayment.DepositDue(b.BookingService.BookingType, b.Status, b.DepositAmount, b.PaidAmount);
+            var due = CmsBookingOnlinePayment.DepositDue(b.BookingType, b.Status, b.DepositAmount, b.PaidAmount);
             if (BookingSlipRule.UploadProblem(b.Status, due, transferReady: true, slipPending: b.SlipUploadedAt != null && b.SlipAttachmentId != null, fileBytes: 1)
                 is string problem)
                 throw new BusinessRuleException(problem, BookingSlipRule.RuleCode, 409);
@@ -126,7 +126,7 @@ public partial class CmsBookingService
     {
         var b = await _db.SiteBookings.AsNoTracking()
             .Where(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId)
-            .Select(x => new { x.Status, x.DepositAmount, x.PaidAmount, x.PaymentHoldUntil, x.BookingService.BookingType })
+            .Select(x => new { x.Status, x.DepositAmount, x.PaidAmount, x.PaymentHoldUntil, x.BookingType })
             .FirstOrDefaultAsync();
         if (b == null) return null;
         var due = CmsBookingOnlinePayment.DepositDue(b.BookingType, b.Status, b.DepositAmount, b.PaidAmount);

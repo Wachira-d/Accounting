@@ -1665,7 +1665,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             var pullNotes = new List<string>();
             foreach (var d in docs)
             {
-                var note = await _tax.TryPullIntoDraftReportAsync(companyId, d.Id);
+                var note = await _tax.TryPullIntoDraftReportAsync(companyId, d.Id, actorEmail: "system/PP36");
                 _logger.LogInformation("PP36 auto-pull {Doc}: {Note}", d.DocumentNumber, note);
                 pullNotes.Add(note);
             }

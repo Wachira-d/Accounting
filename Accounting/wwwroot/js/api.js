@@ -956,6 +956,8 @@ const API = {
       vatDebug: (year, month) => API.get(`${base}/tax/vat-debug?year=${year}&month=${month}`),
       getPullableDocuments: (reportId, q = '') => API.get(`${base}/tax/${reportId}/pullable-documents${q}`),
       pullDocumentIntoReport: (reportId, documentId) => API.post(`${base}/tax/${reportId}/pull-document`, { documentId }),
+      // รอบ 225: ดึงหลายใบในครั้งเดียว (partial · ผลรายใบ + รายงานล่าสุด)
+      pullDocumentsIntoReport: (reportId, documentIds) => API.post(`${base}/tax/${reportId}/pull-documents`, { documentIds }),
       // Tax Filing Export
       // format = 'txt' (ค่าตั้งต้น · นำเข้าเว็บสรรพากร) | 'csv' | 'xlsx' — ภ.ง.ด.1/1ก (รอบ 2026-10-14 ทีม X1)
       exportPnd1: (year, month, format) => `${base}/tax-filing-export/pnd1?year=${year}&month=${month}${format ? `&format=${encodeURIComponent(format)}` : ''}`,

@@ -55,7 +55,10 @@ public static class LodgingHoldRule
 
     /// <summary>ถือห้องถึงเมื่อไรระหว่างจ่ายออนไลน์ = วันหมดอายุของรายการชำระ (หรือค่าตั้งต้นเมื่อไม่มี) + เผื่อการยืนยันมาถึงช้า</summary>
     public static DateTime PaymentHoldUntil(DateTime now, DateTime? intentExpiresAt)
-        => (intentExpiresAt is DateTime e && e > now ? e : now + DefaultPaymentWindow) + ConfirmationGrace;
+    {
+        // รอบ 227 ฝ่ายค้าน B1: วันหมดอายุของผู้ให้บริการอาจยาวเป็นวัน (พร้อมเพย์) — ค่าตั้งต้นเดิม (30 นาที) เป็นเพดาน (GatewayExpiryPolicy.WindowEnd)
+        return (intentExpiresAt is DateTime e && e > now ? GatewayExpiryPolicy.WindowEnd(e, now, DefaultPaymentWindow) : now + DefaultPaymentWindow) + ConfirmationGrace;
+    }
 
     /// <summary>วันเช็คเอาต์ที่ใช้ "นับการกันห้อง" — แขกที่ยังเช็คอินค้างอยู่หลังวันออก (ยังไม่มีใครกดเช็คเอาต์) กันห้องคืนนี้ต่อ
     /// (คำตัดสินข้อ 119: ห้องที่ CheckedIn ค้างยังกันห้อง — ทิศที่ความเสียหายมองเห็นได้: ห้องว่างลดลงพร้อมป้าย "ค้างปิด"

@@ -614,4 +614,262 @@ public class BookingPaymentPolicyDbTests
             .Where(f => f.CompanyId == cid).Take(Accounting.Services.Implementations.Jobs.CartImageCleanupJob.BatchSize).Select(f => f.Id).ToListAsync();
         Assert.Equal(new[] { purgeCart.Id }, cartIds);
     }
+
+    // ═══════════════ รอบ 226 (BOOKING_PAYMENT_AUDIT §6 · TEST_PLAN BKPAY-60/61/62) ═══════════════
+
+    /// <summary>ค่าตั้งตรงตามภาพของเจ้าของ: เว็บ "มัดจำ (บังคับ)" 50% · ต้องชำระภายใน ว่าง · โอน+สลิป กสิกรไทย 1111111111 ·
+    /// บริการ "Sourdough สังขยา" ฿35 ชนิดตั้งต้นของฟอร์ม (นัดหมาย) + ยืนยันอัตโนมัติ</summary>
+    private static async Task<(Guid CompanyId, Guid SiteId, Guid ServiceId)> SeedOwnerScreenshotAsync(Accounting.Data.AccountingDbContext db,
+        BookingType type = BookingType.Appointment, BookingPaymentMode siteMode = BookingPaymentMode.DepositRequired)
+    {
+        var company = new Company { Name = "ร้านขนมทดสอบ", TaxId = "0105556000002" };
+        db.Companies.Add(company);
+        await db.SaveChangesAsync();
+        var tag = Guid.NewGuid().ToString("N")[..8];
+        var site = new Site { CompanyId = company.Id, Name = "ร้านขนมปังบ้านสวน", Slug = "bk-" + tag, Subdomain = "bk-" + tag, Status = SiteStatus.Published };
+        db.Sites.Add(site);
+        await db.SaveChangesAsync();
+        var svc = new SiteBookingService
+        {
+            CompanyId = company.Id, SiteId = site.Id, Name = "Sourdough สังขยา", Slug = "sd-" + tag,
+            SlotMode = BookingSlotMode.Interval, DurationMinutes = 60, SlotIntervalMinutes = 60, MaxCapacity = 5,
+            MinAdvanceBookingHours = 0, MaxAdvanceBookingDays = 30, BookingType = type, AutoConfirm = true, IsActive = true, Price = 35m,
+        };
+        db.SiteBookingServices.Add(svc);
+        db.SiteBookingSlots.Add(new SiteBookingSlot
+        {
+            CompanyId = company.Id, BookingServiceId = svc.Id, DayOfWeek = TargetDate().DayOfWeek,
+            StartTime = new TimeOnly(9, 0), EndTime = new TimeOnly(17, 0), MaxCapacity = 5, IsActive = true,
+        });
+        db.SiteBookingSettings.Add(new SiteBookingSettings
+        {
+            CompanyId = company.Id, SiteId = site.Id, PaymentMode = siteMode, PaymentDepositPercent = 50m, PaymentDeadlineMinutes = null,
+            BankTransferEnabled = true,
+        });
+        db.SitePaymentGateways.Add(new SitePaymentGateway
+        {
+            CompanyId = company.Id, SiteId = site.Id, GatewayType = PaymentGatewayType.BankTransfer, Name = "กสิกรไทย",
+            BankName = "กสิกรไทย", BankAccountNumber = "1111111111", BankAccountName = "ร้านขนมปังบ้านสวน", IsTestMode = false,
+        });
+        await db.SaveChangesAsync();
+        return (company.Id, site.Id, svc.Id);
+    }
+
+    [Fact]
+    public async Task R226_บั๊กBK2611_0004_มัดจำบังคับ_บริการนัดหมาย_ไม่ยืนยันอัตโนมัติ_หน้าตั้งค่ากล่องแดง_แก้คลิกเดียวแล้วเก็บมัดจำ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedOwnerScreenshotAsync(db);
+
+        // 1) ตัวอย่างก่อนกดจอง: ไม่มียอด แต่บอกว่าจะ "รอร้านยืนยัน"
+        var preview = await Svc(db).PreviewPaymentAsync(cid, sid, new BookingPaymentPreviewRequest { BookingServiceId = svcId });
+        Assert.False(preview!.Collects);
+        Assert.True(preview.ShopArrangesPayment);
+        Assert.Equal(BookingPaymentPolicy.ShopArrangesPaymentPreview, preview.NextStepNote);
+
+        // 2) จอง (ลูกค้าเอง): เดิม = Confirmed "จองสำเร็จ" · ตอนนี้ = รอร้านยืนยัน + ไม่ถือรอบ
+        var created = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId), userId: null);
+        Assert.Equal(BookingStatus.Pending, created.Status);
+        Assert.Equal(0m, created.DepositAmount);
+        Assert.Equal("ได้รับการจองแล้ว — รอร้านยืนยัน", created.Payment!.Headline);
+        Assert.Equal("รอร้านยืนยัน", created.CustomerStatusLabel);
+        Assert.Null(created.Payment.ShopPolicyWarning);   // คำตอบลูกค้าไม่มีข้อความถึงพนักงาน
+        Assert.Null((await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id && b.CompanyId == cid)).PaymentHoldUntil);
+        var staffView = await Svc(db).GetBookingAsync(cid, sid, created.Id);
+        Assert.Contains("ไม่ยืนยันอัตโนมัติ", staffView!.Payment!.ShopPolicyWarning);
+
+        // 3) หน้าตั้งค่า: กล่องแดง + บริการในรายการ · บันทึกโหมดบังคับซ้ำ ⇒ 409 (บล็อกจนแก้)
+        var settings = await Svc(db).GetPaymentSettingsAsync(cid, sid);
+        Assert.Contains("Sourdough สังขยา", settings.UncollectableProblem);
+        Assert.True(settings.Services.Single(x => x.Id == svcId).RequiredButUncollectable);
+        Assert.Equal(1440, settings.DefaultDeadlineMinutes);
+        var blocked = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).UpdatePaymentSettingsAsync(cid, sid, new BookingPaymentSettingsDto
+        {
+            Mode = "DepositRequired", DepositPercent = 50m, BankTransferEnabled = true,
+        }, "owner"));
+        Assert.Equal(409, blocked.StatusCode);
+        Assert.Equal(BookingPaymentPolicy.UncollectableRuleCode, blocked.RuleCode);
+
+        // 4) แก้คลิกเดียว: เปลี่ยนชนิด ⇒ ไม่มีกล่องแดง · บันทึกผ่าน
+        var fixedDto = await Svc(db).FixUncollectableServicesAsync(cid, sid, new FixUncollectableServicesRequest { Action = "convert", ServiceIds = { svcId } }, "owner");
+        Assert.Null(fixedDto.UncollectableProblem);
+        Assert.Equal(BookingType.PrePayment, (await db.SiteBookingServices.AsNoTracking().SingleAsync(x => x.Id == svcId)).BookingType);
+
+        // 5) จองใหม่: มัดจำ 50% ของ ฿35 = ฿17.50 · รอชำระเงิน · ถือรอบตามค่าตั้งต้น 1440 นาที · มีเลขบัญชี + แนบสลิปได้
+        var before = DateTime.UtcNow;
+        var paid = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "11:00"), userId: null);
+        Assert.Equal(BookingStatus.Pending, paid.Status);
+        Assert.Equal(17.50m, paid.DepositAmount);
+        Assert.Equal("รอชำระเงิน", paid.CustomerStatusLabel);
+        Assert.True(paid.Payment!.CanUploadSlip);
+        Assert.Equal("1111111111", paid.Payment.Transfer!.AccountNumber);
+        var hold = (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == paid.Id)).PaymentHoldUntil;
+        Assert.NotNull(hold);
+        Assert.InRange(hold!.Value, before.AddMinutes(1439), DateTime.UtcNow.AddMinutes(1441));   // นัดอีก 10 วัน ⇒ ไม่ถูกตัดที่เวลานัด
+
+        // 6) แนบสลิป ⇒ รอร้านตรวจ (ยังไม่ยืนยัน) · ร้านยืนยัน ⇒ ยืนยันแล้ว + คิว "ชำระแล้ว — ยืนยันการจอง" หนึ่งแถว
+        var (slips, _) = Slips(db);
+        var afterSlip = await slips.UploadByTokenAsync(cid, sid, paid.PublicToken!, PdfSlip());
+        Assert.Equal(BookingStatus.Pending, afterSlip!.Status);
+        Assert.Equal("รอร้านตรวจสลิป", afterSlip.CustomerStatusLabel);
+        var verified = await slips.VerifyAsync(cid, sid, paid.Id, new VerifyBookingSlipRequest(), "staff-1");
+        Assert.Equal(BookingStatus.Confirmed, verified.Status);
+        Assert.Equal(1, await db.DeferredNotifications.CountAsync(d => d.CompanyId == cid && d.EntityId == paid.Id
+            && d.Kind == DeferredNotifyPolicy.BookingPaidConfirmed));
+        // ใบแรก (ก่อนแก้) ไม่ถูกแตะ — ยังรอร้านยืนยัน
+        Assert.Equal(BookingStatus.Pending, (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == created.Id)).Status);
+    }
+
+    [Fact]
+    public async Task R226_ทิศตรงข้าม_ยกเว้นบริการ_ยืนยันอัตโนมัติตามเดิม_โหมดไม่บังคับไม่ถูกกัน_พนักงานจองแทนไม่บังคับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedOwnerScreenshotAsync(db);
+        // พนักงานจองแทน ⇒ ยืนยันได้ (รับเงินหน้างาน)
+        Assert.Equal(BookingStatus.Confirmed, (await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "09:00"), userId: null, staffOnBehalf: true)).Status);
+        // ยกเว้น ⇒ บริการนี้ไม่รับชำระล่วงหน้า ⇒ AutoConfirm เดิม · หน้าตั้งค่าไม่มีกล่องแดง
+        var exempt = await Svc(db).FixUncollectableServicesAsync(cid, sid, new FixUncollectableServicesRequest { Action = "exempt", ServiceIds = { svcId } }, "owner");
+        Assert.Null(exempt.UncollectableProblem);
+        Assert.Equal(BookingStatus.Confirmed, (await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "10:00"), userId: null)).Status);
+
+        // โหมดไม่บังคับ + บริการนัดหมาย ⇒ บันทึกได้ (ไม่ใช่ด่านนี้) · การจองยืนยันตาม AutoConfirm
+        var (cid2, sid2, svcId2) = await SeedOwnerScreenshotAsync(db, siteMode: BookingPaymentMode.DepositOptional);
+        Assert.Null((await Svc(db).GetPaymentSettingsAsync(cid2, sid2)).UncollectableProblem);
+        await Svc(db).UpdatePaymentSettingsAsync(cid2, sid2, new BookingPaymentSettingsDto { Mode = "DepositOptional", DepositPercent = 50m, BankTransferEnabled = true }, "owner");
+        Assert.Equal(BookingStatus.Confirmed, (await Svc(db).CreateBookingAsync(cid2, sid2, Req(svcId2), userId: null)).Status);
+    }
+
+    [Fact]
+    public async Task R226_จัดส่ง_ค่าส่งคิดที่เซิร์ฟเวอร์จากโซนของร้าน_มัดจำไม่รวมค่าส่ง_รับเองไม่มีค่าส่ง_ที่อยู่ไม่ครบปฏิเสธ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedOwnerScreenshotAsync(db, BookingType.PrePayment);
+        var zone = new SiteShippingZone { CompanyId = cid, SiteId = sid, Name = "กทม.", Provinces = "กรุงเทพมหานคร", IsActive = true };
+        zone.Rates.Add(new SiteShippingRate { CompanyId = cid, Name = "ส่งด่วนในเมือง", RateType = ShippingRateType.Flat, BaseRate = 50m, IsActive = true });
+        db.SiteShippingZones.Add(zone);
+        await db.SaveChangesAsync();
+        await Svc(db).UpdateFulfillmentSettingsAsync(cid, sid, new BookingFulfillmentSettingsDto
+        {
+            DeliveryEnabled = true, PickupEnabled = true, PickupNote = "รับที่ร้านสาขาสยาม 10:00–18:00",
+        }, "owner");
+
+        // ตัวอย่างก่อนจอง = ตอนจอง (ตัวคิดเดียว)
+        var preview = await Svc(db).PreviewPaymentAsync(cid, sid, new BookingPaymentPreviewRequest
+        {
+            BookingServiceId = svcId, FulfillmentMethod = "delivery", DeliveryProvince = "กรุงเทพมหานคร", DeliveryPostalCode = "10330",
+        });
+        Assert.Equal(50m, preview!.DeliveryFee);
+        Assert.Equal(85m, preview.GrandTotal);
+        Assert.Equal(17.50m, preview.AmountDue);   // มัดจำ 50% ของค่าบริการ ไม่รวมค่าส่ง
+
+        // เปิดสองแบบ + ไม่ส่งวิธี ⇒ ต้องเลือก (ไม่เดา) · ที่อยู่ไม่ครบ ⇒ ปฏิเสธก่อนบันทึก
+        await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "09:00"), userId: null));
+        var noAddr = Req(svcId, "09:00"); noAddr.FulfillmentMethod = "delivery";
+        await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).CreateBookingAsync(cid, sid, noAddr, userId: null));
+        Assert.Equal(0, await db.SiteBookings.CountAsync(b => b.CompanyId == cid));
+
+        var del = Req(svcId, "10:00");
+        del.FulfillmentMethod = "delivery"; del.DeliveryAddress = "99/1 ถนนพระราม 1 แขวงปทุมวัน"; del.DeliveryProvince = "กรุงเทพมหานคร"; del.DeliveryPostalCode = "10330";
+        var booked = await Svc(db).CreateBookingAsync(cid, sid, del, userId: null);
+        Assert.Equal("delivery", booked.FulfillmentMethod);
+        Assert.Equal(50m, booked.DeliveryFee);
+        Assert.Equal(85m, booked.GrandTotal);
+        Assert.Equal(35m, booked.TotalAmount);
+        Assert.Equal(17.50m, booked.DepositAmount);
+        Assert.Contains("ค่าจัดส่ง ฿50.00", booked.FulfillmentSummary);
+        var row = await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == booked.Id && b.CompanyId == cid);
+        Assert.Equal("ส่งด่วนในเมือง", row.DeliveryRateName);
+
+        // พื้นที่นอกโซน ⇒ ปฏิเสธพร้อมทางไปต่อ (รับเอง)
+        var far = Req(svcId, "12:00");
+        far.FulfillmentMethod = "delivery"; far.DeliveryAddress = "1 ถนนนิมมาน"; far.DeliveryProvince = "เชียงใหม่"; far.DeliveryPostalCode = "50200";
+        var farEx = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).CreateBookingAsync(cid, sid, far, userId: null));
+        Assert.Contains("รับเอง", farEx.Message);
+
+        // รับเอง ⇒ ค่าส่ง 0 · ที่รับจากค่าตั้งเว็บ · ไม่เก็บที่อยู่
+        var pick = Req(svcId, "13:00"); pick.FulfillmentMethod = "pickup"; pick.DeliveryAddress = "ไม่ควรถูกเก็บ";
+        var picked = await Svc(db).CreateBookingAsync(cid, sid, pick, userId: null);
+        Assert.Equal(0m, picked.DeliveryFee);
+        Assert.Equal("รับที่ร้านสาขาสยาม 10:00–18:00", picked.PickupNote);
+        Assert.Null((await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == picked.Id)).DeliveryAddress);
+
+        // ชำระเต็มจำนวน ⇒ ค่าบริการ + ค่าจัดส่ง
+        var s = await db.SiteBookingSettings.SingleAsync(x => x.CompanyId == cid && x.SiteId == sid);
+        s.PaymentMode = BookingPaymentMode.FullRequired;
+        await db.SaveChangesAsync();
+        var full = Req(svcId, "14:00");
+        full.FulfillmentMethod = "delivery"; full.DeliveryAddress = "99/1 ถนนพระราม 1 แขวงปทุมวัน"; full.DeliveryProvince = "กรุงเทพมหานคร"; full.DeliveryPostalCode = "10330";
+        var fullBooked = await Svc(db).CreateBookingAsync(cid, sid, full, userId: null);
+        Assert.Equal(85m, fullBooked.DepositAmount);
+        Assert.Equal(85m, fullBooked.Payment!.AmountDue);
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 226 ข้อ 1: ต่อสายเส้นเอกสารจริง (DocumentService) — การจองนัดหมายที่ออกใบเสนอราคาแล้ว + เปลี่ยนชนิดบริการ ⇒ ไม่ 409 ·
+    /// ใบเดิมคงชนิดที่ตรึงไว้ (นัดหมาย) · ใบใหม่เป็นชำระมัดจำล่วงหน้า</summary>
+    [Fact]
+    public async Task R226_ฝ่ายค้าน1_เปลี่ยนชนิดเมื่อมีการจองเปิดที่ออกเอกสารแล้ว_ได้_ใบเดิมคงชนิดเดิม_ใบใหม่ชนิดใหม่()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedOwnerScreenshotAsync(db);
+        var acc = new AccountingService(db);
+        var docs = new DocumentService(db, acc, AllowAll<ISubscriptionService>.Create(), null!, null!,
+            NullLogger<DocumentService>.Instance, null!, null!, null!);
+        var withDocs = new CmsBookingService(db, NullLogger<CmsBookingService>.Instance, docService: docs);
+
+        var old = await withDocs.CreateBookingAsync(cid, sid, Req(svcId, "09:00"), userId: null);
+        var oldRow = await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == old.Id && b.CompanyId == cid);
+        Assert.Equal(BookingType.Appointment, oldRow.BookingType);
+        Assert.True(oldRow.ErpDocumentId != null, "การจองนัดหมายต้องออกใบเสนอราคา (เส้นเอกสารจริง) — " + oldRow.InternalNotes);
+        Assert.Equal(BookingStatus.Pending, oldRow.Status);
+
+        // เดิม (รอบ 226 ก่อนฝ่ายค้าน) = 409 เพราะมีการจองเปิดที่ออกเอกสารแล้ว · ตอนนี้ผ่าน (มีผลกับการจองใหม่เท่านั้น)
+        var fixedDto = await withDocs.FixUncollectableServicesAsync(cid, sid, new FixUncollectableServicesRequest { Action = "convert", ServiceIds = { svcId } }, "owner");
+        Assert.Null(fixedDto.UncollectableProblem);
+
+        var oldAfter = await withDocs.GetBookingAsync(cid, sid, old.Id);
+        Assert.Equal(BookingType.Appointment, oldAfter!.BookingType);   // ตรึง ณ ตอนจอง
+        Assert.Equal(oldRow.ErpDocumentId, oldAfter.ErpDocumentId);
+        var fresh = await withDocs.CreateBookingAsync(cid, sid, Req(svcId, "10:00"), userId: null);
+        Assert.Equal(BookingType.PrePayment, fresh.BookingType);
+        Assert.Equal(17.50m, fresh.DepositAmount);
+
+        // ข้อ 8: id ที่ไม่อยู่ในรายการ "ต้องแก้" ⇒ ปฏิเสธ (แก้ไปแล้ว/บริการอื่น)
+        await Assert.ThrowsAsync<BusinessRuleException>(() => withDocs.FixUncollectableServicesAsync(cid, sid,
+            new FixUncollectableServicesRequest { Action = "exempt", ServiceIds = { svcId } }, "owner"));
+    }
+
+    [Fact]
+    public async Task R226_ฝ่ายค้าน3_เว็บเดิมกำหนดชำระ0_คงไม่กำหนด_มีคำแนะนำ_บันทึกแล้วหาย_ว่างได้ค่าตั้งต้น()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (cid, sid, svcId) = await SeedOwnerScreenshotAsync(db, BookingType.PrePayment);
+        var row = await db.SiteBookingSettings.SingleAsync(x => x.CompanyId == cid && x.SiteId == sid);
+        row.PaymentDeadlineMinutes = 0; row.PaymentDeadlineLegacyNote = true;   // สภาพหลัง migration ของเว็บเดิม
+        await db.SaveChangesAsync();
+        var s = await Svc(db).GetPaymentSettingsAsync(cid, sid);
+        Assert.Equal(BookingPaymentPolicy.LegacyDeadlineNote, s.DeadlineNote);
+        Assert.Equal(0, s.DeadlineMinutes);
+        var legacy = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "09:00"), userId: null);
+        Assert.Null((await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == legacy.Id)).PaymentHoldUntil);   // 0 = ไม่ถือรอบ (เดิม)
+
+        // บันทึก 0 โดยตั้งใจ ⇒ เก็บ 0 + คำแนะนำหาย
+        var saved = await Svc(db).UpdatePaymentSettingsAsync(cid, sid, new BookingPaymentSettingsDto
+        { Mode = "DepositRequired", DepositPercent = 50m, DeadlineMinutes = 0, BankTransferEnabled = true }, "owner");
+        Assert.Equal(0, saved.DeadlineMinutes);
+        Assert.Null(saved.DeadlineNote);
+        // ว่าง ⇒ เก็บ null ⇒ ค่าตั้งต้น 1440
+        await Svc(db).UpdatePaymentSettingsAsync(cid, sid, new BookingPaymentSettingsDto
+        { Mode = "DepositRequired", DepositPercent = 50m, DeadlineMinutes = null, BankTransferEnabled = true }, "owner");
+        var before = DateTime.UtcNow;
+        var fresh = await Svc(db).CreateBookingAsync(cid, sid, Req(svcId, "10:00"), userId: null);
+        var hold = (await db.SiteBookings.AsNoTracking().SingleAsync(b => b.Id == fresh.Id)).PaymentHoldUntil;
+        Assert.InRange(hold!.Value, before.AddMinutes(1439), DateTime.UtcNow.AddMinutes(1441));
+        Assert.Null(fresh.Payment!.ShopPolicyWarning);
+    }
 }
+

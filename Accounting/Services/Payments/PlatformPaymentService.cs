@@ -70,16 +70,21 @@ public class PlatformPaymentService : IPlatformPaymentService
         return new PlatformPayStatus(reason == null, true, cfg.Mode.ToString(), cfg.ProviderCode, methods, reason);
     }
 
-    /// <summary>วิธีจ่ายที่เปิด = ที่ตั้งไว้ ∩ ที่ผู้ให้บริการรองรับ (ไม่ตั้ง = ทุกวิธีที่รองรับ ยกเว้นสลิป) — ชื่อ enum</summary>
+    /// <summary>วิธีจ่ายที่เปิด = ที่ตั้งไว้ ∩ ที่ผู้ให้บริการรองรับ (ไม่ตั้ง = ทุกวิธีที่รองรับ ยกเว้นสลิป) ∩ ที่หน้าชำระของ NextAcc ทำจบได้ — ชื่อ enum
+    /// (รอบ 227: ตัวตัดสินเดียว <see cref="PlatformPayMethods.Effective"/> — เดิมบัตร/วอลเล็ท/แบงก์กิ้งโผล่ให้ผู้เช่าทั้งที่หน้าชำระทำไม่จบ)</summary>
     private List<string> MethodsOf(PaymentProviderConfig cfg)
     {
         var provider = _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode);
         if (provider == null) return new List<string>();
-        var supported = provider.Capabilities.Methods.Where(m => m != PaymentMethodKind.ManualSlip).Select(m => m.ToString()).ToList();
-        List<string> configured;
-        try { configured = string.IsNullOrWhiteSpace(cfg.EnabledMethodsJson) ? new() : System.Text.Json.JsonSerializer.Deserialize<List<string>>(cfg.EnabledMethodsJson) ?? new(); }
-        catch (System.Text.Json.JsonException) { configured = new(); }
-        return configured.Count == 0 ? supported : supported.Where(m => configured.Contains(m, StringComparer.OrdinalIgnoreCase)).ToList();
+        return PlatformPayMethods.Effective(provider.Capabilities.Methods, ConfiguredMethods(cfg.EnabledMethodsJson));
+    }
+
+    /// <summary>วิธีที่แอดมินติ๊ก (JSON ที่เก็บไว้) — อ่านไม่ได้ = ไม่ได้ติ๊ก</summary>
+    public static List<string> ConfiguredMethods(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new List<string>();
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
+        catch (System.Text.Json.JsonException) { return new List<string>(); }
     }
 
     public async Task<PaymentIntent> StartAsync(Guid payerCompanyId, PaymentSourceKind kind, Guid sourceId, decimal serverAmount,

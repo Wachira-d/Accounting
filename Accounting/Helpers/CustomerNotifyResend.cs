@@ -95,6 +95,7 @@ public static class CustomerNotifyResend
             CustomerNotifyEvents.BookingWaitlistPromoted => "ได้คิวจากคิวสำรอง — ระบบลองส่งใหม่เองอัตโนมัติ",
             CustomerNotifyEvents.CartAbandoned => "ข้อความการตลาด — ไม่ส่งย้อนหลัง",
             CustomerNotifyEvents.LineRelink => "คำเชิญผูก LINE — ระบบจัดการเองตามการเปลี่ยน OA",
+            CustomerNotifyEvents.BookingPaidConfirmed => "ชำระแล้ว — ยืนยันการจอง: ลูกค้าเห็นสถานะ “ยืนยันแล้ว” ที่ลิงก์จัดการการจอง (ไม่ส่งซ้ำจากหน้านี้)",
             _ => "ประเภทนี้ยังส่งซ้ำจากหน้านี้ไม่ได้ — กรุณาติดต่อลูกค้าเอง",
         };
     }

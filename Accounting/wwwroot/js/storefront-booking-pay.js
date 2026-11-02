@@ -25,15 +25,20 @@
       try {
         const r = await fetch(this._url('/booking/payment-preview'), {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bookingServiceId: serviceId, units: this._bkUnits() })
+          // รอบ 226: วิธีรับ + จังหวัด/รหัสไปรษณีย์ (ตัวคิดค่าส่งเดียวกับตอนจอง — เซิร์ฟเวอร์คิดยอด)
+          body: JSON.stringify(Object.assign({ bookingServiceId: serviceId, units: this._bkUnits() },
+            typeof this._bkFulfillExtras === 'function' ? this._bkFulfillExtras() : {}))
         });
         if (!r.ok) return;
         const p = (await r.json()).data;
         this._bkPay = p;
         if (!p) return;
+        if (typeof this._bkFulfillRender === 'function') this._bkFulfillRender(p);   // รอบ 226: กล่องจัดส่ง/รับเอง (ค่าจากเซิร์ฟเวอร์)
         const policy = p.cancellationPolicy ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:6px">นโยบายยกเลิก: ${this.esc(p.cancellationPolicy)}</div>` : '';
         const note = p.paymentNote ? `<div style="font-size:12px;color:var(--text-secondary);margin-top:4px">${this.esc(p.paymentNote)}</div>` : '';
-        if (!p.collects) { box.innerHTML = policy ? `<div style="margin:4px 0">${policy}</div>` : ''; return; }
+        // รอบ 226 (คำตัดสิน 226-1): ร้านบังคับชำระล่วงหน้าแต่บริการนี้เก็บในระบบไม่ได้ ⇒ บอกก่อนกดว่าจะ "รอร้านยืนยัน"
+        const shopNote = p.shopArrangesPayment && p.nextStepNote ? `<div style="border:1px solid #F59E0B;background:#FFFBEB;border-radius:10px;padding:10px 12px;font-size:13px;margin:4px 0">💳 ${this.esc(p.nextStepNote)}</div>` : '';
+        if (!p.collects) { box.innerHTML = shopNote + (policy ? `<div style="margin:4px 0">${policy}</div>` : ''); return; }
         const channels = [p.gatewayAvailable ? 'ชำระออนไลน์' : null, p.transferAvailable ? 'โอน/สแกน QR แล้วแนบสลิป' : null].filter(Boolean).join(' หรือ ');
         const pick = p.optional
           ? `<label style="display:flex;gap:6px;align-items:center;font-weight:600;margin-top:6px"><input type="checkbox" id="sfBookPayNow" onchange="Store._bkSubmitLabel(this.checked ? Store._bkPay && Store._bkPay.submitLabelIfPay : null)"> จ่ายมัดจำ ฿${this._money(p.amountDue)} ตอนนี้ (ไม่บังคับ)</label>`
@@ -44,7 +49,7 @@
         box.innerHTML = `<div style="border:1px solid ${p.required ? '#F59E0B' : '#A7F3D0'};background:${p.required ? '#FFFBEB' : '#ECFDF5'};border-radius:10px;padding:12px 14px;font-size:14px">
             <div style="font-weight:600">💳 ${this.esc(p.summary || p.modeLabel || '')}</div>
             ${basis}
-            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">ค่าบริการรวม ฿${this._money(p.totalAmount)}${channels ? ' · ช่องทาง: ' + this.esc(channels) : ''}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">ค่าบริการรวม ฿${this._money(p.totalAmount)}${Number(p.deliveryFee) > 0 ? ' + ค่าจัดส่ง ฿' + this._money(p.deliveryFee) + ' = ฿' + this._money(p.grandTotal) : ''}${channels ? ' · ช่องทาง: ' + this.esc(channels) : ''}</div>
             ${pick}${next}${policy}${note}
           </div>`;
         this._bkSubmitLabel(p.submitLabel || null);

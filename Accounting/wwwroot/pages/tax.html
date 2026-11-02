@@ -125,30 +125,87 @@
       </div>
     </div>
 
-    <!-- Pull Document Modal -->
+    <!-- Pull Document Modal — รอบ 225: ติ๊กเลือกหลายใบแล้วดึงทีเดียว · ตัวกรองคงอยู่หลังดึง (แถวที่ดึงแล้วหายไปในที่ ไม่ปิด/ไม่โหลดใหม่) ·
+         ด่าน "ดึงได้ไหม" อยู่ที่ server ตัวเดียว (Helpers/TaxReportPullEligibility) — หน้านี้แสดงผลเท่านั้น -->
+    <style>
+      #pullDocModal .modal { max-width: 880px; padding: 0; }
+      #pullDocModal .modal-footer { position: sticky; bottom: 0; background: #fff; z-index: 2; justify-content: space-between; align-items: center; gap: 8px; }
+      #pullDocModal .pd-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+      #pullDocModal .pd-chip { border: 1px solid var(--gray-300); background: #fff; border-radius: 999px; padding: 4px 12px; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+      #pullDocModal .pd-chip.on { background: var(--primary, #2563eb); border-color: var(--primary, #2563eb); color: #fff; }
+      #pullDocModal .pd-lbl { font-size: 12px; color: var(--gray-500); white-space: nowrap; }
+      #pullDocModal .pd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      #pullDocModal .pd-table th { position: sticky; top: 0; background: var(--gray-50, #f8fafc); text-align: left; font-weight: 600; font-size: 12px; color: var(--gray-600); padding: 8px 6px; border-bottom: 1px solid var(--gray-200); }
+      #pullDocModal .pd-table td { padding: 8px 6px; border-bottom: 1px solid var(--gray-100, #f1f5f9); vertical-align: top; }
+      #pullDocModal .pd-table tr.pd-sel td { background: #eff6ff; }
+      #pullDocModal .pd-table tr:focus { outline: 2px solid var(--primary, #2563eb); outline-offset: -2px; }
+      #pullDocModal .pd-table input[type=checkbox] { width: 18px; height: 18px; cursor: pointer; }
+      #pullDocModal .pd-num { font-weight: 600; }
+      #pullDocModal .pd-sub { font-size: 11.5px; color: var(--gray-500); }
+      #pullDocModal .pd-amt { text-align: right; white-space: nowrap; }
+      #pullDocModal .pd-skip { font-size: 11.5px; color: #b91c1c; margin-top: 3px; }
+      #pullDocModal .pd-sum { font-size: 12.5px; line-height: 1.5; }
+      #pullDocModal .pd-result { margin-bottom: 8px; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+      #pullDocModal .pd-code { font-size: 10.5px; color: var(--gray-400); }
+      #pullDocModal .pd-warn { margin-bottom: 8px; padding: 8px 12px; border-radius: 8px; font-size: 12.5px; background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+      @media (max-width: 640px) {
+        #pullDocModal .modal { width: 100%; max-height: 92vh; }
+        #pullDocModal .modal-body { padding: 12px; }
+        #pullDocModal .modal-footer { padding: 10px 12px; flex-wrap: wrap; }
+        #pullDocModal .modal-footer > div { flex: 1 1 100%; }
+        #pullDocModal .modal-footer > div:last-child { justify-content: flex-end; }
+        #pullDocModal .pd-hide-sm { display: none; }
+        #pullDocModal input[type=date] { width: 100%; }
+        #pullDocModal .pd-dates { flex: 1 1 100%; }
+      }
+    </style>
     <div class="modal-overlay" id="pullDocModal">
-      <div class="modal" style="max-width:760px">
+      <div class="modal">
         <div class="modal-header"><h3 class="modal-title">ดึงเอกสารเข้ารายงาน</h3><button class="modal-close" onclick="Layout.closeModal('pullDocModal')">&times;</button></div>
         <div class="modal-body">
-          <div style="margin-bottom:10px;padding:9px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12px;color:#1e40af;line-height:1.6">
-            แสดงเฉพาะเอกสารที่ <b>ดึงเข้างวดนี้ได้จริง</b> — ยังไม่ถูกใช้ในรายงานงวดใด,
-            ยังไม่มีบรรทัดในงวดนี้, และอยู่ในกรอบเวลาที่ถูกต้อง
-            (ไม่ย้อนก่อนเดือนของเอกสาร · ฝั่งซื้อไม่เกิน 6 เดือน ตามมาตรา 82/3)
-            <div style="margin-top:6px;color:#1d4ed8">
-              💡 <b>ใบที่เคยติ๊กออกในงวดก่อน</b> ระบบยกมาให้อัตโนมัติแล้วตอนกด "สร้างใหม่"
-              (บรรทัดขึ้นต้นว่า <b>[ยกมา §82/3]</b> และติ๊กออกไว้) — ให้ติ๊กช่อง "ใช้"
-              ที่บรรทัดนั้นแล้วกด "บันทึก" <u>แทนการดึงซ้ำที่นี่</u> จึงจะไม่ได้บรรทัดซ้ำ
-            </div>
+          <div style="margin-bottom:10px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;font-size:12px;color:#1e40af;line-height:1.6">
+            แสดงเฉพาะเอกสารที่ <b>ดึงเข้างวดนี้ได้จริง</b> — ติ๊กเลือกได้หลายใบแล้วกด <b>"ดึงที่เลือก"</b> ด้านล่าง
+            <details style="margin-top:2px"><summary style="cursor:pointer;color:#1d4ed8">เงื่อนไขที่ระบบตรวจ / ใบที่ยกมาจากงวดก่อน</summary>
+              ยังไม่ถูกใช้ในรายงานงวดใด · ยังไม่มีบรรทัดในงวดนี้ · ไม่ย้อนก่อนเดือนของเอกสาร · ฝั่งซื้อไม่เกิน 6 เดือน (มาตรา 82/3) ·
+              ป้าย <span class="badge badge-warning">ย้อน N เดือน</span> = เอกสารเดือนก่อนงวดรายงาน
+              <div style="margin-top:4px">💡 <b>ใบที่เคยติ๊กออกในงวดก่อน</b> ระบบยกมาให้แล้วตอนกด "สร้างใหม่" (บรรทัด <b>[ยกมา §82/3]</b>) —
+                ให้ติ๊กช่อง "ใช้" ที่บรรทัดนั้นแล้วกด "บันทึก" <u>แทนการดึงซ้ำที่นี่</u></div>
+            </details>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-            <input class="form-input form-input-sm" id="pullSearch" placeholder="🔍 ค้นหาเลขที่/ชื่อผู้ติดต่อ" style="flex:1;min-width:160px" onkeydown="if(event.key==='Enter')Page.loadPullable()">
-            <input type="date" class="form-input form-input-sm" id="pullFrom" title="ตั้งแต่วันที่">
-            <input type="date" class="form-input form-input-sm" id="pullTo" title="ถึงวันที่">
+          <div class="pd-row">
+            <input class="form-input form-input-sm" id="pullSearch" placeholder="🔍 ค้นหาเลขที่ / ชื่อผู้ติดต่อ / เลขผู้เสียภาษี" style="flex:1;min-width:180px"
+                   oninput="Page.pullSearchTyped()" onkeydown="if(event.key==='Enter'){event.preventDefault();event.stopPropagation();Page.loadPullable()}">
+            <span id="pullSideChips" style="display:flex;gap:6px"></span>
+          </div>
+          <div class="pd-row">
+            <span class="pd-lbl">ช่วงเดือน:</span>
+            <button type="button" class="pd-chip" data-preset="late" onclick="Page.setPullPreset('late')" title="ภาษีซื้อ: เดือนของรายงานย้อนหลัง 6 เดือน (มาตรา 82/3) · ภาษีขาย: เฉพาะเดือนของรายงาน (ภาษีขายเดือนก่อนต้องยื่นเพิ่มเติม)">ย้อน 6 เดือน (ภาษีซื้อ §82/3)</button>
+            <button type="button" class="pd-chip" data-preset="report" onclick="Page.setPullPreset('report')">เดือนของรายงาน</button>
+            <button type="button" class="pd-chip" data-preset="prev" onclick="Page.setPullPreset('prev')">เดือนก่อน</button>
+          </div>
+          <div class="pd-row">
+            <select class="filter-select" id="pullMonthFrom" onchange="Page.onPullMonthChange('from')" title="ตั้งแต่เดือน (ตัวเลขในวงเล็บ = จำนวนใบที่ดึงได้)" style="min-width:140px"><option value="">ตั้งแต่เดือน…</option></select>
+            <span class="pd-lbl">ถึง</span>
+            <select class="filter-select" id="pullMonthTo" onchange="Page.onPullMonthChange('to')" title="ถึงเดือน" style="min-width:140px"><option value="">ถึงเดือน…</option></select>
+            <span class="pd-dates" style="display:flex;gap:6px;align-items:center">
+              <input type="date" class="form-input form-input-sm" id="pullFrom" title="ตั้งแต่วันที่" onchange="Page.onPullDateChange()">
+              <span class="pd-lbl">–</span>
+              <input type="date" class="form-input form-input-sm" id="pullTo" title="ถึงวันที่ (ว่าง = ถึงวันนี้)" onchange="Page.onPullDateChange()">
+            </span>
             <button class="btn btn-sm btn-secondary" onclick="Page.loadPullable()">ค้นหา</button>
           </div>
+          <div id="pullNoReportWarn"></div>
+          <div id="pullResult"></div>
           <div id="pullDocList"><div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div></div>
         </div>
-        <div class="modal-footer"><button class="btn btn-secondary" onclick="Layout.closeModal('pullDocModal')">ปิด</button></div>
+        <div class="modal-footer">
+          <div class="pd-sum" id="pullSelSummary">ยังไม่ได้เลือก</div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-secondary" onclick="Layout.closeModal('pullDocModal')">ปิด</button>
+            <!-- btn-success ไม่ใช่ btn-primary ตั้งใจ: Layout ผูก Enter ในช่องกรอก → กดปุ่ม primary ของ modal ⇒ Enter ในช่องค้นหาจะดึงทั้งชุดโดยไม่ตั้งใจ -->
+            <button class="btn btn-success" id="pullSelectedBtn" onclick="Page.pullSelected()" disabled>ดึงที่เลือก</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -900,7 +957,22 @@
 
       /** persist เงียบ ๆ (ไม่ full-reload — คงตำแหน่ง scroll/การติ๊กต่อ) + อัปเดต
        *  KPI บนสุดจาก server response (ยอดจริงหลัง recompute). */
-      async _autoSaveVat(id) {
+      /** ปล่อยบันทึกอัตโนมัติที่รออยู่ทันที + รอคำขอที่กำลังวิ่งให้จบ (ก่อนดึงเอกสาร — รอบ 225) */
+      async _flushVatAutoSave() {
+        if (this._vatSaveTimer) {
+          clearTimeout(this._vatSaveTimer); this._vatSaveTimer = null;
+          await this._autoSaveVat(this._currentReportId);
+        } else if (this._vatSaving) {
+          try { await this._vatSaving; } catch { /* ผลแสดงที่ตัวบอกสถานะบันทึกแล้ว */ }
+        }
+      },
+      _autoSaveVat(id) {
+        this._vatSaveTimer = null;
+        const p = this._autoSaveVatRun(id);
+        this._vatSaving = p;
+        return p.finally(() => { if (this._vatSaving === p) this._vatSaving = null; });
+      },
+      async _autoSaveVatRun(id) {
         const api = Layout.api(); if (!api || !id) return;
         const ind = document.getElementById('vatSaveIndicator');
         try {
@@ -926,55 +998,324 @@
           await this.viewDetail(id);
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      // ===== ดึงเอกสารเข้ารายงาน (รอบ 225) =====
+      // ตัวตัดสิน "ดึงได้ไหม" + ยอดบาท + ป้ายย้อนเดือน + ป้ายเดือน พ.ศ. มาจาก server ทั้งหมด — หน้านี้แค่แสดง/เลือก
       _pullReportId: null,
+      _pullState: {},        // ตัวกรองล่าสุดต่อรายงาน (จำไว้ตลอดที่หน้าเปิดอยู่)
+      _pullRes: null,        // คำตอบล่าสุด (ช่วงงวด · จำนวน · เดือน)
+      _pullItems: [],        // แถวที่โหลดแล้ว (หลายหน้าเมื่อกด "โหลดเพิ่ม")
+      _pullSel: new Map(),   // id → แถว (คงอยู่ข้ามการเปลี่ยนตัวกรอง)
+      _pullSkip: {},         // id → เหตุผลที่ข้ามรอบล่าสุด
+      _pullLastIdx: null,    // สำหรับ shift-click เลือกเป็นช่วง
+      _pullBusy: false,
+      _pullSeq: 0,
+      _pullTimer: null,
       openPullDoc(reportId) {
         this._pullReportId = reportId;
-        document.getElementById('pullSearch').value = '';
-        const now = new Date();
-        const from = new Date(now.getFullYear(), now.getMonth() - 12, 1);
-        document.getElementById('pullFrom').value = from.toISOString().slice(0, 10);
-        document.getElementById('pullTo').value = now.toISOString().slice(0, 10);
+        const st = this._pullState[reportId] || { search: '', from: '', to: '', side: '', preset: 'late' };
+        this._pullState[reportId] = st;
+        document.getElementById('pullSearch').value = st.search;
+        document.getElementById('pullFrom').value = st.from;
+        document.getElementById('pullTo').value = st.to;
+        this._pullSel = new Map(); this._pullSkip = {}; this._pullLastIdx = null;
+        this._pullRes = null; this._pullItems = [];   // ช่วงงวด/จำนวนของรายงานก่อนหน้าห้ามค้าง
+        document.getElementById('pullResult').innerHTML = '';
+        this._renderPullSelection();
         Layout.openModal('pullDocModal');
         this.loadPullable();
       },
-      async loadPullable() {
-        const api = Layout.api(); if (!api || !this._pullReportId) return;
-        const list = document.getElementById('pullDocList');
-        list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div>';
-        const p = new URLSearchParams();
-        const s = document.getElementById('pullSearch').value.trim();
-        const f = document.getElementById('pullFrom').value;
-        const t = document.getElementById('pullTo').value;
-        if (s) p.set('search', s);
-        if (f) p.set('fromDate', f);
-        if (t) p.set('toDate', t);
-        try {
-          const res = await api.getPullableDocuments(this._pullReportId, '?' + p.toString());
-          const docs = res.data || [];
-          if (!docs.length) { list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">ไม่พบเอกสารที่ดึงได้</div>'; return; }
-          list.innerHTML = `<div class="table-container"><table class="table"><thead><tr>
-            <th>ประเภท</th><th>เลขที่</th><th>วันที่</th><th>ผู้ติดต่อ</th><th class="text-right">มูลค่า</th><th class="text-right">VAT</th><th></th>
-            </tr></thead><tbody>${docs.map(d => `<tr>
-            <td><span class="badge badge-${d.isInput ? 'primary' : 'success'}">${d.isInput ? 'ซื้อ' : 'ขาย'}</span></td>
-            <td>${d.documentNumber}</td>
-            <td class="text-xs">${Layout.date(d.documentDate)}</td>
-            <td class="text-xs">${d.contactName}</td>
-            <td class="text-right">${Layout.money(d.subTotal)}</td>
-            <td class="text-right">${Layout.money(d.vatAmount)}</td>
-            <td><button class="btn btn-sm btn-primary" onclick="Page.pullDoc('${d.id}')">ดึง</button></td>
-            </tr>`).join('')}</tbody></table></div>`;
-        } catch (e) { list.innerHTML = `<div class="text-center text-danger" style="padding:20px">${e.message}</div>`; }
+      _pullStateNow() { return this._pullState[this._pullReportId]; },
+      _savePullInputs() {
+        const st = this._pullStateNow(); if (!st) return;
+        st.search = document.getElementById('pullSearch').value.trim();
+        st.from = document.getElementById('pullFrom').value;
+        st.to = document.getElementById('pullTo').value;
       },
-      async pullDoc(documentId) {
+      pullSearchTyped() {
+        clearTimeout(this._pullTimer);
+        this._pullTimer = setTimeout(() => this.loadPullable(), 350);
+      },
+      setPullSide(side) { this._pullStateNow().side = side; this.loadPullable(); },
+      setPullPreset(preset) {
+        const st = this._pullStateNow(); const r = this._pullRes;
+        st.preset = preset;
+        const ymd = v => String(v || '').slice(0, 10);
+        if (!r) { st.from = ''; st.to = ''; }
+        else if (preset === 'report') { st.from = ymd(r.periodStart); st.to = ymd(r.periodEnd); }
+        else if (preset === 'prev') {
+          const p = new Date(ymd(r.periodStart) + 'T00:00:00');
+          st.from = Layout.toDateInput(new Date(p.getFullYear(), p.getMonth() - 1, 1));
+          st.to = Layout.toDateInput(new Date(p.getFullYear(), p.getMonth(), 0));
+        } else { st.from = ymd(r.lateWindowStart); st.to = ''; }   // late: ถึงวันนี้ (ใบกำกับซื้อที่มาถึงต้นเดือนถัดไป)
+        document.getElementById('pullFrom').value = st.from;
+        document.getElementById('pullTo').value = st.to;
+        this.loadPullable();
+      },
+      onPullMonthChange(which) {
+        const fSel = document.getElementById('pullMonthFrom'), tSel = document.getElementById('pullMonthTo');
+        if (which === 'from' && fSel.value && !tSel.value) tSel.value = fSel.value;
+        if (which === 'to' && tSel.value && !fSel.value) fSel.value = tSel.value;
+        let f = fSel.value, t = tSel.value;
+        if (f && t && f > t) { [f, t] = [t, f]; fSel.value = f; tSel.value = t; }   // value = YYYY-MM เรียงตามตัวอักษรได้
+        const st = this._pullStateNow();
+        if (f) { const [y, m] = f.split('-').map(Number); st.from = Layout.toDateInput(new Date(y, m - 1, 1)); }
+        if (t) { const [y, m] = t.split('-').map(Number); st.to = Layout.toDateInput(new Date(y, m, 0)); }
+        st.preset = '';
+        document.getElementById('pullFrom').value = st.from;
+        document.getElementById('pullTo').value = st.to;
+        this.loadPullable();
+      },
+      onPullDateChange() { this._pullStateNow().preset = ''; this.loadPullable(); },
+      _pullQuery(offset, limit) {
+        const st = this._pullStateNow();
+        const p = new URLSearchParams();
+        if (st.search) p.set('search', st.search);
+        if (st.from) p.set('fromDate', st.from);
+        if (st.to) p.set('toDate', st.to);
+        if (st.side) p.set('side', st.side);
+        p.set('offset', offset); p.set('limit', limit);
+        return '?' + p.toString();
+      },
+      async loadPullable(append = false) {
         const api = Layout.api(); if (!api || !this._pullReportId) return;
+        clearTimeout(this._pullTimer);
+        this._savePullInputs();
+        const list = document.getElementById('pullDocList');
+        const seq = ++this._pullSeq;   // คำตอบที่มาช้ากว่าคำขอใหม่ = ทิ้ง (ห้าม "ใครมาก่อนชนะ")
+        if (!append) list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">กำลังโหลด...</div>';
         try {
-          await api.pullDocumentIntoReport(this._pullReportId, documentId);
-          Layout.toast('ดึงเอกสารเข้ารายงานสำเร็จ');
-          const rid = this._pullReportId;
-          Layout.closeModal('pullDocModal');
-          await this.load();
-          await this.viewDetail(rid);
-        } catch (e) { Layout.toast(e.message, 'error'); }
+          const res = await api.getPullableDocuments(this._pullReportId, this._pullQuery(append ? this._pullItems.length : 0, 200));
+          if (seq !== this._pullSeq) return;
+          const r = res.data || {};
+          this._pullRes = r;
+          this._pullItems = append ? this._pullItems.concat(r.items || []) : (r.items || []);
+          if (!append) this._pullLastIdx = null;
+          // ครั้งแรกที่เปิด (ยังไม่มีช่วงวันที่) — เติมช่วง "ย้อน 6 เดือน" จากค่าที่ server ส่งมาให้ช่องวันที่ตรงกับผลที่เห็น
+          const st = this._pullStateNow();
+          if (st.preset === 'late' && !st.from && r.lateWindowStart) {
+            st.from = String(r.lateWindowStart).slice(0, 10);
+            document.getElementById('pullFrom').value = st.from;
+          }
+          if (!append) this._renderPullFilters();
+          this._renderPullList();
+        } catch (e) {
+          if (seq !== this._pullSeq) return;
+          list.innerHTML = `<div class="text-center text-danger" style="padding:20px">${Layout.esc(e.message)}</div>`;
+        }
+      },
+      /** โหลดแค่ตัวเลข (จำนวน/เดือน) ใหม่หลังดึง — ไม่แตะแถวที่แสดง/ตำแหน่งเลื่อน */
+      async _refreshPullCounts() {
+        const api = Layout.api(); if (!api) return;
+        try {
+          const res = await api.getPullableDocuments(this._pullReportId, this._pullQuery(0, 1));
+          const r = res.data || {};
+          this._pullRes = Object.assign({}, this._pullRes, {
+            total: r.total, totalInput: r.totalInput, totalOutput: r.totalOutput, months: r.months, scanCapped: r.scanCapped });
+          this._renderPullFilters();
+          this._renderPullHeader();
+        } catch { /* ตัวเลขนับเป็นของประกอบ — แถวที่ดึงแล้วหายไปแล้ว ผลดึงแสดงครบอยู่ด้านบน */ }
+      },
+      _renderPullFilters() {
+        const r = this._pullRes || {}; const st = this._pullStateNow();
+        const n = v => Number(v || 0).toLocaleString('th-TH');
+        const all = (r.totalInput || 0) + (r.totalOutput || 0);
+        const chip = (side, label, cnt) =>
+          `<button type="button" class="pd-chip${st.side === side ? ' on' : ''}" onclick="Page.setPullSide('${side}')">${label} (${n(cnt)})</button>`;
+        document.getElementById('pullSideChips').innerHTML =
+          chip('', 'ทั้งหมด', all) + chip('input', 'ซื้อ', r.totalInput) + chip('output', 'ขาย', r.totalOutput);
+        document.querySelectorAll('#pullDocModal .pd-chip[data-preset]').forEach(b =>
+          b.classList.toggle('on', b.dataset.preset === st.preset));
+        // ตัวเลือกเดือน — รูปแบบเดียวกับหน้าเอกสาร ("มิ.ย. 2569 (76)") · ป้าย/จำนวนมาจาก server
+        const months = r.months || [];
+        const ym = v => (v || '').slice(0, 7);
+        const opts = months.map(m => {
+          const v = `${m.year}-${String(m.month).padStart(2, '0')}`;
+          return `<option value="${v}">${Layout.esc(m.label)} (${n(m.count)})${m.isReportMonth ? ' · เดือนรายงาน' : ''}</option>`;
+        }).join('');
+        const fSel = document.getElementById('pullMonthFrom'), tSel = document.getElementById('pullMonthTo');
+        fSel.innerHTML = '<option value="">ตั้งแต่เดือน…</option>' + opts;
+        fSel.title = tSel.title = 'ตัวเลขในวงเล็บ = เอกสารมี VAT ที่ยังไม่อยู่ในรายงานใด (โดยประมาณ — ระบบตรวจเงื่อนไขครบตอนแสดงรายการ)';
+        tSel.innerHTML = '<option value="">ถึงเดือน…</option>' + opts;
+        // สะท้อนช่วงวันที่ปัจจุบันบนตัวเลือกเดือน เมื่อช่วงตรงต้น/ท้ายเดือนพอดี
+        const fv = ym(st.from), tv = ym(st.to);
+        if (st.from && st.from.endsWith('-01') && [...fSel.options].some(o => o.value === fv)) fSel.value = fv;
+        if (st.to && [...tSel.options].some(o => o.value === tv)) {
+          const [y, m] = tv.split('-').map(Number);
+          if (st.to === Layout.toDateInput(new Date(y, m, 0))) tSel.value = tv;
+        }
+        // เดือนในกรอบ §82/3 ที่ไม่มีรายงาน ภ.พ.30 ในระบบ (server บอก) — อาจยื่นนอกระบบ ⇒ ดึงใบของเดือนนั้นอาจเคลมซ้ำ
+        const nr = r.monthsWithoutReport || [];
+        const coversLate = !st.from || (r.periodStart && st.from < String(r.periodStart).slice(0, 10));
+        document.getElementById('pullNoReportWarn').innerHTML = (nr.length && coversLate)
+          ? `<div class="pd-warn">⚠️ เดือน <b>${nr.map(x => Layout.esc(x)).join(', ')}</b> ไม่มีรายงาน ภ.พ.30 ในระบบ — ถ้ายื่นนอกระบบแล้ว <b>อย่าดึงใบของเดือนนั้นซ้ำ</b> (ใบเหล่านั้นติดป้าย "ไม่มีรายงานเดือนนี้")</div>`
+          : '';
+      },
+      _renderPullHeader() {
+        const r = this._pullRes || {}; const box = document.getElementById('pullHeadInfo'); if (!box) return;
+        const n = v => Number(v || 0).toLocaleString('th-TH');
+        const items = this._pullItems;
+        const allOn = items.length > 0 && items.every(d => this._pullSel.has(d.id));
+        const cb = document.getElementById('pullCheckAll');
+        if (cb) { cb.checked = allOn; cb.indeterminate = !allOn && items.some(d => this._pullSel.has(d.id)); }
+        const lbl = document.getElementById('pullCheckAllLbl');
+        if (lbl) lbl.textContent = `เลือกทั้งหมดที่แสดง (${n(items.length)} จาก ${n(r.total)})`;
+        box.innerHTML = `แสดง <b>${n(items.length)}</b> จาก <b>${n(r.total)}</b> รายการที่ดึงได้`
+          + (r.hasMore ? ' · กด "โหลดเพิ่ม" ด้านล่างเพื่อเลือกส่วนที่เหลือ' : '')
+          + (r.scanCapped ? ' · <span style="color:#b45309">ช่วงวันที่กว้างมาก ระบบสแกนไม่ครบ — แคบช่วงเดือนลงเพื่อให้เห็นครบ</span>' : '');
+      },
+      _renderPullList() {
+        const list = document.getElementById('pullDocList');
+        const r = this._pullRes || {}; const items = this._pullItems;
+        if (!items.length) {
+          const st = this._pullStateNow();
+          list.innerHTML = '<div class="text-center text-gray-400" style="padding:20px">ไม่พบเอกสารที่ดึงได้ในช่วงนี้'
+            + (st.preset !== 'late' ? ' — ลองกด <b>"ย้อน 6 เดือน (§82/3)"</b> เพื่อดูเอกสารเดือนก่อน ๆ' : '') + '</div>';
+          this._renderPullSelection();
+          return;
+        }
+        const n = v => Number(v || 0).toLocaleString('th-TH');
+        const rows = items.map((d, i) => {
+          const on = this._pullSel.has(d.id);
+          const skip = this._pullSkip[d.id];
+          return `<tr data-id="${d.id}" data-idx="${i}" tabindex="0" class="${on ? 'pd-sel' : ''}"
+              onkeydown="Page.pullRowKey(event, ${i})">
+            <td style="width:30px"><input type="checkbox" aria-label="เลือก ${Layout.esc(d.documentNumber)}" ${on ? 'checked' : ''}
+              onclick="Page.togglePullRow(event, ${i})"></td>
+            <td>
+              <div><span class="badge badge-${d.isInput ? 'primary' : 'success'}">${d.isInput ? 'ซื้อ' : 'ขาย'}</span>
+                <span class="pd-num">${Layout.esc(d.documentNumber)}</span>
+                ${d.monthsLate > 0 ? `<span class="badge badge-warning" title="ภาษีซื้อเดือนก่อนงวดรายงาน — ยังเคลมในงวดนี้ได้ (ไม่เกิน 6 เดือน §82/3)">ย้อน ${d.monthsLate} เดือน</span>` : ''}
+                ${d.taxMonthHasNoReport ? `<span class="badge badge-danger" title="เดือนภาษีของใบนี้ไม่มีรายงาน ภ.พ.30 ในระบบ — ถ้ายื่นนอกระบบและเคลมไปแล้ว อย่าดึงซ้ำ">ไม่มีรายงานเดือนนี้</span>` : ''}</div>
+              <div class="pd-sub">${Layout.date(d.documentDate)} · ${Layout.esc(d.contactName)}${d.contactTaxId ? ` <span class="pd-hide-sm">· ${Layout.esc(d.contactTaxId)}</span>` : ''}</div>
+              ${skip ? `<div class="pd-skip">ข้าม: ${Layout.esc(skip)}</div>` : ''}
+            </td>
+            <td class="pd-amt"><div>${Layout.money(d.incomeThb)}</div><div class="pd-sub">VAT ${Layout.money(d.taxThb)}</div></td>
+            <td style="width:56px;text-align:right"><button class="btn btn-sm btn-secondary" onclick="Page.pullDoc('${d.id}')" title="ดึงใบนี้ใบเดียว">ดึง</button></td>
+          </tr>`;
+        }).join('');
+        const more = r.hasMore
+          ? `<div style="text-align:center;margin-top:10px"><button class="btn btn-sm btn-secondary" onclick="Page.loadPullable(true)">โหลดเพิ่ม (เหลืออีก ${n(r.total - items.length)} รายการ)</button></div>` : '';
+        list.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-bottom:6px">
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px;font-weight:600;cursor:pointer">
+              <input type="checkbox" id="pullCheckAll" onclick="Page.togglePullAll(this.checked)" style="width:18px;height:18px">
+              <span id="pullCheckAllLbl">เลือกทั้งหมดที่แสดง</span></label>
+            <span class="pd-sub" id="pullHeadInfo"></span></div>
+          <table class="pd-table"><thead><tr>
+            <th></th>
+            <th>เอกสาร <span class="pd-sub pd-hide-sm" style="font-weight:400">(Shift+คลิก = เลือกเป็นช่วง · Space = ติ๊กแถวที่เลือกอยู่)</span></th>
+            <th class="pd-amt">มูลค่า / VAT (บาท)</th><th></th>
+          </tr></thead><tbody>${rows}</tbody></table>${more}`;
+        this._renderPullHeader();
+        this._renderPullSelection();
+      },
+      togglePullRow(ev, idx) {
+        const d = this._pullItems[idx]; if (!d) return;
+        const on = !this._pullSel.has(d.id);
+        if (ev && ev.shiftKey && this._pullLastIdx != null) {
+          const [a, b] = [Math.min(this._pullLastIdx, idx), Math.max(this._pullLastIdx, idx)];
+          for (let i = a; i <= b; i++) this._setPullSel(this._pullItems[i], on);
+        } else this._setPullSel(d, on);
+        this._pullLastIdx = idx;
+        this._syncPullRowMarks();
+      },
+      pullRowKey(ev, idx) {
+        if (ev.target.tagName === 'BUTTON') return;
+        if (ev.key === ' ' || ev.key === 'Spacebar') {
+          if (ev.target.tagName === 'INPUT') return;   // ช่องติ๊กเองรับ Space อยู่แล้ว (ห้ามสลับซ้ำสองรอบ)
+          ev.preventDefault();
+          this.togglePullRow(ev, idx);
+        } else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          const rows = document.querySelectorAll('#pullDocList tbody tr');
+          const next = rows[idx + (ev.key === 'ArrowDown' ? 1 : -1)];
+          if (next) next.focus();
+        }
+      },
+      togglePullAll(on) {
+        this._pullItems.forEach(d => this._setPullSel(d, on));
+        this._syncPullRowMarks();
+      },
+      _setPullSel(d, on) { if (!d) return; if (on) this._pullSel.set(d.id, d); else this._pullSel.delete(d.id); },
+      _syncPullRowMarks() {
+        document.querySelectorAll('#pullDocList tbody tr').forEach(tr => {
+          const on = this._pullSel.has(tr.dataset.id);
+          tr.classList.toggle('pd-sel', on);
+          const cb = tr.querySelector('input[type=checkbox]'); if (cb) cb.checked = on;
+        });
+        this._renderPullHeader();
+        this._renderPullSelection();
+      },
+      _renderPullSelection() {
+        const sel = [...this._pullSel.values()];
+        const btn = document.getElementById('pullSelectedBtn');
+        const box = document.getElementById('pullSelSummary');
+        const max = (this._pullRes && this._pullRes.maxPerPull) || 500;
+        if (!sel.length) {
+          box.innerHTML = '<span class="text-gray-400">ยังไม่ได้เลือก — ติ๊กช่องหน้ารายการ</span>';
+          btn.disabled = true; btn.textContent = 'ดึงที่เลือก';
+          return;
+        }
+        const sum = arr => arr.reduce((a, d) => ({ inc: a.inc + Number(d.incomeThb || 0), tax: a.tax + Number(d.taxThb || 0) }), { inc: 0, tax: 0 });
+        const ins = sel.filter(d => d.isInput), outs = sel.filter(d => !d.isInput);
+        const si = sum(ins), so = sum(outs);
+        const shownIds = new Set(this._pullItems.map(d => d.id));
+        const hidden = sel.filter(d => !shownIds.has(d.id)).length;
+        const part = (lbl, arr, s) => arr.length ? `<div>${lbl} <b>${arr.length}</b> ใบ · มูลค่า ${Layout.money(s.inc)} · VAT <b>${Layout.money(s.tax)}</b></div>` : '';
+        box.innerHTML = `<div>เลือก <b>${sel.length}</b> รายการ`
+          + (hidden ? ` <span style="color:#b45309">(${hidden} รายการไม่อยู่ในตัวกรองตอนนี้)</span>` : '')
+          + ` · <a href="javascript:void(0)" onclick="Page.clearPullSel()">ล้างที่เลือก</a></div>`
+          + part('ซื้อ', ins, si) + part('ขาย', outs, so)
+          + (sel.length > max ? `<div style="color:#b91c1c">ดึงได้ครั้งละไม่เกิน ${max} รายการ</div>` : '');
+        btn.disabled = this._pullBusy || sel.length > max;
+        btn.textContent = this._pullBusy ? 'กำลังดึง…' : `ดึงที่เลือก (${sel.length} รายการ)`;
+      },
+      clearPullSel() { this._pullSel.clear(); this._syncPullRowMarks(); },
+      pullSelected() { return this._doPull([...this._pullSel.keys()]); },
+      pullDoc(documentId) { return this._doPull([documentId]); },
+      async _doPull(ids) {
+        const api = Layout.api(); if (!api || !this._pullReportId || !ids.length || this._pullBusy) return;
+        this._pullBusy = true; this._renderPullSelection();
+        const rid = this._pullReportId;
+        try {
+          // บันทึกอัตโนมัติที่ค้างอยู่ของหน้ารายงาน (ติ๊ก/แก้ยอด) ต้องลงก่อน — ไม่งั้นรีเฟรชหลังดึงทับงานที่ยังไม่ได้บันทึก
+          await this._flushVatAutoSave();
+          const res = await api.pullDocumentsIntoReport(rid, ids);
+          const r = res.data || {};
+          const added = (r.items || []).filter(i => i.added);
+          const skipped = (r.items || []).filter(i => !i.added);
+          const addedIds = new Set(added.map(i => i.documentId));
+          // ดึงแล้ว ⇒ เอาออกจากรายการ "ในที่" (ไม่โหลดใหม่ · ตัวกรอง/ตำแหน่งเลื่อนคงเดิม)
+          addedIds.forEach(id => { this._pullSel.delete(id); delete this._pullSkip[id]; });
+          skipped.forEach(i => { this._pullSel.delete(i.documentId); this._pullSkip[i.documentId] = i.reason || 'ดึงไม่ได้'; });
+          this._pullItems = this._pullItems.filter(d => !addedIds.has(d.id));
+          this._pullLastIdx = null;   // ดัชนีแถวเปลี่ยนแล้ว — Shift+คลิกครั้งถัดไปต้องไม่อ้างแถวเดิม
+          if (this._pullRes) this._pullRes.total = Math.max(0, (this._pullRes.total || 0) - added.length);
+          const scroller = document.querySelector('#pullDocModal .modal');
+          const keepTop = scroller ? scroller.scrollTop : 0;
+          this._showPullResult(added.length, skipped);
+          this._renderPullList();
+          if (scroller) scroller.scrollTop = keepTop;
+          this._refreshPullCounts();
+          // รายงานด้านหลัง (บรรทัด + ยอดรวม) — รีเฟรชโดยไม่ปิดหน้าต่างดึง
+          if (added.length) { await this.load(); await this.viewDetail(rid); }
+        } catch (e) {
+          Layout.toast(e.message, 'error');
+        } finally {
+          this._pullBusy = false; this._renderPullSelection();
+        }
+      },
+      _showPullResult(addedCount, skipped) {
+        const box = document.getElementById('pullResult');
+        const ok = addedCount > 0;
+        // เหตุผลภาษาไทยก่อน · รหัสกฎเล็ก/จางไว้ท้าย (สำหรับแจ้งทีมงาน)
+        const reasons = skipped.map(i => `<li><b>${Layout.esc(i.documentNumber || '-')}</b> — ${Layout.esc(i.reason || '')}`
+          + (i.ruleCode ? ` <span class="pd-code">${Layout.esc(i.ruleCode)}</span>` : '') + '</li>').join('');
+        box.innerHTML = `<div class="pd-result" style="background:${skipped.length ? '#fffbeb' : '#ecfdf5'};border:1px solid ${skipped.length ? '#fde68a' : '#a7f3d0'}">
+          ${ok ? `✅ ดึงเข้ารายงานแล้ว <b>${addedCount}</b> รายการ` : 'ไม่มีรายการที่ดึงเข้าได้'}
+          ${skipped.length ? ` · ข้าม <b>${skipped.length}</b> รายการ <details style="display:inline"><summary style="display:inline;cursor:pointer;color:#1d4ed8">(ดูเหตุผล)</summary><ul style="margin:6px 0 0 18px;font-size:12.5px">${reasons}</ul></details>` : ''}
+          ${ok ? '<div class="pd-sub" style="margin-top:4px">ดึงผิดใบ? เอาออกได้โดย <b>ติ๊กช่อง "ใช้" ออก</b> ที่บรรทัดนั้นในรายงาน (ด้านหลังหน้าต่างนี้)</div>' : ''}
+          <a href="javascript:void(0)" style="float:right;color:var(--gray-500)" onclick="document.getElementById('pullResult').innerHTML=''" aria-label="ปิด">✕</a></div>`;
+        Layout.toast(ok ? `ดึงเข้ารายงานแล้ว ${addedCount} รายการ${skipped.length ? ` · ข้าม ${skipped.length}` : ''}` : 'ไม่มีรายการที่ดึงเข้าได้', ok ? 'success' : 'warning');
       },
       async fileReport(id) {
         const api = Layout.api(); if (!api) return;

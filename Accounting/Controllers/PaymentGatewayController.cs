@@ -846,6 +846,7 @@ public class PaymentWebhookController : ControllerBase
         foreach (var cfg in configs)
         {
             VerifiedWebhookEvent? verified;
+            var verifiedMode = cfg.Mode;
             try { verified = await provider.VerifyWebhookAsync(raw, headers, cfg, ct); }
             catch (Exception ex)
             {
@@ -853,14 +854,35 @@ public class PaymentWebhookController : ControllerBase
                     providerCode, cfg.CompanyId);
                 continue;
             }
+            // รอบ 227 (PLATFORM_OMISE_AUDIT A-12): event ของอีกโหมด (แดชบอร์ดทดสอบ/จริงตั้ง URL เดียวกัน · ช่องทางเพิ่งสลับโหมดขณะลูกค้าจ่าย) —
+            // ยืนยันด้วยคีย์ของโหมดปัจจุบันไม่ผ่าน (คนละบัญชี) ⇒ ลองคีย์อีกโหมด (เฉพาะเส้นรหัสลับ + อีกโหมดมีคีย์ลับ) · ด่านโหมดของรายการ
+            // (PaymentLiveModeGuard ใน ApplyChargeAsync) ยังตัดสินซ้ำว่า event โหมดนี้เปลี่ยนสถานะรายการนี้ได้ไหม
+            if (verified == null && token != null && PaymentConfigForIntent.OtherMode(cfg) is { } alt)
+            {
+                try { verified = await provider.VerifyWebhookAsync(raw, headers, alt, ct); }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "webhook {Provider}: ยืนยันด้วยคีย์อีกโหมดล้มเหลวสำหรับบริษัท {Company}", providerCode, cfg.CompanyId);
+                    continue;
+                }
+                if (verified != null) verifiedMode = alt.Mode;
+            }
             if (verified == null) continue;
 
-            cfg.LastWebhookAt = DateTime.UtcNow;
-            // รอบ 219 ส่วน B: webhook ขณะโหมดใช้งานจริง — หน้าตั้งค่าเตือนจนกว่าจะเคยได้รับ (endpoint ฝั่ง live ตั้งแยกในแดชบอร์ดผู้ให้บริการ)
-            if (cfg.Mode == PaymentProviderMode.Live) cfg.LastLiveWebhookAt = cfg.LastWebhookAt;
+            var receivedAt = DateTime.UtcNow;
+            // ฝ่ายค้านรอบ 227 N1: "เคยได้รับ webhook" (ด่านทดสอบเชื่อมต่อของโหมดปัจจุบัน) ประทับเฉพาะ event ของโหมดเดียวกับช่องทาง —
+            // event อีกโหมดที่ยืนยันด้วยคีย์อีกชุดไม่ใช่หลักฐานว่า URL ของโหมดนี้ใช้ได้
+            if (verifiedMode == cfg.Mode) cfg.LastWebhookAt = receivedAt;
+            // รอบ 219 ส่วน B: webhook โหมดใช้งานจริง — หน้าตั้งค่าเตือนจนกว่าจะเคยได้รับ (endpoint ฝั่ง live ตั้งแยกในแดชบอร์ดผู้ให้บริการ) ·
+            // รอบ 227: ตามโหมดของคีย์ที่ยืนยันได้จริง (ไม่ใช่โหมดปัจจุบันของช่องทาง)
+            if (verifiedMode == PaymentProviderMode.Live) cfg.LastLiveWebhookAt = receivedAt;
             // A-GW1: เส้นทางที่ webhook มาจริง — หน้าตั้งค่าเตือน "ยังใช้ URL เดิม" · URL เดิมเลิกลอง config นี้เมื่อโหมดนี้ย้ายแล้ว
-            if (token != null) { cfg.LastTokenWebhookAt = cfg.LastWebhookAt; cfg.LastTokenWebhookMode = cfg.Mode; }
-            else cfg.LastLegacyWebhookAt = cfg.LastWebhookAt;
+            // (event อีกโหมดไม่ประทับว่า "โหมดปัจจุบันย้ายแล้ว" — ความหมายเดิมของ LastTokenWebhookMode คงไว้)
+            if (token != null)
+            {
+                if (verifiedMode == cfg.Mode) { cfg.LastTokenWebhookAt = receivedAt; cfg.LastTokenWebhookMode = cfg.Mode; }
+            }
+            else cfg.LastLegacyWebhookAt = cfg.LastWebhookAt;   // URL เดิมไม่ลองคีย์อีกโหมด ⇒ โหมดเดียวกันเสมอ (LastWebhookAt = receivedAt แล้ว)
             await _db.SaveChangesAsync(ct);
 
             // รอบ 198 ฝ่ายค้าน R-E1 (P0): ลายเซ็นผ่านด้วยคีย์ของบริษัทหนึ่ง ไม่ได้แปลว่ารายการที่ metadata อ้างเป็นของบริษัทนั้น —

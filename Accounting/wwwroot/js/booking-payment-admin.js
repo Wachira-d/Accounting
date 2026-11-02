@@ -41,7 +41,11 @@
           ? `ระบบรับชำระเงินของบริษัท: ${d.companyGatewayName || 'ตั้งค่าแล้ว'} — ลูกค้าจ่ายแล้วยืนยันการจองอัตโนมัติ`
           : 'บริษัทยังไม่ได้ตั้งค่าระบบรับชำระเงินออนไลน์ (ตั้งค่า → รับชำระเงินออนไลน์) — เปิดช่องนี้ไม่ได้จนกว่าจะตั้ง';
         $('bpayGateway').disabled = !d.companyGatewayConfigured && !d.onlineGatewayEnabled;
+        // รอบ 226 (คำตัดสิน 226-2): ช่องว่าง = ค่าตั้งต้นของเซิร์ฟเวอร์ (โหมดบังคับ)
+        const dl = $('bpayDeadline'); if (dl) dl.placeholder = `ว่าง = ค่าตั้งต้น ${Number(d.defaultDeadlineMinutes || 1440)} นาที (${Math.round(Number(d.defaultDeadlineMinutes || 1440) / 60)} ชม.) · 0 = ไม่กำหนด`;
+        const dn = $('bpayDeadlineNote'); if (dn) dn.textContent = d.deadlineNote || '';   // ฝ่ายค้านรอบ 226 ข้อ 3: เว็บเดิมที่ไม่เคยกรอก ⇒ คงเป็น 0 + แนะนำ
         this._renderProblem(d.problem, d.channelWarnings);
+        this._renderUncollectable(d);
         this._renderServices(d.services || []);
         this.onModeChange();
         this._optsLoaded = opts.length > 0;
@@ -65,6 +69,36 @@
       const ws = Array.isArray(warnings) ? warnings : (this._s && Array.isArray(this._s.channelWarnings) ? this._s.channelWarnings : []);
       el.innerHTML = (p ? `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:8px">⚠️ ${esc(p)}</div>` : '')
         + ws.map(w => `<div style="background:#fffbeb;border:1px solid #fcd34d;color:#78350f;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:6px">⚠️ ${esc(w)}</div>`).join('');
+    },
+    // รอบ 226 (คำตัดสิน 226-1): โหมดบังคับ + บริการที่เก็บเงินล่วงหน้าไม่ได้ ⇒ กล่องแดง (บันทึกไม่ผ่านจนแก้) + ปุ่มแก้ในคลิกเดียวต่อบริการ/ทั้งหมด
+    _renderUncollectable(d) {
+      const el = $('bpayUncollectable'); if (!el) return;
+      const rows = (d.services || []).filter(r => r.requiredButUncollectable);
+      if (!d.uncollectableProblem || !rows.length) { el.innerHTML = ''; return; }
+      const ids = rows.map(r => r.id);
+      const convIds = rows.filter(r => r.bookingType !== 'PrePayment').map(r => r.id);
+      el.innerHTML = `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;border-radius:8px;padding:10px 12px;font-size:13px;margin-bottom:8px">
+          ⛔ ${esc(d.uncollectableProblem)}
+          <table class="table" style="font-size:12px;margin-top:6px;background:#fff"><tbody>${rows.map(r => `<tr><td>${esc(r.name)}<div class="bs-hint">${esc(Layout.enumLabel ? Layout.enumLabel('bookingType', r.bookingType) : r.bookingType)}</div></td>
+            <td style="white-space:nowrap">${r.bookingType !== 'PrePayment' ? `<button type="button" class="btn btn-primary btn-sm" onclick="BookingPayAdmin.fixServices('convert', ['${jsArg(r.id)}'])">เปลี่ยนเป็นชำระมัดจำล่วงหน้า</button>` : `<span class="bs-hint">${esc(r.problem || '')}</span>`}
+              <button type="button" class="btn btn-secondary btn-sm" onclick="BookingPayAdmin.fixServices('exempt', ['${jsArg(r.id)}'])">ยกเว้น (ไม่รับชำระล่วงหน้า)</button></td></tr>`).join('')}</tbody></table>
+          ${rows.length > 1 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+            ${convIds.length ? `<button type="button" class="btn btn-primary btn-sm" onclick='BookingPayAdmin.fixServices("convert", ${esc(JSON.stringify(convIds))})'>เปลี่ยนชนิดทั้งหมด (${convIds.length})</button>` : ''}
+            <button type="button" class="btn btn-secondary btn-sm" onclick='BookingPayAdmin.fixServices("exempt", ${esc(JSON.stringify(ids))})'>ยกเว้นทั้งหมด (${rows.length})</button></div>` : ''}
+        </div>`;
+    },
+    async fixServices(action, ids) {
+      if (!this._siteId || !Array.isArray(ids) || !ids.length) return;
+      const msg = action === 'convert'
+        ? 'เปลี่ยนชนิดบริการเป็น “ชำระมัดจำล่วงหน้า (ใบรับมัดจำ)”?\n\nมีผลกับการจองใหม่เท่านั้น — การจองที่มีอยู่ใช้ชนิดเดิมที่ตรึงไว้ตอนจอง · ลูกค้าใหม่ต้องชำระตามโหมดของเว็บก่อนการจองจะยืนยัน · ใบรับมัดจำลงวันที่รับเงิน (§78/1)'
+        : 'ยกเว้นบริการนี้ — ไม่รับชำระล่วงหน้า?\n\nการจองบริการนี้จะยืนยันตามค่า “ยืนยันอัตโนมัติ” ของบริการ (ไม่มีขั้นชำระ)';
+      if (!confirm(msg)) return;
+      try {
+        const res = await API.post(`${base(this._siteId)}/payment-settings/fix-services`, { action, serviceIds: ids });
+        Layout.toast(res.message || 'แก้บริการแล้ว', 'success');
+        await this.loadSettings(this._siteId);
+        if (window.Page && typeof Page.loadBookingServices === 'function') await Page.loadBookingServices();
+      } catch (e) { Layout.toast(e.message, 'error', 10000); }
     },
     _renderServices(rows) {
       const el = $('bpayServices'); if (!el) return;
@@ -161,6 +195,7 @@
         p.holdUntil ? ['ต้องชำระภายใน', new Date(p.holdUntil).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }) + ' (ไม่ชำระ ⇒ ระบบยกเลิกอัตโนมัติ)'] : null,
         p.headline && p.step && p.step !== 'None' ? ['ลูกค้าเห็น', p.headline] : null,
         p.slipRejectedReason && !p.slipPending ? ['สลิปล่าสุดไม่ผ่าน', p.slipRejectedReason] : null,
+        p.shopPolicyWarning ? ['⚠️ นโยบายชำระ', p.shopPolicyWarning] : null,   // รอบ 226: โหมดบังคับแต่บริการเก็บเงินไม่ได้
       ].filter(Boolean);
       const head = rows.length ? `<div style="margin-top:6px;font-size:12px;border:1px solid var(--gray-200);border-radius:8px;padding:6px 10px">${rows.map(r =>
         `<div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--gray-500)">${esc(r[0])}</span><span style="text-align:right">${esc(r[1])}</span></div>`).join('')}</div>` : '';
@@ -237,11 +272,13 @@
         <div class="bs-hint" style="margin-bottom:8px">ลูกค้าเห็นยอดที่ต้องจ่าย + กำหนดเวลา + วิธีชำระ <b>ก่อนกดจอง</b> · หลังจองโอน/สแกน QR แล้วแนบสลิป (ร้านตรวจที่หน้า "การจอง") หรือจ่ายออนไลน์ ·
           เก็บเงินล่วงหน้าได้เฉพาะบริการชนิด "ชำระมัดจำล่วงหน้า (ใบรับมัดจำ)" — ใบรับมัดจำลงวันที่รับเงิน (§78/1) · บริการแต่ละตัวตั้งทับได้ที่ฟอร์มบริการ</div>
         <div id="bpayProblem"></div>
+        <div id="bpayUncollectable"></div>
         <div class="form-row">
           <div class="form-group"><label class="form-label">โหมดของเว็บ</label><select class="form-input" id="bpayMode" onchange="BookingPayAdmin.onModeChange()"></select>
             <div class="bs-hint" id="bpayModeHelp"></div></div>
-          <div class="form-group" id="bpayDeadlineRow"><label class="form-label">ต้องชำระภายใน (นาทีหลังจอง · ว่าง/0 = ไม่กำหนด)</label>
-            <input type="number" class="form-input" id="bpayDeadline" min="0" max="10080" placeholder="เช่น 30 · 120 · 1440">
+          <div class="form-group" id="bpayDeadlineRow"><label class="form-label">ต้องชำระภายใน (นาทีหลังจอง · ว่าง = ค่าตั้งต้น 1440 · 0 = ไม่กำหนด)</label>
+            <input type="number" class="form-input" id="bpayDeadline" min="0" max="10080" placeholder="ว่าง = ค่าตั้งต้น 1440 นาที (24 ชม.)">
+            <div class="bs-hint" id="bpayDeadlineNote"></div>
             <div class="bs-hint">ไม่ชำระ/ไม่แนบสลิปในเวลา ⇒ ระบบยกเลิกการจองและปล่อยรอบให้คนอื่น (ไม่เกินเวลานัด) · แนบสลิปแล้วไม่ถูกยกเลิกระหว่างรอร้านตรวจ</div></div>
         </div>
         <div class="form-row-3" id="bpayDepositRow">
@@ -299,5 +336,7 @@
       : '<div class="sg-card sg-hint">เว็บนี้ยังไม่เปิดงานจอง — ค่าตั้งมัดจำ/ชำระก่อนของการจองจะแสดงเมื่อเปิดโมดูลการจอง</div>')
       + otherLinks(ctx);
     if (mods.includes('bookings')) await window.BookingPayAdmin.loadSettings(ctx.siteId);
+    // รอบ 226: จัดส่ง/รับเองของการจอง (js/booking-fulfillment-admin.js) — กล่องต่อท้ายในหมวดเดียวกัน
+    if (mods.includes('bookings') && window.BookingFulfillAdmin) await window.BookingFulfillAdmin.mount(el, ctx);
   };
 })();

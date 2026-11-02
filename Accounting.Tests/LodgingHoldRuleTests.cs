@@ -78,8 +78,12 @@ public class LodgingHoldRuleTests
     [Fact]
     public void ถือห้องระหว่างจ่าย_ถึงวันหมดอายุรายการบวกเผื่อ_หรือค่าตั้งต้นเมื่อไม่รู้()
     {
+        // รอบ 227 ฝ่ายค้าน B1: วันหมดอายุของผู้ให้บริการ (พร้อมเพย์อาจ 24 ชม.) ไม่ยืดการถือห้องเกินค่าตั้งต้นเดิม — ค่าตั้งต้นเป็นเพดาน
         var qrExp = Now.AddHours(24);
-        Assert.Equal(qrExp + LodgingHoldRule.ConfirmationGrace, LodgingHoldRule.PaymentHoldUntil(Now, qrExp));
+        Assert.Equal(Now + LodgingHoldRule.DefaultPaymentWindow + LodgingHoldRule.ConfirmationGrace, LodgingHoldRule.PaymentHoldUntil(Now, qrExp));
+        // วันหมดอายุสั้นกว่าค่าตั้งต้น ⇒ ใช้วันหมดอายุ (ทิศตรงข้าม)
+        var shortExp = Now.AddMinutes(10);
+        Assert.Equal(shortExp + LodgingHoldRule.ConfirmationGrace, LodgingHoldRule.PaymentHoldUntil(Now, shortExp));
         Assert.Equal(Now + LodgingHoldRule.DefaultPaymentWindow + LodgingHoldRule.ConfirmationGrace, LodgingHoldRule.PaymentHoldUntil(Now, null));
         // วันหมดอายุที่ผ่านไปแล้ว (ข้อมูลเพี้ยน) ไม่ทำให้ hold สั้นกว่าค่าตั้งต้น
         Assert.Equal(Now + LodgingHoldRule.DefaultPaymentWindow + LodgingHoldRule.ConfirmationGrace, LodgingHoldRule.PaymentHoldUntil(Now, Now.AddMinutes(-5)));

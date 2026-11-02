@@ -3460,6 +3460,7 @@ public class AccountingDbContext : DbContext
             e.Property(bs => bs.DepositPercent).HasPrecision(5, 2);
             e.Property(bs => bs.CancellationFeePercent).HasPrecision(5, 2);
             e.Property(bs => bs.DepositMinAmount).HasPrecision(18, 2); e.Property(bs => bs.DepositMaxAmount).HasPrecision(18, 2);   // รอบ 218
+            e.Property(bs => bs.FulfillmentDefault).HasMaxLength(16);   // รอบ 226
             e.Property(bs => bs.Currency).HasMaxLength(3);
             e.Property(bs => bs.Category).HasMaxLength(128);
             e.Property(bs => bs.HalfDaySplitTime).HasMaxLength(8);
@@ -3498,6 +3499,10 @@ public class AccountingDbContext : DbContext
             e.Property(b => b.PaidAmount).HasPrecision(18, 2);
             e.Property(b => b.Currency).HasMaxLength(3);
             e.Property(b => b.SlipRejectedReason).HasMaxLength(500);   // รอบ 218
+            // รอบ 226 (Helpers/BookingFulfillmentMigration): จัดส่ง/รับเอง
+            e.Property(b => b.FulfillmentMethod).HasMaxLength(16); e.Property(b => b.DeliveryFee).HasPrecision(18, 2);
+            e.Property(b => b.DeliveryAddress).HasMaxLength(1000); e.Property(b => b.DeliveryProvince).HasMaxLength(100);
+            e.Property(b => b.DeliveryPostalCode).HasMaxLength(10); e.Property(b => b.DeliveryRateName).HasMaxLength(256);
             e.HasOne(b => b.Site).WithMany().HasForeignKey(b => b.SiteId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne(b => b.BookingService).WithMany(bs => bs.Bookings).HasForeignKey(b => b.BookingServiceId).OnDelete(DeleteBehavior.Restrict);
             e.HasOne(b => b.Customer).WithMany(c => c.Bookings).HasForeignKey(b => b.CustomerId).OnDelete(DeleteBehavior.SetNull);
@@ -3514,6 +3519,9 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.PaymentDepositMinAmount).HasPrecision(18, 2); e.Property(x => x.PaymentDepositMaxAmount).HasPrecision(18, 2);
             e.Property(x => x.BankTransferEnabled).HasDefaultValue(true);
             e.Property(x => x.PaymentNote).HasMaxLength(1000);
+            // รอบ 226 (Helpers/BookingFulfillmentMigration): จัดส่ง/รับเองของการจอง
+            e.Property(x => x.FulfillmentDefault).HasMaxLength(16); e.Property(x => x.FulfillmentPickupNote).HasMaxLength(1000);
+            e.Property(x => x.FulfillmentDeliveryMinAmount).HasPrecision(18, 2);
         });
         modelBuilder.Entity<SiteBookingResource>(e =>
         {

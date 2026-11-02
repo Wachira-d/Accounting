@@ -44,12 +44,23 @@ public static class PaymentLiveGate
         return m.Count == 0 ? null : string.Join(" · ", m);
     }
 
-    /// <summary>ด่านของแพลตฟอร์ม NextAcc — ด่านร้านทุกข้อ + นโยบายคืนเงินที่เผยแพร่แล้ว + คำยืนยันที่พิมพ์ · null = ผ่าน</summary>
-    public static string? PlatformRefusal(Facts f, bool refundPolicyPublished, string? typedConfirmation)
+    /// <summary>ด่านของแพลตฟอร์ม NextAcc — ด่านร้านทุกข้อ + นโยบายคืนเงินที่เผยแพร่แล้ว + คำยืนยันที่พิมพ์ · null = ผ่าน
+    /// <para>รอบ 227 (PLATFORM_OMISE_AUDIT B-4): + "URL ของระบบ" ตั้งแล้ว (ไม่ตั้ง ⇒ ผู้จ่ายกลับจากหน้าธนาคาร/ลิงก์ในอีเมลไปโดเมนค่าเริ่มต้นที่ไม่ใช่ของเรา —
+    /// ที่มาของ "ทดลองจ่ายแล้วเด้งไป app.nextacc.com") + มีวิธีชำระที่หน้าชำระของ NextAcc ทำจบได้อย่างน้อย 1 วิธี (<see cref="PlatformPayMethods"/>) ·
+    /// ค่าตั้งต้นของสองพารามิเตอร์ใหม่ = ผ่าน (ผู้เรียกเดิม/เทสต์เดิมไม่เปลี่ยนผล)</para></summary>
+    public static string? PlatformRefusal(Facts f, bool refundPolicyPublished, string? typedConfirmation,
+        bool systemBaseUrlSet = true, int payableMethodCount = 1, IEnumerable<string>? readinessMissing = null)
     {
         var m = Missing(f);
         if (!refundPolicyPublished)
             m.Add("ยังไม่ได้เผยแพร่ \"นโยบายการยกเลิกและคืนเงิน\" ฉบับของ NextAcc (ผู้ดูแลระบบ → เอกสารกฎหมาย) — ผู้ให้บริการรับชำระเงินกำหนดให้เว็บต้องแสดงนโยบายนี้");
+        if (!systemBaseUrlSet)
+            m.Add(SystemBaseUrlMissing);
+        if (payableMethodCount <= 0)
+            m.Add(NoPayableMethod);
+        // ฝ่ายค้านรอบ 227 S4/S2: ข้อที่ด่านใช้จากรายการตรวจความพร้อม (PlatformGatewayReadiness — บัญชีพัก · ราคารวม VAT · …) ไม่ซ้ำข้อความ
+        foreach (var r in readinessMissing ?? Array.Empty<string>())
+            if (!m.Contains(r)) m.Add(r);
         if (!string.Equals(typedConfirmation?.Trim(), ConfirmPhrase, StringComparison.Ordinal))
             m.Add($"พิมพ์คำว่า \"{ConfirmPhrase}\" เพื่อยืนยัน — หลังเปิด ลูกค้าจะถูกเรียกเก็บเงินจริง");
         return m.Count == 0 ? null : string.Join(" · ", m);
@@ -60,6 +71,14 @@ public static class PaymentLiveGate
         => kind != PaymentSourceKind.GatewaySelfTest ? null
             : configMode == PaymentProviderMode.Test ? null
             : "ทดลองจ่ายได้เฉพาะโหมดทดสอบ (ไม่มีเงินจริง) — กลับสู่โหมดทดสอบก่อน หรือใช้คีย์ทดสอบ";
+
+    /// <summary>รอบ 227: ข้อความด่าน "URL ของระบบ" — ตัวเดียวของด่านและหน้าแอดมิน</summary>
+    public const string SystemBaseUrlMissing =
+        "ยังไม่ได้ตั้ง \"URL ของระบบ\" (ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์) — ผู้จ่ายที่กลับจากหน้าธนาคาร/ลิงก์ชำระจะถูกพาไปโดเมนค่าเริ่มต้นที่ไม่ใช่ของ NextAcc";
+
+    /// <summary>รอบ 227: ข้อความด่าน "ไม่มีวิธีชำระที่ใช้ได้"</summary>
+    public const string NoPayableMethod =
+        "ยังไม่ได้เปิดวิธีชำระที่หน้าชำระของ NextAcc ทำจบได้ (ตอนนี้ = พร้อมเพย์) — ติ๊กพร้อมเพย์ในหัวข้อ \"วิธีชำระที่เปิด\" แล้วบันทึก";
 
     /// <summary>ยอดทดลองจ่าย (บาท)</summary>
     public const decimal SelfTestAmount = 20m;

@@ -31,10 +31,45 @@ public class AdminPlatformGatewayController : ControllerBase
     private readonly ILegalDocumentService _legal;
     private readonly ISecretProtector _secrets;
     private readonly IEnumerable<IPaymentProvider> _providers;
+    private readonly IGatewayAccountResolver? _accounts;
+    private readonly IConfiguration? _config;
 
     public AdminPlatformGatewayController(AccountingDbContext db, IPaymentProviderConfigService configs, IPlatformPaymentService platform,
-        IPaymentIntentService intents, ILegalDocumentService legal, ISecretProtector secrets, IEnumerable<IPaymentProvider> providers)
-    { _db = db; _configs = configs; _platform = platform; _intents = intents; _legal = legal; _secrets = secrets; _providers = providers; }
+        IPaymentIntentService intents, ILegalDocumentService legal, ISecretProtector secrets, IEnumerable<IPaymentProvider> providers,
+        IGatewayAccountResolver? accounts = null, IConfiguration? config = null)
+    {
+        _db = db; _configs = configs; _platform = platform; _intents = intents; _legal = legal; _secrets = secrets; _providers = providers;
+        _accounts = accounts; _config = config;
+    }
+
+    /// <summary>รอบ 227 (PLATFORM_OMISE_AUDIT C-1..C-5): ข้อเท็จจริงของรายการตรวจความพร้อม (บัญชี · URL ระบบ · วิธีชำระ) — ตัวเดียวของ GET และด่านเปิดรับเงินจริง</summary>
+    private async Task<PlatformGatewayReadinessFacts> ReadinessFactsAsync(SiteSettings? settings, Guid? platformId, PaymentProviderConfig? cfg,
+        int payableMethods, CancellationToken ct)
+    {
+        var revenueCode = string.IsNullOrWhiteSpace(settings?.PlatformRevenueAccountCode) ? "41000" : settings!.PlatformRevenueAccountCode!.Trim();
+        var cashCode = settings?.PlatformCashAccountCode?.Trim();
+        Task<bool> FoundAsync(Guid pid, string code) => _db.ChartOfAccounts.AsNoTracking()
+            .AnyAsync(a => a.CompanyId == pid && a.AccountCode == code && a.IsActive && !a.IsDeleted, ct);
+        var clearing = platformId is Guid p1 && cfg != null && _accounts != null
+            && await _accounts.ResolveClearingAccountAsync(p1, cfg.ProviderCode, cfg.Id, ct) != null;
+        var fee = platformId is Guid p2 && cfg != null && _accounts != null
+            && await _accounts.ResolveFeeExpenseAccountAsync(p2, cfg.ProviderCode, cfg.Id, ct) != null;
+        var sellerTax = settings?.PlatformSellerTaxId?.Trim();
+        return new PlatformGatewayReadinessFacts(
+            SystemBaseUrl: SystemBaseUrl.IsConfigured(settings?.AppBaseUrl, _config?["App:BaseUrl"])
+                ? SystemBaseUrl.Pick(settings?.AppBaseUrl, _config?["App:BaseUrl"]) : null,
+            ClearingAccountFound: clearing,
+            FeeExpenseAccountFound: fee,
+            RevenueAccountCode: revenueCode,
+            RevenueAccountFound: platformId is Guid p3 && await FoundAsync(p3, revenueCode),
+            CashAccountCode: string.IsNullOrWhiteSpace(cashCode) ? null : cashCode,
+            CashAccountFound: platformId is Guid p4 && !string.IsNullOrWhiteSpace(cashCode) && await FoundAsync(p4, cashCode!),
+            VatRegistered: settings?.PlatformIsVatRegistered == true,
+            SellerTaxIdValid: ThaiTaxId.IsValid(sellerTax),   // ฝ่ายค้าน N3: ตัวตรวจเดียว (checksum mod-11)
+            BankTransferInstructionsSet: !string.IsNullOrWhiteSpace(settings?.PlatformBankTransferInstructions),
+            PayableMethodCount: payableMethods,
+            PriceIncludesVat: settings?.PlatformPriceIncludesVat ?? true);
+    }
 
     private PaymentConfigActor Actor() => new(User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString());
 
@@ -66,13 +101,28 @@ public class AdminPlatformGatewayController : ControllerBase
         var missing = facts == null ? new List<string>() : PaymentLiveGate.Missing(facts);
         if (!purchase.RefundPublished)
             missing.Add("ยังไม่ได้เผยแพร่ \"นโยบายการยกเลิกและคืนเงิน\" ฉบับของ NextAcc (เอกสารกฎหมาย → นโยบายการยกเลิกและคืนเงิน)");
+        // รอบ 227: รายการตรวจความพร้อม (บัญชี · URL ระบบ · วิธีชำระ) — ข้อที่ด่านเปิดรับเงินจริงใช้ (Blocking) รวมเข้า liveGateMissing ด้วย
+        var readiness = PlatformGatewayReadiness.Checks(await ReadinessFactsAsync(settings, platformId, cfg, status.Methods.Count, ct));
+        if (cfg != null) missing.AddRange(PlatformGatewayReadiness.BlockingMissing(readiness));
+        var provider = cfg == null ? null : _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode);
+        var configured = PlatformPaymentService.ConfiguredMethods(cfg?.EnabledMethodsJson);
         var testMode = PlatformPayTestPage.Normalize(settings?.PlatformPayTestPageMode);
         return Ok(new ApiResponse<object>(true, new
         {
             platformCompanyId = platformId,
             platformCompanyName = platformName,
             providers = _providers.Where(p => p.ProviderCode != Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code)
-                .Select(p => new { code = p.ProviderCode, methods = p.Capabilities.Methods.Where(m => m != PaymentMethodKind.ManualSlip).Select(m => m.ToString()).ToList() })
+                .Select(p => new
+                {
+                    code = p.ProviderCode,
+                    methods = p.Capabilities.Methods.Where(m => m != PaymentMethodKind.ManualSlip).Select(m => m.ToString()).ToList(),
+                    // รอบ 227 (B-2): ป้ายไทย + หน้าชำระของ NextAcc ทำจบได้ไหม (เหตุผล) — เซิร์ฟเวอร์ตัดสิน (PlatformPayMethods)
+                    methodInfo = p.Capabilities.Methods.Where(m => m != PaymentMethodKind.ManualSlip).Select(m => new
+                    {
+                        code = m.ToString(), label = PlatformPayMethods.Label(m), payable = PlatformPayMethods.IsPayable(m),
+                        note = PlatformPayMethods.NotPayableReason(m),
+                    }).ToList(),
+                })
                 .ToList(),
             config = cfg == null ? null : new
             {
@@ -83,6 +133,8 @@ public class AdminPlatformGatewayController : ControllerBase
                 cfg.PlatformLiveConfirmedAt,   // ฝ่ายค้าน S1: ผ่านด่านแพลตฟอร์มแล้ว (ผู้เช่าเห็นปุ่มออนไลน์เฉพาะเมื่อมีค่านี้)
                 webhookUrl = $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.Path(cfg.ProviderCode, cfg.WebhookToken)}",
                 enabledMethods = ParseMethods(cfg.EnabledMethodsJson),
+                // รอบ 227: วิธีที่ผู้เช่าเห็นจริง (ติ๊ก ∩ รองรับ ∩ หน้าชำระทำจบได้) — ไม่ติ๊กเลย = ทุกวิธีที่ใช้ได้
+                effectiveMethods = provider == null ? new List<string>() : PlatformPayMethods.Effective(provider.Capabilities.Methods, configured),
                 providerNotice = _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode)?.PendingVerificationNotice,
                 liveWebhookMissing = cfg.Mode == PaymentProviderMode.Live && cfg.LastLiveWebhookAt == null,
             },
@@ -95,7 +147,119 @@ public class AdminPlatformGatewayController : ControllerBase
             offlineReason = status.OfflineReason,
             testPage = new { mode = testMode, modes = PlatformPayTestPage.Modes, url = "/platform-pay-test.html" },
             selfTestAmount = PaymentLiveGate.SelfTestAmount,
+            readiness = readiness.Select(r => new { r.Key, r.Ok, r.Blocking, r.Text }).ToList(),
         }));
+    }
+
+    /// <summary>รอบ 227 (PLATFORM_OMISE_AUDIT C-6): รายการรับชำระค่าบริการออนไลน์ล่าสุดของ NextAcc — มุมมองเดียวที่เทียบ "ผู้ให้บริการ ↔ ระบบ" ได้:
+    /// สถานะ · เลขอ้างอิงผู้ให้บริการ · ค่าธรรมเนียม · ผู้จ่าย · ต้นทาง (เลขรายการชำระ/ส่วนเสริม) · ใบเสร็จที่ออก · เข้ารอบโอนแล้วไหม · เงินเข้าแต่ต้นทางยังไม่บันทึก (⚠️) ·
+    /// อ่านอย่างเดียว (งานแก้ = หน้ารายการรับชำระออนไลน์ของบริษัทผู้ให้บริการ / ศูนย์บิลแอดมิน)</summary>
+    [HttpGet("intents")]
+    public async Task<ActionResult<ApiResponse<object>>> RecentIntents([FromQuery] int take = 50, CancellationToken ct = default)
+    {
+        if (await _platform.PlatformCompanyIdAsync(ct) is not Guid pid)
+            return Ok(new ApiResponse<object>(true, new { items = Array.Empty<object>() }));
+        take = Math.Clamp(take, 1, 200);
+        var rows = await _db.PaymentIntents.AsNoTracking()
+            // ชุดเดียวกับ PlatformRevenueSource.IsPlatformRevenue (เขียนเป็นนิพจน์ให้ EF แปลเป็น SQL ได้) + ทดลองจ่าย
+            .Where(i => i.CompanyId == pid && (i.SourceKind == PaymentSourceKind.SubscriptionPayment || i.SourceKind == PaymentSourceKind.AddOnPurchase
+                || i.SourceKind == PaymentSourceKind.GatewaySelfTest))
+            .OrderByDescending(i => i.CreatedAt).Take(take)
+            .Select(i => new
+            {
+                i.Id, i.CreatedAt, i.ConfirmedAt, i.SourceKind, i.SourceId, i.PayerCompanyId, i.Amount, i.FeeActual, i.Status, i.IsTestMode,
+                i.ProviderRef, i.MethodKind, i.FailureMessage, i.QrExpiresAt,
+                InSettlement = i.SettlementBatchId != null || i.SettlementJournalEntryId != null,
+            })
+            .ToListAsync(ct);
+        var payerIds = rows.Where(r => r.PayerCompanyId != null).Select(r => r.PayerCompanyId!.Value).Distinct().ToList();
+        var payers = await _db.Companies.AsNoTracking().IgnoreQueryFilters().Where(c => payerIds.Contains(c.Id))
+            .Select(c => new { c.Id, c.Name }).ToDictionaryAsync(c => c.Id, c => c.Name, ct);
+        var subIds = rows.Where(r => r.SourceKind == PaymentSourceKind.SubscriptionPayment).Select(r => r.SourceId).ToList();
+        var subs = await _db.SubscriptionPayments.AsNoTracking().IgnoreQueryFilters().Where(p => subIds.Contains(p.Id))
+            .Select(p => new { p.Id, p.PaymentNumber, p.ReceiptNumber, p.Status, p.PlatformDocumentId }).ToDictionaryAsync(p => p.Id, ct);
+        var addOnIds = rows.Where(r => r.SourceKind == PaymentSourceKind.AddOnPurchase).Select(r => r.SourceId).ToList();
+        var addOns = await _db.CompanyFeatures.AsNoTracking().IgnoreQueryFilters().Where(f => addOnIds.Contains(f.Id))
+            .Select(f => new { f.Id, f.FeatureCode, f.PaymentReceiptNumber, f.PaymentIntentId }).ToDictionaryAsync(f => f.Id, ct);
+        var redispatch = await _intents.RedispatchStatesAsync(pid, rows.Select(r => r.Id).ToList(), ct);
+        var items = rows.Select(r =>
+        {
+            subs.TryGetValue(r.SourceId, out var sp);
+            addOns.TryGetValue(r.SourceId, out var ao);
+            var receipt = sp?.ReceiptNumber ?? (ao != null && ao.PaymentIntentId == r.Id ? ao.PaymentReceiptNumber : null);
+            // ฝ่ายค้าน S3: เงินจริงเข้าแล้วแต่ไม่มีใบ ⇒ ติดธง + ปุ่มออกใบอีกครั้ง (ตัวตัดสินเดียว PlatformReceiptGap)
+            var receiptGap = PlatformReceiptGap.Reason(r.SourceKind, r.Status, PaymentIntentTestMode.Decide(r.IsTestMode, null),
+                receipt != null || sp?.PlatformDocumentId != null);
+            var unfulfilled = redispatch.TryGetValue(r.Id, out var st) && st == PaymentRedispatchState.Pending;
+            return new
+            {
+                id = r.Id, createdAt = r.CreatedAt, confirmedAt = r.ConfirmedAt,
+                kind = r.SourceKind.ToString(), kindLabel = PaymentIntentPolicy.SourceKindLabel(r.SourceKind),
+                payer = r.PayerCompanyId is Guid p && payers.TryGetValue(p, out var n) ? n : null,
+                reference = sp?.PaymentNumber ?? ao?.FeatureCode,
+                receiptNumber = receipt,
+                amount = r.Amount, fee = r.FeeActual,
+                status = r.Status.ToString(), statusLabel = PaymentIntentPolicy.StatusLabel(r.Status),
+                method = PlatformPayMethods.Label(r.MethodKind),
+                isTestMode = PaymentIntentTestMode.Decide(r.IsTestMode, null),
+                providerRef = r.ProviderRef, failureMessage = r.FailureMessage,
+                inSettlement = r.InSettlement,
+                // เงินเข้าแล้วแต่ต้นทางยังไม่บันทึก (ส่งต่อไม่สำเร็จ/ยอดไม่ตรง/จ่ายซ้อน) — ตัวตัดสินเดียวกับปุ่ม "ส่งต่อใหม่"
+                needsAttention = unfulfilled || receiptGap != null,
+                attentionReason = unfulfilled ? "เงินเข้าแล้วแต่ต้นทางยังไม่บันทึก — ส่งต่อใหม่ที่หน้ารายการรับชำระออนไลน์ของบริษัทผู้ให้บริการ" : receiptGap,
+                canReissueReceipt = !unfulfilled && receiptGap != null,
+            };
+        }).ToList();
+        return Ok(new ApiResponse<object>(true, new { items }));
+    }
+
+    public sealed record ReissueRequest(string? Reason);
+
+    /// <summary>ฝ่ายค้านรอบ 227 S3: "ออกใบเสร็จอีกครั้ง" ของรายการค่าบริการออนไลน์ที่เงินเข้าแล้วแต่ไม่มีใบ — เรียกตัวออกเอกสารตัวเดิม (idempotent ด้วยเลขอ้างอิงเดิม) ·
+    /// SystemAdmin (ทั้ง controller) · audit chain ทุกครั้ง · ไม่ขาด/ทดสอบ/ยังไม่สำเร็จ ⇒ 409</summary>
+    [HttpPost("intents/{intentId:guid}/reissue-receipt")]
+    public async Task<ActionResult<ApiResponse<object>>> ReissueReceipt(Guid intentId, [FromBody] ReissueRequest? req,
+        [FromServices] ISaasBillingDocumentService billing, [FromServices] IAddOnPurchaseService addons, CancellationToken ct)
+    {
+        if (await _platform.PlatformCompanyIdAsync(ct) is not Guid pid) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้ตั้งบริษัทผู้ให้บริการ"));
+        var i = await _db.PaymentIntents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == intentId && x.CompanyId == pid, ct);
+        if (i == null || i.PayerCompanyId is not Guid payer) return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการ"));
+        string? receipt = null;
+        Guid? platformDoc = null;
+        if (i.SourceKind == PaymentSourceKind.SubscriptionPayment)
+        {
+            var sp = await _db.SubscriptionPayments.AsNoTracking().Where(p => p.Id == i.SourceId && p.Subscription.CompanyId == payer)
+                .Select(p => new { p.ReceiptNumber, p.PlatformDocumentId }).FirstOrDefaultAsync(ct);
+            receipt = sp?.ReceiptNumber; platformDoc = sp?.PlatformDocumentId;
+        }
+        else if (i.SourceKind == PaymentSourceKind.AddOnPurchase)
+            receipt = await _db.CompanyFeatures.AsNoTracking().Where(f => f.Id == i.SourceId && f.CompanyId == payer && f.PaymentIntentId == i.Id)
+                .Select(f => f.PaymentReceiptNumber).FirstOrDefaultAsync(ct);
+        var gap = PlatformReceiptGap.Reason(i.SourceKind, i.Status, PaymentIntentTestMode.Decide(i.IsTestMode, null), receipt != null || platformDoc != null);
+        if (gap == null) return StatusCode(409, new ApiResponse<object>(false, null, "รายการนี้ไม่ต้องออกใบเสร็จเพิ่ม (มีใบแล้ว · โหมดทดสอบ · หรือยังไม่ได้รับเงิน)"));
+
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = pid, EntityType = nameof(PaymentIntent), EntityId = i.Id.ToString(), Action = AuditAction.Update,
+            UserEmail = User?.Identity?.Name,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = PlatformReceiptGap.AuditAction, kind = i.SourceKind.ToString(), i.SourceId, i.Amount, reason = req?.Reason?.Trim() }),
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(), Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+
+        if (i.SourceKind == PaymentSourceKind.SubscriptionPayment)
+        {
+            // เส้นเดิมของการอนุมัติ: ผูกใบแจ้งหนี้ ⇒ ตัดชำระใบเดิม + ใบเสร็จ · ไม่ผูก ⇒ ใบเสร็จขายเงินสด (ทั้งสองเส้น idempotent)
+            var linked = await _db.SubscriptionPayments.AsNoTracking().Where(p => p.Id == i.SourceId).Select(p => p.PlatformInvoiceDocumentId).FirstOrDefaultAsync(ct);
+            if (linked != null) await billing.SettlePlatformInvoiceAsync(i.SourceId);
+            else await billing.GenerateReceiptForApprovedPaymentAsync(i.SourceId);
+            receipt = await _db.SubscriptionPayments.AsNoTracking().Where(p => p.Id == i.SourceId).Select(p => p.ReceiptNumber).FirstOrDefaultAsync(ct);
+        }
+        else receipt = await addons.ReissueGatewayReceiptAsync(payer, i.SourceId, i.Id, ct);
+
+        return receipt == null
+            ? Ok(new ApiResponse<object>(false, null, "ยังออกใบไม่สำเร็จ — ดูสาเหตุในบันทึกตรวจสอบ/หมายเหตุบนใบร่างในบริษัทผู้ให้บริการ แล้วลองใหม่"))
+            : Ok(new ApiResponse<object>(true, new { receiptNumber = receipt }, $"ออกใบแล้ว: {receipt}"));
     }
 
     public sealed record SaveRequest(string ProviderCode, string? DisplayName, string? TestPublicKey, string? TestSecretKey,
@@ -107,6 +271,10 @@ public class AdminPlatformGatewayController : ControllerBase
     {
         if (_providers.All(p => p.ProviderCode != req.ProviderCode) || req.ProviderCode == Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code)
             return BadRequest(new ApiResponse<object>(false, null, "ไม่รู้จักผู้ให้บริการนี้"));
+        // รอบ 227 (B-3): ชื่อวิธีต้องเป็นวิธีที่ผู้ให้บริการรองรับ — เดิมเก็บสตริงอะไรก็ได้ (หน้าเว็บส่งผิด/เรียก API ตรง = ค่าที่ไม่มีผู้อ่าน)
+        var providerForSave = _providers.First(p => p.ProviderCode == req.ProviderCode);
+        if (req.EnabledMethods != null && PlatformPayMethods.Unknown(providerForSave.Capabilities.Methods, req.EnabledMethods) is { Count: > 0 } unknownMethods)
+            return BadRequest(new ApiResponse<object>(false, null, "ผู้ให้บริการนี้ไม่รองรับวิธีชำระ: " + string.Join(", ", unknownMethods)));
         if (await _platform.PlatformCompanyIdAsync(ct) is not Guid pid)
             return BadRequest(new ApiResponse<object>(false, null,
                 "ยังไม่ได้ตั้งบริษัทผู้ให้บริการ — ตั้งที่ ตั้งค่าเว็บไซต์ → ใบเสร็จค่าบริการ ก่อน (เงินค่าบริการลงสมุดของบริษัทนั้น)"));
@@ -118,6 +286,7 @@ public class AdminPlatformGatewayController : ControllerBase
             _db.PaymentProviderConfigs.Add(cfg);
         }
         cfg.WebhookToken ??= GatewayWebhookRoute.NewToken();
+        var before = new { cfg.DisplayName, methods = ParseMethods(cfg.EnabledMethodsJson), cfg.TestPublicKey, cfg.LivePublicKey, mode = cfg.Mode.ToString() };
         if (req.DisplayName != null) cfg.DisplayName = req.DisplayName.Trim();
         _configs.ApplyKeys(cfg, req.TestPublicKey, req.TestSecretKey, req.LivePublicKey, req.LiveSecretKey);
         if (req.EnabledMethods != null) cfg.EnabledMethodsJson = System.Text.Json.JsonSerializer.Serialize(req.EnabledMethods);
@@ -129,13 +298,15 @@ public class AdminPlatformGatewayController : ControllerBase
             EntityId = cfg.Id.ToString(),
             Action = created ? AuditAction.Create : AuditAction.Update,
             UserEmail = User?.Identity?.Name,
-            // ไม่บันทึกตัวคีย์ลับ — บันทึกแค่ว่าช่องไหนถูกเปลี่ยน
+            // ไม่บันทึกตัวคีย์ลับ — บันทึกแค่ว่าช่องไหนถูกเปลี่ยน · รอบ 227: ค่าก่อนแก้ของช่องที่ไม่ใช่ความลับ (ชื่อ · วิธีชำระ · คีย์สาธารณะ · โหมด — คีย์จริงที่ถูกแก้ถอยโหมดอัตโนมัติ)
+            OldValues = created ? null : System.Text.Json.JsonSerializer.Serialize(before),
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
                 action = "platform-gateway-save", provider = req.ProviderCode,
                 testPublicKeyChanged = req.TestPublicKey != null, testSecretChanged = !string.IsNullOrWhiteSpace(req.TestSecretKey),
                 livePublicKeyChanged = req.LivePublicKey != null, liveSecretChanged = !string.IsNullOrWhiteSpace(req.LiveSecretKey),
-                methods = req.EnabledMethods,
+                methods = req.EnabledMethods, displayName = cfg.DisplayName, mode = cfg.Mode.ToString(),
+                testPublicKey = cfg.TestPublicKey, livePublicKey = cfg.LivePublicKey,
             }),
             IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
             Timestamp = DateTime.UtcNow,
@@ -199,7 +370,14 @@ public class AdminPlatformGatewayController : ControllerBase
         var cfg = await ConfigOrNullAsync(ct);
         if (cfg == null) return NotFound(new ApiResponse<object>(false, null, "ยังไม่ได้ตั้งค่าช่องทางรับชำระของ NextAcc"));
         var purchase = await _legal.GetPurchasePolicyVersionAsync(ct);
-        await _configs.SetModeAsync(cfg, req.Mode, new PlatformLiveExtras(purchase.RefundPublished, req.TypedConfirmation), Actor(), ct);
+        // รอบ 227 (B-4 · ฝ่ายค้าน S4/S2): ด่านแพลตฟอร์มเพิ่ม "URL ของระบบตั้งแล้ว" + "มีวิธีชำระที่ทำจบได้" + ข้อที่ด่านใช้จากรายการตรวจความพร้อม
+        // (บัญชีพักผู้ให้บริการรับชำระ · ราคารวม VAT) — ข้อเท็จจริงชุดเดียวกับการ์ดบนหน้า (ReadinessFactsAsync)
+        var settings = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).FirstOrDefaultAsync(ct);
+        var payable = (await _platform.StatusAsync(ct)).Methods.Count;
+        var readinessMissing = PlatformGatewayReadiness.BlockingMissing(PlatformGatewayReadiness.Checks(
+            await ReadinessFactsAsync(settings, cfg.CompanyId, cfg, payable, ct)));
+        await _configs.SetModeAsync(cfg, req.Mode, new PlatformLiveExtras(purchase.RefundPublished, req.TypedConfirmation,
+            SystemBaseUrl.IsConfigured(settings?.AppBaseUrl, _config?["App:BaseUrl"]), payable, readinessMissing), Actor(), ct);
         return Ok(new ApiResponse<object>(true, null, req.Mode == PaymentProviderMode.Live
             ? "เปิดรับเงินค่าบริการจริงแล้ว — ผู้เช่าเห็นปุ่ม \"ชำระออนไลน์\" ทันที · ตรวจว่ามีการแจ้งเตือนโหมดจริงมาถึงหลังรายการแรก"
             : "กลับสู่โหมดทดสอบแล้ว — ผู้เช่ากลับไปใช้เส้นโอน + แนบสลิป"));

@@ -226,8 +226,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         }
     }
 
-    private static bool IsValidTaxId(string? taxId)
-        => !string.IsNullOrWhiteSpace(taxId) && taxId.Length == 13 && taxId.All(char.IsDigit);
+    /// <summary>ฝ่ายค้านรอบ 227 N3: ตัวตรวจเลขผู้เสียภาษีตัวเดียวของระบบ (13 หลัก + checksum mod-11 · กฎเหล็ก #2 A) — เดิมนับแค่ 13 หลัก</summary>
+    private static bool IsValidTaxId(string? taxId) => Accounting.Helpers.ThaiTaxId.IsValid(taxId);
 
     private static string StyleBlock() =>
         "<!DOCTYPE html><html lang='th'><head><meta charset='utf-8'/><style>" + @"
@@ -280,7 +280,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             var res = _issuer == null ? null : await _issuer.SettleInvoiceAsync(invoiceId, payment.Amount, payment.WithholdingTaxAmount,
                 payment.PaymentDate, reference,
                 $"รับชำระค่าบริการ NextAcc — {payment.PaymentNumber}"
-                    + (string.IsNullOrWhiteSpace(payment.TransferReference) ? "" : $" · อ้างอิงโอน {payment.TransferReference}"));
+                    + (string.IsNullOrWhiteSpace(payment.TransferReference) ? "" : $" · อ้างอิงโอน {payment.TransferReference}"),
+                subscriptionPaymentId: payment.Id);   // รอบ 227 (C-2): จ่ายผ่าน gateway ⇒ ขาเงินเข้า = บัญชีพักผู้ให้บริการรับชำระ
             string? problem = null, rule = null;
             if (res == null)
             {
@@ -638,22 +639,10 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
         var gross = payment.Amount;
         decimal subtotal, vat, grandTotal;
-        if (isTaxInvoice)
-        {
-            if (s?.PlatformPriceIncludesVat ?? true)
-            {
-                vat = Math.Round(gross * 7m / 107m, 2, MidpointRounding.AwayFromZero);
-                subtotal = gross - vat;
-                grandTotal = gross;
-            }
-            else
-            {
-                subtotal = gross;
-                vat = Math.Round(gross * 0.07m, 2, MidpointRounding.AwayFromZero);
-                grandTotal = gross + vat;
-            }
-        }
-        else { subtotal = gross; vat = 0m; grandTotal = gross; }
+        // ฝ่ายค้านรอบ 227 S2: ใบเสร็จของเงินที่รับแล้ว = เงินที่รับพอดี (รวม VAT เสมอ — ตัวแยกเดียวกับเส้นเอกสารจริง PlatformMoneyInAccount.SplitReceived) ·
+        // เดิมโหมด "ราคาไม่รวม VAT" ออกยอด = เงินที่รับ + VAT (สูงกว่าเงินที่ได้รับ)
+        (subtotal, vat) = Accounting.Helpers.PlatformMoneyInAccount.SplitReceived(gross, isTaxInvoice);
+        grandTotal = gross;
 
         var title = isTaxInvoice ? "ใบกำกับภาษี / ใบเสร็จรับเงิน" : "ใบเสร็จรับเงิน";
         var buyerBranch = string.IsNullOrWhiteSpace(buyer.BranchCode) ? "00000" : buyer.BranchCode!;

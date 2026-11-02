@@ -56,6 +56,12 @@ public class CreateBookingServiceRequest
     public decimal? DepositMinAmount { get; set; }
     public decimal? DepositMaxAmount { get; set; }
     public int? PaymentDeadlineMinutes { get; set; }
+    /// <summary>รอบ 226: จัดส่ง/รับเองของบริการ — "Inherit" = ตามค่าเว็บ · "Custom" = ใช้สามช่องถัดไป · <b>null = ไม่แตะทั้งชุด</b> (ผู้เรียก API เดิม)</summary>
+    public string? FulfillmentMode { get; set; }
+    public bool FulfillmentDeliveryEnabled { get; set; }
+    public bool FulfillmentPickupEnabled { get; set; }
+    /// <summary>"delivery"/"pickup"/null</summary>
+    public string? FulfillmentDefault { get; set; }
     /// <summary>เวลาทำการ + วันหยุด — <b>null = ไม่แตะตารางเวลาเดิม</b> (ผู้เรียก API เดิม) · ส่งมา = แทนที่ทั้งชุด</summary>
     public BookingScheduleDto? Schedule { get; set; }
 }
@@ -285,6 +291,12 @@ public class BookingServiceResponse
     public int? PaymentDeadlineMinutes { get; set; }
     public string? PaymentSummary { get; set; }
     public string? PaymentProblem { get; set; }
+    /// <summary>รอบ 226: "Inherit"/"Custom" + ค่าที่ตั้งบนบริการ (hydrate ฟอร์ม) · ผลที่มีจริง (<c>BookingFulfillment.Resolve</c>)</summary>
+    public string FulfillmentMode { get; set; } = "Inherit";
+    public bool? FulfillmentDeliveryEnabled { get; set; }
+    public bool? FulfillmentPickupEnabled { get; set; }
+    public string? FulfillmentDefault { get; set; }
+    public string? FulfillmentSummary { get; set; }
     public bool IsActive { get; set; }
     public int UpcomingBookingsCount { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -375,6 +387,15 @@ public class CreateBookingRequest
     /// <summary>รอบ 216 ฝ่ายค้าน S3: หน้าเว็บยืนยันว่าชื่อ/เบอร์/อีเมลมาจากโปรไฟล์ (ผู้ใช้ไม่ได้ลบ/แก้เอง) ⇒ เซิร์ฟเวอร์เติมช่องที่ว่างจากโปรไฟล์ได้ ·
     /// มีผลเฉพาะสมาชิกในโทเคนของเว็บนี้ (controller ตัดเป็น false สำหรับพนักงาน/แขก/ผู้เรียก API) · false = ไม่เติม (ช่องบังคับว่าง ⇒ ข้อความปกติ)</summary>
     public bool ContactFromProfile { get; set; }
+
+    // ── รอบ 226: จัดส่ง / รับเอง (Helpers/BookingFulfillment) — ค่าส่งคิดที่เซิร์ฟเวอร์ (ไม่มีช่องยอดจาก client) ──
+    /// <summary>"delivery"/"pickup" · ว่าง = วิธีเดียวที่เปิด/ค่าตั้งต้น · บริการไม่มีขั้นนี้ = ต้องว่าง</summary>
+    public string? FulfillmentMethod { get; set; }
+    public string? DeliveryAddress { get; set; }
+    public string? DeliveryProvince { get; set; }
+    public string? DeliveryPostalCode { get; set; }
+    /// <summary>อัตราค่าส่งที่ลูกค้าเลือก (เมื่อมีหลายอัตรา) — ตรวจกับตัวเลือกที่เซิร์ฟเวอร์คิดเอง</summary>
+    public Guid? DeliveryRateId { get; set; }
 }
 
 public class UpdateBookingStatusRequest
@@ -418,6 +439,18 @@ public class BookingResponse
     public decimal TotalAmount { get; set; }
     public decimal DepositAmount { get; set; }
     public decimal PaidAmount { get; set; }
+    /// <summary>รอบ 226: วิธีรับ ("delivery"/"pickup"/null) + ป้าย · ค่าจัดส่ง (แยกจาก TotalAmount = ค่าบริการ) · ยอดรวมที่ลูกค้าจ่าย</summary>
+    public string? FulfillmentMethod { get; set; }
+    public string? FulfillmentLabel { get; set; }
+    public decimal DeliveryFee { get; set; }
+    public decimal GrandTotal { get; set; }
+    public string? DeliveryAddress { get; set; }
+    public string? DeliveryProvince { get; set; }
+    public string? DeliveryPostalCode { get; set; }
+    public string? DeliveryRateName { get; set; }
+    /// <summary>บรรทัดสรุปวิธีรับ (ใบยืนยัน/หน้าพนักงาน) — <c>BookingFulfillment.SummaryLine</c> · รับเอง = ที่อยู่/เวลารับจากค่าตั้งเว็บ</summary>
+    public string? FulfillmentSummary { get; set; }
+    public string? PickupNote { get; set; }
     public string Currency { get; set; } = "THB";
     public BookingType BookingType { get; set; }
     public ErpBookingDocumentType? ErpDocumentType { get; set; }
@@ -631,6 +664,8 @@ public record IssueBookingTaxInvoiceRequest(DateTime? ReceivedDate);
 
 public class BookingListResponse
 {
+    /// <summary>รอบ 226: วิธีรับ (ป้าย) — ว่าง = การจองไม่มีขั้นจัดส่ง/รับเอง</summary>
+    public string? FulfillmentLabel { get; set; }
     public Guid Id { get; set; }
     /// <summary>R-45 มุมมองทุกไซต์ — เว็บเจ้าของแถว (ปุ่ม action ต้องยิงไปเว็บนี้)</summary>
     public Guid SiteId { get; set; }

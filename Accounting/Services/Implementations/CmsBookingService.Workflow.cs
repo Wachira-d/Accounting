@@ -273,7 +273,8 @@ public partial class CmsBookingService
     private async Task<BookingCompletionPlanDto?> CompletionPlanAsync(Guid companyId, Guid siteId, BookingResponse b)
     {
         if (b.Status is BookingStatus.Completed or BookingStatus.Cancelled or BookingStatus.NoShow or BookingStatus.Waitlisted) return null;
-        var due = Math.Max(0m, Math.Round(b.TotalAmount - b.PaidAmount, 2, MidpointRounding.AwayFromZero));
+        // รอบ 226: ยอดค้าง = ค่าบริการ + ค่าจัดส่ง − รับแล้ว (b.GrandTotal เติมโดย FillFulfillmentInfoAsync)
+        var due = Math.Max(0m, Math.Round(BookingFulfillment.GrandTotal(b.TotalAmount, b.DeliveryFee) - b.PaidAmount, 2, MidpointRounding.AwayFromZero));
         var plan = new BookingCompletionPlanDto
         {
             AmountDue = due,

@@ -148,6 +148,9 @@ public partial class PdpaService
             ["id"] = b.Id, ["bookingNumber"] = b.BookingNumber, ["bookingDate"] = b.BookingDate, ["status"] = b.Status.ToString(),
             ["guestName"] = b.GuestName, ["guestEmail"] = b.GuestEmail, ["guestPhone"] = b.GuestPhone,
             ["customerNotes"] = b.CustomerNotes, ["totalAmount"] = b.TotalAmount, ["erpDocumentId"] = b.ErpDocumentId,
+            // รอบ 226 (ฝ่ายค้าน ข้อ 6): ที่อยู่จัดส่งของการจอง = ข้อมูลส่วนบุคคล ⇒ อยู่ในคำขอเข้าถึง/โอนย้าย (ลบ = CmsPdpaErasure.AnonymizeBooking)
+            ["fulfillmentMethod"] = b.FulfillmentMethod, ["deliveryAddress"] = b.DeliveryAddress, ["deliveryProvince"] = b.DeliveryProvince,
+            ["deliveryPostalCode"] = b.DeliveryPostalCode, ["deliveryFee"] = b.DeliveryFee,
             ["lineLinks"] = LinesOf(CustomerLineLinkRule.KindBooking, b.Id),
         }).ToList();
         var leads = r.Leads.Select(l => new Dictionary<string, object?>

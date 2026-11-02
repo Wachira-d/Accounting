@@ -101,6 +101,9 @@ public class DeferredNotifyDispatcher
                         case DeferredNotifyPolicy.BookingCreated:
                             skipNote = await sp.GetRequiredService<ICmsBookingService>().DispatchCreatedNotifyAsync(row.CompanyId, row.SiteId, row.EntityId);
                             break;
+                        case DeferredNotifyPolicy.BookingPaidConfirmed:
+                            skipNote = await sp.GetRequiredService<ICmsBookingService>().DispatchPaidConfirmedNotifyAsync(row.CompanyId, row.SiteId, row.EntityId);
+                            break;
                         case DeferredNotifyPolicy.OrderCreated:
                             skipNote = await sp.GetRequiredService<ICmsCommerceService>().DispatchCreatedNotifyAsync(row.CompanyId, row.SiteId, row.EntityId);
                             break;
