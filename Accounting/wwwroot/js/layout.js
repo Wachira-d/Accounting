@@ -3951,3 +3951,8 @@ const Layout = {
     return true;
   },
 };
+
+// รอบ 224: `const Layout` ระดับสคริปต์ไม่กลายเป็น window.Layout ⇒ สคริปต์ร่วมที่เช็ก `window.Layout && …` (money-channel ·
+// booking-payment-admin · customer-notify · cms-site-context · ai-suggestion · documents) มองไม่เห็น Layout เลย —
+// dropdown "เติมจากบัญชี" ของเงินสดย่อยขึ้น "ยังไม่ได้เลือกบริษัท" ทั้งที่เลือกแล้ว · ผูกไว้ที่นี่ที่เดียว
+window.Layout = Layout;

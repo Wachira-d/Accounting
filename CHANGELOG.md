@@ -5991,3 +5991,5 @@ _รอบ 223 (2026-11-02) — การจองนัดหมาย: ขั�
 ที่มาของยอด (`BookingPaymentPolicy.AmountBasis` · `AmountSource` — ช่องมัดจำของบริการทับยอดเว็บ บอกชัด) · ช่องยอดกรอก 0 = ไม่ได้ตั้ง ·
 คำเตือนช่องทางที่ติ๊กแต่ลูกค้าไม่เห็น (`BookingPaymentChannels.Warnings`) · หลังบ้านเห็นโหมด/ยอดค้าง/กำหนดชำระ + ดูสลิปที่ยืนยันแล้ว ·
 เทสต์ `BookingPaymentStepTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+- รอบ 224 — `window.Layout = Layout` ใน layout.js: `const Layout` ไม่อยู่บน window ⇒ dropdown เติมเงินสดย่อยขึ้น "ยังไม่ได้เลือกบริษัท" + booking-payment-admin ไม่ escape · checker `tools/window_global_check.py`
