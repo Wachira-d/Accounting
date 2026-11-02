@@ -253,11 +253,13 @@ public class PettyCashReconciliationDbTests
     }
 
     /// <summary>ที่เก็บไฟล์แนบกลางตัวจริง (FileAttachmentService) ชี้โฟลเดอร์ชั่วคราว — แถว FileAttachments อยู่ในธุรกรรมเดียวกับรายการ</summary>
-    private static FileAttachmentService Files(Accounting.Data.AccountingDbContext db) => new(db, NullLogger<FileAttachmentService>.Instance,
-        new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        {
-            ["FileStorage:BasePath"] = Path.Combine(Path.GetTempPath(), "petty-evidence-dbtest"),
-        }).Build(), new NullErrorLog());
+    private static FileAttachmentService Files(Accounting.Data.AccountingDbContext db)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "petty-evidence-dbtest");
+        return new(db, NullLogger<FileAttachmentService>.Instance, new NullErrorLog(),
+            new Accounting.Services.Storage.LocalDiskFileStorage(new Accounting.Services.Storage.FileStorageLocator(
+                Path.Combine(root, "uploads"), Path.Combine(root, "wwwroot"), root, root)));
+    }
 
     /// <summary>PNG 1×1 จริง (ไบต์ขึ้นต้น 89 50 4E 47) — ผ่าน <see cref="PettyCashEvidence.Check"/></summary>
     private static readonly byte[] Png = Convert.FromBase64String(
