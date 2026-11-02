@@ -145,7 +145,9 @@ public static class QuotaAddOnPricing
 
     /// <summary>เดือนเดียวแบบกำหนดจำนวนวัน (ไม่ใช่ "ถึงสิ้นเดือนไทย") — ดูจากช่วงที่คิดไว้ (ไม่ต้องมีคอลัมน์เพิ่ม)</summary>
     public static bool IsFixedDays(QuotaAddOnMode mode, DateTime quotedStartUtc, DateTime? periodEndUtc)
-        => mode == QuotaAddOnMode.OneOffMonth && periodEndUtc is DateTime e && e != NextThaiMonthStartUtc(quotedStartUtc);
+        // เทียบด้วยค่าคลาดเคลื่อน (ค่าที่อ่านกลับจาก PostgreSQL ถูกตัดเหลือไมโครวินาที · Kind หาย) — ไม่ใช้ == ตรง ๆ
+        => mode == QuotaAddOnMode.OneOffMonth && periodEndUtc is DateTime e
+           && Math.Abs((e - NextThaiMonthStartUtc(quotedStartUtc)).TotalSeconds) > 1;
 
     /// <summary>เงินเข้าช้าสำหรับ "เดือนเดียวแบบกำหนดวัน" — ช่วงสิทธิ์เริ่มวันจ่ายด้วยความยาวเดิม (ราคาเดียวกัน · ลูกค้าไม่เสียวัน) · แบบอื่นคืน null (ตัดสินด้วย <see cref="StaleCheck"/>)</summary>
     public static DateTime? LatePaymentEnd(QuotaAddOnMode mode, bool fixedDays, DateTime quotedStartUtc, DateTime? periodEndUtc, DateTime paidAtUtc)

@@ -180,7 +180,9 @@ public class QuotaAddOnPaymentDbTests
         var renewed = await db.CompanyQuotaAddOns.AsNoTracking().SingleAsync(x => x.RenewedFromId == co.Id);
         Assert.Equal(2, renewed.Units);
         Assert.Equal(3980m, renewed.AmountDue);
-        Assert.Equal(co.PeriodEndUtc, renewed.PeriodStartUtc);
+        // PostgreSQL เก็บความละเอียดไมโครวินาที (และไม่คง DateTimeKind) ⇒ เทียบด้วยค่าคลาดเคลื่อน < 1 ms ไม่ใช่เท่ากันเป๊ะ
+        Assert.True(Math.Abs((co.PeriodEndUtc!.Value - renewed.PeriodStartUtc).TotalMilliseconds) < 1,
+            $"รอบใหม่ต้องเริ่มที่วันสิ้นสุดรอบเดิม: {co.PeriodEndUtc:O} vs {renewed.PeriodStartUtc:O}");
 
         // S8: เพิกถอน ⇒ ไม่นับในเพดานทันที · แถวยังอยู่ (ไม่ลบข้อมูล) · ต้องมีเหตุผล
         await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).RevokeAsync(cid, a.Id, "", "admin"));
