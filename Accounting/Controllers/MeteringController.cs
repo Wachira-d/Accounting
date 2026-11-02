@@ -318,7 +318,7 @@ public class MeteringController : ControllerBase
     public async Task<ActionResult<ApiResponse<DocumentQuotaStatus>>> GetQuota(Guid companyId, CancellationToken ct)
         => Ok(new ApiResponse<DocumentQuotaStatus>(true, await _quota.GetDocumentQuotaAsync(companyId, ct)));
 
-    /// <summary>ฝ่ายค้านรอบ 213 S4: <c>ExpectedPackSize/ExpectedPackPrice</c> = ข้อเสนอที่ผู้ซื้อเห็น (ใช้กับ notify.topup — ไม่ตรงของจริง ⇒ 409) · documents.topup ไม่อ่าน</summary>
+    /// <summary>ฝ่ายค้านรอบ 213 S4: <c>ExpectedPackSize/ExpectedPackPrice</c> = ข้อเสนอที่ผู้ซื้อเห็น (ไม่ตรงของจริง ⇒ 409) · รอบ 229: ใช้กับ documents.topup ด้วย</summary>
     public record TopUpRequest(int Packs = 1, int? ExpectedPackSize = null, decimal? ExpectedPackPrice = null);
 
     /// <summary>header <c>Idempotency-Key</c> ของคำขอซื้อ (null = ไม่ได้ส่ง · ยาวเกิน 200 ตัดทิ้ง — ใช้แค่ hash)</summary>
@@ -339,7 +339,17 @@ public class MeteringController : ControllerBase
 
         var actor = User.Identity?.Name ?? "unknown";
         // ฝ่ายค้านรอบ 212 S2: header Idempotency-Key — กดซ้ำ/ส่งซ้ำด้วยคีย์เดิม = คำขอเดียว (คิดเงินครั้งเดียว · ได้ผลเดิม)
-        var status = await _quota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader());
+        // รอบ 229 (QUOTA_ADDON แพ็ก 0(ข)): ข้อเสนอที่เห็น (ขนาด/ราคาแพ็ก) ต้องตรงของจริง — ไม่ตรง ⇒ 409 + สถานะใหม่ (ยังไม่คิดเงิน)
+        DocumentQuotaStatus status;
+        try
+        {
+            status = await _quota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader(),
+                req.ExpectedPackSize, req.ExpectedPackPrice);
+        }
+        catch (DocumentTopUpOfferChangedException ex)
+        {
+            return StatusCode(409, new ApiResponse<DocumentQuotaStatus>(false, await _quota.GetDocumentQuotaAsync(companyId, ct), ex.Message));
+        }
         var docs = req.Packs * Models.Constants.AddOnCodes.DocumentsPerTopUpPack;
         return Ok(new ApiResponse<DocumentQuotaStatus>(true, status,
             $"เพิ่มโควตา {docs} ฉบับแล้ว — ใช้ได้ถึง {status.BonusExpiresAt?.AddHours(7):dd/MM/yyyy}"));

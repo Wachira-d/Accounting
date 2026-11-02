@@ -79,6 +79,23 @@ public static class PlatformPaymentAttention
         return n;
     }
 
+    /// <summary>รอบ 228 (§5.4): กระดิ่งถึงผู้ดูแลระบบแพลตฟอร์มเรื่องรายการชำระออนไลน์ (ข้อพิพาท/chargeback) — ผู้รับชุดเดียวกับ <see cref="NotifyAdminsAsync"/> ·
+    /// ลิงก์ไปหน้ารายการรับชำระค่าบริการของแอดมิน</summary>
+    public static async Task<int> NotifyAdminsAboutIntentAsync(AccountingDbContext db, Services.Interfaces.INotificationService? notifications,
+        string title, string message, Guid intentId, string url, CancellationToken ct = default)
+    {
+        if (notifications == null) return 0;
+        var platformId = await db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.PlatformCompanyId).FirstOrDefaultAsync(ct);
+        if (platformId is not Guid pid) return 0;
+        var n = 0;
+        foreach (var uid in await PlatformAdminUserIdsAsync(db, pid, ct))
+        {
+            await notifications.SendAsync(uid, pid, NotificationType.SubscriptionPaymentPending, title, message, url, nameof(PaymentIntent), intentId);
+            n++;
+        }
+        return n;
+    }
+
     /// <summary>ผู้รับกระดิ่ง: ผู้ดูแลระบบแพลตฟอร์มที่เป็นสมาชิกบริษัทผู้ให้บริการ · ไม่มี = รายการว่าง (ยังมีหน้าแอดมิน + audit)</summary>
     private static async Task<List<Guid>> PlatformAdminUserIdsAsync(AccountingDbContext db, Guid platformCompanyId, CancellationToken ct = default)
         => await db.CompanyUsers.AsNoTracking()

@@ -55,4 +55,84 @@ public class PettyCashFundGlRuleTests
         Assert.NotNull(PettyCashEvidence.Check(System.Text.Encoding.UTF8.GetBytes("a,b,c\n1,2,3\n"), "slip.csv").Error);   // csv ผ่านที่เก็บกลาง แต่ไม่ใช่หลักฐานเงินสดย่อย
         Assert.Equal("หลักฐานเงินสดย่อย.png", PettyCashEvidence.DisplayName(null, ".png"));
     }
+
+    // ══ ส่วน D (2026-11-02 รอบ 2): ปิดกองทุน · รายการค้างจากใบที่ถูกลบ/ยกเลิก ══
+
+    [Theory]
+    [InlineData("Replenishment", 500, 500)]
+    [InlineData("Disbursement", 120, -120)]
+    [InlineData("Return", 380, -380)]
+    [InlineData("GlOnly", 40, 0)]
+    public void ผลต่อยอดกองทุน_ตัวเดียวของระบบ(string type, decimal amount, decimal effect)
+        => Assert.Equal(effect, PettyCashFundGlRule.FundEffect(type, amount));
+
+    [Fact]
+    public void ผลต่อยอดกองทุน_ชนิดไม่รู้จัก_ไม่เดา()
+    {
+        Assert.Null(PettyCashFundGlRule.FundEffect("Adjustment", 10m));
+        Assert.Null(PettyCashFundGlRule.FundEffect(null, 10m));
+    }
+
+    [Fact]
+    public void สถานะ_รายการค้างจากใบที่หายชนะทุกอย่าง_ทิศตรงข้ามไม่มีค้างยังเป็นสถานะเดิม()
+    {
+        Assert.Equal(PettyCashGlReconStatus.OrphanedFundEntries, PettyCashFundGlRule.Classify(100m, 300m, 2, orphanedEntries: 1));
+        Assert.Equal(PettyCashGlReconStatus.Difference, PettyCashFundGlRule.Classify(100m, 300m, 0, orphanedEntries: 0));
+        Assert.Equal(PettyCashGlReconStatus.Matched, PettyCashFundGlRule.Classify(300m, 300m, 0));
+        Assert.Contains("ย้อนผลต่อกองทุน", PettyCashFundGlRule.StatusLabel(PettyCashGlReconStatus.OrphanedFundEntries));
+    }
+
+    [Fact]
+    public void ปิดกองทุน_ไม่มีค้างปิดได้_มีค้างบอกจำนวนและทางไปต่อ_ติ๊กรับทราบปิดได้()
+    {
+        Assert.Null(PettyCashFundGlRule.CloseBlocker(0, 0, 0, 0m, acknowledged: false));
+        var msg = PettyCashFundGlRule.CloseBlocker(2, 1, 0, 50m, acknowledged: false);
+        Assert.NotNull(msg);
+        Assert.Contains("2 ใบ", msg);
+        Assert.Contains("1 รายการ", msg);
+        Assert.Contains("50.00", msg);
+        Assert.Contains("รับทราบรายการค้าง", msg);     // ชื่อช่องติ๊กบนหน้าจอ = ทางไปต่อ
+        Assert.Null(PettyCashFundGlRule.CloseBlocker(2, 1, 0, 50m, acknowledged: true));   // แถวค้างของกองทุนอื่นบนผังร่วม = รับทราบได้
+        Assert.NotNull(PettyCashFundGlRule.CloseBlocker(0, 0, 0, -0.01m, acknowledged: false));   // ผลต่างสตางค์เดียวก็นับ
+    }
+
+    [Fact]
+    public void ปิดกองทุน_แถวค้างของกองทุนนี้เอง_รับทราบแทนไม่ได้_ต้องย้อนผลก่อน()
+    {
+        var msg = PettyCashFundGlRule.CloseBlocker(0, 1, 1, 200m, acknowledged: true);
+        Assert.NotNull(msg);
+        Assert.Contains("ย้อนผลต่อกองทุน", msg);
+        Assert.Contains("รับทราบแทนไม่ได้", msg);
+        Assert.NotNull(PettyCashFundGlRule.CloseBlocker(0, 1, 1, 200m, acknowledged: false));
+    }
+
+    [Fact]
+    public void สาเหตุรายการค้าง_แยกลบ_ยกเลิก_ร่าง_ไม่พบ()
+    {
+        Assert.Contains("ถูกลบ", PettyCashFundGlRule.OrphanReason(true, true, "Posted"));
+        Assert.Contains("ยกเลิก", PettyCashFundGlRule.OrphanReason(true, false, "Voided"));
+        Assert.Contains("แบบร่าง", PettyCashFundGlRule.OrphanReason(true, false, "Draft"));
+        Assert.Contains("ไม่พบ", PettyCashFundGlRule.OrphanReason(false, false, null));
+    }
+
+    [Fact]
+    public void คืนเงินปิดกองทุน_เดบิตบัญชีรับคืน_เครดิตผังกองทุน_ไม่เลือกบัญชีหรือผังเดียวกันปฏิเสธ()
+    {
+        var fund = Guid.NewGuid(); var bank = Guid.NewGuid();
+        var p = PettyCashJePlan.ForReturn(fund, bank, 380m);
+        Assert.True(p.Ok);
+        Assert.Equal(bank, p.DebitAccountId);
+        Assert.Equal(fund, p.CreditAccountId);
+        var none = PettyCashJePlan.ForReturn(fund, null, 380m);
+        Assert.False(none.Ok);
+        Assert.Contains("คืนเงินเข้าบัญชี", none.Error);
+        Assert.False(PettyCashJePlan.ForReturn(fund, fund, 380m).Ok);
+        Assert.False(PettyCashJePlan.ForReturn(fund, bank, 0m).Ok);
+        Assert.Equal(PettyCashJePlan.RuleNoFundAccount, PettyCashJePlan.ForReturn(null, bank, 1m).RuleCode);
+        // คืนเข้าผังของกองทุนเงินสดย่อยอื่น = ปฏิเสธ (กองทุนปลายทางไม่รู้ยอด) · ทิศตรงข้าม: ธนาคาร (ไม่ใช่ผังกองทุน) ผ่าน
+        var toFund = PettyCashJePlan.ForReturn(fund, bank, 380m, targetIsPettyFundAccount: true);
+        Assert.False(toFund.Ok);
+        Assert.Contains("เติมเงิน", toFund.Error);
+        Assert.True(PettyCashJePlan.ForReturn(fund, bank, 380m, targetIsPettyFundAccount: false).Ok);
+    }
 }

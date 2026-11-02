@@ -81,7 +81,7 @@
               <b>คีย์สาธารณะ (ใช้งานจริง)</b><input id="gLp" value="${e(c ? c.livePublicKey || '' : '')}">
               <b>คีย์ลับ (ใช้งานจริง)</b><input id="gLs" type="password" autocomplete="off" placeholder="${c && c.liveSecretHint ? 'บันทึกไว้แล้ว (' + e(c.liveSecretHint) + ') — เว้นว่าง = ไม่เปลี่ยน' : ''}">
               <b>วิธีชำระที่เปิด</b><div>${methodBoxes || '<span class="muted">—</span>'}
-                <div class="muted">ไม่ติ๊กเลย = ทุกวิธีที่ใช้ได้ · ผู้เช่าเห็นตอนนี้: <b>${e(c && c.effectiveMethods && c.effectiveMethods.length ? c.effectiveMethods.join(', ') : '—')}</b></div></div>
+                <div class="muted">ไม่ติ๊กเลย = ทุกวิธีที่ใช้ได้ · ผู้เช่าเห็นตอนนี้: <b>${e(c && c.effectiveMethods && c.effectiveMethods.length ? c.effectiveMethods.join(', ') : '—')}</b>${c && c.cardNote ? `<div class="bad">บัตร: ${e(c.cardNote)}</div>` : ''}</div></div>
             </div>
             <div class="muted" style="margin-top:6px">คีย์ลับเข้ารหัสก่อนเก็บ และไม่ถูกส่งกลับมาที่หน้านี้ (แสดงแค่ 4 ตัวท้าย) · แก้คีย์ใด = ต้องทดสอบใหม่ก่อนเปิดรับเงินจริง</div>
             <div class="row"><button class="admin-btn admin-btn-primary" onclick="Page.save()">บันทึก</button></div>
@@ -154,12 +154,22 @@
               <td>${this.dt(i.createdAt)}</td><td>${e(i.kindLabel)}${i.isTestMode ? ' <span class="muted">(ทดสอบ)</span>' : ''}</td>
               <td>${e(i.payer || '—')}</td><td>${e(i.reference || '—')}</td><td>${e(i.method)}</td>
               <td style="text-align:right">${money(i.amount)}</td><td style="text-align:right">${money(i.fee)}</td>
-              <td>${i.needsAttention ? '⚠️ ' : ''}${e(i.statusLabel)}${i.failureMessage ? `<div class="muted">${e(i.failureMessage)}</div>` : ''}${i.attentionReason ? `<div class="bad">${e(i.attentionReason)}</div>` : ''}</td>
+              <td>${i.needsAttention ? '⚠️ ' : ''}${e(i.statusLabel)}${i.failureMessage ? `<div class="muted">${e(i.failureMessage)}</div>` : ''}${i.attentionReason ? `<div class="bad">${e(i.attentionReason)}</div>` : ''}${i.dispute && !i.attentionReason ? `<div class="muted">${e(i.dispute.label)}</div>` : ''}${i.dispute && i.dispute.amount != null ? `<div class="muted">ยอดโต้แย้ง ${money(i.dispute.amount)}${i.dispute.reason ? ' · ' + e(i.dispute.reason) : ''}</div>` : ''}${i.refundedAmount > 0 ? `<div class="muted">คืนแล้ว ${money(i.refundedAmount)}</div>` : ''}</td>
               <td><code>${e(i.providerRef || '—')}</code></td>
-              <td>${e(i.receiptNumber || '—')}${i.canReissueReceipt ? `<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-reissue="${e(i.id)}">ออกใบเสร็จอีกครั้ง</button></div>` : ''}</td>
+              <td>${e(i.receiptNumber || '—')}${i.canReissueReceipt ? `<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-reissue="${e(i.id)}">ออกใบเสร็จอีกครั้ง</button></div>` : ''}${i.canReissueCreditNote ? `<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-reissue-cn="${e(i.id)}">ออกใบลดหนี้อีกครั้ง</button></div>` : ''}${i.canAcknowledgeDispute ? `<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-ack-dispute="${e(i.id)}">รับทราบข้อพิพาท</button></div>` : ''}</td>
               <td>${i.inSettlement ? '✓' : '—'}</td></tr>`).join('')}</tbody></table>`;
           box.querySelectorAll('button[data-reissue]').forEach(b => b.addEventListener('click', () => this.reissue(b.dataset.reissue)));
+          box.querySelectorAll('button[data-reissue-cn]').forEach(b => b.addEventListener('click', () => this.intentAction(b.dataset.reissueCn, 'reissue-credit-note', 'หมายเหตุการออกใบลดหนี้อีกครั้ง (บันทึกตรวจสอบ)')));
+          box.querySelectorAll('button[data-ack-dispute]').forEach(b => b.addEventListener('click', () => this.intentAction(b.dataset.ackDispute, 'dispute/acknowledge', 'บันทึกสิ่งที่ทำกับข้อพิพาท (เช่น ส่งหลักฐานแล้ว)')));
         } catch (err) { box.innerHTML = `<div class="bad">${e(err.message)}</div>`; }
+      },
+      // รอบ 228 ฝ่ายค้าน S2/S5: ออกใบลดหนี้อีกครั้ง · รับทราบข้อพิพาท — ผล/ข้อความจากเซิร์ฟเวอร์ (audit ที่เซิร์ฟเวอร์)
+      async intentAction(id, path, ask) {
+        const reason = prompt(ask, '');
+        if (reason === null) return;
+        try { const res = await AdminAPI.post(`/platform-gateway/intents/${encodeURIComponent(id)}/${path}`, { reason }); alert(res.message || 'บันทึกแล้ว'); }
+        catch (err) { alert(err.message); }
+        this.loadIntents();
       },
       async reissue(id) {
         const reason = prompt('เหตุผลที่ออกใบเสร็จอีกครั้ง (บันทึกตรวจสอบ)', 'เงินเข้าแล้วแต่ยังไม่มีใบเสร็จ');

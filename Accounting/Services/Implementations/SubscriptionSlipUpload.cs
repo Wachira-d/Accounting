@@ -9,6 +9,8 @@ namespace Accounting.Services.Implementations;
 /// <para>ที่เก็บไฟล์ = <c>wwwroot/uploads/slips</c> เดิม แต่<b>ไม่เสิร์ฟตรงแล้ว</b> (ฝ่ายค้านรอบ 219 เฟส 2 S9 — ถอดจาก publicUploadPrefixes ·
 /// เปิดผ่าน endpoint ที่ตรวจสิทธิ์ด้วย <see cref="OpenStored"/> เท่านั้น · ไฟล์เดิมอยู่ที่เดิม จึงไม่ต้องย้ายไฟล์) — การย้ายไปที่เก็บไฟล์กลาง (กฎ #4 D)
 /// ยังเป็นงานแยก (ต้องย้ายไฟล์เดิม + ตัวอัปโหลดของลิงก์ชำระไม่มีผู้ใช้ให้ผูก FK ผู้อัปโหลด)</para>
+/// <para>ทีม FS 2026-11-02: ไบต์ของสลิปอยู่ใน<b>ที่เก็บกลาง</b> (<see cref="Accounting.Services.Storage.IFileStorage"/> · Local/S3) ที่ตำแหน่งเดิม —
+/// เขียนผ่าน <c>IImageProcessingService</c> · อ่าน/ลบ/เสิร์ฟผ่านที่เก็บตัวเดียวกัน (<see cref="StoredSlip.Storage"/> · <see cref="ServeAsync"/>) ไม่แตะดิสก์ตรง</para>
 /// </summary>
 public static class SubscriptionSlipUpload
 {
@@ -25,7 +27,8 @@ public static class SubscriptionSlipUpload
     }
 
     /// <summary>ไฟล์สลิปที่เก็บแล้ว (ยังไม่ผูกรายการ)</summary>
-    public sealed record StoredSlip(string FileName, string OriginalFileName, string ContentType, long Size, string StoragePath, string AbsolutePath);
+    public sealed record StoredSlip(string FileName, string OriginalFileName, string ContentType, long Size, string StoragePath, string AbsolutePath,
+        Accounting.Services.Storage.IFileStorage? Storage = null);
 
     /// <summary>โฟลเดอร์เก็บสลิป — อยู่ใต้ wwwroot แต่<b>ไม่เสิร์ฟตรง</b> (ไม่อยู่ใน publicUploadPrefixes ของ Program.cs · ฝ่ายค้าน S9)</summary>
     public static string SlipDirectory(IWebHostEnvironment env)
@@ -39,14 +42,15 @@ public static class SubscriptionSlipUpload
         var processed = await images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, dir, "/uploads/slips", ImageProfile.Slip);
         var fileName = Path.GetFileName(processed.AbsolutePath);
         return new StoredSlip(fileName, file.FileName, file.ContentType, processed.FinalBytes > 0 ? processed.FinalBytes : file.Length,
-            Path.Combine("uploads", "slips", fileName), Path.Combine(dir, fileName));
+            Path.Combine("uploads", "slips", fileName), Path.Combine(dir, fileName), images.Storage);
     }
 
     /// <summary>ฝ่ายค้านรอบสุดท้าย 5: ลบไฟล์ที่เก็บไว้เมื่อสร้างรายการไม่สำเร็จ (ไม่ทิ้งไฟล์กำพร้าที่มี PII) — ลบไม่ได้ = ปล่อย (ไม่กลบ error เดิมของผู้เรียก)</summary>
     public static void DeleteStored(StoredSlip slip)
     {
-        try { if (File.Exists(slip.AbsolutePath)) File.Delete(slip.AbsolutePath); }
-        catch (IOException) { /* ไฟล์ถูกล็อก — งานเก็บกวาดภายหลัง · error เดิมของผู้เรียกสำคัญกว่า */ }
+        // sync เพราะผู้เรียกทุกรายอยู่ใน catch { …; throw; } — รอการลบจบก่อนโยน error เดิมต่อ
+        try { slip.Storage?.DeleteAsync(slip.AbsolutePath).GetAwaiter().GetResult(); }
+        catch (IOException) { /* ไฟล์ถูกล็อก/ที่เก็บไม่ตอบ (FileStorageException) — งานเก็บกวาดภายหลัง · error เดิมของผู้เรียกสำคัญกว่า */ }
         catch (UnauthorizedAccessException) { /* เช่นเดียวกัน */ }
     }
 
@@ -60,8 +64,8 @@ public static class SubscriptionSlipUpload
         {
             try
             {
-                if (File.Exists(slip.AbsolutePath))
-                    await slipOcr.ParseAndStoreAsync(paymentId, await File.ReadAllBytesAsync(slip.AbsolutePath), slip.ContentType);
+                if (slip.Storage != null && await slip.Storage.ReadAllBytesAsync(slip.AbsolutePath) is { } slipBytes)
+                    await slipOcr.ParseAndStoreAsync(paymentId, slipBytes, slip.ContentType);
             }
             catch (Exception ex) { logger?.LogWarning(ex, "อ่านสลิปค่าบริการ (advisory) ไม่สำเร็จ — payment {PaymentId}", paymentId); }
         }
@@ -74,15 +78,15 @@ public static class SubscriptionSlipUpload
         ILogger? logger = null)
         => await AttachAsync(await StoreAsync(file, images, env), paymentId, actor, subs, slipOcr, logger);
 
-    /// <summary>ฝ่ายค้าน S9: เปิดไฟล์สลิปที่เก็บไว้ (ชื่อไฟล์ หรือ URL เดิม "/uploads/slips/x") — เอาเฉพาะชื่อไฟล์ (กัน path traversal) ·
-    /// null = ไม่มีไฟล์ · ผู้เรียกต้องตรวจสิทธิ์ก่อนเสมอ</summary>
+    /// <summary>ฝ่ายค้าน S9: ตำแหน่งไฟล์สลิปที่เก็บไว้ (ชื่อไฟล์ หรือ URL เดิม "/uploads/slips/x") — เอาเฉพาะชื่อไฟล์ (กัน path traversal) ·
+    /// null = ชื่อใช้ไม่ได้ · <b>ไม่ตรวจว่าไฟล์มีจริง</b> (ทีม FS 2026-11-02 — ไฟล์อาจอยู่บน object storage) ⇒ เสิร์ฟด้วย <see cref="ServeAsync"/>
+    /// ซึ่งคืน null เมื่อไม่มีไฟล์ · ผู้เรียกต้องตรวจสิทธิ์ก่อนเสมอ</summary>
     public static (string Path, string ContentType)? OpenStored(IWebHostEnvironment env, string? fileNameOrUrl)
     {
         if (string.IsNullOrWhiteSpace(fileNameOrUrl)) return null;
         var name = Path.GetFileName(fileNameOrUrl.Replace('\\', '/').Split('?')[0]);
         if (string.IsNullOrWhiteSpace(name) || name.StartsWith('.')) return null;
         var full = Path.Combine(SlipDirectory(env), name);
-        if (!File.Exists(full)) return null;
         var ext = Path.GetExtension(name).ToLowerInvariant();
         var type = ext switch
         {
@@ -91,4 +95,9 @@ public static class SubscriptionSlipUpload
         };
         return (full, type);
     }
+
+    /// <summary>เสิร์ฟสลิป/หนังสือรับรองที่เก็บไว้จากที่เก็บกลาง (Local = PhysicalFile ตามเดิม · S3 = สตรีม) — null = ไม่มีไฟล์ (ผู้เรียกตอบ 404 ของตัวเอง)</summary>
+    public static Task<Microsoft.AspNetCore.Mvc.IActionResult?> ServeAsync(Accounting.Services.Storage.IFileStorage storage,
+        (string Path, string ContentType) file, string? downloadName)
+        => Accounting.Services.Storage.FileStorageResults.FileResultAsync(storage, file.Path, file.ContentType, downloadName);
 }

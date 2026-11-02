@@ -220,4 +220,15 @@ public static class DocumentQuotaPolicy
         if (day <= dayOfMonth) return dayOfMonth;      // เต็มแล้ว/กำลังจะเต็มวันนี้
         return day > daysInMonth ? null : day;         // ไม่เต็มภายในเดือนนี้
     }
+
+    /// <summary>รอบ 229 (QUOTA_ADDON แพ็ก 0(ข) · D-1): ข้อเสนอแพ็กเอกสารที่ผู้ซื้อเห็นยังตรงของจริงไหม (ลอก <c>NotifyQuotaPolicy.TopUpOfferChanged</c>) ·
+    /// null = ตรง (หรือไม่ได้ส่งมา — ผู้เรียกเดิม) · ข้อความ = เปลี่ยนแล้ว (409 · ยังไม่คิดเงิน)</summary>
+    public static string? TopUpOfferChanged(int? expectedPackSize, decimal? expectedPrice, int packSize, decimal? currentPrice)
+    {
+        if (expectedPackSize is int s && s != packSize)
+            return $"ขนาดแพ็กเปลี่ยนเป็น {packSize:N0} ฉบับแล้ว — กรุณาตรวจรายละเอียดแล้วยืนยันอีกครั้ง (ยังไม่ได้คิดเงิน)";
+        if (expectedPrice is decimal p && p != (currentPrice ?? 0m))
+            return $"ราคาแพ็กเปลี่ยนเป็น {(currentPrice ?? 0m).ToString("N2", System.Globalization.CultureInfo.InvariantCulture)} บาทแล้ว — กรุณาตรวจรายละเอียดแล้วยืนยันอีกครั้ง (ยังไม่ได้คิดเงิน)";
+        return null;
+    }
 }

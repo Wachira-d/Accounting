@@ -125,13 +125,16 @@ public partial class CmsBookingService
     }
 
     /// <summary>บรรทัด "ค่าจัดส่ง" ของเอกสาร ERP — อัตรา VAT แบบเดียวกับคำสั่งซื้อ (<see cref="ShippingVatAllocation.Split"/> อัตราสูงสุดในบิล · §79) ·
-    /// <paramref name="fee"/> = ส่วนค่าส่งที่อยู่ในใบนี้ (ใบรับมัดจำ = ส่วนที่เกินค่าบริการ · ใบเต็ม = ค่าส่งทั้งหมด) · 0 = ไม่มีบรรทัด</summary>
-    private static IEnumerable<Models.DTOs.Document.DocumentLineRequest> DeliveryErpLines(bool vatRegistered, decimal fee, decimal serviceGross, decimal serviceVatRate)
+    /// <paramref name="fee"/> = ส่วนค่าส่งที่อยู่ในใบนี้ (ใบรับมัดจำ = ส่วนที่เกินค่าบริการ · ใบเต็ม = ค่าส่งทั้งหมด) · 0 = ไม่มีบรรทัด
+    /// · รอบ 228: <paramref name="revenueAccountId"/> = บัญชีรายได้ค่าจัดส่งของเว็บ (<see cref="ShippingRevenueAccount.ResolveAsync"/>) — ผู้เรียกส่ง null สำหรับ<b>ใบรับมัดจำ</b>
+    /// (ลงเงินรับล่วงหน้าผ่าน IsDeposit) · null = บัญชีรายได้ตั้งต้น (เดิม)</summary>
+    private static IEnumerable<Models.DTOs.Document.DocumentLineRequest> DeliveryErpLines(bool vatRegistered, decimal fee, decimal serviceGross, decimal serviceVatRate,
+        Guid? revenueAccountId)
     {
         var parts = ShippingVatAllocation.Split(ShippingVatAllocation.MaxRate, vatRegistered, fee, new[] { (serviceGross, serviceVatRate) });
         return parts.Select(p => new Models.DTOs.Document.DocumentLineRequest(
             Description: ShippingVatAllocation.LineDescription(p, parts.Count), Quantity: 1, Unit: "ครั้ง", UnitPrice: p.Fee,
-            DiscountPercent: 0m, VatRate: p.Rate, WithholdingTaxRate: 0m, AccountId: null, ProductCode: null));
+            DiscountPercent: 0m, VatRate: p.Rate, WithholdingTaxRate: 0m, AccountId: revenueAccountId, ProductCode: null));
     }
 
     // ═══════════════ ค่าตั้งเว็บ: จัดส่ง / รับเอง ═══════════════
@@ -149,7 +152,13 @@ public partial class CmsBookingService
         {
             DeliveryEnabled = row?.FulfillmentDeliveryEnabled ?? false, PickupEnabled = row?.FulfillmentPickupEnabled ?? false,
             DefaultMethod = row?.FulfillmentDefault, PickupNote = row?.FulfillmentPickupNote, DeliveryMinAmount = row?.FulfillmentDeliveryMinAmount,
-            ShippingZoneCount = zoneCount, ShopFlatShippingRate = cfg?.FlatShippingRate, ShopFreeShippingThreshold = cfg?.FreeShippingThreshold,
+            // รอบ 228: ลูกค้าเปลี่ยนวิธีรับเองได้ถึงกี่ ชม. ก่อนนัด · บัญชีรายได้ค่าจัดส่ง (ตั้งที่ร้านค้า — ตัวอ่านเดียว ShippingRevenueAccount)
+            ChangeCutoffHours = row?.FulfillmentChangeCutoffHours,
+            ChangeCutoffSummary = BookingFulfillmentChange.DescribeCutoff(row?.FulfillmentChangeCutoffHours),
+            ShippingRevenueAccountLabel = await ShippingAccountLabelAsync(companyId, siteId),
+            ShippingZoneCount = zoneCount,
+            FreeDeliveryWarning = (await FreeDeliveryStateAsync(companyId, siteId)).Warning,   // รอบ 228 แพ็ก C (Q3)
+ ShopFlatShippingRate = cfg?.FlatShippingRate, ShopFreeShippingThreshold = cfg?.FreeShippingThreshold,
             FeeSourceSummary = zoneCount > 0
                 ? $"ค่าจัดส่งคิดตามโซน/อัตราของร้าน ({zoneCount} โซน) — ลูกค้ากรอกจังหวัด + รหัสไปรษณีย์แล้วระบบคิดให้"
                 : cfg?.FlatShippingRate is decimal fr && fr > 0m
@@ -170,6 +179,7 @@ public partial class CmsBookingService
         var errs = BookingFulfillment.ValidateSettings(request.DefaultMethod, request.DeliveryMinAmount, request.PickupNote);
         var def = BookingFulfillment.StoredDefault(request.DefaultMethod);
         if (BookingFulfillment.DefaultPointsToDisabled(request.DefaultMethod, request.DeliveryEnabled, request.PickupEnabled) is string defErr) errs.Add(defErr);
+        if (BookingFulfillmentChange.ValidateCutoff(request.ChangeCutoffHours) is string cutErr) errs.Add(cutErr);   // รอบ 228
         if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), BookingFulfillment.RuleCode);
         var row = await _db.SiteBookingSettings.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted);
         if (row == null)
@@ -182,9 +192,20 @@ public partial class CmsBookingService
         row.FulfillmentDefault = def;
         row.FulfillmentPickupNote = string.IsNullOrWhiteSpace(request.PickupNote) ? null : request.PickupNote.Trim();
         row.FulfillmentDeliveryMinAmount = request.DeliveryMinAmount is > 0m ? request.DeliveryMinAmount : null;
+        row.FulfillmentChangeCutoffHours = request.ChangeCutoffHours;   // รอบ 228 · null = ลูกค้าเปลี่ยนเองไม่ได้ (เดิม)
         row.UpdatedBy = userId;
         await _db.SaveChangesAsync();
         return await GetFulfillmentSettingsAsync(companyId, siteId);
+    }
+
+    /// <summary>รอบ 228: "รหัส ชื่อ" ของบัญชีรายได้ค่าจัดส่งที่มีผล · null = บัญชีรายได้ตั้งต้น (ข้อความบอกบนหน้าตั้งค่าการจอง)</summary>
+    private async Task<string> ShippingAccountLabelAsync(Guid companyId, Guid siteId)
+    {
+        var id = await ShippingRevenueAccount.ResolveAsync(_db, companyId, siteId);
+        if (id is not Guid accId) return "บัญชีรายได้ตั้งต้นของเอกสาร (ยังไม่ได้ตั้งบัญชีรายได้ค่าจัดส่ง)";
+        var a = await _db.ChartOfAccounts.AsNoTracking().Where(x => x.Id == accId && x.CompanyId == companyId)
+            .Select(x => x.AccountCode + " " + x.AccountName).FirstOrDefaultAsync();
+        return a ?? "บัญชีรายได้ตั้งต้นของเอกสาร";
     }
 
     // ═══════════════ โหมดบังคับ × บริการที่เก็บเงินไม่ได้ (คำตัดสิน 226-1) ═══════════════

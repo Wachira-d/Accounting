@@ -10,6 +10,7 @@
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
   <style>
     .editor-tabs { display:flex; border-bottom:2px solid var(--gray-200); margin-bottom:20px; gap:0 }
+    @media (max-width: 768px) { .editor-tabs { flex-wrap:nowrap !important; overflow-x:auto; -webkit-overflow-scrolling:touch } .editor-tab { flex:0 0 auto; white-space:nowrap } }   /* รอบ 228 แพ็ก B */
     .editor-tab { padding:12px 20px; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; font-weight:500; color:var(--gray-600) }
     .editor-tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600 }
     .editor-tab:hover { color:var(--primary) }
@@ -61,23 +62,23 @@
       </div>
     </div>
 
-    <div class="editor-tabs" style="flex-wrap:wrap">
-      <div class="editor-tab active" data-tab="pages" onclick="Page.switchTab('pages')">📄 หน้าเว็บ</div>
-      <div class="editor-tab" data-tab="nav" onclick="Page.switchTab('nav')">🧭 เมนู</div>
-      <div class="editor-tab" data-tab="media" onclick="Page.switchTab('media')">🖼️ คลังภาพ</div>
-      <div class="editor-tab" data-tab="theme" onclick="Page.switchTab('theme')">🎨 ธีม</div>
-      <div class="editor-tab" data-tab="products" onclick="Page.switchTab('products')" id="tabProducts" style="display:none">🛒 สินค้า</div>
-      <div class="editor-tab" data-tab="orders" onclick="Page.switchTab('orders')" id="tabOrders" style="display:none">📦 ออเดอร์</div>
-      <div class="editor-tab" data-tab="booking" onclick="Page.switchTab('booking')" id="tabBooking" style="display:none">📅 บริการจอง</div>
-      <div class="editor-tab" data-tab="bookings" onclick="Page.switchTab('bookings')" id="tabBookings" style="display:none">📋 รายการจอง</div>
-      <div class="editor-tab" data-tab="lodging" onclick="Page.switchTab('lodging')" id="tabLodging" style="display:none">🏨 ที่พัก</div>
-      <div class="editor-tab" data-tab="customers" onclick="Page.switchTab('customers')">👥 ลูกค้า</div>
-      <div class="editor-tab" data-tab="forms" onclick="Page.switchTab('forms')">📨 ฟอร์ม</div>
-      <div class="editor-tab" data-tab="languages" onclick="Page.switchTab('languages')">🌏 ภาษา</div>
-      <div class="editor-tab" data-tab="team" onclick="Page.switchTab('team')">👤 ทีม</div>
-      <div class="editor-tab" data-tab="redirects" onclick="Page.switchTab('redirects')">↪️ Redirects</div>
-      <div class="editor-tab" data-tab="seo" onclick="Page.switchTab('seo')">🔍 SEO</div>
-      <div class="editor-tab" data-tab="domain" onclick="Page.switchTab('domain')">🌐 โดเมน</div>
+    <div class="editor-tabs" role="tablist" style="flex-wrap:wrap"><!-- รอบ 228 แพ็ก B: role=tab · มือถือเลื่อนแนวนอน (style.css) -->
+      <div class="editor-tab active" role="tab" tabindex="0" data-tab="pages" onclick="Page.switchTab('pages')">📄 หน้าเว็บ</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="nav" onclick="Page.switchTab('nav')">🧭 เมนู</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="media" onclick="Page.switchTab('media')">🖼️ คลังภาพ</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="theme" onclick="Page.switchTab('theme')">🎨 ธีม</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="products" onclick="Page.switchTab('products')" id="tabProducts" style="display:none">🛒 สินค้า</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="orders" onclick="Page.switchTab('orders')" id="tabOrders" style="display:none">📦 ออเดอร์</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="booking" onclick="Page.switchTab('booking')" id="tabBooking" style="display:none">📅 บริการจอง</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="bookings" onclick="Page.switchTab('bookings')" id="tabBookings" style="display:none">📋 รายการจอง</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="lodging" onclick="Page.switchTab('lodging')" id="tabLodging" style="display:none">🏨 ที่พัก</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="customers" onclick="Page.switchTab('customers')">👥 ลูกค้า</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="forms" onclick="Page.switchTab('forms')">📨 ฟอร์ม</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="languages" onclick="Page.switchTab('languages')">🌏 ภาษา</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="team" onclick="Page.switchTab('team')">👤 ทีม</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="redirects" onclick="Page.switchTab('redirects')">↪️ Redirects</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="seo" onclick="Page.switchTab('seo')">🏪 ข้อมูลร้าน · นโยบาย · SEO</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="domain" onclick="Page.switchTab('domain')">🌐 โดเมน</div>
     </div>
 
     <!-- Quotas badge -->
@@ -289,7 +290,7 @@
           <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ลูกค้าต้องติ๊กช่องนี้ทุกครั้งก่อนยืนยันคำสั่งซื้อ/การจอง (ระบบเก็บฉบับที่ลูกค้ายอมรับไว้เป็นหลักฐาน) — พนักงานบันทึกแทนลูกค้าไม่ต้องติ๊ก</div>
         </div>
         <div style="margin-top:16px">
-          <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO, Analytics &amp; CAPTCHA</button>
+          <button class="btn btn-primary" onclick="Page.saveSeo()">💾 บันทึกหน้านี้ (ข้อมูลร้าน · นโยบาย · SEO)</button><!-- รอบ 228 แพ็ก F §1 ข้อ 11: ปุ่มบันทึกทั้งแท็บ ไม่ใช่แค่ SEO -->
         </div>
       </div>
     </div>
@@ -903,8 +904,14 @@
               <input type="number" class="form-input" id="bsPrice" step="0.01" min="0" value="0">
             </div>
             <div class="form-group">
-              <label class="form-label">การออกเอกสารบัญชี</label>
-              <select class="form-input" id="bsBookingType"></select>
+              <!-- รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q1): ถามธุรกิจ ระบบเลือกชนิดเอกสาร (Helpers/BookingPayFirst) · ชนิดเอกสารตรงอยู่ใน "ขั้นสูง (ผู้ทำบัญชี)" -->
+              <label class="form-label">ลูกค้าต้องจ่ายก่อนไหม</label>
+              <select class="form-input" id="bsPayFirst" onchange="Page._bsPayFirstHint()"></select>
+              <div class="bs-hint" id="bsPayFirstHint"></div>
+              <details id="bsTypeAdvanced" style="margin-top:4px"><summary class="bs-hint" style="cursor:pointer">ขั้นสูง (ผู้ทำบัญชี) — เลือกชนิดเอกสารเอง</summary>
+                <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="bsTypeOverride"> ใช้ชนิดเอกสารที่เลือกเอง (ไม่ตามคำตอบด้านบน)</label>
+                <select class="form-input" id="bsBookingType" style="margin-top:4px"></select>
+              </details>
             </div>
           </div>
           <!-- รอบ 207 (ข้อ 1): ผูกสินค้า/บริการในระบบ ⇒ เอกสารได้รหัสสินค้า + บัญชีรายได้ + อัตรา VAT ของสินค้า · POS เปิดบิลด้วยสินค้านี้ -->
@@ -1413,6 +1420,9 @@
       activeThemeId: null,
 
       async init() {
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก B): แท็บกดด้วยคีย์บอร์ด (Enter/Space) · เตือนค่าที่ยังไม่บันทึกของส่วนค่าตั้ง (SEO/ค่าตั้งการจอง) ก่อนออกหน้า
+        document.querySelectorAll('.editor-tab').forEach(el => el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); } }));
+        if (window.CmsDirtyGuard) ['tab-seo', 'bkSecProviders', 'bkSecForm', 'bkSecDocs'].forEach(id => CmsDirtyGuard.watch(document.getElementById(id)));
         if (!Layout.init('cms-sites')) return;
         Layout.setTitle('แก้ไขเว็บไซต์');
         const params = new URLSearchParams(location.search);
@@ -1504,7 +1514,7 @@
       },
 
       switchTab(tab) {
-        document.querySelectorAll('.editor-tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
+        document.querySelectorAll('.editor-tab').forEach(el => { el.classList.toggle('active', el.dataset.tab === tab); el.setAttribute('aria-selected', String(el.dataset.tab === tab)); });
         document.querySelectorAll('.tab-pane').forEach(el => el.classList.toggle('active', el.id === `tab-${tab}`));
         if (tab === 'theme' && !this._themeLoaded) this.loadTheme();
         if (tab === 'domain' && !this._domainLoaded) this.loadDomains();
@@ -1691,7 +1701,8 @@
       },
 
       async publishSite() {
-        if (!confirm('ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ')) return;
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E): ก่อนเผยแพร่แสดงข้อที่ยังไม่ได้ตั้ง (จากเซิร์ฟเวอร์ · แสดง ไม่บล็อก)
+        if (!(window.CmsSetupStatus ? await CmsSetupStatus.confirmPublish(this.siteId) : confirm('ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.cmsPublishSite(this.siteId);
@@ -2364,6 +2375,7 @@
           // รอบ 214: echo ค่าที่เซิร์ฟเวอร์เก็บจริง (โหมดนโยบายตัดสินที่เซิร์ฟเวอร์) — ไม่ค้างสถานะฝั่งหน้าเว็บ
           if (saved && saved.data) { this.site = saved.data; this.hydrateLegal(); }
           Layout.toast('บันทึกสำเร็จ', 'success');
+          if (window.CmsDirtyGuard) CmsDirtyGuard.reset(document.getElementById('tab-seo'));   // รอบ 228 แพ็ก B
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -3128,6 +3140,7 @@
         v('bsId', s.id || ''); v('bsName', s.name || ''); v('bsNameEn', s.nameEn || ''); v('bsDesc', s.description || '');
         v('bsImage', s.imageUrl || ''); v('bsCategory', s.category || ''); v('bsPrice', s.price ?? 0);
         v('bsBookingType', s.bookingType || 'Appointment'); v('bsMode', s.slotMode || 'Interval');
+        this._bsHydratePayFirst(s);   // รอบ 228 แพ็ก D
         v('bsDuration', s.durationMinutes ?? 60);
         const iv = s.slotIntervalMinutes;
         document.getElementById('bsIntervalPick').value = (iv == null) ? '' : ([15, 30, 60].includes(iv) ? String(iv) : 'custom');
@@ -3362,6 +3375,7 @@
         try {
           await api.cmsUpdateBookingSiteSettings(this.siteId, body);
           Layout.toast('บันทึกค่าตั้งของเว็บไซต์แล้ว', 'success');
+          if (window.CmsDirtyGuard) ['bkSecProviders', 'bkSecForm', 'bkSecDocs'].forEach(id => CmsDirtyGuard.reset(document.getElementById(id)));
           await this.loadBookingServices();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -3604,8 +3618,55 @@
               <div style="display:flex;flex-wrap:wrap;gap:6px">
                 ${(p.services || []).map((s, si) => `<button type="button" class="btn btn-sm btn-secondary" onclick="Page.openCreateBookingService(Page._bsPresets[${pi}].services[${si}])">+ ${Layout.esc(s.name)}</button>`).join('')}
               </div>
+              ${p.siteSetupSummary ? `<div style="margin-top:8px;border-top:1px dashed var(--gray-200);padding-top:8px">
+                <div class="bs-hint">⚙️ ตั้งค่าเว็บทั้งชุด: ${Layout.esc(p.siteSetupSummary)} · ค่าที่ตั้งไว้แล้วไม่ถูกทับ</div>
+                <button type="button" class="btn btn-sm btn-primary" style="margin-top:6px" onclick="Page.applyBookingPresetToSite(this, ${pi})">ตั้งค่าเว็บทั้งชุด (คลิกเดียว)</button>
+                <div id="bsPresetResult_${pi}"></div></div>` : ''}
             </div>`).join('');
         } catch (e) { body.innerHTML = `<div class="text-center" style="color:#dc2626;padding:20px">${Layout.esc(e.message)}</div>`; }
+      },
+
+      // รอบ 228 (คำตัดสิน 228-6): แม่แบบที่ตั้งค่าเว็บได้ (เช่น สั่งทำ/พรีออเดอร์) — เซิร์ฟเวอร์ทำ/ข้าม/บอกสิ่งที่ต้องทำต่อ · หน้าแสดงผลอย่างเดียว
+      async applyBookingPresetToSite(btn, pi) {
+        const key = ((this._bsPresets || [])[pi] || {}).key; if (!key) return;
+        if (!confirm('ตั้งค่าเว็บจากแม่แบบนี้? (สร้างบริการตัวอย่าง · เปิดจัดส่ง/รับเอง · เพิ่มช่องบนฟอร์มจอง — ค่าที่ตั้งไว้แล้วไม่ถูกทับ)')) return;
+        const holder = btn.parentElement.querySelector('[id^="bsPresetResult_"]');
+        if (btn.disabled) return;
+        btn.disabled = true;
+        {
+          try {
+            const res = await API.post(`/api/companies/${Layout.getCompanyId()}/cms/sites/${this.siteId}/booking/presets/${encodeURIComponent(key)}/apply-site`, {});
+            const d = res.data || {};
+            const list = (title, xs) => xs && xs.length ? `<div style="font-weight:600;margin-top:6px">${title}</div><ul style="margin:2px 0 0 18px">${xs.map(x => `<li>${Layout.esc(x)}</li>`).join('')}</ul>` : '';
+            if (holder) holder.innerHTML = `<div class="bs-hint" style="margin-top:8px">${list('✅ ทำแล้ว', d.done)}${list('↩️ ข้าม (ตั้งไว้แล้ว)', d.skipped)}${list('➡️ ต้องทำต่อ', d.nextSteps)}</div>`;
+            Layout.toast(res.message || 'ตั้งค่าแล้ว', 'success');
+            if (typeof this.loadBookingServices === 'function') await this.loadBookingServices();
+          } catch (e) { Layout.toast(e.message, 'error', 10000); }
+          finally { btn.disabled = false; }
+        }
+      },
+
+      // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q1): ตัวเลือกจากเซิร์ฟเวอร์ (GET booking/pay-first-options) · ชนิดขั้นสูง (payFirst = null) ⇒ เปิด "ขั้นสูง" + ติ๊กใช้ชนิดเอง
+      async _bsHydratePayFirst(s) {
+        if (!this._payFirstOpts) {
+          try { this._payFirstOpts = (await API.get(`/api/companies/${Layout.getCompanyId()}/cms/sites/${this.siteId}/booking/pay-first-options`)).data || []; }
+          catch (_) { this._payFirstOpts = []; }
+        }
+        const sel = document.getElementById('bsPayFirst'); if (!sel) return;
+        sel.innerHTML = this._payFirstOpts.map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+        // ค่าจากเซิร์ฟเวอร์ (บริการ/แม่แบบส่ง payFirst มาเอง) · ฟอร์มใหม่ (ไม่มีค่า) ⇒ "ไม่ต้องจ่ายก่อน" · null = ชนิดขั้นสูง
+        const ans = s && s.payFirst !== undefined ? s.payFirst : 'AtShop';
+        const advanced = !ans;
+        sel.value = ans || 'AtShop';
+        document.getElementById('bsTypeOverride').checked = advanced;
+        document.getElementById('bsTypeAdvanced').open = advanced;
+        this._bsPayFirstHint(s && s.payFirstWarning);
+      },
+      _bsPayFirstHint(warning) {
+        const o = (this._payFirstOpts || []).find(x => x.value === (document.getElementById('bsPayFirst') || {}).value);
+        const el = document.getElementById('bsPayFirstHint'); if (!el) return;
+        el.innerHTML = (o ? `${Layout.esc(o.description)} · เอกสาร: <b>${Layout.esc(o.documentLabel)}</b>` : '')
+          + (typeof warning === 'string' && warning ? `<div style="color:#b45309">⚠️ ${Layout.esc(warning)}</div>` : '');
       },
 
       _bsNum(id, fallback) { const raw = document.getElementById(id).value; if (raw === '') return fallback; const n = Number(raw); return Number.isFinite(n) ? n : fallback; },
@@ -3623,6 +3684,8 @@
           slug: this._bsSlug, productId: document.getElementById('bsProduct').value || null,   // รอบ 207: เลือกจากรายการสินค้า
           price: this._bsNum('bsPrice', 0),
           bookingType: document.getElementById('bsBookingType').value,
+          // รอบ 228 แพ็ก D: คำตอบธุรกิจ ⇒ เซิร์ฟเวอร์เลือกชนิด · ขั้นสูงติ๊ก ⇒ ส่งชนิดตรง (payFirst = null)
+          payFirst: document.getElementById('bsTypeOverride').checked ? null : (document.getElementById('bsPayFirst').value || null),
           autoConfirm: document.getElementById('bsAutoConfirm').checked,
           isActive: document.getElementById('bsActive').checked,
           slotMode: mode,

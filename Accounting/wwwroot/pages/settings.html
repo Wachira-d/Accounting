@@ -1016,10 +1016,14 @@
 
     <!-- ===== LINE Messaging API Tab ===== -->
     <div id="tabLine" class="card hidden">
-      <h3 class="card-title" style="margin-bottom:4px">💬 LINE Messaging API</h3>
-      <p class="text-gray-400" style="margin:0 0 16px;font-size:13px">
-        ตั้งค่า Channel ของบริษัทคุณเอง — แจ้งเตือนจะส่งผ่าน LINE Official
-        Account ของคุณโดยตรง (แยกการเรียกเก็บ + แบรนด์). สมัครได้ที่
+      <!-- รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก F · §1 ข้อ 13): เปิดด้วยสถานะ ไม่ใช่ศัพท์นักพัฒนา — ส่งผ่าน LINE ของ NextAcc ได้ทันทีโดยไม่ต้องตั้งอะไร -->
+      <h3 class="card-title" style="margin-bottom:4px">💬 แจ้งเตือนทาง LINE</h3>
+      <div style="border:1px solid #d1fae5;background:#f0fdf4;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px">
+        ✅ <b>ส่งแจ้งเตือนลูกค้าทาง LINE ได้แล้ว</b> — ระบบส่งผ่าน LINE ของ NextAcc ให้โดยไม่ต้องตั้งค่า · ส่วนด้านล่างใช้เฉพาะเมื่อต้องการส่งในชื่อ <b>LINE ของร้านเอง</b>
+      </div>
+      <details id="lineAdvanced" style="margin-bottom:12px"><summary style="cursor:pointer;font-weight:600;font-size:14px">ตั้งค่าขั้นสูง — ใช้ LINE OA ของร้านเอง (รหัสเชื่อมจาก LINE Developers)</summary>
+      <p class="text-gray-400" style="margin:8px 0 16px;font-size:13px">
+        ใส่ "รหัสเชื่อม LINE OA ของร้าน" แล้วแจ้งเตือนจะส่งในชื่อร้าน (แยกการเรียกเก็บ + แบรนด์) · สมัครได้ที่
         <a href="https://developers.line.biz/console/" target="_blank" rel="noopener" style="color:#06c755">LINE Developers Console</a>
         → สร้าง Provider → Messaging API channel
       </p>
@@ -1031,7 +1035,7 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">Channel Access Token (long-lived)</label>
+        <label class="form-label">รหัสเชื่อม LINE OA ของร้าน <span class="text-gray-400" style="font-size:12px">(Channel Access Token แบบ long-lived)</span></label>
         <input type="password" class="form-input" id="lineToken"
                placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
@@ -1040,7 +1044,7 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">Channel Secret <span class="text-gray-400" style="font-size:12px">(สำหรับ webhook signature)</span></label>
+        <label class="form-label">รหัสลับของ LINE OA <span class="text-gray-400" style="font-size:12px">(Channel Secret — ใช้ตรวจว่าข้อความมาจาก LINE จริง)</span></label>
         <input type="password" class="form-input" id="lineSecret"
                placeholder="ใส่ใหม่เพื่อแทนค่าเดิม / เว้นว่าง = ใช้ค่าเดิม" autocomplete="off" />
         <div class="text-gray-400" style="font-size:11px;margin-top:4px">
@@ -1049,7 +1053,7 @@
       </div>
 
       <div class="form-group">
-        <label class="form-label">Default Group/Room ID <span class="text-gray-400" style="font-size:12px">(optional — สำหรับแจ้งเตือนกลุ่ม เช่น "ทีมบัญชี")</span></label>
+        <label class="form-label">LINE กลุ่มของทีม <span class="text-gray-400" style="font-size:12px">(ไม่บังคับ · Group/Room ID — สำหรับแจ้งเตือนกลุ่ม เช่น "ทีมบัญชี")</span></label>
         <input type="text" class="form-input" id="lineGroupId" placeholder="Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
       </div>
 
@@ -1057,6 +1061,7 @@
         <label class="form-label">LINE OA Basic ID <span class="text-gray-400" style="font-size:12px">(เช่น @myshop — ใช้ทำปุ่ม "เพิ่มเพื่อน/ส่งรหัส" ให้ลูกค้าหน้าเว็บผูก LINE รับแจ้งเตือน และให้พนักงานผูก LINE รับสลิป)</span></label>
         <input type="text" class="form-input" id="lineOaBasicId" placeholder="@myshop" />
       </div>
+      </details>
 
       <!-- รอบ 211: ช่องทางแจ้งลูกค้าปลายทาง (การจอง/ออเดอร์/สมาชิกเว็บ) — เซิร์ฟเวอร์ตัดสินทุกค่า หน้านี้แสดงอย่างเดียว -->
       <div class="form-group" style="border:1px solid #d1fae5;background:#f0fdf4;border-radius:8px;padding:12px 14px">
@@ -1967,6 +1972,7 @@
           const j = await r.json();
           const c = j.data || {};
           document.getElementById('lineEnabled').checked = !!c.enabled;
+          { const adv = document.getElementById('lineAdvanced'); if (adv) adv.open = !!c.enabled; }   // รอบ 228 แพ็ก F: ร้านที่ใช้ OA ของตัวเอง ⇒ เปิดส่วนขั้นสูงไว้
           document.getElementById('lineGroupId').value = c.defaultGroupId || '';
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
           this._renderLineCustomerChannel(c.customerChannel);

@@ -54,6 +54,31 @@ public class CmsBookingPaymentPublicController : ControllerBase
         return Ok(new ApiResponse<BookingResponse>(true, result, "ส่งสลิปแล้ว — ร้านจะตรวจสอบและยืนยันการจอง"));
     }
 
+    /// <summary>รอบ 228 (คำตัดสิน 228-1): มัดจำไม่บังคับ — ลูกค้าเลือกชำระมัดจำภายหลัง ⇒ ยอดจากเซิร์ฟเวอร์ (ค่าตั้งปัจจุบัน) แล้วใช้ขั้นชำระเดิม (ออนไลน์/โอน/สลิป)</summary>
+    [HttpPost("bookings/by-token/{token}/deposit-later")]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> ChooseDepositLater(Guid companyId, Guid siteId, string token,
+        [FromServices] IChatRateLimiter limiter)
+    {
+        if (!await limiter.TryConsumeAsync($"cms-booking-deposit-later:{siteId}:{Ip}", perMinute: 10, perDay: 200))
+            return StatusCode(429, new ApiResponse<BookingResponse>(false, null, "ทำรายการถี่เกินไป — รอสักครู่แล้วลองใหม่"));
+        var result = await _bookings.ChooseDepositLaterByCustomerAsync(companyId, siteId, token);
+        return Ok(new ApiResponse<BookingResponse>(true, result, "ตั้งยอดมัดจำแล้ว — ชำระได้ด้านล่าง"));
+    }
+
+    /// <summary>รอบ 228 (คำตัดสิน 228-3): ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่ก่อนกำหนดของร้าน — ค่าส่งคิดใหม่ที่เซิร์ฟเวอร์ · previewOnly = ดูผลต่างก่อนยืนยัน (ไม่บันทึก)</summary>
+    [HttpPost("bookings/by-token/{token}/fulfillment")]
+    public async Task<ActionResult<ApiResponse<ChangeBookingFulfillmentResponse>>> ChangeFulfillment(Guid companyId, Guid siteId, string token,
+        [FromBody] ChangeBookingFulfillmentRequest request, [FromServices] IChatRateLimiter limiter)
+    {
+        // ฝ่ายค้านรอบ 228 S7: คีย์แยกต่อการกระทำ — ตัวอย่าง (พิมพ์ที่อยู่ทีละตัว) ได้ถี่กว่าการบันทึก · ไม่กินโควตาของกันและกัน
+        var preview = request?.PreviewOnly == true;
+        if (!await limiter.TryConsumeAsync($"cms-booking-fulfil-{(preview ? "preview" : "apply")}:{siteId}:{Ip}",
+                perMinute: preview ? 60 : 10, perDay: preview ? 2000 : 200))
+            return StatusCode(429, new ApiResponse<ChangeBookingFulfillmentResponse>(false, null, "ทำรายการถี่เกินไป — รอสักครู่แล้วลองใหม่"));
+        var result = await _bookings.ChangeFulfillmentByCustomerAsync(companyId, siteId, token, request ?? new ChangeBookingFulfillmentRequest());
+        return Ok(new ApiResponse<ChangeBookingFulfillmentResponse>(true, result, result.Applied ? "เปลี่ยนวิธีรับแล้ว — ร้านได้รับแจ้งแล้ว" : null));
+    }
+
     /// <summary>ลูกค้าเปิดสลิปของตัวเอง — ต้องถือโทเคนของการจองนั้น (ไม่มี URL สาธารณะของไฟล์)</summary>
     [HttpGet("bookings/by-token/{token}/slip")]
     public async Task<IActionResult> ViewSlip(Guid companyId, Guid siteId, string token, [FromServices] IChatRateLimiter limiter, CancellationToken ct)

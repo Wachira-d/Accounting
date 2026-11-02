@@ -39,6 +39,7 @@
       </div>
     </div>
 
+    <div id="sgSetupStatus"></div><!-- รอบ 228 แพ็ก E: สิ่งที่ยังไม่ได้ตั้งค่า (เซิร์ฟเวอร์ตัดสิน) -->
     <label class="sg-mobile-pick">กลุ่มค่าตั้ง
       <select class="form-input" id="sgMobilePick" onchange="Page.go(this.value)"></select>
     </label>
@@ -57,8 +58,9 @@
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
   <script src="/js/customer-notify.js"></script>
+  <script src="/js/site-transfer-account.js"></script><!-- รอบ 228 แพ็ก A: การ์ดบัญชีรับโอน/พร้อมเพย์ของทุกเว็บ -->
   <script src="/js/booking-payment-admin.js"></script><!-- รอบ 218: ลงทะเบียน CmsSiteSettingsExt.payment (มัดจำ/ชำระเต็ม/โอน-QR-สลิปของการจอง) -->
-  <script src="/js/booking-fulfillment-admin.js"></script><!-- รอบ 226: จัดส่ง/รับเองของการจอง (ต่อท้ายหมวดการชำระเงิน) -->
+  <script src="/js/booking-fulfillment-admin.js"></script><!-- รอบ 226 · รอบ 228 แพ็ก C: กลุ่ม "การจัดส่ง / รับเอง" (CmsSiteSettingsExt.shipping) -->
   <script>
     /* หน้า "ตั้งค่าเว็บ" (รอบ 215 เฟส 2 · erp-review/2026-10-30/CMS_UX_REDESIGN.md §4.4) — ศูนย์รวมค่าตั้งรายเว็บ
      *
@@ -86,12 +88,12 @@
         const id = enc(this.siteId || '');
         return [
           { key: 'general',  label: 'ทั่วไป', render: () => this.links('ทั่วไป', 'ชื่อ · ประเภทธุรกิจ · ข้อมูลติดต่อที่แสดงบนเว็บ · สาขาที่ออกเอกสาร/คลังที่ตัดสต็อก', [
-              ['ข้อมูลติดต่อ · สาขาและคลังของเว็บ', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › SEO (ส่วนข้อมูลติดต่อ / สาขาและคลัง)'],
+              ['ข้อมูลติดต่อ · สาขาและคลังของเว็บ', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › ข้อมูลร้าน · นโยบาย · SEO (ส่วนข้อมูลติดต่อ / สาขาและคลัง)'],
               ['ประเภทธุรกิจ / เติมเทมเพลต', '/pages/cms-sites.html', 'เว็บไซต์ทั้งหมด › การ์ดเว็บ › ⋯'],
             ]) },
           { key: 'seo',      label: 'โดเมน & SEO', render: () => this.links('โดเมน & SEO', 'โดเมน · meta · analytics · captcha · ภาษา', [
               ['โดเมน', `/pages/cms-edit.html?siteId=${id}&tab=domain`, 'หน้าเว็บ › โดเมน'],
-              ['SEO · Analytics · CAPTCHA', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › SEO'],
+              ['SEO · Analytics · CAPTCHA', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › ข้อมูลร้าน · นโยบาย · SEO'],
               ['ภาษา', `/pages/cms-edit.html?siteId=${id}&tab=languages`, 'หน้าเว็บ › ภาษา'],
             ]) },
           mods.includes('bookings') && { key: 'booking', label: 'การจอง / บริการ', render: () => this.renderBooking() },
@@ -99,23 +101,25 @@
               ['ค่าตั้งที่พัก (ห้อง · ราคา · นโยบาย · มัดจำ)', `/pages/lodging-settings.html?siteId=${id}`, 'ตั้งค่าที่พัก'],
             ]) },
           mods.includes('orders') && { key: 'orders', label: 'การสั่งซื้อ', render: () => this.links('การสั่งซื้อ', 'รับคำสั่งซื้อ · ยืนยันอัตโนมัติ · ขอใบเสนอราคา · รีวิว · เลขคำสั่งซื้อ · ช่องฟอร์ม · คูปอง', [
-              ['สวิตช์ร้าน · เลขคำสั่งซื้อ', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › สวิตช์ร้าน'],
+              ['สวิตช์ร้าน · เลขคำสั่งซื้อ', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › การสั่งซื้อ'],
               ['ฟอร์มสั่งซื้อ', `/pages/cms-store-settings.html?siteId=${id}&tab=form`, 'ตั้งค่าร้านค้า › ฟอร์มสั่งซื้อ'],
               ['คูปอง', `/pages/cms-store-settings.html?siteId=${id}&tab=coupons`, 'ตั้งค่าร้านค้า › คูปอง'],
             ]) },
           { key: 'payment',  label: 'การชำระเงิน', render: () => this.renderPayment(mods) },
-          mods.includes('orders') && { key: 'shipping', label: 'การจัดส่ง', render: () => this.links('การจัดส่ง', 'วิธีรับสินค้า · โซนและอัตราค่าส่ง · ส่งฟรี', [
+          // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก C · §1 ข้อ 3): "การจัดส่ง / รับเอง" เป็นกลุ่มของตัวเอง — แสดงทั้งเว็บคำสั่งซื้อและเว็บการจอง
+          // (เนื้อหาจริงจาก CmsSiteSettingsExt.shipping ใน booking-fulfillment-admin.js · ทางสำรองด้านล่างเป็นลิงก์)
+          (mods.includes('orders') || mods.includes('bookings')) && { key: 'shipping', label: 'การจัดส่ง / รับเอง', render: () => this.links('การจัดส่ง / รับเอง', 'วิธีรับสินค้า · โซนและอัตราค่าส่ง · ส่งฟรี', [
               ['โซน/อัตราค่าส่ง', `/pages/cms-store-settings.html?siteId=${id}&tab=shipping`, 'ตั้งค่าร้านค้า › โซน/อัตราค่าส่ง'],
-              ['วิธีรับสินค้า (จัดส่ง/รับเอง)', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › สวิตช์ร้าน'],
-            ]) },
+              mods.includes('orders') && ['วิธีรับสินค้า (จัดส่ง/รับเอง)', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › การสั่งซื้อ'],
+            ].filter(Boolean)) },
           { key: 'notify',   label: 'การแจ้งเตือน / LINE', render: () => this.renderNotify(mods) },
           { key: 'members',  label: 'สมาชิก', render: () => this.links('สมาชิก', 'สั่งซื้อ/จองโดยไม่ต้องสมัคร · ต้องเป็นสมาชิกก่อนจอง · รายชื่อสมาชิก', [
-              mods.includes('orders') && ['สั่งซื้อแบบแขก / ต้องมีบัญชี', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › สวิตช์ร้าน'],
+              mods.includes('orders') && ['สั่งซื้อแบบแขก / ต้องมีบัญชี', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › การสั่งซื้อ'],
               mods.includes('bookings') && ['ต้องเป็นสมาชิกก่อนจอง', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › ค่าตั้งการจองของเว็บไซต์'],
               ['รายชื่อลูกค้า/สมาชิกของเว็บ', `/pages/cms-edit.html?siteId=${id}&tab=customers`, 'หน้าเว็บ › ลูกค้า'],
             ].filter(Boolean)) },
           { key: 'legal',    label: 'กฎหมาย / นโยบาย', render: () => this.links('กฎหมาย / นโยบาย', 'นโยบายความเป็นส่วนตัว · ช่องยินยอม · แบนเนอร์คุกกี้ · นโยบายร้าน', [
-              ['ข้อมูลส่วนบุคคล (PDPA) · ลิงก์นโยบาย · ข้อความยินยอม', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › SEO (ส่วน PDPA)'],
+              ['ข้อมูลส่วนบุคคล (PDPA) · ลิงก์นโยบาย · ข้อความยินยอม', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › ข้อมูลร้าน · นโยบาย · SEO (ส่วน PDPA)'],
             ]) },
           { key: 'team',     label: 'ทีมงานของเว็บ', render: () => this.links('ทีมงานของเว็บ', 'บทบาทรายเว็บ (แอดมิน · บรรณาธิการ · จัดการคำสั่งซื้อ …) — ต่างจาก "จัดการทีม" ของบริษัท', [
               ['ทีมงาน & สิทธิ์ของเว็บนี้', `/pages/cms-edit.html?siteId=${id}&tab=team`, 'หน้าเว็บ › ทีม'],
@@ -138,19 +142,43 @@
         this.siteId = CmsSiteContext.pick(this.sites, qs.get('siteId'), {});
         this.site = this.sites.find(s => s.id === this.siteId) || null;
         CmsSiteContext.setUrl(this.siteId);
-        CmsSiteContext.renderCrumb('cmsCrumb', this.sites, this.siteId, 'ตั้งค่าเว็บ', 'cms-site-settings');
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites, this.siteId, 'ตั้งค่าเว็บ', 'cms-site-settings',
+          { beforeLeave: () => !window.CmsDirtyGuard || CmsDirtyGuard.confirmLeave() });   // รอบ 228 แพ็ก B: สลับเว็บขณะมีค่าค้าง ⇒ ถาม
         const want = qs.get('group');
         this.group = this.groups().some(g => g.key === want) ? want : (this.groups().find(g => g.key === 'booking') || this.groups()[0]).key;
         await this.render();
         this.renderCompany();
+        this.renderSetupStatus();
         // ลิงก์กรองตามสิทธิ์ — วาดใหม่เมื่อสิทธิ์โหลดเสร็จ (ก่อนนั้น hasMenuAccess = true)
-        document.addEventListener('layout:permissions', () => { this.render(); this.renderCompany(); });
+        // รอบ 228 แพ็ก B: สิทธิ์มาถึงขณะผู้ใช้กำลังพิมพ์ ⇒ ไม่วาดทับ (วาดหัว/ลิงก์ใหม่เมื่อไม่มีค่าค้าง)
+        document.addEventListener('layout:permissions', () => { if (!window.CmsDirtyGuard || !CmsDirtyGuard.isDirty()) this.render(); this.renderCompany(); });
       },
 
       async go(key) {
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก B): ค่าที่แก้แล้วยังไม่บันทึก ⇒ ถามก่อนสลับกลุ่ม (เดิมหายเงียบ)
+        if (key !== this.group && window.CmsDirtyGuard && !CmsDirtyGuard.confirmLeave()) {
+          const pick = document.getElementById('sgMobilePick'); if (pick) pick.value = this.group;   // อยู่กลุ่มเดิม ค่าที่พิมพ์ไม่ถูกวาดทับ
+          return;
+        }
         this.group = key;
         try { const u = new URL(location.href); u.searchParams.set('group', key); history.replaceState(null, '', u.pathname + u.search); } catch (_) { /* เบราว์เซอร์เก่า */ }
         await this.render();
+      },
+
+      async renderSetupStatus() {
+        if (!window.CmsSetupStatus) return;
+        this._setup = await CmsSetupStatus.load(this.siteId);
+        CmsSetupStatus.render(document.getElementById('sgSetupStatus'), this._setup, this.siteId);
+        this.renderGroupStatus();
+      },
+      // รอบ 228 (แพ็ก F · §1 ข้อ 6): กลุ่มที่ยังเป็นลิงก์ (ทั่วไป · กฎหมาย) แสดง "ค่าปัจจุบัน" จากแผงเดียวกัน (เซิร์ฟเวอร์ตัดสิน) — รู้ว่าต้องไปไหมก่อนกดไป
+      renderGroupStatus() {
+        const map = { general: ['contact'], legal: ['privacy'] };
+        const keys = map[this.group]; const body = document.getElementById('sgBody');
+        if (!keys || !this._setup || !body) return;
+        const rows = (this._setup.items || []).filter(i => keys.includes(i.key));
+        const card = body.querySelector('.sg-card'); if (!card || card.querySelector('.sg-cur')) return;
+        card.insertAdjacentHTML('beforeend', rows.map(i => `<div class="sg-cur sg-hint" style="margin-top:6px">ตอนนี้: ${i.done ? '✅' : '⚠️'} ${esc(i.label)}${i.detail ? ' — ' + esc(i.detail) : ''}</div>`).join(''));
       },
 
       ctx() {
@@ -176,13 +204,18 @@
         const g = groups.find(x => x.key === this.group) || groups[0];
         const body = document.getElementById('sgBody');
         const ext = window.CmsSiteSettingsExt && window.CmsSiteSettingsExt[g.key];
+        if (window.CmsDirtyGuard) CmsDirtyGuard.reset();   // วาดใหม่ = ค่าจากเซิร์ฟเวอร์ (ผู้ใช้ยืนยันทิ้งแล้วถ้ามีค่าค้าง)
+        // ฝ่ายค้านรอบ 228 S-6: กลุ่มแจ้งเตือนบันทึกเองทันที (customer-notify) ⇒ ไม่นับเป็นค่าค้าง
+        const watchCards = () => { if (window.CmsDirtyGuard && g.key !== 'notify') body.querySelectorAll('.sg-card').forEach(c => CmsDirtyGuard.watch(c)); };
         if (typeof ext === 'function') {
           body.innerHTML = '<div class="sg-card sg-hint">กำลังโหลด…</div>';
-          try { await ext(body, this.ctx()); }
+          try { await ext(body, this.ctx()); watchCards(); }
           catch (e) { body.innerHTML = `<div class="sg-card" style="color:#b91c1c">โหลดส่วนนี้ไม่สำเร็จ: ${esc(e.message || e)}</div>`; }
           return;
         }
         body.innerHTML = await g.render();
+        watchCards();
+        this.renderGroupStatus();
         if (g.key === 'booking') this.wireBooking();
         if (g.key === 'notify') this.mountNotify();
       },

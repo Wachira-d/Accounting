@@ -458,9 +458,11 @@ public partial class LodgingService
 
     /// <summary>พาธไฟล์สลิปที่ปลอดภัย — ตรรกะด่านอยู่ที่ <see cref="LodgingSlipPath"/>
     /// (pure + มีเทสต์) · ที่นี่แค่บอกว่า wwwroot อยู่ไหน</summary>
-    private static string? ResolveSlipPath(string? storedUrl)
+    // ทีม FS 2026-11-02: "ไฟล์มีจริงไหม" ถามที่เก็บกลาง (Local/S3) ตัวเดียวกับที่ ImageProcessingService เขียน — ด่านพาธเดิมไม่เปลี่ยน
+    private string? ResolveSlipPath(string? storedUrl)
         => LodgingSlipPath.Resolve(storedUrl,
-            Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"));
+            Path.Combine(Directory.GetCurrentDirectory(), "wwwroot"),
+            new Func<string, bool>(SlipStorage.Exists));
 
     private static string SlipContentType(string path) => LodgingSlipPath.ContentType(path);
 
@@ -488,7 +490,6 @@ public partial class LodgingService
         // โฟลเดอร์นี้ต้องอยู่ใน publicUploadPrefixes ของ Program.cs (ไม่งั้น static handler ตอบ 404 — tools/upload_route_check.py)
         var relDir = $"uploads/lodging-slips/{DateTime.UtcNow:yyyy-MM}";
         var absDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", relDir);
-        Directory.CreateDirectory(absDir);
         string absPath, relUrl, storedName;
         if (_images != null && _images.IsProcessableImage(ct))
         {
@@ -500,8 +501,9 @@ public partial class LodgingService
         {
             var ext = Path.GetExtension(file.FileName); if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
             storedName = $"{Guid.NewGuid():N}{ext}"; absPath = Path.Combine(absDir, storedName);
-            await using var fs = File.Create(absPath);
-            await file.CopyToAsync(fs);
+            // ทีม FS 2026-11-02: ผ่านที่เก็บกลาง (Local/S3) — ห้ามเขียนดิสก์ตรง
+            await using var fs = file.OpenReadStream();
+            await SlipStorage.WriteAsync(absPath, fs, contentType: ct);
             relUrl = "/" + relDir + "/" + storedName;
         }
         _db.Set<FileAttachment>().Add(new FileAttachment

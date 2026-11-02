@@ -81,6 +81,24 @@ public class BillingCenterController : ControllerBase
         return File(gen.PdfData, "application/pdf", gen.FileName);
     }
 
+    /// <summary>รอบ 228 (PLATFORM_OMISE_AUDIT §5.7): ดาวน์โหลดใบเสร็จ/ใบกำกับภาษี/ใบลดหนี้ค่าบริการ (เช่น ค่าส่วนเสริมที่จ่ายล่วงหน้า) — เรนเดอร์สดจากเอกสารจริงใน
+    /// tenant ผู้ให้บริการ · ต้องเป็นเอกสารที่บริษัทนี้เป็นผู้ซื้อ (<see cref="PlatformInvoiceQueries.PaidDocumentsForBuyer"/>) · ของบริษัทอื่น/ไม่มี = 404 (ข้อความเดียว)</summary>
+    [HttpGet("receipts/{documentId:guid}/pdf")]
+    public async Task<IActionResult> ReceiptPdf(Guid companyId, Guid documentId,
+        [FromServices] IPdfGenerationService pdf, CancellationToken ct)
+    {
+        if (await RequireBillingAsync(companyId, "ดาวน์โหลดใบเสร็จค่าบริการ") is { } deny) return deny;
+        var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
+        if (platformId == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        var mine = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AnyAsync(
+            PlatformInvoiceQueries.PaidDocumentsForBuyer(_db, platformId.Value, companyId), d => d.Id == documentId, ct);
+        if (!mine) return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
+        var gen = await pdf.GenerateDocumentPdfAsync(platformId.Value,
+            new Models.DTOs.DocumentTemplate.GeneratePdfRequest(documentId, null, null, null, null));
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return File(gen.PdfData, "application/pdf", gen.FileName);
+    }
+
     /// <summary>แจ้งชำระใบแจ้งหนี้ด้วยการโอน + แนบสลิปในคำขอเดียว (ยอด = ยอดค้างของใบ · ติ๊กยอมรับเงื่อนไขบังคับ)</summary>
     [HttpPost("invoices/{documentId:guid}/slip")]
     [RequestSizeLimit(SubscriptionSlipUpload.MaxBytes + 1024 * 1024)]
@@ -113,7 +131,7 @@ public class BillingCenterController : ControllerBase
 
     /// <summary>ฝ่ายค้าน S9: สลิปของรายการชำระค่าบริการของบริษัทนี้ — สิทธิ์ Billing.Manage · รายการของบริษัทอื่น = 404 · ไม่เสิร์ฟเป็นไฟล์สาธารณะแล้ว</summary>
     [HttpGet("payments/{paymentId:guid}/slip")]
-    public async Task<IActionResult> PaymentSlip(Guid companyId, Guid paymentId, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    public async Task<IActionResult> PaymentSlip(Guid companyId, Guid paymentId, [FromServices] IWebHostEnvironment env, [FromServices] Accounting.Services.Storage.IFileStorage storage, CancellationToken ct)
     {
         if (await RequireBillingAsync(companyId, "ดูสลิป") is { } deny) return deny;
         var p = await Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.FirstOrDefaultAsync(
@@ -122,7 +140,8 @@ public class BillingCenterController : ControllerBase
         if (p == null || SubscriptionSlipUpload.OpenStored(env, p.SlipFileName) is not { } f)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
         Response.Headers["Cache-Control"] = "private, no-store";
-        return PhysicalFile(f.Path, f.ContentType, p.SlipOriginalFileName ?? p.SlipFileName);
+        return await SubscriptionSlipUpload.ServeAsync(storage, f, p.SlipOriginalFileName ?? p.SlipFileName)
+            ?? NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
     }
 
     /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ส่งหนังสือรับรอง 50 ทวิ ของรายการที่หักภาษี ณ ที่จ่าย (ชำระออนไลน์ไม่มีสลิปให้แนบ) — Billing.Manage · ไฟล์ไม่สาธารณะ</summary>

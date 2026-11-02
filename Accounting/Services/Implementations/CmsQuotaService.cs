@@ -7,10 +7,21 @@ namespace Accounting.Services.Implementations;
 public class CmsQuotaService : ICmsQuotaService
 {
     private readonly AccountingDbContext _db;
+    /// <summary>รอบ 229 (QUOTA_ADDON แพ็ก 2 · §C): เพดานต่อเว็บจากแพ็กเกจ/override เมื่อเว็บไม่ได้ตั้งเอง (<c>Site.MaxPages/MaxProducts</c> = override รายเว็บ ชนะ) ·
+    /// null (เทสต์เดิม) = พฤติกรรมเดิม (ไม่ตั้งที่เว็บ = ไม่จำกัด)</summary>
+    private readonly IQuotaGate? _gate;
 
-    public CmsQuotaService(AccountingDbContext db)
+    public CmsQuotaService(AccountingDbContext db, IQuotaGate? gate = null)
     {
         _db = db;
+        _gate = gate;
+    }
+
+    /// <summary>เพดานต่อเว็บที่มีผล: ค่าที่ตั้งบนเว็บ (override รายเว็บ) ชนะ ⇒ เพดานแพ็กเกจ/รายบริษัท ⇒ ไม่จำกัด</summary>
+    private async Task<int?> PerSiteLimitAsync(Guid companyId, int? siteOverride, string resourceKey)
+    {
+        if (siteOverride != null || _gate == null) return siteOverride;
+        return (await _gate.LimitAsync(companyId, resourceKey)).Effective;
     }
 
     // ── โควตาหน้า/สินค้า ────────────────────────────────────────────────
@@ -34,7 +45,8 @@ public class CmsQuotaService : ICmsQuotaService
         var used = await _db.SitePages
             .CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId);
 
-        return new CmsQuotaUsage { SiteFound = true, Used = used, Limit = site.MaxPages };
+        return new CmsQuotaUsage { SiteFound = true, Used = used,
+            Limit = await PerSiteLimitAsync(companyId, site.MaxPages, Accounting.Models.Constants.QuotaResources.CmsPagesPerSite) };
     }
 
     public async Task<CmsQuotaUsage> ProductUsageAsync(Guid companyId, Guid siteId)
@@ -50,7 +62,8 @@ public class CmsQuotaService : ICmsQuotaService
         var used = await _db.SiteProducts
             .CountAsync(p => p.SiteId == siteId && p.CompanyId == companyId);
 
-        return new CmsQuotaUsage { SiteFound = true, Used = used, Limit = site.MaxProducts };
+        return new CmsQuotaUsage { SiteFound = true, Used = used,
+            Limit = await PerSiteLimitAsync(companyId, site.MaxProducts, Accounting.Models.Constants.QuotaResources.CmsProductsPerSite) };
     }
 
     public async Task<bool> CanAddPageAsync(Guid companyId, Guid siteId)

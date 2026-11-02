@@ -61,6 +61,7 @@
       </div>
       <div class="quota-progress">
         <div class="quota-progress-bar"><div class="quota-progress-fill" id="qFill" style="width:0%"></div></div>
+        <div id="qHint" style="font-size:12px;color:#64748b;margin-top:4px"></div>
       </div>
     </div>
 
@@ -116,6 +117,7 @@
   <script src="/js/translations.js"></script>
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
+  <script src="/js/quota-ui.js"></script>
   <script>
     // Roles keyed by string (API returns enum as string via JsonStringEnumConverter)
     const ROLES = {
@@ -132,7 +134,7 @@
 
     const Page = {
       members: [],
-      maxUsers: 0,
+      seat: null,
       currentUserId: null,
       currentUserRole: null,
       customRoles: [],
@@ -158,14 +160,16 @@
         const api = Layout.api(); if (!api) return;
         try {
           // Load members and usage in parallel
-          const [membersRes, usageRes] = await Promise.all([
+          // รอบ 229 (QUOTA_ADDON แพ็ก 0(จ) · D-4/D-18): ที่นั่งจากตัวสรุปโควตาของเซิร์ฟเวอร์ (สมาชิก + คำเชิญค้าง · เพดานรวมที่ซื้อเพิ่ม) ·
+          // โหลดไม่ได้ = "ดูไม่ได้" ไม่ใช่ "ไม่จำกัด" (เดิมตกเป็น 999)
+          const [membersRes, seatItems] = await Promise.all([
             api.getMembers(),
-            api.getUsageDetail().catch(() => null)
+            (window.QuotaUI ? QuotaUI.summary() : Promise.resolve(null)).catch(() => null)
           ]);
           if (!membersRes || membersRes.success === false)
             throw new Error((membersRes && membersRes.message) || 'เซิร์ฟเวอร์ไม่ส่งรายชื่อสมาชิก');
           this.members = membersRes.data || [];
-          this.maxUsers = usageRes?.data?.maxUsers || 999;
+          this.seat = seatItems ? (seatItems.find(i => i.resource === 'users') || null) : null;
 
           // Show company name so user knows which company they're managing
           const companyName = Layout.currentCompany?.name || '';
@@ -202,14 +206,17 @@
       },
 
       renderQuota() {
-        const count = this.members.length;
-        const max = this.maxUsers;
-        document.getElementById('qCurrent').textContent = count;
-        document.getElementById('qMax').textContent = max >= 999 ? '∞' : max;
-        const pct = max >= 999 ? Math.min((count / 50) * 100, 100) : (count / max) * 100;
+        const s = this.seat;
+        document.getElementById('qCurrent').textContent = s ? s.usedText : this.members.length;
+        document.getElementById('qMax').textContent = s ? s.limitText : 'ดูไม่ได้';
+        const pct = (s && s.limit) ? Math.min(100, Math.round((s.used || 0) * 100 / s.limit)) : 0;
         const fill = document.getElementById('qFill');
-        fill.style.width = Math.min(pct, 100) + '%';
-        fill.className = 'quota-progress-fill' + (pct >= 100 ? ' full' : pct >= 80 ? ' warn' : '');
+        fill.style.width = pct + '%';
+        fill.className = 'quota-progress-fill' + (s && s.warnLevel === 2 ? ' full' : s && s.warnLevel === 1 ? ' warn' : '');
+        const hint = document.getElementById('qHint');
+        if (hint) hint.innerHTML = !s ? '<span style="color:#b45309">โหลดจำนวนที่นั่งไม่ได้ — ลองรีเฟรช</span>'
+          : s.warnLevel === 2 ? `ที่นั่งเต็มแล้ว (รวมคำเชิญที่ยังไม่ตอบ) — เชิญเพิ่มไม่ได้จนกว่าจะนำผู้ใช้ออก/ยกเลิกคำเชิญ${s.canBuy ? ' หรือ <a href="#" onclick="QuotaUI.openBuy(\'users\',{onDone:()=>Page.load()});return false">ซื้อที่นั่งเพิ่ม</a>' : ''}`
+          : (s.note ? Layout.esc(s.note) : '');
       },
 
       renderMembers() {
@@ -309,7 +316,11 @@
           document.getElementById('addEmail').value = '';
           document.getElementById('ownerWarning').style.display = 'none';
           await this.load();
-        } catch (e) { Layout.toast(e.message, 'error'); }
+        } catch (e) {
+          // รอบ 229: ที่นั่งเต็ม (QUOTA-FULL:users) ⇒ เสนอซื้อเพิ่มทันที (ทางไปต่อ) แทน error เปล่า
+          if (window.QuotaUI && QuotaUI.handleFull(e, () => this.load())) return;
+          Layout.toast(e.message, 'error');
+        }
       },
 
       async transferOwnership() {

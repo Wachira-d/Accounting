@@ -385,13 +385,13 @@ public class SettingsService : ISettingsService
         var webRoot = _env.WebRootPath
             ?? Path.Combine(_env.ContentRootPath ?? Directory.GetCurrentDirectory(), "wwwroot");
 
-        // Delete old logo if exists
+        // Delete old logo if exists — ผ่านที่เก็บกลางตัวเดียวกับที่ ImageProcessingService เขียน (Local/S3 · ทีม FS 2026-11-02)
         try
         {
-            if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
-                File.Delete(settings.LogoPath);
+            if (!string.IsNullOrEmpty(settings.LogoPath) && _images.Storage is { } storage)
+                await storage.DeleteAsync(settings.LogoPath);
         }
-        catch { /* old file may be locked / missing — keep going with the new upload */ }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* old file may be locked / missing — keep going with the new upload */ }
 
         var dir = Path.Combine(webRoot, "uploads", "logos", companyId.ToString());
         var web = $"/uploads/logos/{companyId}";
@@ -425,8 +425,8 @@ public class SettingsService : ISettingsService
     public async Task DeleteLogoAsync(Guid companyId)
     {
         var settings = await GetOrCreateSettingsAsync(companyId);
-        if (!string.IsNullOrEmpty(settings.LogoPath) && File.Exists(settings.LogoPath))
-            File.Delete(settings.LogoPath);
+        if (!string.IsNullOrEmpty(settings.LogoPath) && _images.Storage is { } storage)
+            await storage.DeleteAsync(settings.LogoPath);
         settings.LogoPath = null;
         settings.LogoUrl = null;
         await _db.SaveChangesAsync();
@@ -450,10 +450,10 @@ public class SettingsService : ISettingsService
 
         try
         {
-            if (!string.IsNullOrEmpty(settings.StampPath) && File.Exists(settings.StampPath))
-                File.Delete(settings.StampPath);
+            if (!string.IsNullOrEmpty(settings.StampPath) && _images.Storage is { } storage)
+                await storage.DeleteAsync(settings.StampPath);
         }
-        catch { /* old file may be locked / missing — keep going */ }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* old file may be locked / missing — keep going */ }
 
         var dir = Path.Combine(webRoot, "uploads", "stamps", companyId.ToString());
         var web = $"/uploads/stamps/{companyId}";
@@ -487,8 +487,8 @@ public class SettingsService : ISettingsService
     public async Task DeleteStampAsync(Guid companyId)
     {
         var settings = await GetOrCreateSettingsAsync(companyId);
-        if (!string.IsNullOrEmpty(settings.StampPath) && File.Exists(settings.StampPath))
-            File.Delete(settings.StampPath);
+        if (!string.IsNullOrEmpty(settings.StampPath) && _images.Storage is { } storage)
+            await storage.DeleteAsync(settings.StampPath);
         settings.StampPath = null;
         settings.StampUrl = null;
         await _db.SaveChangesAsync();

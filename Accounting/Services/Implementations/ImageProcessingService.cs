@@ -8,10 +8,14 @@ public class ImageProcessingService : IImageProcessingService
 {
     private readonly ILogger<ImageProcessingService> _logger;
 
-    public ImageProcessingService(ILogger<ImageProcessingService> logger)
+    /// <param name="storage">ที่เก็บไฟล์กลาง — <see cref="ProcessAndSaveAsync"/> เขียนผ่านตัวนี้ (Local = พาธเดิม · S3 = object key จากพาธเดียวกัน · ทีม FS 2026-11-02)</param>
+    public ImageProcessingService(ILogger<ImageProcessingService> logger, Accounting.Services.Storage.IFileStorage storage)
     {
         _logger = logger;
+        Storage = storage;
     }
+
+    public Accounting.Services.Storage.IFileStorage Storage { get; }
 
     private record ProfileSpec(int MaxLongEdge, int Quality, bool KeepTransparency, bool ForceSquareCrop);
 
@@ -43,14 +47,12 @@ public class ImageProcessingService : IImageProcessingService
         ImageProfile profile,
         bool generateThumb = false)
     {
-        Directory.CreateDirectory(absoluteDirectory);
-
         // ตัวแปลง (sniff ไบต์ → decode → resize/encode) อยู่ที่ TransformAsync ตัวเดียว — ใช้ร่วมกับ ProcessToBytesAsync (R-43)
         using var t = await TransformAsync(input, contentType, originalFileName, profile);
 
         var fileName = $"{Guid.NewGuid():N}{t.Extension}";
         var absPath = Path.Combine(absoluteDirectory, fileName);
-        await File.WriteAllBytesAsync(absPath, t.Bytes);
+        await Storage.WriteAsync(absPath, t.Bytes, Accounting.Helpers.UploadFileType.ContentTypeForExtension(t.Extension));
         var url = $"{webBaseUrl.TrimEnd('/')}/{fileName}";
 
         if (t.IsRaw || t.Image == null)
@@ -63,7 +65,7 @@ public class ImageProcessingService : IImageProcessingService
             using var thumb = SkiaImageOps.CropToSquare(t.Image, tSpec.MaxLongEdge);
             var thumbName = $"{Path.GetFileNameWithoutExtension(fileName)}_thumb.jpg";
             var thumbPath = Path.Combine(absoluteDirectory, thumbName);
-            await File.WriteAllBytesAsync(thumbPath, SkiaImageOps.EncodeJpeg(thumb, tSpec.Quality));
+            await Storage.WriteAsync(thumbPath, SkiaImageOps.EncodeJpeg(thumb, tSpec.Quality), "image/jpeg");
             thumbUrl = $"{webBaseUrl.TrimEnd('/')}/{thumbName}";
         }
 

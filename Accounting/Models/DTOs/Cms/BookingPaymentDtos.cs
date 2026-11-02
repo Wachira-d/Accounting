@@ -124,7 +124,14 @@ public class BookingFulfillmentSettingsDto
     public string? DefaultMethod { get; set; }
     public string? PickupNote { get; set; }
     public decimal? DeliveryMinAmount { get; set; }
+    /// <summary>รอบ 228: ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่เองได้ถึงกี่ ชม. ก่อนเวลานัด · null = ไม่เปิด (เดิม) — <c>BookingFulfillmentChange</c></summary>
+    public int? ChangeCutoffHours { get; set; }
     // ── อ่านอย่างเดียว ──
+    public string? ChangeCutoffSummary { get; set; }
+    /// <summary>รอบ 228: บัญชีรายได้ค่าจัดส่งของเว็บ (ตั้งที่ ตั้งค่าร้านค้า) · null = บัญชีรายได้ตั้งต้น</summary>
+    public string? ShippingRevenueAccountLabel { get; set; }
+    /// <summary>รอบ 228 (แพ็ก C · Q3): เปิดจัดส่งแต่ไม่ได้ตั้งค่าส่ง ⇒ ส่งฟรีเงียบ — <c>ShopDeliveryFee.FreeByOmissionWarning</c></summary>
+    public string? FreeDeliveryWarning { get; set; }
     public int ShippingZoneCount { get; set; }
     public decimal? ShopFlatShippingRate { get; set; }
     public decimal? ShopFreeShippingThreshold { get; set; }
@@ -221,6 +228,51 @@ public class BookingPaymentInfoDto
     public string? SlipFileUrl { get; set; }
     /// <summary>รอบ 226: พนักงานเท่านั้น — นโยบายชำระที่ตั้งไว้ใช้กับการจองนี้ไม่ได้ (โหมดบังคับ + ชนิดบริการเก็บเงินไม่ได้) พร้อมทางแก้</summary>
     public string? ShopPolicyWarning { get; set; }
+    /// <summary>รอบ 228 (คำตัดสิน 228-1): มัดจำไม่บังคับที่ยังไม่เลือก ⇒ หน้าจัดการการจองแสดงปุ่ม "ชำระมัดจำตอนนี้" — <c>BookingDepositLater.Decide</c></summary>
+    public bool PayLaterShow { get; set; }
+    public bool CanPayDepositLater { get; set; }
+    public decimal PayLaterAmount { get; set; }
+    /// <summary>ข้อความเหนือปุ่ม หรือเหตุที่เลือกไม่ได้</summary>
+    public string? PayLaterNote { get; set; }
+}
+
+/// <summary>รอบ 228: ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่จากหน้าจัดการการจอง — <see cref="PreviewOnly"/> = คิดค่าส่ง/ผลต่างโดยไม่บันทึก</summary>
+public class ChangeBookingFulfillmentRequest
+{
+    public string? FulfillmentMethod { get; set; }
+    public string? DeliveryAddress { get; set; }
+    public string? DeliveryProvince { get; set; }
+    public string? DeliveryPostalCode { get; set; }
+    public Guid? DeliveryRateId { get; set; }
+    public bool PreviewOnly { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 228 S6: ยอดที่ลูกค้าเห็นในตัวอย่าง (ค่าส่งใหม่ · มัดจำหลังเปลี่ยน) — บันทึกต้องส่งและต้องตรง มิฉะนั้น 409</summary>
+    public decimal? ExpectedNewFee { get; set; }
+    public decimal? ExpectedDepositAmount { get; set; }
+}
+
+/// <summary>ผลคิด/ผลบันทึกการเปลี่ยนวิธีรับ — ยอดทุกตัวจากเซิร์ฟเวอร์ (<c>BookingFulfillmentChange.Decide</c>)</summary>
+public class ChangeBookingFulfillmentResponse
+{
+    public BookingFulfillmentQuoteDto Quote { get; set; } = new();
+    public bool Allowed { get; set; }
+    public string? Problem { get; set; }
+    public decimal OldFee { get; set; }
+    public decimal NewFee { get; set; }
+    public decimal NewGrandTotal { get; set; }
+    public decimal NewDepositAmount { get; set; }
+    public string? Effect { get; set; }
+    public bool Applied { get; set; }
+    /// <summary>หลังบันทึก — การจองฉบับลูกค้า (ไม่มีข้อมูลภายใน)</summary>
+    public BookingResponse? Booking { get; set; }
+}
+
+/// <summary>รอบ 228 (คำขอเจ้าของ "สั่งทำ/พรีออเดอร์ ควรใช้ประเภทธุรกิจไหน"): ผลการตั้งค่าเว็บทั้งชุดจากแม่แบบ — ทำอะไรไปแล้ว + สิ่งที่เจ้าของต้องทำต่อ</summary>
+public class BookingPresetApplyResult
+{
+    public string PresetKey { get; set; } = "";
+    public List<string> Done { get; set; } = new();
+    public List<string> Skipped { get; set; } = new();
+    public List<string> NextSteps { get; set; } = new();
 }
 
 public class RejectBookingSlipRequest
@@ -235,3 +287,60 @@ public class VerifyBookingSlipRequest
     /// <summary>ฝ่ายค้านรอบ 218 (B2): วันที่โอนตามสลิป (วันที่ไทย yyyy-MM-dd) = วันที่ใบรับมัดจำ (§78/1) · ว่าง = เวลาที่ลูกค้าแนบสลิป</summary>
     public DateOnly? TransferDate { get; set; }
 }
+
+/// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก A): บัญชีรับโอน/พร้อมเพย์/รูป QR ของเว็บ (ที่เดียว — คำสั่งซื้อ · การจอง · ที่พัก ใช้ร่วม)</summary>
+public class SiteTransferAccountDto
+{
+    public string? BankName { get; set; }
+    public string? BankAccountNumber { get; set; }
+    public string? BankAccountName { get; set; }
+    public string? BankBranch { get; set; }
+    public string? PromptPayId { get; set; }
+    public string? PromptPayQrUrl { get; set; }
+    /// <summary>คำขอ: ยืนยันการล้างช่องที่มีค่าอยู่ (409 ถ้าไม่ยืนยัน)</summary>
+    public bool ConfirmClear { get; set; }
+    // ── อ่านอย่างเดียว ──
+    public List<string> BankNameOptions { get; set; } = new();
+    /// <summary>ลูกค้าโอน/สแกนได้จริงไหม (เลขบัญชี · พร้อมเพย์ที่ถูกต้อง · รูป QR)</summary>
+    public bool Payable { get; set; }
+    /// <summary>งานของเว็บที่ใช้บัญชีนี้ (คำสั่งซื้อ / การจอง / ที่พัก)</summary>
+    public List<string> UsedBy { get; set; } = new();
+}
+
+/// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก C): ค่าส่งของเว็บ (กลุ่ม "การจัดส่ง / รับเอง") — คำสั่งซื้อและการจองใช้ร่วม (ตัวคิด ShopDeliveryFee)</summary>
+public class SiteShippingSettingsDto
+{
+    public decimal? FlatShippingRate { get; set; }
+    public decimal? FreeShippingThreshold { get; set; }
+    public bool FreeShippingOverridesZones { get; set; }
+    /// <summary>คำตัดสิน Q3: เจ้าของยืนยัน "ส่งฟรีจริง" (ไม่มีโซน/ค่าส่งเหมาจ่าย) ⇒ ไม่เตือน</summary>
+    public bool FreeDeliveryConfirmed { get; set; }
+    // ── อ่านอย่างเดียว ──
+    public int ZoneCount { get; set; }
+    public bool OrdersDelivery { get; set; }
+    public bool BookingDelivery { get; set; }
+    public string? FreeDeliveryWarning { get; set; }
+    public string? ShippingRevenueAccountLabel { get; set; }
+}
+
+/// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D): หนึ่งแถวของตาราง "มัดจำ & การยกเลิก ของทุกงาน" (อ่านอย่างเดียว · ข้อความจากเซิร์ฟเวอร์)</summary>
+public class DepositCancelOverviewRow
+{
+    public string Work { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Deposit { get; set; } = "";
+    public string Cancellation { get; set; } = "";
+    public string Where { get; set; } = "";
+    public string? Warning { get; set; }
+}
+
+/// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E): แผง "สิ่งที่ยังไม่ได้ตั้งค่า" ของเว็บ — <c>Helpers/CmsSiteSetupChecklist</c></summary>
+public class CmsSiteSetupStatusDto
+{
+    public List<Accounting.Helpers.CmsSiteSetupItem> Items { get; set; } = new();
+    public int Done { get; set; }
+    public int Total { get; set; }
+    /// <summary>ข้อความก่อนเผยแพร่ (แสดง ไม่บล็อก) · null = ครบ</summary>
+    public string? BeforePublishNote { get; set; }
+}
+

@@ -45,7 +45,14 @@ public static class LatePaymentPenaltyPolicy
         decimal Penalty,
         string? PenaltyReference,
         string PenaltyNote,
-        string FineNote)
+        string FineNote,
+        // รอบ 228 ทีมภาษี: เบี้ยปรับที่เสนอจากกติกาที่ยังไม่ยืนยัน (ภ.พ.36) — หน้าแสดงเป็นข้อมูล แต่ไม่เติมลงช่อง (ผู้ใช้กรอกตามใบเสร็จเอง)
+        bool PenaltyNeedsConfirmation = false,
+        // ฝ่ายค้าน S4: เงินเพิ่มจากกติกาที่ยังไม่ยืนยัน (กองทุนเงินทดแทน ม.46) — ข้อมูลเท่านั้น ไม่เติมช่อง
+        bool SurchargeNeedsConfirmation = false,
+        // ฝ่ายค้าน S6: เงินเพิ่ม §67 ตรี (ภ.ง.ด.50) แยกก้อน/ข้อความของตัวเอง — ข้อมูลเท่านั้น ไม่รวมในเงินเพิ่ม ม.27 และไม่เติมช่อง
+        decimal Section67Ter = 0m,
+        string? Section67TerNote = null)
     {
         public decimal Total => Surcharge + Penalty;
     }
@@ -81,7 +88,21 @@ public static class LatePaymentPenaltyPolicy
     /// <paramref name="paperFiling"/> = ยื่นแบบกระดาษ (ไม่มีสิทธิ์ขยาย e-Filing) · <paramref name="filedAt"/> = วันที่ยื่นแบบจริง (ถ้ารู้ —
     /// เบี้ยปรับคิดจากการ<b>ยื่น</b>ช้า: ยื่นทันแต่จ่ายช้า ⇒ มีแต่เงินเพิ่ม ไม่มีเบี้ยปรับ · ฝ่ายค้านข้อ 7)</summary>
     public static Suggestion Suggest(string remittanceType, int periodYear, int periodMonth,
-        decimal taxAmount, DateTime payDate, IReadOnlySet<DateTime>? holidays, bool paperFiling = false, DateTime? filedAt = null)
+        decimal taxAmount, DateTime payDate, IReadOnlySet<DateTime>? holidays, bool paperFiling = false, DateTime? filedAt = null,
+        CitPayment.EstimateFacts? citEstimate = null)
+    {
+        var s = SuggestCore(remittanceType, periodYear, periodMonth, taxAmount, payDate, holidays, paperFiling, filedAt);
+        // รอบ 228 — ภ.ง.ด.50: เงินเพิ่ม §67 ตรี (ประมาณการ ภ.ง.ด.51 ขาดเกิน 25%) ไม่ขึ้นกับการจ่ายช้า · ฝ่ายค้าน S6: ก้อน/ข้อความของตัวเอง
+        // (ไม่รวมในเงินเพิ่ม ม.27 · ข้อความ "ชำระทันกำหนด" คงเดิม · ไม่เติมช่อง — "เหตุอันสมควร"/ข้อยกเว้นผู้ทำบัญชีตัดสิน) · ไม่มีข้อเท็จจริง ⇒ บอกว่าไม่ได้คำนวณ
+        if (remittanceType != CitPayment.Pnd50Type) return s;
+        if (citEstimate == null)
+            return s with { Section67TerNote = "§67 ตรี: ไม่พบ ภ.ง.ด.51 ของรอบนี้ในระบบ — ระบบไม่คำนวณเงินเพิ่มประมาณการขาด (ถ้ามี กรอกรวมในช่องเงินเพิ่ม)" };
+        var p67 = CitPayment.Section67Ter(citEstimate);
+        return s with { Section67Ter = p67.Amount, Section67TerNote = p67.Note };
+    }
+
+    private static Suggestion SuggestCore(string remittanceType, int periodYear, int periodMonth,
+        decimal taxAmount, DateTime payDate, IReadOnlySet<DateTime>? holidays, bool paperFiling, DateTime? filedAt)
     {
         var grace = DueDate(remittanceType, periodYear, periodMonth, holidays, paperFiling);
         var from = CountFrom(remittanceType, periodYear, periodMonth, holidays);
@@ -122,6 +143,22 @@ public static class LatePaymentPenaltyPolicy
                 sRef = "RD-89/1";
                 sNote = $"เงินเพิ่ม 1.5% ต่อเดือน × {months} เดือน (ป.รัษฎากร ม.89/1 · เศษของเดือนนับเป็นหนึ่งเดือน · ไม่เกินภาษี)";
                 break;
+            case CitPayment.Pnd51Type: case CitPayment.Pnd50Type:
+                surcharge = RevenueCodeSurcharge.Compute(taxAmount, from, pay);
+                capped = RevenueCodeSurcharge.IsCapped(taxAmount, from, pay);
+                months = RevenueCodeSurcharge.MonthsLate(from, pay);
+                sRef = RevenueCodeSurcharge.LegalReference;
+                sNote = $"เงินเพิ่ม 1.5% ต่อเดือน × {months} เดือน (ป.รัษฎากร ม.27 · {(remittanceType == CitPayment.Pnd51Type ? "ภ.ง.ด.51 §67 ทวิ" : "ภ.ง.ด.50 §68")} · เศษของเดือนนับเป็นหนึ่งเดือน · ไม่เกินภาษี)";
+                break;
+            case WorkersCompensationBase.RemittanceType:
+            {
+                var w = WorkersCompensationBase.LateSurcharge(taxAmount, from, pay);
+                surcharge = w.Amount; capped = w.Capped; months = w.Months;
+                sRef = WorkersCompensationBase.LegalReference;
+                sNote = $"เงินเพิ่ม {WorkersCompensationBase.LateSurchargePercentPerMonth:0.##}% ต่อเดือน × {months} เดือน (พ.ร.บ.เงินทดแทน ม.46 · ไม่เกินเงินสมทบ · "
+                    + "อัตรา (2% ตามฉบับแก้ไข 2561 หรือ 3%) และการนับเศษเดือนต้องยืนยันกับผู้ทำบัญชี — ระบบไม่เติมลงช่อง กรอกตามใบเสร็จ)";
+                break;
+            }
             case "VatPp36":
                 surcharge = Pp36Lifecycle.SuggestedSurcharge(taxAmount, from, pay);
                 capped = RevenueCodeSurcharge.IsCapped(taxAmount, from, pay);
@@ -141,7 +178,9 @@ public static class LatePaymentPenaltyPolicy
         var (penalty, pRef, pNote) = filing <= grace
             ? (0m, (string?)null, $"ยื่นแบบทันกำหนด ({filing:dd/MM/yyyy}) — ไม่มีเบี้ยปรับยื่นช้า (มีเฉพาะเงินเพิ่มจากการชำระช้า)")
             : PenaltyFor(remittanceType, taxAmount, (int)(filing - from).TotalDays);
-        return new Suggestion(grace, daysLate, months, surcharge, capped, sRef, sNote, penalty, pRef, pNote, fineNote);
+        return new Suggestion(grace, daysLate, months, surcharge, capped, sRef, sNote, penalty, pRef, pNote, fineNote,
+            PenaltyNeedsConfirmation: penalty > 0m && remittanceType == "VatPp36",
+            SurchargeNeedsConfirmation: surcharge > 0m && remittanceType == WorkersCompensationBase.RemittanceType);
     }
 
     /// <summary>อัตราเบี้ยปรับ ภ.พ.30 ที่ลดแล้ว (ยื่นเองช้า) ตามจำนวนวันที่พ้นกำหนด — 2% / 5% / 10% / 20%</summary>
@@ -167,7 +206,20 @@ public static class LatePaymentPenaltyPolicy
                     + "ใช้เมื่อยื่นเองก่อนถูกตรวจ/ได้รับหมายเรียก · ยึดตามใบเสร็จจริง");
             }
             case "VatPp36":
-                return (0m, null, "ระบบไม่เสนอเบี้ยปรับ ภ.พ.36 (ต้องยืนยันกับผู้ทำบัญชี) — กรอกตามใบเสร็จถ้ามี");
+            {
+                // รอบ 228 (TAX_PENALTY_AUDIT §3 ข้อ 5): เสนอตารางลดเบี้ยปรับชุดเดียวกับ ภ.พ.30 (ยื่นเองช้า) — ข้อมูลเท่านั้น: API ไม่ลงเองเมื่อไม่ส่งค่า
+                // (Resolve: ไม่ส่ง = 0) · หน้าไม่เติมลงช่อง (Suggestion.PenaltyNeedsConfirmation ⇒ PendingRemittanceItem.PenaltyPrefill = 0) ·
+                // ⚠️ ต้องยืนยันกับผู้ทำบัญชีว่าระเบียบลดเบี้ยปรับครอบ ภ.พ.36
+                var rate = Pp30ReducedPenaltyRate(daysLate);
+                var amt = Math.Round(tax * rate, 2, MidpointRounding.AwayFromZero);
+                return (amt, "RD-89",
+                    $"เบี้ยปรับ ภ.พ.36 ยื่นเองช้า {daysLate} วัน — ถ้าระเบียบลดเบี้ยปรับชุดเดียวกับ ภ.พ.30 ใช้ได้ = {rate * 100m:0}% ≈ {amt:N2} บาท · "
+                    + "ต้องยืนยันกับผู้ทำบัญชี — ระบบไม่เติมลงช่อง กรอกตามใบเสร็จจริง");
+            }
+            case CitPayment.Pnd51Type: case CitPayment.Pnd50Type:
+                return (0m, null, "ภ.ง.ด.50/51 ชำระช้ามีเงินเพิ่ม ม.27 · ยื่นช้ามีค่าปรับอาญา ม.35 (กรอกช่องค่าปรับ) — ระบบไม่เสนอเบี้ยปรับ (มีเมื่อถูกประเมิน)");
+            case WorkersCompensationBase.RemittanceType:
+                return (0m, null, "กองทุนเงินทดแทนไม่มีเบี้ยปรับตามแบบ — มีเฉพาะเงินเพิ่ม ม.46");
             case "SsoSps110":
                 return (0m, null, "ประกันสังคมไม่มีเบี้ยปรับ — มีเฉพาะเงินเพิ่ม ม.49");
             default:
@@ -179,6 +231,8 @@ public static class LatePaymentPenaltyPolicy
     {
         "SsoSps110" => "ค่าปรับทางอาญา/ค่าปรับอื่น (ถ้ามี) — กรอกตามหนังสือแจ้งของสำนักงานประกันสังคม · ระบบไม่เดา",
         "VatPp30" or "VatPp36" => "ค่าปรับอาญา (ถ้ามี) — กรอกตามใบเสร็จ/หนังสือเปรียบเทียบปรับ · ระบบไม่เดา",
+        WorkersCompensationBase.RemittanceType => "ค่าปรับ (ถ้ามี) — กรอกตามหนังสือแจ้งของสำนักงานประกันสังคม (กองทุนเงินทดแทน) · ระบบไม่เดา",
+        CitPayment.Pnd51Type or CitPayment.Pnd50Type => "ค่าปรับอาญา ม.35 (ยื่นแบบช้า) — กรอกตามที่สรรพากรเปรียบเทียบปรับ · ระบบไม่เดา",
         _ => "ค่าปรับอาญา ม.35 (ไม่เกิน 2,000 บาท) — กรอกตามที่สรรพากรเปรียบเทียบปรับ · ระบบไม่เดา",
     };
 
@@ -215,14 +269,24 @@ public static class LatePaymentPenaltyPolicy
             .Where(g => g != Guid.Empty)
             .Distinct();
 
+    /// <summary>รอบ 228 ทีมภาษี — เครื่องหมายในคำอธิบายบรรทัดค่าปรับที่ <see cref="JournalLines"/> เขียน · ตัวบวกกลับ §65 ตรี(6) ใช้แยกบรรทัดค่าปรับ
+    /// ออกจากบรรทัดค่าใช้จ่ายที่หักได้ใน JE เดียวกัน (<see cref="ExpenseLinesMixed"/>)</summary>
+    public const string Section65Ter6Marker = "รายจ่ายต้องห้าม §65 ตรี(6)";
+
+    /// <summary>แบบที่ JE นำส่งมีบรรทัดค่าใช้จ่าย<b>ที่หักได้</b>ปนกับค่าปรับ (กท.20ก ส่วนต่าง 54121 · ค่าอากร · ภ.ง.ด.50 ล้างเครดิตแบบเดิมที่ 580xx) —
+    /// ตัวบวกกลับต้องนับเฉพาะบรรทัดที่มี <see cref="Section65Ter6Marker"/></summary>
+    public static bool ExpenseLinesMixed(string remittanceType)
+        => remittanceType is WorkersCompensationBase.RemittanceType or StampDutySchedule.RemittanceType
+            or CitPayment.Pnd51Type or CitPayment.Pnd50Type;
+
     /// <summary>คำอธิบายบรรทัด JE ต่อก้อน (ผังค่าปรับ/เงินเพิ่ม · รายจ่ายต้องห้าม §65 ตรี(6))</summary>
     public static IEnumerable<(decimal Amount, string Description)> JournalLines(string form, Applied a, string? surchargeReference)
     {
         if (a.Surcharge > 0)
-            yield return (a.Surcharge, $"เงินเพิ่มนำส่ง{form}ช้า{(surchargeReference == null ? "" : $" ({surchargeReference})")} — รายจ่ายต้องห้าม §65 ตรี(6)");
+            yield return (a.Surcharge, $"เงินเพิ่มนำส่ง{form}ช้า{(surchargeReference == null ? "" : $" ({surchargeReference})")} — {Section65Ter6Marker}");
         if (a.Penalty > 0)
-            yield return (a.Penalty, $"เบี้ยปรับ{form} — รายจ่ายต้องห้าม §65 ตรี(6)");
+            yield return (a.Penalty, $"เบี้ยปรับ{form} — {Section65Ter6Marker}");
         if (a.OtherFine > 0)
-            yield return (a.OtherFine, $"ค่าปรับ (อาญา/อื่น ๆ) {form} — รายจ่ายต้องห้าม §65 ตรี(6)");
+            yield return (a.OtherFine, $"ค่าปรับ (อาญา/อื่น ๆ) {form} — {Section65Ter6Marker}");
     }
 }

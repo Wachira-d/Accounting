@@ -188,8 +188,10 @@
             </div>
             <div style="text-align:right">
               ${this.access && this.access.canManageBilling === false ? ''
-                : `<button class="btn btn-secondary" onclick="Page.topUp()">➕ ซื้อโควตาเพิ่ม 100 ฉบับ</button>`}
-              <div class="muted" style="font-size:11px;margin-top:2px">ใช้ได้ 60 วัน</div>
+                : (q.topUpPackPrice > 0
+                    ? `<button class="btn btn-secondary" onclick="Page.topUp()">➕ ซื้อเพิ่ม ${Number(q.topUpPackSize).toLocaleString('th-TH')} ฉบับ · ${Number(q.topUpPackPrice).toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท</button>`
+                    : '<span class="muted" style="font-size:12px">ยังไม่เปิดขายแพ็กเอกสาร — ติดต่อผู้ดูแลระบบ</span>')}
+              ${q.topUpPackPrice > 0 ? `<div class="muted" style="font-size:11px;margin-top:2px">ใช้ได้ ${q.topUpValidDays} วัน · ค่าใช้จ่ายเข้าใบแจ้งหนี้ค่าใช้งานรอบถัดไป</div>` : ''}
             </div>
           </div>
           ${unlimited ? '' : `<div class="quota-bar w${q.warnLevel}" style="margin:10px 0"><i style="width:${pct}%"></i></div>`}
@@ -204,14 +206,29 @@
           </div>`;
       },
 
+      // รอบ 229 (QUOTA_ADDON แพ็ก 0(ข) · D-1): ยืนยันพร้อมราคา/ขนาด/อายุจากเซิร์ฟเวอร์ · ส่งข้อเสนอที่เห็นไปเทียบ (เปลี่ยน ⇒ 409 วาดใหม่ · ยังไม่คิดเงิน) ·
+      // Idempotency-Key ต่อการกดยืนยัน 1 ครั้ง (เครือข่ายส่งซ้ำ = คิดเงินครั้งเดียว) — ลอกแพ็กข้อความ (js/customer-notify.js)
       async topUp() {
-        if (!confirm('ซื้อโควตาเพิ่ม 100 ฉบับ? ค่าใช้จ่ายจะเข้าบิลรอบถัดไป')) return;
+        const q = this.quota;
+        if (!q || !(q.topUpPackPrice > 0)) return;
+        if (!confirm(`ซื้อโควตาเอกสารเพิ่ม ${Number(q.topUpPackSize).toLocaleString('th-TH')} ฉบับ ราคา `
+          + `${Number(q.topUpPackPrice).toLocaleString('th-TH', { minimumFractionDigits: 2 })} บาท (ใช้ได้ ${q.topUpValidDays} วัน)? `
+          + 'ค่าใช้จ่ายจะเข้าใบแจ้งหนี้ค่าใช้งานรอบถัดไป')) return;
+        const key = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
         try {
-          const res = await API.post(`/api/companies/${this.cid()}/metering/quota/topup`, { packs: 1 });
+          const res = await API.request('POST', `/api/companies/${this.cid()}/metering/quota/topup`,
+            { packs: 1, expectedPackSize: q.topUpPackSize, expectedPackPrice: q.topUpPackPrice }, false, null, { 'Idempotency-Key': key });
           this.quota = res?.data || this.quota;
           this.renderQuota();
           Layout.toast(res?.message || 'เพิ่มโควตาแล้ว', 'success');
-        } catch (e) { Layout.toast(e.message || 'ซื้อโควตาไม่สำเร็จ', 'error'); }
+        } catch (e) {
+          if (e && e.status === 409 && e.body && e.body.data) {
+            this.quota = e.body.data; this.renderQuota();
+            Layout.toast(e.message || 'ขนาด/ราคาแพ็กเปลี่ยน — กรุณาตรวจแล้วกดซื้ออีกครั้ง', 'warning');
+            return;
+          }
+          Layout.toast(e.message || 'ซื้อโควตาไม่สำเร็จ', 'error');
+        }
       },
 
       // ───────── ภารกิจแลกโควตา ─────────
@@ -425,6 +442,7 @@
           companyId: this.cid(),
           publicBase: `/api/companies/${this.cid()}/platform-pay/addons/${encodeURIComponent(code)}`,
           method,
+          card: this.platformPay?.card || null,   // รอบ 228: สคริปต์/คีย์สาธารณะของช่องทาง NextAcc (ไม่ใช่ของร้าน)
           extraBody: { policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown },
           onPaid: async () => { Layout.toast('ชำระค่าส่วนเสริมสำเร็จ', 'success'); await this.loadFeatures(); if (Layout.loadSubscription) await Layout.loadSubscription(); },
         });

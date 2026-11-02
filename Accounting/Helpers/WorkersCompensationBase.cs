@@ -70,4 +70,71 @@ public static class WorkersCompensationBase
         return Math.Round(MonthlyBase(wagePaidThisPeriod) * ratePercent / 100m,
             2, MidpointRounding.AwayFromZero);
     }
+
+    // ══════════════ รอบ 228 — นำส่งเงินสมทบรายปี (TAX_PENALTY_AUDIT §3 ข้อ 2) ══════════════
+
+    /// <summary>แบบนำส่งบนหน้านำส่งรวม — คีย์งวด = (ปีที่จ่ายค่าจ้าง, 12)</summary>
+    public const string RemittanceType = "WcfAnnual";
+    public const string PayableCode = "21816";
+    public const string ExpenseCode = "54121";
+    public const string LegalReference = "WCA-46";
+
+    /// <summary>เงินเพิ่มเงินสมทบจ่ายช้า (พ.ร.บ.เงินทดแทน ม.46 · แก้ไขโดย พ.ร.บ.เงินทดแทน (ฉบับที่ 2) พ.ศ. 2561 — เดิม 3%) ร้อยละต่อเดือน · ไม่เกินเงินสมทบที่ค้าง ·
+    /// ⚠️ ต้องยืนยันกับผู้ทำบัญชี: อัตรา 2% (หลังแก้ไข 2561) และการนับเศษของเดือน — <b>ข้อมูลเท่านั้น</b>: หน้านำส่งไม่เติมลงช่อง
+    /// (<c>Suggestion.SurchargeNeedsConfirmation</c> · ฝ่ายค้าน S4)</summary>
+    public const decimal LateSurchargePercentPerMonth = 2m;
+
+    /// <summary>เงินสมทบทั้งปีของลูกจ้างหนึ่งคน — ค่าจ้างทั้งปีที่จ่ายจริง ไม่เกิน <see cref="AnnualWageCap"/> × อัตรา (ม.44) ·
+    /// ต่างจากผลรวมรายเดือนเมื่อค่าจ้างไม่สม่ำเสมอ (เดือนที่เกิน 20,000 ถูกตัดรายเดือน แต่ทั้งปียังไม่ถึงเพดาน)</summary>
+    public static decimal AnnualContribution(decimal annualWage, decimal ratePercent)
+    {
+        if (ratePercent <= 0m) return 0m;
+        return Math.Round(Math.Min(Math.Max(0m, annualWage), AnnualWageCap) * ratePercent / 100m,
+            2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>ฐานค่าจ้างของงวดที่ไม่มีค่าจ้างเก็บไว้ (แถวก่อนรอบ 228) — ถอดจากเงินสมทบที่คิดไว้ (ฐานรายเดือนที่ตัดเพดานแล้ว) ·
+    /// อัตรา ≤ 0 = 0</summary>
+    public static decimal WageFromContribution(decimal contribution, decimal ratePercent)
+        => ratePercent <= 0m ? 0m : Math.Round(Math.Max(0m, contribution) * 100m / ratePercent, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>วันครบกำหนด (ก่อนเลื่อนวันหยุด) ของ "เงินสมทบตามค่าจ้างจริง" ปี <paramref name="contributionYear"/> —
+    /// แจ้งค่าจ้างจริง (กท.20ก) + จ่ายส่วนที่ขาดภายในสิ้นเดือนกุมภาพันธ์ของปีถัดไป · ผู้เรียกคือ <see cref="TaxFilingDeadline"/> เท่านั้น ·
+    /// ⚠️ เงินสมทบเบื้องต้น (ประมาณการ) ครบกำหนดภายในมกราคมของปีนั้นเอง — ระบบยังไม่รองรับการจ่ายประมาณการ (ต้องยืนยัน)</summary>
+    internal static DateTime AnnualDueRaw(int contributionYear) => new DateTime(contributionYear + 1, 3, 1).AddDays(-1);
+
+    /// <summary>เงินเพิ่ม ม.46 ที่เสนอ — <see cref="LateSurchargePercentPerMonth"/> ต่อเดือน (นับเดือนด้วย <see cref="RevenueCodeSurcharge.MonthsLate"/>:
+    /// เศษของเดือนนับเป็นหนึ่งเดือน) · ไม่เกินเงินสมทบที่ค้าง · ทันกำหนด/ไม่มียอด ⇒ 0</summary>
+    public static (decimal Amount, int Months, bool Capped) LateSurcharge(decimal unpaid, DateTime dueDate, DateTime payDate)
+    {
+        if (unpaid <= 0m || payDate.Date <= dueDate.Date) return (0m, 0, false);
+        var months = RevenueCodeSurcharge.MonthsLate(dueDate, payDate);
+        var raw = Math.Round(unpaid * LateSurchargePercentPerMonth / 100m * months, 2, MidpointRounding.AwayFromZero);
+        return raw > unpaid ? (unpaid, months, true) : (raw, months, false);
+    }
+
+    /// <summary>แผนบรรทัด JE ตอนนำส่งเงินสมทบ (pure · Dr = Cr ทุกกรณี) —
+    /// Dr 21816 เท่าที่ยังตั้งค้างจ่ายอยู่ · ส่วนที่เกินค้างจ่าย (เงินสมทบรายปีมากกว่าผลรวมรายเดือน) Dr ค่าใช้จ่าย 54121 ·
+    /// การจ่ายที่ปิดยอดทั้งปีแล้วยังเหลือค้างจ่าย (ตั้งรายเดือนเกินรายปี) ⇒ Dr 21816 / Cr 54121 ส่วนเกินคืน</summary>
+    /// <summary>คำอธิบายบรรทัดค่าใช้จ่ายที่หักได้ใน JE นำส่ง — <b>ห้ามมี</b> <see cref="LatePaymentPenaltyPolicy.Section65Ter6Marker"/> (ตัวบวกกลับ §65 ตรี(6) นับเฉพาะบรรทัดที่มีเครื่องหมาย)</summary>
+    public const string TrueUpLineDescription = "เงินสมทบกองทุนเงินทดแทนรายปีส่วนที่เกินตั้งค้างจ่ายรายเดือน (เพดาน 240,000/คน/ปี)";
+    public const string OverAccrualLineDescription = "กลับค้างจ่ายกองทุนเงินทดแทนที่ตั้งรายเดือนเกินเงินสมทบรายปี";
+
+    public sealed record PaymentPlan(decimal DrPayable, decimal DrExpenseTrueUp, decimal ReverseOverAccrual)
+    {
+        public decimal Cash => DrPayable + DrExpenseTrueUp;
+    }
+
+    public static PaymentPlan Plan(decimal annualContribution, decimal accruedInPayroll, decimal remittedBefore, decimal amountNow)
+    {
+        var accruedLeft = Math.Max(0m, accruedInPayroll - Math.Max(0m, remittedBefore));
+        var amt = Math.Max(0m, amountNow);
+        var drPayable = Math.Min(amt, accruedLeft);
+        var trueUp = amt - drPayable;
+        var closesYear = remittedBefore + amt >= annualContribution - 0.005m;
+        var overAccrual = closesYear ? Math.Max(0m, accruedLeft - drPayable) : 0m;
+        return new PaymentPlan(Math.Round(drPayable, 2, MidpointRounding.AwayFromZero),
+            Math.Round(trueUp, 2, MidpointRounding.AwayFromZero),
+            Math.Round(overAccrual, 2, MidpointRounding.AwayFromZero));
+    }
 }

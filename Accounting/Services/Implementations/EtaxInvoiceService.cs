@@ -31,6 +31,8 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
     private readonly IPdfGenerationService _pdfService;
     private readonly IWebHostEnvironment _env;
     private readonly ISecretProtector _secrets;
+    /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — PDF/A-3 + XML ของ e-Tax (หลักฐานภาษี เก็บ 5 ปี §87/3) เขียนผ่านตัวนี้</summary>
+    private readonly Accounting.Services.Storage.IFileStorage _storage;
 
     public EtaxInvoiceService(
         AccountingDbContext db,
@@ -39,8 +41,10 @@ public partial class EtaxInvoiceService : IEtaxInvoiceService
         ILogger<EtaxInvoiceService> logger,
         IPdfGenerationService pdfService,
         IWebHostEnvironment env,
-        ISecretProtector secrets)
+        ISecretProtector secrets,
+        Accounting.Services.Storage.IFileStorage storage)
     {
+        _storage = storage;
         _db = db;
         _config = config;
         _httpClientFactory = httpClientFactory;

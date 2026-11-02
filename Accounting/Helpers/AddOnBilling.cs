@@ -53,12 +53,16 @@ public static class AddOnBilling
     /// <remarks>รอบ 219 เฟส 0 (G-5): <paramref name="upfrontPeriod"/>/<paramref name="paymentStatus"/>/<paramref name="period"/> ส่งต่อให้
     /// <see cref="AddOnPaymentPolicy.UpfrontOverride"/> (ตัวตัดสินเดียวของ "เส้นจ่ายล่วงหน้าครอบงวดนี้แล้ว") — ผู้เรียกจริง
     /// (<c>UsageMeteringService.RecordFlatMonthlyAsync</c>) ต้องส่งครบ (ล็อกด้วย required_call_site_check)</remarks>
+    /// <remarks>รอบ 229 (QUOTA_ADDON แพ็ก 0(ก) · P1): <paramref name="planActive"/> = ผลของ <c>GetEffectivePlanAsync().IsActive</c> (ตัวเดียวกับ
+    /// <c>EntitlementService</c> ① ที่ปิดการใช้ส่วนเสริมเมื่อแพ็กเกจไม่ active) — false ⇒ ฿0 "plan-inactive" และผู้เรียก<b>ไม่บันทึกงวด</b>
+    /// (ต่ออายุภายหลังในเดือนเดียวกัน ⇒ ออกค่าเดือนได้ตามปกติ) · เดิมเก็บค่าเหมาต่อหลังแพ็กเกจหมด/ยกเลิก = เก็บเงินโดยไม่มีบริการ</remarks>
     public static (decimal Amount, string Reason) FlatAmount(
         decimal standardPrice, decimal? snapshotPrice, DateTime? trialUntilUtc,
         bool bundledOrGranted, DateTime nowUtc,
         Accounting.Models.Enums.AddOnPaymentStatus paymentStatus = Accounting.Models.Enums.AddOnPaymentStatus.NotRequired,
-        string? upfrontPeriod = null, string? period = null)
+        string? upfrontPeriod = null, string? period = null, bool planActive = true)
     {
+        if (!planActive) return (0m, PlanInactiveReason);
         if (trialUntilUtc is DateTime t && t > nowUtc) return (0m, "trial");
         if (AddOnPaymentPolicy.UpfrontOverride(paymentStatus, upfrontPeriod, period ?? PeriodOf(nowUtc)) is { } up) return up;
         if (bundledOrGranted) return (0m, "granted");
@@ -66,6 +70,9 @@ public static class AddOnBilling
         if (price <= 0) return (0m, "no-price");
         return (Math.Round(price, 2, MidpointRounding.AwayFromZero), "charged");
     }
+
+    /// <summary>รอบ 229: เหตุผลของ ฿0 เมื่อแพ็กเกจไม่ active (ผู้เรียกข้ามโดยไม่ประทับงวด)</summary>
+    public const string PlanInactiveReason = "plan-inactive";
 
     /// <summary>trial หมดแล้วและตั้งให้ปิดเอง = ต้องปิด (ไม่คิดเงินโดยไม่ถาม)</summary>
     public static bool ShouldAutoDisable(DateTime? trialUntilUtc, bool autoDisableAfterTrial, DateTime nowUtc)

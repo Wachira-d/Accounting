@@ -30,8 +30,12 @@ public class HelpCenterController : ControllerBase
     private readonly ILogger<HelpCenterController> _logger;
     private readonly IWebHostEnvironment _env;
 
-    public HelpCenterController(AccountingDbContext db, ILogger<HelpCenterController> logger, IWebHostEnvironment env)
-    { _db = db; _logger = logger; _env = env; }
+    // ที่เก็บไฟล์กลาง (Local | S3 · ทีม FS 2026-11-02) — สื่อศูนย์ช่วยเหลือเขียนผ่านตัวนี้ · เสิร์ฟ: static (Local) / FileStorageUploadsMiddleware (S3)
+    private readonly Accounting.Services.Storage.IFileStorage _storage;
+
+    public HelpCenterController(AccountingDbContext db, ILogger<HelpCenterController> logger, IWebHostEnvironment env,
+        Accounting.Services.Storage.IFileStorage storage)
+    { _db = db; _logger = logger; _env = env; _storage = storage; }
 
     private const string UploadFolder = "help-media";
 
@@ -284,14 +288,13 @@ public class HelpCenterController : ControllerBase
             return BadRequest(new ApiResponse<string>(false, null,
                 "รองรับเฉพาะไฟล์วิดีโอ (.mp4 .webm .mov .m4v) และคู่มือ .pdf"));
 
-        var dir = Path.Combine(_env.WebRootPath ?? "wwwroot", "uploads", UploadFolder);
-        Directory.CreateDirectory(dir);
+        var dir = Path.Combine(_storage.Locator.WebRoot, "uploads", UploadFolder);
         // ชื่อไฟล์เป็น GUID — ชื่อเดิมของผู้ดูแลอาจมีอักขระที่ทำให้ path พัง
         // และไฟล์นี้เสิร์ฟสาธารณะ จึงไม่ควรเดาชื่อได้
         var stored = $"{Guid.NewGuid():N}{ext}";
         var full = Path.Combine(dir, stored);
-        await using (var fs = System.IO.File.Create(full))
-            await file.CopyToAsync(fs);
+        await using (var fs = file.OpenReadStream())
+            await _storage.WriteAsync(full, fs, null, HttpContext.RequestAborted);
 
         return Ok(new ApiResponse<object>(true, new
         {

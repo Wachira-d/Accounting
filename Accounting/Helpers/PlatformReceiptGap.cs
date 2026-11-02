@@ -18,4 +18,9 @@ public static class PlatformReceiptGap
     }
 
     public const string AuditAction = "platform-receipt-reissue";
+
+    /// <summary>รอบ 228 ฝ่ายค้าน S2: ใบลดหนี้ของการคืนเงินค่าบริการออกอัตโนมัติไม่สำเร็จ (เรื่องค้างบนรายการ) — null = ไม่มี · ทางไปต่อ = ปุ่ม "ออกใบลดหนี้อีกครั้ง"</summary>
+    public static string? CreditNoteReason(string? problem, decimal? pendingAmount)
+        => string.IsNullOrWhiteSpace(problem) ? null
+            : $"คืนเงิน {(pendingAmount ?? 0m):N2} แล้วแต่ยังไม่มีใบลดหนี้ (§86/10): {problem} — กด \"ออกใบลดหนี้อีกครั้ง\"";
 }

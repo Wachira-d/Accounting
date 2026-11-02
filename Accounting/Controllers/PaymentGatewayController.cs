@@ -153,6 +153,7 @@ public class PaymentGatewayController : ControllerBase
                 i.SettlementBatchId,
                 i.RefundOutcomeUnknownSince,
                 i.RefundOutcomeUnknownAmount,
+                i.DisputeState, i.DisputeAmount, i.DisputeReason, i.DisputeUpdatedAt, i.DisputeAcknowledgedAt,
             })
             .ToListAsync(ct);
         // A-GW4: intent ที่รอบโอน settlement เป็นเจ้าของ — "บันทึกรอบโอนแล้ว" เมื่อรอบโอนลงบัญชีแล้ว (ตัวตัดสินเดียวกับรายงานกระทบยอด)
@@ -211,6 +212,14 @@ public class PaymentGatewayController : ControllerBase
                 // R-01: ปุ่ม "ส่งต่อใหม่" เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง
                 redispatchPending = redispatchPending.Contains(r.Id),
                 redispatchPendingLabel = redispatchPending.Contains(r.Id) ? PaymentRedispatchPolicy.PendingLabel : null,
+                // รอบ 228 ฝ่ายค้าน S5: ข้อพิพาท/chargeback ของรายการของร้าน — ป้าย/ทางไปต่อ/ต้องจัดการ จากตัวตัดสินเดียว PaymentDisputeRules
+                dispute = r.DisputeState == null ? null : new
+                {
+                    state = r.DisputeState.ToString(), label = PaymentDisputeRules.Label(r.DisputeState), amount = r.DisputeAmount,
+                    reason = r.DisputeReason, updatedAt = r.DisputeUpdatedAt, acknowledgedAt = r.DisputeAcknowledgedAt,
+                    nextStep = PaymentDisputeRules.NextStep(r.DisputeState),
+                    needsAttention = PaymentDisputeRules.NeedsAttention(r.DisputeState, r.DisputeUpdatedAt, r.DisputeAcknowledgedAt),
+                },
             };
         }).ToList();
         return Ok(new ApiResponse<object>(true, new
@@ -400,6 +409,22 @@ public class PaymentGatewayController : ControllerBase
         if (!result.Ok && !result.NoOp)
             return UnprocessableEntity(new ApiResponse<object>(false, body, result.Message));
         return Ok(new ApiResponse<object>(result.Ok, body, result.Message));
+    }
+
+    public sealed record DisputeAckRequest(string? Note);
+
+    /// <summary>รอบ 228 ฝ่ายค้าน S5: รับทราบ/จัดการข้อพิพาทของรายการแล้ว (ล้างธง "ต้องจัดการ" จนกว่าข้อพิพาทจะเปลี่ยน) — สิทธิ์เดียวกับคืนเงิน ·
+    /// ค่าบริการ NextAcc = SystemAdmin เท่านั้น (ตัวตัดสินเดียว StaffActionDenyReason) · ห้ามคีย์ API · audit chain</summary>
+    [HttpPost("intents/{intentId:guid}/dispute/acknowledge")]
+    [Accounting.Filters.RejectApiKey("รับทราบข้อพิพาทการชำระเงิน")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.Refund)]
+    public async Task<ActionResult<ApiResponse<object>>> AcknowledgeDispute(Guid companyId, Guid intentId, [FromBody] DisputeAckRequest? req,
+        [FromServices] IPaymentDisputeService disputes, CancellationToken ct)
+    {
+        if (await DenyPlatformRevenueStaffAsync(companyId, intentId, PlatformRevenueSource.StaffAction.Refund, ct) is { } platformDeny) return platformDeny;
+        var ok = await disputes.AcknowledgeAsync(companyId, intentId, $"manual:{JwtHelper.GetUserIdFromClaims(User)}", req?.Note, ct);
+        return ok ? Ok(new ApiResponse<object>(true, null, "บันทึกการรับทราบข้อพิพาทแล้ว"))
+            : NotFound(new ApiResponse<object>(false, null, "ไม่พบข้อพิพาทของรายการนี้"));
     }
 
     /// <summary>คืนเงินผ่านผู้ให้บริการ — <b>ลงบัญชีคืนเงินเสมอ</b> (รอบ 198 G-1 · <see cref="IGatewayRefundService"/>)
@@ -790,7 +815,8 @@ public class PaymentWebhookController : ControllerBase
     [HttpPost]
     [Route("{providerCode}")]
     [Route("{providerCode}/{token}")]
-    public async Task<IActionResult> Receive(string providerCode, string? token, CancellationToken ct)
+    public async Task<IActionResult> Receive(string providerCode, string? token, CancellationToken ct,
+        [FromServices] IPaymentDisputeService? disputes = null)
     {
         var provider = _providers.FirstOrDefault(p => p.ProviderCode == providerCode);
         if (provider == null) return Ok(new { received = true, handled = false });
@@ -900,6 +926,14 @@ public class PaymentWebhookController : ControllerBase
                 _logger.LogWarning("webhook {Provider}: ปฏิเสธ event {Event} ของบริษัท {Company} รายการ {Intent} — {Reason}",
                     providerCode, verified.EventId, cfg.CompanyId, verified.IntentId, reject);
                 return Ok(new { received = true, handled = false });
+            }
+
+            // รอบ 228 (§5.4): ข้อพิพาท/chargeback — บันทึก + เตือน (ไม่เปลี่ยนสถานะเงิน · ตัดสินโดยคน) · รายการผ่านด่านเจ้าของข้างบนแล้ว
+            if (verified.Dispute != null)
+            {
+                if (disputes != null)
+                    await disputes.RecordAsync(cfg.CompanyId, verified.IntentId, verified.Dispute, $"webhook:{providerCode}", ct);
+                return Ok(new { received = true, handled = disputes != null });
             }
 
             await _intents.ApplyChargeAsync(verified.IntentId, verified.Charge,

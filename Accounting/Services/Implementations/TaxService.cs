@@ -246,21 +246,8 @@ public partial class TaxService : ITaxService
         var gl21913NetByDoc = await Load21913NetBySourceAsync(companyId, depositDocIds);
         // รอบ 194 M3 — ภาษีขายที่มัดจำ VAT พักย้ายเข้า 21911 จริง (Cr 21911 ของ JE ที่ใบมัดจำเป็นต้นทาง · ไม่นับคู่กลับรายการ) ·
         // ริบเป็นค่าเสียหายบางส่วนกลับ 21913 เข้ารายได้ / คืนบางส่วนตัด 21913 ไปแล้ว ⇒ ภาษีที่รับรู้ < VAT เต็มใบ — แถวมัดจำต้องรายงานเท่าที่ย้ายจริง
-        var glReclassifiedVatByDoc = depositDocIds.Count == 0
-            ? new Dictionary<Guid, decimal>()
-            : (await _db.JournalEntryLines
-                .Where(l => !l.IsDeleted
-                    && l.JournalEntry.CompanyId == companyId
-                    && l.JournalEntry.SourceDocumentId != null
-                    && depositDocIds.Contains(l.JournalEntry.SourceDocumentId.Value)
-                    && !l.JournalEntry.IsDeleted
-                    && l.JournalEntry.Status == JournalEntryStatus.Posted
-                    && l.JournalEntry.OriginalEntryId == null && l.JournalEntry.ReversedByEntryId == null
-                    && l.Account.AccountCode == "21911" && l.CreditAmount > 0)
-                .GroupBy(l => l.JournalEntry.SourceDocumentId!.Value)
-                .Select(g => new { DocId = g.Key, Moved = g.Sum(x => x.CreditAmount) })
-                .ToListAsync())
-                .ToDictionary(x => x.DocId, x => x.Moved);
+        // รอบ 228: loader ตัวเดียวกับปุ่ม "ดึงเอกสาร" (EvaluatePullCandidatesAsync) — เดิมสำเนาอยู่ที่นี่ที่เดียว ⇒ ดึงมัดจำรายงาน VAT เต็มใบ
+        var glReclassifiedVatByDoc = await LoadReclassifiedDepositVatAsync(companyId, depositDocIds);
 
         // Accounts whose input VAT is prohibited (ภาษีซื้อต้องห้าม, §82/5) —
         // e.g. ค่ารับรอง. VAT on purchase lines posting here is excluded from
@@ -2107,11 +2094,16 @@ public partial class TaxService : ITaxService
         // (+ ใบกลับรายการของมัน) ตามวันที่ลงบัญชี — ฐานเดียวกับรายจ่ายใน ภ.ง.ด.50 (WherePeriodActivity: Posted + Reversed) ⇒
         // กลับรายการเดือนเดียวกัน = สุทธิ 0 · ยกเลิกปีถัดไป = ปีเดิมบวกกลับเต็ม ปีถัดไปติดลบเท่ากัน (ไม่ย้อนลบปีที่ยื่นแล้ว)
         // แหล่ง JE: แถวนำส่ง **รวมที่ยกเลิกแล้ว** (IgnoreQueryFilters — ยกเลิก = IsDeleted แต่ JE เดิมยังอยู่ในสมุด) + เครื่องหมายบนรอบเงินเดือน
-        var remitJeIds = await _db.StatutoryRemittances.IgnoreQueryFilters().AsNoTracking()
+        var remitRows = await _db.StatutoryRemittances.IgnoreQueryFilters().AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.JournalEntryId != null
                 && (r.LateFee > 0 || r.Penalty > 0 || r.OtherFine > 0))
-            .Select(r => r.JournalEntryId!.Value)
+            .Select(r => new { Je = r.JournalEntryId!.Value, r.RemittanceType })
             .ToListAsync();
+        // รอบ 228 ทีมภาษี: JE ของแบบใหม่ (กท.20ก · อากรแสตมป์ · ภ.ง.ด.51/50) มีบรรทัดค่าใช้จ่ายที่ "หักได้" ปนอยู่ (54121 ส่วนต่างเงินสมทบ ·
+        // ค่าอากร 54810 · ล้างเครดิต ภ.ง.ด.51 แบบเดิมที่ 580xx) ⇒ นับเฉพาะบรรทัดค่าปรับที่ตัวตั้งเดียว LatePaymentPenaltyPolicy.JournalLines เขียน
+        // (คำอธิบายมี Section65Ter6Marker · ใบกลับรายการคัดลอกคำอธิบาย) · แบบเดิมคงเดิม (บรรทัดค่าใช้จ่ายมีแต่ค่าปรับ — รวม JE ก่อนรอบ 220 ที่ไม่มีเครื่องหมาย)
+        var markedOnly = remitRows.Where(r => Accounting.Helpers.LatePaymentPenaltyPolicy.ExpenseLinesMixed(r.RemittanceType)).Select(r => r.Je).Distinct().ToList();
+        var remitJeIds = remitRows.Where(r => !Accounting.Helpers.LatePaymentPenaltyPolicy.ExpenseLinesMixed(r.RemittanceType)).Select(r => r.Je).ToList();
         var payrollMarks = await _db.PayrollRuns.IgnoreQueryFilters().AsNoTracking()
             .Where(r => r.CompanyId == companyId && r.SsoLateFeeJournalEntryIds != null)
             .Select(r => r.SsoLateFeeJournalEntryIds)
@@ -2127,6 +2119,16 @@ public partial class TaxService : ITaxService
                         || (l.JournalEntry.OriginalEntryId != null && penaltyJeIds.Contains(l.JournalEntry.OriginalEntryId.Value)))
                     && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate
                     && l.Account!.AccountType == AccountType.Expense)
+                .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
+        if (markedOnly.Count > 0)
+            addBack += await _db.JournalEntryLines.AsNoTracking()
+                .WherePeriodActivity()
+                .Where(l => l.JournalEntry.CompanyId == companyId
+                    && (markedOnly.Contains(l.JournalEntryId)
+                        || (l.JournalEntry.OriginalEntryId != null && markedOnly.Contains(l.JournalEntry.OriginalEntryId.Value)))
+                    && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate
+                    && l.Account!.AccountType == AccountType.Expense
+                    && l.Description != null && l.Description.Contains(Accounting.Helpers.LatePaymentPenaltyPolicy.Section65Ter6Marker))
                 .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
         return addBack;
     }
@@ -3370,10 +3372,27 @@ public partial class TaxService : ITaxService
     /// <summary>ยอดที่บรรทัด "ดึงเข้างวด" จะบวกเข้ารายงาน (บาท) — ตัวคำนวณเดียวของรายการดึง (ยอดใน footer) และบรรทัดที่ดึงจริง ·
     /// ภาษีซื้อ = VAT − ต้องห้าม (<see cref="ProhibitedInputVat"/> ตัวเดียวกับ loop หลัก) · บาทด้วยตัวแปลงเดียวกับ JE</summary>
     internal static (decimal Income, decimal Tax) PullLineAmounts(Document doc, bool isInput, IReadOnlySet<Guid> nonClaimableAccountIds)
-        => (Accounting.Helpers.DocumentFx.ToBaht(VatableBase(doc), doc.ExchangeRate),
+        => PullLineAmounts(doc, isInput, nonClaimableAccountIds, depositVatDeferred: false, reclassifiedVatThb: null);
+
+    /// <summary>รอบ 228 (ช่องว่างรอบ 225) — มัดจำ VAT พักที่รับรู้แล้ว (<paramref name="depositVatDeferred"/> = <c>OutputVatOwnership.Decision.EffectivelyDeferred</c>)
+    /// รายงานเท่าที่ GL ย้ายเข้า 21911 จริง (<paramref name="reclassifiedVatThb"/> · บาท) ด้วยตัวคำนวณเดียวกับแถวใน loop หลัก
+    /// (<see cref="DepositPolicyResolver.ReportedRecognizedDepositVat"/>/<see cref="DepositPolicyResolver.ReportedRecognizedDepositBase"/>) ·
+    /// เดิมปุ่มดึงใช้ VAT เต็มใบ ⇒ มัดจำที่ริบ/คืนบางส่วนก่อนรับรู้ถูกดึงเข้า ภ.พ.30 เกินยอดใน GL</summary>
+    internal static (decimal Income, decimal Tax) PullLineAmounts(Document doc, bool isInput, IReadOnlySet<Guid> nonClaimableAccountIds,
+        bool depositVatDeferred, decimal? reclassifiedVatThb)
+    {
+        var baseThb = Accounting.Helpers.DocumentFx.ToBaht(VatableBase(doc), doc.ExchangeRate);
+        if (!isInput && doc.IsDeposit && depositVatDeferred)
+        {
+            var fullVat = Accounting.Helpers.DocumentFx.ToBaht(doc.VatAmount, doc.ExchangeRate);
+            var vat = Accounting.Helpers.DepositPolicyResolver.ReportedRecognizedDepositVat(fullVat, reclassifiedVatThb);
+            return (Accounting.Helpers.DepositPolicyResolver.ReportedRecognizedDepositBase(baseThb, fullVat, vat), vat);
+        }
+        return (baseThb,
             Accounting.Helpers.DocumentFx.ToBaht(isInput
                 ? doc.VatAmount - ProhibitedInputVat(doc, nonClaimableAccountIds)
                 : doc.VatAmount, doc.ExchangeRate));
+    }
 
     /// <summary>เพดานจำนวนใบที่สแกนต่อการค้นหาหนึ่งครั้ง — ช่วงกว้างกว่านี้ ⇒ <c>ScanCapped</c> บอกหน้าให้แคบช่วงลง (ไม่ตัดเงียบ)</summary>
     private const int PullableScanCap = 5000;
@@ -3495,10 +3514,13 @@ public partial class TaxService : ITaxService
     /// <summary><b>เส้นเดียว</b>ที่เตรียมข้อเท็จจริงจาก DB แล้วถาม <see cref="TaxReportPullEligibility.Evaluate"/> — ใช้ทั้งรายการ "ดึงเอกสาร",
     /// แกนดึง (ทีละใบ/หลายใบ) และการคืนบรรทัดดึงตอน "สร้างใหม่" · <paramref name="docs"/> ต้องโหลดบรรทัด + hydrate contact แล้ว ·
     /// ทุกคิวรีมี CompanyId</summary>
-    private async Task<Dictionary<Guid, PullEvaluation>> EvaluatePullCandidatesAsync(Guid companyId, TaxReport report, List<Document> docs)
+    /// <param name="alsoNotElsewhereReportId">รอบ 228 — รายงานจริงที่ถือบรรทัดอยู่ (ตอนตรวจด้วยรายงานจำลอง) ไม่นับเป็น "ใช้ในงวดอื่น" ·
+    /// ที่เหลือใน "งวดอื่น" = ใบเดียวกันถูกใช้ในรายงาน ภ.พ.30 อีกฉบับจริง (เคลม/รายงานซ้ำข้ามงวด)</param>
+    private async Task<Dictionary<Guid, PullEvaluation>> EvaluatePullCandidatesAsync(Guid companyId, TaxReport report, List<Document> docs,
+        Guid? alsoNotElsewhereReportId = null)
     {
         var ids = docs.Select(d => d.Id).ToList();
-        var (inThisReport, claimedElsewhere) = await LoadPullLineFactsAsync(companyId, report.Id, ids);
+        var (inThisReport, claimedElsewhere) = await LoadPullLineFactsAsync(companyId, report.Id, ids, alsoNotElsewhereReportId);
         var nonClaimable = await LoadNonClaimableAccountIdsAsync(companyId);
 
         var replacementIds = docs.Where(d => d.ReplacedByDocumentId.HasValue)
@@ -3516,6 +3538,8 @@ public partial class TaxService : ITaxService
             invoiceIds.Concat(docs.Where(d => d.IsDeposit).Select(d => d.Id)).Distinct().ToList());
         var related = await LoadRelatedDocInfosAsync(companyId,
             docs.Where(d => d.RelatedDocumentId.HasValue).Select(d => d.RelatedDocumentId!.Value).Distinct().ToList());
+        // รอบ 228: มัดจำ VAT พัก — ยอดที่ GL ย้ายเข้า 21911 จริง (loader ตัวเดียวกับ loop หลัก)
+        var reclassified = await LoadReclassifiedDepositVatAsync(companyId, docs.Where(d => d.IsDeposit).Select(d => d.Id).ToList());
 
         var result = new Dictionary<Guid, PullEvaluation>();
         foreach (var d in docs)
@@ -3533,7 +3557,8 @@ public partial class TaxService : ITaxService
                 Output: output,
                 ClaimableInputVat: claimable);
             var v = TaxReportPullEligibility.Evaluate(d, report.Year, report.Month, facts);
-            var (inc, tax) = PullLineAmounts(d, v.IsInput, nonClaimable);
+            var (inc, tax) = PullLineAmounts(d, v.IsInput, nonClaimable, output.EffectivelyDeferred,
+                reclassified.TryGetValue(d.Id, out var moved) ? moved : null);
             result[d.Id] = new PullEvaluation(d, v, inc, tax,
                 TaxReportPullEligibility.TaxMonthOf(d, v.IsInput, output), facts);
         }
@@ -3543,8 +3568,9 @@ public partial class TaxService : ITaxService
     /// <summary>ข้อเท็จจริงที่ตัวตัดสิน "ดึงได้ไหม" ต้องรู้จาก DB — (1) บรรทัดของใบนั้นใน "รายงานงวดนี้" (รวมบรรทัดที่ติ๊กออก เช่น
     /// [ยกมา §82/3] · ติ๊กออกทุกบรรทัดไหม · เป็นบรรทัดเตือนไหม) (2) งวดอื่นที่ใช้ใบนั้นเป็นบรรทัดที่ "ใช้" อยู่ · ทุกคิวรีมี CompanyId</summary>
     private async Task<(Dictionary<Guid, TaxReportPullEligibility.ExistingLine> InThisReport, Dictionary<Guid, (int Year, int Month)> ClaimedElsewhere)>
-        LoadPullLineFactsAsync(Guid companyId, Guid reportId, List<Guid> documentIds)
+        LoadPullLineFactsAsync(Guid companyId, Guid reportId, List<Guid> documentIds, Guid? alsoExcludeReportId = null)
     {
+        var excludeOther = alsoExcludeReportId ?? reportId;
         var inThis = (await _db.TaxReportLines.AsNoTracking()
                 .Where(l => l.TaxReportId == reportId && l.TaxReport.CompanyId == companyId
                     && l.DocumentId != null && documentIds.Contains(l.DocumentId!.Value))
@@ -3556,7 +3582,7 @@ public partial class TaxService : ITaxService
                 g.Any(x => x.IsExcluded && TaxReportPullEligibility.IsWarningLineDescription(x.Description))));
         var elsewhere = (await _db.TaxReportLines.AsNoTracking()
                 .Where(l => l.DocumentId != null && documentIds.Contains(l.DocumentId!.Value) && !l.IsExcluded
-                    && l.TaxReportId != reportId
+                    && l.TaxReportId != reportId && l.TaxReportId != excludeOther
                     && l.TaxReport.CompanyId == companyId && l.TaxReport.TaxType == TaxType.VAT)
                 .Select(l => new { Id = l.DocumentId!.Value, l.TaxReport.Year, l.TaxReport.Month })
                 .ToListAsync())
@@ -3625,6 +3651,25 @@ public partial class TaxService : ITaxService
                 .Select(g => new { DocId = g.Key, Net = g.Sum(x => x.CreditAmount - x.DebitAmount) })
                 .ToListAsync())
                 .ToDictionary(x => x.DocId, x => x.Net);
+
+    /// <summary>รอบ 194 M3 / รอบ 228 — ภาษีขายที่มัดจำ VAT พักย้ายเข้า 21911 จริง (Cr 21911 ของ JE ที่ใบมัดจำเป็นต้นทาง · ไม่นับคู่กลับรายการ) ·
+    /// loader ตัวเดียวของ loop หลัก ภ.พ.30 และปุ่ม "ดึงเอกสาร" (ยอดดึงต้องเท่าที่ GL ย้ายจริง เหมือนแถวใน loop หลัก — <see cref="DepositPolicyResolver.ReportedRecognizedDepositVat"/>)</summary>
+    private async Task<Dictionary<Guid, decimal>> LoadReclassifiedDepositVatAsync(Guid companyId, List<Guid> depositDocIds)
+        => depositDocIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : (await _db.JournalEntryLines
+                .Where(l => !l.IsDeleted
+                    && l.JournalEntry.CompanyId == companyId
+                    && l.JournalEntry.SourceDocumentId != null
+                    && depositDocIds.Contains(l.JournalEntry.SourceDocumentId.Value)
+                    && !l.JournalEntry.IsDeleted
+                    && l.JournalEntry.Status == JournalEntryStatus.Posted
+                    && l.JournalEntry.OriginalEntryId == null && l.JournalEntry.ReversedByEntryId == null
+                    && l.Account.AccountCode == "21911" && l.CreditAmount > 0)
+                .GroupBy(l => l.JournalEntry.SourceDocumentId!.Value)
+                .Select(g => new { DocId = g.Key, Moved = g.Sum(x => x.CreditAmount) })
+                .ToListAsync())
+                .ToDictionary(x => x.DocId, x => x.Moved);
 
     /// <summary>ชนิด + วันที่ VAT ถึงกำหนด + ภาษีซื้อพักของใบต้นทาง — <c>IgnoreQueryFilters</c> (B13: ใบต้นทางที่ถูก soft-delete ยังต้องรู้ชนิด
     /// ไม่งั้นใบเสร็จที่อ้างใบนั้นตกเงื่อนไข ⇒ ภาษีขายหายเงียบ) · กรอง CompanyId เอง</summary>
@@ -3919,7 +3964,9 @@ public partial class TaxService : ITaxService
             await _db.HydrateContactsAsync(companyId, docs);
             // ตัดสินเหมือน "ยังไม่มีบรรทัดในงวดนี้" — ประเมินด้วยรายงานจำลองที่ไม่มีบรรทัดของใบเหล่านั้น
             var probe = new TaxReport { Id = Guid.NewGuid(), CompanyId = companyId, TaxType = rep.TaxType, Year = rep.Year, Month = rep.Month };
-            var evals = await EvaluatePullCandidatesAsync(companyId, probe, docs);
+            // รอบ 228 (ช่องว่างรอบ 225): รายงานจริงฉบับนี้ไม่นับเป็น "งวดอื่น" ⇒ ที่เหลือใน ClaimedInOther = ใบเดียวกันถูกใช้ในรายงาน ภ.พ.30
+            // อีกฉบับจริง (เดิมยกเว้นทั้งกฎด้วยการเทียบปี/เดือน ⇒ ใบที่อยู่สองรายงานพร้อมกันหลุดเมื่อแถวแรกที่เจอเป็นรายงานนี้เอง)
+            var evals = await EvaluatePullCandidatesAsync(companyId, probe, docs, alsoNotElsewhereReportId: rep.Id);
             foreach (var l in pulled)
             {
                 var docId = l.DocumentId!.Value;
@@ -3929,9 +3976,8 @@ public partial class TaxService : ITaxService
                         TaxReportPullEligibility.RuleNotFound, "ไม่พบเอกสาร (ถูกลบ)"));
                     continue;
                 }
-                // "ใช้ในงวดอื่น" ของรายงานจำลอง = รายงานจริงฉบับนี้เอง ⇒ ไม่นับเป็นความผิด
-                if (e.Verdict.Ok || e.Verdict.RuleCode == TaxReportPullEligibility.RuleClaimedInOtherReport
-                    && e.Facts.ClaimedInOther is { } c && c.Year == rep.Year && c.Month == rep.Month) continue;
+                if (e.Verdict.Ok) continue;
+                // บรรทัดที่ติ๊กออกแล้วไม่ทำให้นับซ้ำ — แต่ยังรายงาน (ผู้ใช้เห็นว่าใบอยู่สองรายงาน) ตามพฤติกรรมเดิมของรายการนี้
                 result.Add(new IneligiblePulledLineDto(rep.Id, rep.Year, rep.Month, l.Id, docId, e.Doc.DocumentNumber, l.IsExcluded,
                     e.Verdict.RuleCode, e.Verdict.Reason));
             }

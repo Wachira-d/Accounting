@@ -133,6 +133,7 @@
   <!-- รอบ 219 ส่วน B: ช่องติ๊กยอมรับนโยบาย (ตัวเดียว) + หน้าจ่ายกลางสำหรับชำระออนไลน์ผ่านช่องทางของ NextAcc -->
   <script src="/js/policy-accept.js"></script>
   <script src="/js/pay-widget.js"></script>
+  <script src="/js/quota-ui.js"></script>
   <script>
     const Sub = {
       subscription: null, trial: null, plans: [], cycle: 'monthly', selectedPlan: null,
@@ -281,11 +282,10 @@
         // Usage
         const limits = s.limits || {};
         const current = s.current || {};
+        // รอบ 229 (QUOTA_ADDON แพ็ก 0(ค) · D-3/D-4/D-5): ผู้ใช้/พื้นที่/เว็บ ฯลฯ มาจากตัวสรุปของเซิร์ฟเวอร์ (QuotaUI — เดิมผู้ใช้ "1" ตายตัว) ·
+        // เลิกแสดงเพดาน "รายการบัญชี" (คำตัดสินข้อ 229-7: ไม่บังคับ — การบล็อกการลงบัญชีไม่ปลอดภัย)
         const usageItems = [
           { label:'เอกสาร', used: current.documentsThisMonth || 0, max: limits.maxDocumentsPerMonth || 0 },
-          { label:'รายการบัญชี', used: current.journalEntriesThisMonth || 0, max: limits.maxJournalEntriesPerMonth || 0 },
-          { label:'ผู้ใช้งาน', used: 1, max: limits.maxUsers || 0 },
-          { label:'พื้นที่', used: current.storageUsed || 0, max: limits.maxStorageBytes || 0, isBytes: true },
         ];
 
         document.getElementById('usageContent').innerHTML = usageItems.map(u => {
@@ -297,7 +297,9 @@
             <div class="flex justify-between text-sm" style="margin-bottom:4px"><span>${u.label}</span><span class="font-medium">${usedStr} / ${maxStr}</span></div>
             <div class="usage-bar"><div class="usage-bar-fill" style="width:${pct}%;background:${color}"></div></div>
           </div>`;
-        }).join('');
+        }).join('') + '<div id="subQuotaBars" style="margin-top:12px"></div>'
+          + '<div style="margin-top:6px"><a href="/pages/billing.html" class="btn btn-secondary btn-sm">ดูโควตาทั้งหมด · ซื้อเพิ่ม</a></div>';
+        if (window.QuotaUI) QuotaUI.renderSummary('subQuotaBars', { only: ['users', 'storage.gb', 'cms.sites'] });
       },
 
       // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ยกเลิกแพ็กเกจ = มีผลสิ้นรอบ (เซิร์ฟเวอร์ตัดสิน · ข้อความผลมาจากเซิร์ฟเวอร์) · กลับมาใช้ต่อได้ก่อนสิ้นรอบ
@@ -337,7 +339,7 @@
               <div class="days">${t.daysRemaining}</div>
               <div style="font-size:18px;margin-top:4px" data-i18n="common.days">วัน</div>
               <div style="margin-top:16px;display:flex;justify-content:center;gap:12px">
-                ${t.canExtend ? `<button class="btn btn-white" onclick="Sub.openExtend()">ขยายเวลา (+${t.extensionsUsed < t.maxExtensions ? '7' : '0'} วัน)</button>` : ''}
+                ${t.canExtend ? `<button class="btn btn-white" onclick="Sub.openExtend()">ขยายเวลา (+${t.extensionsUsed < t.maxExtensions ? Number(t.extensionDays || 0) : 0} วัน)</button>` : ''}
                 <button class="btn btn-white" onclick="Sub.openUpgradeFromTrial()">อัปเกรดเลย</button>
               </div>
               ${t.incentive?.discountPercent ? `<div style="margin-top:12px;background:rgba(255,255,255,.15);padding:8px 16px;border-radius:var(--radius);display:inline-block">
@@ -359,7 +361,7 @@
           <h4 class="font-semibold" style="margin-bottom:12px">ลิมิตทดลองใช้</h4>
           <div class="grid grid-4 gap-4" style="margin-bottom:20px">
             <div class="sub-card text-center"><div class="text-2xl font-bold">${usage.documentsUsed || 0}<span class="text-sm text-gray-400">/${usage.documentsLimit || 0}</span></div><div class="text-xs text-gray-500">เอกสาร</div></div>
-            <div class="sub-card text-center"><div class="text-2xl font-bold">${usage.journalEntriesUsed || 0}<span class="text-sm text-gray-400">/${usage.journalEntriesLimit || 0}</span></div><div class="text-xs text-gray-500">รายการบัญชี</div></div>
+            <!-- รอบ 229 (คำตัดสินข้อ 229-7): ไม่แสดงเพดานรายการบัญชี (ไม่บังคับ) -->
             <div class="sub-card text-center"><div class="text-2xl font-bold">${usage.usersUsed || 1}<span class="text-sm text-gray-400">/${usage.usersLimit || 2}</span></div><div class="text-xs text-gray-500">ผู้ใช้งาน</div></div>
             <div class="sub-card text-center"><div class="text-2xl font-bold">${this.formatBytes(usage.storageUsedBytes || 0)}</div><div class="text-xs text-gray-500">พื้นที่ (จาก ${this.formatBytes(usage.storageLimitBytes || 0)})</div></div>
           </div>
@@ -568,6 +570,7 @@
           companyId: Layout.getCompanyId(),
           publicBase: `/api/companies/${Layout.getCompanyId()}/platform-pay/subscription-payments/${encodeURIComponent(paymentId)}`,
           method,
+          card: this._payInfo?.card || null,   // รอบ 228: สคริปต์/คีย์สาธารณะของช่องทาง NextAcc (ไม่ใช่ของร้าน)
           extraBody: { policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown },
           onPaid: () => { Layout.toast('ชำระค่าแพ็กเกจสำเร็จ'); setTimeout(() => location.reload(), 1200); },
         });

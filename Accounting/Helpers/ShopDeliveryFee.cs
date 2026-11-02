@@ -28,11 +28,47 @@ public static class ShopDeliveryFee
 
     /// <summary>โซน/อัตราที่ใช้งานของเว็บ (กรองบริษัท + ลบแล้ว) — คิวรีตัวเดียวของทั้งสองผู้เรียก</summary>
     public static Task<List<SiteShippingZone>> LoadZonesAsync(AccountingDbContext db, Guid companyId, Guid siteId, CancellationToken ct = default)
-        => db.SiteShippingZones.AsNoTracking()
+    {
+        return db.SiteShippingZones.AsNoTracking()
             .Include(z => z.Rates.Where(r => r.IsActive && !r.IsDeleted))
             .Where(z => z.SiteId == siteId && z.CompanyId == companyId && z.IsActive && !z.IsDeleted)
-            .OrderBy(z => z.SortOrder)
+            // ฝ่ายค้านรอบ 228 S4: ลำดับตายตัว (ลำดับเท่ากัน ⇒ สร้างก่อน ⇒ Id) — โซน "ชนะโซนถัดไป" ต้องไม่ขึ้นกับลำดับที่ฐานคืนมา
+            .OrderBy(z => z.SortOrder).ThenBy(z => z.CreatedAt).ThenBy(z => z.Id)
             .ToListAsync(ct);
+    }
+
+    /// <summary>รอบ 228 (BOOKING_PAYMENT_AUDIT §9 · คำขอเจ้าของ "ค่าส่งตามระยะทาง"): โซนที่ตรงที่อยู่ <b>ตามลำดับ</b> — โซนที่ตั้ง
+    /// <see cref="SiteShippingZone.StopWhenMatched"/> ตรงแล้ว ⇒ ไม่ดูโซนถัดไป (โซน "ใกล้ร้าน" ที่ระบุรหัสไปรษณีย์ของอำเภอ/เขตรอบร้าน ชนะโซนทั้งจังหวัด ·
+    /// ลูกค้าไม่ได้เห็นอัตราถูกกว่าของวงนอกให้เลือกแทน) · ไม่มีโซนใดตั้ง ⇒ ทุกโซนที่ตรง (เดิมทุกตัวอักษร) ·
+    /// ตัวจับคู่เดียวของ <see cref="Compute"/> และหน้าร้าน (<c>CmsShippingService.CalculateShippingOptionsAsync</c>)</summary>
+    /// <remarks>ระยะทาง (กม.) จริงไม่รองรับ: ต้องใช้แผนที่/geocoding ภายนอก (ค่าใช้จ่ายต่อครั้ง · ส่งที่อยู่ลูกค้าออกนอกระบบ) และระยะจากเครื่องลูกค้าเชื่อไม่ได้ ⇒
+    /// ใช้รหัสไปรษณีย์ (ผูกกับอำเภอ/เขต · ตัวเลขตรงตัว ไม่ fuzzy) แทน</remarks>
+    public static IEnumerable<SiteShippingZone> MatchingZones(IEnumerable<SiteShippingZone> zones, CalculateShippingRequest address)
+    {
+        return zones.Where(zone => CmsShippingService.ZoneMatchesAddress(zone, address));
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 228 S5: หยุดดูโซนถัดไปหลังโซนนี้ไหม — โซนที่ติ๊ก "ชนะโซนถัดไป" หยุดเฉพาะเมื่อ<b>ให้อัตราที่ใช้ได้อย่างน้อยหนึ่ง</b>
+    /// (อัตราของวงในจำกัดน้ำหนัก/ปิดหมด ⇒ ไม่ปล่อยลูกค้าวงในให้ "ไม่มีวิธีจัดส่ง" — ตกไปโซนถัดไป) · ผู้เรียกวนตาม <see cref="MatchingZones"/></summary>
+    public static bool StopsAfter(SiteShippingZone zone, int applicableRates)
+    {
+        return zone.StopWhenMatched && applicableRates > 0;
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 228 S4: คำเตือนตอนบันทึกโซน — โซน "ชนะโซนถัดไป" มีลำดับซ้ำกับโซนอื่น (ลำดับจริงตัดสินด้วยวันสร้าง — เจ้าของควรตั้งลำดับให้ชัด)</summary>
+    public static string? StopZoneOrderWarning(bool stopWhenMatched, int sortOrder, IEnumerable<int> otherZoneSortOrders)
+        => stopWhenMatched && otherZoneSortOrders.Contains(sortOrder)
+            ? $"⚠️ โซนนี้ติ๊ก “ชนะโซนถัดไป” แต่ลำดับ {sortOrder} ซ้ำกับโซนอื่น — ระบบเรียงโซนที่สร้างก่อนขึ้นก่อน · ตั้งลำดับให้โซนวงในน้อยกว่าวงนอกเพื่อให้ผลแน่นอน"
+            : null;
+
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT §1 ข้อ 3 · คำตัดสิน Q3): เปิดจัดส่ง (คำสั่งซื้อ หรือ การจอง) แต่ไม่มีโซนและไม่มีค่าส่งเหมาจ่าย ⇒ ทุกการจัดส่ง "ส่งฟรี" เงียบ ๆ ·
+    /// <b>เตือนค้าง (ไม่บล็อก)</b> จนเจ้าของกด "ส่งฟรีจริง" · null = ไม่ต้องเตือน · ตัวเดียวของหน้าตั้งค่า/แม่แบบ/ค่าตั้งจัดส่งของการจอง</summary>
+    public static string? FreeByOmissionWarning(bool deliveryOn, int zoneCount, decimal? flatRate, bool freeConfirmed)
+    {
+        if (!deliveryOn || zoneCount > 0 || flatRate is > 0m || freeConfirmed) return null;
+        return "⚠️ เปิดจัดส่งแล้วแต่ยังไม่ได้ตั้งค่าส่ง (ไม่มีโซน/อัตรา และไม่มีค่าส่งเหมาจ่าย) — ตอนนี้ทุกการจัดส่ง “ส่งฟรี” · "
+            + "ตั้งค่าส่งเหมาจ่ายหรือโซน/อัตรา หรือกด “ส่งฟรีจริง” ถ้าตั้งใจส่งฟรี";
+    }
 
     /// <param name="zones">จาก <see cref="LoadZonesAsync"/> (เรียงแล้ว)</param>
     /// <param name="goodsAfterDiscount">ยอดสินค้า/ค่าบริการหลังส่วนลด — ฐานของ "ส่งฟรีเมื่อครบ"</param>
@@ -43,7 +79,9 @@ public static class ShopDeliveryFee
         bool pickupAvailable)
     {
         var options = new List<DeliveryRateOption>();
-        foreach (var zone in zones.Where(z => CmsShippingService.ZoneMatchesAddress(z, address)))
+        foreach (var zone in MatchingZones(zones, address))
+        {
+            var produced = 0;
             foreach (var rate in zone.Rates.OrderBy(r => r.SortOrder))
             {
                 var q = ShippingFeeRules.Quote(new ShippingRateFacts(rate.RateType, rate.BaseRate, rate.PerKgRate,
@@ -54,7 +92,10 @@ public static class ShopDeliveryFee
                 // B7 — คูปองส่งฟรี ⇒ ทุกตัวเลือก 0 (ลูกค้าเห็นตรงกับยอดที่ถูกเก็บ)
                 options.Add(new DeliveryRateOption(rate.Id, rate.Name, zone.Name, couponFreeShip ? 0m : q.Fee, couponFreeShip || q.IsFree,
                     rate.EstimatedDeliveryDaysMin, rate.EstimatedDeliveryDaysMax));
+                produced++;
             }
+            if (StopsAfter(zone, produced)) break;   // รอบ 228: โซน "ชนะโซนถัดไป" ที่ให้อัตราได้จริง
+        }
 
         if (options.Count > 0)
         {

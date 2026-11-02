@@ -2628,6 +2628,7 @@ public class PayrollService : IPayrollService
                 // ปิด → ระบบไม่คิดจนกว่าจะตั้งค่าใน Settings เพื่อกัน double-post
                 // ในข้อมูลเดิม.
                 var workersComp = 0m;
+                var statutoryWageForWcf = statutoryWage;
                 if (companySettings?.WorkersCompensationEnabled == true
                     && emp.IsSubjectToSocialSecurity
                     && companySettings.WorkersCompensationRatePercent > 0)
@@ -2725,6 +2726,8 @@ public class PayrollService : IPayrollService
                     SocialSecurityEmployee = ssoEmployee,
                     SocialSecurityEmployer = ssoEmployer,
                     WorkersCompensation = workersComp,
+                    // รอบ 228: ค่าจ้างก่อนตัดเพดานรายเดือน — เงินสมทบรายปี (กท.20ก) ตัดเพดาน 240,000 ทั้งปี
+                    WorkersCompensationWage = workersComp > 0 ? statutoryWageForWcf : null,
                     WithholdingTax = monthlyTax,
                     ProvidentFundEmployee = pvdEmployee,
                     ProvidentFundEmployer = pvdEmployer,
@@ -3098,11 +3101,16 @@ public class PayrollService : IPayrollService
                 // WorkersCompensationEnabled = true. ใช้คนละผัง SSO เพราะยื่นแยกแบบ
                 if (run.TotalWorkersCompensation > 0)
                 {
-                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        (await ReqAcct("54121", "541", "เงินทดแทน", "กองทุนเงินทดแทน (ค่าใช้จ่าย)")).Id,
+                    // รอบ 228 ทีมภาษี (S8): ตัวหาผังตัวเดียวกับหน้านำส่ง กท.20ก (Helpers/WorkersCompensationAccounts)
+                    var wcExp = await Accounting.Helpers.WorkersCompensationAccounts.ExpenseAsync(_db, companyId)
+                        ?? throw new InvalidOperationException("ลงบัญชีเงินเดือนไม่ได้ — ไม่พบผังบัญชี \"กองทุนเงินทดแทน (ค่าใช้จ่าย)\" "
+                            + "(คาดหวังรหัส 54121 หรือ 541xxx ที่ชื่อมี \"เงินทดแทน\") — เพิ่ม/แก้ผังบัญชีก่อนโพสต์เงินเดือน");
+                    var wcPay = await Accounting.Helpers.WorkersCompensationAccounts.PayableAsync(_db, companyId)
+                        ?? throw new InvalidOperationException("ลงบัญชีเงินเดือนไม่ได้ — ไม่พบผังบัญชี \"กองทุนเงินทดแทนค้างจ่าย\" "
+                            + "(คาดหวังรหัส 21816 หรือ 218xxx ที่ชื่อมี \"เงินทดแทน\") — เพิ่ม/แก้ผังบัญชีก่อนโพสต์เงินเดือน");
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(wcExp.Id,
                         run.TotalWorkersCompensation, 0, "กองทุนเงินทดแทน (นายจ้าง)"));
-                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(
-                        (await ReqAcct("21816", "218", "เงินทดแทน", "กองทุนเงินทดแทนค้างจ่าย")).Id,
+                    lines.Add(new Models.DTOs.Accounting.JournalLineRequest(wcPay.Id,
                         0, run.TotalWorkersCompensation, "กองทุนเงินทดแทนค้างจ่าย"));
                 }
 

@@ -1283,7 +1283,8 @@ const API = {
       // กลับรายการนำส่ง สปส. (นำส่งผิดยอด/ผิดวัน) — ปลดล็อกให้แก้แล้วนำส่งใหม่
       reverseSso: (id, reason) => API.post(`${base}/payroll/runs/${id}/reverse-sso`, { reason }),
       // ── นำส่งภาษี/ประกันสังคมรวม (สปส.1-10 + ภงด.1/3/53 + ภพ.30) ──
-      getRemittances: (monthsBack = 12) => API.get(`${base}/remittances?monthsBack=${monthsBack}`),
+      getRemittances: (monthsBack = 12, includeOldAnnual = false) => API.get(`${base}/remittances?monthsBack=${monthsBack}${includeOldAnnual ? '&includeOldAnnual=true' : ''}`),
+      remitSettledOutside: (body) => API.post(`${base}/remittances/settled-outside`, body),
       // ปฏิทินนำส่ง "แบบ × เดือน" — ใช้บน dashboard (รวมงวดยอด 0 ที่ยังต้องยื่นแบบเปล่า)
       getFilingCalendar: (months = 12) => API.get(`${base}/remittances/calendar?months=${months}`),
       remitPreview: (type, year, month, payDate, paper) => API.get(`${base}/remittances/preview?type=${encodeURIComponent(type)}&year=${year}&month=${month}${payDate ? '&payDate=' + encodeURIComponent(payDate) : ''}${paper ? '&paper=true' : ''}`),
@@ -1353,6 +1354,8 @@ const API = {
         API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason }),
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ให้ handler ของต้นทาง — เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง (redispatchPending)
       redispatchPaymentIntent: (id) => API.post(`${base}/pay/intents/${id}/redispatch`, {}),
+      // รอบ 228 ฝ่ายค้าน S5: รับทราบ/จัดการข้อพิพาทแล้ว
+      acknowledgePaymentDispute: (id, note) => API.post(`${base}/pay/intents/${id}/dispute/acknowledge`, { note: note || null }),
       refundPaymentIntent: (id, amount, reason) =>
         API.post(`${base}/pay/intents/${id}/refund`, { amount, reason }),
       // แก้ค่าธรรมเนียมจริงรายรายการก่อนบันทึกรอบโอน (รอบ 198 G-6) — บังคับเหตุผล · เซิร์ฟเวอร์บันทึก audit

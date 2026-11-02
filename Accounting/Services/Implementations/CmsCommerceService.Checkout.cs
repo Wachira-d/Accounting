@@ -109,6 +109,10 @@ public partial class CmsCommerceService
                 .Select(h => h.Date).ToListAsync();
             foreach (var d in rows) holidays.Add(DateOnly.FromDateTime(ThaiDate.CalendarDateUtc(d)));
         }
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q2): วันหยุด/วันปิดของเว็บ (ตั้งที่เวลาทำการของการจอง) ใช้กับวันรับของสินค้าตามสั่งด้วย — ชุดเดียวต่อเว็บ
+        var siteHoursJson = await _db.SiteBookingSettings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted).Select(x => x.BookingHoursJson).FirstOrDefaultAsync();
+        holidays.UnionWith(BookingSiteHours.ClosedDates(siteHoursJson));
         var cutoff = cfg?.MtoCutoffHour is int h && h >= 0 && h <= 23 ? h : (int?)null;
         return (new ShopCalendar(MtoLeadTime.ParseClosedWeekdays(cfg?.MtoClosedWeekdays), holidays, cutoff), cfg);
     }
@@ -301,12 +305,8 @@ public partial class CmsCommerceService
             QuoteConversionEnabled = flags.QuoteConversion,
         };
         if (!flags.BankTransfer) return result;   // HasPaymentMethod = false · หน้าเว็บซ่อนกล่องโอน (ไม่ใช่ "ร้านยังไม่ตั้งบัญชี")
-        var gw = await _db.Set<SitePaymentGateway>()
-            .AsNoTracking()
-            .Where(g => g.CompanyId == companyId && g.SiteId == siteId
-                     && g.IsActive && !g.IsDeleted)
-            .OrderBy(g => g.SortOrder)
-            .FirstOrDefaultAsync();
+        // ฝ่ายค้านรอบ 228 S-1: ตัวอ่านเดียวของแถวบัญชีรับโอน (เดิมแถวแรกทุกชนิด — แถว Omise อาจชนะ ⇒ คนละบัญชีกับหน้าการจอง)
+        var gw = await SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, siteId).FirstOrDefaultAsync();
         if (gw == null) return result;
         result.PromptPayId = gw.PromptPayId;
         result.PromptPayQrUrl = gw.PromptPayQrUrl;

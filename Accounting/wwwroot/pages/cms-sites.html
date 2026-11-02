@@ -35,6 +35,8 @@
                 data-tour-text="ขั้นที่ 1 — สร้างเว็บไซต์ใหม่ เลือก Template จาก 17 อุตสาหกรรม (ร้านค้า/ร้านอาหาร/โรงแรม/คลินิก/บริการ ฯลฯ)">+ สร้างเว็บไซต์ใหม่</button>
       </div>
     </div>
+    <!-- รอบ 229 (QUOTA_ADDON §C · D-13): จำนวนเว็บที่ใช้/สิทธิ์ (เซิร์ฟเวอร์คำนวณ) + ปุ่มซื้อเพิ่ม — เต็มแล้วเว็บเดิมยังออนไลน์/แก้ไขได้ทั้งหมด -->
+    <div id="siteQuotaBar" style="max-width:520px;margin-bottom:10px"></div>
 
     <!-- ภาพรวมทุกไซต์ (คำสั่งซื้อ · จองคิว · Lead = ?siteId=all จริง · ที่พัก = รายเว็บ) — เติมโดย Page.renderOverview -->
     <div id="sitesOverview" style="display:none;margin-bottom:14px"></div>
@@ -128,6 +130,11 @@
               </select>
               <p id="industryHint" style="font-size:12px;color:var(--gray-500);margin-top:4px"></p>
             </div>
+            <!-- รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E · Q4): ที่พักถามจำนวนห้อง (ค่าเริ่มต้น 3) — แสดงเมื่อประเภทธุรกิจ = ที่พัก -->
+            <div class="form-group" id="roomCountWrap" style="display:none">
+              <label class="form-label">จำนวนห้องที่ให้ระบบสร้างไว้ก่อน (1–11 · แก้/เพิ่มทีหลังได้ที่ตั้งค่าที่พัก)</label>
+              <input type="number" class="form-input" id="fRoomCount" min="1" max="11" value="3" style="max-width:140px">
+            </div>
           </div>
         </div>
         <div class="modal-footer">
@@ -178,6 +185,7 @@
   <script src="/js/i18n.js"></script>
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
+  <script src="/js/quota-ui.js"></script>
   <script>
     // Starter templates — define a site preset + array of pages with blocks.
     // When the user picks one, we create the site, then create each page (with
@@ -236,6 +244,32 @@
         thumbClass: 'health',
         description: 'หน้าหลัก · บริการ · นัดหมายแพทย์ · ติดต่อ',
         siteType: 'Booking', industryType: 'Healthcare', seedTemplate: true
+      },
+      // รอบ 228 (คำตัดสิน 228-6 · คำถามเจ้าของ "สั่งทำ/พรีออเดอร์ ควรใช้ประเภทธุรกิจไหน"): เว็บจองคิว + แม่แบบ "สั่งทำ / พรีออเดอร์"
+      // (บริการชำระมัดจำล่วงหน้า · จัดส่ง/รับเอง · ช่องขนาด/รสชาติ) — เซิร์ฟเวอร์ตั้งค่าทั้งชุดหลังสร้างเว็บ (POST booking/presets/mto/apply-site)
+      mto: {
+        name: 'สั่งทำ / พรีออเดอร์',
+        nameEn: 'Made-to-order / Pre-order',
+        icon: '🎂',
+        thumbClass: 'food',
+        description: 'เบเกอรี่ · ของขวัญ · งานทำมือ — ลูกค้าเลือกวันรับของ ขนาด/รสชาติ จ่ายมัดจำ เลือกจัดส่งหรือรับเอง',
+        siteType: 'Booking', industryType: 'Other', seedTemplate: true, bookingPreset: 'mto'
+      },
+      // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E · §1 ข้อ 15): การ์ดตรงธุรกิจจริง — แม่แบบบริการจากเซิร์ฟเวอร์ (presets beauty/fitness) · โฮมสเตย์ถามจำนวนห้อง (Q4 ค่าเริ่มต้น 3)
+      salon: {
+        name: 'ร้านทำผม / ทำเล็บ', nameEn: 'Salon', icon: '💇', thumbClass: 'beauty',
+        description: 'จองคิวตัดผม/ทำเล็บ รอบทุก 15 นาที · ลูกค้าเลือกช่างได้',
+        siteType: 'Booking', industryType: 'Other', seedTemplate: true, bookingPreset: 'beauty'
+      },
+      pilates: {
+        name: 'พิลาทิส / ฟิตเนส / โยคะ', nameEn: 'Pilates & Fitness', icon: '🧘', thumbClass: 'health',
+        description: 'คลาสกลุ่มรอบตายตัว (นับที่นั่งต่อคน · คิวสำรอง) + เทรนเนอร์ส่วนตัว',
+        siteType: 'Booking', industryType: 'Other', seedTemplate: true, bookingPreset: 'fitness'
+      },
+      homestay: {
+        name: 'โฮมสเตย์ / ที่พักเล็ก', nameEn: 'Homestay', icon: '🏡', thumbClass: 'hotel',
+        description: 'จองห้องพักออนไลน์ · ระบบสร้างห้องตามจำนวนที่ระบุ (ค่าเริ่มต้น 3 ห้อง)',
+        siteType: 'Booking', industryType: 'Hotel', seedTemplate: true, askRooms: true
       },
       booking: {
         name: 'จองนัดหมาย (ทั่วไป)',
@@ -384,6 +418,7 @@
         if (ind) ind.innerHTML = Object.entries(Layout.enumOptions('siteIndustry'))
           .map(([v, l]) => `<option value="${Layout.esc(v)}">${Layout.esc(l)}</option>`).join('');
         Layout.setTitle('เว็บไซต์ทั้งหมด');
+        if (window.QuotaUI) QuotaUI.renderSummary('siteQuotaBar', { only: ['cms.sites'] });
         await this.load();
       },
 
@@ -485,6 +520,7 @@
                     <span style="margin:0 6px">·</span>
                     <span title="ประเภทธุรกิจของเว็บ (กำหนดเทมเพลตและโมดูล)">${Layout.esc(industryLabel(s.industryType))}</span>
                   </div>
+                  <div style="margin-top:6px" data-setup-badge="${Layout.esc(s.id)}"></div>
                 </div>
                 <div style="font-size:32px">${s.industryType === 'Hotel' ? '🏨' : '🌐'}</div>
               </div>
@@ -517,9 +553,30 @@
               </div>
             </div>`;
         }).join('');
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E): ป้าย "ตั้งค่า x/y" ต่อเว็บ (เซิร์ฟเวอร์ตัดสิน) — โหลดตามหลัง ไม่ถ่วงรายการ
+        if (window.CmsSetupStatus) this.sites.forEach(async (s) => {
+          const el = document.querySelector(`[data-setup-badge="${CSS.escape(String(s.id))}"]`);
+          const st = await CmsSetupStatus.load(s.id);
+          if (el && st) el.innerHTML = `<a href="/pages/cms-site-settings.html?siteId=${encodeURIComponent(s.id)}" style="text-decoration:none">${CmsSetupStatus.badge(st)}</a>`;
+        });
       },
 
-      openCreate() {
+      async openCreate() {
+        // รอบ 229 (§C): เต็มแล้วบอกก่อนกรอกฟอร์ม (ด่านจริงที่เซิร์ฟเวอร์ — ตัวนี้แค่บอกเร็ว · ตรวจไม่ได้ = ให้กรอกตามเดิม)
+        try {
+          const chk = (await API.get(`/api/companies/${Layout.getCompanyId()}/quota/check/cms.sites`))?.data;
+          if (chk && chk.allowed === false) {
+            if (chk.buyUrl && window.QuotaUI) {
+              if (confirm((chk.blockReason || 'เว็บไซต์เต็มโควตาแล้ว') + '\n\nเปิดหน้าต่างซื้อเว็บเพิ่มตอนนี้ไหม?'))
+                QuotaUI.openBuy('cms.sites', { onDone: () => QuotaUI.renderSummary('siteQuotaBar', { only: ['cms.sites'] }) });
+            } else Layout.toast(chk.blockReason || 'เว็บไซต์เต็มโควตาแล้ว', 'error');
+            return;
+          }
+        } catch { /* ตรวจล่วงหน้าไม่ได้ ⇒ ด่านจริงตอนสร้างตอบเอง */ }
+        this._openCreateForm();
+      },
+
+      _openCreateForm() {
         // Reset to step 1 with template gallery
         document.getElementById('step1').style.display = '';
         document.getElementById('step2').style.display = 'none';
@@ -575,6 +632,8 @@
       },
 
       renderIndustryHint() {
+        const rw = document.getElementById('roomCountWrap'); const indSel = document.getElementById('fIndustry');
+        if (rw && indSel) rw.style.display = indSel.value === 'Hotel' ? '' : 'none';   // รอบ 228 Q4
         const ind = document.getElementById('fIndustry');
         const hint = document.getElementById('industryHint');
         const tpl = TEMPLATES[this.selectedTpl];
@@ -635,7 +694,9 @@
             defaultLanguage: lang,
             defaultCurrency: currency,
             seedTemplate: useSeed,
-            industryType: chosenIndustry
+            industryType: chosenIndustry,
+            // รอบ 228 (Q4): ที่พักถามจำนวนห้อง (ค่าเริ่มต้น 3) — การ์ดอื่นไม่ส่ง (null = ค่าเดิมของเซิร์ฟเวอร์)
+            lodgingRoomCount: chosenIndustry === 'Hotel' ? (parseInt(document.getElementById('fRoomCount')?.value || '3', 10) || 3) : null
           });
           const site = siteRes.data;
           if (!site?.id) throw new Error('ไม่ได้รับข้อมูลเว็บไซต์ที่สร้าง');
@@ -653,9 +714,20 @@
             setTimeout(() => { window.location.href = `/pages/lodging-settings.html?siteId=${site.id}&welcome=1`; }, 700);
             return;
           }
-          Layout.toast('สร้างเว็บไซต์สำเร็จ — กำลังพาไปหน้าแก้ไข', 'success');
-          setTimeout(() => { window.location.href = `/pages/cms-edit.html?siteId=${site.id}`; }, 700);
+          // รอบ 228: การ์ดที่มีแม่แบบ (สั่งทำ/ซาลอน/ฟิตเนส) — เซิร์ฟเวอร์ทำ/ข้าม · ล้ม = บอกทางไปต่อ (ไม่เงียบ)
+          if (tpl.bookingPreset) {
+            try {
+              await API.post(`/api/companies/${Layout.getCompanyId()}/cms/sites/${site.id}/booking/presets/${encodeURIComponent(tpl.bookingPreset)}/apply-site`, {});
+            } catch (pe) {
+              alert('สร้างเว็บแล้ว แต่ตั้งค่าแม่แบบไม่สำเร็จ: ' + (pe.message || '') + '\nเพิ่มเองได้ที่ แก้ไขเว็บ › บริการจอง › เพิ่มจากแม่แบบ');
+            }
+          }
+          // รอบ 228 (แพ็ก E): สิ่งที่ต้องทำต่อดูที่แผง "สิ่งที่ยังไม่ได้ตั้งค่า" ของศูนย์ตั้งค่าเว็บ (แทน alert ที่หายเมื่อปิด)
+          Layout.toast('สร้างเว็บไซต์สำเร็จ — กำลังพาไปดูสิ่งที่ยังไม่ได้ตั้งค่า', 'success');
+          setTimeout(() => { window.location.href = `/pages/cms-site-settings.html?siteId=${encodeURIComponent(site.id)}`; }, 700);
         } catch (e) {
+          // รอบ 229: เว็บเต็มโควตา (QUOTA-FULL:cms.sites) ⇒ เสนอซื้อเพิ่ม (ทางไปต่อ) — เว็บเดิมไม่ถูกแตะ
+          if (window.QuotaUI && QuotaUI.handleFull(e, () => { Layout.closeModal('createModal'); QuotaUI.renderSummary('siteQuotaBar', { only: ['cms.sites'] }); })) return;
           Layout.toast(e.message || 'สร้างไม่สำเร็จ', 'error');
         } finally {
           btn.disabled = false;
@@ -727,7 +799,8 @@
 
       async publish(id) {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ')) return;
+        // รอบ 228 แพ็ก E: ข้อที่ยังไม่ได้ตั้งก่อนเผยแพร่ (แสดง ไม่บล็อก)
+        if (!(window.CmsSetupStatus ? await CmsSetupStatus.confirmPublish(id) : confirm('ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ'))) return;
         try {
           await api.cmsPublishSite(id);
           Layout.toast('เผยแพร่สำเร็จ', 'success');

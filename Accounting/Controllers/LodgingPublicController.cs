@@ -136,11 +136,13 @@ public class LodgingPublicController : ControllerBase
     /// <para>ก่อนหน้านี้ไฟล์อยู่ใต้ static path สาธารณะ ⇒ ใครได้ URL ไปก็เปิดได้
     /// ตลอดกาล · ตอนนี้ต้องมี token ของการจองใบนั้นเท่านั้น</para></summary>
     [HttpGet("reservations/{token}/slip")]
-    public async Task<IActionResult> Slip(Guid companyId, Guid siteId, string token)
+    public async Task<IActionResult> Slip(Guid companyId, Guid siteId, string token, [FromServices] Accounting.Services.Storage.IFileStorage storage)
     {
         var f = await _svc.GetSlipFileByTokenAsync(companyId, siteId, token);
         if (f == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
-        return PhysicalFile(f.Value.Path, f.Value.ContentType);
+        // เสิร์ฟจากที่เก็บกลาง (Local/S3 · ทีม FS 2026-11-02)
+        return await Accounting.Services.Storage.FileStorageResults.FileResultAsync(storage, f.Value.Path, f.Value.ContentType)
+            ?? NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
     }
 
     [HttpPost("reservations/{token}/slip")]

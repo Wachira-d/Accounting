@@ -120,7 +120,10 @@ public class PromptPayService : IPromptPayService
         return qrCode.GetGraphic(size / 33); // ~33 modules per QR
     }
 
-    public bool ValidatePromptPayId(string promptPayId)
+    public bool ValidatePromptPayId(string promptPayId) => IsValidId(promptPayId);
+
+    /// <summary>รอบ 228 (ฝ่ายค้าน S-2): ตัวตรวจเดียวกัน แบบเรียกได้โดยไม่ต้องฉีด service (ป้ายเตือนบัญชีรับโอนของที่พัก)</summary>
+    public static bool IsValidId(string promptPayId)
     {
         var sanitized = SanitizeId(promptPayId);
 

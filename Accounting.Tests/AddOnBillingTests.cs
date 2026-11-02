@@ -90,4 +90,33 @@ public class AddOnBillingTests
         Assert.Equal(0m, amount);
         Assert.Equal("no-price", reason);
     }
+
+    // ───── รอบ 229 (QUOTA_ADDON แพ็ก 0(ก) · P1): ค่าเหมาส่วนเสริมต้องหยุดเมื่อแพ็กเกจไม่ active ─────
+
+    [Fact]
+    public void แพ็กเกจไม่active_ค่าเหมาเป็นศูนย์_planInactive()
+    {
+        var (amount, reason) = AddOnBilling.FlatAmount(100m, null, null, false, Now, planActive: false);
+        Assert.Equal(0m, amount);
+        Assert.Equal(AddOnBilling.PlanInactiveReason, reason);
+    }
+
+    [Fact]
+    public void แพ็กเกจไม่active_ชนะทุกกรณีอื่น_แม้มีราคาsnapshotและไม่ใช่trial()
+    {
+        var (amount, reason) = AddOnBilling.FlatAmount(100m, 60m, null, false, Now,
+            Accounting.Models.Enums.AddOnPaymentStatus.Paid, "2026-08", "2026-09", planActive: false);
+        Assert.Equal(0m, amount);
+        Assert.Equal("plan-inactive", reason);
+    }
+
+    [Fact]
+    public void ทิศตรงข้าม_แพ็กเกจactive_ยังคิดค่าเหมาตามเดิม()
+    {
+        var (amount, reason) = AddOnBilling.FlatAmount(100m, null, null, false, Now, planActive: true);
+        Assert.Equal(100m, amount);
+        Assert.Equal("charged", reason);
+        // ค่าตั้งต้น (ผู้เรียกเดิมที่ไม่ส่งพารามิเตอร์) = active ⇒ พฤติกรรมเดิมทุกบาท
+        Assert.Equal(100m, AddOnBilling.FlatAmount(100m, null, null, false, Now).Amount);
+    }
 }

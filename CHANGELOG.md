@@ -6035,3 +6035,72 @@ S1 ขาเงินเข้านับเฉพาะเงินจริ�
 S3 ธง "เงินเข้าไม่มีใบ" + ปุ่มออกใบเสร็จอีกครั้ง (`Helpers/PlatformReceiptGap`) · S4 บัญชีพักเป็นด่าน live · S5–S7 · N1–N6 (ตรวจเลขภาษีด้วย `ThaiTaxId.IsValid`) —
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
 
+_เงินสดย่อย ส่วน D (2026-11-02 · `erp-review/2026-11-01/PETTY_CASH_AUDIT.md`): JE เบิก/เติมผ่าน `JournalEntryBuilder` (เลขกลางต่อเนื่อง + ด่านงวดปิด — เดิม `JV-PC-…` สุ่ม) ·
+ปิดกองทุน (คืนเงินเข้าบัญชีที่เลือก · รายการค้างต้องศูนย์หรือรับทราบ · ปิดใช้ · เปิดอีกครั้งได้ · audit) · แถวทะเบียนที่อ้างใบสำคัญซึ่งถูกลบ/ยกเลิก โผล่ในกระทบยอด + "ย้อนผลต่อกองทุน" —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 228 (2026-11-02) — งานค้างการจอง/ร้านค้า (`erp-review/2026-11-01/BOOKING_PAYMENT_AUDIT.md` §9 · คำสั่งเจ้าของ "ตัดสินเอง · ปรับได้"):
+มัดจำไม่บังคับ — ลูกค้าเลือกชำระภายหลังจากหน้าจัดการการจอง (`Helpers/BookingDepositLater` · ใบรับมัดจำออกตอนเงินเข้า §78/1 · 228-1) ·
+ข้อความถึงลูกค้าของร้านในอีเมล/LINE (`BookingPaymentPolicy.WithShopNote` · 228-2) · ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่ก่อนกำหนด N ชม. (`Helpers/BookingFulfillmentChange` ·
+ส่วนต่างค่าส่ง: ยังไม่จ่าย ⇒ มัดจำเต็มจำนวนขยับ + ลบใบร่าง · จ่ายแล้ว ⇒ ค้างเพิ่มที่ใบส่วนที่เหลือ · ต้องคืนเงิน/มีเอกสารรวมค่าส่ง ⇒ ติดต่อร้าน · 228-3) ·
+บัญชีรายได้ค่าจัดส่งของเว็บ (`Helpers/ShippingRevenueAccount` — ใบขายคำสั่งซื้อ + ใบเต็มของการจอง · ไม่ใช่ใบรับมัดจำ · 228-4) ·
+ค่าส่งตามระยะ: ไม่คิด กม. ⇒ โซน "ชนะโซนถัดไป" + รหัสไปรษณีย์ (`ShopDeliveryFee.MatchingZones` ตัวจับคู่เดียวของหน้าร้าน/สั่ง/จอง · 228-5) ·
+แม่แบบ "สั่งทำ / พรีออเดอร์" ตั้งค่าเว็บทั้งชุดในคลิกเดียว + การ์ดวิซาร์ดสร้างเว็บ (228-6) · migration `Helpers/BookingManageMigration` · เทสต์ `BookingRound228Tests` ·
+ล็อกจุดเรียก `required_call_site_check` บล็อก "รอบ 228" — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 228 ทีมภาษี (2026-11-02) — ภาษีค้างจาก `erp-review/2026-11-01/TAX_PENALTY_AUDIT.md` §3 + ช่องว่างรอบ 225 (สรุป/ต้องยืนยันอยู่ที่ AUDIT §5):
+ภ.ง.ด.51/50 ชำระผ่านหน้านำส่งรวม (`Helpers/CitPayment` · ตั้งหนี้ภ.ง.ด.51 Dr 11920 · ภ.ง.ด.50 Cr 21920 สุทธิหลังเครดิต · เงินเพิ่ม ม.27 · §67 ตรี 20% ค่าเสนอ) ·
+กองทุนเงินทดแทนรายปี `WcfAnnual` (เพดาน 240,000/คน ทั้งปี · `PayrollDetail.WorkersCompensationWage` · ส่วนต่างลง 54121 · ม.46) ·
+อากรแสตมป์ลงบัญชีผ่าน `RemitStampDutyAsync` + อัตราปัดขึ้นตาม "หรือเศษของ" (`Helpers/StampDutySchedule`) + เงินเพิ่มอากร ม.113/114 + แก้ XSS หน้าอากร ·
+ภ.พ.36 เสนอเบี้ยปรับตารางลด (ไม่ลงเอง) · unique index นำส่ง `_v3` (ยกเว้น WcfAnnual/StampDuty) · ดึงมัดจำ VAT พักใช้ยอดที่ GL ย้ายจริง · ตรวจเคลมซ้ำข้ามรายงาน ·
+เทสต์ `Round228TaxRemittanceTests` · ล็อกจุดเรียก `required_call_site_check` บล็อก "รอบ 228 ทีมภาษี" — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_เงินสดย่อย ส่วน D ฝ่ายค้าน (2026-11-02): วันที่ตามปฏิทินไทย · รับทราบไม่ครอบแถวค้างของกองทุนเอง · ไฟล์ก่อนออกเลข JV · ใบร่างย้อนผลไม่ได้ · คืนเข้าผังกองทุนไม่ได้ ·
+ลบใบสำคัญ (เดี่ยว/หลายใบ) ตรวจงวดจากวันที่ + migration เติม `FiscalPeriodId` จากวันที่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 228 ทีม PLATFORM BILLING + OMISE (erp-review/2026-11-02/PLATFORM_OMISE_AUDIT.md §5/§7): ช่องกรอกบัตร + 3-D Secure ใน `js/pay-widget.js` (โทเคนในเบราว์เซอร์ · สคริปต์/คีย์สาธารณะจาก
+`PaymentClientSetup` · รับกลับหลังหน้าธนาคาร `PayWidget.resume()`) — ทั้งหน้าร้านและค่าบริการ NextAcc · บัตรเปิดใน `PlatformPayMethods` เมื่อมีคีย์สาธารณะของโหมดนี้ · ร้านตัดปุ่มบัตรเมื่อไม่มีคีย์ ·
+ศูนย์บิลแสดง/ดาวน์โหลดใบเสร็จ·ใบกำกับ·ใบลดหนี้ (`PaidDocumentsForBuyer` · `billing-center/receipts/{id}/pdf`) · คืนเงินค่าบริการใต้บริษัทผู้ให้บริการ ⇒ PV Dr ลูกหนี้/Cr บัญชีพัก + ใบลดหนี้อัตโนมัติ §86/10
+(`IssueRefundCreditNoteAsync` · `Helpers/PlatformRefundCreditNote`) · ข้อพิพาท/chargeback จาก webhook ที่ยืนยันแล้ว (`PaymentDisputeService` · คอลัมน์ `PaymentIntent.Dispute*`) · รายงาน MRR/ลูกหนี้ตามอายุ
+(`revenue-report` · `Helpers/PlatformRevenueMetrics`) · ดีไซน์ transfers/proration/คูปอง/ตัดบัตรอัตโนมัติ (§7.1) · เทสต์ `PlatformBillingRound228Tests` · ล็อกจุดเรียกบล็อก "รอบ 228 ทีม PLATFORM BILLING" —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_ทีม FS 2026-11-02 — ที่เก็บไฟล์กลาง (กฎเหล็ก #4 D): `Services/Storage/IFileStorage` + `LocalDiskFileStorage` (พฤติกรรมเดิม) + `S3FileStorage` (AWS S3/R2/MinIO/Spaces · SigV4 เขียนเอง `Helpers/S3SigV4` ล็อกด้วยเวกเตอร์ AWS · ไม่เพิ่ม NuGet) · key คำนวณจากพาธเดิมด้วย `Helpers/FileStorageKey` (ไม่มี data migration) · production fail-fast `Helpers/FileStorageConfigPolicy` · ผู้เขียน/อ่าน/ลบ/เสิร์ฟ 22 กลุ่มย้ายเข้าที่เก็บกลาง (ไฟล์แนบ · ImageProcessingService · OCR ×4 · e-Tax · สลิป 3 ระบบ · PDF โลโก้ · `/uploads/**` สาธารณะผ่าน `FileStorageUploadsMiddleware`) · เครื่องมือย้าย `POST api/admin/file-storage/migrate` (dry-run · SHA-256 · ไม่ลบดิสก์ · JobLock) · `ProductService.RemoveImageAsync` ลบเฉพาะรูปในแกลเลอรีของบริษัทนี้ · ratchet `tools/local_disk_write_check.py` ขยายเป็น File.*/FileStream/FileInfo/Directory.*/PhysicalFile + รูอินเทอร์โพเลต · ยกเว้นรายไฟล์ OWNER (138 → 32 จุด) · ฝ่ายค้านผู้ประสานงาน B1–B3/S1–S7/N1/N4/N7 แก้แล้ว (`FileStorageDefaults.Local` นอก DI · migration `Unchecked`/`RemoteNewer`/`Complete` + ตรวจคอลัมน์พาธทุกตาราง · `/uploads` Range/ETag · secret ไม่อยู่ใน ToString) · `erp-review/2026-11-02/FILE_STORAGE_AUDIT.md` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit: เติมในคอมมิตตามหลัง_
+
+_รอบ 228 ทีม PLATFORM BILLING ฝ่ายค้าน (PLATFORM_OMISE_AUDIT §7.2): B1 คืนเงินค่าบริการไม่ลง PV อีก — ใบลดหนี้ (PaymentAccountId = บัญชีพัก) คือรายการเดียว · ล้ม ⇒ ใบสำคัญสำรอง + เรื่องค้าง + ปุ่มออกใหม่ ·
+S1 บันทึกยอดคืนย้อนหลังผ่านเส้นเดียวกัน · S3 ใบเดิมที่ยังมีผลก่อน · S4 ข้อพิพาทไม่ถอย + FOR UPDATE · S5 รับทราบข้อพิพาท (แอดมิน/ร้าน) + หน้าร้านเห็น + กระดิ่งเจ้าของ · S6 MRR ส่วนเสริมเฉพาะจ่ายแล้ว ·
+N1–N4 · เส้นร้าน (ใบลดหนี้ด้วยมือหลังคืนเงิน gateway ลง Cr เงินสด) ยืนยันว่าเกิดจริง — เปิดค้างพร้อมข้อเสนอ · Db `PlatformRefundCreditNoteDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 228 ฝ่ายค้าน + CMS_SETTINGS_UX_AUDIT แพ็ก A–C (2026-11-02): ฝ่ายค้าน S1–S8/N1–N6 (มัดจำจากข้อเท็จจริงที่ตรึง · ใบรออนุมัติ = ออกแล้ว · ยืนยันยอดที่เห็น · แจ้งร้านหลังปล่อยล็อก ·
+โซนลำดับตายตัว/หยุดเมื่อให้อัตราได้ · โควตาแยก · ลบร่าง DRAFT- หลังเลิกผูก · ล็อกแม่แบบ) — BOOKING_PAYMENT_AUDIT §9 ·
+**แพ็ก A** บัญชีรับโอน/พร้อมเพย์/QR ที่เดียวของทุกเว็บ (`Helpers/SiteTransferAccount` · `…/booking/transfer-account` · `js/site-transfer-account.js`) · ทางเข้าเดิมไม่ล้างรูป QR/ชื่อธนาคาร ·
+modal หน้าคำสั่งซื้อ ⇒ ย้ายแล้ว · ข้อความท้ายใบเสนอราคา ⇒ ตั้งค่าร้านค้า · ที่พักเตือนเมื่อไม่มีบัญชีรับโอน · **แพ็ก B** `CmsDirtyGuard` + sim · form-row-3 ยุบบนมือถือ · แท็บ cms-edit role=tab ·
+**แพ็ก C** กลุ่ม "การจัดส่ง / รับเอง" ทั้งเว็บร้านค้า/การจอง (`…/booking/shipping-settings`) · เตือนส่งฟรีเงียบ (Q3 · `FreeDeliveryConfirmed`) · คำตัดสิน Q1–Q5 บันทึกใน CMS_SETTINGS_UX_AUDIT §6 —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 228 ทีม PLATFORM BILLING (คำตัดสินผู้ประสานงาน "แก้เลย"): ใบลดหนี้ขายของใบที่ชำระครบหลังคืนเงินผ่าน gateway ⇒ ขา counter = ผังลูกหนี้ของใบสำคัญคืนเงิน (เดิม Cr เงินสด ⇒ เงินออกสองขา + ลูกหนี้ค้าง) ·
+`Helpers/GatewayRefundCreditNoteCounter` + hunk เดียวใน `DocumentService.AutoPostToJournalAsync` · ไม่มีคืนเงิน gateway = เดิม · Db `GatewayRefundCreditNoteCounterDbTests` (สองทิศ) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+
+_รอบ 229 โควตาเสริม (`erp-review/2026-11-02/QUOTA_ADDON_SUBSCRIPTION_AUDIT.md` แพ็ก 0–6 · คำตัดสินข้อ 229-1..7): **แพ็ก 0** ค่าเหมาส่วนเสริมหยุดเมื่อแพ็กเกจไม่ active (P1 · `FlatAmount(planActive)` + งานรายเดือนถาม `GetEffectivePlanAsync().IsActive` — ไม่ประทับงวด) ·
+แพ็กเอกสารโชว์ราคา/ส่ง expected (409)/Idempotency-Key · ผู้ใช้จริง · `+7` ⇒ วันจากแม่แบบ · ซ่อนเพดานรายการบัญชี · OCR 429 ชี้หน้าซื้อ · team โหลดพลาด ≠ ไม่จำกัด · รหัสส่วนเสริมใหม่ต้อง `AddOnCodes.IsKnown` ·
+**แพ็ก 1** `QuotaResources` (closed list) · ตาราง `PlanQuotaAllowances`/`CompanyQuotaOverrides`/`QuotaAddOnOffers`/`CompanyQuotaAddOns` (`Helpers/QuotaAddOnMigration` — ไม่ backfill: ช่องเดิมยังเป็นตัวตั้ง) · `QuotaLimitPolicy` · `IQuotaGate` (ล็อกธุรกรรม) · `quota/summary` ·
+**แพ็ก 2** ด่านจำนวนเว็บใน `CreateSiteAsync` + เพดานหน้า/สินค้าต่อเว็บจากแพ็กเกจ + แถบ/ซื้อใน cms-sites · **แพ็ก 3** `QuotaAddOnPricing` 3 โหมด · `PaymentSourceKind.QuotaAddOnPurchase=9` ใน `PlatformRevenueSource` · handler · ใบเสร็จ `QADD-…` (ขาเงินเข้าตามชนิด intent) ·
+หน้าแอดมิน `admin-quota.html` (เพดานต่อแพ็กเกจ · แคตตาล็อก · override + เหตุผล + audit · คิวสลิป) · **แพ็ก 4** ใบต่ออายุหลายบรรทัด + ตัดชำระแล้วต่อโควตาเสริม · **แพ็ก 5** ที่นั่ง/พื้นที่/ที่พัก/OCR ผ่านด่านเดียว · เลิกขอเครดิต OCR ไม่มีเงิน (410) ·
+**แพ็ก 6** เมนูเหลือ "แพ็กเกจและการชำระเงิน" + `js/quota-ui.js` · เทสต์ `QuotaAddOnRound229Tests` + `AddOnBillingTests` + Db `QuotaGateDbTests` · ค้าง: supersede ใบต่ออายุเมื่อเปลี่ยนรายการ · License · แท็บ hub — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 228 ทีมภาษี ฝ่ายค้าน (2026-11-02 · TAX_PENALTY_AUDIT §5 ภาคผนวก): S1 ภ.ง.ด.51 Dr 11920 = ยอดที่ชำระ ไม่แตะ 11910 (`CitPayment.AccrualPlan`) · S2 `CIT-POST-DUP` ·
+S3 ชำระนอกเส้นนี้จับคู่ต่อก้อน + ซ่อนเกิน 24 เดือน + "ชำระนอกระบบแล้ว" (`SettledOutsideAsync` · คอลัมน์ `StatutoryRemittances.SettledOutside`) · S4 เงินเพิ่ม กท.20ก ข้อมูลเท่านั้น (2%) ·
+S5/S6 §67 ตรี ก้อนแยก ฐานยอดนำส่งจริง + ข้อยกเว้นให้ตรวจ + แถบเตือนเมื่อสุทธิ 0 · S7 ปีถอดฐาน · S8 `Helpers/WorkersCompensationAccounts` · S9 อากรติดแสตมป์ไม่ลงบัญชีโดยปริยาย/ทับได้/ล็อก ·
+deploy: ถอยโค้ดก่อนรอบ 228 ต้องจัดการแถวซ้ำก่อน `_v2` (N1) · Db test `Round228TaxRemittanceDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 228 รีวิวแพ็ก A–C + แพ็ก D/E/F (บางส่วน) — CMS_SETTINGS_UX_AUDIT §6 สถานะ: S-1 ตัวอ่านเดียว `SiteTransferAccount.Rows` (5 ผู้อ่าน) + migration คัดลอกบัญชีเข้าแถวโอน · S-2–S-7 (แอดมิน+audit ·
+ทางเข้าเดิมเดินตัวเขียนเดียว · ไม่ล้างค่าที่ไม่ส่ง · ล้างบัญชีที่งานอื่นใช้ = 409 · ตัวกันค่าหายต่อแท็บ/การ์ด) · **D** คำถาม "ลูกค้าต้องจ่ายก่อนไหม" (`Helpers/BookingPayFirst`) · ตารางมัดจำ & การยกเลิกของทุกงาน ·
+วันหยุดชุดเดียว (Q2) · **E** แผงสิ่งที่ยังไม่ได้ตั้งค่า (`Helpers/CmsSiteSetupChecklist` · `…/booking/setup-status`) + ก่อนเผยแพร่ + การ์ดซาลอน/พิลาทิส/โฮมสเตย์ (จำนวนห้อง Q4) ·
+**F** ช่องเวลาตัวเลข+หน่วย (`CmsDuration`) · หน้า LINE เริ่มด้วยสถานะ · ป้ายตามอภิธานศัพท์บางส่วน · เทสต์ `CmsSettingsUxRound228Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+_รอบ 228 ปิดท้าย (2026-11-02): `SiteTransferAccount.WriteRowAsync` ต้องอยู่ในธุรกรรม + `pg_advisory_xact_lock` ต่อเว็บก่อนอ่านแถว (ผู้เรียก 3 ทางเปิด/commit ธุรกรรม · บันทึกครั้งแรกพร้อมกันไม่เกิดสองแถว · rcs ล็อก) · Db test `SiteTransferAccountDbTests` (409 ล้างไม่ยืนยัน/การจอง/คำสั่งซื้อ/ที่พัก · ทิศตรงข้าม + audit · PUT เดิมคงรูป QR/ชื่อธนาคาร · ไม่เกิดแถวที่สอง) · D/E/F ที่ยังไม่ย้าย 5 ข้อ ค้างไปรอบหน้า (CMS_SETTINGS_UX_AUDIT §6)_
+
+
+_รอบ 229 ภาคผนวกฝ่ายค้าน: B1 วง DI ของโควตาเสริม (resolve ตอนใช้ · `di_cycle_check` เห็น IEnumerable/หลาย register + self-test) · B2 ข้อเสนอล้าสมัย 409/`QUOTA-STALE` + จ่ายช้ากำหนดวันนับจากวันจ่าย ·
+S1–S10 (ยกเลิกต่อหลังออกใบ 409 · อนุมัติไม่มีสลิปต้องมีหลักฐาน · ต่อโควตาในธุรกรรมเดียวกับต่อแพ็กเกจ + แจ้งใบถูกแทนที่ · savepoint · `PlatformRevenueSource.Kinds` · ที่พักผ่านด่านเดียว ·
+ใบเสร็จ = เงินรับจริง/วันโอน · เพิกถอน · ส่งมอบบริษัทผ่านด่านที่นั่ง) · `Helpers/PlatformInvoiceLineMath` · เทสต์ `QuotaAddOnPaymentDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_

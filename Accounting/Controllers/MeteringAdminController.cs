@@ -69,7 +69,7 @@ public class MeteringAdminController : ControllerBase
 
     /// <summary>ฝ่ายค้านรอบ 219 เฟส 2 (S9): สลิปค่าส่วนเสริม (SystemAdmin) — <c>/uploads/slips</c> ไม่เสิร์ฟตรงแล้ว</summary>
     [HttpGet("addon-payments/{companyId:guid}/{featureCode}/slip")]
-    public async Task<IActionResult> AddOnSlip(Guid companyId, string featureCode, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    public async Task<IActionResult> AddOnSlip(Guid companyId, string featureCode, [FromServices] IWebHostEnvironment env, [FromServices] Accounting.Services.Storage.IFileStorage storage, CancellationToken ct)
     {
         var url = await _db.CompanyFeatures.AsNoTracking().IgnoreQueryFilters()
             .Where(f => f.CompanyId == companyId && f.FeatureCode == featureCode && !f.IsDeleted)
@@ -77,7 +77,8 @@ public class MeteringAdminController : ControllerBase
         if (Accounting.Services.Implementations.SubscriptionSlipUpload.OpenStored(env, url) is not { } file)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
         Response.Headers["Cache-Control"] = "private, no-store";
-        return PhysicalFile(file.Path, file.ContentType, System.IO.Path.GetFileName(file.Path));
+        return await Accounting.Services.Implementations.SubscriptionSlipUpload.ServeAsync(storage, file, System.IO.Path.GetFileName(file.Path))
+            ?? NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
     }
 
     public record ReviewAddOnPaymentRequest(bool Approve, string? Reason);
@@ -173,6 +174,12 @@ public class MeteringAdminController : ControllerBase
             return BadRequest(new ApiResponse<string>(false, null, packErr));
 
         var row = await _db.ApiFeatures.FirstOrDefaultAsync(f => f.FeatureCode == code);
+        // รอบ 229 (QUOTA_ADDON แพ็ก 0 · A-1): รหัสใหม่ต้องอยู่ในรายการที่โค้ดอ่านจริง (AddOnCodes) — เดิมสร้างรหัสอะไรก็ได้ ⇒ ขายของที่ไม่มีผู้อ่าน
+        // (บทเรียน lodging.promo) · โควตาจำนวน (เว็บ/ที่นั่ง/พื้นที่/OCR) ตั้งที่หน้า "โควตาและโควตาเสริม" (ทรัพยากรเลือกจาก QuotaResources) · แถวเดิมแก้ได้ตามเดิม
+        if (row == null && !Models.Constants.AddOnCodes.IsKnown(code))
+            return BadRequest(new ApiResponse<string>(false, null,
+                $"รหัส \"{code}\" ไม่มีในระบบ — ส่วนเสริมใหม่ต้องเป็นรหัสที่โค้ดรองรับแล้วเท่านั้น (สร้างรหัสเองจะขายได้แต่ไม่มีผลอะไร) · "
+                + "ถ้าต้องการขายจำนวนเพิ่ม (เว็บไซต์ · ที่นั่ง · พื้นที่ · หน้า OCR · ที่พัก) ให้ตั้งที่หน้า \"โควตาและโควตาเสริม\""));
         if (row == null)
         {
             row = new ApiFeature { FeatureCode = code, CreatedBy = User.Identity?.Name };

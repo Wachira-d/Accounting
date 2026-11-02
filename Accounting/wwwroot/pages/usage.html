@@ -240,7 +240,7 @@
       renderUsageBars(d) {
         const items = [
           { label: 'เอกสาร / เดือน', used: d.documentsThisMonth, max: d.maxDocumentsPerMonth, icon: '📄' },
-          { label: 'รายการบัญชี / เดือน', used: d.journalEntriesThisMonth, max: d.maxJournalEntriesPerMonth, icon: '📝' },
+          // รอบ 229 (คำตัดสินข้อ 229-7): ไม่แสดงเพดานรายการบัญชี/เดือน — ไม่บังคับ (การบล็อกการลงบัญชีไม่ปลอดภัย)
           { label: 'OCR สแกน / เดือน', used: d.ocrPagesThisMonth || 0, max: d.maxOcrPagesPerMonth || 0, icon: '🔍',
             extra: (d.ocrBonusPages > 0 ? ` +โบนัส ${d.ocrBonusPages}` : '') + (d.ocrCreditPagesRemaining > 0 ? ` +เครดิต ${d.ocrCreditPagesRemaining}` : '') },
           { label: 'ผู้ใช้งาน', used: d.currentUsers, max: d.maxUsers, icon: '👥' },

@@ -16,6 +16,11 @@
  *     (ลูกค้าใช้เวลาสแกนจ่ายเป็นนาที) และเปลืองทั้งเซิร์ฟเวอร์เราและโควตา API
  *  4. **ป้ายโหมดทดสอบต้องเห็นบนหน้าจ่ายของลูกค้า** ไม่ใช่แค่หน้าตั้งค่าของร้าน —
  *     ไม่งั้นร้านทดลองแล้วเข้าใจว่าเก็บเงินได้จริง
+ *  5. **เลขบัตรไม่เคยออกจากเบราว์เซอร์ไปเซิร์ฟเวอร์ของเรา** (PCI-DSS SAQ-A · รอบ 228 PLATFORM_OMISE_AUDIT §5.1) —
+ *     ช่องกรอกบัตรไม่มี name/ไม่อยู่ใน <form> · ค่าในช่องส่งให้สคริปต์ของผู้ให้บริการ (URL + คีย์สาธารณะมาจากเซิร์ฟเวอร์ —
+ *     `PaymentClientSetup`) แลกเป็นโทเคน แล้วส่ง **เฉพาะโทเคน** (`cardToken`) · ล้างช่องทันทีหลังแลก
+ *  6. **กลับจากหน้าธนาคาร (3-D Secure · แบงก์กิ้ง · วอลเล็ท)** — ก่อนพาออกไป จดรายการไว้ใน sessionStorage + ใส่ `payReturn=1`
+ *     ใน URL กลับ · โหลดหน้าเดิมกลับมา ⇒ `PayWidget.resume()` (รันเองตอนโหลด) ถามสถานะจากเซิร์ฟเวอร์ (ไม่เชื่อ query)
  *
  * ═══ สองโหมด ═══
  *  A. **โหมดในระบบ** (ผู้ใช้ล็อกอิน) — ส่ง sourceKind/sourceId/amount เอง ยิงไป
@@ -30,6 +35,8 @@
  *     companyId, sourceKind: 'SiteOrder', sourceId, amount,   // โหมด A
  *     publicBase: `/api/companies/${cid}/public-pay/lodging/${siteId}/${token}`, // โหมด B
  *     method: 'PromptPay', description, customerEmail,
+ *     methods: [{ code, label }],      // (ไม่ใส่ method) ให้ผู้จ่ายเลือกวิธีในหน้าต่างนี้ — ป้ายจากเซิร์ฟเวอร์
+ *     card: { providerCode, scriptUrl, publicKey },   // ไม่ส่ง = widget ถาม cardSetupUrl (ค่าตั้งต้น public-pay/methods ของบริษัท)
  *     onPaid: (intent) => { ... },     // จ่ายสำเร็จ
  *     onClosed: () => { ... },         // ผู้ใช้ปิดหน้าต่างเอง
  *   });
@@ -39,6 +46,38 @@
 
   const POLL_STEPS_MS = [2000, 2000, 3000, 5000, 5000, 10000];
   const MAX_POLL_MS = 15 * 60 * 1000;   // QR ส่วนใหญ่หมดอายุก่อนถึงตรงนี้อยู่แล้ว
+  const RETURN_PARAM = 'payReturn';
+  const PENDING_KEY = 'payWidget.pending';
+  const PENDING_MAX_AGE_MS = 2 * 60 * 60 * 1000;   // กลับจากหน้าธนาคารเกิน 2 ชม. = ไม่ตรวจต่ออัตโนมัติ (สถานะจริงยังอยู่ที่หน้าเดิม)
+
+  // รอบ 228: ตัวแปลงเลขบัตรเป็นโทเคน **ต่อผู้ให้บริการ** (ตารางเดียว · คีย์ = providerCode ที่เซิร์ฟเวอร์ส่งมา) — สคริปต์/คีย์มาจากเซิร์ฟเวอร์เสมอ
+  const TOKENIZERS = {
+    omise(setup, c) {
+      return new Promise((resolve, reject) => {
+        const sdk = global.Omise;
+        if (!sdk || typeof sdk.createToken !== 'function') { reject(new Error('โหลดตัวรับบัตรของผู้ให้บริการไม่สำเร็จ — ลองใหม่อีกครั้ง')); return; }
+        sdk.setPublicKey(setup.publicKey);
+        sdk.createToken('card', {
+          name: c.name, number: c.number, expiration_month: c.month, expiration_year: c.year, security_code: c.cvc,
+        }, (status, resp) => {
+          if (status === 200 && resp && resp.id) resolve(resp.id);
+          else reject(new Error((resp && resp.message) ? 'ข้อมูลบัตรไม่ถูกต้อง: ' + resp.message : 'แปลงข้อมูลบัตรไม่สำเร็จ'));
+        });
+      });
+    },
+  };
+
+  function storage() { try { return global.sessionStorage; } catch { return null; } }
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const found = Array.from(document.scripts).find(x => x.src === src);
+      if (found && found.dataset.loaded === '1') { resolve(); return; }
+      const el = found || document.createElement('script');
+      el.addEventListener('load', () => { el.dataset.loaded = '1'; resolve(); });
+      el.addEventListener('error', () => reject(new Error('โหลดตัวรับบัตรไม่สำเร็จ (เครือข่าย/ตัวบล็อกโฆษณา) — ลองใหม่ หรือเลือกพร้อมเพย์')));
+      if (!found) { el.src = src; el.async = true; document.head.appendChild(el); }
+    });
+  }
 
   function esc(v) {
     return String(v == null ? '' : v)
@@ -55,8 +94,125 @@
 
     async open(opts) {
       this._stopped = false;
-      this._opts = opts || {};
+      this._opts = opts = Object.assign({}, opts || {});
       this._mount();
+
+      // รอบ 228: ไม่ได้กำหนดวิธี + มีหลายวิธี ⇒ ให้ผู้จ่ายเลือกที่นี่ (ป้ายจากเซิร์ฟเวอร์)
+      const choices = (opts.methods || []).map(m => typeof m === 'string' ? { code: m, label: m } : m).filter(m => m && m.code);
+      if (!opts.method && choices.length > 1) { this._renderChooser(choices); return; }
+      if (!opts.method && choices.length === 1) opts.method = choices[0].code;
+
+      // รอบ 228: บัตร ⇒ ช่องกรอกบัตร → โทเคนในเบราว์เซอร์ก่อน (เลขบัตรไม่ส่งมาที่เซิร์ฟเวอร์ของเรา)
+      if (opts.method === 'Card' && !opts.cardToken) { await this._renderCardForm(); return; }
+      await this._start();
+    },
+
+    _choose(code) { this._opts.method = code; this.open(this._opts); },
+
+    _renderChooser(choices) {
+      this._setBody(`
+        <div style="padding:20px">
+          <div style="font-size:15px;font-weight:700;color:#0f172a;margin-bottom:12px">เลือกวิธีชำระเงิน</div>
+          <div style="display:grid;gap:8px">
+            ${choices.map((m, i) => `<button data-pw-method="${i}" style="text-align:left;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;font-size:14px;cursor:pointer">${esc(m.label || m.code)}</button>`).join('')}
+          </div>
+          <button onclick="PayWidget.close()" style="margin-top:14px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer">ยกเลิก</button>
+        </div>`);
+      const box = document.getElementById('payWidgetBox');
+      (box ? box.querySelectorAll('[data-pw-method]') : []).forEach(b => b.addEventListener('click', () => this._choose(choices[Number(b.dataset.pwMethod)].code)));
+    },
+
+    async _cardSetup() {
+      const o = this._opts;
+      if (o.card && o.card.publicKey && o.card.scriptUrl) return o.card;
+      // ค่าตั้งต้นเฉพาะเส้นของร้าน (public-pay) — เส้นค่าบริการ NextAcc (platform-pay) ต้องส่ง card ของช่องทาง NextAcc มาเอง (ห้ามหยิบคีย์ของร้าน)
+      const shopPath = !o.publicBase || String(o.publicBase).indexOf('/public-pay/') >= 0;
+      const url = o.cardSetupUrl || (o.companyId && shopPath ? `/api/companies/${o.companyId}/public-pay/methods` : null);
+      if (!url) return null;
+      try {
+        const res = await fetch(url, { headers: this._authHeader() });
+        const json = await res.json();
+        const d = json && json.data;
+        return d && d.card && d.card.publicKey && d.card.scriptUrl ? d.card : null;
+      } catch { return null; }
+    },
+
+    async _renderCardForm() {
+      this._setBody('<div style="padding:28px;text-align:center;color:#64748b">กำลังเตรียมช่องกรอกบัตร…</div>');
+      const setup = await this._cardSetup();
+      if (!setup || !TOKENIZERS[setup.providerCode]) {
+        this._renderError('ช่องทางนี้ยังรับบัตรไม่ได้ (ยังไม่ได้ตั้งคีย์สาธารณะของผู้ให้บริการ) — เลือกวิธีอื่น เช่น พร้อมเพย์');
+        return;
+      }
+      this._cardSetupValue = setup;
+      const inp = 'width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:9px 10px;font-size:14px';
+      const yearNow = new Date().getFullYear();
+      this._setBody(`
+        ${setup.isTestMode ? '<div style="background:#fef3c7;color:#92400e;padding:8px 14px;font-size:12px;font-weight:700;text-align:center">⚠️ โหมดทดสอบ — ใช้บัตรทดสอบเท่านั้น เงินไม่เข้าจริง</div>' : ''}
+        <div style="padding:20px">
+          <div style="font-size:15px;font-weight:700;color:#0f172a">ชำระด้วยบัตรเครดิต/เดบิต</div>
+          ${this._opts.amount ? `<div style="font-size:13px;color:#64748b;margin-top:2px">ยอด ฿${money(this._opts.amount)}</div>` : ''}
+          <div style="display:grid;gap:10px;margin-top:12px">
+            <label style="font-size:12px;color:#475569">ชื่อบนบัตร<input id="pwCardName" autocomplete="cc-name" style="${inp}"></label>
+            <label style="font-size:12px;color:#475569">หมายเลขบัตร<input id="pwCardNumber" autocomplete="cc-number" inputmode="numeric" maxlength="23" style="${inp}"></label>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+              <label style="font-size:12px;color:#475569">เดือน<input id="pwCardMonth" autocomplete="cc-exp-month" inputmode="numeric" maxlength="2" placeholder="MM" style="${inp}"></label>
+              <label style="font-size:12px;color:#475569">ปี (ค.ศ.)<input id="pwCardYear" autocomplete="cc-exp-year" inputmode="numeric" maxlength="4" placeholder="${yearNow}" style="${inp}"></label>
+              <label style="font-size:12px;color:#475569">CVV<input id="pwCardCvc" autocomplete="cc-csc" inputmode="numeric" maxlength="4" type="password" style="${inp}"></label>
+            </div>
+          </div>
+          <div id="pwCardError" style="color:#b91c1c;font-size:12px;margin-top:8px"></div>
+          <div style="font-size:11px;color:#64748b;margin-top:8px;line-height:1.6">ข้อมูลบัตรส่งตรงถึงผู้ให้บริการรับชำระเงินเพื่อแปลงเป็นรหัสใช้ครั้งเดียว — ระบบของเราไม่เห็นและไม่เก็บเลขบัตร · ธนาคารอาจพาไปยืนยันตัวตน (3-D Secure) แล้วกลับมาหน้านี้เอง</div>
+          <div style="display:flex;gap:8px;margin-top:14px">
+            <button id="pwCardPay" style="flex:1;background:#16a34a;color:#fff;border:0;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:600;cursor:pointer">ชำระเงิน</button>
+            <button onclick="PayWidget.close()" style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;font-size:13px;cursor:pointer">ยกเลิก</button>
+          </div>
+        </div>`);
+      const btn = document.getElementById('pwCardPay');
+      if (btn) btn.addEventListener('click', () => this._submitCard());
+    },
+
+    async _submitCard() {
+      const val = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+      const errBox = document.getElementById('pwCardError');
+      const btn = document.getElementById('pwCardPay');
+      const card = {
+        name: val('pwCardName'), number: val('pwCardNumber').replace(/[\s-]/g, ''),
+        month: val('pwCardMonth'), year: val('pwCardYear'), cvc: val('pwCardCvc'),
+      };
+      if (!card.name || !/^\d{12,19}$/.test(card.number) || !/^\d{1,2}$/.test(card.month) || !/^\d{2,4}$/.test(card.year) || !/^\d{3,4}$/.test(card.cvc)) {
+        if (errBox) errBox.textContent = 'กรอกข้อมูลบัตรให้ครบ (ชื่อ · เลขบัตร · เดือน/ปีหมดอายุ · CVV)';
+        return;
+      }
+      if (card.year.length === 2) card.year = '20' + card.year;
+      if (btn) { btn.disabled = true; btn.textContent = 'กำลังตรวจบัตร…'; }
+      const setup = this._cardSetupValue;
+      try {
+        await loadScript(setup.scriptUrl);
+        const token = await TOKENIZERS[setup.providerCode](setup, card);
+        // ล้างช่องบัตรทันที — ค่าไม่ค้างใน DOM หลังได้โทเคน
+        ['pwCardNumber', 'pwCardCvc', 'pwCardMonth', 'pwCardYear', 'pwCardName'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        this._opts.cardToken = token;
+        await this._start();
+      } catch (e) {
+        if (errBox) errBox.textContent = e.message || 'แปลงข้อมูลบัตรไม่สำเร็จ';
+        if (btn) { btn.disabled = false; btn.textContent = 'ชำระเงิน'; }
+      }
+    },
+
+    /** URL กลับหลังหน้าธนาคาร = หน้าเดิม + payReturn=1 (ไม่มีข้อมูลสถานะใน URL — สถานะถามเซิร์ฟเวอร์เสมอ) */
+    _returnUrl() {
+      if (this._opts.returnUrl) return this._opts.returnUrl;
+      try {
+        const u = new URL(location.href);
+        u.hash = '';
+        u.searchParams.set(RETURN_PARAM, '1');
+        return u.toString();
+      } catch { return location.origin + location.pathname; }
+    },
+
+    async _start() {
+      const opts = this._opts;
       this._setBody('<div style="padding:28px;text-align:center;color:#64748b">กำลังเตรียมการชำระเงิน…</div>');
 
       try {
@@ -70,7 +226,7 @@
         const body = pub
           ? Object.assign({}, opts.extraBody || {}, {
               method: opts.method || 'PromptPay',
-              returnUrl: opts.returnUrl || (location.origin + location.pathname),
+              returnUrl: this._returnUrl(),
               cardToken: opts.cardToken || null,
             })
           : {
@@ -79,7 +235,7 @@
               description: opts.description || null,
               customerEmail: opts.customerEmail || null,
               customerPhone: opts.customerPhone || null,
-              returnUrl: opts.returnUrl || (location.origin + location.pathname),
+              returnUrl: this._returnUrl(),
               cardToken: opts.cardToken || null,
               siteId: opts.siteId || null, contactId: opts.contactId || null,
             };
@@ -99,13 +255,67 @@
 
         // 3-D Secure ของบัตร: ต้องพาไปหน้าธนาคาร แล้วกลับมาตรวจสถานะจากเซิร์ฟเวอร์
         // (ห้ามเชื่อ query string ตอนกลับ)
-        if (intent.authorizeUrl) { global.location.href = intent.authorizeUrl; return; }
+        // รอบ 228: จดรายการไว้ก่อนออก (sessionStorage) ⇒ กลับมาแล้ว resume() ถามสถานะต่อ — ไม่ได้จด (โหมดส่วนตัว) = หน้าเดิมยังแสดงสถานะจริงจากเซิร์ฟเวอร์
+        if (intent.authorizeUrl && /^https:\/\//i.test(String(intent.authorizeUrl))) {
+          this._rememberPending(intent);
+          global.location.href = intent.authorizeUrl;
+          return;
+        }
 
         this._renderPending(intent);
         this._poll(0, Date.now());
       } catch (e) {
+        // ฝ่ายค้าน N2: โทเคนบัตรใช้ได้ครั้งเดียว — เริ่มไม่สำเร็จแล้วห้ามส่งโทเคนเดิมซ้ำ (เปิดใหม่ = กรอกบัตรใหม่)
+        this._opts.cardToken = null;
         this._renderError(e.message);
       }
+    },
+
+    _statusUrl() {
+      return this._opts.publicBase
+        ? `${this._opts.publicBase}/intents/${this._intentId}`
+        : `/api/companies/${this._opts.companyId}/pay/intents/${this._intentId}/status`;
+    },
+
+    _rememberPending(intent) {
+      const st = storage();
+      if (!st) return;
+      try {
+        st.setItem(PENDING_KEY, JSON.stringify({
+          intentId: intent.id, publicBase: this._opts.publicBase || null, companyId: this._opts.companyId || null,
+          customAuth: typeof this._opts.authHeader === 'function', hash: location.hash || '', at: Date.now(),
+        }));
+      } catch { /* เก็บไม่ได้ = กลับมาแล้วไม่เปิดหน้าต่างตรวจผลเอง (สถานะยังถูกต้องที่เซิร์ฟเวอร์) */ }
+    },
+
+    /** กลับจากหน้าธนาคาร (3-D Secure/แบงก์กิ้ง/วอลเล็ท) — เปิดหน้าต่าง "กำลังตรวจผล" แล้วถามสถานะจากเซิร์ฟเวอร์ (ไม่เชื่อ query) ·
+     *  หน้าที่ใช้ authHeader ของตัวเองเรียก resume({ authHeader }) เอง · ปิดหน้าต่าง = โหลดหน้าใหม่ให้เห็นสถานะล่าสุด */
+    resume(extra) {
+      let marked = false;
+      try { marked = new URL(location.href).searchParams.get(RETURN_PARAM) === '1'; } catch { marked = false; }
+      if (!marked) return false;
+      const st = storage();
+      let rec = null;
+      try { rec = st ? JSON.parse(st.getItem(PENDING_KEY) || 'null') : null; } catch { rec = null; }
+      // ฝ่ายค้าน N1: หน้าที่ใช้ตัวสร้าง header ของตัวเอง ⇒ รอให้หน้านั้นเรียก resume({ authHeader }) เอง — ห้ามล้างเครื่องหมาย/รายการก่อน
+      if (rec && rec.customAuth && !(extra && typeof extra.authHeader === 'function')) return false;
+      // ล้างเครื่องหมายใน URL (กดรีเฟรชแล้วไม่ตรวจซ้ำ) + คืน hash เดิมของหน้า
+      try {
+        const u = new URL(location.href);
+        u.searchParams.delete(RETURN_PARAM);
+        if (rec && rec.hash) u.hash = rec.hash;
+        history.replaceState(null, '', u.toString());
+      } catch { /* เปลี่ยน URL ไม่ได้ไม่เป็นไร */ }
+      if (!rec || !rec.intentId || (Date.now() - Number(rec.at || 0)) > PENDING_MAX_AGE_MS) return false;
+      try { if (st) st.removeItem(PENDING_KEY); } catch { /* ignore */ }
+      this._stopped = false;
+      this._opts = Object.assign({ publicBase: rec.publicBase, companyId: rec.companyId,
+        onClosed: () => { try { location.reload(); } catch { /* ignore */ } } }, extra || {});
+      this._intentId = rec.intentId;
+      this._mount();
+      this._setBody('<div style="padding:28px;text-align:center;color:#64748b">กลับจากหน้าธนาคารแล้ว — กำลังตรวจผลการชำระเงินกับระบบ…</div>');
+      this._poll(0, Date.now());
+      return true;
     },
 
     _authHeader() {
@@ -223,10 +433,7 @@
       this._timer = setTimeout(async () => {
         if (this._stopped) return;
         try {
-          const statusUrl = this._opts.publicBase
-            ? `${this._opts.publicBase}/intents/${this._intentId}`
-            : `/api/companies/${this._opts.companyId}/pay/intents/${this._intentId}/status`;
-          const res = await fetch(statusUrl, { headers: this._authHeader() });
+          const res = await fetch(this._statusUrl(), { headers: this._authHeader() });
           const json = await res.json();
           const intent = json.data;
           if (intent && intent.status === 'Succeeded') {
@@ -260,4 +467,9 @@
   };
 
   global.PayWidget = PayWidget;
+
+  // รอบ 228: กลับจากหน้าธนาคาร ⇒ ตรวจผลต่อเองทุกหน้าที่โหลด widget (หน้าร้าน/ศูนย์บิล/แพ็กเกจ/ส่วนเสริม ไม่ต้องเรียกเอง)
+  function autoResume() { try { PayWidget.resume(); } catch { /* ไม่ให้หน้าเดิมพัง */ } }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', autoResume);
+  else autoResume();
 })(window);

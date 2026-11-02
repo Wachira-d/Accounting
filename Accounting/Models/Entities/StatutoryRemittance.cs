@@ -55,4 +55,8 @@ public class StatutoryRemittance : TenantEntity
     public Guid? ReceiptAttachmentId { get; set; }
 
     public string? Note { get; set; }
+
+    /// <summary>รอบ 228 ฝ่ายค้าน S3 — "ชำระนอกระบบแล้ว": แถวนี้ผูกใบสำคัญ (JE) ที่ผู้ใช้ลงเองไว้ก่อน (<see cref="JournalEntryId"/>) ไม่ใช่ JE ที่เส้นนำส่งสร้าง ⇒
+    /// ยกเลิกแถวนี้ = ปลดการผูกเท่านั้น <b>ไม่กลับรายการ</b> JE ของผู้ใช้ · แถวเดิม = false</summary>
+    public bool SettledOutside { get; set; }
 }

@@ -25,11 +25,12 @@ public class OcrV1Controller : PublicApiControllerBase
 
     private readonly IOcrService _ocr;
     private readonly ILogger<OcrV1Controller> _logger;
+    private readonly Accounting.Services.Storage.IFileStorage _storage;
 
     public OcrV1Controller(AccountingDbContext db, IUsageMeteringService metering,
-        IOcrService ocr, ILogger<OcrV1Controller> logger)
+        IOcrService ocr, ILogger<OcrV1Controller> logger, Accounting.Services.Storage.IFileStorage storage)
         : base(db, metering)
-    { _ocr = ocr; _logger = logger; }
+    { _ocr = ocr; _logger = logger; _storage = storage; }
 
     /// <summary>
     /// อัปโหลดรูป/PDF แล้วรับข้อมูลที่อ่านได้ทันที (synchronous)
@@ -101,13 +102,13 @@ public class OcrV1Controller : PublicApiControllerBase
                 .FirstOrDefaultAsync(ct);
             if (uploaderId == null) return null;
 
-            var dir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "ocr");
-            Directory.CreateDirectory(dir);
+            // ที่เดียวกับเส้นเว็บ (wwwroot/uploads/ocr) ผ่านที่เก็บกลาง (ทีม FS 2026-11-02)
+            var dir = Path.Combine(_storage.Locator.RelativeBase, "wwwroot", "uploads", "ocr");
             var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
             var path = Path.Combine(dir, fileName);
 
-            await using (var fs = System.IO.File.Create(path))
-                await file.CopyToAsync(fs, ct);
+            await using (var fs = file.OpenReadStream())
+                await _storage.WriteAsync(path, fs, file.ContentType, ct);
 
             var attachment = new Models.Entities.FileAttachment
             {

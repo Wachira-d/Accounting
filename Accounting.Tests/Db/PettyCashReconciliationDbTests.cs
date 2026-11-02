@@ -446,4 +446,359 @@ public class PettyCashReconciliationDbTests
             await Assert.ThrowsAsync<BusinessRuleException>(() => new PettyCashService(req).UndoGlOnlyAsync(s.CompanyId, topUp.Id));
         }
     }
+
+    // ══════════════ ส่วน D (2026-11-02 รอบ 2) — เลข/งวดกลาง · รายการค้างจากใบที่ถูกลบ · ปิด/เปิดกองทุน ══════════════
+
+    [Fact]
+    public async Task ใบสำคัญเงินสดย่อย_เลขผ่านตัวกลางต่อเนื่อง_และงวดปิดบล็อกโดยยอดกองทุนไม่ขยับ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid fundId;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            fundId = (await new PettyCashService(req).CreateFundAsync(s.CompanyId, "สำนักงานใหญ่", null, 5000m, null)).Id;
+        var day = new DateTime(2026, 10, 5, 3, 0, 0, DateTimeKind.Utc);
+        PettyCashTransaction top, pay;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            top = await new PettyCashService(req).ReplenishAsync(s.CompanyId, fundId, 1000m, null, day, sourceBankAccountId: s.BankId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            pay = await new PettyCashService(req).DisburseAsync(s.CompanyId, fundId, 100m, "ค่าน้ำดื่ม", s.ExpenseGl, "R-1", day);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var nos = await check.JournalEntries.AsNoTracking().Where(j => j.CompanyId == s.CompanyId)
+                .OrderBy(j => j.EntryNumber).Select(j => j.EntryNumber).ToListAsync();
+            Assert.Equal(new[] { "JV-202610-0001", "JV-202610-0002" }, nos);   // เดิม JV-PC-20261005-XXXX สุ่ม
+            Assert.DoesNotContain(nos, n => n.Contains("JV-PC-"));
+        }
+
+        // งวด ก.ย. 2569 ปิดแล้ว ⇒ เบิก/เติมย้อนไปวันในงวดนั้นไม่ได้ (ข้อความไทย + รหัสกฎ) และไม่มีอะไรถูกบันทึก
+        db.FiscalPeriods.Add(new FiscalPeriod { CompanyId = s.CompanyId, Name = "2569/09", Year = 2026, Month = 9,
+            StartDate = new DateTime(2026, 9, 1, 0, 0, 0, DateTimeKind.Utc), EndDate = new DateTime(2026, 9, 30, 0, 0, 0, DateTimeKind.Utc),
+            Status = FiscalPeriodStatus.Closed });
+        await db.SaveChangesAsync();
+        var sepDay = new DateTime(2026, 9, 20, 3, 0, 0, DateTimeKind.Utc);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PettyCashJePlan.RulePeriodClosed, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).DisburseAsync(s.CompanyId, fundId, 50m, "ย้อนงวด", s.ExpenseGl, "R-2", sepDay))).RuleCode);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PettyCashJePlan.RulePeriodClosed, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).ReplenishAsync(s.CompanyId, fundId, 50m, null, sepDay, sourceBankAccountId: s.BankId))).RuleCode);
+        using var after = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(900m, (await after.PettyCashFunds.AsNoTracking().SingleAsync(f => f.Id == fundId)).CurrentBalance);
+        Assert.Equal(2, await after.PettyCashTransactions.CountAsync(t => t.FundId == fundId));
+        Assert.Equal(2, await after.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId));
+    }
+
+    [Fact]
+    public async Task ใบเบิกถูกลบ_กระทบยอดบอกรายการค้าง_ย้อนผลแล้วยอดตรงGL_ใบที่ยังอยู่ย้อนไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid fundId;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            fundId = (await new PettyCashService(req).CreateFundAsync(s.CompanyId, "สำนักงานใหญ่", null, 5000m, null)).Id;
+        PettyCashTransaction top, pay;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            top = await new PettyCashService(req).ReplenishAsync(s.CompanyId, fundId, 1000m, null, DateTime.UtcNow, sourceBankAccountId: s.BankId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            pay = await new PettyCashService(req).DisburseAsync(s.CompanyId, fundId, 200m, "ค่าแท็กซี่", s.ExpenseGl, "R-9", DateTime.UtcNow);
+        // ลบใบสำคัญของการเบิก (ทางเดียวกับหน้า “สมุดรายวันทั่วไป” → ลบ = soft-delete) — GL ไม่นับแล้ว แต่ยอดกองทุนยังหัก 200
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var je = await req.JournalEntries.SingleAsync(j => j.Id == pay.JournalEntryId);
+            je.IsDeleted = true;
+            await req.SaveChangesAsync();
+        }
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var g = Assert.Single(await new PettyCashService(check).GetGlReconciliationAsync(s.CompanyId));
+            Assert.Equal(1000m, g.GlBalance);
+            Assert.Equal(800m, g.FundsTotal);
+            Assert.Equal(200m, g.Difference);
+            Assert.Equal(nameof(PettyCashGlReconStatus.OrphanedFundEntries), g.Status);
+            var o = Assert.Single(g.OrphanedEntries!);
+            Assert.Equal(pay.Id, o.TransactionId);
+            Assert.Equal(200m, o.FundEffectReversal);
+            Assert.Contains("ถูกลบ", o.Reason);
+        }
+        // ทิศตรงข้าม: รายการที่ใบยังอยู่ใน GL ย้อนผลไม่ได้ (409) — ยอดไม่ขยับ
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).ReverseOrphanedEntryAsync(s.CompanyId, top.Id))).StatusCode);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(1000m, (await new PettyCashService(req).ReverseOrphanedEntryAsync(s.CompanyId, pay.Id)).CurrentBalance);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var g = Assert.Single(await new PettyCashService(check).GetGlReconciliationAsync(s.CompanyId));
+            Assert.Equal(nameof(PettyCashGlReconStatus.Matched), g.Status);
+            Assert.Equal(0, g.OrphanedCount);
+            Assert.True(await check.AuditLogs.AnyAsync(l => l.EntityId == pay.Id.ToString() && l.OldValues!.Contains("petty-cash-orphan-reversed")));
+            Assert.DoesNotContain((await new PettyCashService(check).GetRegisterAsync(s.CompanyId, fundId, null, null)).Rows, r => r.Id == pay.Id);
+        }
+        // ย้อนซ้ำ = ไม่พบ (แถวถูกเอาออกแล้ว) — ยอดไม่ขยับสองครั้ง
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<KeyNotFoundException>(() => new PettyCashService(req).ReverseOrphanedEntryAsync(s.CompanyId, pay.Id));
+        using var final = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1000m, (await final.PettyCashFunds.AsNoTracking().SingleAsync(f => f.Id == fundId)).CurrentBalance);
+    }
+
+    [Fact]
+    public async Task ปิดกองทุน_มีค้างต้องรับทราบ_คืนเงินลงJE_ปิดแล้วเบิกไม่ได้_เปิดอีกครั้งได้_ยอดศูนย์ปิดโดยไม่ลงJE()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid fundId;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            fundId = (await new PettyCashService(req).CreateFundAsync(s.CompanyId, "สำนักงานใหญ่", null, 5000m, null)).Id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new PettyCashService(req).ReplenishAsync(s.CompanyId, fundId, 1000m, null, DateTime.UtcNow, sourceBankAccountId: s.BankId);
+        await PostExternalAsync(s.CompanyId, s.ExpenseGl, s.PettyGl, 120m, "PV-CLOSE-1");   // ค้างระบุกองทุน
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var p = await new PettyCashService(req).GetClosePreviewAsync(s.CompanyId, fundId);
+            Assert.Equal(1000m, p.Balance);
+            Assert.True(p.NeedsReturnAccount);
+            Assert.Equal(1, p.UnattributedCount);
+            Assert.NotNull(p.Blocker);
+        }
+        // ไม่ติ๊กรับทราบ ⇒ ปิดไม่ได้ ไม่มีอะไรเปลี่ยน
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PettyCashFundGlRule.RuleCloseOpenItems, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).CloseFundAsync(s.CompanyId, fundId, null, s.BankId, DateTime.UtcNow, null, false))).RuleCode);
+        // รับทราบแต่ไม่เลือกบัญชีรับคืน ⇒ ปฏิเสธ (ไม่เดาธนาคารแม้มีใบเดียว)
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PettyCashJePlan.RuleNoSourceAccount, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).CloseFundAsync(s.CompanyId, fundId, null, null, DateTime.UtcNow, null, true))).RuleCode);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var f = await check.PettyCashFunds.AsNoTracking().SingleAsync(x => x.Id == fundId);
+            Assert.True(f.IsActive);
+            Assert.Equal(1000m, f.CurrentBalance);
+        }
+
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new PettyCashService(req).CloseFundAsync(s.CompanyId, fundId, null, s.BankId, DateTime.UtcNow, "ยุบสาขา", true);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var f = await check.PettyCashFunds.AsNoTracking().SingleAsync(x => x.Id == fundId);
+            Assert.False(f.IsActive);
+            Assert.Equal(0m, f.CurrentBalance);
+            var ret = await check.PettyCashTransactions.AsNoTracking().SingleAsync(t => t.FundId == fundId && t.Type == PettyCashFundGlRule.ReturnType);
+            Assert.Equal(1000m, ret.Amount);
+            var lines = await check.JournalEntryLines.AsNoTracking().Where(l => l.JournalEntryId == ret.JournalEntryId).ToListAsync();
+            Assert.Equal(1000m, lines.Single(l => l.AccountId == s.BankGl).DebitAmount);
+            Assert.Equal(1000m, lines.Single(l => l.AccountId == s.PettyGl).CreditAmount);
+            Assert.StartsWith("JV-", (await check.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == ret.JournalEntryId)).EntryNumber);
+            Assert.True(await check.AuditLogs.AnyAsync(l => l.EntityId == fundId.ToString() && l.NewValues!.Contains("petty-cash-fund-closed")
+                && l.NewValues!.Contains("\"acknowledgedOpenItems\":true")));
+            var reg = await new PettyCashService(check).GetRegisterAsync(s.CompanyId, fundId, null, null);
+            Assert.Equal(1000m, reg.Rows.Single(r => r.Id == ret.Id).AmountOut);   // คืนเงิน = เงินออกในทะเบียน
+        }
+        // ปิดแล้ว: เบิก/เติม/ระบุกองทุน/ปิดซ้ำ ไม่ได้
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PettyCashFundGlRule.RuleFundClosed, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).ReplenishAsync(s.CompanyId, fundId, 10m, null, DateTime.UtcNow, sourceBankAccountId: s.BankId))).RuleCode);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).CloseFundAsync(s.CompanyId, fundId, null, s.BankId, DateTime.UtcNow, null, true))).StatusCode);
+
+        // เปิดอีกครั้ง → เติม → เบิกได้ · audit
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.True((await new PettyCashService(req).ReopenFundAsync(s.CompanyId, fundId)).IsActive);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new PettyCashService(req).ReplenishAsync(s.CompanyId, fundId, 300m, null, DateTime.UtcNow, sourceBankAccountId: s.BankId);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new PettyCashService(req).DisburseAsync(s.CompanyId, fundId, 300m, "ค่าไปรษณีย์", s.ExpenseGl, "R-3", DateTime.UtcNow);
+        // ยอด 0 + ทำเครื่องหมายใบค้างว่าไม่กระทบกองทุน ⇒ ปิดได้โดยไม่ต้องรับทราบ และไม่ลง JE เพิ่ม
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var g = Assert.Single(await new PettyCashService(req).GetGlReconciliationAsync(s.CompanyId));
+            await new PettyCashService(req).MarkGlOnlyAsync(s.CompanyId, s.PettyGl, Assert.Single(g.UnattributedEntries).JournalEntryId, "ทดสอบ");
+        }
+        int jeBefore;
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            jeBefore = await check.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId);
+            Assert.Null((await new PettyCashService(check).GetClosePreviewAsync(s.CompanyId, fundId)).Blocker);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new PettyCashService(req).CloseFundAsync(s.CompanyId, fundId, null, null, DateTime.UtcNow, null, false);
+        using var final = DbTestDatabase.TryCreateContext()!;
+        Assert.False((await final.PettyCashFunds.AsNoTracking().SingleAsync(f => f.Id == fundId)).IsActive);
+        Assert.Equal(jeBefore, await final.JournalEntries.CountAsync(j => j.CompanyId == s.CompanyId));
+        Assert.True(await final.AuditLogs.AnyAsync(l => l.EntityId == fundId.ToString() && l.NewValues!.Contains("petty-cash-fund-reopened")));
+    }
+
+    // ══════════════ ส่วน D ฝ่ายค้าน (2026-11-02) ══════════════
+
+    private static DateTime U(int y, int m, int d, int h = 0, int min = 0) => new(y, m, d, h, min, 0, DateTimeKind.Utc);
+
+    private static async Task AddPeriodAsync(Guid companyId, int y, int m, FiscalPeriodStatus status)
+    {
+        using var db = DbTestDatabase.TryCreateContext()!;
+        db.FiscalPeriods.Add(new FiscalPeriod { CompanyId = companyId, Name = $"{y + 543}/{m:D2}", Year = y, Month = m,
+            StartDate = U(y, m, 1), EndDate = U(y, m, DateTime.DaysInMonth(y, m)), Status = status });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task<Guid> PostJeAsync(Guid companyId, Guid dr, Guid cr, decimal amount, string no, DateTime date, Guid? periodId = null)
+    {
+        using var db = DbTestDatabase.TryCreateContext()!;
+        var je = new JournalEntry { CompanyId = companyId, EntryNumber = no, EntryDate = date, JournalType = JournalType.General,
+            Description = "ทดสอบ", Status = JournalEntryStatus.Posted, TotalDebit = amount, TotalCredit = amount, FiscalPeriodId = periodId };
+        je.Lines.Add(new JournalEntryLine { AccountId = dr, DebitAmount = amount });
+        je.Lines.Add(new JournalEntryLine { AccountId = cr, CreditAmount = amount });
+        db.JournalEntries.Add(je);
+        await db.SaveChangesAsync();
+        return je.Id;
+    }
+
+    [Fact]
+    public async Task วันที่รายการ_ยึดปฏิทินไทย_ตีหนึ่งวันที่1ไม่ตกงวดเดือนก่อนที่ปิด_ห้าทุ่มวันสิ้นเดือนยังถูกบล็อก()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid fundId;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            fundId = (await new PettyCashService(req).CreateFundAsync(s.CompanyId, "สำนักงานใหญ่", null, 5000m, null)).Id;
+        await AddPeriodAsync(s.CompanyId, 2026, 10, FiscalPeriodStatus.Closed);
+        // 2026-10-31 18:00Z = 1 พ.ย. 01:00 เวลาไทย ⇒ งวด พ.ย. (เปิด) · เลข JV-202611
+        PettyCashTransaction t;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            t = await new PettyCashService(req).ReplenishAsync(s.CompanyId, fundId, 500m, null, U(2026, 10, 31, 18), sourceBankAccountId: s.BankId);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+        {
+            var row = await check.PettyCashTransactions.AsNoTracking().SingleAsync(x => x.Id == t.Id);
+            Assert.Equal(U(2026, 11, 1), row.TransactionDate);
+            var je = await check.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == row.JournalEntryId);
+            Assert.Equal(U(2026, 11, 1), je.EntryDate);
+            Assert.StartsWith("JV-202611-", je.EntryNumber);
+        }
+        // ทิศตรงข้าม: 2026-10-31 16:30Z = 31 ต.ค. 23:30 เวลาไทย ⇒ งวด ต.ค. ที่ปิด
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PettyCashJePlan.RulePeriodClosed, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).DisburseAsync(s.CompanyId, fundId, 10m, "ค่าน้ำ", s.ExpenseGl, "R", U(2026, 10, 31, 16, 30)))).RuleCode);
+        // วันที่ล้วนจากหน้าเว็บ (YYYY-MM-DD → Unspecified) = วันนั้นตามปฏิทินไทย
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            t = await new PettyCashService(req).DisburseAsync(s.CompanyId, fundId, 10m, "ค่าน้ำ", s.ExpenseGl, "R", new DateTime(2026, 11, 2));
+        using var final = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(U(2026, 11, 2), (await final.PettyCashTransactions.AsNoTracking().SingleAsync(x => x.Id == t.Id)).TransactionDate);
+    }
+
+    [Fact]
+    public async Task ใบที่ยังเป็นร่าง_ย้อนผลไม่ได้_ลบแล้วย้อนได้_และปิดกองทุนรับทราบแทนแถวค้างของตัวเองไม่ได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        Guid fundId;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            fundId = (await new PettyCashService(req).CreateFundAsync(s.CompanyId, "สำนักงานใหญ่", null, 5000m, null)).Id;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new PettyCashService(req).ReplenishAsync(s.CompanyId, fundId, 1000m, null, DateTime.UtcNow, sourceBankAccountId: s.BankId);
+        PettyCashTransaction pay;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            pay = await new PettyCashService(req).DisburseAsync(s.CompanyId, fundId, 200m, "ค่ารถ", s.ExpenseGl, "R", DateTime.UtcNow);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var je = await req.JournalEntries.SingleAsync(j => j.Id == pay.JournalEntryId);
+            je.Status = JournalEntryStatus.Draft;
+            await req.SaveChangesAsync();
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var o = Assert.Single(Assert.Single(await new PettyCashService(req).GetGlReconciliationAsync(s.CompanyId)).OrphanedEntries!);
+            Assert.Contains("แบบร่าง", o.Reason);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(409, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).ReverseOrphanedEntryAsync(s.CompanyId, pay.Id))).StatusCode);
+        // แถวค้างของกองทุนนี้เอง ⇒ ปิดไม่ได้แม้ติ๊กรับทราบ · พรีวิวบอกว่ารับทราบแทนไม่ได้
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var p = await new PettyCashService(req).GetClosePreviewAsync(s.CompanyId, fundId);
+            Assert.Equal(1, p.OwnOrphanedCount);
+            Assert.False(p.CanAcknowledge);
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(PettyCashFundGlRule.RuleCloseOpenItems, (await Assert.ThrowsAsync<BusinessRuleException>(() =>
+                new PettyCashService(req).CloseFundAsync(s.CompanyId, fundId, null, s.BankId, DateTime.UtcNow, null, true))).RuleCode);
+        // ลบใบร่าง ⇒ ย้อนผลได้ ⇒ ปิดได้โดยไม่ต้องรับทราบ
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var je = await req.JournalEntries.SingleAsync(j => j.Id == pay.JournalEntryId);
+            je.IsDeleted = true;
+            await req.SaveChangesAsync();
+        }
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(1000m, (await new PettyCashService(req).ReverseOrphanedEntryAsync(s.CompanyId, pay.Id)).CurrentBalance);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await new PettyCashService(req).CloseFundAsync(s.CompanyId, fundId, null, s.BankId, DateTime.UtcNow, null, false);
+        using var final = DbTestDatabase.TryCreateContext()!;
+        Assert.False((await final.PettyCashFunds.AsNoTracking().SingleAsync(f => f.Id == fundId)).IsActive);
+    }
+
+    [Fact]
+    public async Task เติมFiscalPeriodIdจากวันที่_เฉพาะแถวว่างที่มีงวดครอบ_รันซ้ำได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        await AddPeriodAsync(s.CompanyId, 2026, 10, FiscalPeriodStatus.Open);
+        Guid oct;
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            oct = (await c.FiscalPeriods.AsNoTracking().SingleAsync(f => f.CompanyId == s.CompanyId)).Id;
+        var inside = await PostJeAsync(s.CompanyId, s.ExpenseGl, s.PettyGl, 10m, "JV-PC-20261015-AB12", U(2026, 10, 15, 9));
+        var outside = await PostJeAsync(s.CompanyId, s.ExpenseGl, s.PettyGl, 10m, "JV-PC-20261205-CD34", U(2026, 12, 5));
+        var other = Guid.NewGuid();
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            c.FiscalPeriods.Add(new FiscalPeriod { Id = other, CompanyId = s.CompanyId, Name = "อื่น", Year = 2027, Month = 1, StartDate = U(2027, 1, 1), EndDate = U(2027, 1, 31) });
+            await c.SaveChangesAsync();
+        }
+        var preset = await PostJeAsync(s.CompanyId, s.ExpenseGl, s.PettyGl, 10m, "JV-202610-9999", U(2026, 10, 20), other);
+        for (var i = 0; i < 2; i++)   // รันซ้ำได้
+            using (var mig = DbTestDatabase.TryCreateContext()!)
+                foreach (var sql in Accounting.Data.DatabaseMigrationHelper.JournalFiscalPeriodBackfillStatements())
+                    await mig.Database.ExecuteSqlRawAsync(sql);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(oct, (await check.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == inside)).FiscalPeriodId);
+        Assert.Null((await check.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == outside)).FiscalPeriodId);
+        Assert.Equal(other, (await check.JournalEntries.AsNoTracking().SingleAsync(j => j.Id == preset)).FiscalPeriodId);   // มี FK แล้วไม่ถูกแตะ
+    }
+
+    [Fact]
+    public async Task ลบใบสำคัญ_FKงวดว่างแต่วันที่อยู่ในงวดปิด_ลบเดี่ยวและหลายใบถูกบล็อก_งวดเปิดลบได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var s = await SeedAsync(db);
+        await AddPeriodAsync(s.CompanyId, 2026, 9, FiscalPeriodStatus.Closed);
+        var closedJe = await PostJeAsync(s.CompanyId, s.ExpenseGl, s.PettyGl, 10m, "JV-PC-20260910-AAAA", U(2026, 9, 10));
+        var openJe = await PostJeAsync(s.CompanyId, s.ExpenseGl, s.PettyGl, 10m, "JV-PC-20261010-BBBB", U(2026, 10, 10));
+        var openJe2 = await PostJeAsync(s.CompanyId, s.ExpenseGl, s.PettyGl, 10m, "JV-PC-20261011-CCCC", U(2026, 10, 11));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<InvalidOperationException>(() => new AccountingService(c).DeleteJournalEntryAsync(s.CompanyId, closedJe));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                new AccountingService(c).BatchDeleteJournalEntriesAsync(s.CompanyId, new List<Guid> { openJe, closedJe }));
+        using (var c = DbTestDatabase.TryCreateContext()!)
+        {
+            // ชุดที่มีใบงวดปิด = ไม่มีใบไหนถูกลบ
+            Assert.True(await c.JournalEntries.AnyAsync(j => j.Id == closedJe));
+            Assert.True(await c.JournalEntries.AnyAsync(j => j.Id == openJe));
+        }
+        // ทิศตรงข้าม: งวดเปิด/ไม่มีแถวงวด ลบได้ทั้งสองทาง
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            await new AccountingService(c).DeleteJournalEntryAsync(s.CompanyId, openJe);
+        using (var c = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(1, await new AccountingService(c).BatchDeleteJournalEntriesAsync(s.CompanyId, new List<Guid> { openJe2 }));
+        using var final = DbTestDatabase.TryCreateContext()!;
+        Assert.False(await final.JournalEntries.AnyAsync(j => j.Id == openJe || j.Id == openJe2));
+    }
 }

@@ -50,7 +50,17 @@ public static class TaxFilingDeadline
     /// <summary>ยื่นผ่านอินเทอร์เน็ตได้ไหม — <b>สปส. ไม่อยู่ในมาตรการของกระทรวงการคลัง</b>
     /// (คนละหน่วยงาน) จึงไม่ได้ +8 วัน</summary>
     private static bool HasEFilingExtension(string remittanceType)
-        => !remittanceType.StartsWith("Sso", StringComparison.Ordinal);
+        => !remittanceType.StartsWith("Sso", StringComparison.Ordinal)
+           && remittanceType != WorkersCompensationBase.RemittanceType;   // รอบ 228: กองทุนเงินทดแทน = สำนักงานประกันสังคม ไม่ใช่มาตรการกระทรวงการคลัง
+
+    /// <summary>รอบ 228 — แบบรายครึ่งปี/รายปี: (ปี, เดือนสิ้นงวด) → วันครบกำหนดแบบกระดาษก่อนเลื่อนวันหยุด · null = แบบรายเดือน ·
+    /// ภ.ง.ด.51 (§67 ทวิ) / ภ.ง.ด.50 (§68) จาก <see cref="CitPayment"/> · กองทุนเงินทดแทนรายปีจาก <see cref="WorkersCompensationBase"/></summary>
+    private static DateTime? NonMonthlyPaperRaw(string remittanceType, int year, int month)
+    {
+        if (CitPayment.IsCit(remittanceType)) return CitPayment.PaperDueRaw(remittanceType, year, month);
+        if (remittanceType == WorkersCompensationBase.RemittanceType) return WorkersCompensationBase.AnnualDueRaw(year);
+        return null;
+    }
 
     /// <summary>
     /// (กระดาษ, e-Filing) ของงวด <paramref name="year"/>/<paramref name="month"/>
@@ -68,7 +78,7 @@ public static class TaxFilingDeadline
     {
         var next = new DateTime(year, month, 1).AddMonths(1);
         var day = Math.Min(PaperDay(remittanceType), DateTime.DaysInMonth(next.Year, next.Month));
-        var paperRaw = new DateTime(next.Year, next.Month, day);
+        var paperRaw = NonMonthlyPaperRaw(remittanceType, year, month) ?? new DateTime(next.Year, next.Month, day);
 
         // ⚠️ e-Filing นับจากวันครบกำหนด **ก่อนเลื่อน** — เดิมปฏิทินภาษีเลื่อนกระดาษ
         // ก่อนแล้วค่อย +8 ⇒ งวดที่วันที่ 7 ตรงเสาร์ ได้ e-Filing วันที่ 17 ซึ่ง
@@ -118,8 +128,10 @@ public static class TaxFilingDeadline
     // ระหว่างรอตัวบท (หมวด B — ห้ามแต่งข้อมูลภายนอก): แสดงทั้งวันกระดาษและวัน e-Filing ตามเดิม แต่ "เตือน/เลยกำหนด" ใช้วันที่เร็วกว่า
     // (วันกระดาษ) สำหรับสองแบบนี้ — ถ้ามาตรการไม่ครอบ การเตือนตามวัน e-Filing = ช้า 8 วัน (ทิศอันตราย) · ยืนยันแล้วให้เอาแบบออกจากชุดนี้ที่เดียว
 
-    /// <summary>แบบที่<b>ยังไม่ยืนยัน</b>ว่ามาตรการขยายเวลายื่นทางอินเทอร์เน็ตครอบ — ตัวเดียวของทั้งระบบ</summary>
-    private static readonly HashSet<string> EFilingExtensionUnconfirmed = new(StringComparer.Ordinal) { "VatPp36", "WhtPnd54" };
+    /// <summary>แบบที่<b>ยังไม่ยืนยัน</b>ว่ามาตรการขยายเวลายื่นทางอินเทอร์เน็ตครอบ — ตัวเดียวของทั้งระบบ ·
+    /// รอบ 228: ภ.ง.ด.50/51 ยังไม่ยืนยันว่ามาตรการ +8 วันรอบปัจจุบันครอบ ⇒ เตือน/นับเงินเพิ่มตามวันกระดาษ (ทิศไม่ประเมินขาด)</summary>
+    private static readonly HashSet<string> EFilingExtensionUnconfirmed = new(StringComparer.Ordinal)
+        { "VatPp36", "WhtPnd54", CitPayment.Pnd51Type, CitPayment.Pnd50Type };
 
     /// <summary>วันที่ใช้<b>เตือน/ตัดสินว่าเลยกำหนด</b> — วัน e-Filing เมื่อยืนยันว่ามาตรการครอบ · วันกระดาษ (เร็วกว่า) เมื่อยังไม่ยืนยัน</summary>
     public static DateTime WarnBy(string remittanceType, int year, int month) => WarnBy(remittanceType, year, month, null);

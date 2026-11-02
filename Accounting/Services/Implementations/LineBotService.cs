@@ -35,8 +35,10 @@ public class LineBotService : ILineBotService
         IOcrService ocr, IOcrQuotaService ocrQuota, IChatbotService chat,
         IPermissionService perms, IChatRateLimiter rateLimiter, IEmailService email,
         INextAccLineConfig nextAccLine,
-        ICustomerLineLinkService? customerLinks = null)
+        ICustomerLineLinkService? customerLinks = null,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
+        _storage = storage;
         _customerLinks = customerLinks;
         _nextAccLine = nextAccLine;
         _db = db; _config = config; _httpFactory = httpFactory;
@@ -51,6 +53,8 @@ public class LineBotService : ILineBotService
     private readonly ICustomerLineLinkService? _customerLinks;
     /// <summary>รอบ 212 D: token/secret ของ OA กลาง — หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)</summary>
     private readonly INextAccLineConfig _nextAccLine;
+    /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — DI ใส่ให้เสมอ · null (นอก DI) ⇒ FileStorageDefaults.Local</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
 
     /// <summary>เพดานความพยายาม "ผูกบัญชี" ต่อ LINE user หนึ่งราย
     ///
@@ -552,11 +556,11 @@ public class LineBotService : ILineBotService
         Guid attachmentId;
         try
         {
-            var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "ocr");
-            Directory.CreateDirectory(uploadsDir);
+            var storage = _storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
+            var uploadsDir = Path.Combine(storage.Locator.RelativeBase, "wwwroot", "uploads", "ocr");
             var storedName = $"{Guid.NewGuid()}{ext}";
             var filePath = Path.Combine(uploadsDir, storedName);
-            await File.WriteAllBytesAsync(filePath, bytes);
+            await storage.WriteAsync(filePath, bytes, contentType);
 
             var attachment = new FileAttachment
             {

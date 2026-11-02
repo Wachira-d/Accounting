@@ -32,6 +32,7 @@ public static class BookingFulfillment
     public const string RuleCode = "CMS-BOOKING-FULFILLMENT";
     public const int MaxNoteLength = 1000;
     public const int MaxAddressLength = 1000;
+    public const int MaxProvinceLength = 100;
 
     private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
     private static string Baht(decimal v) => "฿" + v.ToString("#,##0.00", CultureInfo.InvariantCulture);
@@ -111,6 +112,7 @@ public static class BookingFulfillment
         if (a.Length < 5) errs.Add("กรุณากรอกที่อยู่จัดส่ง (บ้านเลขที่ ถนน ตำบล อำเภอ)");
         if (a.Length > MaxAddressLength) errs.Add($"ที่อยู่จัดส่งยาวเกิน {MaxAddressLength:N0} ตัวอักษร");
         if (string.IsNullOrWhiteSpace(province)) errs.Add("กรุณากรอกจังหวัดของที่อยู่จัดส่ง");
+        else if (province.Trim().Length > MaxProvinceLength) errs.Add($"จังหวัดยาวเกิน {MaxProvinceLength} ตัวอักษร");   // ฝ่ายค้านรอบ 228 N2 (คอลัมน์ varchar(100))
         var pc = (postalCode ?? "").Trim();
         if (pc.Length != 5 || !pc.All(char.IsAsciiDigit)) errs.Add("รหัสไปรษณีย์ต้องเป็นตัวเลข 5 หลัก");
         return errs;

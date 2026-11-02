@@ -60,6 +60,9 @@ public class AddOnMonthlyBillingJob : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
         var metering = scope.ServiceProvider.GetRequiredService<IUsageMeteringService>();
         var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
+        // รอบ 229 (QUOTA_ADDON แพ็ก 0(ก) · P1): สถานะแพ็กเกจตัดสินด้วยตัวเดียวกับ EntitlementService ① (GetEffectivePlanAsync().IsActive)
+        var subscriptions = scope.ServiceProvider.GetRequiredService<ISubscriptionService>();
+        var quotaAddOns = scope.ServiceProvider.GetService<Accounting.Services.Payments.IQuotaAddOnPurchaseService>();
 
         var startedAt = DateTime.UtcNow;
         var period = AddOnBilling.PeriodOf(startedAt);
@@ -79,6 +82,7 @@ public class AddOnMonthlyBillingJob : BackgroundService
         if (flatCodes.Count == 0)
         {
             await tx.CommitAsync(ct);
+            await BillQuotaAddOnsAsync(quotaAddOns, period, recorder, startedAt, ct);
             return;
         }
 
@@ -87,7 +91,8 @@ public class AddOnMonthlyBillingJob : BackgroundService
                      && (f.LastBilledPeriod == null || f.LastBilledPeriod.CompareTo(period) < 0))
             .ToListAsync(ct);
 
-        var billed = 0; var disabled = 0; decimal total = 0m;
+        var billed = 0; var disabled = 0; var skippedInactive = 0; decimal total = 0m;
+        var planActiveCache = new Dictionary<Guid, bool>();
         foreach (var row in rows)
         {
             if (ct.IsCancellationRequested) break;
@@ -103,8 +108,15 @@ public class AddOnMonthlyBillingJob : BackgroundService
                     continue;
                 }
 
-                var res = await metering.RecordFlatMonthlyAsync(row.CompanyId, row.FeatureCode, period, ct);
+                // รอบ 229 (P1): แพ็กเกจหมดอายุ/ยกเลิก/ระงับ ⇒ ส่วนเสริมใช้ไม่ได้ (EntitlementService ①) ⇒ ห้ามออกค่าเดือน · ไม่ประทับงวด
+                if (!planActiveCache.TryGetValue(row.CompanyId, out var planActive))
+                {
+                    planActive = (await subscriptions.GetEffectivePlanAsync(row.CompanyId))?.IsActive == true;
+                    planActiveCache[row.CompanyId] = planActive;
+                }
+                var res = await metering.RecordFlatMonthlyAsync(row.CompanyId, row.FeatureCode, period, ct, planActive);
                 if (res.Recorded) { billed++; total += res.ChargedAmount; }
+                else if (!planActive) skippedInactive++;
             }
             catch (Exception ex)
             {
@@ -116,6 +128,9 @@ public class AddOnMonthlyBillingJob : BackgroundService
 
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        await BillQuotaAddOnsAsync(quotaAddOns, period, recorder, startedAt, ct);
+        if (skippedInactive > 0)
+            _logger.LogInformation("AddOn billing งวด {Period}: ข้าม {Skipped} รายการเพราะแพ็กเกจไม่ active (ไม่เก็บเงิน)", period, skippedInactive);
 
         if (billed > 0 || disabled > 0)
             _logger.LogInformation("AddOn billing งวด {Period}: ออกบิล {Billed} รายการ รวม {Total:N2} บาท · ปิดหลังหมด trial {Disabled} รายการ",
@@ -124,5 +139,26 @@ public class AddOnMonthlyBillingJob : BackgroundService
         if (recorder != null)
             await recorder.RecordAsync("AddOnMonthlyBilling", true,
                 $"งวด {period}: ออกบิล {billed} รายการ ({total:N2} บาท), ปิดหลัง trial {disabled}", billed, startedAt);
+    }
+
+    /// <summary>รอบ 229 (QUOTA_ADDON §B.5 RecurringMonthly): ค่าเดือนของโควตาเสริมรายเดือน → UsageEvent → ใบแจ้งหนี้ค่าใช้งานเส้นเดิม ·
+    /// แยกธุรกรรม/ล็อกของตัวเอง (ล้มไม่ทำให้ค่าเหมาส่วนเสริมพัง) · ล้มดัง = log error + บันทึกผลงาน</summary>
+    private async Task BillQuotaAddOnsAsync(Accounting.Services.Payments.IQuotaAddOnPurchaseService? svc, string period,
+        IJobRunRecorder? recorder, DateTime startedAt, CancellationToken ct)
+    {
+        if (svc == null) return;
+        try
+        {
+            var r = await svc.BillRecurringAsync(period, ct);
+            if (recorder != null && (r.Billed > 0 || r.Expired > 0 || r.SkippedInactive > 0))
+                await recorder.RecordAsync("QuotaAddOnMonthlyBilling", true,
+                    $"งวด {period}: ออกค่าเดือนโควตาเสริม {r.Billed} รายการ ({r.Total:N2} บาท) · หมดอายุ {r.Expired} · ข้ามเพราะแพ็กเกจไม่ active {r.SkippedInactive}",
+                    r.Billed, startedAt);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ออกค่าเดือนโควตาเสริมงวด {Period} ไม่สำเร็จ — รอบถัดไป (6 ชม.) จะลองใหม่ (กันซ้ำด้วยคีย์ต่องวด)", period);
+            if (recorder != null) await recorder.RecordAsync("QuotaAddOnMonthlyBilling", false, ex.Message, 0, startedAt);
+        }
     }
 }

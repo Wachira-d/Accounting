@@ -48,7 +48,6 @@ public interface IOcrQuotaService
     /// </summary>
     Task RecordEngineUsageAsync(Guid companyId, string engineKind);
 
-    Task<OcrCreditPurchaseResponse> PurchaseCreditsAsync(Guid companyId, int pages, string performedBy);
     Task<OcrCreditPurchaseResponse> ReviewCreditPurchaseAsync(Guid purchaseId, bool approve, string? notes, string performedBy);
     Task<List<OcrCreditPurchaseResponse>> GetPurchaseHistoryAsync(Guid companyId);
     Task<List<OcrCreditPurchaseResponse>> GetPendingPurchasesAsync();

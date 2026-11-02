@@ -46,6 +46,22 @@ public static class PlatformInvoiceQueries
                 && issued.Contains(d.Status) && contactIds.Contains(d.ContactId));
     }
 
+    /// <summary>รอบ 228 (PLATFORM_OMISE_AUDIT §5.7): <b>ใบเสร็จ/ใบกำกับภาษี/ใบลดหนี้</b> ที่บริษัทผู้เช่ารายนี้เป็นผู้ซื้อใน tenant ผู้ให้บริการ (ค่าส่วนเสริมจ่ายล่วงหน้า ·
+    /// ใบเสร็จค่าแพ็กเกจ · ใบลดหนี้ของการคืนเงิน) — ผู้ซื้อตรวจด้วยผู้ติดต่อที่ผูก tenant (<c>ExternalId</c>) ชุดเดียวกับ <see cref="ForBuyer"/> ·
+    /// ออกเลขแล้วเท่านั้น (ร่าง/ปฏิเสธไม่นับ · ใบที่ยกเลิกยังแสดง — ผู้ซื้อต้องเห็นว่าถูกยกเลิก)</summary>
+    public static IQueryable<Document> PaidDocumentsForBuyer(AccountingDbContext db, Guid platformId, Guid buyerCompanyId)
+    {
+        var key = buyerCompanyId.ToString();
+        var contactIds = db.Contacts.AsNoTracking()
+            .Where(c => c.CompanyId == platformId && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key)
+            .Select(c => c.Id);
+        var issued = PlatformInvoiceRules.IssuedStatuses;
+        return db.Documents.AsNoTracking()
+            .Where(d => d.CompanyId == platformId && !d.IsDeleted
+                && (d.DocumentType == DocumentType.TaxInvoice || d.DocumentType == DocumentType.Receipt || d.DocumentType == DocumentType.CreditNote)
+                && issued.Contains(d.Status) && contactIds.Contains(d.ContactId));
+    }
+
     /// <summary>project เป็นแถวมุมผู้จ่าย — ใช้เป็น<b>ขั้นสุดท้าย</b>ของ query เท่านั้น (ห้ามต่อ Where/OrderBy/Contains หลังจากนี้)</summary>
     public static IQueryable<PlatformInvoiceRow> AsRows(this IQueryable<Document> q, Guid buyerCompanyId)
         => q.Select(d => new PlatformInvoiceRow(d.Id, buyerCompanyId, d.DocumentNumber, d.Reference, d.Status,

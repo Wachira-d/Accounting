@@ -124,15 +124,19 @@ public partial class CmsBookingService
     /// <summary>บรรทัดวิธีชำระท้ายข้อความยืนยันการจอง (null = ไม่มียอดค้าง) — ตัวตัดสินเดียว <see cref="BookingPaymentPolicy.NotifyLine"/></summary>
     private async Task<string?> PaymentNotifyLineAsync(Guid companyId, Guid siteId, Guid bookingId)
     {
-        var b = await _db.SiteBookings.AsNoTracking()
-            .Where(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId)
-            .Select(x => new { x.Status, x.DepositAmount, x.PaidAmount, x.PaymentHoldUntil, x.BookingType })
-            .FirstOrDefaultAsync();
+        var b = await _db.SiteBookings.Include(x => x.BookingService).AsNoTracking()
+            .FirstOrDefaultAsync(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId);
         if (b == null) return null;
         var due = CmsBookingOnlinePayment.DepositDue(b.BookingType, b.Status, b.DepositAmount, b.PaidAmount);
-        if (due <= 0.005m) return null;
         var ctx = await LoadPaymentContextAsync(companyId, siteId);
-        return BookingPaymentPolicy.NotifyLine(due, b.PaymentHoldUntil, ctx.TransferReady, ctx.GatewayReady);
+        if (due > 0.005m)
+            // รอบ 228: ข้อความถึงลูกค้าของร้าน (PaymentNote) ต่อท้าย — อีเมล/LINE เห็นเหมือนหน้าเว็บ
+            return BookingPaymentPolicy.WithShopNote(BookingPaymentPolicy.NotifyLine(due, b.PaymentHoldUntil, ctx.TransferReady, ctx.GatewayReady), ctx.PaymentNote);
+        // รอบ 228 (คำตัดสิน 228-1): มัดจำไม่บังคับที่ลูกค้าไม่ได้เลือกตอนจอง ⇒ บอกว่าเลือกชำระภายหลังได้ที่ลิงก์จัดการการจอง
+        var later = await DepositLaterOfAsync(companyId, siteId, b, b.BookingService, DateTime.UtcNow);
+        return later.Allowed
+            ? BookingPaymentPolicy.WithShopNote(BookingDepositLater.NotifyLine(later.Amount), ctx.PaymentNote)
+            : null;
     }
 
     private async Task NotifyShopSlipUploadedAsync(Guid companyId, Guid siteId, Guid bookingId, decimal amount)

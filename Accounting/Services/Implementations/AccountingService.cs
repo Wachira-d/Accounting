@@ -947,6 +947,9 @@ public partial class AccountingService : IAccountingService
         await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { entry.Id }, "ลบ");
 
         await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
+        // ยึดวันที่ด้วย (เหมือนยกเลิก) — ใบที่ FiscalPeriodId ว่าง (ลงก่อนตั้งงวด / เงินสดย่อยรุ่นเก่า) เดิมลบได้แม้งวดของวันนั้นปิดแล้ว
+        // (ฝ่ายค้าน PETTY_CASH_AUDIT ส่วน D ข้อ 2)
+        await ValidateFiscalPeriodOpenForDateAsync(companyId, entry.EntryDate);
 
         var toDelete = new List<JournalEntry> { entry };
 
@@ -978,6 +981,7 @@ public partial class AccountingService : IAccountingService
             if (rev != null)
             {
                 await ValidateFiscalPeriodOpenAsync(rev.FiscalPeriodId);
+                await ValidateFiscalPeriodOpenForDateAsync(companyId, rev.EntryDate);
                 toDelete.Add(rev);
             }
         }
@@ -1406,6 +1410,14 @@ public partial class AccountingService : IAccountingService
                 .ToListAsync();
             entries.AddRange(revs);
             foreach (var r in revs) deleteIds.Add(r.Id);
+        }
+
+        // งวดปิด — ตรวจทั้งชุด (รวมตัวกลับรายการที่ลากมา) ก่อนแตะใบไหน ด่านเดียวกับลบเดี่ยว/ยกเลิก (เดิมทางหลายใบไม่ตรวจงวดเลย ·
+        // ฝ่ายค้าน PETTY_CASH_AUDIT ส่วน D ข้อ 2) · โยนก่อน SaveChanges ⇒ ไม่มีใบไหนถูกลบ
+        foreach (var e in entries)
+        {
+            await ValidateFiscalPeriodOpenAsync(e.FiscalPeriodId);
+            await ValidateFiscalPeriodOpenForDateAsync(companyId, e.EntryDate);
         }
 
         var allLineIds = entries.SelectMany(e => e.Lines.Select(l => l.Id)).ToList();

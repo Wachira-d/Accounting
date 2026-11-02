@@ -75,4 +75,9 @@ public interface IImageProcessingService
 
     /// <summary>True for raster image types we can transform.</summary>
     bool IsProcessableImage(string contentType);
+
+    /// <summary>ที่เก็บไฟล์ที่ <see cref="ProcessAndSaveAsync"/> เขียนลง (ทีม FS 2026-11-02) — ผู้เรียกที่ต้องอ่าน/ลบไฟล์ที่เพิ่งเก็บ
+    /// (เช่น <c>SubscriptionSlipUpload</c> ซึ่งเป็น static helper) ใช้ตัวเดียวกันนี้ ไม่แตะ <c>System.IO.File</c> เอง ·
+    /// ค่าเริ่มต้น = ดิสก์ของเครื่องนี้ที่รากค่าเริ่มต้น (<see cref="Accounting.Services.Storage.FileStorageDefaults"/>) — ไม่มี "ไม่มีที่เก็บ"</summary>
+    Accounting.Services.Storage.IFileStorage Storage => Accounting.Services.Storage.FileStorageDefaults.Local;
 }

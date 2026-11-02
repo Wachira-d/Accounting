@@ -9,7 +9,8 @@ public interface IStatutoryRemittanceService
 {
     /// <summary>คำนวณรายการรอนำส่งทุกประเภท ย้อนหลัง N เดือน (default 12) +
     /// ประวัติที่นำส่งล่าสุด. ยอดค้าง = หนี้ที่ตั้งไว้ − ที่นำส่งแล้ว.</summary>
-    Task<RemittanceDashboardResponse> GetDashboardAsync(Guid companyId, int monthsBack = 12);
+    /// <param name="includeOldAnnual">รอบ 228 ฝ่ายค้าน S3: แสดง ภ.ง.ด.51/50 · กท.20ก ที่ครบกำหนดเกิน 24 เดือนด้วย (ค่าตั้งต้น ซ่อน + นับใน HiddenOldAnnualCount)</param>
+    Task<RemittanceDashboardResponse> GetDashboardAsync(Guid companyId, int monthsBack = 12, bool includeOldAnnual = false);
 
     /// <summary>นำส่ง 1 งวด — post JE (Dr หนี้ค้างจ่าย [+ เงินเพิ่ม] / Cr ธนาคาร),
     /// บันทึก StatutoryRemittance, อัปเดต PayrollRun.SsoSettledAt ถ้าเป็น SSO
@@ -34,6 +35,12 @@ public interface IStatutoryRemittanceService
 
     /// <summary>ยกเลิกการนำส่ง (คำตัดสินข้อ 113) — กลับ JE ครั้งเดียว · ปลดทุกรอบเงินเดือนที่ใช้ JE นี้ · ใบ ภ.พ.36 กลับเป็นค้างนำส่ง · เหตุผลบังคับ</summary>
     Task<string> VoidRemittanceAsync(Guid companyId, Guid remittanceId, string? reason, string performedBy);
+
+    /// <summary>รอบ 228 — จ่ายอากรแสตมป์หนึ่งรายการ: JE (Dr ค่าอากร + เงินเพิ่มอากร/ค่าปรับ / Cr ธนาคาร) + แถวนำส่งชนิด StampDuty · ยกเลิกผ่าน <see cref="VoidRemittanceAsync"/></summary>
+    /// <summary>รอบ 228 ฝ่ายค้าน S3 — ผูกใบสำคัญที่ลงเอง (Dr ผังหนี้) กับงวด ภ.ง.ด.51/50 · กท.20ก ที่ยังขึ้นค้าง (ไม่ลง JE ใหม่ · audit · ยกเลิกไม่กลับรายการ)</summary>
+    Task<RemitResult> SettledOutsideAsync(Guid companyId, SettledOutsideRequest request, string performedBy);
+
+    Task<RemitResult> RemitStampDutyAsync(Guid companyId, Guid stampDutyRecordId, StampDutyRemitRequest request, string performedBy);
 
     /// <summary>รับรู้ภาษีซื้อ ภ.พ.36 หลังได้ใบเสร็จ RD (Dr 11610 / Cr 11640 ลงวันเคลม +
     /// stamp เอกสาร → เข้า ภ.พ.30 เดือนเคลม) — เฉพาะใบที่อยู่ในรายการนำส่งแล้ว · เลข/วันที่ใบเสร็จบังคับ ·

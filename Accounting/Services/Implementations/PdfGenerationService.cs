@@ -27,14 +27,19 @@ public partial class PdfGenerationService : IPdfGenerationService
     // upload URL ("/uploads/x.png") to its physical wwwroot path — uploads
     // (logo / company stamp) are stored as relative URLs.
     private static string? _webRoot;
+    // ที่เก็บไฟล์กลาง (Local | S3 · ทีม FS 2026-11-02) — โลโก้/ตราประทับที่ฝังใน PDF อ่านผ่านตัวนี้ (ตัวเรนเดอร์เป็น sync ⇒ ReadAllBytes) ·
+    // ค่าคงที่ของ process (singleton จาก DI) เก็บแบบเดียวกับ _webRoot
+    private static Accounting.Services.Storage.IFileStorage? _storage;
 
     public PdfGenerationService(AccountingDbContext db, IDocumentTemplateService templateService,
-        Pdf.IHtmlPdfRenderer? htmlPdf = null, Microsoft.AspNetCore.Hosting.IWebHostEnvironment? env = null)
+        Pdf.IHtmlPdfRenderer? htmlPdf = null, Microsoft.AspNetCore.Hosting.IWebHostEnvironment? env = null,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
         _db = db;
         _templateService = templateService;
         _htmlPdf = htmlPdf;
         if (env?.WebRootPath is { Length: > 0 } wr) _webRoot = wr;
+        if (storage != null) _storage = storage;
     }
 
     public async Task<GeneratePdfResponse> GenerateDocumentPdfAsync(Guid companyId, GeneratePdfRequest request)
@@ -3375,33 +3380,23 @@ public partial class PdfGenerationService : IPdfGenerationService
 
     /// <summary>Read an image file into bytes, swallowing every failure
     /// (null path, missing file, IO error, oversized) → returns null so the
-    /// caller simply renders no image.</summary>
+    /// caller simply renders no image. อ่านผ่านที่เก็บกลาง (ทีม FS 2026-11-02):
+    /// ลองตามตำแหน่งที่เก็บไว้ก่อน (พาธเต็ม) แล้วค่อยตีเป็น URL "/uploads/x.png" ใต้ wwwroot
+    /// (โลโก้/ตราประทับบางแถวเก็บเป็น URL สัมพัทธ์)</summary>
     private static byte[]? TryReadImage(string? path)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
-            var resolved = ResolveImagePath(path);
-            if (resolved == null || !File.Exists(resolved)) return null;
-            var info = new FileInfo(resolved);
-            if (info.Length <= 0 || info.Length > 8 * 1024 * 1024) return null;  // cap 8MB
-            return File.ReadAllBytes(resolved);
+            var storage = _storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;   // ไม่ผ่าน DI (เทสต์) ⇒ ดิสก์ค่าเริ่มต้น — โลโก้ไม่หายเงียบ (ฝ่ายค้าน B3)
+            var p = path.Trim();
+            var bytes = storage.ReadAllBytes(p);
+            if (bytes == null && !string.IsNullOrEmpty(_webRoot))
+                bytes = storage.ReadAllBytes(Path.Combine(_webRoot!, p.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar)));
+            if (bytes == null || bytes.Length == 0 || bytes.Length > 8 * 1024 * 1024) return null;  // cap 8MB
+            return bytes;
         }
         catch { return null; }
-    }
-
-    /// <summary>Resolve an image reference that may be an absolute path OR a
-    /// web-relative upload URL ("/uploads/x.png") to a physical file path.
-    /// Logo / company-stamp uploads are persisted as relative URLs, so the
-    /// raw string isn't a valid filesystem path on its own.</summary>
-    private static string? ResolveImagePath(string path)
-    {
-        var p = path.Trim();
-        if (File.Exists(p)) return p;                 // already an absolute/real path
-        if (string.IsNullOrEmpty(_webRoot)) return p; // no web root captured → best effort
-        // Strip a leading slash + normalise separators, then anchor to wwwroot.
-        var rel = p.TrimStart('/', '\\').Replace('/', Path.DirectorySeparatorChar);
-        return Path.Combine(_webRoot!, rel);
     }
 
     /// <summary>Map a template font name to a family QuestPDF is likely to

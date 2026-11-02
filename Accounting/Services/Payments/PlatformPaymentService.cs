@@ -7,8 +7,10 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Payments;
 
 /// <summary>สถานะช่องทางรับชำระค่าบริการของ NextAcc ที่หน้าแพ็กเกจ/ส่วนเสริมใช้ตัดสินว่าจะแสดงปุ่ม "ชำระออนไลน์" ไหม
-/// (<c>Online</c> = มีช่องทางที่<b>เปิดรับเงินจริงแล้ว</b>เท่านั้น — โหมดทดสอบ/ปิด/ยังไม่ตั้ง ⇒ เส้นโอน + แนบสลิป)</summary>
-public sealed record PlatformPayStatus(bool Online, bool Configured, string? Mode, string? ProviderCode, IReadOnlyList<string> Methods, string? OfflineReason);
+/// (<c>Online</c> = มีช่องทางที่<b>เปิดรับเงินจริงแล้ว</b>เท่านั้น — โหมดทดสอบ/ปิด/ยังไม่ตั้ง ⇒ เส้นโอน + แนบสลิป)
+/// <para>รอบ 228: <c>Card</c> = สิ่งที่หน้าชำระต้องใช้รับบัตร (สคริปต์ + คีย์สาธารณะของโหมดนี้) — null = รับบัตรไม่ได้ (วิธี "บัตร" ไม่อยู่ใน <c>Methods</c> ด้วย)</para></summary>
+public sealed record PlatformPayStatus(bool Online, bool Configured, string? Mode, string? ProviderCode, IReadOnlyList<string> Methods, string? OfflineReason,
+    PaymentClientSetup? Card = null);
 
 /// <summary>
 /// รอบ 219 ส่วน B (คำตัดสินข้อ 179 · ต่อจากเฟส 0 ข้อ 178) — <b>ทางเดียว</b>ที่สร้างรายการชำระค่าบริการ NextAcc แบบออนไลน์:
@@ -67,7 +69,8 @@ public class PlatformPaymentService : IPlatformPaymentService
                 "ยังไม่เปิดชำระค่าบริการ NextAcc ออนไลน์ — กรุณาโอนเงินแล้วแนบสลิป");
         var methods = MethodsOf(cfg);
         var reason = PlatformPayAvailability.OfflineReason(cfg.IsActive, cfg.Mode, methods.Count, cfg.PlatformLiveConfirmedAt != null);
-        return new PlatformPayStatus(reason == null, true, cfg.Mode.ToString(), cfg.ProviderCode, methods, reason);
+        var card = methods.Contains(nameof(PaymentMethodKind.Card)) ? CardSetupOf(cfg) : null;
+        return new PlatformPayStatus(reason == null, true, cfg.Mode.ToString(), cfg.ProviderCode, methods, reason, card);
     }
 
     /// <summary>วิธีจ่ายที่เปิด = ที่ตั้งไว้ ∩ ที่ผู้ให้บริการรองรับ (ไม่ตั้ง = ทุกวิธีที่รองรับ ยกเว้นสลิป) ∩ ที่หน้าชำระของ NextAcc ทำจบได้ — ชื่อ enum
@@ -76,8 +79,13 @@ public class PlatformPaymentService : IPlatformPaymentService
     {
         var provider = _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode);
         if (provider == null) return new List<string>();
-        return PlatformPayMethods.Effective(provider.Capabilities.Methods, ConfiguredMethods(cfg.EnabledMethodsJson));
+        return PlatformPayMethods.Effective(provider.Capabilities.Methods, ConfiguredMethods(cfg.EnabledMethodsJson),
+            cardClientReady: PaymentClientSetup.For(provider, cfg) != null);
     }
+
+    /// <summary>รอบ 228 (§5.1): สคริปต์ + คีย์สาธารณะของโหมดปัจจุบัน — ตัวเดียวกับเส้นของร้าน (<see cref="PaymentClientSetup.For"/>)</summary>
+    private PaymentClientSetup? CardSetupOf(PaymentProviderConfig cfg)
+        => PaymentClientSetup.For(_providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode), cfg);
 
     /// <summary>วิธีที่แอดมินติ๊ก (JSON ที่เก็บไว้) — อ่านไม่ได้ = ไม่ได้ติ๊ก</summary>
     public static List<string> ConfiguredMethods(string? json)

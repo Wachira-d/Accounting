@@ -46,9 +46,7 @@ public partial class StorefrontCustomerService : IStorefrontCustomerService
     /// <summary>พร้อมเพย์ของเว็บ (ช่องทางชำระตัวแรกที่เปิด — ตัวเดียวกับ <c>GetStorefrontPaymentOptionsAsync</c>) · รูปแบบผิด ⇒ null</summary>
     private async Task<string?> PromptPayIdAsync(Guid companyId, Guid siteId)
     {
-        var id = await _db.Set<SitePaymentGateway>().AsNoTracking()
-            .Where(g => g.CompanyId == companyId && g.SiteId == siteId && g.IsActive && !g.IsDeleted)
-            .OrderBy(g => g.SortOrder)
+        var id = await Accounting.Helpers.SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, siteId)   // รอบ 228 S-1
             .Select(g => g.PromptPayId).FirstOrDefaultAsync();
         return !string.IsNullOrWhiteSpace(id) && _promptPay.ValidatePromptPayId(id) ? id : null;
     }

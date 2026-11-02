@@ -116,6 +116,29 @@
         </div>
       </div>
     </div>
+
+    <!-- ปิดกองทุน — ทุกตัวเลข/เงื่อนไข/ข้อความมาจากเซิร์ฟเวอร์ (GET …/close-preview → PettyCashService.EvaluateCloseAsync ตัวเดียวกับการปิดจริง) -->
+    <div id="closeFundModal" class="modal-overlay">
+      <div class="modal" style="max-width:560px;width:90%">
+        <h3 style="margin-top:0" id="cfTitle">ปิดกองทุน</h3>
+        <div id="cfSummary" style="font-size:13px;color:#334155"></div>
+        <div id="cfReturnBox">
+          <label>คืนเงินคงเหลือเข้าบัญชี</label>
+          <select id="cfReturn" class="form-input"><option value="">— เลือกบัญชีที่รับเงินคืน —</option></select>
+          <div style="font-size:11px;color:#64748b;margin-top:4px">ลงบัญชีอัตโนมัติ: เดบิตบัญชีที่เลือก / เครดิตผังของกองทุน · ยอดกองทุนเป็น 0 แล้วปิดใช้</div>
+        </div>
+        <label>หมายเหตุ</label>
+        <input id="cfNote" class="form-input" placeholder="เช่น ยุบสาขา / เปลี่ยนผู้ดูแล">
+        <div id="cfAckBox" style="display:none;margin-top:10px;padding:8px;border:1px solid #fcd34d;background:#fffbeb;border-radius:6px;font-size:13px">
+          <div id="cfBlocker" style="color:#92400e"></div>
+          <label style="display:flex;gap:6px;align-items:center;margin-top:6px"><input type="checkbox" id="cfAck"> รับทราบรายการค้าง ปิดกองทุนต่อ (บันทึกใน audit)</label>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">
+          <button class="btn btn-secondary" onclick="document.getElementById('closeFundModal').classList.remove('active')">ยกเลิก</button>
+          <button class="btn btn-danger" id="cfSubmit" onclick="Page.submitCloseFund()">ปิดกองทุน</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="/js/api.js"></script>
@@ -279,10 +302,12 @@
                   <div style="font-size:12px;color:#64748b;margin-top:2px">${acct}</div>
                 </div>
                 <div style="display:flex;gap:6px;flex-wrap:wrap">
-                  <button class="btn btn-sm btn-warning" onclick="Page.disburse('${f.id}')">เบิก</button>
-                  <button class="btn btn-sm btn-success" onclick="Page.replenish('${f.id}')">เติมเงิน</button>
+                  ${f.isActive ? `<button class="btn btn-sm btn-warning" onclick="Page.disburse('${f.id}')">เบิก</button>
+                  <button class="btn btn-sm btn-success" onclick="Page.replenish('${f.id}')">เติมเงิน</button>` : '<span class="badge badge-gray" style="align-self:center">ปิดกองทุนแล้ว</span>'}
                   <button class="btn btn-sm btn-secondary" onclick="Page.openRegister('${f.id}')">📋 รายการ</button>
                   <button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${f.id}')">แก้ไข / ผูกผังบัญชี</button>
+                  ${f.isActive ? `<button class="btn btn-sm btn-ghost" onclick="Page.openCloseFund('${f.id}')">ปิดกองทุน</button>`
+                    : `<button class="btn btn-sm btn-ghost" onclick="Page.reopenFund('${f.id}')">เปิดกองทุนอีกครั้ง</button>`}
                 </div>
               </div>
             </div>`;
@@ -311,7 +336,8 @@
             ใบสำคัญจ่าย/ใบเบิก/สมุดรายวันที่เลือกผังเงินสดย่อยจะโผล่ที่นี่จนกว่าจะระบุว่าเป็นของกองทุนไหน</div>`
           + rows.map(g => {
             const ok = g.status === 'Matched';
-            const fundOpts = (g.funds || []).map(f => `<option value="${Layout.esc(f.fundId)}">${Layout.esc(f.name)}${f.isActive ? '' : ' (ปิดใช้)'}</option>`).join('');
+            // กองทุนที่ปิดแล้วรับรายการไม่ได้ (เซิร์ฟเวอร์ปฏิเสธ PETTY-FUND-CLOSED) — ไม่เสนอในตัวเลือก · ทางไปต่อ = เปิดกองทุนอีกครั้ง / ไม่กระทบกองทุน
+            const fundOpts = (g.funds || []).filter(f => f.isActive).map(f => `<option value="${Layout.esc(f.fundId)}">${Layout.esc(f.name)}</option>`).join('');
             const entries = (g.unattributedEntries || []).map(x => `<tr>
                 <td style="white-space:nowrap">${Layout.date(x.entryDate)}</td>
                 <td><a href="/pages/journals.html?entryId=${Layout.esc(x.journalEntryId)}">${Layout.esc(x.entryNumber)}</a></td>
@@ -330,6 +356,14 @@
                 <td>${Layout.esc(x.description || '')}</td>
                 <td class="text-right">${Layout.money(x.netDebit)}</td>
                 <td><button class="btn btn-sm btn-ghost" onclick="Page.undoGlOnly('${Layout.jsArg(x.transactionId)}')">ยกเลิกเครื่องหมาย</button></td></tr>`).join('');
+            // แถวทะเบียนที่อ้างใบสำคัญซึ่งถูกลบ/ยกเลิก — เหตุผล/ยอดที่จะขยับมาจากเซิร์ฟเวอร์ (PettyCashFundGlRule.OrphanReason/FundEffect)
+            const orphans = (g.orphanedEntries || []).map(x => `<tr>
+                <td style="white-space:nowrap">${Layout.date(x.transactionDate)}</td>
+                <td>${Layout.esc(x.entryNumber || '-')}</td>
+                <td>${Layout.esc(x.fundName)} · ${Layout.esc(x.typeLabel)} ${Layout.money(x.amount)}</td>
+                <td>${Layout.esc(x.reason)}</td>
+                <td class="text-right">${Layout.money(x.fundEffectReversal)}</td>
+                <td><button class="btn btn-sm btn-primary" onclick="Page.reverseOrphan('${Layout.jsArg(x.transactionId)}')">ย้อนผลต่อกองทุน</button></td></tr>`).join('');
             const more = g.unattributedCount > (g.unattributedEntries || []).length
               ? `<div style="font-size:12px;color:#64748b;margin-top:4px">แสดง ${(g.unattributedEntries || []).length} จาก ${g.unattributedCount} ใบ (ล่าสุดก่อน)</div>` : '';
             return `<div class="card" style="margin-bottom:12px">
@@ -344,6 +378,10 @@
               ${entries ? `<div style="overflow:auto;margin-top:8px"><table class="table" style="font-size:13px"><thead><tr>
                 <th>วันที่</th><th>ใบสำคัญ</th><th>รายละเอียด</th><th>ผลต่อกองทุน</th><th class="text-right">จำนวน</th><th>กองทุน</th><th></th></tr></thead>
                 <tbody>${entries}</tbody></table>${more}</div>` : ''}
+              ${orphans ? `<div style="overflow:auto;margin-top:8px"><div style="font-size:12px;color:#b45309">รายการในทะเบียนกองทุนที่ใบสำคัญถูกลบ/ยกเลิกแล้ว — ยอดกองทุนยังนับแต่ผังบัญชีไม่นับ
+                  · “ย้อนผลต่อกองทุน” = เอารายการออกจากทะเบียนและปรับยอดกองทุนให้ตรงผังบัญชี (ไม่ลงใบสำคัญใหม่)</div>
+                <table class="table" style="font-size:13px"><thead><tr><th>วันที่</th><th>ใบสำคัญ</th><th>รายการ</th><th>สาเหตุ</th><th class="text-right">ยอดกองทุนจะขยับ</th><th></th></tr></thead>
+                <tbody>${orphans}</tbody></table></div>` : ''}
               ${glOnly ? `<details style="margin-top:8px"><summary style="font-size:12px;cursor:pointer">ใบที่ทำเครื่องหมาย “ไม่กระทบกองทุน (ปรับเฉพาะ GL)” ${(g.glOnlyEntries || []).length} ใบ · รวม ${Layout.money(g.glOnlyNet)}</summary>
                 <table class="table" style="font-size:13px"><thead><tr><th>วันที่</th><th>ใบสำคัญ</th><th>รายละเอียด</th><th class="text-right">ยอดลงผัง (เดบิต−เครดิต)</th><th></th></tr></thead>
                 <tbody>${glOnly}</tbody></table></details>` : ''}
@@ -361,6 +399,66 @@
           const r = await API.post(`/api/companies/${Layout.getCompanyId()}/sme/petty-cash/gl-only`, { accountId, journalEntryId, note: note.trim() || null });
           Layout.toast((r && r.message) || 'ทำเครื่องหมายแล้ว');
           await this.loadRecon();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async reverseOrphan(transactionId) {
+        if (!confirm('ย้อนผลรายการนี้ต่อกองทุน? รายการจะออกจากทะเบียนและยอดกองทุนปรับให้ตรงผังบัญชี (บันทึกใน audit)')) return;
+        try {
+          const r = await API.post(`/api/companies/${Layout.getCompanyId()}/sme/petty-cash/transactions/${transactionId}/reverse-orphan`, {});
+          Layout.toast((r && r.message) || 'ย้อนผลแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ── ปิด/เปิดกองทุน — เงื่อนไขทั้งหมดอยู่ฝั่งเซิร์ฟเวอร์ · หน้าแสดงผลพรีวิวและส่งสิ่งที่ผู้ใช้เลือก ──
+      _closeFundId: null,
+      _closePreview: null,
+      async openCloseFund(fundId) {
+        this._closeFundId = fundId;
+        const cid = Layout.getCompanyId();
+        let p;
+        try { p = (await API.get(`/api/companies/${cid}/sme/petty-cash/funds/${fundId}/close-preview`)).data; }
+        catch (e) { Layout.toast(e.message, 'error'); return; }
+        this._closePreview = p;
+        document.getElementById('cfTitle').textContent = 'ปิดกองทุน ' + (p.fundName || '');
+        document.getElementById('cfNote').value = '';
+        document.getElementById('cfAck').checked = false;
+        document.getElementById('cfSummary').innerHTML = `ยอดคงเหลือ <b>${Layout.money(p.balance)}</b>`
+          + (p.fundAccountLabel ? ` · ผังกองทุน ${Layout.esc(p.fundAccountLabel)}` : '')
+          + (p.negativeBalanceMessage ? `<div style="color:#dc2626;margin-top:6px">${Layout.esc(p.negativeBalanceMessage)}</div>` : '')
+          + (!p.needsReturnAccount && !p.negativeBalanceMessage ? '<div style="color:#64748b;margin-top:4px">ยอดเป็น 0 — ปิดได้โดยไม่ลงใบสำคัญ</div>' : '');
+        document.getElementById('cfReturnBox').style.display = p.needsReturnAccount ? '' : 'none';
+        document.getElementById('cfAckBox').style.display = p.blocker ? '' : 'none';
+        // รับทราบไม่ครอบรายการค้างของกองทุนนี้เอง (เซิร์ฟเวอร์ตัดสิน canAcknowledge) — ซ่อนช่องติ๊ก ให้ย้อนผลก่อน
+        document.getElementById('cfAck').parentElement.style.display = p.canAcknowledge === false ? 'none' : '';
+        document.getElementById('cfBlocker').textContent = p.blocker || '';
+        document.getElementById('cfSubmit').disabled = !!p.negativeBalanceMessage;
+        document.getElementById('closeFundModal').classList.add('active');
+        if (p.needsReturnAccount)
+          await MoneyChannel.fill(document.getElementById('cfReturn'), { placeholder: '— เลือกบัญชีที่รับเงินคืน —' });
+      },
+      async submitCloseFund() {
+        const p = this._closePreview || {};
+        let ch = { bankAccountId: null, accountId: null };
+        if (p.needsReturnAccount) {
+          ch = MoneyChannel.read(document.getElementById('cfReturn'));
+          if (!ch.bankAccountId && !ch.accountId) { Layout.toast('เลือก “คืนเงินคงเหลือเข้าบัญชี”', 'error'); return; }
+        }
+        try {
+          const r = await API.post(`/api/companies/${Layout.getCompanyId()}/sme/petty-cash/funds/${this._closeFundId}/close`, {
+            returnBankAccountId: ch.bankAccountId, returnAccountId: ch.accountId, closeDate: Layout.toDateInput(new Date()),
+            note: document.getElementById('cfNote').value.trim() || null,
+            acknowledgeOpenItems: !!document.getElementById('cfAck').checked });
+          document.getElementById('closeFundModal').classList.remove('active');
+          Layout.toast((r && r.message) || 'ปิดกองทุนแล้ว');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async reopenFund(fundId) {
+        if (!confirm('เปิดกองทุนนี้อีกครั้ง? (ยอดเริ่มจากยอดคงเหลือปัจจุบัน — ปกติ 0 ต้องเติมเงินก่อนเบิก)')) return;
+        try {
+          const r = await API.post(`/api/companies/${Layout.getCompanyId()}/sme/petty-cash/funds/${fundId}/reopen`, {});
+          Layout.toast((r && r.message) || 'เปิดกองทุนแล้ว');
+          await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async undoGlOnly(transactionId) {
@@ -515,7 +613,7 @@
           const cid = Layout.getCompanyId();
           await API.upload(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/disburse`,
             this._form({ amount, description: desc, expenseAccountId, receiptReference: receipt,
-              txnDate: new Date().toISOString(), projectId }, 'dEvidence'));
+              txnDate: Layout.toDateInput(new Date()), projectId }, 'dEvidence'));
           this.closeDisburse();
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
@@ -546,7 +644,7 @@
         try {
           const cid = Layout.getCompanyId();
           await API.upload(`/api/companies/${cid}/sme/petty-cash/funds/${this._activeFundId}/replenish`,
-            this._form({ amount, notes: document.getElementById('rNotes').value.trim() || null, txnDate: new Date().toISOString(),
+            this._form({ amount, notes: document.getElementById('rNotes').value.trim() || null, txnDate: Layout.toDateInput(new Date()),
               sourceBankAccountId: ch.bankAccountId, sourceAccountId: ch.accountId }, 'rEvidence'));
           this.closeReplenish();
           Layout.toast('เติมเงินสดย่อยแล้ว');

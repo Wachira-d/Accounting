@@ -62,6 +62,9 @@ public class CreateBookingServiceRequest
     public bool FulfillmentPickupEnabled { get; set; }
     /// <summary>"delivery"/"pickup"/null</summary>
     public string? FulfillmentDefault { get; set; }
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q1): คำตอบ "ลูกค้าต้องจ่ายก่อนไหม" (AtShop/PayFirst/ShopConfirms) ⇒ ระบบเลือกชนิดเอกสาร ·
+    /// null = ใช้ <see cref="BookingType"/> ตรง (ขั้นสูง — ผู้ทำบัญชี / ผู้เรียก API เดิม) — ตัวตัดสิน <c>Helpers/BookingPayFirst</c></summary>
+    public string? PayFirst { get; set; }
     /// <summary>เวลาทำการ + วันหยุด — <b>null = ไม่แตะตารางเวลาเดิม</b> (ผู้เรียก API เดิม) · ส่งมา = แทนที่ทั้งชุด</summary>
     public BookingScheduleDto? Schedule { get; set; }
 }
@@ -212,6 +215,8 @@ public class BookingServicePresetResponse
     public string Label { get; set; } = "";
     public string? Description { get; set; }
     public List<CreateBookingServiceRequest> Services { get; set; } = new();
+    /// <summary>รอบ 228: แม่แบบนี้ตั้งค่าเว็บทั้งชุดได้ (ปุ่ม "ตั้งค่าเว็บทั้งชุด") — สรุปสิ่งที่จะทำ · null = เติมฟอร์มบริการอย่างเดียว</summary>
+    public string? SiteSetupSummary { get; set; }
 }
 
 public class UpdateBookingServiceRequest : CreateBookingServiceRequest
@@ -297,6 +302,9 @@ public class BookingServiceResponse
     public bool? FulfillmentPickupEnabled { get; set; }
     public string? FulfillmentDefault { get; set; }
     public string? FulfillmentSummary { get; set; }
+    /// <summary>รอบ 228 (แพ็ก D): คำตอบ "ลูกค้าต้องจ่ายก่อนไหม" ของชนิดที่ตั้งไว้ (null = ชนิดขั้นสูง) + คำเตือนมัดจำที่ไม่ถูกเก็บ</summary>
+    public string? PayFirst { get; set; }
+    public string? PayFirstWarning { get; set; }
     public bool IsActive { get; set; }
     public int UpcomingBookingsCount { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -500,6 +508,9 @@ public class BookingResponse
     public bool CanCancelOnline { get; set; }
     /// <summary>ลูกค้าเลื่อนนัดเองได้ (ในหน้าต่างยกเลิกฟรี · รอบ 206)</summary>
     public bool CanRescheduleOnline { get; set; }
+    /// <summary>รอบ 228: ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่เองได้ตอนนี้ (หน้าต่างจากค่าตั้งเว็บ — <c>BookingFulfillmentChange.Window</c>) · ข้อความกำหนดเวลา/เหตุที่ปิด</summary>
+    public bool CanChangeFulfillmentOnline { get; set; }
+    public string? FulfillmentChangeNote { get; set; }
     public DateTime? PaidAt { get; set; }
     public string? PaymentReference { get; set; }
     /// <summary>เตือนก่อนนัดส่งถึงจริงล่าสุดเมื่อไร (UTC) · null = ยังไม่ส่ง</summary>

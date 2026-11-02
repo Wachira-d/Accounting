@@ -121,6 +121,13 @@ public partial class CmsBookingService : ICmsBookingService
         svc.Price = r.Price; svc.DepositAmount = r.DepositAmount;
         svc.DepositPercent = r.DepositPercent;
         svc.BookingType = r.BookingType; svc.ProductId = r.ProductId;
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q1): คำถามธุรกิจ "ลูกค้าต้องจ่ายก่อนไหม" ⇒ ชนิดเอกสาร (ตัวตัดสินเดียว BookingPayFirst) ·
+        // null = ชนิดที่ส่งตรง (ขั้นสูง — ผู้ทำบัญชีเลือก "จองยืนยัน (ใบกำกับภาษี)" ได้ / ผู้เรียก API เดิม)
+        if (r.PayFirst != null)
+        {
+            if (BookingPayFirst.TypeFor(r.PayFirst) is BookingType chosen) svc.BookingType = chosen;
+            else errs.Add($"คำตอบ \"ลูกค้าต้องจ่ายก่อนไหม\" ไม่รู้จัก ({r.PayFirst})");
+        }
         svc.Category = r.Category; svc.AutoConfirm = r.AutoConfirm;
         svc.FreeCancellationHours = r.FreeCancellationHours;
         svc.CancellationFeePercent = r.CancellationFeePercent;
@@ -383,6 +390,8 @@ public partial class CmsBookingService : ICmsBookingService
             FulfillmentDeliveryEnabled = s.FulfillmentDeliveryEnabled, FulfillmentPickupEnabled = s.FulfillmentPickupEnabled,
             FulfillmentDefault = s.FulfillmentDefault,
             FulfillmentSummary = BookingFulfillment.Describe(FulfillmentOf(s, site.Row)),
+            PayFirst = BookingPayFirst.AnswerFor(s.BookingType),   // รอบ 228 แพ็ก D
+            PayFirstWarning = BookingPayFirst.DepositConflict(s.BookingType, s.DepositAmount, s.DepositPercent),
             IsActive = s.IsActive,
             UpcomingBookingsCount = upcoming,
             CreatedAt = s.CreatedAt
@@ -2181,7 +2190,9 @@ public partial class CmsBookingService : ICmsBookingService
                     WithholdingTaxRate: 0m,
                     AccountId: isDeposit ? null : product?.SalesAccountId,
                     ProductCode: product?.Code)
-            }.Concat(DeliveryErpLines(bookingVatRegistered, deliveryInDoc, booking.TotalAmount, lineVatRate)).ToList(),
+            }.Concat(DeliveryErpLines(bookingVatRegistered, deliveryInDoc, booking.TotalAmount, lineVatRate,
+                // รอบ 228: ใบรับมัดจำ ⇒ null (เงินรับล่วงหน้า) · ใบเต็ม ⇒ บัญชีรายได้ค่าจัดส่งของเว็บ
+                isDeposit ? null : await ShippingRevenueAccount.ResolveAsync(_db, companyId, siteId))).ToList(),
             Currency: svc.Currency,
             PricesIncludeVat: true,           // ราคา CMS เป็น gross
             BookingNumber: booking.BookingNumber,

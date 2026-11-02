@@ -15,8 +15,13 @@ public class OcrSelfCorrectionService
     private readonly AccountingDbContext _db;
     private readonly ILogger<OcrSelfCorrectionService> _logger;
 
-    public OcrSelfCorrectionService(AccountingDbContext db, ILogger<OcrSelfCorrectionService> logger)
+    /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — กวาดไฟล์สแกนกำพร้าผ่านตัวนี้ (Local/S3) · null (นอก DI) ⇒ FileStorageDefaults.Local</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
+
+    public OcrSelfCorrectionService(AccountingDbContext db, ILogger<OcrSelfCorrectionService> logger,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
+        _storage = storage;
         _db = db;
         _logger = logger;
     }
@@ -223,11 +228,8 @@ public class OcrSelfCorrectionService
                     continue;
                 try
                 {
-                    if (System.IO.File.Exists(attachment.StoragePath))
-                    {
-                        System.IO.File.Delete(attachment.StoragePath);
+                    if (await (_storage ?? Accounting.Services.Storage.FileStorageDefaults.Local).DeleteAsync(attachment.StoragePath, ct))
                         orphanFilesPurged++;
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -267,11 +269,8 @@ public class OcrSelfCorrectionService
                     continue;
                 try
                 {
-                    if (!string.IsNullOrEmpty(f.StoragePath) && System.IO.File.Exists(f.StoragePath))
-                    {
-                        System.IO.File.Delete(f.StoragePath);
+                    if (!string.IsNullOrEmpty(f.StoragePath) && await (_storage ?? Accounting.Services.Storage.FileStorageDefaults.Local).DeleteAsync(f.StoragePath, ct))
                         orphanFilesPurged++;
-                    }
                 }
                 catch (Exception ex)
                 {

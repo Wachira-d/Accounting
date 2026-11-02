@@ -62,6 +62,22 @@ public static class LodgingSeedDefaults
 
     public static int TotalUnits => RoomTypes.Sum(r => r.Units.Length);
 
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E · คำตัดสิน Q4): ค่าเริ่มต้นจำนวนห้องที่ถามใน wizard (โฮมสเตย์/ที่พักเล็ก)</summary>
+    public const int DefaultWizardRoomCount = 3;
+
+    /// <summary>หมายเลขห้องที่ seed ต่อประเภท — null = ครบ 11 ห้อง (เดิมทุกตัวอักษร) · N = เลือกแบบวนประเภท (101, 201, 301, 102 …) ให้เห็นทุกแบบห้อง ·
+    /// จำกัด 1–<see cref="TotalUnits"/> (เพิ่มห้องเองภายหลังได้ที่ตั้งค่าที่พัก)</summary>
+    public static string[][] UnitsFor(int? roomCount)
+    {
+        if (roomCount is not int n) return RoomTypes.Select(r => r.Units).ToArray();
+        n = Math.Clamp(n, 1, TotalUnits);
+        var picked = RoomTypes.Select(_ => new List<string>()).ToArray();
+        for (var round = 0; n > 0; round++)
+            for (var t = 0; t < RoomTypes.Length && n > 0; t++)
+                if (round < RoomTypes[t].Units.Length) { picked[t].Add(RoomTypes[t].Units[round]); n--; }
+        return picked.Select(l => l.ToArray()).ToArray();
+    }
+
     /// <summary>"฿1,500" — ตัวเดียวที่แปลงตัวเลขเป็นข้อความบนหน้าเว็บ (InvariantCulture กัน th-TH ปฏิทิน/ตัวเลข)</summary>
     public static string Baht(decimal v) => "฿" + v.ToString("N0", CultureInfo.InvariantCulture);
 }

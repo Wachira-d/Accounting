@@ -232,6 +232,7 @@
   <script src="/js/pay-widget.js"></script>
   <script src="/js/storefront-booking-pay.js"></script>
   <script src="/js/storefront-booking-fulfillment.js"></script>
+  <script src="/js/storefront-booking-manage.js"></script>
   <script src="/js/submit-once.js"></script>
 
   <script>
@@ -2818,6 +2819,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
               <button class="btn" onclick="Store.printBookingConfirmation()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
             </div>
             ${b.payment && b.payment.paymentFirst ? '' : '<div id="sfBookingPayBox"></div>'}
+            <div id="sfBookingManageBox"></div>
             <div id="sfBookingLineBox"></div>
             ${b.canRescheduleOnline ? `<div style="margin-top:20px;border-top:1px solid #E5E7EB;padding-top:16px">
               <div style="font-weight:600;margin-bottom:6px">เลื่อนนัด</div>
@@ -2833,6 +2835,8 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
             </div>` : ''}
           </div>`;
         await this._renderBookingPayOnline(b);
+        // รอบ 228: ชำระมัดจำภายหลัง (มัดจำไม่บังคับ) + เปลี่ยนวิธีรับ/ที่อยู่ก่อนกำหนด (js/storefront-booking-manage.js)
+        if (typeof this._bkManageRender === 'function') this._bkManageRender(b, token);
         this.renderLineBox('sfBookingLineBox', { kind: 'booking', token });
       },
       // รอบ 206: เลื่อนนัดเอง — เวลาว่างจากเซิร์ฟเวอร์ (available-slots เดิม) · ส่งแล้วเซิร์ฟเวอร์ตัดสินรอบใหม่ (ไม่นับการจองตัวเอง)
@@ -3904,6 +3908,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
     });
 
     if (window.StoreBookingFulfill) StoreBookingFulfill.install(Store);   // รอบ 226: ขั้นจัดส่ง/รับเองของการจอง (js/storefront-booking-fulfillment.js)
+    if (window.StoreBookingManage) StoreBookingManage.install(Store);   // รอบ 228: หน้าจัดการการจอง — ชำระมัดจำภายหลัง · เปลี่ยนวิธีรับ (js/storefront-booking-manage.js)
     if (window.StoreBookingPay) StoreBookingPay.install(Store);   // รอบ 218: ยอดชำระก่อนกดจอง + กล่องโอน/QR/สลิป (js/storefront-booking-pay.js)
     Store.init();
   </script>

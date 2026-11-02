@@ -443,4 +443,22 @@ public static class BookingPaymentPolicy
         var by = holdUntilUtc is DateTime u ? $" ภายใน {u.AddHours(7).ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)} น." : "";
         return $"💳 ยอดที่ต้องชำระ {Baht(due)}{by} — {how}";
     }
+
+    /// <summary>รอบ 228 (BOOKING_PAYMENT_AUDIT §4 ข้อ 4): "ข้อความถึงลูกค้า" ของหน้าตั้งค่าการชำระ (เช่น "โอนแล้วแจ้งชื่อในแชต") ต่อท้ายบรรทัดชำระเงิน
+    /// ในอีเมล/LINE — เดิมแสดงบนหน้าเว็บอย่างเดียว · ใช้เฉพาะเมื่อมีบรรทัดชำระ (มียอดค้าง/เลือกชำระภายหลังได้) · ว่าง = ไม่เพิ่ม · ยาวเกินตัดที่ 500 ตัว</summary>
+    public const int NotifyNoteMaxLength = 500;
+
+    public static string? WithShopNote(string? paymentLine, string? paymentNote)
+    {
+        if (string.IsNullOrWhiteSpace(paymentLine)) return null;
+        var note = paymentNote?.Trim();
+        if (string.IsNullOrEmpty(note)) return paymentLine;
+        if (note.Length > NotifyNoteMaxLength)
+        {
+            // ฝ่ายค้านรอบ 228 N3: ไม่ตัดกลางคู่ surrogate (อีโมจิ) — ตัดก่อนตัวสูงที่ค้าง
+            var cut = char.IsHighSurrogate(note[NotifyNoteMaxLength - 1]) ? NotifyNoteMaxLength - 1 : NotifyNoteMaxLength;
+            note = note[..cut] + "…";
+        }
+        return paymentLine + "\n📝 ข้อความจากร้าน: " + note;
+    }
 }

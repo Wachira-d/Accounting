@@ -25,13 +25,14 @@ public static class LodgingSeeder
     /// <c>Message</c> = ข้อความถึงเจ้าของเมื่อไม่ได้สร้างด้วยเหตุที่เจ้าของต้องรู้</summary>
     public readonly record struct Result(LodgingProperty? Property, LodgingSeedOutcome Outcome, string? Message);
 
-    public static async Task<Result> SeedForSiteAsync(AccountingDbContext db, Guid companyId, Site site, string userId, IEntitlementService? entitlement)
+    public static async Task<Result> SeedForSiteAsync(AccountingDbContext db, Guid companyId, Site site, string userId, IEntitlementService? entitlement,
+        int? roomCount = null, Accounting.Services.Implementations.IQuotaGate? quotaGate = null)
     {
         var bound = await db.LodgingProperties.AnyAsync(p => p.CompanyId == companyId && p.SiteId == site.Id);
         var unlinked = bound ? new List<string>() : await db.LodgingProperties.AsNoTracking()
             .Where(p => p.CompanyId == companyId && p.SiteId == null && !p.IsDeleted)
             .OrderBy(p => p.SortOrder).ThenBy(p => p.Name).Select(p => p.Name).ToListAsync();
-        var quotaBlock = bound || unlinked.Count > 0 ? null : await LodgingPropertyQuota.BlockReasonAsync(db, entitlement, companyId);
+        var quotaBlock = bound || unlinked.Count > 0 ? null : await LodgingPropertyQuota.BlockReasonAsync(db, entitlement, companyId, quotaGate);
         var (outcome, message) = LodgingSeedDecision.Decide(bound, unlinked, quotaBlock);
         if (outcome != LodgingSeedOutcome.Created) return new Result(null, outcome, message);
 
@@ -120,11 +121,14 @@ public static class LodgingSeeder
         // ประเภทห้อง + หมายเลขห้อง — ทุกค่าจาก LodgingSeedDefaults.RoomTypes (ชุดเดียวกับที่ HotelPlan พิมพ์บนหน้าเว็บ)
         var roomTypes = new List<LodgingRoomType>();
         var rtSort = 1;
+        // รอบ 228 (แพ็ก E · Q4): จำนวนห้องจาก wizard (null = 11 ห้องเดิม) — ประเภทห้องครบทุกแบบเสมอ (หน้าเว็บที่ seed อ้างทุกแบบ)
+        var unitsByType = LodgingSeedDefaults.UnitsFor(roomCount);
+        var typeIndex = 0;
         foreach (var d in LodgingSeedDefaults.RoomTypes)
         {
             var rt = RT(d.Name, d.Name, d.Code, d.Rate, d.StandardOccupancy, d.MaxAdults, d.MaxChildren, d.MaxOccupancy, d.Bed, d.SizeSqm, d.ExtraBed, rtSort++, d.Description);
             roomTypes.Add(rt);
-            Units(rt, d.Floor, d.Units);
+            Units(rt, d.Floor, unitsByType[typeIndex++]);
         }
         db.LodgingRoomTypes.AddRange(roomTypes);
         void Units(LodgingRoomType rt, string floor, params string[] numbers)

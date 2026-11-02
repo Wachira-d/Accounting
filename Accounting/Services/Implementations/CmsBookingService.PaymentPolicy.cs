@@ -71,7 +71,7 @@ public partial class CmsBookingService
                     && (g.BankAccountNumber != null || g.PromptPayId != null))
                 .Select(g => g.Name).FirstOrDefaultAsync();
             if (other != null)
-                dto.ChannelWarnings.Add($"บัญชีรับโอนของหน้าร้านค้าอยู่ในช่องทาง “{other}” ซึ่งไม่ใช่ชนิดโอน/พร้อมเพย์ — การจองไม่ใช้ช่องนั้น · กรอกเลขบัญชี/พร้อมเพย์ในหัวข้อ “ช่องทางรับเงิน” ด้านล่างแล้วบันทึก");
+                dto.ChannelWarnings.Add($"บัญชีรับโอนของหน้าร้านค้าอยู่ในช่องทาง “{other}” ซึ่งไม่ใช่ชนิดโอน/พร้อมเพย์ — การจองไม่ใช้ช่องนั้น · กรอกเลขบัญชี/พร้อมเพย์ที่การ์ด “💰 บัญชีรับโอน / พร้อมเพย์” ด้านบนแล้วบันทึก");
         }
         var siteRow = await _db.SiteBookingSettings.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted);
@@ -110,17 +110,10 @@ public partial class CmsBookingService
         errs.AddRange(BookingPaymentPolicy.ValidateRule(rule));
         if (request.PaymentNote?.Length > 1000) errs.Add("ข้อความถึงลูกค้ายาวเกิน 1,000 ตัวอักษร");
 
-        string? acct = null, ppId = null, qr = null;
-        if (request.UpdateTransfer)
-        {
-            errs.AddRange(BookingPaymentChannels.ValidateBankAccount(request.BankName, request.BankAccountNumber, request.BankAccountName, request.BankBranch));
-            acct = BookingPaymentChannels.NormalizeAccountNumber(request.BankAccountNumber);
-            ppId = string.IsNullOrWhiteSpace(request.PromptPayId) ? null : new string(request.PromptPayId.Where(char.IsDigit).ToArray());
-            if (ppId != null && !_promptPay.ValidatePromptPayId(ppId))
-                errs.Add("พร้อมเพย์ต้องเป็นเบอร์มือถือ 10 หลัก (ขึ้นต้น 0) หรือเลขประจำตัวผู้เสียภาษี/บัตรประชาชน 13 หลักที่ถูกต้อง");
-            qr = string.IsNullOrWhiteSpace(request.PromptPayQrUrl) ? null : request.PromptPayQrUrl.Trim();
-            if (!BookingPaymentChannels.QrImageUrlAcceptable(qr)) errs.Add("รูป QR ต้องอัปโหลดผ่านคลังสื่อของเว็บ หรือเป็นลิงก์ https");
-        }
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก A): ตรวจ/เขียนบัญชีรับโอนผ่านตัวเดียว (TransferAccountInput · ใช้ร่วมกับการ์ด "บัญชีรับโอน" ทุกเว็บ)
+        var transferIn = request.UpdateTransfer
+            ? NormalizeTransferInput(request.BankName, request.BankAccountNumber, request.BankAccountName, request.BankBranch, request.PromptPayId, request.PromptPayQrUrl, errs)
+            : null;
         if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), BookingPaymentPolicy.RuleCode);
 
         var row = await _db.SiteBookingSettings.FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted);
@@ -130,48 +123,15 @@ public partial class CmsBookingService
             _db.SiteBookingSettings.Add(row);
         }
         SitePaymentGateway? gw = null;
-        if (request.UpdateTransfer)
-        {
-            // ฝ่ายค้านรอบ 218 (B1): อ่าน/เขียนเฉพาะแถวชนิดโอน/พร้อมเพย์ (แถว Omise/2C2P/Stripe — webhook ของคำสั่งซื้อหาด้วยชนิด — ไม่ถูกแตะ) ·
-            // ไม่เคยเปลี่ยนชนิด/ชื่อของแถวเดิม · ไม่มีแถวชนิดโอน ⇒ สร้างใหม่ · ช่องที่มีค่าแล้วส่งมาว่าง ⇒ ต้องยืนยันการล้าง (ใช้ร่วมกับคำสั่งซื้อ)
-            gw = await _db.SitePaymentGateways
-                .Where(g => g.CompanyId == companyId && g.SiteId == siteId && g.IsActive && !g.IsDeleted
-                    && (g.GatewayType == PaymentGatewayType.BankTransfer || g.GatewayType == PaymentGatewayType.PromptPay))
-                .OrderBy(g => g.SortOrder).FirstOrDefaultAsync();
-            var beforeInfo = gw == null ? null
-                : new BookingTransferInfo(gw.BankName, gw.BankAccountNumber, gw.BankAccountName, gw.BankBranch, gw.PromptPayId, gw.PromptPayQrUrl);
-            var cleared = BookingPaymentChannels.ClearedFields(beforeInfo, acct == null ? null : request.BankName, acct,
-                acct == null ? null : request.BankAccountName, acct == null ? null : request.BankBranch, ppId, qr);
-            if (cleared.Count > 0 && !request.ConfirmClearTransfer)
-                throw new BusinessRuleException(BookingPaymentChannels.ClearConfirmMessage(cleared), BookingPaymentChannels.ClearConfirmRuleCode, 409);
-            if (gw == null && (acct != null || ppId != null || qr != null))
-            {
-                gw = new SitePaymentGateway
-                {
-                    CompanyId = companyId, SiteId = siteId, CreatedBy = userId, IsTestMode = false,
-                    GatewayType = ppId != null ? PaymentGatewayType.PromptPay : PaymentGatewayType.BankTransfer,
-                    Name = ppId != null ? "PromptPay" : (string.IsNullOrWhiteSpace(request.BankName) ? "โอนเงิน" : request.BankName.Trim()),
-                };
-                _db.SitePaymentGateways.Add(gw);
-            }
-            if (gw != null)
-            {
-                gw.BankName = acct == null ? null : request.BankName?.Trim();
-                gw.BankAccountNumber = acct;
-                gw.BankAccountName = acct == null ? null : request.BankAccountName?.Trim();
-                gw.BankBranch = acct == null || string.IsNullOrWhiteSpace(request.BankBranch) ? null : request.BankBranch.Trim();
-                gw.PromptPayId = ppId;
-                gw.PromptPayQrUrl = qr;
-                gw.UpdatedBy = userId;
-            }
-        }
+        // รีวิวรอบ 228: เขียนบัญชีรับโอน ⇒ ธุรกรรมเดียว (ล็อกต่อเว็บใน WriteRowAsync) · ไม่เขียนบัญชี ⇒ เส้นเดิม
+        await using var transferTx = transferIn != null && _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        if (transferIn != null)
+            gw = await WriteTransferRowAsync(companyId, siteId, transferIn, request.ConfirmClearTransfer, userId);
 
         // ด่านช่องทางคิดจากค่าที่ "จะเป็น" หลังบันทึก (ไม่ใช่ค่าเดิม) — gateway ของบริษัทอ่านสด
         var before = await LoadPaymentContextAsync(companyId, siteId);
-        var transferAfter = request.UpdateTransfer
-            ? (gw == null ? null : new BookingTransferInfo(gw.BankName, gw.BankAccountNumber, gw.BankAccountName, gw.BankBranch, gw.PromptPayId, gw.PromptPayQrUrl))
-            : before.Transfer;
-        var ppValidAfter = request.UpdateTransfer ? ppId != null : before.PromptPayValid;
+        var transferAfter = transferIn != null ? TransferInfoOf(gw) : before.Transfer;
+        var ppValidAfter = transferIn != null ? transferIn.PromptPayId != null : before.PromptPayValid;
         var gatewayReady = BookingPaymentChannels.GatewayReady(request.OnlineGatewayEnabled, before.CompanyGatewayActive);
         var transferReady = BookingPaymentChannels.TransferReady(request.BankTransferEnabled, transferAfter, ppValidAfter);
         if (BookingPaymentPolicy.SiteSaveProblem(rule, gatewayReady, transferReady) is string problem)
@@ -206,7 +166,16 @@ public partial class CmsBookingService
         row.BankTransferEnabled = request.BankTransferEnabled;
         row.PaymentNote = string.IsNullOrWhiteSpace(request.PaymentNote) ? null : request.PaymentNote.Trim();
         row.UpdatedBy = userId;
+        if (transferIn != null)   // ฝ่ายค้านรอบ 228 S-3: ร่องรอยการเปลี่ยนบัญชีรับเงิน (ปิดเลข) — ทางเข้าเดียวกับการ์ดบัญชีรับโอน
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = Guid.TryParse(userId, out var uid) ? uid : null,
+                EntityType = "SiteTransferAccount", EntityId = siteId.ToString(), Action = AuditAction.Update,
+                OldValues = System.Text.Json.JsonSerializer.Serialize(SiteTransferAccount.MaskForAudit(before.Transfer)),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(SiteTransferAccount.MaskForAudit(TransferInfoOf(gw))),
+            });
         await _db.SaveChangesAsync();
+        if (transferTx != null) await transferTx.CommitAsync();
         return await GetPaymentSettingsAsync(companyId, siteId);
     }
 

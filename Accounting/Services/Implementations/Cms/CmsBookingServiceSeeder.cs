@@ -41,9 +41,19 @@ public static class CmsBookingServiceSeeder
         /// <summary>การจัดสรรผู้ให้บริการ — ยังไม่มีผู้ให้บริการผูก = นับความจุของบริการ (เริ่มใช้ได้ทันที)</summary>
         /// <summary>ฝ่ายค้านรอบ 215 เฟส 2 S2: null = ตามค่าเว็บ (ค่าเริ่มต้นของตัวอย่าง) · ตั้งเฉพาะตัวอย่างที่ต้องการโหมดเฉพาะจริง</summary>
         public BookingResourceMode? ResourceMode { get; init; }
+        /// <summary>รอบ 228: จัดส่ง/รับเองของบริการนี้ (null ทั้งคู่ = ตามค่าเว็บ) — แม่แบบสั่งทำ/พรีออเดอร์ตั้งเองที่บริการ (เติมฟอร์มแล้วใช้ได้ทันที)</summary>
+        public bool? Delivery { get; init; }
+        public bool? Pickup { get; init; }
     }
 
-    public sealed record Preset(string Key, string Label, string Description, IReadOnlyList<Sample> Samples);
+    /// <summary>รอบ 228 (คำตัดสิน 228-6): ค่าตั้ง<b>ระดับเว็บ</b>ที่แม่แบบนี้ตั้งให้ได้ในคลิกเดียว — ใช้ค่าตั้งที่มีอยู่ทั้งหมด (จัดส่ง/รับเอง · หน้าต่างเปลี่ยนวิธีรับ ·
+    /// ช่องที่ลูกค้ากรอกตอนจอง) · ไม่มีเครื่องใหม่ · ค่าที่เจ้าของตั้งไว้แล้วชนะ (ผู้ใช้ <c>CmsBookingService.ApplyPresetToSiteAsync</c>)</summary>
+    public sealed record SiteSetup(bool Delivery, bool Pickup, int ChangeCutoffHours, IReadOnlyList<Accounting.Helpers.BookingCustomField> CustomFields, string Summary);
+
+    public sealed record Preset(string Key, string Label, string Description, IReadOnlyList<Sample> Samples)
+    {
+        public SiteSetup? Setup { get; init; }
+    }
 
     private static readonly Hours[] Daily1020 = { new("*", "10:00", "20:00") };
 
@@ -94,7 +104,7 @@ public static class CmsBookingServiceSeeder
 
     private static readonly Sample BadmintonCourt = new("สนามแบดมินตัน (ต่อชั่วโมง)", "Badminton court hourly", 60, 200, "สนาม", "ราคาต่อสนามต่อชั่วโมง · จองติดกันได้สูงสุด 3 ชั่วโมง", BookingType.Appointment, 4)
     { Interval = 60, MaxUnits = 3, MinAdvanceHours = 0, MaxAdvanceDays = 14, OpeningHours = new[] { new Hours("*", "08:00", "23:00") } };
-    private static readonly Sample FootballCourt = new("สนามฟุตบอล 7 คน (ต่อชั่วโมง)", "Football 7-a-side hourly", 60, 1200, "สนาม", "หญ้าเทียม · จองติดกันได้สูงสุด 3 ชั่วโมง", BookingType.Appointment, 1)
+    private static readonly Sample FootballCourt = new("สนามฟุตบอล 7 คน (ต่อชั่วโมง)", "Football 7-a-side hourly", 60, 1200, "สนาม", "หญ้าเทียม · จองติดกันได้สูงสุด 3 ชั่วโมง · มัดจำ 50%", BookingType.PrePayment, 1)
     { Interval = 60, MaxUnits = 3, BufferAfter = 0, MinAdvanceHours = 2, MaxAdvanceDays = 30, DepositPercent = 50, OpeningHours = new[] { new Hours("*", "09:00", "24:00") } };
 
     private static readonly Hours[] CoworkHours = { new("1-5", "08:00", "18:00") };
@@ -115,6 +125,27 @@ public static class CmsBookingServiceSeeder
     private static readonly Sample CameraFullDay = new("เช่ากล้อง + เลนส์ (รายวัน)", "Camera rental full day", 540, 1000, "อุปกรณ์", "ทั้งวัน 09:00–18:00", BookingType.Appointment, 2)
     { Mode = BookingSlotMode.FullDay, CapacityGroup = "กล้อง", MinAdvanceHours = 12, OpeningHours = new[] { new Hours("*", "09:00", "18:00") } };
 
+    // ─────────────── รอบ 228: สั่งทำ / พรีออเดอร์ (คำถามเจ้าของ "สั่งทำ/พรีออเดอร์ ควรใช้ประเภทธุรกิจไหน") ───────────────
+    // คำตัดสิน 228-6: ใช้ "บริการที่จองได้" (ชนิดชำระมัดจำล่วงหน้า) เป็นช่องรับงาน — รอบเวลา = วัน/ช่วงเวลาที่รับของ · ความจุ = ชิ้นที่ผลิตได้ต่อรอบ ·
+    // จองล่วงหน้าขั้นต่ำ = เวลาผลิต (lead time) · มัดจำ 50% (เก็บผ่านขั้นชำระเดิม · ใบรับมัดจำ §78/1) · จัดส่ง/รับเอง · ช่องขนาด/รสชาติ/ข้อความ ·
+    // ไม่ใช้ "สินค้าตามสั่ง" ของร้านค้า (ตะกร้า) เพราะงานสั่งทำต้องจองคิวผลิตตามวัน — ร้านที่ขายของสำเร็จรูปพร้อมส่งใช้ร้านค้าเหมือนเดิม
+    private static readonly Hours[] MtoPickupHours = { new("*", "10:00", "18:00") };
+    private static readonly Sample CustomCake = new("เค้กสั่งทำ (1 ปอนด์)", "Custom cake 1 lb", 60, 650, "สั่งทำ", "เลือกขนาด รสชาติ และข้อความบนเค้ก · สั่งล่วงหน้าอย่างน้อย 2 วัน · มัดจำ 50%", BookingType.PrePayment, 4)
+    { Interval = 60, MinAdvanceHours = 48, MaxAdvanceDays = 60, DepositPercent = 50, FreeCancellationHours = 48, CancellationFeePercent = 50,
+      OpeningHours = MtoPickupHours, Delivery = true, Pickup = true };
+    private static readonly Sample PreOrderBatch = new("พรีออเดอร์ขนม (รอบรับของรายวัน)", "Pre-order daily batch", 480, 350, "พรีออเดอร์", "สั่งล่วงหน้า 1 วัน · รับของ/จัดส่งตามวันที่เลือก · มัดจำ 50%", BookingType.PrePayment, 30)
+    { Mode = BookingSlotMode.FullDay, MinAdvanceHours = 24, MaxAdvanceDays = 30, DepositPercent = 50, FreeCancellationHours = 24, CancellationFeePercent = 50,
+      OpeningHours = MtoPickupHours, Delivery = true, Pickup = true };
+
+    private static readonly SiteSetup MtoSetup = new(Delivery: true, Pickup: true, ChangeCutoffHours: 24,
+        new Accounting.Helpers.BookingCustomField[]
+        {
+            new("size", "ขนาด", "Size", "select", new[] { "1 ปอนด์", "2 ปอนด์", "3 ปอนด์" }, BookingFieldRequirement.Required),
+            new("flavour", "รสชาติ", "Flavour", "select", new[] { "ช็อกโกแลต", "วานิลลา", "ใบเตย", "สตรอว์เบอร์รี" }, BookingFieldRequirement.Required),
+            new("message", "ข้อความบนสินค้า", "Message", "text", null, BookingFieldRequirement.Optional, MaxLength: 60),
+        },
+        "เปิดจัดส่ง + รับเองของการจอง · ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่เองได้ถึง 24 ชม. ก่อนรับของ · เพิ่มช่อง ขนาด / รสชาติ / ข้อความบนสินค้า (เฉพาะบริการของแม่แบบนี้) · สร้างบริการตัวอย่าง (มัดจำ 50% · สั่งล่วงหน้า 1–2 วัน)");
+
     /// <summary>แม่แบบทั้งหมด (ลำดับ = ลำดับในปุ่ม "เพิ่มจากแม่แบบ")</summary>
     public static IReadOnlyList<Preset> Presets { get; } = new[]
     {
@@ -130,6 +161,9 @@ public static class CmsBookingServiceSeeder
         new Preset("cafe", "คาเฟ่", "จองที่นั่งรายชั่วโมง", new[] { CafeTable }),
         new Preset("education", "โรงเรียน / สถาบันสอน", "ทดลองเรียน นับที่นั่งต่อคน", new[] { TrialClass }),
         new Preset("property", "อสังหา (นัดดูทรัพย์)", "รอบละ 1 ชั่วโมง · เผื่อเดินทาง 30 นาที", new[] { PropertyViewing }),
+        new Preset("mto", "สั่งทำ / พรีออเดอร์ (เบเกอรี่ · ของขวัญ · งานทำมือ)",
+            "รับงานล่วงหน้าตามวันรับของ · ความจุ = ชิ้นที่ทำได้ต่อรอบ · มัดจำ 50% · จัดส่งหรือรับเอง · ลูกค้าเลือกขนาด/รสชาติ/ข้อความ",
+            new[] { CustomCake, PreOrderBatch }) { Setup = MtoSetup },
     };
 
     private static IReadOnlyList<Sample> Of(params string[] keys)
@@ -185,6 +219,10 @@ public static class CmsBookingServiceSeeder
         SlotMode = s.Mode, SlotIntervalMinutes = s.Interval, HalfDaySplitTime = s.HalfDaySplit, CapacityGroup = s.CapacityGroup,
         Schedule = ScheduleOf(s),
         WaitlistEnabled = s.Waitlist, ResourceMode = s.ResourceMode, EnforceSlotCapacity = true,
+        // รอบ 228: ตัวอย่างที่ตั้งวิธีรับเอง ⇒ "กำหนดเอง" ที่บริการ · ไม่ตั้ง ⇒ ไม่ส่ง (null = ไม่แตะ — ตามค่าเว็บ)
+        PayFirst = Accounting.Helpers.BookingPayFirst.AnswerFor(s.Type),   // รอบ 228 แพ็ก D: ฟอร์มแม่แบบเติมคำตอบจากเซิร์ฟเวอร์
+        FulfillmentMode = s.Delivery != null || s.Pickup != null ? "Custom" : null,
+        FulfillmentDeliveryEnabled = s.Delivery ?? false, FulfillmentPickupEnabled = s.Pickup ?? false,
     };
 
     public static IReadOnlyList<BookingServicePresetResponse> PresetResponses()
@@ -192,6 +230,7 @@ public static class CmsBookingServiceSeeder
         {
             Key = p.Key, Label = p.Label, Description = p.Description,
             Services = p.Samples.Select(ToRequest).ToList(),
+            SiteSetupSummary = p.Setup?.Summary,
         }).ToList();
 
     /// <summary>คืนจำนวนบริการที่เพิ่ม (0 = มีอยู่แล้ว/ไม่มีตัวอย่างสำหรับประเภทนี้) — ผู้เรียก SaveChanges เอง</summary>

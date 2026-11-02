@@ -183,7 +183,7 @@
             <div class="ap-grid">
               <div class="ap-stat"><div class="v">${u.companiesUsed||0} / ${u.maxCompanies||p.maxCompanies}</div><div class="l">บริษัท</div></div>
               <div>${gauge(u.documents||0, u.maxDocuments||p.maxDocumentsPerMonth, v=>v+' ใบ')}<div style="font-size:11px;color:#64748b;font-weight:600;text-align:center;margin-top:2px">📄 เอกสาร</div></div>
-              <div>${gauge(u.journalEntries||0, u.maxJournalEntries||p.maxJournalEntriesPerMonth, v=>v+' JE')}<div style="font-size:11px;color:#64748b;font-weight:600;text-align:center;margin-top:2px">📒 สมุดรายวัน</div></div>
+              <!-- รอบ 229 (คำตัดสินข้อ 229-7): ไม่แสดงเพดานสมุดรายวัน (ไม่บังคับ) -->
               <div>${gauge(u.ocrPages||0, u.maxOcrPages||p.maxOcrPagesPerMonth, v=>v+' หน้า')}<div style="font-size:11px;color:#64748b;font-weight:600;text-align:center;margin-top:2px">📸 OCR</div></div>
               <div>${gauge(u.storageBytes||0, u.maxStorageBytes||p.maxStorageBytes, v=>this._fmtBytes(v))}<div style="font-size:11px;color:#64748b;font-weight:600;text-align:center;margin-top:2px">💾 พื้นที่</div></div>
               <div class="ap-stat"><div class="v">${p.maxUsersPerCompany}</div><div class="l">ผู้ใช้ / บริษัท</div></div>

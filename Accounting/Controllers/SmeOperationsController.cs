@@ -221,6 +221,49 @@ public class SmeOperationsController : ControllerBase
         return Ok(new ApiResponse<string>(true, "ok", "ยกเลิกเครื่องหมายแล้ว — ใบสำคัญกลับไปรอระบุกองทุน"));
     }
 
+    // ── ส่วน D (PETTY_CASH_AUDIT รอบ 2) — รายการค้างจากใบที่ถูกลบ/ยกเลิก · ปิด/เปิดกองทุน · ทุกเส้นขยับยอดกองทุน ⇒ สิทธิ์ “จัดการใบสำคัญ” ──
+
+    /// <summary>ย้อนผลต่อกองทุนของแถวทะเบียนที่อ้างใบสำคัญซึ่งไม่อยู่ใน GL แล้ว (ถูกลบ/ยกเลิก) — ไม่ลง JE · audit</summary>
+    [HttpPost("petty-cash/transactions/{transactionId:guid}/reverse-orphan")]
+    [RequirePermission(PermissionKeys.JournalManage)]
+    public async Task<ActionResult<ApiResponse<PettyCashFund>>> ReverseOrphan(
+        Guid companyId, Guid transactionId, [FromServices] IPettyCashService svc, CancellationToken ct)
+    {
+        var f = await svc.ReverseOrphanedEntryAsync(companyId, transactionId, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<PettyCashFund>(true, f, $"ย้อนผลต่อกองทุน {f.Name} แล้ว — คงเหลือ {f.CurrentBalance:N2}"));
+    }
+
+    [HttpGet("petty-cash/funds/{fundId:guid}/close-preview")]
+    public async Task<ActionResult<ApiResponse<PettyCashClosePreview>>> ClosePreview(
+        Guid companyId, Guid fundId, [FromServices] IPettyCashService svc, CancellationToken ct) =>
+        Ok(new ApiResponse<PettyCashClosePreview>(true, await svc.GetClosePreviewAsync(companyId, fundId, ct)));
+
+    /// <param name="ReturnAccountId">ผังเงินสด/กระเป๋าเงินที่รับเงินคืน (ChartOfAccounts.Id)</param>
+    /// <param name="ReturnBankAccountId">บัญชีธนาคารที่รับเงินคืน (BankAccounts.Id) · ส่งอย่างใดอย่างหนึ่ง · จำเป็นเมื่อยอดคงเหลือ &gt; 0</param>
+    /// <param name="CloseDate">วันที่ปิด/คืนเงิน (null = วันนี้) — ด่านงวดบัญชีปิดตรวจวันนี้</param>
+    /// <param name="AcknowledgeOpenItems">true = รับทราบรายการค้างบนผังกองทุนแล้วปิดต่อ (บันทึกใน audit)</param>
+    public sealed record CloseFundRequest(Guid? ReturnAccountId, Guid? ReturnBankAccountId, DateTime? CloseDate, string? Note,
+        bool AcknowledgeOpenItems = false);
+
+    [HttpPost("petty-cash/funds/{fundId:guid}/close")]
+    [RequirePermission(PermissionKeys.JournalManage)]
+    public async Task<ActionResult<ApiResponse<PettyCashFund>>> CloseFund(
+        Guid companyId, Guid fundId, [FromBody] CloseFundRequest req, [FromServices] IPettyCashService svc, CancellationToken ct)
+    {
+        var f = await svc.CloseFundAsync(companyId, fundId, req.ReturnAccountId, req.ReturnBankAccountId,
+            req.CloseDate ?? DateTime.UtcNow, req.Note, req.AcknowledgeOpenItems, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<PettyCashFund>(true, f, $"ปิดกองทุน {f.Name} แล้ว"));
+    }
+
+    [HttpPost("petty-cash/funds/{fundId:guid}/reopen")]
+    [RequirePermission(PermissionKeys.JournalManage)]
+    public async Task<ActionResult<ApiResponse<PettyCashFund>>> ReopenFund(
+        Guid companyId, Guid fundId, [FromServices] IPettyCashService svc, CancellationToken ct)
+    {
+        var f = await svc.ReopenFundAsync(companyId, fundId, JwtHelper.GetUserIdFromClaims(User), ct);
+        return Ok(new ApiResponse<PettyCashFund>(true, f, $"เปิดกองทุน {f.Name} อีกครั้งแล้ว — เติมเงินก่อนเบิก"));
+    }
+
     // ── Stock count ─────────────────────────────────────────────────
     public sealed record StartCountRequest(string CountNumber, Guid? WarehouseId,
         string CountType, List<Guid> ProductIds);

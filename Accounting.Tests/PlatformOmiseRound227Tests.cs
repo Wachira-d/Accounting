@@ -174,11 +174,12 @@ public class PlatformOmiseRound227Tests
     [Fact]
     public void B2_ไม่ติ๊ก_ผู้เช่าเห็นแค่วิธีที่ทำจบได้_ติ๊กแต่บัตร_ไม่มีวิธีให้จ่าย()
     {
-        Assert.Equal(new[] { "PromptPay" }, PlatformPayMethods.Effective(OmiseMethods, Array.Empty<string>()));
-        Assert.Empty(PlatformPayMethods.Effective(OmiseMethods, new[] { "Card" }));   // เดิม: ศูนย์บิลเลือก "Card" แล้วล้มทุกครั้ง
-        Assert.Equal(new[] { "PromptPay" }, PlatformPayMethods.Effective(OmiseMethods, new[] { "card", "promptpay" }));
+        // รอบ 228: บัตรเปิดเมื่อช่องทางรับบัตรในเบราว์เซอร์ได้ (คีย์สาธารณะของโหมดนี้) — ไม่มีคีย์ = พฤติกรรมรอบ 227 เดิม
+        Assert.Equal(new[] { "PromptPay" }, PlatformPayMethods.Effective(OmiseMethods, Array.Empty<string>(), cardClientReady: false));
+        Assert.Empty(PlatformPayMethods.Effective(OmiseMethods, new[] { "Card" }, cardClientReady: false));   // เดิม: ศูนย์บิลเลือก "Card" แล้วล้มทุกครั้ง
+        Assert.Equal(new[] { "PromptPay" }, PlatformPayMethods.Effective(OmiseMethods, new[] { "card", "promptpay" }, cardClientReady: false));
         Assert.True(PlatformPayMethods.IsPayable(PaymentMethodKind.PromptPay));
-        Assert.NotNull(PlatformPayMethods.NotPayableReason(PaymentMethodKind.Card));
+        Assert.NotNull(PlatformPayMethods.NotPayableReason(PaymentMethodKind.Card, cardClientReady: false));
         Assert.NotNull(PlatformPayMethods.NotPayableReason(PaymentMethodKind.TrueMoney));
         Assert.Equal("พร้อมเพย์ (QR)", PlatformPayMethods.Label(PaymentMethodKind.PromptPay));
     }

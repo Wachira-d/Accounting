@@ -159,6 +159,12 @@ public class SiteCommerceConfig : TenantEntity
     public decimal? FreeShippingThreshold { get; set; }
     /// <summary>รอบ 209 (R-209-B8): เกณฑ์ส่งฟรีระดับร้านใช้กับอัตราในโซนด้วย · false = เฉพาะร้านที่ไม่ได้ตั้งโซน (เดิม)</summary>
     public bool FreeShippingOverridesZones { get; set; } = false;
+    /// <summary>รอบ 228 (BOOKING_PAYMENT_AUDIT §9): บัญชีรายได้ค่าจัดส่ง (หมวด 4) ของบรรทัด "ค่าจัดส่ง" ในใบขายของคำสั่งซื้อ + ใบกำกับของการจองแบบจัดส่ง ·
+    /// null = บัญชีรายได้ตั้งต้นของเอกสาร (พฤติกรรมเดิม) · ใบรับมัดจำไม่ใช้ (ลงเงินรับล่วงหน้า) · ตัวอ่านเดียว <c>Helpers/ShippingRevenueAccount</c></summary>
+    public Guid? ShippingRevenueAccountId { get; set; }
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT คำตัดสิน Q3): เจ้าของยืนยันว่า "ส่งฟรีจริง" (ไม่มีโซน/ค่าส่งเหมาจ่าย) ⇒ ปิดคำเตือนค้าง ·
+    /// ตั้งค่าส่งเหมาจ่าย &gt; 0 ⇒ กลับเป็น false (ล้างค่าส่งอีกครั้งต้องยืนยันใหม่) · ตัวตัดสิน <c>Helpers/ShopDeliveryFee.FreeByOmissionWarning</c></summary>
+    public bool FreeDeliveryConfirmed { get; set; }
 
     // ── คูปอง ──
     public bool EnableCoupons { get; set; } = true;

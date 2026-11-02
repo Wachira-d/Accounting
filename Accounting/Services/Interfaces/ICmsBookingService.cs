@@ -59,6 +59,22 @@ public interface ICmsBookingService
     /// <summary>รอบ 206: เลื่อนนัด (แถวเดิม · ตัดสินรอบใหม่ด้วย BookingSlotEngine.Decide ไม่นับตัวเอง · เอกสาร/เงินคงผูก) — CmsBookingService.Reschedule.cs</summary>
     Task<BookingResponse> RescheduleAsync(Guid companyId, Guid siteId, Guid bookingId, RescheduleBookingRequest request, string userId);
     Task<BookingResponse> RescheduleByCustomerAsync(Guid companyId, Guid siteId, string token, RescheduleBookingRequest request);
+    /// <summary>รอบ 228 (คำตัดสิน 228-1): มัดจำไม่บังคับ — ลูกค้าเลือกชำระภายหลังจากหน้าจัดการการจอง (<c>BookingDepositLater</c>) — CmsBookingService.Manage.cs</summary>
+    Task<BookingResponse> ChooseDepositLaterByCustomerAsync(Guid companyId, Guid siteId, string token);
+    /// <summary>รอบ 228 (คำตัดสิน 228-3): ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่ก่อนกำหนด — ค่าส่งคิดใหม่ที่เซิร์ฟเวอร์ · PreviewOnly = ไม่บันทึก (<c>BookingFulfillmentChange</c>)</summary>
+    Task<ChangeBookingFulfillmentResponse> ChangeFulfillmentByCustomerAsync(Guid companyId, Guid siteId, string token, ChangeBookingFulfillmentRequest request);
+    /// <summary>รอบ 228 (คำตัดสิน 228-6): ตั้งค่าเว็บทั้งชุดจากแม่แบบ (เช่น "สั่งทำ / พรีออเดอร์") — ใช้ค่าตั้งที่มีอยู่ ไม่มีเครื่องใหม่ · ค่าที่เจ้าของตั้งไว้ชนะ</summary>
+    Task<BookingPresetApplyResult> ApplyPresetToSiteAsync(Guid companyId, Guid siteId, string presetKey, string userId);
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก A): บัญชีรับโอน/พร้อมเพย์/QR ของเว็บที่เดียว (คำสั่งซื้อ · การจอง · ที่พัก) — CmsBookingService.TransferAccount.cs</summary>
+    Task<SiteTransferAccountDto> GetTransferAccountAsync(Guid companyId, Guid siteId);
+    Task<SiteTransferAccountDto> UpdateTransferAccountAsync(Guid companyId, Guid siteId, SiteTransferAccountDto request, string userId);
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก C): ค่าส่งเหมาจ่าย/ส่งฟรี + คำเตือนส่งฟรีเงียบ (Q3) — CmsBookingService.Shipping.cs</summary>
+    Task<SiteShippingSettingsDto> GetShippingSettingsAsync(Guid companyId, Guid siteId);
+    Task<SiteShippingSettingsDto> UpdateShippingSettingsAsync(Guid companyId, Guid siteId, SiteShippingSettingsDto request, string userId);
+    /// <summary>รอบ 228 (แพ็ก D): ตาราง "มัดจำ & การยกเลิก ของทุกงาน" ของเว็บ (อ่านอย่างเดียว) — CmsBookingService.Overview.cs</summary>
+    Task<List<DepositCancelOverviewRow>> GetDepositCancelOverviewAsync(Guid companyId, Guid siteId);
+    /// <summary>รอบ 228 (แพ็ก E): แผง "สิ่งที่ยังไม่ได้ตั้งค่า" ของเว็บ — CmsBookingService.Overview.cs</summary>
+    Task<CmsSiteSetupStatusDto> GetSetupStatusAsync(Guid companyId, Guid siteId);
 
     // ── รอบ 207: หน้าทำงานผู้ให้บริการ — CmsBookingService.Workflow.cs ──
     /// <summary>ผู้ให้บริการที่เลือกได้ตอนเริ่มให้บริการ (รับบริการนี้ได้ · ว่าง/ไม่ว่าง + เหตุ · เรียงตามตรรกะแนะนำของไซต์)</summary>

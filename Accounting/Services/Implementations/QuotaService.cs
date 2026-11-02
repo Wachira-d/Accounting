@@ -86,13 +86,17 @@ public class QuotaService : IQuotaService
             OverageEnabled: overagePrice > 0, OverageUnitPrice: overagePrice,
             OverageThisMonth: overageRows.Sum(r => r.Quantity),
             OverageChargedThisMonth: overageRows.Sum(r => r.ChargedAmount),
-            Message: msg);
+            Message: msg,
+            TopUpPackSize: AddOnCodes.DocumentsPerTopUpPack,
+            TopUpPackPrice: (await _metering.ResolveEffectivePlanAsync(companyId, AddOnCodes.DocumentsTopUp, ct))?.UnitPrice ?? 0m,
+            TopUpValidDays: AddOnCodes.TopUpValidDays);
     }
 
     // ───────────────────────── ซื้อเพิ่ม ─────────────────────────
 
     public async Task<DocumentQuotaStatus> PurchaseTopUpAsync(
-        Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null)
+        Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null,
+        int? expectedPackSize = null, decimal? expectedPackPrice = null)
     {
         if (packs <= 0) throw new BusinessRuleException("จำนวนแพ็กต้องมากกว่า 0", "QUOTA-TOPUP");
         if (packs > 50) throw new BusinessRuleException("ซื้อได้ครั้งละไม่เกิน 50 แพ็ก", "QUOTA-TOPUP");
@@ -119,6 +123,21 @@ public class QuotaService : IQuotaService
         var seq = await _db.UsageEvents.AsNoTracking()
             .CountAsync(u => u.CompanyId == companyId && u.FeatureCode == AddOnCodes.DocumentsTopUp
                           && u.IdempotencyKey != null && u.IdempotencyKey.StartsWith(prefix) && !u.IsDeleted, ct) + 1;
+
+        // รอบ 229 (QUOTA_ADDON แพ็ก 0(ข) · D-1): ข้อเสนอที่ผู้ซื้อเห็น (ขนาด/ราคา) ต้องตรงของจริงใต้ล็อก ก่อนคิดเงิน — ลอก notify.topup ·
+        // คำขอซ้ำที่สำเร็จไปแล้ว (คีย์เดิม) ไม่ตรวจซ้ำ (คืนผลเดิมด้านล่าง)
+        var requestUsageKey = AddOnBilling.TopUpRequestKey(AddOnCodes.DocumentsTopUp, period, idempotencyKey);
+        var alreadyRecorded = requestUsageKey != null && await _db.UsageEvents.AsNoTracking()
+            .AnyAsync(u => u.CompanyId == companyId && u.IdempotencyKey == requestUsageKey && !u.IsDeleted, ct);
+        if (!alreadyRecorded && (expectedPackSize != null || expectedPackPrice != null))
+        {
+            var currentPrice = (await _metering.ResolveEffectivePlanAsync(companyId, AddOnCodes.DocumentsTopUp, ct))?.UnitPrice;
+            if (DocumentQuotaPolicy.TopUpOfferChanged(expectedPackSize, expectedPackPrice, AddOnCodes.DocumentsPerTopUpPack, currentPrice) is string changed)
+            {
+                await tx.RollbackAsync(ct);
+                throw new DocumentTopUpOfferChangedException(changed);
+            }
+        }
 
         // คิดเงินก่อนให้ของ — ถ้าบันทึกมิเตอร์ไม่สำเร็จต้องไม่แจกโควตาฟรี
         // (ต่างจากมิเตอร์ทั่วไปที่ "ล้มเหลวแล้วปล่อยผ่าน" เพราะที่นั่นงานหลักคือ

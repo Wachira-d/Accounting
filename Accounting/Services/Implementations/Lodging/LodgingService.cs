@@ -33,12 +33,22 @@ public partial class LodgingService : ILodgingService
     /// <summary>ฝ่ายค้านรอบ 202 P1-3ค: บัญชีขาเงินเข้าของใบมัดจำที่ออกภายหลังให้เงินออนไลน์ที่เคยยืนยันไม่ได้ (ตัวเดียวกับ handler)</summary>
     private readonly Accounting.Services.Payments.IGatewayAccountResolver? _gatewayAccounts;
 
+    /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — สลิปเขียน/ตรวจผ่านตัวนี้ · นอก DI (เทสต์) ⇒ <see cref="Accounting.Services.Storage.FileStorageDefaults.Local"/></summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
+    private Accounting.Services.Storage.IFileStorage SlipStorage => _storage ?? _images?.Storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
+
+    /// <summary>ฝ่ายค้านรอบ 229 S6: ด่านจำนวนที่พักตัวเดียว (IQuotaGate) — null (เทสต์เดิม) = สูตรเดิมใน LodgingPropertyQuota</summary>
+    private readonly IQuotaGate? _quotaGate;
+
     public LodgingService(AccountingDbContext db, ILogger<LodgingService> logger, IDocumentService docService,
         IEmailService? email = null, IImageProcessingService? images = null,
         IUsageMeteringService? metering = null, IEntitlementService? entitlement = null,
         ILineNotifyService? line = null, INotificationEngine? notify = null,
-        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null, IBookingNotifier? notifier = null)
+        Accounting.Services.Payments.IGatewayAccountResolver? gatewayAccounts = null, IBookingNotifier? notifier = null,
+        Accounting.Services.Storage.IFileStorage? storage = null, IQuotaGate? quotaGate = null)
     {
+        _quotaGate = quotaGate;
+        _storage = storage;
         _notifier = notifier;
         _notify = notify;
         _gatewayAccounts = gatewayAccounts;
@@ -157,7 +167,9 @@ public partial class LodgingService : ILodgingService
         if (string.IsNullOrWhiteSpace(dto.Name)) throw new BusinessRuleException("กรุณาระบุชื่อที่พัก");
 
         // ที่พักแห่งแรกใช้ฟรี · แห่งที่ 2 ขึ้นไปเป็น add-on — ด่านตัวเดียวกับ LodgingSeeder (รอบ 202 LW · W-05/ข้อ 118)
-        var quotaBlock = await LodgingPropertyQuota.BlockReasonAsync(_db, _entitlement, companyId);
+        // ฝ่ายค้านรอบ 229 S6: นับ + insert ใต้ล็อกธุรกรรมเดียวกัน (สองคำขอพร้อมกันได้แค่หนึ่ง)
+        await using var quotaTx = _quotaGate != null && _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        var quotaBlock = await LodgingPropertyQuota.BlockReasonAsync(_db, _entitlement, companyId, _quotaGate);
         if (quotaBlock != null) throw new BusinessRuleException(quotaBlock, LodgingPropertyQuota.RuleCode);
 
         var p = new LodgingProperty { CompanyId = companyId, CreatedBy = userId };
@@ -170,6 +182,7 @@ public partial class LodgingService : ILodgingService
         await EnsureUniqueCodeAsync(companyId, p);
         _db.LodgingProperties.Add(p);
         await _db.SaveChangesAsync();
+        if (quotaTx != null) await quotaTx.CommitAsync();
         return await ToDtoAsync(companyId, p);
     }
 
@@ -450,6 +463,17 @@ public partial class LodgingService : ILodgingService
             readiness = LodgingPublicReadiness.Evaluate(p.SiteId, siteExists: siteName != null, siteName,
                 p.IsActive, p.OnlineBookingEnabled, unitCount, bindableSiteCount: bindable.Count);
         }
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT §1 ข้อ 1 · แพ็ก A): แขกต้องชำระ/ส่งสลิปผ่านเว็บ แต่เว็บที่ผูกไม่มีบัญชีรับโอนและไม่มีชำระออนไลน์ ⇒ เตือน (ตัวตัดสิน SiteTransferAccount)
+        string? transferWarning = null;
+        if (p.SiteId is Guid boundSite && siteName != null)
+        {
+            // ฝ่ายค้านรอบ 228 S-2: ตัวอ่านเดียวกับกล่องสลิปของแขก (แถวโอน/พร้อมเพย์) + สวิตช์ "รับโอน" ของเว็บ + ตัวตรวจพร้อมเพย์จริง
+            var payCtx = await Accounting.Services.Implementations.Cms.BookingPaymentContextLoader.LoadAsync(_db, companyId, boundSite, Accounting.Services.Implementations.PromptPayService.IsValidId);
+            var bankTransferOn = await _db.SiteCommerceConfigs.AsNoTracking().Where(c => c.SiteId == boundSite && c.CompanyId == companyId)
+                .Select(c => (bool?)c.EnableBankTransfer).FirstOrDefaultAsync() ?? true;
+            transferWarning = SiteTransferAccount.LodgingWarning(true, LodgingGuestConfirmPolicy.Resolve(p) != LodgingGuestConfirmMode.Instant,
+                bankTransferOn && SiteTransferAccount.Payable(payCtx.Transfer, payCtx.PromptPayValid), payCtx.CompanyGatewayActive);
+        }
         var roomKind = await DepositKindForAsync(companyId, p);
         var effectiveVat = await EffectiveVatRateAsync(companyId, p);
         return new LodgingPropertyDto
@@ -501,6 +525,7 @@ public partial class LodgingService : ILodgingService
             RoomTypeCount = rtCount, UnitCount = unitCount, SiteName = siteName,
             EffectiveVatRate = effectiveVat,
             PublicBookingStatus = readiness.Status, PublicBookingMessage = readiness.Message, PublicBookingFix = readiness.FixHint,
+            TransferAccountWarning = transferWarning,
             BindableSites = bindable,
         };
     }

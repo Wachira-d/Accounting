@@ -129,32 +129,32 @@
 
 ## 5. ดีไซน์ + ข้อเสนอ (ไม่สร้างในรอบนี้)
 
-### 5.1 ช่องกรอกบัตร + 3-D Secure + แบงก์กิ้ง (ทำให้ `PlatformPayMethods` เปิดเพิ่มได้)
+### 5.1 ช่องกรอกบัตร + 3-D Secure + แบงก์กิ้ง (ทำให้ `PlatformPayMethods` เปิดเพิ่มได้) — ✅ บัตรทำแล้วรอบ 228 · วอลเล็ท/แบงก์กิ้ง ⚠️ ยังปิด
 `PayWidget` ขอ `{ publicKey, clientScriptUrl }` จาก endpoint ของช่องทาง (ค่าจาก `IPaymentProvider.ClientScriptUrl` + `OmisePaymentProvider.PublicKey` — ไม่ hard-code) → โหลด omise.js →
 `Omise.createToken('card', …)` ในเบราว์เซอร์ → ส่ง `cardToken` (เส้นเดิมรับอยู่แล้ว) → ได้ `authorizeUrl` → ไปหน้าธนาคาร → กลับมาที่ `returnUrl` ที่มี `?intent=` →
 หน้าเดิม (ศูนย์บิล/ลิงก์ชำระ/แพ็กเกจ/ส่วนเสริม) เปิด widget ต่อในโหมด "ตรวจสถานะ" (ถามเซิร์ฟเวอร์ ไม่เชื่อ query) · CSP มาจาก `CspNeeds` แล้ว ·
 แบงก์กิ้ง/วอลเล็ทใช้ "รับกลับ" ตัวเดียวกัน + ช่องเบอร์วอลเล็ท · เปิดใน `PlatformPayMethods.NotPayableReason` เมื่อครบ · ประมาณ 2–3 วัน + ทดสอบ sandbox
 
-### 5.2 ตัดบัตรอัตโนมัติ (saved card)
+### 5.2 ตัดบัตรอัตโนมัติ (saved card) — ดีไซน์ + ข้อความยินยอม (รอบ 228 · ยังไม่สร้าง)
 Omise Customer ต่อบริษัทผู้จ่าย (เก็บ `cust_…` ใน tenant ผู้ให้บริการ · ไม่เก็บเลขบัตร) · ยินยอมชัดแจ้ง (PDPA `ConsentRecord` + ข้อความในนโยบาย) · 3DS ครั้งแรก ·
 ตัดเมื่อออกใบต่ออายุ/ใบค่าใช้งานถึงกำหนด ผ่าน `PaymentIntentService.StartAsync` ตัวเดิม (ชนิดต้นทางเดิม) · ล้ม ⇒ dunning เดิม · แอดมินปิดได้ต่อบริษัท · 4–5 วัน · **แนะนำทำหลัง 5.1**
 
-### 5.3 ดึงรอบโอน (transfers) อัตโนมัติ
+### 5.3 ดึงรอบโอน (transfers) อัตโนมัติ — ดีไซน์ละเอียดรอบ 228 (ยังไม่สร้าง)
 adapter เพิ่ม `ListSettlementsAsync` (ไม่มีชื่อเจ้าในชั้นกลาง) → ร่างรอบโอนใน `GatewaySettlementService` (ด่านยอดไม่ตรงเดิม) ให้ผู้ทำบัญชีกดยืนยัน — ไม่ลง JE อัตโนมัติ · 2 วัน
 
-### 5.4 ข้อพิพาท/chargeback
+### 5.4 ข้อพิพาท/chargeback — ✅ รอบ 228 (บันทึก + เตือน + แสดง · JE ค่าเสียหายยังทำมือ)
 adapter ยืนยัน event `charge.dispute.*` (fetch แบบเดิม) → `PaymentIntent.DisputeStatus` + ประวัติ + แจ้ง SystemAdmin · แพ้ข้อพิพาท ⇒ เรื่องค้างบนรายการชำระ (`PlatformPaymentAttention`) ให้แอดมินตัดสินพักสิทธิ์/ออกใบลดหนี้ · JE Dr ค่าเสียหาย / Cr 11340 ตอนรอบโอนหัก · 2–3 วัน
 
-### 5.5 คืนเงินค่าบริการ + ใบลดหนี้ §86/10
+### 5.5 คืนเงินค่าบริการ + ใบลดหนี้ §86/10 — ✅ รอบ 228
 ตามคำตัดสิน "ไม่คืนเงิน" — ข้อยกเว้น (เก็บซ้อน/ผิดพลาด) ใช้ปุ่มคืนเงินเดิม (SystemAdmin) แล้ว**ออกใบลดหนี้อ้างใบเดิม**ใน tenant ผู้ให้บริการ (ด่าน SUM(CN) ≤ ใบเดิม ที่มีอยู่) — ต่อสายจาก `GatewayRefundService` เมื่อ intent เป็นเงินแพลตฟอร์ม · 1.5 วัน
 
 ### 5.6 Idempotency-Key ของ Omise
 ส่ง `PaymentIntent.IdempotencyKey` เป็นหัว idempotency ของคำขอสร้าง charge (ยืนยันชื่อหัว/พฤติกรรมกับ sandbox ก่อน) ⇒ timeout ตอนสร้าง charge แล้วลองใหม่ไม่ได้ charge ซ้อน · 0.5 วัน
 
-### 5.7 ดาวน์โหลดใบเสร็จส่วนเสริมในศูนย์บิล
+### 5.7 ดาวน์โหลดใบเสร็จส่วนเสริมในศูนย์บิล — ✅ รอบ 228
 endpoint ศูนย์บิล "เอกสารที่บริษัทนี้เป็นผู้ซื้อในบริษัทผู้ให้บริการ" (ตรวจ `ContactId` ผูก tenant ด้วย `ExternalId`) ใช้กับใบเสร็จส่วนเสริม (และใบกำกับขายสดอื่น) · 0.5–1 วัน
 
-### 5.8 Proration
+### 5.8 Proration + คูปอง/โค้ดส่วนลด — ดีไซน์รอบ 228 (ยังไม่สร้าง)
 คงคำตัดสินเดิม (อัปเกรดทันที = รอบใหม่เริ่มวันอนุมัติ ส่วนที่เหลือสละ) — ทำเมื่อมีคำขอจริง (pure `PlatformProration` + เครดิตรอบหน้า) · 2 วัน
 
 ## 6. ฝ่ายค้านรอบ 227 — ผลและการแก้ (คำตัดสินผู้ประสานงาน)
@@ -177,4 +177,55 @@ endpoint ศูนย์บิล "เอกสารที่บริษัท
 | N6 | เบอร์วอลเล็ทมีขีด/ช่องว่าง | ตัวเลขล้วน | `OmisePaymentProvider.PhoneDigits` · `A4_*` |
 
 ผลต่อพฤติกรรมเดิม: ใบเสร็จค่าแพ็กเกจในโหมด "ราคาไม่รวม VAT" เปลี่ยนจาก "เงิน + VAT" เป็น "เงินที่รับ (ถอด VAT)" — ใบเดิมไม่ถูกแก้ · เลขภาษีผู้ขายที่ checksum ไม่ผ่าน ⇒ ออกใบเสร็จธรรมดาแทนใบกำกับ (การ์ดความพร้อมบอก)
+
+## 7. รอบ 228 — ทำของค้าง §5 (ทีม PLATFORM BILLING + OMISE · ผู้ประสานงานตัดสินเอง ตามคำเจ้าของ "ตัดสินเอง") · **ยังไม่ได้คอมไพล์ในเครื่องนี้**
+
+| ข้อ | สถานะ | ทำอะไร | ไฟล์ / เทสต์ |
+| --- | --- | --- | --- |
+| 5.1 บัตร + 3DS | ✅ | `IPaymentProvider.ClientPublicKey` (adapter ประกาศ — คีย์สาธารณะของ**โหมดปัจจุบัน**) + `Services/Payments/PaymentClientSetup` (สคริปต์ + คีย์ · ไม่มีชื่อเจ้า) · `PlatformPayInfo` คืน `card` + `methodOptions` (ป้ายจาก `PlatformPayMethods.Label`) · ร้าน `public-pay/methods` คืน `card` และ**ตัดปุ่มบัตรเมื่อไม่มีคีย์สาธารณะ** (เดิมขึ้นแล้วล้ม "ไม่พบโทเคนบัตร") · `js/pay-widget.js`: ตัวเลือกวิธีในหน้าต่าง · ช่องกรอกบัตร (ไม่มี name/ไม่อยู่ใน form · ล้างหลังแลกโทเคน) → โหลดสคริปต์จาก URL ที่เซิร์ฟเวอร์ให้ (CSP มาจาก `CspNeeds` แล้ว) → โทเคน → `cardToken` · ก่อนพาไปหน้าธนาคารจดรายการใน sessionStorage + URL กลับมี `payReturn=1` → `PayWidget.resume()` รันเองตอนโหลด ถามสถานะเซิร์ฟเวอร์ (ไม่เชื่อ query) · เส้นค่าบริการต้องส่ง `card` ของช่องทาง NextAcc เอง (ไม่หยิบคีย์ของร้าน) · `PlatformPayMethods.Effective(…, cardClientReady)` (ไม่มีค่าตั้งต้น — ลืมส่ง = คอมไพล์ไม่ผ่าน) | `PaymentClientSetup.cs` · `PlatformPaymentService.MethodsOf/CardSetupOf` · `PublicPaymentController.Methods` · `pay-widget.js` · `billing.html`/`addons.html`/`subscription.html` · `Card1–3` |
+| แบงก์กิ้ง/วอลเล็ท | ⚠️ ปิดต่อ | การรับกลับใช้ได้แล้ว (เส้นเดียวกับ 3DS — หน้าร้านได้ผลทันที) แต่ adapter ผูกธนาคารเดียว (`mobile_banking_kbank`/`internet_banking_bay`) และเส้นค่าบริการยังไม่ส่งเบอร์วอลเล็ท ⇒ เหตุผลใน `PlatformPayMethods.NotPayableReason` เปลี่ยนตามจริง · ทำต่อ = ตัวเลือกธนาคารใน widget + `source[type]` ต่อธนาคาร + ช่องเบอร์ใน `PlatformPaymentController.StartRequest` | — |
+| 5.7 ใบเสร็จในศูนย์บิล | ✅ | `PlatformInvoiceQueries.PaidDocumentsForBuyer` (ใบกำกับ/ใบเสร็จ/ใบลดหนี้ที่บริษัทเป็นผู้ซื้อ — ผู้ติดต่อผูก tenant ตัวเดียวกับใบแจ้งหนี้) · `GET billing-center/receipts/{id}/pdf` (Billing.Manage · ของบริษัทอื่น = 404) · ศูนย์บิลมีตาราง "ใบเสร็จ / ใบกำกับภาษี / ใบลดหนี้" + ปุ่มใบเสร็จบนแถวส่วนเสริม (`BillingCenterAddOn.ReceiptDocumentId`) | `BillingCenterController.ReceiptPdf` · `PlatformBillingCenterService` |
+| 5.5 ใบลดหนี้คืนเงิน | ✅ (แก้ตามฝ่ายค้าน B1 §7.2) | intent ค่าบริการ**ใต้บริษัทผู้ให้บริการ** (`PlatformRevenueSource.RefundBooksInPlatformTenant`) — ~~คืนเงินลง PV Dr ลูกหนี้ / Cr บัญชีพัก~~ (ฝ่ายค้าน B1: ไม่ลง PV แล้ว — ใบลดหนี้ Cr บัญชีพักคือรายการเดียว) หลัง commit `IssueRefundCreditNoteAsync` ออกใบลดหนี้ (อนุมัติทันที) อ้างใบเดิม · ยอด = เงินที่คืนรวม VAT (`SplitReceived` ถ้าใบเดิมมี VAT) · ด่าน `Helpers/PlatformRefundCreditNote.Decide` (Σ ≤ ใบเดิม · ใบเดิมยกเลิก/ไม่พบ = ไม่ออก + ทางไปต่อ) · อ้างอิง `REFUND-{เลขคืน}` กันซ้ำ · audit `RD-86/10-PLATFORM-REFUND` · ครอบคืนเงินปกติ/ตรวจผลไม่แน่ชัด/บันทึกผลมือ · รายการเก่าใต้ร้าน = ไม่ลง (เดิม) | `GatewayRefundService.IssuePlatformCreditNoteAsync` · `PlatformBillingDocumentIssuer.IssueRefundCreditNoteAsync` · `Cn1–5` |
+| 5.4 ข้อพิพาท | ✅ | adapter: event ที่ `data.object = dispute` ⇒ อ่านเลข charge (ตรวจรูป `chrg_`) → fetch charge ด้วยคีย์ของเรา → intent จาก metadata → `VerifiedWebhookEvent.Dispute` · webhook ผ่านด่านเจ้าของรายการเดิมแล้วส่ง `PaymentDisputeService.RecordAsync` (ไม่ `ApplyChargeAsync`) · คอลัมน์ `PaymentIntent.DisputeState/ProviderRef/Amount/Reason/UpdatedAt` (ADD COLUMN IF NOT EXISTS) · ประวัติ + audit `GW-DISPUTE` + กระดิ่งแอดมินแพลตฟอร์ม (เปิด/พิจารณา/แพ้/ปิด) · รายการบนหน้าแอดมินติดธง + ป้าย/ทางไปต่อ (`Helpers/PaymentDisputeRules`) · **ไม่เปลี่ยนสถานะเงิน/สิทธิ์เอง** | `PaymentDisputeService` · `OmisePaymentProvider.VerifyDisputeAsync/ParseDispute` · `Dp1–3` |
+| 6 รายงาน MRR/AR | ✅ | `GET api/admin/platform-billing/revenue-report` — MRR ตามแพ็กเกจ (Active/PastDue · ไม่ฟรี · ราคา ÷ เดือนของรอบ) · นับยกเลิกสิ้นรอบ/ค้างชำระ · ส่วนเสริมที่ต้องจ่าย (MRR) · รับค่าส่วนเสริม 30 วัน · ลูกหนี้ค้าง 5 ช่วงอายุ · หน้า `/admin/platform-billing.html` การ์ด 📈 | `Helpers/PlatformRevenueMetrics` · `Mrr1–3` |
+
+### 7.1 ดีไซน์ที่ยังไม่สร้าง (ตัดสินแล้ว — ทำเมื่อมีคำขอจริง/เวลา)
+
+**5.3 รอบโอน (transfers) → ร่างรอบโอน:** adapter เพิ่ม `Task<IReadOnlyList<ProviderSettlement>> ListSettlementsAsync(config, since, ct)` (default ว่าง · Omise = `GET /transfers?from=` แล้วต่อ `GET /transactions?…` เพื่อหา charge ในรอบ —
+ต้องยืนยันใน sandbox ว่า transfer ระบุ charge ได้ ถ้าไม่ได้ จับคู่ด้วยช่วงวันที่ + ยอดสุทธิ) → job ต่อบริษัท (JobLock + watermark `LastSettlementPullAt`) สร้าง **ร่าง** ใน `GatewaySettlementService` ด้วย intent ที่จับได้ ·
+ด่านยอดไม่ตรงเดิมบล็อก · ผู้ทำบัญชีกดยืนยัน (ไม่ลง JE อัตโนมัติ — สถานะ "ระบบภายนอกรับแล้ว" ต้องมาจากผู้ให้บริการจริง แต่การลงบัญชีเป็นของคน) · แพ้ข้อพิพาท = บรรทัดหักในรอบ ⇒ Dr ค่าเสียหายจากข้อพิพาท / Cr 11340 ·
+**ไม่สร้างรอบนี้** เพราะรูปข้อมูล transfer↔charge ของผู้ให้บริการยังไม่ยืนยันกับ sandbox (เสี่ยงร่างผิดที่ดูถูก)
+
+**5.8 Proration (อัปเกรดกลางรอบ):** pure `Helpers/PlatformProration.Charge(oldPricePerCycle, newPricePerCycle, cycleStart, cycleEnd, today)` = round((ใหม่ − เก่า) × วันที่เหลือ ÷ วันในรอบ, 2, AwayFromZero) ·
+อัปเกรด ⇒ สร้าง `SubscriptionPayment` ยอดส่วนต่าง (ชนิด `Proration` · ไม่เปลี่ยน EndDate) จ่ายผ่านศูนย์บิล/widget เดิม · จ่ายแล้วเปลี่ยนแพ็กเกจทันทีโดย**รอบเดิมคงที่** (แทนนโยบายชั่วคราว "เริ่มรอบใหม่วันอนุมัติ") ·
+ดาวน์เกรด = `Scheduled*` เดิม (มีผลวันครบรอบ · ไม่คืนส่วนต่าง — ข้อ 178 ⑥/⑦) · ไม่เก็บย้อนหลัง (ข้อ 178 ②) · แอดมินยังตั้งราคา/ยกเว้นได้ (ข้อ 178 ①)
+
+**คูปอง/โค้ดส่วนลด:** ตาราง `PlatformCoupon(Code unique ไม่สนตัวพิมพ์, Kind{Percent,Fixed}, Value, ValidFrom, ValidTo, MaxUses, UsedCount, PlansJson, AppliesTo{Subscription,AddOn,Both}, IsActive)` +
+`PlatformCouponRedemption(CouponId, CompanyId, SubscriptionPaymentId/CompanyFeatureId, Amount, At)` (unique CouponId+CompanyId) · pure `Helpers/PlatformCouponRule.Apply(price, coupon, now, plan, usedCount)` ⇒ ยอดหลังส่วนลด (ไม่ต่ำกว่า 0 · ปัดครึ่งขึ้น) หรือเหตุผลปฏิเสธ ·
+ใช้ตอน**สร้าง**รายการชำระ (ยอดยังมาจากเซิร์ฟเวอร์เสมอ) · ใช้สิทธิ์นับเมื่อเงินเข้า (handler) ใต้ advisory lock · ใบเสร็จแสดงส่วนลดเป็นบรรทัดส่วนลด (ฐานภาษีหลังส่วนลด) · **ผลต่อด่านเดิม:** อนุมัติอัตโนมัติเฉพาะ "ยอด = ราคาเต็ม" ต้องเปลี่ยนเป็น "ยอด = ราคาหลังคูปองที่บันทึกบนรายการ" (`PlatformPlanPricing.ClaimedAmountAcceptable`) ·
+แอดมินสร้าง/ปิดโค้ดที่ `/admin/platform-billing.html` + audit chain · ประมาณ 2–3 วัน
+
+**5.2 ตัดบัตรอัตโนมัติ — ข้อความยินยอม (ใช้ตอนสร้าง):**
+> "ข้าพเจ้ายินยอมให้ NextAcc บันทึกบัตรนี้ไว้กับผู้ให้บริการรับชำระเงิน (NextAcc ไม่เก็บเลขบัตร) และตัดเงินค่าแพ็กเกจ/ค่าส่วนเสริม/ค่าใช้งานตามใบแจ้งหนี้ที่ถึงกำหนดโดยอัตโนมัติ
+> ตามราคาที่แสดงในศูนย์บิล · ยกเลิกการตัดอัตโนมัติได้ทุกเมื่อที่ศูนย์บิล (มีผลกับรอบถัดไป) · ไม่มีการคืนเงินตามนโยบายการยกเลิกและคืนเงิน ฉบับ {version}"
+>
+ขั้น: ติ๊กยินยอม (บังคับ · `ConsentRecord` PDPA + ฉบับนโยบาย) → บัตรครั้งแรกผ่าน 3DS (widget เดิม) → adapter สร้าง customer + ผูกบัตร (เก็บเฉพาะ `cust_`/`card_` id ใน `PlatformSavedCard` ต่อบริษัทผู้จ่ายใน tenant ผู้ให้บริการ) →
+job ใบถึงกำหนด (JobLock) เริ่ม `PlatformPaymentService.StartAsync` ชนิดต้นทางเดิม + `ChargeRequest.CustomerRef` (Idempotency-Key = §5.6) → ล้ม ⇒ dunning เดิม + อีเมล · แอดมินปิดได้ต่อบริษัท · ทำหลัง 5.6
+
+### 7.2 ฝ่ายค้านรอบ 228 — ผลและการแก้ (คำตัดสินผู้ประสานงาน)
+
+| # | ข้อ | แก้ | ที่อยู่ / เทสต์ |
+| --- | --- | --- | --- |
+| B1 (blocking) | คืนเงินลงซ้ำ: PV Dr ลูกหนี้/Cr 11340 + ใบลดหนี้ของใบที่ชำระครบ (`AdjustmentNoteAccount.CounterLegIsMoney`) ลง Cr **เงินสด** ⇒ เงินออกสองขา + ลูกหนี้ค้าง | ทางเลือก (a): ธุรกรรมคืนเงินไม่ลง PV สำหรับค่าบริการใต้บริษัทผู้ให้บริการ · ใบลดหนี้ใส่ `PaymentAccountId` = บัญชีพัก ⇒ Dr รายได้+VAT / Cr 11340 · ใบลดหนี้ล้ม ⇒ ใบสำคัญสำรอง Dr ลูกหนี้/Cr 11340 (ดังบนงบ) + เรื่องค้าง | `GatewayRefundService.BookRefundAsync/IssuePlatformCreditNoteAsync/PostPlatformFallbackVoucherAsync` · `IssueRefundCreditNoteAsync(counterAccountId)` · Db `PlatformRefundCreditNoteDbTests.B1_*` (11340 −107 · 111 = 0 · ลูกหนี้ 0 · รายได้ −100 · VAT −7) |
+| B1 เส้นร้าน | **ยืนยันแล้วว่าเกิดแบบเดียวกัน**: คืนเงินผ่าน gateway (PV Dr ลูกหนี้/Cr บัญชีพัก) แล้วผู้ใช้ออกใบลดหนี้อ้างใบที่ชำระครบ ⇒ ขา counter = ช่องทางเงินของใบ (เงินสด/ธนาคาร) | ✅ แก้แล้ว (คำตัดสินผู้ประสานงาน "แก้เลย"): ตอนลงบัญชีใบลดหนี้ขายโหมดขาเงิน ถ้าใบต้นทางมีเงินคืน gateway (`PaymentIntent` ชนิด Document · `LastRefundJournalEntryId`) ที่ยังไม่มีใบลดหนี้ครอบ ≥ ยอดใบนี้ และไม่มี WHT ⇒ ขา counter = ผังลูกหนี้ (ขา Dr) ของ PV นั้น · อื่น ๆ = เดิม · การ "ครอบแล้ว" ใช้ชุดเดียวกับ `CreditNoteStatesAsync` (ใบลดหนี้ที่ออกแล้วอ้างใบต้นทาง) · ข้อจำกัด: คืนน้อยกว่าใบลดหนี้ (ไม่แบ่งขา) และใบที่มี WHT คงเส้นเดิม | `Helpers/GatewayRefundCreditNoteCounter` · hunk เดียวใน `DocumentService.AutoPostToJournalAsync` · Db `GatewayRefundCreditNoteCounterDbTests` (ลูกหนี้ 0 · เงินสด 0 · บัญชีพัก −107 / ทิศตรงข้าม เงินสด −107) · `Cn7_*` |
+| S1 | บันทึกยอดคืนย้อนหลัง (ลงบัญชี) ไม่ผ่านใบลดหนี้ | เลือก "ให้ระบบลงบัญชี" ⇒ `IssuePlatformCreditNoteAsync` เส้นเดียวกัน · "ลงด้วยมือแล้ว" ⇒ ไม่ออก | `RecordLegacyRefundAsync` · Db B1 ใช้ทางเข้านี้ |
+| S2 | ใบลดหนี้ล้มแล้วหายเงียบ | ประทับ `PaymentIntent.RefundCreditNotePending*/Problem/CounterAccountId/FallbackJournalEntryId` + audit `platform-refund-credit-note-failed` · รายการบนหน้าแอดมินติดธง (`PlatformReceiptGap.CreditNoteReason`) + ปุ่ม "ออกใบลดหนี้อีกครั้ง" (SystemAdmin · audit · เลขกันซ้ำเดิม · counter = ลูกหนี้ของใบสำคัญสำรอง) | `RetryPlatformCreditNoteAsync` · `AdminPlatformGatewayController.ReissueCreditNote` · `Cn6_*` |
+| S3 | ใบเดิมที่ยกเลิกถูกเลือกก่อน | ใบที่ยังมีผลก่อน | `IssueRefundCreditNoteAsync` |
+| S4 | ข้อพิพาทถอยสถานะเมื่อ event มาช้า · webhook พร้อมกัน | `PaymentDisputeRules.ShouldApply` (ผลปลายทางไม่ถอยเว้นแต่เลขข้อพิพาทใหม่ · เลขว่าง = เดิม · ส่งซ้ำไม่เขียน) + `FOR UPDATE` ในธุรกรรม | `PaymentDisputeService.RecordAsync` · `Dp3_*` `Dp4_*` |
+| S5 | ไม่มีทางปิดธงข้อพิพาท · ร้านไม่เห็น | "รับทราบข้อพิพาท" (แอดมิน: SystemAdmin · ร้าน: สิทธิ์คืนเงิน · ค่าบริการ NextAcc = SystemAdmin) + audit · ธงกลับมาเมื่อข้อพิพาทเปลี่ยน · หน้า `payment-intents.html` แสดงข้อพิพาท · กระดิ่งเจ้าของบริษัทสำหรับรายการของร้าน | `AcknowledgeAsync` · `PaymentGatewayController.AcknowledgeDispute` · `Dp5_*` |
+| S6 | MRR ส่วนเสริมนับรอชำระ/ทดลอง/บริษัทหมดอายุ | นับเฉพาะจ่ายแล้ว + พ้นทดลอง + บริษัทใช้งาน (`AddOnCountsTowardMrr`) · แยกคอลัมน์รอชำระ/ทดลอง | `revenue-report` · `Mrr4_*` |
+| N1–N4 | resume ล้างเครื่องหมายก่อนตรวจ customAuth · โทเคนบัตรค้างหลังเริ่มไม่สำเร็จ · ตัวหาบริษัทผู้ให้บริการซ้ำ · เหตุผลแอดมินไม่อยู่บนใบ | ตรวจก่อนล้าง · ล้างโทเคน · `PlatformInvoiceQueries.PlatformTenantIdAsync` · บรรทัดใบลดหนี้พกเหตุผล (`LineDescription`) | `pay-widget.js` · `GatewayRefundService` · `Cn6_*` |
+
+ข้อจำกัดที่รู้: เรื่องค้างใบลดหนี้เก็บได้ 1 รายการต่อรายการชำระ — ล้มซ้อนอีกครั้งก่อนออกรายการแรก ข้อความบอกให้ดูบันทึกตรวจสอบ (audit เก็บทั้งสองรายการ) ·
+ใบลดหนี้อาจถูกด่าน §86/10 ของ DocumentService (วันที่ใบเทียบเดือนเหตุการณ์) ⇒ ล้ม ⇒ ใบสำคัญสำรอง + เรื่องค้าง (ไม่เงียบ) · ยังไม่ได้คอมไพล์ในเครื่องนี้
 

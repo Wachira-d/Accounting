@@ -420,7 +420,7 @@ public class UsageMeteringService : IUsageMeteringService
     /// <summary>ค่าเหมารายเดือน 1 ฟีเจอร์ 1 งวด — เรียกจาก AddOnMonthlyBillingJob เท่านั้น
     /// (ดู doc ที่ interface ว่าทำไมแยกจาก RecordAsync)</summary>
     public async Task<UsageRecordResult> RecordFlatMonthlyAsync(Guid companyId, string featureCode,
-        string period, CancellationToken ct = default)
+        string period, CancellationToken ct = default, bool planActive = true)
     {
         try
         {
@@ -444,7 +444,10 @@ public class UsageMeteringService : IUsageMeteringService
             var (amount, reason) = AddOnBilling.FlatAmount(
                 plan.UnitPrice, row.SnapshotUnitPrice, row.TrialUntil,
                 row.GrantSource != AddOnGrantSource.OwnerSelfServe, nowUtc,
-                row.PaymentStatus, row.UpfrontPeriod, period);
+                row.PaymentStatus, row.UpfrontPeriod, period, planActive);
+            // รอบ 229 (QUOTA_ADDON แพ็ก 0 · P1): แพ็กเกจไม่ active ⇒ ไม่มีบริการ ⇒ ไม่บันทึกค่าเหมาและไม่ประทับงวด (ต่ออายุแล้วงวดนี้ออกได้ตามปกติ)
+            if (reason == AddOnBilling.PlanInactiveReason)
+                return new UsageRecordResult(false, null, 0, false, false, "แพ็กเกจไม่ active — ไม่ออกค่าเหมาส่วนเสริมงวดนี้");
 
             var account = company.BillingAccountId.HasValue
                 ? await _db.BillingAccounts.FirstOrDefaultAsync(a => a.Id == company.BillingAccountId.Value, ct)

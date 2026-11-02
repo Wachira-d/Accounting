@@ -245,7 +245,10 @@ public partial class CmsBookingService
             .Select(b => (Guid?)b.Id).FirstOrDefaultAsync();
         if (id is not Guid bookingId) return null;
         var resp = await GetBookingAsync(companyId, siteId, bookingId);
-        return resp == null ? null : ForCustomer(resp);
+        if (resp == null) return null;
+        // รอบ 228 (ฝ่ายค้าน N4): ปุ่มชำระมัดจำภายหลัง/เปลี่ยนวิธีรับ เฉพาะมุมมองลูกค้า (หน้าพนักงานไม่ต้องคิด)
+        await FillManageInfoAsync(companyId, siteId, resp);
+        return ForCustomer(resp);
     }
 
     /// <summary>ตัดข้อมูลภายในออกจากคำตอบที่ลูกค้าเห็น (หมายเหตุภายใน · ข้อความ ERP · ผู้ให้บริการภายใน) — ตัวเดียว</summary>
@@ -467,7 +470,8 @@ public partial class CmsBookingService
                 Quantity: qty, Unit: qty > 1 ? "ช่วง" : "ครั้ง",
                 UnitPrice: unitPrice, DiscountPercent: 0m, VatRate: vatRate, WithholdingTaxRate: 0m, AccountId: product?.SalesAccountId, ProductCode: product?.Code),
         };
-        lines.AddRange(DeliveryErpLines(vatRegistered, booking.DeliveryFee, booking.TotalAmount, vatRate));   // รอบ 226
+        lines.AddRange(DeliveryErpLines(vatRegistered, booking.DeliveryFee, booking.TotalAmount, vatRate,
+            await ShippingRevenueAccount.ResolveAsync(_db, companyId, siteId)));   // รอบ 226 · รอบ 228 บัญชีรายได้ค่าจัดส่ง
         var full = DocumentService.PreviewTotals(lines, true, 0m);
         var vatPortion = erpDoc.TotalAmount > 0m ? erpDoc.VatAmount / erpDoc.TotalAmount : 0m;
         var refundedBase = Math.Round(erpDoc.DepositRefundedAmount * (1 - vatPortion), 2, MidpointRounding.AwayFromZero);

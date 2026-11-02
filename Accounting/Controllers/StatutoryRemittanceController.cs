@@ -31,9 +31,26 @@ public class StatutoryRemittanceController : ControllerBase
     /// <summary>ยอดรอนำส่งทุกประเภท + ประวัติ.</summary>
     [HttpGet]
     public async Task<ActionResult<ApiResponse<RemittanceDashboardResponse>>> Get(
-        Guid companyId, [FromQuery] int monthsBack = 12)
+        Guid companyId, [FromQuery] int monthsBack = 12, [FromQuery] bool includeOldAnnual = false)
         => Ok(new ApiResponse<RemittanceDashboardResponse>(true,
-            await _service.GetDashboardAsync(companyId, monthsBack)));
+            await _service.GetDashboardAsync(companyId, monthsBack, includeOldAnnual)));
+
+    /// <summary>รอบ 228 ฝ่ายค้าน S3 — "ชำระนอกระบบแล้ว": ผูกใบสำคัญที่ลงเองกับงวด ภ.ง.ด.51/50 · กท.20ก (ไม่ลง JE ใหม่ · audit) · สิทธิ์เดียวกับการนำส่ง</summary>
+    [HttpPost("settled-outside")]
+    [RequirePermission(PermissionKeys.TaxFile)]
+    public async Task<ActionResult<ApiResponse<RemitResult>>> SettledOutside(
+        Guid companyId, [FromBody] SettledOutsideRequest request)
+    {
+        try
+        {
+            var res = await _service.SettledOutsideAsync(companyId, request, JwtHelper.GetUserIdFromClaims(User).ToString());
+            return Ok(new ApiResponse<RemitResult>(true, res, res.Message));
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new ApiResponse<RemitResult>(false, null, ex.Message));
+        }
+    }
 
     /// <summary>ปฏิทินนำส่ง "แบบ × เดือน" สำหรับ dashboard — ตอบว่าเดือนไหนยื่นแล้ว/ยัง
     /// รวมงวดที่ยอด 0 (ต้องยื่นแบบเปล่า) และงวดที่ระบบยังไม่ทราบยอด.</summary>

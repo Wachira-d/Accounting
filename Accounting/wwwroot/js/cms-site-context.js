@@ -292,3 +292,135 @@
 
   window.CmsSiteContext = CmsSiteContext;
 })();
+
+/* รอบ 228 (erp-review/2026-11-02/CMS_SETTINGS_UX_AUDIT.md แพ็ก B · §1 ข้อ 7) — ตัวกัน "ค่าที่พิมพ์แล้วยังไม่บันทึกหาย" ของหน้าตั้งค่า CMS ทุกหน้า
+ * เดิม: สลับกลุ่ม/สลับเว็บ/ปิดหน้า แล้วค่าที่พิมพ์หายเงียบ (มีแค่ lodging-settings ที่เตือน)
+ * ใช้: CmsDirtyGuard.watch(el) — ช่องใน el ที่ผู้ใช้แก้ (input/change) ⇒ ป้าย "ยังไม่ได้บันทึก" · reset(el) หลังบันทึก/โหลดใหม่ · markDirty(el) เมื่อค่าเปลี่ยนโดยโค้ด (อัปโหลดรูป)
+ *     CmsDirtyGuard.confirmLeave() — ก่อนเปลี่ยนกลุ่ม/เว็บ: ไม่มีค่าค้าง ⇒ true · มี ⇒ ถาม (ยืนยัน = ทิ้งค่าแล้วไปต่อ) · ส่งเป็น beforeLeave ของตัวสลับเว็บได้ตรง
+ *     ปิดแท็บ/รีเฟรชขณะมีค่าค้าง ⇒ เบราว์เซอร์ถาม (beforeunload) */
+(function () {
+  const dirty = new Set();
+  const badge = (el, on) => {
+    if (!el || !el.querySelector) return;
+    let b = el.querySelector(':scope > .cms-dirty-badge');
+    if (on && !b && el.insertAdjacentHTML) {
+      el.insertAdjacentHTML('afterbegin', '<div class="cms-dirty-badge" style="background:#fffbeb;border:1px solid #fcd34d;color:#78350f;border-radius:8px;padding:6px 10px;font-size:12px;margin-bottom:8px">● มีค่าที่ยังไม่ได้บันทึก — กดปุ่มบันทึกของส่วนนี้ก่อนออก</div>');
+    } else if (!on && b) b.remove();
+  };
+  const CmsDirtyGuard = {
+    watch(el) {
+      if (!el || el.__cmsDirtyWatched || !el.addEventListener) return;
+      el.__cmsDirtyWatched = true;
+      const on = (e) => {
+        const t = e && e.target;
+        if (!t || !t.matches || !t.matches('input,select,textarea') || t.type === 'file' || t.dataset.noDirty === '1') return;
+        CmsDirtyGuard.markDirty(el);
+      };
+      el.addEventListener('input', on);
+      el.addEventListener('change', on);
+    },
+    markDirty(el) { if (!el) return; dirty.add(el); badge(el, true); },
+    reset(el) { if (el) { dirty.delete(el); badge(el, false); } else { dirty.forEach(x => badge(x, false)); dirty.clear(); } },
+    isDirty() {
+      for (const el of Array.from(dirty)) if (el.isConnected === false) dirty.delete(el);
+      return dirty.size > 0;
+    },
+    confirmLeave() {
+      if (!CmsDirtyGuard.isDirty()) return true;
+      const ok = (typeof confirm === 'function') ? confirm('มีค่าที่แก้แล้วยังไม่ได้บันทึก — ออกจากส่วนนี้แล้วค่าที่พิมพ์จะหาย\n\nกด "ตกลง" เพื่อทิ้งค่า · "ยกเลิก" เพื่อกลับไปบันทึก') : false;
+      if (ok) CmsDirtyGuard.reset();
+      return ok;
+    },
+  };
+  try {
+    window.addEventListener('beforeunload', (e) => {
+      if (!CmsDirtyGuard.isDirty()) return;
+      e.preventDefault(); e.returnValue = '';
+    });
+  } catch (_) { /* ไม่มี DOM (sim) */ }
+  window.CmsDirtyGuard = CmsDirtyGuard;
+})();
+
+/* รอบ 228 (erp-review/2026-11-02/CMS_SETTINGS_UX_AUDIT.md แพ็ก E · §4.2) — แผง "สิ่งที่ยังไม่ได้ตั้งค่า" ของเว็บ
+ * ข้อ/ข้อความ/ผลตัดสินมาจากเซิร์ฟเวอร์ (GET …/booking/setup-status · Helpers/CmsSiteSetupChecklist) — ไฟล์นี้แสดงอย่างเดียว
+ * ใช้: ศูนย์ตั้งค่าเว็บ (แผงบนสุด) · การ์ดเว็บใน "เว็บไซต์ทั้งหมด" (x/y) · ก่อนเผยแพร่ (cms-edit/cms-sites — แสดง ไม่บล็อก) */
+(function () {
+  const esc = (v) => (window.Layout && Layout.esc ? Layout.esc(v) : String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])));
+  const CmsSetupStatus = {
+    async load(siteId) {
+      if (!siteId || !window.API || !window.Layout) return null;
+      try { return (await API.get(`/api/companies/${Layout.getCompanyId()}/cms/sites/${encodeURIComponent(siteId)}/booking/setup-status`)).data || null; }
+      catch (_) { return null; }
+    },
+    href(item, siteId) {
+      const id = encodeURIComponent(siteId || '');
+      if (item.group) return `/pages/cms-site-settings.html?siteId=${id}&group=${encodeURIComponent(item.group)}`;
+      const m = /^cms-edit:(\w+)$/.exec(item.href || '');
+      if (m) return m[1] === 'publish' ? `/pages/cms-edit.html?siteId=${id}` : `/pages/cms-edit.html?siteId=${id}&tab=${m[1]}`;
+      return null;
+    },
+    /** แผงเต็ม (ศูนย์ตั้งค่าเว็บ) — ครบแล้ว ⇒ แถบเขียวสั้น */
+    render(el, st, siteId) {
+      if (!el) return;
+      if (!st || !Array.isArray(st.items)) { el.innerHTML = ''; return; }
+      const missing = st.items.filter(i => !i.done);
+      if (!missing.length) { el.innerHTML = `<div class="sg-card" style="background:#ecfdf5;border-color:#a7f3d0">✅ ตั้งค่าครบ ${st.done}/${st.total} — เว็บพร้อมรับลูกค้า</div>`; return; }
+      el.innerHTML = `<div class="sg-card" style="border-color:#fcd34d"><h3 style="font-size:16px;font-weight:600;margin:0 0 6px">📝 สิ่งที่ยังไม่ได้ตั้งค่า (${st.done}/${st.total})</h3>
+        ${missing.map(i => { const h = this.href(i, siteId); return `<div class="sg-link"><div><div style="font-weight:500">${i.blocking ? '⛔' : '⚠️'} ${esc(i.label)}</div>
+          ${i.detail ? `<div class="sg-hint">${esc(i.detail)}</div>` : ''}</div>${h ? `<a class="btn btn-sm btn-secondary" href="${esc(h)}">ไปตั้ง →</a>` : ''}</div>`; }).join('')}</div>`;
+    },
+    /** ป้าย x/y (การ์ดเว็บ) */
+    badge(st) {
+      if (!st) return '';
+      const ok = st.done === st.total;
+      return `<span title="ตั้งค่าเว็บ: ${st.done}/${st.total} ข้อ" style="font-size:12px;padding:2px 8px;border-radius:10px;background:${ok ? '#dcfce7' : '#fef3c7'};color:${ok ? '#166534' : '#92400e'}">${ok ? '✅' : '📝'} ตั้งค่า ${st.done}/${st.total}</span>`;
+    },
+    /** ก่อนเผยแพร่: แสดงข้อที่ขาด (ไม่บล็อก) แล้วถามยืนยัน — คืน true = ไปต่อ */
+    async confirmPublish(siteId) {
+      const st = await this.load(siteId);
+      const note = st && st.beforePublishNote;
+      return confirm((note ? note + '\n\n' : '') + 'ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ');
+    },
+  };
+  window.CmsSetupStatus = CmsSetupStatus;
+})();
+
+/* รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก F · §1 ข้อ 8) — ช่องเวลา "ตัวเลข + หน่วย" (นาที/ชั่วโมง/วัน) แทนช่องนาทีล้วน
+ * เดิม: หน่วย 4 แบบในเรื่องเดียวกัน (ใส่ 24 คิดว่า 24 ชม. ได้ 24 นาที ⇒ ระบบยกเลิกการจองลูกค้า)
+ * ใช้: CmsDuration.attach('bpayDeadline', 'min') — ช่องเดิมยังเก็บค่าหน่วยฐาน (โค้ดโหลด/บันทึกเดิมไม่เปลี่ยน) · ซ่อนช่องเดิม แสดงตัวเลข + หน่วยแทน ·
+ *     CmsDuration.sync(id) หลังโค้ดตั้งค่าช่องเดิม (โหลดจากเซิร์ฟเวอร์) ⇒ แสดงในหน่วยที่ใหญ่สุดที่หารลงตัว */
+(function () {
+  const UNITS = { min: [['นาที', 1], ['ชั่วโมง', 60], ['วัน', 1440]], hour: [['ชั่วโมง', 1], ['วัน', 24]] };
+  const CmsDuration = {
+    attach(id, base) {
+      const el = document.getElementById(id);
+      if (!el || el.dataset.durAttached === '1' || !UNITS[base]) return;
+      el.dataset.durAttached = '1'; el.dataset.durBase = base;
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;gap:6px;align-items:center';
+      wrap.innerHTML = `<input type="number" class="form-input" min="0" step="1" style="max-width:140px" id="${id}__n" placeholder="${(el.getAttribute('placeholder') || '').replace(/"/g, '&quot;')}">`
+        + `<select class="form-input" style="width:auto" id="${id}__u">${UNITS[base].map(([l, f]) => `<option value="${f}">${l}</option>`).join('')}</select>`;
+      el.insertAdjacentElement('afterend', wrap);
+      el.style.display = 'none';
+      const push = () => {
+        const n = document.getElementById(id + '__n').value;
+        el.value = n === '' ? '' : String(Math.round(Number(n) * Number(document.getElementById(id + '__u').value)));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      document.getElementById(id + '__n').addEventListener('input', push);
+      document.getElementById(id + '__u').addEventListener('change', push);
+      this.sync(id);
+    },
+    sync(id) {
+      const el = document.getElementById(id); const n = document.getElementById(id + '__n'); const u = document.getElementById(id + '__u');
+      if (!el || !n || !u) return;
+      const units = UNITS[el.dataset.durBase] || [];
+      const v = el.value === '' ? null : Number(el.value);
+      if (v == null || !Number.isFinite(v)) { n.value = ''; u.value = String(units[units.length > 1 ? 1 : 0][1]); return; }
+      let pick = units[0];
+      for (const x of units) if (v !== 0 && v % x[1] === 0) pick = x;
+      u.value = String(pick[1]); n.value = String(v / pick[1]);
+    },
+  };
+  window.CmsDuration = CmsDuration;
+})();

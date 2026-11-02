@@ -1,13 +1,13 @@
-# local_disk_write_check — ไฟล์:จำนวน GetCurrentDirectory() ที่มีอยู่ก่อน (ratchet · ลดได้ เพิ่มไม่ได้)
+# local_disk_write_check — ไฟล์:จำนวนจุดแตะดิสก์ตรง (GetCurrentDirectory · File.* · FileStream · Directory.* · PhysicalFile)
+# ratchet: ลดได้ เพิ่มไม่ได้ · เหตุผลของจุดที่เหลือ: erp-review/2026-11-02/FILE_STORAGE_AUDIT.md
 Controllers/DocumentBrandController.cs:1
-Controllers/FileAttachmentController.cs:3
-Controllers/IntegrationController.cs:1
-Controllers/OcrController.cs:1
-Controllers/V1/OcrV1Controller.cs:1
-Services/Implementations/FileAttachmentService.cs:1
-Services/Implementations/KnowledgeBaseService.cs:1
-Services/Implementations/LineBotService.cs:1
+Controllers/EtaxController.cs:3
+Program.cs:11
+Services/Ai/Embedding/OnnxSentenceEmbeddingService.cs:1
+Services/Ai/Embedding/WordPieceTokenizer.cs:3
+Services/Implementations/EtaxInvoiceService.cs:1
+Services/Implementations/KnowledgeBaseService.cs:4
 Services/Implementations/Lodging/LodgingService.Operations.cs:2
-Services/Implementations/PortalService.cs:1
-Services/Implementations/SaasBillingDocumentService.cs:2
+Services/Implementations/Ocr/EmbeddedTesseractOcrService.cs:2
+Services/Implementations/PdfGenerationService.PdfA3.cs:2
 Services/Implementations/SettingsService.cs:2

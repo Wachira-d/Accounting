@@ -845,6 +845,35 @@ public class SubscriptionService : ISubscriptionService
 
     // ==================== Usage Tracking ====================
 
+    /// <summary>รอบ 229 ฝ่ายค้าน S3: เรื่องค้างบนรายการชำระ — ต่ออายุแพ็กเกจแล้วแต่โควตาเสริมในใบไม่ได้รอบใหม่</summary>
+    public const string QuotaRenewalAttentionRule = "PLATFORM-QUOTA-RENEWAL-FAILED";
+
+    private async Task ReleaseStaleQuotaRenewalLinesAsync(SubscriptionPayment payment, Guid staleInvoiceId, string actor)
+    {
+        try
+        {
+            var cid = payment.Subscription.CompanyId;
+            var rows = await _db.CompanyQuotaAddOns.Where(p => p.CompanyId == cid && p.RenewalInvoiceDocumentId == staleInvoiceId).ToListAsync();
+            if (rows.Count == 0) return;
+            foreach (var r in rows) { r.RenewalInvoiceDocumentId = null; r.RenewUnitPrice = null; r.UpdatedAt = DateTime.UtcNow; r.UpdatedBy = actor; }
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = cid, Action = AuditAction.Update, EntityType = nameof(CompanyQuotaAddOn), EntityId = staleInvoiceId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "QuotaRenewalLinesReleased", invoiceId = staleInvoiceId, rows = rows.Select(r => r.Id), payment = payment.PaymentNumber, by = actor }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            var msg = $"ใบแจ้งหนี้ต่ออายุเดิมถูกแทนที่ด้วยรายการ {payment.PaymentNumber} — โควตาเสริม {rows.Count} รายการในใบเดิมยังไม่ได้ต่อ "
+                + "(ใช้ได้ถึงวันหมดอายุเดิมที่จ่ายไว้ · ข้อมูลไม่หาย) · ต่อได้โดยซื้อแบบ \"ถึงวันหมดอายุแพ็กเกจ\" ที่หน้า \"แพ็กเกจและการชำระเงิน\"";
+            var ownerId = await _db.CompanyUsers.Where(cu => cu.CompanyId == cid && cu.Role == UserRole.Owner).Select(cu => cu.UserId).FirstOrDefaultAsync();
+            if (ownerId != Guid.Empty)
+                await NotifyUserAsync(ownerId, cid, Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded, NotificationType.SubscriptionPaymentApproved,
+                    "โควตาเสริมยังไม่ได้ต่ออายุ", msg, "/pages/billing.html", "SubscriptionPayment", payment.Id);
+            await PlatformPaymentAttention.NotifyAdminsAsync(_db, _notificationService, $"โควตาเสริมหลุดจากการต่ออายุ ({payment.PaymentNumber})", msg, payment.Id);
+        }
+        catch (Exception ex) { _logger?.LogError(ex, "ปลดบรรทัดโควตาเสริมของใบต่ออายุที่ถูกแทนที่ไม่สำเร็จ (ใบ {Invoice})", staleInvoiceId); }
+    }
+
     public async Task<bool> CheckFeatureAccessAsync(Guid companyId, FeatureFlags feature, bool recordShadow = true)
     {
         var eff = await GetEffectivePlanAsync(companyId);
@@ -1154,6 +1183,9 @@ public class SubscriptionService : ISubscriptionService
         // ⇒ ด่านนี้ผ่านทุกครั้ง (ด่านที่เขียนไว้แต่ไม่มีอินพุตจริง = ไม่มีด่าน). ใช้สูตรเดียว
         // กับที่หน้าจอโชว์ (StorageBytesForPoolAsync) — ไฟล์บัญชี + สื่อ CMS แชร์งบเดียวกัน
         var usedBytes = await StorageBytesForPoolAsync(poolCompanyIds);
+        // รอบ 229 (QUOTA_ADDON §B.4): override รายบริษัทของแอดมิน (GB · -1 = ไม่จำกัด) ชนะช่องเดิม · + พื้นที่ที่บริษัทนี้ซื้อเพิ่มและยังมีผล
+        // (ตัวอ่านเดียวกับด่าน/หน้าสรุป — QuotaStore) · ไม่มีแถว = เพดานเดิมทุกบาท (ไม่กระทบผู้เช่าเดิม)
+        maxBytes = await Accounting.Helpers.QuotaStorageLimit.ApplyAsync(_db, companyId, maxBytes);
         return new StorageStatus(usedBytes, maxBytes);
     }
 
@@ -2645,6 +2677,27 @@ public class SubscriptionService : ISubscriptionService
                 $"ผู้เช่าหักภาษี ณ ที่จ่าย {payment.WithholdingTaxAmount:N2} บาท — รอหนังสือรับรอง 50 ทวิ (ผู้เช่าส่งที่ศูนย์บิล/ลิงก์ชำระ)",
                 PlatformPaymentAttention.RuleWhtCertPending, performedBy);
 
+        // รอบ 229 (QUOTA_ADDON §B.6 ขั้น 5 · ฝ่ายค้าน S3): จ่ายใบต่ออายุ (ต่อแพ็กเกจแล้วในหน่วยความจำ) ⇒ โควตาเสริมทุกบรรทัดในใบได้รอบใหม่
+        // ถึงวันหมดอายุใหม่ — <b>บันทึกพร้อมการอนุมัติในธุรกรรมที่ล็อกเดียวกัน</b> (save:false) ⇒ ต่อแพ็กเกจแต่ไม่ต่อโควตาเสริมเป็นไปไม่ได้ ·
+        // idempotent (unique RenewedFromId + แถวที่เพิ่มค้างใน context) · ล้ม (อ่านไม่ได้) ⇒ ไม่ทำให้การรับเงินพัง แต่ประทับเรื่องค้างบนรายการชำระ + audit (ล้มดัง)
+        if (payment.Status == SubscriptionPaymentStatus.Approved && !invoiceOnly && payment.PlatformInvoiceDocumentId is Guid renewalInvoiceId)
+        {
+            try
+            {
+                await Accounting.Services.Payments.QuotaRenewalLines.ActivateForInvoiceAsync(_db, payment.Subscription.CompanyId, renewalInvoiceId,
+                    payment.Subscription.EndDate, performedBy, save: false);
+            }
+            catch (Exception ex)
+            {
+                foreach (var added in _db.ChangeTracker.Entries<CompanyQuotaAddOn>().Where(x => x.State == EntityState.Added).ToList())
+                    added.State = EntityState.Detached;
+                _logger?.LogError(ex, "ต่ออายุโควตาเสริมพร้อมแพ็กเกจไม่สำเร็จ (payment {Payment} · ใบ {Invoice})", payment.Id, renewalInvoiceId);
+                PlatformPaymentAttention.Flag(_db, payment, payment.Subscription.CompanyId,
+                    $"ต่ออายุแพ็กเกจแล้วแต่สร้างรอบใหม่ของโควตาเสริมในใบ {payment.PlatformInvoiceDocumentId} ไม่สำเร็จ — ผู้ดูแลระบบต้องเปิดรอบใหม่ให้ด้วยมือ",
+                    QuotaRenewalAttentionRule, performedBy);
+            }
+        }
+
         await _db.SaveChangesAsync();
         if (lockTx != null) await lockTx.CommitAsync();   // ปล่อยล็อก — ขั้นถัดไป idempotent (อ้างอิงต่อรายการ) และเรียกบริการที่มีธุรกรรมของตัวเอง
 
@@ -2660,6 +2713,9 @@ public class SubscriptionService : ISubscriptionService
         // รอบ 219 เฟส 2 (S9): ใบต่ออายุของรอบเดิมที่ไม่ได้ถูกจ่าย ⇒ ยกเลิกผ่านเส้นยกเลิกเอกสาร (ยังไม่มีการชำระ) / บันทึกงานออกใบลดหนี้ (มีการชำระแล้ว)
         if (payment.Status == SubscriptionPaymentStatus.Approved && staleRenewalId is Guid stale && _billing != null)
             await _billing.HandleStaleRenewalInvoiceAsync(payment.SubscriptionId, stale, $"รายการ {payment.PaymentNumber} เริ่ม/ต่อรอบใหม่");
+        // ฝ่ายค้าน S3: ใบต่ออายุที่ถูกแทนที่มีบรรทัดโควตาเสริม ⇒ บรรทัดเหล่านั้นไม่ได้ต่อ (ใบถูกยกเลิก/ต้องลดหนี้) — ปลดล็อกให้เลือกต่อในใบใหม่ได้ + แจ้งลูกค้าและผู้ดูแล (ไม่เงียบ)
+        if (payment.Status == SubscriptionPaymentStatus.Approved && staleRenewalId is Guid staleInv)
+            await ReleaseStaleQuotaRenewalLinesAsync(payment, staleInv, performedBy);
 
         // รอบ 219 เฟส 2 ขั้น 2 (G-8): ชำระแล้ว ⇒ ประเมินค้างชำระของบริษัทนี้ใหม่ทันที (ไม่รอรอบงาน) — ระบบระงับไว้เพราะค้างชำระและไม่มีใบเกินผ่อนผันแล้ว ⇒ คืนสถานะ
         if (payment.Status == SubscriptionPaymentStatus.Approved && _dunning != null)

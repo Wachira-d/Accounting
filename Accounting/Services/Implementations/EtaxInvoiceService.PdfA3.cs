@@ -122,12 +122,13 @@ public partial class EtaxInvoiceService
         var fileName = $"{etax.EtaxRefNumber}.pdf";
 
         var storageRoot = Path.Combine(_env.ContentRootPath, "storage", "etax", companyId.ToString("N"));
-        Directory.CreateDirectory(storageRoot);
 
         var pdfPath = Path.Combine(storageRoot, fileName);
         var xmlPath = Path.Combine(storageRoot, $"{etax.EtaxRefNumber}.xml");
-        await File.WriteAllBytesAsync(pdfPath, pdfBytes);
-        await File.WriteAllTextAsync(xmlPath, etax.XmlContent, System.Text.Encoding.UTF8);
+        // ผ่านที่เก็บกลาง (Local/S3 · ทีม FS 2026-11-02) · XML คงไบต์เดิม (UTF-8 + BOM ตามที่ File.WriteAllTextAsync(…, Encoding.UTF8) เคยเขียน)
+        await _storage.WriteAsync(pdfPath, pdfBytes, "application/pdf");
+        await _storage.WriteAsync(xmlPath,
+            System.Text.Encoding.UTF8.GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(etax.XmlContent)).ToArray(), "application/xml");
 
         etax.PdfFilePath = pdfPath;
         etax.XmlFilePath = xmlPath;

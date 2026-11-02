@@ -57,19 +57,22 @@ public class ProductService : IProductService
         var p = await _db.Products.FirstOrDefaultAsync(x => x.Id == productId && x.CompanyId == companyId && !x.IsDeleted)
             ?? throw new InvalidOperationException("ไม่พบสินค้า");
         var list = ParseImageUrls(p.ImageUrlsJson);
-        list.RemoveAll(u => u == url);
+        var removed = list.RemoveAll(u => u == url);
         p.ImageUrlsJson = list.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(list);
         await _db.SaveChangesAsync();
 
         // Best-effort delete of the file + its thumbnail. Don't fail the request if the file is gone.
         try
         {
-            if (url.StartsWith("/uploads/products/", StringComparison.OrdinalIgnoreCase))
+            // ผ่านที่เก็บกลางตัวเดียวกับที่ ImageProcessingService เขียน (Local/S3 · ทีม FS 2026-11-02) · ลบเฉพาะ URL ที่อยู่ในแกลเลอรีของสินค้านี้จริง
+            // (เดิมลบตาม URL ที่ผู้เรียกส่งมาแม้ไม่อยู่ในรายการ — `..` ชี้ออกนอกโฟลเดอร์รูปได้ · โฟลเดอร์ต้องเป็นของบริษัทนี้)
+            if (removed > 0 && !url.Contains("..", StringComparison.Ordinal)
+                && url.StartsWith($"/uploads/products/{companyId}/", StringComparison.OrdinalIgnoreCase) && _images.Storage is { } storage)
             {
                 var abs = Path.Combine(_env.WebRootPath, url.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
-                if (File.Exists(abs)) File.Delete(abs);
+                await storage.DeleteAsync(abs);
                 var thumb = abs.Replace(Path.GetFileName(abs), Path.GetFileNameWithoutExtension(abs) + "_thumb.jpg");
-                if (File.Exists(thumb)) File.Delete(thumb);
+                await storage.DeleteAsync(thumb);
             }
         }
         catch { /* swallow — file cleanup is best-effort */ }

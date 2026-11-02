@@ -35,6 +35,7 @@ public class CmsBookingPaymentController : ControllerBase
 
     /// <summary>บันทึกนโยบาย + ช่องทาง — โหมดเก็บเงินที่ไม่มีช่องทางชำระ ⇒ 400 พร้อมทางไปต่อ (ไม่บันทึกค่าที่ไม่มีผล) · คีย์เดียวกับค่าตั้งการจองของเว็บ</summary>
     [HttpPut("payment-settings")]
+    [RequireSiteRole(SiteStaffRole.Admin)]   // ฝ่ายค้านรอบ 228 S-3: ค่าตั้งการรับเงิน (เขียนบัญชีรับโอนได้ด้วย) = แอดมินของเว็บ
     [RequirePermission(PermissionKeys.CmsSiteSettings)]
     public async Task<ActionResult<ApiResponse<BookingPaymentSettingsDto>>> UpdatePaymentSettings(Guid companyId, Guid siteId,
         [FromBody] BookingPaymentSettingsDto request)
@@ -56,6 +57,56 @@ public class CmsBookingPaymentController : ControllerBase
         return Ok(new ApiResponse<BookingPaymentSettingsDto>(true, result, "แก้บริการแล้ว — บันทึกโหมดการชำระได้"));
     }
 
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E): แผง "สิ่งที่ยังไม่ได้ตั้งค่า" ของเว็บ (อ่านอย่างเดียว · ศูนย์ตั้งค่า · การ์ดเว็บ · ก่อนเผยแพร่)</summary>
+    [HttpGet("setup-status")]
+    public async Task<ActionResult<ApiResponse<CmsSiteSetupStatusDto>>> SetupStatus(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<CmsSiteSetupStatusDto>(true, await _bookings.GetSetupStatusAsync(companyId, siteId)));
+
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D): ตาราง "มัดจำ & การยกเลิก ของทุกงาน" (อ่านอย่างเดียว · บอกที่แก้ต่อแถว)</summary>
+    [HttpGet("deposit-overview")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
+    public async Task<ActionResult<ApiResponse<List<DepositCancelOverviewRow>>>> DepositOverview(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<List<DepositCancelOverviewRow>>(true, await _bookings.GetDepositCancelOverviewAsync(companyId, siteId)));
+
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q1): ตัวเลือกคำถาม "ลูกค้าต้องจ่ายก่อนไหม" ของฟอร์มบริการ (ป้าย/คำอธิบาย/ชนิดเอกสารจากเซิร์ฟเวอร์)</summary>
+    [HttpGet("pay-first-options")]
+    public ActionResult<ApiResponse<IReadOnlyList<BookingPayFirstOption>>> PayFirstOptions(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<IReadOnlyList<BookingPayFirstOption>>(true, BookingPayFirst.Options));
+
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก A): บัญชีรับโอน/พร้อมเพย์/รูป QR ของเว็บ — ที่เดียวของทุกงาน (คำสั่งซื้อ · การจอง · ที่พัก)</summary>
+    [HttpGet("transfer-account")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
+    public async Task<ActionResult<ApiResponse<SiteTransferAccountDto>>> GetTransferAccount(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<SiteTransferAccountDto>(true, await _bookings.GetTransferAccountAsync(companyId, siteId)));
+
+    [HttpPut("transfer-account")]
+    [RequireSiteRole(SiteStaffRole.Admin)]   // ฝ่ายค้านรอบ 228 S-3: บัญชีที่เงินเข้า = แอดมินของเว็บเท่านั้น (+ audit ในเซอร์วิส)
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<SiteTransferAccountDto>>> UpdateTransferAccount(Guid companyId, Guid siteId,
+        [FromBody] SiteTransferAccountDto request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookings.UpdateTransferAccountAsync(companyId, siteId, request, userId);
+        return Ok(new ApiResponse<SiteTransferAccountDto>(true, result, "บันทึกบัญชีรับโอนแล้ว — ใช้กับคำสั่งซื้อ การจอง และที่พักของเว็บนี้"));
+    }
+
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก C): ค่าส่งเหมาจ่าย/ส่งฟรีของเว็บ + คำเตือนส่งฟรีเงียบ (คำตัดสิน Q3) — เว็บคำสั่งซื้อและเว็บการจอง</summary>
+    [HttpGet("shipping-settings")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
+    public async Task<ActionResult<ApiResponse<SiteShippingSettingsDto>>> GetShippingSettings(Guid companyId, Guid siteId)
+        => Ok(new ApiResponse<SiteShippingSettingsDto>(true, await _bookings.GetShippingSettingsAsync(companyId, siteId)));
+
+    [HttpPut("shipping-settings")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<SiteShippingSettingsDto>>> UpdateShippingSettings(Guid companyId, Guid siteId,
+        [FromBody] SiteShippingSettingsDto request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookings.UpdateShippingSettingsAsync(companyId, siteId, request, userId);
+        return Ok(new ApiResponse<SiteShippingSettingsDto>(true, result, "บันทึกค่าส่งแล้ว — ใช้กับคำสั่งซื้อและการจองแบบจัดส่งของเว็บนี้"));
+    }
+
     /// <summary>รอบ 226: จัดส่ง/รับเองของการจอง (ค่าส่งใช้โซน/อัตราของร้าน)</summary>
     [HttpGet("fulfillment-settings")]
     public async Task<ActionResult<ApiResponse<BookingFulfillmentSettingsDto>>> GetFulfillmentSettings(Guid companyId, Guid siteId)
@@ -69,6 +120,18 @@ public class CmsBookingPaymentController : ControllerBase
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
         var result = await _bookings.UpdateFulfillmentSettingsAsync(companyId, siteId, request, userId);
         return Ok(new ApiResponse<BookingFulfillmentSettingsDto>(true, result, "บันทึกการจัดส่ง/รับเองของการจองแล้ว"));
+    }
+
+    /// <summary>รอบ 228 (คำตัดสิน 228-6): ตั้งค่าเว็บทั้งชุดจากแม่แบบ (เช่น "สั่งทำ / พรีออเดอร์") — บริการตัวอย่าง + จัดส่ง/รับเอง + ช่องฟอร์มจอง ·
+    /// ค่าที่ตั้งไว้แล้วชนะ · คืนสิ่งที่ทำ/ข้าม/ต้องทำต่อ</summary>
+    [HttpPost("presets/{presetKey}/apply-site")]
+    [RequireSiteRole(SiteStaffRole.Admin, SiteStaffRole.Editor)]
+    [RequirePermission(PermissionKeys.CmsSiteSettings)]
+    public async Task<ActionResult<ApiResponse<BookingPresetApplyResult>>> ApplyPresetToSite(Guid companyId, Guid siteId, string presetKey)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _bookings.ApplyPresetToSiteAsync(companyId, siteId, presetKey, userId);
+        return Ok(new ApiResponse<BookingPresetApplyResult>(true, result, "ตั้งค่าเว็บจากแม่แบบแล้ว"));
     }
 
     /// <summary>ร้านยืนยันสลิป ⇒ เส้นเงินเดียวกับ gateway (ยืนยันการจอง + ใบรับมัดจำลงวันที่รับเงิน) · ล้มหลังยืนยัน ⇒ ErpNotices บอกทางไปต่อ</summary>

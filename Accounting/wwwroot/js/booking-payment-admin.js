@@ -34,25 +34,35 @@
         set('bpayDeadline', d.deadlineMinutes); set('bpayNote', d.paymentNote);
         $('bpayGateway').checked = d.onlineGatewayEnabled === true;
         $('bpayTransfer').checked = d.bankTransferEnabled !== false;
-        set('bpayBankName', d.bankName); set('bpayBankAcct', d.bankAccountNumber); set('bpayBankAcctName', d.bankAccountName);
-        set('bpayBankBranch', d.bankBranch); set('bpayPromptPay', d.promptPayId); set('bpayQrUrl', d.promptPayQrUrl);
-        this._qrPreview();
         $('bpayGatewayHint').textContent = d.companyGatewayConfigured
           ? `ระบบรับชำระเงินของบริษัท: ${d.companyGatewayName || 'ตั้งค่าแล้ว'} — ลูกค้าจ่ายแล้วยืนยันการจองอัตโนมัติ`
           : 'บริษัทยังไม่ได้ตั้งค่าระบบรับชำระเงินออนไลน์ (ตั้งค่า → รับชำระเงินออนไลน์) — เปิดช่องนี้ไม่ได้จนกว่าจะตั้ง';
         $('bpayGateway').disabled = !d.companyGatewayConfigured && !d.onlineGatewayEnabled;
         // รอบ 226 (คำตัดสิน 226-2): ช่องว่าง = ค่าตั้งต้นของเซิร์ฟเวอร์ (โหมดบังคับ)
         const dl = $('bpayDeadline'); if (dl) dl.placeholder = `ว่าง = ค่าตั้งต้น ${Number(d.defaultDeadlineMinutes || 1440)} นาที (${Math.round(Number(d.defaultDeadlineMinutes || 1440) / 60)} ชม.) · 0 = ไม่กำหนด`;
-        const dn = $('bpayDeadlineNote'); if (dn) dn.textContent = d.deadlineNote || '';   // ฝ่ายค้านรอบ 226 ข้อ 3: เว็บเดิมที่ไม่เคยกรอก ⇒ คงเป็น 0 + แนะนำ
+        const dn = $('bpayDeadlineNote'); if (dn) dn.textContent = d.deadlineNote || '';
+        // รอบ 228 (แพ็ก F · §1 ข้อ 8): "ต้องชำระภายใน" เป็น ตัวเลข + หน่วย (นาที/ชั่วโมง/วัน) — ช่องเดิมยังเก็บนาที
+        if (window.CmsDuration) { CmsDuration.attach('bpayDeadline', 'min'); CmsDuration.sync('bpayDeadline'); }   // ฝ่ายค้านรอบ 226 ข้อ 3: เว็บเดิมที่ไม่เคยกรอก ⇒ คงเป็น 0 + แนะนำ
         this._renderProblem(d.problem, d.channelWarnings);
         this._renderUncollectable(d);
         this._renderServices(d.services || []);
         this.onModeChange();
         this._optsLoaded = opts.length > 0;
+        if (window.CmsDirtyGuard) CmsDirtyGuard.reset(box.closest('.sg-card') || box);   // รอบ 228 แพ็ก B: ค่าบนจอ = ค่าที่บันทึก
       } catch (e) {
         this._optsLoaded = false;
         box.querySelector('#bpayProblem').innerHTML = `<div class="bs-hint" style="color:#b91c1c">โหลดค่าตั้งการชำระเงินไม่สำเร็จ: ${esc(e.message)}</div>`;
       }
+    },
+    /** ฝ่ายค้านรอบ 228 S-5(a): หลังบันทึกบัญชีรับโอน — อัปเดตคำเตือน/กล่องแดง/ตารางผล โดยไม่แตะช่องที่ผู้ใช้อาจกำลังแก้ */
+    async refreshWarnings(siteId) {
+      try {
+        const d = (await API.get(`${base(siteId)}/payment-settings`)).data || {};
+        this._s = Object.assign({}, this._s || {}, { channelWarnings: d.channelWarnings, services: d.services, uncollectableProblem: d.uncollectableProblem, problem: d.problem });
+        this._renderProblem(d.problem, d.channelWarnings);
+        this._renderUncollectable(d);
+        this._renderServices(d.services || []);
+      } catch (_) { /* คำเตือนเดิมคงไว้ — ครั้งหน้าโหลดใหม่ */ }
     },
     onModeChange() {
       const m = ($('bpayMode') || {}).value || '';
@@ -100,6 +110,17 @@
         if (window.Page && typeof Page.loadBookingServices === 'function') await Page.loadBookingServices();
       } catch (e) { Layout.toast(e.message, 'error', 10000); }
     },
+    // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · §1 ข้อ 9): ตารางรวม "มัดจำ & การยกเลิก ของทุกงาน" — ข้อความจากเซิร์ฟเวอร์ · แถวบอกที่แก้ (ไม่มีช่องแก้ซ้ำ)
+    async loadOverview(siteId) {
+      const el = $('sgDepositOverview'); if (!el || !siteId) return;
+      try {
+        const rows = (await API.get(`${base(siteId)}/deposit-overview`)).data || [];
+        el.innerHTML = rows.length ? `<div class="sg-card"><h3 style="font-size:16px;font-weight:600;margin:0 0 6px">📋 มัดจำ & การยกเลิก ของทุกงาน</h3>
+          <div class="bs-hint" style="margin-bottom:6px">ภาพรวมอ่านอย่างเดียว — ตรวจว่านโยบายบนเว็บตรงกับที่ระบบเก็บจริง · แก้ตามคอลัมน์ "แก้ที่"</div>
+          <div style="overflow-x:auto"><table class="table" style="font-size:12px"><thead><tr><th>งาน</th><th>ชื่อ</th><th>มัดจำ/ชำระก่อน</th><th>ยกเลิก</th><th>แก้ที่</th></tr></thead><tbody>${rows.map(r =>
+            `<tr><td>${esc(r.work)}</td><td>${esc(r.name)}</td><td>${esc(r.deposit)}${r.warning ? `<div style="color:#b45309">⚠️ ${esc(r.warning)}</div>` : ''}</td><td>${esc(r.cancellation)}</td><td class="bs-hint">${esc(r.where)}</td></tr>`).join('')}</tbody></table></div></div>` : '';
+      } catch (_) { el.innerHTML = ''; }
+    },
     _renderServices(rows) {
       const el = $('bpayServices'); if (!el) return;
       if (!rows.length) { el.innerHTML = '<div class="bs-hint">ยังไม่มีบริการ</div>'; return; }
@@ -107,26 +128,6 @@
         <tr><td>${esc(r.name)}<div class="bs-hint">${esc(Layout.enumLabel ? Layout.enumLabel('bookingType', r.bookingType) : r.bookingType)}</div></td>
           <td style="${r.problem && !r.collects ? 'color:#b45309' : ''}">${esc(r.summary)}</td>
           <td>${window.Page && typeof Page.openEditBookingService === 'function' ? `<button type="button" class="btn btn-secondary btn-sm" onclick="Page.openEditBookingService('${jsArg(r.id)}')">แก้บริการ</button>` : ''}</td></tr>`).join('')}</tbody></table>`;
-    },
-    async uploadQr(input) {
-      const f = input && input.files && input.files[0]; if (!f) return;
-      const api = Layout.api(); if (!api || !this._siteId) return;
-      try {
-        const fd = new FormData(); fd.append('file', f);
-        const res = await api.cmsUploadMedia(this._siteId, fd);
-        const url = res && res.data && res.data.publicUrl;
-        if (!url) throw new Error('เซิร์ฟเวอร์ไม่ส่ง URL กลับ');
-        $('bpayQrUrl').value = url;
-        this._qrPreview();
-        Layout.toast('อัปโหลดรูป QR แล้ว — กด “บันทึกการชำระเงิน” เพื่อใช้งาน', 'info');
-      } catch (e) { Layout.toast('อัปโหลดรูป QR ไม่สำเร็จ: ' + e.message, 'error'); }
-      input.value = '';
-    },
-    clearQr() { $('bpayQrUrl').value = ''; this._qrPreview(); },
-    _qrPreview() {
-      const url = ($('bpayQrUrl') || {}).value || '';
-      const el = $('bpayQrPreview'); if (!el) return;
-      el.innerHTML = url ? `<img src="${esc(url)}" alt="QR โอนเงิน" style="max-width:160px;max-height:160px;border:1px solid var(--gray-200);border-radius:8px">` : '<span class="bs-hint">ยังไม่มีรูป QR</span>';
     },
     async save() {
       if (!this._siteId) return;
@@ -137,9 +138,8 @@
         deadlineMinutes: num('bpayDeadline'),
         onlineGatewayEnabled: $('bpayGateway').checked, bankTransferEnabled: $('bpayTransfer').checked,
         paymentNote: ($('bpayNote') || {}).value || null,
-        updateTransfer: true,
-        bankName: txt('bpayBankName'), bankAccountNumber: txt('bpayBankAcct'), bankAccountName: txt('bpayBankAcctName'),
-        bankBranch: txt('bpayBankBranch'), promptPayId: txt('bpayPromptPay'), promptPayQrUrl: txt('bpayQrUrl'),
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก A): บัญชีรับโอนบันทึกที่การ์ดของมันเอง (js/site-transfer-account.js) — หมวดนี้ไม่แตะแถวบัญชี
+        updateTransfer: false,
       };
       try {
         let res;
@@ -276,7 +276,7 @@
         <div class="form-row">
           <div class="form-group"><label class="form-label">โหมดของเว็บ</label><select class="form-input" id="bpayMode" onchange="BookingPayAdmin.onModeChange()"></select>
             <div class="bs-hint" id="bpayModeHelp"></div></div>
-          <div class="form-group" id="bpayDeadlineRow"><label class="form-label">ต้องชำระภายใน (นาทีหลังจอง · ว่าง = ค่าตั้งต้น 1440 · 0 = ไม่กำหนด)</label>
+          <div class="form-group" id="bpayDeadlineRow"><label class="form-label">ถ้าไม่จ่ายภายใน… หลังจอง ระบบยกเลิกให้อัตโนมัติ (ว่าง = ค่าตั้งต้น 24 ชม. · 0 = ไม่กำหนด)</label>
             <input type="number" class="form-input" id="bpayDeadline" min="0" max="10080" placeholder="ว่าง = ค่าตั้งต้น 1440 นาที (24 ชม.)">
             <div class="bs-hint" id="bpayDeadlineNote"></div>
             <div class="bs-hint">ไม่ชำระ/ไม่แนบสลิปในเวลา ⇒ ระบบยกเลิกการจองและปล่อยรอบให้คนอื่น (ไม่เกินเวลานัด) · แนบสลิปแล้วไม่ถูกยกเลิกระหว่างรอร้านตรวจ</div></div>
@@ -291,22 +291,7 @@
         <div class="form-group"><label style="font-size:13px"><input type="checkbox" id="bpayGateway"> ชำระออนไลน์ (บัตร/QR ผ่านระบบรับชำระเงิน — ยืนยันการจองอัตโนมัติ)</label>
           <div class="bs-hint" id="bpayGatewayHint"></div></div>
         <div class="form-group"><label style="font-size:13px"><input type="checkbox" id="bpayTransfer" checked> โอนเงิน / สแกน QR แล้วแนบสลิป (ร้านตรวจสลิป)</label>
-          <div class="bs-hint">ใช้บัญชีเดียวกับ "ตั้งค่าการรับเงิน" ของคำสั่งซื้อ (แก้ที่นี่ = แก้ที่นั่นด้วย)</div></div>
-        <div class="form-row-3">
-          <div class="form-group"><label class="form-label">ธนาคาร</label><input type="text" class="form-input" id="bpayBankName" maxlength="128" placeholder="เช่น กสิกรไทย"></div>
-          <div class="form-group"><label class="form-label">เลขบัญชี</label><input type="text" class="form-input" id="bpayBankAcct" maxlength="30" inputmode="numeric" placeholder="xxx-x-xxxxx-x"></div>
-          <div class="form-group"><label class="form-label">ชื่อบัญชี</label><input type="text" class="form-input" id="bpayBankAcctName" maxlength="200"></div>
-        </div>
-        <div class="form-row-3">
-          <div class="form-group"><label class="form-label">สาขา (ถ้ามี)</label><input type="text" class="form-input" id="bpayBankBranch" maxlength="128"></div>
-          <div class="form-group"><label class="form-label">พร้อมเพย์ (เบอร์มือถือ / เลขผู้เสียภาษี)</label><input type="text" class="form-input" id="bpayPromptPay" maxlength="20" inputmode="numeric">
-            <div class="bs-hint">ใส่แล้วระบบสร้าง QR ที่มียอดเงินให้ลูกค้าอัตโนมัติ</div></div>
-          <div class="form-group"><label class="form-label">หรือ แนบรูป QR โอนเงิน</label>
-            <input type="hidden" id="bpayQrUrl">
-            <div id="bpayQrPreview" style="margin-bottom:6px"></div>
-            <input type="file" accept="image/*" onchange="BookingPayAdmin.uploadQr(this)">
-            <button type="button" class="btn btn-secondary btn-sm" style="margin-top:4px" onclick="BookingPayAdmin.clearQr()">ลบรูป QR</button></div>
-        </div>
+          <div class="bs-hint">เลขบัญชี · พร้อมเพย์ · รูป QR ตั้งที่การ์ด <b>“💰 บัญชีรับโอน / พร้อมเพย์”</b> ด้านบน (ที่เดียว — ใช้ร่วมกับคำสั่งซื้อและที่พัก · รอบ 228)</div></div>
         <div class="form-group"><label class="form-label">ข้อความถึงลูกค้า (เงื่อนไขการชำระ/คืนเงิน — แสดงในกล่องชำระเงิน)</label>
           <textarea class="form-input" id="bpayNote" rows="2" maxlength="1000" placeholder="เช่น มัดจำไม่คืนเมื่อยกเลิกภายใน 24 ชม. ก่อนนัด · โอนแล้วร้านยืนยันภายใน 1 ชม."></textarea>
           <div class="bs-hint">ค่าธรรมเนียมยกเลิก/คืนมัดจำตามจริงคิดจาก "ยกเลิกฟรีก่อนเวลานัด" + "% ค่าธรรมเนียม" ของแต่ละบริการ (ริบไม่เกินมัดจำ)</div></div>
@@ -331,12 +316,14 @@
     ensureStyle();
     const mods = (ctx.site && Array.isArray(ctx.site.modules)) ? ctx.site.modules : [];
     const badge = typeof ctx.scopeBadge === 'function' ? ctx.scopeBadge('site') : '';
-    el.innerHTML = (mods.includes('bookings')
+    // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก A): การ์ด "บัญชีรับโอน / พร้อมเพย์" แสดงทุกเว็บ (คำสั่งซื้อ · การจอง · ที่พัก ใช้ร่วม) — อยู่บนสุดของหมวด
+    el.innerHTML = '<div id="sgTransferCard"></div><div id="sgDepositOverview"></div>' + (mods.includes('bookings')
       ? `<div class="sg-card"><div class="sg-hint" style="margin-bottom:6px">${badge}</div>${settingsMarkup()}</div>`
-      : '<div class="sg-card sg-hint">เว็บนี้ยังไม่เปิดงานจอง — ค่าตั้งมัดจำ/ชำระก่อนของการจองจะแสดงเมื่อเปิดโมดูลการจอง</div>')
+      : '')
       + otherLinks(ctx);
+    if (window.SiteTransferCard) await window.SiteTransferCard.mount($('sgTransferCard'), ctx);
     if (mods.includes('bookings')) await window.BookingPayAdmin.loadSettings(ctx.siteId);
-    // รอบ 226: จัดส่ง/รับเองของการจอง (js/booking-fulfillment-admin.js) — กล่องต่อท้ายในหมวดเดียวกัน
-    if (mods.includes('bookings') && window.BookingFulfillAdmin) await window.BookingFulfillAdmin.mount(el, ctx);
+    await window.BookingPayAdmin.loadOverview(ctx.siteId);   // รอบ 228 แพ็ก D: มัดจำ & การยกเลิก ของทุกงาน (อ่านอย่างเดียว)
+    // รอบ 228 (แพ็ก C): จัดส่ง/รับเองของการจองย้ายไปกลุ่ม "การจัดส่ง / รับเอง" ของตัวเอง (CmsSiteSettingsExt.shipping ใน booking-fulfillment-admin.js)
   };
 })();

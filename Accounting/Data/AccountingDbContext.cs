@@ -21,6 +21,11 @@ public class AccountingDbContext : DbContext
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
     public DbSet<DeferredNotification> DeferredNotifications => Set<DeferredNotification>();   // รอบ 217 — แจ้งเตือนตามหลัง (Helpers/DeferredNotifyPolicy)
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
+    // รอบ 229 — โควตาเสริม (ตาราง/index ต้องตรงกับ Helpers/QuotaAddOnMigration)
+    public DbSet<PlanQuotaAllowance> PlanQuotaAllowances => Set<PlanQuotaAllowance>();
+    public DbSet<CompanyQuotaOverride> CompanyQuotaOverrides => Set<CompanyQuotaOverride>();
+    public DbSet<QuotaAddOnOffer> QuotaAddOnOffers => Set<QuotaAddOnOffer>();
+    public DbSet<CompanyQuotaAddOn> CompanyQuotaAddOns => Set<CompanyQuotaAddOn>();
     public DbSet<LineOaSwitchEvent> LineOaSwitchEvents => Set<LineOaSwitchEvent>();   // รอบ 212 แพ็ก B
     public DbSet<LineOaDestinationSighting> LineOaDestinationSightings => Set<LineOaDestinationSighting>();   // รอบ 212 ฝ่ายค้าน (B+D) ข้อ 4
     public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
@@ -3627,6 +3632,59 @@ public class AccountingDbContext : DbContext
         {
             e.HasKey(x => new { x.CompanyId, x.Period });
             e.Property(x => x.Period).HasMaxLength(7);
+        });
+        // รอบ 229 — โควตาเสริม (ตาราง/index ต้องตรงกับ Helpers/QuotaAddOnMigration)
+        modelBuilder.Entity<PlanQuotaAllowance>(e =>
+        {
+            e.Property(x => x.ResourceKey).HasMaxLength(64);
+            e.HasIndex(x => new { x.PlanTemplateId, x.ResourceKey }).IsUnique().HasFilter("\"IsDeleted\" = false")
+                .HasDatabaseName("UX_PlanQuotaAllowances_Plan_Resource");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<CompanyQuotaOverride>(e =>
+        {
+            e.Property(x => x.ResourceKey).HasMaxLength(64);
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.Property(x => x.SetBy).HasMaxLength(200);
+            e.HasIndex(x => new { x.CompanyId, x.ResourceKey }).IsUnique().HasFilter("\"IsDeleted\" = false")
+                .HasDatabaseName("UX_CompanyQuotaOverrides_Company_Resource");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<QuotaAddOnOffer>(e =>
+        {
+            e.Property(x => x.ResourceKey).HasMaxLength(64);
+            e.Property(x => x.Name).HasMaxLength(200);
+            e.Property(x => x.MonthlyUnitPrice).HasPrecision(18, 2);
+            e.Property(x => x.AnnualUnitPrice).HasPrecision(18, 2);
+            e.HasIndex(x => x.ResourceKey).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_QuotaAddOnOffers_Resource");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<CompanyQuotaAddOn>(e =>
+        {
+            e.Property(x => x.ResourceKey).HasMaxLength(64);
+            e.Property(x => x.UnitPriceSnapshot).HasPrecision(18, 2);
+            e.Property(x => x.MonthlyUnitPriceSnapshot).HasPrecision(18, 2);
+            e.Property(x => x.RenewUnitPrice).HasPrecision(18, 2);
+            e.Property(x => x.AmountDue).HasPrecision(18, 2);
+            e.Property(x => x.ProrationNote).HasMaxLength(300);
+            e.Property(x => x.SlipPath).HasMaxLength(500);
+            e.Property(x => x.SlipReference).HasMaxLength(120);
+            e.Property(x => x.RejectedReason).HasMaxLength(500);
+            e.Property(x => x.ReviewedBy).HasMaxLength(200);
+            e.Property(x => x.ReceiptNumber).HasMaxLength(64);
+            e.Property(x => x.LastBilledPeriod).HasMaxLength(7);
+            e.Property(x => x.PolicyVersionAccepted).HasMaxLength(64);
+            e.Property(x => x.RequestKey).HasMaxLength(80);
+            e.Property(x => x.ReceivedAmount).HasPrecision(18, 2);
+            e.Property(x => x.OfflineReference).HasMaxLength(200);
+            e.Property(x => x.AttentionRule).HasMaxLength(64);
+            e.Property(x => x.AttentionReason).HasMaxLength(500);
+            e.HasIndex(x => new { x.CompanyId, x.ResourceKey, x.Status }).HasDatabaseName("IX_CompanyQuotaAddOns_Company_Resource_Status");
+            e.HasIndex(x => new { x.CompanyId, x.RequestKey }).IsUnique()
+                .HasFilter("\"RequestKey\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_CompanyQuotaAddOns_Company_RequestKey");
+            e.HasIndex(x => x.RenewedFromId).IsUnique()
+                .HasFilter("\"RenewedFromId\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_CompanyQuotaAddOns_RenewedFrom");
+            e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 212 แพ็ก B: การสลับ LINE OA → คำเชิญผูกใหม่ (ตาราง/index ต้องตรงกับ CmsRound212NotifyStatements + Helpers/CustomerRelinkMigration)
         modelBuilder.Entity<LineOaSwitchEvent>(e =>

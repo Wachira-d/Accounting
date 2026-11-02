@@ -82,8 +82,10 @@ public interface IUsageMeteringService
     ///
     /// idempotent ด้วย <c>AddOnBilling.FlatKey</c> + <c>CompanyFeature.LastBilledPeriod</c>
     /// — เรียกซ้ำงวดเดิมไม่เกิดยอดซ้ำ</summary>
+    /// <remarks>รอบ 229 (QUOTA_ADDON แพ็ก 0): <paramref name="planActive"/> = <c>GetEffectivePlanAsync().IsActive</c> ของบริษัท (ผู้เรียก — งานรายเดือน — ส่งมา) ·
+    /// false ⇒ ไม่ออกค่าเหมาและไม่ประทับงวด (แพ็กเกจหมด/ยกเลิก/ระงับ = ไม่มีบริการ ⇒ ไม่เก็บเงิน)</remarks>
     Task<UsageRecordResult> RecordFlatMonthlyAsync(Guid companyId, string featureCode,
-        string period, CancellationToken ct = default);
+        string period, CancellationToken ct = default, bool planActive = true);
 
     /// <summary>สรุปการใช้งานของบริษัทในเดือนที่ระบุ (สำหรับหน้า usage)</summary>
     Task<List<UsageSummaryRow>> GetMonthlyUsageAsync(Guid companyId, int year, int month,

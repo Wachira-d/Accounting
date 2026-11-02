@@ -78,6 +78,9 @@ public class SiteBookingSettings : TenantEntity
     public string? FulfillmentPickupNote { get; set; }
     /// <summary>ยอดค่าบริการขั้นต่ำที่จัดส่งได้ · null = ไม่กำหนด</summary>
     public decimal? FulfillmentDeliveryMinAmount { get; set; }
+    /// <summary>รอบ 228 (BOOKING_PAYMENT_AUDIT §9): ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่เองจากหน้า "จัดการการจอง" ได้ถึงกี่ชั่วโมงก่อนเวลานัด ·
+    /// null = ไม่เปิดให้เปลี่ยนเอง (พฤติกรรมเดิม — ติดต่อร้าน) · 0 = ได้จนถึงเวลานัด · ตัวตัดสินเดียว <c>Helpers/BookingFulfillmentChange</c></summary>
+    public int? FulfillmentChangeCutoffHours { get; set; }
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>

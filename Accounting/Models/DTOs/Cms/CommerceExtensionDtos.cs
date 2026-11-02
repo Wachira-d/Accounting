@@ -83,6 +83,8 @@ public class CreateShippingZoneRequest
     public string? CountryCodes { get; set; }
     public string? Provinces { get; set; }
     public string? PostalCodePatterns { get; set; }
+    /// <summary>รอบ 228: ตรงโซนนี้แล้วไม่ดูโซนถัดไป (วงระยะทาง/อำเภอด้วยรหัสไปรษณีย์) · ค่าเริ่ม false = เดิม</summary>
+    public bool StopWhenMatched { get; set; }
     public int SortOrder { get; set; }
     public List<CreateShippingRateRequest>? Rates { get; set; }
 }
@@ -111,7 +113,10 @@ public class ShippingZoneResponse
     public string? CountryCodes { get; set; }
     public string? Provinces { get; set; }
     public string? PostalCodePatterns { get; set; }
+    public bool StopWhenMatched { get; set; }
     public bool IsActive { get; set; }
+    /// <summary>รอบ 228: คำเตือนหลังบันทึก (โซน "ชนะโซนถัดไป" ลำดับซ้ำ) · null = ไม่มี</summary>
+    public string? Warning { get; set; }
     public int SortOrder { get; set; }
     public List<ShippingRateResponse> Rates { get; set; } = new();
 }

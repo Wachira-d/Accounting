@@ -60,6 +60,17 @@ public class OcrService : IOcrService
     private readonly Services.Interfaces.IAccountingService? _accounting;
     private readonly Ocr.ProductMatcher? _productMatcher;
 
+    /// <summary>ที่เก็บไฟล์กลาง (Local | S3 · ทีม FS 2026-11-02) — ไฟล์ต้นฉบับของสแกนอ่าน/ลบผ่านตัวนี้ ไม่แตะดิสก์ตรง ·
+    /// DI ใส่ให้เสมอ (null = สร้างนอก DI ⇒ FileStorageDefaults.Local ดิสก์ค่าเริ่มต้น)</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
+    private Accounting.Services.Storage.IFileStorage Files
+        => _storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
+
+    /// <summary>ไบต์ของไฟล์ต้นฉบับ — ไม่มีในที่เก็บ ⇒ <see cref="FileNotFoundException"/> (สัญญาเดียวกับ File.ReadAllBytesAsync เดิม · ผู้เรียกจับอยู่แล้ว)</summary>
+    private async Task<byte[]> ReadSourceBytesAsync(FileAttachment file)
+        => await Files.ReadAllBytesAsync(file.StoragePath)
+           ?? throw new FileNotFoundException("ไม่พบไฟล์ต้นฉบับของสแกนในที่เก็บไฟล์", file.StoragePath);
+
     public OcrService(AccountingDbContext db, IHttpClientFactory httpClientFactory,
         IConfiguration configuration, ILogger<OcrService> logger,
         IDbdLookupService dbdLookup,
@@ -80,8 +91,10 @@ public class OcrService : IOcrService
         Ocr.ProductMatcher? productMatcher = null,
         Services.Ai.IAiFeedbackRecorder? feedbackRecorder = null,
         Services.Interfaces.IBotExchangeRateService? fxRates = null,
-        Services.Interfaces.IPermissionService? perms = null)
+        Services.Interfaces.IPermissionService? perms = null,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
+        _storage = storage;
         _perms = perms;
         _docWorkflowLearner = docWorkflowLearner;
         _aiAugmenter = aiAugmenter;
@@ -149,11 +162,8 @@ public class OcrService : IOcrService
         string? fileHash = null;
         try
         {
-            if (File.Exists(file.StoragePath))
-            {
-                var bytes = await File.ReadAllBytesAsync(file.StoragePath);
+            if (await Files.ReadAllBytesAsync(file.StoragePath) is { } bytes)
                 fileHash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-            }
         }
         catch { /* hash is optional */ }
 
@@ -336,7 +346,7 @@ public class OcrService : IOcrService
             {
                 try
                 {
-                    var pdfBytes = await File.ReadAllBytesAsync(file.StoragePath);
+                    var pdfBytes = await ReadSourceBytesAsync(file);
                     var etax = Ocr.EtaxPdfXmlExtractor.TryExtract(pdfBytes);
                     if (etax != null && etax.Found)
                     {
@@ -519,7 +529,7 @@ public class OcrService : IOcrService
                 {
                     try
                     {
-                        var pdfBytes = await File.ReadAllBytesAsync(file.StoragePath);
+                        var pdfBytes = await ReadSourceBytesAsync(file);
                         var maxPages = siteSettings?.OcrMaxPagesPerScan ?? 10;
                         var pdfResult = Ocr.PdfTextLayerExtractor.TryExtract(pdfBytes, maxPages);
                         if (pdfResult.HasUsableText)
@@ -4119,10 +4129,9 @@ public class OcrService : IOcrService
 
     private async Task<AzureExtractionResult> ExtractWithAzureDiAsync(Guid companyId, FileAttachment file, SiteSettings? siteSettings)
     {
-        if (!System.IO.File.Exists(file.StoragePath))
+        var fileBytes = await Files.ReadAllBytesAsync(file.StoragePath);
+        if (fileBytes == null)
             return new AzureExtractionResult(false, "", new OcrExtractedData(), "Source file missing");
-
-        var fileBytes = await System.IO.File.ReadAllBytesAsync(file.StoragePath);
         var contentType = OcrPreprocessor.EffectiveContentType(file.ContentType ?? "", file.OriginalFileName);
 
         var preflight = OcrPreprocessor.Check(fileBytes, contentType, file.OriginalFileName);
@@ -4989,7 +4998,7 @@ public class OcrService : IOcrService
         byte[] bytes;
         try
         {
-            bytes = await File.ReadAllBytesAsync(file.StoragePath);
+            bytes = await ReadSourceBytesAsync(file);
         }
         catch (Exception ex)
         {
@@ -5043,7 +5052,7 @@ public class OcrService : IOcrService
         // and leave rawText = filename — which is exactly the production bug the
         // user reported on 2026-05-11.
         byte[] fileData;
-        try { fileData = await File.ReadAllBytesAsync(file.StoragePath); }
+        try { fileData = await ReadSourceBytesAsync(file); }
         catch (Exception ex)
         {
             throw new InvalidOperationException(
@@ -10483,7 +10492,7 @@ public class OcrService : IOcrService
                     fileOwnerExists: await ScanFileOwnerExistsAsync(companyId, file.EntityType, file.EntityId));
                 if (action == Accounting.Helpers.ScanFileDisposalAction.Remove)
                 {
-                    try { if (File.Exists(file.StoragePath)) File.Delete(file.StoragePath); }
+                    try { await Files.DeleteAsync(file.StoragePath); }
                     catch (Exception ex)
                     {
                         _logger.LogWarning(ex, "ลบไฟล์จริงของสแกน {ScanId} ไม่สำเร็จ ({Path}) — แถวไฟล์ถูกลบแล้ว ไฟล์ค้างบนดิสก์",

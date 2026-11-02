@@ -46,11 +46,8 @@ public static class BookingPaymentContextLoader
     {
         var row = await db.SiteBookingSettings.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted, ct);
-        var gw = await db.SitePaymentGateways.AsNoTracking()
-            // ฝ่ายค้านรอบ 218 (B1): เฉพาะแถวชนิดโอน/พร้อมเพย์ — แถว gateway อื่น (Omise ฯลฯ) ไม่ใช่ช่องโอน
-            .Where(g => g.CompanyId == companyId && g.SiteId == siteId && g.IsActive && !g.IsDeleted
-                && (g.GatewayType == PaymentGatewayType.BankTransfer || g.GatewayType == PaymentGatewayType.PromptPay))
-            .OrderBy(g => g.SortOrder)
+        // ฝ่ายค้านรอบ 218 (B1) · รอบ 228 S-1: ตัวอ่านเดียวของแถวบัญชีรับโอน (ชนิดโอน/พร้อมเพย์ · ลำดับตายตัว)
+        var gw = await SiteTransferAccount.Rows(db.SitePaymentGateways.AsNoTracking(), companyId, siteId)
             .Select(g => new { g.Id, g.BankName, g.BankAccountNumber, g.BankAccountName, g.BankBranch, g.PromptPayId, g.PromptPayQrUrl })
             .FirstOrDefaultAsync(ct);
         var cfg = await db.PaymentProviderConfigs.AsNoTracking()

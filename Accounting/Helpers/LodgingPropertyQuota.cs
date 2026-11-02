@@ -18,13 +18,34 @@ public static class LodgingPropertyQuota
 
     /// <summary>null = สร้างที่พักเพิ่มได้ · ข้อความไทย = ถูกกัน (บอกทางไปต่อ) · <paramref name="entitlement"/> null = ไม่มีตัวตรวจสิทธิ์ (เทสต์/ไม่ได้ลงทะเบียน) ⇒ ผ่าน
     /// ตามพฤติกรรมเดิมของ CreatePropertyAsync</summary>
-    public static async Task<string?> BlockReasonAsync(AccountingDbContext db, IEntitlementService? entitlement, Guid companyId)
+    /// <remarks>ฝ่ายค้านรอบ 229 S6: มี <paramref name="gate"/> ⇒ ตัดสินด้วยด่านโควตาตัวเดียว (override · เพดานแพ็กเกจ/ทดลองจริง · ที่ซื้อ · สวิตช์หลายแห่ง = ไม่จำกัด) ·
+    /// ผู้เรียกอยู่ในธุรกรรม ⇒ ล็อกต่อ (บริษัท, ทรัพยากร) ก่อนนับ (สองคำขอพร้อมกันได้แค่หนึ่ง — ผู้เรียกต้อง insert ในธุรกรรมเดียวกัน) · null (เทสต์เดิม) = สูตรเดิมด้านล่าง</remarks>
+    public static async Task<string?> BlockReasonAsync(AccountingDbContext db, IEntitlementService? entitlement, Guid companyId,
+        Accounting.Services.Implementations.IQuotaGate? gate = null)
     {
+        if (gate != null)
+        {
+            if (db.Database.CurrentTransaction != null) await gate.LockAsync(companyId, QuotaResources.LodgingProperties);
+            var d = await gate.CheckAsync(companyId, QuotaResources.LodgingProperties, 1);
+            if (d.Allowed) return null;
+            var hint = entitlement == null ? null : (await entitlement.CheckAsync(companyId, AddOnCodes.LodgingMultiProperty)).UpgradeHint;
+            return $"{d.BlockReason} · หรือ{hint ?? "เปิดส่วนเสริม \"ที่พักหลายแห่ง\""} (ที่หน้า \"ส่วนเสริมของฉัน\")";
+        }
         var existing = await db.LodgingProperties.CountAsync(x => x.CompanyId == companyId && !x.IsDeleted);
         if (existing < 1 || entitlement == null) return null;
+        // รอบ 229 (QUOTA_ADDON แพ็ก 5): จำนวนที่พักที่มีผล = override รายบริษัท ?? เพดานแพ็กเกจ (allowance) ?? 1 (แห่งแรกฟรี — พฤติกรรมเดิม)
+        // + ที่พักที่ซื้อเพิ่ม (ตัวตัดสินเดียว QuotaLimitPolicy) · ส่วนเสริมสวิตช์ "ที่พักหลายแห่ง" ยังเปิดได้ไม่จำกัดตามเดิม
+        var now = DateTime.UtcNow;
+        var limit = QuotaLimitPolicy.Effective(
+            await Accounting.Services.Implementations.QuotaStore.OverrideAsync(db, companyId, QuotaResources.LodgingProperties),
+            await Accounting.Services.Implementations.QuotaStore.AllowanceAsync(db,
+                await Accounting.Services.Implementations.QuotaStore.PlanTemplateIdAsync(db, companyId), QuotaResources.LodgingProperties),
+            inTrial: false, legacyLimit: 1,
+            await Accounting.Services.Implementations.QuotaStore.PurchasesAsync(db, companyId, QuotaResources.LodgingProperties), now);
+        if (limit.Effective is not int max || existing + 1 <= max) return null;
         var ent = await entitlement.CheckAsync(companyId, AddOnCodes.LodgingMultiProperty);
         if (ent.Allowed) return null;
-        return $"เปิดที่พักได้ 1 แห่งในแพ็กเกจปัจจุบัน — {ent.UpgradeHint ?? "เปิดส่วนเสริม \"ที่พักหลายแห่ง\""}"
-            + " (ที่หน้า \"ส่วนเสริมของฉัน\")";
+        return $"เปิดที่พักได้ {max:N0} แห่งในแพ็กเกจปัจจุบัน — {ent.UpgradeHint ?? "เปิดส่วนเสริม \"ที่พักหลายแห่ง\""}"
+            + " (ที่หน้า \"ส่วนเสริมของฉัน\") หรือซื้อที่พักเพิ่มเป็นรายแห่งที่หน้า \"แพ็กเกจและการชำระเงิน\" · ที่พักเดิมใช้งานได้ตามปกติ";
     }
 }

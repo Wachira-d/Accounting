@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>โควตาและโควตาเสริม - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px; margin-bottom:16px }
+    .card h3 { margin:0 0 12px; font-size:15px; font-weight:700; color:#0f172a }
+    table.rpt { width:100%; border-collapse:collapse; font-size:13px }
+    table.rpt th { background:#f8fafc; text-align:left; padding:8px 10px; font-weight:700; color:#334155; border-bottom:2px solid #e2e8f0; white-space:nowrap }
+    table.rpt td { padding:6px 10px; border-bottom:1px solid #f1f5f9; vertical-align:top }
+    table.rpt input[type=number], table.rpt input[type=text] { width:90px }
+    .scroll-x { overflow-x:auto }
+    .muted { color:#64748b; font-size:12px }
+    .warn { color:#b45309; font-size:12px; font-weight:600 }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="container" style="max-width:1400px;margin:0 auto;padding:20px">
+      <h1 style="margin:0 0 4px;font-size:24px;font-weight:700">📏 โควตาและโควตาเสริม</h1>
+      <p class="muted" style="font-size:14px;margin:0 0 16px">
+        เพดานต่อแพ็กเกจ · ขายโควตาเพิ่ม · override รายบริษัท · ตรวจสลิป — <b>เกินเพดาน = บล็อกเฉพาะการเพิ่มใหม่</b> ของเดิมของผู้เช่าไม่ถูกลบ/ไม่ถูกปิด ·
+        นับต่อบริษัท · ไม่ตั้ง = ไม่จำกัด (ผู้เช่าเดิมไม่ถูกบล็อก) · ผู้ใช้/พื้นที่/OCR ตั้งที่ช่องเดิมของ <a href="/admin/plans.html">หน้าจัดการแพ็กเกจ</a>
+      </p>
+
+      <div class="card"><h3>1) เพดานต่อแพ็กเกจ <span class="muted">(-1 = ไม่จำกัด · ว่าง = ไม่ตั้ง)</span></h3>
+        <div id="allowances" class="scroll-x">กำลังโหลด...</div></div>
+
+      <div class="card"><h3>2) แคตตาล็อกโควตาเสริม <span class="muted">(ราคาใหม่มีผลกับการซื้อครั้งถัดไป — ของที่ซื้อแล้วคงราคาเดิม)</span></h3>
+        <div id="offers" class="scroll-x">กำลังโหลด...</div></div>
+
+      <div class="card"><h3>3) override รายบริษัท <span class="muted">(ต้องมีเหตุผล · บันทึก audit)</span></h3>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <input id="coSearch" class="form-input" placeholder="ชื่อบริษัท / เลขผู้เสียภาษี / Company ID" style="max-width:360px">
+          <button class="btn btn-secondary" onclick="AQ.searchCompanies()">ค้นหา</button>
+        </div>
+        <div id="coResults"></div>
+        <div id="coDetail"></div></div>
+
+      <div class="card"><h3>4) สลิปค่าโควตาเสริมที่รอตรวจ
+          <select id="pqFilter" class="form-select" style="width:auto;display:inline-block;margin-left:8px" onchange="AQ.loadPurchases()">
+            <option value="pending">รอตรวจ</option><option value="awaiting">รอชำระ</option><option value="active">ใช้งานอยู่</option><option value="attention">ต้องจัดการ</option><option value="all">ทั้งหมด</option>
+          </select></h3>
+        <div id="purchases" class="scroll-x">กำลังโหลด...</div></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+    // ทุกค่ามาจาก /api/admin/quota/* — รายชื่อทรัพยากรเป็น closed list ของเซิร์ฟเวอร์ (หน้าเว็บไม่พิมพ์รหัสเอง)
+    const AQ = {
+      resources: [],
+      esc(s) { return Layout.esc(s); },
+      money(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 }); },
+
+      async init() {
+        if (!Layout.init('admin-quota')) return;
+        if (!(await Layout.requirePlatformAdmin())) return;
+        Layout.setTitle('โควตาและโควตาเสริม');
+        try { this.resources = (await API.get('/api/admin/quota/resources'))?.data || []; } catch (e) { Layout.toast(e.message, 'error'); }
+        await Promise.all([this.loadAllowances(), this.loadOffers(), this.loadPurchases()]);
+      },
+
+      // ── 1) เพดานต่อแพ็กเกจ ──
+      async loadAllowances() {
+        const el = document.getElementById('allowances');
+        let plans;
+        try { plans = (await API.get('/api/admin/quota/allowances'))?.data || []; } catch (e) { el.innerHTML = `<span class="warn">${this.esc(e.message)}</span>`; return; }
+        const cols = this.resources.filter(r => r.planEditableHere);
+        const legacy = this.resources.filter(r => !r.planEditableHere);
+        el.innerHTML = `<table class="rpt"><thead><tr><th>แพ็กเกจ</th>${cols.map(c => `<th>${this.esc(c.label)}<div class="muted">ปกติ / ทดลอง</div></th>`).join('')}<th></th></tr></thead><tbody>
+          ${plans.map(p => `<tr><td><b>${this.esc(p.name)}</b> <span class="muted">${this.esc(p.plan)}${p.isActive ? '' : ' · ปิดอยู่'}</span></td>
+            ${cols.map(c => { const a = (p.allowances || []).find(x => x.resource === c.key) || {};
+              return `<td><input type="number" min="-1" data-al="${this.esc(p.id)}|${this.esc(c.key)}|i" value="${a.included ?? ''}" class="form-input">
+                <input type="number" min="-1" data-al="${this.esc(p.id)}|${this.esc(c.key)}|t" value="${a.trialIncluded ?? ''}" class="form-input" style="margin-top:4px"></td>`; }).join('')}
+            <td><button class="btn btn-primary btn-sm" onclick="AQ.saveAllowances('${Layout.jsArg(p.id)}')">บันทึก</button></td></tr>`).join('')}
+          </tbody></table>
+          <div class="muted" style="margin-top:8px">${cols.map(c => `<div><b>${this.esc(c.label)}</b>: ${this.esc(c.legacyNote)}</div>`).join('')}
+            ${legacy.map(c => `<div><b>${this.esc(c.label)}</b>: ${this.esc(c.legacyNote)}</div>`).join('')}
+            <div><b>รายการบัญชี/เดือน</b>: ไม่บังคับใช้ (เลิกใช้) — คำตัดสินข้อ 229-7 (การบล็อกการลงบัญชีไม่ปลอดภัย)</div></div>`;
+      },
+      async saveAllowances(planId) {
+        const items = this.resources.filter(r => r.planEditableHere).map(r => {
+          const i = document.querySelector(`[data-al="${planId}|${r.key}|i"]`).value;
+          const t = document.querySelector(`[data-al="${planId}|${r.key}|t"]`).value;
+          return { resource: r.key, included: i === '' ? null : Number(i), trialIncluded: t === '' ? null : Number(t) };
+        });
+        try { const r = await API.put(`/api/admin/quota/allowances/${encodeURIComponent(planId)}`, items); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); this.loadAllowances(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── 2) แคตตาล็อก ──
+      async loadOffers() {
+        const el = document.getElementById('offers');
+        let offers;
+        try { offers = (await API.get('/api/admin/quota/offers'))?.data || []; } catch (e) { el.innerHTML = `<span class="warn">${this.esc(e.message)}</span>`; return; }
+        const sellable = this.resources.filter(r => r.sellable);
+        const modeLbl = { OneOffMonth: 'เดือนเดียว', RecurringMonthly: 'ทุกเดือน', Coterm: 'ถึงวันหมดอายุ' };
+        el.innerHTML = `<table class="rpt"><thead><tr><th>ทรัพยากร</th><th>ชื่อที่แสดง</th><th>ขนาด/หน่วย</th><th>ราคา/เดือน</th><th>ราคา/ปี<div class="muted">ว่าง = เดือน×12</div></th>
+            <th>วิธีซื้อที่เปิด</th><th>ซื้อได้สูงสุด<div class="muted">ต่อบริษัท</div></th><th>ขั้นต่ำ 1 เดือน<div class="muted">(ถึงวันหมดอายุ)</div></th><th>อายุเดือนเดียว (วัน)<div class="muted">ว่าง = ถึงสิ้นเดือน</div></th><th>เปิดขาย</th><th>ขายอยู่</th><th></th></tr></thead><tbody>
+          ${sellable.map(r => { const o = offers.find(x => x.resource === r.key) || { modes: ['OneOffMonth', 'RecurringMonthly', 'Coterm'], unitSize: 1, minChargeOneMonth: true, isActive: false };
+            const k = this.esc(r.key);
+            return `<tr><td><b>${this.esc(r.label)}</b><div class="muted">${k} · ${this.esc(r.unit)} · ${r.kind === 'Consumable' ? 'ใช้แล้วหมด' : 'จำนวนพร้อมกัน'}</div>
+                ${o.warning ? `<div class="warn">⚠️ ${this.esc(o.warning)}</div>` : ''}</td>
+              <td><input type="text" data-of="${k}|name" value="${this.esc(o.name || '')}" class="form-input" style="width:140px"></td>
+              <td><input type="number" min="1" data-of="${k}|unitSize" value="${o.unitSize}" class="form-input"></td>
+              <td><input type="number" min="0" step="0.01" data-of="${k}|monthly" value="${o.monthlyUnitPrice ?? ''}" class="form-input"></td>
+              <td><input type="number" min="0" step="0.01" data-of="${k}|annual" value="${o.annualUnitPrice ?? ''}" class="form-input"></td>
+              <td>${['OneOffMonth', 'RecurringMonthly', 'Coterm'].map(m => `<label style="display:block;white-space:nowrap"><input type="checkbox" data-of="${k}|mode|${m}" ${(o.modes || []).includes(m) ? 'checked' : ''} ${r.kind === 'Consumable' && m !== 'OneOffMonth' ? 'disabled' : ''} style="width:auto"> ${modeLbl[m]}</label>`).join('')}</td>
+              <td><input type="number" min="1" data-of="${k}|max" value="${o.maxUnitsPerCompany ?? ''}" class="form-input"></td>
+              <td><input type="checkbox" data-of="${k}|min" ${o.minChargeOneMonth ? 'checked' : ''} style="width:auto"></td>
+              <td><input type="number" min="1" max="366" data-of="${k}|valid" value="${o.validDays ?? ''}" class="form-input"></td>
+              <td><input type="checkbox" data-of="${k}|active" ${o.isActive ? 'checked' : ''} style="width:auto"></td>
+              <td>${o.activeUnits ? `${o.activeUnits} หน่วย · ${o.activeCompanies} บริษัท` : '<span class="muted">—</span>'}</td>
+              <td><button class="btn btn-primary btn-sm" onclick="AQ.saveOffer('${Layout.jsArg(r.key)}')">บันทึก</button></td></tr>`; }).join('')}
+          </tbody></table>`;
+      },
+      async saveOffer(key) {
+        const v = f => document.querySelector(`[data-of="${key}|${f}"]`);
+        const num = f => { const x = v(f).value; return x === '' ? null : Number(x); };
+        const body = {
+          resource: key, name: v('name').value, unitSize: num('unitSize') || 1, monthlyUnitPrice: num('monthly') || 0, annualUnitPrice: num('annual'),
+          modes: ['OneOffMonth', 'RecurringMonthly', 'Coterm'].filter(m => { const c = v('mode|' + m); return c && c.checked && !c.disabled; }),
+          maxUnitsPerCompany: num('max'), minChargeOneMonth: v('min').checked, validDays: num('valid'), isActive: v('active').checked, sortOrder: 0,
+        };
+        try { const r = await API.post('/api/admin/quota/offers', body); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); this.loadOffers(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── 3) override รายบริษัท ──
+      async searchCompanies() {
+        const q = document.getElementById('coSearch').value.trim();
+        const el = document.getElementById('coResults');
+        try {
+          const rows = (await API.get(`/api/admin/quota/companies?q=${encodeURIComponent(q)}`))?.data || [];
+          el.innerHTML = rows.length ? rows.map(c => `<a href="#" onclick="AQ.openCompany('${Layout.jsArg(c.id)}');return false" style="display:inline-block;margin:0 10px 6px 0">${this.esc(c.name)} <span class="muted">${this.esc(c.taxId || '')}</span></a>`).join('')
+            : '<span class="muted">ไม่พบ (พิมพ์อย่างน้อย 2 ตัวอักษร)</span>';
+        } catch (e) { el.innerHTML = `<span class="warn">${this.esc(e.message)}</span>`; }
+      },
+      async openCompany(id) {
+        const el = document.getElementById('coDetail');
+        let d;
+        try { d = (await API.get(`/api/admin/quota/companies/${encodeURIComponent(id)}`))?.data; } catch (e) { el.innerHTML = `<span class="warn">${this.esc(e.message)}</span>`; return; }
+        this._co = id;
+        el.innerHTML = `<h4 style="margin:12px 0 6px">${this.esc(d.name)}</h4>
+          <table class="rpt"><thead><tr><th>ทรัพยากร</th><th>ใช้ไป</th><th>เพดานที่มีผล</th><th>ที่มา</th><th>ซื้อเพิ่มที่มีผล</th><th>override</th><th></th></tr></thead><tbody>
+          ${d.summary.map(s => { const ov = d.overrides.find(o => o.resource === s.resource); const k = this.esc(s.resource);
+            return `<tr><td>${this.esc(s.label)}</td><td>${this.esc(s.usedText)}</td><td>${this.esc(s.limitText)}</td><td class="muted">${this.esc(s.source)}</td><td>${s.purchased || 0}</td>
+              <td><input type="number" min="-1" data-ov="${k}" value="${ov ? ov.limit : ''}" class="form-input" placeholder="ไม่ตั้ง">
+                ${ov ? `<div class="muted">${this.esc(ov.reason)} · ${this.esc(ov.setBy || '')}</div>` : ''}</td>
+              <td><input type="text" data-ovr="${k}" placeholder="เหตุผล (บังคับ)" class="form-input" style="width:180px">
+                <button class="btn btn-primary btn-sm" onclick="AQ.saveOverride('${Layout.jsArg(s.resource)}')">บันทึก</button></td></tr>`; }).join('')}
+          </tbody></table>
+          <h4 style="margin:12px 0 6px">การซื้อของบริษัทนี้</h4>
+          ${d.purchases.length ? `<table class="rpt"><thead><tr><th>รายการ</th><th>แบบ</th><th>ช่วง</th><th>ยอด</th><th>สถานะ</th></tr></thead><tbody>${d.purchases.map(p =>
+            `<tr><td>${this.esc(p.label)} × ${p.units}</td><td>${this.esc(p.modeLabel)}</td><td>${Layout.date(p.periodStart)} – ${p.periodEnd ? Layout.date(p.periodEnd) : 'ทุกเดือน'}</td><td>${this.money(p.amountDue)}</td><td>${this.esc(p.statusLabel)}</td></tr>`).join('')}</tbody></table>`
+            : '<span class="muted">ยังไม่มี</span>'}`;
+      },
+      async saveOverride(resource) {
+        const v = document.querySelector(`[data-ov="${resource}"]`).value;
+        const reason = document.querySelector(`[data-ovr="${resource}"]`).value;
+        try {
+          const r = await API.put(`/api/admin/quota/companies/${encodeURIComponent(this._co)}/overrides`, { resource, limit: v === '' ? null : Number(v), reason });
+          Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); this.openCompany(this._co);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
+      // ── 4) คิวสลิป ──
+      async loadPurchases() {
+        const el = document.getElementById('purchases');
+        const st = document.getElementById('pqFilter').value;
+        let rows;
+        try { rows = (await API.get(`/api/admin/quota/purchases?status=${encodeURIComponent(st)}`))?.data || []; } catch (e) { el.innerHTML = `<span class="warn">${this.esc(e.message)}</span>`; return; }
+        if (!rows.length) { el.innerHTML = '<span class="muted">ไม่มีรายการในสถานะนี้</span>'; return; }
+        el.innerHTML = `<table class="rpt"><thead><tr><th>บริษัท</th><th>รายการ</th><th>ยอด</th><th>สลิป</th><th>สถานะ</th><th></th></tr></thead><tbody>
+          ${rows.map(r => { const p = r.purchase; return `<tr><td>${this.esc(r.companyName)}</td><td>${this.esc(p.label)} × ${p.units} · ${this.esc(p.modeLabel)}<div class="muted">${this.esc(p.note || '')}</div></td>
+            <td>${this.money(p.amountDue)}</td>
+            <td>${r.hasSlip ? `<a href="#" onclick="AQ.openSlip('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}');return false">เปิดดูสลิป</a>` : '<span class="muted">—</span>'}</td>
+            <td>${this.esc(p.statusLabel)}${p.receiptNumber ? `<div class="muted">ใบเสร็จ ${this.esc(p.receiptNumber)}</div>` : ''}
+              ${r.intentStatus ? `<div class="muted">ชำระออนไลน์: ${this.esc(r.intentStatus)}</div>` : ''}
+              ${r.refunded ? '<div class="warn">คืนเงินแล้ว</div>' : ''}
+              ${p.attentionReason ? `<div class="warn">⚠️ ${this.esc(p.attentionRule || '')}: ${this.esc(p.attentionReason)}</div>` : ''}</td>
+            <td style="white-space:nowrap">${p.status === 'PendingReview' || p.status === 'AwaitingPayment'
+              ? `<button class="btn btn-primary btn-sm" onclick="AQ.review('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}',true,${r.hasSlip ? 'true' : 'false'},${Number(p.amountDue)})">อนุมัติ</button>
+                 <button class="btn btn-secondary btn-sm" onclick="AQ.review('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}',false)">ปฏิเสธ</button>` : ''}
+              ${p.status === 'Active' ? `<button class="btn btn-secondary btn-sm" onclick="AQ.revoke('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}')">เพิกถอนสิทธิ์</button>` : ''}</td></tr>`; }).join('')}
+          </tbody></table>`;
+      },
+      async revoke(cid, id) {
+        const reason = prompt('เหตุผลการเพิกถอนสิทธิ์ (เช่น คืนเงินแล้ว) — มีผลทันที ของที่ผู้เช่าสร้างไว้ไม่ถูกลบ:'); if (!reason) return;
+        try { const r = await API.post(`/api/admin/quota/purchases/${encodeURIComponent(cid)}/${encodeURIComponent(id)}/revoke`, { reason });
+          Layout.toast(r?.message || 'เพิกถอนแล้ว', 'success'); this.loadPurchases(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openSlip(cid, id) {
+        try {
+          const f = await API.fetchFile(`/api/admin/quota/purchases/${encodeURIComponent(cid)}/${encodeURIComponent(id)}/slip`, 'slip');
+          const u = URL.createObjectURL(f.blob); window.open(u, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(u), 60000);
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ฝ่ายค้าน S2/S7: ยอดรับจริง + วันที่โอน = ยอด/วันที่บนใบเสร็จ · ไม่มีสลิป ⇒ ต้องมีหลักฐานรับเงินนอกระบบ + เหตุผล (เซิร์ฟเวอร์บังคับ)
+      async review(cid, id, approve, hasSlip, due) {
+        let reason = null, offlineReference = null, receivedAmount = null, transferDate = null;
+        if (!approve) { reason = prompt('เหตุผลที่ไม่อนุมัติ (ผู้เช่าจะเห็น):'); if (!reason) return; }
+        else {
+          if (!hasSlip) {
+            offlineReference = prompt('รายการนี้ไม่มีสลิป — ระบุหลักฐานการรับเงิน (เลขอ้างอิงการโอน/ใบนำฝาก):'); if (!offlineReference) return;
+            reason = prompt('เหตุผลที่อนุมัติโดยไม่มีสลิป (บันทึก audit):'); if (!reason) return;
+          }
+          const amt = prompt('ยอดเงินที่รับจริง (บาท) — ยอดบนใบเสร็จ', String(due ?? '')); if (amt === null) return;
+          receivedAmount = Number(amt);
+          const d = prompt('วันที่โอน (YYYY-MM-DD · ว่าง = ตามสลิป/วันนี้) — วันที่บนใบเสร็จ', ''); if (d === null) return;
+          transferDate = d.trim() || null;
+          if (!confirm('อนุมัติ = เปิดโควตาให้ทันทีและออกใบกำกับภาษี/ใบเสร็จ — ตรวจยอดเงินเข้าแล้วใช่ไหม?')) return;
+        }
+        try { const r = await API.post(`/api/admin/quota/purchases/${encodeURIComponent(cid)}/${encodeURIComponent(id)}/review`,
+            { approve, reason, offlineReference, receivedAmount, transferDate });
+          Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); this.loadPurchases(); }
+        catch (e) { Layout.toast(e.message, 'error'); }
+      },
+    };
+    AQ.init();
+  </script>
+</body>
+</html>

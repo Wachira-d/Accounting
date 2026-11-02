@@ -635,6 +635,7 @@ public enum PaymentSourceKind
     AddOnPurchase = 6,         // ซื้อส่วนเสริม (add-on) รายเดือน — LDG-P0-03
     SiteBooking = 7,           // มัดจำการจองนัดหมาย (CMS booking) — รอบ 205 W2 R-08 (Helpers/CmsBookingOnlinePayment)
     GatewaySelfTest = 8,       // รอบ 219 ส่วน B: ทดลองจ่าย ฿20 โหมดทดสอบ (ตรวจคีย์+webhook ก่อนเปิด live) — ไม่ลงบัญชี ไม่เข้ารอบโอน (Helpers/PaymentLiveGate)
+    QuotaAddOnPurchase = 9,    // รอบ 229: ซื้อโควตาเสริม (CompanyQuotaAddOn.Id) — เงินแพลตฟอร์ม (Helpers/PlatformRevenueSource) · handler QuotaAddOnPaymentHandler
 }
 
 /// <summary>สถานะการชำระเงินของการเปิดใช้ add-on หนึ่งครั้ง (LDG-P0-03)

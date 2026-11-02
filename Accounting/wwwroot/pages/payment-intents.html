@@ -191,12 +191,16 @@
             ${r.creditNoteState === 'CreditNoteCovered' ? '<div style="margin-top:2px"><span class="pill cn-ok">ออกใบลดหนี้แล้ว</span></div>' : ''}
             ${r.refundUntracked ? '<div style="color:#b45309;font-size:11px;margin-top:2px">ไม่มียอดคืนในระบบ — กด "บันทึกยอดคืน" (เจ้าของกิจการ)</div>' : ''}
             ${r.refundOutcomeUnknown ? `<div style="color:#b91c1c;font-size:11px;margin-top:2px">${Layout.esc(r.refundOutcomeUnknownMessage || 'คืนเงินผลไม่แน่ชัด')}</div>` : ''}
-            ${r.redispatchPending ? `<div style="margin-top:2px"><span class="pill cn-miss">⚠️ ${Layout.esc(r.redispatchPendingLabel || 'ยังไม่ได้บันทึกให้ต้นทาง')}</span></div>` : ''}</td>
+            ${r.redispatchPending ? `<div style="margin-top:2px"><span class="pill cn-miss">⚠️ ${Layout.esc(r.redispatchPendingLabel || 'ยังไม่ได้บันทึกให้ต้นทาง')}</span></div>` : ''}
+            ${r.dispute ? `<div style="margin-top:2px"><span class="pill ${r.dispute.needsAttention ? 'cn-miss' : 'cn-ok'}">${r.dispute.needsAttention ? '⚠️ ' : ''}${Layout.esc(r.dispute.label)}</span>
+              ${r.dispute.amount != null ? `<div style="font-size:11px">ยอดโต้แย้ง ${Layout.money(r.dispute.amount)}${r.dispute.reason ? ' · ' + Layout.esc(r.dispute.reason) : ''}</div>` : ''}
+              ${r.dispute.needsAttention && r.dispute.nextStep ? `<div style="color:#b45309;font-size:11px">${Layout.esc(r.dispute.nextStep)}</div>` : ''}</div>` : ''}</td>
           <td style="font-size:11.5px">${Layout.esc(r.confirmedBy || '—')}</td>
           <td style="white-space:nowrap">
             <button class="btn btn-sm btn-secondary" onclick="Page.events('${r.id}')">ประวัติ</button>
             ${open ? `<button class="btn btn-sm btn-secondary" onclick="Page.live('${r.id}')">ตรวจสถานะสด</button>
                       <button class="btn btn-sm btn-primary" onclick="Page.manual('${r.id}')">ยืนยันด้วยมือ</button>` : ''}
+            ${r.dispute && r.dispute.needsAttention ? `<button class="btn btn-sm btn-secondary" onclick="Page.ackDispute('${r.id}')">รับทราบข้อพิพาท</button>` : ''}
             ${r.redispatchPending ? `<button class="btn btn-sm btn-primary" onclick="Page.redispatch('${r.id}')" title="เงินเข้าแล้วแต่ต้นทางยังไม่ถูกบันทึก — ให้ระบบส่งต่อให้ handler เดิมอีกครั้ง (ไม่บันทึกเงินซ้ำ)">ส่งต่อใหม่</button>` : ''}
             ${r.refundOutcomeUnknown
               ? `<button class="btn btn-sm btn-warning" onclick="Page.verifyRefund('${r.id}')">ตรวจผลการคืนเงิน</button>
@@ -218,6 +222,15 @@
           Layout.toast(`สถานะล่าสุด: ${res?.data?.status || '-'}`);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ตรวจสถานะไม่สำเร็จ', 'error'); }
+      },
+
+      // รอบ 228 ฝ่ายค้าน S5: รับทราบ/จัดการข้อพิพาท (ล้างธงจนกว่าข้อพิพาทจะเปลี่ยน · audit ที่เซิร์ฟเวอร์)
+      async ackDispute(id) {
+        const api = Layout.api(); if (!api) return;
+        const note = prompt('บันทึกสิ่งที่ทำ (เช่น ส่งหลักฐานแล้ว/ออกใบลดหนี้แล้ว)', '');
+        if (note === null) return;
+        try { const res = await api.acknowledgePaymentDispute(id, note); Layout.toast(res?.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
       },
 
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ — ปุ่มโผล่เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง · ผล/เหตุผลมาจากเซิร์ฟเวอร์ทั้งหมด

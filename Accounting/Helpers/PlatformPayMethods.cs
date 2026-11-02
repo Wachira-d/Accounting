@@ -12,19 +12,22 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class PlatformPayMethods
 {
-    /// <summary>เหตุที่หน้าชำระของ NextAcc ยังใช้วิธีนี้ไม่ได้ — null = ใช้ได้</summary>
-    public static string? NotPayableReason(PaymentMethodKind method) => method switch
+    /// <summary>เหตุที่หน้าชำระของ NextAcc ยังใช้วิธีนี้ไม่ได้ — null = ใช้ได้ ·
+    /// รอบ 228 (§5.1): บัตรเปิดแล้ว (ช่องกรอกบัตร + โทเคนในเบราว์เซอร์ + รับกลับหลัง 3-D Secure ใน <c>js/pay-widget.js</c>) เมื่อ <paramref name="cardClientReady"/>
+    /// (ช่องทางมีสคริปต์ + คีย์สาธารณะของโหมดนี้ — <c>PaymentClientSetup.For</c>) · ค่าตั้งต้น true = "หน้าชำระทำได้" (ป้ายบนหน้าแอดมินที่ยังไม่รู้คีย์)</summary>
+    public static string? NotPayableReason(PaymentMethodKind method, bool cardClientReady = true) => method switch
     {
         PaymentMethodKind.PromptPay => null,
-        PaymentMethodKind.Card => "หน้าชำระของ NextAcc ยังไม่มีช่องกรอกบัตร (แปลงเลขบัตรเป็นโทเคนในเบราว์เซอร์) และหน้ารับกลับหลัง 3-D Secure — เปิดไว้ผู้เช่าจะชำระไม่สำเร็จ",
-        PaymentMethodKind.TrueMoney => "ต้องขอเบอร์วอลเล็ทของผู้จ่าย — หน้าชำระของ NextAcc ยังไม่มีช่องนี้",
+        PaymentMethodKind.Card => cardClientReady ? null
+            : "ยังไม่ได้ใส่คีย์สาธารณะ (public key) ของโหมดนี้ — หน้าชำระแปลงเลขบัตรเป็นโทเคนในเบราว์เซอร์ไม่ได้",
+        PaymentMethodKind.TrueMoney => "ต้องขอเบอร์วอลเล็ทของผู้จ่าย — หน้าชำระค่าบริการของ NextAcc ยังไม่ส่งเบอร์นี้ไปกับรายการ",
         PaymentMethodKind.MobileBanking or PaymentMethodKind.InternetBanking
-            => "พาผู้จ่ายออกไปแอป/เว็บธนาคาร — หน้าชำระของ NextAcc ยังไม่รับกลับมาตรวจสถานะ (เงินเข้าได้แต่ผู้เช่าไม่เห็นผล)",
+            => "หน้าชำระรับกลับจากแอป/เว็บธนาคารได้แล้ว (รอบ 228) แต่ช่องทางผูกไว้กับธนาคารเดียว — ผู้จ่ายยังเลือกธนาคารของตัวเองไม่ได้",
         PaymentMethodKind.ManualSlip => "โอนเงิน + แนบสลิปเป็นเส้นแยก (เปิดเสมอ) ไม่ใช่วิธีของช่องทางออนไลน์",
         _ => "ยังไม่รองรับ",
     };
 
-    public static bool IsPayable(PaymentMethodKind method) => NotPayableReason(method) == null;
+    public static bool IsPayable(PaymentMethodKind method, bool cardClientReady = true) => NotPayableReason(method, cardClientReady) == null;
 
     /// <summary>ชื่อไทยของวิธี (หน้าแอดมิน/หน้าเลือกวิธี) — ตัวเดียว (หน้าเว็บไม่ต้องมีตารางป้ายของตัวเอง)</summary>
     public static string Label(PaymentMethodKind method) => method switch
@@ -38,14 +41,15 @@ public static class PlatformPayMethods
         _ => method.ToString(),
     };
 
-    /// <summary>วิธีที่ผู้เช่าเห็น = (ที่แอดมินติ๊ก ∩ ที่ผู้ให้บริการรองรับ — ไม่ติ๊กเลย = ทุกวิธีที่รองรับ) ∩ ที่หน้าชำระของ NextAcc ทำจบได้ · ชื่อ enum · ลำดับตามผู้ให้บริการ</summary>
-    public static List<string> Effective(IEnumerable<PaymentMethodKind> providerSupported, IReadOnlyCollection<string> configured)
+    /// <summary>วิธีที่ผู้เช่าเห็น = (ที่แอดมินติ๊ก ∩ ที่ผู้ให้บริการรองรับ — ไม่ติ๊กเลย = ทุกวิธีที่รองรับ) ∩ ที่หน้าชำระของ NextAcc ทำจบได้ · ชื่อ enum · ลำดับตามผู้ให้บริการ ·
+    /// <paramref name="cardClientReady"/> = ช่องทางนี้รับบัตรในเบราว์เซอร์ได้จริง (สคริปต์ + คีย์สาธารณะของโหมดนี้) — ผู้เรียกส่งเสมอ (ไม่มีค่าตั้งต้น: ลืมส่ง = คอมไพล์ไม่ผ่าน)</summary>
+    public static List<string> Effective(IEnumerable<PaymentMethodKind> providerSupported, IReadOnlyCollection<string> configured, bool cardClientReady)
     {
         var supported = providerSupported.Where(m => m != PaymentMethodKind.ManualSlip).ToList();
         var chosen = configured.Count == 0
             ? supported
             : supported.Where(m => configured.Contains(m.ToString(), StringComparer.OrdinalIgnoreCase)).ToList();
-        return chosen.Where(IsPayable).Select(m => m.ToString()).ToList();
+        return chosen.Where(m => IsPayable(m, cardClientReady)).Select(m => m.ToString()).ToList();
     }
 
     /// <summary>ชื่อวิธีที่แอดมินส่งมาแต่ผู้ให้บริการไม่รองรับ/ไม่ใช่ชื่อวิธี (ด่านตอนบันทึก) — ว่าง = ใช้ได้ทั้งหมด</summary>
