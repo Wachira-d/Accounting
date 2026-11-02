@@ -337,7 +337,7 @@ public class DepositCancelOverviewRow
 /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E): แผง "สิ่งที่ยังไม่ได้ตั้งค่า" ของเว็บ — <c>Helpers/CmsSiteSetupChecklist</c></summary>
 public class CmsSiteSetupStatusDto
 {
-    public List<Accounting.Helpers.CmsSiteSetupItem> Items { get; set; } = new();
+    public List<CmsSiteSetupItem> Items { get; set; } = new();
     public int Done { get; set; }
     public int Total { get; set; }
     /// <summary>ข้อความก่อนเผยแพร่ (แสดง ไม่บล็อก) · null = ครบ</summary>

@@ -1841,27 +1841,6 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         return result;
     }
 
-    private async Task<Dictionary<int, WcfYear>> LoadWcfYearsAsync(Guid companyId)
-    {
-        var rate = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
-            .Select(x => (decimal?)x.WorkersCompensationRatePercent).FirstOrDefaultAsync() ?? 0m;
-        var rows = await _db.PayrollDetails.AsNoTracking()
-            .Where(d => d.CompanyId == companyId && d.WorkersCompensation > 0
-                && d.PayrollRun.Status == Accounting.Helpers.PayrollRunFilingScope.Paid)
-            .Select(d => new { d.PayrollRun.Year, d.EmployeeId, d.WorkersCompensation, d.WorkersCompensationWage })
-            .ToListAsync();
-        return rows.GroupBy(r => r.Year).ToDictionary(g => g.Key, g =>
-        {
-            var accrued = g.Sum(x => x.WorkersCompensation);
-            // อัตราถูกปิด/เป็น 0 ภายหลัง ⇒ ใช้ยอดที่ตั้งค้างจ่ายไว้ (ไม่ทิ้งหนี้ที่มีใน GL)
-            var annual = rate <= 0m ? accrued
-                : g.GroupBy(x => x.EmployeeId).Sum(e => Accounting.Helpers.WorkersCompensationBase.AnnualContribution(
-                    e.Sum(x => x.WorkersCompensationWage ?? Accounting.Helpers.WorkersCompensationBase.WageFromContribution(x.WorkersCompensation, rate)), rate));
-            return new WcfYear(g.Key, annual, accrued, g.Select(x => x.EmployeeId).Distinct().Count(),
-                g.Count(x => x.WorkersCompensationWage == null));
-        });
-    }
-
     /// <summary>
     /// <b>รับรู้ภาษีซื้อ ภ.พ.36</b> หลังได้ใบเสร็จกรมสรรพากร — JE: Dr 11610 ภาษีซื้อ / Cr 11640 ยังไม่ถึงกำหนด + ประทับวันเคลมลงเอกสาร
     /// (ภ.พ.30 เดือนนั้นดึงเข้าเอง) · หลักกฎหมาย §82/4 ประกอบใบเสร็จ RD (คำตัดสินข้อ 129 — เลิกอ้าง §77/2)

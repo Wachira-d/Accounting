@@ -67,7 +67,7 @@ public static class FileStorageKey
     }
 
     /// <summary>key ที่ยอมรับ: prefix ที่รู้จัก · ไม่มี <c>..</c>/<c>.</c>/ช่วงว่าง · ไม่มี backslash/อักขระควบคุม · ยาวไม่เกิน <see cref="MaxKeyLength"/></summary>
-    public static bool IsSafeKey(string? key)
+    internal static bool IsSafeKey(string? key)
     {
         if (string.IsNullOrEmpty(key) || key.Length > MaxKeyLength) return false;
         if (key.Contains('\\') || key.Any(char.IsControl)) return false;

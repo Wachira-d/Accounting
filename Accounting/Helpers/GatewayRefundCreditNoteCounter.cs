@@ -19,13 +19,13 @@ public static class GatewayRefundCreditNoteCounter
     private const decimal Tolerance = 0.005m;
 
     /// <summary>ใช้ผังลูกหนี้ของใบสำคัญคืนเงินเป็นขา counter ไหม · pure</summary>
-    public static bool UsesRefundReceivable(bool salesCreditNote, bool counterIsMoney, decimal withholdingTax,
+    internal static bool UsesRefundReceivable(bool salesCreditNote, bool counterIsMoney, decimal withholdingTax,
         decimal refundedUncovered, decimal creditNoteTotal)
         => salesCreditNote && counterIsMoney && withholdingTax <= 0m && creditNoteTotal > 0m
            && refundedUncovered + Tolerance >= creditNoteTotal;
 
     /// <summary>ยอดคืนผ่าน gateway ที่ยังไม่มีใบลดหนี้ครอบ · pure</summary>
-    public static decimal Uncovered(decimal refundedTotal, decimal creditedBefore) => Math.Max(0m, refundedTotal - creditedBefore);
+    internal static decimal Uncovered(decimal refundedTotal, decimal creditedBefore) => Math.Max(0m, refundedTotal - creditedBefore);
 
     /// <summary>ผังลูกหนี้ของใบสำคัญคืนเงินผ่าน gateway ของใบต้นทาง (ใบล่าสุด · ขา Dr) เมื่อใบลดหนี้นี้ควรล้างยอดรอ — null = ใช้พฤติกรรมเดิม ·
     /// ทุก query กรอง <paramref name="companyId"/></summary>

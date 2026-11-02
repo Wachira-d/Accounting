@@ -29,7 +29,7 @@ public static class FileStorageConfigPolicy
     };
 
     /// <summary>ค่าที่ "ไม่ว่างแต่ใช้ไม่ได้" — ตัวอย่างใน appsettings/เอกสาร (เช่น AKIAIOSFODNN7EXAMPLE) · ค่าที่ขึ้นต้น <c>${</c></summary>
-    public static bool IsPlaceholder(string? value)
+    private static bool IsPlaceholder(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return true;
         var v = value.Trim();
