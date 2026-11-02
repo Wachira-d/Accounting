@@ -85,7 +85,10 @@ public class GatewayRefundCreditNoteCounterDbTests
     private static async Task CreditNoteAsync(Accounting.Data.AccountingDbContext db, Seed s, Document inv)
     {
         var docs = new DocumentService(db, new AccountingService(db), AllowAll<ISubscriptionService>.Create(), null!, null!,
-            NullLogger<DocumentService>.Instance, null!, null!, null!);
+            NullLogger<DocumentService>.Instance, null!,
+                // CI รอบ 228: งานฝึก OCR หลังอนุมัติ (TryTrainAsync) ไม่มีตัวกัน null — ต้องส่งตัวจริง (DI จริงไม่เคยเป็น null)
+                new Accounting.Services.Implementations.Ocr.VendorIntelligenceService(db, NullLogger<Accounting.Services.Implementations.Ocr.VendorIntelligenceService>.Instance),
+                null!);
         var cn = await docs.CreateDocumentAsync(s.CompanyId, new CreateDocumentRequest(
             DocumentType: DocumentType.CreditNote, DocumentDate: DateTime.UtcNow.Date, DueDate: null, ContactId: s.ContactId,
             Reference: inv.DocumentNumber, Notes: "คืนเงินลูกค้า",

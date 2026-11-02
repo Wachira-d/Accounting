@@ -748,6 +748,24 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         }
         catch (Exception ex)
         {
+            // CI รอบ 228 (ต้นเหตุ 11340 ลดสองเท่า): ApproveDocumentAsync ลง JE + ออกเลขแล้ว commit ก่อนงานข้างเคียงหลังอนุมัติ (ฝึก OCR/แจ้งเตือน ฯลฯ) —
+            // งานข้างเคียงโยน ⇒ เดิมตอบ "ล้ม" ⇒ ผู้เรียกลงใบสำคัญสำรอง Cr บัญชีพักอีกขา (เงินออกสองครั้ง) · ตอนนี้ถามฐานก่อน: ใบลดหนี้ออกเลขแล้ว = สำเร็จ
+            if (draft is { } d)
+            {
+                try
+                {
+                    var issued = await _db.Documents.AsNoTracking()
+                        .Where(x => x.Id == d.DocumentId && x.CompanyId == d.TenantId && !x.IsDeleted
+                            && x.Status != DocumentStatus.Draft && x.Status != DocumentStatus.Voided && x.Status != DocumentStatus.Rejected)
+                        .Select(x => new { x.Id, x.DocumentNumber }).FirstOrDefaultAsync();
+                    if (issued != null)
+                    {
+                        _logger.LogWarning(ex, "ใบลดหนี้ {Cn} อนุมัติแล้ว แต่งานหลังอนุมัติล้ม — ถือว่าออกใบสำเร็จ (ไม่ลงใบสำคัญสำรองซ้ำ)", issued.DocumentNumber);
+                        return new PlatformRefundCreditResult(true, issued.Id, issued.DocumentNumber, null);
+                    }
+                }
+                catch (Exception probe) { _logger.LogError(probe, "ตรวจสถานะใบลดหนี้หลังอนุมัติล้มไม่สำเร็จ (intent {Intent})", intentId); }
+            }
             _logger.LogError(ex, "ออกใบลดหนี้ของการคืนเงินค่าบริการไม่สำเร็จ (intent {Intent} · อ้างอิง {Ref})", intentId, refundRef);
             await NoteDraftFailureAsync(draft, "ออกใบลดหนี้คืนเงินค่าบริการแพลตฟอร์ม", ex);
             return new PlatformRefundCreditResult(false, null, null,

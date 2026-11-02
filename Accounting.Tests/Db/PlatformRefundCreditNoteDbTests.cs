@@ -54,10 +54,13 @@ public class PlatformRefundCreditNoteDbTests
 
     /// <param name="platformVatRegistered">true = เส้นปกติ (ใบลดหนี้ออกได้) · false = ทิศตรงข้าม: ใบลดหนี้ถูกด่าน §90/2 ปฏิเสธ ⇒ ใบสำคัญสำรอง Dr ลูกหนี้/Cr บัญชีพัก
     /// + เรื่องค้างบนรายการ (ล้มดัง ไม่เงียบ — CI รอบ 228)</param>
+    /// <param name="sideEffectThrows">CI รอบ 228 (ต้นเหตุ 11340 ลดสองเท่า): งานข้างเคียงหลังอนุมัติใบลดหนี้โยน (ฝึก OCR) หลัง JE ลงแล้ว ⇒ ต้องนับว่าออกใบสำเร็จ
+    /// ไม่ลงใบสำคัญสำรองซ้ำ</param>
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task B1_คืนเงินค่าส่วนเสริม_บันทึกยอดคืน_ลงบัญชีด้วยใบลดหนี้ใบเดียว_บัญชีพักลด_เงินสดไม่ขยับ_ลูกหนี้ศูนย์(bool platformVatRegistered)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task B1_คืนเงินค่าส่วนเสริม_บันทึกยอดคืน_ลงบัญชีด้วยใบลดหนี้ใบเดียว_บัญชีพักลด_เงินสดไม่ขยับ_ลูกหนี้ศูนย์(bool platformVatRegistered, bool sideEffectThrows)
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
@@ -112,7 +115,10 @@ public class PlatformRefundCreditNoteDbTests
         await WithPlatformAsync(db, f.PlatformId, async () =>
         {
             var docs = new DocumentService(db, new AccountingService(db), AllowAll<ISubscriptionService>.Create(), null!, null!,
-                NullLogger<DocumentService>.Instance, null!, null!, null!);
+                NullLogger<DocumentService>.Instance, null!,
+                // CI รอบ 228: งานฝึก OCR หลังอนุมัติ (TryTrainAsync) ไม่มีตัวกัน null — ต้องส่งตัวจริง (DI จริงไม่เคยเป็น null)
+                sideEffectThrows ? null! : new Accounting.Services.Implementations.Ocr.VendorIntelligenceService(db, NullLogger<Accounting.Services.Implementations.Ocr.VendorIntelligenceService>.Instance),
+                null!);
             var providers = new IPaymentProvider[] { new OmisePaymentProvider(null!, null!, NullLogger<OmisePaymentProvider>.Instance) };
             var resolver = new GatewayAccountResolver(db, providers, NullLogger<GatewayAccountResolver>.Instance);
             var issuer = new PlatformBillingDocumentIssuer(db, new F4ServiceMap().Add<IDocumentService>(docs),
