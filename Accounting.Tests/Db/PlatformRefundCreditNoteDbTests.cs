@@ -52,12 +52,20 @@ public class PlatformRefundCreditNoteDbTests
                   select new { Code = g.Key, Net = g.Sum(x => x.DebitAmount - x.CreditAmount) })
             .ToDictionaryAsync(x => x.Code, x => x.Net);
 
-    [Fact]
-    public async Task B1_คืนเงินค่าส่วนเสริม_บันทึกยอดคืน_ลงบัญชีด้วยใบลดหนี้ใบเดียว_บัญชีพักลด_เงินสดไม่ขยับ_ลูกหนี้ศูนย์()
+    /// <param name="platformVatRegistered">true = เส้นปกติ (ใบลดหนี้ออกได้) · false = ทิศตรงข้าม: ใบลดหนี้ถูกด่าน §90/2 ปฏิเสธ ⇒ ใบสำคัญสำรอง Dr ลูกหนี้/Cr บัญชีพัก
+    /// + เรื่องค้างบนรายการ (ล้มดัง ไม่เงียบ — CI รอบ 228)</param>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task B1_คืนเงินค่าส่วนเสริม_บันทึกยอดคืน_ลงบัญชีด้วยใบลดหนี้ใบเดียว_บัญชีพักลด_เงินสดไม่ขยับ_ลูกหนี้ศูนย์(bool platformVatRegistered)
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
         var f = await PlatformBillingPhase2DbTests.SeedAsync(db);
+        // CI รอบ 228 (ต้นเหตุ): บริษัทผู้ให้บริการในชุดทดสอบไม่ได้จด VAT ⇒ DocumentService ปฏิเสธใบลดหนี้ที่มี VAT (§90/2) — ใบเดิมมี VAT แปลว่าจดแล้ว
+        // (production: ใบกำกับเดิมออกได้ก็ต่อเมื่อจด VAT) · ใบลดหนี้ล้มจริง ⇒ ใบสำคัญสำรอง + เรื่องค้าง (เทสต์ Cn/สำรองด้านล่าง)
+        var platformCo = await db.Companies.SingleAsync(c => c.Id == f.PlatformId);
+        platformCo.IsVatRegistered = platformVatRegistered;
         var acc = new Dictionary<string, ChartOfAccount>();
         foreach (var (code, name, type) in new[]
                  {
@@ -119,22 +127,37 @@ public class PlatformRefundCreditNoteDbTests
             _out.WriteLine(r.Message);
 
             using var check = DbTestDatabase.TryCreateContext()!;
-            var cn = await check.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == f.PlatformId && d.DocumentType == DocumentType.CreditNote
-                && d.RelatedDocumentId == original.Id);
-            Assert.Equal(107m, cn.TotalAmount);
-            Assert.Equal(7m, cn.VatAmount);
-            Assert.NotEqual(DocumentStatus.Draft, cn.Status);
             var gl = await BalancesAsync(check, f.PlatformId);
-            Assert.Equal(535m - 107m, gl.GetValueOrDefault(GatewayAccountResolver.StandardClearingCode));   // บัญชีพัก −107
-            Assert.Equal(0m, gl.GetValueOrDefault("111"));                                                 // เงินสดไม่ขยับ (เดิม Cr 107)
-            Assert.Equal(0m, gl.GetValueOrDefault("11310"));                                               // ลูกหนี้ศูนย์ (เดิม Dr 107 ค้าง)
-            Assert.Equal(-400m, gl.GetValueOrDefault("41000"));                                            // รายได้ 500 − 100
-            Assert.Equal(-28m, gl.GetValueOrDefault("21911"));                                             // ภาษีขาย 35 − 7
-            // ไม่มีใบสำคัญคืนเงินของรายการนี้ (ใบลดหนี้คือรายการบัญชีเดียว) · ไม่มีเรื่องค้าง
             var after = await check.PaymentIntents.AsNoTracking().SingleAsync(i => i.Id == intent.Id);
-            Assert.Null(after.LastRefundJournalEntryId);
-            Assert.Null(after.RefundCreditNoteProblem);
             Assert.Equal(107m, after.RefundedAmount);
+            Assert.Equal(535m - 107m, gl.GetValueOrDefault(GatewayAccountResolver.StandardClearingCode));   // บัญชีพัก −107 (ทั้งสองทิศ — ครั้งเดียว)
+            Assert.Equal(0m, gl.GetValueOrDefault("111"));                                                 // เงินสดไม่ขยับ (เดิม Cr 107)
+            if (platformVatRegistered)
+            {
+                var cn = await check.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == f.PlatformId && d.DocumentType == DocumentType.CreditNote
+                    && d.RelatedDocumentId == original.Id);
+                Assert.Equal(107m, cn.TotalAmount);
+                Assert.Equal(7m, cn.VatAmount);
+                Assert.NotEqual(DocumentStatus.Draft, cn.Status);
+                Assert.Equal(0m, gl.GetValueOrDefault("11310"));                                           // ลูกหนี้ศูนย์ (เดิม Dr 107 ค้าง)
+                Assert.Equal(-400m, gl.GetValueOrDefault("41000"));                                        // รายได้ 500 − 100
+                Assert.Equal(-28m, gl.GetValueOrDefault("21911"));                                         // ภาษีขาย 35 − 7
+                // ไม่มีใบสำคัญคืนเงินของรายการนี้ (ใบลดหนี้คือรายการบัญชีเดียว) · ไม่มีเรื่องค้าง
+                Assert.Null(after.LastRefundJournalEntryId);
+                Assert.Null(after.RefundCreditNoteProblem);
+            }
+            else
+            {
+                // ใบลดหนี้ออกไม่ได้ ⇒ ใบสำคัญสำรองลงลูกหนี้รอใบลดหนี้ (ดังบนงบ) · รายได้/VAT ยังไม่ลด · เรื่องค้าง + ขา counter ที่ใบลดหนี้รอบหน้าต้องใช้ = ลูกหนี้
+                Assert.Equal(107m, gl.GetValueOrDefault("11310"));
+                Assert.Equal(-500m, gl.GetValueOrDefault("41000"));
+                Assert.NotNull(after.LastRefundJournalEntryId);
+                Assert.NotNull(after.RefundCreditNoteProblem);
+                Assert.Contains("90/2", after.RefundCreditNoteProblem);
+                Assert.Equal(acc["11310"].Id, after.RefundCreditNoteCounterAccountId);
+                Assert.Equal(107m, after.RefundCreditNotePendingAmount);
+                Assert.Contains("ใบสำคัญสำรอง", r.Message);
+            }
         });
     }
 }

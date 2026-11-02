@@ -116,6 +116,10 @@ public class GatewayRefundService : IGatewayRefundService
                 CreditNoteState = nameof(GatewayRefundCreditNoteState.CreditNoteCovered), NextStep = null,
             };
 
+        // CI รอบ 228: ใบลดหนี้ที่อนุมัติล้มอาจทิ้งการเปลี่ยนแปลงค้างใน context (ร่าง/สถานะ) — ล้างก่อนลงใบสำคัญสำรอง แล้วโหลดรายการใหม่
+        // (หมายเหตุบนใบร่างบันทึกไปแล้วโดยตัวออกเอกสาร · ห้ามให้ SaveChanges ของใบสำคัญสำรองพาของค้างลงฐาน)
+        _db.ChangeTracker.Clear();
+        intent = await _db.PaymentIntents.FirstAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
         var fallback = await PostPlatformFallbackVoucherAsync(companyId, intent, outcome.Amount, key, reason, actor, clearing);
         var problem = cn.Problem + (fallback.Problem == null ? "" : " · " + fallback.Problem);
         await MarkCreditNotePendingAsync(companyId, intent, key, outcome.Amount, reason, problem,
@@ -215,6 +219,7 @@ public class GatewayRefundService : IGatewayRefundService
             return Fail("รายการนี้ไม่มีใบลดหนี้ค้าง");
         var counter = intent.RefundCreditNoteCounterAccountId ?? await _accounts.ResolveMoneyInAccountAsync(intent, ct);
         var cn = await TryIssueCreditNoteAsync(intentId, amount, key, intent.RefundCreditNotePendingReason ?? "คืนเงินค่าบริการ", counter);
+        if (!cn.Ok) _db.ChangeTracker.Clear();   // CI รอบ 228: ของค้างจากการอนุมัติที่ล้มห้ามติดไปกับ SaveChanges ด้านล่าง
         var tracked = await _db.PaymentIntents.FirstAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
         if (cn.Ok)
         {

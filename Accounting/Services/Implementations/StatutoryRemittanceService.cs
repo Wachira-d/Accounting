@@ -1546,8 +1546,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 LateFee = lateFee,
                 Penalty = applied.Penalty,
                 OtherFine = applied.OtherFine,
-                SuggestedLateFee = suggested.Surcharge,
-                SuggestedPenalty = suggested.Penalty,
+                // "ค่าที่ระบบเสนอ" = ค่าที่ฟอร์มเติมให้ผู้ใช้ (รอบ 220: ใช้ตรวจย้อนว่าผู้ใช้แก้ไหม) — รอบ 228 ฝ่ายค้าน S4/PP36: กติกาที่ยังไม่ยืนยัน
+                // (เบี้ยปรับ ภ.พ.36 · เงินเพิ่ม กท.20ก) แสดงเป็นข้อมูลแต่ไม่เติมช่อง ⇒ ค่าที่เสนอลงช่อง = 0 (ตัวตั้งเดียวกับ PenaltyPrefill/LateFeePrefill)
+                // ห้ามเก็บยอดข้อมูลเป็น "ค่าเสนอ" — ไม่งั้นแถวนำส่งบอกว่าผู้ใช้ "ลด" ค่าที่ระบบไม่เคยเติม
+                SuggestedLateFee = suggested.SurchargeNeedsConfirmation ? 0m : suggested.Surcharge,
+                SuggestedPenalty = suggested.PenaltyNeedsConfirmation ? 0m : suggested.Penalty,
                 PaperFiling = req.PaperFiling,
                 PayDate = req.PayDate,
                 BankGlAccountId = bankGlId,

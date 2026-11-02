@@ -116,7 +116,10 @@ public class RemittancePenaltyPostingDbTests
         Assert.Equal((12.34m, 50m, 200m), (row.LateFee, row.Penalty, row.OtherFine));
         // ค่าที่ระบบเสนอเก็บคู่ (ผู้ใช้แก้แล้ว) — ตัวตั้งเดียวกับ preview
         Assert.Equal(preview.LateFeePreview, row.SuggestedLateFee);
+        // รอบ 228: ภ.พ.36 เสนอเบี้ยปรับเป็นข้อมูล (ต้องยืนยัน) แต่ไม่เติมช่อง ⇒ "ค่าที่ระบบเสนอลงช่อง" ยังเป็น 0 (PenaltyPrefill)
         Assert.Equal(0m, row.SuggestedPenalty);
+        Assert.Equal(0m, preview.PenaltyPrefill);
+        Assert.True(preview.PenaltyPreview > 0);   // ข้อมูลยังแสดง
 
         var addBack = await new TaxService(check).ComputeSection65TerAddBackAsync(s.CompanyId, Period, DateTime.UtcNow.Date.AddDays(1));
         Assert.Equal(262.34m, addBack);

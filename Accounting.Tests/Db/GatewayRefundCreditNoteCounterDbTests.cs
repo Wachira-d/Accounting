@@ -24,10 +24,12 @@ public class GatewayRefundCreditNoteCounterDbTests
 
     private static async Task<Seed> SeedAsync(Accounting.Data.AccountingDbContext db)
     {
-        var co = new Company { Name = "ร้านทดสอบคืนเงิน gateway", TaxId = "0105556000002" };
+        // CI รอบ 228: บริษัทต้องจด VAT — ใบลดหนี้ที่มี VAT ของบริษัทที่ไม่จดถูกด่าน §90/2 ปฏิเสธ (ไม่ใช่สิ่งที่เทสต์นี้ตรวจ)
+        var co = new Company { Name = "ร้านทดสอบคืนเงิน gateway", TaxId = "0105556000025", IsVatRegistered = true };
         db.Companies.Add(co);
         await db.SaveChangesAsync();
-        var contact = new Contact { CompanyId = co.Id, Name = "ลูกค้าบัตร", IsCustomer = true };
+        var contact = new Contact { CompanyId = co.Id, Name = "ลูกค้าบัตร", IsCustomer = true, TaxId = "0105556000017", BranchCode = "00000",
+            Address = "1 ถนนทดสอบ แขวงทดสอบ เขตทดสอบ กรุงเทพมหานคร 10110" };
         db.Contacts.Add(contact);
         var acc = new Dictionary<string, ChartOfAccount>();
         foreach (var (code, name, type) in new[]
@@ -93,7 +95,8 @@ public class GatewayRefundCreditNoteCounterDbTests
                     WithholdingTaxRate: 0m, AccountId: s.Acc["41000"].Id),
             },
             RelatedDocumentId: inv.Id, CnDnPurchaseSideOverride: false, CreditNoteReason: CreditNoteReason.Adjustment), "tester");
-        await docs.ApproveDocumentAsync(s.CompanyId, cn.Id, "tester");
+        // CI รอบ 228: ผู้ใช้อนุมัติบนหน้าเอกสาร = เห็นคำเตือนแล้วกดรับทราบ (รูปเดียวกับเส้นเว็บ) — เทสต์นี้ตรวจขา GL ไม่ใช่ชุดคำเตือน
+        await docs.ApproveDocumentAsync(s.CompanyId, cn.Id, "tester", acknowledgeWarnings: true);
     }
 
     [Fact]
