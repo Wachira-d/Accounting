@@ -201,8 +201,15 @@ public static class PaymentIntentPolicy
         var host = abs.Host;
         var allowed = allowedHosts.Any(h => !string.IsNullOrWhiteSpace(h)
                           && string.Equals(h.Trim().TrimEnd('.'), host.TrimEnd('.'), StringComparison.OrdinalIgnoreCase))
-                      || (baseUri != null && string.Equals(baseUri.Host, host, StringComparison.OrdinalIgnoreCase));
+                      || (baseUri != null && string.Equals(StripWww(baseUri.Host), StripWww(host), StringComparison.OrdinalIgnoreCase));
         return allowed ? u : fallback;
+    }
+
+    /// <summary>รอบ 221: โดเมนระบบ "www.x" กับ "x" เป็นเจ้าของเดียวกัน (ผู้ใช้เปิด www.nextacc.net ขณะตั้ง URL ระบบเป็น nextacc.net)</summary>
+    private static string StripWww(string host)
+    {
+        var h = host.TrimEnd('.');
+        return h.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? h[4..] : h;
     }
 
     /// <summary>คีย์กันสร้าง intent ซ้ำสำหรับการจ่ายครั้งเดียวกัน

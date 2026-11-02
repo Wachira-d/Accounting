@@ -46,6 +46,8 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
         if (doc == null) return false;
         // ไม่ Include Contact (INNER JOIN ตัดใบที่ contact ถูกลบ) — hydrate แยก
         await _db.HydrateContactAsync(companyId, doc);
+        // รอบ 221: URL ระบบจากตัวตั้งเดียว (เดิม appsettings ล้วน + ค่าเริ่มต้น app.nextacc.com = โดเมนที่ไม่ใช่ของเรา)
+        var baseUrl = await SystemBaseUrl.ResolveAsync(_db, _config, ct) ?? "";
         var lineId = doc.Contact?.LineUserId;
         if (string.IsNullOrWhiteSpace(lineId))
         {
@@ -106,7 +108,7 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
                             // เดิม hardcode https://app.example.com/... = ลิงก์ตาย
                             // จริงใน prod — ใช้ App:BaseUrl (ตัวเดียวกับ payslip
                             // LINE) ชี้เข้า portal ลูกค้าของบริษัทนั้น
-                            uri = $"{(_config?["App:BaseUrl"] ?? "https://app.nextacc.com").TrimEnd('/')}/portal.html?company={doc.CompanyId}"
+                            uri = $"{baseUrl}/portal.html?company={doc.CompanyId}"
                         }
                     }
                 }

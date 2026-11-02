@@ -314,7 +314,7 @@ public class StaffDailySummaryService : IStaffDailySummaryService
         var scope = await RecipientScopeAsync(cfg.CompanyId, m, round.SiteIds, ct);
         var visible = StaffDailySummaryPlan.FilterForRecipient(round.Rows, round.Sections, scope, round.LodgingActive);
         if (!visible.HasAnySection) return Array.Empty<string>();
-        return StaffDailySummaryBuilder.Build(today, round.CompanyName, round.ScopeName, visible, _config["App:BaseUrl"]);
+        return StaffDailySummaryBuilder.Build(today, round.CompanyName, round.ScopeName, visible, await SystemBaseUrl.ResolveAsync(_db, _config, ct));
     }
 
     /// <summary>คีย์สิทธิ์ที่แคตตาล็อกถาม (ผ่าน <see cref="IPermissionService.HasPermissionAsync"/> — กติกาเดียวกับด่าน endpoint · เจ้าของผ่านทุกคีย์) +

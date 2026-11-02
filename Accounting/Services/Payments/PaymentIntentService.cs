@@ -111,7 +111,11 @@ public class PaymentIntentService : IPaymentIntentService
             .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.CustomDomain != null)
             .Select(x => x.CustomDomain!)
             .ToListAsync(ct));
-        return PaymentIntentPolicy.SafeReturnUrl(requested, hosts, _config?["App:BaseUrl"]);
+        // รอบ 221: URL ของระบบ = ค่าที่ผู้ดูแลตั้ง (SiteSettings.AppBaseUrl) ก่อน แล้วจึง appsettings — เดิมอ่านแต่ appsettings
+        // (ค่าเริ่มต้น app.nextacc.com ซึ่งเป็นโดเมนที่ไม่ใช่ของเรา) ⇒ ทดลองจ่ายแล้ว Omise เด้งกลับไปเว็บขายโดเมน
+        var configBase = _config?["App:BaseUrl"];
+        if (Uri.TryCreate(configBase?.Trim(), UriKind.Absolute, out var cfgUri)) hosts.Add(cfgUri.Host);
+        return PaymentIntentPolicy.SafeReturnUrl(requested, hosts, await SystemBaseUrl.ResolveAsync(_db, _config, ct));
     }
 
     private IPaymentProvider Resolve(string code)

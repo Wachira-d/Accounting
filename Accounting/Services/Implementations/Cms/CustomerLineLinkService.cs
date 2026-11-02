@@ -61,7 +61,7 @@ public class CustomerLineLinkService : ICustomerLineLinkService
             if (CustomerNotifyChannel.LinkUsable(g.OaScope, g.OaDestination, ch.Scope, ch.CurrentDestination)) active += g.Count;
             else stale += g.Count;
         }
-        var baseUrl = (_config["App:BaseUrl"] ?? "").TrimEnd('/');
+        var baseUrl = await SystemBaseUrl.ResolveAsync(_db, _config, ct) ?? "";
         var webhook = string.IsNullOrEmpty(baseUrl) ? null : $"{baseUrl}/api/line/webhook/c/{companyId}";
         return new CustomerLineChannelInfo(ch.Scope, ch.BasicId, ch.CanLink, ch.Problem, webhook, active, stale);
     }
