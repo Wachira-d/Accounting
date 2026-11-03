@@ -18,7 +18,12 @@ public record UsageRecordRequest(
     string? RefEntityType = null,
     Guid? RefEntityId = null,
     // ฝ่ายค้านรอบ 213 S3: หน่วยที่ลูกค้าซื้อ ณ ตอนนั้น (เช่น "แพ็ก 500 ข้อความ") — ใบแจ้งหนี้ใช้ค่านี้แทนป้ายปัจจุบันของฟีเจอร์ · null = ใช้ป้ายของฟีเจอร์ (เดิม)
-    string? UnitLabel = null);
+    string? UnitLabel = null,
+    // รอบ 231 (ส่วนเกินโควตา): ราคาต่อหน่วยที่ผู้เรียก resolve มาแล้วจากตาราง OverageRates (Helpers/OverageRateResolver) — มิเตอร์ overage.* ไม่อยู่ใน ApiPricingPlan ·
+    // null = resolve จาก ApiPricingPlan ตามเดิม · 0 = บันทึกเป็นข้อมูลไม่คิดเงิน (ใบที่กฎหมายบังคับในโหมดล็อก)
+    decimal? UnitPriceOverride = null,
+    // ฝ่ายค้านรอบ 231 S4: เวลาที่เหตุการณ์ "เกิด" เมื่อผู้เรียกสรุปย้อนหลัง (ส่วนเกินพื้นที่ GB-เดือนปิดงวดก่อน ⇒ ประทับวินาทีสุดท้ายของงวดนั้น ไม่ใช่เวลาที่งานรัน) · null = ตอนนี้
+    DateTime? OccurredAtOverride = null);
 
 /// <summary>ผลการบันทึก — บอกด้วยว่าคิดเงินไปเท่าไรและทำไม</summary>
 /// <param name="Recorded">false = ไม่ได้บันทึกใหม่ (ซ้ำ/ฟีเจอร์ปิด/ไม่มีราคา)</param>

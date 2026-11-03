@@ -120,6 +120,10 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
                 // รอบ 230: ส่วนต่างอัปเกรดกลางรอบ — บอกตามจริง (ไม่ใช่ "แพ็กเกจ 0 เดือน")
                 p.IsProration
                     ? $"ส่วนต่างอัปเกรด {p.ProrationFromPlan} → {p.RequestedPlan} ({p.ProrationDays}/{p.ProrationCycleDays} วัน)"
+                    // รอบ 231 (ฝ่ายค้าน S1): รายการเปลี่ยนรอบบิล — บอกเครดิตที่หักและรอบใหม่นับจากวันชำระ
+                    : p.IsCycleChange
+                    ? $"เปลี่ยนรอบบิลเป็นราย{Accounting.Helpers.PlatformPlanPricing.CycleLabel(p.RequestedBillingCycle)} {p.RequestedPlan} (หักมูลค่าคงเหลือ {p.CycleChangeCredit ?? 0m:N2} · {p.ProrationDays}/{p.ProrationCycleDays} วัน · รอบใหม่นับจากวันชำระ)"
+                      + (p.StandardAmount is decimal sa ? $" · ราคาพิเศษ (ราคาตั้ง {sa:N2})" : "")
                     : PaymentPurpose(p.PlatformInvoiceDocumentId != null, invNo, p.Kind, p.RequestedPlan, p.RequestedPeriodMonths),
                 invNo, p.ReceiptNumber, p.ReceiptIsTaxInvoice, p.ReceiptNumber != null, p.SlipFileName != null,
                 p.Status == SubscriptionPaymentStatus.Rejected ? p.RejectionReason : null,

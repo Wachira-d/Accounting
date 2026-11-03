@@ -1777,8 +1777,9 @@ const Layout = {
       description: 'ใช้ไปเท่าไร · ซื้อโควตาเพิ่ม (เว็บไซต์ · ที่นั่ง · พื้นที่ · หน้า OCR) · ต่ออายุ · ใบแจ้งหนี้ · ชำระออนไลน์หรือโอน+สลิป · ใบเสร็จ/ใบกำกับภาษี' },
     { id: 'addons', inHub: true, label: 'ส่วนเสริมของฉัน', icon: '🧩', href: '/pages/addons.html',
       description: 'เปิด/ปิดส่วนเสริมที่คิดเงินแยกจากแพ็กเกจ · ดูโควตาเอกสารเดือนนี้ · ซื้อโควตาเพิ่ม' },
-    { id: 'usage', inHub: true, label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
-      description: 'การใช้งานเทียบกับ limit · จำนวนเอกสาร · ผู้ใช้ · storage' },
+    // รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §D.3): usage.html ยุบเข้า hub แท็บ "ใช้ไปเท่าไร" (URL เดิม redirect) — เมนูชี้แท็บตรง
+    { id: 'usage', inHub: true, label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/billing.html#tab=usage', _i18nKey: 'nav.usage',
+      description: 'การใช้งานเทียบกับ limit · เดือนนี้ + ย้อนหลัง 24 เดือน · ส่วนเกินโควตา · ผู้ใช้ · storage' },
     { id: 'audit', label: 'บันทึกกิจกรรม (Audit)', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog', _i18nKey: 'nav.audit',
       description: 'ประวัติทุก action ในระบบ · ใคร · เมื่อไหร่ · IP · เปลี่ยนอะไร' },
   ],

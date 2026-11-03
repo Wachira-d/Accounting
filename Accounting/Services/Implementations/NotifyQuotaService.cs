@@ -29,6 +29,8 @@ public class NotifyQuotaService : INotifyQuotaService
     public const string KindEssential = "essential";
     public const string KindFull = "full";
     public const string KindUntracked = "untracked";
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-2): เต็มแต่ผู้เช่าเปิด "ใช้ต่อได้ คิดค่าส่วนเกิน" ⇒ ส่งทางช่องกลางต่อ + 1 UsageEvent overage.notify.messages ต่อข้อความ</summary>
+    public const string KindOverage = "overage";
     /// <summary>อายุ claim — คำขอที่ค้าง/ล้มกลางทางเกินนี้ ⇒ คำขอถัดไปรับช่วงได้ ·
     /// ฝ่ายค้านรอบ 212 (a): ต้องยาวกว่าผลรวม timeout ของทุกขั้น (LINE push + SMTP ร้าน + SMTP ระบบ) — ไม่งั้นคำขอที่ยังส่งอยู่ถูกรับช่วงแล้วส่งซ้ำ</summary>
     public static readonly TimeSpan ClaimLease = TimeSpan.FromMinutes(10);
@@ -40,9 +42,13 @@ public class NotifyQuotaService : INotifyQuotaService
     private readonly INotificationEngine? _engine;
     private readonly INotificationService? _bell;
 
+    /// <summary>รอบ 231: ด่านส่วนเกินตัวเดียว (null ในเทสต์เดิม = ไม่มีส่วนเกิน — เส้นเดิมทุกประการ)</summary>
+    private readonly IOverageService? _overage;
+
     public NotifyQuotaService(AccountingDbContext db, ILogger<NotifyQuotaService> logger, IServiceScopeFactory? scopes = null,
-        IUsageMeteringService? metering = null, INotificationEngine? engine = null, INotificationService? bell = null)
+        IUsageMeteringService? metering = null, INotificationEngine? engine = null, INotificationService? bell = null, IOverageService? overage = null)
     {
+        _overage = overage;
         _db = db;
         _logger = logger;
         _scopes = scopes;
@@ -268,7 +274,11 @@ public class NotifyQuotaService : INotifyQuotaService
                     return new NotifyReservation(true, KindEssential, period, planLimit, 0, used);
                 }
 
-                // 4) เต็ม — แจ้งเจ้าของระดับ 100% (ครั้งเดียวต่องวด · AlertIfCrossedAsync ประทับกันซ้ำ)
+                // 4) รอบ 231 (§B.4 · คำตัดสินข้อ 231-2): เต็ม + ผู้เช่าเปิดส่วนเกิน (มีราคา · ไม่ถึงเพดาน · ไม่ถูกล็อก) ⇒ ส่งทางช่องกลางต่อ คิดต่อข้อความ
+                var overage = await TryReserveOverageAsync(db, companyId, period, ct);
+                if (overage != null) return overage with { Limit = planLimit, CrossedLevel = 0 };
+
+                // 5) เต็ม — แจ้งเจ้าของระดับ 100% (ครั้งเดียวต่องวด · AlertIfCrossedAsync ประทับกันซ้ำ)
                 return new NotifyReservation(false, KindFull, period, planLimit, 2, planLimit);
             });
         }
@@ -278,6 +288,25 @@ public class NotifyQuotaService : INotifyQuotaService
             return new NotifyReservation(true, KindUntracked, period, NotifyQuotaPolicy.Unlimited, 0, 0);
         }
     }
+
+    /// <summary>รอบ 231: จอง 1 หน่วยแบบส่วนเกิน — ถามด่าน (OverageService.DecideAsync) · อนุญาต ⇒ นับ Used ต่อ (atomic) + บันทึก UsageEvent overage.notify.messages
+    /// (คีย์ = ตัวนับหลังเพิ่ม · unique ต่อบริษัท·งวด) · ไม่อนุญาต/ไม่มีบริการ ⇒ null (เส้นเดิม: ช่องของร้าน/ไม่ส่ง)</summary>
+    private async Task<NotifyReservation?> TryReserveOverageAsync(AccountingDbContext db, Guid companyId, string period, CancellationToken ct)
+    {
+        if (_overage == null) return null;
+        var decision = await _overage.DecideAsync(companyId, AddOnCodesOverageResource, 1, ct);
+        if (!decision.Allowed) return null;
+        var used = await ScalarIntAsync(db, """
+            UPDATE "NotifyUsageCounters" SET "Used" = "Used" + 1 WHERE "CompanyId" = @c AND "Period" = @p
+            RETURNING "Used" + "BonusUsed";
+            """, ct, P("c", companyId, NpgsqlDbType.Uuid), P("p", period, NpgsqlDbType.Varchar)) ?? 0;
+        await _overage.RecordAsync(companyId, AddOnCodesOverageResource, 1, OverageKey(period, used), "NotifyUsageCounter", null,
+            chargeable: true, unitPriceSnapshot: decision.UnitPrice, ct);
+        return new NotifyReservation(true, KindOverage, period, NotifyQuotaPolicy.Unlimited, 0, used);
+    }
+
+    private const string AddOnCodesOverageResource = Accounting.Models.Constants.OverageResources.NotifyMessages;
+    private static string OverageKey(string period, int usedAfter) => $"notify-overage:{period}:{usedAfter}";
 
     private static NotifyReservation Reserved(string kind, string period, int planLimit, int usedAfter, int bonusRemaining, DateTime? bonusExp, DateTime now)
     {
@@ -295,6 +324,15 @@ public class NotifyQuotaService : INotifyQuotaService
         {
             await IsolatedAsync(async db =>
             {
+                if (reservation.Kind == KindOverage)
+                {
+                    // รอบ 231: ส่งล้ม ⇒ คืนตัวนับ + ถอน UsageEvent ส่วนเกินของข้อความนี้ (ยังไม่ออกบิล) — ไม่คิดเงินข้อความที่ไม่ได้ส่ง
+                    await ExecAsync(db, """UPDATE "UsageEvents" SET "IsDeleted" = true, "UpdatedAt" = now() WHERE "CompanyId" = @c AND "IdempotencyKey" = @k AND "BilledPeriod" IS NULL;""",
+                        ct, P("c", companyId, NpgsqlDbType.Uuid), P("k", OverageKey(reservation.Period, reservation.UsedAfter), NpgsqlDbType.Varchar));
+                    return await ExecAsync(db, """
+                        UPDATE "NotifyUsageCounters" SET "Used" = GREATEST("Used" - 1, 0) WHERE "CompanyId" = @c AND "Period" = @p;
+                        """, ct, P("c", companyId, NpgsqlDbType.Uuid), P("p", reservation.Period, NpgsqlDbType.Varchar));
+                }
                 if (reservation.Kind == KindBonus)
                 {
                     await ExecAsync(db, """UPDATE "Subscriptions" SET "NotifyBonusQuota" = "NotifyBonusQuota" + 1 WHERE "CompanyId" = @c AND "IsDeleted" = false;""",
@@ -328,21 +366,24 @@ public class NotifyQuotaService : INotifyQuotaService
                     ct, P("c", companyId, NpgsqlDbType.Uuid), P("p", reservation.Period, NpgsqlDbType.Varchar));
             });
             if (stamped != 1) return;   // งวดนี้แจ้งระดับนี้ไปแล้ว (หรือคำขออื่นแจ้งพร้อมกัน)
-            var owner = await IsolatedAsync(db => db.CompanyUsers.AsNoTracking()
-                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner)
-                .Select(cu => cu.UserId).FirstOrDefaultAsync(ct));
-            if (owner == Guid.Empty) return;
+            // ฝ่ายค้านรอบ 231 S7: ผู้รับ = เจ้าของ + ผู้มีสิทธิ์ BillingManage (ตัวเดียว OverageService.BillingRecipientsAsync)
+            var recipients = await IsolatedAsync(db => OverageService.BillingRecipientsAsync(db, companyId, ct));
+            if (recipients.Count == 0) return;
             var title = NotifyQuotaPolicy.CrossedTitle(reservation.CrossedLevel);
             var message = NotifyQuotaPolicy.CrossedMessage(reservation.CrossedLevel, reservation.UsedAfter, reservation.Limit);
             var eventKey = reservation.CrossedLevel >= 2 ? NotificationEvents.NotifyQuota100 : NotificationEvents.NotifyQuota80;
-            if (_engine != null)
-                await _engine.DispatchAsync(companyId, eventKey, new NotificationContext
-                {
-                    Title = title, Message = message, ActionUrl = "/pages/addons.html", EntityType = "Subscription",
-                    BellType = NotificationType.System, RecipientUserId = owner,
-                });
-            else if (_bell != null)
-                await _bell.SendAsync(owner, companyId, NotificationType.System, title, message, "/pages/addons.html", "Subscription", null);
+            foreach (var uid in recipients)
+            {
+                if (_engine != null)
+                    await _engine.DispatchAsync(companyId, eventKey, new NotificationContext
+                    {
+                        // รอบ 231 (P0 ข): ลิงก์ไปแท็บ "ใช้ไปเท่าไร" ของ hub (เดิม /pages/addons.html) — ที่เดียวกับทรัพยากรอื่น
+                        Title = title, Message = message, ActionUrl = Accounting.Models.Constants.QuotaResources.UsageUrl, EntityType = "Subscription",
+                        BellType = NotificationType.System, RecipientUserId = uid,
+                    });
+                else if (_bell != null)
+                    await _bell.SendAsync(uid, companyId, NotificationType.System, title, message, Accounting.Models.Constants.QuotaResources.UsageUrl, "Subscription", null);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

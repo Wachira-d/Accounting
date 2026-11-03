@@ -5,10 +5,10 @@
 // (`/api/subscription/plans` + `/api/subscription/feature-catalog`) แล้วแปลงเป็นข้อความ —
 // ห้ามพิมพ์ชื่อฟีเจอร์ · จำนวน · วัน ลงในหน้าไหนอีก
 //
-// เกณฑ์ "ไม่จำกัด": ค่าที่ seed/แอดมินใช้แทนไม่จำกัดคือ 999 (ผู้ใช้) · 99 (บริษัท) ·
-// 99999 (เอกสาร/รายการ) — เก็บไว้ที่นี่ที่เดียว (เดิม subscription.html พิมพ์ซ้ำเอง)
+// รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT P0 จ · F2 ข้อ 5): เกณฑ์ "ไม่จำกัด" **ไม่อยู่ในไฟล์นี้อีก** — เซิร์ฟเวอร์ส่ง `limitTexts` (ข้อความพร้อมแสดง)
+// และ `unlimited` (ธง) มากับทุกแพ็กเกจ/subscription (`Helpers/UsageBarRule.LimitTexts` ตัวเดียว · เดิมที่นี่ถือสำเนา 999/99/99999)
+// คีย์: users · companies · docs · journals · ocr · storage · messages
 const PlanDisplay = {
-  UNLIMITED_AT: { users: 999, companies: 99, docs: 99999, journals: 99999 },
 
   esc(s) {
     return String(s ?? '')
@@ -23,12 +23,14 @@ const PlanDisplay = {
   rank(p) { return { FreeTrial: 0, Basic: 1, Pro: 2, Enterprise: 3 }[p?.plan] ?? 9; },
   sort(plans) { return (plans || []).slice().sort((a, b) => this.rank(a) - this.rank(b)); },
 
-  isUnlimited(n, kind) { return Number(n) >= (this.UNLIMITED_AT[kind] || Infinity); },
+  /// ธง "ไม่จำกัด" ของแพ็กเกจ p (จากเซิร์ฟเวอร์) — ไม่มีข้อมูล = ไม่ใช่ไม่จำกัด (โหลดไม่ได้ ≠ ไม่จำกัด · D-4)
+  isUnlimited(p, kind) { return !!(p && p.unlimited && p.unlimited[kind] === true); },
 
-  /// ตัวเลขลิมิต → ข้อความ ("ไม่จำกัด" เมื่อถึงค่าแทน)
-  limit(n, kind, unlimitedLabel) {
-    if (this.isUnlimited(n, kind)) return unlimitedLabel;
-    return Number(n || 0).toLocaleString();
+  /// ข้อความลิมิตของแพ็กเกจ p (จากเซิร์ฟเวอร์) · unlimitedLabel = ป้ายที่หน้านี้อยากใช้แทน "ไม่จำกัด" (เช่น '∞' หรือคำแปล)
+  limit(p, kind, unlimitedLabel) {
+    if (this.isUnlimited(p, kind)) return unlimitedLabel;
+    const t = p && p.limitTexts && p.limitTexts[kind];
+    return t != null ? String(t) : '—';
   },
 
   storage(bytes) {
@@ -69,10 +71,10 @@ const PlanDisplay = {
   /// L = พจนานุกรมข้อความ (หน้าเรียกส่งมาจาก I18n ของตัวเอง)
   featureLines(p, catalog, nextPlan, L) {
     const lines = [];
-    lines.push({ check: true, text: this.isUnlimited(p.maxUsers, 'users') ? L.unlimitedUsers : L.users(p.maxUsers) });
-    if (this.isUnlimited(p.maxCompanies, 'companies') || p.maxCompanies > 1)
-      lines.push({ check: true, text: L.companies(this.limit(p.maxCompanies, 'companies', L.unlimited)) });
-    lines.push({ check: true, text: this.isUnlimited(p.maxDocumentsPerMonth, 'docs') ? L.unlimitedDocs : L.docs(Number(p.maxDocumentsPerMonth || 0).toLocaleString()) });
+    lines.push({ check: true, text: this.isUnlimited(p, 'users') ? L.unlimitedUsers : L.users(p.maxUsers) });
+    if (this.isUnlimited(p, 'companies') || p.maxCompanies > 1)
+      lines.push({ check: true, text: L.companies(this.limit(p, 'companies', L.unlimited)) });
+    lines.push({ check: true, text: this.isUnlimited(p, 'docs') ? L.unlimitedDocs : L.docs(this.limit(p, 'docs', L.unlimited)) });
     lines.push({ check: true, text: L.storage(this.storage(p.maxStorageBytes)) });
     const count = (p.enabledFeatureNames || []).length;
     if (count) lines.push({ check: true, text: L.featureCount(count) });

@@ -82,9 +82,10 @@ public class PiiEncryptionRoundTripTests
     public void ข้อมูลถูกแก้ต้องถอดไม่ได้_GCM_tag_ทำงาน()
     {
         var cipher = EncryptionHelper.Encrypt("1234567890121", KeyA);
-        var bytes = Convert.FromBase64String(cipher);
+        Assert.StartsWith(EncryptionHelper.CipherPrefix, cipher);                       // รอบ 231: รูปแบบ enc1:
+        var bytes = Convert.FromBase64String(cipher[EncryptionHelper.CipherPrefix.Length..]);
         bytes[^1] ^= 0xFF;                       // พลิกไบต์สุดท้ายของ ciphertext
-        var tampered = Convert.ToBase64String(bytes);
+        var tampered = EncryptionHelper.CipherPrefix + Convert.ToBase64String(bytes);
         Assert.ThrowsAny<CryptographicException>(() => EncryptionHelper.Decrypt(tampered, KeyA));   // ดูเหตุผลข้างบน (.NET 8 ชนิดลูก)
     }
 
@@ -118,15 +119,15 @@ public class PiiEncryptionRoundTripTests
 
     [Theory]
     [MemberData(nameof(ThaiPiiSamples))]
-    public void converter_ต้อง_idempotent_บันทึกซ้ำห้ามเข้ารหัสซ้อน(string plain)
+    public void converter_ค่าที่มีคำนำหน้าจากผู้ใช้_ถูกห่อซ้อน_ไม่ถอดให้(string plain)
     {
-        // EF เรียก ConvertToProvider ทุกครั้งที่ save — ถ้าไม่ idempotent
-        // การกดบันทึกครั้งที่สองจะได้ ciphertext ซ้อนสองชั้น แล้วอ่านกลับได้แค่
-        // ชั้นเดียว = ผู้ใช้เห็น Base64 แทนเลขบัตร
-        var once = ToDb(plain);
-        var twice = ToDb(once);
-        Assert.Equal(once, twice);
-        Assert.Equal(plain, FromDb(twice));
+        // ฝ่ายค้านรอบ 231 S2 (พลิกจาก "idempotent"): EF ส่งค่า CLR (plaintext ใน entity) เข้า ConvertToProvider ทุกครั้ง — ไม่เคยส่ง ciphertext
+        // กลับเข้ามาเอง ⇒ "มีคำนำหน้าแล้วข้าม" ไม่จำเป็น และเป็น oracle: ผู้ใช้ส่ง enc1:<ciphertext ของแถวอื่น> มาเป็นเลขบัตร ⇒ ระบบถอดให้ตอนอ่าน
+        var once = ToDb(plain)!;
+        var twice = ToDb(once)!;
+        Assert.NotEqual(once, twice);                 // ห่อซ้อน
+        Assert.Equal(once, FromDb(twice));            // อ่านกลับได้สตริง enc1:… ไม่ใช่เลขบัตรที่ถอดแล้ว
+        Assert.Equal(plain, FromDb(once));
     }
 
     [Fact]

@@ -56,6 +56,11 @@ public static class NotificationEvents
     public const string NotifyQuota80 = "notify.quota.80";
     /// <summary>รอบ 212 แพ็ก A: โควตาข้อความช่องกลางเต็ม — ข้อความถัดไปไปช่องของร้าน หรือไม่ถูกส่ง · ครั้งเดียวต่องวด</summary>
     public const string NotifyQuota100 = "notify.quota.100";
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-5): โควตาทรัพยากรอื่น (OCR · ที่นั่ง · พื้นที่ · เว็บ · ที่พัก) ข้ามเกณฑ์เตือนที่แอดมินตั้ง — ครั้งเดียวต่อ (ทรัพยากร·เกณฑ์·เดือน) · งานรายวัน UsageSnapshotJob</summary>
+    public const string QuotaResourceLevel = "quota.resource_level";
+    /// <summary>รอบ 231: เริ่มคิดค่าส่วนเกินครั้งแรกของเดือน / ถึงเพดานเงิน / ไม่มีราคา / ถูกล็อกเพราะค้างชำระ</summary>
+    public const string OverageStarted = "overage.started";
+    public const string OverageCapped = "overage.capped";
     public const string DepreciationPosted      = "depreciation.posted";
     /// <summary>2026-10-14 (ID#13): งานลงค่าเสื่อมราคาอัตโนมัติรายเดือนล้ม (เช่น ผังค่าเสื่อมถูกปิดใช้/งวดปิด) —
     /// เดิมลงแค่ log ⇒ เจ้าของไม่รู้จนปิดงบ</summary>
@@ -130,6 +135,9 @@ public static class NotificationEvents
         ("Accounting", DocumentQuotaLevel, "โควตาเอกสารเดือนนี้ใกล้เต็ม (80%) / เต็มแล้ว"),
         ("Accounting", NotifyQuota80, "ข้อความแจ้งเตือนลูกค้าผ่านช่องกลางใช้ไปแล้ว 80% ของโควตาเดือนนี้"),
         ("Accounting", NotifyQuota100, "ข้อความแจ้งเตือนลูกค้าผ่านช่องกลางเต็มโควตาเดือนนี้แล้ว"),
+        ("Accounting", QuotaResourceLevel, "โควตาทรัพยากร (OCR · ที่นั่ง · พื้นที่ · เว็บ · ที่พัก) ใกล้เต็ม/เต็ม ตามเกณฑ์ที่ผู้ดูแลระบบตั้ง"),
+        ("Accounting", OverageStarted, "เริ่มคิดค่าส่วนเกินโควตาเดือนนี้ (ราคาตามจริง)"),
+        ("Accounting", OverageCapped, "ส่วนเกินโควตาถูกหยุด: ถึงเพดานเงิน / ไม่มีราคา / ปิดสิทธิ์เพราะค้างชำระ"),
         ("Accounting", DepreciationPosted, "ลงค่าเสื่อมราคาประจำเดือนอัตโนมัติ"),
         ("Accounting", DepreciationFailed, "ลงค่าเสื่อมราคาอัตโนมัติไม่สำเร็จ (ต้องแก้แล้วกดคำนวณค่าเสื่อมเอง)"),
         ("Accounting", RecurringApprovedWithNotes, "รายการประจำอนุมัติอัตโนมัติพร้อมข้อสังเกตรายจ่ายต้องห้าม §65 ตรี"),

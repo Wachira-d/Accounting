@@ -138,7 +138,9 @@ public class SubscriptionCheckMiddleware
         // ===== WP-A2/A1: ข้อเท็จจริงของด่านเขียน (บริษัทถูกระงับ · หมดอายุเกินผ่อนผัน) — โหลดเมื่อจำเป็นเท่านั้น =====
         CompanyStatusRow? co = null;
         SubscriptionService_EffectivePlan? eff = null;
-        if (SubscriptionGatePolicy.NeedsWriteFacts(sub.Status, isWrite, writeMode))
+        // รอบ 231 (231-10): ทดลองใช้ที่เปิด BlockAccessOnExpiry ⇒ โหลดข้อเท็จจริงสำหรับคำขออ่านด้วย (เฉพาะสถานะ Expired)
+        if (SubscriptionGatePolicy.NeedsWriteFacts(sub.Status, isWrite, writeMode)
+            || SubscriptionGatePolicy.NeedsReadFactsWhenExpired(sub.Status, isWrite, writeMode, sub.BlockReadsWhenExpired))
         {
             co = await SafeGetCompanyStatusAsync(db, companyId);
             eff = await SafeGetEffectivePlanAsync(subscriptionService, companyId);
@@ -154,7 +156,13 @@ public class SubscriptionCheckMiddleware
             sub.Status, sub.EnabledFeatures, isWrite, writeMode,
             companySuspended,
             eff?.IsActive,
-            featurePlan.Enforce));
+            featurePlan.Enforce) with
+        {
+            // รอบ 231 (231-10): ผู้อ่าน TrialConfig.BlockAccessOnExpiry / AllowDataExportAfterExpiry (ผ่าน gate state — ไม่คำนวณเองที่นี่)
+            BlockReadsWhenExpired = sub.BlockReadsWhenExpired,
+            IsDataExport = SubscriptionGatePolicy.IsDataExportPath(path),
+            AllowExportWhenExpired = sub.AllowExportWhenExpired,
+        });
 
         // ===== โหมดเงา: ตัดสินแล้วบันทึก แต่ไม่บล็อก — แอดมินดูผลกระทบก่อนเปิดบังคับ =====
         if (action == SubscriptionGateAction.Shadow)
@@ -207,7 +215,7 @@ public class SubscriptionCheckMiddleware
                     $"บริษัทนี้ถูกระงับการใช้งาน: {suspendReason}");
                 return;
             case SubscriptionGateReason.PlanExpired:
-                await WriteExpired(context, sub.Plan.ToString());
+                await WriteExpired(context, sub.Plan.ToString(), readBlocked: !isWrite);
                 return;
             case SubscriptionGateReason.FeatureNotInPlan:
                 var feature = verdict.Feature ?? FeatureFlags.None;
@@ -284,7 +292,7 @@ public class SubscriptionCheckMiddleware
 
     /// <summary>402 Payment Required — หมดอายุเกิน grace, บล็อกเฉพาะ write.
     /// อ่านได้ปกติ + ชี้หน้าต่ออายุ (partner/integration parse JSON นี้ได้).</summary>
-    private static async Task WriteExpired(HttpContext context, string? plan)
+    private static async Task WriteExpired(HttpContext context, string? plan, bool readBlocked = false)
     {
         context.Response.StatusCode = StatusCodes.Status402PaymentRequired;
         context.Response.ContentType = "application/json; charset=utf-8";
@@ -292,7 +300,10 @@ public class SubscriptionCheckMiddleware
         {
             success = false,
             data = (object?)null,
-            message = "การสมัครสมาชิกหมดอายุแล้ว — เปิดดูข้อมูลได้แต่สร้าง/แก้ไขไม่ได้ โปรดต่ออายุ",
+            // รอบ 231 (231-10): ทดลองใช้ที่เปิด BlockAccessOnExpiry ⇒ บล็อกอ่านด้วย — ข้อความต้องตรงสิ่งที่เกิดจริง (ไม่บอกว่า "เปิดดูได้" ทั้งที่ดูไม่ได้)
+            message = readBlocked
+                ? "ช่วงทดลองใช้สิ้นสุดแล้ว — เข้าถึงข้อมูลไม่ได้จนกว่าจะเลือกแพ็กเกจ (ส่งออกข้อมูลได้ตามนโยบาย) โปรดเลือกแพ็กเกจที่หน้า \"แพ็กเกจและการชำระเงิน\""
+                : "การสมัครสมาชิกหมดอายุแล้ว — เปิดดูข้อมูลได้แต่สร้าง/แก้ไขไม่ได้ โปรดต่ออายุ",
             errors = (object?)null,
             code = "SUBSCRIPTION_EXPIRED",
             feature = (string?)null,

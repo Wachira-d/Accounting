@@ -324,7 +324,7 @@
 
       const lines = [];
       // ความลับที่ถอดรหัสไม่ออก = ต้นเหตุจริงของ "Authentication Required"
-      // (คีย์เข้ารหัสถูกเปลี่ยนหลังบันทึก) — ต้องขึ้นเป็นบรรทัดแรกและเด่นกว่าอย่างอื่น
+      // (เหตุที่แน่นอน — คีย์ถูกเปลี่ยน/ค่าเสียหาย — เซิร์ฟเวอร์ระบุมาในข้อความ: SecretWarnings) — ต้องขึ้นเป็นบรรทัดแรกและเด่นกว่าอย่างอื่น
       if (d.secretWarning) {
         badge.className = 'status-badge status-error';
         badge.textContent = '✗ รหัสที่บันทึกไว้ใช้ไม่ได้';
@@ -332,6 +332,8 @@
           ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
         lines.push(`<span style="color:#991b1b">${esc(d.secretWarning)}</span>`);
       }
+      // รอบ 231 S1: คำใบ้ค่ากำกวม — ไม่ใช่ข้อผิดพลาด ไม่เปลี่ยนป้ายสถานะ
+      if (d.secretHint) lines.push(`<span style="color:#92400e">${AdminLayout.esc(d.secretHint)}</span>`);
       const provLabel = { Smtp: 'SMTP', MicrosoftGraph: 'Microsoft Graph', GmailApi: 'Gmail API' }[d.provider] || d.provider || 'ไม่มีข้อมูล';
       lines.push(`Provider: <strong>${AdminLayout.esc(provLabel)}</strong>`);
       if (d.fromAddress) lines.push(`ผู้ส่ง: <strong>${d.fromName || ''} &lt;${AdminLayout.esc(d.fromAddress)}&gt;</strong>`);

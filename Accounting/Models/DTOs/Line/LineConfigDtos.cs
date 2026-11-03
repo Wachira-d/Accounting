@@ -17,7 +17,9 @@ public record LineConfigResponse(
     /// <summary>รอบ 212 แพ็ก B: ความคืบหน้าคำเชิญผูก LINE ใหม่หลังเปลี่ยน OA (เซิร์ฟเวอร์ประกอบป้าย "เชิญผูกใหม่: ส่งแล้ว N/M") · null = ไม่มีการเปลี่ยน OA ล่าสุด</summary>
     CustomerRelinkProgress? RelinkInvite = null,
     /// <summary>รอบ 212 ฝ่ายค้าน (B+D) ข้อ 2: webhook มาจากบอทอื่นที่ไม่ใช่บอทของ token (secret ของ OA อื่น) — ข้อความจากเซิร์ฟเวอร์ · null = ไม่มีปัญหา</summary>
-    string? WebhookProblem = null);
+    string? WebhookProblem = null,
+    /// <summary>ฝ่ายค้านรอบ 231 S1: คำใบ้ (ไม่ใช่ข้อผิดพลาด) เมื่อ token/secret ที่เก็บไว้ "ดูเหมือน ciphertext รุ่นก่อนแต่ถอดไม่ออก" — ระบบใช้เป็นค่าดิบ · null = ไม่มี</summary>
+    string? SecretHint = null);
 
 /// <summary>รอบ 212 แพ็ก B: สถานะคำเชิญผูกใหม่ของการเปลี่ยน OA ล่าสุด — <c>Label</c> = ข้อความที่หน้าเว็บแสดงตรง ๆ (ไม่มีกติกาฝั่ง JS)</summary>
 public record CustomerRelinkProgress(

@@ -80,7 +80,9 @@ public class PlatformDunningJob : BackgroundService
         var flagged = await db.PlatformDunningStates.AsNoTracking()
             .Where(s => s.SuspendedByDunningAt != null || s.WouldSuspendSince != null)
             .Select(s => s.CompanyId).ToListAsync(ct);
-        var candidates = withOpen.Union(flagged).ToList();
+        // ฝ่ายค้านรอบ 231 B1: บริษัทที่ถูกปิดสิทธิ์ส่วนเกินเพราะค้างชำระต้องถูกประเมินต่อแม้ไม่มีใบค้างแล้ว — ไม่งั้นชำระครบแล้วไม่มีใครปลดล็อก
+        var lockedOverage = await Accounting.Services.Implementations.OverageService.LockedOverageCompaniesAsync(db, ct);
+        var candidates = withOpen.Union(flagged).Union(lockedOverage).ToList();
         var cutoff = nowUtc.AddHours(-EvaluateEveryHours);
         var last = await db.PlatformDunningStates.AsNoTracking()
             .Where(s => candidates.Contains(s.CompanyId))

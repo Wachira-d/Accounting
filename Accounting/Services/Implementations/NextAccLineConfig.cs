@@ -23,20 +23,24 @@ public class NextAccLineConfig : INextAccLineConfig
     {
         if (_loaded != null) return _loaded;
         NextAccLineValues? admin = null;
-        var adminTokenUndecryptable = false;
+        string? adminTokenUnusableReason = null;
+        string? adminSecretUnusableReason = null;
         if (_db != null)
         {
             var row = await _db.SiteSettings.AsNoTracking()
                 .Select(s => new { s.LineMessagingChannelAccessToken, s.LineMessagingChannelSecret, s.LineMessagingBasicId, s.LineMessagingBotUserId, s.LineMessagingGroupId })
                 .FirstOrDefaultAsync(ct);
-            // ฝ่ายค้าน (B+D) ข้อ 3: มี token เก็บไว้แต่ถอดไม่ได้ ⇒ ไม่ถอยไป config (อาจเป็นคนละ OA)
-            adminTokenUndecryptable = row != null && !string.IsNullOrWhiteSpace(row.LineMessagingChannelAccessToken)
-                && !_secrets.IsUsable(row.LineMessagingChannelAccessToken);
+            // ฝ่ายค้าน (B+D) ข้อ 3: มี token เก็บไว้แต่ถอดไม่ได้ ⇒ ไม่ถอยไป config (อาจเป็นคนละ OA) · รอบ 231: เหตุมาจากตัวตรวจจริง ไม่ใช่ "คีย์ถูกเปลี่ยน" ตายตัว
+            // (N2: Inspect ครั้งเดียวต่อช่อง · S3: secret ใช้ไม่ได้ก็ดังเท่ากัน — ไม่ปล่อย webhook 401 เงียบ)
+            if (row != null && !string.IsNullOrWhiteSpace(row.LineMessagingChannelAccessToken))
+                adminTokenUnusableReason = SecretWarnings.ReasonFor(_secrets.Inspect(row.LineMessagingChannelAccessToken));
+            if (row != null && !string.IsNullOrWhiteSpace(row.LineMessagingChannelSecret))
+                adminSecretUnusableReason = SecretWarnings.ReasonFor(_secrets.Inspect(row.LineMessagingChannelSecret));
             if (row != null)
                 admin = new NextAccLineValues(_secrets.Unprotect(row.LineMessagingChannelAccessToken), _secrets.Unprotect(row.LineMessagingChannelSecret),
                     row.LineMessagingBasicId, row.LineMessagingBotUserId, row.LineMessagingGroupId);
         }
-        _loaded = NextAccLineConfigRule.Merge(admin, FromConfig(_config), adminTokenUndecryptable);
+        _loaded = NextAccLineConfigRule.Merge(admin, FromConfig(_config), adminTokenUnusableReason, adminSecretUnusableReason);
         return _loaded;
     }
 

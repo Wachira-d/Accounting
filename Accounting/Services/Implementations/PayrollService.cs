@@ -435,7 +435,12 @@ public class PayrollService : IPayrollService
         if (request.BankName != null) employee.BankName = request.BankName;
         if (request.BankAccountNumber != null
             && !EmployeeRecordEdit.IsMaskedEcho(request.BankAccountNumber, PiiMask.BankAccountNo(employee.BankAccountNumber)))
+        {
+            // ฝ่ายค้านรอบ 231 S2: คอลัมน์เข้ารหัส — ค่าที่ขึ้นต้น enc1: ห้ามเข้า (ปิด oracle)
+            if (SecretInputRule.CipherPrefixProblem(request.BankAccountNumber, "เลขบัญชีธนาคาร") is string cipherProblem)
+                throw new BusinessRuleException(cipherProblem, SecretInputRule.RuleCipherPrefix);
             employee.BankAccountNumber = request.BankAccountNumber;
+        }
         if (request.SocialSecurityHospital != null) employee.SocialSecurityHospital = request.SocialSecurityHospital;
         if (request.HasProvidentFund.HasValue) employee.HasProvidentFund = request.HasProvidentFund.Value;
         if (request.ProvidentFundEmployeePercent.HasValue) employee.ProvidentFundEmployeePercent = request.ProvidentFundEmployeePercent.Value;

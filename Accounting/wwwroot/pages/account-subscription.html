@@ -231,7 +231,7 @@
               <div class="price">฿${this._money(p.monthlyPrice)}<small> / เดือน</small></div>
               <ul>
                 ${this._planLines(p).map(f => `<li style="${f.check ? '' : 'color:#94a3b8'}">${f.check ? '' : '✗ '}${this._esc(f.text)}</li>`).join('')}
-                <li>${this._esc(PlanDisplay.limit(p.maxOcrPagesPerMonth, 'docs', 'ไม่จำกัด'))} หน้า OCR / เดือน</li>
+                <li>${this._esc(PlanDisplay.limit(p, 'ocr', 'ไม่จำกัด'))} หน้า OCR / เดือน</li>
               </ul>
               <button onclick="Page.startTrial('${p.id}','${Layout.jsArg(p.name)}')">ทดลองใช้ ${p.trialDurationDays||14} วัน</button>
             </div>`).join('')

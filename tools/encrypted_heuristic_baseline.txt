@@ -1,0 +1,4 @@
+# encrypted_heuristic_check — ratchet baseline (ไฟล์::เมธอด) · จุดเดิมที่ถอด base64 เองแต่ไม่ใช่ตัวตัดสิน "เข้ารหัสแล้ว"
+# เพิ่มบรรทัดได้เฉพาะเมื่ออธิบายได้ว่าเมธอดนั้นไม่ได้ตัดสิน ciphertext ของ EncryptionHelper — เมธอดใหม่ในไฟล์เดิมไม่ได้รับยกเว้น
+Accounting/Services/Implementations/AuthService.cs::IsLikelyBase64
+Accounting/Services/Implementations/PortalService.cs::VerifyLegacySha256

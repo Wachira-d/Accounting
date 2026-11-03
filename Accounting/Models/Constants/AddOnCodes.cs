@@ -79,8 +79,9 @@ public static class AddOnCodes
         DocumentsOverage, LodgingStay, LodgingEmailOverage, LodgingSms, DocumentsTopUp, NotifyTopUp,
     };
 
+    /// <remarks>รอบ 231: มิเตอร์ส่วนเกิน <c>overage.&lt;resource&gt;</c> (<see cref="OverageResources"/>) เป็นมิเตอร์ของระบบเช่นกัน — ไม่มีแถว CompanyFeature ให้เปิด</remarks>
     public static bool IsSystemMeter(string? code)
-        => code != null && SystemMeters.Contains(code);
+        => code != null && (SystemMeters.Contains(code) || code.StartsWith(OverageResources.MeterPrefix, StringComparison.Ordinal));
 
     /// <summary>รอบ 229 (QUOTA_ADDON A-1): รหัส API ที่คิดเงินต่อการเรียก (ผู้อ่าน <c>PublicApiControllerBase.MeterAsync</c> ผ่าน <c>Feature</c> ของ Controllers/V1 — Bank/Contacts/Documents/Ocr)</summary>
     public static readonly IReadOnlyList<string> ConnectedApi = new[]

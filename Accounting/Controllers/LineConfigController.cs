@@ -163,6 +163,8 @@ public class LineConfigController : ControllerBase
             CustomerChannel = _customerLinks == null ? null : await _customerLinks.GetChannelInfoAsync(companyId),
             RelinkInvite = _relink == null ? null : await _relink.GetProgressAsync(companyId),
             WebhookProblem = string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch) ? null : CustomerRelinkInvitePlan.SecretOfOtherOaProblem,
+            // ฝ่ายค้านรอบ 231 S1: ค่ากำกวม (base64 ถอดไม่ออก — ใช้เป็นค่าดิบ) ⇒ คำใบ้ให้กรอกใหม่ถ้าใช้ไม่ติด
+            SecretHint = SecretWarnings.BuildHints(_secrets, ("Channel Access Token", s.LineChannelAccessToken), ("Channel Secret", s.LineChannelSecret)),
         };
 
     private static LineConfigResponse Build(CompanySettings s) => new(

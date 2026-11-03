@@ -44,7 +44,7 @@
       <div style="display:flex;gap:6px;flex-wrap:wrap">
         <a href="/pages/subscription.html" class="btn btn-secondary">💎 รายละเอียดแพ็กเกจ/ทดลองใช้</a>
         <a href="/pages/addons.html" class="btn btn-secondary">🧩 ส่วนเสริม</a>
-        <a href="/pages/usage.html" class="btn btn-secondary">📊 รายละเอียดการใช้งาน</a>
+        <!-- รอบ 231: usage.html ยุบเข้าแท็บ "ใช้ไปเท่าไร" (URL เดิม redirect มาที่นี่) -->
         <a href="/pages/account-subscription.html" class="btn btn-secondary">🎫 License (หลายบริษัท)</a>
       </div>
     </div>
@@ -62,12 +62,21 @@
       <div class="card" id="planPendingCard" style="display:none"><h3>รายการชำระค่าแพ็กเกจที่รอชำระ</h3><div id="planPending"></div></div>
       <!-- รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): เปลี่ยน/อัปเกรด — ราคา/ส่วนต่างตามวันที่เหลือ/คูปอง คิดที่เซิร์ฟเวอร์ (GET …/plan-quote) -->
       <div class="card"><h3>เปลี่ยน / อัปเกรดแพ็กเกจ</h3><div id="planChange">กำลังโหลด...</div></div>
+      <!-- รอบ 231 (§B.7): นโยบายเมื่อโควตาเต็ม — การ์ดเต็มอยู่แท็บ "ใช้ไปเท่าไร" (ตัวเดียว) -->
+      <div class="card"><h3>เมื่อโควตาของแพ็กเกจเต็ม</h3><div id="planOverageBrief" class="muted">กำลังโหลด...</div>
+        <div style="margin-top:8px"><a href="#tab=usage" class="btn btn-secondary btn-sm" onclick="HubTabs.show('usage', true); return false;">⚙️ ตั้งค่า "หยุดส่วนที่เกิน / ใช้ต่อได้ คิดค่าส่วนเกิน"</a></div></div>
     </section>
 
     <section class="hub-pane" data-pane="usage">
-      <!-- รอบ 229/230: ใช้ไปเท่าไร — ตัวเลข/ระดับ/ความยาวหลอดทั้งหมดจากเซิร์ฟเวอร์ (js/quota-ui.js) -->
-      <div class="card" id="quotaCard"><h3>ใช้ไปเท่าไร</h3><div id="quotaSummary">กำลังโหลด...</div>
-        <div style="margin-top:6px"><a href="/pages/usage.html" class="btn btn-secondary btn-sm">📊 ดูรายละเอียด (ไฟล์ · ผู้ใช้ · เอกสาร)</a></div></div>
+      <!-- รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.7/§D.3 · คำตัดสินข้อ 231-1..7): แท็บเดียวเห็นครบ — ส่วนเกิน/นโยบาย · เดือนนี้ทุกทรัพยากร · ย้อนหลัง 24 เดือน · รายละเอียดพื้นที่/ผู้ใช้
+           ทุกตัวเลข/ข้อความ/ราคา/เกณฑ์มาจากเซิร์ฟเวอร์ (quota/overage/month · quota/history · subscription/usage/detail · quota/summary) -->
+      <div class="card" id="overageCard"><h3>เมื่อใช้ครบโควตาของแพ็กเกจ · ส่วนเกินเดือนนี้</h3><div id="overagePolicy">กำลังโหลด...</div></div>
+      <div class="card" id="usageDetailCard"><h3>ใช้ไปเท่าไรเดือนนี้ — เอกสาร · OCR · ผู้ใช้ · พื้นที่</h3><div id="usageAlerts"></div><div id="usageDetailBars">กำลังโหลด...</div></div>
+      <!-- รอบ 229/230: โควตาเสริม (เว็บ · ที่นั่ง · พื้นที่ · ที่พัก · OCR) — ตัวเลข/ระดับ/ความยาวหลอดทั้งหมดจากเซิร์ฟเวอร์ (js/quota-ui.js) -->
+      <div class="card" id="quotaCard"><h3>โควตาตามแพ็กเกจ · ซื้อเพิ่ม</h3><div id="quotaSummary">กำลังโหลด...</div></div>
+      <div class="card"><div id="notifyQuotaCard"></div></div>
+      <div class="card" id="historyCard"><h3>ย้อนหลังรายเดือน <span class="muted" id="historyRetention"></span></h3><div id="usageHistory">กำลังโหลด...</div></div>
+      <div class="card"><h3>รายละเอียด (พื้นที่แยกประเภท · ผู้ใช้ · ไฟล์ใหญ่สุด)</h3><div id="usageDetailMore">กำลังโหลด...</div></div>
     </section>
 
     <section class="hub-pane" data-pane="buy">
@@ -119,6 +128,7 @@
 
   <script src="/js/pay-widget.js"></script>
   <script src="/js/policy-accept.js"></script>
+  <script src="/js/customer-notify.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/layout.js"></script>
   <script>
@@ -160,7 +170,7 @@
           <div style="display:flex;gap:18px;flex-wrap:wrap">
             <div><div class="muted">แพ็กเกจ</div><b>${e(p.planName || p.plan)}</b></div>
             <div><div class="muted">สถานะ</div><b>${e(p.statusLabel)}</b></div>
-            <div><div class="muted">ราคา/รอบ</div><b>฿${Layout.money(p.pricePerCycle)}</b></div>
+            <div><div class="muted">ราคา/รอบ</div><b>฿${Layout.money(p.pricePerCycle)}</b>${p.specialPriceNote ? `<div style="color:#166534;font-size:12px;font-weight:600">★ ${Layout.esc(p.specialPriceNote)}</div>` : ''}</div>
             <div><div class="muted">ใช้ได้ถึง</div><b>${p.isPermanentFree ? 'ไม่หมดอายุ' : (p.endDate ? Layout.date(p.endDate) : '-')}</b></div>
             <div><div class="muted">ออกใบแจ้งหนี้ต่ออายุ</div><b>${p.nextRenewalInvoiceAt ? Layout.date(p.nextRenewalInvoiceAt) : '-'}</b></div>
           </div>
@@ -409,7 +419,9 @@
           <div style="font-weight:700;margin-bottom:6px">${e(q.plan)} · ${e(this.cycleLabel(q.cycle))}</div>
           <div class="note ${q.blocked ? 'warn' : ''}" style="margin-bottom:8px">${e(q.message)}</div>
           ${pays ? `
-            <div class="quote-row"><span>${q.prorated ? `ส่วนต่าง (${q.daysRemaining}/${q.cycleDays} วัน)` : 'ราคาแพ็กเกจ'}</span><span>฿${Layout.money(q.listAmount)}</span></div>
+            ${q.specialPriceNote ? `<div class="quote-row" style="color:#166534;font-weight:600"><span>★ ${e(q.specialPriceNote)}</span><span style="text-decoration:line-through;color:#94a3b8">฿${Layout.money(q.standardAmount)}</span></div>` : ''}
+            <div class="quote-row"><span>${q.prorated ? `ส่วนต่าง (${q.daysRemaining}/${q.cycleDays} วัน)` : q.kind === 'CycleChange' ? `ค่ารอบใหม่ หักมูลค่าคงเหลือรอบเดิม ฿${Layout.money(q.cycleChangeCredit || 0)} (${q.daysRemaining}/${q.cycleDays} วัน)` : 'ราคาแพ็กเกจ'}</span><span>฿${Layout.money(q.listAmount)}</span></div>
+            ${q.kind === 'CycleChange' && q.newPeriodEndUtc ? `<div class="quote-row" style="color:#475569;font-size:12px"><span>รอบใหม่เริ่มวันที่ชำระ · ใช้ได้ถึง</span><span>${Layout.date(q.newPeriodEndUtc)}</span></div>` : ''}
             ${q.discount > 0 ? `<div class="quote-row" style="color:#166534"><span>${e(q.couponLabel || 'ส่วนลด')}</span><span>−฿${Layout.money(q.discount)}</span></div>` : ''}
             <div class="quote-row" style="font-size:16px;font-weight:800;border-top:1px solid #e2e8f0;padding-top:6px"><span>ยอดชำระ</span><span>฿${Layout.money(q.amountDue)}</span></div>
             <div style="display:flex;gap:6px;align-items:center;margin:8px 0;flex-wrap:wrap">
@@ -518,7 +530,155 @@
       for (let i = 0; i < 50 && !(window.Layout && Layout.getCompanyId && Layout.getCompanyId()); i++) await new Promise(r => setTimeout(r, 100));
       QuotaHub.refresh();
       QuotaUI.initHash(() => QuotaHub.refresh());
+      UsageTab.refresh();
     })();
+  </script>
+  <script>
+    // ───────── รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.7/§D.3 · คำตัดสินข้อ 231-1..7): แท็บ "ใช้ไปเท่าไร" ─────────
+    // F2 ข้อ 5 "server computes · page displays": ราคา · เพดาน · "ไม่จำกัด" · ระดับเตือน · ประมาณการบิล · ข้อความเงื่อนไข · ป้ายเดือน มาจากเซิร์ฟเวอร์ทั้งหมด
+    const UsageTab = {
+      overage: null, detail: null, history: null, months: 12, period: null,
+      cid() { return Layout.getCompanyId(); },
+      base() { return `/api/companies/${this.cid()}/quota`; },
+      esc(s) { return Layout.esc(s); },
+      money(n) { return Layout.money(n); },
+      color(level) { return level === 2 ? '#dc2626' : level === 1 ? '#d97706' : '#16a34a'; },
+      canManage() { return !!(Bill.data && (Bill.data.canManagePlan || Bill.data.canPay)); },
+
+      async refresh() { await Promise.all([this.loadOverage(), this.loadDetail(), this.loadHistory()]); },
+
+      // ── นโยบายส่วนเกิน + ส่วนเกินเดือนนี้ ──
+      async loadOverage() {
+        const el = document.getElementById('overagePolicy'), brief = document.getElementById('planOverageBrief');
+        try { this.overage = (await API.get(`${this.base()}/overage/month`)).data; }
+        catch (e) { el.innerHTML = `<div class="note bad">${this.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`; if (brief) brief.textContent = ''; return; }
+        this.renderOverage();
+      },
+      renderOverage() {
+        const d = this.overage, e = this.esc, el = document.getElementById('overagePolicy'), brief = document.getElementById('planOverageBrief');
+        if (!d) return;
+        const allow = d.mode === 'AllowOverage';
+        const priced = (d.items || []).filter(i => i.hasRate);
+        const priceLine = priced.length ? priced.map(i => `${e(i.label)} ${e(i.priceText)}`).join(' · ') : 'ยังไม่มีราคาส่วนเกิน — ผู้ดูแลระบบ NextAcc ยังไม่เปิดใช้';
+        const rows = (d.items || []).map(i => `<tr><td>${e(i.label)}</td><td class="text-right">${Number(i.units || 0).toLocaleString('th-TH')} ${e(i.unit)}${i.freeUnits ? `<div class="muted" style="font-size:11px">+ ไม่คิดเงิน ${Number(i.freeUnits).toLocaleString('th-TH')} ${e(i.unit)}</div>` : ''}</td>
+            <td class="text-right">฿${this.money(i.amount)}</td><td>${i.hasRate ? e(i.priceText) : '<span class="muted">ไม่มีราคา</span>'}</td>
+            <td>${i.enabled ? '✅ เปิด' : '<span class="muted">หยุด</span>'}</td></tr>`).join('');
+        const locked = d.locked ? `<div class="note bad" style="margin-bottom:10px">🔒 ${e(d.lockedNote || '')} <a href="#tab=docs" onclick="HubTabs.show('docs', true); return false;" class="btn btn-primary btn-sm" style="margin-left:6px">ชำระตอนนี้</a></div>` : '';
+        // คำตัดสิน S8: ใบที่กฎหมายบังคับออกเกินโควตาโดยไม่คิดเงิน — บอกผู้เช่าตรง ๆ ว่าใช้เกินแพ็กเกจแล้ว ควรอัปเกรด/ซื้อเพิ่ม/เปิดส่วนเกิน
+        const freeDocs = d.freeDocumentsThisMonth > 0 ? `<div class="note" style="margin-bottom:10px">⚠️ เดือนนี้ออกเอกสารเกินโควตาแพ็กเกจ <b>${Number(d.freeDocumentsThisMonth).toLocaleString('th-TH')} ฉบับ</b> (ใบกำกับภาษี/ใบเสร็จ/ใบลดหนี้ออกได้เสมอ ไม่คิดเงิน) — ใบเสนอราคา/ใบสั่งซื้อถูกหยุดอยู่ · <a href="#tab=plan" onclick="HubTabs.show('plan', true); return false;">อัปเกรดแพ็กเกจ</a> หรือเปิด "ใช้ต่อได้ คิดค่าส่วนเกิน" ด้านล่าง</div>` : '';
+        const manage = this.canManage();
+        const chosen = new Set(d.enabledResources || []);
+        el.innerHTML = `${locked}${freeDocs}
+          <div class="kpis" style="margin-bottom:10px">
+            <div class="kpi"><div class="lbl">นโยบายตอนนี้</div><div style="font-size:14px;font-weight:700">${e(d.modeLabel)}</div></div>
+            <div class="kpi ${d.totalAmount > 0 ? 'bad' : ''}"><div class="lbl">ส่วนเกินเดือนนี้ (${e(d.period)})</div><div class="val">฿${this.money(d.totalAmount)}</div></div>
+            <div class="kpi"><div class="lbl">บิลถัดไป</div><div style="font-size:12px;color:#334155">${e(d.nextInvoiceNote)}</div></div>
+          </div>
+          <div class="table-container"><table class="table"><thead><tr><th>ทรัพยากร</th><th class="text-right">เกินเดือนนี้</th><th class="text-right">ค่าส่วนเกิน</th><th>ราคา</th><th>สถานะ</th></tr></thead><tbody>${rows}</tbody></table></div>
+          <form id="overageForm" style="margin-top:12px;display:grid;gap:8px" onsubmit="event.preventDefault(); UsageTab.savePolicy()">
+            <label style="display:flex;gap:8px;align-items:flex-start"><input type="radio" name="ovMode" value="HardLock" ${allow ? '' : 'checked'} ${manage ? '' : 'disabled'} style="width:auto;margin-top:3px">
+              <span><b>หยุดส่วนที่เกิน</b> (ค่าตั้งต้น) — ระบบจะไม่สร้างรายการเพิ่มจนกว่าจะขึ้นเดือนใหม่ ซื้อโควตาเพิ่ม หรืออัปเกรด<br><span class="muted">ใบกำกับภาษี · ใบเสร็จ · ใบลดหนี้ ยังออกได้เสมอโดยไม่คิดเงิน</span></span></label>
+            <label style="display:flex;gap:8px;align-items:flex-start"><input type="radio" name="ovMode" value="AllowOverage" ${allow ? 'checked' : ''} ${manage && !d.locked ? '' : 'disabled'} style="width:auto;margin-top:3px">
+              <span><b>ใช้ต่อได้ คิดค่าส่วนเกินตามจริง</b><br><span class="muted">${e(priceLine)}</span><br><span class="muted">${e(d.termsNote)}</span></span></label>
+            <div style="margin-left:24px;display:grid;gap:6px">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span>ทรัพยากรที่ยอมให้เกิน:</span>
+                ${(d.items || []).map(i => `<label style="display:inline-flex;gap:4px;align-items:center;${i.hasRate ? '' : 'opacity:.55'}"><input type="checkbox" name="ovRes" value="${e(i.resource)}" ${chosen.size === 0 || chosen.has(i.resource) ? 'checked' : ''} ${i.hasRate && manage ? '' : 'disabled'} style="width:auto"> ${e(i.label)}</label>`).join('')}
+                <span class="muted">(ติ๊กทั้งหมด = ทุกรายการที่มีราคา)</span></div>
+              <label style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">เพดานค่าส่วนเกินต่อเดือน
+                <input type="number" id="ovCap" class="form-input" min="0" step="1" style="max-width:140px" value="${d.monthlyCapAmount != null ? Number(d.monthlyCapAmount) : ''}" placeholder="ว่าง = ไม่จำกัด" ${manage ? '' : 'disabled'}> บาท
+                <span class="muted">(ถึงเพดานแล้วกลับไปหยุดส่วนที่เกินจนขึ้นเดือนใหม่)</span></label>
+              <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ovAccept" ${manage ? '' : 'disabled'} style="width:auto"> ยอมรับเงื่อนไขค่าส่วนเกิน (ฉบับ ${e(d.policyVersion)})${d.acceptedPolicyVersion ? ` <span class="muted">— ยอมรับฉบับ ${e(d.acceptedPolicyVersion)} เมื่อ ${Layout.date(d.acceptedAtUtc)}</span>` : ''}</label>
+            </div>
+            <div>${manage ? '<button type="submit" class="btn btn-primary btn-sm">บันทึกนโยบาย</button>' : '<span class="muted">เฉพาะเจ้าของ/ผู้มีสิทธิ์จัดการค่าใช้จ่ายเปลี่ยนได้</span>'}</div>
+          </form>`;
+        if (brief) brief.textContent = `${d.modeLabel} · ส่วนเกินเดือนนี้ ฿${this.money(d.totalAmount)}${d.locked ? ' · 🔒 ปิดสิทธิ์ส่วนเกินชั่วคราว (ค้างชำระ)' : ''}`;
+      },
+      async savePolicy() {
+        const f = document.getElementById('overageForm'); if (!f) return;
+        const mode = (f.querySelector('input[name=ovMode]:checked') || {}).value || 'HardLock';
+        const resources = Array.from(f.querySelectorAll('input[name=ovRes]:checked')).map(x => x.value);
+        const all = Array.from(f.querySelectorAll('input[name=ovRes]')).filter(x => !x.disabled).length;
+        const capRaw = String(document.getElementById('ovCap').value || '').trim();
+        const body = { mode, monthlyCapAmount: capRaw ? Number(capRaw) : null, resources: resources.length === all ? null : resources,
+          policyAccepted: document.getElementById('ovAccept').checked, policyVersionShown: this.overage ? this.overage.policyVersion : null };
+        try {
+          const r = await API.put(`${this.base()}/overage-policy`, body);
+          this.overage = r.data; this.renderOverage();
+          Layout.toast(r.message || 'บันทึกแล้ว', 'success');
+        } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+
+      // ── เดือนนี้: เอกสาร/OCR/ผู้ใช้/พื้นที่ (หลอดจากเซิร์ฟเวอร์ — เดิม usage.html) + รายละเอียด ──
+      async loadDetail() {
+        const bars = document.getElementById('usageDetailBars'), more = document.getElementById('usageDetailMore'), alerts = document.getElementById('usageAlerts');
+        try { this.detail = (await API.get(`/api/subscription/${this.cid()}/usage/detail`)).data; }
+        catch (e) { bars.innerHTML = `<div class="muted">ยังไม่มีข้อมูลแพ็กเกจ (${this.esc(e.message || '')})</div>`; more.innerHTML = ''; alerts.innerHTML = ''; return; }
+        const d = this.detail, e = this.esc;
+        alerts.innerHTML = (d.alerts || []).map(a => `<div class="note ${a.type === 'danger' ? 'bad' : a.type === 'warning' ? 'warn' : ''}" style="margin-bottom:6px">${e(a.message)}</div>`).join('');
+        const icons = { documents: '📄', ocr: '🔍', users: '👥', storage: '💾' };
+        bars.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%, 260px),1fr));gap:14px">` + (d.bars || []).map(b => `<div>
+            <div style="display:flex;justify-content:space-between;gap:8px;font-size:13px"><span>${icons[b.key] || '•'} ${e(b.label)}</span>
+              <b>${e(b.usedText)} / ${e(b.limitText)}</b></div>
+            ${b.unlimited ? '' : `<div style="height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:4px"><i style="display:block;height:100%;width:${Number(b.percent) || 0}%;background:${this.color(b.level)}"></i></div>`}
+            <div class="muted" style="font-size:11px">${b.unlimited ? 'ไม่จำกัด' : e(String(b.percent)) + '%'}${b.extra ? ' · ' + e(b.extra) : ''}</div>
+          </div>`).join('') + `</div>
+          <div class="muted" style="margin-top:8px">แพ็กเกจ ${e(d.planName || d.plan)} · ${e(d.statusLabel || d.status)} · เหลือ ${Number(d.daysLeft) || 0} วัน · รีเซ็ตตัวนับ ${Layout.date(d.usageResetDate)}</div>`;
+        if (window.CustomerNotify) CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: this.cid() });
+        const bytes = b => b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b >= 1024 ? (b / 1024).toFixed(0) + ' KB' : b + ' B';
+        const roleMap = { Owner: 'เจ้าของ', Accountant: 'นักบัญชี', Staff: 'พนักงาน', Auditor: 'ผู้ตรวจสอบ', Viewer: 'ผู้ดู', ExternalAccountant: 'นักบัญชีภายนอก', PlatformSupport: 'ผู้ดูแลแพลตฟอร์ม', SystemAdmin: 'แอดมิน' };
+        const sb = d.storageBreakdown || [], total = Number(d.storageUsed) || 0;
+        more.innerHTML = `
+          <details><summary style="cursor:pointer;font-weight:600">พื้นที่เก็บข้อมูลแยกประเภท (${sb.length})</summary>
+            ${sb.length ? sb.map(c => `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px"><span style="width:110px">${e(c.label)}</span>
+              <div style="flex:1;height:6px;background:#f1f5f9;border-radius:3px;overflow:hidden"><i style="display:block;height:100%;width:${total > 0 ? (c.bytes / total * 100) : 0}%;background:#4F46E5"></i></div>
+              <span style="width:80px;text-align:right">${bytes(c.bytes)}</span><span class="muted" style="width:60px;text-align:right">${c.fileCount} ไฟล์</span></div>`).join('') : '<div class="muted">ยังไม่มีไฟล์</div>'}</details>
+          <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">บัญชีผู้ใช้ (${(d.users || []).length})</summary>
+            ${(d.users || []).map(u => `<div style="display:flex;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px">
+              <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${e(u.fullName || '-')}</b> <span class="muted">${e(u.email)}</span></span>
+              <span class="pill">${e(roleMap[u.role] || u.role)}</span><span class="muted">${u.lastLoginAt ? 'ล่าสุด ' + Layout.date(u.lastLoginAt) : 'ยังไม่ล็อกอิน'}</span></div>`).join('') || '<div class="muted">ไม่มีผู้ใช้</div>'}</details>
+          <details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600">ไฟล์ขนาดใหญ่ที่สุด</summary>
+            ${(d.largestFiles || []).length ? `<div class="table-container"><table class="table" style="font-size:13px"><thead><tr><th>ชื่อไฟล์</th><th>ประเภท</th><th class="text-right">ขนาด</th><th>อัปโหลดโดย</th><th>วันที่</th></tr></thead><tbody>
+              ${d.largestFiles.map(f => `<tr><td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${e(f.fileName)}">${e(f.fileName)}</td><td>${e(f.entityType)}</td><td class="text-right">${bytes(f.fileSize)}</td><td>${e(f.uploadedBy)}</td><td>${Layout.date(f.uploadedAt)}</td></tr>`).join('')}
+            </tbody></table></div>` : '<div class="muted">ยังไม่มีไฟล์</div>'}</details>`;
+      },
+
+      // ── ย้อนหลังรายเดือน (snapshot · คำตัดสินข้อ 231-6) ──
+      async loadHistory() {
+        const el = document.getElementById('usageHistory');
+        try { this.history = (await API.get(`${this.base()}/history?months=${this.months}`)).data; }
+        catch (e) { el.innerHTML = `<div class="muted">โหลดประวัติไม่สำเร็จ (${this.esc(e.message || '')})</div>`; return; }
+        const r = document.getElementById('historyRetention'); if (r) r.textContent = `(เก็บ ${this.history.retentionMonths} เดือน)`;
+        if (!this.period || !this.history.months.some(m => m.period === this.period)) this.period = (this.history.months[0] || {}).period || null;
+        this.renderHistory();
+      },
+      renderHistory() {
+        const h = this.history, e = this.esc, el = document.getElementById('usageHistory');
+        if (!h || !h.months.length) { el.innerHTML = '<div class="muted">ยังไม่มีข้อมูล</div>'; return; }
+        const m = h.months.find(x => x.period === this.period) || h.months[0];
+        const spark = key => h.months.slice().reverse().map(x => { const b = (x.bars || []).find(y => y.resource === key); const v = b && b.known ? Math.min(100, b.percent) : 0;
+          return `<i title="${Layout.esc(x.label)}: ${b && b.known ? Layout.esc(b.usedText) : '—'}" style="display:inline-block;width:6px;height:${4 + Math.round(v / 100 * 16)}px;background:${b && b.known ? this.color(b.warnLevel) : '#e5e7eb'};margin-right:1px;vertical-align:bottom"></i>`; }).join('');
+        el.innerHTML = `
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <span class="muted">เดือน</span>
+            <select class="form-select" style="width:auto" onchange="UsageTab.period = this.value; UsageTab.renderHistory()">
+              ${h.months.map(x => `<option value="${e(x.period)}" ${x.period === m.period ? 'selected' : ''}>${e(x.label)}${x.isCurrent ? ' (เดือนนี้)' : ''}</option>`).join('')}</select>
+            <select class="form-select" style="width:auto" onchange="UsageTab.months = Number(this.value); UsageTab.loadHistory()">
+              ${[6, 12, 24].map(k => `<option value="${k}" ${k === this.months ? 'selected' : ''}>ย้อนหลัง ${k} เดือน</option>`).join('')}</select>
+            ${m.isCurrent ? '<span class="pill">ข้อมูลสด</span>' : `<span class="muted">ข้อมูล ณ ${m.snapshotAtUtc ? Layout.date(m.snapshotAtUtc) : '—'}</span>`}
+          </div>
+          <div class="table-container"><table class="table"><thead><tr><th>ทรัพยากร</th><th class="text-right">ใช้ไป</th><th class="text-right">เพดาน</th><th class="text-right">ซื้อเพิ่ม</th><th class="text-right">ส่วนเกิน</th><th>แนวโน้ม ${h.months.length} เดือน</th><th></th></tr></thead><tbody>
+            ${(m.bars || []).map(b => `<tr><td>${e(b.label)}${b.note ? `<div class="muted">${e(b.note)}</div>` : ''}</td>
+              <td class="text-right"><b style="color:${b.known ? this.color(b.warnLevel) : '#64748b'}">${e(b.usedText)}</b></td><td class="text-right">${e(b.limitText)}</td>
+              <td class="text-right">${b.purchased ? Number(b.purchased).toLocaleString('th-TH') : '—'}</td>
+              <td class="text-right">${b.overageUnits ? `${Number(b.overageUnits).toLocaleString('th-TH')} ${e(b.unit)} = ฿${this.money(b.overageAmount)}` : '—'}</td>
+              <td>${spark(b.resource)}</td>
+              <td>${b.buyUrl ? `<a href="${e(b.buyUrl)}" class="btn btn-secondary btn-sm" onclick="if (location.pathname.endsWith('billing.html')) { location.hash = '${e(b.buyUrl.split('#')[1] || '')}'; return false; }">ซื้อเพิ่ม</a>` : ''}</td></tr>`).join('')}
+            <tr><td>🤖 การเรียก AI <span class="muted">(ข้อมูลอย่างเดียว · ไม่มีเพดาน · ไม่คิดเงิน)</span></td><td class="text-right">${Number(m.aiCallsTotal || 0).toLocaleString('th-TH')} ครั้ง</td><td class="text-right">—</td><td class="text-right">—</td><td class="text-right">—</td><td class="muted">ถึง AI ภายนอก ${Number(m.aiCallsPaid || 0).toLocaleString('th-TH')} ครั้ง</td><td></td></tr>
+          </tbody></table></div>
+          <div style="margin-top:8px;font-size:13px">ส่วนเกินรวม ${e(m.label)}: <b>฿${this.money(m.overageTotal)}</b>
+            ${(m.invoices || []).length ? ' · ใบแจ้งหนี้ ' + m.invoices.map(i => `<a href="#tab=docs" onclick="HubTabs.show('docs', true); return false;">${e(i.documentNumber)}</a> (${e(i.stateLabel)})`).join(', ') : ''}</div>`;
+      },
+    };
   </script>
   <script src="/js/billing-saved-cards.js"></script>
 </body>

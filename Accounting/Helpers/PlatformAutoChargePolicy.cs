@@ -54,6 +54,11 @@ public static class PlatformAutoChargePolicy
     public static bool SuspendedByDunning(bool dunningStateFlag, string? lastSuspendAction)
         => dunningStateFlag && lastSuspendAction == DunningSuspendAction;
 
+    /// <summary>รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.5 · คำตัดสินข้อ 231-4): ใบค่าใช้งาน/ส่วนเกิน (<c>USAGE-</c>) เข้าคิวตัดบัตรอัตโนมัติเฉพาะเมื่อแอดมินเปิด
+    /// <c>PlatformBillingSettings.OverageAutoChargeSavedCard</c> — ใบชนิดอื่น (ต่ออายุ/แอดมินออกเอง) ไม่ขึ้นกับค่าตั้งนี้ · ผู้อ่านตัวเดียวของค่าตั้ง (F2 ข้อ 2)</summary>
+    public static bool AutoChargeAllowedForKind(PlatformInvoiceKind kind, bool overageAutoChargeSavedCard)
+        => kind != PlatformInvoiceKind.Usage || overageAutoChargeSavedCard;
+
     public static bool SubscriptionChargeable(SubscriptionStatus status, bool suspendedByDunning)
         => status is SubscriptionStatus.Trial or SubscriptionStatus.Active or SubscriptionStatus.PastDue
            || (status == SubscriptionStatus.Suspended && suspendedByDunning);

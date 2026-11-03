@@ -10,9 +10,9 @@ namespace Accounting.Helpers;
 /// </summary>
 public static class UsageBarRule
 {
-    public const int WarnPercent = 70;
-    public const int DangerPercent = 90;
+    /// <summary>รอบ 231: เกณฑ์เตือนย้ายไป <see cref="QuotaWarnPolicy"/> (ค่าตั้ง <c>PlatformBillingSettings.QuotaWarnPercents</c> · ตั้งต้น 80/90/100) — ค่าคงที่เดิม 70/90 เลิกใช้</summary>
     public const int UnlimitedUsersAt = 999;
+    public const int UnlimitedCompaniesAt = 99;
     public const int UnlimitedCountAt = 99999;
 
     /// <summary>1 หลอด — ทุกช่องคิดแล้ว (หน้าเว็บแสดงอย่างเดียว) · <see cref="Level"/> 0 ปกติ · 1 ใกล้เต็ม · 2 เต็ม/เกือบเต็ม</summary>
@@ -28,7 +28,9 @@ public static class UsageBarRule
         return p > 100m ? 100m : p < 0m ? 0m : p;
     }
 
-    public static int Level(decimal percent) => percent >= DangerPercent ? 2 : percent >= WarnPercent ? 1 : 0;
+    /// <summary>ระดับของหลอด (0/1/2) — ตัวตัดสินเดียว <see cref="QuotaWarnPolicy.Severity"/> · <paramref name="percents"/> null = ค่าตั้งต้น</summary>
+    public static int Level(long used, long? limit, bool unlimited, IReadOnlyList<int>? percents = null)
+        => unlimited ? 0 : QuotaWarnPolicy.Severity(used, limit, percents);
 
     private static string BytesText(long b)
     {
@@ -38,38 +40,68 @@ public static class UsageBarRule
         return $"{b:N0} B";
     }
 
-    public static Bar Users(long used, int max)
+    // เกณฑ์ค่าตัวแทน "ไม่จำกัด" — ที่เดียว (ผู้อ่านภายนอกใช้ผ่าน Users/Documents/Ocr/Storage/LimitTexts/UnlimitedFlags)
+    private static bool UsersUnlimited(int max) => max <= 0 || max >= UnlimitedUsersAt;
+    private static bool CountUnlimited(int max) => max <= 0 || max >= UnlimitedCountAt;
+    private static bool CompaniesUnlimited(int max) => max <= 0 || max >= UnlimitedCompaniesAt;
+    private static bool OcrUnlimited(int max) => max < 0;
+    private static bool StorageUnlimited(long maxBytes) => maxBytes >= QuotaResources.UnlimitedBytes;
+
+    public static Bar Users(long used, int max, IReadOnlyList<int>? percents = null)
     {
-        var unlimited = max <= 0 || max >= UnlimitedUsersAt;
-        return Make("users", "ผู้ใช้งาน", used, max, unlimited, $"{used:N0}", unlimited ? "ไม่จำกัด" : $"{max:N0}", null);
+        var unlimited = UsersUnlimited(max);
+        return Make("users", "ผู้ใช้งาน", used, max, unlimited, $"{used:N0}", unlimited ? "ไม่จำกัด" : $"{max:N0}", null, percents);
     }
 
-    public static Bar Documents(long used, int max)
+    /// <param name="extra">รอบ 231: หมายเหตุ (เช่น "รวมโบนัส N") — null = ไม่มี</param>
+    public static Bar Documents(long used, int max, IReadOnlyList<int>? percents = null, string? extra = null)
     {
-        var unlimited = max <= 0 || max >= UnlimitedCountAt;
-        return Make("documents", "เอกสาร / เดือน", used, max, unlimited, $"{used:N0}", unlimited ? "ไม่จำกัด" : $"{max:N0}", null);
+        var unlimited = CountUnlimited(max);
+        return Make("documents", "เอกสาร / เดือน", used, max, unlimited, $"{used:N0}", unlimited ? "ไม่จำกัด" : $"{max:N0}", extra, percents);
     }
+
+    /// <summary>รอบ 231 (§A.2 "ไม่จำกัด ตัดสินที่เดียว"): ข้อความเพดานของแพ็กเกจ/subscription สำหรับหน้าเว็บทุกหน้า — เดิม <c>js/plan-display.js</c> และ
+    /// <c>pages/subscription.html</c> พิมพ์เกณฑ์ 999/99/99999 เอง · คีย์: users · companies · docs · journals · ocr · storage · messages</summary>
+    public static Dictionary<string, string> LimitTexts(int maxUsers, int maxCompanies, int maxDocs, int maxJournals, int maxOcr, long maxStorageBytes, int? maxMessages)
+        => new()
+        {
+            ["users"] = UsersUnlimited(maxUsers) ? "ไม่จำกัด" : maxUsers.ToString("N0"),
+            ["companies"] = CompaniesUnlimited(maxCompanies) ? "ไม่จำกัด" : maxCompanies.ToString("N0"),
+            ["docs"] = CountUnlimited(maxDocs) ? "ไม่จำกัด" : maxDocs.ToString("N0"),
+            ["journals"] = CountUnlimited(maxJournals) ? "ไม่จำกัด" : maxJournals.ToString("N0"),
+            ["ocr"] = OcrUnlimited(maxOcr) ? "ไม่จำกัด" : maxOcr.ToString("N0"),
+            ["storage"] = StorageUnlimited(maxStorageBytes) ? "ไม่จำกัด" : BytesText(maxStorageBytes),
+            ["messages"] = maxMessages is int m && m >= 0 ? m.ToString("N0") : "ไม่จำกัด",
+        };
+
+    public static Dictionary<string, bool> UnlimitedFlags(int maxUsers, int maxCompanies, int maxDocs, int maxJournals, int maxOcr, long maxStorageBytes, int? maxMessages)
+        => new()
+        {
+            ["users"] = UsersUnlimited(maxUsers), ["companies"] = CompaniesUnlimited(maxCompanies), ["docs"] = CountUnlimited(maxDocs),
+            ["journals"] = CountUnlimited(maxJournals), ["ocr"] = OcrUnlimited(maxOcr), ["storage"] = StorageUnlimited(maxStorageBytes),
+            ["messages"] = !(maxMessages is int m && m >= 0),
+        };
 
     /// <summary>OCR — เพดาน = โควตาแพ็กเกจ + โบนัส + เครดิตที่ซื้อคงเหลือ (เท่าที่ตัวนับ OCR ใช้จริง) · &lt; 0 = ไม่จำกัด</summary>
-    public static Bar Ocr(long used, int planMax, int bonus, int creditRemaining)
+    public static Bar Ocr(long used, int planMax, int bonus, int creditRemaining, IReadOnlyList<int>? percents = null)
     {
-        var unlimited = planMax < 0;
+        var unlimited = OcrUnlimited(planMax);
         var limit = unlimited ? 0 : (long)planMax + Math.Max(0, bonus) + Math.Max(0, creditRemaining);
         var extra = (bonus > 0 ? $" รวมโบนัส {bonus:N0}" : "") + (creditRemaining > 0 ? $" · เครดิตที่ซื้อคงเหลือ {creditRemaining:N0}" : "");
         return Make("ocr", "OCR สแกน / เดือน", used, limit, unlimited, $"{used:N0}", unlimited ? "ไม่จำกัด" : $"{limit:N0}",
-            extra.Length == 0 ? null : extra.TrimStart(' ', '·'));
+            extra.Length == 0 ? null : extra.TrimStart(' ', '·'), percents);
     }
 
-    public static Bar Storage(long usedBytes, long maxBytes)
+    public static Bar Storage(long usedBytes, long maxBytes, IReadOnlyList<int>? percents = null)
     {
-        var unlimited = maxBytes >= QuotaResources.UnlimitedBytes;
-        return Make("storage", "พื้นที่จัดเก็บ", usedBytes, maxBytes, unlimited, BytesText(usedBytes), unlimited ? "ไม่จำกัด" : BytesText(maxBytes), null);
+        var unlimited = StorageUnlimited(maxBytes);
+        return Make("storage", "พื้นที่จัดเก็บ", usedBytes, maxBytes, unlimited, BytesText(usedBytes), unlimited ? "ไม่จำกัด" : BytesText(maxBytes), null, percents);
     }
 
-    private static Bar Make(string key, string label, long used, long limit, bool unlimited, string usedText, string limitText, string? extra)
+    private static Bar Make(string key, string label, long used, long limit, bool unlimited, string usedText, string limitText, string? extra, IReadOnlyList<int>? percents)
     {
         var pct = Percent(used, limit, unlimited);
-        return new Bar(key, label, used, unlimited ? null : limit, unlimited, pct, unlimited ? 0 : Level(pct), usedText, limitText, extra);
+        return new Bar(key, label, used, unlimited ? null : limit, unlimited, pct, Level(used, unlimited ? null : limit, unlimited, percents), usedText, limitText, extra);
     }
 
     /// <summary>วันที่เหลือของแพ็กเกจ (ปฏิทินไทย · ไม่ติดลบ) — เดิมหน้าเว็บคิดจากนาฬิกาเครื่องผู้ใช้</summary>

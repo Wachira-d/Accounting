@@ -82,7 +82,8 @@ public class UsageMeteringService : IUsageMeteringService
 
             // ไม่มีแผนราคา = ยังไม่ได้ตั้งราคาฟีเจอร์นี้ → บันทึกการใช้งานไว้
             // (ราคา 0) ไม่ปฏิเสธงาน — admin ตั้งราคาย้อนหลังแล้วเห็นปริมาณจริงได้
-            var unitPrice = plan?.UnitPrice ?? 0m;
+            // รอบ 231: มิเตอร์ส่วนเกิน overage.* ไม่อยู่ในแคตตาล็อก ApiPricingPlan — ผู้เรียก (OverageService) resolve ราคาจาก OverageRates แล้วส่งมา (snapshot)
+            var unitPrice = request.UnitPriceOverride ?? plan?.UnitPrice ?? 0m;
 
             // ── 4. โควตาฟรีของเดือน (นับรวมทั้งกลุ่ม) ──
             var monthStart = new DateTime(nowUtc.Year, nowUtc.Month, 1, 0, 0, 0, DateTimeKind.Utc);
@@ -124,7 +125,7 @@ public class UsageMeteringService : IUsageMeteringService
                     ? null : request.IdempotencyKey.Trim(),
                 RefEntityType = request.RefEntityType,
                 RefEntityId = request.RefEntityId,
-                OccurredAt = nowUtc,
+                OccurredAt = request.OccurredAtOverride ?? nowUtc,
                 UnitLabelSnapshot = string.IsNullOrWhiteSpace(request.UnitLabel) ? null : request.UnitLabel.Trim(),
             };
             _db.UsageEvents.Add(ev);
@@ -169,7 +170,9 @@ public class UsageMeteringService : IUsageMeteringService
     /// <summary>คิดยอดตามวิธีที่ admin ตั้งไว้</summary>
     private static decimal ComputeCharge(ApiPricingPlan? plan, decimal unitPrice, int billableQty)
     {
-        if (plan == null || billableQty <= 0) return 0m;
+        if (billableQty <= 0) return 0m;
+        // รอบ 231: ไม่มีแผนในแคตตาล็อกแต่ผู้เรียกส่งราคามา (มิเตอร์ส่วนเกิน overage.*) ⇒ ต่อหน่วยตรง ๆ · ไม่มีทั้งคู่ = 0 (เดิม)
+        if (plan == null) return unitPrice * billableQty;
         return plan.Method switch
         {
             // เหมารายเดือน — การ "ใช้งาน" แต่ละครั้งต้องไม่คิดเงิน (ไม่งั้นใช้ 10 ครั้ง

@@ -14,7 +14,17 @@ public sealed record PlatformBillingPolicy(
     bool AutoSuspendEnabled,
     int PaymentLinkExpiryDays,
     bool ReminderEmailEnabled,
-    bool ReminderLineEnabled);
+    bool ReminderLineEnabled,
+    // รอบ 231 — ส่วนเกินโควตา (ค่าตั้งต้นเมื่อแถวเดิมยังไม่มีคอลัมน์ = ค่าเดียวกับ migration)
+    int OverageGraceDays = PlatformBillingSettingsRules.DefaultOverageGraceDays,
+    Accounting.Models.Enums.OverageUnpaidAction OverageUnpaidAction = Accounting.Models.Enums.OverageUnpaidAction.LockThenDunning,
+    decimal OverageMinInvoiceAmount = PlatformBillingSettingsRules.DefaultOverageMinInvoiceAmount,
+    string QuotaWarnPercents = QuotaWarnPolicy.DefaultPercents,
+    bool OverageAutoChargeSavedCard = false)
+{
+    /// <summary>เกณฑ์เตือนที่ parse แล้ว (ตัวเดียวที่ผู้อ่านใช้)</summary>
+    public IReadOnlyList<int> WarnPercents => QuotaWarnPolicy.Parse(QuotaWarnPercents);
+}
 
 /// <summary>
 /// รอบ 219 เฟส 2 (คำตัดสินข้อ 180 · เจ้าของ: "อยากได้ระบบที่ flexible ตั้งค่าได้") — <b>ตัวตั้งค่าตั้งต้น + ตัวตรวจ + ตัวแปลง</b> ของค่าตั้งการเรียกเก็บ
@@ -32,6 +42,12 @@ public static class PlatformBillingSettingsRules
     public const int MinSuspendGraceDays = 0, MaxSuspendGraceDays = 90;
     public const int MinPaymentLinkExpiryDays = 1, MaxPaymentLinkExpiryDays = 90;
     public const int MaxReminderDay = 60, MaxReminderCount = 6;
+
+    // รอบ 231 — ส่วนเกินโควตา
+    public const int DefaultOverageGraceDays = 7;
+    public const decimal DefaultOverageMinInvoiceAmount = 50m;
+    public const int MinOverageGraceDays = 1, MaxOverageGraceDays = 60;
+    public const decimal MaxOverageMinInvoiceAmount = 100_000m;
 
     public static PlatformBillingPolicy Defaults { get; } = new(
         DefaultRenewalInvoiceLeadDays,
@@ -52,7 +68,23 @@ public static class PlatformBillingSettingsRules
             row.AutoSuspendEnabled,
             Math.Clamp(row.PaymentLinkExpiryDays, MinPaymentLinkExpiryDays, MaxPaymentLinkExpiryDays),
             row.ReminderEmailEnabled,
-            row.ReminderLineEnabled);
+            row.ReminderLineEnabled,
+            Math.Clamp(row.OverageGraceDays, MinOverageGraceDays, MaxOverageGraceDays),
+            Enum.IsDefined(row.OverageUnpaidAction) ? row.OverageUnpaidAction : Accounting.Models.Enums.OverageUnpaidAction.LockThenDunning,
+            Math.Clamp(row.OverageMinInvoiceAmount, 0m, MaxOverageMinInvoiceAmount),
+            string.IsNullOrWhiteSpace(row.QuotaWarnPercents) ? QuotaWarnPolicy.DefaultPercents : row.QuotaWarnPercents,
+            row.OverageAutoChargeSavedCard);
+    }
+
+    /// <summary>รอบ 231: ตรวจค่าตั้งส่วนเกิน (เข้ม · ค่าที่แอดมินกรอก) — คืนข้อความไทยตัวแรกที่ผิด (null = ผ่าน) + เกณฑ์เตือนที่จัดรูปแล้ว</summary>
+    public static string? ValidateOverage(int graceDays, decimal minInvoice, string? warnPercents, out string normalizedWarn)
+    {
+        normalizedWarn = "";
+        if (graceDays < MinOverageGraceDays || graceDays > MaxOverageGraceDays)
+            return $"กำหนดชำระใบส่วนเกินต้องอยู่ระหว่าง {MinOverageGraceDays}–{MaxOverageGraceDays} วัน";
+        if (minInvoice < 0m || minInvoice > MaxOverageMinInvoiceAmount)
+            return $"ยอดขั้นต่ำของใบค่าใช้งานต้องอยู่ระหว่าง 0–{MaxOverageMinInvoiceAmount:N0} บาท";
+        return QuotaWarnPolicy.Validate(warnPercents, out normalizedWarn);
     }
 
     /// <summary>อ่านรายการวันแบบผ่อนปรน (ค่าที่เก็บไว้แล้ว) — ตัดตัวที่อ่านไม่ได้/หลุดช่วงทิ้ง · ไม่ซ้ำ · ไม่เกิน <see cref="MaxReminderCount"/> ตัว</summary>

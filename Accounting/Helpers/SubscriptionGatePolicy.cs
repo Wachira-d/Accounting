@@ -50,7 +50,14 @@ public sealed record SubscriptionGateFacts(
     SubscriptionWriteGateMode WriteMode,
     bool? CompanySuspended,
     bool? PlanActive,
-    FeatureFlags? RequiredFeature);
+    FeatureFlags? RequiredFeature,
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-10): ผู้อ่านของ <c>TrialConfig.BlockAccessOnExpiry</c> — ทดลองใช้หมดอายุพ้นผ่อนผัน ⇒ บล็อก<b>อ่าน</b>ด้วย (ไม่ใช่แค่เขียน) ·
+    /// false = พฤติกรรมเดิม (อ่านได้ เขียน 402)</summary>
+    bool BlockReadsWhenExpired = false,
+    /// <summary>คำขอนี้เป็นการส่งออกข้อมูล (<see cref="SubscriptionGatePolicy.IsDataExportPath"/>)</summary>
+    bool IsDataExport = false,
+    /// <summary>ผู้อ่านของ <c>TrialConfig.AllowDataExportAfterExpiry</c> — เมื่อบล็อกอ่านเพราะหมดอายุ ยังปล่อยเส้นส่งออกข้อมูล (PDPA portability)</summary>
+    bool AllowExportWhenExpired = false);
 
 /// <summary>ผลตัดสิน</summary>
 /// <param name="Block">เหตุที่ต้องปฏิเสธ (<see cref="SubscriptionGateReason.None"/> = ผ่าน)</param>
@@ -332,6 +339,20 @@ public static class SubscriptionGatePolicy
     public static bool NeedsWriteFacts(SubscriptionStatus status, bool isWrite, SubscriptionWriteGateMode writeMode) =>
         !IsInactive(status) && isWrite && writeMode != SubscriptionWriteGateMode.Off;
 
+    /// <summary>รอบ 231 (231-10): ด่าน<b>อ่าน</b>ของทดลองใช้ที่เปิด <c>BlockAccessOnExpiry</c> ต้องโหลดข้อเท็จจริง (แผนที่มีผล) ไหม — เฉพาะคำขออ่าน + สถานะ Expired
+    /// (ทดลองที่ยังไม่หมดอายุไม่เสีย query) · middleware ถามร่วมกับ <see cref="NeedsWriteFacts"/> (ด่านเขียนเดิม ไม่เปลี่ยน)</summary>
+    public static bool NeedsReadFactsWhenExpired(SubscriptionStatus status, bool isWrite, SubscriptionWriteGateMode writeMode, bool blockReadsWhenExpired) =>
+        !IsInactive(status) && !isWrite && blockReadsWhenExpired && status == SubscriptionStatus.Expired && writeMode != SubscriptionWriteGateMode.Off;
+
+    /// <summary>รอบ 231 (231-10): เส้นทางส่งออกข้อมูล (ผู้อ่านของ <c>AllowDataExportAfterExpiry</c>) — export/download/PDF/DSR portability ·
+    /// ตัวเดียวของ middleware (JS ไม่มีสำเนา)</summary>
+    public static bool IsDataExportPath(string? path)
+    {
+        if (string.IsNullOrEmpty(path)) return false;
+        var p = path.ToLowerInvariant();
+        return p.Contains("/export") || p.Contains("/dsr/portability") || p.Contains("/dsr/access") || p.EndsWith("/pdf") || p.Contains("/download");
+    }
+
     /// <summary>เส้นทางนี้ต้องใช้ฟีเจอร์อะไร (คีย์ยาวสุดที่ตรงชนะ) · <c>null</c> = ไม่ต้อง หรือเป็นเส้นทางที่กฎหมาย/คำตัดสินยกเว้น
     /// (<see cref="FeatureExemptRoutes"/> ทุก method · <see cref="FeatureExemptEndpoints"/> เฉพาะ method นั้น — <paramref name="method"/> <c>null</c> =
     /// ไม่รู้ method ⇒ ไม่ใช้ข้อยกเว้นราย method) · ผลบอกด้วยว่าคีย์เพิ่งเริ่มมีผลไหม และคำขอเดียวกันเดิมถูกตัดสินด้วยคีย์ไหน</summary>
@@ -454,6 +475,15 @@ public static class SubscriptionGatePolicy
                     return new SubscriptionGateVerdict(SubscriptionGateReason.PlanExpired, null, logOnly);
                 logOnly.Add(SubscriptionGateReason.PlanExpired);
             }
+        }
+        // รอบ 231 (231-10): BlockAccessOnExpiry ⇒ บล็อกอ่านด้วยเมื่อหมดอายุพ้นผ่อนผัน — โหมดเดียวกับด่านเขียน (Enforce = บล็อก · Shadow = log) ·
+        // เส้นส่งออกข้อมูลยังผ่านเมื่อ AllowDataExportAfterExpiry (ทิศตรงข้าม: ไม่เปิดสวิตช์ = อ่านได้ตามเดิมทุกประการ)
+        if (f.WriteMode != SubscriptionWriteGateMode.Off && !f.IsWrite && f.BlockReadsWhenExpired && f.PlanActive == false
+            && !(f.IsDataExport && f.AllowExportWhenExpired))
+        {
+            if (f.WriteMode == SubscriptionWriteGateMode.Enforce)
+                return new SubscriptionGateVerdict(SubscriptionGateReason.PlanExpired, null, logOnly);
+            logOnly.Add(SubscriptionGateReason.PlanExpired);
         }
 
         if (f.RequiredFeature is FeatureFlags need && !f.EnabledFeatures.HasFlag(need))

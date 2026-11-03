@@ -23,7 +23,10 @@ public enum ImageProfile
     /// <summary>OCR source — preserve detail, just strip metadata + cap absurd sizes. ~2400px long edge, q92.</summary>
     OcrSource,
     /// <summary>Generic content image. ~1600px long edge, q82.</summary>
-    Generic
+    Generic,
+    /// <summary>Favicon (รอบ 231): สี่เหลี่ยมจัตุรัส 128px · <b>PNG เสมอ</b> — เดิมใช้ Avatar ซึ่งเก็บ PNG เฉพาะเมื่อมีความโปร่งใส ⇒ ไอคอนทึบถูกแปลงเป็น JPG
+    /// แล้วแท็บเบราว์เซอร์แสดงไม่ถูกต้อง · ICO/SVG ไม่ผ่านตัวแปลง (เซฟดิบตามผลตรวจไบต์)</summary>
+    Favicon
 }
 
 public record ProcessedImageResult(

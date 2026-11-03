@@ -78,7 +78,7 @@ public class PlatformAutoChargeService : IPlatformAutoChargeService
         {
             if (ct.IsCancellationRequested) break;
             t.Payers++;
-            try { await ProcessPayerAsync(pid, cfg, m, version, retryDays, t, ct); }
+            try { await ProcessPayerAsync(pid, cfg, m, version, retryDays, policy.OverageAutoChargeSavedCard, t, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // บริษัทหนึ่งล้มไม่ลากบริษัทอื่น — ล้มดัง: log + นับในสรุปรอบ (JobRunLog) · แถวความพยายามที่จองไว้ถูกประทับผลใน ChargeInvoiceAsync แล้ว
@@ -95,7 +95,7 @@ public class PlatformAutoChargeService : IPlatformAutoChargeService
     }
 
     private async Task ProcessPayerAsync(Guid pid, PaymentProviderConfig cfg, PlatformAutoChargeMandate m, string version,
-        IReadOnlyList<int> retryDays, Tally t, CancellationToken ct)
+        IReadOnlyList<int> retryDays, bool overageAutoChargeSavedCard, Tally t, CancellationToken ct)
     {
         var payer = m.PayerCompanyId;
         await _cards.RefreshVerificationAsync(payer, ct);
@@ -144,6 +144,8 @@ public class PlatformAutoChargeService : IPlatformAutoChargeService
             var facts = attempts.Where(a => a.DocumentId == r.Id).Select(a => new AutoChargeAttemptFact(a.AttemptNo, a.AttemptedAt, a.Outcome)).ToList();
             var d = PlatformAutoChargePolicy.Decide(r.DueDate, now, r.BalanceDue, excluded, facts, retryDays);
             if (d.AttemptNo is not int no) continue;
+            // รอบ 231 (231-4): ใบค่าใช้งาน/ส่วนเกิน USAGE- ตัดอัตโนมัติเฉพาะเมื่อแอดมินเปิด OverageAutoChargeSavedCard (ปิด = ผู้เช่าชำระเองที่ศูนย์บิล · ทวงหนี้ตามเดิม)
+            if (!PlatformAutoChargePolicy.AutoChargeAllowedForKind(PlatformInvoiceRules.KindOf(r.Reference), overageAutoChargeSavedCard)) { t.Skipped++; continue; }
             if (await OpenOnlinePaymentAsync(sub.Id, r.Id, ct)) { t.Skipped++; continue; }   // ผู้เช่าเริ่มจ่ายออนไลน์ไว้ (QR/3DS) — ไม่ตัดซ้อน
             // ฝ่ายค้าน (nice): ผู้เช่าแจ้งภาษีหัก ณ ที่จ่ายไว้กับรายการของใบนี้ ⇒ ไม่ตัด (ตัดเต็มยอดจะล้างยอดภาษีที่แจ้งไว้)
             if (await _db.SubscriptionPayments.AsNoTracking().AnyAsync(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId == r.Id

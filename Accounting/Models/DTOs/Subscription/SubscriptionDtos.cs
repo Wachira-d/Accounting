@@ -47,7 +47,12 @@ public record TrialExpiryBehavior(
     bool AllowDataExportAfterExpiry,
     int GracePeriodDays,
     bool ShowWatermark,
-    string? TrialMessage);
+    string? TrialMessage,
+    // รอบ 231 (ฝ่ายค้าน B2 · กฎ #4 A "เก็บแล้วต้อง echo กลับ"): นโยบายปิดข้อมูลหลังหมดอายุ
+    bool DeleteDataAfterGracePeriod = false,
+    int DataRetentionDays = 90,
+    int PurgeNoticeDays = 14,
+    DateTime? PurgeNoticeSentAt = null);
 
 public record ConversionIncentive(
     decimal? DiscountPercent,
@@ -90,7 +95,14 @@ public record PlanChangeQuote(
     string Message,
     string? CouponLabel = null,
     string? CouponProblem = null,
-    string? Blocked = null);
+    string? Blocked = null,
+    /// <summary>รอบ 231 (231-8): ราคาตั้ง (แม่แบบ) ก่อนราคาพิเศษ — ต่างจาก <see cref="ListAmount"/> (= ราคาพิเศษ) เมื่อมี override · หน้าเว็บแสดง "ราคาพิเศษสำหรับคุณ" เมื่อ <c>StandardAmount &gt; ListAmount</c></summary>
+    decimal? StandardAmount = null,
+    /// <summary>ข้อความ "ราคาพิเศษสำหรับคุณ …" (<c>PlatformPlanPricing.SpecialPriceNote</c>) · null = ราคาตั้ง</summary>
+    string? SpecialPriceNote = null,
+    /// <summary>รอบ 231 (231-9): รายการเปลี่ยนรอบบิลกลางรอบ — มูลค่าคงเหลือรอบเดิมที่หัก · วันหมดอายุใหม่ = วันที่ชำระ + เดือนของรอบใหม่</summary>
+    decimal? CycleChangeCredit = null,
+    DateTime? NewPeriodEndUtc = null);
 
 /// <summary>รอบ 230: แอดมินแก้ยอดของรายการชำระค่าแพ็กเกจที่ยังไม่จ่าย (คำตัดสินเจ้าของข้อ 178 ① — ยืดหยุ่นได้เสมอ · audit chain)</summary>
 public record OverridePaymentAmountRequest(decimal Amount, string? Reason);
@@ -141,7 +153,16 @@ public record SubscriptionResponse(
     /// <summary>รอบ 219 ส่วน B: ขอยกเลิกไว้ — ใช้ได้ถึง <c>EndDate</c> แล้วสิ้นสุด (หน้าเว็บแสดงปุ่ม "กลับมาใช้ต่อ")</summary>
     bool CancelAtPeriodEnd = false,
     /// <summary>ฝ่ายค้าน (หมายเหตุ): ข้อความยืนยันก่อนกดยกเลิก (SubscriptionCancelPolicy.ConfirmText) — หน้าเว็บแสดงอย่างเดียว</summary>
-    string? CancelConfirmText = null);
+    string? CancelConfirmText = null,
+    /// <summary>รอบ 231 (231-10): ชนิด (ทดลอง/Free Edition/จ่ายเงิน) — ชื่อ enum (<c>SubscriptionKindRule</c>) · null = แถวเก่ายังไม่ backfill</summary>
+    string? Kind = null,
+    /// <summary>รอบ 231 (231-8): "ราคาพิเศษสำหรับคุณ: ฿…/ปี (ราคาตั้ง ฿…)" ของแพ็กเกจ+รอบปัจจุบัน · null = ราคาตั้ง — หน้าเว็บแสดงอย่างเดียว</summary>
+    string? SpecialPriceNote = null,
+    /// <summary>รอบ 231 (P0 จ · LICENSE_USAGE_OVERAGE_AUDIT): หลอดเอกสารเดือนนี้ (ใช้ไป/เพดาน/ไม่จำกัด/ระดับ) คิดที่เซิร์ฟเวอร์ — หน้าแพ็กเกจแสดงอย่างเดียว</summary>
+    global::Accounting.Helpers.UsageBarRule.Bar? DocumentsBar = null,
+    /// <summary>รอบ 231 (P0 จ): ข้อความเพดาน users/companies/docs/journals/ocr/storage/messages ("ไม่จำกัด" ตัดสินที่เซิร์ฟเวอร์ — UsageBarRule.LimitTexts)</summary>
+    Dictionary<string, string>? LimitTexts = null,
+    Dictionary<string, bool>? Unlimited = null);
 
 public record UsageLimits(
     int MaxUsers,
@@ -264,7 +285,10 @@ public record PlanTemplateResponse(
     int? TrialMaxSharedMessagesPerMonth = null,
     // ฝ่ายค้านรอบ 212 (c): ตัวเลขแนะนำจากเซิร์ฟเวอร์ (คำใบ้ — ไม่ถูกตั้งให้อัตโนมัติ)
     int? SuggestedSharedMessagesPerMonth = null,
-    int? SuggestedTrialSharedMessagesPerMonth = null);
+    int? SuggestedTrialSharedMessagesPerMonth = null,
+    // รอบ 231 (P0 จ): ข้อความ/ธง "ไม่จำกัด" ของแพ็กเกจจากเซิร์ฟเวอร์ (UsageBarRule.LimitTexts) — หน้าแรก/สมัคร/License/แพ็กเกจ อ่านค่านี้แทนเกณฑ์ใน JS
+    Dictionary<string, string>? LimitTexts = null,
+    Dictionary<string, bool>? Unlimited = null);
 
 /// <summary>1 ฟีเจอร์ในแคตตาล็อก — ป้ายไทย/อังกฤษ + หมวด + คำอธิบาย (จาก <c>Helpers/FeatureCatalog</c>)</summary>
 public record FeatureFlagInfo(string Name, string Category, string LabelTh, string LabelEn = "", string Description = "");
@@ -397,7 +421,16 @@ public record SubscriptionPaymentResponse(
     string? CouponCode = null,
     decimal CouponDiscountAmount = 0m,
     decimal? QuotedAmount = null,
-    string? AmountOverrideReason = null);
+    string? AmountOverrideReason = null,
+    // รอบ 231 (ฝ่ายค้าน S1 · กฎ #4 A "เก็บแล้วต้อง echo กลับ"): เปลี่ยนรอบบิลกลางรอบ · ราคาพิเศษ
+    bool IsCycleChange = false,
+    /// <summary>มูลค่าคงเหลือรอบเดิมที่หัก (บาท) — เฉพาะรายการเปลี่ยนรอบ</summary>
+    decimal? CycleChangeCredit = null,
+    /// <summary>คำอธิบายรายการเปลี่ยนรอบ (ฝั่ง server · หน้าเว็บแสดงอย่างเดียว)</summary>
+    string? CycleChangeNote = null,
+    /// <summary>ราคาตั้ง (แม่แบบ) ก่อนราคาพิเศษ · null = ไม่มีราคาพิเศษ</summary>
+    decimal? StandardAmount = null,
+    Guid? PriceOverrideId = null);
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,
@@ -487,7 +520,9 @@ public record UpdateTrialConfigRequest(
     int? DataRetentionDays,
     decimal? DiscountPercentOnConversion,
     DateTime? DiscountValidUntil,
-    string? ConversionPromoCode);
+    string? ConversionPromoCode,
+    /// <summary>รอบ 231 (ฝ่ายค้าน B2): แจ้งเจ้าของล่วงหน้ากี่วันก่อนปิดข้อมูลทดลองใช้ (0 = ไม่แจ้ง)</summary>
+    int? PurgeNoticeDays = null);
 
 // ===== Admin: Direct Subscription Management =====
 public record AdminChangePlanRequest(
@@ -507,10 +542,13 @@ public record AdminChangeDatesRequest(
     DateTime? NextBillingDate = null,
     string? Notes = null);
 
+/// <summary>รอบ 231 (231-11): <c>Reason</c> บังคับ (audit chain) · ผู้ใช้/พื้นที่ ⇒ เขียน <c>CompanyQuotaOverride</c> ผ่าน <c>QuotaOverrideWriter</c> (กลไกเดียว) ·
+/// เอกสาร/รายการบัญชี/บริษัท ⇒ ยังเขียน <c>Subscription.Max*</c> พร้อมค่าเก่า/ใหม่ใน audit</summary>
 public record AdminChangeLimitsRequest(
     int? MaxUsers = null,
     int? MaxDocumentsPerMonth = null,
     int? MaxJournalEntriesPerMonth = null,
     long? MaxStorageBytes = null,
     int? MaxCompanies = null,
-    string? Notes = null);
+    string? Notes = null,
+    string? Reason = null);

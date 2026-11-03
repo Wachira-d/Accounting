@@ -48,6 +48,9 @@ public static class EmployeeRecordEdit
         if (t.IndexOf('X') >= 0 || t.IndexOf('x') >= 0)
             return FieldEdit.Reject($"{fieldLabel}: ค่านี้เป็นเลขที่ถูกปิดบัง (PDPA) — "
                 + "พิมพ์เลขจริง 13 หลัก หรือคงค่าเดิมไว้โดยไม่แก้ช่องนี้");
+        // ฝ่ายค้านรอบ 231 S2: คอลัมน์นี้เข้ารหัสผ่าน EncryptedColumnConverter — ค่าที่ขึ้นต้น enc1: ห้ามเข้า (ปิด oracle)
+        if (SecretInputRule.CipherPrefixProblem(t, fieldLabel) is string cipherProblem)
+            return FieldEdit.Reject(cipherProblem);
         // เลขเดิม (แค่ต่างขีด/ช่องว่าง) = ไม่ได้แก้ — ตรวจ**ก่อน** checksum: เลขเก่าที่เข้าระบบ
         // ก่อนมีด่าน checksum (สมัยตรวจแค่ regex 13 หลัก · HRIS sync · นำเข้า CSV) ต้องไม่ทำให้
         // HR แก้ช่องอื่นของพนักงานคนนั้นไม่ได้เลย (เข้มขึ้นต้องมีทางไปต่อ — F2 ข้อ 8)

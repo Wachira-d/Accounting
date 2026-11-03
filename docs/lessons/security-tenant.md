@@ -297,3 +297,25 @@
   ทางที่ไม่ผ่านต้องมีทางไปต่อที่มองเห็น (โอนผู้อนุมัติ · ตั้งผู้อนุมัติเริ่มต้นใหม่) ไม่ใช่ข้ามขั้น (ลด SoD) · ทางเข้าที่สอง (มือถือ/API) เรียกเจ้าของกติกาตัวเดียว ·
   กลไก: `required_call_site_check` (SubmitForApprovalAsync · SubmitActionAsync · QuickApproveAsync ห้ามเพิ่มแถวผลอนุมัติเอง · TryAutoApproveAsync) +
   Db test `ApprovalWorkflowMembershipDbTests` / `CrossTenantSignerDbTests`
+
+- **"เข้ารหัสแล้วหรือยัง" ห้ามเดาจากรูป — ciphertext ต้องประกาศตัวเอง** (รอบ 231 · บั๊ก production: webhook LINE OA กลาง 401 + หน้าจอฟ้อง "คีย์เข้ารหัสของระบบถูกเปลี่ยน"
+  ทั้งที่คีย์ไม่เคยเปลี่ยน) — `EncryptionHelper.IsEncrypted` เดิมตอบจาก "ยาว ≥ 40 + เป็น base64 + ≥ nonce+tag ไบต์" ⇒ Channel Access Token ของ LINE (base64 ~170 ตัว)
+  ถูกตัดสินว่าเป็น ciphertext ⇒ `SecretProtector.Protect` "ไม่เข้ารหัสซ้ำ" **เก็บค่าดิบ** ⇒ ตอนอ่าน `Unprotect/IsUsable` ถอดค่าดิบไม่ออกทุกคีย์ ⇒ `NextAccLineConfig`
+  ทิ้งค่าตั้งแอดมินทั้งชุด (token+secret) และทุกข้อความบนจอ/ใน log พูดว่า "คีย์ถูกเปลี่ยน" ตายตัว (ไม่มีใครตรวจว่าคีย์เปลี่ยนจริง — กฎ F2 ข้อ 7) ·
+  คอลัมน์ PII (`EncryptedColumnConverter`) ใช้ตัวเดาเดียวกัน ⇒ PII ที่บังเอิญเป็น base64 ยาวถูกเก็บดิบตลอดกาลโดยไม่มีใครรู้
+  → กติกา: (1) ciphertext มี**คำนำหน้ารุ่น** `enc1:` (`EncryptionHelper.CipherPrefix`) · `IsEncrypted` = คำนำหน้าเท่านั้น · `Protect`/`EncryptOnSave` เข้ารหัส**เสมอ**เว้นแต่มีคำนำหน้า
+  (2) ค่าเก่าไม่มีคำนำหน้าแยก "ciphertext รุ่นก่อน" จาก "plaintext" ได้ทางเดียวคือ**ลองถอด** (`LooksLikeLegacyCiphertext` + คีย์ปัจจุบัน/คีย์เดิม) — ถอดไม่ออกทุกคีย์ = plaintext ใช้ตามเดิม
+  (token ดิบของเจ้าของจึงกลับมาใช้ได้โดยไม่ต้องกรอกใหม่) · ตัวเดารูปเหลือไว้ใน OWNER file ตัวเดียวและใช้เฉพาะฝั่งอ่าน (`tools/encrypted_heuristic_check.py` + baseline ห้ามตัวที่สอง)
+  (3) ตัวตัดสินเดียว `SecretProtector.Classify` → `SecretState` {Plaintext · LegacyFormat · LegacyKey · Current · Malformed · WrongKey} — `Unprotect/IsUsable/Reprotect/Inspect` อ่านจากตัวนี้
+  (4) ข้อความ "คีย์เข้ารหัสของระบบถูกเปลี่ยน" ออกได้เฉพาะ `WrongKey` (มีคำนำหน้า · รูปแบบถูก · ถอดไม่ออกทุกคีย์) ผ่าน `SecretWarnings.UnusableReason/FieldWarning` ตัวเดียว ·
+  ค่าเสียหายบอกว่าเสียหาย (`Malformed`) · ตัวส่ง SMTP ที่เห็นแค่ "รหัสว่าง" บอกสิ่งที่ตรวจได้แล้วชี้ไปหน้าตั้งค่า ไม่เดาเหตุ
+  (5) `SecretReprotectJob` ย้ายค่าไม่มีคำนำหน้า (ciphertext เก่า + plaintext ที่เก็บดิบ) ไป `enc1:` ⇒ การเดารูปหมดหน้าที่ไปทีละแถว (F2 ข้อ 9 persist แล้วต้องมี migration) ·
+  กลไก: `EncryptionFormatRound231Tests` (ทั้งสองทิศ: token ดิบ/ciphertext เก่า/คีย์เดิมกลับมาใช้ได้ · plaintext/Current ไม่ถูกแตะ · WrongKey/Malformed แยกข้อความ) +
+  `required_call_site_check` (Protect/EncryptOnSave ห้าม `LooksLikeLegacyCiphertext(`/`FromBase64String(` · Classify/Inspect/Reprotect ต้องมีครบ) + `encrypted_heuristic_check` (self-test 3 รูป)
+  → **ภาคผนวกฝ่ายค้านรอบ 231** (1 blocker + 3 should · คำตัดสินผู้ประสานงาน): (B1) รูปแบบใหม่เป็น **forward-only** — ห่อแล้วย้อนรุ่นไม่ได้ ⇒ deploy note ใน CHANGELOG/ACCOUNT_STRUCTURE +
+  ประตู `Security:MigrateCipherPrefix` (default ปิด) คุมการห่อค่าไม่มีคำนำหน้า (คีย์เดิมย้ายเสมอ) · job สรุป "รอห่อ/ห่อค่ากำกวม" · (S1) "ดูเหมือน ciphertext แต่ถอดไม่ออก" ≠ plaintext ธรรมดา —
+  สถานะ `AmbiguousBase64` ยัง usable แต่มีคำใบ้ใน UI + นับแยกในงานย้าย (ค่าที่แต่งขึ้นเงียบ ๆ อันตรายกว่าการบอกว่า "ไม่แน่ใจ" — F2 ข้อ 3) · (S2) **"มีคำนำหน้าแล้วข้าม" = decryption oracle**:
+  ผู้มีสิทธิ์เขียนช่อง A ส่ง `enc1:<ciphertext ช่อง B>` ⇒ ระบบถอดให้ตอนอ่าน ⇒ `Protect` เข้ารหัสเสมอ + ปฏิเสธค่าขึ้นต้น enc1 (`SecretInputRule`) · converter ปล่อยผ่านเฉพาะค่าที่อ่านมาแล้วถอดไม่ออก
+  (ชุด hash ในโพรเซส — ไม่ใช่ state ข้ามเครื่อง: entity ถูกอ่าน/บันทึกในโพรเซสเดียว · ถูกล้าง = ห่อซ้อนค่าที่ใช้ไม่ได้อยู่แล้ว) · เทสต์ "idempotent" เดิม 2 ตัวคือด่านที่ล็อก oracle ไว้ ⇒ พลิกเป็นทิศตรงข้าม ·
+  (S3) secret ใช้ไม่ได้ต้องดังเท่า token (webhook 401 เงียบ = สถานะปลายทางที่ระบบไม่ตรวจ) · กลไกเพิ่ม: `required_call_site_check` (Protect ห้าม IsEncrypted · EncryptOnSave ห้าม "มีคำนำหน้าแล้วข้าม" · Reprotect ต้องผ่านประตู) +
+  `EncryptionFormatRound231Tests` (ประตูสองทิศ · oracle ปิด · pass-through แถวเดิม · secret เสีย ⇒ SourceNone · ค่ากำกวม usable+คำใบ้)

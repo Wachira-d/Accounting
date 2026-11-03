@@ -45,7 +45,7 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
         // (PayerCompanyId — intent อยู่ใต้บริษัทผู้ให้บริการ ตรวจแล้วใน DispatchSucceededAsync ด้วย PlatformRevenueSource)
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == intent.SourceId)
-            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.RequestedPlan, p.RequestedBillingCycle, p.ReviewNotes, p.PlatformInvoiceDocumentId, p.QuotedAmount })
+            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.Subscription.AccountSubscriptionId, p.RequestedPlan, p.RequestedBillingCycle, p.ReviewNotes, p.PlatformInvoiceDocumentId, p.QuotedAmount })
             .FirstOrDefaultAsync(ct);
         if (pay != null && !Accounting.Helpers.PlatformRevenueSource.SourceBelongsToPayer(intent.PayerCompanyId, pay.CompanyId))
         {
@@ -117,9 +117,11 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
         // รายการแบบเดิมยังต้องตรงราคาเต็มของแพ็กเกจ
         var template = pay.PlatformInvoiceDocumentId != null ? null : await _db.PlanTemplates.AsNoTracking()
             .FirstOrDefaultAsync(t => t.Plan == pay.RequestedPlan && t.IsActive, ct);
-        // รอบ 230: รายการที่เซิร์ฟเวอร์เสนอยอดเอง (ส่วนต่างอัปเกรด/คูปอง/แอดมินแก้) ⇒ เทียบกับยอดนั้น (ตัวตัดสินเดียว PlatformPlanPricing.AutoApproveExpected)
+        // รอบ 230: รายการที่เซิร์ฟเวอร์เสนอยอดเอง (ส่วนต่างอัปเกรด/คูปอง/แอดมินแก้) ⇒ เทียบกับยอดนั้น (ตัวตัดสินเดียว PlatformPlanPricing.AutoApproveExpected) ·
+        // รอบ 231 (231-8): ราคาเต็ม = ราคาพิเศษของบริษัทนี้ (PlatformPriceOverrideStore) ไม่ใช่ราคาแม่แบบ — ไม่งั้นรายการราคาพิเศษแบบเดิมถูกพักให้แอดมินทุกใบ
         var listPrice = Accounting.Helpers.PlatformPlanPricing.AutoApproveExpected(pay.QuotedAmount,
-            template == null ? 0m : Accounting.Helpers.PlatformPlanPricing.AmountDue(template, pay.RequestedBillingCycle));
+            template == null ? 0m : await Accounting.Helpers.PlatformPriceOverrideStore.AmountDueAsync(_db, pay.CompanyId, pay.AccountSubscriptionId, template, pay.RequestedBillingCycle, DateTime.UtcNow,
+                currentPlan: await _db.Subscriptions.AsNoTracking().Where(s => s.Id == pay.SubscriptionId).Select(s => (SubscriptionPlan?)s.Plan).FirstOrDefaultAsync(ct), ct: ct));   // ฝ่ายค้าน S4: ซื้อแพ็กเกจเดิมซ้ำ = ต่ออายุ
         if (pay.PlatformInvoiceDocumentId == null
             && ((template == null && pay.QuotedAmount == null) || listPrice <= 0m || !Accounting.Helpers.PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m))
         {

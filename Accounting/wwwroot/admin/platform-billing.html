@@ -29,6 +29,14 @@
         <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="autoSuspendEnabled"> ระงับอัตโนมัติเมื่อเกินระยะผ่อนผัน</label>
         <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="reminderEmailEnabled"> ส่งใบแจ้งหนี้/แจ้งเตือนทางอีเมล</label>
         <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="reminderLineEnabled"> ส่งใบแจ้งหนี้/แจ้งเตือนทาง LINE</label>
+        <!-- รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.2 · คำตัดสินข้อ 231-3/231-4/231-5): ค่าตั้งส่วนเกินโควตา + เกณฑ์เตือนทุกทรัพยากร · ราคาต่อหน่วยอยู่ที่ /pages/admin-quota.html -->
+        <label>กำหนดชำระใบค่าส่วนเกิน/ค่าใช้งาน (วันหลังออกใบ)<input class="admin-input" type="number" name="overageGraceDays" min="1"><span class="hint" id="hOvGrace"></span></label>
+        <label>ยอดขั้นต่ำของใบค่าใช้งาน (บาท · ต่ำกว่ายกยอดไปเดือนถัดไป)<input class="admin-input" type="number" name="overageMinInvoiceAmount" min="0" step="0.01"></label>
+        <label>เกณฑ์เตือนโควตาใกล้เต็ม (% คั่นจุลภาค · ทุกทรัพยากร)<input class="admin-input" name="quotaWarnPercents" placeholder="80,90,100"><span class="hint" id="hWarn"></span></label>
+        <label>ค้างชำระใบส่วนเกินเกินกำหนดแล้ว<select class="admin-input" name="overageUnpaidAction">
+          <option value="LockThenDunning">ปิดสิทธิ์ส่วนเกินก่อน แล้วเข้าเกณฑ์ค้างชำระปกติ (ระงับเมื่อเกินผ่อนผัน)</option>
+          <option value="LockOverageOnly">ปิดสิทธิ์ส่วนเกินอย่างเดียว (ใบส่วนเกินไม่นับเข้าการระงับ)</option></select></label>
+        <label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" name="overageAutoChargeSavedCard"> ใบส่วนเกินตัดบัตรที่บันทึกไว้อัตโนมัติ (เมื่อผู้เช่าเปิดตัดอัตโนมัติ)</label>
       </form>
       <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="admin-btn admin-btn-primary" onclick="PB.saveSettings()">บันทึกค่าตั้ง</button>
@@ -79,7 +87,14 @@
         f.autoSuspendEnabled.checked = d.autoSuspendEnabled;
         f.reminderEmailEnabled.checked = d.reminderEmailEnabled;
         f.reminderLineEnabled.checked = d.reminderLineEnabled;
+        f.overageGraceDays.value = d.overageGraceDays;
+        f.overageMinInvoiceAmount.value = d.overageMinInvoiceAmount;
+        f.quotaWarnPercents.value = d.quotaWarnPercents;
+        f.overageUnpaidAction.value = d.overageUnpaidAction || 'LockThenDunning';
+        f.overageAutoChargeSavedCard.checked = !!d.overageAutoChargeSavedCard;
         const L = d.limits || {};
+        document.getElementById('hOvGrace').textContent = L.overageGrace ? `${L.overageGrace[0]}–${L.overageGrace[1]} วัน` : '';
+        document.getElementById('hWarn').textContent = L.warnMaxThresholds ? `ไม่เกิน ${L.warnMaxThresholds} ค่า (1–100)` : '';
         document.getElementById('hLead').textContent = L.renewalLead ? `${L.renewalLead[0]}–${L.renewalLead[1]} วัน` : '';
         document.getElementById('hGrace').textContent = L.grace ? `${L.grace[0]}–${L.grace[1]} วัน` : '';
         document.getElementById('hLink').textContent = L.linkExpiry ? `${L.linkExpiry[0]}–${L.linkExpiry[1]} วัน` : '';
@@ -105,6 +120,11 @@
           paymentLinkExpiryDays: parseInt(f.paymentLinkExpiryDays.value || '0', 10),
           reminderEmailEnabled: f.reminderEmailEnabled.checked,
           reminderLineEnabled: f.reminderLineEnabled.checked,
+          overageGraceDays: parseInt(f.overageGraceDays.value || '0', 10),
+          overageMinInvoiceAmount: Number(f.overageMinInvoiceAmount.value || '0'),
+          quotaWarnPercents: f.quotaWarnPercents.value,
+          overageUnpaidAction: f.overageUnpaidAction.value,
+          overageAutoChargeSavedCard: f.overageAutoChargeSavedCard.checked,
         };
         try {
           const r = await AdminAPI.savePlatformBillingSettings(body);

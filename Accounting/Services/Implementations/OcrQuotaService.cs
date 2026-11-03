@@ -10,11 +10,14 @@ public class OcrQuotaService : IOcrQuotaService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<OcrQuotaService> _logger;
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-2): ด่านส่วนเกินตัวเดียว — โควตา+โบนัส+เครดิตหมดแล้ว "สแกนต่อ คิดต่อหน้า" ได้ไหม · null (เทสต์เดิม) = บล็อกตามเดิม</summary>
+    private readonly IOverageService? _overage;
 
-    public OcrQuotaService(AccountingDbContext db, ILogger<OcrQuotaService> logger)
+    public OcrQuotaService(AccountingDbContext db, ILogger<OcrQuotaService> logger, IOverageService? overage = null)
     {
         _db = db;
         _logger = logger;
+        _overage = overage;
     }
 
     /// <summary>OCR quota source-of-truth after the License overlay. When the
@@ -225,6 +228,8 @@ public class OcrQuotaService : IOcrQuotaService
 
             // Lazy monthly reset — ล้างตัวนับทุกตัวผ่านตัวกลางตัวเดียว (เดิมล้างแค่ OCR รวม
             // ⇒ ตัวนับ Azure/local สะสมข้ามเดือนไม่รู้จบ) — Helpers/SubscriptionUsageRollover
+            // รอบ 231 (§D.1): เขียน snapshot ค่าปิดเดือน **ก่อน** ล้าง — บนธุรกรรมเดียวกัน (ล้ม = ไม่ล้าง · ไม่ snapshot = ไม่ล้าง)
+            await UsageSnapshotService.WriteRolloverAsync(_db, sub, DateTime.UtcNow);
             Accounting.Helpers.SubscriptionUsageRollover.RollIfDue(sub, DateTime.UtcNow);
 
             // License path: lock the License row, sum every attached company's
@@ -258,8 +263,22 @@ public class OcrQuotaService : IOcrQuotaService
                     .FirstOrDefaultAsync();
                 if (credit == null)
                 {
-                    await tx.RollbackAsync();
-                    return false;
+                    // รอบ 231 (§B.4 · คำตัดสินข้อ 231-2): โควตา+โบนัส+เครดิตหมด ⇒ ถามด่านส่วนเกิน — อนุญาต ⇒ สแกนต่อ (ตัวนับเดินต่อ) + คิดต่อหน้าหลัง commit · ไม่งั้น 429 เดิม
+                    var overage = _overage == null ? null : await _overage.DecideAsync(companyId, Accounting.Models.Constants.OverageResources.OcrPages, 1);
+                    if (overage is not { Allowed: true })
+                    {
+                        await tx.RollbackAsync();
+                        return false;
+                    }
+                    sub.CurrentMonthOcrPages++;
+                    await _db.SaveChangesAsync();
+                    await tx.CommitAsync();
+                    // คีย์ idempotent = ตัวนับหลังเพิ่ม (unique ต่อบริษัท·งวด เพราะเพิ่มใต้ FOR UPDATE) · ไม่โยน — สแกนเดินต่อแม้มิเตอร์ล้ม
+                    await _overage!.RecordAsync(companyId, Accounting.Models.Constants.OverageResources.OcrPages, 1,
+                        $"ocr-overage:{Accounting.Helpers.AddOnBilling.PeriodOf(DateTime.UtcNow)}:{sub.CurrentMonthOcrPages}", "Subscription", sub.Id,
+                        chargeable: true, unitPriceSnapshot: overage.UnitPrice);
+                    _logger.LogInformation("OCR overage consumed CompanyId={CompanyId} Used={Used} UnitPrice={Price}", companyId, sub.CurrentMonthOcrPages, overage.UnitPrice);
+                    return true;
                 }
                 credit.PagesRemaining--;
             }
@@ -466,7 +485,11 @@ public class OcrQuotaService : IOcrQuotaService
         var due = await _db.Subscriptions.Where(s => s.UsageResetDate <= now).ToListAsync();
         var resetCount = 0;
         foreach (var sub in due)
+        {
+            // รอบ 231 (§D.1): snapshot ค่าปิดเดือนก่อนล้าง (INSERT … ON CONFLICT — ซ้ำกับจุดขึ้นเดือนอื่นไม่ล้ม)
+            await UsageSnapshotService.WriteRolloverAsync(_db, sub, now);
             if (Accounting.Helpers.SubscriptionUsageRollover.RollIfDue(sub, now)) resetCount++;
+        }
         if (resetCount > 0) await _db.SaveChangesAsync();
 
         _logger.LogInformation("Monthly usage reset for {Count} subscriptions", resetCount);

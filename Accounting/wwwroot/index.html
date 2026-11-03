@@ -745,8 +745,8 @@
         if (!box) return;
         if (!free) { box.hidden = true; return; }
         const d = document.getElementById('freeDocsN'); const u = document.getElementById('freeUsersN');
-        if (d) d.textContent = PlanDisplay.limit(free.maxDocumentsPerMonth, 'docs', '∞');
-        if (u) u.textContent = PlanDisplay.limit(free.maxUsers, 'users', '∞');
+        if (d) d.textContent = PlanDisplay.limit(free, 'docs', '∞');
+        if (u) u.textContent = PlanDisplay.limit(free, 'users', '∞');
       },
 
       /// ตารางเปรียบเทียบ — แถว = ลิมิต + ทุกฟีเจอร์ในแคตตาล็อกที่มีอย่างน้อยหนึ่งแพ็กเกจเปิด
@@ -769,10 +769,10 @@
         const unl = t('cmpUnlimited');
 
         let body = sec(t('cmpSecUsage'));
-        body += row(t('cmpUsers'), plans.map(p => num(PlanDisplay.limit(p.maxUsers, 'users', unl))));
-        body += row(t('cmpCompanies'), plans.map(p => num(PlanDisplay.limit(p.maxCompanies, 'companies', unl))));
-        body += row(t('cmpDocsMonth'), plans.map(p => num(PlanDisplay.limit(p.maxDocumentsPerMonth, 'docs', unl))));
-        body += row(t('cmpJournalsMonth'), plans.map(p => num(PlanDisplay.limit(p.maxJournalEntriesPerMonth, 'journals', unl))));
+        body += row(t('cmpUsers'), plans.map(p => num(PlanDisplay.limit(p, 'users', unl))));
+        body += row(t('cmpCompanies'), plans.map(p => num(PlanDisplay.limit(p, 'companies', unl))));
+        body += row(t('cmpDocsMonth'), plans.map(p => num(PlanDisplay.limit(p, 'docs', unl))));
+        body += row(t('cmpJournalsMonth'), plans.map(p => num(PlanDisplay.limit(p, 'journals', unl))));
         body += row(t('cmpStorage'), plans.map(p => num(PlanDisplay.storage(p.maxStorageBytes))));
 
         for (const c of cat.categories || []) {

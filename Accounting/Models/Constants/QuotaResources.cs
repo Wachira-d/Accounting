@@ -83,6 +83,9 @@ public static class QuotaResources
     /// <summary>ลิงก์ทางไปต่อ "ซื้อเพิ่ม" ของทรัพยากร (ตัวเดียวทั้งข้อความปฏิเสธและหน้าเว็บ)</summary>
     public static string BuyUrl(string resourceKey) => "/pages/billing.html#buy=" + resourceKey;
 
+    /// <summary>รอบ 231: แท็บ "ใช้ไปเท่าไร" ของ hub — ลิงก์ในข้อความแจ้งเตือนโควตา/ส่วนเกินทุกทรัพยากร (เดิมชี้ <c>/pages/addons.html</c>)</summary>
+    public const string UsageUrl = "/pages/billing.html#tab=usage";
+
     public const long BytesPerGb = 1024L * 1024L * 1024L;
     /// <summary>เพดานพื้นที่ "ไม่จำกัด" — ไม่ใช้ long.MaxValue (used + เพิ่ม จะล้นเป็นค่าลบแล้วกลายเป็นบล็อก)</summary>
     public const long UnlimitedBytes = long.MaxValue / 4;

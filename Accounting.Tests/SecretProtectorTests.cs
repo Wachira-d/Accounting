@@ -40,12 +40,15 @@ public class SecretProtectorTests
     }
 
     [Fact]
-    public void เข้ารหัสซ้ำไม่ทับซ้อน_ค่าที่เข้ารหัสแล้วส่งเข้าอีกรอบต้องไม่เปลี่ยน()
+    public void ค่าที่เข้ารหัสแล้วส่งเข้า_Protect_อีกรอบ_ต้องถูกปฏิเสธ_ไม่ใช่ปล่อยผ่าน()
     {
+        // ฝ่ายค้านรอบ 231 S2 (พลิกจาก "idempotent"): ปล่อยผ่านค่าที่มีคำนำหน้า = ผู้ใช้ส่ง enc1:<ciphertext ช่องอื่น> มาให้ระบบถอดให้ได้
         var p = Make(KeyA);
-        var once = p.Protect("s3cret");
-        Assert.Equal(once, p.Protect(once));
-        Assert.Equal("s3cret", p.Unprotect(p.Protect(once)));
+        var once = p.Protect("s3cret")!;
+        var ex = Assert.Throws<BusinessRuleException>(() => p.Protect(once));
+        Assert.Equal(SecretInputRule.RuleCipherPrefix, ex.RuleCode);
+        Assert.Contains("enc1:", ex.Message);
+        Assert.Equal("s3cret", p.Unprotect(once));   // ค่าเดิมยังถอดได้ตามปกติ
     }
 
     [Fact]

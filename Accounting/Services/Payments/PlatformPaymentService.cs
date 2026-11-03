@@ -147,7 +147,7 @@ public class PlatformPaymentService : IPlatformPaymentService
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == subscriptionPaymentId && p.Subscription.CompanyId == payerCompanyId)
             .Select(p => new { p.Id, p.Amount, p.Status, p.PaymentNumber, p.SlipFileName, p.RequestedPlan, p.RequestedBillingCycle,
-                p.PlatformInvoiceDocumentId, Held = p.AttentionReason != null, p.QuotedAmount })
+                p.PlatformInvoiceDocumentId, Held = p.AttentionReason != null, p.QuotedAmount, p.Subscription.AccountSubscriptionId })
             .FirstOrDefaultAsync(ct)
             ?? throw new InvalidOperationException("ไม่พบรายการชำระค่าแพ็กเกจของบริษัทนี้");
         if (pay.Status is not (SubscriptionPaymentStatus.Pending or SubscriptionPaymentStatus.UnderReview))
@@ -162,8 +162,10 @@ public class PlatformPaymentService : IPlatformPaymentService
             var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == pay.RequestedPlan && t.IsActive, ct);
             // รอบ 230 โควตา/บิล (ฝ่ายค้าน B1): ตัวตัดสินเดียวกับ handler — รายการที่เซิร์ฟเวอร์เสนอยอดเอง (ส่วนต่างอัปเกรด/คูปอง/แอดมินแก้) เทียบ QuotedAmount ·
             // รายการราคาเต็มเทียบราคาแพ็กเกจปัจจุบันตามเดิม (ราคาเปลี่ยน = ปฏิเสธ)
+            // รอบ 231 (231-8): ราคาเต็ม = ราคาพิเศษของบริษัทนี้ (PlatformPriceOverrideStore — ตัวเดียวกับ handler)
             var listPrice = PlatformPlanPricing.AutoApproveExpected(pay.QuotedAmount,
-                template == null ? 0m : PlatformPlanPricing.AmountDue(template, pay.RequestedBillingCycle));
+                template == null ? 0m : await PlatformPriceOverrideStore.AmountDueAsync(_db, payerCompanyId, pay.AccountSubscriptionId, template, pay.RequestedBillingCycle, DateTime.UtcNow,
+                    currentPlan: await _db.Subscriptions.AsNoTracking().Where(s => s.Id == pay.SubscriptionId).Select(s => (SubscriptionPlan?)s.Plan).FirstOrDefaultAsync(ct), ct: ct));   // ฝ่ายค้าน S4
             if ((template == null && pay.QuotedAmount == null) || listPrice <= 0m || !PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m)
                 throw new InvalidOperationException("ยอดของรายการชำระนี้ไม่ตรงกับราคาแพ็กเกจปัจจุบัน (ราคาอาจเปลี่ยนหลังสร้างรายการ) — "
                     + "กรุณาเลือกแพ็กเกจใหม่เพื่อสร้างรายการชำระตามราคาปัจจุบัน หรือติดต่อผู้ดูแลระบบ");
