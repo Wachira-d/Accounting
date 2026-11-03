@@ -183,6 +183,7 @@ public class SettlementRulesAndSchemaTests
     public void ผังมาตรฐานมี11350_53170_57140_ใต้กลุ่มที่ถูกต้อง_และไม่seedผังพักย่อย()
     {
         var chart = ChartOfAccountTemplates.GetCommonAccounts();
+        Assert.Equal(AccountType.Asset, chart.Single(a => a.Code == "11340").Type);   // รอบ 232: seed ให้บริษัทเดิมด้วย
         Assert.Equal(AccountType.Asset, chart.Single(a => a.Code == "11350").Type);
         Assert.Equal(AccountType.Expense, chart.Single(a => a.Code == "53170").Type);
         Assert.Equal(AccountType.Expense, chart.Single(a => a.Code == "57140").Type);
@@ -195,7 +196,7 @@ public class SettlementRulesAndSchemaTests
     public void Migration_ใส่ผังให้บริษัทเดิม_ONCONFLICTไม่ทับ_ไม่ย้ายยอด_อยู่เส้นหลักที่logความล้มเหลว()
     {
         var sql = SettlementChartSeed.MigrationSeedSql();
-        foreach (var code in new[] { "'11350','113'", "'53170','531'", "'57140','571'" })
+        foreach (var code in new[] { "'11340','113'", "'11350','113'", "'53170','531'", "'57140','571'" })
             Assert.Contains(code, sql);
         Assert.EndsWith("ON CONFLICT DO NOTHING;", sql);
         Assert.DoesNotContain("UPDATE", sql);
