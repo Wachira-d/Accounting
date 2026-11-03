@@ -59,8 +59,6 @@ public class GatewayChargeNextStepRound232Tests
         Assert.Null(GatewayChargeNextStep.MissingReason(PaymentMethodKind.ManualSlip, PaymentIntentStatus.Pending, null, null));
         // CI รอบ 232: บัตร (รวมบัตรที่บันทึกไว้) รอผลธนาคาร ไม่มีลิงก์ 3DS ⇒ ไม่ใช่ "ไม่มีทางจ่าย" — ต้องคง Pending ให้ webhook ตัดสิน
         Assert.Null(GatewayChargeNextStep.MissingReason(PaymentMethodKind.Card, PaymentIntentStatus.Pending, null, null));
-        Assert.False(GatewayChargeNextStep.NeedsPayerStep(PaymentMethodKind.Card));
-        Assert.True(GatewayChargeNextStep.NeedsPayerStep(PaymentMethodKind.PromptPay));
         // ฝ่ายค้าน 232 B1: บัตรไม่ 3-D Secure สำเร็จทันที (ไม่มี QR/ลิงก์) — ไม่ใช่ "ขาดขั้นถัดไป" (ไม่งั้นลูกค้าเห็น error แล้วกดจ่ายซ้ำ = ตัดบัตรสองครั้ง)
         Assert.Null(GatewayChargeNextStep.MissingReason(PaymentMethodKind.Card, PaymentIntentStatus.Succeeded, null, null));
         Assert.Null(GatewayChargeNextStep.MissingReason(PaymentMethodKind.PromptPay, PaymentIntentStatus.Succeeded, null, null));

@@ -58,7 +58,7 @@ public static class GatewayChargeNextStep
     }
 
     /// <summary>วิธีที่ผู้จ่ายต้องทำขั้นถัดไปเอง (สแกน QR / ไปหน้าธนาคาร) — บัตรกับสลิปโอนไม่ต้อง</summary>
-    public static bool NeedsPayerStep(PaymentMethodKind method)
+    private static bool NeedsPayerStep(PaymentMethodKind method)
         => method is not (PaymentMethodKind.Card or PaymentMethodKind.ManualSlip);
 
     private static bool IsHttps(string? url)

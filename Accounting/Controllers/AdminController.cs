@@ -741,7 +741,10 @@ public class AdminController : ControllerBase
                 company.Subscription.NextBillingDate,
                 company.Subscription.IsPermanentFree,
                 IsOpenEnded = Accounting.Helpers.SubscriptionExpiry.IsOpenEnded(company.Subscription.IsPermanentFree, company.Subscription.EndDate, DateTime.UtcNow),   // รอบ 232
-                company.Subscription.ExpiryNeedsReview,
+                // ธงจาก migration หรือแถวที่กลายเป็นค่าแทนทีหลัง (ตัวตัดสินเดียว SubscriptionExpiry.NeedsExpiryReview) — ปุ่ม "กำหนดรอบ" รับทั้งสองกรณีอยู่แล้ว
+                ExpiryNeedsReview = company.Subscription.ExpiryNeedsReview
+                    || Accounting.Helpers.SubscriptionExpiry.NeedsExpiryReview(company.Subscription.IsPermanentFree, company.Subscription.Plan,
+                        company.Subscription.EndDate, DateTime.UtcNow),
                 company.Subscription.EnabledFeatures,
                 company.Subscription.AccountSubscriptionId,
                 company.Subscription.RenewalInvoiceNumber,
