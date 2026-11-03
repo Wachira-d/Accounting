@@ -635,14 +635,27 @@ public partial class LodgingService
     /// การกดของเจ้าหน้าที่เอง</summary>
     private async Task TryNotifyLineAsync(Guid companyId, Guid reservationId, string evt)
     {
-        if (_line == null || evt is not ("created" or "slip")) return;
+        // รอบ 232 (232-Notify): เดิม ILineNotifyService.NotifyLodgingBookingAsync ประกาศกลุ่ม LINE แล้วถอยไปกลุ่มกลางของแพลตฟอร์มเมื่อที่พักไม่มี OA ⇒
+        // เดินเครื่องแจ้งเตือนกลาง (lodging.booking_created / lodging.slip_uploaded · ค่าตั้งของบริษัท · ช่องกลุ่ม LINE = OA ของบริษัทเท่านั้น)
+        if (_notify == null || evt is not ("created" or "slip")) return;
         try
         {
             var r = await ResQuery(companyId).AsNoTracking().FirstOrDefaultAsync(x => x.Id == reservationId);
             if (r == null || !r.Property.NotifyOwnerOnBooking) return;
-            await _line.NotifyLodgingBookingAsync(companyId, r.Property.Name, r.ReservationNumber,
-                r.GuestName, RoomSummary(r), r.CheckInDate, r.CheckOutDate, r.Nights,
-                r.TotalAmount, r.DepositRequired, isSlipUploaded: evt == "slip");
+            var isSlip = evt == "slip";
+            // วันที่เข้าพักเป็น "วันตามปฏิทิน" อยู่แล้ว (00:00 UTC) — ไม่ต้อง +7
+            var message = $"🏠 {r.Property.Name}\n🧾 {r.ReservationNumber}\n👤 {r.GuestName}\n🛏 {RoomSummary(r)}"
+                + $"\n📅 {r.CheckInDate:dd/MM/yyyy} → {r.CheckOutDate:dd/MM/yyyy} ({r.Nights} คืน)"
+                + $"\n💰 ยอดรวม {r.TotalAmount:N2} บาท" + (r.DepositRequired > 0 ? $" · มัดจำ {r.DepositRequired:N2} บาท" : "");
+            await _notify.DispatchAsync(companyId,
+                isSlip ? Models.Constants.NotificationEvents.LodgingSlipUploaded : Models.Constants.NotificationEvents.LodgingBookingCreated,
+                new Accounting.Services.Interfaces.NotificationContext
+                {
+                    Title = isSlip ? "📎 แขกส่งสลิปแล้ว รอตรวจสอบ" : "🏨 มีการจองใหม่",
+                    Message = message,
+                    ActionUrl = $"/pages/lodging.html?reservation={r.Id}",
+                    EntityType = "LodgingReservation", EntityId = r.Id,
+                });
         }
         catch (Exception ex)
         {

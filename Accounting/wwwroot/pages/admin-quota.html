@@ -21,13 +21,15 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="container" style="max-width:1400px;margin:0 auto;padding:20px">
+      <div style="font-size:12px;margin-bottom:4px"><a href="/admin/plans.html" style="color:#2563eb">← แอดมิน › แพ็กเกจ &amp; บิลลิ่ง</a></div>
       <h1 style="margin:0 0 4px;font-size:24px;font-weight:700">📏 โควตาและโควตาเสริม</h1>
       <p class="muted" style="font-size:14px;margin:0 0 16px">
         เพดานต่อแพ็กเกจ · ขายโควตาเพิ่ม · override รายบริษัท · ตรวจสลิป — <b>เกินเพดาน = บล็อกเฉพาะการเพิ่มใหม่</b> ของเดิมของผู้เช่าไม่ถูกลบ/ไม่ถูกปิด ·
         นับต่อบริษัท · ไม่ตั้ง = ไม่จำกัด (ผู้เช่าเดิมไม่ถูกบล็อก) · ผู้ใช้/พื้นที่/OCR ตั้งที่ช่องเดิมของ <a href="/admin/plans.html">หน้าจัดการแพ็กเกจ</a>
       </p>
 
-      <div class="card"><h3>1) เพดานต่อแพ็กเกจ <span class="muted">(-1 = ไม่จำกัด · ว่าง = ไม่ตั้ง)</span></h3>
+      <!-- รอบ 232 (ข้อ 6): ฟอร์มเพดานต่อแพ็กเกจย้ายไปอยู่ในฟอร์ม "แก้ไขแพ็กเกจ" (/admin/plans.html — ฟอร์มเดียว) · ที่นี่แสดงอย่างเดียว -->
+      <div class="card"><h3>1) เพดานต่อแพ็กเกจ <span class="muted">(-1 = ไม่จำกัด · ว่าง = ไม่ตั้ง) · แก้ที่ <a href="/admin/plans.html" style="color:#2563eb">จัดการแพ็กเกจ › แก้ไขแพ็กเกจ</a></span></h3>
         <div id="allowances" class="scroll-x">กำลังโหลด...</div></div>
 
       <div class="card"><h3>2) แคตตาล็อกโควตาเสริม <span class="muted">(ราคาใหม่มีผลกับการซื้อครั้งถัดไป — ของที่ซื้อแล้วคงราคาเดิม)</span></h3>
@@ -150,22 +152,13 @@
         el.innerHTML = `<table class="rpt"><thead><tr><th>แพ็กเกจ</th>${cols.map(c => `<th>${this.esc(c.label)}<div class="muted">ปกติ / ทดลอง</div></th>`).join('')}<th></th></tr></thead><tbody>
           ${plans.map(p => `<tr><td><b>${this.esc(p.name)}</b> <span class="muted">${this.esc(p.plan)}${p.isActive ? '' : ' · ปิดอยู่'}</span></td>
             ${cols.map(c => { const a = (p.allowances || []).find(x => x.resource === c.key) || {};
-              return `<td><input type="number" min="-1" data-al="${this.esc(p.id)}|${this.esc(c.key)}|i" value="${a.included ?? ''}" class="form-input">
-                <input type="number" min="-1" data-al="${this.esc(p.id)}|${this.esc(c.key)}|t" value="${a.trialIncluded ?? ''}" class="form-input" style="margin-top:4px"></td>`; }).join('')}
-            <td><button class="btn btn-primary btn-sm" onclick="AQ.saveAllowances('${Layout.jsArg(p.id)}')">บันทึก</button></td></tr>`).join('')}
+              const txt = v => v == null ? '<span class="muted">ไม่ตั้ง</span>' : v < 0 ? 'ไม่จำกัด' : Number(v).toLocaleString('th-TH');
+              return `<td>${txt(a.included)} <span class="muted">/ ${txt(a.trialIncluded)}</span></td>`; }).join('')}
+            <td><a class="btn btn-secondary btn-sm" href="/admin/plans.html">แก้</a></td></tr>`).join('')}
           </tbody></table>
           <div class="muted" style="margin-top:8px">${cols.map(c => `<div><b>${this.esc(c.label)}</b>: ${this.esc(c.legacyNote)}</div>`).join('')}
             ${legacy.map(c => `<div><b>${this.esc(c.label)}</b>: ${this.esc(c.legacyNote)}</div>`).join('')}
             <div><b>รายการบัญชี/เดือน</b>: ไม่บังคับใช้ (เลิกใช้) — คำตัดสินข้อ 229-7 (การบล็อกการลงบัญชีไม่ปลอดภัย)</div></div>`;
-      },
-      async saveAllowances(planId) {
-        const items = this.resources.filter(r => r.planEditableHere).map(r => {
-          const i = document.querySelector(`[data-al="${planId}|${r.key}|i"]`).value;
-          const t = document.querySelector(`[data-al="${planId}|${r.key}|t"]`).value;
-          return { resource: r.key, included: i === '' ? null : Number(i), trialIncluded: t === '' ? null : Number(t) };
-        });
-        try { const r = await API.put(`/api/admin/quota/allowances/${encodeURIComponent(planId)}`, items); Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); this.loadAllowances(); }
-        catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       // ── 2) แคตตาล็อก ──

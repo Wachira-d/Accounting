@@ -65,6 +65,18 @@ public class PartialConvertPolicyTests
     }
 
     [Fact]
+    public void รอบ232_N5_ข้อความ422สองชั้นของการผูกภายหลัง_ระบุชื่อใบที่กินยอดทั้งสองใบ()
+    {
+        // LinkToSourceAsync รวมสองชั้นด้วย "\n" ก่อนโยน 422 (ConfirmOverSourceAmount) — ผู้ใช้ต้องรู้ว่าใบไหนกินยอด: ใบต้นทางที่ผูก + ใบเสนอราคาราก
+        var msg = string.Join("\n",
+            PartialConvertPolicy.OverAmountMessage("DN-2026-0009", "วางบิล", 500m, 600m, 1_000m),
+            RootRevenueLedger.OverMessage("QT-2026-0001", 700m, 600m, 1_000m));
+        Assert.Contains("DN-2026-0009", msg);
+        Assert.Contains("QT-2026-0001", msg);
+        Assert.Equal(2, msg.Split('\n').Length);
+    }
+
+    [Fact]
     public void ข้อความเกินยอด_บอกตัวเลขครบสามตัว()
     {
         var m = PartialConvertPolicy.OverAmountMessage("QT-2026-0001", "วางบิล", 500m, 535m, 535m);

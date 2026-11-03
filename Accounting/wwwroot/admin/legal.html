@@ -56,6 +56,21 @@
         <button class="admin-btn admin-btn-outline admin-btn-sm" id="copyUrlBtn">คัดลอก</button>
         <a class="admin-btn admin-btn-outline admin-btn-sm" id="openUrlBtn" href="#" target="_blank" rel="noopener">เปิดดู</a>
       </div>
+      <!-- รอบ 232 (232-Checkout-1): ฉบับอังกฤษ = เอกสารเดียวกัน ?lang=en (ไม่มีฉบับแยก · เลขฉบับ/วันมีผลร่วมกัน) -->
+      <div class="url-row" style="margin-top:6px">
+        <span>🌐 ฉบับอังกฤษ (ฉบับเดียวกัน):</span>
+        <code id="publicUrlEn">-</code>
+        <a class="admin-btn admin-btn-outline admin-btn-sm" id="openUrlEnBtn" href="#" target="_blank" rel="noopener">เปิดดู</a>
+        <span class="muted" id="enState"></span>
+      </div>
+      <!-- รอบ 232 (ฝ่ายค้าน N3 · คำตัดสิน 232-Checkout-1): เติม/แก้ข้อความอังกฤษของฉบับที่เผยแพร่แล้ว — เลขฉบับคงเดิม (ไทยเป็นฉบับผูกพัน) · audit chain ที่เซิร์ฟเวอร์ -->
+      <details style="margin-top:8px" id="curEnDetails" hidden>
+        <summary style="cursor:pointer;font-weight:600">✏️ เติม/แก้ข้อความอังกฤษของฉบับปัจจุบัน (<span id="curEnVersion">-</span>) — ไม่ต้องออกฉบับใหม่</summary>
+        <div class="muted" style="margin:6px 0">ฉบับไทยเป็นฉบับที่มีผลผูกพัน · ข้อความอังกฤษเป็นคำแปลประกอบ ⇒ แก้ได้โดยเลขฉบับ/วันมีผล/หลักฐานการยอมรับไม่เปลี่ยน ·
+          เว้นว่างแล้วบันทึก = ล้างฉบับอังกฤษ · ทุกครั้งบันทึกลงประวัติตรวจสอบ</div>
+        <textarea class="editor" id="curBodyEn" spellcheck="false" style="min-height:160px"></textarea>
+        <div style="margin-top:8px"><button class="admin-btn admin-btn-outline" id="saveCurEnBtn">💾 บันทึกข้อความอังกฤษของฉบับปัจจุบัน</button></div>
+      </details>
       <div class="muted" id="baseUrlNote" style="margin-top:6px"></div>
       <div id="upcomingBox" class="muted" style="margin-top:8px"></div>
     </div>
@@ -92,6 +107,17 @@
           <div class="preview" id="previewPane"><span class="muted">กด "ดูตัวอย่าง" เพื่อดูหน้าตาที่ลูกค้าจะเห็น</span></div>
         </div>
       </div>
+      <!-- รอบ 232: ฉบับภาษาอังกฤษของร่างเดียวกัน — เว้นว่าง = ยังไม่มี (หน้าสาธารณะแสดงไทย + "English version not available yet" · ไม่แปลอัตโนมัติ) -->
+      <details style="margin-top:12px" id="enDetails">
+        <summary style="cursor:pointer;font-weight:600">🌐 ฉบับภาษาอังกฤษ (English version) — ไม่บังคับ</summary>
+        <div class="muted" style="margin:6px 0">ใช้เลขฉบับ/วันมีผลเดียวกับฉบับไทย (ภาษาเป็นแค่การแสดง · หลักฐานการยอมรับอ้างฉบับเดียวกัน) ·
+          เว้นว่าง = ยังไม่มีฉบับอังกฤษ ผู้อ่านที่กด English จะเห็นฉบับไทยพร้อมประกาศ · ฉบับไทยเป็นฉบับที่มีผลผูกพัน</div>
+        <div class="grid-2">
+          <textarea class="editor" id="dBodyEn" spellcheck="false" placeholder="## 1. Heading&#10;Paragraph...&#10;- item"></textarea>
+          <div><div id="previewWarningsEn"></div><div class="preview" id="previewPaneEn"><span class="muted">กด "ดูตัวอย่างอังกฤษ"</span></div></div>
+        </div>
+        <div style="margin-top:8px"><button class="admin-btn admin-btn-outline" id="previewEnBtn">👁 ดูตัวอย่างอังกฤษ</button></div>
+      </details>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="admin-btn admin-btn-outline" id="previewBtn">👁 ดูตัวอย่าง</button>
         <button class="admin-btn admin-btn-primary" id="saveBtn">💾 บันทึกร่าง</button>
@@ -130,6 +156,8 @@
         document.getElementById('startFromCurrentBtn').addEventListener('click', () => this.startFromCurrent());
         document.getElementById('discardBtn').addEventListener('click', () => this.discard());
         document.getElementById('previewBtn').addEventListener('click', () => this.preview());
+        document.getElementById('previewEnBtn').addEventListener('click', () => this.preview('en'));
+        document.getElementById('saveCurEnBtn').addEventListener('click', () => this.saveCurrentEnglish());
         document.getElementById('saveBtn').addEventListener('click', () => this.save());
         document.getElementById('publishBtn').addEventListener('click', () => this.publish());
         this.load();
@@ -217,6 +245,14 @@
           + (d.current.source === 'builtin' ? '<span class="pill">ฉบับตั้งต้นของระบบ</span>' : '');
         document.getElementById('publicUrl').textContent = d.publicUrl;
         document.getElementById('openUrlBtn').href = d.publicUrl;
+        // รอบ 232: ฉบับอังกฤษ = URL เดียวกัน + ?lang=en · สถานะมาจากเซิร์ฟเวอร์ (englishAvailable) ไม่เดาจากช่องร่าง
+        document.getElementById('publicUrlEn').textContent = d.publicUrlEn || '-';
+        document.getElementById('openUrlEnBtn').href = d.publicUrlEn || '#';
+        document.getElementById('enState').textContent = d.current.englishAvailable ? 'ฉบับปัจจุบันมีภาษาอังกฤษแล้ว' : 'ฉบับปัจจุบันยังไม่มีภาษาอังกฤษ — ผู้อ่านเห็นไทย + ประกาศ';
+        // ฝ่ายค้าน N3: ฉบับตั้งต้นในระบบ (ไม่มีแถว) เติมอังกฤษไม่ได้ — ซ่อน · ฉบับที่เผยแพร่แล้วแก้อังกฤษได้โดยไม่ขยับเลขฉบับ
+        document.getElementById('curEnDetails').hidden = d.current.source === 'builtin';
+        document.getElementById('curEnVersion').textContent = d.current.version || '-';
+        document.getElementById('curBodyEn').value = d.current.bodyMarkdownEn || '';
         document.getElementById('baseUrlNote').textContent = d.baseUrlFromSettings
           ? 'โดเมนมาจาก "URL ของระบบ" (ตั้งค่าเว็บไซต์)'
           : 'ยังไม่ได้ตั้ง "URL ของระบบ" ที่หน้าตั้งค่าเว็บไซต์ — URL นี้ใช้โดเมนที่เปิดหน้าแอดมินอยู่';
@@ -234,6 +270,9 @@
         document.getElementById('dEffective').value = dr ? (dr.effectiveDate || '') : '';
         document.getElementById('dSummary').value = dr ? (dr.changeSummary || '') : '';
         document.getElementById('dBody').value = dr ? (dr.bodyMarkdown || '') : '';
+        document.getElementById('dBodyEn').value = dr ? (dr.bodyMarkdownEn || '') : '';   // รอบ 232: hydrate ช่องอังกฤษ (เก็บแล้วต้อง echo กลับ)
+        document.getElementById('dBodyEn').oninput = () => { this._dirty = true; document.getElementById('publishBtn').disabled = true; };
+        document.getElementById('previewPaneEn').innerHTML = '<span class="muted">กด "ดูตัวอย่างอังกฤษ"</span>';
         document.getElementById('discardBtn').disabled = !dr;
         document.getElementById('publishBtn').disabled = !dr;
         document.getElementById('previewPane').innerHTML = '<span class="muted">กด "ดูตัวอย่าง" เพื่อดูหน้าตาที่ลูกค้าจะเห็น</span>';
@@ -267,6 +306,7 @@
         if (body.value.trim() && !confirm('แทนที่เนื้อความในร่างด้วยฉบับปัจจุบัน?')) return;
         const src = d.upcoming || d.current;
         body.value = src.bodyMarkdown || '';
+        document.getElementById('dBodyEn').value = src.bodyMarkdownEn || '';   // รอบ 232: คัดลอกฉบับอังกฤษมาด้วย (ถ้ามี)
         const parts = String(src.version).split('.').map(Number);
         parts[1] = (parts[1] || 0) + 1;
         document.getElementById('dVersion').value = `${parts[0] || 1}.${parts[1]}`;
@@ -281,16 +321,31 @@
           effectiveDate: document.getElementById('dEffective').value || null,
           bodyMarkdown: document.getElementById('dBody').value,
           changeSummary: document.getElementById('dSummary').value.trim() || null,
+          bodyMarkdownEn: document.getElementById('dBodyEn').value,   // รอบ 232: "" = ล้างฉบับอังกฤษ (ส่งเสมอ — ค่าเดิมไม่ค้าง)
         };
       },
 
-      async preview() {
+      /** ฝ่ายค้าน N3: บันทึกข้อความอังกฤษของฉบับที่เผยแพร่แล้ว (เลขฉบับคงเดิม) — ผลลัพธ์/ข้อความจากเซิร์ฟเวอร์ */
+      async saveCurrentEnglish() {
+        const d = this.doc;
+        if (!d || !d.current || d.current.source === 'builtin') return;
         try {
-          const res = await AdminAPI.post(`${this.base}/${this.kind}/preview`, { bodyMarkdown: document.getElementById('dBody').value });
+          const res = await AdminAPI.put(`${this.base}/${this.kind}/versions/${encodeURIComponent(d.current.version)}/english`,
+            { bodyMarkdownEn: document.getElementById('curBodyEn').value });
+          AdminLayout.toast(res.message || 'บันทึกแล้ว', 'success');
+          await this.load();
+        } catch (e) { AdminLayout.toast('บันทึกข้อความอังกฤษไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      /** รอบ 232: lang = 'en' ⇒ ตัวอย่างฉบับอังกฤษ (ตัวแปลงเดียวกัน — โทเคนผู้ควบคุมข้อมูลชุดเดียวกัน) */
+      async preview(lang) {
+        const en = lang === 'en';
+        try {
+          const res = await AdminAPI.post(`${this.base}/${this.kind}/preview`, { bodyMarkdown: document.getElementById(en ? 'dBodyEn' : 'dBody').value });
           // HTML แปลง + encode ที่เซิร์ฟเวอร์ (ตัวเดียวกับหน้าสาธารณะ) — วางได้ตรง ๆ
-          document.getElementById('previewPane').innerHTML = res.data.html || '<span class="muted">(ว่าง)</span>';
+          document.getElementById(en ? 'previewPaneEn' : 'previewPane').innerHTML = res.data.html || '<span class="muted">(ว่าง)</span>';
           const w = res.data.warnings || [];
-          document.getElementById('previewWarnings').innerHTML = w.length
+          document.getElementById(en ? 'previewWarningsEn' : 'previewWarnings').innerHTML = w.length
             ? `<div class="warn-list">${w.map(x => '⚠️ ' + AdminLayout.esc(x)).join('<br>')}</div>` : '';
         } catch (e) { AdminLayout.toast('ดูตัวอย่างไม่สำเร็จ: ' + e.message, 'error'); }
       },

@@ -274,6 +274,11 @@ PosPayment              + PaymentIntentId?  (POS แสดง QR บนจอ/�
 → redirect 3DS → กลับมา `ReturnUrl` → หน้า return **ไม่เชื่อ query string** เรียก
 `GET intents/{id}/status` ซึ่งไป `provider.GetChargeAsync` สดถ้ายัง Pending
 
+**ขั้นถัดไปของผู้จ่าย (รอบ 232 · `Helpers/GatewayChargeNextStep` ตัวเดียว):** charge คืนได้ทั้ง `source.scannable_code` (QR · flow offline)
+และ `authorize_uri` (หน้า offsite · flow redirect) **พร้อมกัน** — พร้อมเพย์เป็นแบบนั้นจริง ⇒ กติกา: **QR ชนะ** (adapter ทิ้งลิงก์ตั้งแต่ `ParseCharge` ·
+หน้าจ่ายดู `qrPayload` ก่อน `authorizeUrl`) · ไม่มี QR แต่มีลิงก์ https ⇒ redirect · Pending ไม่มีทั้งคู่ ⇒ `StartAsync` ปิด `Failed` รหัส `no_next_step`
+ข้อความไทย (ไม่ปล่อยผู้จ่ายรอหน้าว่าง) · ที่มา: ทดลองจ่าย ฿20 "เด้งกลับหน้าเดิม" เพราะพาออกไปหน้า offsite ซึ่งส่งกลับ `return_uri` ทันที
+
 ### 4.4 Sandbox / ตั้งค่า / สลับ live
 
 หน้า `pages/payment-settings.html` (ต่อบริษัท · สิทธิ์ `Settings.Manage`):
@@ -315,6 +320,8 @@ PosPayment              + PaymentIntentId?  (POS แสดง QR บนจอ/�
 
 `wwwroot/js/pay-widget.js` — รับ `{intentEndpoint, sourceKind, sourceId}` → วาดวิธีจ่ายที่เปิด →
 QR/บัตร/redirect → poll → เปลี่ยนหน้าเป็น "ชำระแล้ว" · มีปุ่ม "อัปโหลดสลิปแทน" เสมอ
+· ลำดับตัดสินหลังได้ intent (รอบ 232): `Failed/Expired` ⇒ บอกเหตุผลทันที → มี `qrPayload` ⇒ แสดง QR (ไม่ redirect แม้มี `authorizeUrl`) → ไม่มี QR มี `authorizeUrl` https ⇒ redirect
+(จด sessionStorage → กลับมา `resume()`; หน้าที่ส่ง `authHeader` เองต้องเรียก `resume({authHeader})` เอง — `platform-pay-test.html`) → ไม่มีทั้งคู่ (ไม่ใช่สลิป) ⇒ ข้อความล้มดัง
 (fallback เมื่อ gateway ล่ม — C) · ใช้ใน `storefront.html` (checkout) · `portal.html` (openPay) ·
 หน้าจองที่พัก (`/reservation/{token}`) · `subscription.html` (ค่าบริการ) · `pos.html`
 (โหมด "ให้ลูกค้าสแกนที่จอ")
@@ -322,6 +329,10 @@ QR/บัตร/redirect → poll → เปลี่ยนหน้าเป็
 ---
 
 ## 5. บัญชีและภาษี — สรุปสำหรับนักบัญชี
+
+> **โหมดทดสอบ (รอบ 232 · คำตัดสิน 232-Omise-2):** ตารางด้านล่างใช้กับ**เงินจริง**เท่านั้น — intent ที่ชำระด้วยคีย์ทดสอบไม่สร้างรายการใดในตารางนี้
+> (`TestModePaymentPolicy.AllowsBusinessEffects` = false ⇒ dispatcher ไม่เรียก handler — ด่านแรกก่อนด่านสิทธิ์แพลตฟอร์ม · ต้นทางคงรอชำระ · intent ป้าย "ทดสอบ — ไม่ลงบัญชี") · ยกเว้นทดลองจ่ายของระบบที่ประทับ `LastSelfTestPaidAt` อย่างเดียว ·
+> ขาคืนเงินของรายการทดสอบใช้ตัวตั้งเดียวกัน (`TestModePaymentPolicy.IsNoMoney` — บันทึกยอดคืน + เหตุการณ์ ไม่ลง PV)
 
 | เหตุการณ์ | Dr | Cr | หมายเหตุ |
 | --- | --- | --- | --- |

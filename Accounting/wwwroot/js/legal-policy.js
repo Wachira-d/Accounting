@@ -7,9 +7,40 @@
  * ชื่อ/ที่อยู่/อีเมลผู้ควบคุมข้อมูลถูกแทนในเนื้อความที่เซิร์ฟเวอร์แล้ว (SiteSettings.PlatformSeller* — ตัวตั้งเดียว)
  *
  * ?version=1.0 = ดูฉบับเก่า (ประวัติ) — แสดงป้าย "ฉบับเก่า" + ลิงก์กลับฉบับปัจจุบัน
+ *
+ * รอบ 232 (232-Checkout-1): **2 ภาษา** — `?lang=en` (จำใน localStorage `legal.lang`) · ฉบับ/วันมีผลเดียวกันทั้งสองภาษา (ภาษาเป็นแค่การแสดง) ·
+ * ตัวตัดสินอยู่เซิร์ฟเวอร์ (Helpers/LegalDocumentLanguage): ขอ en แต่ยังไม่มี ⇒ ส่งไทยกลับมาพร้อม `languageNotice` — หน้านี้แสดงตามที่เซิร์ฟเวอร์บอก ไม่แต่ง ·
+ * สวิตช์วาดลงที่ `[data-legal-lang]` (ถ้ามีในหน้า) · ค่าใน DTO: language · englishAvailable · languageNotice
  */
 window.LegalPolicy = {
   data: null,
+  LANG_KEY: 'legal.lang',
+
+  /** ภาษาที่ผู้อ่านขอ: query ?lang ชนะ localStorage · ค่าอื่นนอกจาก en = th (เซิร์ฟเวอร์ normalize อีกชั้น) */
+  requestedLang() {
+    const q = new URLSearchParams(location.search).get('lang');
+    if (q) return q === 'en' ? 'en' : 'th';
+    try { return localStorage.getItem(this.LANG_KEY) === 'en' ? 'en' : 'th'; } catch (_) { return 'th'; }
+  },
+
+  /** กดสลับภาษา — จำไว้ + เขียน query (ลิงก์แชร์ได้ · กลับมาหน้านี้ภาษาเดิม) */
+  setLang(lang) {
+    try { localStorage.setItem(this.LANG_KEY, lang === 'en' ? 'en' : 'th'); } catch (_) { /* โหมดส่วนตัว — ใช้ query อย่างเดียว */ }
+    const u = new URL(location.href);
+    if (lang === 'en') u.searchParams.set('lang', 'en'); else u.searchParams.delete('lang');
+    location.href = u.toString();
+  },
+
+  /** สวิตช์ TH/EN — ปุ่มของภาษาที่แสดงอยู่เป็นตัวหนา · ไม่มีฉบับอังกฤษก็ยังกดได้ (เซิร์ฟเวอร์ตอบไทย + ประกาศ) */
+  renderLangSwitch(d) {
+    const box = document.querySelector('[data-legal-lang]');
+    if (!box) return;
+    const cur = d.language === 'en' ? 'en' : 'th';
+    const btn = (code, label) => `<button type="button" data-lang="${code}" style="border:1px solid var(--gray-300,#cbd5e1);background:${cur === code ? 'var(--primary,#4f46e5)' : '#fff'};color:${cur === code ? '#fff' : 'inherit'};border-radius:6px;padding:4px 10px;font-size:.85rem;cursor:pointer">${label}</button>`;
+    box.innerHTML = `<span style="font-size:.85rem;color:var(--gray-500)">ภาษา / Language:</span> ${btn('th', 'ไทย')} ${btn('en', 'English')}`
+      + (d.englishAvailable === false && cur === 'th' ? ' <span style="font-size:.8rem;color:var(--gray-500)">(English version not available yet)</span>' : '');
+    box.querySelectorAll('button[data-lang]').forEach(b => b.addEventListener('click', () => this.setLang(b.dataset.lang)));
+  },
 
   /** พ.ศ. + ชื่อเดือนไทย — แบบยื่น/เอกสารทางการใช้ พ.ศ. (กฎโปรเจกต์) */
   thaiDate(iso) {
@@ -33,7 +64,10 @@ window.LegalPolicy = {
     const body = document.getElementById('legalBody');
     let d = null;
     try {
-      const url = `/api/legal/documents/${encodeURIComponent(kind)}` + (version ? `?version=${encodeURIComponent(version)}` : '');
+      const qs = new URLSearchParams();
+      if (version) qs.set('version', version);
+      if (this.requestedLang() === 'en') qs.set('lang', 'en');
+      const url = `/api/legal/documents/${encodeURIComponent(kind)}` + (qs.toString() ? `?${qs}` : '');
       const r = await fetch(url);
       const j = await r.json().catch(() => null);
       if (!r.ok) throw new Error((j && j.message) || 'โหลดเอกสารไม่สำเร็จ');
@@ -48,6 +82,16 @@ window.LegalPolicy = {
     const put = (key, text) => document.querySelectorAll(`[data-legal="${key}"]`).forEach(el => { el.textContent = text; });
     put('version', d.version || '-');
     put('effectiveDate', this.thaiDate(d.effectiveDate));
+    // รอบ 232: หัวเอกสาร/ชื่อแท็บตามภาษาที่แสดงจริง (เซิร์ฟเวอร์ส่ง title ตามภาษาแล้ว) + สวิตช์ + ประกาศ "ยังไม่มีฉบับอังกฤษ"
+    document.querySelectorAll('[data-legal="title"]').forEach(el => { el.textContent = d.title || el.textContent; });
+    if (d.title) document.title = `${d.title} | NextAcc`;
+    document.documentElement.lang = d.language === 'en' ? 'en' : 'th';
+    this.renderLangSwitch(d);
+    const langNote = document.getElementById('legalLangNotice');
+    if (langNote) {
+      langNote.textContent = d.languageNotice || '';
+      langNote.style.display = d.languageNotice ? 'block' : 'none';
+    }
     // เซิร์ฟเวอร์แปลง + encode แล้ว (LegalMarkdown) — วางเป็น HTML ได้ ข้อความผู้ใช้ไม่มีทางเป็นแท็ก
     if (body) body.innerHTML = d.html || '<p>-</p>';
 
@@ -88,7 +132,8 @@ window.LegalPolicy = {
       box.innerHTML = '<b>ประวัติฉบับ:</b> ' + rows.map(h => {
         const label = `ฉบับที่ ${this.esc(h.version)} (มีผล ${this.esc(this.thaiDate(h.effectiveDate))})`
           + (h.isCurrent ? ' · ปัจจุบัน' : h.isUpcoming ? ' · ประกาศล่วงหน้า' : '');
-        return h.version === shownVersion ? `<span>${label}</span>` : `<a href="?version=${encodeURIComponent(h.version)}">${label}</a>`;
+        const langQ = this.requestedLang() === 'en' ? '&lang=en' : '';
+        return h.version === shownVersion ? `<span>${label}</span>` : `<a href="?version=${encodeURIComponent(h.version)}${langQ}">${label}</a>`;
       }).join(' · ');
       box.style.display = 'block';
     } catch (_) { box.style.display = 'none'; /* ประวัติเป็นส่วนเสริม — เนื้อความหลักแสดงแล้ว */ }

@@ -1748,6 +1748,7 @@ public partial class DocumentService : IDocumentService
             var createLinePayees = await ResolveLineWhtPayeesAsync(companyId, doc,
                 createLines.Select((l, i) => (l.WhtPayeeContactId, true, l.WithholdingTaxRate, createAmts[i].WhtAmount)).ToList(),
                 request.WhtPayeeContactId);
+            var createdLines = new List<DocumentLine>();
             int lineIdx = -1;
             foreach (var line in createLines)
             {
@@ -1794,7 +1795,7 @@ public partial class DocumentService : IDocumentService
                     enforcedClaimable = false;
                     enforcedReason = null;
                 }
-                _db.DocumentLines.Add(new DocumentLine
+                var createdLine = new DocumentLine
                 {
                     DocumentId = doc.Id,
                     LineOrder = order++,
@@ -1820,8 +1821,13 @@ public partial class DocumentService : IDocumentService
                     // รอบ 203: ประเภทเงินได้ ม.40 (ตรวจแล้วใน ValidateDocumentLinesAsync) — สร้าง: ไม่ส่ง = ไม่ระบุ
                     IncomeTypeCode = Accounting.Helpers.DocumentLineIncomeType.Decide(line.IncomeTypeCode, null).Code,
                     WhtPayeeContactId = createLinePayees[lineIdx],
-                });
+                };
+                _db.DocumentLines.Add(createdLine);
+                createdLines.Add(createdLine);
             }
+            // รอบ 232: เลือกใบต้นทางบนฟอร์ม/API (RelatedDocumentId) แต่บรรทัดไม่ได้ชี้บรรทัดต้นทาง ⇒ ป้าย lifecycle ของใบต้นทาง "ไม่ทราบสัดส่วน"
+            // ตลอดกาล — จับคู่แน่นอนแล้วประทับ (ตัวตัดสินเดียว Helpers/SourceLineBackfill · จับไม่ได้ = ไม่แต่ง)
+            await StampSourceLinesFromRelatedAsync(companyId, doc, createdLines);
 
             // รอบ 193: SubTotal = Σ บรรทัด + ผลต่างปัดเศษ (0 = สูตรเดิมทุกประการ — Helpers/DocumentRounding)
             doc.SubTotal = subTotal + doc.RoundingAdjustment;
@@ -2247,6 +2253,47 @@ public partial class DocumentService : IDocumentService
         doc.InputVatBecameClaimableAt = post.Period;
     }
 
+    /// <summary>
+    /// รอบ 232 — ใบที่สร้างโดยเลือกใบต้นทาง (<c>RelatedDocumentId</c>) แต่บรรทัดไม่ได้ชี้บรรทัดต้นทาง: ประทับ <c>SourceLineId</c> เมื่อจับคู่ได้แน่นอน
+    /// (<see cref="SourceLineBackfill.Stamp"/> · จำนวนบรรทัดเท่า + รหัสสินค้า/คำอธิบาย + จำนวนตรงทุกบรรทัด) · ใบที่แปลงมา/ฟอร์มส่งครบ (มี SourceLineId แล้ว) ไม่แตะ ·
+    /// ใบมัดจำ/ใบออกแทน ไม่แตะ (บรรทัดไม่ใช่มูลค่าสินค้าตามต้นทาง — กติกาเดียวกับ <see cref="DocumentLinkPolicy.ChildBlockReason"/>) ·
+    /// ใบต้นทางต้องเป็นชนิดแปลงต่อ (<see cref="DocumentConversionProgress.IsConversionBearing"/>) — ใบสำคัญจ่ายที่อ้างใบแจ้งหนี้ซื้อ ฯลฯ ไม่เกี่ยว
+    /// </summary>
+    private async Task<int> StampSourceLinesFromRelatedAsync(Guid companyId, Document doc, IReadOnlyList<DocumentLine> lines)
+    {
+        if (doc.RelatedDocumentId is not Guid srcId || lines.Count == 0) return 0;
+        if (lines.Any(l => l.SourceLineId.HasValue) || doc.IsDeposit || doc.ReplacesDocumentId.HasValue) return 0;
+        var src = await _db.Documents.AsNoTracking().Include(d => d.Lines)
+            .FirstOrDefaultAsync(d => d.Id == srcId && d.CompanyId == companyId && !d.IsDeleted);
+        if (src == null || !DocumentConversionProgress.IsConversionBearing(src.DocumentType)) return 0;
+        var n = SourceLineBackfill.Stamp(lines, src.Lines.ToList(), matchQuantity: true);
+        if (n > 0)
+            _logger.LogInformation("ประทับ SourceLineId {Count} บรรทัดของ {Doc} จาก {Source} (จับคู่แน่นอน · {Rule})",
+                n, doc.DocumentNumber, src.DocumentNumber, SourceLineBackfill.RuleCode);
+        return n;
+    }
+
+    /// <summary>
+    /// รอบ 232 — หลัง <c>UpdateDocumentAsync</c> สร้างบรรทัดใหม่ทั้งชุด (Id ใหม่): (ก) ใบนี้เป็นต้นทางของใบอื่น ⇒ ย้ายตัวชี้ <c>SourceLineId</c> ของบรรทัดใบลูก
+    /// จาก Id เดิมไป Id ใหม่ (<see cref="SourceLineBackfill.Remap"/> — ไม่งั้นแก้ใบสั่งซื้อหลังแปลงแล้วป้าย lifecycle "ไม่ทราบสัดส่วน" + ด่านกันแปลงเกินมองไม่เห็นใบลูก) ·
+    /// (ข) ใบนี้เป็นใบลูกที่ถูกแก้ผ่านทางเข้าที่ไม่ส่ง <c>sourceLineId</c> กลับมา ⇒ ยกค่าจากบรรทัดเดิม (<see cref="SourceLineBackfill.CarryFromPrevious"/>) ·
+    /// จับคู่ไม่ได้แน่นอน = ไม่แตะ + log (งานซ่อม <c>SourceLineBackfillJob</c> ลองใหม่ด้วยกติกาจำนวน)
+    /// </summary>
+    private async Task RelinkSourceLinesAfterLineRewriteAsync(Guid companyId, IReadOnlyList<DocumentLine> previous, IReadOnlyList<DocumentLine> fresh)
+    {
+        SourceLineBackfill.CarryFromPrevious(previous, fresh);
+        var oldIds = previous.Select(l => l.Id).ToList();
+        if (oldIds.Count == 0) return;
+        var dependents = await _db.DocumentLines
+            .Where(l => l.SourceLineId != null && oldIds.Contains(l.SourceLineId.Value) && l.Document.CompanyId == companyId)
+            .ToListAsync();
+        if (dependents.Count == 0) return;
+        var moved = SourceLineBackfill.Remap(dependents, previous, fresh);
+        if (moved < dependents.Count)
+            _logger.LogWarning("แก้ไขบรรทัดใบต้นทางแล้วย้ายตัวชี้ของใบลูกได้ {Moved}/{Total} บรรทัด (จับคู่ไม่แน่นอน — คง dangling · {Rule})",
+                moved, dependents.Count, SourceLineBackfill.RuleCode);
+    }
+
     /// <summary>ผลการออกเอกสารต่อของใบต้นทาง 1 ใบ — ความคืบหน้า (สูตรเดียว <see cref="DocumentConversionProgress.Evaluate"/>) ·
     /// ใบลูกล่าสุดที่ยังมีผล · จำนวนใบลูกที่ยังมีผลทั้งหมด</summary>
     internal sealed record ConversionSummary(
@@ -2282,6 +2329,15 @@ public partial class DocumentService : IDocumentService
                   && consuming.Contains(cd.Id)   // รวมใบแจ้งหนี้ที่ถูกแทนที่ด้วยใบกำกับ (ข้อ 138)
             select new { SourceDocId = sl.DocumentId, ChildId = cd.Id, cd.DocumentType, cl.Quantity, cl.Amount })
             .ToListAsync();
+        // (1ข) รอบ 232: ใบหลานที่วางบิลผ่านใบส่งของ/ใบรับสินค้า (PO → GRN → PI · QT → DN → INV) — ตัวโหลดเดียวกับด่านกันแปลงเกิน
+        //      (LoadBilledViaDeliveryAsync) ⇒ แกนวางบิลของใบต้นทางขยับเหมือน ComputeConsumptionAsync · เดิมป้ายของ PO เห็นแค่ GRN
+        var srcLineOwner = await _db.DocumentLines.AsNoTracking()
+            .Where(l => srcIds.Contains(l.DocumentId) && l.Document.CompanyId == companyId)
+            .Select(l => new { l.Id, l.DocumentId })
+            .ToDictionaryAsync(x => x.Id, x => x.DocumentId);
+        var viaDelivery = await LoadBilledViaDeliveryAsync(companyId, srcLineOwner.Keys.ToList());
+        consumed.AddRange(viaDelivery.Where(v => srcLineOwner.ContainsKey(v.SourceLineId))
+            .Select(v => new { SourceDocId = srcLineOwner[v.SourceLineId], ChildId = v.ChildId, DocumentType = v.DocumentType, Quantity = v.Quantity, Amount = v.Amount }));
 
         // (2) ใบลูกที่ยังมีผล — ผูกด้วย RelatedDocumentId (รวมใบที่ไม่ได้ยกรายการ เช่น ใบแจ้งหนี้มัดจำ)
         //     หรือเป็นเจ้าของบรรทัดที่ยกมาจาก (1)
@@ -3178,6 +3234,9 @@ public partial class DocumentService : IDocumentService
                     throw new BusinessRuleException($"บรรทัด \"{ptLine.Description}\": {payerSideErr}", "WHT-INCOME-TYPE");
             }
 
+            // รอบ 232: บรรทัดเดิมก่อนลบ — (ก) ใบลูกของใบนี้ชี้ Id เหล่านี้อยู่ ต้องย้ายไปบรรทัดใหม่ (ข) ทางเข้าที่ไม่ส่ง sourceLineId ต้องไม่ล้างค่าเดิม
+            var prevLinesForSourceLink = doc.Lines.Where(l => !l.IsDeleted).ToList();
+            var updatedLines = new List<DocumentLine>();
             _db.DocumentLines.RemoveRange(doc.Lines);
 
             if (request.PricesIncludeVat.HasValue) doc.PricesIncludeVat = request.PricesIncludeVat.Value;
@@ -3281,7 +3340,7 @@ public partial class DocumentService : IDocumentService
                     enforcedClaimable = false;
                     enforcedReason = null;
                 }
-                _db.DocumentLines.Add(new DocumentLine
+                var updatedLine = new DocumentLine
                 {
                     DocumentId = doc.Id,
                     LineOrder = order++,
@@ -3312,8 +3371,13 @@ public partial class DocumentService : IDocumentService
                         Accounting.Helpers.DocumentLineIncomeType.KeptFromPrevious(prevIncomeTypes, updLineIdx, line.Description),
                         storedIncomeCodes).Code,
                     WhtPayeeContactId = updLinePayees[updLineIdx],
-                });
+                };
+                _db.DocumentLines.Add(updatedLine);
+                updatedLines.Add(updatedLine);
             }
+            // รอบ 232: บรรทัดถูกสร้างใหม่ทั้งชุด (Id ใหม่) — ย้ายตัวชี้ SourceLineId ของใบลูกมาบรรทัดใหม่ + ยกค่าเดิมให้บรรทัดใหม่เมื่อผู้เรียกไม่ส่งกลับ
+            // (ตัวตัดสินเดียว Helpers/SourceLineBackfill — ไม่งั้นแก้ใบสั่งซื้อหลังแปลงแล้วป้าย lifecycle กลายเป็น "ไม่ทราบสัดส่วน")
+            await RelinkSourceLinesAfterLineRewriteAsync(companyId, prevLinesForSourceLink, updatedLines);
 
             // รอบ 193: SubTotal = Σ บรรทัด + ผลต่างปัดเศษ (0 = สูตรเดิมทุกประการ)
             doc.SubTotal = subTotal + doc.RoundingAdjustment;
@@ -7496,21 +7560,17 @@ public partial class DocumentService : IDocumentService
         // จุดเดียวกับ POS/Integration/CMS — IssuedDocumentHooks (รอบ 193 · S-02)
         await _issuedHooks.RunAsync(companyId, doc);
 
-        // LINE notification (best-effort) — keeps the legacy broadcast room
-        // hook for companies wired to a single LINE Notify channel.
+        // รอบ 232 (232-Notify): ประกาศกลุ่ม LINE "✅ เอกสารอนุมัติแล้ว" เดิม (NotifyDocumentApprovedAsync) ถูกถอด — มันถอยไป token+GroupId ของ OA กลาง
+        // เมื่อบริษัทไม่มี OA ⇒ เอกสารของผู้เช่าเด้งเข้าห้องแอดมินแพลตฟอร์ม · ตอนนี้ document.approved เดินเครื่องแจ้งเตือนกลางข้างล่างตัวเดียว
+        // (ช่อง "กลุ่ม LINE ของบริษัท" = OA ของบริษัทเท่านั้น · ค่าตั้งต้น NotificationAudiencePolicy.DefaultMatrix)
         var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? "";
-        try
-        {
-            await _lineNotify.NotifyDocumentApprovedAsync(companyId, doc.DocumentNumber, contactName, doc.TotalAmount);
-        }
-        catch (Exception ex) { _logger.LogWarning(ex, "LINE notification failed for document {DocNum}", doc.DocumentNumber); }
 
         // แจ้งกลับ "ผู้ส่งบิลทางไลน์" — เอกสารที่เกิดจากโยนรูปเข้า LINE bot ฝัง
         // lineUserId ไว้ใน scan metadata ตอน intake. ผู้ส่ง (มักเป็นพนักงาน
         // หน้างาน) ควรรู้ว่านักบัญชีอนุมัติแล้วโดยไม่ต้องเปิดแอปมาเช็คเอง.
         // ข้ามเมื่อผู้อนุมัติคือผู้ส่งเอง (เพิ่งกดปุ่มในแชท — ได้คำตอบจาก
-        // postback อยู่แล้ว). ใช้ companyId=null → token ของบอท (ผู้ใช้แชทกับ
-        // ช่องบอท ส่งจาก OA อื่นของบริษัทจะไม่ถึง). best-effort เสมอ.
+        // postback อยู่แล้ว). ผู้ส่งคุยกับบอทกลาง ⇒ ส่งผ่าน OA กลางแบบระบุชัด
+        // (TryPushViaNextAccAsync — สมาชิกของบริษัทนี้ที่ผูกกับบอทกลางเอง · รอบ 232). best-effort เสมอ.
         try
         {
             var lineScanMeta = await _db.Set<OcrScanResult>().AsNoTracking()
@@ -7530,10 +7590,15 @@ public partial class DocumentService : IDocumentService
                         .Select(u => u.LineUserId)
                         .FirstOrDefaultAsync();
                     if (approverLineId != submitterLineId)
-                        await _lineNotify.PushToUserAsync(null, submitterLineId,
+                    {
+                        var pushed = await _lineNotify.TryPushViaNextAccAsync(submitterLineId, new[]
+                        {
                             $"✅ บิลที่คุณส่งเข้าไลน์ได้รับการอนุมัติแล้ว\n"
                             + $"📄 {doc.DocumentNumber} · {contactName}\n"
-                            + $"💰 {doc.TotalAmount:N2} บาท — ลงบัญชีเรียบร้อย");
+                            + $"💰 {doc.TotalAmount:N2} บาท — ลงบัญชีเรียบร้อย"
+                        });
+                        if (!pushed.Ok) _logger.LogWarning("LINE submitter notify ไม่สำเร็จ doc {DocId}: {Error}", doc.Id, pushed.Error);
+                    }
                 }
             }
         }
@@ -12545,12 +12610,12 @@ public partial class DocumentService : IDocumentService
             root.Currency ?? "THB");
     }
 
-    private readonly record struct BilledViaDeliveryLine(Guid SourceLineId, decimal Quantity, decimal Amount, DocumentType DocumentType);
+    private readonly record struct BilledViaDeliveryLine(Guid SourceLineId, decimal Quantity, decimal Amount, DocumentType DocumentType, Guid ChildId);
 
     /// <summary>ทีมตรวจเส้นแปลง ข้อ 2 (2026-10-08): ใบแจ้งหนี้/ใบกำกับ/ใบแจ้งหนี้ซื้อที่ออก <b>จากใบส่งของ/ใบรับสินค้า</b>
     /// (หลานของใบต้นทาง: บรรทัดหลาน → บรรทัดใบส่งของ → บรรทัดต้นทาง) — นับเข้าแกน "วางบิล" ของบรรทัดต้นทาง
     /// · เดิมนับเฉพาะลูกตรง ⇒ QT → DN → INV แล้ว QT → INV อีกใบผ่านทุกด่าน = รายได้/ภาษีขายซ้ำ
-    /// (PO → GRN → PI แล้ว PO → PI ถูกกันที่ ConvertCoreAsync อยู่แล้ว แต่แถบวางบิลของ PO ไม่ขยับ)
+    /// (PO → GRN → PI แล้ว PO → PI ถูกกันที่ ConvertCoreAsync อยู่แล้ว แต่แถบวางบิลของ PO ไม่ขยับ) · รอบ 232: ป้าย lifecycle (LoadConversionSummariesAsync) อ่านตัวนี้ด้วย
     /// · ผ่านใบวางบิล (QT → BN → INV) <b>ไม่</b>ยก เพราะใบวางบิลนับแกนวางบิลไปแล้ว (ยกซ้ำ = นับสองรอบ)
     /// · ใบหลานต้องยังมีผล (ConsumingChildDocIds) · ใบส่งของตรงกลางยกเลิกภายหลังก็ยังนับ (การวางบิลเกิดแล้วจริง)</summary>
     private async Task<List<BilledViaDeliveryLine>> LoadBilledViaDeliveryAsync(Guid companyId, List<Guid> sourceLineIds)
@@ -12567,10 +12632,10 @@ public partial class DocumentService : IDocumentService
                   && (md.DocumentType == DocumentType.DeliveryNote || md.DocumentType == DocumentType.GoodsReceiptNote)
                   && gd.CompanyId == companyId
                   && consuming.Contains(gd.Id)
-            select new { SourceLineId = ml.SourceLineId!.Value, gl.Quantity, gl.Amount, gd.DocumentType })
+            select new { SourceLineId = ml.SourceLineId!.Value, gl.Quantity, gl.Amount, gd.DocumentType, ChildId = gd.Id })
             .ToListAsync();
         return rows.Where(r => GetFulfillmentAxis(r.DocumentType) == FulfillmentAxis.Billing)
-            .Select(r => new BilledViaDeliveryLine(r.SourceLineId, r.Quantity, r.Amount, r.DocumentType)).ToList();
+            .Select(r => new BilledViaDeliveryLine(r.SourceLineId, r.Quantity, r.Amount, r.DocumentType, r.ChildId)).ToList();
     }
 
     /// <summary>Shared validation for both whole-document and partial
@@ -14912,11 +14977,16 @@ public partial class DocumentService : IDocumentService
             if (issuedSettlementReceipt != null)
                 await _issuedHooks.RunAsync(companyId, issuedSettlementReceipt);
 
-            try
-            {
-                await _lineNotify.NotifyPaymentReceivedAsync(companyId, doc.DocumentNumber, payment.Amount);
-            }
-            catch { /* best-effort notification */ }
+            // รอบ 232 (232-Notify): "💵 รับชำระเงินแล้ว" เดิมประกาศกลุ่ม LINE แล้วถอยไปกลุ่มกลางของแพลตฟอร์ม ⇒ เดินเครื่องแจ้งเตือนกลาง
+            // (document.payment_received · ค่าตั้งของบริษัท · ไม่โยนกลับผู้เรียก — engine กลืนเองและ log)
+            if (_notify != null)
+                await _notify.DispatchAsync(companyId, NotificationEvents.PaymentReceived, new NotificationContext
+                {
+                    Title = "💵 รับชำระเงินแล้ว",
+                    Message = $"📄 {doc.DocumentNumber}\n💰 {payment.Amount:N2} บาท",
+                    ActionUrl = $"/pages/documents.html?id={doc.Id}",
+                    EntityType = "Document", EntityId = doc.Id,
+                });
 
             // Webhooks — payment.received (always) + document.paid
             // (when BalanceDue is now zero). Both fire outside the

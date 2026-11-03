@@ -267,12 +267,13 @@ public class PlatformGatewayRefundPolicyTests
     [Fact]
     public void Self_test_refund_refused_and_test_mode_not_booked()
     {
-        Assert.Equal(GatewayTestPaymentRules.SelfTestRefundMessage, GatewayTestPaymentRules.RefundRefusal(PaymentSourceKind.GatewaySelfTest));
-        Assert.Null(GatewayTestPaymentRules.RefundRefusal(PaymentSourceKind.SiteOrder));
-        Assert.True(GatewayTestPaymentRules.IsNoMoney(PaymentSourceKind.SiteOrder, true));
-        Assert.True(GatewayTestPaymentRules.IsNoMoney(PaymentSourceKind.GatewaySelfTest, null));
-        Assert.False(GatewayTestPaymentRules.IsNoMoney(PaymentSourceKind.SiteOrder, false));   // เงินจริงลงบัญชีตามเดิม
-        Assert.False(GatewayTestPaymentRules.IsNoMoney(PaymentSourceKind.SiteOrder, null));
+        // รอบ 232 S2: ย้ายเข้า TestModePaymentPolicy (ตัวตั้งเดียวของเงินทดสอบ) · โหมด null ถูก resolve ผ่าน PaymentIntentTestMode ก่อนถึงตัวตัดสิน
+        Assert.Equal(TestModePaymentPolicy.SelfTestRefundMessage, TestModePaymentPolicy.RefundRefusal(PaymentSourceKind.GatewaySelfTest));
+        Assert.Null(TestModePaymentPolicy.RefundRefusal(PaymentSourceKind.SiteOrder));
+        Assert.True(TestModePaymentPolicy.IsNoMoney(PaymentSourceKind.SiteOrder, true));
+        Assert.True(TestModePaymentPolicy.IsNoMoney(PaymentSourceKind.GatewaySelfTest, false));
+        Assert.False(TestModePaymentPolicy.IsNoMoney(PaymentSourceKind.SiteOrder, false));   // เงินจริงลงบัญชีตามเดิม
+        Assert.False(TestModePaymentPolicy.IsNoMoney(PaymentSourceKind.SiteOrder, PaymentIntentTestMode.Decide(null, null)));
     }
 
     [Theory]

@@ -141,8 +141,11 @@ public class BookingNotifier : IBookingNotifier
                 }
                 else
                 {
-                    sent = await _line.TryPushToUserAsync(companyId, line!.Trim(), request.Text);
-                    stepError = sent ? null : "LINE: ส่งไม่สำเร็จ (ลูกค้าบล็อก OA / ยังไม่เพิ่มเพื่อน / ยังไม่ตั้งค่า channel token)";
+                    // รอบ 232 (232-Notify): ลูกค้าที่ผูกกับ OA ของบริษัท ⇒ OA ของบริษัทเท่านั้น (ไม่ถอยไป OA กลาง) · เหตุจากตัวส่ง (นโยบาย/LINE ตอบ) ไม่ใช่ข้อความเดาสาเหตุ
+                    var pushed = await _line.TryPushToUserAsync(companyId, line!.Trim(), request.Text);
+                    sent = pushed.Ok;
+                    var why = pushed.Error ?? "ส่งไม่สำเร็จ (ลูกค้าบล็อก OA / ยังไม่เพิ่มเพื่อน)";
+                    stepError = sent ? null : "LINE (OA ของร้าน): " + why;
                 }
             }
             else if (step.Source == CustomerNotifyPolicy.SrcTenantSmtp)

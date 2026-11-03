@@ -1475,7 +1475,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   PurchaseOrder / GoodsReceiptNote / DeliveryNote · `Evaluate(Σ จำนวนต้นทาง, แถว (ชนิดใบลูก, จำนวนที่ยก), มีใบลูกผูก RelatedDocumentId)`
   = **แยกแกน** (`AxisOf` — ตารางเดียวกับด่านกันแปลงเกิน `GetFulfillmentAxis` ซึ่งตอนนี้เรียกตัวนี้) แล้วเอาแกนที่ไปไกลสุด
   (สูตรเดิมรวมทุกแกน ⇒ ส่งของ 50% + แจ้งหนี้ 50% ของก้อนเดียวกัน = "ครบ" ผิด) · ครบ = ≥ Σ − 0.0001 · บางส่วน % ปัด 1 ตำแหน่ง
-  AwayFromZero เพดาน 99.9 · ไม่มีการยกบรรทัดแต่มีใบลูกผูก `RelatedDocumentId` (เช่น ใบแจ้งหนี้มัดจำ) = **บางส่วน · ไม่ทราบสัดส่วน**
+  AwayFromZero เพดาน 99.9 · ไม่มีการยกบรรทัดแต่มีใบลูกผูก `RelatedDocumentId` (เช่น ใบแจ้งหนี้มัดจำ) = **บางส่วน · ไม่ทราบสัดส่วน (รายการของใบลูกไม่ได้จับคู่กับรายการใบนี้)** (`UnknownShareText` · รอบ 232)
   (ห้ามบอกว่ายังไม่ออก) · ใบลูก `Voided`/`Rejected`/ลบ **ไม่นับ** (`InactiveChildStatuses`) ⇒ ยกเลิกใบแจ้งหนี้แล้วใบเสนอราคากลับเป็น "ยังไม่ออก"
 - **ตัวโหลด batch** `DocumentService.LoadConversionSummariesAsync(companyId, {id → Σ จำนวน})` — query คงที่ 2 ครั้งไม่ว่ากี่ใบ
   (จำนวนที่ยกผ่าน `SourceLineId` · ใบลูกที่ยังมีผลจาก `RelatedDocumentId` ∪ เจ้าของบรรทัดที่ยก) · **ทุก query กรอง `CompanyId`**
@@ -1487,6 +1487,25 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ⇒ "ร่างใบแจ้งหนี้ไว้แล้ว (ยังไม่อนุมัติ)" (ไม่โชว์เลข DRAFT-) · ไม่มีใบลูก "⏳ ยังไม่ออกเอกสารต่อ" · **ยังไม่ได้คำนวณ (null) ⇒ ไม่ขึ้นป้าย**
   (ห้ามเดา) · ชื่อชนิดจาก `Helpers/DocumentTypeNames` (ตารางเดียวกับหัวกระดาษ — ย้ายจาก `PdfGenerationService.GetDocumentTitle`)
   · ใบต้นทางเองเป็นร่าง/รออนุมัติ/ยกเลิก/ปฏิเสธ ⇒ กติกาเดิม (ไม่ขึ้นป้าย / Cancelled)
+- **รอบ 232 — "ไม่ทราบสัดส่วน" ต้องเกิดเฉพาะเมื่อจับคู่ไม่ได้จริง** (บั๊กเจ้าของ: หน้ารวมใบสั่งซื้อขึ้น "◐ ออกใบแจ้งหนี้ซื้อ PI-20261007-0004 แล้ว · ไม่ทราบสัดส่วน"
+  ทั้งที่ PI แปลงมาจาก PO-20261007-0001 และยอด 12,164.72 เท่ากันเป๊ะ) — สาเหตุที่พิสูจน์: ป้ายอ่าน `DocumentLine.SourceLineId` ของบรรทัดใบลูก**เท่านั้น** และมี 4 ทางที่
+  บรรทัดไม่ชี้ต้นทาง: (ค) **`UpdateDocumentAsync` ลบบรรทัดเดิมทิ้ง (`RemoveRange`) แล้วสร้างใหม่ Id ใหม่** ⇒ แก้ใบสั่งซื้อ (Rev) หลังแปลงแล้ว SourceLineId ของ PI ชี้บรรทัดที่
+  ไม่มีแล้ว (dangling · join ว่าง) · (ก) สร้างใบมือ/API เลือกใบต้นทางบนฟอร์ม (`RelatedDocumentId`) แต่บรรทัดไม่มี SourceLineId · (ข) สแกน `/link-po` ที่ไม่ได้จับคู่รายบรรทัด
+  (`poLineMap` ว่าง) · (ง) แก้ใบลูกผ่านทางเข้าที่ไม่ส่ง `sourceLineId` กลับ (`documents.html` ส่งครบ · `purchases.html` ไม่มีฟอร์ม — ลิงก์ไป documents.html) ·
+  + สาย PO → GRN → PI: PI ยกบรรทัดจาก GRN ⇒ ตัวโหลดเห็นแค่ GRN (แกนส่งมอบ) · **แก้**: ตัวตัดสินเดียว `Helpers/SourceLineBackfill` (`CertainMap` = จำนวนบรรทัดเท่า +
+  รหัสสินค้า/คำอธิบาย (normalize เดียวกับ `DocumentLinkPolicy.SuggestLineMap`) + จำนวนตรงทุกบรรทัด · ผิดคู่เดียว = ไม่จับทั้งใบ · `Stamp`/`Remap`/`CarryFromPrevious`) เรียกจาก
+  `CreateDocumentAsync` → `StampSourceLinesFromRelatedAsync` (เฉพาะต้นทาง `IsConversionBearing` · ไม่แตะใบมัดจำ/ใบออกแทน/ใบที่มี SourceLineId แล้ว) ·
+  `UpdateDocumentAsync` → `RelinkSourceLinesAfterLineRewriteAsync` (ย้ายตัวชี้ของใบลูกจาก Id เดิม → ใหม่ ไม่เทียบจำนวน — ยกเว้นกุญแจซ้ำในชุดเดียวกัน (S3) ⇒ บังคับเทียบจำนวน ยังกำกวม ⇒ ไม่ย้าย คง dangling + LogWarning · ยกค่าเดิมให้บรรทัดใหม่เมื่อผู้เรียกไม่ส่ง) ·
+  `OcrService.BuildScanLinesAsync` (ผูก PO แต่ไม่ได้จับคู่บรรทัด) · `LoadConversionSummariesAsync` เติมแถวหลานจาก `LoadBilledViaDeliveryAsync` (ตัวเดียวกับ
+  `ComputeConsumptionAsync`) ⇒ PO → GRN → PI ขึ้น "✓ ออกใบแจ้งหนี้ซื้อ … แล้ว" (**N6 ตั้งใจ**: PI ที่ชี้บรรทัด GRN ซึ่ง GRN ถูกยกเลิกภายหลัง **ยังนับแกนวางบิล** —
+  การวางบิลเกิดแล้วจริง กติกาเดียวกับ `LoadBilledViaDeliveryAsync` ที่ด่านกันแปลงเกินใช้) · **ข้อมูลเก่า**: `Services/Background/SourceLineBackfillJob` (หนึ่งรอบหลังเริ่มระบบ ใต้ `JobLock` ·
+  **watermark ต่อบริษัท** `Company.SourceLineBackfillCheckedAt` (S4 · `Round232SourceLineStatements`): ตรวจเฉพาะใบลูกที่ "แตะล่าสุด" = max(ใบลูก `CreatedAt`/`UpdatedAt`, ใบต้นทาง `UpdatedAt`) ∈ (watermark, now] (ใบต้นทางถูกแก้แล้ว Remap จับไม่ได้ ⇒ รอบหน้าลองใหม่ด้วยกติกาจำนวน) วนเป็น batch 500 (cursor + Id ที่เวลาเท่ากัน) จนหมด
+  แล้วเลื่อน watermark — ใบที่จับไม่ได้ไม่ถูกแตะแต่ก็ไม่ถูกกวาดซ้ำทุกบูต · บริษัทล้ม = watermark ไม่เลื่อน รอบหน้าทำต่อ · ใบลูกที่ผูกหัวแต่ไม่มีบรรทัดชี้บรรทัดต้นทางที่ยังมีอยู่
+  (N4: "ยังมีอยู่" พึ่ง global filter `!IsDeleted` ของ DocumentLines และ `UpdateDocumentAsync` ลบบรรทัดจริง `RemoveRange` ⇒ dangling = แถวหายจากตาราง) · ประทับเฉพาะจับคู่แน่นอน
+  (ทับ dangling ได้ · S3: กุญแจซ้ำในชุดเดียวกัน ⇒ บังคับเทียบจำนวน ยังซ้ำ ⇒ ไม่จับ) · audit chain ต่อใบ · `JobRunLog` "SourceLineBackfill" นับ บริษัท/ตรวจ/ซ่อม/จับไม่ได้/ล้ม) ·
+  **S5 สแกน `/link-po` ที่จับคู่บรรทัดไม่ได้**: แท็ก `[SRC-LINE]` (`Helpers/OcrSourceLineNote` · ล้างทุกครั้งที่สร้างบรรทัดผ่าน `OcrLineBuildNotes.StripRecomputed`) → DTO
+  `SourceLinesStamped`/`SourceLineWarning` → `document-scan.html` แบนเนอร์เหลือง "ยังไม่ได้จับคู่รายการกับใบสั่งซื้อ … ตรวจจำนวนให้ตรงแล้วบันทึกอีกครั้ง หรือใช้จับคู่รายบรรทัด" · จับไม่ได้ = คงป้าย แต่ข้อความบอกสาเหตุ `DocumentConversionProgress.UnknownShareText` = "ไม่ทราบสัดส่วน (รายการของใบลูกไม่ได้จับคู่กับรายการใบนี้)" ·
+  ล็อกจุดเรียก `required_call_site_check` 7 กติกา (`_R232SL_WHY`) · เทสต์ `SourceLineBackfillTests` · `DocumentConversionProgressTests.รอบ232_*` · Db `SourceLineBackfillDbTests`
 - **DTO** `DocumentResponse.ConvertedToLatest` (ใบลูกล่าสุดที่ยังมีผล — ชิปกดเปิดได้) · `ConvertedToActiveCount` ·
   `ConversionCompletionPercent`/`ConversionStatus` ("None"/"Partial"/"Full") ตอนนี้มีในหน้ารวมด้วย · `BalanceDueApplies`
   (= `ArApScope.CarriesBalance` — ลูกหนี้/เจ้าหนี้เท่านั้น) ⇒ หน้าเว็บแสดง "—" ในคอลัมน์ค้างชำระ + ไม่ขึ้นชิปอายุหนี้/แถว
@@ -1797,6 +1816,11 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 
 ### 2.6b Payment gateway — รับเงิน · คืนเงิน · รอบโอน (PAYMENT_GATEWAY_DESIGN.md · รอบ 198 settlement เฟส 0)
 
+- **รอบ 232 — ขั้นถัดไปของผู้จ่ายหลังสร้าง charge (ตัวตัดสินเดียว `Helpers/GatewayChargeNextStep`):** QR มา ⇒ แสดงในหน้าเดิมเสมอ (ลิงก์ `authorize_uri` ที่มาพร้อมกันถูกทิ้งตั้งแต่ `OmisePaymentProvider.ParseCharge`) ·
+  ไม่มี QR แต่มีลิงก์ https ⇒ พาไปหน้าธนาคาร/3-D Secure แล้วกลับ `ReturnUrl` (+`?payReturn=1` → `PayWidget.resume()`; หน้าที่ใช้ header ของตัวเอง เช่น `platform-pay-test.html` ต้องเรียก `resume({authHeader})` เอง) ·
+  Pending แต่ไม่มีทั้งคู่ (ไม่ใช่สลิปโอน) ⇒ `StartAsync` ปิดรายการ `Failed` รหัส `no_next_step` พร้อมเหตุผลไทยก่อน commit (เงินเข้าทีหลังยัง Failed→Succeeded ได้ตามนโยบายเดิม) · หมดเวลา 20 วิ/เครือข่ายขาด ⇒ `FailureMessage` ไทย (`TransportFailureText`) ·
+  **เงินโหมดทดสอบไม่มีผลทางธุรกิจ (คำตัดสิน 232-Omise-2 · `Helpers/TestModePaymentPolicy` = ตัวตั้งเดียวของ "เงินทดสอบ" ขาเข้า+ขาคืน — รวม `GatewayTestPaymentRules` เดิมแล้ว · โหมดจาก `PaymentIntentTestMode.ResolveAsync` null→config ทุกจุด):** intent คีย์ทดสอบ (IsTestMode/config.Mode=Test) ของทุกต้นทางยกเว้น GatewaySelfTest ⇒ `DispatchSucceededAsync` **ด่านแรกก่อน `EntitlementBlockReason`** (ด่านสิทธิ์ไม่รู้จักโหมดทดสอบอีก — ค่าบริการ/ส่วนเสริมทดสอบ = เหตุการณ์ 🧪 ไม่ใช่งานค้างส่งต่อใหม่) ไม่เรียก handler (ไม่มี JE/ใบเสร็จ/สต็อก/ตัดชำระ · ต้นทางคงรอชำระ · เหตุการณ์ `🧪 โหมดทดสอบ — ไม่ลงบัญชี` บน intent · ไม่ใช่งานค้างส่งต่อใหม่) + `GuardAsync` ชั้นสองใน handler ทั้ง 8 · ป้าย `TestModePaymentPolicy.StatusLabel` "(ทดสอบ — ไม่ลงบัญชี)" ในรายการรับชำระ + ทุก intent response ส่ง `statusLabel`/`testNote` (`PayerNote`) ให้หน้าจ่ายแสดง (widget ไม่มีข้อความเอง) · widget: `Succeeded` ตั้งแต่สร้าง (บัตรไม่ 3DS) ⇒ หน้าสำเร็จก่อนตาข่าย "ไม่มี QR/ลิงก์" · `MissingReason` ยิงเฉพาะ `StartAsync` (poll ไม่ตัดสิน — ตั้งใจ) ·
+  URL แจ้งเตือน (webhook) ที่หน้าตั้งค่าร้าน (`PaymentSettingsController`) และแอดมินแพลตฟอร์ม (`AdminPlatformGatewayController`) ใช้ `SystemBaseUrl.PublicOrigin` (URL ระบบที่ตั้งไว้ก่อน · ไม่ตั้ง = คำขอ) — เทสต์ `GatewayChargeNextStepRound232Tests` · Last verified `commit <เติมในคอมมิตตามหลัง>`
 - **รอบ 231 — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ · ชนิด subscription · audit License (คำตัดสินข้อ 231-8..231-11 · `ACCOUNT_STRUCTURE.md` §6.2f):**
   ทุกจุดที่คิดราคาแพ็กเกจ (ใบต่ออายุ · ส่วนต่าง · ดูราคา · คำขอ/แปลงทดลองใช้ · แจ้งชำระ · อนุมัติอัตโนมัติ · แอดมินเปลี่ยนแพ็กเกจ) ผ่าน `Helpers/PlatformPriceOverrideStore` → `PlatformPlanPricing.EffectiveCyclePrice`
   (ราคาพิเศษ `CompanyPlanPriceOverrides` ชนะราคาแม่แบบ · คูปองซ้อนทีหลัง) · เปลี่ยนรอบบิลยาวขึ้นกลางรอบ = รายการ `IsCycleChange` (ราคารอบใหม่ − เครดิต `PlatformProration.CycleChange`) → เงินเข้า ⇒ รอบใหม่เริ่มวันชำระ ·
@@ -2548,6 +2572,31 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (ไม่มี `lockOnEnforce` — หน้าเดิมล็อกแบบนี้) · `migration/*` (ย้ายระบบ/งบทดลองยกมา) เดิมไม่อยู่ในตาราง ⇒ **ไม่เพิ่ม** (ห้ามเข้มเกินพฤติกรรมเดิม) ·
   ทางไปต่อของแพ็กเกจที่ไม่มี: ข้อความอัปเกรดมาตรฐาน (`FEATURE_NOT_AVAILABLE` + `upgradeUrl`) · หน้าบัญชีธนาคารยังนำเข้า statement ทางเดิม (`/bank`) ได้ ·
   เทสต์ `SubscriptionGateImportHubTests` · `tools/nav_lock_mode_sim.js` (ศูนย์นำเข้า = หน้าเดิมทุกโหมด) · Last verified รอบ 206 `commit c382580d`
+
+### 2.12 ซื้อแพ็กเกจ NextAcc สาธารณะ — cart + checkout จบในเว็บ (รอบ 232 · คำตัดสิน 232-Checkout-2 · `erp-review/2026-11-03/OMISE_READINESS.md`)
+
+- **ทางเข้า:** `/pricing.html` (ตะกร้า · `GET api/public/checkout/catalog`+`quote` สาธารณะ — ราคาตั้งจาก `PlanTemplate` ผ่าน `PlatformPlanPricing` · ป้ายโหมดทดสอบ/นโยบายจากเซิร์ฟเวอร์) →
+  `/checkout.html` (สมัคร/เข้าสู่ระบบในหน้า → `GET …/me` บริษัทที่เป็น Owner → `GET …/companies/{id}/quote` (`QuotePlanChangeAsync`: ราคาพิเศษ+คูปอง) → ติ๊กข้อกำหนด+นโยบายคืนเงิน (ข้อความ/ฉบับ `PurchasePolicyAcceptance.PlatformInfo`) →
+  `POST …/companies/{id}/orders` → `PublicCheckoutService.CreateOrderAsync`: สวิตช์ `PublicCheckoutPolicy.Decide` · Owner · **resume** รายการรอชำระเดิม (`CanResume`) ·
+  **ชนิดคำสั่งซื้อตัดสินก่อนมี side-effect** (ฝ่ายค้าน B1 · `PublicCheckoutPolicy.DecideOrder` ผ่าน `DecideOrderAsync` อ่านอย่างเดียว — ตัวเดียวกับยอดตะกร้าของบริษัท):
+  ทดลองใช้/หมดอายุ/ค้างชำระ/ฟรีถาวร ⇒ `ISubscriptionService.ConvertTrialAsync` (ยอดจาก `RequestPlanPaymentAsync` — ราคาพิเศษ → คูปอง) ·
+  Active แพ็กเกจ+รอบเดิม ⇒ **ต่ออายุ** `ISubscriptionService.SubmitPaymentAsync` (ยอด `PlatformPriceOverrideStore.AmountDueAsync(currentPlan)` = ราคาต่ออายุ `IsRenewalPurchase` · เซิร์ฟเวอร์ตรวจซ้ำ ·
+  อนุมัติแล้วต่อจากวันหมดอายุเดิม · ใบแจ้งหนี้ต่ออายุออกแล้ว/ใส่คูปอง ⇒ ปฏิเสธพร้อมเหตุ) · อัปเกรด/รอบยาวขึ้นที่มียอด ⇒ `ConvertTrialAsync` → `ChangeSubscriptionAsync` (จ่ายก่อนมีผล) ·
+  **ดาวน์เกรด/รอบสั้นลง/เปลี่ยนที่ไม่มียอด ⇒ ปฏิเสธก่อนเรียก service** ("ลดแพ็กเกจได้ที่หน้าแพ็กเกจในระบบ — มีผลสิ้นรอบ" · เดิม `ChangeSubscriptionAsync` บันทึก `ScheduledPlan` แล้วจึง throw) ·
+  หลักฐานยอมรับ `PolicyAcceptance` ช่อง `platform-subscription`/paymentId (ฝ่ายค้าน S5: ผู้ใช้คนเดิม+ฉบับเดิม+รายการเดิม ⇒ ไม่เพิ่มแถวซ้ำ `UserAlreadyAcceptedAsync`) · อีเมลยืนยัน (`IEmailService.TrySendAsync` — ไม่ตั้ง = log)) →
+  `PayWidget.open({publicBase: …/orders/{paymentId}, methods, card})` (บัตรผ่าน Omise.js token / พร้อมเพย์ QR ในหน้า · `returnUrl` = หน้าสำเร็จ) → `POST …/orders/{paymentId}/intents` → `StartIntentAsync`:
+  **เส้นเดียวทั้ง Live/Test** (ฝ่ายค้าน S1) `IPlatformPaymentService.StartSubscriptionPaymentAsync(…, allowTestMode: avail.IsTestMode)` — ด่าน part B ครบ (ยอดตรงราคาปัจจุบัน · ไม่ซ้อนสลิป/พัก · วิธีที่เปิด) ·
+  ต่างกันเฉพาะด่านช่องทาง `PlatformPayAvailability.StartRefusal` (Test ผ่านได้เมื่อเปิด+มีวิธี · `IsTestMode` ประทับบน intent ⇒ `TestModePaymentPolicy` กันผล) · ผู้เรียกเดิมไม่ส่ง ⇒ Test ถูกปฏิเสธเหมือนเดิม ·
+  Live ที่ยังไม่ `PlatformLiveConfirmedAt` ⇒ ปฏิเสธ (ไม่ตกไป Test) → `/checkout-success.html` poll `GET …/orders/{paymentId}` (ผลลัพธ์ `PublicCheckoutPolicy.Resolve`: Activated / PaidAwaitingApproval / TestPaid / AwaitingPayment / Failed · ใบเสร็จ `…/receipt` = `ISaasBillingDocumentService.GetReceiptPdfAsync`)
+- **เงินเข้า:** เส้นเดิมทั้งหมด — `SubscriptionPaymentHandler` ⇒ `ReviewPaymentAsync(systemConfirmed)` ⇒ ต่ออายุ + ใบเสร็จ/ใบกำกับแพลตฟอร์ม (`PlatformBillingDocumentIssuer`) · ไม่มีเอกสารชนิดใหม่
+- **ด่าน:** สวิตช์แอดมิน `SiteSettings.PublicCheckoutEnabled` (ค่าเริ่มต้นปิด · `api/admin/public-checkout` · audit) — **ปิด ⇒ แคตตาล็อก · ยอดตะกร้า · สร้างรายการ · เริ่มชำระ ตอบ 404 + เหตุผล ·
+  สถานะ intent / สถานะคำสั่งซื้อ / ใบเสร็จของรายการเดิมยังเปิดโดยตั้งใจ** (ฝ่ายค้าน S2 — ผู้จ่ายก่อนปิดสวิตช์ต้องดูผล/โหลดใบเสร็จได้) · `[Authorize]` + `RequireOwnerAttribute.DenyAsync` + service ตรวจ Owner ซ้ำ ทุกเส้นที่แตะเงิน · `RejectApiKey` ·
+  rate-limit ต่อ IP+ทั้งระบบ (`IChatRateLimiter` fail-closed · `PublicCheckoutPolicy.StartPer*`) · ยอดตะกร้าของบริษัท: ต่อผู้ใช้ + **รหัสคูปองต่างกัน ≤ 10 ต่อ 10 นาทีต่อผู้ใช้** ตรวจก่อนประเมิน (ฝ่ายค้าน S3 · ใช้กับเส้นสร้างรายการด้วย · เกิน ⇒ 429 ไทย) ·
+  `Idempotency-Key` จาก `submit-once.js` ทุก POST · `required_call_site_check` กติกา `_R232_WHY` (รวมลำดับ "ตัดสินชนิดก่อน side-effect" · จุดเรียกเริ่มชำระเดียว · ผู้เรียกเดิมห้ามส่ง `allowTestMode`) ·
+  สมัครสมาชิก (`api/auth/register`) ยังใช้ rate-limit ในหน่วยความจำของ `RateLimitMiddleware` เดิม (ฝ่ายค้าน S4 · บันทึกใน OMISE_READINESS §4)
+- **นโยบาย 2 ภาษา (232-Checkout-1):** `Helpers/LegalDocumentLanguage.Pick` ตัวเดียว — `GET api/legal/documents/{kind}?lang=en` · `storefront/legal/{kind}?lang=` · `public/reservations/legal/…?lang=` · ฉบับ/วันมีผล/หลักฐานเดียวกัน · ไม่มี EN = ไทย + ประกาศ ·
+  เติม/แก้ EN ของฉบับที่เผยแพร่แล้ว **ไม่ขยับเลขฉบับ** (ฝ่ายค้าน N3 · `PUT api/admin/legal-documents/{kind}/versions/{version}/english` → `SetPublishedEnglishAsync` · ตัวตัดสิน `PublishedEnglishRefusal` · audit chain `LegalDocumentEnglishUpdated` · ไทยเป็นฉบับผูกพัน) ·
+  หน้าแอดมิน CMS เตือนว่า EN ของร้านแสดงเฉพาะโหมด "เขียนเอง" (แม่แบบ = ล้าง EN · ฝ่ายค้าน N4)
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -5962,7 +6011,7 @@ feedback ครบ ซึ่งไม่จริงเลยสักตัว 
 > | **ยอดสลิปที่แขกกรอก (รอบ 205 W5 · R-52)** | `POST public …/reservations/{token}/slip` (`declaredAmount` form) → `UploadSlipByTokenAsync` → `LodgingSlipGallery.NormalizeDeclaredAmount` | ไม่ใช่เอกสาร/ไม่ใช่หลักฐาน — เก็บ `LodgingReservation.SlipDeclaredAmount` + audit ต่อใบ · กรอบสลิปแสดงคู่ยอดที่ต้องโอน · ระบบไม่ประทับ "ตรง" (G3) · ยอดจริงบันทึกตอน “บันทึกรับเงินตามสลิป” |
 > | **ค่าเช็คอินก่อนเวลา / เช็คเอาต์ช้า** | `CheckInAsync` / `CheckOutAsync` → `AddChargeCoreAsync` | `EarlyCheckInFee`/`LateCheckOutFee` มีคอลัมน์มาตั้งแต่รอบ 124 แต่**ไม่มีใครอ่าน** · **พนักงานติ๊กเอง** ไม่ใช่ระบบเก็บอัตโนมัติ |
 > | **สลิปเป็น PII** | `Helpers/LodgingSlipPath` + `reservations/{id\|token}/slip` | ถอด `/uploads/lodging-slips` ออกจาก `publicUploadPrefixes` (เดิมใครได้ URL ก็เปิดได้ตลอดกาล) · ด่านสองชั้น: สิทธิ์ + พาธ (กัน traversal จากค่าที่ค้างใน DB) · `PaymentSlipUrl` ใน API คืน **endpoint ที่มีด่าน** ไม่ใช่ storage path · หน้าเว็บเปิดผ่าน `Layout.openAuthed` (`<a href>` เปล่าไม่ส่ง Bearer ⇒ 401) |
-> | **LINE แจ้งเจ้าของ** | `ILineNotifyService.NotifyLodgingBookingAsync` ← `TryNotifyLineAsync` | จองใหม่ · แขกส่งสลิป → เข้ากลุ่ม LINE เดิมของบริษัท (ไม่ต้องตั้งค่าเพิ่ม) · ใช้ธง `NotifyOwnerOnBooking` ร่วมกับอีเมล · **ฝั่งแขกส่ง LINE ไม่ได้** (จองแบบไม่ล็อกอิน ไม่มี LINE user id) |
+> | **LINE แจ้งเจ้าของ** | `INotificationEngine.DispatchAsync` (`lodging.booking_created` / `lodging.slip_uploaded`) ← `TryNotifyLineAsync` (รอบ 232 · 232-Notify — เดิม `NotifyLodgingBookingAsync` ประกาศกลุ่ม LINE แล้วถอยไปกลุ่มกลางของแพลตฟอร์ม) | จองใหม่ · แขกส่งสลิป → ตารางแจ้งเตือนของบริษัท (ค่าตั้งต้น: กระดิ่งเจ้าของ + กลุ่ม LINE ของบริษัทถ้าผูก OA ไว้) · ใช้ธง `NotifyOwnerOnBooking` ร่วมกับอีเมล · **ฝั่งแขกส่ง LINE ไม่ได้** (จองแบบไม่ล็อกอิน ไม่มี LINE user id) |
 >
 > **สูตรยอดคงเหลือย้ายมาอยู่ที่เดียว** — `Helpers/LodgingAmounts.BalanceDue`
 > (เดิมคัดลอกไว้ 4 จุดใน `LodgingService`) เพราะกำลังจะมีผู้ใช้รายที่ห้าคือเส้นจ่ายเงินของแขก
@@ -7192,3 +7241,54 @@ _Last verified against codebase: 2026-10-29 (รอบ 208 แก้ตามฝ
   (N1) เว็บล่าสุดคีย์ `cmsLastSite:<companyId>:<userId>` · (N2) lead ระดับบริษัทนับเฉพาะเว็บที่ยังอยู่ · (N4) ไม่มี `data-nav-id="undefined"` · (N7) encode subdomain · (N11) ฟอร์มที่พักค้างแก้ ⇒ ถามก่อนสลับเว็บ ·
   `required_call_site_check` +6 กติกา (`_R215_WHY`)
 - sim `tools/cms_workspace_nav_sim.js` · เทสต์ `CmsModuleResolverTests` (lead ทั้งสองทิศ · ชื่อหมวด · Newsletter) · `CmsSiteScopeTests` (รายการเว็บ 3 เคส) · Last verified `commit e717d3b5` (+ คอมมิตแก้ฝ่ายค้านตามหลัง)
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Omise — §2.6b ขั้นถัดไปของผู้จ่าย `GatewayChargeNextStep` (QR ชนะ authorize_uri · Pending ว่าง = Failed `no_next_step` · ข้อความไทยตอนหมดเวลา) · `pay-widget.js` QR ก่อน redirect · `platform-pay-test.html` resume · URL webhook ผ่าน `SystemBaseUrl.PublicOrigin` · เงินโหมดทดสอบไม่มีผลทางธุรกิจ `TestModePaymentPolicy` (232-Omise-2) — เทสต์ `GatewayChargeNextStepRound232Tests` · `TestModePaymentPolicyRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+
+- **รอบ 232 · นโยบายผู้รับแจ้งเตือน LINE — เรื่องของผู้เช่า vs เรื่องของแพลตฟอร์ม (คำตัดสิน 232-Notify · `Helpers/NotificationAudiencePolicy` · ยังไม่ได้คอมไพล์ในเครื่องนี้)**:
+
+- **อาการ (เจ้าของ)**: OA กลางของ NextAcc ส่ง "✅ เอกสารอนุมัติแล้ว 📄 PI-20261001-0005 👤 บริษัท บุญทรัพย์ ถาวร จำกัด 💰 3,584.50 บาท" เข้าห้องของเจ้าของแพลตฟอร์ม
+- **สาเหตุจริง (พิสูจน์จากโค้ดก่อนแก้)**: `LineNotifyService.ResolveConfigAsync(companyId)` — บริษัทไม่ได้เปิด LINE/ไม่มี token ⇒ `_nextAcc.GetAsync()` คืน **token + `SiteSettings.LineMessagingGroupId` ของ OA กลาง**
+  ⇒ `NotifyDocumentApprovedAsync` (+ `NotifyPaymentReceivedAsync` · `NotifyOverdueInvoiceAsync` · `NotifyBankSyncCompleteAsync` · `NotifyECommerceSyncAsync` · `NotifyLodgingBookingAsync` · `NotifyPayrollCompletedAsync`/`NotifyLowBalanceAsync` (2 ตัวหลังไม่มีผู้เรียก))
+  ประกาศเหตุการณ์ของ**ทุกบริษัทที่ไม่ได้ตั้ง OA เอง**เข้ากลุ่มกลางของแอดมิน · เส้น 1:1 `PushToUserAsync(companyId…)`/`PushFlexToUserAsync`/`TryPushToUserAsync`/`TestConfigAsync` ก็ถอยไป token กลางแบบเดียวกัน (ปุ่ม "ทดสอบ" ของร้านตอบ "สำเร็จ" ทั้งที่ร้านยังไม่มี OA)
+  — ไม่ใช่เรื่อง "ผู้รับเป็นทั้งเจ้าของผู้เช่าและแอดมิน" และไม่ใช่ `NotificationEngine` (เส้น 1:1 ของพนักงานผ่านบอทกลางถูกต้องอยู่แล้ว)
+- **ตัวตัดสินเดียว** `Helpers/NotificationAudiencePolicy` (pure): `Classify(eventKey)` → `TenantBusiness` (ตั้งต้นสำหรับทุกคีย์ที่ไม่รู้จัก) | `PlatformAccount` (`subscription.*` · `quota.*` · `notify.quota.*` · `overage.*` · `platform.account.*`) | `PlatformOps` (`platform.ops.*`) ·
+  `LineRoute(audience, oa, target, companyOaConfigured)` → `LineRouteDecision(Allowed, RuleCode, Reason)`:
+
+  | ผู้รับของเหตุการณ์ | OA ของบริษัท → กลุ่ม/1:1 | OA กลาง → 1:1 สมาชิกของบริษัทนั้น | OA กลาง → กลุ่มกลางของผู้ดูแล (ฝ่ายค้าน N3: ไม่มีปลายทาง "แอดมิน 1:1" — กระดิ่งแอดมินเดินทาง `PlatformPaymentAttention`) |
+  | --- | --- | --- | --- |
+  | **TenantBusiness** (เอกสาร · รับเงิน · เกินกำหนด · ธนาคาร · ร้านค้าออนไลน์ · ที่พัก · เงินเดือน · OCR · อนุมัติ · ลา/เบิก · CMS) | ✅ ถ้าบริษัทผูก OA · ❌ `NOTIFY-TENANT-NO-COMPANY-OA` **ไม่ถอยไป OA กลาง** | ✅ `NOTIFY-TENANT-MEMBER-NEXTACC` (userId แยกตาม provider — พนักงาน/ลูกค้าที่ผูก "ผูก 123456"/"สลิป 123456"/รหัสลูกค้า กับบอทกลางเอง = ช่องส่วนตัวของเขา) | ❌ `NOTIFY-TENANT-NOT-PLATFORM` |
+  | **PlatformAccount** (ต่ออายุ · ชำระค่าแพ็กเกจ · ใกล้หมดอายุ · โควตา/ส่วนเกิน · ใบแจ้งหนี้ค่าบริการ) | ❌ `NOTIFY-ACCOUNT-NOT-COMPANY-OA` | ✅ `NOTIFY-ACCOUNT-OWNER-NEXTACC` (เจ้าของบริษัทนั้น) | ❌ `NOTIFY-ACCOUNT-NOT-PLATFORM-GROUP` |
+  | **PlatformOps** (ฟอร์มติดต่อ/แชทหน้าเว็บ NextAcc · เงินเข้าไม่ตรง · webhook/gateway/งานกลางคืนล้ม) | ❌ `NOTIFY-OPS-NOT-TENANT` | ❌ | ✅ `NOTIFY-OPS-PLATFORM` (ปิดได้ `SiteSettings.LineMessagingOpsAlertsToGroup`) |
+
+  ผู้รับที่เป็นทั้งเจ้าของผู้เช่าและแอดมิน: ได้เฉพาะตามบทบาทที่เหตุการณ์กำหนด (ตารางตัดสินจาก "ผู้รับของเหตุการณ์" ไม่ใช่ตัวบุคคล)
+- **`ILineNotifyService` ใหม่ (ทุกเมธอดประกาศผู้รับ+OA ชัด · ผ่าน `LineRoute` ก่อนยิง · ไม่มีเมธอดไหน "ลองอันหนึ่งแล้วถอยไปอีกอัน")**:
+  `TryPushCompanyGroupAsync(companyId, text)` (OA ร้าน → `LineDefaultGroupId`) · `TryPushToUserAsync(companyId, userId, text)` / `TryPushFlexToUserAsync(companyId, …)` (OA ร้าน 1:1 · คืน `LinePushResult` — เดิม bool/Task กลืนผล) ·
+  `TryPushViaNextAccAsync` / `TryPushFlexViaNextAccAsync` (บอทกลาง 1:1 ถึงสมาชิกผู้เช่า — เดิม) · `TryPushPlatformOpsAsync(text)` (กลุ่มกลาง · PlatformOps) · `TestConfigAsync` (token ของร้านเท่านั้น) ·
+  **ถอด**: `SendMessageAsync` · `PushToUserAsync` ×2 · `PushFlexToUserAsync` ×2 · `Notify*Async` ×8 · `ResolveConfigAsync` (ตัวอ่าน OA ร้านตัวใหม่ `ResolveCompanyOaAsync` ห้ามแตะ resolver กลาง — `required_call_site_check`) ·
+  `LinePushResult.RuleCode` = กติกาที่กั้น (ผู้เรียก log/ประทับได้ · `PayslipLineDeliveryService` แปลง `NOTIFY-TENANT-NO-COMPANY-OA` เป็น `LineNotConfigured`)
+- **ประกาศกลุ่ม LINE 8 ตัวเดิม → เครื่องแจ้งเตือนกลาง (ผู้เช่าตั้งค่าได้)**: คีย์ใหม่ `document.payment_received` · `ar.invoice_overdue` (งาน dunning ภายใน · คนละอย่างกับ `ar.dunning.*` ถึงลูกค้า) · `bank.sync_completed` · `ecommerce.sync_completed` ·
+  `lodging.booking_created` · `lodging.slip_uploaded` (+ `document.approved` เดิมที่ engine ยิงอยู่แล้ว — ประกาศกลุ่มซ้ำถูกถอด) · `NotificationSetting.EnableLineGroup` (คอลัมน์ใหม่ · ADD COLUMN หลัง CREATE TABLE) = ช่องที่ 4 "กลุ่ม LINE ของบริษัท"
+  ส่งหนึ่งครั้งต่อเหตุการณ์ (ไม่ขึ้นกับบทบาท) ผ่าน `TryPushCompanyGroupAsync` · **ค่าตั้งต้น** (บริษัทยังไม่มีแถวของคีย์นั้น) = `NotificationAudiencePolicy.DefaultMatrix`: กระดิ่งถึงเจ้าของ + กลุ่ม LINE ของบริษัท**เฉพาะเมื่อผูก OA+กลุ่มไว้แล้ว**
+  (`CompanyLineGroupConfigured` — บริษัทที่เคยได้ประกาศกลุ่มผ่าน OA ของตัวเองไม่ถดถอย) · คีย์อื่นค่าตั้งต้นว่างเหมือนเดิม · `NotificationConfigService.GetCompanySettingsAsync` ส่งแถวตั้งต้น `IsDefault=true` ให้ `notifications.html` แสดง (ป้าย "ค่าตั้งต้นของระบบ") — JS ไม่มีสำเนากติกา ·
+  `NotificationEngine.DispatchLineAsync` ผ่าน `LineRoute(Classify(eventKey), NextAccOa, TenantMember)` ก่อนยิงทุกครั้ง · `DispatchCompanyGroupAsync` รับเฉพาะ `TenantBusiness`
+- **หน้าตั้งค่า**: `settings.html` แท็บ LINE แสดง `LineConfigResponse.TenantLineNotice` (`NotificationAudiencePolicy.CompanyGroupNotice`) — "บริษัทยังไม่ได้ผูก LINE OA ของตัวเอง — แจ้งเตือนธุรกิจส่งทางกระดิ่ง/อีเมลแทน (ไม่ส่งผ่าน OA กลาง)" (ห้าม fallback เงียบ) ·
+  แอดมิน `site-settings.html` แท็บ LINE OA กลาง: ป้ายนโยบาย + ติ๊ก "ส่งเรื่องของระบบเข้ากลุ่มนี้" (`LineMessagingOpsAlertsToGroup` · ตั้งต้น true · ผู้อ่าน `NextAccLineConfig` → `TryPushPlatformOpsAsync`) ·
+  PlatformAccount ผ่าน OA กลางยังคุมด้วยค่าตั้งเดิม (`PlatformBillingSettings.ReminderLineEnabled` · ตาราง `subscription.*` ของบริษัท) — ไม่สร้างสวิตช์ซ้ำ
+- **จุดส่ง LINE ทั้งหมดหลังแก้ (grep `_line\w*\.(TryPush|TestConfig)` = 14 จุด)**: ผู้เช่าผ่าน OA ร้าน 4 (`BookingNotifier` · `DocumentLineDeliveryService` · `PayslipLineDeliveryService` HR-typed · `LineConfigController.Test`) ·
+  สมาชิกผู้เช่าผ่านบอทกลาง 7 (`NotificationEngine` · `StaffDailySummaryService` ×2 · `PayslipLineDeliveryService` bound · `BookingNotifier` LineViaNextAcc · `DocumentService` ผู้ส่งบิลทางไลน์ · `PlatformBillingNotifier` = PlatformAccount ถึงเจ้าของ) ·
+  กลุ่มกลาง PlatformOps 2 (`ContactInquiryController` · `ChatbotService`) · กลุ่มของบริษัท 1 (`NotificationEngine.DispatchCompanyGroupAsync`) — ไม่มีจุดใดส่งเรื่องของผู้เช่าเข้ากลุ่มกลางอีก
+- **คิว/ข้อความที่ส่งไปแล้ว**: ไม่มีคิว LINE ค้างในฐาน (push ยิงทันที · `StaffDailySummaryDeliveries`/`PlatformBillingNotices` เป็นผลการส่ง ไม่ใช่คิว) ⇒ ไม่ต้อง migration ข้อมูล · ข้อความที่เคยเข้ากลุ่มกลางลบย้อนหลังไม่ได้ (LINE ไม่มี API ลบ push)
+- **ฝ่ายค้าน 232-Notify (แก้แล้ว)**: **B1** กันถดถอย `document.approved` — บริษัทที่ตั้งแถวไว้เองก่อนรอบนี้ + ผูก OA+กลุ่ม เคยได้ประกาศกลุ่มโดยไม่มีค่าตั้ง ⇒ backfill ครั้งเดียว `Helpers/NotificationLineGroupBackfill.MigrationSql`
+  (DO-block เพิ่มคอลัมน์ `EnableLineGroup` + `UpdateSql` **เฉพาะตอนคอลัมน์ยังไม่มี** — แพตเทิร์น information_schema guard ที่เรพใช้อยู่ · บูตถัดไป no-op ⇒ แถวที่ผู้ใช้ปิดช่องกลุ่มเองไม่ถูกทับ · ไม่ขึ้นกับวันปล่อยจริง —
+  เลือกแทนเกณฑ์ `UpdatedAt < วันปล่อย` (วันที่ฝังไว้ไม่ตรงวันปล่อยจริง ⇒ หลุด/ทับ) และแทนคอลัมน์ธง IsDefault ที่ต้อง persist ตลอดไป · Db test `Db/NotificationLineGroupRound232DbTests` B1 ทั้งสองทิศ) ·
+  **S1** endpoint push ของ LINE ยิงที่เดียว `LineNotifyService.PushCoreAsync` — `LineBotService.ReplyAsync`/`PushFlexAsync` เดิมยิง `api.line.me` เอง 2 จุด ⇒ ผ่าน `TryPushViaNextAccAsync`/`TryPushFlexViaNextAccAsync` (`ILineNotifyService?` ฉีดเพิ่มท้าย ctor · null = ข้าม+log) ·
+  checker `LINE_PUSH_FORBID` ทั้งเรพ + self-test (วางสตริงใน `LineWebhookController`/`LineBotService` ในหน่วยความจำต้องฟ้อง · คอมเมนต์/`/v2/bot/info`/ไฟล์ตัวยิงไม่ฟ้อง) ·
+  **S2** `ResolveCompanyOaAsync` ตรวจ `IsUsable` ก่อน `Unprotect` (token ถอดไม่ได้ = ไม่มี OA) · Db test: เปิด LINE+token ถอดไม่ได้ / ปิด LINE แต่ OA กลางมี token+กลุ่ม ⇒ 0 HTTP + `NOTIFY-TENANT-NO-COMPANY-OA` · ทิศตรงข้าม: เปิด+ถอดได้ ⇒ ยิงด้วย token ของบริษัทเข้ากลุ่มของบริษัท ·
+  **N1** `TryPushViaNextAccAsync(…, audience)` — `PlatformBillingNotifier` ส่ง `PlatformAccount` ⇒ `NOTIFY-ACCOUNT-OWNER-NEXTACC` ตรงตาราง · **N2** แชทหน้าเว็บ (`ChatbotService.NotifyAgentNeededAsync` — รวม `Channel="Tenant"` ที่ผู้ใช้ ERP ขอคุยกับเจ้าหน้าที่ NextAcc) = PlatformOps โดยตั้งใจ (คนตอบคือทีมแพลตฟอร์ม) ·
+  **N3** ลบ `LineTargetKind.PlatformAdmin` (ทางที่ไม่มีผู้เรียก)
+- ด่าน `tools/required_call_site_check.py` บล็อก 232-Notify 24+7 กติกา + เคสฝ่ายค้าน NT1–NT7 + `LINE_PUSH_FORBID` · เทสต์ `NotificationAudiencePolicyRound232Tests` (ตาราง 3×3 ทั้งสองทิศ · HTTP capture: กลุ่มร้านไม่มี OA = ไม่ยิง · PlatformOps = token กลาง+กลุ่มกลาง · บอทกลาง 1:1 ไม่ถดถอย) ·
+  `CmsRound212DailySummaryTests.Customer_push_without_company_oa_is_denied_and_never_uses_global_token` (พลิกทิศจาก `…keeps_global_resolution_unchanged`)
+
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — §9.9 นโยบายผู้รับแจ้งเตือน LINE `NotificationAudiencePolicy` · `ILineNotifyService` ไม่มี fallback OA กลาง · ประกาศกลุ่ม 8 ตัว → engine + `EnableLineGroup` · เทสต์ `NotificationAudiencePolicyRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม SourceLine — §2.4a ป้าย lifecycle "ไม่ทราบสัดส่วน" ทั้งที่ยอดเท่าเป๊ะ: ตัวตัดสินเดียว `Helpers/SourceLineBackfill` ประทับ/ย้าย `SourceLineId` ทุกทางเข้า (สร้าง · แก้ไข · OCR link-po) + ป้ายมองทะลุ GRN/DN + งานซ่อมข้อมูลเก่า `SourceLineBackfillJob` — เทสต์ `SourceLineBackfillTests` · `SourceLineBackfillDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout + นโยบาย 2 ภาษา — §2.12 ใหม่ (`PublicCheckoutController` · `PublicCheckoutService` · `PublicCheckoutPolicy` · `SiteSettings.PublicCheckoutEnabled`) · `LegalDocumentLanguage` 2 ภาษาทุกหน้านโยบาย (แพลตฟอร์ม/CMS/จองโต๊ะ) — เทสต์ `PublicCheckoutRound232Tests` · `LegalDocumentLanguageRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

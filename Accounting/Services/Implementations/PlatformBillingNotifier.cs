@@ -100,7 +100,8 @@ public class PlatformBillingNotifier : IPlatformBillingNotifier
                         var ok = 0; string? err = null;
                         foreach (var o in to)
                         {
-                            var r = await _line.TryPushViaNextAccAsync(o.LineUserId!, new[] { $"{subject}\n\n{body}\n\n🔗 {link}" });
+                            // รอบ 232 (232-Notify · ฝ่ายค้าน N1): เรื่องบัญชีของผู้เช่ากับแพลตฟอร์ม → เจ้าของบริษัทนั้นผ่าน OA กลาง = PlatformAccount (NOTIFY-ACCOUNT-OWNER-NEXTACC)
+                            var r = await _line.TryPushViaNextAccAsync(o.LineUserId!, new[] { $"{subject}\n\n{body}\n\n🔗 {link}" }, NotificationAudience.PlatformAccount);
                             if (r.Ok) ok++; else err = r.Error;
                         }
                         await FinishAsync(id, ok > 0 ? StatusSent : StatusFailed, ok > 0 ? $"ส่งถึง {ok}/{to.Count}" : (err ?? "ส่งไม่สำเร็จ"), ct);

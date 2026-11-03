@@ -117,11 +117,17 @@ public class DocumentLineDeliveryService : IDocumentLineDeliveryService
 
         try
         {
-            await _line.PushFlexToUserAsync(companyId, lineId,
+            // รอบ 232 (232-Notify): ลูกค้าของบริษัทผ่าน OA ของบริษัทเท่านั้น (ไม่ถอยไป OA กลาง) · ผลล้มไม่ถูกกลืน (เดิม PushFlexToUserAsync คืน Task ⇒ true แม้ LINE ปฏิเสธ)
+            var r = await _line.TryPushFlexToUserAsync(companyId, lineId,
                 isEn ? $"{typeLabel} {doc.DocumentNumber} — Total ฿{doc.TotalAmount:N2}"
                      : $"{typeLabel} {doc.DocumentNumber} ยอดรวม ฿{doc.TotalAmount:N2}", flex);
+            if (!r.Ok)
+            {
+                _logger.LogWarning("LINE delivery for doc {DocId} ไม่สำเร็จ [{Rule}]: {Error}", documentId, r.RuleCode, r.Error);
+                return false;
+            }
             _logger.LogInformation("LINE delivery sent for doc {DocId} → LineUserId {Line}",
-                documentId, lineId);
+                documentId, CustomerLineLinkRule.Mask(lineId));
             return true;
         }
         catch (Exception ex)

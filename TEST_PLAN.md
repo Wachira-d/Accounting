@@ -1,3 +1,53 @@
+## PC232 — หน้าซื้อแพ็กเกจสาธารณะ (cart + checkout จบในเว็บ · Omise review) + นโยบาย 2 ภาษา (รอบ 232 · คำตัดสิน 232-Checkout-1/2 · `erp-review/2026-11-03/OMISE_READINESS.md`)
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| PC232-01 | สวิตช์ `PublicCheckoutEnabled` ปิด / ไม่มีแถวค่าตั้ง | catalog/quote/orders ตอบ 404 + `DisabledMessage` · หน้า pricing/checkout บอกตรง ๆ + ลิงก์สมัคร · ปุ่มบน index ไม่ขึ้น | pure `ปิดสวิตช์_หรือไม่มีแถวค่าตั้ง_*` · `PublicCheckoutController.Catalog` |
+| PC232-02 | ช่องทางโหมด Test | ซื้อได้ครบลูป + `isTestMode=true` ⇒ ป้าย "โหมดทดสอบ" ทุกหน้า · intent ผ่าน `IPaymentIntentService.StartAsync` ใต้บริษัทผู้ให้บริการ (PayerCompanyId · ยอดของรายการ · วิธีที่เปิด) · เงินทดสอบไม่เปิดสิทธิ์ (`TestModePaymentPolicy`) · หน้าสำเร็จ `TestPaid` | pure `โหมดทดสอบ_*` · `เงินทดสอบสำเร็จ_ไม่ใช่เปิดสิทธิ์` · `required_call_site` StartIntentAsync |
+| PC232-03 | ช่องทาง Live ผ่านด่านแพลตฟอร์มแล้ว | รับเงินจริงผ่าน `IPlatformPaymentService.StartSubscriptionPaymentAsync` (ด่านเดิมครบ) · ไม่มีป้ายทดสอบ | pure `โหมดจริง_ผ่านด่าน*` |
+| PC232-04 | ทิศตรงข้าม: Live แต่ยังไม่ `PlatformLiveConfirmedAt` / config ปิด / ไม่มีวิธี / ไม่มี config | หน้าเปิดแต่ชำระออนไลน์ไม่ได้ + เหตุ + ทางไปต่อ (สมัครแล้วโอนในระบบ) · **ไม่ตกไปโหมดทดสอบเงียบ** | pure `โหมดจริง_ยังไม่ผ่านด่าน*` · `ช่องทางไม่พร้อม_*` |
+| PC232-05 | แพ็กเกจฟรีถาวร / ราคา 0 / ปิดใช้ | ไม่ขึ้นหน้าขาย · quote ⇒ 400 "ไม่มีค่าใช้จ่าย" | pure `แพ็กเกจที่ขายบนหน้าสาธารณะ` |
+| PC232-06 | ยอดของตะกร้า | ยังไม่ล็อกอิน = ราคาตั้ง (`PlatformPlanPricing.AmountDue`) + หมายเหตุคูปองตรวจหลังรู้บริษัท · มีบริษัท = `QuotePlanChangeAsync` (ราคาพิเศษ+คูปอง — ตัวเดียวกับในระบบ) · คูปองใช้ไม่ได้ = 400 พร้อมเหตุ | `required_call_site` CreateOrderAsync forbid `CyclePrice/AmountDue` · `PublicCheckoutService.QuoteAsync` |
+| PC232-07 | กดสั่งซื้อซ้ำ / กลับมาจากอีเมล | รายการรอชำระเดิม (แพ็กเกจ/รอบตรง · ไม่ผูกใบ · ไม่มีสลิป · ไม่ถูกพัก) ถูกใช้ต่อ `resumed=true` — ไม่สร้างซ้ำ · คีย์กันซ้ำ `submit-once.js` ทุก POST | pure `รายการรอชำระเดิม_*` + ทิศตรงข้าม 6 กรณี |
+| PC232-08 | ยอดจริงต่างจากที่แสดง (ราคาพิเศษ/คูปองเปลี่ยน) | หน้า checkout อัปเดตยอด + ให้กดยืนยันอีกครั้ง (ไม่เปิด widget เงียบ) | `checkout.html` pay() |
+| PC232-09 | ติ๊กยอมรับข้อกำหนด+คืนเงิน | ไม่ติ๊ก/ฉบับเก่า ⇒ 400 ไม่สร้างรายการ · ติ๊ก ⇒ `PolicyAcceptance` ผูก `platform-subscription`/paymentId (ช่องเดียวกับในระบบ) · เริ่ม intent ตรวจซ้ำ | `required_call_site` CreateOrder/StartIntent |
+| PC232-10 | หน้าสำเร็จ | poll 2→10 วิ ≤ 15 นาที · ไม่เชื่อ query · ผลลัพธ์ `Resolve`: Approved ⇒ เปิดสิทธิ์ · เงินจริงเข้าแต่รายการไม่อนุมัติ ⇒ "รอตรวจ" (ไม่โกหกว่าเปิดแล้ว) · Failed/Expired/Cancelled ⇒ ล้มเหลว · ใบเสร็จดาวน์โหลดเมื่อ `ReceiptNumber` มี | pure `อนุมัติแล้ว_เปิดสิทธิ์` · `เงินจริงเข้าแต่รายการยังไม่อนุมัติ_*` · `ล้มเหลว_*` · `ยังไม่ได้รับเงิน` |
+| PC232-11 | สิทธิ์/ความปลอดภัย | endpoint ที่แตะเงิน `[Authorize]` + `RequireOwnerAttribute.DenyAsync` + service ตรวจ Owner ซ้ำ · `RejectApiKey` · rate-limit ต่อ IP+ทั้งระบบ fail-closed · ไม่เปิดข้อมูลบริษัทอื่น (ทุก query กรอง CompanyId) · intent status ต้องตรง paymentId | `PublicCheckoutController` · `required_call_site` |
+| PC232-12 | นโยบาย 2 ภาษา | `?lang=en` มี EN ⇒ EN + title EN · ไม่มี EN ⇒ ไทย + `languageNotice` (ไม่แต่ง) · th ⇒ ไทย + `englishAvailable` · ฉบับ/วันมีผล/ConsentVersion เท่ากันทั้งสองภาษา · ประวัติฉบับคง lang · แอดมิน/ร้านแก้ EN แล้ว echo กลับ · แม่แบบร้าน/หน้าจองโต๊ะ = ไทย + ประกาศ | pure `LegalDocumentLanguageRound232Tests` (9) · `LegalController.GetDocument` · `CmsRenderingService.GetLegalPageAsync` |
+
+## SL232 — ป้าย lifecycle "ไม่ทราบสัดส่วน" ทั้งที่ยอดเท่าเป๊ะ: SourceLineId ทุกทางเข้า + งานซ่อมข้อมูลเก่า (รอบ 232 · `DOCUMENT_FLOW.md` §2.4a)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| SL232-01 | PI ยอด 12,164.72 = PO เป๊ะ · บรรทัด PI ชี้ SourceLineId ของ PO | `Full` · "✓ ออกใบแจ้งหนี้ซื้อ PI-20261007-0004 แล้ว" | pure `DocumentConversionProgressTests.รอบ232_ใบแจ้งหนี้ซื้อยอดเท่าใบสั่งซื้อเป๊ะ_*` |
+| SL232-02 | ทิศตรงข้าม: ผูกหัว (RelatedDocumentId) แต่ไม่มีแถว consumed (บรรทัดไม่ชี้/dangling) | `Partial` · % null · ข้อความ `UnknownShareText` บอกสาเหตุ "รายการของใบลูกไม่ได้จับคู่" — ห้ามแต่ง "ครบ" จากยอดหัวใบ | pure `รอบ232_ทิศตรงข้าม_ผูกหัวแต่บรรทัดไม่ชี้ต้นทาง_*` |
+| SL232-03 | สาย PO → GRN → PI (PI ยกบรรทัดจาก GRN) | แถวหลานจาก `LoadBilledViaDeliveryAsync` เข้าแกนวางบิลของ PO ⇒ `Full` · ป้ายเอ่ยชื่อ PI | pure `รอบ232_สาย_PO_GRN_PI_*` · checker `LoadConversionSummariesAsync` must `LoadBilledViaDeliveryAsync(` |
+| SL232-04 | `SourceLineBackfill.Stamp`: จำนวนบรรทัดเท่า + คำอธิบาย (normalize)/รหัสสินค้า + จำนวนตรง · รหัสสินค้าชนะคำอธิบาย | ประทับครบทุกบรรทัด | pure `SourceLineBackfillTests.จับคู่แน่นอน_*` · `รหัสสินค้าชนะคำอธิบาย_*` |
+| SL232-05 | ทิศตรงข้าม: จำนวนไม่ตรงบรรทัดเดียว · จำนวนบรรทัดไม่เท่า · ฝั่งหนึ่งมีรหัสอีกฝั่งไม่มี · บรรทัดชี้ต้นทางนี้อยู่แล้ว · ชี้ที่อื่นโดยไม่อนุญาต | ไม่แตะเลย (0) · `overwriteForeign` เท่านั้นที่ทับ dangling | pure `ทิศตรงข้าม_*` ×3 · `บรรทัดชี้ที่อื่น_*` |
+| SL232-06 | แก้ใบต้นทาง (บรรทัดสร้างใหม่ Id ใหม่ · จำนวนเปลี่ยน) · ลบบรรทัดหนึ่ง | `Remap` ย้ายตัวชี้ของใบลูกตาม · จับไม่แน่นอน = คง dangling (ไม่ชี้ผิด) | pure `แก้ใบต้นทาง_*` · `ทิศตรงข้าม_แก้ใบต้นทางแล้วลบบรรทัดหนึ่ง_*` · checker `UpdateDocumentAsync` before(RemoveRange → Relink) |
+| SL232-07 | แก้ใบลูกผ่านทางเข้าที่ไม่ส่ง `sourceLineId` · ฟอร์มส่งกลับเอง | `CarryFromPrevious` ยกค่าเดิม · ฟอร์มส่งมา = ไม่ทับ | pure `แก้ใบลูกผ่านทางเข้า_*` · `ทิศตรงข้าม_ฟอร์มส่ง_*` |
+| SL232-08 | งานซ่อมข้อมูลเก่า `SourceLineBackfillJob.RunCompanyAsync`: PI ผูกหัว PO รายการตรง · PI จำนวนไม่ตรง · PI ที่แปลงมาจริง | Candidates 2 · ซ่อม 1 ใบ 2 บรรทัด + audit row · ไม่ตรง = ไม่แตะ (นับ Unmatched) · แปลงมาจริงไม่อยู่ในรายการ | Db `SourceLineBackfillDbTests` (ต้อง `ACCOUNTING_TEST_PG` · ไม่มีฐาน = ข้ามพร้อมข้อความ) · checker `RunCompanyAsync` must `overwriteForeign: true` + audit chain |
+| SL232-09 | ฝ่ายค้าน S4: รอบสองหลัง watermark `Company.SourceLineBackfillCheckedAt` เลื่อน · ใบลูกใหม่หลัง watermark · ใบต้นทางถูกแก้ (`UpdatedAt`) หลัง watermark | รอบสอง Candidates 0 (ใบจำนวนไม่ตรงไม่ถูกกวาดซ้ำ) · ใบใหม่ถูกเห็นและซ่อม · ใบต้นทางถูกแก้ ⇒ ใบลูกที่ยังไม่มีตัวชี้ถูกเห็นอีกครั้ง (Candidates 1 · Unmatched 1) · watermark เลื่อนหลัง Stamp เท่านั้น | Db `SourceLineBackfillDbTests` (รอบสอง/สาม/สี่) · checker before(Stamp → `SourceLineBackfillCheckedAt = nowUtc`) + `touched > cursor` + `c.UpdatedAt`/`s.UpdatedAt` |
+| SL232-10 | ฝ่ายค้าน S3: คำอธิบายซ้ำ 2 บรรทัดสลับจำนวนตอนแก้ใบต้นทาง · กุญแจ+จำนวนซ้ำทั้งคู่ | ไม่ย้ายตัวชี้ผิด (คง dangling) · ลำดับเดิมจำนวนเดิมยังย้ายถูก · ซ้ำทั้งคู่ = ไม่จับเลย | pure `ฝ่ายค้านS3_*` ×2 |
+| SL232-11 | ฝ่ายค้าน S5/N5: สแกนผูก PO จับคู่ไม่ได้ ⇒ แท็ก `[SRC-LINE]` → `SourceLineWarning` บนหน้าตรวจ · จับได้ ⇒ `SourceLinesStamped` · แท็กถูกล้างตอนสร้างบรรทัดใหม่ · ข้อความ 422 สองชั้นระบุชื่อใบทั้งสอง | Parse round-trip · StripRecomputed ตัดแท็ก · ข้อความมีเลขใบต้นทาง + ใบเสนอราคาราก | pure `ฝ่ายค้านS5_*` · `PartialConvertPolicyTests.รอบ232_N5_*` · checker `BuildScanLinesAsync` must `OcrSourceLineNote.*` |
+
+## HB232 — hub แพ็กเกจ/บิล ทางเข้าเดียว · "ไม่หมดอายุ" ตัวตัดสินเดียว · โควตา CMS ในฟอร์มแพ็กเกจ (รอบ 232 · `ACCOUNT_STRUCTURE.md` §6.2h)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| HB232-01 | ค่าแทน EndDate = ค.ศ. 2126 โดยธง `IsPermanentFree=false` (ภาพ "2 เม.ย. 2669") | `IsOpenEnded` true · `DisplayEnd`/`NextRenewalInvoiceAt` = null · `DaysLeft` null ⇒ จอแสดง "ไม่หมดอายุ" ไม่มีวันออกใบ | pure `SubscriptionExpiryTests.ค่าแทน_2126_โดยธงฟรีถาวรหลุด_*` |
+| HB232-02 | ตัวเขียน `OpenEnded(now)` ↔ ตัวอ่าน · ค่าแทนที่เขียนไว้ 40 ปีก่อน | ยังจำแนกเป็นไม่หมดอายุ (เกณฑ์ 50 ปี < 100 ปี) | pure `ตัวเขียนค่าแทนกับตัวอ่าน_ตรงกัน` |
+| HB232-03 | ทิศตรงข้าม: รายเดือน · รายปี · 10 ปี · ก่อนเกณฑ์ 1 วัน | แสดงวันหมดอายุ/วันที่เหลือ/วันออกใบ (EndDate − lead) ตามเดิม · เกณฑ์ 50 ปีพอดี = ค่าแทน | pure `แพ็กเกจจริง_แสดงวันหมดอายุ*` (Theory 4) · `เกณฑ์_50ปีพอดี_*` |
+| HB232-04 | ไม่ Active / ออกใบรอบนี้แล้ว / ขอยกเลิกสิ้นรอบ · หมดอายุแล้ว | ไม่มีวันออกใบ · วันที่เหลือ 0 (ไม่ใช่ไม่หมดอายุ) | pure `วันออกใบต่ออายุ_ไม่มีเมื่อ_*` · `หมดอายุแล้ว_*` |
+| HB232-05 | `const` ประกาศใน `<script>` บล็อกหลังแต่ถูกเรียกจากบล็อกก่อน (บั๊ก "UsageTab is not defined") | checker ฟ้อง · ประกาศก่อนเรียก/เรียกในคอมเมนต์/ชื่อซ้อน/บล็อก src ไม่ฟ้อง · `window.X` ที่อ้างต้องมีผู้ผูก (Bill · HubTabs · PlanTab · UsageTab) | `python3 tools/window_global_check.py --self-test` (negative test ในตัว) |
+| HB232-06 | modal ใต้ `.modal-overlay` (billing · addons · admin-addons) | ซ่อนจนกว่า `.active` — ไม่มีกล่องค้างท้ายหน้า | ตรวจสายตา/markup (ไม่มี `<div class="modal" id=` ที่ไม่มี overlay ใน 3 หน้านี้ — `grep -n 'class="modal" id=' wwwroot/pages/{billing,addons,admin-addons}.html` = 0) |
+| HB232-07 | ฟอร์มแพ็กเกจ: โหลด `/api/admin/quota/resources` ไม่สำเร็จ | ช่องโควตา CMS ล็อก + toast · บันทึกแพ็กเกจไม่ PUT allowances (ไม่ทับค่าเดิมด้วยค่าว่าง) | manual (plans.html `quotaFieldsHtml`/`saveQuotaAllowances` — `window._quotaResources === null`) |
+| HB232-08 | ฝ่ายค้าน B1(ก): ปิดรอบ Monthly/Quarterly/SemiAnnual/Annual · รอบไม่รู้จัก | EndDate = now + 1/3/6/12 เดือน (ไม่รู้จัก = 1) · NextBillingDate = EndDate · ไม่เป็นค่าแทน · จอแสดงวันจริง | pure `B1_ปิดรอบ_*` (Theory 4) · `B1_รอบที่ไม่รู้จัก_*` · checker ApplyTemplate/UpdatePlanTemplateAsync/CloseOpenEndedCoreAsync |
+| HB232-09 | ฝ่ายค้าน B1(ข): แถวรอตรวจ = ธง false · Plan ≠ FreeTrial · ค่าแทน · ทิศตรงข้าม: ฟรีถาวรจริง / FreeTrial / มีรอบจริง | เฉพาะแถวแรก true | pure `B1ข_แถวรอตรวจ_*` · migration SQL เงื่อนไขเดียวกัน |
+| HB232-10 | ฝ่ายค้าน B1(ข): job เตือน/ออกใบ/ปิดใช้ เจอแถว ExpiryNeedsReview | ข้าม + LogWarning ครั้งเดียวต่อวัน + นับใน JobRun · แอดมินกด "กำหนดรอบ" ⇒ ปลดธง + ประวัติ/audit/แจ้งเจ้าของ · ฟรีถาวรจริง/มีรอบอยู่แล้ว ⇒ 409 | checker `ProcessSubscriptionNotificationsAsync`/`ProcessExpiredSubscriptionsAsync`/`AdminCloseOpenEnded` · manual (Db test รอ SDK) |
+| HB232-11 | ฝ่ายค้าน S1: stub บริษัทใหม่ (ทางสำรองเมื่อ StartTrial ล้ม) | หมดอายุ = StartDate + TrialDurationDays (30) ไม่ใช่ 100 ปี | checker `EnsureSubscriptionForNewCompanyAsync` forbid `SubscriptionExpiry.OpenEnded(` |
+| HB232-12 | ฝ่ายค้าน S2/S3: PUT allowances included=null + trialIncluded=5 · บันทึกแพ็กเกจผ่านแต่โควตาล้ม | 400 ข้อความไทย (ฟอร์มล็อกช่องทดลองเมื่อช่องปกติว่าง) · toast "บันทึกแพ็กเกจแล้ว แต่โควตา … ไม่สำเร็จ — กดบันทึกอีกครั้ง" ฟอร์มไม่ปิด | manual (AdminQuotaController.SetAllowances · plans.html savePlan) |
+| HB232-13 | ฝ่ายค้าน S4/N1: การอ้างใน function/method/callback ก่อนประกาศข้ามบล็อก · ThresholdFrom = เกณฑ์ IsOpenEnded | ไม่ฟ้อง (deferred) · ฟ้องเฉพาะ top-level/IIFE · เกณฑ์พอดี = ค่าแทน, ก่อน 1 tick = ไม่ | `window_global_check.py --self-test` · pure `N1_ThresholdFrom_*` |
+
 ## OV231 — ส่วนเกินโควตา · เกณฑ์เตือนเดียว · ประวัติการใช้งาน (`erp-review/2026-11-03/LICENSE_USAGE_OVERAGE_AUDIT.md` §B/§D · คำตัดสินข้อ 231-1..7)
 
 | # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
@@ -454,7 +504,7 @@
 | CMS212C-01 | ร้านตั้ง OA เอง · แจ้งเตือนพนักงาน (engine) / สรุปประจำวัน | push ด้วย token ของ OA กลาง ไม่อ่านค่าตั้งบริษัท (DbContext null ในเทสต์) | `Staff_push_uses_nextacc_token_without_reading_company_settings` · rules `NotificationEngine.DispatchLineAsync` · `TryPushViaNextAccAsync` (forbid `ResolveConfigAsync`) |
 | CMS212C-02 | ไม่ได้ตั้ง token ของ OA กลาง | ล้มพร้อมเหตุ · ไม่ถอยไป OA ร้าน · ไม่ยิง HTTP | `Staff_push_without_nextacc_token_fails_with_reason_and_never_falls_back` |
 | CMS212C-03 | LINE ตอบ 400 · ส่ง 8 ก้อน · ผู้รับไม่ผูก | คืนเหตุ "LINE ตอบ 400" · ส่งแค่ 5 ก้อน · ไม่ผูก = ล้ม | `Staff_push_reports_line_error_and_caps_five_messages` · `Line_limits_normalize_drops_blank_truncates_and_caps` |
-| CMS212C-04 | **ทิศตรงข้าม** push ถึงลูกค้า (`TryPushToUserAsync`) | ความหมายเดิม (ResolveConfigAsync) | `Customer_push_without_company_keeps_global_resolution_unchanged` |
+| CMS212C-04 | **ทิศตรงข้าม** push ถึงลูกค้า (`TryPushToUserAsync`) | ~~ความหมายเดิม (ResolveConfigAsync)~~ **รอบ 232 พลิกทิศ**: ไม่มี OA ของบริษัท ⇒ ถูกนโยบายกั้น `NOTIFY-TENANT-NO-COMPANY-OA` · ไม่ถอยไป token กลาง · ไม่ยิง HTTP (ดู NT232) | `Customer_push_without_company_oa_is_denied_and_never_uses_global_token` (แทน `…keeps_global_resolution_unchanged`) |
 | CMS212C-05 | ประกอบข้อความทุกหัวข้อ | ตัวเลข/การจัดกลุ่มผู้ให้บริการ/ที่นั่ง %/ค้างชำระ/เลยกำหนด ตรง | `Builder_renders_each_section_with_numbers_and_provider_grouping` |
 | CMS212C-06 | หัวข้อ null / ว่าง | null = ไม่มีหัวข้อ · ว่าง = "ไม่มีรายการ" | `Builder_omits_null_sections_and_says_empty_for_empty_ones` |
 | CMS212C-07 | 3,000 รายการ (เกินเพดาน LINE) | 5 ก้อน × ≤ 5,000 ตัว · ท้ายบอก "อีก N รายการ" + ลิงก์หน้าหลังบ้าน · แสดง + เหลือ = ทั้งหมด · ไม่มีฐานลิงก์ ⇒ บอกชื่อหน้า | `Builder_splits_within_line_limits_and_reports_omitted_items_with_link` · `Builder_without_base_url_names_the_page_instead_of_a_link` |
@@ -551,7 +601,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **753 ไฟล์ · 7,886 `[Fact]` + 1,200 `[Theory]` (5,622 `InlineData`)** ณ 2026-11-03 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **762 ไฟล์ · 7,969 `[Fact]` + 1,221 `[Theory]` (5,698 `InlineData`)** ณ 2026-11-03 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -7669,3 +7719,57 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | TX230-24 | (N4) ยืนยัน "ลงบัญชีด้วยมือแล้ว" | หายจากรายการ · audit · กดลงบัญชีผ่านระบบ ⇒ 409 · ยกเลิกการยืนยันแล้วกลับมา |
 | TX230-25 | (N5) เลือกปี/งวดในฟอร์ม | เห็นช่วงงวด/วันลงบัญชี/กำหนดยื่นจากเซิร์ฟเวอร์ก่อนกด |
 | TX230-26 | ค่าเสื่อม พ.ค. ลงบัญชีแล้ว 1,000 + มิ.ย. ยังไม่ลง 2,000 | ภ.ง.ด.50: ค่าใช้จ่ายทั้งปี (GL) รวม 1,000 · บรรทัด "ค่าเสื่อมราคาที่ยังไม่ลงบัญชี" = 2,000 (เดิม 3,000 ⇒ หักซ้ำ 1,000) · เครื่องคำนวณค่าใช้จ่ายเท่ากัน |
+
+## GW232 — ทดลองจ่ายพร้อมเพย์ "เด้งกลับหน้าเดิม" · ขั้นถัดไปของผู้จ่าย (รอบ 232 · `Helpers/GatewayChargeNextStep` · `GatewayChargeNextStepRound232Tests`)
+
+| # | กรณี | ผลที่คาด |
+| --- | --- | --- |
+| GW232-1 | charge พร้อมเพย์ (flow offline) มาทั้ง `scannable_code` + `authorize_uri` | adapter คืน QR อย่างเดียว · `AuthorizeUrl = null` (ไม่พาออกจากหน้า) · วันหมดอายุจาก `expires_at` คงเดิม |
+| GW232-2 | ทิศตรงข้าม: บัตร 3-D Secure / mobile banking (flow redirect) ไม่มี QR | `AuthorizeUrl` https คงเดิม · `MissingReason` = null |
+| GW232-3 | charge Pending ไม่มีทั้ง QR และลิงก์ (พร้อมเพย์ · mobile banking · บัตร) | `MissingReason` ข้อความไทยตามวิธี · `StartAsync` ปิดเป็น `Failed` รหัส `no_next_step` ก่อน commit (ล็อกด้วย `required_call_site_check`) |
+| GW232-4 | ทิศตรงข้าม: มี QR / มีลิงก์ / สลิปโอน / สถานะไม่ใช่ Pending / บัตรสำเร็จทันที (พักเป็น Pending เพื่อส่ง ApplyChargeAsync) | ไม่ตัดสิน (null) · ลิงก์ `http://` หรือ `javascript:` = ไม่มีลิงก์ |
+| GW232-5 | สร้าง charge หมดเวลา 20 วิ / DNS ล้ม / ผู้เรียกยกเลิก | `FailureMessage` ไทย (`TransportFailureText`) · ข้อผิดพลาดธุรกิจจาก adapter คงข้อความไทยเดิม · ข้อความว่าง ⇒ "เริ่มการชำระเงินไม่สำเร็จ" |
+| GW232-6 | หน้าจ่าย (`pay-widget.js`) ได้ intent ที่มี QR + ลิงก์ (รายการเก่าก่อนรอบ 232) | แสดง QR ไม่ redirect · intent `Failed/Expired` ตั้งแต่สร้าง ⇒ ข้อความเหตุผลทันที (ไม่รอ poll 2 วิ) · Pending ไม่มีทั้งคู่ (ไม่ใช่สลิป) ⇒ ข้อความล้มดัง ไม่ใช่ "กำลังรอการชำระเงิน…" ค้าง |
+| GW232-7 | หน้าทดลองจ่าย (`platform-pay-test.html` · header ของตัวเอง) กลับจากผู้ให้บริการด้วย `?payReturn=1` | หน้าเรียก `PayWidget.resume({ authHeader })` เอง ⇒ หน้าต่าง "กำลังตรวจผล" + สถานะจากเซิร์ฟเวอร์ (เดิมเงียบ = "เด้งกลับหน้าเดิม") |
+| GW232-8 | URL แจ้งเตือน (webhook) บนหน้าตั้งค่าร้าน/แอดมิน เมื่อตั้ง URL ระบบแล้ว · ไม่ตั้ง · ค่าไม่ใช่ URL · **ค่าที่มากับซอร์ส app.nextacc.com (B2)** | origin จาก `SystemBaseUrl.PublicOrigin` (URL ระบบชนะ `Request.Host` ภายในหลัง reverse proxy) · ไม่ตั้ง/ค่าเสีย/ค่า shipped default ⇒ scheme/host ของคำขอ (`IsConfigured` ภายใน helper — ผู้เรียกไม่เช็คเอง) |
+| GW232-9 | (B1) บัตรไม่ต้อง 3-D Secure ⇒ intent `Succeeded` ทันทีโดยไม่มี QR/ลิงก์ | widget: หน้าสำเร็จ + `onPaid` **ก่อน**ตาข่าย "ไม่มี QR/ลิงก์" (ไม่ให้ลูกค้ากดจ่ายซ้ำ) · `MissingReason` Succeeded/Expired/Refunded = null · (N1) `MissingReason` ยิงเฉพาะ `StartAsync` — poll/Refresh ไม่ตัดสิน (ตั้งใจ) |
+
+## GW232T — เงินโหมดทดสอบไม่มีผลทางธุรกิจ (คำตัดสิน 232-Omise-2 · `Helpers/TestModePaymentPolicy` · `TestModePaymentPolicyRound232Tests`)
+
+| # | กรณี | ผลที่คาด |
+| --- | --- | --- |
+| GW232T-1 | intent คีย์ทดสอบของ SiteOrder/Document/Lodging/POS/SiteBooking/Subscription/AddOn/QuotaAddOn สำเร็จ | `AllowsBusinessEffects=false` · `DispatchSucceededAsync` ไม่เรียก handler · เหตุการณ์ `🧪 โหมดทดสอบ — ไม่ลงบัญชี…` บน intent · ต้นทางคงรอชำระ · ไม่ใช่งานค้าง "ส่งต่อใหม่" |
+| GW232T-2 | ทิศตรงข้าม: intent เงินจริงทุกต้นทาง | `AllowsBusinessEffects=true` · handler ทำงานเหมือนเดิม |
+| GW232T-3 | ทดลองจ่ายของระบบ (GatewaySelfTest) โหมดทดสอบ | ผ่าน ⇒ ประทับ `LastSelfTestPaidAt` ตามเดิม |
+| GW232T-4 | เรียก handler ตรง (ส่งต่อใหม่/โค้ดใหม่) ด้วย intent ทดสอบ | `GuardAsync` โยน `BusinessRuleException` `PAY-TEST-MODE-NO-EFFECT` ข้อความไทย — ล็อกทั้ง 8 handler + dispatcher ด้วย `required_call_site_check` (ถอด guard แล้วฟ้อง) |
+| GW232T-5 | ป้ายสถานะรายการรับชำระออนไลน์ (ร้าน/แอดมิน) · หน้าจ่ายของลูกค้า (S3) | Succeeded/Refunded + ทดสอบ ⇒ "… (ทดสอบ — ไม่ลงบัญชี)" · `isTestMode` ใน list ร้าน · ทุก intent response (public-pay · pay/intents · platform-pay · ทดลองจ่าย) ส่ง `statusLabel` + `testNote` (`TestModePaymentPolicy.PayerNote` — ทดลองจ่ายของระบบ "ไม่มีเงินจริงและไม่ลงบัญชี" · ร้าน "รายการต้นทางยังรอชำระจริง" · เงินจริง = null) · widget ไม่มีข้อความเอง |
+| GW232T-6 | (S1) ค่าบริการ/ส่วนเสริม/โควตาเสริมจ่ายด้วยคีย์ทดสอบ | ด่าน 232 มาก่อน `EntitlementBlockReason` (ถอด `isTestMode` ออกจากด่านสิทธิ์แล้ว — ตัวตัดสินเดียว) ⇒ เหตุการณ์ 🧪 `BlockMessage` · **ไม่ใช่**งานค้าง/ไม่มีปุ่ม "ส่งต่อใหม่"/ไม่แจ้ง unfulfilled · ลำดับล็อกด้วย `required_call_site_check` (AllowsBusinessEffects before EntitlementBlockReason) |
+| GW232T-7 | (S2) ขาคืนเงินของ intent ทดสอบ/ทดลองจ่าย | `TestModePaymentPolicy.IsNoMoney`/`RefundRefusal`/`TestModeNotBookedNote` (รวม `GatewayTestPaymentRules` เดิม — ลบแล้ว) · โหมดจาก `PaymentIntentTestMode.ResolveAsync` (null→config) เหมือน dispatcher · ทดลองจ่ายของระบบ: ไม่มีเงิน แต่ยัง "มีผล" ประทับ `LastSelfTestPaidAt` |
+
+## NT232 — นโยบายผู้รับแจ้งเตือน LINE: เรื่องของผู้เช่า vs เรื่องของแพลตฟอร์ม (รอบ 232 · คำตัดสิน 232-Notify · `Helpers/NotificationAudiencePolicy` · `NotificationAudiencePolicyRound232Tests` · จุดเรียกล็อกด้วย `required_call_site_check` บล็อก `_R232N_WHY` 24 กติกา + เคสฝ่ายค้าน NT1–NT7)
+
+> ที่มา: OA กลางส่ง "✅ เอกสารอนุมัติแล้ว PI-… บริษัท บุญทรัพย์ ถาวร จำกัด" เข้าห้องของเจ้าของแพลตฟอร์ม — `LineNotifyService.ResolveConfigAsync` เดิมถอยไป token + GroupId ของ OA กลางเมื่อบริษัทไม่มี OA
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| NT232-1 | จำแนกคีย์เหตุการณ์ทุกตัวใน `NotificationEvents.All` | `subscription.*`/`quota.*`/`notify.quota.*`/`overage.*` = PlatformAccount · `platform.ops.*` = PlatformOps · ที่เหลือ + ไม่รู้จัก/ว่าง/null = TenantBusiness · คีย์ PlatformAccount ไม่อยู่ใน `MigratedBroadcastKeys` | `Classify_maps_event_keys_and_defaults_unknown_to_tenant` · `Every_catalog_event_is_classified_…` |
+| NT232-2 | **TenantBusiness → กลุ่มกลาง / แอดมินแพลตฟอร์ม** (ผู้รับเป็นทั้งเจ้าของผู้เช่าและแอดมิน) | ❌ `NOTIFY-TENANT-NOT-PLATFORM` ทั้งเมื่อบริษัทมี/ไม่มี OA | `Tenant_business_never_reaches_platform_group_or_admin_even_without_company_oa` |
+| NT232-3 | TenantBusiness · บริษัทไม่มี OA → กลุ่ม/1:1 ผ่าน OA ร้าน | ❌ `NOTIFY-TENANT-NO-COMPANY-OA` + `NoCompanyOaMessage` ("ไม่ส่งผ่าน LINE OA กลาง") — **ไม่ redirect** · กลุ่มของบริษัทผ่าน OA กลาง = ❌ | `Tenant_business_without_company_oa_is_denied_not_redirected` |
+| NT232-4 | TenantBusiness · บริษัทมี OA | ✅ กลุ่ม + 1:1 `NOTIFY-TENANT-COMPANY-OA` (Reason null) | `Tenant_business_with_company_oa_is_allowed_for_group_and_member` |
+| NT232-5 | **ทิศตรงข้าม** สมาชิกผู้เช่าที่ผูกกับบอทกลางเอง (รอบ 212 C/D) | ✅ `NOTIFY-TENANT-MEMBER-NEXTACC` · `TryPushViaNextAccAsync` ยังยิงด้วย token กลางถึง userId นั้น | `Tenant_member_bound_to_nextacc_bot_still_receives_one_to_one` · `Tenant_member_via_nextacc_still_pushes_with_central_token` |
+| NT232-6 | PlatformAccount (ต่ออายุ/ชำระ/ใกล้หมดอายุ/โควตา) | ✅ ถึงเจ้าของบริษัทผ่าน OA กลาง `NOTIFY-ACCOUNT-OWNER-NEXTACC` · ❌ กลุ่มกลาง · ❌ OA ของร้าน | `Platform_account_reaches_owner_via_nextacc_but_not_platform_group_or_company_oa` |
+| NT232-7 | PlatformOps | ✅ กลุ่มกลาง/แอดมิน `NOTIFY-OPS-PLATFORM` · ❌ สมาชิก/กลุ่มของบริษัท/OA ร้าน `NOTIFY-OPS-NOT-TENANT` | `Platform_ops_reaches_platform_group_and_admins_only` |
+| NT232-8 | ค่าตั้งต้นของคีย์ที่ย้ายจากประกาศกลุ่ม LINE (7 คีย์) | Owner: Sys=true · Email/LINE=false · LineGroup = เฉพาะเมื่อบริษัทผูก OA+กลุ่มแล้ว (กันถดถอย) · คีย์อื่น (ลา/subscription) = ว่างเหมือนเดิม · ทุกคีย์อยู่ในแคตตาล็อก | `Default_matrix_for_migrated_keys_…` · `Migrated_keys_exist_in_catalog` |
+| NT232-9 | `CompanyLineGroupConfigured` · `CompanyGroupNotice` | ต้อง เปิด+token+group ครบ · ป้าย 3 แบบ (ไม่มี OA = `NoCompanyOaMessage` · ไม่มีกลุ่ม · พร้อม) | `Company_line_group_configured_requires_enabled_token_and_group` · `Company_group_notice_tells_user_no_fallback_to_central_oa` |
+| NT232-10 | **บั๊กที่รายงาน** `TryPushCompanyGroupAsync` บริษัทไม่มี OA (DbContext null) ขณะ OA กลางมี token+กลุ่ม | `Ok=false` · `RuleCode=NOTIFY-TENANT-NO-COMPANY-OA` · **0 HTTP** (กลุ่มกลางไม่ได้รับ) | `Company_group_without_company_oa_is_denied_and_central_group_never_receives_it` |
+| NT232-11 | Flex 1:1 ผ่าน OA ร้าน + ปุ่ม "ทดสอบ" ของร้าน เมื่อร้านไม่มี OA | ถูกกั้น · ทดสอบตอบ false "OA ของร้าน" · 0 HTTP (เดิมทดสอบด้วย token กลาง ⇒ "สำเร็จ") | `Company_flex_and_test_without_company_oa_are_denied_without_central_token` |
+| NT232-12 | PlatformOps ผ่าน `TryPushPlatformOpsAsync` | ยิงด้วย token กลางถึง `GroupId` กลาง · แอดมินปิด `OpsAlertsToGroup` ⇒ Fail "ปิด" · ไม่มี Group ID ⇒ Fail · 0 HTTP | `Platform_ops_goes_to_central_group_with_central_token` · `Platform_ops_respects_admin_switch_and_missing_group` |
+| NT232-13 | `LinePushResult.Denied` | พก `RuleCode` · `Fail` ไม่มี RuleCode | `Push_result_denied_carries_rule_code` |
+| NT232-14 | ฝ่ายค้าน (checker): ทิ้งผล `route` ใน `TryPushCompanyGroupAsync` (NT1) · ใส่ fallback `_nextAcc.GetAsync` กลับใน `ResolveCompanyOaAsync` (NT2) · ถอด `DispatchCompanyGroupAsync` จาก engine (NT3) · ใส่ `NotifyDocumentApprovedAsync` กลับใน `ApproveDocumentAsync#2` (NT4) · ถอดสวิตช์แอดมิน (NT5) · ทิ้งผลใน `TestConfigAsync` (NT6) | ต้องฟ้อง · NT7 (ขึ้นบรรทัดใหม่) ต้องไม่ฟ้อง | `python3 tools/required_call_site_check.py` (self-test ในตัว) |
+| NT232-15 | **B1 (Db)** บริษัทผูก OA+กลุ่ม · แถว `document.approved` (Accounting · Sys) ที่มีอยู่ก่อนรอบ 232 | หลังรัน `NotificationLineGroupBackfill.UpdateSql`: `EnableLineGroup=true` · ช่อง Sys เดิมคง · `NotificationEngine.DispatchAsync` เรียก `TryPushCompanyGroupAsync` พร้อมหัวข้อ | `Db/NotificationLineGroupRound232DbTests.B1_บริษัทผูกOAและกลุ่ม_…` |
+| NT232-16 | **B1 ทิศตรงข้าม (Db)** บริษัทปิด LINE · มี OA แต่ไม่มีกลุ่ม · บริษัทผูก OA+กลุ่มแต่ผู้ใช้ปิดช่องกลุ่มหลังคอลัมน์มีแล้ว แล้วรัน `MigrationSql` (บูตถัดไป) ×2 | ทั้ง 3 ไม่ถูกทับ (`EnableLineGroup=false`) · `MigrationSql` เมื่อคอลัมน์มีแล้ว = no-op | `B1_ทิศตรงข้าม_บริษัทไม่มีOAหรือไม่มีกลุ่ม_ไม่ถูกแตะ_และบูตถัดไปไม่ทับแถวที่ผู้ใช้ปิดกลุ่ม` |
+| NT232-17 | **S2 (Db)** เปิด LINE แต่ token เข้ารหัสด้วยคีย์อื่น (ถอดไม่ได้) ขณะ OA กลางมี token+กลุ่ม | กลุ่ม + 1:1 ผ่าน OA ร้าน ⇒ `NOTIFY-TENANT-NO-COMPANY-OA` · **0 HTTP** | `S2_เปิดLINEแต่tokenถอดไม่ได้_…` |
+| NT232-18 | **S2 (Db)** ปิด LINE ของบริษัท (token+กลุ่มมีค่า) แม้ OA กลางมี token+กลุ่ม · ทิศตรงข้าม: เปิดแล้ว | ปิด ⇒ 0 HTTP + RuleCode · เปิด ⇒ 1 HTTP ด้วย token ของบริษัท ถึง `LineDefaultGroupId` ของบริษัท (ไม่ใช่กลุ่มกลาง) | `S2_ปิดLINEของบริษัท_แม้OAกลางมีtokenและกลุ่ม_ไม่ยิงHTTP` |
+| NT232-19 | **S1** วางสตริง `api.line.me/v2/bot/message/push|multicast` ใน `LineWebhookController`/`LineBotService` (ในหน่วยความจำ) · คอมเมนต์ · `/v2/bot/info` · ไฟล์ `LineNotifyService` | ฟ้อง · ไม่ฟ้อง · ไม่ฟ้อง · ไม่ฟ้อง — และ `LineBotService.ReplyAsync`/`PushFlexAsync` ต้องเรียก `_line.TryPush*ViaNextAccAsync` (forbid `_httpFactory.CreateClient`) | `LINE_PUSH_FORBID` self-test + rules S1 ใน `required_call_site_check` |
+| NT232-20 | **N1/N3** `PlatformBillingNotifier.SendAsync` ส่ง `NotificationAudience.PlatformAccount` · enum `LineTargetKind` มี 3 ค่า (ไม่มี PlatformAdmin) | rule N1 ล็อก · `Platform_ops_reaches_platform_group_only` | checker + `NotificationAudiencePolicyRound232Tests` |
+

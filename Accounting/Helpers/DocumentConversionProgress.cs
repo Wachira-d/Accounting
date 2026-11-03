@@ -146,7 +146,8 @@ public static class DocumentConversionProgress
     /// <paramref name="activeChildCount"/> = จำนวนใบลูกที่ยังมีผลทั้งหมด (รวม <paramref name="latest"/>) ⇒ เกิน 1 ใบต่อท้าย "+N"
     /// <list type="bullet">
     /// <item>ครบ: "✓ ออกใบแจ้งหนี้ INV-001 แล้ว" (ใบลูกยังเป็นร่าง ⇒ "✓ ร่างใบแจ้งหนี้ไว้แล้ว (ยังไม่อนุมัติ)")</item>
-    /// <item>บางส่วน: "◐ ออกใบแจ้งหนี้ INV-001 แล้ว 60%" · ไม่ทราบสัดส่วน ⇒ "… แล้ว · ไม่ทราบสัดส่วน"</item>
+    /// <item>บางส่วน: "◐ ออกใบแจ้งหนี้ INV-001 แล้ว 60%" · ไม่ทราบสัดส่วน ⇒ "… แล้ว · ไม่ทราบสัดส่วน (รายการของใบลูกไม่ได้จับคู่กับรายการใบนี้)"
+    /// (<see cref="UnknownShareText"/> — เกิดเมื่อบรรทัดใบลูกไม่มี/ชี้ผิด <c>SourceLineId</c> · รอบ 232 ทางเข้าสดประทับให้เองผ่าน <see cref="SourceLineBackfill"/>)</item>
     /// <item>ยังไม่ออก: "⏳ ยังไม่ออกเอกสารต่อ"</item>
     /// </list>
     /// ชื่อชนิดมาจาก <see cref="DocumentTypeNames"/> (ตารางเดียวกับหัวกระดาษ)
@@ -179,9 +180,14 @@ public static class DocumentConversionProgress
             : $"ร่าง{name}ไว้แล้ว (ยังไม่อนุมัติ)";
     }
 
+    /// <summary>ข้อความ "ไม่ทราบสัดส่วน" ตัวเดียว (ป้าย · เทสต์ · doc อ้างตัวนี้)</summary>
+    public const string UnknownShareText = "ไม่ทราบสัดส่วน (รายการของใบลูกไม่ได้จับคู่กับรายการใบนี้)";
+
     private static string PercentText(decimal? pct)
     {
-        if (!pct.HasValue || pct.Value <= 0m) return " · ไม่ทราบสัดส่วน";
+        // ไม่ทราบสัดส่วน = ใบลูกผูกแค่หัว (RelatedDocumentId) แต่ไม่มีบรรทัดใดชี้บรรทัดของใบนี้ — บอกสาเหตุให้คนตามต่อได้ (รอบ 232:
+        // ทางเข้าสดประทับให้เอง + SourceLineBackfillJob ซ่อมข้อมูลเก่าเมื่อจับคู่แน่นอน · จับไม่ได้ = ป้ายนี้ซื่อสัตย์กว่าสัดส่วนที่แต่งขึ้น)
+        if (!pct.HasValue || pct.Value <= 0m) return " · " + UnknownShareText;
         // ปัดลงเสมอ — "99.9" ห้ามกลายเป็น "100%" บนป้ายของใบที่ยังไม่ครบ
         var whole = Math.Floor(pct.Value);
         return whole < 1m ? " <1%" : $" {whole:0}%";

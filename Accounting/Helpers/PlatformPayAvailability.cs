@@ -12,4 +12,15 @@ public static class PlatformPayAvailability
             : mode != PaymentProviderMode.Live || !platformLiveConfirmed ? "ช่องทางรับชำระออนไลน์ของ NextAcc ยังไม่เปิดรับเงินจริง — กรุณาโอนเงินแล้วแนบสลิป"
             : methodCount == 0 ? "ช่องทางรับชำระออนไลน์ของ NextAcc ยังไม่ได้เปิดวิธีชำระใด — กรุณาโอนเงินแล้วแนบสลิป"
             : null;
+
+    /// <summary>รอบ 232 (ฝ่ายค้าน S1 · คำตัดสิน 232-Checkout-2): ด่านเริ่มชำระของ <c>PlatformPaymentService</c> — <paramref name="allowTestMode"/> = false (ทุกผู้เรียกเดิม:
+    /// ศูนย์บิล · ลิงก์ชำระ · ตัดบัตรอัตโนมัติ) ⇒ <see cref="OfflineReason"/> เดิมทุกตัวอักษร (โหมดทดสอบถูกปฏิเสธ) · true (หน้าซื้อแพ็กเกจสาธารณะเท่านั้น —
+    /// Omise ตรวจเว็บด้วยคีย์ทดสอบ) ⇒ โหมดทดสอบผ่านได้เมื่อเปิดอยู่+มีวิธี (intent ประทับ <c>IsTestMode</c> ⇒ <see cref="TestModePaymentPolicy"/> กันผลทางธุรกิจ) ·
+    /// Live ยังต้องผ่านด่านแพลตฟอร์มเหมือนเดิม (ไม่มีทางลัด) · pure — null = เริ่มได้</summary>
+    public static string? StartRefusal(bool isActive, PaymentProviderMode mode, int methodCount, bool platformLiveConfirmed, bool allowTestMode)
+        => allowTestMode && mode == PaymentProviderMode.Test
+            ? (!isActive ? "ช่องทางรับชำระออนไลน์ของ NextAcc ปิดอยู่ชั่วคราว — กรุณาโอนเงินแล้วแนบสลิป"
+               : methodCount == 0 ? "ช่องทางรับชำระออนไลน์ของ NextAcc ยังไม่ได้เปิดวิธีชำระใด — กรุณาโอนเงินแล้วแนบสลิป"
+               : null)
+            : OfflineReason(isActive, mode, methodCount, platformLiveConfirmed);
 }

@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Models.Enums;
 
 namespace Accounting.Models.DTOs.Cms;
@@ -142,6 +143,10 @@ public class StorefrontLegalPageResponse
     /// <summary>วันที่ร้านแก้ข้อความล่าสุด (null = แม่แบบของระบบ)</summary>
     public DateTime? UpdatedAt { get; set; }
     public string SiteName { get; set; } = "";
+    /// <summary>รอบ 232 (232-Checkout-1): ภาษาที่แสดงจริง · มีฉบับอังกฤษให้สลับไหม · ประกาศเมื่อขอ en แต่ไม่มี (<c>Helpers/LegalDocumentLanguage</c>)</summary>
+    public string Language { get; set; } = LegalDocumentLanguage.Thai;
+    public bool EnglishAvailable { get; set; }
+    public string? LanguageNotice { get; set; }
 }
 
 public class StorefrontThemeInfo

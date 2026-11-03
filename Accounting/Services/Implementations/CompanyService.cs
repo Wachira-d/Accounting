@@ -169,18 +169,21 @@ public class CompanyService : ICompanyService
                     // ของ stub จะพยายาม insert ของเสียซ้ำแล้วล้มตาม. ล้างก่อน
                     _db.ChangeTracker.Clear();
                     // last-resort stub — กัน usage counter NRE เมื่อ template/DB มีปัญหา
-                    _db.Subscriptions.Add(new Subscription
+                    // รอบ 232 (ฝ่ายค้าน S1): stub เป็น "ทดลองใช้" (Status=Trial · ไม่ติดธงฟรีถาวร) ⇒ หมดอายุตาม TrialDurationDays ของ entity (ตัวตั้งเดิม 30 วัน)
+                    // ไม่ใช่ค่าแทน 100 ปี (เดิมทำให้ trial stub ไม่มีวันหมดและโชว์ "2669") — ถ้าเจตนาฟรีถาวรต้องติดธง IsPermanentFree ไม่ใช่ยืดวัน
+                    var stub = new Subscription
                     {
                         CompanyId = companyId,
                         Plan = preferredPlan ?? SubscriptionPlan.FreeTrial,
                         Status = SubscriptionStatus.Trial,
                         StartDate = DateTime.UtcNow,
-                        EndDate = DateTime.UtcNow.AddYears(100),  // Free perpetual
                         MaxUsers = 1, MaxCompanies = 1,
                         MaxDocumentsPerMonth = 30, MaxJournalEntriesPerMonth = 50,
                         MaxStorageBytes = 100L * 1024 * 1024,
                         CreatedBy = userId.ToString()
-                    });
+                    };
+                    stub.EndDate = stub.StartDate.AddDays(stub.TrialDurationDays);
+                    _db.Subscriptions.Add(stub);
                     await _db.SaveChangesAsync();
                 }
             }

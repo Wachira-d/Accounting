@@ -8422,6 +8422,24 @@ public class OcrService : IOcrService
         if (Accounting.Helpers.OcrTotalAnchor.DocumentOverstatement(
                 normalizedRawText, result.ExtractedTotalAmount, builtTotal) is { } overstated)
             result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrLineBuildNotes.GapTag + " " + overstated.Message;
+        // รอบ 232: ผูกใบสั่งซื้อ (/link-po) แต่ไม่ได้จับคู่รายบรรทัด (poLineMap ว่าง) ⇒ บรรทัดไม่มี SourceLineId ⇒ ป้ายของใบสั่งซื้อ "ไม่ทราบสัดส่วน" +
+        // ด่านกันแปลงเกินมองไม่เห็น — จับคู่แน่นอนแล้วประทับ (ตัวตัดสินเดียว Helpers/SourceLineBackfill · บรรทัดที่ผูกผ่าน poLineMap แล้วไม่แตะ)
+        if (linkedPo != null)
+        {
+            var stamped = Accounting.Helpers.SourceLineBackfill.Stamp(document.Lines.ToList(), linkedPo.Lines.ToList(), matchQuantity: true);
+            // ฝ่ายค้าน S5: บอกผลให้คนเห็น — แท็ก [SRC-LINE] ลง ProcessingNotes (DTO อ่านเป็น SourceLinesStamped/SourceLineWarning) · บรรทัดที่ผูกผ่าน poLineMap แล้ว = ไม่ใช่ "ยังไม่ได้จับคู่"
+            var mappedViaPo = document.Lines.Any(l => l.SourceLineId.HasValue);
+            if (stamped > 0)
+            {
+                _logger.LogInformation("สแกน {ScanId}: จับคู่รายการกับใบสั่งซื้อ {Po} ให้ {Count} บรรทัด (SourceLineBackfill)", result.Id, linkedPo.DocumentNumber, stamped);
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrSourceLineNote.Stamped(stamped, linkedPo.DocumentNumber);
+            }
+            else if (!mappedViaPo)
+            {
+                _logger.LogInformation("สแกน {ScanId}: ผูกใบสั่งซื้อ {Po} แต่จับคู่รายการไม่ได้แน่นอน — บรรทัดไม่มี SourceLineId", result.Id, linkedPo.DocumentNumber);
+                result.ProcessingNotes = (result.ProcessingNotes ?? "") + "\n" + Accounting.Helpers.OcrSourceLineNote.Unmatched(linkedPo.DocumentNumber);
+            }
+        }
         return sourceIndexes;
     }
 
@@ -10870,6 +10888,9 @@ public class OcrService : IOcrService
             OpenPoNumbersJson: r.OpenPoNumbersJson,
             LinkedPurchaseOrderId: r.LinkedPurchaseOrderId,
             LinkedPurchaseOrderNumber: r.LinkedPurchaseOrderNumber,
+            // รอบ 232 S5: ผลจับคู่บรรทัดกับใบสั่งซื้อ อ่านจากแท็ก [SRC-LINE] ใน ProcessingNotes (ตัวเขียน BuildScanLinesAsync · ตัวอ่าน OcrSourceLineNote.Parse)
+            SourceLinesStamped: Accounting.Helpers.OcrSourceLineNote.Parse(r.ProcessingNotes).Stamped,
+            SourceLineWarning: Accounting.Helpers.OcrSourceLineNote.Parse(r.ProcessingNotes).Warning,
             LinkedPredecessorDocumentId: r.LinkedPredecessorDocumentId,
             LinkedPredecessorNumber: r.LinkedPredecessorNumber,
             LinkedPredecessorType: r.LinkedPredecessorType,

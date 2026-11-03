@@ -17,7 +17,9 @@ public sealed record BillingCenterPlan(
     string Plan, string? PlanName, string Status, string StatusLabel, string BillingCycle, decimal PricePerCycle,
     DateTime? EndDate, bool IsPermanentFree, DateTime? NextRenewalInvoiceAt,
     string? ScheduledPlan, DateTime? ScheduledPlanEffectiveAt,
-    bool CancelAtPeriodEnd, DateTime? CancelEffectiveAt, bool CanCancel, bool CanReactivate, string? CancelNote);
+    bool CancelAtPeriodEnd, DateTime? CancelEffectiveAt, bool CanCancel, bool CanReactivate, string? CancelNote,
+    /// <summary>รอบ 232: "ไม่หมดอายุ" ตัดสินจาก <c>SubscriptionExpiry</c> (ธงฟรีถาวร <b>หรือ</b> ค่าแทนในฐาน) — หน้าเว็บแสดง "ไม่หมดอายุ" ไม่ใช่ปี 2669</summary>
+    bool IsOpenEnded = false);
 
 public sealed record BillingCenterInvoice(
     Guid Id, string DocumentNumber, string Kind, string KindLabel, DateTime DocumentDate, DateTime? DueDate,

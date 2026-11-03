@@ -87,9 +87,13 @@ public class AccountPlanExpiryReminderJob : BackgroundService
             try { await ProcessOne(db, email, a, now, ct); processed++; }
             catch (Exception ex) { _logger.LogWarning(ex, "Reminder failed for AccountSub {Id}", a.Id); }
         }
+        // รอบ 232 (ฝ่ายค้าน B1 ข): แถว ExpiryNeedsReview ที่งานต่ออายุ/เตือน/ปิดใช้ข้าม — นับให้เห็นใน JobRun (ไม่ใช่แค่ LogWarning)
+        var reviewSvc = scope.ServiceProvider.GetService<ISubscriptionService>();
+        var needsReview = 0;
+        if (reviewSvc != null) { try { needsReview = await reviewSvc.CountExpiryNeedsReviewAsync(); } catch (Exception ex) { _logger.LogWarning(ex, "นับ ExpiryNeedsReview ไม่สำเร็จ"); } }
         if (recorder != null)
             await recorder.RecordAsync("AccountPlanExpiryReminder", true,
-                $"ตรวจ {rows.Count} License, ประมวลผล {processed}", processed, jobStart);
+                $"ตรวจ {rows.Count} License, ประมวลผล {processed}" + (needsReview > 0 ? $" · ข้าม {needsReview} บริษัท (แผนจ่ายเงินไม่มีรอบ — รอแอดมินกำหนดรอบ)" : ""), processed, jobStart);
 
         // WP-A3: per-company subscription lifecycle — เดิมเป็น manual-only
         // (เรียกจาก AdminController เท่านั้น) ทำให้ Active→PastDue→Suspended

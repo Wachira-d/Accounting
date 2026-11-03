@@ -53,11 +53,14 @@
           <p class="muted">หน้านี้แสดงขั้นตอนชำระเงินเหมือนหน้าจริงของผู้ใช้ — ข้อกำหนดและนโยบายการยกเลิกและคืนเงินแสดงก่อนชำระทุกครั้ง ·
             <a href="/terms.html" target="_blank" rel="noopener">ข้อกำหนด</a> · <a href="/refund-policy.html" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a> ·
             <a href="/privacy.html" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a></p>`;
+        const onPaid = () => { box.insertAdjacentHTML('beforeend', '<p class="muted">✅ ทดลองชำระสำเร็จ</p>'); };
         document.getElementById('payBtn').addEventListener('click', () => {
           try { PolicyAccept.require('testPolicy'); } catch (e) { alert(e.message); return; }
-          PayWidget.open({ publicBase: '/api/platform-pay-test', method: 'PromptPay', authHeader: auth,
-            onPaid: () => { box.insertAdjacentHTML('beforeend', '<p class="muted">✅ ทดลองชำระสำเร็จ</p>'); } });
+          PayWidget.open({ publicBase: '/api/platform-pay-test', method: 'PromptPay', authHeader: auth, onPaid });
         });
+        // รอบ 232: หน้านี้ใช้ header ของตัวเอง (admin_token) ⇒ PayWidget.resume() อัตโนมัติ **ไม่ทำงาน** (รอให้หน้าเรียกเองพร้อม authHeader)
+        // เดิมไม่เคยเรียก ⇒ กลับจากหน้าผู้ให้บริการ (?payReturn=1) แล้วหน้าแสดงเหมือนไม่มีอะไรเกิดขึ้น = "เด้งกลับหน้าเดิม" เงียบ ๆ
+        PayWidget.resume({ authHeader: auth, onPaid });
       }).catch(() => { box.innerHTML = '<div class="err">โหลดไม่สำเร็จ — กรุณาลองใหม่</div>'; });
     })();
   </script>

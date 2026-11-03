@@ -101,5 +101,7 @@ public class PlatformPayTestController : ControllerBase
         id = i.Id, status = i.Status.ToString(), amount = i.Amount, currency = i.Currency,
         qrPayload = i.QrPayload, qrExpiresAt = i.QrExpiresAt, authorizeUrl = i.AuthorizeUrl, failureMessage = i.FailureMessage,
         isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
+        statusLabel = TestModePaymentPolicy.StatusLabel(i.Status, PaymentIntentTestMode.Decide(i.IsTestMode, null)),
+        testNote = TestModePaymentPolicy.PayerNote(i.Status, PaymentIntentTestMode.Decide(i.IsTestMode, null), i.SourceKind),
     };
 }

@@ -348,7 +348,7 @@ public class CmsRound212PrefsQuotaTests
         {
             if (m != nameof(ILineNotifyService.TryPushToUserAsync)) return null;
             calls.Log.Add("line");
-            return lineOk;
+            return lineOk ? LinePushResult.Success : LinePushResult.Fail("LINE ตอบ 400");   // รอบ 232: คืน LinePushResult (เดิม bool)
         });
         var links = F4Proxy<ICustomerLineLinkService>.Create((m, a) => m == nameof(ICustomerLineLinkService.ResolveLineUserIdAsync) ? optedLine : null);
         return new TestNotifier(settings, rules ?? Array.Empty<CustomerNotifyRuleRow>(), scope, system, line, links, factory, quota);

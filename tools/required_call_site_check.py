@@ -2493,7 +2493,7 @@ RULES += [
          must=["JournalInputTaxInvoice.Resolve(", "TaxPayerBranchCode = inv.SupplierBranch", "TransactionDate = inv.TransactionDate"],
          why="E2-5 บรรทัดภาษีซื้อของ JE ที่มีใบกำกับโครงสร้าง: วันที่/เลขที่/สาขาจากใบกำกับ ไม่ regex คำอธิบาย"),
     dict(file="Controllers/PaymentSettingsController.cs", method="List",
-         must=["CompanyVatStatus.IsRegisteredAsync(", "Map(c, vatRegistered, showToken)"],
+         must=["CompanyVatStatus.IsRegisteredAsync(", "Map(c, vatRegistered, showToken, origin)"],
          why="R-E6 หน้าตั้งค่าได้คำเตือนโหมด VAT ค่าธรรมเนียมจากสถานะจด VAT จริง"),
     dict(file=INTEG, method="ProcessPaymentAsync", must=["ResolvePaymentJournalAccountsAsync("],
          before=[("ResolvePaymentJournalAccountsAsync(", "_db.Set<Payment>().Add(")],
@@ -4725,7 +4725,7 @@ RULES += [
          must_re=[r"b\s*\.\s*CompanyId\s*==\s*companyId", r"l\s*\.\s*CompanyId\s*==\s*companyId"],
          why="A-GW4: สถานะรอบโอน + ยอดจากบรรทัดของรอบที่ลงบัญชีแล้ว · tenant"),
     dict(file=GW_CTL, method="List",
-         must=["PaymentIntentPolicy.IsStuck(", "PaymentIntentPolicy.StatusLabel(", "PaymentIntentPolicy.SourceKindLabel(",
+         must=["PaymentIntentPolicy.IsStuck(", "TestModePaymentPolicy.StatusLabel(", "PaymentIntentPolicy.SourceKindLabel(",
                "GatewayRefundMath.Check(", "PaymentIntentPolicy.CanEditFee(", "PaymentIntentPolicy.StatusOptions(",
                "LoadBatchSettlementAsync("],
          forbid=["isSettled = i.SettlementJournalEntryId != null"],
@@ -4828,7 +4828,7 @@ RULES += [
          before=[("GatewayWebhookRoute.ShouldStampLegacySkip(", "provider.VerifyWebhookAsync(")],
          why="GWO-1: URL เดิมลองเฉพาะร้านที่มีหลักฐานใช้ URL เดิม (ธงจาก migration) + ก่อนวันปิด · GWO-7: คำขอที่ถูกข้ามประทับเวลาให้คำเตือนขึ้นจริง (ขอบเขตบริษัท)"),
     dict(file="Controllers/PaymentSettingsController.cs", method="List",
-         must=["RequireOwnerAttribute.DenyAsync(", "Map(c, vatRegistered, showToken)"],
+         must=["RequireOwnerAttribute.DenyAsync(", "Map(c, vatRegistered, showToken, origin)"],
          why="GWO-6: URL ที่มีรหัสลับเต็มเห็นเฉพาะเจ้าของ (ด่านเดียวกับ [RequireOwner])"),
     dict(file="Controllers/PaymentSettingsController.cs", method="Map",
          must=["MaskedWebhookUrl(", "GatewayWebhookRoute.AcceptsLegacy(", "c.LastLegacySkippedAt"],
@@ -5670,6 +5670,52 @@ def line_config_self_test(files) -> list:
             fails.append(f"self-test LINE_CONFIG_FORBID: `{ok}` ถูกฟ้องผิด")
     if line_config_errors([("Services/Implementations/NextAccLineConfig.cs", 'class __Z { string F() => _config["Line:ChannelSecret"]; }\n')]):
         fails.append("self-test LINE_CONFIG_FORBID: ไฟล์ resolver ถูกฟ้องผิด")
+    return fails
+
+
+# ── ฝ่ายค้าน 232-Notify S1: endpoint push ของ LINE ยิงได้ที่เดียว (LineNotifyService.PushCoreAsync — ผ่าน NotificationAudiencePolicy ก่อนเสมอ) ·
+#    เดิม LineBotService ยิงเองอีก 2 จุด (ไม่ผ่านตัวตัดสิน · ไม่มีเพดานข้อความ) ──
+LINE_PUSH_FORBID = dict(
+    allow={"Services/Implementations/LineNotifyService.cs"},
+    literal_patterns=[r'api\.line\.me/v2/bot/message/(?:push|multicast|broadcast)'],
+    why="ฝ่ายค้าน 232-Notify S1: push LINE ผ่าน ILineNotifyService ตัวเดียว (ตัดสินผู้รับ + token + เพดานข้อความที่ LineNotifyService.PushCoreAsync) — ห้ามยิง api.line.me เอง",
+)
+
+
+def line_push_errors(files) -> list:
+    errs = []
+    for rel, text in files:
+        if rel in LINE_PUSH_FORBID["allow"]:
+            continue
+        code = mask(text, keep_strings=True)
+        for rx in LINE_PUSH_FORBID["literal_patterns"]:
+            for m in re.finditer(rx, code):
+                line = code.count("\n", 0, m.start()) + 1
+                errs.append(f"{rel}:{line} ยิง LINE push เอง `{m.group(0)}` — {LINE_PUSH_FORBID['why']}")
+    return errs
+
+
+def line_push_self_test(files) -> list:
+    """negative test: วางสตริง endpoint ใน controller/service อื่นแล้วต้องฟ้อง · คอมเมนต์ไม่ฟ้อง · ไฟล์ที่อนุญาตไม่ฟ้อง (ไม่แตะไฟล์จริง — ทำในหน่วยความจำ)"""
+    fails = []
+    d = dict(files)
+    for target in ("Controllers/LineWebhookController.cs", "Services/Implementations/LineBotService.cs"):
+        base = d.get(target)
+        if base is None:
+            fails.append(f"self-test LINE_PUSH_FORBID: ไม่พบ {target}")
+            continue
+        if line_push_errors([(target, base)]):
+            fails.append(f"self-test LINE_PUSH_FORBID: {target} ปัจจุบันถูกฟ้อง (ต้องแก้โค้ดก่อน)")
+        for sample in ['var res = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);',
+                       'const string PushUrl = "https://api.line.me/v2/bot/message/multicast";']:
+            if not line_push_errors([(target, base + "\nclass __X { void F() { " + sample + " } }\n")]):
+                fails.append(f"self-test LINE_PUSH_FORBID: ใส่ `{sample[:60]}` ใน {target} แล้วไม่ฟ้อง")
+    for ok in ['// เดิมยิง https://api.line.me/v2/bot/message/push เอง', 'var r = await _line.TryPushViaNextAccAsync(u, new[] { text });',
+               'var info = await client.GetAsync("https://api.line.me/v2/bot/info");']:
+        if line_push_errors([("Services/Implementations/LineBotService.cs", "class __Y { async void F() { " + ok + " } }\n")]):
+            fails.append(f"self-test LINE_PUSH_FORBID: `{ok[:60]}` ถูกฟ้องผิด")
+    if line_push_errors([("Services/Implementations/LineNotifyService.cs", 'class __Z { string U => "https://api.line.me/v2/bot/message/push"; }\n')]):
+        fails.append("self-test LINE_PUSH_FORBID: ไฟล์ตัวยิงเดียวถูกฟ้องผิด")
     return fails
 
 
@@ -10536,8 +10582,8 @@ RULES += [
          must=["_line.TryPushViaNextAccAsync("], forbid=["PushToUserAsync(", "TryPushToUserAsync("],
          why="รอบ 212 C: userId ของพนักงานผูกกับ OA กลางเท่านั้น — push ผ่าน OA ของร้าน (ResolveConfigAsync) ล้มทุกฉบับ"),
     dict(file="Services/Implementations/LineNotifyService.cs", method="TryPushViaNextAccAsync",
-         must=["NextAccTokenAsync()", "LineMessageLimits.Normalize(", "PushCoreAsync("], forbid=["ResolveConfigAsync("],
-         why="รอบ 212 C: เส้นพนักงานระบุ OA กลางชัด ไม่เลือกตามค่าตั้งบริษัท · ไม่ถอยไป OA ร้าน · ≤5 ก้อน × ≤5,000 ตัว"),
+         must=["NextAccTokenAsync()", "LineMessageLimits.Normalize(", "PushCoreAsync("], forbid=["ResolveConfigAsync(", "ResolveCompanyOaAsync("],
+         why="รอบ 212 C: เส้นพนักงานระบุ OA กลางชัด ไม่เลือกตามค่าตั้งบริษัท · ไม่ถอยไป OA ร้าน · ≤5 ก้อน × ≤5,000 ตัว (รอบ 232: ตัวอ่าน OA ร้านเปลี่ยนชื่อเป็น ResolveCompanyOaAsync)"),
     dict(file="Services/Background/StaffDailySummaryJob.cs", method="RunGuardedAsync",
          must=["JobLock.RunExclusiveAsync(", "AdvisoryLockKey.BackgroundJob"],
          why="รอบ 212 C (F4 #6): งานส่งข้อความเดินทีละเครื่อง"),
@@ -10668,15 +10714,14 @@ RULES += [
                "_secrets.Unprotect(row.LineMessagingChannelSecret)"],
          why="รอบ 212 D: ค่าหน้าแอดมินก่อน (ถอดรหัส) · ไม่มี token ⇒ config Line:* ทั้งชุด — กติกา Merge ตัวเดียว"),
     dict(file="Services/Implementations/LineNotifyService.cs", method="TryPushFlexViaNextAccAsync",
-         must=["NextAccTokenAsync()", "PushCoreAsync("], forbid=["ResolveConfigAsync("],
+         must=["NextAccTokenAsync()", "PushCoreAsync("], forbid=["ResolveConfigAsync(", "ResolveCompanyOaAsync("],
          why="รอบ 212 D: Flex ถึงพนักงานผ่าน OA กลางแบบระบุชัด (ไม่เลือกตามค่าตั้งบริษัท) · คืนเหตุเมื่อล้ม"),
-    dict(file="Services/Implementations/LineNotifyService.cs", method="ResolveConfigAsync",
-         must=["_nextAcc.GetAsync("], why="รอบ 212 D: fallback OA กลาง (token + group) ผ่าน resolver ตัวเดียว"),
+    # รอบ 232 (232-Notify): ResolveConfigAsync (fallback OA กลาง) ถูกถอด — ตัวอ่าน OA ของบริษัทห้ามแตะ resolver กลาง (กติกาใหม่อยู่บล็อก 232 ข้างล่าง)
     dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="SendPayslipAsync",
          must=["ResolveRecipientAsync(", "recipient.ViaNextAcc", "_line.TryPushFlexViaNextAccAsync(", "IsLineConfiguredAsync(companyId, recipient.ViaNextAcc"],
          must_re=[r"if\s*\(\s*!\s*r\s*\.\s*Ok\s*\)"],
-         before=[("_line.TryPushFlexViaNextAccAsync(", "_line.PushFlexToUserAsync(")],
-         why="รอบ 212 D: พนักงานที่ผูก \"สลิป 123456\" กับ OA กลาง ต้องได้สลิปผ่าน OA กลาง (userId แยกตาม provider) · ผลล้มไม่ถูกกลืน"),
+         before=[("_line.TryPushFlexViaNextAccAsync(", "_line.TryPushFlexToUserAsync(")],
+         why="รอบ 212 D: พนักงานที่ผูก \"สลิป 123456\" กับ OA กลาง ต้องได้สลิปผ่าน OA กลาง (userId แยกตาม provider) · ผลล้มไม่ถูกกลืน (รอบ 232: เส้น HR กรอกเอง = TryPushFlexToUserAsync OA ร้านเท่านั้น)"),
     dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="ResolveRecipientAsync",
          must=["NextAccLineConfigRule.PayslipRecipient(", "c.UsedByLineUserId == row.LineId", "c.CompanyId == companyId", "e.CompanyId == companyId"],
          why="รอบ 212 D: หลักฐานการผูกผ่าน OA กลาง = แถวรหัสผูกของพนักงานคนนี้ในบริษัทนี้ (กฎ M)"),
@@ -10691,6 +10736,154 @@ RULES += [
     dict(file="Controllers/AdminLineMessagingController.cs", method="Test",
          must=["_lineConfig.GetAsync("], must_lit=["https://api.line.me/v2/bot/info"],
          why="รอบ 212 D: ปุ่มทดสอบใช้ token ที่ระบบใช้จริง (หน้าแอดมินก่อน · config fallback)"),
+]
+
+# ── รอบ 232 (คำตัดสิน 232-Notify): นโยบายผู้รับแจ้งเตือน — เรื่องของผู้เช่า vs เรื่องของแพลตฟอร์ม ──
+# ที่มา: OA กลางส่ง "✅ เอกสารอนุมัติแล้ว PI-… บริษัท บุญทรัพย์ ถาวร จำกัด" เข้าห้องของเจ้าของแพลตฟอร์ม เพราะ LineNotifyService.ResolveConfigAsync
+# "บริษัทไม่มี OA ⇒ token + GroupId ของ OA กลาง" · ตอนนี้ทุกจุดยิง LINE ผ่าน Helpers/NotificationAudiencePolicy.LineRoute ก่อน · เส้นของบริษัทอ่าน OA ของบริษัทเท่านั้น
+_R232N_WHY = "รอบ 232 (232-Notify): "
+_LINE_SVC = "Services/Implementations/LineNotifyService.cs"
+_R232N_ROUTE_RE = r"if\s*\(\s*!\s*route\s*\.\s*Allowed\s*\)\s*return\s+LinePushResult\s*\.\s*Denied\s*\("
+RULES += [
+    dict(file=_LINE_SVC, method="ResolveCompanyOaAsync",
+         must=["x.LineEnabled", "x.LineChannelAccessToken", "x.LineDefaultGroupId", "_secrets.Unprotect("],
+         must_re=[r"x\s*\.\s*CompanyId\s*==\s*companyId"],
+         forbid=["_nextAcc.GetAsync(", "NextAccTokenAsync(", "FromConfig("],
+         why=_R232N_WHY + "ตัวอ่าน OA ของบริษัทห้ามแตะ resolver กลาง — ไม่มี OA = None (ไม่ถอยไป token/กลุ่มของแพลตฟอร์ม)"),
+    dict(file=_LINE_SVC, method="TryPushCompanyGroupAsync",
+         must=["ResolveCompanyOaAsync(", "NotificationAudiencePolicy.LineRoute(", "NotificationAudience.TenantBusiness", "LineTargetKind.CompanyGroup", "oa.GroupId"],
+         must_re=[_R232N_ROUTE_RE],
+         before=[("NotificationAudiencePolicy.LineRoute(", "PushCoreAsync(")],
+         forbid=["_nextAcc.GetAsync(", "NextAccTokenAsync(", "nx.GroupId"],
+         why=_R232N_WHY + "กลุ่มของบริษัทผ่าน OA ของบริษัทเท่านั้น · ตัดสินก่อนยิง · ถูกกั้น = Denied พร้อม RuleCode (ไม่เงียบ)"),
+    dict(file=_LINE_SVC, method="TryPushToUserAsync",
+         must=["ResolveCompanyOaAsync(", "NotificationAudiencePolicy.LineRoute(", "LineOaKind.CompanyOa", "LineTargetKind.TenantMember"],
+         must_re=[_R232N_ROUTE_RE], before=[("NotificationAudiencePolicy.LineRoute(", "PushCoreAsync(")],
+         forbid=["_nextAcc.GetAsync(", "NextAccTokenAsync("],
+         why=_R232N_WHY + "1:1 ผ่าน OA ของบริษัทเท่านั้น (ลูกค้าที่ผูกกับ OA ร้าน) · ไม่ถอยไป OA กลาง"),
+    dict(file=_LINE_SVC, method="TryPushFlexToUserAsync",
+         must=["ResolveCompanyOaAsync(", "NotificationAudiencePolicy.LineRoute(", "LineOaKind.CompanyOa", "LineTargetKind.TenantMember"],
+         must_re=[_R232N_ROUTE_RE], before=[("NotificationAudiencePolicy.LineRoute(", "PushCoreAsync(")],
+         forbid=["_nextAcc.GetAsync(", "NextAccTokenAsync("],
+         why=_R232N_WHY + "Flex 1:1 ผ่าน OA ของบริษัทเท่านั้น · คืนผล (ไม่กลืน)"),
+    dict(file=_LINE_SVC, method="TestConfigAsync",
+         must=["ResolveCompanyOaAsync(", "NotificationAudiencePolicy.LineRoute("],
+         must_re=[r"if\s*\(\s*!\s*route\s*\.\s*Allowed\s*\)\s*return\s*\(\s*false"],
+         forbid=["_nextAcc.GetAsync(", "NextAccTokenAsync("],
+         why=_R232N_WHY + "ปุ่มทดสอบของบริษัททดสอบ token ของบริษัท (เดิมทดสอบด้วย token กลาง ⇒ \"สำเร็จ\" ทั้งที่ OA ร้านยังไม่มี)"),
+    dict(file=_LINE_SVC, method="TryPushPlatformOpsAsync",
+         must=["NotificationAudiencePolicy.LineRoute(", "NotificationAudience.PlatformOps", "LineTargetKind.PlatformGroup", "nx.OpsAlertsToGroup", "nx.GroupId"],
+         must_re=[_R232N_ROUTE_RE], before=[("NotificationAudiencePolicy.LineRoute(", "PushCoreAsync(")],
+         forbid=["ResolveCompanyOaAsync(", "LineDefaultGroupId"],
+         why=_R232N_WHY + "เรื่องของระบบเข้ากลุ่มกลางเท่านั้น · แอดมินปิดได้ · ไม่แตะ OA ของบริษัทใด"),
+    dict(file=_LINE_SVC, method="TryPushViaNextAccAsync",
+         must=["NotificationAudiencePolicy.LineRoute(", "LineOaKind.NextAccOa", "LineTargetKind.TenantMember"],
+         must_re=[_R232N_ROUTE_RE], before=[("NotificationAudiencePolicy.LineRoute(", "PushCoreAsync(")],
+         why=_R232N_WHY + "1:1 ผ่านบอทกลาง = ช่องส่วนตัวของสมาชิกผู้เช่า (TenantMember) — ประกาศผู้รับชัด ไม่ใช่กลุ่มกลาง"),
+    dict(file=_LINE_SVC, method="TryPushFlexViaNextAccAsync",
+         must=["NotificationAudiencePolicy.LineRoute(", "LineOaKind.NextAccOa", "LineTargetKind.TenantMember"],
+         must_re=[_R232N_ROUTE_RE], before=[("NotificationAudiencePolicy.LineRoute(", "PushCoreAsync(")],
+         why=_R232N_WHY + "Flex 1:1 ผ่านบอทกลาง = ช่องส่วนตัวของสมาชิกผู้เช่า"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchAsync",
+         must=["NotificationAudiencePolicy.DefaultMatrix(", "CompanyLineGroupConfiguredAsync(", "s.EnableLineGroup", "DispatchCompanyGroupAsync("],
+         before=[("NotificationAudiencePolicy.DefaultMatrix(", "DispatchCompanyGroupAsync("), ("DispatchCompanyGroupAsync(", "ResolveRoleAsync(")],
+         forbid=["TryPushPlatformOpsAsync(", "_nextAcc"],
+         why=_R232N_WHY + "ค่าตั้งต้นของคีย์ที่ย้ายมาจากตัวตัดสินเดียว · ช่องกลุ่ม LINE ของบริษัทหนึ่งครั้งต่อเหตุการณ์ · engine ไม่มีทางไปกลุ่มกลาง"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchCompanyGroupAsync",
+         must=["NotificationAudiencePolicy.Classify(eventKey)", "NotificationAudience.TenantBusiness", "_line.TryPushCompanyGroupAsync(", "r.RuleCode"],
+         forbid=["TryPushPlatformOpsAsync(", "TryPushViaNextAccAsync("],
+         why=_R232N_WHY + "กลุ่มของบริษัทรับเฉพาะเหตุการณ์ธุรกิจของผู้เช่า · ถูกนโยบายกั้นบอกเหตุ (ไม่เงียบ)"),
+    dict(file="Services/Implementations/NotificationEngine.cs", method="DispatchLineAsync",
+         must=["NotificationAudiencePolicy.LineRoute(", "NotificationAudiencePolicy.Classify(eventKey)", "LineTargetKind.TenantMember"],
+         must_re=[r"if\s*\(\s*!\s*route\s*\.\s*Allowed\s*\)"],
+         before=[("NotificationAudiencePolicy.LineRoute(", "_line.TryPushViaNextAccAsync(")],
+         why=_R232N_WHY + "1:1 ตามบทบาทของบริษัท = สมาชิกผู้เช่า — ตัดสินก่อนยิง"),
+    dict(file="Services/Implementations/NotificationConfigService.cs", method="GetCompanySettingsAsync",
+         must=["NotificationAudiencePolicy.MigratedBroadcastKeys", "NotificationAudiencePolicy.DefaultMatrix(", "NotificationAudiencePolicy.CompanyLineGroupConfigured(", "IsDefault: true"],
+         why=_R232N_WHY + "หน้าตั้งค่าเห็นค่าตั้งต้นชุดเดียวกับที่ engine ใช้ (ไม่มีสำเนากติกาใน JS)"),
+    dict(file=DOC, method="ApproveDocumentAsync#2",   # #0/#1 = overload ส่งต่อแบบ expression-bodied
+         must=["_lineNotify.TryPushViaNextAccAsync(submitterLineId", "NotificationEvents.DocumentApproved"],
+         forbid=["NotifyDocumentApprovedAsync(", "PushToUserAsync(null", "TryPushCompanyGroupAsync("],
+         why=_R232N_WHY + "อนุมัติเอกสาร: ประกาศกลุ่ม LINE เดิม (ถอยไปกลุ่มกลาง) ถูกถอด — เดิน engine ตัวเดียว · ผู้ส่งบิลทางไลน์ = 1:1 ผ่านบอทกลาง"),
+    dict(file=DOC, method="CreatePaymentAsync",
+         must=["NotificationEvents.PaymentReceived"], forbid=["NotifyPaymentReceivedAsync(", "TryPushCompanyGroupAsync("],
+         why=_R232N_WHY + "รับชำระ: เดิน engine (ค่าตั้งของบริษัท) แทนประกาศกลุ่ม LINE ที่ถอยไปกลุ่มกลาง"),
+    dict(file="Services/Implementations/BackgroundJobService.cs", method="ProcessDunningLetters",
+         must=["NotificationEvents.InvoiceOverdue"], forbid=["NotifyOverdueInvoiceAsync(", "ILineNotifyService"],
+         why=_R232N_WHY + "ใบเกินกำหนด: เดิน engine แทนประกาศกลุ่ม LINE"),
+    dict(file="Controllers/BankFeedController.cs", method="Sync",
+         must=["NotificationEvents.BankSyncCompleted"], forbid=["NotifyBankSyncCompleteAsync("],
+         why=_R232N_WHY + "ซิงก์ธนาคาร: เดิน engine"),
+    dict(file="Controllers/ECommerceController.cs", method="SyncOrders",
+         must=["NotificationEvents.ECommerceSyncCompleted"], forbid=["NotifyECommerceSyncAsync("],
+         why=_R232N_WHY + "ซิงก์ร้านค้าออนไลน์: เดิน engine"),
+    dict(file="Services/Implementations/Lodging/LodgingService.Operations.cs", method="TryNotifyLineAsync",
+         must=["NotificationEvents.LodgingSlipUploaded", "NotificationEvents.LodgingBookingCreated", "r.Property.NotifyOwnerOnBooking"],
+         forbid=["NotifyLodgingBookingAsync(", "_line."],
+         why=_R232N_WHY + "ที่พักจอง/สลิปใหม่: เดิน engine · ยังเคารพธงแจ้งเจ้าของ"),
+    dict(file="Controllers/ContactInquiryController.cs", method="SubmitInquiry",
+         must=["TryPushPlatformOpsAsync("], forbid=["SendMessageAsync(", "TryPushCompanyGroupAsync("],
+         why=_R232N_WHY + "ฟอร์มติดต่อของเว็บ NextAcc = เรื่องของแพลตฟอร์ม"),
+    dict(file="Services/Implementations/ChatbotService.cs", method="NotifyAgentNeededAsync",
+         must=["TryPushPlatformOpsAsync("], forbid=["SendMessageAsync(", "TryPushCompanyGroupAsync("],
+         why=_R232N_WHY + "ลูกค้าขอคุยกับเจ้าหน้าที่แพลตฟอร์ม = เรื่องของแพลตฟอร์ม"),
+    dict(file="Services/Implementations/PayslipLineDeliveryService.cs", method="IsLineConfiguredAsync",
+         must=["s.LineEnabled", "_nextAcc.GetAsync("],
+         must_re=[r"if\s*\(\s*!\s*viaNextAcc\s*\)\s*\{[^}]*return\s+s\s*!=\s*null\s*&&"],
+         why=_R232N_WHY + "LINE id ที่ HR กรอกเอง = OA ของบริษัทเท่านั้น (ไม่ถอยไป OA กลาง) · ผูกผ่านบอทกลาง = token กลาง"),
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="DeliverAsync",
+         must=["pushed.Ok", "pushed.Error"], forbid=["sent = await _line.TryPushToUserAsync("],
+         why=_R232N_WHY + "ผลส่งผ่าน OA ร้านบอกเหตุจริง (นโยบาย/LINE ตอบ) ไม่ใช่ข้อความเดาสาเหตุ"),
+    dict(file="Controllers/LineConfigController.cs", method="BuildAsync",
+         must=["NotificationAudiencePolicy.CompanyGroupNotice("],
+         why=_R232N_WHY + "หน้าตั้งค่าบอกว่าไม่มี OA ร้าน = ไปกระดิ่ง/อีเมล ไม่ผ่าน OA กลาง (ห้าม fallback เงียบ)"),
+    dict(file="Services/Implementations/NextAccLineConfig.cs", method="GetAsync",
+         must=["s.LineMessagingOpsAlertsToGroup", "OpsAlertsToGroup = opsAlertsToGroup"],
+         why=_R232N_WHY + "ค่าตั้ง \"เรื่องของระบบเข้ากลุ่มกลาง\" มีผู้อ่านเชิงธุรกิจ (settings_reader)"),
+    # ── ฝ่ายค้าน 232-Notify (B1 · S1 · S2 · N1) ──
+    dict(file=_LINE_SVC, method="PushCoreAsync",
+         must_lit=["api.line.me/v2/bot/message/push"], must=["CustomerLineLinkRule.RedactForLog(body)"],
+         why="ฝ่ายค้าน 232 S1: ตัวยิง endpoint push ของ LINE ที่เดียวทั้งเรพ (LINE_PUSH_FORBID กันที่อื่น)"),
+    dict(file="Services/Implementations/LineBotService.cs", method="ReplyAsync",
+         must=["_line.TryPushViaNextAccAsync("], forbid=["_httpFactory.CreateClient(", "_nextAccLine.GetAsync("],
+         why="ฝ่ายค้าน 232 S1: push ถึงผู้ใช้บอทผ่าน ILineNotifyService ตัวเดียว"),
+    dict(file="Services/Implementations/LineBotService.cs", method="PushFlexAsync",
+         must=["_line.TryPushFlexViaNextAccAsync("], forbid=["_httpFactory.CreateClient(", "_nextAccLine.GetAsync("],
+         why="ฝ่ายค้าน 232 S1: flex ถึงผู้ใช้บอทผ่าน ILineNotifyService ตัวเดียว"),
+    dict(file=_LINE_SVC, method="ResolveCompanyOaAsync",
+         must=["_secrets.IsUsable(s.LineChannelAccessToken)"], before=[("_secrets.IsUsable(", "_secrets.Unprotect(")],
+         why="ฝ่ายค้าน 232 S2: token ที่เก็บไว้แต่ถอดไม่ได้ = ไม่มี OA (IsUsable ก่อน Unprotect — ไม่เอาค่าว่าง/ค่าดิบไปยิง)"),
+    dict(file="Services/Implementations/PlatformBillingNotifier.cs", method="SendAsync",
+         must=["NotificationAudience.PlatformAccount"], must_re=[r"TryPushViaNextAccAsync\([^;]*NotificationAudience\.PlatformAccount\)"],
+         why="ฝ่ายค้าน 232 N1: ใบแจ้งหนี้/เตือนค่าบริการถึงเจ้าของผ่าน OA กลาง = PlatformAccount (NOTIFY-ACCOUNT-OWNER-NEXTACC) ตามตาราง"),
+    dict(file="Data/DatabaseMigrationHelper.cs", method="GetFullTextSearchStatements",
+         must=["Accounting.Helpers.NotificationLineGroupBackfill.MigrationSql"], must_lit=['ADD COLUMN IF NOT EXISTS "EnableLineGroup"'],
+         why="ฝ่ายค้าน 232 B1: backfill ช่องกลุ่มของ document.approved ครั้งเดียว — DO-block เพิ่มคอลัมน์+UPDATE เฉพาะตอนคอลัมน์ยังไม่มี (ต้องอยู่ก่อน ADD COLUMN IF NOT EXISTS ธรรมดา · ตัวตั้ง SQL ตัวเดียว Helpers/NotificationLineGroupBackfill)"),
+]
+
+# เคสฝ่ายค้าน 232-Notify: ใส่ fallback กลับ / ทิ้งผลตัวตัดสิน / ถอดช่องกลุ่มของบริษัท / ประกาศกลุ่มเดิมกลับมา ⇒ ต้องฟ้อง · จัดรูปแบบใหม่ ⇒ ต้องไม่ฟ้อง
+REVIEWER_CASES += [
+    ("NT1", "TryPushCompanyGroupAsync",
+     "if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);\n        if (oa.GroupId == null)",
+     "_ = route;\n        if (oa.GroupId == null)", True),
+    ("NT2", "ResolveCompanyOaAsync",
+     "if (s == null || !s.LineEnabled || string.IsNullOrWhiteSpace(s.LineChannelAccessToken)) return CompanyOa.None;",
+     "if (s == null || !s.LineEnabled || string.IsNullOrWhiteSpace(s.LineChannelAccessToken)) { var nx = await _nextAcc.GetAsync(); return new CompanyOa(nx.HasToken, nx.AccessToken, nx.GroupId); }", True),
+    ("NT3", "DispatchAsync",
+     "            if (settings.Any(s => s.EnableLineGroup))\n                await DispatchCompanyGroupAsync(companyId, eventKey, context);\n", "", True),
+    ("NT4", "ApproveDocumentAsync#2",
+     "        var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? \"\";\n\n        // แจ้งกลับ",
+     "        var contactName = await _db.Contacts.Where(c => c.Id == doc.ContactId).Select(c => c.Name).FirstOrDefaultAsync() ?? \"\";\n        await _lineNotify.NotifyDocumentApprovedAsync(companyId, doc.DocumentNumber, contactName, doc.TotalAmount);\n\n        // แจ้งกลับ", True),
+    ("NT5", "TryPushPlatformOpsAsync",
+     "if (!nx.OpsAlertsToGroup) return LinePushResult.Fail(\"ผู้ดูแลระบบปิด \\\"ส่งเรื่องของระบบเข้ากลุ่ม LINE กลาง\\\" ไว้\");", "", True),
+    ("NT6", "TestConfigAsync",
+     "if (!route.Allowed)\n            return (false,", "if (route.Allowed || !route.Allowed)\n            _ = (false,", True),
+    # ทิศตรงข้าม: จัดรูปแบบใหม่ (ขึ้นบรรทัด) ต้องไม่ฟ้อง
+    ("NT7", "TryPushToUserAsync",
+     "if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);\n        return await PushCoreAsync(oa.Token, TextPayload(lineUserId, message)",
+     "if (!route.Allowed)\n            return LinePushResult.Denied(route.RuleCode, route.Reason!);\n        return await PushCoreAsync(oa.Token, TextPayload(lineUserId, message)", False),
+]
+RULES += [
     # ── รอบ 212 แพ็ก B (คำตัดสินข้อ 171 ข้อ 4 · เจ้าของ: "ส่ง"): ร้านเปลี่ยน LINE OA ⇒ บันทึกการสลับ (PUT ค่าตั้ง · webhook) ⇒ งานเบื้องหลังเชิญลูกค้าผูกใหม่ ·
     #    ส่งผ่าน BookingNotifier ตัวเดียว (ค่าตั้ง/โควตา/กันซ้ำของแพ็ก A) · ตัวตัดสิน Helpers/CustomerRelinkInvitePlan ──
     dict(file="Controllers/LineConfigController.cs", method="Update",
@@ -11333,8 +11526,61 @@ RULES += [
          why=_R219_WHY + "G-1 ทางแจ้งจากระบบภายนอกไม่มีผู้จ่าย ⇒ รายการค่าบริการถูกปฏิเสธ"),
     dict(file=PAY_INTENT, method="DispatchSucceededAsync",
          must=["PlatformRevenueSource.EntitlementBlockReason(", "PaymentIntentTestMode.ResolveAsync(", "intent.PayerCompanyId"],
-         before=[("PlatformRevenueSource.EntitlementBlockReason(", "handler.HandleSucceededAsync(")],
+         before=[("PlatformRevenueSource.EntitlementBlockReason(", "handler.HandleSucceededAsync("),
+                 # ฝ่ายค้าน 232 S1: โหมดทดสอบตัดสินก่อนด่านสิทธิ์ (ทุกต้นทาง) — ค่าบริการทดสอบ = เหตุการณ์ 🧪 ไม่ใช่งานค้างส่งต่อใหม่
+                 ("TestModePaymentPolicy.AllowsBusinessEffects(", "PlatformRevenueSource.EntitlementBlockReason(")],
          why=_R219_WHY + "G-3 + part B (a) เงินค่าบริการให้สิทธิ์เฉพาะเมื่อรับผ่านบริษัทผู้ให้บริการ · รู้ผู้จ่าย · ไม่ใช่โหมดทดสอบ — ก่อนเรียก handler"),
+    # ── รอบ 232 (เด้งกลับหน้าเดิมตอนทดลองจ่ายพร้อมเพย์ · GatewayChargeNextStep) ──
+    dict(file=PAY_INTENT, method="StartAsync",
+         must=["GatewayChargeNextStep.MissingReason(", "GatewayChargeNextStep.MissingCode", "GatewayChargeNextStep.TransportFailureText("],
+         must_re=[r"GatewayChargeNextStep\.MissingReason\([^;]*is\s+string\s+\w+\)"],
+         before=[("ApplyChargeToEntity(", "GatewayChargeNextStep.MissingReason("),
+                 ("GatewayChargeNextStep.MissingReason(", "syncSucceeded != null")],   # ก่อนบล็อก SaveChanges/Commit/ApplyChargeAsync ท้ายเมธอด
+         why="รอบ 232: charge ที่ยังรอแต่ไม่มีทั้ง QR และลิงก์ ⇒ ปิดเป็นล้มเหลวพร้อมเหตุผลไทยก่อน commit (ไม่ปล่อยผู้จ่ายรอหน้าว่าง) · "
+             "หมดเวลา/เครือข่ายขาดต้องเป็นข้อความไทย (TransportFailureText) ไม่ใช่ ex.Message ของ .NET"),
+    dict(file="Services/Payments/Providers/OmisePaymentProvider.cs", method="ParseCharge",
+         must=["GatewayChargeNextStep.Decide("],
+         must_re=[r"qr\s*=\s*next\.QrPayload", r"authorize\s*=\s*next\.AuthorizeUrl"],
+         why="รอบ 232: QR ชนะ authorize_uri (พร้อมเพย์มาทั้งคู่ ⇒ เดิมพาออกหน้า offsite แล้วถูกส่งกลับหน้าเดิม) — ตัวตัดสินเดียว ห้าม parse เอง"),
+    # ── รอบ 232 (คำตัดสิน 232-Omise-2): เงินโหมดทดสอบไม่มีผลทางธุรกิจ — TestModePaymentPolicy ตัวเดียว ──
+    dict(file=PAY_INTENT, method="DispatchSucceededAsync",
+         must=["TestModePaymentPolicy.AllowsBusinessEffects(", "TestModePaymentPolicy.BlockMessage("],
+         must_re=[r"if\s*\(\s*!\s*TestModePaymentPolicy\.AllowsBusinessEffects\("],
+         before=[("TestModePaymentPolicy.AllowsBusinessEffects(", "handler.HandleSucceededAsync("),
+                 ("TestModePaymentPolicy.AllowsBusinessEffects(", "PlatformRevenueSource.EntitlementBlockReason(")],
+         why="232-Omise-2: intent คีย์ทดสอบของร้าน/แพลตฟอร์มห้ามเรียก handler (JE/ใบเสร็จ/สต็อก/ตัดชำระ) — กันก่อนเรียก handler ทุกตัว"),
+    dict(file="Services/Payments/Handlers/AddOnPurchasePaymentHandler.cs", method="HandleSucceededAsync",
+         must=["TestModePaymentPolicy.GuardAsync(_db, intent, ct)"],
+         before=[("TestModePaymentPolicy.GuardAsync(", "_db.")],
+         why="232-Omise-2: ด่านชั้นสองใน handler — ถูกเรียกตรง (ส่งต่อใหม่/โค้ดใหม่) ก็ยังไม่มีผลทางธุรกิจจากเงินทดสอบ"),
+    dict(file="Services/Payments/Handlers/DocumentPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["TestModePaymentPolicy.GuardAsync(_db, intent, ct)"],
+         before=[("TestModePaymentPolicy.GuardAsync(", "_db.")],
+         why="232-Omise-2: ด่านชั้นสองใน handler — ถูกเรียกตรง (ส่งต่อใหม่/โค้ดใหม่) ก็ยังไม่มีผลทางธุรกิจจากเงินทดสอบ"),
+    dict(file="Services/Payments/Handlers/LodgingReservationPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["TestModePaymentPolicy.GuardAsync(_db, intent, ct)"],
+         before=[("TestModePaymentPolicy.GuardAsync(", "_db.")],
+         why="232-Omise-2: ด่านชั้นสองใน handler — ถูกเรียกตรง (ส่งต่อใหม่/โค้ดใหม่) ก็ยังไม่มีผลทางธุรกิจจากเงินทดสอบ"),
+    dict(file="Services/Payments/Handlers/PosOrderPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["TestModePaymentPolicy.GuardAsync(_db, intent, ct)"],
+         before=[("TestModePaymentPolicy.GuardAsync(", "_db.")],
+         why="232-Omise-2: ด่านชั้นสองใน handler — ถูกเรียกตรง (ส่งต่อใหม่/โค้ดใหม่) ก็ยังไม่มีผลทางธุรกิจจากเงินทดสอบ"),
+    dict(file="Services/Payments/Handlers/QuotaAddOnPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["TestModePaymentPolicy.GuardAsync(_db, intent, ct)"],
+         before=[("TestModePaymentPolicy.GuardAsync(", "_db.")],
+         why="232-Omise-2: ด่านชั้นสองใน handler — ถูกเรียกตรง (ส่งต่อใหม่/โค้ดใหม่) ก็ยังไม่มีผลทางธุรกิจจากเงินทดสอบ"),
+    dict(file="Services/Payments/Handlers/SiteBookingPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["TestModePaymentPolicy.GuardAsync(_db, intent, ct)"],
+         before=[("TestModePaymentPolicy.GuardAsync(", "_db.")],
+         why="232-Omise-2: ด่านชั้นสองใน handler — ถูกเรียกตรง (ส่งต่อใหม่/โค้ดใหม่) ก็ยังไม่มีผลทางธุรกิจจากเงินทดสอบ"),
+    dict(file="Services/Payments/Handlers/SiteOrderPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["TestModePaymentPolicy.GuardAsync(_db, intent, ct)"],
+         before=[("TestModePaymentPolicy.GuardAsync(", "_db.")],
+         why="232-Omise-2: ด่านชั้นสองใน handler — ถูกเรียกตรง (ส่งต่อใหม่/โค้ดใหม่) ก็ยังไม่มีผลทางธุรกิจจากเงินทดสอบ"),
+    dict(file="Services/Payments/Handlers/SubscriptionPaymentHandler.cs", method="HandleSucceededAsync",
+         must=["TestModePaymentPolicy.GuardAsync(_db, intent, ct)"],
+         before=[("TestModePaymentPolicy.GuardAsync(", "_db.")],
+         why="232-Omise-2: ด่านชั้นสองใน handler — ถูกเรียกตรง (ส่งต่อใหม่/โค้ดใหม่) ก็ยังไม่มีผลทางธุรกิจจากเงินทดสอบ"),
     dict(file=GW_CTL, method="Create",
          must=["PlatformRevenueSource.IsPlatformRevenue(req.SourceKind)"],
          before=[("PlatformRevenueSource.IsPlatformRevenue(req.SourceKind)", "_intents.StartAsync(")],
@@ -11406,10 +11652,11 @@ RULES += [
 _R219B_WHY = "รอบ 219 ส่วน B (คำตัดสินข้อ 179): "
 POLICY_HELPER = "PurchasePolicyAcceptance."
 RULES += [
-    dict(file="Services/Payments/PlatformPaymentService.cs", method="StartAsync",
-         must=["PlatformRevenueSource.IsPlatformRevenue(", "PlatformPayAvailability.OfflineReason(", "PayerCompanyId: payerCompanyId",
+    # รอบ 232 (ฝ่ายค้าน S1): ตัวเริ่มย้ายไป StartCoreAsync — ด่านช่องทางผ่าน StartRefusal (allowTestMode=false ⇒ OfflineReason เดิมทุกตัวอักษร)
+    dict(file="Services/Payments/PlatformPaymentService.cs", method="StartCoreAsync",
+         must=["PlatformRevenueSource.IsPlatformRevenue(", "PlatformPayAvailability.StartRefusal(", "PayerCompanyId: payerCompanyId",
                "providerCode: cfg.ProviderCode"],
-         before=[("PlatformPayAvailability.OfflineReason(", "_intents.StartAsync(")],
+         before=[("PlatformPayAvailability.StartRefusal(", "_intents.StartAsync(")],
          why=_R219B_WHY + "ชำระค่าบริการออนไลน์ได้เฉพาะช่องทางของแพลตฟอร์มที่เปิดรับเงินจริงแล้ว · intent ใต้บริษัทผู้ให้บริการ + ผู้จ่าย"),
     dict(file="Services/Payments/PlatformPaymentService.cs", method="StartAddOnAsync",
          must=["_addons.AmountDueAsync("],
@@ -11478,10 +11725,10 @@ RULES += [
          must=["i.SourceKind != PaymentSourceKind.GatewaySelfTest && i.IsTestMode != true"],
          why=_R219B_WHY + "B1 เส้นรอบโอนเดิมก็ไม่หยิบรายการทดสอบ"),
     dict(file="Services/Payments/GatewayRefundService.cs", method="BookRefundAsync",
-         before=[("GatewayTestPaymentRules.IsNoMoney(", "JournalEntryBuilder.For(")],
+         before=[("TestModePaymentPolicy.IsNoMoney(", "JournalEntryBuilder.For(")],
          why=_R219B_WHY + "B2 คืนเงินรายการทดสอบไม่ลง PV"),
     dict(file="Services/Payments/GatewayRefundService.cs", method="RefundCoreAsync",
-         before=[("GatewayTestPaymentRules.RefundRefusal(", "provider.RefundAsync(")],
+         before=[("TestModePaymentPolicy.RefundRefusal(", "provider.RefundAsync(")],
          why=_R219B_WHY + "B2 ทดลองจ่ายคืนเงินไม่ได้ (ก่อนเรียกผู้ให้บริการ)"),
     dict(file=PAY_INTENT, method="ApplyChargeAsync",
          before=[("PaymentLiveModeGuard.Mismatch(", "PaymentIntentPolicy.Evaluate(")],
@@ -11500,7 +11747,7 @@ RULES += [
          why=_R219B_WHY + "S1 ปุ่มออนไลน์ต้องผ่านด่านแพลตฟอร์ม"),
     dict(file="Services/Payments/PlatformPaymentService.cs", method="StartSubscriptionPaymentAsync",
          must=["PlatformDoublePayment.OnlineStartRefusal(", "PlatformPlanPricing.ClaimedAmountAcceptable("],
-         before=[("PlatformPlanPricing.ClaimedAmountAcceptable(", "return await StartAsync(")],
+         before=[("PlatformPlanPricing.ClaimedAmountAcceptable(", "return await StartCoreAsync(")],
          why=_R219B_WHY + "S2 สลิปรอตรวจห้ามจ่ายออนไลน์ซ้อน · S3 ยอดต้องตรงราคาปัจจุบันก่อนเก็บเงิน"),
     dict(file="Services/Payments/PlatformPaymentService.cs", method="StartAddOnAsync",
          must=["PlatformDoublePayment.OnlineStartRefusal("],
@@ -11729,9 +11976,40 @@ RULES += [
          forbid=["sub.ScheduledPlanEffectiveAt = sub.EndDate"],
          before=[("PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(", "sub.ScheduledPlan = template.Plan")],
          why=_R219_WHY + "S9 ไม่รับดาวน์เกรดหลังออกใบแจ้งหนี้ต่ออายุของรอบนี้แล้ว"),
+    # รอบ 232: ค่าแทน "ไม่หมดอายุ" เขียนผ่าน SubscriptionExpiry.OpenEnded( ตัวเดียว (เดิมล็อก literal AddYears(100) ซึ่งกลายเป็นสำเนาที่ 3 — F2 ข้อ 4)
     dict(file="Services/Implementations/SubscriptionService.cs", method="ApplyTemplate",
-         must=["template.IsPermanentFree", "AddYears(100)", "SubscriptionStatus.Active"],
-         why=_R219_WHY + "S2 แพ็กเกจฟรีถาวร = Active ไม่หมดอายุ"),
+         must=["template.IsPermanentFree", "SubscriptionExpiry.OpenEnded(", "SubscriptionStatus.Active"],
+         forbid=["AddYears(100)"],
+         why=_R219_WHY + "S2 แพ็กเกจฟรีถาวร = Active ไม่หมดอายุ (ค่าแทนผ่านตัวเขียนเดียว)"),
+    dict(file="Services/Implementations/SubscriptionService.cs", method="UpdatePlanTemplateAsync",
+         must=["SubscriptionExpiry.OpenEnded("], forbid=["AddYears(100)"],
+         why="รอบ 232: ค่าแทน \"ไม่หมดอายุ\" (ค.ศ. 2126 เคยหลุดถึงจอเป็น \"2669\") เขียนผ่าน SubscriptionExpiry.OpenEnded ตัวเดียว"),
+    # ฝ่ายค้าน 232-hub B1(ก): ที่ใดถอดธงฟรีถาวร (template.IsPermanentFree=false ทับแถวที่เคยฟรี/ค่าแทน) ต้องปิดรอบผ่านตัวตั้งเดียว — ห้ามทิ้งค่าแทน 2126 ไว้บนแผนจ่ายเงิน
+    dict(file="Services/Implementations/SubscriptionService.cs", method="ApplyTemplate",
+         must=["SubscriptionExpiry.IsOpenEnded(sub.IsPermanentFree, sub.EndDate, nowUtc)", "SubscriptionExpiry.CloseOpenEnded(nowUtc, cycle)", "sub.ExpiryNeedsReview = false"],
+         why="รอบ 232 B1(ก): แม่แบบใหม่ไม่ฟรีถาวรทับแถวที่เคยไม่มีรอบ ⇒ EndDate = now + 1 รอบ (ตัวตั้งเดียว) + ปลดธงรอตรวจ"),
+    dict(file="Services/Implementations/SubscriptionService.cs", method="UpdatePlanTemplateAsync",
+         must=["CloseOpenEndedCoreAsync(sub"], forbid=["sub.IsPermanentFree = false"],
+         why="รอบ 232 B1(ก): resync แม่แบบที่เลิกฟรีถาวร ⇒ ปิดรอบ + ประวัติ/audit/แจ้งเจ้าของ ผ่านผู้เขียนเดียว"),
+    dict(file="Services/Implementations/SubscriptionService.cs", method="CloseOpenEndedCoreAsync",
+         must=["SubscriptionExpiry.CloseOpenEnded(nowUtc, sub.BillingCycle)", "sub.ExpiryNeedsReview = false", "_db.AddChainedAuditLog(", "SendSubscriptionNotificationToOwner(sub"],
+         why="รอบ 232 B1: ผู้เขียนเดียวของการปิดรอบ — ตั้งวัน + ปลดธง + audit chain + แจ้งเจ้าของ ครบในที่เดียว"),
+    dict(file="Controllers/AdminController.cs", method="AdminCloseOpenEnded",
+         must=["_subscriptionService.CloseOpenEndedAsync("], forbid=["ExpiryNeedsReview = false", "AddMonths("],
+         why="รอบ 232 B1(ข): ปุ่ม \"กำหนดรอบ\" ของแอดมินห้ามตั้งวัน/ปลดธงเอง — ผ่าน service ตัวเดียว"),
+    dict(file="Services/Implementations/SubscriptionService.cs", method="ProcessSubscriptionNotificationsAsync",
+         must=["if (sub.ExpiryNeedsReview) continue;", "WarnExpiryNeedsReviewOncePerDay("],
+         why="รอบ 232 B1(ข): งานเตือน/ออกใบต่ออายุข้ามแถวรอตรวจ + เตือนครั้งเดียวต่อวัน"),
+    dict(file="Services/Implementations/SubscriptionService.cs", method="ProcessExpiredSubscriptionsAsync",
+         must=["sub.ExpiryNeedsReview || sub.IsPermanentFree) continue"],
+         why="รอบ 232 B1(ข): งานปิดใช้ (Active→PastDue) ข้ามแถวรอตรวจ"),
+    dict(file="Services/Implementations/CompanyService.cs", method="EnsureSubscriptionForNewCompanyAsync",
+         must=["stub.StartDate.AddDays(stub.TrialDurationDays)"], forbid=["SubscriptionExpiry.OpenEnded("],
+         why="รอบ 232 S1: stub ทดลองใช้หมดอายุตาม TrialDurationDays (ตัวตั้งเดิม) ไม่ใช่ค่าแทน 100 ปี"),
+    dict(file="Services/Implementations/PlatformBillingCenterService.cs", method="GetSummaryAsync",
+         must=["SubscriptionExpiry.DisplayEnd(", "SubscriptionExpiry.NextRenewalInvoiceAt(", "SubscriptionExpiry.IsOpenEnded("],
+         forbid=["sub.IsPermanentFree ? null : sub.EndDate"],
+         why="รอบ 232: วันหมดอายุ/วันออกใบต่ออายุบนจอผู้เช่าผ่านตัวตัดสินเดียว — ธงอย่างเดียวไม่พอ (ธงหลุดแล้วค่าแทนโผล่เป็นปี 2669)"),
     dict(file="Services/Implementations/SubscriptionService.cs", method="GetSubscriptionAsync",
          must=["AddOnPaymentPolicy.UsableWhilePending("],
          why=_R219_WHY + "S7 รายการส่วนเสริมที่ใช้ได้ใช้ตัวตัดสินเดียวกับด่านสิทธิ์"),
@@ -12010,7 +12288,7 @@ RULES += [
          why=_R219P2X_WHY + "N1 ขอบเขตของ intent = ใบของลิงก์"),
     dict(file="Services/Payments/PlatformPaymentService.cs", method="StartSubscriptionPaymentAsync",
          must=["pay.Held", "pay.PlatformInvoiceDocumentId == null"],
-         before=[("pay.Held", "StartAsync(")],
+         before=[("pay.Held", "StartCoreAsync(")],
          why=_R219P2X_WHY + "N7 แนบสลิปแล้ว/พักให้แอดมิน ⇒ ห้ามจ่ายออนไลน์ซ้ำ"),
 ]
 
@@ -13019,6 +13297,126 @@ RULES += [
          why=_R231OV_WHY + "ค่าตั้ง OverageAutoChargeSavedCard มีผู้อ่านจริง — ใบ USAGE- ไม่เข้าคิวตัดบัตรเมื่อปิด"),
 ]
 
+# ── รอบ 232 (บั๊กเจ้าของ): หน้ารวมใบสั่งซื้อ "◐ ออกใบแจ้งหนี้ซื้อ PI-… แล้ว · ไม่ทราบสัดส่วน" ทั้งที่ยอดเท่าเป๊ะ — ป้ายอ่าน SourceLineId ของบรรทัดใบลูกเท่านั้น
+#    ⇒ ทุกทางเข้าที่สร้าง/เขียนบรรทัดต้องประทับ/ย้าย SourceLineId ผ่านตัวตัดสินเดียว Helpers/SourceLineBackfill (เทสต์ SourceLineBackfillTests ล็อกแค่ helper) ──
+_R232SL_WHY = "รอบ 232: บรรทัดใบลูกต้องชี้บรรทัดต้นทาง (SourceLineId) ทุกทางเข้า ไม่งั้นป้าย lifecycle ของใบต้นทาง \"ไม่ทราบสัดส่วน\" + ด่านกันแปลงเกินมองไม่เห็นใบลูก — "
+RULES += [
+    dict(file=DOC, method="CreateDocumentAsync", must=["StampSourceLinesFromRelatedAsync("],
+         why=_R232SL_WHY + "สร้างใบมือ/API โดยเลือกใบต้นทางบนฟอร์ม (RelatedDocumentId) ต้องประทับเมื่อจับคู่แน่นอน"),
+    dict(file=DOC, method="StampSourceLinesFromRelatedAsync",
+         must=["SourceLineBackfill.Stamp(", "DocumentConversionProgress.IsConversionBearing("],
+         must_re=[r"matchQuantity:\s*true", r"doc\.IsDeposit\s*\|\|\s*doc\.ReplacesDocumentId\.HasValue"],
+         why=_R232SL_WHY + "ประทับเฉพาะใบต้นทางชนิดแปลงต่อ · จำนวนต้องตรง (ห้ามเดา) · ใบมัดจำ/ใบออกแทนไม่แตะ (กติกาเดียวกับ DocumentLinkPolicy.ChildBlockReason)"),
+    dict(file=DOC, method="UpdateDocumentAsync", must=["RelinkSourceLinesAfterLineRewriteAsync("],
+         before=[("_db.DocumentLines.RemoveRange(doc.Lines)", "RelinkSourceLinesAfterLineRewriteAsync(")],
+         why=_R232SL_WHY + "แก้ไขใบแล้วบรรทัดถูกสร้างใหม่ (Id ใหม่) — ตัวชี้ของใบลูกต้องย้ายตาม + ค่าเดิมของใบลูกต้องไม่หายเมื่อผู้เรียกไม่ส่ง sourceLineId"),
+    dict(file=DOC, method="RelinkSourceLinesAfterLineRewriteAsync",
+         must=["SourceLineBackfill.CarryFromPrevious(", "SourceLineBackfill.Remap("],
+         must_re=[r"l\.Document\.CompanyId\s*==\s*companyId"],
+         why=_R232SL_WHY + "ย้ายตัวชี้ (Remap) + ยกค่าเดิม (CarryFromPrevious) · query ผู้พึ่งพากรองบริษัท (กฎ M)"),
+    dict(file=DOC, method="LoadConversionSummariesAsync",
+         must=["LoadBilledViaDeliveryAsync(", "DocumentConversionProgress.EvaluateByValue("],
+         why=_R232SL_WHY + "สาย PO → GRN → PI / QT → DN → INV: ป้ายของใบต้นทางต้องมองทะลุใบส่งของ/ใบรับสินค้าด้วยตัวโหลดเดียวกับด่านกันแปลงเกิน"),
+    dict(file=OCR, method="BuildScanLinesAsync", must=["SourceLineBackfill.Stamp("],
+         must_re=[r"if\s*\(\s*linkedPo\s*!=\s*null\s*\)"],
+         why=_R232SL_WHY + "สแกนที่ผูกใบสั่งซื้อ (/link-po) แต่ไม่ได้จับคู่รายบรรทัด ต้องประทับเมื่อจับคู่แน่นอน"),
+    dict(file="Services/Background/SourceLineBackfillJob.cs", method="RunCompanyAsync",
+         must=["SourceLineBackfill.Stamp(", "db.AddChainedAuditLog(", "DocumentConversionProgress.SourceTypes", "DocumentConversionProgress.InactiveChildStatuses",
+               "company.SourceLineBackfillCheckedAt = nowUtc"],
+         must_re=[r"overwriteForeign:\s*true", r"matchQuantity:\s*true", r"c\.CompanyId\s*==\s*companyId\s*&&\s*s\.CompanyId\s*==\s*companyId",
+                  r"touched\s*>\s*cursor", r"s\.UpdatedAt\s*!=\s*null", r"c\.UpdatedAt\s*!=\s*null"],
+         before=[("SourceLineBackfill.Stamp(", "company.SourceLineBackfillCheckedAt = nowUtc")],
+         why=_R232SL_WHY + "งานซ่อมข้อมูลเก่า: กติกาเดียวกับทางเข้าสด · ทับได้เฉพาะ dangling · audit chain · ใบลูก-ต้นทางบริษัทเดียวกัน · watermark ต่อบริษัท (S4) เลื่อนหลังวน batch จนหมด"),
+    dict(file=OCR, method="BuildScanLinesAsync", must=["OcrSourceLineNote.Stamped(", "OcrSourceLineNote.Unmatched("],
+         why=_R232SL_WHY + "S5 ผลจับคู่ต้องบอกคน (แท็ก [SRC-LINE] → DTO SourceLinesStamped/SourceLineWarning) ไม่ใช่เงียบ"),
+]
+
+# ── รอบ 232 (คำตัดสิน 232-Checkout-2): หน้าซื้อแพ็กเกจสาธารณะ — ยอดจากเซิร์ฟเวอร์ · สวิตช์แอดมิน · ด่านโหมดทดสอบ · หลักฐานยอมรับนโยบาย ──
+_R232_CHECKOUT = "Services/Platform/PublicCheckoutService.cs"
+_R232_CTRL = "Controllers/PublicCheckoutController.cs"
+_R232_WHY = "232-Checkout-2: "
+RULES += [
+    dict(file=_R232_CHECKOUT, method="AvailabilityAsync",
+         must=["PublicCheckoutPolicy.Decide(", "PublicCheckoutEnabled", "PlatformLiveConfirmedAt"],
+         why=_R232_WHY + "สวิตช์แอดมิน + โหมดช่องทาง + ด่าน live ของแพลตฟอร์ม ตัดสินที่ PublicCheckoutPolicy ตัวเดียว (ห้ามประกอบเอง)"),
+    # ฝ่ายค้าน B1: ชนิดคำสั่งซื้อตัดสินก่อนเรียก service ที่มี side-effect (เดิม Active+เดิม ⇒ throw · ดาวน์เกรด ⇒ ScheduledPlan ถูกบันทึกแล้วจึง throw)
+    dict(file=_R232_CHECKOUT, method="CreateOrderAsync",
+         must=["AvailabilityAsync(", "RequireOwnerAsync(", "PublicCheckoutPolicy.CanResume(", "DecideOrderAsync(", "_subs.ConvertTrialAsync(",
+               "_subs.SubmitPaymentAsync(", "PublicCheckoutPolicy.OrderKind.Refused", "PublicCheckoutPolicy.OrderKind.Renewal"],
+         before=[("AvailabilityAsync(", "_subs.ConvertTrialAsync("), ("RequireOwnerAsync(", "_subs.ConvertTrialAsync("),
+                 ("PublicCheckoutPolicy.CanResume(", "_subs.ConvertTrialAsync("),
+                 ("DecideOrderAsync(", "_subs.ConvertTrialAsync("), ("DecideOrderAsync(", "_subs.SubmitPaymentAsync("),
+                 ("PublicCheckoutPolicy.OrderKind.Refused", "_subs.SubmitPaymentAsync("), ("PublicCheckoutPolicy.OrderKind.Refused", "_subs.ConvertTrialAsync(")],
+         forbid=["PlatformPlanPricing.CyclePrice(", "PlatformPlanPricing.AmountDue(", "new SubscriptionPayment", "_subs.ChangeSubscriptionAsync("],
+         why=_R232_WHY + "B1 ชนิดคำสั่งซื้อ (ซื้อใหม่/ต่ออายุ/อัปเกรด/ปฏิเสธ) ตัดสินก่อนมี side-effect · ซื้อใหม่/อัปเกรดผ่าน ConvertTrialAsync · ต่ออายุผ่าน SubmitPaymentAsync (เซิร์ฟเวอร์ตรวจยอดซ้ำ) — ไม่คิดเงินเอง"),
+    dict(file=_R232_CHECKOUT, method="DecideOrderAsync",
+         must=["PublicCheckoutPolicy.DecideOrder(", "_subs.QuotePlanChangeAsync(", "PlatformPriceOverrideStore.AmountDueAsync(", "currentPlan: sub.Plan",
+               "PlatformPlanPricing.ScheduleBlockedByIssuedRenewal("],
+         forbid=["_subs.ConvertTrialAsync(", "_subs.ChangeSubscriptionAsync(", "_subs.SubmitPaymentAsync(", "SaveChangesAsync("],
+         why=_R232_WHY + "B1 ตัวตัดสินชนิดคำสั่งซื้ออ่านอย่างเดียว (ไม่มี side-effect) · ราคาต่ออายุจากตัวตัดสินเดียว (IsRenewalPurchase ผ่าน currentPlan)"),
+    dict(file=_R232_CHECKOUT, method="QuoteAsync",
+         must=["DecideOrderAsync(", "q!.CouponProblem", "OrderKind.Refused", "OrderKind.Renewal"],
+         before=[("DecideOrderAsync(", "q!.CouponProblem")],
+         why=_R232_WHY + "B1 ยอดตะกร้าของบริษัทใช้ตัวตัดสินชนิดเดียวกับตอนยืนยัน (ดาวน์เกรดบอกตั้งแต่ตะกร้า · ต่ออายุแสดงราคาต่ออายุ)"),
+    # ฝ่ายค้าน S1: เส้นเริ่มชำระเดียวทั้ง Live/Test — ห้ามสำเนาด่าน (เดิม Test สร้าง intent เองด้วยด่านชุดย่อย ⇒ ขาด price-drift/PlatformDoublePayment)
+    dict(file=_R232_CHECKOUT, method="StartIntentAsync",
+         must=["AvailabilityAsync(", "_platform.StartSubscriptionPaymentAsync(", "allowTestMode: avail.IsTestMode"],
+         must_re=[r"if\s*\(\s*!\s*avail\.OnlineAvailable\s*\)\s*throw"],
+         before=[("AvailabilityAsync(", "_platform.StartSubscriptionPaymentAsync(")],
+         forbid=["PlatformPlanPricing.CyclePrice(", "PlatformPlanPricing.AmountDue(", "_intents.", "StartPaymentRequest(", "status.Methods.Contains(",
+                 "allowTestMode: true"],
+         why=_R232_WHY + "S1 Live/Test เส้นเดียว IPlatformPaymentService.StartSubscriptionPaymentAsync (ด่านเดิมครบ) · โหมดทดสอบผ่านได้เฉพาะเมื่อหน้านี้ตัดสินว่าเป็นโหมดทดสอบ"),
+    dict(file="Services/Payments/PlatformPaymentService.cs", method="StartAsync",
+         must=["allowTestMode: false"], forbid=["allowTestMode: true"],
+         why=_R232_WHY + "S1 ผู้เรียก StartAsync เดิมทุกตัว (ส่วนเสริม/โควตา/ใบแจ้งหนี้) ไม่มีทางผ่านโหมดทดสอบ"),
+    dict(file="Services/Payments/PlatformPaymentService.cs", method="StartSubscriptionPaymentAsync",
+         must=["StartCoreAsync(", "allowTestMode)"],
+         why=_R232_WHY + "S1 ค่า allowTestMode ส่งต่อถึงด่านช่องทางตัวเดียว (StartRefusal) — ด่านยอด/สลิป/พักเหมือนเดิม"),
+    # ทิศตรงข้าม S1: ผู้เรียกเดิมห้ามขอโหมดทดสอบ (ไม่ส่ง = false = โหมดทดสอบถูกปฏิเสธ)
+    dict(file="Controllers/PlatformPaymentController.cs", method="StartSubscription", must=["StartSubscriptionPaymentAsync("], forbid=["allowTestMode"],
+         why=_R232_WHY + "S1 ศูนย์บิล (ผู้เช่าในระบบ) ไม่ผ่านโหมดทดสอบ"),
+    dict(file="Controllers/PlatformPayLinkController.cs", method="PayOnline", must=["StartSubscriptionPaymentAsync("], forbid=["allowTestMode"],
+         why=_R232_WHY + "S1 ลิงก์ชำระไม่ผ่านโหมดทดสอบ"),
+    dict(file="Services/Payments/PlatformAutoChargeService.cs", method="ChargeInvoiceAsync", must=["StartSubscriptionPaymentAsync("], forbid=["allowTestMode"],
+         why=_R232_WHY + "S1 ตัดบัตรอัตโนมัติไม่ผ่านโหมดทดสอบ"),
+    dict(file=_R232_CHECKOUT, method="OrderStatusAsync",
+         must=["PublicCheckoutPolicy.Resolve(", "PaymentIntentTestMode.Decide(", "PublicCheckoutPolicy.OutcomeMessage("],
+         forbid=["Outcome.Activated;"],
+         why=_R232_WHY + "ผลลัพธ์หน้าสำเร็จ (เปิดสิทธิ์/รอตรวจ/ทดสอบ/ยังไม่จ่าย) ตัดสินที่ PublicCheckoutPolicy.Resolve — เงินทดสอบ ≠ เปิดสิทธิ์"),
+    dict(file=_R232_CTRL, method="CreateOrder",
+         must=["OwnerDenyAsync(", "RateOkAsync(", "PurchasePolicyAcceptance.Problem(", "PurchasePolicyAcceptance.EnforcePlatformForUserAsync(",
+               "_checkout.CreateOrderAsync("],
+         before=[("PurchasePolicyAcceptance.Problem(", "_checkout.CreateOrderAsync("), ("RateOkAsync(", "_checkout.CreateOrderAsync("),
+                 ("_checkout.CreateOrderAsync(", "PurchasePolicyAcceptance.EnforcePlatformForUserAsync(")],
+         why=_R232_WHY + "เจ้าของบริษัท + โควตา + ติ๊กยอมรับนโยบาย (ตรวจก่อนสร้าง · หลักฐานผูกรายการหลังสร้าง)"),
+    # ฝ่ายค้าน S5: หลักฐานยอมรับไม่ซ้ำทุกคลิก · S3: คูปองนับรหัสต่างกันต่อผู้ใช้ก่อนประเมิน
+    dict(file=_R232_CTRL, method="CreateOrder",
+         must=["PurchasePolicyAcceptance.UserAlreadyAcceptedAsync(", "accepted: !alreadyAccepted", "CouponAttemptOkAsync("],
+         before=[("CouponAttemptOkAsync(", "_checkout.CreateOrderAsync("),
+                 ("PurchasePolicyAcceptance.UserAlreadyAcceptedAsync(", "PurchasePolicyAcceptance.EnforcePlatformForUserAsync(")],
+         why=_R232_WHY + "S5 resume/กดซ้ำไม่เพิ่มแถวหลักฐาน · S3 รหัสคูปองต่างกันต่อ 10 นาทีต่อผู้ใช้"),
+    dict(file=_R232_CTRL, method="CompanyQuote",
+         must=["OwnerDenyAsync(", "UserQuoteRateOkAsync(", "CouponAttemptOkAsync(", "_checkout.QuoteAsync("],
+         before=[("UserQuoteRateOkAsync(", "_checkout.QuoteAsync("), ("CouponAttemptOkAsync(", "_checkout.QuoteAsync(")],
+         why=_R232_WHY + "S3 คูปองไล่เดาได้ — โควตาต่อผู้ใช้ + รหัสต่างกันต่อ 10 นาที ตรวจก่อนประเมิน (ไม่งั้น 200/429 เป็นตัวบอกรหัสถูก)"),
+    dict(file=_R232_CTRL, method="CouponAttemptOkAsync",
+         must=["PublicCheckoutPolicy.CouponWindowId(", "PublicCheckoutPolicy.CouponCodesPerWindowPerUser", "failClosed: true"],
+         why=_R232_WHY + "S3 ตัวนับบน PostgreSQL (multi-instance) · ค่าคงที่จาก PublicCheckoutPolicy ตัวเดียว"),
+    # ฝ่ายค้าน N3: เติม/แก้อังกฤษของฉบับที่เผยแพร่แล้ว — เลขฉบับคงเดิม · audit chain
+    dict(file="Services/Implementations/LegalDocumentService.cs", method="SetPublishedEnglishAsync",
+         must=["LegalDocumentLanguage.PublishedEnglishRefusal(", "AddChainedAuditLog(", "row.BodyMarkdownEn = after"],
+         before=[("LegalDocumentLanguage.PublishedEnglishRefusal(", "row.BodyMarkdownEn = after")],
+         forbid=["row.Version =", "row.EffectiveDate =", "row.BodyMarkdown =", "row.Status ="],
+         why="232-Checkout-1 (ฝ่ายค้าน N3): อังกฤษเป็นคำแปลประกอบ — แก้ได้โดยไม่ขยับเลขฉบับ/เนื้อไทย/สถานะ · ทุกการเปลี่ยนลง audit chain"),
+    dict(file=_R232_CTRL, method="StartIntent",
+         must=["OwnerDenyAsync(", "RateOkAsync(", "PurchasePolicyAcceptance.EnforcePlatformForUserAsync(", "_checkout.StartIntentAsync(",
+               "PurchasePolicyAcceptance.UserAlreadyAcceptedAsync("],
+         before=[("PurchasePolicyAcceptance.EnforcePlatformForUserAsync(", "_checkout.StartIntentAsync("),
+                 ("PurchasePolicyAcceptance.UserAlreadyAcceptedAsync(", "PurchasePolicyAcceptance.EnforcePlatformForUserAsync(")],
+         forbid=["req.Amount", "amount:"],
+         why=_R232_WHY + "เริ่มชำระ: ยอดไม่รับจากหน้าเว็บ · หลักฐานยอมรับก่อนเริ่ม"),
+]
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
@@ -13039,8 +13437,9 @@ def main() -> int:
     marker_files = notes_marker_files()
     errs += notes_marker_errors(marker_files)
     errs += line_config_errors(marker_files)
+    errs += line_push_errors(marker_files)
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
-          + notes_marker_self_test(marker_files) + line_config_self_test(marker_files))
+          + notes_marker_self_test(marker_files) + line_config_self_test(marker_files) + line_push_self_test(marker_files))
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

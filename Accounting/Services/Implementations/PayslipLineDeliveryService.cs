@@ -171,8 +171,14 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
             }
             else
             {
-                // LINE id ที่ HR กรอกเอง (ไม่มีหลักฐานการผูก) — ไม่รู้ provider ⇒ เส้นเดิม (OA บริษัทถ้าตั้ง ไม่งั้น OA กลาง)
-                await _line.PushFlexToUserAsync(companyId, lineId, alt, flex);
+                // LINE id ที่ HR กรอกเอง (ไม่มีหลักฐานการผูก) — รอบ 232 (232-Notify): OA ของบริษัทเท่านั้น (เดิมถอยไป OA กลาง = ส่งไม่ถึงอยู่แล้วเพราะ userId
+                // แยกตาม provider และเป็นการยืม OA ของแพลตฟอร์มส่งเรื่องของผู้เช่า) · ไม่มี OA ⇒ LineNotConfigured พร้อมเหตุใน log · ผลล้มไม่ถูกกลืน
+                var r = await _line.TryPushFlexToUserAsync(companyId, lineId, alt, flex);
+                if (!r.Ok)
+                {
+                    _logger.LogWarning("ส่งสลิป LINE (OA บริษัท) ล้มเหลว run {Run} emp {Emp} [{Rule}]: {Err}", payrollRunId, employeeId, r.RuleCode, r.Error);
+                    return r.RuleCode == NotificationAudiencePolicy.RuleTenantNoCompanyOa ? PayslipLineSendResult.LineNotConfigured : PayslipLineSendResult.LineFailed;
+                }
             }
             _logger.LogInformation("ส่งสลิป LINE run {Run} emp {Emp} สำเร็จ", payrollRunId, employeeId);
             return PayslipLineSendResult.Sent;
@@ -277,12 +283,12 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
     {
         if (!viaNextAcc)
         {
+            // รอบ 232 (232-Notify): LINE id ที่ HR กรอกเอง = OA ของบริษัทเท่านั้น — ไม่มี ⇒ LineNotConfigured (ไม่ถอยไป OA กลาง)
             var s = await _db.Set<CompanySettings>().AsNoTracking()
                 .FirstOrDefaultAsync(x => x.CompanyId == companyId, ct);
-            if (s != null && s.LineEnabled && !string.IsNullOrWhiteSpace(s.LineChannelAccessToken))
-                return true;
+            return s != null && s.LineEnabled && !string.IsNullOrWhiteSpace(s.LineChannelAccessToken);
         }
-        // OA กลาง (ผู้รับที่ผูกผ่าน OA กลาง หรือ fallback ของเส้นเดิม) — หน้าแอดมินก่อน · config Line:* fallback
+        // OA กลาง (ผู้รับที่ผูกผ่าน OA กลาง) — หน้าแอดมินก่อน · config Line:* fallback
         return (await _nextAcc.GetAsync(ct)).HasToken;
     }
 

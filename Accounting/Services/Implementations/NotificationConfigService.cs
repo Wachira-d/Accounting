@@ -1,4 +1,5 @@
 using Accounting.Data;
+using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs.Notification;
 using Accounting.Models.Entities;
@@ -25,8 +26,21 @@ public class NotificationConfigService : INotificationConfigService
             .AsNoTracking()
             .Where(s => s.CompanyId == companyId)
             .ToListAsync();
-        return rows.Select(r => new NotificationSettingDto(
-            r.EventKey, r.RecipientRole, r.EnableSystem, r.EnableEmail, r.EnableLine)).ToList();
+        var list = rows.Select(r => new NotificationSettingDto(
+            r.EventKey, r.RecipientRole, r.EnableSystem, r.EnableEmail, r.EnableLine, r.EnableLineGroup)).ToList();
+        // รอบ 232 (232-Notify): คีย์ที่ย้ายจากประกาศกลุ่ม LINE เดิม — บริษัทที่ยังไม่มีแถวของคีย์นั้นเห็น "ค่าตั้งต้นที่ระบบใช้อยู่" (IsDefault)
+        // ตัวเดียวกับที่ NotificationEngine ใช้ (NotificationAudiencePolicy.DefaultMatrix) — หน้าเว็บไม่มีสำเนากติกา
+        var line = await _db.Set<CompanySettings>().AsNoTracking().Where(s => s.CompanyId == companyId)
+            .Select(s => new { s.LineEnabled, s.LineChannelAccessToken, s.LineDefaultGroupId }).FirstOrDefaultAsync();
+        var groupConfigured = line != null && NotificationAudiencePolicy.CompanyLineGroupConfigured(line.LineEnabled, line.LineChannelAccessToken, line.LineDefaultGroupId);
+        var configuredKeys = rows.Select(r => r.EventKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in NotificationAudiencePolicy.MigratedBroadcastKeys)
+        {
+            if (configuredKeys.Contains(key)) continue;
+            foreach (var d in NotificationAudiencePolicy.DefaultMatrix(key, groupConfigured))
+                list.Add(new NotificationSettingDto(key, d.RecipientRole, d.EnableSystem, d.EnableEmail, d.EnableLine, d.EnableLineGroup, IsDefault: true));
+        }
+        return list;
     }
 
     public async Task BulkUpsertCompanySettingsAsync(Guid companyId, BulkUpdateNotificationSettingsRequest request, string updatedBy)
@@ -45,6 +59,7 @@ public class NotificationConfigService : INotificationConfigService
                 row.EnableSystem = dto.EnableSystem;
                 row.EnableEmail = dto.EnableEmail;
                 row.EnableLine = dto.EnableLine;
+                row.EnableLineGroup = dto.EnableLineGroup;
                 row.UpdatedAt = DateTime.UtcNow;
                 row.UpdatedBy = updatedBy;
             }
@@ -58,6 +73,7 @@ public class NotificationConfigService : INotificationConfigService
                     EnableSystem = dto.EnableSystem,
                     EnableEmail = dto.EnableEmail,
                     EnableLine = dto.EnableLine,
+                    EnableLineGroup = dto.EnableLineGroup,
                     CreatedBy = updatedBy,
                 });
             }

@@ -87,6 +87,7 @@
       info: null, plans: [],
       async init() {
         if (!Layout.init('account-subscription')) return;
+        Layout.mountBillingHub('license');   // รอบ 232: หน้านี้ = แท็บ "License หลายบริษัท" ของ hub
         Layout.setTitle('License ของฉัน');
         await Promise.all([this.load(), this.loadPlans()]);
       },
@@ -174,7 +175,7 @@
               <div class="badge">${this._esc(p.planName)}</div>
               <div class="info">
                 <strong>Account Plan</strong>
-                <div class="meta">สถานะ ${p.status} · หมดอายุ ${new Date(p.endDate).toLocaleDateString('th-TH')}</div>
+                <div class="meta">สถานะ ${p.status} · หมดอายุ ${Layout.date(p.endDate)}</div>
               </div>
             </div>
             <div style="font-size:12px;color:#64748b;font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px">

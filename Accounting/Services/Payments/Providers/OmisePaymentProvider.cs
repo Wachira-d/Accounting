@@ -187,7 +187,12 @@ public class OmisePaymentProvider : IPaymentProvider
             // (หน้าจ่ายไม่รู้เวลาหมด · รายการค้าง Pending จนผู้ให้บริการตอบ expired) · อ่านเฉพาะ charge ที่มี source (ไม่ใช่บัตร — บัตรไม่มี QR)
             if (expires == null && el.TryGetProperty("expires_at", out var cex) && cex.ValueKind == JsonValueKind.String) expires = cex.GetString();
         }
-        if (el.TryGetProperty("authorize_uri", out var au)) authorize = au.GetString();
+        if (el.TryGetProperty("authorize_uri", out var au) && au.ValueKind == JsonValueKind.String) authorize = au.GetString();
+        // รอบ 232: charge พร้อมเพย์ (flow offline) มาพร้อม **ทั้ง** QR และ authorize_uri (หน้า offsite ของ flow redirect) — เก็บทั้งคู่แล้วหน้าจ่าย
+        // พาออกไปหน้า offsite ซึ่งส่งกลับ return_uri ทันที ⇒ "เด้งกลับหน้าเดิม" ไม่เห็น QR · ตัวตัดสินเดียว GatewayChargeNextStep: QR ชนะ · ลิงก์เฉพาะเมื่อไม่มี QR
+        var next = GatewayChargeNextStep.Decide(qr, authorize);
+        qr = next.QrPayload;
+        authorize = next.AuthorizeUrl;
 
         DateTime? expiresAt = DateTime.TryParse(expires, CultureInfo.InvariantCulture,
             DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var exd)

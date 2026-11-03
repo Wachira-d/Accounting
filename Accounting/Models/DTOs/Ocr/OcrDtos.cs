@@ -65,6 +65,10 @@ public record OcrResultResponse(
     /// the PO document id; the review UI shows a "ผูกกับ PO ..." chip.</summary>
     Guid? LinkedPurchaseOrderId = null,
     string? LinkedPurchaseOrderNumber = null,
+    /// <summary>รอบ 232 S5 — จำนวนบรรทัดที่ระบบจับคู่กับใบสั่งซื้อให้เอง (SourceLineBackfill) ตอนสร้างบรรทัด · 0 = ไม่มี/ผูกผ่านจับคู่รายบรรทัดอยู่แล้ว</summary>
+    int SourceLinesStamped = 0,
+    /// <summary>รอบ 232 S5 — ผูกใบสั่งซื้อแต่จับคู่รายการไม่ได้แน่นอน (ข้อความจากเซิร์ฟเวอร์ · null = ไม่มีอะไรต้องเตือน) — หน้าตรวจ OCR แสดงตรง ๆ</summary>
+    string? SourceLineWarning = null,
     /// <summary>Header discount (ส่วนลด) read off the paper.</summary>
     decimal? ExtractedDiscountAmount = null,
     /// <summary>True เมื่อ AI's GL answer ถูก "นำมาใช้จริง" บน suggestedAccounts

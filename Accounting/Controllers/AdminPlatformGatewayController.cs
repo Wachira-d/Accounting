@@ -131,7 +131,9 @@ public class AdminPlatformGatewayController : ControllerBase
                 testSecretHint = Hint(cfg.TestSecretKeyProtected), liveSecretHint = Hint(cfg.LiveSecretKeyProtected),
                 cfg.LastTestPassedAt, cfg.LiveKeyVerifiedAt, cfg.LastWebhookAt, cfg.LastLiveWebhookAt, cfg.LastSelfTestPaidAt, cfg.LiveEnabledAt,
                 cfg.PlatformLiveConfirmedAt,   // ฝ่ายค้าน S1: ผ่านด่านแพลตฟอร์มแล้ว (ผู้เช่าเห็นปุ่มออนไลน์เฉพาะเมื่อมีค่านี้)
-                webhookUrl = $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.Path(cfg.ProviderCode, cfg.WebhookToken)}",
+                // รอบ 232: origin จาก URL ของระบบที่ตั้งไว้ (SystemBaseUrl.PublicOrigin) — Request.Host หลัง reverse proxy เป็นชื่อภายใน ⇒ URL ที่ผู้ให้บริการเรียกไม่ถึง
+                webhookUrl = SystemBaseUrl.PublicOrigin(SystemBaseUrl.Pick(settings?.AppBaseUrl, _config?["App:BaseUrl"]), Request.Scheme, Request.Host.ToString())
+                    + GatewayWebhookRoute.Path(cfg.ProviderCode, cfg.WebhookToken),
                 enabledMethods = ParseMethods(cfg.EnabledMethodsJson),
                 // รอบ 227: วิธีที่ผู้เช่าเห็นจริง (ติ๊ก ∩ รองรับ ∩ หน้าชำระทำจบได้) — ไม่ติ๊กเลย = ทุกวิธีที่ใช้ได้
                 effectiveMethods = provider == null ? new List<string>() : PlatformPayMethods.Effective(provider.Capabilities.Methods, configured,
@@ -210,7 +212,7 @@ public class AdminPlatformGatewayController : ControllerBase
                 reference = sp?.PaymentNumber ?? ao?.FeatureCode ?? (qa != null ? "quota." + qa.ResourceKey : null),
                 receiptNumber = receipt,
                 amount = r.Amount, fee = r.FeeActual,
-                status = r.Status.ToString(), statusLabel = PaymentIntentPolicy.StatusLabel(r.Status),
+                status = r.Status.ToString(), statusLabel = TestModePaymentPolicy.StatusLabel(r.Status, PaymentIntentTestMode.Decide(r.IsTestMode, null)),
                 method = PlatformPayMethods.Label(r.MethodKind),
                 isTestMode = PaymentIntentTestMode.Decide(r.IsTestMode, null),
                 providerRef = r.ProviderRef, failureMessage = r.FailureMessage,

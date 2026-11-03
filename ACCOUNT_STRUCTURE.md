@@ -845,6 +845,52 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 - **กฎเหล็ก #1 ยังบังคับเต็ม** — ทุก endpoint ที่แตะ AI ผ่าน orchestrator + kill-switch;
   ลูกค้า API ได้ local-first อัตโนมัติ = ต้นทุนต่อ transaction ลดเรื่อย ๆ ราคาขายคงที่
 
+### 6.2h hub "แพ็กเกจและการชำระเงิน" เหลือทางเข้าเดียว (ผู้เช่า + แอดมิน) · "ไม่หมดอายุ" ตัวตัดสินเดียว · โควตา CMS ในฟอร์มแพ็กเกจ (รอบ 232)
+
+**บั๊กที่รายงาน (ภาพหน้าจอ) + สาเหตุจริง**
+
+| # | อาการ | สาเหตุจริง | แก้ |
+| --- | --- | --- | --- |
+| 1 | toast "UsageTab is not defined" · การ์ด "เปลี่ยน/อัปเกรด" · "เมื่อโควตาเต็ม" · "ใช้ไปเท่าไรเดือนนี้" ค้าง "กำลังโหลด..." | `billing.html` มี 3 `<script>` inline: IIFE ในบล็อกที่ 2 เรียก `UsageTab.refresh()` แต่ `const UsageTab` ประกาศในบล็อกที่ 3 (ยังไม่รัน) · และ `if (window.PlanTab) PlanTab.render()` เป็น false ตลอดเพราะ `const` ระดับสคริปต์ไม่อยู่บน `window` ⇒ การ์ด "เปลี่ยน/อัปเกรด" ไม่เคยเรนเดอร์ตั้งแต่รอบ 230 | ย้ายบล็อก `UsageTab` ขึ้นก่อนผู้เรียก + ผูก `window.Bill/HubTabs/PlanTab/UsageTab` · `tools/window_global_check.py` เพิ่ม GLOBALS 4 ตัว + **กติกาที่สอง**: const/let/class ที่ประกาศในบล็อกหลังแต่ถูกเรียกจากบล็อกก่อน = ฟ้อง (self-test มี) — กวาดทั้ง wwwroot แล้วไม่มีหน้าอื่นเป็นแบบนี้ |
+| 2 | modal ว่าง 2 กล่องโผล่ท้ายหน้า ("ปิด/ส่งสลิป" · "ยกเลิก/ส่งสลิป") | markup ใช้ `<div class="modal"><div class="modal-content">` ตรง ๆ — `style.css` ซ่อนด้วย `.modal-overlay` (opacity/pointer-events จนกว่า `.active`) ส่วน `.modal` เป็นแค่กล่องขาว **ไม่มี display:none** ⇒ โผล่ค้างเสมอ · `Layout.openModal` toggle `.active` บน id นั้นซึ่งไม่มีผลกับ `.modal` | ห่อเป็น `.modal-overlay > .modal` (ไม่ใช่ลบ — กล่องคือสองหน้าที่ต่างกัน: ชำระใบแจ้งหนี้ vs ชำระรายการค่าแพ็กเกจ) · คลาสเดียวกันใน `addons.html` (3 กล่อง) · `admin-addons.html` (2 กล่อง) แก้พร้อมกัน |
+| 3 | "ใช้ได้ถึง 2 เม.ย. 2669 · ออกใบแจ้งหนี้ต่ออายุ 18 มี.ค. 2669" | ไม่ใช่ +543 ซ้ำ — ค่าในฐานคือ **ค.ศ. 2126** (`UtcNow.AddYears(100)` ที่ 3 จุดเขียนเป็นค่าแทน "ไม่หมดอายุ" ของฟรีถาวร/stub) แล้ว `Layout.date` (locale th-TH) แปลงเป็น พ.ศ. 2669 ถูกต้อง · ค่าแทนหลุดเพราะธง `IsPermanentFree` ถูกถอด (resync แม่แบบที่เลิกฟรีถาวรไม่รีเซ็ต EndDate) หรือ stub `CompanyService` ไม่เคยติดธง — ฝั่งอ่านทุกจอตัดสินจากธงอย่างเดียว | ตัวตัดสินเดียว `Helpers/SubscriptionExpiry`: `OpenEnded(now)` (ตัวเขียนเดียว · 3 จุดเดิมเรียกตัวนี้) · `IsOpenEnded(flag, end, now)` = ธง **หรือ** `end ≥ now+50y` (`ThresholdFrom` สูตรเดียวกันสำหรับ EF projection) · `DisplayEnd`/`NextRenewalInvoiceAt` คืน null = "ไม่หมดอายุ" (วันที่เหลือ: service เรียก `UsageBarRule.DaysLeft` เฉพาะเมื่อไม่ open-ended) · ผู้อ่าน: `PlatformBillingCenterService` (billing-center) · `SubscriptionResponse.IsOpenEnded` (subscription.html) · `UsageDetailResponse.DaysLeft` null · `AdminController` รายการ/รายละเอียดบริษัท (`isOpenEnded`) · JS ทุกจอใช้ `isOpenEnded || isPermanentFree` และแสดงวันที่ผ่าน `Layout.date`/`AdminLayout.date` เท่านั้น (ไม่มี +543 ใน JS) · การตรวจ "หมดอายุหรือยัง" ยังเทียบ ค.ศ. UTC (`SubscriptionCancelPolicy` · `UsageBarRule.DaysLeft`) · **ไม่ต้อง migration**: ค่าแทน 2126 ในฐานถูกอ่านเป็น "ไม่หมดอายุ" โดยค่า ไม่ใช่โดยธง · เทสต์ `SubscriptionExpiryTests` |
+
+**โครงเมนูใหม่ — ผู้เช่า** (ตัวตั้งเดียว `Layout.billingHub` ใน `wwwroot/js/layout.js` · เมนู `navItems` ฟิลเตอร์ `inHub` ทั้ง sidebar และเมนูเต็ม — เดิมเมนูเต็มไม่กรอง ⇒ เห็น 7 ทางเข้า)
+
+| หมวด "บัญชีผู้ใช้" (เหลือ) | แท็บของ hub `/pages/billing.html` | หน้าเดิม → ที่ไป |
+| --- | --- | --- |
+| **แพ็กเกจและการชำระเงิน** (เมนูเดียว) | `#tab=plan` แพ็กเกจ (ปัจจุบัน · เปลี่ยน/อัปเกรด · เมื่อโควตาเต็ม) · `#tab=usage` ใช้ไปเท่าไร/โควตา (= "สถานะการใช้งาน" + ย้อนหลัง 24 เดือน) · `#tab=buy` ซื้อเพิ่ม/ส่วนเสริม · `#tab=docs` ใบแจ้งหนี้&ใบเสร็จ · **License หลายบริษัท** (หน้าแยก) | `usage.html` → redirect `#tab=usage` (รอบ 231) · `subscription.html` = แท็บ "แพ็กเกจ › รายละเอียด/ทดลองใช้" (คง URL · แถบแท็บเดียวกันผ่าน `Layout.mountBillingHub('plan')`) · `addons.html` = แท็บ "ซื้อเพิ่ม › จัดการส่วนเสริม" (`mountBillingHub('buy')`) · `account-subscription.html` = แท็บ "License หลายบริษัท" (`mountBillingHub('license')`) · ปุ่มลัด 3 ปุ่มบนหัว hub ถอด (ซ้ำกับแท็บ) |
+| คู่มือ · บันทึกกิจกรรม | — | คงเดิม |
+| ย้ายออก → "เงิน & ธนาคาร" | — | `payment-intents` (รายการรับชำระออนไลน์) · `payment-settlements` (กระทบยอดเงินรับออนไลน์) — เรื่องร้านรับเงินจากลูกค้า ไม่ใช่บัญชีผู้ใช้ · id เมนูคงเดิม (สิทธิ์ตามบทบาทไม่เปลี่ยน) |
+
+**โครงเมนูใหม่ — แอดมิน** (ตัวตั้งเดียว `AdminLayout.billingHub` ใน `wwwroot/admin/admin-layout.js` · `render()` แทรกแถบแท็บให้ทุกหน้าใน hub อัตโนมัติ · sidebar เหลือ "💎 แพ็กเกจ & บิลลิ่ง" + "รายรับ/ธุรกิจ" · หน้าอื่น `inHub` · `วันหยุดราชการ` ย้ายไป "ตั้งค่า")
+
+| กลุ่มแท็บ | หน้า (URL เดิมทั้งหมด — ไม่ redirect ไม่ลบ API) |
+| --- | --- |
+| แม่แบบแพ็กเกจ | `/admin/plans.html` (โควตา · ฟีเจอร์ · ราคา · **โควตา CMS/ที่พัก**) · `/pages/admin-quota.html` (โควตาเสริม · ราคาส่วนเกิน · override รายบริษัท — เพดานต่อแพ็กเกจเป็นตารางอ่านอย่างเดียว ชี้กลับฟอร์มแพ็กเกจ) · `/pages/admin-addons.html` · `/admin/subscription-enforcement.html` |
+| บัญชีลูกค้า | `/admin/account-subscriptions.html` (License · ราคาพิเศษราย License · ทดลองใช้) — ราคาพิเศษ/ชนิดบัญชีรายบริษัทยังอยู่ในหน้า "ลูกค้า/บริษัท" (`price-override-admin.js` การ์ดเดียวกัน 2 ที่) |
+| รายการชำระ / ใบแจ้งหนี้ | `/admin/platform-billing.html` · `/admin/payments.html` · `/admin/coupons.html` |
+| Gateway | `/admin/platform-gateway.html` · `/admin/platform-card-ops.html` |
+
+**ฝ่ายค้าน 232-hub (1 blocker + 6 should) — ผลแก้**
+
+| ข้อ | คำตัดสิน | ที่ทำ |
+| --- | --- | --- |
+| B1(ก) | ถอดธงฟรีถาวรต้องตั้งรอบใหม่ผ่านตัวตั้งเดียว + audit + แจ้งเจ้าของ | `SubscriptionExpiry.CloseOpenEnded(now, cycle)` ⇒ EndDate = now + 1 รอบ (`PlatformPlanPricing.MonthsOf` · ไม่รู้จัก = 1 เดือน) · NextBillingDate = EndDate · **ผู้เขียนเดียว** `SubscriptionService.CloseOpenEndedCoreAsync` (ตั้งวัน · ปลด `ExpiryNeedsReview` · `SubscriptionHistory` `OpenEndedClosed` · `AddChainedAuditLog` `SUB-EXPIRY-CLOSE-OPEN-ENDED` · แจ้งเจ้าของ "แพ็กเกจเปลี่ยนเป็นแบบมีรอบ หมดอายุ <วันที่>") · ผู้เรียก: `ApplyTemplate` (static · คืน true เมื่อแถวเคยไม่มีรอบ) → `ApplyTemplateWithPriceAsync` (อนุมัติชำระ/ดาวน์เกรดถึงวัน) · `UpdatePlanTemplateAsync` (resync แม่แบบเลิกฟรีถาวร — เดิมถอดธงแล้วทิ้ง 2126) · แอดมิน "กำหนดรอบ" · ล็อกใน `required_call_site_check` (ApplyTemplate · UpdatePlanTemplateAsync · CloseOpenEndedCoreAsync · AdminCloseOpenEnded forbid ตั้งวัน/ปลดธงเอง) |
+| B1(ข) | แถวค้าง: ไม่แก้เงียบ · ประทับ `ExpiryNeedsReview` · แอดมินกำหนดรอบ · job ข้าม | `Subscription.ExpiryNeedsReview` (ADD COLUMN IF NOT EXISTS + UPDATE idempotent: ธง false · Plan ≠ FreeTrial · EndDate > now+50y — เกณฑ์เดียวกับ `ThresholdFrom`) · หน้า "ลูกค้า/บริษัท": แถบ "⚠️ แผนจ่ายเงินไม่มีรอบเรียกเก็บ" + ปุ่ม "กำหนดรอบ" → `POST /api/admin/companies/{id}/subscription/close-open-ended` (`ISubscriptionService.CloseOpenEndedAsync` · 409 ถ้าฟรีถาวรจริง/มีรอบอยู่แล้ว) · `ProcessSubscriptionNotificationsAsync` (เตือน/ออกใบต่ออายุ/เตือนตัดบัญชี) และ `ProcessExpiredSubscriptionsAsync` (Active→PastDue) ข้ามแถวนี้ · `LogWarning` ครั้งเดียวต่อวันต่อ process · `AccountPlanExpiryReminderJob` นับใน JobRun ("ข้าม N บริษัท (แผนจ่ายเงินไม่มีรอบ)") ผ่าน `CountExpiryNeedsReviewAsync` |
+| B1(ค) | ป้าย: "ไม่หมดอายุ (ฟรีถาวร)" เฉพาะธง true · ธง false + ค่าแทน = "ไม่มีรอบเรียกเก็บ — ต้องตรวจ" | แอดมิน: `AdminLayout.expiryLabel(s)` ตัวเดียว (รายการ + รายละเอียด) · ผู้เช่า: billing.html/subscription.html "ไม่มีรอบเรียกเก็บ — ผู้ดูแลระบบ NextAcc กำลังตรวจ" · เทสต์ `B1ข_แถวรอตรวจ_*` (สองทิศ) · `B1_ปิดรอบ_*` (Theory 4 รอบ) |
+| S1 | stub ใน CompanyService ใช้ TrialDurationDays | `EnsureSubscriptionForNewCompanyAsync`: stub = Status Trial ⇒ `EndDate = StartDate + TrialDurationDays` (ค่าตั้งเดิมของ entity 30 วัน) · ไม่ใช่ค่าแทน · ถ้าเจตนาฟรีถาวรต้องติดธง — จดใน comment + rule forbid `SubscriptionExpiry.OpenEnded(` ในเมธอดนี้ |
+| S2 | included=null + trialIncluded มีค่า ⇒ 400 | `AdminQuotaController.SetAllowances` 400 ข้อความไทย · ฟอร์ม plans.html ล็อกช่องทดลองเมื่อช่องปกติว่าง (`syncQuotaTrialField`) |
+| S3 | request เดียว หรือบอกชัด | ยัง 2 คำขอ (updatePlan + PUT allowances — รวมเป็น body เดียวต้องแก้ `UpdatePlanTemplateRequest`/service ธุรกรรมเดียว · ยกไปรอบถัดไป) · คำขอที่สองล้ม ⇒ toast "บันทึกแพ็กเกจแล้ว แต่โควตา CMS/ที่พักไม่สำเร็จ: <เหตุ> — แก้ค่าแล้วกดบันทึกอีกครั้ง" (ไม่ปิดฟอร์ม) |
+| S4 | check_script_order เฉพาะ top-level/IIFE | `_eager_uses`: นับการอ้างที่ depth 0 ของ statement ระดับบนสุด หรือ body ตรงของ IIFE (`(…)()`/`(async () => {…})()`) · ใน function/method/callback ไม่นับ · self-test เพิ่ม deferred (4 แบบ ไม่ฟ้อง) + eager/IIFE (ฟ้อง) · จดใน `docs/lessons/checker-writing.md` |
+| S5 | สิทธิ์ hub ตัวตั้งเดียว · roles.html รายการเดียว · palette จาก navItems | `Layout.billingHub.menuIds` = ['billing','subscription','addons','usage','account-subscription'] · `hasMenuAccess(id ใน hub)` = allowed มี id ใด ๆ ในชุด (บทบาทเก่าที่ติ๊กลูกถือว่ามี hub — อ่านฝั่ง resolver ไม่แก้ข้อมูล) · roles.html ข้าม `inHub` ⇒ ช่องติ๊กเดียว "แพ็กเกจและการชำระเงิน" · `command-palette.js` เติมคำสั่งจาก `Layout.navItems` (ข้าม inHub · ตามสิทธิ์ · ไม่ซ้ำ href กับรายการ static) |
+| S6 | แอดมินเห็นแถว "ไม่มีรอบเรียกเก็บ" ชัด | รายการลูกค้า + รายละเอียด ป้ายส้ม ⚠️ + แถบเหลืองพร้อมปุ่ม (B1 ข/ค) |
+| N1–N4 | เทสต์ threshold · FirstSnapshot ไม่นับ Backfill · mountBillingHub warn · doc | `N1_ThresholdFrom_*` · `Source != Backfill` · `console.warn` เมื่อไม่พบหัวหน้า · ตารางนี้ + TEST_PLAN HB232-08..13 |
+
+**ข้อ 5 ประวัติรายเดือน** — แท็บ "ใช้ไปเท่าไร" มีตัวเลือกเดือน + ย้อนหลัง 6/12/24 + **กราฟแท่งต่อทรัพยากร** (% ของเพดาน · เดือนไม่มี snapshot = แท่งเทา) · `UsageHistoryResponse.FirstSnapshotPeriod/Label` (งวดแรกที่มี snapshot ของบริษัท) ⇒ หัวการ์ดบอก "เริ่มเก็บตั้งแต่ <เดือน>" หรือ "ยังไม่มี snapshot ของเดือนก่อน" — ไม่แต่งเลข
+
+**ข้อ 6 โควตา CMS ของแพ็กเกจ** — ค่าไม่ได้อยู่บน `PlanTemplate` (ไม่มีคอลัมน์ `MaxCmsSites`) แต่อยู่ตาราง `PlanQuotaAllowance` (แถวต่อ แพ็กเกจ×ทรัพยากร · `Included`/`TrialIncluded` · -1 = ไม่จำกัด · ไม่มีแถว = ไม่จำกัด/ค่าเดิม) ผ่าน `/api/admin/quota/allowances` · ฟอร์ม "แก้ไขแพ็กเกจ" (`plans.html`) เป็น**ฟอร์มเดียว**: ช่องสร้างจาก closed list `/api/admin/quota/resources` (`planEditableHere`: cms.sites · cms.pages-per-site · cms.products-per-site · lodging.properties) · บันทึกแพ็กเกจแล้ว PUT allowances (ล้มดัง · โหลดรายการไม่สำเร็จ = ช่องล็อก ไม่บันทึกทับด้วยค่าว่าง) · ผู้อ่านเชิงธุรกิจเดิม: `QuotaGateService.CheckAsync` (`CmsSiteService.CreateSiteAsync` — ล็อกจุดเรียกใน `required_call_site_check` อยู่แล้ว) · `CmsQuotaService.PerSiteLimitAsync` (หน้า/สินค้าต่อเว็บ) · ฝั่งผู้เช่า `quota/summary` แสดงค่าเดียวกัน
+
 ### 7.1 Self-service onboarding 📋 — ลูกค้าสร้างการเข้าถึงเองครบวงจร ไม่ต้องรอ admin
 
 ```
@@ -1009,7 +1055,7 @@ public class AccountDomain : BaseEntity          // ผูกระดับ Bil
 | **Google OAuth** | ✅ | `POST /auth/sso` — เส้นหลักคือ **authorization-code redirect** เหมือน LINE (`ValidateGoogleTokenAsync` แลก code ที่ `oauth2.googleapis.com/token` ด้วย `SiteSettings.GoogleClientSecret` แล้ว verify id_token ที่ tokeninfo); One Tap (`gsi/client`) เหลือเป็นทางสำรองเมื่อยังไม่ได้ตั้ง secret |
 | Facebook OAuth | ✅ | `POST /auth/sso` + `User.AuthProvider/AuthProviderId` (generic รองรับ provider เพิ่มโดยไม่แก้ schema) — ยังใช้ JS SDK |
 | **LINE Login** (OAuth2) | ✅ | authorization-code flow → `AuthService.ValidateLineTokenAsync` (channel secret ไม่ออกจาก server); คนละอย่างกับ LINE bot binding ที่มีแล้ว (`User.LineUserId` + `LineBindCode`) — แต่ login แล้ว map เข้า `LineUserId` เดิมได้เลย บัญชีเดียวทั้ง login และ bot |
-| **LINE OA กลาง (Messaging API)** | ✅ รอบ 212 D | ค่าตั้งระดับแพลตฟอร์มบน `SiteSettings.LineMessaging*` (token/secret เข้ารหัส) ตั้งที่ `/admin/site-settings.html` แท็บ "LINE OA กลาง" (SystemAdmin) · ผู้อ่านตัวเดียว `INextAccLineConfig` — หน้าแอดมินก่อนทั้งชุด · ไม่มี token ⇒ config `Line:*` (deployment เดิม) · webhook `/api/line-webhook` · คนละ channel กับ LINE Login (userId ตรงกันเฉพาะเมื่ออยู่ provider เดียวกัน) |
+| **LINE OA กลาง (Messaging API)** | ✅ รอบ 212 D | ค่าตั้งระดับแพลตฟอร์มบน `SiteSettings.LineMessaging*` (token/secret เข้ารหัส) ตั้งที่ `/admin/site-settings.html` แท็บ "LINE OA กลาง" (SystemAdmin) · ผู้อ่านตัวเดียว `INextAccLineConfig` — หน้าแอดมินก่อนทั้งชุด · ไม่มี token ⇒ config `Line:*` (deployment เดิม) · webhook `/api/line-webhook` · คนละ channel กับ LINE Login (userId ตรงกันเฉพาะเมื่ออยู่ provider เดียวกัน) · **รอบ 232 (232-Notify)**: OA กลางส่งได้เฉพาะ (ก) 1:1 ถึงสมาชิก/ลูกค้าของบริษัทที่ผูกกับบอทกลางเอง (ข) เรื่องบัญชีของผู้เช่ากับแพลตฟอร์มถึงเจ้าของบริษัทนั้น (ค) เรื่องของระบบเข้ากลุ่มกลาง `LineMessagingGroupId` (สวิตช์ `LineMessagingOpsAlertsToGroup`) — **ไม่ใช่ห้องสำรองของบริษัทที่ไม่ได้ตั้ง OA** (ตัวตัดสิน `Helpers/NotificationAudiencePolicy` · DOCUMENT_FLOW รอบ 232) |
 | **Microsoft Entra ID (Office 365)** | 📋 | OIDC มาตรฐาน; ตลาดเดียวกับลูกค้า Dynamics พอดี — บริษัทที่ใช้ Dynamics มี M365 อยู่แล้วเกือบ 100% |
 
 - `AuthProvider` เพิ่มค่า `"Line"` (✅ ใช้งานแล้ว), `"Microsoft"` (📋) — โครงเดิมรองรับอยู่แล้ว
@@ -1348,3 +1394,19 @@ _Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I
 _Last verified against codebase: 2026-11-02 (ทีม FS — ที่เก็บไฟล์กลาง Local | S3 · ไม่มี entity/คอลัมน์ใหม่ · เทสต์ `FileStorageKeyTests` `S3SigV4Tests` `FileStorageConfigPolicyTests` `FileStorageProviderTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit: เติมในคอมมิตตามหลัง)_
 
 _Last verified against codebase: 2026-11-03 (รอบ 230 Omise — §6.2d บัตรที่บันทึก/ตัดบัตรอัตโนมัติ/รอบโอนจากผู้ให้บริการ: 5 ตารางระดับแพลตฟอร์มใหม่ (`PlatformCardBillingMigration`) · เทสต์ `PlatformCardBillingRound230Tests` `PlatformCardBillingRound230DbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · sha เติมในคอมมิตตามหลัง)_
+
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — แถว LINE OA กลาง: นโยบายผู้รับ `NotificationAudiencePolicy` · `SiteSettings.LineMessagingOpsAlertsToGroup` (คอลัมน์ใหม่ใน `NextAccLineConfigMigration`) · `NotificationSetting.EnableLineGroup` · เทสต์ `NotificationAudiencePolicyRound232Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · sha เติมในคอมมิตตามหลัง)_
+
+### 6.2i หน้าซื้อแพ็กเกจสาธารณะ — cart + checkout จบในเว็บ (รอบ 232 · คำตัดสิน 232-Checkout-2 · `erp-review/2026-11-03/OMISE_READINESS.md`)
+
+- **ทางเข้าใหม่ของลูกค้าใหม่** (Omise ต้องตรวจก่อนเปิดบัญชี): `/pricing.html` (ตะกร้า: แพ็กเกจจาก `PlanTemplate` ที่ `IsActive && !IsPermanentFree && MonthlyPrice>0` · รอบบิล · คูปอง)
+  → `/checkout.html` (สมัคร+สร้างบริษัท `api/auth/register` หรือเข้าสู่ระบบ ในหน้าเดียว · เลือกบริษัทที่เป็น **Owner** · ยอด `QuotePlanChangeAsync` · ติ๊กข้อกำหนด+คืนเงิน ·
+  `POST api/public/checkout/companies/{id}/orders` ⇒ `ConvertTrialAsync` ⇒ `SubscriptionPayment` เดิม · `PayWidget` publicBase `…/orders/{paymentId}`) → `/checkout-success.html`
+- **ไม่มี entity ใหม่** — ใช้ `SubscriptionPayment` · `PaymentIntent` (ใต้บริษัทผู้ให้บริการ + `PayerCompanyId`) · `PolicyAcceptance` (ช่อง `platform-subscription`) เดิมทั้งหมด ·
+  คอลัมน์ใหม่ `SiteSettings.PublicCheckoutEnabled` (ค่าเริ่มต้น **false** · `LegalDocumentMigration`) — ผู้อ่าน `PublicCheckoutService.AvailabilityAsync` ผ่าน `PublicCheckoutPolicy.Decide` ตัวเดียว
+- **โหมด**: Test ⇒ ซื้อได้ + ป้ายทดสอบ + intent ผ่าน `IPaymentIntentService` (เงินทดสอบไม่มีผล 232-Omise-2) · Live+`PlatformLiveConfirmedAt` ⇒ `IPlatformPaymentService.StartSubscriptionPaymentAsync` ·
+  Live ที่ยังไม่ผ่านด่าน ⇒ ปิดรับเงิน (ไม่ตกไป Test) · เงินเข้า ⇒ `SubscriptionPaymentHandler` ⇒ เปิดสิทธิ์ + ใบเสร็จแพลตฟอร์ม (เส้น §6.2b/§6.2d เดิม)
+- **แอดมิน**: `api/admin/public-checkout` (GET สถานะ+URL ที่ส่ง Omise · PUT สวิตช์ · audit chain `public-checkout-switch`) · การ์ดใน `/admin/site-settings.html` แท็บบริการ · ไม่แตะ `AdminController`
+- **ยังไม่ทำ**: ส่วนเสริม/โควตาเพิ่มในตะกร้า (ซื้อหลังเข้าระบบที่ hub §6.2h) · Db test ของ service (ล็อกด้วย `required_call_site` 6 กติกา)
+
+_Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i หน้าซื้อแพ็กเกจสาธารณะ · `SiteSettings.PublicCheckoutEnabled` · `Helpers/PublicCheckoutPolicy` · `Services/Platform/PublicCheckoutService` · เทสต์ `PublicCheckoutRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

@@ -43,8 +43,52 @@
       } catch (e) { console.warn('Could not load feature catalog', e); }
     }
 
+    // รอบ 232 (ข้อ 6): โควตา CMS (จำนวนเว็บ · หน้า/เว็บ · สินค้า/เว็บ) + ที่พัก ของแต่ละแพ็กเกจอยู่ในตาราง PlanQuotaAllowance (ไม่ใช่คอลัมน์บน PlanTemplate) —
+    // ฟอร์มแก้แพ็กเกจเป็น "ฟอร์มเดียว" ของค่านี้ (หน้าโควตาเสริมแสดงอย่างเดียว) · รายชื่อทรัพยากรเป็น closed list จากเซิร์ฟเวอร์ (ไม่พิมพ์รหัสเอง) ·
+    // ผู้อ่านเชิงธุรกิจ: QuotaGateService.CheckAsync (CmsSiteService.CreateSiteAsync) · CmsQuotaService.PerSiteLimitAsync (หน้า/สินค้าต่อเว็บ)
+    window._quotaResources = []; window._quotaAllowances = [];
+    async function loadQuotaAllowances() {
+      try {
+        const [r, a] = await Promise.all([AdminAPI.get('/api/admin/quota/resources'), AdminAPI.get('/api/admin/quota/allowances')]);
+        window._quotaResources = (r?.data || []).filter(x => x.planEditableHere);
+        window._quotaAllowances = a?.data || [];
+      } catch (err) { window._quotaResources = null; AdminLayout.toast('โหลดโควตา CMS/ที่พักของแพ็กเกจไม่สำเร็จ: ' + (err.message || ''), 'error'); }
+    }
+    function quotaAllowanceOf(planId, key) {
+      const p = (window._quotaAllowances || []).find(x => x.id === planId);
+      return ((p && p.allowances) || []).find(x => x.resource === key) || {};
+    }
+    function quotaFieldsHtml(planId) {
+      const res = window._quotaResources;
+      if (res === null) return '<div style="color:#b91c1c;font-size:12px">โหลดโควตา CMS/ที่พักไม่สำเร็จ — ช่องถูกล็อก กันบันทึกทับค่าเดิมด้วยค่าว่าง (รีเฟรชแล้วลองใหม่)</div>';
+      return `<div class="admin-grid-3">${res.map((r, i) => { const a = quotaAllowanceOf(planId, r.key);
+        return `<div class="admin-form-group">
+          <label class="admin-label">${AdminLayout.esc(r.label)} <span style="font-weight:400;color:#94a3b8;font-size:11px">(${AdminLayout.esc(r.unit)})${r.perSite ? ' — ต่อเว็บ' : ''}</span></label>
+          <input type="number" min="-1" class="admin-input" id="ep_q_${i}" data-quota-key="${AdminLayout.esc(r.key)}" value="${a.included ?? ''}" placeholder="ว่าง = ไม่ตั้ง · -1 = ไม่จำกัด" oninput="syncQuotaTrialField(${i})">
+          <input type="number" min="-1" class="admin-input" id="ep_qt_${i}" value="${a.trialIncluded ?? ''}" placeholder="ระหว่างทดลองใช้ (ว่าง = ใช้ค่าปกติ)" style="margin-top:4px" ${a.included == null ? 'disabled' : ''} title="ตั้งได้เมื่อช่องปกติมีค่า (ฝ่ายค้าน S2)">
+          <div style="font-size:11px;color:#64748b;margin-top:4px">${AdminLayout.esc(r.legacyNote || '')}</div>
+        </div>`; }).join('')}</div>`;
+    }
+    // รอบ 232 (ฝ่ายค้าน S2): ช่องทดลองใช้ล็อกเมื่อช่องปกติว่าง (เซิร์ฟเวอร์ปฏิเสธคู่ "ปกติว่าง + ทดลองมีค่า" ด้วย)
+    function syncQuotaTrialField(i) {
+      const main = document.getElementById('ep_q_' + i), trial = document.getElementById('ep_qt_' + i);
+      if (!main || !trial) return;
+      trial.disabled = main.value === '';
+      if (trial.disabled) trial.value = '';
+    }
+    async function saveQuotaAllowances(planId) {
+      const res = window._quotaResources;
+      if (!res) return;   // โหลดไม่สำเร็จ = ไม่แตะค่าเดิม (ล้มดังตอนโหลดแล้ว)
+      const items = res.map((r, i) => {
+        const v = document.getElementById('ep_q_' + i).value, t = document.getElementById('ep_qt_' + i).value;
+        return { resource: r.key, included: v === '' ? null : Number(v), trialIncluded: t === '' ? null : Number(t) };
+      });
+      await AdminAPI.put(`/api/admin/quota/allowances/${encodeURIComponent(planId)}`, items);
+    }
+
     async function loadPlans() {
       await loadFeatures();
+      await loadQuotaAllowances();
       try {
         const res = await AdminAPI.plans(true);
         const plans = res.data;
@@ -268,10 +312,10 @@
               </div>
 
               <div style="font-weight:600;margin:16px 0 8px">ลิมิตการใช้งาน (แผนแบบเสียเงิน)</div>
-              <!-- รอบ 229 (QUOTA_ADDON §C · A-4): จำนวนเว็บ CMS · หน้า/สินค้าต่อเว็บ · ที่พัก + ขายโควตาเพิ่ม ตั้งที่หน้าเดียว (ไม่ทำสำเนาช่องที่นี่) -->
-              <div style="font-size:12px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:8px">
-                📏 <b>จำนวนเว็บไซต์ (CMS) · หน้า/สินค้าต่อเว็บ · ที่พัก</b> และการ<b>ขายโควตาเพิ่ม</b> (เว็บ · ที่นั่ง · พื้นที่ · หน้า OCR) ตั้งที่
-                <a href="/pages/admin-quota.html" style="color:#2563eb;font-weight:600">โควตาและโควตาเสริม</a> · ช่องด้านล่าง (ผู้ใช้ · พื้นที่ · OCR) ยังเป็นตัวตั้งของทรัพยากรนั้น</div>
+              <!-- รอบ 232 (ข้อ 6): จำนวนเว็บ CMS · หน้า/สินค้าต่อเว็บ · ที่พัก ตั้งในฟอร์มนี้ (ตาราง PlanQuotaAllowance ผ่าน /api/admin/quota/allowances — ตัวตั้งเดียว ·
+                   หน้า "โควตาและโควตาเสริม" เหลือแสดง + ขายโควตาเพิ่ม/ราคาส่วนเกิน) · ช่องด้านล่าง (ผู้ใช้ · พื้นที่ · OCR) ยังเป็นตัวตั้งของทรัพยากรนั้น -->
+              <div style="font-weight:600;font-size:13px;margin:8px 0 6px">📏 โควตาเว็บไซต์ (CMS) · ที่พัก <span style="font-weight:400;color:#64748b;font-size:11px">— ว่าง = ไม่ตั้ง (ไม่จำกัด/ค่าเดิม) · -1 = ไม่จำกัด · ตัวเลข = เพดาน · แถวล่างของแต่ละช่อง = ระหว่างทดลองใช้ · การ<b>ขายโควตาเพิ่ม</b>/ราคาส่วนเกินอยู่ที่ <a href="/pages/admin-quota.html" style="color:#2563eb;font-weight:600">โควตาและโควตาเสริม</a></span></div>
+              <div id="ep_quota_block">${quotaFieldsHtml(p.id)}</div>
               <div class="admin-grid-3">
                 <div class="admin-form-group">
                   <label class="admin-label">ผู้ใช้สูงสุด / บริษัท <span style="font-weight:400;color:#94a3b8;font-size:11px">— ต่อบริษัท · บน Account Plan map → MaxUsersPerCompany</span></label>
@@ -448,6 +492,9 @@
           enabledFeatureNames,
           trialFeatureNames,
         });
+        // รอบ 232 (ฝ่ายค้าน S3): ยังเป็น 2 คำขอ (แพ็กเกจ · โควตา) — ถ้าคำขอที่สองล้ม ต้องบอกชัดว่าแพ็กเกจบันทึกแล้วแต่โควตายังไม่ ไม่ใช่ล้มรวมเหมือนไม่บันทึกอะไร
+        try { await saveQuotaAllowances(planId); }
+        catch (qerr) { AdminLayout.toast('บันทึกแพ็กเกจแล้ว แต่โควตา CMS/ที่พักไม่สำเร็จ: ' + (qerr.message || '') + ' — แก้ค่าแล้วกดบันทึกอีกครั้ง', 'error'); return; }
         AdminLayout.toast('บันทึกแพ็กเกจสำเร็จ — อัพเดตให้บริษัทที่อยู่ในแพ็กเกจนี้แล้ว');
         closeEditModal();
         loadPlans();

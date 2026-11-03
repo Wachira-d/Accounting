@@ -393,12 +393,14 @@ public class ChatbotService : IChatbotService
         {
             var who = !string.IsNullOrWhiteSpace(conv.VisitorName) ? conv.VisitorName
                 : conv.Channel == "Tenant" ? "ผู้ใช้ในระบบ" : "ผู้เยี่ยมชมเว็บไซต์";
-            await _lineNotify.SendMessageAsync(
+            // รอบ 232 (232-Notify): แชทหน้าเว็บ NextAcc ตอบโดยเจ้าหน้าที่แพลตฟอร์ม = PlatformOps ⇒ กลุ่ม LINE กลางเท่านั้น
+            var r = await _lineNotify.TryPushPlatformOpsAsync(
                 $"💬 มีลูกค้าขอคุยกับเจ้าหน้าที่\n"
                 + $"👤 {who}"
                 + (string.IsNullOrWhiteSpace(conv.VisitorEmail) ? "" : $" ({conv.VisitorEmail})")
                 + $"\n❓ {Truncate(lastMessage, 200)}\n"
                 + $"🔗 ตอบที่หน้า Admin → แชทลูกค้า");
+            if (!r.Ok) _logger.LogWarning("แจ้งเตือน admin (WaitingAgent) ทาง LINE ไม่สำเร็จ: {Error}", r.Error);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "แจ้งเตือน admin (WaitingAgent) ไม่สำเร็จ"); }
     }

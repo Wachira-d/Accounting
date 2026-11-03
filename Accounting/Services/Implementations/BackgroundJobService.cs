@@ -158,7 +158,8 @@ public class BackgroundJobService : BackgroundService
         try
         {
             var db = scope.ServiceProvider.GetRequiredService<AccountingDbContext>();
-            var lineNotify = scope.ServiceProvider.GetRequiredService<ILineNotifyService>();
+            // รอบ 232 (232-Notify): "⚠️ ใบแจ้งหนี้เกินกำหนด" เดิมประกาศกลุ่ม LINE แล้วถอยไปกลุ่มกลางของแพลตฟอร์ม ⇒ เครื่องแจ้งเตือนกลาง (ar.invoice_overdue)
+            var notify = scope.ServiceProvider.GetService<INotificationEngine>();
             var today = DateTime.UtcNow.Date;
 
             var companyIds = await db.Documents
@@ -199,16 +200,14 @@ public class BackgroundJobService : BackgroundService
                     {
                         doc.Status = DocumentStatus.Overdue;
                         var daysOverdue = (today - doc.DueDate!.Value).Days;
-                        try
-                        {
-                            await lineNotify.NotifyOverdueInvoiceAsync(
-                                doc.CompanyId, doc.DocumentNumber,
-                                doc.Contact?.Name ?? "ไม่ระบุ", doc.BalanceDue, daysOverdue);
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "LINE notify skipped for overdue doc {DocId}", doc.Id);
-                        }
+                        if (notify != null)
+                            await notify.DispatchAsync(doc.CompanyId, Models.Constants.NotificationEvents.InvoiceOverdue, new NotificationContext
+                            {
+                                Title = "⚠️ ใบแจ้งหนี้เกินกำหนด",
+                                Message = $"📄 {doc.DocumentNumber}\n👤 {doc.Contact?.Name ?? "ไม่ระบุ"}\n💰 ค้างชำระ {doc.BalanceDue:N2} บาท\n📅 เกินกำหนด {daysOverdue} วัน",
+                                ActionUrl = $"/pages/documents.html?id={doc.Id}",
+                                EntityType = "Document", EntityId = doc.Id,
+                            });
                     }
                 }
 

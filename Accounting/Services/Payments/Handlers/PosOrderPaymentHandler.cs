@@ -37,6 +37,8 @@ public class PosOrderPaymentHandler : IPaymentCompletionHandler
 
     public async Task HandleSucceededAsync(PaymentIntent intent, CancellationToken ct = default)
     {
+        // รอบ 232 (232-Omise-2): ด่านชั้นสอง — เงินโหมดทดสอบห้ามมีผลทางธุรกิจ (dispatcher กันชั้นแรก · ตัวตัดสินเดียว TestModePaymentPolicy)
+        await Accounting.Helpers.TestModePaymentPolicy.GuardAsync(_db, intent, ct);
         var order = await _db.PosOrders.AsNoTracking()
             .Where(o => o.Id == intent.SourceId && o.CompanyId == intent.CompanyId)
             .Select(o => new { o.Id, o.OrderNumber, o.Status, o.NetAmount })

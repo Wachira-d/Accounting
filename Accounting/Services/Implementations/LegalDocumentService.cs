@@ -36,7 +36,7 @@ public class LegalDocumentService : ILegalDocumentService
 
     private static LegalDocumentView ToView(LegalDocumentVersion r) => new(
         r.Kind, LegalDocumentDefaults.Title(r.Kind), r.Version, DateOnly.FromDateTime(r.EffectiveDate), r.BodyMarkdown,
-        "published", r.PublishedAt, r.ChangeSummary);
+        "published", r.PublishedAt, r.ChangeSummary, string.IsNullOrWhiteSpace(r.BodyMarkdownEn) ? null : r.BodyMarkdownEn);
 
     private Task<List<LegalDocumentVersion>> PublishedRowsAsync(string kind, CancellationToken ct)
         => _db.LegalDocumentVersions.AsNoTracking()
@@ -124,7 +124,8 @@ public class LegalDocumentService : ILegalDocumentService
         => _db.LegalDocumentVersions.FirstOrDefaultAsync(x => x.Kind == kind && x.Status == LegalDocumentPolicy.StatusDraft, ct);
 
     private static LegalDraftView DraftView(LegalDocumentVersion r) => new(
-        r.Id, r.Version, DateOnly.FromDateTime(r.EffectiveDate), r.BodyMarkdown, r.ChangeSummary, r.CreatedAt, r.UpdatedAt, r.UpdatedBy ?? r.CreatedBy);
+        r.Id, r.Version, DateOnly.FromDateTime(r.EffectiveDate), r.BodyMarkdown, r.ChangeSummary, r.CreatedAt, r.UpdatedAt, r.UpdatedBy ?? r.CreatedBy,
+        r.BodyMarkdownEn);
 
     public async Task<LegalDraftView?> GetDraftAsync(string kind, CancellationToken ct = default)
     {
@@ -140,6 +141,9 @@ public class LegalDocumentService : ILegalDocumentService
         var body = input.BodyMarkdown ?? "";
         if (body.Length > LegalMarkdown.MaxLength)
             throw new BusinessRuleException($"เนื้อความยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", LegalDocumentPolicy.RuleCode);
+        // รอบ 232 (232-Checkout-1): ฉบับอังกฤษ — null = ไม่เปลี่ยน · "" = ล้าง · เพดานเดียวกับฉบับไทย
+        if (input.BodyMarkdownEn is { Length: > LegalMarkdown.MaxLength })
+            throw new BusinessRuleException($"เนื้อความภาษาอังกฤษยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", LegalDocumentPolicy.RuleCode);
         var version = (input.Version ?? "").Trim();
         // ร่างเก็บได้แม้ยังไม่ใส่เลข — แต่ถ้าใส่ ต้องเป็นรูปแบบที่เผยแพร่ได้ (บอกตั้งแต่ตอนบันทึก ไม่ใช่รอไปล้มตอนเผยแพร่)
         if (version.Length > 0 && !LegalDocumentPolicy.IsValidVersionLabel(version))
@@ -170,6 +174,7 @@ public class LegalDocumentService : ILegalDocumentService
         row.Version = version;
         row.EffectiveDate = eff.ToDateTime(TimeOnly.MinValue);
         row.BodyMarkdown = body;
+        if (input.BodyMarkdownEn != null) row.BodyMarkdownEn = string.IsNullOrWhiteSpace(input.BodyMarkdownEn) ? null : input.BodyMarkdownEn;
         row.ChangeSummary = summary;
         await SaveGuardedAsync(ct);
         return DraftView(row);
@@ -233,6 +238,49 @@ public class LegalDocumentService : ILegalDocumentService
         row.UpdatedBy = actor;
         await SaveGuardedAsync(ct);
         return true;
+    }
+
+    public async Task<LegalDocumentView> SetPublishedEnglishAsync(string kind, string version, string? bodyMarkdownEn, string actor,
+        string? ipAddress = null, CancellationToken ct = default)
+    {
+        var k = RequireKind(kind);
+        var v = (version ?? "").Trim();
+        var row = await _db.LegalDocumentVersions
+            .FirstOrDefaultAsync(x => x.Kind == k && x.Version == v && x.Status == LegalDocumentPolicy.StatusPublished, ct);
+        if (LegalDocumentLanguage.PublishedEnglishRefusal(row != null, row?.Status, bodyMarkdownEn, LegalMarkdown.MaxLength) is string refusal)
+            throw new BusinessRuleException(refusal, LegalDocumentPolicy.RuleCode, row == null ? 404 : 400);
+        var before = row!.BodyMarkdownEn;
+        var after = string.IsNullOrWhiteSpace(bodyMarkdownEn) ? null : bodyMarkdownEn;
+        if (string.Equals(before, after, StringComparison.Ordinal)) return ToView(row);   // ไม่เปลี่ยน = ไม่เขียน audit ซ้ำ
+        row.BodyMarkdownEn = after;   // เลขฉบับ/วันมีผล/เนื้อความไทยไม่แตะ — หลักฐานการยอมรับผูกฉบับไทยเดิม
+        row.UpdatedAt = DateTime.UtcNow;
+        row.UpdatedBy = actor;
+        Guid? actorId = Guid.TryParse(actor, out var aid) ? aid : null;
+        var actorEmail = actorId is Guid a2
+            ? await _db.Users.AsNoTracking().Where(u => u.Id == a2).Select(u => u.Email).FirstOrDefaultAsync(ct)
+            : null;
+        static string? Sha(string? t) => t == null ? null
+            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(t)));
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = PdpaPolicy.PlatformScopeCompanyId,
+            UserId = actorId,
+            UserEmail = actorEmail,
+            IpAddress = ipAddress is { Length: > 45 } ? ipAddress[..45] : ipAddress,
+            Action = AuditAction.Update,
+            EntityType = nameof(LegalDocumentVersion),
+            EntityId = row.Id.ToString(),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "LegalDocumentEnglishUpdated", kind = k, version = row.Version, by = actor,
+                beforeSha256 = Sha(before), afterSha256 = Sha(after), beforeLength = before?.Length ?? 0, afterLength = after?.Length ?? 0,
+                note = "ฉบับไทยเป็นฉบับผูกพัน — เลขฉบับไม่เปลี่ยน (คำตัดสิน 232-Checkout-1 · ฝ่ายค้าน N3)",
+                ruleCode = LegalDocumentPolicy.RuleCode, legalReference = "PDPA ม.23",
+            }),
+        });
+        await SaveGuardedAsync(ct);
+        _logger.LogWarning("แก้ข้อความอังกฤษของ{Title} ฉบับ {Version} โดย {Actor} (เลขฉบับคงเดิม)", LegalDocumentDefaults.Title(k), row.Version, actor);
+        return ToView(row);
     }
 
     /// <summary>ฝ่ายค้านรอบ 214 (หมายเหตุ): สองแท็บกดพร้อมกัน — เผยแพร่ซ้ำ (Status เป็น concurrency token: UPDATE … WHERE Status='Draft') /

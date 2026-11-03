@@ -22,7 +22,8 @@ public static class OcrLineBuildNotes
     public const string GapTag = "[Σ-GAP]";
 
     // ทีม F: แผนหัก ณ ที่จ่ายต่อบรรทัด (OcrLineWhtPlan) เขียนใหม่ทุกครั้งที่สร้างบรรทัด ⇒ ล้างของรอบก่อน (ไม่สะสมซ้ำ · ไม่ค้างหยุดอนุมัติเมื่อแผนไม่ใช้แล้ว)
-    private static readonly string[] Recomputed = { GapTag, OcrHeaderVatEvidence.DerivedTag, OcrLineWhtPlan.AppliedTag, OcrLineWhtPlan.MismatchTag, OcrLineWhtPlan.SuggestTag };
+    // รอบ 232: ผลจับคู่บรรทัดกับใบสั่งซื้อ (OcrSourceLineNote) เขียนใหม่ทุกครั้งที่สร้างบรรทัดเช่นกัน
+    private static readonly string[] Recomputed = { GapTag, OcrHeaderVatEvidence.DerivedTag, OcrLineWhtPlan.AppliedTag, OcrLineWhtPlan.MismatchTag, OcrLineWhtPlan.SuggestTag, OcrSourceLineNote.Tag };
 
     /// <summary>ตัดบรรทัดที่ขึ้นต้นด้วยแท็กที่ตัวสร้างบรรทัดคำนวณใหม่ · บรรทัดอื่นคงเดิมทุกตัวอักษร · ไม่มีอะไรให้ตัด = คืนค่าเดิม</summary>
     public static string? StripRecomputed(string? notes)

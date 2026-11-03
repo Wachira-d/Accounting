@@ -4,8 +4,10 @@ namespace Accounting.Helpers;
 
 /// <summary>ค่าตั้ง LINE OA กลางของ NextAcc ที่ใช้งานจริง (ถอดรหัสแล้ว) — ได้จาก <c>INextAccLineConfig.GetAsync</c> ตัวเดียว ·
 /// <see cref="Source"/> บอกว่ามาจากหน้าแอดมิน (<see cref="NextAccLineConfigRule.SourceAdmin"/>) หรือ config <c>Line:*</c></summary>
+/// <param name="OpsAlertsToGroup">รอบ 232: แอดมินอนุญาตให้ "เรื่องของระบบ" (PlatformOps) เข้ากลุ่มกลางไหม — <c>SiteSettings.LineMessagingOpsAlertsToGroup</c> (ตั้งต้น true) ·
+/// ผู้อ่าน: <c>LineNotifyService.TryPushPlatformOpsAsync</c></param>
 public sealed record NextAccLineSettings(string? AccessToken, string? ChannelSecret, string? BasicId, string? BotUserId, string? GroupId, string Source,
-    string? Problem = null)
+    string? Problem = null, bool OpsAlertsToGroup = true)
 {
     public bool HasToken => !string.IsNullOrWhiteSpace(AccessToken);
     public bool HasSecret => !string.IsNullOrWhiteSpace(ChannelSecret);

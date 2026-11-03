@@ -1021,6 +1021,8 @@
       <div style="border:1px solid #d1fae5;background:#f0fdf4;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px">
         ✅ <b>ส่งแจ้งเตือนลูกค้าทาง LINE ได้แล้ว</b> — ระบบส่งผ่าน LINE ของ NextAcc ให้โดยไม่ต้องตั้งค่า · ส่วนด้านล่างใช้เฉพาะเมื่อต้องการส่งในชื่อ <b>LINE ของร้านเอง</b>
       </div>
+      <!-- รอบ 232 (232-Notify): สถานะ "แจ้งเตือนธุรกิจของบริษัททาง LINE (กลุ่มทีม)" — เซิร์ฟเวอร์ตัดสิน (tenantLineNotice) · ไม่มี OA ของร้าน = ไปกระดิ่ง/อีเมล ไม่ผ่าน OA กลาง -->
+      <div id="lineTenantNotice" style="border:1px solid #fde68a;background:#fffbeb;border-radius:8px;padding:10px 14px;margin:0 0 12px;font-size:13px;display:none"></div>
       <details id="lineAdvanced" style="margin-bottom:12px"><summary style="cursor:pointer;font-weight:600;font-size:14px">ตั้งค่าขั้นสูง — ใช้ LINE OA ของร้านเอง (รหัสเชื่อมจาก LINE Developers)</summary>
       <p class="text-gray-400" style="margin:8px 0 16px;font-size:13px">
         ใส่ "รหัสเชื่อม LINE OA ของร้าน" แล้วแจ้งเตือนจะส่งในชื่อร้าน (แยกการเรียกเก็บ + แบรนด์) · สมัครได้ที่
@@ -1977,6 +1979,7 @@
           document.getElementById('lineOaBasicId').value = c.oaBasicId || '';
           this._renderLineCustomerChannel(c.customerChannel);
           this._renderLineRelinkInvite(c.relinkInvite, c.webhookProblem);
+          { const n = document.getElementById('lineTenantNotice'); if (n) { n.style.display = c.tenantLineNotice ? '' : 'none'; n.textContent = c.tenantLineNotice ? '🔔 ' + c.tenantLineNotice : ''; } }
           document.getElementById('lineToken').value = '';
           document.getElementById('lineSecret').value = '';
           document.getElementById('lineTokenStatus').textContent = c.hasAccessToken

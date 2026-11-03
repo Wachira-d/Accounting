@@ -64,11 +64,14 @@ public class PaymentGatewayController : ControllerBase
     public sealed record IntentResponse(
         Guid Id, string Status, string Method, decimal Amount, string Currency,
         string? QrPayload, DateTime? QrExpiresAt, string? AuthorizeUrl,
-        string? FailureMessage, bool IsTestMode);
+        string? FailureMessage, bool IsTestMode,
+        // รอบ 232 S3: ป้าย/หมายเหตุโหมดทดสอบจากเซิร์ฟเวอร์ (TestModePaymentPolicy ตัวเดียว)
+        string StatusLabel, string? TestNote);
 
     private static IntentResponse Map(PaymentIntent i, bool testMode) => new(
         i.Id, i.Status.ToString(), i.MethodKind.ToString(), i.Amount, i.Currency,
-        i.QrPayload, i.QrExpiresAt, i.AuthorizeUrl, i.FailureMessage, testMode);
+        i.QrPayload, i.QrExpiresAt, i.AuthorizeUrl, i.FailureMessage, testMode,
+        TestModePaymentPolicy.StatusLabel(i.Status, testMode), TestModePaymentPolicy.PayerNote(i.Status, testMode, i.SourceKind));
 
     /// <summary>ฝ่ายค้านรอบ 219 รอบ 2: ตัวตัดสินเดียวกับด่านให้สิทธิ์ (โหมด ณ ตอนสร้างชนะ · แถวเดิมอ่าน config)</summary>
     private Task<bool> IsTestModeAsync(PaymentIntent i, CancellationToken ct)
@@ -146,6 +149,7 @@ public class PaymentGatewayController : ControllerBase
             {
                 i.Id, i.ProviderCode, SourceKindValue = i.SourceKind, sourceKind = i.SourceKind.ToString(), i.SourceId,
                 i.Amount, StatusValue = i.Status, status = i.Status.ToString(), method = i.MethodKind.ToString(),
+                IsTestModeStamped = i.IsTestMode,
                 i.ProviderRef, i.FailureMessage, i.ConfirmedAt, i.ConfirmedBy,
                 i.FeeActual, i.SettledAt, i.CreatedAt,
                 i.RefundedAmount, i.LastRefundedAt, i.LastRefundJournalEntryId,
@@ -188,7 +192,9 @@ public class PaymentGatewayController : ControllerBase
                 r.ProviderRef, r.FailureMessage, r.ConfirmedAt, r.ConfirmedBy, r.FeeActual, r.SettledAt,
                 r.CreatedAt, r.RefundedAmount, r.LastRefundedAt, r.LastRefundJournalEntryId, isSettled,
                 // รอบ 201 ทีม GW (A-GW2): ป้าย/ปุ่ม/ค้างนาน — เซิร์ฟเวอร์ตัดสิน (หน้าเว็บไม่มีสำเนาเกณฑ์อีก)
-                statusLabel = PaymentIntentPolicy.StatusLabel(r.StatusValue),
+                // รอบ 232 (232-Omise-2): รายการโหมดทดสอบ — ป้าย "ทดสอบ — ไม่ลงบัญชี" (ตัวตัดสินเดียว TestModePaymentPolicy)
+                isTestMode = PaymentIntentTestMode.Decide(r.IsTestModeStamped, null),
+                statusLabel = TestModePaymentPolicy.StatusLabel(r.StatusValue, PaymentIntentTestMode.Decide(r.IsTestModeStamped, null)),
                 sourceKindLabel = PaymentIntentPolicy.SourceKindLabel(r.SourceKindValue),
                 isStuck = PaymentIntentPolicy.IsStuck(r.StatusValue, r.CreatedAt, nowUtc),
                 canCheckLive = PaymentIntentPolicy.IsOpen(r.StatusValue),

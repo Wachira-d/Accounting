@@ -308,6 +308,22 @@
           + เพิ่มแพ็กเกจบริการ
         </button>
       </div>
+      <!-- รอบ 232 (คำตัดสิน 232-Checkout-2): สวิตช์หน้าซื้อแพ็กเกจสาธารณะ (cart + checkout ที่จบในเว็บ — Omise ตรวจก่อนเปิดบัญชี) ·
+           ค่าเริ่มต้นปิด · สถานะโหมด/เหตุผลจากเซิร์ฟเวอร์ (api/admin/public-checkout · Helpers/PublicCheckoutPolicy) — แยก endpoint จาก site-settings (AdminController) -->
+      <div class="admin-card" id="publicCheckoutCard">
+        <div class="admin-card-header">
+          <div>
+            <div class="admin-card-title">🛒 หน้าซื้อแพ็กเกจสาธารณะ (ตะกร้า + ชำระเงินในเว็บ)</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">/pricing.html → /checkout.html → /checkout-success.html — ลูกค้าใหม่สมัคร เลือกแพ็กเกจ และจ่ายบัตร/พร้อมเพย์ได้เองโดยไม่ต้องติดต่อเรา ·
+              ใช้ช่องทางรับชำระของ NextAcc (โหมดทดสอบ = ป้าย "โหมดทดสอบ" ทั้งหน้า ไม่มีเงินจริง ไม่เปิดสิทธิ์)</div>
+          </div>
+        </div>
+        <div id="publicCheckoutState" style="font-size:13px;margin-top:12px;line-height:1.8">กำลังโหลด...</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">
+          <label style="display:flex;gap:8px;align-items:center;font-size:14px"><input type="checkbox" id="publicCheckoutEnabled"> เปิดหน้าซื้อแพ็กเกจสาธารณะ</label>
+          <button class="admin-btn admin-btn-primary admin-btn-sm" type="button" id="publicCheckoutSave">บันทึก</button>
+        </div>
+      </div>
     </div>
 
     <!-- Tab 4: System -->
@@ -481,8 +497,10 @@
     <div class="tab-panel" id="tab-line">
       <div class="admin-card">
         <div class="section-title">LINE OA กลาง (Messaging API)</div>
-        <div class="help-text" style="margin-bottom:12px">OA ของ NextAcc ที่ผู้ใช้ ERP / พนักงาน (สลิปเงินเดือน · สรุปประจำวัน) และลูกค้าของร้านที่ไม่มี OA เองใช้ผูกและรับแจ้งเตือน ·
-          ค่าในหน้านี้มีผลก่อน config ของเซิร์ฟเวอร์ (<code>Line:*</code>) เมื่อมี Channel Access Token</div>
+        <div class="help-text" style="margin-bottom:12px">OA ของ NextAcc ที่ผู้ใช้ ERP / พนักงาน (สลิปเงินเดือน · สรุปประจำวัน) และลูกค้าของร้านที่ไม่มี OA เองใช้ผูกและรับแจ้งเตือน<b>แบบ 1:1</b> ·
+          ค่าในหน้านี้มีผลก่อน config ของเซิร์ฟเวอร์ (<code>Line:*</code>) เมื่อมี Channel Access Token ·
+          รอบ 232: OA กลางส่งได้เฉพาะ (ก) เรื่องบัญชีของผู้เช่ากับแพลตฟอร์ม (ต่ออายุ · ชำระค่าบริการ · ใกล้หมดอายุ · โควตา) ถึงเจ้าของบริษัทนั้น และ (ข) เรื่องของระบบเข้ากลุ่มของผู้ดูแล —
+          <b>เหตุการณ์ธุรกิจของผู้เช่า (เอกสาร/รับเงิน/การจอง) ไม่เข้ากลุ่มกลาง</b> แม้บริษัทนั้นไม่ได้ตั้ง OA เอง</div>
         <div id="lnStatus" class="help-text" style="margin-bottom:12px"></div>
         <div id="lnWarnings" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:8px;background:#fef3c7;color:#92400e;font-size:13px"></div>
         <div class="form-group">
@@ -511,8 +529,11 @@
             <div class="help-text">ตั้งแล้วระบบตรวจว่า webhook มาจากบอทนี้จริงก่อนผูก LINE ของลูกค้า</div>
           </div>
           <div class="form-group">
-            <label>Group ID สำหรับข้อความกลุ่มของระบบ (ไม่บังคับ)</label>
+            <label>Group ID กลุ่ม LINE ของผู้ดูแลระบบ (ไม่บังคับ)</label>
             <input type="text" id="lnGroupId" placeholder="C + 32 ตัว">
+            <!-- รอบ 232 (232-Notify): กลุ่มกลางรับเฉพาะเรื่องของระบบ — ป้ายนโยบายมาจากเซิร์ฟเวอร์ (groupPolicyNote) -->
+            <div class="help-text" id="lnGroupPolicy"></div>
+            <label style="font-weight:400;margin-top:6px"><input type="checkbox" id="lnOpsAlerts" style="width:auto"> ส่ง "เรื่องของระบบ" เข้ากลุ่มนี้ (ฟอร์มติดต่อ · ลูกค้าขอคุยกับเจ้าหน้าที่)</label>
           </div>
         </div>
         <div id="lnTestResult" class="help-text" style="margin-top:8px"></div>
@@ -597,6 +618,28 @@
         preview.className = 'placeholder';
       }
     }
+
+    // ===== รอบ 232: สวิตช์หน้าซื้อแพ็กเกจสาธารณะ (endpoint แยก — ไม่ผ่าน payload ของ site-settings) =====
+    async function loadPublicCheckout() {
+      const box = document.getElementById('publicCheckoutState');
+      try {
+        const res = await AdminAPI.get('/public-checkout');
+        const d = res.data;
+        const esc = AdminLayout.esc;
+        document.getElementById('publicCheckoutEnabled').checked = !!d.enabled;
+        box.innerHTML = `สถานะ: <b>${d.enabled ? 'เปิด' : 'ปิด'}</b> · ชำระออนไลน์: <b>${d.onlineAvailable ? (d.isTestMode ? '🧪 โหมดทดสอบ (ไม่มีเงินจริง)' : '✅ รับเงินจริง') : '❌ ' + esc(d.reason || 'ยังไม่พร้อม')}</b><br>
+          URL ที่ส่งให้ Omise ตรวจ: <code>${esc(d.pricingUrl)}</code> · <code>${esc(d.checkoutUrl)}</code>
+          ${d.baseUrlFromSettings ? '' : '<br><span style="color:#92400e">⚠️ ยังไม่ได้ตั้ง "URL ของระบบ" (แท็บทั่วไป) — URL ด้านบนใช้โฮสต์ที่เปิดหน้าแอดมินอยู่ อาจไม่ใช่โดเมนจริง</span>'}`;
+      } catch (e) { box.textContent = 'โหลดไม่สำเร็จ: ' + e.message; }
+    }
+    document.getElementById('publicCheckoutSave').addEventListener('click', async () => {
+      try {
+        const res = await AdminAPI.put('/public-checkout', { enabled: document.getElementById('publicCheckoutEnabled').checked });
+        AdminLayout.toast(res.message || 'บันทึกแล้ว');
+      } catch (e) { AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+      await loadPublicCheckout();
+    });
+    loadPublicCheckout();
 
     // ===== Load Settings =====
     async function loadSettings() {
@@ -973,6 +1016,8 @@
       document.getElementById('lnBasicId').value = d.basicId || '';
       document.getElementById('lnBotUserId').value = d.botUserId || '';
       document.getElementById('lnGroupId').value = d.groupId || '';
+      document.getElementById('lnOpsAlerts').checked = d.opsAlertsToGroup !== false;
+      document.getElementById('lnGroupPolicy').textContent = d.groupPolicyNote || '';
       const src = lnSourceLabel[d.effectiveSource] || (d.effectiveSource || '');
       document.getElementById('lnStatus').innerHTML = 'ระบบใช้อยู่ตอนนี้: <strong>' + AdminLayout.esc(src) + '</strong>'
         + (d.configHasToken ? ' · เซิร์ฟเวอร์มี Line:ChannelAccessToken ใน config ด้วย' : '')
@@ -1010,6 +1055,7 @@
           basicId: document.getElementById('lnBasicId').value.trim(),
           botUserId: document.getElementById('lnBotUserId').value.trim(),
           groupId: document.getElementById('lnGroupId').value.trim(),
+          opsAlertsToGroup: document.getElementById('lnOpsAlerts').checked,
         };
         const res = await AdminAPI.updateLineMessaging(payload);
         lnRender(res.data);

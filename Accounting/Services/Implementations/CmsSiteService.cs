@@ -327,6 +327,25 @@ public class CmsSiteService : ICmsSiteService
             if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"นโยบายการยกเลิกและคืนเงินยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
             if (md != site.RefundPolicyMarkdown) { site.RefundPolicyMarkdown = md; site.RefundPolicyUpdatedAt = DateTime.UtcNow; }
         }
+        // รอบ 232 (232-Checkout-1): ฉบับอังกฤษของข้อความที่ร้านเขียน — "" = ล้าง · null = ไม่เปลี่ยน · เพดานเดียวกัน · ไม่ขยับวันที่ปรับปรุง (ฉบับเดียวกัน)
+        if (request.PrivacyPolicyMarkdownEn != null)
+        {
+            var md = Blank(request.PrivacyPolicyMarkdownEn);
+            if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"นโยบายความเป็นส่วนตัว (อังกฤษ) ยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
+            site.PrivacyPolicyMarkdownEn = md;
+        }
+        if (request.TermsOfServiceMarkdownEn != null)
+        {
+            var md = Blank(request.TermsOfServiceMarkdownEn);
+            if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"ข้อกำหนดการใช้บริการ (อังกฤษ) ยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
+            site.TermsOfServiceMarkdownEn = md;
+        }
+        if (request.RefundPolicyMarkdownEn != null)
+        {
+            var md = Blank(request.RefundPolicyMarkdownEn);
+            if (md is { Length: > LegalMarkdown.MaxLength }) throw new BusinessRuleException($"นโยบายการยกเลิกและคืนเงิน (อังกฤษ) ยาวเกิน {LegalMarkdown.MaxLength:N0} ตัวอักษร", "PDPA-23-SHOP-POLICY");
+            site.RefundPolicyMarkdownEn = md;
+        }
         if (request.RefundReturnWindowDays.HasValue)
         {
             var d = request.RefundReturnWindowDays.Value;
@@ -453,6 +472,9 @@ public class CmsSiteService : ICmsSiteService
                 RefundPolicyUrl = s.RefundPolicyUrl,
                 RefundPolicyMarkdown = s.RefundPolicyMarkdown,
                 RefundPolicyUpdatedAt = s.RefundPolicyUpdatedAt,
+                PrivacyPolicyMarkdownEn = s.PrivacyPolicyMarkdownEn,   // รอบ 232: echo ฉบับอังกฤษ
+                TermsOfServiceMarkdownEn = s.TermsOfServiceMarkdownEn,
+                RefundPolicyMarkdownEn = s.RefundPolicyMarkdownEn,
                 RefundReturnWindowDays = s.RefundReturnWindowDays,
                 RefundProcessingDays = s.RefundProcessingDays,
                 PolicyAcceptanceText = s.PolicyAcceptanceText,

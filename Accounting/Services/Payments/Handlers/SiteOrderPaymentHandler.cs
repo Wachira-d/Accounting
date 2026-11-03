@@ -29,6 +29,8 @@ public class SiteOrderPaymentHandler : IPaymentCompletionHandler
 
     public async Task HandleSucceededAsync(PaymentIntent intent, CancellationToken ct = default)
     {
+        // รอบ 232 (232-Omise-2): ด่านชั้นสอง — เงินโหมดทดสอบห้ามมีผลทางธุรกิจ (dispatcher กันชั้นแรก · ตัวตัดสินเดียว TestModePaymentPolicy)
+        await Accounting.Helpers.TestModePaymentPolicy.GuardAsync(_db, intent, ct);
         // siteId อาจไม่ได้ส่งมาตอนสร้าง intent — หาจากตัวออเดอร์เอง
         // (เดาไม่ได้ และ "ค่า default ที่แต่งขึ้นอันตรายกว่าการไม่ตอบ")
         var siteId = intent.SiteId ?? await _db.SiteOrders.AsNoTracking()

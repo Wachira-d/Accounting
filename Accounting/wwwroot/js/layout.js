@@ -875,6 +875,9 @@ const Layout = {
     // "*" = backend sentinel = "no custom CompanyRole assigned, show all"
     // (preserves legacy access for plain Employee / Manager UserRoles).
     if (allowed.includes('*')) return true;
+    // รอบ 232 (ฝ่ายค้าน S5): hub "แพ็กเกจและการชำระเงิน" = รายการเดียวในหน้าบทบาท · บทบาทเก่าที่ติ๊กลูก (subscription/addons/usage/account-subscription) ถือว่ามี hub
+    // และหน้าลูกเปิดได้เมื่อมีสิทธิ์ hub หรือลูกใด ๆ (ตัวตั้งเดียว billingHub.menuIds — ไม่ต้อง migrate ข้อมูลบทบาท)
+    if (this.billingHub.menuIds.includes(menuId)) return this.billingHub.menuIds.some(id => allowed.includes(id));
     // STRICT mode: explicit role with empty grant list → hide everything.
     // Admin must tick menus on the role page to expose them.
     return allowed.includes(menuId);
@@ -977,7 +980,8 @@ const Layout = {
       // flush() then drops sections that end up empty after item filtering.
       if (item.section) return true;   // flush() ทิ้งหมวดที่ว่างให้เอง
       const visible =
-        (!item.id || !hidden.includes(item.id))
+        !item.inHub   // รอบ 232: หน้าย่อยของ hub ไม่โผล่เป็นเมนูแยก (เดิมกรองเฉพาะ sidebar ⇒ เมนูเต็มยังเห็น 7 ทางเข้าซ้อน)
+        && (!item.id || !hidden.includes(item.id))
         && (!item.id || this.hasMenuAccess(item.id))
         && (!item.adminOnly || isAdminUser)
         && (!item.platformAdmin || isPlatformAdmin);
@@ -1442,6 +1446,47 @@ const Layout = {
   // `section:` markers open collapsible groups; every item in a group also
   // carries a `description` shown in the hover tooltip.  Active section
   // auto-expands; collapsed state persists in localStorage.
+  // ───────── รอบ 232: hub "แพ็กเกจและการชำระเงิน" — ตารางแท็บตัวเดียว (ผู้เช่า) ─────────
+  // ที่มา: เมนู "บัญชีผู้ใช้" เคยมี 7 ทางเข้าซ้อนกัน (License ของฉัน · แพ็กเกจของบริษัทนี้ · แพ็กเกจและการชำระเงิน · ส่วนเสริมของฉัน · สถานะการใช้งาน
+  // + ปุ่มลัด 3 ปุ่มบนหัว hub) ⇒ เหลือเมนูเดียว แท็บ 5 แท็บ · แท็บ pane อยู่ใน billing.html (#tab=…) · แท็บที่เป็นหน้าแยกคง URL เดิม (ไม่ลบ API/ไม่ redirect)
+  // และหน้าย่อยเดิม (subscription/addons/account-subscription) แสดงแถบแท็บเดียวกันผ่าน mountBillingHub() ⇒ ผู้ใช้เห็นเป็น "หน้าเดียว"
+  // ห้ามพิมพ์รายชื่อแท็บซ้ำในหน้าใด — billing.html สร้างแท็บจากตารางนี้ (HubTabs.init)
+  billingHub: {
+    url: '/pages/billing.html',
+    // ฝ่ายค้าน S5: สิทธิ์เมนู — id ลูกเดิมที่บทบาทเคยติ๊กไว้ (hasMenuAccess('billing') = มี billing หรือลูกใด ๆ · อ่านฝั่ง resolver ไม่แก้ข้อมูล)
+    menuIds: ['billing', 'subscription', 'addons', 'usage', 'account-subscription'],
+    tabs: [
+      { key: 'plan', label: '💎 แพ็กเกจ', pane: true, pages: ['/pages/subscription.html'], sub: 'รายละเอียด / ทดลองใช้' },
+      { key: 'usage', label: '📊 ใช้ไปเท่าไร / โควตา', pane: true, pages: ['/pages/usage.html'] },
+      { key: 'buy', label: '➕ ซื้อเพิ่ม / ส่วนเสริม', pane: true, pages: ['/pages/addons.html'], sub: 'จัดการส่วนเสริม' },
+      { key: 'docs', label: '🧾 ใบแจ้งหนี้ & ใบเสร็จ', pane: true },
+      { key: 'license', label: '🎫 License หลายบริษัท', pane: false, href: '/pages/account-subscription.html', pages: ['/pages/account-subscription.html'] },
+    ],
+  },
+  /** แท็บของ hub เป็น HTML — inHub=true (อยู่ใน billing.html: แท็บ pane เป็นปุ่ม data-tab · แท็บหน้าแยกเป็นลิงก์) · inHub=false (หน้าย่อย: ทุกแท็บเป็นลิงก์กลับ hub) */
+  billingHubTabsHtml(active, opts) {
+    const inHub = !!(opts && opts.inHub), e = s => this.esc(s), hub = this.billingHub;
+    return hub.tabs.map(t => {
+      const cls = 'hub-tab' + (t.key === active ? ' active' : '');
+      if (inHub && t.pane) return `<button type="button" class="${cls}" role="tab" data-tab="${e(t.key)}">${e(t.label)}</button>`;
+      const href = t.pane ? `${hub.url}#tab=${t.key}` : t.href;
+      return `<a class="${cls}" role="tab" href="${e(href)}" style="text-decoration:none;display:inline-block">${e(t.label)}</a>`;
+    }).join('');
+  },
+  /** หน้าย่อยของ hub (subscription/addons/account-subscription) เรียกหลัง Layout.init — แทรกแถบแท็บเดียวกันใต้หัวหน้า + ป้ายหน้าย่อย */
+  mountBillingHub(active) {
+    const root = document.getElementById('pageContent'); if (!root || root.querySelector('.hub-tabs[data-billing-hub]')) return;
+    const tab = this.billingHub.tabs.find(t => t.key === active); if (!tab) return;
+    const header = root.querySelector('.page-header') || (root.querySelector('h1, h2') || {}).parentElement;
+    if (!header || header === root && !root.firstElementChild) { console.warn('[Layout.mountBillingHub] ไม่พบหัวหน้า (.page-header / h1) — แถบแท็บ hub ไม่ถูกแทรก:', location.pathname); return; }
+    const here = location.pathname;
+    const sub = tab.pane && tab.pages && tab.pages.includes(here) && tab.sub ? `<span class="muted" style="margin-left:8px">› ${this.esc(tab.sub)}</span>` : '';
+    const html = `<div class="hub-tabs" data-billing-hub="1" role="tablist" style="display:flex;gap:6px;flex-wrap:wrap;border-bottom:1px solid #e2e8f0;margin:0 0 16px;align-items:center">
+      ${this.billingHubTabsHtml(active, { inHub: false })}${sub}</div>
+      <style>.hub-tab{background:none;border:none;border-bottom:3px solid transparent;padding:10px 14px;font-size:14px;font-weight:600;color:#64748b;cursor:pointer}.hub-tab.active{color:#1d4ed8;border-bottom-color:#2563eb}</style>`;
+    (header === root ? root.firstElementChild : header).insertAdjacentHTML('afterend', html);
+  },
+
   navItems: [
     { id: 'dashboard', label: 'แดชบอร์ด', icon: '📊', href: '/app.html', feature: 'Dashboard', _i18nKey: 'nav.dashboard',
       description: 'ภาพรวมธุรกิจ — ยอดขาย รายจ่าย ลูกหนี้ เจ้าหนี้ กำไร เปรียบเทียบรายเดือน' },
@@ -1491,6 +1536,11 @@ const Layout = {
     // S200-2: lockOnEnforce = ผูกฟีเจอร์ครั้งแรกรอบ 200 ⇒ ล็อก 🔒 เฉพาะเมื่อโหมดที่มีผลจริง (เซิร์ฟเวอร์) = Enforce · ก่อนนั้นป้าย "แพ็กเกจไม่รวม" กดเข้าได้
     { id: 'settlements', label: 'รอบโอนเงินจากแพลตฟอร์ม', icon: '🧾', href: '/pages/settlements.html', feature: 'BankReconciliation', lockOnEnforce: true,
       description: 'นำเข้ารายงานรอบโอนของ marketplace/gateway/เครื่องรูดบัตร → จัดประเภทบรรทัด → จับคู่ใบขาย → ลงบัญชีใบค่าธรรมเนียม/ใบขายสรุป/JE → จับคู่เงินเข้าธนาคาร' },
+    // รอบ 232: ย้ายมาจากหมวด "บัญชีผู้ใช้" — เงินที่ลูกค้าของร้านจ่ายผ่านช่องทางออนไลน์ของร้าน (id คงเดิม · สิทธิ์เมนูไม่เปลี่ยน)
+    { id: 'payment-intents', label: 'รายการรับชำระออนไลน์', icon: '💳', href: '/pages/payment-intents.html',
+      description: 'ทุกครั้งที่ลูกค้ากดจ่ายผ่านระบบ — ตรวจสถานะสด · ยืนยันด้วยมือเมื่อ webhook หาย · คืนเงิน · ดูประวัติทีละรายการ' },
+    { id: 'payment-settlements', label: 'กระทบยอดเงินรับออนไลน์', icon: '🏦', href: '/pages/payment-settlements.html',
+      description: 'เงินที่รับผ่านระบบชำระออนไลน์เข้าธนาคาร T+n หลังหักค่าธรรมเนียม — บันทึกรอบโอนเข้าเพื่อล้างบัญชีพัก 11340 และรับรู้ค่าธรรมเนียม' },
     { id: 'settlement-channels', label: 'ช่องทางรับเงินผ่าน wallet', icon: '⚙️', href: '/pages/settlement-channels.html', feature: 'BankReconciliation', lockOnEnforce: true,
       description: 'ผังพักต่อแพลตฟอร์ม (11341–11349) · ผู้ติดต่อแพลตฟอร์ม · โหมด VAT/หัก ณ ที่จ่ายของค่าธรรมเนียม · ผังค่าธรรมเนียม' },
 
@@ -1760,18 +1810,16 @@ const Layout = {
     { id: 'webhooks', label: 'Webhooks', icon: '🔌', href: '/pages/webhooks.html', feature: 'Webhook', _i18nKey: 'nav.webhooks',
       description: 'ส่ง event ออกไประบบอื่นเมื่อมีการเปลี่ยนแปลง · subscribe/unsubscribe' },
 
-    { section: 'บัญชีผู้ใช้', icon: '💎', description: 'License · แพ็กเกจ · การใช้งาน · audit log' },
-    { id: 'account-subscription', label: 'License ของฉัน', icon: '🎫', href: '/pages/account-subscription.html',
+    { section: 'บัญชีผู้ใช้', icon: '💎', description: 'แพ็กเกจและการชำระเงิน (hub เดียว: แพ็กเกจ · ใช้ไปเท่าไร · ซื้อเพิ่ม · ใบแจ้งหนี้ · License) · คู่มือ · audit log' },
+    // รอบ 232: License ของฉัน = แท็บ "License หลายบริษัท" ของ hub (inHub) — URL เดิมคงไว้ · id คงเดิม (สิทธิ์เมนูตามบทบาทไม่เปลี่ยน)
+    { id: 'account-subscription', inHub: true, label: 'License ของฉัน', icon: '🎫', href: '/pages/account-subscription.html',
       description: 'แพ็กเกจหลัก (User-level) ครอบหลายบริษัทใต้ License เดียว — แนะนำสำหรับเจ้าของหลายบริษัท / นักบัญชีดูแลหลายลูกค้า' },
     // รอบ 229 (QUOTA_ADDON §D.3 · D-2): เรื่องแพ็กเกจ/บิล/โควตาเหลือเมนูเดียว "แพ็กเกจและการชำระเงิน" — หน้าย่อยเดิม (inHub) ยังเปิดได้จาก hub · id คงเดิม (สิทธิ์เมนูตามบทบาทไม่เปลี่ยน)
     { id: 'subscription', inHub: true, label: 'แพ็กเกจของบริษัทนี้', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
       description: 'แพ็กเกจระดับบริษัท (Company-level) — ใช้เมื่อต้องการแยกบิลแยกใบกำกับ' },
     { id: 'help', label: 'คู่มือ & วิดีโอสอนใช้งาน', icon: '🎓', href: '/pages/help.html',
       description: 'วิดีโอสอนใช้งานและคู่มือ แยกตามเรื่อง (บัญชี · ภาษี · เงินเดือน) และตามธุรกิจ (ที่พัก · POS · เว็บไซต์)' },
-    { id: 'payment-intents', label: 'รายการรับชำระออนไลน์', icon: '💳', href: '/pages/payment-intents.html',
-      description: 'ทุกครั้งที่ลูกค้ากดจ่ายผ่านระบบ — ตรวจสถานะสด · ยืนยันด้วยมือเมื่อ webhook หาย · คืนเงิน · ดูประวัติทีละรายการ' },
-    { id: 'payment-settlements', label: 'กระทบยอดเงินรับออนไลน์', icon: '🏦', href: '/pages/payment-settlements.html',
-      description: 'เงินที่รับผ่านระบบชำระออนไลน์เข้าธนาคาร T+n หลังหักค่าธรรมเนียม — บันทึกรอบโอนเข้าเพื่อล้างบัญชีพัก 11340 และรับรู้ค่าธรรมเนียม' },
+    // รอบ 232: "รายการรับชำระออนไลน์" + "กระทบยอดเงินรับออนไลน์" ย้ายไปหมวด "เงิน & ธนาคาร" (เป็นเรื่องร้านรับเงินจากลูกค้า ไม่ใช่บัญชีผู้ใช้/แพ็กเกจ)
     // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ศูนย์บิลค่าบริการ NextAcc — ใบแจ้งหนี้ · ชำระ · ใบเสร็จ · แพ็กเกจ/ส่วนเสริม (เข้าได้แม้ถูกระงับเพราะค้างชำระ)
     { id: 'billing', label: 'แพ็กเกจและการชำระเงิน', icon: '💎', href: '/pages/billing.html',
       description: 'ใช้ไปเท่าไร · ซื้อโควตาเพิ่ม (เว็บไซต์ · ที่นั่ง · พื้นที่ · หน้า OCR) · ต่ออายุ · ใบแจ้งหนี้ · ชำระออนไลน์หรือโอน+สลิป · ใบเสร็จ/ใบกำกับภาษี' },

@@ -87,14 +87,18 @@ public class LegalController : ControllerBase
     public sealed record UpcomingInfo(string Version, string EffectiveDate, string? ChangeSummary);
 
     /// <summary><c>IsArchived</c> = ฉบับที่หมดผลแล้ว · <c>IsUpcoming</c> = ฉบับที่ประกาศแล้วแต่ยังไม่ถึงวันมีผล (ฝ่ายค้าน S2 — เดิมเหมาเป็น "ฉบับเก่า")</summary>
+    /// <summary>รอบ 232 (232-Checkout-1): <c>Language</c> = ภาษาที่แสดงจริง · <c>EnglishAvailable</c> = มีฉบับอังกฤษให้สลับ · <c>LanguageNotice</c> = ขอ en แต่ยังไม่มี
+    /// (ตัวตัดสินเดียว <see cref="LegalDocumentLanguage.Pick"/> · ฉบับ/วันมีผลเดียวกันทั้งสองภาษา)</summary>
     public sealed record LegalDocumentDto(
         string Kind, string Title, string Version, string EffectiveDate, string Html, string Source,
-        string? ChangeSummary, UpcomingInfo? Upcoming, string ConsentVersion, bool ControllerConfigured, bool IsArchived, bool IsUpcoming);
+        string? ChangeSummary, UpcomingInfo? Upcoming, string ConsentVersion, bool ControllerConfigured, bool IsArchived, bool IsUpcoming,
+        string Language = LegalDocumentLanguage.Thai, bool EnglishAvailable = false, string? LanguageNotice = null);
 
     /// <summary>เนื้อความเอกสาร (HTML ที่เซิร์ฟเวอร์แปลง + encode แล้ว) — ไม่ระบุ version = ฉบับที่มีผลวันนี้</summary>
     [HttpGet("documents/{kind}")]
     [AllowAnonymous]
-    public async Task<ActionResult<ApiResponse<LegalDocumentDto>>> GetDocument(string kind, [FromQuery] string? version, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<LegalDocumentDto>>> GetDocument(string kind, [FromQuery] string? version, CancellationToken ct,
+        [FromQuery] string? lang = null)
     {
         if (!LegalDocumentDefaults.IsKind(kind))
             return NotFound(new ApiResponse<LegalDocumentDto>(false, null, "ไม่พบเอกสาร"));
@@ -104,16 +108,19 @@ public class LegalController : ControllerBase
         var upcoming = await _legal.GetUpcomingAsync(kind, ct);
         var consent = await _legal.GetConsentVersionAsync(ct);
         var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
-        var html = await _legal.RenderPlatformAsync(doc.BodyMarkdown, ct);
+        // รอบ 232: ภาษาเป็นแค่การแสดง — ฉบับ/วันมีผล/ประวัติ/ConsentVersion เหมือนกันทั้ง th/en · ไม่มี en = ไทย + ประกาศ (ไม่แต่ง)
+        var choice = LegalDocumentLanguage.Pick(doc.BodyMarkdown, doc.BodyMarkdownEn, lang);
+        var html = await _legal.RenderPlatformAsync(choice.Markdown, ct);
         var isUpcoming = doc.EffectiveDate > LegalDocumentPolicy.TodayBangkok(DateTime.UtcNow);
         return Ok(new ApiResponse<LegalDocumentDto>(true, new LegalDocumentDto(
-            doc.Kind, doc.Title, doc.Version, doc.EffectiveDate.ToString("yyyy-MM-dd"), html, doc.Source, doc.ChangeSummary,
+            doc.Kind, LegalDocumentLanguage.TitleFor(doc.Kind, choice.Language), doc.Version, doc.EffectiveDate.ToString("yyyy-MM-dd"), html, doc.Source, doc.ChangeSummary,
             upcoming == null ? null : new UpcomingInfo(upcoming.Version, upcoming.EffectiveDate.ToString("yyyy-MM-dd"), upcoming.ChangeSummary),
             consent.ConsentVersion,
             ControllerConfigured: !string.IsNullOrWhiteSpace(s?.PlatformSellerName)
                                   && !string.IsNullOrWhiteSpace(FirstNonEmpty(s?.PlatformSellerEmail, s?.ContactEmail)),
             IsArchived: doc.Version != current.Version && !isUpcoming,
-            IsUpcoming: isUpcoming)));
+            IsUpcoming: isUpcoming,
+            Language: choice.Language, EnglishAvailable: choice.EnglishAvailable, LanguageNotice: choice.Notice)));
     }
 
     /// <summary>ประวัติฉบับที่เผยแพร่ (สาธารณะ — โปร่งใสว่าเคยเปลี่ยนอะไรเมื่อไร · ไม่มีร่าง · ไม่มีชื่อผู้เผยแพร่)</summary>

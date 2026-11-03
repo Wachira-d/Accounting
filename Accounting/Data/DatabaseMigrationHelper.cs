@@ -213,6 +213,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round202LodgingWebStatements());   // รอบ 202 ทีม LW (บล็อกท้ายไฟล์)
         list.AddRange(Round204Pnd2Statements());   // รอบ 204 ภ.ง.ด.2 (บล็อกท้ายไฟล์)
         list.AddRange(Round204DirectiveStatements());   // รอบ 204 คอลัมน์ WHT (schema only · บล็อกท้ายไฟล์)
+        list.AddRange(Round232SourceLineStatements());   // รอบ 232 watermark งานซ่อม SourceLineId ต่อบริษัท (บล็อกท้ายไฟล์)
         list.AddRange(Round204RoyaltyHistoryStatements());   // รอบ 204 ฝ่ายค้าน M2/L6 — ประวัติค่าตั้งค่าสิทธิ (ก่อน Round204Pnd2Statements)
         list.AddRange(Round205ImportHubStatements());   // รอบ 205 T0 ศูนย์นำเข้าข้อมูล (บล็อกท้ายไฟล์)
         list.AddRange(Round205TeamDMigrationStatements());   // รอบ 205 ทีม D คำแนะนำบัญชีของ migration wizard (บล็อกท้ายไฟล์)
@@ -794,6 +795,19 @@ public static class DatabaseMigrationHelper
             ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DebitNoteReason" integer NULL;
             """,
 
+            // ===== รอบ 232 (ฝ่ายค้าน B1 ข): แผนจ่ายเงินที่ค้างค่าแทน "ไม่หมดอายุ" (EndDate > now+50y · ธงฟรีถาวร false · ไม่ใช่ FreeTrial) — ไม่แก้ EndDate เงียบ
+            //       ประทับ ExpiryNeedsReview ให้แอดมิน "กำหนดรอบ" (SubscriptionExpiry.ThresholdFrom = 50 ปี สูตรเดียวกับฝั่งอ่าน) · idempotent =====
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "ExpiryNeedsReview" boolean NOT NULL DEFAULT false;
+            """,
+            """
+            UPDATE "Subscriptions"
+            SET "ExpiryNeedsReview" = true
+            WHERE ("IsPermanentFree" IS NULL OR "IsPermanentFree" = false)
+              AND "Plan" <> 0                                   -- SubscriptionPlan.FreeTrial (ทดลอง/ฟรีถาวรตามคำตัดสินเดิมข้างบน)
+              AND "EndDate" > (now() AT TIME ZONE 'UTC') + INTERVAL '50 years'
+              AND "ExpiryNeedsReview" = false;
+            """,
             // ===== Subscriptions: renewal invoice (WP-B1) =====
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceNumber" text NULL;
@@ -3792,6 +3806,16 @@ public static class DatabaseMigrationHelper
             """
             CREATE UNIQUE INDEX IF NOT EXISTS "IX_NotificationSettings_CompanyId_EventKey_RecipientRole"
                 ON "NotificationSettings" ("CompanyId", "EventKey", "RecipientRole");
+            """,
+
+            // รอบ 232 (232-Notify): ช่อง "กลุ่ม LINE ของบริษัท" ต่อเหตุการณ์ (ค่าตั้งต้นของคีย์ที่ย้ายมาอยู่ใน NotificationAudiencePolicy.DefaultMatrix
+            // ใช้เฉพาะเมื่อบริษัทยังไม่มีแถวของคีย์นั้น) · ต้องมาหลัง CREATE TABLE ข้างบน
+            // ฝ่ายค้าน 232 B1 — กันถดถอย document.approved: บริษัทที่ "ตั้งแถว document.approved ไว้เอง" + ผูก OA+กลุ่มของตัวเอง เคยได้ประกาศกลุ่ม LINE
+            // (Notify*Async เดิม ไม่มีค่าตั้ง) ⇒ เปิดช่องกลุ่มให้แถวเดิม <b>ครั้งเดียว</b>: DO-block เพิ่มคอลัมน์ + UPDATE เฉพาะตอนคอลัมน์ยังไม่มี
+            // (ไม่ขึ้นกับวันปล่อย · บูตถัดไป no-op ⇒ ไม่ทับแถวที่ผู้ใช้ปิดกลุ่มเอง) · ตัวตัดสิน Helpers/NotificationLineGroupBackfill — Db test NotificationLineGroupRound232DbTests
+            Accounting.Helpers.NotificationLineGroupBackfill.MigrationSql,
+            """
+            ALTER TABLE "NotificationSettings" ADD COLUMN IF NOT EXISTS "EnableLineGroup" boolean NOT NULL DEFAULT false;
             """,
 
             // ===== NotificationPreferences: per-user suppression overrides =====
@@ -7674,6 +7698,13 @@ public static class DatabaseMigrationHelper
 
     /// <summary>รอบ 204 — คอลัมน์หัก ณ ที่จ่าย <b>schema only</b> (ยังไม่มีผู้อ่าน/ผู้เขียน — ต่อสายในคอมมิตตามหลัง) ·
     /// ค่าตั้งต้นทุกคอลัมน์ = พฤติกรรมเดิม (false / 0 = ภ.ง.ด.3 / NULL) · <c>ADD COLUMN IF NOT EXISTS</c> ⇒ รันทุกบูตได้</summary>
+    /// <summary>รอบ 232 ฝ่ายค้าน S4 — watermark ต่อบริษัทของ <c>SourceLineBackfillJob</c> (ใบลูก CreatedAt ≤ ค่านี้ตรวจแล้ว ไม่กวาดซ้ำทุกบูต) ·
+    /// schema only · <c>ADD COLUMN IF NOT EXISTS</c> ⇒ รันทุกบูตได้</summary>
+    internal static IReadOnlyList<string> Round232SourceLineStatements() => new List<string>
+    {
+        """ALTER TABLE "Companies" ADD COLUMN IF NOT EXISTS "SourceLineBackfillCheckedAt" timestamp with time zone NULL;""",
+    };
+
     internal static IReadOnlyList<string> Round204DirectiveStatements() => new List<string>
     {
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "WhtBorneByContract" boolean NOT NULL DEFAULT false;""",

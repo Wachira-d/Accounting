@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>สถานะคำสั่งซื้อ | NextAcc</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .cs-wrap { max-width:640px; margin:0 auto; padding:100px 24px 80px; text-align:center }
+    .cs-card { border:1px solid var(--gray-200); border-radius:16px; padding:28px; background:#fff; text-align:left }
+    .cs-icon { font-size:3rem; margin-bottom:8px }
+    .cs-wrap h1 { font-size:1.6rem; font-weight:800; color:var(--gray-900); margin-bottom:6px }
+    .pc-row { display:flex; justify-content:space-between; font-size:.9rem; padding:6px 0; border-bottom:1px dashed var(--gray-200) }
+    .pc-banner { border-radius:10px; padding:12px 16px; margin-bottom:18px; font-size:.9rem; text-align:left }
+    .pc-banner.test { background:#fffbeb; border:1px solid #fcd34d; color:#92400e }
+    .pc-banner.ok { background:#ecfdf5; border:1px solid #a7f3d0; color:#065f46 }
+    .pc-banner.wait { background:#eff6ff; border:1px solid #bfdbfe; color:#1e3a8a }
+    .pc-banner.bad { background:#fef2f2; border:1px solid #fecaca; color:#991b1b }
+    .cs-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px }
+    .cs-links { margin-top:24px; font-size:.85rem; color:var(--gray-500) } .cs-links a { color:var(--primary) }
+  </style>
+</head>
+<body>
+  <!-- รอบ 232 (คำตัดสิน 232-Checkout-2): หน้าสำเร็จ/สถานะคำสั่งซื้อ — ไม่เชื่อ query string ว่าจ่ายแล้ว: poll GET orders/{paymentId} (เซิร์ฟเวอร์ตัดสินผลลัพธ์ด้วย
+       PublicCheckoutPolicy.Resolve: เปิดสิทธิ์แล้ว / ได้เงินรอตรวจ / ทดสอบ / ยังไม่จ่าย / ล้มเหลว) · ใบเสร็จดาวน์โหลดจาก orders/{paymentId}/receipt เมื่อระบบออกให้แล้ว · ต้องมีโทเคนของเจ้าของบริษัท -->
+  <div class="cs-wrap">
+    <div class="cs-icon" id="icon">⏳</div>
+    <h1 id="title">กำลังตรวจสอบสถานะ…</h1>
+    <div id="banner"></div>
+    <div class="cs-card">
+      <div id="rows"><div style="color:var(--gray-500);font-size:.9rem">กำลังโหลด…</div></div>
+      <div class="cs-actions" id="actions"></div>
+    </div>
+    <div class="cs-links">ปัญหาการชำระเงิน? <a href="/contact.html">ติดต่อเรา</a> · <a href="/refund-policy.html" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a> · <a href="/terms.html" target="_blank" rel="noopener">ข้อกำหนดการใช้งาน</a></div>
+  </div>
+  <script>
+    (function () {
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const $ = id => document.getElementById(id);
+      const q = new URLSearchParams(location.search);
+      const company = q.get('company'), payment = q.get('payment');
+      const token = () => { try { return localStorage.getItem('token'); } catch (_) { return null; } };
+      const POLL = [2000, 3000, 3000, 5000, 5000, 10000];
+      const MAX_MS = 15 * 60 * 1000;
+      let n = 0, started = Date.now();
+      const ICON = { Activated: '✅', PaidAwaitingApproval: '🕒', TestPaid: '🧪', AwaitingPayment: '⏳', Failed: '❌' };
+      const CLS = { Activated: 'ok', PaidAwaitingApproval: 'wait', TestPaid: 'test', AwaitingPayment: 'wait', Failed: 'bad' };
+      function render(s) {
+        $('icon').textContent = ICON[s.outcome] || '⏳';
+        $('title').textContent = s.outcome === 'Activated' ? 'ชำระเงินสำเร็จ — เปิดใช้แพ็กเกจแล้ว' : s.outcome === 'TestPaid' ? 'ชำระสำเร็จ (โหมดทดสอบ)'
+          : s.outcome === 'PaidAwaitingApproval' ? 'ได้รับเงินแล้ว — กำลังเปิดใช้งาน' : s.outcome === 'Failed' ? 'การชำระไม่สำเร็จ' : 'รอการชำระเงิน';
+        $('banner').innerHTML = `<div class="pc-banner ${CLS[s.outcome] || 'wait'}">${esc(s.message)}</div>`
+          + (s.isTestMode && s.outcome !== 'TestPaid' ? '<div class="pc-banner test">🧪 โหมดทดสอบ — ไม่มีเงินจริง</div>' : '');
+        $('rows').innerHTML = `<div class="pc-row"><span>เลขที่รายการ</span><b>${esc(s.paymentNumber)}</b></div>
+          <div class="pc-row"><span>แพ็กเกจ</span><span>${esc(s.plan)} · ${esc(s.cycle)}</span></div>
+          <div class="pc-row"><span>ยอด</span><b>฿${money(s.amount)}</b></div>
+          <div class="pc-row"><span>สถานะรายการ</span><span>${esc(s.paymentStatus)}${s.intentStatus ? ' · การชำระ: ' + esc(s.intentStatus) : ''}</span></div>
+          ${s.subscriptionEndDate ? `<div class="pc-row"><span>ใช้ได้ถึง</span><span>${esc(new Date(s.subscriptionEndDate).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'long', year: 'numeric' }))}</span></div>` : ''}
+          ${s.receiptNumber ? `<div class="pc-row"><span>ใบเสร็จ/ใบกำกับ</span><span>${esc(s.receiptNumber)}</span></div>` : ''}`;
+        const a = [];
+        if (s.receiptAvailable) a.push(`<a class="btn btn-outline" id="receiptBtn" href="#">📄 ดาวน์โหลดใบเสร็จ</a>`);
+        if (s.outcome === 'Activated' || s.outcome === 'PaidAwaitingApproval') a.push('<a class="btn btn-primary" href="/app.html">เข้าสู่ระบบ NextAcc &rarr;</a>');
+        if (s.outcome === 'AwaitingPayment') a.push(`<a class="btn btn-primary" href="/checkout.html?company=${encodeURIComponent(company)}&payment=${encodeURIComponent(payment)}">ชำระเงินต่อ</a>`);
+        if (s.outcome === 'Failed' || s.outcome === 'TestPaid') a.push('<a class="btn btn-outline" href="/pricing.html">เลือกแพ็กเกจใหม่</a>');
+        $('actions').innerHTML = a.join('');
+        const rb = $('receiptBtn');
+        if (rb) rb.addEventListener('click', async ev => {
+          ev.preventDefault();
+          try {
+            const r = await fetch(`/api/public/checkout/companies/${encodeURIComponent(company)}/orders/${encodeURIComponent(payment)}/receipt`, { headers: { Authorization: 'Bearer ' + token() } });
+            if (!r.ok) { const j = await r.json().catch(() => null); throw new Error((j && j.message) || 'ดาวน์โหลดไม่สำเร็จ'); }
+            const blob = await r.blob(); const url = URL.createObjectURL(blob);
+            const el = document.createElement('a'); el.href = url; el.download = `receipt-${s.paymentNumber}.pdf`; document.body.appendChild(el); el.click(); el.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+          } catch (e) { alert(e.message); }
+        });
+      }
+      async function poll() {
+        if (!company || !payment) { $('title').textContent = 'ไม่พบคำสั่งซื้อ'; $('rows').innerHTML = '<a href="/pricing.html">กลับไปเลือกแพ็กเกจ</a>'; return; }
+        if (!token()) { $('title').textContent = 'กรุณาเข้าสู่ระบบ'; $('rows').innerHTML = `<a href="/checkout.html?company=${encodeURIComponent(company)}&payment=${encodeURIComponent(payment)}">เข้าสู่ระบบเพื่อดูสถานะ</a>`; return; }
+        try {
+          const r = await fetch(`/api/public/checkout/companies/${encodeURIComponent(company)}/orders/${encodeURIComponent(payment)}`, { headers: { Authorization: 'Bearer ' + token() } });
+          const j = await r.json().catch(() => null);
+          if (!r.ok || !j || !j.data) throw new Error((j && j.message) || `โหลดสถานะไม่สำเร็จ (${r.status})`);
+          render(j.data);
+          const o = j.data.outcome;
+          // หยุด poll เมื่อสถานะสุดท้าย — "ได้เงินแล้วรอตรวจ" ยัง poll ต่อ (handler เปิดสิทธิ์ภายในไม่กี่วินาที)
+          if (o === 'Activated' || o === 'TestPaid' || o === 'Failed') return;
+        } catch (e) {
+          $('banner').innerHTML = `<div class="pc-banner bad">${esc(e.message)}</div>`;
+        }
+        if (Date.now() - started > MAX_MS) return;
+        setTimeout(poll, POLL[Math.min(n++, POLL.length - 1)]);
+      }
+      poll();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ชำระเงิน | NextAcc</title>
+  <meta name="robots" content="noindex, follow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .co-wrap { max-width:1000px; margin:0 auto; padding:90px 24px 80px }
+    .co-wrap h1 { font-size:1.8rem; font-weight:800; color:var(--gray-900); margin-bottom:6px }
+    .pc-steps { display:flex; gap:10px; flex-wrap:wrap; margin:14px 0 22px; font-size:.85rem; color:var(--gray-500) }
+    .pc-steps span { padding:4px 10px; border-radius:9999px; background:var(--gray-100) }
+    .pc-steps span.on { background:var(--primary); color:#fff }
+    .pc-banner { border-radius:10px; padding:12px 16px; margin-bottom:18px; font-size:.9rem }
+    .pc-banner.test { background:#fffbeb; border:1px solid #fcd34d; color:#92400e }
+    .pc-banner.off { background:#fef2f2; border:1px solid #fecaca; color:#991b1b }
+    .co-grid { display:grid; grid-template-columns:1fr 340px; gap:28px; align-items:start }
+    .co-card { border:1px solid var(--gray-200); border-radius:14px; padding:20px; background:#fff; margin-bottom:18px }
+    .co-card h2 { font-size:1.05rem; font-weight:700; margin-bottom:10px }
+    .co-card.done h2::after { content:' ✓'; color:#059669 }
+    .co-card.locked { opacity:.55; pointer-events:none }
+    .co-field { margin-bottom:10px } .co-field label { display:block; font-size:.85rem; color:var(--gray-600); margin-bottom:3px }
+    .co-field input, .co-field select { width:100%; border:1px solid var(--gray-300); border-radius:8px; padding:9px 10px; font-size:.95rem }
+    .co-tabs { display:flex; gap:8px; margin-bottom:12px } .co-tabs button { border:1px solid var(--gray-300); background:#fff; border-radius:9999px; padding:6px 14px; cursor:pointer }
+    .co-tabs button.on { background:var(--primary); color:#fff; border-color:var(--primary) }
+    .pc-row { display:flex; justify-content:space-between; font-size:.9rem; padding:5px 0; border-bottom:1px dashed var(--gray-200) }
+    .pc-row.total { font-weight:800; font-size:1.05rem; border:0; padding-top:10px }
+    .co-err { color:#b91c1c; font-size:.85rem; margin-top:8px; white-space:pre-line }
+    .co-ok { color:#065f46; font-size:.85rem; margin-top:8px }
+    .co-policy { font-size:.9rem; line-height:1.7; display:flex; gap:8px; align-items:flex-start }
+    .co-policy a { color:var(--primary) }
+    .sticky { position:sticky; top:90px }
+    @media (max-width:860px) { .co-grid { grid-template-columns:1fr } .sticky { position:static } }
+  </style>
+</head>
+<body>
+  <!-- รอบ 232 (คำตัดสิน 232-Checkout-2): หน้า checkout ของการซื้อแพ็กเกจ NextAcc — ทุกขั้นจบในหน้านี้: บัญชี (สมัคร/เข้าสู่ระบบ ผ่าน api/auth เดิม) → ยอดของบริษัท
+       (GET companies/{id}/quote · ราคาพิเศษ+คูปองคิดที่เซิร์ฟเวอร์) → ติ๊กยอมรับข้อกำหนด+นโยบายคืนเงิน (ข้อความ/ฉบับจากเซิร์ฟเวอร์) → POST orders (ยอดจากเซิร์ฟเวอร์ · คีย์กันซ้ำ
+       submit-once.js) → PayWidget (publicBase = orders/{paymentId} · บัตร/พร้อมเพย์ในหน้าเดียวกัน · ไม่พาออกไป LINE/แชต) → /checkout-success.html · ป้ายโหมดทดสอบจากเซิร์ฟเวอร์ -->
+  <div class="co-wrap">
+    <a href="/pricing.html" style="font-size:.9rem;color:var(--primary);text-decoration:none">&larr; กลับไปเลือกแพ็กเกจ</a>
+    <h1>ชำระเงิน</h1>
+    <div class="pc-steps"><span>1 เลือกแพ็กเกจ</span><span class="on" id="st2">2 บัญชีผู้ใช้</span><span id="st3">3 ชำระเงิน</span><span>4 เปิดใช้งาน</span></div>
+    <div id="banner"></div>
+    <div class="co-grid" id="main" hidden>
+      <div>
+        <div class="co-card" id="cardAccount">
+          <h2>1. บัญชีผู้ใช้</h2>
+          <div id="accountKnown" hidden>
+            <div style="font-size:.9rem">เข้าสู่ระบบในชื่อ <b id="meEmail"></b> · <a href="#" id="logoutLink" style="color:var(--primary)">ใช้บัญชีอื่น</a></div>
+            <div class="co-field" style="margin-top:10px"><label for="companySel">ซื้อแพ็กเกจให้บริษัท</label><select id="companySel"></select></div>
+            <div id="noCompany" class="co-err" hidden>บัญชีนี้ยังไม่ได้เป็นเจ้าของบริษัทใด — สร้างบริษัทใหม่ได้จากแท็บ "สร้างบัญชีใหม่" ด้วยอีเมลอื่น หรือเข้าสู่ระบบแล้วสร้างบริษัทในหน้าตั้งค่า</div>
+          </div>
+          <div id="accountForm">
+            <div class="co-tabs"><button type="button" data-tab="register" class="on">สร้างบัญชีใหม่</button><button type="button" data-tab="login">มีบัญชีแล้ว — เข้าสู่ระบบ</button></div>
+            <form id="formRegister" autocomplete="on">
+              <div class="co-field"><label for="rCompany">ชื่อบริษัท/กิจการ</label><input id="rCompany" required maxlength="200"></div>
+              <div class="co-field"><label for="rName">ชื่อ-นามสกุล</label><input id="rName" required maxlength="100"></div>
+              <div class="co-field"><label for="rEmail">อีเมล</label><input id="rEmail" type="email" required autocomplete="email"></div>
+              <div class="co-field"><label for="rPass">รหัสผ่าน (อย่างน้อย 8 ตัวอักษร)</label><input id="rPass" type="password" required minlength="8" autocomplete="new-password"></div>
+              <label class="co-policy"><input type="checkbox" id="rAgree" required> <span id="rAgreeText">ยอมรับ <a href="/terms.html" target="_blank" rel="noopener">ข้อกำหนดการใช้งาน</a> และ <a href="/privacy.html" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a> ของ NextAcc</span></label>
+              <div class="co-err" id="rErr"></div>
+              <button class="btn btn-primary w-full" type="submit" style="margin-top:10px">สร้างบัญชีและไปขั้นถัดไป</button>
+            </form>
+            <form id="formLogin" hidden autocomplete="on">
+              <div class="co-field"><label for="lEmail">อีเมล</label><input id="lEmail" type="email" required autocomplete="email"></div>
+              <div class="co-field"><label for="lPass">รหัสผ่าน</label><input id="lPass" type="password" required autocomplete="current-password"></div>
+              <div class="co-err" id="lErr"></div>
+              <button class="btn btn-primary w-full" type="submit" style="margin-top:10px">เข้าสู่ระบบ</button>
+              <div style="font-size:.8rem;margin-top:6px"><a href="/reset-password.html" style="color:var(--primary)">ลืมรหัสผ่าน?</a></div>
+            </form>
+          </div>
+        </div>
+        <div class="co-card locked" id="cardPay">
+          <h2>2. ยืนยันและชำระเงิน</h2>
+          <label class="co-policy"><input type="checkbox" id="policyAccept"> <span id="policyText">กำลังโหลดข้อความนโยบาย…</span></label>
+          <div class="co-err" id="payErr"></div>
+          <div class="co-ok" id="payOk"></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+            <button class="btn btn-primary" id="payBtn" type="button" disabled>ชำระเงิน</button>
+          </div>
+          <div style="font-size:.8rem;color:var(--gray-500);margin-top:10px">ชำระด้วยบัตรเครดิต/เดบิต หรือพร้อมเพย์ (QR) ภายในหน้านี้ · ข้อมูลบัตรส่งตรงถึงผู้ให้บริการชำระเงิน ไม่ผ่านเซิร์ฟเวอร์ของเรา ·
+            ใบเสร็จ/ใบกำกับภาษีออกอัตโนมัติเมื่อชำระสำเร็จ</div>
+        </div>
+      </div>
+      <aside class="co-card sticky">
+        <h2>🛒 สรุปรายการ</h2>
+        <div id="summary"><div style="color:var(--gray-500);font-size:.9rem">กำลังโหลด…</div></div>
+        <div class="co-field" style="margin-top:10px"><label for="coupon">คูปองส่วนลด</label><input id="coupon" maxlength="40" autocomplete="off"></div>
+        <div class="co-err" id="quoteErr"></div>
+        <div style="font-size:.8rem;color:var(--gray-500);margin-top:8px" id="policyLinks"></div>
+      </aside>
+    </div>
+  </div>
+  <script src="/js/submit-once.js"></script>
+  <script src="/js/pay-widget.js"></script>
+  <script>
+    (function () {
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const CART_KEY = 'nextacc.cart';
+      const $ = id => document.getElementById(id);
+      const token = () => { try { return localStorage.getItem('token'); } catch (_) { return null; } };
+      const auth = () => { const t = token(); return t ? { Authorization: 'Bearer ' + t } : {}; };
+      async function api(url, init) {
+        const i = Object.assign({ headers: {} }, init || {});
+        i.headers = Object.assign({ 'Content-Type': 'application/json' }, auth(), i.headers || {});
+        const r = i.method === 'POST' && window.SubmitOnce ? await SubmitOnce.fetch(url, i, {}) : await fetch(url, i);
+        const j = await r.json().catch(() => null);
+        if (r.status === 401) { throw Object.assign(new Error('กรุณาเข้าสู่ระบบอีกครั้ง'), { unauthorized: true }); }
+        if (!r.ok || !j || j.success === false) throw new Error((j && j.message) || `ไม่สำเร็จ (${r.status})`);
+        return j;
+      }
+      const Page = {
+        catalog: null, cart: null, companyId: null, quote: null, order: null, signupPolicyVersion: null,
+        async init() {
+          const q = new URLSearchParams(location.search);
+          let cart = null; try { cart = JSON.parse(localStorage.getItem(CART_KEY) || 'null'); } catch (_) { /* ignore */ }
+          this.cart = { plan: q.get('plan') || (cart && cart.plan), cycle: q.get('cycle') || (cart && cart.cycle) || 'Annual', coupon: q.get('coupon') || (cart && cart.coupon) || '' };
+          this.resume = { company: q.get('company'), payment: q.get('payment') };   // กลับมาชำระต่อจากอีเมล/หน้าสำเร็จ
+          const banner = $('banner');
+          let j = null, r = null;
+          try { r = await fetch('/api/public/checkout/catalog'); j = await r.json(); } catch (e) { banner.innerHTML = `<div class="pc-banner off">โหลดข้อมูลไม่สำเร็จ — ${esc(e.message)}</div>`; return; }
+          const d = j && j.data;
+          if (!r.ok || !d || !d.enabled) { banner.innerHTML = `<div class="pc-banner off">${esc((j && j.message) || 'หน้าซื้อแพ็กเกจออนไลน์ยังไม่เปิดให้บริการ')} · <a href="/register.html">สมัครใช้งาน</a></div>`; return; }
+          this.catalog = d;
+          if (!this.cart.plan && !this.resume.payment) { location.href = '/pricing.html'; return; }
+          if (d.isTestMode) banner.innerHTML = `<div class="pc-banner test">🧪 <b>โหมดทดสอบ</b> — ไม่มีการตัดเงินจริง และจะไม่เปิดใช้แพ็กเกจจริง (ใช้บัตรทดสอบของผู้ให้บริการได้)</div>`;
+          else if (!d.onlineAvailable) banner.innerHTML = `<div class="pc-banner off">${esc(d.reason || 'ยังชำระออนไลน์ไม่ได้ในขณะนี้')}</div>`;
+          $('policyText').innerHTML = `${esc(d.policy.text)} — <a href="${esc(d.policy.termsUrl)}" target="_blank" rel="noopener">ข้อกำหนด</a> · <a href="${esc(d.policy.refundUrl)}" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a> (ฉบับ ${esc(d.policy.version)})`;
+          $('policyLinks').innerHTML = `<a href="${esc(d.policy.termsUrl)}" target="_blank" rel="noopener">ข้อกำหนดการใช้งาน</a> · <a href="${esc(d.policy.refundUrl)}" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a> · <a href="${esc(d.policy.privacyUrl)}" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a> · <a href="/contact.html">ติดต่อเรา</a>`;
+          $('coupon').value = this.cart.coupon || '';
+          $('coupon').addEventListener('change', () => { this.cart.coupon = $('coupon').value.trim(); this.saveCart(); this.order = null; this.refreshQuote(); });
+          // ฉบับความยินยอมตอนสมัคร (PDPA ม.19 — ตัวเดียวกับ register.html)
+          try { const p = await (await fetch('/api/legal/policy')).json(); this.signupPolicyVersion = (p.data || p).version || null; } catch (_) { /* server ตรวจอีกชั้น */ }
+          if (!d.registrationOpen) { $('formRegister').innerHTML = '<div class="co-err">ระบบปิดรับสมัครสมาชิกใหม่ชั่วคราว — เข้าสู่ระบบด้วยบัญชีที่มีอยู่</div>'; this.tab('login'); }
+          document.querySelectorAll('.co-tabs button').forEach(b => b.addEventListener('click', () => this.tab(b.dataset.tab)));
+          $('formRegister').addEventListener('submit', ev => { ev.preventDefault(); this.register(); });
+          $('formLogin').addEventListener('submit', ev => { ev.preventDefault(); this.login(); });
+          $('logoutLink').addEventListener('click', ev => { ev.preventDefault(); try { localStorage.removeItem('token'); localStorage.removeItem('user'); } catch (_) { /* ignore */ } location.reload(); });
+          $('companySel').addEventListener('change', () => { this.companyId = $('companySel').value; this.order = null; this.refreshQuote(); });
+          $('policyAccept').addEventListener('change', () => this.updatePayButton());
+          $('payBtn').addEventListener('click', () => this.pay());
+          $('main').hidden = false;
+          this.renderSummary();
+          if (token()) await this.loadMe(); else this.refreshQuote();
+        },
+        saveCart() { try { localStorage.setItem(CART_KEY, JSON.stringify(this.cart)); } catch (_) { /* ignore */ } },
+        tab(t) {
+          document.querySelectorAll('.co-tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+          $('formRegister').hidden = t !== 'register'; $('formLogin').hidden = t !== 'login';
+        },
+        renderSummary(q) {
+          const d = this.catalog, plan = d.plans.find(p => p.plan === this.cart.plan) || { name: this.cart.plan };
+          const cyc = d.cycles.find(c => c.code === this.cart.cycle) || { label: this.cart.cycle };
+          const rows = [`<div class="pc-row"><span>${esc(plan.name)}</span><span>${esc(cyc.label)}</span></div>`];
+          if (q) {
+            rows.push(`<div class="pc-row"><span>ราคาแพ็กเกจ</span><span>฿${money(q.listAmount)}</span></div>`);
+            if (q.discount > 0) rows.push(`<div class="pc-row"><span>ส่วนลด${q.couponCode ? ' (' + esc(q.couponCode) + ')' : ''}</span><span>−฿${money(q.discount)}</span></div>`);
+            rows.push(`<div class="pc-row total"><span>ยอดชำระ</span><span>฿${money(q.amountDue)}</span></div>`);
+            if (q.couponNote) rows.push(`<div style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.couponNote)}</div>`);
+            rows.push(`<div style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.note)}</div>`);
+          } else rows.push('<div style="color:var(--gray-500);font-size:.85rem;margin-top:6px">ยอดสุดท้าย (รวมคูปอง/ราคาพิเศษ) จะแสดงหลังระบุบริษัท</div>');
+          $('summary').innerHTML = rows.join('');
+        },
+        async refreshQuote() {
+          $('quoteErr').textContent = '';
+          try {
+            const qs = new URLSearchParams({ plan: this.cart.plan, cycle: this.cart.cycle }); if (this.cart.coupon) qs.set('coupon', this.cart.coupon);
+            const url = this.companyId ? `/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/quote?${qs}` : `/api/public/checkout/quote?${qs}`;
+            const j = await api(url);
+            this.quote = j.data; this.renderSummary(this.quote);
+          } catch (e) { this.quote = null; this.renderSummary(null); $('quoteErr').textContent = e.message; }
+          this.updatePayButton();
+        },
+        async loadMe() {
+          try {
+            const j = await api('/api/public/checkout/me');
+            const me = j.data;
+            $('meEmail').textContent = me.email || '';
+            $('accountKnown').hidden = false; $('accountForm').hidden = true; $('cardAccount').classList.add('done');
+            const sel = $('companySel');
+            sel.innerHTML = (me.companies || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)} (${esc(c.plan)} · ${esc(c.status)})</option>`).join('');
+            $('noCompany').hidden = me.companies.length > 0;
+            if (me.companies.length === 0) { this.companyId = null; this.refreshQuote(); return; }
+            if (this.resume.company && me.companies.some(c => c.id === this.resume.company)) sel.value = this.resume.company;
+            this.companyId = sel.value;
+            $('cardPay').classList.remove('locked'); $('st2').classList.remove('on'); $('st3').classList.add('on');
+            await this.refreshQuote();
+            if (this.resume.payment) await this.resumeOrder();
+          } catch (e) {
+            if (e.unauthorized) { try { localStorage.removeItem('token'); } catch (_) { /* ignore */ } $('accountKnown').hidden = true; $('accountForm').hidden = false; this.refreshQuote(); }
+            else $('rErr').textContent = e.message;
+          }
+        },
+        async register() {
+          const err = $('rErr'); err.textContent = '';
+          if (!$('rAgree').checked) { err.textContent = 'กรุณาติ๊กยอมรับข้อกำหนดและนโยบายความเป็นส่วนตัวก่อนสมัคร'; return; }
+          const name = $('rName').value.trim(); const sp = name.indexOf(' ');
+          try {
+            const j = await api('/api/auth/register', { method: 'POST', body: JSON.stringify({
+              email: $('rEmail').value.trim(), password: $('rPass').value, fullName: name,
+              firstName: sp > 0 ? name.slice(0, sp) : name, lastName: sp > 0 ? name.slice(sp + 1) : null,
+              companyName: $('rCompany').value.trim(), plan: this.cart.plan,
+              acceptedTerms: true, policyVersion: this.signupPolicyVersion,
+            }) });
+            const t = j.data.accessToken || j.data.token;
+            localStorage.setItem('token', t); localStorage.setItem('user', JSON.stringify(j.data.user || j.data));
+            await this.loadMe();
+          } catch (e) { err.textContent = e.message; }
+        },
+        async login() {
+          const err = $('lErr'); err.textContent = '';
+          try {
+            const j = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email: $('lEmail').value.trim(), password: $('lPass').value }) });
+            const t = j.data.accessToken || j.data.token;
+            localStorage.setItem('token', t); localStorage.setItem('user', JSON.stringify(j.data.user || j.data));
+            await this.loadMe();
+          } catch (e) { err.textContent = e.message; }
+        },
+        updatePayButton() {
+          const ok = !!(this.companyId && this.quote && $('policyAccept').checked && this.catalog && this.catalog.onlineAvailable);
+          $('payBtn').disabled = !ok;
+          $('payBtn').textContent = this.quote ? `ชำระเงิน ฿${money(this.quote.amountDue)}` + (this.catalog && this.catalog.isTestMode ? ' (ทดสอบ)' : '') : 'ชำระเงิน';
+        },
+        async resumeOrder() {
+          // กลับมาชำระต่อ: สถานะจากเซิร์ฟเวอร์ (ไม่เชื่อ query) — จ่ายแล้ว ⇒ ไปหน้าสำเร็จ · ยังค้าง ⇒ ใช้รายการเดิม
+          try {
+            const j = await api(`/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/orders/${encodeURIComponent(this.resume.payment)}`);
+            const s = j.data;
+            if (s.outcome !== 'AwaitingPayment') { location.href = `/checkout-success.html?company=${encodeURIComponent(this.companyId)}&payment=${encodeURIComponent(s.paymentId)}`; return; }
+            this.order = { paymentId: s.paymentId, paymentNumber: s.paymentNumber, amount: s.amount, resumed: true };
+            $('payOk').textContent = `พบรายการรอชำระ ${s.paymentNumber} ยอด ฿${money(s.amount)} — กดชำระเงินเพื่อดำเนินการต่อ`;
+          } catch (e) { $('payErr').textContent = e.message; }
+        },
+        async pay() {
+          const err = $('payErr'), ok = $('payOk'); err.textContent = '';
+          const btn = $('payBtn'); btn.disabled = true;
+          try {
+            if (!this.order) {
+              // สร้าง (หรือใช้ต่อ) รายการค่าแพ็กเกจ — ยอดจากเซิร์ฟเวอร์ · หลักฐานยอมรับผูกรายการ
+              const j = await api(`/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/orders`, { method: 'POST', body: JSON.stringify({
+                plan: this.cart.plan, cycle: this.cart.cycle, couponCode: this.cart.coupon || null,
+                policyAccepted: $('policyAccept').checked, policyVersionShown: this.catalog.policy.version,
+              }) });
+              this.order = j.data;
+              ok.textContent = `${j.data.resumed ? 'ใช้รายการเดิม' : 'สร้างรายการ'} ${j.data.paymentNumber} ยอด ฿${money(j.data.amount)}`;
+              if (Math.abs(Number(j.data.amount) - Number(this.quote.amountDue)) > 0.009) {
+                // ยอดจริงต่างจากที่โชว์ (ราคาพิเศษ/คูปองเปลี่ยน) — บอกก่อนจ่าย ไม่เงียบ
+                this.quote = Object.assign({}, this.quote, { amountDue: j.data.amount, discount: j.data.couponDiscountAmount || 0, listAmount: j.data.listAmount || this.quote.listAmount });
+                this.renderSummary(this.quote); this.updatePayButton();
+                ok.textContent += ' — ยอดอัปเดตตามรายการจริง กดชำระเงินอีกครั้งเพื่อยืนยัน';
+                btn.disabled = false; return;
+              }
+            }
+            const base = `/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/orders/${encodeURIComponent(this.order.paymentId)}`;
+            const success = `${location.origin}/checkout-success.html?company=${encodeURIComponent(this.companyId)}&payment=${encodeURIComponent(this.order.paymentId)}`;
+            PayWidget.open({
+              companyId: this.companyId,
+              publicBase: base,
+              methods: this.catalog.methodOptions,         // ป้ายจากเซิร์ฟเวอร์ — ผู้ซื้อเลือกวิธีในหน้าต่าง
+              card: this.catalog.card || null,              // สคริปต์/คีย์สาธารณะของช่องทาง NextAcc (โหมดที่ตั้ง)
+              returnUrl: success,                           // กลับจาก 3-D Secure/แบงก์กิ้ง ⇒ หน้าสำเร็จถามสถานะจากเซิร์ฟเวอร์
+              description: `ค่าแพ็กเกจ ${this.order.paymentNumber}`,
+              extraBody: { policyAccepted: true, policyVersionShown: this.catalog.policy.version },
+              onPaid: () => { location.href = success; },
+              onClosed: () => { btn.disabled = false; },
+            });
+          } catch (e) { err.textContent = e.message; btn.disabled = false; }
+        },
+      };
+      Page.init();
+    })();
+  </script>
+</body>
+</html>

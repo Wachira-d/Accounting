@@ -29,7 +29,7 @@
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
       <div><h2 class="page-title">แพ็กเกจของบริษัทนี้</h2><p class="page-subtitle">แพ็กเกจระดับบริษัท (Company-level) · ใช้เมื่อต้องการแยกบิลจาก License ส่วนตัว</p></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap"><a href="/pages/billing.html" class="btn btn-secondary">🧾 ศูนย์บิลค่าบริการ</a><a href="/pages/account-subscription.html" class="btn btn-secondary">🎫 ดู License ของฉัน →</a></div>
+      <!-- รอบ 232: ปุ่มลัด (ศูนย์บิล · License) ยุบเป็นแถบแท็บของ hub (Layout.mountBillingHub) -->
     </div>
 
     <!-- Account Plan banner — surfaces when this Company is covered by the
@@ -167,7 +167,7 @@
                 <div style="flex:1;min-width:260px">
                   <div style="font-weight:700;font-size:15px;color:#0c4a6e">บริษัทนี้อยู่ใต้ License ของคุณ</div>
                   <div style="font-size:12px;color:#475569;margin-top:2px">
-                    สถานะ ${d.status} · หมดอายุ ${new Date(d.endDate).toLocaleDateString('th-TH')}
+                    สถานะ ${d.status} · หมดอายุ ${Layout.date(d.endDate)}
                     · MaxUsers ${d.maxUsers} · MaxDocs ${d.maxDocumentsPerMonth}/เดือน (รวมทุกบริษัทใต้ License)
                   </div>
                 </div>
@@ -190,6 +190,7 @@
       },
       async init() {
         if (!Layout.init('subscription')) return;
+        Layout.mountBillingHub('plan');   // รอบ 232: หน้านี้ = แท็บ "แพ็กเกจ › รายละเอียด/ทดลองใช้" ของ hub (ตารางแท็บใน layout.js)
         Layout.setTitle('แพ็กเกจและการสมัครสมาชิก');
         if (window.CustomerNotify && Layout.getCompanyId())
           CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: Layout.getCompanyId() });
@@ -273,9 +274,9 @@
           </div>
           <div class="grid grid-4 gap-4">
             <div><div class="text-xs text-gray-500">วันเริ่มต้น</div><div class="font-medium">${Layout.date(s.startDate)}</div></div>
-            <div><div class="text-xs text-gray-500">วันหมดอายุ</div><div class="font-medium ${!s.isPermanentFree && new Date(s.endDate) < new Date() ? 'text-danger' : ''}">${s.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : Layout.date(s.endDate)}</div></div>
-            <div><div class="text-xs text-gray-500">บิลถัดไป</div><div class="font-medium">${s.isPermanentFree ? '-' : (s.nextBillingDate ? Layout.date(s.nextBillingDate) : '-')}</div></div>
-            <div><div class="text-xs text-gray-500">วันที่เหลือ</div><div class="font-medium">${s.isPermanentFree ? '∞' : Math.max(0, Math.ceil((new Date(s.endDate) - new Date()) / 86400000)) + ' วัน'}</div></div>
+            <div><div class="text-xs text-gray-500">วันหมดอายุ</div><div class="font-medium ${!(s.isPermanentFree || s.isOpenEnded) && new Date(s.endDate) < new Date() ? 'text-danger' : ''}">${s.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : s.isOpenEnded ? '<span style="color:#b45309">ไม่มีรอบเรียกเก็บ — ผู้ดูแลระบบ NextAcc กำลังตรวจ</span>' : Layout.date(s.endDate)}</div></div>
+            <div><div class="text-xs text-gray-500">บิลถัดไป</div><div class="font-medium">${(s.isPermanentFree || s.isOpenEnded) ? '-' : (s.nextBillingDate ? Layout.date(s.nextBillingDate) : '-')}</div></div>
+            <div><div class="text-xs text-gray-500">วันที่เหลือ</div><div class="font-medium">${(s.isPermanentFree || s.isOpenEnded) ? '∞' : Math.max(0, Math.ceil((new Date(s.endDate) - new Date()) / 86400000)) + ' วัน'}</div></div>
           </div>
           ${this.cancelHtml(s)}`;
 
@@ -301,7 +302,7 @@
 
       // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ยกเลิกแพ็กเกจ = มีผลสิ้นรอบ (เซิร์ฟเวอร์ตัดสิน · ข้อความผลมาจากเซิร์ฟเวอร์) · กลับมาใช้ต่อได้ก่อนสิ้นรอบ
       cancelHtml(s) {
-        if (s.isPermanentFree || s.status !== 'Active') return '';
+        if (s.isPermanentFree || s.isOpenEnded || s.status !== 'Active') return '';
         if (s.cancelAtPeriodEnd)
           return `<div style="margin-top:14px;padding:10px 12px;border-radius:8px;background:#FEF3C7;color:#92400E;font-size:13px">
             ขอยกเลิกแล้ว — ใช้งานได้ถึง ${Layout.date(s.endDate)} แล้วแพ็กเกจจะสิ้นสุด (ไม่เรียกเก็บรอบถัดไป)

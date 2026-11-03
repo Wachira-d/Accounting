@@ -9,9 +9,10 @@
   const $ = (id) => document.getElementById(id);
   const KINDS = ['privacy', 'terms', 'refund'];
   const FIELD = {
-    privacy: { url: 'privacyPolicyUrl', md: 'privacyPolicyMarkdown', mode: 'privacyLegalMode', title: '🔒 นโยบายความเป็นส่วนตัว' },
-    terms: { url: 'termsOfServiceUrl', md: 'termsOfServiceMarkdown', mode: 'termsLegalMode', title: '📄 ข้อกำหนดการใช้บริการ' },
-    refund: { url: 'refundPolicyUrl', md: 'refundPolicyMarkdown', mode: 'refundLegalMode', title: '↩️ นโยบายการยกเลิกและคืนเงิน' },
+    // รอบ 232 (232-Checkout-1): mdEn = ฉบับภาษาอังกฤษของข้อความที่ร้านเขียน (ฉบับเดียวกัน · ว่าง = ลูกค้าที่กด English เห็นไทย + ประกาศ)
+    privacy: { url: 'privacyPolicyUrl', md: 'privacyPolicyMarkdown', mdEn: 'privacyPolicyMarkdownEn', mode: 'privacyLegalMode', title: '🔒 นโยบายความเป็นส่วนตัว' },
+    terms: { url: 'termsOfServiceUrl', md: 'termsOfServiceMarkdown', mdEn: 'termsOfServiceMarkdownEn', mode: 'termsLegalMode', title: '📄 ข้อกำหนดการใช้บริการ' },
+    refund: { url: 'refundPolicyUrl', md: 'refundPolicyMarkdown', mdEn: 'refundPolicyMarkdownEn', mode: 'refundLegalMode', title: '↩️ นโยบายการยกเลิกและคืนเงิน' },
   };
   const published = (st) => st === 'Published' || st === 1;
   const reset = (id) => { if (window.CmsDirtyGuard && $(id)) CmsDirtyGuard.reset($(id)); };
@@ -77,6 +78,11 @@
             <textarea class="form-input" id="sgLgMd_${k}" rows="12" spellcheck="false" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px"></textarea>
             <div class="sg-hint">## หัวข้อ · - รายการ · **ตัวหนา** · [ข้อความ](https://...) · ข้อความแทรก เช่น {{company.name}} {{company.phone}} (ดูรายการที่ ข้อมูลร้าน) ·
               ${k === 'refund' ? 'เฉพาะนโยบายคืนเงิน: {{shop.depositForfeit}} {{shop.returnWindowDays}} {{shop.refundProcessingDays}} (ตัวเลขจากค่าตั้งด้านล่าง) · ' : ''}ไม่รับ HTML</div>
+            <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13px">🌐 ฉบับภาษาอังกฤษ (English version) — ไม่บังคับ</summary>
+              <textarea class="form-input" id="sgLgMdEn_${k}" rows="10" spellcheck="false" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;margin-top:6px" placeholder="## 1. Heading&#10;Paragraph..."></textarea>
+              <div class="sg-hint">ลูกค้ากด English ที่หน้านโยบาย (?lang=en) · เว้นว่าง = ยังไม่มีฉบับอังกฤษ ลูกค้าเห็นฉบับไทยพร้อมประกาศ "English version not available yet" · ฉบับไทยเป็นฉบับที่มีผล</div>
+              <div class="sg-hint" style="color:var(--amber-700,#b45309)">⚠️ ข้อความอังกฤษแสดงเฉพาะเมื่อเลือก "เขียนเอง / ปรับแม่แบบ" — เลือก "ใช้แม่แบบของระบบ" แล้วบันทึก ⇒ ข้อความอังกฤษของร้านถูกล้าง (แม่แบบยังไม่มีฉบับอังกฤษ ลูกค้าเห็นไทย + ประกาศ) · "ใช้ลิงก์ของร้านเอง" ⇒ ลูกค้าไปหน้าของร้าน ไม่เห็นข้อความนี้</div>
+            </details>
           </div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;background:var(--gray-50);border-radius:8px;padding:8px 10px">
             <span>🔗 ลิงก์ที่ลูกค้าเห็น:</span><code id="sgLgPub_${k}" style="flex:1;min-width:200px;word-break:break-all">-</code>
@@ -125,6 +131,7 @@
         const r = document.querySelector(`input[name="sgLgMode_${k}"][value="${s[f.mode] || 'default'}"]`); if (r) r.checked = true;
         $('sgLgUrl_' + k).value = s[f.url] || '';
         $('sgLgMd_' + k).value = s[f.md] || '';
+        $('sgLgMdEn_' + k).value = s[f.mdEn] || '';   // รอบ 232: hydrate ฉบับอังกฤษ (เก็บแล้วต้อง echo กลับ)
         $('sgLgPreview_' + k).style.display = 'none';
         $('sgLgWarn_' + k).textContent = '';
         this.modeChanged(k, true);
@@ -179,6 +186,7 @@
       const body = {};
       body[f.url] = mode === 'external' ? $('sgLgUrl_' + k).value.trim() : '';
       body[f.md] = mode === 'default' ? '' : $('sgLgMd_' + k).value;   // ลิงก์ของร้าน: เก็บข้อความที่เขียนไว้ต่อ (สลับกลับมาไม่หาย) · แม่แบบ: ล้าง
+      body[f.mdEn] = mode === 'default' ? '' : $('sgLgMdEn_' + k).value;   // รอบ 232: ฉบับอังกฤษตามฉบับไทย (แม่แบบ = ไม่มีฉบับอังกฤษของร้าน)
       if (await this._update(body, 'sgLg_' + k, 'บันทึกนโยบายแล้ว')) this.hydrateLegal(k);
     },
     async saveRefund() {

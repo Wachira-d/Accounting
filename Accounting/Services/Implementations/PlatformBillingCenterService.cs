@@ -44,15 +44,19 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
         var planName = await _db.PlanTemplates.AsNoTracking().Where(t => t.Plan == sub.Plan && t.IsActive)
             .Select(t => t.Name).FirstOrDefaultAsync(ct);
         var renewalIssued = sub.RenewalInvoiceForEndDate == sub.EndDate && sub.RenewalInvoiceNumber != null;
-        DateTime? nextRenewalAt = !sub.IsPermanentFree && sub.Status == SubscriptionStatus.Active && !renewalIssued
-            ? sub.EndDate.AddDays(-policy.RenewalInvoiceLeadDays) : null;
+        // รอบ 232: วันหมดอายุ/วันออกใบต่ออายุ/"ไม่หมดอายุ" ผ่าน SubscriptionExpiry ตัวเดียว — ค่าแทน ค.ศ. 2126 (ธงฟรีถาวรหลุด) เคยหลุดถึงจอเป็น "2 เม.ย. 2669"
+        var openEnded = SubscriptionExpiry.IsOpenEnded(sub.IsPermanentFree, sub.EndDate, now);
+        var nextRenewalAt = SubscriptionExpiry.NextRenewalInvoiceAt(sub.IsPermanentFree, sub.EndDate, now,
+            isActive: sub.Status == SubscriptionStatus.Active, renewalAlreadyIssued: renewalIssued, cancelAtPeriodEnd: sub.CancelAtPeriodEnd,
+            leadDays: policy.RenewalInvoiceLeadDays);
         var plan = new BillingCenterPlan(sub.Plan.ToString(), planName, sub.Status.ToString(), StatusLabel(sub.Status),
-            sub.BillingCycle.ToString(), sub.PricePerCycle, sub.IsPermanentFree ? null : sub.EndDate, sub.IsPermanentFree,
-            sub.CancelAtPeriodEnd ? null : nextRenewalAt, sub.ScheduledPlan?.ToString(), sub.ScheduledPlanEffectiveAt,
-            sub.CancelAtPeriodEnd, sub.CancelAtPeriodEnd ? sub.EndDate : null,
+            sub.BillingCycle.ToString(), sub.PricePerCycle, SubscriptionExpiry.DisplayEnd(sub.IsPermanentFree, sub.EndDate, now), sub.IsPermanentFree,
+            nextRenewalAt, sub.ScheduledPlan?.ToString(), sub.ScheduledPlanEffectiveAt,
+            sub.CancelAtPeriodEnd, sub.CancelAtPeriodEnd && !openEnded ? sub.EndDate : null,
             !sub.CancelAtPeriodEnd && sub.Status is SubscriptionStatus.Active or SubscriptionStatus.Trial or SubscriptionStatus.PastDue,
             SubscriptionCancelPolicy.ResumeRefusal(sub.CancelAtPeriodEnd, sub.Status, sub.EndDate, now) == null,
-            sub.CancelAtPeriodEnd ? SubscriptionCancelPolicy.Message(SubscriptionCancelPolicy.Outcome.AtPeriodEnd, sub.EndDate) : null);
+            sub.CancelAtPeriodEnd ? SubscriptionCancelPolicy.Message(SubscriptionCancelPolicy.Outcome.AtPeriodEnd, sub.EndDate) : null,
+            IsOpenEnded: openEnded);
 
         // ── ใบแจ้งหนี้ ──
         var invoices = platformId is Guid pid

@@ -158,6 +158,8 @@ public record SubscriptionResponse(
     string? Kind = null,
     /// <summary>รอบ 231 (231-8): "ราคาพิเศษสำหรับคุณ: ฿…/ปี (ราคาตั้ง ฿…)" ของแพ็กเกจ+รอบปัจจุบัน · null = ราคาตั้ง — หน้าเว็บแสดงอย่างเดียว</summary>
     string? SpecialPriceNote = null,
+    /// <summary>รอบ 232: "ไม่หมดอายุ" ตัดสินจาก <c>SubscriptionExpiry</c> (ธงฟรีถาวร <b>หรือ</b> ค่าแทน ค.ศ. 2126 ในฐาน) — หน้าเว็บแสดง "ไม่หมดอายุ" ไม่พิมพ์ปี 2669</summary>
+    bool IsOpenEnded = false,
     /// <summary>รอบ 231 (P0 จ · LICENSE_USAGE_OVERAGE_AUDIT): หลอดเอกสารเดือนนี้ (ใช้ไป/เพดาน/ไม่จำกัด/ระดับ) คิดที่เซิร์ฟเวอร์ — หน้าแพ็กเกจแสดงอย่างเดียว</summary>
     global::Accounting.Helpers.UsageBarRule.Bar? DocumentsBar = null,
     /// <summary>รอบ 231 (P0 จ): ข้อความเพดาน users/companies/docs/journals/ocr/storage/messages ("ไม่จำกัด" ตัดสินที่เซิร์ฟเวอร์ — UsageBarRule.LimitTexts)</summary>
@@ -535,6 +537,9 @@ public record AdminChangePlanRequest(
 public record AdminChangeSubStatusRequest(
     SubscriptionStatus Status,
     string? Notes = null);
+
+/// <summary>รอบ 232: เหตุผลตอนแอดมิน "กำหนดรอบ" (ไม่บังคับ)</summary>
+public record AdminCloseOpenEndedRequest(string? Reason = null);
 
 public record AdminChangeDatesRequest(
     DateTime? StartDate = null,

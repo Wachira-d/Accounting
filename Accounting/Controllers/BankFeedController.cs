@@ -11,12 +11,14 @@ namespace Accounting.Controllers;
 public class BankFeedController : ControllerBase
 {
     private readonly IBankFeedService _service;
-    private readonly ILineNotifyService _lineNotify;
+    /// <summary>รอบ 232 (232-Notify): แจ้ง "ซิงก์ธนาคารสำเร็จ" ผ่านเครื่องแจ้งเตือนกลาง (ค่าตั้งของบริษัท: กระดิ่ง/อีเมล/LINE/กลุ่ม LINE ของบริษัท) —
+    /// เดิม <c>ILineNotifyService.NotifyBankSyncCompleteAsync</c> ประกาศเข้ากลุ่ม LINE โดยถอยไปกลุ่มกลางของแพลตฟอร์มเมื่อบริษัทไม่มี OA</summary>
+    private readonly INotificationEngine? _notify;
 
-    public BankFeedController(IBankFeedService service, ILineNotifyService lineNotify)
+    public BankFeedController(IBankFeedService service, INotificationEngine? notify = null)
     {
         _service = service;
-        _lineNotify = lineNotify;
+        _notify = notify;
     }
 
     [HttpGet("connections")]
@@ -44,8 +46,14 @@ public class BankFeedController : ControllerBase
     public async Task<IActionResult> Sync(Guid companyId, Guid connectionId)
     {
         var result = await _service.SyncAsync(companyId, connectionId);
-        if (result.Status == "Success" && result.NewTransactions > 0)
-            await _lineNotify.NotifyBankSyncCompleteAsync(companyId, result.BankName, result.NewTransactions);
+        if (result.Status == "Success" && result.NewTransactions > 0 && _notify != null)
+            await _notify.DispatchAsync(companyId, Accounting.Models.Constants.NotificationEvents.BankSyncCompleted, new NotificationContext
+            {
+                Title = "🏦 Sync ธนาคารสำเร็จ",
+                Message = $"🔄 {result.BankName}\n📊 รายการใหม่ {result.NewTransactions} รายการ",
+                ActionUrl = "/pages/bank.html",
+                EntityType = "BankFeedConnection", EntityId = connectionId,
+            });
         return Ok(new ApiResponse<object>(true, result));
     }
 

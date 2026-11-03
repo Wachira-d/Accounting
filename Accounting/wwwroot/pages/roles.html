@@ -158,6 +158,8 @@
       if (!it.id) return;
       // เมนูของแพลตฟอร์ม/เจ้าของบริษัท — ไม่ใช่สิ่งที่มอบผ่าน role บริษัทได้
       if (it.adminOnly || it.platformAdmin) return;
+      // รอบ 232 (ฝ่ายค้าน S5): หน้าย่อยของ hub ไม่แยกช่องติ๊ก — ติ๊ก "แพ็กเกจและการชำระเงิน" ตัวเดียว = ทุกแท็บ (Layout.hasMenuAccess อ่านลูกเดิมที่เคยติ๊กให้)
+      if (it.inHub) return;
       if (!cur) { cur = { section: 'หลัก', items: [] }; out.push(cur); }
       cur.items.push({
         id: it.id, label: it.label, icon: it.icon || '📄',
