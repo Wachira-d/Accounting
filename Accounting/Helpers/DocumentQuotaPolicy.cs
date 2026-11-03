@@ -181,6 +181,11 @@ public static class DocumentQuotaPolicy
         return after > WarnLevel(usedBefore, limitBefore) ? after : 0;
     }
 
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-5): เกณฑ์ % ที่<b>เพิ่งข้าม</b>ตามรายการที่แอดมินตั้ง (<see cref="QuotaWarnPolicy"/>) · 0 = ไม่ข้าม · เพดาน ≤ 0 = ไม่จำกัด —
+    /// ตัวเดียวกับ <see cref="CrossedWarnLevel(int,int,int,int)"/> แต่คืน % (80/90/100) แทนระดับ 1/2 ให้แจ้งครั้งเดียวต่อเกณฑ์</summary>
+    public static int CrossedWarnLevel(int usedBefore, int limitBefore, int usedAfter, int limitAfter, IReadOnlyList<int>? percents)
+        => QuotaWarnPolicy.Crossed(usedBefore, limitBefore <= 0 ? null : limitBefore, usedAfter, limitAfter <= 0 ? null : limitAfter, percents);
+
     /// <summary>ฐานนับโควตา (ใช้ไป, เพดานแพ็กเกจ) — ฝ่ายค้านรอบ 205 ข้อ 1 · <b>คำตัดสิน</b>: บริษัทใต้แพ็กเกจกลุ่ม (AccountSubscription)
     /// ใช้ "ยอดรวมทั้งกลุ่ม + เพดานกลุ่ม" ทั้งตอนตรวจโควตาและตอนหักโบนัส (โบนัสยังเป็นของบริษัทที่ซื้อ แต่ถูกใช้เมื่อ<b>กลุ่ม</b>เกินเพดาน —
     /// เพราะเพดานที่บังคับจริงคือเพดานกลุ่ม) · บริษัทเดี่ยวใช้ตัวนับ/เพดานของตัวเอง · เดิมตรวจด้วยยอดกลุ่มแต่หักโบนัสเทียบตัวนับบริษัทเดียว
@@ -202,11 +207,11 @@ public static class DocumentQuotaPolicy
     /// <summary>ระดับการเตือน — 0 = ปกติ, 1 = ใกล้เต็ม (≥ WarnPercent), 2 = เต็มแล้ว</summary>
     public const int WarnPercent = 80;
 
+    /// <remarks>รอบ 231: ตัวตัดสินเดียว <see cref="QuotaWarnPolicy.Severity"/> (ค่าตั้งต้น 80/90/100 — ระดับ 1 ยังเริ่มที่ 80% เหมือนเดิม)</remarks>
     public static int WarnLevel(int used, int limit)
     {
         if (limit <= 0) return 0;
-        if (used >= limit) return 2;
-        return used * 100 >= limit * WarnPercent ? 1 : 0;
+        return QuotaWarnPolicy.Severity(used, limit);
     }
 
     /// <summary>คาดว่าจะเต็มวันที่เท่าไรของเดือน (run-rate) — null = ยังไม่พอประเมิน

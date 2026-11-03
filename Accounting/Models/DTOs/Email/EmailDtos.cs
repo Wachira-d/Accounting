@@ -57,7 +57,9 @@ public record EmailConfigResponse(
     /// หน้าจอจะโชว์ว่า "มีรหัสผ่านเก็บไว้แล้ว" แล้วส่งอีเมลไม่ออกโดยไม่มีใครรู้ว่าทำไม</summary>
     string? SecretWarning = null,
     /// <summary>รอบ 212 (คำตัดสินข้อ 171): ถอยไปอีเมลของระบบเมื่อส่งถึงลูกค้า (null = ค่าเริ่มต้น) — แก้ที่ PUT customer-notify/fallback</summary>
-    string? CustomerEmailFallback = null);
+    string? CustomerEmailFallback = null,
+    /// <summary>ฝ่ายค้านรอบ 231 S1: คำใบ้ (ไม่ใช่ข้อผิดพลาด) เมื่อค่าที่เก็บไว้ "ดูเหมือน ciphertext รุ่นก่อนแต่ถอดไม่ออก" — ระบบใช้เป็นค่าดิบ · null = ไม่มี</summary>
+    string? SecretHint = null);
 
 public record SmtpConfigDto(
     string? Host,
@@ -119,7 +121,9 @@ public record SystemEmailConfigResponse(
     SmtpConfigDto? Smtp,
     MicrosoftGraphConfigDto? Microsoft,
     GmailConfigDto? Gmail,
-    string? SecretWarning = null);
+    string? SecretWarning = null,
+    /// <summary>ฝ่ายค้านรอบ 231 S1: คำใบ้ค่ากำกวม (ดู <c>CompanyEmailConfigResponse.SecretHint</c>)</summary>
+    string? SecretHint = null);
 
 public record UpdateSystemEmailConfigRequest(
     EmailProvider Provider,

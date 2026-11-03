@@ -426,6 +426,9 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandle
     Accounting.Services.Payments.Handlers.AddOnPurchasePaymentHandler>();
 // รอบ 229 (QUOTA_ADDON_SUBSCRIPTION_AUDIT): ด่านโควตาตัวเดียว · เส้นซื้อโควตาเสริม · เงินเข้าแล้วเปิดสิทธิ์ (handler ต่อชนิด QuotaAddOnPurchase)
 builder.Services.AddScoped<Accounting.Services.Implementations.IQuotaGate, Accounting.Services.Implementations.QuotaGateService>();
+// รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B/§D · คำตัดสินข้อ 231-1..7): ด่านส่วนเกินตัวเดียว (เอกสาร/OCR/ข้อความ/พื้นที่) + snapshot การใช้งานรายเดือน (ประวัติ 24 เดือน)
+builder.Services.AddScoped<Accounting.Services.Implementations.IOverageService, Accounting.Services.Implementations.OverageService>();
+builder.Services.AddScoped<Accounting.Services.Implementations.IUsageSnapshotService, Accounting.Services.Implementations.UsageSnapshotService>();
 builder.Services.AddScoped<Accounting.Services.Payments.IQuotaAddOnPurchaseService, Accounting.Services.Payments.QuotaAddOnPurchaseService>();
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.QuotaAddOnPaymentHandler>();
@@ -827,9 +830,11 @@ builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAud
 // ปิดรอบบิลค่าใช้งาน — รวม UsageEvent ที่ยังไม่ออกบิลเป็นใบแจ้งหนี้หลายบรรทัด
 // (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
 builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
-builder.Services.AddHostedService<Accounting.Services.Background.PlatformDunningJob>();   // รอบ 219 เฟส 2 ขั้น 2 — ทวงหนี้ค่าบริการ NextAcc ทุกชั่วโมง (JobLock · watermark ต่อบริษัท)
+builder.Services.AddHostedService<Accounting.Services.Background.PlatformDunningJob>();   // รอบ 219 เฟส 2 ขั้น 2 — ทวงหนี้ค่าบริการ NextAcc ทุกชั่วโมง (JobLock · watermark ต่อบริษัท) · รอบ 231 ขั้น 1 ล็อก/ปลดสิทธิ์ส่วนเกินจากใบ USAGE- ค้าง
+builder.Services.AddHostedService<Accounting.Services.Background.UsageSnapshotJob>();   // รอบ 231 — snapshot การใช้งานรายวัน (Capacity = ค่าสูงสุดของเดือน) · เตือนใกล้เต็มทุกทรัพยากร · ส่วนเกินพื้นที่ GB-เดือน (JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.PlatformAutoChargeJob>();   // รอบ 230 — ตัดบัตรอัตโนมัติใบค่าบริการถึงกำหนด ทุกชั่วโมง (JobLock · unique ใบ+ครั้งที่ · สวิตช์แพลตฟอร์มปิดเป็นค่าตั้งต้น)
 builder.Services.AddHostedService<Accounting.Services.Background.PlatformTransferPullJob>();   // รอบ 230 — ดึงรอบโอนของผู้ให้บริการ → ร่างรอบโอน ทุก 6 ชม. (JobLock · ไม่ลงบัญชี)
+builder.Services.AddHostedService<Accounting.Services.Background.TrialDataRetentionJob>();   // รอบ 231 (231-10) — ปิดข้อมูลทดลองใช้ที่หมดอายุพ้นระยะเก็บ (ผู้อ่าน TrialConfig.DeleteDataAfterGracePeriod/DataRetentionDays · legal hold ไม่แตะ · JobLock)
 // ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)

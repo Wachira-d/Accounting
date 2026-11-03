@@ -1,4 +1,7 @@
+using Accounting.Data;
+using Accounting.Models.Entities;
 using Accounting.Services;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Helpers;
 
@@ -17,12 +20,68 @@ public static class SettlementChartSeed
     public const string PaymentFeeAccountCode = "53170";
     /// <summary>ขาดทุนจาก chargeback (report-S1 G5/D8) — ห้ามรวม 57130</summary>
     public const string ChargebackLossAccountCode = "57140";
+    /// <summary>บัญชีพักผู้ให้บริการรับชำระเงิน (gateway · ขาเงินเข้าของ PaymentIntent) — ผังมาตรฐานที่ <c>GatewayAccountResolver</c> ใช้เมื่อ config ไม่ได้ตั้ง ·
+    /// รอบ 232: บริษัทที่สร้างก่อนผังนี้เข้าแม่แบบไม่มีแถว ⇒ ผูกช่องทาง Omise ล้ม "ไม่มีผัง 11340" ⇒ seed ให้บริษัทเดิม + สร้างให้เองตอนใช้
+    /// (<see cref="EnsureStandardAccountAsync"/>)</summary>
+    public const string GatewayClearingAccountCode = "11340";
 
     /// <summary>รหัสที่ migration ต้องใส่ให้บริษัทเดิม (เรียงตามเลข)</summary>
     public static readonly IReadOnlyList<string> SeededCodes = new[]
     {
-        ReserveAccountCode, PaymentFeeAccountCode, ChargebackLossAccountCode,
+        GatewayClearingAccountCode, ReserveAccountCode, PaymentFeeAccountCode, ChargebackLossAccountCode,
     };
+
+    private const string LockScope = "settlement-chart-seed";
+
+    /// <summary>คืน AccountId ของผังมาตรฐาน <paramref name="code"/> ของบริษัท — <b>สร้างให้ถ้ายังไม่มี</b> จากแถวใน
+    /// <see cref="ChartOfAccountTemplates.GetCommonAccounts"/> ใต้กลุ่มแม่ 3 หลักของบริษัทนั้น (ตัวเดียวกับ <see cref="MigrationSeedSql"/>) ·
+    /// idempotent (ล็อก advisory ต่อบริษัท+รหัส · แถวที่ลบแล้ว = กู้คืนให้ใช้ได้ ไม่สร้างซ้ำเพราะ unique CompanyId+AccountCode) ·
+    /// ไม่มีกลุ่มแม่ (ผังไม่ใช่มาตรฐาน) ⇒ คืน null — ผู้เรียกตัดสินเอง ("ไม่รู้ต้องบอกว่าไม่รู้") · บันทึกเอง (SaveChanges · ธุรกรรมของตัวเองเมื่อผู้เรียกไม่มี)</summary>
+    public static async Task<Guid?> EnsureStandardAccountAsync(AccountingDbContext db, Guid companyId, string code, CancellationToken ct = default)
+    {
+        var existing = await db.ChartOfAccounts.AsNoTracking()
+            .Where(a => a.CompanyId == companyId && a.AccountCode == code && a.IsActive)
+            .Select(a => (Guid?)a.Id).FirstOrDefaultAsync(ct);
+        if (existing != null) return existing;
+        if (db.Database.CurrentTransaction != null) return await CreateUnderLockAsync(db, companyId, code, ct);
+        var strategy = db.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async () =>
+        {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            var id = await CreateUnderLockAsync(db, companyId, code, ct);
+            await tx.CommitAsync(ct);
+            return id;
+        });
+    }
+
+    private static async Task<Guid?> CreateUnderLockAsync(AccountingDbContext db, Guid companyId, string code, CancellationToken ct)
+    {
+        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", new object[] { AdvisoryLockKey.For(companyId, LockScope, code) }, ct);
+        // แถวเดิม (รวมที่ลบ/ปิดใช้ — unique index ไม่กรอง IsDeleted) ⇒ เปิดใช้คืน ไม่สร้างซ้ำ
+        var row = await db.ChartOfAccounts.IgnoreQueryFilters().FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == code, ct);
+        if (row != null)
+        {
+            if (row.IsDeleted || !row.IsActive)
+            {
+                row.IsDeleted = false; row.IsActive = true; row.UpdatedAt = DateTime.UtcNow;
+                await db.SaveChangesAsync(ct);
+            }
+            return row.Id;
+        }
+        var t = ChartOfAccountTemplates.GetCommonAccounts().Single(a => a.Code == code);
+        var parentCode = ParentGroupCode(code);
+        var parent = await db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == parentCode && a.IsActive, ct);
+        if (parent == null) return null;
+        var account = new ChartOfAccount
+        {
+            CompanyId = companyId, AccountCode = t.Code, AccountName = t.NameTh, AccountNameEn = t.NameEn, AccountType = t.Type,
+            ParentAccountId = parent.Id, Level = t.Level, IsActive = true, IsSystemAccount = true,
+            Description = "สร้างอัตโนมัติจากผังมาตรฐานเมื่อระบบต้องใช้ (รอบ 232)",
+        };
+        db.ChartOfAccounts.Add(account);
+        await db.SaveChangesAsync(ct);
+        return account.Id;
+    }
 
     /// <summary>INSERT ผังทั้งสามให้บริษัทที่มีกลุ่มแม่ในผังมาตรฐานแล้ว (113 · 531 · 571) — ผูก <c>ParentAccountId</c> กับกลุ่มแม่ของบริษัทนั้น ·
     /// <c>ON CONFLICT DO NOTHING</c> (unique CompanyId+AccountCode) ⇒ รันทุกบูตได้ ไม่ทับรหัสที่ลูกค้าตั้งเอง · ไม่ย้ายยอดใด ๆ</summary>

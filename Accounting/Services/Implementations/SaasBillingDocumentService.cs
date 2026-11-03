@@ -413,7 +413,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             var renewCycle = sub.ScheduledPlan != null ? (sub.ScheduledBillingCycle ?? sub.BillingCycle) : sub.BillingCycle;
             var template = await _db.PlanTemplates.AsNoTracking()
                 .FirstOrDefaultAsync(t => t.Plan == renewPlan && t.IsActive);
-            var amount = PriceFor(template, renewCycle, sub.PricePerCycle);
+            var amount = await PriceForAsync(sub, template, renewCycle);
             if (amount <= 0) return null; // ฟรี/ไม่มีราคา → ไม่ต้องออกใบแจ้งหนี้
 
             var settings = await _db.Set<SiteSettings>().AsNoTracking().OrderBy(s => s.CreatedAt).FirstOrDefaultAsync();
@@ -534,7 +534,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         var renewPlan = sub.ScheduledPlan ?? sub.Plan;   // รอบ 219 เฟส 0: ให้ตรงกับตอนออกใบ (ดาวน์เกรดที่รอมีผล)
         var renewCycle = sub.ScheduledPlan != null ? (sub.ScheduledBillingCycle ?? sub.BillingCycle) : sub.BillingCycle;
         var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == renewPlan && t.IsActive);
-        var amount = PriceFor(template, renewCycle, sub.PricePerCycle);
+        var amount = await PriceForAsync(sub, template, renewCycle);
         var settings = await _db.Set<SiteSettings>().AsNoTracking().OrderBy(s => s.CreatedAt).FirstOrDefaultAsync();
         var issuedAt = sub.RenewalInvoiceIssuedAt ?? DateTime.UtcNow;
         var forEnd = sub.RenewalInvoiceForEndDate ?? sub.EndDate;
@@ -550,9 +550,14 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         BillingCycle.SemiAnnual => 6, BillingCycle.Annual => 12, _ => 1
     };
 
-    /// <remarks>รอบ 219 เฟส 0: ราคาต่อรอบมาจาก <see cref="Accounting.Helpers.PlatformPlanPricing.CyclePrice"/> ตัวเดียว (เดิม switch สำเนาที่ 5)</remarks>
-    private static decimal PriceFor(PlanTemplate? t, BillingCycle c, decimal fallback)
-        => t == null ? fallback : Accounting.Helpers.PlatformPlanPricing.CyclePrice(t, c);
+    /// <remarks>รอบ 219 เฟส 0: ราคาต่อรอบมาจากตัวตั้งเดียว (เดิม switch สำเนาที่ 5) · รอบ 231 (231-8): ใบต่ออายุคิด<b>ราคาพิเศษของบริษัทนี้</b>
+    /// (<see cref="Accounting.Helpers.PlatformPriceOverrideStore"/> · แถว License ใช้เมื่อบริษัทอยู่ใต้ License · <c>AppliesToRenewals</c>) — เดิมราคาแม่แบบเสมอ ·
+    /// ไม่มีแม่แบบ ⇒ <c>PricePerCycle</c> ที่บันทึก (ซึ่ง <c>ApplyTemplateWithPriceAsync</c> ตั้งเป็นราคาพิเศษแล้ว)</remarks>
+    private async Task<decimal> PriceForAsync(Subscription sub, PlanTemplate? t, BillingCycle c)
+    {
+        if (t == null) return sub.PricePerCycle;
+        return (await Accounting.Helpers.PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, t, c, DateTime.UtcNow, forRenewal: true)).Price;
+    }
 
     private async Task<string> NextInvoiceNumberAsync(DateTime now)
     {

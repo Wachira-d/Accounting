@@ -30,8 +30,9 @@ public class UsageInvoicingJob : BackgroundService
     private static readonly TimeSpan Cycle = TimeSpan.FromHours(6);
 
     /// <summary>ยอดต่ำกว่านี้ยกยอดไปงวดหน้า — ค่าธรรมเนียมออกบิล/ตามเก็บแพงกว่า
-    /// ตัวเงิน และลูกค้าไม่อยากได้ใบกำกับ ฿3.50 (ไม่ตีตรา = รวมกับงวดถัดไป)</summary>
-    private const decimal MinInvoiceAmount = 50m;
+    /// ตัวเงิน และลูกค้าไม่อยากได้ใบกำกับ ฿3.50 (ไม่ตีตรา = รวมกับงวดถัดไป) ·
+    /// รอบ 231: ย้ายเป็นค่าตั้ง <c>PlatformBillingSettings.OverageMinInvoiceAmount</c> (ตั้งต้น 50) — ค่านี้เป็นแค่ fallback เมื่ออ่านค่าตั้งไม่ได้</summary>
+    private const decimal MinInvoiceAmount = Accounting.Helpers.PlatformBillingSettingsRules.DefaultOverageMinInvoiceAmount;
 
     public UsageInvoicingJob(IServiceScopeFactory scopeFactory, ILogger<UsageInvoicingJob> logger)
     { _scopeFactory = scopeFactory; _logger = logger; }
@@ -95,72 +96,71 @@ public class UsageInvoicingJob : BackgroundService
             .Select(a => a.Id).ToListAsync(ct);
         var prepaid = prepaidAccounts.ToHashSet();
 
-        var issued = 0; var closedPrepaid = 0; var carried = 0;
+        // รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.5 · คำตัดสินข้อ 231-4): ขั้นต่ำ + กำหนดชำระ (วันออก + OverageGraceDays) จากค่าตั้งของแอดมิน
+        var billingPolicy = await PlatformBillingSettingsService.LoadPolicyAsync(db, ct);
+        var minInvoice = Accounting.Helpers.UsageInvoiceLines.MinInvoice(billingPolicy.OverageMinInvoiceAmount, MinInvoiceAmount);
 
-        foreach (var group in pending.GroupBy(u => new { u.CompanyId, Period = AddOnBilling.PeriodOf(u.OccurredAt) }))
+        var issued = 0; var closedPrepaid = 0; var carried = 0; var closedZero = 0;
+
+        // ฝ่ายค้านรอบ 231 B3: จัดกลุ่มตาม "บริษัท" (ทุกงวดที่ปิดแล้ว) — งวดที่ยกยอดมาเพราะต่ำกว่าขั้นต่ำถูกรวมเข้าใบเดียวกับงวดถัดไป (คนละบรรทัด) ·
+        // เดิมจัดกลุ่มต่อ (บริษัท, งวด) ⇒ งวดละ 30 บาทไม่เคยถึงขั้นต่ำ 50 สักใบ = ยกยอดตลอดไป
+        foreach (var group in pending.GroupBy(u => u.CompanyId))
         {
             if (ct.IsCancellationRequested) break;
             var rows = group.ToList();
-            var period = group.Key.Period;
             var accountId = rows.Select(r => r.BillingAccountId).FirstOrDefault(x => x.HasValue);
+            var periodOf = rows.ToDictionary(r => r.Id, r => AddOnBilling.PeriodOf(r.OccurredAt));
 
-            // Prepaid: ตัดเครดิตไปแล้ว — ปิดรอบโดยไม่ออกใบ (แต่ต้องตีตรา)
-            if (accountId.HasValue && prepaid.Contains(accountId.Value))
+            // ตัวตัดสินเดียว (pure · Helpers/UsageInvoiceLines): prepaid ปิดรอบไม่มีใบ · รวม 0 บาท (ใบที่กฎหมายบังคับในโหมดล็อก · มิเตอร์ข้อมูลอย่างเดียว — รอบ 231) ปิดงวดไม่มีใบ ·
+            // ต่ำกว่าขั้นต่ำ ยกยอด (ไม่ตีตรา — ไม่ใช่การยกเลิกหนี้) · อื่น ออกใบ · ยอดถูก snapshot แล้ว (ChargedAmount) การตั้งราคาทีหลังไม่คิดย้อนหลัง
+            var total = rows.Sum(r => r.ChargedAmount);
+            var disposition = Accounting.Helpers.UsageInvoiceLines.Dispose(accountId.HasValue && prepaid.Contains(accountId.Value), total, minInvoice);
+            if (disposition == Accounting.Helpers.UsageInvoiceLines.Disposition.ClosePrepaid)
             {
-                foreach (var r in rows) r.BilledPeriod = period;
+                foreach (var r in rows) r.BilledPeriod = periodOf[r.Id];
                 closedPrepaid += rows.Count;
                 continue;
             }
-
-            var total = rows.Sum(r => r.ChargedAmount);
-            if (total < MinInvoiceAmount)
+            if (disposition == Accounting.Helpers.UsageInvoiceLines.Disposition.CloseZero)
             {
-                // ไม่ตีตรา — ยกยอดไปรวมกับงวดถัดไป (ไม่ใช่การยกเลิกหนี้)
+                foreach (var r in rows) r.BilledPeriod = periodOf[r.Id];
+                closedZero += rows.Count;
+                continue;
+            }
+            if (disposition == Accounting.Helpers.UsageInvoiceLines.Disposition.Carry)
+            {
                 carried += rows.Count;
                 continue;
             }
 
-            // ฝ่ายค้านรอบ 213 S3: แยกบรรทัดตามหน่วย ณ ตอนซื้อ (แพ็ก 500 กับแพ็ก 1,000 คนละบรรทัด) · หน่วยจาก snapshot ของแถวก่อน ⇒ ป้ายปัจจุบันของฟีเจอร์ (แถวเก่า)
-            var lines = rows
-                .GroupBy(r => new { r.FeatureCode, r.UnitLabelSnapshot })
-                .Select(g =>
-                {
-                    names.TryGetValue(g.Key.FeatureCode, out var meta);
-                    var qty = g.Sum(x => x.Quantity);
-                    return new PlatformInvoiceLine(
-                        // รอบ 229: ค่าเดือนโควตาเสริม (quota.*) ไม่อยู่ในแคตตาล็อก ApiFeature — ชื่อจาก QuotaResources (ไม่โชว์รหัสดิบ)
-                        Description: $"{meta?.Name ?? Accounting.Models.Constants.QuotaResources.InvoiceName(g.Key.FeatureCode) ?? g.Key.FeatureCode} · งวด {period}",
-                        AmountNet: g.Sum(x => x.ChargedAmount),
-                        Unit: AddOnBilling.InvoiceUnit(g.Key.UnitLabelSnapshot, meta?.UnitLabel),
-                        Quantity: qty > 0 ? qty : 1m);
-                })
-                .OrderByDescending(l => l.AmountNet)
-                .ToList();
+            // บรรทัดใบ (§86/4: ชื่อที่อ่านออก · Qty × ราคา/หน่วย = ยอดบรรทัด · แยกบรรทัดตามงวด/หน่วย ณ ตอนซื้อ/ราคา) — ตัวประกอบเดียว Helpers/UsageInvoiceLines.Build
+            var lineRows = rows.Select(r => new Accounting.Helpers.UsageInvoiceLines.Row(periodOf[r.Id], r.FeatureCode, r.UnitLabelSnapshot, r.UnitPriceSnapshot, r.Quantity, r.ChargedAmount)).ToList();
+            var lines = Accounting.Helpers.UsageInvoiceLines.Build(lineRows,
+                code => names.TryGetValue(code, out var meta) ? ((string? Name, string? UnitLabel)?)(meta.Name, meta.UnitLabel) : null);
+            var latestPeriod = Accounting.Helpers.UsageInvoiceLines.LatestPeriod(lineRows);
+            var periodsText = string.Join(", ", lineRows.Select(r => r.Period).Distinct().OrderBy(p => p).Select(Accounting.Helpers.UsageHistoryRule.Label));
 
             var issueDate = DateTime.UtcNow;
-            // อ้างอิงต้องคงที่ต่อ (บริษัท, งวด) — ถ้ารอบก่อนออกใบไปแล้วแต่ตีตราไม่สำเร็จ
-            // จะเห็นได้ทันทีว่าเป็นใบซ้ำของงวดเดียวกัน (8 ตัวแรกของ id พอแยกได้)
-            var shortId = group.Key.CompanyId.ToString("N")[..8];
             var doc = await issuer.IssueUsageInvoiceAsync(
-                buyerCompanyId: group.Key.CompanyId,
+                buyerCompanyId: group.Key,
                 lines: lines,
                 issueDate: issueDate,
-                dueDate: issueDate.AddDays(7),
-                reference: $"{Accounting.Helpers.PlatformInvoiceRules.UsageReferencePrefix}{period}-{shortId}",
-                notes: $"ค่าใช้งานตามจริงงวด {period} — รายละเอียดแยกตามรายการด้านล่าง");
+                dueDate: Accounting.Helpers.UsageInvoiceLines.DueDate(issueDate, billingPolicy.OverageGraceDays),   // รอบ 231: ครบกำหนด = วันออก + OverageGraceDays
+                reference: Accounting.Helpers.UsageInvoiceLines.Reference(group.Key, latestPeriod),
+                notes: $"ค่าใช้งานตามจริงงวด {periodsText} — รายละเอียดแยกตามรายการด้านล่าง");
 
             // ออกใบไม่สำเร็จ = **ห้ามตีตรา** ปล่อยให้รอบหน้าลองใหม่
             // (ตีตราแล้วรายได้หายถาวรโดยไม่มีใครรู้ — เงียบที่สุดในบรรดาบั๊กเรื่องเงิน)
             if (doc == null)
             {
                 _logger.LogWarning("ออกใบแจ้งหนี้ค่าใช้งานงวด {Period} ของบริษัท {Cid} ไม่สำเร็จ — จะลองใหม่รอบหน้า",
-                    period, group.Key.CompanyId);
+                    latestPeriod, group.Key);
                 continue;
             }
 
-            foreach (var r in rows) { r.BilledPeriod = period; r.BilledDocumentId = doc.DocumentId; }
+            foreach (var r in rows) { r.BilledPeriod = periodOf[r.Id]; r.BilledDocumentId = doc.DocumentId; }
             issued++;
-            issuedDocs.Add((group.Key.CompanyId, doc.DocumentId));
+            issuedDocs.Add((group.Key, doc.DocumentId));
         }
 
         await db.SaveChangesAsync(ct);
@@ -171,7 +171,7 @@ public class UsageInvoicingJob : BackgroundService
         if (notifier != null)
             foreach (var (buyer, docId) in issuedDocs) await notifier.InvoiceIssuedAsync(buyer, docId, ct);
 
-        var summary = $"ออกใบแจ้งหนี้ {issued} ใบ · ปิดรอบ prepaid {closedPrepaid} รายการ · ยกยอดต่ำกว่าเกณฑ์ {carried} รายการ";
+        var summary = $"ออกใบแจ้งหนี้ {issued} ใบ · ปิดรอบ prepaid {closedPrepaid} รายการ · ปิดงวดรายการ 0 บาท {closedZero} รายการ · ยกยอดต่ำกว่าเกณฑ์ {carried} รายการ";
         if (issued > 0 || closedPrepaid > 0) _logger.LogInformation("ปิดรอบบิลค่าใช้งาน: {Summary}", summary);
         if (recorder != null)
             await recorder.RecordAsync("UsageInvoicing", true, summary, issued, startedAt);

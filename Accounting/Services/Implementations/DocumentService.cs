@@ -43,6 +43,8 @@ public partial class DocumentService : IDocumentService
     /// ที่ไม่มี DI ครบ. null = ไม่บันทึก overage (เสียรายได้ 1 รายการ ยอมรับได้
     /// ห้ามทำให้สร้างเอกสารไม่ได้)</summary>
     private readonly IUsageMeteringService? _metering;
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-1/231-2): ด่านส่วนเกินตัวเดียว — เกินโควตาแล้ว "ใช้ต่อได้ คิดค่าส่วนเกิน" หรือไม่ (null ในเทสต์เดิม = HardLock)</summary>
+    private readonly IOverageService? _overage;
 
     /// <summary>ผู้เขียนสต็อกตัวเดียวของระบบ (POS_MULTI_BRANCH_ANALYSIS เฟส 0) —
     /// optional เพราะเทสต์เก่าสร้าง DocumentService ด้วยอาร์กิวเมนต์ไม่ครบ;
@@ -78,9 +80,11 @@ public partial class DocumentService : IDocumentService
         IUsageMeteringService? metering = null,
         IStockLedger? stock = null,
         IIssuedDocumentHooks? issuedHooks = null,
-        Accounting.Services.Storage.IFileStorage? fileStorage = null)
+        Accounting.Services.Storage.IFileStorage? fileStorage = null,
+        IOverageService? overage = null)
     {
         _fileStorage = fileStorage;
+        _overage = overage;
         // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — จุดเดียวกับ POS/Integration/CMS (S-02) ·
         // ไม่มี DI (สร้างเองนอก container) → สร้างตัวจริงจากของที่มีอยู่ ห้ามปล่อย null แล้วข้ามเงียบ
         _issuedHooks = issuedHooks ?? new IssuedDocumentHooks(db, etaxService,
@@ -1080,11 +1084,14 @@ public partial class DocumentService : IDocumentService
         // R-04 ขั้น 1: ใบร่างจากเส้นอัตโนมัติ (จองนัดหมาย/คำสั่งซื้อหน้าเว็บ) ไม่นับ/ไม่บล็อกตอนสร้าง — นับ (และบล็อกใบที่รอได้) ตอนอนุมัติใน ApproveDocumentAsync
         var quotaDeferred = DocumentQuotaPolicy.Counts(quotaClass) && DocumentQuotaPolicy.DefersCountUntilApproval(originModule);
         var withinQuota = await _subscriptionService.CheckUsageLimitAsync(companyId, "document");
-        if (!withinQuota && !quotaDeferred && DocumentQuotaPolicy.CanRefuseWhenOverQuota(quotaClass))
+        // รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.4 · คำตัดสินข้อ 231-1): ใบที่รอได้ + เกินโควตา ⇒ ถามด่านส่วนเกินตัวเดียว (OverageService.DecideAsync) —
+        // เปิด "ใช้ต่อได้ คิดค่าส่วนเกิน" + มีราคา + ไม่ถึงเพดานเงิน + ไม่ถูกล็อกเพราะค้างชำระ ⇒ ออกได้ (คิดส่วนเกินตอนนับ) · ไม่งั้น 409 เดิมพร้อมเหตุ/ทางไปต่อ
+        if (!withinQuota && !quotaDeferred && DocumentQuotaPolicy.CanRefuseWhenOverQuota(quotaClass)
+            && !(await DecideDocumentOverageAsync(companyId)).Allowed)
         {
             var (used, limit) = await GetDocumentQuotaAsync(companyId);
             throw new BusinessRuleException(
-                DocumentQuotaPolicy.BlockedMessage(used, limit), "QUOTA-DOCUMENTS");
+                DocumentQuotaPolicy.BlockedMessage(used, limit) + await OverageHintAsync(companyId), "QUOTA-DOCUMENTS");
         }
 
         // Check feature access
@@ -1860,8 +1867,8 @@ public partial class DocumentService : IDocumentService
             if (DocumentQuotaPolicy.Counts(quotaClass) && !quotaDeferred)
             {
                 await _subscriptionService.IncrementUsageAsync(companyId, "document");
-                // เกินโควตาแต่เป็นใบที่ห้ามปฏิเสธ → เกิดหนี้แทนการบล็อก
-                if (!withinQuota) await RecordDocumentOverageAsync(companyId, doc);
+                // เกินโควตาแต่เป็นใบที่ห้ามปฏิเสธ → เกิดหนี้แทนการบล็อก · รอบ 231: ใบที่รอได้ซึ่งผ่านด่านส่วนเกินมาแล้วก็นับส่วนเกินเช่นกัน
+                if (!withinQuota) await RecordDocumentOverageAsync(companyId, doc, quotaClass);
             }
 
             await transaction.CommitAsync();
@@ -4190,13 +4197,36 @@ public partial class DocumentService : IDocumentService
                 sub?.DocumentBonusQuota ?? 0, sub?.DocumentBonusExpiresAt, DateTime.UtcNow, used: sub?.CurrentMonthDocuments ?? 0));
     }
 
-    /// <summary>เอกสารเกินโควตา 1 ฉบับ = 1 UsageEvent (documents.overage)
+    /// <summary>รอบ 231: ด่านส่วนเกินของเอกสาร (ตัวเดียว — ห้ามประกอบเอง) · ไม่มีบริการ (เทสต์เดิม) = HardLock</summary>
+    private async Task<OverageDecision> DecideDocumentOverageAsync(Guid companyId)
+        => _overage == null
+            ? OverageDecision.Deny(Models.Constants.OverageResources.Documents, Models.Constants.OverageResources.RuleNotEnabled, null)
+            : await _overage.DecideAsync(companyId, Models.Constants.OverageResources.Documents, 1);
+
+    /// <summary>ท้ายข้อความปฏิเสธ: เหตุที่ส่วนเกินไม่ช่วย (ไม่ได้เปิด/ไม่มีราคา/ถึงเพดาน/ถูกล็อก) — ทางไปต่อทางที่สาม (F2 ข้อ 8)</summary>
+    private async Task<string> OverageHintAsync(Guid companyId)
+    {
+        var d = await DecideDocumentOverageAsync(companyId);
+        return string.IsNullOrWhiteSpace(d.Reason) ? "" : " · " + d.Reason;
+    }
+
+    /// <summary>เอกสารเกินโควตา 1 ฉบับ = 1 UsageEvent (<c>overage.documents</c> · รอบ 231 — เดิม <c>documents.overage</c> ราคาจากแคตตาล็อกที่มักเป็น 0)
     ///
     /// **ห้าม throw** — งานหลักคือเอกสารที่กฎหมายบังคับให้ออก บันทึกมิเตอร์ไม่ได้
     /// ก็ต้องออกเอกสารสำเร็จอยู่ดี (หลักเดียวกับที่ UsageMeteringService ประกาศไว้)
-    /// idempotent ด้วย DocumentId — สร้างเอกสารใบเดิมซ้ำไม่ได้อยู่แล้ว แต่กัน retry</summary>
-    private async Task RecordDocumentOverageAsync(Guid companyId, Document doc)
+    /// idempotent ด้วย DocumentId — สร้างเอกสารใบเดิมซ้ำไม่ได้อยู่แล้ว แต่กัน retry
+    /// <para>รอบ 231 (§B.4): คิดเงินเฉพาะเมื่อด่านส่วนเกินอนุญาต (เปิด+มีราคา+ไม่ถึงเพดาน+ไม่ถูกล็อก) · ใบที่กฎหมายบังคับในโหมดล็อก = บันทึกเป็นข้อมูลราคา 0
+    /// ("ออกได้ · ไม่คิดเงิน" — ห้ามขวางใบกำกับ) · ไม่มี OverageService (เทสต์เดิม) ⇒ มิเตอร์เดิม</para></summary>
+    private async Task RecordDocumentOverageAsync(Guid companyId, Document doc, QuotaEnforcement quotaClass)
     {
+        if (_overage != null)
+        {
+            var decision = await DecideDocumentOverageAsync(companyId);
+            await _overage.RecordAsync(companyId, Models.Constants.OverageResources.Documents, 1, $"doc-overage:{doc.Id:N}", "Document", doc.Id,
+                chargeable: decision.Allowed, unitPriceSnapshot: decision.Allowed ? decision.UnitPrice : 0m);
+            return;
+        }
+        _ = quotaClass;
         if (_metering == null) return;
         try
         {
@@ -6445,11 +6475,13 @@ public partial class DocumentService : IDocumentService
         if (doc.QuotaCountDeferred)
         {
             deferredQuotaWithin = await _subscriptionService.CheckUsageLimitAsync(companyId, "document");
+            // รอบ 231: ด่านส่วนเกินเดียวกับตอนสร้าง (DecideDocumentOverageAsync) — ทางเข้าอนุมัติใบที่เลื่อนนับเดินด่านเดียวกัน
             if (!deferredQuotaWithin && DocumentQuotaPolicy.CanRefuseWhenOverQuota(
-                    DocumentQuotaPolicy.Classify(doc.DocumentType, doc.IsDeposit, IsLodgingOrigin(doc.OriginModule))))
+                    DocumentQuotaPolicy.Classify(doc.DocumentType, doc.IsDeposit, IsLodgingOrigin(doc.OriginModule)))
+                && !(await DecideDocumentOverageAsync(companyId)).Allowed)
             {
                 var (quotaUsed, quotaLimit) = await GetDocumentQuotaAsync(companyId);
-                throw new BusinessRuleException(DocumentQuotaPolicy.BlockedMessage(quotaUsed, quotaLimit), "QUOTA-DOCUMENTS");
+                throw new BusinessRuleException(DocumentQuotaPolicy.BlockedMessage(quotaUsed, quotaLimit) + await OverageHintAsync(companyId), "QUOTA-DOCUMENTS");
             }
         }
 
@@ -7405,7 +7437,8 @@ public partial class DocumentService : IDocumentService
                 {
                     doc.QuotaCountDeferred = false;
                     await _subscriptionService.IncrementUsageAsync(companyId, "document");
-                    if (!deferredQuotaWithin) await RecordDocumentOverageAsync(companyId, doc);
+                    if (!deferredQuotaWithin) await RecordDocumentOverageAsync(companyId, doc,
+                        DocumentQuotaPolicy.Classify(doc.DocumentType, doc.IsDeposit, IsLodgingOrigin(doc.OriginModule)));
                     deferredQuotaCounted = true;
                 }
 

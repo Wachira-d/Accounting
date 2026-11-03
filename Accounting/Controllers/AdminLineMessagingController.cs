@@ -61,13 +61,20 @@ public class AdminLineMessagingController : ControllerBase
             s.LineMessagingBasicId, s.LineMessagingBotUserId, s.LineMessagingGroupId);
         var cfg = Accounting.Services.Implementations.NextAccLineConfig.FromConfig(_config);
         var hasToken = _secrets.IsUsable(s.LineMessagingChannelAccessToken);
-        var eff = NextAccLineConfigRule.Merge(admin, cfg, !string.IsNullOrWhiteSpace(s.LineMessagingChannelAccessToken) && !hasToken);
+        // รอบ 231 (กฎ F2 ข้อ 7): เหตุที่ token ใช้ไม่ได้มาจาก SecretWarnings (ตรวจจริง) — เดิมเขียน "คีย์ถูกเปลี่ยน" ตายตัวทั้งที่คีย์ไม่เคยเปลี่ยน
+        var tokenWarning = SecretWarnings.FieldWarning(_secrets, "Channel Access Token", s.LineMessagingChannelAccessToken);
+        var secretWarning = SecretWarnings.FieldWarning(_secrets, "Channel Secret", s.LineMessagingChannelSecret);
+        // S3: secret ใช้ไม่ได้ ⇒ ชุดแอดมินไม่ถูกใช้ (SourceNone) เหมือน token — ไม่ปล่อยให้ webhook 401 เงียบ
+        var eff = NextAccLineConfigRule.Merge(admin, cfg,
+            tokenWarning == null ? null : SecretWarnings.UnusableReason(_secrets, s.LineMessagingChannelAccessToken),
+            secretWarning == null ? null : SecretWarnings.UnusableReason(_secrets, s.LineMessagingChannelSecret));
         var hasSecret = _secrets.IsUsable(s.LineMessagingChannelSecret);
         var warnings = new List<string>();
-        if (!string.IsNullOrEmpty(s.LineMessagingChannelAccessToken) && !hasToken)
-            warnings.Add("Channel Access Token ที่บันทึกไว้ถอดรหัสไม่ได้ (คีย์เข้ารหัสของระบบถูกเปลี่ยน) — กรอกใหม่");
-        if (!string.IsNullOrEmpty(s.LineMessagingChannelSecret) && !hasSecret)
-            warnings.Add("Channel Secret ที่บันทึกไว้ถอดรหัสไม่ได้ (คีย์เข้ารหัสของระบบถูกเปลี่ยน) — กรอกใหม่");
+        if (tokenWarning != null) warnings.Add(tokenWarning);
+        if (secretWarning != null) warnings.Add(secretWarning);
+        // S1: ค่ากำกวม (base64 ถอดไม่ออก — ใช้เป็นค่าดิบ) ⇒ คำใบ้ ไม่ใช่ข้อผิดพลาด
+        if (SecretWarnings.FieldHint(_secrets, "Channel Access Token", s.LineMessagingChannelAccessToken) is string tokenHint) warnings.Add(tokenHint);
+        if (SecretWarnings.FieldHint(_secrets, "Channel Secret", s.LineMessagingChannelSecret) is string secretHint) warnings.Add(secretHint);
         if (hasToken && !hasSecret)
             warnings.Add("มี Channel Access Token แต่ยังไม่มี Channel Secret — webhook ของ OA กลางจะถูกปฏิเสธทุกครั้ง (ผูก LINE/คำสั่งบอทใช้ไม่ได้)");
         if (!hasToken && (hasSecret || s.LineMessagingBasicId != null || s.LineMessagingBotUserId != null))

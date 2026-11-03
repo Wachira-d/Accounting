@@ -43,6 +43,4 @@ SiteSettings.WebsiteUrl
 SiteSettings.YouTubeUrl
 TaxRuleConfig.HealthInsuranceCap
 TaxRuleConfig.MortgageInterestCap
-TrialConfig.DataRetentionDays
-TrialConfig.DeleteDataAfterGracePeriod
 TrialConfig.TrialMaxCompanies

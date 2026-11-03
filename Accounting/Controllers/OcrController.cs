@@ -195,13 +195,20 @@ public class OcrController : ControllerBase
         if (!await _quota.TryConsumeAsync(companyId))
         {
             var status = await _quota.GetQuotaStatusAsync(companyId);
+            // รอบ 231: บอกเหตุที่ส่วนเกินไม่ช่วย (ไม่ได้เปิด/ไม่มีราคา/ถึงเพดาน/ถูกล็อก) — ทางไปต่อทางที่สาม (F2 ข้อ 8) · ไม่มีบริการ = ไม่พูดถึง
+            var overageHint = "";
+            if (HttpContext.RequestServices.GetService(typeof(Accounting.Services.Implementations.IOverageService)) is Accounting.Services.Implementations.IOverageService ovSvc)
+            {
+                var ovd = await ovSvc.DecideAsync(companyId, Accounting.Models.Constants.OverageResources.OcrPages, 1);
+                if (!string.IsNullOrWhiteSpace(ovd.Reason)) overageHint = " · " + ovd.Reason;
+            }
             // รอบ 229 (QUOTA_ADDON แพ็ก 0(ง)/5 · D-12): ข้อความชี้ทางที่มีจริง — ซื้อหน้า OCR เพิ่มผ่านโควตาเสริม (จ่ายผ่านระบบ + ใบกำกับ) ·
             // เดิม "กรุณาซื้อเครดิตเพิ่ม" แต่ไม่มีหน้าซื้อ (ทางตัน) · ruleCode ให้หน้าเว็บเปิดหน้าต่างซื้อ
             return StatusCode(429, new ApiResponse<object>(false,
                 new { ruleCode = Accounting.Models.Constants.QuotaResources.FullRuleCode(Accounting.Models.Constants.QuotaResources.OcrPagesMonth),
                       buyUrl = Accounting.Models.Constants.QuotaResources.BuyUrl(Accounting.Models.Constants.QuotaResources.OcrPagesMonth) },
                 $"โควต้า OCR หมด — ใช้ไป {status.UsedThisMonth}/{status.MaxPagesPerMonth} หน้าในเดือนนี้ · ซื้อหน้า OCR เพิ่มได้ที่หน้า \"แพ็กเกจและการชำระเงิน\" "
-                + "(ถ้ายังไม่เปิดขาย กรุณาติดต่อผู้ดูแลระบบ) หรือรอรอบเดือนถัดไป"));
+                + "(ถ้ายังไม่เปิดขาย กรุณาติดต่อผู้ดูแลระบบ) หรือรอรอบเดือนถัดไป" + overageHint));
         }
 
         var uploadsDir = Path.Combine(_storage.Locator.RelativeBase, "wwwroot", "uploads", "ocr");

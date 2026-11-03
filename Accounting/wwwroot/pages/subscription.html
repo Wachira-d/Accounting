@@ -284,18 +284,15 @@
         const current = s.current || {};
         // รอบ 229 (QUOTA_ADDON แพ็ก 0(ค) · D-3/D-4/D-5): ผู้ใช้/พื้นที่/เว็บ ฯลฯ มาจากตัวสรุปของเซิร์ฟเวอร์ (QuotaUI — เดิมผู้ใช้ "1" ตายตัว) ·
         // เลิกแสดงเพดาน "รายการบัญชี" (คำตัดสินข้อ 229-7: ไม่บังคับ — การบล็อกการลงบัญชีไม่ปลอดภัย)
-        const usageItems = [
-          { label:'เอกสาร', used: current.documentsThisMonth || 0, max: limits.maxDocumentsPerMonth || 0 },
-        ];
+        // รอบ 231 (P0 จ · F2 ข้อ 5): หลอดเอกสารจากเซิร์ฟเวอร์ (s.documentsBar — UsageBarRule) ทั้งตัวเลข/ข้อความเพดาน/ระดับ — เดิมพิมพ์เกณฑ์ ≥ 99999 และ % เอง
+        const docBar = s.documentsBar;
+        const usageItems = docBar ? [docBar] : [{ label: 'เอกสาร', usedText: String(current.documentsThisMonth || 0), limitText: (s.limitTexts && s.limitTexts.docs) || '—', percent: 0, level: 0, unlimited: true }];
 
         document.getElementById('usageContent').innerHTML = usageItems.map(u => {
-          const pct = u.max > 0 ? Math.min(100, (u.used / u.max * 100)) : 0;
-          const color = pct > 90 ? 'var(--danger)' : pct > 70 ? 'var(--warning)' : 'var(--success)';
-          const usedStr = u.isBytes ? this.formatBytes(u.used) : u.used.toLocaleString();
-          const maxStr = u.isBytes ? this.formatBytes(u.max) : (u.max >= 99999 ? 'ไม่จำกัด' : u.max.toLocaleString());
+          const color = u.level === 2 ? 'var(--danger)' : u.level === 1 ? 'var(--warning)' : 'var(--success)';
           return `<div>
-            <div class="flex justify-between text-sm" style="margin-bottom:4px"><span>${u.label}</span><span class="font-medium">${usedStr} / ${maxStr}</span></div>
-            <div class="usage-bar"><div class="usage-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+            <div class="flex justify-between text-sm" style="margin-bottom:4px"><span>${Layout.esc(u.label)}</span><span class="font-medium">${Layout.esc(u.usedText)} / ${Layout.esc(u.limitText)}</span></div>
+            <div class="usage-bar"><div class="usage-bar-fill" style="width:${u.unlimited ? 0 : (Number(u.percent) || 0)}%;background:${color}"></div></div>
           </div>`;
         }).join('') + '<div id="subQuotaBars" style="margin-top:12px"></div>'
           + '<div style="margin-top:6px"><a href="/pages/billing.html" class="btn btn-secondary btn-sm">ดูโควตาทั้งหมด · ซื้อเพิ่ม</a></div>';

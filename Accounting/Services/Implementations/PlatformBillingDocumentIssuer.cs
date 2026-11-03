@@ -801,6 +801,10 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         {
             var months = payment.RequestedPeriodMonths > 0 ? payment.RequestedPeriodMonths : 1;
             desc = $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {payment.RequestedPlan} ({months} เดือน) — {buyer.Name}";
+            // รอบ 231 (231-9): เปลี่ยนรอบบิลกลางรอบ — บอกเครดิตรอบเดิมที่หักบนใบ (ยอดรับ = ราคารอบใหม่ − เครดิต) · วันที่ไทย พ.ศ.
+            if (payment.IsCycleChange && payment.CycleChangeCredit is decimal credit && credit > 0m
+                && payment.ProrationCycleEndUtc is DateTime ccEnd && payment.ProrationDays is int ccD && payment.ProrationCycleDays is int ccC)
+                desc += " · " + Accounting.Helpers.PlatformProration.CycleChangeCreditDescription(credit, ccD, ccC, ccEnd);
         }
         if (payment.CouponDiscountAmount > 0m && !string.IsNullOrWhiteSpace(payment.CouponCode))
             desc += $" · ส่วนลดคูปอง {payment.CouponCode}";

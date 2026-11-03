@@ -129,4 +129,108 @@ public static class PlatformPlanPricing
     /// <summary>รายงานแอดมิน: แพ็กเกจที่ผู้เช่าเปิดเอง (Convert/เปลี่ยนแพ็กเกจรุ่นก่อนเฟส 0) หลังการชำระที่อนุมัติครั้งล่าสุด = ยังไม่ได้จ่าย</summary>
     public static bool IsUnpaidSelfActivation(DateTime? lastSelfActivationAt, DateTime? lastApprovedPaymentAt)
         => lastSelfActivationAt is DateTime a && (lastApprovedPaymentAt is not DateTime p || p < a);
+
+    // ═════════ รอบ 231 (คำตัดสินข้อ 231-8 · LICENSE_USAGE_OVERAGE_AUDIT §C.2) — ราคาพิเศษรายบริษัท: ตัวตัดสินเดียว ═════════
+
+    public const string SourceList = "list";
+    public const string SourceOverridePlan = "override:PriceOfPlan";
+    public const string SourceOverrideFixed = "override:Fixed";
+    public const string SourceOverridePercent = "override:Percent";
+
+    /// <summary>ข้อมูลของแถวราคาพิเศษ (pure — ไม่ผูก entity · <c>PlatformPriceOverrideStore.ToInput</c> แปลงให้)</summary>
+    public sealed record PriceOverrideInput(Guid Id, PlanPriceOverrideMode Mode, Guid? ReferencePlanTemplateId,
+        decimal? FixedMonthly, decimal? FixedQuarterly, decimal? FixedSemiAnnual, decimal? FixedAnnual, decimal? PercentOff,
+        DateTime EffectiveFromUtc, DateTime? EffectiveToUtc, bool IsActive, bool AppliesToUpgrades, bool AppliesToRenewals);
+
+    /// <summary>ผลของ <see cref="EffectiveCyclePrice"/> — <see cref="Price"/> = ราคาที่ใช้จริง · <see cref="ListPrice"/> = ราคาแม่แบบ · <see cref="Applied"/> = ใช้ราคาพิเศษ</summary>
+    public sealed record EffectivePrice(decimal Price, decimal ListPrice, string Source, Guid? OverrideId, string? Note)
+    {
+        public bool Applied => OverrideId != null;
+    }
+
+    /// <summary>แถวราคาพิเศษใช้ได้ ณ เวลานี้กับงานชนิดนี้ไหม — active · อยู่ในช่วง [From, To) · ไม่ถูกปิด · ตรงชนิดงาน (ต่ออายุ/อัปเกรด)</summary>
+    public static bool OverrideLive(PriceOverrideInput? ov, DateTime nowUtc, bool forRenewal)
+        => ov != null && ov.IsActive
+           && ov.EffectiveFromUtc <= nowUtc
+           && (ov.EffectiveToUtc == null || nowUtc < ov.EffectiveToUtc.Value)
+           && (forRenewal ? ov.AppliesToRenewals : ov.AppliesToUpgrades);
+
+    /// <summary><b>ราคาต่อรอบที่มีผลจริง</b> — ตัวเดียวของ ใบต่ออายุ · ส่วนต่างอัปเกรด (ทั้งสองฝั่ง) · ดูราคา · คำขอแพ็กเกจ/แปลงจากทดลองใช้ · อนุมัติอัตโนมัติ · แอดมินเปลี่ยนแพ็กเกจ ·
+    /// ลำดับ: ราคาพิเศษที่ active และอยู่ในช่วง ?? ราคาแม่แบบ · ปัด 2 ตำแหน่ง AwayFromZero · ห้ามติดลบ ·
+    /// <c>PriceOfPlan</c> ต้องมี <paramref name="reference"/> (ไม่มี = ตกกลับราคาแม่แบบ พร้อม Note — ไม่แต่งราคาเอง · F2 ข้อ 3) ·
+    /// <c>FixedPerCycle</c> รอบที่เว้นว่าง = ราคาแม่แบบรอบนั้น · <c>PercentOff</c> นอกช่วง (0, 100] = ตกกลับ ·
+    /// ซ้อน: ราคาพิเศษ (แทนราคาตั้ง) → คูปอง (<see cref="AmountDue(decimal, decimal?)"/> ลดจากราคาพิเศษ) → แอดมินแก้ยอดครั้งเดียว (ทับสุดท้าย)</summary>
+    public static EffectivePrice EffectiveCyclePrice(PlanTemplate target, BillingCycle cycle, PriceOverrideInput? ov, PlanTemplate? reference,
+        DateTime nowUtc, bool forRenewal = false)
+    {
+        var list = R2(CyclePrice(target, cycle));
+        if (!OverrideLive(ov, nowUtc, forRenewal))
+            return new EffectivePrice(list, list, SourceList, null, null);
+        switch (ov!.Mode)
+        {
+            case PlanPriceOverrideMode.PriceOfPlan:
+                if (reference == null || ov.ReferencePlanTemplateId == null || reference.Id != ov.ReferencePlanTemplateId)
+                    return new EffectivePrice(list, list, SourceList, null, "ราคาพิเศษอ้างแพ็กเกจที่ไม่พบ — ใช้ราคาแม่แบบ");
+                // ฝ่ายค้าน S6: แม่แบบอ้างอิงถูกปิด/ลบ ⇒ ไม่ grandfather ราคาเก่า — ตกกลับราคาแม่แบบพร้อมเหตุ (แอดมินตั้งแถวใหม่)
+                if (!reference.IsActive || reference.IsDeleted)
+                    return new EffectivePrice(list, list, SourceList, null, $"ราคาพิเศษอ้างแพ็กเกจ {reference.Name} ที่ปิด/ลบแล้ว — ใช้ราคาแม่แบบ (ตั้งราคาพิเศษใหม่)");
+                var refPrice = R2(CyclePrice(reference, cycle));
+                return new EffectivePrice(refPrice, list, SourceOverridePlan, ov.Id, $"ราคาตามข้อตกลง: ราคาของแพ็กเกจ {reference.Name}");
+            case PlanPriceOverrideMode.FixedPerCycle:
+                decimal? fixedPrice = cycle switch
+                {
+                    BillingCycle.Monthly => ov.FixedMonthly,
+                    BillingCycle.Quarterly => ov.FixedQuarterly,
+                    BillingCycle.SemiAnnual => ov.FixedSemiAnnual,
+                    BillingCycle.Annual => ov.FixedAnnual,
+                    _ => null,
+                };
+                if (fixedPrice is not decimal f || f < 0m)
+                    return new EffectivePrice(list, list, SourceList, null, "ราคาพิเศษไม่ได้กำหนดรอบนี้ — ใช้ราคาแม่แบบ");
+                return new EffectivePrice(R2(f), list, SourceOverrideFixed, ov.Id, "ราคาตามข้อตกลง");
+            case PlanPriceOverrideMode.PercentOff:
+                if (ov.PercentOff is not decimal p || p <= 0m || p > 100m)
+                    return new EffectivePrice(list, list, SourceList, null, "ราคาพิเศษกำหนด % ไม่ถูกต้อง — ใช้ราคาแม่แบบ");
+                var discounted = R2(Math.Max(0m, list * (1m - p / 100m)));
+                return new EffectivePrice(discounted, list, SourceOverridePercent, ov.Id, $"ราคาตามข้อตกลง: ลด {p:0.##}% จากราคาตั้ง");
+            default:
+                return new EffectivePrice(list, list, SourceList, null, null);
+        }
+    }
+
+    /// <summary>ยอดที่ต้องจ่ายจาก<b>ราคาที่มีผลแล้ว</b> (ราคาพิเศษหรือแม่แบบ) หักส่วนลด % (โปรโมชันแปลงทดลองใช้) — คูปองซ้อนบนผลนี้อีกชั้นใน <c>PlatformCouponStore</c> ·
+    /// ปัด 2 ตำแหน่ง AwayFromZero · ไม่ติดลบ</summary>
+    public static decimal AmountDue(decimal effectiveCyclePrice, decimal? discountPercent)
+    {
+        var price = effectiveCyclePrice;
+        if (discountPercent is decimal d && d > 0m && d <= 100m)
+            price *= (1m - d / 100m);
+        return R2(Math.Max(0m, price));
+    }
+
+    /// <summary>ข้อความ "ราคาพิเศษสำหรับคุณ" บนหน้าแพ็กเกจ/ดูราคา — null เมื่อไม่มีราคาพิเศษ (หน้าเว็บแสดงอย่างเดียว · F2 ข้อ 5)</summary>
+    public static string? SpecialPriceNote(EffectivePrice p, BillingCycle cycle)
+        => p.Applied ? $"ราคาพิเศษสำหรับคุณ: ฿{p.Price:N2}/{CycleLabel(cycle)} (ราคาตั้ง ฿{p.ListPrice:N2})" : null;
+
+    /// <summary>ฝ่ายค้าน S5: วันสิ้นสุดราคาพิเศษที่แอดมินกรอกเป็น "วันที่" ⇒ เก็บเป็น<b>สิ้นวันไทย</b> (23:59:59.999 Asia/Bangkok) ในรูป UTC
+    /// — ช่วง [From, To) จึงครอบวันที่กรอกทั้งวัน และตารางแสดงวันเดียวกับที่กรอก</summary>
+    public static DateTime EndOfBangkokDayUtc(DateTime anyUtc)
+    {
+        var bkk = DateTime.SpecifyKind(anyUtc, DateTimeKind.Utc).AddHours(7).Date;
+        return DateTime.SpecifyKind(bkk.AddDays(1).AddMilliseconds(-1).AddHours(-7), DateTimeKind.Utc);
+    }
+
+    /// <summary>ฝ่ายค้าน S4/N1: ซื้อแพ็กเกจเดิมซ้ำ (ต่ออายุ/เปลี่ยนรอบของแพ็กเกจเดิม) = งาน "ต่ออายุ" · แพ็กเกจต่าง = "อัปเกรด" — ตัวเดียวของทุกจุดเรียก resolver</summary>
+    public static bool IsRenewalPurchase(SubscriptionPlan currentPlan, SubscriptionPlan targetPlan) => currentPlan == targetPlan;
+
+    public static string CycleLabel(BillingCycle cycle) => cycle switch
+    {
+        BillingCycle.Monthly => "เดือน",
+        BillingCycle.Quarterly => "3 เดือน",
+        BillingCycle.SemiAnnual => "6 เดือน",
+        BillingCycle.Annual => "ปี",
+        _ => cycle.ToString(),
+    };
+
+    private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 }

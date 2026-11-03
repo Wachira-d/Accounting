@@ -100,10 +100,7 @@ public static class QuotaLimitPolicy
     }
 
     /// <summary>ระดับเตือนของหลอด (0 ปกติ · 1 ≥ 80% · 2 เต็ม/เกิน) — หน้าเว็บแสดงอย่างเดียว</summary>
-    public static int WarnLevel(int used, int? limit)
-    {
-        if (limit is not int max) return 0;
-        if (max <= 0 || used >= max) return 2;
-        return used * 100L >= max * 80L ? 1 : 0;
-    }
+    /// <remarks>รอบ 231: ตัวตัดสินเดียว <see cref="QuotaWarnPolicy.Severity"/> · <paramref name="percents"/> = เกณฑ์ของแอดมิน (null = ค่าตั้งต้น 80/90/100)</remarks>
+    public static int WarnLevel(int used, int? limit, IReadOnlyList<int>? percents = null)
+        => QuotaWarnPolicy.Severity(used, limit, percents);
 }

@@ -41,6 +41,12 @@
         <div id="coResults"></div>
         <div id="coDetail"></div></div>
 
+      <!-- รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.7 · คำตัดสินข้อ 231-3): ราคาส่วนเกินต่อทรัพยากร (+ต่อแพ็กเกจ · แถวแพ็กเกจชนะ) — ไม่มีราคา = ผู้เช่าเปิดส่วนเกินไม่ได้ (ไม่คิด 0) ·
+           ค่าตั้งผ่อนผัน/ขั้นต่ำ/เกณฑ์เตือน/การจัดการเมื่อค้างชำระ อยู่ที่ /admin/platform-billing.html -->
+      <div class="card"><h3>5) ราคาส่วนเกินโควตา <span class="muted">(บาทต่อหน่วย · รวม VAT ตามค่าตั้งราคาแพลตฟอร์ม · ว่าง/0 = ปิดราคา · แก้ราคา = ปิดแถวเดิม+แถวใหม่ (ประวัติคงอยู่) · เหตุผลบังคับ · audit)</span></h3>
+        <div id="overageRates" class="scroll-x">กำลังโหลด...</div>
+        <div class="muted" style="margin-top:6px">กำหนดชำระใบส่วนเกิน · ยอดขั้นต่ำ · เกณฑ์เตือน · ค้างชำระแล้วทำอะไร: <a href="/admin/platform-billing.html">ค่าตั้งการเรียกเก็บค่าบริการ</a></div></div>
+
       <div class="card"><h3>4) สลิปค่าโควตาเสริมที่รอตรวจ
           <select id="pqFilter" class="form-select" style="width:auto;display:inline-block;margin-left:8px" onchange="AQ.loadPurchases()">
             <option value="pending">รอตรวจ</option><option value="awaiting">รอชำระ</option><option value="active">ใช้งานอยู่</option><option value="attention">ต้องจัดการ</option><option value="all">ทั้งหมด</option>
@@ -63,7 +69,75 @@
         if (!(await Layout.requirePlatformAdmin())) return;
         Layout.setTitle('โควตาและโควตาเสริม');
         try { this.resources = (await API.get('/api/admin/quota/resources'))?.data || []; } catch (e) { Layout.toast(e.message, 'error'); }
-        await Promise.all([this.loadAllowances(), this.loadOffers(), this.loadPurchases()]);
+        await Promise.all([this.loadAllowances(), this.loadOffers(), this.loadPurchases(), this.loadOverageRates()]);
+      },
+
+      // ── 5) ราคาส่วนเกิน (รอบ 231) — ทรัพยากร × (ทุกแพ็กเกจ + แต่ละแม่แบบ) · ค่าทั้งหมดจาก /api/admin/quota/overage-rates ──
+      async loadOverageRates() {
+        const el = document.getElementById('overageRates');
+        let d;
+        try { d = (await API.get('/api/admin/quota/overage-rates'))?.data; } catch (e) { el.innerHTML = `<span class="warn">${this.esc(e.message)}</span>`; return; }
+        this._ov = d;
+        const cols = [{ id: '', name: 'ทุกแพ็กเกจ (ค่าตั้งต้น)' }].concat((d.plans || []).filter(p => p.isActive).map(p => ({ id: p.id, name: `${p.name} (${p.plan})` })));
+        const live = (res, planId) => (d.rates || []).find(r => r.live && r.resource === res && (r.planTemplateId || '') === planId);
+        const history = (res, planId) => (d.rates || []).filter(r => !r.live && r.resource === res && (r.planTemplateId || '') === planId).length;
+        el.innerHTML = `<table class="rpt"><thead><tr><th>ทรัพยากร</th>${cols.map(c => `<th>${this.esc(c.name)}<div class="muted">ราคา/หน่วย (พื้นที่: + ขนาดหน่วย GB-เดือน)</div></th>`).join('')}<th>เหตุผล</th><th></th></tr></thead><tbody>
+          ${(d.resources || []).map(r => `<tr><td><b>${this.esc(r.label)}</b><div class="muted">${this.esc(r.key)} · ต่อ ${this.esc(r.unit)}${r.realtime ? '' : ' · สรุปสิ้นเดือน (GB-เดือน)'}</div></td>
+            ${cols.map(c => { const cur = live(r.key, c.id), h = history(r.key, c.id);
+              return `<td><input type="number" min="0" step="0.01" data-ovp="${this.esc(r.key)}|${this.esc(c.id)}|price" value="${cur ? cur.unitPrice : ''}" class="form-input" placeholder="ไม่มีราคา">
+                ${r.realtime ? `<input type="hidden" data-ovp="${this.esc(r.key)}|${this.esc(c.id)}|size" value="1">` : `<input type="number" min="1" data-ovp="${this.esc(r.key)}|${this.esc(c.id)}|size" value="${cur ? cur.unitSize : 1}" class="form-input" style="margin-top:4px" title="ขนาดหน่วย (GB-เดือนต่อ 1 หน่วยราคา)">`}
+                ${cur ? `<div class="muted">มีผลตั้งแต่ ${Layout.date(cur.effectiveFrom)}${h ? ` · ประวัติ ${h} แถว` : ''}</div>` : (h ? `<div class="muted">ปิดราคาแล้ว · ประวัติ ${h} แถว</div>` : '')}</td>`; }).join('')}
+            <td><input type="text" data-ovr="${this.esc(r.key)}" placeholder="เหตุผล (บังคับ)" class="form-input" style="width:160px"></td>
+            <td><button class="btn btn-primary btn-sm" onclick="AQ.saveOverageRates('${Layout.jsArg(r.key)}')">บันทึก</button></td></tr>`).join('')}
+          </tbody></table><div class="muted" style="margin-top:6px">เงื่อนไขฉบับ ${this.esc(d.policyVersion)} — ผู้เช่าต้องติ๊กยอมรับก่อนเปิด "ใช้ต่อได้ คิดค่าส่วนเกิน"</div>`;
+      },
+      async saveOverageRates(resource) {
+        const reason = (document.querySelector(`[data-ovr="${resource}"]`)?.value || '').trim();
+        if (reason.length < 3) { Layout.toast('ระบุเหตุผล (บันทึกใน audit)', 'error'); return; }
+        const cols = [''].concat((this._ov.plans || []).filter(p => p.isActive).map(p => p.id));
+        let changed = 0;
+        for (const planId of cols) {
+          const priceEl = document.querySelector(`[data-ovp="${resource}|${planId}|price"]`), sizeEl = document.querySelector(`[data-ovp="${resource}|${planId}|size"]`);
+          if (!priceEl) continue;
+          const cur = (this._ov.rates || []).find(r => r.live && r.resource === resource && (r.planTemplateId || '') === planId);
+          const price = priceEl.value === '' ? null : Number(priceEl.value), size = Number(sizeEl.value || 1);
+          const same = cur ? (price != null && Number(cur.unitPrice) === price && Number(cur.unitSize) === size) : (price == null || price === 0);
+          if (same) continue;
+          try { await API.put('/api/admin/quota/overage-rates', { resource, planTemplateId: planId || null, unitPrice: price, unitSize: size, reason }); changed++; }
+          catch (e) { Layout.toast(e.message, 'error'); return; }
+        }
+        Layout.toast(changed ? `บันทึกราคา ${changed} รายการแล้ว` : 'ไม่มีอะไรเปลี่ยน', changed ? 'success' : 'info');
+        this.loadOverageRates();
+      },
+
+      // ── นโยบายส่วนเกินรายบริษัท (รอบ 231) — ดู/ตั้งแทน/ปลดล็อก พร้อมเหตุผล ──
+      async loadCompanyOverage(id) {
+        const el = document.getElementById('coOverage'); if (!el) return;
+        let d;
+        try { d = (await API.get(`/api/admin/quota/companies/${encodeURIComponent(id)}/overage`))?.data; } catch (e) { el.innerHTML = `<span class="warn">${this.esc(e.message)}</span>`; return; }
+        el.innerHTML = `<h4 style="margin:12px 0 6px">นโยบายส่วนเกินโควตา</h4>
+          <div style="font-size:13px;margin-bottom:6px"><b>${this.esc(d.modeLabel)}</b> · เพดาน/เดือน ${d.monthlyCapAmount != null ? '฿' + this.money(d.monthlyCapAmount) : 'ไม่จำกัด'} · ส่วนเกินเดือน ${this.esc(d.period)} ฿${this.money(d.totalAmount)}
+            ${d.locked ? `<div class="warn">🔒 ${this.esc(d.lockedNote || '')}</div>` : ''}${d.freeDocumentsThisMonth > 0 ? `<div class="warn">⚠️ ออกเอกสารเกินโควตาโดยไม่คิดเงิน ${Number(d.freeDocumentsThisMonth).toLocaleString('th-TH')} ฉบับเดือนนี้ (ใบที่กฎหมายบังคับในโหมดหยุดส่วนที่เกิน — ผู้เช่าควรอัปเกรด)</div>` : ''}${d.acceptedPolicyVersion ? `<div class="muted">ยอมรับเงื่อนไขฉบับ ${this.esc(d.acceptedPolicyVersion)} เมื่อ ${Layout.date(d.acceptedAtUtc)}</div>` : '<div class="muted">ผู้เช่ายังไม่เคยยอมรับเงื่อนไข</div>'}</div>
+          <table class="rpt"><thead><tr><th>ทรัพยากร</th><th>เกินเดือนนี้ (คิดเงิน)</th><th>ไม่คิดเงิน</th><th>ค่าส่วนเกิน</th><th>ราคาที่มีผล</th><th>เปิดอยู่</th></tr></thead><tbody>
+            ${(d.items || []).map(i => `<tr><td>${this.esc(i.label)}</td><td>${i.units} ${this.esc(i.unit)}</td><td>${i.freeUnits ? `${i.freeUnits} ${this.esc(i.unit)}` : '—'}</td><td>${this.money(i.amount)}</td><td>${i.hasRate ? this.esc(i.priceText) : '<span class="muted">ไม่มีราคา</span>'}</td><td>${i.enabled ? '✅' : '—'}</td></tr>`).join('')}
+          </tbody></table>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+            <select id="coOvMode" class="form-select" style="width:auto"><option value="HardLock" ${d.mode === 'HardLock' ? 'selected' : ''}>หยุดส่วนที่เกิน</option><option value="AllowOverage" ${d.mode === 'AllowOverage' ? 'selected' : ''}>ใช้ต่อได้ คิดค่าส่วนเกิน</option></select>
+            <input type="number" id="coOvCap" class="form-input" min="0" style="width:120px" placeholder="เพดาน/เดือน (ว่าง=ไม่จำกัด)" value="${d.monthlyCapAmount != null ? Number(d.monthlyCapAmount) : ''}">
+            <label style="display:inline-flex;gap:4px;align-items:center"><input type="checkbox" id="coOvUnlock" style="width:auto" ${d.locked ? '' : 'disabled'}> ปลดล็อก (ค้างชำระ)</label>
+            <input type="text" id="coOvReason" class="form-input" placeholder="เหตุผล (บังคับ)" style="width:200px">
+            <button class="btn btn-primary btn-sm" onclick="AQ.saveCompanyOverage()">บันทึก</button>
+          </div>`;
+      },
+      async saveCompanyOverage() {
+        const reason = (document.getElementById('coOvReason').value || '').trim();
+        if (reason.length < 3) { Layout.toast('ระบุเหตุผล (บันทึกใน audit)', 'error'); return; }
+        const cap = String(document.getElementById('coOvCap').value || '').trim();
+        try {
+          const r = await API.put(`/api/admin/quota/companies/${encodeURIComponent(this._co)}/overage`, {
+            mode: document.getElementById('coOvMode').value, monthlyCapAmount: cap ? Number(cap) : null, unlock: document.getElementById('coOvUnlock').checked, reason });
+          Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); this.loadCompanyOverage(this._co);
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       // ── 1) เพดานต่อแพ็กเกจ ──
@@ -159,7 +233,9 @@
           <h4 style="margin:12px 0 6px">การซื้อของบริษัทนี้</h4>
           ${d.purchases.length ? `<table class="rpt"><thead><tr><th>รายการ</th><th>แบบ</th><th>ช่วง</th><th>ยอด</th><th>สถานะ</th></tr></thead><tbody>${d.purchases.map(p =>
             `<tr><td>${this.esc(p.label)} × ${p.units}</td><td>${this.esc(p.modeLabel)}</td><td>${Layout.date(p.periodStart)} – ${p.periodEnd ? Layout.date(p.periodEnd) : 'ทุกเดือน'}</td><td>${this.money(p.amountDue)}</td><td>${this.esc(p.statusLabel)}</td></tr>`).join('')}</tbody></table>`
-            : '<span class="muted">ยังไม่มี</span>'}`;
+            : '<span class="muted">ยังไม่มี</span>'}
+          <div id="coOverage">กำลังโหลดนโยบายส่วนเกิน...</div>`;
+        this.loadCompanyOverage(id);
       },
       async saveOverride(resource) {
         const v = document.querySelector(`[data-ov="${resource}"]`).value;

@@ -28,6 +28,18 @@ public class PlatformBillingSettings : BaseEntity
     public bool ReminderEmailEnabled { get; set; } = true;
     /// <summary>ส่งใบแจ้งหนี้/แจ้งเตือนทาง LINE (OA กลางของ NextAcc · ไม่นับโควตาข้อความของร้าน)</summary>
     public bool ReminderLineEnabled { get; set; } = true;
+
+    // ───────── รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.2 · คำตัดสินข้อ 231-3/231-4/231-5) — ค่าตั้งส่วนเกินโควตา (คอลัมน์: Helpers/OverageMigration) ─────────
+    /// <summary>ครบกำหนดใบส่วนเกิน = วันออก + N (ผู้อ่าน: UsageInvoicingJob · PlatformDunningService ขั้น 1)</summary>
+    public int OverageGraceDays { get; set; } = 7;
+    /// <summary>ค้างชำระใบส่วนเกินเกินผ่อนผันแล้วทำอะไร (ผู้อ่าน: PlatformDunningService)</summary>
+    public Accounting.Models.Enums.OverageUnpaidAction OverageUnpaidAction { get; set; } = Accounting.Models.Enums.OverageUnpaidAction.LockThenDunning;
+    /// <summary>ยอดต่ำกว่านี้ยกยอดไปงวดหน้า (เดิมค่าคงที่ 50 ใน UsageInvoicingJob)</summary>
+    public decimal OverageMinInvoiceAmount { get; set; } = 50m;
+    /// <summary>เกณฑ์เตือนโควตาทุกทรัพยากร (คั่นจุลภาค · ตัวตัดสิน Helpers/QuotaWarnPolicy)</summary>
+    public string QuotaWarnPercents { get; set; } = Accounting.Helpers.QuotaWarnPolicy.DefaultPercents;
+    /// <summary>ใบส่วนเกินเข้าคิวตัดบัตรอัตโนมัติเมื่อมี mandate (ผู้อ่าน: PlatformAutoChargePolicy ผ่าน PlatformBillingPolicy)</summary>
+    public bool OverageAutoChargeSavedCard { get; set; } = false;   // ฝ่ายค้านรอบ 231 S3: ตั้งต้นไม่ตัดบัตร
 }
 
 /// <summary>

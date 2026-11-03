@@ -252,6 +252,8 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.QuotaAddOnMigration.Statements());   // รอบ 229 — โควตาเสริม: เพดานต่อแพ็กเกจ · override รายบริษัท · แคตตาล็อก · การซื้อ (Helpers/QuotaAddOnMigration)
         list.AddRange(Accounting.Helpers.PlatformCouponMigration.Statements());   // รอบ 230 — คูปองแพลตฟอร์ม · ส่วนต่างอัปเกรดกลางรอบ · ยอดที่เซิร์ฟเวอร์เสนอ (หลังรอบ 229 — แตะ CompanyQuotaAddOns)
         list.AddRange(Accounting.Helpers.PlatformCardBillingMigration.Statements());   // รอบ 230 — บัตรที่บันทึก · ตัดบัตรอัตโนมัติ · รอบโอนจากผู้ให้บริการของค่าบริการ NextAcc (ไม่มีคอลัมน์เลขบัตร)
+        list.AddRange(Accounting.Helpers.OverageMigration.Statements());   // รอบ 231 — ส่วนเกินโควตา (ราคา · นโยบายรายบริษัท · ค่าตั้ง) + snapshot การใช้งานรายเดือน/รายวัน (หลังรอบ 219 เฟส 2 — แตะ PlatformBillingSettings)
+        list.AddRange(Accounting.Helpers.PlatformPriceOverrideMigration.Statements());   // รอบ 231 — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ · Subscriptions.Kind + backfill · ย้าย override เพดานไป CompanyQuotaOverrides (หลังรอบ 229/230)
         return list;
     }
 

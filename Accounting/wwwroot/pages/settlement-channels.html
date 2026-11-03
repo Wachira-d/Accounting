@@ -211,8 +211,9 @@
         const clearing = locked
           ? `<div class="locked">${Layout.esc(clearingText || '-')}<span class="why">${Layout.esc(lockWhy)}</span></div>`
           : `<select class="form-select" id="fClearing">${this.accountOptions(this.assetAccounts, ch?.clearingAccountId || '',
-               ch ? '(คงผังเดิม)' : '(ให้ระบบสร้างผังพัก 11341–11349 ให้)')}</select>
-             <div class="hint">เว้นว่างได้ — ระบบสร้างผังพักแยกต่อช่องทางให้ · ช่องทาง gateway ที่ผูกการตั้งค่าไว้ใช้ผังพักของ gateway นั้นเสมอ
+               ch ? '(คงผังเดิม)' : '(ให้ระบบจัดการผังพักให้)')}</select>
+             <div class="hint">เว้นว่างได้ — ระบบสร้างผังพักแยกต่อช่องทางให้ (11341–11349) · ช่องทาง gateway ที่ผูกการตั้งค่าไว้ใช้ผังพักของ gateway นั้นเสมอ
+               (ผังที่ตั้งในหน้าตั้งค่าการรับชำระเงินออนไลน์ หรือ 11340 — ไม่มีระบบสร้างให้)
                · <b>ผังพักล็อกทันทีที่มีรอบโอนรอบแรก</b></div>`;
 
         document.getElementById('formBox').innerHTML = `

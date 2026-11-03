@@ -36,7 +36,13 @@ public static class NextAccLineConfigRule
 
     /// <summary>รอบ 212 ฝ่ายค้าน (B+D) ข้อ 3: token ในหน้าแอดมินมีอยู่แต่ถอดรหัสไม่ได้ — <b>ไม่ถอยไป config</b> (อาจเป็นคนละ OA ⇒ ข้อความย้าย OA เงียบ ๆ
     /// + ลิงก์ลูกค้าทุกบริษัทกลายเป็น "สลับ OA") ⇒ ถือว่าไม่ได้ตั้ง จนกว่าแอดมินจะตั้งใหม่</summary>
-    public const string UndecryptableTokenMessage = "ถอดรหัส Channel Access Token ของ LINE OA กลางไม่ได้ (คีย์เข้ารหัสของระบบถูกเปลี่ยน) — ตั้งใหม่ที่ ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง · ระหว่างนี้ไม่ส่งผ่าน OA กลาง (ไม่สลับไปใช้ค่า config)";
+    /// <param name="reason">เหตุที่ตรวจจริงจาก <c>SecretWarnings.UnusableReason</c> (รอบ 231 · กฎ F2 ข้อ 7 — เดิมเขียน "คีย์ถูกเปลี่ยน" ตายตัว ทั้งที่กรณีจริงคือ token ถูกเก็บดิบ)</param>
+    private static string UndecryptableTokenMessage(string reason)
+        => $"ถอดรหัส Channel Access Token ของ LINE OA กลางไม่ได้ ({reason}) — ตั้งใหม่ที่ ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง · ระหว่างนี้ไม่ส่งผ่าน OA กลาง (ไม่สลับไปใช้ค่า config)";
+
+    /// <summary>ฝ่ายค้านรอบ 231 S3: secret ใช้ไม่ได้ก็ต้องดัง (ไม่งั้น token ส่งได้แต่ webhook 401 เงียบ) — ชุดแอดมินถือว่าไม่ได้ตั้ง ไม่ถอยไป config เช่นกัน</summary>
+    private static string UndecryptableSecretMessage(string reason)
+        => $"ถอดรหัส Channel Secret ของ LINE OA กลางไม่ได้ ({reason}) — webhook ของ OA กลางจะถูกปฏิเสธทุกครั้ง · ตั้งใหม่ที่ ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง · ระหว่างนี้ไม่ส่งผ่าน OA กลาง (ไม่สลับไปใช้ค่า config)";
 
     /// <summary>รอบ 212 ฝ่ายค้าน (B+D) ข้อ 5: token กับ secret ต้องตั้งคู่กัน (ทั้งคู่หรือไม่มีทั้งคู่) — ครึ่งชุด = webhook ถูกปฏิเสธ/ลายเซ็นไม่ผ่าน · null = ผ่าน</summary>
     public static string? PairProblem(bool tokenSet, bool secretSet)
@@ -49,12 +55,14 @@ public static class NextAccLineConfigRule
 
     private static string? T(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
 
-    /// <param name="adminTokenUndecryptable">แถวแอดมินมี token ที่เก็บไว้แต่ถอดรหัสไม่ได้ ⇒ ไม่มี token (ไม่ถอยไป config) + <see cref="UndecryptableTokenMessage"/></param>
-    public static NextAccLineSettings Merge(NextAccLineValues? admin, NextAccLineValues? config, bool adminTokenUndecryptable = false)
+    /// <param name="adminTokenUnusableReason">ไม่ null = แถวแอดมินมี token ที่เก็บไว้แต่ถอดรหัสไม่ได้ (ค่า = เหตุที่ตรวจจริง) ⇒ ไม่มี token (ไม่ถอยไป config) + <see cref="UndecryptableTokenMessage"/></param>
+    /// <param name="adminSecretUnusableReason">ฝ่ายค้านรอบ 231 S3: เช่นเดียวกันสำหรับ Channel Secret ⇒ <see cref="SourceNone"/> + <see cref="UndecryptableSecretMessage"/> (ไม่ปล่อยให้ webhook 401 เงียบ)</param>
+    public static NextAccLineSettings Merge(NextAccLineValues? admin, NextAccLineValues? config, string? adminTokenUnusableReason = null, string? adminSecretUnusableReason = null)
     {
-        if (adminTokenUndecryptable)
+        if (adminTokenUnusableReason != null || adminSecretUnusableReason != null)
             return new NextAccLineSettings(null, null, admin == null ? null : CustomerLineLinkRule.NormalizeBasicId(admin.BasicId), T(admin?.BotUserId),
-                T(admin?.GroupId), SourceNone, UndecryptableTokenMessage);
+                T(admin?.GroupId), SourceNone,
+                adminTokenUnusableReason != null ? UndecryptableTokenMessage(adminTokenUnusableReason) : UndecryptableSecretMessage(adminSecretUnusableReason!));
         if (admin != null && T(admin.AccessToken) != null) return Build(admin, SourceAdmin);
         if (config != null && T(config.AccessToken) != null) return Build(config, SourceConfig);
         // ไม่มี token ทั้งคู่ ⇒ ส่งไม่ได้ (HasToken=false) · ค่าที่เหลือจากหน้าแอดมินก่อน (ให้หน้าจอเห็นสิ่งที่กรอกไว้)

@@ -206,32 +206,17 @@ public class AdminQuotaController : ControllerBase
     [HttpPut("companies/{companyId:guid}/overrides")]
     public async Task<ActionResult<ApiResponse<object>>> SetOverride(Guid companyId, [FromBody] OverrideBody b, CancellationToken ct)
     {
-        var res = QuotaResources.Find(b.Resource);
-        if (res == null) return BadRequest(new ApiResponse<object>(false, null, "ทรัพยากรต้องเลือกจากรายการของระบบ"));
-        var reason = (b.Reason ?? "").Trim();
-        if (reason.Length < 3) return BadRequest(new ApiResponse<object>(false, null, "ต้องระบุเหตุผล (บันทึกใน audit)"));
-        if (reason.Length > 500) reason = reason[..500];
-        if (b.Limit is int l && l < -1) return BadRequest(new ApiResponse<object>(false, null, "ค่าต้องเป็น -1 (ไม่จำกัด) หรือ 0 ขึ้นไป"));
         if (!await _db.Companies.AnyAsync(c => c.Id == companyId, ct)) return NotFound(new ApiResponse<object>(false, null, "ไม่พบบริษัท"));
-        var row = await _db.CompanyQuotaOverrides.FirstOrDefaultAsync(o => o.CompanyId == companyId && o.ResourceKey == res.Key, ct);
-        var before = row?.Limit;
-        if (b.Limit == null)
+        // รอบ 231 (231-11): ผู้เขียนเดียว QuotaOverrideWriter (ตรวจทรัพยากร/เหตุผล/ค่า + audit chain) — AdminChangeLimits เดินตัวเดียวกัน
+        try
         {
-            if (row != null) { row.IsDeleted = true; row.UpdatedAt = DateTime.UtcNow; row.UpdatedBy = Actor; }
+            await QuotaOverrideWriter.SetAsync(_db, companyId, b.Resource, b.Limit, b.Reason ?? "", Actor,
+                HttpContext?.Connection.RemoteIpAddress?.ToString(), ct);
         }
-        else
+        catch (BusinessRuleException ex)
         {
-            if (row == null) { row = new CompanyQuotaOverride { CompanyId = companyId, ResourceKey = res.Key, CreatedBy = Actor }; _db.CompanyQuotaOverrides.Add(row); }
-            row.Limit = b.Limit.Value; row.Reason = reason; row.SetBy = Actor; row.SetAt = DateTime.UtcNow;
-            row.UpdatedAt = DateTime.UtcNow; row.UpdatedBy = Actor;
+            return BadRequest(new ApiResponse<object>(false, null, ex.Message));
         }
-        _db.AddChainedAuditLog(new AuditLog
-        {
-            CompanyId = companyId, UserEmail = Actor, Action = AuditAction.Update, EntityType = nameof(CompanyQuotaOverride), EntityId = res.Key,
-            OldValues = System.Text.Json.JsonSerializer.Serialize(new { limit = before }),
-            NewValues = System.Text.Json.JsonSerializer.Serialize(new { limit = b.Limit, reason, removed = b.Limit == null }),
-            Timestamp = DateTime.UtcNow,
-        });
         await _db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<object>(true, null, b.Limit == null ? "ลบ override แล้ว — กลับไปใช้เพดานของแพ็กเกจ" : "บันทึก override แล้ว — มีผลทันที (ของที่มีอยู่เกินไม่ถูกลบ)"));
     }

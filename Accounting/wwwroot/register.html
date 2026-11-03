@@ -607,7 +607,7 @@
           ? '<div style="position:absolute;top:-8px;right:8px;background:#10B981;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">ฟรีตลอดชีพ</div>'
           : (p.plan === 'Pro' ? '<div style="position:absolute;top:-8px;right:8px;background:#4F46E5;color:#fff;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:700">แนะนำ</div>' : '');
         const line2 = free ? 'ฟรีตลอดชีพ' : (p.trialDurationDays > 0 ? `ทดลอง ${p.trialDurationDays} วัน` : 'ไม่มีช่วงทดลอง');
-        const docs = PlanDisplay.limit(p.maxDocumentsPerMonth, 'docs', 'ไม่จำกัด');
+        const docs = PlanDisplay.limit(p, 'docs', 'ไม่จำกัด');
         return `<label class="plan-card" data-plan="${esc(p.plan)}" data-free="${free ? '1' : '0'}" style="cursor:pointer;padding:12px;border:2px solid #e2e8f0;border-radius:10px;text-align:center;transition:all 0.15s;background:#fff;position:relative">
                 <input type="radio" name="plan" value="${esc(p.plan)}" ${p === defaultPlan ? 'checked' : ''} style="display:none">
                 ${badge}

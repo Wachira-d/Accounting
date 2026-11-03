@@ -24,8 +24,15 @@ public class AccountingDbContext : DbContext
     // รอบ 229 — โควตาเสริม (ตาราง/index ต้องตรงกับ Helpers/QuotaAddOnMigration)
     public DbSet<PlanQuotaAllowance> PlanQuotaAllowances => Set<PlanQuotaAllowance>();
     public DbSet<CompanyQuotaOverride> CompanyQuotaOverrides => Set<CompanyQuotaOverride>();
+    /// <summary>รอบ 231 — ราคาพิเศษรายบริษัท/ราย License (Helpers/PlatformPriceOverrideMigration)</summary>
+    public DbSet<CompanyPlanPriceOverride> CompanyPlanPriceOverrides => Set<CompanyPlanPriceOverride>();
     public DbSet<QuotaAddOnOffer> QuotaAddOnOffers => Set<QuotaAddOnOffer>();
     public DbSet<CompanyQuotaAddOn> CompanyQuotaAddOns => Set<CompanyQuotaAddOn>();
+    // รอบ 231 — ส่วนเกินโควตา + ประวัติการใช้งาน (ตาราง/index ต้องตรงกับ Helpers/OverageMigration)
+    public DbSet<OverageRate> OverageRates => Set<OverageRate>();
+    public DbSet<CompanyOveragePolicy> CompanyOveragePolicies => Set<CompanyOveragePolicy>();
+    public DbSet<UsageMonthlySnapshot> UsageMonthlySnapshots => Set<UsageMonthlySnapshot>();
+    public DbSet<UsageDailySnapshot> UsageDailySnapshots => Set<UsageDailySnapshot>();
     // รอบ 230 — คูปองแพลตฟอร์ม (ตาราง/index ต้องตรงกับ Helpers/PlatformCouponMigration)
     public DbSet<PlatformCoupon> PlatformCoupons => Set<PlatformCoupon>();
     public DbSet<PlatformCouponRedemption> PlatformCouponRedemptions => Set<PlatformCouponRedemption>();
@@ -3707,6 +3714,42 @@ public class AccountingDbContext : DbContext
             e.HasKey(x => new { x.CompanyId, x.Period });
             e.Property(x => x.Period).HasMaxLength(7);
         });
+        // รอบ 231 — ส่วนเกินโควตา + ประวัติการใช้งาน (ตาราง/index ต้องตรงกับ Helpers/OverageMigration)
+        modelBuilder.Entity<OverageRate>(e =>
+        {
+            e.Property(x => x.ResourceKey).HasMaxLength(64);
+            e.Property(x => x.SetBy).HasMaxLength(200);
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.ResourceKey, x.PlanTemplateId, x.EffectiveFromUtc }).HasDatabaseName("IX_OverageRates_Resource_Plan");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<CompanyOveragePolicy>(e =>
+        {
+            e.Property(x => x.ResourcesCsv).HasMaxLength(300);
+            e.Property(x => x.AcceptedPolicyVersion).HasMaxLength(64);
+            e.Property(x => x.AcceptedBy).HasMaxLength(200);
+            e.Property(x => x.LockedReason).HasMaxLength(500);
+            e.Property(x => x.CapNotifiedPeriod).HasMaxLength(7);
+            e.Property(x => x.StartedNotifiedPeriod).HasMaxLength(7);
+            e.Property(x => x.FreeOverageNotifiedPeriod).HasMaxLength(7);
+            e.Property(x => x.MonthlyCapAmount).HasPrecision(18, 2);
+            e.HasIndex(x => x.CompanyId).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_CompanyOveragePolicies_Company");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<UsageMonthlySnapshot>(e =>
+        {
+            e.Property(x => x.Period).HasMaxLength(7);
+            e.Property(x => x.ResourceKey).HasMaxLength(64);
+            e.Property(x => x.OverageAmount).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.Period, x.ResourceKey }).IsUnique().HasDatabaseName("UX_UsageMonthlySnapshots_Company_Period_Resource");
+        });
+        modelBuilder.Entity<UsageDailySnapshot>(e =>
+        {
+            e.Property(x => x.ResourceKey).HasMaxLength(64);
+            e.Property(x => x.UnitPrice).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.Date, x.ResourceKey }).IsUnique().HasDatabaseName("UX_UsageDailySnapshots_Company_Date_Resource");
+        });
         // รอบ 229 — โควตาเสริม (ตาราง/index ต้องตรงกับ Helpers/QuotaAddOnMigration)
         modelBuilder.Entity<PlanQuotaAllowance>(e =>
         {
@@ -3722,6 +3765,24 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.SetBy).HasMaxLength(200);
             e.HasIndex(x => new { x.CompanyId, x.ResourceKey }).IsUnique().HasFilter("\"IsDeleted\" = false")
                 .HasDatabaseName("UX_CompanyQuotaOverrides_Company_Resource");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 231 — ราคาพิเศษรายบริษัท (ตาราง/index ต้องตรงกับ Helpers/PlatformPriceOverrideMigration)
+        modelBuilder.Entity<CompanyPlanPriceOverride>(e =>
+        {
+            e.Property(x => x.Reason).HasMaxLength(500);
+            e.Property(x => x.ApprovedBy).HasMaxLength(200);
+            e.Property(x => x.EndedBy).HasMaxLength(200);
+            e.Property(x => x.EndReason).HasMaxLength(500);
+            e.Property(x => x.PercentOff).HasPrecision(9, 4);
+            e.Property(x => x.FixedMonthly).HasPrecision(18, 2);
+            e.Property(x => x.FixedQuarterly).HasPrecision(18, 2);
+            e.Property(x => x.FixedSemiAnnual).HasPrecision(18, 2);
+            e.Property(x => x.FixedAnnual).HasPrecision(18, 2);
+            e.HasIndex(x => new { x.CompanyId, x.PlanTemplateId }).HasFilter("\"IsDeleted\" = false")
+                .HasDatabaseName("IX_CompanyPlanPriceOverrides_Company_Plan");
+            e.HasIndex(x => new { x.AccountSubscriptionId, x.PlanTemplateId }).HasFilter("\"IsDeleted\" = false")
+                .HasDatabaseName("IX_CompanyPlanPriceOverrides_Account_Plan");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<QuotaAddOnOffer>(e =>

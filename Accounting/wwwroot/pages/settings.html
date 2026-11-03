@@ -1989,6 +1989,11 @@
                  ทดสอบล่าสุด: ${new Date(c.lastTestedAt).toLocaleString()} — ${c.lastTestStatus || ''}
                </div>`;
           }
+          // รอบ 231 S1: คำใบ้ค่ากำกวม (เซิร์ฟเวอร์ประกอบ — ไม่ใช่ข้อผิดพลาด)
+          if (c.secretHint) {
+            document.getElementById('lineTestResult').innerHTML +=
+              `<div style="font-size:12px;color:#92400e;margin-top:4px">${Layout.esc(c.secretHint)}</div>`;
+          }
         } catch (e) { Layout.toast('โหลดการตั้งค่า LINE ไม่สำเร็จ', 'error'); }
       },
       // รอบ 211: แสดงผลที่เซิร์ฟเวอร์ตัดสิน (OA ที่ใช้ · ผูกได้ไหม · URL webhook ต่อบริษัท · จำนวนลิงก์) — ไม่มีกติกาฝั่งหน้าเว็บ
@@ -2191,6 +2196,10 @@
             status.innerHTML = `<div style="padding:10px;background:#fee2e2;border-radius:6px;color:#991b1b;font-size:13px">⚠ ทดสอบล่าสุดไม่ผ่าน: ${c.lastTestStatus}</div>`;
           } else {
             status.innerHTML = `<div style="padding:10px;background:#fef3c7;border-radius:6px;color:#78350f;font-size:13px">⚠ ยังไม่ได้ทดสอบ — กรอกข้อมูลแล้วกด "ทดสอบส่งอีเมล" เพื่อยืนยัน</div>`;
+          }
+          // รอบ 231 S1: คำใบ้ค่ากำกวม (เซิร์ฟเวอร์ประกอบข้อความ — ไม่ใช่ข้อผิดพลาด ไม่ทับสถานะด้านบน)
+          if (c.secretHint) {
+            status.innerHTML += `<div style="margin-top:6px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;color:#92400e;font-size:12px;line-height:1.6">${Layout.esc(c.secretHint)}</div>`;
           }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

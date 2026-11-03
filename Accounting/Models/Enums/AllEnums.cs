@@ -302,6 +302,27 @@ public enum TrialStatus
     Converted = 4   // แปลงเป็น paid แล้ว
 }
 
+/// <summary>รอบ 231 (คำตัดสินข้อ 231-10 · LICENSE_USAGE_OVERAGE_AUDIT §A.8/E7): ชนิดของ subscription — แยก "ทดลองใช้แพ็กเกจ X" ออกจาก "Free Edition"
+/// ที่เดิมใช้ <c>SubscriptionPlan.FreeTrial</c> ร่วมกัน · ตัวตัดสินเดียว <c>Helpers/SubscriptionKindRule.Derive</c> (SQL backfill ใน
+/// <c>Helpers/PlatformPriceOverrideMigration</c> เขียนสูตรเดียวกัน) · 0 = แถวเก่าที่ยังไม่ backfill (ห้ามใช้เป็นค่าตั้งใจ)</summary>
+public enum SubscriptionKind
+{
+    Unknown = 0,
+    Trial = 1,
+    Free = 2,
+    Paid = 3
+}
+
+/// <summary>รอบ 231 (คำตัดสินข้อ 231-8 · §C.1): โหมดราคาพิเศษรายบริษัท/รายLicense — <c>PriceOfPlan</c> จ่ายราคาของแพ็กเกจอ้างอิง (เช่น "จ่าย Standard ได้ Pro") ·
+/// <c>FixedPerCycle</c> กำหนดราคาต่อรอบเอง (รอบที่เว้นว่าง = ราคาแม่แบบ) · <c>PercentOff</c> ลด % จากราคาแม่แบบ · ตัวตัดสินเดียว
+/// <c>Helpers/PlatformPlanPricing.EffectiveCyclePrice</c></summary>
+public enum PlanPriceOverrideMode
+{
+    PriceOfPlan = 1,
+    FixedPerCycle = 2,
+    PercentOff = 3
+}
+
 // ==================== Accounting ====================
 public enum AccountType
 {

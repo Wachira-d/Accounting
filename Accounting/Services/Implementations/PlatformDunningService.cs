@@ -35,10 +35,12 @@ public class PlatformDunningService : IPlatformDunningService
     private readonly ISubscriptionGateShadowLog _gate;
     private readonly IConfiguration _config;
     private readonly ILogger<PlatformDunningService> _logger;
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-4): ขั้น 1 ของใบส่วนเกินค้างชำระ — ล็อก/ปลดสิทธิ์ส่วนเกิน (null ในเทสต์เดิม = ไม่มีขั้น 1)</summary>
+    private readonly IOverageService? _overage;
 
     public PlatformDunningService(AccountingDbContext db, IPlatformBillingNotifier notifier, ISubscriptionGateShadowLog gate,
-        IConfiguration config, ILogger<PlatformDunningService> logger)
-    { _db = db; _notifier = notifier; _gate = gate; _config = config; _logger = logger; }
+        IConfiguration config, ILogger<PlatformDunningService> logger, IOverageService? overage = null)
+    { _db = db; _notifier = notifier; _gate = gate; _config = config; _logger = logger; _overage = overage; }
 
     public async Task<DunningEvaluation?> EvaluateCompanyAsync(Guid companyId, bool sendReminders, CancellationToken ct = default)
     {
@@ -81,7 +83,21 @@ public class PlatformDunningService : IPlatformDunningService
         if (state.SuspendedByDunningAt != null && sub.Status != SubscriptionStatus.Suspended)
         { state.SuspendedByDunningAt = null; state.StatusBeforeSuspend = null; }
 
-        var decision = PlatformDunningPolicy.Decide(now, invoices, policy, mode, sub.Status, state.SuspendedByDunningAt != null, state.SuspendExemptUntil);
+        // รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.5 · คำตัดสินข้อ 231-4) — ขั้น 1: ใบ USAGE- ค้างเกิน OverageGraceDays ⇒ ปิดสิทธิ์ส่วนเกิน (กลับเป็นล็อก · ของที่ใช้แล้วไม่ถอน) ·
+        // ชำระครบ ⇒ ปลด · ขั้น 2 = dunning เดิม — LockOverageOnly ⇒ ใบ USAGE- ไม่นับเข้าการระงับทั้งบริษัท (เตือนยังส่งตามปกติ)
+        var references = rows.Select(r => r.Reference).ToList();
+        var usageInvoices = invoices.Where((_, i) => PlatformInvoiceRules.KindOf(references[i]) == PlatformInvoiceKind.Usage).ToList();
+        var overageAction = OveragePolicy.UnpaidLockAction.None;
+        if (_overage != null)
+        {
+            var oldestUsage = rows.Where((r, i) => !invoices[i].Excluded && PlatformInvoiceRules.KindOf(r.Reference) == PlatformInvoiceKind.Usage && r.BalanceDue > PlatformInvoiceRules.Epsilon)
+                .OrderBy(r => r.DueDate ?? r.DocumentDate).Select(r => r.DocumentNumber).FirstOrDefault();
+            overageAction = await _overage.ApplyUnpaidLockAsync(companyId, usageInvoices, policy.OverageGraceDays, oldestUsage, ct);
+        }
+        var forSuspension = OveragePolicy.ForSuspension(invoices, references, policy.OverageUnpaidAction);
+        var decision = PlatformDunningPolicy.Decide(now, forSuspension, policy, mode, sub.Status, state.SuspendedByDunningAt != null, state.SuspendExemptUntil);
+        if (!ReferenceEquals(forSuspension, invoices))
+            decision = decision with { Reminders = PlatformDunningPolicy.Decide(now, invoices, policy, mode, sub.Status, state.SuspendedByDunningAt != null, state.SuspendExemptUntil).Reminders };
 
         // ส่งข้อความหลัง commit (ไม่ถือล็อกแถวระหว่างส่งอีเมล/LINE · คีย์กันซ้ำของผู้ส่งไม่ผูกกับธุรกรรมนี้)
         var outbox = new List<(Guid? DocumentId, string Key, string Subject, string Body)>();
@@ -93,6 +109,19 @@ public class PlatformDunningService : IPlatformDunningService
                 outbox.Add((r.DocumentId, r.MessageKey, subject, body));
             }
 
+        switch (overageAction)
+        {
+            case OveragePolicy.UnpaidLockAction.Lock:
+                outbox.Add((null, PlatformDunningPolicy.CompanyKey(companyId, "overage-locked", now),
+                    "ปิดสิทธิ์ส่วนเกินโควตาชั่วคราว — ใบแจ้งหนี้ค่าส่วนเกินค้างชำระ",
+                    $"ใบแจ้งหนี้ค่าใช้งาน/ส่วนเกินเกินกำหนดชำระ (กำหนด = วันออกใบ + {policy.OverageGraceDays} วัน) ระบบกลับไปใช้ \"หยุดส่วนที่เกิน\" (ของที่ใช้ไปแล้วไม่ถูกถอน · ใบกำกับภาษี/ใบเสร็จยังออกได้)\n"
+                    + "ชำระที่ศูนย์บิลค่าบริการแล้วระบบจะเปิดสิทธิ์ส่วนเกินคืนอัตโนมัติ"));
+                break;
+            case OveragePolicy.UnpaidLockAction.Unlock:
+                outbox.Add((null, PlatformDunningPolicy.CompanyKey(companyId, "overage-unlocked", now),
+                    "เปิดสิทธิ์ส่วนเกินโควตาคืนแล้ว", "ได้รับชำระใบค่าส่วนเกินแล้ว — \"ใช้ต่อได้ คิดค่าส่วนเกิน\" กลับมามีผลตามนโยบายที่ตั้งไว้"));
+                break;
+        }
         switch (decision.Action)
         {
             case DunningAction.Suspend:

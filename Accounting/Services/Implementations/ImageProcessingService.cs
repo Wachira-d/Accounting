@@ -17,7 +17,7 @@ public class ImageProcessingService : IImageProcessingService
 
     public Accounting.Services.Storage.IFileStorage Storage { get; }
 
-    private record ProfileSpec(int MaxLongEdge, int Quality, bool KeepTransparency, bool ForceSquareCrop);
+    private record ProfileSpec(int MaxLongEdge, int Quality, bool KeepTransparency, bool ForceSquareCrop, bool AlwaysPng = false);
 
     private static readonly Dictionary<ImageProfile, ProfileSpec> _specs = new()
     {
@@ -29,6 +29,7 @@ public class ImageProcessingService : IImageProcessingService
         [ImageProfile.Avatar]       = new(256,  82, false, true),
         [ImageProfile.OcrSource]    = new(2400, 92, false, false),
         [ImageProfile.Generic]      = new(1600, 82, false, false),
+        [ImageProfile.Favicon]      = new(128,  90, true,  true, AlwaysPng: true),
     };
 
     public bool IsProcessableImage(string contentType)
@@ -158,7 +159,8 @@ public class ImageProcessingService : IImageProcessingService
                 : SkiaImageOps.ResizeMax(decoded.Bitmap, spec.MaxLongEdge);
 
             // Choose output format: keep PNG when transparency matters, otherwise JPEG for smaller files
-            var keepPng = spec.KeepTransparency && SkiaImageOps.HasTransparency(image);
+            // รอบ 231: โปรไฟล์ที่ต้อง PNG เสมอ (favicon) ไม่ขึ้นกับความโปร่งใส — ไอคอนทึบเคยถูกแปลงเป็น JPG
+            var keepPng = spec.AlwaysPng || (spec.KeepTransparency && SkiaImageOps.HasTransparency(image));
             var ext = keepPng ? ".png" : ".jpg";
             var encoded = keepPng ? SkiaImageOps.EncodePng(image) : SkiaImageOps.EncodeJpeg(image, spec.Quality);
             return new Transformed(encoded, ext, image.Width, image.Height, originalBytes, false, image);

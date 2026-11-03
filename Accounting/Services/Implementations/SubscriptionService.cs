@@ -24,8 +24,9 @@ public class SubscriptionService : ISubscriptionService
     public SubscriptionService(AccountingDbContext db, INotificationService notificationService,
         INotificationEngine? notify = null, ISaasBillingDocumentService? billing = null,
         ISubscriptionGateShadowLog? shadowLog = null, ILogger<SubscriptionService>? logger = null,
-        IPlatformDunningService? dunning = null)
+        IPlatformDunningService? dunning = null, IOverageService? overage = null)
     {
+        _overage = overage;
         _dunning = dunning;
         _db = db;
         _logger = logger;
@@ -40,6 +41,9 @@ public class SubscriptionService : ISubscriptionService
 
     /// <summary>รอบ 219 เฟส 2 ขั้น 2: ประเมินค้างชำระใหม่หลังอนุมัติการชำระ (คืนสถานะที่ระบบระงับเพราะค้างชำระทันที) · null ในเทสต์ที่สร้างเอง</summary>
     private readonly IPlatformDunningService? _dunning;
+
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-2): ด่านส่วนเกินพื้นที่ (GB-เดือน) — null ในเทสต์ที่สร้างเอง = บล็อกตามเดิม</summary>
+    private readonly IOverageService? _overage;
 
     /// <summary>duplicate audit #7 phase 2: route subscription notification ผ่าน
     /// NotificationEngine (production) → กลับไป NotificationService legacy
@@ -95,6 +99,7 @@ public class SubscriptionService : ISubscriptionService
             var days = permFree ? 36500 : (request.TrialDays ?? tpl?.TrialDurationDays ?? 30);
             softDeleted.Status = permFree ? SubscriptionStatus.Active : SubscriptionStatus.Trial;
             softDeleted.IsPermanentFree = permFree;
+            softDeleted.Kind = SubscriptionKindRule.Derive(permFree, softDeleted.Status, neverPaid: true, isFreeTrialPlan: request.TargetPlan == SubscriptionPlan.FreeTrial);   // รอบ 231 (231-10)
             softDeleted.StartDate = DateTime.UtcNow;
             softDeleted.EndDate = DateTime.UtcNow.AddDays(days);
             // GetTrialStatusAsync ต้องมี TrialConfig — แถวเก่าอาจไม่มี/ถูกลบตาม
@@ -169,6 +174,8 @@ public class SubscriptionService : ISubscriptionService
             StartDate = now,
             EndDate = now.AddDays(trialDays),
             IsPermanentFree = isPermanentFree,
+            // รอบ 231 (231-10): ชนิดจากตัวตัดสินเดียว — ฟรีถาวร = Free · อื่น ๆ = Trial
+            Kind = SubscriptionKindRule.Derive(isPermanentFree, isPermanentFree ? SubscriptionStatus.Active : SubscriptionStatus.Trial, neverPaid: true, isFreeTrialPlan: request.TargetPlan == SubscriptionPlan.FreeTrial),
             EnabledFeatures = isPermanentFree
                 ? (template?.EnabledFeatures ?? FeatureFlags.TrialFeatures)
                 : (template?.TrialFeatures ?? FeatureFlags.TrialFeatures),
@@ -283,7 +290,8 @@ public class SubscriptionService : ISubscriptionService
                 tc.AllowDataExportAfterExpiry,
                 tc.GracePeriodDays,
                 tc.ShowTrialWatermark,
-                tc.TrialMessage),
+                tc.TrialMessage,
+                tc.DeleteDataAfterGracePeriod, tc.DataRetentionDays, tc.PurgeNoticeDays, tc.PurgeNoticeSentAt),
             tc.DiscountPercentOnConversion.HasValue
                 ? new ConversionIncentive(tc.DiscountPercentOnConversion, tc.DiscountValidUntil, tc.ConversionPromoCode)
                 : null,
@@ -400,21 +408,27 @@ public class SubscriptionService : ISubscriptionService
     /// ทุกรายการที่เส้นนี้สร้าง ประทับ <c>QuotedAmount</c> (ยอดของเซิร์ฟเวอร์ — ช่องทางออนไลน์อนุมัติอัตโนมัติเมื่อเงินเข้าเท่ายอดนี้)</para></summary>
     private async Task<SubscriptionPaymentResponse> RequestPlanPaymentAsync(Subscription sub, PlanTemplate template,
         BillingCycle cycle, decimal? discountPercent, string performedBy, string historyAction, string note,
-        PlatformProration.Result? proration = null, string? couponCode = null)
+        PlatformProration.Result? proration = null, string? couponCode = null, PlatformProration.CycleChangeResult? cycleChange = null)
     {
         var prorated = proration?.Applies == true;
+        var cycleChanged = cycleChange?.Applies == true;
         var months = prorated ? 0 : PlatformPlanPricing.MonthsOf(cycle);
         if (!prorated && months <= 0) throw new BusinessRuleException("รอบบิลไม่ถูกต้อง");
-        var listAmount = prorated ? proration!.Amount : PlatformPlanPricing.AmountDue(template, cycle, discountPercent);
+        // รอบ 231 (231-8): ราคาต่อรอบผ่านตัวตัดสินราคาพิเศษตัวเดียว (ราคาพิเศษ → ส่วนลดโปรโมชัน % → คูปอง) — ส่วนต่าง/เปลี่ยนรอบคิดราคาพิเศษทั้งสองฝั่งมาแล้ว
+        var effective = await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, cycle, DateTime.UtcNow, forRenewal: PlatformPlanPricing.IsRenewalPurchase(sub.Plan, template.Plan));   // ฝ่ายค้าน S4: ซื้อแพ็กเกจเดิมซ้ำ = ต่ออายุ
+        var listAmount = prorated ? proration!.Amount
+            : cycleChanged ? cycleChange!.Amount
+            : PlatformPlanPricing.AmountDue(effective.Price, discountPercent);
         if (listAmount <= 0m)
-            throw new BusinessRuleException(
-                "แพ็กเกจนี้ไม่มีค่าบริการตามตารางราคา — ติดต่อผู้ดูแลระบบ NextAcc เพื่อเปลี่ยนแพ็กเกจ");
+            throw new BusinessRuleException(cycleChanged
+                ? "มูลค่าคงเหลือของรอบเดิมครอบคลุมค่ารอบใหม่ทั้งหมด — ติดต่อผู้ดูแลระบบ NextAcc ให้บันทึกเปลี่ยนรอบแบบยกเว้นค่าบริการ (ยอด 0)"
+                : "แพ็กเกจนี้ไม่มีค่าบริการตามตารางราคา — ติดต่อผู้ดูแลระบบ NextAcc เพื่อเปลี่ยนแพ็กเกจ");
         var code = PlatformCouponRule.Normalize(couponCode);
 
         // กดซ้ำ = รายการเดิม (แพ็กเกจ/รอบ/ชนิด/คูปอง/ยอดก่อนคูปองเดียวกัน · ยังไม่จ่าย)
         var existing = await _db.SubscriptionPayments
             .FirstOrDefaultAsync(p => p.SubscriptionId == sub.Id && p.Status == SubscriptionPaymentStatus.Pending
-                && p.RequestedPlan == template.Plan && p.RequestedBillingCycle == cycle && p.IsProration == prorated
+                && p.RequestedPlan == template.Plan && p.RequestedBillingCycle == cycle && p.IsProration == prorated && p.IsCycleChange == cycleChanged
                 && p.CouponCode == code && (p.ListAmount ?? p.Amount) == listAmount && p.PlatformInvoiceDocumentId == null);
         if (existing != null) return MapPaymentToResponse(existing);
 
@@ -440,7 +454,7 @@ public class SubscriptionService : ISubscriptionService
             var amount = listAmount;
             // รายการรอชำระเดิมที่ถือคูปองเดียวกันไว้ / ส่วนต่างอัปเกรดใบเก่า (ไม่มีสลิป · ไม่เคยเริ่มชำระออนไลน์) = คำขอที่ถูกแทน ⇒ ยกเลิก + ปลดการจอง
             // (ไม่ให้กินสิทธิ์ต่อบริษัทของคำขอใหม่ · ฝ่ายค้าน S6: ส่วนต่างใบเก่าคิดวันที่เหลือไม่ตรงแล้ว)
-            if (code != null || prorated) await SupersedePendingPaymentsAsync(sub, code, prorated, performedBy);
+            if (code != null || prorated || cycleChanged) await SupersedePendingPaymentsAsync(sub, code, prorated || cycleChanged, performedBy);
             if (code != null)
             {
                 var (coupon, eval) = await PlatformCouponStore.ReserveAsync(_db, sub.CompanyId, code, PlatformCouponScope.Subscription,
@@ -450,9 +464,12 @@ public class SubscriptionService : ISubscriptionService
                 payment.ListAmount = listAmount;
             }
             payment.Amount = amount;
-            // ฝ่ายค้าน B1 (คำตัดสินผู้ประสานงาน): ยอดที่เซิร์ฟเวอร์เสนอประทับเฉพาะรายการส่วนต่าง/มีคูปอง (และแอดมินแก้ยอด) — รายการราคาเต็มคงกติกาเดิม
-            // (ช่องทางออนไลน์/handler เทียบราคาแพ็กเกจปัจจุบัน ⇒ ราคาเปลี่ยนหลังสร้างรายการ = ปฏิเสธ)
-            payment.QuotedAmount = prorated || code != null ? amount : null;
+            // รอบ 231 (231-8): ตามรอยราคาพิเศษ — ราคาตั้งเก็บไว้ให้ประวัติ/แอดมินเห็นส่วนต่าง (ใบกำกับแสดงราคาที่ตกลงเป็นราคาขาย ไม่ใช่ราคาตั้ง−ส่วนลด)
+            payment.PriceOverrideId = effective.OverrideId;
+            payment.StandardAmount = effective.Applied && !prorated && !cycleChanged ? PlatformPlanPricing.AmountDue(effective.ListPrice, discountPercent) : null;
+            // ฝ่ายค้าน B1 (คำตัดสินผู้ประสานงาน): ยอดที่เซิร์ฟเวอร์เสนอประทับเฉพาะรายการส่วนต่าง/มีคูปอง/ราคาพิเศษ/เปลี่ยนรอบ (และแอดมินแก้ยอด) — รายการราคาเต็มคงกติกาเดิม
+            // (ช่องทางออนไลน์/handler เทียบราคาแพ็กเกจปัจจุบัน ⇒ ราคาเปลี่ยนหลังสร้างรายการ = ปฏิเสธ) · ราคาพิเศษต้องประทับ ไม่งั้นทุกใบถูกพักให้แอดมิน (§C.2)
+            payment.QuotedAmount = prorated || cycleChanged || code != null || effective.Applied ? amount : null;
             if (prorated)
             {
                 payment.IsProration = true;
@@ -460,6 +477,16 @@ public class SubscriptionService : ISubscriptionService
                 payment.ProrationDays = proration!.DaysRemaining;
                 payment.ProrationCycleDays = proration.CycleDays;
                 payment.ProrationCycleEndUtc = proration.CycleEndUtc;
+            }
+            if (cycleChanged)
+            {
+                // รอบ 231 (231-9): เปลี่ยนรอบบิลกลางรอบ — D/C และวันหมดอายุของรอบที่คิดเครดิต (ความหมายเดียวกับส่วนต่าง: รอบที่ถูกคิด) · อนุมัติ ⇒ เริ่มรอบใหม่วันที่ชำระ
+                payment.IsCycleChange = true;
+                payment.CycleChangeCredit = cycleChange!.Credit;
+                payment.ProrationFromPlan = sub.Plan.ToString();
+                payment.ProrationDays = cycleChange.DaysRemaining;
+                payment.ProrationCycleDays = cycleChange.CycleDays;
+                payment.ProrationCycleEndUtc = cycleChange.CycleEndUtc;
             }
             _db.SubscriptionPayments.Add(payment);
             _db.SubscriptionHistories.Add(new SubscriptionHistory
@@ -470,6 +497,8 @@ public class SubscriptionService : ISubscriptionService
                 ToPlan = template.Plan,
                 Notes = $"{note}: {payment.PaymentNumber} {template.Plan} ({cycle}) {amount:N2} THB"
                         + (prorated ? $" · ส่วนต่าง {proration!.DaysRemaining}/{proration.CycleDays} วัน (วันหมดอายุเดิม)" : "")
+                        + (cycleChanged ? $" · เปลี่ยนรอบบิล หักมูลค่าคงเหลือ {cycleChange!.Credit:N2} ({cycleChange.DaysRemaining}/{cycleChange.CycleDays} วัน) รอบใหม่เริ่มวันที่ชำระ" : "")
+                        + (effective.Applied ? $" · ราคาพิเศษ (ราคาตั้ง {effective.ListPrice:N2}/รอบ → {effective.Price:N2})" : "")
                         + (payment.CouponCode != null ? $" · คูปอง {payment.CouponCode} ลด {payment.CouponDiscountAmount:N2}" : "")
                         + " — รอชำระ (ยังไม่เปิดแพ็กเกจ)",
                 PerformedBy = performedBy
@@ -490,7 +519,7 @@ public class SubscriptionService : ISubscriptionService
     {
         var olds = await _db.SubscriptionPayments
             .Where(p => p.SubscriptionId == sub.Id && p.Status == SubscriptionPaymentStatus.Pending && p.SlipFileName == null && p.PlatformInvoiceDocumentId == null
-                && ((code != null && p.CouponCode == code) || (prorated && p.IsProration)))
+                && ((code != null && p.CouponCode == code) || (prorated && (p.IsProration || p.IsCycleChange))))
             .ToListAsync();
         var n = 0;
         foreach (var old in olds)
@@ -567,6 +596,8 @@ public class SubscriptionService : ISubscriptionService
         sub.LocalOcrPagesPerMonth = template.LocalOcrPagesPerMonth;
         sub.FallbackToLocalWhenAzureExhausted = template.FallbackToLocalWhenAzureExhausted;
         sub.IsPermanentFree = template.IsPermanentFree;
+        // รอบ 231 (231-10): เปิดแพ็กเกจจากแม่แบบ = จ่ายแล้ว (Paid) หรือ Free Edition — ตัวตัดสินเดียว SubscriptionKindRule
+        sub.Kind = SubscriptionKindRule.AfterTemplateApplied(template.IsPermanentFree);
         // ฝ่ายค้านรอบ 219 S2: แพ็กเกจฟรีถาวร = Active ไม่หมดอายุ (เหมือน ResyncSubscriptionsFromTemplateAsync) — ดาวน์เกรดไปแพ็กเกจฟรีห้ามตกเป็น PastDue
         if (template.IsPermanentFree)
         {
@@ -574,6 +605,14 @@ public class SubscriptionService : ISubscriptionService
             sub.EndDate = DateTime.UtcNow.AddYears(100);
             sub.NextBillingDate = null;
         }
+    }
+
+    /// <summary>รอบ 231 (231-8): <see cref="ApplyTemplate"/> + ราคาต่อรอบบน subscription = <b>ราคาที่บริษัทนี้จ่ายจริง</b> (ราคาพิเศษผ่าน <see cref="PlatformPriceOverrideStore"/>) —
+    /// ใบต่ออายุ/ส่วนต่างฝั่งเดิมใช้ <c>PricePerCycle</c> เป็น fallback เมื่อไม่มีแม่แบบ จึงต้องเป็นราคาพิเศษ ไม่ใช่ราคาตั้ง · ผู้เรียก: อนุมัติชำระ (ทุกชนิด) · ดาวน์เกรดถึงวันมีผล</summary>
+    private async Task ApplyTemplateWithPriceAsync(Subscription sub, PlanTemplate template, BillingCycle cycle, DateTime nowUtc)
+    {
+        ApplyTemplate(sub, template, cycle);
+        sub.PricePerCycle = (await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, cycle, nowUtc, forRenewal: true)).Price;
     }
 
     public async Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId)
@@ -638,13 +677,24 @@ public class SubscriptionService : ISubscriptionService
             .Select(t => t.Name)
             .FirstOrDefaultAsync();
 
+        // รอบ 231 (231-8): "ราคาพิเศษสำหรับคุณ" ของแพ็กเกจ+รอบปัจจุบัน (ตัวตัดสินเดียว PlatformPriceOverrideStore) — หน้าเว็บแสดงอย่างเดียว · ฟรีถาวรไม่มีราคา
+        string? specialPriceNote = null;
+        if (!sub.IsPermanentFree)
+        {
+            var priceTpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == plan && t.IsActive);
+            if (priceTpl != null)
+                specialPriceNote = PlatformPlanPricing.SpecialPriceNote(
+                    await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, priceTpl, sub.BillingCycle, DateTime.UtcNow, forRenewal: true), sub.BillingCycle);
+        }
+
+        var current = await GetUsageCurrentAsync(sub);   // รอบ 231: ใช้ร่วมกับหลอดเอกสาร (DocumentsBar) — เรียกครั้งเดียว
         return new SubscriptionResponse(
             sub.Id, sub.CompanyId, plan, status, sub.BillingCycle,
             sub.PricePerCycle, sub.StartDate, endDate, sub.NextBillingDate,
             features,
             FeatureFlagsHelper.ToNameList(features),
             new UsageLimits(maxUsers, maxCompanies, maxDocs, maxJournals, maxStorage),
-            await GetUsageCurrentAsync(sub),
+            current,
             sub.IsPermanentFree,
             addOnCodes,
             planName,
@@ -652,7 +702,14 @@ public class SubscriptionService : ISubscriptionService
             ScheduledBillingCycle: sub.ScheduledBillingCycle,
             ScheduledPlanEffectiveAt: sub.ScheduledPlanEffectiveAt,
             CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
-            CancelConfirmText: SubscriptionCancelPolicy.ConfirmText(sub.Status, sub.EndDate, DateTime.UtcNow, sub.IsPermanentFree));
+            CancelConfirmText: SubscriptionCancelPolicy.ConfirmText(sub.Status, sub.EndDate, DateTime.UtcNow, sub.IsPermanentFree),
+            Kind: sub.Kind == SubscriptionKind.Unknown ? null : sub.Kind.ToString(),
+            SpecialPriceNote: specialPriceNote,
+            // รอบ 231 (P0 จ · "ไม่จำกัด" ที่เดียว): หลอดเอกสาร + ข้อความเพดานคิดที่เซิร์ฟเวอร์ — pages/subscription.html เลิกพิมพ์เกณฑ์ ≥ 99999 เอง
+            DocumentsBar: UsageBarRule.Documents(current.DocumentsThisMonth,
+                Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(maxDocs, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow, used: current.DocumentsThisMonth)),
+            LimitTexts: UsageBarRule.LimitTexts(maxUsers, maxCompanies, maxDocs, maxJournals, acct?.MaxOcrPagesPerMonth ?? sub.MaxOcrPagesPerMonth, maxStorage, sub.MaxSharedMessagesPerMonth),
+            Unlimited: UsageBarRule.UnlimitedFlags(maxUsers, maxCompanies, maxDocs, maxJournals, acct?.MaxOcrPagesPerMonth ?? sub.MaxOcrPagesPerMonth, maxStorage, sub.MaxSharedMessagesPerMonth));
     }
 
     /// <summary>ผลของ overlay แพ็กเกจ (บริษัท ↔ User License) + mask ที่เจ้าของบริษัทปิดเอง — ตัวเดียวของ
@@ -744,7 +801,17 @@ public class SubscriptionService : ISubscriptionService
         var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null) return null;
         var ov = await ResolveGateOverlayAsync(sub, companyId);
-        return new SubscriptionGateState(ov.Plan, ov.Status, ov.Features);
+        // รอบ 231 (231-10): ผู้อ่านของ TrialConfig.BlockAccessOnExpiry / AllowDataExportAfterExpiry — เฉพาะทดลองใช้ที่หมดอายุแล้ว (ไม่เสีย query กับบริษัทอื่น) ·
+        // Free Edition/จ่ายเงิน ไม่มีนโยบายนี้ (กันแถวเก่า Kind=Unknown ด้วย LastPaymentDate)
+        bool blockReads = false, allowExport = true;
+        if (sub.Status == SubscriptionStatus.Expired && !sub.IsPermanentFree
+            && (sub.Kind == SubscriptionKind.Trial || (sub.Kind == SubscriptionKind.Unknown && sub.LastPaymentDate == null)))
+        {
+            var tc = await _db.TrialConfigs.AsNoTracking().Where(t => t.SubscriptionId == sub.Id)
+                .Select(t => new { t.BlockAccessOnExpiry, t.AllowDataExportAfterExpiry }).FirstOrDefaultAsync();
+            if (tc != null) { blockReads = tc.BlockAccessOnExpiry; allowExport = tc.AllowDataExportAfterExpiry; }
+        }
+        return new SubscriptionGateState(ov.Plan, ov.Status, ov.Features, blockReads, allowExport);
     }
 
     /// <summary>
@@ -846,10 +913,27 @@ public class SubscriptionService : ISubscriptionService
         var cycle = request.NewBillingCycle ?? sub.BillingCycle;
 
         var kind = PlatformPlanPricing.Classify(current?.MonthlyPrice ?? 0m, template.MonthlyPrice);
+        // รอบ 231 (คำตัดสินข้อ 231-9 · §B.8): เปลี่ยนรอบบิลให้ยาวขึ้นกลางรอบ (แพ็กเกจเดิม หรือพร้อมอัปเกรด) ⇒ จ่ายรอบใหม่เต็ม หักมูลค่าคงเหลือรอบเดิม ·
+        // รอบใหม่เริ่มวันที่ชำระ · สิทธิ์สลับเมื่อเงินเข้า · สั้นลง/ดาวน์เกรด = เส้น Scheduled* เดิม (มีผลวันครบรอบ ไม่คืนเงิน)
+        if (cycle != sub.BillingCycle && kind != PlatformPlanPricing.ChangeKind.Downgrade
+            && PlatformPlanPricing.MonthsOf(cycle) > PlatformPlanPricing.MonthsOf(sub.BillingCycle))
+        {
+            var cc = await CycleChangeForAsync(sub, current, template, cycle, DateTime.UtcNow);
+            if (cc.Applies)
+            {
+                var ccPay = await RequestPlanPaymentAsync(sub, template, cycle, null, performedBy, "CycleChangeRequested",
+                    $"ขอเปลี่ยนรอบบิล {sub.BillingCycle} → {cycle}" + (template.Plan != sub.Plan ? $" พร้อมเปลี่ยนเป็น {template.Plan}" : ""),
+                    couponCode: request.CouponCode, cycleChange: cc);
+                return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), ccPay,
+                    $"สร้างรายการชำระ {ccPay.PaymentNumber} ยอด {ccPay.Amount:N2} บาทแล้ว ({cc.Note}) — "
+                    + (template.Plan != sub.Plan ? $"เปลี่ยนเป็น {template.Name} ราย{PlatformPlanPricing.CycleLabel(cycle)}" : $"รอบบิลราย{PlatformPlanPricing.CycleLabel(cycle)}")
+                    + " มีผลทันทีเมื่อชำระเงิน · รอบใหม่เริ่มวันที่ชำระ (วันหมดอายุเดิมไม่ใช้แล้ว)");
+            }
+        }
         if (kind == PlatformPlanPricing.ChangeKind.Upgrade)
         {
             // รอบ 230 (คำตัดสินข้อ 230-Q1 · §7.1): อัปเกรดกลางรอบ = จ่ายส่วนต่างของวันที่เหลือ · วันหมดอายุคงเดิม (แทน "เริ่มรอบใหม่ — ส่วนที่เหลือสละ")
-            var pr = ProrationFor(sub, current, template, DateTime.UtcNow);
+            var pr = await ProrationForAsync(sub, current, template, DateTime.UtcNow);
             if (pr.Applies)
             {
                 var prorated = await RequestPlanPaymentAsync(sub, template, sub.BillingCycle, null, performedBy,
@@ -857,7 +941,7 @@ public class SubscriptionService : ISubscriptionService
                 return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), prorated,
                     $"สร้างรายการชำระส่วนต่าง {prorated.PaymentNumber} ยอด {prorated.Amount:N2} บาทแล้ว ({pr.Note}) — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงิน "
                     + $"· ใช้ได้ถึงวันเดิม {sub.EndDate.AddHours(7):dd/MM/yyyy} · รอบถัดไปคิดราคา {template.Name}"
-                    + (cycle != sub.BillingCycle ? " · รอบบิลคงเดิม — เปลี่ยนรอบบิลได้หลังอัปเกรด (มีผลวันครบรอบ)" : ""));
+                    + (cycle != sub.BillingCycle ? " · รอบบิลสั้นลงคงเดิม — เปลี่ยนรอบบิลสั้นลงได้หลังอัปเกรด (มีผลวันครบรอบ)" : ""));
             }
             var payment = await RequestPlanPaymentAsync(sub, template, cycle, null, performedBy,
                 "PlanUpgradeRequested", $"ขออัปเกรดจาก {sub.Plan}", couponCode: request.CouponCode);
@@ -893,14 +977,42 @@ public class SubscriptionService : ISubscriptionService
             effectiveAt);
     }
 
+    /// <summary>รอบ 231 (ฝ่ายค้าน S2): ฐาน "ราคาเดิมต่อรอบ" ของส่วนต่างอัปเกรด/เครดิตเปลี่ยนรอบ = <b>ยอดที่จ่ายจริง</b>ของรอบนั้น
+    /// (<see cref="PlatformPriceOverrideStore.LastApprovedCycleAmountAsync"/> — หลังคูปอง/แก้ยอด) · ไม่เคยจ่าย (แอดมินเปิดให้) ⇒ ราคาพิเศษ/แม่แบบของแพ็กเกจเดิม ·
+    /// ไม่มีแม่แบบ ⇒ <c>PricePerCycle</c> ที่บันทึก — สูตร pure <see cref="PlatformProration.OldPriceBasis"/></summary>
+    private async Task<decimal> OldCyclePriceBasisAsync(Subscription sub, PlanTemplate? current, BillingCycle cycle, DateTime nowUtc)
+    {
+        var lastPaid = await PlatformPriceOverrideStore.LastApprovedCycleAmountAsync(_db, sub.Id, sub.Plan, cycle);
+        var resolved = current != null
+            ? (await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, current, cycle, nowUtc, forRenewal: true)).Price
+            : sub.PricePerCycle;
+        return PlatformProration.OldPriceBasis(lastPaid, resolved);
+    }
+
     /// <summary>รอบ 230: ส่วนต่างอัปเกรดของ subscription นี้ (ตัวเดียวของ "ขออัปเกรด" และ "ดูราคา") — ราคาเดิม/ใหม่ต่อรอบบิล<b>ปัจจุบัน</b> ตามตารางแพ็กเกจ ·
     /// ไม่มีแม่แบบของแพ็กเกจเดิม ⇒ ราคาต่อรอบที่บันทึกบน subscription</summary>
-    private static PlatformProration.Result ProrationFor(Subscription sub, PlanTemplate? current, PlanTemplate target, DateTime nowUtc)
-        => PlatformProration.Upgrade(
-            current != null ? PlatformPlanPricing.CyclePrice(current, sub.BillingCycle) : sub.PricePerCycle,
-            PlatformPlanPricing.CyclePrice(target, sub.BillingCycle),
+    /// <para>รอบ 231 (231-8): ราคา<b>ทั้งสองฝั่ง</b>ผ่านตัวตัดสินราคาพิเศษ — ฝั่งเดิม = ราคาที่บริษัทจ่ายจริง (override ของแพ็กเกจเดิมถ้ามี · ไม่งั้นแม่แบบ ·
+    /// ไม่มีแม่แบบ = <c>PricePerCycle</c> ที่บันทึก) · ฝั่งใหม่ = ราคาพิเศษของแพ็กเกจใหม่ — ใช้ราคาตั้งฝั่งเดิมจะคิดส่วนต่างมาก/น้อยเกิน (§C.2)</para>
+    private async Task<PlatformProration.Result> ProrationForAsync(Subscription sub, PlanTemplate? current, PlanTemplate target, DateTime nowUtc)
+    {
+        var oldPrice = await OldCyclePriceBasisAsync(sub, current, sub.BillingCycle, nowUtc);
+        var newPrice = (await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, target, sub.BillingCycle, nowUtc,
+            forRenewal: PlatformPlanPricing.IsRenewalPurchase(sub.Plan, target.Plan))).Price;
+        return PlatformProration.Upgrade(oldPrice, newPrice,
             PlatformPlanPricing.MonthsOf(sub.BillingCycle), sub.EndDate, nowUtc,
             planActive: sub.Status == SubscriptionStatus.Active, isTrial: sub.Status == SubscriptionStatus.Trial, isPermanentFree: sub.IsPermanentFree);
+    }
+
+    /// <summary>รอบ 231 (231-9): เปลี่ยนรอบบิลกลางรอบ (ตัวเดียวของ "ขอเปลี่ยน" และ "ดูราคา") — ราคาเดิมต่อรอบเดิม / ราคาใหม่ต่อรอบใหม่ ผ่านราคาพิเศษทั้งสองฝั่ง</summary>
+    private async Task<PlatformProration.CycleChangeResult> CycleChangeForAsync(Subscription sub, PlanTemplate? current, PlanTemplate target,
+        BillingCycle newCycle, DateTime nowUtc)
+    {
+        var oldPrice = await OldCyclePriceBasisAsync(sub, current, sub.BillingCycle, nowUtc);
+        var newPrice = (await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, target, newCycle, nowUtc,
+            forRenewal: PlatformPlanPricing.IsRenewalPurchase(sub.Plan, target.Plan))).Price;
+        return PlatformProration.CycleChange(oldPrice, PlatformPlanPricing.MonthsOf(sub.BillingCycle), newPrice, PlatformPlanPricing.MonthsOf(newCycle),
+            sub.EndDate, nowUtc, planActive: sub.Status == SubscriptionStatus.Active, isTrial: sub.Status == SubscriptionStatus.Trial, isPermanentFree: sub.IsPermanentFree);
+    }
 
     /// <summary>รอบ 230 (D-8 · คำตัดสินข้อ 230-Q1/230-Q2): ดูราคาก่อนยืนยัน — ใช้ตัวตัดสินเดียวกับ <see cref="ConvertTrialAsync"/>/<see cref="ChangeSubscriptionAsync"/>
     /// (จำแนกทิศ · ส่วนต่าง · ราคาเต็ม · คูปอง) · ไม่สร้าง/ไม่จองอะไร</summary>
@@ -914,45 +1026,70 @@ public class SubscriptionService : ISubscriptionService
         var cycle = cycleRequested ?? sub.BillingCycle;
         var now = DateTime.UtcNow;
 
-        async Task<PlanChangeQuote> Pay(string kind, bool prorated, BillingCycle c, decimal list, int? d, int? cd, DateTime? end, string msg)
+        // รอบ 231 (231-8): ราคาพิเศษของแพ็กเกจเป้าหมายรอบที่ขอ — ตัวตัดสินเดียวกับตอนยืนยัน (RequestPlanPaymentAsync) · StandardAmount = ราคาตั้ง
+        var effective = await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, cycle, now, forRenewal: PlatformPlanPricing.IsRenewalPurchase(sub.Plan, template.Plan));   // ฝ่ายค้าน S4
+        var specialNote = PlatformPlanPricing.SpecialPriceNote(effective, cycle);
+        // ฝ่ายค้าน S10: ส่วนต่างอัปเกรดคิดบน "รอบปัจจุบัน" ไม่ใช่รอบที่ขอ ⇒ ราคาตั้ง/ป้ายราคาพิเศษของบรรทัดนั้นต้องมาจากรอบที่คิดจริง
+        var effectiveCurrentCycle = cycle == sub.BillingCycle ? effective
+            : await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, sub.BillingCycle, now, forRenewal: PlatformPlanPricing.IsRenewalPurchase(sub.Plan, template.Plan));
+        var specialNoteCurrentCycle = PlatformPlanPricing.SpecialPriceNote(effectiveCurrentCycle, sub.BillingCycle);
+
+        async Task<PlanChangeQuote> Pay(string kind, bool prorated, BillingCycle c, decimal list, int? d, int? cd, DateTime? end, string msg,
+            decimal? standard = null, decimal? credit = null, DateTime? newEnd = null, string? special = null)
         {
             var ev = await PlatformCouponStore.PreviewAsync(_db, companyId, couponCode, PlatformCouponScope.Subscription,
                 plan.ToString(), c.ToString(), null, list, now);
             var ok = ev is { Ok: true };
             return new PlanChangeQuote(kind, prorated, plan.ToString(), c.ToString(), list, ok ? ev!.Discount : 0m, ok ? ev!.AmountAfter : list,
-                d, cd, end, null, msg, ok ? ev!.Label : null, ev is { Ok: false } ? ev.Problem : null);
+                d, cd, end, null, msg, ok ? ev!.Label : null, ev is { Ok: false } ? ev.Problem : null,
+                StandardAmount: standard, SpecialPriceNote: standard is decimal s && s > list ? (special ?? specialNote) : null,
+                CycleChangeCredit: credit, NewPeriodEndUtc: newEnd);
         }
 
         // ทดลองใช้/หมดอายุ/ฟรีถาวร ⇒ ซื้อเต็มรอบ เริ่มรอบใหม่จากวันที่ชำระ (เส้น ConvertTrialAsync)
         if (sub.Status != SubscriptionStatus.Active || sub.IsPermanentFree)
         {
-            var full = PlatformPlanPricing.AmountDue(template, cycle);
+            var full = PlatformPlanPricing.AmountDue(effective.Price, null);
+            var standardFull = PlatformPlanPricing.AmountDue(effective.ListPrice, null);
             // ฝ่ายค้าน N6: โค้ดโปรโมชันแปลงจากทดลองใช้ของบริษัทนี้ (TrialConfig) — เงื่อนไขเดียวกับ ConvertTrialAsync · ใช้ก่อนคูปองแพลตฟอร์ม
             var trial = await _db.TrialConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.SubscriptionId == sub.Id);
             if (!string.IsNullOrEmpty(couponCode) && trial != null && trial.ConversionPromoCode == couponCode
                 && trial.DiscountPercentOnConversion.HasValue && (trial.DiscountValidUntil == null || trial.DiscountValidUntil > now))
             {
-                var promo = PlatformPlanPricing.AmountDue(template, cycle, trial.DiscountPercentOnConversion.Value);
+                var promo = PlatformPlanPricing.AmountDue(effective.Price, trial.DiscountPercentOnConversion.Value);
                 return new PlanChangeQuote("New", false, plan.ToString(), cycle.ToString(), full, PlatformCouponRule.R2(full - promo), promo, null, null, null, null,
                     $"ชำระ {template.Name} {PlatformPlanPricing.MonthsOf(cycle)} เดือน — เริ่มรอบใหม่จากวันที่ชำระ (โปรโมชันแปลงจากทดลองใช้ ลด {trial.DiscountPercentOnConversion:0.##}% · ผู้ดูแลระบบตรวจยอดก่อนเปิด)",
-                    $"โปรโมชันแปลงจากทดลองใช้ {trial.DiscountPercentOnConversion:0.##}%");
+                    $"โปรโมชันแปลงจากทดลองใช้ {trial.DiscountPercentOnConversion:0.##}%",
+                    StandardAmount: standardFull, SpecialPriceNote: effective.Applied ? specialNote : null);
             }
             return await Pay("New", false, cycle, full, null, null, null,
-                $"ชำระ {template.Name} {PlatformPlanPricing.MonthsOf(cycle)} เดือน — เริ่มรอบใหม่จากวันที่ชำระ");
+                $"ชำระ {template.Name} {PlatformPlanPricing.MonthsOf(cycle)} เดือน — เริ่มรอบใหม่จากวันที่ชำระ", standard: standardFull);
         }
 
         var kind = PlatformPlanPricing.Classify(current?.MonthlyPrice ?? 0m, template.MonthlyPrice);
+        // รอบ 231 (231-9): เปลี่ยนรอบบิลยาวขึ้นกลางรอบ — ตัวตัดสินเดียวกับ ChangeSubscriptionAsync
+        if (cycle != sub.BillingCycle && kind != PlatformPlanPricing.ChangeKind.Downgrade
+            && PlatformPlanPricing.MonthsOf(cycle) > PlatformPlanPricing.MonthsOf(sub.BillingCycle))
+        {
+            var cc = await CycleChangeForAsync(sub, current, template, cycle, now);
+            if (cc.Applies)
+                return await Pay("CycleChange", false, cycle, cc.Amount, cc.DaysRemaining, cc.CycleDays, sub.EndDate,
+                    $"เปลี่ยนเป็นราย{PlatformPlanPricing.CycleLabel(cycle)}: {cc.Note} — มีผลทันทีเมื่อชำระ · รอบใหม่ {cc.NewCycleMonths} เดือน นับจากวันที่ชำระ (วันหมดอายุเดิมไม่ใช้แล้ว)",
+                    standard: effective.Applied ? PlatformPlanPricing.AmountDue(effective.ListPrice, null) : null, credit: cc.Credit, newEnd: cc.NewEndUtc);
+        }
         if (kind == PlatformPlanPricing.ChangeKind.Upgrade)
         {
-            var pr = ProrationFor(sub, current, template, now);
+            var pr = await ProrationForAsync(sub, current, template, now);
             if (pr.Applies)
                 return await Pay("Upgrade", true, sub.BillingCycle, pr.Amount, pr.DaysRemaining, pr.CycleDays, sub.EndDate,
                     $"จ่ายส่วนต่างเฉพาะวันที่เหลือ ({pr.Note}) — เปลี่ยนเป็น {template.Name} ทันทีเมื่อชำระ · ใช้ได้ถึงวันเดิม · รอบถัดไปคิดราคา {template.Name}"
-                    + (cycle != sub.BillingCycle ? " · รอบบิลคงเดิม (เปลี่ยนรอบบิลได้หลังอัปเกรด มีผลวันครบรอบ)" : ""));
+                    + (cycle != sub.BillingCycle ? " · รอบบิลสั้นลงคงเดิม (เปลี่ยนรอบบิลสั้นลงได้หลังอัปเกรด มีผลวันครบรอบ)" : ""),
+                    standard: effectiveCurrentCycle.Applied ? PlatformPlanPricing.AmountDue(effectiveCurrentCycle.ListPrice, null) : null, special: specialNoteCurrentCycle);   // S10
             var daysLeft = UsageBarRule.DaysLeft(sub.EndDate, now);
-            return await Pay("Upgrade", false, cycle, PlatformPlanPricing.AmountDue(template, cycle), null, null, null,
+            return await Pay("Upgrade", false, cycle, PlatformPlanPricing.AmountDue(effective.Price, null), null, null, null,
                 $"ชำระ {template.Name} เต็มรอบ — เริ่มรอบใหม่จากวันที่ชำระ ({pr.NotApplicableReason})"
-                + (daysLeft > 0 ? $" · วันที่เหลือของแพ็กเกจเดิม {daysLeft} วันไม่ถูกนำมาหัก" : ""));
+                + (daysLeft > 0 ? $" · วันที่เหลือของแพ็กเกจเดิม {daysLeft} วันไม่ถูกนำมาหัก" : ""),
+                standard: PlatformPlanPricing.AmountDue(effective.ListPrice, null));
         }
         if (template.Plan == sub.Plan && cycle == sub.BillingCycle)
             return new PlanChangeQuote("Same", false, plan.ToString(), cycle.ToString(), 0m, 0m, 0m, null, null, sub.EndDate, null,
@@ -1299,6 +1436,8 @@ public class SubscriptionService : ISubscriptionService
         // ⚠️ ต้องล้าง **ตัวนับทุกตัว** ที่วันรีเซ็ตนี้คุม (รวม OCR) — เดิมจุดนี้ล้างแค่เอกสาร/JE
         // แล้วเลื่อนวันรีเซ็ต ⇒ ตัวนับ OCR ไม่เคยถูกล้าง สะสมข้ามเดือนจนผู้ใช้สแกนไม่ได้
         // (เจ้าของรายงาน 2026-09-24) — ดู Helpers/SubscriptionUsageRollover
+        // รอบ 231 (§D.1): snapshot ค่าปิดเดือน (เอกสาร/OCR) **ก่อน** ล้างตัวนับ — INSERT … ON CONFLICT บนคอนเนกชันเดียวกัน (ไม่ถึงวันรีเซ็ต = ไม่เขียน)
+        await UsageSnapshotService.WriteRolloverAsync(_db, sub, DateTime.UtcNow);
         if (Accounting.Helpers.SubscriptionUsageRollover.RollIfDue(sub, DateTime.UtcNow))
         {
             // persist เฉพาะตอน tracker สะอาด (ดู trackerClean ด้านบน) — ค่าใน
@@ -1389,7 +1528,12 @@ public class SubscriptionService : ISubscriptionService
         if (additionalBytes < 0) return true;
         var status = await GetStorageStatusAsync(companyId);
         if (status == null) return false;
-        return status.UsedBytes + additionalBytes <= status.MaxBytes;
+        if (status.UsedBytes + additionalBytes <= status.MaxBytes) return true;
+        // รอบ 231 (§B.4 · คำตัดสินข้อ 231-2): เกินเพดาน + ผู้เช่าเปิด "ใช้ต่อได้ คิดค่าส่วนเกิน" พื้นที่ (มีราคา · ไม่ถึงเพดานเงิน · ไม่ถูกล็อก) ⇒ อัปโหลดได้ ·
+        // คิดเป็น GB-เดือนสิ้นเดือนจากตัวอย่างรายวัน (UsageSnapshotJob) ไม่ใช่ต่อไฟล์ — ด่านนี้แค่ "ยอมให้เกิน"
+        if (_overage == null) return false;
+        var overGb = (int)Math.Min(int.MaxValue, (status.UsedBytes + additionalBytes - status.MaxBytes + Models.Constants.QuotaResources.BytesPerGb - 1) / Models.Constants.QuotaResources.BytesPerGb);
+        return (await _overage.DecideAsync(companyId, Models.Constants.OverageResources.StorageGb, Math.Max(1, overGb))).Allowed;
     }
 
     /// <summary>พื้นที่ที่ใช้จริง + เพดานของ pool (บริษัทเดี่ยว หรือทุกบริษัทใต้ License เดียวกัน) —
@@ -1544,8 +1688,11 @@ public class SubscriptionService : ISubscriptionService
                 }
                 var limitAfter = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(planLimit,
                     sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, nowUtc, used: usedAfter);
+                // รอบ 231 (คำตัดสินข้อ 231-5): เกณฑ์เตือนตามที่แอดมินตั้ง (PlatformBillingSettings.QuotaWarnPercents · QuotaWarnPolicy) —
+                // ค่าที่เก็บ = % ที่เพิ่งข้าม (80/90/100) แจ้งครั้งเดียวต่อเกณฑ์ต่อเดือน (เดิมระดับ 1/2 ตายตัว 80/100)
+                var warnPercents = (await PlatformBillingSettingsService.LoadPolicyAsync(_db)).WarnPercents;
                 crossedLevel = Accounting.Helpers.DocumentQuotaPolicy.CrossedWarnLevel(usedBefore, limitBefore,
-                    usedAfter, limitAfter);
+                    usedAfter, limitAfter, warnPercents);
                 crossedUsed = usedAfter; crossedLimit = limitAfter;
                 break;
             }
@@ -1621,16 +1768,14 @@ public class SubscriptionService : ISubscriptionService
     {
         try
         {
-            var ownerUserId = await _db.CompanyUsers.AsNoTracking()
-                .Where(cu => cu.CompanyId == companyId && cu.Role == UserRole.Owner)
-                .Select(cu => cu.UserId)
-                .FirstOrDefaultAsync();
-            if (ownerUserId == Guid.Empty) return;
-            await NotifyUserAsync(ownerUserId, companyId,
-                Models.Constants.NotificationEvents.DocumentQuotaLevel, NotificationType.System,
-                level >= 2 ? "โควตาเอกสารเดือนนี้เต็มแล้ว" : "โควตาเอกสารใกล้เต็ม",
-                Accounting.Helpers.DocumentQuotaPolicy.CrossedMessage(level, used, limit),
-                "/pages/addons.html", "Subscription", null);
+            // รอบ 231 (P0 ข · คำตัดสินข้อ 231-5): level = % เกณฑ์ที่ข้าม (80/90/100) · ลิงก์ไปแท็บ "ใช้ไปเท่าไร" ของ hub (เดิม /pages/addons.html) ·
+            // ฝ่ายค้าน S7: ผู้รับ = เจ้าของ + ผู้มีสิทธิ์ BillingManage (ตัวเดียว OverageService.BillingRecipientsAsync — เส้นเดียวกับทรัพยากรอื่น)
+            foreach (var uid in await OverageService.BillingRecipientsAsync(_db, companyId, default))
+                await NotifyUserAsync(uid, companyId,
+                    Models.Constants.NotificationEvents.DocumentQuotaLevel, NotificationType.System,
+                    Accounting.Helpers.QuotaWarnPolicy.Title("เอกสาร", level),
+                    Accounting.Helpers.DocumentQuotaPolicy.CrossedMessage(level >= 100 ? 2 : 1, used, limit),
+                    Models.Constants.QuotaResources.UsageUrl, "Subscription", null);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1976,6 +2121,7 @@ public class SubscriptionService : ISubscriptionService
         if (request.GracePeriodDays.HasValue) tc.GracePeriodDays = request.GracePeriodDays.Value;
         if (request.DeleteDataAfterGracePeriod.HasValue) tc.DeleteDataAfterGracePeriod = request.DeleteDataAfterGracePeriod.Value;
         if (request.DataRetentionDays.HasValue) tc.DataRetentionDays = request.DataRetentionDays.Value;
+        if (request.PurgeNoticeDays.HasValue) tc.PurgeNoticeDays = Math.Max(0, request.PurgeNoticeDays.Value);   // รอบ 231 (ฝ่ายค้าน B2)
         if (request.DiscountPercentOnConversion.HasValue) tc.DiscountPercentOnConversion = request.DiscountPercentOnConversion.Value;
         if (request.DiscountValidUntil.HasValue) tc.DiscountValidUntil = request.DiscountValidUntil.Value;
         if (request.ConversionPromoCode != null) tc.ConversionPromoCode = request.ConversionPromoCode;
@@ -2092,13 +2238,36 @@ public class SubscriptionService : ISubscriptionService
                 && (p.ExpiresAt == null || p.ExpiresAt > DateTime.UtcNow))
             .SumAsync(p => p.PagesRemaining);
 
+        // รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT P0 ก): เพดานที่มีผล = ตัวตัดสินเดียวกับด่าน/hub — เดิมอ่านช่องดิบ ⇒ ไม่รวม override แอดมิน/ที่นั่ง-GB ที่ซื้อเพิ่ม/โบนัสเอกสาร
+        // ผู้ใช้: QuotaLimitPolicy.Effective (override · allowance · ช่องเดิม · ที่ซื้อ) — ตัวเดียวกับ QuotaGateService.LimitAsync (QuotaStore ใช้ได้โดยไม่เกิดวง DI)
+        var limitNow = DateTime.UtcNow;
+        var usersLimit = Accounting.Helpers.QuotaLimitPolicy.Effective(
+            await QuotaStore.OverrideAsync(_db, companyId, Models.Constants.QuotaResources.Users),
+            await QuotaStore.AllowanceAsync(_db, await QuotaStore.PlanTemplateIdAsync(_db, companyId), Models.Constants.QuotaResources.Users),
+            status == SubscriptionStatus.Trial, maxUsers,
+            await QuotaStore.PurchasesAsync(_db, companyId, Models.Constants.QuotaResources.Users), limitNow);
+        maxUsers = usersLimit.IsUnlimited ? -1 : usersLimit.Effective!.Value;
+        // พื้นที่: GetStorageStatusAsync (เพดานเดิม + override + ที่ซื้อ · pool ของ License) — ตัวตัดสินเดิมของด่านสื่อ CMS
+        if (await GetStorageStatusAsync(companyId) is { } storageStatus) { maxStorage = storageStatus.MaxBytes; storageUsed = storageStatus.UsedBytes; }
+        // เอกสาร: เพดานที่ด่านใช้จริง (โบนัส top-up/แอดมิน/ภารกิจ) + เพดานที่แสดงเมื่อเกิน (DisplayLimit — ไม่โชว์ "150/100")
+        var docOverageThisMonth = (await _db.UsageEvents.AsNoTracking()
+            .Where(u => u.CompanyId == companyId && !u.IsDeleted && !u.IsSandbox
+                && (u.FeatureCode == Models.Constants.AddOnCodes.DocumentsOverage || u.FeatureCode == Models.Constants.OverageResources.FeatureCode(Models.Constants.OverageResources.Documents)))
+            .Select(u => new { u.OccurredAt, u.Quantity }).ToListAsync())
+            .Where(u => AddOnBilling.PeriodOf(u.OccurredAt) == AddOnBilling.PeriodOf(limitNow)).Sum(u => u.Quantity);
+        var docEffective = Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(maxDocs, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, limitNow, used: docsUsed);
+        var docBonusAlive = sub.DocumentBonusQuota > 0 && (sub.DocumentBonusExpiresAt == null || sub.DocumentBonusExpiresAt > limitNow);
+        maxDocs = Accounting.Helpers.DocumentQuotaPolicy.DisplayLimit(docsUsed, docEffective, docOverageThisMonth);
+        var warnPercents = (await PlatformBillingSettingsService.LoadPolicyAsync(_db)).WarnPercents;
+
         // รอบ 230 (D-4 · F2 ข้อ 5): หลอดทุกตัวคิดที่เซิร์ฟเวอร์ตัวเดียว (UsageBarRule) — เกณฑ์ "ไม่จำกัด"/สีเตือน/% ไม่อยู่ในหน้าเว็บอีก · คำเตือนข้างล่างอ่านระดับจากหลอดเดียวกัน
+        // รอบ 231: เกณฑ์เตือนจากค่าตั้งของแอดมิน (QuotaWarnPolicy) ทุกหลอด
         var bars = new List<UsageBarRule.Bar>
         {
-            UsageBarRule.Documents(docsUsed, maxDocs),
-            UsageBarRule.Ocr(ocrUsed, maxOcr, sub.OcrBonusPages, ocrCredits),
-            UsageBarRule.Users(companyUsers.Count, maxUsers),
-            UsageBarRule.Storage(storageUsed, maxStorage),
+            UsageBarRule.Documents(docsUsed, maxDocs, warnPercents, docBonusAlive ? $"รวมโบนัสคงเหลือ {sub.DocumentBonusQuota:N0}" : null),
+            UsageBarRule.Ocr(ocrUsed, maxOcr, sub.OcrBonusPages, ocrCredits, warnPercents),
+            UsageBarRule.Users(companyUsers.Count, maxUsers, warnPercents),
+            UsageBarRule.Storage(storageUsed, maxStorage, warnPercents),
         };
         var storageBar = bars[3]; var docBar = bars[0]; var userBar = bars[2];
 
@@ -2179,6 +2348,8 @@ public class SubscriptionService : ISubscriptionService
         foreach (var sub in expiredTrials)
         {
             sub.Status = SubscriptionStatus.Expired;
+            // รอบ 231 (231-10 · ฝ่ายค้าน B1): หมดทดลอง = ยังเป็นชนิด Trial (ไม่ใช่ Paid) — ผู้อ่าน: ด่านอ่าน (BlockAccessOnExpiry) · งานปิดข้อมูล (TrialDataRetentionJob)
+            sub.Kind = SubscriptionKindRule.AfterTrialExpired(sub.IsPermanentFree);
             if (sub.TrialConfig != null)
                 sub.TrialConfig.TrialStatus = TrialStatus.Expired;
 
@@ -2194,6 +2365,28 @@ public class SubscriptionService : ISubscriptionService
         }
 
         await _db.SaveChangesAsync();
+
+        // รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §A.8 "หมดทดลอง ไม่แจ้งเจ้าของจากจุดนี้"): แจ้งเจ้าของหลัง commit — ล้มเหลวไม่ย้อนสถานะ (log อย่างเดียว · ไม่ block งาน)
+        foreach (var sub in expiredTrials)
+        {
+            try
+            {
+                var ownerId = await _db.CompanyUsers.AsNoTracking().Where(cu => cu.CompanyId == sub.CompanyId && cu.Role == UserRole.Owner)
+                    .Select(cu => cu.UserId).FirstOrDefaultAsync();
+                if (ownerId == Guid.Empty) continue;
+                var blocks = sub.TrialConfig?.BlockAccessOnExpiry == true;
+                await NotifyUserAsync(ownerId, sub.CompanyId,
+                    Models.Constants.NotificationEvents.SubscriptionExpired, NotificationType.SubscriptionExpired,
+                    "ช่วงทดลองใช้สิ้นสุดแล้ว",
+                    (blocks ? "ระบบปิดการเข้าถึงข้อมูลจนกว่าจะเลือกแพ็กเกจ" : "ยังเปิดดูข้อมูลได้ แต่สร้าง/แก้ไขไม่ได้หลังพ้นช่วงผ่อนผัน")
+                    + " — เลือกแพ็กเกจที่หน้า \"แพ็กเกจและการชำระเงิน\"",
+                    "/pages/billing.html#tab=plan", "Subscription", sub.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "แจ้งเจ้าของว่าทดลองใช้หมดอายุไม่สำเร็จ (บริษัท {CompanyId}) — สถานะเปลี่ยนแล้ว", sub.CompanyId);
+            }
+        }
     }
 
     // ==================== Subscription Notification Settings ====================
@@ -2249,7 +2442,9 @@ public class SubscriptionService : ISubscriptionService
         if (months <= 0) throw new BusinessRuleException("รอบบิลไม่ถูกต้อง");
         if (request.RequestedPeriodMonths > 0 && request.RequestedPeriodMonths != months)
             throw new BusinessRuleException($"จำนวนเดือนต้องตรงกับรอบบิล ({months} เดือน)");
-        var due = PlatformPlanPricing.AmountDue(template, request.RequestedBillingCycle);
+        // รอบ 231 (231-8): ยอดที่ต้องตรง = ราคาพิเศษของบริษัทนี้ (ถ้ามี) ไม่ใช่ราคาแม่แบบ — ตัวตัดสินเดียวกับ handler/เริ่มชำระออนไลน์
+        var effectiveSubmit = await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, request.RequestedBillingCycle, DateTime.UtcNow, forRenewal: PlatformPlanPricing.IsRenewalPurchase(sub.Plan, template.Plan));   // ฝ่ายค้าน S4
+        var due = PlatformPlanPricing.AmountDue(effectiveSubmit.Price, null);
         if (due <= 0m)
             throw new BusinessRuleException("แพ็กเกจนี้ไม่มีค่าบริการตามตารางราคา — ไม่ต้องแจ้งชำระ");
         if (!PlatformPlanPricing.ClaimedAmountAcceptable(request.Amount, due))
@@ -2710,6 +2905,73 @@ public class SubscriptionService : ISubscriptionService
                     $"การชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท ได้รับการยืนยันแล้ว",
                     "/pages/billing.html", "SubscriptionPayment", payment.Id);
         }
+        else if (request.Approve && payment.IsCycleChange)
+        {
+            // รอบ 231 (คำตัดสินข้อ 231-9 · §B.8): เปลี่ยนรอบบิลกลางรอบ — รอบใหม่ "เริ่มใหม่" วันที่ชำระ · วันหมดอายุใหม่ = วันชำระ + เดือนของรอบใหม่ · สิทธิ์สลับเมื่อเงินเข้า
+            var sub = payment.Subscription;
+            var now = DateTime.UtcNow;
+            var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == payment.RequestedPlan && p.IsActive);
+            // ล้าสมัย (ต่ออายุ/แอดมินแก้วันหมดอายุ/แพ็กเกจเปลี่ยนหลังคิดเครดิต) ⇒ พักให้แอดมิน (เครดิตที่หักอาจไม่ตรงแล้ว) · แอดมินอนุมัติ = ตัดสินแล้ว
+            var ccStale = template == null ? $"ไม่พบแม่แบบแพ็กเกจ {payment.RequestedPlan} ที่เปิดใช้"
+                : PlatformProration.StaleReason(payment.ProrationCycleEndUtc ?? sub.EndDate, sub.EndDate, payment.ProrationFromPlan ?? sub.Plan.ToString(), sub.Plan.ToString(), now);
+            var ccRenewalClaim = sub.RenewalInvoiceDocumentId is Guid oldRenewalCc
+                ? await RenewalInvoiceClaims.ClaimProblemAsync(_db, sub.Id, oldRenewalCc, payment.Id) : null;
+            if ((ccStale != null || ccRenewalClaim != null) && systemConfirmed)
+                return await HoldForAdminAsync(payment, request, performedBy, lockTx,
+                    $"เงินค่าเปลี่ยนรอบบิล {payment.PaymentNumber} เข้าแล้วแต่ต้องให้คนตัดสิน: {ccStale ?? ccRenewalClaim} — ตรวจแล้วอนุมัติ (เริ่มรอบใหม่) หรือคืนเงิน");
+            // ฝ่ายค้าน S3: ใบต่ออายุเดิมถูกจ่าย/แจ้งชำระแล้ว ⇒ ไม่ทับ EndDate เอง — แอดมินต้องจัดการใบนั้นก่อน (ยกเลิก/จับคู่) แล้วค่อยอนุมัติ
+            if (ccRenewalClaim != null)
+                throw new BusinessRuleException(
+                    $"อนุมัติเปลี่ยนรอบบิล {payment.PaymentNumber} ไม่ได้: {ccRenewalClaim} — จัดการใบต่ออายุเดิมก่อน (ยกเลิก/จับคู่การชำระ) ระบบไม่ทับวันหมดอายุเอง",
+                    PlatformProration.RenewalClaimRuleCode);
+            payment.Status = SubscriptionPaymentStatus.Approved;
+            var fromPlan = sub.Plan;
+            var fromCycle = sub.BillingCycle;
+            payment.PaymentDate = PlatformPlanPricing.ApprovedPaymentDate(systemConfirmed, gatewayPaidAtUtc,
+                payment.Kind is SubscriptionPaymentKind.ManualByAdmin or SubscriptionPaymentKind.Waived,
+                payment.PaymentDate, payment.CreatedAt, now);
+            if (sub.RenewalInvoiceNumber != null || sub.RenewalInvoiceDocumentId != null)
+            {
+                staleRenewalId = sub.RenewalInvoiceDocumentId;
+                _db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    SubscriptionId = sub.Id, Action = "RenewalInvoiceSuperseded", FromPlan = fromPlan, ToPlan = payment.RequestedPlan,
+                    Notes = $"ใบแจ้งหนี้ต่ออายุ {sub.RenewalInvoiceNumber} (รอบเดิม {fromCycle}) ถูกแทนที่ด้วยการเปลี่ยนรอบบิล {payment.PaymentNumber} — "
+                          + "ยังไม่มีการชำระ = ระบบยกเลิกใบเดิม · รอบใหม่ออกใบต่ออายุของตัวเอง",
+                    PerformedBy = performedBy
+                });
+                RenewalInvoiceSupersede.Apply(sub);
+            }
+            var ccStatusAfter = await StatusAfterPaymentAsync(sub);
+            if (template != null) await ApplyTemplateWithPriceAsync(sub, template, payment.RequestedBillingCycle, now);
+            else { sub.Plan = payment.RequestedPlan; sub.BillingCycle = payment.RequestedBillingCycle; }
+            var ccMonths = payment.RequestedPeriodMonths > 0 ? payment.RequestedPeriodMonths : PlatformPlanPricing.MonthsOf(payment.RequestedBillingCycle);
+            sub.EndDate = payment.PaymentDate.AddMonths(ccMonths);
+            sub.NextBillingDate = sub.EndDate;
+            sub.LastPaymentDate = payment.PaymentDate;
+            sub.PaymentReference = payment.PaymentNumber;
+            sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
+            sub.CancelAtPeriodEnd = false; sub.CancelRequestedAt = null;
+            sub.Status = ccStatusAfter;
+            payment.SubscriptionExtendedTo = sub.EndDate;
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id, Action = "CycleChangeApplied", FromPlan = fromPlan, ToPlan = payment.RequestedPlan, ToStatus = sub.Status,
+                Notes = $"Payment {payment.PaymentNumber} approved — เปลี่ยนรอบบิล {fromCycle} → {payment.RequestedBillingCycle}"
+                        + (fromPlan != payment.RequestedPlan ? $" พร้อมเปลี่ยน {fromPlan} → {payment.RequestedPlan}" : "")
+                        + $" · หักมูลค่าคงเหลือ {payment.CycleChangeCredit ?? 0m:N2} ({payment.ProrationDays}/{payment.ProrationCycleDays} วัน) · รอบใหม่ถึง {sub.EndDate:yyyy-MM-dd}"
+                        + (ccStale != null ? $" · แอดมินอนุมัติแม้ล้าสมัย: {ccStale}" : ""),
+                PerformedBy = performedBy
+            });
+            var ccOwner = await _db.CompanyUsers.Where(cu => cu.CompanyId == sub.CompanyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId).FirstOrDefaultAsync();
+            if (ccOwner != Guid.Empty)
+                await NotifyUserAsync(ccOwner, sub.CompanyId,
+                    Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded, NotificationType.SubscriptionPaymentApproved,
+                    "เปลี่ยนรอบบิลแล้ว",
+                    $"ได้รับชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท — รอบบิลราย{PlatformPlanPricing.CycleLabel(payment.RequestedBillingCycle)} เริ่มแล้ว ใช้ได้ถึง {sub.EndDate.AddHours(7):dd/MM/yyyy}",
+                    "/pages/billing.html", "SubscriptionPayment", payment.Id);
+        }
         else if (request.Approve && payment.IsProration)
         {
             // รอบ 230 (คำตัดสินข้อ 230-Q1): ส่วนต่างอัปเกรดกลางรอบ — เปลี่ยนแพ็กเกจทันที <b>วันหมดอายุคงเดิม</b> (ไม่ต่ออายุ · ไม่เริ่มรอบใหม่)
@@ -2751,7 +3013,7 @@ public class SubscriptionService : ISubscriptionService
                 });
                 RenewalInvoiceSupersede.Apply(sub);
             }
-            if (template != null) ApplyTemplate(sub, template, sub.BillingCycle);
+            if (template != null) await ApplyTemplateWithPriceAsync(sub, template, sub.BillingCycle, now);
             else sub.Plan = payment.RequestedPlan;
             sub.EndDate = keepEnd; sub.NextBillingDate = keepNext; sub.Status = keepStatus;
             // อัปเกรดแทนการดาวน์เกรด/เปลี่ยนรอบที่รอวันครบรอบ (คำขอล่าสุดชนะ) · ฝ่ายค้าน N5: บอกในประวัติว่าล้างอะไรไป (ไม่เงียบ)
@@ -2849,7 +3111,7 @@ public class SubscriptionService : ISubscriptionService
                     RenewalInvoiceSupersede.Apply(sub);   // ตัวล้างตัวชี้ใบต่ออายุตัวเดียว (เดิมเขียน 4 บรรทัดเอง)
                 }
                 // ธง "ฟรีถาวร" ต้องตามแพ็กเกจใหม่เสมอ (ApplyTemplate ตั้งให้) — เดิมเส้นนี้เคยลืมธงนี้ ⇒ จ่ายแล้วยังโชว์ "ฟรีถาวร" และงานตัดหมดอายุไม่ตัด
-                ApplyTemplate(sub, template, payment.RequestedBillingCycle);
+                await ApplyTemplateWithPriceAsync(sub, template, payment.RequestedBillingCycle, now);
                 sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
             }
             else
@@ -3293,7 +3555,7 @@ public class SubscriptionService : ISubscriptionService
         {
             var tpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.ScheduledPlan && p.IsActive);
             var fromPlan = sub.Plan;
-            if (tpl != null) ApplyTemplate(sub, tpl, sub.ScheduledBillingCycle ?? sub.BillingCycle);
+            if (tpl != null) await ApplyTemplateWithPriceAsync(sub, tpl, sub.ScheduledBillingCycle ?? sub.BillingCycle, now);
             _db.SubscriptionHistories.Add(new SubscriptionHistory
             {
                 SubscriptionId = sub.Id,
@@ -3496,7 +3758,15 @@ public class SubscriptionService : ISubscriptionService
             p.CouponCode,
             p.CouponDiscountAmount,
             p.QuotedAmount,
-            p.AmountOverrideReason);
+            p.AmountOverrideReason,
+            // รอบ 231 (ฝ่ายค้าน S1): เปลี่ยนรอบบิล · ราคาพิเศษ — echo กลับให้หน้าตรวจสลิป/hub
+            p.IsCycleChange,
+            p.CycleChangeCredit,
+            p.IsCycleChange && p.ProrationDays is int cd && p.ProrationCycleDays is int cc
+                ? $"เปลี่ยนรอบบิลเป็นราย{PlatformPlanPricing.CycleLabel(p.RequestedBillingCycle)} — หักมูลค่าคงเหลือรอบเดิม {p.CycleChangeCredit ?? 0m:N2} บาท ({cd}/{cc} วัน) · อนุมัติแล้วรอบใหม่ {p.RequestedPeriodMonths} เดือนเริ่มวันที่ชำระ"
+                : null,
+            p.StandardAmount,
+            p.PriceOverrideId);
     }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)
@@ -3523,7 +3793,10 @@ public class SubscriptionService : ISubscriptionService
             t.MaxSharedMessagesPerMonth,
             t.TrialMaxSharedMessagesPerMonth,
             Accounting.Helpers.NotifyQuotaPolicy.SuggestedLimit(t.Plan),
-            Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialLimit);
+            Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialLimit,
+            // รอบ 231 (P0 จ): ข้อความ/ธง "ไม่จำกัด" ของแพ็กเกจคิดที่เซิร์ฟเวอร์ (UsageBarRule) — js/plan-display.js เลิกถือสำเนาเกณฑ์ 999/99/99999
+            UsageBarRule.LimitTexts(t.MaxUsers, t.MaxCompanies, t.MaxDocumentsPerMonth, t.MaxJournalEntriesPerMonth, t.MaxOcrPagesPerMonth, t.MaxStorageBytes, t.MaxSharedMessagesPerMonth),
+            UsageBarRule.UnlimitedFlags(t.MaxUsers, t.MaxCompanies, t.MaxDocumentsPerMonth, t.MaxJournalEntriesPerMonth, t.MaxOcrPagesPerMonth, t.MaxStorageBytes, t.MaxSharedMessagesPerMonth));
     }
 }
 

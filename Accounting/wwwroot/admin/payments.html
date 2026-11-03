@@ -252,7 +252,9 @@
                   ${p.slipOcrReference ? ` · อ้างอิง ${AdminLayout.esc(p.slipOcrReference)}` : ''}
                 </div>` : ''}
 
-              ${p.isProration || p.couponCode || p.amountOverrideReason ? `<div style="border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+              ${p.isProration || p.isCycleChange || p.standardAmount != null || p.couponCode || p.amountOverrideReason ? `<div style="border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+                ${p.isCycleChange ? `<div>🔁 ${AdminLayout.esc(p.cycleChangeNote || 'เปลี่ยนรอบบิลกลางรอบ')} — อนุมัติแล้ว <b>รอบใหม่เริ่มวันที่ชำระ</b> (วันหมดอายุเดิมไม่ใช้)</div>` : ''}
+                ${p.standardAmount != null ? `<div>★ ราคาพิเศษของบริษัทนี้ — ราคาตั้ง ${AdminLayout.money(p.standardAmount)} → คิด ${AdminLayout.money(p.quotedAmount != null ? p.quotedAmount : p.amount)}</div>` : ''}
                 ${p.isProration ? `<div>📐 ${AdminLayout.esc(p.prorationNote || 'ส่วนต่างอัปเกรดกลางรอบ')} — อนุมัติแล้วเปลี่ยนแพ็กเกจทันที <b>ไม่ขยับวันหมดอายุ</b></div>` : ''}
                 ${p.couponCode ? `<div>🎟️ คูปอง ${AdminLayout.esc(p.couponCode)} — ราคา ${AdminLayout.money(p.listAmount)} ลด ${AdminLayout.money(p.couponDiscountAmount)}</div>` : ''}
                 ${p.amountOverrideReason ? `<div>✏️ แอดมินแก้ยอด: ${AdminLayout.esc(p.amountOverrideReason)}</div>` : ''}

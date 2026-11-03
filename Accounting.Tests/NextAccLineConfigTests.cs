@@ -79,10 +79,12 @@ public class NextAccLineConfigTests
     public void Undecryptable_admin_token_does_not_fall_back_to_config_set()
     {
         // ฝ่ายค้าน (B+D) ข้อ 3: token ในหน้าแอดมินถอดไม่ได้ ⇒ ไม่สลับไปใช้ config (อาจเป็นคนละ OA) ⇒ ไม่มี token + เหตุชัด
-        var r = NextAccLineConfigRule.Merge(V(null, "S", "@adminoa", Bot), V("CFG-TOKEN", "CFG-SECRET", "@cfgoa"), adminTokenUndecryptable: true);
+        var r = NextAccLineConfigRule.Merge(V(null, "S", "@adminoa", Bot), V("CFG-TOKEN", "CFG-SECRET", "@cfgoa"), adminTokenUnusableReason: "เหตุที่ตรวจพบ");
         Assert.False(r.HasToken);
         Assert.Equal(NextAccLineConfigRule.SourceNone, r.Source);
-        Assert.Equal(NextAccLineConfigRule.UndecryptableTokenMessage, r.Problem);
+        Assert.Contains("ถอดรหัส Channel Access Token ของ LINE OA กลางไม่ได้ (เหตุที่ตรวจพบ)", r.Problem);
+        Assert.Contains("ไม่สลับไปใช้ค่า config", r.Problem);   // รอบ 231: ประโยคอ้างเหตุที่ตรวจจริง ไม่ใช่ "คีย์ถูกเปลี่ยน" ตายตัว
+        Assert.DoesNotContain("คีย์เข้ารหัสของระบบถูกเปลี่ยน", r.Problem);
         Assert.Null(r.ChannelSecret);
         Assert.Equal("@adminoa", r.BasicId);
         // ทิศตรงข้าม: ไม่มี token ในหน้าแอดมินเลย ⇒ ใช้ config ตามเดิม (deployment ที่ตั้งผ่าน env)

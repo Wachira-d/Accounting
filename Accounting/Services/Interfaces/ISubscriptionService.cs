@@ -4,7 +4,10 @@ using Accounting.Models.Enums;
 namespace Accounting.Services.Interfaces;
 
 /// <summary>ส่วนที่ gate แพ็กเกจต้องใช้ — ผลของ <see cref="ISubscriptionService.GetGateStateAsync"/></summary>
-public sealed record SubscriptionGateState(SubscriptionPlan Plan, SubscriptionStatus Status, FeatureFlags EnabledFeatures);
+/// <param name="BlockReadsWhenExpired">รอบ 231 (231-10): ผู้อ่านของ <c>TrialConfig.BlockAccessOnExpiry</c> (เฉพาะ <c>Subscription.Kind = Trial</c>) — middleware ส่งเข้า <c>SubscriptionGatePolicy.Decide</c></param>
+/// <param name="AllowExportWhenExpired">ผู้อ่านของ <c>TrialConfig.AllowDataExportAfterExpiry</c></param>
+public sealed record SubscriptionGateState(SubscriptionPlan Plan, SubscriptionStatus Status, FeatureFlags EnabledFeatures,
+    bool BlockReadsWhenExpired = false, bool AllowExportWhenExpired = true);
 
 public interface ISubscriptionService
 {

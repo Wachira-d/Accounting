@@ -76,6 +76,8 @@
   <script src="/admin/admin-layout.js"></script>
   <script src="/admin/company-usage-audit.js"></script>
   <script src="/admin/notify-quota-admin.js"></script>
+  <script src="/admin/price-override-admin.js"></script>   <!-- รอบ 231 (231-8): การ์ดราคาพิเศษรายบริษัท -->
+
   <script>
     AdminLayout.init('customers');
     let currentPage = 1;
@@ -486,6 +488,8 @@
 
             <!-- Payments -->
             <div class="detail-panel" id="panel-payments">
+              <!-- รอบ 231 (231-8): ราคาพิเศษรายบริษัท (/admin/price-override-admin.js · ตัวเลขจากเซิร์ฟเวอร์) -->
+              <div id="priceOverrideCompany" style="margin-bottom:12px;padding:10px;border:1px solid #e2e8f0;border-radius:8px"></div>
               ${d.recentPayments.length ? `
               <div class="admin-table-wrap">
               <table class="admin-table">
@@ -522,6 +526,8 @@
       // the select element only exists in that branch of the template.
       if (!ap) loadAttachLicenseOptions();
       if (typeof NotifyQuotaAdmin !== 'undefined') NotifyQuotaAdmin.mount(document.getElementById('nqaCompany'), c.id);
+      // รอบ 231 (231-8): ราคาพิเศษรายบริษัท
+      if (typeof PriceOverrideAdmin !== 'undefined') PriceOverrideAdmin.mount(document.getElementById('priceOverrideCompany'), { companyId: c.id });
     }
 
     // current = undefined/null แปลว่าเซิร์ฟเวอร์ยังไม่ส่งค่า → ต้องบอกว่า “ไม่มีข้อมูล”
@@ -688,10 +694,13 @@
         if (isNaN(mj)) return;
         const mo = parseInt(prompt('MaxOcrPagesPerMonth (aggregate)', d.maxOcrPagesPerMonth));
         if (isNaN(mo)) return;
+        // รอบ 231 (231-11): เหตุผลบังคับ (ประวัติ + audit chain)
+        const reason = prompt('เหตุผลที่ปรับ limits (บังคับ · เก็บใน audit)', '') || '';
+        if (reason.trim().length < 3) { alert('ต้องระบุเหตุผล'); return; }
         await AdminAPI.put('/account-subscriptions/' + apId + '/limits', {
           maxCompanies: mc, maxUsersPerCompany: mu,
           maxDocumentsPerMonth: md, maxJournalEntriesPerMonth: mj,
-          maxOcrPagesPerMonth: mo,
+          maxOcrPagesPerMonth: mo, reason,
         });
         alert('✓ บันทึก limits ใหม่แล้ว');
         showDetail(window.currentCompanyId);

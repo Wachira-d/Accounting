@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using Accounting.Data;
 using Accounting.Models.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -43,8 +44,8 @@ public interface IGatewayAccountResolver
 /// <list type="number">
 /// <item>ตัวตัดสินว่า "เข้าธนาคารทันทีไหม" คือ <c>IPaymentProvider.SettlesDirectlyToBank</c>
 ///   ที่ adapter ประกาศเอง — <b>ไม่มีลิสต์ชื่อเจ้าตรงกลาง</b> (เกณฑ์ผ่านเฟส 6)</item>
-/// <item>ไม่มีผัง 11340 → คืน null (พฤติกรรมเดิม) แต่ <b>log ระดับ Error</b> —
-///   เงียบไม่ได้เพราะยอดธนาคารจะสูงเกินจริงตั้งแต่วันนั้นเป็นต้นไป</item>
+/// <item>ไม่มีผัง 11340 → <b>สร้างให้จากผังมาตรฐานใต้กลุ่ม 113</b> (รอบ 232 · <c>SettlementChartSeed.EnsureStandardAccountAsync</c>) ·
+///   ไม่มีกลุ่ม 113 ด้วย → คืน null แต่ <b>log ระดับ Error</b> — เงียบไม่ได้เพราะยอดธนาคารจะสูงเกินจริงตั้งแต่วันนั้นเป็นต้นไป</item>
 /// </list>
 /// </summary>
 public class GatewayAccountResolver : IGatewayAccountResolver
@@ -106,11 +107,9 @@ public class GatewayAccountResolver : IGatewayAccountResolver
         // ยังไม่ได้ตั้งค่า → ใช้ผังมาตรฐาน · **ไม่ตกไปลงธนาคาร** เพราะเงินยังไม่เข้าจริง
         // (ลงธนาคารเกินไว้ = กระทบยอดพังเงียบตลอดไป ซึ่งกู้ยากกว่าการมียอดค้างใน
         // บัญชีพักที่มองเห็นได้และล้างได้ตอน settlement)
-        return await _db.ChartOfAccounts.AsNoTracking()
-            .Where(a => a.CompanyId == companyId
-                && a.AccountCode == StandardClearingCode && !a.IsDeleted)
-            .Select(a => (Guid?)a.Id)
-            .FirstOrDefaultAsync(ct);
+        // รอบ 232: บริษัทเดิมที่ไม่มีแถว 11340 ⇒ สร้างให้จากผังมาตรฐานใต้กลุ่ม 113 (ตัวเดียวกับ migration seed) — ผู้ใช้ไม่ต้องเพิ่มผังเอง ·
+        // ไม่มีกลุ่ม 113 (ผังไม่ใช่มาตรฐาน) ⇒ null ตามเดิม (ผู้เรียกล้มดัง/ให้เลือกผังเอง)
+        return await SettlementChartSeed.EnsureStandardAccountAsync(_db, companyId, StandardClearingCode, ct);
     }
 
     public async Task<Guid?> ResolveFeeExpenseAccountAsync(Guid companyId, string providerCode, Guid? providerConfigId,

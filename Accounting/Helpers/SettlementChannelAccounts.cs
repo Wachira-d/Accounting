@@ -61,8 +61,9 @@ public static class SettlementChannelAccounts
                 return g;
             case GatewayClearingDecision.FailResolverMissing:
                 throw new BusinessRuleException(
-                    $"หาผังพักของ gateway ที่ช่องทาง \"{channel.DisplayName}\" ผูกไว้ไม่ได้ (ไม่ได้ตั้งผังพักใน config และไม่มีผัง 11340) — "
-                    + "เพิ่มผัง 11340 ลูกหนี้ผู้ให้บริการรับชำระเงิน หรือเลือกผังพักในหน้าตั้งค่าการรับชำระเงินออนไลน์ก่อนผูกช่องทาง",
+                    $"หาผังพักของ gateway ที่ช่องทาง \"{channel.DisplayName}\" ผูกไว้ไม่ได้ — ผังที่ตั้งในหน้าตั้งค่าการรับชำระเงินออนไลน์ถูกลบ/ปิดใช้ "
+                    + "หรือผังบัญชีของบริษัทไม่มีกลุ่ม 113 ให้ระบบสร้างผัง 11340 ลูกหนี้ผู้ให้บริการรับชำระเงินให้เอง · "
+                    + "เปิดใช้ผังนั้น หรือเลือกผังพักในหน้าตั้งค่าการรับชำระเงินออนไลน์ก่อนผูกช่องทาง",
                     "SETTLEMENT-GATEWAY-CLEARING");
             case GatewayClearingDecision.FailMismatch:
                 throw new BusinessRuleException(

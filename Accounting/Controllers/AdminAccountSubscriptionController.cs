@@ -39,6 +39,38 @@ public class AdminAccountSubscriptionController : ControllerBase
         return u?.IsSystemAdmin == true;
     }
 
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-11 · P0 ค): ร่องรอยของคำสั่ง License (เปลี่ยนสถานะ/ขยายอายุ/ปรับเพดาน) — เดิมไม่มีประวัติ ไม่มี audit chain ไม่บังคับเหตุผล ·
+    /// audit chain 1 แถว (EntityType AccountSubscription · ค่าเก่า/ใหม่ · เหตุผล) + <c>SubscriptionHistory</c> ต่อบริษัทลูกทุกบริษัทที่ผูกอยู่ (ระงับ License ⇒ ประวัติของบริษัทต้องเห็น) ·
+    /// ผู้เรียก SaveChanges</summary>
+    private async Task WriteLicenseAuditAsync(AccountSubscription a, string action, string reason, object before, object after,
+        SubscriptionStatus? fromStatus = null, SubscriptionStatus? toStatus = null)
+    {
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? uid.ToString();
+        var now = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = null, UserId = uid, UserEmail = email, Action = AuditAction.Update,
+            EntityType = nameof(AccountSubscription), EntityId = a.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { action, reason, after, ruleCode = "PLATFORM-LICENSE-ADMIN" }),
+            IpAddress = HttpContext?.Connection.RemoteIpAddress?.ToString(), Timestamp = now,
+        });
+        var childSubIds = await _db.Subscriptions.AsNoTracking()
+            .Where(s => s.AccountSubscriptionId == a.Id && !s.IsDeleted).Select(s => s.Id).ToListAsync();
+        foreach (var subId in childSubIds)
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = subId, AccountSubscriptionId = a.Id, Action = action,
+                FromStatus = fromStatus, ToStatus = toStatus,
+                Notes = $"License {a.Id.ToString()[..8].ToUpper()}: {System.Text.Json.JsonSerializer.Serialize(before)} → {System.Text.Json.JsonSerializer.Serialize(after)} — เหตุผล: {reason}",
+                PerformedBy = uid.ToString(),
+            });
+    }
+
+    private static string? ReasonProblem(string? reason)
+        => string.IsNullOrWhiteSpace(reason) || reason.Trim().Length < 3 ? "ต้องระบุเหตุผล (บันทึกใน audit)" : null;
+
     public record AccountSubAdminDto(
         Guid Id, Guid OwnerUserId, string OwnerName, string OwnerEmail,
         Guid PlanTemplateId, string PlanName,
@@ -157,41 +189,54 @@ public class AdminAccountSubscriptionController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> ChangeStatus(Guid id, [FromBody] ChangeStatusRequest req)
     {
         if (!await IsSystemAdminAsync()) return Forbid();
+        if (ReasonProblem(req.Reason) is string why) return BadRequest(new ApiResponse<string>(false, null, why));
         var a = await _db.AccountSubscriptions.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
         if (a == null) return NotFound();
+        if (a.Status == req.Status) return Ok(new ApiResponse<string>(true, null, $"สถานะเป็น {req.Status} อยู่แล้ว"));
+        var from = a.Status;
         a.Status = req.Status;
         a.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         a.UpdatedAt = DateTime.UtcNow;
+        await WriteLicenseAuditAsync(a, "LicenseStatusChanged", req.Reason!.Trim(), new { status = from.ToString() }, new { status = req.Status.ToString() }, from, req.Status);
         await _db.SaveChangesAsync();
-        return Ok(new ApiResponse<string>(true, null, $"เปลี่ยนสถานะเป็น {req.Status}"));
+        return Ok(new ApiResponse<string>(true, null, $"เปลี่ยนสถานะเป็น {req.Status} (บันทึกประวัติ + audit แล้ว)"));
     }
 
-    public record ExtendDatesRequest(DateTime EndDate);
+    public record ExtendDatesRequest(DateTime EndDate, string? Reason = null);
     /// <summary>Extend EndDate without going through the slip approval flow —
-    /// used by support to honor goodwill credits, enterprise contracts, etc.</summary>
+    /// used by support to honor goodwill credits, enterprise contracts, etc.
+    /// <para>รอบ 231 (231-11): เหตุผลบังคับ · ประวัติ+audit · ทำใต้ <c>SubscriptionPaymentLock</c> (คีย์ License) กันชนกับการอนุมัติชำระที่ cascade วันหมดอายุมาที่ License พร้อมกัน</para></summary>
     [HttpPut("{id:guid}/extend")]
     public async Task<ActionResult<ApiResponse<string>>> Extend(Guid id, [FromBody] ExtendDatesRequest req)
     {
         if (!await IsSystemAdminAsync()) return Forbid();
+        if (ReasonProblem(req.Reason) is string why) return BadRequest(new ApiResponse<string>(false, null, why));
+        await using var lockTx = await SubscriptionPaymentLock.AcquireAsync(_db, id);
         var a = await _db.AccountSubscriptions.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
         if (a == null) return NotFound();
         if (req.EndDate <= a.StartDate)
             return BadRequest(new ApiResponse<string>(false, null, "วันสิ้นสุดต้องมากกว่าวันเริ่ม"));
+        var before = new { endDate = a.EndDate, status = a.Status.ToString() };
+        var fromStatus = a.Status;
         a.EndDate = req.EndDate;
         // Returning to Active makes sense when extending past a recent expiry.
         if (a.Status == SubscriptionStatus.Expired || a.Status == SubscriptionStatus.PastDue)
             a.Status = SubscriptionStatus.Active;
         a.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         a.UpdatedAt = DateTime.UtcNow;
+        await WriteLicenseAuditAsync(a, "LicenseExtended", req.Reason!.Trim(), before, new { endDate = a.EndDate, status = a.Status.ToString() },
+            fromStatus, a.Status);
         await _db.SaveChangesAsync();
-        return Ok(new ApiResponse<string>(true, null, "ขยายอายุ Account Plan สำเร็จ"));
+        if (lockTx != null) await lockTx.CommitAsync();
+        return Ok(new ApiResponse<string>(true, null, "ขยายอายุ Account Plan สำเร็จ (บันทึกประวัติ + audit แล้ว)"));
     }
 
     public record ChangeLimitsRequest(
         int? MaxCompanies, int? MaxUsersPerCompany,
         int? MaxDocumentsPerMonth, int? MaxJournalEntriesPerMonth,
         long? MaxStorageBytes, int? MaxOcrPagesPerMonth,
-        int? AzureOcrPagesPerMonth, int? LocalOcrPagesPerMonth);
+        int? AzureOcrPagesPerMonth, int? LocalOcrPagesPerMonth,
+        string? Reason = null);
     /// <summary>Override plan limits for an individual account — typical for
     /// negotiated enterprise contracts. Only sets the fields actually
     /// provided; null leaves the existing value alone.</summary>
@@ -199,8 +244,10 @@ public class AdminAccountSubscriptionController : ControllerBase
     public async Task<ActionResult<ApiResponse<string>>> ChangeLimits(Guid id, [FromBody] ChangeLimitsRequest req)
     {
         if (!await IsSystemAdminAsync()) return Forbid();
+        if (ReasonProblem(req.Reason) is string why) return BadRequest(new ApiResponse<string>(false, null, why));
         var a = await _db.AccountSubscriptions.FirstOrDefaultAsync(x => x.Id == id && !x.IsDeleted);
         if (a == null) return NotFound();
+        var before = new { a.MaxCompanies, a.MaxUsersPerCompany, a.MaxDocumentsPerMonth, a.MaxJournalEntriesPerMonth, a.MaxStorageBytes, a.MaxOcrPagesPerMonth, a.AzureOcrPagesPerMonth, a.LocalOcrPagesPerMonth };
         if (req.MaxCompanies.HasValue) a.MaxCompanies = Math.Max(1, req.MaxCompanies.Value);
         if (req.MaxUsersPerCompany.HasValue) a.MaxUsersPerCompany = Math.Max(1, req.MaxUsersPerCompany.Value);
         if (req.MaxDocumentsPerMonth.HasValue) a.MaxDocumentsPerMonth = Math.Max(0, req.MaxDocumentsPerMonth.Value);
@@ -211,8 +258,10 @@ public class AdminAccountSubscriptionController : ControllerBase
         if (req.LocalOcrPagesPerMonth.HasValue) a.LocalOcrPagesPerMonth = req.LocalOcrPagesPerMonth.Value;
         a.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         a.UpdatedAt = DateTime.UtcNow;
+        await WriteLicenseAuditAsync(a, "LicenseLimitsChanged", req.Reason!.Trim(), before,
+            new { a.MaxCompanies, a.MaxUsersPerCompany, a.MaxDocumentsPerMonth, a.MaxJournalEntriesPerMonth, a.MaxStorageBytes, a.MaxOcrPagesPerMonth, a.AzureOcrPagesPerMonth, a.LocalOcrPagesPerMonth });
         await _db.SaveChangesAsync();
-        return Ok(new ApiResponse<string>(true, null, "บันทึก limits ใหม่แล้ว"));
+        return Ok(new ApiResponse<string>(true, null, "บันทึก limits ใหม่แล้ว (บันทึกประวัติ + audit แล้ว)"));
     }
 
     /// <summary>Admin-side detach — sets a Company's Subscription.AccountSubscriptionId

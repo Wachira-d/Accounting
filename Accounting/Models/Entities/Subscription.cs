@@ -62,6 +62,11 @@ public class Subscription : BaseEntity
     // ฟรีตลอดไป (ไม่หมดอายุ ไม่นับวัน trial)
     public bool IsPermanentFree { get; set; } = false;
 
+    /// <summary>รอบ 231 (คำตัดสินข้อ 231-10): ชนิด — ทดลองใช้ / Free Edition / จ่ายเงิน (เดิมต้องอ่าน <see cref="IsPermanentFree"/> + <see cref="Status"/> + <c>LastPaymentDate</c> 3 ช่องเสมอ) ·
+    /// ผู้เขียนเดียว <c>Helpers/SubscriptionKindRule.Derive</c> (เริ่มทดลอง/ฟรี · อนุมัติชำระ · ดาวน์เกรดถึงวันมีผล) · แถวเก่า backfill ด้วย SQL สูตรเดียวกัน
+    /// (<c>Helpers/PlatformPriceOverrideMigration</c>) · <c>Unknown</c> = ยังไม่ backfill</summary>
+    public SubscriptionKind Kind { get; set; } = SubscriptionKind.Unknown;
+
     // Usage Limits
     public int MaxUsers { get; set; } = 1;
     public int MaxCompanies { get; set; } = 1;
@@ -184,6 +189,10 @@ public class TrialConfig : BaseEntity
     public int GracePeriodDays { get; set; } = 7;  // จำนวนวัน grace period หลังหมดอายุ
     public bool DeleteDataAfterGracePeriod { get; set; } = false;
     public int DataRetentionDays { get; set; } = 90; // เก็บข้อมูลกี่วันหลังหมดอายุ
+    /// <summary>รอบ 231 (ฝ่ายค้าน B2): แจ้งเจ้าของล่วงหน้ากี่วันก่อนปิดข้อมูลทดลองใช้ (0 = ไม่แจ้ง) — ผู้อ่าน <c>TrialDataRetentionJob</c>/<c>TrialDataRetentionPolicy</c></summary>
+    public int PurgeNoticeDays { get; set; } = 14;
+    /// <summary>เวลาที่แจ้งเจ้าของแล้ว (งานตั้งเอง · null = ยังไม่แจ้ง) — ปิดข้อมูลได้เมื่อแจ้งแล้วครบ <see cref="PurgeNoticeDays"/></summary>
+    public DateTime? PurgeNoticeSentAt { get; set; }
 
     // Computed Properties
     [NotMapped]
@@ -396,4 +405,15 @@ public class SubscriptionPayment : BaseEntity
     public decimal CouponDiscountAmount { get; set; }
     /// <summary>เหตุผลที่แอดมินแก้ยอด (audit chain <c>PLATFORM-ADMIN-PRICE-OVERRIDE</c>) · null = ไม่เคยแก้</summary>
     public string? AmountOverrideReason { get; set; }
+
+    // ===== รอบ 231 (คำตัดสินข้อ 231-8/231-9) — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ (คอลัมน์: Helpers/PlatformPriceOverrideMigration) =====
+    /// <summary>แถว <c>CompanyPlanPriceOverride</c> ที่ใช้คิดยอดรายการนี้ (ตามรอยกลับได้) · null = ราคาแม่แบบ</summary>
+    public Guid? PriceOverrideId { get; set; }
+    /// <summary>ราคาแม่แบบ (ราคาตั้ง) ก่อนราคาพิเศษ — ใบกำกับ<b>ไม่</b>แสดงเป็นราคาตั้ง−ส่วนลด (ราคาที่ตกลง = ราคาขายจริง §86/4) · เก็บไว้ให้แอดมิน/ประวัติเห็นส่วนต่าง · null = ไม่มีราคาพิเศษ</summary>
+    public decimal? StandardAmount { get; set; }
+    /// <summary>รายการนี้คือ<b>เปลี่ยนรอบบิลกลางรอบ</b> (รายเดือน→รายปี · <c>Helpers/PlatformProration.CycleChange</c>) — อนุมัติ ⇒ <b>เริ่มรอบใหม่วันที่ชำระ</b> ตามรอบใหม่
+    /// (ต่างจากส่วนต่างอัปเกรดที่คงวันหมดอายุ) · <c>RequestedPeriodMonths</c> = เดือนของรอบใหม่</summary>
+    public bool IsCycleChange { get; set; }
+    /// <summary>มูลค่าคงเหลือของรอบเดิมที่หักให้ (บาท · = ราคาเดิมต่อรอบ × D/C) — บรรทัดที่สองบนใบเสร็จเป็น <c>DiscountAmount</c> ของบรรทัดแรก</summary>
+    public decimal? CycleChangeCredit { get; set; }
 }

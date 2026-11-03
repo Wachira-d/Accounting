@@ -1601,11 +1601,14 @@ public class AdminController : ControllerBase
         }
         else if (template != null)
         {
-            // รอบ 219 เฟส 0: ราคาต่อรอบจากตัวตั้งเดียว (PlatformPlanPricing)
-            sub.PricePerCycle = Accounting.Helpers.PlatformPlanPricing.CyclePrice(template, sub.BillingCycle);
+            // รอบ 219 เฟส 0: ราคาต่อรอบจากตัวตั้งเดียว · รอบ 231 (231-8): ผ่านราคาพิเศษของบริษัทนี้ (PlatformPriceOverrideStore) ไม่ใช่ราคาแม่แบบ
+            sub.PricePerCycle = (await Accounting.Helpers.PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, sub.BillingCycle, DateTime.UtcNow, forRenewal: true)).Price;
         }
         // แอดมินเปลี่ยนทันที = แทนที่การเปลี่ยนที่รอมีผล (ถ้ามี)
         sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
+        // รอบ 231 (ฝ่ายค้าน B1 ก): แอดมินเปิดแพ็กเกจให้บริษัทที่ Active = ชนิดตามแม่แบบ (Free Edition / จ่ายเงิน) ผ่านตัวตัดสินเดียว — ทดลอง/หมดอายุไม่แตะ (หมดทดลอง/อนุมัติชำระตั้งเอง)
+        if (sub.Status == SubscriptionStatus.Active)
+            sub.Kind = Accounting.Helpers.SubscriptionKindRule.AfterTemplateApplied(template?.IsPermanentFree ?? (request.Plan == SubscriptionPlan.FreeTrial));
 
         // Update limits from template if not overridden
         if (template != null && !request.KeepCurrentLimits)
@@ -1723,29 +1726,74 @@ public class AdminController : ControllerBase
         Guid companyId, [FromBody] AdminChangeLimitsRequest request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var actorEmail = User.FindFirstValue(ClaimTypes.Email) ?? userId;
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
         if (sub == null)
             return NotFound(new ApiResponse<string>(false, null, "ไม่พบ subscription"));
-
-        if (request.MaxUsers.HasValue) sub.MaxUsers = request.MaxUsers.Value;
-        if (request.MaxDocumentsPerMonth.HasValue) sub.MaxDocumentsPerMonth = request.MaxDocumentsPerMonth.Value;
-        if (request.MaxJournalEntriesPerMonth.HasValue) sub.MaxJournalEntriesPerMonth = request.MaxJournalEntriesPerMonth.Value;
-        if (request.MaxStorageBytes.HasValue) sub.MaxStorageBytes = request.MaxStorageBytes.Value;
-        if (request.MaxCompanies.HasValue) sub.MaxCompanies = request.MaxCompanies.Value;
+        // รอบ 231 (คำตัดสินข้อ 231-11 · P0 ง): เหตุผลบังคับ · ค่าเก่า/ใหม่ลง audit chain · ผู้ใช้/พื้นที่เดิน QuotaOverrideWriter (กลไกเดียวกับ AdminQuotaController.SetOverride —
+        // เดิมเขียน Subscription.MaxUsers/MaxStorageBytes ตรง ⇒ hub (QuotaLimitPolicy) กับ usage.html เห็นคนละค่า) · เอกสาร/รายการบัญชี/บริษัท ยังอยู่บน Subscription.Max* (ไม่มี key ใน QuotaResources)
+        var reason = (request.Reason ?? request.Notes ?? "").Trim();
+        if (reason.Length < 3)
+            return BadRequest(new ApiResponse<string>(false, null, "ต้องระบุเหตุผล (บันทึกใน audit)"));
+        var ip = HttpContext?.Connection.RemoteIpAddress?.ToString();
+        var before = new { sub.MaxUsers, sub.MaxDocumentsPerMonth, sub.MaxJournalEntriesPerMonth, sub.MaxStorageBytes, sub.MaxCompanies };
+        var changes = new List<string>();
+        if (request.MaxUsers.HasValue)
+        {
+            var r = await Accounting.Helpers.QuotaOverrideWriter.SetAsync(_db, companyId, Models.Constants.QuotaResources.Users,
+                Accounting.Helpers.QuotaOverrideWriter.UsersFromLegacy(request.MaxUsers.Value), reason, actorEmail, ip);
+            if (r != null) changes.Add($"users {r.Before?.ToString() ?? "-"}→{r.After}");
+            sub.MaxUsers = request.MaxUsers.Value;   // ช่องเดิมตามให้หน้าที่ยังอ่านช่องเดิมตรงกัน (override ชนะใน QuotaLimitPolicy)
+        }
+        if (request.MaxStorageBytes.HasValue)
+        {
+            var r = await Accounting.Helpers.QuotaOverrideWriter.SetAsync(_db, companyId, Models.Constants.QuotaResources.StorageGb,
+                Accounting.Helpers.QuotaOverrideWriter.StorageGbFromBytes(request.MaxStorageBytes.Value), reason, actorEmail, ip);
+            if (r != null) changes.Add($"storage.gb {r.Before?.ToString() ?? "-"}→{r.After}");
+            sub.MaxStorageBytes = request.MaxStorageBytes.Value;
+        }
+        // ฝ่ายค้าน N3 (sunset): เอกสาร/รายการบัญชี/บริษัท ยังเขียน Subscription.Max* ตรง — จะย้ายเข้า CompanyQuotaOverride เมื่อ QuotaResources มี key ของทรัพยากรเหล่านี้
+        // (จดใน ACCOUNT_STRUCTURE §6.2f) · ห้ามเพิ่มผู้เขียน Max* ใหม่
+        if (request.MaxDocumentsPerMonth.HasValue && request.MaxDocumentsPerMonth.Value != sub.MaxDocumentsPerMonth)
+        { changes.Add($"documents {sub.MaxDocumentsPerMonth}→{request.MaxDocumentsPerMonth.Value}"); sub.MaxDocumentsPerMonth = request.MaxDocumentsPerMonth.Value; }
+        if (request.MaxJournalEntriesPerMonth.HasValue && request.MaxJournalEntriesPerMonth.Value != sub.MaxJournalEntriesPerMonth)
+        { changes.Add($"journals {sub.MaxJournalEntriesPerMonth}→{request.MaxJournalEntriesPerMonth.Value}"); sub.MaxJournalEntriesPerMonth = request.MaxJournalEntriesPerMonth.Value; }
+        if (request.MaxCompanies.HasValue && request.MaxCompanies.Value != sub.MaxCompanies)
+        { changes.Add($"companies {sub.MaxCompanies}→{request.MaxCompanies.Value}"); sub.MaxCompanies = request.MaxCompanies.Value; }
+        if (changes.Count == 0)
+            return Ok(new ApiResponse<object>(true, new { sub.MaxUsers, sub.MaxDocumentsPerMonth, sub.MaxJournalEntriesPerMonth, sub.MaxStorageBytes, sub.MaxCompanies },
+                "ไม่มีค่าเปลี่ยน"));
 
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
             SubscriptionId = sub.Id,
             Action = "AdminLimitsChanged",
-            Notes = $"Admin adjusted usage limits" + (request.Notes != null ? $": {request.Notes}" : ""),
+            Notes = $"Admin adjusted usage limits: {string.Join(" · ", changes)} — เหตุผล: {reason}",
             PerformedBy = userId
+        });
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = JwtHelper.GetUserIdFromClaims(User),
+            UserEmail = actorEmail,
+            Action = AuditAction.Update,
+            EntityType = "Subscription",
+            EntityId = sub.Id.ToString(),
+            OldValues = JsonSerializer.Serialize(before),
+            NewValues = JsonSerializer.Serialize(new
+            {
+                action = "AdminLimitsChanged", sub.MaxUsers, sub.MaxDocumentsPerMonth, sub.MaxJournalEntriesPerMonth, sub.MaxStorageBytes, sub.MaxCompanies,
+                reason, changes, ruleCode = "PLATFORM-ADMIN-LIMITS-OVERRIDE",
+            }),
+            IpAddress = ip,
+            Timestamp = DateTime.UtcNow,
         });
 
         await _db.SaveChangesAsync();
         return Ok(new ApiResponse<object>(true, new {
             sub.MaxUsers, sub.MaxDocumentsPerMonth, sub.MaxJournalEntriesPerMonth,
             sub.MaxStorageBytes, sub.MaxCompanies
-        }, "ปรับ limits สำเร็จ"));
+        }, "ปรับ limits สำเร็จ — ผู้ใช้/พื้นที่บันทึกเป็น override รายบริษัท (กลไกเดียวกับหน้าโควตา)"));
     }
 
     /// <summary>
@@ -2247,7 +2295,7 @@ public class AdminController : ControllerBase
         {
             "logo"    => ImageProfile.Logo,
             "icon"    => ImageProfile.Avatar,
-            "favicon" => ImageProfile.Avatar,
+            "favicon" => ImageProfile.Favicon,
             "banner"  => ImageProfile.Banner,
             _         => ImageProfile.Generic
         };
@@ -2470,6 +2518,11 @@ public class AdminController : ControllerBase
             _secrets.IsUsable(s.SystemGmailClientSecret),
             _secrets.IsUsable(s.SystemGmailRefreshToken)),
         SecretWarning: SecretWarnings.Build(_secrets,
+            ("รหัสผ่าน SMTP", s.SystemSmtpPassword),
+            ("Client Secret (Microsoft)", s.SystemMsClientSecret),
+            ("Client Secret (Gmail)", s.SystemGmailClientSecret),
+            ("Refresh Token (Gmail)", s.SystemGmailRefreshToken)),
+        SecretHint: SecretWarnings.BuildHints(_secrets,
             ("รหัสผ่าน SMTP", s.SystemSmtpPassword),
             ("Client Secret (Microsoft)", s.SystemMsClientSecret),
             ("Client Secret (Gmail)", s.SystemGmailClientSecret),

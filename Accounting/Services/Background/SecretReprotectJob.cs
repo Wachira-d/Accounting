@@ -14,6 +14,8 @@ namespace Accounting.Services.Background;
 /// <para>ค่าที่เข้ารหัสด้วยคีย์เดิม (config เดิม/dev key) ยังถอดได้ผ่านคีย์เดิมของ <see cref="SecretProtector"/> (ไม่มีอะไรพังทันที) ·
 /// งานนี้ย้ายค่าเหล่านั้นไปคีย์ปัจจุบัน<b>ครั้งเดียวต่อการบูต</b> (ล็อก <see cref="JobLock"/> — หลาย instance ไม่ทำซ้ำ) แล้วบันทึกจำนวน +
 /// audit chain ต่อแถว (ชื่อช่องเท่านั้น ไม่มีค่า) · ค่าที่ถอดไม่ออกทุกคีย์ <b>ไม่ถูกแตะ</b> (คงอยู่ · <c>IsUsable=false</c> ⇒ ผู้ใช้กรอกใหม่) ·
+/// รอบ 231: ย้ายค่าที่<b>ไม่มีคำนำหน้า <c>enc1:</c></b> ด้วย — ciphertext รุ่นก่อน (ถอดได้ด้วยคีย์ปัจจุบัน/คีย์เดิม) และ plaintext เก่า (รวม token ที่รุ่นก่อนเก็บดิบเพราะเดารูปผิด)
+/// ⇒ ทุกค่าในทะเบียนไปอยู่รูปแบบมีคำนำหน้า แล้วการ "เดารูป" (<c>EncryptionHelper.LooksLikeLegacyCiphertext</c>) ไม่ต้องถูกใช้กับแถวนั้นอีก ·
 /// รอบ 2: อ่านทีละชุด + เขียนแบบมีเงื่อนไขค่าเดิม (ไม่ทับค่าที่ผู้ใช้เพิ่งหมุน)</para>
 ///
 /// <para><b>ทะเบียนช่องความลับ (ตัวเดียว):</b> ทุกช่องที่เขียนผ่าน <c>ISecretProtector.Protect</c> — เพิ่มช่องใหม่ต้องเพิ่มที่นี่
@@ -25,7 +27,10 @@ public static class SecretReprotectPass
     public const int BatchSize = 200;
 
     /// <param name="SkippedConcurrent">ค่าที่ถูกผู้ใช้เปลี่ยนระหว่างอ่าน→เขียน (เงื่อนไข "ค่าเดิม" ไม่ตรง) ⇒ ไม่เขียนทับ</param>
-    public sealed record Result(int Scanned, int Reprotected, IReadOnlyDictionary<string, int> PerColumn, int SkippedConcurrent = 0);
+    /// <param name="PendingWrap">ฝ่ายค้านรอบ 231 B1: ค่าไม่มีคำนำหน้า (LegacyFormat/Plaintext/AmbiguousBase64) ที่ยังไม่ถูกห่อเพราะ <c>Security:MigrateCipherPrefix</c> ปิด — อ่านได้ครบ ไม่รีบ</param>
+    /// <param name="WrappedAmbiguous">S1: ค่ากำกวม (base64 ถอดไม่ออก) ที่ถูกห่อเป็น enc1 (ประตูเปิด) — ถ้าจริง ๆ เป็น ciphertext คีย์ที่หายไป การห่อทำให้เห็นชัดว่าต้องกรอกใหม่ · นับแยก + LogWarning</param>
+    public sealed record Result(int Scanned, int Reprotected, IReadOnlyDictionary<string, int> PerColumn, int SkippedConcurrent = 0,
+        int PendingWrap = 0, int WrappedAmbiguous = 0);
 
     /// <summary>ช่องความลับหนึ่งช่อง — ชื่อคอลัมน์มาจากนิพจน์ (<c>r =&gt; r.Col</c>) ตัวเดียวกับที่ใช้อ่าน ⇒ ชื่อพิมพ์ผิดไม่ได้</summary>
     public sealed record Column<T>(string Name, Func<T, string?> Get);
@@ -35,12 +40,15 @@ public static class SecretReprotectPass
 
     /// <param name="onlyCompanyId">จำกัดเฉพาะแถวของบริษัทนี้ (ซ่อมรายบริษัท/เทสต์บนฐานร่วม) · null = ทุกแถว รวมค่าตั้งแพลตฟอร์ม</param>
     /// <param name="beforeWrite">จุดสอดของเทสต์ — เรียกหลังอ่านค่า ก่อนเขียนแบบมีเงื่อนไข (จำลองผู้ใช้หมุนคีย์พร้อมกัน) · production = null</param>
+    /// <param name="logger">LogWarning ต่อค่ากำกวมที่ถูกห่อ (S1) · null = ไม่ log</param>
     public static async Task<Result> RunAsync(AccountingDbContext db, ISecretProtector protector, CancellationToken ct = default,
-        Guid? onlyCompanyId = null, Func<Guid, Task>? beforeWrite = null)
+        Guid? onlyCompanyId = null, Func<Guid, Task>? beforeWrite = null, ILogger? logger = null)
     {
         var per = new Dictionary<string, int>();
         var scanned = 0;
         var skipped = 0;
+        var pendingWrap = 0;
+        var wrappedAmbiguous = 0;
 
         IQueryable<T> Scope<T>(IQueryable<T> q) where T : TenantEntity
             => onlyCompanyId is Guid c ? q.Where(r => r.CompanyId == c) : q;
@@ -68,7 +76,13 @@ public static class SecretReprotectPass
                         var v = c.Get(row);
                         if (string.IsNullOrEmpty(v)) continue;
                         scanned++;
-                        if (protector.Reprotect(v) is not string nv) continue;
+                        var state = protector.Inspect(v);
+                        if (protector.Reprotect(v) is not string nv)
+                        {
+                            // B1: ไม่มีคำนำหน้าแต่ประตูปิด ⇒ รอห่อ (สรุปใน JobRun ให้ผู้ดูแลเห็นว่ามีกี่ค่า)
+                            if (state is SecretState.LegacyFormat or SecretState.Plaintext or SecretState.AmbiguousBase64) pendingWrap++;
+                            continue;
+                        }
                         if (beforeWrite != null) await beforeWrite(row.Id);
                         var id = row.Id;
                         var name = c.Name;
@@ -79,6 +93,12 @@ public static class SecretReprotectPass
                         {
                             changed.Add(name);
                             per[$"{table}.{name}"] = per.GetValueOrDefault($"{table}.{name}") + 1;
+                            if (state == SecretState.AmbiguousBase64)
+                            {
+                                wrappedAmbiguous++;
+                                logger?.LogWarning("SecretReprotect: ห่อค่ากำกวม {Table}.{Column} (Id {Id}) — base64 ที่ถอดไม่ออก ใช้เป็นค่าดิบ · ถ้าเคยเปลี่ยนคีย์ ค่านี้ต้องกรอกใหม่",
+                                    table, name, id);
+                            }
                         }
                         else skipped++;   // ค่าเปลี่ยนไปแล้ว (ผู้ใช้บันทึกใหม่/ลบ) ⇒ ของผู้ใช้ชนะ
                     }
@@ -142,7 +162,7 @@ public static class SecretReprotectPass
             Col<SitePaymentGateway>(r => r.SecretKeyEncrypted),
             Col<SitePaymentGateway>(r => r.WebhookSecret));
 
-        return new Result(scanned, per.Values.Sum(), per, skipped);
+        return new Result(scanned, per.Values.Sum(), per, skipped, pendingWrap, wrappedAmbiguous);
     }
 }
 
@@ -167,9 +187,11 @@ public class SecretReprotectJob : BackgroundService
             var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
             await JobLock.RunExclusiveAsync(db, AdvisoryLockKey.BackgroundJob, nameof(SecretReprotectJob), async () =>
             {
-                var r = await SecretReprotectPass.RunAsync(db, protector, stoppingToken);
+                var r = await SecretReprotectPass.RunAsync(db, protector, stoppingToken, logger: _logger);
                 var summary = $"ตรวจความลับ {r.Scanned} ค่า · เข้ารหัสใหม่ด้วยคีย์ปัจจุบัน {r.Reprotected} ค่า"
-                    + (r.PerColumn.Count == 0 ? "" : " (" + string.Join(", ", r.PerColumn.Select(kv => $"{kv.Key}={kv.Value}")) + ")");
+                    + (r.PerColumn.Count == 0 ? "" : " (" + string.Join(", ", r.PerColumn.Select(kv => $"{kv.Key}={kv.Value}")) + ")")
+                    + (r.PendingWrap == 0 ? "" : $" · รอห่อ enc1 {r.PendingWrap} ค่า (เปิด {SecretProtector.MigrateCipherPrefixConfigKey} เมื่อพร้อม — forward-only)")
+                    + (r.WrappedAmbiguous == 0 ? "" : $" · ห่อค่ากำกวม (base64 ถอดไม่ออก) {r.WrappedAmbiguous} ค่า — ดู log");
                 if (r.Reprotected > 0) _logger.LogWarning("SecretReprotect: {Summary}", summary);
                 if (recorder != null) await recorder.RecordAsync("SecretReprotect", true, summary, r.Reprotected, startedAt);
             }, _logger, ct: stoppingToken);

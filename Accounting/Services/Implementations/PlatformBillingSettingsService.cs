@@ -22,7 +22,13 @@ public sealed record PlatformBillingSettingsDto(
     bool IsDefault,
     string EnforcementMode,
     string SuspensionSummary,
-    object Limits);
+    object Limits,
+    // รอบ 231 — ส่วนเกินโควตา (echo ทุกช่อง)
+    int OverageGraceDays = 7,
+    string OverageUnpaidAction = "LockThenDunning",
+    decimal OverageMinInvoiceAmount = 50m,
+    string QuotaWarnPercents = "80,90,100",
+    bool OverageAutoChargeSavedCard = false);
 
 public sealed record UpdatePlatformBillingSettingsRequest(
     int RenewalInvoiceLeadDays,
@@ -32,7 +38,13 @@ public sealed record UpdatePlatformBillingSettingsRequest(
     bool AutoSuspendEnabled,
     int PaymentLinkExpiryDays,
     bool ReminderEmailEnabled,
-    bool ReminderLineEnabled);
+    bool ReminderLineEnabled,
+    // รอบ 231 — ส่วนเกินโควตา (null = คงค่าเดิม — หน้าเก่าที่ไม่ส่งช่องใหม่ต้องไม่ล้างค่า)
+    int? OverageGraceDays = null,
+    string? OverageUnpaidAction = null,
+    decimal? OverageMinInvoiceAmount = null,
+    string? QuotaWarnPercents = null,
+    bool? OverageAutoChargeSavedCard = null);
 
 /// <summary>ผู้แก้ค่าตั้ง (ลง audit chain)</summary>
 public sealed record PlatformBillingActor(Guid? UserId, string? Email, string? Ip);
@@ -94,6 +106,19 @@ public class PlatformBillingSettingsService : IPlatformBillingSettingsService
         row.PaymentLinkExpiryDays = req.PaymentLinkExpiryDays;
         row.ReminderEmailEnabled = req.ReminderEmailEnabled;
         row.ReminderLineEnabled = req.ReminderLineEnabled;
+        // รอบ 231: ค่าตั้งส่วนเกิน — ตรวจเข้มเฉพาะช่องที่ส่งมา (ไม่ส่ง = คงเดิม)
+        var ovGrace = req.OverageGraceDays ?? row.OverageGraceDays;
+        var ovMin = req.OverageMinInvoiceAmount ?? row.OverageMinInvoiceAmount;
+        var ovWarn = req.QuotaWarnPercents ?? row.QuotaWarnPercents;
+        var ovErr = PlatformBillingSettingsRules.ValidateOverage(ovGrace, ovMin, ovWarn, out var warnNormalized);
+        if (ovErr != null) throw new BusinessRuleException(ovErr, "PLATFORM-BILLING-SETTINGS-INVALID");
+        if (req.OverageUnpaidAction != null && !Enum.TryParse<OverageUnpaidAction>(req.OverageUnpaidAction, true, out _))
+            throw new BusinessRuleException("การจัดการเมื่อค้างชำระใบส่วนเกินต้องเป็น LockOverageOnly หรือ LockThenDunning", "PLATFORM-BILLING-SETTINGS-INVALID");
+        row.OverageGraceDays = ovGrace;
+        row.OverageMinInvoiceAmount = Math.Round(ovMin, 2, MidpointRounding.AwayFromZero);
+        row.QuotaWarnPercents = warnNormalized;
+        if (req.OverageUnpaidAction != null) row.OverageUnpaidAction = Enum.Parse<OverageUnpaidAction>(req.OverageUnpaidAction, true);
+        if (req.OverageAutoChargeSavedCard is bool oac) row.OverageAutoChargeSavedCard = oac;
         row.UpdatedAt = DateTime.UtcNow;
         row.UpdatedBy = actor.UserId?.ToString();
 
@@ -118,6 +143,7 @@ public class PlatformBillingSettingsService : IPlatformBillingSettingsService
     {
         r.RenewalInvoiceLeadDays, r.ReminderDaysBeforeDue, r.ReminderDaysAfterDue, r.SuspendGraceDays,
         r.AutoSuspendEnabled, r.PaymentLinkExpiryDays, r.ReminderEmailEnabled, r.ReminderLineEnabled,
+        r.OverageGraceDays, overageUnpaidAction = r.OverageUnpaidAction.ToString(), r.OverageMinInvoiceAmount, r.QuotaWarnPercents, r.OverageAutoChargeSavedCard,
     };
 
     private static PlatformBillingSettingsDto ToDto(PlatformBillingSettings? row, SubscriptionEnforcementMode mode)
@@ -138,6 +164,10 @@ public class PlatformBillingSettingsService : IPlatformBillingSettingsService
                 linkExpiry = new[] { PlatformBillingSettingsRules.MinPaymentLinkExpiryDays, PlatformBillingSettingsRules.MaxPaymentLinkExpiryDays },
                 maxReminderDay = PlatformBillingSettingsRules.MaxReminderDay,
                 maxReminderCount = PlatformBillingSettingsRules.MaxReminderCount,
-            });
+                overageGrace = new[] { PlatformBillingSettingsRules.MinOverageGraceDays, PlatformBillingSettingsRules.MaxOverageGraceDays },
+                overageMinInvoiceMax = PlatformBillingSettingsRules.MaxOverageMinInvoiceAmount,
+                warnMaxThresholds = QuotaWarnPolicy.MaxThresholds,
+            },
+            p.OverageGraceDays, p.OverageUnpaidAction.ToString(), p.OverageMinInvoiceAmount, p.QuotaWarnPercents, p.OverageAutoChargeSavedCard);
     }
 }
