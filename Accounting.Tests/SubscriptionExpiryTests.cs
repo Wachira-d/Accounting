@@ -113,11 +113,11 @@ public class SubscriptionExpiryTests
     public void B1ข_แถวรอตรวจ_เฉพาะแผนจ่ายเงินที่ธงหลุดและค้างค่าแทน()
     {
         var sentinel = Now.AddYears(100);
-        Assert.True(SubscriptionExpiry.NeedsReview(isPermanentFree: false, Accounting.Models.Enums.SubscriptionPlan.Professional, sentinel, Now));
+        Assert.True(SubscriptionExpiry.NeedsExpiryReview(isPermanentFree: false, Accounting.Models.Enums.SubscriptionPlan.Pro, sentinel, Now));
         // ทิศตรงข้าม: ฟรีถาวรจริง / FreeTrial (ฟรีถาวรตามคำตัดสินเดิม) / แผนจ่ายเงินที่มีรอบจริง — ไม่ต้องตรวจ
-        Assert.False(SubscriptionExpiry.NeedsReview(isPermanentFree: true, Accounting.Models.Enums.SubscriptionPlan.Professional, sentinel, Now));
-        Assert.False(SubscriptionExpiry.NeedsReview(isPermanentFree: false, Accounting.Models.Enums.SubscriptionPlan.FreeTrial, sentinel, Now));
-        Assert.False(SubscriptionExpiry.NeedsReview(isPermanentFree: false, Accounting.Models.Enums.SubscriptionPlan.Professional, Now.AddMonths(1), Now));
+        Assert.False(SubscriptionExpiry.NeedsExpiryReview(isPermanentFree: true, Accounting.Models.Enums.SubscriptionPlan.Pro, sentinel, Now));
+        Assert.False(SubscriptionExpiry.NeedsExpiryReview(isPermanentFree: false, Accounting.Models.Enums.SubscriptionPlan.FreeTrial, sentinel, Now));
+        Assert.False(SubscriptionExpiry.NeedsExpiryReview(isPermanentFree: false, Accounting.Models.Enums.SubscriptionPlan.Pro, Now.AddMonths(1), Now));
     }
 
     [Fact]

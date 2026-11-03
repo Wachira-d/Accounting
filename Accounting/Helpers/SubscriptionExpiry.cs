@@ -51,7 +51,7 @@ public static class SubscriptionExpiry
     }
 
     /// <summary>ฝ่ายค้าน 232-hub B1(ข): แถวที่ต้องให้แอดมินตรวจ = แผนจ่ายเงิน (ไม่ใช่ FreeTrial · ธงฟรีถาวร false) แต่ EndDate เป็นค่าแทน — ไม่แก้เงียบ</summary>
-    public static bool NeedsReview(bool isPermanentFree, Models.Enums.SubscriptionPlan plan, DateTime endUtc, DateTime nowUtc)
+    public static bool NeedsExpiryReview(bool isPermanentFree, Models.Enums.SubscriptionPlan plan, DateTime endUtc, DateTime nowUtc)
         => !isPermanentFree && plan != Models.Enums.SubscriptionPlan.FreeTrial && IsOpenEnded(endUtc, nowUtc);
 
     /// <summary>วันที่จะออกใบแจ้งหนี้ต่ออายุ (EndDate − leadDays): null เมื่อไม่หมดอายุ / ไม่ Active / ออกใบรอบนี้แล้ว / ขอยกเลิกสิ้นรอบ</summary>

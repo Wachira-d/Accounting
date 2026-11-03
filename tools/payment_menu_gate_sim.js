@@ -25,11 +25,26 @@ function extractMethod(src, name) {
   return `${name}(${m[1]}) {` + src.slice(m.index + m[0].length, i);
 }
 
+/** ตัด property `name: { … }` ของ object literal (รอบ 232: hasMenuAccess อ่าน this.billingHub — ต้องใช้ตารางจริง ไม่ใช่ stub) */
+function extractProp(src, name) {
+  const re = new RegExp('\\n\\s*' + name + '\\s*:\\s*\\{');
+  const m = re.exec(src);
+  if (!m) return null;
+  let i = m.index + m[0].length, depth = 1;
+  for (; i < src.length && depth > 0; i++) {
+    const ch = src[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+  }
+  return `${name}: {` + src.slice(m.index + m[0].length, i);
+}
+
 function build(src) {
   const part = extractMethod(src, 'hasMenuAccess');
   if (!part) return null;
+  const hub = extractProp(src, 'billingHub');
   // eslint-disable-next-line no-new-func
-  return new Function(`return { myPermissions: null, ${part} };`)();
+  return new Function(`return { myPermissions: null, ${hub ? hub + ',' : ''} ${part} };`)();
 }
 
 function suite(src, quiet) {
