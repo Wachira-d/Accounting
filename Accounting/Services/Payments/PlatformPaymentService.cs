@@ -147,7 +147,7 @@ public class PlatformPaymentService : IPlatformPaymentService
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == subscriptionPaymentId && p.Subscription.CompanyId == payerCompanyId)
             .Select(p => new { p.Id, p.Amount, p.Status, p.PaymentNumber, p.SlipFileName, p.RequestedPlan, p.RequestedBillingCycle,
-                p.PlatformInvoiceDocumentId, Held = p.AttentionReason != null, p.QuotedAmount, p.Subscription.AccountSubscriptionId })
+                p.PlatformInvoiceDocumentId, Held = p.AttentionReason != null, p.QuotedAmount, p.Subscription.AccountSubscriptionId, p.SubscriptionId })
             .FirstOrDefaultAsync(ct)
             ?? throw new InvalidOperationException("ไม่พบรายการชำระค่าแพ็กเกจของบริษัทนี้");
         if (pay.Status is not (SubscriptionPaymentStatus.Pending or SubscriptionPaymentStatus.UnderReview))

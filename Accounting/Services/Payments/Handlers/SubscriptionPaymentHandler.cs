@@ -45,7 +45,7 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
         // (PayerCompanyId — intent อยู่ใต้บริษัทผู้ให้บริการ ตรวจแล้วใน DispatchSucceededAsync ด้วย PlatformRevenueSource)
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == intent.SourceId)
-            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.Subscription.AccountSubscriptionId, p.RequestedPlan, p.RequestedBillingCycle, p.ReviewNotes, p.PlatformInvoiceDocumentId, p.QuotedAmount })
+            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.Subscription.AccountSubscriptionId, p.RequestedPlan, p.RequestedBillingCycle, p.ReviewNotes, p.PlatformInvoiceDocumentId, p.QuotedAmount, p.SubscriptionId })
             .FirstOrDefaultAsync(ct);
         if (pay != null && !Accounting.Helpers.PlatformRevenueSource.SourceBelongsToPayer(intent.PayerCompanyId, pay.CompanyId))
         {
