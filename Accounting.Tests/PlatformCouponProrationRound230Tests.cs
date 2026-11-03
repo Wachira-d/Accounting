@@ -39,7 +39,7 @@ public class PlatformCouponProrationRound230Tests
         // รอบรายเดือน 01/05/2570 → 31/05/2570 (30 วัน) เหลือ 1 วัน · ส่วนต่าง 0.15 ⇒ 0.15 × 1 / 30 = 0.005 ⇒ 0.01 (banker's = 0.00)
         var end = new DateTime(2027, 5, 30, 17, 0, 0, DateTimeKind.Utc);   // 31/05/2570 00:00 ไทย
         var now = new DateTime(2027, 5, 30, 3, 0, 0, DateTimeKind.Utc);    // 30/05/2570 10:00 ไทย
-        var r = PlatformProration.Upgrade(0m, 0.15m, 1, end, now);
+        var r = PlatformProration.Upgrade(1m, 1.15m, 1, end, now);   // รอบ 233 E-3: ราคาเดิม 0 = ไม่ใช่ส่วนต่าง (เทสต์ปัดเศษคงส่วนต่าง 0.15)
         Assert.True(r.Applies);
         Assert.Equal(1, r.DaysRemaining);
         Assert.Equal(30, r.CycleDays);

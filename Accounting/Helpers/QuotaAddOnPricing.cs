@@ -36,8 +36,10 @@ public static class QuotaAddOnPricing
 
     private static DateTime ThaiDate(DateTime utc) => utc.AddHours(7).Date;
     /// <summary>วันที่ไทย (พ.ศ.) dd/MM/yyyy — InvariantCulture เสมอ (เครื่อง th-TH จะบวก 543 ซ้ำ)</summary>
+    /// <remarks>รอบ 233 (LICENSE_CASE_MATRIX E-5): เดิม <c>AddYears(543)</c> ⇒ 29 ก.พ. ค.ศ. 2028 (ปีอธิกสุรทิน) กลายเป็น "28/02/2571" เพราะ ค.ศ. 2571 ไม่ใช่ปีอธิกสุรทิน
+    /// (DateTime ตัดวันให้) — วันหมดอายุ/ช่วงคิดเงินบนใบเสร็จผิดหนึ่งวัน · ตอนนี้บวกเลขปีตรง ๆ (พ.ศ. = ค.ศ. + 543 ไม่เปลี่ยนวัน/เดือน)</remarks>
     public static string ThaiDateText(DateTime thaiDate)
-        => thaiDate.AddYears(543).ToString("dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture);
+        => $"{thaiDate.Day:00}/{thaiDate.Month:00}/{thaiDate.Year + 543}";
     private static DateTime ThaiMidnightToUtc(DateTime thaiDate) => DateTime.SpecifyKind(thaiDate.AddHours(-7), DateTimeKind.Utc);
 
     /// <summary>ต้นเดือนไทยถัดไป (เวลา UTC) — วันสิ้นสุดของสิทธิ์รายเดือน/เดือนเดียว</summary>

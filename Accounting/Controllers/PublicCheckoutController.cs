@@ -101,7 +101,7 @@ public class PublicCheckoutController : ControllerBase
         return Ok(new ApiResponse<object>(true, new
         {
             userId = uid, email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value,
-            companies = rows.Select(r => new { id = r.Id, name = r.Name, plan = r.Plan, status = r.Status }).ToList(),
+            companies = rows.Select(r => new { id = r.Id, name = r.Name, plan = r.Plan, status = r.Status, lowerPlans = r.LowerPlans, lowerNote = r.LowerNote }).ToList(),
         }));
     }
 

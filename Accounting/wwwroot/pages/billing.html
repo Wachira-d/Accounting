@@ -413,6 +413,7 @@
         el.innerHTML = `<div class="quote-box">
           <div style="font-weight:700;margin-bottom:6px">${e(q.plan)} · ${e(this.cycleLabel(q.cycle))}</div>
           <div class="note ${q.blocked ? 'warn' : ''}" style="margin-bottom:8px">${e(q.message)}</div>
+          ${this.previewHtml(q.preview)}
           ${pays ? `
             ${q.specialPriceNote ? `<div class="quote-row" style="color:#166534;font-weight:600"><span>★ ${e(q.specialPriceNote)}</span><span style="text-decoration:line-through;color:#94a3b8">฿${Layout.money(q.standardAmount)}</span></div>` : ''}
             <div class="quote-row"><span>${q.prorated ? `ส่วนต่าง (${q.daysRemaining}/${q.cycleDays} วัน)` : q.kind === 'CycleChange' ? `ค่ารอบใหม่ หักมูลค่าคงเหลือรอบเดิม ฿${Layout.money(q.cycleChangeCredit || 0)} (${q.daysRemaining}/${q.cycleDays} วัน)` : 'ราคาแพ็กเกจ'}</span><span>฿${Layout.money(q.listAmount)}</span></div>
@@ -431,6 +432,21 @@
         if (cb) cb.addEventListener('click', () => { this.couponCode = String(document.getElementById('planCoupon').value || '').trim(); this.loadQuote(q.plan); });
         const go = document.getElementById('planConfirm');
         if (go) go.addEventListener('click', () => this.confirm());
+      },
+      // รอบ 233 (คำตัดสิน 233-*): "สิ่งที่จะได้ถ้าจ่ายเงินนี้" — แพ็ก/วันหมดอายุเดิม → ใหม่ · เครดิตแพ็กเดิม · เหตุผลของวันที่ (PlanPurchasePreview จากเซิร์ฟเวอร์ ·
+      // ตัวคำนวณวันที่ตัวเดียวกับตอนอนุมัติชำระ) — หน้านี้แสดงอย่างเดียว ไม่คำนวณวันที่/เครดิตเอง
+      previewHtml(pv) {
+        if (!pv) return '';
+        const e = Layout.esc;
+        const credit = pv.credit > 0 ? `<div class="quote-row"><span>ค่า ${e(pv.newPlanName)}${pv.daysRemaining ? ` (${pv.daysRemaining}/${pv.cycleDays} วัน)` : ''}</span><span>฿${Layout.money(pv.listPrice)}</span></div>
+          <div class="quote-row" style="color:#166534"><span>เครดิตจากแพ็กเดิม${pv.creditFormula ? ` (${e(pv.creditFormula)})` : ''}</span><span>−฿${Layout.money(pv.credit)}</span></div>` : '';
+        return `<div class="note ${pv.allowed ? '' : pv.kind === 'Same' ? 'warn' : 'bad'}" style="margin-bottom:8px">
+          <div style="font-weight:700">${e(pv.headline)}</div>
+          <div style="font-weight:600">📅 ${e(pv.dateLine)}</div>
+          ${pv.allowed ? '' : `<div>${e(pv.refusalReason || '')}</div>`}
+          ${(pv.notes || []).filter(n => n !== pv.refusalReason).map(n => `<div>• ${e(n)}</div>`).join('')}
+          ${pv.nextStep ? `<div>→ ${pv.nextStepUrl ? `<a href="${e(pv.nextStepUrl)}">${e(pv.nextStep)}</a>` : e(pv.nextStep)}</div>` : ''}
+        </div>${credit}`;
       },
       async confirm() {
         const q = this.quote; if (!q) return;

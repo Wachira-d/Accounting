@@ -58,11 +58,13 @@ public static class PlatformPriceOverrideStore
         return PlatformPlanPricing.AmountDue(eff.Price, discountPercent);
     }
 
-    /// <summary>ฝ่ายค้าน S2: ยอดที่จ่ายจริงล่าสุดของ (แพ็กเกจ, รอบ) นี้ — รายการ Approved ที่ไม่ใช่ส่วนต่าง/เปลี่ยนรอบ · null = ไม่เคยจ่ายรอบนี้</summary>
+    /// <summary>ฝ่ายค้าน S2: ยอดที่จ่ายจริงล่าสุดของ (แพ็กเกจ, รอบ) นี้ — รายการ Approved ที่ไม่ใช่ส่วนต่าง/เปลี่ยนรอบ · null = ไม่เคยจ่ายรอบนี้
+    /// <para>รอบ 233 ฝ่ายค้าน S2: ยอด = <b>ก่อนหัก ณ ที่จ่าย</b> (<c>Amount + WithholdingTaxAmount</c> — ค่าบริการจริงตามใบกำกับ · เงินที่เข้าบัญชีต่ำกว่าเพราะลูกค้าหัก 3% ไว้แทนเรา) ·
+    /// ฝ่ายค้าน S3: รายการ Approved ยอด 0 (คูปอง 100%/ยกเว้น) = จ่ายจริง 0 ⇒ คืน 0 (เดิมกรอง <c>Amount &gt; 0</c> ทิ้ง ⇒ ตกไปราคาแม่แบบ = เครดิตเงินที่ไม่เคยจ่าย)</para></summary>
     public static Task<decimal?> LastApprovedCycleAmountAsync(AccountingDbContext db, Guid subscriptionId, SubscriptionPlan plan, BillingCycle cycle, CancellationToken ct = default)
         => db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.SubscriptionId == subscriptionId && p.Status == SubscriptionPaymentStatus.Approved && p.RequestedPlan == plan
-                && p.RequestedBillingCycle == cycle && !p.IsProration && !p.IsCycleChange && p.Amount > 0m)
+                && p.RequestedBillingCycle == cycle && !p.IsProration && !p.IsCycleChange)
             .OrderByDescending(p => p.PaymentDate).ThenByDescending(p => p.CreatedAt)
-            .Select(p => (decimal?)p.Amount).FirstOrDefaultAsync(ct);
+            .Select(p => (decimal?)(p.Amount + p.WithholdingTaxAmount)).FirstOrDefaultAsync(ct);
 }

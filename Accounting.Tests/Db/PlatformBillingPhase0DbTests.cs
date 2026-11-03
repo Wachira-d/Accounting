@@ -238,6 +238,169 @@ public class PlatformBillingPhase0DbTests
         }
     }
 
+    /// <summary>รอบ 233 (233-7 · ตัวคำนวณวันที่ตัวเดียว): ทดลอง Pro เหลือ 20 วันแล้วซื้อ Pro ⇒ วันหมดอายุที่ preview บอก = วันที่ประทับตอนอนุมัติ
+    /// = วันชำระ + 1 เดือน (เดิม: ต่อท้ายวันทดลอง ⇒ +20 วัน + 1 เดือน ทั้งที่หน้าชำระบอก "เริ่มรอบใหม่จากวันที่ชำระ")</summary>
+    [Fact]
+    public async Task Round233_trial_same_plan_purchase_starts_at_payment_and_matches_preview()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsurePricedTemplateAsync(db, SubscriptionPlan.Pro);
+        var (cid, sub) = await SeedAsync(db, SubscriptionStatus.Trial, SubscriptionPlan.Pro);
+        var svc = new SubscriptionService(db, Notifications());
+        var quote = await svc.QuotePlanChangeAsync(cid, SubscriptionPlan.Pro, BillingCycle.Monthly, null);
+        Assert.NotNull(quote.Preview);
+        Assert.True(quote.Preview!.Allowed);
+        Assert.NotNull(quote.Preview.NewEndUtc);
+        var res = await svc.ConvertTrialAsync(cid, new ConvertTrialRequest(SubscriptionPlan.Pro, BillingCycle.Monthly), "owner");
+        Assert.NotNull(res.Payment);
+        await svc.ReviewPaymentAsync(res.Payment!.Id, new ReviewSubscriptionPaymentRequest(true, "test", null), "system", systemConfirmed: true);
+        var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
+        Assert.True(after.EndDate < DateTime.UtcNow.AddDays(32), $"ต้องเริ่มวันชำระ ไม่ต่อท้ายวันทดลอง: {after.EndDate:O}");
+        Assert.True((after.EndDate - quote.Preview.NewEndUtc!.Value).Duration() < TimeSpan.FromMinutes(5),
+            $"วันที่ประทับ {after.EndDate:O} ≠ preview {quote.Preview.NewEndUtc:O}");
+        var pay = await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == res.Payment.Id);
+        Assert.Equal(after.EndDate, pay.SubscriptionExtendedTo);
+    }
+
+    /// <summary>รอบ 233 (E-2): แถว ExpiryNeedsReview (แผนจ่ายเงินที่ EndDate เป็นค่าแทน +100 ปี) จ่ายต่ออายุ ⇒ รอบจริงจากวันชำระ · รายการชำระบันทึกวันเดียวกัน (เดิม 2126+1 เดือน) · ปลดธง</summary>
+    [Fact]
+    public async Task Round233_renewal_on_open_ended_paid_plan_starts_at_payment_and_clears_review_flag()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsurePricedTemplateAsync(db, SubscriptionPlan.Pro);
+        var (_, sub) = await SeedAsync(db, SubscriptionStatus.Active, SubscriptionPlan.Pro);
+        sub.EndDate = DateTime.UtcNow.AddYears(100);
+        sub.ExpiryNeedsReview = true;
+        sub.BillingCycle = BillingCycle.Monthly;
+        var pay = new SubscriptionPayment
+        {
+            SubscriptionId = sub.Id, PaymentNumber = "SP-233-" + Guid.NewGuid().ToString("N")[..6], Amount = 990m, PaymentDate = DateTime.UtcNow,
+            RequestedPlan = SubscriptionPlan.Pro, RequestedBillingCycle = BillingCycle.Monthly, RequestedPeriodMonths = 1, Status = SubscriptionPaymentStatus.Pending,
+        };
+        db.SubscriptionPayments.Add(pay);
+        await db.SaveChangesAsync();
+        await new SubscriptionService(db, Notifications()).ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "test", null), "system", systemConfirmed: true);
+        var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
+        Assert.True(after.EndDate < DateTime.UtcNow.AddDays(32), $"EndDate {after.EndDate:O}");
+        Assert.False(after.ExpiryNeedsReview);
+        var paid = await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == pay.Id);
+        Assert.Equal(after.EndDate, paid.SubscriptionExtendedTo);   // เดิม: 2126 + 1 เดือน บนรายการ/แจ้งเตือน
+    }
+
+    private static SubscriptionPayment SlipPayment(Guid subId, SubscriptionPlan plan, DateTime paidUtc) => new()
+    {
+        SubscriptionId = subId, PaymentNumber = "SP-233F-" + Guid.NewGuid().ToString("N")[..6], Amount = 990m, PaymentDate = paidUtc,
+        RequestedPlan = plan, RequestedBillingCycle = BillingCycle.Monthly, RequestedPeriodMonths = 1, Status = SubscriptionPaymentStatus.Pending,
+        Kind = SubscriptionPaymentKind.Normal,
+    };
+
+    /// <summary>ฝ่ายค้าน 233 B1: ฟรีถาวร → ซื้อ (แอดมินอนุมัติสลิปที่โอน 5 วันก่อน) ⇒ ApplyTemplate ไม่ปิดรอบด้วย UtcNow ทับ — EndDate = รายการชำระ = วันรับเงิน + 1 เดือน</summary>
+    [Fact]
+    public async Task Round233_B1_permanent_free_purchase_end_date_matches_payment_record()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsurePricedTemplateAsync(db, SubscriptionPlan.Pro);
+        var (_, sub) = await SeedAsync(db, SubscriptionStatus.Active, SubscriptionPlan.FreeTrial);
+        sub.IsPermanentFree = true;
+        sub.EndDate = DateTime.UtcNow.AddYears(100);
+        var pay = SlipPayment(sub.Id, SubscriptionPlan.Pro, DateTime.UtcNow.AddDays(-5));
+        db.SubscriptionPayments.Add(pay);
+        await db.SaveChangesAsync();
+        await new SubscriptionService(db, Notifications()).ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "test", null),
+            Guid.NewGuid().ToString(), systemConfirmed: false);
+        var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
+        var paid = await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == pay.Id);
+        if ((await TemplateAsync(db, SubscriptionPlan.Pro)) is { IsPermanentFree: false })
+        {
+            Assert.Equal(after.EndDate, paid.SubscriptionExtendedTo);
+            Assert.True((after.EndDate - paid.PaymentDate.AddMonths(1)).Duration() < TimeSpan.FromSeconds(1), $"{after.EndDate:O} vs {paid.PaymentDate:O}");
+        }
+    }
+
+    /// <summary>ฝ่ายค้าน 233 S1: วันรับเงินจากสลิป (5 วันก่อน) ≠ เวลาอนุมัติ — แพ็กเดิมหมดไป 10 วัน ⇒ รอบ = วันรับเงิน + 1 เดือน (ไม่ใช่ เวลาอนุมัติ + 1 เดือน)</summary>
+    [Fact]
+    public async Task Round233_S1_backdated_slip_period_starts_at_payment_date_not_approval()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsurePricedTemplateAsync(db, SubscriptionPlan.Pro);
+        var (_, sub) = await SeedAsync(db, SubscriptionStatus.Expired, SubscriptionPlan.Pro);
+        sub.EndDate = DateTime.UtcNow.AddDays(-10);
+        var pay = SlipPayment(sub.Id, SubscriptionPlan.Pro, DateTime.UtcNow.AddDays(-5));
+        db.SubscriptionPayments.Add(pay);
+        await db.SaveChangesAsync();
+        await new SubscriptionService(db, Notifications()).ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "test", null),
+            Guid.NewGuid().ToString(), systemConfirmed: false);
+        var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
+        var paid = await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == pay.Id);
+        Assert.True(paid.PaymentDate < DateTime.UtcNow.AddDays(-4), "วันรับเงินต้องเป็นวันในสลิป");
+        Assert.True((after.EndDate - paid.PaymentDate.AddMonths(1)).Duration() < TimeSpan.FromSeconds(1), $"{after.EndDate:O} vs {paid.PaymentDate:O}");
+        Assert.True(after.EndDate < DateTime.UtcNow.AddDays(28), "ใส่ `now` กลับ ⇒ ≈ +30 วัน ⇒ เทสต์นี้แดง");
+    }
+
+    /// <summary>ฝ่ายค้าน 233 S5 (K-3): บริษัทผูกแพลนบัญชี (ตัวคุมสิทธิ์ GetEffectivePlanAsync) — ต่ออายุแล้ววันหมดอายุของแพลนบัญชี = ของ subscription (PaidPeriod/วันรับเงินเดียวกัน)</summary>
+    [Fact]
+    public async Task Round233_K3_account_plan_cascade_uses_same_paid_period_as_subscription()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await EnsurePricedTemplateAsync(db, SubscriptionPlan.Pro);
+        var tpl = await TemplateAsync(db, SubscriptionPlan.Pro);
+        if (tpl == null) return;
+        var tag = Guid.NewGuid().ToString("N")[..6];
+        var owner = new User { Email = $"k3-{tag}@test.local", PasswordHash = "x", FullName = "เจ้าของทดสอบ K-3" };
+        db.Users.Add(owner);
+        await db.SaveChangesAsync();
+        var expiredAt = DateTime.UtcNow.AddDays(-10);
+        var acct = new AccountSubscription
+        {
+            OwnerUserId = owner.Id, PlanTemplateId = tpl.Id, Status = SubscriptionStatus.Expired, StartDate = DateTime.UtcNow.AddDays(-40), EndDate = expiredAt,
+            MaxDocumentsPerMonth = 100, MaxUsersPerCompany = 5, MaxStorageBytes = 1024L * 1024 * 1024, MaxOcrPagesPerMonth = 50, MaxCompanies = 3,
+        };
+        db.AccountSubscriptions.Add(acct);
+        var (_, sub) = await SeedAsync(db, SubscriptionStatus.Expired, SubscriptionPlan.Pro);
+        sub.EndDate = expiredAt;
+        sub.AccountSubscriptionId = acct.Id;
+        var pay = SlipPayment(sub.Id, SubscriptionPlan.Pro, DateTime.UtcNow.AddDays(-5));
+        db.SubscriptionPayments.Add(pay);
+        await db.SaveChangesAsync();
+        await new SubscriptionService(db, Notifications()).ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "test", null),
+            Guid.NewGuid().ToString(), systemConfirmed: false);
+        var afterSub = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
+        var afterAcct = await db.AccountSubscriptions.AsNoTracking().SingleAsync(a => a.Id == acct.Id);
+        Assert.True((afterAcct.EndDate - afterSub.EndDate).Duration() < TimeSpan.FromSeconds(1),
+            $"แพลนบัญชี {afterAcct.EndDate:O} ≠ subscription {afterSub.EndDate:O} (เดิม: แพลนบัญชีนับจากเวลาอนุมัติ)");
+    }
+
+    /// <summary>ฝ่ายค้าน 233 S2/S3: ฐานเครดิต = ยอดก่อนหัก ณ ที่จ่าย · รายการ Approved ยอด 0 = จ่ายจริง 0 (ไม่ตกไปราคาแม่แบบ)</summary>
+    [Fact]
+    public async Task Round233_S2_S3_last_approved_amount_is_gross_of_wht_and_zero_counts()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (_, sub) = await SeedAsync(db, SubscriptionStatus.Active, SubscriptionPlan.Basic);
+        Assert.Null(await PlatformPriceOverrideStore.LastApprovedCycleAmountAsync(db, sub.Id, SubscriptionPlan.Basic, BillingCycle.Annual));   // ไม่เคยจ่าย ⇒ null (ใช้ราคาแม่แบบ)
+        db.SubscriptionPayments.Add(new SubscriptionPayment
+        {
+            SubscriptionId = sub.Id, PaymentNumber = "SP-233W-" + Guid.NewGuid().ToString("N")[..6], Amount = 5_849.27m, WithholdingTaxAmount = 168.73m,
+            PaymentDate = DateTime.UtcNow.AddDays(-30), RequestedPlan = SubscriptionPlan.Basic, RequestedBillingCycle = BillingCycle.Annual, RequestedPeriodMonths = 12,
+            Status = SubscriptionPaymentStatus.Approved,
+        });
+        await db.SaveChangesAsync();
+        Assert.Equal(6_018m, await PlatformPriceOverrideStore.LastApprovedCycleAmountAsync(db, sub.Id, SubscriptionPlan.Basic, BillingCycle.Annual));
+        db.SubscriptionPayments.Add(new SubscriptionPayment
+        {
+            SubscriptionId = sub.Id, PaymentNumber = "SP-233Z-" + Guid.NewGuid().ToString("N")[..6], Amount = 0m, Kind = SubscriptionPaymentKind.Waived,
+            PaymentDate = DateTime.UtcNow.AddDays(-1), RequestedPlan = SubscriptionPlan.Basic, RequestedBillingCycle = BillingCycle.Annual, RequestedPeriodMonths = 12,
+            Status = SubscriptionPaymentStatus.Approved,
+        });
+        await db.SaveChangesAsync();
+        Assert.Equal(0m, await PlatformPriceOverrideStore.LastApprovedCycleAmountAsync(db, sub.Id, SubscriptionPlan.Basic, BillingCycle.Annual));
+    }
+
     [Fact]
     public async Task Mid_cycle_upgrade_starts_now_but_same_plan_renewal_extends_from_end()
     {

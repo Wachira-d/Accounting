@@ -111,6 +111,27 @@
           document.getElementById('main').hidden = false;
           this.render();
           this.refreshQuote();
+          this.loadOwned();
+        },
+        // รอบ 233 (คำตัดสิน 233-3): ผู้ใช้ที่ล็อกอินอยู่ — ป้าย "ต่ำกว่าแพ็กปัจจุบัน" บนการ์ด (ชุดแพ็กที่ต่ำกว่า = เซิร์ฟเวอร์ตัดสินต่อบริษัทที่ผู้ใช้เป็นเจ้าของเท่านั้น · lowerPlans)
+        owned: [],
+        async loadOwned() {
+          let t = null; try { t = localStorage.getItem('token'); } catch (_) { /* ignore */ }
+          if (!t) return;
+          try {
+            const r = await fetch('/api/public/checkout/me', { headers: { Authorization: 'Bearer ' + t } });
+            if (!r.ok) return;
+            const j = await r.json();
+            this.owned = (j && j.data && j.data.companies) || [];
+            this.render();
+          } catch (_) { /* ไม่มีป้าย = แสดงตามปกติ (ตะกร้ายังตรวจที่เซิร์ฟเวอร์อีกชั้น) */ }
+        },
+        lowerBadge(plan) {
+          const hit = this.owned.filter(c => (c.lowerPlans || []).includes(plan));
+          if (!hit.length) return '';
+          // ฝ่ายค้าน N5: ข้อความจากเซิร์ฟเวอร์ (lowerNote — ชื่อบริษัท · แพ็กปัจจุบัน · วันมีผล) — หน้าเว็บไม่ประกอบข้อความกติกาเอง
+          return `<div class="pc-lower" style="margin:6px 0;padding:6px 8px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:.8rem">
+            ${hit.map(c => `⛔ ${esc(c.lowerNote || '')}`).join('<br>')}</div>`;
         },
         priceFor(p, cycle) {
           return ({ Monthly: p.monthlyPrice, Quarterly: p.quarterlyPrice, SemiAnnual: p.semiAnnualPrice, Annual: p.annualPrice })[cycle] || 0;
@@ -133,6 +154,7 @@
                 <li>📄 เอกสาร ${p.maxDocumentsPerMonth > 0 ? esc(p.maxDocumentsPerMonth) + '/เดือน' : 'ไม่จำกัด'}</li>
                 <li>🔎 OCR ${p.maxOcrPagesPerMonth > 0 ? esc(p.maxOcrPagesPerMonth) + ' หน้า/เดือน' : 'ไม่จำกัด'}</li>
               </ul>
+              ${this.lowerBadge(p.plan)}
               <button type="button" class="btn ${p.plan === this.plan ? 'btn-primary' : 'btn-outline'} w-full" data-plan="${esc(p.plan)}">${p.plan === this.plan ? '✓ อยู่ในตะกร้า' : 'ใส่ตะกร้า'}</button>
             </div>`;
           }).join('');
@@ -159,7 +181,7 @@
               ${q.discount > 0 ? `<div class="pc-row"><span>ส่วนลด</span><span>−฿${money(q.discount)}</span></div>` : ''}
               <div class="pc-row total"><span>ยอดชำระ</span><span>฿${money(q.amountDue)}</span></div>
               ${q.couponNote ? `<div class="sub" style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.couponNote)}</div>` : ''}
-              <div class="sub" style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.note)}</div>`;
+              <div class="sub" style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.preview ? q.preview.dateLine : q.note)}</div>`;
             go.disabled = false;
           } catch (e) { body.innerHTML = ''; err.textContent = e.message; go.disabled = true; }
         },

@@ -150,13 +150,14 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             var grossBeforeWht = decimal.Round(net + wht, 2, MidpointRounding.AwayFromZero);
             if (grossBeforeWht <= 0m) return null;   // ยกเว้นค่าบริการ (0 บาท) ไม่ต้องออกใบ
 
-            var isVat = settings.PlatformIsVatRegistered && IsValidTaxId(settings.PlatformSellerTaxId);
+            var isVat = Accounting.Helpers.PlanPurchasePreview.IssuesTaxInvoice(settings.PlatformIsVatRegistered, settings.PlatformSellerTaxId);   // รอบ 233 N3: ตัวตัดสินเดียวกับ preview
             // ฐานก่อน VAT: ถ้าราคาที่ตั้งไว้รวม VAT แล้ว ต้องถอดออกก่อน เพราะบรรทัด
             // เอกสารเก็บราคา ex-VAT (PricesIncludeVat ของ document ใช้เส้นทางคนละแบบ)
             // ฝ่ายค้านรอบ 227 S2: เงินที่รับแล้วรวม VAT เสมอ + VAT = ยอด − ฐาน (ไม่มีเศษ 0.01 · ไม่ออกใบสูงกว่าเงินที่รับเมื่อตั้ง "ราคาไม่รวม VAT")
             // รอบ 230 (คำตัดสินข้อ 230-Q2 · §86/4): คูปอง ⇒ บรรทัดราคาเต็ม + ส่วนลดของบรรทัด (หักก่อน VAT) · ฐานหลังส่วนลด + VAT = เงินที่รับพอดี
+            // รอบ 233 (คำตัดสิน 233-4): เปลี่ยนรอบบิล ⇒ เครดิตรอบเดิมเป็นส่วนลดของบรรทัด (ก่อน VAT) เหมือนคูปอง — บรรทัด = ค่ารอบใหม่เต็ม (เดิม: บรรทัดเป็นยอดสุทธิ เครดิตอยู่แค่ในคำอธิบาย)
             var (fullBase, discountBase, baseAmount, vatAmount) = Accounting.Helpers.PlatformCouponRule.SplitDiscounted(
-                grossBeforeWht, payment.CouponDiscountAmount, isVat);
+                grossBeforeWht, Accounting.Helpers.PlanPurchasePreview.InvoiceDiscountGross(payment.CouponDiscountAmount, payment.IsCycleChange, payment.CycleChangeCredit), isVat);
             // อัตรา WHT คำนวณกลับจากยอดจริง — ให้ยอดหักตรงกับที่ลูกค้าหักเป๊ะ
             // (กันเศษสตางค์จากการปัดอัตรา 3.00%)
             var whtRate = wht > 0m && baseAmount > 0m
@@ -224,7 +225,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             var contactId = await EnsureContactAsync(tenantId.Value, buyer);
             if (contactId == null) return null;
 
-            var isVat = settings.PlatformIsVatRegistered && IsValidTaxId(settings.PlatformSellerTaxId);
+            var isVat = Accounting.Helpers.PlanPurchasePreview.IssuesTaxInvoice(settings.PlatformIsVatRegistered, settings.PlatformSellerTaxId);   // รอบ 233 N3: ตัวตัดสินเดียวกับ preview
             var baseAmount = isVat && settings.PlatformPriceIncludesVat
                 ? decimal.Round(amountNet * 100m / 107m, 2, MidpointRounding.AwayFromZero)
                 : amountNet;
@@ -377,7 +378,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             var contactId = await EnsureContactAsync(tenantId.Value, buyer);
             if (contactId == null) return null;
 
-            var isVat = settings.PlatformIsVatRegistered && IsValidTaxId(settings.PlatformSellerTaxId);
+            var isVat = Accounting.Helpers.PlanPurchasePreview.IssuesTaxInvoice(settings.PlatformIsVatRegistered, settings.PlatformSellerTaxId);   // รอบ 233 N3: ตัวตัดสินเดียวกับ preview
             var revenueCode = string.IsNullOrWhiteSpace(settings.PlatformRevenueAccountCode)
                 ? "41000" : settings.PlatformRevenueAccountCode;
 
@@ -597,7 +598,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             var contactId = await EnsureContactAsync(tenantId.Value, buyer);
             if (contactId == null) return null;
 
-            var isVat = settings.PlatformIsVatRegistered && IsValidTaxId(settings.PlatformSellerTaxId);
+            var isVat = Accounting.Helpers.PlanPurchasePreview.IssuesTaxInvoice(settings.PlatformIsVatRegistered, settings.PlatformSellerTaxId);   // รอบ 233 N3: ตัวตัดสินเดียวกับ preview
             // ฝ่ายค้านรอบ 227 S2: ใบ = เงินที่รับพอดี (ฐาน + VAT บังคับ = ยอด) · รอบ 230: คูปอง ⇒ ส่วนลดของบรรทัดก่อน VAT (ตัวแยกเดียว PlatformCouponRule.SplitDiscounted)
             var (fullBase, discountBase, baseAmount, vatAmount) = Accounting.Helpers.PlatformCouponRule.SplitDiscounted(amountReceived, discountReceived, isVat);
             var req = new CreateDocumentRequest(
@@ -810,7 +811,4 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             desc += $" · ส่วนลดคูปอง {payment.CouponCode}";
         return desc;
     }
-
-    /// <summary>ฝ่ายค้านรอบ 227 N3: ตัวตรวจเลขผู้เสียภาษีตัวเดียวของระบบ (13 หลัก + checksum mod-11 · กฎเหล็ก #2 A) — เดิมนับแค่ 13 หลัก</summary>
-    private static bool IsValidTaxId(string? taxId) => Accounting.Helpers.ThaiTaxId.IsValid(taxId);
 }

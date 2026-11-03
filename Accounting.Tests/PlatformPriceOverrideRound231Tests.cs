@@ -217,7 +217,7 @@ public class PlatformPriceOverrideRound231Tests
     {
         Assert.Equal(1_500m, PlatformProration.OldPriceBasis(1_500m, 1_990m));        // จ่ายจริง (หลังคูปอง) ชนะราคาแม่แบบ/พิเศษ
         Assert.Equal(1_990m, PlatformProration.OldPriceBasis(null, 1_990m));          // ไม่เคยจ่ายรอบนี้ (แอดมินเปิดให้)
-        Assert.Equal(1_990m, PlatformProration.OldPriceBasis(0m, 1_990m));            // ยอด 0 ไม่นับ
+        Assert.Equal(0m, PlatformProration.OldPriceBasis(0m, 1_990m));               // รอบ 233 ฝ่ายค้าน S3: Approved ยอด 0 (คูปอง 100%/ยกเว้น) = จ่ายจริง 0 ⇒ เครดิต 0 (เดิม: ตกไปราคาแม่แบบ)
         Assert.Equal(1_234.57m, PlatformProration.OldPriceBasis(1_234.565m, 0m));     // ปัด AwayFromZero
         // เครดิตเปลี่ยนรอบคิดจากฐานนั้น: จ่ายจริง 1,500 รายเดือน เหลือ 16/30 วัน ⇒ credit 800.00
         var cc = PlatformProration.CycleChange(PlatformProration.OldPriceBasis(1_500m, 1_990m), 1, 19_900m, 12,
