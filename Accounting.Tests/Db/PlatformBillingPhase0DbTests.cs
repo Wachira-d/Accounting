@@ -18,6 +18,8 @@ namespace Accounting.Tests.Db;
 /// ค่าเหมาส่วนเสริมไม่เก็บซ้อนงวดที่จ่ายล่วงหน้า (G-5) · ส่วนเสริมค้างชำระเกินระยะผ่อนผันถูกระงับ (G-11)
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 224: ทั้งสามคลาสเรียก ProcessExpiredSubscriptionsAsync ซึ่งกวาดทั้งฐาน — รันขนานกันแล้วคลาสหนึ่งยกเลิกการสมัครของอีกคลาสก่อน (เทสต์สุ่มแดง)
+[Collection("SubscriptionExpirySweep")]
 public class PlatformBillingPhase0DbTests
 {
     private readonly ITestOutputHelper _out;

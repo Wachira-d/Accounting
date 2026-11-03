@@ -1,3 +1,4 @@
+using Accounting.Helpers;
 using System.Security.Cryptography;
 using Accounting.Data;
 using Accounting.Models.DTOs.Payroll;
@@ -150,7 +151,7 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
         var period = $"{_thMonths[Math.Clamp(run.Month, 1, 12)]} {run.Year + 543}";
         var coName = await _db.Companies.AsNoTracking()
             .Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "บริษัท";
-        var url = BuildPublicUrl(token);
+        var url = BuildPublicUrl(await SystemBaseUrl.ResolveAsync(_db, _config, ct) ?? "", token);
 
         // Flex card — ซ่อนยอดเงิน (ตามนโยบาย PDPA): โชว์แค่ชื่อ/งวด + ปุ่ม
         var flex = BuildPayslipFlex(coName, empName, period, url);
@@ -285,9 +286,8 @@ public class PayslipLineDeliveryService : IPayslipLineDeliveryService
         return (await _nextAcc.GetAsync(ct)).HasToken;
     }
 
-    private string BuildPublicUrl(string token)
+    private static string BuildPublicUrl(string baseUrl, string token)
     {
-        var baseUrl = (_config["App:BaseUrl"] ?? "").TrimEnd('/');
         return $"{baseUrl}/api/public/payslip/{token}";
     }
 

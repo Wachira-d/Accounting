@@ -120,6 +120,8 @@ Accounting/Controllers/CmsBookingController.cs	RescheduleByToken	1
 Accounting/Controllers/CmsBookingController.cs	SyncBookingToErp	1
 Accounting/Controllers/CmsBookingController.cs	UpdateBookingStatus	1
 Accounting/Controllers/CmsBookingController.cs	UpdateService	1
+Accounting/Controllers/CmsBookingPaymentPublicController.cs	ChangeFulfillment	1
+Accounting/Controllers/CmsBookingPaymentPublicController.cs	ChooseDepositLater	1
 Accounting/Controllers/CmsBookingPaymentPublicController.cs	UploadSlip	1
 Accounting/Controllers/CmsCommerceConfigController.cs	UpdateConfig	1
 Accounting/Controllers/CmsCommerceController.cs	AddProduct	1
@@ -465,7 +467,6 @@ Accounting/Controllers/SignatureApprovalController.cs	SetDefault	1
 Accounting/Controllers/SignatureApprovalController.cs	SetupApproval	1
 Accounting/Controllers/SignatureApprovalController.cs	Upload	1
 Accounting/Controllers/SmeOperationsController.cs	CloseCount	1
-Accounting/Controllers/SmeOperationsController.cs	CreateFund	1
 Accounting/Controllers/SmeOperationsController.cs	Disburse	1
 Accounting/Controllers/SmeOperationsController.cs	PostFxRevaluation	1
 Accounting/Controllers/SmeOperationsController.cs	ProposeFxRevaluation	1

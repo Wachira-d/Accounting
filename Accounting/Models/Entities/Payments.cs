@@ -168,6 +168,25 @@ public class PaymentIntent : TenantEntity
     /// <summary>เครื่องหมายเฉพาะของครั้งที่ "ผลไม่แน่ชัด" ที่แนบไปกับคำขอคืนเงิน (ฝ่ายค้าน E2-2) — ตรวจผลหา "ครั้งนี้" ในรายการคืนของผู้ให้บริการ</summary>
     public string? RefundOutcomeUnknownAttempt { get; set; }
     public DateTime? LastRefundedAt { get; set; }
+    /// <summary>รอบ 228 (PLATFORM_OMISE_AUDIT §5.4): ข้อพิพาท/chargeback ล่าสุดของรายการนี้ — จาก webhook ที่ยืนยันแล้ว (fetch กลับ) ·
+    /// ระบบไม่เปลี่ยนสถานะเงิน/สิทธิ์เอง (ตัวตัดสิน <c>Helpers/PaymentDisputeRules</c>) · null = ไม่มีข้อพิพาท</summary>
+    public PaymentDisputeState? DisputeState { get; set; }
+    public string? DisputeProviderRef { get; set; }
+    public decimal? DisputeAmount { get; set; }
+    public string? DisputeReason { get; set; }
+    public DateTime? DisputeUpdatedAt { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 228 S5: แอดมินรับทราบ/จัดการข้อพิพาทแล้ว (ส่งหลักฐาน/ตัดสินพักสิทธิ์/ใบลดหนี้) — ล้างธง "ต้องจัดการ" จนกว่าสถานะ/เลขข้อพิพาทจะเปลี่ยน</summary>
+    public DateTime? DisputeAcknowledgedAt { get; set; }
+    public string? DisputeAcknowledgedBy { get; set; }
+    /// <summary>ฝ่ายค้านรอบ 228 S2: ใบลดหนี้อัตโนมัติของการคืนเงินค่าบริการ<b>ออกไม่สำเร็จ</b> — เลขกันซ้ำ · ยอด · เหตุผลการคืน · ปัญหา ·
+    /// ผัง counter ที่ใบลดหนี้ต้องใช้ตอนออกใหม่ (ลูกหนี้ เมื่อลงใบสำคัญสำรองแล้ว · บัญชีพัก เมื่อยังไม่ลง) · ใบสำคัญสำรอง — null = ไม่มีเรื่องค้าง
+    /// (แอดมิน "ออกใบลดหนี้อีกครั้ง" · ตัวเดียว <c>GatewayRefundService.RetryPlatformCreditNoteAsync</c>)</summary>
+    public string? RefundCreditNotePendingRef { get; set; }
+    public decimal? RefundCreditNotePendingAmount { get; set; }
+    public string? RefundCreditNotePendingReason { get; set; }
+    public string? RefundCreditNoteProblem { get; set; }
+    public Guid? RefundCreditNoteCounterAccountId { get; set; }
+    public Guid? RefundCreditNoteFallbackJournalEntryId { get; set; }
     /// <summary>JE คืนเงินครั้งล่าสุด (Dr ลูกหนี้ / Cr บัญชีพัก) — ผูกไว้ตามรอยจากหน้ารายการ</summary>
     public Guid? LastRefundJournalEntryId { get; set; }
     public decimal? SettledAmount { get; set; }

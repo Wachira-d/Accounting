@@ -34,7 +34,14 @@ public sealed record BillingCenterPayment(
 
 public sealed record BillingCenterAddOn(
     string FeatureCode, string Name, string PaymentStatus, string PaymentStatusLabel, string BillingChoice, string BillingChoiceLabel,
-    DateTime? TrialUntil, DateTime? GraceUntil, bool Usable, decimal? MonthlyPrice);
+    DateTime? TrialUntil, DateTime? GraceUntil, bool Usable, decimal? MonthlyPrice,
+    /// <summary>รอบ 228 (§5.7): ใบเสร็จ/ใบกำกับของการชำระล่วงหน้าครั้งล่าสุด (ดาวน์โหลดที่ <c>billing-center/receipts/{id}/pdf</c>) · null = ยังไม่มีใบ</summary>
+    Guid? ReceiptDocumentId = null, string? ReceiptNumber = null);
+
+/// <summary>รอบ 228 (§5.7): เอกสารที่บริษัทนี้เป็นผู้ซื้อใน tenant ผู้ให้บริการ (ใบเสร็จ · ใบกำกับภาษี · ใบลดหนี้) — ป้ายจากเซิร์ฟเวอร์</summary>
+public sealed record BillingCenterReceipt(
+    Guid Id, string DocumentNumber, string DocumentType, string TypeLabel, DateTime DocumentDate, decimal TotalAmount,
+    string? Reference, bool IsVoided);
 
 public sealed record BillingCenterSummary(
     bool PlatformTenantConfigured,
@@ -50,4 +57,6 @@ public sealed record BillingCenterSummary(
     object PayOptions,
     string SuspensionPolicy,
     bool CanPay,
-    bool CanManagePlan);
+    bool CanManagePlan,
+    /// <summary>รอบ 228 (§5.7): ใบเสร็จ/ใบกำกับภาษี/ใบลดหนี้ค่าบริการ (ล่าสุดก่อน) — null = ยังไม่ตั้งบริษัทผู้ให้บริการ</summary>
+    List<BillingCenterReceipt>? Receipts = null);

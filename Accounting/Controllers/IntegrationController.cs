@@ -292,9 +292,13 @@ public class ExternalIntegrationController : ControllerBase, IAsyncActionFilter
 {
     private readonly IIntegrationService _service;
     private readonly IFileAttachmentService _attachmentService;
+    // ที่เก็บไฟล์กลาง (Local | S3 · ทีม FS 2026-11-02) — ไฟล์แนบจาก integration พักผ่านตัวนี้ก่อน UploadAsync ย้ายเข้าโฟลเดอร์บริษัท
+    private readonly Accounting.Services.Storage.IFileStorage _storage;
 
-    public ExternalIntegrationController(IIntegrationService service, IFileAttachmentService attachmentService)
+    public ExternalIntegrationController(IIntegrationService service, IFileAttachmentService attachmentService,
+        Accounting.Services.Storage.IFileStorage storage)
     {
+        _storage = storage;
         _service = service;
         _attachmentService = attachmentService;
     }
@@ -681,9 +685,8 @@ public class ExternalIntegrationController : ControllerBase, IAsyncActionFilter
                 var shortGuid = Guid.NewGuid().ToString("N")[..8];
                 var fileName = $"Document_{result.DocumentId}_{DateTime.UtcNow:yyyyMMddHHmmss}_{shortGuid}{Path.GetExtension(att.FileName)}";
                 var storagePath = Path.Combine("uploads", "attachments", companyId.ToString(), fileName);
-                var fullPath = Path.Combine(Directory.GetCurrentDirectory(), storagePath);
-                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                await System.IO.File.WriteAllBytesAsync(fullPath, fileBytes);
+                // พักไฟล์ผ่านที่เก็บกลาง (สัมพัทธ์จาก working dir เดิม) — UploadAsync ย้ายเข้าโฟลเดอร์บริษัท/ชนิด (ทีม FS 2026-11-02)
+                await _storage.WriteAsync(storagePath, fileBytes, att.ContentType);
 
                 // ApiKey-authenticated requests have no user identity — use a synthetic
                 // system user marker. Audit log will show "uploaded via integration".

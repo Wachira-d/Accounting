@@ -50,6 +50,9 @@ public interface IGatewayRefundService
     Task<GatewayRefundOutcome> RecordLegacyRefundAsync(Guid companyId, Guid intentId, decimal? amount, DateTime? refundedAtUtc,
         string? providerRefundRef, string? evidence, GatewayLegacyRefundJournal journal,
         string actor, string? actorEmail, string? ipAddress, CancellationToken ct = default);
+
+    /// <summary>รอบ 228 ฝ่ายค้าน S2: ออกใบลดหนี้ของการคืนเงินค่าบริการที่ค้าง (ออกอัตโนมัติไม่สำเร็จ) อีกครั้ง — SystemAdmin · audit</summary>
+    Task<GatewayRefundOutcome> RetryPlatformCreditNoteAsync(Guid companyId, Guid intentId, string actor, string? adminNote, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -77,13 +80,182 @@ public class GatewayRefundService : IGatewayRefundService
     private readonly IGatewayAccountResolver _accounts;
     private readonly ILogger<GatewayRefundService> _logger;
 
+    /// <summary>รอบ 228 (§5.5): ตัวออกใบลดหนี้ใน tenant ผู้ให้บริการ — null (เทสต์เดิม) = ไม่ออกอัตโนมัติ (ผลบอกให้ออกด้วยมือ)</summary>
+    private readonly Accounting.Services.Implementations.IPlatformBillingDocumentIssuer? _platformIssuer;
+
     public GatewayRefundService(AccountingDbContext db, IEnumerable<IPaymentProvider> providers,
-        IPaymentIntentService intents, IGatewayAccountResolver accounts, ILogger<GatewayRefundService> logger)
-    { _db = db; _providers = providers; _intents = intents; _accounts = accounts; _logger = logger; }
+        IPaymentIntentService intents, IGatewayAccountResolver accounts, ILogger<GatewayRefundService> logger,
+        Accounting.Services.Implementations.IPlatformBillingDocumentIssuer? platformIssuer = null)
+    { _db = db; _providers = providers; _intents = intents; _accounts = accounts; _logger = logger; _platformIssuer = platformIssuer; }
+
+    /// <summary>ฝ่ายค้าน N3: บริษัทผู้ให้บริการ — ตัวหาเดียว (<see cref="Accounting.Services.Implementations.PlatformInvoiceQueries.PlatformTenantIdAsync"/>)</summary>
+    private Task<Guid?> PlatformCompanyIdAsync(CancellationToken ct)
+        => Accounting.Services.Implementations.PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
+
+    /// <summary>รอบ 228 (PLATFORM_OMISE_AUDIT §5.5 · §86/10 · ฝ่ายค้าน B1/S2): เงินค่าบริการ NextAcc ใต้บริษัทผู้ให้บริการที่คืนสำเร็จ ⇒ ออกใบลดหนี้อ้างใบเดิม
+    /// ด้วยขา counter = บัญชีพักผู้ให้บริการรับชำระ — <b>ใบลดหนี้คือรายการบัญชีเดียวของการคืนเงินนี้</b> (ธุรกรรมคืนเงินไม่ลงใบสำคัญ) ·
+    /// ล้ม ⇒ ใบสำคัญสำรอง Dr ลูกหนี้ / Cr บัญชีพัก (บัญชีพักไม่ค้างเงียบ · ลูกหนี้ "รอใบลดหนี้" ดังบนงบ) + ประทับเรื่องค้างบนรายการ (แอดมินออกใหม่ได้) ·
+    /// รายการของร้าน/โหมดทดสอบ/รายการเก่าใต้บริษัทร้าน ⇒ ไม่ทำอะไร</summary>
+    private async Task<GatewayRefundOutcome> IssuePlatformCreditNoteAsync(Guid companyId, Guid intentId, GatewayRefundOutcome outcome, string reason,
+        string actor)
+    {
+        if (!outcome.Ok || outcome.Amount <= 0m || string.IsNullOrWhiteSpace(outcome.RefundRef)) return outcome;
+        var ct = CancellationToken.None;   // เงินออกไปแล้ว — ผู้ใช้ปิดหน้าต้องไม่ตัดการลงบัญชีกลางทาง
+        var intent = await _db.PaymentIntents.FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
+        if (intent == null || GatewayTestPaymentRules.IsNoMoney(intent.SourceKind, intent.IsTestMode)
+            || !PlatformRevenueSource.RefundBooksInPlatformTenant(intent.SourceKind, companyId, await PlatformCompanyIdAsync(ct)))
+            return outcome;
+        var message = outcome.Message.Replace(PlatformRevenueSource.RefundNotBookedNote, PlatformRefundCreditNote.BookedByCreditNoteNote);
+        var key = PlatformRefundCreditNote.DedupeKey(outcome.RefundRef!, outcome.RefundedTotal);
+        var clearing = await _accounts.ResolveMoneyInAccountAsync(intent, ct);
+        var cn = await TryIssueCreditNoteAsync(intentId, outcome.Amount, key, reason, clearing);
+        if (cn.Ok)
+            return outcome with
+            {
+                Message = message + $" · ออกใบลดหนี้ {cn.CreditNoteNumber} อ้างใบเดิมแล้ว (§86/10 · Cr บัญชีพักผู้ให้บริการรับชำระ)",
+                CreditNoteState = nameof(GatewayRefundCreditNoteState.CreditNoteCovered), NextStep = null,
+            };
+
+        // CI รอบ 228: ใบลดหนี้ที่อนุมัติล้มอาจทิ้งการเปลี่ยนแปลงค้างใน context (ร่าง/สถานะ) — ล้างก่อนลงใบสำคัญสำรอง แล้วโหลดรายการใหม่
+        // (หมายเหตุบนใบร่างบันทึกไปแล้วโดยตัวออกเอกสาร · ห้ามให้ SaveChanges ของใบสำคัญสำรองพาของค้างลงฐาน)
+        _db.ChangeTracker.Clear();
+        intent = await _db.PaymentIntents.FirstAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
+        var fallback = await PostPlatformFallbackVoucherAsync(companyId, intent, outcome.Amount, key, reason, actor, clearing);
+        var problem = cn.Problem + (fallback.Problem == null ? "" : " · " + fallback.Problem);
+        await MarkCreditNotePendingAsync(companyId, intent, key, outcome.Amount, reason, problem,
+            fallback.ArAccountId ?? clearing, fallback.JournalEntry?.Id, actor);
+        return outcome with
+        {
+            Message = message + " — ⚠️ " + problem
+                + (fallback.JournalEntry != null ? $" · ลงใบสำคัญสำรอง {fallback.JournalEntry.EntryNumber} (Dr ลูกหนี้ / Cr บัญชีพัก) รอใบลดหนี้" : "")
+                + " · กด \"ออกใบลดหนี้อีกครั้ง\" ที่หน้าช่องทางรับชำระของ NextAcc",
+            JournalEntryId = fallback.JournalEntry?.Id, JournalEntryNumber = fallback.JournalEntry?.EntryNumber,
+        };
+    }
+
+    private async Task<Accounting.Services.Implementations.PlatformRefundCreditResult> TryIssueCreditNoteAsync(Guid intentId, decimal amount, string key,
+        string reason, Guid? counterAccountId)
+    {
+        if (_platformIssuer == null)
+            return new(false, null, null, "บริการนี้ออกใบลดหนี้อัตโนมัติไม่ได้ — ออกใบลดหนี้อ้างใบเดิมที่หน้าเอกสารของบริษัทผู้ให้บริการ");
+        if (counterAccountId is not Guid counter)
+            return new(false, null, null, "ไม่พบบัญชีพักผู้ให้บริการรับชำระ (แนะนำ 11340) — ตั้งผังแล้วออกใบลดหนี้อีกครั้ง");
+        return await _platformIssuer.IssueRefundCreditNoteAsync(intentId, amount, key, reason, counter);
+    }
+
+    private sealed record FallbackVoucher(JournalEntry? JournalEntry, Guid? ArAccountId, string? Problem);
+
+    /// <summary>ฝ่ายค้าน B1: ใบลดหนี้ออกไม่สำเร็จ ⇒ Dr ลูกหนี้การค้า (ผู้ติดต่อของผู้จ่าย) / Cr บัญชีพัก — เงินที่ผู้ให้บริการคืนออกไปแล้วต้องออกจากบัญชีพัก
+    /// และค้างเป็น "ลูกหนี้รอใบลดหนี้" ที่เห็นบนงบ (ใบลดหนี้ที่ออกทีหลังใช้ผังลูกหนี้นี้เป็นขา counter) · ลงไม่ได้ (งวดปิด/ไม่มีผัง) ⇒ บอกเหตุ ไม่โยน</summary>
+    private async Task<FallbackVoucher> PostPlatformFallbackVoucherAsync(Guid companyId, PaymentIntent intent, decimal amount, string key, string reason,
+        string actor, Guid? clearing)
+    {
+        var ct = CancellationToken.None;
+        try
+        {
+            if (clearing is not Guid c) return new(null, null, "ไม่ได้ลงใบสำคัญสำรอง (ไม่พบบัญชีพัก)");
+            var ar = await TradeReceivableAccount.ResolveAsync(_db, companyId, await ContactArPinAsync(companyId, intent, ct), ct);
+            if (ar == null) return new(null, null, $"ไม่ได้ลงใบสำคัญสำรอง (ไม่พบผังลูกหนี้ {TradeReceivableAccount.StandardCode})");
+            var entryDate = ThaiDate.CalendarDateUtc(DateTime.UtcNow);
+            if (await JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, entryDate, ct) is string closed)
+                return new(null, null, "ไม่ได้ลงใบสำคัญสำรอง: " + closed);
+            var je = await JournalEntryBuilder.For(_db, companyId, entryDate)
+                .Type(JournalType.CashPayments)
+                .NumberPrefix("PV")
+                .Description($"คืนเงินค่าบริการ NextAcc ผ่านผู้ให้บริการรับชำระ ({intent.ProviderCode}) — ใบลดหนี้ยังไม่ออก {key}")
+                .Reference(PlatformRefundCreditNote.Reference(key))
+                .CreatedBy(actor)
+                .Debit(ar.Id, amount, $"ตั้งลูกหนี้รอใบลดหนี้ — คืนเงิน {intent.SourceKind} ({reason})")
+                .Credit(c, amount, $"คืนเงินจากยอดที่ผู้ให้บริการถือไว้ {key}")
+                .PostAsync(actor, ct);
+            intent.LastRefundJournalEntryId = je.Id;
+            await _db.SaveChangesAsync(ct);
+            return new(je, ar.Id, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ลงใบสำคัญสำรองของการคืนเงินค่าบริการไม่สำเร็จ — intent {Intent} ยอด {Amount:N2}", intent.Id, amount);
+            _db.ChangeTracker.Clear();
+            return new(null, null, "ลงใบสำคัญสำรองไม่สำเร็จ: " + ex.Message);
+        }
+    }
+
+    /// <summary>ฝ่ายค้าน S2: ประทับเรื่องค้างบนรายการ + audit (หน้าแอดมินติดธง · ปุ่มออกใบลดหนี้อีกครั้ง) — เรื่องค้างเดิมที่ยังไม่ได้ออกอยู่ในบันทึกตรวจสอบ (ข้อความบอก)</summary>
+    private async Task MarkCreditNotePendingAsync(Guid companyId, PaymentIntent intent, string key, decimal amount, string reason, string problem,
+        Guid? counterAccountId, Guid? fallbackJeId, string actor)
+    {
+        var tracked = await _db.PaymentIntents.FirstAsync(i => i.Id == intent.Id && i.CompanyId == companyId);
+        var previous = tracked.RefundCreditNotePendingRef;
+        if (previous != null && previous != key)
+            problem += $" · มีใบลดหนี้ค้างอีกรายการ ({previous}) — ดูบันทึกตรวจสอบของรายการนี้แล้วออกด้วยมือ";
+        tracked.RefundCreditNotePendingRef = key;
+        tracked.RefundCreditNotePendingAmount = amount;
+        tracked.RefundCreditNotePendingReason = reason.Length > 500 ? reason[..500] : reason;
+        tracked.RefundCreditNoteProblem = problem.Length > 1000 ? problem[..1000] : problem;
+        tracked.RefundCreditNoteCounterAccountId = counterAccountId;
+        tracked.RefundCreditNoteFallbackJournalEntryId = fallbackJeId;
+        tracked.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, EntityType = nameof(PaymentIntent), EntityId = intent.Id.ToString(), Action = AuditAction.Update,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "platform-refund-credit-note-failed", ruleCode = PlatformRefundCreditNote.RuleCode, key, amount, problem,
+                counterAccountId, fallbackJeId, previousPending = previous, actor,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(CancellationToken.None);
+    }
+
+    /// <summary>ฝ่ายค้าน S2: "ออกใบลดหนี้อีกครั้ง" ของเรื่องค้าง — เลขกันซ้ำเดิม · ขา counter ที่ประทับไว้ (ลูกหนี้หลังใบสำคัญสำรอง / บัญชีพัก) · audit ทุกครั้ง ·
+    /// สำเร็จ ⇒ ล้างเรื่องค้าง · ไม่สำเร็จ ⇒ ปรับข้อความปัญหา · SystemAdmin (ผู้เรียกตรวจ)</summary>
+    public async Task<GatewayRefundOutcome> RetryPlatformCreditNoteAsync(Guid companyId, Guid intentId, string actor, string? adminNote,
+        CancellationToken ct = default)
+    {
+        var intent = await _db.PaymentIntents.FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
+        if (intent == null) return Fail("ไม่พบรายการชำระเงิน");
+        if (intent.RefundCreditNotePendingRef is not string key || intent.RefundCreditNotePendingAmount is not decimal amount)
+            return Fail("รายการนี้ไม่มีใบลดหนี้ค้าง");
+        var counter = intent.RefundCreditNoteCounterAccountId ?? await _accounts.ResolveMoneyInAccountAsync(intent, ct);
+        var cn = await TryIssueCreditNoteAsync(intentId, amount, key, intent.RefundCreditNotePendingReason ?? "คืนเงินค่าบริการ", counter);
+        if (!cn.Ok) _db.ChangeTracker.Clear();   // CI รอบ 228: ของค้างจากการอนุมัติที่ล้มห้ามติดไปกับ SaveChanges ด้านล่าง
+        var tracked = await _db.PaymentIntents.FirstAsync(i => i.Id == intentId && i.CompanyId == companyId, ct);
+        if (cn.Ok)
+        {
+            tracked.RefundCreditNotePendingRef = null;
+            tracked.RefundCreditNotePendingAmount = null;
+            tracked.RefundCreditNotePendingReason = null;
+            tracked.RefundCreditNoteProblem = null;
+            tracked.RefundCreditNoteCounterAccountId = null;
+            tracked.RefundCreditNoteFallbackJournalEntryId = null;
+        }
+        else
+        {
+            var pr = cn.Problem ?? "ออกใบลดหนี้ไม่สำเร็จ";
+            tracked.RefundCreditNoteProblem = pr.Length > 1000 ? pr[..1000] : pr;
+        }
+        tracked.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, EntityType = nameof(PaymentIntent), EntityId = intentId.ToString(), Action = AuditAction.Update,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "platform-refund-credit-note-retry", ruleCode = PlatformRefundCreditNote.RuleCode, key, amount, ok = cn.Ok,
+                creditNote = cn.CreditNoteNumber, problem = cn.Problem, actor, note = adminNote?.Trim(),
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(CancellationToken.None);
+        return cn.Ok
+            ? new GatewayRefundOutcome(true, $"ออกใบลดหนี้ {cn.CreditNoteNumber} แล้ว", key, amount, false, intent.RefundedAmount, null, null,
+                nameof(GatewayRefundCreditNoteState.CreditNoteCovered), null)
+            : Fail(cn.Problem ?? "ออกใบลดหนี้ไม่สำเร็จ");
+    }
 
     public const string NextStepText =
         "เปิดเอกสารต้นทางแล้วออก \"ใบลดหนี้\" (§86/10) เพื่อลดภาษีขาย — ระบบลงบัญชีคืนเงินแล้ว "
-        + "(Dr ลูกหนี้การค้า / Cr บัญชีพักผู้ให้บริการ) และตั้งยอดรอใบลดหนี้ไว้ที่ลูกหนี้ · ใบลดหนี้จะล้างยอดนี้ · "
+        + "(Dr ลูกหนี้การค้า / Cr บัญชีพักผู้ให้บริการ) และตั้งยอดรอใบลดหนี้ไว้ที่ลูกหนี้ · ใบลดหนี้ที่อ้างใบต้นทางจะล้างยอดนี้ (ไม่ลงเงินสดซ้ำ — รอบ 228) · "
         + "ระบบไม่ออกให้อัตโนมัติเพราะใบลดหนี้ต้องระบุเหตุผลตามที่กฎหมายกำหนดและยอดสะสมห้ามเกินใบเดิม ซึ่งต้องให้คนตัดสิน";
 
     public async Task<GatewayRefundOutcome> RefundAsync(Guid companyId, Guid intentId, decimal? amount,
@@ -113,7 +285,7 @@ public class GatewayRefundService : IGatewayRefundService
             if (states.TryGetValue(intentId, out var cn))
                 outcome = outcome with { CreditNoteState = cn.State };
         }
-        return outcome;
+        return await IssuePlatformCreditNoteAsync(companyId, intentId, outcome, reason.Trim(), actor);
     }
 
     /// <summary>ผลของเส้นธุรกรรม + สถานะที่ต้องเดินต่อ (null = ไม่มีเงินออก ไม่ต้องเปลี่ยนสถานะ)</summary>
@@ -180,8 +352,11 @@ public class GatewayRefundService : IGatewayRefundService
         string? unknownError = null;
         try
         {
+            // รอบ 227 (A-12): คีย์ของโหมดที่รายการถูกสร้าง (PaymentConfigForIntent) — ช่องทางอาจถูกสลับโหมดหลังรับเงิน
             result = await provider.RefundAsync(intent, check.Amount, reason.Trim(), attemptMarker,
-                config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode },
+                config == null
+                    ? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }
+                    : PaymentConfigForIntent.For(config, intent.IsTestMode),
                 CancellationToken.None);
             // E2-1: ผู้ให้บริการตอบ 5xx/408 = ไม่รู้ผล (ไม่ใช่ "ปฏิเสธ") ⇒ ล็อกเหมือนหมดเวลา
             if (result.OutcomeUnknown) unknownError = result.FailureMessage ?? "ผู้ให้บริการตอบผิดพลาด";
@@ -285,6 +460,12 @@ public class GatewayRefundService : IGatewayRefundService
             });
             return null;
         }
+        // รอบ 228 (§5.5 · ฝ่ายค้าน B1): ค่าบริการ NextAcc ไม่ลงใบสำคัญคืนเงินที่นี่เลย —
+        // ใต้บริษัทผู้ให้บริการ ⇒ ใบลดหนี้อัตโนมัติหลัง commit เป็น "ใบเดียว" ที่ลงบัญชี (Dr รายได้ + ภาษีขาย / Cr บัญชีพักผู้ให้บริการรับชำระ —
+        // ใบเดิมชำระครบ ⇒ ขา counter = ช่องทางเงินของใบลดหนี้ = บัญชีพัก) · เดิมลง PV Dr ลูกหนี้/Cr บัญชีพัก แล้วใบลดหนี้ของใบที่ชำระครบลง Cr เงินสดอีกขา
+        // ⇒ เงินสดหายสองครั้ง + ลูกหนี้ค้าง · ใบลดหนี้ล้ม ⇒ ใบสำคัญสำรอง (PostPlatformFallbackVoucherAsync) ให้บัญชีพักไม่ค้างเงียบ
+        // รายการเก่าใต้บริษัทร้าน ⇒ ไม่ลง (ข้อ 4 รอบ 2 เดิม)
+        var platformBooks = PlatformRevenueSource.RefundBooksInPlatformTenant(intent.SourceKind, companyId, await PlatformCompanyIdAsync(ct));
         if (PlatformRevenueSource.RefundSkipsStoreReceivable(intent.SourceKind))
         {
             intent.RefundedAmount = newRefundedTotal;
@@ -295,7 +476,7 @@ public class GatewayRefundService : IGatewayRefundService
                 CompanyId = companyId, IntentId = intent.Id, At = refundAtUtc, Source = PaymentEventSource.Manual,
                 FromStatus = fromStatus, ToStatus = newStatus, RefundAmount = amount,
                 Note = $"คืนเงิน {amount:N2} (สะสม {newRefundedTotal:N2}) · อ้างอิง {refundRef} โดย {actor} · {reason} · "
-                     + PlatformRevenueSource.RefundNotBookedNote,
+                     + (platformBooks ? PlatformRefundCreditNote.BookedByCreditNoteNote : PlatformRevenueSource.RefundNotBookedNote),
             });
             // ประวัติบนแถวสิทธิ์ต้นทาง (รายการชำระค่าแพ็กเกจ/ส่วนเสริม) — ผู้สอบบัญชีของแพลตฟอร์มตามจากต้นทางได้
             _db.AddChainedAuditLog(new AuditLog
@@ -307,7 +488,7 @@ public class GatewayRefundService : IGatewayRefundService
                 NewValues = System.Text.Json.JsonSerializer.Serialize(new
                 {
                     action = "platform-revenue-refund", ruleCode = "PLATFORM-REFUND-GOODWILL", intentId = intent.Id,
-                    amount, refundedTotal = newRefundedTotal, refundRef, reason, actor,
+                    amount, refundedTotal = newRefundedTotal, refundRef, reason, actor, bookedByCreditNote = platformBooks,
                 }),
                 Timestamp = DateTime.UtcNow,
             });
@@ -402,7 +583,7 @@ public class GatewayRefundService : IGatewayRefundService
                     new ProviderCharge(intentNow.ProviderRef ?? string.Empty, st, "refunded", intentNow.Amount),
                     PaymentEventSource.Poll, $"verify:{actor} · ตรวจผลการคืนเงินที่ไม่แน่ชัด", CancellationToken.None);
         }
-        return outcome;
+        return await IssuePlatformCreditNoteAsync(companyId, intentId, outcome, "ตรวจผลการคืนเงินที่ไม่แน่ชัด — ผู้ให้บริการยืนยันว่าคืนแล้ว", actor);
     }
 
     /// <summary>เส้นธุรกรรมของการตรวจผล — ล็อกเดียวกับการคืนเงิน · ถามยอดคืนสะสมจากผู้ให้บริการ · ตัดสินด้วย
@@ -431,7 +612,9 @@ public class GatewayRefundService : IGatewayRefundService
         try
         {
             charge = await provider.GetChargeAsync(intent,
-                config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }, ct);
+                config == null
+                    ? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }
+                    : PaymentConfigForIntent.For(config, intent.IsTestMode), ct);   // รอบ 227 (A-12)
         }
         catch (Exception ex)
         {
@@ -527,7 +710,7 @@ public class GatewayRefundService : IGatewayRefundService
                     new ProviderCharge(intentNow.ProviderRef ?? string.Empty, st, "refunded", intentNow.Amount),
                     PaymentEventSource.Manual, $"manual:{actor} · บันทึกผลการคืนเงินที่ไม่แน่ชัดด้วยมือ", CancellationToken.None);
         }
-        return outcome;
+        return await IssuePlatformCreditNoteAsync(companyId, intentId, outcome, "บันทึกผลการคืนเงินที่ไม่แน่ชัดด้วยมือ", actor);
     }
 
     /// <summary>เส้นธุรกรรมของการบันทึกผลด้วยมือ — ล็อกเดียวกับการคืนเงิน · ตัดสินด้วย <see cref="GatewayRefundMath.CheckManualResolution"/>
@@ -722,12 +905,16 @@ public class GatewayRefundService : IGatewayRefundService
         });
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
-        return new GatewayRefundOutcome(true,
+        var legacyOutcome = new GatewayRefundOutcome(true,
             (journal != GatewayLegacyRefundJournal.BookNow
                 ? $"บันทึกยอดคืน {check.AmountToBook:N2} บาทแล้ว (ไม่ลงบัญชีซ้ำ — ลงด้วยมือไว้แล้ว)"
                 : $"บันทึกยอดคืน {check.AmountToBook:N2} บาท — {BookedText(je)}") + " · " + roundOutcome,
             refundRef, check.AmountToBook, intent.Status == PaymentIntentStatus.Refunded, check.AmountToBook,
             je?.Id, je?.EntryNumber, "", NextStepText);
+        // ฝ่ายค้านรอบ 228 S1: เลือก "ลงบัญชี" กับค่าบริการใต้บริษัทผู้ให้บริการ ⇒ ใบลดหนี้อัตโนมัติเส้นเดียวกับคืนเงินปกติ (ลงด้วยมือไว้แล้ว = ไม่ออก)
+        return journal == GatewayLegacyRefundJournal.BookNow
+            ? await IssuePlatformCreditNoteAsync(companyId, intentId, legacyOutcome, $"บันทึกยอดคืนย้อนหลัง — {evidenceText}", actor)
+            : legacyOutcome;
     }
 
     /// <summary>รายการนี้อยู่ในรอบโอนที่<b>บันทึกแล้ว</b>ไหม + อ้างอิงของรอบ (ใช้แค่ถ้อยคำของข้อความสำเร็จ · RV2-3) — เส้นเดิม: มีใบสำคัญรอบโอน ·
@@ -792,6 +979,15 @@ public class GatewayRefundService : IGatewayRefundService
                 .Select(d => (Guid?)d.ContactId)
                 .FirstOrDefaultAsync(ct);
             if (docContact is Guid dc && dc != Guid.Empty) contactId = dc;
+        }
+        // รอบ 228 (§5.5): ค่าบริการ NextAcc ⇒ ผู้ติดต่อของบริษัทผู้จ่ายใน tenant ผู้ให้บริการ (ตัวเดียวกับที่ใบเดิม/ใบลดหนี้ใช้) — ลูกหนี้ที่ตั้งตอนคืนเงินต้องเป็นผังเดียวกับที่ใบลดหนี้ล้าง
+        else if (PlatformRevenueSource.IsPlatformRevenue(intent.SourceKind) && intent.PayerCompanyId is Guid payer)
+        {
+            var key = payer.ToString();
+            var tenantContact = await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.ExternalSystem == PlatformInvoiceRules.TenantContactSystem && c.ExternalId == key)
+                .OrderBy(c => c.CreatedAt).Select(c => (Guid?)c.Id).FirstOrDefaultAsync(ct);
+            if (tenantContact is Guid tc) contactId = tc;
         }
         if (contactId is not Guid id || id == Guid.Empty) return null;
         return await _db.Contacts.AsNoTracking()

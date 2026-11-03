@@ -39,7 +39,20 @@ public record PendingRemittanceItem(
     decimal PenaltyPreview = 0m,
     string? LateFeeNote = null,
     string? PenaltyNote = null,
-    string? FineNote = null);
+    string? FineNote = null,
+    // รอบ 228: ป้ายงวดของแบบรายครึ่งปี/รายปี (ภ.ง.ด.51/50 · กท.20ก) — เซิร์ฟเวอร์คิด หน้าแสดง · null = แบบรายเดือน (หน้าแสดงเดือน/ปีเอง)
+    string? PeriodLabel = null,
+    // รอบ 228: คำอธิบายยอด (เช่น กท.20ก ยอดรายปีเทียบตั้งค้างจ่ายรายเดือน · ภ.ง.ด.50 หักเครดิต) — null = ไม่มี
+    string? AmountNote = null,
+    // รอบ 228: ค่าที่หน้าเติมลงช่องเบี้ยปรับ — null = เท่ากับ PenaltyPreview · 0 = กติกายังไม่ยืนยัน (ภ.พ.36) แสดงค่าเสนอเป็นข้อมูลแต่ไม่เติม
+    decimal? PenaltyPrefill = null,
+    // ฝ่ายค้าน S4: ค่าที่หน้าเติมลงช่องเงินเพิ่ม — null = เท่ากับ LateFeePreview · 0 = กติกายังไม่ยืนยัน (กองทุนเงินทดแทน ม.46)
+    decimal? LateFeePrefill = null,
+    // ฝ่ายค้าน S6: เงินเพิ่ม §67 ตรี (ภ.ง.ด.50) แยกก้อน — ข้อมูลเท่านั้น ไม่เติมช่อง · 0/null = ไม่มี
+    decimal Section67TerPreview = 0m,
+    string? Section67TerNote = null,
+    // ฝ่ายค้าน S3: แบบนี้ผูกใบสำคัญที่ลงเอง ("ชำระนอกระบบแล้ว") ได้ — เซิร์ฟเวอร์ตัดสิน (ภ.ง.ด.51/50 · กท.20ก)
+    bool CanSettleOutside = false);
 
 /// <summary>สรุปหน้านำส่ง — ยอดรวมรอนำส่ง + รายการ.</summary>
 public record RemittanceDashboardResponse(
@@ -51,7 +64,11 @@ public record RemittanceDashboardResponse(
     // ภ.พ.36 นำส่งแล้ว รอรับรู้ภาษีซื้อ (ขั้นที่ 2) — ว่าง = ไม่มีค้าง
     List<Pp36AwaitingRecognitionItem> Pp36AwaitingRecognition,
     // รอบ 203 ทีม F3 (E-3/E-6): ภ.พ.36 ที่ "ต้องตรวจ" — ใบอนุมัติแล้วไม่มี JE (ไม่นับในยอด) · นำส่งเกิน · null = เส้นทางที่ไม่คำนวณ
-    List<Pp36IssueItem>? Pp36Issues = null);
+    List<Pp36IssueItem>? Pp36Issues = null,
+    // รอบ 228 ฝ่ายค้าน S5b/S3: ข้อความที่ต้องเห็นแม้ไม่มีรายการรอนำส่ง (เช่น §67 ตรี ของ ภ.ง.ด.50 ที่ยอดสุทธิ 0) — null/ว่าง = ไม่มี
+    List<string>? Advisories = null,
+    // ฝ่ายค้าน S3: ภ.ง.ด.51/50 · กท.20ก ที่ครบกำหนดเกิน 24 เดือนแล้วถูกซ่อน (ขอดูด้วย includeOldAnnual=true) — 0 = ไม่มี
+    int HiddenOldAnnualCount = 0);
 
 /// <summary>ภ.พ.36 ที่ต้องตรวจ (ไม่นับเงียบ) — Kind: "NoJournal" (ใบอนุมัติแล้วแต่ GL ไม่มี Cr 21912 · ซ่อม JE ก่อน) ·
 /// "OverRemitted" (ยอดนำส่งมากกว่าหนี้ 21912 ของใบที่ผูกอยู่)</summary>
@@ -85,7 +102,11 @@ public record RemittanceHistoryItem(
     bool? Pp36Recognized = null,
     // รอบ 220: เบี้ยปรับ + ค่าปรับอื่น ที่ลงบัญชี (แถวเดิม = 0)
     decimal Penalty = 0m,
-    decimal OtherFine = 0m);
+    decimal OtherFine = 0m,
+    // รอบ 228: ป้ายงวดของแบบรายครึ่งปี/รายปี/รายตราสาร — null = แบบรายเดือน
+    string? PeriodLabel = null,
+    // รอบ 228 ฝ่ายค้าน S3: ผูกใบสำคัญที่ลงเอง (ไม่ใช่ JE ของเส้นนำส่ง) — ยกเลิกไม่กลับรายการ
+    bool SettledOutside = false);
 
 /// <summary>ภ.พ.36 ที่นำส่งแล้วแต่ยัง "ไม่ได้กดรับรู้ภาษีซื้อ" — ภาษีซื้อจึงยัง
 /// ไม่ขึ้นใน ภ.พ.30 (ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่
@@ -138,6 +159,27 @@ public record RemitRequest(
     decimal? OtherFine = null,
     // รอบ 220 ฝ่ายค้านข้อ 1: ยื่นแบบกระดาษ ⇒ ครบกำหนดวันกระดาษเสมอ (ไม่มีสิทธิ์ขยาย e-Filing)
     bool PaperFiling = false);
+
+/// <summary>รอบ 228 — จ่ายอากรแสตมป์ (หน้าอากรแสตมป์ → <c>RemitStampDutyAsync</c>) · DutyAmount null = ยอดบนรายการ ·
+/// Surcharge/OtherFine null = 0 (หน้าเติมค่าเสนอให้เห็นก่อนกด) · ExpenseAccountId null = 54810</summary>
+public record StampDutyRemitRequest(
+    DateTime PayDate,
+    string? RdReceiptNumber,
+    Guid? BankAccountId = null,
+    Guid? BankGlAccountId = null,
+    decimal? DutyAmount = null,
+    decimal? Surcharge = null,
+    decimal? OtherFine = null,
+    Guid? ExpenseAccountId = null);
+
+/// <summary>รอบ 228 ฝ่ายค้าน S3 — "ชำระนอกระบบแล้ว": ผูกใบสำคัญ (JE) ที่ล้างหนี้ ภ.ง.ด.51/50 · กท.20ก ไว้แล้วกับงวด (ไม่ลง JE ใหม่ · audit) ·
+/// ใช้เมื่อชำระด้วยใบสำคัญจ่ายก่อนมีเส้นนำส่ง แล้วระบบยังขึ้นเป็นค้าง</summary>
+public record SettledOutsideRequest(
+    string RemittanceType,
+    int PeriodYear,
+    int PeriodMonth,
+    string JournalEntryNumber,
+    string? Note = null);
 
 public record RemitResult(
     Guid Id,

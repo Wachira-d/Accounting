@@ -39,7 +39,7 @@
     </div>
 
     <div class="ss-tabs">
-      <button class="btn btn-secondary btn-sm ss-tab" data-tab="general" onclick="Page.tab('general')">สวิตช์ร้าน</button>
+      <button class="btn btn-secondary btn-sm ss-tab" data-tab="general" onclick="Page.tab('general')">การสั่งซื้อ</button><!-- รอบ 228 แพ็ก F §5: "สวิตช์ร้าน" ⇒ "การสั่งซื้อ" -->
       <button class="btn btn-secondary btn-sm ss-tab" data-tab="payment" onclick="Page.tab('payment')">วิธีชำระ</button>
       <button class="btn btn-secondary btn-sm ss-tab" data-tab="form" onclick="Page.tab('form')">ฟอร์มสั่งซื้อ</button>
       <button class="btn btn-secondary btn-sm ss-tab" data-tab="shipping" onclick="Page.tab('shipping')">โซน/อัตราค่าส่ง</button>
@@ -54,11 +54,14 @@
         <div class="ss-hint">ต้องเปิดอย่างน้อย 1 วิธี · ปิดจัดส่ง = หน้าร้านไม่แสดงที่อยู่/ค่าส่ง และเซิร์ฟเวอร์ปฏิเสธคำสั่งซื้อแบบจัดส่ง</div>
         <div class="ss-row"><input type="checkbox" id="sw_enableShipping"><label for="sw_enableShipping">รับคำสั่งซื้อแบบจัดส่ง<small>ปิด = ร้านมารับเองอย่างเดียว</small></label></div>
         <div class="ss-row"><input type="checkbox" id="sw_enablePickup"><label for="sw_enablePickup">ให้ลูกค้ามารับเองที่ร้าน<small>ไม่มีค่าส่ง · วันปิดร้าน/ตัดรอบตั้งที่ ⚙️ สินค้าตามสั่ง ในหน้าคำสั่งซื้อ</small></label></div>
-        <div class="ss-grid" style="margin-top:8px">
-          <div><label class="form-label">ค่าส่งเหมาจ่าย (บาท · ร้านที่ไม่ได้ตั้งโซน)</label><input type="number" min="0" step="0.01" class="form-input" id="sw_flatShippingRate" placeholder="ว่าง = ไม่คิดค่าส่ง"></div>
-          <div><label class="form-label">ส่งฟรีเมื่อยอดสินค้าถึง (บาท)</label><input type="number" min="0" step="0.01" class="form-input" id="sw_freeShippingThreshold" placeholder="ว่าง = ไม่มี"></div>
-        </div>
-        <div class="ss-row"><input type="checkbox" id="sw_freeShippingOverridesZones"><label for="sw_freeShippingOverridesZones">ใช้ "ส่งฟรีเมื่อครบยอด" กับอัตราในโซนด้วย<small>ปิด = ใช้เฉพาะร้านที่ไม่ได้ตั้งโซน (อัตราในโซนใช้ "ส่งฟรีเมื่อครบ" ของอัตรานั้นเอง)</small></label></div>
+        <!-- รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก C): ค่าส่งเหมาจ่าย/ส่งฟรี ย้ายไปกลุ่ม "การจัดส่ง / รับเอง" ของศูนย์ตั้งค่าเว็บ (ที่เดียว · ใช้ร่วมการจอง) -->
+        <div class="ss-warn" style="background:#eff6ff;border-color:#bfdbfe;color:#1e3a8a;margin-top:8px">ย้ายแล้ว — ค่าส่งเหมาจ่าย · ส่งฟรีเมื่อครบยอด ตั้งที่ <b>ตั้งค่าเว็บ › การจัดส่ง / รับเอง</b> (ใช้ร่วมคำสั่งซื้อและการจอง)
+          <a class="btn btn-sm btn-primary" id="shipMovedLink" href="/pages/cms-site-settings.html?group=shipping" style="margin-left:8px">ไปที่นั่น →</a></div>
+        <!-- รอบ 228: บัญชีรายได้ค่าจัดส่ง (คำสั่งซื้อ + การจองแบบจัดส่ง) — ตรวจที่เซิร์ฟเวอร์ (Helpers/ShippingRevenueAccount) -->
+        <div style="margin-top:8px"><label class="form-label">บัญชีรายได้ค่าจัดส่ง (ใบขาย/ใบกำกับของคำสั่งซื้อและการจองแบบจัดส่ง)</label>
+          <select class="form-input" id="sw_shippingRevenueAccountId"><option value="">บัญชีรายได้ตั้งต้นของเอกสาร (เดิม)</option></select>
+          <div class="ss-hint">ใบรับมัดจำไม่ใช้บัญชีนี้ (ลงเงินรับล่วงหน้า) · มีผลกับเอกสารที่ออกหลังบันทึก</div>
+          <div class="ss-warn" id="shipAccWarn" style="display:none"></div></div>
       </div>
 
       <div class="ss-card">
@@ -67,6 +70,9 @@
         <div class="ss-row"><input type="checkbox" id="sw_autoConfirmOrders"><label for="sw_autoConfirmOrders">ยืนยันคำสั่งซื้อใหม่อัตโนมัติ<small>เปลี่ยนสถานะเป็น "ยืนยันแล้ว" ทันที — ไม่ใช่การรับเงิน (เงินยังต้องยืนยันตามเดิม)</small></label></div>
         <div class="ss-row"><input type="checkbox" id="sw_enableTaxInvoice"><label for="sw_enableTaxInvoice">ลูกค้าขอใบกำกับภาษีเต็มรูปที่หน้าร้านได้<small>ผู้ซื้อต้องกรอกชื่อ · ที่อยู่ · เลขผู้เสียภาษี 13 หลัก · สาขา 5 หลัก (ตรวจที่เซิร์ฟเวอร์ §86/4)</small></label></div>
         <div class="ss-row"><input type="checkbox" id="sw_enableQuoteConversion"><label for="sw_enableQuoteConversion">ลูกค้ากด "ขอใบเสนอราคา" แทนการชำระได้</label></div>
+        <div style="margin:4px 0 10px"><label class="form-label">📄 ข้อความท้ายใบเสนอราคา (แสดงทุกใบที่ออกจากเว็บ)</label>
+          <textarea id="sw_quotationMessageTh" class="form-input" rows="3" maxlength="1000" placeholder="เช่น ราคานี้ยืนยัน 7 วัน · ชำระมัดจำ 50% เมื่อยืนยันคำสั่งซื้อ"></textarea>
+          <div class="ss-hint">ย้ายมาจากปุ่ม "ตั้งค่าวิธีรับเงิน" ในหน้าคำสั่งซื้อ (รอบ 228)</div></div>
         <div class="ss-row"><input type="checkbox" id="sw_enableCoupons"><label for="sw_enableCoupons">ใช้คูปองส่วนลด<small>ปิด = ช่องโค้ดหายจากหน้าร้าน และส่วนลดค้างในตะกร้าไม่ถูกใช้</small></label></div>
         <div class="ss-row"><input type="checkbox" id="sw_enableWishlist"><label for="sw_enableWishlist">รายการโปรด (Wishlist) ของสมาชิก</label></div>
       </div>
@@ -131,6 +137,8 @@
       <div class="ss-card">
         <h3>📦 โซนและอัตราค่าส่ง</h3>
         <div class="ss-hint">ไม่มีโซน = ใช้ค่าส่งเหมาจ่ายของร้าน · จังหวัดคั่นด้วย , (ว่าง = ทุกจังหวัด) · รหัสไปรษณีย์ใช้ * แทนตัวเลข เช่น 10* · บันทึกโซน/อัตราได้ทันที (แยกจากปุ่มบันทึกค่าตั้ง)</div>
+        <div class="ss-hint">📍 <b>ค่าส่งตามระยะทาง/อำเภอ</b>: ระบบไม่คิดระยะ (กม.) จากแผนที่ — ใช้รหัสไปรษณีย์ของอำเภอ/เขตรอบร้านแทน เช่น โซน "ใกล้ร้าน (≤ 5 กม.)" = 10110,10260 ลำดับ 1 ติ๊ก "ชนะโซนถัดไป" ·
+          โซน "กรุงเทพฯ ทั้งหมด" = 10*,11*,12* ลำดับ 2 ⇒ ลูกค้าในวงในได้อัตราวงในเท่านั้น (ไม่เห็นอัตราวงนอกให้เลือก)</div>
         <div id="zoneList"></div>
         <button class="btn btn-secondary btn-sm" onclick="Page.addZone()">+ เพิ่มโซน</button>
       </div>
@@ -176,7 +184,7 @@
   <script>
     // รอบ 209 P2 — หน้าแสดง/แก้ค่าอย่างเดียว: กติกา (ต้องมีวิธีรับ/ชำระ ≥ 1 · รูปคำนำหน้า · ช่องฟอร์ม) ตัดสินที่เซิร์ฟเวอร์
     // (Helpers/CmsFeatureFlags · Helpers/OrderFormFields) แล้วข้อความผิดกลับมาแสดงตรง ๆ — ไม่มีสำเนากติกาในหน้านี้
-    const SWITCHES = ['enableShipping', 'enablePickup', 'freeShippingOverridesZones', 'enableGuestCheckout', 'autoConfirmOrders',
+    const SWITCHES = ['enableShipping', 'enablePickup', 'enableGuestCheckout', 'autoConfirmOrders',
       'enableTaxInvoice', 'enableQuoteConversion', 'enableCoupons', 'enableWishlist', 'enableReviews', 'reviewAutoApprove',
       'reviewRequirePurchase', 'enableOnlinePayment', 'enableBankTransfer', 'enableCod'];
     const RATE_TYPES = [['Flat', 'เหมาจ่าย'], ['ByWeight', 'ตามน้ำหนัก'], ['Free', 'ส่งฟรี']];
@@ -197,8 +205,12 @@
         try {
           const sites = this.sites = await CmsSiteContext.loadSites();
           const sel = document.getElementById('siteSelector');
-          const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: 'orders', allowAll: false });
-          CmsSiteContext.fillSelect(sel, sites, { module: 'orders', allowAll: false, value: picked });
+          // รอบ 228 (แพ็ก C · §1 ข้อ 3): แท็บโซน/อัตราค่าส่งใช้กับการจองแบบจัดส่งด้วย ⇒ ไม่ติดป้าย "ยังไม่ใช้งานนี้" กับเว็บการจอง
+          const shipMod = wantTab === 'shipping' ? null : 'orders';
+          const picked = CmsSiteContext.pick(sites, new URLSearchParams(location.search).get('siteId'), { module: shipMod, allowAll: false });
+          CmsSiteContext.fillSelect(sel, sites, { module: shipMod, allowAll: false, value: picked });
+          // รอบ 228 แพ็ก B · ฝ่ายค้าน S-6: แท็บแจ้งเตือนบันทึกเองทันที (ไม่มีปุ่มบันทึกรวม) ⇒ ไม่นับเป็นค่าค้าง
+          if (window.CmsDirtyGuard) document.querySelectorAll('[data-pane]:not([data-pane="notify"])').forEach(p => CmsDirtyGuard.watch(p));
           this.onSiteChange();
         } catch (e) { Layout.toast('โหลดเว็บไซต์ไม่สำเร็จ: ' + e.message, 'error'); }
       },
@@ -211,10 +223,14 @@
       },
 
       async onSiteChange() {
+        // รอบ 228 แพ็ก B: เปลี่ยนเว็บขณะมีค่าค้าง ⇒ ถามก่อน (ไม่ยืนยัน = กลับเว็บเดิม)
+        if (this.siteId && window.CmsDirtyGuard && !CmsDirtyGuard.confirmLeave()) { document.getElementById('siteSelector').value = this.siteId; return; }
         const v = document.getElementById('siteSelector').value;
         this.siteId = v || null;
         CmsSiteContext.setUrl(v);
-        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], v, 'ตั้งค่าร้านค้า', 'cms-store-settings');
+        CmsSiteContext.renderCrumb('cmsCrumb', this.sites || [], v, 'ตั้งค่าร้านค้า', 'cms-store-settings',
+          { beforeLeave: () => !window.CmsDirtyGuard || CmsDirtyGuard.confirmLeave() });   // รอบ 228 แพ็ก B
+        const ml = document.getElementById('shipMovedLink'); if (ml) ml.href = '/pages/cms-site-settings.html?siteId=' + encodeURIComponent(v || '') + '&group=shipping';
         document.getElementById('ordersLink').href = '/pages/cms-orders.html?siteId=' + encodeURIComponent(v || '');
         if (!this.siteId) return;
         await Promise.all([this.loadConfig(), this.loadZones(), this.loadCoupons()]);
@@ -243,8 +259,8 @@
         try {
           const c = this.cfg = (await api.cmsGetCommerceConfig(this.siteId)).data;
           SWITCHES.forEach(k => { const el = document.getElementById('sw_' + k); if (el) el.checked = !!c[k]; });
-          document.getElementById('sw_flatShippingRate').value = c.flatShippingRate ?? '';
-          document.getElementById('sw_freeShippingThreshold').value = c.freeShippingThreshold ?? '';
+          document.getElementById('sw_quotationMessageTh').value = c.quotationMessageTh || '';   // รอบ 228 แพ็ก A: ย้ายจาก modal หน้าคำสั่งซื้อ
+          await this.loadShippingAccounts(c);   // รอบ 228
           document.getElementById('sw_orderNumberPrefix').value = c.orderNumberPrefix || '';
           document.getElementById('orderNumberExample').textContent = c.orderNumberExample || '-';
           const opts = (c.formFieldRequirementOptions || []).map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
@@ -253,7 +269,8 @@
             const el = document.getElementById('ff_' + k); el.innerHTML = opts; el.value = ff[k] || 'Optional';
           });
           document.getElementById('formState').textContent = c.orderFormFieldsConfigured ? ' · ตั้งค่าแล้ว' : ' · ใช้ฟอร์มเดิม (ยังไม่ได้ตั้ง)';
-          this.formTypes = c.formFieldTypes || ['text'];
+          // รอบ 222: ชนิดช่อง + ป้ายไทยจากเซิร์ฟเวอร์ (ตัวตั้งเดียวกับฟอร์มจอง) — เซิร์ฟเวอร์เก่าไม่มีป้าย ⇒ ใช้ชื่อชนิด
+          this.formTypes = (c.formFieldTypeOptions && c.formFieldTypeOptions.length) ? c.formFieldTypeOptions.map(o => [o.value, o.label]) : (c.formFieldTypes || ['text']).map(t => [t, t]);
           this.reqOptions = c.formFieldRequirementOptions || [];
           this.customFields = (ff.customFields || []).map(f => Object.assign({}, f));
           this.resetFormFlag = false;
@@ -263,7 +280,7 @@
 
       renderCustomFields() {
         const sel = (list, v) => list.map(([val, lbl]) => `<option value="${Layout.esc(val)}" ${val === v ? 'selected' : ''}>${Layout.esc(lbl)}</option>`).join('');
-        const typeList = (this.formTypes || []).map(t => [t, t]);
+        const typeList = this.formTypes || [];
         const reqList = (this.reqOptions || []).map(o => [o.value, o.label]);
         document.getElementById('cfRows').innerHTML = this.customFields.map((f, i) => `<tr>
             <td><input value="${Layout.esc(f.key || '')}" maxlength="30" onchange="Page.cf(${i}, 'key', this.value)"></td>
@@ -295,6 +312,25 @@
         Layout.toast('จะกลับเป็นฟอร์มเดิมเมื่อกด "บันทึกค่าตั้งร้าน"', 'info');
       },
 
+      // รอบ 228: ตัวเลือกบัญชีรายได้ (หมวด 4 ที่ใช้งาน) — ค่าที่ตั้งไว้แต่ไม่อยู่ในรายการ (ถูกปิด) ยังแสดงพร้อมคำเตือนจากเซิร์ฟเวอร์
+      async loadShippingAccounts(c) {
+        const sel = document.getElementById('sw_shippingRevenueAccountId');
+        const warn = document.getElementById('shipAccWarn');
+        if (!sel) return;
+        if (!this._revAccounts) {
+          try { this._revAccounts = ((await Layout.api().getAccounts('?type=Revenue&pageSize=500')).data || []).filter(a => a.isActive !== false); }
+          catch (_) { this._revAccounts = []; }
+        }
+        const cur = c.shippingRevenueAccountId || '';
+        const opts = this._revAccounts.map(a => `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} ${Layout.esc(a.accountName)}</option>`);
+        if (cur && !this._revAccounts.some(a => a.id === cur))
+          opts.push(`<option value="${Layout.esc(cur)}">${Layout.esc(c.shippingRevenueAccountLabel || cur)} (ใช้ไม่ได้แล้ว)</option>`);
+        sel.innerHTML = '<option value="">บัญชีรายได้ตั้งต้นของเอกสาร (เดิม)</option>' + opts.join('');
+        sel.value = cur;
+        this._shipAccLoaded = cur;
+        if (warn) { warn.textContent = c.shippingRevenueAccountWarning || ''; warn.style.display = c.shippingRevenueAccountWarning ? '' : 'none'; }
+      },
+
       _num(id) { const v = document.getElementById(id).value; return v === '' ? null : Number(v); },
 
       async save() {
@@ -302,9 +338,12 @@
         const body = {};
         SWITCHES.forEach(k => { const el = document.getElementById('sw_' + k); if (el) body[k] = el.checked; });
         // ช่องว่าง = ล้างค่า (ไม่ใช่ "ไม่เปลี่ยน") — เซิร์ฟเวอร์รับธง clear แยก
-        const flat = this._num('sw_flatShippingRate'), free = this._num('sw_freeShippingThreshold');
-        if (flat == null) body.clearFlatShippingRate = true; else body.flatShippingRate = flat;
-        if (free == null) body.clearFreeShippingThreshold = true; else body.freeShippingThreshold = free;
+        // รอบ 228: ค่าส่งเหมาจ่าย/ส่งฟรีไม่ส่งจากหน้านี้แล้ว (ย้ายไปศูนย์ตั้งค่าเว็บ — ไม่ส่ง = เซิร์ฟเวอร์ไม่แตะ)
+        body.quotationMessageTh = document.getElementById('sw_quotationMessageTh').value.trim();   // "" = ล้าง
+        // รอบ 228: ว่าง = กลับไปใช้บัญชีรายได้ตั้งต้น (ธง clear แยก)
+        // ไม่เปลี่ยน = ไม่ส่ง (บัญชีเดิมที่ถูกปิดภายหลังไม่ขังการบันทึกค่าอื่น — คำเตือนอยู่บนหน้า)
+        const shipAcc = document.getElementById('sw_shippingRevenueAccountId').value;
+        if (shipAcc !== (this._shipAccLoaded || '')) { if (shipAcc) body.shippingRevenueAccountId = shipAcc; else body.clearShippingRevenueAccount = true; }
         body.orderNumberPrefix = document.getElementById('sw_orderNumberPrefix').value;
         if (this.resetFormFlag) body.resetOrderFormFields = true;
         else body.orderFormFields = {
@@ -319,6 +358,8 @@
           await api.cmsUpdateCommerceConfig(this.siteId, body);
           Layout.toast('บันทึกค่าตั้งร้านแล้ว', 'success');
           await this.loadConfig();
+          // ฝ่ายค้านรอบ 228 S-5(b): ปุ่มนี้บันทึกเฉพาะ สวิตช์ร้าน · วิธีชำระ · ฟอร์ม ⇒ ล้างสถานะค้างเฉพาะสามแท็บนี้
+          if (window.CmsDirtyGuard) ['general', 'payment', 'form'].forEach(k => CmsDirtyGuard.reset(document.querySelector(`[data-pane="${k}"]`)));
         } catch (e) { Layout.toast(e.message, 'error'); }
         finally { btn.disabled = false; }
       },
@@ -329,6 +370,7 @@
         try { this.zones = (await api.cmsListShippingZones(this.siteId)).data || []; }
         catch (e) { this.zones = []; Layout.toast('โหลดโซนค่าส่งไม่สำเร็จ: ' + e.message, 'error'); }
         this.renderZones();
+        if (window.CmsDirtyGuard) CmsDirtyGuard.reset(document.querySelector('[data-pane="shipping"]'));   // ฝ่ายค้าน S-6: ค่าบนจอ = ค่าที่บันทึก
       },
       renderZones() {
         const typeSel = (v) => RATE_TYPES.map(([val, lbl]) => `<option value="${val}" ${val === v ? 'selected' : ''}>${lbl}</option>`).join('');
@@ -340,6 +382,7 @@
               <div><label class="form-label">รหัสไปรษณีย์ (เช่น 10*,11*)</label><input class="form-input" id="z_post_${zi}" value="${Layout.esc(z.postalCodePatterns || '')}"></div>
               <div><label class="form-label">ลำดับ</label><input type="number" class="form-input" id="z_sort_${zi}" value="${num(z.sortOrder) || 0}"></div>
             </div>
+            <div class="ss-row"><input type="checkbox" id="z_stop_${zi}" ${z.stopWhenMatched ? 'checked' : ''}><label for="z_stop_${zi}">ชนะโซนถัดไป<small>ที่อยู่ตรงโซนนี้แล้วไม่ดูโซนลำดับถัดไป (ใช้ทำวงระยะทาง/อำเภอ)</small></label></div>
             <div class="flex gap-2" style="margin:8px 0;flex-wrap:wrap">
               <button class="btn btn-primary btn-sm" onclick="Page.saveZone(${zi})">💾 บันทึกโซน</button>
               ${z.id ? `<button class="btn btn-secondary btn-sm" onclick="Page.deleteZone(${zi})">🗑 ลบโซน</button>` : ''}
@@ -372,11 +415,12 @@
           postalCodePatterns: document.getElementById('z_post_' + zi).value.trim() || null,
           countryCodes: z.countryCodes || 'TH',
           sortOrder: Number(document.getElementById('z_sort_' + zi).value || 0),
+          stopWhenMatched: document.getElementById('z_stop_' + zi).checked,   // รอบ 228
         };
         try {
-          if (z.id) await api.cmsUpdateShippingZone(this.siteId, z.id, body);
-          else await api.cmsCreateShippingZone(this.siteId, body);
-          Layout.toast('บันทึกโซนแล้ว', 'success');
+          const saved = z.id ? await api.cmsUpdateShippingZone(this.siteId, z.id, body) : await api.cmsCreateShippingZone(this.siteId, body);
+          const warn = saved && saved.data && saved.data.warning;   // รอบ 228: โซน "ชนะโซนถัดไป" ลำดับซ้ำ (ข้อความจากเซิร์ฟเวอร์)
+          Layout.toast(warn || 'บันทึกโซนแล้ว', warn ? 'warning' : 'success', warn ? 10000 : undefined);
           await this.loadZones();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -417,6 +461,7 @@
         try { this.coupons = (await api.cmsListCoupons(this.siteId)).data || []; }
         catch (e) { this.coupons = []; Layout.toast('โหลดคูปองไม่สำเร็จ: ' + e.message, 'error'); }
         this.renderCoupons();
+        if (window.CmsDirtyGuard) CmsDirtyGuard.reset(document.querySelector('[data-pane="coupons"]'));   // ฝ่ายค้าน S-6
       },
       renderCoupons() {
         const typeSel = (v) => COUPON_TYPES.map(([val, lbl]) => `<option value="${val}" ${val === v ? 'selected' : ''}>${lbl}</option>`).join('');

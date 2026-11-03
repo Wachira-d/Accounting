@@ -26,6 +26,8 @@ public class CreateSiteRequest
     /// ลูกค้าค่อยแก้คำ ใส่รูป ปรับแต่งทีหลังได้จาก CMS editor.</summary>
     public bool SeedTemplate { get; set; } = false;
     public IndustryType IndustryType { get; set; } = IndustryType.General;
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E · Q4): จำนวนห้องที่ seed ให้เว็บที่พัก (wizard ค่าเริ่มต้น 3) · null = 11 ห้องเดิม</summary>
+    public int? LodgingRoomCount { get; set; }
 }
 
 public class UpdateSiteRequest

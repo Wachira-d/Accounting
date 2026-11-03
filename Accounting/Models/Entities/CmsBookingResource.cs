@@ -56,6 +56,9 @@ public class SiteBookingSettings : TenantEntity
     public decimal? PaymentDepositMaxAmount { get; set; }
     /// <summary>ต้องชำระภายในกี่นาทีหลังจอง (โหมดบังคับ) · null/0 = ไม่กำหนด (ไม่ยกเลิกอัตโนมัติ) · ผู้อ่าน: <c>BookingReminderJob</c> ผ่าน <c>SiteBooking.PaymentHoldUntil</c></summary>
     public int? PaymentDeadlineMinutes { get; set; }
+    /// <summary>รอบ 226 (ฝ่ายค้าน ข้อ 3): เว็บโหมดบังคับที่เดิมไม่กรอกกำหนดชำระ — migration ตั้งเป็น 0 (คงพฤติกรรมเดิม "ไม่ถือรอบ") แล้วยกธงนี้ ⇒
+    /// หน้าตั้งค่าแสดงคำแนะนำให้ตั้งกำหนดชำระ · ล้างเมื่อเจ้าของบันทึกค่าตั้งการชำระ</summary>
+    public bool PaymentDeadlineLegacyNote { get; set; }
     /// <summary>รับโอน/สแกน QR + แนบสลิป (ข้อมูลบัญชีอยู่ที่ <c>SitePaymentGateway</c> ของเว็บ) · ค่าเริ่ม true (มีบัญชีเมื่อไรใช้ได้ทันที)</summary>
     public bool BankTransferEnabled { get; set; } = true;
     /// <summary>ข้อความถึงลูกค้าเรื่องการชำระ/คืนเงิน (แสดงในกล่องชำระ) · null = ไม่มี</summary>
@@ -63,6 +66,21 @@ public class SiteBookingSettings : TenantEntity
     /// <summary>รอบ 215 เฟส 2 (คำตัดสินข้อ 176): "ลูกค้าเลือกผู้ให้บริการได้ไหม" ค่าเริ่มต้นของทุกบริการที่ตั้ง "ตามค่าเว็บ" ·
     /// null = ไม่ตั้ง ⇒ None (พฤติกรรมเดิม) · เว็บใหม่ตั้งตอนสร้าง (<c>BookingProviderAllocation.NewSiteDefaultMode</c>)</summary>
     public BookingResourceMode? DefaultResourceMode { get; set; }
+
+    // ── รอบ 226: จัดส่ง / รับเองของการจอง (ตัวตัดสินเดียว Helpers/BookingFulfillment · ค่าส่งจากตัวคิดของร้าน Helpers/ShopDeliveryFee) ──
+    /// <summary>เปิดตัวเลือก "จัดส่ง" ให้ทุกบริการที่ตั้ง "ตามค่าเว็บ" · ค่าเริ่ม false (ปิดทั้งคู่ = ไม่มีขั้นนี้ — การจองนัดหมายแบบเดิม)</summary>
+    public bool FulfillmentDeliveryEnabled { get; set; }
+    /// <summary>เปิดตัวเลือก "รับเองที่ร้าน"</summary>
+    public bool FulfillmentPickupEnabled { get; set; }
+    /// <summary>วิธีที่เลือกไว้ก่อน ("delivery"/"pickup") · null = ให้ลูกค้าเลือกเอง</summary>
+    public string? FulfillmentDefault { get; set; }
+    /// <summary>ที่อยู่/เวลารับเองที่แสดงลูกค้า (เช่น "รับที่ร้านสาขาสยาม 10:00–18:00")</summary>
+    public string? FulfillmentPickupNote { get; set; }
+    /// <summary>ยอดค่าบริการขั้นต่ำที่จัดส่งได้ · null = ไม่กำหนด</summary>
+    public decimal? FulfillmentDeliveryMinAmount { get; set; }
+    /// <summary>รอบ 228 (BOOKING_PAYMENT_AUDIT §9): ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่เองจากหน้า "จัดการการจอง" ได้ถึงกี่ชั่วโมงก่อนเวลานัด ·
+    /// null = ไม่เปิดให้เปลี่ยนเอง (พฤติกรรมเดิม — ติดต่อร้าน) · 0 = ได้จนถึงเวลานัด · ตัวตัดสินเดียว <c>Helpers/BookingFulfillmentChange</c></summary>
+    public int? FulfillmentChangeCutoffHours { get; set; }
 }
 
 /// <summary>ผู้ให้บริการ / ห้อง / อุปกรณ์ ที่จองได้ (ช่าง · หมอ · เทรนเนอร์ · ห้องประชุม · รถ) ต่อไซต์</summary>

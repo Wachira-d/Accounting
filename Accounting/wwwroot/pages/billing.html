@@ -27,15 +27,26 @@
 <body>
   <div id="pageContent" class="page-content fade-in">
     <div class="page-header">
-      <div><h2 class="page-title">ศูนย์บิลค่าบริการ NextAcc</h2>
-        <p class="page-subtitle">ใบแจ้งหนี้ · ชำระเงิน · ใบเสร็จ · แพ็กเกจและส่วนเสริมของบริษัทนี้</p></div>
-      <a href="/pages/subscription.html" class="btn btn-secondary">💎 แพ็กเกจ</a>
+      <div><h2 class="page-title">แพ็กเกจและการชำระเงิน</h2>
+        <p class="page-subtitle">ใช้ไปเท่าไร · ซื้อเพิ่ม · ต่ออายุ · ใบแจ้งหนี้ · ใบเสร็จ ของบริษัทนี้ (ที่เดียว)</p></div>
+      <!-- รอบ 229 (QUOTA_ADDON §D.3): hub เดียว — หน้าย่อยเดิมยังเปิดได้จากปุ่มเหล่านี้ (เมนูข้างเหลือรายการเดียว) -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <a href="/pages/subscription.html" class="btn btn-secondary">💎 เปลี่ยน/ต่ออายุแพ็กเกจ</a>
+        <a href="/pages/addons.html" class="btn btn-secondary">🧩 ส่วนเสริม</a>
+        <a href="/pages/usage.html" class="btn btn-secondary">📊 รายละเอียดการใช้งาน</a>
+        <a href="/pages/account-subscription.html" class="btn btn-secondary">🎫 License (หลายบริษัท)</a>
+      </div>
     </div>
     <div id="notice"></div>
     <div class="kpis" id="kpis"></div>
     <div class="card"><h3>แพ็กเกจปัจจุบัน</h3><div id="plan">กำลังโหลด...</div></div>
+    <!-- รอบ 229 (QUOTA_ADDON §D.3): ใช้ไปเท่าไร + ซื้อเพิ่ม + ต่ออายุพร้อมแพ็กเกจ — ตัวเลข/ราคาทั้งหมดจากเซิร์ฟเวอร์ (js/quota-ui.js) -->
+    <div class="card" id="quotaCard"><h3>ใช้ไปเท่าไร · ซื้อเพิ่ม</h3><div id="quotaSummary">กำลังโหลด...</div></div>
+    <div class="card"><h3>การซื้อโควตาเสริม</h3><div id="quotaPurchases">กำลังโหลด...</div></div>
+    <div class="card"><h3>ต่ออายุพร้อมแพ็กเกจ (โควตาเสริมแบบถึงวันหมดอายุ)</h3><div id="quotaRenewal">กำลังโหลด...</div></div>
     <div class="card"><h3>ใบแจ้งหนี้</h3><div id="invoices">กำลังโหลด...</div></div>
     <div class="card"><h3>ประวัติการชำระ</h3><div id="payments">กำลังโหลด...</div></div>
+    <div class="card"><h3>ใบเสร็จ / ใบกำกับภาษี / ใบลดหนี้</h3><div id="receipts">กำลังโหลด...</div></div>
     <div class="card"><h3>ส่วนเสริม</h3><div id="addons">กำลังโหลด...</div>
       <div style="margin-top:10px"><a href="/pages/addons.html" class="btn btn-secondary btn-sm">🧩 จัดการส่วนเสริม</a></div></div>
   </div>
@@ -79,7 +90,7 @@
           this.render();
         } catch (e) {
           document.getElementById('plan').innerHTML = `<div class="note bad">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
-          ['invoices', 'payments', 'addons'].forEach(id => document.getElementById(id).innerHTML = '');
+          ['invoices', 'payments', 'receipts', 'addons'].forEach(id => document.getElementById(id).innerHTML = '');
         }
       },
 
@@ -139,12 +150,23 @@
               </tr>`).join('')}
             </tbody></table></div>`;
 
+        // รอบ 228 (§5.7): ใบเสร็จ/ใบกำกับ/ใบลดหนี้ที่บริษัทนี้เป็นผู้ซื้อ (รวมค่าส่วนเสริมที่จ่ายล่วงหน้า) — ป้ายจากเซิร์ฟเวอร์
+        const rc = d.receipts;
+        document.getElementById('receipts').innerHTML = rc == null
+          ? '<div class="muted">ยังไม่ได้ตั้งบริษัทผู้ให้บริการ — ใบเสร็จแบบ PDF อยู่ในประวัติการชำระ</div>'
+          : rc.length === 0 ? '<div class="muted">ยังไม่มีเอกสาร</div>'
+          : `<div class="table-container"><table class="table"><thead><tr><th>เลขที่</th><th>ชนิด</th><th>วันที่</th><th class="text-right">ยอด</th><th></th></tr></thead><tbody>
+              ${rc.map(r => `<tr><td class="font-medium">${e(r.documentNumber)}${r.isVoided ? ' <span class="muted">(ยกเลิกแล้ว)</span>' : ''}</td>
+                <td>${e(r.typeLabel)}</td><td>${Layout.date(r.documentDate)}</td><td class="text-right">฿${Layout.money(r.totalAmount)}</td>
+                <td><button class="btn btn-secondary btn-sm" onclick="Bill.receiptDoc('${Layout.jsArg(r.id)}','${Layout.jsArg(r.documentNumber)}')">PDF</button></td></tr>`).join('')}
+            </tbody></table></div>`;
+
         const ad = d.addOns || [];
         document.getElementById('addons').innerHTML = ad.length === 0
           ? '<div class="muted">ยังไม่ได้เปิดส่วนเสริม</div>'
           : `<div class="table-container"><table class="table"><thead><tr><th>ส่วนเสริม</th><th>วิธีชำระ</th><th>สถานะการชำระ</th><th class="text-right">ราคา/เดือน</th><th>ใช้งาน</th></tr></thead><tbody>
               ${ad.map(a => `<tr><td>${e(a.name)}</td><td>${e(a.billingChoiceLabel || '-')}</td>
-                <td>${e(a.paymentStatusLabel || 'ไม่ต้องชำระล่วงหน้า')}${a.graceUntil ? `<div class="muted">ชำระก่อน ${Layout.date(a.graceUntil)}</div>` : ''}${a.trialUntil ? `<div class="muted">ทดลองใช้ถึง ${Layout.date(a.trialUntil)}</div>` : ''}</td>
+                <td>${e(a.paymentStatusLabel || 'ไม่ต้องชำระล่วงหน้า')}${a.receiptDocumentId ? `<div><button class="btn btn-secondary btn-sm" style="margin-top:4px" onclick="Bill.receiptDoc('${Layout.jsArg(a.receiptDocumentId)}','${Layout.jsArg(a.receiptNumber || 'receipt')}')">ใบเสร็จ ${e(a.receiptNumber || '')}</button></div>` : ''}${a.graceUntil ? `<div class="muted">ชำระก่อน ${Layout.date(a.graceUntil)}</div>` : ''}${a.trialUntil ? `<div class="muted">ทดลองใช้ถึง ${Layout.date(a.trialUntil)}</div>` : ''}</td>
                 <td class="text-right">${a.monthlyPrice != null ? '฿' + Layout.money(a.monthlyPrice) : '-'}</td>
                 <td>${a.usable ? '✅' : '⛔ ระงับ'}</td></tr>`).join('')}
             </tbody></table></div>`;
@@ -160,6 +182,7 @@
           Layout.toast(res?.message || 'ส่งแล้ว', 'success'); await this.load();
         } catch (e) { Layout.toast(e.message || 'ส่งไม่สำเร็จ', 'error'); }
       },
+      async receiptDoc(id, no) { try { await API.download(`${this.base()}/receipts/${id}/pdf`, `${no || 'receipt'}.pdf`); } catch (e) { Layout.toast(e.message, 'error'); } },
       async receipt(paymentId, no) {
         try { await API.download(`/api/subscription/${this.cid()}/payments/${paymentId}/receipt`, `${no || 'receipt'}.pdf`); }
         catch (e) { Layout.toast(e.message, 'error'); }
@@ -219,10 +242,16 @@
           const res = await API.post(`${this.base()}/invoices/${this._payId}/online-payment`,
             Object.assign({}, pol, { withholdingTaxAmount: whtRaw ? Number(whtRaw) : null }));
           this.closePay();
+          // รอบ 228: ผู้จ่ายเลือกวิธีในหน้าต่างชำระ (ป้ายจากเซิร์ฟเวอร์) · บัตร = ช่องกรอกบัตร → โทเคนในเบราว์เซอร์ (สคริปต์/คีย์สาธารณะจาก payOptions.card)
+          const po = this.data.payOptions || {};
+          const opts = (po.methodOptions || []).filter(m => (res.data.methods || []).includes(m.code));
           PayWidget.open({
             companyId: this.cid(),
             publicBase: res.data.publicBase,
-            method: (res.data.methods || this._methods || [])[0] || 'PromptPay',
+            methods: opts.length ? opts : (res.data.methods || []),
+            method: (opts.length || (res.data.methods || []).length) ? undefined : 'PromptPay',
+            card: po.card || null,
+            amount: res.data.amount,
             extraBody: pol,
             onPaid: async () => { Layout.toast('ชำระเงินสำเร็จ — รอระบบยืนยัน', 'success'); await this.load(); },
           });
@@ -240,6 +269,22 @@
       },
     };
     Bill.init();
+  </script>
+  <script src="/js/quota-ui.js"></script>
+  <script>
+    // รอบ 229: ส่วนโควตาแยกจาก Bill (ไม่แตะเส้นใบแจ้งหนี้/ใบเสร็จ) — รีเฟรชทั้งสามการ์ดหลังซื้อ
+    const QuotaHub = {
+      refresh() {
+        QuotaUI.renderSummary('quotaSummary', { onBought: () => QuotaHub.refresh() });
+        QuotaUI.renderPurchases('quotaPurchases');
+        QuotaUI.renderRenewal('quotaRenewal');
+      },
+    };
+    (async () => {
+      for (let i = 0; i < 50 && !(window.Layout && Layout.getCompanyId && Layout.getCompanyId()); i++) await new Promise(r => setTimeout(r, 100));
+      QuotaHub.refresh();
+      QuotaUI.initHash(() => QuotaHub.refresh());
+    })();
   </script>
 </body>
 </html>

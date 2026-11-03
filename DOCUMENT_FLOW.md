@@ -1819,6 +1819,23 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
     + ล็อกแถว + ส่งหลัง commit · ยกเลิกมีผล ⇒ `RenewalVoidOnCancel` · ส่วนเสริมสลับวิธีชำระ ⇒ `NeedsCatchUpAfterSwitch` · ผู้ถูกระงับจ่ายออนไลน์
     (`IsBillingPaymentPath`) · สลิปผ่าน endpoint ตรวจสิทธิ์ · ลิงก์ชำระ: audit ครั้งแรก/นับ atomic/ถังต่อโทเคน/intent ของใบนี้เท่านั้น/URL กลับไม่มีโทเคน ·
     Last verified `commit 8dffaaf7`
+- **รอบ 229 — โควตาเสริม: ซื้อจำนวนเพิ่ม → ใบกำกับ/ใบเสร็จ · ต่ออายุพร้อมแพ็กเกจในใบแจ้งหนี้หลายบรรทัด (`erp-review/2026-11-02/QUOTA_ADDON_SUBSCRIPTION_AUDIT.md` · คำตัดสินข้อ 229-1..7):**
+  - **ซื้อ (จ่ายก่อน):** `QuotaAddOnPurchaseService.CreateAsync` (ยอด `QuotaAddOnPricing` · ข้อเสนอที่เห็นไม่ตรง ⇒ 409) → ชำระออนไลน์ `PaymentSourceKind.QuotaAddOnPurchase` (intent ใต้บริษัทผู้ให้บริการ — `PlatformRevenueSource`)
+    หรือโอน+สลิป → แอดมินอนุมัติ ⇒ **ใบกำกับภาษี/ใบเสร็จรับเงิน (ขายเงินสด) ใน tenant ผู้ให้บริการ** ผ่าน `IssueAddOnReceiptAsync` เดิม (อ้างอิง `QADD-{intent}` / `QADD-SLIP-{id}` — idempotent ·
+    ขาเงินเข้า = บัญชีพักผู้ให้บริการรับชำระเมื่อจ่ายผ่าน gateway ตามชนิด intent จริง) · บรรทัด = คำอธิบาย "จำนวน × หน่วยละ · ช่วงคิดตามวัน" · ยอด `round(units × perUnit, 2)` ·
+    ออกใบล้ม ⇒ audit `RD-86/4-ADDON-RECEIPT` + log error (สิทธิ์เปิดแล้ว) · ไม่มีเส้นเอกสารใหม่
+  - **รายเดือนต่อเนื่อง:** เดือนแรกในใบเสร็จข้างบน (คิดตามวัน) · เดือนถัดไป `UsageEvent` (`quota.<resource>` · คีย์ `qadd:{id}:{yyyy-MM}`) ⇒ **ใบแจ้งหนี้ค่าใช้งานรายเดือนเส้นเดิม** (ชื่อบรรทัดจาก `QuotaResources.InvoiceName`) ·
+    แพ็กเกจไม่ active ⇒ ไม่ออก (เหมือนค่าเหมาส่วนเสริมสวิตช์ — แก้บั๊ก P1 รอบนี้)
+  - **ต่ออายุ:** `GenerateRenewalInvoiceAsync` — มีโควตาเสริมแบบถึงวันหมดอายุที่ติ๊กต่อ ⇒ **ใบแจ้งหนี้ต่ออายุหลายบรรทัด** (แพ็กเกจ + บรรทัดละรายการ `u × R`) ผ่าน `IssueUsageInvoiceAsync` ด้วย reference ต่ออายุเดิม ·
+    ไม่มี ⇒ ใบบรรทัดเดียวตามเดิม · ตัดชำระใบ (อนุมัติรายการที่ผูกใบ) ⇒ ต่อแพ็กเกจ + `QuotaRenewalLines.ActivateForInvoiceAsync` สร้างรอบใหม่ (idempotent) · บรรทัดที่ไม่ติ๊กหมดพร้อมรอบ (ไม่ลบข้อมูล)
+  - **คืนเงิน:** ใบลดหนี้อัตโนมัติรอบ 228 หาใบเดิมของโควตาเสริมด้วยอ้างอิง `QADD-{intent}` ตัวเดียวกับฝั่งออกใบ · นโยบายค่าบริการไม่คืนเงิน (แอดมินทำ goodwill)
+  - Last verified — รอบ 229 working tree (ยังไม่มี sha · ยังไม่ได้คอมไพล์)
+  - **ฝ่ายค้านรอบ 229:** ใบเสร็จ = เงินที่รับจริง ลงวันที่โอน (สลิป/แอดมินระบุ) · ข้อเสนอล้าสมัยไม่เปิดสิทธิ์ (409 / เรื่องค้าง `QUOTA-STALE`) · ใบต่ออายุ: รอบใหม่ของโควตาเสริมบันทึกในธุรกรรมเดียวกับการต่อแพ็กเกจ ·
+    ใบที่ถูกแทนที่ ⇒ ปลดบรรทัด + แจ้ง · ยอดบรรทัดใบหลายบรรทัดผ่าน `Helpers/PlatformInvoiceLineMath` ตัวเดียว (ผลต่าง ≤ 1 สตางค์/บรรทัด — มีเทสต์) · หน้าแอดมินช่องทางรับชำระเห็น/ออกใบซ้ำของโควตาเสริม
+- **รอบ 227 — Omise ของ NextAcc: เงิน → เอกสาร → บัญชี (`erp-review/2026-11-02/PLATFORM_OMISE_AUDIT.md`):** รับเงินค่าบริการผ่าน gateway ⇒
+  ใบเสร็จค่าแพ็กเกจ/ตัดชำระใบแจ้งหนี้ลง **Dr บัญชีพักผู้ให้บริการรับชำระ** (เดิม Dr ธนาคาร ⇒ รอบโอน Cr 11340 ซ้ำ) · **ค่าส่วนเสริมจ่ายล่วงหน้า** (ออนไลน์/สลิปที่อนุมัติ)
+  ⇒ ใบกำกับภาษี/ใบเสร็จรับเงินขายเงินสดใน tenant ผู้ให้บริการ (`IPlatformBillingDocumentIssuer.IssueAddOnReceiptAsync` · เดิมไม่มีเอกสาร) + อีเมลแจ้งเจ้าของเมื่อจ่ายออนไลน์ ·
+  poll/คืนเงิน/webhook ใช้คีย์ของโหมดที่รายการถูกสร้าง · ผู้เช่าเห็นเฉพาะวิธีที่หน้าชำระทำจบได้ (พร้อมเพย์) · ข้อความล้มเหลวไทย · Last verified — commit (เติมในคอมมิตตามหลัง)
 - **รอบ 219 ส่วน B — ช่องทางรับชำระของ NextAcc + ติ๊กยอมรับนโยบาย (คำตัดสินข้อ 179):** ผู้เช่าชำระค่าแพ็กเกจ/ส่วนเสริมออนไลน์ผ่าน `IPlatformPaymentService`
   (`platform-pay/addons/{code}/intents` · `platform-pay/subscription-payments/{id}/intents` · intent ใต้บริษัทผู้ให้บริการ + `PayerCompanyId` · ยอดจากเซิร์ฟเวอร์) —
   **มีปุ่มเฉพาะเมื่อ config ของแพลตฟอร์ม active + โหมดใช้งานจริง** (`Helpers/PlatformPayAvailability`) · นอกนั้นโอน + แนบสลิป · ตั้งค่าที่ `/admin/platform-gateway.html`
@@ -1839,6 +1856,22 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   **ไม่ลง JE ลูกหนี้รอใบลดหนี้**ในสมุดของบริษัทที่ถือ intent (`PlatformRevenueSource.RefundSkipsStoreReceivable`) — บันทึกยอดคืน + ประวัติ intent + audit
   `PLATFORM-REFUND-GOODWILL` บนแถวสิทธิ์ต้นทาง · โหมดทดสอบ: `IsTestMode` nullable (null = แถวเดิม ⇒ config) ผ่าน `Helpers/PaymentIntentTestMode` ทั้งด่านให้สิทธิ์และหน้าจ่ายเงิน ·
   วันรับเงิน: gateway = `PaidAt` · แอดมิน = ตามที่กรอก (ปฏิเสธอนาคต/งวดปิดของผู้ให้บริการ) · Last verified `commit d4119b5a`
+  **รอบ 228 (PLATFORM_OMISE_AUDIT §5.5 · §86/10 — แทนประโยค "ไม่ลง JE ลูกหนี้รอใบลดหนี้" สำหรับรายการใต้บริษัทผู้ให้บริการ):** ตั้งแต่รอบ 227 ใบกำกับ/ใบเสร็จค่าบริการ +
+  ขาเงินเข้า 11340 อยู่ในสมุดของบริษัทผู้ให้บริการ ⇒ คืนเงิน intent ค่าบริการที่อยู่**ใต้บริษัทผู้ให้บริการ** (`PlatformRevenueSource.RefundBooksInPlatformTenant`)
+  **ไม่ลงใบสำคัญคืนเงิน** (ฝ่ายค้าน B1 — เดิม PV Dr ลูกหนี้/Cr บัญชีพัก + ใบลดหนี้ของใบที่ชำระครบลง Cr เงินสด ⇒ เงินออกสองขา + ลูกหนี้ค้าง) ·
+  หลัง commit **ออกใบลดหนี้อัตโนมัติ (อนุมัติทันที)** อ้างใบเดิม ด้วย `PaymentAccountId` = บัญชีพัก ⇒ JE ของใบลดหนี้ = **Dr รายได้ + ภาษีขาย / Cr 11340** (รายการบัญชีเดียว)
+  (`IPlatformBillingDocumentIssuer.IssueRefundCreditNoteAsync` · ส่วนเสริม = ใบที่อ้างอิง `ADDON-{intent}` ที่ยังไม่ยกเลิกก่อน · แพ็กเกจ = `SubscriptionPayment.PlatformDocumentId`) ·
+  ยอด = เงินที่คืนรวม VAT แยกฐาน/VAT ด้วย `PlatformMoneyInAccount.SplitReceived` (ใบเดิมมี VAT) · ด่าน Σ ใบลดหนี้ ≤ ใบเดิม + ใบเดิมยกเลิก/ไม่พบ = ไม่ออก (`Helpers/PlatformRefundCreditNote`) ·
+  เหตุผล = `CreditNoteReason.Adjustment` + ข้อความของแอดมินบนบรรทัด · อ้างอิง `REFUND-{เลขคืนเงิน}/{ยอดคืนสะสม}` (กันออกซ้ำ · ร่างค้าง = อนุมัติใบเดิม) ·
+  ครอบคืนเงินปกติ · ตรวจผลที่ไม่แน่ชัด · บันทึกผลด้วยมือ · บันทึกยอดคืนย้อนหลัง (เลือก "ให้ระบบลงบัญชี") ·
+  **ใบลดหนี้ล้ม** ⇒ ใบสำคัญสำรอง PV Dr ลูกหนี้ (ผู้ติดต่อของผู้จ่าย) / Cr 11340 + ประทับเรื่องค้าง `PaymentIntent.RefundCreditNote*` + audit ⇒ หน้าแอดมินติดธง + ปุ่ม
+  "ออกใบลดหนี้อีกครั้ง" (`POST api/admin/platform-gateway/intents/{id}/reissue-credit-note` · ขา counter = ลูกหนี้ของใบสำคัญสำรอง ⇒ ล้างลูกหนี้) · รายการเก่าใต้บริษัทร้าน = ไม่ลง (เดิม) ·
+  **เส้นของร้าน (แก้แล้ว รอบ 228):** คืนเงินผ่าน gateway ลง PV Dr ลูกหนี้/Cr บัญชีพัก แล้วใบลดหนี้ขายอ้างใบที่ชำระครบ ⇒ ถ้าใบต้นทางมีเงินคืน gateway ที่ยังไม่มีใบลดหนี้ครอบ ≥ ยอดใบนี้
+  (ไม่มีภาษีหัก ณ ที่จ่าย) ขา counter = **ผังลูกหนี้ของ PV นั้น** (ล้างยอดรอ) แทนช่องทางเงิน (`Helpers/GatewayRefundCreditNoteCounter` · `DocumentService.AutoPostToJournalAsync`) ·
+  ไม่มีคืนเงิน gateway / คืนน้อยกว่าใบลดหนี้ / ฝั่งซื้อ / มี WHT = เส้นเดิม (ช่องทางเงินของใบ) · ป้าย "ออกใบลดหนี้แล้ว" มาจาก `CreditNoteStatesAsync` ชุดเดิม ·
+  **ข้อพิพาท/chargeback** (`charge.dispute.*` · §5.4): webhook ยืนยันแบบ fetch (dispute → charge → `metadata.intentId`) → `PaymentDisputeService` บันทึก `PaymentIntent.Dispute*` +
+  ประวัติ + audit `GW-DISPUTE` + กระดิ่ง (ค่าบริการ = แอดมินแพลตฟอร์ม · ของร้าน = เจ้าของบริษัท) · ล็อกแถว + ผลปลายทางไม่ถอย (ลำดับสลับ/ส่งซ้ำ) ·
+  ปุ่ม "รับทราบข้อพิพาท" (แอดมิน/หน้ารายการรับชำระของร้าน · audit) ล้างธงจนกว่าข้อพิพาทเปลี่ยน — **ไม่เปลี่ยนสถานะเงิน/สิทธิ์** (แพ้ = ผู้ให้บริการหักในรอบโอน · คนตัดสินพักสิทธิ์/ใบลดหนี้) · Last verified `commit (รอบ 228 — เติมในคอมมิตตามหลัง)`
 - **รับเงินสำเร็จ**: ขา "เงินเข้า" ตัดสินที่ `IGatewayAccountResolver.ResolveMoneyInAccountAsync` ตัวเดียว (adapter ที่ไม่เข้าธนาคารทันที ⇒
   Dr **11340** หรือผังที่ตั้ง `PaymentProviderConfig.ClearingAccountId` · ตัวหาบัญชีพักตัวเดียว `ResolveClearingAccountAsync`) ผ่านตัวจัดการต้นทาง 6 ชนิด
 - **คืนเงิน** (`POST pay/intents/{id}/refund` → `GatewayRefundService.RefundAsync`): ตรวจ `GatewayRefundMath.Check` (สถานะรับเงินแล้ว · **ยอดคืนสะสม**
@@ -3219,6 +3252,55 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 `AsNoTracking`, เขียนจริงแค่ INSERT บรรทัดใหม่ 1 แถว + `ExecuteUpdateAsync` ยอดรวม
 รายงาน, จัดลำดับ §87 ทำท้ายสุดแบบ best-effort (อัปเดตเฉพาะแถวที่ลำดับเปลี่ยน)
 
+**รอบ 225 — ดึงหลายใบในครั้งเดียว + ตัวตัดสินเดียว** (สถานะปัจจุบัน · ทับย่อหน้า "การกันซ้ำ" ข้างบนในส่วนที่ขัดกัน):
+- **ตัวตัดสินกลาง `Helpers/TaxReportPullEligibility`** (pure · เทสต์ `TaxReportPullEligibilityTests`) — ทั้ง 3 ทางเข้าถามที่นี่:
+  รายการ (`GetPullableDocumentsAsync`) · ทีละใบ (`PullDocumentIntoReportAsync` · `TryPullIntoDraftReportAsync`) · หลายใบ (`PullDocumentsIntoReportAsync`)
+  ⇒ ทีละใบ = หลายใบที่มี 1 id (แกน `PullDocumentsCoreAsync` ตัวเดียว · ไม่ผ่าน = throw ข้อความเดิม) · ตาราง `PullableVatTypes` ย้ายเข้า helper
+- ด่านรายใบ (ลำดับ · RuleCode): CIL `RD-82/5(1)-CIL` (**เดิมอยู่ในตารางเป็น "ฝั่งขาย"** ⇒ ใบรับรองแทนใบเสร็จที่มี VAT โผล่เป็น "ขาย") · ประเภท `TAX-PULL-DOC-TYPE` ·
+  ยกเลิก `TAX-PULL-VOIDED` · ยังไม่ออก `TAX-PULL-NOT-ISSUED` (**ใหม่ที่ตอนดึง** — เดิมเรียก API ตรงดึงใบร่างได้) · ไม่มี VAT · ออกใบแทนแล้ว `RD-86/4-REPLACED` (ตอนนี้รายการซ่อนด้วย) ·
+  PV ไม่ติ๊กใบกำกับ `RD-82/5(1)` · override ผังนอก 116 `TAX-PULL-VAT-EXPENSED` + VAT พัก 11640 `RD-86/4-UNDUE-11640` (**ใหม่ที่ตอนดึง** — เดิมตรวจแค่ในรายการ) ·
+  เวลา `TAX-PULL-BEFORE-DOC-MONTH` / `RD-82/3` (ตัวเดิม `EvaluateClaimPeriod`) · มีบรรทัดในงวดนี้ `TAX-PULL-PENDING-LINE` / `TAX-PULL-DUP-THIS` · ใช้ในงวดอื่น `TAX-PULL-DUP-OTHER`
+- ด่านระดับรายงาน (`EvaluateReport` — ไม่ผ่าน = ทั้งคำขอล้ม): ไม่ใช่ ภ.พ.30 · ยื่น/ประกาศยื่นแล้ว (`TaxFilingLockPolicy.DeclaredOrFiled`)
+- **`POST tax/{reportId}/pull-documents` `{documentIds}`** (สิทธิ์ `TaxFile`) — ≤ `MaxPerCall` 500 ใบ (id ซ้ำนับครั้งเดียว) · **partial**: ใบที่ผ่านเข้าในธุรกรรมเดียว
+  (INSERT บรรทัด + ยอดรวม set-based + audit `TaxReportPullDocuments` ใคร/ใบไหน/ยอดก่อน-หลัง) · ใบที่ไม่ผ่านคืน `{documentId, documentNumber, added:false, ruleCode, reason}` ·
+  ใบไม่พบ/ต่างบริษัท = `TAX-PULL-NOT-FOUND` ไม่มีเลขที่ (ไม่เปิดเผย) · **ล็อก `pg_advisory_xact_lock` ต่อรายงาน** (`AdvisoryLockKey.TaxReportPull`) ก่อนอ่านบรรทัดเดิม ⇒
+  ส่งซ้ำ/สองแท็บพร้อมกันไม่เกิดบรรทัดซ้ำ · บรรทัดใหม่เรียงตามวันที่ก่อนต่อท้าย แล้ว `NormalizeReportLineOrder` หลัง commit (best-effort เหมือนเดิม) ·
+  คืน `PullDocumentsResult{addedCount, skippedCount, items, report}` · ดึงทีละใบตอนนี้ลง audit ด้วย (เดิมไม่มี)
+- **รายการแบ่งหน้า** `GET …/pullable-documents?search&fromDate&toDate&side=input|output&offset&limit` ⇒ `PullableDocumentListResponse`
+  (`items` · `total` ทั้งชุดตามตัวกรอง ⇒ "เลือกทั้งหมด" บอก N จาก M · `hasMore` · `scanCapped` เมื่อช่วงเกิน 5,000 ใบ · `totalInput/totalOutput` ·
+  `months[]` จำนวนใบที่ดึงได้ต่อเดือน + ป้าย พ.ศ. · `periodStart/periodEnd/lateWindowStart`) · ค่าตั้งต้น: ตั้งแต่ = งวด − 6 เดือน, ถึง = วันนี้ (อย่างน้อยสิ้นงวด —
+  ใบซื้อที่บันทึกต้นเดือนถัดไปแต่ใบกำกับผู้ขายลงวันที่ในงวดยังดึงได้) · ค้นเลขที่/ชื่อ/เลขผู้เสียภาษี · แต่ละใบมี `incomeThb/taxThb` = ยอดที่จะเข้ารายงานจริง
+  (`TaxService.PullLineAmounts` ตัวเดียวกับบรรทัดที่ดึง — VAT ซื้อเฉพาะบรรทัดเคลมได้ · บาท) + `monthsLate` (ป้าย "ย้อน N เดือน")
+- หน้า `tax.html` หน้าต่าง "ดึงเอกสาร": ติ๊กรายแถว/เลือกทั้งหมดที่แสดง/Shift+คลิกช่วง/Space · ชิป ซื้อ/ขาย/ทั้งหมด (จำนวนจาก server) · ช่วงเดือน
+  "ย้อน 6 เดือน (§82/3)" (ค่าตั้งต้น) / "เดือนของรายงาน" / "เดือนก่อน" + ตัวเลือกเดือน ตั้งแต่→ถึง แบบหน้าเอกสาร · ค้นหาทันที (หน่วง 350ms) ·
+  footer ค้าง: จำนวนที่เลือก + มูลค่า/VAT แยกซื้อ/ขาย + "ดึงที่เลือก (N รายการ)" (ปุ่ม `btn-success` ไม่ใช่ primary — Layout ผูก Enter→ปุ่ม primary) ·
+  หลังดึง **ไม่ปิด/ไม่ล้างตัวกรอง**: แถวที่ดึงแล้วหายในที่ · ใบที่ข้ามติดเหตุผลบนแถว + แถบ "ดึงแล้ว N · ข้าม M (ดูเหตุผล)" · รายงานด้านหลังรีเฟรช · ตัวกรองจำต่อรายงานจนปิดหน้า
+- Db test `TaxReportBulkPullDbTests` (partial · ส่งซ้ำ · ลำดับ · ยอด · audit · ต่างบริษัท) · ล็อกจุดเรียก `tools/required_call_site_check.py` บล็อก "รอบ 225"
+- **รอบ 225 ชุดแก้หลังรีวิว (ฝ่ายค้าน + พนักงาน + ผู้ทำบัญชี)** — สถานะปัจจุบัน ทับข้อความข้างบนที่ขัดกัน:
+  - **B1 เจ้าของภาษีขาย ตัวตัดสินเดียว `Helpers/OutputVatOwnership`** — loop หลัก `GenerateVatReport` (สาขาใบกำกับ/ใบแจ้งหนี้ + ใบเสร็จ/มัดจำ) และปุ่มดึงถามตัวเดียวกัน ·
+    loader ข้อเท็จจริงชุดเดียว (`LoadSupersededInvoiceIdsAsync` · `LoadInvoiceIdsOwnedByVatReceiptAsync` · `Load21913NetBySourceAsync` · `LoadRelatedDocInfosAsync`) ·
+    ฝั่งขายดึงไม่ได้เมื่อ: ใบแจ้งหนี้ที่ใบกำกับอ้างแล้ว `OUT-VAT-SUPERSEDED` · VAT พัก 21913 (§78/1 ยังไม่รับเงิน) `OUT-VAT-NOT-DUE-21913` · ใบเสร็จถือ VAT เป็นเจ้าของ `OUT-VAT-OWNED-BY-RECEIPT` ·
+    ใบเสร็จที่แค่รับชำระ `OUT-VAT-SETTLEMENT-ONLY` · มัดจำนำไปหักแล้ว `OUT-VAT-DEPOSIT-APPLIED` / VAT พักยังไม่รับรู้ `OUT-VAT-DEPOSIT-NOT-RECOGNIZED` ·
+    ผล loop หลักเดิมทุกกรณี (เทสต์ `OutputVatOwnershipTests` เทียบสำเนาเงื่อนไขก่อนรอบ 225 บนตารางข้อเท็จจริง)
+  - **คำตัดสินผู้ทำบัญชี: ภาษีขายย้อนเดือนดึงไม่ได้** `RD-83-OUTPUT-LATE` — เดือนภาษีขาย = วันที่ VAT ถึงกำหนด (ใบแจ้งหนี้บริการ = วันรับเงิน · มัดจำ = วันรับรู้) ·
+    ก่อนเดือนรายงาน ⇒ ต้องยื่น ภ.พ.30 เพิ่มเติมของเดือนนั้น (§83 · เงินเพิ่ม §89/1) · ฝั่งซื้อยังย้อนได้ตาม §82/3 ⇒ ค่าตั้งต้น "ย้อน 6 เดือน" ได้ผลเท่ากับ ซื้อ = 6 เดือน · ขาย = เดือนรายงาน
+  - **S2 ภาษีซื้อต้องห้าม ตัวคำนวณเดียว `TaxService.ProhibitedInputVat`** (ธงรายบรรทัด + ผังต้องห้าม + legacy หมวดหัวใบ — loop หลักใช้ตัวนี้) · ยอดดึง = VAT − ต้องห้าม ·
+    เคลมได้ ≤ 0 ⇒ `TAX-PULL-NO-CLAIMABLE` · ไม่มีข้อเท็จจริง ⇒ `TAX-PULL-FACTS-MISSING` (fail closed)
+  - **S1 ล็อกงานเขียน ภ.พ.30 ต่อบริษัท** `AdvisoryLockKey.TaxVatReportWrite` part "vat" (ระดับ session `SessionAdvisoryLock` · re-entrant) ครอบ ดึง · `UpdateTaxReportAsync` · `FileTaxReportAsync` ·
+    `RegenerateTaxReportAsync` (เนื้อจริงย้ายเป็น `*UnlockedAsync`) — ดึงใบเดียวกันเข้าสองงวดพร้อมกันผ่านได้งวดเดียว (Db test)
+  - **S3** "สร้างใหม่" คืนบรรทัดดึง (`PulledLinePrefix` · Contains — รวมบรรทัดรุ่นก่อนที่ขึ้นต้น ⚠️) เฉพาะใบที่ยังผ่าน `EvaluatePullCandidatesAsync` · ไม่ผ่าน = ไม่คืน +
+    หมายเหตุ `⚠️ ระบบตรวจ: ไม่คืนบรรทัดดึง …` · ตรวจรายงานร่างที่ถือบรรทัดดึงที่ไม่ผ่านด่าน (เช่น CIL ที่เคยดึงเป็นฝั่งขาย): `GET tax/pulled-lines/ineligible` (อ่านอย่างเดียว)
+  - **S4** บรรทัดเตือนในงวดนี้ (🚫/⚠️/[รอใบกำกับ] — `IsWarningLineDescription` ชุดเดียวกับที่ "สร้างใหม่" ไม่คืนติ๊ก) ⇒ `TAX-PULL-WARNING-LINE` เหตุผลบอกให้แก้ที่ต้นเหตุ ไม่ใช่ "ติ๊กใช้"
+  - **S5** ถอดป้าย "⚠️ เกิน 6 เดือน" ที่เทียบวันนี้ในบรรทัดดึง · **S6** รายการสแกนเฉพาะ [from, to) · จำนวนต่อเดือนนับด้วย SQL GroupBy แยก (เอกสารมี VAT ที่ยังไม่อยู่ในรายงานใด — โดยประมาณ) ·
+    **S7** ยอดรวม + ลำดับ §87 + audit อยู่ในธุรกรรมเดียว ไม่มี catch ในธุรกรรม · "วันนี้" = วันที่ไทย (`ThaiDate.CalendarDateUtc`) · ป้ายเดือน `ThaiDate.ShortMonthBe`
+  - เดือนในกรอบ §82/3 ที่ไม่มีรายงาน ภ.พ.30 ในระบบ ⇒ `monthsWithoutReport` + ป้ายรายแถว "ไม่มีรายงานเดือนนี้" (ถ้ายื่นนอกระบบแล้ว อย่าดึงซ้ำ)
+  - audit ของการดึงอัตโนมัติ: ผู้ตั้งเดือนเคลม (DocumentController) / `system/PP36` (รับรู้ ภ.พ.36) / `system/auto-pull`
+  - หน้า: บันทึกอัตโนมัติที่ค้างถูกปล่อยก่อนดึง (`_flushVatAutoSave`) · ป้าย "เลือกทั้งหมดที่แสดง (N จาก M)" · เหตุผลไทยก่อน รหัสกฎเล็กท้าย · ดึงผิด ⇒ ติ๊ก "ใช้" ออกที่บรรทัด · footer มือถือขึ้นบรรทัดใหม่
+- **รอบ 228 ทีมภาษี (ช่องว่างรอบ 225)**: (1) ดึงมัดจำ VAT พักที่รับรู้แล้ว ⇒ ยอด = ที่ GL ย้ายเข้า 21911 จริง (`TaxService.PullLineAmounts(..., depositVatDeferred, reclassifiedVatThb)` ·
+  loader เดียวกับ loop หลัก `LoadReclassifiedDepositVatAsync`) — เดิมดึง VAT เต็มใบ · (2) `GET tax/pulled-lines/ineligible` ฟ้อง `TAX-PULL-DUP-OTHER` เมื่อใบเดียวกันถูกใช้ในรายงาน ภ.พ.30
+  อีกฉบับจริง (เดิมยกเว้นด้วยการเทียบปี/เดือนของแถวแรกที่เจอ ⇒ เคลมซ้ำหลุดเมื่อแถวแรกเป็นรายงานนี้เอง)
+- Last verified `commit (รอบ 225 — เติมในคอมมิตตามหลัง)` · รอบ 228 ทีมภาษี `commit (เติมในคอมมิตตามหลัง)`
+
 ### 3.7 มัดจำ (Deposit lifecycle)
 - **รอบ 194 ทีม B — เส้นเอกสารต่อสายประเภทเงินมัดจำแล้ว** (spec `erp-review/2026-09-25/spec-194.md` S2–S4 · กติกาเส้นเอกสาร
   `Helpers/DepositKindDocumentRules` · เทสต์ `DepositKindDocumentRulesTests` สองครึ่ง · ล็อกจุดเรียก `tools/required_call_site_check.py` บล็อก "รอบ 194 ทีม B"):
@@ -3959,7 +4041,31 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   เฉพาะ JE ที่ไม่ใช่ของแถวนำส่ง (`LatePaymentPenaltyPolicy.AddBackTotal` — ไม่นับซ้ำ) · เดิมอ่านแต่ `Document.NonDeductibleAmount` ⇒ เงินเพิ่มจากการนำส่งไม่เคยบวกกลับ
 - ปฏิทินนำส่ง + แถวรอนำส่ง: เงินเพิ่มประมาณการทุกแบบ (เดิมเฉพาะ สปส./ภ.พ.36) + เบี้ยปรับประมาณการ ภ.พ.30
 - **ฝ่ายค้านรอบ 220 (ภาคผนวกข้อ 181)**: (1) พ้นวันขยาย e-Filing ⇒ นับเงินเพิ่ม/วันเบี้ยปรับจาก**วันกระดาษ** (จ่ายภายในวันขยาย = 0) + ตัวเลือก "ยื่นแบบกระดาษ" (`RemitRequest.PaperFiling` · `?paper=true`) — **ต้องยืนยันกับนักบัญชี** · (2) สปส. วันครบกำหนดเลื่อนวันหยุดราชการ (`SsoLateFee.DueDate/Compute(…, holidays)` · `PayrollService.SsoHolidaysAsync` ใช้ทั้งป้ายวันครบกำหนด/พรีวิว/ลงบัญชี) · (3) บวกกลับ §65 ตรี(6) จาก**บรรทัดค่าใช้จ่ายที่ลงบัญชีจริง**ของ JE นำส่ง + ใบกลับรายการ (Posted+Reversed · ตามวันที่ลงบัญชี) — แถวนำส่งที่ยกเลิกแล้วยังนับ (IgnoreQueryFilters) · รอบเงินเดือนมีเครื่องหมาย `PayrollRun.SsoLateFeeJournalEntryIds` (เติมท้าย ไม่ล้างตอนกลับรายการ + migration เติมจากข้อมูลเดิม) · (4) เลิกเดาผังค่าปรับจากชื่อ · (5) สร้าง 54820 เฉพาะใต้ 548 ที่เป็นค่าใช้จ่าย เปิดใช้ และเป็นหัวหมวด (มีผังย่อย/ไม่มีรายการ) · ชนกันพร้อมกัน 23505 ⇒ ใช้ตัวที่ชนะ · audit chain · ข้อความแยก "54820 เป็นบัญชีคุม" · (6) หน้านำส่ง: ค่าที่ผู้ใช้พิมพ์ชนะ (`dataset.userTouched`) · "คำนวณให้" เขียนทับหลังยืนยัน · ทิ้งคำตอบเก่า · ติดลบแสดงข้อผิดพลาด (ไม่ตัดเป็น 0) · (7) ภ.พ.30 ยื่นแบบทันแล้ว (`ReportFiledAt`) ⇒ ไม่มีเบี้ยปรับ (ยื่นช้า ⇒ นับวันจากวันยื่น) · audit การยกเลิกเก็บ Penalty/OtherFine · ป้าย "ประมาณการ"
-- 📋 เปิดค้าง (AUDIT §3): ภ.ง.ด.50/51 ไม่มีเส้นชำระ + §67 ตรี 20% · กองทุนเงินทดแทน · อากรแสตมป์ · ภ.พ.36 เบี้ยปรับ · กติกาเสียสิทธิ์ขยาย e-Filing รอนักบัญชียืนยัน
+- ~~📋 เปิดค้าง (AUDIT §3): ภ.ง.ด.50/51 ไม่มีเส้นชำระ + §67 ตรี 20% · กองทุนเงินทดแทน · อากรแสตมป์~~ → ปิดในรอบ 228 ทีมภาษี (§5.3a-3)
+
+#### 5.3a-3 ภ.ง.ด.51/50 · กองทุนเงินทดแทนรายปี · อากรแสตมป์ ในเส้นนำส่งเดียวกัน (รอบ 228 ทีมภาษี · `TAX_PENALTY_AUDIT.md` §5)
+
+- **ภ.ง.ด.51/50** (`CitPnd51`/`CitPnd50` · คีย์งวด = (ปี, 6|12) · `Helpers/CitPayment`): ตั้งหนี้ `FinancialManagementService.PostCITAsync` —
+  ภ.ง.ด.51 **Dr 11920** ภาษีจ่ายล่วงหน้า (เดิม Dr 580xx) / Cr 11910 ภาษีถูกหัก (ถ้าใช้) / Cr 21920 สุทธิ · ภ.ง.ด.50 Dr 580xx ภาษีทั้งปี / Cr เครดิต ภ.ง.ด.51
+  (ผังที่ JE ครึ่งปีลง Dr — 11920 หรือ 580xx ของใบเดิม) / Cr 11910 / **Cr 21920 = ยอดสุทธิ** (เดิมเต็มภาษี) · ผังไม่ครบ ⇒ ปฏิเสธ `CIT-POST-ACCOUNT` (เดิมข้ามเงียบแล้วประทับ Filed) ·
+  หน้านำส่งรวมแสดงรายการรอนำส่งจาก JE ตั้งหนี้ที่ยังมีผล (GL-first · กลับรายการแล้ว = ไม่มีหนี้) · ชำระ: Dr ผังหนี้ของ JE ตั้งหนี้ / (ตั้งแบบเดิม: Cr เครดิต) / Cr ธนาคาร + เงินเพิ่ม/ค่าปรับ ·
+  กำหนด: ภ.ง.ด.51 สิ้นเดือนที่ 2 หลังครึ่งปี (§67 ทวิ) · ภ.ง.ด.50 150 วันหลังสิ้นรอบ (§68) — เตือนตามวันกระดาษ (มาตรการ e-Filing ยังไม่ยืนยัน) ·
+  เงินเพิ่ม ม.27 1.5%/เดือน · **ภ.ง.ด.50 + §67 ตรี** 20% × (ภาษีจริง ÷ 2 − ภ.ง.ด.51 ที่ชำระ) เมื่อประมาณการ (กำไรครึ่งปี × 2) ขาดเกิน 25% — รวมในช่องเงินเพิ่ม (ค่าเสนอ แก้ได้)
+- **กองทุนเงินทดแทน** (`WcfAnnual` · คีย์ (ปี, 12) · `Helpers/WorkersCompensationBase`): ยอด = Σ ต่อคน min(ค่าจ้างทั้งปี, 240,000) × อัตราค่าตั้ง
+  (`PayrollDetail.WorkersCompensationWage` ใหม่ — แถวเดิมถอดฐานจากเงินสมทบ) − ที่นำส่งแล้ว · จ่ายได้หลายครั้งต่อปี (unique index `_v3` ยกเว้น) ใต้ `pg_advisory_xact_lock` + ตรวจยอดซ้ำ ·
+  JE ตาม `Plan`: Dr 21816 เท่าที่ตั้งค้างจ่ายเหลือ · ส่วนเกิน Dr 54121 · ปิดปีแล้วค้างจ่ายเหลือ Dr 21816/Cr 54121 · กำหนดสิ้น ก.พ. ปีถัดไป · เงินเพิ่ม ม.46 3%/เดือน ไม่เกินเงินสมทบ (ต้องยืนยัน)
+- **อากรแสตมป์** (`Helpers/StampDutySchedule` · `StatutoryRemittanceService.RemitStampDutyAsync`): อัตรา "ทุก 1,000/2,000 หรือเศษ" ปัดขึ้น (เดิมปัดลง + เพดานที่ไม่มีในบัญชีอัตรา) ·
+  หน้าอากร "บันทึกจ่าย" ⇒ Dr ค่าอากร (54810 หรือผังที่เลือก) + Dr ผังค่าปรับ (เงินเพิ่มอากร 2 เท่า ≤ 90 วัน / 5 เท่า — ค่าเสนอ) / Cr ธนาคาร + แถวนำส่งชนิด `StampDuty`
+  (ประวัติ · ยกเลิก ⇒ อากรกลับเป็นค้างชำระ · บวกกลับ §65 ตรี(6) อัตโนมัติ) · ไม่ติ๊ก "ลงบัญชี" = บันทึกเลขใบเสร็จอย่างเดียว (เดิม) · จ่ายแล้วห้ามเขียนทับ
+- **ภ.พ.36 เบี้ยปรับ** (`SuggestedPenalty`/`SuggestedLateFee` บนแถวนำส่ง = ค่าที่เติมลงช่อง ⇒ กติกาที่ยังไม่ยืนยันเก็บ 0): เสนอตารางลดชุดเดียวกับ ภ.พ.30 เป็น**ข้อมูล** (ต้องยืนยัน) — `Suggestion.PenaltyNeedsConfirmation` ⇒ `PendingRemittanceItem.PenaltyPrefill = 0` หน้าไม่เติมลงช่อง · API ไม่ลงเองเมื่อไม่ส่งค่า
+- ป้ายงวด `PeriodLabel` (ครึ่งปี/รอบปี/ปี/เลขสัญญา) + `AmountNote` จากเซิร์ฟเวอร์ · เทสต์ `Round228TaxRemittanceTests` · ล็อกจุดเรียก `required_call_site_check` บล็อก "รอบ 228 ทีมภาษี"
+- **ฝ่ายค้านรอบ 228 ทีมภาษี (สถานะปัจจุบัน — ทับข้อความข้างบนที่ขัดกัน):** ภ.ง.ด.51 Dr 11920 = **ยอดที่ชำระ** / Cr 21920 (ไม่แตะ 11910 — ใช้ครั้งเดียวตอน ภ.ง.ด.50 ·
+  รูป JE `CitPayment.AccrualPlan`) · ตั้งหนี้รอบเดียวกันซ้ำ = `CIT-POST-DUP` · ยอดค้าง ภ.ง.ด./กท.20ก ตัดการชำระนอกเส้นนี้แบบจับคู่ต่อก้อน (ใบสำคัญ Dr ผังหนี้หลังวันตั้งหนี้ ·
+  `LoadManualDebitsAsync`/`MatchFifo`) แทนยอดคงเหลือรวม · ครบกำหนดเกิน 24 เดือนซ่อน (`includeOldAnnual` · `HiddenOldAnnualCount`) ·
+  `POST remittances/settled-outside` ผูกใบสำคัญที่ลงเอง (`StatutoryRemittance.SettledOutside` · audit · ยกเลิก = ปลดผูก ไม่กลับรายการ) ·
+  เงินเพิ่ม กท.20ก (2% · ต้องยืนยัน) และ §67 ตรี (ก้อนแยก `Section67TerPreview` · ฐาน = ยอดนำส่ง ภ.ง.ด.51 + ภาษีถูกหักครึ่งปี) เป็น**ข้อมูล ไม่เติมช่อง** ·
+  ภ.ง.ด.50 สุทธิ 0 ที่มี §67 ตรี ⇒ `Advisories` · ผัง กท.20ก ตัวหาเดียว `Helpers/WorkersCompensationAccounts` (เงินเดือน + นำส่ง) · อากรติดแสตมป์ค่าตั้งต้นไม่ลงบัญชี + เตือนลงซ้ำ ·
+  บันทึกเลขใบเสร็จอย่างเดียว (ไม่มีแถวนำส่ง) ทับได้ · `MarkPaidAsync` ใต้ `FOR UPDATE` · Db test `Round228TaxRemittanceDbTests`
 
 #### 5.3b ปฏิทินนำส่ง (Filing calendar) — วิดเจ็ต dashboard
 
@@ -4852,6 +4958,28 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
     `PUT …/sme/petty-cash/funds/{id}` (สิทธิ์ `Journal.Manage`) แก้ชื่อ/วงเงิน/**ผูกผังของกองทุน** (ทางออกของกองทุนเก่า — ข้อความ "ยังไม่ผูกผัง" ชี้ปุ่ม “แก้ไข / ผูกผังบัญชี”) ·
     เปลี่ยนผังเมื่อมีรายการลงบัญชีแล้ว = บล็อก (ยอดเดิมอยู่ผังเก่า) · เติมเงิน `sourceBankAccountId` (ธนาคาร) หรือ `sourceAccountId` (ผังเงินสด) ·
     เบิก: ผังค่าใช้จ่ายตรวจ tenant/ระดับ · ห้ามผังเดียวกับกองทุน · โครงการต้องเป็นของบริษัท · เงินไม่พอ/ไม่พบกองทุน = ไทย (เดิม "Insufficient…"/"Fund not found.")
+    · **2026-11-02 (`erp-review/2026-11-01/PETTY_CASH_AUDIT.md` · `Helpers/PettyCashFundGlRule`)**: ผัง 1 ผัง ↔ กองทุน 1 กองทุนเป็นค่าตั้งต้น
+    (เปิด/เปลี่ยนผังไปผังที่กองทุนอื่นใช้ = `PETTY-FUND-SHARED-GL` เว้นแต่ส่ง `allowSharedAccount: true`) · ใบสำคัญจากทางอื่น (ใบสำคัญจ่าย/ใบเบิก/
+    เงินทดรอง/สินเชื่อ/สมุดรายวัน/กลับรายการ) ที่แตะผังกองทุน**ไม่ขยับยอดกองทุน** ⇒ `GET …/sme/petty-cash/reconciliation` แสดงยอด GL vs ยอดกองทุน +
+    ใบที่ยังไม่ระบุกองทุน · `POST …/funds/{id}/attribute-entry {journalEntryId}` (สิทธิ์ `Journal.Manage`) เพิ่มแถวทะเบียนอ้างใบเดิม **ไม่ลง JE ใหม่** · ระบุซ้ำ = 409
+    · ใบที่ไม่ใช่เงินในลิ้นชัก: `POST …/petty-cash/gl-only {accountId, journalEntryId, note}` (`Journal.Manage`) = แถว `GlOnly` ไม่ขยับยอดกองทุน ·
+    ยกเลิก `POST …/gl-only/{id}/undo` · ทุกเส้นที่แก้ยอดกองทุนล็อกแถว (`FOR UPDATE`) + ระบุ/ทำเครื่องหมายล็อกต่อใบสำคัญ (advisory) · audit ทุกการตัดสิน
+    · **หลักฐาน (ส่วน C · `Helpers/PettyCashEvidence`)**: `POST …/funds/{id}/replenish` และ `…/disburse` รับ JSON เดิม **หรือ** multipart (`payload` = JSON เดิม +
+    `evidence` = รูป/PDF ตรวจชนิดจากไบต์) — รายการ + JE + ไฟล์ (`IFileAttachmentService` · `EntityType="PettyCashTransaction"`) + audit (hash chain) ในธุรกรรมเดียว ·
+    `CompanySettings.PettyCashTopUpEvidenceRequired=true` ⇒ เติมโดยไม่มีไฟล์ = `PETTY-TOPUP-EVIDENCE-REQUIRED` (ทั้งสองรูปคำขอ) · แนบภายหลัง
+    `POST …/petty-cash/transactions/{id}/evidence` (สิทธิ์ `Journal.Manage`) · ทะเบียนคืน `evidence[]` · ดาวน์โหลด `GET attachments/{id}/download` (ด่านกลาง + ตรวจบริษัท)
+    · **ส่วน D (2026-11-02 รอบ 2)**: JE เบิก/เติม/คืนเงินผ่าน `JournalEntryBuilder` (เลข `JV-yyyyMM-####` ต่อเนื่องเดียวกับ JE อัตโนมัติอื่น + `FiscalPeriodId` +
+    ด่านงวดปิด `PETTY-PERIOD-CLOSED` ตรวจก่อนขยับยอด) — เดิม `JV-PC-yyyyMMdd-XXXX` สุ่ม ไม่ตรวจงวด · **ปิดกองทุน** `POST …/funds/{id}/close
+    {returnBankAccountId|returnAccountId, closeDate, note, acknowledgeOpenItems}` (`Journal.Manage`): ยอด > 0 ⇒ JE Dr บัญชีที่เลือก / Cr ผังกองทุน
+    (`PettyCashJePlan.ForReturn` · ไม่เดาบัญชีรับคืน) + แถวทะเบียน `Return` (เงินออก) → ยอด 0 → `IsActive=false` · รายการค้างบนผังกองทุน (ยังไม่ระบุ/
+    อ้างใบที่หาย/ผลต่าง) ต้องเป็นศูนย์หรือติ๊กรับทราบ (`PettyCashFundGlRule.CloseBlocker` · พรีวิว `GET …/funds/{id}/close-preview` ตัวตัดสินเดียวกัน) ·
+    ยอดติดลบปิดไม่ได้ · กองทุนปิดแล้ว เบิก/เติม/ระบุกองทุน = `PETTY-FUND-CLOSED` (409) · `POST …/funds/{id}/reopen` · audit ทั้งปิด/เปิด ·
+    **แถวทะเบียนที่อ้างใบสำคัญซึ่งหายจาก GL** (ลบใบ = soft-delete / ร่างที่ยกเลิก) โผล่ในกระทบยอดเป็น `OrphanedFundEntries` พร้อมสาเหตุ →
+    `POST …/petty-cash/transactions/{id}/reverse-orphan` (`Journal.Manage`) ย้อนผลต่อยอดกองทุน (`PettyCashFundGlRule.FundEffect`) + soft-delete แถว · ไม่ลง JE ·
+    ใบที่ยังอยู่ใน GL ย้อนไม่ได้ (409 — ทางไปต่อ: กลับรายการใบแล้วระบุใบกลับเข้ากองทุน)
+    · ฝ่ายค้านส่วน D: วันที่ของเบิก/เติม/ปิด = วันตามปฏิทินไทย (`ThaiDate.CalendarDateUtc` · หน้าเว็บส่ง `YYYY-MM-DD`) · รับทราบตอนปิด**ไม่ครอบ**แถวค้างของกองทุนนี้เอง
+    (ต้องย้อนผลก่อน) · ใบร่างย้อนผลไม่ได้ · คืนเงินเข้าผังกองทุนเงินสดย่อยไม่ได้ · ไฟล์หลักฐานเก็บก่อนออกเลข JV · **ลบใบสำคัญ** (เดี่ยว/หลายใบ ·
+    `AccountingService`) ตรวจงวดจากวันที่ด้วย + migration เติม `JournalEntries.FiscalPeriodId` ที่ว่างจากวันที่
   - **สินเชื่อ**: `Loan.MoneyAccountId` = **ผังบัญชี** (คอลัมน์เดิม `"BankAccountId"` map ด้วย `HasColumnName` ไม่ migrate) · คำขอส่ง `bankAccountId`
     (BankAccounts.Id) หรือ `moneyAccountId` · JE รับเงินกู้ตัดสินที่ `Helpers/LoanPostingPlan.ForDisbursement` (`postDisbursementEntry`: true ต้องมีผังเงินกู้ +
     ช่องทางเงิน · false = ยอดยกมาแล้วไม่ลง · null (API เดิม) มีครึ่งเดียว = ปฏิเสธ ไม่ข้ามเงียบ) · ความถี่รับเฉพาะรายเดือน (ตารางผ่อนรายเดือนเท่านั้น) ·
@@ -5982,6 +6110,64 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
   บันทึกบริการ: ปิดใช้/แก้ชื่อโดยไม่แตะค่าชำระ ⇒ ไม่ตรวจช่องทาง · บันทึกค่าตั้งเว็บที่ทำให้บริการเก็บเงินเองไม่มีช่องทาง ⇒ 409 พร้อมรายชื่อ
   ที่ตั้งค่า (รวมรอบ 215 เฟส 2): ฟอร์มค่าตั้งการชำระของการจองอยู่ที่ "ตั้งค่าเว็บ › การชำระเงิน" ที่เดียว (`CmsSiteSettingsExt.payment`) · cms-edit เหลือกล่อง "ย้ายแล้ว" + ตั้งทับรายบริการที่ฟอร์มบริการ
   _Last verified against codebase: 2026-10-30 (รอบ 218 — นโยบายรับชำระล่วงหน้า + สลิปผ่าน PaymentIntent · เทสต์ `BookingPaymentPolicyTests` · `Db/BookingPaymentPolicyDbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit fe1a9f0e · c62e1809 · 03191135 · e98ca3e9 · 7cf933b1)_
+- **รอบ 223 · ขั้นชำระเงินก่อนคำยืนยัน + ตรวจค่าตั้งทุกช่อง (`erp-review/2026-11-01/BOOKING_PAYMENT_AUDIT.md`)**: หลังกดจอง หัวข้อ/ไอคอน/ป้ายสถานะ/ลำดับกล่อง
+  มาจากตัวตัดสินเดียว `Helpers/BookingPaymentStep.Decide(สถานะ, โหมด, ยอดค้าง DepositDue, สลิปรอตรวจ, กำหนดชำระ)` (ส่งใน `BookingResponse.Payment.Step/Headline/StepDetail/StepIcon/PaymentFirst`):
+  รอยืนยัน + ยอดค้าง ⇒ `AwaitingPayment` "ยังไม่ยืนยัน — ชำระเงินเพื่อยืนยันการจอง" (ป้ายลูกค้า "รอชำระเงิน" แทน "รอร้านยืนยัน") · แนบสลิป ⇒ `SlipReview` "รอร้านตรวจสลิป" ·
+  มัดจำไม่บังคับที่ลูกค้าเลือกจ่าย ⇒ `OptionalPayment` (ยืนยันตามค่าบริการ · บอกว่าข้ามได้) · ยืนยันแล้วแต่ค้าง ⇒ `OutstandingPayment` · นอกนั้น "จองสำเร็จ"/"ได้รับการจองแล้ว — รอร้านยืนยัน" ·
+  หน้าผลการจอง/หน้า my-booking วาดกล่องชำระ (บัญชี · QR พร้อมยอด · แนบสลิป · ชำระออนไลน์) **ก่อน**รายละเอียดเมื่อ `PaymentFirst` · ป้ายลูกค้า (`CustomerStatusLabel`) ไม่ถูก `FillWorkspaceAsync` เขียนทับ ·
+  ใบยืนยัน/พิมพ์: แถวมัดจำต่อท้ายสถานะการชำระ + แถว "ที่มาของยอดมัดจำ" (`BookingPaymentPolicy.AmountBasis`) · ก่อนกดจอง: ที่มาของยอด + "กดจองแล้วจะไปขั้นชำระเงิน" (`PreviewNextStep`) + ป้ายปุ่ม (`SubmitLabel`) ·
+  **ลำดับยอด**: โหมด = บริการ ?? เว็บ แต่สูตรยอด = ช่อง "มัดจำ (บาท/%)" ของบริการ (ถ้ากรอก &gt; 0) ?? ของเว็บ — `BookingPaymentEffective.AmountSource` + `Describe` บอก "ยอดใช้ช่องมัดจำของบริการนี้แทนยอดเว็บ" ·
+  ช่องยอดที่กรอก 0 = ไม่ได้ตั้ง (เดิม 0 ของบริการทับ % ของเว็บ ⇒ ไม่เก็บเงินเงียบ) · หน้าตั้งค่าแสดง `ChannelWarnings` (`BookingPaymentChannels.Warnings` — ติ๊กโอนไม่มีบัญชี/พร้อมเพย์ผิด/QR ไม่ปลอดภัย/ติ๊กออนไลน์ไม่มีระบบบริษัท ·
+  บัญชีหน้าร้านอยู่แถวชนิดอื่น) · หลังบ้าน (cms-bookings): กล่องการชำระแสดง โหมด · ที่มาของยอด · ยอดค้าง · กำหนดชำระ · สิ่งที่ลูกค้าเห็น · ปุ่มดูสลิปทั้งรอตรวจและยืนยันแล้ว (`SlipFileUrl` เมื่อ `SlipAttachmentId` มีค่า ·
+  ลิงก์ `attachments/{id}/download` ด่าน `SiteBooking → CmsOrderManage` · คำตอบลูกค้าถูกล้างใน `ForCustomer`) · ไม่เปลี่ยนสถานะ/เงิน/เอกสาร — เปลี่ยนเฉพาะข้อความ/ลำดับที่แสดง + ยอดเมื่อช่องกรอก 0
+  _Last verified against codebase: 2026-11-02 (รอบ 223 — เทสต์ `BookingPaymentStepTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ commit)_
+- **รอบ 226 · โหมดบังคับ × บริการที่เก็บเงินไม่ได้ + ค่าตั้งต้นกำหนดชำระ + แจ้ง "ชำระแล้ว — ยืนยันการจอง" (`erp-review/2026-11-01/BOOKING_PAYMENT_AUDIT.md` §6)**:
+  บั๊ก BK-2611-0004 — เว็บ "มัดจำ (บังคับ)" แต่บริการชนิดนัดหมาย/รับจอง/จองยืนยัน (ฟอร์มบริการตั้งต้น "นัดหมาย") เก็บเงินล่วงหน้าไม่ได้ (§78/1) ⇒ `Resolve` ได้โหมด "ปิด"
+  ⇒ `OnSeat` ไม่บังคับรอ ⇒ `AutoConfirm` ⇒ "ยืนยันแล้ว" ไม่มีขั้นชำระ · ตอนนี้ `BookingPaymentEffective.RequiredButUncollectable` (โหมดที่ตั้ง = บังคับ แต่ชนิดเก็บไม่ได้) ⇒
+  `OnSeat` ForcePending (ไม่ถือรอบ — ลูกค้าไม่มีทางจ่ายในระบบ) · `BookingPaymentStep.Decide(..., shopArrangesPayment)` "ได้รับการจองแล้ว — รอร้านยืนยัน" + "ร้านจะติดต่อเรื่องชำระเงิน" ·
+  พนักงานเห็น `Payment.ShopPolicyWarning` · ตั้งค่าเว็บ › การชำระเงิน: กล่องแดง `UncollectableProblem` + ปุ่ม `POST …/booking/payment-settings/fix-services`
+  (`convert` = ชนิด "ชำระมัดจำล่วงหน้า" มีผลกับการจองใหม่ / `exempt` = บริการตั้ง "ไม่รับชำระล่วงหน้า") · บันทึกโหมดบังคับขณะยังมีบริการเหล่านี้ ⇒ 409
+  `CMS-BOOKING-PAYMENT-UNCOLLECTABLE` · พนักงานจองแทน/โหมดไม่บังคับ/แบบเดิม ไม่ถูกแตะ ·
+  "ต้องชำระภายใน" ว่างทั้งเว็บและบริการในโหมดบังคับ ⇒ 1440 นาที (`DefaultRequiredDeadlineMinutes` · ไม่เกินเวลานัด · บริการกรอก 0 = ไม่กำหนด) ·
+  รับเงินครบจนสถานะ รอยืนยัน → ยืนยันแล้ว (`RecordDepositPaymentAsync` — สลิปที่ร้านยืนยัน/ชำระออนไลน์) ⇒ คิว `DeferredNotifyPolicy.BookingPaidConfirmed` ในธุรกรรมเดียวกัน
+  ⇒ `DispatchPaidConfirmedNotifyAsync` ข้อความ `booking.paid-confirmed` "ชำระแล้ว — ยืนยันการจอง" (คีย์กันซ้ำ `booking:{id}:booking.paid-confirmed` · ไม่ใช่ยืนยันแล้ว ⇒ ไม่ส่ง)
+- **รอบ 226 · จัดส่ง / รับเองของการจอง (เช่น เบเกอรี่สั่งทำ · BOOKING_PAYMENT_AUDIT §7)**: ตัวตัดสินเดียว `Helpers/BookingFulfillment` (เว็บ `SiteBookingSettings.Fulfillment*` ?? บริการ
+  `SiteBookingService.Fulfillment*` ทีละช่อง · ปิดทั้งคู่ = ไม่มีขั้นนี้ = การจองเดิมทุกตัวอักษร) · ค่าจัดส่งคิดที่เซิร์ฟเวอร์ด้วยตัวคิดของร้านตัวเดียว `Helpers/ShopDeliveryFee.Compute`
+  (ย้ายจากเช็กเอาต์ — คำสั่งซื้อผลเดิม · โซนจังหวัด/รหัสไปรษณีย์ · ส่งฟรีเมื่อครบ · เหมาจ่ายเมื่อไม่มีโซน · ยอดค่าบริการเป็นฐาน · ไม่มีน้ำหนัก/คูปอง) ผ่าน `CmsBookingService.QuoteFulfillmentAsync`
+  ทั้งตัวอย่างก่อนจอง (`payment-preview.fulfillment`) และ `CreateBookingAsync` (เข้ม: ที่อยู่ไม่ครบ/นอกพื้นที่/ต่ำกว่าขั้นต่ำ ⇒ 400 ก่อนบันทึก) · ตรึงบนการจอง `FulfillmentMethod · DeliveryFee ·
+  DeliveryAddress/Province/PostalCode · DeliveryRateId/Name` · **คำตัดสิน 226-4**: `TotalAmount` = ค่าบริการเท่านั้น (ค่าคอม/ส่วนแบ่ง/ค่าธรรมเนียมยกเลิกคิดจากค่าบริการ) · ยอดรวม = `GrandTotal` ·
+  มัดจำ (บาท/%) คิดจากค่าบริการ · ชำระเต็ม = ค่าบริการ + ค่าจัดส่ง · เพดานรับเงิน/ยอดค้างตอนเสร็จ = ยอดรวม · เอกสาร ERP: บรรทัด "ค่าจัดส่ง" แยก (`DeliveryErpLines` →
+  `ShippingVatAllocation.Split(MaxRate)` อัตรา VAT แบบคำสั่งซื้อ §79) ทั้งใบตอนจอง/ใบกำกับเมื่อถึง tax point/ใบส่วนที่เหลือตอนเสร็จ · ใบรับมัดจำแยกส่วนค่าบริการ/ค่าส่ง (`SplitPrepayment`) ·
+  จองด้วยบัตรคอร์สที่มีค่าส่ง ⇒ ปฏิเสธ · ที่อยู่จัดส่งถูกล้างตามคำขอลบข้อมูล (`CmsPdpaErasure.AnonymizeBooking`) · ข้อความยืนยัน/แจ้งร้าน + ใบยืนยัน + my-booking + หลังบ้าน (รายการ 🚚 + รายละเอียด) แสดงวิธีรับ/ที่อยู่/ค่าส่ง ·
+  ที่ตั้งค่า: ตั้งค่าเว็บ › การชำระเงิน › "🚚 จัดส่ง / รับเองของการจอง" (`GET/PUT …/booking/fulfillment-settings`) · ฟอร์มบริการ "ตามค่าเว็บ/กำหนดเอง" · อัตราค่าส่ง = ตั้งค่าร้านค้า › โซน/อัตราค่าส่ง
+- **รอบ 226 · ฝ่ายค้าน (BOOKING_PAYMENT_AUDIT §8)**: ชนิดบริการตรึงบนการจอง `SiteBooking.BookingType` (ตั้งตอนสร้าง · backfill แถวเดิมจากบริการ) — ทุกเส้นของการจองที่มีอยู่
+  (รับเงิน/ยืนยัน · เอกสาร ERP · tax point/ยกเลิก/ไม่มา/ริบ/คืน · สลิป/ยอดค้าง · คิวสำรอง · ป้าย) อ่านช่องนี้ ⇒ "เปลี่ยนเป็นชำระมัดจำล่วงหน้า" มีผลกับการจองใหม่เท่านั้น (ไม่กัน 409 แล้ว) ·
+  ปุ่มแก้รับเฉพาะบริการในรายการ + ด่านบันทึกบริการ · "ต้องชำระภายใน" 0 = ไม่กำหนด (เก็บ 0) · ว่าง = 1440 · เว็บเดิมที่ไม่เคยกรอกถูกตั้ง 0 + คำแนะนำ · คิวสำรองที่ได้ที่ไม่ใช้ค่าตั้งต้น ·
+  มัดจำบังคับไม่มียอด = รอร้านยืนยันเช่นกัน · บิล POS จากการจองแบบจัดส่งมีบรรทัด "ค่าจัดส่ง" · PDPA export มีที่อยู่จัดส่ง · คำเตือนพนักงานเฉพาะรอยืนยัน
+  _Last verified against codebase: 2026-11-02 (รอบ 226 + ฝ่ายค้าน — เทสต์ `BookingRound226Tests` · Db `BookingPaymentPolicyDbTests`.R226_* · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ commit)_
+- **รอบ 228 · หน้าจัดการการจองของลูกค้า + ค่าจัดส่ง (BOOKING_PAYMENT_AUDIT §9)**:
+  (1) **มัดจำไม่บังคับ — ชำระภายหลัง** (`Helpers/BookingDepositLater` · `POST …/booking/bookings/by-token/{t}/deposit-later`): ตั้ง `SiteBooking.DepositAmount` = ยอดเดียวกับติ๊กตอนจอง
+  (ฐานค่าบริการ) ใต้ล็อกสถานะ · **ไม่ออกใบร่าง/ไม่เปลี่ยนสถานะ/ไม่ถือรอบ** · ใบรับมัดจำออกตอนเงินเข้าผ่านเส้นเดิม (`IssueDepositReceiptAfterPaymentAsync` → `SyncBookingToErpAsync` ลงวันที่รับเงิน §78/1) ·
+  ต้องมีช่องทางโอน/ออนไลน์ · บัตรคอร์ส/รับเงินแล้ว/เลยเวลานัด ⇒ ไม่ได้ ·
+  (2) **ข้อความจากร้าน** (`PaymentNote`) ต่อท้ายบรรทัดชำระในอีเมล/LINE ยืนยันการจอง (`BookingPaymentPolicy.WithShopNote`) · มัดจำไม่บังคับที่ยังไม่เลือก ⇒ บรรทัด "เลือกชำระภายหลังได้" ·
+  (3) **เปลี่ยนวิธีรับ/ที่อยู่เอง** (`Helpers/BookingFulfillmentChange` · `POST …/by-token/{t}/fulfillment` previewOnly/บันทึก): ค่าตั้ง `SiteBookingSettings.FulfillmentChangeCutoffHours`
+  (null = ไม่เปิด เดิม) · ค่าส่งคิดใหม่ด้วย `QuoteFulfillmentAsync` ตัวเดียวกับตอนจอง · ส่วนต่าง (คำตัดสิน 228-3): ค่าส่งเท่าเดิม ⇒ ได้เสมอ · ยังไม่จ่าย ⇒ มัดจำชำระเต็มจำนวนขยับตาม +
+  ใบรับมัดจำ**ร่าง**ที่ยอดไม่ตรงถูกลบ (ออกใหม่ตอนเงินเข้า) · จ่ายแล้ว ⇒ มัดจำ/ใบที่ออกแล้วไม่แตะ ค่าส่งเพิ่ม = ยอดค้างที่ใบส่วนที่เหลือตอนเสร็จ · ต้องคืนเงิน/มีใบเสนอราคา-ใบกำกับที่รวมค่าส่งแล้ว/
+  สลิปรอตรวจ/ชำระออนไลน์ค้าง ⇒ ปฏิเสธ ให้ติดต่อร้าน · แจ้งร้าน + หมายเหตุภายใน ·
+  (4) **บัญชีรายได้ค่าจัดส่ง** `SiteCommerceConfig.ShippingRevenueAccountId` (ตรวจ `Helpers/ShippingRevenueAccount` — หมวดรายได้ของบริษัทที่ใช้งาน) ⇒ บรรทัด "ค่าจัดส่ง" ของใบขายคำสั่งซื้อ
+  (`BuildOrderErpLines`) · ใบเสนอราคา/ใบกำกับตอนจอง · ใบส่วนที่เหลือของการจอง · **ใบรับมัดจำไม่ใช้** (เงินรับล่วงหน้า) · ไม่ตั้ง/บัญชีถูกปิดภายหลัง = บัญชีรายได้ตั้งต้น (เดิม) ·
+  (5) **ค่าส่งตามระยะ** — ไม่คิด กม. (ต้องใช้แผนที่ภายนอก) ⇒ โซน `StopWhenMatched` "ชนะโซนถัดไป" + รหัสไปรษณีย์ของอำเภอ/เขต (ตัวจับคู่เดียว `ShopDeliveryFee.MatchingZones` ทั้งหน้าร้าน/สั่ง/จอง) ·
+  (6) **แม่แบบ "สั่งทำ / พรีออเดอร์"** (`POST …/booking/presets/mto/apply-site` · การ์ดในวิซาร์ดสร้างเว็บ) — บริการชำระมัดจำล่วงหน้า 50% · สั่งล่วงหน้า 24–48 ชม. · จัดส่ง+รับเอง ·
+  ช่องขนาด/รสชาติ/ข้อความ · ค่าที่ตั้งไว้แล้วชนะ · migration `Helpers/BookingManageMigration`
+  ฝ่ายค้านรอบ 228 (BOOKING_PAYMENT_AUDIT §9): มัดจำหลังเปลี่ยนค่าส่งจากข้อเท็จจริงที่ตรึง (`NewDeposit` · เพดานยอดรวมใหม่) · ใบรับมัดจำรออนุมัติ/มีเลข = ออกแล้ว (ปฏิเสธ) ·
+  ลบได้เฉพาะร่าง `DRAFT-` หลังเลิกผูก+บันทึกการจอง · บันทึกต้องส่งยอดที่เห็น (ไม่ตรง = 409) · แจ้งร้านหลังปล่อยล็อก · โซนลำดับตายตัว + หยุดเฉพาะเมื่อให้อัตราได้ ·
+  **CMS_SETTINGS_UX_AUDIT แพ็ก A–C**: บัญชีรับโอน/พร้อมเพย์/QR ของเว็บที่เดียว (`…/booking/transfer-account` — คำสั่งซื้อ · การจอง · ที่พัก) · ทางเข้าเดิม `PUT commerce/payment-gateways/{id}`
+  ไม่ล้างรูป QR/ชื่อธนาคารที่ไม่ได้ส่ง · ที่พักแขกต้องโอนแต่ไม่มีบัญชี ⇒ เตือน · กลุ่ม "การจัดส่ง / รับเอง" (`…/booking/shipping-settings` — ค่าส่งเหมาจ่าย/ส่งฟรี ที่เดียว) ·
+  เปิดจัดส่งแต่ไม่ตั้งค่าส่ง ⇒ เตือนค้างจนกด "ส่งฟรีจริง" (`SiteCommerceConfig.FreeDeliveryConfirmed` · คำตัดสิน Q3) · ตัวกันค่าหาย `CmsDirtyGuard`
+  รีวิว A–C + แพ็ก D/E: ทุกผู้อ่านบัญชีรับโอนใช้ `SiteTransferAccount.Rows` · ทางเข้าเดิม payment-gateways แถวโอน ⇒ ตัวเขียนเดียว (+ audit) · **ชนิดเอกสารของบริการจองเลือกจากคำตอบ
+  "ลูกค้าต้องจ่ายก่อนไหม"** (`BookingPayFirst`: ไม่ต้องจ่ายก่อน = นัดหมาย/ใบเสนอราคา · ต้องจ่ายก่อน = ชำระมัดจำล่วงหน้า/ใบรับมัดจำ · ร้านติดต่อกลับ = รับจอง · จองยืนยัน/ใบกำกับตอนจอง = ขั้นสูง) ·
+  วันปิดทั้งวันของเว็บ (เวลาทำการของการจอง) ⇒ ปฏิทินรับของสินค้าตามสั่ง (Q2) · เว็บที่พักจาก wizard seed ห้องตามจำนวนที่ระบุ (ค่าเริ่มต้น 3 · Q4)
+  _Last verified against codebase: 2026-11-02 (รอบ 228 — เทสต์ `BookingRound228Tests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ commit)_
 - **ให้บริการเสร็จ (R-09)**: มัดจำออกใบแล้ว + ราคาเต็ม > มัดจำ ⇒ `SettleDepositOnCompleteAsync` ออกใบกำกับ (จด VAT) / ใบเสร็จ ส่วนที่เหลือ `DepositBaseDeducted` + `DepositAppliedRef` = ใบมัดจำ (ช่องเดียวกับเช็คเอาต์ที่พัก §6.5 / MTO ข้อ 156) · อนุมัติ ⇒ `RealizeTaxedDepositDeductionsAsync` รับรู้ฐานมัดจำ · `ServiceUsedDate` = เวลานัด (tax point §78/1) · มัดจำ = ราคาเต็ม / มัดจำ VAT รอ / เงินประกัน ⇒ เส้นเดิม `RealizeDepositOnCompleteAsync` + ข้อความเดิม
 - **ยกเลิกเอง (R-10) / ไม่มา (R-11)**: `Helpers/BookingCancellationFee.Plan` — หน้าต่างฟรี `FreeCancellationHours` (เฉพาะยกเลิกเอง) · ค่าธรรมเนียม = ค่าบริการรวม × `CancellationFeePercent` · ริบ ≤ มัดจำที่รับจริง (ข้อ 126) ผ่าน `RealizeDepositAsync(ForfeitAs: PriceOrFee)` เท่า**ฐาน**ของส่วนที่ริบ · ส่วนที่เหลือ "รอคืน" ที่ศูนย์มัดจำ (ใบลดหนี้ §86/10 · ระบบไม่คืนเอง R1) · ไม่ตั้ง % ⇒ ไม่ริบ/ไม่คืนเอง (มัดจำคงเป็นหนี้สินรอพนักงาน — เส้นเดิม) · พนักงานยกเลิกจากหลังบ้าน = ไม่คิดค่าธรรมเนียมอัตโนมัติ (เส้นเดิม `SettleErpDocumentOnCancelAsync`)
 - **เลื่อนนัด (รอบ 206 · ข้อ 165 ค)**: `RescheduleCoreAsync` — แถวเดิมเปลี่ยนวัน/เวลา ตัดสินรอบใหม่ด้วย `BookingSlotEngine.Decide` ใต้ล็อกไซต์โดยไม่นับตัวเอง · เอกสารมัดจำ/ใบยืนยัน/เงินคงผูก (จดหมายเหตุบนใบ ไม่แก้บรรทัด §86/4) · ลูกค้าเลื่อนเองเฉพาะหน้าต่างยกเลิกฟรี · รอบเดิมว่าง ⇒ เลื่อนคิวสำรอง · รีเซ็ตเตือนก่อนนัด
@@ -5993,6 +6179,18 @@ audit chain (`EntityType = LodgingProperty` · old/new siteId) · ตอบ DTO 
 - **รอบ 207 · ตารางเอกสารแต่ละขั้น** `Helpers/BookingDocumentFlow.Describe` ถาม `Decide` ตัวเดียวกับเส้นจริง (หน้าตั้งค่าแสดงตรง) · รายละเอียดการจองแสดง**เอกสารทุกใบ**ที่ `BookingNumber` ตรง + ประวัติรับเงิน + ไทม์ไลน์ (`FillWorkspaceAsync`) · ลูกค้าหน้าเว็บได้มุมมองลูกค้าเสมอ (`ForCustomer`)
 - **รอบ 207 · ผูกสินค้า**: `SyncBookingToErpAsync` โหลดสินค้าที่ผูก (เดิมไม่ Include ⇒ null เสมอ) ⇒ บรรทัดได้รหัสสินค้า + บัญชีรายได้ (ยกเว้นใบมัดจำ) + อัตรา VAT ผ่าน `Helpers/BookingProductLink.VatRate` · สร้างสินค้าบริการจากบริการ `PUT …/services/{id}/product` ผ่าน `IProductService.CreateAsync`
 - **รอบ 207 · ฟอร์มจอง**: ช่องบังคับ/ซ่อน `Helpers/BookingFormFields` ตรวจใน `CreateBookingAsync` (เส้นลูกค้า) ก่อนกันรอบ · ใบยืนยันการจองให้ลูกค้าดาวน์โหลด/พิมพ์ (ไม่ใช่ใบกำกับ/ใบเสร็จ — ระบุบนใบ)
+- **รอบ 222 · ช่องที่เจ้าของเพิ่มเองบนฟอร์มจอง** (คำขอเจ้าของ "เพิ่มฟิลด์ให้ลูกค้ากรอก/เลือก dropdown ตามที่ตั้งค่า"): ตั้งที่ **CMS › แก้ไขเว็บไซต์ › แท็บ 📅 บริการจอง ›
+  การ์ด "📝 ข้อมูลที่ลูกค้าต้องกรอกตอนจอง" › ➕ ช่องที่เพิ่มเอง** (`cms-edit.html` `bkCfRender` → `PUT booking-settings` `formFields.customFields`) — เก็บใน
+  `SiteBookingSettings.FormFieldsJson` เดิม (`BookingFormFieldsConfig.CustomFields` · ช่องละ `ServiceIds` ว่าง = ทุกบริการ · ไม่มีคอลัมน์ค่าตั้งใหม่) ·
+  ชนิด ข้อความสั้น/ยาว · ตัวเลข · วันที่ · dropdown · ช่องติ๊ก + บังคับ/ไม่บังคับ/ไม่แสดง + ยาวสุด — **กติกาชุดเดียวกับฟอร์มสั่งซื้อ** `Helpers/CustomFormFields`
+  (แยกจาก `OrderFormFields` · ชนิด "ตัวเลข" จึงใช้ได้กับฟอร์มสั่งซื้อด้วย) · บันทึก: `customFields` null = คงรายการเดิม (ผู้เรียกที่ส่งแค่ เบอร์/อีเมล/หมายเหตุ ไม่ลบช่องเงียบ ๆ) ·
+  `[]` = ลบทั้งหมด · บริการที่เลือกต้องเป็นบริการของเว็บที่ยังไม่ถูกลบ (`BookingFormFields.ValidateConfig`) ·
+  หน้าจอง: DTO บริการส่ง `customFields` ที่ server กรองแล้ว (`FieldsForService` — ขอบเขตบริการ + ตัดช่อง "ไม่แสดง") ⇒ `storefront.html` วาดด้วย `_renderCustomField` ตัวเดียวกับเช็กเอาต์ ·
+  ด่านจริง `BookingFormFields.CheckCustom` ใน `CreateBookingAsync` (ทางเข้าเดียวที่สร้าง `SiteBooking`) **ทุกผู้จอง** (แขก · สมาชิก · พนักงานจองแทน) ก่อนกันรอบ/บันทึก:
+  บังคับ · ตัวเลือกต้องอยู่ในรายการ · ความยาว · ตัวเลข/วันที่ถูกรูป · คีย์ของช่องที่ไม่แสดง/บริการอื่น = ไม่เก็บ · **พนักงานจองแทน = ไม่บังคับช่องบังคับ** (walk-in) แต่ค่าที่ส่งยังต้องถูกรูป ·
+  คำตอบตรึงป้าย+ค่าใน `SiteBooking.CustomFieldsJson` (migration `BookingFormFields.MigrationStatements` · NULL = การจองเดิม) ⇒ `BookingResponse.CustomFields` —
+  หน้าทำงาน `cms-bookings.html` ("ข้อมูลเพิ่มเติมจากลูกค้า") · หน้าจัดการ/ใบยืนยันของลูกค้า (`_bookingRows`) · ข้อความแจ้งร้าน "การจองใหม่" + ยืนยันการจองถึงลูกค้า
+  (บรรทัด "ข้อมูลเพิ่มเติม: …" จาก `CustomFormFields.SummaryLine`) · เลื่อนนัด = แถวเดิม ⇒ คำตอบคงอยู่ · ไม่ใช่ข้อมูลภาษี/เอกสาร ERP (ไม่ลงหมายเหตุใบ) · เทสต์ `BookingCustomFieldsTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้
 - **รอบ 208 · ด่านเปลี่ยนสถานะ (ฝ่ายค้าน W2 ข้อ 1/3 blocking · ข้อ 167)**: การจอง `Helpers/BookingStatusTransition` · ออเดอร์ `Helpers/SiteOrderStatusTransition` — สถานะเดิม = ไม่ทำซ้ำ (NoOp · ออเดอร์แก้เลขพัสดุ/หมายเหตุได้) · เสร็จสิ้น/ยกเลิก/ไม่มา (ออเดอร์: ยกเลิก/คืนเงินแล้ว) เปลี่ยนต่อไม่ได้ 409 · ทุกเส้นที่เปลี่ยนสถานะถือล็อก session ต่อรายการ (`Helpers/AdvisorySessionLock` · คีย์ `status:{id}` / `cms-order-status`) — เส้นสถานะ · เสร็จ+รับชำระ · ลูกค้ายกเลิกเอง · รับมัดจำ (xact บนคีย์สถานะก่อนคีย์ใบ) · ยืนยันรับเงินออเดอร์ (`ConfirmPaymentAsync` ⇒ ออเดอร์ยกเลิก/คืนเงินแล้วปฏิเสธ) · ทางลูกค้า "ขอใบเสนอราคา" เฉพาะออเดอร์ที่รอ + ไม่มีเงินเข้า · job ปล่อยที่ข้ามการจองที่รับเงินแล้ว + ตรวจซ้ำใต้ล็อก (`ExpectedCurrentStatus` · `HoldLapsedAsOfUtc`) · รับมัดจำล้างเวลาถือที่ + เขียน `SiteBookingPayment` (หลักฐานรายก้อนลงเวลาบันทึก ⇒ `GatewaySourceEvidence` ไม่รับซ้ำ) · วันรับเงินไม่ก่อนวันจอง · ริบมัดจำ: หมายเหตุ = ยอดที่ริบจริง (`BookingCancellationFee.GrossOfBase`) · ใบส่วนที่เหลือ = ราคาที่ตรึง (`FrozenUnitPrice`) + VAT/บัญชีรายได้ของสินค้าที่ผูก · ลูกค้ายกเลิกเองระบุผู้กระทำ `customer:` ⇒ คืนเครดิตตามนโยบายลูกค้า · การจองที่จ่ายด้วยเครดิตเลื่อนนัดผ่านเส้นนี้ไม่ได้ · **ยังเปิด (ข้อสังเกต)**: POS เขียนสถานะการจองตรง (เฉพาะการจองไม่มีเงิน) · ลูกค้ายกเลิก/เลื่อนเองเปิดเป็นค่าเริ่มต้น (ตามแบบเดิม)
 - **รอบ 209 · P1 หน้าร้านฝั่งลูกค้า (คำตัดสินข้อ 168 ข/ฑ · R-209-A1/B3/B4/A9/E1/C3)**: (ก) **หน้าสถานะออเดอร์ของแขก** `[AllowAnonymous] GET commerce/orders/public/{token}` (`Controllers/CmsStorefrontCustomerController` · `StorefrontCustomerService.GetPublicOrderAsync`) — กุญแจ `SiteOrder.PublicToken` (สุ่ม 192 บิต base64url · `Helpers/SiteOrderPublic.NewToken` ออกใน `CreateOrderAsync` · ออเดอร์เดิม backfill ตอนบูต `Helpers/StorefrontP1Migration`) · คำตอบ = `PublicOrderResponse` จาก `SiteOrderPublic.ToPublic` (ยอด/งวด/ป้ายจาก `GetOrderAsync` ตัวเดียวกับหลังบ้าน · **ไม่มี** ที่อยู่/เบอร์/อีเมล/เลขภาษี/หมายเหตุ/สลิป/คูปอง) · จำกัดต่อ IP · storefront `order-success/{token}` + `track-order/{token}` ใช้ endpoint นี้ (เดิมเรียก GET ของพนักงาน ⇒ 401 ⇒ QR ฿0) · ไม่พบ/ลิงก์ GUID เดิม = หน้าข้อความ ไม่ใช่ QR ฿0 · ทางเดิมของแขก (แนบสลิป/จ่ายออนไลน์/ขอใบเสนอราคา) ยังใช้ id ออเดอร์จากคำตอบนี้ · (ข) **ผู้ขนส่ง** `SiteOrder.ShippingCarrier` ตั้งจาก `SiteShippingRate.CarrierName` ตอนสั่ง (มารับเอง = null) · พนักงานแก้คู่เลขพัสดุใน `UpdateOrderStatusAsync` (`SiteOrderPublic.CarrierEdit`: null = ไม่แก้ · "" = ล้าง) · echo ใน `OrderResponse` + ช่องใน cms-orders · ลิงก์ติดตามเฉพาะผู้ขนส่งที่รู้รูปแบบ (`SiteOrderPublic.TrackingUrl` — ไปรษณีย์ไทย/Kerry/Flash · อื่น = เลขอย่างเดียว) · (ค) **A9** ตะกร้าว่าง/ไม่มีบรรทัด ⇒ 400 ก่อนบันทึก (`EmptyOrderProblem` · เดิมได้ออเดอร์ ฿0) · คีย์กันกดซ้ำ (`CreateOrderRequest.IdempotencyKey` หรือ header `Idempotency-Key` · 16–80 ตัว URL-safe · unique ต่อบริษัท+เว็บ) — คีย์เดิม ⇒ คืนออเดอร์เดิม · คำขอซ้อนชน unique ⇒ คืนออเดอร์ของคำขอแรก (`SaveNewOrderOrReplayAsync`) · (ง) **ลูกค้าของออเดอร์** มาจากโทเคนหน้าร้าน ไม่ใช่ body (`StorefrontCustomerAuth.OrderCustomerId` — แขกนิรนาม ⇒ null · พนักงาน ERP ⇒ body) + service ยืนยันว่าเป็นลูกค้าของเว็บนี้ · (จ) **บัญชีลูกค้า** storefront `account` (ล็อกอิน/สมัครผ่าน `portal/login|register` เดิม · โทเคน audience `:storefront` ส่งใน header `X-Storefront-Token` ตรวจด้วย `Helpers/StorefrontCustomerAuth` — scheme ERP ยังปฏิเสธเหมือนเดิม) · `GET portal/me|me/orders|me/bookings|me/credits` อ่านเฉพาะ id ในโทเคน (บัตร = `CreditPass` ของ `ContactId` ของลูกค้า · อ่านอย่างเดียว) · ยกเลิก/เลื่อนการจองผ่านลิงก์ `my-booking/{token}` เดิม · (ฉ) **จองด้วยบัตรจากหน้าเว็บ** ด่าน `CreditBookingLink.PayWithCreditGate` 3 ทิศ (พนักงานมีสิทธิ์ `CmsOrderManage` = เดิม · ลูกค้าหน้าร้านที่โทเคนเว็บนี้ id ตรง `CustomerId` = ได้ ผู้กระทำ `storefront-customer:{id}` · อื่น ๆ = 403) + service ตรวจซ้ำ `ActorPayWithCreditProblem` (รวม `PayWithCreditProblem(string)` เดิมเข้าไป) · ไม่ออกเอกสาร ERP (เส้นบัตรเดิม) · (ช) **QR พร้อมเพย์สร้างที่เซิร์ฟเวอร์** `GET commerce/promptpay-qr?amount=` (`IPromptPayService` ตัวเดียว · พร้อมเพย์ของเว็บจากช่องทางชำระ · จำกัดต่อ IP) — เลิกส่งเลขพร้อมเพย์/ยอดไป api.qrserver.com ทั้งหน้าออเดอร์และที่พัก · ลบสำเนา EMVCo ฝั่ง JS
 

@@ -685,12 +685,10 @@ public class CmsContentService : ICmsContentService
         else
         {
             // ไฟล์เดิมที่เขียน disk ตรง (ก่อน R-43) — ยังต้องลบที่ตำแหน่งเดิม (ไม่ย้ายไฟล์เงียบ ๆ · F2 #9)
-            if (File.Exists(media.StoragePath))
-                File.Delete(media.StoragePath);
-            if (!string.IsNullOrEmpty(media.WebPPath) && File.Exists(media.WebPPath))
-                File.Delete(media.WebPPath);
-            if (!string.IsNullOrEmpty(media.ThumbnailPath) && File.Exists(media.ThumbnailPath))
-                File.Delete(media.ThumbnailPath);
+            // ทีม FS 2026-11-02: ลบผ่านที่เก็บกลาง (Local/S3) ตัวเดียวกับที่ ImageProcessingService เขียน
+            if ((_images?.Storage ?? Accounting.Services.Storage.FileStorageDefaults.Local) is { } storage)
+                foreach (var legacyPath in new[] { media.StoragePath, media.WebPPath, media.ThumbnailPath })
+                    if (!string.IsNullOrEmpty(legacyPath)) await storage.DeleteAsync(legacyPath);
         }
 
         var site = await _db.Sites.FirstOrDefaultAsync(s => s.Id == siteId && s.CompanyId == companyId);

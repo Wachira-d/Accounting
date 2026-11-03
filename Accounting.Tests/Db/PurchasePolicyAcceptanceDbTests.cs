@@ -17,6 +17,8 @@ namespace Accounting.Tests.Db;
 /// ค่าบริการแพลตฟอร์มยอมรับไว้แล้วสำหรับรายการเดียวกัน ⇒ ไม่ต้องติ๊กซ้ำ · ยกเลิกแพ็กเกจมีผลสิ้นรอบ (ไม่เข้า PastDue)
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 224: ทั้งสามคลาสเรียก ProcessExpiredSubscriptionsAsync ซึ่งกวาดทั้งฐาน — รันขนานกันแล้วคลาสหนึ่งยกเลิกการสมัครของอีกคลาสก่อน (เทสต์สุ่มแดง)
+[Collection("SubscriptionExpirySweep")]
 public class PurchasePolicyAcceptanceDbTests
 {
     private readonly ITestOutputHelper _out;

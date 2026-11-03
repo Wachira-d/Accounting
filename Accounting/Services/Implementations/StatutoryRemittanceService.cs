@@ -46,6 +46,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // §83/6 reverse charge — VAT ประเมินเองจากจ่ายค่าบริการ ตปท. (ตั้งหนี้
         // Cr 21912 ตอนบันทึกเอกสาร IsForeignService → นำส่ง Dr 21912/Cr ธนาคาร)
         "VatPp36"   => ("ภาษีมูลค่าเพิ่ม (บริการต่างประเทศ §83/6)", "ภ.พ.36", "21912"),
+        // รอบ 228 — แบบรายครึ่งปี/รายปี: คีย์งวด = (ปี, เดือนสิ้นงวด) · ยอด/ผังจาก Helpers/CitPayment · Helpers/WorkersCompensationBase
+        Accounting.Helpers.CitPayment.Pnd51Type => ("ภาษีเงินได้นิติบุคคล (ครึ่งปี)", "ภ.ง.ด.51", Accounting.Helpers.CitPayment.PayableCode),
+        Accounting.Helpers.CitPayment.Pnd50Type => ("ภาษีเงินได้นิติบุคคล (รอบปี)", "ภ.ง.ด.50", Accounting.Helpers.CitPayment.PayableCode),
+        Accounting.Helpers.WorkersCompensationBase.RemittanceType => ("กองทุนเงินทดแทน (เงินสมทบรายปี)", "กท.20ก", Accounting.Helpers.WorkersCompensationBase.PayableCode),
+        // อากรแสตมป์นำส่งรายตราสารผ่าน RemitStampDutyAsync เท่านั้น (ผังว่าง ⇒ RemitAsync ปฏิเสธ) — มีที่นี่เพื่อป้ายในประวัติ
+        Accounting.Helpers.StampDutySchedule.RemittanceType => ("อากรแสตมป์", "อากรแสตมป์", ""),
         _           => ("ไม่ทราบ", type, "")
     };
 
@@ -66,7 +72,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     private async Task EnsureHolidaysAsync(DateTime today)
         => _holidays ??= await PlatformHolidayStore.LoadSetAsync(_db, today.Year - 3, today.Year + 1, _logger);
 
-    public async Task<RemittanceDashboardResponse> GetDashboardAsync(Guid companyId, int monthsBack = 12)
+    public async Task<RemittanceDashboardResponse> GetDashboardAsync(Guid companyId, int monthsBack = 12, bool includeOldAnnual = false)
     {
         // ⚠️ ต้องเป็นวันตามเวลาไทย (UTC+7) ไม่ใช่ UTC — ช่วง 00:00–07:00 ของไทย
         // UTC ยังเป็นเมื่อวาน ⇒ ธง "เลยกำหนด" และเงินเพิ่ม §49 คลาดไป 1 วัน และ
@@ -432,13 +438,84 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                && (recognizedRemitIds.Contains(r.Id)
                    || pp36RecognizedRefs.Any(x => x.StartsWith($"ภ.พ.36R-{r.PeriodYear}{r.PeriodMonth:D2}")));
 
+        // ── รอบ 228: ภ.ง.ด.51/50 (ตั้งหนี้ 21920 จาก "คำนวณภาษีนิติบุคคล") + กองทุนเงินทดแทนรายปี (กท.20ก) ──
+        // ฝ่ายค้าน S3: (1) ชำระนอกเส้นนี้ (ใบสำคัญจ่าย Dr ผังหนี้ หลังวันตั้งหนี้) จับคู่ต่อก้อนแบบ FIFO — ครบ = ไม่ขึ้นค้าง · บางส่วน = ขึ้นพร้อมคำเตือน
+        // (ไม่เดาว่าเป็นของงวดไหน) · (2) ครบกำหนดเกิน 24 เดือนแล้ว = ซ่อน เว้นแต่ขอดู (includeOldAnnual) · (3) ผูกใบสำคัญเองได้ (SettledOutsideAsync)
+        var advisories = new List<string>();
+        var hiddenOld = 0;
+        var oldFloor = today.AddMonths(-24);
+        bool TooOld(string type, int y, int m) => !includeOldAnnual && Accounting.Helpers.TaxFilingDeadline.WarnBy(type, y, m, _holidays) < oldFloor;
+
+        var (citRows, s67) = await LoadCitPayablesAsync(companyId, remits);
+        _citRows = citRows;
+        var citGroups = _citRows.GroupBy(r => (r.Type, r.Year, r.Month)).ToList();
+        var citClaims = citGroups.Select(g => (AccountId: g.First().PayableAccountId, PostedAt: g.Min(r => r.PostedAt),
+            Need: Remitted(g.Key.Type, g.Key.Year, g.Key.Month) > 0 ? 0m : g.Sum(r => r.Offsets.Payable + r.Offsets.PrepaidUsed + r.Offsets.WhtUsed))).ToList();
+        var citDebits = (await LoadManualDebitsAsync(companyId, citClaims.Select(c => c.AccountId).Distinct().ToList()))
+            .Select(d => (d.AccountId, d.Date, d.Amount)).ToList();
+        var citMatched = MatchFifo(citClaims, citDebits);
+        for (var i = 0; i < citGroups.Count; i++)
+        {
+            var g = citGroups[i];
+            var outstanding = g.Sum(r => r.Offsets.Payable) - Remitted(g.Key.Type, g.Key.Year, g.Key.Month);
+            if (outstanding <= 0.009m) continue;
+            if (citMatched[i] >= citClaims[i].Need - 0.009m) continue;   // ล้างนอกเส้นนี้ครบแล้ว
+            if (TooOld(g.Key.Type, g.Key.Year, g.Key.Month)) { hiddenOld++; continue; }
+            var credits = g.Sum(r => r.Offsets.PrepaidUsed + r.Offsets.WhtUsed);
+            var citNotes = g.Select(r => r.Warning).Where(x => x != null).Select(x => x!).Distinct().ToList();
+            if (credits > 0.005m)
+                citNotes.Insert(0, $"หนี้ 21920 ที่ตั้งไว้ {g.Sum(r => r.Offsets.Payable) + credits:N2} − เครดิต (ภ.ง.ด.51 ที่จ่าย/ภาษีถูกหัก ณ ที่จ่าย) {credits:N2} ⇒ ล้างเครดิตในรายการเดียวกัน");
+            if (citMatched[i] > 0.005m)
+                citNotes.Add($"⚠️ พบใบสำคัญ Dr 21920 นอกหน้านี้ {citMatched[i]:N2} หลังวันตั้งหนี้ — ถ้าเป็นการชำระงวดนี้ กด “ชำระนอกระบบแล้ว” ผูกใบนั้นแทนการนำส่งซ้ำ");
+            pending.Add(BuildItem(g.Key.Type, g.Key.Year, g.Key.Month, outstanding, today,
+                periodLabel: Accounting.Helpers.CitPayment.PeriodLabel(g.Key.Type, g.Key.Year),
+                amountNote: citNotes.Count > 0 ? string.Join(" · ", citNotes) : null));
+        }
+        // S5b: §67 ตรี ของ ภ.ง.ด.50 ที่ไม่มีแถวรอนำส่ง (ยอดสุทธิ 0) ต้องยังเห็น
+        foreach (var (y, note) in s67)
+            if (!TooOld(Accounting.Helpers.CitPayment.Pnd50Type, y, 12)) advisories.Add(note);
+
+        _wcfYears = await LoadWcfYearsAsync(companyId);
+        _wcfPayableAccountId = (await Accounting.Helpers.WorkersCompensationAccounts.PayableAsync(_db, companyId))?.Id;   // S8 ตัวหาผังเดียวกับเงินเดือน
+        if (_wcfYears.Count > 0 && _wcfPayableAccountId is Guid wcfAcc)
+        {
+            var years = _wcfYears.Keys.OrderBy(k => k).ToList();
+            var claims = years.Select(y => (AccountId: wcfAcc, PostedAt: _wcfYears[y].FirstAccrualAt,
+                Need: Math.Max(0m, _wcfYears[y].Accrued - Remitted(Accounting.Helpers.WorkersCompensationBase.RemittanceType, y, 12)))).ToList();
+            var debits = (await LoadManualDebitsAsync(companyId, new List<Guid> { wcfAcc })).Select(d => (d.AccountId, d.Date, d.Amount)).ToList();
+            var matched = MatchFifo(claims, debits);
+            for (var i = 0; i < years.Count; i++)
+                _wcfYears[years[i]] = _wcfYears[years[i]] with { ClearedOutside = matched[i] };
+        }
+        foreach (var w in _wcfYears.Values.OrderBy(w => w.Year))
+        {
+            var outstanding = w.Annual - w.ClearedOutside - Remitted(Accounting.Helpers.WorkersCompensationBase.RemittanceType, w.Year, 12);
+            if (outstanding <= 0.009m) continue;
+            if (TooOld(Accounting.Helpers.WorkersCompensationBase.RemittanceType, w.Year, 12)) { hiddenOld++; continue; }
+            var notes = new List<string>();
+            if (Math.Abs(w.Annual - w.Accrued) > 0.005m)
+                notes.Add($"เงินสมทบรายปี {w.Annual:N2} (ค่าจ้างทั้งปีไม่เกิน 240,000/คน) · ตั้งค้างจ่ายรายเดือนไว้ {w.Accrued:N2} ⇒ ส่วนต่างลงค่าใช้จ่าย 54121 ตอนนำส่ง");
+            if (w.WagesReconstructed > 0)
+                notes.Add($"{w.WagesReconstructed} งวดไม่มีค่าจ้างเก็บไว้ (ก่อนรอบ 228) — ถอดฐานจากเงินสมทบรายเดือน");
+            if (w.ClearedOutside > 0.005m)
+                notes.Add($"ค้างจ่ายกองทุนเงินทดแทนถูกล้างนอกหน้านี้แล้ว {w.ClearedOutside:N2} (ใบสำคัญจ่ายหลังวันตั้งค้างจ่าย) — หักออกจากยอดค้าง");
+            if (_wcfPayableAccountId == null)
+                notes.Add("⚠️ ไม่พบผังกองทุนเงินทดแทนค้างจ่าย (21816) — นำส่งไม่ได้จนกว่าจะสร้างผัง");
+            pending.Add(BuildItem(Accounting.Helpers.WorkersCompensationBase.RemittanceType, w.Year, 12, outstanding, today,
+                payeeCount: w.Employees,
+                periodLabel: $"ปี {w.Year + 543}" + (w.Year >= today.Year ? " (ยังไม่ปิดปี — ยอดสะสมถึงวันนี้)" : ""),
+                amountNote: notes.Count > 0 ? string.Join(" · ", notes) : null));
+        }
+
         // ── ประวัติที่นำส่งล่าสุด ──
         var history = remits.OrderByDescending(r => r.PayDate).Take(30)
             .Select(r => new RemittanceHistoryItem(r.Id, r.RemittanceType, Meta(r.RemittanceType).Form,
                 r.PeriodYear, r.PeriodMonth, r.Amount, r.LateFee, r.PayDate, r.FilingNumber,
                 r.JournalEntryId, r.ReceiptAttachmentId, r.CreatedBy, r.CreatedAt,
                 Pp36Recognized: r.RemittanceType == "VatPp36" ? Pp36RecognizedOf(r) : (bool?)null,
-                Penalty: r.Penalty, OtherFine: r.OtherFine))
+                Penalty: r.Penalty, OtherFine: r.OtherFine,
+                PeriodLabel: PeriodLabelOf(r.RemittanceType, r.PeriodYear, r.RemittanceType == Accounting.Helpers.StampDutySchedule.RemittanceType ? r.Note : null),
+                SettledOutside: r.SettledOutside))
             .ToList();
 
         pending = pending.OrderByDescending(p => p.IsOverdue)
@@ -451,7 +528,9 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             Pending: pending,
             RecentHistory: history,
             Pp36AwaitingRecognition: pp36Awaiting,
-            Pp36Issues: pp36Issues);
+            Pp36Issues: pp36Issues,
+            Advisories: advisories.Count > 0 ? advisories : null,
+            HiddenOldAnnualCount: hiddenOld);
     }
 
     /// <summary>
@@ -484,10 +563,18 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         return issues;
     }
 
+    /// <summary>ป้ายงวดในประวัติ (รอบ 228) — แบบรายครึ่งปี/รายปี/รายตราสาร · null = รายเดือน (หน้าแสดงเดือน/ปีเอง)</summary>
+    private static string? PeriodLabelOf(string type, int year, string? note)
+        => Accounting.Helpers.CitPayment.IsCit(type) ? Accounting.Helpers.CitPayment.PeriodLabel(type, year)
+         : type == Accounting.Helpers.WorkersCompensationBase.RemittanceType ? $"ปี {year + 543}"
+         : type == Accounting.Helpers.StampDutySchedule.RemittanceType ? (string.IsNullOrWhiteSpace(note) ? null : note)
+         : null;
+
     private PendingRemittanceItem BuildItem(string type, int year, int month, decimal amount,
         DateTime today, decimal? employee = null, decimal? employer = null, int? payeeCount = null,
         decimal? outputVat = null, decimal? inputVat = null, Guid? relatedRunId = null,
-        DateTime? reportFiledAt = null, int? unissuedCount = null, decimal? unissuedAmount = null)
+        DateTime? reportFiledAt = null, int? unissuedCount = null, decimal? unissuedAmount = null,
+        string? periodLabel = null, string? amountNote = null)
     {
         var (label, form, code) = Meta(type);
         var (paper, efiling) = DueDates(type, year, month, _holidays);
@@ -504,7 +591,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             employee, employer, payeeCount, outputVat, inputVat, relatedRunId,
             reportFiledAt, unissuedCount, unissuedAmount,
             WarnDueDate: warnBy, WarnNote: Accounting.Helpers.TaxFilingDeadline.EFilingCaveat(type, (paper, efiling), today),
-            PenaltyPreview: sug.Penalty, LateFeeNote: sug.SurchargeNote, PenaltyNote: sug.PenaltyNote, FineNote: sug.FineNote);
+            PenaltyPreview: sug.Penalty, LateFeeNote: sug.SurchargeNote, PenaltyNote: sug.PenaltyNote, FineNote: sug.FineNote,
+            PeriodLabel: periodLabel, AmountNote: amountNote,
+            PenaltyPrefill: sug.PenaltyNeedsConfirmation ? 0m : null,
+            LateFeePrefill: sug.SurchargeNeedsConfirmation ? 0m : null,
+            Section67TerPreview: sug.Section67Ter, Section67TerNote: sug.Section67TerNote,
+            CanSettleOutside: Accounting.Helpers.CitPayment.IsCit(type) || type == Accounting.Helpers.WorkersCompensationBase.RemittanceType);
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -1137,14 +1229,17 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     public async Task<PendingRemittanceItem?> PreviewAsync(Guid companyId, string remittanceType,
         int periodYear, int periodMonth, DateTime payDate, bool paperFiling = false)
     {
-        var dash = await GetDashboardAsync(companyId, 18);
+        var dash = await GetDashboardAsync(companyId, 18, includeOldAnnual: true);   // ปุ่มคำนวณให้ของแถวเก่าที่ผู้ใช้ขอดูต้องหาเจอ
         var item = dash.Pending.FirstOrDefault(p => p.RemittanceType == remittanceType
             && p.PeriodYear == periodYear && p.PeriodMonth == periodMonth);
         if (item == null) return null;
         // คำนวณเงินเพิ่ม/เบี้ยปรับใหม่ตาม payDate ที่เลือก — ทุกแบบ (ปุ่ม "คำนวณให้" บนหน้านำส่ง · ตัวเดียวกับตอนลงบัญชี)
         var sug = SuggestPenalties(remittanceType, periodYear, periodMonth, item.Amount, payDate, paperFiling, item.ReportFiledAt);
         return item with { LateFeePreview = sug.Surcharge, PenaltyPreview = sug.Penalty,
-            LateFeeNote = sug.SurchargeNote, PenaltyNote = sug.PenaltyNote, FineNote = sug.FineNote };
+            LateFeeNote = sug.SurchargeNote, PenaltyNote = sug.PenaltyNote, FineNote = sug.FineNote,
+            PenaltyPrefill = sug.PenaltyNeedsConfirmation ? 0m : null,
+            LateFeePrefill = sug.SurchargeNeedsConfirmation ? 0m : null,
+            Section67TerPreview = sug.Section67Ter, Section67TerNote = sug.Section67TerNote };
     }
 
     public async Task<RemitResult> RemitAsync(Guid companyId, RemitRequest req, string performedBy)
@@ -1157,7 +1252,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         // กันนำส่งซ้ำงวดเดิม — ภ.พ.36 ยกเว้น (คำตัดสินข้อ 133): ยื่นได้หลายครั้งต่อเดือน (ต่อการจ่ายเงิน) ⇒ ด่านเปลี่ยนเป็น
         // "ห้ามนับใบเดิมซ้ำ" (ใบที่อยู่ในรายการนำส่งแล้วไม่ถูกนับในยอดค้าง · ตรวจซ้ำใต้ล็อกแถวเอกสารข้างล่าง)
         var isPp36 = type == "VatPp36";
-        if (!isPp36)
+        // รอบ 228: กองทุนเงินทดแทนจ่ายได้หลายครั้งต่อปี (เงินสมทบเบื้องต้น/ส่วนที่ขาด) — ด่านกันซ้ำ = ยอดค้างตรวจซ้ำใต้ล็อกในธุรกรรม
+        var isWcf = type == Accounting.Helpers.WorkersCompensationBase.RemittanceType;
+        var isCit = Accounting.Helpers.CitPayment.IsCit(type);
+        if (!isPp36 && !isWcf)
         {
             var dup = await _db.Set<StatutoryRemittance>().AnyAsync(r => r.CompanyId == companyId
                 && !r.IsDeleted && r.RemittanceType == type
@@ -1168,7 +1266,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
 
         // หายอดค้าง + breakdown จาก dashboard (source of truth เดียวกับที่แสดง)
-        var dash = await GetDashboardAsync(companyId, 24);
+        var dash = await GetDashboardAsync(companyId, 24, includeOldAnnual: true);
         var item = dash.Pending.FirstOrDefault(p => p.RemittanceType == type
             && p.PeriodYear == req.PeriodYear && p.PeriodMonth == req.PeriodMonth);
         if (item == null)
@@ -1228,12 +1326,81 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
 
         // ผัง Cr (แหล่งเงิน)
         var bankGlId = await ResolveBankGlAsync(companyId, req.BankAccountId, req.BankGlAccountId);
-        var payable = await ResolveAccountAsync(companyId, payableCode)
-            ?? throw new InvalidOperationException($"ไม่พบผังบัญชี {payableCode} ({label}) — กรุณาสร้างก่อน");
+        // ภ.ง.ด.50/51: ผังหนี้ = ผังที่ JE ตั้งหนี้ลงจริง (GL-first ในแผนข้างล่าง) — ไม่บังคับให้มี 21920 ตรงรหัส
+        // กท.20ก: ตัวหาผังเดียวกับตอนตั้งค้างจ่ายในเงินเดือน (S8 · Helpers/WorkersCompensationAccounts)
+        var payable = isCit ? null
+            : (isWcf ? await Accounting.Helpers.WorkersCompensationAccounts.PayableAsync(_db, companyId) : await ResolveAccountAsync(companyId, payableCode))
+              ?? throw new InvalidOperationException($"ไม่พบผังบัญชี {payableCode} ({label}) — กรุณาสร้างก่อน");
 
         // ── สร้าง JE ──
         var lines = new List<JournalLineRequest>();
-        if (type == "VatPp30")
+        Accounting.Helpers.WorkersCompensationBase.PaymentPlan? wcfPlan = null;
+        if (isCit)
+        {
+            // รอบ 228 — ภ.ง.ด.51/50: Dr หนี้ที่ตั้งไว้ (ผังของ JE ตั้งหนี้) = จ่าย + ล้างเครดิต · Cr ผังเครดิต ภ.ง.ด.51 (ผังที่ JE ตั้งหนี้ครึ่งปีลง Dr — ใหม่ 11920 ·
+            // เดิม 580xx) · Cr 11910 ภาษีถูกหัก ณ ที่จ่าย · Cr ธนาคาร = ยอดจ่าย + เงินเพิ่ม/ค่าปรับ (Helpers/CitPayment · ตั้งหนี้แบบใหม่ไม่มีส่วนล้าง)
+            var citRows = (_citRows ?? new List<CitPayableRow>())
+                .Where(r => r.Type == type && r.Year == req.PeriodYear && r.Month == req.PeriodMonth).ToList();
+            if (citRows.Count == 0 || Math.Abs(citRows.Sum(r => r.Offsets.Payable) - amount) > 0.009m)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"{form} {Accounting.Helpers.CitPayment.PeriodLabel(type, req.PeriodYear)} — ยอดหนี้ในบัญชีเปลี่ยนระหว่างนี้ โหลดหน้าใหม่แล้วตรวจอีกครั้ง", "CIT-REMIT-STALE", 409);
+            foreach (var g in citRows.GroupBy(r => r.PayableAccountId))
+                lines.Add(new JournalLineRequest(g.Key, g.Sum(r => r.Offsets.Payable + r.Offsets.PrepaidUsed + r.Offsets.WhtUsed), 0,
+                    $"ล้างภาษีเงินได้นิติบุคคลค้างจ่าย {form} (Dr 21920)"));
+            var prepaidTotal = citRows.Sum(r => r.Offsets.PrepaidUsed);
+            if (prepaidTotal > 0)
+            {
+                var prepaidAccId = citRows.Select(r => r.PrepaidOffsetAccountId).FirstOrDefault(x => x != null)
+                    ?? (await ResolveAccountAsync(companyId, Accounting.Helpers.CitPayment.PrepaidCode))?.Id
+                    ?? throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบผัง {Accounting.Helpers.CitPayment.PrepaidCode} (ภาษีเงินได้นิติบุคคลจ่ายล่วงหน้า) สำหรับล้างเครดิต ภ.ง.ด.51 {prepaidTotal:N2} บาท — สร้างผังที่หน้า “ผังบัญชี” ก่อน",
+                        "CIT-REMIT-NO-11920");
+                lines.Add(new JournalLineRequest(prepaidAccId, 0, prepaidTotal, "ล้างเครดิตภาษีที่ชำระตาม ภ.ง.ด.51"));
+            }
+            var whtTotal = citRows.Sum(r => r.Offsets.WhtUsed);
+            if (whtTotal > 0)
+            {
+                var whtAcc = await ResolveAccountAsync(companyId, Accounting.Helpers.CitPayment.WhtCreditCode)
+                    ?? throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบผัง {Accounting.Helpers.CitPayment.WhtCreditCode} (ภาษีถูกหัก ณ ที่จ่าย) สำหรับล้างเครดิต {whtTotal:N2} บาท — สร้างผังที่หน้า “ผังบัญชี” ก่อน",
+                        "CIT-REMIT-NO-11910");
+                lines.Add(new JournalLineRequest(whtAcc.Id, 0, whtTotal, "ล้างภาษีถูกหัก ณ ที่จ่ายที่ใช้เป็นเครดิต"));
+            }
+            if (penaltyAcc != null)
+                foreach (var (amt, desc) in Accounting.Helpers.LatePaymentPenaltyPolicy.JournalLines(form, applied, suggested.SurchargeReference))
+                    lines.Add(new JournalLineRequest(penaltyAcc.Id, amt, 0, desc));
+            lines.Add(new JournalLineRequest(bankGlId, 0, amount + applied.Total,
+                $"ชำระ{form} {Accounting.Helpers.CitPayment.PeriodLabel(type, req.PeriodYear)}"));
+        }
+        else if (isWcf)
+        {
+            // รอบ 228 — กท.20ก: Dr 21816 เท่าที่ตั้งค้างจ่ายรายเดือนยังเหลือ · ส่วนเกิน (เงินสมทบรายปี > ผลรวมรายเดือน) Dr 54121 ·
+            // ปิดยอดทั้งปีแล้วค้างจ่ายยังเหลือ ⇒ Dr 21816 / Cr 54121 (Helpers/WorkersCompensationBase.Plan · Dr = Cr ทุกกรณี)
+            var w = (_wcfYears ?? new Dictionary<int, WcfYear>()).GetValueOrDefault(req.PeriodYear)
+                ?? throw new InvalidOperationException($"ไม่มียอดเงินสมทบกองทุนเงินทดแทนปี {req.PeriodYear + 543}");
+            var remittedBefore = await RemittedSumAsync(companyId, type, req.PeriodYear, 12);
+            // ค้างจ่ายที่ถูกล้างนอกเส้นนี้ (ClearedOutside) ไม่ถูก Dr ซ้ำ — ถือเป็นทั้งเงินสมทบที่จ่ายแล้วและค้างจ่ายที่ล้างแล้ว
+            wcfPlan = Accounting.Helpers.WorkersCompensationBase.Plan(w.Annual - w.ClearedOutside, w.Accrued - w.ClearedOutside, remittedBefore, amount);
+            var drPayable = wcfPlan.DrPayable + wcfPlan.ReverseOverAccrual;
+            if (drPayable > 0)
+                lines.Add(new JournalLineRequest(payable!.Id, drPayable, 0, "ล้างกองทุนเงินทดแทนค้างจ่าย (Dr 21816)"));
+            if (wcfPlan.DrExpenseTrueUp > 0 || wcfPlan.ReverseOverAccrual > 0)
+            {
+                var exp = await Accounting.Helpers.WorkersCompensationAccounts.ExpenseAsync(_db, companyId)
+                    ?? throw new Accounting.Helpers.BusinessRuleException(
+                        $"ไม่พบผัง {Accounting.Helpers.WorkersCompensationBase.ExpenseCode} (กองทุนเงินทดแทน — ค่าใช้จ่าย) สำหรับส่วนต่างเงินสมทบรายปีกับที่ตั้งรายเดือน — สร้างผังที่หน้า “ผังบัญชี” ก่อน",
+                        "WCF-REMIT-NO-54121");
+                if (wcfPlan.DrExpenseTrueUp > 0)
+                    lines.Add(new JournalLineRequest(exp.Id, wcfPlan.DrExpenseTrueUp, 0, Accounting.Helpers.WorkersCompensationBase.TrueUpLineDescription));
+                if (wcfPlan.ReverseOverAccrual > 0)
+                    lines.Add(new JournalLineRequest(exp.Id, 0, wcfPlan.ReverseOverAccrual, Accounting.Helpers.WorkersCompensationBase.OverAccrualLineDescription));
+            }
+            if (penaltyAcc != null)
+                foreach (var (amt, desc) in Accounting.Helpers.LatePaymentPenaltyPolicy.JournalLines(form, applied, suggested.SurchargeReference))
+                    lines.Add(new JournalLineRequest(penaltyAcc.Id, amt, 0, desc));
+            lines.Add(new JournalLineRequest(bankGlId, 0, wcfPlan.Cash + applied.Total, $"นำส่งเงินสมทบกองทุนเงินทดแทนปี {req.PeriodYear + 543}"));
+        }
+        else if (type == "VatPp30")
         {
             // Dr 21911 ภาษีขาย / Cr 11610 ภาษีซื้อ (+ เครดิตยกมา §82/3) / Cr ธนาคาร
             //
@@ -1245,7 +1412,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             var plan = Accounting.Helpers.VatRemittanceJournal.Build(
                 item.OutputVat ?? amount, item.InputVat ?? 0m, amount);
 
-            lines.Add(new JournalLineRequest(payable.Id, plan.ClearOutputVat, 0,
+            lines.Add(new JournalLineRequest(payable!.Id, plan.ClearOutputVat, 0,
                 "ล้างภาษีขาย ภพ.30 (Dr 21911)"));
 
             if (plan.ClearInputVat > 0)
@@ -1276,7 +1443,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         }
         else
         {
-            lines.Add(new JournalLineRequest(payable.Id, amount, 0, $"ล้าง{label}ค้างจ่าย (Dr {payableCode})"));
+            lines.Add(new JournalLineRequest(payable!.Id, amount, 0, $"ล้าง{label}ค้างจ่าย (Dr {payableCode})"));
             // ผังค่าปรับ/เงินเพิ่ม (54820) = รายจ่ายต้องห้าม §65 ตรี(6) — บวกกลับ ภ.ง.ด.50 (TaxService.ComputeSection65TerAddBackAsync อ่านจากแถวนำส่ง)
             if (penaltyAcc != null)
                 foreach (var (amt, desc) in Accounting.Helpers.LatePaymentPenaltyPolicy.JournalLines(form, applied, suggested.SurchargeReference))
@@ -1346,9 +1513,22 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         await using var tx = await _db.Database.BeginTransactionAsync();
         try
         {
+            if (isWcf)
+            {
+                // รอบ 228: จ่ายได้หลายครั้งต่อปี ⇒ กันสองแท็บจ่ายยอดค้างเดียวกันซ้ำ — ล็อกต่อ (บริษัท, ปี) แล้วตรวจยอดที่นำส่งไปแล้วใหม่
+                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                    Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.StatutoryRemit, $"{type}:{req.PeriodYear}"));
+                var nowRemitted = await RemittedSumAsync(companyId, type, req.PeriodYear, 12);
+                var w = _wcfYears![req.PeriodYear];
+                if (nowRemitted + amount > w.Annual - w.ClearedOutside + 0.009m)
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"เงินสมทบกองทุนเงินทดแทนปี {req.PeriodYear + 543} ถูกนำส่งไปแล้วระหว่างนี้ — โหลดหน้าใหม่แล้วตรวจยอดค้างอีกครั้ง", "WCF-REMIT-STALE", 409);
+            }
+            var periodText = isCit ? Accounting.Helpers.CitPayment.PeriodLabel(type, req.PeriodYear)
+                : isWcf ? $"ปี {req.PeriodYear + 543}" : $"งวด {req.PeriodMonth:D2}/{req.PeriodYear}";
             var jeReq = new CreateJournalEntryRequest(
                 EntryDate: req.PayDate,
-                Description: $"นำส่ง{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear}"
+                Description: $"นำส่ง{form} {periodText}"
                     + (string.IsNullOrWhiteSpace(req.FilingNumber) ? "" : $" — เลขรับ {req.FilingNumber}"),
                 Reference: $"{form}-{req.PeriodYear}{req.PeriodMonth:D2}",
                 Lines: lines,
@@ -1366,8 +1546,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 LateFee = lateFee,
                 Penalty = applied.Penalty,
                 OtherFine = applied.OtherFine,
-                SuggestedLateFee = suggested.Surcharge,
-                SuggestedPenalty = suggested.Penalty,
+                // "ค่าที่ระบบเสนอ" = ค่าที่ฟอร์มเติมให้ผู้ใช้ (รอบ 220: ใช้ตรวจย้อนว่าผู้ใช้แก้ไหม) — รอบ 228 ฝ่ายค้าน S4/PP36: กติกาที่ยังไม่ยืนยัน
+                // (เบี้ยปรับ ภ.พ.36 · เงินเพิ่ม กท.20ก) แสดงเป็นข้อมูลแต่ไม่เติมช่อง ⇒ ค่าที่เสนอลงช่อง = 0 (ตัวตั้งเดียวกับ PenaltyPrefill/LateFeePrefill)
+                // ห้ามเก็บยอดข้อมูลเป็น "ค่าเสนอ" — ไม่งั้นแถวนำส่งบอกว่าผู้ใช้ "ลด" ค่าที่ระบบไม่เคยเติม
+                SuggestedLateFee = suggested.SurchargeNeedsConfirmation ? 0m : suggested.Surcharge,
+                SuggestedPenalty = suggested.PenaltyNeedsConfirmation ? 0m : suggested.Penalty,
                 PaperFiling = req.PaperFiling,
                 PayDate = req.PayDate,
                 BankGlAccountId = bankGlId,
@@ -1442,7 +1625,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 : "";
 
             return new RemitResult(rec.Id, je.Id, amount, lateFee,
-                $"นำส่ง{form} งวด {req.PeriodMonth:D2}/{req.PeriodYear} สำเร็จ ({amount + applied.Total:N2} บาท"
+                $"นำส่ง{form} {periodText} สำเร็จ ({amount + applied.Total:N2} บาท"
                 + (applied.Total > 0 ? $" · ภาษี {amount:N2} + เงินเพิ่ม {applied.Surcharge:N2} + เบี้ยปรับ {applied.Penalty:N2} + ค่าปรับ {applied.OtherFine:N2}" : "")
                 + $"){reportNote}", applied.Penalty, applied.OtherFine);
         }
@@ -1489,7 +1672,176 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     private Accounting.Helpers.LatePaymentPenaltyPolicy.Suggestion SuggestPenalties(string type, int year, int month, decimal amount, DateTime payDate,
         bool paperFiling = false, DateTime? filedAt = null)
     {
-        return Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest(type, year, month, amount, payDate, _holidays, paperFiling, filedAt);
+        // รอบ 228: ภ.ง.ด.50 — ข้อเท็จจริง §67 ตรี จากรายการคำนวณ CIT ที่โหลดใน GetDashboardAsync (ผู้เรียกทุกตัวโหลด dashboard ก่อน)
+        var est = type == Accounting.Helpers.CitPayment.Pnd50Type ? _citRows?.FirstOrDefault(r => r.Type == type && r.Year == year)?.Estimate : null;
+        return Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest(type, year, month, amount, payDate, _holidays, paperFiling, filedAt, est);
+    }
+
+    // ══════════════ รอบ 228 — ภ.ง.ด.51/50 + กองทุนเงินทดแทนรายปี (loader ข้อเท็จจริง) ══════════════
+
+    private List<CitPayableRow>? _citRows;
+    private Dictionary<int, WcfYear>? _wcfYears;
+    private Guid? _wcfPayableAccountId;
+
+    /// <summary>หนี้ CIT หนึ่งรายการคำนวณที่ตั้งหนี้แล้ว — ยอดจาก GL (Cr 21920 ของ JE ตั้งหนี้) แยกเป็นจ่ายธนาคาร/ล้างเครดิต
+    /// (<see cref="Accounting.Helpers.CitPayment.AtPayment"/>) · <paramref name="PostedAt"/> = วันที่ JE ตั้งหนี้ (ตัวจับคู่การชำระนอกเส้นนี้)</summary>
+    private sealed record CitPayableRow(string Type, int Year, int Month, Guid RecordId, Guid PayableAccountId,
+        Accounting.Helpers.CitPayment.Offsets Offsets, Guid? PrepaidOffsetAccountId, Accounting.Helpers.CitPayment.EstimateFacts? Estimate,
+        string? Warning, DateTime PostedAt);
+
+    /// <summary>ข้อเท็จจริง §67 ตรี ของ ภ.ง.ด.50 ปี <paramref name="ceYear"/> (ฝ่ายค้าน S5a) — ภาษีที่ชำระตาม ภ.ง.ด.51 = ยอดนำส่งในระบบ (แถวที่ยังมีผล)
+    /// + ภาษีถูกหัก ณ ที่จ่ายที่ใช้ในครึ่งปี · ไม่มีแถวนำส่ง ⇒ ยอดที่ต้องชำระตามที่ตั้งหนี้ (บอกฐานในข้อความ) · ไม่มี ภ.ง.ด.51 ⇒ null</summary>
+    private static Accounting.Helpers.CitPayment.EstimateFacts? EstimateFactsFor(List<CorporateIncomeTax> recs, CorporateIncomeTax annual, int ceYear,
+        List<StatutoryRemittance> remits, DateTime? companyCreatedAt)
+    {
+        var half = recs.Where(h => h.TaxPeriod == "HalfYear" && Accounting.Helpers.CitPayment.CeYear(h.TaxYear) == ceYear)
+            .OrderByDescending(h => h.CreatedAt).FirstOrDefault();
+        if (half == null) return null;
+        var halfWht = Accounting.Helpers.CitPayment.Split(half.TaxAmount, 0m, half.WithholdingTaxCredit).WhtUsed;
+        var remitted = remits.Where(r => r.RemittanceType == Accounting.Helpers.CitPayment.Pnd51Type && r.PeriodYear == ceYear).Sum(r => r.Amount);
+        var (paid, basis) = remitted > 0m
+            ? (remitted + halfWht, $"ยอดนำส่ง ภ.ง.ด.51 ในระบบ {remitted:N2} + ภาษีถูกหักครึ่งปี {halfWht:N2}")
+            : (half.NetTaxPayable + halfWht, $"ไม่พบรายการนำส่ง ภ.ง.ด.51 ในระบบ — ใช้ยอดที่ตั้งหนี้ {half.NetTaxPayable:N2} + ภาษีถูกหักครึ่งปี {halfWht:N2}");
+        // ประมาณการทั้งปีของ ภ.ง.ด.51 = กำไรครึ่งปี × 2 (วิธีเดียวกับไฟล์ยื่น ภ.ง.ด.51 — TaxFilingExportService.ExportPnd51Async)
+        var firstYear = companyCreatedAt is DateTime c && c.Year == ceYear && c > new DateTime(ceYear, 1, 1);
+        return new Accounting.Helpers.CitPayment.EstimateFacts(half.TaxableProfit * 2m, annual.TaxableProfit, annual.TaxAmount, paid, basis, firstYear);
+    }
+
+    private async Task<(List<CitPayableRow> Rows, List<(int Year, string Note)> S67Advisories)> LoadCitPayablesAsync(Guid companyId, List<StatutoryRemittance> remits)
+    {
+        var recs = await _db.CorporateIncomeTaxes.AsNoTracking()
+            .Where(c => c.CompanyId == companyId && c.JournalEntryId != null)
+            .ToListAsync();
+        if (recs.Count == 0) return (new List<CitPayableRow>(), new List<(int, string)>());
+        var companyCreatedAt = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => (DateTime?)c.CreatedAt).FirstOrDefaultAsync();
+        var jeIds = recs.Select(r => r.JournalEntryId!.Value).ToList();
+        // GL-first: บรรทัดของ JE ตั้งหนี้ที่ยังมีผล (ไม่ถูกลบ/ไม่ถูกกลับรายการ · N3)
+        var lines = await _db.JournalEntryLines.AsNoTracking()
+            .Where(l => !l.IsDeleted && jeIds.Contains(l.JournalEntryId)
+                && l.JournalEntry.CompanyId == companyId && !l.JournalEntry.IsDeleted
+                && l.JournalEntry.Status == JournalEntryStatus.Posted && l.JournalEntry.ReversedByEntryId == null)
+            .Select(l => new { l.JournalEntryId, l.AccountId, Code = l.Account.AccountCode, l.DebitAmount, l.CreditAmount, l.JournalEntry.EntryDate })
+            .ToListAsync();
+
+        // ภ.ง.ด.51 ของปีเดียวกัน — ผังที่ JE ตั้งหนี้ลง Dr (ใหม่ = 11920 · เดิม = 580xx) คือผังที่ "ล้างเครดิต ภ.ง.ด.51" ต้องลง Cr
+        Guid? HalfYearDebitAccount(int ceYear)
+        {
+            var half = recs.Where(r => r.TaxPeriod == "HalfYear" && Accounting.Helpers.CitPayment.CeYear(r.TaxYear) == ceYear)
+                .OrderByDescending(r => r.CreatedAt).FirstOrDefault();
+            return half == null ? null
+                : lines.Where(l => l.JournalEntryId == half.JournalEntryId && l.DebitAmount > 0).Select(l => (Guid?)l.AccountId).FirstOrDefault();
+        }
+
+        var rows = new List<CitPayableRow>();
+        var advisories = new List<(int, string)>();
+        foreach (var r in recs)
+        {
+            var type = Accounting.Helpers.CitPayment.TypeOf(r.TaxPeriod);
+            var ce = Accounting.Helpers.CitPayment.CeYear(r.TaxYear);
+            if (type == null || ce == null) continue;
+            var jeLines = lines.Where(l => l.JournalEntryId == r.JournalEntryId).ToList();
+            if (jeLines.Count == 0) continue;   // JE ถูกกลับรายการ/ลบ ⇒ ไม่มีหนี้
+            var est = type == Accounting.Helpers.CitPayment.Pnd50Type ? EstimateFactsFor(recs, r, ce.Value, remits, companyCreatedAt) : null;
+            // N2: เฉพาะผังหนี้ CIT (21920) — ไม่ใช่ 21921–21923 ที่เป็นภาษีอื่น
+            var payLine = jeLines.Where(l => l.CreditAmount > 0 && l.Code == Accounting.Helpers.CitPayment.PayableCode).ToList();
+            if (payLine.Count == 0)
+            {
+                // ฝ่ายค้าน S5b: ภ.ง.ด.50 ยอดสุทธิ 0 (เครดิตครอบ) ไม่มีแถวรอนำส่ง — §67 ตรี ยังต้องเห็น
+                if (est != null && Accounting.Helpers.CitPayment.Section67Ter(est) is { Applies: true } p0)
+                    advisories.Add((ce.Value, $"ภ.ง.ด.50 {Accounting.Helpers.CitPayment.PeriodLabel(type, ce.Value)} ไม่มียอดต้องชำระ แต่ — {p0.Note}"));
+                continue;
+            }
+            var gl = payLine.Sum(l => l.CreditAmount);
+            var offsets = Accounting.Helpers.CitPayment.AtPayment(gl, r.NetTaxPayable, r.PrepaidTaxCredit, r.WithholdingTaxCredit);
+            // ภ.ง.ด.50 ไม่ได้หัก ภ.ง.ด.51 ⇒ ยอดค้างนี้อาจจ่ายภาษีครึ่งปีซ้ำ — เตือนด้วยยอดที่ชำระจริง (ไม่แก้ยอดเอง: ตัวเลขมาจากการคำนวณที่ผู้ใช้บันทึก)
+            string? warn = null;
+            if (type == Accounting.Helpers.CitPayment.Pnd50Type && r.PrepaidTaxCredit <= 0m)
+            {
+                var paid51 = remits.Where(x => x.RemittanceType == Accounting.Helpers.CitPayment.Pnd51Type && x.PeriodYear == ce).Sum(x => x.Amount);
+                if (paid51 > 0m)
+                    warn = $"⚠️ ภ.ง.ด.50 นี้ไม่ได้หักภาษีที่ชำระตาม ภ.ง.ด.51 (ยอดที่ชำระ {paid51:N2}) — คำนวณ ภ.ง.ด.50 ใหม่โดยกรอก \"ภาษีจ่ายล่วงหน้า\" ก่อนนำส่ง";
+            }
+            var (y, m) = Accounting.Helpers.CitPayment.PeriodKey(type, ce.Value);
+            rows.Add(new CitPayableRow(type, y, m, r.Id, payLine[0].AccountId, offsets,
+                type == Accounting.Helpers.CitPayment.Pnd50Type ? HalfYearDebitAccount(ce.Value) : null, est, warn, payLine[0].EntryDate));
+        }
+        return (rows, advisories);
+    }
+
+    /// <summary>กองทุนเงินทดแทนหนึ่งปี — <see cref="Annual"/> = Σ ต่อคน <see cref="Accounting.Helpers.WorkersCompensationBase.AnnualContribution"/> ·
+    /// <see cref="Accrued"/> = Σ ที่ตั้งค้างจ่ายรายเดือน (21816) ของรอบที่จ่ายแล้ว · <see cref="FirstAccrualAt"/> = วันจ่ายรอบแรกของปี (ตัวจับคู่การล้างนอกเส้นนี้)</summary>
+    private sealed record WcfYear(int Year, decimal Annual, decimal Accrued, int Employees, int WagesReconstructed, DateTime FirstAccrualAt,
+        decimal ClearedOutside = 0m);
+
+    /// <summary>ฝ่ายค้าน S7 — เมื่อทุกงวดของปีถอดฐานจากเงินสมทบ (ไม่มีค่าจ้างเก็บไว้) หรือต่างกันไม่เกิน 1 บาท (เศษปัด) ⇒ เงินสมทบรายปี = ที่ตั้งค้างจ่าย
+    /// (ไม่สร้างส่วนต่างจากการปัดเศษ/การถอดฐาน)</summary>
+    internal const decimal WcfRoundingTolerance = 1m;
+
+    private async Task<Dictionary<int, WcfYear>> LoadWcfYearsAsync(Guid companyId)
+    {
+        var rate = await _db.CompanySettings.AsNoTracking().Where(x => x.CompanyId == companyId)
+            .Select(x => (decimal?)x.WorkersCompensationRatePercent).FirstOrDefaultAsync() ?? 0m;
+        var rows = await _db.PayrollDetails.AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.WorkersCompensation > 0
+                && d.PayrollRun.Status == Accounting.Helpers.PayrollRunFilingScope.Paid)
+            .Select(d => new { d.PayrollRun.Year, d.PayrollRun.Month, d.PayrollRun.PaidAt, d.EmployeeId, d.WorkersCompensation, d.WorkersCompensationWage })
+            .ToListAsync();
+        return rows.GroupBy(r => r.Year).ToDictionary(g => g.Key, g =>
+        {
+            var accrued = g.Sum(x => x.WorkersCompensation);
+            var reconstructed = g.Count(x => x.WorkersCompensationWage == null);
+            // อัตราถูกปิด/เป็น 0 ภายหลัง หรือทุกงวดถอดฐาน ⇒ ใช้ยอดที่ตั้งค้างจ่ายไว้ (ไม่ทิ้งหนี้ที่มีใน GL · ไม่สร้างส่วนต่างปลอม)
+            var annual = rate <= 0m || reconstructed == g.Count() ? accrued
+                : g.GroupBy(x => x.EmployeeId).Sum(e => Accounting.Helpers.WorkersCompensationBase.AnnualContribution(
+                    e.Sum(x => x.WorkersCompensationWage ?? Accounting.Helpers.WorkersCompensationBase.WageFromContribution(x.WorkersCompensation, rate)), rate));
+            if (Math.Abs(annual - accrued) <= WcfRoundingTolerance) annual = accrued;
+            var first = g.Select(x => x.PaidAt ?? new DateTime(x.Year, x.Month, 1)).Min();
+            return new WcfYear(g.Key, annual, accrued, g.Select(x => x.EmployeeId).Distinct().Count(), reconstructed, first);
+        });
+    }
+
+    /// <summary>ฝ่ายค้าน S3 — "ชำระนอกเส้นนี้" ต่อ JE: บรรทัด Dr สุทธิบนผังหนี้ของ JE ที่<b>ไม่ใช่</b>ของเส้นนำส่ง (ทุกแถว รวมที่ยกเลิก) ·
+    /// ไม่ใช่ใบกลับรายการ/ใบที่ถูกกลับ (N3) · ไม่ถูกลบ · เรียงตามวันที่ — ผู้เรียกจับคู่กับหนี้ที่ตั้ง<b>ก่อน</b>วันที่ของบรรทัด (FIFO)</summary>
+    private sealed record ManualDebit(Guid AccountId, DateTime Date, decimal Amount);
+
+    private async Task<List<ManualDebit>> LoadManualDebitsAsync(Guid companyId, List<Guid> accountIds)
+    {
+        if (accountIds.Count == 0) return new List<ManualDebit>();
+        var remitJe = await _db.StatutoryRemittances.IgnoreQueryFilters().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && r.JournalEntryId != null)
+            .Select(r => r.JournalEntryId!.Value).ToListAsync();
+        return (await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => !l.IsDeleted && accountIds.Contains(l.AccountId)
+                    && l.JournalEntry.CompanyId == companyId && !l.JournalEntry.IsDeleted
+                    && l.JournalEntry.Status == JournalEntryStatus.Posted
+                    && l.JournalEntry.ReversedByEntryId == null && l.JournalEntry.OriginalEntryId == null
+                    && !remitJe.Contains(l.JournalEntryId))
+                .GroupBy(l => new { l.JournalEntryId, l.AccountId, l.JournalEntry.EntryDate })
+                .Select(g => new { g.Key.AccountId, g.Key.EntryDate, Net = g.Sum(x => x.DebitAmount - x.CreditAmount) })
+                .ToListAsync())
+            .Where(x => x.Net > 0.005m)
+            .OrderBy(x => x.EntryDate)
+            .Select(x => new ManualDebit(x.AccountId, x.EntryDate, x.Net))
+            .ToList();
+    }
+
+    /// <summary>จับคู่ FIFO (pure) — หนี้แต่ละก้อน (เรียงวันตั้งหนี้) ใช้บรรทัด Dr ที่ลงวันที่ไม่ก่อนวันตั้งหนี้ บนผังเดียวกัน จนครบยอดที่ต้องการ ·
+    /// คืนยอดที่จับคู่ได้ต่อก้อน (ลำดับเดียวกับ <paramref name="claims"/>)</summary>
+    internal static decimal[] MatchFifo(IReadOnlyList<(Guid AccountId, DateTime PostedAt, decimal Need)> claims, IReadOnlyList<(Guid AccountId, DateTime Date, decimal Amount)> debits)
+    {
+        var left = debits.Select(d => d.Amount).ToArray();
+        var result = new decimal[claims.Count];
+        foreach (var i in Enumerable.Range(0, claims.Count).OrderBy(i => claims[i].PostedAt))
+        {
+            var need = claims[i].Need;
+            for (var j = 0; j < debits.Count && need > 0.005m; j++)
+            {
+                if (left[j] <= 0.005m || debits[j].AccountId != claims[i].AccountId || debits[j].Date.Date < claims[i].PostedAt.Date) continue;
+                var take = Math.Min(left[j], need);
+                left[j] -= take; need -= take; result[i] += take;
+            }
+        }
+        return result;
     }
 
     /// <summary>
@@ -1665,7 +2017,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             var pullNotes = new List<string>();
             foreach (var d in docs)
             {
-                var note = await _tax.TryPullIntoDraftReportAsync(companyId, d.Id);
+                var note = await _tax.TryPullIntoDraftReportAsync(companyId, d.Id, actorEmail: "system/PP36");
                 _logger.LogInformation("PP36 auto-pull {Doc}: {Note}", d.DocumentNumber, note);
                 pullNotes.Add(note);
             }
@@ -1792,7 +2144,8 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 .Where(j => j.Id == jeId && j.CompanyId == companyId)
                 .Select(j => new { j.Status, j.ReversedByEntryId })
                 .FirstOrDefaultAsync();
-            var alreadyReversed = je == null || je.ReversedByEntryId != null || je.Status != JournalEntryStatus.Posted;
+            // รอบ 228 ฝ่ายค้าน S3: แถว "ชำระนอกระบบแล้ว" ผูก JE ของผู้ใช้ — ยกเลิก = ปลดการผูกเท่านั้น ห้ามกลับรายการใบสำคัญของผู้ใช้
+            var alreadyReversed = rec.SettledOutside || je == null || je.ReversedByEntryId != null || je.Status != JournalEntryStatus.Posted;
             // กลับลงวันที่จ่ายเดิม (งวดของการนำส่งกลับเป็นศูนย์สุทธิ — แบบเดียวกับ ReverseSsoSettlementAsync) · งวดนั้นปิดแล้ว ⇒ วันนี้ตามปฏิทินไทย
             var payDay = Accounting.Helpers.ThaiDate.CalendarDateUtc(rec.PayDate);
             var payPeriodClosed = await _db.FiscalPeriods.AsNoTracking().AnyAsync(fp => fp.CompanyId == companyId
@@ -1822,6 +2175,18 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                 l.UpdatedBy = performedBy;
                 l.UpdatedAt = DateTime.UtcNow;
             }
+            // รอบ 228: อากรแสตมป์ที่จ่ายผ่านรายการนี้กลับเป็น "ค้างชำระ" (ไม่ค้างสถานะจ่ายแล้วทั้งที่ JE ถูกกลับ)
+            var stampRecords = await _db.StampDutyRecords
+                .Where(x => x.CompanyId == companyId && x.StatutoryRemittanceId == rec.Id)
+                .ToListAsync();
+            foreach (var sd in stampRecords)
+            {
+                sd.StatutoryRemittanceId = null;
+                sd.PaidAt = null;
+                sd.RdReceiptNumber = null;
+                sd.UpdatedBy = performedBy;
+                sd.UpdatedAt = DateTime.UtcNow;
+            }
             rec.IsDeleted = true;
             rec.UpdatedBy = performedBy;
             rec.UpdatedAt = DateTime.UtcNow;
@@ -1849,6 +2214,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     ReversalDate = alreadyReversed ? (DateTime?)null : reversalDate,
                     UnsettledPayrollRuns = runs.Select(r => r.PayrollNumber),
                     ReleasedPp36Documents = links.Count,
+                    ReleasedStampDutyRecords = stampRecords.Select(x => x.Reference),
                 }),
                 Timestamp = DateTime.UtcNow,
             });
@@ -1856,14 +2222,207 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             await tx.CommitAsync();
 
             return $"ยกเลิกการนำส่ง{form} งวด {rec.PeriodMonth:D2}/{rec.PeriodYear} แล้ว — "
-                + (alreadyReversed ? "รายการบัญชีของการนำส่งถูกกลับไว้ก่อนแล้ว (ไม่กลับซ้ำ)" : $"กลับรายการบัญชี {reversal?.EntryNumber}")
+                + (rec.SettledOutside ? "ปลดการผูกใบสำคัญที่ลงเองแล้ว (ไม่กลับรายการใบสำคัญ)"
+                   : alreadyReversed ? "รายการบัญชีของการนำส่งถูกกลับไว้ก่อนแล้ว (ไม่กลับซ้ำ)" : $"กลับรายการบัญชี {reversal?.EntryNumber}")
                 + (runs.Count > 0 ? $" · ปลดสถานะนำส่งประกันสังคม {runs.Count} รอบ" : "")
-                + (links.Count > 0 ? $" · ใบ ภ.พ.36 {links.Count} ใบกลับเป็นค้างนำส่ง" : "");
+                + (links.Count > 0 ? $" · ใบ ภ.พ.36 {links.Count} ใบกลับเป็นค้างนำส่ง" : "")
+                + (stampRecords.Count > 0 ? $" · อากรแสตมป์ {stampRecords.Count} รายการกลับเป็นค้างชำระ" : "");
         }
         catch
         {
             await tx.RollbackAsync();
             _db.ChangeTracker.Clear();   // คลาสเดียวกับ RemitAsync — ของค้างใน tracker ห้ามถูกบันทึกครึ่งเดียว
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// <b>รอบ 228 ฝ่ายค้าน S3 — "ชำระนอกระบบแล้ว"</b>: ผูกใบสำคัญ (JE ที่ผู้ใช้ลงเอง Dr ผังหนี้) กับงวด ภ.ง.ด.51/50 · กท.20ก ที่ระบบยังขึ้นค้าง —
+    /// ไม่สร้าง JE ใหม่ · ใบนั้นต้องเป็นของบริษัท Post แล้ว ไม่ถูกกลับ ไม่ผูกกับรายการนำส่งอื่น และ Dr ผังหนี้สุทธิ &gt; 0 ·
+    /// ภ.ง.ด. ต้อง Dr ไม่น้อยกว่ายอดค้าง (ผูกบางส่วนไม่ได้ — หนึ่งแถวต่องวด) · กท.20ก ผูกได้เท่าที่ Dr · audit chain · ล็อกต่องวด
+    /// </summary>
+    public async Task<RemitResult> SettledOutsideAsync(Guid companyId, SettledOutsideRequest req, string performedBy)
+    {
+        var type = req.RemittanceType;
+        var isCit = Accounting.Helpers.CitPayment.IsCit(type);
+        if (!isCit && type != Accounting.Helpers.WorkersCompensationBase.RemittanceType)
+            throw new Accounting.Helpers.BusinessRuleException("ผูกใบสำคัญได้เฉพาะ ภ.ง.ด.51/50 และกองทุนเงินทดแทน", "SETTLED-OUTSIDE-TYPE");
+        if (string.IsNullOrWhiteSpace(req.JournalEntryNumber))
+            throw new Accounting.Helpers.BusinessRuleException("กรอกเลขที่ใบสำคัญ (JE) ที่ใช้ชำระ", "SETTLED-OUTSIDE-NO-JE");
+        var (_, form, _) = Meta(type);
+        var dash = await GetDashboardAsync(companyId, 24, includeOldAnnual: true);
+        var item = dash.Pending.FirstOrDefault(p => p.RemittanceType == type && p.PeriodYear == req.PeriodYear && p.PeriodMonth == req.PeriodMonth)
+            ?? throw new InvalidOperationException($"ไม่มียอดค้างของ {form} งวดนี้");
+        var payableId = isCit
+            ? (_citRows ?? new List<CitPayableRow>()).Where(r => r.Type == type && r.Year == req.PeriodYear && r.Month == req.PeriodMonth)
+                .Select(r => (Guid?)r.PayableAccountId).FirstOrDefault()
+            : _wcfPayableAccountId;
+        if (payableId == null) throw new InvalidOperationException($"ไม่พบผังหนี้ของ {form}");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.StatutoryRemit, $"{type}:{req.PeriodYear}"));
+            var no = req.JournalEntryNumber.Trim();
+            var je = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId && j.EntryNumber == no && !j.IsDeleted)
+                .Select(j => new { j.Id, j.EntryDate, j.Status, j.ReversedByEntryId, j.OriginalEntryId })
+                .FirstOrDefaultAsync()
+                ?? throw new Accounting.Helpers.BusinessRuleException($"ไม่พบใบสำคัญเลขที่ {no}", "SETTLED-OUTSIDE-NO-JE");
+            if (je.Status != JournalEntryStatus.Posted || je.ReversedByEntryId != null || je.OriginalEntryId != null)
+                throw new Accounting.Helpers.BusinessRuleException($"ใบสำคัญ {no} ไม่ได้ Post หรือเป็น/ถูกกลับรายการ — ผูกไม่ได้", "SETTLED-OUTSIDE-JE-STATE");
+            if (await _db.StatutoryRemittances.AnyAsync(r => r.CompanyId == companyId && !r.IsDeleted && r.JournalEntryId == je.Id))
+                throw new Accounting.Helpers.BusinessRuleException($"ใบสำคัญ {no} ผูกกับรายการนำส่งอื่นอยู่แล้ว", "SETTLED-OUTSIDE-JE-USED", 409);
+            var netDr = await _db.JournalEntryLines.AsNoTracking()
+                .Where(l => l.JournalEntryId == je.Id && !l.IsDeleted && l.AccountId == payableId.Value)
+                .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
+            if (netDr <= 0.005m)
+                throw new Accounting.Helpers.BusinessRuleException($"ใบสำคัญ {no} ไม่ได้ Dr ผังหนี้ของ {form} — ผูกไม่ได้", "SETTLED-OUTSIDE-NO-DEBIT");
+            if (isCit && netDr < item.Amount - 0.009m)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"ใบสำคัญ {no} Dr ผังหนี้ {netDr:N2} น้อยกว่ายอดค้าง {item.Amount:N2} — ผูกบางส่วนไม่ได้ (หนึ่งแถวต่องวด)", "SETTLED-OUTSIDE-SHORT");
+            var amount = Math.Min(item.Amount, netDr);
+            var nowRemitted = await RemittedSumAsync(companyId, type, req.PeriodYear, req.PeriodMonth);
+            if (!isCit && nowRemitted + amount > (_wcfYears![req.PeriodYear].Annual - _wcfYears[req.PeriodYear].ClearedOutside) + 0.009m)
+                throw new Accounting.Helpers.BusinessRuleException("ยอดค้างเปลี่ยนระหว่างนี้ — โหลดหน้าใหม่", "WCF-REMIT-STALE", 409);
+            var rec = new StatutoryRemittance
+            {
+                CompanyId = companyId, RemittanceType = type, PeriodYear = req.PeriodYear, PeriodMonth = req.PeriodMonth,
+                Amount = amount, PayDate = je.EntryDate, JournalEntryId = je.Id, SettledOutside = true,
+                Note = ("ชำระนอกระบบ — ผูกใบสำคัญ " + no + (string.IsNullOrWhiteSpace(req.Note) ? "" : " · " + req.Note.Trim())),
+                CreatedBy = performedBy,
+            };
+            _db.Set<StatutoryRemittance>().Add(rec);
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserId = Guid.TryParse(performedBy, out var actorId) ? actorId : (Guid?)null,
+                Action = AuditAction.Create,
+                EntityType = "StatutoryRemittance",
+                EntityId = rec.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Operation = "SettledOutside", type, req.PeriodYear, req.PeriodMonth, Amount = amount,
+                    JournalEntryNumber = no, JournalEntryDebit = netDr, OutstandingBefore = item.Amount, req.Note,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return new RemitResult(rec.Id, je.Id, amount, 0m,
+                $"ผูกใบสำคัญ {no} กับ {form} {item.PeriodLabel ?? $"{req.PeriodMonth:D2}/{req.PeriodYear}"} แล้ว ({amount:N2} บาท · ไม่ลงบัญชีใหม่)");
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            _db.ChangeTracker.Clear();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// <b>รอบ 228 — จ่ายอากรแสตมป์ผ่านเส้นนำส่งตัวเดียวกับภาษีอื่น</b> (TAX_PENALTY_AUDIT §3 ข้อ 3) — Dr ผังค่าอากร (ค่าตั้งต้น 54810 · ผู้ใช้เลือกได้) +
+    /// Dr ผังค่าปรับ (เงินเพิ่มอากร ม.113/114 · ค่าปรับ — §65 ตรี(6) บวกกลับผ่านแถวนำส่งนี้) / Cr ธนาคาร · แถว <see cref="StatutoryRemittance"/> ชนิด StampDuty
+    /// (ประวัติ · ยกเลิก · บวกกลับ ใช้ของเดิมทั้งหมด) · ล็อกแถวอากรก่อนตรวจ "จ่ายแล้ว" (กดซ้ำ/สองแท็บ = ตัวที่สองถูกปฏิเสธ)
+    /// </summary>
+    public async Task<RemitResult> RemitStampDutyAsync(Guid companyId, Guid stampDutyRecordId, StampDutyRemitRequest req, string performedBy)
+    {
+        if (req.Surcharge is < 0m || req.OtherFine is < 0m || req.DutyAmount is <= 0m)
+            throw new Accounting.Helpers.BusinessRuleException("ยอดอากร/เงินเพิ่มอากร/ค่าปรับต้องไม่ติดลบ (อากรต้องมากกว่า 0)",
+                Accounting.Helpers.LatePaymentPenaltyPolicy.NegativeRuleCode);
+        if (string.IsNullOrWhiteSpace(req.RdReceiptNumber))
+            throw new Accounting.Helpers.BusinessRuleException("กรอกเลขที่ใบเสร็จ/เลขอ้างอิง e-Stamp ของกรมสรรพากร", "STAMP-REMIT-NO-RECEIPT");
+        var bankGlId = await ResolveBankGlAsync(companyId, req.BankAccountId, req.BankGlAccountId);
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            await _db.Database.ExecuteSqlRawAsync(
+                "SELECT 1 FROM \"StampDutyRecords\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", stampDutyRecordId, companyId);
+            var sd = await _db.StampDutyRecords
+                .FirstOrDefaultAsync(x => x.Id == stampDutyRecordId && x.CompanyId == companyId && !x.IsDeleted)
+                ?? throw new KeyNotFoundException("ไม่พบรายการอากรแสตมป์");
+            // ฝ่ายค้าน S9b: บันทึกจ่ายแบบ "เลขใบเสร็จอย่างเดียว" (ไม่มีแถวนำส่ง) แก้/ลงบัญชีทับได้ · ที่ลงบัญชีผ่านเส้นนี้แล้วต้องยกเลิกก่อน
+            if (sd.StatutoryRemittanceId != null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"อากร {sd.Reference} บันทึกจ่ายและลงบัญชีแล้ว ({sd.PaidAt:dd/MM/yyyy}) — ถ้าจะแก้ ให้ยกเลิกรายการนำส่งในประวัติหน้านำส่งก่อน", "STAMP-REMIT-ALREADY-PAID", 409);
+
+            var duty = Math.Round(req.DutyAmount ?? sd.DutyAmount, 2, MidpointRounding.AwayFromZero);
+            if (duty <= 0m)
+                throw new Accounting.Helpers.BusinessRuleException("อากรของรายการนี้เป็น 0 — กรอกยอดอากรที่จ่ายจริง", "STAMP-REMIT-ZERO");
+            // วันครบกำหนดชุดเดียวกับรายการค้างบนหน้าอากร (StampDutyController.Unpaid — เลื่อนเสาร์/อาทิตย์)
+            var due = Accounting.Helpers.StampDutySchedule.DueDate(sd.InstrumentDate, sd.PaymentMethod);
+            var sug = Accounting.Helpers.StampDutySchedule.SuggestSurcharge(duty, due, req.PayDate);
+            // ค่าที่ผู้ใช้ส่งชนะ · ไม่ส่งเงินเพิ่ม = 0 (ห้ามประทับค่าที่ผู้ใช้ไม่เห็น — หน้าเติมค่าเสนอให้เห็นก่อนกด)
+            var surcharge = Math.Round(req.Surcharge ?? 0m, 2, MidpointRounding.AwayFromZero);
+            var fine = Math.Round(req.OtherFine ?? 0m, 2, MidpointRounding.AwayFromZero);
+
+            var expenseAcc = req.ExpenseAccountId is Guid eid
+                ? await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a => a.Id == eid && a.CompanyId == companyId && a.IsActive && !a.IsDeleted
+                      && a.AccountType == AccountType.Expense)
+                  ?? throw new Accounting.Helpers.BusinessRuleException("ผังค่าอากรที่เลือกไม่ใช่ผังค่าใช้จ่ายที่ลงรายการได้", "STAMP-REMIT-ACCOUNT")
+                : await ResolveAccountAsync(companyId, Accounting.Helpers.StampDutySchedule.ExpenseCode)
+                  ?? throw new Accounting.Helpers.BusinessRuleException(
+                      $"ไม่พบผัง {Accounting.Helpers.StampDutySchedule.ExpenseCode} (ค่าธรรมเนียมราชการ) — เลือกผังค่าอากรในหน้าต่างบันทึกจ่าย หรือสร้างผังที่หน้า “ผังบัญชี”",
+                      "STAMP-REMIT-ACCOUNT");
+            var penaltyAcc = surcharge + fine > 0
+                ? await Accounting.Helpers.PenaltyExpenseAccount.ResolveOrCreateAsync(_db, companyId, performedBy)
+                : null;
+            var applied = new Accounting.Helpers.LatePaymentPenaltyPolicy.Applied(surcharge, 0m, fine);
+            var form = "อากรแสตมป์";
+            var lines = new List<JournalLineRequest>
+            {
+                new(expenseAcc.Id, duty, 0, Accounting.Helpers.StampDutySchedule.ExpenseLineDescription(sd.Reference, sd.RdScheduleNumber)),
+            };
+            if (penaltyAcc != null)
+                foreach (var (amt, desc) in Accounting.Helpers.LatePaymentPenaltyPolicy.JournalLines(form, applied, Accounting.Helpers.StampDutySchedule.LegalReference))
+                    lines.Add(new JournalLineRequest(penaltyAcc.Id, amt, 0, desc));
+            lines.Add(new JournalLineRequest(bankGlId, 0, duty + applied.Total, $"จ่ายอากรแสตมป์ {sd.Reference}"));
+
+            var je = await _accounting.CreateJournalEntryAsync(companyId, new CreateJournalEntryRequest(
+                EntryDate: req.PayDate,
+                Description: $"จ่ายอากรแสตมป์ {sd.Reference} — ใบเสร็จ {req.RdReceiptNumber!.Trim()}",
+                Reference: $"STAMP-{sd.InstrumentDate:yyyyMM}",
+                Lines: lines,
+                JournalType: JournalType.General), performedBy);
+            await _accounting.PostJournalEntryAsync(companyId, je.Id);
+
+            var rec = new StatutoryRemittance
+            {
+                CompanyId = companyId,
+                RemittanceType = Accounting.Helpers.StampDutySchedule.RemittanceType,
+                PeriodYear = sd.InstrumentDate.Year,
+                PeriodMonth = sd.InstrumentDate.Month,
+                Amount = duty,
+                LateFee = surcharge,
+                OtherFine = fine,
+                SuggestedLateFee = sug.Amount,
+                PayDate = req.PayDate,
+                BankGlAccountId = bankGlId,
+                JournalEntryId = je.Id,
+                FilingNumber = req.RdReceiptNumber.Trim(),
+                Note = sd.Reference,
+                CreatedBy = performedBy,
+            };
+            _db.Set<StatutoryRemittance>().Add(rec);
+            sd.PaidAt = req.PayDate;
+            sd.RdReceiptNumber = req.RdReceiptNumber.Trim();
+            sd.StatutoryRemittanceId = rec.Id;
+            if (req.DutyAmount is decimal d && d != sd.DutyAmount) sd.DutyAmount = duty;   // ยอดตามใบเสร็จจริง (กรมประเมินต่าง)
+            sd.UpdatedBy = performedBy;
+            sd.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            await tx.CommitAsync();
+            return new RemitResult(rec.Id, je.Id, duty, surcharge,
+                $"บันทึกจ่ายอากรแสตมป์ {sd.Reference} สำเร็จ ({duty + applied.Total:N2} บาท"
+                + (applied.Total > 0 ? $" · อากร {duty:N2} + เงินเพิ่มอากร {surcharge:N2} + ค่าปรับ {fine:N2}" : "") + ")",
+                0m, fine);
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            _db.ChangeTracker.Clear();
             throw;
         }
     }
@@ -1879,6 +2438,12 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     }
 
     // ===== helpers =====
+    /// <summary>ยอดภาษี/เงินสมทบที่นำส่งไปแล้วของงวด (ไม่รวมเงินเพิ่ม/ค่าปรับ · แถวที่ยกเลิกไม่นับ)</summary>
+    private async Task<decimal> RemittedSumAsync(Guid companyId, string type, int year, int month)
+        => await _db.Set<StatutoryRemittance>().AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.RemittanceType == type && r.PeriodYear == year && r.PeriodMonth == month)
+            .SumAsync(r => (decimal?)r.Amount) ?? 0m;
+
     private async Task<ChartOfAccount?> ResolveAccountAsync(Guid companyId, string code) =>
         await _db.ChartOfAccounts.DefaultPostingCandidates(_db).FirstOrDefaultAsync(a =>
             a.CompanyId == companyId && a.AccountCode == code && !a.IsDeleted);

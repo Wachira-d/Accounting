@@ -752,8 +752,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
       <!-- Pending Credit Purchases -->
       <div class="admin-card">
         <div class="admin-card-header">
-          <div class="admin-card-title">รายการซื้อเครดิต OCR (รออนุมัติ)</div>
+          <div class="admin-card-title">รายการซื้อเครดิต OCR (รออนุมัติ) — รายการเดิม</div>
         </div>
+        <!-- รอบ 229 (คำตัดสินข้อ 229-6): เส้นขอเครดิตแบบนี้เลิกแล้ว (ไม่มีหลักฐานเงิน/ใบกำกับ) — ที่ค้างอยู่ยังอนุมัติด้วยมือได้ · ซื้อใหม่ผ่านโควตาเสริม -->
+        <p style="font-size:12px;color:#b45309;margin:4px 0 8px">⚠️ รายการเหล่านี้<b>ไม่มีหลักฐานการชำระเงินและไม่มีใบกำกับภาษี</b> — ตรวจเงินเข้าก่อนอนุมัติ ·
+          การซื้อใหม่ผ่าน <a href="/pages/admin-quota.html">โควตาเสริม</a> (จ่ายผ่านระบบ + ใบเสร็จ)</p>
         <div id="pendingCredits">
           <p style="color:#94a3b8;font-size:14px">กำลังโหลด...</p>
         </div>
@@ -1037,7 +1040,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8501</pre>
                 <td style="font-size:11px;color:#64748b">${c.companyId}</td>
                 <td>${c.pagesPurchased.toLocaleString()}</td>
                 <td>${c.amountPaid.toLocaleString('th-TH',{minimumFractionDigits:2})} THB</td>
-                <td><span class="badge-pending">รออนุมัติ</span></td>
+                <td><span class="badge-pending">รออนุมัติ</span><div style="font-size:11px;color:#b45309">ไม่มีหลักฐานการชำระเงิน</div></td>
                 <td>
                   <button class="btn-secondary" style="padding:4px 12px;font-size:12px" onclick="reviewCredit('${c.id}',true)">อนุมัติ</button>
                   <button class="btn-danger" style="padding:4px 12px;font-size:12px" onclick="reviewCredit('${c.id}',false)">ปฏิเสธ</button>

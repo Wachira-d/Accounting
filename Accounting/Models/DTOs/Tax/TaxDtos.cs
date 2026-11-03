@@ -115,9 +115,60 @@ public record PullableDocumentDto(
     string ContactName,
     decimal SubTotal,
     decimal VatAmount,
-    bool IsInput);
+    bool IsInput,
+    // รอบ 225 — ดึงหลายใบ: ยอดที่ "จะเข้ารายงานจริง" เป็นบาท (ตัวคำนวณเดียวกับบรรทัดที่ดึง · VAT ฝั่งซื้อเฉพาะบรรทัดที่เคลมได้)
+    // ⇒ ยอดรวมใน footer ของหน้าตรงกับยอดที่บวกเข้ารายงาน · ป้าย "ย้อนเดือน" คำนวณที่ server
+    decimal IncomeThb = 0m,
+    decimal TaxThb = 0m,
+    string? ContactTaxId = null,
+    DateTime? TaxMonth = null,
+    int MonthsLate = 0,
+    // ฝั่งซื้อ: เดือนภาษีของใบไม่มีรายงาน ภ.พ.30 ในระบบ (อาจยื่นนอกระบบ — ดึงแล้วอาจเคลมซ้ำ)
+    bool TaxMonthHasNoReport = false);
+
+/// <summary>รายการ "ดึงเอกสาร" แบบแบ่งหน้า (รอบ 225) — <see cref="Total"/> = จำนวนใบที่ดึงได้ทั้งหมดตามตัวกรอง
+/// (ไม่ใช่แค่หน้าที่โชว์) ⇒ ปุ่ม "เลือกทั้งหมด" บอกได้ตรงว่าเลือก N จาก M · <see cref="ScanCapped"/> = ช่วงวันที่กว้างจน
+/// สแกนไม่หมด (ยอด Total อาจต่ำกว่าจริง) ⇒ หน้าบอกให้แคบช่วงลง</summary>
+public record PullableDocumentListResponse(
+    List<PullableDocumentDto> Items,
+    int Total,
+    int Offset,
+    int Limit,
+    bool HasMore,
+    bool ScanCapped,
+    DateTime PeriodStart,
+    DateTime PeriodEnd,
+    DateTime LateWindowStart,
+    int MaxPerPull,
+    int TotalInput,
+    int TotalOutput,
+    List<PullableMonthBucket> Months,
+    // เดือนในกรอบ "ย้อน 6 เดือน" ที่ไม่มีรายงาน ภ.พ.30 ในระบบ (ป้าย พ.ศ.) — หน้าเตือน "ถ้ายื่นนอกระบบแล้ว อย่าดึงซ้ำ"
+    List<string> MonthsWithoutReport);
+
+/// <summary>บรรทัด "ดึงเข้างวด" ในรายงานร่างที่ตอนนี้ไม่ผ่านด่านดึง (รอบ 225 S3 — อ่านอย่างเดียว)</summary>
+public record IneligiblePulledLineDto(Guid ReportId, int Year, int Month, Guid LineId, Guid DocumentId, string? DocumentNumber,
+    bool LineExcluded, string? RuleCode, string? Reason);
+
+/// <summary>จำนวนใบที่ดึงได้ต่อเดือน (ตามวันที่เอกสาร · ตามคำค้น/ฝั่งที่เลือก) — ป้าย พ.ศ. คำนวณที่ server ·
+/// หน้าใช้เติมตัวเลือก "ตั้งแต่เดือน/ถึงเดือน" แบบเดียวกับหน้าเอกสาร</summary>
+public record PullableMonthBucket(int Year, int Month, string Label, int Count, bool IsReportMonth);
 
 public record PullDocumentRequest(Guid DocumentId);
+
+/// <summary>ดึงหลายใบในครั้งเดียว (รอบ 225) — สูงสุด <c>TaxReportPullEligibility.MaxPerCall</c> ใบ</summary>
+public record PullDocumentsRequest(List<Guid> DocumentIds);
+
+/// <summary>ผลรายใบ: Added = เข้ารายงานแล้ว · ไม่ Added = ข้าม พร้อมเหตุผลไทย + RuleCode</summary>
+public record PullDocumentItemResult(Guid DocumentId, string? DocumentNumber, bool Added, string? RuleCode, string? Reason);
+
+/// <summary>ผลดึงหลายใบ — แบบ partial: ใบที่ผ่านเข้าในธุรกรรมเดียว ใบที่ไม่ผ่านข้ามพร้อมเหตุผล ·
+/// <see cref="Report"/> = รายงานล่าสุดหลังดึง (บรรทัด + ยอดรวม) ให้หน้า refresh ได้ทันที</summary>
+public record PullDocumentsResult(
+    int AddedCount,
+    int SkippedCount,
+    List<PullDocumentItemResult> Items,
+    TaxReportResponse Report);
 
 public record TaxReportLineResponse(
     Guid Id,

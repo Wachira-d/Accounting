@@ -117,7 +117,7 @@ public partial class LodgingService
         return SlipFile(url);
     }
 
-    private static (string Path, string ContentType)? SlipFile(string? storedUrl)
+    private (string Path, string ContentType)? SlipFile(string? storedUrl)
     {
         var path = ResolveSlipPath(storedUrl);
         return path == null ? null : (path, SlipContentType(path));

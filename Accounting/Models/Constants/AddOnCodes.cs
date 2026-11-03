@@ -81,4 +81,15 @@ public static class AddOnCodes
 
     public static bool IsSystemMeter(string? code)
         => code != null && SystemMeters.Contains(code);
+
+    /// <summary>รอบ 229 (QUOTA_ADDON A-1): รหัส API ที่คิดเงินต่อการเรียก (ผู้อ่าน <c>PublicApiControllerBase.MeterAsync</c> ผ่าน <c>Feature</c> ของ Controllers/V1 — Bank/Contacts/Documents/Ocr)</summary>
+    public static readonly IReadOnlyList<string> ConnectedApi = new[]
+    {
+        // etax.generate · assistant.ask ถูก seed ไว้แต่ยังไม่มี controller ไหนคิดเงิน ⇒ ไม่อยู่ในรายการสร้างใหม่ (แถวเดิมแก้ได้ตามเดิม)
+        "ocr.scan", "bank.recon", "document.create",
+    };
+
+    /// <summary>รอบ 229 (A-1): รหัสที่โค้ดมีผู้อ่านจริง — แอดมินสร้างแคตตาล็อกใหม่ได้เฉพาะรหัสเหล่านี้ (closed list)</summary>
+    public static bool IsKnown(string? code)
+        => !string.IsNullOrWhiteSpace(code) && (Switchable.Contains(code) || SystemMeters.Contains(code) || ConnectedApi.Contains(code));
 }

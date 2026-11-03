@@ -205,6 +205,86 @@ public class AdminPlatformBillingController : ControllerBase
         }));
     }
 
+    /// <summary>รอบ 228 (งานข้อ 6): รายงานรายได้ประจำ — แพ็กเกจที่ใช้งานจ่ายเงินแยกตามแพ็กเกจ + MRR · ลูกหนี้ค่าบริการค้างตามอายุ · ส่วนเสริม (MRR + รับเงินล่วงหน้า 30 วัน) ·
+    /// อ่านอย่างเดียว · ตัวเลขจากตัวตัดสินเดียว <see cref="PlatformRevenueMetrics"/> · SystemAdmin (ทั้งคลาส · ข้ามบริษัทโดยตั้งใจ — รายงานของแพลตฟอร์ม)</summary>
+    [HttpGet("revenue-report")]
+    public async Task<ActionResult<ApiResponse<object>>> RevenueReport(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var platformId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct);
+
+        // ── แพ็กเกจ (ไม่นับบริษัทผู้ให้บริการเอง) ──
+        var subs = await _db.Subscriptions.AsNoTracking()
+            .Where(s => platformId == null || s.CompanyId != platformId.Value)
+            .Select(s => new { s.CompanyId, s.Plan, s.Status, s.IsPermanentFree, s.PricePerCycle, s.BillingCycle, s.CancelAtPeriodEnd })
+            .ToListAsync(ct);
+        var planNames = await _db.PlanTemplates.AsNoTracking().Where(t => t.IsActive)
+            .Select(t => new { t.Plan, t.Name }).ToListAsync(ct);
+        var nameOf = planNames.GroupBy(p => p.Plan).ToDictionary(g => g.Key, g => g.First().Name);
+        var paying = subs.Where(s => PlatformRevenueMetrics.CountsTowardMrr(s.Status, s.IsPermanentFree, s.PricePerCycle)).ToList();
+        var byPlan = paying.GroupBy(s => s.Plan).Select(g => new
+        {
+            plan = g.Key.ToString(), planName = nameOf.GetValueOrDefault(g.Key, g.Key.ToString()),
+            activeCount = g.Count(),
+            pastDueCount = g.Count(x => x.Status == SubscriptionStatus.PastDue),
+            cancellingCount = g.Count(x => x.CancelAtPeriodEnd),
+            mrr = g.Sum(x => PlatformRevenueMetrics.MonthlyEquivalent(x.PricePerCycle, x.BillingCycle)),
+        }).OrderByDescending(x => x.mrr).ToList();
+        var statusCounts = subs.GroupBy(s => s.Status).Select(g => new { status = g.Key.ToString(), count = g.Count() }).ToList();
+
+        // ── ส่วนเสริม: ที่เปิดใช้และต้องจ่าย (ราคา/เดือน) — ฝ่ายค้าน S6: MRR นับเฉพาะที่จ่ายแล้ว · ไม่อยู่ในช่วงทดลอง · บริษัทมีแพ็กเกจที่ใช้งาน
+        //    (รอชำระ/ทดลอง/บริษัทหมดอายุ แยกคอลัมน์ ไม่ปนรายได้ประจำ) — ตัวตัดสินเดียว PlatformRevenueMetrics.AddOnCountsTowardMrr ──
+        var activeCompanies = subs.Where(x => x.Status is SubscriptionStatus.Active or SubscriptionStatus.PastDue or SubscriptionStatus.Trial)
+            .Select(x => x.CompanyId).ToHashSet();
+        var addOns = await _db.CompanyFeatures.AsNoTracking()
+            .Where(f => !f.IsDeleted && f.IsEnabled && f.PaymentStatus != AddOnPaymentStatus.NotRequired && f.PaymentStatus != AddOnPaymentStatus.Rejected
+                && (platformId == null || f.CompanyId != platformId.Value))
+            .Select(f => new { f.CompanyId, f.FeatureCode, f.PaymentStatus, f.TrialUntil, Price = f.SnapshotUnitPrice ?? f.AcceptedUnitPrice })
+            .ToListAsync(ct);
+        var addOnByCode = addOns.GroupBy(a => a.FeatureCode).Select(g =>
+        {
+            var counted = g.Where(x => PlatformRevenueMetrics.AddOnCountsTowardMrr(x.PaymentStatus, x.TrialUntil, activeCompanies.Contains(x.CompanyId), now)).ToList();
+            return new
+            {
+                featureCode = g.Key, count = g.Count(), paidCount = counted.Count,
+                awaitingCount = g.Count(x => x.PaymentStatus is AddOnPaymentStatus.AwaitingPayment or AddOnPaymentStatus.PendingReview),
+                trialCount = g.Count(x => x.TrialUntil > now),
+                mrr = Math.Round(counted.Sum(x => x.Price ?? 0m), 2, MidpointRounding.AwayFromZero),
+            };
+        }).OrderByDescending(x => x.mrr).ToList();
+
+        // ── ลูกหนี้ค่าบริการค้างตามอายุ + ใบเสร็จค่าส่วนเสริม 30 วัน (เอกสารจริงใน tenant ผู้ให้บริการ) ──
+        object? aging = null;
+        decimal addOnReceipts30 = 0m;
+        if (platformId is Guid pid)
+        {
+            var open = await PlatformInvoiceQueries.OpenForAllBuyersAsync(_db, pid, 5000, ct);
+            aging = PlatformRevenueMetrics.AgingBuckets.Select(b =>
+            {
+                var rows = open.Where(r => PlatformRevenueMetrics.AgingBucket(PlatformInvoiceRules.DaysPastDue(r.DueDate, now)) == b).ToList();
+                return new { bucket = b, count = rows.Count, amount = rows.Sum(r => r.BalanceDue), companies = rows.Select(r => r.BuyerCompanyId).Distinct().Count() };
+            }).ToList();
+            var since = now.AddDays(-30);
+            addOnReceipts30 = await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == pid && !d.IsDeleted && d.Reference != null && d.Reference.StartsWith("ADDON-")
+                    && (d.DocumentType == DocumentType.TaxInvoice || d.DocumentType == DocumentType.Receipt)
+                    && d.Status != DocumentStatus.Draft && d.Status != DocumentStatus.Voided && d.DocumentDate >= since)
+                .SumAsync(d => (decimal?)d.TotalAmount, ct) ?? 0m;
+        }
+
+        return Ok(new ApiResponse<object>(true, new
+        {
+            generatedAt = now,
+            platformConfigured = platformId != null,
+            mrr = byPlan.Sum(x => x.mrr),
+            addOnMrr = addOnByCode.Sum(x => x.mrr),
+            payingSubscriptions = paying.Count,
+            byPlan, statusCounts, addOns = addOnByCode,
+            aging, addOnReceiptsLast30Days = addOnReceipts30,
+            note = "MRR = ราคาต่อรอบ ÷ จำนวนเดือนของรอบ ของแพ็กเกจ Active/ค้างชำระที่ไม่ฟรี · ส่วนเสริม = ราคา/เดือนของที่เปิดใช้และต้องจ่าย · ลูกหนี้ = ใบแจ้งหนี้ค่าบริการที่ยังค้าง",
+        }));
+    }
+
     public record DunningExemptRequest(int Days, string? Reason);
 
     [HttpPost("dunning/{companyId:guid}/evaluate")]
@@ -316,25 +396,27 @@ public class AdminPlatformBillingController : ControllerBase
 
     /// <summary>ฝ่ายค้าน S9: สลิปของรายการชำระค่าบริการ (SystemAdmin) — ไม่เสิร์ฟเป็นไฟล์สาธารณะแล้ว</summary>
     [HttpGet("subscription-payments/{paymentId:guid}/slip")]
-    public async Task<IActionResult> PaymentSlip(Guid paymentId, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    public async Task<IActionResult> PaymentSlip(Guid paymentId, [FromServices] IWebHostEnvironment env, [FromServices] Accounting.Services.Storage.IFileStorage storage, CancellationToken ct)
     {
         var p = await _db.SubscriptionPayments.AsNoTracking().Where(x => x.Id == paymentId)
             .Select(x => new { x.SlipFileName, x.SlipOriginalFileName }).FirstOrDefaultAsync(ct);
         if (p == null || SubscriptionSlipUpload.OpenStored(env, p.SlipFileName) is not { } f)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
         Response.Headers["Cache-Control"] = "private, no-store";
-        return PhysicalFile(f.Path, f.ContentType, p.SlipOriginalFileName ?? p.SlipFileName);
+        return await SubscriptionSlipUpload.ServeAsync(storage, f, p.SlipOriginalFileName ?? p.SlipFileName)
+            ?? NotFound(new ApiResponse<object>(false, null, "ไม่พบสลิป"));
     }
 
     /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: หนังสือรับรอง 50 ทวิ ที่ผู้เช่าส่ง (SystemAdmin)</summary>
     [HttpGet("subscription-payments/{paymentId:guid}/wht-certificate")]
-    public async Task<IActionResult> WhtCertificate(Guid paymentId, [FromServices] IWebHostEnvironment env, CancellationToken ct)
+    public async Task<IActionResult> WhtCertificate(Guid paymentId, [FromServices] IWebHostEnvironment env, [FromServices] Accounting.Services.Storage.IFileStorage storage, CancellationToken ct)
     {
         var name = await _db.SubscriptionPayments.AsNoTracking().Where(x => x.Id == paymentId).Select(x => x.WhtCertificateFileName).FirstOrDefaultAsync(ct);
         if (SubscriptionSlipUpload.OpenStored(env, name) is not { } f)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบหนังสือรับรอง"));
         Response.Headers["Cache-Control"] = "private, no-store";
-        return PhysicalFile(f.Path, f.ContentType, "50tawi-" + System.IO.Path.GetFileName(f.Path));
+        return await SubscriptionSlipUpload.ServeAsync(storage, f, "50tawi-" + System.IO.Path.GetFileName(f.Path))
+            ?? NotFound(new ApiResponse<object>(false, null, "ไม่พบหนังสือรับรอง"));
     }
 
     public record ResolveAttentionRequest(string? Note);

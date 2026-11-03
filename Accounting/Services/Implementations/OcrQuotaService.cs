@@ -413,37 +413,8 @@ public class OcrQuotaService : IOcrQuotaService
         await TryConsumeAsync(companyId);
     }
 
-    public async Task<OcrCreditPurchaseResponse> PurchaseCreditsAsync(Guid companyId, int pages, string performedBy)
-    {
-        var siteSettings = await _db.SiteSettings.FirstOrDefaultAsync();
-        var minPurchase = siteSettings?.OcrCreditMinPurchase ?? 100;
-        if (pages < minPurchase)
-            throw new InvalidOperationException($"ต้องซื้อขั้นต่ำ {minPurchase} หน้า");
-
-        var pricePerPage = siteSettings?.OcrCreditPricePerPage ?? 2.0m;
-
-        var sub = await _db.Subscriptions
-            .FirstOrDefaultAsync(s => s.CompanyId == companyId
-                && s.Status != SubscriptionStatus.Cancelled);
-        if (sub == null)
-            throw new InvalidOperationException("ไม่พบ Subscription");
-
-        var purchase = new OcrCreditPurchase
-        {
-            CompanyId = companyId,
-            SubscriptionId = sub.Id,
-            PagesPurchased = pages,
-            PagesRemaining = pages,
-            AmountPaid = pages * pricePerPage,
-            Status = "Pending",
-            CreatedBy = performedBy
-        };
-
-        _db.OcrCreditPurchases.Add(purchase);
-        await _db.SaveChangesAsync();
-
-        return MapToResponse(purchase);
-    }
+    // รอบ 229 (คำตัดสินข้อ 229-6): PurchaseCreditsAsync (สร้างแถว Pending โดยไม่มีเงิน/ใบกำกับ) ถูกลบ — ซื้อหน้า OCR ผ่านโควตาเสริม
+    // (QuotaAddOnPurchaseService สร้างเครดิต Approved พร้อมใบเสร็จเมื่อรับเงินแล้ว) · ReviewCreditPurchaseAsync คงไว้ให้แอดมินจัดการรายการ Pending เดิม
 
     public async Task<OcrCreditPurchaseResponse> ReviewCreditPurchaseAsync(
         Guid purchaseId, bool approve, string? notes, string performedBy)

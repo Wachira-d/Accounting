@@ -32,4 +32,17 @@ public static class BookingSiteHours
         try { return JsonSerializer.Deserialize<BookingScheduleDto>(json, Options) ?? new BookingScheduleDto(); }
         catch (JsonException) { return new BookingScheduleDto(); }
     }
+
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · คำตัดสิน Q2 "วันหยุดชุดเดียวต่อเว็บ"): วันที่ปิดทั้งวันของเว็บ (วันหยุด/วันพิเศษที่ "ปิด" ในเวลาทำการของเว็บ)
+    /// ⇒ ปฏิทินรับของสินค้าตามสั่งใช้ด้วย (<c>CmsCommerceService.LoadShopCalendarAsync</c>) — เจ้าของตั้งวันหยุดที่เดียว · วันที่อ่านไม่ได้ข้าม</summary>
+    public static HashSet<DateOnly> ClosedDates(string? json)
+    {
+        var set = new HashSet<DateOnly>();
+        foreach (var e in Deserialize(json).Exceptions ?? new List<BookingDateExceptionDto>())
+            if (e.Closed && DateOnly.TryParseExact((e.Date ?? "").Trim(), "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var d))
+                set.Add(d);
+        return set;
+    }
 }
+

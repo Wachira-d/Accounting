@@ -17,6 +17,8 @@ namespace Accounting.Tests.Db;
 /// <para>ทุกเทสต์อยู่ในคลาสเดียว (xUnit รันเรียงในคลาส) เพราะตั้ง <c>SiteSettings.PlatformCompanyId</c> / ค่าตั้งแถวเดียวของระบบชั่วคราวแล้วคืนค่า</para>
 /// </summary>
 [Trait("Category", "Db")]
+// รอบ 224: ทั้งสามคลาสเรียก ProcessExpiredSubscriptionsAsync ซึ่งกวาดทั้งฐาน — รันขนานกันแล้วคลาสหนึ่งยกเลิกการสมัครของอีกคลาสก่อน (เทสต์สุ่มแดง)
+[Collection("SubscriptionExpirySweep")]
 public class PlatformBillingPhase2DbTests
 {
     private readonly ITestOutputHelper _out;

@@ -74,12 +74,21 @@ public static class AdvisoryLockKey
     /// **ต้องผูก companyId**: งานทำรายบริษัท เดิมใช้ค่าคงที่ 828003 ทั้งระบบ ⇒
     /// ผู้ใช้บริษัท A กดปุ่มแล้วผู้ใช้บริษัท B ต้องรอจนเสร็จ ทั้งที่คนละชุดข้อมูล</summary>
     public const string UndueVatExpiry = "undue-vat";
+    /// <summary>รอบ 225: งานเขียนรายงาน ภ.พ.30 ของบริษัท (ดึงเอกสาร · บันทึกบรรทัด · ยื่น · สร้างใหม่) — part = "vat" ·
+    /// ต่อบริษัทไม่ใช่ต่อรายงาน: ด่าน "ใบนี้ถูกใช้ในงวดอื่นไหม" ข้ามรายงาน ⇒ ดึงใบเดียวกันเข้าสองงวดพร้อมกันต้องไม่ผ่านทั้งคู่ (เคลมซ้ำ)</summary>
+    public const string TaxVatReportWrite = "tax-vat-report";
+    /// <summary>รอบ 228 — นำส่งที่จ่ายได้หลายครั้งต่องวด (กองทุนเงินทดแทนรายปี · อากรแสตมป์รายตราสาร) · part = "{type}:{คีย์}"</summary>
+    public const string StatutoryRemit = "statutory-remit";
     /// <summary>ปิดรอบบิลค่าใช้งาน (รวม UsageEvent เป็นใบแจ้งหนี้) — part = งวดที่รัน
     /// · คีย์ระดับระบบไม่ผูกบริษัท เพราะงานเดินทีเดียวทุก tenant</summary>
     public const string UsageInvoicing = "usage-invoice";
     /// <summary>เพิ่มโควตาเอกสาร (ซื้อ top-up / แลกจากภารกิจ) — part = "reward"/"topup"
     /// เพดานต่อวัน-เดือนจะไร้ผลทันทีถ้าปล่อยให้สองแท็บกดพร้อมกันแล้วผ่านทั้งคู่</summary>
     public const string QuotaGrant = "quota-grant";
+    /// <summary>รอบ 229: ด่านโควตาแบบ Capacity (part = ทรัพยากร) — นับ + insert ในธุรกรรมเดียวกันใต้ล็อกนี้ ⇒ สองคำขอพร้อมกันผ่านได้แค่หนึ่ง (<c>IQuotaGate.LockAsync</c>)</summary>
+    public const string QuotaCapacity = "quota-cap";
+    /// <summary>รอบ 229: ซื้อโควตาเสริม (part = ทรัพยากร) — เพดานซื้อต่อบริษัท + คีย์กันกดซ้ำตรวจใต้ล็อก</summary>
+    public const string QuotaAddOnPurchase = "quota-addon";
 
     /// <summary>การชำระเงินผ่าน gateway — ล็อกทั้งตอน "มี intent อยู่แล้วไหม" (คีย์ = source)
     /// และตอนเปลี่ยนสถานะ (คีย์ = intent id) · สองแท็บที่กดจ่ายพร้อมกันต้องได้ QR ใบเดียว
@@ -222,4 +231,11 @@ public static class AdvisoryLockKey
 
     /// <summary>ขายคอร์ส 1 คำขอ (idempotency key ของหน้าจอ) — part = key · session lock ผ่าน <c>JobLock.RunExclusiveAsync</c> ครอบการออกใบ+อนุมัติ+เปิดบัตร</summary>
     public const string CreditSale = "credit-sale";
+
+    /// <summary>ระบุกองทุน / ทำเครื่องหมาย "ปรับเฉพาะ GL" ให้ใบสำคัญจากทางอื่น (PETTY_CASH_AUDIT · ฝ่ายค้านข้อ 2) — part = JournalEntryId ·
+    /// ล็อกต่อ<b>ใบสำคัญ</b> (ไม่ใช่ต่อกองทุน) ⇒ สองกองทุนที่ใช้ผังร่วมกันระบุใบเดียวกันพร้อมกันไม่ได้สองแถว</summary>
+    public const string PettyCashEntry = "petty-entry";
+
+    /// <summary>เครื่องมือย้ายไฟล์ดิสก์ → object storage (ทีม FS 2026-11-02) — ทั้งระบบรอบเดียว · part = "all" · ผ่าน <c>JobLock.RunExclusiveAsync</c></summary>
+    public const string FileStorageMigrate = "file-storage-migrate";
 }

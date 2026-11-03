@@ -86,7 +86,7 @@
                     <span>เอกสาร/เดือน</span><strong>${p.maxDocumentsPerMonth?.toLocaleString() || '-'}</strong>
                   </div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
-                    <span>รายการบัญชี/เดือน</span><strong>${p.maxJournalEntriesPerMonth?.toLocaleString() || '-'}</strong>
+                    <span title="คำตัดสินข้อ 229-7: ไม่บังคับ — ผู้เช่าไม่เห็นตัวเลขนี้แล้ว">รายการบัญชี/เดือน <small style="color:#b45309">(ไม่บังคับใช้ — เลิกใช้)</small></span><strong>${p.maxJournalEntriesPerMonth?.toLocaleString() || '-'}</strong>
                   </div>
                   <div class="admin-flex" style="justify-content:space-between;margin-bottom:6px">
                     <span title="LINE OA/อีเมลของ NextAcc ที่ส่งถึงลูกค้าของร้าน (OA/อีเมลของร้านเองไม่นับ)">ข้อความช่องกลาง/เดือน</span><strong>${p.maxSharedMessagesPerMonth == null || p.maxSharedMessagesPerMonth < 0 ? 'ไม่จำกัด' : p.maxSharedMessagesPerMonth.toLocaleString()}</strong>
@@ -268,6 +268,10 @@
               </div>
 
               <div style="font-weight:600;margin:16px 0 8px">ลิมิตการใช้งาน (แผนแบบเสียเงิน)</div>
+              <!-- รอบ 229 (QUOTA_ADDON §C · A-4): จำนวนเว็บ CMS · หน้า/สินค้าต่อเว็บ · ที่พัก + ขายโควตาเพิ่ม ตั้งที่หน้าเดียว (ไม่ทำสำเนาช่องที่นี่) -->
+              <div style="font-size:12px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:8px">
+                📏 <b>จำนวนเว็บไซต์ (CMS) · หน้า/สินค้าต่อเว็บ · ที่พัก</b> และการ<b>ขายโควตาเพิ่ม</b> (เว็บ · ที่นั่ง · พื้นที่ · หน้า OCR) ตั้งที่
+                <a href="/pages/admin-quota.html" style="color:#2563eb;font-weight:600">โควตาและโควตาเสริม</a> · ช่องด้านล่าง (ผู้ใช้ · พื้นที่ · OCR) ยังเป็นตัวตั้งของทรัพยากรนั้น</div>
               <div class="admin-grid-3">
                 <div class="admin-form-group">
                   <label class="admin-label">ผู้ใช้สูงสุด / บริษัท <span style="font-weight:400;color:#94a3b8;font-size:11px">— ต่อบริษัท · บน Account Plan map → MaxUsersPerCompany</span></label>
@@ -284,7 +288,7 @@
                   <input type="number" min="0" class="admin-input" id="ep_docs" value="${p.maxDocumentsPerMonth}">
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">รายการบัญชี/เดือน</label>
+                  <label class="admin-label">รายการบัญชี/เดือน <span style="font-weight:600;color:#b45309;font-size:11px">— ไม่บังคับใช้ (เลิกใช้) · ผู้เช่าไม่เห็นแล้ว (คำตัดสินข้อ 229-7)</span></label>
                   <input type="number" min="0" class="admin-input" id="ep_journals" value="${p.maxJournalEntriesPerMonth || 0}">
                 </div>
                 <div class="admin-form-group">
@@ -372,7 +376,7 @@
                   <div style="font-size:11px;color:#64748b;margin-top:4px">ว่าง = ใช้ค่าของแพ็กเกจ${p.suggestedTrialSharedMessagesPerMonth != null ? ' · แนะนำ ' + p.suggestedTrialSharedMessagesPerMonth.toLocaleString() : ''}</div>
                 </div>
                 <div class="admin-form-group">
-                  <label class="admin-label">รายการบัญชี/เดือน (Trial)</label>
+                  <label class="admin-label">รายการบัญชี/เดือน (Trial) <span style="font-weight:600;color:#b45309;font-size:11px">— ไม่บังคับใช้ (เลิกใช้)</span></label>
                   <input type="number" min="0" class="admin-input" id="ep_trial_journals" value="${p.trialMaxJournalEntriesPerMonth || 0}">
                 </div>
               </div>

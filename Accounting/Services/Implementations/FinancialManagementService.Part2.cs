@@ -99,13 +99,85 @@ public partial class FinancialManagementService
         if (entity.Status == "Filed") throw new InvalidOperationException("ยื่นแล้ว");
         if (entity.TaxAmount <= 0) { entity.Status = "Filed"; await _db.SaveChangesAsync(); return MapCIT(entity); }
 
-        // Dr 58000 (CIT Expense) / Cr 21920 (CIT Payable)
-        var citExpenseAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode.StartsWith("580") && a.IsActive);
-        var citPayableAcc = await _db.ChartOfAccounts.FirstOrDefaultAsync(a =>
-            a.CompanyId == companyId && a.AccountCode.StartsWith("2192") && a.IsActive);
+        // ══ รอบ 228 (TAX_PENALTY_AUDIT §3 ข้อ 1 · ฝ่ายค้าน S1/S2) — ตั้งหนี้ให้เส้นชำระ (หน้านำส่ง ภ.ง.ด.51/50 · Helpers/CitPayment) ล้างได้พอดี ══
+        // รูป JE จากตัวตั้งเดียว CitPayment.AccrualPlan: ภ.ง.ด.51 Dr 11920 = ยอดที่ต้องชำระ / Cr 21920 (ไม่แตะ 11910 — ใช้ครั้งเดียวตอน ภ.ง.ด.50) ·
+        // ภ.ง.ด.50 Dr 580xx ภาษีทั้งปี / Cr เครดิต ภ.ง.ด.51 (ผังที่ JE ครึ่งปีลง Dr — ใหม่ 11920 · เดิม 580xx) / Cr 11910 / Cr 21920 สุทธิ
+        // (เดิม Cr 21920 เต็มภาษี ⇒ หนี้ค้างเท่าเครดิตตลอดไป · ภ.ง.ด.51 ลงค่าใช้จ่ายซ้ำ) · ผังไม่ครบ ⇒ ปฏิเสธ (เดิมข้ามการลงบัญชีเงียบ ๆ แล้วประทับ "Filed")
+        var type = CitPayment.TypeOf(entity.TaxPeriod)
+            ?? throw new BusinessRuleException($"รอบภาษี \"{entity.TaxPeriod}\" ไม่รู้จัก (HalfYear/Annual)", "CIT-POST-PERIOD");
+        var ceYear = CitPayment.CeYear(entity.TaxYear)
+            ?? throw new BusinessRuleException($"ปีภาษี \"{entity.TaxYear}\" อ่านไม่ได้", "CIT-POST-PERIOD");
 
-        if (citExpenseAcc != null && citPayableAcc != null)
+        // S2: รอบเดียวกัน (ปี ค.ศ. + ครึ่งปี/ทั้งปี) ตั้งหนี้ซ้ำไม่ได้ ถ้ารายการอื่นยังมี JE ที่มีผล — คำนวณใหม่ต้องกลับรายการ JE เดิมก่อน (ไม่งั้น 21920 ตั้งสองเท่า)
+        var otherJeIds = (await _db.Set<CorporateIncomeTax>().AsNoTracking()
+                .Where(c => c.CompanyId == companyId && c.Id != entity.Id && c.TaxPeriod == entity.TaxPeriod && c.JournalEntryId != null)
+                .Select(c => new { c.TaxYear, c.JournalEntryId }).ToListAsync())
+            .Where(c => CitPayment.CeYear(c.TaxYear) == ceYear).Select(c => c.JournalEntryId!.Value).ToList();
+        if (otherJeIds.Count > 0)
+        {
+            var live = await _db.JournalEntries.AsNoTracking()
+                .Where(j => j.CompanyId == companyId && otherJeIds.Contains(j.Id) && !j.IsDeleted
+                    && j.Status == JournalEntryStatus.Posted && j.ReversedByEntryId == null)
+                .Select(j => j.EntryNumber).ToListAsync();
+            if (live.Count > 0)
+                throw new BusinessRuleException(
+                    $"{CitPayment.PeriodLabel(type, ceYear)} ตั้งหนี้ภาษีไว้แล้ว (JE {string.Join(", ", live)}) — "
+                    + "ถ้าคำนวณใหม่ ให้กลับรายการ JE เดิมที่หน้าสมุดรายวันก่อน แล้วค่อยบันทึกรายการนี้ (กันหนี้ 21920 ตั้งซ้ำ)", "CIT-POST-DUP", 409);
+        }
+
+        async Task<ChartOfAccount> Req(string code, Func<ChartOfAccount, bool>? fallback, string name)
+        {
+            var exact = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == code && a.IsActive);
+            if (exact != null) return exact;
+            if (fallback != null)
+            {
+                var alt = (await _db.ChartOfAccounts.Where(a => a.CompanyId == companyId && a.IsActive).ToListAsync()).Where(fallback)
+                    .OrderBy(a => a.AccountCode).FirstOrDefault();
+                if (alt != null) return alt;
+            }
+            throw new BusinessRuleException($"ไม่พบผังบัญชี {code} ({name}) — สร้างผังที่หน้า “ผังบัญชี” ก่อนบันทึกภาษีเงินได้นิติบุคคล", "CIT-POST-ACCOUNT");
+        }
+
+        var plan = CitPayment.AccrualPlan(type, entity.TaxAmount, entity.PrepaidTaxCredit, entity.WithholdingTaxCredit);
+        var lines = new List<JournalEntryLine>();
+        int order = 1;
+        foreach (var pl in plan)
+        {
+            Guid accId;
+            string desc;
+            switch (pl.Role)
+            {
+                case CitPayment.AccrualRole.Expense:
+                    accId = (await Req("58000", a => a.AccountCode.StartsWith("580") && a.AccountType == AccountType.Expense, "ภาษีเงินได้นิติบุคคล (ค่าใช้จ่าย)")).Id;
+                    desc = "ภาษีเงินได้นิติบุคคล (ภ.ง.ด.50)"; break;
+                case CitPayment.AccrualRole.Prepaid:
+                    accId = (await Req(CitPayment.PrepaidCode, null, "ภาษีเงินได้นิติบุคคลจ่ายล่วงหน้า")).Id;
+                    desc = "ภาษีเงินได้นิติบุคคลจ่ายล่วงหน้า (ภ.ง.ด.51 · ยอดที่ชำระ)"; break;
+                case CitPayment.AccrualRole.PrepaidOffset:
+                {
+                    // ผังเครดิต ภ.ง.ด.51 = ผังที่ JE ตั้งหนี้ครึ่งปีของปีเดียวกันลง Dr (ตั้งแบบเดิมลงค่าใช้จ่าย ⇒ Cr ค่าใช้จ่ายเท่าที่ลงซ้ำ) · ไม่พบ ⇒ 11920
+                    var halfJeIds = (await _db.Set<CorporateIncomeTax>().AsNoTracking()
+                            .Where(c => c.CompanyId == companyId && c.TaxPeriod == "HalfYear" && c.JournalEntryId != null && c.Id != entity.Id)
+                            .Select(c => new { c.TaxYear, c.JournalEntryId, c.CreatedAt }).ToListAsync())
+                        .Where(c => CitPayment.CeYear(c.TaxYear) == ceYear).OrderByDescending(c => c.CreatedAt).Select(c => c.JournalEntryId!.Value).ToList();
+                    var halfDebitAcc = halfJeIds.Count == 0 ? null : await _db.JournalEntryLines.AsNoTracking()
+                        .Where(l => l.JournalEntryId == halfJeIds[0] && l.JournalEntry.CompanyId == companyId && l.DebitAmount > 0)
+                        .Select(l => (Guid?)l.AccountId).FirstOrDefaultAsync();
+                    accId = halfDebitAcc ?? (await Req(CitPayment.PrepaidCode, null, "ภาษีเงินได้นิติบุคคลจ่ายล่วงหน้า")).Id;
+                    desc = "หักภาษีที่ชำระตาม ภ.ง.ด.51"; break;
+                }
+                case CitPayment.AccrualRole.WhtCredit:
+                    accId = (await Req(CitPayment.WhtCreditCode, null, "ภาษีถูกหัก ณ ที่จ่าย")).Id;
+                    desc = "หักภาษีถูกหัก ณ ที่จ่าย (เครดิตภาษีทั้งปี)"; break;
+                default:
+                    accId = (await Req(CitPayment.PayableCode, null, "ภาษีเงินได้นิติบุคคลค้างจ่าย")).Id;
+                    desc = "ภาษีเงินได้นิติบุคคลค้างจ่าย (ยอดที่ต้องชำระ)"; break;
+            }
+            lines.Add(new() { AccountId = accId, DebitAmount = pl.Debit, CreditAmount = pl.Credit, Description = desc, LineOrder = order++ });
+        }
+        var jeTotal = plan.Sum(x => x.Debit);
+
+        if (lines.Count > 0)
         {
             var jeNum = await NextJvNumberAsync(companyId);
             var fpId = await GetFiscalPeriodIdAsync(companyId, DateTime.UtcNow);
@@ -117,12 +189,8 @@ public partial class FinancialManagementService
                 Description = $"ภาษีเงินได้นิติบุคคล {entity.TaxYear} ({entity.TaxPeriod})",
                 Reference = $"CIT-{entity.TaxYear}-{entity.TaxPeriod}",
                 Status = JournalEntryStatus.Posted, IsAutoGenerated = true, FiscalPeriodId = fpId,
-                TotalDebit = entity.TaxAmount, TotalCredit = entity.TaxAmount,
-                Lines = new List<JournalEntryLine>
-                {
-                    new() { AccountId = citExpenseAcc.Id, DebitAmount = entity.TaxAmount, Description = "ภาษีเงินได้นิติบุคคล", LineOrder = 1 },
-                    new() { AccountId = citPayableAcc.Id, CreditAmount = entity.TaxAmount, Description = "ภาษีเงินได้ค้างจ่าย", LineOrder = 2 }
-                }
+                TotalDebit = jeTotal, TotalCredit = jeTotal,
+                Lines = lines
             };
             _db.JournalEntries.Add(je);
             await _db.SaveChangesAsync();

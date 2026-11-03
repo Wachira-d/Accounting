@@ -110,9 +110,9 @@ public class LatePaymentPenaltyPolicyTests
     }
 
     [Fact]
-    public void ภพ36_สปส_หักณที่จ่าย_ไม่เสนอเบี้ยปรับ_ค่าปรับอาญาไม่เดา()
+    public void สปส_หักณที่จ่าย_ไม่เสนอเบี้ยปรับ_ค่าปรับอาญาไม่เดา()
     {
-        Assert.Equal(0m, S("VatPp36", 10_000m, d => d.AddDays(20)).Penalty);
+        // รอบ 228 ทีมภาษี: ภ.พ.36 เสนอเบี้ยปรับตารางลด (ต้องยืนยัน) — ล็อกที่ Round228TaxRemittanceTests · ที่นี่เหลือแบบที่ไม่มีเบี้ยปรับตามแบบ
         Assert.Equal(0m, S("SsoSps110", 10_000m, d => d.AddDays(20)).Penalty);
         var wht = S("WhtPnd53", 10_000m, d => d.AddDays(20));
         Assert.Equal(0m, wht.Penalty);

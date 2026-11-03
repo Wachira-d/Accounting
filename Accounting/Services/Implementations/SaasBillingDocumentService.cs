@@ -24,6 +24,14 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
     private const string EntityType = "SubscriptionReceipt";
 
+    /// <summary>ไบต์ของ PDF ที่เก็บไว้ (ทีม FS 2026-11-02) — ไม่มีแถว/ไฟล์จริงหาย ⇒ null (ผู้เรียกสร้างใหม่จากข้อมูลที่ stamp ไว้ · พฤติกรรมเดิม) ·
+    /// ที่เก็บตอบผิดปกติ (<c>FileStorageException</c>) ไม่จับ — ล้มดัง</summary>
+    private async Task<byte[]?> StoredBytesOrNullAsync(Guid companyId, Guid attachmentId)
+    {
+        try { return await _files.ReadBytesAsync(companyId, attachmentId); }
+        catch (FileNotFoundException) { return null; }
+    }
+
     public SaasBillingDocumentService(AccountingDbContext db, IPdfGenerationService pdf,
         IFileAttachmentService files, ILogger<SaasBillingDocumentService> logger,
         IEmailService? email = null, IPlatformBillingDocumentIssuer? issuer = null, IPlatformBillingNotifier? notifier = null,
@@ -167,14 +175,9 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         if (payment.ReceiptAttachmentId.HasValue)
         {
             var att = await _files.GetByIdAsync(companyId, payment.ReceiptAttachmentId.Value);
-            if (att != null)
-            {
-                var fullPath = Path.IsPathRooted(att.StoragePath)
-                    ? att.StoragePath
-                    : Path.Combine(Directory.GetCurrentDirectory(), att.StoragePath);
-                if (File.Exists(fullPath))
-                    return (await File.ReadAllBytesAsync(fullPath), att.OriginalFileName);
-            }
+            // อ่านผ่านที่เก็บกลาง (IFileAttachmentService → IFileStorage · ทีม FS 2026-11-02) — ไฟล์หาย ⇒ สร้างใหม่ด้านล่าง
+            if (att != null && await StoredBytesOrNullAsync(companyId, att.Id) is { } bytes)
+                return (bytes, att.OriginalFileName);
         }
 
         // fallback: regenerate จากข้อมูลที่ stamp ไว้ (ไฟล์หาย/ยังไม่ออก)
@@ -226,8 +229,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         }
     }
 
-    private static bool IsValidTaxId(string? taxId)
-        => !string.IsNullOrWhiteSpace(taxId) && taxId.Length == 13 && taxId.All(char.IsDigit);
+    /// <summary>ฝ่ายค้านรอบ 227 N3: ตัวตรวจเลขผู้เสียภาษีตัวเดียวของระบบ (13 หลัก + checksum mod-11 · กฎเหล็ก #2 A) — เดิมนับแค่ 13 หลัก</summary>
+    private static bool IsValidTaxId(string? taxId) => Accounting.Helpers.ThaiTaxId.IsValid(taxId);
 
     private static string StyleBlock() =>
         "<!DOCTYPE html><html lang='th'><head><meta charset='utf-8'/><style>" + @"
@@ -280,7 +283,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             var res = _issuer == null ? null : await _issuer.SettleInvoiceAsync(invoiceId, payment.Amount, payment.WithholdingTaxAmount,
                 payment.PaymentDate, reference,
                 $"รับชำระค่าบริการ NextAcc — {payment.PaymentNumber}"
-                    + (string.IsNullOrWhiteSpace(payment.TransferReference) ? "" : $" · อ้างอิงโอน {payment.TransferReference}"));
+                    + (string.IsNullOrWhiteSpace(payment.TransferReference) ? "" : $" · อ้างอิงโอน {payment.TransferReference}"),
+                subscriptionPaymentId: payment.Id);   // รอบ 227 (C-2): จ่ายผ่าน gateway ⇒ ขาเงินเข้า = บัญชีพักผู้ให้บริการรับชำระ
             string? problem = null, rule = null;
             if (res == null)
             {
@@ -419,17 +423,35 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             // ได้ลูกหนี้ใน GL ของเราเอง (ตามเก็บได้จริง) + เลขในชุดเดียวกับเอกสารอื่น
             if (_issuer != null && await _issuer.IsEnabledAsync())
             {
-                var invoiced = await _issuer.IssueRenewalInvoiceAsync(sub.CompanyId,
-                    $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {renewPlan} ({months} เดือน) "
-                        + $"— รอบถัดไปถึง {sub.EndDate.AddMonths(months):dd/MM/yyyy}",
-                    amount, now, sub.EndDate, Accounting.Helpers.PlatformInvoiceRules.RenewalReferencePrefix + sub.Id.ToString()[..8].ToUpper());
+                var planLine = $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {renewPlan} ({months} เดือน) "
+                    + $"— รอบถัดไปถึง {sub.EndDate.AddMonths(months):dd/MM/yyyy}";
+                var reference = Accounting.Helpers.PlatformInvoiceRules.RenewalReferencePrefix + sub.Id.ToString()[..8].ToUpper();
+                // รอบ 229 (QUOTA_ADDON §B.6 · คำตัดสินข้อ 229-3): โควตาเสริมแบบ "ถึงวันหมดอายุ" ที่ติ๊กต่อ (ค่าตั้งต้น = ต่อ) ⇒ บรรทัดละรายการในใบเดียวกัน
+                // (ราคาเต็มรอบ round(u × R, 2)) · ไม่มีรายการ ⇒ ใบบรรทัดเดียวตามเดิม · ตัดชำระใบนี้ ⇒ SubscriptionService สร้างรอบใหม่ของบรรทัดเหล่านี้
+                var quotaLines = (await Accounting.Services.Payments.QuotaRenewalLines.CandidatesAsync(_db, sub.CompanyId, sub.EndDate, months, includeOptedOut: false))
+                    .Where(l => l.OfferAvailable && l.Amount > 0m).ToList();
+                var invoiced = quotaLines.Count == 0
+                    ? await _issuer.IssueRenewalInvoiceAsync(sub.CompanyId, planLine, amount, now, sub.EndDate, reference)
+                    : await _issuer.IssueUsageInvoiceAsync(sub.CompanyId,
+                        new List<PlatformInvoiceLine> { new(planLine, amount) }
+                            .Concat(quotaLines.Select(l => new PlatformInvoiceLine(l.Description, l.Amount,
+                                Accounting.Models.Constants.QuotaResources.Find(l.Row.ResourceKey)?.Unit ?? "หน่วย", l.Units))).ToList(),
+                        now, sub.EndDate, reference, "ใบแจ้งหนี้ค่าบริการต่ออายุระบบบัญชีออนไลน์ (รวมโควตาเสริมที่เลือกต่อ)");
                 if (invoiced != null)
                 {
                     sub.RenewalInvoiceNumber = invoiced.DocumentNumber;
                     sub.RenewalInvoiceIssuedAt = now;
                     sub.RenewalInvoiceForEndDate = sub.EndDate;
                     sub.RenewalInvoiceDocumentId = invoiced.DocumentId;
+                    foreach (var l in quotaLines)
+                    {
+                        l.Row.RenewalInvoiceDocumentId = invoiced.DocumentId;
+                        l.Row.RenewUnits = l.Units;
+                        l.Row.RenewUnitPrice = l.PerUnit;
+                        l.Row.UpdatedAt = now; l.Row.UpdatedBy = "system:platform-billing";
+                    }
                     await _db.SaveChangesAsync();
+                    amount += quotaLines.Sum(l => l.Amount);
                     // รอบ 219 เฟส 2 ขั้น 2 (G-7): ใบจริงใน tenant ผู้ให้บริการ ⇒ ส่งผ่านผู้ส่งตัวเดียว (อีเมล + LINE · คีย์ "ใบใหม่" ต่อใบ — งานทวงหนี้ไม่ส่งซ้ำ)
                     if (_notifier != null) await _notifier.InvoiceIssuedAsync(sub.CompanyId, invoiced.DocumentId);
                     else await SendInvoiceEmailAsync(sub.CompanyId, invoiced.DocumentNumber, amount, sub.EndDate);
@@ -502,13 +524,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         var atts = await _files.GetByEntityAsync(sub.CompanyId, "SubscriptionInvoice", sub.Id);
         var stored = atts.OrderByDescending(a => a.CreatedAt)
             .FirstOrDefault(a => a.OriginalFileName == $"{sub.RenewalInvoiceNumber}.pdf");
-        if (stored != null)
-        {
-            var fullPath = Path.IsPathRooted(stored.StoragePath)
-                ? stored.StoragePath : Path.Combine(Directory.GetCurrentDirectory(), stored.StoragePath);
-            if (File.Exists(fullPath))
-                return (await File.ReadAllBytesAsync(fullPath), stored.OriginalFileName);
-        }
+        if (stored != null && await StoredBytesOrNullAsync(sub.CompanyId, stored.Id) is { } storedBytes)
+            return (storedBytes, stored.OriginalFileName);
 
         // regenerate
         var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sub.CompanyId);
@@ -638,22 +655,10 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
         var gross = payment.Amount;
         decimal subtotal, vat, grandTotal;
-        if (isTaxInvoice)
-        {
-            if (s?.PlatformPriceIncludesVat ?? true)
-            {
-                vat = Math.Round(gross * 7m / 107m, 2, MidpointRounding.AwayFromZero);
-                subtotal = gross - vat;
-                grandTotal = gross;
-            }
-            else
-            {
-                subtotal = gross;
-                vat = Math.Round(gross * 0.07m, 2, MidpointRounding.AwayFromZero);
-                grandTotal = gross + vat;
-            }
-        }
-        else { subtotal = gross; vat = 0m; grandTotal = gross; }
+        // ฝ่ายค้านรอบ 227 S2: ใบเสร็จของเงินที่รับแล้ว = เงินที่รับพอดี (รวม VAT เสมอ — ตัวแยกเดียวกับเส้นเอกสารจริง PlatformMoneyInAccount.SplitReceived) ·
+        // เดิมโหมด "ราคาไม่รวม VAT" ออกยอด = เงินที่รับ + VAT (สูงกว่าเงินที่ได้รับ)
+        (subtotal, vat) = Accounting.Helpers.PlatformMoneyInAccount.SplitReceived(gross, isTaxInvoice);
+        grandTotal = gross;
 
         var title = isTaxInvoice ? "ใบกำกับภาษี / ใบเสร็จรับเงิน" : "ใบเสร็จรับเงิน";
         var buyerBranch = string.IsNullOrWhiteSpace(buyer.BranchCode) ? "00000" : buyer.BranchCode!;

@@ -883,7 +883,7 @@ const Layout = {
   /** หน้าที่แสดงข้อมูล **ข้ามบริษัท** — เข้าได้เฉพาะแอดมินของแพลตฟอร์ม
    *  (ด่านจริงอยู่ที่ API ซึ่งบังคับ role SystemAdmin — ตรงนี้กันไม่ให้หน้าจอโผล่
    *   ให้ลูกค้าเห็นและกันการเดา URL ตรง ๆ) */
-  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage', 'admin-addons', 'admin-help'],
+  PLATFORM_ADMIN_PAGES: ['ai-usage', 'admin-company-usage', 'admin-addons', 'admin-help', 'admin-quota'],
 
   /** เรียกจากหน้าแอดมินแพลตฟอร์มโดยตรง — รอสิทธิ์จากเซิร์ฟเวอร์ก่อนตัดสิน
    *  (ค่าจาก localStorage ผู้ใช้แก้เองได้ จึงไม่ใช้เป็นตัวตัดสิน) */
@@ -1693,6 +1693,9 @@ const Layout = {
       description: 'อัปโหลดวิดีโอสอนหรือวางลิงก์ YouTube/Facebook/TikTok · แยกหมวดตามเรื่องและตามโมดูลธุรกิจ · เผยแพร่/พักไว้เป็นร่างได้' },
     { id: 'admin-addons', label: 'ส่วนเสริมและราคา', icon: '💰', href: '/pages/admin-addons.html', platformAdmin: true,
       description: 'แคตตาล็อกส่วนเสริม: ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย (ราคาเก่าไม่ถูกแก้ย้อนหลัง)' },
+    // รอบ 229 (QUOTA_ADDON §D.2): โควตา — เพดานต่อแพ็กเกจ (รวมจำนวนเว็บ CMS) · แคตตาล็อกโควตาเสริม · override รายบริษัท · ตรวจสลิป
+    { id: 'admin-quota', label: 'โควตาและโควตาเสริม', icon: '📏', href: '/pages/admin-quota.html', platformAdmin: true,
+      description: 'เพดานต่อแพ็กเกจ (เว็บ CMS · หน้า/สินค้าต่อเว็บ · ที่พัก) · ขายโควตาเพิ่ม (ราคาเดือน/ปี · วิธีซื้อ · ซื้อได้สูงสุด) · override รายบริษัทพร้อมเหตุผล · ตรวจสลิป' },
     // รอบ 205 ทีม E — ทางนำเข้าหลักทุกชนิด (IMPORT_ETL_REVIEW §2.8): วางไฟล์ → เซิร์ฟเวอร์อ่าน/จับคู่/แปลง/ตรวจ → ผู้ใช้แค่ตรวจและยืนยัน ·
     // รอบ 206: ผูก BulkImport เหมือนเมนู import-export เดิม ("จำกัดตามหน้าเดิม") — คู่กับ ("/companies/*/import", BulkImport) ใน
     // SubscriptionGatePolicy.RouteFeatureMap (เมนูกับ API ต้องตรงกัน) · ไม่ใส่ lockOnEnforce เพราะหน้าเดิมล็อกแบบเดิม (ห้ามหลวมกว่าหน้าที่มันแทน)
@@ -1760,7 +1763,8 @@ const Layout = {
     { section: 'บัญชีผู้ใช้', icon: '💎', description: 'License · แพ็กเกจ · การใช้งาน · audit log' },
     { id: 'account-subscription', label: 'License ของฉัน', icon: '🎫', href: '/pages/account-subscription.html',
       description: 'แพ็กเกจหลัก (User-level) ครอบหลายบริษัทใต้ License เดียว — แนะนำสำหรับเจ้าของหลายบริษัท / นักบัญชีดูแลหลายลูกค้า' },
-    { id: 'subscription', label: 'แพ็กเกจของบริษัทนี้', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
+    // รอบ 229 (QUOTA_ADDON §D.3 · D-2): เรื่องแพ็กเกจ/บิล/โควตาเหลือเมนูเดียว "แพ็กเกจและการชำระเงิน" — หน้าย่อยเดิม (inHub) ยังเปิดได้จาก hub · id คงเดิม (สิทธิ์เมนูตามบทบาทไม่เปลี่ยน)
+    { id: 'subscription', inHub: true, label: 'แพ็กเกจของบริษัทนี้', icon: '💎', href: '/pages/subscription.html', _i18nKey: 'nav.subscription',
       description: 'แพ็กเกจระดับบริษัท (Company-level) — ใช้เมื่อต้องการแยกบิลแยกใบกำกับ' },
     { id: 'help', label: 'คู่มือ & วิดีโอสอนใช้งาน', icon: '🎓', href: '/pages/help.html',
       description: 'วิดีโอสอนใช้งานและคู่มือ แยกตามเรื่อง (บัญชี · ภาษี · เงินเดือน) และตามธุรกิจ (ที่พัก · POS · เว็บไซต์)' },
@@ -1769,11 +1773,11 @@ const Layout = {
     { id: 'payment-settlements', label: 'กระทบยอดเงินรับออนไลน์', icon: '🏦', href: '/pages/payment-settlements.html',
       description: 'เงินที่รับผ่านระบบชำระออนไลน์เข้าธนาคาร T+n หลังหักค่าธรรมเนียม — บันทึกรอบโอนเข้าเพื่อล้างบัญชีพัก 11340 และรับรู้ค่าธรรมเนียม' },
     // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ศูนย์บิลค่าบริการ NextAcc — ใบแจ้งหนี้ · ชำระ · ใบเสร็จ · แพ็กเกจ/ส่วนเสริม (เข้าได้แม้ถูกระงับเพราะค้างชำระ)
-    { id: 'billing', label: 'ศูนย์บิลค่าบริการ', icon: '🧾', href: '/pages/billing.html',
-      description: 'ใบแจ้งหนี้ค่าบริการ NextAcc · ชำระด้วยการโอน+สลิป · ประวัติการชำระและใบเสร็จ · แพ็กเกจ/ส่วนเสริม' },
-    { id: 'addons', label: 'ส่วนเสริมของฉัน', icon: '🧩', href: '/pages/addons.html',
+    { id: 'billing', label: 'แพ็กเกจและการชำระเงิน', icon: '💎', href: '/pages/billing.html',
+      description: 'ใช้ไปเท่าไร · ซื้อโควตาเพิ่ม (เว็บไซต์ · ที่นั่ง · พื้นที่ · หน้า OCR) · ต่ออายุ · ใบแจ้งหนี้ · ชำระออนไลน์หรือโอน+สลิป · ใบเสร็จ/ใบกำกับภาษี' },
+    { id: 'addons', inHub: true, label: 'ส่วนเสริมของฉัน', icon: '🧩', href: '/pages/addons.html',
       description: 'เปิด/ปิดส่วนเสริมที่คิดเงินแยกจากแพ็กเกจ · ดูโควตาเอกสารเดือนนี้ · ซื้อโควตาเพิ่ม' },
-    { id: 'usage', label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
+    { id: 'usage', inHub: true, label: 'สถานะการใช้งาน', icon: '📊', href: '/pages/usage.html', _i18nKey: 'nav.usage',
       description: 'การใช้งานเทียบกับ limit · จำนวนเอกสาร · ผู้ใช้ · storage' },
     { id: 'audit', label: 'บันทึกกิจกรรม (Audit)', icon: '🔍', href: '/pages/audit.html', feature: 'AuditLog', _i18nKey: 'nav.audit',
       description: 'ประวัติทุก action ในระบบ · ใคร · เมื่อไหร่ · IP · เปลี่ยนอะไร' },
@@ -1796,7 +1800,7 @@ const Layout = {
         </select>
       </div>
       <nav class="sidebar-nav">
-        ${this.navItems.filter(item => (!item.id || this.hasMenuAccess(item.id))
+        ${this.navItems.filter(item => !item.inHub && (!item.id || this.hasMenuAccess(item.id))
             && (!item.adminOnly || this.myPermissions?.isOwnerOrAdmin === true)
             && (!item.platformAdmin || this.myPermissions?.isSystemAdmin === true)).map(item => this._renderNavItem(item)).join('')}
       </nav>
@@ -3951,3 +3955,8 @@ const Layout = {
     return true;
   },
 };
+
+// รอบ 224: `const Layout` ระดับสคริปต์ไม่กลายเป็น window.Layout ⇒ สคริปต์ร่วมที่เช็ก `window.Layout && …` (money-channel ·
+// booking-payment-admin · customer-notify · cms-site-context · ai-suggestion · documents) มองไม่เห็น Layout เลย —
+// dropdown "เติมจากบัญชี" ของเงินสดย่อยขึ้น "ยังไม่ได้เลือกบริษัท" ทั้งที่เลือกแล้ว · ผูกไว้ที่นี่ที่เดียว
+window.Layout = Layout;

@@ -109,6 +109,10 @@ public partial class CmsCommerceService
                 .Select(h => h.Date).ToListAsync();
             foreach (var d in rows) holidays.Add(DateOnly.FromDateTime(ThaiDate.CalendarDateUtc(d)));
         }
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q2): วันหยุด/วันปิดของเว็บ (ตั้งที่เวลาทำการของการจอง) ใช้กับวันรับของสินค้าตามสั่งด้วย — ชุดเดียวต่อเว็บ
+        var siteHoursJson = await _db.SiteBookingSettings.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted).Select(x => x.BookingHoursJson).FirstOrDefaultAsync();
+        holidays.UnionWith(BookingSiteHours.ClosedDates(siteHoursJson));
         var cutoff = cfg?.MtoCutoffHour is int h && h >= 0 && h <= 23 ? h : (int?)null;
         return (new ShopCalendar(MtoLeadTime.ParseClosedWeekdays(cfg?.MtoClosedWeekdays), holidays, cutoff), cfg);
     }
@@ -180,57 +184,28 @@ public partial class CmsCommerceService
         if (method == Accounting.Helpers.FulfillmentMethod.Delivery)
         {
             var weight = await CheckoutWeightKgAsync(companyId, lines);
-            var zones = await _db.SiteShippingZones.AsNoTracking()
-                .Include(z => z.Rates.Where(r => r.IsActive && !r.IsDeleted))
-                .Where(z => z.SiteId == siteId && z.CompanyId == companyId && z.IsActive && !z.IsDeleted)
-                .OrderBy(z => z.SortOrder)
-                .ToListAsync();
+            // รอบ 226: ตัวคิดค่าจัดส่งตัวเดียวของร้าน (Helpers/ShopDeliveryFee) — การจองที่เลือก "จัดส่ง" ใช้ตัวเดียวกัน · ผลเดิมทุกตัว
+            var zones = await ShopDeliveryFee.LoadZonesAsync(_db, companyId, siteId);
             var address = new CalculateShippingRequest
             {
                 CountryCode = req.CountryCode, Province = req.Province, PostalCode = req.PostalCode,
                 TotalWeightKg = weight, SubTotal = goodsAfterDiscount,
             };
-            foreach (var zone in zones.Where(z => CmsShippingService.ZoneMatchesAddress(z, address)))
-                foreach (var rate in zone.Rates.OrderBy(r => r.SortOrder))
+            var delivery = ShopDeliveryFee.Compute(zones, address, goodsAfterDiscount, weight, cfg?.FlatShippingRate, cfg?.FreeShippingThreshold,
+                flags.FreeShippingOverridesZones, couponFreeShip, req.ShippingRateId, flags.Pickup);
+            foreach (var o in delivery.Options)
+                quote.ShippingOptions.Add(new CheckoutShippingOption
                 {
-                    var q = ShippingFeeRules.Quote(new ShippingRateFacts(rate.RateType, rate.BaseRate, rate.PerKgRate,
-                        rate.FreeAboveAmount, rate.MinWeightKg, rate.MaxWeightKg), goodsAfterDiscount, weight);
-                    // B8 — เกณฑ์ส่งฟรีระดับร้านทับอัตราโซนเฉพาะเมื่อร้านเลือก (ค่าเริ่มต้น = เดิม)
-                    q = ShippingFeeRules.ApplyShopFreeThreshold(q, cfg?.FreeShippingThreshold, flags.FreeShippingOverridesZones, goodsAfterDiscount);
-                    if (!q.Applicable) continue;
-                    quote.ShippingOptions.Add(new CheckoutShippingOption
-                    {
-                        RateId = rate.Id, Name = rate.Name, ZoneName = zone.Name,
-                        // B7 — คูปองส่งฟรี ⇒ ทุกตัวเลือก 0 (ลูกค้าเห็นตรงกับยอดที่ถูกเก็บ)
-                        Fee = couponFreeShip ? 0m : q.Fee, IsFree = couponFreeShip || q.IsFree,
-                        EstimatedDeliveryDaysMin = rate.EstimatedDeliveryDaysMin, EstimatedDeliveryDaysMax = rate.EstimatedDeliveryDaysMax,
-                    });
-                }
-
-            if (quote.ShippingOptions.Count > 0)
+                    RateId = o.RateId, Name = o.Name, ZoneName = o.ZoneName, Fee = o.Fee, IsFree = o.IsFree,
+                    EstimatedDeliveryDaysMin = o.EtaDaysMin, EstimatedDeliveryDaysMax = o.EtaDaysMax,
+                });
+            if (delivery.Chosen != null)
             {
-                if (req.ShippingRateId is Guid rid)
-                    chosen = quote.ShippingOptions.FirstOrDefault(o => o.RateId == rid)
-                        ?? throw new BusinessRuleException("วิธีจัดส่งที่เลือกใช้กับที่อยู่/น้ำหนักนี้ไม่ได้ — เลือกใหม่", "SHIP-RATE");
-                else if (quote.ShippingOptions.Count == 1)
-                    chosen = quote.ShippingOptions[0];
-                if (chosen != null) { fee = chosen.Fee; quote.SelectedShippingRateId = chosen.RateId; }
-                else quote.Problem = "กรุณาเลือกวิธีจัดส่ง";
+                chosen = quote.ShippingOptions.First(o => o.RateId == delivery.Chosen.RateId);
+                quote.SelectedShippingRateId = chosen.RateId;
             }
-            else if (zones.Count > 0)
-            {
-                // โซนจำกัดพื้นที่ + ยังไม่กรอกที่อยู่ ⇒ บอกให้กรอก (ไม่ใช่ "ไม่มีวิธีส่ง") · กรอกแล้วไม่ตรง ⇒ บอกทางไปต่อ
-                var missingAddress = string.IsNullOrWhiteSpace(req.Province) || string.IsNullOrWhiteSpace(req.PostalCode);
-                quote.Problem = missingAddress && zones.Any(CmsShippingService.ZoneNeedsAddress)
-                    ? "กรุณากรอกจังหวัดและรหัสไปรษณีย์เพื่อคำนวณค่าจัดส่ง"
-                    : "ยังไม่มีวิธีจัดส่งสำหรับจังหวัด/รหัสไปรษณีย์นี้ — ตรวจการสะกด"
-                        + (flags.Pickup ? " หรือเลือกมารับเองที่ร้าน" : " หรือติดต่อร้านเพื่อสั่งทางอื่น");
-            }
-            else
-            {
-                // ร้านไม่ได้ตั้งโซน ⇒ ค่าส่งเหมาจ่าย/ส่งฟรีเมื่อครบยอดระดับร้าน
-                fee = couponFreeShip ? 0m : ShippingFeeRules.SiteFlatFee(cfg?.FlatShippingRate, cfg?.FreeShippingThreshold, goodsAfterDiscount);
-            }
+            fee = delivery.Fee;
+            if (delivery.Problem != null) quote.Problem = delivery.Problem;
             quote.FreeShippingByCoupon = couponFreeShip;
         }
         quote.ShippingFee = fee;
@@ -330,12 +305,8 @@ public partial class CmsCommerceService
             QuoteConversionEnabled = flags.QuoteConversion,
         };
         if (!flags.BankTransfer) return result;   // HasPaymentMethod = false · หน้าเว็บซ่อนกล่องโอน (ไม่ใช่ "ร้านยังไม่ตั้งบัญชี")
-        var gw = await _db.Set<SitePaymentGateway>()
-            .AsNoTracking()
-            .Where(g => g.CompanyId == companyId && g.SiteId == siteId
-                     && g.IsActive && !g.IsDeleted)
-            .OrderBy(g => g.SortOrder)
-            .FirstOrDefaultAsync();
+        // ฝ่ายค้านรอบ 228 S-1: ตัวอ่านเดียวของแถวบัญชีรับโอน (เดิมแถวแรกทุกชนิด — แถว Omise อาจชนะ ⇒ คนละบัญชีกับหน้าการจอง)
+        var gw = await SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, siteId).FirstOrDefaultAsync();
         if (gw == null) return result;
         result.PromptPayId = gw.PromptPayId;
         result.PromptPayQrUrl = gw.PromptPayQrUrl;

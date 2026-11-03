@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using Accounting.Data;
 using Accounting.Helpers;
+using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Cms;
 using Accounting.Models.Entities;
@@ -19,9 +20,13 @@ public class CmsSiteService : ICmsSiteService
     /// <summary>ด่าน "ที่พักหลายแห่ง" ของการ seed ที่พัก — ตัวเดียวกับ LodgingService.CreatePropertyAsync (รอบ 202 LW · ข้อ 118)</summary>
     private readonly IEntitlementService? _entitlement;
 
+    /// <summary>รอบ 229 (QUOTA_ADDON แพ็ก 2 · §C): ด่านจำนวนเว็บต่อบริษัท — ตัวเดียว IQuotaGate · null (เทสต์เดิม) = ไม่จำกัด (พฤติกรรมเดิม)</summary>
+    private readonly IQuotaGate? _quotaGate;
+
     public CmsSiteService(AccountingDbContext db, ILogger<CmsSiteService> logger, ICmsQuotaService? quota = null,
-        IEntitlementService? entitlement = null)
+        IEntitlementService? entitlement = null, IQuotaGate? quotaGate = null)
     {
+        _quotaGate = quotaGate;
         _quota = quota;
         _entitlement = entitlement;
         _db = db;
@@ -74,6 +79,19 @@ public class CmsSiteService : ICmsSiteService
         if (request.DefaultWarehouseId is Guid nw && nw != Guid.Empty
             && !await _db.Warehouses.AnyAsync(x => x.Id == nw && x.CompanyId == companyId && !x.IsDeleted))
             throw new BusinessRuleException("ไม่พบคลังที่เลือก หรือไม่ใช่คลังของบริษัทนี้", CmsDocumentBranch.RuleCode);
+
+        // รอบ 229 (QUOTA_ADDON แพ็ก 2 · §C · คำตัดสินข้อ 229-1/229-2): จำนวนเว็บต่อบริษัท — นับทุกสถานะที่ยังไม่ลบ · ตรวจใต้ล็อกธุรกรรมเดียวกับ insert
+        // (สองคำขอพร้อมกันได้แค่หนึ่ง) · เต็ม = บล็อกเฉพาะการสร้างเว็บใหม่ — เว็บเดิมออนไลน์และแก้ไขได้ตามปกติ ไม่ถูกปิด/ลบ
+        // ทางสร้าง Site มีที่นี่ที่เดียว (ล็อกด้วย tools/required_call_site_check.py ให้ทางใหม่ในอนาคตต้องผ่าน)
+        await using var quotaTx = _quotaGate != null && _db.Database.CurrentTransaction == null
+            ? await _db.Database.BeginTransactionAsync() : null;
+        if (_quotaGate != null)
+        {
+            await _quotaGate.LockAsync(companyId, QuotaResources.CmsSites);
+            var siteQuota = await _quotaGate.CheckAsync(companyId, QuotaResources.CmsSites, 1);
+            if (!siteQuota.Allowed)
+                throw new BusinessRuleException(siteQuota.BlockReason!, siteQuota.RuleCode, 409);
+        }
 
         var site = new Site
         {
@@ -135,6 +153,7 @@ public class CmsSiteService : ICmsSiteService
         });
 
         await _db.SaveChangesAsync();
+        if (quotaTx != null) await quotaTx.CommitAsync();
 
         // Optional: seed industry-specific starter pages so the customer
         // lands on a complete, working site instead of a blank canvas.
@@ -196,7 +215,7 @@ public class CmsSiteService : ICmsSiteService
         {
             try
             {
-                var seed = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId, _entitlement);
+                var seed = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId, _entitlement, request.LodgingRoomCount, _quotaGate);   // รอบ 228 Q4
                 if (seed.Property != null)
                 {
                     await _db.SaveChangesAsync();
@@ -629,7 +648,7 @@ public class CmsSiteService : ICmsSiteService
         // ต้องทำแม้ SeedPages=false ไม่งั้น /booking ของเว็บไม่มีอะไรให้จอง
         if (request.IndustryType == IndustryType.Hotel)
         {
-            var seed = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId, _entitlement);
+            var seed = await Cms.LodgingSeeder.SeedForSiteAsync(_db, companyId, site, userId, _entitlement, quotaGate: _quotaGate);
             result.LodgingSeeded = seed.Property != null;
             result.LodgingMessage = seed.Message;   // ข้อ 118: มีที่พักไม่ผูกอยู่แล้ว ⇒ เสนอผูก ไม่สร้างแห่งที่สอง
         }

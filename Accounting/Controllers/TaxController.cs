@@ -118,14 +118,16 @@ public class TaxController : ControllerBase
         return Ok(new ApiResponse<TaxReportResponse>(true, result, "สร้างรายงานภาษีใหม่สำเร็จ"));
     }
 
-    /// <summary>เอกสารงวดอื่นที่มี VAT และยังไม่ถูกใช้ในรายงานใด — สำหรับเลือกดึงเข้างวดนี้</summary>
+    /// <summary>เอกสารที่ดึงเข้างวดนี้ได้จริง (ตัวตัดสินเดียวกับตอนดึง) — แบ่งหน้า + Total ทั้งชุด + จำนวนใบต่อเดือน (รอบ 225) ·
+    /// <paramref name="side"/> = input | output | ว่าง (ทั้งหมด)</summary>
     [HttpGet("{reportId:guid}/pullable-documents")]
-    public async Task<ActionResult<ApiResponse<List<PullableDocumentDto>>>> GetPullableDocuments(
+    public async Task<ActionResult<ApiResponse<PullableDocumentListResponse>>> GetPullableDocuments(
         Guid companyId, Guid reportId,
-        [FromQuery] string? search = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null)
+        [FromQuery] string? search = null, [FromQuery] DateTime? fromDate = null, [FromQuery] DateTime? toDate = null,
+        [FromQuery] string? side = null, [FromQuery] int offset = 0, [FromQuery] int limit = 200)
     {
-        var result = await _taxService.GetPullableDocumentsAsync(companyId, reportId, search, fromDate, toDate);
-        return Ok(new ApiResponse<List<PullableDocumentDto>>(true, result));
+        var result = await _taxService.GetPullableDocumentsAsync(companyId, reportId, search, fromDate, toDate, side, offset, limit);
+        return Ok(new ApiResponse<PullableDocumentListResponse>(true, result));
     }
 
     /// <summary>ดึงเอกสารเก่าเข้ารายงานภาษีงวดนี้เป็นบรรทัดใหม่</summary>
@@ -136,7 +138,9 @@ public class TaxController : ControllerBase
         if (await RequireTaxAsync(companyId, "ดึงเอกสารเข้ารายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
         try
         {
-            var result = await _taxService.PullDocumentIntoReportAsync(companyId, reportId, request.DocumentId);
+            var result = await _taxService.PullDocumentIntoReportAsync(companyId, reportId, request.DocumentId,
+                actorId: Helpers.JwtHelper.GetUserIdFromClaims(User),
+                actorEmail: User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value);
             return Ok(new ApiResponse<TaxReportResponse>(true, result, "ดึงเอกสารเข้ารายงานสำเร็จ"));
         }
         catch (Exception ex) when (ex is not KeyNotFoundException and not InvalidOperationException
@@ -148,6 +152,33 @@ public class TaxController : ControllerBase
             throw new InvalidOperationException(
                 $"ดึงเอกสารเข้ารายงานไม่สำเร็จ: {ex.Message} — แจ้งทีมงานพร้อมเลขเอกสารได้เลย");
         }
+    }
+
+    /// <summary>ดึงหลายใบเข้ารายงาน ภ.พ.30 ในครั้งเดียว (รอบ 225) — partial: ใบที่ผ่านด่านเดียวกับดึงทีละใบเข้าในธุรกรรมเดียว ·
+    /// ใบที่ไม่ผ่านคืนเหตุผลไทย + RuleCode รายใบ · ส่งซ้ำไม่เกิดบรรทัดซ้ำ · ≤ 500 ใบต่อครั้ง</summary>
+    [HttpPost("{reportId:guid}/pull-documents")]
+    public async Task<ActionResult<ApiResponse<PullDocumentsResult>>> PullDocuments(
+        Guid companyId, Guid reportId, [FromBody] PullDocumentsRequest request)
+    {
+        if (await RequireTaxAsync(companyId, "ดึงเอกสารเข้ารายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
+        var result = await _taxService.PullDocumentsIntoReportAsync(companyId, reportId, request?.DocumentIds ?? new List<Guid>(),
+            actorId: Helpers.JwtHelper.GetUserIdFromClaims(User),
+            actorEmail: User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value);
+        var msg = result.SkippedCount == 0
+            ? $"ดึงเข้ารายงานแล้ว {result.AddedCount:N0} รายการ"
+            : $"ดึงเข้ารายงานแล้ว {result.AddedCount:N0} รายการ · ข้าม {result.SkippedCount:N0} รายการ";
+        return Ok(new ApiResponse<PullDocumentsResult>(true, result, msg));
+    }
+
+    /// <summary>ตรวจรายงาน ภ.พ.30 ร่างที่มีบรรทัด "ดึงเข้างวด" ซึ่งตอนนี้ไม่ผ่านด่านดึง (เช่น ใบรับรองแทนใบเสร็จที่เคยดึงเป็นฝั่งขาย ·
+    /// ภาษีขายย้อนเดือน · ใบแจ้งหนี้ที่ใบกำกับเป็นเจ้าของ VAT) — รอบ 225 S3 · อ่านอย่างเดียว ไม่แก้รายงาน</summary>
+    [HttpGet("pulled-lines/ineligible")]
+    public async Task<ActionResult<ApiResponse<List<IneligiblePulledLineDto>>>> FindIneligiblePulledLines(Guid companyId)
+    {
+        if (await RequireTaxAsync(companyId, "ดูรายงานภาษี", PermissionKeys.TaxFile) is { } deny) return deny;
+        var result = await _taxService.FindIneligiblePulledLinesAsync(companyId);
+        return Ok(new ApiResponse<List<IneligiblePulledLineDto>>(true, result,
+            result.Count == 0 ? "ไม่พบบรรทัดดึงที่ไม่ผ่านด่าน" : $"พบ {result.Count} บรรทัดที่ควรตรวจ"));
     }
 
     /// <summary>ส่งออกรายงานภาษีเป็นไฟล์ Excel (.xlsx)</summary>

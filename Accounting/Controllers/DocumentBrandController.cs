@@ -252,7 +252,8 @@ public class DocumentBrandController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         // ลบไฟล์เก่าหลังบันทึกสำเร็จเท่านั้น — ลบก่อนแล้วอัปโหลดพังคือเสียของเดิมฟรี
-        try { if (!string.IsNullOrEmpty(oldPath) && oldPath != b.LogoPath && System.IO.File.Exists(oldPath)) System.IO.File.Delete(oldPath); }
+        // ผ่านที่เก็บกลางตัวเดียวกับที่ ImageProcessingService เขียน (Local/S3 · ทีม FS 2026-11-02)
+        try { if (!string.IsNullOrEmpty(oldPath) && oldPath != b.LogoPath && _images.Storage is { } storage) await storage.DeleteAsync(oldPath, ct); }
         catch { /* ไฟล์เก่าหาย/ถูกล็อก — ไม่ใช่เหตุให้การอัปโหลดล้ม */ }
 
         await _db.Entry(b).Reference(x => x.AddressSourceBranch).LoadAsync(ct);

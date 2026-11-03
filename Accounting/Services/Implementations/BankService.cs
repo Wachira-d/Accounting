@@ -197,10 +197,21 @@ public partial class BankService : IBankService
 
     public async Task<List<BankAccountResponse>> GetBankAccountsAsync(Guid companyId, bool activeOnly = false)
     {
-        var accounts = await _db.Set<BankAccount>()
-            .Include(a => a.LinkedAccount)
+        // 2026-11-02 (PETTY_CASH_AUDIT ส่วน A): รายการนี้เป็นตัวเลือกของทุกหน้าที่เคลื่อนเงิน (MoneyChannel.fill) — อ่านเฉพาะคอลัมน์ที่ใช้
+        // (AsNoTracking + projection) แทนโหลดทั้ง entity + Include ผังทั้งแถว ⇒ คอลัมน์ใหม่ของ BankAccounts/ChartOfAccounts ที่ฐานเดิมยังไม่มี
+        // (ฐาน production ได้คอลัมน์จาก DatabaseMigrationHelper ไม่ใช่ EnsureCreated แบบฐานเทสต์) ไม่ทำให้ตัวเลือกทุกหน้าล้มทั้งชุด ·
+        // ผังที่ผูกถูกลบ/ไม่ใช่ของบริษัทนี้ = แสดงเหมือน "ยังไม่ผูก" (ไม่โยน)
+        var accounts = await _db.Set<BankAccount>().AsNoTracking()
             .Where(a => a.CompanyId == companyId && !a.IsDeleted && (!activeOnly || a.IsActive))
             .OrderBy(a => a.AccountName)
+            .Select(a => new
+            {
+                a.Id, a.AccountName, a.BankName, a.AccountNumber, a.BranchName, a.AccountType, a.Currency,
+                a.CurrentBalance, a.LinkedAccountId, a.IsActive,
+                a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt,
+                LinkedCode = a.LinkedAccount != null && a.LinkedAccount.CompanyId == companyId ? a.LinkedAccount.AccountCode : null,
+                LinkedName = a.LinkedAccount != null && a.LinkedAccount.CompanyId == companyId ? a.LinkedAccount.AccountName : null,
+            })
             .ToListAsync();
 
         // Compute live balance from posted journal entries for each linked COA account.
@@ -235,7 +246,7 @@ public partial class BankService : IBankService
             return new BankAccountResponse(
                 a.Id, a.AccountName, a.BankName, a.AccountNumber,
                 a.BranchName, a.AccountType, a.Currency, displayBalance,
-                a.LinkedAccountId, a.LinkedAccount?.AccountCode, a.LinkedAccount?.AccountName,
+                a.LinkedAccountId, a.LinkedCode, a.LinkedName,
                 a.IsActive,
                 a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt,
                 bookBalance,

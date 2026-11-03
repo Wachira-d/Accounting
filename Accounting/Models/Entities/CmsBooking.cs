@@ -61,6 +61,11 @@ public class SiteBookingService : TenantEntity
     public decimal? DepositMaxAmount { get; set; }
     /// <summary>รอบ 218: ต้องชำระภายในกี่นาทีหลังจอง · null = ตามค่าเว็บ · 0 = ไม่กำหนด</summary>
     public int? PaymentDeadlineMinutes { get; set; }
+    /// <summary>รอบ 226: จัดส่ง/รับเองรายบริการ · null = ตามค่าเว็บ (<see cref="SiteBookingSettings.FulfillmentDeliveryEnabled"/> ฯลฯ) ·
+    /// ตัวตัดสินเดียว <c>Helpers/BookingFulfillment.Resolve</c></summary>
+    public bool? FulfillmentDeliveryEnabled { get; set; }
+    public bool? FulfillmentPickupEnabled { get; set; }
+    public string? FulfillmentDefault { get; set; }
 
     // Pricing
     public decimal Price { get; set; }
@@ -176,6 +181,8 @@ public class SiteBooking : TenantEntity
     public ErpBookingDocumentType? ErpDocumentType { get; set; }
 
     public string? CustomerNotes { get; set; }
+    /// <summary>รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเองบนฟอร์มจอง (JSON ป้าย+ค่า ณ ตอนจอง — <c>CustomFormFields.ParseAnswers</c>) · null = ไม่มี/การจองก่อนรอบ 222</summary>
+    public string? CustomFieldsJson { get; set; }
     public string? InternalNotes { get; set; }
     public string? CancellationReason { get; set; }
 
@@ -219,6 +226,22 @@ public class SiteBooking : TenantEntity
     /// <summary>เหตุผลที่ร้านปฏิเสธสลิปครั้งล่าสุด (ลูกค้าเห็นตรง ๆ) · ล้างเมื่อแนบใหม่</summary>
     public string? SlipRejectedReason { get; set; }
     public DateTime? SlipRejectedAt { get; set; }
+
+    /// <summary>รอบ 226 (ฝ่ายค้าน ข้อ 1): ชนิดบริการ <b>ตรึง ณ ตอนจอง</b> — เส้นเอกสาร/เงินของการจองที่มีอยู่อ่านช่องนี้ (ไม่ใช่ชนิดปัจจุบันของบริการ) ⇒
+    /// เปลี่ยนชนิดบริการแล้วมีผลกับการจองใหม่เท่านั้น · แถวเดิม backfill จากบริการใน <c>BookingFulfillmentMigration</c></summary>
+    public BookingType BookingType { get; set; } = BookingType.Lead;
+
+    // ── รอบ 226: จัดส่ง / รับเอง (Helpers/BookingFulfillment) — ตรึง ณ ตอนจอง · ค่าส่งคิดที่เซิร์ฟเวอร์ (Helpers/ShopDeliveryFee) ──
+    /// <summary>"delivery"/"pickup" · null = บริการไม่มีขั้นนี้ (การจองนัดหมายแบบเดิม)</summary>
+    public string? FulfillmentMethod { get; set; }
+    /// <summary>ค่าจัดส่ง (รวม VAT ตามราคาของร้าน) — แยกจาก <see cref="TotalAmount"/> (= ค่าบริการ) · ยอดรวมที่ลูกค้าจ่าย = TotalAmount + DeliveryFee</summary>
+    public decimal DeliveryFee { get; set; }
+    public string? DeliveryAddress { get; set; }
+    public string? DeliveryProvince { get; set; }
+    public string? DeliveryPostalCode { get; set; }
+    /// <summary>อัตราค่าส่งที่ใช้ (<c>SiteShippingRate</c>) · null = ค่าส่งเหมาจ่ายของร้าน/รับเอง</summary>
+    public Guid? DeliveryRateId { get; set; }
+    public string? DeliveryRateName { get; set; }
 
     public ICollection<SiteBookingPayment> Payments { get; set; } = new List<SiteBookingPayment>();
 }

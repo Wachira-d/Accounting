@@ -46,9 +46,7 @@ public partial class StorefrontCustomerService : IStorefrontCustomerService
     /// <summary>พร้อมเพย์ของเว็บ (ช่องทางชำระตัวแรกที่เปิด — ตัวเดียวกับ <c>GetStorefrontPaymentOptionsAsync</c>) · รูปแบบผิด ⇒ null</summary>
     private async Task<string?> PromptPayIdAsync(Guid companyId, Guid siteId)
     {
-        var id = await _db.Set<SitePaymentGateway>().AsNoTracking()
-            .Where(g => g.CompanyId == companyId && g.SiteId == siteId && g.IsActive && !g.IsDeleted)
-            .OrderBy(g => g.SortOrder)
+        var id = await Accounting.Helpers.SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, siteId)   // รอบ 228 S-1
             .Select(g => g.PromptPayId).FirstOrDefaultAsync();
         return !string.IsNullOrWhiteSpace(id) && _promptPay.ValidatePromptPayId(id) ? id : null;
     }
@@ -83,7 +81,7 @@ public partial class StorefrontCustomerService : IStorefrontCustomerService
                           orderby b.BookingDate descending, b.StartTime descending
                           select new { b.BookingNumber, s.Name, b.BookingDate, b.StartTime, b.EndTime, b.Status, b.PublicToken,
                               // รอบ 218: ป้ายการชำระล่วงหน้า (ตัวตัดสินเดียว BookingPaymentPolicy.StatusLabel)
-                              s.BookingType, b.DepositAmount, b.PaidAmount, b.PaymentHoldUntil, b.SlipRejectedReason,
+                              b.BookingType, b.DepositAmount, b.PaidAmount, b.PaymentHoldUntil, b.SlipRejectedReason,
                               SlipPending = b.SlipUploadedAt != null && b.SlipAttachmentId != null })
             .Take(100).ToListAsync();
         return rows.Select(b => new StorefrontMyBookingItem

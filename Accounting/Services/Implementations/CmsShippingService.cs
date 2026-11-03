@@ -25,7 +25,7 @@ public class CmsShippingService : ICmsShippingService
             CompanyId = companyId, SiteId = siteId,
             Name = request.Name, Description = request.Description,
             CountryCodes = request.CountryCodes, Provinces = request.Provinces,
-            PostalCodePatterns = request.PostalCodePatterns,
+            PostalCodePatterns = request.PostalCodePatterns, StopWhenMatched = request.StopWhenMatched,
             SortOrder = request.SortOrder, CreatedBy = userId
         };
         _db.SiteShippingZones.Add(zone);
@@ -48,7 +48,7 @@ public class CmsShippingService : ICmsShippingService
             }
         }
         await _db.SaveChangesAsync();
-        return await GetZoneResponseAsync(zone.Id);
+        return await WithZoneOrderWarningAsync(companyId, siteId, await GetZoneResponseAsync(zone.Id));
     }
 
     public async Task<ShippingZoneResponse> UpdateZoneAsync(Guid companyId, Guid siteId, Guid zoneId, CreateShippingZoneRequest request, string userId)
@@ -61,23 +61,35 @@ public class CmsShippingService : ICmsShippingService
         zone.CountryCodes = request.CountryCodes;
         zone.Provinces = request.Provinces;
         zone.PostalCodePatterns = request.PostalCodePatterns;
+        zone.StopWhenMatched = request.StopWhenMatched;
         zone.SortOrder = request.SortOrder;
         zone.UpdatedBy = userId;
 
         await _db.SaveChangesAsync();
-        return await GetZoneResponseAsync(zoneId);
+        return await WithZoneOrderWarningAsync(companyId, siteId, await GetZoneResponseAsync(zoneId));
+    }
+
+    /// <summary>รอบ 228 (ฝ่ายค้าน S4): โซน "ชนะโซนถัดไป" ที่ลำดับซ้ำกับโซนอื่น ⇒ คำเตือนบนคำตอบ (บันทึกแล้ว · ลำดับจริงตามวันสร้าง)</summary>
+    private async Task<ShippingZoneResponse> WithZoneOrderWarningAsync(Guid companyId, Guid siteId, ShippingZoneResponse r)
+    {
+        if (!r.StopWhenMatched) return r;
+        var others = await _db.SiteShippingZones.AsNoTracking()
+            .Where(z => z.SiteId == siteId && z.CompanyId == companyId && !z.IsDeleted && z.IsActive && z.Id != r.Id)
+            .Select(z => z.SortOrder).ToListAsync();
+        r.Warning = Accounting.Helpers.ShopDeliveryFee.StopZoneOrderWarning(true, r.SortOrder, others);
+        return r;
     }
 
     public async Task<List<ShippingZoneResponse>> GetZonesAsync(Guid companyId, Guid siteId)
     {
         return await _db.SiteShippingZones.AsNoTracking()
             .Where(z => z.SiteId == siteId && z.CompanyId == companyId && !z.IsDeleted)
-            .OrderBy(z => z.SortOrder)
+            .OrderBy(z => z.SortOrder).ThenBy(z => z.CreatedAt).ThenBy(z => z.Id)
             .Select(z => new ShippingZoneResponse
             {
                 Id = z.Id, Name = z.Name, Description = z.Description,
                 CountryCodes = z.CountryCodes, Provinces = z.Provinces,
-                PostalCodePatterns = z.PostalCodePatterns,
+                PostalCodePatterns = z.PostalCodePatterns, StopWhenMatched = z.StopWhenMatched,
                 IsActive = z.IsActive, SortOrder = z.SortOrder,
                 // รอบ 209 P2: อัตราที่ลบแล้วไม่ขึ้นในหน้าตั้งค่า · echo น้ำหนักต่ำ/สูงสุดที่รับไว้ (กฎเหล็ก #4 A — เดิมเก็บแต่ไม่ส่งกลับ)
                 Rates = z.Rates.Where(r => !r.IsDeleted).OrderBy(r => r.SortOrder).Select(r => new ShippingRateResponse
@@ -99,6 +111,9 @@ public class CmsShippingService : ICmsShippingService
         if (zone == null) return false;
         zone.IsActive = false;
         zone.IsDeleted = true;
+        // รอบ 228 (รีวิว A–C · Q3): สภาพค่าส่งเปลี่ยน ⇒ การยืนยัน "ส่งฟรีจริง" เดิมหมดผล (ถ้ากลับเป็นส่งฟรีต้องยืนยันใหม่)
+        var cfg = await _db.SiteCommerceConfigs.FirstOrDefaultAsync(c => c.SiteId == siteId && c.CompanyId == companyId);
+        if (cfg != null) cfg.FreeDeliveryConfirmed = false;
         await _db.SaveChangesAsync();
         return true;
     }
@@ -163,13 +178,14 @@ public class CmsShippingService : ICmsShippingService
         var zones = await _db.SiteShippingZones.AsNoTracking()
             .Include(z => z.Rates.Where(r => r.IsActive))
             .Where(z => z.SiteId == siteId && z.CompanyId == companyId && z.IsActive)
-            .OrderBy(z => z.SortOrder)
+            .OrderBy(z => z.SortOrder).ThenBy(z => z.CreatedAt).ThenBy(z => z.Id)   // รอบ 228 S4: ลำดับตายตัว (ตัวเดียวกับ ShopDeliveryFee.LoadZonesAsync)
             .ToListAsync();
 
         var options = new List<ShippingOptionResponse>();
-        foreach (var zone in zones)
+        // รอบ 228: ตัวจับคู่เดียวกับตอนสั่ง/จอง (ShopDeliveryFee.MatchingZones — โซน "ชนะโซนถัดไป")
+        foreach (var zone in Accounting.Helpers.ShopDeliveryFee.MatchingZones(zones, request))
         {
-            if (!ZoneMatchesAddress(zone, request)) continue;
+            var produced = 0;
 
             foreach (var rate in zone.Rates.OrderBy(r => r.SortOrder))
             {
@@ -188,7 +204,9 @@ public class CmsShippingService : ICmsShippingService
                     EstimatedDeliveryDaysMin = rate.EstimatedDeliveryDaysMin,
                     EstimatedDeliveryDaysMax = rate.EstimatedDeliveryDaysMax
                 });
+                produced++;
             }
+            if (Accounting.Helpers.ShopDeliveryFee.StopsAfter(zone, produced)) break;   // รอบ 228 S5
         }
 
         return options.OrderBy(o => o.Cost).ToList();
@@ -251,7 +269,7 @@ public class CmsShippingService : ICmsShippingService
         {
             Id = z.Id, Name = z.Name, Description = z.Description,
             CountryCodes = z.CountryCodes, Provinces = z.Provinces,
-            PostalCodePatterns = z.PostalCodePatterns,
+            PostalCodePatterns = z.PostalCodePatterns, StopWhenMatched = z.StopWhenMatched,
             IsActive = z.IsActive, SortOrder = z.SortOrder,
             Rates = z.Rates.Where(r => !r.IsDeleted).OrderBy(r => r.SortOrder).Select(MapRateResponse).ToList()
         };

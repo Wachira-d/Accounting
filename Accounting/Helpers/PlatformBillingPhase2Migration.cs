@@ -53,5 +53,8 @@ public static class PlatformBillingPhase2Migration
         """CREATE INDEX IF NOT EXISTS "IX_PlatformBillingNotices_Buyer_CreatedAt" ON "PlatformBillingNotices" ("BuyerCompanyId", "CreatedAt");""",
         """CREATE TABLE IF NOT EXISTS "PlatformDunningStates" ("Id" uuid PRIMARY KEY, "CompanyId" uuid NOT NULL, "LastEvaluatedAt" timestamp without time zone NULL, "OverdueAmount" numeric(18,2) NOT NULL DEFAULT 0, "OldestOverdueDueDate" timestamp without time zone NULL, "SuspendedByDunningAt" timestamp without time zone NULL, "StatusBeforeSuspend" integer NULL, "WouldSuspendSince" timestamp without time zone NULL, "SuspendExemptUntil" timestamp without time zone NULL, "LastAction" varchar(300) NULL, "CreatedAt" timestamp without time zone NOT NULL DEFAULT (now() at time zone 'utc'), "UpdatedAt" timestamp without time zone NULL, "CreatedBy" text NULL, "UpdatedBy" text NULL, "IsDeleted" boolean NOT NULL DEFAULT false);""",
         """CREATE UNIQUE INDEX IF NOT EXISTS "UX_PlatformDunningStates_Company" ON "PlatformDunningStates" ("CompanyId");""",
+        // ── รอบ 227 (PLATFORM_OMISE_AUDIT C-3): ใบเสร็จ/ใบกำกับของค่าส่วนเสริมที่จ่ายล่วงหน้า (เดิมไม่มีเอกสารเลย) ──
+        """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentReceiptDocumentId" uuid NULL;""",
+        """ALTER TABLE "CompanyFeatures" ADD COLUMN IF NOT EXISTS "PaymentReceiptNumber" varchar(50) NULL;""",
     };
 }

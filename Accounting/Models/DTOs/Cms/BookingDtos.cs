@@ -56,6 +56,15 @@ public class CreateBookingServiceRequest
     public decimal? DepositMinAmount { get; set; }
     public decimal? DepositMaxAmount { get; set; }
     public int? PaymentDeadlineMinutes { get; set; }
+    /// <summary>รอบ 226: จัดส่ง/รับเองของบริการ — "Inherit" = ตามค่าเว็บ · "Custom" = ใช้สามช่องถัดไป · <b>null = ไม่แตะทั้งชุด</b> (ผู้เรียก API เดิม)</summary>
+    public string? FulfillmentMode { get; set; }
+    public bool FulfillmentDeliveryEnabled { get; set; }
+    public bool FulfillmentPickupEnabled { get; set; }
+    /// <summary>"delivery"/"pickup"/null</summary>
+    public string? FulfillmentDefault { get; set; }
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q1): คำตอบ "ลูกค้าต้องจ่ายก่อนไหม" (AtShop/PayFirst/ShopConfirms) ⇒ ระบบเลือกชนิดเอกสาร ·
+    /// null = ใช้ <see cref="BookingType"/> ตรง (ขั้นสูง — ผู้ทำบัญชี / ผู้เรียก API เดิม) — ตัวตัดสิน <c>Helpers/BookingPayFirst</c></summary>
+    public string? PayFirst { get; set; }
     /// <summary>เวลาทำการ + วันหยุด — <b>null = ไม่แตะตารางเวลาเดิม</b> (ผู้เรียก API เดิม) · ส่งมา = แทนที่ทั้งชุด</summary>
     public BookingScheduleDto? Schedule { get; set; }
 }
@@ -100,6 +109,8 @@ public class BookingSiteSettingsDto
     /// <summary>ช่องบังคับของฟอร์มจอง (<c>BookingFormFields</c>)</summary>
     public BookingFormFieldsConfig? FormFields { get; set; }
     public List<BookingFormFields.FieldOption> FormFieldOptions { get; set; } = new();
+    /// <summary>รอบ 222: ชนิดช่องที่เจ้าของเพิ่มเองได้ + ป้ายไทย (<c>CustomFormFields.TypeOptions</c>) — หน้าตั้งค่าแสดงตรง</summary>
+    public List<CustomFormFields.TypeOption> CustomFieldTypeOptions { get; set; } = new();
     /// <summary>เอกสารตอนให้บริการเสร็จ (บริการแบบนัดหมาย/Lead ที่มียอด)</summary>
     public BookingCompletionDocument? CompletionDocument { get; set; }
     public List<BookingDocumentFlow.Option> CompletionDocumentOptions { get; set; } = new();
@@ -204,6 +215,8 @@ public class BookingServicePresetResponse
     public string Label { get; set; } = "";
     public string? Description { get; set; }
     public List<CreateBookingServiceRequest> Services { get; set; } = new();
+    /// <summary>รอบ 228: แม่แบบนี้ตั้งค่าเว็บทั้งชุดได้ (ปุ่ม "ตั้งค่าเว็บทั้งชุด") — สรุปสิ่งที่จะทำ · null = เติมฟอร์มบริการอย่างเดียว</summary>
+    public string? SiteSetupSummary { get; set; }
 }
 
 public class UpdateBookingServiceRequest : CreateBookingServiceRequest
@@ -263,6 +276,8 @@ public class BookingServiceResponse
     public BookingResourceMode EffectiveResourceMode { get; set; }
     /// <summary>รอบ 207: ช่องบังคับ/ซ่อนของฟอร์มจอง (ค่าของไซต์) — หน้าจองแสดงตาม · ด่านจริงอยู่ที่เซิร์ฟเวอร์</summary>
     public BookingFormFieldsConfig FormFields { get; set; } = BookingFormFields.Default;
+    /// <summary>รอบ 222: ช่องที่เจ้าของเพิ่มเองที่ลูกค้าเห็นบนฟอร์มจองบริการนี้ (server กรองขอบเขตบริการ + ช่องซ่อนแล้ว — <c>BookingFormFields.FieldsForService</c>)</summary>
+    public List<BookingCustomField> CustomFields { get; set; } = new();
     /// <summary>ผู้ให้บริการที่ทำบริการนี้ได้ (เปิดใช้อยู่) — ลูกค้าเลือกเมื่อโหมด "บังคับระบุ"/"ลูกค้าเลือก"</summary>
     public List<BookingResourceBrief> Resources { get; set; } = new();
     public BookingScheduleDto Schedule { get; set; } = new();
@@ -281,6 +296,15 @@ public class BookingServiceResponse
     public int? PaymentDeadlineMinutes { get; set; }
     public string? PaymentSummary { get; set; }
     public string? PaymentProblem { get; set; }
+    /// <summary>รอบ 226: "Inherit"/"Custom" + ค่าที่ตั้งบนบริการ (hydrate ฟอร์ม) · ผลที่มีจริง (<c>BookingFulfillment.Resolve</c>)</summary>
+    public string FulfillmentMode { get; set; } = "Inherit";
+    public bool? FulfillmentDeliveryEnabled { get; set; }
+    public bool? FulfillmentPickupEnabled { get; set; }
+    public string? FulfillmentDefault { get; set; }
+    public string? FulfillmentSummary { get; set; }
+    /// <summary>รอบ 228 (แพ็ก D): คำตอบ "ลูกค้าต้องจ่ายก่อนไหม" ของชนิดที่ตั้งไว้ (null = ชนิดขั้นสูง) + คำเตือนมัดจำที่ไม่ถูกเก็บ</summary>
+    public string? PayFirst { get; set; }
+    public string? PayFirstWarning { get; set; }
     public bool IsActive { get; set; }
     public int UpcomingBookingsCount { get; set; }
     public DateTime CreatedAt { get; set; }
@@ -336,6 +360,8 @@ public class CreateBookingRequest
     /// <summary>ผู้ให้บริการที่ลูกค้าเลือก (โหมดบังคับระบุ/ลูกค้าเลือก) · โหมดระบบจัดให้ ⇒ ไม่ใช้ค่านี้</summary>
     public Guid? ResourceId { get; set; }
     public string? CustomerNotes { get; set; }
+    /// <summary>รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเอง (key → ค่า · ช่องติ๊ก = "true") — ด่าน <c>BookingFormFields.CheckCustom</c></summary>
+    public Dictionary<string, string?>? CustomFields { get; set; }
 
     // Payment info
     public Guid? PaymentGatewayId { get; set; }
@@ -369,6 +395,15 @@ public class CreateBookingRequest
     /// <summary>รอบ 216 ฝ่ายค้าน S3: หน้าเว็บยืนยันว่าชื่อ/เบอร์/อีเมลมาจากโปรไฟล์ (ผู้ใช้ไม่ได้ลบ/แก้เอง) ⇒ เซิร์ฟเวอร์เติมช่องที่ว่างจากโปรไฟล์ได้ ·
     /// มีผลเฉพาะสมาชิกในโทเคนของเว็บนี้ (controller ตัดเป็น false สำหรับพนักงาน/แขก/ผู้เรียก API) · false = ไม่เติม (ช่องบังคับว่าง ⇒ ข้อความปกติ)</summary>
     public bool ContactFromProfile { get; set; }
+
+    // ── รอบ 226: จัดส่ง / รับเอง (Helpers/BookingFulfillment) — ค่าส่งคิดที่เซิร์ฟเวอร์ (ไม่มีช่องยอดจาก client) ──
+    /// <summary>"delivery"/"pickup" · ว่าง = วิธีเดียวที่เปิด/ค่าตั้งต้น · บริการไม่มีขั้นนี้ = ต้องว่าง</summary>
+    public string? FulfillmentMethod { get; set; }
+    public string? DeliveryAddress { get; set; }
+    public string? DeliveryProvince { get; set; }
+    public string? DeliveryPostalCode { get; set; }
+    /// <summary>อัตราค่าส่งที่ลูกค้าเลือก (เมื่อมีหลายอัตรา) — ตรวจกับตัวเลือกที่เซิร์ฟเวอร์คิดเอง</summary>
+    public Guid? DeliveryRateId { get; set; }
 }
 
 public class UpdateBookingStatusRequest
@@ -412,11 +447,28 @@ public class BookingResponse
     public decimal TotalAmount { get; set; }
     public decimal DepositAmount { get; set; }
     public decimal PaidAmount { get; set; }
+    /// <summary>รอบ 226: วิธีรับ ("delivery"/"pickup"/null) + ป้าย · ค่าจัดส่ง (แยกจาก TotalAmount = ค่าบริการ) · ยอดรวมที่ลูกค้าจ่าย</summary>
+    public string? FulfillmentMethod { get; set; }
+    public string? FulfillmentLabel { get; set; }
+    public decimal DeliveryFee { get; set; }
+    public decimal GrandTotal { get; set; }
+    public string? DeliveryAddress { get; set; }
+    public string? DeliveryProvince { get; set; }
+    public string? DeliveryPostalCode { get; set; }
+    public string? DeliveryRateName { get; set; }
+    /// <summary>บรรทัดสรุปวิธีรับ (ใบยืนยัน/หน้าพนักงาน) — <c>BookingFulfillment.SummaryLine</c> · รับเอง = ที่อยู่/เวลารับจากค่าตั้งเว็บ</summary>
+    public string? FulfillmentSummary { get; set; }
+    public string? PickupNote { get; set; }
     public string Currency { get; set; } = "THB";
     public BookingType BookingType { get; set; }
     public ErpBookingDocumentType? ErpDocumentType { get; set; }
     public Guid? ErpDocumentId { get; set; }
     public string? CustomerNotes { get; set; }
+    /// <summary>รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเอง ณ ตอนจอง (ป้าย+ค่าที่ตรึงไว้ — <c>CustomFormFields.ParseAnswers</c>)</summary>
+    public List<CustomFormAnswer> CustomFields { get; set; } = new();
+    /// <summary>JSON ดิบจาก query (EF แปลงฟังก์ชันใน projection ไม่ได้) — ไม่ส่งออก</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? CustomFieldsRaw { get; set; }
     public string? InternalNotes { get; set; }
     public DateTime? ConfirmedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
@@ -456,6 +508,9 @@ public class BookingResponse
     public bool CanCancelOnline { get; set; }
     /// <summary>ลูกค้าเลื่อนนัดเองได้ (ในหน้าต่างยกเลิกฟรี · รอบ 206)</summary>
     public bool CanRescheduleOnline { get; set; }
+    /// <summary>รอบ 228: ลูกค้าเปลี่ยนวิธีรับ/ที่อยู่เองได้ตอนนี้ (หน้าต่างจากค่าตั้งเว็บ — <c>BookingFulfillmentChange.Window</c>) · ข้อความกำหนดเวลา/เหตุที่ปิด</summary>
+    public bool CanChangeFulfillmentOnline { get; set; }
+    public string? FulfillmentChangeNote { get; set; }
     public DateTime? PaidAt { get; set; }
     public string? PaymentReference { get; set; }
     /// <summary>เตือนก่อนนัดส่งถึงจริงล่าสุดเมื่อไร (UTC) · null = ยังไม่ส่ง</summary>
@@ -620,6 +675,8 @@ public record IssueBookingTaxInvoiceRequest(DateTime? ReceivedDate);
 
 public class BookingListResponse
 {
+    /// <summary>รอบ 226: วิธีรับ (ป้าย) — ว่าง = การจองไม่มีขั้นจัดส่ง/รับเอง</summary>
+    public string? FulfillmentLabel { get; set; }
     public Guid Id { get; set; }
     /// <summary>R-45 มุมมองทุกไซต์ — เว็บเจ้าของแถว (ปุ่ม action ต้องยิงไปเว็บนี้)</summary>
     public Guid SiteId { get; set; }

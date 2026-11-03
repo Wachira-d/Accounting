@@ -151,6 +151,8 @@ public class LodgingPropertyDto
     public string? PublicBookingMessage { get; set; }
     /// <summary>ทางแก้ (null เมื่อพร้อมแล้ว)</summary>
     public string? PublicBookingFix { get; set; }
+    /// <summary>รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก A): เว็บที่ผูกไม่มีบัญชีรับโอน/พร้อมเพย์ทั้งที่แขกต้องชำระ — <c>SiteTransferAccount.LodgingWarning</c> · response-only</summary>
+    public string? TransferAccountWarning { get; set; }
     /// <summary>เว็บประเภทที่พักที่ผูกด่วนได้ (เฉพาะสถานะไม่ผูก/เว็บหาย · ไม่รวมเว็บที่ผูกกับที่พักอื่น) — <c>LodgingPublicReadiness.BindCandidates</c> ·
     /// response-only · ปุ่มเรียก <c>POST properties/{id}/bind-site</c></summary>
     public List<LodgingSiteBindOption>? BindableSites { get; set; }

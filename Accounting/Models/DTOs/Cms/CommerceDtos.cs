@@ -505,7 +505,7 @@ public class OrderResponse
     public string? RequestedReadyDate { get; set; }
     /// <summary>yyyy-MM-dd · null = รับเอง/ไม่รู้วันขนส่ง</summary>
     public string? EstimatedDeliveryDate { get; set; }
-    public List<global::Accounting.Helpers.OrderCustomAnswer> CustomFields { get; set; } = new();
+    public List<global::Accounting.Helpers.CustomFormAnswer> CustomFields { get; set; } = new();
     /// <summary>JSON ดิบจากฐาน (ใช้ภายในเพื่อแปลงเป็น <see cref="CustomFields"/> หลัง query) — ไม่ส่งออก</summary>
     [System.Text.Json.Serialization.JsonIgnore]
     public string? CustomFieldsRaw { get; set; }

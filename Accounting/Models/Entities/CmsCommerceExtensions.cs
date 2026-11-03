@@ -63,6 +63,9 @@ public class SiteShippingZone : TenantEntity
     public string? CountryCodes { get; set; } // CSV: "TH,LA,KH"
     public string? Provinces { get; set; }     // CSV provinces (TH-specific)
     public string? PostalCodePatterns { get; set; } // CSV pattern: "10*,11*"
+    /// <summary>รอบ 228: ที่อยู่ตรงโซนนี้แล้ว<b>ไม่ดูโซนถัดไป</b> (ตามลำดับ SortOrder) — ใช้ทำ "วงระยะทาง/อำเภอ" ด้วยรหัสไปรษณีย์
+    /// (โซนใกล้ร้านชนะโซนทั้งจังหวัด) · false = เดิม (ทุกโซนที่ตรงให้ลูกค้าเลือก) · ตัวจับคู่เดียว <c>Helpers/ShopDeliveryFee.MatchingZones</c></summary>
+    public bool StopWhenMatched { get; set; }
 
     public bool IsActive { get; set; } = true;
     public int SortOrder { get; set; }

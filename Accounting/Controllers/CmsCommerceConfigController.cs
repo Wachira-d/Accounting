@@ -41,7 +41,7 @@ public class CmsCommerceConfigController : ControllerBase
             await _db.SaveChangesAsync();
         }
 
-        return Ok(new ApiResponse<CommerceConfigResponse>(true, MapConfig(config)));
+        return Ok(new ApiResponse<CommerceConfigResponse>(true, await WithShippingAccountAsync(MapConfig(config), companyId)));
     }
 
     [HttpPut]
@@ -69,7 +69,7 @@ public class CmsCommerceConfigController : ControllerBase
         if (request.EnableTaxInvoice.HasValue) config.EnableTaxInvoice = request.EnableTaxInvoice.Value;
 
         if (request.EnableShipping.HasValue) config.EnableShipping = request.EnableShipping.Value;
-        if (request.ClearFlatShippingRate == true) config.FlatShippingRate = null;
+        if (request.ClearFlatShippingRate == true) { config.FlatShippingRate = null; config.FreeDeliveryConfirmed = false; }   // รอบ 228 Q3: ล้างค่าส่งต้องยืนยันส่งฟรีใหม่
         else if (request.FlatShippingRate.HasValue)
         {
             if (request.FlatShippingRate < 0m) return BadRequest(new ApiResponse<CommerceConfigResponse>(false, null, "ค่าส่งเหมาจ่ายต้องไม่ติดลบ"));
@@ -82,6 +82,15 @@ public class CmsCommerceConfigController : ControllerBase
             config.FreeShippingThreshold = request.FreeShippingThreshold;
         }
         if (request.FreeShippingOverridesZones.HasValue) config.FreeShippingOverridesZones = request.FreeShippingOverridesZones.Value;
+        // รอบ 228: บัญชีรายได้ค่าจัดส่ง — ผิด (ไม่ใช่หมวดรายได้/ปิด/ของบริษัทอื่น) = 400 ไม่เก็บค่าที่ผู้ออกเอกสารใช้ไม่ได้ · มีผลกับเอกสารที่ออกหลังบันทึก
+        if (request.ClearShippingRevenueAccount == true) config.ShippingRevenueAccountId = null;
+        else if (request.ShippingRevenueAccountId is Guid shipAccId)
+        {
+            var acc = await _db.ChartOfAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.Id == shipAccId && a.CompanyId == companyId);
+            if (ShippingRevenueAccount.Problem(acc, companyId) is string accErr)
+                return BadRequest(new ApiResponse<CommerceConfigResponse>(false, null, accErr));
+            config.ShippingRevenueAccountId = shipAccId;
+        }
 
         if (request.EnableCoupons.HasValue) config.EnableCoupons = request.EnableCoupons.Value;
         if (request.EnableReviews.HasValue) config.EnableReviews = request.EnableReviews.Value;
@@ -152,7 +161,17 @@ public class CmsCommerceConfigController : ControllerBase
         config.UpdatedBy = userId;
         await _db.SaveChangesAsync();
 
-        return Ok(new ApiResponse<CommerceConfigResponse>(true, MapConfig(config), CmsMessages.Get("config.updated", Lang)));
+        return Ok(new ApiResponse<CommerceConfigResponse>(true, await WithShippingAccountAsync(MapConfig(config), companyId), CmsMessages.Get("config.updated", Lang)));
+    }
+
+    /// <summary>รอบ 228: ชื่อ + คำเตือนของบัญชีรายได้ค่าจัดส่ง (บัญชีถูกปิด/ลบภายหลัง ⇒ เอกสารใหม่ใช้บัญชีตั้งต้น — <c>ShippingRevenueAccount</c>)</summary>
+    private async Task<CommerceConfigResponse> WithShippingAccountAsync(CommerceConfigResponse r, Guid companyId)
+    {
+        if (r.ShippingRevenueAccountId is not Guid id) return r;
+        var acc = await _db.ChartOfAccounts.AsNoTracking().IgnoreQueryFilters().FirstOrDefaultAsync(a => a.Id == id && a.CompanyId == companyId);
+        r.ShippingRevenueAccountLabel = acc == null ? null : $"{acc.AccountCode} {acc.AccountName}";
+        r.ShippingRevenueAccountWarning = ShippingRevenueAccount.StaleWarning(id, acc, companyId);
+        return r;
     }
 
     private static CommerceConfigResponse MapConfig(SiteCommerceConfig c) => new()
@@ -163,6 +182,7 @@ public class CmsCommerceConfigController : ControllerBase
         EnableShipping = c.EnableShipping,
         FlatShippingRate = c.FlatShippingRate, FreeShippingThreshold = c.FreeShippingThreshold,
         FreeShippingOverridesZones = c.FreeShippingOverridesZones,
+        ShippingRevenueAccountId = c.ShippingRevenueAccountId,
         EnableCoupons = c.EnableCoupons,
         EnableReviews = c.EnableReviews, ReviewAutoApprove = c.ReviewAutoApprove, ReviewRequirePurchase = c.ReviewRequirePurchase,
         EnableWishlist = c.EnableWishlist, EnableAbandonedCartRecovery = c.EnableAbandonedCartRecovery,
@@ -177,6 +197,8 @@ public class CmsCommerceConfigController : ControllerBase
         FormFieldRequirementOptions = BookingFormFields.RequirementOptions()
             .Select(o => new CommerceOptionValue { Value = o.Value, Label = o.Label }).ToList(),
         FormFieldTypes = OrderFormFields.FieldTypes.ToList(),
+        // รอบ 222: ป้ายไทยของชนิดช่อง (ตัวตั้งเดียวกับฟอร์มจอง — CustomFormFields.TypeOptions) · หน้าตั้งค่าแสดงตรง
+        FormFieldTypeOptions = CustomFormFields.TypeOptions().Select(o => new CommerceOptionValue { Value = o.Value, Label = o.Label }).ToList(),
         EnableOnlinePayment = c.EnableOnlinePayment, EnableCod = c.EnableCod, EnableBankTransfer = c.EnableBankTransfer,
         OrderConfirmMessageTh = c.OrderConfirmMessageTh, OrderConfirmMessageEn = c.OrderConfirmMessageEn,
         QuotationMessageTh = c.QuotationMessageTh, QuotationMessageEn = c.QuotationMessageEn,

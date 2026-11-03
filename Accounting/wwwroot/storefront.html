@@ -231,6 +231,8 @@
        ห้ามเขียน QR/poll เองในหน้านี้ ไม่งั้นได้สำเนาชุดที่สองที่ drift แน่นอน -->
   <script src="/js/pay-widget.js"></script>
   <script src="/js/storefront-booking-pay.js"></script>
+  <script src="/js/storefront-booking-fulfillment.js"></script>
+  <script src="/js/storefront-booking-manage.js"></script>
   <script src="/js/submit-once.js"></script>
 
   <script>
@@ -1412,9 +1414,15 @@
         const r = req ? 'required' : '';
         if (f.type === 'textarea') return `<div>${lbl}<textarea name="${name}" rows="2" maxlength="${ml}" ${r} style="${st}"></textarea></div>`;
         if (f.type === 'date') return `<div>${lbl}<input type="date" name="${name}" ${r} style="${st}"></div>`;
+        if (f.type === 'number') return `<div>${lbl}<input type="text" inputmode="decimal" name="${name}" maxlength="${ml}" ${r} style="${st}"></div>`;
         if (f.type === 'select') return `<div>${lbl}<select name="${name}" ${r} style="${st}"><option value="">— เลือก —</option>${(f.options || []).map(o => `<option value="${this.esc(o)}">${this.esc(o)}</option>`).join('')}</select></div>`;
         if (f.type === 'checkbox') return `<label style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" name="${name}" value="true" ${r}> ${this.esc(f.label)}${req ? ' *' : ''}</label>`;
         return `<div>${lbl}<input type="text" name="${name}" maxlength="${ml}" ${r} style="${st}"></div>`;
+      },
+      // ค่าช่องที่ร้านเพิ่มเอง (ฟอร์มสั่งซื้อ + ฟอร์มจอง ใช้ตัวเดียว) — ช่องติ๊ก = "true" · ว่าง = null · เซิร์ฟเวอร์ตรวจทั้งหมด (CustomFormFields)
+      _customFieldValues(fd, fields) {
+        return Object.fromEntries((fields || []).map(f => [f.key,
+          f.type === 'checkbox' ? (fd.get('cf_' + f.key) ? 'true' : null) : (fd.get('cf_' + f.key) || null)]));
       },
       async setRequestedDate(cartId, v) {
         this._checkout = Object.assign(this._checkout || {}, { reqDate: v || null });
@@ -1604,8 +1612,7 @@
           // รอบ 209 P2 — วิธีชำระ · วันรับ · ช่องที่ร้านเพิ่มเอง (เซิร์ฟเวอร์ตรวจทั้งหมด)
           paymentMethodChoice: (this._checkout && this._checkout.payChoice) || null,
           requestedReadyDate: (this._checkout && this._checkout.reqDate) || null,
-          customFields: Object.fromEntries(((this._quote && this._quote.customFields) || []).map(f => [f.key,
-            f.type === 'checkbox' ? (fd.get('cf_' + f.key) ? 'true' : null) : (fd.get('cf_' + f.key) || null)])),
+          customFields: this._customFieldValues(fd, (this._quote && this._quote.customFields) || []),
           consentGiven: this.p6ConsentValue(ev.target),   // รอบ 209 P6 (PDPA)
           ...this.policyAcceptValue(ev.target),   // รอบ 219 ส่วน B: ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (บังคับ · ด่านที่เซิร์ฟเวอร์)
           saveToProfile: this._memberSaveValue(ev.target),   // รอบ 216: เซิร์ฟเวอร์บันทึกลงโปรไฟล์ของสมาชิกในโทเคนเท่านั้น
@@ -2478,6 +2485,7 @@
             ${fld('phone', 'เบอร์โทร', r => `<input name="customerPhone" type="tel" ${r} maxlength="30" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`)}
             ${fld('email', 'อีเมล', r => `<input type="email" name="customerEmail" ${r} maxlength="200" style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px">`)}
             ${fld('notes', 'หมายเหตุ', r => `<textarea name="notes" rows="2" ${r} style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:6px"></textarea>`)}
+            ${((svc && svc.customFields) || []).map(f => this._renderCustomField(f)).join('')}
             <div id="sfBookCreditBox"></div>
             ${this.p6ConsentHtml()}
             ${this.policyAcceptHtml()}
@@ -2562,6 +2570,7 @@
         const form = document.getElementById('sfBookForm');
         const fd = new FormData(form);
         if (!fd.get('slotStart')) { alert('กรุณาเลือกเวลา'); return; }
+        const svc = (Store._bkServices || {})[fd.get('serviceId')] || null;   // รอบ 222: ชุดช่องเพิ่มเองที่วาดในฟอร์มนี้
         // ช่องบังคับ (ตามค่าตั้งของเว็บ) — เตือนก่อนส่ง · เซิร์ฟเวอร์ตรวจซ้ำเป็นด่านจริง
         if (!form.reportValidity()) return;
         const bookingDate = document.getElementById('sfBookDate').value; // yyyy-mm-dd
@@ -2575,6 +2584,7 @@
           guestPhone: fd.get('customerPhone') || null,
           guestEmail: fd.get('customerEmail') || null,
           customerNotes: fd.get('notes') || null,
+          customFields: this._customFieldValues(fd, (svc && svc.customFields) || []),   // รอบ 222: ช่องที่เจ้าของเพิ่มเอง (ด่านจริง BookingFormFields.CheckCustom)
           guestCount: this._bkGuests(),
           units: this._bkUnits(),
           resourceId: this._bkResource(),
@@ -2585,6 +2595,7 @@
           confirmAdditional: !!confirmAdditional      // รอบ 217: ตั้งใจจองรอบเดิมเพิ่มอีกที่ (ผู้ใช้กดยืนยันหลังคำเตือนจองซ้ำ)
         };
         if (typeof this._bkPayExtras === 'function') Object.assign(body, this._bkPayExtras());   // รอบ 218: มัดจำไม่บังคับ — ลูกค้าเลือกจ่ายไหม
+        if (typeof this._bkFulfillExtras === 'function') Object.assign(body, this._bkFulfillExtras());   // รอบ 226: จัดส่ง/รับเอง + ที่อยู่ (ค่าส่งเซิร์ฟเวอร์คิดเอง)
         // รอบ 209 P1 (C3): จองด้วยบัตร — ส่ง id ลูกค้าของตัวเอง + โทเคนหน้าร้าน (เซิร์ฟเวอร์เทียบ id ในโทเคนกับ customerId)
         const useCredit = document.getElementById('sfBookUseCredit');
         const meForCredit = useCredit && useCredit.checked ? await this._custMeLoad() : null;
@@ -2638,17 +2649,22 @@
       async _showBookingDone(booking) {
         // รอบ 207 (ข้อ 6): หน้าจองสำเร็จแสดงรายละเอียดครบ + ดาวน์โหลด/พิมพ์ใบยืนยันการจองเก็บไว้
         this._lastBooking = booking;
+        // รอบ 223 (BOOKING_PAYMENT_AUDIT): หัวข้อ/ไอคอน/ขั้นชำระมาก่อนคำยืนยัน มาจากเซิร์ฟเวอร์ (BookingPaymentStep) — โหมดบังคับไม่ขึ้น "จองสำเร็จ" จนรับเงิน
+        const step = booking.payment || {};
+        const payFirst = step.paymentFirst === true;
         document.getElementById('sfBookingModal').innerHTML = `
           <div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:92vh;overflow:auto;padding:28px">
             <div style="text-align:center">
-              <div style="font-size:56px">✅</div>
-              <h2 style="margin:4px 0">${booking.reused ? 'คุณจองรอบนี้ไว้แล้ว' : booking.status === 'Waitlisted' ? 'ลงคิวสำรองแล้ว' : 'จองสำเร็จ'}</h2>
+              <div style="font-size:56px">${this.esc(booking.reused ? '✅' : (step.stepIcon || '✅'))}</div>
+              <h2 style="margin:4px 0">${booking.reused ? 'คุณจองรอบนี้ไว้แล้ว' : step.headline ? this.esc(step.headline) : booking.status === 'Waitlisted' ? 'ลงคิวสำรองแล้ว' : 'จองสำเร็จ'}</h2>
+              ${!booking.reused && step.stepDetail ? `<p style="color:var(--text-secondary);font-size:14px">${this.esc(step.stepDetail)}</p>` : ''}
               ${booking.reused ? `<p style="color:var(--text-secondary)">ระบบไม่บันทึกซ้ำ — นี่คือการจองเดิมของคุณ (เลขที่ ${this.esc(booking.duplicateOf || booking.bookingNumber || '')})</p>
                 <button class="btn btn-secondary" onclick="Store._bookAnotherSeat(this)" style="margin-top:6px">➕ จองเพิ่มอีกที่ในรอบเดียวกัน</button>` : ''}
               ${booking.status === 'Waitlisted' ? `<p style="color:var(--text-secondary)">คิวสำรองลำดับที่ ${this.esc(String(booking.waitlistPosition || '-'))} — มีที่ว่างเมื่อไรร้านจะแจ้งกลับ</p>` : ''}
             </div>
+            ${payFirst ? '<div id="sfBookingPayBox"></div><h3 style="margin:18px 0 0;font-size:15px">รายละเอียดการจอง</h3>' : ''}
             ${this._bookingDetailHtml(booking)}
-            <div id="sfBookingPayBox"></div>
+            ${payFirst ? '' : '<div id="sfBookingPayBox"></div>'}
             <div id="sfBookingLineBox"></div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px">
               <button class="btn btn-primary" onclick="Store.downloadBookingConfirmation()">⬇️ ดาวน์โหลดใบยืนยันการจอง</button>
@@ -2699,8 +2715,15 @@
           ['เบอร์โทร', b.guestPhone || ''],
           ['อีเมล', b.guestEmail || b.customerEmail || ''],
           ['ค่าบริการ', '฿' + this._money(b.totalAmount)],
-          ['มัดจำ', Number(b.depositAmount) > 0 ? `฿${this._money(b.depositAmount)} (ชำระแล้ว ฿${this._money(b.paidAmount)})` : ''],
+          // รอบ 226: วิธีรับ + ค่าจัดส่ง + ยอดรวม (ค่าจากเซิร์ฟเวอร์ — BookingFulfillment) · ไม่มีขั้นนี้ = แถวว่าง (ถูกกรองทิ้ง)
+          ['วิธีรับ', b.fulfillmentSummary || ''],
+          ['ค่าจัดส่ง', Number(b.deliveryFee) > 0 ? '฿' + this._money(b.deliveryFee) + (b.deliveryRateName ? ' (' + b.deliveryRateName + ')' : '') : ''],
+          ['ยอดรวม', Number(b.deliveryFee) > 0 ? '฿' + this._money(b.grandTotal) : ''],
+          // รอบ 223: แถวมัดจำบอกสถานะการชำระจากเซิร์ฟเวอร์ (รอชำระ/รอตรวจสลิป/ชำระแล้ว) + ที่มาของยอด — ใบยืนยัน/พิมพ์ใช้แถวชุดเดียวกัน
+          ['มัดจำ', Number(b.depositAmount) > 0 ? `฿${this._money(b.depositAmount)} (ชำระแล้ว ฿${this._money(b.paidAmount)})${b.payment && b.payment.statusLabel ? ' · ' + b.payment.statusLabel : ''}` : ''],
+          ['ที่มาของยอดมัดจำ', (b.payment && b.payment.amountBasis) || ''],
           ['หมายเหตุ', b.customerNotes || ''],
+          ...(b.customFields || []).map(a => [a.label, a.value]),   // รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเอง (ป้าย+ค่าที่ตรึงตอนจอง)
           ['นโยบายยกเลิก', b.cancelPolicyNote || ''],
         ].filter(([, v]) => v !== '' && v != null);
       },
@@ -2788,12 +2811,15 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
           <div class="sf-container" style="padding:32px 20px;max-width:640px">
             ${flash ? `<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:10px;padding:12px 16px;color:#065F46;margin-bottom:16px">${this.esc(flash)}</div>` : ''}
             <h1 style="margin:0 0 6px">การจอง ${this.esc(b.bookingNumber || '')}</h1>
+            ${b.payment && b.payment.step && b.payment.step !== 'None' ? `<div style="font-weight:600;margin:6px 0">${this.esc(b.payment.stepIcon || '')} ${this.esc(b.payment.headline || '')}</div>${b.payment.stepDetail ? `<div style="font-size:13px;color:var(--text-secondary)">${this.esc(b.payment.stepDetail)}</div>` : ''}` : ''}
+            ${b.payment && b.payment.paymentFirst ? '<div id="sfBookingPayBox"></div>' : ''}
             ${this._bookingDetailHtml(b)}
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0">
               <button class="btn btn-primary" onclick="Store.downloadBookingConfirmation()">⬇️ ดาวน์โหลดใบยืนยันการจอง</button>
               <button class="btn" onclick="Store.printBookingConfirmation()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
             </div>
-            <div id="sfBookingPayBox"></div>
+            ${b.payment && b.payment.paymentFirst ? '' : '<div id="sfBookingPayBox"></div>'}
+            <div id="sfBookingManageBox"></div>
             <div id="sfBookingLineBox"></div>
             ${b.canRescheduleOnline ? `<div style="margin-top:20px;border-top:1px solid #E5E7EB;padding-top:16px">
               <div style="font-weight:600;margin-bottom:6px">เลื่อนนัด</div>
@@ -2809,6 +2835,8 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
             </div>` : ''}
           </div>`;
         await this._renderBookingPayOnline(b);
+        // รอบ 228: ชำระมัดจำภายหลัง (มัดจำไม่บังคับ) + เปลี่ยนวิธีรับ/ที่อยู่ก่อนกำหนด (js/storefront-booking-manage.js)
+        if (typeof this._bkManageRender === 'function') this._bkManageRender(b, token);
         this.renderLineBox('sfBookingLineBox', { kind: 'booking', token });
       },
       // รอบ 206: เลื่อนนัดเอง — เวลาว่างจากเซิร์ฟเวอร์ (available-slots เดิม) · ส่งแล้วเซิร์ฟเวอร์ตัดสินรอบใหม่ (ไม่นับการจองตัวเอง)
@@ -3879,6 +3907,8 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
       },
     });
 
+    if (window.StoreBookingFulfill) StoreBookingFulfill.install(Store);   // รอบ 226: ขั้นจัดส่ง/รับเองของการจอง (js/storefront-booking-fulfillment.js)
+    if (window.StoreBookingManage) StoreBookingManage.install(Store);   // รอบ 228: หน้าจัดการการจอง — ชำระมัดจำภายหลัง · เปลี่ยนวิธีรับ (js/storefront-booking-manage.js)
     if (window.StoreBookingPay) StoreBookingPay.install(Store);   // รอบ 218: ยอดชำระก่อนกดจอง + กล่องโอน/QR/สลิป (js/storefront-booking-pay.js)
     Store.init();
   </script>

@@ -111,7 +111,14 @@ public class PaymentIntentService : IPaymentIntentService
             .Where(x => x.CompanyId == companyId && !x.IsDeleted && x.CustomDomain != null)
             .Select(x => x.CustomDomain!)
             .ToListAsync(ct));
-        return PaymentIntentPolicy.SafeReturnUrl(requested, hosts, _config?["App:BaseUrl"]);
+        // รอบ 221: URL ของระบบ = ค่าที่ผู้ดูแลตั้ง (SiteSettings.AppBaseUrl) ก่อน แล้วจึง appsettings — เดิมอ่านแต่ appsettings
+        // (ค่าเริ่มต้น app.nextacc.com ซึ่งเป็นโดเมนที่ไม่ใช่ของเรา) ⇒ ทดลองจ่ายแล้ว Omise เด้งกลับไปเว็บขายโดเมน
+        // รอบ 227 (PLATFORM_OMISE_AUDIT D-6 · ฝ่ายค้าน S7): โฮสต์ของ appsettings อยู่ใน allow-list เฉพาะเมื่อ deployment ตั้งค่าเอง (ไม่ใช่ค่าที่มากับซอร์ส
+        // app.nextacc.com — โดเมนที่ไม่ใช่ของเรา) · ผู้ดูแลตั้ง URL ระบบในหน้า admin แล้ว โฮสต์ของ deployment ยังกลับได้ (สองโดเมนของเราเอง)
+        var configBase = _config?["App:BaseUrl"];
+        if (SystemBaseUrl.IsConfigured(null, configBase) && Uri.TryCreate(configBase!.Trim(), UriKind.Absolute, out var cfgUri))
+            hosts.Add(cfgUri.Host);
+        return PaymentIntentPolicy.SafeReturnUrl(requested, hosts, await SystemBaseUrl.ResolveAsync(_db, _config, ct));
     }
 
     private IPaymentProvider Resolve(string code)
@@ -222,23 +229,26 @@ public class PaymentIntentService : IPaymentIntentService
         if (settled != null)
             throw new InvalidOperationException("รายการนี้ชำระเงินเรียบร้อยแล้ว");
 
-        // ยังเปิดอยู่และยอดเท่ากัน + ยังไม่หมดอายุ → ใช้ใบเดิม (ห้ามสร้าง QR ซ้อน)
+        var config = await _db.PaymentProviderConfigs
+            .Where(c => c.CompanyId == companyId && c.IsActive && !c.IsDeleted
+                     && (providerCode == null || c.ProviderCode == providerCode))
+            .OrderBy(c => c.SortOrder).ThenBy(c => c.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        // ยังเปิดอยู่และยอดเท่ากัน + ยังไม่หมดอายุ → ใช้ใบเดิม (ห้ามสร้าง QR ซ้อน) ·
+        // รอบ 227 ฝ่ายค้าน N2: และโหมดเดียวกับช่องทางตอนนี้ — QR ทดสอบที่ค้างไว้ห้ามถูกยื่นให้ผู้จ่ายหลังเปิดรับเงินจริง (และกลับกัน)
+        var currentMode = PaymentIntentTestMode.StampAtCreate(config);
         var reusable = existing.FirstOrDefault(i =>
             PaymentIntentPolicy.IsOpen(i.Status)
             && i.Amount == request.Amount
             && i.MethodKind == request.Method
+            && i.IsTestMode == currentMode
             && (i.QrExpiresAt == null || i.QrExpiresAt > DateTime.UtcNow));
         if (reusable != null)
         {
             await tx.CommitAsync(ct);
             return reusable;
         }
-
-        var config = await _db.PaymentProviderConfigs
-            .Where(c => c.CompanyId == companyId && c.IsActive && !c.IsDeleted
-                     && (providerCode == null || c.ProviderCode == providerCode))
-            .OrderBy(c => c.SortOrder).ThenBy(c => c.CreatedAt)
-            .FirstOrDefaultAsync(ct);
 
         // รอบ 219 ส่วน B: ทดลองจ่าย (GatewaySelfTest) ได้เฉพาะ config โหมดทดสอบ — ไม่มีเงินจริงผ่านปุ่ม/หน้าทดสอบ (ด่านเดียว PaymentLiveGate)
         if (PaymentLiveGate.SelfTestRefusal(request.SourceKind, config?.Mode) is string selfTestNo)
@@ -600,20 +610,33 @@ public class PaymentIntentService : IPaymentIntentService
 
         if (!PaymentIntentPolicy.IsOpen(intent.Status)) return intent;
 
-        // QR/ลิงก์หมดอายุแล้ว → ปิดใบนี้เอง ไม่ต้องรบกวน provider
-        if (intent.QrExpiresAt is DateTime exp && exp <= DateTime.UtcNow)
-            return await ApplyChargeAsync(intentId,
-                new ProviderCharge(intent.ProviderRef ?? string.Empty, PaymentIntentStatus.Expired,
-                    "expired", intent.Amount),
-                PaymentEventSource.System, "system:expiry", ct);
+        // QR/ลิงก์หมดอายุแล้ว — รอบ 227 ฝ่ายค้าน B1 (Helpers/GatewayExpiryPolicy): มีเลขอ้างอิงผู้ให้บริการ ⇒ ถามผู้ให้บริการก่อนแล้วใช้สถานะของเขา
+        // (เงินอาจเข้าวินาทีสุดท้าย — ห้ามประทับ "หมดอายุ" เอง) · ปิดเองได้ทันทีเฉพาะใบที่ไม่เคยมี charge · ถามไม่ได้ ⇒ ปิดเองหลังวันหมดอายุ + ระยะผ่อนเท่านั้น
+        if (GatewayExpiryPolicy.ExpireWithoutAsking(intent.QrExpiresAt, !string.IsNullOrWhiteSpace(intent.ProviderRef), DateTime.UtcNow))
+            return await ExpireLocallyAsync(intent, ct);
+        var pastExpiry = intent.QrExpiresAt is DateTime exp && exp <= DateTime.UtcNow;
 
         var config = intent.ProviderConfigId is Guid cid
             ? await _db.PaymentProviderConfigs.AsNoTracking().FirstOrDefaultAsync(c => c.Id == cid, ct)
             : null;
 
         var provider = Resolve(intent.ProviderCode);
-        var charge = await provider.GetChargeAsync(intent,
-            config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }, ct);
+        // รอบ 227 (PLATFORM_OMISE_AUDIT A-12): ถามด้วยคีย์ของโหมดที่รายการถูกสร้าง — ช่องทางอาจถูกสลับโหมด/ปิดฉุกเฉินหลังลูกค้าสแกนแล้ว
+        ProviderCharge charge;
+        try
+        {
+            charge = await provider.GetChargeAsync(intent,
+                config == null
+                    ? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }
+                    : PaymentConfigForIntent.For(config, intent.IsTestMode), ct);
+        }
+        catch (Exception ex) when (pastExpiry && ex is not OperationCanceledException)
+        {
+            // ถามผู้ให้บริการไม่ได้ขณะพ้นวันหมดอายุ — ปิดเองเฉพาะเมื่อพ้นระยะผ่อนแล้ว (นอกนั้นโยนต่อ: รอบหน้าถามใหม่)
+            if (!GatewayExpiryPolicy.ExpireAfterProviderUnreachable(intent.QrExpiresAt, DateTime.UtcNow)) throw;
+            _logger.LogWarning(ex, "ถามสถานะรายการ {Intent} ที่พ้นวันหมดอายุไม่ได้ — ปิดเป็นหมดอายุหลังระยะผ่อน", intentId);
+            return await ExpireLocallyAsync(intent, ct);
+        }
 
         var updated = await ApplyChargeAsync(intentId, charge, PaymentEventSource.Poll, "poll", ct);
 
@@ -622,6 +645,12 @@ public class PaymentIntentService : IPaymentIntentService
         if (tracked != null) { tracked.LastPolledAt = DateTime.UtcNow; await _db.SaveChangesAsync(ct); }
         return updated;
     }
+
+    /// <summary>ปิดใบเป็น "หมดอายุ" ด้วยเส้นเดียวกับผู้ให้บริการรายงาน (ประวัติ · ล็อก · นโยบายสถานะ)</summary>
+    private Task<PaymentIntent> ExpireLocallyAsync(PaymentIntent intent, CancellationToken ct)
+        => ApplyChargeAsync(intent.Id,
+            new ProviderCharge(intent.ProviderRef ?? string.Empty, PaymentIntentStatus.Expired, "expired", intent.Amount),
+            PaymentEventSource.System, "system:expiry", ct);
 
     /// <summary>คัดค่าจาก provider ลง entity — ที่เดียวที่แมป เพื่อไม่ให้ webhook กับ poll
     /// เขียนคนละชุดฟิลด์</summary>

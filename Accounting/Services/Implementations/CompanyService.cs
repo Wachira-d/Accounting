@@ -19,13 +19,18 @@ public class CompanyService : ICompanyService
     private readonly IConfiguration? _config;
     private readonly Microsoft.AspNetCore.Http.IHttpContextAccessor? _http;
 
+    /// <summary>รอบ 229 (QUOTA_ADDON แพ็ก 5): ด่านที่นั่งตัวเดียว (เพดานแพ็กเกจ/License + override + ที่นั่งที่ซื้อเพิ่ม) · null (เทสต์เดิม) = สูตรเดิม inline</summary>
+    private readonly IQuotaGate? _quotaGate;
+
     public CompanyService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService? subscriptionService = null,
         IEmailService? emailService = null,
         ILogger<CompanyService>? logger = null,
         IConfiguration? config = null,
-        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null)
+        Microsoft.AspNetCore.Http.IHttpContextAccessor? http = null,
+        IQuotaGate? quotaGate = null)
     {
+        _quotaGate = quotaGate;
         _db = db;
         _accountingService = accountingService;
         _subscriptionService = subscriptionService;
@@ -398,9 +403,21 @@ public class CompanyService : ICompanyService
         if (string.IsNullOrEmpty(email))
             throw new InvalidOperationException("กรุณาระบุอีเมล");
 
+        // รอบ 229 (QUOTA_ADDON แพ็ก 5 · คำตัดสินข้อ 229-1/229-2): ด่านที่นั่งตัวเดียว IQuotaGate — เพดานเดิม (License ชนะ/แพ็กเกจบริษัท) + override แอดมิน
+        // + ที่นั่งที่ซื้อเพิ่ม · นับ + เพิ่มแถว ใต้ล็อกธุรกรรมเดียวกัน (สองคำเชิญพร้อมกันผ่านได้แค่หนึ่ง) · เต็ม = บล็อกการเพิ่มเท่านั้น (ผู้ใช้เดิมล็อกอินได้ตามปกติ)
+        await using var seatTx = _quotaGate != null && _db.Database.CurrentTransaction == null
+            ? await _db.Database.BeginTransactionAsync() : null;
+        if (_quotaGate != null)
+        {
+            await _quotaGate.LockAsync(companyId, Accounting.Models.Constants.QuotaResources.Users);
+            var seat = await _quotaGate.CheckAsync(companyId, Accounting.Models.Constants.QuotaResources.Users, 1);
+            if (!seat.Allowed)
+                throw new Accounting.Helpers.BusinessRuleException(seat.BlockReason!, seat.RuleCode, 409);
+        }
+
         // Hard limit: check effective MaxUsers — License's MaxUsersPerCompany
         // wins when the company is attached, otherwise per-company sub.MaxUsers.
-        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        var sub = _quotaGate != null ? null : await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
         if (sub != null)
         {
             int maxUsers = sub.MaxUsers;
@@ -437,6 +454,7 @@ public class CompanyService : ICompanyService
                 Role = request.Role
             });
             await _db.SaveChangesAsync();
+            if (seatTx != null) await seatTx.CommitAsync();
             // Existing platform user added directly — no email needed (they
             // already have an account + will see the company on next login).
             return new AddUserResult(WasInvited: false, Email: email, InvitationId: null, EmailSent: false);
@@ -468,6 +486,7 @@ public class CompanyService : ICompanyService
         inv.UpdatedBy = ownerId.ToString();
         if (existing == null) _db.CompanyInvitations.Add(inv);
         await _db.SaveChangesAsync();
+        if (seatTx != null) await seatTx.CommitAsync();
 
         // Build the shareable accept-invite link up front so we can always
         // return it (the owner can copy/paste it even when email isn't set up).
@@ -660,6 +679,14 @@ public class CompanyService : ICompanyService
         var target = await _db.Users.FirstAsync(u => u.Email.ToLower() == email);
         var row = await _db.CompanyUsers.FirstOrDefaultAsync(cu => cu.CompanyId == companyId && cu.UserId == target.Id);
         var before = row?.Role;
+        // ฝ่ายค้านรอบ 229 S10: ผู้รับเป็นสมาชิกใหม่ และผู้โอนไม่ได้ถอดตัวเองออก ⇒ เพิ่มที่นั่งสุทธิ 1 ⇒ ผ่านด่านที่นั่งตัวเดียว (ถอดตัวเอง = สุทธิ 0 ไม่ตรวจ —
+        // การส่งมอบบริษัทให้ลูกค้าต้องไม่ติดเพดานเพราะที่นั่งของผู้ส่งมอบเอง)
+        if (row == null && !removeSupport && _quotaGate != null)
+        {
+            var seat = await _quotaGate.CheckAsync(companyId, Accounting.Models.Constants.QuotaResources.Users, 1);
+            if (!seat.Allowed)
+                throw new Accounting.Helpers.BusinessRuleException(seat.BlockReason! + " · หรือเลือก \"ถอดฉันออกจากบริษัทหลังส่งมอบ\"", seat.RuleCode, 409);
+        }
         if (row == null)
             _db.CompanyUsers.Add(new CompanyUser { UserId = target.Id, CompanyId = companyId, Role = UserRole.Owner });
         else

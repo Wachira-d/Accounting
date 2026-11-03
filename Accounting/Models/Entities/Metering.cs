@@ -141,6 +141,11 @@ public class CompanyFeature : TenantEntity
     public string? PaymentReviewedBy { get; set; }
     /// <summary>เหตุผลที่ปฏิเสธ — ลูกค้าต้องเห็น ไม่ใช่ถูกปิดเงียบ ๆ</summary>
     public string? PaymentRejectedReason { get; set; }
+
+    /// <summary>รอบ 227 (PLATFORM_OMISE_AUDIT C-3): ใบกำกับภาษี/ใบเสร็จรับเงินที่ออกใน tenant ผู้ให้บริการสำหรับการชำระล่วงหน้าครั้งล่าสุด
+    /// (<c>IPlatformBillingDocumentIssuer.IssueAddOnReceiptAsync</c>) · null = ยังไม่ออก/ออกไม่สำเร็จ (ประวัติ audit บอกเหตุ)</summary>
+    public Guid? PaymentReceiptDocumentId { get; set; }
+    public string? PaymentReceiptNumber { get; set; }
 }
 
 /// <summary>

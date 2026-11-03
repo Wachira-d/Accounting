@@ -61,7 +61,10 @@
         const banner = { off: '⏸️ ปิด/ยังไม่ตั้งค่า — ผู้เช่าชำระด้วยการโอน + แนบสลิป', test: '🧪 โหมดทดสอบ — เงินไม่เข้าจริง · ผู้เช่ายังไม่เห็นปุ่มชำระออนไลน์', live: '✅ เปิดรับเงินจริงแล้ว — ผู้เช่าเห็นปุ่ม "ชำระออนไลน์"' }[mode];
         const provOpts = d.providers.map(p => `<option value="${e(p.code)}" ${c && c.providerCode === p.code ? 'selected' : ''}>${e(p.code)}</option>`).join('');
         const prov = d.providers.find(p => p.code === (c ? c.providerCode : (d.providers[0] || {}).code)) || { methods: [] };
-        const methodBoxes = prov.methods.map(m => `<label style="margin-right:12px"><input type="checkbox" data-m value="${e(m)}" ${c && c.enabledMethods.includes(m) ? 'checked' : ''}> ${e(m)}</label>`).join('');
+        // รอบ 227: ป้ายไทย + "หน้าชำระของ NextAcc ทำจบได้ไหม" มาจากเซิร์ฟเวอร์ (Helpers/PlatformPayMethods) — วิธีที่ยังทำไม่จบติ๊กได้แต่ผู้เช่าไม่เห็น
+        const methodBoxes = (prov.methodInfo || []).map(m => `<label style="display:block;margin:2px 0"><input type="checkbox" data-m value="${e(m.code)}" ${c && c.enabledMethods.includes(m.code) ? 'checked' : ''}> ${e(m.label)}
+            ${m.payable ? '<span class="ok">· ใช้ได้</span>' : `<span class="muted">· ยังไม่เปิดให้ผู้เช่า — ${e(m.note)}</span>`}</label>`).join('');
+        const readiness = (d.readiness || []).map(r => `<li class="${r.ok ? 'ok' : 'bad'}">${r.ok ? '✓' : (r.blocking ? '✗' : '⚠️')} ${e(r.text)}</li>`).join('');
         const missing = d.liveGateMissing || [];
         const displayName = c ? (c.displayName || '') : 'NextAcc Omise';
         document.getElementById('state').innerHTML = `
@@ -77,7 +80,8 @@
               <b>คีย์ลับ (ทดสอบ)</b><input id="gTs" type="password" autocomplete="off" placeholder="${c && c.testSecretHint ? 'บันทึกไว้แล้ว (' + e(c.testSecretHint) + ') — เว้นว่าง = ไม่เปลี่ยน' : ''}">
               <b>คีย์สาธารณะ (ใช้งานจริง)</b><input id="gLp" value="${e(c ? c.livePublicKey || '' : '')}">
               <b>คีย์ลับ (ใช้งานจริง)</b><input id="gLs" type="password" autocomplete="off" placeholder="${c && c.liveSecretHint ? 'บันทึกไว้แล้ว (' + e(c.liveSecretHint) + ') — เว้นว่าง = ไม่เปลี่ยน' : ''}">
-              <b>วิธีชำระที่เปิด</b><div>${methodBoxes || '<span class="muted">—</span>'}</div>
+              <b>วิธีชำระที่เปิด</b><div>${methodBoxes || '<span class="muted">—</span>'}
+                <div class="muted">ไม่ติ๊กเลย = ทุกวิธีที่ใช้ได้ · ผู้เช่าเห็นตอนนี้: <b>${e(c && c.effectiveMethods && c.effectiveMethods.length ? c.effectiveMethods.join(', ') : '—')}</b>${c && c.cardNote ? `<div class="bad">บัตร: ${e(c.cardNote)}</div>` : ''}</div></div>
             </div>
             <div class="muted" style="margin-top:6px">คีย์ลับเข้ารหัสก่อนเก็บ และไม่ถูกส่งกลับมาที่หน้านี้ (แสดงแค่ 4 ตัวท้าย) · แก้คีย์ใด = ต้องทดสอบใหม่ก่อนเปิดรับเงินจริง</div>
             <div class="row"><button class="admin-btn admin-btn-primary" onclick="Page.save()">บันทึก</button></div>
@@ -120,12 +124,59 @@
             <div class="muted" style="margin-top:6px">นโยบายการยกเลิกและคืนเงิน: ฉบับ ${e(d.refundPolicy.version)} ${d.refundPolicy.published ? '(เผยแพร่แล้ว)' : '(ฉบับตั้งต้นของระบบ — ยังไม่ได้เผยแพร่ฉบับของ NextAcc)'} ·
               <a href="/admin/legal.html?kind=refund">แก้/เผยแพร่</a> · <a href="${e(d.refundPolicy.url)}" target="_blank" rel="noopener">ดูหน้าสาธารณะ</a></div>
           </div>` : ''}
+          <div class="admin-card" style="margin-bottom:14px">
+            <div class="admin-card-header"><span class="admin-card-title">📒 ความพร้อมการเชื่อมโยงข้อมูล/บัญชี</span></div>
+            <div class="muted">เงินออนไลน์ → รายการชำระ/ส่วนเสริม → ใบกำกับภาษี/ใบเสร็จในบริษัทผู้ให้บริการ → Dr บัญชีพักผู้ให้บริการรับชำระ (11340) → บันทึกรอบโอนในบริษัทผู้ให้บริการ (ธนาคาร + ค่าธรรมเนียม + VAT ค่าธรรมเนียม)</div>
+            <ul class="list">${readiness}</ul>
+          </div>
+          <div class="admin-card" style="margin-bottom:14px">
+            <div class="admin-card-header"><span class="admin-card-title">💳 รายการรับชำระค่าบริการออนไลน์ล่าสุด</span>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="Page.loadIntents()">โหลด</button></div>
+            <div class="muted">เทียบกับแดชบอร์ดผู้ให้บริการด้วยเลขอ้างอิง · ⚠️ = เงินเข้าแล้วแต่ต้นทางยังไม่บันทึก (แก้ที่หน้ารายการรับชำระออนไลน์ของบริษัทผู้ให้บริการ — "ส่งต่อใหม่")</div>
+            <div id="gIntents" style="overflow-x:auto"></div>
+          </div>
           <div class="admin-card">
             <div class="admin-card-header"><span class="admin-card-title">🧾 หน้าทดลองจ่าย (<a href="${e(d.testPage.url)}" target="_blank" rel="noopener">${e(d.testPage.url)}</a>)</span></div>
             <div class="muted" style="margin-bottom:8px">ใช้คีย์โหมดทดสอบเสมอ (ไม่มีเงินจริง) — เปิดให้ผู้ตรวจเว็บของผู้ให้บริการ/เดโมได้ · ปิดอัตโนมัติเมื่อช่องทางอยู่โหมดใช้งานจริง</div>
             <select id="gTestPage">${d.testPage.modes.map(m => `<option value="${e(m)}" ${m === d.testPage.mode ? 'selected' : ''}>${e({ Off: 'ปิด', AdminsOnly: 'เฉพาะผู้ดูแลระบบ (ค่าเริ่มต้น)', Public: 'เปิดสาธารณะ' }[m] || m)}</option>`).join('')}</select>
             <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="Page.saveTestPage()">บันทึก</button>
           </div>`;
+      },
+      async loadIntents() {
+        const box = document.getElementById('gIntents'), e = this.esc.bind(this);
+        box.textContent = 'กำลังโหลด…';
+        try {
+          const items = (await AdminAPI.get('/platform-gateway/intents?take=50')).data.items || [];
+          const money = n => n == null ? '—' : Number(n).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          box.innerHTML = !items.length ? '<div class="muted">ยังไม่มีรายการ</div>' : `<table class="admin-table" style="font-size:12px;width:100%">
+            <thead><tr><th>เวลา</th><th>ชนิด</th><th>ผู้จ่าย</th><th>อ้างอิง</th><th>วิธี</th><th style="text-align:right">ยอด</th><th style="text-align:right">ค่าธรรมเนียม</th><th>สถานะ</th><th>เลขผู้ให้บริการ</th><th>ใบเสร็จ</th><th>รอบโอน</th></tr></thead>
+            <tbody>${items.map(i => `<tr>
+              <td>${this.dt(i.createdAt)}</td><td>${e(i.kindLabel)}${i.isTestMode ? ' <span class="muted">(ทดสอบ)</span>' : ''}</td>
+              <td>${e(i.payer || '—')}</td><td>${e(i.reference || '—')}</td><td>${e(i.method)}</td>
+              <td style="text-align:right">${money(i.amount)}</td><td style="text-align:right">${money(i.fee)}</td>
+              <td>${i.needsAttention ? '⚠️ ' : ''}${e(i.statusLabel)}${i.failureMessage ? `<div class="muted">${e(i.failureMessage)}</div>` : ''}${i.attentionReason ? `<div class="bad">${e(i.attentionReason)}</div>` : ''}${i.dispute && !i.attentionReason ? `<div class="muted">${e(i.dispute.label)}</div>` : ''}${i.dispute && i.dispute.amount != null ? `<div class="muted">ยอดโต้แย้ง ${money(i.dispute.amount)}${i.dispute.reason ? ' · ' + e(i.dispute.reason) : ''}</div>` : ''}${i.refundedAmount > 0 ? `<div class="muted">คืนแล้ว ${money(i.refundedAmount)}</div>` : ''}</td>
+              <td><code>${e(i.providerRef || '—')}</code></td>
+              <td>${e(i.receiptNumber || '—')}${i.canReissueReceipt ? `<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-reissue="${e(i.id)}">ออกใบเสร็จอีกครั้ง</button></div>` : ''}${i.canReissueCreditNote ? `<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-reissue-cn="${e(i.id)}">ออกใบลดหนี้อีกครั้ง</button></div>` : ''}${i.canAcknowledgeDispute ? `<div><button class="admin-btn admin-btn-outline admin-btn-sm" data-ack-dispute="${e(i.id)}">รับทราบข้อพิพาท</button></div>` : ''}</td>
+              <td>${i.inSettlement ? '✓' : '—'}</td></tr>`).join('')}</tbody></table>`;
+          box.querySelectorAll('button[data-reissue]').forEach(b => b.addEventListener('click', () => this.reissue(b.dataset.reissue)));
+          box.querySelectorAll('button[data-reissue-cn]').forEach(b => b.addEventListener('click', () => this.intentAction(b.dataset.reissueCn, 'reissue-credit-note', 'หมายเหตุการออกใบลดหนี้อีกครั้ง (บันทึกตรวจสอบ)')));
+          box.querySelectorAll('button[data-ack-dispute]').forEach(b => b.addEventListener('click', () => this.intentAction(b.dataset.ackDispute, 'dispute/acknowledge', 'บันทึกสิ่งที่ทำกับข้อพิพาท (เช่น ส่งหลักฐานแล้ว)')));
+        } catch (err) { box.innerHTML = `<div class="bad">${e(err.message)}</div>`; }
+      },
+      // รอบ 228 ฝ่ายค้าน S2/S5: ออกใบลดหนี้อีกครั้ง · รับทราบข้อพิพาท — ผล/ข้อความจากเซิร์ฟเวอร์ (audit ที่เซิร์ฟเวอร์)
+      async intentAction(id, path, ask) {
+        const reason = prompt(ask, '');
+        if (reason === null) return;
+        try { const res = await AdminAPI.post(`/platform-gateway/intents/${encodeURIComponent(id)}/${path}`, { reason }); alert(res.message || 'บันทึกแล้ว'); }
+        catch (err) { alert(err.message); }
+        this.loadIntents();
+      },
+      async reissue(id) {
+        const reason = prompt('เหตุผลที่ออกใบเสร็จอีกครั้ง (บันทึกตรวจสอบ)', 'เงินเข้าแล้วแต่ยังไม่มีใบเสร็จ');
+        if (reason === null) return;
+        try { const res = await AdminAPI.post(`/platform-gateway/intents/${encodeURIComponent(id)}/reissue-receipt`, { reason });
+          AdminLayout.toast(res.message || 'บันทึกแล้ว', res.success === false ? 'error' : undefined); await this.loadIntents(); }
+        catch (err) { AdminLayout.toast(err.message, 'error'); }
       },
       async save() {
         const v = id => document.getElementById(id).value;

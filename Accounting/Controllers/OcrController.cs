@@ -26,9 +26,12 @@ public class OcrController : ControllerBase
     private readonly IPermissionService _perms;
     // ด่านสแกน/ไฟล์ตัวเดียวของระบบ (รอบ 193 S2) — ทุก action ที่รับ scanId ต้องผ่าน ScanGateAsync (tools/attachment_gate_check.py)
     private readonly IAttachmentAccessGate _gate;
+    // ที่เก็บไฟล์กลาง (Local | S3 · ทีม FS 2026-11-02) — ไฟล์สแกนเขียน/เสิร์ฟผ่านตัวนี้ ไม่แตะดิสก์ตรง
+    private readonly Accounting.Services.Storage.IFileStorage _storage;
     public OcrController(IOcrService service, IOcrQuotaService quota, AccountingDbContext db,
-        IDocumentService documentService, IPermissionService perms, IAttachmentAccessGate gate)
-    { _service = service; _quota = quota; _db = db; _documentService = documentService; _perms = perms; _gate = gate; }
+        IDocumentService documentService, IPermissionService perms, IAttachmentAccessGate gate,
+        Accounting.Services.Storage.IFileStorage storage)
+    { _service = service; _quota = quota; _db = db; _documentService = documentService; _perms = perms; _gate = gate; _storage = storage; }
 
     /// <summary>
     /// **ด่านของสแกนหนึ่งใบ — ทุก action ที่รับ <c>scanId</c> ต้องเรียกตัวนี้ก่อนแตะสแกน** · คืน <c>null</c> = ผ่าน
@@ -192,16 +195,20 @@ public class OcrController : ControllerBase
         if (!await _quota.TryConsumeAsync(companyId))
         {
             var status = await _quota.GetQuotaStatusAsync(companyId);
-            return StatusCode(429, new ApiResponse<object>(false, null,
-                $"โควต้า OCR หมด — ใช้ไป {status.UsedThisMonth}/{status.MaxPagesPerMonth} หน้าในเดือนนี้ กรุณาซื้อเครดิตเพิ่ม"));
+            // รอบ 229 (QUOTA_ADDON แพ็ก 0(ง)/5 · D-12): ข้อความชี้ทางที่มีจริง — ซื้อหน้า OCR เพิ่มผ่านโควตาเสริม (จ่ายผ่านระบบ + ใบกำกับ) ·
+            // เดิม "กรุณาซื้อเครดิตเพิ่ม" แต่ไม่มีหน้าซื้อ (ทางตัน) · ruleCode ให้หน้าเว็บเปิดหน้าต่างซื้อ
+            return StatusCode(429, new ApiResponse<object>(false,
+                new { ruleCode = Accounting.Models.Constants.QuotaResources.FullRuleCode(Accounting.Models.Constants.QuotaResources.OcrPagesMonth),
+                      buyUrl = Accounting.Models.Constants.QuotaResources.BuyUrl(Accounting.Models.Constants.QuotaResources.OcrPagesMonth) },
+                $"โควต้า OCR หมด — ใช้ไป {status.UsedThisMonth}/{status.MaxPagesPerMonth} หน้าในเดือนนี้ · ซื้อหน้า OCR เพิ่มได้ที่หน้า \"แพ็กเกจและการชำระเงิน\" "
+                + "(ถ้ายังไม่เปิดขาย กรุณาติดต่อผู้ดูแลระบบ) หรือรอรอบเดือนถัดไป"));
         }
 
-        var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "uploads", "ocr");
-        Directory.CreateDirectory(uploadsDir);
+        var uploadsDir = Path.Combine(_storage.Locator.RelativeBase, "wwwroot", "uploads", "ocr");
         var fileName = $"{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
         var filePath = Path.Combine(uploadsDir, fileName);
 
-        await System.IO.File.WriteAllBytesAsync(filePath, fileBytes);
+        await _storage.WriteAsync(filePath, fileBytes, file.ContentType);
 
         var attachment = new FileAttachment
         {
@@ -1616,13 +1623,15 @@ public class OcrController : ControllerBase
         }));
     }
 
+    /// <summary>รอบ 229 (คำตัดสินข้อ 229-6): <b>เลิกเส้นขอเครดิต OCR แบบไม่มีเงิน</b> (ไม่มี PaymentIntent/สลิป/ใบกำกับ — G-9/A-5) — ซื้อหน้า OCR ผ่านโควตาเสริม
+    /// (<c>/pages/billing.html#buy=ocr.pages.month</c> · จ่ายผ่านระบบ + ใบกำกับ) · รายการ Pending เดิมยังค้างให้แอดมินอนุมัติด้วยมือได้ (ไม่ลบข้อมูล) ·
+    /// คงเส้นทางไว้ตอบ 410 พร้อมทางไปต่อ (ไม่ใช่ 404 เงียบ) — ผู้เรียกเดิม/บุ๊กมาร์กเห็นว่าไปซื้อที่ไหน</summary>
     [HttpPost("credits/purchase")]
-    public async Task<ActionResult<ApiResponse<OcrCreditPurchaseResponse>>> PurchaseCredits(
-        Guid companyId, [FromBody] OcrCreditPurchaseRequest request)
-    {
-        var result = await _quota.PurchaseCreditsAsync(companyId, request.Pages, User.Identity?.Name ?? "");
-        return Ok(new ApiResponse<OcrCreditPurchaseResponse>(true, result, "สร้างรายการซื้อเครดิตสำเร็จ — รอ Admin อนุมัติ"));
-    }
+    public ActionResult<ApiResponse<object>> PurchaseCredits(Guid companyId, [FromBody] OcrCreditPurchaseRequest request)
+        => StatusCode(410, new ApiResponse<object>(false,
+            new { buyUrl = Accounting.Models.Constants.QuotaResources.BuyUrl(Accounting.Models.Constants.QuotaResources.OcrPagesMonth) },
+            "การขอซื้อเครดิต OCR แบบรอผู้ดูแลอนุมัติเลิกใช้แล้ว — ซื้อหน้า OCR เพิ่มได้ที่หน้า \"แพ็กเกจและการชำระเงิน\" (ชำระผ่านระบบ ได้ใบกำกับภาษี/ใบเสร็จ) "
+            + "· รายการที่ขอไว้ก่อนหน้านี้ยังรอผู้ดูแลระบบตรวจตามเดิม"));
 
     [HttpGet("credits/history")]
     public async Task<ActionResult<ApiResponse<List<OcrCreditPurchaseResponse>>>> GetCreditHistory(Guid companyId)
@@ -1642,7 +1651,7 @@ public class OcrController : ControllerBase
 
         var file = await _db.FileAttachments
             .FirstOrDefaultAsync(f => f.Id == scan.FileAttachmentId && f.CompanyId == companyId);
-        if (file == null || !System.IO.File.Exists(file.StoragePath))
+        if (file == null)
             return NotFound();
 
         // Force inline display — passing the filename makes ASP.NET emit
@@ -1651,9 +1660,11 @@ public class OcrController : ControllerBase
         // Set the header manually with 'inline' + escape the filename for a
         // safe RFC 6266 fallback (Thai filenames pass through fine on RFC 5987
         // user-agents and the percent-encoded form is the strict fallback).
+        var result = await Accounting.Services.Storage.FileStorageResults.FileResultAsync(_storage, file.StoragePath, file.ContentType ?? "application/octet-stream");
+        if (result == null) return NotFound();
         var safeName = Uri.EscapeDataString(file.OriginalFileName ?? "document");
         Response.Headers.ContentDisposition = $"inline; filename=\"{safeName}\"; filename*=UTF-8''{safeName}";
-        return PhysicalFile(file.StoragePath, file.ContentType ?? "application/octet-stream");
+        return result;
     }
 
     /// <summary>

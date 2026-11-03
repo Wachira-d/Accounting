@@ -20,8 +20,13 @@ public class PortalService : IPortalService
     private readonly IImageProcessingService? _images;
     private readonly string _portalSigningKey;
 
-    public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null, IImageProcessingService? images = null)
+    /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — นอก DI ⇒ FileStorageDefaults.Local</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
+
+    public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null, IImageProcessingService? images = null,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
+        _storage = storage;
         _db = db;
         _pdfService = pdfService;
         _images = images;
@@ -478,10 +483,7 @@ public class PortalService : IPortalService
     /// the slip-upload UI.</summary>
     public async Task<StorefrontPaymentOptions> GetCompanyPaymentOptionsAsync(Guid companyId)
     {
-        var gw = await _db.Set<SitePaymentGateway>().AsNoTracking()
-            .Where(g => g.CompanyId == companyId && g.IsActive && !g.IsDeleted)
-            .OrderBy(g => g.SortOrder)
-            .FirstOrDefaultAsync();
+        var gw = await Accounting.Helpers.SiteTransferAccount.Rows(_db.Set<SitePaymentGateway>().AsNoTracking(), companyId, null).FirstOrDefaultAsync();   // รอบ 228 S-1
         if (gw == null) return new StorefrontPaymentOptions { HasPaymentMethod = false };
         var has = !string.IsNullOrEmpty(gw.PromptPayId) || !string.IsNullOrEmpty(gw.BankAccountNumber);
         return new StorefrontPaymentOptions
@@ -522,9 +524,10 @@ public class PortalService : IPortalService
         // Save file under wwwroot/uploads/portal-slips/{yyyy-MM}/...
         // Run images through ImageProcessingService (Slip profile — compressed
         // but still readable). PDFs and unknown types pass through untouched.
+        // ทีม FS 2026-11-02: เขียนผ่านที่เก็บกลางตัวเดียวกับ ImageProcessingService (Local/S3) — ห้ามแตะดิสก์ตรง
+        var storage = _storage ?? _images?.Storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
         var relDir = $"uploads/portal-slips/{DateTime.UtcNow:yyyy-MM}";
-        var absDir = System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "wwwroot", relDir);
-        System.IO.Directory.CreateDirectory(absDir);
+        var absDir = System.IO.Path.Combine(storage.Locator.RelativeBase, "wwwroot", relDir);
         string storedName; string absPath; string relUrl;
         if (_images != null && _images.IsProcessableImage(file.ContentType))
         {
@@ -540,7 +543,7 @@ public class PortalService : IPortalService
             if (string.IsNullOrWhiteSpace(ext)) ext = ".bin";
             storedName = $"{Guid.NewGuid():N}{ext}";
             absPath = System.IO.Path.Combine(absDir, storedName);
-            await using (var fs = System.IO.File.Create(absPath)) await file.CopyToAsync(fs);
+            await using (var fs = file.OpenReadStream()) await storage.WriteAsync(absPath, fs, file.ContentType);
             relUrl = "/" + relDir + "/" + storedName;
         }
 

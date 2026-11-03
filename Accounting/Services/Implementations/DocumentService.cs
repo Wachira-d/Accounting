@@ -52,6 +52,9 @@ public partial class DocumentService : IDocumentService
     /// <summary>ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — ตัวเดียวกับ POS/Integration/CMS (S-02)</summary>
     private readonly IIssuedDocumentHooks _issuedHooks;
 
+    /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — คัดลอกไฟล์แนบตอนแปลงเอกสาร · null (นอก DI) ⇒ FileStorageDefaults.Local</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _fileStorage;
+
     public DocumentService(AccountingDbContext db, IAccountingService accountingService,
         ISubscriptionService subscriptionService, IWithholdingTaxCertService whtService,
         IEtaxInvoiceService etaxService, ILogger<DocumentService> logger,
@@ -74,8 +77,10 @@ public partial class DocumentService : IDocumentService
         IPermissionService? permissionService = null,
         IUsageMeteringService? metering = null,
         IStockLedger? stock = null,
-        IIssuedDocumentHooks? issuedHooks = null)
+        IIssuedDocumentHooks? issuedHooks = null,
+        Accounting.Services.Storage.IFileStorage? fileStorage = null)
     {
+        _fileStorage = fileStorage;
         // ผลข้างเคียงหลังออกเอกสาร (e-Tax อัตโนมัติ) — จุดเดียวกับ POS/Integration/CMS (S-02) ·
         // ไม่มี DI (สร้างเองนอก container) → สร้างตัวจริงจากของที่มีอยู่ ห้ามปล่อย null แล้วข้ามเงียบ
         _issuedHooks = issuedHooks ?? new IssuedDocumentHooks(db, etaxService,
@@ -13385,7 +13390,8 @@ public partial class DocumentService : IDocumentService
         // Fire-and-forget physical file copy — caller doesn't wait. If copy fails,
         // the new attachment row's StoragePath simply points at the parent file
         // (which still works as long as parent isn't purged).
-        if (copyPlan.Count > 0)
+        // ผ่านที่เก็บกลาง (Local/S3 · ทีม FS 2026-11-02) — ตัวที่เก็บเป็น singleton ใช้ใน Task.Run ได้ (ไม่ผูก DbContext ของคำขอ)
+        if (copyPlan.Count > 0 && (_fileStorage ?? Accounting.Services.Storage.FileStorageDefaults.Local) is { } storage)
         {
             _ = Task.Run(async () =>
             {
@@ -13393,12 +13399,8 @@ public partial class DocumentService : IDocumentService
                 {
                     try
                     {
-                        if (System.IO.File.Exists(source) && !System.IO.File.Exists(target))
-                        {
-                            await using var srcStream = System.IO.File.OpenRead(source);
-                            await using var dstStream = System.IO.File.Create(target);
-                            await srcStream.CopyToAsync(dstStream);
-                        }
+                        if (!await storage.ExistsAsync(target) && await storage.ReadAllBytesAsync(source) is { } bytes)
+                            await storage.WriteAsync(target, bytes);
                     }
                     catch (Exception ex)
                     {
@@ -18225,14 +18227,24 @@ public partial class DocumentService : IDocumentService
             // รอบ 206: ลด/เพิ่มหนี้ของใบต้นทาง ⇒ ผังลูกหนี้/เจ้าหนี้ที่ใบต้นทางตั้งไว้จริง (ไม่ใช่ผังที่ผู้ติดต่อปักตอนนี้)
             // ทีม V (V-CN-03): ขาเงินของใบลด/เพิ่มหนี้เดินช่องทางเงินของเอกสาร (ธนาคาร/ผังที่เลือก → เงินสดตั้งต้น) ตัวเดียวกับทุกใบ —
             // เดิมลง "111" ตายตัว ⇒ คืนเงินผ่านธนาคารไปโผล่เงินสดในมือ · ไม่มีช่องทาง = 111 เหมือนเดิมทุกประการ
-            var counterAcc = isCashSettlement
+            // รอบ 228 (PLATFORM_OMISE_AUDIT §7.2 B1 เส้นร้าน): ใบลดหนี้ขายของใบที่ชำระครบ หลังคืนเงินผ่านผู้ให้บริการรับชำระ (ใบสำคัญ Dr ลูกหนี้ / Cr บัญชีพัก
+            // ที่ยังไม่มีใบลดหนี้ครอบ) ⇒ ขา counter = ผังลูกหนี้ของใบสำคัญนั้น (ล้างยอดรอใบลดหนี้) — เดิมตกเงินสด ⇒ เงินออกสองขา + ลูกหนี้ค้าง ·
+            // ไม่มีคืนเงิน gateway = เส้นเดิมทุกประการ (ตัวตัดสินเดียว Helpers/GatewayRefundCreditNoteCounter)
+            var gatewayRefundArId = isCreditNote && isCashSettlement && !isPurchaseSide && source != null
+                ? await Accounting.Helpers.GatewayRefundCreditNoteCounter.RefundReceivableAccountIdAsync(_db, companyId, source.Id, doc.Id,
+                    doc.TotalAmount, doc.WithholdingTaxAmount)
+                : null;
+            var counterAcc = gatewayRefundArId is Guid grArId
+                ? await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.Id == grArId && a.CompanyId == companyId) ?? UseMoneyAccount()
+                : isCashSettlement
                 ? UseMoneyAccount()
                 : source != null
                     ? await OriginalArApAccountAsync(companyId, source.Id, isPurchaseSide ? Accounting.Helpers.ArApSide.Payable : Accounting.Helpers.ArApSide.Receivable,
                         doc, pinContact => FindAccountAsync(companyId, counterAccCode, pinContact))
                     : await FindAccountAsync(companyId, counterAccCode, doc.Contact);
-            var counterDesc = $"{typeLabel} - {doc.DocumentNumber}" +
-                Accounting.Helpers.AdjustmentNoteAccount.CounterLegSuffix(isCashSettlement);
+            var counterDesc = $"{typeLabel} - {doc.DocumentNumber}" + (gatewayRefundArId != null
+                ? " (ล้างลูกหนี้รอใบลดหนี้ — คืนเงินผ่านผู้ให้บริการรับชำระแล้ว)"
+                : Accounting.Helpers.AdjustmentNoteAccount.CounterLegSuffix(isCashSettlement));
 
             // CN reduces the receivable/increases payable for purchase return; DN opposite.
             // Sales side:    CN→Cr counter, DN→Dr counter

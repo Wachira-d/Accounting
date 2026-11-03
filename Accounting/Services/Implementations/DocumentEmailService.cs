@@ -16,13 +16,18 @@ public class DocumentEmailService : IDocumentEmailService
     private readonly ILogger<DocumentEmailService> _logger;
     private readonly IPdfGenerationService? _pdf;
 
+    /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — อ่าน PDF/A-3 ของ e-Tax ที่เก็บไว้ · null (นอก DI) ⇒ FileStorageDefaults.Local</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
+
     public DocumentEmailService(
         AccountingDbContext db,
         IEmailSenderFactory senderFactory,
         IEtaxInvoiceService etaxService,
         ILogger<DocumentEmailService> logger,
-        IPdfGenerationService? pdf = null)
+        IPdfGenerationService? pdf = null,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
+        _storage = storage;
         _db = db;
         _senderFactory = senderFactory;
         _etaxService = etaxService;
@@ -215,9 +220,10 @@ public class DocumentEmailService : IDocumentEmailService
         if (req.IncludePdf)
         {
             byte[]? pdfBytes = null;
-            if (!string.IsNullOrWhiteSpace(etax.PdfFilePath) && File.Exists(etax.PdfFilePath))
+            if (!string.IsNullOrWhiteSpace(etax.PdfFilePath)
+                && await (_storage ?? Accounting.Services.Storage.FileStorageDefaults.Local).ReadAllBytesAsync(etax.PdfFilePath) is { } storedPdf)
             {
-                pdfBytes = await File.ReadAllBytesAsync(etax.PdfFilePath);
+                pdfBytes = storedPdf;
             }
             else
             {

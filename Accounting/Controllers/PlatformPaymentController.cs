@@ -62,6 +62,7 @@ public class PlatformPaymentController : ControllerBase
     }
 
     [HttpGet("addons/{featureCode}/intents/{intentId:guid}")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.BillingManage)]   // รอบ 227 (D-4): สมมาตรกับสถานะค่าแพ็กเกจ (ฝ่ายค้าน S5) — เดิมไม่ตรวจสิทธิ์
     public async Task<ActionResult<ApiResponse<object>>> AddOnStatus(Guid companyId, string featureCode, Guid intentId, CancellationToken ct)
         => await StatusAsync(companyId, intentId, ct);
 
@@ -146,6 +147,13 @@ public static class PlatformPayInfo
         {
             online = status.Online,
             methods = status.Online ? status.Methods : Array.Empty<string>(),
+            // รอบ 228 (§5.1): ป้ายไทยของแต่ละวิธี (ตัวเดียว PlatformPayMethods.Label — หน้าเว็บไม่มีตารางป้ายเอง) + สิ่งที่หน้าชำระใช้รับบัตร
+            methodOptions = status.Online
+                ? status.Methods.Select(m => (object)new { code = m, label = Enum.TryParse<PaymentMethodKind>(m, out var k) ? PlatformPayMethods.Label(k) : m }).ToArray()
+                : Array.Empty<object>(),
+            card = status.Online && status.Card is { } c
+                ? new { providerCode = c.ProviderCode, scriptUrl = c.ScriptUrl, publicKey = c.PublicKey, isTestMode = c.IsTestMode }
+                : null,
             offlineReason = status.OfflineReason,
             bankTransferInstructions = string.IsNullOrWhiteSpace(text) ? null : text.Trim(),
             fallbackNote = string.IsNullOrWhiteSpace(text)

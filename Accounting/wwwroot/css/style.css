@@ -503,6 +503,8 @@ input, select, textarea { font-family: inherit; font-size: inherit; }
   .auth-left { display: none; }
   .auth-right { width: 100%; }
   .form-row { grid-template-columns: 1fr; }
+  /* รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก B · §1 ข้อ 14): แถว 3/2-1/1-2/3-1 ช่องยุบเป็นแถวเดียวบนมือถือ (เดิมบีบเหลือ ~100px ต่อช่อง) */
+  .form-row-3, .form-row-2-1, .form-row-1-2, .form-row-3-1 { grid-template-columns: 1fr; }
   .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
   .page-header { flex-direction: column; align-items: flex-start; gap: 12px; }
   .toolbar { flex-wrap: wrap; gap: 8px; }

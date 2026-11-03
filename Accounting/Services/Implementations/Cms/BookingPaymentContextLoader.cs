@@ -16,10 +16,13 @@ public sealed record BookingPaymentSiteContext(
     bool PromptPayValid,
     bool CompanyGatewayActive,
     string? CompanyGatewayName,
-    Guid? TransferGatewayRowId)
+    Guid? TransferGatewayRowId,
+    string? RawQrUrl = null)
 {
     public bool GatewayReady => BookingPaymentChannels.GatewayReady(OnlineEnabled, CompanyGatewayActive);
     public bool TransferReady => BookingPaymentChannels.TransferReady(TransferEnabled, Transfer, PromptPayValid);
+    /// <summary>รอบ 223: ช่องทางที่ติ๊กแต่ลูกค้าจะไม่เห็น (หน้าตั้งค่าแสดง) — ตัวตัดสิน <see cref="BookingPaymentChannels.Warnings"/></summary>
+    public List<string> ChannelWarnings => BookingPaymentChannels.Warnings(TransferEnabled, Transfer, PromptPayValid, OnlineEnabled, CompanyGatewayActive, RawQrUrl);
 }
 
 /// <summary>
@@ -43,11 +46,8 @@ public static class BookingPaymentContextLoader
     {
         var row = await db.SiteBookingSettings.AsNoTracking()
             .FirstOrDefaultAsync(x => x.CompanyId == companyId && x.SiteId == siteId && !x.IsDeleted, ct);
-        var gw = await db.SitePaymentGateways.AsNoTracking()
-            // ฝ่ายค้านรอบ 218 (B1): เฉพาะแถวชนิดโอน/พร้อมเพย์ — แถว gateway อื่น (Omise ฯลฯ) ไม่ใช่ช่องโอน
-            .Where(g => g.CompanyId == companyId && g.SiteId == siteId && g.IsActive && !g.IsDeleted
-                && (g.GatewayType == PaymentGatewayType.BankTransfer || g.GatewayType == PaymentGatewayType.PromptPay))
-            .OrderBy(g => g.SortOrder)
+        // ฝ่ายค้านรอบ 218 (B1) · รอบ 228 S-1: ตัวอ่านเดียวของแถวบัญชีรับโอน (ชนิดโอน/พร้อมเพย์ · ลำดับตายตัว)
+        var gw = await SiteTransferAccount.Rows(db.SitePaymentGateways.AsNoTracking(), companyId, siteId)
             .Select(g => new { g.Id, g.BankName, g.BankAccountNumber, g.BankAccountName, g.BankBranch, g.PromptPayId, g.PromptPayQrUrl })
             .FirstOrDefaultAsync(ct);
         var cfg = await db.PaymentProviderConfigs.AsNoTracking()
@@ -62,6 +62,6 @@ public static class BookingPaymentContextLoader
         // manual-slip ไม่ใช่ gateway ออนไลน์ (หน้า public-pay/methods ตัดออกเช่นกัน)
         var gatewayActive = cfg != null && cfg.ProviderCode != Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code;
         return new BookingPaymentSiteContext(SiteRule(row), row?.OnlineDepositEnabled ?? false, row?.BankTransferEnabled ?? true,
-            row?.PaymentNote, transfer, ppValid, gatewayActive, gatewayActive ? cfg!.DisplayName : null, gw?.Id);
+            row?.PaymentNote, transfer, ppValid, gatewayActive, gatewayActive ? cfg!.DisplayName : null, gw?.Id, gw?.PromptPayQrUrl);
     }
 }

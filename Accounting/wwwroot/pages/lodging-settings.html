@@ -493,7 +493,10 @@
         }
         box.innerHTML = `${live ? '🟢' : '🔴'} <b>${esc(p.publicBookingMessage || '')}</b>`
           + (p.publicBookingFix ? `<div style="margin-top:4px">วิธีแก้: ${esc(p.publicBookingFix)}</div>` : '')
-          + bind;
+          + bind
+          // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก A · §1 ข้อ 1): แขกต้องโอน แต่เว็บที่ผูกไม่มีบัญชีรับโอน (ข้อความจากเซิร์ฟเวอร์) + ลิงก์ไปการ์ดบัญชีรับโอนของเว็บนั้น
+          + (p.transferAccountWarning ? `<div style="margin-top:8px;background:#fffbeb;border:1px solid #fcd34d;color:#78350f;border-radius:8px;padding:8px 10px">${esc(p.transferAccountWarning)}
+              <a class="btn btn-sm btn-secondary" style="margin-left:6px" href="/pages/cms-site-settings.html?siteId=${encodeURIComponent(p.siteId || '')}&group=payment">ตั้งบัญชีรับโอน →</a></div>` : '');
         box.style.display = '';
       },
       // ผูกที่พักกับเว็บจากป้ายสถานะ — ด่านทั้งหมดอยู่ที่เซิร์ฟเวอร์ (BindSiteAsync) · ได้ DTO ใหม่กลับมาแสดงสถานะทันที
@@ -585,7 +588,7 @@
         // ช่อง response-only + ค่าเดิมของที่พัก (รอบ 194: ตั้งผ่านประเภทเงินมัดจำแล้ว — ส่งกลับ = เซิร์ฟเวอร์ถือว่าเป็นหน้ารุ่นเก่า)
         delete d.roomDepositKindInfo; delete d.roomDepositKindInherited; delete d.depositKindOptions; delete d.depositVatExplanation;
         delete d.depositVatTreatment; delete d.depositOutputVatDeferred;
-        delete d.publicBookingStatus; delete d.publicBookingMessage; delete d.publicBookingFix; delete d.bindableSites;
+        delete d.publicBookingStatus; delete d.publicBookingMessage; delete d.publicBookingFix; delete d.bindableSites; delete d.transferAccountWarning;
         // คำตัดสินข้อ 128: ธงเดิมเป็นสำเนาที่ระบบเขียนตามโหมด (หน้านี้ไม่มีช่อง) · ตัวเลือกโหมดเป็น response-only
         delete d.confirmWithoutDeposit; delete d.guestConfirmModeOptions;
         // คำตัดสินข้อ 157: ตัวเลือก/คำอธิบายจังหวะออกเอกสารภาษีเป็น response-only

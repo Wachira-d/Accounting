@@ -279,12 +279,13 @@ public class LodgingController : ControllerBase
     /// และ URL นั้นถูกส่งกลับใน API response ของหน้าการจองด้วย</para></summary>
     [HttpGet("reservations/{id:guid}/slip")]
     [RequirePermission(PermissionKeys.LodgingManage)]
-    public async Task<IActionResult> Slip(Guid companyId, Guid id)
+    public async Task<IActionResult> Slip(Guid companyId, Guid id, [FromServices] Accounting.Services.Storage.IFileStorage storage)
     {
         var f = await _svc.GetSlipFileAsync(companyId, id);
         if (f == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
-        // inline เพื่อให้เปิดดูในแท็บใหม่ได้เลย (พนักงานต้องเทียบยอดกับหน้าจอ)
-        return PhysicalFile(f.Value.Path, f.Value.ContentType);
+        // inline เพื่อให้เปิดดูในแท็บใหม่ได้เลย (พนักงานต้องเทียบยอดกับหน้าจอ) · เสิร์ฟจากที่เก็บกลาง (Local/S3 · ทีม FS)
+        return await Accounting.Services.Storage.FileStorageResults.FileResultAsync(storage, f.Value.Path, f.Value.ContentType)
+            ?? NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
     }
 
     /// <summary>สลิปทุกใบของการจอง (ล่าสุด · ถูกปฏิเสธ · ถูกส่งทับ) ให้โมดัลการจองแสดงเป็นรูปย่อ — URL ทุกใบเป็นเส้นที่ตรวจสิทธิ์</summary>
@@ -300,13 +301,14 @@ public class LodgingController : ControllerBase
     /// <summary>ไฟล์สลิป 1 ใบ (รวมใบที่ถูกปฏิเสธ — ยังเป็นหลักฐาน) · inline เพื่อแสดงในโมดัล · ไม่ส่งชื่อไฟล์เดิมของแขกเป็น header</summary>
     [HttpGet("reservations/{id:guid}/slips/{attachmentId:guid}")]
     [RequirePermission(PermissionKeys.LodgingManage)]
-    public async Task<IActionResult> SlipById(Guid companyId, Guid id, Guid attachmentId)
+    public async Task<IActionResult> SlipById(Guid companyId, Guid id, Guid attachmentId, [FromServices] Accounting.Services.Storage.IFileStorage storage)
     {
         var f = await _svc.GetSlipAttachmentFileAsync(companyId, id, attachmentId);
         if (f == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
         // nosniff: เบราว์เซอร์ต้องเชื่อ content type ที่เราตั้ง (รูป/PDF เท่านั้น) ไม่เดาเป็น HTML
         Response.Headers["X-Content-Type-Options"] = "nosniff";
-        return PhysicalFile(f.Value.Path, f.Value.ContentType);
+        return await Accounting.Services.Storage.FileStorageResults.FileResultAsync(storage, f.Value.Path, f.Value.ContentType)
+            ?? NotFound(new ApiResponse<string>(false, null, "ไม่พบไฟล์สลิป"));
     }
 
     /// <summary>ปฏิเสธสลิปที่แขกส่งมา — ทางออกที่หายไปเมื่อสลิปไม่ตรง/ปลอม

@@ -138,6 +138,8 @@
 
       MONTHS: ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'],
       period(y, m) { return `${this.MONTHS[m]} ${y + 543}`; },
+      /** รอบ 228: แบบรายครึ่งปี/รายปี/รายตราสาร (ภ.ง.ด.51/50 · กท.20ก · อากรแสตมป์) ใช้ป้ายงวดที่เซิร์ฟเวอร์ส่งมา — ไม่มี = เดือน/ปีตามเดิม */
+      periodOf(r) { return r.periodLabel || this.period(r.periodYear, r.periodMonth); },
 
       // ── กลุ่มประเภทแบบ (ใช้สีให้สแกนด้วยตาได้ทันทีว่าเป็นภาษีสายไหน) ──
       TYPE_GROUP: {
@@ -190,7 +192,7 @@
           // timeout 25s กันค้างตลอดถ้าเซิร์ฟเวอร์ตอบช้า → ขึ้นปุ่มลองใหม่
           const timeout = new Promise((_, rej) =>
             setTimeout(() => rej(new Error('หมดเวลาโหลด — เซิร์ฟเวอร์ตอบช้าหรือยังไม่ได้อัปเดต กรุณาลองใหม่')), 25000));
-          const res = await Promise.race([api.getRemittances(12), timeout]);
+          const res = await Promise.race([api.getRemittances(12, !!this._includeOldAnnual), timeout]);
           this._data = (res && res.data) || { pending: [], recentHistory: [], totalPending: 0, totalOverdue: 0, overdueCount: 0 };
           // กัน field หาย
           this._data.pending = this._data.pending || [];
@@ -311,7 +313,7 @@
             if (f.status === 'later' && u !== 'later') return false;
           }
           if (q) {
-            const hay = [r.formCode, r.typeLabel, this.period(r.periodYear, r.periodMonth),
+            const hay = [r.formCode, r.typeLabel, this.periodOf(r),
               r.payableAccountCode, String(r.amount)].join(' ').toLowerCase();
             if (!hay.includes(q)) return false;
           }
@@ -379,6 +381,10 @@
         + card('นำส่งแล้ว (12 เดือน)', String((d.recentHistory || []).length), `${Layout.money(paidAmt)} บาท`, '#059669');
       },
 
+      _includeOldAnnual: false,
+      /** รอบ 228 ฝ่ายค้าน S3: สลับแสดงภาษีรายปีที่ครบกำหนดเกิน 24 เดือน (เซิร์ฟเวอร์กรอง — หน้าแค่ส่งธง) */
+      toggleOldAnnual() { this._includeOldAnnual = !this._includeOldAnnual; this.load(); },
+
       renderPp36Banner() {
         // ── ภ.พ.36 นำส่งแล้วแต่ยังไม่รับรู้ภาษีซื้อ + รายการที่ต้องตรวจ — ต้องเด่นเหนือทุกอย่าง ──
         // ผู้ใช้เจอจริง: นำส่งแล้วหาใบใน ภ.พ.30 ไม่เจอ เพราะขั้นที่ 2 ("รับรู้ภาษีซื้อ" เมื่อได้ใบเสร็จ RD) ซ่อนอยู่ในแท็บประวัติ.
@@ -387,7 +393,12 @@
         const awaiting = (this._data && this._data.pp36AwaitingRecognition) || [];
         const issues = (this._data && this._data.pp36Issues) || [];
         const el = document.getElementById('pp36Banner');
-        if (!awaiting.length && !issues.length) { el.innerHTML = ''; return; }
+        // รอบ 228 ฝ่ายค้าน S3/S5b: ข้อความจากเซิร์ฟเวอร์ (เช่น §67 ตรี ของ ภ.ง.ด.50 ยอดสุทธิ 0) + ภาษีรายปีเก่าที่ซ่อน (ขอดูได้)
+        const adv = (this._data && this._data.advisories) || [];
+        const hidden = (this._data && this._data.hiddenOldAnnualCount) || 0;
+        const advHtml = (adv.length ? `<div style="background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #d97706;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#92400e">${adv.map(a => `<div>⚠️ ${Layout.esc(a)}</div>`).join('')}</div>` : '')
+          + (hidden > 0 || this._includeOldAnnual ? `<div class="text-xs text-gray-500" style="margin-bottom:10px">${this._includeOldAnnual ? 'แสดงภาษีรายปี (ภ.ง.ด.51/50 · กท.20ก) ที่ครบกำหนดเกิน 24 เดือนด้วย' : `ซ่อนภาษีรายปีที่ครบกำหนดเกิน 24 เดือน ${hidden} รายการ`} · <a href="#" onclick="Page.toggleOldAnnual();return false" style="text-decoration:underline">${this._includeOldAnnual ? 'ซ่อน' : 'แสดง'}</a></div>` : '');
+        if (!awaiting.length && !issues.length) { el.innerHTML = advHtml; return; }
         const awaitingHtml = !awaiting.length ? '' : `
           <div style="background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #2563eb;border-radius:10px;padding:12px 14px;margin-bottom:12px">
             <div style="font-weight:700;color:#1e40af;margin-bottom:6px">🌐 ภ.พ.36 นำส่งแล้ว — รอรับรู้ภาษีซื้อเข้า ภ.พ.30 (${awaiting.length} รายการนำส่ง)</div>
@@ -406,7 +417,7 @@
                 ${i.documentId ? `<a href="/pages/documents.html?id=${encodeURIComponent(i.documentId)}" style="font-weight:600">${Layout.esc(i.documentNumber || '')}</a> · ` : ''}${Layout.esc(i.message)}
               </div>`).join('')}
           </div>`;
-        el.innerHTML = issuesHtml + awaitingHtml + '<div style="margin-bottom:8px"></div>';
+        el.innerHTML = advHtml + issuesHtml + awaitingHtml + '<div style="margin-bottom:8px"></div>';
       },
 
       renderViewSwitch() {
@@ -487,8 +498,8 @@
         return `
           <tr class="rm-row ${u.cls}">
             <td class="font-medium" data-label="แบบ">${typeCell}</td>
-            <td data-label="งวด">${this.period(r.periodYear, r.periodMonth)}</td>
-            <td class="text-right" data-label="ยอดรอนำส่ง" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}${fee}${sub}${gap}</td>
+            <td data-label="งวด">${Layout.esc(this.periodOf(r))}</td>
+            <td class="text-right" data-label="ยอดรอนำส่ง" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}${fee}${sub}${gap}${r.amountNote ? `<div class="text-xs text-gray-500">${Layout.esc(r.amountNote)}</div>` : ''}</td>
             <td class="text-center" data-label="กำหนดยื่น">${Layout.date(r.eFilingDueDate)}<div class="text-xs text-gray-400">กระดาษ ${Layout.date(r.paperDueDate)}</div>${r.warnNote ? `<div class="text-xs" style="color:#b45309" title="${Layout.esc(r.warnNote)}">⚠️ เตือนตามวันกระดาษ</div>` : ''}</td>
             <td class="text-center" data-label="สถานะ"><span class="badge ${u.badge}">${u.label}</span></td>
             <td class="text-right"><button class="btn btn-outline btn-sm" onclick="Page.openPay(${r._idx})">💸 นำส่ง</button></td>
@@ -553,7 +564,7 @@
           const overdueN = list.filter(r => r.isOverdue).length;
           const first = list[0];
           const title = byPeriod
-            ? `งวด ${this.period(first.periodYear, first.periodMonth)}`
+            ? `งวด ${Layout.esc(this.periodOf(first))}`
             : `${Layout.esc(first.formCode)} — ${Layout.esc(first.typeLabel)}`;
           const g = byPeriod ? null : this.gstyle(first.remittanceType);
           const collapsed = !!this._collapsed[k];
@@ -575,7 +586,7 @@
       /** ยกเลิกการนำส่ง (คำตัดสินข้อ 113) — เซิร์ฟเวอร์ตัดสินทั้งหมด (เหตุผลบังคับ · ภ.พ.36 ที่รับรู้ภาษีซื้อแล้วถูกกัน) · หน้าเว็บแค่ถามเหตุผล */
       async voidRemittance(id) {
         const r = (this._data.recentHistory || []).find(x => x.id === id);
-        const label = r ? `${r.formCode} ${this.period(r.periodYear, r.periodMonth)}` : '';
+        const label = r ? `${r.formCode} ${this.periodOf(r)}` : '';
         const reason = prompt(`ยกเลิกการนำส่ง ${label}\n\nระบบจะกลับรายการบัญชีของการนำส่ง (ลงวันนี้) และปลดสถานะ "นำส่งแล้ว" ของรอบเงินเดือน/ใบที่ผูก — ต้องนำส่งใหม่ภายหลัง\n\nเหตุผล (บังคับ):`);
         if (reason === null) return;
         if (!reason.trim()) { Layout.toast('ต้องระบุเหตุผล', 'error'); return; }
@@ -611,7 +622,7 @@
         return (this._data.recentHistory || []).filter(r => {
           if (this._hf.type !== 'all' && r.remittanceType !== this._hf.type) return false;
           if (q) {
-            const hay = [r.formCode, this.period(r.periodYear, r.periodMonth), r.filingNumber || '',
+            const hay = [r.formCode, this.periodOf(r), r.filingNumber || '',
               String(r.amount)].join(' ').toLowerCase();
             if (!hay.includes(q)) return false;
           }
@@ -638,14 +649,14 @@
                 return `
                 <tr class="rm-row">
                   <td data-label="แบบ"><span class="rm-type-badge" style="color:${g.fg};background:${g.bg};border-color:${g.bd}">${Layout.esc(r.formCode)}</span></td>
-                  <td data-label="งวด">${this.period(r.periodYear, r.periodMonth)}</td>
+                  <td data-label="งวด">${Layout.esc(this.periodOf(r))}</td>
                   <td class="text-right" data-label="ยอด" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</td>
                   <td class="text-right" data-label="เงินเพิ่ม/เบี้ยปรับ/ค่าปรับ" style="font-variant-numeric:tabular-nums" title="เงินเพิ่ม ${Layout.money(r.lateFee || 0)} · เบี้ยปรับ ${Layout.money(r.penalty || 0)} · ค่าปรับ ${Layout.money(r.otherFine || 0)}">${((r.lateFee || 0) + (r.penalty || 0) + (r.otherFine || 0)) > 0
                     ? Layout.money((r.lateFee || 0) + (r.penalty || 0) + (r.otherFine || 0))
                       + (((r.penalty || 0) + (r.otherFine || 0)) > 0 ? `<div class="text-xs text-gray-400">เพิ่ม ${Layout.money(r.lateFee || 0)} · ปรับ ${Layout.money((r.penalty || 0) + (r.otherFine || 0))}</div>` : '')
                     : '-'}</td>
                   <td data-label="วันที่จ่าย">${Layout.date(r.payDate)}</td>
-                  <td data-label="เลขรับ">${Layout.esc(r.filingNumber || '-')}</td>
+                  <td data-label="เลขรับ">${Layout.esc(r.filingNumber || '-')}${r.settledOutside ? '<div class="text-xs" style="color:#64748b">ชำระนอกระบบ (ผูกใบสำคัญ)</div>' : ''}</td>
                   <td class="text-center" data-label="ใบเสร็จ">${r.receiptAttachmentId
                     ? `<button class="btn btn-sm btn-ghost" onclick="Page.viewReceipt('${r.receiptAttachmentId}')" title="เปิดดูใบเสร็จ/หลักฐานที่แนบไว้">📎 ดู</button>`
                     : `<button class="btn btn-sm btn-ghost" onclick="Page.attachFromHistory('${r.id}', '${this.period(r.periodYear, r.periodMonth)}')" title="ยังไม่มีไฟล์แนบ — แนบใบเสร็จ/สลิปย้อนหลังได้">＋แนบ</button>`}</td>
@@ -775,7 +786,7 @@
         if (!r) return;
         this._sel = r;
         const titleEl = this._byId('remitTitle');
-        if (titleEl) titleEl.textContent = `นำส่ง ${r.formCode} — ${this.period(r.periodYear, r.periodMonth)}`;
+        if (titleEl) titleEl.textContent = `นำส่ง ${r.formCode} — ${this.periodOf(r)}`;
         const today = Layout.toDateInput(new Date()) /* วันที่ปฏิทิน — ห้าม toISOString (เลื่อน 1 วันใน ICT) */;
         // แหล่งเงินครบ: บัญชีธนาคาร (map LinkedAccountId) + GL เงินสด/ช่องจ่ายอื่น
         let bankOpts = '<option value="">— ใช้บัญชีเริ่มต้น —</option>';
@@ -807,15 +818,18 @@
           </div>
           <div style="background:#f8fafc;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:13px">
             <div style="display:flex;justify-content:space-between"><span class="text-gray-500">ยอดเงินสมทบ/ภาษี</span><b style="font-variant-numeric:tabular-nums">${Layout.money(r.amount)}</b></div>
-            ${penRow('rmSurcharge', 'เงินเพิ่ม', r.lateFeeNote, r.lateFeePreview)}
-            ${penRow('rmPenalty', 'เบี้ยปรับ', r.penaltyNote, r.penaltyPreview)}
+            ${penRow('rmSurcharge', 'เงินเพิ่ม', r.lateFeeNote, r.lateFeePrefill ?? r.lateFeePreview)}
+            ${penRow('rmPenalty', 'เบี้ยปรับ', r.penaltyNote, r.penaltyPrefill ?? r.penaltyPreview)}
             ${penRow('rmFine', 'ค่าปรับ (อาญา/อื่น ๆ)', r.fineNote, 0)}
             <div style="display:flex;justify-content:flex-end;margin-top:4px;gap:8px;align-items:center">
               <span id="rmPenNote" class="text-xs text-gray-500" style="flex:1;line-height:1.5">${Layout.esc(r.lateFeeNote || '')}</span>
               <button type="button" class="btn btn-secondary btn-sm" onclick="Page._recalc(true)" title="ระบบคำนวณเงินเพิ่ม/เบี้ยปรับตามวันที่จ่าย (ไม่แตะช่องค่าปรับ)">คำนวณให้</button>
             </div>
             <div class="text-xs text-gray-400" style="margin-top:2px">ยอดในสามช่องนี้ลงผังเงินเพิ่ม/ค่าปรับ = รายจ่ายต้องห้าม §65 ตรี(6) (บวกกลับ ภ.ง.ด.50 ให้เอง) · แก้ให้ตรงใบเสร็จได้</div>
-            <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:6px"><span>รวมจ่าย</span><b id="totLbl" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount + (r.lateFeePreview || 0) + (r.penaltyPreview || 0))}</b></div>
+            <div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid #e2e8f0;padding-top:6px"><span>รวมจ่าย</span><b id="totLbl" style="font-variant-numeric:tabular-nums">${Layout.money(r.amount + ((r.lateFeePrefill ?? r.lateFeePreview) || 0) + ((r.penaltyPrefill ?? r.penaltyPreview) || 0))}</b></div>
+            ${r.section67TerNote ? `<div class="text-xs" style="margin-top:6px;color:#b45309" id="rmS67">${r.section67TerPreview > 0 ? `⚠️ เงินเพิ่ม §67 ตรี (ประมาณการ ${Layout.money(r.section67TerPreview)} — ระบบไม่เติม) · ` : ''}${Layout.esc(r.section67TerNote)}</div>` : ''}
+            ${r.amountNote ? `<div class="text-xs text-gray-500" style="margin-top:4px">${Layout.esc(r.amountNote)}</div>` : ''}
+            ${r.canSettleOutside ? `<div style="margin-top:8px"><button type="button" class="btn btn-ghost btn-sm" onclick="Page.settleOutside()" title="ชำระด้วยใบสำคัญจ่ายไปแล้ว (ก่อนมีหน้านี้) — ผูกใบนั้นกับงวด ไม่ลงบัญชีใหม่">ชำระนอกระบบแล้ว (ผูกใบสำคัญ)</button></div>` : ''}
           </div>
           <div class="form-row"><label class="form-label">วันที่จ่าย</label>
             <input type="date" id="rmPayDate" class="form-input" value="${today}" onchange="Page._recalc()"></div>
@@ -850,17 +864,33 @@
           const res = await Layout.api().remitPreview(r.remittanceType, r.periodYear, r.periodMonth, dateEl.value, paper);
           if (seq !== this._recalcSeq) return;   // คำตอบเก่ามาช้า (เปลี่ยนวันที่/ติ๊กซ้ำระหว่างรอ) — ทิ้ง
           const d = res.data || {};
-          const vals = { rmSurcharge: d.lateFeePreview, rmPenalty: d.penaltyPreview };
+          // รอบ 228: เบี้ยปรับจากกติกาที่ยังไม่ยืนยัน (ภ.พ.36) เซิร์ฟเวอร์ส่ง penaltyPrefill = 0 — แสดงค่าเสนอในคำอธิบาย ไม่เติมลงช่อง
+          const vals = { rmSurcharge: d.lateFeePrefill ?? d.lateFeePreview, rmPenalty: d.penaltyPrefill ?? d.penaltyPreview };
           for (const id of ids) {
             const el = this._byId(id); if (!el) continue;
             if (fromButton || el.dataset.userTouched !== '1') { el.value = Number(vals[id] || 0).toFixed(2); delete el.dataset.userTouched; }
           }
           const nEl = this._byId('rmPenNote');
           if (nEl) nEl.textContent = [d.lateFeeNote, d.penaltyNote].filter(Boolean).join(' · ');
+          const s67 = this._byId('rmS67');
+          if (s67) s67.textContent = (d.section67TerPreview > 0 ? `⚠️ เงินเพิ่ม §67 ตรี (ประมาณการ ${Layout.money(d.section67TerPreview)} — ระบบไม่เติม) · ` : '') + (d.section67TerNote || '');
           this._updateTotal();
         } catch (e) {
           if (seq === this._recalcSeq && fromButton) Layout.toast('คำนวณไม่สำเร็จ — กรอกตามใบเสร็จได้เลย (' + (e.message || '') + ')', 'error');
         }
+      },
+
+      /** รอบ 228 ฝ่ายค้าน S3: ผูกใบสำคัญที่ลงเองกับงวด (เซิร์ฟเวอร์ตรวจใบ/ยอด/ผัง + audit) — หน้าแค่ถามเลขที่ */
+      async settleOutside() {
+        const r = this._sel; if (!r) return;
+        const no = prompt(`ผูกใบสำคัญที่ใช้ชำระ ${r.formCode} ${this.periodOf(r)}\n\nกรอกเลขที่ใบสำคัญ (JV) ที่ Dr ผังหนี้ไว้แล้ว — ระบบไม่ลงบัญชีใหม่:`);
+        if (!no || !no.trim()) return;
+        try {
+          const res = await Layout.api().remitSettledOutside({ remittanceType: r.remittanceType, periodYear: r.periodYear, periodMonth: r.periodMonth, journalEntryNumber: no.trim() });
+          Layout.toast(res.message || 'ผูกแล้ว');
+          Layout.closeModal('remitModal');
+          this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       /** ช่องเงิน: ว่าง = 0 · ติดลบ/ไม่ใช่ตัวเลข = null (ให้ผู้เรียกแสดงข้อผิดพลาด — ห้ามตัดเป็น 0 เงียบ) */

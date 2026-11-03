@@ -10,6 +10,7 @@
   <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
   <style>
     .editor-tabs { display:flex; border-bottom:2px solid var(--gray-200); margin-bottom:20px; gap:0 }
+    @media (max-width: 768px) { .editor-tabs { flex-wrap:nowrap !important; overflow-x:auto; -webkit-overflow-scrolling:touch } .editor-tab { flex:0 0 auto; white-space:nowrap } }   /* รอบ 228 แพ็ก B */
     .editor-tab { padding:12px 20px; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; font-weight:500; color:var(--gray-600) }
     .editor-tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600 }
     .editor-tab:hover { color:var(--primary) }
@@ -61,23 +62,23 @@
       </div>
     </div>
 
-    <div class="editor-tabs" style="flex-wrap:wrap">
-      <div class="editor-tab active" data-tab="pages" onclick="Page.switchTab('pages')">📄 หน้าเว็บ</div>
-      <div class="editor-tab" data-tab="nav" onclick="Page.switchTab('nav')">🧭 เมนู</div>
-      <div class="editor-tab" data-tab="media" onclick="Page.switchTab('media')">🖼️ คลังภาพ</div>
-      <div class="editor-tab" data-tab="theme" onclick="Page.switchTab('theme')">🎨 ธีม</div>
-      <div class="editor-tab" data-tab="products" onclick="Page.switchTab('products')" id="tabProducts" style="display:none">🛒 สินค้า</div>
-      <div class="editor-tab" data-tab="orders" onclick="Page.switchTab('orders')" id="tabOrders" style="display:none">📦 ออเดอร์</div>
-      <div class="editor-tab" data-tab="booking" onclick="Page.switchTab('booking')" id="tabBooking" style="display:none">📅 บริการจอง</div>
-      <div class="editor-tab" data-tab="bookings" onclick="Page.switchTab('bookings')" id="tabBookings" style="display:none">📋 รายการจอง</div>
-      <div class="editor-tab" data-tab="lodging" onclick="Page.switchTab('lodging')" id="tabLodging" style="display:none">🏨 ที่พัก</div>
-      <div class="editor-tab" data-tab="customers" onclick="Page.switchTab('customers')">👥 ลูกค้า</div>
-      <div class="editor-tab" data-tab="forms" onclick="Page.switchTab('forms')">📨 ฟอร์ม</div>
-      <div class="editor-tab" data-tab="languages" onclick="Page.switchTab('languages')">🌏 ภาษา</div>
-      <div class="editor-tab" data-tab="team" onclick="Page.switchTab('team')">👤 ทีม</div>
-      <div class="editor-tab" data-tab="redirects" onclick="Page.switchTab('redirects')">↪️ Redirects</div>
-      <div class="editor-tab" data-tab="seo" onclick="Page.switchTab('seo')">🔍 SEO</div>
-      <div class="editor-tab" data-tab="domain" onclick="Page.switchTab('domain')">🌐 โดเมน</div>
+    <div class="editor-tabs" role="tablist" style="flex-wrap:wrap"><!-- รอบ 228 แพ็ก B: role=tab · มือถือเลื่อนแนวนอน (style.css) -->
+      <div class="editor-tab active" role="tab" tabindex="0" data-tab="pages" onclick="Page.switchTab('pages')">📄 หน้าเว็บ</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="nav" onclick="Page.switchTab('nav')">🧭 เมนู</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="media" onclick="Page.switchTab('media')">🖼️ คลังภาพ</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="theme" onclick="Page.switchTab('theme')">🎨 ธีม</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="products" onclick="Page.switchTab('products')" id="tabProducts" style="display:none">🛒 สินค้า</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="orders" onclick="Page.switchTab('orders')" id="tabOrders" style="display:none">📦 ออเดอร์</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="booking" onclick="Page.switchTab('booking')" id="tabBooking" style="display:none">📅 บริการจอง</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="bookings" onclick="Page.switchTab('bookings')" id="tabBookings" style="display:none">📋 รายการจอง</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="lodging" onclick="Page.switchTab('lodging')" id="tabLodging" style="display:none">🏨 ที่พัก</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="customers" onclick="Page.switchTab('customers')">👥 ลูกค้า</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="forms" onclick="Page.switchTab('forms')">📨 ฟอร์ม</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="languages" onclick="Page.switchTab('languages')">🌏 ภาษา</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="team" onclick="Page.switchTab('team')">👤 ทีม</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="redirects" onclick="Page.switchTab('redirects')">↪️ Redirects</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="seo" onclick="Page.switchTab('seo')">🏪 ข้อมูลร้าน · นโยบาย · SEO</div>
+      <div class="editor-tab" role="tab" tabindex="0" data-tab="domain" onclick="Page.switchTab('domain')">🌐 โดเมน</div>
     </div>
 
     <!-- Quotas badge -->
@@ -289,7 +290,7 @@
           <div style="font-size:11px;color:var(--gray-500);margin-top:4px">ลูกค้าต้องติ๊กช่องนี้ทุกครั้งก่อนยืนยันคำสั่งซื้อ/การจอง (ระบบเก็บฉบับที่ลูกค้ายอมรับไว้เป็นหลักฐาน) — พนักงานบันทึกแทนลูกค้าไม่ต้องติ๊ก</div>
         </div>
         <div style="margin-top:16px">
-          <button class="btn btn-primary" onclick="Page.saveSeo()">บันทึก SEO, Analytics &amp; CAPTCHA</button>
+          <button class="btn btn-primary" onclick="Page.saveSeo()">💾 บันทึกหน้านี้ (ข้อมูลร้าน · นโยบาย · SEO)</button><!-- รอบ 228 แพ็ก F §1 ข้อ 11: ปุ่มบันทึกทั้งแท็บ ไม่ใช่แค่ SEO -->
         </div>
       </div>
     </div>
@@ -389,6 +390,13 @@
           <div class="form-group"><label class="form-label">เบอร์โทร</label><select class="form-input" id="bssFfPhone"></select></div>
           <div class="form-group"><label class="form-label">อีเมล</label><select class="form-input" id="bssFfEmail"></select></div>
           <div class="form-group"><label class="form-label">หมายเหตุ / รายละเอียดเพิ่มเติม</label><select class="form-input" id="bssFfNotes"></select></div>
+        </div>
+        <!-- รอบ 222: ช่องที่เจ้าของเพิ่มเอง (ข้อความ/ตัวเลข/วันที่/dropdown/ช่องติ๊ก) — กติกาชุดเดียวกับฟอร์มสั่งซื้อ (Helpers/CustomFormFields) · ด่านจริง BookingFormFields.CheckCustom -->
+        <div style="margin:4px 0 10px">
+          <strong style="font-size:14px">➕ ช่องที่เพิ่มเอง</strong>
+          <span class="bs-hint">(ไม่เกิน 10 ช่อง · เลือกได้ว่าใช้กับบริการไหน · คำตอบแสดงในรายละเอียดการจอง หน้าทำงาน และข้อความแจ้งร้าน/ลูกค้า)</span>
+          <div id="bssCustomFields" style="margin-top:8px"></div>
+          <button class="btn btn-secondary btn-sm" onclick="Page.bkCfAdd()">+ เพิ่มช่อง</button>
         </div>
         <button class="btn btn-primary btn-sm" onclick="Page.saveBookingSiteSettings()">บันทึกฟอร์มจอง</button>
       </div>
@@ -896,8 +904,14 @@
               <input type="number" class="form-input" id="bsPrice" step="0.01" min="0" value="0">
             </div>
             <div class="form-group">
-              <label class="form-label">การออกเอกสารบัญชี</label>
-              <select class="form-input" id="bsBookingType"></select>
+              <!-- รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q1): ถามธุรกิจ ระบบเลือกชนิดเอกสาร (Helpers/BookingPayFirst) · ชนิดเอกสารตรงอยู่ใน "ขั้นสูง (ผู้ทำบัญชี)" -->
+              <label class="form-label">ลูกค้าต้องจ่ายก่อนไหม</label>
+              <select class="form-input" id="bsPayFirst" onchange="Page._bsPayFirstHint()"></select>
+              <div class="bs-hint" id="bsPayFirstHint"></div>
+              <details id="bsTypeAdvanced" style="margin-top:4px"><summary class="bs-hint" style="cursor:pointer">ขั้นสูง (ผู้ทำบัญชี) — เลือกชนิดเอกสารเอง</summary>
+                <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" id="bsTypeOverride"> ใช้ชนิดเอกสารที่เลือกเอง (ไม่ตามคำตอบด้านบน)</label>
+                <select class="form-input" id="bsBookingType" style="margin-top:4px"></select>
+              </details>
             </div>
           </div>
           <!-- รอบ 207 (ข้อ 1): ผูกสินค้า/บริการในระบบ ⇒ เอกสารได้รหัสสินค้า + บัญชีรายได้ + อัตรา VAT ของสินค้า · POS เปิดบิลด้วยสินค้านี้ -->
@@ -1346,6 +1360,7 @@
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
   <script src="/js/booking-payment-admin.js"></script>
+  <script src="/js/booking-fulfillment-admin.js"></script><!-- รอบ 226: จัดส่ง/รับเองรายบริการ -->
   <script>
     const BLOCK_TYPES = {
       1:{n:'Hero',i:'🎬',f:'hero'},
@@ -1405,6 +1420,9 @@
       activeThemeId: null,
 
       async init() {
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก B): แท็บกดด้วยคีย์บอร์ด (Enter/Space) · เตือนค่าที่ยังไม่บันทึกของส่วนค่าตั้ง (SEO/ค่าตั้งการจอง) ก่อนออกหน้า
+        document.querySelectorAll('.editor-tab').forEach(el => el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click(); } }));
+        if (window.CmsDirtyGuard) ['tab-seo', 'bkSecProviders', 'bkSecForm', 'bkSecDocs'].forEach(id => CmsDirtyGuard.watch(document.getElementById(id)));
         if (!Layout.init('cms-sites')) return;
         Layout.setTitle('แก้ไขเว็บไซต์');
         const params = new URLSearchParams(location.search);
@@ -1496,7 +1514,7 @@
       },
 
       switchTab(tab) {
-        document.querySelectorAll('.editor-tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
+        document.querySelectorAll('.editor-tab').forEach(el => { el.classList.toggle('active', el.dataset.tab === tab); el.setAttribute('aria-selected', String(el.dataset.tab === tab)); });
         document.querySelectorAll('.tab-pane').forEach(el => el.classList.toggle('active', el.id === `tab-${tab}`));
         if (tab === 'theme' && !this._themeLoaded) this.loadTheme();
         if (tab === 'domain' && !this._domainLoaded) this.loadDomains();
@@ -1683,7 +1701,8 @@
       },
 
       async publishSite() {
-        if (!confirm('ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ')) return;
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E): ก่อนเผยแพร่แสดงข้อที่ยังไม่ได้ตั้ง (จากเซิร์ฟเวอร์ · แสดง ไม่บล็อก)
+        if (!(window.CmsSetupStatus ? await CmsSetupStatus.confirmPublish(this.siteId) : confirm('ยืนยันการเผยแพร่เว็บไซต์? เว็บจะเข้าถึงได้สาธารณะ'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.cmsPublishSite(this.siteId);
@@ -2356,6 +2375,7 @@
           // รอบ 214: echo ค่าที่เซิร์ฟเวอร์เก็บจริง (โหมดนโยบายตัดสินที่เซิร์ฟเวอร์) — ไม่ค้างสถานะฝั่งหน้าเว็บ
           if (saved && saved.data) { this.site = saved.data; this.hydrateLegal(); }
           Layout.toast('บันทึกสำเร็จ', 'success');
+          if (window.CmsDirtyGuard) CmsDirtyGuard.reset(document.getElementById('tab-seo'));   // รอบ 228 แพ็ก B
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
@@ -3120,6 +3140,7 @@
         v('bsId', s.id || ''); v('bsName', s.name || ''); v('bsNameEn', s.nameEn || ''); v('bsDesc', s.description || '');
         v('bsImage', s.imageUrl || ''); v('bsCategory', s.category || ''); v('bsPrice', s.price ?? 0);
         v('bsBookingType', s.bookingType || 'Appointment'); v('bsMode', s.slotMode || 'Interval');
+        this._bsHydratePayFirst(s);   // รอบ 228 แพ็ก D
         v('bsDuration', s.durationMinutes ?? 60);
         const iv = s.slotIntervalMinutes;
         document.getElementById('bsIntervalPick').value = (iv == null) ? '' : ([15, 30, 60].includes(iv) ? String(iv) : 'custom');
@@ -3131,6 +3152,7 @@
         v('bsDepositAmount', s.depositAmount); v('bsDepositPercent', s.depositPercent);
         v('bsFreeCancel', s.freeCancellationHours); v('bsCancelFee', s.cancellationFeePercent);
         if (window.BookingPayAdmin) BookingPayAdmin.hydrateService(s);   // รอบ 218: ชำระล่วงหน้า (ตามค่าเว็บ/กำหนดเอง) — ฟอร์มใหม่ได้ "ตามค่าเว็บ"
+        if (window.BookingFulfillAdmin) BookingFulfillAdmin.hydrateService(s);   // รอบ 226: จัดส่ง/รับเอง (ตามค่าเว็บ/กำหนดเอง) — ฟอร์มใหม่ได้ "ตามค่าเว็บ"
         document.getElementById('bsAutoConfirm').checked = !!s.autoConfirm;
         document.getElementById('bsActive').checked = s.isActive !== false;
         this._bsSlug = s.slug || null;
@@ -3344,6 +3366,8 @@
           if (this._bssProvidersDirty) body.providerAllocationEnabled = document.getElementById('bssProvidersEnabled').checked;
           body.providerRecommendStrategy = document.getElementById('bssStrategy').value;
           body.formFields = { phone: document.getElementById('bssFfPhone').value, email: document.getElementById('bssFfEmail').value, notes: document.getElementById('bssFfNotes').value };
+          // รอบ 222: ส่งรายการช่องเพิ่มเองเฉพาะเมื่อโหลดค่าเดิมได้ (ไม่ส่ง = เซิร์ฟเวอร์คงรายการเดิม · [] = ลบทั้งหมด)
+          if (this._bkCfLoaded) body.formFields.customFields = (this._bkCf || []).map(f => Object.assign({}, f, { serviceIds: (f.serviceIds || []).length ? f.serviceIds : null }));
           const cd = document.querySelector('input[name="bssCompletionDoc"]:checked');
           if (cd) body.completionDocument = cd.value;
         }
@@ -3351,6 +3375,7 @@
         try {
           await api.cmsUpdateBookingSiteSettings(this.siteId, body);
           Layout.toast('บันทึกค่าตั้งของเว็บไซต์แล้ว', 'success');
+          if (window.CmsDirtyGuard) ['bkSecProviders', 'bkSecForm', 'bkSecDocs'].forEach(id => CmsDirtyGuard.reset(document.getElementById(id)));
           await this.loadBookingServices();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
@@ -3372,6 +3397,12 @@
         [['bssFfPhone', ff.phone || 'Required'], ['bssFfEmail', ff.email || 'Optional'], ['bssFfNotes', ff.notes || 'Optional']].forEach(([id, v]) => {
           const el = document.getElementById(id); el.innerHTML = ffOpts; el.value = v;
         });
+        // รอบ 222: ช่องที่เจ้าของเพิ่มเอง — echo กลับจากเซิร์ฟเวอร์ (ชนิด+ป้ายไทยจากเซิร์ฟเวอร์ · หน้าไม่มีสำเนากติกา)
+        this._bkCfTypes = (d.customFieldTypeOptions || []).map(o => [o.value, o.label]);
+        this._bkCfReq = (d.formFieldOptions || []).map(o => [o.value, o.label]);
+        this._bkCf = ((d.formFields || {}).customFields || []).map(f => Object.assign({}, f, { options: f.options || [], serviceIds: f.serviceIds || [] }));
+        this._bkCfLoaded = this._bkCfTypes.length > 0;
+        this.bkCfRender();
         const cur = d.completionDocument || 'Auto';
         document.getElementById('bssCompletionDoc').innerHTML = (d.completionDocumentOptions || []).map(o => `
           <label style="display:flex;gap:8px;align-items:flex-start;margin:6px 0;cursor:pointer;color:inherit">
@@ -3386,6 +3417,61 @@
         document.getElementById('bssRequireMember').checked = d.requireMemberToBook === true;
         this._bss210Loaded = typeof d.requireMemberToBook === 'boolean';
       },
+      // ── รอบ 222: ช่องที่เจ้าของเพิ่มเองบนฟอร์มจอง (ตรวจจริงที่เซิร์ฟเวอร์ตอนบันทึก — BookingFormFields.ValidateConfig) ──
+      bkCfRender() {
+        const wrap = document.getElementById('bssCustomFields'); if (!wrap) return;
+        const sel = (list, v) => list.map(([val, lbl]) => `<option value="${Layout.esc(val)}" ${val === v ? 'selected' : ''}>${Layout.esc(lbl)}</option>`).join('');
+        const svcs = this.bookingServices || [];
+        if (!this._bkCfLoaded) { wrap.innerHTML = '<div class="bs-hint">โหลดค่าตั้งช่องเพิ่มเองไม่สำเร็จ — ลองรีเฟรชหน้า</div>'; return; }
+        wrap.innerHTML = (this._bkCf || []).map((f, i) => {
+          const known = (f.serviceIds || []).filter(id => svcs.some(s => s.id === id));
+          const stale = (f.serviceIds || []).length > 0 && known.length === 0;
+          const scope = (f.serviceIds || []).length ? `${known.length} บริการ` : 'ทุกบริการ';
+          return `<div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px;margin-bottom:8px">
+            <div class="form-row-3">
+              <div class="form-group"><label class="form-label">ชื่อช่องที่ลูกค้าเห็น</label><input class="form-input" maxlength="100" value="${Layout.esc(f.label || '')}" placeholder="เช่น ความยาวผม" onchange="Page.bkCf(${i}, 'label', this.value)"></div>
+              <div class="form-group"><label class="form-label">ชนิด</label><select class="form-input" onchange="Page.bkCf(${i}, 'type', this.value)">${sel(this._bkCfTypes, f.type || 'text')}</select></div>
+              <div class="form-group"><label class="form-label">บังคับกรอก</label><select class="form-input" onchange="Page.bkCf(${i}, 'requirement', this.value)">${sel(this._bkCfReq, f.requirement || 'Optional')}</select></div>
+            </div>
+            ${f.type === 'select' ? `<div class="form-group"><label class="form-label">ตัวเลือกใน dropdown (คั่นด้วย ,)</label><input class="form-input" value="${Layout.esc((f.options || []).join(', '))}" placeholder="เช่น สั้น, กลาง, ยาว" onchange="Page.bkCf(${i}, 'options', this.value)"></div>` : ''}
+            <div class="form-row-3">
+              <div class="form-group"><label class="form-label">รหัสช่อง (a-z 0-9 _)</label><input class="form-input" maxlength="30" value="${Layout.esc(f.key || '')}" onchange="Page.bkCf(${i}, 'key', this.value)"></div>
+              <div class="form-group"><label class="form-label">ยาวสุด (ตัวอักษร · ว่าง = 500)</label><input class="form-input" type="number" min="1" max="500" value="${f.maxLength == null ? '' : Number(f.maxLength)}" onchange="Page.bkCf(${i}, 'maxLength', this.value)"></div>
+              <div class="form-group"><label class="form-label">ใช้กับบริการ</label>
+                <details><summary id="bkCfScope${i}" style="cursor:pointer">${Layout.esc(scope)}${stale ? ' <span style="color:#DC2626">· บริการที่เลือกถูกลบแล้ว — เลือกใหม่</span>' : ''}</summary>
+                  <div class="bs-hint">ไม่ติ๊กเลย = ทุกบริการ</div>
+                  ${svcs.map(s => `<label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" ${(f.serviceIds || []).includes(s.id) ? 'checked' : ''} onchange="Page.bkCfSvc(${i}, '${Layout.jsArg(s.id)}', this.checked)"> ${Layout.esc(s.name || '')}</label>`).join('') || '<div class="bs-hint">ยังไม่มีบริการ</div>'}
+                </details></div>
+            </div>
+            <button class="btn btn-sm btn-danger" onclick="Page.bkCfRemove(${i})">🗑 ลบช่องนี้</button>
+          </div>`;
+        }).join('') || '<div class="bs-hint" style="margin-bottom:8px">ยังไม่มีช่องที่เพิ่มเอง</div>';
+      },
+      bkCf(i, k, v) {
+        const f = (this._bkCf || [])[i]; if (!f) return;
+        if (k === 'options') f.options = String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+        else if (k === 'maxLength') f.maxLength = v === '' ? null : Number(v);
+        else f[k] = v;
+        if (k === 'type') this.bkCfRender();   // ชนิด dropdown ⇒ แสดงช่องตัวเลือก
+      },
+      bkCfSvc(i, id, on) {
+        const f = (this._bkCf || [])[i]; if (!f) return;
+        const svcs = (this.bookingServices || []).map(s => s.id);
+        const cur = (f.serviceIds || []).filter(x => svcs.includes(x) && x !== id);   // บริการที่ถูกลบหลุดออกเมื่อเจ้าของแก้ขอบเขต
+        f.serviceIds = on ? cur.concat([id]) : cur;
+        // ไม่วาดใหม่ทั้งก้อน (กล่องเลือกบริการจะหุบ) — อัปเดตเฉพาะสรุปขอบเขต
+        const sum = document.getElementById('bkCfScope' + i);
+        if (sum) sum.textContent = f.serviceIds.length ? `${f.serviceIds.length} บริการ` : 'ทุกบริการ';
+      },
+      bkCfAdd() {
+        if (!this._bkCfLoaded) return;
+        this._bkCf = this._bkCf || [];
+        let n = this._bkCf.length + 1;
+        while (this._bkCf.some(f => f.key === 'field' + n)) n++;
+        this._bkCf.push({ key: 'field' + n, label: '', type: 'text', options: [], requirement: 'Optional', maxLength: null, serviceIds: [] });
+        this.bkCfRender();
+      },
+      bkCfRemove(i) { (this._bkCf || []).splice(i, 1); this.bkCfRender(); },
       bssProvidersToggle() {
         this._bssProvidersDirty = true;
         const on = document.getElementById('bssProvidersEnabled').checked;
@@ -3532,8 +3618,55 @@
               <div style="display:flex;flex-wrap:wrap;gap:6px">
                 ${(p.services || []).map((s, si) => `<button type="button" class="btn btn-sm btn-secondary" onclick="Page.openCreateBookingService(Page._bsPresets[${pi}].services[${si}])">+ ${Layout.esc(s.name)}</button>`).join('')}
               </div>
+              ${p.siteSetupSummary ? `<div style="margin-top:8px;border-top:1px dashed var(--gray-200);padding-top:8px">
+                <div class="bs-hint">⚙️ ตั้งค่าเว็บทั้งชุด: ${Layout.esc(p.siteSetupSummary)} · ค่าที่ตั้งไว้แล้วไม่ถูกทับ</div>
+                <button type="button" class="btn btn-sm btn-primary" style="margin-top:6px" onclick="Page.applyBookingPresetToSite(this, ${pi})">ตั้งค่าเว็บทั้งชุด (คลิกเดียว)</button>
+                <div id="bsPresetResult_${pi}"></div></div>` : ''}
             </div>`).join('');
         } catch (e) { body.innerHTML = `<div class="text-center" style="color:#dc2626;padding:20px">${Layout.esc(e.message)}</div>`; }
+      },
+
+      // รอบ 228 (คำตัดสิน 228-6): แม่แบบที่ตั้งค่าเว็บได้ (เช่น สั่งทำ/พรีออเดอร์) — เซิร์ฟเวอร์ทำ/ข้าม/บอกสิ่งที่ต้องทำต่อ · หน้าแสดงผลอย่างเดียว
+      async applyBookingPresetToSite(btn, pi) {
+        const key = ((this._bsPresets || [])[pi] || {}).key; if (!key) return;
+        if (!confirm('ตั้งค่าเว็บจากแม่แบบนี้? (สร้างบริการตัวอย่าง · เปิดจัดส่ง/รับเอง · เพิ่มช่องบนฟอร์มจอง — ค่าที่ตั้งไว้แล้วไม่ถูกทับ)')) return;
+        const holder = btn.parentElement.querySelector('[id^="bsPresetResult_"]');
+        if (btn.disabled) return;
+        btn.disabled = true;
+        {
+          try {
+            const res = await API.post(`/api/companies/${Layout.getCompanyId()}/cms/sites/${this.siteId}/booking/presets/${encodeURIComponent(key)}/apply-site`, {});
+            const d = res.data || {};
+            const list = (title, xs) => xs && xs.length ? `<div style="font-weight:600;margin-top:6px">${title}</div><ul style="margin:2px 0 0 18px">${xs.map(x => `<li>${Layout.esc(x)}</li>`).join('')}</ul>` : '';
+            if (holder) holder.innerHTML = `<div class="bs-hint" style="margin-top:8px">${list('✅ ทำแล้ว', d.done)}${list('↩️ ข้าม (ตั้งไว้แล้ว)', d.skipped)}${list('➡️ ต้องทำต่อ', d.nextSteps)}</div>`;
+            Layout.toast(res.message || 'ตั้งค่าแล้ว', 'success');
+            if (typeof this.loadBookingServices === 'function') await this.loadBookingServices();
+          } catch (e) { Layout.toast(e.message, 'error', 10000); }
+          finally { btn.disabled = false; }
+        }
+      },
+
+      // รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก D · Q1): ตัวเลือกจากเซิร์ฟเวอร์ (GET booking/pay-first-options) · ชนิดขั้นสูง (payFirst = null) ⇒ เปิด "ขั้นสูง" + ติ๊กใช้ชนิดเอง
+      async _bsHydratePayFirst(s) {
+        if (!this._payFirstOpts) {
+          try { this._payFirstOpts = (await API.get(`/api/companies/${Layout.getCompanyId()}/cms/sites/${this.siteId}/booking/pay-first-options`)).data || []; }
+          catch (_) { this._payFirstOpts = []; }
+        }
+        const sel = document.getElementById('bsPayFirst'); if (!sel) return;
+        sel.innerHTML = this._payFirstOpts.map(o => `<option value="${Layout.esc(o.value)}">${Layout.esc(o.label)}</option>`).join('');
+        // ค่าจากเซิร์ฟเวอร์ (บริการ/แม่แบบส่ง payFirst มาเอง) · ฟอร์มใหม่ (ไม่มีค่า) ⇒ "ไม่ต้องจ่ายก่อน" · null = ชนิดขั้นสูง
+        const ans = s && s.payFirst !== undefined ? s.payFirst : 'AtShop';
+        const advanced = !ans;
+        sel.value = ans || 'AtShop';
+        document.getElementById('bsTypeOverride').checked = advanced;
+        document.getElementById('bsTypeAdvanced').open = advanced;
+        this._bsPayFirstHint(s && s.payFirstWarning);
+      },
+      _bsPayFirstHint(warning) {
+        const o = (this._payFirstOpts || []).find(x => x.value === (document.getElementById('bsPayFirst') || {}).value);
+        const el = document.getElementById('bsPayFirstHint'); if (!el) return;
+        el.innerHTML = (o ? `${Layout.esc(o.description)} · เอกสาร: <b>${Layout.esc(o.documentLabel)}</b>` : '')
+          + (typeof warning === 'string' && warning ? `<div style="color:#b45309">⚠️ ${Layout.esc(warning)}</div>` : '');
       },
 
       _bsNum(id, fallback) { const raw = document.getElementById(id).value; if (raw === '') return fallback; const n = Number(raw); return Number.isFinite(n) ? n : fallback; },
@@ -3551,6 +3684,8 @@
           slug: this._bsSlug, productId: document.getElementById('bsProduct').value || null,   // รอบ 207: เลือกจากรายการสินค้า
           price: this._bsNum('bsPrice', 0),
           bookingType: document.getElementById('bsBookingType').value,
+          // รอบ 228 แพ็ก D: คำตอบธุรกิจ ⇒ เซิร์ฟเวอร์เลือกชนิด · ขั้นสูงติ๊ก ⇒ ส่งชนิดตรง (payFirst = null)
+          payFirst: document.getElementById('bsTypeOverride').checked ? null : (document.getElementById('bsPayFirst').value || null),
           autoConfirm: document.getElementById('bsAutoConfirm').checked,
           isActive: document.getElementById('bsActive').checked,
           slotMode: mode,
@@ -3579,6 +3714,7 @@
         // รอบ 210: ส่งเฉพาะเมื่อมีตัวเลือกจาก server (ไม่งั้น null = คงค่าเดิม · ไม่รีเซ็ตเงียบ)
         if (document.getElementById('bsMemberAccessWrap').style.display !== 'none') body.memberAccess = document.getElementById('bsMemberAccess').value || 'Inherit';
         if (window.BookingPayAdmin) Object.assign(body, BookingPayAdmin.servicePayload());   // รอบ 218: ไม่มีตัวเลือก ⇒ {} (คงค่าเดิม)
+        if (window.BookingFulfillAdmin) Object.assign(body, BookingFulfillAdmin.servicePayload());   // รอบ 226: จัดส่ง/รับเอง
         if (!body.name) { Layout.toast('กรุณากรอกชื่อบริการ', 'error'); return; }
         // ช่วงเวลาที่ผิดรูป/เริ่มไม่ก่อนจบ — server ตรวจและตอบข้อความไทยกลับมา (ไม่ตรวจซ้ำในหน้านี้)
         try {

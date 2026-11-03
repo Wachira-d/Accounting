@@ -13,6 +13,8 @@ public static class SessionAdvisoryLock
 {
     public const string PlatformSubscriptionPayment = "platform-sub-payment";
     public const string PlatformAddOnPayment = "platform-addon-payment";
+    /// <summary>รอบ 229: เงินเข้า/อนุมัติสลิป/ปฏิเสธ ของการซื้อโควตาเสริม 1 แถว (part = id ของการซื้อ)</summary>
+    public const string PlatformQuotaAddOnPayment = "platform-quota-addon-payment";
 
     public static async Task<T> RunAsync<T>(AccountingDbContext db, long key, Func<Task<T>> work, CancellationToken ct = default)
     {

@@ -418,6 +418,10 @@ public class StampDutyRecord : TenantEntity
     /// <summary>Project this duty is incurred on (rental contract
     /// for project X, loan for project Y). Flows to the cost JE.</summary>
     public Guid? ProjectId { get; set; }
+
+    /// <summary>รอบ 228 — แถวนำส่ง (<c>StatutoryRemittance</c> ชนิด StampDuty) ที่ลงบัญชีการจ่ายอากรนี้ (Dr ค่าอากร + เงินเพิ่มอากร / Cr ธนาคาร) ·
+    /// null = ยังไม่จ่าย หรือจ่ายแบบบันทึกเลขใบเสร็จอย่างเดียว (ไม่ลงบัญชี) · ยกเลิกการนำส่ง ⇒ ล้างกลับเป็น null + ล้างวันจ่าย</summary>
+    public Guid? StatutoryRemittanceId { get; set; }
 }
 
 /// <summary>

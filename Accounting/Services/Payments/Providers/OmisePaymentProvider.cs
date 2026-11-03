@@ -53,6 +53,9 @@ public class OmisePaymentProvider : IPaymentProvider
     /// ไม่ hard-code เอง (ไฟล์อื่นห้ามรู้จักโดเมนนี้)</summary>
     string? IPaymentProvider.ClientScriptUrl => CdnBase + "/omise.js";
 
+    /// <summary>รอบ 228: คีย์สาธารณะของโหมดปัจจุบัน (ตัวเดียวกับ <see cref="PublicKey"/>) — หน้าชำระใช้แปลงเลขบัตรเป็นโทเคนในเบราว์เซอร์</summary>
+    string? IPaymentProvider.ClientPublicKey(PaymentProviderConfig config) => PublicKey(config);
+
     /// <summary>รอบ 201 ทีม GW (BACKLOG B-1 · team-G คำถามค้าง 2): รุ่น 2019-05-29 ช่อง <c>fee</c> = ค่าธรรมเนียม<b>ก่อน VAT</b> และมี <c>fee_vat</c> แยก —
     /// adapter ยังไม่อ่าน <c>fee_vat</c> และยังไม่ได้ยืนยันใน sandbox ว่าการปักรุ่นไม่เปลี่ยนช่องอื่น ⇒ เตือนล่วงหน้าบนหน้าตั้งค่าเท่านั้น
     /// (<b>ห้ามต่อสาย <c>fee_vat</c></b> จนกว่ามีผล sandbox — รายการทดสอบอยู่ PAYMENT_GATEWAY_DESIGN.md §4.4)</summary>
@@ -179,7 +182,10 @@ public class OmisePaymentProvider : IPaymentProvider
                 && sc.TryGetProperty("image", out var img)
                 && img.TryGetProperty("download_uri", out var uri))
                 qr = uri.GetString();
-            if (src.TryGetProperty("expires_at", out var ex)) expires = ex.GetString();
+            if (src.TryGetProperty("expires_at", out var ex) && ex.ValueKind == JsonValueKind.String) expires = ex.GetString();
+            // รอบ 227 (PLATFORM_OMISE_AUDIT A-7): วันหมดอายุของ QR อยู่ที่ระดับ charge (<c>expires_at</c>) — source ไม่มีช่องนี้ ⇒ เดิม QrExpiresAt = null เสมอ
+            // (หน้าจ่ายไม่รู้เวลาหมด · รายการค้าง Pending จนผู้ให้บริการตอบ expired) · อ่านเฉพาะ charge ที่มี source (ไม่ใช่บัตร — บัตรไม่มี QR)
+            if (expires == null && el.TryGetProperty("expires_at", out var cex) && cex.ValueKind == JsonValueKind.String) expires = cex.GetString();
         }
         if (el.TryGetProperty("authorize_uri", out var au)) authorize = au.GetString();
 
@@ -203,8 +209,11 @@ public class OmisePaymentProvider : IPaymentProvider
             QrPayload: qr,
             QrExpiresAt: expiresAt,
             AuthorizeUrl: authorize,
-            FailureCode: el.TryGetProperty("failure_code", out var fc) ? fc.GetString() : null,
-            FailureMessage: el.TryGetProperty("failure_message", out var fm) ? fm.GetString() : null,
+            FailureCode: el.TryGetProperty("failure_code", out var fc) && fc.ValueKind == JsonValueKind.String ? fc.GetString() : null,
+            // รอบ 227 (A-10): ข้อความถึงผู้จ่ายเป็นไทยจากรหัส (OmiseFailureText ตัวเดียว) — เดิมเก็บ failure_message ภาษาอังกฤษตรง ๆ
+            FailureMessage: OmiseFailureText.Describe(
+                el.TryGetProperty("failure_code", out var fc2) && fc2.ValueKind == JsonValueKind.String ? fc2.GetString() : null,
+                el.TryGetProperty("failure_message", out var fm) && fm.ValueKind == JsonValueKind.String ? fm.GetString() : null),
             // ยอดคืนสะสมของ charge — ใช้ตรวจการคืนเงินที่ผลไม่แน่ชัด (ฝ่ายค้าน E-2)
             RefundedTotal: refundedTotal,
             Refunds: refunds,
@@ -269,6 +278,10 @@ public class OmisePaymentProvider : IPaymentProvider
         else
         {
             form.Add(new("source[type]", SourceType(req.Kind)));
+            // รอบ 227 (A-4): วอลเล็ทต้องระบุเบอร์ของผู้จ่ายใน source — ไม่ส่ง = ผู้ให้บริการปฏิเสธทุกครั้ง (หน้าชำระของ NextAcc ยังไม่เปิดวิธีนี้ · Helpers/PlatformPayMethods)
+            // ฝ่ายค้าน N6: ตัวเลขล้วน ("081-234 5678" ⇒ "0812345678") · ไม่มีตัวเลขเลย = ไม่ส่ง
+            if (req.Kind == PaymentMethodKind.TrueMoney && PhoneDigits(req.CustomerPhone) is { Length: > 0 } phone)
+                form.Add(new("source[phone_number]", phone));
             if (!string.IsNullOrWhiteSpace(req.ReturnUrl))
                 form.Add(new("return_uri", req.ReturnUrl));
         }
@@ -386,7 +399,11 @@ public class OmisePaymentProvider : IPaymentProvider
             if (!doc.RootElement.TryGetProperty("data", out var data)
                 || data.ValueKind != JsonValueKind.Object) return null;
 
-            // สนใจเฉพาะ event ที่เกี่ยวกับ charge — refund/dispute มีเส้นทางของตัวเอง
+            // รอบ 228 (§5.4): ข้อพิพาท/chargeback (charge.dispute.*) — data เป็น dispute ที่ชี้ charge ⇒ fetch charge กลับมาหา intent (metadata ของเราเอง)
+            if (data.TryGetProperty("object", out var dObj) && dObj.GetString() == "dispute")
+                return await VerifyDisputeAsync(client, eventId!, data, ct);
+
+            // สนใจเฉพาะ event ที่เกี่ยวกับ charge — refund มีเส้นทางของตัวเอง
             if (!data.TryGetProperty("object", out var objEl) || objEl.GetString() != "charge")
                 return null;
 
@@ -408,6 +425,60 @@ public class OmisePaymentProvider : IPaymentProvider
             return null;
         }
     }
+
+    /// <summary>รอบ 228 (§5.4): event ข้อพิพาท — อ่านเลข charge จาก dispute ที่ fetch มาแล้ว (ไม่ใช่ body) → fetch charge ด้วยคีย์ของเรา → intent จาก metadata ·
+    /// เลข charge ต้องเป็นรูปเลข charge ก่อนต่อ path (เหมือนเลข event) · อ่านไม่ได้ = null (ไม่ throw)</summary>
+    private async Task<VerifiedWebhookEvent?> VerifyDisputeAsync(HttpClient client, string eventId, JsonElement dispute, CancellationToken ct)
+    {
+        string? chargeId = null;
+        if (dispute.TryGetProperty("charge", out var ch))
+            chargeId = ch.ValueKind == JsonValueKind.String ? ch.GetString()
+                : ch.ValueKind == JsonValueKind.Object && ch.TryGetProperty("id", out var cid) ? cid.GetString() : null;
+        if (!IsWellFormedChargeId(chargeId)) return null;
+        using var resp = await client.GetAsync($"/charges/{chargeId}", ct);
+        if (!resp.IsSuccessStatusCode) return null;
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        var charge = doc.RootElement;
+        if (!charge.TryGetProperty("metadata", out var meta) || meta.ValueKind != JsonValueKind.Object
+            || !meta.TryGetProperty("intentId", out var intentEl) || !Guid.TryParse(intentEl.GetString(), out var intentId))
+            return null;
+        return new VerifiedWebhookEvent(eventId, intentId, ParseCharge(charge), ParseDispute(dispute));
+    }
+
+    /// <summary>dispute ของเจ้านี้ → ภาษากลาง · สถานะที่ไม่รู้จัก = เปิด (ให้คนดู — ไม่เดาว่าจบแล้ว) · pure</summary>
+    internal static ProviderDispute ParseDispute(JsonElement d)
+    {
+        var raw = d.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString() : null;
+        var state = raw switch
+        {
+            "open" => PaymentDisputeState.Open,
+            "pending" => PaymentDisputeState.UnderReview,
+            "won" => PaymentDisputeState.Won,
+            "lost" => PaymentDisputeState.Lost,
+            "closed" => PaymentDisputeState.Closed,
+            _ => PaymentDisputeState.Open,
+        };
+        string? reason = null;
+        foreach (var f in new[] { "reason_message", "message", "reason_code" })
+            if (reason == null && d.TryGetProperty(f, out var r) && r.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(r.GetString()))
+                reason = r.GetString();
+        if (reason is { Length: > 500 }) reason = reason[..500];
+        return new ProviderDispute(
+            d.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String ? id.GetString() ?? "" : "",
+            state, raw,
+            d.TryGetProperty("amount", out var amt) && amt.ValueKind == JsonValueKind.Number ? FromMinorUnit(amt.GetInt64()) : 0m,
+            reason);
+    }
+
+    /// <summary>รูปเลข charge (<c>chrg_</c> + ตัวอักษร/ตัวเลข/ขีดล่าง) — ด่านก่อนต่อเข้า path · pure</summary>
+    internal static bool IsWellFormedChargeId(string? id)
+        => id is { Length: > 5 and <= 100 }
+           && id.StartsWith("chrg_", StringComparison.Ordinal)
+           && id.All(c => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_');
+
+    /// <summary>เบอร์โทรเป็นตัวเลขล้วน (ฝ่ายค้านรอบ 227 N6) · pure</summary>
+    internal static string PhoneDigits(string? phone)
+        => string.IsNullOrWhiteSpace(phone) ? "" : new string(phone.Where(char.IsAsciiDigit).ToArray());
 
     /// <summary>รูปเลข event ของผู้ให้บริการนี้ (<c>evnt_</c> + ตัวอักษร/ตัวเลข/ขีดล่าง · โหมดทดสอบ = <c>evnt_test_…</c>) —
     /// ด่านก่อนต่อเข้า path (ไม่มี <c>/</c> <c>.</c> <c>?</c> <c>%</c>) · pure</summary>
@@ -477,14 +548,8 @@ public class OmisePaymentProvider : IPaymentProvider
             using var doc = JsonDocument.Parse(body);
             var code = doc.RootElement.TryGetProperty("code", out var c) ? c.GetString() : null;
             var message = doc.RootElement.TryGetProperty("message", out var m) ? m.GetString() : null;
-            return code switch
-            {
-                "authentication_failure" => "คีย์ไม่ถูกต้องหรือหมดอายุ — ตรวจคีย์ในหน้าตั้งค่าการรับชำระเงิน",
-                "insufficient_fund" => "ยอดเงินในบัญชี/วงเงินบัตรไม่พอ",
-                "invalid_card" => "ข้อมูลบัตรไม่ถูกต้อง",
-                "payment_rejected" => "ธนาคารผู้ออกบัตรปฏิเสธรายการนี้",
-                _ => message ?? $"ผู้ให้บริการตอบกลับผิดพลาด ({httpStatus})",
-            };
+            // รอบ 227 (A-10): ตารางรหัส → ไทย ตัวเดียวกับ failure_code ของ charge (OmiseFailureText) — เดิม switch 4 รหัสในไฟล์นี้
+            return OmiseFailureText.Describe(code, message) ?? $"ผู้ให้บริการตอบกลับผิดพลาด ({httpStatus})";
         }
         catch (JsonException)
         {

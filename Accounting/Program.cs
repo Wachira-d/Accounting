@@ -397,6 +397,9 @@ builder.Services.AddScoped<Accounting.Services.Settlement.ISettlementPostingServ
 // คืนเงินผ่าน gateway + JE คืนเงิน (Dr ลูกหนี้ / Cr บัญชีพัก) — รอบ 198 G-1 · เดิม endpoint คืนเงินไม่ลงบัญชีเลย
 builder.Services.AddScoped<Accounting.Services.Payments.IGatewayRefundService,
     Accounting.Services.Payments.GatewayRefundService>();
+// รอบ 228 (PLATFORM_OMISE_AUDIT §5.4): ข้อพิพาท/chargeback จาก webhook ที่ยืนยันแล้ว — บันทึก + เตือนแอดมิน (ไม่เปลี่ยนสถานะเงิน)
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentDisputeService,
+    Accounting.Services.Payments.PaymentDisputeService>();
 // รอบ 198 เฟส 1 ทีม B — settlement (wallet → ธนาคาร): นำเข้า · จัดประเภท (student-first ผ่าน IAiOrchestrator · SettlementLineClassify)
 // · จับคู่ใบขาย (อ่านอย่างเดียว) · ตั้งค่าช่องทาง — ไม่ลงบัญชี (ทีม C) · adapter อ่านไฟล์ลงทะเบียนเป็นชุด (เพิ่มเจ้าใหม่ = เพิ่มไฟล์ใน Services/Settlement/Adapters)
 builder.Services.AddSingleton<Accounting.Services.Settlement.Adapters.ISettlementReportAdapter,
@@ -414,6 +417,11 @@ builder.Services.AddScoped<Accounting.Services.Payments.IAddOnPurchaseService,
     Accounting.Services.Payments.AddOnPurchaseService>();
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.AddOnPurchasePaymentHandler>();
+// รอบ 229 (QUOTA_ADDON_SUBSCRIPTION_AUDIT): ด่านโควตาตัวเดียว · เส้นซื้อโควตาเสริม · เงินเข้าแล้วเปิดสิทธิ์ (handler ต่อชนิด QuotaAddOnPurchase)
+builder.Services.AddScoped<Accounting.Services.Implementations.IQuotaGate, Accounting.Services.Implementations.QuotaGateService>();
+builder.Services.AddScoped<Accounting.Services.Payments.IQuotaAddOnPurchaseService, Accounting.Services.Payments.QuotaAddOnPurchaseService>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
+    Accounting.Services.Payments.Handlers.QuotaAddOnPaymentHandler>();
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
     Accounting.Services.Payments.Handlers.DocumentPaymentHandler>();
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentCompletionHandler,
@@ -498,6 +506,8 @@ builder.Services.AddScoped<IFixedAssetService, FixedAssetService>();
 builder.Services.AddScoped<IFinancialManagementService, FinancialManagementService>();
 builder.Services.AddScoped<IApprovalService, ApprovalService>();
 builder.Services.AddScoped<IFileAttachmentService, FileAttachmentService>();
+// ที่เก็บไฟล์กลาง (Local | S3-compatible) + ด่าน fail-fast ใน production — ทีม FS 2026-11-02 · erp-review/2026-11-02/FILE_STORAGE_AUDIT.md
+Accounting.Services.Storage.FileStorageRegistration.AddFileStorage(builder.Services, builder.Configuration, builder.Environment);
 // ด่านไฟล์แนบตัวเดียวของทุกทางเข้า (ไฟล์แนบ · ใบเสร็จนำส่ง · รูป/รายการสแกน) — รอบ 193 S2
 builder.Services.AddScoped<IAttachmentAccessGate, AttachmentAccessGate>();
 builder.Services.AddScoped<ICurrencyService, CurrencyService>();
@@ -1182,6 +1192,8 @@ app.UseStaticFiles(new StaticFileOptions
     FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsPath),
     RequestPath = "/uploads"
 });
+// โหมด S3: /uploads/** สาธารณะ (ผ่าน allow-list ข้างบนแล้ว) ที่ไม่อยู่บนดิสก์ ⇒ เสิร์ฟจาก object storage · โหมด Local ส่งต่อทันที
+app.UseMiddleware<Accounting.Services.Storage.FileStorageUploadsMiddleware>();
 
 // 5. API Key middleware (before JWT auth - alternative auth method)
 app.UseMiddleware<ApiKeyMiddleware>();

@@ -15,6 +15,8 @@ public static class DeferredNotifyPolicy
 {
     public const string BookingCreated = "booking.created";
     public const string OrderCreated = "order.created";
+    /// <summary>รอบ 226: การจองยืนยันเพราะรับเงินล่วงหน้าครบ ⇒ ข้อความ "ชำระแล้ว — ยืนยันการจอง" ถึงลูกค้า (เข้าคิวในธุรกรรมรับเงิน)</summary>
+    public const string BookingPaidConfirmed = "booking.paid-confirmed";
     public const int MaxAttempts = 5;
     public const int BatchSize = 50;
     public const int MaxErrorLength = 500;
@@ -23,7 +25,7 @@ public static class DeferredNotifyPolicy
     /// <summary>ระยะ lease ของแถวที่หยิบไปแล้ว (เครื่องล้มกลางทาง ⇒ หมด lease แล้วหยิบใหม่ได้)</summary>
     public static readonly TimeSpan Lease = TimeSpan.FromMinutes(2);
 
-    public static bool IsKnownKind(string? kind) => kind is BookingCreated or OrderCreated;
+    public static bool IsKnownKind(string? kind) => kind is BookingCreated or OrderCreated or BookingPaidConfirmed;
 
     /// <summary>แถวคิวใหม่ — ผู้เรียก Add เข้า DbContext <b>ก่อน SaveChanges/Commit ของรายการเดียวกัน</b> (หนึ่งธุรกรรม)</summary>
     public static DeferredNotification New(Guid companyId, Guid siteId, string kind, Guid entityId, DateTime nowUtc)
@@ -47,6 +49,15 @@ public static class DeferredNotifyPolicy
         BookingStatus.Cancelled => "ไม่ส่ง: การจองถูกยกเลิกก่อนถึงคิวแจ้งเตือน (ไม่ส่ง \"ยืนยันการจอง\"/\"การจองใหม่\")",
         BookingStatus.NoShow => "ไม่ส่ง: การจองถูกบันทึกว่าไม่มาก่อนถึงคิวแจ้งเตือน",
         _ => null,
+    };
+
+    /// <summary>รอบ 226: ถึงคิวแล้วการจองไม่ได้ "ยืนยันแล้ว" (ถูกยกเลิก/ไม่มา/ลบ/ย้อนสถานะ) ⇒ ไม่ส่ง "ชำระแล้ว — ยืนยันการจอง" · กำลังให้บริการ/เสร็จแล้ว = ยังส่ง
+    /// (เงินเข้าจริง ลูกค้าควรได้ยืนยัน) · null = ส่ง</summary>
+    public static string? PaidConfirmedSkipReason(BookingStatus? status) => status switch
+    {
+        BookingStatus.Confirmed or BookingStatus.InProgress or BookingStatus.Completed => null,
+        null => "ไม่ส่ง: ไม่พบการจอง (ถูกลบก่อนถึงคิวแจ้งเตือน)",
+        _ => $"ไม่ส่ง: การจองไม่ได้อยู่ในสถานะยืนยันแล้ว ({status}) ก่อนถึงคิวแจ้งเตือน",
     };
 
     /// <summary>ฝ่ายค้าน S4 (ออเดอร์): ยกเลิก · คืนเงินเต็ม · ถูกลบ ⇒ ไม่ส่ง "ออเดอร์ใหม่"/"ยืนยันคำสั่งซื้อ" · คืนเงินบางส่วนยังส่ง (ออเดอร์ยังเดินอยู่)</summary>

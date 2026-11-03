@@ -5,6 +5,7 @@ using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.FileAttachment;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
+using Accounting.Services.Storage;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -21,10 +22,12 @@ public class FileAttachmentController : ControllerBase
     private readonly AccountingDbContext _db;
     private readonly IAttachmentAccessGate _gate;
     private readonly ISubscriptionService _subscriptions;
+    private readonly IFileStorage _storage;
 
     public FileAttachmentController(IFileAttachmentService attachmentService, IImageProcessingService images,
-        AccountingDbContext db, IAttachmentAccessGate gate, ISubscriptionService subscriptions)
+        AccountingDbContext db, IAttachmentAccessGate gate, ISubscriptionService subscriptions, IFileStorage storage)
     {
+        _storage = storage;
         _attachmentService = attachmentService;
         _images = images;
         _db = db;
@@ -91,8 +94,8 @@ public class FileAttachmentController : ControllerBase
         var kind = UploadFileType.SniffAttachment(head, file.FileName)
             ?? throw new UnsupportedUploadException(UploadFileType.AttachmentRejectMessage);
 
-        var storageDir = Path.Combine(Directory.GetCurrentDirectory(), "uploads", "attachments", companyId.ToString());
-        Directory.CreateDirectory(storageDir);
+        // โฟลเดอร์พักไฟล์ (staging) ใต้ราก working dir เดิม — UploadAsync ย้ายเข้าโฟลเดอร์บริษัท/ชนิดผ่านที่เก็บกลาง (ทีม FS)
+        var storageDir = Path.Combine(_storage.Locator.RelativeBase, "uploads", "attachments", companyId.ToString());
 
         string fileName; string storagePath; long finalSize;
         if (kind.IsImage)
@@ -110,11 +113,8 @@ public class FileAttachmentController : ControllerBase
             var shortGuid = Guid.NewGuid().ToString("N")[..8];
             fileName = $"{entityType}_{entityId}_{DateTime.UtcNow:yyyyMMddHHmmss}_{shortGuid}{kind.Extension}";
             storagePath = Path.Combine("uploads", "attachments", companyId.ToString(), fileName);
-            var fullPath = Path.Combine(Directory.GetCurrentDirectory(), storagePath);
-            using (var stream = new FileStream(fullPath, FileMode.Create))
-            {
-                await file.CopyToAsync(stream);
-            }
+            await using (var stream = file.OpenReadStream())
+                await _storage.WriteAsync(storagePath, stream, kind.ContentType);
             finalSize = file.Length;
         }
 
@@ -191,14 +191,10 @@ public class FileAttachmentController : ControllerBase
         var deny = await DenyAttachmentAsync(companyId, attachment.EntityType, attachment.EntityId, AttachmentAccess.Read, "ดาวน์โหลดไฟล์แนบ", attachment.Id);
         if (deny is { } d) return StatusCode(d.Status, new ApiResponse<object>(false, null, d.Message));
 
-        var fullPath = Path.IsPathRooted(attachment.StoragePath)
-            ? attachment.StoragePath
-            : Path.Combine(Directory.GetCurrentDirectory(), attachment.StoragePath);
-        if (!System.IO.File.Exists(fullPath))
-            return NotFound(new ApiResponse<object>(false, null, "ไฟล์ถูกลบหรือย้ายแล้ว"));
-
+        // ตำแหน่งสัมพัทธ์ resolve กับ working dir เดิมใน FileStorageLocator ตัวเดียว · Local = PhysicalFile ตามเดิม · S3 = สตรีมจาก object
         var contentType = string.IsNullOrEmpty(attachment.ContentType)
             ? "application/octet-stream" : attachment.ContentType;
-        return PhysicalFile(fullPath, contentType, attachment.OriginalFileName);
+        return await _storage.FileResultAsync(attachment.StoragePath, contentType, attachment.OriginalFileName)
+            ?? NotFound(new ApiResponse<object>(false, null, "ไฟล์ถูกลบหรือย้ายแล้ว"));
     }
 }

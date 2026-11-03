@@ -33,6 +33,8 @@ public static class PettyCashJePlan
     public const string RuleNoSourceAccount = "PETTY-NO-SOURCE-ACCOUNT";
     public const string RuleBadAmount = "PETTY-BAD-AMOUNT";
     public const string RuleOk = "PETTY-JE-OK";
+    /// <summary>วันที่รายการอยู่ในงวดบัญชีที่ปิดแล้ว — ด่านงวดตัวเดียวกับ JE อื่น (<c>JournalEntryBuilder.ClosedPeriodReasonAsync</c>)</summary>
+    public const string RulePeriodClosed = "PETTY-PERIOD-CLOSED";
 
     /// <summary>ผังมาตรฐานของกองทุนเงินสดย่อย (<c>ChartOfAccountTemplates</c>: 11112 เงินสดย่อย) — เซิร์ฟเวอร์เสนอเป็นค่าตั้งต้นตอนเปิด/แก้กองทุน
     /// (ผู้ใช้เปลี่ยนได้) · ตัวตั้งตัวเดียว ห้ามเขียนรหัสนี้ซ้ำในหน้าเว็บ</summary>
@@ -115,5 +117,32 @@ public static class PettyCashJePlan
                 "บัญชีต้นทางกับผังของกองทุนเป็นบัญชีเดียวกัน — เลือก “เติมจากบัญชี” ใหม่");
 
         return new Plan(true, fundAccountId.Value, sourceAccountId.Value, false, RuleOk, null);
+    }
+
+    /// <summary>
+    /// คืนเงินคงเหลือตอนปิดกองทุน — Dr บัญชีที่รับเงินคืน (ธนาคาร/เงินสด) / Cr ผังของกองทุน (ทิศกลับของ <see cref="ForReplenishment"/>).
+    /// </summary>
+    /// <param name="fundAccountId">`PettyCashFund.LinkedAccountId`</param>
+    /// <param name="targetAccountId">ผังของบัญชีที่รับเงินคืน (ผ่าน <see cref="PickedAccountGuard.ResolveMoneyChannelAsync"/> แล้ว)</param>
+    /// <param name="amount">ยอดคงเหลือที่คืน</param>
+    /// <param name="targetIsPettyFundAccount">บัญชีที่รับคืนเป็นผังของกองทุนเงินสดย่อย (กองทุนใดก็ตาม) — ปฏิเสธ: เงินย้ายกองทุนโดยกองทุนปลายทางไม่รู้</param>
+    public static Plan ForReturn(Guid? fundAccountId, Guid? targetAccountId, decimal amount, bool targetIsPettyFundAccount = false)
+    {
+        if (amount <= 0m)
+            return Fail(RuleBadAmount, "ยอดคืนต้องมากกว่า 0");
+        if (!fundAccountId.HasValue || fundAccountId.Value == Guid.Empty)
+            return Fail(RuleNoFundAccount, NoFundAccountMessage);
+        if (!targetAccountId.HasValue || targetAccountId.Value == Guid.Empty)
+            return Fail(RuleNoSourceAccount,
+                $"กองทุนยังมีเงินคงเหลือ {amount:N2} บาท — เลือก “คืนเงินเข้าบัญชี” (บัญชีธนาคาร/เงินสดที่รับเงินคืน) ก่อนปิดกองทุน "
+                + "(ไม่งั้นยอดเงินสดย่อยในงบจะค้างอยู่ทั้งที่กองทุนปิดแล้ว)");
+        if (fundAccountId.Value == targetAccountId.Value)
+            return Fail(RuleNoSourceAccount,
+                "บัญชีที่รับเงินคืนเป็นผังเดียวกับผังของกองทุน — เลือก “คืนเงินเข้าบัญชี” ใหม่");
+        if (targetIsPettyFundAccount)
+            return Fail(RuleNoSourceAccount,
+                "บัญชีที่รับเงินคืนเป็นผังของกองทุนเงินสดย่อย — เลือกบัญชีธนาคารหรือเงินสดใหญ่ · ถ้าต้องการย้ายเงินไปอีกกองทุน "
+                + "ให้คืนเข้าบัญชีกลางก่อน แล้วกด “เติมเงิน” ที่กองทุนปลายทาง (กองทุนปลายทางจึงจะรู้ยอด)");
+        return new Plan(true, targetAccountId.Value, fundAccountId.Value, false, RuleOk, null);
     }
 }

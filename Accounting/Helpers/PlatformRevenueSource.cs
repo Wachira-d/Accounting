@@ -22,8 +22,14 @@ public static class PlatformRevenueSource
         + "ร้านเริ่มรับชำระ ยืนยันรับเงิน ส่งต่อ หรือคืนเงินรายการนี้เองไม่ได้ (ผู้ดูแลระบบ NextAcc เป็นผู้ตรวจสอบ)";
 
     /// <summary>ชนิดต้นทางที่เป็นรายได้ของแพลตฟอร์ม (ไม่ใช่ของร้าน) — เพิ่มชนิดใหม่ที่จ่ายให้ NextAcc ที่นี่ที่เดียว</summary>
-    public static bool IsPlatformRevenue(PaymentSourceKind kind)
-        => kind is PaymentSourceKind.SubscriptionPayment or PaymentSourceKind.AddOnPurchase;
+    public static bool IsPlatformRevenue(PaymentSourceKind kind) => Kinds.Contains(kind);
+
+    /// <summary>ชุดชนิดต้นทางที่เป็นรายได้แพลตฟอร์ม — ตัวเดียวทั้งด่าน (<see cref="IsPlatformRevenue"/>) และ query ฝั่งแอดมิน (EF แปล <c>Contains</c> เป็น SQL ได้) ·
+    /// รอบ 229 (QUOTA_ADDON §B.7): โควตาเสริม — ต้องอยู่ที่นี่ ไม่งั้น intent ไปตก gateway ของผู้เช่า (G-1 ซ้ำ) · ฝ่ายค้าน S5: หน้าแอดมินเคยเขียนชุดนี้ซ้ำเอง</summary>
+    public static readonly IReadOnlyList<PaymentSourceKind> Kinds = new[]
+    {
+        PaymentSourceKind.SubscriptionPayment, PaymentSourceKind.AddOnPurchase, PaymentSourceKind.QuotaAddOnPurchase,
+    };
 
     /// <summary>สร้าง intent ได้ไหม (ทุกทางเข้า — <c>PaymentIntentService.StartAsync</c>/<c>RecordExternalSuccessAsync</c>)
     /// · null = ได้ · ชนิดของร้าน = ได้เสมอ (ไม่แตะพฤติกรรมเดิม)</summary>
@@ -56,6 +62,12 @@ public static class PlatformRevenueSource
     /// <summary>ฝ่ายค้านรอบ 219 รอบ 2 (ข้อ 4): คืนเงินรายการชนิดนี้ <b>ไม่ตั้งลูกหนี้รอใบลดหนี้ในสมุดของบริษัทที่ถือ intent</b> — รายได้ค่าบริการไม่ใช่รายได้ของร้าน
     /// (ไม่มีใบกำกับของร้านให้ออกใบลดหนี้ ⇒ ลูกหนี้ค้างตลอดกาล) · บันทึกยอดคืน + ประวัติรายการ + audit บนแถวสิทธิ์ต้นทางแทน</summary>
     public static bool RefundSkipsStoreReceivable(PaymentSourceKind kind) => IsPlatformRevenue(kind);
+
+    /// <summary>รอบ 228 (PLATFORM_OMISE_AUDIT §5.5 · §86/10): intent ค่าบริการที่อยู่<b>ใต้บริษัทผู้ให้บริการ</b> (ทางที่ถูกตั้งแต่เฟส 0 — ใบกำกับ/ใบเสร็จ +
+    /// ขาเงินเข้าบัญชีพัก 11340 อยู่ในสมุดนั้นตั้งแต่รอบ 227 C-2/C-3) ⇒ คืนเงินลงบัญชี Dr ลูกหนี้การค้า / Cr บัญชีพัก (เส้นเดียวกับของร้าน) แล้วออก<b>ใบลดหนี้อัตโนมัติ</b>
+    /// อ้างใบเดิม (ล้างลูกหนี้ + ลดภาษีขาย) · รายการเก่าใต้บริษัทร้าน (ก่อนเฟส 0) ⇒ คงไม่ลงบัญชี (<see cref="RefundSkipsStoreReceivable"/> · ข้อ 4 รอบ 2 — สมุดร้านไม่มีใบให้ลดหนี้) · pure</summary>
+    public static bool RefundBooksInPlatformTenant(PaymentSourceKind kind, Guid intentCompanyId, Guid? platformCompanyId)
+        => IsPlatformRevenue(kind) && platformCompanyId is Guid p && p == intentCompanyId;
 
     /// <summary>ข้อความในประวัติ/ผลคืนเงินเมื่อไม่ลงบัญชีของร้าน (ข้อความเดียว)</summary>
     public const string RefundNotBookedNote =

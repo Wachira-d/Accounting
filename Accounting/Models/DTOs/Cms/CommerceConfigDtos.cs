@@ -21,6 +21,9 @@ public class UpdateCommerceConfigRequest
     /// <summary>รอบ 209: true = ล้างเกณฑ์ส่งฟรี</summary>
     public bool? ClearFreeShippingThreshold { get; set; }
     public bool? FreeShippingOverridesZones { get; set; }
+    /// <summary>รอบ 228: บัญชีรายได้ค่าจัดส่ง (หมวดรายได้) · ตั้งคู่กับ <see cref="ClearShippingRevenueAccount"/> = กลับไปใช้บัญชีตั้งต้น · ไม่ส่งทั้งคู่ = ไม่แตะ</summary>
+    public Guid? ShippingRevenueAccountId { get; set; }
+    public bool? ClearShippingRevenueAccount { get; set; }
 
     // คูปอง · รีวิว · รายการโปรด
     public bool? EnableCoupons { get; set; }
@@ -89,6 +92,10 @@ public class CommerceConfigResponse
     public decimal? FlatShippingRate { get; set; }
     public decimal? FreeShippingThreshold { get; set; }
     public bool FreeShippingOverridesZones { get; set; }
+    /// <summary>รอบ 228: บัญชีรายได้ค่าจัดส่ง · null = บัญชีรายได้ตั้งต้นของเอกสาร (เดิม) · ชื่อ/คำเตือนเมื่อบัญชีใช้ไม่ได้แล้ว</summary>
+    public Guid? ShippingRevenueAccountId { get; set; }
+    public string? ShippingRevenueAccountLabel { get; set; }
+    public string? ShippingRevenueAccountWarning { get; set; }
     public bool EnableCoupons { get; set; }
     public bool EnableReviews { get; set; }
     public bool ReviewAutoApprove { get; set; }
@@ -109,6 +116,7 @@ public class CommerceConfigResponse
     public bool OrderFormFieldsConfigured { get; set; }
     public List<CommerceOptionValue> FormFieldRequirementOptions { get; set; } = new();
     public List<string> FormFieldTypes { get; set; } = new();
+    public List<CommerceOptionValue> FormFieldTypeOptions { get; set; } = new();
     public bool EnableOnlinePayment { get; set; }
     public bool EnableCod { get; set; }
     public bool EnableBankTransfer { get; set; }

@@ -41,7 +41,7 @@ public partial class PosService
         string Source, Guid Id, string? Number, string CustomerName, string? Phone, Guid? ContactId,
         DateTime StartAtUtc, int DurationMinutes, string? ServiceName, decimal? ServicePrice, Guid? ServiceProductId,
         string? TableNumber, int PartySize, Guid? StaffId, string? StaffName, PosBookingState State,
-        string? RevenueDocNo, decimal DepositPaid);
+        string? RevenueDocNo, decimal DepositPaid, decimal DeliveryFee = 0m);   // รอบ 226: ค่าจัดส่งของการจอง (บรรทัดแยกในบิล)
 
     private async Task<List<BookingSnapshot>> LoadBookingSnapshotsAsync(Guid companyId, DateTime dayBangkok,
         string? onlySource = null, Guid? onlyId = null)
@@ -75,7 +75,7 @@ public partial class PosService
                 .Select(b => new
                 {
                     b.Id, b.BookingNumber, b.Status, b.BookingDate, b.StartTime, b.DurationMinutes,
-                    b.GuestName, b.GuestPhone, b.GuestCount, b.TotalAmount, b.PaidAmount, b.ErpDocumentId,
+                    b.GuestName, b.GuestPhone, b.GuestCount, b.TotalAmount, b.PaidAmount, b.ErpDocumentId, b.DeliveryFee,
                     b.AssignedStaffId, b.AssignedStaffName,
                     CustomerName = b.Customer != null ? b.Customer.FullName : null,
                     CustomerPhone = b.Customer != null ? b.Customer.Phone : null,
@@ -141,7 +141,7 @@ public partial class PosService
                     (b.GuestName ?? b.CustomerName ?? "ลูกค้า").Trim(), b.GuestPhone ?? b.CustomerPhone, b.ContactId,
                     startUtc, b.DurationMinutes, b.ServiceName, b.TotalAmount, b.ServiceProductId,
                     null, Math.Max(1, b.GuestCount), b.AssignedStaffId, b.AssignedStaffName, MapState(b.Status),
-                    revenueDocNo, depositPaid));
+                    revenueDocNo, depositPaid, b.DeliveryFee));
             }
         }
         return list.OrderBy(x => x.StartAtUtc).ToList();
@@ -208,6 +208,10 @@ public partial class PosService
                 // บริการบนเว็บที่ไม่ได้ผูกสินค้า ⇒ รายการพิเศษชนิดบริการ (ไม่ตัดสต็อก · รายได้ขายมาตรฐาน) — ไม่แต่งสินค้าขึ้นมาเอง
                 : new CreateOrderItemRequest(null, null, snap.ServiceName!, null, 1m, null, price,
                     StaffId: staffId, IsCustomItem: true, CustomItemKind: PosCustomItemRule.KindService));
+            // รอบ 226 (ฝ่ายค้าน ข้อ 2): การจองแบบจัดส่ง ⇒ ค่าจัดส่งเป็นบรรทัดแยก (ยอดบิล = ค่าบริการ + ค่าจัดส่ง ตรงกับยอดรวมของการจอง)
+            if (PosBookingIntake.DeliveryLine(snap.DeliveryFee) is decimal fee)
+                items.Add(new CreateOrderItemRequest(null, null, PosBookingIntake.DeliveryLineName, null, 1m, null, fee,
+                    IsCustomItem: true, CustomItemKind: PosCustomItemRule.KindService));
         }
 
         var label = snap.Source == PosBookingSource.CmsBooking ? $"การจอง {snap.Number}" : "การจองโต๊ะ";

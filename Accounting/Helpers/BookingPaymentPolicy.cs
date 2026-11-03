@@ -27,8 +27,18 @@ public sealed record BookingPaymentEffective(
     decimal? MinAmount,
     decimal? MaxAmount,
     int DeadlineMinutes,
-    string? Problem)
+    string? Problem,
+    BookingPaymentModeSource AmountSource = BookingPaymentModeSource.Legacy,
+    BookingPaymentMode? ConfiguredMode = null,
+    bool DeadlineDefaulted = false)
 {
+    /// <summary>รอบ 226 (BOOKING_PAYMENT_AUDIT §6 · คำตัดสิน 226-1): โหมดที่ตั้งไว้ "บังคับ" แต่ชนิดบริการเก็บเงินล่วงหน้าไม่ได้ (§78/1) ⇒
+    /// ระบบเก็บเงินไม่ได้ แต่ <b>ห้ามยืนยันการจองอัตโนมัติ</b> (ขัดกับโหมดบังคับที่เจ้าของตั้ง) — การจองรอร้านยืนยัน/จัดการชำระเอง ·
+    /// หน้าตั้งค่าแสดงรายชื่อบริการเหล่านี้เป็นกล่องแดง + ปุ่มแก้ (เปลี่ยนชนิด / ยกเว้น)</summary>
+    /// · ฝ่ายค้านรอบ 226 ข้อ 5: รวม "โหมดมัดจำบังคับแต่ไม่มียอด" (Problem ยอด — โหมดยังเป็นมัดจำแต่ยอด 0) ⇒ รอร้านยืนยันเช่นกัน (ไม่ยืนยันอัตโนมัติ)
+    public bool RequiredButUncollectable =>
+        Problem != null && ConfiguredMode is BookingPaymentMode.DepositRequired or BookingPaymentMode.FullRequired;
+
     /// <summary>มีการเก็บเงินล่วงหน้า (ไม่ใช่ปิด)</summary>
     public bool Collects => Mode != BookingPaymentMode.Off;
     /// <summary>บังคับจ่ายก่อน (มัดจำบังคับ / เต็มยอด)</summary>
@@ -71,6 +81,19 @@ public static class BookingPaymentPolicy
     /// <summary>ปฏิเสธสลิปแล้วต่อเวลาถือให้ส่งใหม่ (นาที)</summary>
     public const int SlipResubmitGraceMinutes = 24 * 60;
     public const string HoldExpiredReason = "ไม่ชำระเงินล่วงหน้าภายในเวลาที่กำหนด — ระบบยกเลิกการจองอัตโนมัติ";
+    /// <summary>รอบ 226 (คำตัดสิน 226-2): โหมดบังคับที่ไม่ได้กรอก "ต้องชำระภายใน" ทั้งเว็บและบริการ ⇒ ถือรอบ 24 ชม. (เดิม = ถือไม่มีกำหนด รอบค้างจนร้านยกเลิกเอง) ·
+    /// ไม่ถือเลยต้องตั้งที่บริการเป็น 0 · หน้าตั้งค่าแสดงค่านี้เป็นค่าตั้งต้น</summary>
+    public const int DefaultRequiredDeadlineMinutes = 24 * 60;
+
+    /// <summary>ฝ่ายค้านรอบ 226 ข้อ 3: คำแนะนำบนหน้าตั้งค่าของเว็บเดิม (migration ตั้งกำหนดชำระ = 0 เพื่อคงพฤติกรรมเดิม)</summary>
+    public const string LegacyDeadlineNote =
+        "ℹ️ เว็บนี้ยังไม่ได้ตั้ง “ต้องชำระภายใน” — ระบบคงไว้เป็น 0 (ไม่กำหนด: การจองที่ยังไม่ชำระค้างรอบไว้จนร้านยกเลิกเอง) · "
+        + "แนะนำให้ตั้ง เช่น 1440 นาที (24 ชม.) แล้วบันทึก — ระบบจะยกเลิกการจองที่ไม่ชำระในเวลาและปล่อยรอบให้คนอื่น";
+
+    /// <summary>ฝ่ายค้านรอบ 226 ข้อ 4: ได้ที่จากคิวสำรอง — กำหนดชำระ "ค่าตั้งต้น" (เจ้าของไม่ได้กรอก) ใช้เฉพาะตอนจองใหม่ ไม่ใช้ตอนเลื่อนจากคิว
+    /// (คิวที่จองไว้ก่อนมีค่าตั้งต้นจะไม่ถูกยกเลิกอัตโนมัติจากค่าที่ตัวเองไม่เคยเห็น) · ค่าที่เจ้าของกรอกเองยังใช้ตามเดิม</summary>
+    public static BookingPaymentEffective ForWaitlistPromotion(BookingPaymentEffective e)
+        => e.DeadlineDefaulted ? e with { DeadlineMinutes = 0, DeadlineDefaulted = false } : e;
 
     private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
     private static string Baht(decimal v) => "฿" + v.ToString("#,##0.00", CultureInfo.InvariantCulture);
@@ -79,26 +102,40 @@ public static class BookingPaymentPolicy
     {
         site ??= BookingPaymentRuleInput.None;
         service ??= BookingPaymentRuleInput.None;
-        var serviceAmount = service.FixedAmount != null || service.Percent != null;
         var mode = service.Mode ?? site.Mode;
         if (mode is not BookingPaymentMode m)
         {
             // Legacy: ช่องมัดจำของบริการตามเดิม · ไม่มี min/max/กำหนดเวลา (ไม่เปลี่ยนพฤติกรรมเว็บที่ไม่เคยตั้ง)
             return new BookingPaymentEffective(type == BookingType.PrePayment ? BookingPaymentMode.DepositRequired : BookingPaymentMode.Off,
-                BookingPaymentModeSource.Legacy, service.FixedAmount, service.Percent, null, null, 0, null);
+                BookingPaymentModeSource.Legacy, service.FixedAmount, service.Percent, null, null, 0, null,
+                service.FixedAmount != null || service.Percent != null ? BookingPaymentModeSource.Service : BookingPaymentModeSource.Legacy);
         }
         var source = service.Mode != null ? BookingPaymentModeSource.Service : BookingPaymentModeSource.Site;
-        var fixedAmt = serviceAmount ? service.FixedAmount : site.FixedAmount;
-        var percent = serviceAmount ? service.Percent : site.Percent;
-        var deadline = Math.Clamp(service.DeadlineMinutes ?? site.DeadlineMinutes ?? 0, 0, MaxDeadlineMinutes);
+        // รอบ 223 (BOOKING_PAYMENT_AUDIT): ช่องยอดที่กรอก 0 = "ไม่ได้ตั้ง" (เดิม 0 ของบริการทับ % ของเว็บ ⇒ ลูกค้าไม่ถูกเก็บเงินเงียบ ๆ ·
+        // บาท 0 + % 20 ⇒ ได้ 0 เพราะบาทมาก่อน) — ไม่เก็บมัดจำที่บริการนี้ให้ตั้งโหมด "ไม่รับชำระล่วงหน้า"
+        var svcFixed = Positive(service.FixedAmount);
+        var svcPercent = Positive(service.Percent);
+        var serviceAmount = svcFixed != null || svcPercent != null;
+        var fixedAmt = serviceAmount ? svcFixed : Positive(site.FixedAmount);
+        var percent = serviceAmount ? svcPercent : Positive(site.Percent);
+        // รอบ 226 (คำตัดสิน 226-2): โหมดบังคับ + ไม่กรอกกำหนดเวลาทั้งสองชั้น ⇒ ค่าตั้งต้น 24 ชม. (บริการกรอก 0 = ไม่กำหนดโดยตั้งใจ)
+        var configuredDeadline = service.DeadlineMinutes ?? site.DeadlineMinutes;
+        var deadlineDefaulted = configuredDeadline == null && m is BookingPaymentMode.DepositRequired or BookingPaymentMode.FullRequired;
+        var deadline = Math.Clamp(configuredDeadline ?? (deadlineDefaulted ? DefaultRequiredDeadlineMinutes : 0), 0, MaxDeadlineMinutes);
+        // รอบ 223 (BOOKING_PAYMENT_AUDIT): ที่มาของ "สูตรยอด" แยกจากที่มาของโหมด — โหมดตามเว็บแต่บริการกรอกมัดจำบาท/% ไว้ ⇒ ยอดของบริการชนะ
+        // (เจ้าของเห็น 50% ที่เว็บ แต่ลูกค้าถูกเก็บ ฿10 ของบริการ) ⇒ ต้องบอกที่มาให้เห็นทั้งหน้าตั้งค่าและลูกค้า
+        var amountSource = serviceAmount ? BookingPaymentModeSource.Service
+            : fixedAmt != null || percent != null ? BookingPaymentModeSource.Site : BookingPaymentModeSource.Legacy;
         var eff = new BookingPaymentEffective(m, source, fixedAmt, percent, service.MinAmount ?? site.MinAmount,
-            service.MaxAmount ?? site.MaxAmount, deadline, null);
+            service.MaxAmount ?? site.MaxAmount, deadline, null, amountSource, m, deadlineDefaulted);
         if (m != BookingPaymentMode.Off && type != BookingType.PrePayment)
             return eff with { Mode = BookingPaymentMode.Off, Problem = TypeMismatchProblem(type) };
         if (m is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional && fixedAmt == null && percent == null)
             return eff with { Problem = "ยังไม่ได้ตั้งยอดมัดจำ (บาท หรือ %) — ลูกค้าจะไม่ถูกเรียกเก็บเงิน" };
         return eff;
     }
+
+    private static decimal? Positive(decimal? v) => v is > 0m ? v : null;
 
     /// <summary>ข้อความ "ชนิดบริการนี้เก็บเงินล่วงหน้าไม่ได้" — ตัวเดียวกับที่ด่านบันทึกบริการใช้</summary>
     private static string TypeMismatchProblem(BookingType type)
@@ -114,7 +151,16 @@ public static class BookingPaymentPolicy
     };
 
     /// <summary>ยอดที่ต้องชำระล่วงหน้า (สกุลของบริการ) — decimal · ปัด 2 ตำแหน่งแบบ AwayFromZero · clamp [ขั้นต่ำ, สูงสุด] แล้ว [0, ยอดรวม] ·
-    /// มัดจำไม่บังคับ + ลูกค้าไม่เลือกจ่าย ⇒ 0 · เต็มยอด ⇒ ยอดรวม</summary>
+    /// มัดจำไม่บังคับ + ลูกค้าไม่เลือกจ่าย ⇒ 0 · เต็มยอด ⇒ ยอดรวม
+    /// · รอบ 226 (คำตัดสิน 226-4): <paramref name="deliveryFee"/> = ค่าจัดส่งของการจอง — <b>มัดจำ (บาท/%) คิดจากค่าบริการเท่านั้น</b>
+    /// (ค่าส่งเป็นต้นทุนผ่านมือ ไม่ใช่ราคาบริการที่ร้านตั้ง % ไว้) · <b>ชำระเต็มจำนวน = ค่าบริการ + ค่าจัดส่ง</b> (จ่ายครบทุกอย่างก่อน)</summary>
+    public static decimal AmountDue(BookingPaymentEffective e, decimal total, bool customerOptsIn, decimal deliveryFee)
+    {
+        if (e.Mode == BookingPaymentMode.FullRequired) return R2(Math.Max(0m, total) + Math.Max(0m, deliveryFee));
+        return AmountDue(e, total, customerOptsIn);
+    }
+
+    /// <summary>ยอดที่ต้องชำระล่วงหน้าจากค่าบริการ (ไม่มีค่าจัดส่ง) — ดู overload ที่รับค่าจัดส่ง</summary>
     public static decimal AmountDue(BookingPaymentEffective e, decimal total, bool customerOptsIn)
     {
         var t = R2(Math.Max(0m, total));
@@ -134,10 +180,29 @@ public static class BookingPaymentPolicy
     /// <summary>ยอดมัดจำที่บันทึกบนการจอง — Legacy + ชนิดที่ไม่ใช่ PrePayment = สูตรเดิม (<see cref="BookingSlotEngine.Deposit"/> · แสดงอย่างเดียว) ·
     /// นอกนั้น <see cref="AmountDue"/></summary>
     public static decimal BookingDeposit(BookingType type, BookingPaymentEffective e, decimal total, decimal? serviceFixed, decimal? servicePercent,
-        bool customerOptsIn)
+        bool customerOptsIn, decimal deliveryFee = 0m)
         => e.IsLegacy && type != BookingType.PrePayment
             ? BookingSlotEngine.Deposit(total, serviceFixed, servicePercent)
-            : AmountDue(e, total, customerOptsIn);
+            : AmountDue(e, total, customerOptsIn, deliveryFee);
+
+    /// <summary>รอบ 226 (คำตัดสิน 226-1): หน้าตั้งค่าโหมดบังคับ — บริการที่ใช้งานอยู่ซึ่งเก็บเงินล่วงหน้าไม่ได้ (ชนิดไม่ใช่ "ชำระมัดจำล่วงหน้า")
+    /// และไม่ได้ยกเว้นเอง ⇒ ข้อความกล่องแดงพร้อมรายชื่อ (null = ไม่มี)</summary>
+    public static string? SiteRequiredUncollectableProblem(BookingPaymentMode? siteMode, IReadOnlyCollection<string> serviceNames)
+        => siteMode is not (BookingPaymentMode.DepositRequired or BookingPaymentMode.FullRequired) || serviceNames.Count == 0 ? null
+            : $"โหมด “{ModeLabel(siteMode.Value)}” ใช้ไม่ได้กับบริการต่อไปนี้ — ชนิดบริการเก็บเงินล่วงหน้าไม่ได้ (§78/1 ต้องออกใบรับมัดจำ) หรือยังไม่มียอดมัดจำ: "
+              + string.Join(", ", serviceNames.Take(10)) + (serviceNames.Count > 10 ? $" และอีก {serviceNames.Count - 10} รายการ" : "")
+              + " — ลูกค้าที่จองบริการเหล่านี้จะได้สถานะ “รอร้านยืนยัน” และไม่มีขั้นชำระเงิน · กด “เปลี่ยนเป็นชำระมัดจำล่วงหน้า” เพื่อเก็บเงิน "
+              + "หรือ “ยกเว้น (ไม่รับชำระล่วงหน้า)” ถ้าบริการนั้นไม่ต้องเก็บเงินก่อน";
+
+    /// <summary>รอบ 226: คำอธิบายถึงลูกค้าเมื่อการจองรอร้านยืนยันเพราะร้านต้องรับชำระล่วงหน้าแต่ระบบเก็บให้ไม่ได้ (ไม่ใช่ "ยืนยันแล้ว")</summary>
+    public const string ShopArrangesPaymentPreview =
+        "กดจองแล้วการจองจะ “รอร้านยืนยัน” — ร้านกำหนดให้ชำระล่วงหน้า และจะติดต่อกลับเรื่องการชำระเงินก่อนยืนยัน";
+
+    /// <summary>รอบ 226: รหัสกฎของด่าน "โหมดบังคับ × บริการที่เก็บเงินไม่ได้"</summary>
+    public const string UncollectableRuleCode = "CMS-BOOKING-PAYMENT-UNCOLLECTABLE";
+
+    public const string ShopArrangesPaymentDetail =
+        "ร้านกำหนดให้ชำระล่วงหน้าก่อนยืนยันการจอง — ร้านจะติดต่อกลับเรื่องการชำระเงิน · การจองนี้ยังไม่ได้รับการยืนยัน";
 
     /// <summary>การจองใหม่ต้อง "รอยืนยัน" จนรับเงินครบไหม (ชนะ AutoConfirm) — เฉพาะโหมดบังคับที่ตั้งเอง (ไม่ใช่ Legacy) และมียอด</summary>
     private static bool ForcePendingUntilPaid(BookingPaymentEffective e, decimal due)
@@ -153,11 +218,18 @@ public static class BookingPaymentPolicy
     }
 
     /// <summary>ฝ่ายค้านรอบ 218 (S5): ตัดสินตอนการจอง "ได้ที่" — ใช้ทั้งจองใหม่และเลื่อนจากคิวสำรอง (ตัวเดียว · ห้ามประกอบเองที่จุดเรียก) ·
-    /// พนักงานจองแทน = ไม่บังคับ/ไม่ถือ</summary>
+    /// พนักงานจองแทน = ไม่บังคับ/ไม่ถือ
+    /// · รอบ 226 (คำตัดสิน 226-1): โหมดบังคับที่ชนิดบริการเก็บเงินไม่ได้ (<see cref="BookingPaymentEffective.RequiredButUncollectable"/>) ⇒
+    /// รอร้านยืนยัน (ไม่ยืนยันอัตโนมัติ · ไม่ถือรอบ เพราะลูกค้าไม่มีทางจ่ายในระบบ) — เดิมตก "ไม่มีเงินล่วงหน้า" แล้ว AutoConfirm ขึ้น "ยืนยันแล้ว"
+    /// ทั้งที่เจ้าของตั้งมัดจำบังคับ (BK-2611-0004)</summary>
     public static BookingSeatPaymentDecision OnSeat(BookingPaymentEffective e, decimal deposit, DateTime nowUtc, DateTime startUtc, bool createdByStaff)
-        => createdByStaff || !ForcePendingUntilPaid(e, deposit)
+    {
+        if (createdByStaff) return new BookingSeatPaymentDecision(false, null);
+        if (e.RequiredButUncollectable) return new BookingSeatPaymentDecision(true, null);
+        return !ForcePendingUntilPaid(e, deposit)
             ? new BookingSeatPaymentDecision(false, null)
             : new BookingSeatPaymentDecision(true, HoldUntil(e, deposit, nowUtc, startUtc, false));
+    }
 
     /// <summary>ฝ่ายค้านรอบ 2 (โน้ต): มัดจำที่ยังค้าง ณ ตอนได้ที่ (หักเงินที่รับแล้ว · ไม่ติดลบ · ปัด 2 ตำแหน่ง AwayFromZero)</summary>
     public static decimal RemainingDeposit(decimal depositAmount, decimal paidAmount)
@@ -168,7 +240,10 @@ public static class BookingPaymentPolicy
 
     /// <summary>มีรายการชำระออนไลน์ที่ยังเปิด/ยังไม่หมดอายุ (+ระยะผ่อน) ⇒ ยังไม่ยกเลิก</summary>
     public static bool GatewayPaymentInProgress(bool intentOpen, DateTime? qrExpiresAtUtc, DateTime intentCreatedAtUtc, DateTime nowUtc)
-        => intentOpen && (qrExpiresAtUtc ?? intentCreatedAtUtc.AddMinutes(30)).AddMinutes(GatewayGraceMinutes) > nowUtc;
+    {
+        // รอบ 227 ฝ่ายค้าน B1: min(วันหมดอายุของผู้ให้บริการ, สร้าง + 30 นาที) — ค่าเดิมเป็นเพดาน (GatewayExpiryPolicy.WindowEnd)
+        return intentOpen && GatewayExpiryPolicy.WindowEnd(qrExpiresAtUtc, intentCreatedAtUtc, TimeSpan.FromMinutes(30)).AddMinutes(GatewayGraceMinutes) > nowUtc;
+    }
 
     /// <summary>job ยกเลิกใบที่ไม่จ่ายในเวลาได้ไหม — รอยืนยัน + พ้นเวลา + ยังไม่มีเงิน + ไม่มีสลิปรอตรวจ (ลูกค้าโอนแล้ว ⇒ ให้คนตัดสิน)</summary>
     public static bool HoldLapsed(BookingStatus status, DateTime? holdUntilUtc, decimal paidAmount, bool slipPending, DateTime nowUtc)
@@ -230,7 +305,7 @@ public static class BookingPaymentPolicy
         if (!gatewayReady && !transferReady)
             return $"โหมด “{ModeLabel(m)}” ต้องมีช่องทางชำระอย่างน้อย 1 ทาง — ใส่เลขบัญชี/พร้อมเพย์/รูป QR ในหัวข้อ “ช่องทางรับเงิน” "
                    + "หรือเปิดชำระออนไลน์ (ต้องตั้งค่าระบบรับชำระเงินของบริษัทก่อน)";
-        if (m is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional && site.FixedAmount == null && site.Percent == null)
+        if (m is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional && Positive(site.FixedAmount) == null && Positive(site.Percent) == null)
             return "โหมดมัดจำต้องตั้งยอดมัดจำตั้งต้นของเว็บ (บาท หรือ %) — บริการที่ตั้งยอดเองใช้ของตัวเอง";
         return null;
     }
@@ -271,14 +346,55 @@ public static class BookingPaymentPolicy
             BookingPaymentModeSource.Site => "ตามค่าเว็บ",
             _ => "แบบเดิม",
         };
+        if (e.RequiredButUncollectable)
+            return $"⚠️ {ModeLabel(e.ConfiguredMode!.Value)} ({src}) แต่เก็บเงินล่วงหน้าไม่ได้ — การจองจะ “รอร้านยืนยัน” (ไม่ยืนยันอัตโนมัติ) · {e.Problem}";
         if (e.Problem != null && !e.Collects) return $"ไม่เก็บเงินล่วงหน้า ({src}) — {e.Problem}";
         if (!e.Collects) return $"{ModeLabel(e.Mode)} ({src})";
         var amount = e.Mode == BookingPaymentMode.FullRequired ? "เต็มจำนวน"
             : e.FixedAmount is decimal f ? Baht(f)
             : e.Percent is decimal p ? $"{p.ToString("0.##", CultureInfo.InvariantCulture)}%" : "ยังไม่ได้ตั้งยอด";
         var bounds = (e.MinAmount is decimal mn && mn > 0m ? $" ขั้นต่ำ {Baht(mn)}" : "") + (e.MaxAmount is decimal mx && mx > 0m ? $" สูงสุด {Baht(mx)}" : "");
-        var deadline = e.DeadlineMinutes > 0 ? $" · ชำระภายใน {DeadlineText(e.DeadlineMinutes)}" : "";
-        return $"{ModeLabel(e.Mode)} {amount}{bounds}{deadline} ({src})";
+        var deadline = e.DeadlineMinutes > 0 ? $" · ชำระภายใน {DeadlineText(e.DeadlineMinutes)}{(e.DeadlineDefaulted ? " (ค่าตั้งต้น)" : "")}" : "";
+        return $"{ModeLabel(e.Mode)} {amount}{bounds}{deadline} ({src}{AmountSourceNote(e)})";
+    }
+
+    /// <summary>รอบ 223: โหมดตามค่าเว็บ แต่ยอดมัดจำมาจากช่อง "มัดจำ (บาท/%)" ของบริการ ⇒ บอกชัด (เดิมขึ้น "ตามค่าเว็บ" ทั้งที่ยอดไม่ใช่ของเว็บ)</summary>
+    private static string AmountSourceNote(BookingPaymentEffective e)
+        => e.Mode is BookingPaymentMode.DepositRequired or BookingPaymentMode.DepositOptional
+           && e.Source == BookingPaymentModeSource.Site && e.AmountSource == BookingPaymentModeSource.Service
+            ? " · ยอดมัดจำใช้ช่อง “มัดจำ (บาท/%)” ของบริการนี้แทนยอดตั้งต้นของเว็บ — ล้างช่องนั้นในฟอร์มบริการถ้าต้องการใช้ยอดของเว็บ"
+            : "";
+
+    /// <summary>รอบ 223: ที่มาของยอดที่ลูกค้าเห็น (เช่น "50% ของค่าบริการ ฿35.00" · "ยอดคงที่ของบริการนี้" · "ปรับเป็นขั้นต่ำ") — null = ไม่เก็บ
+    /// · รอบ 226: <paramref name="deliveryFee"/> &gt; 0 ⇒ บอกว่าค่าจัดส่งรวม (ชำระเต็ม) หรือไม่รวม (มัดจำ — คำตัดสิน 226-4)</summary>
+    public static string? AmountBasis(BookingPaymentEffective e, decimal total, decimal amount, decimal deliveryFee)
+    {
+        var basis = AmountBasis(e, total, amount);
+        if (basis == null || deliveryFee <= 0m) return basis;
+        return e.Mode == BookingPaymentMode.FullRequired
+            ? $"ค่าบริการ {Baht(R2(Math.Max(0m, total)))} + ค่าจัดส่ง {Baht(R2(deliveryFee))} = {Baht(amount)}"
+            : $"{basis} (ไม่รวมค่าจัดส่ง {Baht(R2(deliveryFee))} — ชำระพร้อมยอดคงเหลือ)";
+    }
+
+    /// <summary>ที่มาของยอดจากค่าบริการ (ไม่มีค่าจัดส่ง)</summary>
+    public static string? AmountBasis(BookingPaymentEffective e, decimal total, decimal amount)
+    {
+        if (!e.Collects || amount <= 0m) return null;
+        if (e.Mode == BookingPaymentMode.FullRequired) return $"ค่าบริการเต็มจำนวน {Baht(amount)}";
+        string raw;
+        decimal rawAmt;
+        if (e.FixedAmount is decimal f) { raw = $"มัดจำคงที่ {Baht(f)}"; rawAmt = f; }
+        else if (e.Percent is decimal p)
+        {
+            rawAmt = R2(R2(Math.Max(0m, total)) * p / 100m);
+            raw = $"มัดจำ {p.ToString("0.##", CultureInfo.InvariantCulture)}% ของค่าบริการ {Baht(R2(Math.Max(0m, total)))}";
+        }
+        else return null;
+        if (amount == R2(rawAmt)) return e.FixedAmount != null ? raw : $"{raw} = {Baht(amount)}";
+        var why = e.MinAmount is decimal mn && mn > 0m && amount == R2(Math.Min(mn, R2(Math.Max(0m, total)))) && rawAmt < mn ? "ขั้นต่ำ"
+            : e.MaxAmount is decimal mx && mx > 0m && amount == R2(mx) && rawAmt > mx ? "สูงสุด"
+            : "ไม่เกินค่าบริการ";
+        return $"{raw} → ปรับตาม{why} = {Baht(amount)}";
     }
 
     private static string DeadlineText(int minutes)
@@ -326,5 +442,23 @@ public static class BookingPaymentPolicy
         };
         var by = holdUntilUtc is DateTime u ? $" ภายใน {u.AddHours(7).ToString("dd/MM/yyyy HH:mm", CultureInfo.InvariantCulture)} น." : "";
         return $"💳 ยอดที่ต้องชำระ {Baht(due)}{by} — {how}";
+    }
+
+    /// <summary>รอบ 228 (BOOKING_PAYMENT_AUDIT §4 ข้อ 4): "ข้อความถึงลูกค้า" ของหน้าตั้งค่าการชำระ (เช่น "โอนแล้วแจ้งชื่อในแชต") ต่อท้ายบรรทัดชำระเงิน
+    /// ในอีเมล/LINE — เดิมแสดงบนหน้าเว็บอย่างเดียว · ใช้เฉพาะเมื่อมีบรรทัดชำระ (มียอดค้าง/เลือกชำระภายหลังได้) · ว่าง = ไม่เพิ่ม · ยาวเกินตัดที่ 500 ตัว</summary>
+    public const int NotifyNoteMaxLength = 500;
+
+    public static string? WithShopNote(string? paymentLine, string? paymentNote)
+    {
+        if (string.IsNullOrWhiteSpace(paymentLine)) return null;
+        var note = paymentNote?.Trim();
+        if (string.IsNullOrEmpty(note)) return paymentLine;
+        if (note.Length > NotifyNoteMaxLength)
+        {
+            // ฝ่ายค้านรอบ 228 N3: ไม่ตัดกลางคู่ surrogate (อีโมจิ) — ตัดก่อนตัวสูงที่ค้าง
+            var cut = char.IsHighSurrogate(note[NotifyNoteMaxLength - 1]) ? NotifyNoteMaxLength - 1 : NotifyNoteMaxLength;
+            note = note[..cut] + "…";
+        }
+        return paymentLine + "\n📝 ข้อความจากร้าน: " + note;
     }
 }

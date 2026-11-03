@@ -276,6 +276,9 @@ public class PayrollDetail : TenantEntity
     public decimal SocialSecurityEmployer { get; set; }  // สมทบประกันสังคม (นายจ้าง)
     // กองทุนเงินทดแทน — นายจ้างฝ่ายเดียว 0.2-1.0% × min(salary, cap). cap = 240,000/ปี/คน
     public decimal WorkersCompensation { get; set; }
+    /// <summary>รอบ 228 — ค่าจ้างของงวดที่ใช้คิดกองทุนเงินทดแทน (ม.5 · <b>ก่อน</b>ตัดเพดานรายเดือน) ⇒ เงินสมทบรายปีตัดเพดาน 240,000/คน
+    /// ทั้งปี (<c>WorkersCompensationBase.AnnualContribution</c>) · null = แถวก่อนรอบ 228 ⇒ ตัวอ่านถอดฐานจากเงินสมทบ (<c>WageFromContribution</c>)</summary>
+    public decimal? WorkersCompensationWage { get; set; }
     public decimal WithholdingTax { get; set; }          // ภาษีหัก ณ ที่จ่าย
     public decimal ProvidentFundEmployee { get; set; }   // กองทุนสำรองเลี้ยงชีพ (ลูกจ้าง)
     public decimal ProvidentFundEmployer { get; set; }   // กองทุนสำรองเลี้ยงชีพ (นายจ้าง)

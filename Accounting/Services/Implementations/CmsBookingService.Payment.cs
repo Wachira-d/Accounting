@@ -49,7 +49,7 @@ public partial class CmsBookingService
             var booking = await _db.SiteBookings.Include(b => b.BookingService)
                 .FirstOrDefaultAsync(b => b.Id == bookingId && b.SiteId == siteId && b.CompanyId == companyId, ct)
                 ?? throw new KeyNotFoundException("Booking not found.");
-            type = booking.BookingService.BookingType;
+            type = booking.BookingType;   // รอบ 226: ชนิดที่ตรึงบนการจอง
             depositAmount = booking.DepositAmount;
 
             if (fromOnlinePayment && CmsBookingOnlinePayment.AlreadyRecorded(booking.PaymentReference, reference))
@@ -60,7 +60,8 @@ public partial class CmsBookingService
                     throw new BusinessRuleException(
                         $"การจอง {booking.BookingNumber} ถูกยกเลิก/บันทึกไม่มาแล้ว — บันทึกรับเงินไม่ได้ · ถ้าเงินเข้าแล้วจริง ให้คืนเงิน หรือออกใบเสร็จแยกที่หน้าเอกสาร (อ้างเลขการจอง)",
                         PaymentRuleCode, 409);
-                if (CmsBookingOnlinePayment.ValidateAmount(amount, booking.TotalAmount, booking.PaidAmount) is string amtErr)
+                // รอบ 226: ยอดที่รับได้ทั้งหมด = ค่าบริการ + ค่าจัดส่ง (BookingFulfillment.GrandTotal)
+                if (CmsBookingOnlinePayment.ValidateAmount(amount, BookingFulfillment.GrandTotal(booking.TotalAmount, booking.DeliveryFee), booking.PaidAmount) is string amtErr)
                     throw new BusinessRuleException(amtErr, PaymentRuleCode);
                 // รอบ 208 (ฝ่ายค้าน W2 ข้อ 10): วันรับเงิน = วันที่ใบเสร็จมัดจำ (§78/1) ⇒ ห้ามก่อนวันที่จอง (กันลงย้อนเข้างวดที่ยื่นแล้ว)
                 if (ThaiDate.CalendarDateUtc(paidAt) < ThaiDate.CalendarDateUtc(booking.CreatedAt))
@@ -101,6 +102,11 @@ public partial class CmsBookingService
                 {
                     booking.Status = BookingStatus.Confirmed;
                     booking.ConfirmedAt = now;
+                    // รอบ 226 (BOOKING_PAYMENT_AUDIT §4 ข้อ 2): ยืนยันเพราะรับเงินครบ ⇒ แจ้งลูกค้า "ชำระแล้ว — ยืนยันการจอง" (คิวตามหลังในธุรกรรมเดียวกัน ·
+                    // แถวคิวไม่ซ้ำต่อการจอง (unique Kind+Entity) + คีย์กันซ้ำของข้อความ ⇒ webhook/poll/ยืนยันซ้ำ ไม่ส่งซ้ำ)
+                    if (!await _db.DeferredNotifications.IgnoreQueryFilters()
+                            .AnyAsync(d => d.CompanyId == companyId && d.Kind == DeferredNotifyPolicy.BookingPaidConfirmed && d.EntityId == booking.Id, ct))
+                        _db.DeferredNotifications.Add(DeferredNotifyPolicy.New(companyId, siteId, DeferredNotifyPolicy.BookingPaidConfirmed, booking.Id, now));
                 }
                 var note = CmsBookingOnlinePayment.PaidNote(amount, reference, paidAt, fromOnlinePayment && !isSlipMoney, booking.PaidAmount, booking.DepositAmount)
                     + (string.IsNullOrWhiteSpace(request.Note) ? "" : $" · {request.Note.Trim()}");
@@ -239,7 +245,10 @@ public partial class CmsBookingService
             .Select(b => (Guid?)b.Id).FirstOrDefaultAsync();
         if (id is not Guid bookingId) return null;
         var resp = await GetBookingAsync(companyId, siteId, bookingId);
-        return resp == null ? null : ForCustomer(resp);
+        if (resp == null) return null;
+        // รอบ 228 (ฝ่ายค้าน N4): ปุ่มชำระมัดจำภายหลัง/เปลี่ยนวิธีรับ เฉพาะมุมมองลูกค้า (หน้าพนักงานไม่ต้องคิด)
+        await FillManageInfoAsync(companyId, siteId, resp);
+        return ForCustomer(resp);
     }
 
     /// <summary>ตัดข้อมูลภายในออกจากคำตอบที่ลูกค้าเห็น (หมายเหตุภายใน · ข้อความ ERP · ผู้ให้บริการภายใน) — ตัวเดียว</summary>
@@ -255,7 +264,7 @@ public partial class CmsBookingService
         foreach (var a in r.Assignments) a.SharePercent = 0m;
         r.PaymentReference = null;
         // รอบ 218: รายการชำระของสลิป/ลิงก์ไฟล์สลิปของพนักงาน ไม่ใช่ของลูกค้า (ลูกค้าเปิดสลิปตัวเองผ่านเส้นโทเคน)
-        if (r.Payment != null) { r.Payment.SlipIntentId = null; r.Payment.SlipFileUrl = null; }
+        if (r.Payment != null) { r.Payment.SlipIntentId = null; r.Payment.SlipFileUrl = null; r.Payment.ShopPolicyWarning = null; }
         return r;
     }
 
@@ -263,6 +272,7 @@ public partial class CmsBookingService
     private async Task FillCustomerFacingAsync(Guid companyId, Guid siteId, BookingResponse resp)
     {
         var now = DateTime.UtcNow;
+        await FillFulfillmentInfoAsync(companyId, siteId, resp);   // รอบ 226: วิธีรับ · ค่าจัดส่ง · ยอดรวม (ก่อนตัวที่คิดยอดค้าง)
         var onlineEnabled = await _db.SiteBookingSettings.AsNoTracking()
             .Where(s => s.CompanyId == companyId && s.SiteId == siteId)
             .Select(s => (bool?)s.OnlineDepositEnabled).FirstOrDefaultAsync() ?? false;
@@ -344,7 +354,7 @@ public partial class CmsBookingService
     {
         var b = await _db.SiteBookings.AsNoTracking()
             .Where(x => x.Id == bookingId && x.SiteId == siteId && x.CompanyId == companyId)
-            .Select(x => new { x.BookingDate, x.StartTime, x.TotalAmount, x.PaidAmount, x.BookingService.FreeCancellationHours, x.BookingService.CancellationFeePercent, x.BookingService.BookingType })
+            .Select(x => new { x.BookingDate, x.StartTime, x.TotalAmount, x.PaidAmount, x.BookingService.FreeCancellationHours, x.BookingService.CancellationFeePercent, x.BookingType })
             .FirstOrDefaultAsync();
         if (b == null || b.BookingType != BookingType.PrePayment) return;
         var plan = BookingCancellationFee.Plan(BookingCancelKind.NoShow, DateTime.UtcNow, CreditBookingLink.StartUtc(b.BookingDate, b.StartTime),
@@ -439,7 +449,8 @@ public partial class CmsBookingService
 
         var (vatRegistered, defaultRate) = await CompanyVatStatus.ProfileAsync(_db, companyId);
         var action = CmsBookingCancelPolicy.DecideOnComplete(erpDoc.IsDeposit, erpDoc.Status, erpDoc.VatAmount, erpDoc.DepositNature, vatRegistered);
-        var remainder = Math.Round(booking.TotalAmount - erpDoc.TotalAmount, 2, MidpointRounding.AwayFromZero);
+        // รอบ 226: ราคาเต็มของใบสุดท้าย = ค่าบริการ + ค่าจัดส่ง (ค่าส่งเป็นบรรทัดแยก — DeliveryErpLines)
+        var remainder = Math.Round(BookingFulfillment.GrandTotal(booking.TotalAmount, booking.DeliveryFee) - erpDoc.TotalAmount, 2, MidpointRounding.AwayFromZero);
         if (action != CmsBookingCompleteAction.AutoRealize || erpDoc.DepositOutputVatDeferred || remainder <= 0.005m || _docService == null)
         {
             await RealizeDepositOnCompleteAsync(companyId, erpDocId, userId, notices, bookingNotes);
@@ -459,6 +470,8 @@ public partial class CmsBookingService
                 Quantity: qty, Unit: qty > 1 ? "ช่วง" : "ครั้ง",
                 UnitPrice: unitPrice, DiscountPercent: 0m, VatRate: vatRate, WithholdingTaxRate: 0m, AccountId: product?.SalesAccountId, ProductCode: product?.Code),
         };
+        lines.AddRange(DeliveryErpLines(vatRegistered, booking.DeliveryFee, booking.TotalAmount, vatRate,
+            await ShippingRevenueAccount.ResolveAsync(_db, companyId, siteId)));   // รอบ 226 · รอบ 228 บัญชีรายได้ค่าจัดส่ง
         var full = DocumentService.PreviewTotals(lines, true, 0m);
         var vatPortion = erpDoc.TotalAmount > 0m ? erpDoc.VatAmount / erpDoc.TotalAmount : 0m;
         var refundedBase = Math.Round(erpDoc.DepositRefundedAmount * (1 - vatPortion), 2, MidpointRounding.AwayFromZero);

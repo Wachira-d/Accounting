@@ -128,7 +128,8 @@ public class UsageInvoicingJob : BackgroundService
                     names.TryGetValue(g.Key.FeatureCode, out var meta);
                     var qty = g.Sum(x => x.Quantity);
                     return new PlatformInvoiceLine(
-                        Description: $"{meta?.Name ?? g.Key.FeatureCode} · งวด {period}",
+                        // รอบ 229: ค่าเดือนโควตาเสริม (quota.*) ไม่อยู่ในแคตตาล็อก ApiFeature — ชื่อจาก QuotaResources (ไม่โชว์รหัสดิบ)
+                        Description: $"{meta?.Name ?? Accounting.Models.Constants.QuotaResources.InvoiceName(g.Key.FeatureCode) ?? g.Key.FeatureCode} · งวด {period}",
                         AmountNet: g.Sum(x => x.ChargedAmount),
                         Unit: AddOnBilling.InvoiceUnit(g.Key.UnitLabelSnapshot, meta?.UnitLabel),
                         Quantity: qty > 0 ? qty : 1m);

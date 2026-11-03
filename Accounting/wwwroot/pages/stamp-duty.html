@@ -20,16 +20,10 @@
       <h3>คำนวณอากร</h3>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0;max-width:760px">
         <div><label>หมวด (RD Schedule)</label>
-          <select id="schedule" class="form-input">
-            <option value="1">Group 1: ค่าเช่า (0.1% cap 1k/ปี)</option>
-            <option value="4">Group 4: จ้างทำของ (0.1% cap 200k)</option>
-            <option value="5">Group 5: กู้ยืม (0.05% cap 10k)</option>
-            <option value="7">Group 7: มอบอำนาจ (30 baht flat)</option>
-            <option value="17">Group 17: เช็คต่างประเทศ (3 baht/ฉบับ)</option>
-          </select>
+          <select id="schedule" class="form-input"><option value="4">กำลังโหลด…</option></select>
         </div>
-        <div><label>มูลค่าสัญญา</label><input id="instValue" type="number" class="form-input" placeholder="100000"></div>
-        <div><label>ปีสัญญา (Group 1)</label><input id="years" type="number" class="form-input" value="1"></div>
+        <div><label>มูลค่าสัญญา (ค่าเช่ารวมทั้งสัญญา/สินจ้าง/เงินกู้)</label><input id="instValue" type="number" class="form-input" placeholder="100000"></div>
+        <div><label>ปีสัญญา (ข้อมูลประกอบ)</label><input id="years" type="number" class="form-input" value="1"></div>
         <div style="display:flex;align-items:end"><button class="btn btn-primary" onclick="Page.compute()">คำนวณ</button></div>
       </div>
       <div id="computeResult" style="padding:14px;background:#f8fafc;border-radius:10px"></div>
@@ -41,16 +35,10 @@
         <div><label>Reference</label><input id="cRef" class="form-input" placeholder="เลขที่สัญญา"></div>
         <div><label>ประเภท (InstrumentType)</label><input id="cType" class="form-input" placeholder="เช่น Lease"></div>
         <div><label>หมวด (RD Schedule)</label>
-          <select id="cSchedule" class="form-input">
-            <option value="1">Group 1: ค่าเช่า</option>
-            <option value="4">Group 4: จ้างทำของ</option>
-            <option value="5">Group 5: กู้ยืม</option>
-            <option value="7">Group 7: มอบอำนาจ</option>
-            <option value="17">Group 17: เช็คต่างประเทศ</option>
-          </select>
+          <select id="cSchedule" class="form-input"><option value="4">กำลังโหลด…</option></select>
         </div>
         <div><label>มูลค่าสัญญา</label><input id="cValue" type="number" step="0.01" class="form-input"></div>
-        <div><label>ปีสัญญา (Group 1)</label><input id="cYears" type="number" class="form-input" value="1"></div>
+        <div><label>ปีสัญญา (ข้อมูลประกอบ)</label><input id="cYears" type="number" class="form-input" value="1"></div>
         <div><label>วันที่สัญญา</label><input id="cDate" type="date" class="form-input"></div>
         <div><label>วิธีจ่าย</label>
           <select id="cMethod" class="form-input">
@@ -73,9 +61,30 @@
       </div>
       <div class="table-container" style="margin-top:12px">
         <table class="data-table">
-          <thead><tr><th>Reference</th><th>ประเภท</th><th style="text-align:right">มูลค่า</th><th style="text-align:right">อากร</th><th>วันที่</th><th>การจัดการ</th></tr></thead>
-          <tbody id="unpaidBody"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">กด รีเฟรช</td></tr></tbody>
+          <thead><tr><th>Reference</th><th>ประเภท</th><th style="text-align:right">มูลค่า</th><th style="text-align:right">อากร</th><th>วันที่สัญญา</th><th>ครบกำหนด</th><th>การจัดการ</th></tr></thead>
+          <tbody id="unpaidBody"><tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8">กด รีเฟรช</td></tr></tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- รอบ 228: บันทึกจ่าย = ลงบัญชีผ่านเส้นนำส่ง (Dr ค่าอากร + เงินเพิ่มอากร/ค่าปรับ §65 ตรี(6) / Cr ธนาคาร) · ยกเลิกได้ที่ประวัติหน้านำส่งภาษี -->
+    <div class="card" id="payCard" style="margin-top:14px;display:none">
+      <h3 id="payTitle">บันทึกจ่ายอากร</h3>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:14px 0;max-width:1000px">
+        <div><label>วันที่จ่าย</label><input id="pDate" type="date" class="form-input" onchange="Page.refreshSuggestion()"></div>
+        <div><label>เลขที่ใบเสร็จ / e-Stamp</label><input id="pReceipt" class="form-input"></div>
+        <div><label>อากร (บาท)</label><input id="pDuty" type="number" step="0.01" min="0" class="form-input"></div>
+        <div><label>เงินเพิ่มอากร (บาท)</label><input id="pSurcharge" type="number" step="0.01" min="0" class="form-input" oninput="this.dataset.userTouched='1'">
+          <div id="pSurchargeNote" class="text-xs" style="color:#64748b;margin-top:4px"></div></div>
+        <div><label>ค่าปรับ (ถ้ามี)</label><input id="pFine" type="number" step="0.01" min="0" class="form-input" value="0"></div>
+        <div><label>จ่ายจาก</label><select id="pBank" class="form-input"><option value="">— ใช้บัญชีเริ่มต้น —</option></select></div>
+        <div style="grid-column:1/-1"><label style="display:flex;gap:6px;align-items:center"><input id="pPost" type="checkbox" checked>
+          ลงบัญชีการจ่าย (ไม่ติ๊ก = บันทึกเลขใบเสร็จอย่างเดียว เพราะลงค่าอากรด้วยใบสำคัญจ่ายแล้ว)</label>
+          <div id="pPostWarn" class="text-xs" style="color:#b45309;margin-top:4px"></div></div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-success" onclick="Page.submitPay()">บันทึกจ่าย</button>
+        <button class="btn btn-secondary" onclick="Page.closePay()">ยกเลิก</button>
       </div>
     </div>
   </div>
@@ -87,8 +96,23 @@
         if (!Layout.init('stamp-duty')) return;
         Layout.setTitle('อากรแสตมป์');
         document.getElementById('cDate').value = Layout.toDateInput(new Date());
+        await this.loadSchedules();
         await this.loadProjects();
         await this.loadUnpaid();
+      },
+      _rows: [],
+      _payId: null,
+      _esc(v) { return Layout.esc(v == null ? '' : String(v)); },
+      /** รอบ 228: ลักษณะ + อัตรามาจากเซิร์ฟเวอร์ (Helpers/StampDutySchedule) — หน้าไม่เขียนอัตราเอง */
+      async loadSchedules() {
+        try {
+          const cid = Layout.getCompanyId();
+          if (!cid) return;
+          const r = await API.get(`/api/companies/${cid}/stamp-duty/schedules`);
+          const opts = (r.data || []).map(x => `<option value="${x.schedule}">${this._esc(x.label)}</option>`).join('');
+          document.getElementById('schedule').innerHTML = opts;
+          document.getElementById('cSchedule').innerHTML = opts;
+        } catch (e) { Layout.toast('โหลดลักษณะอากรไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async loadProjects() {
         try {
@@ -132,36 +156,93 @@
           const cid = Layout.getCompanyId();
           const r = await API.get(`/api/companies/${cid}/stamp-duty/compute?rdScheduleNumber=${sch}&instrumentValue=${val}&leaseYears=${yr}`);
           const d = r.data;
-          document.getElementById('computeResult').innerHTML = `<div style="font-size:16px"><b>อากรที่ต้องจ่าย: ${this._fmt(d.duty)} บาท</b></div><div style="font-size:12px;color:#64748b;margin-top:4px">หมวด ${d.schedule} · มูลค่าสัญญา ${this._fmt(d.instrumentValue)}${d.leaseYears ? ' · ' + d.leaseYears + ' ปี' : ''}</div>`;
+          document.getElementById('computeResult').innerHTML = `<div style="font-size:16px"><b>อากรที่ต้องจ่าย: ${this._fmt(d.duty)} บาท</b></div><div style="font-size:12px;color:#64748b;margin-top:4px">${this._esc(d.label)} · มูลค่าสัญญา ${this._fmt(d.instrumentValue)}</div>`;
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async loadUnpaid() {
         const tbody = document.getElementById('unpaidBody');
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px">กำลังโหลด...</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px">กำลังโหลด...</td></tr>';
         try {
           const cid = Layout.getCompanyId();
           const r = await API.get(`/api/companies/${cid}/stamp-duty/unpaid`);
           const rows = r.data || [];
+          this._rows = rows;
           if (rows.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">ไม่มีอากรค้างชำระ</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:#94a3b8">ไม่มีอากรค้างชำระ</td></tr>';
             return;
           }
+          // รอบ 228: escape ทุกช่องที่ผู้ใช้กรอก (เดิม Reference/ประเภทต่อ HTML ตรง) · ครบกำหนด/เลยกำหนดเซิร์ฟเวอร์ตัดสิน
           tbody.innerHTML = rows.map(r => `<tr>
-            <td>${r.reference}</td><td>${r.instrumentType}</td>
+            <td>${this._esc(r.reference)}</td><td>${this._esc(r.instrumentType)}<div class="text-xs" style="color:#64748b">${this._esc(r.scheduleLabel)}</div></td>
             <td style="text-align:right">${this._fmt(r.instrumentValue)}</td>
             <td style="text-align:right;color:#dc2626"><b>${this._fmt(r.dutyAmount)}</b></td>
-            <td>${new Date(r.instrumentDate).toLocaleDateString('th-TH')}</td>
-            <td><button class="btn btn-sm btn-success" onclick="Page.markPaid('${r.id}')">บันทึกจ่าย</button></td>
+            <td>${Layout.date(r.instrumentDate)}</td>
+            <td>${Layout.date(r.dueDate)}${r.isOverdue ? `<div class="text-xs" style="color:#dc2626" title="${this._esc(r.surchargeNote)}">เลยกำหนด · เงินเพิ่มอากร (ประมาณการ) ${this._fmt(r.suggestedSurcharge)}</div>` : ''}</td>
+            <td><button class="btn btn-sm btn-success" onclick="Page.openPay('${r.id}')">บันทึกจ่าย</button></td>
           </tr>`).join('');
-        } catch (e) { tbody.innerHTML = `<tr><td colspan="6" style="color:#dc2626;text-align:center">${e.message}</td></tr>`; }
+        } catch (e) { tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center">${this._esc(e.message)}</td></tr>`; }
       },
-      async markPaid(id) {
-        const rcpt = prompt('เลข receipt RD');
-        if (!rcpt) return;
+      async openPay(id) {
+        const r = this._rows.find(x => x.id === id);
+        if (!r) return;
+        this._payId = id;
+        document.getElementById('payTitle').textContent = `บันทึกจ่ายอากร — ${r.reference}`;
+        document.getElementById('pDate').value = Layout.toDateInput(new Date());
+        document.getElementById('pReceipt').value = '';
+        document.getElementById('pDuty').value = r.dutyAmount;
+        const sur = document.getElementById('pSurcharge');
+        sur.value = r.suggestedSurcharge || 0; delete sur.dataset.userTouched;
+        document.getElementById('pSurchargeNote').textContent = r.surchargeNote || '';
+        document.getElementById('pFine').value = 0;
+        // ฝ่ายค้าน S9a: ค่าตั้งต้นจากเซิร์ฟเวอร์ — ติดแสตมป์ (Affix) ไม่ลงบัญชี (มักลงค่าซื้อแสตมป์ไปแล้ว ⇒ ลงซ้ำ = ค่าใช้จ่ายสองเท่า)
+        document.getElementById('pPost').checked = r.defaultPostJournal !== false;
+        document.getElementById('pPostWarn').textContent = r.defaultPostJournal === false
+          ? '⚠️ ติดแสตมป์: ถ้าลงค่าซื้อแสตมป์เป็นค่าใช้จ่ายไปแล้ว อย่าติ๊ก "ลงบัญชี" (จะเป็นค่าใช้จ่ายซ้ำ)'
+          : (r.paidMarkOnly ? '⚠️ รายการนี้เคยบันทึกเลขใบเสร็จแบบไม่ลงบัญชีไว้ — ถ้าลงค่าอากรด้วยใบสำคัญจ่ายแล้ว อย่าติ๊ก "ลงบัญชี"' : '');
+        try {
+          const b = await Layout.api().getBankAccounts();
+          const banks = ((b && b.data) || []).filter(x => x.isActive !== false && x.linkedAccountId);
+          document.getElementById('pBank').innerHTML = '<option value="">— ใช้บัญชีเริ่มต้น —</option>'
+            + banks.map(x => `<option value="${x.id}">${this._esc(x.bankName || x.accountName || 'ธนาคาร')} ${this._esc(x.accountNumber || '')}</option>`).join('');
+        } catch (e) { Layout.toast('โหลดบัญชีธนาคารไม่สำเร็จ — ใช้บัญชีเริ่มต้น', 'error'); }
+        document.getElementById('payCard').style.display = '';
+        document.getElementById('payCard').scrollIntoView({ behavior: 'smooth' });
+      },
+      closePay() { this._payId = null; document.getElementById('payCard').style.display = 'none'; },
+      /** วันจ่ายเปลี่ยน ⇒ ขอค่าเสนอใหม่จากเซิร์ฟเวอร์ (ค่าที่ผู้ใช้พิมพ์เองชนะ — ไม่เขียนทับ) */
+      async refreshSuggestion() {
+        const id = this._payId; if (!id) return;
+        const date = document.getElementById('pDate').value;
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await API.get(`/api/companies/${cid}/stamp-duty/unpaid?payDate=${encodeURIComponent(date)}`);
+          if (this._payId !== id) return;
+          const row = (r.data || []).find(x => x.id === id);
+          if (!row) return;
+          const sur = document.getElementById('pSurcharge');
+          if (!sur.dataset.userTouched) sur.value = row.suggestedSurcharge || 0;
+          document.getElementById('pSurchargeNote').textContent = row.surchargeNote || '';
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async submitPay() {
+        const id = this._payId; if (!id) return;
+        const rcpt = document.getElementById('pReceipt').value.trim();
+        if (!rcpt) { Layout.toast('กรอกเลขที่ใบเสร็จ/e-Stamp', 'error'); return; }
+        const num = (el) => { const v = document.getElementById(el).value; return v === '' ? null : +v; };
+        const body = {
+          rdReceiptNumber: rcpt,
+          paidAt: document.getElementById('pDate').value,
+          postJournal: document.getElementById('pPost').checked,
+          bankAccountId: document.getElementById('pBank').value || null,
+          dutyAmount: num('pDuty'),
+          surcharge: num('pSurcharge'),
+          otherFine: num('pFine'),
+        };
         const cid = Layout.getCompanyId();
         try {
-          await API.post(`/api/companies/${cid}/stamp-duty/${id}/paid`,
-            { rdReceiptNumber: rcpt, paidAt: new Date().toISOString() });
+          const r = await API.post(`/api/companies/${cid}/stamp-duty/${id}/paid`, body);
+          Layout.toast(r.message);
+          this.closePay();
           await this.loadUnpaid();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },

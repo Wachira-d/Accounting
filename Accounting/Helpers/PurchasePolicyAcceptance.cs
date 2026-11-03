@@ -39,6 +39,8 @@ public static class PurchasePolicyAcceptance
     /// <summary>ใบแจ้งหนี้/บิลค่าบริการของแพลตฟอร์ม (ศูนย์ชำระค่าบริการของทีมเฟส 0 เรียกใช้ด้วยช่องนี้)</summary>
     public const string ChannelPlatformInvoice = "platform-invoice";
     public const string ChannelPlatformTopUp = "platform-topup";
+    /// <summary>รอบ 229: ซื้อโควตาเสริม (SourceId = CompanyQuotaAddOn.Id)</summary>
+    public const string ChannelPlatformQuotaAddOn = "platform-quota-addon";
 
     public const string MissingMessage =
         "กรุณาติ๊กยอมรับข้อกำหนดและนโยบายการยกเลิก/คืนเงินก่อนดำเนินการต่อ (อ่านนโยบายได้จากลิงก์ข้างช่องติ๊ก)";

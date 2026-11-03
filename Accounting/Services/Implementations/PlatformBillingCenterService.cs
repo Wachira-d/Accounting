@@ -20,7 +20,7 @@ public interface IPlatformBillingCenterService
 
 public class PlatformBillingCenterService : IPlatformBillingCenterService
 {
-    private const int InvoiceTake = 60, PaymentTake = 60, LineTake = 5;
+    private const int InvoiceTake = 60, PaymentTake = 60, LineTake = 5, ReceiptTake = 60;
     private readonly AccountingDbContext _db;
     private readonly Accounting.Services.Payments.IPlatformPaymentService _platform;
     private readonly ILegalDocumentService _legal;
@@ -139,7 +139,19 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             f.TrialUntil > now ? f.TrialUntil : null,
             f.PaymentStatus == AddOnPaymentStatus.AwaitingPayment ? AddOnPaymentPolicy.GraceEndsAt(f.PaymentAwaitingSince) : null,
             AddOnPaymentPolicy.UsableWhilePending(f.PaymentStatus, f.PaymentAwaitingSince, now),
-            f.SnapshotUnitPrice ?? f.AcceptedUnitPrice)).ToList();
+            f.SnapshotUnitPrice ?? f.AcceptedUnitPrice,
+            f.PaymentReceiptDocumentId, f.PaymentReceiptNumber)).ToList();
+
+        // ── ใบเสร็จ/ใบกำกับ/ใบลดหนี้ค่าบริการ (รอบ 228 §5.7) — ผู้ซื้อ = บริษัทนี้ (ผู้ติดต่อผูก tenant) · ล่าสุดก่อน ──
+        var receipts = platformId is Guid p4
+            ? (await PlatformInvoiceQueries.PaidDocumentsForBuyer(_db, p4, companyId)
+                    .OrderByDescending(d => d.DocumentDate).ThenByDescending(d => d.DocumentNumber).Take(ReceiptTake)
+                    .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.TotalAmount, d.Reference, d.Status })
+                    .ToListAsync(ct))
+                .Select(d => new BillingCenterReceipt(d.Id, d.DocumentNumber, d.DocumentType.ToString(), ReceiptTypeLabel(d.DocumentType),
+                    d.DocumentDate, d.TotalAmount, d.Reference, d.Status == DocumentStatus.Voided))
+                .ToList()
+            : null;
 
         var pay = await Accounting.Controllers.PlatformPayInfo.BuildAsync(_db, _platform, _legal, ct);
         return new BillingCenterSummary(
@@ -154,8 +166,17 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             invoiceDtos, paymentDtos, addOns,
             pay,
             PlatformBillingSettingsRules.DescribeSuspension(policy, mode == SubscriptionEnforcementMode.Enforce),
-            canPay, canManagePlan);
+            canPay, canManagePlan, receipts);
     }
+
+    /// <summary>ป้ายชนิดเอกสารที่ผู้เช่าได้รับ (ตัวเดียวของศูนย์บิล)</summary>
+    public static string ReceiptTypeLabel(DocumentType t) => t switch
+    {
+        DocumentType.TaxInvoice => "ใบกำกับภาษี/ใบเสร็จรับเงิน",
+        DocumentType.Receipt => "ใบเสร็จรับเงิน",
+        DocumentType.CreditNote => "ใบลดหนี้",
+        _ => t.ToString(),
+    };
 
     /// <summary>เหตุที่จ่ายใบนี้ไม่ได้ (null = จ่ายได้) — ตัวเดียวที่หน้าเว็บอ่าน</summary>
     internal static string? PayRefusal(bool open, bool canPay, bool pendingWithSlip, string? pendingNumber)

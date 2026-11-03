@@ -65,6 +65,7 @@ BillingAccount  ─ ใครจ่าย (สัญญา, บิล, โคว
 | `Company` | `Models/Entities/Company.cs` | tenant; มี `BranchCode` (สำนักงานใหญ่ 00000) |
 | **`Company` ↔ `CompanySettings` (แถวค่าตั้ง)** | `Helpers/CompanySettingsFactory.cs` · `Helpers/CompanyVatStatus.cs` | ✅ รอบ 193 (S-01 stopgap): แถวค่าตั้งเกิด**พร้อมบริษัท**ทุกทาง (สร้าง `CompanyService.CreateAsync` · สมัคร · SSO) + lazy-create 6 จุดเรียก `AddNewAsync` ตัวเดียว (seed `VatRegistered`/`DefaultVatRate` จาก `Company` · `new CompanySettings` นอก factory = 0 จุด — `tools/company_settings_factory_check.py`) · ธง VAT อ่านผ่าน `CompanyVatStatus.IsRegistered(companyFlag, settingsFlag?)` (มีแถว = ค่าตั้ง · ไม่มี = บริษัท · ลำดับรอ Q1) · `CompanySettings.VatStatusConfirmedAt` (วิซาร์ด = ยืนยัน · สมัคร/SSO/lazy = ยังไม่ · ประทับเฉพาะ payload มีช่อง VAT + `confirmVatStatus:true`) → แถบเตือน `layout.js` · รายงานอ่านอย่างเดียว `GET /api/companies/{id}/vat-flag-consistency` (+ `/zero-rated-tax-invoices`) สิทธิ์ `CompanySettings.Edit` · `GET /api/admin/vat-flag-consistency` (SystemAdmin · เฉพาะบริษัทที่ขัดกัน + `companiesWithoutSettingsRow`) · **ไม่ migrate** ธงที่ขัดกัน (คำตัดสิน #14 — ให้คนตัดสิน) · ไม่มีหน้าเว็บของรายงาน |
 | `CompanySettings.MoneyAccountCodePrefixes` + `DefaultPaymentAccountId` (2026-10-14 ทีม F3) | `Models/Entities/CompanySettings.cs` · `Helpers/MoneyAccountRule.cs` · `Services/Implementations/MoneyAccounts/MoneyAccountDirectory.cs` | รหัสขึ้นต้นของผังเงินสด/ธนาคารสำหรับบริษัทที่ใช้ผังของตัวเอง (`varchar(200) NULL` · NULL = ผังมาตรฐาน 111/1133/2123 · ปรับรูปที่ `NormalizeSetting`) · ผู้อ่านเดียว `MoneyAccountDirectory` (รายการช่องทางเงิน · แหล่งเงินเริ่มต้น · ตรวจแหล่งจ่ายเงินเดือน) · `DefaultPaymentAccountId` ตรวจตอนบันทึก (ของบริษัทนี้/เปิดใช้/ลงรายการได้) และ GET คืน `DefaultPaymentAccountLabel/Warning` · UI `settings.html` (ไม่แตะช่อง = ไม่ส่ง) |
+| `CompanySettings.PettyCashTopUpEvidenceRequired` (2026-11-02 · `erp-review/2026-11-01/PETTY_CASH_AUDIT.md` ส่วน C) | `Models/Entities/CompanySettings.cs` · `Helpers/PettyCashEvidence.cs` · `Services/Implementations/PettyCash/PettyCashService.cs` | เติมเงินสดย่อยต้องแนบสลิป (`boolean NOT NULL DEFAULT false` · บริษัทเดิมไม่เปลี่ยนพฤติกรรม) · ผู้อ่านเดียว `PettyCashService.IsTopUpEvidenceRequiredAsync` (ด่านใน `ReplenishWithEvidenceAsync` — JSON เดิมและ multipart) · echo ใน `CompanySettingsResponse` · UI `settings.html` ใต้รหัสผังเงินสด/ธนาคาร (โหลดไม่ได้ = ไม่ส่ง) · หน้าเงินสดย่อยอ่านผ่าน `GET sme/petty-cash/options` |
 | `CompanySettings.ReceiptFormPolicyJson` (รอบ 203) | `Models/Entities/CompanySettings.cs` · `Helpers/ReceiptFormRule.cs` (`ReceiptFormPolicy`) | ค่าตั้ง "แต่ละกรณีให้ออกใบเสร็จแบบไหน" — JSON object `{"<ReceiptFormCase>":"<ReceiptForm>"}` คอลัมน์เดียว (`text NULL` · NULL = ค่าแนะนำทุกกรณี = พฤติกรรมเดิม) · แกนที่สามข้าง `ReceiptIssueMode` (ออกกี่ใบ) และ `UnifyTaxInvoiceNumberSeries` (เลขชุดไหน): คุมว่า**กระดาษประกาศตัวเป็นอะไร** (ใบเสร็จเปล่า / ใบเสร็จ+ใบกำกับเต็มรูป / +อย่างย่อ / หลักฐานรับชำระ) · เป็นแค่ความชอบ — `ReceiptFormRule.Decide` ใช้เฉพาะเมื่ออยู่ในชุดที่กฎหมายอนุญาตของใบนั้น (ม.86 · 86/4 · 86/6 · 82/5(2)) · `Normalize` ปฏิเสธคีย์/ค่าขยะตอนบันทึก · ผู้อ่าน `DocumentService.DecideReceiptFormAsync` · UI `settings.html` ตาราง matrix จาก `CompanySettingsResponse.ReceiptFormMatrix` (เซิร์ฟเวอร์คำนวณ) · ทำไม JSON ไม่แยกคอลัมน์: มีแค่ 3 กรณีที่เลือกได้จริง กรณีขึ้นกับโมดูลที่ tenant ใช้ ไม่มีใคร query ด้วย SQL · DOCUMENT_FLOW §5.1 |
 | `Branch` | `Models/Entities/DimensionalAccounting.cs:37` | `TaxBranchCode`, `IsHeadOffice`, ที่อยู่ครบ; `BranchId` ใช้บน JournalEntry/Payroll แล้ว — ทะเบียน + API + หน้าตั้งค่า ✅ (§3.1a) |
 | `TaxBranchCode` (resolver) | `Helpers/TaxBranchCode.cs` | ✅ ตัวเดียวของระบบ: `TryNormalize` (เติม 0 ให้ครบ 5 หลัก) · `Label`/`LabelWithName` ("สำนักงานใหญ่" / **"สาขาที่ 00008" — 5 หลัก ตั้งแต่รอบ 193 คำตัดสิน #21**) ตามประกาศอธิบดีฯ ฉบับที่ 199 |
@@ -619,6 +620,20 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 **ขายเฉพาะของที่มีจริง** — `lodging.promo` ถูก unpublish แล้ว: `LodgingReservation.PromoCode`
 เก็บเป็นข้อความเฉย ๆ `LodgingPricingEngine` ไม่เคยอ่านมาคิดส่วนลด ⇒ เปิดขายไปก็ไม่ได้อะไร
 
+#### 6.1b-Q โควตาเสริม (Quota Add-on) — เพดานจำนวน + ซื้อเพิ่ม 3 วิธี (รอบ 229 · `erp-review/2026-11-02/QUOTA_ADDON_SUBSCRIPTION_AUDIT.md` · คำตัดสินข้อ 229-1..7)
+
+| เรื่อง | ตัวเดียวของระบบ | กติกา |
+| --- | --- | --- |
+| ทรัพยากรที่มีเพดาน/ขายเพิ่มได้ | `Models/Constants/QuotaResources` (closed list) | เว็บ CMS · หน้า/สินค้าต่อเว็บ (ตั้งได้ ไม่ขาย) · ที่นั่ง · พื้นที่ (GB) · ที่พัก · หน้า OCR — มีเฉพาะที่มีด่านจริง (สาขา/คลัง/POS/โดเมน/แบนด์วิดท์ยังไม่อยู่) · AI/การจอง/รายการบัญชี **ไม่อยู่โดยตั้งใจ** |
+| เพดานที่มีผล | `Helpers/QuotaLimitPolicy.Effective` | override รายบริษัท → `PlanQuotaAllowance` ของแพ็กเกจ (ทดลอง = TrialIncluded) → ช่องเดิมของแพ็กเกจ (ผู้ใช้/พื้นที่/OCR — ไม่ทำสำเนา) → ไม่จำกัด · + ที่ซื้อและยังมีผล (`IsLive`: Active และ now ∈ [start, end)) · **นับต่อบริษัท** · -1 = ไม่จำกัด |
+| ด่าน "เพิ่มได้ไหม" | `IQuotaGate.CheckAsync` ใต้ `LockAsync` (pg_advisory_xact_lock ต่อ บริษัท+ทรัพยากร) ในธุรกรรมเดียวกับ insert | จุดเรียก: `CmsSiteService.CreateSiteAsync` · `CompanyService.AddUserAsync` · (ที่พัก `LodgingPropertyQuota` · พื้นที่ `QuotaStorageLimit` ใน `GetStorageStatusAsync` · OCR = เครดิตในตัวนับเดิม) · **เกินเพดาน = บล็อกการเพิ่มเท่านั้น** ของเดิมไม่ถูกลบ/ปิด (229-2) · ข้อความปฏิเสธมีทางไปต่อ + `ruleCode QUOTA-FULL:<resource>` |
+| แคตตาล็อก + ราคา | `QuotaAddOnOffers` (แอดมิน `/pages/admin-quota.html` · `api/admin/quota/offers`) | 1 ข้อเสนอต่อทรัพยากร · ขนาดหน่วย · ราคาเดือน/ปี · วิธีซื้อที่เปิด · ซื้อได้สูงสุด/บริษัท · ขั้นต่ำ 1 เดือน · อายุเดือนเดียว · ไม่มีราคา = ซื้อไม่ได้ (ไม่ขายฟรีเงียบ) |
+| ยอด | `Helpers/QuotaAddOnPricing` | เดือนเดียว = ราคาเต็มถึงสิ้นเดือนไทย (Consumable 60 วัน) · รายเดือน = เดือนแรกตามวัน แล้ว `UsageEvent` รายเดือน (`qadd:{id}:{yyyy-MM}`) · ถึงวันหมดอายุ = `round(R×D/C,2)` ต่อหน่วย (R = ราคาปีหรือเดือน×12) ขั้นต่ำ 1 เดือน · ฟรีถาวร/ทดลองไม่มีโหมดนี้ |
+| เงิน → สิทธิ์ → เอกสาร | `QuotaAddOnPurchaseService` · `PaymentSourceKind.QuotaAddOnPurchase` (ใน `PlatformRevenueSource`) · `QuotaAddOnPaymentHandler` | intent ใต้บริษัทผู้ให้บริการ (ยอดจากเซิร์ฟเวอร์ · ติ๊กยอมรับนโยบาย `platform-quota-addon`) หรือโอน+สลิป → แอดมินอนุมัติ · **ให้สิทธิ์เมื่อรับเงินแล้วเท่านั้น** · ใบกำกับ/ใบเสร็จ `IssueAddOnReceiptAsync` อ้างอิง `QADD-…` (ขาเงินเข้าตามชนิด intent) · คืนเงิน = ใบลดหนี้เส้นรอบ 228 (หาใบเดิมด้วยอ้างอิงเดียวกัน) |
+| ต่ออายุ | `QuotaRenewalLines` | โหมดถึงวันหมดอายุต่อพร้อมแพ็กเกจเป็นค่าตั้งต้น · ใบต่ออายุหลายบรรทัด · ตัดชำระใบ ⇒ รอบใหม่ · ใบออกแล้ว = รายการล็อก (409) · บริษัทใต้ License ยังไม่รวม |
+| แพ็กเกจหมด/ยกเลิก | `AddOnMonthlyBillingJob` · `BillRecurringAsync` | ค่าเหมาส่วนเสริมสวิตช์และค่าเดือนโควตาเสริม **ไม่ออก** เมื่อ `GetEffectivePlanAsync().IsActive == false` (ไม่ประทับงวด) |
+| รายการล้าสมัย (ฝ่ายค้าน B2) | `QuotaAddOnPricing.StaleCheck` | เริ่มชำระ/แนบสลิป/อนุมัติ = 409 `QUOTA-STALE` · เงินเข้าช้า: เดือนเดียวแบบกำหนดวันนับจากวันจ่าย · อื่น = ไม่เปิด + `AttentionRule` + audit · ใบเสร็จ = เงินรับจริง ลงวันโอน (S7) · แอดมินอนุมัติไม่มีสลิปต้องมีหลักฐาน (S2) · เพิกถอนได้ (S8) · ค้างไม่จ่าย 14 วัน = ยกเลิก |
+
 #### 6.1c แคตตาล็อกฟีเจอร์ + หน้าที่แสดงแพ็กเกจ — อ่านจากที่แอดมินตั้งเท่านั้น ✅ (2026-09-10)
 
 | ชั้น | ตัวเดียวของระบบ | หมายเหตุ |
@@ -636,6 +651,10 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 "แพ็กเกจขั้นต่ำ" ของ add-on **ไม่เคยบล็อก** (`MinPlanBlocked` parse ไม่ได้ = ขายทุกแพ็กเกจ) และตั้ง
 โบนัสโควตาต่อแพ็กเกจแล้ว 404. กติกา: ค่าที่มีที่ให้ตั้งในระบบ ห้ามมีสำเนาบนหน้าใด ๆ · API ไม่ตอบ =
 ซ่อนส่วนนั้น/บอกว่าโหลดไม่ได้ ไม่ตกไปใช้ตารางราคาสำรองที่พิมพ์ไว้ (เดิม `renderFallback` โชว์ราคาเก่า)
+
+**แก้ doc (รอบ 229 · QUOTA_ADDON §E):** ย่อหน้าข้างบนบอกว่า "+7 วัน" ถูกแก้แล้ว — ตรวจ 2026-11-02 พบ `subscription.html` ปุ่ม "ขยายเวลา (+7 วัน)"
+**ยังพิมพ์ 7 ตายตัว** (doc ผิด/ถดถอย) · รอบ 229 แก้เป็น `extensionDays` ของเซิร์ฟเวอร์แล้ว · ตัวเลขโควตาบนหน้าแพ็กเกจ/ทีม/เว็บ/ศูนย์บิลมาจาก
+`GET /api/companies/{cid}/quota/summary` ตัวเดียว (โหลดไม่ได้ = "ดูไม่ได้" ไม่ใช่ "ไม่จำกัด") · เพดาน "รายการบัญชี/เดือน" เลิกแสดงต่อผู้เช่า (คำตัดสินข้อ 229-7)
 
 ### 6.2 Prepaid / Postpaid (default — รอบ 219 เฟส 0)
 
@@ -704,6 +723,28 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   IP ใน audit ผิด) · `Security:TrustProxyHeaders=false` เมื่อไม่มี proxy
   · **ฝ่ายค้านรอบสุดท้าย (d24ce956):** production + TrustProxyHeaders เปิด + ไม่ตั้ง `Security:KnownProxies`/`Security:KnownNetworks` (CIDR คั่นด้วย `,` เช่น
   `10.0.0.0/8`) ⇒ **boot ไม่ขึ้น** (fail-fast แบบ secret) · ยกเว้นตั้ง `Security:TrustAllForwarders=true` อย่างตั้งใจ (พอร์ต backend เปิดเฉพาะ proxy) — ⚠️ ก่อน deploy คอมมิตนี้ต้องตั้งค่าใดค่าหนึ่ง
+
+### 6.2d Omise ของ NextAcc — เงิน → เอกสาร → บัญชี (รอบ 227 · `erp-review/2026-11-02/PLATFORM_OMISE_AUDIT.md`)
+
+- **ขาเงินเข้าของเงินค่าบริการ:** จ่ายผ่าน gateway (มี `PaymentIntent` สำเร็จของต้นทางนั้นใต้บริษัทผู้ให้บริการ) ⇒ ใบเสร็จค่าแพ็กเกจ/ตัดชำระใบแจ้งหนี้/ใบเสร็จส่วนเสริม
+  **Dr บัญชีพักผู้ให้บริการรับชำระ** (`IGatewayAccountResolver` — ผังที่ตั้งบน config หรือ 11340) ไม่ใช่ธนาคาร · ล้างด้วย "บันทึกรอบโอน" ในบริษัทผู้ให้บริการ
+  (Dr ธนาคาร + Dr ค่าธรรมเนียม 54710 + Dr ภาษีซื้อ / Cr 11340) · สลิป = `SiteSettings.PlatformCashAccountCode` (เดิม) · ไม่มีผังพัก ⇒ ลงธนาคาร + log (เหมือนเส้นร้าน) —
+  การ์ด "ความพร้อม" บนหน้าแอดมินบอก · JE เก่าก่อนรอบนี้ไม่ถูกแก้ย้อนหลัง
+- **ค่าส่วนเสริมจ่ายล่วงหน้า:** รับเงินแล้ว (ออนไลน์ หรือสลิปที่แอดมินอนุมัติ) ⇒ ใบกำกับภาษี/ใบเสร็จรับเงิน (ขายเงินสด) ใน tenant ผู้ให้บริการ
+  (`IssueAddOnReceiptAsync` · กันซ้ำด้วยเลขอ้างอิงต่อ intent/ต่อไฟล์สลิป) → `CompanyFeature.PaymentReceiptDocumentId/Number` · ออกไม่สำเร็จ = audit `RD-86/4-ADDON-RECEIPT`
+- **คีย์ของรายการเดิม = โหมดที่ประทับตอนสร้าง** (`PaymentIntent.IsTestMode` · `Services/Payments/PaymentConfigForIntent`) — poll · สั่งคืน · ตรวจผลคืน · webhook (ลองคีย์อีกโหมด) ·
+  สลับโหมด/ปิดฉุกเฉินไม่ทำให้เงินที่กำลังเข้าหาย (ร้านได้ผลเดียวกัน)
+- **วิธีชำระที่ผู้เช่าเห็น** = ติ๊ก ∩ ผู้ให้บริการรองรับ ∩ หน้าชำระของ NextAcc ทำจบได้ (`Helpers/PlatformPayMethods` — ตอนนี้พร้อมเพย์) · ด่านเปิดรับเงินจริงเพิ่ม
+  "URL ของระบบตั้งแล้ว" (ค่าที่มากับซอร์ส app.nextacc.com ไม่นับ — `SystemBaseUrl.IsConfigured`) + "มีวิธีที่ทำจบได้" + มีผังบัญชีพัก + (จด VAT) ราคาตั้งแบบรวม VAT
+- **ใบเสร็จของเงินที่รับแล้ว = เงินที่รับพอดี** (ฝ่ายค้าน S2): เงินที่รับถือว่ารวม VAT เสมอ — ฐาน = round(A×100/107) · VAT = A − ฐาน (`PlatformMoneyInAccount.SplitReceived`) ·
+  เงินจริงเข้าแต่ไม่มีใบ ⇒ ติดธงในรายการบนหน้าแอดมิน + "ออกใบเสร็จอีกครั้ง" (audit) · ใบพ้นวันหมดอายุที่มี charge ถามผู้ให้บริการก่อนปิด (`GatewayExpiryPolicy`)
+
+- **รอบ 228 (PLATFORM_OMISE_AUDIT §5):** บัตรเปิดบนหน้าชำระ NextAcc เมื่อช่องทางมีคีย์สาธารณะของโหมดปัจจุบัน (`Services/Payments/PaymentClientSetup` — เลขบัตรแปลงเป็นโทเคนในเบราว์เซอร์
+  ด้วยสคริปต์ของผู้ให้บริการ · เซิร์ฟเวอร์รับแต่โทเคน · 3-D Secure/แบงก์กิ้งพากลับหน้าเดิมแล้ว `PayWidget.resume()` ถามสถานะจากเซิร์ฟเวอร์) · วอลเล็ท/แบงก์กิ้งยังปิด (ไม่ส่งเบอร์ · ธนาคารเดียว) ·
+  **คืนเงินค่าบริการ (แอดมิน)** ⇒ **ใบลดหนี้อัตโนมัติ**อ้างใบเดิมในบริษัทผู้ให้บริการ = รายการบัญชีเดียว Dr รายได้ + ภาษีขาย / Cr 11340 (ไม่ลงใบสำคัญคืนเงิน · ใบลดหนี้ล้ม ⇒
+  ใบสำคัญสำรอง Dr ลูกหนี้/Cr 11340 + ปุ่มออกใบลดหนี้อีกครั้ง — DOCUMENT_FLOW §ค่าบริการ) · **ข้อพิพาท** บันทึกบนรายการ + เตือนแอดมิน
+  (ไม่เปลี่ยนสถานะเงิน) · ศูนย์บิลแสดง/ดาวน์โหลดใบเสร็จ/ใบกำกับ/ใบลดหนี้ที่บริษัทเป็นผู้ซื้อ (`PlatformInvoiceQueries.PaidDocumentsForBuyer`) · รายงาน MRR/ลูกหนี้ตามอายุ
+  `GET api/admin/platform-billing/revenue-report` (`Helpers/PlatformRevenueMetrics`)
 
 ### 6.3 Edge cases (ตัดสินใจแล้ว)
 
@@ -1221,3 +1262,18 @@ _Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I
 - `Site.UseGlobalInventory=false` ⇒ ตัดสต็อกที่ `Site.DefaultWarehouseId` หรือคลังของสาขาที่ผูก (`Helpers/CmsSiteWarehouse`) · ค่าเริ่มต้น true = คลังหลักบริษัท
 - ตั้ง/เปลี่ยนที่ `cms-edit` แท็บ SEO → "สาขาและคลังของเว็บนี้" · เซิร์ฟเวอร์ตรวจว่าสาขา/คลังเป็นของบริษัทนี้ (Guid ศูนย์ = ล้าง) · มีผลกับเอกสารใหม่เท่านั้น
 
+
+## โครงสร้างพื้นฐาน — ที่เก็บไฟล์กลาง (ทีม FS · 2026-11-02) 🔨 (โค้ดครบ · ยังไม่ได้คอมไพล์ในเครื่องนี้ · ยังไม่ทดสอบกับ bucket จริง)
+
+- ไฟล์ของผู้เช่าทุกบริษัท (ไฟล์แนบ · สแกน OCR · โลโก้/ตราประทับ · สลิปค่าบริการ/ส่วนเสริม/พอร์ทัล/ที่พัก · e-Tax PDF/XML · สื่อ) เขียน/อ่าน/ลบผ่าน
+  `Services/Storage/IFileStorage` ตัวเดียว · `FileStorage:Provider` = `Local` (ค่าเริ่มต้น — ดิสก์ของเครื่อง · รันได้เครื่องเดียวหรือ volume ร่วม) |
+  `S3` (AWS S3 / Cloudflare R2 / MinIO / DigitalOcean Spaces — รันหลาย instance ได้)
+- **ไม่มีคอลัมน์ใหม่** — ค่าที่ persist คงเดิม · object key คำนวณจากพาธ (`Helpers/FileStorageKey`) ⇒ `FileStorage:BasePath` และพาธในคอนเทนเนอร์ต้องคงที่
+- **env ใน production** (คีย์ลับห้ามลง appsettings): `FileStorage__Provider` · `FileStorage__S3__Endpoint` · `FileStorage__S3__Region` ·
+  `FileStorage__S3__Bucket` · `FileStorage__S3__AccessKeyId` · `FileStorage__S3__SecretAccessKey` · (ไม่บังคับ) `FileStorage__S3__KeyPrefix` ·
+  `FileStorage__S3__ForcePathStyle` (ค่าเริ่มต้น true) · `FileStorage__S3__LocalReadFallback` (ค่าเริ่มต้น true) — `Provider=S3` แต่ค่าว่าง/placeholder ⇒ **แอปไม่ start**
+- ย้ายไฟล์เดิม: SystemAdmin `POST /api/admin/file-storage/migrate` (dry-run ก่อน · ตรวจ SHA-256 · ไม่ลบดิสก์) · ขั้นตอนเต็ม + ตารางผู้เขียนทุกจุด:
+  `erp-review/2026-11-02/FILE_STORAGE_AUDIT.md` §5
+- โควตาพื้นที่ (`AttachmentStorageNotice` · Σ `FileAttachment.FileSize`) ไม่เปลี่ยน — นับจากแถว ไม่ใช่จากดิสก์/bucket
+
+_Last verified against codebase: 2026-11-02 (ทีม FS — ที่เก็บไฟล์กลาง Local | S3 · ไม่มี entity/คอลัมน์ใหม่ · เทสต์ `FileStorageKeyTests` `S3SigV4Tests` `FileStorageConfigPolicyTests` `FileStorageProviderTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit: เติมในคอมมิตตามหลัง)_

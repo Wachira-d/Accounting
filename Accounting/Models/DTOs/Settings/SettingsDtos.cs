@@ -146,7 +146,9 @@ public record UpdateCompanySettingsRequest(
     WhtFxRateBasis? WhtFxRateBasis = null,
     BotRateType? FxBotRateType = null,
     // รอบ 220 (คำตัดสินข้อ 181): ผังเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ตอนนำส่งภาษี-ประกันสังคม — "" = ล้าง (ใช้ 54820) · null = ไม่แก้ · ต้องเป็นผังค่าใช้จ่ายที่มีจริง
-    string? PenaltyExpenseAccountCode = null);
+    string? PenaltyExpenseAccountCode = null,
+    // 2026-11-02 (PETTY_CASH_AUDIT ส่วน C): เติมเงินสดย่อยต้องแนบสลิป (null = ไม่แก้)
+    bool? PettyCashTopUpEvidenceRequired = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -307,6 +309,8 @@ public record CompanySettingsResponse(
     /// <summary>รอบ 220 — ผังเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ที่ตั้งไว้ (null = ค่าแนะนำ) + รหัสที่ระบบใช้จริง (Helpers/PenaltyExpenseAccount)</summary>
     public string? PenaltyExpenseAccountCode { get; init; }
     public string? PenaltyExpenseAccountCodeEffective { get; init; }
+    /// <summary>เติมเงินสดย่อยต้องแนบสลิป (<c>CompanySettings.PettyCashTopUpEvidenceRequired</c>) · เก็บแล้วต้อง echo กลับ</summary>
+    public bool PettyCashTopUpEvidenceRequired { get; init; }
 }
 
 // ===== Landing Page Services (Public) =====

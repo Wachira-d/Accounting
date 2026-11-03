@@ -35,6 +35,11 @@
         <span class="hint" id="settingsMeta" style="font-size:12px;color:#64748b"></span>
       </div>
     </div>
+    <!-- รอบ 228 (งานข้อ 6): รายได้ประจำ (MRR) ตามแพ็กเกจ · ลูกหนี้ค้างตามอายุ · ส่วนเสริม — ตัวเลขทุกช่องจากเซิร์ฟเวอร์ (Helpers/PlatformRevenueMetrics) -->
+    <div class="admin-card" id="revenue">
+      <div class="section-title">📈 รายได้ประจำ (MRR) · ลูกหนี้ค้างตามอายุ · ส่วนเสริม</div>
+      <div id="revenueReport">กำลังโหลด...</div>
+    </div>
     <!-- ฝ่ายค้านรอบ 219 เฟส 2 (S2/B2/S3): รายการชำระที่ต้องจัดการด้วยมือ — ตัดชำระล้ม · พักอนุมัติอัตโนมัติ · รับเกินยอด (ค่าทุกช่องจากเซิร์ฟเวอร์) -->
     <div class="admin-card" id="exceptions">
       <div class="section-title">🚨 รายการชำระที่ต้องจัดการ</div>
@@ -128,6 +133,27 @@
           'ไม่มีใบค้าง 🎉');
       } catch (err) { el.textContent = err.message; }
     };
+    PB.loadRevenue = async function () {
+      const e = AdminLayout.esc, m = AdminLayout.money, el = document.getElementById('revenueReport');
+      try {
+        const d = (await AdminAPI.get('/platform-billing/revenue-report')).data;
+        el.innerHTML = `
+          <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:10px">
+            <div><div class="hint">MRR แพ็กเกจ</div><b style="font-size:18px">฿${m(d.mrr)}</b></div>
+            <div><div class="hint">MRR ส่วนเสริม</div><b style="font-size:18px">฿${m(d.addOnMrr)}</b></div>
+            <div><div class="hint">แพ็กเกจจ่ายเงินที่ใช้งาน</div><b style="font-size:18px">${Number(d.payingSubscriptions || 0)}</b></div>
+            <div><div class="hint">รับค่าส่วนเสริมล่วงหน้า 30 วัน</div><b style="font-size:18px">฿${m(d.addOnReceiptsLast30Days)}</b></div>
+          </div>
+          ${this.table(d.byPlan, ['แพ็กเกจ', 'ใช้งาน', 'ค้างชำระ', 'จะยกเลิกสิ้นรอบ', 'MRR'],
+            x => [e(x.planName), x.activeCount, x.pastDueCount, x.cancellingCount, m(x.mrr)], 'ยังไม่มีแพ็กเกจจ่ายเงิน')}
+          <div class="section-title" style="margin-top:12px;font-size:13px">ลูกหนี้ค่าบริการค้างตามอายุ</div>
+          ${d.aging ? this.table(d.aging, ['ช่วง', 'ใบ', 'บริษัท', 'ยอดค้าง'], x => [e(x.bucket), x.count, x.companies, m(x.amount)], '-')
+            : '<div class="pb-note warn">ยังไม่ได้ตั้งบริษัทผู้ให้บริการ — ยังไม่มีใบแจ้งหนี้จริง</div>'}
+          <div class="section-title" style="margin-top:12px;font-size:13px">ส่วนเสริมที่ต้องจ่าย</div>
+          ${this.table(d.addOns, ['รหัส', 'เปิดใช้', 'นับ MRR (จ่ายแล้ว)', 'รอชำระ/รอตรวจ', 'ทดลอง', 'MRR'], x => [e(x.featureCode), x.count, x.paidCount, x.awaitingCount, x.trialCount, m(x.mrr)], 'ไม่มี')}
+          <div class="hint" style="margin-top:6px">${e(d.note || '')}</div>`;
+      } catch (err) { el.textContent = err.message; }
+    };
     PB.loadNotices = async function () {
       const e = AdminLayout.esc, el = document.getElementById('notices');
       try {
@@ -203,6 +229,7 @@
       catch (err) { AdminLayout.toast(err.message, 'error'); }
     };
     PB.loadSettings();
+    PB.loadRevenue();
     PB.loadExceptions();
     PB.loadOpen();
     PB.loadLinks();

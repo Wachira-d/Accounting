@@ -21,9 +21,17 @@ public record DocumentQuotaStatus(
     decimal OverageUnitPrice,
     int OverageThisMonth,
     decimal OverageChargedThisMonth,
-    string? Message);
+    string? Message,
+    // รอบ 229 (QUOTA_ADDON แพ็ก 0(ข) · D-1/D-11): ข้อเสนอแพ็กเอกสาร — หน้าเว็บโชว์ราคา/ขนาด/อายุจากที่นี่ (ไม่พิมพ์ "100 ฉบับ · 60 วัน" เอง) และส่งกลับมาเทียบ
+    int TopUpPackSize = 0, decimal TopUpPackPrice = 0m, int TopUpValidDays = 0);
 
 /// <summary>ภารกิจแลกโควตา 1 รายการที่ผู้ใช้เห็น</summary>
+/// <summary>รอบ 229: ข้อเสนอแพ็กเอกสารเปลี่ยนระหว่างที่ผู้ซื้อดู (409 · ยังไม่คิดเงิน)</summary>
+public sealed class DocumentTopUpOfferChangedException : Accounting.Helpers.BusinessRuleException
+{
+    public DocumentTopUpOfferChangedException(string message) : base(message, "QUOTA-TOPUP-CHANGED", 409) { }
+}
+
 public record QuotaRewardOptionDto(
     Guid Id, string Kind, string Title, string? Description,
     string? ImageUrl, string? MediaUrl, string? PartnerUrl,
@@ -48,7 +56,8 @@ public interface IQuotaService
 
     /// <summary>ซื้อโควตาเพิ่ม (top-up) — 1 แพ็ก = `documents.topup` 1 หน่วย
     /// คิดเงินผ่าน UsageEvent ปกติ (เข้าบิลรอบเดือน/ตัดเครดิต Prepaid)</summary>
-    Task<DocumentQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null);
+    Task<DocumentQuotaStatus> PurchaseTopUpAsync(Guid companyId, int packs, string actor, CancellationToken ct = default, string? idempotencyKey = null,
+        int? expectedPackSize = null, decimal? expectedPackPrice = null);
 
     Task<List<QuotaRewardOptionDto>> ListRewardOptionsAsync(Guid companyId, CancellationToken ct = default);
 

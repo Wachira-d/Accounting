@@ -64,6 +64,13 @@ public static class ThaiDate
     public static (DateTime Bound, bool Exclusive) InstantToUtc(DateTime to)
         => IsDateOnly(to) ? (BangkokDayStartUtc(to.Date.AddDays(1)), true) : (to, false);
 
+    private static readonly string[] ShortMonthsTh =
+        { "", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค." };
+
+    /// <summary>ป้ายเดือนย่อ + ปี พ.ศ. เช่น "มิ.ย. 2569" (รอบ 225 — ตัวเลือกเดือนในหน้าดึงเอกสาร · ใช้รูปเดียวกับหน้าเอกสาร)</summary>
+    public static string ShortMonthBe(int year, int month)
+        => $"{ShortMonthsTh[Math.Clamp(month, 1, 12)]} {year + 543}";
+
     /// <summary>yyyyMMdd ของวันที่ไทย — ใช้กับเลขเอกสาร.</summary>
     public static string YyyyMmDd(DateTime dt)
         => CalendarDateUtc(dt).ToString("yyyyMMdd");

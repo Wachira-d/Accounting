@@ -1240,8 +1240,38 @@ public partial class CmsCommerceService : ICmsCommerceService
 
     // ===== Payment Gateways =====
 
+    /// <summary>ฝ่ายค้านรอบ 228 S-4: ทางเข้าเดิม (สร้าง/แก้ แถวชนิดโอน/พร้อมเพย์) เดินตัวตรวจ + ตัวเขียนเดียวกับการ์ดบัญชีรับโอน — ช่องที่ไม่ส่ง (null) = คงค่าเดิม ·
+    /// "" = ล้าง (ผู้เรียกตั้งใจ) · ไม่มีแถวโอนที่สองเกิด (เขียนแถวของเว็บแถวเดียวจาก <see cref="SiteTransferAccount.Rows"/>)</summary>
+    private async Task<PaymentGatewayResponse> UpsertTransferGatewayAsync(Guid companyId, Guid siteId, CreatePaymentGatewayRequest request, string userId)
+    {
+        var cur = await SiteTransferAccount.Rows(_db.SitePaymentGateways.AsNoTracking(), companyId, siteId).FirstOrDefaultAsync();
+        var errs = new List<string>();
+        var t = SiteTransferAccount.Normalize(
+            SiteTransferAccount.KeepUnlessSent(cur?.BankName, request.BankName), SiteTransferAccount.KeepUnlessSent(cur?.BankAccountNumber, request.BankAccountNumber),
+            SiteTransferAccount.KeepUnlessSent(cur?.BankAccountName, request.BankAccountName), SiteTransferAccount.KeepUnlessSent(cur?.BankBranch, request.BankBranch),
+            SiteTransferAccount.KeepUnlessSent(cur?.PromptPayId, request.PromptPayId), SiteTransferAccount.KeepUnlessSent(cur?.PromptPayQrUrl, request.PromptPayQrUrl),
+            PromptPayService.IsValidId, errs);
+        if (errs.Count > 0) throw new BusinessRuleException(string.Join(" · ", errs), SiteTransferAccount.RuleCode);
+        await using var tx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;   // รีวิวรอบ 228: ล็อกต่อเว็บใน WriteRowAsync
+        var gw = await SiteTransferAccount.WriteRowAsync(_db, companyId, siteId, t, confirmClear: true, userId)
+            ?? throw new BusinessRuleException("กรอกเลขบัญชี พร้อมเพย์ หรือรูป QR อย่างน้อย 1 อย่าง", SiteTransferAccount.RuleCode);
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, UserId = Guid.TryParse(userId, out var uid) ? uid : null,
+            EntityType = "SiteTransferAccount", EntityId = siteId.ToString(), Action = AuditAction.Update,
+            OldValues = System.Text.Json.JsonSerializer.Serialize(SiteTransferAccount.MaskForAudit(SiteTransferAccount.InfoOf(cur))),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(SiteTransferAccount.MaskForAudit(SiteTransferAccount.InfoOf(gw))),
+        });
+        await _db.SaveChangesAsync();
+        if (tx != null) await tx.CommitAsync();
+        return MapGatewayResponse(gw);
+    }
+
+    private static bool IsTransferType(PaymentGatewayType t) => t is PaymentGatewayType.BankTransfer or PaymentGatewayType.PromptPay;
+
     public async Task<PaymentGatewayResponse> CreatePaymentGatewayAsync(Guid companyId, Guid siteId, CreatePaymentGatewayRequest request, string userId)
     {
+        if (IsTransferType(request.GatewayType)) return await UpsertTransferGatewayAsync(companyId, siteId, request, userId);   // รอบ 228 S-4
         var gw = new SitePaymentGateway
         {
             CompanyId = companyId, SiteId = siteId, GatewayType = request.GatewayType,
@@ -1265,6 +1295,8 @@ public partial class CmsCommerceService : ICmsCommerceService
     {
         var gw = await _db.SitePaymentGateways.FirstOrDefaultAsync(g => g.Id == gatewayId && g.SiteId == siteId && g.CompanyId == companyId)
             ?? throw new KeyNotFoundException("Payment gateway not found.");
+        // รอบ 228 S-4: แถวชนิดโอน/พร้อมเพย์ (หรือขอเปลี่ยนเป็นชนิดนั้น) ⇒ ตัวเขียนเดียวของบัญชีรับโอน (ไม่ล้างช่องที่ไม่ได้ส่ง)
+        if (IsTransferType(gw.GatewayType) || IsTransferType(request.GatewayType)) return await UpsertTransferGatewayAsync(companyId, siteId, request, userId);
 
         gw.Name = request.Name;
         gw.Description = request.Description;
@@ -1273,8 +1305,9 @@ public partial class CmsCommerceService : ICmsCommerceService
         if (request.SecretKey != null) gw.SecretKeyEncrypted = EncryptionHelper.Encrypt(request.SecretKey, _encryptionKey);
         gw.MerchantId = request.MerchantId;
         gw.PromptPayId = request.PromptPayId;
-        gw.PromptPayQrUrl = request.PromptPayQrUrl;
-        gw.BankName = request.BankName;
+        // รอบ 228 (CMS_SETTINGS_UX_AUDIT §1 ข้อ 2): ช่องที่ผู้เรียกไม่ส่ง (null) = ไม่แตะ · "" = ล้าง — เดิม modal หน้าคำสั่งซื้อส่งไม่มีรูป QR ⇒ รูป QR ที่ตั้งจากหน้าการชำระเงินหายเงียบ
+        gw.PromptPayQrUrl = SiteTransferAccount.KeepUnlessSent(gw.PromptPayQrUrl, request.PromptPayQrUrl);
+        gw.BankName = SiteTransferAccount.KeepUnlessSent(gw.BankName, request.BankName);
         gw.BankAccountNumber = request.BankAccountNumber;
         gw.BankAccountName = request.BankAccountName;
         // รอบ 218: null = ผู้เรียกเดิมที่ไม่รู้จักช่องนี้ ⇒ ไม่แตะ (ไม่ล้างสาขาที่ตั้งจากหน้าการจองเงียบ ๆ)
@@ -1379,7 +1412,8 @@ public partial class CmsCommerceService : ICmsCommerceService
             // ≠ order.TotalAmount แต่ตอนตัดชำระจ่าย order.TotalAmount → AR ค้างเศษ
             // ถาวร + รายได้เพี้ยน. เพิ่มบรรทัดค่าจัดส่ง (บวก) + ส่วนลด (ลบ) ให้ยอดตรง.
             // รอบ 205 W6 (R-41 B2): บรรทัดสินค้าคอร์สลงผังค่าบริการรับล่วงหน้า (21713) — จุดเชื่อมเดียวกับ CourseCreditOnlineSale (ออเดอร์ไม่มีคอร์ส = เส้นเดิม)
-            Lines: BuildOrderErpLines(order, storeVatRegistered, await CourseCreditOnlineSale.UnearnedAccountsAsync(_db, companyId, order)),
+            Lines: BuildOrderErpLines(order, storeVatRegistered, await CourseCreditOnlineSale.UnearnedAccountsAsync(_db, companyId, order),
+                await ShippingRevenueAccount.ResolveAsync(_db, companyId, siteId)),   // รอบ 228
             ProjectId: null,
             BankAccountId: null,
             PaymentAccountId: null,
@@ -1431,7 +1465,7 @@ public partial class CmsCommerceService : ICmsCommerceService
     // internal (ไม่ใช่ private) เพื่อให้เทสต์เรียกตรงได้ — เส้นนี้เป็นเส้นที่เงียบ
     // ที่สุดของระบบ (webhook → เอกสาร) ไม่มีใครเห็นถ้าพัง (InternalsVisibleTo อยู่ใน .csproj แล้ว)
     internal static List<Models.DTOs.Document.DocumentLineRequest> BuildOrderErpLines(SiteOrder order, bool vatRegistered = true,
-        IReadOnlyDictionary<Guid, Guid>? unearnedBySiteProduct = null)
+        IReadOnlyDictionary<Guid, Guid>? unearnedBySiteProduct = null, Guid? shippingAccountId = null)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
         var lines = new List<Models.DTOs.Document.DocumentLineRequest>();
@@ -1470,7 +1504,8 @@ public partial class CmsCommerceService : ICmsCommerceService
                     Unit: "ครั้ง", DiscountPercent: 0m,
                     VatRate: part.Rate,
                     WithholdingTaxRate: 0m,
-                    AccountId: null, ProjectId: null));
+                    // รอบ 228: บัญชีรายได้ค่าจัดส่งของเว็บ (Helpers/ShippingRevenueAccount) · null = บัญชีรายได้ตั้งต้น (เดิม)
+                    AccountId: shippingAccountId, ProjectId: null));
                 lineGross.Add(Math.Round(part.Fee, 2, R));
             }
         }

@@ -218,10 +218,13 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round205TeamDMigrationStatements());   // รอบ 205 ทีม D คำแนะนำบัญชีของ migration wizard (บล็อกท้ายไฟล์)
         list.AddRange(Adversarial1BankStatements());   // ฝ่ายค้านรอบ 1 — ยอดคงเหลือ statement ที่ไม่รู้ (บล็อกท้ายไฟล์)
         list.AddRange(AdversarialEtlStatements());   // ฝ่ายค้านรอบ ETL — ปิดค่า "ลงอัตโนมัติ" ที่ยังไม่มีผล (บล็อกท้ายไฟล์)
+        list.AddRange(JournalFiscalPeriodBackfillStatements());   // เงินสดย่อยส่วน D ฝ่ายค้านข้อ 2 — เติม FiscalPeriodId ของ JE จากวันที่ (บล็อกถัดจาก AdversarialEtl)
         list.AddRange(ThaiDigitLearnerKeyStatements());   // ทีม W1d P2-6 — คีย์ตัวเรียนรู้ที่เก็บเลขผู้เสียภาษีเป็นเลขไทย (บล็อกท้ายไฟล์)
         list.AddRange(TeamKPosMtoStatements());   // ทีม K — POS คิวการจอง/ช่างรายบรรทัด/รายการพิเศษ + สินค้าตามสั่ง (บล็อกท้ายไฟล์)
         list.AddRange(Accounting.Helpers.BookingEngineMigration.Statements());   // ทีม B — engine รอบจองคิว CMS (Helpers/BookingEngineMigration)
         list.AddRange(Accounting.Helpers.BookingPaymentMigration.Statements());   // รอบ 218 — นโยบายรับชำระล่วงหน้า + สลิปของการจอง (Helpers/BookingPaymentMigration)
+        list.AddRange(Accounting.Helpers.BookingFulfillmentMigration.Statements());   // รอบ 226 — จัดส่ง/รับเองของการจอง (Helpers/BookingFulfillmentMigration)
+        list.AddRange(Accounting.Helpers.BookingManageMigration.Statements());   // รอบ 228 — จัดการการจองของฉัน · บัญชีรายได้ค่าจัดส่ง · โซนชนะโซนถัดไป
         list.AddRange(Accounting.Helpers.ClassScheduleMigration.Statements());   // รอบ 209 P4 — ตารางคลาส (เทอม/รอบเรียน) บนเครื่องจอง CMS
         list.AddRange(Round205RoleMenuIdStatements());   // รอบ 205 ทีม I — id เมนูเก่าในบทบาทที่สร้างจากแม่แบบ (บล็อกท้ายไฟล์)
         list.AddRange(CourseCreditStatements());   // ทีม L — คอร์ส/เครดิต/ชั่วโมง (บล็อกท้ายไฟล์)
@@ -245,6 +248,8 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PlatformBillingPhase0Migration.Statements());   // รอบ 219 เฟส 0 — ผู้จ่ายของ intent ค่าบริการ · ระยะผ่อนผัน/งวดจ่ายล่วงหน้าของส่วนเสริม · ดาวน์เกรดรอครบรอบ · วิธีโอนให้ NextAcc
         list.AddRange(Accounting.Helpers.PlatformBillingPhase2Migration.Statements());   // รอบ 219 เฟส 2 — ค่าตั้งการเรียกเก็บ · หลักฐานยอมรับเงื่อนไข · ผูกการชำระกับใบแจ้งหนี้ · dunning · ลิงก์ชำระ (หลังเฟส 0)
         list.AddRange(Accounting.Helpers.PurchasePolicyAcceptanceMigration.Statements());   // รอบ 219 ส่วน B — หลักฐานยอมรับนโยบายก่อนชำระ · นโยบายคืนเงินของร้าน · ด่าน live เข้มขึ้น · ยกเลิกสิ้นรอบ · หน้าทดลองจ่าย
+        list.AddRange(Accounting.Helpers.BookingFormFields.MigrationStatements());   // รอบ 222 — คำตอบช่องที่เจ้าของเพิ่มเองบนฟอร์มจอง (SiteBookings.CustomFieldsJson)
+        list.AddRange(Accounting.Helpers.QuotaAddOnMigration.Statements());   // รอบ 229 — โควตาเสริม: เพดานต่อแพ็กเกจ · override รายบริษัท · แคตตาล็อก · การซื้อ (Helpers/QuotaAddOnMigration)
         return list;
     }
 
@@ -5036,6 +5041,8 @@ public static class DatabaseMigrationHelper
             // 2026-10-14 (PC#11): รหัสขึ้นต้นของผังเงินสด/ธนาคารสำหรับบริษัทที่ใช้ผังบัญชีของตัวเอง
             // (null = ผังมาตรฐาน 111/1133/2123 — Helpers/MoneyAccountRule ตัวเดียว)
             """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "MoneyAccountCodePrefixes" varchar(200) NULL;""",
+            // 2026-11-02 (PETTY_CASH_AUDIT ส่วน C): เติมเงินสดย่อยต้องแนบสลิป (ค่าตั้งต้น = ไม่บังคับ — บริษัทเดิมไม่เปลี่ยนพฤติกรรม)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "PettyCashTopUpEvidenceRequired" boolean NOT NULL DEFAULT false;""",
 
             // ===== CompanySettings: กองทุนเงินทดแทน (กท.20ก) =====
             // อัตราสมทบนายจ้างฝ่ายเดียว 0.2–1.0% ตามประเภทกิจการ. default 0.2%
@@ -5501,7 +5508,11 @@ public static class DatabaseMigrationHelper
             // นำส่ง 1 ครั้ง/ประเภท/งวด (กันจ่ายซ้ำ) — เฉพาะ row ที่ยังไม่ลบ · **ยกเว้น ภ.พ.36** (รอบ 203 ทีม F3 · คำตัดสินข้อ 133: ยื่นได้หลายครั้งต่อเดือน
             // ต่อการจ่ายเงิน — ด่านกันซ้ำของ ภ.พ.36 คือ "ใบหนึ่งนับได้ครั้งเดียว" ที่ตาราง Pp36RemittanceDocuments) · index เดิมถูกแทนด้วย _v2
             """DROP INDEX IF EXISTS "UX_StatutoryRemittances_Period";""",
-            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_StatutoryRemittances_Period_v2" ON "StatutoryRemittances" ("CompanyId", "RemittanceType", "PeriodYear", "PeriodMonth") WHERE "IsDeleted" = false AND "RemittanceType" <> 'VatPp36';""",
+            // รอบ 228: กองทุนเงินทดแทนรายปี (จ่ายได้หลายครั้งต่อปี — ด่านกันซ้ำ = ล็อก + ยอดค้างใน RemitAsync) และอากรแสตมป์ (รายตราสาร — ด่านกันซ้ำ =
+            // StampDutyRecords.StatutoryRemittanceId ใต้ล็อกแถว) ⇒ ยกเว้นจาก unique ต่องวดเหมือน ภ.พ.36 · _v2 ถูกแทนด้วย _v3 (ห้ามสร้าง _v2 ซ้ำ —
+            // แถว WCF สองครั้งในปีเดียวจะทำให้ CREATE UNIQUE ล้ม)
+            """DROP INDEX IF EXISTS "UX_StatutoryRemittances_Period_v2";""",
+            """CREATE UNIQUE INDEX IF NOT EXISTS "UX_StatutoryRemittances_Period_v3" ON "StatutoryRemittances" ("CompanyId", "RemittanceType", "PeriodYear", "PeriodMonth") WHERE "IsDeleted" = false AND "RemittanceType" NOT IN ('VatPp36', 'WcfAnnual', 'StampDuty');""",
             // รอบ 220 (คำตัดสินข้อ 181): เบี้ยปรับ + ค่าปรับอื่น + ค่าที่ระบบเสนอ — แถวเดิม = 0/NULL (ไม่กระทบยอดเดิม)
             """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "Penalty" decimal(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "OtherFine" decimal(18,2) NOT NULL DEFAULT 0;""",
@@ -5513,6 +5524,12 @@ public static class DatabaseMigrationHelper
             // (รอบที่ยังผูก JE อยู่และมีเงินเพิ่ม — รอบที่กลับรายการไปก่อนรอบ 220 ถูกล้าง id แล้ว กู้ไม่ได้ ⇒ บันทึกใน TAX_PENALTY_AUDIT §3)
             """ALTER TABLE "PayrollRuns" ADD COLUMN IF NOT EXISTS "SsoLateFeeJournalEntryIds" text NULL;""",
             """UPDATE "PayrollRuns" SET "SsoLateFeeJournalEntryIds" = "SsoSettlementJournalEntryId"::text WHERE "SsoLateFeeJournalEntryIds" IS NULL AND "SsoLateFeeAmount" > 0 AND "SsoSettlementJournalEntryId" IS NOT NULL;""",
+            // รอบ 228: ค่าจ้างก่อนตัดเพดานรายเดือนของกองทุนเงินทดแทน (เงินสมทบรายปีตัดเพดาน 240,000 ทั้งปี) · แถวเดิม NULL ⇒ ถอดฐานจากเงินสมทบ
+            """ALTER TABLE "PayrollDetails" ADD COLUMN IF NOT EXISTS "WorkersCompensationWage" decimal(18,2) NULL;""",
+            // รอบ 228: อากรแสตมป์ที่จ่ายผ่านเส้นนำส่ง (JE + แถวนำส่ง) — null = ยังไม่จ่าย หรือจ่ายแบบบันทึกเลขใบเสร็จอย่างเดียว (ก่อนรอบ 228/ไม่ลงบัญชี)
+            """ALTER TABLE "StampDutyRecords" ADD COLUMN IF NOT EXISTS "StatutoryRemittanceId" uuid NULL;""",
+            // รอบ 228 ฝ่ายค้าน S3: แถวนำส่งที่ผูกใบสำคัญของผู้ใช้ ("ชำระนอกระบบแล้ว") — ยกเลิกไม่กลับรายการ JE ของผู้ใช้ · แถวเดิม false
+            """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "SettledOutside" boolean NOT NULL DEFAULT false;""",
 
             // ===== Pp36RemittanceDocuments: ใบ ↔ รายการนำส่ง ภ.พ.36 (รอบ 203 ทีม F3 · คำตัดสินข้อ 133/134) =====
             """
@@ -6545,6 +6562,21 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "JournalEntries" ADD COLUMN IF NOT EXISTS "TaxInvoiceSupplierBranch" varchar(10) NULL;""",
             // รอบ 200 ทีม G (review198-E2 E2-12): ค่าธรรมเนียมที่ถูกหัก ณ วันบันทึกรอบโอน — รายงานกระทบยอดไม่คิดใหม่ด้วยโหมด VAT วันนี้
             """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "SettledFeeDeducted" numeric(18,2) NULL;""",
+            // รอบ 228 (PLATFORM_OMISE_AUDIT §5.4): ข้อพิพาท/chargeback จาก webhook ที่ยืนยันแล้ว — แถวเดิม NULL = ไม่มีข้อพิพาท
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "DisputeState" integer NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "DisputeProviderRef" varchar(100) NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "DisputeAmount" numeric(18,2) NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "DisputeReason" varchar(500) NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "DisputeUpdatedAt" timestamptz NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "DisputeAcknowledgedAt" timestamptz NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "DisputeAcknowledgedBy" varchar(200) NULL;""",
+            // ฝ่ายค้านรอบ 228 S2: ใบลดหนี้คืนเงินค่าบริการที่ออกไม่สำเร็จ (เรื่องค้างของแอดมิน) — แถวเดิม NULL = ไม่มีเรื่องค้าง
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundCreditNotePendingRef" varchar(150) NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundCreditNotePendingAmount" numeric(18,2) NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundCreditNotePendingReason" varchar(500) NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundCreditNoteProblem" varchar(1000) NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundCreditNoteCounterAccountId" uuid NULL;""",
+            """ALTER TABLE "PaymentIntents" ADD COLUMN IF NOT EXISTS "RefundCreditNoteFallbackJournalEntryId" uuid NULL;""",
             // เติมย้อนหลังเฉพาะที่พิสูจน์ได้: ค่าธรรมเนียมที่ถูกหัก = (ยอด − ยอดคืน ณ วันเงินเข้า) − ยอดโอนเข้าที่บันทึก ต้องเท่ากับหนึ่งในค่าที่สูตรรอบโอน
             // ให้ได้จริง (ค่าธรรมเนียม · หรือ ค่าธรรมเนียม + VAT 7%) · ไม่ตรง = คง NULL (ใช้สูตรเดิม ไม่เดา) · idempotent (เติมเฉพาะ NULL)
             """UPDATE "PaymentIntents" SET "SettledFeeDeducted" = d.derived FROM (SELECT "Id", round(GREATEST(0, "Amount" - ("RefundSettledAmount" - "RefundDeductedAfterSettlement")) - "SettledAmount", 2) AS derived, round("FeeActual", 2) AS fee FROM "PaymentIntents" WHERE "SettlementJournalEntryId" IS NOT NULL AND "SettledAmount" IS NOT NULL AND "FeeActual" IS NOT NULL AND "SettledFeeDeducted" IS NULL) d WHERE "PaymentIntents"."Id" = d."Id" AND (abs(d.derived - d.fee) <= 0.005 OR abs(d.derived - (d.fee + round(d.fee * 0.07, 2))) <= 0.005);""",
@@ -7696,6 +7728,30 @@ public static class DatabaseMigrationHelper
     internal static IReadOnlyList<string> AdversarialEtlStatements() => new List<string>
     {
         """UPDATE "ImportMappingTemplates" SET "AutoCommitWhenClean" = false WHERE "AutoCommitWhenClean" = true;""",
+    };
+
+    /// <summary>
+    /// <b>เงินสดย่อยส่วน D · ฝ่ายค้านข้อ 2 (2026-11-02)</b> — ใบสำคัญที่ <c>FiscalPeriodId</c> ว่าง (เงินสดย่อยรุ่น <c>JV-PC-…</c> ที่สร้าง JE เอง ·
+    /// ใบที่ลงก่อนบริษัทตั้งงวด) ⇒ ด่านที่ยึด FK (<c>ValidateFiscalPeriodOpenAsync</c>) ข้ามเงียบ · เติม FK จาก<b>วันที่</b>ด้วยเงื่อนไขเดียวกับ
+    /// <c>JournalEntryBuilder.FindPeriodAsync</c> (งวดของบริษัท · <c>StartDate &lt;= วันที่ &lt;= EndDate</c> · วันที่ = ส่วนวันของ <c>EntryDate</c> แบบ UTC) ·
+    /// แตะเฉพาะแถวที่ยังว่าง (รันซ้ำได้ · ใบที่มี FK แล้วไม่ถูกแตะ) · ไม่มีงวดครอบ = คงว่าง · งวดซ้อน = เลือกงวดที่เริ่มหลังสุด
+    /// </summary>
+    internal static IReadOnlyList<string> JournalFiscalPeriodBackfillStatements() => new List<string>
+    {
+        """
+        UPDATE "JournalEntries" je SET "FiscalPeriodId" = (
+            SELECT fp."Id" FROM "FiscalPeriods" fp
+            WHERE fp."CompanyId" = je."CompanyId" AND fp."IsDeleted" = false
+              AND fp."StartDate" <= (date_trunc('day', je."EntryDate" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+              AND fp."EndDate"   >= (date_trunc('day', je."EntryDate" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+            ORDER BY fp."StartDate" DESC, fp."Id" LIMIT 1)
+        WHERE je."FiscalPeriodId" IS NULL
+          AND EXISTS (
+            SELECT 1 FROM "FiscalPeriods" fp
+            WHERE fp."CompanyId" = je."CompanyId" AND fp."IsDeleted" = false
+              AND fp."StartDate" <= (date_trunc('day', je."EntryDate" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+              AND fp."EndDate"   >= (date_trunc('day', je."EntryDate" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'));
+        """,
     };
 
     /// <summary>

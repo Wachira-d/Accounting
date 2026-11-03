@@ -14,7 +14,8 @@ public partial class CmsBookingService
 {
     private sealed record BookingNotifyFacts(string BookingNumber, string ServiceName, DateTime BookingDate, TimeOnly StartTime, BookingStatus Status,
         int GuestCount, string? GuestName, string? GuestEmail, string? GuestPhone, string? CancellationReason, string? CustomerName, string? CustomerEmail,
-        string? AuthProvider, string? AuthProviderId, string? ResourceName, string? PublicToken, Guid? CustomerId);
+        string? AuthProvider, string? AuthProviderId, string? ResourceName, string? PublicToken, Guid? CustomerId,
+        string? CustomFieldsJson = null);
 
     private Task<BookingNotifyFacts?> LoadBookingNotifyFactsAsync(Guid companyId, Guid siteId, Guid bookingId)
         => _db.SiteBookings.AsNoTracking()
@@ -25,7 +26,7 @@ public partial class CmsBookingService
                 b.Customer != null ? b.Customer.AuthProvider : null, b.Customer != null ? b.Customer.AuthProviderId : null,
                 b.ResourceId == null ? null
                     : _db.SiteBookingResources.Where(r => r.Id == b.ResourceId && r.CompanyId == companyId).Select(r => r.Name).FirstOrDefault(),
-                b.PublicToken, b.CustomerId))
+                b.PublicToken, b.CustomerId, b.CustomFieldsJson))
             .FirstOrDefaultAsync();
 
     /// <summary>รอบ 210: บรรทัด "ดู/จัดการการจอง" ท้ายข้อความถึงลูกค้า — ลิงก์ my-booking จากฐานหน้าร้าน (<see cref="CmsStorefrontLink"/>) ·
@@ -38,6 +39,10 @@ public partial class CmsBookingService
 
     private async Task<string> SiteNameAsync(Guid companyId, Guid siteId)
         => await _db.Sites.AsNoTracking().Where(s => s.Id == siteId && s.CompanyId == companyId).Select(s => s.Name).FirstOrDefaultAsync() ?? "";
+
+    /// <summary>รอบ 222: "ข้อมูลเพิ่มเติม: ป้าย: ค่า · …" จากคำตอบที่ตรึงบนการจอง (ตัวสรุปกลาง CustomFormFields.SummaryLine) · ไม่มี = null (ไม่เพิ่มบรรทัด)</summary>
+    private static string? CustomAnswersLine(BookingNotifyFacts f)
+        => CustomFormFields.SummaryLine(f.CustomFieldsJson) is string line ? "ข้อมูลเพิ่มเติม: " + line : null;
 
     private static string? BookingDisplayName(BookingNotifyFacts f) => !string.IsNullOrWhiteSpace(f.CustomerName) ? f.CustomerName : f.GuestName;
 
@@ -71,8 +76,10 @@ public partial class CmsBookingService
         var (customer, custErr) = await SendBookingConfirmedToCustomerAsync(companyId, siteId, bookingId, f, site);
         if (custErr != null) failures.Add(CmsNotificationText.FailureNote("ลูกค้า", customer.Subject, custErr, now));
 
-        var shop = CmsNotificationText.ShopNewBooking(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), f.GuestPhone, date, f.StartTime,
-            f.GuestCount, waitlisted: f.Status == BookingStatus.Waitlisted);
+        // รอบ 222: คำตอบช่องที่เจ้าของเพิ่มเอง ⇒ บรรทัดเดียวท้ายข้อความถึงร้าน (ร้านเตรียมงานได้โดยไม่ต้องเปิดหลังบ้าน)
+        var shop = CmsNotificationText.WithLine(CmsNotificationText.ShopNewBooking(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), f.GuestPhone, date, f.StartTime,
+            f.GuestCount, waitlisted: f.Status == BookingStatus.Waitlisted),
+            CmsNotificationText.JoinLines(CustomAnswersLine(f), await FulfillmentNotifyLineAsync(companyId, siteId, bookingId)));   // รอบ 226: วิธีรับ
         var shopErr = await _shopNotifier.NotifyShopAsync(companyId, siteId, shop, orderEvent: false);
         if (shopErr != null) failures.Add(CmsNotificationText.FailureNote("ร้าน", shop.Subject, shopErr, now));
 
@@ -84,9 +91,12 @@ public partial class CmsBookingService
     private async Task<(CmsNotification Message, string? Error)> SendBookingConfirmedToCustomerAsync(Guid companyId, Guid siteId, Guid bookingId, BookingNotifyFacts f, string site)
     {
         // รอบ 218: มียอดชำระล่วงหน้าค้าง ⇒ บรรทัดยอด/กำหนดเวลา/วิธีชำระก่อนลิงก์จัดการการจอง (BookingPaymentPolicy.NotifyLine)
-        var customer = await WithBookingLinkAsync(companyId, siteId, f, CmsNotificationText.WithLine(
+        // รอบ 222: ข้อมูลที่ลูกค้ากรอกในช่องเพิ่มเอง ⇒ ทวนในใบยืนยัน (ก่อนบรรทัดชำระเงิน)
+        var customer = await WithBookingLinkAsync(companyId, siteId, f, CmsNotificationText.WithLine(CmsNotificationText.WithLine(
             CmsNotificationText.CustomerBookingConfirmation(site, f.BookingNumber, f.ServiceName, BookingDisplayName(f), DateOnly.FromDateTime(f.BookingDate), f.StartTime, f.ResourceName, f.Status),
-            await PaymentNotifyLineAsync(companyId, siteId, bookingId)));
+            CustomAnswersLine(f)),
+            // รอบ 226: วิธีรับ (จัดส่ง + ที่อยู่ + ค่าส่ง / รับเอง + ที่อยู่-เวลารับ) ก่อนบรรทัดชำระ
+            CmsNotificationText.JoinLines(await FulfillmentNotifyLineAsync(companyId, siteId, bookingId), await PaymentNotifyLineAsync(companyId, siteId, bookingId))));
         var err = await _shopNotifier!.NotifyCustomerAsync(companyId, siteId, CustomerNotifyEvents.BookingConfirmed, CustomerNotifyKeys.Booking(bookingId, CustomerNotifyEvents.BookingConfirmed), ContactOf(f.GuestEmail, f.CustomerEmail, f.AuthProvider, f.AuthProviderId, CustomerLineTarget.ForBooking(bookingId, f.CustomerId)), customer);
         return (customer, err);
     }

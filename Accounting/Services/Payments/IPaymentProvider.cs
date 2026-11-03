@@ -81,7 +81,12 @@ public sealed record ProviderRefund(
 public sealed record VerifiedWebhookEvent(
     string EventId,
     Guid IntentId,
-    ProviderCharge Charge);
+    ProviderCharge Charge,
+    // รอบ 228 (§5.4): event ข้อพิพาท/chargeback ของ charge นี้ (ยืนยันแล้วเหมือน charge) — มีค่า ⇒ ผู้เรียกบันทึกข้อพิพาท ไม่เปลี่ยนสถานะเงิน
+    ProviderDispute? Dispute = null);
+
+/// <summary>รอบ 228 (§5.4): ข้อพิพาท/chargeback ตามผู้ให้บริการ — แปลเป็นภาษากลางแล้ว · <c>Amount</c> = ยอดที่ถูกโต้แย้ง (บาท)</summary>
+public sealed record ProviderDispute(string ProviderRef, PaymentDisputeState State, string? RawStatus, decimal Amount, string? Reason);
 
 /// <summary>ผลการทดสอบเชื่อมต่อ — ข้อความต้องเป็นภาษาคนที่บอก **ทางแก้**
 /// ไม่ใช่ error code ของ provider</summary>
@@ -125,6 +130,10 @@ public interface IPaymentProvider
     /// <summary>URL ของสคริปต์ที่หน้าจ่ายเงินต้องโหลด (tokenization ฝั่งเบราว์เซอร์) —
     /// null = ไม่ต้องโหลดอะไร · หน้าเว็บขอค่านี้จาก API ไม่ hard-code เอง</summary>
     string? ClientScriptUrl => null;
+
+    /// <summary>รอบ 228 (PLATFORM_OMISE_AUDIT §5.1): คีย์สาธารณะของ<b>โหมดปัจจุบัน</b>ของช่องทาง — ให้สคริปต์ฝั่งเบราว์เซอร์แปลงเลขบัตรเป็นโทเคน ·
+    /// ไม่ใช่ความลับ (ออกแบบมาให้เปิดเผย) · null = ไม่มี/เจ้านี้ไม่ใช้ · หน้าเว็บขอค่านี้ผ่าน <see cref="PaymentClientSetup"/> เท่านั้น</summary>
+    string? ClientPublicKey(PaymentProviderConfig config) => null;
 
     /// <summary>เงินเข้าบัญชีธนาคารของบริษัท<b>ทันที</b>ที่ยืนยันหรือไม่
     ///

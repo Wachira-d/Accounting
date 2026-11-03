@@ -430,7 +430,7 @@ public class DocumentController : ControllerBase
             companyId, documentId, request.Period, userIdGuid.ToString());
         // sync รายงานร่างของงวดใหม่ทันที — ตั้งเดือนเคลมแล้วต้องเห็นในรายงานเลย
         // โดยไม่ต้อง "สร้างใหม่" (ซึ่งล้างการติ๊กของบรรทัดอื่นทั้งงวด)
-        var pullNote = await _taxService.TryPullIntoDraftReportAsync(companyId, documentId);
+        var pullNote = await _taxService.TryPullIntoDraftReportAsync(companyId, documentId, actorId: userIdGuid);
         return Ok(new ApiResponse<DocumentResponse>(true, result,
             $"ตั้งงวดเคลมภาษีซื้อแล้ว — {pullNote}"));
     }

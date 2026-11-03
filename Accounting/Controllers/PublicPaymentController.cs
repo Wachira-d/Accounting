@@ -89,7 +89,6 @@ public class PublicPaymentController : ControllerBase
         var cfg = await _db.PaymentProviderConfigs.AsNoTracking()
             .Where(c => c.CompanyId == companyId && c.IsActive && !c.IsDeleted)
             .OrderBy(c => c.SortOrder).ThenBy(c => c.CreatedAt)
-            .Select(c => new { c.DisplayName, c.ProviderCode, c.Mode })
             .FirstOrDefaultAsync(ct);
 
         if (cfg == null)
@@ -103,9 +102,12 @@ public class PublicPaymentController : ControllerBase
         // ถามความสามารถจาก adapter เอง ไม่ใช่ hardcode รายการวิธีจ่ายไว้ที่นี่หรือในหน้าเว็บ
         // (defect class "สำเนามือฝั่ง JS" — คอมเมนต์บน PaymentCapabilities ห้ามไว้ตรง ๆ)
         var adapter = _providers.FirstOrDefault(p => p.ProviderCode == cfg.ProviderCode);
-        var methods = (adapter?.Capabilities.Methods ?? new HashSet<PaymentMethodKind>())
+        // รอบ 228 (PLATFORM_OMISE_AUDIT §5.1): สิ่งที่หน้าชำระใช้รับบัตร (สคริปต์ + คีย์สาธารณะของโหมดนี้ — ไม่ใช่ความลับ) ·
+        // รับบัตรไม่ได้ (ไม่มีคีย์สาธารณะ) ⇒ ไม่แสดงปุ่มบัตร (เดิมขึ้นแล้วเซิร์ฟเวอร์โยน "ไม่พบโทเคนบัตร" ทุกครั้ง)
+        var card = PaymentClientSetup.For(adapter, cfg);
+        var methods = PaymentClientSetup.WithoutUnusableCard((adapter?.Capabilities.Methods ?? new HashSet<PaymentMethodKind>())
             .Where(m => m != PaymentMethodKind.ManualSlip)
-            .Select(m => m.ToString()).ToList();
+            .Select(m => m.ToString()), card);
 
         return Ok(new ApiResponse<object>(true, new
         {
@@ -113,6 +115,7 @@ public class PublicPaymentController : ControllerBase
             methods,
             displayName = cfg.DisplayName,
             isTestMode = cfg.Mode == PaymentProviderMode.Test,
+            card = card == null ? null : new { providerCode = card.ProviderCode, scriptUrl = card.ScriptUrl, publicKey = card.PublicKey, isTestMode = card.IsTestMode },
         }));
     }
 

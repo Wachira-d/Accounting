@@ -2,6 +2,7 @@ using Accounting.Data;
 using Accounting.Models.DTOs.FileAttachment;
 using Accounting.Models.Entities;
 using Accounting.Services.Interfaces;
+using Accounting.Services.Storage;
 using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
@@ -11,6 +12,7 @@ public class FileAttachmentService : IFileAttachmentService
     private readonly AccountingDbContext _db;
     private readonly ILogger<FileAttachmentService> _logger;
     private readonly IErrorLogService _errorLogService;
+    private readonly IFileStorage _storage;
     private readonly string _storagePath;
 
     // Allowed file extensions (whitelist)
@@ -25,12 +27,15 @@ public class FileAttachmentService : IFileAttachmentService
     private const long MaxFileSizeDefault = 25 * 1024 * 1024;  // 25 MB
     private const long MaxFileSizeImage = 10 * 1024 * 1024;    // 10 MB
 
-    public FileAttachmentService(AccountingDbContext db, ILogger<FileAttachmentService> logger, IConfiguration config, IErrorLogService errorLogService)
+    /// <param name="storage">ที่เก็บไฟล์กลาง (Local | S3) — รากของไฟล์แนบ = <see cref="FileStorageLocator.AttachmentsRoot"/>
+    /// (<c>FileStorage:BasePath</c> อ่านที่ locator ที่เดียว · ทีม FS 2026-11-02)</param>
+    public FileAttachmentService(AccountingDbContext db, ILogger<FileAttachmentService> logger, IErrorLogService errorLogService, IFileStorage storage)
     {
         _db = db;
         _logger = logger;
         _errorLogService = errorLogService;
-        _storagePath = config["FileStorage:BasePath"] ?? Path.Combine(Directory.GetCurrentDirectory(), "uploads");
+        _storage = storage;
+        _storagePath = storage.Locator.AttachmentsRoot;
     }
 
     public async Task<FileAttachmentResponse> UploadAsync(Guid companyId, string entityType, Guid entityId,
@@ -46,18 +51,19 @@ public class FileAttachmentService : IFileAttachmentService
         if (fileSize > maxSize)
             throw new InvalidOperationException($"ขนาดไฟล์เกินกำหนด (สูงสุด {maxSize / (1024 * 1024)} MB)");
 
-        // Ensure storage directory exists
         var companyDir = Path.Combine(_storagePath, companyId.ToString(), entityType);
-        Directory.CreateDirectory(companyDir);
 
         // Generate unique filename
         var uniqueFileName = $"{Guid.NewGuid()}{extension}";
         var actualStoragePath = Path.Combine(companyDir, uniqueFileName);
 
-        // If storagePath is provided (temp file), move it; otherwise use the path as-is
-        if (File.Exists(storagePath))
+        // ไฟล์ที่ผู้เรียกเขียนไว้ก่อน (staging) ⇒ ย้ายเข้าโฟลเดอร์ของบริษัท/ชนิด ผ่านที่เก็บกลาง (คัดลอก → ลบต้นทาง · Local/S3 เหมือนกัน) ·
+        // ไม่มีไฟล์ที่ตำแหน่งนั้น ⇒ ใช้ตำแหน่งที่ส่งมาตรง ๆ (พฤติกรรมเดิม)
+        var staged = await _storage.ReadAllBytesAsync(storagePath);
+        if (staged != null)
         {
-            File.Move(storagePath, actualStoragePath);
+            await _storage.WriteAsync(actualStoragePath, staged, contentType);
+            await _storage.DeleteAsync(storagePath);
         }
         else
         {
@@ -108,11 +114,10 @@ public class FileAttachmentService : IFileAttachmentService
             throw new InvalidOperationException($"ขนาดไฟล์เกินกำหนด (สูงสุด {maxSize / (1024 * 1024)} MB)");
 
         var companyDir = Path.Combine(_storagePath, companyId.ToString(), entityType);
-        Directory.CreateDirectory(companyDir);
 
         var uniqueFileName = $"{Guid.NewGuid()}{extension}";
         var actualStoragePath = Path.Combine(companyDir, uniqueFileName);
-        await File.WriteAllBytesAsync(actualStoragePath, content);
+        await _storage.WriteAsync(actualStoragePath, content, contentType);
 
         var attachment = new FileAttachment
         {
@@ -225,10 +230,9 @@ public class FileAttachmentService : IFileAttachmentService
             .Select(f => f.StoragePath)
             .FirstOrDefaultAsync(ct);
         if (path == null) return null;
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
-            throw new FileNotFoundException(
-                "ไม่พบไฟล์ต้นฉบับในที่เก็บ (แถวไฟล์แนบยังอยู่แต่ไฟล์จริงหาย) — อัปโหลดไฟล์ใหม่อีกครั้ง", path);
-        return await File.ReadAllBytesAsync(path, ct);
+        var bytes = string.IsNullOrEmpty(path) ? null : await _storage.ReadAllBytesAsync(path, ct);
+        return bytes ?? throw new FileNotFoundException(
+            "ไม่พบไฟล์ต้นฉบับในที่เก็บ (แถวไฟล์แนบยังอยู่แต่ไฟล์จริงหาย) — อัปโหลดไฟล์ใหม่อีกครั้ง", path);
     }
 
     public async Task DeleteAsync(Guid companyId, Guid attachmentId, bool keepPhysicalFile = false)
@@ -247,12 +251,12 @@ public class FileAttachmentService : IFileAttachmentService
             _logger.LogInformation("Attachment {Id} soft-deleted; physical file retained (legal retention)", attachmentId);
             return;
         }
-        if (!string.IsNullOrEmpty(attachment.StoragePath) && File.Exists(attachment.StoragePath))
+        if (!string.IsNullOrEmpty(attachment.StoragePath))
         {
             try
             {
-                File.Delete(attachment.StoragePath);
-                _logger.LogInformation("File deleted: {StoragePath}", attachment.StoragePath);
+                if (await _storage.DeleteAsync(attachment.StoragePath))
+                    _logger.LogInformation("File deleted: {StoragePath}", attachment.StoragePath);
             }
             catch (Exception ex)
             {

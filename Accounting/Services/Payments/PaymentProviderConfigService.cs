@@ -13,7 +13,11 @@ public sealed record PaymentConnectionTest(ProviderHealth Test, ProviderHealth? 
 public sealed record PaymentConfigActor(string? Email, string? IpAddress);
 
 /// <summary>ด่านเพิ่มของแพลตฟอร์ม NextAcc ตอนเปิดรับเงินจริง (<see cref="PaymentLiveGate.PlatformRefusal"/>)</summary>
-public sealed record PlatformLiveExtras(bool RefundPolicyPublished, string? TypedConfirmation);
+public sealed record PlatformLiveExtras(bool RefundPolicyPublished, string? TypedConfirmation,
+    // รอบ 227 (PLATFORM_OMISE_AUDIT B-4): URL ของระบบตั้งแล้ว · จำนวนวิธีที่หน้าชำระของ NextAcc ทำจบได้ (PlatformPayMethods)
+    bool SystemBaseUrlSet = true, int PayableMethodCount = 1,
+    // ฝ่ายค้านรอบ 227 S4: ข้อที่ด่านใช้จากรายการตรวจความพร้อม (PlatformGatewayReadiness.BlockingMissing)
+    IReadOnlyList<string>? ReadinessMissing = null);
 
 /// <summary>
 /// รอบ 219 ส่วน B (คำตัดสินข้อ 179) — <b>ตัวเดียว</b>ของงานตั้งค่าผู้ให้บริการรับชำระเงิน (คีย์ · ทดสอบ · สลับโหมด · ปิดฉุกเฉิน · ทดลองจ่าย)
@@ -103,20 +107,13 @@ public class PaymentProviderConfigService : IPaymentProviderConfigService
 
     /// <summary>สำเนาในหน่วยความจำ (ไม่ถูกติดตาม) ที่ชี้โหมดที่ต้องการทดสอบ — adapter เลือกคีย์ตามโหมดของ config ⇒ ทดสอบคีย์ทั้งสองชุดได้
     /// โดยไม่แก้ interface ของผู้ให้บริการ</summary>
-    private static PaymentProviderConfig Probe(PaymentProviderConfig cfg, PaymentProviderMode mode) => new()
+    private static PaymentProviderConfig Probe(PaymentProviderConfig cfg, PaymentProviderMode mode)
     {
-        Id = cfg.Id,
-        CompanyId = cfg.CompanyId,
-        ProviderCode = cfg.ProviderCode,
-        TestPublicKey = cfg.TestPublicKey,
-        TestSecretKeyProtected = cfg.TestSecretKeyProtected,
-        LivePublicKey = cfg.LivePublicKey,
-        LiveSecretKeyProtected = cfg.LiveSecretKeyProtected,
-        WebhookSecretProtected = cfg.WebhookSecretProtected,
-        Mode = mode,
-        LastWebhookAt = mode == PaymentProviderMode.Live ? cfg.LastLiveWebhookAt : cfg.LastWebhookAt,
-        EnabledMethodsJson = cfg.EnabledMethodsJson,
-    };
+        // รอบ 227: สำเนาตัวเดียวกับรายการที่ถูกสร้างคนละโหมด (PaymentConfigForIntent.WithMode) — ต่างแค่ "เคยได้รับ webhook" ต้องเป็นของโหมดที่ทดสอบ
+        var probe = PaymentConfigForIntent.WithMode(cfg, mode);
+        probe.LastWebhookAt = mode == PaymentProviderMode.Live ? cfg.LastLiveWebhookAt : cfg.LastWebhookAt;
+        return probe;
+    }
 
     public async Task<PaymentConnectionTest> TestAsync(PaymentProviderConfig cfg, CancellationToken ct = default)
     {
@@ -152,7 +149,8 @@ public class PaymentProviderConfigService : IPaymentProviderConfigService
             var facts = GateFacts(cfg);
             var refusal = platform == null
                 ? PaymentLiveGate.Refusal(facts)
-                : PaymentLiveGate.PlatformRefusal(facts, platform.RefundPolicyPublished, platform.TypedConfirmation);
+                : PaymentLiveGate.PlatformRefusal(facts, platform.RefundPolicyPublished, platform.TypedConfirmation,
+                    platform.SystemBaseUrlSet, platform.PayableMethodCount, platform.ReadinessMissing);
             if (refusal != null) throw new BusinessRuleException(refusal, PaymentLiveGate.RuleCode);
             cfg.LiveEnabledAt = DateTime.UtcNow;
         }

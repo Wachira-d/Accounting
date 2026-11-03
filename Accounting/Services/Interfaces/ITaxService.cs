@@ -17,14 +17,23 @@ public interface ITaxService
     Task<int> AutoRefreshReportsAsync(Guid companyId, int months = 2);
     Task<object> GetVatDebugAsync(Guid companyId, int year, int month);
 
-    /// <summary>เอกสารงวดอื่นที่มี VAT และยังไม่ถูกใช้ในรายงานใด — สำหรับดึงเข้างวดนี้</summary>
-    Task<List<PullableDocumentDto>> GetPullableDocumentsAsync(Guid companyId, Guid reportId, string? search, DateTime? fromDate, DateTime? toDate);
-    /// <summary>ดึงเอกสารเก่าเข้ารายงานภาษีงวดนี้เป็นบรรทัดใหม่</summary>
-    Task<TaxReportResponse> PullDocumentIntoReportAsync(Guid companyId, Guid reportId, Guid documentId);
+    /// <summary>เอกสารงวดอื่นที่มี VAT และยังไม่ถูกใช้ในรายงานใด — สำหรับดึงเข้างวดนี้ ·
+    /// รอบ 225: แบ่งหน้า (offset/limit) + Total ของทั้งชุด ⇒ "เลือกทั้งหมด" บอก N จาก M ได้ตรง</summary>
+    Task<PullableDocumentListResponse> GetPullableDocumentsAsync(Guid companyId, Guid reportId, string? search,
+        DateTime? fromDate, DateTime? toDate, string? side = null, int offset = 0, int limit = 200);
+    /// <summary>ดึงเอกสารเก่าเข้ารายงานภาษีงวดนี้เป็นบรรทัดใหม่ (ไม่ผ่าน = throw ข้อความไทย)</summary>
+    Task<TaxReportResponse> PullDocumentIntoReportAsync(Guid companyId, Guid reportId, Guid documentId,
+        Guid? actorId = null, string? actorEmail = null);
+    /// <summary>ดึงหลายใบในครั้งเดียว (รอบ 225) — partial: ใบที่ผ่านด่านเดียวกับดึงทีละใบเข้าในธุรกรรมเดียว ·
+    /// ใบที่ไม่ผ่านคืนเหตุผล + RuleCode · ส่งซ้ำไม่เกิดบรรทัดซ้ำ</summary>
+    Task<PullDocumentsResult> PullDocumentsIntoReportAsync(Guid companyId, Guid reportId, IReadOnlyList<Guid> documentIds,
+        Guid? actorId = null, string? actorEmail = null);
+    /// <summary>รายงานร่างที่ถือบรรทัด "ดึงเข้างวด" ซึ่งตอนนี้ไม่ผ่านด่านดึง (รอบ 225 S3 — อ่านอย่างเดียว ไม่แก้)</summary>
+    Task<List<IneligiblePulledLineDto>> FindIneligiblePulledLinesAsync(Guid companyId);
 
     /// <summary>ดึงใบเดียวเข้ารายงานร่างของงวดเคลม (ไม่ regenerate — ค่าที่ติ๊ก
     /// ไว้ในรายงานไม่หาย) — best-effort คืนข้อความผลลัพธ์ ไม่ throw</summary>
-    Task<string> TryPullIntoDraftReportAsync(Guid companyId, Guid documentId);
+    Task<string> TryPullIntoDraftReportAsync(Guid companyId, Guid documentId, Guid? actorId = null, string? actorEmail = null);
     /// <summary>ส่งออกรายงานภาษีเป็นไฟล์ Excel (.xlsx) — VAT แยกชีตภาษีขาย/ภาษีซื้อ</summary>
     Task<(byte[] Content, string FileName)> ExportTaxReportXlsxAsync(Guid companyId, Guid reportId);
 
