@@ -2607,6 +2607,23 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   (4) แอดมิน `/admin/legal.html` ปุ่ม "🌐 ใส่คำแปลตั้งต้น (อังกฤษ)" ทั้งช่อง EN ของร่างและของฉบับปัจจุบัน ← `GET api/admin/legal-documents/{kind}/builtin-en` (SystemAdmin · อ่านอย่างเดียว ·
   คืน markdown ที่**ยังมีโทเคน** + html ตัวอย่าง + คำเตือน) — เติมเฉพาะช่องว่าง/ยืนยันทับ · ไม่บันทึกให้ · สำเนาให้เจ้าของคัดลอก: `erp-review/2026-11-03/legal-en/*.en.md`
 
+### 2.12a "สิ่งที่จะได้ถ้าจ่ายเงินนี้" — preview ตัวเดียว + ตัวคำนวณวันที่ตัวเดียว (รอบ 233 · คำตัดสิน 233-1…233-8 · `erp-review/2026-11-03/LICENSE_CASE_MATRIX.md`)
+
+- **ตัวตัดสิน:** `Helpers/PlanPurchasePreview` (pure) — `ForPurchase` (ซื้อใหม่/ต่ออายุ/ส่วนต่างอัปเกรด/อัปเกรดเต็มรอบ/รอบยาวขึ้น) · `ForScheduled` (ดาวน์เกรด/รอบสั้นลง ไม่ต้องจ่าย) · `ForSame` ·
+  `ForAnonymous` (ยังไม่ล็อกอิน) · `Refused` (เหตุ + วันที่ + ทางไปต่อ) → `Result` (แพ็ก/วันหมดอายุเดิม → ใหม่ · ราคา − เครดิต(+สูตร) − คูปอง = ยอด · DateLine/Notes ไทย พ.ศ.)
+- **ทางเข้า:** `SubscriptionService.QuotePlanChangeAsync` = `QuotePlanChangeCoreAsync` (ตัวคิดเดิม) + `PlanPreviewForQuoteAsync` ⇒ `PlanChangeQuote.Preview` (hub `pages/billing.html` · `pages/subscription.html`) ·
+  `PublicCheckoutService.QuoteAsync` ⇒ `PublicCheckoutQuote.Preview` (`/checkout.html` กล่องสรุป · `/pricing.html` บรรทัดวันที่) — **ปฏิเสธ (ดาวน์เกรด/รอบสั้น/คูปองต่ออายุ/ใบต่ออายุออกแล้ว) คืน 200 + `Preview.Allowed=false`**
+  (เดิม throw) ⇒ กล่องแดง + ใต้ปุ่ม + ปุ่ม "ชำระไม่ได้" · `CreateOrderAsync` throw ข้อความเดียวกัน · `GET api/public/checkout/me` คืน `lowerPlans` ต่อบริษัทที่เป็นเจ้าของ ⇒ ป้าย "ต่ำกว่าแพ็กปัจจุบัน" บน `/pricing.html`
+- **วันที่:** `PlanPurchasePreview.PaidPeriod` ตัวเดียวทั้ง preview (วันชำระ = วันนี้) และ `ReviewPaymentLockedAsync` ทั้ง 3 เส้น (วันชำระ = `PlatformPlanPricing.ApprovedPaymentDate` — เดิมเส้นซื้อ/ต่ออายุใช้เวลาที่กดอนุมัติ) ·
+  ต่ออายุแพ็กเดิม = max(วันหมดอายุเดิม, วันชำระ) + รอบ · **ทดลองใช้ ⇒ เริ่มวันชำระ** (เดิมแพ็กเดียวกันต่อท้ายวันทดลอง) · วันหมดอายุค่าแทน (ExpiryNeedsReview) ⇒ เริ่มวันชำระ + ปลดธง (เดิมต่อจากปี 2126) ·
+  ส่วนต่างอัปเกรด = วันหมดอายุคงเดิม (คำตัดสินเจ้าของข้อ 178 · 233-2) · รอบยาวขึ้น = วันชำระ + รอบใหม่
+- **เอกสาร:** รายการเปลี่ยนรอบ ⇒ บรรทัด = ค่ารอบใหม่เต็ม + เครดิตเป็น `DiscountAmount` ก่อน VAT (`InvoiceDiscountGross` → `PlatformCouponRule.SplitDiscounted` · §86/4) · วันที่ไทยบนใบเสร็จ `QuotaAddOnPricing.ThaiDateText`
+  ไม่ตัด 29 ก.พ. เป็น 28 ก.พ. แล้ว · `PlatformProration.Upgrade` แพ็กเดิมราคา 0/วันหมดอายุค่าแทน ⇒ ไม่ใช่ส่วนต่าง (จ่ายเต็มรอบ)
+- **ฝ่ายค้าน 233:** วันรับเงินย้อนจนรอบจบก่อนอนุมัติ ⇒ นับจากเวลาอนุมัติ + ประวัติ `PaidPeriodStartedAtApproval` (233-1b) · ฟรีถาวร→ซื้อ ApplyTemplate ใช้วันหมดอายุของรอบที่จ่าย ·
+  ฐานเครดิต = `Amount + WithholdingTaxAmount` · Approved ยอด 0 = เครดิต 0 · `CreateOrderAsync` resume ส่วนต่างเก่า ⇒ `MustRequote` (ยอดไม่ตรง + ยังไม่เริ่มชำระ ⇒ ออกใหม่ ยกเลิกใบเก่า) ·
+  แพลนบัญชีใช้ `PaidPeriod` เดียวกัน · ใบกำกับ/preview ตัดสิน VAT ด้วย `PlanPurchasePreview.IssuesTaxInvoice` · `/me` คืน `lowerNote`
+- **ค้าง:** K-1 K-2 K-4 K-5 K-7 K-8 ใน MATRIX §5 (แบบ ข เป็นค่าตั้ง · คูปองต่ออายุ · preview หน้า License/แอดมิน/อีเมล · AddMonths บน UTC ช่วงตีสอง)
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)
@@ -7302,3 +7319,5 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม SourceLine 
 
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout + นโยบาย 2 ภาษา — §2.12 ใหม่ (`PublicCheckoutController` · `PublicCheckoutService` · `PublicCheckoutPolicy` · `SiteSettings.PublicCheckoutEnabled`) · `LegalDocumentLanguage` 2 ภาษาทุกหน้านโยบาย (แพลตฟอร์ม/CMS/จองโต๊ะ) — เทสต์ `PublicCheckoutRound232Tests` · `LegalDocumentLanguageRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำแปลอังกฤษตั้งต้นของนโยบาย (`LegalDocumentDefaults.En.cs` · `CmsLegalPages.EffectiveMarkdownEn` · `builtin-en`) — เทสต์ `LegalDocumentDefaultsEnRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+
+_Last verified against codebase: 2026-11-03 (รอบ 233 ทีม License case matrix — §2.12a "สิ่งที่จะได้ถ้าจ่าย" `Helpers/PlanPurchasePreview` (preview + `PaidPeriod` ตัวคำนวณวันที่เดียวกับตอนอนุมัติ) · ปฏิเสธบนหน้าซื้อเป็นใบเสนอ `Allowed=false` · ทดลอง → ซื้อเริ่มวันชำระ · ExpiryNeedsReview · เครดิตเปลี่ยนรอบเป็นส่วนลดก่อน VAT · ThaiDateText 29 ก.พ. — เทสต์ `PlanPurchasePreviewRound233Tests` · `PlatformBillingPhase0DbTests.Round233_*` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

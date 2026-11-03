@@ -78,6 +78,12 @@ public static class PublicCheckoutPolicy
         SubscriptionPlan wantedPlan, BillingCycle wantedCycle, bool linkedToInvoice, bool hasSlip, bool held)
         => status == SubscriptionPaymentStatus.Pending && plan == wantedPlan && cycle == wantedCycle && !linkedToInvoice && !hasSlip && !held;
 
+    /// <summary>รอบ 233 ฝ่ายค้าน S5 (K-6): รายการส่วนต่าง/เปลี่ยนรอบที่ค้างอยู่คิด "วันที่เหลือ" ณ วันสร้าง — resume วันนี้ต้องคิดใหม่:
+    /// ยอดก่อนคูปองของใบเสนอวันนี้ ≠ ของรายการเดิม ⇒ ห้าม resume (สร้างใหม่ผ่านเส้นเดิม ซึ่งยกเลิกใบเก่าด้วย <c>SupersedePendingPaymentsAsync</c>) ·
+    /// <b>มีการเริ่มชำระออนไลน์แล้ว</b> (intent) ⇒ ใช้รายการเดิม (ยอดอยู่ใน QR/บัตรแล้ว ยกเลิกไม่ได้ปลอดภัย — ห้ามสร้างรายการซ้อน) · ราคาเต็ม/ต่ออายุไม่เกี่ยว</summary>
+    public static bool MustRequote(bool isProrationOrCycleChange, decimal pendingListAmount, decimal freshListAmount, bool hasIntent)
+        => isProrationOrCycleChange && !hasIntent && Math.Abs(pendingListAmount - freshListAmount) > 0.005m;
+
     /// <summary>สถานะที่หน้าสำเร็จแสดง — ตัวเดียว (หน้าเว็บไม่มีตารางสถานะเอง)</summary>
     public enum Outcome { Activated, PaidAwaitingApproval, TestPaid, AwaitingPayment, Failed }
 

@@ -67,6 +67,7 @@ _R212_DIRECT = ["_email.SendAsync(", "_email.TrySendAsync(", "emailService.SendA
 SSO_INLINE = ["SsoWageBase.GrossWage(", "SsoWageBase.PeriodBase(", "SsoWageBase.Clamp(", "SsoWageBase.SalaryPaidThisPeriod("]
 
 _R219_WHY = "รอบ 219 เฟส 0 (คำตัดสินข้อ 178): "
+_R233_WHY = "รอบ 233 (คำตัดสิน 233-* · erp-review/2026-11-03/LICENSE_CASE_MATRIX.md): "
 _R220_WHY = "รอบ 220 (คำตัดสินข้อ 181 · erp-review/2026-11-01/TAX_PENALTY_AUDIT.md): "
 
 RULES = [
@@ -11972,7 +11973,7 @@ RULES += [
          why=_R219_WHY + "S8 โหมดทดสอบ ณ ตอนสร้าง intent ชนะโหมดปัจจุบันของ config · รอบ 2: ตัวตัดสินเดียวกับหน้าจ่ายเงิน (null = แถวเดิม ⇒ config)"),
     # รอบ 219 ส่วน B ฝ่ายค้าน S2/S5: ตัวงานย้ายเข้า ReviewPaymentLockedAsync (ReviewPaymentAsync = ล็อกรอบงาน) · ล้างใบต่ออายุผ่านตัวกลาง RenewalInvoiceSupersede
     dict(file="Services/Implementations/SubscriptionService.cs", method="ReviewPaymentLockedAsync",
-         must=["PlatformPlanPricing.PeriodStart(", "PlatformPlanPricing.MayCascadeToAccountPlan(", "PlatformPlanPricing.ApprovedPaymentDate(systemConfirmed, gatewayPaidAtUtc",
+         must=["PlanPurchasePreview.PaidPeriod(", "PlatformPlanPricing.MayCascadeToAccountPlan(", "PlatformPlanPricing.ApprovedPaymentDate(systemConfirmed, gatewayPaidAtUtc",
                "IgnoreQueryFilters().Where(t => t.Id == acct.PlanTemplateId)", "RenewalInvoiceSupersede.Apply(sub)"],
          forbid=["var baseDate = sub.EndDate > now ? sub.EndDate : now", "PlatformPlanPricing.ClampPaymentDate(payment.PaymentDate"],
          why=_R219_WHY + "B1 อัปเกรด/ฟรีถาวรเริ่มรอบจากวันนี้ · S5 cascade แพลนบัญชีเฉพาะแพ็กเกจตรงกัน (แม่แบบที่ลบแล้วก็นับ) · "
@@ -13031,7 +13032,7 @@ RULES += [
          must=["ProrationForAsync(sub, current, template", "RequestPlanPaymentAsync(", "request.CouponCode"],
          before=[("ProrationForAsync(sub, current, template", "RequestPlanPaymentAsync(sub, template, sub.BillingCycle")],
          why=_R230Q_WHY + "230-Q1 อัปเกรดกลางรอบคิดส่วนต่างด้วยตัวคิดตัวเดียว (PlatformProration) ก่อนสร้างรายการ · คูปองตัดสินที่เซิร์ฟเวอร์"),
-    dict(file="Services/Implementations/SubscriptionService.cs", method="QuotePlanChangeAsync",
+    dict(file="Services/Implementations/SubscriptionService.cs", method="QuotePlanChangeCoreAsync",   # รอบ 233: ตัวคิดย้ายเข้า Core · ตัวนอกห่อ preview
          must=["ProrationForAsync(sub, current, template", "PlatformCouponStore.PreviewAsync(", "PlatformPlanPricing.ScheduleBlockedByIssuedRenewal("],
          why=_R230Q_WHY + "230-Q1/Q2 หน้าดูราคาใช้ตัวตัดสินเดียวกับตอนยืนยัน (ส่วนต่าง · คูปอง · ดาวน์เกรดถูกบล็อกเมื่อออกใบต่ออายุแล้ว)"),
     dict(file="Services/Implementations/SubscriptionService.cs", method="RequestPlanPaymentAsync",
@@ -13043,7 +13044,7 @@ RULES += [
          must=["payment.IsProration", "PlatformProration.StaleReason(", "RenewalInvoiceSupersede.Apply(sub)", "PlatformCouponStore.RedeemAsync(", "PlatformCouponStore.ReleaseAsync(",
                "RenewalInvoiceClaims.ClaimProblemAsync(", "PlatformCouponStore.RedeemProblemAsync(", "HoldForAdminAsync("],
          before=[("RenewalInvoiceClaims.ClaimProblemAsync(", "RenewalInvoiceSupersede.Apply(sub)")],
-         must_lit=["sub.EndDate = keepEnd"],
+         must_re=[r"isProration:\s*true,\s*isCycleChange:\s*false,\s*keepEnd"],   # รอบ 233: คงวันหมดอายุผ่านตัวคำนวณวันที่ตัวเดียว (PlanPurchasePreview.PaidPeriod)
          why=_R230Q_WHY + "230-Q1 ส่วนต่างอัปเกรด: วันหมดอายุคงเดิม · ล้าสมัย ⇒ พักให้แอดมิน · ใบต่ออายุแพ็กเกจเดิมถูกแทนที่ · 230-Q2 คูปองนับเมื่อเงินเข้า/ปลดเมื่อปฏิเสธ"),
     dict(file="Services/Implementations/SubscriptionService.cs", method="OverridePaymentAmountAsync",
          must=["SubscriptionPaymentLock.AcquireAsync(", "AddChainedAuditLog(", "PaymentIntentStatus.Pending", "payment.QuotedAmount = newAmount",
@@ -13126,7 +13127,7 @@ RULES += [
          must=["CycleChangeForAsync(sub, current, template, cycle", "cycleChange: cc", "PlatformPlanPricing.MonthsOf(cycle) > PlatformPlanPricing.MonthsOf(sub.BillingCycle)"],
          before=[("CycleChangeForAsync(sub, current, template, cycle", "ProrationForAsync(sub, current, template")],
          why=_R231_WHY + "231-9 รอบยาวขึ้นกลางรอบ = รายการเปลี่ยนรอบ (ก่อนตกไปเส้นส่วนต่าง) · สั้นลง = Scheduled* เดิม"),
-    dict(file=_SUBSVC, method="QuotePlanChangeAsync",
+    dict(file=_SUBSVC, method="QuotePlanChangeCoreAsync",
          must=["PlatformPriceOverrideStore.ResolveForSubscriptionAsync(", "CycleChangeForAsync(sub, current, template, cycle", "StandardAmount:"],
          forbid=["PlatformPlanPricing.AmountDue(template, cycle"],
          why=_R231_WHY + "231-8/231-9 หน้าดูราคาใช้ตัวตัดสินเดียวกับตอนยืนยัน (ราคาพิเศษ · เปลี่ยนรอบ) และส่งราคาตั้งให้หน้าเว็บแสดง"),
@@ -13135,12 +13136,12 @@ RULES += [
          forbid=["PlatformPlanPricing.AmountDue(template, request.RequestedBillingCycle)"],
          why=_R231_WHY + "231-8 ยอดที่ผู้เช่าแจ้งต้องตรงราคาพิเศษ ไม่ใช่ราคาแม่แบบ"),
     dict(file=_SUBSVC, method="ApplyTemplateWithPriceAsync",
-         must=["ApplyTemplate(sub, template, cycle)", "PlatformPriceOverrideStore.ResolveForSubscriptionAsync("],
+         must=["ApplyTemplate(sub, template, cycle, paidPeriodEndUtc)", "PlatformPriceOverrideStore.ResolveForSubscriptionAsync("],   # รอบ 233 B1
          why=_R231_WHY + "231-8 ราคาต่อรอบบน subscription = ราคาที่จ่ายจริง (fallback ของใบต่ออายุ/ส่วนต่าง)"),
     dict(file=_SUBSVC, method="ReviewPaymentLockedAsync",
-         must=["payment.IsCycleChange", "ApplyTemplateWithPriceAsync(", "sub.EndDate = payment.PaymentDate.AddMonths(ccMonths)", "RenewalInvoiceClaims.ClaimProblemAsync(_db, sub.Id, oldRenewalCc",
+         must=["payment.IsCycleChange", "ApplyTemplateWithPriceAsync(", "isProration: false, isCycleChange: true, sub.EndDate, payment.PaymentDate, ccMonths", "RenewalInvoiceClaims.ClaimProblemAsync(_db, sub.Id, oldRenewalCc",
                "PlatformProration.RenewalClaimRuleCode"],
-         before=[("PlatformProration.RenewalClaimRuleCode", "sub.EndDate = payment.PaymentDate.AddMonths(ccMonths)")],
+         before=[("PlatformProration.RenewalClaimRuleCode", "isProration: false, isCycleChange: true")],
          forbid=["RenewalInvoiceKeptAfterCycleChange", "ApplyTemplate(sub, template, sub.BillingCycle);", "ApplyTemplate(sub, template, payment.RequestedBillingCycle);"],
          why=_R231_WHY + "231-9 อนุมัติเปลี่ยนรอบ = รอบใหม่เริ่มวันชำระ · ใบต่ออายุเดิมที่ถูกจ่ายแล้วไม่ถูกแทนที่ · ทุกการเปิดแพ็กเกจผ่าน ApplyTemplateWithPriceAsync"),
     dict(file=_SUBSVC, method="ProcessExpiredSubscriptionsAsync",
@@ -13437,6 +13438,63 @@ RULES += [
                  ("PurchasePolicyAcceptance.UserAlreadyAcceptedAsync(", "PurchasePolicyAcceptance.EnforcePlatformForUserAsync(")],
          forbid=["req.Amount", "amount:"],
          why=_R232_WHY + "เริ่มชำระ: ยอดไม่รับจากหน้าเว็บ · หลักฐานยอมรับก่อนเริ่ม"),
+    # ═════════ รอบ 233 (คำตัดสิน 233-* · LICENSE_CASE_MATRIX) — "สิ่งที่จะได้ถ้าจ่ายเงินนี้" ตัวเดียว: ทุกทางเข้าเรียก PlanPurchasePreview · วันที่ตัวคำนวณเดียว ═════════
+    dict(file=_SUBSVC, method="QuotePlanChangeAsync",
+         must=["QuotePlanChangeCoreAsync(", "PlanPreviewForQuoteAsync("],
+         before=[("QuotePlanChangeCoreAsync(", "PlanPreviewForQuoteAsync(")],
+         why=_R233_WHY + "hub ผู้เช่า (billing.html) ได้ preview ทุกใบเสนอ"),
+    dict(file=_SUBSVC, method="PlanPreviewForQuoteAsync",
+         must=["PlanPurchasePreview.ForSame(", "PlanPurchasePreview.ForScheduled(", "PlanPurchasePreview.ForPurchase(", "OldPriceBasis: q.OldPriceBasis",
+               "PlanPurchasePreview.CurrentOf(", "PlanPurchasePreview.TargetOf("],
+         forbid=[".AddMonths(", "AddDays(", "PlatformPlanPricing.PeriodStart("],
+         why=_R233_WHY + "preview ห้ามคำนวณวันที่/เครดิตเอง — วันที่จาก PaidPeriod ใน PlanPurchasePreview เท่านั้น"),
+    dict(file=_SUBSVC, method="ReviewPaymentLockedAsync",
+         must=["PlanPurchasePreview.PaidPeriod(changeKind, sub.Plan == payment.RequestedPlan, sub.IsPermanentFree, wasTrial",
+               "isProration: false, isCycleChange: true", "isProration: true, isCycleChange: false", "payment.PaymentDate = paidAt"],
+         before=[("var paidAt = PlatformPlanPricing.ApprovedPaymentDate(", "PlanPurchasePreview.PaidPeriod(changeKind")],
+         forbid=["PlatformPlanPricing.PeriodStart(", "baseDate.AddMonths(", "payment.PaymentDate.AddMonths(", "sub.EndDate = keepEnd",
+                 "acct.EndDate > now ? acct.EndDate : now", "acctBase.AddMonths("],
+         why=_R233_WHY + "วันที่ที่ประทับตอนอนุมัติ = วันที่ที่ preview บอก (ตัวคำนวณเดียว · วันชำระ = ApprovedPaymentDate)"),
+    # ฝ่ายค้าน 233 S1/B1/B2/K-3: PaidPeriod ของเส้นซื้อ/ต่ออายุต้องรับวันรับเงิน (paidAt — ใส่ `now` กลับ = ฟ้อง) + เวลาอนุมัติ (กันรอบที่จบก่อนอนุมัติ) ·
+    # ApplyTemplate รับวันหมดอายุของรอบที่จ่าย (ไม่ปิดรอบด้วย UtcNow ทับ) · แพลนบัญชีใช้ PaidPeriod/paidAt เดียวกัน
+    dict(file=_SUBSVC, method="ReviewPaymentLockedAsync",
+         call_args=[("PlanPurchasePreview.PaidPeriod(changeKind", "paidAt"), ("PlanPurchasePreview.PaidPeriod(changeKind", "approvedAtUtc"),
+                    ("PlanPurchasePreview.PaidPeriod(PlatformPlanPricing.ChangeKind.Same, true", "paidAt"),
+                    ("PlanPurchasePreview.PaidPeriod(PlatformPlanPricing.ChangeKind.Same, false", "approvedAtUtc")],
+         must=["paidPeriodEndUtc: newEndDate", "paidPeriodEndUtc: ccPeriod.EndUtc", "period.StartedAtApproval", "ccPeriod.StartedAtApproval"],
+         must_lit=["{PlanPurchasePreview.BackdatedNote}"],
+         why=_R233_WHY + "ฝ่ายค้าน B1/B2/S1/K-3: วันรับเงินจริง · รอบที่ใช้ได้จริงเสมอ · ApplyTemplate ไม่ทับวันหมดอายุ · แพลนบัญชีตรงกับ subscription"),
+    dict(file=_SUBSVC, method="ApplyTemplate",
+         must=["if (paidPeriodEndUtc is DateTime pe)"],
+         why=_R233_WHY + "ฝ่ายค้าน B1: ฟรีถาวร/ค่าแทน → ซื้อ ปิดรอบด้วยวันหมดอายุของรอบที่จ่าย"),
+    dict(file=_SUBSVC, method="PlanPreviewForQuoteAsync",
+         must=["PlanPurchasePreview.IssuesTaxInvoice(", "NewCyclePrice: q.NewCyclePrice"],
+         why=_R233_WHY + "ฝ่ายค้าน N2/N3: ราคาจริงของรอบใหม่ · ธง VAT ตัวเดียวกับตัวออกใบ"),
+    dict(file=PLATFORM, method="IssuePaidReceiptAsync",
+         must=["PlanPurchasePreview.IssuesTaxInvoice(settings.PlatformIsVatRegistered, settings.PlatformSellerTaxId)"],
+         forbid=["settings.PlatformIsVatRegistered && IsValidTaxId("],
+         why=_R233_WHY + "ฝ่ายค้าน N3: ออกใบกำกับไหม = ตัวตัดสินเดียวกับ preview"),
+    dict(file=_R232_CHECKOUT, method="CreateOrderAsync",
+         must=["PublicCheckoutPolicy.MustRequote(", "_subs.QuotePlanChangeAsync("],
+         before=[("PublicCheckoutPolicy.MustRequote(", "_subs.ConvertTrialAsync(")],
+         why=_R233_WHY + "ฝ่ายค้าน S5 (K-6): resume รายการส่วนต่างเก่า ⇒ คิดยอดใหม่ ณ เวลา resume (ไม่ตรง + ยังไม่เริ่มชำระ ⇒ ออกใหม่ผ่านเส้นเดิมที่ยกเลิกใบเก่า)"),
+    dict(file=_R232_CHECKOUT, method="QuoteAsync",
+         must=["RefusalPreviewAsync(", "RenewalPreviewAsync(", "q.Preview", "PlanPurchasePreview.ForAnonymous("],
+         forbid=["throw new BusinessRuleException(decision.Refusal", ".AddMonths(", "PlatformPlanPricing.PeriodStart("],
+         why=_R233_WHY + "233-3 ปฏิเสธ = ใบเสนอพร้อมเหตุ+วันที่+ทางไปต่อ (ไม่ใช่ error ลอย) · ต่ออายุแสดงวันหมดอายุใหม่"),
+    dict(file=_R232_CHECKOUT, method="CreateOrderAsync",
+         must=["RefusalPreviewAsync("],
+         forbid=["throw new BusinessRuleException(decision.Refusal ?? PublicCheckoutPolicy.DowngradeRefusal"],
+         why=_R233_WHY + "ข้อความปฏิเสธตอนสร้างรายการ = ข้อความเดียวกับกล่องสรุป"),
+    dict(file=_R232_CHECKOUT, method="RenewalPreviewAsync",
+         must=["PlanPurchasePreview.ForPurchase("], forbid=[".AddMonths("],
+         why=_R233_WHY + "233-1 ต่ออายุ = max(วันหมดอายุเดิม, วันชำระ) + รอบ ผ่าน PaidPeriod ตัวเดียว"),
+    dict(file=_R232_CHECKOUT, method="OwnedCompaniesAsync",
+         must=["PlanPurchasePreview.LowerPlanNote(", "PlatformPlanPricing.Classify(", "PlatformPlanPricing.ChangeKind.Downgrade", "SubscriptionStatus.Active", "IsPermanentFree"],
+         why=_R233_WHY + "pricing.html ป้าย 'ต่ำกว่าแพ็กปัจจุบัน' = เงื่อนไขเดียวกับ DecideOrder (ตัดสินที่เซิร์ฟเวอร์ · เฉพาะบริษัทที่ผู้ใช้เป็นเจ้าของ)"),
+    dict(file=PLATFORM, method="IssuePaidReceiptAsync",
+         must=["PlanPurchasePreview.InvoiceDiscountGross(payment.CouponDiscountAmount, payment.IsCycleChange, payment.CycleChangeCredit)"],
+         why=_R233_WHY + "233-4 เครดิตรอบเดิมของการเปลี่ยนรอบเป็นส่วนลดของบรรทัดก่อน VAT (§86/4) เหมือนคูปอง"),
 ]
 
 def main() -> int:

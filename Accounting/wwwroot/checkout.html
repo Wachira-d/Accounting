@@ -31,6 +31,13 @@
     .pc-row.total { font-weight:800; font-size:1.05rem; border:0; padding-top:10px }
     .co-err { color:#b91c1c; font-size:.85rem; margin-top:8px; white-space:pre-line }
     .co-ok { color:#065f46; font-size:.85rem; margin-top:8px }
+    /* รอบ 233: "สิ่งที่จะได้ถ้าจ่ายเงินนี้" (PlanPurchasePreview จากเซิร์ฟเวอร์) — ปฏิเสธ = กล่องแดง + ทางไปต่อ */
+    .pv-box { border-radius:10px; padding:10px 12px; margin-top:10px; font-size:.85rem; line-height:1.6 }
+    .pv-box.ok { background:#f0fdf4; border:1px solid #bbf7d0; color:#14532d }
+    .pv-box.bad { background:#fef2f2; border:1px solid #fecaca; color:#991b1b }
+    .pv-box .pv-h { font-weight:700; margin-bottom:4px }
+    .pv-box .pv-dates { font-weight:600 }
+    .pv-box a { color:inherit; font-weight:700 }
     .co-policy { font-size:.9rem; line-height:1.7; display:flex; gap:8px; align-items:flex-start }
     .co-policy a { color:var(--primary) }
     .sticky { position:sticky; top:90px }
@@ -160,12 +167,28 @@
           const d = this.catalog, plan = d.plans.find(p => p.plan === this.cart.plan) || { name: this.cart.plan };
           const cyc = d.cycles.find(c => c.code === this.cart.cycle) || { label: this.cart.cycle };
           const rows = [`<div class="pc-row"><span>${esc(plan.name)}</span><span>${esc(cyc.label)}</span></div>`];
-          if (q) {
-            rows.push(`<div class="pc-row"><span>ราคาแพ็กเกจ</span><span>฿${money(q.listAmount)}</span></div>`);
+          const pv = q && q.preview;
+          if (pv && !pv.allowed) {
+            // รอบ 233 (233-3): ชำระไม่ได้ — เหตุ + วันที่ + ทางไปต่อ จากเซิร์ฟเวอร์ (PlanPurchasePreview.Refused) · ไม่มีตัวเลขเงินให้เข้าใจผิด
+            rows.push(`<div class="pv-box bad"><div class="pv-h">⛔ ${esc(pv.headline)}</div><div>${esc(pv.dateLine)}</div><div style="margin-top:4px">${esc(pv.refusalReason)}</div>`
+              + (pv.nextStep ? `<div style="margin-top:6px">→ ${pv.nextStepUrl ? `<a href="${esc(pv.nextStepUrl)}">${esc(pv.nextStep)}</a>` : esc(pv.nextStep)}</div>` : '') + '</div>');
+          } else if (q) {
+            if (pv && pv.currentPlanName) rows.push(`<div class="pc-row"><span>แพ็กเกจปัจจุบัน</span><span>${esc(pv.currentPlanName)} → ${esc(pv.newPlanName)}</span></div>`);
+            if (pv && pv.credit > 0) {
+              // เครดิตแพ็กเดิม: ราคาส่วนที่ซื้อ − เครดิต = ยอดก่อนคูปอง (ผลรวมตรงยอดที่คิดจริง — เซิร์ฟเวอร์แตกให้)
+              rows.push(`<div class="pc-row"><span>ค่า ${esc(pv.newPlanName)}${pv.daysRemaining ? ` (${pv.daysRemaining}/${pv.cycleDays} วัน)` : ''}</span><span>฿${money(pv.listPrice)}</span></div>`);
+              rows.push(`<div class="pc-row" style="color:#166534"><span>เครดิตจากแพ็กเดิม${pv.creditFormula ? ` <small>(${esc(pv.creditFormula)})</small>` : ''}</span><span>−฿${money(pv.credit)}</span></div>`);
+            } else rows.push(`<div class="pc-row"><span>ราคาแพ็กเกจ</span><span>฿${money(q.listAmount)}</span></div>`);
             if (q.discount > 0) rows.push(`<div class="pc-row"><span>ส่วนลด${q.couponCode ? ' (' + esc(q.couponCode) + ')' : ''}</span><span>−฿${money(q.discount)}</span></div>`);
             rows.push(`<div class="pc-row total"><span>ยอดชำระ</span><span>฿${money(q.amountDue)}</span></div>`);
+            if (pv) {
+              // วันที่ใหม่เป็นข้อความไทย พ.ศ. ที่เซิร์ฟเวอร์ประกอบ (ตัวคำนวณวันที่ตัวเดียวกับตอนอนุมัติชำระ) — หน้าเว็บไม่คำนวณวันที่เอง
+              const extra = pv.notes || [];   // เหตุผลของวันที่ + ผลข้างเคียง (เซิร์ฟเวอร์แยกจากบรรทัดเงินให้แล้ว)
+              rows.push(`<div class="pv-box ok"><div class="pv-h">${esc(pv.headline)}</div><div class="pv-dates">📅 ${esc(pv.dateLine)}</div>`
+                + extra.map(l => `<div>• ${esc(l)}</div>`).join('') + '</div>');
+            }
             if (q.couponNote) rows.push(`<div style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.couponNote)}</div>`);
-            rows.push(`<div style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.note)}</div>`);
+            if (!pv) rows.push(`<div style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.note)}</div>`);
           } else rows.push('<div style="color:var(--gray-500);font-size:.85rem;margin-top:6px">ยอดสุดท้าย (รวมคูปอง/ราคาพิเศษ) จะแสดงหลังระบุบริษัท</div>');
           $('summary').innerHTML = rows.join('');
         },
@@ -225,19 +248,21 @@
           } catch (e) { err.textContent = e.message; }
         },
         updatePayButton() {
-          const ok = !!(this.companyId && this.quote && $('policyAccept').checked && this.catalog && this.catalog.onlineAvailable);
+          const refused = !!(this.quote && this.quote.preview && !this.quote.preview.allowed);   // รอบ 233: ชำระไม่ได้ (เหตุจากเซิร์ฟเวอร์)
+          const ok = !!(this.companyId && this.quote && !refused && $('policyAccept').checked && this.catalog && this.catalog.onlineAvailable);
           $('payBtn').disabled = !ok;
           // รอบ 232 (ผู้ใช้: "ปุ่มชำระเงินกดไม่ได้"): บอกเหตุที่ปุ่มยังกดไม่ได้ตรงใต้ปุ่ม — ข้อความ error ของยอดเดิมอยู่แค่ในคอลัมน์ตะกร้า (หลุดจอมือถือ)
           const why = ok ? '' : !(this.catalog && this.catalog.onlineAvailable) ? ((this.catalog && this.catalog.reason) || 'ยังชำระออนไลน์ไม่ได้ในขณะนี้')
             : !this.companyId ? 'เข้าสู่ระบบ/สมัคร และเลือกบริษัทก่อน'
             : !this.quote ? ($('quoteErr').textContent || 'กำลังคำนวณยอด…')
+            : refused ? ('ชำระไม่ได้: ' + this.quote.preview.refusalReason + (this.quote.preview.nextStep ? ' → ' + this.quote.preview.nextStep : ''))
             : !$('policyAccept').checked ? 'ติ๊กยอมรับข้อกำหนดและนโยบายการยกเลิกและคืนเงินก่อน' : '';
           $('payBlocked').textContent = why;
           // วิธีชำระที่รับ (ป้ายจากเซิร์ฟเวอร์) — ผู้ซื้อเลือกวิธีในหน้าต่างชำระที่เปิดหลังกดปุ่ม
           const ms = (this.catalog && this.catalog.methodOptions) || [];
           $('payMethods').innerHTML = ms.length
             ? `วิธีชำระที่รับ: <b>${ms.map(m => esc(m.label || m.code)).join(' · ')}</b> — เลือกวิธีในหน้าต่างชำระที่เปิดขึ้นหลังกด "ชำระเงิน"` : '';
-          $('payBtn').textContent = this.quote ? `ชำระเงิน ฿${money(this.quote.amountDue)}` + (this.catalog && this.catalog.isTestMode ? ' (ทดสอบ)' : '') : 'ชำระเงิน';
+          $('payBtn').textContent = refused ? 'ชำระไม่ได้' : this.quote ? `ชำระเงิน ฿${money(this.quote.amountDue)}` + (this.catalog && this.catalog.isTestMode ? ' (ทดสอบ)' : '') : 'ชำระเงิน';
         },
         async resumeOrder() {
           // กลับมาชำระต่อ: สถานะจากเซิร์ฟเวอร์ (ไม่เชื่อ query) — จ่ายแล้ว ⇒ ไปหน้าสำเร็จ · ยังค้าง ⇒ ใช้รายการเดิม

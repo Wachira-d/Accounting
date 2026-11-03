@@ -491,7 +491,7 @@
           <div class="text-center" style="margin-bottom:16px">
             <div style="font-size:48px">&#x1F680;</div>
             <h4>เลือกแพ็กเกจ ${Layout.esc(p.name)}</h4>
-            <div class="text-xs text-gray-500" id="upgradeQuoteNote">กำลังคิดยอดที่ต้องจ่าย...</div>
+            <div class="text-xs text-gray-500" id="upgradeQuoteNote" style="white-space:pre-line">กำลังคิดยอดที่ต้องจ่าย...</div>
           </div>
           <div class="sub-card" style="margin-bottom:16px">
             <div class="flex justify-between"><span>แพ็กเกจ</span><strong>${Layout.esc(p.name)}</strong></div>
@@ -509,7 +509,11 @@
           const qr = await API.get(`/api/subscription/${Layout.getCompanyId()}/plan-quote?plan=${encodeURIComponent(plan)}&cycle=${encodeURIComponent(cycleEnum)}`);
           const q = qr?.data;
           if (q) {
-            document.getElementById('upgradeQuoteNote').textContent = q.message || '';
+            // รอบ 233: "สิ่งที่จะได้" จากเซิร์ฟเวอร์ (PlanPurchasePreview) — วันหมดอายุเดิม → ใหม่ / เหตุที่ทำไม่ได้ · แสดงอย่างเดียว
+            const pv = q.preview;
+            document.getElementById('upgradeQuoteNote').textContent = pv
+              ? [pv.headline, '📅 ' + pv.dateLine, pv.allowed ? '' : (pv.refusalReason || ''), ...(pv.notes || []).filter(n => n !== pv.refusalReason)].filter(Boolean).join('\n')
+              : (q.message || '');
             document.getElementById('upgradeQuoteAmount').textContent = q.amountDue > 0 ? `฿${this.formatMoney(q.amountDue)}` : 'ไม่ต้องชำระตอนนี้';
           }
         } catch (e) { document.getElementById('upgradeQuoteNote').textContent = 'ยอดจริงคิดตอนกดยืนยัน (อัปเกรดกลางรอบ = จ่ายส่วนต่างตามวันที่เหลือ · แพ็กเกจที่ถูกลง = มีผลวันครบรอบ)'; }

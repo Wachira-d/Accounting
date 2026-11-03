@@ -1409,4 +1409,14 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
 - **แอดมิน**: `api/admin/public-checkout` (GET สถานะ+URL ที่ส่ง Omise · PUT สวิตช์ · audit chain `public-checkout-switch`) · การ์ดใน `/admin/site-settings.html` แท็บบริการ · ไม่แตะ `AdminController`
 - **ยังไม่ทำ**: ส่วนเสริม/โควตาเพิ่มในตะกร้า (ซื้อหลังเข้าระบบที่ hub §6.2h) · Db test ของ service (ล็อกด้วย `required_call_site` 6 กติกา)
 
+### 6.2j "สิ่งที่ลูกค้าจะได้ก่อนจ่าย" + เมทริกซ์ทุกเคส license (รอบ 233 · คำตัดสิน 233-1…233-8 · `erp-review/2026-11-03/LICENSE_CASE_MATRIX.md`)
+
+- **ไม่มี entity/คอลัมน์ใหม่** — `PlanChangeQuote.Preview` / `PublicCheckoutQuote.Preview` (DTO) จาก `Helpers/PlanPurchasePreview` · `PlanChangeQuote.OldPriceBasis` (ฐานเครดิต = ยอดจ่ายจริง)
+- **กติกาวันหมดอายุ (ตัวคำนวณเดียว `PaidPeriod` — preview = ที่ประทับ):** ต่ออายุ = max(EndDate, วันชำระ) + รอบ · ทดลอง/ฟรีถาวร/ค่าแทน/อัปเกรดเต็มรอบ = วันชำระ + รอบ ·
+  ส่วนต่างอัปเกรด = EndDate เดิม · เปลี่ยนรอบ = วันชำระ + รอบใหม่ · ดาวน์เกรด = มีผลวันครบรอบ · วันชำระ = `ApprovedPaymentDate` · `ExpiryNeedsReview` ปลดเมื่อจ่ายแล้วได้รอบจริง
+- **ตัวอย่างเจ้าของ:** Starter รายปี ฿6,018 ใช้ 3 เดือน → Pro ฿15,198 ⇒ ฿6,916.44 (ค่า Pro 275/365 ฿11,450.55 − เครดิต ฿4,534.11) ใช้ได้ถึงวันหมดอายุเดิม
+- **AccountSubscription:** cascade แพลนบัญชี (เฉพาะแพ็กตรง) ใช้ `PaidPeriod` + วันรับเงิน + เวลาอนุมัติเดียวกับ subscription (ฝ่ายค้าน S5 · เดิมนับจากเวลาอนุมัติเอง) — หน้า License ยังไม่มี preview (K-7)
+- **ฝ่ายค้าน 233:** วันรับเงินย้อนจนรอบจบก่อนอนุมัติ ⇒ นับจากเวลาอนุมัติ (233-1b) · ฟรีถาวร→ซื้อ: `ApplyTemplate(paidPeriodEndUtc)` · ฐานเครดิต = ยอดก่อนหัก ณ ที่จ่าย · Approved ยอด 0 = เครดิต 0 ·
+  แถวค่าแทน (ExpiryNeedsReview) ดาวน์เกรด ⇒ มีผลทันที ไม่ตั้งเวลา
+
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i หน้าซื้อแพ็กเกจสาธารณะ · `SiteSettings.PublicCheckoutEnabled` · `Helpers/PublicCheckoutPolicy` · `Services/Platform/PublicCheckoutService` · เทสต์ `PublicCheckoutRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

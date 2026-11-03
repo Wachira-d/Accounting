@@ -602,7 +602,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **764 ไฟล์ · 7,977 `[Fact]` + 1,226 `[Theory]` (5,698 `InlineData`)** ณ 2026-11-03 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **766 ไฟล์ · 8,017 `[Fact]` + 1,227 `[Theory]` (5,703 `InlineData`)** ณ 2026-11-03 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -7774,3 +7774,24 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | NT232-19 | **S1** วางสตริง `api.line.me/v2/bot/message/push|multicast` ใน `LineWebhookController`/`LineBotService` (ในหน่วยความจำ) · คอมเมนต์ · `/v2/bot/info` · ไฟล์ `LineNotifyService` | ฟ้อง · ไม่ฟ้อง · ไม่ฟ้อง · ไม่ฟ้อง — และ `LineBotService.ReplyAsync`/`PushFlexAsync` ต้องเรียก `_line.TryPush*ViaNextAccAsync` (forbid `_httpFactory.CreateClient`) | `LINE_PUSH_FORBID` self-test + rules S1 ใน `required_call_site_check` |
 | NT232-20 | **N1/N3** `PlatformBillingNotifier.SendAsync` ส่ง `NotificationAudience.PlatformAccount` · enum `LineTargetKind` มี 3 ค่า (ไม่มี PlatformAdmin) | rule N1 ล็อก · `Platform_ops_reaches_platform_group_only` | checker + `NotificationAudiencePolicyRound232Tests` |
 
+
+## LC233 — "สิ่งที่ลูกค้าจะได้ก่อนจ่าย" + เมทริกซ์ license (รอบ 233 · คำตัดสิน 233-1…233-8 · `erp-review/2026-11-03/LICENSE_CASE_MATRIX.md`)
+
+| # | สถานการณ์ | ผลที่ต้องได้ | เทสต์/หลักฐาน |
+| --- | --- | --- | --- |
+| LC233-1 | Starter รายปี ฿6,018 ใช้ 3 เดือน (เหลือ 275/365) → Pro ฿15,198 | ยอด ฿6,916.44 · ค่า Pro ส่วนที่เหลือ ฿11,450.55 − เครดิต ฿4,534.11 · ใช้ได้ถึง 01/01/2570 (คงเดิม) | `PlanPurchasePreviewRound233Tests.เจ้าของ_*` |
+| LC233-2 | ต่ออายุก่อนหมด / หลังหมด (ผ่อนผัน) | ต่อท้ายวันหมดอายุเดิม (เหลือ 59 วันไม่หาย) / นับจากวันชำระ | `ต่ออายุก่อนหมด_*` · `ต่ออายุหลังหมด_*` |
+| LC233-3 | ทดลอง Pro เหลือ 17–20 วันแล้วซื้อ Pro | เริ่มวันชำระ (ไม่ต่อท้ายวันทดลอง) · preview = วันที่ประทับ | `ทดลองใช้แพ็กเดียวกัน_*` · Db `Round233_trial_same_plan_*` |
+| LC233-4 | แผนจ่ายเงิน EndDate ค่าแทน +100 ปี (ExpiryNeedsReview) ต่ออายุ | วันชำระ + รอบ · `SubscriptionExtendedTo` = EndDate จริง · ปลดธง | `วันหมดอายุค่าแทน100ปี_*` · Db `Round233_renewal_on_open_ended_*` |
+| LC233-5 | ส่วนต่างจากแพ็กราคา 0 | ไม่ใช่ส่วนต่าง (ทิศตรงข้าม 590→1,490 ยังคิด) | `แพ็กเดิมราคา0_*` |
+| LC233-6 | ดาวน์เกรด / รอบสั้นลง / คูปองต่ออายุ / ใบต่ออายุออกแล้ว บนหน้าซื้อ | ปฏิเสธ + แพ็ก/วันหมดอายุปัจจุบัน + วันมีผล + ลิงก์ · อัปเกรดไม่ถูกปฏิเสธ | `ดาวน์เกรด_*` `รอบสั้นลง_*` `ต่ออายุพร้อมคูปอง_*` `ใบต่ออายุออกแล้ว_*` `ทิศตรงข้าม_*` |
+| LC233-7 | สิ้นเดือน 31 → 30/28 · 29 ก.พ. ปีอธิกสุรทิน · แสดง พ.ศ. 29/02/2571 | วันที่ถูกทุกแถว · ไม่กลายเป็น 28/02 | `ตัวคำนวณวันที่_*` (5 แถว) · `วันที่ไทย_29กพ_*` |
+| LC233-8 | ใบกำกับรายการเปลี่ยนรอบ | บรรทัด = ค่ารอบใหม่เต็ม + เครดิตเป็นส่วนลดก่อน VAT · ฐาน+VAT = เงินรับ | `ใบกำกับ_เครดิตเปลี่ยนรอบ_*` |
+| LC233-9 | ทุกทางเข้าเรียก preview · ตัวอนุมัติใช้ `PaidPeriod` ตัวเดียว | ถอดการเรียก/ประกอบวันที่เอง ⇒ checker ฟ้อง | `tools/required_call_site_check.py` `_R233_WHY` (negative: แทน `PaidPeriod` ด้วย `PeriodStart`+`AddMonths` ⇒ ฟ้อง) |
+| LC233-10 | ฝ่ายค้าน B1: ฟรีถาวร → ซื้อ (สลิปย้อน 5 วัน) | EndDate = `SubscriptionExtendedTo` = วันรับเงิน + 1 เดือน | Db `Round233_B1_*` |
+| LC233-11 | ฝ่ายค้าน B2/233-1b: วันรับเงินย้อนจนรอบจบก่อนอนุมัติ / โอนก่อนหมดแต่ตรวจหลังหมด | นับจากวันอนุมัติ + ประวัติ / ต่อจาก EndDate เดิม | `B2_*` (2) |
+| LC233-12 | ฝ่ายค้าน S1: วันรับเงินจากสลิป ≠ เวลาอนุมัติ | รอบ = วันรับเงิน + 1 เดือน · checker `call_args` paidAt | Db `Round233_S1_*` |
+| LC233-13 | ฝ่ายค้าน S2/S3: หัก ณ ที่จ่าย 3% · Approved ยอด 0 | ฐาน = ก่อนหัก (฿6,916.44) · เครดิต 0 | `S2_*` `S3_*` · Db `Round233_S2_S3_*` |
+| LC233-14 | ฝ่ายค้าน S5: resume ส่วนต่างเก่า · แพลนบัญชี | คิดยอดใหม่ ยกเลิกใบเก่า ไม่ซ้อน · แพลนบัญชี = subscription | `S5_*` · Db `Resume_stale_*` · `Round233_K3_*` |
+| LC233-15 | ฝ่ายค้าน S6: QuoteAsync/CreateOrderAsync ปฏิเสธ · OwnedCompaniesAsync | Allowed=false ไม่สร้าง · throw ข้อความเดียวกัน ไม่มี ScheduledPlan/รายการ · เฉพาะ Owner + lowerPlans | `PublicCheckoutRound233DbTests` |
+| LC233-16 | ฝ่ายค้าน N2/N3/N5/N7 | ราคาจริงรอบใหม่ + ปฏิเสธเมื่อเครดิตครอบ · VAT ตัวเดียวกับตัวออกใบ · ป้ายจากเซิร์ฟเวอร์ · ค่าแทน ⇒ ดาวน์เกรดทันที | `N2_*` `N3_*` `N5_*` `N7_*` |

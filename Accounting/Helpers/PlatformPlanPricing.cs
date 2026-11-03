@@ -61,15 +61,23 @@ public static class PlatformPlanPricing
          : ChangeKind.Same;
 
     /// <summary>อนุมัติการชำระที่เป็นดาวน์เกรดระหว่างรอบที่ยังใช้งาน ⇒ เลื่อนไปมีผลวันครบรอบเดิม (ไม่ตัดสิทธิ์แพ็กเกจที่จ่ายไปแล้ว)</summary>
+    /// <remarks>รอบ 233 ฝ่ายค้าน N7: วันหมดอายุค่าแทน "ไม่หมดอายุ" (ExpiryNeedsReview) ไม่ใช่วันครบรอบจริง ⇒ ไม่เลื่อน (เปลี่ยนทันทีตามรอบที่จ่าย) —
+    /// เดิมเลื่อนไป "วันเริ่มรอบที่จ่าย" ซึ่งคือวันชำระ (ในอดีต) หรือปี 2126</remarks>
     public static bool DeferToCycleEnd(ChangeKind kind, SubscriptionStatus status, DateTime currentEndUtc, DateTime nowUtc)
-        => kind != ChangeKind.Upgrade && status == SubscriptionStatus.Active && currentEndUtc > nowUtc;
+        => kind != ChangeKind.Upgrade && status == SubscriptionStatus.Active && currentEndUtc > nowUtc
+           && !SubscriptionExpiry.IsOpenEnded(currentEndUtc, nowUtc);
 
     /// <summary>ฝ่ายค้านรอบ 219 B1 (นโยบายชั่วคราวจนกว่าจะมี proration · คำตัดสินข้อ 178 ภาคผนวก): วันเริ่มรอบที่จ่าย —
     /// <b>ต่ออายุแพ็กเกจเดิม</b>/ดาวน์เกรดที่รอวันครบรอบ ⇒ ต่อจากวันหมดอายุเดิม (ถ้ายังไม่หมด) · <b>อัปเกรดทันที</b> หรือ sub <b>ฟรีถาวร</b>
     /// (EndDate +100 ปี) ⇒ เริ่มจากวันนี้ (ส่วนที่เหลือของรอบเดิมสละ) · เดิมทุกกรณีต่อจาก EndDate ⇒ ฟรีถาวรอัปเกรด ฿990 ได้ Pro 100 ปี</summary>
-    public static DateTime PeriodStart(ChangeKind kind, bool samePlan, bool currentIsPermanentFree, DateTime currentEndUtc, DateTime nowUtc)
+    /// <para>รอบ 233 (คำตัดสิน 233-1/233-7 · ผู้เรียกผ่าน <see cref="PlanPurchasePreview.PaidPeriod"/> ตัวเดียว): <paramref name="isTrial"/> (สถานะ Trial) ⇒ เริ่มวันชำระ
+    /// (เดิม: ทดลอง Pro แล้วซื้อ Pro = ต่อท้ายวันทดลองที่เหลือ แต่ทดลอง Pro แล้วซื้อ Enterprise = เริ่มวันนี้ — ไม่สม่ำเสมอ และหน้าชำระบอก "เริ่มรอบใหม่จากวันที่ชำระ") ·
+    /// วันหมดอายุเป็นค่าแทน "ไม่หมดอายุ" (<see cref="SubscriptionExpiry.IsOpenEnded(DateTime, DateTime)"/> · แถว ExpiryNeedsReview) ⇒ เริ่มวันชำระ
+    /// (เดิม: ต่ออายุต่อจากปี 2126 ⇒ ใบเสร็จ/แจ้งเตือนบอก "ใช้ได้ถึง 2670" ก่อน ApplyTemplate ปิดรอบทับ)</para>
+    public static DateTime PeriodStart(ChangeKind kind, bool samePlan, bool currentIsPermanentFree, DateTime currentEndUtc, DateTime nowUtc, bool isTrial = false)
     {
-        if (currentIsPermanentFree) return nowUtc;
+        if (currentIsPermanentFree || SubscriptionExpiry.IsOpenEnded(currentEndUtc, nowUtc)) return nowUtc;
+        if (isTrial) return nowUtc;
         if (!samePlan && kind == ChangeKind.Upgrade) return nowUtc;
         return currentEndUtc > nowUtc ? currentEndUtc : nowUtc;
     }
@@ -123,8 +131,9 @@ public static class PlatformPlanPricing
 
     /// <summary>ฝ่ายค้านรอบ 219 รอบ 2 (S2): วันมีผลของการเปลี่ยนแพ็กเกจที่รอครบรอบ — sub ฟรีถาวร (EndDate +100 ปี) / หมดรอบแล้ว ⇒ มีผลทันที
     /// (เดิมตั้งวันมีผล = EndDate ⇒ ฟรีถาวรรอ 100 ปี) · อื่น ๆ = วันครบรอบ</summary>
+    /// <remarks>รอบ 233 ฝ่ายค้าน N7: วันหมดอายุค่าแทน (แถว ExpiryNeedsReview ที่ธงฟรีถาวรหลุด) = ไม่มีวันครบรอบ ⇒ มีผลทันทีเหมือนฟรีถาวร (เดิมตั้งมีผลปี 2126)</remarks>
     public static DateTime ScheduledChangeEffectiveAt(bool isPermanentFree, DateTime endUtc, DateTime nowUtc)
-        => isPermanentFree || endUtc <= nowUtc ? nowUtc : endUtc;
+        => isPermanentFree || endUtc <= nowUtc || SubscriptionExpiry.IsOpenEnded(endUtc, nowUtc) ? nowUtc : endUtc;
 
     /// <summary>รายงานแอดมิน: แพ็กเกจที่ผู้เช่าเปิดเอง (Convert/เปลี่ยนแพ็กเกจรุ่นก่อนเฟส 0) หลังการชำระที่อนุมัติครั้งล่าสุด = ยังไม่ได้จ่าย</summary>
     public static bool IsUnpaidSelfActivation(DateTime? lastSelfActivationAt, DateTime? lastApprovedPaymentAt)

@@ -102,7 +102,13 @@ public record PlanChangeQuote(
     string? SpecialPriceNote = null,
     /// <summary>รอบ 231 (231-9): รายการเปลี่ยนรอบบิลกลางรอบ — มูลค่าคงเหลือรอบเดิมที่หัก · วันหมดอายุใหม่ = วันที่ชำระ + เดือนของรอบใหม่</summary>
     decimal? CycleChangeCredit = null,
-    DateTime? NewPeriodEndUtc = null);
+    DateTime? NewPeriodEndUtc = null,
+    /// <summary>รอบ 233: ฐานราคาเดิมต่อรอบของส่วนต่างอัปเกรด (ยอดที่จ่ายจริง · <c>PlatformProration.OldPriceBasis</c>) — ใช้แตกบรรทัด "เครดิตแพ็กเดิม" ใน <see cref="Preview"/></summary>
+    decimal? OldPriceBasis = null,
+    /// <summary>รอบ 233 ฝ่ายค้าน N2: ราคาจริงของรอบใหม่ (รายการเปลี่ยนรอบ) — preview แสดงราคานี้ ไม่ใช่ "ยอด + เครดิต" (ผิดเมื่อเครดิตเกินค่ารอบ)</summary>
+    decimal? NewCyclePrice = null,
+    /// <summary>รอบ 233 (คำตัดสิน 233-*): "สิ่งที่จะได้ถ้าจ่ายเงินนี้" — แพ็ก/วันหมดอายุเดิม → ใหม่ · เครดิต · ยอด · เหตุที่ทำไม่ได้ (<c>Helpers/PlanPurchasePreview</c> ตัวเดียว)</summary>
+    global::Accounting.Helpers.PlanPurchasePreview.Result? Preview = null);
 
 /// <summary>รอบ 230: แอดมินแก้ยอดของรายการชำระค่าแพ็กเกจที่ยังไม่จ่าย (คำตัดสินเจ้าของข้อ 178 ① — ยืดหยุ่นได้เสมอ · audit chain)</summary>
 public record OverridePaymentAmountRequest(decimal Amount, string? Reason);
