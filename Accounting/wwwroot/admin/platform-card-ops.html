@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตัดบัตรอัตโนมัติ + รอบโอน - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .muted { color:#64748b; font-size:12px }
+    .pill { display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:9999px; background:#f1f5f9; color:#475569 }
+    .pill.ok { background:#dcfce7; color:#166534 } .pill.bad { background:#fee2e2; color:#991b1b } .pill.warn { background:#fef3c7; color:#92400e }
+    .row-actions { display:flex; gap:6px; flex-wrap:wrap }
+  </style>
+</head>
+<body>
+  <!-- รอบ 230 (PLATFORM_OMISE_AUDIT §5.2/§5.3): สวิตช์ตัดบัตรอัตโนมัติ · คำสั่งตัดต่อบริษัท · ความพยายามตัด · รอบโอนจากผู้ให้บริการ → ร่างรอบโอน
+       ทุกค่า/ป้าย/เหตุผลมาจากเซิร์ฟเวอร์ · ไม่มีปุ่มลงบัญชีที่หน้านี้ (ลงบัญชีที่หน้ารอบโอนของบริษัทผู้ให้บริการ) -->
+  <div id="pageContent">
+    <div class="info-box" id="guidance">กำลังโหลด...</div>
+
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <span class="admin-card-title">💳 ตัดบัตรอัตโนมัติ (ทั้งระบบ)</span>
+        <div class="row-actions">
+          <button class="admin-btn admin-btn-outline admin-btn-sm" id="toggleGlobal">…</button>
+          <button class="admin-btn admin-btn-primary admin-btn-sm" id="runNow">ตัดตอนนี้</button>
+        </div>
+      </div>
+      <div id="globalState" class="muted"></div>
+      <div id="mandates" style="margin-top:10px">กำลังโหลด...</div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🧾 ความพยายามตัดล่าสุด</span></div>
+      <div id="attempts">กำลังโหลด...</div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header">
+        <span class="admin-card-title">🏦 รอบโอนจากผู้ให้บริการ → ร่างรอบโอน</span>
+        <button class="admin-btn admin-btn-primary admin-btn-sm" id="pullNow">ดึงรอบโอนตอนนี้</button>
+      </div>
+      <div class="muted" style="margin-bottom:8px">ระบบสร้างเฉพาะ "ร่าง" ในบริษัทผู้ให้บริการ — ผู้ทำบัญชีตรวจยอดกับสเตทเมนต์ แล้วลงบัญชีที่หน้า "รอบโอนเงินจากแพลตฟอร์ม" ของบริษัทผู้ให้บริการ (ยอดไม่ตรง = ระบบบล็อก)</div>
+      <div id="transfers">กำลังโหลด...</div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Page = {
+      base: '/platform-card-ops',
+      data: null,
+
+      init() {
+        AdminLayout.init('platform-card-ops');
+        document.getElementById('toggleGlobal').addEventListener('click', () => this.toggleGlobal());
+        document.getElementById('runNow').addEventListener('click', () => this.runNow());
+        document.getElementById('pullNow').addEventListener('click', () => this.pull());
+        document.getElementById('mandates').addEventListener('click', (ev) => {
+          const b = ev.target.closest('button[data-block]');
+          if (b) this.block(b.dataset.block, b.dataset.blocked === 'true', b.dataset.name);
+        });
+        document.getElementById('transfers').addEventListener('click', (ev) => {
+          const b = ev.target.closest('button[data-rematch]');
+          if (b) this.rematch(b.dataset.rematch);
+        });
+        this.load();
+      },
+
+      esc(v) { return AdminLayout.esc(v == null ? '' : String(v)); },
+      money(n) { return Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); },
+      when(t) { return t ? new Date(t).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' }) : '-'; },
+
+      async load() {
+        try {
+          const res = await AdminAPI.get(this.base);
+          this.data = res.data;
+          this.render();
+        } catch (e) {
+          document.getElementById('mandates').innerHTML = `<div style="color:#dc2626">${this.esc(e.message)}</div>`;
+        }
+      },
+
+      render() {
+        const d = this.data, e = (v) => this.esc(v);
+        document.getElementById('guidance').textContent = d.guidance || '';
+        document.getElementById('toggleGlobal').textContent = d.autoChargeEnabled ? 'ปิดตัดบัตรอัตโนมัติทั้งระบบ' : 'เปิดตัดบัตรอัตโนมัติทั้งระบบ';
+        document.getElementById('globalState').innerHTML = `สถานะ: ${d.autoChargeEnabled ? '<span class="pill ok">เปิด</span>' : '<span class="pill">ปิด</span>'}
+          · ฉบับความยินยอมปัจจุบัน <code>${e(d.consentVersion)}</code>`;
+        const ms = d.mandates || [];
+        document.getElementById('mandates').innerHTML = ms.length === 0 ? '<div class="muted">ยังไม่มีบริษัทที่บันทึกบัตร</div>'
+          : `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>บริษัท</th><th>คำสั่งตัด</th><th>บัตรตั้งต้น</th><th>ตัดได้ไหม</th><th></th></tr></thead><tbody>
+            ${ms.map(m => `<tr>
+              <td><strong>${e(m.companyName || m.payerCompanyId)}</strong><div class="muted">${e(m.payerCompanyId)}</div></td>
+              <td>${m.enabled ? '<span class="pill ok">เปิด</span>' : '<span class="pill">ปิด</span>'} ${m.adminBlocked ? `<span class="pill bad">แอดมินระงับ</span><div class="muted">${e(m.adminBlockedReason)}</div>` : ''}
+                <div class="muted">ยินยอมฉบับ ${e(m.consentVersion || '-')} · ${this.when(m.enabledAt)}</div></td>
+              <td>${e(m.defaultCardLabel || '-')}<div class="muted">บัตร ${e(m.activeCards)} ใบ</div></td>
+              <td>${m.blockReason ? `<span class="muted">${e(m.blockReason)}</span>` : '<span class="pill ok">ตัดได้</span>'}</td>
+              <td><button class="admin-btn admin-btn-outline admin-btn-sm" data-block="${AdminLayout.esc(m.payerCompanyId)}" data-blocked="${m.adminBlocked ? 'true' : 'false'}" data-name="${AdminLayout.esc(m.companyName || '')}">${m.adminBlocked ? 'ยกเลิกระงับ' : 'ระงับ'}</button></td>
+            </tr>`).join('')}</tbody></table></div>`;
+
+        const at = d.attempts || [];
+        document.getElementById('attempts').innerHTML = at.length === 0 ? '<div class="muted">ยังไม่มีการตัดอัตโนมัติ</div>'
+          : `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>เวลา</th><th>บริษัท</th><th>ใบแจ้งหนี้</th><th>ครั้งที่</th><th>ยอด</th><th>ผล</th></tr></thead><tbody>
+            ${at.map(a => `<tr><td>${this.when(a.attemptedAt)}</td><td>${e(a.companyName || a.payerCompanyId)}</td><td>${e(a.documentNumber || '-')}</td>
+              <td>${e(a.attemptNo)}</td><td>฿${this.money(a.amount)}</td>
+              <td><span class="pill ${a.outcome === 'Succeeded' ? 'ok' : (a.outcome === 'Failed' ? 'bad' : 'warn')}">${e(a.outcomeLabel)}</span>${a.detail ? `<div class="muted">${e(a.detail)}</div>` : ''}</td></tr>`).join('')}
+            </tbody></table></div>`;
+
+        const ts = d.transfers || [];
+        document.getElementById('transfers').innerHTML = ts.length === 0 ? '<div class="muted">ยังไม่มีรอบโอนที่ดึงมา — กด "ดึงรอบโอนตอนนี้"</div>'
+          : `<div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>รอบโอน</th><th>เข้าธนาคาร</th><th>ค่าธรรมเนียมโอน</th><th>สถานะ</th><th>จับคู่</th><th>ร่าง</th><th></th></tr></thead><tbody>
+            ${ts.map(t => `<tr>
+              <td><strong>${e(t.transferRef)}</strong> ${t.isTestMode ? '<span class="pill warn">ทดสอบ</span>' : ''}<div class="muted">${this.when(t.providerCreatedAt)}</div></td>
+              <td>฿${this.money(t.netToBank)}<div class="muted">หักจากยอดคงเหลือ ฿${this.money(t.walletDebit)}</div></td>
+              <td>฿${this.money(t.transferFee)}${t.transferFeeVat ? ` + VAT ฿${this.money(t.transferFeeVat)}` : ''}</td>
+              <td>${t.paid ? '<span class="pill ok">โอนถึงแล้ว</span>' : `<span class="pill">${e(t.rawStatus || 'รอ')}</span>`}<div class="muted">${this.when(t.paidAt)}</div></td>
+              <td>${e(t.matchMethodLabel)}<div class="muted">รายการ ${e(t.matchedIntentCount)} · ผู้ให้บริการระบุ ${e(t.chargeRefCount)}</div>${t.problem ? `<div class="muted" style="color:#92400e">${e(t.problem)}</div>` : ''}</td>
+              <td>${t.hasLiveDraft ? `<span class="pill ok">มีร่าง</span><div class="muted">${e(t.settlementBatchStatus || '')}</div>`
+                : (t.settlementBatchId ? '<span class="pill bad">ร่างถูกยกเลิก — ประกอบเองที่หน้ารอบโอน</span>' : '-')}</td>
+              <td>${!t.settlementBatchId && t.paid && !t.isTestMode ? `<button class="admin-btn admin-btn-outline admin-btn-sm" data-rematch="${AdminLayout.esc(t.id)}">จับคู่ใหม่</button>` : ''}</td>
+            </tr>`).join('')}</tbody></table></div>`;
+      },
+
+      async toggleGlobal() {
+        const on = !(this.data && this.data.autoChargeEnabled);
+        if (!confirm(on ? 'เปิดตัดบัตรอัตโนมัติทั้งระบบ? ระบบจะเริ่มตัดบัตรของบริษัทที่ยินยอมไว้เมื่อใบแจ้งหนี้ถึงกำหนด' : 'ปิดตัดบัตรอัตโนมัติทั้งระบบ?')) return;
+        try { const r = await AdminAPI.post(`${this.base}/auto-charge`, { enabled: on }); AdminLayout.toast(r.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      async runNow() {
+        const btn = document.getElementById('runNow'); btn.disabled = true;
+        try { const r = await AdminAPI.post(`${this.base}/auto-charge/run`, {}); AdminLayout.toast(r.message || 'เสร็จแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast(e.message, 'error'); } finally { btn.disabled = false; }
+      },
+
+      async block(payerId, blocked, name) {
+        let reason = null;
+        if (!blocked) { reason = prompt(`เหตุผลที่ระงับการตัดอัตโนมัติของ ${name || payerId}`); if (!reason) return; }
+        try { const r = await AdminAPI.post(`${this.base}/mandates/${encodeURIComponent(payerId)}/block`, { blocked: !blocked, reason });
+              AdminLayout.toast(r.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      async pull() {
+        const btn = document.getElementById('pullNow'); btn.disabled = true;
+        try { const r = await AdminAPI.post(`${this.base}/transfers/pull`, {}); AdminLayout.toast(r.message || 'ดึงแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast('ดึงรอบโอนไม่สำเร็จ: ' + e.message, 'error'); } finally { btn.disabled = false; }
+      },
+
+      async rematch(id) {
+        try { const r = await AdminAPI.post(`${this.base}/transfers/${encodeURIComponent(id)}/rematch`, {}); AdminLayout.toast(r.message || 'เสร็จแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+    };
+    Page.init();
+  </script>
+</body>
+</html>

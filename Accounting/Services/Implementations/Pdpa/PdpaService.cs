@@ -445,6 +445,10 @@ public partial class PdpaService : IPdpaService
             }));
         }
 
+        // รอบ 230 ฝ่ายค้าน S6: ความยินยอมบันทึกบัตร/ตัดบัตรอัตโนมัติที่ผู้ใช้นี้ให้ในนามบริษัทนี้ (ไม่ส่ง IP/UA เหตุผลเดียวกับข้างบน)
+        if (user != null)
+            acceptRows.AddRange(await Accounting.Services.Payments.PlatformSavedCardService.ConsentRowsForUserAsync(_db, user.Id, companyId, includeNetwork: false, ct));
+
         var total = (userProfile.Count > 0 ? 1 : 0) + contactRows.Count
             + docRows.Count + payRows.Count + logRows.Count + extRows.Count + acceptRows.Count;
 
@@ -551,6 +555,12 @@ public partial class PdpaService : IPdpaService
             .ToListAsync(ct);
         foreach (var pc in platformConsents)
             Accounting.Helpers.PlatformPolicyAcceptanceRules.Pseudonymise(pc, u.Email, DateTime.UtcNow);
+        // รอบ 230 ฝ่ายค้าน S6: ความยินยอมตัดบัตรอัตโนมัติ (ใต้บริษัทผู้ให้บริการ) — หลักฐานคงไว้ (legal hold) แต่ทำอีเมล/IP/UA ไม่ให้ระบุตัว
+        var cardConsents = await _db.PdpaConsentRecords.IgnoreQueryFilters()
+            .Where(c => c.SubjectUserId == u.Id && c.Purpose == Accounting.Helpers.PlatformSavedCardRules.ConsentPurpose)
+            .ToListAsync(ct);
+        foreach (var cc in cardConsents)
+            Accounting.Helpers.PlatformPolicyAcceptanceRules.Pseudonymise(cc, u.Email, DateTime.UtcNow);
         u.Phone = null;
         u.LineUserId = null;
         u.Status = Models.Enums.UserStatus.Inactive;

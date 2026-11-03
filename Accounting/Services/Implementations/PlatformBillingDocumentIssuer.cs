@@ -58,8 +58,9 @@ public interface IPlatformBillingDocumentIssuer
     /// ยอด <paramref name="amountReceived"/> = เงินที่ได้รับ (ราคาตั้งรวม VAT หรือไม่ ตามค่าตั้ง <c>PlatformPriceIncludesVat</c> เดียวกับเส้นอื่น) ·
     /// <b>idempotent</b> ด้วย <paramref name="reference"/> (มีใบที่อ้างอิงนี้แล้ว = คืนใบเดิม) · ขาเงินเข้า = บัญชีพักผู้ให้บริการรับชำระเมื่อจ่ายผ่าน gateway
     /// (<paramref name="gatewayIntentId"/>) ไม่ใช่ธนาคาร · คืน null เมื่อยังไม่ตั้ง tenant/ล้ม (ไม่โยน — เงินเข้าแล้วต้องบันทึกสิทธิ์ได้เสมอ)</summary>
+    /// <param name="discountReceived">รอบ 230: ส่วนลดคูปอง (รวม VAT) — &gt; 0 ⇒ บรรทัดราคาเต็ม + ส่วนลดของบรรทัดก่อน VAT (§86/4) · ฐานหลังส่วนลด + VAT = เงินที่รับ</param>
     Task<PlatformDocResult?> IssueAddOnReceiptAsync(Guid buyerCompanyId, string description, decimal amountReceived, DateTime paidAt,
-        string reference, Guid? gatewayIntentId);
+        string reference, Guid? gatewayIntentId, decimal discountReceived = 0m);
 
     /// <summary>รอบ 228 (PLATFORM_OMISE_AUDIT §5.5 · §86/10): ออก<b>ใบลดหนี้</b> (อนุมัติทันที) อ้างใบกำกับ/ใบเสร็จเดิมของรายการชำระค่าบริการออนไลน์ที่แอดมินคืนเงิน —
     /// ใน tenant ผู้ให้บริการ (ตัวเดียวกับ intent) · ยอด = เงินที่คืน (รวม VAT) · ด่าน Σ ใบลดหนี้ ≤ ใบเดิม (<c>Helpers/PlatformRefundCreditNote</c>) ·
@@ -153,7 +154,9 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             // ฐานก่อน VAT: ถ้าราคาที่ตั้งไว้รวม VAT แล้ว ต้องถอดออกก่อน เพราะบรรทัด
             // เอกสารเก็บราคา ex-VAT (PricesIncludeVat ของ document ใช้เส้นทางคนละแบบ)
             // ฝ่ายค้านรอบ 227 S2: เงินที่รับแล้วรวม VAT เสมอ + VAT = ยอด − ฐาน (ไม่มีเศษ 0.01 · ไม่ออกใบสูงกว่าเงินที่รับเมื่อตั้ง "ราคาไม่รวม VAT")
-            var (baseAmount, vatAmount) = Accounting.Helpers.PlatformMoneyInAccount.SplitReceived(grossBeforeWht, isVat);
+            // รอบ 230 (คำตัดสินข้อ 230-Q2 · §86/4): คูปอง ⇒ บรรทัดราคาเต็ม + ส่วนลดของบรรทัด (หักก่อน VAT) · ฐานหลังส่วนลด + VAT = เงินที่รับพอดี
+            var (fullBase, discountBase, baseAmount, vatAmount) = Accounting.Helpers.PlatformCouponRule.SplitDiscounted(
+                grossBeforeWht, payment.CouponDiscountAmount, isVat);
             // อัตรา WHT คำนวณกลับจากยอดจริง — ให้ยอดหักตรงกับที่ลูกค้าหักเป๊ะ
             // (กันเศษสตางค์จากการปัดอัตรา 3.00%)
             var whtRate = wht > 0m && baseAmount > 0m
@@ -171,11 +174,12 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 Lines: new List<DocumentLineRequest>
                 {
                     new(Description: desc, Quantity: 1m, Unit: "รายการ",
-                        UnitPrice: baseAmount, DiscountPercent: 0m,
+                        UnitPrice: fullBase, DiscountPercent: 0m,
                         VatRate: isVat ? 7m : 0m, WithholdingTaxRate: whtRate,
                         AccountId: null,
                         AccountCode: string.IsNullOrWhiteSpace(settings.PlatformRevenueAccountCode)
                             ? "41000" : settings.PlatformRevenueAccountCode,
+                        DiscountAmount: discountBase > 0m ? discountBase : null,
                         VatAmountOverride: isVat ? vatAmount : null)
                 },
                 // เงินรับแล้ว → ออกใบเดียวจบแบบขายเงินสด (Dr เงินสด/ธนาคาร ไม่ตั้งลูกหนี้)
@@ -568,7 +572,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
     }
 
     public async Task<PlatformDocResult?> IssueAddOnReceiptAsync(Guid buyerCompanyId, string description, decimal amountReceived, DateTime paidAt,
-        string reference, Guid? gatewayIntentId)
+        string reference, Guid? gatewayIntentId, decimal discountReceived = 0m)
     {
         (Guid TenantId, Guid DocumentId)? draft = null;
         try
@@ -594,8 +598,8 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             if (contactId == null) return null;
 
             var isVat = settings.PlatformIsVatRegistered && IsValidTaxId(settings.PlatformSellerTaxId);
-            // ฝ่ายค้านรอบ 227 S2: ใบ = เงินที่รับพอดี (ฐาน + VAT บังคับ = ยอด)
-            var (baseAmount, vatAmount) = Accounting.Helpers.PlatformMoneyInAccount.SplitReceived(amountReceived, isVat);
+            // ฝ่ายค้านรอบ 227 S2: ใบ = เงินที่รับพอดี (ฐาน + VAT บังคับ = ยอด) · รอบ 230: คูปอง ⇒ ส่วนลดของบรรทัดก่อน VAT (ตัวแยกเดียว PlatformCouponRule.SplitDiscounted)
+            var (fullBase, discountBase, baseAmount, vatAmount) = Accounting.Helpers.PlatformCouponRule.SplitDiscounted(amountReceived, discountReceived, isVat);
             var req = new CreateDocumentRequest(
                 DocumentType: isVat ? DocumentType.TaxInvoice : DocumentType.Receipt,
                 // ฝ่ายค้านรอบ 227 N4: วันที่ใบ = วันที่ตามเวลาไทยของเวลารับเงิน (เงินเข้า 00:30 น. ไทย = วันนี้ ไม่ใช่เมื่อวานตาม UTC)
@@ -607,10 +611,11 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 Lines: new List<DocumentLineRequest>
                 {
                     new(Description: description, Quantity: 1m, Unit: "รายการ",
-                        UnitPrice: baseAmount, DiscountPercent: 0m,
+                        UnitPrice: fullBase, DiscountPercent: 0m,
                         VatRate: isVat ? 7m : 0m, WithholdingTaxRate: 0m,
                         AccountId: null,
                         AccountCode: string.IsNullOrWhiteSpace(settings.PlatformRevenueAccountCode) ? "41000" : settings.PlatformRevenueAccountCode,
+                        DiscountAmount: discountBase > 0m ? discountBase : null,
                         VatAmountOverride: isVat ? vatAmount : null)
                 },
                 IssuedAsCashReceipt: isVat ? true : null,
@@ -787,9 +792,19 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
 
     private static string BuildServiceDescription(SubscriptionPayment payment, Company buyer)
     {
-        var months = payment.RequestedPeriodMonths > 0 ? payment.RequestedPeriodMonths : 1;
-        return $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {payment.RequestedPlan} "
-             + $"({months} เดือน) — {buyer.Name}";
+        string desc;
+        // รอบ 230: ส่วนต่างอัปเกรดกลางรอบ — บอกช่วงที่คิด (วันที่ไทย พ.ศ.) แทน "1 เดือน" ที่ไม่จริง
+        if (payment.IsProration && payment.ProrationCycleEndUtc is DateTime end && payment.ProrationDays is int d && payment.ProrationCycleDays is int c)
+            desc = Accounting.Helpers.PlatformProration.ReceiptDescription(payment.ProrationFromPlan ?? "-", payment.RequestedPlan.ToString(), end, d, c)
+                   + $" — {buyer.Name}";
+        else
+        {
+            var months = payment.RequestedPeriodMonths > 0 ? payment.RequestedPeriodMonths : 1;
+            desc = $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {payment.RequestedPlan} ({months} เดือน) — {buyer.Name}";
+        }
+        if (payment.CouponDiscountAmount > 0m && !string.IsNullOrWhiteSpace(payment.CouponCode))
+            desc += $" · ส่วนลดคูปอง {payment.CouponCode}";
+        return desc;
     }
 
     /// <summary>ฝ่ายค้านรอบ 227 N3: ตัวตรวจเลขผู้เสียภาษีตัวเดียวของระบบ (13 หลัก + checksum mod-11 · กฎเหล็ก #2 A) — เดิมนับแค่ 13 หลัก</summary>

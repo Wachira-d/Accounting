@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.Constants;
@@ -29,18 +30,63 @@ public class PlatformPaymentController : ControllerBase
     private readonly AccountingDbContext _db;
     private readonly IPlatformPaymentService _platform;
     private readonly ILegalDocumentService _legal;
+    private readonly IPlatformSavedCardService _savedCards;
 
-    public PlatformPaymentController(AccountingDbContext db, IPlatformPaymentService platform, ILegalDocumentService legal)
-    { _db = db; _platform = platform; _legal = legal; }
+    public PlatformPaymentController(AccountingDbContext db, IPlatformPaymentService platform, ILegalDocumentService legal,
+        IPlatformSavedCardService savedCards)
+    { _db = db; _platform = platform; _legal = legal; _savedCards = savedCards; }
 
     /// <summary>วิธีชำระค่าบริการ NextAcc + ข้อความ/ฉบับนโยบายที่ต้องติ๊ก — หน้าเว็บแสดงอย่างเดียว (ตัวเดียวกับ <c>metering/platform-pay</c>)</summary>
     [HttpGet]
     public async Task<ActionResult<ApiResponse<object>>> Info(Guid companyId, CancellationToken ct)
         => Ok(new ApiResponse<object>(true, await PlatformPayInfo.BuildAsync(_db, _platform, _legal, ct)));
 
-    /// <summary>คำขอเริ่มชำระ — ยอดมาจากเซิร์ฟเวอร์เท่านั้น · <c>PolicyAccepted</c>/<c>PolicyVersionShown</c> = ช่องติ๊กยอมรับนโยบาย</summary>
+    /// <summary>คำขอเริ่มชำระ — ยอดมาจากเซิร์ฟเวอร์เท่านั้น · <c>PolicyAccepted</c>/<c>PolicyVersionShown</c> = ช่องติ๊กยอมรับนโยบาย ·
+    /// รอบ 230: <c>SaveCard</c> + <c>SaveCardConsent</c>/<c>SaveCardConsentVersionShown</c> = ติ๊ก "บันทึกบัตรเพื่อตัดอัตโนมัติ" (บัตรเท่านั้น · ยินยอมบังคับ)</summary>
     public sealed record StartRequest(PaymentMethodKind Method = PaymentMethodKind.PromptPay, string? ReturnUrl = null, string? CardToken = null,
-        bool PolicyAccepted = false, string? PolicyVersionShown = null);
+        bool PolicyAccepted = false, string? PolicyVersionShown = null,
+        bool SaveCard = false, bool SaveCardConsent = false, string? SaveCardConsentVersionShown = null,
+        // ฝ่ายค้านรอบ 230 S1: ผู้จ่ายนิติบุคคลติ๊กรับทราบแยกว่าตัดอัตโนมัติไม่หักภาษี ณ ที่จ่าย
+        bool SaveCardWhtAcknowledged = false);
+
+    /// <summary>รอบ 230 (§5.2): ข้อความยินยอม "บันทึกบัตรเพื่อตัดอัตโนมัติ" ที่หน้าชำระด้วยบัตรแสดง — null = ไม่เสนอ (ปิดทั้งระบบ/ช่องทางไม่รองรับ)</summary>
+    [HttpGet("saved-card-offer")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.BillingManage)]
+    public async Task<ActionResult<ApiResponse<object>>> SavedCardOffer(Guid companyId, CancellationToken ct)
+        => Ok(new ApiResponse<object>(true, await _savedCards.OfferAsync(companyId, ct)));
+
+    private PlatformCardActor Actor() => new(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(System.Security.Claims.ClaimTypes.Email),
+        HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());
+
+    /// <summary>รอบ 230: ติ๊กบันทึกบัตร ⇒ บันทึกบัตรจากโทเคนก่อน (ยินยอมบังคับ · ผู้ให้บริการสร้างลูกค้า + ผูกบัตร) แล้วชำระด้วยบัตรที่บันทึก (โทเคนใช้ได้ครั้งเดียว) ·
+    /// ไม่ติ๊ก ⇒ null (ชำระด้วยโทเคนตามเดิม)</summary>
+    private async Task<PlatformCardRefs?> SaveCardIfAskedAsync(Guid companyId, StartRequest req, CancellationToken ct)
+    {
+        if (!req.SaveCard) return null;
+        if (req.Method != PaymentMethodKind.Card || string.IsNullOrWhiteSpace(req.CardToken))
+            throw new BusinessRuleException("บันทึกบัตรได้เฉพาะการชำระด้วยบัตร", PlatformSavedCardRules.RuleSave);
+        return await _savedCards.SaveFromTokenAsync(companyId, req.CardToken, req.SaveCardConsent, req.SaveCardConsentVersionShown,
+            req.SaveCardWhtAcknowledged, Actor(), ct);
+    }
+
+    /// <summary>ฝ่ายค้านรอบ 230 S3/B2: เริ่มชำระ (ด้วยบัตรที่เพิ่งบันทึกถ้ามี) — เริ่มไม่สำเร็จ ⇒ ทิ้งบัตรที่ยังไม่เคยใช้ (ไม่ค้างบัตร/ความยินยอมลอย) ·
+    /// ผูกรายการแรกเฉพาะรายการที่สร้างในคำขอนี้ (<c>startedAt</c>)</summary>
+    private async Task<PaymentIntent> StartMaybeSavedAsync(Guid companyId, StartRequest req, Func<PlatformCardRefs?, Task<PaymentIntent>> start,
+        CancellationToken ct)
+    {
+        var startedAt = DateTime.UtcNow;
+        var saved = await SaveCardIfAskedAsync(companyId, req, ct);
+        PaymentIntent intent;
+        try { intent = await start(saved); }
+        catch (Exception) when (saved != null)
+        {
+            await _savedCards.DiscardUnusedAsync(companyId, saved.SavedCardId, "เริ่มชำระไม่สำเร็จหลังบันทึกบัตร", CancellationToken.None);
+            throw;
+        }
+        await _db.SaveChangesAsync(ct);   // หลักฐานการยอมรับ (ใบเดิมที่ใช้ซ้ำไม่ผ่าน SaveChanges ของ StartAsync)
+        if (saved != null) await _savedCards.BindFirstIntentAsync(companyId, saved.SavedCardId, intent, startedAt, ct);
+        return intent;
+    }
 
     [HttpPost("addons/{featureCode}/intents")]
     [Accounting.Filters.RejectApiKey("ชำระค่าส่วนเสริม")]
@@ -54,8 +100,8 @@ public class PlatformPaymentController : ControllerBase
             await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, _legal, companyId, User,
                 PurchasePolicyAcceptance.ChannelPlatformAddOn, sourceId, req.PolicyAccepted, req.PolicyVersionShown,
                 HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
-            var intent = await _platform.StartAddOnAsync(companyId, featureCode, req.Method, req.ReturnUrl, req.CardToken, ct);
-            await _db.SaveChangesAsync(ct);   // หลักฐานการยอมรับ (ใบเดิมที่ใช้ซ้ำไม่ผ่าน SaveChanges ของ StartAsync)
+            var intent = await StartMaybeSavedAsync(companyId, req,
+                saved => _platform.StartAddOnAsync(companyId, featureCode, req.Method, req.ReturnUrl, req.CardToken, ct, saved), ct);
             return Ok(new ApiResponse<object>(true, Map(intent)));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
@@ -78,8 +124,8 @@ public class PlatformPaymentController : ControllerBase
             await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, _legal, companyId, User,
                 PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentId, req.PolicyAccepted, req.PolicyVersionShown,
                 HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
-            var intent = await _platform.StartSubscriptionPaymentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct);
-            await _db.SaveChangesAsync(ct);
+            var intent = await StartMaybeSavedAsync(companyId, req,
+                saved => _platform.StartSubscriptionPaymentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct, saved), ct);
             return Ok(new ApiResponse<object>(true, Map(intent)));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }

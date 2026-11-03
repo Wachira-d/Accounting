@@ -57,6 +57,15 @@ public static class InstructorPayRule
 {
     public const string RuleCode = "CMS-INSTRUCTOR-PAY";
 
+    /// <summary>รอบ 230 (CMS_SETTINGS_UX_AUDIT §6 ค้างข้อ 4): ตัวเลือกกติกาค่าตอบแทน — ตารางเดียว (ศูนย์ตั้งค่าเว็บ › การจอง แสดงตรง ไม่มีสำเนาในหน้า)</summary>
+    public static readonly IReadOnlyList<Accounting.Models.DTOs.Commission.PayModeOption> ModeOptions = new[]
+    {
+        new Accounting.Models.DTOs.Commission.PayModeOption(nameof(InstructorPayMode.None), "ไม่คิดค่าตอบแทน"),
+        new Accounting.Models.DTOs.Commission.PayModeOption(nameof(InstructorPayMode.PerClass), "ต่อคลาส (บาท)"),
+        new Accounting.Models.DTOs.Commission.PayModeOption(nameof(InstructorPayMode.PerHead), "ต่อหัว (บาท)"),
+        new Accounting.Models.DTOs.Commission.PayModeOption(nameof(InstructorPayMode.PercentOfRevenue), "% ของรายได้"),
+    };
+
     private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
     private static bool Held(BookingStatus s) => s is BookingStatus.Completed or BookingStatus.NoShow;

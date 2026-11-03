@@ -26,10 +26,13 @@ public interface IPlatformPaymentService
     Task<PaymentProviderConfig?> PlatformConfigAsync(CancellationToken ct = default);
     Task<PlatformPayStatus> StatusAsync(CancellationToken ct = default);
     /// <summary>เริ่มชำระออนไลน์ (ช่องทางต้องเปิดรับเงินจริงแล้ว) — <paramref name="serverAmount"/> ต้องมาจากเซิร์ฟเวอร์ · ไม่ผ่าน ⇒ InvalidOperationException (ข้อความไทย)</summary>
+    /// <para>รอบ 230 (§5.2): <paramref name="savedCard"/> = ตัดด้วยบัตรที่บันทึกไว้ของผู้จ่ายรายนี้ (วิธีต้องเป็นบัตร · ไม่ต้องมีโทเคน)</para>
     Task<PaymentIntent> StartAsync(Guid payerCompanyId, PaymentSourceKind kind, Guid sourceId, decimal serverAmount, PaymentMethodKind method,
-        string? description, string? returnUrl, string? cardToken, CancellationToken ct = default);
-    Task<PaymentIntent> StartAddOnAsync(Guid payerCompanyId, string featureCode, PaymentMethodKind method, string? returnUrl, string? cardToken, CancellationToken ct = default);
-    Task<PaymentIntent> StartSubscriptionPaymentAsync(Guid payerCompanyId, Guid subscriptionPaymentId, PaymentMethodKind method, string? returnUrl, string? cardToken, CancellationToken ct = default);
+        string? description, string? returnUrl, string? cardToken, CancellationToken ct = default, PlatformCardRefs? savedCard = null);
+    Task<PaymentIntent> StartAddOnAsync(Guid payerCompanyId, string featureCode, PaymentMethodKind method, string? returnUrl, string? cardToken,
+        CancellationToken ct = default, PlatformCardRefs? savedCard = null);
+    Task<PaymentIntent> StartSubscriptionPaymentAsync(Guid payerCompanyId, Guid subscriptionPaymentId, PaymentMethodKind method, string? returnUrl,
+        string? cardToken, CancellationToken ct = default, PlatformCardRefs? savedCard = null);
     /// <summary>สถานะสดของรายการที่บริษัทนี้เป็นผู้จ่าย — รายการของบริษัทอื่น/ของร้าน ⇒ null</summary>
     Task<PaymentIntent?> RefreshForPayerAsync(Guid payerCompanyId, Guid intentId, CancellationToken ct = default);
     /// <summary>ต้นทางของรายการ (ส่วนเสริม: CompanyFeature.Id · แพ็กเกจ: SubscriptionPayment.Id) — ใช้ผูกหลักฐานยอมรับนโยบาย</summary>
@@ -96,7 +99,8 @@ public class PlatformPaymentService : IPlatformPaymentService
     }
 
     public async Task<PaymentIntent> StartAsync(Guid payerCompanyId, PaymentSourceKind kind, Guid sourceId, decimal serverAmount,
-        PaymentMethodKind method, string? description, string? returnUrl, string? cardToken, CancellationToken ct = default)
+        PaymentMethodKind method, string? description, string? returnUrl, string? cardToken, CancellationToken ct = default,
+        PlatformCardRefs? savedCard = null)
     {
         if (!PlatformRevenueSource.IsPlatformRevenue(kind))
             throw new InvalidOperationException("ช่องทางนี้รับเฉพาะค่าบริการ NextAcc");
@@ -106,9 +110,14 @@ public class PlatformPaymentService : IPlatformPaymentService
         if (reason != null) throw new InvalidOperationException(reason);
         if (!MethodsOf(cfg!).Contains(method.ToString()))
             throw new InvalidOperationException("ช่องทางรับชำระของ NextAcc ไม่ได้เปิดวิธีชำระนี้");
+        // รอบ 230: บัตรที่บันทึกไว้ต้องเป็นของผู้จ่ายรายนี้ + ผู้ให้บริการ/โหมดเดียวกับช่องทางตอนนี้ (ตัวตัดสินเดียว PlatformSavedCardRules.UseRefusal)
+        if (savedCard != null && PlatformSavedCardRules.UseRefusal(method == PaymentMethodKind.Card, savedCard.PayerCompanyId == payerCompanyId,
+                savedCard.ProviderCode == cfg!.ProviderCode, savedCard.IsTestMode == (cfg.Mode == PaymentProviderMode.Test)) is string cardNo)
+            throw new InvalidOperationException(cardNo);
         return await _intents.StartAsync(cfg!.CompanyId, new StartPaymentRequest(
-            kind, sourceId, serverAmount, method, description, ReturnUrl: returnUrl, CardToken: cardToken,
-            PayerCompanyId: payerCompanyId), providerCode: cfg.ProviderCode, ct: ct);
+            kind, sourceId, serverAmount, method, description, ReturnUrl: returnUrl, CardToken: savedCard == null ? cardToken : null,
+            PayerCompanyId: payerCompanyId, CustomerRef: savedCard?.CustomerRef, SavedCardRef: savedCard?.CardRef),
+            providerCode: cfg.ProviderCode, ct: ct);
     }
 
     public async Task<Guid?> AddOnSourceIdAsync(Guid payerCompanyId, string featureCode, CancellationToken ct = default)
@@ -117,7 +126,7 @@ public class PlatformPaymentService : IPlatformPaymentService
             .Select(f => (Guid?)f.Id).FirstOrDefaultAsync(ct);
 
     public async Task<PaymentIntent> StartAddOnAsync(Guid payerCompanyId, string featureCode, PaymentMethodKind method, string? returnUrl,
-        string? cardToken, CancellationToken ct = default)
+        string? cardToken, CancellationToken ct = default, PlatformCardRefs? savedCard = null)
     {
         var sourceId = await AddOnSourceIdAsync(payerCompanyId, featureCode, ct)
             ?? throw new InvalidOperationException("ยังไม่ได้เปิดใช้ส่วนเสริมนี้");
@@ -129,16 +138,16 @@ public class PlatformPaymentService : IPlatformPaymentService
         if (due <= 0m) throw new InvalidOperationException("ส่วนเสริมนี้ไม่มียอดค้างชำระ");
         var name = await _db.ApiFeatures.AsNoTracking().Where(f => f.FeatureCode == featureCode).Select(f => f.Name).FirstOrDefaultAsync(ct) ?? featureCode;
         return await StartAsync(payerCompanyId, PaymentSourceKind.AddOnPurchase, sourceId, due, method,
-            $"ค่าส่วนเสริม {name}", returnUrl, cardToken, ct);
+            $"ค่าส่วนเสริม {name}", returnUrl, cardToken, ct, savedCard);
     }
 
     public async Task<PaymentIntent> StartSubscriptionPaymentAsync(Guid payerCompanyId, Guid subscriptionPaymentId, PaymentMethodKind method,
-        string? returnUrl, string? cardToken, CancellationToken ct = default)
+        string? returnUrl, string? cardToken, CancellationToken ct = default, PlatformCardRefs? savedCard = null)
     {
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == subscriptionPaymentId && p.Subscription.CompanyId == payerCompanyId)
             .Select(p => new { p.Id, p.Amount, p.Status, p.PaymentNumber, p.SlipFileName, p.RequestedPlan, p.RequestedBillingCycle,
-                p.PlatformInvoiceDocumentId, Held = p.AttentionReason != null })
+                p.PlatformInvoiceDocumentId, Held = p.AttentionReason != null, p.QuotedAmount })
             .FirstOrDefaultAsync(ct)
             ?? throw new InvalidOperationException("ไม่พบรายการชำระค่าแพ็กเกจของบริษัทนี้");
         if (pay.Status is not (SubscriptionPaymentStatus.Pending or SubscriptionPaymentStatus.UnderReview))
@@ -151,15 +160,18 @@ public class PlatformPaymentService : IPlatformPaymentService
         if (pay.PlatformInvoiceDocumentId == null)
         {
             var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == pay.RequestedPlan && t.IsActive, ct);
-            var listPrice = template == null ? 0m : PlatformPlanPricing.AmountDue(template, pay.RequestedBillingCycle);
-            if (template == null || listPrice <= 0m || !PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m)
+            // รอบ 230 โควตา/บิล (ฝ่ายค้าน B1): ตัวตัดสินเดียวกับ handler — รายการที่เซิร์ฟเวอร์เสนอยอดเอง (ส่วนต่างอัปเกรด/คูปอง/แอดมินแก้) เทียบ QuotedAmount ·
+            // รายการราคาเต็มเทียบราคาแพ็กเกจปัจจุบันตามเดิม (ราคาเปลี่ยน = ปฏิเสธ)
+            var listPrice = PlatformPlanPricing.AutoApproveExpected(pay.QuotedAmount,
+                template == null ? 0m : PlatformPlanPricing.AmountDue(template, pay.RequestedBillingCycle));
+            if ((template == null && pay.QuotedAmount == null) || listPrice <= 0m || !PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m)
                 throw new InvalidOperationException("ยอดของรายการชำระนี้ไม่ตรงกับราคาแพ็กเกจปัจจุบัน (ราคาอาจเปลี่ยนหลังสร้างรายการ) — "
                     + "กรุณาเลือกแพ็กเกจใหม่เพื่อสร้างรายการชำระตามราคาปัจจุบัน หรือติดต่อผู้ดูแลระบบ");
         }
         else if (pay.Amount <= 0m) throw new InvalidOperationException("รายการชำระใบแจ้งหนี้นี้ไม่มียอด");
         // ยอด = ยอดของรายการชำระที่เซิร์ฟเวอร์คำนวณตอนสร้าง (PlatformPlanPricing.AmountDue) — handler ตรวจกับตารางราคาอีกชั้น
         return await StartAsync(payerCompanyId, PaymentSourceKind.SubscriptionPayment, pay.Id, pay.Amount, method,
-            $"ค่าแพ็กเกจ {pay.PaymentNumber}", returnUrl, cardToken, ct);
+            $"ค่าแพ็กเกจ {pay.PaymentNumber}", returnUrl, cardToken, ct, savedCard);
     }
 
     public async Task<PaymentIntent?> RefreshForPayerAsync(Guid payerCompanyId, Guid intentId, CancellationToken ct = default)

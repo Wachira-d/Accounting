@@ -897,6 +897,7 @@ const API = {
       calculateCIT: (d) => API.post(`${base}/financial/cit`, d),
       getCITs: () => API.get(`${base}/financial/cit`),
       postCIT: (id) => API.post(`${base}/financial/cit/${id}/post`),
+      previewCITPeriod: (taxYear, taxPeriod) => API.get(`${base}/financial/cit/period?taxYear=${encodeURIComponent(taxYear)}&taxPeriod=${encodeURIComponent(taxPeriod)}`),
       createAppropriation: (d) => API.post(`${base}/financial/profit-appropriation`, d),
       getAppropriations: () => API.get(`${base}/financial/profit-appropriation`),
       approveAppropriation: (id) => API.post(`${base}/financial/profit-appropriation/${id}/approve`),

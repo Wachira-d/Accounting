@@ -137,6 +137,19 @@
       } catch { return null; }
     },
 
+    /** รอบ 230: ข้อเสนอ "บันทึกบัตรเพื่อตัดอัตโนมัติ" (ข้อความยินยอม + ฉบับจากเซิร์ฟเวอร์) — เฉพาะเส้นค่าบริการ NextAcc (platform-pay) · null = ไม่เสนอ */
+    async _savedCardOffer() {
+      const o = this._opts;
+      if (o.savedCardOffer !== undefined) return o.savedCardOffer;
+      if (!o.publicBase || String(o.publicBase).indexOf('/platform-pay/') < 0 || !o.companyId) return null;
+      try {
+        const res = await fetch(`/api/companies/${o.companyId}/platform-pay/saved-card-offer`, { headers: this._authHeader() });
+        const json = await res.json();
+        const d = json && json.data;
+        return d && d.text && d.version ? d : null;
+      } catch { return null; }
+    },
+
     async _renderCardForm() {
       this._setBody('<div style="padding:28px;text-align:center;color:#64748b">กำลังเตรียมช่องกรอกบัตร…</div>');
       const setup = await this._cardSetup();
@@ -145,6 +158,7 @@
         return;
       }
       this._cardSetupValue = setup;
+      const offer = this._offerValue = await this._savedCardOffer();
       const inp = 'width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:9px 10px;font-size:14px';
       const yearNow = new Date().getFullYear();
       this._setBody(`
@@ -161,6 +175,11 @@
               <label style="font-size:12px;color:#475569">CVV<input id="pwCardCvc" autocomplete="cc-csc" inputmode="numeric" maxlength="4" type="password" style="${inp}"></label>
             </div>
           </div>
+          ${offer ? `<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#334155;margin-top:12px;line-height:1.6">
+            <input type="checkbox" id="pwSaveCard" style="margin-top:3px">
+            <span><b>บันทึกบัตรเพื่อตัดอัตโนมัติ</b> (ไม่บังคับ)<br>${esc(offer.text)}</span></label>
+            ${offer.whtWarning ? `<label style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:#92400e;margin-top:8px;line-height:1.6">
+            <input type="checkbox" id="pwSaveCardWht" style="margin-top:3px"><span>${esc(offer.whtWarning)}</span></label>` : ''}` : ''}
           <div id="pwCardError" style="color:#b91c1c;font-size:12px;margin-top:8px"></div>
           <div style="font-size:11px;color:#64748b;margin-top:8px;line-height:1.6">ข้อมูลบัตรส่งตรงถึงผู้ให้บริการรับชำระเงินเพื่อแปลงเป็นรหัสใช้ครั้งเดียว — ระบบของเราไม่เห็นและไม่เก็บเลขบัตร · ธนาคารอาจพาไปยืนยันตัวตน (3-D Secure) แล้วกลับมาหน้านี้เอง</div>
           <div style="display:flex;gap:8px;margin-top:14px">
@@ -185,6 +204,21 @@
         return;
       }
       if (card.year.length === 2) card.year = '20' + card.year;
+      // รอบ 230: ติ๊กบันทึกบัตร = ยินยอมตามข้อความ (ฉบับที่แสดงส่งกลับให้เซิร์ฟเวอร์ตรวจ) · ไม่ติ๊ก = ล้างค่าที่อาจค้างจากครั้งก่อน
+      const saveBox = document.getElementById('pwSaveCard');
+      const extra = Object.assign({}, this._opts.extraBody || {});
+      delete extra.saveCard; delete extra.saveCardConsent; delete extra.saveCardConsentVersionShown; delete extra.saveCardWhtAcknowledged;
+      if (saveBox && saveBox.checked && this._offerValue) {
+        // ฝ่ายค้าน S1: นิติบุคคลต้องติ๊กรับทราบภาษีหัก ณ ที่จ่ายแยก (เซิร์ฟเวอร์ตรวจซ้ำ)
+        const whtBox = document.getElementById('pwSaveCardWht');
+        if (this._offerValue.whtWarning && !(whtBox && whtBox.checked)) {
+          if (errBox) errBox.textContent = 'ติ๊กรับทราบเรื่องภาษีหัก ณ ที่จ่ายก่อน หรือเอาเครื่องหมายบันทึกบัตรออก';
+          return;
+        }
+        extra.saveCard = true; extra.saveCardConsent = true; extra.saveCardConsentVersionShown = this._offerValue.version;
+        extra.saveCardWhtAcknowledged = !!(whtBox && whtBox.checked);
+      }
+      this._opts.extraBody = extra;
       if (btn) { btn.disabled = true; btn.textContent = 'กำลังตรวจบัตร…'; }
       const setup = this._cardSetupValue;
       try {

@@ -2059,9 +2059,11 @@ public partial class TaxService : ITaxService
     public async Task<decimal> ComputeSection65TerAddBackAsync(
         Guid companyId, DateTime fromDate, DateTime toDate)
     {
+        // รอบ 230 N1: วันสุดท้ายรวมทั้งวัน (เดิม <= toDate ⇒ รายการ 15:00 ของวันสุดท้ายหลุด) — ขอบเดียวกับ CitPeriodLines/CitPeriodFigures
+        var toExclusive = toDate.Date.AddDays(1);
         var nonDeductDocs = await _db.Documents.AsNoTracking()
             .Where(d => d.CompanyId == companyId
-                && d.DocumentDate >= fromDate && d.DocumentDate <= toDate
+                && d.DocumentDate >= fromDate && d.DocumentDate < toExclusive
                 && !Accounting.Helpers.DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided
                 && d.Status != DocumentStatus.Rejected
                 && d.NonDeductibleAmount > 0)
@@ -2117,7 +2119,7 @@ public partial class TaxService : ITaxService
                 .Where(l => l.JournalEntry.CompanyId == companyId
                     && (penaltyJeIds.Contains(l.JournalEntryId)
                         || (l.JournalEntry.OriginalEntryId != null && penaltyJeIds.Contains(l.JournalEntry.OriginalEntryId.Value)))
-                    && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate
+                    && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate < toExclusive
                     && l.Account!.AccountType == AccountType.Expense)
                 .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
         if (markedOnly.Count > 0)
@@ -2126,7 +2128,7 @@ public partial class TaxService : ITaxService
                 .Where(l => l.JournalEntry.CompanyId == companyId
                     && (markedOnly.Contains(l.JournalEntryId)
                         || (l.JournalEntry.OriginalEntryId != null && markedOnly.Contains(l.JournalEntry.OriginalEntryId.Value)))
-                    && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate <= toDate
+                    && l.JournalEntry.EntryDate >= fromDate && l.JournalEntry.EntryDate < toExclusive
                     && l.Account!.AccountType == AccountType.Expense
                     && l.Description != null && l.Description.Contains(Accounting.Helpers.LatePaymentPenaltyPolicy.Section65Ter6Marker))
                 .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
@@ -2156,7 +2158,10 @@ public partial class TaxService : ITaxService
         var totalRevenue = revenueLines.Sum(l => l.CreditAmount - l.DebitAmount);
 
         // Calculate total expenses
+        // ★ รอบ 230 (TAX_PENALTY_AUDIT §6): ไม่หักค่าใช้จ่ายภาษีเงินได้ (580xx) — §65 ตรี(6 ทวิ) · ตั้งหนี้ CIT ลงวันสิ้นรอบแล้ว ⇒ ถ้าไม่ตัด ภาษีจะหักตัวเอง ·
+        // ตัวกรองเดียวกับเครื่องคำนวณหน้าบริหารการเงิน + ภ.ง.ด.51 + ตัวเทียบความสด (CitFreshTotalsAsync)
         var expenseLines = await CitPeriodLines(companyId, startDate, endDate)
+            .ExceptCitExpense()
             .Include(l => l.JournalEntry)
             .Include(l => l.Account)
             .Where(l => l.Account!.AccountType == AccountType.Expense)
@@ -2164,30 +2169,10 @@ public partial class TaxService : ITaxService
 
         var totalExpenses = expenseLines.Sum(l => l.DebitAmount - l.CreditAmount);
 
-        // Query fixed assets for tax depreciation
-        var activeAssets = await _db.Set<FixedAsset>()
-            .Where(a => a.CompanyId == companyId && a.Status == AssetStatus.Active)
-            .Select(a => a.Id)
-            .ToListAsync();
-
-        var totalDepreciation = 0m;
-        if (activeAssets.Any())
-        {
-            // B8: ค่าเสื่อมต้องอยู่ใน **รอบบัญชีเดียวกับรายได้/ค่าใช้จ่าย** —
-            // เดิมกรอง `d.Year == year` (ปีปฏิทิน) ขณะที่ขาอื่นใช้ startDate..
-            // endDate ที่เคารพ FiscalYearStartMonth ⇒ บริษัทรอบไม่ตรงปีปฏิทิน
-            // (เช่น ก.ค.–มิ.ย.) ได้ค่าเสื่อมผิดรอบทั้งก้อน. AssetDepreciation
-            // เก็บ Year+Month → เทียบเป็น (ปี,เดือน) ตามช่วงรอบจริง
-            var depFrom = (startDate.Year, startDate.Month);
-            var depTo = (endDate.Year, endDate.Month);
-            var depRows = await _db.Set<AssetDepreciation>()
-                .Where(d => activeAssets.Contains(d.FixedAssetId)
-                    && (d.Year > depFrom.Item1 || (d.Year == depFrom.Item1 && d.Month >= depFrom.Item2))
-                    && (d.Year < depTo.Item1 || (d.Year == depTo.Item1 && d.Month <= depTo.Item2)))
-                .Select(d => d.Amount)
-                .ToListAsync();
-            totalDepreciation = depRows.Sum();
-        }
+        // ค่าเสื่อมที่ยังไม่อยู่ใน GL — คำตัดสิน coordinator รอบ 230: เดิมบวกทุกแถว AssetDepreciation ของรอบ ทั้งที่แถวที่ลงบัญชีแล้ว
+        // (FixedAssetService: JE วันสิ้นเดือน Dr ผังค่าเสื่อม · ประทับ IsPosted + JournalEntryId) อยู่ใน expenseLines แล้ว ⇒ หักซ้ำ ·
+        // ตอนนี้นับเฉพาะแถวที่ยังไม่ลงบัญชี ผ่านตัวโหลดเดียวกับเครื่องคำนวณ (Tax/CitPeriodFigures) · B8 ช่วง (ปี,เดือน) ตามรอบจริงคงเดิม
+        var totalDepreciation = await Accounting.Services.Implementations.Tax.CitPeriodFigures.UnbookedDepreciationAsync(_db, companyId, startDate, endDate);
 
         // Add depreciation to total expenses
         totalExpenses += totalDepreciation;
@@ -2206,16 +2191,14 @@ public partial class TaxService : ITaxService
         // net profit เพื่อคำนวณ CIT.
         // ตรวจหาบัญชีค่ารับรองโดย InputVatClaimable=false (seed มาเป็น
         // ค่ารับรอง) หรือ AccountName match "รับรอง".
+        // รอบ 230: เกณฑ์ผัง + เพดานย้ายไป Helpers/CitCalculation ตัวเดียว (เครื่องคำนวณหน้าบริหารการเงินใช้ชุดเดียวกัน)
         var entertainmentLines = expenseLines.Where(l => l.Account != null
-            && (l.Account.InputVatClaimable == false
-                || (l.Account.AccountName != null && l.Account.AccountName.Contains("รับรอง"))))
+            && Accounting.Helpers.CitCalculation.IsEntertainmentAccount(l.Account.AccountCode, l.Account.AccountName))
             .ToList();
         var entertainmentExpense = entertainmentLines.Sum(l => l.DebitAmount - l.CreditAmount);
         var paidUpCapital = company?.PaidUpCapital ?? 0m;
-        var revenueLimit = totalRevenue * 0.003m;
-        var capitalLimit = paidUpCapital * 0.003m;
-        var entertainmentCap = Math.Min(10_000_000m, Math.Max(revenueLimit, capitalLimit));
-        var entertainmentExcess = Math.Max(0, entertainmentExpense - entertainmentCap);
+        var entertainmentCap = Accounting.Helpers.CitCalculation.EntertainmentCap(totalRevenue, paidUpCapital);   // ป้ายบรรทัดรายงาน (ฝ่ายค้าน B1)
+        var entertainmentExcess = Accounting.Helpers.CitCalculation.EntertainmentExcess(entertainmentExpense, totalRevenue, paidUpCapital, halfYear: false);
 
         // §65 ตรี — รายจ่ายต้องห้ามอื่น ๆ ที่ Section65TerValidator คำนวณตอน approve
         // (ค่าปรับ/เบี้ยปรับ, รายจ่ายส่วนตัว, ไม่มีผู้รับเงิน, capex ลงเป็น expense ฯลฯ)
@@ -2247,32 +2230,10 @@ public partial class TaxService : ITaxService
             .Select(t => new { t.Year, NetProfit = t.NetVat })
             .ToListAsync();
 
-        // pool ของขาดทุนที่ยังไม่ถูกใช้: (ปีที่เกิด, ยอดคงเหลือ)
-        var lossPool = new List<(int Year, decimal Remaining)>();
-        foreach (var pr in priorCitReports)
-        {
-            // ตัดโควตาที่หมดอายุ (ขาดทุนปี Y ใช้ได้ถึงปี Y+5)
-            lossPool.RemoveAll(x => pr.Year > x.Year + 5);
-            if (pr.NetProfit < 0)
-            {
-                lossPool.Add((pr.Year, Math.Abs(pr.NetProfit)));
-                continue;
-            }
-            // ปีกำไร → กินโควตาเก่าสุดก่อน
-            var profitLeft = pr.NetProfit;
-            for (var i = 0; i < lossPool.Count && profitLeft > 0; i++)
-            {
-                var use = Math.Min(lossPool[i].Remaining, profitLeft);
-                lossPool[i] = (lossPool[i].Year, lossPool[i].Remaining - use);
-                profitLeft -= use;
-            }
-            lossPool.RemoveAll(x => x.Remaining <= 0.005m);
-        }
-        lossPool.RemoveAll(x => year > x.Year + 5);   // หมดอายุ ณ ปีที่กำลังคำนวณ
-        var lossCarryForwardAvailable = lossPool.Sum(x => x.Remaining);
-        var lossCarryForwardUsed = netProfitBeforeTax > 0
-            ? Math.Min(lossCarryForwardAvailable, netProfitBeforeTax)
-            : 0m;
+        // รอบ 230 ฝ่ายค้าน S4: pool FIFO ย้ายไปตัวตั้งเดียว CitCalculation.LossCarryForwardAvailable (เครื่องคำนวณหน้าบริหารการเงินใช้ตัวเดียวกัน)
+        var lossCarryForwardAvailable = Accounting.Helpers.CitCalculation.LossCarryForwardAvailable(
+            priorCitReports.Select(p => (p.Year, p.NetProfit)), year);
+        var lossCarryForwardUsed = Accounting.Helpers.CitCalculation.LossCarryForwardUsed(lossCarryForwardAvailable, netProfitBeforeTax);
 
         // อัตรา CIT — คิดจากกำไรหลังหักผลขาดทุนยกมาแล้ว (ฐานภาษีจริงตาม §65 ตรี(12))
         //
@@ -2287,7 +2248,7 @@ public partial class TaxService : ITaxService
         // ไม่ใช่ตัดสินเงียบ (บริษัทที่ยังไม่กรอกทุนจะเห็นว่าทำไมถึงได้ 20%)
         var smeReason = Accounting.Helpers.CitRateTable.SmeReason(paidUpCapital, totalRevenue);
         var taxableProfit = netProfitBeforeTax - lossCarryForwardUsed;
-        var citAmount = CalculateThaiCit(taxableProfit, isSme);
+        var citAmount = CalculateThaiCit(taxableProfit, isSme, year);   // N6: ตารางของรอบบัญชีนี้
         var netCitAmount = citAmount;
 
         // ===== เครดิตภาษีที่ "เราถูกหัก ณ ที่จ่าย" (ภ.ง.ด.50/51) =====
@@ -2297,10 +2258,11 @@ public partial class TaxService : ITaxService
         // ⚠️ นับเฉพาะรายการที่ "มีหนังสือรับรองจริง" (Received/Claimed) —
         // รายการ Pending คือถูกหักแล้วแต่ยังไม่ได้ใบ ซึ่งกฎหมายยังเครดิตไม่ได้
         // (ดู WHT_CREDIT_PLAN.md ข้อ L1) การเอา Pending มารวมจะทำให้ยื่นเกินสิทธิ์
+        // รอบ 230 ฝ่ายค้าน S5: กติกาเดียวกับเครื่องคำนวณหน้าบริหารการเงิน — วันที่บนหนังสือรับรองอยู่ในรอบบัญชี (เดิม TaxYear = ปีที่กรอก ⇒ รอบไม่ตรงปีปฏิทินนับผิดรอบ)
         var whtCreditRows = await _db.WhtCreditsReceived.AsNoTracking()
-            .Where(w => w.CompanyId == companyId && w.TaxYear == year
-                && (w.Status == WhtCreditStatus.Received || w.Status == WhtCreditStatus.Claimed))
+            .CreditableInPeriod(companyId, startDate, endDate)
             .Select(w => w.WhtAmount).ToListAsync();
+        var whtUndated = await _db.WhtCreditsReceived.AsNoTracking().CreditableUndated(companyId, year).CountAsync();
         var whtCredit = whtCreditRows.Sum();
         var whtPendingRows = await _db.WhtCreditsReceived.AsNoTracking()
             .Where(w => w.CompanyId == companyId && w.TaxYear == year
@@ -2343,7 +2305,7 @@ public partial class TaxService : ITaxService
             {
                 TaxReportId = report.Id,
                 LineOrder = lineOrder++,
-                Description = "ค่าเสื่อมราคาทางภาษี",
+                Description = "ค่าเสื่อมราคาที่ยังไม่ลงบัญชี (ค่าเสื่อมที่ลงบัญชีแล้วอยู่ในค่าใช้จ่ายทั้งปี)",
                 IncomeAmount = totalDepreciation,
                 TaxAmount = 0
             });
@@ -2447,6 +2409,19 @@ public partial class TaxService : ITaxService
                 IncomeAmount = whtPending,
                 TaxAmount = 0,
                 IncomeTypeCode = "WHT_PENDING"
+            });
+        }
+        if (whtUndated > 0)
+        {
+            // รอบ 230 S5: หนังสือรับรองที่ได้รับแล้วแต่ไม่มีวันที่ ⇒ นับเข้ารอบไม่ได้ — ดังบนรายงาน (ไม่ทิ้งเงียบ)
+            report.Lines.Add(new TaxReportLine
+            {
+                TaxReportId = report.Id,
+                LineOrder = lineOrder++,
+                Description = $"⚠️ หนังสือรับรองภาษีถูกหักที่ได้รับแล้ว {whtUndated} ใบไม่มีวันที่ — ไม่ได้นับเป็นเครดิต (กรอกวันที่ในทะเบียนภาษีถูกหัก แล้วสร้างรายงานใหม่)",
+                IncomeAmount = 0,
+                TaxAmount = 0,
+                IncomeTypeCode = "WHT_UNDATED"
             });
         }
         report.Lines.Add(new TaxReportLine
@@ -2629,8 +2604,9 @@ public partial class TaxService : ITaxService
     /// </summary>
     /// <param name="isSme">ผลของ <see cref="Accounting.Helpers.CitRateTable.IsSme"/>
     /// ของบริษัทนั้น — ห้ามตั้งค่าตายตัว</param>
-    private static decimal CalculateThaiCit(decimal netProfit, bool isSme)
-        => Accounting.Helpers.CitRateTable.Compute(netProfit, isSme);
+    /// <param name="fiscalYear">ปีรอบบัญชี (รอบ 230 N6 — ตาราง <c>CitRateBracket</c> ตามปี)</param>
+    private static decimal CalculateThaiCit(decimal netProfit, bool isSme, int fiscalYear)
+        => Accounting.Helpers.CitRateTable.Compute(netProfit, isSme, fiscalYear);
 
     /// <summary>
     /// อัตราหัก ณ ที่จ่ายของบรรทัดที่ยังไม่ได้บันทึกอัตราไว้
@@ -2834,10 +2810,11 @@ public partial class TaxService : ITaxService
     /// </summary>
     private IQueryable<JournalEntryLine> CitPeriodLines(Guid companyId, DateTime start, DateTime endInclusive)
     {
+        var endExclusive = endInclusive.Date.AddDays(1);
         return _db.JournalEntryLines
             .Where(l => l.JournalEntry.CompanyId == companyId
                 && l.JournalEntry.EntryDate >= start
-                && l.JournalEntry.EntryDate <= endInclusive)
+                && l.JournalEntry.EntryDate < endExclusive)   // รอบ 230 N1: ขอบ [start, วันสุดท้าย + 1 วัน) เดียวกับบวกกลับ/เครื่องคำนวณ
             .WherePeriodActivity();
     }
 
@@ -2848,6 +2825,7 @@ public partial class TaxService : ITaxService
             .Where(l => l.Account!.AccountType == AccountType.Revenue)
             .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount)) ?? 0m;
         var expense = await CitPeriodLines(companyId, start, endInclusive).AsNoTracking()
+            .ExceptCitExpense()   // รอบ 230: ฐานเดียวกับ GenerateCitReport (ไม่หัก 580xx) — สองฝั่งกรองต่างกัน = ตัวเทียบฟ้องทุกใบ
             .Where(l => l.Account!.AccountType == AccountType.Expense)
             .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
         return (revenue, expense);

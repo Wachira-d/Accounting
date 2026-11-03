@@ -23,6 +23,19 @@
     .site-status.draft { background:#FEF3C7; color:#92400E }
     .site-status.published { background:#D1FAE5; color:#065F46 }
     .site-status.maintenance { background:#FEE2E2; color:#991B1B }
+    /* รอบ 230: wizard สร้างเว็บ 6 ขั้น + การ์ดตัวแก้ที่ใช้ร่วมกับศูนย์ตั้งค่าเว็บ (.sg-*) */
+    .wz-steps { display:flex; gap:4px; list-style:none; padding:0; margin:0 0 16px; flex-wrap:wrap }
+    .wz-steps li { flex:1; min-width:110px; font-size:12px; padding:6px 8px; border-radius:8px; background:var(--gray-50); color:var(--gray-500); border:1px solid var(--gray-200) }
+    .wz-steps li[aria-current="step"] { background:#eff6ff; color:#1d4ed8; border-color:#bfdbfe; font-weight:600 }
+    .wz-steps li.done { color:#15803d; border-color:#bbf7d0; background:#f0fdf4 }
+    .wz-h { margin-bottom:12px; font-size:15px; font-weight:600 }
+    .kind-card { border:1px solid var(--gray-200); border-radius:10px; padding:14px; cursor:pointer; background:#fff; text-align:left }
+    .kind-card:hover, .kind-card:focus { border-color:var(--primary); outline:none; box-shadow:0 0 0 3px rgba(79,70,229,.12) }
+    .kind-card .k-icon { font-size:28px } .kind-card .k-name { font-weight:700; font-size:14px; margin-top:4px } .kind-card .k-desc { font-size:12px; color:var(--gray-500); margin-top:2px; line-height:1.5 }
+    #createModal .sg-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:14px 16px; margin-bottom:12px }
+    #createModal .sg-card h3 { font-size:15px; font-weight:600; margin:0 0 4px }
+    #createModal .sg-hint, #createModal .bs-hint { font-size:12px; color:var(--gray-500) }
+    #createModal .sg-link { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 0; border-top:1px solid var(--gray-100); flex-wrap:wrap }
   </style>
 </head>
 <body>
@@ -32,7 +45,7 @@
       <div class="flex gap-2">
         <button class="btn btn-primary" onclick="Page.openCreate()"
                 data-tour-step="1"
-                data-tour-text="ขั้นที่ 1 — สร้างเว็บไซต์ใหม่ เลือก Template จาก 17 อุตสาหกรรม (ร้านค้า/ร้านอาหาร/โรงแรม/คลินิก/บริการ ฯลฯ)">+ สร้างเว็บไซต์ใหม่</button>
+                data-tour-text="ขั้นที่ 1 — สร้างเว็บไซต์ใหม่: บอกว่าธุรกิจของคุณคือแบบไหน แล้วเลือกแบบเว็บสำเร็จรูป ระบบพาตั้งค่ารับเงิน/จัดส่ง/การจองต่อจนพร้อม">+ สร้างเว็บไซต์ใหม่</button>
       </div>
     </div>
     <!-- รอบ 229 (QUOTA_ADDON §C · D-13): จำนวนเว็บที่ใช้/สิทธิ์ (เซิร์ฟเวอร์คำนวณ) + ปุ่มซื้อเพิ่ม — เต็มแล้วเว็บเดิมยังออนไลน์/แก้ไขได้ทั้งหมด -->
@@ -56,90 +69,99 @@
       <button class="btn btn-primary" onclick="Page.openCreate()">+ เริ่มสร้างเว็บไซต์</button>
     </div>
 
-    <!-- Create Modal -->
+    <!-- รอบ 230 (erp-review/2026-11-02/CMS_SETTINGS_UX_AUDIT.md §4.3 · §6 ค้างข้อ 2): wizard 6 ขั้นแทน modal 2 ขั้น —
+         1 ธุรกิจของคุณ → 2 แบบเว็บสำเร็จรูป → 3 ข้อมูลร้าน (สร้างเว็บตอนกดถัดไป) → 4 รับเงิน (การ์ดบัญชีรับโอนเดียวกับศูนย์ตั้งค่าเว็บ) →
+         5 จัดส่ง/รับเอง หรือ เวลาเปิดร้าน+การรับจอง (ตัวแก้ชุดเดียวกับศูนย์) → 6 ตรวจทาน (แผงความพร้อมจากเซิร์ฟเวอร์)
+         ทำต่อได้: ?setup={siteId}&step=N (ขั้น 4–6 ของเว็บที่สร้างแล้ว) · ปุ่ม "ตั้งค่าเริ่มต้นต่อ" บนการ์ดเว็บที่ยังตั้งไม่ครบ · ข้ามได้ทุกขั้นหลังสร้างเว็บ -->
     <div class="modal-overlay" id="createModal">
       <div class="modal" style="max-width:900px">
         <div class="modal-header">
-          <h3 class="modal-title">สร้างเว็บไซต์ใหม่</h3>
-          <button class="modal-close" onclick="Layout.closeModal('createModal')">&times;</button>
+          <h3 class="modal-title" id="wzTitle">สร้างเว็บไซต์ใหม่</h3>
+          <button class="modal-close" onclick="Page.closeWizard()">&times;</button>
         </div>
         <div class="modal-body">
-          <!-- Step 1: Template Gallery -->
-          <div id="step1">
-            <h4 style="margin-bottom:12px;font-size:14px;font-weight:600">1. เลือก Template</h4>
+          <ol class="wz-steps" id="wzSteps" aria-label="ขั้นตอน"></ol>
+          <!-- ขั้น 1: ธุรกิจของคุณ -->
+          <div id="wzStep1" class="wz-pane">
+            <h4 class="wz-h">ธุรกิจของคุณคือแบบไหน</h4>
+            <div class="grid grid-4 gap-3" id="kindGallery"></div>
+          </div>
+          <!-- ขั้น 2: แบบเว็บสำเร็จรูป -->
+          <div id="wzStep2" class="wz-pane" style="display:none">
+            <h4 class="wz-h">เลือกแบบเว็บสำเร็จรูป</h4>
             <div class="grid grid-4 gap-3" id="templateGallery"></div>
           </div>
-
-          <!-- Step 2: Site details -->
-          <div id="step2" style="display:none">
-            <button class="btn btn-sm btn-ghost" style="margin-bottom:12px" onclick="Page.backToTemplates()">← เปลี่ยน Template</button>
+          <!-- ขั้น 3: ข้อมูลร้าน -->
+          <div id="wzStep3" class="wz-pane" style="display:none">
             <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:12px;margin-bottom:16px">
               <strong id="selectedTplName" style="font-size:14px"></strong>
               <div style="font-size:12px;color:var(--gray-600);margin-top:2px" id="selectedTplDesc"></div>
             </div>
-            <h4 style="margin-bottom:12px;font-size:14px;font-weight:600">2. ข้อมูลเว็บไซต์</h4>
             <div class="form-group">
-              <label class="form-label">ชื่อเว็บไซต์ *</label>
+              <label class="form-label" for="fName">ชื่อร้าน / ชื่อเว็บไซต์ *</label>
               <input type="text" class="form-input" id="fName" placeholder="เช่น ร้านดอกไม้สวยงาม">
             </div>
             <div class="form-group">
-              <label class="form-label">ชื่อเว็บไซต์ (อังกฤษ)</label>
-              <input type="text" class="form-input" id="fNameEn" placeholder="เช่น Beautiful Flowers Shop">
+              <label class="form-label" for="fNameEn">ชื่อภาษาอังกฤษ (ใช้เติมลิงก์เว็บให้อัตโนมัติ)</label>
+              <input type="text" class="form-input" id="fNameEn" placeholder="เช่น Beautiful Flowers Shop" oninput="Page.suggestSubdomain()">
             </div>
             <div class="form-group">
-              <label class="form-label">URL ย่อย (Subdomain) *</label>
+              <label class="form-label" for="fSubdomain">ลิงก์เว็บของร้าน *</label>
               <div style="display:flex;align-items:center;gap:6px">
-                <span style="color:var(--gray-500);font-size:13px;white-space:nowrap">/site/</span>
+                <span style="color:var(--gray-500);font-size:13px;white-space:nowrap" id="fSubdomainPrefix">/site/</span>
                 <input type="text" class="form-input" id="fSubdomain" placeholder="my-shop" style="flex:1" oninput="Page.normalizeSubdomain(this)">
               </div>
-              <p style="font-size:12px;color:var(--gray-500);margin-top:4px">ใช้ได้เฉพาะตัวอักษร a-z, ตัวเลข, ขีดกลาง — สามารถเปลี่ยนหรือเชื่อม domain ของตัวเองภายหลังได้</p>
+              <p style="font-size:12px;color:var(--gray-500);margin-top:4px">ชื่อในลิงก์ใช้ได้เฉพาะ a-z ตัวเลข ขีดกลาง — เปลี่ยนหรือเชื่อมโดเมนของร้านเองภายหลังได้</p>
             </div>
             <div class="form-row">
-              <div class="form-group">
-                <label class="form-label">ภาษาหลัก</label>
-                <select class="form-input" id="fLang">
-                  <option value="th">ไทย</option>
-                  <option value="en">English</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label">สกุลเงิน</label>
-                <select class="form-input" id="fCurrency">
-                  <option value="THB">THB (บาท)</option>
-                  <option value="USD">USD (Dollar)</option>
-                </select>
-              </div>
+              <div class="form-group"><label class="form-label" for="fPhone">เบอร์โทรร้าน (แสดงบนเว็บ · ว่าง = ใช้ของบริษัท)</label><input type="text" class="form-input" id="fPhone" maxlength="50"></div>
+              <div class="form-group"><label class="form-label" for="fEmail">อีเมลร้าน (ว่าง = ใช้ของบริษัท)</label><input type="email" class="form-input" id="fEmail" maxlength="256"></div>
             </div>
-            <!-- Starter template — seeds 4-5 pages so the customer doesn't
-                 land on a blank canvas. They edit the copy/images later. -->
-            <div class="form-group" style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-top:8px">
-              <label class="form-checkbox" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
-                <input type="checkbox" id="fSeedTemplate" checked style="margin-top:3px">
-                <span>
-                  <strong style="font-size:14px">🎁 สร้างพร้อมเนื้อหาตัวอย่าง (แนะนำ)</strong>
-                  <span style="display:block;font-size:12px;color:#166534;margin-top:3px;line-height:1.5">
-                    ระบบจะใส่หน้าเว็บ 4-5 หน้าให้พร้อมใช้ทันที (หน้าหลัก · เกี่ยวกับเรา · บริการ/เมนู/สินค้า · ติดต่อ) ลูกค้าค่อยแก้คำ ใส่รูป ปรับแต่งเองได้ทีหลัง
-                  </span>
-                </span>
-              </label>
-            </div>
-            <div class="form-group" id="industryWrap">
-              <label class="form-label">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(ตั้งให้ตามเทมเพลตที่เลือก — เปลี่ยนได้ถ้าเทมเพลตกับธุรกิจจริงไม่ตรงกัน)</span></label>
-              <select class="form-input" id="fIndustry" onchange="Page.onIndustryChange(this)">
-                <!-- รอบ 215: ตัวเลือกสร้างจาก Layout.enumOptions('siteIndustry') ตอน init (ตารางป้ายเดียว) -->
-              </select>
-              <p id="industryHint" style="font-size:12px;color:var(--gray-500);margin-top:4px"></p>
-            </div>
+            <div class="form-group"><label class="form-label" for="fLine">LINE ให้ลูกค้าทักแชต</label><input type="text" class="form-input" id="fLine" maxlength="100" placeholder="@yourshop"></div>
             <!-- รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก E · Q4): ที่พักถามจำนวนห้อง (ค่าเริ่มต้น 3) — แสดงเมื่อประเภทธุรกิจ = ที่พัก -->
             <div class="form-group" id="roomCountWrap" style="display:none">
-              <label class="form-label">จำนวนห้องที่ให้ระบบสร้างไว้ก่อน (1–11 · แก้/เพิ่มทีหลังได้ที่ตั้งค่าที่พัก)</label>
+              <label class="form-label" for="fRoomCount">จำนวนห้องที่ให้ระบบสร้างไว้ก่อน (1–11 · แก้/เพิ่มทีหลังได้ที่ตั้งค่าที่พัก)</label>
               <input type="number" class="form-input" id="fRoomCount" min="1" max="11" value="3" style="max-width:140px">
             </div>
+            <details style="margin-top:4px">
+              <summary style="cursor:pointer;font-size:13px;color:var(--gray-600)">ตัวเลือกเพิ่มเติม (ภาษา · สกุลเงิน · เนื้อหาตัวอย่าง · ประเภทธุรกิจ)</summary>
+              <div class="form-row" style="margin-top:8px">
+                <div class="form-group">
+                  <label class="form-label" for="fLang">ภาษาหลัก</label>
+                  <select class="form-input" id="fLang"><option value="th">ไทย</option><option value="en">English</option></select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="fCurrency">สกุลเงิน</label>
+                  <select class="form-input" id="fCurrency"><option value="THB">THB (บาท)</option><option value="USD">USD (Dollar)</option></select>
+                </div>
+              </div>
+              <div class="form-group" style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px">
+                <label class="form-checkbox" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
+                  <input type="checkbox" id="fSeedTemplate" checked style="margin-top:3px">
+                  <span><strong style="font-size:14px">🎁 สร้างพร้อมเนื้อหาตัวอย่าง (แนะนำ)</strong>
+                    <span style="display:block;font-size:12px;color:#166534;margin-top:3px;line-height:1.5">ระบบใส่หน้าเว็บ 4-5 หน้าให้พร้อมใช้ทันที (หน้าหลัก · เกี่ยวกับเรา · บริการ/เมนู/สินค้า · ติดต่อ) แก้คำ ใส่รูปเองได้ทีหลัง</span></span>
+                </label>
+              </div>
+              <div class="form-group" id="industryWrap">
+                <label class="form-label" for="fIndustry">ประเภทธุรกิจ <span style="color:var(--gray-500);font-size:11px">(ตั้งให้ตามแบบเว็บที่เลือก — เปลี่ยนได้ถ้าไม่ตรงธุรกิจจริง)</span></label>
+                <select class="form-input" id="fIndustry" onchange="Page.onIndustryChange(this)">
+                  <!-- รอบ 215: ตัวเลือกสร้างจาก Layout.enumOptions('siteIndustry') ตอน init (ตารางป้ายเดียว) -->
+                </select>
+                <p id="industryHint" style="font-size:12px;color:var(--gray-500);margin-top:4px"></p>
+              </div>
+            </details>
           </div>
+          <!-- ขั้น 4–6: เว็บสร้างแล้ว — ตัวแก้ชุดเดียวกับศูนย์ตั้งค่าเว็บ (ไม่มีสำเนาฟอร์ม) -->
+          <div id="wzStep4" class="wz-pane" style="display:none"><h4 class="wz-h">ลูกค้าจ่ายเงินให้ร้านทางไหน</h4><div id="wzPay"></div></div>
+          <div id="wzStep5" class="wz-pane" style="display:none"><h4 class="wz-h" id="wzStep5Title">ส่งของ / รับจองอย่างไร</h4><div id="wzFulfil"></div></div>
+          <div id="wzStep6" class="wz-pane" style="display:none"><h4 class="wz-h">ตรวจทาน — สิ่งที่ยังไม่ได้ตั้งค่า</h4><div id="wzReview"></div></div>
         </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('createModal')">ยกเลิก</button>
-          <button class="btn btn-primary" id="btnCreate" onclick="Page.createSite()" style="display:none">สร้างเว็บไซต์</button>
+        <div class="modal-footer" style="justify-content:space-between">
+          <button class="btn btn-secondary" id="wzBack" onclick="Page.wzBack()">← ย้อนกลับ</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost" id="wzSkip" onclick="Page.wzNext(true)" style="display:none">ข้ามขั้นนี้</button>
+            <button class="btn btn-primary" id="btnCreate" onclick="Page.wzNext(false)">ถัดไป →</button>
+          </div>
         </div>
       </div>
     </div>
@@ -150,7 +172,7 @@
   <div class="modal-overlay" id="applyTplModal">
     <div class="modal" style="max-width:560px">
       <div class="modal-header">
-        <h3 class="modal-title">🧩 เติมเทมเพลต / เปลี่ยนประเภทธุรกิจ</h3>
+        <h3 class="modal-title">🧩 เติมแบบเว็บสำเร็จรูป / เปลี่ยนประเภทธุรกิจ</h3>
         <button class="modal-close" onclick="Layout.closeModal('applyTplModal')">×</button>
       </div>
       <div class="modal-body">
@@ -163,19 +185,19 @@
         <div class="form-group">
           <label class="form-checkbox" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
             <input type="checkbox" id="applyTplSeed" checked style="margin-top:3px">
-            <span><strong>เติมหน้าเว็บของประเภทนี้</strong><span style="display:block;font-size:12px;color:var(--gray-500)">หน้าที่ยังไม่มีจะถูกเพิ่ม · หน้าที่มี slug ซ้ำ (เช่น home/contact) จะถูก<u>ข้าม</u> เว้นแต่ติ๊กข้อถัดไป</span></span>
+            <span><strong>เติมหน้าเว็บของประเภทนี้</strong><span style="display:block;font-size:12px;color:var(--gray-500)">หน้าที่ยังไม่มีจะถูกเพิ่ม · หน้าที่ชื่อในลิงก์ซ้ำ (เช่น home/contact) จะถูก<u>ข้าม</u> เว้นแต่ติ๊กข้อถัดไป</span></span>
           </label>
         </div>
         <div class="form-group">
           <label class="form-checkbox" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer">
             <input type="checkbox" id="applyTplReplace" style="margin-top:3px">
-            <span><strong style="color:#b45309">แทนที่หน้าเดิมที่ slug ซ้ำ</strong><span style="display:block;font-size:12px;color:var(--gray-500)">หน้าเดิมจะถูกซ่อน (ไม่ลบจริง กู้จากฐานข้อมูลได้) แล้วใส่หน้าเทมเพลตใหม่แทน — ใช้เมื่อยังไม่ได้แต่งหน้าเดิม</span></span>
+            <span><strong style="color:#b45309">แทนที่หน้าเดิมที่ชื่อในลิงก์ซ้ำ</strong><span style="display:block;font-size:12px;color:var(--gray-500)">หน้าเดิมจะถูกซ่อน (ไม่ลบจริง กู้จากฐานข้อมูลได้) แล้วใส่หน้าของแบบเว็บใหม่แทน — ใช้เมื่อยังไม่ได้แต่งหน้าเดิม</span></span>
           </label>
         </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="Layout.closeModal('applyTplModal')">ยกเลิก</button>
-        <button class="btn btn-primary" id="btnApplyTpl" onclick="Page.applyTemplate()">เติมเทมเพลต</button>
+        <button class="btn btn-primary" id="btnApplyTpl" onclick="Page.applyTemplate()">เติมแบบเว็บ</button>
       </div>
     </div>
   </div>
@@ -186,6 +208,9 @@
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
   <script src="/js/quota-ui.js"></script>
+  <script src="/js/site-transfer-account.js"></script><!-- รอบ 230: wizard ขั้น 4 (การ์ดบัญชีรับโอนเดียวกับศูนย์ตั้งค่าเว็บ) -->
+  <script src="/js/booking-fulfillment-admin.js"></script><!-- รอบ 230: wizard ขั้น 5 (ค่าส่ง · จัดส่ง/รับเองของการจอง) -->
+  <script src="/js/booking-site-settings-admin.js"></script><!-- รอบ 230: wizard ขั้น 5 (เวลาเปิดร้าน + การรับจอง) -->
   <script>
     // Starter templates — define a site preset + array of pages with blocks.
     // When the user picks one, we create the site, then create each page (with
@@ -377,6 +402,27 @@
       }
     };
 
+    // รอบ 230 (CMS_SETTINGS_UX_AUDIT §4.3 ขั้น 1): การ์ด "ธุรกิจของคุณ" ภาษาคน → กรองแบบเว็บสำเร็จรูปในขั้น 2 (การจัดกลุ่มบนจออย่างเดียว ·
+    // ประเภทธุรกิจ/แม่แบบบริการที่ส่งเซิร์ฟเวอร์ยังมาจาก TEMPLATES ตัวเดียว) · ทุกแบบเว็บต้องอยู่ในกลุ่มใดกลุ่มหนึ่ง (อื่น ๆ = ที่เหลือ)
+    const KINDS = [
+      { key: 'shop', icon: '🛍️', name: 'ร้านค้าออนไลน์', desc: 'ขายสินค้า มีตะกร้า จัดส่ง/รับเอง', tpls: ['ecommerce', 'retail', 'trading', 'agriculture'] },
+      { key: 'mto', icon: '🎂', name: 'สั่งทำ / พรีออเดอร์', desc: 'เบเกอรี่ ของขวัญ งานทำมือ — ลูกค้าเลือกวันรับ จ่ายมัดจำ', tpls: ['mto'] },
+      { key: 'beauty', icon: '💇', name: 'ร้านทำผม-เล็บ / สปา', desc: 'จองคิว เลือกช่าง', tpls: ['salon', 'beauty'] },
+      { key: 'health', icon: '🏥', name: 'คลินิก / สุขภาพ', desc: 'นัดหมายแพทย์/นักบำบัด', tpls: ['healthcare'] },
+      { key: 'fitness', icon: '🧘', name: 'ฟิตเนส / พิลาทิส / คลาสเรียน', desc: 'คลาสกลุ่ม รอบตายตัว เทรนเนอร์', tpls: ['pilates', 'education'] },
+      { key: 'lodging', icon: '🏡', name: 'โฮมสเตย์ / รีสอร์ต / โรงแรม', desc: 'จองห้องพักออนไลน์', tpls: ['homestay', 'hotel'] },
+      { key: 'food', icon: '☕', name: 'ร้านอาหาร / คาเฟ่', desc: 'เมนู จองโต๊ะ', tpls: ['restaurant', 'cafe'] },
+      { key: 'service', icon: '📅', name: 'บริการ / ที่ปรึกษา / ฟรีแลนซ์', desc: 'รับนัด รับงาน ขอใบเสนอราคา', tpls: ['booking', 'freelance', 'transportation'] },
+      { key: 'company', icon: '🏢', name: 'เว็บบริษัท / ผลงาน', desc: 'แนะนำบริษัท ผลงาน ติดต่อ', tpls: ['corporate', 'construction', 'realestate', 'technology', 'manufacturing'] },
+      { key: 'other', icon: '✨', name: 'อื่น ๆ / เริ่มจากหน้าเปล่า', desc: 'ดูแบบเว็บทั้งหมด', tpls: null },
+    ];
+    const WZ_STEPS = ['ธุรกิจของคุณ', 'แบบเว็บสำเร็จรูป', 'ข้อมูลร้าน', 'รับเงิน', 'ส่งของ / การจอง', 'ตรวจทาน'];
+    const wzMemo = {   // ขั้นล่าสุดต่อเว็บ (ความสะดวกของผู้ชมคนนี้ — URL ?setup=&step= ยังเป็นความจริง)
+      get(id) { try { return Number(localStorage.getItem('cmsWizardStep:' + id)) || null; } catch (_) { return null; } },
+      set(id, n) { try { localStorage.setItem('cmsWizardStep:' + id, String(n)); } catch (_) { /* ไม่มีที่เก็บ */ } },
+      clear(id) { try { localStorage.removeItem('cmsWizardStep:' + id); } catch (_) { /* ไม่มีที่เก็บ */ } },
+    };
+
     // Accept both numeric (legacy) and enum-name (JsonStringEnumConverter) status values.
     const STATUS_LABEL = {
       'Draft':     ['ร่าง','draft'],     0: ['ร่าง','draft'],
@@ -420,6 +466,14 @@
         Layout.setTitle('เว็บไซต์ทั้งหมด');
         if (window.QuotaUI) QuotaUI.renderSummary('siteQuotaBar', { only: ['cms.sites'] });
         await this.load();
+        // รอบ 230: ทำ wizard ต่อ (?setup={siteId}&step=4..6) — เว็บต้องอยู่ในรายการที่ผู้ใช้เห็น (ไม่ใช่ = ไม่เปิด + บอก)
+        const qs = new URLSearchParams(location.search);
+        const setupId = qs.get('setup');
+        if (setupId) {
+          const site = this.sites.find(x => x.id === setupId);
+          if (!site) { Layout.toast('ไม่พบเว็บไซต์ที่จะตั้งค่าต่อ (อาจถูกลบหรือไม่ใช่ของบริษัทนี้)', 'info', 6000); this._wzUrl(null); }
+          else this.resumeWizard(site, Number(qs.get('step')) || wzMemo.get(site.id) || 4);
+        }
       },
 
       async load() {
@@ -518,7 +572,7 @@
                     <span style="margin:0 6px">·</span>
                     <span>${typeLabel}</span>
                     <span style="margin:0 6px">·</span>
-                    <span title="ประเภทธุรกิจของเว็บ (กำหนดเทมเพลตและโมดูล)">${Layout.esc(industryLabel(s.industryType))}</span>
+                    <span title="ประเภทธุรกิจของเว็บ (กำหนดแบบเว็บและงานที่ใช้)">${Layout.esc(industryLabel(s.industryType))}</span>
                   </div>
                   <div style="margin-top:6px" data-setup-badge="${Layout.esc(s.id)}"></div>
                 </div>
@@ -546,7 +600,7 @@
                   <summary class="btn btn-sm btn-ghost" style="list-style:none" aria-label="เมนูเพิ่มเติมของเว็บ ${Layout.esc(s.name)}">⋯</summary>
                   <div style="position:absolute;right:0;z-index:5;background:#fff;border:1px solid var(--gray-200);border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,.08);padding:4px;min-width:200px;display:flex;flex-direction:column">
                     ${isPublished ? `<a href="${pathUrl}" target="_blank" rel="noopener" class="btn btn-sm btn-ghost" style="justify-content:flex-start">🔗 เปิด ${Layout.esc(s.subdomain)}</a>` : ''}
-                    <button class="btn btn-sm btn-ghost" style="justify-content:flex-start" onclick="Page.openApplyTemplate('${Layout.jsArg(s.id)}')" title="เติมหน้าเทมเพลต / เปลี่ยนประเภทธุรกิจของเว็บนี้ (ใช้ซ่อมเว็บที่สร้างผิดประเภท)">🧩 เติมเทมเพลต</button>
+                    <button class="btn btn-sm btn-ghost" style="justify-content:flex-start" onclick="Page.openApplyTemplate('${Layout.jsArg(s.id)}')" title="เติมหน้าแบบเว็บสำเร็จรูป / เปลี่ยนประเภทธุรกิจของเว็บนี้ (ใช้ซ่อมเว็บที่สร้างผิดประเภท)">🧩 เติมแบบเว็บสำเร็จรูป</button>
                     <button class="btn btn-sm btn-ghost" style="justify-content:flex-start;color:#b91c1c" onclick="Page.deleteSite('${Layout.jsArg(s.id)}','${Layout.jsArg(s.name)}')">🗑 ลบเว็บไซต์</button>
                   </div>
                 </details>
@@ -557,7 +611,10 @@
         if (window.CmsSetupStatus) this.sites.forEach(async (s) => {
           const el = document.querySelector(`[data-setup-badge="${CSS.escape(String(s.id))}"]`);
           const st = await CmsSetupStatus.load(s.id);
-          if (el && st) el.innerHTML = `<a href="/pages/cms-site-settings.html?siteId=${encodeURIComponent(s.id)}" style="text-decoration:none">${CmsSetupStatus.badge(st)}</a>`;
+          if (el && st) el.innerHTML = `<a href="/pages/cms-site-settings.html?siteId=${encodeURIComponent(s.id)}" style="text-decoration:none">${CmsSetupStatus.badge(st)}</a>`
+            // รอบ 230: ตั้งค่ายังไม่ครบ ⇒ ทำ wizard ต่อจากขั้นรับเงิน (หรือขั้นล่าสุดที่ทำค้าง)
+            // ฝ่ายค้านรอบ 230 N3: ข้อ "เผยแพร่" ไม่นับ (wizard ไม่ได้ทำขั้นนั้น — เว็บร่างที่ตั้งค่าครบแล้วไม่ต้องเห็นปุ่มทำต่อ)
+            + ((st.items || []).some(i => !i.done && i.key !== 'publish') ? ` <a href="/pages/cms-sites.html?setup=${encodeURIComponent(s.id)}&step=${wzMemo.get(s.id) || 4}" style="font-size:12px;color:var(--primary);margin-left:6px">▶ ตั้งค่าเริ่มต้นต่อ</a>` : '');
         });
       },
 
@@ -576,53 +633,186 @@
         this._openCreateForm();
       },
 
+      // ═════ รอบ 230: wizard สร้างเว็บ 6 ขั้น (CMS_SETTINGS_UX_AUDIT §4.3) ═════
       _openCreateForm() {
-        // Reset to step 1 with template gallery
-        document.getElementById('step1').style.display = '';
-        document.getElementById('step2').style.display = 'none';
-        document.getElementById('btnCreate').style.display = 'none';
-        document.getElementById('fName').value = '';
-        document.getElementById('fNameEn').value = '';
-        document.getElementById('fSubdomain').value = '';
+        this.wz = { step: 1, kind: null, site: null };
+        ['fName', 'fNameEn', 'fSubdomain', 'fPhone', 'fEmail', 'fLine'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        const sub = document.getElementById('fSubdomain'); if (sub) delete sub.dataset.userTouched;
         document.getElementById('fLang').value = 'th';
         document.getElementById('fCurrency').value = 'THB';
+        document.getElementById('fSeedTemplate').checked = true;
+        document.getElementById('fRoomCount').value = '3';
         this.selectedTpl = null;
-        this.renderTemplateGallery();
+        this.renderKinds();
+        this.wzShow(1);
         Layout.openModal('createModal');
       },
 
-      renderTemplateGallery() {
+      /** ทำต่อของเว็บที่สร้างแล้ว — ขั้น 4–6 เท่านั้น (ขั้น 1–3 คือการสร้างเว็บ) */
+      async resumeWizard(site, step) {
+        this.wz = { step: 4, kind: null, site };
+        this.selectedTpl = null;
+        Layout.openModal('createModal');
+        await this.wzShow(Math.min(6, Math.max(4, step)));
+      },
+
+      _wzUrl(siteId, step) {
+        try {
+          const u = new URL(location.href);
+          if (siteId) { u.searchParams.set('setup', siteId); u.searchParams.set('step', String(step)); }
+          else { u.searchParams.delete('setup'); u.searchParams.delete('step'); }
+          history.replaceState(null, '', u.pathname + u.search);
+        } catch (_) { /* เบราว์เซอร์เก่า */ }
+      },
+
+      _ctx() {
+        const site = this.wz && this.wz.site;
+        return { companyId: Layout.getCompanyId(), siteId: site && site.id, site, sites: this.sites, api: Layout.api(),
+          scopeBadge: (k) => CmsSiteContext.scopeBadge(k, site && site.name) };
+      },
+
+      async wzShow(n) {
+        this.wz.step = n;
+        const created = !!this.wz.site;
+        document.getElementById('wzTitle').textContent = created ? `ตั้งค่าเริ่มต้น: ${this.wz.site.name || ''}` : 'สร้างเว็บไซต์ใหม่';
+        document.getElementById('wzSteps').innerHTML = WZ_STEPS.map((t, i) => {
+          const k = i + 1;
+          return `<li${k === n ? ' aria-current="step"' : ''} class="${k < n || (created && k <= 3) ? 'done' : ''}">${k}. ${Layout.esc(t)}</li>`;
+        }).join('');
+        for (let i = 1; i <= 6; i++) document.getElementById('wzStep' + i).style.display = i === n ? '' : 'none';
+        const back = document.getElementById('wzBack'); const next = document.getElementById('btnCreate'); const skip = document.getElementById('wzSkip');
+        back.style.display = (n === 1 || n === 4) ? 'none' : '';   // ขั้น 4 = เว็บสร้างแล้ว ย้อนไปขั้นสร้างไม่ได้
+        skip.style.display = (n === 4 || n === 5) ? '' : 'none';
+        next.style.display = (n === 1 || n === 2) ? 'none' : '';   // ขั้น 1–2 เลือกการ์ด = ไปต่อเอง
+        next.textContent = n === 3 ? 'สร้างเว็บแล้วไปต่อ →' : (n === 6 ? 'เสร็จ — ไปศูนย์ตั้งค่าเว็บ' : 'ถัดไป →');
+        if (created) { this._wzUrl(this.wz.site.id, n); wzMemo.set(this.wz.site.id, n); }
+        if (window.CmsDirtyGuard) CmsDirtyGuard.reset();
+        const ctx = this._ctx();
+        const watchAll = (el) => { if (window.CmsDirtyGuard && el) el.querySelectorAll('.sg-card').forEach(c => CmsDirtyGuard.watch(c)); };
+        if (n === 4) {
+          const el = document.getElementById('wzPay');
+          el.innerHTML = '<div class="sg-hint">กำลังโหลด…</div>';
+          if (window.SiteTransferCard) await SiteTransferCard.mount(el, ctx);
+          el.insertAdjacentHTML('beforeend', `<div class="sg-card"><div class="sg-link"><div><div style="font-weight:500">รับบัตร/QR ออนไลน์ (ไม่บังคับ)</div>
+            <div class="sg-hint">ตั้งครั้งเดียวที่ระดับบริษัท · ลูกค้าต้องจ่ายก่อนไหม (มัดจำ/เต็ม) ตั้งที่ ตั้งค่าเว็บ › การชำระเงิน</div></div>
+            <a class="btn btn-sm btn-secondary" href="/pages/payment-settings.html" target="_blank" rel="noopener">รับชำระเงินออนไลน์ ↗</a></div></div>`);
+          watchAll(el);
+        } else if (n === 5) {
+          const el = document.getElementById('wzFulfil');
+          const mods = Array.isArray(ctx.site && ctx.site.modules) ? ctx.site.modules : [];
+          const id = encodeURIComponent(ctx.siteId || '');
+          el.innerHTML = '<div id="wzFulBooking"></div><div id="wzFulShip"></div>';
+          const title = document.getElementById('wzStep5Title');
+          if (mods.includes('lodging')) {
+            title.textContent = 'ห้องพัก · ราคา · เวลาเข้า-ออก';
+            el.innerHTML = `<div class="sg-card"><div class="sg-link"><div><div style="font-weight:500">ระบบสร้างห้อง ราคา และนโยบายตัวอย่างให้แล้ว</div>
+              <div class="sg-hint">ตรวจ/แก้ห้อง ราคา เวลาเข้า-ออก และมัดจำ ที่ตั้งค่าที่พัก (ทำต่อทีหลังได้)</div></div>
+              <a class="btn btn-sm btn-secondary" href="/pages/lodging-settings.html?siteId=${id}&welcome=1">ตั้งค่าที่พัก →</a></div></div>`;
+          } else if (!mods.includes('bookings') && !mods.includes('orders')) {
+            title.textContent = 'ส่งของ / การจอง';
+            el.innerHTML = '<div class="sg-card sg-hint">เว็บแบบนี้ไม่มีคำสั่งซื้อหรือการจอง — ข้ามขั้นนี้ได้เลย</div>';
+          } else {
+            title.textContent = mods.includes('bookings') ? 'เวลาเปิดร้าน · การรับจอง · ส่งของ' : 'ส่งของ / รับเอง';
+            if (mods.includes('bookings') && window.BookingSiteAdmin) await BookingSiteAdmin.mountBasics(document.getElementById('wzFulBooking'), ctx);
+            // จัดส่ง/รับเอง: ร้านค้า หรือแม่แบบสั่งทำ (การจองแบบจัดส่ง) — ตัวแก้เดียวกับกลุ่ม "การจัดส่ง / รับเอง"
+            if ((mods.includes('orders') || (this.wz.tplPreset === 'mto')) && window.SiteShippingAdmin) await SiteShippingAdmin.mount(document.getElementById('wzFulShip'), ctx);
+            else document.getElementById('wzFulShip').innerHTML = `<div class="sg-card"><div class="sg-link"><div><div style="font-weight:500">ส่งของถึงลูกค้า / รับเองที่ร้าน (ถ้ามี)</div>
+              <div class="sg-hint">เปิดได้ภายหลังที่ ตั้งค่าเว็บ › การจัดส่ง / รับเอง</div></div></div></div>`;
+          }
+          watchAll(el);
+        } else if (n === 6) {
+          const el = document.getElementById('wzReview');
+          el.innerHTML = '<div class="sg-hint">กำลังตรวจ…</div>';
+          const st = window.CmsSetupStatus ? await CmsSetupStatus.load(ctx.siteId) : null;
+          if (st && window.CmsSetupStatus) CmsSetupStatus.render(el, st, ctx.siteId);
+          else el.innerHTML = '<div class="sg-card sg-hint">ตรวจความพร้อมไม่ได้ตอนนี้ — ดูได้ที่ศูนย์ตั้งค่าเว็บ</div>';
+          const id = encodeURIComponent(ctx.siteId || '');
+          el.insertAdjacentHTML('beforeend', `<div class="sg-card"><div class="sg-link"><div><div style="font-weight:500">แต่งหน้าเว็บ · เพิ่มสินค้า/บริการ</div><div class="sg-hint">หน้าเว็บ & เนื้อหา</div></div>
+              <a class="btn btn-sm btn-secondary" href="/pages/cms-edit.html?siteId=${id}">แก้หน้าเว็บ →</a></div>
+            <div class="sg-link"><div><div style="font-weight:500">เปิดเว็บให้ลูกค้าเห็น</div><div class="sg-hint">ยังเป็นฉบับร่างจนกว่าจะกด "เผยแพร่" ที่หน้าเว็บ</div></div></div></div>`);
+        }
+      },
+
+      renderKinds() {
+        document.getElementById('kindGallery').innerHTML = KINDS.map(k => `<button type="button" class="kind-card" onclick="Page.pickKind('${k.key}')">
+            <div class="k-icon">${k.icon}</div><div class="k-name">${Layout.esc(k.name)}</div><div class="k-desc">${Layout.esc(k.desc)}</div></button>`).join('');
+      },
+
+      pickKind(key) {
+        this.wz.kind = key;
+        const used = new Set(KINDS.flatMap(k => k.tpls || []));
+        const k = KINDS.find(x => x.key === key);
+        const keys = (k && k.tpls) ? k.tpls.filter(t => TEMPLATES[t]) : Object.keys(TEMPLATES).filter(t => !used.has(t)).concat(Object.keys(TEMPLATES).filter(t => used.has(t)));
+        this.renderTemplateGallery(keys);
+        this.wzShow(2);
+      },
+
+      renderTemplateGallery(keys) {
         const gallery = document.getElementById('templateGallery');
-        gallery.innerHTML = Object.entries(TEMPLATES).map(([key, tpl]) => `
-          <div class="tpl-card" onclick="Page.selectTemplate('${key}')">
+        gallery.innerHTML = (keys || Object.keys(TEMPLATES)).map(key => { const tpl = TEMPLATES[key]; return `
+          <div class="tpl-card" role="button" tabindex="0" onclick="Page.selectTemplate('${key}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();Page.selectTemplate('${key}')}">
             <div class="tpl-thumb ${tpl.thumbClass}">${tpl.icon}</div>
             <div class="tpl-body">
-              <div class="tpl-title">${tpl.name}</div>
-              <div class="tpl-desc">${tpl.description}</div>
+              <div class="tpl-title">${Layout.esc(tpl.name)}</div>
+              <div class="tpl-desc">${Layout.esc(tpl.description)}</div>
             </div>
-          </div>
-        `).join('');
+          </div>`; }).join('');
       },
 
       selectTemplate(key) {
         this.selectedTpl = key;
         const tpl = TEMPLATES[key];
-        document.getElementById('selectedTplName').textContent = `เทมเพลต: ${tpl.name}${tpl.seedTemplate === false ? ' (หน้าเปล่า)' : ' — ระบบจะใส่ 4 หน้าตัวอย่างให้'}`;
+        this.wz.tplPreset = tpl.bookingPreset || null;
+        document.getElementById('selectedTplName').textContent = `แบบเว็บ: ${tpl.name}${tpl.seedTemplate === false ? ' (หน้าเปล่า)' : ' — ระบบใส่หน้าตัวอย่างให้'}`;
         document.getElementById('selectedTplDesc').textContent = tpl.description;
-        // เทมเพลตเป็นคนตั้ง "ประเภทธุรกิจ" (เดิม dropdown ค้างที่ "ทั่วไป" แล้ว createSite อ่านค่านั้น
-        // ทับเทมเพลตเสมอ ⇒ การ์ด "โรงแรม" ได้เว็บบริการทั่วไป ไม่มีหน้าจอง). กติกา autoSrc/userTouched:
-        // ค่าที่ผู้ใช้เลือกเองหลังจากนี้ชนะ · แต่กลับไปเปลี่ยนเทมเพลตใหม่ = เริ่มนับใหม่จากเทมเพลต
+        // แบบเว็บเป็นคนตั้ง "ประเภทธุรกิจ" · กติกา autoSrc/userTouched: ค่าที่ผู้ใช้เลือกเองหลังจากนี้ชนะ · เปลี่ยนแบบเว็บ = เริ่มนับใหม่
         const ind = document.getElementById('fIndustry');
         if (ind) {
           ind.value = String(tpl.industryType ?? 'General');
-          if (ind.value !== String(tpl.industryType ?? 'General')) ind.value = 'General'; // เทมเพลตอ้างค่าที่ dropdown ไม่มี
+          if (ind.value !== String(tpl.industryType ?? 'General')) ind.value = 'General';
           ind.dataset.autoSrc = 'template';
           delete ind.dataset.userTouched;
           this.renderIndustryHint();
         }
-        document.getElementById('step1').style.display = 'none';
-        document.getElementById('step2').style.display = '';
-        document.getElementById('btnCreate').style.display = '';
+        this.wzShow(3);
+      },
+
+      wzBack() {
+        const n = this.wz.step;
+        if (n === 2) this.wzShow(1);
+        else if (n === 3) this.wzShow(2);
+        else if (n > 4) { if (!window.CmsDirtyGuard || CmsDirtyGuard.confirmLeave()) this.wzShow(n - 1); }
+      },
+
+      async wzNext(skip) {
+        const n = this.wz.step;
+        if (n === 3) { await this.createSite(); return; }
+        // ขั้น 4–5: ค่าที่แก้แต่ยังไม่กดบันทึกของการ์ด ⇒ ถามก่อน (กดข้าม = ทิ้งค่าที่พิมพ์ · บันทึกไปแล้ว = คงอยู่)
+        if ((n === 4 || n === 5) && window.CmsDirtyGuard && !CmsDirtyGuard.confirmLeave()) return;
+        if (n < 6) { await this.wzShow(n + 1); return; }
+        this.finishWizard(true);
+      },
+
+      closeWizard() {
+        if (window.CmsDirtyGuard && !CmsDirtyGuard.confirmLeave()) return;
+        Layout.closeModal('createModal');
+        if (this.wz && this.wz.site) { this._wzUrl(null); this.load(); }
+      },
+
+      finishWizard(toHub) {
+        const id = this.wz && this.wz.site && this.wz.site.id;
+        if (id) wzMemo.clear(id);
+        this._wzUrl(null);
+        Layout.closeModal('createModal');
+        if (toHub && id) window.location.href = `/pages/cms-site-settings.html?siteId=${encodeURIComponent(id)}`;
+        else this.load();
+      },
+
+      suggestSubdomain() {
+        // เติมลิงก์เว็บจากชื่ออังกฤษ (ผู้ใช้แก้ลิงก์เองแล้ว = ไม่ทับ)
+        const sub = document.getElementById('fSubdomain');
+        if (!sub || sub.dataset.userTouched) return;
+        sub.value = (document.getElementById('fNameEn').value || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 63);
       },
 
       onIndustryChange(sel) {
@@ -641,21 +831,16 @@
         const tplInd = String(tpl.industryType ?? 'General');
         const label = ind.options[ind.selectedIndex]?.textContent || '';
         if (ind.value === tplInd) {
-          hint.textContent = `ตามเทมเพลต "${tpl.name}" → เนื้อหา/ฟีเจอร์ของ ${label}` + (ind.value === '15' ? ' (จะสร้างระบบจองห้องพัก · ห้อง · ราคา · นโยบาย ให้พร้อมจองทันที)' : '');
+          hint.textContent = `ตามแบบเว็บ "${tpl.name}" → เนื้อหา/ฟีเจอร์ของ ${label}` + (ind.value === '15' ? ' (จะสร้างระบบจองห้องพัก · ห้อง · ราคา · นโยบาย ให้พร้อมจองทันที)' : '');
           hint.style.color = 'var(--gray-500)';
         } else {
-          hint.textContent = `⚠️ คุณเลือก "${label}" ต่างจากเทมเพลต "${tpl.name}" — หน้าเว็บที่ระบบใส่ให้จะเป็นของ ${label} ไม่ใช่ของเทมเพลต`;
+          hint.textContent = `⚠️ คุณเลือก "${label}" ต่างจากแบบเว็บ "${tpl.name}" — หน้าเว็บที่ระบบใส่ให้จะเป็นของ ${label} ไม่ใช่ของแบบเว็บที่เลือก`;
           hint.style.color = '#b45309';
         }
       },
 
-      backToTemplates() {
-        document.getElementById('step1').style.display = '';
-        document.getElementById('step2').style.display = 'none';
-        document.getElementById('btnCreate').style.display = 'none';
-      },
-
       normalizeSubdomain(input) {
+        input.dataset.userTouched = '1';
         input.value = (input.value || '').toLowerCase().replace(/[^a-z0-9-]/g, '').replace(/^-+|-+$/g, '').slice(0, 63);
       },
 
@@ -666,13 +851,13 @@
         const subdomain = document.getElementById('fSubdomain').value.trim();
         const lang = document.getElementById('fLang').value;
         const currency = document.getElementById('fCurrency').value;
-        if (!name) { Layout.toast('กรุณากรอกชื่อเว็บไซต์', 'error'); return; }
+        if (!name) { Layout.toast('กรุณากรอกชื่อร้าน / ชื่อเว็บไซต์', 'error'); return; }
         if (!subdomain || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(subdomain)) {
-          Layout.toast('Subdomain ไม่ถูกต้อง — ใช้ตัวอักษร a-z, ตัวเลข, ขีดกลาง', 'error');
+          Layout.toast('ลิงก์เว็บไม่ถูกต้อง — ใช้ตัวอักษร a-z, ตัวเลข, ขีดกลาง', 'error');
           return;
         }
         const tpl = TEMPLATES[this.selectedTpl];
-        if (!tpl) { Layout.toast('กรุณาเลือก Template', 'error'); return; }
+        if (!tpl) { Layout.toast('กรุณาเลือกแบบเว็บสำเร็จรูป', 'error'); return; }
 
         const btn = document.getElementById('btnCreate');
         btn.disabled = true;
@@ -698,40 +883,42 @@
             // รอบ 228 (Q4): ที่พักถามจำนวนห้อง (ค่าเริ่มต้น 3) — การ์ดอื่นไม่ส่ง (null = ค่าเดิมของเซิร์ฟเวอร์)
             lodgingRoomCount: chosenIndustry === 'Hotel' ? (parseInt(document.getElementById('fRoomCount')?.value || '3', 10) || 3) : null
           });
-          const site = siteRes.data;
+          let site = siteRes.data;
           if (!site?.id) throw new Error('ไม่ได้รับข้อมูลเว็บไซต์ที่สร้าง');
 
-          Layout.closeModal('createModal');
           if (typeof Layout.loadVatRegistration === 'function') Layout.loadVatRegistration();   // เมนูโมดูลใหม่ (ที่พัก/ร้านค้า) โผล่ทันที
-          // รอบ 202 ทีม LW (W-08): ขั้น seed ที่ล้ม/ถูกข้าม (ที่พัก · หน้าตัวอย่าง · บริการจอง) — เซิร์ฟเวอร์เป็นคนเขียนข้อความ
-          // หน้านี้แสดงอย่างเดียว · หยุดให้อ่านก่อนพาไปหน้าถัดไป (toast หายไปพร้อมการเปลี่ยนหน้า)
-          const warns = Array.isArray(site.warnings) ? site.warnings.filter(Boolean) : [];
-          if (warns.length) alert('สร้างเว็บไซต์แล้ว แต่มีเรื่องที่ต้องทำต่อ:\n\n• ' + warns.join('\n• '));
-          if (chosenIndustry === 'Hotel') {
-            // ธุรกิจที่พัก: เซิร์ฟเวอร์ seed ห้อง/ราคา/นโยบายให้แล้ว → พาไปหน้าตั้งค่าที่พัก
-            // (ผูกด้วย siteId — หน้านั้น resolve ที่พักของเว็บนี้เอง) ให้เห็นทันทีว่าจองได้แล้ว
-            if (!warns.length) Layout.toast('สร้างเว็บไซต์ + ระบบจองที่พักสำเร็จ — กำลังพาไปตั้งค่าที่พัก', 'success');
-            setTimeout(() => { window.location.href = `/pages/lodging-settings.html?siteId=${site.id}&welcome=1`; }, 700);
-            return;
-          }
-          // รอบ 228: การ์ดที่มีแม่แบบ (สั่งทำ/ซาลอน/ฟิตเนส) — เซิร์ฟเวอร์ทำ/ข้าม · ล้ม = บอกทางไปต่อ (ไม่เงียบ)
-          if (tpl.bookingPreset) {
+          // รอบ 202 ทีม LW (W-08): ขั้น seed ที่ล้ม/ถูกข้าม — เซิร์ฟเวอร์เป็นคนเขียนข้อความ (หน้านี้แสดงอย่างเดียว)
+          const notes = Array.isArray(site.warnings) ? site.warnings.filter(Boolean) : [];
+          // รอบ 228: การ์ดที่มีแม่แบบ (สั่งทำ/ซาลอน/ฟิตเนส) — เซิร์ฟเวอร์ทำ/ข้าม · ล้ม = บอกทางไปต่อ (ไม่เงียบ) · ที่พักไม่ใช้แม่แบบบริการ
+          if (tpl.bookingPreset && chosenIndustry !== 'Hotel') {
             try {
               await API.post(`/api/companies/${Layout.getCompanyId()}/cms/sites/${site.id}/booking/presets/${encodeURIComponent(tpl.bookingPreset)}/apply-site`, {});
-            } catch (pe) {
-              alert('สร้างเว็บแล้ว แต่ตั้งค่าแม่แบบไม่สำเร็จ: ' + (pe.message || '') + '\nเพิ่มเองได้ที่ แก้ไขเว็บ › บริการจอง › เพิ่มจากแม่แบบ');
-            }
+            } catch (pe) { notes.push('ตั้งค่าแม่แบบไม่สำเร็จ: ' + (pe.message || '') + ' — เพิ่มเองได้ที่ หน้าเว็บ › บริการจอง › เพิ่มจากแม่แบบ'); }
           }
-          // รอบ 228 (แพ็ก E): สิ่งที่ต้องทำต่อดูที่แผง "สิ่งที่ยังไม่ได้ตั้งค่า" ของศูนย์ตั้งค่าเว็บ (แทน alert ที่หายเมื่อปิด)
-          Layout.toast('สร้างเว็บไซต์สำเร็จ — กำลังพาไปดูสิ่งที่ยังไม่ได้ตั้งค่า', 'success');
-          setTimeout(() => { window.location.href = `/pages/cms-site-settings.html?siteId=${encodeURIComponent(site.id)}`; }, 700);
+          // รอบ 230 (wizard ขั้น 3): ข้อมูลติดต่อร้าน — ทางเขียนเดียวกับ ตั้งค่าเว็บ › ข้อมูลร้าน (PUT site · ส่งเฉพาะช่องที่กรอก = ช่องว่างใช้ของบริษัท)
+          const contact = {};
+          [['fPhone', 'contactPhone'], ['fEmail', 'contactEmail'], ['fLine', 'lineId']].forEach(([id, k]) => { const v = document.getElementById(id).value.trim(); if (v) contact[k] = v; });
+          if (Object.keys(contact).length) {
+            try { await api.cmsUpdateSite(site.id, contact); }
+            catch (ce) { notes.push('บันทึกข้อมูลติดต่อไม่สำเร็จ: ' + (ce.message || '') + ' — แก้ได้ที่ ตั้งค่าเว็บ › ข้อมูลร้าน'); }
+          }
+          // ฝ่ายค้านรอบ 230 S1: แม่แบบ (สั่งทำ/ซาลอน/ฟิตเนส) เพิ่มบริการหลังสร้าง ⇒ site.modules จากคำตอบตอนสร้างยังไม่มี "bookings" —
+          // โหลดเว็บใหม่หลังใส่แม่แบบ + ข้อมูลติดต่อ (ขั้น 5 เลือกตัวแก้ตามโมดูลที่เซิร์ฟเวอร์คำนวณ) · โหลดไม่ได้ = ใช้ค่าเดิม (ขั้น 5 ยังมีลิงก์ไปศูนย์)
+          try { const fresh = (await api.cmsGetSite(site.id))?.data; if (fresh && fresh.id === site.id) site = fresh; } catch (_) { /* ใช้ข้อมูลตอนสร้าง */ }
+          // เว็บสร้างแล้ว ⇒ ขั้น 4–6 ทำบนเว็บนี้ (รีเฟรช/ปิดแล้วทำต่อได้ด้วย ?setup=) · ข้อความที่ต้องทำต่อค้างบนจอ (ไม่ใช้ alert)
+          this.wz.site = site;
+          this.sites = [site].concat(this.sites.filter(x => x.id !== site.id));
+          Layout.toast('สร้างเว็บไซต์แล้ว — ตั้งค่าเริ่มต้นต่ออีก 3 ขั้น (ข้ามได้)', 'success');
+          await this.wzShow(4);
+          if (notes.length) document.getElementById('wzPay').insertAdjacentHTML('afterbegin',
+            `<div class="sg-card" style="border-color:#fcd34d;background:#fffbeb"><b>สร้างเว็บแล้ว แต่มีเรื่องที่ต้องทำต่อ</b>${notes.map(w => `<div class="sg-hint" style="color:#78350f">• ${Layout.esc(w)}</div>`).join('')}</div>`);
         } catch (e) {
           // รอบ 229: เว็บเต็มโควตา (QUOTA-FULL:cms.sites) ⇒ เสนอซื้อเพิ่ม (ทางไปต่อ) — เว็บเดิมไม่ถูกแตะ
           if (window.QuotaUI && QuotaUI.handleFull(e, () => { Layout.closeModal('createModal'); QuotaUI.renderSummary('siteQuotaBar', { only: ['cms.sites'] }); })) return;
           Layout.toast(e.message || 'สร้างไม่สำเร็จ', 'error');
         } finally {
           btn.disabled = false;
-          btn.textContent = 'สร้างเว็บไซต์';
+          if (this.wz && this.wz.step === 3) btn.textContent = 'สร้างเว็บแล้วไปต่อ →';
         }
       },
 
@@ -767,7 +954,7 @@
         const replace = document.getElementById('applyTplReplace').checked;
         if (replace && !(await Layout.confirmDanger({
           title: 'แทนที่หน้าเดิม',
-          message: 'หน้าที่ slug ซ้ำกับเทมเพลตจะถูกซ่อนแล้วแทนด้วยหน้าใหม่ — สิ่งที่แต่งไว้บนหน้านั้นจะไม่แสดงบนเว็บอีก',
+          message: 'หน้าที่ชื่อในลิงก์ซ้ำกับแบบเว็บจะถูกซ่อนแล้วแทนด้วยหน้าใหม่ — สิ่งที่แต่งไว้บนหน้านั้นจะไม่แสดงบนเว็บอีก',
         }))) return;
         const btn = document.getElementById('btnApplyTpl');
         btn.disabled = true; btn.textContent = 'กำลังเติม...';

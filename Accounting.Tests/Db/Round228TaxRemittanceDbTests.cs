@@ -66,6 +66,9 @@ public class Round228TaxRemittanceDbTests
             CompanyId = companyId, TaxYear = (Year + 543).ToString(), TaxPeriod = period, TaxableProfit = profit,
             TaxAmount = tax, PrepaidTaxCredit = prepaid, WithholdingTaxCredit = wht,
             NetTaxPayable = CitPayment.Split(tax, prepaid, wht).Payable, Status = "Calculated",
+            // รอบ 230 ฝ่ายค้าน S3: ตั้งหนี้ต้องมีวันสิ้นงวดที่เก็บตอนคำนวณ (แถวไม่มี ⇒ 409 คำนวณใหม่) — รอบ ม.ค.–ธ.ค.
+            PeriodStart = new DateTime(Year, 1, 1),
+            PeriodEnd = period == "HalfYear" ? new DateTime(Year, 6, 30) : new DateTime(Year, 12, 31),
         };
 
     [Fact]
@@ -127,8 +130,8 @@ public class Round228TaxRemittanceDbTests
         await new FinancialManagementService(db).PostCITAsync(cid, half.Id, "tester");
         Assert.Contains((await Svc(db).GetDashboardAsync(cid, 24)).Pending, p => p.RemittanceType == CitPayment.Pnd51Type && p.Amount == 30_000m);
 
-        // ใบสำคัญที่ลงวันที่ก่อนตั้งหนี้ ⇒ ไม่นับเป็นการชำระงวดนี้
-        var early = new JournalEntry { CompanyId = cid, EntryNumber = "JV-EARLY-228", EntryDate = DateTime.UtcNow.Date.AddDays(-30),
+        // ใบสำคัญที่ลงวันที่ก่อนตั้งหนี้ ⇒ ไม่นับเป็นการชำระงวดนี้ · รอบ 230: ตั้งหนี้ลงวันสิ้นครึ่งปี (30 มิ.ย.) ⇒ "ก่อน" = ก่อนวันนั้น
+        var early = new JournalEntry { CompanyId = cid, EntryNumber = "JV-EARLY-228", EntryDate = new DateTime(Year, 6, 1),
             Status = JournalEntryStatus.Posted, JournalType = JournalType.General, TotalDebit = 30_000m, TotalCredit = 30_000m };
         early.Lines.Add(new JournalEntryLine { AccountId = acc["21920"], DebitAmount = 30_000m, LineOrder = 1 });
         early.Lines.Add(new JournalEntryLine { AccountId = acc["11120"], CreditAmount = 30_000m, LineOrder = 2 });

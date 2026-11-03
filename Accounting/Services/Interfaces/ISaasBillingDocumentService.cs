@@ -17,7 +17,8 @@ public interface ISaasBillingDocumentService
 
     /// <summary>รอบ 219 เฟส 2 (S9): ใบต่ออายุที่ล้าสมัยหลังอนุมัติการชำระอื่น — ยังไม่มีการชำระ ⇒ ยกเลิกผ่านเส้นยกเลิกเอกสารปกติ ·
     /// มีการชำระแล้ว ⇒ ไม่ยกเลิก บันทึก "ต้องออกใบลดหนี้" ให้แอดมิน · ประวัติ + audit chain ทุกกรณี · ไม่โยน</summary>
-    Task HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string cause);   // cause = เหตุที่ใบล้าสมัย (ข้อความลงประวัติ เช่น "รายการ SP-…" · "ยกเลิกเมื่อสิ้นรอบ")
+    /// <summary>รอบ 230 โควตา/บิล (ฝ่ายค้าน S2): คืนผล (Voided = ยกเลิกแล้ว · อื่น = ไม่ได้ยกเลิก — ผู้เรียกห้ามออกใบใหม่/ห้ามปลดตัวชี้) · ล้ม = Failed</summary>
+    Task<Accounting.Services.Implementations.StaleRenewalOutcome> HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string cause);   // cause = เหตุที่ใบล้าสมัย (ข้อความลงประวัติ เช่น "รายการ SP-…" · "ยกเลิกเมื่อสิ้นรอบ")
 
     /// <summary>ดึง PDF ที่ออกแล้วสำหรับดาวน์โหลด (regenerate ถ้าไฟล์หาย).</summary>
     Task<(byte[] Bytes, string FileName)?> GetReceiptPdfAsync(Guid paymentId);

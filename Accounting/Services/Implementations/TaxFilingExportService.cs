@@ -1100,7 +1100,7 @@ public class TaxFilingExportService : ITaxFilingExportService
     // แล้วชำระภาษีครึ่งปี = (ประมาณการกำไรสุทธิทั้งปี × อัตรา) ÷ 2.
     // ยื่นภายใน 2 เดือนนับจากวันสุดท้ายของ 6 เดือนแรก (รอบ ม.ค.-ธ.ค. →
     // ยื่น 31 ส.ค.). รอบ < 12 เดือน (ปีแรก / สุดท้าย / เปลี่ยนรอบ) ยกเว้น
-    // ไม่ต้องยื่น ภ.ง.ด.51.
+    // ไม่ต้องยื่น ภ.ง.ด.51 — รอบ 230: ระบบไม่ตัดสินเอง (เตือนเท่านั้น · ผู้ใช้ติ๊กที่เครื่องคำนวณ).
     // ระบบทำ:
     //   • คำนวณ "กำไรสุทธิจริง 6 เดือนแรก" จาก JE Revenue/Expense
     //   • Estimate ทั้งปี = ครึ่งปี × 2 (วิธี simple — user แก้ได้ใน portal)
@@ -1112,85 +1112,61 @@ public class TaxFilingExportService : ITaxFilingExportService
     // =====================================================================
     public async Task<TaxFilingExportResult> ExportPnd51Async(Guid companyId, int year)
     {
+        // ══ รอบ 230 ฝ่ายค้าน S1 — ไฟล์ ภ.ง.ด.51 ไม่ประกอบสูตรเองอีก ══
+        // (1) มีรายการคำนวณ ภ.ง.ด.51 ที่ตั้งหนี้แล้วและ JE ยังมีผล ⇒ ใช้ตัวเลขชุดนั้น (ประมาณการที่ผู้ใช้กรอก · ภาษีที่ตั้งหนี้ — ไฟล์ = บัญชี)
+        // (2) ไม่มี ⇒ คำนวณสดด้วยตัวโหลด/กติกาเดียวกับเครื่องคำนวณ (Tax/CitPeriodFigures · CitCalculation.HalfYearTax · ประมาณการ = กำไรครึ่งปี × 2)
+        // รอบแรก < 12 เดือน: เดิมยกเว้นอัตโนมัติจาก Company.CreatedAt (วันเริ่มใช้ระบบ ไม่ใช่วันจดทะเบียน) ⇒ เลิก — เตือนเท่านั้น (Pnd51Exemption)
+        // กำหนดยื่น: TaxFilingDeadline (สิ้นเดือนที่ 2 หลังครึ่งปี — เดิม halfEnd.AddMonths(2) ⇒ 30 ส.ค. แทน 31 ส.ค.)
         var company = await GetCompanyAsync(companyId);
         var thaiYear = year + 543;
-        var fy = Accounting.Helpers.FiscalYear.RangeFor(year, company.FiscalYearStartMonth);
-        var fyStart = fy.Start;
-        var fyEnd = fy.EndInclusive;
-        var halfEnd = fy.HalfEndInclusive;   // 6 เดือนแรก
+        var range = Accounting.Helpers.CitCalculation.PeriodFor(year, company.FiscalYearStartMonth, Accounting.Helpers.CitCalculation.HalfYear);
+        var halfEnd = range.EndInclusive;
+        var due = Accounting.Helpers.TaxFilingDeadline.For(Accounting.Helpers.CitPayment.Pnd51Type, halfEnd.Year, halfEnd.Month).Paper;
+        var (_, firstYearNote) = Accounting.Helpers.CitCalculation.Pnd51Exemption(null, company.CreatedAt, range.FullYear);
 
-        // First-year ยกเว้น ภ.ง.ด.51 — ใช้ Company.CreatedAt เป็น proxy
-        // ของวันเริ่มจัดตั้งระบบ (best-effort; user override ผ่าน portal ได้).
-        // ถ้า CreatedAt อยู่ในช่วง fyStart..fyEnd → ปีแรก รอบ < 12 เดือน.
-        var incorporatedAt = company.CreatedAt;
-        var isFirstYear = incorporatedAt > fyStart && incorporatedAt < fyEnd;
-        if (isFirstYear)
+        var posted = await Accounting.Services.Implementations.Tax.CitPeriodFigures.LivePostedHalfYearAsync(_db, companyId, year);
+
+        decimal revenueHalf, netProfitHalf, estimatedAnnualProfit, estimatedAnnualCit, halfYearCit;
+        bool isSme;
+        string smeReason, source;
+        if (posted != null)
         {
-            return new TaxFilingExportResult(
-                "PND51", "ภ.ง.ด.51", $"PND51_{year}.txt", "text/plain", AsBytes(""),
-                0, 0, 0,
-                $"ภ.ง.ด.51 ปี {year}: รอบบัญชี < 12 เดือน (ปีแรก/สุดท้าย/เปลี่ยนรอบ) — ยกเว้นไม่ต้องยื่น (§67 ทวิ)");
+            revenueHalf = posted.TotalRevenue;
+            netProfitHalf = posted.TaxableProfit;
+            estimatedAnnualProfit = posted.EstimatedAnnualProfit ?? posted.TaxableProfit * 2m;
+            halfYearCit = posted.TaxAmount;
+            estimatedAnnualCit = halfYearCit * 2m;
+            isSme = posted.IsSme ?? false;
+            smeReason = posted.SmeReason ?? "รายการคำนวณก่อนรอบ 230 (ไม่มีเหตุผล SME)";
+            source = "จากรายการคำนวณ ภ.ง.ด.51 ที่ตั้งหนี้แล้ว";
         }
-
-        // กำไรสุทธิ 6 เดือนแรก = Revenue − Expense (ReportableJournal.WherePeriodActivity)
-        var revenueHalf = await _db.JournalEntryLines.AsNoTracking()
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.EntryDate >= fyStart
-                && l.JournalEntry.EntryDate <= halfEnd
-                && l.Account!.AccountType == AccountType.Revenue)
-            .WherePeriodActivity()   // ★ ทีม O 2026-10-22 — Posted + Reversed (คู่กลับรายการหักล้างกัน) · ไม่นับใบปิดบัญชี · ฐานเดียวกับ ภ.ง.ด.50
-            .SumAsync(l => (decimal?)(l.CreditAmount - l.DebitAmount)) ?? 0m;
-        var expenseHalf = await _db.JournalEntryLines.AsNoTracking()
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.EntryDate >= fyStart
-                && l.JournalEntry.EntryDate <= halfEnd
-                && l.Account!.AccountType == AccountType.Expense)
-            .WherePeriodActivity()   // ★ ทีม O 2026-10-22 — Posted + Reversed (คู่กลับรายการหักล้างกัน) · ไม่นับใบปิดบัญชี · ฐานเดียวกับ ภ.ง.ด.50
-            .SumAsync(l => (decimal?)(l.DebitAmount - l.CreditAmount)) ?? 0m;
-        // B6: บวกกลับ §65 ตรี ของครึ่งปีแรก — ฐานเดียวกับ ภ.ง.ด.50 (เดิม 51
-        // คำนวณจาก JE ล้วน ไม่มีบวกกลับเลย ⇒ ประมาณการกำไรต่ำกว่าจริง เสี่ยง
-        // เงินเพิ่ม 20% ตาม §67 ตรี เมื่อประมาณการขาดเกิน 25%)
-        var addBackHalf = await _taxService.ComputeSection65TerAddBackAsync(
-            companyId, fyStart, halfEnd);
-        var netProfitHalf = revenueHalf - expenseHalf + addBackHalf;
-
-        // ประมาณการทั้งปี — วิธี simple × 2 (user แก้ใน portal ก่อนยื่น)
-        var estimatedAnnualProfit = netProfitHalf * 2m;
-
-        // อัตราภาษี — SME (ทุน ≤ 5 ล. + รายได้ ≤ 30 ล.) ใช้ขั้นบันได, อื่น ๆ 20%.
-        // ใช้รายได้ทั้งปี (ประมาณครึ่งปี × 2) ตัดสินว่า SME.
-        // ★ D2-B2a: เกณฑ์ SME เคยเป็นสูตร inline ที่นี่ — ย้ายไป
-        // `Helpers/CitRateTable.IsSme` เพื่อให้เส้น ภ.ง.ด.50 (TaxService) ใช้
-        // เกณฑ์ **ตัวเดียวกัน** (เดิม ภ.ง.ด.50 ไม่ตัดสิน SME เลย = ใช้ขั้นบันได
-        // กับทุกบริษัท)
-        var revenueAnnualEst = revenueHalf * 2m;
-        var paidUpCapital = company.PaidUpCapital;
-        var isSme = Accounting.Helpers.CitRateTable.IsSme(paidUpCapital, revenueAnnualEst);
-        var estimatedAnnualCit = ComputeCit(estimatedAnnualProfit, isSme);
-        // §67 ทวิ — **ตกจุดกึ่งกลางจริง**: `x/2` ให้ .005 ทุกครั้งที่สตางค์เป็นเลขคี่
-        // (พิสูจน์แล้วด้วยการไล่ค่า) ⇒ ไม่มี AwayFromZero = banker's rounding
-        // ปัดลงครึ่งหนึ่งของเคส ⇒ ยอดในไฟล์ที่ยื่นต่างจากที่คำนวณเอง (ผลตรวจ C-T16)
-        var halfYearCit = Math.Round(estimatedAnnualCit / 2m, 2, MidpointRounding.AwayFromZero);   // §67 ทวิ
+        else
+        {
+            var fig = await Accounting.Services.Implementations.Tax.CitPeriodFigures.LoadAsync(_db, _taxService, companyId, range, company.PaidUpCapital);
+            netProfitHalf = Accounting.Helpers.CitCalculation.TaxableProfit(fig.AccountingProfit, fig.AutoAddBack, 0m, 0m, 0m);
+            revenueHalf = fig.Revenue;
+            var sme = Accounting.Helpers.CitCalculation.DecideSme(company.PaidUpCapital, revenueHalf * 2m, null, null);
+            isSme = sme.IsSme;
+            smeReason = sme.Reason;
+            var h = Accounting.Helpers.CitCalculation.HalfYearTax(netProfitHalf, null, Accounting.Helpers.CitCalculation.BasisEstimate, isSme, year);
+            estimatedAnnualProfit = h.EstimatedAnnualProfit;
+            estimatedAnnualCit = h.AnnualTaxOnBasis;
+            halfYearCit = h.HalfYearTax;
+            source = "คำนวณสด (ยังไม่มีรายการคำนวณที่ตั้งหนี้แล้ว — ประมาณการ = กำไรครึ่งปี × 2 · แก้ประมาณการที่หน้าบริหารการเงิน)";
+        }
 
         var sb = new System.Text.StringBuilder();
         var branchSeq = company.BranchCode ?? "00000";
         sb.AppendLine($"H|{company.TaxId}|{branchSeq}|ภ.ง.ด.51|{thaiYear:D4}|6M|{revenueHalf:F2}|{netProfitHalf:F2}|{estimatedAnnualProfit:F2}|{estimatedAnnualCit:F2}|{halfYearCit:F2}");
-        sb.AppendLine($"T|isSME={(isSme ? 1 : 0)}|due={halfEnd.AddMonths(2):yyyy-MM-dd}");
+        sb.AppendLine($"T|isSME={(isSme ? 1 : 0)}|due={due:yyyy-MM-dd}");
 
         return new TaxFilingExportResult(
             "PND51", "ภ.ง.ด.51", $"PND51_{year}.txt", "text/plain", AsBytes(sb.ToString()),
             1, revenueHalf, halfYearCit,
-            $"ภ.ง.ด.51 ปี {year} ({(isSme ? "SME" : "ทั่วไป")}) — "
-            + Accounting.Helpers.CitRateTable.SmeReason(paidUpCapital, revenueAnnualEst) + " · "
-            + $"กำไรครึ่งปี {netProfitHalf:N2}, " +
-            $"ประมาณการทั้งปี {estimatedAnnualProfit:N2}, ภาษีครึ่งปี {halfYearCit:N2}. " +
-            $"กำหนดยื่น: {halfEnd.AddMonths(2):dd/MM/yyyy} (§67 ทวิ — 2 เดือนนับจาก {halfEnd:dd/MM/yyyy})");
+            $"ภ.ง.ด.51 ปี {year} ({(isSme ? "SME" : "ทั่วไป")}) — {source} · " + smeReason + " · "
+            + $"กำไรครึ่งปี {netProfitHalf:N2}, ประมาณการทั้งปี {estimatedAnnualProfit:N2}, ภาษีครึ่งปี {halfYearCit:N2}. "
+            + $"กำหนดยื่น: {due:dd/MM/yyyy} (§67 ทวิ — ภายใน 2 เดือนนับจาก {halfEnd:dd/MM/yyyy})"
+            + (firstYearNote == null ? "" : " · " + firstYearNote));
     }
 
-    /// <summary>คำนวณ CIT ตามอัตรา SME / ทั่วไป — <b>ตารางอัตราอยู่ที่
-    /// <see cref="Accounting.Helpers.CitRateTable"/> ที่เดียว</b>
-    /// (เดิมสูตรขั้นบันไดอยู่ที่นี่ และมีสำเนาที่สองใน <c>TaxService</c> ที่
-    /// **ไม่ดู SME เลย** — D2-B2a). ห้ามเขียนขั้น/อัตราซ้ำที่นี่อีก</summary>
-    private static decimal ComputeCit(decimal netProfit, bool isSme)
-        => Accounting.Helpers.CitRateTable.Compute(netProfit, isSme);
 }

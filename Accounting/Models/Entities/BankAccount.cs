@@ -413,6 +413,11 @@ public class StampDutyRecord : TenantEntity
     public DateTime? PaidAt { get; set; }
     public string? RdReceiptNumber { get; set; }                // for ESD / Or.Sor.4
 
+    /// <summary>รอบ 230 N4 — ผู้ใช้ยืนยันว่าค่าอากรของใบที่ "บันทึกเลขใบเสร็จอย่างเดียว" ลงบัญชีด้วยใบสำคัญเองแล้ว ⇒ ซ่อนจากรายการรอลงบัญชี +
+    /// เส้นลงบัญชี (<c>RemitStampDutyAsync</c>) ปฏิเสธ (กันค่าใช้จ่ายซ้ำ) · ยกเลิกการยืนยันได้ · audit ทุกครั้ง</summary>
+    public DateTime? ManualPostingConfirmedAt { get; set; }
+    public string? ManualPostingConfirmedBy { get; set; }
+
     public string? Notes { get; set; }
 
     /// <summary>Project this duty is incurred on (rental contract
@@ -559,6 +564,8 @@ public class PdpaConsentRecord : TenantEntity
     public string? EvidenceSource { get; set; }
     /// <summary>รอบ 214 ฝ่ายค้าน S1: ลบตามคำขอแล้ว (อีเมล/IP ทำไม่ให้ระบุตัว · แถวคงไว้เป็นหลักฐาน)</summary>
     public DateTime? PseudonymisedAt { get; set; }
+    /// <summary>รอบ 230 ฝ่ายค้าน S2: user-agent ตอนให้ความยินยอม (อยู่ใน canonical ของ <see cref="EvidenceHash"/> เมื่อมีค่า · แถวเดิม null = เหมือนเดิม)</summary>
+    public string? UserAgent { get; set; }
 }
 
 /// <summary>PiiAccessLog (ม.37(4)) — บันทึก who-accessed-what PII event-style.

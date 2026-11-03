@@ -69,7 +69,8 @@ public partial class CommissionService
         return new ResourcePaySettingsResponse(
             rows.Select(r => new ResourcePayResponse(r.Id, r.Name, r.IsActive, r.StaffUserId, r.EmployeeId,
                 r.EmployeeId is Guid eid && names.TryGetValue(eid, out var n) ? n : null, r.PayMode, r.PayRate, r.PayMinimumPerClass)).ToList(),
-            emps.Select(e => new PayEmployeeOption(e.Id, EmployeeLabel(e.NickName, e.FirstNameTh, e.LastNameTh))).ToList());
+            emps.Select(e => new PayEmployeeOption(e.Id, EmployeeLabel(e.NickName, e.FirstNameTh, e.LastNameTh))).ToList(),
+            InstructorPayRule.ModeOptions);
     }
 
     public async Task<ResourcePayResponse> SaveResourcePayAsync(Guid companyId, Guid siteId, Guid resourceId, SaveResourcePayRequest request, string actor)

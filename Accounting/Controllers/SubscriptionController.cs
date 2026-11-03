@@ -1,6 +1,7 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.DTOs.Subscription;
+using Accounting.Models.Enums;
 using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
@@ -206,6 +207,22 @@ public class SubscriptionController : ControllerBase
         var result = await _subscriptionService.ChangeSubscriptionAsync(companyId, request, userId);
         await RecordPlanAcceptanceAsync(legal, companyId, result, request.PolicyVersionShown);
         return Ok(new ApiResponse<PlanPurchaseResponse>(true, result, result.Message));
+    }
+
+    /// <summary>รอบ 230 (D-8 · คำตัดสินข้อ 230-Q1/230-Q2): ดูราคาก่อนเปลี่ยนแพ็กเกจ — ส่วนต่างตามวันที่เหลือ / ราคาเต็ม / ดาวน์เกรดมีผลวันครบรอบ + คูปอง ·
+    /// ตัวเลขทุกตัวจากเซิร์ฟเวอร์ (หน้าเว็บแสดงอย่างเดียว) · ไม่สร้าง/ไม่จองอะไร</summary>
+    [HttpGet("{companyId:guid}/plan-quote")]
+    [Accounting.Filters.RejectApiKey("ดูราคาเปลี่ยนแพ็กเกจ")]
+    public async Task<ActionResult<ApiResponse<PlanChangeQuote>>> PlanQuote(Guid companyId, [FromQuery] SubscriptionPlan plan,
+        [FromServices] IChatRateLimiter rate, [FromQuery] BillingCycle? cycle = null, [FromQuery] string? coupon = null)
+    {
+        // เจ้าของเท่านั้น (เข้มกว่า BillingManage — เส้นยืนยันก็ต้องเป็นเจ้าของ) · ฝ่ายค้าน N1: มีโค้ด ⇒ นับต่อผู้ใช้กันเดารหัส
+        if (await RequireOwnerAsync(companyId, "ดูราคาเปลี่ยนแพ็กเกจ") is { } deny) return deny;
+        if (!string.IsNullOrWhiteSpace(coupon)
+            && !await rate.TryConsumeAsync($"coupon-preview:{JwtHelper.GetUserIdFromClaims(User)}", 10, 100, default, failClosed: true))
+            return StatusCode(429, new ApiResponse<PlanChangeQuote>(false, null!, "ตรวจโค้ดบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่"));
+        var q = await _subscriptionService.QuotePlanChangeAsync(companyId, plan, cycle, coupon);
+        return Ok(new ApiResponse<PlanChangeQuote>(true, q, q.Message));
     }
 
     /// <summary>

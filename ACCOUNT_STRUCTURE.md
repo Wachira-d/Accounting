@@ -630,7 +630,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 | แคตตาล็อก + ราคา | `QuotaAddOnOffers` (แอดมิน `/pages/admin-quota.html` · `api/admin/quota/offers`) | 1 ข้อเสนอต่อทรัพยากร · ขนาดหน่วย · ราคาเดือน/ปี · วิธีซื้อที่เปิด · ซื้อได้สูงสุด/บริษัท · ขั้นต่ำ 1 เดือน · อายุเดือนเดียว · ไม่มีราคา = ซื้อไม่ได้ (ไม่ขายฟรีเงียบ) |
 | ยอด | `Helpers/QuotaAddOnPricing` | เดือนเดียว = ราคาเต็มถึงสิ้นเดือนไทย (Consumable 60 วัน) · รายเดือน = เดือนแรกตามวัน แล้ว `UsageEvent` รายเดือน (`qadd:{id}:{yyyy-MM}`) · ถึงวันหมดอายุ = `round(R×D/C,2)` ต่อหน่วย (R = ราคาปีหรือเดือน×12) ขั้นต่ำ 1 เดือน · ฟรีถาวร/ทดลองไม่มีโหมดนี้ |
 | เงิน → สิทธิ์ → เอกสาร | `QuotaAddOnPurchaseService` · `PaymentSourceKind.QuotaAddOnPurchase` (ใน `PlatformRevenueSource`) · `QuotaAddOnPaymentHandler` | intent ใต้บริษัทผู้ให้บริการ (ยอดจากเซิร์ฟเวอร์ · ติ๊กยอมรับนโยบาย `platform-quota-addon`) หรือโอน+สลิป → แอดมินอนุมัติ · **ให้สิทธิ์เมื่อรับเงินแล้วเท่านั้น** · ใบกำกับ/ใบเสร็จ `IssueAddOnReceiptAsync` อ้างอิง `QADD-…` (ขาเงินเข้าตามชนิด intent) · คืนเงิน = ใบลดหนี้เส้นรอบ 228 (หาใบเดิมด้วยอ้างอิงเดียวกัน) |
-| ต่ออายุ | `QuotaRenewalLines` | โหมดถึงวันหมดอายุต่อพร้อมแพ็กเกจเป็นค่าตั้งต้น · ใบต่ออายุหลายบรรทัด · ตัดชำระใบ ⇒ รอบใหม่ · ใบออกแล้ว = รายการล็อก (409) · บริษัทใต้ License ยังไม่รวม |
+| ต่ออายุ | `QuotaRenewalLines` | โหมดถึงวันหมดอายุต่อพร้อมแพ็กเกจเป็นค่าตั้งต้น · ใบต่ออายุหลายบรรทัด · ตัดชำระใบ ⇒ รอบใหม่ · ใบออกแล้ว**ยังไม่มีการชำระ/แจ้งชำระ** = เปลี่ยนได้ (ยกเลิกใบเดิม + ออกใบใหม่ทันที — รอบ 230 ข้อ 230-Q3) · มีการชำระ/แจ้งชำระแล้ว = 409 `QUOTA-RENEW-LOCKED` · บริษัทใต้ License ยังไม่รวม |
 | แพ็กเกจหมด/ยกเลิก | `AddOnMonthlyBillingJob` · `BillRecurringAsync` | ค่าเหมาส่วนเสริมสวิตช์และค่าเดือนโควตาเสริม **ไม่ออก** เมื่อ `GetEffectivePlanAsync().IsActive == false` (ไม่ประทับงวด) |
 | รายการล้าสมัย (ฝ่ายค้าน B2) | `QuotaAddOnPricing.StaleCheck` | เริ่มชำระ/แนบสลิป/อนุมัติ = 409 `QUOTA-STALE` · เงินเข้าช้า: เดือนเดียวแบบกำหนดวันนับจากวันจ่าย · อื่น = ไม่เปิด + `AttentionRule` + audit · ใบเสร็จ = เงินรับจริง ลงวันโอน (S7) · แอดมินอนุมัติไม่มีสลิปต้องมีหลักฐาน (S2) · เพิกถอนได้ (S8) · ค้างไม่จ่าย 14 วัน = ยกเลิก |
 
@@ -687,7 +687,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 - **ส่วนเสริมเหมารายเดือน**: ค้างชำระใช้ได้ `AddOnPaymentPolicy.UnpaidGraceDays` (7) วันนับจาก `CompanyFeature.PaymentAwaitingSince` แล้วระงับ · งวดที่จ่ายล่วงหน้า
   (`CompanyFeature.UpfrontPeriod`) ไม่ออกค่าเหมาซ้ำ · ยังไม่จ่าย = ไม่ออกค่าเดือน · แถวที่ค้างชำระก่อนเฟส 0 = ผ่อนผัน 7 วันนับจากวัน deploy (migration ตั้งเวลาให้ · คำตัดสินเจ้าของ ④)
 - รายงานอ่านอย่างเดียว `/admin/revenue.html` (`AdminPlatformBillingController`): unpaid-activations · prepaid-accounts · tenant-routed-intents
-- **หลังฝ่ายค้าน (ภาคผนวกข้อ 178):** อัปเกรดทันที/sub ฟรีถาวร = รอบใหม่เริ่มวันอนุมัติ (ส่วนที่เหลือสละ — ชั่วคราวจนมี proration) · ต่ออายุ/ดาวน์เกรดรอครบรอบ ต่อจากวันหมดอายุเดิม ·
+- **(รอบ 230 — แทนประโยคถัดไปสำหรับอัปเกรดกลางรอบ: จ่ายส่วนต่างตามวันที่เหลือ วันหมดอายุคงเดิม — §6.2e)** **หลังฝ่ายค้าน (ภาคผนวกข้อ 178):** อัปเกรดทันที/sub ฟรีถาวร = รอบใหม่เริ่มวันอนุมัติ (ส่วนที่เหลือสละ — ชั่วคราวจนมี proration) · ต่ออายุ/ดาวน์เกรดรอครบรอบ ต่อจากวันหมดอายุเดิม ·
   แพ็กเกจฟรีถาวร = Active ไม่หมดอายุ · ทดลองใช้ Account Plan ครั้งเดียวต่อเจ้าของต่อระดับ · การจ่ายของบริษัทต่ออายุแพลนบัญชีเฉพาะเมื่อแพ็กเกจตรง · ออกใบแจ้งหนี้ต่ออายุแล้ว = ดาวน์เกรดได้หลังครบรอบ
 - **Deploy checklist — คีย์เข้ารหัส (B2):** (1) ตั้ง `ENCRYPTION_KEY` (หรือ `Security:EncryptionKey`) ใน production — ว่าง/dev key = แอปไม่บูต · (2) **อย่าลบค่า
   `Security:EncryptionKey` เดิม**ในการ deploy แรกหลังเปลี่ยน (เป็นคีย์เดิมที่ใช้ถอดความลับเก่า) · (3) หลังบูต 3 นาทีดูผลงาน `SecretReprotect` ในหน้างานเบื้องหลัง
@@ -745,6 +745,37 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   ใบสำคัญสำรอง Dr ลูกหนี้/Cr 11340 + ปุ่มออกใบลดหนี้อีกครั้ง — DOCUMENT_FLOW §ค่าบริการ) · **ข้อพิพาท** บันทึกบนรายการ + เตือนแอดมิน
   (ไม่เปลี่ยนสถานะเงิน) · ศูนย์บิลแสดง/ดาวน์โหลดใบเสร็จ/ใบกำกับ/ใบลดหนี้ที่บริษัทเป็นผู้ซื้อ (`PlatformInvoiceQueries.PaidDocumentsForBuyer`) · รายงาน MRR/ลูกหนี้ตามอายุ
   `GET api/admin/platform-billing/revenue-report` (`Helpers/PlatformRevenueMetrics`)
+- **รอบ 230 (PLATFORM_OMISE_AUDIT §5.2/§5.3 · §7.3):** ตารางระดับแพลตฟอร์มใหม่ (ไม่ใช่ TenantEntity — คีย์ = บริษัทผู้ให้บริการ + บริษัทผู้จ่าย · schema `Helpers/PlatformCardBillingMigration`):
+  `PlatformSavedCards` (เลขอ้างอิงลูกค้า/บัตรของผู้ให้บริการ · ยี่ห้อ · 4 ตัวท้าย · วันหมดอายุ · ตั้งต้น · ยืนยันแล้ว · ลบแบบประทับเวลา — ไม่มีคอลัมน์เลขบัตร/CVV) ·
+  `PlatformAutoChargeMandates` (หนึ่งแถวต่อบริษัทผู้จ่าย: ผู้เช่าเปิด/ปิด + ฉบับความยินยอม · แอดมินระงับต่อบริษัท) · `PlatformAutoChargeAttempts` (unique ใบ+ครั้งที่) ·
+  `PlatformAutoChargeSettings` (สวิตช์แพลตฟอร์มแถวเดียว · ค่าตั้งต้นปิด) · `PlatformProviderTransfers` (รอบโอนที่ดึงจากผู้ให้บริการ · unique เลขรอบโอน · ร่างรอบโอนที่สร้าง) ·
+  ความยินยอมตัดบัตร = `PdpaConsentRecord` ใต้บริษัทผู้ให้บริการ (ผู้ควบคุมข้อมูล) · ตัดอัตโนมัติไม่เปลี่ยนเส้นบัญชีเดิม (เงินเข้า Dr 11340 ผ่าน handler เดิม) ·
+  รอบโอนจาก API = **ร่าง**ในบริษัทผู้ให้บริการ ลงบัญชีโดยคนที่หน้ารอบโอน (Dr ธนาคาร · Dr ค่าธรรมเนียม+VAT · Cr 11340) · หน้าแอดมิน `/admin/platform-card-ops.html` ·
+  ศูนย์บิลการ์ด "บัตรที่บันทึกไว้ · ตัดบัตรอัตโนมัติ" (`api/subscription/{cid}/billing-center/saved-cards`)
+  · ฝ่ายค้านรอบ 230 (§7.4): คอลัมน์เพิ่ม `PaymentIntents.SavedCardRef` · `PdpaConsentRecords.UserAgent` · `PlatformSavedCards.WhtAcknowledgedAt` ·
+  `PlatformAutoChargeMandates.WhtAcknowledgedAt/LastProcessedAt` (ADD COLUMN IF NOT EXISTS ใน `PlatformCardBillingMigration`) — คำสั่งตัดเปิดเมื่อบัตรยืนยันแล้วเท่านั้น
+
+### 6.2e ส่วนต่างอัปเกรดกลางรอบ · คูปอง · แอดมินแก้ยอด · hub 4 แท็บ (รอบ 230 · คำตัดสินข้อ 230-Q1..Q4 · `erp-review/2026-11-02/QUOTA_ADDON_SUBSCRIPTION_AUDIT.md` §E รอบ 230)
+
+| เรื่อง | ตัวเดียวของระบบ | กติกา |
+| --- | --- | --- |
+| อัปเกรดกลางรอบ (230-Q1) | `Helpers/PlatformProration.Upgrade` · `SubscriptionService.ProrationFor` | ยอด = `round((ราคาใหม่ต่อรอบ − ราคาเดิมต่อรอบ) × D ÷ C, 2, AwayFromZero)` · D = วันที่เหลือ (ปฏิทินไทย) · C = วันของรอบ (`EndDate − เดือนของรอบ`) · รอบบิลปัจจุบันเท่านั้น (ขอเปลี่ยนรอบพร้อมกัน = รอบคงเดิม เปลี่ยนรอบได้หลังอัปเกรด มีผลวันครบรอบ) · รายการชำระ `IsProration` (`RequestedPeriodMonths = 0`) · **เงินเข้า ⇒ เปลี่ยนแพ็กเกจทันที วันหมดอายุคงเดิม** · ใบต่ออายุรอบหน้าที่ออกตามแพ็กเกจเดิม ⇒ ถูกแทนที่ (ยังไม่จ่าย = ยกเลิก แล้วงานต่ออายุออกใหม่ตามแพ็กเกจใหม่) · วันหมดอายุ/แพ็กเกจเปลี่ยนหลังคิด (`PlatformProration.StaleReason`) + เงินเข้าออนไลน์ ⇒ **พักให้แอดมิน** (`PLATFORM-PAYMENT-HELD`) · ไม่ใช้กับ ทดลองใช้/ฟรีถาวร/หมดอายุ/เหลือ < 1 วัน/ราคาไม่สูงขึ้น ⇒ เส้นเดิม "เริ่มรอบใหม่วันที่ชำระ" (หน้าดูราคาบอกจำนวนวันที่ไม่ถูกนำมาหัก — D-8) |
+| ดาวน์เกรด | `Scheduled*` เดิม | มีผลวันครบรอบ · ไม่เก็บ/ไม่คืนส่วนต่าง (ข้อ 178 ⑥⑦) · ใบต่ออายุออกแล้ว = บล็อกจนครบรอบ (เดิม S9) |
+| ดูราคาก่อนยืนยัน | `SubscriptionService.QuotePlanChangeAsync` · `GET api/subscription/{cid}/plan-quote?plan=&cycle=&coupon=` | ตัวตัดสินเดียวกับตอนยืนยัน (จำแนกทิศ · ส่วนต่าง · ราคาเต็ม · คูปอง · บล็อก) · ไม่สร้าง/ไม่จอง |
+| คูปอง (230-Q2) | ตาราง `PlatformCoupons` + `PlatformCouponRedemptions` (`Helpers/PlatformCouponMigration`) · ตัวตัดสิน `Helpers/PlatformCouponRule` · ตัวเก็บ/นับ `Services/Implementations/PlatformCouponStore` | % หรือบาท · ช่วงวัน [เริ่ม, ถึง) · เพดานรวม/ต่อบริษัท · แพ็กเกจ/รอบบิล/ทรัพยากรโควตาเสริมที่ใช้ได้ · ครั้งแรกเท่านั้น · ใช้ได้กับค่าแพ็กเกจ (รวมส่วนต่างอัปเกรด) และโควตาเสริม · **ตัดสินตอนสร้างรายการชำระ** (ยอดจากเซิร์ฟเวอร์) · จองใต้ `pg_advisory_xact_lock` ต่อคูปองในธุรกรรมเดียวกับการสร้างรายการ (การจองนับเข้าเพดาน 14 วัน) · นับเมื่อเงินเข้า (UPDATE แบบมีเงื่อนไข — webhook ซ้ำนับครั้งเดียว) · ปลดเมื่อปฏิเสธ/ยกเลิก/ค้าง 14 วัน · ยอดหลังลดไม่ต่ำกว่า 0 (ลดจน 0 = ปฏิเสธ ให้แอดมินบันทึกยกเว้น) · ไม่มีคูปองส่วนเสริมสวิตช์ (`AddOnPurchaseService` — ทีมอื่น) |
+| ใบกำกับมีส่วนลด (§86/4) | `PlatformCouponRule.SplitDiscounted` ใน `PlatformBillingDocumentIssuer.IssuePaidReceiptAsync`/`IssueAddOnReceiptAsync` + PDF เดี่ยว | บรรทัด = ราคาเต็มก่อน VAT · `DiscountAmount` ของบรรทัด = ส่วนลดก่อน VAT · ฐานหลังลด + VAT = เงินที่รับพอดี · คำอธิบายบรรทัดบอกรหัสคูปอง |
+| อนุมัติอัตโนมัติ (ข้อ 178 (ฉ) ปรับ) | `PlatformPlanPricing.AutoApproveExpected` ใน `SubscriptionPaymentHandler` | รายการที่เซิร์ฟเวอร์เสนอยอดเอง (`SubscriptionPayment.QuotedAmount` — ทุกรายการที่ `RequestPlanPaymentAsync` สร้าง/แอดมินแก้) ⇒ เงินเข้าเท่ายอดนั้นอนุมัติได้ · รายการแบบเดิม (ผู้เช่าแจ้งยอดเอง — `QuotedAmount` null) ⇒ ต้องเท่าราคาเต็มเหมือนเดิม |
+| แอดมินแก้ยอด (ข้อ 178 ①) | `SubscriptionService.OverridePaymentAmountAsync` · `POST api/admin/subscription-payments/{id}/amount` · ปุ่มในหน้าตรวจ `/admin/payments.html` | เฉพาะรายการที่ยังไม่อนุมัติ/ไม่ผูกใบแจ้งหนี้ · ไม่มีการชำระออนไลน์ค้าง/สำเร็จ · เหตุผลบังคับ · audit chain `PLATFORM-ADMIN-PRICE-OVERRIDE` · ยอดใหม่ = ยอดที่อนุมัติอัตโนมัติได้ |
+| แอดมินจัดการคูปอง | `/admin/coupons.html` · `AdminPlatformCouponController` (`api/admin/platform-coupons`) | สร้าง/แก้/ปิด/ดูการใช้ · เปลี่ยนรหัสของคูปองที่ถูกใช้แล้วไม่ได้ · ลบได้เฉพาะคูปองที่ไม่เคยจอง/ใช้ (soft delete) · audit chain ทุกครั้ง |
+| ใบต่ออายุเปลี่ยนรายการ (230-Q3) | `QuotaAddOnPurchaseService.PrepareRenewalSupersedeAsync` → `ReissueRenewalAsync` | แก้/เลิกต่อโควตาเสริมหลังออกใบ: ยังไม่มีการชำระ/แจ้งชำระ/รับบางส่วน ⇒ ปลดตัวชี้ (แพ็กเกจ+บรรทัด) + ประวัติ + audit → ยกเลิกใบเดิม (`HandleStaleRenewalInvoiceAsync`) → ออกใบใหม่ทันที · มีแล้ว ⇒ 409 พร้อมเหตุ |
+| hub 4 แท็บ (230-Q4) | `pages/billing.html` (`#tab=plan|usage|buy|docs` · `#buy=<resource>` ⇒ แท็บซื้อ + เปิดหน้าต่างซื้อ) | แพ็กเกจ (แพ็กเกจปัจจุบัน · รายการที่รอชำระ `canPayNow` · เปลี่ยน/อัปเกรดพร้อมราคาจาก `plan-quote`) · ใช้ไปเท่าไร (`quota/summary` — ความยาวหลอด `Percent` คิดที่เซิร์ฟเวอร์) · ซื้อเพิ่ม/ส่วนเสริม (โควตาที่ขาย · การซื้อ · ต่ออายุ · ส่วนเสริม) · ใบแจ้งหนี้&ใบเสร็จ · `usage.html` หลอด/สถานะ/วันที่เหลือจาก `UsageDetailResponse.Bars` (`Helpers/UsageBarRule`) |
+
+**ฝ่ายค้านรอบ 230 (แก้แล้ว):** เริ่มชำระออนไลน์และ handler ใช้ `AutoApproveExpected` ตัวเดียว — `QuotedAmount` ประทับเฉพาะรายการส่วนต่าง/มีคูปอง/แอดมินแก้ (ราคาเต็มยังเทียบราคาปัจจุบัน) ·
+ใบต่ออายุถูกจ่าย/แจ้งชำระแล้ว = ไม่แทนที่ (ตัวตัดสินเดียว `RenewalInvoiceClaims`) — อัปเกรดที่ระบบยืนยันถูกพัก · เปลี่ยนรายการต่ออายุทำใต้ล็อกการอนุมัติ ยกเลิกใบได้ก่อนจึงปลดตัวชี้ ·
+รายการคูปอง/ส่วนต่างค้าง 14 วัน ⇒ ยกเลิก + ปลด (`ExpireStaleQuotedPaymentsAsync`) · การจองหมดแล้วเงินเข้าเกินเพดาน ⇒ พัก/เรื่องค้าง `PLATFORM-COUPON` · ลดจน 0 ตัดสินใน `PlatformCouponRule.Apply` ·
+แอดมินแก้ยอดรายการมีคูปอง ⇒ ส่วนลด = ราคาก่อนคูปอง − ยอดใหม่ · เงินส่วนต่างเข้าหลังวันสิ้นรอบที่คิด = ล้าสมัย · ส่วนต่างใบใหม่แทนใบเก่า · ดูผลคูปองจำกัดอัตรา + สิทธิ์ `BillingManage`
+
+ยังไม่ทำ (บันทึกไว้): คูปองของส่วนเสริมสวิตช์ (`AddOnPurchaseService` — ไฟล์ของทีม saved card) · โควตาเสริมของบริษัทใต้ License ต่อพร้อมใบต่ออายุ License (ยังหมดพร้อมรอบ — ซื้อใหม่) · เครดิตส่วนต่างเมื่อดาวน์เกรด (ไม่คืนเงินตามนโยบาย)
 
 ### 6.3 Edge cases (ตัดสินใจแล้ว)
 
@@ -1277,3 +1308,5 @@ _Last verified against codebase: 2026-10-22 (rev 50 · รอบ 205 ทีม I
 - โควตาพื้นที่ (`AttachmentStorageNotice` · Σ `FileAttachment.FileSize`) ไม่เปลี่ยน — นับจากแถว ไม่ใช่จากดิสก์/bucket
 
 _Last verified against codebase: 2026-11-02 (ทีม FS — ที่เก็บไฟล์กลาง Local | S3 · ไม่มี entity/คอลัมน์ใหม่ · เทสต์ `FileStorageKeyTests` `S3SigV4Tests` `FileStorageConfigPolicyTests` `FileStorageProviderTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit: เติมในคอมมิตตามหลัง)_
+
+_Last verified against codebase: 2026-11-03 (รอบ 230 Omise — §6.2d บัตรที่บันทึก/ตัดบัตรอัตโนมัติ/รอบโอนจากผู้ให้บริการ: 5 ตารางระดับแพลตฟอร์มใหม่ (`PlatformCardBillingMigration`) · เทสต์ `PlatformCardBillingRound230Tests` `PlatformCardBillingRound230DbTests` · ยังไม่ได้คอมไพล์ในเครื่องนี้ · sha เติมในคอมมิตตามหลัง)_

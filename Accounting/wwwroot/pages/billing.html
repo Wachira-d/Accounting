@@ -22,6 +22,17 @@
     .note.bad { background:#fef2f2; border-color:#fecaca; color:#991b1b }
     .muted { color:#64748b; font-size:12px }
     .terms li { margin:4px 0 4px 18px; font-size:13px; color:#334155 }
+    /* รอบ 230 (QUOTA_ADDON §D.3 · §E แพ็ก 6): hub 4 แท็บ — ลิงก์ตรงได้ด้วย #tab=plan|usage|buy|docs */
+    .hub-tabs { display:flex; gap:6px; flex-wrap:wrap; border-bottom:1px solid #e2e8f0; margin-bottom:16px }
+    .hub-tab { background:none; border:none; border-bottom:3px solid transparent; padding:10px 14px; font-size:14px; font-weight:600; color:#64748b; cursor:pointer }
+    .hub-tab.active { color:#1d4ed8; border-bottom-color:#2563eb }
+    .hub-pane { display:none } .hub-pane.active { display:block }
+    .plan-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%, 210px),1fr)); gap:10px }
+    .plan-opt { border:1px solid #e2e8f0; border-radius:12px; padding:12px; background:#fff }
+    .plan-opt.current { border-color:#2563eb; background:#eff6ff }
+    .plan-opt .nm { font-weight:700; color:#0f172a } .plan-opt .pr { font-size:18px; font-weight:800; margin:4px 0 8px }
+    .quote-box { margin-top:12px; border:1px solid #bfdbfe; background:#f8fafc; border-radius:12px; padding:12px }
+    .quote-row { display:flex; justify-content:space-between; font-size:14px; margin:3px 0 }
   </style>
 </head>
 <body>
@@ -29,9 +40,9 @@
     <div class="page-header">
       <div><h2 class="page-title">แพ็กเกจและการชำระเงิน</h2>
         <p class="page-subtitle">ใช้ไปเท่าไร · ซื้อเพิ่ม · ต่ออายุ · ใบแจ้งหนี้ · ใบเสร็จ ของบริษัทนี้ (ที่เดียว)</p></div>
-      <!-- รอบ 229 (QUOTA_ADDON §D.3): hub เดียว — หน้าย่อยเดิมยังเปิดได้จากปุ่มเหล่านี้ (เมนูข้างเหลือรายการเดียว) -->
+      <!-- รอบ 230 (QUOTA_ADDON §D.3): hub เดียว 4 แท็บ — หน้าย่อยเดิมเปิดได้จากปุ่มเหล่านี้ (เมนูข้างเหลือรายการเดียว) -->
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <a href="/pages/subscription.html" class="btn btn-secondary">💎 เปลี่ยน/ต่ออายุแพ็กเกจ</a>
+        <a href="/pages/subscription.html" class="btn btn-secondary">💎 รายละเอียดแพ็กเกจ/ทดลองใช้</a>
         <a href="/pages/addons.html" class="btn btn-secondary">🧩 ส่วนเสริม</a>
         <a href="/pages/usage.html" class="btn btn-secondary">📊 รายละเอียดการใช้งาน</a>
         <a href="/pages/account-subscription.html" class="btn btn-secondary">🎫 License (หลายบริษัท)</a>
@@ -39,16 +50,56 @@
     </div>
     <div id="notice"></div>
     <div class="kpis" id="kpis"></div>
-    <div class="card"><h3>แพ็กเกจปัจจุบัน</h3><div id="plan">กำลังโหลด...</div></div>
-    <!-- รอบ 229 (QUOTA_ADDON §D.3): ใช้ไปเท่าไร + ซื้อเพิ่ม + ต่ออายุพร้อมแพ็กเกจ — ตัวเลข/ราคาทั้งหมดจากเซิร์ฟเวอร์ (js/quota-ui.js) -->
-    <div class="card" id="quotaCard"><h3>ใช้ไปเท่าไร · ซื้อเพิ่ม</h3><div id="quotaSummary">กำลังโหลด...</div></div>
-    <div class="card"><h3>การซื้อโควตาเสริม</h3><div id="quotaPurchases">กำลังโหลด...</div></div>
-    <div class="card"><h3>ต่ออายุพร้อมแพ็กเกจ (โควตาเสริมแบบถึงวันหมดอายุ)</h3><div id="quotaRenewal">กำลังโหลด...</div></div>
-    <div class="card"><h3>ใบแจ้งหนี้</h3><div id="invoices">กำลังโหลด...</div></div>
-    <div class="card"><h3>ประวัติการชำระ</h3><div id="payments">กำลังโหลด...</div></div>
-    <div class="card"><h3>ใบเสร็จ / ใบกำกับภาษี / ใบลดหนี้</h3><div id="receipts">กำลังโหลด...</div></div>
-    <div class="card"><h3>ส่วนเสริม</h3><div id="addons">กำลังโหลด...</div>
-      <div style="margin-top:10px"><a href="/pages/addons.html" class="btn btn-secondary btn-sm">🧩 จัดการส่วนเสริม</a></div></div>
+    <div class="hub-tabs" role="tablist" id="hubTabs">
+      <button type="button" class="hub-tab" role="tab" data-tab="plan">💎 แพ็กเกจ</button>
+      <button type="button" class="hub-tab" role="tab" data-tab="usage">📊 ใช้ไปเท่าไร / โควตา</button>
+      <button type="button" class="hub-tab" role="tab" data-tab="buy">➕ ซื้อเพิ่ม / ส่วนเสริม</button>
+      <button type="button" class="hub-tab" role="tab" data-tab="docs">🧾 ใบแจ้งหนี้ &amp; ใบเสร็จ</button>
+    </div>
+
+    <section class="hub-pane" data-pane="plan">
+      <div class="card"><h3>แพ็กเกจปัจจุบัน</h3><div id="plan">กำลังโหลด...</div></div>
+      <div class="card" id="planPendingCard" style="display:none"><h3>รายการชำระค่าแพ็กเกจที่รอชำระ</h3><div id="planPending"></div></div>
+      <!-- รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): เปลี่ยน/อัปเกรด — ราคา/ส่วนต่างตามวันที่เหลือ/คูปอง คิดที่เซิร์ฟเวอร์ (GET …/plan-quote) -->
+      <div class="card"><h3>เปลี่ยน / อัปเกรดแพ็กเกจ</h3><div id="planChange">กำลังโหลด...</div></div>
+    </section>
+
+    <section class="hub-pane" data-pane="usage">
+      <!-- รอบ 229/230: ใช้ไปเท่าไร — ตัวเลข/ระดับ/ความยาวหลอดทั้งหมดจากเซิร์ฟเวอร์ (js/quota-ui.js) -->
+      <div class="card" id="quotaCard"><h3>ใช้ไปเท่าไร</h3><div id="quotaSummary">กำลังโหลด...</div>
+        <div style="margin-top:6px"><a href="/pages/usage.html" class="btn btn-secondary btn-sm">📊 ดูรายละเอียด (ไฟล์ · ผู้ใช้ · เอกสาร)</a></div></div>
+    </section>
+
+    <section class="hub-pane" data-pane="buy">
+      <div class="card"><h3>ซื้อโควตาเพิ่ม</h3><div id="quotaBuyList">กำลังโหลด...</div></div>
+      <div class="card"><h3>การซื้อโควตาเสริม</h3><div id="quotaPurchases">กำลังโหลด...</div></div>
+      <div class="card"><h3>ต่ออายุพร้อมแพ็กเกจ (โควตาเสริมแบบถึงวันหมดอายุ)</h3><div id="quotaRenewal">กำลังโหลด...</div></div>
+      <div class="card"><h3>ส่วนเสริม</h3><div id="addons">กำลังโหลด...</div>
+        <div style="margin-top:10px"><a href="/pages/addons.html" class="btn btn-secondary btn-sm">🧩 จัดการส่วนเสริม</a></div></div>
+    </section>
+
+    <section class="hub-pane" data-pane="docs">
+      <div class="card"><h3>ใบแจ้งหนี้</h3><div id="invoices">กำลังโหลด...</div></div>
+      <!-- รอบ 230 (PLATFORM_OMISE_AUDIT §5.2): บัตรที่บันทึกไว้ + ตัดบัตรอัตโนมัติ — ค่าทั้งหมดจากเซิร์ฟเวอร์ (js/billing-saved-cards.js) -->
+      <div class="card" id="savedCardsCard"><h3>บัตรที่บันทึกไว้ · ตัดบัตรอัตโนมัติ</h3><div id="savedCards">กำลังโหลด...</div></div>
+      <div class="card"><h3>ประวัติการชำระ</h3><div id="payments">กำลังโหลด...</div></div>
+      <div class="card"><h3>ใบเสร็จ / ใบกำกับภาษี / ใบลดหนี้</h3><div id="receipts">กำลังโหลด...</div></div>
+    </section>
+  </div>
+
+  <!-- รอบ 230: ชำระรายการค่าแพ็กเกจ/ส่วนต่างอัปเกรด (ยอดจากเซิร์ฟเวอร์) — ออนไลน์ผ่านช่องทาง NextAcc หรือโอน + แนบสลิป -->
+  <div class="modal" id="planPayModal">
+    <div class="modal-content" style="max-width:560px">
+      <div class="modal-header">
+        <h3 id="planPayTitle">ชำระค่าแพ็กเกจ</h3>
+        <button class="modal-close" onclick="PlanTab.closePay()">&times;</button>
+      </div>
+      <div class="modal-body" id="planPayBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="PlanTab.closePay()">ปิด</button>
+        <button class="btn btn-primary" id="planSlipSubmit" onclick="PlanTab.submitSlip()">ส่งสลิป</button>
+      </div>
+    </div>
   </div>
 
   <div class="modal" id="payModal">
@@ -79,7 +130,8 @@
 
       async init() {
         if (!Layout.init('billing')) return;
-        Layout.setTitle('ศูนย์บิลค่าบริการ');
+        Layout.setTitle('แพ็กเกจและการชำระเงิน');
+        HubTabs.init();
         await this.load();
       },
 
@@ -88,6 +140,7 @@
           const res = await API.get(this.base());
           this.data = res.data;
           this.render();
+          if (window.PlanTab) PlanTab.render();
         } catch (e) {
           document.getElementById('plan').innerHTML = `<div class="note bad">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
           ['invoices', 'payments', 'receipts', 'addons'].forEach(id => document.getElementById(id).innerHTML = '');
@@ -135,6 +188,15 @@
                 </td></tr>`).join('')}
             </tbody></table></div>`;
 
+        // รอบ 230: รายการค่าแพ็กเกจ/ส่วนต่างอัปเกรดที่ยังไม่จ่าย (เซิร์ฟเวอร์ตัดสิน canPayNow) — แสดงบนแท็บแพ็กเกจด้วย
+        const pending = (d.payments || []).filter(x => x.canPayNow);
+        document.getElementById('planPendingCard').style.display = pending.length ? '' : 'none';
+        document.getElementById('planPending').innerHTML = pending.map(x => `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #f1f5f9">
+            <div><b>${e(x.paymentNumber)}</b> · ${e(x.purpose)}${x.couponCode ? ` <span class="muted">(คูปอง ${e(x.couponCode)} ลด ฿${Layout.money(x.couponDiscountAmount)})</span>` : ''}</div>
+            <div><b>฿${Layout.money(x.amount)}</b> <button class="btn btn-primary btn-sm" onclick="PlanTab.openPay('${Layout.jsArg(x.id)}')">ชำระ</button></div>
+          </div>`).join('');
+
         const pays = d.payments || [];
         document.getElementById('payments').innerHTML = pays.length === 0
           ? '<div class="muted">ยังไม่มีการชำระ</div>'
@@ -143,7 +205,8 @@
               ${pays.map(x => `<tr>
                 <td class="font-medium">${e(x.paymentNumber)}</td><td>${Layout.date(x.paymentDate)}</td><td>${e(x.purpose)}</td>
                 <td class="text-right">฿${Layout.money(x.amount)}</td>
-                <td>${e(x.statusLabel)}${x.rejectionReason ? `<div class="muted">${e(x.rejectionReason)}</div>` : ''}</td>
+                <td>${e(x.statusLabel)}${x.rejectionReason ? `<div class="muted">${e(x.rejectionReason)}</div>` : ''}
+                  ${x.canPayNow ? `<div><button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="PlanTab.openPay('${Layout.jsArg(x.id)}')">ชำระ</button></div>` : ''}</td>
                 <td>${x.hasReceipt ? `<button class="btn btn-secondary btn-sm" onclick="Bill.receipt('${Layout.jsArg(x.id)}','${Layout.jsArg(x.receiptNumber)}')">${e(x.receiptNumber)}</button>` : '-'}
                   ${x.needsWhtCertificate ? `<div><label class="btn btn-secondary btn-sm" style="margin-top:4px">ส่ง 50 ทวิ (${Layout.money(x.withholdingTaxAmount)})
                     <input type="file" accept="image/*,application/pdf" style="display:none" onchange="Bill.whtCert('${Layout.jsArg(x.id)}', this)"></label></div>` : ''}</td>
@@ -268,14 +331,185 @@
         catch (e) { Layout.toast(e.message, 'error'); }
       },
     };
+
+    // ───────── รอบ 230: แท็บของ hub (ลิงก์ตรง #tab=…) ─────────
+    const HubTabs = {
+      names: ['plan', 'usage', 'buy', 'docs'],
+      current() {
+        const h = location.hash || '';
+        const m = /#tab=([a-z]+)/.exec(h);
+        if (m && this.names.includes(m[1])) return m[1];
+        if (/#buy=/.test(h)) return 'buy';   // ลิงก์จากข้อความ "โควตาเต็ม" (QuotaResources.BuyUrl) ⇒ แท็บซื้อเพิ่ม + เปิดหน้าต่างซื้อ
+        return 'plan';
+      },
+      show(name, write) {
+        document.querySelectorAll('#hubTabs .hub-tab').forEach(b => b.classList.toggle('active', b.getAttribute('data-tab') === name));
+        document.querySelectorAll('.hub-pane').forEach(p => p.classList.toggle('active', p.getAttribute('data-pane') === name));
+        if (write) { try { history.replaceState(null, '', '#tab=' + name); } catch (e) { location.hash = 'tab=' + name; } }
+      },
+      init() {
+        document.querySelectorAll('#hubTabs .hub-tab').forEach(b => b.addEventListener('click', () => this.show(b.getAttribute('data-tab'), true)));
+        window.addEventListener('hashchange', () => this.show(this.current(), false));
+        this.show(this.current(), false);
+      },
+    };
+
+    // ───────── รอบ 230: แท็บแพ็กเกจ — เปลี่ยน/อัปเกรด (ส่วนต่างตามวันที่เหลือ · คูปอง) + ชำระรายการที่รอ ─────────
+    // ทุกตัวเลข (ยอด · ส่วนต่าง · ส่วนลด · วันมีผล · ข้อความ) มาจาก GET …/plan-quote — หน้าเว็บแสดงอย่างเดียว
+    const PlanTab = {
+      plans: null, cycle: null, quote: null, couponCode: '', _payId: null,
+      cycleLabel(c) { return ({ Monthly: 'รายเดือน', Quarterly: 'ราย 3 เดือน', SemiAnnual: 'ราย 6 เดือน', Annual: 'รายปี' })[c] || c; },
+      priceOf(p, c) { return ({ Monthly: p.monthlyPrice, Quarterly: p.quarterlyPrice, SemiAnnual: p.semiAnnualPrice, Annual: p.annualPrice })[c]; },
+      async ensurePlans() {
+        if (this.plans) return;
+        try { const r = await API.get('/api/subscription/plans'); this.plans = (r.data && (r.data.items || r.data)) || []; }
+        catch (e) { this.plans = []; }
+      },
+      async render() {
+        const el = document.getElementById('planChange'); if (!el) return;
+        const d = Bill.data || {}, e = Layout.esc;
+        if (!d.canManagePlan) { el.innerHTML = '<div class="muted">เฉพาะเจ้าของบริษัทเปลี่ยนแพ็กเกจได้</div>'; return; }
+        await this.ensurePlans();
+        const cur = d.plan || {};
+        if (!this.cycle) this.cycle = cur.billingCycle || 'Monthly';
+        const plans = this.plans.filter(p => !p.isTrialOnly && p.plan !== 'FreeTrial');
+        el.innerHTML = `
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+            <span class="muted">รอบบิล</span>
+            ${['Monthly', 'Quarterly', 'SemiAnnual', 'Annual'].map(c => `<button type="button" class="btn btn-sm ${c === this.cycle ? 'btn-primary' : 'btn-secondary'}" data-cycle="${c}">${e(this.cycleLabel(c))}</button>`).join('')}
+          </div>
+          <div class="plan-grid">${plans.map(p => `
+            <div class="plan-opt ${p.plan === cur.plan ? 'current' : ''}">
+              <div class="nm">${e(p.name || p.plan)}${p.plan === cur.plan ? ' <span class="pill">ปัจจุบัน</span>' : ''}</div>
+              <div class="pr">฿${Layout.money(this.priceOf(p, this.cycle) || 0)} <span class="muted">/ ${e(this.cycleLabel(this.cycle))}</span></div>
+              <button type="button" class="btn btn-secondary btn-sm" data-quote="${e(p.plan)}">ดูราคาที่ต้องจ่าย</button>
+            </div>`).join('')}</div>
+          <div id="planQuote"></div>`;
+        el.querySelectorAll('[data-cycle]').forEach(b => b.addEventListener('click', () => { this.cycle = b.getAttribute('data-cycle'); this.quote = null; this.render(); }));
+        el.querySelectorAll('[data-quote]').forEach(b => b.addEventListener('click', () => this.loadQuote(b.getAttribute('data-quote'))));
+        if (this.quote) this.renderQuote();
+      },
+      async loadQuote(plan) {
+        const box = () => document.getElementById('planQuote');
+        try {
+          const q = new URLSearchParams({ plan, cycle: this.cycle });
+          if (this.couponCode) q.set('coupon', this.couponCode);
+          const r = await API.get(`/api/subscription/${Bill.cid()}/plan-quote?${q.toString()}`);
+          this.quote = r.data;
+          if (!Bill.data.payOptions) await Bill.load();
+          this.renderQuote();
+        } catch (err) { if (box()) box().innerHTML = `<div class="note bad" style="margin-top:10px">${Layout.esc(err.message || 'ดูราคาไม่สำเร็จ')}</div>`; }
+      },
+      renderQuote() {
+        const q = this.quote, e = Layout.esc, el = document.getElementById('planQuote');
+        if (!q || !el) return;
+        const pays = q.amountDue > 0;
+        const canGo = q.kind !== 'Same' && !q.blocked;
+        el.innerHTML = `<div class="quote-box">
+          <div style="font-weight:700;margin-bottom:6px">${e(q.plan)} · ${e(this.cycleLabel(q.cycle))}</div>
+          <div class="note ${q.blocked ? 'warn' : ''}" style="margin-bottom:8px">${e(q.message)}</div>
+          ${pays ? `
+            <div class="quote-row"><span>${q.prorated ? `ส่วนต่าง (${q.daysRemaining}/${q.cycleDays} วัน)` : 'ราคาแพ็กเกจ'}</span><span>฿${Layout.money(q.listAmount)}</span></div>
+            ${q.discount > 0 ? `<div class="quote-row" style="color:#166534"><span>${e(q.couponLabel || 'ส่วนลด')}</span><span>−฿${Layout.money(q.discount)}</span></div>` : ''}
+            <div class="quote-row" style="font-size:16px;font-weight:800;border-top:1px solid #e2e8f0;padding-top:6px"><span>ยอดชำระ</span><span>฿${Layout.money(q.amountDue)}</span></div>
+            <div style="display:flex;gap:6px;align-items:center;margin:8px 0;flex-wrap:wrap">
+              <input id="planCoupon" class="form-input" maxlength="40" placeholder="โค้ดส่วนลด (ถ้ามี)" value="${e(this.couponCode)}" style="max-width:200px;text-transform:uppercase">
+              <button type="button" class="btn btn-secondary btn-sm" id="planCouponBtn">ใช้โค้ด</button>
+              ${q.couponProblem ? `<span style="color:#b91c1c;font-size:12px">${e(q.couponProblem)}</span>` : ''}
+            </div>` : ''}
+          ${canGo ? `<div id="planPolicy" style="margin:8px 0">${PolicyAccept.html((Bill.data.payOptions || {}).policy)}</div>
+            <button type="button" class="btn btn-primary" id="planConfirm">${pays ? 'ยืนยันและไปชำระ' : 'ยืนยันการเปลี่ยน (มีผลวันครบรอบ)'}</button>` : ''}
+        </div>`;
+        const cb = document.getElementById('planCouponBtn');
+        if (cb) cb.addEventListener('click', () => { this.couponCode = String(document.getElementById('planCoupon').value || '').trim(); this.loadQuote(q.plan); });
+        const go = document.getElementById('planConfirm');
+        if (go) go.addEventListener('click', () => this.confirm());
+      },
+      async confirm() {
+        const q = this.quote; if (!q) return;
+        let pol;
+        try { pol = PolicyAccept.require('planPolicy'); } catch (err) { Layout.toast(err.message, 'error'); return; }
+        // คูปองที่หน้าต่างแสดงว่าใช้ได้เท่านั้นที่ส่ง (เซิร์ฟเวอร์ตัดสินซ้ำใต้ล็อกตอนสร้างรายการ)
+        const coupon = q.discount > 0 ? this.couponCode : null;
+        try {
+          const res = q.kind === 'New'
+            ? await API.post(`/api/subscription/${Bill.cid()}/convert`, { plan: q.plan, billingCycle: q.cycle, promoCode: coupon,
+                policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown })
+            : await API.put(`/api/subscription/${Bill.cid()}/plan`, { newPlan: q.plan, newBillingCycle: this.cycle, couponCode: coupon,
+                policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown });
+          Layout.toast(res?.message || 'บันทึกแล้ว', 'success');
+          this.quote = null; this.couponCode = '';
+          await Bill.load();
+          const pay = res?.data?.payment;
+          if (pay && pay.amount > 0) this.openPay(pay.id, pay);
+        } catch (err) { Layout.toast(err.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+      openPay(id, fromCreate) {
+        const d = Bill.data || {}, e = Layout.esc;
+        const p = fromCreate || (d.payments || []).find(x => x.id === id);
+        if (!p) return;
+        this._payId = id;
+        const po = d.payOptions || {};
+        const opts = (po.methodOptions || []);
+        document.getElementById('planPayTitle').textContent = `ชำระ ${p.paymentNumber}`;
+        document.getElementById('planPayBody').innerHTML = `
+          <div class="note" style="margin-bottom:10px"><b>ยอดที่ต้องชำระ ฿${Layout.money(p.amount)}</b></div>
+          <div id="planPayPolicy">${PolicyAccept.html(po.policy)}</div>
+          ${po.online ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">${opts.map(m =>
+              `<button type="button" class="btn btn-primary btn-sm" data-pp="${e(m.code)}">ชำระด้วย ${e(m.label)}</button>`).join('')}</div>`
+            : (po.onlineNote ? `<div class="muted" style="margin:8px 0">${e(po.onlineNote)}</div>` : '')}
+          ${po.bankTransferInstructions
+            ? `<div class="note" style="white-space:pre-line;margin-bottom:10px"><b>โอนเงินค่าบริการให้ NextAcc</b>\n${e(po.bankTransferInstructions)}</div>`
+            : `<div class="note bad" style="margin-bottom:10px">${e(po.fallbackNote || '')}</div>`}
+          <label>แนบสลิป (รูปหรือ PDF)<input type="file" id="planSlipFile" accept="image/*,application/pdf" class="form-input"></label>
+          <div class="muted" style="margin-top:6px">ชำระออนไลน์สำเร็จ = เปิดใช้ทันที · โอน + สลิป = เปิดใช้เมื่อผู้ดูแลระบบตรวจแล้ว</div>`;
+        document.querySelectorAll('#planPayBody [data-pp]').forEach(b => b.addEventListener('click', () => this.payOnline(b.getAttribute('data-pp'))));
+        Layout.openModal('planPayModal');
+      },
+      closePay() { Layout.closeModal('planPayModal'); },
+      payOnline(method) {
+        let pol;
+        try { pol = PolicyAccept.require('planPayPolicy'); } catch (err) { Layout.toast(err.message, 'error'); return; }
+        const po = (Bill.data || {}).payOptions || {};
+        this.closePay();
+        PayWidget.open({
+          companyId: Bill.cid(),
+          publicBase: `/api/companies/${Bill.cid()}/platform-pay/subscription-payments/${encodeURIComponent(this._payId)}`,
+          method, card: po.card || null,
+          extraBody: { policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown },
+          onPaid: async () => { Layout.toast('ชำระสำเร็จ — รอระบบยืนยัน', 'success'); await Bill.load(); },
+        });
+      },
+      async submitSlip() {
+        const f = document.getElementById('planSlipFile');
+        if (!this._payId || !f || !f.files.length) { Layout.toast('เลือกไฟล์สลิปก่อน', 'error'); return; }
+        let pol;
+        try { pol = PolicyAccept.require('planPayPolicy'); } catch (err) { Layout.toast(err.message, 'error'); return; }
+        const fd = new FormData(); fd.append('file', f.files[0]);
+        fd.append('policyAccepted', pol.policyAccepted ? 'true' : 'false');
+        if (pol.policyVersionShown) fd.append('policyVersionShown', pol.policyVersionShown);
+        const btn = document.getElementById('planSlipSubmit'); btn.disabled = true;
+        try {
+          const r = await API.upload(`/api/subscription/payments/${encodeURIComponent(this._payId)}/slip`, fd);
+          Layout.toast(r?.message || 'ส่งสลิปแล้ว — รอผู้ดูแลระบบตรวจสอบ', 'success');
+          this.closePay(); await Bill.load();
+        } catch (err) { Layout.toast(err.message || 'ส่งสลิปไม่สำเร็จ', 'error'); }
+        finally { btn.disabled = false; }
+      },
+    };
     Bill.init();
   </script>
   <script src="/js/quota-ui.js"></script>
   <script>
-    // รอบ 229: ส่วนโควตาแยกจาก Bill (ไม่แตะเส้นใบแจ้งหนี้/ใบเสร็จ) — รีเฟรชทั้งสามการ์ดหลังซื้อ
+    // รอบ 229: ส่วนโควตาแยกจาก Bill (ไม่แตะเส้นใบแจ้งหนี้/ใบเสร็จ) — รีเฟรชทุกการ์ดหลังซื้อ ·
+    // รอบ 230: แท็บ "ซื้อเพิ่ม" แสดงเฉพาะรายการที่ซื้อได้ (canBuy จากเซิร์ฟเวอร์) ด้วย renderer ตัวเดียวกัน
     const QuotaHub = {
-      refresh() {
-        QuotaUI.renderSummary('quotaSummary', { onBought: () => QuotaHub.refresh() });
+      async refresh() {
+        const items = await QuotaUI.renderSummary('quotaSummary', { onBought: () => QuotaHub.refresh() });
+        const buyable = (items || []).filter(i => i.canBuy).map(i => i.resource);
+        const buyEl = document.getElementById('quotaBuyList');
+        if (buyable.length) QuotaUI.renderSummary(buyEl, { only: buyable, onBought: () => QuotaHub.refresh() });
+        else buyEl.innerHTML = '<div class="muted">ยังไม่มีโควตาที่เปิดขาย — ติดต่อผู้ดูแลระบบ NextAcc หรือเปลี่ยนแพ็กเกจที่แท็บ "แพ็กเกจ"</div>';
         QuotaUI.renderPurchases('quotaPurchases');
         QuotaUI.renderRenewal('quotaRenewal');
       },
@@ -286,5 +520,6 @@
       QuotaUI.initHash(() => QuotaHub.refresh());
     })();
   </script>
+  <script src="/js/billing-saved-cards.js"></script>
 </body>
 </html>

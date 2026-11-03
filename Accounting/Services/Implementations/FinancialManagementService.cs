@@ -10,7 +10,14 @@ namespace Accounting.Services.Implementations;
 public partial class FinancialManagementService : IFinancialManagementService
 {
     private readonly AccountingDbContext _db;
-    public FinancialManagementService(AccountingDbContext db) => _db = db;
+    /// <summary>รอบ 230: ฐานบวกกลับ §65 ตรี ตัวเดียวกับ ภ.ง.ด.50/51 (<c>ITaxService.ComputeSection65TerAddBackAsync</c>) ·
+    /// null (เทสต์ที่สร้าง service ตรง) ⇒ <c>new TaxService(db)</c> — สูตรเดียวกัน ไม่ใช่สำเนา</summary>
+    private readonly ITaxService _tax;
+    public FinancialManagementService(AccountingDbContext db, ITaxService? tax = null)
+    {
+        _db = db;
+        _tax = tax ?? new TaxService(db);
+    }
 
     /// <summary>เลข JV — ผ่านตัวออกเลขกลางตัวเดียวของระบบ
     ///

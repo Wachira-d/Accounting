@@ -67,6 +67,25 @@
       </div>
     </div>
 
+    <!-- รอบ 230: ใบที่บันทึกเลขใบเสร็จอย่างเดียว (ไม่มี JE/แถวนำส่ง) — ลงบัญชีทับผ่านเส้นเดียวกับรายการค้าง (POST {id}/paid · postJournal=true ⇒ RemitStampDutyAsync) -->
+    <div class="card" style="margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h3 style="margin:0">บันทึกเลขใบเสร็จแล้ว — ยังไม่ลงบัญชีผ่านระบบ</h3>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label style="display:flex;gap:4px;align-items:center;font-size:13px"><input type="checkbox" id="markedShowConfirmed" onchange="Page.loadMarked(1)"> แสดงที่ยืนยันว่าลงด้วยมือแล้ว</label>
+          <button class="btn btn-secondary" onclick="Page.loadMarked()">รีเฟรช</button>
+        </div>
+      </div>
+      <div class="text-xs" style="color:#64748b;margin-top:4px">รายการที่เคยติ๊ก "ไม่ลงบัญชี" — ถ้าลงค่าอากรด้วยใบสำคัญจ่ายแล้ว <b>ไม่ต้อง</b>ลงซ้ำ · ถ้ายังไม่ได้ลง กด "ลงบัญชีการจ่าย"</div>
+      <div class="table-container" style="margin-top:12px">
+        <table class="data-table">
+          <thead><tr><th>Reference</th><th>ประเภท</th><th style="text-align:right">อากร</th><th>วันที่จ่าย</th><th>เลขใบเสร็จ</th><th>การจัดการ</th></tr></thead>
+          <tbody id="markedBody"><tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">กด รีเฟรช</td></tr></tbody>
+        </table>
+      </div>
+      <div id="markedPager" style="display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:8px;font-size:13px"></div>
+    </div>
+
     <!-- รอบ 228: บันทึกจ่าย = ลงบัญชีผ่านเส้นนำส่ง (Dr ค่าอากร + เงินเพิ่มอากร/ค่าปรับ §65 ตรี(6) / Cr ธนาคาร) · ยกเลิกได้ที่ประวัติหน้านำส่งภาษี -->
     <div class="card" id="payCard" style="margin-top:14px;display:none">
       <h3 id="payTitle">บันทึกจ่ายอากร</h3>
@@ -99,9 +118,12 @@
         await this.loadSchedules();
         await this.loadProjects();
         await this.loadUnpaid();
+        await this.loadMarked();
       },
       _rows: [],
+      _marked: [],
       _payId: null,
+      _payMarked: false,
       _esc(v) { return Layout.esc(v == null ? '' : String(v)); },
       /** รอบ 228: ลักษณะ + อัตรามาจากเซิร์ฟเวอร์ (Helpers/StampDutySchedule) — หน้าไม่เขียนอัตราเอง */
       async loadSchedules() {
@@ -182,21 +204,80 @@
           </tr>`).join('');
         } catch (e) { tbody.innerHTML = `<tr><td colspan="7" style="color:#dc2626;text-align:center">${this._esc(e.message)}</td></tr>`; }
       },
-      async openPay(id) {
-        const r = this._rows.find(x => x.id === id);
+      /** รอบ 230: ใบที่บันทึกเลขใบเสร็จอย่างเดียว — เซิร์ฟเวอร์คัด (GET marked-only · แบ่งหน้า N4) หน้าแสดง */
+      _markedPage: 1,
+      async loadMarked(page) {
+        if (page) this._markedPage = page;
+        const tbody = document.getElementById('markedBody');
+        const pager = document.getElementById('markedPager');
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:20px">กำลังโหลด...</td></tr>';
+        try {
+          const cid = Layout.getCompanyId();
+          const showConfirmed = document.getElementById('markedShowConfirmed').checked;
+          const r = await API.get(`/api/companies/${cid}/stamp-duty/marked-only?page=${this._markedPage}&pageSize=50&includeConfirmed=${showConfirmed}`);
+          const d = r.data || {};
+          const rows = d.items || [];
+          this._marked = rows;
+          const pages = Math.max(1, Math.ceil((d.total || 0) / (d.pageSize || 50)));
+          pager.innerHTML = (d.total || 0) > (d.pageSize || 50)
+            ? `<button class="btn btn-sm btn-secondary" ${this._markedPage <= 1 ? 'disabled' : ''} onclick="Page.loadMarked(${this._markedPage - 1})">‹ ก่อนหน้า</button>
+               <span>หน้า ${this._markedPage}/${pages} · ทั้งหมด ${d.total} รายการ</span>
+               <button class="btn btn-sm btn-secondary" ${this._markedPage >= pages ? 'disabled' : ''} onclick="Page.loadMarked(${this._markedPage + 1})">ถัดไป ›</button>`
+            : (d.total ? `ทั้งหมด ${d.total} รายการ` : '');
+          if (rows.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:#94a3b8">ไม่มีรายการ</td></tr>';
+            return;
+          }
+          tbody.innerHTML = rows.map(r => `<tr>
+            <td>${this._esc(r.reference)}</td><td>${this._esc(r.instrumentType)}<div class="text-xs" style="color:#64748b">${this._esc(r.scheduleLabel)}</div></td>
+            <td style="text-align:right"><b>${this._fmt(r.dutyAmount)}</b></td>
+            <td>${Layout.date(r.paidAt)}</td><td>${this._esc(r.rdReceiptNumber)}</td>
+            <td>${r.manualPostingConfirmedAt
+              ? `<span class="text-xs" style="color:#64748b">ยืนยันลงด้วยมือ ${Layout.date(r.manualPostingConfirmedAt)}</span>
+                 <button class="btn btn-sm btn-secondary" onclick="Page.manualPosting('${r.id}', false)">ยกเลิกการยืนยัน</button>`
+              : `<button class="btn btn-sm btn-primary" onclick="Page.openPay('${r.id}', true)">ลงบัญชีการจ่าย</button>
+                 <button class="btn btn-sm btn-secondary" onclick="Page.manualPosting('${r.id}', true)">ลงบัญชีด้วยมือแล้ว — ซ่อน</button>`}</td>
+          </tr>`).join('');
+        } catch (e) { tbody.innerHTML = `<tr><td colspan="6" style="color:#dc2626;text-align:center">${this._esc(e.message)}</td></tr>`; pager.innerHTML = ''; }
+      },
+      /** N4: ยืนยัน/ยกเลิก "ลงค่าอากรด้วยใบสำคัญเองแล้ว" — เซิร์ฟเวอร์บันทึก audit · ใบที่ยืนยันแล้วลงผ่านระบบไม่ได้ */
+      async manualPosting(id, confirmed) {
+        const r = this._marked.find(x => x.id === id);
+        if (!r) return;
+        const msg = confirmed
+          ? `ยืนยันว่าค่าอากร ${r.reference} (${this._fmt(r.dutyAmount)} บาท) ลงบัญชีด้วยใบสำคัญจ่ายเองแล้ว?\nรายการจะถูกซ่อน และลงผ่านระบบซ้ำไม่ได้จนกว่าจะยกเลิกการยืนยัน`
+          : `ยกเลิกการยืนยันของ ${r.reference}? รายการจะกลับมารอลงบัญชี`;
+        if (!confirm(msg)) return;
+        const note = confirmed ? (prompt('เลขใบสำคัญที่ลงไว้ (ถ้ามี — บันทึกใน audit)', '') ?? '') : '';
+        try {
+          const cid = Layout.getCompanyId();
+          const res = await API.post(`/api/companies/${cid}/stamp-duty/${id}/manual-posting`, { confirmed, note: note || null });
+          Layout.toast(res.message);
+          await this.loadMarked();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async openPay(id, marked) {
+        const r = (marked ? this._marked : this._rows).find(x => x.id === id);
         if (!r) return;
         this._payId = id;
-        document.getElementById('payTitle').textContent = `บันทึกจ่ายอากร — ${r.reference}`;
-        document.getElementById('pDate').value = Layout.toDateInput(new Date());
-        document.getElementById('pReceipt').value = '';
+        this._payMarked = !!marked;
+        document.getElementById('payTitle').textContent = (marked ? 'ลงบัญชีการจ่ายอากร (บันทึกเลขใบเสร็จไว้แล้ว) — ' : 'บันทึกจ่ายอากร — ') + r.reference;
+        // ใบที่บันทึกเลขไว้แล้ว: ตั้งต้นจากวันจ่าย/เลขใบเสร็จเดิม (แก้ได้)
+        document.getElementById('pDate').value = marked && r.paidAt ? Layout.toDateInput(new Date(r.paidAt)) : Layout.toDateInput(new Date());
+        document.getElementById('pReceipt').value = marked ? (r.rdReceiptNumber || '') : '';
         document.getElementById('pDuty').value = r.dutyAmount;
         const sur = document.getElementById('pSurcharge');
         sur.value = r.suggestedSurcharge || 0; delete sur.dataset.userTouched;
         document.getElementById('pSurchargeNote').textContent = r.surchargeNote || '';
         document.getElementById('pFine').value = 0;
         // ฝ่ายค้าน S9a: ค่าตั้งต้นจากเซิร์ฟเวอร์ — ติดแสตมป์ (Affix) ไม่ลงบัญชี (มักลงค่าซื้อแสตมป์ไปแล้ว ⇒ ลงซ้ำ = ค่าใช้จ่ายสองเท่า)
-        document.getElementById('pPost').checked = r.defaultPostJournal !== false;
-        document.getElementById('pPostWarn').textContent = r.defaultPostJournal === false
+        const post = document.getElementById('pPost');
+        post.checked = marked ? true : r.defaultPostJournal !== false;
+        // ห้าม silent no-op: ปุ่มนี้มีไว้ลงบัญชี ⇒ ล็อกช่องพร้อมบอกเหตุผล (แก้เลขใบเสร็จอย่างเดียวไม่ต้องใช้ปุ่มนี้)
+        post.disabled = !!marked;
+        document.getElementById('pPostWarn').textContent = marked
+          ? '⚠️ ปุ่มนี้ลงบัญชีการจ่าย (Dr ค่าอากร / Cr ธนาคาร) — ถ้าลงค่าอากรด้วยใบสำคัญจ่ายแล้ว กด "ยกเลิก" (จะเป็นค่าใช้จ่ายซ้ำ)'
+          : r.defaultPostJournal === false
           ? '⚠️ ติดแสตมป์: ถ้าลงค่าซื้อแสตมป์เป็นค่าใช้จ่ายไปแล้ว อย่าติ๊ก "ลงบัญชี" (จะเป็นค่าใช้จ่ายซ้ำ)'
           : (r.paidMarkOnly ? '⚠️ รายการนี้เคยบันทึกเลขใบเสร็จแบบไม่ลงบัญชีไว้ — ถ้าลงค่าอากรด้วยใบสำคัญจ่ายแล้ว อย่าติ๊ก "ลงบัญชี"' : '');
         try {
@@ -208,16 +289,19 @@
         document.getElementById('payCard').style.display = '';
         document.getElementById('payCard').scrollIntoView({ behavior: 'smooth' });
       },
-      closePay() { this._payId = null; document.getElementById('payCard').style.display = 'none'; },
+      closePay() { this._payId = null; this._payMarked = false; document.getElementById('pPost').disabled = false; document.getElementById('payCard').style.display = 'none'; },
       /** วันจ่ายเปลี่ยน ⇒ ขอค่าเสนอใหม่จากเซิร์ฟเวอร์ (ค่าที่ผู้ใช้พิมพ์เองชนะ — ไม่เขียนทับ) */
       async refreshSuggestion() {
         const id = this._payId; if (!id) return;
         const date = document.getElementById('pDate').value;
         try {
           const cid = Layout.getCompanyId();
-          const r = await API.get(`/api/companies/${cid}/stamp-duty/unpaid?payDate=${encodeURIComponent(date)}`);
+          const list = this._payMarked ? 'marked-only' : 'unpaid';
+          const extra = this._payMarked ? `&page=${this._markedPage}&pageSize=50&includeConfirmed=${document.getElementById('markedShowConfirmed').checked}` : '';
+          const r = await API.get(`/api/companies/${cid}/stamp-duty/${list}?payDate=${encodeURIComponent(date)}${extra}`);
           if (this._payId !== id) return;
-          const row = (r.data || []).find(x => x.id === id);
+          const list2 = Array.isArray(r.data) ? r.data : ((r.data && r.data.items) || []);
+          const row = list2.find(x => x.id === id);
           if (!row) return;
           const sur = document.getElementById('pSurcharge');
           if (!sur.dataset.userTouched) sur.value = row.suggestedSurcharge || 0;
@@ -244,6 +328,7 @@
           Layout.toast(r.message);
           this.closePay();
           await this.loadUnpaid();
+          await this.loadMarked();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
     };

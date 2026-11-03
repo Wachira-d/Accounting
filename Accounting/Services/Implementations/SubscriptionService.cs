@@ -371,7 +371,7 @@ public class SubscriptionService : ISubscriptionService
 
         if (sub.Status == SubscriptionStatus.Active && !sub.IsPermanentFree)
             return await ChangeSubscriptionAsync(companyId,
-                new ChangeSubscriptionRequest(request.Plan, request.BillingCycle), performedBy);
+                new ChangeSubscriptionRequest(request.Plan, request.BillingCycle, CouponCode: request.PromoCode), performedBy);
 
         var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.Plan && p.IsActive)
             ?? throw new KeyNotFoundException($"ไม่พบ plan template สำหรับ {request.Plan}");
@@ -384,56 +384,163 @@ public class SubscriptionService : ISubscriptionService
             && (sub.TrialConfig.DiscountValidUntil == null || sub.TrialConfig.DiscountValidUntil > DateTime.UtcNow))
             discount = sub.TrialConfig.DiscountPercentOnConversion.Value;
 
+        // รอบ 230 (คำตัดสินข้อ 230-Q2): โค้ดที่ไม่ใช่โปรโมชันแปลงทดลองใช้ของบริษัทนี้ ⇒ คูปองแพลตฟอร์ม (ใช้ไม่ได้ = 400 พร้อมเหตุ — เดิมโค้ดผิดถูกเพิกเฉยเงียบ ๆ)
+        var coupon = discount == null && !string.IsNullOrWhiteSpace(request.PromoCode) ? request.PromoCode : null;
         var payment = await RequestPlanPaymentAsync(sub, template, request.BillingCycle, discount, performedBy,
-            "PlanPurchaseRequested", "ขอเปลี่ยนเป็นแพ็กเกจจ่ายเงิน");
+            "PlanPurchaseRequested", "ขอเปลี่ยนเป็นแพ็กเกจจ่ายเงิน", couponCode: coupon);
         return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), payment,
             $"สร้างรายการชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาทแล้ว — แพ็กเกจ {template.Name} จะเปิดใช้เมื่อชำระเงินและผู้ดูแลระบบยืนยัน "
             + "(ระหว่างนี้ใช้งานตามสิทธิ์เดิมได้ตามปกติ)");
     }
 
     /// <summary>รอบ 219 เฟส 0: สร้าง (หรือใช้ซ้ำ) รายการชำระค่าแพ็กเกจที่<b>ยอดมาจากเซิร์ฟเวอร์</b> (<see cref="PlatformPlanPricing.AmountDue"/>) —
-    /// ทางเดียวของผู้เช่าในการขอแพ็กเกจจ่ายเงิน · ใช้ซ้ำรายการรอชำระที่แพ็กเกจ/รอบ/ยอดเดียวกัน (กดซ้ำไม่เกิดหลายรายการ)</summary>
+    /// ทางเดียวของผู้เช่าในการขอแพ็กเกจจ่ายเงิน · ใช้ซ้ำรายการรอชำระที่แพ็กเกจ/รอบ/ยอดเดียวกัน (กดซ้ำไม่เกิดหลายรายการ)
+    /// <para>รอบ 230: <paramref name="proration"/> (ใช้ได้) ⇒ ยอด = ส่วนต่างตามวันที่เหลือ · <c>RequestedPeriodMonths = 0</c> (อนุมัติแล้วไม่ขยับวันหมดอายุ) ·
+    /// <paramref name="couponCode"/> ⇒ จองคูปองใต้ล็อกในธุรกรรมเดียวกับการสร้างรายการ (<see cref="PlatformCouponStore.ReserveAsync"/>) ·
+    /// ทุกรายการที่เส้นนี้สร้าง ประทับ <c>QuotedAmount</c> (ยอดของเซิร์ฟเวอร์ — ช่องทางออนไลน์อนุมัติอัตโนมัติเมื่อเงินเข้าเท่ายอดนี้)</para></summary>
     private async Task<SubscriptionPaymentResponse> RequestPlanPaymentAsync(Subscription sub, PlanTemplate template,
-        BillingCycle cycle, decimal? discountPercent, string performedBy, string historyAction, string note)
+        BillingCycle cycle, decimal? discountPercent, string performedBy, string historyAction, string note,
+        PlatformProration.Result? proration = null, string? couponCode = null)
     {
-        var months = PlatformPlanPricing.MonthsOf(cycle);
-        if (months <= 0) throw new BusinessRuleException("รอบบิลไม่ถูกต้อง");
-        var amount = PlatformPlanPricing.AmountDue(template, cycle, discountPercent);
-        if (amount <= 0m)
+        var prorated = proration?.Applies == true;
+        var months = prorated ? 0 : PlatformPlanPricing.MonthsOf(cycle);
+        if (!prorated && months <= 0) throw new BusinessRuleException("รอบบิลไม่ถูกต้อง");
+        var listAmount = prorated ? proration!.Amount : PlatformPlanPricing.AmountDue(template, cycle, discountPercent);
+        if (listAmount <= 0m)
             throw new BusinessRuleException(
                 "แพ็กเกจนี้ไม่มีค่าบริการตามตารางราคา — ติดต่อผู้ดูแลระบบ NextAcc เพื่อเปลี่ยนแพ็กเกจ");
+        var code = PlatformCouponRule.Normalize(couponCode);
 
+        // กดซ้ำ = รายการเดิม (แพ็กเกจ/รอบ/ชนิด/คูปอง/ยอดก่อนคูปองเดียวกัน · ยังไม่จ่าย)
         var existing = await _db.SubscriptionPayments
             .FirstOrDefaultAsync(p => p.SubscriptionId == sub.Id && p.Status == SubscriptionPaymentStatus.Pending
-                && p.RequestedPlan == template.Plan && p.RequestedBillingCycle == cycle && p.Amount == amount);
+                && p.RequestedPlan == template.Plan && p.RequestedBillingCycle == cycle && p.IsProration == prorated
+                && p.CouponCode == code && (p.ListAmount ?? p.Amount) == listAmount && p.PlatformInvoiceDocumentId == null);
         if (existing != null) return MapPaymentToResponse(existing);
 
-        var payment = new SubscriptionPayment
+        Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? tx = null;
+        if (code != null && _db.Database.IsRelational() && _db.Database.CurrentTransaction == null)
+            tx = await _db.Database.BeginTransactionAsync();
+        try
         {
-            SubscriptionId = sub.Id,
-            PaymentNumber = await NextPaymentNumberAsync(sub),
-            Amount = amount,
-            PaymentDate = DateTime.UtcNow,
-            PaymentMethod = PaymentMethod.BankTransfer,
-            RequestedPlan = template.Plan,
-            RequestedBillingCycle = cycle,
-            RequestedPeriodMonths = months,
-            CustomerNotes = note,
-            Status = SubscriptionPaymentStatus.Pending,
-            CreatedBy = performedBy
-        };
-        _db.SubscriptionPayments.Add(payment);
+            var now = DateTime.UtcNow;
+            var payment = new SubscriptionPayment
+            {
+                SubscriptionId = sub.Id,
+                PaymentNumber = await NextPaymentNumberAsync(sub),
+                PaymentDate = now,
+                PaymentMethod = PaymentMethod.BankTransfer,
+                RequestedPlan = template.Plan,
+                RequestedBillingCycle = cycle,
+                RequestedPeriodMonths = months,
+                CustomerNotes = note,
+                Status = SubscriptionPaymentStatus.Pending,
+                CreatedBy = performedBy
+            };
+            var amount = listAmount;
+            // รายการรอชำระเดิมที่ถือคูปองเดียวกันไว้ / ส่วนต่างอัปเกรดใบเก่า (ไม่มีสลิป · ไม่เคยเริ่มชำระออนไลน์) = คำขอที่ถูกแทน ⇒ ยกเลิก + ปลดการจอง
+            // (ไม่ให้กินสิทธิ์ต่อบริษัทของคำขอใหม่ · ฝ่ายค้าน S6: ส่วนต่างใบเก่าคิดวันที่เหลือไม่ตรงแล้ว)
+            if (code != null || prorated) await SupersedePendingPaymentsAsync(sub, code, prorated, performedBy);
+            if (code != null)
+            {
+                var (coupon, eval) = await PlatformCouponStore.ReserveAsync(_db, sub.CompanyId, code, PlatformCouponScope.Subscription,
+                    template.Plan.ToString(), cycle.ToString(), null, listAmount, PlatformCouponRule.SourceSubscriptionPayment, payment.Id, performedBy, now);
+                amount = eval.AmountAfter;
+                payment.CouponId = coupon.Id; payment.CouponCode = coupon.Code; payment.CouponDiscountAmount = eval.Discount;
+                payment.ListAmount = listAmount;
+            }
+            payment.Amount = amount;
+            // ฝ่ายค้าน B1 (คำตัดสินผู้ประสานงาน): ยอดที่เซิร์ฟเวอร์เสนอประทับเฉพาะรายการส่วนต่าง/มีคูปอง (และแอดมินแก้ยอด) — รายการราคาเต็มคงกติกาเดิม
+            // (ช่องทางออนไลน์/handler เทียบราคาแพ็กเกจปัจจุบัน ⇒ ราคาเปลี่ยนหลังสร้างรายการ = ปฏิเสธ)
+            payment.QuotedAmount = prorated || code != null ? amount : null;
+            if (prorated)
+            {
+                payment.IsProration = true;
+                payment.ProrationFromPlan = sub.Plan.ToString();
+                payment.ProrationDays = proration!.DaysRemaining;
+                payment.ProrationCycleDays = proration.CycleDays;
+                payment.ProrationCycleEndUtc = proration.CycleEndUtc;
+            }
+            _db.SubscriptionPayments.Add(payment);
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id,
+                Action = historyAction,
+                FromPlan = sub.Plan,
+                ToPlan = template.Plan,
+                Notes = $"{note}: {payment.PaymentNumber} {template.Plan} ({cycle}) {amount:N2} THB"
+                        + (prorated ? $" · ส่วนต่าง {proration!.DaysRemaining}/{proration.CycleDays} วัน (วันหมดอายุเดิม)" : "")
+                        + (payment.CouponCode != null ? $" · คูปอง {payment.CouponCode} ลด {payment.CouponDiscountAmount:N2}" : "")
+                        + " — รอชำระ (ยังไม่เปิดแพ็กเกจ)",
+                PerformedBy = performedBy
+            });
+            await _db.SaveChangesAsync();
+            if (tx != null) await tx.CommitAsync();
+            return MapPaymentToResponse(payment);
+        }
+        finally
+        {
+            if (tx != null) await tx.DisposeAsync();
+        }
+    }
+
+    /// <summary>รอบ 230: รายการรอชำระของ subscription นี้ที่จองคูปองเดียวกันไว้ หรือเป็นส่วนต่างอัปเกรดใบเก่า (เมื่อ <paramref name="prorated"/>) และยังไม่มีสลิป/ไม่เคยเริ่มชำระออนไลน์
+    /// ⇒ ยกเลิก + ปลดการจองคูปอง (คำขอใหม่แทน) · มีสลิป/intent แล้ว = ไม่แตะ (เงินอาจกำลังเข้า)</summary>
+    private async Task SupersedePendingPaymentsAsync(Subscription sub, string? code, bool prorated, string performedBy)
+    {
+        var olds = await _db.SubscriptionPayments
+            .Where(p => p.SubscriptionId == sub.Id && p.Status == SubscriptionPaymentStatus.Pending && p.SlipFileName == null && p.PlatformInvoiceDocumentId == null
+                && ((code != null && p.CouponCode == code) || (prorated && p.IsProration)))
+            .ToListAsync();
+        var n = 0;
+        foreach (var old in olds)
+        {
+            var hasIntent = await _db.PaymentIntents.AsNoTracking()
+                .AnyAsync(i => i.SourceKind == PaymentSourceKind.SubscriptionPayment && i.SourceId == old.Id);
+            if (hasIntent) continue;
+            await CancelQuotedPaymentAsync(sub.Id, sub.CompanyId, old, "ถูกแทนด้วยคำขอใหม่", "PaymentSupersededByNewRequest", performedBy);
+            n++;
+        }
+        // บันทึกก่อนจอง — ตัวนับเพดาน (CountAsync) อ่านจากฐาน ไม่ใช่จาก change tracker
+        if (n > 0) await _db.SaveChangesAsync();
+    }
+
+    /// <summary>รอบ 230: ยกเลิกรายการรอชำระที่เซิร์ฟเวอร์เสนอยอด (ส่วนต่าง/คูปอง) + ปลดการจองคูปอง + ประวัติ — ตัวเดียวของ "ถูกแทน" และ "ค้างเกินกำหนด" (ผู้เรียก SaveChanges)</summary>
+    private async Task CancelQuotedPaymentAsync(Guid subscriptionId, Guid companyId, SubscriptionPayment old, string reason, string action, string performedBy)
+    {
+        old.Status = SubscriptionPaymentStatus.Cancelled;
+        old.RejectionReason = reason;
+        if (old.CouponId != null)
+            await PlatformCouponStore.ReleaseAsync(_db, companyId, PlatformCouponRule.SourceSubscriptionPayment, old.Id, reason, performedBy);
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
-            SubscriptionId = sub.Id,
-            Action = historyAction,
-            FromPlan = sub.Plan,
-            ToPlan = template.Plan,
-            Notes = $"{note}: {payment.PaymentNumber} {template.Plan} ({cycle}) {amount:N2} THB — รอชำระ (ยังไม่เปิดแพ็กเกจ)",
+            SubscriptionId = subscriptionId, Action = action,
+            Notes = $"ยกเลิกรายการรอชำระ {old.PaymentNumber}" + (old.CouponCode != null ? $" (คูปอง {old.CouponCode})" : "") + (old.IsProration ? " (ส่วนต่างอัปเกรด)" : "") + $" — {reason}",
             PerformedBy = performedBy
         });
-        await _db.SaveChangesAsync();
-        return MapPaymentToResponse(payment);
+    }
+
+    /// <summary>รอบ 230 (ฝ่ายค้าน S3): รายการค่าแพ็กเกจที่มีคูปอง/ส่วนต่างอัปเกรด ค้างไม่จ่ายเกิน <see cref="PlatformCouponRule.ReservationDays"/> วัน
+    /// (ไม่มีสลิป · ไม่มีการชำระออนไลน์ค้าง/สำเร็จ) ⇒ ยกเลิก + ปลดคูปอง (เหมือนโควตาเสริมค้าง 14 วัน) — งาน <c>AccountPlanExpiryReminderJob</c> ทุกรอบ · idempotent</summary>
+    public async Task<int> ExpireStaleQuotedPaymentsAsync()
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-PlatformCouponRule.ReservationDays);
+        var rows = await _db.SubscriptionPayments.Include(p => p.Subscription)
+            .Where(p => p.Status == SubscriptionPaymentStatus.Pending && p.SlipFileName == null && p.PlatformInvoiceDocumentId == null
+                && (p.CouponId != null || p.IsProration) && p.CreatedAt < cutoff)
+            .Take(500).ToListAsync();
+        var n = 0;
+        foreach (var p in rows)
+        {
+            if (await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.SourceKind == PaymentSourceKind.SubscriptionPayment && i.SourceId == p.Id
+                    && (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending || i.Status == PaymentIntentStatus.Succeeded)))
+                continue;
+            await CancelQuotedPaymentAsync(p.SubscriptionId, p.Subscription.CompanyId, p, $"ค้างไม่ชำระเกิน {PlatformCouponRule.ReservationDays} วัน",
+                "QuotedPaymentExpired", "system:platform-billing");
+            n++;
+        }
+        if (n > 0) await _db.SaveChangesAsync();
+        return n;
     }
 
     /// <summary>เลขรายการชำระค่าแพ็กเกจ (SP-{บริษัท 8 ตัว}-{ลำดับ}) — ตัวเดียวของ Submit/คำขอแพ็กเกจ/บันทึกโดยแอดมิน</summary>
@@ -741,10 +848,22 @@ public class SubscriptionService : ISubscriptionService
         var kind = PlatformPlanPricing.Classify(current?.MonthlyPrice ?? 0m, template.MonthlyPrice);
         if (kind == PlatformPlanPricing.ChangeKind.Upgrade)
         {
+            // รอบ 230 (คำตัดสินข้อ 230-Q1 · §7.1): อัปเกรดกลางรอบ = จ่ายส่วนต่างของวันที่เหลือ · วันหมดอายุคงเดิม (แทน "เริ่มรอบใหม่ — ส่วนที่เหลือสละ")
+            var pr = ProrationFor(sub, current, template, DateTime.UtcNow);
+            if (pr.Applies)
+            {
+                var prorated = await RequestPlanPaymentAsync(sub, template, sub.BillingCycle, null, performedBy,
+                    "PlanUpgradeProrated", $"ขออัปเกรดจาก {sub.Plan} (ส่วนต่างตามวันที่เหลือ)", pr, request.CouponCode);
+                return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), prorated,
+                    $"สร้างรายการชำระส่วนต่าง {prorated.PaymentNumber} ยอด {prorated.Amount:N2} บาทแล้ว ({pr.Note}) — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงิน "
+                    + $"· ใช้ได้ถึงวันเดิม {sub.EndDate.AddHours(7):dd/MM/yyyy} · รอบถัดไปคิดราคา {template.Name}"
+                    + (cycle != sub.BillingCycle ? " · รอบบิลคงเดิม — เปลี่ยนรอบบิลได้หลังอัปเกรด (มีผลวันครบรอบ)" : ""));
+            }
             var payment = await RequestPlanPaymentAsync(sub, template, cycle, null, performedBy,
-                "PlanUpgradeRequested", $"ขออัปเกรดจาก {sub.Plan}");
+                "PlanUpgradeRequested", $"ขออัปเกรดจาก {sub.Plan}", couponCode: request.CouponCode);
             return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), payment,
-                $"สร้างรายการชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาทแล้ว — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงินและผู้ดูแลระบบยืนยัน");
+                $"สร้างรายการชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาทแล้ว — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงินและผู้ดูแลระบบยืนยัน "
+                + $"(เริ่มรอบใหม่จากวันที่ชำระ · {pr.NotApplicableReason})");
         }
 
         if (template.Plan == sub.Plan && cycle == sub.BillingCycle)
@@ -772,6 +891,136 @@ public class SubscriptionService : ISubscriptionService
         return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), null,
             $"บันทึกแล้ว — เปลี่ยนเป็น {template.Name} มีผล {effectiveAt.AddHours(7):dd/MM/yyyy} (ใช้สิทธิ์แพ็กเกจเดิมได้จนถึงวันนั้น)",
             effectiveAt);
+    }
+
+    /// <summary>รอบ 230: ส่วนต่างอัปเกรดของ subscription นี้ (ตัวเดียวของ "ขออัปเกรด" และ "ดูราคา") — ราคาเดิม/ใหม่ต่อรอบบิล<b>ปัจจุบัน</b> ตามตารางแพ็กเกจ ·
+    /// ไม่มีแม่แบบของแพ็กเกจเดิม ⇒ ราคาต่อรอบที่บันทึกบน subscription</summary>
+    private static PlatformProration.Result ProrationFor(Subscription sub, PlanTemplate? current, PlanTemplate target, DateTime nowUtc)
+        => PlatformProration.Upgrade(
+            current != null ? PlatformPlanPricing.CyclePrice(current, sub.BillingCycle) : sub.PricePerCycle,
+            PlatformPlanPricing.CyclePrice(target, sub.BillingCycle),
+            PlatformPlanPricing.MonthsOf(sub.BillingCycle), sub.EndDate, nowUtc,
+            planActive: sub.Status == SubscriptionStatus.Active, isTrial: sub.Status == SubscriptionStatus.Trial, isPermanentFree: sub.IsPermanentFree);
+
+    /// <summary>รอบ 230 (D-8 · คำตัดสินข้อ 230-Q1/230-Q2): ดูราคาก่อนยืนยัน — ใช้ตัวตัดสินเดียวกับ <see cref="ConvertTrialAsync"/>/<see cref="ChangeSubscriptionAsync"/>
+    /// (จำแนกทิศ · ส่วนต่าง · ราคาเต็ม · คูปอง) · ไม่สร้าง/ไม่จองอะไร</summary>
+    public async Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested, string? couponCode)
+    {
+        var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == plan && p.IsActive)
+            ?? throw new KeyNotFoundException($"ไม่พบ plan template สำหรับ {plan}");
+        var current = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.Plan && p.IsActive);
+        var cycle = cycleRequested ?? sub.BillingCycle;
+        var now = DateTime.UtcNow;
+
+        async Task<PlanChangeQuote> Pay(string kind, bool prorated, BillingCycle c, decimal list, int? d, int? cd, DateTime? end, string msg)
+        {
+            var ev = await PlatformCouponStore.PreviewAsync(_db, companyId, couponCode, PlatformCouponScope.Subscription,
+                plan.ToString(), c.ToString(), null, list, now);
+            var ok = ev is { Ok: true };
+            return new PlanChangeQuote(kind, prorated, plan.ToString(), c.ToString(), list, ok ? ev!.Discount : 0m, ok ? ev!.AmountAfter : list,
+                d, cd, end, null, msg, ok ? ev!.Label : null, ev is { Ok: false } ? ev.Problem : null);
+        }
+
+        // ทดลองใช้/หมดอายุ/ฟรีถาวร ⇒ ซื้อเต็มรอบ เริ่มรอบใหม่จากวันที่ชำระ (เส้น ConvertTrialAsync)
+        if (sub.Status != SubscriptionStatus.Active || sub.IsPermanentFree)
+        {
+            var full = PlatformPlanPricing.AmountDue(template, cycle);
+            // ฝ่ายค้าน N6: โค้ดโปรโมชันแปลงจากทดลองใช้ของบริษัทนี้ (TrialConfig) — เงื่อนไขเดียวกับ ConvertTrialAsync · ใช้ก่อนคูปองแพลตฟอร์ม
+            var trial = await _db.TrialConfigs.AsNoTracking().FirstOrDefaultAsync(t => t.SubscriptionId == sub.Id);
+            if (!string.IsNullOrEmpty(couponCode) && trial != null && trial.ConversionPromoCode == couponCode
+                && trial.DiscountPercentOnConversion.HasValue && (trial.DiscountValidUntil == null || trial.DiscountValidUntil > now))
+            {
+                var promo = PlatformPlanPricing.AmountDue(template, cycle, trial.DiscountPercentOnConversion.Value);
+                return new PlanChangeQuote("New", false, plan.ToString(), cycle.ToString(), full, PlatformCouponRule.R2(full - promo), promo, null, null, null, null,
+                    $"ชำระ {template.Name} {PlatformPlanPricing.MonthsOf(cycle)} เดือน — เริ่มรอบใหม่จากวันที่ชำระ (โปรโมชันแปลงจากทดลองใช้ ลด {trial.DiscountPercentOnConversion:0.##}% · ผู้ดูแลระบบตรวจยอดก่อนเปิด)",
+                    $"โปรโมชันแปลงจากทดลองใช้ {trial.DiscountPercentOnConversion:0.##}%");
+            }
+            return await Pay("New", false, cycle, full, null, null, null,
+                $"ชำระ {template.Name} {PlatformPlanPricing.MonthsOf(cycle)} เดือน — เริ่มรอบใหม่จากวันที่ชำระ");
+        }
+
+        var kind = PlatformPlanPricing.Classify(current?.MonthlyPrice ?? 0m, template.MonthlyPrice);
+        if (kind == PlatformPlanPricing.ChangeKind.Upgrade)
+        {
+            var pr = ProrationFor(sub, current, template, now);
+            if (pr.Applies)
+                return await Pay("Upgrade", true, sub.BillingCycle, pr.Amount, pr.DaysRemaining, pr.CycleDays, sub.EndDate,
+                    $"จ่ายส่วนต่างเฉพาะวันที่เหลือ ({pr.Note}) — เปลี่ยนเป็น {template.Name} ทันทีเมื่อชำระ · ใช้ได้ถึงวันเดิม · รอบถัดไปคิดราคา {template.Name}"
+                    + (cycle != sub.BillingCycle ? " · รอบบิลคงเดิม (เปลี่ยนรอบบิลได้หลังอัปเกรด มีผลวันครบรอบ)" : ""));
+            var daysLeft = UsageBarRule.DaysLeft(sub.EndDate, now);
+            return await Pay("Upgrade", false, cycle, PlatformPlanPricing.AmountDue(template, cycle), null, null, null,
+                $"ชำระ {template.Name} เต็มรอบ — เริ่มรอบใหม่จากวันที่ชำระ ({pr.NotApplicableReason})"
+                + (daysLeft > 0 ? $" · วันที่เหลือของแพ็กเกจเดิม {daysLeft} วันไม่ถูกนำมาหัก" : ""));
+        }
+        if (template.Plan == sub.Plan && cycle == sub.BillingCycle)
+            return new PlanChangeQuote("Same", false, plan.ToString(), cycle.ToString(), 0m, 0m, 0m, null, null, sub.EndDate, null,
+                "แพ็กเกจและรอบบิลนี้คือแพ็กเกจปัจจุบันอยู่แล้ว");
+        var blocked = PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(sub.RenewalInvoiceForEndDate, sub.EndDate);
+        var effectiveAt = PlatformPlanPricing.ScheduledChangeEffectiveAt(sub.IsPermanentFree, sub.EndDate, now);
+        return new PlanChangeQuote(kind == PlatformPlanPricing.ChangeKind.Downgrade ? "Downgrade" : "CycleChange", false, plan.ToString(), cycle.ToString(),
+            0m, 0m, 0m, null, null, sub.EndDate, effectiveAt,
+            blocked ?? $"ไม่ต้องชำระตอนนี้ — เปลี่ยนเป็น {template.Name} มีผล {effectiveAt.AddHours(7):dd/MM/yyyy} (ใช้แพ็กเกจเดิมได้จนถึงวันนั้น · ไม่คืนเงินส่วนต่าง)",
+            Blocked: blocked);
+    }
+
+    /// <summary>รอบ 230 (คำตัดสินเจ้าของข้อ 178 ① — แอดมินยืดหยุ่นได้เสมอ): แก้ยอดของรายการชำระค่าแพ็กเกจที่<b>ยังไม่จ่าย</b> (เช่น ส่วนลดพิเศษ · ส่วนต่างที่ตกลงกัน) —
+    /// ยอดใหม่ = ยอดที่ช่องทางออนไลน์อนุมัติอัตโนมัติ (<c>QuotedAmount</c>) · เหตุผลบังคับ · audit chain <c>PLATFORM-ADMIN-PRICE-OVERRIDE</c> ·
+    /// ห้ามเมื่อมีการชำระออนไลน์ค้าง (ยอดใน QR/บัตรเดิมจะไม่ตรง) · ใบแจ้งหนี้ที่ผูกไว้ ⇒ ใช้ช่อง "เงินที่รับจริง" ตอนอนุมัติแทน</summary>
+    public async Task<SubscriptionPaymentResponse> OverridePaymentAmountAsync(Guid paymentId, decimal amount, string reason, string performedBy)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) throw new BusinessRuleException("ระบุเหตุผลที่แก้ยอด");
+        var newAmount = Math.Round(amount, 2, MidpointRounding.AwayFromZero);
+        if (newAmount <= 0m)
+            throw new BusinessRuleException("ยอดต้องมากกว่า 0 — ไม่เก็บเงินเลย ให้ใช้ \"บันทึกรับเงินเอง\" แบบยกเว้นค่าบริการแทน");
+        var subscriptionId = await _db.SubscriptionPayments.AsNoTracking().Where(p => p.Id == paymentId)
+            .Select(p => (Guid?)p.SubscriptionId).FirstOrDefaultAsync() ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+        await using var lockTx = await SubscriptionPaymentLock.AcquireAsync(_db, subscriptionId);
+        var payment = await _db.SubscriptionPayments.Include(p => p.Subscription).FirstAsync(p => p.Id == paymentId);
+        if (_db.Database.IsRelational()) await _db.Entry(payment).ReloadAsync();
+        if (payment.Status is not (SubscriptionPaymentStatus.Pending or SubscriptionPaymentStatus.UnderReview))
+            throw new BusinessRuleException("แก้ยอดได้เฉพาะรายการที่ยังไม่อนุมัติ/ไม่ปฏิเสธ", "PLATFORM-ADMIN-PRICE-OVERRIDE", 409);
+        if (payment.PlatformInvoiceDocumentId != null)
+            throw new BusinessRuleException("รายการนี้ชำระใบแจ้งหนี้ — ยอดตามใบ (กรอก \"เงินที่รับจริง\" ตอนอนุมัติ หรือออกใบลดหนี้)", "PLATFORM-ADMIN-PRICE-OVERRIDE", 409);
+        var liveIntent = await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.SourceKind == PaymentSourceKind.SubscriptionPayment && i.SourceId == payment.Id
+            && (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending || i.Status == PaymentIntentStatus.Succeeded));
+        if (liveIntent)
+            throw new BusinessRuleException("มีการชำระออนไลน์ของรายการนี้ค้าง/สำเร็จแล้ว — แก้ยอดไม่ได้ (รอหมดอายุ หรืออนุมัติตามเงินที่รับจริง)", "PLATFORM-ADMIN-PRICE-OVERRIDE", 409);
+        var before = payment.Amount;
+        var beforeDiscount = payment.CouponDiscountAmount;
+        payment.Amount = newAmount;
+        payment.QuotedAmount = newAmount;
+        // ฝ่ายค้าน S5: รายการมีคูปอง ⇒ ส่วนลดบนใบ = ราคาก่อนคูปอง − ยอดใหม่ (ไม่ติดลบ) — ไม่งั้นใบกำกับบวกส่วนลดเดิมกลับเป็น "ราคาเต็ม" ที่ไม่จริง ·
+        // ยอดใหม่ ≥ ราคาก่อนคูปอง ⇒ ปลดคูปอง (ไม่นับการใช้) · แก้แถวการใช้ในธุรกรรมเดียวกัน
+        if (payment.CouponId != null && payment.ListAmount is decimal listBeforeCoupon)
+        {
+            var d = await PlatformCouponStore.AdjustForOverrideAsync(_db, payment.Subscription.CompanyId, PlatformCouponRule.SourceSubscriptionPayment, payment.Id,
+                listBeforeCoupon, newAmount, performedBy);
+            payment.CouponDiscountAmount = d;
+            if (d <= 0m) { payment.CouponId = null; payment.ListAmount = null; }
+        }
+        payment.AmountOverrideReason = reason.Trim().Length > 500 ? reason.Trim()[..500] : reason.Trim();
+        payment.UpdatedAt = DateTime.UtcNow; payment.UpdatedBy = performedBy;
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = payment.SubscriptionId, Action = "PaymentAmountOverridden",
+            Notes = $"แอดมินแก้ยอด {payment.PaymentNumber} {before:N2} → {newAmount:N2} บาท · {payment.AmountOverrideReason}", PerformedBy = performedBy
+        });
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = payment.Subscription.CompanyId, Action = AuditAction.Update, EntityType = nameof(SubscriptionPayment), EntityId = payment.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { amount = before, couponDiscount = beforeDiscount }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "PlatformAdminPriceOverride", ruleCode = "PLATFORM-ADMIN-PRICE-OVERRIDE", amount = newAmount, couponDiscount = payment.CouponDiscountAmount,
+                slipAttached = payment.SlipFileName != null, reason = payment.AmountOverrideReason, by = performedBy,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
+        if (lockTx != null) await lockTx.CommitAsync();
+        return MapPaymentToResponse(payment);
     }
 
     public async Task<string> CancelSubscriptionAsync(Guid companyId, string performedBy)
@@ -1837,25 +2086,37 @@ public class SubscriptionService : ISubscriptionService
             }
         }
 
+        var ocrCredits = await _db.OcrCreditPurchases
+            .Where(p => p.CompanyId == companyId && p.Status == "Approved"
+                && p.PagesRemaining > 0
+                && (p.ExpiresAt == null || p.ExpiresAt > DateTime.UtcNow))
+            .SumAsync(p => p.PagesRemaining);
+
+        // รอบ 230 (D-4 · F2 ข้อ 5): หลอดทุกตัวคิดที่เซิร์ฟเวอร์ตัวเดียว (UsageBarRule) — เกณฑ์ "ไม่จำกัด"/สีเตือน/% ไม่อยู่ในหน้าเว็บอีก · คำเตือนข้างล่างอ่านระดับจากหลอดเดียวกัน
+        var bars = new List<UsageBarRule.Bar>
+        {
+            UsageBarRule.Documents(docsUsed, maxDocs),
+            UsageBarRule.Ocr(ocrUsed, maxOcr, sub.OcrBonusPages, ocrCredits),
+            UsageBarRule.Users(companyUsers.Count, maxUsers),
+            UsageBarRule.Storage(storageUsed, maxStorage),
+        };
+        var storageBar = bars[3]; var docBar = bars[0]; var userBar = bars[2];
+
         // Build alerts
         var alerts = new List<UsageAlert>();
-        var storagePct = maxStorage > 0 ? (double)storageUsed / maxStorage * 100 : 0;
-        var docPct = maxDocs > 0 ? (double)docsUsed / maxDocs * 100 : 0;
-        var userPct = maxUsers > 0 ? (double)companyUsers.Count / maxUsers * 100 : 0;
+        if (storageBar.Level == 2)
+            alerts.Add(new UsageAlert("danger", "storage", $"พื้นที่เก็บข้อมูลใช้ไป {storageBar.Percent:F0}% แล้ว กรุณาเคลียร์ไฟล์หรืออัปเกรดแพ็กเกจ"));
+        else if (storageBar.Level == 1)
+            alerts.Add(new UsageAlert("warning", "storage", $"พื้นที่เก็บข้อมูลใช้ไป {storageBar.Percent:F0}% แล้ว"));
 
-        if (storagePct >= 90)
-            alerts.Add(new UsageAlert("danger", "storage", $"พื้นที่เก็บข้อมูลใช้ไป {storagePct:F0}% แล้ว กรุณาเคลียร์ไฟล์หรืออัปเกรดแพ็กเกจ"));
-        else if (storagePct >= 70)
-            alerts.Add(new UsageAlert("warning", "storage", $"พื้นที่เก็บข้อมูลใช้ไป {storagePct:F0}% แล้ว"));
-
-        if (docPct >= 90)
+        if (docBar.Level == 2)
             alerts.Add(new UsageAlert("danger", "documents", $"เอกสารเดือนนี้ใช้ไป {docsUsed}/{maxDocs} รายการ"));
-        else if (docPct >= 70)
-            alerts.Add(new UsageAlert("warning", "documents", $"เอกสารเดือนนี้ใช้ไป {docPct:F0}%"));
+        else if (docBar.Level == 1)
+            alerts.Add(new UsageAlert("warning", "documents", $"เอกสารเดือนนี้ใช้ไป {docBar.Percent:F0}%"));
 
-        if (userPct >= 100)
+        if (!userBar.Unlimited && companyUsers.Count >= maxUsers)
             alerts.Add(new UsageAlert("danger", "users", "จำนวนผู้ใช้เต็มแล้ว อัปเกรดแพ็กเกจเพื่อเพิ่มผู้ใช้"));
-        else if (companyUsers.Count >= maxUsers - 1 && maxUsers < 999)
+        else if (!userBar.Unlimited && companyUsers.Count >= maxUsers - 1)
             alerts.Add(new UsageAlert("warning", "users", $"เหลือโควต้าผู้ใช้อีก {maxUsers - companyUsers.Count} คน"));
 
         var daysLeft = (endDate - DateTime.UtcNow).Days;
@@ -1864,17 +2125,12 @@ public class SubscriptionService : ISubscriptionService
         else if (daysLeft <= 7)
             alerts.Add(new UsageAlert("warning", "subscription", $"Subscription จะหมดอายุใน {daysLeft} วัน"));
 
-        var ocrPct = maxOcr > 0 ? (double)ocrUsed / maxOcr * 100 : 0;
-        if (ocrPct >= 90)
-            alerts.Add(new UsageAlert("danger", "ocr", $"โควต้า OCR ใช้ไป {ocrUsed}/{maxOcr} หน้า"));
-        else if (ocrPct >= 70)
-            alerts.Add(new UsageAlert("warning", "ocr", $"โควต้า OCR ใช้ไป {ocrPct:F0}%"));
-
-        var ocrCredits = await _db.OcrCreditPurchases
-            .Where(p => p.CompanyId == companyId && p.Status == "Approved"
-                && p.PagesRemaining > 0
-                && (p.ExpiresAt == null || p.ExpiresAt > DateTime.UtcNow))
-            .SumAsync(p => p.PagesRemaining);
+        var ocrBar = bars[1];
+        if (ocrBar.Level == 2)
+            alerts.Add(new UsageAlert("danger", "ocr", $"โควต้า OCR ใช้ไป {ocrUsed}/{ocrBar.LimitText} หน้า"));
+        else if (ocrBar.Level == 1)
+            alerts.Add(new UsageAlert("warning", "ocr", $"โควต้า OCR ใช้ไป {ocrBar.Percent:F0}%"));
+        var planName = await _db.PlanTemplates.AsNoTracking().Where(t => t.Plan == plan && t.IsActive).Select(t => t.Name).FirstOrDefaultAsync();
 
         return new UsageDetailResponse(
             plan, status, endDate,
@@ -1887,7 +2143,11 @@ public class SubscriptionService : ISubscriptionService
             MaxOcrPagesPerMonth: maxOcr,
             OcrBonusPages: sub.OcrBonusPages,
             OcrCreditPagesRemaining: ocrCredits,
-            Alerts: alerts);
+            Alerts: alerts,
+            Bars: bars,
+            StatusLabel: PlatformBillingCenterService.StatusLabel(status),
+            DaysLeft: UsageBarRule.DaysLeft(endDate, DateTime.UtcNow),
+            PlanName: planName ?? plan.ToString());
     }
 
     private static string GetCategoryLabel(string entityType)
@@ -2409,6 +2669,11 @@ public class SubscriptionService : ISubscriptionService
             payment.WithholdingTaxAmount = plainWht;
         }
 
+        // รอบ 230 (ฝ่ายค้าน S3): คูปองที่การจองหมดอายุระหว่างค้างชำระ ⇒ นับเพดานใหม่ใต้ล็อกของคูปอง · เกินแล้ว + ระบบยืนยัน ⇒ พักให้แอดมิน (แอดมินอนุมัติ = ตัดสินแล้ว)
+        if (request.Approve && systemConfirmed && payment.CouponId != null
+            && await PlatformCouponStore.RedeemProblemAsync(_db, payment.Subscription.CompanyId, PlatformCouponRule.SourceSubscriptionPayment, payment.Id) is string couponOver)
+            return await HoldForAdminAsync(payment, request, performedBy, lockTx, $"เงินเข้า {payment.PaymentNumber} แล้วแต่ {couponOver}");
+
         payment.ReviewedByUserId = reviewerUserId;
         payment.ReviewedAt = DateTime.UtcNow;
         payment.ReviewNotes = linkedNote == null ? request.ReviewNotes
@@ -2443,6 +2708,84 @@ public class SubscriptionService : ISubscriptionService
                     NotificationType.SubscriptionPaymentApproved,
                     "ได้รับชำระใบแจ้งหนี้แล้ว",
                     $"การชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท ได้รับการยืนยันแล้ว",
+                    "/pages/billing.html", "SubscriptionPayment", payment.Id);
+        }
+        else if (request.Approve && payment.IsProration)
+        {
+            // รอบ 230 (คำตัดสินข้อ 230-Q1): ส่วนต่างอัปเกรดกลางรอบ — เปลี่ยนแพ็กเกจทันที <b>วันหมดอายุคงเดิม</b> (ไม่ต่ออายุ · ไม่เริ่มรอบใหม่)
+            var sub = payment.Subscription;
+            var now = DateTime.UtcNow;
+            var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == payment.RequestedPlan && p.IsActive);
+            // ล้าสมัย (ต่ออายุ/แอดมินแก้วันหมดอายุ/แพ็กเกจเปลี่ยนหลังคิดส่วนต่าง) ⇒ ระบบไม่ตัดสินเอง: พักให้แอดมิน (ล้มดัง) · แอดมินกดอนุมัติ = ตัดสินแล้ว (เปลี่ยนแพ็กเกจตามรายการ)
+            var prorationStale = template == null ? $"ไม่พบแม่แบบแพ็กเกจ {payment.RequestedPlan} ที่เปิดใช้"
+                : PlatformProration.StaleReason(payment.ProrationCycleEndUtc ?? sub.EndDate, sub.EndDate, payment.ProrationFromPlan ?? sub.Plan.ToString(), sub.Plan.ToString(), now);
+            // ฝ่ายค้าน S1: ใบต่ออายุของแพ็กเกจเดิมที่มีการชำระ/แจ้งชำระแล้ว ⇒ ห้ามแทนที่อัตโนมัติ (ตัวตัดสินเดียวกับการเปลี่ยนรายการต่ออายุ — RenewalInvoiceClaims)
+            var renewalClaim = sub.RenewalInvoiceDocumentId is Guid oldRenewal
+                ? await RenewalInvoiceClaims.ClaimProblemAsync(_db, sub.Id, oldRenewal, payment.Id) : null;
+            if ((prorationStale != null || renewalClaim != null) && systemConfirmed)
+                return await HoldForAdminAsync(payment, request, performedBy, lockTx,
+                    $"เงินส่วนต่างอัปเกรด {payment.PaymentNumber} เข้าแล้วแต่ต้องให้คนตัดสิน: {prorationStale ?? renewalClaim} — ตรวจแล้วอนุมัติ (เปลี่ยนแพ็กเกจ) หรือคืนเงิน");
+            payment.Status = SubscriptionPaymentStatus.Approved;
+            var keepEnd = sub.EndDate;
+            var keepNext = sub.NextBillingDate;
+            var keepStatus = sub.Status;
+            var fromPlan = sub.Plan;
+            // ใบแจ้งหนี้ต่ออายุรอบหน้าที่ออกตามแพ็กเกจเดิม ⇒ ล้าสมัย (ราคาแพ็กเกจใหม่) — ล้างตัวชี้ (ตัวเดียว RenewalInvoiceSupersede) ·
+            // หลัง commit: ยังไม่มีการชำระ ⇒ ยกเลิกใบผ่านเส้นยกเลิกเอกสาร (HandleStaleRenewalInvoiceAsync) แล้วงานต่ออายุออกใบใหม่ตามแพ็กเกจใหม่
+            if (renewalClaim != null)
+                // แอดมินอนุมัติเอง ทั้งที่ใบต่ออายุเดิมถูกจ่าย/แจ้งชำระแล้ว ⇒ คงใบเดิม (ไม่แทนที่ · ไม่ยกเลิก) — ผู้ดูแลระบบออกใบลดหนี้/ใบใหม่ด้วยมือ (บอกในประวัติ)
+                _db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    SubscriptionId = sub.Id, Action = "RenewalInvoiceKeptAfterUpgrade", FromPlan = fromPlan, ToPlan = payment.RequestedPlan,
+                    Notes = $"อัปเกรดกลางรอบ {payment.PaymentNumber} แต่ไม่แทนที่ใบต่ออายุเดิม: {renewalClaim}", PerformedBy = performedBy
+                });
+            else if (sub.RenewalInvoiceNumber != null || sub.RenewalInvoiceDocumentId != null)
+            {
+                staleRenewalId = sub.RenewalInvoiceDocumentId;
+                _db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    SubscriptionId = sub.Id, Action = "RenewalInvoiceSuperseded", FromPlan = fromPlan, ToPlan = payment.RequestedPlan,
+                    Notes = $"ใบแจ้งหนี้ต่ออายุ {sub.RenewalInvoiceNumber} (แพ็กเกจ {fromPlan}) ถูกแทนที่ด้วยการอัปเกรดกลางรอบ {payment.PaymentNumber} — "
+                          + "ยังไม่มีการชำระ = ระบบยกเลิกใบเดิมและออกใบใหม่ตามแพ็กเกจใหม่ · มีการชำระแล้ว = ผู้ดูแลระบบออกใบลดหนี้",
+                    PerformedBy = performedBy
+                });
+                RenewalInvoiceSupersede.Apply(sub);
+            }
+            if (template != null) ApplyTemplate(sub, template, sub.BillingCycle);
+            else sub.Plan = payment.RequestedPlan;
+            sub.EndDate = keepEnd; sub.NextBillingDate = keepNext; sub.Status = keepStatus;
+            // อัปเกรดแทนการดาวน์เกรด/เปลี่ยนรอบที่รอวันครบรอบ (คำขอล่าสุดชนะ) · ฝ่ายค้าน N5: บอกในประวัติว่าล้างอะไรไป (ไม่เงียบ)
+            if (sub.ScheduledPlan != null || sub.CancelAtPeriodEnd)
+                _db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    SubscriptionId = sub.Id, Action = "ScheduledChangeClearedByUpgrade", FromPlan = fromPlan, ToPlan = payment.RequestedPlan,
+                    Notes = $"อัปเกรดกลางรอบ {payment.PaymentNumber} ล้าง"
+                            + (sub.ScheduledPlan != null ? $" การเปลี่ยนเป็น {sub.ScheduledPlan} ({sub.ScheduledBillingCycle}) ที่รอมีผล {sub.ScheduledPlanEffectiveAt:yyyy-MM-dd}" : "")
+                            + (sub.CancelAtPeriodEnd ? " · การยกเลิกเมื่อสิ้นรอบ (จ่ายอัปเกรด = ใช้ต่อ)" : ""),
+                    PerformedBy = performedBy
+                });
+            sub.ScheduledPlan = null; sub.ScheduledBillingCycle = null; sub.ScheduledPlanEffectiveAt = null;
+            sub.CancelAtPeriodEnd = false; sub.CancelRequestedAt = null;
+            payment.PaymentDate = PlatformPlanPricing.ApprovedPaymentDate(systemConfirmed, gatewayPaidAtUtc,
+                payment.Kind is SubscriptionPaymentKind.ManualByAdmin or SubscriptionPaymentKind.Waived,
+                payment.PaymentDate, payment.CreatedAt, now);
+            sub.LastPaymentDate = payment.PaymentDate;
+            sub.PaymentReference = payment.PaymentNumber;
+            payment.SubscriptionExtendedTo = sub.EndDate;
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id, Action = "PlanUpgradedProrated", FromPlan = fromPlan, ToPlan = payment.RequestedPlan, ToStatus = sub.Status,
+                Notes = $"Payment {payment.PaymentNumber} approved — อัปเกรด {fromPlan} → {payment.RequestedPlan} (ส่วนต่าง {payment.ProrationDays}/{payment.ProrationCycleDays} วัน) · "
+                        + $"วันหมดอายุคงเดิม {sub.EndDate:yyyy-MM-dd}" + (prorationStale != null ? $" · แอดมินอนุมัติแม้ล้าสมัย: {prorationStale}" : ""),
+                PerformedBy = performedBy
+            });
+            var ownerUserId = await _db.CompanyUsers.Where(cu => cu.CompanyId == sub.CompanyId && cu.Role == UserRole.Owner)
+                .Select(cu => cu.UserId).FirstOrDefaultAsync();
+            if (ownerUserId != Guid.Empty)
+                await NotifyUserAsync(ownerUserId, sub.CompanyId,
+                    Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded, NotificationType.SubscriptionPaymentApproved,
+                    "อัปเกรดแพ็กเกจแล้ว",
+                    $"ได้รับชำระส่วนต่าง {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท — ใช้แพ็กเกจ {payment.RequestedPlan} ได้ทันที ถึง {sub.EndDate.AddHours(7):dd/MM/yyyy}",
                     "/pages/billing.html", "SubscriptionPayment", payment.Id);
         }
         else if (request.Approve)
@@ -2677,6 +3020,13 @@ public class SubscriptionService : ISubscriptionService
                 $"ผู้เช่าหักภาษี ณ ที่จ่าย {payment.WithholdingTaxAmount:N2} บาท — รอหนังสือรับรอง 50 ทวิ (ผู้เช่าส่งที่ศูนย์บิล/ลิงก์ชำระ)",
                 PlatformPaymentAttention.RuleWhtCertPending, performedBy);
 
+        // รอบ 230 (คำตัดสินข้อ 230-Q2): คูปองของรายการนี้ — เงินเข้า (อนุมัติ) ⇒ นับการใช้ · ปฏิเสธ ⇒ ปลดการจอง (ในธุรกรรมที่ล็อกเดียวกัน)
+        if (payment.CouponId != null && payment.Status == SubscriptionPaymentStatus.Approved)
+            await PlatformCouponStore.RedeemAsync(_db, payment.Subscription.CompanyId, PlatformCouponRule.SourceSubscriptionPayment, payment.Id, performedBy);
+        else if (payment.CouponId != null && payment.Status == SubscriptionPaymentStatus.Rejected)
+            await PlatformCouponStore.ReleaseAsync(_db, payment.Subscription.CompanyId, PlatformCouponRule.SourceSubscriptionPayment, payment.Id,
+                $"รายการถูกปฏิเสธ: {request.RejectionReason}", performedBy);
+
         // รอบ 229 (QUOTA_ADDON §B.6 ขั้น 5 · ฝ่ายค้าน S3): จ่ายใบต่ออายุ (ต่อแพ็กเกจแล้วในหน่วยความจำ) ⇒ โควตาเสริมทุกบรรทัดในใบได้รอบใหม่
         // ถึงวันหมดอายุใหม่ — <b>บันทึกพร้อมการอนุมัติในธุรกรรมที่ล็อกเดียวกัน</b> (save:false) ⇒ ต่อแพ็กเกจแต่ไม่ต่อโควตาเสริมเป็นไปไม่ได้ ·
         // idempotent (unique RenewedFromId + แถวที่เพิ่มค้างใน context) · ล้ม (อ่านไม่ได้) ⇒ ไม่ทำให้การรับเงินพัง แต่ประทับเรื่องค้างบนรายการชำระ + audit (ล้มดัง)
@@ -2724,6 +3074,26 @@ public class SubscriptionService : ISubscriptionService
             catch (Exception ex) { _logger?.LogError(ex, "ประเมินค้างชำระหลังอนุมัติ {Payment} ไม่สำเร็จ — งานทวงหนี้จะประเมินรอบถัดไป", payment.Id); }
         }
 
+        return MapPaymentToResponse(payment);
+    }
+
+    /// <summary>รอบ 230: พักรายการที่เงินเข้าแล้วให้แอดมินตัดสิน (สถานะ UnderReview + เรื่องค้าง <c>PLATFORM-PAYMENT-HELD</c> + ประวัติ + กระดิ่ง · ล้มดัง) —
+    /// ตัวเดียวของเหตุรอบ 230 (ส่วนต่างล้าสมัย · ใบต่ออายุเดิมถูกจ่ายแล้ว · คูปองเกินเพดาน) · commit ธุรกรรมที่ล็อกไว้</summary>
+    private async Task<SubscriptionPaymentResponse> HoldForAdminAsync(SubscriptionPayment payment, ReviewSubscriptionPaymentRequest request, string performedBy,
+        IDbContextTransaction? lockTx, string why)
+    {
+        payment.Status = SubscriptionPaymentStatus.UnderReview;
+        payment.ReviewNotes = request.ReviewNotes;
+        PlatformPaymentAttention.Flag(_db, payment, payment.Subscription.CompanyId, why, PlatformPaymentAttention.RuleHeld, performedBy);
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = payment.SubscriptionId, Action = "PaymentHeldForAdmin", Notes = $"Payment {payment.PaymentNumber}: {why}", PerformedBy = performedBy
+        });
+        await _db.SaveChangesAsync();
+        if (lockTx != null) await lockTx.CommitAsync();
+        try { await PlatformPaymentAttention.NotifyAdminsAsync(_db, _notificationService, $"พักรายการชำระ {payment.PaymentNumber} ให้ตรวจ", why, payment.Id); }
+        catch (Exception ex) { _logger?.LogError(ex, "ส่งกระดิ่งแอดมิน (พัก {Payment}) ไม่สำเร็จ — เรื่องค้างอยู่ในหน้าแอดมินแล้ว", payment.Id); }
+        _logger?.LogError("พักรายการชำระ {Payment} ให้แอดมิน: {Why}", payment.PaymentNumber, why);
         return MapPaymentToResponse(payment);
     }
 
@@ -3118,7 +3488,15 @@ public class SubscriptionService : ISubscriptionService
             p.PlatformInvoiceDocumentId,
             p.WithholdingTaxAmount,
             p.AttentionReason,
-            p.WhtCertificateFileName != null);
+            p.WhtCertificateFileName != null,
+            p.IsProration,
+            p.IsProration && p.ProrationDays is int pd && p.ProrationCycleDays is int pc
+                ? $"ส่วนต่างอัปเกรดจาก {p.ProrationFromPlan} คิด {pd}/{pc} วัน (วันหมดอายุเดิม)" : null,
+            p.ListAmount,
+            p.CouponCode,
+            p.CouponDiscountAmount,
+            p.QuotedAmount,
+            p.AmountOverrideReason);
     }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)

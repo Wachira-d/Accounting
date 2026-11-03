@@ -68,7 +68,32 @@ public record ChangeSubscriptionRequest(
     SubscriptionPlan NewPlan,
     BillingCycle? NewBillingCycle = null,
     bool PolicyAccepted = false,
-    string? PolicyVersionShown = null);
+    string? PolicyVersionShown = null,
+    // รอบ 230 (คำตัดสินข้อ 230-Q2): คูปองแพลตฟอร์ม (ตัดสินที่เซิร์ฟเวอร์ตอนสร้างรายการชำระ — ใช้ไม่ได้ = 400 ไม่สร้างรายการ)
+    string? CouponCode = null);
+
+/// <summary>รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): ผลคิด "ถ้าเปลี่ยนเป็นแพ็กเกจนี้ ต้องจ่ายเท่าไร มีผลเมื่อไร" — เซิร์ฟเวอร์คิดทุกตัวเลข หน้าเว็บแสดงอย่างเดียว ·
+/// <paramref name="Kind"/> = Upgrade | Downgrade | Same | New (ทดลองใช้/หมดอายุ — ซื้อเต็มรอบ) · <paramref name="Prorated"/> = คิดส่วนต่างตามวันที่เหลือ (วันหมดอายุคงเดิม) ·
+/// <paramref name="AmountDue"/> = ยอดที่ต้องจ่ายหลังคูปอง (0 = ไม่ต้องจ่าย — ดาวน์เกรด/เปลี่ยนรอบมีผลวันครบรอบ)</summary>
+public record PlanChangeQuote(
+    string Kind,
+    bool Prorated,
+    string Plan,
+    string Cycle,
+    decimal ListAmount,
+    decimal Discount,
+    decimal AmountDue,
+    int? DaysRemaining,
+    int? CycleDays,
+    DateTime? PeriodEndUtc,
+    DateTime? EffectiveAt,
+    string Message,
+    string? CouponLabel = null,
+    string? CouponProblem = null,
+    string? Blocked = null);
+
+/// <summary>รอบ 230: แอดมินแก้ยอดของรายการชำระค่าแพ็กเกจที่ยังไม่จ่าย (คำตัดสินเจ้าของข้อ 178 ① — ยืดหยุ่นได้เสมอ · audit chain)</summary>
+public record OverridePaymentAmountRequest(decimal Amount, string? Reason);
 
 /// <summary>รอบ 219 เฟส 0 (G-0 · คำตัดสินข้อ 178): ผลของการ "เลือกแพ็กเกจ" ของผู้เช่า — <b>ไม่เปิดแพ็กเกจจ่ายเงินทันที</b> ·
 /// อัปเกรด/แปลงจากทดลองใช้ = สร้างรายการชำระ (<paramref name="Payment"/>) รอเงินเข้า/แอดมินยืนยัน · ดาวน์เกรด/เปลี่ยนรอบ = รอมีผลวันครบรอบ
@@ -364,7 +389,15 @@ public record SubscriptionPaymentResponse(
     /// <summary>ฝ่ายค้านรอบสุดท้าย 4: ภาษีหักที่ผู้เช่าแจ้ง (หน้าตรวจของแอดมินเติมให้) · เรื่องที่แอดมินต้องจัดการ · มีหนังสือรับรอง 50 ทวิ แล้วไหม</summary>
     decimal WithholdingTaxAmount = 0m,
     string? AttentionReason = null,
-    bool HasWhtCertificate = false);
+    bool HasWhtCertificate = false,
+    // รอบ 230: ส่วนต่างอัปเกรด · คูปอง · แอดมินแก้ยอด (เก็บแล้วต้อง echo กลับ — กฎ #4 A)
+    bool IsProration = false,
+    string? ProrationNote = null,
+    decimal? ListAmount = null,
+    string? CouponCode = null,
+    decimal CouponDiscountAmount = 0m,
+    decimal? QuotedAmount = null,
+    string? AmountOverrideReason = null);
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,
@@ -398,7 +431,12 @@ public record UsageDetailResponse(
     int OcrBonusPages = 0,
     int OcrCreditPagesRemaining = 0,
     // Alerts
-    List<UsageAlert>? Alerts = null);
+    List<UsageAlert>? Alerts = null,
+    // รอบ 230 (D-4 · F2 ข้อ 5): หลอด/สถานะ/วันที่เหลือ คิดที่เซิร์ฟเวอร์ (Helpers/UsageBarRule) — หน้า usage.html แสดงอย่างเดียว
+    List<global::Accounting.Helpers.UsageBarRule.Bar>? Bars = null,
+    string? StatusLabel = null,
+    int? DaysLeft = null,
+    string? PlanName = null);
 
 public record UsageUserInfo(
     Guid UserId,

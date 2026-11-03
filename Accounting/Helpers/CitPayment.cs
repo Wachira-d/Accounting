@@ -12,7 +12,7 @@ namespace Accounting.Helpers;
 ///
 /// <para>═══ กติกา ═══
 /// <list type="bullet">
-/// <item>งวด: ภ.ง.ด.51 = (ปี, เดือนสิ้นครึ่งปี) · ภ.ง.ด.50 = (ปี, เดือนสิ้นรอบ) — รอบเดียวกับตัวคำนวณ (<c>CalculateCITAsync</c> ม.ค.–ธ.ค.)</item>
+/// <item>งวด: คีย์ตัวตน ภ.ง.ด.51 = (ปีรอบบัญชี, 6) · ภ.ง.ด.50 = (ปีรอบบัญชี, 12) · วันครบกำหนดคิดจากวันสิ้นงวดจริงที่เก็บบนรายการคำนวณ (<see cref="DueKey"/> · รอบ 230 ฝ่ายค้าน S2)</item>
 /// <item>กำหนดยื่น (แบบกระดาษ ก่อนเลื่อนวันหยุด): ภ.ง.ด.51 = ภายใน 2 เดือนนับแต่วันสุดท้ายของ 6 เดือนแรก (§67 ทวิ) ·
 /// ภ.ง.ด.50 = ภายใน 150 วันนับแต่วันสุดท้ายของรอบบัญชี (§68) — ตารางวันที่อยู่ <see cref="TaxFilingDeadline"/> (เรียกที่นี่)</item>
 /// <item>เครดิตหักจากภาษี: ภ.ง.ด.51 ที่จ่ายแล้วก่อน แล้วภาษีถูกหัก ณ ที่จ่าย — ไม่เกินภาษี (ส่วนเกินคงเป็นสิทธิขอคืนในผัง 11920/11910)</item>
@@ -56,6 +56,22 @@ public static class CitPayment
     /// <summary>คีย์งวดของแถวนำส่ง (ปี, เดือนสิ้นงวด)</summary>
     public static (int Year, int Month) PeriodKey(string remittanceType, int ceYear)
         => remittanceType == Pnd51Type ? (ceYear, 6) : (ceYear, 12);
+
+    /// <summary>
+    /// รอบ 230 ฝ่ายค้าน S2 — (ปี, เดือน) <b>ตามปฏิทิน</b>ของวันสิ้นงวดที่ใช้คิดวันครบกำหนด/เงินเพิ่ม (ส่งให้ <see cref="TaxFilingDeadline"/> → <see cref="PaperDueRaw"/>:
+    /// ภ.ง.ด.51 = สิ้นเดือนที่ 2 นับจากเดือนสิ้นครึ่งปี (§67 ทวิ) · ภ.ง.ด.50 = วันสิ้นรอบ + 150 วัน (§68)) — แยกจากคีย์ตัวตน (<see cref="PeriodKey"/> = ปีรอบบัญชี, 6|12)
+    /// ที่แถวนำส่ง/ป้ายใช้ · มี <paramref name="periodEnd"/> (รายการคำนวณรอบ 230) ⇒ เดือนสิ้นงวดจริง · แถวเดิมไม่มี ⇒ คีย์เดิม และ <c>Legacy = true</c> เมื่อรอบบัญชีบริษัทไม่ใช่ ม.ค.
+    /// (คีย์เดิมผิด ⇒ ผู้เรียกต้องเตือน + ไม่เสนอเงินเพิ่ม) · รอบ ม.ค.–ธ.ค. คีย์เดิมตรงอยู่แล้ว ⇒ ไม่ legacy
+    /// </summary>
+    public static (int Year, int Month, bool Legacy) DueKey(string remittanceType, int ceFiscalYear, DateTime? periodEnd, int fiscalYearStartMonth)
+    {
+        if (periodEnd is DateTime pe) return (pe.Year, pe.Month, false);
+        var (y, m) = PeriodKey(remittanceType, ceFiscalYear);
+        return (y, m, FiscalYear.NormalizeStartMonth(fiscalYearStartMonth) != 1);
+    }
+
+    /// <summary>ข้อความเตือนของแถวเดิม (ไม่มีวันสิ้นงวด) ที่รอบบัญชีไม่ใช่ ม.ค.–ธ.ค.</summary>
+    public const string LegacyDueNote = "⚠️ รายการคำนวณนี้บันทึกก่อนรอบ 230 (ไม่มีวันสิ้นงวด) — วันครบกำหนดที่แสดงคิดจากรอบ ม.ค.–ธ.ค. ซึ่งไม่ตรงรอบบัญชีบริษัท · ระบบไม่เสนอเงินเพิ่ม (กรอกเอง) · คำนวณใหม่เพื่อให้วันถูก";
 
     /// <summary>ป้ายงวดที่แสดงบนจอ (เซิร์ฟเวอร์คิด หน้าแสดง) — ปี พ.ศ.</summary>
     public static string PeriodLabel(string remittanceType, int year)
@@ -136,14 +152,17 @@ public static class CitPayment
     /// <summary>ข้อเท็จจริงของ §67 ตรี — ประมาณการทั้งปีที่แสดงใน ภ.ง.ด.51 · กำไรสุทธิจริง + ภาษีจริงของ ภ.ง.ด.50 ·
     /// <paramref name="HalfYearTaxPaid"/> = ภาษีที่ชำระตาม ภ.ง.ด.51 <b>จริง</b> (ยอดนำส่ง + ภาษีถูกหัก ณ ที่จ่ายที่ใช้ในครึ่งปี · ฝ่ายค้าน S5a) ·
     /// <paramref name="PaidBasis"/> = บอกว่ายอดชำระมาจากไหน (แสดงในข้อความ) · <paramref name="PossiblyFirstYear"/> = บริษัทเริ่มในรอบนี้ (รอบแรก &lt; 12 เดือนไม่ต้องยื่น ภ.ง.ด.51)</summary>
+    /// <param name="ActualHalfYearBasis">รอบ 230: ภ.ง.ด.51 ยื่นจากกำไรสุทธิจริงครึ่งปี (§67 ทวิ(2)) ⇒ ไม่อยู่ใต้ §67 ตรี</param>
     public sealed record EstimateFacts(decimal EstimatedAnnualProfit, decimal ActualAnnualProfit, decimal ActualAnnualTax, decimal HalfYearTaxPaid,
-        string? PaidBasis = null, bool PossiblyFirstYear = false);
+        string? PaidBasis = null, bool PossiblyFirstYear = false, bool ActualHalfYearBasis = false);
 
     public sealed record EstimatePenalty(decimal Amount, bool Applies, string Note);
 
     /// <summary>§67 ตรี — เงินเพิ่ม 20% ของภาษีที่ชำระขาดตาม §67 ทวิ เมื่อประมาณการขาดเกิน 25% ของกำไรจริง (ค่าเสนอ)</summary>
     public static EstimatePenalty Section67Ter(EstimateFacts f)
     {
+        if (f.ActualHalfYearBasis)
+            return new EstimatePenalty(0m, false, "ภ.ง.ด.51 ยื่นจากกำไรสุทธิจริงครึ่งปี (§67 ทวิ(2)) — ไม่อยู่ใต้เงินเพิ่ม §67 ตรี");
         if (f.ActualAnnualProfit <= 0m)
             return new EstimatePenalty(0m, false, "กำไรสุทธิจริงไม่เกิน 0 — ไม่มีเงินเพิ่ม §67 ตรี");
         var shortPct = (f.ActualAnnualProfit - f.EstimatedAnnualProfit) / f.ActualAnnualProfit;

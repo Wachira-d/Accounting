@@ -268,10 +268,26 @@ public class OmisePaymentProvider : IPaymentProvider
 
         if (req.Kind == PaymentMethodKind.Card)
         {
-            if (string.IsNullOrWhiteSpace(req.CardToken))
-                throw new InvalidOperationException(
-                    "ไม่พบโทเคนบัตร — เลขบัตรต้องถูกแปลงเป็นโทเคนในเบราว์เซอร์ก่อนเสมอ");
-            form.Add(new("card", req.CardToken));
+            if (!string.IsNullOrWhiteSpace(req.CustomerRef))
+            {
+                // รอบ 230 (§5.2): ตัดด้วยบัตรที่บันทึกไว้ — customer + card ของลูกค้านั้น (ไม่มีโทเคน · เลขอ้างอิงต้องเป็นรูปของเจ้านี้ก่อนส่ง)
+                if (!IsWellFormedRef(req.CustomerRef, "cust_"))
+                    throw new InvalidOperationException("เลขอ้างอิงลูกค้าของบัตรที่บันทึกไว้ไม่ถูกต้อง");
+                form.Add(new("customer", req.CustomerRef));
+                if (!string.IsNullOrWhiteSpace(req.SavedCardRef))
+                {
+                    if (!IsWellFormedRef(req.SavedCardRef, "card_"))
+                        throw new InvalidOperationException("เลขอ้างอิงบัตรที่บันทึกไว้ไม่ถูกต้อง");
+                    form.Add(new("card", req.SavedCardRef));
+                }
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(req.CardToken))
+                    throw new InvalidOperationException(
+                        "ไม่พบโทเคนบัตร — เลขบัตรต้องถูกแปลงเป็นโทเคนในเบราว์เซอร์ก่อนเสมอ");
+                form.Add(new("card", req.CardToken));
+            }
             if (!string.IsNullOrWhiteSpace(req.ReturnUrl))
                 form.Add(new("return_uri", req.ReturnUrl));   // 3-D Secure
         }
@@ -286,14 +302,235 @@ public class OmisePaymentProvider : IPaymentProvider
                 form.Add(new("return_uri", req.ReturnUrl));
         }
 
-        using var resp = await client.PostAsync("/charges", new FormUrlEncodedContent(form), ct);
+        using var msg = new HttpRequestMessage(HttpMethod.Post, "/charges") { Content = new FormUrlEncodedContent(form) };
+        // รอบ 230 (§5.6 เฉพาะเส้นที่ส่งคีย์ — ตัดบัตรที่บันทึก): หัวกันซ้ำของคำขอ POST ตามเอกสารสาธารณะของเจ้านี้ · ⚠️ ต้องยืนยันชื่อหัว/พฤติกรรมใน sandbox
+        if (!string.IsNullOrWhiteSpace(req.IdempotencyKey))
+            msg.Headers.TryAddWithoutValidation(IdempotencyHeader, req.IdempotencyKey);
+        using var resp = await client.SendAsync(msg, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
         if (!resp.IsSuccessStatusCode)
+        {
+            // ฝ่ายค้าน B1: 5xx/408 = ผู้ให้บริการอาจสร้าง charge แล้ว — ห้ามตอบว่า "ล้มเหลว" (ตัวแยกเดียวกับการคืนเงิน)
+            if (GatewayRefundMath.ClassifyRefundHttpStatus((int)resp.StatusCode) == GatewayRefundHttpOutcome.Unknown)
+                throw new ProviderOutcomeUnknownException($"ผู้ให้บริการตอบผิดพลาด ({(int)resp.StatusCode}) — ไม่รู้ว่าตัดเงินแล้วหรือยัง");
+            // ฝ่ายค้าน (nice): ตัดบัตรที่บันทึกโดยไม่มีผู้ใช้ แล้วผู้ให้บริการขอ return_uri (3-D Secure) ⇒ ต้องให้ผู้จ่ายทำเอง · ⚠️ ข้อความ/รหัสต้องยืนยันใน sandbox
+            if (!string.IsNullOrWhiteSpace(req.CustomerRef) && body.Contains("return_uri", StringComparison.OrdinalIgnoreCase))
+                throw new ProviderActionRequiredException("ธนาคารขอยืนยันตัวตน (3-D Secure) — ตัดอัตโนมัติไม่ได้ กรุณาชำระด้วยตนเอง");
             throw new InvalidOperationException(FriendlyError(body, resp.StatusCode.ToString()));
+        }
 
         using var doc = JsonDocument.Parse(body);
         return ParseCharge(doc.RootElement);
     }
+
+    /// <summary>ฝ่ายค้าน B1: หา charge ของรายการจาก <c>metadata.intentId</c> ในรายการ charge ตั้งแต่ก่อนรายการถูกสร้าง (สูงสุด 3 หน้า) ·
+    /// ⚠️ พารามิเตอร์ <c>from/order</c> ของรายการ charge ตามเอกสารสาธารณะ — ต้องยืนยันใน sandbox</summary>
+    public async Task<ProviderCharge?> FindChargeForIntentAsync(PaymentIntent intent, PaymentProviderConfig config, CancellationToken ct = default)
+    {
+        using var client = Client(config, ApiBase);
+        var from = DateTime.SpecifyKind(intent.CreatedAt, DateTimeKind.Utc).AddMinutes(-5)
+            .ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        for (var page = 0; page < 3; page++)
+        {
+            using var resp = await client.GetAsync($"/charges?from={Uri.EscapeDataString(from)}&limit=100&offset={page * 100}&order=chronological", ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode) throw new InvalidOperationException(FriendlyError(body, resp.StatusCode.ToString()));
+            using var doc = JsonDocument.Parse(body);
+            if (FindChargeInList(doc.RootElement, intent.Id) is { } hit) return hit;
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array || data.GetArrayLength() < 100) break;
+        }
+        return null;
+    }
+
+    /// <summary>charge ในรายการที่ <c>metadata.intentId</c> ตรง — ไม่พบ = null · pure</summary>
+    internal static ProviderCharge? FindChargeInList(JsonElement list, Guid intentId)
+    {
+        if (!list.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return null;
+        foreach (var c in data.EnumerateArray())
+            if (c.ValueKind == JsonValueKind.Object && c.TryGetProperty("metadata", out var meta) && meta.ValueKind == JsonValueKind.Object
+                && Str(meta, "intentId") is string id && Guid.TryParse(id, out var g) && g == intentId)
+                return ParseCharge(c);
+        return null;
+    }
+
+    /// <summary>ชื่อหัวกันซ้ำของคำขอสร้าง charge (รอบ 230 · ต้องยืนยันใน sandbox)</summary>
+    public const string IdempotencyHeader = "Idempotency-Key";
+
+    // ═══ รอบ 230 (PLATFORM_OMISE_AUDIT §5.2): บัตรที่บันทึกไว้ ═══
+    // รูปข้อมูลตามเอกสารสาธารณะรุ่น 2019-05-29: token มี card{id,brand,last_digits,expiration_month,expiration_year,fingerprint} ·
+    // POST /customers (card=โทเคน) สร้างลูกค้า+ผูกบัตร · PATCH /customers/{id} (card=โทเคน) ผูกบัตรเพิ่ม · DELETE /customers/{id}/cards/{card} ·
+    // ⚠️ ต้องยืนยันใน sandbox: เลขบัตรหลังผูก = เลขบัตรในโทเคน (ถ้าไม่ตรง ใช้ลายนิ้วมือบัตรจับคู่ — ไม่ตรงทั้งคู่ = ล้มดัง ไม่เดา)
+
+    bool IPaymentProvider.SupportsSavedCards => true;
+
+    public async Task<ProviderSavedCard> SaveCardAsync(PaymentProviderConfig config, string cardToken, string? existingCustomerRef,
+        string customerDescription, string? customerEmail, CancellationToken ct = default)
+    {
+        if (!IsWellFormedRef(cardToken, "tokn_")) throw new InvalidOperationException("โทเคนบัตรไม่ถูกต้อง — กรอกบัตรใหม่อีกครั้ง");
+        if (existingCustomerRef != null && !IsWellFormedRef(existingCustomerRef, "cust_"))
+            throw new InvalidOperationException("เลขอ้างอิงลูกค้าของบัตรที่บันทึกไว้ไม่ถูกต้อง");
+        using var client = Client(config, ApiBase);
+
+        // 1) อ่านบัตรในโทเคน (ไม่ใช้โทเคน) — ได้เลขบัตร/ลายนิ้วมือไว้หาบัตรใบนี้หลังผูก
+        using var tokResp = await client.GetAsync($"/tokens/{cardToken}", ct);
+        var tokBody = await tokResp.Content.ReadAsStringAsync(ct);
+        if (!tokResp.IsSuccessStatusCode) throw new InvalidOperationException(FriendlyError(tokBody, tokResp.StatusCode.ToString()));
+        string? tokCardId, tokFingerprint;
+        using (var tokDoc = JsonDocument.Parse(tokBody))
+        {
+            if (!tokDoc.RootElement.TryGetProperty("card", out var tc) || tc.ValueKind != JsonValueKind.Object)
+                throw new InvalidOperationException("ผู้ให้บริการไม่ส่งข้อมูลบัตรของโทเคน — กรอกบัตรใหม่อีกครั้ง");
+            tokCardId = Str(tc, "id");
+            tokFingerprint = Str(tc, "fingerprint");
+        }
+
+        // 2) สร้างลูกค้า (หรือผูกบัตรเพิ่มให้ลูกค้าเดิม) ด้วยโทเคน
+        var form = new List<KeyValuePair<string, string>> { new("card", cardToken) };
+        HttpResponseMessage resp;
+        if (existingCustomerRef == null)
+        {
+            form.Add(new("description", customerDescription.Length > 200 ? customerDescription[..200] : customerDescription));
+            if (!string.IsNullOrWhiteSpace(customerEmail)) form.Add(new("email", customerEmail.Trim()));
+            resp = await client.PostAsync("/customers", new FormUrlEncodedContent(form), ct);
+        }
+        else
+            resp = await client.PatchAsync($"/customers/{existingCustomerRef}", new FormUrlEncodedContent(form), ct);
+        using var ownedResp = resp;
+        var body = await resp.Content.ReadAsStringAsync(ct);
+        if (!resp.IsSuccessStatusCode) throw new InvalidOperationException(FriendlyError(body, resp.StatusCode.ToString()));
+        using var doc = JsonDocument.Parse(body);
+        return ParseSavedCustomerCard(doc.RootElement, tokCardId, tokFingerprint)
+            ?? throw new InvalidOperationException("บันทึกบัตรแล้วแต่หาบัตรใบนี้ในข้อมูลลูกค้าของผู้ให้บริการไม่พบ — ติดต่อผู้ดูแลระบบ (ยังไม่มีการตัดเงิน)");
+    }
+
+    /// <summary>หาบัตรใบที่เพิ่งผูกจากข้อมูลลูกค้า: เลขบัตรตรงโทเคนก่อน → ลายนิ้วมือตรง (ใบล่าสุด) → ไม่พบ = null (ห้ามเดาใบอื่น) · pure</summary>
+    internal static ProviderSavedCard? ParseSavedCustomerCard(JsonElement customer, string? tokenCardId, string? tokenFingerprint)
+    {
+        var custId = Str(customer, "id");
+        if (!IsWellFormedRef(custId, "cust_")) return null;
+        if (!customer.TryGetProperty("cards", out var cards) || cards.ValueKind != JsonValueKind.Object
+            || !cards.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) return null;
+        JsonElement? hit = null;
+        foreach (var c in data.EnumerateArray())
+            if (c.ValueKind == JsonValueKind.Object && tokenCardId != null && Str(c, "id") == tokenCardId) { hit = c; break; }
+        if (hit == null && !string.IsNullOrEmpty(tokenFingerprint))
+            hit = data.EnumerateArray()
+                .Where(c => c.ValueKind == JsonValueKind.Object && Str(c, "fingerprint") == tokenFingerprint)
+                .OrderByDescending(c => Str(c, "created_at") ?? Str(c, "created") ?? "", StringComparer.Ordinal)
+                .Select(c => (JsonElement?)c).FirstOrDefault();
+        if (hit is not JsonElement card) return null;
+        var cardId = Str(card, "id");
+        if (!IsWellFormedRef(cardId, "card_")) return null;
+        int? Int(string name) => card.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var n) ? (int?)n : null;
+        bool? live = card.TryGetProperty("livemode", out var lm) && lm.ValueKind is JsonValueKind.True or JsonValueKind.False ? (bool?)lm.GetBoolean()
+            : customer.TryGetProperty("livemode", out var clm) && clm.ValueKind is JsonValueKind.True or JsonValueKind.False ? (bool?)clm.GetBoolean() : null;
+        return new ProviderSavedCard(custId!, cardId!, Str(card, "brand"), Str(card, "last_digits"),
+            Int("expiration_month"), Int("expiration_year"), live);
+    }
+
+    public async Task<ProviderCardRemoval> RemoveSavedCardAsync(PaymentProviderConfig config, string customerRef, string cardRef,
+        CancellationToken ct = default)
+    {
+        if (!IsWellFormedRef(customerRef, "cust_") || !IsWellFormedRef(cardRef, "card_"))
+            return new ProviderCardRemoval(false, "เลขอ้างอิงบัตรไม่ถูกต้อง");
+        HttpClient client;
+        try { client = Client(config, ApiBase); }
+        catch (InvalidOperationException ex) { return new ProviderCardRemoval(false, ex.Message); }
+        using var owned = client;
+        using var resp = await client.DeleteAsync($"/customers/{customerRef}/cards/{cardRef}", ct);
+        if (resp.IsSuccessStatusCode || resp.StatusCode == System.Net.HttpStatusCode.NotFound) return new ProviderCardRemoval(true, null);
+        return new ProviderCardRemoval(false, FriendlyError(await resp.Content.ReadAsStringAsync(ct), resp.StatusCode.ToString()));
+    }
+
+    // ═══ รอบ 230 (PLATFORM_OMISE_AUDIT §5.3): รอบโอน (transfers) ═══
+    // ⚠️ ต้องยืนยันใน sandbox: (ก) amount คือยอดเข้าธนาคารและค่าธรรมเนียมโอนหักเพิ่มจากยอดคงเหลือ หรือมี net แยก
+    // (ข) ช่อง transactions ของรอบโอนชี้ charge ได้หรือไม่ — ไม่ได้ ⇒ ChargeRefs = null (ผู้เรียกจับคู่ด้วยยอด + ช่วงเวลา ไม่เดาจากช่องอื่น)
+
+    public const int TransferPageSize = 100, TransferMaxPages = 10;
+
+    public async Task<IReadOnlyList<ProviderSettlement>> ListSettlementsAsync(PaymentProviderConfig config, DateTime sinceUtc,
+        CancellationToken ct = default)
+    {
+        using var client = Client(config, ApiBase);
+        var list = new List<ProviderSettlement>();
+        var from = DateTime.SpecifyKind(sinceUtc, DateTimeKind.Utc).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture);
+        for (var page = 0; page < TransferMaxPages; page++)
+        {
+            var url = $"/transfers?from={Uri.EscapeDataString(from)}&limit={TransferPageSize}&offset={page * TransferPageSize}&order=chronological";
+            using var resp = await client.GetAsync(url, ct);
+            var body = await resp.Content.ReadAsStringAsync(ct);
+            if (!resp.IsSuccessStatusCode) throw new InvalidOperationException(FriendlyError(body, resp.StatusCode.ToString()));
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array) break;
+            var n = 0;
+            foreach (var t in data.EnumerateArray())
+            {
+                n++;
+                if (ParseTransfer(t) is { } s) list.Add(s);
+            }
+            if (n < TransferPageSize) break;
+        }
+        return list;
+    }
+
+    /// <summary>รอบโอนหนึ่งรอบ → ภาษากลาง · pure (เทสต์ได้) · ช่องที่ขาด = ไม่เดา</summary>
+    internal static ProviderSettlement? ParseTransfer(JsonElement t)
+    {
+        if (t.ValueKind != JsonValueKind.Object) return null;
+        var id = Str(t, "id");
+        if (!IsWellFormedRef(id, "trsf_")) return null;
+        if (t.TryGetProperty("deleted", out var del) && del.ValueKind == JsonValueKind.True) return null;
+        decimal? Money(string name) => t.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? (decimal?)FromMinorUnit(v.GetInt64()) : null;
+        var amount = Money("amount") ?? 0m;
+        var fee = Money("fee") ?? 0m;
+        var feeVat = Money("fee_vat") ?? 0m;
+        var net = Money("net");
+        decimal walletDebit, netToBank;
+        string? note;
+        if (net is decimal n)
+        {
+            // มี net แยก ⇒ ค่าธรรมเนียมหักจากยอดโอน: ยอดที่ออกจาก wallet = amount · เข้าธนาคาร = net
+            walletDebit = amount; netToBank = n;
+            var feeTotal = amount - n;
+            note = feeTotal != fee + feeVat
+                ? $"ยอดโอน − ยอดสุทธิ ({feeTotal:N2}) ไม่เท่าค่าธรรมเนียม+VAT ที่รายงาน ({fee + feeVat:N2}) — ใช้ยอดสุทธิเป็นตัวตั้ง" : null;
+            // ฝ่ายค้าน (nice): คงบรรทัด VAT ค่าธรรมเนียมที่รายงานไว้ — ปรับเฉพาะส่วนค่าธรรมเนียม (ยอดสุทธิเป็นตัวตั้ง)
+            if (feeTotal != fee + feeVat) { feeVat = Math.Min(feeVat, Math.Max(0m, feeTotal)); fee = feeTotal - feeVat; }
+        }
+        else
+        {
+            // ไม่มี net ⇒ ถือว่า amount เข้าธนาคารเต็ม และค่าธรรมเนียมโอนหักเพิ่มจากยอดคงเหลือ (ต้องยืนยันใน sandbox)
+            walletDebit = amount + fee + feeVat; netToBank = amount;
+            note = fee + feeVat > 0m ? "ถือว่าค่าธรรมเนียมโอนหักจากยอดคงเหลือเพิ่มจากยอดโอน (ต้องยืนยันใน sandbox)" : null;
+        }
+        List<string>? charges = null;
+        if (t.TryGetProperty("transactions", out var txs) && txs.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var x in txs.EnumerateArray())
+            {
+                string? chargeId = x.ValueKind == JsonValueKind.String ? x.GetString()
+                    : x.ValueKind == JsonValueKind.Object ? (Str(x, "origin") ?? Str(x, "source")) : null;
+                if (IsWellFormedChargeId(chargeId)) (charges ??= new List<string>()).Add(chargeId!);
+            }
+        }
+        DateTime? When(string name) => DateTime.TryParse(Str(t, name), CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out var d) ? (DateTime?)d : null;
+        bool? live = t.TryGetProperty("livemode", out var lm) && lm.ValueKind is JsonValueKind.True or JsonValueKind.False ? (bool?)lm.GetBoolean() : null;
+        var paid = t.TryGetProperty("paid", out var pd) && pd.ValueKind == JsonValueKind.True;
+        var status = Str(t, "status") ?? (paid ? "paid" : t.TryGetProperty("sent", out var sn) && sn.ValueKind == JsonValueKind.True ? "sent" : "pending");
+        return new ProviderSettlement(id!, walletDebit, netToBank, fee, feeVat, status, paid,
+            When("created_at") ?? When("created"), When("paid_at") ?? When("sent_at"),
+            charges?.Distinct().ToList(), live, note);
+    }
+
+    private static string? Str(JsonElement el, string name)
+        => el.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+
+    /// <summary>รูปเลขอ้างอิงของเจ้านี้ (prefix + ตัวอักษร/ตัวเลข/ขีดล่าง) — ด่านก่อนต่อเข้า path/ส่งเป็นค่า · pure</summary>
+    internal static bool IsWellFormedRef(string? id, string prefix)
+        => id is { Length: > 5 and <= 100 }
+           && id.StartsWith(prefix, StringComparison.Ordinal)
+           && id.All(c => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '_');
 
     public async Task<ProviderCharge> GetChargeAsync(PaymentIntent intent,
         PaymentProviderConfig config, CancellationToken ct = default)

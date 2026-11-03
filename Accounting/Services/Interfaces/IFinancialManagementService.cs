@@ -34,6 +34,8 @@ public interface IFinancialManagementService
     Task<CITResponse> CalculateCITAsync(Guid companyId, CalculateCITRequest request, string userId);
     Task<List<CITResponse>> GetCITListAsync(Guid companyId);
     Task<CITResponse> PostCITAsync(Guid companyId, Guid id, string userId);
+    /// <summary>รอบ 230 N5 — ช่วงงวด/วันลงบัญชี/กำหนดยื่นของงวดที่เลือก (เซิร์ฟเวอร์คิด หน้าแสดงก่อนกดคำนวณ)</summary>
+    Task<CitPeriodPreviewResponse> PreviewCITPeriodAsync(Guid companyId, string taxYear, string taxPeriod);
 
     // 7. Profit Appropriation
     Task<ProfitAppropriationResponse> CreateProfitAppropriationAsync(Guid companyId, CreateProfitAppropriationRequest request, string userId);

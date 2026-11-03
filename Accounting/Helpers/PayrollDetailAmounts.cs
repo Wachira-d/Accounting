@@ -172,17 +172,28 @@ public static class PayrollDetailAmounts
     /// <para><b>รอบที่นำเข้าจากระบบนอก</b> (<paramref name="runIsExternalImport"/> · X3) ⇒ <b>ไม่แตะ</b> แล้วคืน false —
     /// แถวนำเข้าไม่มีเงินทดแทน (ระบบต้นทางไม่ส่งมา) ถ้าแถวที่เพิ่มมือคิดอยู่คนเดียว ยอด กท.20ก ของรอบจะเป็นยอดของคนเดียว
     /// ที่ไม่มีใครตั้งใจ · ผู้เรียกต้องบอกผู้ใช้ (ข้อความตอบ) ว่าไม่ได้คิด</para></summary>
+    /// <para>รอบ 230: ฐาน = ค่าจ้าง ม.5 <b>เต็ม</b> (<see cref="WorkersCompensationBase.ManualRowWage"/>) ไม่ใช่ฐาน ปกส. ที่ตัดเพดาน ปกส. ·
+    /// เก็บค่าจ้างที่ใช้ลง <c>WorkersCompensationWage</c> (เดิมค้างค่าจากการคำนวณรอบ ⇒ เงินสมทบรายปีถอดฐานผิดคน/ผิดยอด)</para>
     /// <returns>true = คิด/ตั้งค่าใหม่แล้ว · false = รอบนำเข้า ไม่แตะ</returns>
+    /// <param name="ssoCeiling">เพดานฐาน ปกส. ของงวด (<c>GetSsoParamsAsync().MaxBase</c>)</param>
     public static bool ApplyWorkersCompensation(PayrollDetail d, bool runIsExternalImport,
-        bool companyEnabled, decimal ratePercent, bool employeeSubjectToSso)
+        bool companyEnabled, decimal ratePercent, bool employeeSubjectToSso, decimal ssoCeiling)
     {
         ArgumentNullException.ThrowIfNull(d);
         if (runIsExternalImport) return false;
+        var wage = WorkersCompensationBase.ManualRowWage(d.SocialSecurityBase, ssoCeiling, d.GrossIncome);
         d.WorkersCompensation = companyEnabled && employeeSubjectToSso && ratePercent > 0 && d.SocialSecurityBase > 0
-            ? WorkersCompensationBase.Contribution(d.SocialSecurityBase, ratePercent)
+            ? WorkersCompensationBase.Contribution(wage, ratePercent)
             : 0m;
+        d.WorkersCompensationWage = d.WorkersCompensation > 0m ? wage : null;
         return true;
     }
+
+    /// <summary>รอบ 230 ฝ่ายค้าน S9 — ✏️ แก้ยอดต้องคิดเงินทดแทนใหม่ไหม: ฐาน ปกส. เปลี่ยน (เดิม) · หรือรายได้รวมเปลี่ยนขณะฐานชนเพดาน ปกส.
+    /// (ฐานเงินทดแทนตอนนั้น = รายได้รวม — <see cref="WorkersCompensationBase.ManualRowWage"/>) · ฐานต่ำกว่าเพดานแล้วแก้แค่รายได้ ⇒ ไม่คิดใหม่ (ฐานที่ผู้ใช้ประกาศเป็นตัวตั้ง)</summary>
+    public static bool WorkersCompensationInputsChanged(decimal baseBefore, decimal baseAfter, decimal grossBefore, decimal grossAfter, decimal ssoCeiling)
+        => baseAfter != baseBefore
+        || (grossAfter != grossBefore && (ssoCeiling <= 0m || baseAfter >= ssoCeiling));
 
     /// <summary>รายได้/ภาษีสะสมทั้งปี (YTD บนสลิป) ของแถว = ยอดสะสมงวดก่อน + ยอดของงวดนี้ — สูตรเดียวกับเส้นคำนวณรอบ
     /// (<c>cumulativeIncome + grossIncome</c> · <c>cumulativeTax + monthlyTax</c>) · ยอดสะสมจาก <see cref="PayrollWithholdingTax.PriorYtd"/>

@@ -136,5 +136,11 @@ namespace Accounting.Models.Entities
         /// <summary>ฝ่ายค้าน B2/S3: เรื่องที่แอดมินต้องจัดการ (เช่น <c>QUOTA-STALE</c> เงินเข้าช้าแต่ช่วงสิทธิ์ใช้ไม่ได้) — null = ไม่มี</summary>
         public string? AttentionRule { get; set; }
         public string? AttentionReason { get; set; }
+        /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q2): คูปองที่ใช้ตอนสร้างรายการ · <see cref="AmountDue"/> = ยอดหลังส่วนลด · <see cref="ListAmount"/> = ยอดก่อนส่วนลด ·
+        /// ใบเสร็จแสดงส่วนลดก่อน VAT (คอลัมน์: Helpers/PlatformCouponMigration)</summary>
+        public Guid? CouponId { get; set; }
+        public string? CouponCode { get; set; }
+        public decimal CouponDiscountAmount { get; set; }
+        public decimal? ListAmount { get; set; }
     }
 }

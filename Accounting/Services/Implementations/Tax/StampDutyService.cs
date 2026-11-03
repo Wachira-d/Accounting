@@ -26,6 +26,12 @@ public interface IStampDutyService
 
     Task<IReadOnlyList<StampDutyRecord>> ListUnpaidAsync(Guid companyId,
         CancellationToken ct = default);
+    /// <summary>รอบ 230 — บันทึกเลขใบเสร็จอย่างเดียว (มีวันจ่าย แต่ไม่มีแถวนำส่ง/JE) ⇒ ลงบัญชีทับได้ผ่าน <c>RemitStampDutyAsync</c></summary>
+    Task<(IReadOnlyList<StampDutyRecord> Items, int Total)> ListMarkedOnlyAsync(Guid companyId, int page = 1, int pageSize = 50,
+        bool includeConfirmed = false, CancellationToken ct = default);
+    /// <summary>รอบ 230 N4 — ยืนยัน/ยกเลิกยืนยันว่าค่าอากรของใบนี้ลงบัญชีด้วยมือแล้ว (ซ่อนจากรายการ · กันลงซ้ำ) · audit chain</summary>
+    Task<StampDutyRecord> ConfirmManualPostingAsync(Guid companyId, Guid recordId, bool confirmed, string? note, string performedBy,
+        CancellationToken ct = default);
 }
 
 public class StampDutyService : IStampDutyService
@@ -96,5 +102,59 @@ public class StampDutyService : IStampDutyService
             .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.PaidAt == null)
             .OrderBy(r => r.InstrumentDate)
             .ToListAsync(ct);
+    }
+
+    /// <summary>รอบ 230 (TAX_PENALTY_AUDIT §5 ความเสี่ยงที่เหลือ S3 ข้อสุดท้าย) — เดิมรายการค้างแสดงเฉพาะ <c>PaidAt == null</c> ⇒ ใบที่บันทึกเลขใบเสร็จอย่างเดียวแล้ว
+    /// ลงบัญชีทับได้ทาง API แต่ไม่มีทางเข้าบนหน้า · เงื่อนไขเดียวกับด่านใน <c>RemitStampDutyAsync</c> (<c>StatutoryRemittanceId == null</c>)</summary>
+    public async Task<(IReadOnlyList<StampDutyRecord> Items, int Total)> ListMarkedOnlyAsync(Guid companyId, int page = 1, int pageSize = 50,
+        bool includeConfirmed = false, CancellationToken ct = default)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
+        var q = _db.StampDutyRecords.AsNoTracking()
+            .Where(r => r.CompanyId == companyId && !r.IsDeleted && r.PaidAt != null && r.StatutoryRemittanceId == null
+                && (includeConfirmed || r.ManualPostingConfirmedAt == null));
+        var total = await q.CountAsync(ct);
+        var items = await q.OrderByDescending(r => r.PaidAt).ThenBy(r => r.Id)
+            .Skip((page - 1) * pageSize).Take(pageSize).ToListAsync(ct);
+        return (items, total);
+    }
+
+    public async Task<StampDutyRecord> ConfirmManualPostingAsync(Guid companyId, Guid recordId, bool confirmed, string? note, string performedBy,
+        CancellationToken ct = default)
+    {
+        // ล็อกแถวเดียวกับเส้นลงบัญชี (RemitStampDutyAsync) ⇒ ยืนยันพร้อมกดลงบัญชีไม่ทับกัน
+        await using var tx = await _db.Database.BeginTransactionAsync(ct);
+        await _db.Database.ExecuteSqlRawAsync(
+            "SELECT 1 FROM \"StampDutyRecords\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", new object[] { recordId, companyId }, ct);
+        var record = await _db.StampDutyRecords.FirstOrDefaultAsync(r => r.Id == recordId && r.CompanyId == companyId && !r.IsDeleted, ct)
+            ?? throw new KeyNotFoundException("ไม่พบรายการอากรแสตมป์");
+        if (record.StatutoryRemittanceId != null)
+            throw new Accounting.Helpers.BusinessRuleException($"อากร {record.Reference} ลงบัญชีผ่านระบบแล้ว — ไม่ต้องยืนยันลงบัญชีด้วยมือ", "STAMP-MANUAL-ALREADY-POSTED", 409);
+        if (record.PaidAt == null)
+            throw new Accounting.Helpers.BusinessRuleException($"อากร {record.Reference} ยังไม่ได้บันทึกจ่าย — บันทึกเลขใบเสร็จก่อน", "STAMP-MANUAL-NOT-PAID", 409);
+        var before = new { record.ManualPostingConfirmedAt, record.ManualPostingConfirmedBy };
+        record.ManualPostingConfirmedAt = confirmed ? DateTime.UtcNow : null;
+        record.ManualPostingConfirmedBy = confirmed ? performedBy : null;
+        record.UpdatedBy = performedBy;
+        record.UpdatedAt = DateTime.UtcNow;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId,
+            UserId = Guid.TryParse(performedBy, out var actor) ? actor : null,
+            Action = Accounting.Models.Enums.AuditAction.Update,
+            EntityType = "StampDutyRecord",
+            EntityId = record.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                Operation = confirmed ? "ManualPostingConfirmed" : "ManualPostingUnconfirmed", record.Reference, record.DutyAmount,
+                record.RdReceiptNumber, Note = note?.Trim(),
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        await tx.CommitAsync(ct);
+        return record;
     }
 }

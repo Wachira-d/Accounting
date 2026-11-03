@@ -208,59 +208,49 @@
         `).join('');
       },
 
-      renderOverview(d) {
-        const statusMap = { Trial:'ทดลองใช้', Active:'ใช้งาน', PastDue:'เกินกำหนด', Cancelled:'ยกเลิก', Expired:'หมดอายุ', Suspended:'ระงับ' };
-        const daysLeft = Math.max(0, Math.ceil((new Date(d.endDate) - new Date()) / 86400000));
-        const storagePct = d.maxStorageBytes > 0 ? (d.storageUsed / d.maxStorageBytes * 100).toFixed(1) : 0;
+      // รอบ 230 (D-4 · F2 ข้อ 5): หลอด/สถานะ/วันที่เหลือ/เกณฑ์ไม่จำกัด มาจากเซิร์ฟเวอร์ (UsageBarRule) — หน้านี้ไม่คิด % เอง
+      bar(d, key) { return (d.bars || []).find(b => b.key === key) || null; },
+      levelColor(level) { return level === 2 ? 'var(--danger)' : level === 1 ? 'var(--warning)' : 'var(--success)'; },
 
+      renderOverview(d) {
+        const e = Layout.esc;
+        const users = this.bar(d, 'users'), storage = this.bar(d, 'storage'), docs = this.bar(d, 'documents');
+        const card = (title, valueHtml, sub, b) => `
+          <div class="usage-card">
+            <h4>${e(title)}</h4>
+            <div class="value">${valueHtml}</div>
+            <div class="sub">${e(sub)}</div>
+            ${b && !b.unlimited ? `<div class="progress-bar" style="margin-top:8px"><div class="progress-fill" style="width:${Number(b.percent) || 0}%;background:${this.levelColor(b.level)}"></div></div>` : ''}
+          </div>`;
+        const slash = b => b ? `${e(b.usedText)} <span style="font-size:16px;font-weight:400;color:var(--gray-400)">/ ${e(b.limitText)}</span>` : '—';
         document.getElementById('overviewCards').innerHTML = `
           <div class="usage-card">
             <h4>แพ็กเกจ</h4>
-            <div class="value" style="color:var(--primary)">${Layout.esc(this._planName(d.plan))}</div>
-            <div class="sub">${statusMap[d.status] || d.status} | เหลือ ${daysLeft} วัน</div>
+            <div class="value" style="color:var(--primary)">${e(d.planName || this._planName(d.plan))}</div>
+            <div class="sub">${e(d.statusLabel || d.status)} | เหลือ ${Number(d.daysLeft) || 0} วัน</div>
           </div>
-          <div class="usage-card">
-            <h4>ผู้ใช้งาน</h4>
-            <div class="value">${d.currentUsers} <span style="font-size:16px;font-weight:400;color:var(--gray-400)">/ ${d.maxUsers >= 999 ? '∞' : d.maxUsers}</span></div>
-            <div class="sub">บัญชีที่ใช้งานอยู่</div>
-          </div>
-          <div class="usage-card">
-            <h4>พื้นที่ใช้งาน</h4>
-            <div class="value">${this.formatBytes(d.storageUsed)}</div>
-            <div class="sub">จาก ${this.formatBytes(d.maxStorageBytes)} (${storagePct}%)</div>
-            <div class="progress-bar" style="margin-top:8px"><div class="progress-fill" style="width:${Math.min(100,storagePct)}%;background:${storagePct > 90 ? 'var(--danger)' : storagePct > 70 ? 'var(--warning)' : 'var(--success)'}"></div></div>
-          </div>
-          <div class="usage-card">
-            <h4>เอกสารเดือนนี้</h4>
-            <div class="value">${d.documentsThisMonth} <span style="font-size:16px;font-weight:400;color:var(--gray-400)">/ ${d.maxDocumentsPerMonth >= 99999 ? '∞' : d.maxDocumentsPerMonth}</span></div>
-            <div class="sub">รีเซ็ต ${this.formatDate(d.usageResetDate)}</div>
-          </div>`;
+          ${card('ผู้ใช้งาน', slash(users), 'บัญชีที่ใช้งานอยู่', null)}
+          ${card('พื้นที่ใช้งาน', storage ? e(storage.usedText) : '—', storage ? `จาก ${storage.limitText}${storage.unlimited ? '' : ` (${storage.percent}%)`}` : '', storage)}
+          ${card('เอกสารเดือนนี้', slash(docs), `รีเซ็ต ${this.formatDate(d.usageResetDate)}`, null)}`;
       },
 
       renderUsageBars(d) {
-        const items = [
-          { label: 'เอกสาร / เดือน', used: d.documentsThisMonth, max: d.maxDocumentsPerMonth, icon: '📄' },
-          // รอบ 229 (คำตัดสินข้อ 229-7): ไม่แสดงเพดานรายการบัญชี/เดือน — ไม่บังคับ (การบล็อกการลงบัญชีไม่ปลอดภัย)
-          { label: 'OCR สแกน / เดือน', used: d.ocrPagesThisMonth || 0, max: d.maxOcrPagesPerMonth || 0, icon: '🔍',
-            extra: (d.ocrBonusPages > 0 ? ` +โบนัส ${d.ocrBonusPages}` : '') + (d.ocrCreditPagesRemaining > 0 ? ` +เครดิต ${d.ocrCreditPagesRemaining}` : '') },
-          { label: 'ผู้ใช้งาน', used: d.currentUsers, max: d.maxUsers, icon: '👥' },
-          { label: 'พื้นที่จัดเก็บ', used: d.storageUsed, max: d.maxStorageBytes, isBytes: true, icon: '💾' },
-        ];
-
-        document.getElementById('usageBars').innerHTML = items.map(u => {
-          const pct = u.max > 0 && u.max < 99999 ? Math.min(100, u.used / u.max * 100) : (u.max >= 99999 ? 0 : 0);
-          const color = pct > 90 ? 'var(--danger)' : pct > 70 ? 'var(--warning)' : 'var(--success)';
-          const usedStr = u.isBytes ? this.formatBytes(u.used) : u.used.toLocaleString();
-          const maxStr = u.isBytes ? this.formatBytes(u.max) : (u.max >= 99999 ? 'ไม่จำกัด' : u.max.toLocaleString());
-          return `<div>
+        const e = Layout.esc;
+        const icons = { documents: '📄', ocr: '🔍', users: '👥', storage: '💾' };
+        const bars = d.bars || [];
+        document.getElementById('usageBars').innerHTML = bars.length === 0
+          ? '<div style="color:#b91c1c;font-size:13px">โหลดข้อมูลการใช้งานไม่ได้ — ลองรีเฟรชหน้านี้</div>'
+          : bars.map(b => {
+            const color = this.levelColor(b.level);
+            return `<div>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-              <span style="font-size:14px">${u.icon} ${u.label}</span>
-              <span style="font-weight:600;font-size:14px">${usedStr} / ${maxStr}${u.extra || ''}</span>
+              <span style="font-size:14px">${icons[b.key] || '•'} ${e(b.label)}</span>
+              <span style="font-weight:600;font-size:14px">${e(b.usedText)} / ${e(b.limitText)}${b.extra ? ` <span class="muted" style="font-weight:400;font-size:12px">(${e(b.extra)})</span>` : ''}</span>
             </div>
-            <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${color}"></div></div>
-            <div class="pct-label" style="color:${color}">${pct.toFixed(1)}%</div>
+            <div class="progress-bar"><div class="progress-fill" style="width:${Number(b.percent) || 0}%;background:${color}"></div></div>
+            <div class="pct-label" style="color:${color}">${b.unlimited ? 'ไม่จำกัด' : e(String(b.percent)) + '%'}</div>
           </div>`;
-        }).join('');
+          }).join('');
       },
 
       renderStorageBreakdown(breakdown, totalUsed) {
@@ -282,7 +272,8 @@
       },
 
       renderUsers(users, current, max) {
-        document.getElementById('userCount').textContent = `${current} / ${max >= 999 ? '∞' : max}`;
+        const ub = this.bar(this.data || {}, 'users');
+        document.getElementById('userCount').textContent = ub ? `${ub.usedText} / ${ub.limitText}` : `${current}`;
         const el = document.getElementById('userList');
         if (!users || !users.length) {
           el.innerHTML = '<p class="text-center text-gray-400" style="padding:20px">ไม่มีผู้ใช้</p>';
@@ -305,7 +296,7 @@
           </div>
         `).join('') + `
           <div style="padding:12px 0;text-align:center">
-            <button class="btn btn-secondary btn-sm" onclick="Page.showAddUserInfo()" ${current >= max && max < 999 ? 'disabled title="โควต้าผู้ใช้เต็มแล้ว"' : ''}>
+            <button class="btn btn-secondary btn-sm" onclick="Page.showAddUserInfo()" ${ub && !ub.unlimited && ub.level === 2 && current >= max ? 'disabled title="โควต้าผู้ใช้เต็มแล้ว"' : ''}>
               + เพิ่มผู้ใช้
             </button>
           </div>`;
@@ -335,9 +326,9 @@
       },
 
       showAddUserInfo() {
-        const d = this.data;
-        if (d && d.currentUsers >= d.maxUsers && d.maxUsers < 999) {
-          Layout.toast('โควต้าผู้ใช้เต็มแล้ว กรุณาอัปเกรดแพ็กเกจ', 'error');
+        const d = this.data, ub = this.bar(d || {}, 'users');
+        if (d && ub && !ub.unlimited && d.currentUsers >= d.maxUsers) {
+          Layout.toast('โควต้าผู้ใช้เต็มแล้ว — ซื้อที่นั่งเพิ่มหรืออัปเกรดที่หน้า "แพ็กเกจและการชำระเงิน"', 'error');
           return;
         }
         Layout.toast('เพิ่มผู้ใช้ได้ที่เมนู ตั้งค่า > ข้อมูลบริษัท หรือติดต่อแอดมิน', 'info');

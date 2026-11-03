@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คูปอง/โค้ดส่วนลด - Admin Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/admin/admin.css">
+  <style>
+    .muted { color:#64748b; font-size:12px }
+    .form-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%, 220px),1fr)); gap:10px }
+    .form-grid label { display:flex; flex-direction:column; font-size:12px; color:#475569; gap:4px }
+    .form-grid input, .form-grid select, .form-grid textarea { padding:6px 8px; border:1px solid #cbd5e1; border-radius:8px; font-size:14px }
+    .checks { display:flex; flex-wrap:wrap; gap:6px 14px; font-size:13px }
+    .checks label { flex-direction:row; align-items:center; gap:6px; color:#0f172a }
+    .pill { display:inline-block; font-size:11px; font-weight:600; padding:2px 9px; border-radius:9999px; background:#f1f5f9; color:#475569 }
+    .pill.ok { background:#dcfce7; color:#166534 } .pill.off { background:#fee2e2; color:#991b1b }
+  </style>
+</head>
+<body>
+  <!-- รอบ 230 (PLATFORM_OMISE_AUDIT §7.1 · คำตัดสินข้อ 230-Q2): คูปองของ NextAcc — ตัดสินที่เซิร์ฟเวอร์ (Helpers/PlatformCouponRule) · หน้านี้กรอก/แสดงเท่านั้น -->
+  <div id="pageContent">
+    <div class="info-box">คูปองใช้ตอน<b>สร้างรายการชำระ</b> (ค่าแพ็กเกจ/ส่วนต่างอัปเกรด/โควตาเสริม) · ยอดหลังส่วนลดไม่ต่ำกว่า 0 · ใบกำกับภาษีแสดงส่วนลดก่อน VAT ·
+      นับการใช้เมื่อเงินเข้า (รายการรอชำระจองสิทธิ์ไว้ 14 วัน) · คูปองที่เคยใช้แล้ว<b>ลบไม่ได้</b> (หลักฐานใบกำกับ) — ปิดใช้แทน · ทุกการแก้บันทึก audit</div>
+
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title" id="formTitle">➕ สร้างคูปอง</span></div>
+      <div class="form-grid">
+        <label>รหัส (A–Z 0–9 - _)<input id="cCode" maxlength="40" style="text-transform:uppercase"></label>
+        <label>ชนิดส่วนลด<select id="cKind"><option value="Percent">เปอร์เซ็นต์ (%)</option><option value="Fixed">จำนวนเงิน (บาท)</option></select></label>
+        <label>มูลค่า<input id="cValue" type="number" min="0" step="0.01"></label>
+        <label>ใช้กับ<select id="cScope"><option value="Both">ค่าแพ็กเกจ + โควตาเสริม</option><option value="Subscription">ค่าแพ็กเกจเท่านั้น</option><option value="QuotaAddOn">โควตาเสริมเท่านั้น</option></select></label>
+        <label>เริ่มใช้ (ว่าง = ทันที)<input id="cFrom" type="date"></label>
+        <label>ใช้ได้ถึง (ว่าง = ไม่หมดอายุ)<input id="cTo" type="date"></label>
+        <label>ใช้ได้ทั้งหมด (ครั้ง · ว่าง = ไม่จำกัด)<input id="cMaxTotal" type="number" min="1" step="1"></label>
+        <label>ต่อบริษัท (ครั้ง · ว่าง = ไม่จำกัด)<input id="cMaxCompany" type="number" min="1" step="1" value="1"></label>
+        <label style="grid-column:1/-1">คำอธิบาย (แอดมินเห็น)<input id="cDesc" maxlength="300"></label>
+      </div>
+      <div style="margin-top:10px"><div class="muted">แพ็กเกจที่ใช้ได้ (ไม่เลือก = ทุกแพ็กเกจ)</div><div class="checks" id="cPlans"></div></div>
+      <div style="margin-top:8px"><div class="muted">รอบบิลที่ใช้ได้ (ไม่เลือก = ทุกรอบ)</div><div class="checks" id="cCycles"></div></div>
+      <div style="margin-top:8px"><div class="muted">โควตาเสริมที่ใช้ได้ (ไม่เลือก = ทุกรายการ)</div><div class="checks" id="cResources"></div></div>
+      <div class="checks" style="margin-top:10px">
+        <label><input type="checkbox" id="cFirst"> ใช้ได้เฉพาะการชำระครั้งแรกของบริษัท</label>
+        <label><input type="checkbox" id="cActive" checked> เปิดใช้</label>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button class="admin-btn admin-btn-primary" id="saveBtn">บันทึก</button>
+        <button class="admin-btn admin-btn-outline" id="resetBtn">ล้างฟอร์ม</button>
+      </div>
+    </div>
+
+    <div class="admin-card">
+      <div class="admin-card-header"><span class="admin-card-title">🎟️ คูปองทั้งหมด</span></div>
+      <div id="list">กำลังโหลด...</div>
+    </div>
+    <div class="admin-card" id="redeemCard" style="display:none">
+      <div class="admin-card-header"><span class="admin-card-title" id="redeemTitle">การใช้คูปอง</span></div>
+      <div id="redeemList"></div>
+    </div>
+  </div>
+
+  <script src="/admin/admin-api.js"></script>
+  <script src="/admin/admin-layout.js"></script>
+  <script>
+    const Coupons = {
+      base: '/platform-coupons',
+      editId: null, rows: [], opts: { plans: [], cycles: [], resources: [] },
+      esc(s) { return AdminLayout.esc(s); },
+
+      async init() {
+        AdminLayout.init('platform-coupons');
+        try { const o = await AdminAPI.get(`${this.base}/options`); this.opts = o.data || this.opts; } catch (e) { /* แสดงฟอร์มได้แม้ตัวเลือกโหลดไม่ได้ */ }
+        this.renderChecks();
+        document.getElementById('saveBtn').addEventListener('click', () => this.save());
+        document.getElementById('resetBtn').addEventListener('click', () => this.reset());
+        await this.load();
+      },
+
+      renderChecks() {
+        const box = (id, items, name) => document.getElementById(id).innerHTML = (items || []).map(i =>
+          `<label><input type="checkbox" name="${name}" value="${this.esc(i.value)}"> ${this.esc(i.label)}</label>`).join('') || '<span class="muted">—</span>';
+        box('cPlans', this.opts.plans, 'plan'); box('cCycles', this.opts.cycles, 'cycle'); box('cResources', this.opts.resources, 'res');
+      },
+      checked(name) { return Array.from(document.querySelectorAll(`input[name="${name}"]:checked`)).map(x => x.value); },
+      setChecked(name, values) { document.querySelectorAll(`input[name="${name}"]`).forEach(x => x.checked = (values || []).includes(x.value)); },
+      // วันที่ฟอร์ม = วันไทย ⇒ เริ่ม 00:00 ไทย · "ใช้ได้ถึง" = รวมทั้งวัน (00:00 ไทยของวันถัดไป) — ส่งเป็น UTC
+      dateToUtc(v, endOfDay) {
+        if (!v) return null;
+        const d = new Date(v + 'T00:00:00+07:00');
+        if (endOfDay) d.setUTCDate(d.getUTCDate() + 1);
+        return d.toISOString();
+      },
+      utcToDate(v, endOfDay) {
+        if (!v) return '';
+        const d = new Date(v); if (endOfDay) d.setUTCDate(d.getUTCDate() - 1);
+        return new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10);
+      },
+
+      body() {
+        const num = id => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
+        return {
+          code: document.getElementById('cCode').value.trim(),
+          description: document.getElementById('cDesc').value.trim() || null,
+          kind: document.getElementById('cKind').value,
+          value: Number(document.getElementById('cValue').value || 0),
+          validFromUtc: this.dateToUtc(document.getElementById('cFrom').value, false),
+          validToUtc: this.dateToUtc(document.getElementById('cTo').value, true),
+          maxUsesTotal: num('cMaxTotal'), maxUsesPerCompany: num('cMaxCompany'),
+          appliesTo: document.getElementById('cScope').value,
+          plans: this.checked('plan'), cycles: this.checked('cycle'), addOnResources: this.checked('res'),
+          firstPaymentOnly: document.getElementById('cFirst').checked,
+          isActive: document.getElementById('cActive').checked,
+        };
+      },
+
+      async save() {
+        try {
+          const res = this.editId ? await AdminAPI.put(`${this.base}/${this.editId}`, this.body()) : await AdminAPI.post(this.base, this.body());
+          AdminLayout.toast(res.message || 'บันทึกแล้ว');
+          this.reset(); await this.load();
+        } catch (e) { AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
+      reset() {
+        this.editId = null;
+        document.getElementById('formTitle').textContent = '➕ สร้างคูปอง';
+        ['cCode', 'cValue', 'cFrom', 'cTo', 'cMaxTotal', 'cDesc'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('cMaxCompany').value = '1';
+        document.getElementById('cKind').value = 'Percent'; document.getElementById('cScope').value = 'Both';
+        document.getElementById('cFirst').checked = false; document.getElementById('cActive').checked = true;
+        ['plan', 'cycle', 'res'].forEach(n => this.setChecked(n, []));
+      },
+
+      edit(id) {
+        const c = this.rows.find(r => r.id === id); if (!c) return;
+        this.editId = id;
+        document.getElementById('formTitle').textContent = `✏️ แก้คูปอง ${c.code}`;
+        document.getElementById('cCode').value = c.code; document.getElementById('cKind').value = c.kind;
+        document.getElementById('cValue').value = c.value; document.getElementById('cScope').value = c.appliesTo;
+        document.getElementById('cFrom').value = this.utcToDate(c.validFromUtc, false);
+        document.getElementById('cTo').value = this.utcToDate(c.validToUtc, true);
+        document.getElementById('cMaxTotal').value = c.maxUsesTotal ?? '';
+        document.getElementById('cMaxCompany').value = c.maxUsesPerCompany ?? '';
+        document.getElementById('cDesc').value = c.description || '';
+        document.getElementById('cFirst').checked = !!c.firstPaymentOnly; document.getElementById('cActive').checked = !!c.isActive;
+        this.setChecked('plan', c.plans); this.setChecked('cycle', c.cycles); this.setChecked('res', c.addOnResources);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      },
+
+      async toggle(id) {
+        const c = this.rows.find(r => r.id === id); if (!c) return;
+        const body = {
+          code: c.code, description: c.description, kind: c.kind, value: c.value, validFromUtc: c.validFromUtc, validToUtc: c.validToUtc,
+          maxUsesTotal: c.maxUsesTotal, maxUsesPerCompany: c.maxUsesPerCompany, appliesTo: c.appliesTo,
+          plans: c.plans, cycles: c.cycles, addOnResources: c.addOnResources, firstPaymentOnly: c.firstPaymentOnly, isActive: !c.isActive,
+        };
+        try { const r = await AdminAPI.put(`${this.base}/${id}`, body); AdminLayout.toast(r.message || 'บันทึกแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+
+      async remove(id) {
+        const c = this.rows.find(r => r.id === id); if (!c) return;
+        if (!confirm(`ลบคูปอง ${c.code}? (ลบได้เฉพาะคูปองที่ยังไม่เคยถูกใช้)`)) return;
+        try { const r = await AdminAPI.del(`${this.base}/${id}`); AdminLayout.toast(r.message || 'ลบแล้ว'); await this.load(); }
+        catch (e) { AdminLayout.toast(e.message, 'error'); }
+      },
+
+      async redemptions(id) {
+        const c = this.rows.find(r => r.id === id);
+        document.getElementById('redeemCard').style.display = '';
+        document.getElementById('redeemTitle').textContent = `การใช้คูปอง ${c ? c.code : ''}`;
+        const el = document.getElementById('redeemList');
+        el.innerHTML = 'กำลังโหลด...';
+        try {
+          const r = await AdminAPI.get(`${this.base}/${id}/redemptions`);
+          const rows = r.data || [];
+          el.innerHTML = rows.length === 0 ? '<div class="muted">ยังไม่มีการใช้</div>' : `<table class="admin-table"><thead><tr>
+              <th>บริษัท</th><th>ชนิดรายการ</th><th class="text-right">ราคา</th><th class="text-right">ส่วนลด</th><th class="text-right">ยอดหลังลด</th><th>สถานะ</th><th>วันที่</th></tr></thead><tbody>
+            ${rows.map(x => `<tr><td>${this.esc(x.companyName)}</td><td>${this.esc(x.sourceKind === 'QuotaAddOn' ? 'โควตาเสริม' : 'ค่าแพ็กเกจ')}</td>
+              <td class="text-right">${AdminLayout.money(x.listAmount)}</td><td class="text-right">${AdminLayout.money(x.discountAmount)}</td>
+              <td class="text-right">${AdminLayout.money(x.amountAfter)}</td><td>${this.esc(x.statusLabel)}${x.releaseReason ? `<div class="muted">${this.esc(x.releaseReason)}</div>` : ''}</td>
+              <td>${AdminLayout.datetime(x.createdAt)}</td></tr>`).join('')}</tbody></table>`;
+        } catch (e) { el.innerHTML = `<div style="color:#dc2626">${this.esc(e.message)}</div>`; }
+      },
+
+      async load() {
+        const el = document.getElementById('list');
+        try {
+          const r = await AdminAPI.get(this.base);
+          this.rows = r.data || [];
+        } catch (e) { el.innerHTML = `<div style="color:#dc2626">${this.esc(e.message)}</div>`; return; }
+        el.innerHTML = this.rows.length === 0 ? '<div class="muted">ยังไม่มีคูปอง</div>' : `<table class="admin-table"><thead><tr>
+            <th>รหัส</th><th>ส่วนลด</th><th>ใช้กับ</th><th>ช่วงเวลา</th><th class="text-right">ใช้แล้ว / จอง / เพดาน</th><th>สถานะ</th><th></th></tr></thead><tbody>
+          ${this.rows.map(c => `<tr>
+            <td><strong>${this.esc(c.code)}</strong>${c.description ? `<div class="muted">${this.esc(c.description)}</div>` : ''}${c.firstPaymentOnly ? '<div class="muted">ครั้งแรกเท่านั้น</div>' : ''}</td>
+            <td>${this.esc(c.label)}</td>
+            <td class="muted">${this.esc(c.appliesTo)}${c.plans.length ? ' · ' + this.esc(c.plans.join(', ')) : ''}${c.cycles.length ? ' · ' + this.esc(c.cycles.join(', ')) : ''}${c.addOnResources.length ? ' · ' + this.esc(c.addOnResources.join(', ')) : ''}</td>
+            <td class="muted">${c.validFromUtc ? AdminLayout.date(c.validFromUtc) : 'ทันที'} – ${c.validToUtc ? this.esc(this.utcToDate(c.validToUtc, true)) : 'ไม่หมดอายุ'}</td>
+            <td class="text-right">${c.redeemedCount} / ${c.reservedCount} / ${c.maxUsesTotal ?? '∞'}<div class="muted">ต่อบริษัท ${c.maxUsesPerCompany ?? '∞'}</div></td>
+            <td><span class="pill ${c.statusLabel === 'ใช้ได้' ? 'ok' : 'off'}">${this.esc(c.statusLabel)}</span></td>
+            <td style="white-space:nowrap">
+              <button class="admin-btn admin-btn-outline admin-btn-sm" data-act="edit" data-id="${this.esc(c.id)}">แก้</button>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" data-act="toggle" data-id="${this.esc(c.id)}">${c.isActive ? 'ปิดใช้' : 'เปิดใช้'}</button>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" data-act="use" data-id="${this.esc(c.id)}">การใช้</button>
+              <button class="admin-btn admin-btn-outline admin-btn-sm" data-act="del" data-id="${this.esc(c.id)}">ลบ</button>
+            </td></tr>`).join('')}</tbody></table>`;
+        el.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
+          const id = b.getAttribute('data-id'), act = b.getAttribute('data-act');
+          if (act === 'edit') this.edit(id); else if (act === 'toggle') this.toggle(id);
+          else if (act === 'use') this.redemptions(id); else if (act === 'del') this.remove(id);
+        }));
+      },
+    };
+    Coupons.init();
+  </script>
+</body>
+</html>

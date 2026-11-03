@@ -71,6 +71,23 @@ public static class WorkersCompensationBase
             2, MidpointRounding.AwayFromZero);
     }
 
+    /// <summary>
+    /// รอบ 230 (TAX_PENALTY_AUDIT §5 ข้อสุดท้าย → §6) — <b>ค่าจ้างตาม ม.5 ของแถวที่เพิ่ม/แก้ด้วยมือ</b> (ฐานเงินทดแทน ไม่ใช่ฐาน ปกส.):
+    /// <list type="bullet">
+    /// <item>ฐาน ปกส. ที่ผู้ใช้ประกาศ <b>ต่ำกว่าเพดาน ปกส.</b> ⇒ ฐานนั้นคือค่าจ้างเต็ม (ผู้ใช้จำแนกแล้วว่าอะไรเป็นค่าจ้าง — ไม่ดึงรายได้อื่นเข้ามา)</item>
+    /// <item>ฐาน ปกส. <b>ชนเพดาน</b> (หรือไม่รู้เพดาน) ⇒ ค่าจ้างจริงอาจสูงกว่า ⇒ ใช้ MAX(ฐาน, รายได้รวมงวด) — ทิศอนุรักษ์
+    /// (เดิมคิดเงินทดแทนจากฐานที่ตัดเพดาน ปกส. 15,000 ⇒ ค่าจ้าง 18,000 สมทบขาดเงียบ ๆ — G5) · เพดานเงินทดแทน 20,000/เดือนตัดที่ <see cref="Contribution"/></item>
+    /// </list>
+    /// ติดลบ ⇒ 0
+    /// </summary>
+    /// <param name="ssoCeiling">เพดานฐาน ปกส. ของงวด (≤ 0 = ไม่รู้ ⇒ ถือว่าชนเพดาน)</param>
+    public static decimal ManualRowWage(decimal socialSecurityBase, decimal ssoCeiling, decimal grossIncome)
+    {
+        var b = Math.Max(0m, socialSecurityBase);
+        if (ssoCeiling > 0m && b < ssoCeiling) return b;
+        return Math.Max(b, Math.Max(0m, grossIncome));
+    }
+
     // ══════════════ รอบ 228 — นำส่งเงินสมทบรายปี (TAX_PENALTY_AUDIT §3 ข้อ 2) ══════════════
 
     /// <summary>แบบนำส่งบนหน้านำส่งรวม — คีย์งวด = (ปีที่จ่ายค่าจ้าง, 12)</summary>

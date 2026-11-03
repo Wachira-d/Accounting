@@ -493,19 +493,28 @@
           <div class="text-center" style="margin-bottom:16px">
             <div style="font-size:48px">&#x1F680;</div>
             <h4>เลือกแพ็กเกจ ${Layout.esc(p.name)}</h4>
-            <div class="text-xs text-gray-500">อัปเกรด = ชำระก่อนแล้วเปิดใช้ทันทีเมื่อยืนยัน (เริ่มรอบใหม่จากวันที่ยืนยัน) · แพ็กเกจที่ถูกลง = มีผลวันครบรอบปัจจุบัน — ระบบแจ้งผลหลังกดยืนยัน</div>
+            <div class="text-xs text-gray-500" id="upgradeQuoteNote">กำลังคิดยอดที่ต้องจ่าย...</div>
           </div>
           <div class="sub-card" style="margin-bottom:16px">
             <div class="flex justify-between"><span>แพ็กเกจ</span><strong>${Layout.esc(p.name)}</strong></div>
             <div class="flex justify-between"><span>รอบบิล</span><strong>${this.cycleName()}</strong></div>
             <div class="flex justify-between"><span>ราคา/เดือน</span><strong>฿${this.formatMoney(price.perMonth)}</strong></div>
-            <div class="flex justify-between" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px"><span class="font-bold">ยอดชำระ</span><span class="font-bold text-lg text-primary">฿${this.formatMoney(price.total)}</span></div>
+            <div class="flex justify-between" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:8px"><span class="font-bold">ยอดชำระ</span><span class="font-bold text-lg text-primary" id="upgradeQuoteAmount">฿${this.formatMoney(price.total)}</span></div>
           </div>
           <div class="form-group"><label class="form-label">โค้ดส่วนลด (ถ้ามี)</label><input type="text" class="form-input" id="promoCode" placeholder="กรอกโค้ดส่วนลด"></div>
           <input type="hidden" id="upgradePlan" value="${Layout.esc(plan)}">
           <input type="hidden" id="upgradeCycle" value="${cycleEnum}">
           <div id="upgradePolicy">${PolicyAccept.html((await this.platformPayInfo())?.policy)}</div>`;
         Layout.openModal('upgradeModal');
+        // รอบ 230 (D-8 · คำตัดสินข้อ 230-Q1): ยอด/ส่วนต่างตามวันที่เหลือ/วันมีผล จากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับตอนยืนยัน) — ไม่ใช่ราคาเต็มที่หน้าเว็บเดา
+        try {
+          const qr = await API.get(`/api/subscription/${Layout.getCompanyId()}/plan-quote?plan=${encodeURIComponent(plan)}&cycle=${encodeURIComponent(cycleEnum)}`);
+          const q = qr?.data;
+          if (q) {
+            document.getElementById('upgradeQuoteNote').textContent = q.message || '';
+            document.getElementById('upgradeQuoteAmount').textContent = q.amountDue > 0 ? `฿${this.formatMoney(q.amountDue)}` : 'ไม่ต้องชำระตอนนี้';
+          }
+        } catch (e) { document.getElementById('upgradeQuoteNote').textContent = 'ยอดจริงคิดตอนกดยืนยัน (อัปเกรดกลางรอบ = จ่ายส่วนต่างตามวันที่เหลือ · แพ็กเกจที่ถูกลง = มีผลวันครบรอบ)'; }
       },
 
       async confirmUpgrade() {

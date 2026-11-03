@@ -24,10 +24,42 @@ namespace Accounting.Services.Settlement;
 /// </summary>
 public sealed partial class SettlementImportService
 {
-    public async Task<SettlementImportResult> ImportFromPaymentIntentsAsync(Guid companyId, Guid userId,
+    public Task<SettlementImportResult> ImportFromPaymentIntentsAsync(Guid companyId, Guid userId,
         SettlementIntentBatchRequest request, CancellationToken ct = default)
     {
-        var h = request.Header;
+        return ImportGatewayIntentsCoreAsync(companyId, userId, request.Header, null, Array.Empty<SettlementParsedRow>(),
+            SettlementSourceKind.PaymentIntents, ct);
+    }
+
+    /// <summary>
+    /// รอบ 230 (PLATFORM_OMISE_AUDIT §5.3): <b>ร่าง</b>รอบโอนจากรอบโอนที่ดึงจาก API ของผู้ให้บริการ — ด่านเดียวกับ <see cref="ImportFromPaymentIntentsAsync"/> ทุกข้อ
+    /// (ช่องทาง gateway · โหมด VAT/หัก ณ ที่จ่ายตรงกัน · ผังพักตรงกัน · intent ยังไม่มีเจ้าของ · ยอดคืน ณ วันเงินเข้า · ตรวจซ้ำใต้ล็อก) แต่เลือก
+    /// <b>เฉพาะ intent ที่ตัวจับคู่ให้มา</b> (ไม่ใช่ทั้งช่วง) + บรรทัดค่าธรรมเนียมโอน (ถ้ามี) · สถานะนำเข้า = ร่าง — <b>ไม่ลงบัญชี</b> (ผู้ทำบัญชีกดลงบัญชีที่หน้ารอบโอน ด่านยอดไม่ตรงเดิมบล็อก)
+    /// </summary>
+    public Task<SettlementImportResult> ImportProviderTransferDraftAsync(Guid companyId, Guid userId, ProviderTransferDraftRequest request,
+        CancellationToken ct = default)
+    {
+        if (request.IntentIds.Count == 0)
+            throw new BusinessRuleException("ไม่มีรายการรับชำระที่จับคู่กับรอบโอนนี้", "SETTLEMENT-NO-INTENTS");
+        var extra = new List<SettlementParsedRow>();
+        var feeTotal = request.TransferFee + request.TransferFeeVat;
+        if (feeTotal > 0m)
+            extra.Add(new SettlementParsedRow(10_000, "Transfer fee", "ค่าธรรมเนียมโอนเงินของผู้ให้บริการ",
+                ThaiDate.CalendarDateUtc(request.PayoutDate), request.PayoutRef, "transfer-fee:" + request.PayoutRef,
+                -feeTotal, request.TransferFeeVat > 0m ? -request.TransferFeeVat : null, null, SettlementLineType.WithdrawalFee,
+                PayoutRef: request.PayoutRef));
+        var header = new SettlementBatchHeaderRequest
+        {
+            ChannelId = request.ChannelId, PayoutRef = request.PayoutRef, PayoutDate = request.PayoutDate, NetPayout = request.NetToBank,
+            Note = request.Note,
+        };
+        return ImportGatewayIntentsCoreAsync(companyId, userId, header, request.IntentIds, extra, SettlementSourceKind.Api, ct);
+    }
+
+    private async Task<SettlementImportResult> ImportGatewayIntentsCoreAsync(Guid companyId, Guid userId, SettlementBatchHeaderRequest h,
+        IReadOnlyCollection<Guid>? onlyIntentIds, IReadOnlyList<SettlementParsedRow> extraRows, SettlementSourceKind sourceKind,
+        CancellationToken ct)
+    {
         var channel = await LoadChannelAsync(companyId, h.ChannelId, tracked: false, ct);
         EnsureActive(channel);
         if (GatewayBatchIntentRules.ChannelRefusal(channel.Kind, channel.PaymentProviderConfigId) is string notGateway)
@@ -60,9 +92,12 @@ public sealed partial class SettlementImportService
         if (h.PayoutDate is not DateTime payoutDate)
             throw new BusinessRuleException("ระบุวันที่เงินเข้าธนาคารของรอบโอนนี้", "SETTLEMENT-PAYOUT-DATE");
 
-        var loaded = await LoadIntentRowsAsync(companyId, providerCode, cfg.FeeVatMode, h.PeriodFrom, h.PeriodTo, payoutDate, ct);
+        var loaded = await LoadIntentRowsAsync(companyId, providerCode, cfg.FeeVatMode, h.PeriodFrom, h.PeriodTo, payoutDate, ct, onlyIntentIds);
         var rows = loaded.Rows;
         var warnings = new List<string>();
+        // รอบ 230: ร่างจากรอบโอนของผู้ให้บริการ — บางรายการที่จับคู่ไว้ถูกรอบโอนอื่นหยิบไปแล้ว ⇒ บอก (ด่านยอดไม่ตรงบล็อกการลงบัญชีเอง)
+        if (onlyIntentIds != null && rows.NewIntentIds.Count < onlyIntentIds.Count)
+            warnings.Add($"รายการรับชำระ {onlyIntentIds.Count - rows.NewIntentIds.Count} รายการที่จับคู่ไว้อยู่ในรอบโอนอื่นแล้ว/ไม่เข้าเกณฑ์ — ตรวจยอดก่อนลงบัญชี");
         // review198-E2 E2-10: การคืนเงินผลไม่แน่ชัด — ประกอบรอบโอนได้ (เห็นยอด) แต่ลงบัญชีไม่ได้จนกว่าจะตรวจผล (ด่านผู้ลงบัญชี RefundOutcomeUnknown)
         if (loaded.RefundUnknown > 0)
             warnings.Add($"รายการรับชำระ {loaded.RefundUnknown} รายการมีการคืนเงินที่ผลยังไม่แน่ชัด — ตรวจผลการคืนเงินกับผู้ให้บริการก่อน "
@@ -77,8 +112,9 @@ public sealed partial class SettlementImportService
         if (rows.Rows.Count == 0)
             throw new BusinessRuleException("ไม่มีรายการรับชำระที่รอเข้ารอบโอนของ gateway นี้ในช่วงที่เลือก (หรือถูกบันทึกรอบโอนด้วยเส้นเดิมแล้ว)",
                 "SETTLEMENT-NO-INTENTS");
-        return await PersistAsync(new PersistInput(companyId, userId, channel.Id, h, rows.Rows, Array.Empty<string>(),
-            SettlementSourceKind.PaymentIntents, null, null, PaymentIntentAdapter.AdapterCode, rows.NewIntentIds, providerCode,
+        var allRows = extraRows.Count == 0 ? rows.Rows : rows.Rows.Concat(extraRows).ToList();
+        return await PersistAsync(new PersistInput(companyId, userId, channel.Id, h, allRows, Array.Empty<string>(),
+            sourceKind, null, null, PaymentIntentAdapter.AdapterCode, rows.NewIntentIds, providerCode,
             warnings), ct);
     }
 
@@ -90,16 +126,25 @@ public sealed partial class SettlementImportService
     private sealed record GatewayIntentLoad(SettlementIntentRows Rows, int RefundUnknown, int OlderUnclaimed);
 
     private async Task<GatewayIntentLoad> LoadIntentRowsAsync(Guid companyId, string providerCode, GatewayFeeVatMode feeVatMode,
-        DateTime? periodFrom, DateTime? periodTo, DateTime payoutDate, CancellationToken ct)
+        DateTime? periodFrom, DateTime? periodTo, DateTime payoutDate, CancellationToken ct, IReadOnlyCollection<Guid>? onlyIntentIds = null)
     {
+        if (onlyIntentIds != null)
+        {
+            // รอบ 230: รอบโอนจาก API ของผู้ให้บริการ — ชุดรายการมาจากตัวจับคู่ (ไม่ใช่ช่วงวันที่) · เกณฑ์ "ยังไม่มีเจ้าของ" ตัวเดียวกัน
+            periodFrom = null;
+            periodTo = null;
+        }
         // R200G-3 (รอบ 200): ขอบช่วง = เที่ยงคืนเวลาไทย ตัวเดียวกับแผนรอบโอนเส้นเดิม/รายงานกระทบยอด (GatewaySettlementMath) —
         // เดิม CalendarDateUtc(วันที่) = 00:00 UTC (07:00 ไทย) ⇒ รับเงินตี 0–7 ของวันถัดจากปลายช่วงถูกดึงเข้ารอบนี้ · ของวันแรกหลุด
         var from = periodFrom is DateTime pf ? GatewaySettlementMath.ConfirmedFromUtc(pf) : (DateTime?)null;
         // R2M-6 (ฝ่ายค้านรอบสอง · X-8): ไม่กรอกปลายช่วง ⇒ ขอบบน = เที่ยงคืนต้นวันเงินเข้า (ห้ามไม่มีขอบบน — รายการหลังเงินเข้าไม่ใช่ของรอบนี้)
-        DateTime? to = GatewaySettlementMath.ConfirmedToExclusiveUtc(periodTo ?? payoutDate.AddDays(-1));
+        DateTime? to = onlyIntentIds != null ? null : GatewaySettlementMath.ConfirmedToExclusiveUtc(periodTo ?? payoutDate.AddDays(-1));
+        var only = onlyIntentIds?.Distinct().ToList();
         // ยังไม่มีเจ้าของรอบโอน (เส้นเดิม SettlementJournalEntryId · เส้นนี้ SettlementBatchId ว่างทั้งคู่) — ตัวตัดสินตัวเดียว (expression)
-        var fresh = await _db.PaymentIntents.AsNoTracking()
-            .Where(GatewayBatchIntentRules.UnclaimedForBatch(companyId, providerCode, from, to))
+        var freshQuery = _db.PaymentIntents.AsNoTracking()
+            .Where(GatewayBatchIntentRules.UnclaimedForBatch(companyId, providerCode, from, to));
+        if (only != null) freshQuery = freshQuery.Where(i => only.Contains(i.Id));
+        var fresh = await freshQuery
             .Select(i => new GatewayIntentRow(i.Id, i.ProviderRef, i.Amount, i.RefundedAmount, i.FeeActual, i.FeeEstimated,
                 i.ConfirmedAt, i.LastRefundedAt, i.RefundOutcomeUnknownSince != null))
             .ToListAsync(ct);

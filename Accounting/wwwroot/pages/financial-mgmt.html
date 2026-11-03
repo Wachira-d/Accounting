@@ -114,7 +114,7 @@
     <div id="tab-cit" class="tab-content">
       <div class="card">
         <div class="card-header"><h3>ภาษีเงินได้นิติบุคคล (58000 / 21920)</h3>
-          <button class="btn btn-primary btn-sm" onclick="Page.showModal('citModal')">คำนวณภาษี</button>
+          <button class="btn btn-primary btn-sm" onclick="Page.openCIT()">คำนวณภาษี</button>
         </div>
         <div class="table-container"><table class="table"><thead><tr>
           <th>ปีภาษี</th><th>งวด</th><th class="text-right">รายได้</th><th class="text-right">ค่าใช้จ่าย</th>
@@ -229,16 +229,36 @@
   <div class="modal-header"><h3>คำนวณภาษีเงินได้นิติบุคคล</h3><button class="btn-close" onclick="Page.hideModal('citModal')">&times;</button></div>
   <div class="modal-body">
     <div class="form-row">
-      <div class="form-group"><label>ปีภาษี (พ.ศ.) *</label><input id="citYear" class="form-control" value="2567"></div>
-      <div class="form-group"><label>งวด *</label><select id="citPeriod" class="form-control"><option value="Annual">ประจำปี (ภ.ง.ด.50)</option><option value="HalfYear">ครึ่งปี (ภ.ง.ด.51)</option></select></div>
+      <div class="form-group"><label>ปีภาษี (พ.ศ.) *</label><input id="citYear" class="form-control" value="2567" onchange="Page.citPeriodPreview()"></div>
+      <div class="form-group"><label>งวด *</label><select id="citPeriod" class="form-control" onchange="Page.citToggle()"><option value="Annual">ประจำปี (ภ.ง.ด.50)</option><option value="HalfYear">ครึ่งปี (ภ.ง.ด.51)</option></select></div>
+    </div>
+    <div id="citPeriodInfo" class="text-xs" style="color:#1e40af;margin-bottom:8px"></div>
+    <!-- รอบ 230 (Helpers/CitCalculation): รอบบัญชีตามบริษัท · บวกกลับ §65 ตรี อัตโนมัติ (ไม่หัก 580xx) · SME ต่อบริษัท · ภ.ง.ด.51 ประมาณการ ÷ 2 -->
+    <div class="text-xs" style="color:#64748b;margin-bottom:8px">ระบบคำนวณตามรอบบัญชีของบริษัท · บวกกลับรายจ่ายต้องห้าม §65 ตรี (เอกสาร · เงินเพิ่ม/ค่าปรับ · ส่วนเกินค่ารับรอง) ให้เอง · ไม่หักค่าใช้จ่ายภาษีเงินได้ (580xx) · ช่องด้านล่างคือรายการ<b>เพิ่มเติม</b></div>
+    <div class="form-row">
+      <div class="form-group"><label>รายจ่ายบวกกลับเพิ่มเติม</label><input type="number" id="citAddBack" class="form-control" value="0" step="0.01" min="0"></div>
+      <div class="form-group"><label>รายจ่ายหักเพิ่ม</label><input type="number" id="citDeduct" class="form-control" value="0" step="0.01" min="0"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>รายจ่ายบวกกลับ</label><input type="number" id="citAddBack" class="form-control" value="0" step="0.01"></div>
-      <div class="form-group"><label>รายจ่ายหักเพิ่ม</label><input type="number" id="citDeduct" class="form-control" value="0" step="0.01"></div>
+      <div class="form-group"><label>รายได้ที่ได้รับยกเว้น</label><input type="number" id="citExempt" class="form-control" value="0" step="0.01" min="0"></div>
+      <div class="form-group"><label>สถานะ SME</label><select id="citSme" class="form-control" onchange="Page.citToggle()">
+        <option value="">ระบบตัดสิน (ทุนชำระ ≤ 5 ล. และรายได้ ≤ 30 ล.)</option><option value="true">กำหนดเอง: SME</option><option value="false">กำหนดเอง: ไม่ใช่ SME (20%)</option></select></div>
+    </div>
+    <div class="form-row" id="citSmeReasonRow" style="display:none">
+      <div class="form-group" style="flex:1"><label>เหตุผลที่กำหนดเอง *</label><input id="citSmeReason" class="form-control" placeholder="เช่น ทุนที่ชำระแล้ว ณ วันสิ้นรอบ 4,000,000"></div>
+    </div>
+    <div id="citHalfRows">
+      <div class="form-row">
+        <div class="form-group"><label>วิธียื่น ภ.ง.ด.51</label><select id="citBasis" class="form-control" onchange="Page.citToggle()">
+          <option value="Estimate">ประมาณการกำไรทั้งปี ÷ 2 (§67 ทวิ(1))</option><option value="ActualHalfYear">ตามกำไรสุทธิจริงครึ่งปี — บจ./ธนาคาร (§67 ทวิ(2))</option></select></div>
+        <div class="form-group" id="citEstimateGroup"><label>ประมาณการกำไรสุทธิทั้งปี</label><input type="number" id="citEstimate" class="form-control" step="0.01" placeholder="ว่าง = กำไรครึ่งปี × 2"></div>
+      </div>
+      <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="citShortYear"> รอบบัญชีนี้ไม่ถึง 12 เดือน (รอบแรก/เปลี่ยนรอบ) — ไม่ต้องยื่น ภ.ง.ด.51</label>
     </div>
     <div class="form-row">
-      <div class="form-group"><label>ภาษีหัก ณ ที่จ่าย</label><input type="number" id="citWht" class="form-control" value="0" step="0.01"></div>
-      <div class="form-group"><label>ภาษีจ่ายล่วงหน้า (ภ.ง.ด.51)</label><input type="number" id="citPrepaid" class="form-control" value="0" step="0.01"></div>
+      <div class="form-group"><label>ภาษีหัก ณ ที่จ่าย</label><input type="number" id="citWht" class="form-control" step="0.01" min="0" placeholder="ว่าง = ดึงจากหนังสือรับรองที่ได้รับ"></div>
+      <div class="form-group" id="citLossGroup"><label>ผลขาดทุนยกมา (ภ.ง.ด.50)</label><input type="number" id="citLoss" class="form-control" step="0.01" min="0" placeholder="ว่าง = จากรายงาน ภ.ง.ด.50 ที่ยื่นแล้ว 5 รอบก่อน"></div>
+      <div class="form-group" id="citPrepaidGroup"><label>ภาษีจ่ายล่วงหน้า (ภ.ง.ด.51)</label><input type="number" id="citPrepaid" class="form-control" step="0.01" min="0" placeholder="ว่าง = ภ.ง.ด.51 ที่ตั้งหนี้แล้ว"></div>
     </div>
   </div>
   <div class="modal-footer"><button class="btn" onclick="Page.hideModal('citModal')" data-i18n="common.cancel">ยกเลิก</button><button class="btn btn-primary" onclick="Page.submitCIT()">คำนวณ</button></div>

@@ -117,12 +117,17 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             string? invNo = p.PlatformInvoiceDocumentId is Guid g && invNumbers.TryGetValue(g, out var n) ? n : null;
             return new BillingCenterPayment(p.Id, p.PaymentNumber, p.Amount, p.PaymentDate, p.Status.ToString(),
                 PaymentStatusLabel(p.Status, p.SlipFileName != null),
-                PaymentPurpose(p.PlatformInvoiceDocumentId != null, invNo, p.Kind, p.RequestedPlan, p.RequestedPeriodMonths),
+                // รอบ 230: ส่วนต่างอัปเกรดกลางรอบ — บอกตามจริง (ไม่ใช่ "แพ็กเกจ 0 เดือน")
+                p.IsProration
+                    ? $"ส่วนต่างอัปเกรด {p.ProrationFromPlan} → {p.RequestedPlan} ({p.ProrationDays}/{p.ProrationCycleDays} วัน)"
+                    : PaymentPurpose(p.PlatformInvoiceDocumentId != null, invNo, p.Kind, p.RequestedPlan, p.RequestedPeriodMonths),
                 invNo, p.ReceiptNumber, p.ReceiptIsTaxInvoice, p.ReceiptNumber != null, p.SlipFileName != null,
                 p.Status == SubscriptionPaymentStatus.Rejected ? p.RejectionReason : null,
                 p.WithholdingTaxAmount > 0m && p.WhtCertificateFileName == null
                     && p.Status is not (SubscriptionPaymentStatus.Rejected or SubscriptionPaymentStatus.Cancelled),
-                p.WithholdingTaxAmount);
+                p.WithholdingTaxAmount,
+                canPay && p.Status == SubscriptionPaymentStatus.Pending && p.SlipFileName == null && p.PlatformInvoiceDocumentId == null && p.Amount > 0m,
+                p.CouponDiscountAmount, p.CouponCode);
         }).ToList();
 
         // ── ส่วนเสริม ──

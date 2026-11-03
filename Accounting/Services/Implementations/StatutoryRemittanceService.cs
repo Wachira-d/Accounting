@@ -444,7 +444,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         var advisories = new List<string>();
         var hiddenOld = 0;
         var oldFloor = today.AddMonths(-24);
-        bool TooOld(string type, int y, int m) => !includeOldAnnual && Accounting.Helpers.TaxFilingDeadline.WarnBy(type, y, m, _holidays) < oldFloor;
+        bool TooOld(string type, int y, int m)
+        {
+            var (dy, dm) = DueKeyOf(type, y, m);   // รอบ 230 S2: CIT นับจากวันสิ้นงวดจริง
+            return !includeOldAnnual && Accounting.Helpers.TaxFilingDeadline.WarnBy(type, dy, dm, _holidays) < oldFloor;
+        }
 
         var (citRows, s67) = await LoadCitPayablesAsync(companyId, remits);
         _citRows = citRows;
@@ -577,9 +581,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         string? periodLabel = null, string? amountNote = null)
     {
         var (label, form, code) = Meta(type);
-        var (paper, efiling) = DueDates(type, year, month, _holidays);
+        var (dueY, dueM) = DueKeyOf(type, year, month);   // รอบ 230 S2: ภ.ง.ด.51/50 = เดือนสิ้นงวดจริงตามรอบบัญชีบริษัท (แบบอื่นคงเดิม)
+        var (paper, efiling) = DueDates(type, dueY, dueM, _holidays);
         // รอบ 201 B-7: เตือนตามวันที่จาก TaxFilingDeadline.WarnBy ตัวเดียว (ภ.พ.36/ภ.ง.ด.54 = วันกระดาษ จนกว่าจะยืนยันมาตรการ e-Filing) · วันหยุดราชการชุดเดียวกับ DueDates (B-9)
-        var warnBy = Accounting.Helpers.TaxFilingDeadline.WarnBy(type, year, month, _holidays);
+        var warnBy = Accounting.Helpers.TaxFilingDeadline.WarnBy(type, dueY, dueM, _holidays);
         // "ยื่นแบบแล้ว" ตัดธงเลยกำหนดออก — ยอดยังค้างได้ (ยังไม่จ่ายเงิน) แต่ผู้ใช้
         // ไม่ได้ทำผิดกำหนดยื่น จึงห้ามขึ้นสีแดง/นับใน OverdueCount
         var overdue = today > warnBy.Date && reportFiledAt == null;
@@ -1674,8 +1679,21 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     {
         // รอบ 228: ภ.ง.ด.50 — ข้อเท็จจริง §67 ตรี จากรายการคำนวณ CIT ที่โหลดใน GetDashboardAsync (ผู้เรียกทุกตัวโหลด dashboard ก่อน)
         var est = type == Accounting.Helpers.CitPayment.Pnd50Type ? _citRows?.FirstOrDefault(r => r.Type == type && r.Year == year)?.Estimate : null;
-        return Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest(type, year, month, amount, payDate, _holidays, paperFiling, filedAt, est);
+        // รอบ 230 S2: ภ.ง.ด.51/50 นับเงินเพิ่มจากวันสิ้นงวดจริง · แถวเดิมที่คีย์ไม่ตรงรอบบัญชี ⇒ ไม่เสนอเงินเพิ่ม (ข้อความบอก — กรอกเอง)
+        var (dueY, dueM) = DueKeyOf(type, year, month);
+        var sug = Accounting.Helpers.LatePaymentPenaltyPolicy.Suggest(type, dueY, dueM, amount, payDate, _holidays, paperFiling, filedAt, est);
+        if (Accounting.Helpers.CitPayment.IsCit(type) && _citLegacyDue.Contains((type, year)))
+            sug = sug with { Surcharge = 0m, SurchargeNote = Accounting.Helpers.CitPayment.LegacyDueNote };
+        return sug;
     }
+
+    /// <summary>รอบ 230 S2 — คีย์วันครบกำหนดของ ภ.ง.ด.51/50 (โหลดใน <see cref="LoadCitPayablesAsync"/> จาก <c>CorporateIncomeTax.PeriodEnd</c>) · แบบอื่น = คีย์เดิม</summary>
+    private Dictionary<(string Type, int Year), (int Year, int Month)> _citDueKeys = new();
+    /// <summary>แถวเดิม (ไม่มีวันสิ้นงวด) ของบริษัทรอบไม่ใช่ ม.ค. — เตือน + ไม่เสนอเงินเพิ่ม</summary>
+    private HashSet<(string Type, int Year)> _citLegacyDue = new();
+
+    private (int Year, int Month) DueKeyOf(string type, int year, int month)
+        => Accounting.Helpers.CitPayment.IsCit(type) && _citDueKeys.TryGetValue((type, year), out var k) ? k : (year, month);
 
     // ══════════════ รอบ 228 — ภ.ง.ด.51/50 + กองทุนเงินทดแทนรายปี (loader ข้อเท็จจริง) ══════════════
 
@@ -1692,7 +1710,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
     /// <summary>ข้อเท็จจริง §67 ตรี ของ ภ.ง.ด.50 ปี <paramref name="ceYear"/> (ฝ่ายค้าน S5a) — ภาษีที่ชำระตาม ภ.ง.ด.51 = ยอดนำส่งในระบบ (แถวที่ยังมีผล)
     /// + ภาษีถูกหัก ณ ที่จ่ายที่ใช้ในครึ่งปี · ไม่มีแถวนำส่ง ⇒ ยอดที่ต้องชำระตามที่ตั้งหนี้ (บอกฐานในข้อความ) · ไม่มี ภ.ง.ด.51 ⇒ null</summary>
     private static Accounting.Helpers.CitPayment.EstimateFacts? EstimateFactsFor(List<CorporateIncomeTax> recs, CorporateIncomeTax annual, int ceYear,
-        List<StatutoryRemittance> remits, DateTime? companyCreatedAt)
+        List<StatutoryRemittance> remits, DateTime? companyCreatedAt, int fiscalStartMonth = 1)
     {
         var half = recs.Where(h => h.TaxPeriod == "HalfYear" && Accounting.Helpers.CitPayment.CeYear(h.TaxYear) == ceYear)
             .OrderByDescending(h => h.CreatedAt).FirstOrDefault();
@@ -1702,9 +1720,13 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
         var (paid, basis) = remitted > 0m
             ? (remitted + halfWht, $"ยอดนำส่ง ภ.ง.ด.51 ในระบบ {remitted:N2} + ภาษีถูกหักครึ่งปี {halfWht:N2}")
             : (half.NetTaxPayable + halfWht, $"ไม่พบรายการนำส่ง ภ.ง.ด.51 ในระบบ — ใช้ยอดที่ตั้งหนี้ {half.NetTaxPayable:N2} + ภาษีถูกหักครึ่งปี {halfWht:N2}");
-        // ประมาณการทั้งปีของ ภ.ง.ด.51 = กำไรครึ่งปี × 2 (วิธีเดียวกับไฟล์ยื่น ภ.ง.ด.51 — TaxFilingExportService.ExportPnd51Async)
-        var firstYear = companyCreatedAt is DateTime c && c.Year == ceYear && c > new DateTime(ceYear, 1, 1);
-        return new Accounting.Helpers.CitPayment.EstimateFacts(half.TaxableProfit * 2m, annual.TaxableProfit, annual.TaxAmount, paid, basis, firstYear);
+        // ประมาณการทั้งปีของ ภ.ง.ด.51 — รอบ 230: ค่าที่ใช้คิดภาษีจริง (EstimatedAnnualProfit · ผู้ใช้แก้ได้) · แถวก่อนรอบ 230 = กำไรครึ่งปี × 2
+        // (วิธีเดียวกับไฟล์ยื่น ภ.ง.ด.51 — TaxFilingExportService.ExportPnd51Async) · ยื่นจากกำไรจริงครึ่งปี (§67 ทวิ(2)) ⇒ ไม่อยู่ใต้ §67 ตรี
+        // รอบ 230 N3: "อาจเป็นรอบแรก" = เริ่มใช้ระบบภายในรอบบัญชีของบริษัท (ไม่ใช่ปีปฏิทิน) — ตัวตัดสินเดียวกับเครื่องคำนวณ (CitCalculation.Pnd51Exemption · เตือนเท่านั้น)
+        var firstYear = Accounting.Helpers.CitCalculation.Pnd51Exemption(null, companyCreatedAt,
+            Accounting.Helpers.FiscalYear.RangeFor(ceYear, fiscalStartMonth)).Note != null;
+        return new Accounting.Helpers.CitPayment.EstimateFacts(half.EstimatedAnnualProfit ?? half.TaxableProfit * 2m, annual.TaxableProfit, annual.TaxAmount, paid, basis, firstYear,
+            ActualHalfYearBasis: half.HalfYearBasis == Accounting.Helpers.CitCalculation.BasisActualHalfYear);
     }
 
     private async Task<(List<CitPayableRow> Rows, List<(int Year, string Note)> S67Advisories)> LoadCitPayablesAsync(Guid companyId, List<StatutoryRemittance> remits)
@@ -1713,7 +1735,10 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             .Where(c => c.CompanyId == companyId && c.JournalEntryId != null)
             .ToListAsync();
         if (recs.Count == 0) return (new List<CitPayableRow>(), new List<(int, string)>());
-        var companyCreatedAt = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => (DateTime?)c.CreatedAt).FirstOrDefaultAsync();
+        var companyInfo = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => new { c.CreatedAt, c.FiscalYearStartMonth }).FirstOrDefaultAsync();
+        DateTime? companyCreatedAt = companyInfo?.CreatedAt;
+        var fiscalStartMonth = companyInfo?.FiscalYearStartMonth ?? 1;
         var jeIds = recs.Select(r => r.JournalEntryId!.Value).ToList();
         // GL-first: บรรทัดของ JE ตั้งหนี้ที่ยังมีผล (ไม่ถูกลบ/ไม่ถูกกลับรายการ · N3)
         var lines = await _db.JournalEntryLines.AsNoTracking()
@@ -1741,7 +1766,7 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             if (type == null || ce == null) continue;
             var jeLines = lines.Where(l => l.JournalEntryId == r.JournalEntryId).ToList();
             if (jeLines.Count == 0) continue;   // JE ถูกกลับรายการ/ลบ ⇒ ไม่มีหนี้
-            var est = type == Accounting.Helpers.CitPayment.Pnd50Type ? EstimateFactsFor(recs, r, ce.Value, remits, companyCreatedAt) : null;
+            var est = type == Accounting.Helpers.CitPayment.Pnd50Type ? EstimateFactsFor(recs, r, ce.Value, remits, companyCreatedAt, fiscalStartMonth) : null;
             // N2: เฉพาะผังหนี้ CIT (21920) — ไม่ใช่ 21921–21923 ที่เป็นภาษีอื่น
             var payLine = jeLines.Where(l => l.CreditAmount > 0 && l.Code == Accounting.Helpers.CitPayment.PayableCode).ToList();
             if (payLine.Count == 0)
@@ -1762,6 +1787,14 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
                     warn = $"⚠️ ภ.ง.ด.50 นี้ไม่ได้หักภาษีที่ชำระตาม ภ.ง.ด.51 (ยอดที่ชำระ {paid51:N2}) — คำนวณ ภ.ง.ด.50 ใหม่โดยกรอก \"ภาษีจ่ายล่วงหน้า\" ก่อนนำส่ง";
             }
             var (y, m) = Accounting.Helpers.CitPayment.PeriodKey(type, ce.Value);
+            // รอบ 230 S2: วันครบกำหนดจากวันสิ้นงวดที่เก็บบนรายการคำนวณ (ไม่ใช่ เดือน 6/12 ของปีรอบบัญชี)
+            var due = Accounting.Helpers.CitPayment.DueKey(type, ce.Value, r.PeriodEnd, fiscalStartMonth);
+            _citDueKeys[(type, y)] = (due.Year, due.Month);
+            if (due.Legacy)
+            {
+                _citLegacyDue.Add((type, y));
+                warn = warn == null ? Accounting.Helpers.CitPayment.LegacyDueNote : warn + " · " + Accounting.Helpers.CitPayment.LegacyDueNote;
+            }
             rows.Add(new CitPayableRow(type, y, m, r.Id, payLine[0].AccountId, offsets,
                 type == Accounting.Helpers.CitPayment.Pnd50Type ? HalfYearDebitAccount(ce.Value) : null, est, warn, payLine[0].EntryDate));
         }
@@ -2347,6 +2380,11 @@ public class StatutoryRemittanceService : IStatutoryRemittanceService
             if (sd.StatutoryRemittanceId != null)
                 throw new Accounting.Helpers.BusinessRuleException(
                     $"อากร {sd.Reference} บันทึกจ่ายและลงบัญชีแล้ว ({sd.PaidAt:dd/MM/yyyy}) — ถ้าจะแก้ ให้ยกเลิกรายการนำส่งในประวัติหน้านำส่งก่อน", "STAMP-REMIT-ALREADY-PAID", 409);
+            // รอบ 230 N4: ผู้ใช้ยืนยันแล้วว่าลงค่าอากรด้วยใบสำคัญเอง ⇒ ลงซ้ำไม่ได้ (ทางไปต่อ: ยกเลิกการยืนยันที่หน้าอากรก่อน)
+            if (sd.ManualPostingConfirmedAt != null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"อากร {sd.Reference} ถูกยืนยันว่าลงบัญชีด้วยมือแล้ว ({sd.ManualPostingConfirmedAt:dd/MM/yyyy}) — ถ้าจะลงผ่านระบบ ให้ยกเลิกการยืนยันที่หน้าอากรแสตมป์ก่อน",
+                    "STAMP-REMIT-MANUALLY-POSTED", 409);
 
             var duty = Math.Round(req.DutyAmount ?? sd.DutyAmount, 2, MidpointRounding.AwayFromZero);
             if (duty <= 0m)

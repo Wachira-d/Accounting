@@ -160,8 +160,50 @@ public class PayrollDetailAmountsTests
     {
         var d = new PayrollDetail { SocialSecurityBase = 30_000m };
         Assert.True(PayrollDetailAmounts.ApplyWorkersCompensation(d, runIsExternalImport: false,
-            companyEnabled: true, ratePercent: 0.2m, employeeSubjectToSso: true));
+            companyEnabled: true, ratePercent: 0.2m, employeeSubjectToSso: true, ssoCeiling: 15_000m));
         Assert.Equal(40m, d.WorkersCompensation);              // min(30,000, 20,000) × 0.2%
+    }
+
+    // ── รอบ 230 (TAX_PENALTY_AUDIT §6): ฐานเงินทดแทน = ค่าจ้าง ม.5 เต็ม ไม่ใช่ฐาน ปกส. ที่ตัดเพดาน ปกส. ──
+
+    [Fact]
+    public void เงินทดแทน_ฐานปกสชนเพดาน_ใช้รายได้รวมงวด_ไม่ใช่15000()
+    {
+        // ค่าจ้าง 18,000 · ฐาน ปกส. ตัดที่ 15,000 — เดิม 15,000 × 0.2% = 30 (ขาด) · ถูก = 18,000 × 0.2% = 36
+        var d = new PayrollDetail { SocialSecurityBase = 15_000m, GrossIncome = 18_000m };
+        Assert.True(PayrollDetailAmounts.ApplyWorkersCompensation(d, false, true, 0.2m, true, ssoCeiling: 15_000m));
+        Assert.Equal(36m, d.WorkersCompensation);
+        Assert.Equal(18_000m, d.WorkersCompensationWage);     // เก็บค่าจ้างที่ใช้ (ฐานรายปีอ่านตัวนี้)
+    }
+
+    [Fact]
+    public void เงินทดแทน_ฐานปกสต่ำกว่าเพดาน_ใช้ฐานที่ผู้ใช้ประกาศ_ไม่ดึงรายได้อื่น()
+    {
+        // ทิศตรงข้าม: ค่าจ้าง 10,000 + โบนัสที่ผู้ใช้ไม่นับเป็นค่าจ้าง 5,000 ⇒ ฐาน 10,000 คงเดิม (ไม่ใช่ 15,000)
+        var d = new PayrollDetail { SocialSecurityBase = 10_000m, GrossIncome = 15_000m };
+        Assert.True(PayrollDetailAmounts.ApplyWorkersCompensation(d, false, true, 0.2m, true, ssoCeiling: 15_000m));
+        Assert.Equal(20m, d.WorkersCompensation);
+        Assert.Equal(10_000m, d.WorkersCompensationWage);
+    }
+
+    [Fact]
+    public void เงินทดแทน_ชนเพดานเงินทดแทน20000_และไม่รู้เพดานปกส_ถือว่าชนเพดาน()
+    {
+        var hi = new PayrollDetail { SocialSecurityBase = 15_000m, GrossIncome = 50_000m };
+        PayrollDetailAmounts.ApplyWorkersCompensation(hi, false, true, 0.5m, true, ssoCeiling: 15_000m);
+        Assert.Equal(100m, hi.WorkersCompensation);            // min(50,000, 20,000) × 0.5%
+        Assert.Equal(50_000m, WorkersCompensationBase.ManualRowWage(15_000m, 0m, 50_000m));
+        Assert.Equal(15_000m, WorkersCompensationBase.ManualRowWage(15_000m, 0m, 0m));
+        Assert.Equal(0m, WorkersCompensationBase.ManualRowWage(-5m, 15_000m, -1m));
+    }
+
+    [Fact]
+    public void เงินทดแทน_ไม่คิด_ล้างค่าจ้างที่เก็บ()
+    {
+        var d = new PayrollDetail { SocialSecurityBase = 15_000m, GrossIncome = 18_000m, WorkersCompensation = 30m, WorkersCompensationWage = 15_000m };
+        PayrollDetailAmounts.ApplyWorkersCompensation(d, false, companyEnabled: false, 0.2m, true, 15_000m);
+        Assert.Equal(0m, d.WorkersCompensation);
+        Assert.Null(d.WorkersCompensationWage);
     }
 
     [Theory]
@@ -172,7 +214,7 @@ public class PayrollDetailAmountsTests
     public void เงินทดแทน_รอบในระบบ_เงื่อนไขไม่ครบ_ตั้งเป็น0_แม้เดิมมีค่า(bool enabled, double rate, bool subject, int ssoBase)
     {
         var d = new PayrollDetail { SocialSecurityBase = ssoBase, WorkersCompensation = 99m };
-        Assert.True(PayrollDetailAmounts.ApplyWorkersCompensation(d, false, enabled, (decimal)rate, subject));
+        Assert.True(PayrollDetailAmounts.ApplyWorkersCompensation(d, false, enabled, (decimal)rate, subject, 15_000m));
         Assert.Equal(0m, d.WorkersCompensation);
     }
 
@@ -181,10 +223,10 @@ public class PayrollDetailAmountsTests
     {
         var d = new PayrollDetail { SocialSecurityBase = 15_000m, WorkersCompensation = 0m };
         Assert.False(PayrollDetailAmounts.ApplyWorkersCompensation(d, runIsExternalImport: true,
-            companyEnabled: true, ratePercent: 0.5m, employeeSubjectToSso: true));
+            companyEnabled: true, ratePercent: 0.5m, employeeSubjectToSso: true, ssoCeiling: 15_000m));
         Assert.Equal(0m, d.WorkersCompensation);               // คงศูนย์เท่าแถวนำเข้าอื่น (X3)
         var kept = new PayrollDetail { SocialSecurityBase = 15_000m, WorkersCompensation = 12.34m };
-        PayrollDetailAmounts.ApplyWorkersCompensation(kept, true, true, 0.5m, true);
+        PayrollDetailAmounts.ApplyWorkersCompensation(kept, true, true, 0.5m, true, 15_000m);
         Assert.Equal(12.34m, kept.WorkersCompensation);        // ไม่แตะค่าเดิม
     }
 

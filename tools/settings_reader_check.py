@@ -58,9 +58,10 @@ ENTITIES = {
                       'Accounting/wwwroot/admin/subscription-enforcement.html']),
     'LodgingProperty': ('Accounting/Models/Entities/Lodging.cs', None,
                         ['Accounting/wwwroot/pages/lodging-settings.html']),
-    # รอบ 209 P2: หน้าแก้ค่าตั้งร้าน (hydrate ฟอร์มไม่นับเป็นผู้อ่าน)
+    # รอบ 209 P2: หน้าแก้ค่าตั้งร้าน (hydrate ฟอร์มไม่นับเป็นผู้อ่าน) · รอบ 230: ค่าสินค้าตามสั่งย้ายจาก modal cms-orders ไป
+    # ศูนย์ตั้งค่าเว็บ (js/cms-mto-settings-admin.js) — หน้าแก้คือไฟล์นั้น · cms-orders ไม่ใช่หน้าแก้แล้ว (อ่านเพื่อแบนเนอร์ = ผู้อ่านจริง)
     'SiteCommerceConfig': ('Accounting/Models/Entities/CmsSite.cs', None,
-                           ['Accounting/wwwroot/pages/cms-store-settings.html', 'Accounting/wwwroot/pages/cms-orders.html']),
+                           ['Accounting/wwwroot/pages/cms-store-settings.html', 'Accounting/wwwroot/js/cms-mto-settings-admin.js']),
     'DocumentTemplate': ('Accounting/Models/Entities/DocumentTemplate.cs', None,
                          ['Accounting/wwwroot/pages/document-templates.html']),
     'TrialConfig': ('Accounting/Models/Entities/Subscription.cs', None, ['Accounting/wwwroot/admin/plans.html']),

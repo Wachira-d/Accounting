@@ -250,6 +250,8 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PurchasePolicyAcceptanceMigration.Statements());   // รอบ 219 ส่วน B — หลักฐานยอมรับนโยบายก่อนชำระ · นโยบายคืนเงินของร้าน · ด่าน live เข้มขึ้น · ยกเลิกสิ้นรอบ · หน้าทดลองจ่าย
         list.AddRange(Accounting.Helpers.BookingFormFields.MigrationStatements());   // รอบ 222 — คำตอบช่องที่เจ้าของเพิ่มเองบนฟอร์มจอง (SiteBookings.CustomFieldsJson)
         list.AddRange(Accounting.Helpers.QuotaAddOnMigration.Statements());   // รอบ 229 — โควตาเสริม: เพดานต่อแพ็กเกจ · override รายบริษัท · แคตตาล็อก · การซื้อ (Helpers/QuotaAddOnMigration)
+        list.AddRange(Accounting.Helpers.PlatformCouponMigration.Statements());   // รอบ 230 — คูปองแพลตฟอร์ม · ส่วนต่างอัปเกรดกลางรอบ · ยอดที่เซิร์ฟเวอร์เสนอ (หลังรอบ 229 — แตะ CompanyQuotaAddOns)
+        list.AddRange(Accounting.Helpers.PlatformCardBillingMigration.Statements());   // รอบ 230 — บัตรที่บันทึก · ตัดบัตรอัตโนมัติ · รอบโอนจากผู้ให้บริการของค่าบริการ NextAcc (ไม่มีคอลัมน์เลขบัตร)
         return list;
     }
 
@@ -5530,6 +5532,24 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "StampDutyRecords" ADD COLUMN IF NOT EXISTS "StatutoryRemittanceId" uuid NULL;""",
             // รอบ 228 ฝ่ายค้าน S3: แถวนำส่งที่ผูกใบสำคัญของผู้ใช้ ("ชำระนอกระบบแล้ว") — ยกเลิกไม่กลับรายการ JE ของผู้ใช้ · แถวเดิม false
             """ALTER TABLE "StatutoryRemittances" ADD COLUMN IF NOT EXISTS "SettledOutside" boolean NOT NULL DEFAULT false;""",
+            // รอบ 230 (TAX_PENALTY_AUDIT §6 · Helpers/CitCalculation): ข้อเท็จจริงของเครื่องคำนวณ CIT — แถวเดิม NULL/0 (ไม่เปลี่ยนยอดที่ตั้งหนี้ไปแล้ว ·
+            // PostCITAsync ของแถวเดิมที่ยังไม่ตั้งหนี้คิดวันสิ้นงวดจากเดือนเริ่มรอบปัจจุบัน) · §67 ตรี อ่าน EstimatedAnnualProfit ?? กำไรครึ่งปี × 2
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "PeriodStart" timestamp NULL;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "PeriodEnd" timestamp NULL;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "IsSme" boolean NULL;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "SmeReason" text NULL;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "SmeOverrideReason" text NULL;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "AutoAddBack" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "ExemptIncome" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "CitExpenseExcluded" decimal(18,2) NOT NULL DEFAULT 0;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "EstimatedAnnualProfit" decimal(18,2) NULL;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "HalfYearBasis" varchar(20) NULL;""",
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "CalculationNote" text NULL;""",
+            // รอบ 230 ฝ่ายค้าน S4: ผลขาดทุนยกมาที่หักในรอบ (แถวเดิม 0)
+            """ALTER TABLE "CorporateIncomeTaxes" ADD COLUMN IF NOT EXISTS "LossCarryForwardUsed" decimal(18,2) NOT NULL DEFAULT 0;""",
+            // รอบ 230 N4: อากร "บันทึกเลขใบเสร็จอย่างเดียว" ที่ผู้ใช้ยืนยันว่าลงบัญชีด้วยมือแล้ว (แถวเดิม NULL = ยังแสดงในรายการรอลงบัญชี)
+            """ALTER TABLE "StampDutyRecords" ADD COLUMN IF NOT EXISTS "ManualPostingConfirmedAt" timestamp NULL;""",
+            """ALTER TABLE "StampDutyRecords" ADD COLUMN IF NOT EXISTS "ManualPostingConfirmedBy" varchar(200) NULL;""",
 
             // ===== Pp36RemittanceDocuments: ใบ ↔ รายการนำส่ง ภ.พ.36 (รอบ 203 ทีม F3 · คำตัดสินข้อ 133/134) =====
             """

@@ -400,6 +400,13 @@ builder.Services.AddScoped<Accounting.Services.Payments.IGatewayRefundService,
 // รอบ 228 (PLATFORM_OMISE_AUDIT §5.4): ข้อพิพาท/chargeback จาก webhook ที่ยืนยันแล้ว — บันทึก + เตือนแอดมิน (ไม่เปลี่ยนสถานะเงิน)
 builder.Services.AddScoped<Accounting.Services.Payments.IPaymentDisputeService,
     Accounting.Services.Payments.PaymentDisputeService>();
+// รอบ 230 (PLATFORM_OMISE_AUDIT §5.2/§5.3): บัตรที่บันทึก + คำสั่งตัดอัตโนมัติ (ยินยอม PDPA) · ตัดบัตรอัตโนมัติของใบค่าบริการ · ดึงรอบโอนของผู้ให้บริการ → ร่างรอบโอน (ไม่ลงบัญชี)
+builder.Services.AddScoped<Accounting.Services.Payments.IPlatformSavedCardService,
+    Accounting.Services.Payments.PlatformSavedCardService>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPlatformAutoChargeService,
+    Accounting.Services.Payments.PlatformAutoChargeService>();
+builder.Services.AddScoped<Accounting.Services.Payments.IPlatformTransferReconciliationService,
+    Accounting.Services.Payments.PlatformTransferReconciliationService>();
 // รอบ 198 เฟส 1 ทีม B — settlement (wallet → ธนาคาร): นำเข้า · จัดประเภท (student-first ผ่าน IAiOrchestrator · SettlementLineClassify)
 // · จับคู่ใบขาย (อ่านอย่างเดียว) · ตั้งค่าช่องทาง — ไม่ลงบัญชี (ทีม C) · adapter อ่านไฟล์ลงทะเบียนเป็นชุด (เพิ่มเจ้าใหม่ = เพิ่มไฟล์ใน Services/Settlement/Adapters)
 builder.Services.AddSingleton<Accounting.Services.Settlement.Adapters.ISettlementReportAdapter,
@@ -821,6 +828,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.LodgingNightAud
 // (BilledPeriod/BilledDocumentId มีมาตั้งแต่ต้นแต่ไม่เคยมีใครเขียน = เก็บเงินไม่ได้)
 builder.Services.AddHostedService<Accounting.Services.Background.UsageInvoicingJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.PlatformDunningJob>();   // รอบ 219 เฟส 2 ขั้น 2 — ทวงหนี้ค่าบริการ NextAcc ทุกชั่วโมง (JobLock · watermark ต่อบริษัท)
+builder.Services.AddHostedService<Accounting.Services.Background.PlatformAutoChargeJob>();   // รอบ 230 — ตัดบัตรอัตโนมัติใบค่าบริการถึงกำหนด ทุกชั่วโมง (JobLock · unique ใบ+ครั้งที่ · สวิตช์แพลตฟอร์มปิดเป็นค่าตั้งต้น)
+builder.Services.AddHostedService<Accounting.Services.Background.PlatformTransferPullJob>();   // รอบ 230 — ดึงรอบโอนของผู้ให้บริการ → ร่างรอบโอน ทุก 6 ชม. (JobLock · ไม่ลงบัญชี)
 // ฝ่ายค้านรอบ 219 B2: เข้ารหัสความลับที่ยังอยู่บนคีย์เดิมใหม่ด้วยคีย์ปัจจุบัน (ครั้งเดียวต่อบูต · JobLock)
 builder.Services.AddHostedService<Accounting.Services.Background.SecretReprotectJob>();
 // ตาข่ายรับของ webhook — webhook เป็นเส้นเร็ว ไม่ใช่เส้นเดียว (มันหายได้จริง)
