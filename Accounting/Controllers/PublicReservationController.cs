@@ -78,14 +78,16 @@ public class PublicReservationController : ControllerBase
             new CompanyInfoDto(company.Id, company.Name, company.Phone, logoUrl, slots)));
     }
 
-    public record ShopLegalDto(string Kind, string Title, string CompanyName, string Html);
+    /// <summary>รอบ 232: + ภาษาที่แสดงจริง/ประกาศ (<c>Helpers/LegalDocumentLanguage</c>) — หน้าจองโต๊ะใช้แม่แบบของระบบซึ่งมีเฉพาะไทย ⇒ ขอ en ได้ไทย + ประกาศ</summary>
+    public record ShopLegalDto(string Kind, string Title, string CompanyName, string Html,
+        string Language = Accounting.Helpers.LegalDocumentLanguage.Thai, bool EnglishAvailable = false, string? LanguageNotice = null);
 
     /// <summary>รอบ 214 (คำตัดสินข้อ 173 B): นโยบายความเป็นส่วนตัว/ข้อกำหนดของ<b>ร้าน</b>สำหรับหน้าจองโต๊ะ (ไม่ผูกเว็บ CMS) —
     /// แม่แบบของระบบ (<c>LegalDocumentDefaults.ShopTemplate</c>) + ตัวตนของร้านจากข้อมูลบริษัท · ร้านเป็นผู้ควบคุมข้อมูลของลูกค้า
     /// (PDPA ม.23 — ต้องแจ้งก่อน/ขณะเก็บชื่อ/เบอร์โทรตอนจอง) · เปิดเฉพาะบริษัทที่เปิดรับจองโต๊ะ (มีโต๊ะใช้งาน) — บริษัทอื่นตอบ 404
     /// ไม่เปิดเผยที่อยู่/เลขผู้เสียภาษีของบริษัทที่ไม่ได้ใช้หน้าจองสาธารณะ</summary>
     [HttpGet("legal/{companyId:guid}/{kind}")]
-    public async Task<ActionResult<ApiResponse<ShopLegalDto>>> ShopLegal(Guid companyId, string kind, CancellationToken ct)
+    public async Task<ActionResult<ApiResponse<ShopLegalDto>>> ShopLegal(Guid companyId, string kind, CancellationToken ct, [FromQuery] string? lang = null)
     {
         if (!Accounting.Helpers.LegalDocumentDefaults.IsKind(kind)) return NotFound();
         var takesBookings = await _db.PosTables.AsNoTracking()
@@ -102,9 +104,12 @@ public class PublicReservationController : ControllerBase
         // รอบ 219 ส่วน B: นโยบายคืนเงินบนหน้าจองโต๊ะ — ไม่มีค่าตั้งของเว็บ ⇒ โทเคนชี้ไปเงื่อนไขบนหน้าจอง (ไม่เดาตัวเลข)
         if (kind == Accounting.Helpers.LegalDocumentDefaults.KindRefund)
             foreach (var kv in Accounting.Helpers.CmsLegalPages.BookingPageRefundTokens()) tokens[kv.Key] = kv.Value;
-        var html = Accounting.Helpers.LegalMarkdown.Render(Accounting.Helpers.LegalDocumentDefaults.ShopTemplate(kind), tokens);
+        // รอบ 232: ตัวตัดสินภาษาตัวเดียวกับหน้าแพลตฟอร์ม/CMS — แม่แบบไม่มีฉบับอังกฤษ ⇒ ขอ en ได้ไทย + ประกาศ (ไม่แปลเอง)
+        var choice = Accounting.Helpers.LegalDocumentLanguage.Pick(Accounting.Helpers.LegalDocumentDefaults.ShopTemplate(kind), null, lang);
+        var html = Accounting.Helpers.LegalMarkdown.Render(choice.Markdown, tokens);
         return Ok(new ApiResponse<ShopLegalDto>(true,
-            new ShopLegalDto(kind, Accounting.Helpers.LegalDocumentDefaults.Title(kind), c.Name ?? "", html)));
+            new ShopLegalDto(kind, Accounting.Helpers.LegalDocumentLanguage.TitleFor(kind, choice.Language), c.Name ?? "", html,
+                choice.Language, choice.EnglishAvailable, choice.Notice)));
     }
 
     private static DateTime RoundToHalfHour(DateTime t)

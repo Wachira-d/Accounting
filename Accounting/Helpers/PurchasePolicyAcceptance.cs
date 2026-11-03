@@ -242,6 +242,17 @@ public static class PurchasePolicyAcceptance
         return await EnforcePlatformAsync(db, legal, payerCompanyId, userId, channel, sourceId, accepted, versionShown, ip, userAgent, ct);
     }
 
+    /// <summary>รอบ 232 (ฝ่ายค้าน S5): <b>ผู้ใช้คนนี้</b>ยอมรับฉบับปัจจุบันไว้แล้วสำหรับรายการนี้ (บริษัท · ช่อง · รายการ · ฉบับ · ผู้ใช้ เดียวกัน) —
+    /// หน้าซื้อแพ็กเกจสาธารณะใช้กันแถวหลักฐานซ้ำทุกคลิก (pay-widget ส่ง <c>PolicyAccepted=true</c> ทุกครั้ง) โดยไม่แตะความหมายของ <see cref="EnforcePlatformForUserAsync"/></summary>
+    public static async Task<bool> UserAlreadyAcceptedAsync(AccountingDbContext db, ILegalDocumentService legal, Guid payerCompanyId,
+        System.Security.Claims.ClaimsPrincipal user, string channel, Guid sourceId, CancellationToken ct = default)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(user);
+        var version = (await legal.GetPurchasePolicyVersionAsync(ct)).Version;
+        return await db.Set<PolicyAcceptance>().AsNoTracking().AnyAsync(a => a.CompanyId == payerCompanyId && a.Scope == ScopePlatform
+            && a.Channel == channel && a.SourceId == sourceId && a.PolicyVersion == version && a.UserId == userId, ct);
+    }
+
     /// <summary>บริษัทผู้จ่ายยอมรับฉบับนี้ไว้แล้วสำหรับรายการนี้ (กรองบริษัท)</summary>
     private static Task<bool> HasPlatformAcceptanceAsync(AccountingDbContext db, Guid payerCompanyId, string channel, Guid sourceId,
         string version, CancellationToken ct = default)

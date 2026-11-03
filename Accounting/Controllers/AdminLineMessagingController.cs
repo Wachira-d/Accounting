@@ -11,12 +11,14 @@ namespace Accounting.Controllers;
 
 /// <summary>สถานะค่าตั้ง LINE OA กลาง — ความลับไม่ถูกส่งกลับ (บอกแค่ "ตั้งแล้ว")</summary>
 /// <param name="EffectiveSource">ชุดที่ระบบใช้อยู่จริง: admin = ค่าในหน้านี้ · config = Line:* ของเซิร์ฟเวอร์ · none = ยังไม่มี token</param>
+/// <param name="OpsAlertsToGroup">รอบ 232 (232-Notify): กลุ่มกลางรับ "เรื่องของระบบ" (ฟอร์มติดต่อ/แชทหน้าเว็บ NextAcc) ไหม — กลุ่มกลาง<b>ไม่</b>รับเหตุการณ์ธุรกิจของผู้เช่าไม่ว่าค่านี้เป็นอะไร</param>
 public record NextAccLineAdminDto(bool HasAccessToken, bool HasChannelSecret, string? BasicId, string? BotUserId, string? GroupId,
-    string EffectiveSource, bool ConfigHasToken, string WebhookUrl, string? AddFriendUrl, IReadOnlyList<string> Warnings);
+    string EffectiveSource, bool ConfigHasToken, string WebhookUrl, string? AddFriendUrl, IReadOnlyList<string> Warnings, bool OpsAlertsToGroup = true,
+    string? GroupPolicyNote = null);
 
-/// <summary>บันทึก — ช่องลับว่าง = คงค่าเดิม (ล้างต้องติ๊ก Clear*) · ช่องไม่ลับ null = คงค่าเดิม · "" = ล้าง</summary>
+/// <summary>บันทึก — ช่องลับว่าง = คงค่าเดิม (ล้างต้องติ๊ก Clear*) · ช่องไม่ลับ null = คงค่าเดิม · "" = ล้าง · <paramref name="OpsAlertsToGroup"/> null = คงค่าเดิม</summary>
 public record UpdateNextAccLineRequest(string? ChannelAccessToken, string? ChannelSecret, bool ClearAccessToken, bool ClearChannelSecret,
-    string? BasicId, string? BotUserId, string? GroupId);
+    string? BasicId, string? BotUserId, string? GroupId, bool? OpsAlertsToGroup = null);
 
 /// <summary>ผลทดสอบ token กับ LINE (<c>GET /v2/bot/info</c>) — ค่าจริงของบอทให้หน้าเว็บเสนอเติม Basic ID / Bot User ID</summary>
 public record NextAccLineTestDto(bool Ok, string Message, string? BasicId, string? BotUserId, string? DisplayName, string? WebhookEndpoint, bool? WebhookActive);
@@ -87,7 +89,9 @@ public class AdminLineMessagingController : ControllerBase
         var baseUrl = await _db.SiteSettings.AsNoTracking().Select(x => x.AppBaseUrl).FirstOrDefaultAsync(ct);
         return new NextAccLineAdminDto(hasToken, hasSecret, s.LineMessagingBasicId, s.LineMessagingBotUserId, s.LineMessagingGroupId,
             eff.Source, !string.IsNullOrWhiteSpace(cfg.AccessToken), NextAccLineConfigRule.WebhookUrl(baseUrl ?? _config["App:BaseUrl"]),
-            CustomerLineLinkRule.AddFriendUrl(eff.BasicId), warnings);
+            CustomerLineLinkRule.AddFriendUrl(eff.BasicId), warnings, s.LineMessagingOpsAlertsToGroup,
+            // รอบ 232: ป้ายนโยบายจากเซิร์ฟเวอร์ — กลุ่มกลางรับเฉพาะเรื่องของระบบ · เหตุการณ์ของผู้เช่าถูกกั้นด้วย NotificationAudiencePolicy เสมอ
+            NotificationAudiencePolicy.TenantNotPlatformMessage);
     }
 
     [HttpGet]
@@ -114,6 +118,7 @@ public class AdminLineMessagingController : ControllerBase
         s.LineMessagingBasicId = NextAccLineConfigRule.ApplyText(s.LineMessagingBasicId, basic, req.BasicId != null);
         s.LineMessagingBotUserId = NextAccLineConfigRule.ApplyText(s.LineMessagingBotUserId, bot, req.BotUserId != null);
         s.LineMessagingGroupId = NextAccLineConfigRule.ApplyText(s.LineMessagingGroupId, group, req.GroupId != null);
+        if (req.OpsAlertsToGroup is bool ops) s.LineMessagingOpsAlertsToGroup = ops;   // รอบ 232: null = คงค่าเดิม
         // ฝ่ายค้าน (B+D) ข้อ 5: token/secret ต้องคู่กัน — ไม่บันทึกครึ่งชุด (ยังไม่ SaveChanges ⇒ คำขอนี้ไม่มีผล)
         var pair = NextAccLineConfigRule.PairProblem(!string.IsNullOrWhiteSpace(s.LineMessagingChannelAccessToken), !string.IsNullOrWhiteSpace(s.LineMessagingChannelSecret));
         if (pair != null) return BadRequest(new ApiResponse<NextAccLineAdminDto>(false, null, pair));

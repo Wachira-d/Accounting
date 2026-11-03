@@ -20,8 +20,9 @@ public partial class LodgingService : ILodgingService
     private readonly IEmailService? _email;
     /// <summary>รอบ 212 แพ็ก A: อีเมลถึงแขก/ที่พักผ่านช่องกลางเดียว (ค่าตั้ง · ผู้ส่งของร้าน · โควตา · กันซ้ำ) — <c>TryNotifyAsync</c> ไม่เรียก <c>IEmailService</c> ตรงอีกแล้ว</summary>
     private readonly IBookingNotifier? _notifier;
-    /// <summary>แจ้งกลุ่ม LINE ของที่พักเมื่อมีจอง/สลิปใหม่ — ที่พักไทยเช็ค LINE
-    /// จริงกว่าอีเมล · ไม่ได้ตั้งค่า = เงียบ ไม่ error (LDG-P2-06)</summary>
+    /// <summary>รอบ 232 (232-Notify): ไม่ใช้แล้ว — จอง/สลิปใหม่ไปเครื่องแจ้งเตือนกลาง (<see cref="_notify"/> · lodging.booking_created / lodging.slip_uploaded) ·
+    /// คงพารามิเตอร์ไว้ให้ตำแหน่งอาร์กิวเมนต์ของผู้สร้าง (เทสต์/DI) ไม่เลื่อน</summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("CodeQuality", "IDE0052:Remove unread private members", Justification = "คงตำแหน่งอาร์กิวเมนต์ของผู้สร้าง")]
     private readonly ILineNotifyService? _line;
     private readonly IImageProcessingService? _images;
     /// <summary>มิเตอร์ — optional: บันทึกไม่ได้ต้องไม่ทำให้เช็คเอาต์พัง (เสียรายได้

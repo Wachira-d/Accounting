@@ -44,6 +44,16 @@ public static class NotificationEvents
     public const string PaymentVoucherGenerated = "document.pv_generated";
     public const string DocumentApproved        = "document.approved";
     public const string DocumentVoided          = "document.voided";
+    // ===== รอบ 232 (232-Notify): ย้ายจาก LineNotifyService.Notify*Async (ประกาศกลุ่ม LINE โดยไม่มีค่าตั้ง + ถอยไปกลุ่มกลางของแพลตฟอร์ม) =====
+    // ค่าตั้งต้นเมื่อบริษัทยังไม่ตั้ง = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) — Helpers/NotificationAudiencePolicy.DefaultMatrix
+    /// <summary>บันทึกรับชำระของเอกสารขาย (ตัดชำระ/ใบเสร็จ) — เดิม "💵 รับชำระเงินแล้ว" เข้ากลุ่ม LINE</summary>
+    public const string PaymentReceived         = "document.payment_received";
+    /// <summary>ใบแจ้งหนี้เพิ่งเกินกำหนดครั้งแรก (งาน dunning ภายใน) — เดิม "⚠️ ใบแจ้งหนี้เกินกำหนด" เข้ากลุ่ม LINE · คนละอย่างกับ `ar.dunning.*` ที่เป็นหนังสือทวงถึงลูกค้า</summary>
+    public const string InvoiceOverdue          = "ar.invoice_overdue";
+    /// <summary>ซิงก์ธนาคารได้รายการใหม่</summary>
+    public const string BankSyncCompleted       = "bank.sync_completed";
+    /// <summary>ซิงก์ร้านค้าออนไลน์ได้ออเดอร์ใหม่</summary>
+    public const string ECommerceSyncCompleted  = "ecommerce.sync_completed";
     /// <summary>รับชำระออนไลน์ค้างนานผิดปกติในโหมดใช้งานจริง — อาการที่ผู้ใช้เจอคือ
     /// "ลูกค้าจ่ายแล้วแต่ออเดอร์ยังค้าง" ซึ่งเจ้าของร้านไม่รู้จนลูกค้าโทรมา ·
     /// สาเหตุที่พบบ่อยสุดคือยังไม่ได้ตั้ง webhook URL ในแดชบอร์ดผู้ให้บริการ</summary>
@@ -100,6 +110,10 @@ public static class NotificationEvents
     /// <summary>รอบ 202 ทีม LO (คำตัดสินข้อ 127): เงินออนไลน์เข้า/แขกส่งสลิปแล้ว แต่ระบบยืนยันห้องไม่ได้ (ห้องเต็ม/hold หมด) —
     /// ระบบไม่คืนเงินเอง ต้องมีคนตัดสิน (ติดธงบนการจองด้วย · ตัวกรอง "เงินเข้าแต่ยืนยันไม่ได้" ในหน้าที่พัก)</summary>
     public const string LodgingPaymentUnconfirmed = "lodging.payment_unconfirmed";
+    /// <summary>รอบ 232: มีการจองใหม่จากเว็บ (เดิม "🏨 มีการจองใหม่" เข้ากลุ่ม LINE · เคารพ <c>Property.NotifyOwnerOnBooking</c> ที่จุดเรียก)</summary>
+    public const string LodgingBookingCreated   = "lodging.booking_created";
+    /// <summary>รอบ 232: แขกส่งสลิปรอตรวจ (เดิม "📎 แขกส่งสลิปแล้ว รอตรวจสอบ" เข้ากลุ่ม LINE)</summary>
+    public const string LodgingSlipUploaded     = "lodging.slip_uploaded";
 
     // ===== CMS =====
     public const string SitePublishSucceeded = "site.publish_succeeded";
@@ -130,6 +144,10 @@ public static class NotificationEvents
         ("Accounting", PaymentVoucherGenerated, "สร้างใบสำคัญจ่ายอัตโนมัติ"),
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
+        ("Accounting", PaymentReceived, "บันทึกรับชำระเงินของเอกสาร"),
+        ("Accounting", InvoiceOverdue, "ใบแจ้งหนี้เพิ่งเกินกำหนดชำระ (แจ้งภายใน)"),
+        ("Accounting", BankSyncCompleted, "ซิงก์ธนาคารได้รายการใหม่"),
+        ("Accounting", ECommerceSyncCompleted, "ซิงก์ร้านค้าออนไลน์ได้ออเดอร์ใหม่"),
         ("Accounting", GatewayPaymentStuck, "รับชำระออนไลน์ค้างนานผิดปกติ (ตรวจ webhook)"),
         ("Accounting", GatewayPaymentUnfulfilled, "เงินออนไลน์เข้าแล้วแต่ระบบบันทึกรับเงิน/ออกเอกสารไม่สำเร็จ (ต้องทำมือ)"),
         ("Accounting", DocumentQuotaLevel, "โควตาเอกสารเดือนนี้ใกล้เต็ม (80%) / เต็มแล้ว"),
@@ -150,6 +168,8 @@ public static class NotificationEvents
         ("Approval", ApprovalGranted, "อนุมัติคำขอแล้ว"),
         ("Approval", ApprovalRejected, "ปฏิเสธคำขอ"),
         ("Lodging",  LodgingPaymentUnconfirmed, "ที่พัก: เงินเข้า/ส่งสลิปแล้วแต่ยืนยันห้องไม่ได้ (ต้องตัดสิน)"),
+        ("Lodging",  LodgingBookingCreated, "ที่พัก: มีการจองใหม่จากเว็บ"),
+        ("Lodging",  LodgingSlipUploaded, "ที่พัก: แขกส่งสลิปรอตรวจ"),
         ("CMS",      SitePublishSucceeded, "เผยแพร่เว็บไซต์สำเร็จ"),
         ("CMS",      SitePublishFailed,    "เผยแพร่เว็บไซต์ล้มเหลว"),
     };

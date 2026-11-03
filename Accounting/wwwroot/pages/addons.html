@@ -70,8 +70,9 @@
     </div>
   </div>
 
-  <div class="modal" id="missionModal">
-    <div class="modal-content" style="max-width:620px">
+  <!-- รอบ 232: กล่องต้องอยู่ใต้ .modal-overlay (style.css ซ่อนจนกว่า .active) — เดิม .modal ตรง ๆ โผล่ค้างท้ายหน้า (คลาสเดียวกับ billing.html) -->
+  <div class="modal-overlay" id="missionModal">
+    <div class="modal" style="max-width:620px">
       <div class="modal-header">
         <h3 id="missionModalTitle">ภารกิจ</h3>
         <button class="modal-close" onclick="Page.closeMission()">&times;</button>
@@ -80,8 +81,8 @@
     </div>
   </div>
 
-  <div class="modal" id="slipModal">
-    <div class="modal-content" style="max-width:520px">
+  <div class="modal-overlay" id="slipModal">
+    <div class="modal" style="max-width:520px">
       <div class="modal-header">
         <h3 id="slipModalTitle">แนบสลิป</h3>
         <button class="modal-close" onclick="Page.closeSlip()">&times;</button>
@@ -95,8 +96,8 @@
   </div>
 
   <!-- รอบ 219 เฟส 2 ขั้น 3 (คำตัดสินเจ้าของข้อ 178 ⑤⑧): ซื้อส่วนเสริมที่ต้องจ่าย = เลือกวิธีชำระต่อการซื้อ + ติ๊กยอมรับเงื่อนไข (เซิร์ฟเวอร์บอกว่าต้องไหม) -->
-  <div class="modal" id="buyModal">
-    <div class="modal-content" style="max-width:520px">
+  <div class="modal-overlay" id="buyModal">
+    <div class="modal" style="max-width:520px">
       <div class="modal-header">
         <h3 id="buyModalTitle">เปิดใช้ส่วนเสริม</h3>
         <button class="modal-close" onclick="Layout.closeModal('buyModal')">&times;</button>
@@ -122,6 +123,7 @@
 
       async init() {
         if (!Layout.init('addons')) return;
+        Layout.mountBillingHub('buy');   // รอบ 232: หน้านี้ = แท็บ "ซื้อเพิ่ม/ส่วนเสริม › จัดการส่วนเสริม" ของ hub
         Layout.setTitle('ส่วนเสริมของฉัน');
         await this.loadAll();
       },

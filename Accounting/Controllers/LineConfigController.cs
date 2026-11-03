@@ -158,14 +158,19 @@ public class LineConfigController : ControllerBase
     }
 
     private async Task<LineConfigResponse> BuildAsync(Guid companyId, CompanySettings s)
-        => Build(s) with
+    {
+        return Build(s) with
         {
             CustomerChannel = _customerLinks == null ? null : await _customerLinks.GetChannelInfoAsync(companyId),
             RelinkInvite = _relink == null ? null : await _relink.GetProgressAsync(companyId),
             WebhookProblem = string.IsNullOrWhiteSpace(s.LineWebhookDestinationMismatch) ? null : CustomerRelinkInvitePlan.SecretOfOtherOaProblem,
             // ฝ่ายค้านรอบ 231 S1: ค่ากำกวม (base64 ถอดไม่ออก — ใช้เป็นค่าดิบ) ⇒ คำใบ้ให้กรอกใหม่ถ้าใช้ไม่ติด
             SecretHint = SecretWarnings.BuildHints(_secrets, ("Channel Access Token", s.LineChannelAccessToken), ("Channel Secret", s.LineChannelSecret)),
+            // รอบ 232 (232-Notify): ไม่มี OA ของร้าน ⇒ แจ้งเตือนธุรกิจไปกระดิ่ง/อีเมล ไม่ถอยไป OA กลาง — บอกผู้ใช้ตรงนี้ (ห้าม fallback เงียบ)
+            TenantLineNotice = NotificationAudiencePolicy.CompanyGroupNotice(
+                s.LineEnabled && _secrets.IsUsable(s.LineChannelAccessToken), !string.IsNullOrWhiteSpace(s.LineDefaultGroupId)),
         };
+    }
 
     private static LineConfigResponse Build(CompanySettings s) => new(
         Enabled: s.LineEnabled,

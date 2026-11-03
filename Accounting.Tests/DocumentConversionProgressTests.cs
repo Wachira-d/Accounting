@@ -119,7 +119,8 @@ public class DocumentConversionProgressTests
         var (_, reason) = DocumentService.ComputeLifecycle(Quotation(),
             Summary(p, Child("INV-2026-0030", DocumentType.Invoice), 1));
         Assert.Equal(ConversionProgressState.Partial, p.State);
-        Assert.Equal("◐ ออกใบแจ้งหนี้ INV-2026-0030 แล้ว · ไม่ทราบสัดส่วน", reason);
+        Assert.Equal("◐ ออกใบแจ้งหนี้ INV-2026-0030 แล้ว · " + DocumentConversionProgress.UnknownShareText, reason);
+        Assert.Contains("ไม่ทราบสัดส่วน", reason);
     }
 
     [Fact]
@@ -312,6 +313,53 @@ public class DocumentConversionProgressTests
             new[] { (DocumentType.PurchaseOrder, 4m, 0m) }, true);
         Assert.Equal(ConversionProgressState.Partial, p.State);
         Assert.Equal(40m, p.Percent);
+    }
+
+    // ── รอบ 232 (บั๊กเจ้าของ): หน้ารวมใบสั่งซื้อขึ้น "◐ ออกใบแจ้งหนี้ซื้อ PI-20261007-0004 แล้ว · ไม่ทราบสัดส่วน" ทั้งที่ยอด PI = ยอด PO เป๊ะ ──
+    private static Document PurchaseOrder() => new()
+    {
+        DocumentType = DocumentType.PurchaseOrder, DocumentNumber = "PO-20261007-0001",
+        Status = DocumentStatus.Approved, TotalAmount = 13_016.25m, BalanceDue = 13_016.25m,
+    };
+
+    [Fact]
+    public void รอบ232_ใบแจ้งหนี้ซื้อยอดเท่าใบสั่งซื้อเป๊ะ_เมื่อบรรทัดชี้ต้นทาง_ป้ายครบ()
+    {
+        // ยอดฐาน 12,164.72 ทั้งสองใบ · บรรทัด PI ชี้ SourceLineId ของ PO ⇒ แถว consumed ครบ
+        var p = DocumentConversionProgress.EvaluateByValue(3m, 12_164.72m,
+            new[] { (DocumentType.PurchaseInvoice, 1m, 8_000m), (DocumentType.PurchaseInvoice, 1m, 4_000m), (DocumentType.PurchaseInvoice, 1m, 164.72m) },
+            hasActiveLinkedChild: true);
+        var (status, reason) = DocumentService.ComputeLifecycle(PurchaseOrder(),
+            Summary(p, Child("PI-20261007-0004", DocumentType.PurchaseInvoice), 1));
+        Assert.Equal(ConversionProgressState.Full, p.State);
+        Assert.Equal("Done", status);
+        Assert.Equal("✓ ออกใบแจ้งหนี้ซื้อ PI-20261007-0004 แล้ว", reason);
+    }
+
+    [Fact]
+    public void รอบ232_ทิศตรงข้าม_ผูกหัวแต่บรรทัดไม่ชี้ต้นทาง_ยังไม่ทราบสัดส่วน_และบอกสาเหตุ()
+    {
+        // บรรทัด PI ไม่มี SourceLineId (หรือ dangling) ⇒ consumed ว่าง — ห้ามแต่งเป็น "ครบ" จากยอดหัวใบ · ข้อความต้องบอกสาเหตุให้ตามต่อได้
+        var p = DocumentConversionProgress.EvaluateByValue(3m, 12_164.72m,
+            Array.Empty<(DocumentType, decimal, decimal)>(), hasActiveLinkedChild: true);
+        var (status, reason) = DocumentService.ComputeLifecycle(PurchaseOrder(),
+            Summary(p, Child("PI-20261007-0004", DocumentType.PurchaseInvoice), 1));
+        Assert.Equal(ConversionProgressState.Partial, p.State);
+        Assert.Null(p.Percent);
+        Assert.Equal("PartiallyDone", status);
+        Assert.Equal("◐ ออกใบแจ้งหนี้ซื้อ PI-20261007-0004 แล้ว · " + DocumentConversionProgress.UnknownShareText, reason);
+        Assert.Contains("ไม่ได้จับคู่", reason);
+    }
+
+    [Fact]
+    public void รอบ232_สาย_PO_GRN_PI_แถววางบิลผ่านใบรับสินค้า_นับเข้าแกนวางบิลของใบสั่งซื้อ()
+    {
+        // ตัวโหลดเติมแถวของหลาน (PI ที่ยกบรรทัดจาก GRN) ด้วยชนิด PurchaseInvoice ⇒ แกนวางบิล = ครบ แม้แกนส่งมอบ (GRN) ก็ครบ
+        var p = DocumentConversionProgress.EvaluateByValue(2m, 1_000m,
+            new[] { (DocumentType.GoodsReceiptNote, 2m, 1_000m), (DocumentType.PurchaseInvoice, 2m, 1_000m) }, true);
+        Assert.Equal(ConversionProgressState.Full, p.State);
+        Assert.Equal(DocumentConversionProgress.Axis.Billing, DocumentConversionProgress.AxisOf(DocumentType.PurchaseInvoice));
+        Assert.Equal(DocumentConversionProgress.Axis.Delivery, DocumentConversionProgress.AxisOf(DocumentType.GoodsReceiptNote));
     }
 
     // ── ทีมตรวจเส้นแปลง ข้อ 9 (2026-10-08): ใบวางบิลจบได้ทั้งการรับชำระและการแปลงต่อครบ ──

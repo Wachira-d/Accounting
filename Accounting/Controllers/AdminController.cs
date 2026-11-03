@@ -401,6 +401,7 @@ public class AdminController : ControllerBase
         }
 
         var total = await query.CountAsync();
+        var openEndedFrom = Accounting.Helpers.SubscriptionExpiry.ThresholdFrom(DateTime.UtcNow);   // รอบ 232: ค่าแทน 2126 ⇒ "ไม่หมดอายุ" (สูตรเดียวกับ IsOpenEnded)
         var companies = await query
             .OrderByDescending(c => c.CreatedAt)
             .Skip((page - 1) * pageSize)
@@ -442,8 +443,11 @@ public class AdminController : ControllerBase
                     EndDate = c.Subscription.AccountSubscription != null
                         ? c.Subscription.AccountSubscription.EndDate
                         : c.Subscription.EndDate,
-                    // ฟรีถาวร → UI แสดง "ไม่หมดอายุ" แทนวันที่ sentinel +100 ปี
+                    // ฟรีถาวร → UI แสดง "ไม่หมดอายุ" แทนวันที่ sentinel +100 ปี · รอบ 232: ตัดสินจากค่าด้วย (ธงหลุดแล้วเคยโชว์ "2669")
                     c.Subscription.IsPermanentFree,
+                    IsOpenEnded = c.Subscription.IsPermanentFree
+                        || (c.Subscription.AccountSubscription != null ? c.Subscription.AccountSubscription.EndDate : c.Subscription.EndDate) >= openEndedFrom,
+                    c.Subscription.ExpiryNeedsReview,
                     // Surface the License attachment so the UI can show a
                     // "via License: <ownerName>" badge if it wants to.
                     ViaLicense = c.Subscription.AccountSubscriptionId != null,
@@ -736,6 +740,11 @@ public class AdminController : ControllerBase
                 company.Subscription.StartDate, company.Subscription.EndDate,
                 company.Subscription.NextBillingDate,
                 company.Subscription.IsPermanentFree,
+                IsOpenEnded = Accounting.Helpers.SubscriptionExpiry.IsOpenEnded(company.Subscription.IsPermanentFree, company.Subscription.EndDate, DateTime.UtcNow),   // รอบ 232
+                // ธงจาก migration หรือแถวที่กลายเป็นค่าแทนทีหลัง (ตัวตัดสินเดียว SubscriptionExpiry.NeedsExpiryReview) — ปุ่ม "กำหนดรอบ" รับทั้งสองกรณีอยู่แล้ว
+                ExpiryNeedsReview = company.Subscription.ExpiryNeedsReview
+                    || Accounting.Helpers.SubscriptionExpiry.NeedsExpiryReview(company.Subscription.IsPermanentFree, company.Subscription.Plan,
+                        company.Subscription.EndDate, DateTime.UtcNow),
                 company.Subscription.EnabledFeatures,
                 company.Subscription.AccountSubscriptionId,
                 company.Subscription.RenewalInvoiceNumber,
@@ -1688,6 +1697,20 @@ public class AdminController : ControllerBase
     /// <summary>
     /// Admin: ปรับวันหมดอายุ / ต่ออายุ
     /// </summary>
+    /// <summary>รอบ 232 (ฝ่ายค้าน B1): "กำหนดรอบ" ให้แผนจ่ายเงินที่ค้างค่าแทน "ไม่หมดอายุ" (ExpiryNeedsReview) — ผู้เขียนเดียว SubscriptionService.CloseOpenEndedAsync</summary>
+    [HttpPost("companies/{companyId:guid}/subscription/close-open-ended")]
+    public async Task<ActionResult<ApiResponse<SubscriptionResponse>>> AdminCloseOpenEnded(Guid companyId, [FromBody] AdminCloseOpenEndedRequest? request)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        try
+        {
+            var res = await _subscriptionService.CloseOpenEndedAsync(companyId, userId, request?.Reason);
+            return Ok(new ApiResponse<SubscriptionResponse>(true, res, $"กำหนดรอบแล้ว — ใช้ได้ถึง {res.EndDate:dd/MM/yyyy}"));
+        }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<SubscriptionResponse>(false, null, ex.Message)); }
+        catch (BusinessRuleException ex) { return Conflict(new ApiResponse<SubscriptionResponse>(false, null, ex.Message)); }
+    }
+
     [HttpPut("companies/{companyId:guid}/subscription/dates")]
     public async Task<ActionResult<ApiResponse<object>>> AdminChangeDates(
         Guid companyId, [FromBody] AdminChangeDatesRequest request)

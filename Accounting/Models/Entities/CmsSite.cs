@@ -93,6 +93,11 @@ public class Site : TenantEntity
     public string? RefundPolicyUrl { get; set; }
     public string? RefundPolicyMarkdown { get; set; }
     public DateTime? RefundPolicyUpdatedAt { get; set; }
+    /// <summary>รอบ 232 (232-Checkout-1): ฉบับ<b>ภาษาอังกฤษ</b>ของข้อความที่ร้านเขียนเอง (ฉบับเดียวกัน ภาษาเป็นแค่การแสดง · ตัวตัดสิน
+    /// <c>Helpers/LegalDocumentLanguage.Pick</c>) · ว่าง = ยังไม่มี ⇒ หน้าเว็บแสดงไทย + "English version not available yet" · แม่แบบของระบบมีเฉพาะไทย</summary>
+    public string? PrivacyPolicyMarkdownEn { get; set; }
+    public string? TermsOfServiceMarkdownEn { get; set; }
+    public string? RefundPolicyMarkdownEn { get; set; }
     /// <summary>จำนวนวันที่ลูกค้าแจ้งคืนสินค้าได้ (โทเคน <c>shop.returnWindowDays</c>) · null = 7</summary>
     public int? RefundReturnWindowDays { get; set; }
     /// <summary>จำนวนวันที่ร้านคืนเงินหลังอนุมัติ (โทเคน <c>shop.refundProcessingDays</c>) · null = 14</summary>

@@ -29,6 +29,9 @@
   <div class="sp">
     <div class="tabs"><a id="tabPrivacy" href="#">นโยบายความเป็นส่วนตัว</a><a id="tabTerms" href="#">ข้อกำหนดการใช้บริการ</a><a id="tabRefund" href="#">นโยบายการยกเลิกและคืนเงิน</a></div>
     <h1 id="spTitle">กำลังโหลด...</h1>
+    <!-- รอบ 232 (232-Checkout-1): สวิตช์ 2 ภาษา — แม่แบบของระบบมีเฉพาะไทย ⇒ กด English ได้ไทย + ประกาศจากเซิร์ฟเวอร์ (ไม่แต่ง) -->
+    <div id="spLang" style="font-size:13px;margin-bottom:8px"></div>
+    <div id="spLangNotice" style="display:none;background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:13px"></div>
     <div class="meta" id="spMeta"></div>
     <div id="spBody"></div>
   </div>
@@ -40,19 +43,24 @@
       const c = params.get('c') || '';
       // รอบ 219 ส่วน B: + นโยบายการยกเลิกและคืนเงิน (refund)
       const k = ['terms', 'refund'].includes(params.get('k')) ? params.get('k') : 'privacy';
-      const href = kind => `?c=${encodeURIComponent(c)}&k=${kind}`;
+      const lang = params.get('lang') === 'en' ? 'en' : 'th';
+      const href = (kind, l) => `?c=${encodeURIComponent(c)}&k=${kind}` + ((l || lang) === 'en' ? '&lang=en' : '');
+      document.getElementById('spLang').innerHTML = `ภาษา / Language: <a href="${href(k, 'th')}" style="${lang !== 'en' ? 'font-weight:700' : ''}">ไทย</a> · <a href="${href(k, 'en')}" style="${lang === 'en' ? 'font-weight:700' : ''}">English</a>`;
       document.getElementById('tabPrivacy').href = href('privacy');
       document.getElementById('tabTerms').href = href('terms');
       document.getElementById('tabRefund').href = href('refund');
       const body = document.getElementById('spBody');
       try {
-        const r = await fetch(`/api/public/reservations/legal/${encodeURIComponent(c)}/${k}`);
+        const r = await fetch(`/api/public/reservations/legal/${encodeURIComponent(c)}/${k}` + (lang === 'en' ? '?lang=en' : ''));
         const j = await r.json().catch(() => null);
         if (!r.ok || !j || !j.data) throw new Error((j && j.message) || 'ไม่พบเอกสารของร้านนี้');
         const d = j.data;
         document.title = `${d.title} | ${d.companyName}`;
         document.getElementById('spTitle').textContent = d.title;
         document.getElementById('spMeta').textContent = d.companyName;
+        const ln = document.getElementById('spLangNotice');
+        ln.textContent = d.languageNotice || '';
+        ln.style.display = d.languageNotice ? 'block' : 'none';
         // เซิร์ฟเวอร์แปลง + encode แล้ว (Helpers/LegalMarkdown)
         body.innerHTML = d.html || '';
         // ลิงก์สัมพัทธ์ในแม่แบบ ("privacy"/"terms") → แท็บของหน้านี้

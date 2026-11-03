@@ -36,6 +36,8 @@ public class LodgingReservationPaymentHandler : IPaymentCompletionHandler
 
     public async Task HandleSucceededAsync(PaymentIntent intent, CancellationToken ct = default)
     {
+        // รอบ 232 (232-Omise-2): ด่านชั้นสอง — เงินโหมดทดสอบห้ามมีผลทางธุรกิจ (dispatcher กันชั้นแรก · ตัวตัดสินเดียว TestModePaymentPolicy)
+        await Accounting.Helpers.TestModePaymentPolicy.GuardAsync(_db, intent, ct);
         var r = await _db.LodgingReservations.AsNoTracking()
             .Where(x => x.Id == intent.SourceId && x.CompanyId == intent.CompanyId)
             .Select(x => new { x.Id, x.ReservationNumber, x.Status, x.DepositPaid, x.PaymentReference })

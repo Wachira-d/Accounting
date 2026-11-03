@@ -378,6 +378,8 @@ builder.Services.AddScoped<Accounting.Services.Payments.IPaymentProviderConfigSe
 // รอบ 219 ส่วน B: ชำระค่าบริการ NextAcc ออนไลน์ผ่านช่องทางของแพลตฟอร์ม (intent ใต้บริษัทผู้ให้บริการ + ผู้จ่าย) — ไม่ใช่ gateway ของร้าน
 builder.Services.AddScoped<Accounting.Services.Payments.IPlatformPaymentService,
     Accounting.Services.Payments.PlatformPaymentService>();
+// รอบ 232 (232-Checkout-2): หน้าซื้อแพ็กเกจสาธารณะ (cart + checkout จบในเว็บ — Omise review) — เรียกของเดิมทั้งหมด (ConvertTrial · platform-pay · intents)
+builder.Services.AddScoped<Accounting.Services.Platform.IPublicCheckoutService, Accounting.Services.Platform.PublicCheckoutService>();
 // ผังบัญชีขา "เงินเข้า" (ธนาคาร vs บัญชีพัก 11340) — แยกเป็นบริการของตัวเองโดยตั้งใจ:
 // ถ้าอยู่ใน PaymentIntentService จะเกิด **วงกลม DI** เพราะ handler ต้องเรียกมัน
 // แต่ตัวมันรับ IEnumerable<IPaymentCompletionHandler> อยู่แล้ว
@@ -796,6 +798,8 @@ builder.Services.AddHostedService<AbandonedCartService>();
 // ทีม W4 R-25 — ล้างรูปตัวอย่างของตะกร้าที่ไม่ได้สั่ง (ผ่าน JobLock · ลบผ่าน IFileAttachmentService ตัวเดียว)
 builder.Services.AddHostedService<Accounting.Services.Implementations.Jobs.CartImageCleanupJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.DocumentAgingBackgroundService>();
+// รอบ 232: ซ่อม SourceLineId ของใบลูกที่ผูกหัวแต่บรรทัดไม่ชี้ใบต้นทาง (จับคู่แน่นอนเท่านั้น · JobLock · JobRunLog "SourceLineBackfill")
+builder.Services.AddHostedService<Accounting.Services.Background.SourceLineBackfillJob>();
 builder.Services.AddHostedService<Accounting.Services.Background.DepreciationBackgroundService>();
 builder.Services.AddHostedService<Accounting.Services.Background.AccountPlanExpiryReminderJob>();
 // รอบ 205 W3 (R-12 R-13): เตือนลูกค้าก่อนนัด (ReminderSent/ReminderSentAt มีมาแต่ไม่มีผู้เขียน) · แจ้งได้คิวซ้ำ · ปล่อยรอบคิวสำรองที่หมดเวลาถือ — Helpers/JobLock

@@ -62,6 +62,10 @@ public class Subscription : BaseEntity
     // ฟรีตลอดไป (ไม่หมดอายุ ไม่นับวัน trial)
     public bool IsPermanentFree { get; set; } = false;
 
+    /// <summary>รอบ 232 (ฝ่ายค้าน B1 ข): แผนจ่ายเงินที่ EndDate เป็นค่าแทน "ไม่หมดอายุ" (ค.ศ. 2126) โดยธงฟรีถาวร false — ประทับโดย migration (ไม่แก้ EndDate เงียบ) ·
+    /// งานต่ออายุ/เตือน/ปิดใช้ข้ามแถวนี้ · แอดมินกด "กำหนดรอบ" (<c>SubscriptionExpiry.CloseOpenEnded</c>) เพื่อปลด · ผู้เขียนเดียว <c>SubscriptionService.CloseOpenEndedAsync</c></summary>
+    public bool ExpiryNeedsReview { get; set; } = false;
+
     /// <summary>รอบ 231 (คำตัดสินข้อ 231-10): ชนิด — ทดลองใช้ / Free Edition / จ่ายเงิน (เดิมต้องอ่าน <see cref="IsPermanentFree"/> + <see cref="Status"/> + <c>LastPaymentDate</c> 3 ช่องเสมอ) ·
     /// ผู้เขียนเดียว <c>Helpers/SubscriptionKindRule.Derive</c> (เริ่มทดลอง/ฟรี · อนุมัติชำระ · ดาวน์เกรดถึงวันมีผล) · แถวเก่า backfill ด้วย SQL สูตรเดียวกัน
     /// (<c>Helpers/PlatformPriceOverrideMigration</c>) · <c>Unknown</c> = ยังไม่ backfill</summary>

@@ -113,6 +113,10 @@ public interface ISubscriptionService
     /// <summary>รอบ 230 (ฝ่ายค้าน S3): ยกเลิกรายการค่าแพ็กเกจที่มีคูปอง/ส่วนต่าง ค้างไม่จ่ายเกินระยะจอง + ปลดคูปอง — คืนจำนวนที่ยกเลิก</summary>
     Task<int> ExpireStaleQuotedPaymentsAsync();
     Task ProcessExpiredSubscriptionsAsync();       // ตรวจสอบ subscription หมดอายุ
+    /// <summary>รอบ 232 (ฝ่ายค้าน B1): แอดมิน "กำหนดรอบ" ให้แผนจ่ายเงินที่ค้างค่าแทน "ไม่หมดอายุ" (ExpiryNeedsReview) — EndDate = now + 1 รอบ · ประวัติ/audit/แจ้งเจ้าของ</summary>
+    Task<SubscriptionResponse> CloseOpenEndedAsync(Guid companyId, string performedBy, string? reason = null);
+    /// <summary>จำนวนแถว ExpiryNeedsReview (งานพื้นหลังข้าม · นับใน JobRun)</summary>
+    Task<int> CountExpiryNeedsReviewAsync();
 }
 
 /// <summary>พื้นที่ที่ใช้จริงของ pool (ไบต์) + เพดานของแพ็กเกจ</summary>

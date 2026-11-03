@@ -134,7 +134,7 @@ public class CmsRenderingService : ICmsRenderingService
     /// <summary>รอบ 214 (คำตัดสินข้อ 173 B): หน้านโยบายความเป็นส่วนตัว/ข้อกำหนดของร้าน — ข้อความที่ร้านเขียน หรือแม่แบบของระบบ
     /// (ชื่อ/ที่อยู่/เลขผู้เสียภาษี/ช่องทางติดต่อจากโทเคนชุดเดียวกับเนื้อหาเว็บ — ค่าระดับเว็บชนะบริษัท) · เว็บต้องเผยแพร่แล้ว (เหมือน init) ·
     /// CompanyId scope · โหมด external ก็ยังคืนเนื้อความ (สำรองเมื่อลิงก์ภายนอกล่ม) พร้อม URL ให้หน้าเว็บพาไป</summary>
-    public async Task<StorefrontLegalPageResponse?> GetLegalPageAsync(Guid companyId, Guid siteId, string kind)
+    public async Task<StorefrontLegalPageResponse?> GetLegalPageAsync(Guid companyId, Guid siteId, string kind, string? lang = null)
     {
         if (!Accounting.Helpers.LegalDocumentDefaults.IsKind(kind)) return null;
         var site = await _db.Sites.AsNoTracking()
@@ -143,17 +143,32 @@ public class CmsRenderingService : ICmsRenderingService
         var (url, custom, updatedAt) = LegalFields(site, kind);
         var link = Accounting.Helpers.CmsLegalPages.Resolve(kind, url, custom);
         var tokens = await BuildLegalTokensAsync(companyId, site, kind);
+        // รอบ 232 (232-Checkout-1): ภาษาเป็นแค่การแสดง — ฉบับอังกฤษมีเฉพาะข้อความที่ร้านเขียนเอง (แม่แบบของระบบเป็นไทย) · ขอ en แต่ไม่มี ⇒ ไทย + ประกาศ (ไม่แต่ง)
+        var thai = Accounting.Helpers.CmsLegalPages.EffectiveMarkdown(kind, custom);
+        var choice = Accounting.Helpers.LegalDocumentLanguage.Pick(thai, string.IsNullOrWhiteSpace(custom) ? null : LegalMarkdownEn(site, kind), lang);
         return new StorefrontLegalPageResponse
         {
             Kind = kind,
-            Title = Accounting.Helpers.LegalDocumentDefaults.Title(kind),
+            Title = Accounting.Helpers.LegalDocumentLanguage.TitleFor(kind, choice.Language),
             Mode = link.Mode,
             ExternalUrl = link.ExternalUrl,
-            Html = Accounting.Helpers.LegalMarkdown.Render(Accounting.Helpers.CmsLegalPages.EffectiveMarkdown(kind, custom), tokens),
+            Html = Accounting.Helpers.LegalMarkdown.Render(choice.Markdown, tokens),
             UpdatedAt = string.IsNullOrWhiteSpace(custom) ? null : updatedAt,
             SiteName = site.Name,
+            Language = choice.Language,
+            EnglishAvailable = choice.EnglishAvailable,
+            LanguageNotice = choice.Notice,
         };
     }
+
+    /// <summary>รอบ 232: ฉบับอังกฤษของข้อความที่ร้านเขียน — คู่กับ <see cref="LegalFields"/> (ชนิดไม่รู้จัก = โยนเหมือนกัน)</summary>
+    private static string? LegalMarkdownEn(Models.Entities.Site site, string kind) => kind switch
+    {
+        Accounting.Helpers.LegalDocumentDefaults.KindPrivacy => site.PrivacyPolicyMarkdownEn,
+        Accounting.Helpers.LegalDocumentDefaults.KindTerms => site.TermsOfServiceMarkdownEn,
+        Accounting.Helpers.LegalDocumentDefaults.KindRefund => site.RefundPolicyMarkdownEn,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "ชนิดเอกสารกฎหมายไม่รู้จัก"),
+    };
 
     /// <summary>ช่องของเว็บตามชนิดเอกสาร — ตัวเดียวของหน้าแสดง (เดิม ternary สองทาง: ชนิดที่สามตกเป็น privacy เงียบ ๆ)</summary>
     private static (string? Url, string? Markdown, DateTime? UpdatedAt) LegalFields(Models.Entities.Site site, string kind) => kind switch

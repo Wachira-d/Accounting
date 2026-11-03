@@ -19,7 +19,9 @@ public sealed record UsageHistoryInvoice(Guid DocumentId, string DocumentNumber,
 public sealed record UsageHistoryMonth(string Period, string Label, bool IsCurrent, IReadOnlyList<UsageHistoryBar> Bars, int AiCallsTotal, int AiCallsPaid,
     decimal OverageTotal, IReadOnlyList<UsageHistoryInvoice> Invoices, DateTime? SnapshotAtUtc);
 
-public sealed record UsageHistoryResponse(IReadOnlyList<UsageHistoryMonth> Months, IReadOnlyList<object> Resources, int RetentionMonths);
+/// <param name="FirstSnapshotPeriod">รอบ 232: งวด (yyyy-MM) แรกที่มี snapshot ของบริษัทนี้ · null = ยังไม่มี snapshot เดือนก่อนเลย — หน้าเว็บบอกตรง ๆ "เริ่มเก็บตั้งแต่ …" ไม่แต่งเลข</param>
+public sealed record UsageHistoryResponse(IReadOnlyList<UsageHistoryMonth> Months, IReadOnlyList<object> Resources, int RetentionMonths,
+    string? FirstSnapshotPeriod = null, string? FirstSnapshotLabel = null);
 
 /// <summary>
 /// รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §D · §B.5 · คำตัดสินข้อ 231-5/231-6/231-7) — <b>ผู้เขียน snapshot การใช้งานรายเดือน + ผู้อ่านประวัติ ตัวเดียว</b>
@@ -278,7 +280,13 @@ public class UsageSnapshotService : IUsageSnapshotService
         }
         var resources = UsageHistoryRule.DisplayResources.Select(r => (object)new { key = r.Key, label = r.Label, unit = r.Unit }).ToList();
         resources.Add(new { key = UsageHistoryRule.AiKey, label = "การเรียก AI (ข้อมูลอย่างเดียว · ไม่มีเพดาน · ไม่คิดเงิน)", unit = "ครั้ง" });
-        return new UsageHistoryResponse(monthsOut, resources, UsageHistoryRule.RetentionMonths);
+        // รอบ 232: งวดแรกที่มี snapshot (ทุกงวด ไม่ใช่แค่ช่วงที่ขอ) — งวด yyyy-MM เทียบเป็นข้อความได้ · ไม่มี = null (หน้าเว็บบอก "เริ่มเก็บตั้งแต่เดือนนี้")
+        // ฝ่ายค้าน N2: ไม่นับแถว Backfill (เติมย้อนหลังจากตารางต้นทาง) — "เริ่มเก็บ" = snapshot จริงงวดแรก
+        var firstPeriod = await _db.UsageMonthlySnapshots.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.Period != current && s.Source != UsageSnapshotSource.Backfill)
+            .OrderBy(s => s.Period).Select(s => s.Period).FirstOrDefaultAsync(ct);
+        return new UsageHistoryResponse(monthsOut, resources, UsageHistoryRule.RetentionMonths,
+            firstPeriod, firstPeriod == null ? null : UsageHistoryRule.Label(firstPeriod));
     }
 
     /// <summary>เติมย้อนหลังครั้งเดียวจากตารางต้นทาง (วิธีเดียวกับ AdminCompanyUsageController: เอกสารที่ไม่ใช่ร่าง/ปฏิเสธ · สแกน OCR) · Source=Backfill · ไม่ทับ Rollover</summary>

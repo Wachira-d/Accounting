@@ -36,7 +36,9 @@
     <!-- ===== Admin Matrix ===== -->
     <div id="paneMatrix" class="tab-pane">
       <div style="background:#fef3c7;border:1px solid #fcd34d;padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;color:#78350f">
-        <strong>Default-deny:</strong> ทุกช่องเริ่มจาก "ปิด" — ติ๊กเฉพาะ event × ผู้รับ × ช่องทาง ที่ต้องการให้แจ้งจริง ๆ
+        <strong>Default-deny:</strong> ทุกช่องเริ่มจาก "ปิด" — ติ๊กเฉพาะ event × ผู้รับ × ช่องทาง ที่ต้องการให้แจ้งจริง ๆ ·
+        ช่อง <strong>กลุ่ม LINE ของบริษัท</strong> ส่งเข้า "LINE กลุ่มของทีม" ผ่าน LINE OA ของร้านเอง (ตั้งที่ ตั้งค่า → แจ้งเตือนทาง LINE) — ไม่มี OA ของร้าน = ไม่ส่ง (ไม่ผ่าน OA กลางของ NextAcc) ·
+        แถวที่ติดป้าย "ค่าตั้งต้นของระบบ" คือค่าที่ระบบใช้อยู่จนกว่าคุณจะบันทึกเอง
       </div>
       <div id="matrixContainer" style="overflow-x:auto;background:#fff;border-radius:6px"></div>
       <div style="display:flex;justify-content:flex-end;margin-top:12px">
@@ -123,15 +125,19 @@
         const roles = cat.recipientRoles;
         const groups = {};
         cat.events.forEach(e => { (groups[e.domain] ||= []).push(e); });
+        // รอบ 232 (232-Notify): ช่องที่ 4 "กลุ่ม LINE ของบริษัท" (OA ของร้าน · หนึ่งครั้งต่อเหตุการณ์ · ไม่ขึ้นกับบทบาท) — เซิร์ฟเวอร์ส่งแถวค่าตั้งต้น (isDefault) มาให้
+        // สำหรับเหตุการณ์ที่ย้ายจากประกาศกลุ่ม LINE เดิม · หน้านี้ไม่มีสำเนากติกา (กติกาอยู่ NotificationAudiencePolicy)
         let html = '<table class="matrix-table"><thead><tr><th class="event">เหตุการณ์</th>';
         roles.forEach(r => { html += `<th class="role" colspan="3">${roleLabels[r] || r}</th>`; });
-        html += '</tr><tr><th></th>';
+        html += '<th class="role">กลุ่ม LINE<br>ของบริษัท</th></tr><tr><th></th>';
         roles.forEach(() => { html += '<th class="role" style="font-size:10px;font-weight:400">Sys / Email / LINE</th>'; });
-        html += '</tr></thead><tbody>';
+        html += '<th class="role" style="font-size:10px;font-weight:400">OA ของร้าน</th></tr></thead><tbody>';
         Object.keys(groups).forEach(domain => {
-          html += `<tr><th class="domain" colspan="${1 + roles.length}">${Layout.esc(domain)}</th></tr>`;
+          html += `<tr><th class="domain" colspan="${2 + roles.length}">${Layout.esc(domain)}</th></tr>`;
           groups[domain].forEach(ev => {
-            html += `<tr><td class="event"><div style="font-weight:600">${Layout.esc(ev.label)}</div><div style="font-size:10px;color:#94a3b8">${Layout.esc(ev.key)}</div></td>`;
+            const anyDefault = roles.some(role => (this._matrix[ev.key + '|' + role] || {}).isDefault);
+            const anyGroup = roles.some(role => (this._matrix[ev.key + '|' + role] || {}).enableLineGroup);
+            html += `<tr><td class="event"><div style="font-weight:600">${Layout.esc(ev.label)}</div><div style="font-size:10px;color:#94a3b8">${Layout.esc(ev.key)}${anyDefault ? ' · <span style="color:#d97706">ค่าตั้งต้นของระบบ (ยังไม่ได้บันทึกเอง)</span>' : ''}</div></td>`;
             roles.forEach(role => {
               const key = ev.key + '|' + role;
               const s = this._matrix[key] || { enableSystem: false, enableEmail: false, enableLine: false };
@@ -141,6 +147,7 @@
                 <label><input type="checkbox" data-k="${key}" data-c="line" ${s.enableLine ? 'checked' : ''}>LINE</label>
               </div></td>`;
             });
+            html += `<td><div class="channel-cell"><label><input type="checkbox" data-g="${Layout.esc(ev.key)}" ${anyGroup ? 'checked' : ''}>กลุ่ม</label></div></td>`;
             html += '</tr>';
           });
         });
@@ -150,13 +157,17 @@
       async saveMatrix() {
         const api = Layout.api(); if (!api) return;
         const settings = [];
-        document.querySelectorAll('#matrixContainer input[type=checkbox]').forEach(cb => {
+        document.querySelectorAll('#matrixContainer input[type=checkbox][data-k]').forEach(cb => {
           const [eventKey, role] = cb.dataset.k.split('|');
           let row = settings.find(s => s.eventKey === eventKey && s.recipientRole === role);
-          if (!row) { row = { eventKey, recipientRole: role, enableSystem: false, enableEmail: false, enableLine: false }; settings.push(row); }
+          if (!row) { row = { eventKey, recipientRole: role, enableSystem: false, enableEmail: false, enableLine: false, enableLineGroup: false }; settings.push(row); }
           if (cb.dataset.c === 'sys') row.enableSystem = cb.checked;
           if (cb.dataset.c === 'email') row.enableEmail = cb.checked;
           if (cb.dataset.c === 'line') row.enableLine = cb.checked;
+        });
+        // รอบ 232: "กลุ่ม LINE ของบริษัท" เป็นค่าต่อเหตุการณ์ — เก็บบนทุกแถวบทบาทของเหตุการณ์นั้น (เครื่องแจ้งเตือนส่งหนึ่งครั้งเมื่อแถวใดติ๊ก)
+        document.querySelectorAll('#matrixContainer input[type=checkbox][data-g]').forEach(cb => {
+          settings.filter(s => s.eventKey === cb.dataset.g).forEach(s => { s.enableLineGroup = cb.checked; });
         });
         try {
           await api.bulkUpsertNotificationSettings({ settings });

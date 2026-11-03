@@ -29,6 +29,7 @@
 
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;flex-wrap:wrap;gap:12px">
         <div>
+          <div style="font-size:12px;margin-bottom:4px"><a href="/admin/plans.html" style="color:#2563eb">← แอดมิน › แพ็กเกจ &amp; บิลลิ่ง</a></div>
           <h1 style="margin:0;font-size:24px;font-weight:700">💰 ส่วนเสริมและราคา</h1>
           <p style="margin:4px 0 0;color:#64748b;font-size:14px">
             ตั้งราคา · เปิด/ปิดการขาย · กำหนดวันทดลองใช้ และแพ็กเกจขั้นต่ำของแต่ละส่วนเสริม
@@ -124,8 +125,9 @@
     </div>
   </div>
 
-  <div class="modal" id="rewardModal">
-    <div class="modal-content" style="max-width:640px">
+  <!-- รอบ 232: กล่องต้องอยู่ใต้ .modal-overlay (style.css ซ่อนจนกว่า .active) — เดิม .modal ตรง ๆ โผล่ค้างท้ายหน้า (คลาสเดียวกับ billing.html) -->
+  <div class="modal-overlay" id="rewardModal">
+    <div class="modal" style="max-width:640px">
       <div class="modal-header">
         <h3 id="rwTitle">ภารกิจแลกโควตา</h3>
         <button class="modal-close" onclick="Layout.closeModal('rewardModal')">&times;</button>
@@ -176,8 +178,8 @@
     </div>
   </div>
 
-  <div class="modal" id="editModal">
-    <div class="modal-content" style="max-width:680px">
+  <div class="modal-overlay" id="editModal">
+    <div class="modal" style="max-width:680px">
       <div class="modal-header">
         <h3 id="editTitle">แก้ไขส่วนเสริม</h3>
         <button class="modal-close" onclick="Layout.closeModal('editModal')">&times;</button>

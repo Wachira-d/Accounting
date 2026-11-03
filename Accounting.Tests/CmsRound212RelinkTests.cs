@@ -318,7 +318,7 @@ public class CmsRound212RelinkTests
         var line = F4Proxy<ILineNotifyService>.Create((m, a) =>
         {
             if (m == nameof(ILineNotifyService.TryPushViaNextAccAsync)) { log.Add("push-nextacc"); return pushOk ? LinePushResult.Success : LinePushResult.Fail("LINE ตอบ 400"); }
-            if (m == nameof(ILineNotifyService.TryPushToUserAsync)) { log.Add("push-company"); return true; }
+            if (m == nameof(ILineNotifyService.TryPushToUserAsync)) { log.Add("push-company"); return LinePushResult.Success; }   // รอบ 232: คืน LinePushResult
             return null;
         });
         var quota = F4Proxy<INotifyQuotaService>.Create((m, a) => m switch

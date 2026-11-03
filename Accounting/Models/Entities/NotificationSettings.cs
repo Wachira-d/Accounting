@@ -22,7 +22,11 @@ public class NotificationSetting : TenantEntity
 
     public bool EnableSystem { get; set; } = false;
     public bool EnableEmail { get; set; } = false;
+    /// <summary>LINE 1:1 ถึงผู้รับตามบทบาท (ผูกผ่านบอทกลาง "ผูก 123456")</summary>
     public bool EnableLine { get; set; } = false;
+    /// <summary>รอบ 232 (232-Notify): ประกาศเข้า<b>กลุ่ม LINE ของบริษัท</b> (<c>CompanySettings.LineDefaultGroupId</c> ผ่าน OA ของบริษัท) หนึ่งครั้งต่อเหตุการณ์ —
+    /// แทน <c>LineNotifyService.Notify*Async</c> เดิมที่ประกาศโดยไม่มีค่าตั้งและถอยไปกลุ่มกลางของแพลตฟอร์ม · บริษัทไม่มี OA ⇒ ไม่ส่ง (ไม่ถอย) · ผู้อ่าน <c>NotificationEngine</c></summary>
+    public bool EnableLineGroup { get; set; } = false;
 }
 
 /// <summary>

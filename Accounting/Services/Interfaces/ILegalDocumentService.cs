@@ -3,7 +3,9 @@ namespace Accounting.Services.Interfaces;
 /// <summary>ฉบับของเอกสารที่แสดง — <c>Source</c> = "published" (แถวที่แอดมินเผยแพร่) | "builtin" (ฉบับตั้งต้นในโค้ด)</summary>
 public sealed record LegalDocumentView(
     string Kind, string Title, string Version, DateOnly EffectiveDate, string BodyMarkdown,
-    string Source, DateTime? PublishedAt, string? ChangeSummary);
+    string Source, DateTime? PublishedAt, string? ChangeSummary,
+    // รอบ 232 (232-Checkout-1): ฉบับอังกฤษของฉบับเดียวกัน (null = ยังไม่มี · ฉบับตั้งต้นในโค้ดไม่มี) — เลือกแสดงด้วย Helpers/LegalDocumentLanguage.Pick
+    string? BodyMarkdownEn = null);
 
 /// <summary>เวอร์ชันของสองเอกสาร + เวอร์ชันความยินยอมรวม (<c>LegalDocumentPolicy.ConsentVersion</c>)</summary>
 public sealed record LegalConsentVersion(string PrivacyVersion, string TermsVersion, string ConsentVersion);
@@ -16,10 +18,11 @@ public sealed record LegalHistoryItem(
     string Version, DateOnly EffectiveDate, DateTime? PublishedAt, string? PublishedBy, string? ChangeSummary,
     bool IsCurrent, bool IsUpcoming, bool IsBuiltIn);
 
-public sealed record LegalDraftInput(string? Version, DateOnly? EffectiveDate, string? BodyMarkdown, string? ChangeSummary);
+public sealed record LegalDraftInput(string? Version, DateOnly? EffectiveDate, string? BodyMarkdown, string? ChangeSummary,
+    string? BodyMarkdownEn = null);   // รอบ 232: null = ไม่เปลี่ยน · "" = ล้างฉบับอังกฤษ (เหมือนช่องอื่นของระบบ)
 
 public sealed record LegalDraftView(Guid Id, string Version, DateOnly EffectiveDate, string BodyMarkdown, string? ChangeSummary,
-    DateTime CreatedAt, DateTime? UpdatedAt, string? UpdatedBy);
+    DateTime CreatedAt, DateTime? UpdatedAt, string? UpdatedBy, string? BodyMarkdownEn = null);
 
 /// <summary>
 /// รอบ 214 (คำตัดสินข้อ 173) — เอกสารทางกฎหมายของแพลตฟอร์ม (นโยบายความเป็นส่วนตัว · ข้อกำหนดการใช้งาน):
@@ -53,6 +56,10 @@ public interface ILegalDocumentService
     /// <summary>เผยแพร่ร่าง (ตรวจด้วย <c>LegalDocumentPolicy.ValidatePublish</c>) — หลังจากนี้แถวแก้ไม่ได้</summary>
     Task<LegalHistoryItem> PublishDraftAsync(string kind, string actor, string? ipAddress = null, CancellationToken ct = default);
     Task<bool> DiscardDraftAsync(string kind, string actor, CancellationToken ct = default);
+    /// <summary>รอบ 232 (ฝ่ายค้าน N3): เติม/แก้/ล้าง ("" หรือช่องว่าง) ฉบับอังกฤษของฉบับที่เผยแพร่แล้ว — <b>ไม่ขยับเลขฉบับ</b> (ไทยเป็นฉบับผูกพัน) · audit chain ·
+    /// ตัวตัดสิน <c>LegalDocumentLanguage.PublishedEnglishRefusal</c></summary>
+    Task<LegalDocumentView> SetPublishedEnglishAsync(string kind, string version, string? bodyMarkdownEn, string actor, string? ipAddress = null,
+        CancellationToken ct = default);
 
     /// <summary>ฝ่ายค้านรอบ 214 S3: หลักฐานยอมรับนโยบายทั้งหมดของผู้ใช้เอง (ทุกช่อง + ผลตรวจ) — DSR ม.30/31 ระดับแพลตฟอร์ม</summary>
     Task<List<Dictionary<string, object?>>> GetMyAcceptancesAsync(Guid userId, CancellationToken ct = default);

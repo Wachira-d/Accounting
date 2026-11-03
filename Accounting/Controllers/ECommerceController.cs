@@ -11,12 +11,14 @@ namespace Accounting.Controllers;
 public class ECommerceController : ControllerBase
 {
     private readonly IECommerceService _service;
-    private readonly ILineNotifyService _lineNotify;
+    /// <summary>รอบ 232 (232-Notify): แจ้ง "ซิงก์ร้านค้าออนไลน์สำเร็จ" ผ่านเครื่องแจ้งเตือนกลาง (ค่าตั้งของบริษัท) — เดิม <c>NotifyECommerceSyncAsync</c> ประกาศกลุ่ม LINE
+    /// โดยถอยไปกลุ่มกลางของแพลตฟอร์มเมื่อบริษัทไม่มี OA</summary>
+    private readonly INotificationEngine? _notify;
 
-    public ECommerceController(IECommerceService service, ILineNotifyService lineNotify)
+    public ECommerceController(IECommerceService service, INotificationEngine? notify = null)
     {
         _service = service;
-        _lineNotify = lineNotify;
+        _notify = notify;
     }
 
     [HttpGet("connections")]
@@ -37,8 +39,14 @@ public class ECommerceController : ControllerBase
     public async Task<IActionResult> SyncOrders(Guid companyId, Guid connectionId, [FromQuery] DateTime? since = null)
     {
         var result = await _service.SyncOrdersAsync(companyId, connectionId, since);
-        if (result.Status == "Success" && result.NewOrders > 0)
-            await _lineNotify.NotifyECommerceSyncAsync(companyId, result.Platform, result.NewOrders, result.TotalAmount);
+        if (result.Status == "Success" && result.NewOrders > 0 && _notify != null)
+            await _notify.DispatchAsync(companyId, Accounting.Models.Constants.NotificationEvents.ECommerceSyncCompleted, new NotificationContext
+            {
+                Title = $"🛒 Sync {result.Platform} สำเร็จ",
+                Message = $"📦 ออเดอร์ใหม่ {result.NewOrders} รายการ\n💰 ยอดรวม {result.TotalAmount:N2} บาท",
+                ActionUrl = "/pages/integrations.html",
+                EntityType = "ECommerceConnection", EntityId = connectionId,
+            });
         return Ok(new ApiResponse<object>(true, result));
     }
 

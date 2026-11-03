@@ -40,25 +40,15 @@
     <div class="page-header">
       <div><h2 class="page-title">แพ็กเกจและการชำระเงิน</h2>
         <p class="page-subtitle">ใช้ไปเท่าไร · ซื้อเพิ่ม · ต่ออายุ · ใบแจ้งหนี้ · ใบเสร็จ ของบริษัทนี้ (ที่เดียว)</p></div>
-      <!-- รอบ 230 (QUOTA_ADDON §D.3): hub เดียว 4 แท็บ — หน้าย่อยเดิมเปิดได้จากปุ่มเหล่านี้ (เมนูข้างเหลือรายการเดียว) -->
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <a href="/pages/subscription.html" class="btn btn-secondary">💎 รายละเอียดแพ็กเกจ/ทดลองใช้</a>
-        <a href="/pages/addons.html" class="btn btn-secondary">🧩 ส่วนเสริม</a>
-        <!-- รอบ 231: usage.html ยุบเข้าแท็บ "ใช้ไปเท่าไร" (URL เดิม redirect มาที่นี่) -->
-        <a href="/pages/account-subscription.html" class="btn btn-secondary">🎫 License (หลายบริษัท)</a>
-      </div>
+      <!-- รอบ 232: ปุ่มลัด 3 ปุ่มเดิม (รายละเอียดแพ็กเกจ · ส่วนเสริม · License) ยุบเป็นแท็บของ hub — ตารางแท็บอยู่ที่ Layout.billingHub ตัวเดียว (หน้าย่อยเดิมใช้ตารางเดียวกัน) -->
     </div>
     <div id="notice"></div>
     <div class="kpis" id="kpis"></div>
-    <div class="hub-tabs" role="tablist" id="hubTabs">
-      <button type="button" class="hub-tab" role="tab" data-tab="plan">💎 แพ็กเกจ</button>
-      <button type="button" class="hub-tab" role="tab" data-tab="usage">📊 ใช้ไปเท่าไร / โควตา</button>
-      <button type="button" class="hub-tab" role="tab" data-tab="buy">➕ ซื้อเพิ่ม / ส่วนเสริม</button>
-      <button type="button" class="hub-tab" role="tab" data-tab="docs">🧾 ใบแจ้งหนี้ &amp; ใบเสร็จ</button>
-    </div>
+    <!-- รอบ 232: แท็บสร้างจาก Layout.billingHub (ตัวตั้งเดียว · แท็บ "License หลายบริษัท" เป็นหน้าแยก) — HubTabs.init() เติม -->
+    <div class="hub-tabs" role="tablist" id="hubTabs"></div>
 
     <section class="hub-pane" data-pane="plan">
-      <div class="card"><h3>แพ็กเกจปัจจุบัน</h3><div id="plan">กำลังโหลด...</div></div>
+      <div class="card"><h3>แพ็กเกจปัจจุบัน <a href="/pages/subscription.html" class="muted" style="font-weight:400;margin-left:8px">รายละเอียด / ทดลองใช้ →</a></h3><div id="plan">กำลังโหลด...</div></div>
       <div class="card" id="planPendingCard" style="display:none"><h3>รายการชำระค่าแพ็กเกจที่รอชำระ</h3><div id="planPending"></div></div>
       <!-- รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): เปลี่ยน/อัปเกรด — ราคา/ส่วนต่างตามวันที่เหลือ/คูปอง คิดที่เซิร์ฟเวอร์ (GET …/plan-quote) -->
       <div class="card"><h3>เปลี่ยน / อัปเกรดแพ็กเกจ</h3><div id="planChange">กำลังโหลด...</div></div>
@@ -97,8 +87,9 @@
   </div>
 
   <!-- รอบ 230: ชำระรายการค่าแพ็กเกจ/ส่วนต่างอัปเกรด (ยอดจากเซิร์ฟเวอร์) — ออนไลน์ผ่านช่องทาง NextAcc หรือโอน + แนบสลิป -->
-  <div class="modal" id="planPayModal">
-    <div class="modal-content" style="max-width:560px">
+  <!-- รอบ 232: กล่องต้องอยู่ใต้ .modal-overlay (style.css ซ่อนด้วย opacity/pointer-events จนกว่า .active) — เดิมใช้ .modal ตรง ๆ ⇒ โผล่ค้างท้ายหน้า 2 กล่อง -->
+  <div class="modal-overlay" id="planPayModal">
+    <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <h3 id="planPayTitle">ชำระค่าแพ็กเกจ</h3>
         <button class="modal-close" onclick="PlanTab.closePay()">&times;</button>
@@ -111,8 +102,8 @@
     </div>
   </div>
 
-  <div class="modal" id="payModal">
-    <div class="modal-content" style="max-width:560px">
+  <div class="modal-overlay" id="payModal">
+    <div class="modal" style="max-width:560px">
       <div class="modal-header">
         <h3 id="payModalTitle">ชำระใบแจ้งหนี้</h3>
         <button class="modal-close" onclick="Bill.closePay()">&times;</button>
@@ -150,7 +141,7 @@
           const res = await API.get(this.base());
           this.data = res.data;
           this.render();
-          if (window.PlanTab) PlanTab.render();
+          PlanTab.render();   // รอบ 232: เดิม `if (window.PlanTab)` — const ระดับสคริปต์ไม่อยู่บน window ⇒ ไม่เคยเรนเดอร์ (การ์ดค้าง "กำลังโหลด...")
         } catch (e) {
           document.getElementById('plan').innerHTML = `<div class="note bad">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
           ['invoices', 'payments', 'receipts', 'addons'].forEach(id => document.getElementById(id).innerHTML = '');
@@ -171,7 +162,7 @@
             <div><div class="muted">แพ็กเกจ</div><b>${e(p.planName || p.plan)}</b></div>
             <div><div class="muted">สถานะ</div><b>${e(p.statusLabel)}</b></div>
             <div><div class="muted">ราคา/รอบ</div><b>฿${Layout.money(p.pricePerCycle)}</b>${p.specialPriceNote ? `<div style="color:#166534;font-size:12px;font-weight:600">★ ${Layout.esc(p.specialPriceNote)}</div>` : ''}</div>
-            <div><div class="muted">ใช้ได้ถึง</div><b>${p.isPermanentFree ? 'ไม่หมดอายุ' : (p.endDate ? Layout.date(p.endDate) : '-')}</b></div>
+            <div><div class="muted">ใช้ได้ถึง</div><b>${p.isPermanentFree ? 'ไม่หมดอายุ (ฟรีถาวร)' : p.isOpenEnded ? '<span style="color:#b45309">ไม่มีรอบเรียกเก็บ — ผู้ดูแลระบบ NextAcc กำลังตรวจ</span>' : (p.endDate ? Layout.date(p.endDate) : '-')}</b></div>
             <div><div class="muted">ออกใบแจ้งหนี้ต่ออายุ</div><b>${p.nextRenewalInvoiceAt ? Layout.date(p.nextRenewalInvoiceAt) : '-'}</b></div>
           </div>
           ${p.scheduledPlan ? `<div class="note" style="margin-top:10px">เปลี่ยนเป็น ${e(p.scheduledPlan)} มีผล ${Layout.date(p.scheduledPlanEffectiveAt)}</div>` : ''}
@@ -343,8 +334,9 @@
     };
 
     // ───────── รอบ 230: แท็บของ hub (ลิงก์ตรง #tab=…) ─────────
+    // รอบ 232: รายชื่อแท็บมาจาก Layout.billingHub (ตัวตั้งเดียว — หน้าย่อย subscription/addons/account-subscription ใช้ตารางเดียวกัน)
     const HubTabs = {
-      names: ['plan', 'usage', 'buy', 'docs'],
+      get names() { return Layout.billingHub.tabs.filter(t => t.pane).map(t => t.key); },
       current() {
         const h = location.hash || '';
         const m = /#tab=([a-z]+)/.exec(h);
@@ -353,12 +345,15 @@
         return 'plan';
       },
       show(name, write) {
+        const tab = Layout.billingHub.tabs.find(t => t.key === name);
+        if (tab && !tab.pane) { location.href = tab.href; return; }   // แท็บที่เป็นหน้าแยก (License หลายบริษัท)
         document.querySelectorAll('#hubTabs .hub-tab').forEach(b => b.classList.toggle('active', b.getAttribute('data-tab') === name));
         document.querySelectorAll('.hub-pane').forEach(p => p.classList.toggle('active', p.getAttribute('data-pane') === name));
         if (write) { try { history.replaceState(null, '', '#tab=' + name); } catch (e) { location.hash = 'tab=' + name; } }
       },
       init() {
-        document.querySelectorAll('#hubTabs .hub-tab').forEach(b => b.addEventListener('click', () => this.show(b.getAttribute('data-tab'), true)));
+        document.getElementById('hubTabs').innerHTML = Layout.billingHubTabsHtml(this.current(), { inHub: true });
+        document.querySelectorAll('#hubTabs .hub-tab[data-tab]').forEach(b => b.addEventListener('click', () => this.show(b.getAttribute('data-tab'), true)));
         window.addEventListener('hashchange', () => this.show(this.current(), false));
         this.show(this.current(), false);
       },
@@ -509,35 +504,19 @@
         finally { btn.disabled = false; }
       },
     };
+    // รอบ 232: const ระดับสคริปต์ไม่อยู่บน window — สคริปต์อื่น/onclick ที่อ้าง window.X ต้องมีผู้ผูก (tools/window_global_check.py)
+    window.Bill = Bill;
+    window.HubTabs = HubTabs;
+    window.PlanTab = PlanTab;
     Bill.init();
   </script>
   <script src="/js/quota-ui.js"></script>
   <script>
-    // รอบ 229: ส่วนโควตาแยกจาก Bill (ไม่แตะเส้นใบแจ้งหนี้/ใบเสร็จ) — รีเฟรชทุกการ์ดหลังซื้อ ·
-    // รอบ 230: แท็บ "ซื้อเพิ่ม" แสดงเฉพาะรายการที่ซื้อได้ (canBuy จากเซิร์ฟเวอร์) ด้วย renderer ตัวเดียวกัน
-    const QuotaHub = {
-      async refresh() {
-        const items = await QuotaUI.renderSummary('quotaSummary', { onBought: () => QuotaHub.refresh() });
-        const buyable = (items || []).filter(i => i.canBuy).map(i => i.resource);
-        const buyEl = document.getElementById('quotaBuyList');
-        if (buyable.length) QuotaUI.renderSummary(buyEl, { only: buyable, onBought: () => QuotaHub.refresh() });
-        else buyEl.innerHTML = '<div class="muted">ยังไม่มีโควตาที่เปิดขาย — ติดต่อผู้ดูแลระบบ NextAcc หรือเปลี่ยนแพ็กเกจที่แท็บ "แพ็กเกจ"</div>';
-        QuotaUI.renderPurchases('quotaPurchases');
-        QuotaUI.renderRenewal('quotaRenewal');
-      },
-    };
-    (async () => {
-      for (let i = 0; i < 50 && !(window.Layout && Layout.getCompanyId && Layout.getCompanyId()); i++) await new Promise(r => setTimeout(r, 100));
-      QuotaHub.refresh();
-      QuotaUI.initHash(() => QuotaHub.refresh());
-      UsageTab.refresh();
-    })();
-  </script>
-  <script>
     // ───────── รอบ 231 (LICENSE_USAGE_OVERAGE_AUDIT §B.7/§D.3 · คำตัดสินข้อ 231-1..7): แท็บ "ใช้ไปเท่าไร" ─────────
+    // รอบ 232: บล็อกนี้ต้องอยู่ก่อนสคริปต์ QuotaHub ที่เรียก UsageTab.refresh() — เดิมอยู่หลัง ⇒ "UsageTab is not defined" (const ประกาศทีหลังผู้เรียก) ⇒ 3 การ์ดค้าง "กำลังโหลด..."
     // F2 ข้อ 5 "server computes · page displays": ราคา · เพดาน · "ไม่จำกัด" · ระดับเตือน · ประมาณการบิล · ข้อความเงื่อนไข · ป้ายเดือน มาจากเซิร์ฟเวอร์ทั้งหมด
     const UsageTab = {
-      overage: null, detail: null, history: null, months: 12, period: null,
+      overage: null, detail: null, history: null, months: 12, period: null, chartKey: null,
       cid() { return Layout.getCompanyId(); },
       base() { return `/api/companies/${this.cid()}/quota`; },
       esc(s) { return Layout.esc(s); },
@@ -622,7 +601,7 @@
             ${b.unlimited ? '' : `<div style="height:8px;background:#e5e7eb;border-radius:999px;overflow:hidden;margin-top:4px"><i style="display:block;height:100%;width:${Number(b.percent) || 0}%;background:${this.color(b.level)}"></i></div>`}
             <div class="muted" style="font-size:11px">${b.unlimited ? 'ไม่จำกัด' : e(String(b.percent)) + '%'}${b.extra ? ' · ' + e(b.extra) : ''}</div>
           </div>`).join('') + `</div>
-          <div class="muted" style="margin-top:8px">แพ็กเกจ ${e(d.planName || d.plan)} · ${e(d.statusLabel || d.status)} · เหลือ ${Number(d.daysLeft) || 0} วัน · รีเซ็ตตัวนับ ${Layout.date(d.usageResetDate)}</div>`;
+          <div class="muted" style="margin-top:8px">แพ็กเกจ ${e(d.planName || d.plan)} · ${e(d.statusLabel || d.status)} · ${d.daysLeft == null ? 'ไม่หมดอายุ' : `เหลือ ${Number(d.daysLeft) || 0} วัน`} · รีเซ็ตตัวนับ ${Layout.date(d.usageResetDate)}</div>`;
         if (window.CustomerNotify) CustomerNotify.mountQuota(document.getElementById('notifyQuotaCard'), { companyId: this.cid() });
         const bytes = b => b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : b >= 1024 ? (b / 1024).toFixed(0) + ' KB' : b + ' B';
         const roleMap = { Owner: 'เจ้าของ', Accountant: 'นักบัญชี', Staff: 'พนักงาน', Auditor: 'ผู้ตรวจสอบ', Viewer: 'ผู้ดู', ExternalAccountant: 'นักบัญชีภายนอก', PlatformSupport: 'ผู้ดูแลแพลตฟอร์ม', SystemAdmin: 'แอดมิน' };
@@ -647,7 +626,9 @@
         const el = document.getElementById('usageHistory');
         try { this.history = (await API.get(`${this.base()}/history?months=${this.months}`)).data; }
         catch (e) { el.innerHTML = `<div class="muted">โหลดประวัติไม่สำเร็จ (${this.esc(e.message || '')})</div>`; return; }
-        const r = document.getElementById('historyRetention'); if (r) r.textContent = `(เก็บ ${this.history.retentionMonths} เดือน)`;
+        // รอบ 232: บอกตรง ๆ ว่าเริ่มเก็บ snapshot ตั้งแต่เดือนไหน (เดือนก่อนหน้านั้นไม่มีข้อมูล — ไม่แต่งเลข)
+        const r = document.getElementById('historyRetention');
+        if (r) r.textContent = `(เก็บ ${this.history.retentionMonths} เดือน · ${this.history.firstSnapshotLabel ? 'เริ่มเก็บตั้งแต่ ' + this.history.firstSnapshotLabel : 'ยังไม่มี snapshot ของเดือนก่อน — เริ่มเก็บตั้งแต่เดือนนี้'})`;
         if (!this.period || !this.history.months.some(m => m.period === this.period)) this.period = (this.history.months[0] || {}).period || null;
         this.renderHistory();
       },
@@ -655,6 +636,20 @@
         const h = this.history, e = this.esc, el = document.getElementById('usageHistory');
         if (!h || !h.months.length) { el.innerHTML = '<div class="muted">ยังไม่มีข้อมูล</div>'; return; }
         const m = h.months.find(x => x.period === this.period) || h.months[0];
+        // รอบ 232: กราฟแท่งย้อนหลัง (เก่า → ใหม่) ของทรัพยากรที่เลือก — ค่า/เพดาน/ระดับจากเซิร์ฟเวอร์ · เดือนไม่มี snapshot = แท่งเทา "ไม่มีข้อมูล"
+        const resources = (h.resources || []).filter(x => x.key !== 'ai.calls');   // AI = ข้อมูลอย่างเดียว ไม่มีเพดาน (UsageHistoryRule.AiKey)
+        if (!this.chartKey || !resources.some(x => x.key === this.chartKey)) this.chartKey = (resources[0] || {}).key || null;
+        const chart = key => {
+          const ms = h.months.slice().reverse();
+          return `<div style="display:flex;align-items:flex-end;gap:4px;height:110px;padding:4px 0;border-bottom:1px solid #e2e8f0">` + ms.map(x => {
+            const b = (x.bars || []).find(y => y.resource === key);
+            const known = !!(b && b.known);
+            const pct = known ? Math.min(100, Number(b.percent) || 0) : 0;
+            const hpx = known ? Math.max(3, Math.round(pct)) : 3;
+            return `<div title="${Layout.esc(x.label)}: ${known ? Layout.esc(b.usedText) + ' / ' + Layout.esc(b.limitText) : 'ไม่มีข้อมูล'}" style="flex:1;min-width:8px;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%">
+              <i style="display:block;width:100%;max-width:28px;height:${hpx}%;background:${known ? this.color(b.warnLevel) : '#e5e7eb'};border-radius:3px 3px 0 0"></i></div>`; }).join('') + `</div>
+            <div style="display:flex;gap:4px;font-size:10px;color:#64748b">` + ms.map(x => `<div style="flex:1;min-width:8px;text-align:center;overflow:hidden;white-space:nowrap">${Layout.esc(String(x.label).replace(/ \d{4}$/, ''))}</div>`).join('') + `</div>`;
+        };
         const spark = key => h.months.slice().reverse().map(x => { const b = (x.bars || []).find(y => y.resource === key); const v = b && b.known ? Math.min(100, b.percent) : 0;
           return `<i title="${Layout.esc(x.label)}: ${b && b.known ? Layout.esc(b.usedText) : '—'}" style="display:inline-block;width:6px;height:${4 + Math.round(v / 100 * 16)}px;background:${b && b.known ? this.color(b.warnLevel) : '#e5e7eb'};margin-right:1px;vertical-align:bottom"></i>`; }).join('');
         el.innerHTML = `
@@ -665,6 +660,12 @@
             <select class="form-select" style="width:auto" onchange="UsageTab.months = Number(this.value); UsageTab.loadHistory()">
               ${[6, 12, 24].map(k => `<option value="${k}" ${k === this.months ? 'selected' : ''}>ย้อนหลัง ${k} เดือน</option>`).join('')}</select>
             ${m.isCurrent ? '<span class="pill">ข้อมูลสด</span>' : `<span class="muted">ข้อมูล ณ ${m.snapshotAtUtc ? Layout.date(m.snapshotAtUtc) : '—'}</span>`}
+          </div>
+          <div style="margin-bottom:12px">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px"><span class="muted">กราฟแท่ง ${h.months.length} เดือน (% ของเพดาน)</span>
+              <select class="form-select" style="width:auto" onchange="UsageTab.chartKey = this.value; UsageTab.renderHistory()">
+                ${resources.map(x => `<option value="${e(x.key)}" ${x.key === this.chartKey ? 'selected' : ''}>${e(x.label)}</option>`).join('')}</select></div>
+            ${this.chartKey ? chart(this.chartKey) : '<div class="muted">ยังไม่มีข้อมูล</div>'}
           </div>
           <div class="table-container"><table class="table"><thead><tr><th>ทรัพยากร</th><th class="text-right">ใช้ไป</th><th class="text-right">เพดาน</th><th class="text-right">ซื้อเพิ่ม</th><th class="text-right">ส่วนเกิน</th><th>แนวโน้ม ${h.months.length} เดือน</th><th></th></tr></thead><tbody>
             ${(m.bars || []).map(b => `<tr><td>${e(b.label)}${b.note ? `<div class="muted">${e(b.note)}</div>` : ''}</td>
@@ -679,6 +680,28 @@
             ${(m.invoices || []).length ? ' · ใบแจ้งหนี้ ' + m.invoices.map(i => `<a href="#tab=docs" onclick="HubTabs.show('docs', true); return false;">${e(i.documentNumber)}</a> (${e(i.stateLabel)})`).join(', ') : ''}</div>`;
       },
     };
+    window.UsageTab = UsageTab;   // รอบ 232: ผู้ผูก window (ถูกเรียกจากสคริปต์ QuotaHub ด้านล่าง + onclick)
+  </script>
+  <script>
+    // รอบ 229: ส่วนโควตาแยกจาก Bill (ไม่แตะเส้นใบแจ้งหนี้/ใบเสร็จ) — รีเฟรชทุกการ์ดหลังซื้อ ·
+    // รอบ 230: แท็บ "ซื้อเพิ่ม" แสดงเฉพาะรายการที่ซื้อได้ (canBuy จากเซิร์ฟเวอร์) ด้วย renderer ตัวเดียวกัน
+    const QuotaHub = {
+      async refresh() {
+        const items = await QuotaUI.renderSummary('quotaSummary', { onBought: () => QuotaHub.refresh() });
+        const buyable = (items || []).filter(i => i.canBuy).map(i => i.resource);
+        const buyEl = document.getElementById('quotaBuyList');
+        if (buyable.length) QuotaUI.renderSummary(buyEl, { only: buyable, onBought: () => QuotaHub.refresh() });
+        else buyEl.innerHTML = '<div class="muted">ยังไม่มีโควตาที่เปิดขาย — ติดต่อผู้ดูแลระบบ NextAcc หรือเปลี่ยนแพ็กเกจที่แท็บ "แพ็กเกจ"</div>';
+        QuotaUI.renderPurchases('quotaPurchases');
+        QuotaUI.renderRenewal('quotaRenewal');
+      },
+    };
+    (async () => {
+      for (let i = 0; i < 50 && !(window.Layout && Layout.getCompanyId && Layout.getCompanyId()); i++) await new Promise(r => setTimeout(r, 100));
+      QuotaHub.refresh();
+      QuotaUI.initHash(() => QuotaHub.refresh());
+      window.UsageTab.refresh();   // ประกาศไว้ในสคริปต์ก่อนหน้า (ผูก window แล้ว)
+    })();
   </script>
   <script src="/js/billing-saved-cards.js"></script>
 </body>

@@ -322,11 +322,14 @@ public class CmsRound212DailySummaryTests
     }
 
     [Fact]
-    public async Task Customer_push_without_company_keeps_global_resolution_unchanged()
+    public async Task Customer_push_without_company_oa_is_denied_and_never_uses_global_token()
     {
-        // ทิศตรงข้าม: เส้นลูกค้า/เดิม (companyId null) ยังเลือก token ผ่าน ResolveConfigAsync ตามเดิม — ไม่ถูกเปลี่ยนความหมาย
+        // รอบ 232 (232-Notify) — พลิกทิศจากเทสต์เดิม "Customer_push_without_company_keeps_global_resolution_unchanged":
+        // เส้นลูกค้าผ่าน OA ร้าน (companyId ระบุ · ไม่มี OA ของบริษัท) ต้องถูกนโยบายกั้นพร้อม RuleCode · ไม่ถอยไป token กลาง · ไม่ยิง HTTP
         var h = new CaptureHandler();
-        Assert.True(await Line(h, "GLOBAL").TryPushToUserAsync(null, "Ucustomer", "ข้อความ"));
-        Assert.Equal("GLOBAL", Assert.Single(h.Requests).Auth);
+        var r = await Line(h, "GLOBAL").TryPushToUserAsync(Guid.NewGuid(), "Ucustomer", "ข้อความ");
+        Assert.False(r.Ok);
+        Assert.Equal(Accounting.Helpers.NotificationAudiencePolicy.RuleTenantNoCompanyOa, r.RuleCode);
+        Assert.Empty(h.Requests);
     }
 }

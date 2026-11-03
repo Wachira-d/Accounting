@@ -3801,12 +3801,24 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
       },
       // รอบ 214 (คำตัดสินข้อ 173 B): หน้านโยบาย/ข้อกำหนดของร้าน — HTML แปลง + encode ที่เซิร์ฟเวอร์ (Helpers/LegalMarkdown) หน้านี้แค่วาง ·
       // ร้านตั้งลิงก์ภายนอกไว้ ⇒ บอกพร้อมลิงก์ แต่ยังแสดงฉบับในระบบเป็นสำรอง · ลิงก์สัมพัทธ์ "privacy"/"terms" ในเนื้อความ → ปลายทางจริงของเว็บนี้
+      // รอบ 232 (232-Checkout-1): 2 ภาษา — ?lang=en (จำใน localStorage legal.lang) · ตัวตัดสินที่เซิร์ฟเวอร์ (LegalDocumentLanguage) ขอ en แต่ร้านยังไม่เขียน ⇒ ไทย + ประกาศ
+      legalLang() {
+        const q = new URLSearchParams(location.search).get('lang');
+        if (q) return q === 'en' ? 'en' : 'th';
+        try { return localStorage.getItem('legal.lang') === 'en' ? 'en' : 'th'; } catch (_) { return 'th'; }
+      },
+      setLegalLang(lang) {
+        try { localStorage.setItem('legal.lang', lang === 'en' ? 'en' : 'th'); } catch (_) { /* โหมดส่วนตัว */ }
+        const u = new URL(location.href);
+        if (lang === 'en') u.searchParams.set('lang', 'en'); else u.searchParams.delete('lang');
+        location.href = u.toString();
+      },
       async renderLegalPage(kind) {
         const main = document.getElementById('sfMain');
         main.innerHTML = '<div class="sf-loader">กำลังโหลด...</div>';
         let d = null;
         try {
-          const r = await fetch(this._url('/storefront/legal/' + encodeURIComponent(kind)));
+          const r = await fetch(this._url('/storefront/legal/' + encodeURIComponent(kind)) + (this.legalLang() === 'en' ? '?lang=en' : ''));
           const j = await r.json().catch(() => null);
           if (!r.ok) throw new Error((j && j.message) || 'โหลดเอกสารไม่สำเร็จ');
           d = j.data || j;
@@ -3829,6 +3841,12 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
           </style>
           <article class="sf-legal">
             <h1>${this.esc(d.title)}</h1>
+            <div style="margin-bottom:10px;font-size:13px">ภาษา / Language:
+              <button type="button" data-sf-lang="th" style="border:1px solid #E5E7EB;border-radius:6px;padding:3px 10px;cursor:pointer;${d.language !== 'en' ? 'background:var(--primary,#4F46E5);color:#fff' : 'background:#fff'}">ไทย</button>
+              <button type="button" data-sf-lang="en" style="border:1px solid #E5E7EB;border-radius:6px;padding:3px 10px;cursor:pointer;${d.language === 'en' ? 'background:var(--primary,#4F46E5);color:#fff' : 'background:#fff'}">English</button>
+              ${d.englishAvailable === false && d.language !== 'en' ? '<span style="color:#6B7280">(English version not available yet)</span>' : ''}
+            </div>
+            ${d.languageNotice ? `<div style="background:#EFF6FF;border:1px solid #BFDBFE;color:#1E3A8A;border-radius:8px;padding:10px 14px;margin-bottom:18px;font-size:14px">${this.esc(d.languageNotice)}</div>` : ''}
             <div style="color:var(--text-secondary,#6B7280);font-size:13px;margin-bottom:20px">${this.esc(d.siteName || '')}${updated ? ' · ปรับปรุงล่าสุด ' + this.esc(updated) : ''}</div>
             ${ext}
             <div id="sfLegalBody"></div>
@@ -3837,6 +3855,7 @@ ${link ? `<p class="foot">ดู/จัดการการจอง: ${this.es
         const body = document.getElementById('sfLegalBody');
         body.innerHTML = d.html || '';
         body.querySelectorAll('a[href="privacy"],a[href="terms"],a[href="refund"]').forEach(a => { a.href = this.legalHref(a.getAttribute('href')); });
+        main.querySelectorAll('button[data-sf-lang]').forEach(b => b.addEventListener('click', () => this.setLegalLang(b.dataset.sfLang)));
       },
       // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ช่องติ๊ก "ยอมรับข้อกำหนด + นโยบายการยกเลิกและคืนเงิน" — บังคับทุกเช็กเอาต์/จอง (ด่านจริงที่เซิร์ฟเวอร์
       // Helpers/PurchasePolicyAcceptance) · ข้อความ/ฉบับจากเซิร์ฟเวอร์ (site.policyAcceptanceText/policyVersion) · ฉบับไปกับคำขอ (policyVersionShown)

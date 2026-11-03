@@ -140,15 +140,15 @@ public class PlatformBillingPhase0Tests
     [Fact]
     public void Entitlement_blocked_for_tenant_routed_unknown_payer_and_test_mode()
     {
-        Assert.NotNull(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, Tenant, isTestMode: false));
-        Assert.NotNull(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.AddOnPurchase, Tenant, null, Tenant, isTestMode: false));
-        Assert.NotNull(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.SubscriptionPayment, Platform, Platform, null, isTestMode: false));
-        // part B (a): จ่ายโหมดทดสอบ ⇒ ไม่ให้สิทธิ์จริง
-        Assert.Contains("โหมดทดสอบ",
-            PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.SubscriptionPayment, Platform, Platform, Tenant, isTestMode: true));
-        Assert.Null(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.SubscriptionPayment, Platform, Platform, Tenant, isTestMode: false));
-        // ทิศตรงข้าม: ออเดอร์ของร้านในโหมดทดสอบ ยังส่งต่อตามเดิม (ไม่ใช่เงินของแพลตฟอร์ม)
-        Assert.Null(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.SiteOrder, Tenant, Platform, null, isTestMode: true));
+        Assert.NotNull(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.AddOnPurchase, Tenant, Platform, Tenant));
+        Assert.NotNull(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.AddOnPurchase, Tenant, null, Tenant));
+        Assert.NotNull(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.SubscriptionPayment, Platform, Platform, null));
+        // part B (a) → รอบ 232 S1: จ่ายโหมดทดสอบ ⇒ ไม่ให้สิทธิ์จริง — ตัดสินที่ TestModePaymentPolicy ก่อนถึงด่านนี้ (ทุกต้นทาง ไม่เฉพาะแพลตฟอร์ม)
+        Assert.False(TestModePaymentPolicy.AllowsBusinessEffects(true, PaymentSourceKind.SubscriptionPayment));
+        Assert.Contains("โหมดทดสอบ", TestModePaymentPolicy.BlockMessage(PaymentSourceKind.SubscriptionPayment));
+        Assert.Null(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.SubscriptionPayment, Platform, Platform, Tenant));
+        // ด่านสิทธิ์ไม่ยุ่งกับต้นทางของร้าน (ไม่ใช่เงินของแพลตฟอร์ม)
+        Assert.Null(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.SiteOrder, Tenant, Platform, null));
     }
 
     [Fact]

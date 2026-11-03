@@ -122,6 +122,11 @@ public static class DocumentLinkPolicy
 
     public readonly record struct LineKey(Guid Id, int LineOrder, string? ProductCode, string? Description);
 
+    /// <summary>ตัว normalize คำอธิบายบรรทัดเพื่อเทียบกัน (ตัดช่องว่างซ้อน/หัวท้าย · ไม่สนตัวพิมพ์) — ตัวเดียวที่ <see cref="SuggestLineMap"/>
+    /// และ <see cref="SourceLineBackfill"/> ใช้ (รอบ 232 — ห้ามมีสำเนาที่สอง)</summary>
+    public static string NormalizeDescription(string? s) => string.Join(' ', (s ?? "").Trim().ToLowerInvariant()
+        .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
     /// <summary>
     /// เสนอการจับคู่บรรทัด (ผู้ใช้แก้ได้): รหัสสินค้าตรงกัน → คำอธิบายตรงกัน (ไม่สนช่องว่าง/ตัวพิมพ์) → ลำดับบรรทัดเมื่อจำนวนบรรทัดเท่ากัน ·
     /// จับไม่ได้ = null (ไม่นับในความคืบหน้าแต่ไม่กันการผูก) · บรรทัดลูกหลายบรรทัดจับบรรทัดต้นทางเดียวกันได้ (แบ่งงวด)
@@ -129,8 +134,7 @@ public static class DocumentLinkPolicy
     public static List<(Guid ChildLineId, Guid? SourceLineId)> SuggestLineMap(
         IReadOnlyList<LineKey> childLines, IReadOnlyList<LineKey> sourceLines)
     {
-        static string Norm(string? s) => string.Join(' ', (s ?? "").Trim().ToLowerInvariant()
-            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        static string Norm(string? s) => NormalizeDescription(s);
         var byCode = sourceLines.Where(s => !string.IsNullOrWhiteSpace(s.ProductCode))
             .GroupBy(s => s.ProductCode!.Trim(), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);

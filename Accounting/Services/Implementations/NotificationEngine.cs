@@ -60,7 +60,7 @@ public class NotificationEngine : INotificationEngine
             var settings = await _db.NotificationSettings
                 .AsNoTracking()
                 .Where(s => s.CompanyId == companyId && s.EventKey == eventKey
-                    && (s.EnableSystem || s.EnableEmail || s.EnableLine))
+                    && (s.EnableSystem || s.EnableEmail || s.EnableLine || s.EnableLineGroup))
                 .ToListAsync();
             // ถ้า caller ระบุ RecipientUserId override + ไม่มี NotificationSettings
             // ใน event นี้ → ใช้ default channels (System+Email) สำหรับ user
@@ -71,7 +71,23 @@ public class NotificationEngine : INotificationEngine
                 await DispatchDirectAsync(companyId, eventKey, context.RecipientUserId.Value, context);
                 return;
             }
+            // รอบ 232 (232-Notify): คีย์ที่ย้ายจากประกาศกลุ่ม LINE เดิม — บริษัทยังไม่ตั้ง ⇒ ค่าตั้งต้นจากตัวตัดสินเดียว
+            // (กระดิ่งถึงเจ้าของ + กลุ่ม LINE ของบริษัทเมื่อผูกไว้แล้ว) · คีย์อื่น = ว่าง = ไม่ส่ง (พฤติกรรมเดิม)
+            if (settings.Count == 0)
+            {
+                settings = NotificationAudiencePolicy.DefaultMatrix(eventKey, await CompanyLineGroupConfiguredAsync(companyId))
+                    .Select(d => new NotificationSetting
+                    {
+                        CompanyId = companyId, EventKey = eventKey, RecipientRole = d.RecipientRole,
+                        EnableSystem = d.EnableSystem, EnableEmail = d.EnableEmail, EnableLine = d.EnableLine, EnableLineGroup = d.EnableLineGroup,
+                    })
+                    .ToList();
+            }
             if (settings.Count == 0) return;
+
+            // ช่อง "กลุ่ม LINE ของบริษัท" — หนึ่งครั้งต่อเหตุการณ์ (ไม่ใช่ต่อผู้รับ) · OA ของบริษัทเท่านั้น · ไม่มี OA ⇒ ผลบอกเหตุ (ไม่ถอยไปกลุ่มกลาง)
+            if (settings.Any(s => s.EnableLineGroup))
+                await DispatchCompanyGroupAsync(companyId, eventKey, context);
 
             // recipientKey → effective (channels + Recipient). Key combines
             // UserId.ToString() for system users, or "email:" / "line:"
@@ -155,7 +171,7 @@ public class NotificationEngine : INotificationEngine
                     await DispatchEmailAsync(companyId, email!, fullName, context);
 
                 if (e.Line && !supLine && !string.IsNullOrWhiteSpace(lineUserId))
-                    await DispatchLineAsync(companyId, lineUserId!, context);
+                    await DispatchLineAsync(companyId, lineUserId!, context, eventKey);
             }
         }
         catch (Exception ex)
@@ -353,14 +369,52 @@ public class NotificationEngine : INotificationEngine
     /// พนักงาน HR (<c>Employee.LineId</c> จาก "สลิป 123456") — ทั้งคู่ผูกผ่าน webhook ของ <b>OA กลาง</b>เท่านั้น ⇒ push ต้องออก OA กลางแบบระบุชัด ·
     /// เดิม <c>PushToUserAsync(companyId, …)</c> เลือก OA ของร้านเมื่อร้านเปิด LINE ⇒ userId ข้าม provider ⇒ ล้มทุกฉบับเงียบ ๆ ·
     /// แจ้งเตือนรายเหตุการณ์<b>ไม่นับ</b>โควตาข้อความช่องกลาง (§10) · ล้ม ⇒ log พร้อมเหตุ (ช่องอื่นของผู้รับยังทำงานตามเดิม)</summary>
-    private async Task DispatchLineAsync(Guid companyId, string lineUserId, NotificationContext context)
+    private async Task DispatchLineAsync(Guid companyId, string lineUserId, NotificationContext context, string eventKey)
+    {
+        // รอบ 232 (232-Notify): ผู้รับตามบทบาทของบริษัทนี้ = สมาชิกของผู้เช่า (TenantMember) ผ่านบอทกลางที่เขาผูกเอง — ตัดสินก่อนยิงทุกครั้ง
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudiencePolicy.Classify(eventKey), LineOaKind.NextAccOa, LineTargetKind.TenantMember, companyOaConfigured: false);
+        if (!route.Allowed)
+        {
+            _logger.LogWarning("NotificationEngine: นโยบายผู้รับกั้น LINE 1:1 ของ {EventKey} (company {CompanyId}) [{Rule}]: {Reason}", eventKey, companyId, route.RuleCode, route.Reason);
+            return;
+        }
+        var r = await _line.TryPushViaNextAccAsync(lineUserId, new[] { LineText(context) });
+        if (!r.Ok)
+            _logger.LogWarning("NotificationEngine: LINE ถึงพนักงานไม่สำเร็จ (company {CompanyId}): {Error}", companyId, r.Error);
+    }
+
+    /// <summary>รอบ 232: ช่อง "กลุ่ม LINE ของบริษัท" — ตัวตัดสิน OA/ผู้รับอยู่ใน <c>LineNotifyService.TryPushCompanyGroupAsync</c> (OA ของบริษัทเท่านั้น) ·
+    /// ถูกนโยบายกั้น (ไม่มี OA) = log Information ครั้งเดียวต่อเหตุการณ์ (ไม่ spam — หน้าตั้งค่าบอกผู้ใช้อยู่แล้ว) · ล้มจริง = Warning</summary>
+    private async Task DispatchCompanyGroupAsync(Guid companyId, string eventKey, NotificationContext context)
+    {
+        var audience = NotificationAudiencePolicy.Classify(eventKey);
+        if (audience != NotificationAudience.TenantBusiness)
+        {
+            _logger.LogWarning("NotificationEngine: {EventKey} ไม่ใช่เหตุการณ์ธุรกิจของผู้เช่า — ไม่ประกาศเข้ากลุ่ม LINE ของบริษัท {CompanyId}", eventKey, companyId);
+            return;
+        }
+        var r = await _line.TryPushCompanyGroupAsync(companyId, LineText(context));
+        if (r.Ok) return;
+        if (r.RuleCode != null)
+            _logger.LogInformation("NotificationEngine: กลุ่ม LINE ของบริษัท {CompanyId} ไม่ส่ง ({EventKey}) [{Rule}]: {Reason}", companyId, eventKey, r.RuleCode, r.Error);
+        else
+            _logger.LogWarning("NotificationEngine: ประกาศกลุ่ม LINE ของบริษัท {CompanyId} ไม่สำเร็จ ({EventKey}): {Error}", companyId, eventKey, r.Error);
+    }
+
+    private static string LineText(NotificationContext context)
     {
         var text = $"{context.Title}\n\n{context.Message}";
         if (!string.IsNullOrEmpty(context.ActionUrl))
             text += $"\n\n🔗 {context.ActionUrl}";
-        var r = await _line.TryPushViaNextAccAsync(lineUserId, new[] { text });
-        if (!r.Ok)
-            _logger.LogWarning("NotificationEngine: LINE ถึงพนักงานไม่สำเร็จ (company {CompanyId}): {Error}", companyId, r.Error);
+        return text;
+    }
+
+    /// <summary>บริษัทผูกกลุ่ม LINE ของตัวเองไว้แล้วไหม (ตัวตัดสิน <see cref="NotificationAudiencePolicy.CompanyLineGroupConfigured"/>) — ใช้เลือกค่าตั้งต้นของคีย์ที่ย้ายมา</summary>
+    private async Task<bool> CompanyLineGroupConfiguredAsync(Guid companyId)
+    {
+        var s = await _db.Set<CompanySettings>().AsNoTracking().Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.LineEnabled, x.LineChannelAccessToken, x.LineDefaultGroupId }).FirstOrDefaultAsync();
+        return s != null && NotificationAudiencePolicy.CompanyLineGroupConfigured(s.LineEnabled, s.LineChannelAccessToken, s.LineDefaultGroupId);
     }
 
     private static string WebUtilityEncode(string s) =>

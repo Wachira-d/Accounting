@@ -81,6 +81,10 @@ public class UpdateSiteRequest
     /// <summary>รอบ 219 ส่วน B: นโยบายการยกเลิกและคืนเงินของร้าน — ลิงก์ ("" = ล้าง) · ข้อความที่เขียนเอง ("" = แม่แบบ) · null = ไม่เปลี่ยน</summary>
     public string? RefundPolicyUrl { get; set; }
     public string? RefundPolicyMarkdown { get; set; }
+    /// <summary>รอบ 232: ฉบับภาษาอังกฤษของข้อความที่ร้านเขียนเอง · "" = ล้าง (ไม่มีฉบับอังกฤษ) · null = ไม่เปลี่ยน · ใช้ได้เฉพาะเมื่อมีฉบับไทย (โหมด custom)</summary>
+    public string? PrivacyPolicyMarkdownEn { get; set; }
+    public string? TermsOfServiceMarkdownEn { get; set; }
+    public string? RefundPolicyMarkdownEn { get; set; }
     /// <summary>จำนวนวันแจ้งคืนสินค้า / วันดำเนินการคืนเงิน (1–365) · 0 = กลับไปค่าเริ่มต้น · null = ไม่เปลี่ยน</summary>
     public int? RefundReturnWindowDays { get; set; }
     public int? RefundProcessingDays { get; set; }
@@ -147,6 +151,10 @@ public class SiteResponse
     public string? RefundPolicyUrl { get; set; }
     public string? RefundPolicyMarkdown { get; set; }
     public DateTime? RefundPolicyUpdatedAt { get; set; }
+    /// <summary>รอบ 232: echo ฉบับอังกฤษครบทุกช่องที่รับ (กฎ #4 A)</summary>
+    public string? PrivacyPolicyMarkdownEn { get; set; }
+    public string? TermsOfServiceMarkdownEn { get; set; }
+    public string? RefundPolicyMarkdownEn { get; set; }
     public int? RefundReturnWindowDays { get; set; }
     public int? RefundProcessingDays { get; set; }
     public string? PolicyAcceptanceText { get; set; }

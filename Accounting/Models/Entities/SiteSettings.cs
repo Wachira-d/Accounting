@@ -174,8 +174,11 @@ public class SiteSettings : BaseEntity
     public string? LineMessagingBasicId { get; set; }
     /// <summary>bot userId (U + 32 hex) — ตรวจกับ <c>destination</c> ของ webhook (ไม่ตั้ง = ตัดสินด้วย scope อย่างเดียว)</summary>
     public string? LineMessagingBotUserId { get; set; }
-    /// <summary>กลุ่ม LINE (C/R + 32 hex) สำหรับข้อความกลุ่มของระบบเมื่อบริษัทไม่ได้ตั้ง OA เอง (เดิม Line:GroupId)</summary>
+    /// <summary>กลุ่ม LINE กลาง (C/R + 32 hex) ของ<b>ผู้ดูแลแพลตฟอร์ม</b> — รอบ 232 (คำตัดสิน 232-Notify): รับเฉพาะ "เรื่องของระบบ" (PlatformOps: ฟอร์มติดต่อ/แชทหน้าเว็บ NextAcc)
+    /// <b>ไม่ใช่</b>ห้องสำรองของบริษัทที่ไม่ได้ตั้ง OA เอง (เดิม <c>LineNotifyService.ResolveConfigAsync</c> ถอยมาใช้กลุ่มนี้ ⇒ "เอกสารอนุมัติแล้ว" ของผู้เช่าเด้งเข้าห้องแอดมิน)</summary>
     public string? LineMessagingGroupId { get; set; }
+    /// <summary>รอบ 232: ส่ง "เรื่องของระบบ" (PlatformOps) เข้ากลุ่มกลางไหม — ปิด = กระดิ่ง/อีเมลของแอดมินยังทำงาน · ผู้อ่าน <c>NextAccLineConfig</c> → <c>LineNotifyService.TryPushPlatformOpsAsync</c></summary>
+    public bool LineMessagingOpsAlertsToGroup { get; set; } = true;
 
     // ===== OCR Provider Selection (System-wide, overrides appsettings) =====
     // Provider chain is strictly Azure DI v4 → Local (PaddleOCR + EasyOCR).
@@ -306,4 +309,7 @@ public class SiteSettings : BaseEntity
     /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): หน้าทดลองจ่ายของแพลตฟอร์ม <c>/platform-pay-test.html</c> —
     /// "Off" | "AdminsOnly" | "Public" · null = AdminsOnly (ตัวตัดสินเดียว <c>Helpers/PlatformPayTestPage</c>) · ใช้คีย์โหมดทดสอบเท่านั้นเสมอ</summary>
     public string? PlatformPayTestPageMode { get; set; }
+    /// <summary>รอบ 232 (คำตัดสิน 232-Checkout-2): เปิดหน้าซื้อแพ็กเกจสาธารณะ <c>/pricing.html</c> → <c>/checkout.html</c> (cart + checkout ที่จบในเว็บ — Omise ตรวจก่อนเปิดบัญชี) ·
+    /// ค่าเริ่มต้น<b>ปิด</b> · ตัวตัดสินเดียว <c>Helpers/PublicCheckoutPolicy.Decide</c> (ผู้อ่าน: <c>Services/Platform/PublicCheckoutService</c>) · แก้ที่ <c>api/admin/public-checkout</c></summary>
+    public bool PublicCheckoutEnabled { get; set; } = false;
 }

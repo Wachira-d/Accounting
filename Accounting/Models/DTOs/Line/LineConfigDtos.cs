@@ -19,7 +19,10 @@ public record LineConfigResponse(
     /// <summary>รอบ 212 ฝ่ายค้าน (B+D) ข้อ 2: webhook มาจากบอทอื่นที่ไม่ใช่บอทของ token (secret ของ OA อื่น) — ข้อความจากเซิร์ฟเวอร์ · null = ไม่มีปัญหา</summary>
     string? WebhookProblem = null,
     /// <summary>ฝ่ายค้านรอบ 231 S1: คำใบ้ (ไม่ใช่ข้อผิดพลาด) เมื่อ token/secret ที่เก็บไว้ "ดูเหมือน ciphertext รุ่นก่อนแต่ถอดไม่ออก" — ระบบใช้เป็นค่าดิบ · null = ไม่มี</summary>
-    string? SecretHint = null);
+    string? SecretHint = null,
+    /// <summary>รอบ 232 (232-Notify): ป้ายสถานะ "แจ้งเตือนธุรกิจของบริษัททาง LINE" จากตัวตัดสินเดียว (<c>NotificationAudiencePolicy.CompanyGroupNotice</c>) —
+    /// ไม่มี OA ของร้าน ⇒ บอกว่าไปกระดิ่ง/อีเมลแทน และ<b>ไม่</b>ส่งผ่าน OA กลาง · หน้าเว็บแสดงอย่างเดียว</summary>
+    string? TenantLineNotice = null);
 
 /// <summary>รอบ 212 แพ็ก B: สถานะคำเชิญผูกใหม่ของการเปลี่ยน OA ล่าสุด — <c>Label</c> = ข้อความที่หน้าเว็บแสดงตรง ๆ (ไม่มีกติกาฝั่ง JS)</summary>
 public record CustomerRelinkProgress(

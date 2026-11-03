@@ -336,6 +336,20 @@ public class PaymentIntentService : IPaymentIntentService
                 AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Created, PaymentIntentStatus.Failed, note: "⚠️ " + modeBad);
                 _logger.LogError("โหมด charge ไม่ตรงโหมดของ intent {Intent} ({Provider}): {Why}", intent.Id, code, modeBad);
             }
+            // รอบ 232: charge ยังรอแต่ผู้ให้บริการไม่ส่งทั้ง QR และลิงก์หน้าชำระ ⇒ ผู้จ่ายไม่มีทางจ่าย — ปิดเป็นล้มเหลวพร้อมเหตุผลไทย
+            // (ล้มดัง · ไม่ปล่อยให้หน้าจ่ายขึ้น "กำลังรอการชำระเงิน…" กับหน้าว่างจนหมดเวลา) · เงินเข้าทีหลังยังเปลี่ยนเป็นสำเร็จได้ (Failed → Succeeded ตามนโยบายเดิม)
+            else if (syncSucceeded == null   // บัตรที่สำเร็จทันทีถูกพักเป็น Pending ข้างบนเพื่อส่ง ApplyChargeAsync — ไม่ใช่ "รอผู้จ่าย"
+                     && GatewayChargeNextStep.MissingReason(intent.MethodKind, intent.Status, intent.QrPayload, intent.AuthorizeUrl) is string noStep)
+            {
+                syncSucceeded = null;
+                intent.Status = PaymentIntentStatus.Failed;
+                intent.FailureCode = GatewayChargeNextStep.MissingCode;
+                intent.FailureMessage = noStep;
+                AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Pending, PaymentIntentStatus.Failed, note: "⚠️ " + noStep,
+                    payload: charge.RawStatus);
+                _logger.LogError("charge {Ref} ของ intent {Intent} ({Provider}) ไม่มีขั้นถัดไปให้ผู้จ่าย (ไม่มี QR/ลิงก์): {Why}",
+                    charge.ProviderRef, intent.Id, code, noStep);
+            }
         }
         catch (Exception ex) when (!string.IsNullOrWhiteSpace(request.CustomerRef)
                                    && SavedCardChargeOutcome.IsUnknown(ex, ct.IsCancellationRequested))
@@ -366,9 +380,10 @@ public class PaymentIntentService : IPaymentIntentService
             syncSucceeded = null;
             intent.Status = PaymentIntentStatus.Failed;
             intent.FailureCode = "create_charge_failed";
-            intent.FailureMessage = ex.Message;
+            // รอบ 232: หมดเวลา 20 วิ/เครือข่ายขาด ⇒ ข้อความไทย (เดิมผู้จ่ายเห็นข้อความ .NET ภาษาอังกฤษ) · ข้อผิดพลาดเชิงธุรกิจจาก adapter คงข้อความเดิม
+            intent.FailureMessage = GatewayChargeNextStep.TransportFailureText(ex, ct.IsCancellationRequested);
             AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Created,
-                PaymentIntentStatus.Failed, note: "สร้าง charge ไม่สำเร็จ: " + ex.Message);
+                PaymentIntentStatus.Failed, note: "สร้าง charge ไม่สำเร็จ: " + intent.FailureMessage);
             _logger.LogError(ex, "สร้าง charge ไม่สำเร็จ intent {Intent} provider {Provider}",
                 intent.Id, code);
         }
@@ -467,15 +482,26 @@ public class PaymentIntentService : IPaymentIntentService
     /// <param name="redispatchActor">ไม่ null = ถูกเรียกจาก <see cref="RedispatchAsync"/> ⇒ สำเร็จแล้วเขียนเหตุการณ์ ✅ (การส่งต่อครั้งแรกไม่เขียน — ของเดิม)</param>
     private async Task<bool> DispatchSucceededAsync(PaymentIntent intent, CancellationToken ct, string? redispatchActor = null)
     {
-        // รอบ 219 เฟส 0 (G-1/G-3 · part B (a)): เงินค่าบริการ NextAcc ให้สิทธิ์ได้เฉพาะเมื่อรับผ่านบริษัทผู้ให้บริการ · รู้ผู้จ่าย · ไม่ใช่โหมดทดสอบ —
+        // รอบ 232 (คำตัดสิน 232-Omise-2): เงินโหมดทดสอบของร้าน/แพลตฟอร์มไม่มีผลทางธุรกิจ — ไม่เรียก handler (JE/ใบเสร็จ/สต็อก/ตัดชำระ) ·
+        // ต้นทางคงรอชำระ + เหตุการณ์บน intent (ไม่ใช่งานค้างส่งต่อใหม่) · ทดลองจ่ายของระบบ (GatewaySelfTest) ผ่านเพื่อประทับ LastSelfTestPaidAt ·
+        // ฝ่ายค้านรอบ 219 S8: โหมด ณ ตอนสร้างชนะ · แถวก่อนมีคอลัมน์ (null) ⇒ อ่านโหมดของ config (PaymentIntentTestMode ตัวเดียวกับหน้าจ่าย) ·
+        // ฝ่ายค้าน 232 S1: ด่านนี้มาก่อน EntitlementBlockReason ⇒ ค่าบริการ/ส่วนเสริม/โควตาทดสอบ = เหตุการณ์ 🧪 ไม่ใช่งานค้าง "ส่งต่อใหม่"
+        var testMode = await PaymentIntentTestMode.ResolveAsync(_db, intent, ct);
+        if (!TestModePaymentPolicy.AllowsBusinessEffects(testMode, intent.SourceKind))
+        {
+            var note = TestModePaymentPolicy.BlockMessage(intent.SourceKind);
+            _logger.LogWarning("intent {Intent} ({Kind}) ชำระด้วยคีย์ทดสอบ — ไม่ส่งต่อ handler: {Note}", intent.Id, intent.SourceKind, note);
+            AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Succeeded, PaymentIntentStatus.Succeeded, note: note);
+            await _db.SaveChangesAsync(ct);
+            return true;
+        }
+
+        // รอบ 219 เฟส 0 (G-1/G-3): เงินค่าบริการ NextAcc ให้สิทธิ์ได้เฉพาะเมื่อรับผ่านบริษัทผู้ให้บริการ · รู้ผู้จ่าย (โหมดทดสอบตัดสินไปแล้วข้างบน) —
         // ไม่ผ่าน = ไม่เรียก handler (ไม่ต่ออายุ/ไม่เปิดส่วนเสริม) แต่ล้มดัง: ประวัติ ⚠️ + log + แจ้ง (เหมือนไม่มี handler)
         if (PlatformRevenueSource.IsPlatformRevenue(intent.SourceKind))
         {
-            // ฝ่ายค้านรอบ 219 S8: โหมด ณ ตอนสร้างชนะ (config อาจสลับภายหลังได้ทั้งสองทาง) · แถวก่อนมีคอลัมน์ (null) ⇒ อ่านโหมดของ config ·
-            // รอบ 2: ตัวตัดสินเดียวกับหน้าจ่ายเงินทั้งสองหน้า (PaymentIntentTestMode)
-            var isTest = await PaymentIntentTestMode.ResolveAsync(_db, intent, ct);
             var block = PlatformRevenueSource.EntitlementBlockReason(intent.SourceKind, intent.CompanyId,
-                await PlatformCompanyIdAsync(ct), intent.PayerCompanyId, isTest);
+                await PlatformCompanyIdAsync(ct), intent.PayerCompanyId);
             if (block != null)
             {
                 _logger.LogError("เงินค่าบริการ NextAcc เข้าแล้วแต่ไม่ให้สิทธิ์อัตโนมัติ — intent {Intent} บริษัท {Company} ผู้จ่าย {Payer} ยอด {Amount:N2}: {Reason}",

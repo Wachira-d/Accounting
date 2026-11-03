@@ -177,6 +177,8 @@ public class PlatformPaymentController : ControllerBase
         failureMessage = i.FailureMessage,
         // ฝ่ายค้าน (หมายเหตุ): โหมดจากค่าที่ประทับบน intent (ตัวเดียว PaymentIntentTestMode) — ไม่เดาจากช่องทาง
         isTestMode = PaymentIntentTestMode.Decide(i.IsTestMode, null),
+        statusLabel = TestModePaymentPolicy.StatusLabel(i.Status, PaymentIntentTestMode.Decide(i.IsTestMode, null)),
+        testNote = TestModePaymentPolicy.PayerNote(i.Status, PaymentIntentTestMode.Decide(i.IsTestMode, null), i.SourceKind),
     };
 }
 

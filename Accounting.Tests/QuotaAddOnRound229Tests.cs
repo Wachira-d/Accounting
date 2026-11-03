@@ -307,7 +307,8 @@ public class QuotaAddOnRound229Tests
         var tenant = Guid.NewGuid(); var platform = Guid.NewGuid();
         Assert.NotNull(PlatformRevenueSource.StartDenyReason(PaymentSourceKind.QuotaAddOnPurchase, tenant, platform, tenant));
         Assert.Null(PlatformRevenueSource.StartDenyReason(PaymentSourceKind.QuotaAddOnPurchase, platform, platform, tenant));
-        Assert.NotNull(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.QuotaAddOnPurchase, platform, platform, tenant, isTestMode: true));
+        Assert.False(TestModePaymentPolicy.AllowsBusinessEffects(true, PaymentSourceKind.QuotaAddOnPurchase));   // รอบ 232 S1: โหมดทดสอบตัดสินก่อนด่านสิทธิ์
+        Assert.Null(PlatformRevenueSource.EntitlementBlockReason(PaymentSourceKind.QuotaAddOnPurchase, platform, platform, tenant));
         Assert.Equal("โควตาเสริม", PaymentIntentPolicy.SourceKindLabel(PaymentSourceKind.QuotaAddOnPurchase));
     }
 

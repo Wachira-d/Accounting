@@ -75,15 +75,14 @@ public static class PlatformRevenueSource
 
     /// <summary>เงินเข้าแล้ว — ให้สิทธิ์ (ต่ออายุ/เปิดส่วนเสริม) ได้ไหม · null = ได้ · ไม่ได้ = ไม่เรียก handler + บันทึกเหตุผลในประวัติ (ล้มดัง)</summary>
     public static string? EntitlementBlockReason(PaymentSourceKind kind, Guid intentCompanyId, Guid? platformCompanyId,
-        Guid? payerCompanyId, bool isTestMode)
+        Guid? payerCompanyId)
     {
+        // รอบ 232 S1: โหมดทดสอบไม่ใช่เรื่องของด่านนี้แล้ว — TestModePaymentPolicy.AllowsBusinessEffects ตัดสินก่อนถึงที่นี่ (ทุกต้นทาง)
         if (!IsPlatformRevenue(kind)) return null;
         if (platformCompanyId is not Guid p || p != intentCompanyId)
             return "รายการค่าบริการนี้ไม่ได้รับเงินผ่านบริษัทผู้ให้บริการ (เงินอาจเข้าบัญชีของร้าน) — ไม่ให้สิทธิ์อัตโนมัติ ให้ผู้ดูแลระบบตรวจ";
         if (payerCompanyId is null)
             return "ไม่ทราบบริษัทผู้จ่ายของรายการค่าบริการนี้ — ไม่ให้สิทธิ์อัตโนมัติ";
-        if (isTestMode)
-            return "ชำระในโหมดทดสอบ — บันทึกว่าทดสอบสำเร็จ แต่ไม่ให้สิทธิ์/ไม่ต่ออายุจริง";
         return null;
     }
 

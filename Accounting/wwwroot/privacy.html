@@ -41,7 +41,10 @@
   <div class="legal-wrap">
     <a class="legal-back" href="/">&larr; กลับหน้าแรก</a> · <a class="legal-back" href="/register.html">สมัครสมาชิก</a>
 
-    <h1>นโยบายความเป็นส่วนตัว</h1>
+    <h1 data-legal="title">นโยบายความเป็นส่วนตัว</h1>
+    <!-- รอบ 232 (232-Checkout-1): สวิตช์ 2 ภาษา (?lang=en · จำใน localStorage) — ฉบับ/วันมีผลเดียวกัน · ไม่มีฉบับอังกฤษ = แสดงไทย + ประกาศ (js/legal-policy.js) -->
+    <div data-legal-lang style="margin-bottom:10px"></div>
+    <div class="legal-notice" id="legalLangNotice" style="display:none"></div>
     <div class="legal-meta">
       ฉบับที่ <b data-legal="version">-</b> · มีผลบังคับใช้ <b data-legal="effectiveDate">-</b> ·
       ตาม พ.ร.บ.คุ้มครองข้อมูลส่วนบุคคล พ.ศ. 2562 (PDPA)

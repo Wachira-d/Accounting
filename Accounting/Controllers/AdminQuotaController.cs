@@ -78,6 +78,9 @@ public class AdminQuotaController : ControllerBase
                 return BadRequest(new ApiResponse<object>(false, null, $"\"{res.Label}\" ตั้งที่ช่องเดิมของแพ็กเกจ (หน้าจัดการแพ็กเกจ) — ไม่ทำสำเนาที่สอง"));
             if (it.Included is int i && i < -1 || it.TrialIncluded is int t && t < -1)
                 return BadRequest(new ApiResponse<object>(false, null, "ค่าต้องเป็น -1 (ไม่จำกัด) หรือ 0 ขึ้นไป"));
+            // รอบ 232 (ฝ่ายค้าน S2): ค่าทดลองใช้โดยไม่มีค่าปกติ = แถวถูกลบทั้งแถว (TrialIncluded หายเงียบ) — ปฏิเสธให้ชัด
+            if (it.Included == null && it.TrialIncluded != null)
+                return BadRequest(new ApiResponse<object>(false, null, $"\"{res.Label}\": ตั้งค่าระหว่างทดลองใช้ได้เมื่อตั้งค่าปกติด้วย (ค่าปกติว่าง = ไม่ตั้ง/ลบแถว) — กรอกค่าปกติ หรือเว้นว่างทั้งสองช่อง"));
         }
         var existing = await _db.PlanQuotaAllowances.Where(a => a.PlanTemplateId == planTemplateId).ToListAsync(ct);
         var before = existing.Select(a => new { a.ResourceKey, a.Included, a.TrialIncluded }).ToList();

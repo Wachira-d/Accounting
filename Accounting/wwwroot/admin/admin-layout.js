@@ -71,29 +71,29 @@ const AdminLayout = {
     { id: 'chat-kb', label: 'คลังความรู้ Chatbot', icon: '📚', href: '/admin/chat-kb.html' },
     { id: 'help-content', label: 'คู่มือ/วิดีโอสอนใช้งาน', icon: '🎓', href: '/admin/help-content.html' },
     { id: 'users', label: 'ผู้ใช้งาน', icon: '👥', href: '/admin/users.html' },
-    { id: 'account-subs', label: '🎫 Account Plans (User License)', icon: '🎫', href: '/admin/account-subscriptions.html' },
-    { section: 'แพ็กเกจ' },
-    { id: 'plans', label: 'จัดการแพ็กเกจ', icon: '💎', href: '/admin/plans.html' },
-    { id: 'subscription-enforcement', label: 'บังคับแพ็กเกจบนหน้าเว็บ', icon: '🚦', href: '/admin/subscription-enforcement.html' },
-    // รอบ 201 ทีม PL (B-9): วันหยุดราชการระดับแพลตฟอร์ม — เลื่อนกำหนดยื่นภาษี (ว่าง = เสาร์/อาทิตย์อย่างเดียว)
-    { id: 'platform-holidays', label: 'วันหยุดราชการ (กำหนดยื่นภาษี)', icon: '📅', href: '/admin/platform-holidays.html' },
-    { section: 'การเงิน' },
+    // รอบ 232: หน้าแพ็กเกจ/โควตา/ราคา/License/บิล/gateway ที่เคยเป็น 9 เมนูซ้อนกัน ⇒ hub เดียว "แพ็กเกจ & บิลลิ่ง" (แถบแท็บจาก billingHub ข้างล่าง · inHub = ไม่โผล่ใน sidebar · URL เดิมคงไว้)
+    { id: 'account-subs', inHub: true, label: 'License ลูกค้า (Account Plans)', icon: '🎫', href: '/admin/account-subscriptions.html' },
+    { section: 'แพ็กเกจ & บิลลิ่ง' },
+    { id: 'plans', label: 'แพ็กเกจ & บิลลิ่ง', icon: '💎', href: '/admin/plans.html' },
+    { id: 'subscription-enforcement', inHub: true, label: 'บังคับแพ็กเกจบนหน้าเว็บ', icon: '🚦', href: '/admin/subscription-enforcement.html' },
     { id: 'revenue', label: 'รายรับ/ธุรกิจ', icon: '📈', href: '/admin/revenue.html' },
-    { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },
+    { id: 'payments', inHub: true, label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },
     // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บ · ใบค้างชำระทุกบริษัท · ทวงหนี้/ระงับ · ลิงก์ชำระ
-    { id: 'platform-billing', label: 'เรียกเก็บค่าบริการ', icon: '🧾', href: '/admin/platform-billing.html' },
+    { id: 'platform-billing', inHub: true, label: 'เรียกเก็บค่าบริการ', icon: '🧾', href: '/admin/platform-billing.html' },
     // รอบ 230 (คำตัดสินข้อ 230-Q2): คูปอง/โค้ดส่วนลดของ NextAcc (ค่าแพ็กเกจ · ส่วนต่างอัปเกรด · โควตาเสริม)
-    { id: 'platform-coupons', label: 'คูปอง/โค้ดส่วนลด', icon: '🎟️', href: '/admin/coupons.html' },
+    { id: 'platform-coupons', inHub: true, label: 'คูปอง/โค้ดส่วนลด', icon: '🎟️', href: '/admin/coupons.html' },
     // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ช่องทางรับชำระค่าบริการของ NextAcc (Omise) — คีย์ · ทดสอบ · ทดลองจ่าย · เปิดรับเงินจริง · ปิดฉุกเฉิน · หน้าทดลองจ่าย
-    { id: 'platform-gateway', label: 'ช่องทางรับชำระของ NextAcc', icon: '🏦', href: '/admin/platform-gateway.html' },
+    { id: 'platform-gateway', inHub: true, label: 'ช่องทางรับชำระของ NextAcc', icon: '🏦', href: '/admin/platform-gateway.html' },
     // รอบ 230 (PLATFORM_OMISE_AUDIT §5.2/§5.3): ตัดบัตรอัตโนมัติ (สวิตช์ · คำสั่งตัดต่อบริษัท · ความพยายาม) + รอบโอนจากผู้ให้บริการ → ร่างรอบโอน (ไม่ลงบัญชี)
-    { id: 'platform-card-ops', label: 'ตัดบัตรอัตโนมัติ + รอบโอน', icon: '💳', href: '/admin/platform-card-ops.html' },
+    { id: 'platform-card-ops', inHub: true, label: 'ตัดบัตรอัตโนมัติ + รอบโอน', icon: '💳', href: '/admin/platform-card-ops.html' },
     { section: 'เชื่อมต่อระบบ' },
     { id: 'integrations', label: 'Integration', icon: '🔗', href: '/admin/integrations.html' },
     { section: 'ตั้งค่าระบบบัญชี' },
     { id: 'coa-template', label: 'ผังบัญชีต้นแบบ', icon: '📒', href: '/admin/coa-template.html' },
     { section: 'ตั้งค่า' },
     { id: 'site-settings', label: 'ตั้งค่าเว็บไซต์', icon: '⚙️', href: '/admin/site-settings.html' },
+    // รอบ 201 ทีม PL (B-9): วันหยุดราชการระดับแพลตฟอร์ม — เลื่อนกำหนดยื่นภาษี (ว่าง = เสาร์/อาทิตย์อย่างเดียว) · รอบ 232 ย้ายจากหมวด "แพ็กเกจ" (เป็นค่าตั้งระบบ)
+    { id: 'platform-holidays', label: 'วันหยุดราชการ (กำหนดยื่นภาษี)', icon: '📅', href: '/admin/platform-holidays.html' },
     // รอบ 214 (คำตัดสินข้อ 173): นโยบายความเป็นส่วนตัว/ข้อกำหนดการใช้งานของแพลตฟอร์ม — แก้ร่าง · เผยแพร่ (append-only) · URL สาธารณะ
     { id: 'legal', label: 'นโยบาย/ข้อกำหนด/คืนเงิน', icon: '⚖️', href: '/admin/legal.html' },
     { id: 'system-email', label: 'อีเมลระบบ (SMTP)', icon: '📧', href: '/admin/system-email.html' },
@@ -106,6 +106,50 @@ const AdminLayout = {
     { id: 'error-log', label: 'บันทึกข้อผิดพลาด', icon: '🐞', href: '/admin/error-log.html' },
     { id: 'background-jobs', label: 'งานเบื้องหลัง (Jobs)', icon: '🛠️', href: '/admin/background-jobs.html' },
   ],
+
+  // ───────── รอบ 232: hub "แพ็กเกจ & บิลลิ่ง" (แอดมิน) — ตารางแท็บตัวเดียว ─────────
+  // 4 กลุ่ม: แม่แบบแพ็กเกจ (โควตา+ฟีเจอร์+ราคา · โควตาเสริม/ราคาส่วนเกิน · ส่วนเสริม · บังคับแพ็กเกจ) · บัญชีลูกค้า (License/ราคาพิเศษ/ชนิดบัญชี/ทดลอง — ราคาพิเศษรายบริษัทอยู่ในหน้าลูกค้า) ·
+  // รายการชำระ/ใบแจ้งหนี้ (เรียกเก็บ · ตรวจสอบการชำระ · คูปอง) · gateway (ช่องทางรับชำระ · ตัดบัตร/รอบโอน) — ทุกแท็บคง URL เดิม (ไม่ redirect · ไม่ลบ API)
+  // หน้าที่อยู่ใน hub จะได้แถบแท็บนี้อัตโนมัติจาก render() (ตัดสินจาก currentPage/pathname) — ห้ามพิมพ์รายชื่อแท็บซ้ำในหน้าใด
+  billingHub: {
+    groups: [
+      { label: 'แม่แบบแพ็กเกจ', tabs: [
+        { id: 'plans', label: '💎 แพ็กเกจ (โควตา · ฟีเจอร์ · ราคา)', href: '/admin/plans.html' },
+        { id: 'admin-quota', label: '📏 โควตาเสริม · ราคาส่วนเกิน', href: '/pages/admin-quota.html' },
+        { id: 'admin-addons', label: '🧩 ส่วนเสริมและราคา', href: '/pages/admin-addons.html' },
+        { id: 'subscription-enforcement', label: '🚦 บังคับแพ็กเกจ', href: '/admin/subscription-enforcement.html' } ] },
+      { label: 'บัญชีลูกค้า', tabs: [
+        { id: 'account-subs', label: '🎫 License · ราคาพิเศษ · ทดลองใช้', href: '/admin/account-subscriptions.html' } ] },
+      { label: 'รายการชำระ / ใบแจ้งหนี้', tabs: [
+        { id: 'platform-billing', label: '🧾 เรียกเก็บ · ใบค้างชำระ', href: '/admin/platform-billing.html' },
+        { id: 'payments', label: '💳 ตรวจสอบการชำระ', href: '/admin/payments.html' },
+        { id: 'platform-coupons', label: '🎟️ คูปอง', href: '/admin/coupons.html' } ] },
+      { label: 'Gateway', tabs: [
+        { id: 'platform-gateway', label: '🏦 ช่องทางรับชำระ', href: '/admin/platform-gateway.html' },
+        { id: 'platform-card-ops', label: '💳 ตัดบัตร · รอบโอน', href: '/admin/platform-card-ops.html' } ] },
+    ],
+  },
+  /** รอบ 232 (ฝ่ายค้าน B1 ค): ป้ายวันหมดอายุของ subscription ตัวเดียว — ธงฟรีถาวร = "ไม่หมดอายุ (ฟรีถาวร)" · ธง false แต่ค่าแทน = "ไม่มีรอบเรียกเก็บ — ต้องตรวจ" · อื่น = วันที่ (ผ่าน date() ตัวเดียว ไม่มี +543) */
+  expiryLabel(s) {
+    if (!s) return '-';
+    if (s.isPermanentFree) return '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>';
+    if (s.isOpenEnded || s.expiryNeedsReview) return '<span style="color:#b45309;font-weight:600">⚠️ ไม่มีรอบเรียกเก็บ — ต้องตรวจ</span>';
+    return this.date(s.endDate);
+  },
+  /** แท็บของ hub ที่ตรงกับหน้านี้ (id เมนู หรือ pathname) · null = หน้านี้ไม่อยู่ใน hub */
+  billingHubActive() {
+    const here = (typeof window !== 'undefined' && window.location) ? window.location.pathname : '';
+    for (const g of this.billingHub.groups) for (const t of g.tabs) if (t.id === this.currentPage || t.href === here) return t;
+    return null;
+  },
+  billingHubHtml() {
+    const active = this.billingHubActive(); if (!active) return '';
+    return `<div class="admin-hub-tabs" style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;padding:10px 24px;margin:-24px -24px 20px;border-bottom:1px solid #e2e8f0;background:#fff">
+      <div style="font-weight:700;color:#0f172a;padding-bottom:6px">💎 แพ็กเกจ &amp; บิลลิ่ง</div>
+      ${this.billingHub.groups.map(g => `<div style="display:flex;flex-direction:column;gap:2px"><div style="font-size:11px;color:#94a3b8">${this.esc(g.label)}</div>
+        <div style="display:flex;gap:2px;flex-wrap:wrap">${g.tabs.map(t => `<a href="${this.esc(t.href)}" style="padding:4px 10px;border-radius:6px;font-size:13px;text-decoration:none;${t === active ? 'background:#1d4ed8;color:#fff;font-weight:600' : 'color:#334155;background:#f1f5f9'}">${this.esc(t.label)}</a>`).join('')}</div></div>`).join('')}
+    </div>`;
+  },
 
   /// เรนเดอร์ sidebar+topbar ครอบ #pageContent. pageName = id ใน navItems
   /// (ใช้ไฮไลต์เมนูที่กำลังเปิด) — ส่งมาผิด/ไม่ส่ง เมนูยังขึ้นครบ แค่ไม่ไฮไลต์
@@ -192,9 +236,9 @@ const AdminLayout = {
         <span class="admin-badge">ADMIN</span>
       </div>
       <nav class="admin-nav">
-        ${this.navItems.map(item => {
+        ${this.navItems.filter(item => !item.inHub).map(item => {   // รอบ 232: หน้าใน hub ไม่โผล่เป็นเมนูแยก
           if (item.section) return `<div class="admin-nav-section">${item.section}</div>`;
-          const active = item.id === this.currentPage ? ' active' : '';
+          const active = item.id === this.currentPage || (item.id === 'plans' && this.billingHubActive()) ? ' active' : '';
           return `<a href="${item.href}" class="admin-nav-item${active}"><span class="icon">${item.icon}</span>${item.label}</a>`;
         }).join('')}
       </nav>
@@ -217,10 +261,10 @@ const AdminLayout = {
       <a href="/" target="_blank" class="admin-link-site">เปิดเว็บไซต์หลัก ↗</a>
     `;
 
-    // Main
+    // Main — รอบ 232: หน้าที่อยู่ใน hub "แพ็กเกจ & บิลลิ่ง" ได้แถบแท็บเดียวกันเหนือเนื้อหา (ตาราง billingHub ตัวเดียว)
     const main = document.createElement('main');
     main.className = 'admin-main';
-    main.innerHTML = pageContent.innerHTML;
+    main.innerHTML = this.billingHubHtml() + pageContent.innerHTML;
 
     // Overlay for mobile sidebar
     const overlay = document.createElement('div');

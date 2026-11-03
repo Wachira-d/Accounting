@@ -12,8 +12,8 @@ namespace Accounting.Helpers;
 /// ถูกพาไปยกเลิกแทนการรับรู้ · ตอนนี้: หลักฐาน = แถว <c>DocumentEmailLog</c> ของใบนั้นที่ส่ง<b>สำเร็จ</b> (<see cref="EmailLogStatus.Sent"/> — ครอบทั้งอีเมลปกติและ
 /// e-Tax by email ซึ่งเขียนแถวชนิดเดียวกันพร้อม <c>DocumentId</c>) · สถานะเอกสารไม่ใช่หลักฐาน (ไม่มีผู้ประทับ)</para>
 /// <para>LINE (รอบ 201 ทีม ST · A-ST10 ตรวจแล้ว NOT-A-BUG): <c>DocumentLineDeliveryService.SendDocumentLineAsync</c> <b>ไม่มีผู้เรียกทั้งเรพ</b> (มีแค่การลงทะเบียน DI) ⇒
-/// วันนี้ไม่มีทางเข้าใดส่งเอกสารผ่าน LINE จึงไม่มีการส่งที่ต้องนับ · ถ้าวันหน้าต่อสายปุ่มส่ง LINE ต้องทำพร้อมกัน: (1) push ที่คืนผล (ตัวปัจจุบัน
-/// <c>ILineNotifyService.PushFlexToUserAsync</c> คืน <c>Task</c> และกลืนผลล้ม ⇒ เมธอดตอบ true แม้ LINE ปฏิเสธ) (2) บันทึกการส่งที่ API ตอบสำเร็จ
+/// วันนี้ไม่มีทางเข้าใดส่งเอกสารผ่าน LINE จึงไม่มีการส่งที่ต้องนับ · ถ้าวันหน้าต่อสายปุ่มส่ง LINE ต้องทำพร้อมกัน: (1) push ที่คืนผล (รอบ 232: ใช้
+/// <c>ILineNotifyService.TryPushFlexToUserAsync</c> คืน <c>LinePushResult</c> แล้ว — ข้อ (1) ปิดแล้ว) (2) บันทึกการส่งที่ API ตอบสำเร็จ
 /// (3) ช่องทาง LINE ในตัวตัดสินนี้ — ไม่เดาจากการกดปุ่ม (คำตัดสินข้อ 25)</para>
 /// </summary>
 public static class DocumentDeliveryEvidence

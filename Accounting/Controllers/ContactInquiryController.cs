@@ -68,9 +68,14 @@ public class ContactInquiryController : ControllerBase
                           $"💬 ข้อความ: {inquiry.Message}\n" +
                           $"🕐 เวลา: {DateTime.UtcNow.AddHours(7):dd/MM/yyyy HH:mm} น.";
 
+        // รอบ 232 (232-Notify): ฟอร์มติดต่อของเว็บ NextAcc = เรื่องของผู้ดูแลแพลตฟอร์ม (PlatformOps) ⇒ กลุ่ม LINE กลางเท่านั้น (ตัวตัดสิน NotificationAudiencePolicy)
         _ = Task.Run(async () =>
         {
-            try { await _lineNotifyService.SendMessageAsync(lineMessage); }
+            try
+            {
+                var r = await _lineNotifyService.TryPushPlatformOpsAsync(lineMessage);
+                if (!r.Ok) _logger.LogWarning("LINE (กลุ่มผู้ดูแล) แจ้งฟอร์มติดต่อ {Id} ไม่สำเร็จ: {Error}", inquiry.Id, r.Error);
+            }
             catch (Exception ex) { _logger.LogError(ex, "Failed to send LINE notification for inquiry {Id}", inquiry.Id); }
         });
 

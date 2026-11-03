@@ -152,3 +152,13 @@ awk brace-balance                      # ทุก .cs ที่แก้
 > คือ "แก้เส้นเดียวจาก N โดยไม่ grep call site")
 - แจ้งผู้ใช้เสมอว่า "ยังไม่ได้คอมไพล์ — รบกวน rebuild ฝั่งคุณ"
 
+
+
+### รอบ 232 — `window_global_check.check_script_order`: นับเฉพาะการอ้างที่ "รันทันที" (top-level / IIFE)
+- **ที่มา**: บั๊ก `UsageTab is not defined` (billing.html — IIFE ในบล็อกที่ 2 เรียก const ของบล็อกที่ 3) · รุ่นแรกของกติกาจับทุกการอ้าง `Name.`/`Name(` ในบล็อกก่อนหน้า ⇒
+  ฝ่ายค้าน S4 ชี้ว่า handler/method/callback ที่อ้างชื่อจากบล็อกหลังนั้น **ถูกต้อง** (รันหลังทุกบล็อกโหลดแล้ว) — checker ที่ฟ้องผิด = checker ที่พัง (F2 ข้อ 6)
+- **กติกา**: `_eager_uses` ถอดสตริง/เทมเพลตหยาบ ๆ แล้วแบ่ง statement ระดับบนสุดด้วย depth ของวงเล็บ · นับการอ้างที่ depth 0 ของ statement หรือใน body ตรงของ
+  statement ที่เป็น IIFE (`(…)()` · `(async () => {…})()` · depth ≤ 2 เพื่อให้ `for {}` ใน IIFE ยังนับ) · ใน `function`/method/arrow callback ไม่นับ
+- **negative/positive ใน self-test**: deferred 4 แบบ (function · object method · addEventListener callback · setTimeout) ต้องไม่ฟ้อง · `Bill.init();` ระดับบนสุด และ IIFE ต้องฟ้อง ·
+  บล็อก `<script src>` ไม่นับเป็นบล็อก inline
+- **ข้อจำกัดที่รู้**: regex ถอดสตริงเป็นแบบหยาบ (regex literal ที่มี `{`/`(` อาจเพี้ยน depth) — ถ้าฟ้องผิดให้เพิ่มเคสใน self-test ก่อนแก้

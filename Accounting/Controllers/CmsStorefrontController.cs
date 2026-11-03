@@ -42,9 +42,9 @@ public class CmsStorefrontController : ControllerBase
     // ===== รอบ 214: นโยบายความเป็นส่วนตัว / ข้อกำหนดของร้าน (หน้า /legal/privacy · /legal/terms บน storefront) =====
 
     [HttpGet("legal/{kind}")]
-    public async Task<ActionResult<ApiResponse<StorefrontLegalPageResponse>>> LegalPage(Guid companyId, Guid siteId, string kind)
+    public async Task<ActionResult<ApiResponse<StorefrontLegalPageResponse>>> LegalPage(Guid companyId, Guid siteId, string kind, [FromQuery] string? lang = null)
     {
-        var result = await _renderingService.GetLegalPageAsync(companyId, siteId, kind);
+        var result = await _renderingService.GetLegalPageAsync(companyId, siteId, kind, lang);   // รอบ 232: ?lang=en
         if (result == null) return NotFound(new ApiResponse<StorefrontLegalPageResponse>(false, null, "ไม่พบเอกสาร"));
         return Ok(new ApiResponse<StorefrontLegalPageResponse>(true, result));
     }

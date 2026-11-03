@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เลือกแพ็กเกจ | NextAcc</title>
+  <meta name="description" content="เลือกแพ็กเกจ NextAcc ใส่ตะกร้า แล้วชำระเงินออนไลน์ได้ทันทีในเว็บไซต์ (บัตรเครดิต/เดบิต · พร้อมเพย์)">
+  <meta name="robots" content="index, follow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .pc-wrap { max-width:1100px; margin:0 auto; padding:90px 24px 80px }
+    .pc-head h1 { font-size:2rem; font-weight:800; color:var(--gray-900); margin-bottom:6px }
+    .pc-head p { color:var(--gray-600) }
+    .pc-steps { display:flex; gap:10px; flex-wrap:wrap; margin:18px 0 26px; font-size:.85rem; color:var(--gray-500) }
+    .pc-steps span { padding:4px 10px; border-radius:9999px; background:var(--gray-100) }
+    .pc-steps span.on { background:var(--primary); color:#fff }
+    .pc-banner { border-radius:10px; padding:12px 16px; margin-bottom:18px; font-size:.9rem }
+    .pc-banner.test { background:#fffbeb; border:1px solid #fcd34d; color:#92400e }
+    .pc-banner.off { background:#fef2f2; border:1px solid #fecaca; color:#991b1b }
+    .pc-grid { display:grid; grid-template-columns:1fr 340px; gap:28px; align-items:start }
+    .pc-cycles { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px }
+    .pc-cycles button { border:1px solid var(--gray-300); background:#fff; border-radius:9999px; padding:6px 14px; cursor:pointer; font-size:.9rem }
+    .pc-cycles button.on { background:var(--primary); color:#fff; border-color:var(--primary) }
+    .pc-plans { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px }
+    .pc-plan { border:1px solid var(--gray-200); border-radius:14px; padding:20px; background:#fff; display:flex; flex-direction:column; gap:8px }
+    .pc-plan.sel { border-color:var(--primary); box-shadow:0 0 0 3px rgba(79,70,229,.15) }
+    .pc-plan .name { font-weight:700; font-size:1.1rem }
+    .pc-plan .price { font-size:1.6rem; font-weight:800; color:var(--gray-900) }
+    .pc-plan .sub { font-size:.8rem; color:var(--gray-500) }
+    .pc-plan ul { list-style:none; margin:8px 0; padding:0; font-size:.85rem; color:var(--gray-600) }
+    .pc-cart { border:1px solid var(--gray-200); border-radius:14px; padding:20px; background:#fff; position:sticky; top:90px }
+    .pc-cart h2 { font-size:1.05rem; font-weight:700; margin-bottom:10px }
+    .pc-row { display:flex; justify-content:space-between; font-size:.9rem; padding:5px 0; border-bottom:1px dashed var(--gray-200) }
+    .pc-row.total { font-weight:800; font-size:1.05rem; border:0; padding-top:10px }
+    .pc-cart input { width:100%; border:1px solid var(--gray-300); border-radius:8px; padding:8px 10px; font-size:.9rem }
+    .pc-links { margin-top:30px; font-size:.85rem; color:var(--gray-500) }
+    .pc-links a { color:var(--primary) }
+    .pc-err { color:#b91c1c; font-size:.85rem; margin-top:8px }
+    @media (max-width:860px) { .pc-grid { grid-template-columns:1fr } .pc-cart { position:static } }
+  </style>
+</head>
+<body>
+  <!-- รอบ 232 (คำตัดสิน 232-Checkout-2): หน้า "ตะกร้า" ของการซื้อแพ็กเกจ NextAcc สาธารณะ — ราคา/รอบ/ป้ายโหมดทดสอบ/นโยบายมาจาก GET /api/public/checkout/catalog
+       (Helpers/PublicCheckoutPolicy ตัวตัดสินเดียว) · ยอดจาก GET /api/public/checkout/quote (ราคาตั้ง · คูปอง/ราคาพิเศษคิดหลังรู้บริษัทที่หน้า checkout) ·
+       หน้านี้ไม่คิดเงินเอง — "server computes · page displays" · ตะกร้าเก็บใน localStorage (ความสะดวกต่อผู้ชม ไม่ใช่สถานะของระบบ) -->
+  <div class="pc-wrap">
+    <div class="pc-head">
+      <a href="/" style="font-size:.9rem;color:var(--primary);text-decoration:none">&larr; หน้าแรก</a>
+      <h1>เลือกแพ็กเกจ NextAcc</h1>
+      <p>เลือกแพ็กเกจและรอบบิล ใส่ตะกร้า แล้วชำระเงินออนไลน์ได้ทันทีในเว็บไซต์นี้ — เปิดใช้งานอัตโนมัติเมื่อชำระสำเร็จ</p>
+    </div>
+    <div class="pc-steps"><span class="on">1 เลือกแพ็กเกจ</span><span>2 บัญชีผู้ใช้</span><span>3 ชำระเงิน</span><span>4 เปิดใช้งาน</span></div>
+    <div id="banner"></div>
+    <div class="pc-grid" id="main" hidden>
+      <div>
+        <div class="pc-cycles" id="cycles"></div>
+        <div class="pc-plans" id="plans"></div>
+      </div>
+      <aside class="pc-cart">
+        <h2>🛒 ตะกร้า</h2>
+        <div id="cartBody"><div class="sub" style="color:var(--gray-500);font-size:.9rem">ยังไม่ได้เลือกแพ็กเกจ</div></div>
+        <div style="margin-top:12px">
+          <label style="font-size:.85rem;color:var(--gray-600)">คูปองส่วนลด (ถ้ามี)
+            <input type="text" id="coupon" maxlength="40" placeholder="เช่น WELCOME10" autocomplete="off"></label>
+        </div>
+        <div id="cartErr" class="pc-err"></div>
+        <button class="btn btn-primary w-full" id="goCheckout" style="margin-top:14px" disabled>ไปชำระเงิน &rarr;</button>
+        <div class="sub" style="font-size:.78rem;color:var(--gray-500);margin-top:8px">ราคายังไม่รวมส่วนลดคูปอง/ราคาพิเศษของบริษัท — ยอดสุดท้ายแสดงก่อนชำระ · ภาษีมูลค่าเพิ่มตามที่ระบุในใบกำกับ</div>
+      </aside>
+    </div>
+    <div class="pc-links" id="links"></div>
+  </div>
+  <script>
+    (function () {
+      const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const money = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const CART_KEY = 'nextacc.cart';
+      const Page = {
+        catalog: null, cycle: 'Annual', plan: null, quote: null,
+        loadCart() { try { return JSON.parse(localStorage.getItem(CART_KEY) || 'null'); } catch (_) { return null; } },
+        saveCart(c) { try { localStorage.setItem(CART_KEY, JSON.stringify(c)); } catch (_) { /* โหมดส่วนตัว — ส่งผ่าน query แทน */ } },
+        async init() {
+          const banner = document.getElementById('banner');
+          let j = null, r = null;
+          try { r = await fetch('/api/public/checkout/catalog'); j = await r.json(); } catch (e) { banner.innerHTML = `<div class="pc-banner off">โหลดแพ็กเกจไม่สำเร็จ — ${esc(e.message)}</div>`; return; }
+          const d = j && j.data;
+          if (!r.ok || !d || !d.enabled) {
+            // ปิดอยู่ = บอกตรง ๆ + ทางไปต่อ (ไม่ใช่หน้าว่าง)
+            banner.innerHTML = `<div class="pc-banner off">${esc((j && j.message) || (d && d.reason) || 'หน้าซื้อแพ็กเกจออนไลน์ยังไม่เปิดให้บริการ')}<br>
+              <a href="/register.html">สมัครใช้งาน</a> · <a href="/contact.html">ติดต่อเรา</a></div>`;
+            return;
+          }
+          this.catalog = d;
+          if (d.isTestMode) banner.innerHTML = `<div class="pc-banner test">🧪 <b>โหมดทดสอบ</b> — ช่องทางชำระเงินใช้คีย์ทดสอบ ไม่มีการตัดเงินจริง และจะไม่เปิดใช้แพ็กเกจจริง (ใช้สำหรับตรวจสอบขั้นตอนเท่านั้น)</div>`;
+          else if (!d.onlineAvailable) banner.innerHTML = `<div class="pc-banner off">${esc(d.reason || 'ยังชำระออนไลน์ไม่ได้ในขณะนี้')}</div>`;
+          const q = new URLSearchParams(location.search);
+          const cart = this.loadCart() || {};
+          const wantPlan = q.get('plan') || cart.plan;
+          const wantCycle = q.get('cycle') || cart.cycle;
+          if (d.cycles.some(c => c.code === wantCycle)) this.cycle = wantCycle;
+          if (d.plans.some(p => p.plan.toLowerCase() === String(wantPlan || '').toLowerCase())) this.plan = d.plans.find(p => p.plan.toLowerCase() === String(wantPlan).toLowerCase()).plan;
+          document.getElementById('coupon').value = cart.coupon || q.get('coupon') || '';
+          document.getElementById('coupon').addEventListener('change', () => this.refreshQuote());
+          document.getElementById('goCheckout').addEventListener('click', () => this.checkout());
+          document.getElementById('links').innerHTML = `ก่อนชำระเงิน โปรดอ่าน <a href="${esc(d.policy.termsUrl)}" target="_blank" rel="noopener">ข้อกำหนดการใช้งาน</a> ·
+            <a href="${esc(d.policy.refundUrl)}" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a> · <a href="${esc(d.policy.privacyUrl)}" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a> ·
+            <a href="/contact.html">ติดต่อเรา</a>`;
+          document.getElementById('main').hidden = false;
+          this.render();
+          this.refreshQuote();
+        },
+        priceFor(p, cycle) {
+          return ({ Monthly: p.monthlyPrice, Quarterly: p.quarterlyPrice, SemiAnnual: p.semiAnnualPrice, Annual: p.annualPrice })[cycle] || 0;
+        },
+        render() {
+          const d = this.catalog;
+          document.getElementById('cycles').innerHTML = d.cycles.map(c =>
+            `<button type="button" data-cycle="${esc(c.code)}" class="${c.code === this.cycle ? 'on' : ''}">${esc(c.label)}</button>`).join('');
+          document.querySelectorAll('#cycles button').forEach(b => b.addEventListener('click', () => { this.cycle = b.dataset.cycle; this.render(); this.refreshQuote(); }));
+          const months = (d.cycles.find(c => c.code === this.cycle) || {}).months || 1;
+          document.getElementById('plans').innerHTML = d.plans.map(p => {
+            const total = this.priceFor(p, this.cycle);
+            return `<div class="pc-plan ${p.plan === this.plan ? 'sel' : ''}">
+              <div class="name">${esc(p.name)}</div>
+              <div class="sub">${esc(p.description || '')}</div>
+              <div class="price">฿${money(total)}</div>
+              <div class="sub">ต่อ ${months} เดือน (≈ ฿${money(total / months)}/เดือน)</div>
+              <ul>
+                <li>👥 ผู้ใช้ ${p.maxUsers > 0 ? esc(p.maxUsers) : 'ไม่จำกัด'} คน</li>
+                <li>📄 เอกสาร ${p.maxDocumentsPerMonth > 0 ? esc(p.maxDocumentsPerMonth) + '/เดือน' : 'ไม่จำกัด'}</li>
+                <li>🔎 OCR ${p.maxOcrPagesPerMonth > 0 ? esc(p.maxOcrPagesPerMonth) + ' หน้า/เดือน' : 'ไม่จำกัด'}</li>
+              </ul>
+              <button type="button" class="btn ${p.plan === this.plan ? 'btn-primary' : 'btn-outline'} w-full" data-plan="${esc(p.plan)}">${p.plan === this.plan ? '✓ อยู่ในตะกร้า' : 'ใส่ตะกร้า'}</button>
+            </div>`;
+          }).join('');
+          document.querySelectorAll('#plans button[data-plan]').forEach(b => b.addEventListener('click', () => { this.plan = b.dataset.plan; this.render(); this.refreshQuote(); }));
+        },
+        async refreshQuote() {
+          const body = document.getElementById('cartBody');
+          const err = document.getElementById('cartErr');
+          const go = document.getElementById('goCheckout');
+          err.textContent = '';
+          if (!this.plan) { body.innerHTML = '<div style="color:var(--gray-500);font-size:.9rem">ยังไม่ได้เลือกแพ็กเกจ</div>'; go.disabled = true; return; }
+          const coupon = document.getElementById('coupon').value.trim();
+          this.saveCart({ plan: this.plan, cycle: this.cycle, coupon });
+          body.innerHTML = '<div style="color:var(--gray-500);font-size:.9rem">กำลังคำนวณยอด…</div>';
+          try {
+            const qs = new URLSearchParams({ plan: this.plan, cycle: this.cycle }); if (coupon) qs.set('coupon', coupon);
+            const r = await fetch('/api/public/checkout/quote?' + qs);
+            const j = await r.json();
+            if (!r.ok || !j.success) throw new Error(j.message || 'คำนวณยอดไม่สำเร็จ');
+            const q = this.quote = j.data;
+            const plan = this.catalog.plans.find(p => p.plan === q.plan) || {};
+            body.innerHTML = `<div class="pc-row"><span>${esc(plan.name || q.plan)}</span><span>${esc(q.cycleLabel)}</span></div>
+              <div class="pc-row"><span>ราคาแพ็กเกจ</span><span>฿${money(q.listAmount)}</span></div>
+              ${q.discount > 0 ? `<div class="pc-row"><span>ส่วนลด</span><span>−฿${money(q.discount)}</span></div>` : ''}
+              <div class="pc-row total"><span>ยอดชำระ</span><span>฿${money(q.amountDue)}</span></div>
+              ${q.couponNote ? `<div class="sub" style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.couponNote)}</div>` : ''}
+              <div class="sub" style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.note)}</div>`;
+            go.disabled = false;
+          } catch (e) { body.innerHTML = ''; err.textContent = e.message; go.disabled = true; }
+        },
+        checkout() {
+          if (!this.plan) return;
+          const coupon = document.getElementById('coupon').value.trim();
+          this.saveCart({ plan: this.plan, cycle: this.cycle, coupon });
+          const qs = new URLSearchParams({ plan: this.plan, cycle: this.cycle }); if (coupon) qs.set('coupon', coupon);
+          location.href = '/checkout.html?' + qs;   // ตะกร้าไปทั้ง localStorage และ query (โหมดส่วนตัวก็ไม่หาย)
+        },
+      };
+      Page.init();
+    })();
+  </script>
+</body>
+</html>

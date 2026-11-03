@@ -36,11 +36,13 @@ public class LineBotService : ILineBotService
         IPermissionService perms, IChatRateLimiter rateLimiter, IEmailService email,
         INextAccLineConfig nextAccLine,
         ICustomerLineLinkService? customerLinks = null,
-        Accounting.Services.Storage.IFileStorage? storage = null)
+        Accounting.Services.Storage.IFileStorage? storage = null,
+        ILineNotifyService? line = null)
     {
         _storage = storage;
         _customerLinks = customerLinks;
         _nextAccLine = nextAccLine;
+        _line = line;
         _db = db; _config = config; _httpFactory = httpFactory;
         _logger = logger; _docService = docService; _payslipLine = payslipLine;
         _ocr = ocr; _ocrQuota = ocrQuota; _chat = chat; _perms = perms;
@@ -53,6 +55,9 @@ public class LineBotService : ILineBotService
     private readonly ICustomerLineLinkService? _customerLinks;
     /// <summary>รอบ 212 D: token/secret ของ OA กลาง — หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)</summary>
     private readonly INextAccLineConfig _nextAccLine;
+    /// <summary>ฝ่ายค้าน 232 S1: push ถึงผู้ใช้บอทผ่าน <see cref="ILineNotifyService"/> ตัวเดียว (ตัดสินผู้รับ + token กลาง + เพดานข้อความ) — ไม่ยิง endpoint push ของ LINE
+    /// เองอีก (`required_call_site_check` LINE_PUSH_FORBID: ที่เดียว = <c>LineNotifyService.PushCoreAsync</c>) · null (นอก DI) ⇒ ข้าม + log (ไม่ยิงดิบ)</summary>
+    private readonly ILineNotifyService? _line;
     /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — DI ใส่ให้เสมอ · null (นอก DI) ⇒ FileStorageDefaults.Local</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
 
@@ -901,28 +906,11 @@ public class LineBotService : ILineBotService
     /// ผู้ใช้แชทกับบอทช่องนี้ ใช้ token บริษัท (LINE Notify OA) จะส่งไม่ถึง.</summary>
     private async Task<bool> PushFlexAsync(string lineUserId, string altText, object contents)
     {
-        var token = (await _nextAccLine.GetAsync()).AccessToken;
-        if (string.IsNullOrEmpty(token)) return false;
-        var client = _httpFactory.CreateClient();
-        client.DefaultRequestHeaders.Add("Authorization", "Bearer " + token);
-        var payload = JsonSerializer.Serialize(new
-        {
-            to = lineUserId,
-            messages = new object[] { new { type = "flex", altText, contents } }
-        });
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        try
-        {
-            var res = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
-            if (!res.IsSuccessStatusCode)
-                _logger.LogWarning("LINE flex push returned {Status} for {User}", res.StatusCode, CustomerLineLinkRule.Mask(lineUserId));
-            return res.IsSuccessStatusCode;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "LINE flex push failed");
-            return false;
-        }
+        // ฝ่ายค้าน 232 S1: ผ่านตัวยิงเดียว (ตัดสินผู้รับ TenantMember ผ่านบอทกลาง · token กลาง · altText ≤ 400) — เดิมยิง endpoint push ของ LINE เองซ้ำกับ LineNotifyService
+        if (_line == null) { _logger.LogWarning("LINE flex push skipped — ไม่มี ILineNotifyService (นอก DI)"); return false; }
+        var r = await _line.TryPushFlexViaNextAccAsync(lineUserId, altText, contents);
+        if (!r.Ok) _logger.LogWarning("LINE flex push failed for {User}: {Error}", CustomerLineLinkRule.Mask(lineUserId), r.Error);
+        return r.Ok;
     }
 
     /// <summary>สรุปผลสแกนเป็นข้อความ LINE ที่คนไม่ใช่นักบัญชีอ่านรู้เรื่อง —
@@ -1028,26 +1016,9 @@ public class LineBotService : ILineBotService
 
     public async Task ReplyAsync(string lineUserId, string text)
     {
-        var token = (await _nextAccLine.GetAsync()).AccessToken;
-        if (string.IsNullOrEmpty(token))
-        {
-            _logger.LogWarning("LINE ChannelAccessToken not configured — bot reply skipped.");
-            return;
-        }
-        var client = _httpFactory.CreateClient();
-        client.DefaultRequestHeaders.Add("Authorization", "Bearer " + token);
-        var payload = JsonSerializer.Serialize(new
-        {
-            to = lineUserId,
-            messages = new[] { new { type = "text", text } }
-        });
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        try
-        {
-            var res = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
-            if (!res.IsSuccessStatusCode)
-                _logger.LogWarning("LINE push returned {Status} for {User}", res.StatusCode, CustomerLineLinkRule.Mask(lineUserId));
-        }
-        catch (Exception ex) { _logger.LogError(ex, "LINE push failed"); }
+        // ฝ่ายค้าน 232 S1: push ข้อความถึงผู้ใช้บอท (ชื่อเดิม "Reply" แต่เป็น push) ผ่าน ILineNotifyService ตัวเดียว — ไม่ยิง endpoint push ของ LINE เอง
+        if (_line == null) { _logger.LogWarning("LINE push skipped — ไม่มี ILineNotifyService (นอก DI)"); return; }
+        var r = await _line.TryPushViaNextAccAsync(lineUserId, new[] { text });
+        if (!r.Ok) _logger.LogWarning("LINE push failed for {User}: {Error}", CustomerLineLinkRule.Mask(lineUserId), r.Error);
     }
 }

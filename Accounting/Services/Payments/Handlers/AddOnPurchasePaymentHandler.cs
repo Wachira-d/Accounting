@@ -30,6 +30,8 @@ public class AddOnPurchasePaymentHandler : IPaymentCompletionHandler
 
     public async Task HandleSucceededAsync(PaymentIntent intent, CancellationToken ct = default)
     {
+        // รอบ 232 (232-Omise-2): ด่านชั้นสอง — เงินโหมดทดสอบห้ามมีผลทางธุรกิจ (dispatcher กันชั้นแรก · ตัวตัดสินเดียว TestModePaymentPolicy)
+        await Accounting.Helpers.TestModePaymentPolicy.GuardAsync(_db, intent, ct);
         // รอบ 219 เฟส 0 (G-1/G-3): intent ค่าส่วนเสริมอยู่ใต้บริษัทผู้ให้บริการ (ตรวจแล้วใน DispatchSucceededAsync) — แถวสิทธิ์เป็นของ
         // <b>บริษัทผู้จ่าย</b> (PayerCompanyId) ไม่ใช่ intent.CompanyId · เดิมกรอง intent.CompanyId ⇒ เงินต้องเข้า gateway ของร้านเอง
         var payer = intent.PayerCompanyId;

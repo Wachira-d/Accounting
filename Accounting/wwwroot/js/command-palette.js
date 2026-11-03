@@ -62,7 +62,21 @@
   }
 
   let overlay, inputEl, resultsEl;
-  let allCommands = [...staticCommands];
+  // รอบ 232 (ฝ่ายค้าน S5): เมนูจาก Layout.navItems (ตัวตั้งเดียว · ข้าม inHub/ซ่อนตามสิทธิ์) — ไม่พิมพ์รายการหน้าซ้ำที่นี่ · รายการ static เดิมคงไว้เฉพาะที่ไม่ซ้ำ href
+  function navCommands() {
+    const L = window.Layout; if (!L || !Array.isArray(L.navItems)) return [];
+    const seen = new Set(staticCommands.map(c => String(c.action).match(/'(\/pages\/[^']+)'/)?.[1]).filter(Boolean));
+    const out = [];
+    L.navItems.forEach(it => {
+      if (!it.id || !it.href || it.inHub || seen.has(it.href.split('#')[0].split('?')[0])) return;
+      if (typeof L.hasMenuAccess === 'function' && !L.hasMenuAccess(it.id)) return;
+      if ((it.adminOnly && !L.myPermissions?.isOwnerOrAdmin) || (it.platformAdmin && !L.myPermissions?.isSystemAdmin)) return;
+      seen.add(it.href.split('#')[0].split('?')[0]);
+      out.push({ id: 'nav-' + it.id, label: it.label, icon: it.icon || '📄', keys: (it.description || '') + ' ' + it.id, action: () => location.href = it.href });
+    });
+    return out;
+  }
+  let allCommands = [...staticCommands, ...navCommands()];
   let selectedIdx = 0;
   let visibleCommands = [];
 

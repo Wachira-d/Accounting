@@ -23,6 +23,10 @@ public class LegalDocumentVersion : BaseEntity
     /// <summary>เนื้อความ markdown ชุดย่อย (<c>Helpers/LegalMarkdown</c>) พร้อมโทเคน <c>{{controller.*}}</c></summary>
     public string BodyMarkdown { get; set; } = "";
 
+    /// <summary>รอบ 232 (232-Checkout-1): เนื้อความฉบับ<b>ภาษาอังกฤษ</b>ของฉบับเดียวกัน (null/ว่าง = ยังไม่มี — หน้าเว็บแสดงไทยพร้อมประกาศ
+    /// <c>LegalDocumentLanguage.EnglishUnavailableNotice</c>) · เลขฉบับ/วันมีผล/หลักฐานยอมรับใช้ร่วมกัน (ภาษาเป็นแค่การแสดง)</summary>
+    public string? BodyMarkdownEn { get; set; }
+
     /// <summary>สรุปสิ่งที่เปลี่ยน (แสดงในประวัติฉบับ + แถบแจ้งผู้ใช้)</summary>
     public string? ChangeSummary { get; set; }
 

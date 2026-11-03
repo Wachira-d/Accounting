@@ -8,12 +8,15 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Services.Implementations;
 
+/// <summary>ตัวยิง LINE push ตัวเดียวของระบบ — ดูสัญญาที่ <see cref="ILineNotifyService"/> ·
+/// รอบ 232 (คำตัดสิน 232-Notify): ทุกเมธอดตัดสินเส้นทางด้วย <see cref="NotificationAudiencePolicy.LineRoute"/> ก่อนยิง · เส้นของบริษัทอ่าน <b>OA ของบริษัทเท่านั้น</b>
+/// (<see cref="ResolveCompanyOaAsync"/>) · เส้นกลางอ่าน <see cref="INextAccLineConfig"/> เท่านั้น — ไม่มีเมธอดไหน "ลองอันหนึ่งแล้วถอยไปอีกอัน"</summary>
 public class LineNotifyService : ILineNotifyService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<LineNotifyService> _logger;
-    private readonly AccountingDbContext _db;
+    private readonly AccountingDbContext? _db;
     private readonly ISecretProtector _secrets;
     /// <summary>รอบ 212 D: ค่าตั้ง OA กลาง (หน้าแอดมินก่อน · config Line:* fallback) — ผู้อ่านตัวเดียว</summary>
     private readonly INextAccLineConfig _nextAcc;
@@ -35,24 +38,27 @@ public class LineNotifyService : ILineNotifyService
         _nextAcc = nextAcc ?? new NextAccLineConfig(db, configuration, secrets);
     }
 
-    /// <summary>หา (token, defaultGroupId) สำหรับบริษัท — ใช้ของบริษัทถ้าตั้ง
-    /// LineEnabled + มี token; ไม่งั้น fallback ไป appsettings global (เพื่อ
-    /// compatibility กับการตั้งค่าเก่า). Returns (null, null) ถ้าไม่มีเลย.</summary>
-    private async Task<(string? Token, string? GroupId)> ResolveConfigAsync(Guid? companyId)
+    /// <summary>OA ของบริษัท (ถอดรหัสแล้ว) — <see cref="Configured"/> = เปิด LINE + token ถอดได้ · <see cref="GroupId"/> = "LINE กลุ่มของทีม"</summary>
+    private sealed record CompanyOa(bool Configured, string? Token, string? GroupId)
     {
-        if (companyId.HasValue)
-        {
-            var s = await _db.Set<CompanySettings>().AsNoTracking()
-                .FirstOrDefaultAsync(x => x.CompanyId == companyId.Value);
-            if (s != null && s.LineEnabled && !string.IsNullOrWhiteSpace(s.LineChannelAccessToken))
-            {
-                var token = _secrets.Unprotect(s.LineChannelAccessToken);
-                if (!string.IsNullOrWhiteSpace(token))
-                    return (token, s.LineDefaultGroupId);
-            }
-        }
-        var nx = await _nextAcc.GetAsync();
-        return (nx.AccessToken, nx.GroupId);
+        public static CompanyOa None { get; } = new(false, null, null);
+    }
+
+    /// <summary>ค่าตั้ง OA ของ<b>บริษัท</b>เท่านั้น — รอบ 232: ไม่มี ⇒ <see cref="CompanyOa.None"/> (เดิมถอยไป token + GroupId ของ OA กลาง = ต้นตอที่เหตุการณ์ของผู้เช่าเด้งเข้าห้องแอดมินแพลตฟอร์ม) ·
+    /// db null (เทสต์ที่สร้างตรง) = ไม่มี OA ของบริษัท</summary>
+    private async Task<CompanyOa> ResolveCompanyOaAsync(Guid companyId)
+    {
+        if (_db == null) return CompanyOa.None;
+        var s = await _db.Set<CompanySettings>().AsNoTracking()
+            .Where(x => x.CompanyId == companyId)
+            .Select(x => new { x.LineEnabled, x.LineChannelAccessToken, x.LineDefaultGroupId })
+            .FirstOrDefaultAsync();
+        if (s == null || !s.LineEnabled || string.IsNullOrWhiteSpace(s.LineChannelAccessToken)) return CompanyOa.None;
+        // ฝ่ายค้าน 232 S2: token ที่เก็บไว้แต่ถอดไม่ได้ (คีย์เปลี่ยน/ค่าเสีย) = ไม่มี OA (IsUsable ก่อน Unprotect — Unprotect คืนค่าว่าง/ค่าดิบเมื่อถอดไม่ออก)
+        if (!_secrets.IsUsable(s.LineChannelAccessToken)) return CompanyOa.None;
+        var token = _secrets.Unprotect(s.LineChannelAccessToken);
+        if (string.IsNullOrWhiteSpace(token)) return CompanyOa.None;
+        return new CompanyOa(true, token, string.IsNullOrWhiteSpace(s.LineDefaultGroupId) ? null : s.LineDefaultGroupId.Trim());
     }
 
     private async Task<bool> PushRawAsync(string? token, object payload, string context)
@@ -89,34 +95,13 @@ public class LineNotifyService : ILineNotifyService
         }
     }
 
-    /// <summary>รอบ 212 C — push ถึง<b>พนักงาน/ผู้ใช้ ERP</b> ผ่าน OA กลางของ NextAcc <b>แบบระบุชัด</b> (ไม่ผ่าน <see cref="ResolveConfigAsync"/>):
-    /// userId ของพนักงานได้จาก webhook ของ OA กลางเท่านั้น ("ผูก 123456" · "สลิป 123456" ใน <c>LineBotService</c>) และ userId ของ LINE แยกตาม provider ⇒
-    /// ส่งผ่าน OA ของร้านไม่มีทางถึง (บั๊กแฝงที่แก้: ร้านที่ตั้ง OA เองแจ้งเตือนพนักงานล้มทุกฉบับ) · ไม่แตะค่าตั้งของบริษัทเลย ·
-    /// ข้อความผ่าน <see cref="LineMessageLimits.Normalize"/> (≤ 5 ก้อน × ≤ 5,000 ตัว) · ไม่ตั้ง token กลาง ⇒ ล้มพร้อมเหตุ (ไม่ถอยไป OA ร้าน)</summary>
-    public async Task<LinePushResult> TryPushViaNextAccAsync(string lineUserId, IReadOnlyList<string> messages)
-    {
-        if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
-        var texts = LineMessageLimits.Normalize(messages);
-        if (texts.Count == 0) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
-        var token = await NextAccTokenAsync();
-        if (string.IsNullOrWhiteSpace(token)) return LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage);
-        return await PushCoreAsync(token, new
-        {
-            to = lineUserId,
-            messages = texts.Select(t => new { type = "text", text = t }).ToArray()
-        }, $"staff {CustomerLineLinkRule.Mask(lineUserId)}");
-    }
+    private static object TextPayload(string to, string text)
+        => new { to, messages = new[] { new { type = "text", text } } };
 
-    /// <summary>รอบ 212 D — Flex ถึง<b>พนักงาน</b>ผ่าน OA กลางแบบระบุชัด (คู่ของ <see cref="TryPushViaNextAccAsync"/>) · ใช้กับสลิปเงินเดือนที่ผูกผ่าน OA กลาง ·
-    /// คืนเหตุเมื่อล้ม (เดิม <see cref="PushFlexToUserAsync(Guid?, string, string, object)"/> กลืนผลล้ม ⇒ ผู้เรียกรายงาน "ส่งแล้ว" ทั้งที่ LINE ปฏิเสธ)</summary>
-    public async Task<LinePushResult> TryPushFlexViaNextAccAsync(string lineUserId, string altText, object flexContents)
-    {
-        if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
-        var token = await NextAccTokenAsync();
-        if (string.IsNullOrWhiteSpace(token)) return LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage);
-        return await PushCoreAsync(token, new
+    private static object FlexPayload(string to, string altText, object flexContents)
+        => new
         {
-            to = lineUserId,
+            to,
             messages = new[]
             {
                 new
@@ -126,170 +111,105 @@ public class LineNotifyService : ILineNotifyService
                     contents = flexContents
                 }
             }
-        }, $"staff flex {CustomerLineLinkRule.Mask(lineUserId)}");
-    }
+        };
 
-    /// <summary>token ของ OA กลาง (NextAcc) — ที่เดียวที่ส่งถึงพนักงานอ่าน · ผ่าน resolver ตัวเดียว (รอบ 212 D)</summary>
-    private async Task<string?> NextAccTokenAsync() => (await _nextAcc.GetAsync()).AccessToken;
+    // ───────── เส้นของผู้เช่า — OA ของบริษัทเท่านั้น ─────────
 
-    public async Task SendMessageAsync(string message)
+    public async Task<LinePushResult> TryPushCompanyGroupAsync(Guid companyId, string message)
     {
-        var (token, groupId) = await ResolveConfigAsync(null);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        await PushRawAsync(token, new
-        {
-            to = groupId,
-            messages = new[] { new { type = "text", text = message } }
-        }, "group");
+        if (string.IsNullOrWhiteSpace(message)) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
+        var oa = await ResolveCompanyOaAsync(companyId);
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.CompanyGroup, oa.Configured);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        if (oa.GroupId == null) return LinePushResult.Fail("ยังไม่ได้ใส่ \"LINE กลุ่มของทีม\" (Group ID) ในหน้าตั้งค่า LINE ของบริษัท");
+        return await PushCoreAsync(oa.Token, TextPayload(oa.GroupId, LineMessageLimits.Truncate(message, 5000)), $"company-group {companyId}");
     }
 
-    /// <summary>Push a personalised text message to one user. Used by
-    /// the NotificationEngine when a recipient has a bound LineUserId.
-    /// No-op when LINE is not configured (no token) or the userId is
-    /// empty so the engine can fall back to System / Email cleanly.</summary>
-    public Task PushToUserAsync(string lineUserId, string message)
-        => PushToUserAsync(null, lineUserId, message);
-
-    public async Task PushToUserAsync(Guid? companyId, string lineUserId, string message)
+    public async Task<LinePushResult> TryPushToUserAsync(Guid companyId, string lineUserId, string message)
     {
-        if (string.IsNullOrWhiteSpace(lineUserId)) return;
-        var (token, _) = await ResolveConfigAsync(companyId);
-        await PushRawAsync(token, new
-        {
-            to = lineUserId,
-            messages = new[] { new { type = "text", text = message } }
-        }, $"user {CustomerLineLinkRule.Mask(lineUserId)}");
+        if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
+        var oa = await ResolveCompanyOaAsync(companyId);
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        return await PushCoreAsync(oa.Token, TextPayload(lineUserId, message), $"user {CustomerLineLinkRule.Mask(lineUserId)}");
     }
 
-    public async Task<bool> TryPushToUserAsync(Guid? companyId, string lineUserId, string message)
+    public async Task<LinePushResult> TryPushFlexToUserAsync(Guid companyId, string lineUserId, string altText, object flexContents)
     {
-        if (string.IsNullOrWhiteSpace(lineUserId)) return false;
-        var (token, _) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(token)) return false;
-        return await PushRawAsync(token, new
-        {
-            to = lineUserId,
-            messages = new[] { new { type = "text", text = message } }
-        }, $"user {CustomerLineLinkRule.Mask(lineUserId)}");
+        if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
+        var oa = await ResolveCompanyOaAsync(companyId);
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        return await PushCoreAsync(oa.Token, FlexPayload(lineUserId, altText, flexContents), $"flex user {CustomerLineLinkRule.Mask(lineUserId)}");
     }
 
-    public Task PushFlexToUserAsync(string lineUserId, string altText, object flexContents)
-        => PushFlexToUserAsync(null, lineUserId, altText, flexContents);
-
-    public async Task PushFlexToUserAsync(Guid? companyId, string lineUserId, string altText, object flexContents)
-    {
-        if (string.IsNullOrWhiteSpace(lineUserId)) return;
-        var (token, _) = await ResolveConfigAsync(companyId);
-        await PushRawAsync(token, new
-        {
-            to = lineUserId,
-            messages = new[]
-            {
-                new
-                {
-                    type = "flex",
-                    altText = string.IsNullOrEmpty(altText) ? "การแจ้งเตือนจาก NextAcc" : altText,
-                    contents = flexContents
-                }
-            }
-        }, $"flex user {CustomerLineLinkRule.Mask(lineUserId)}");
-    }
-
-    public async Task NotifyDocumentApprovedAsync(Guid companyId, string documentNumber, string contactName, decimal amount)
-    {
-        var (token, groupId) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        var msg = $"✅ เอกสารอนุมัติแล้ว\n📄 {documentNumber}\n👤 {contactName}\n💰 {amount:N2} บาท";
-        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "doc-approved");
-    }
-
-    // Servers run UTC; recipients are Thai-based. Render times in ICT (UTC+7)
-    // so the LINE message matches what the user sees on the wall clock.
-    private static string NowIct() => DateTime.UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm");
-
-    public async Task NotifyPaymentReceivedAsync(Guid companyId, string documentNumber, decimal amount)
-    {
-        var (token, groupId) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        var msg = $"💵 รับชำระเงินแล้ว\n📄 {documentNumber}\n💰 {amount:N2} บาท\n🕐 {NowIct()}";
-        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "payment");
-    }
-
-    public async Task NotifyOverdueInvoiceAsync(Guid companyId, string documentNumber, string contactName, decimal amount, int daysOverdue)
-    {
-        var (token, groupId) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        var msg = $"⚠️ ใบแจ้งหนี้เกินกำหนด\n📄 {documentNumber}\n👤 {contactName}\n💰 ค้างชำระ {amount:N2} บาท\n📅 เกินกำหนด {daysOverdue} วัน";
-        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "overdue");
-    }
-
-    public async Task NotifyBankSyncCompleteAsync(Guid companyId, string bankName, int newTransactions)
-    {
-        var (token, groupId) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        var msg = $"🏦 Sync ธนาคารสำเร็จ\n🔄 {bankName}\n📊 รายการใหม่ {newTransactions} รายการ\n🕐 {NowIct()}";
-        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "bank-sync");
-    }
-
-    public async Task NotifyLodgingBookingAsync(Guid companyId, string propertyName, string reservationNumber,
-        string guestName, string roomSummary, DateTime checkIn, DateTime checkOut, int nights,
-        decimal totalAmount, decimal depositRequired, bool isSlipUploaded)
-    {
-        var (token, groupId) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        var head = isSlipUploaded ? "📎 แขกส่งสลิปแล้ว รอตรวจสอบ" : "🏨 มีการจองใหม่";
-        // วันที่เข้าพักเป็น "วันตามปฏิทิน" อยู่แล้ว (00:00 UTC) — ไม่ต้อง +7 ซ้ำ
-        // ต่างจาก NowIct() ที่แปลงเวลา ณ ขณะนั้น
-        var msg = $"{head}\n🏠 {propertyName}\n🧾 {reservationNumber}\n👤 {guestName}"
-                + $"\n🛏 {roomSummary}"
-                + $"\n📅 {checkIn:dd/MM/yyyy} → {checkOut:dd/MM/yyyy} ({nights} คืน)"
-                + $"\n💰 ยอดรวม {totalAmount:N2} บาท"
-                + (depositRequired > 0 ? $" · มัดจำ {depositRequired:N2} บาท" : "")
-                + $"\n🕐 {NowIct()}";
-        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "lodging-booking");
-    }
-
-    public async Task NotifyECommerceSyncAsync(Guid companyId, string platform, int newOrders, decimal totalAmount)
-    {
-        var (token, groupId) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        var msg = $"🛒 Sync {platform} สำเร็จ\n📦 ออเดอร์ใหม่ {newOrders} รายการ\n💰 ยอดรวม {totalAmount:N2} บาท\n🕐 {NowIct()}";
-        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "ecom-sync");
-    }
-
-    public async Task NotifyPayrollCompletedAsync(Guid companyId, string runName, int employeeCount, decimal totalNet)
-    {
-        var (token, groupId) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        var msg = $"💼 คำนวณเงินเดือนเสร็จสิ้น\n📋 {runName}\n👥 {employeeCount} คน\n💰 รวมจ่ายสุทธิ {totalNet:N2} บาท";
-        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "payroll");
-    }
-
-    public async Task NotifyLowBalanceAsync(Guid companyId, string accountName, decimal balance, decimal threshold)
-    {
-        var (token, groupId) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(groupId)) return;
-        var msg = $"🔴 แจ้งเตือน: ยอดเงินต่ำ\n🏦 {accountName}\n💰 คงเหลือ {balance:N2} บาท\n⚠️ ต่ำกว่าเกณฑ์ {threshold:N2} บาท";
-        await PushRawAsync(token, new { to = groupId, messages = new[] { new { type = "text", text = msg } } }, "low-balance");
-    }
-
-    /// <summary>Test config — ส่ง echo message ไปยัง groupId หรือ lineUserId
-    /// ที่ระบุ. ใช้จากปุ่ม "ทดสอบ" ในหน้าตั้งค่า. Returns (success, message).</summary>
     public async Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId)
     {
         if (string.IsNullOrWhiteSpace(toLineId))
             return (false, "กรุณาระบุ LINE User ID หรือ Group ID ปลายทาง");
-        var (token, _) = await ResolveConfigAsync(companyId);
-        if (string.IsNullOrWhiteSpace(token))
-            return (false, "ยังไม่ได้ตั้งค่า Channel Access Token");
-        var ok = await PushRawAsync(token, new
-        {
-            to = toLineId,
-            messages = new[] { new { type = "text",
-                text = $"✅ ทดสอบ LINE Messaging API สำเร็จ\nบริษัท: {companyId}\nเวลา: {NowIct()}" } }
-        }, "test");
+        var oa = await ResolveCompanyOaAsync(companyId);
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
+        if (!route.Allowed)
+            return (false, "ยังไม่ได้ตั้งค่า Channel Access Token ของ LINE OA ของร้าน (ติ๊ก \"เปิดใช้งาน\" + ใส่ Token แล้วบันทึกก่อน) — " + route.Reason);
+        var ok = await PushRawAsync(oa.Token, TextPayload(toLineId.Trim(),
+            $"✅ ทดสอบ LINE Messaging API สำเร็จ\nบริษัท: {companyId}\nเวลา: {NowIct()}"), "test");
         return ok
             ? (true, "ส่งข้อความทดสอบสำเร็จ")
             : (false, "ส่งไม่สำเร็จ ตรวจสอบ Token และ ID ปลายทาง (ดู log)");
     }
+
+    // ───────── เส้น OA กลาง — ระบุชัด ─────────
+
+    /// <summary>รอบ 212 C — push ถึง<b>พนักงาน/ผู้ใช้ ERP/ลูกค้า</b>ที่ผูกกับบอทกลางเองผ่าน OA กลางของ NextAcc <b>แบบระบุชัด</b> (ไม่อ่านค่าตั้งบริษัท):
+    /// userId ของ LINE แยกตาม provider ⇒ ส่งผ่าน OA ของร้านไม่มีทางถึง · ข้อความผ่าน <see cref="LineMessageLimits.Normalize"/> (≤ 5 ก้อน × ≤ 5,000 ตัว) ·
+    /// ไม่ตั้ง token กลาง ⇒ ล้มพร้อมเหตุ (ไม่ถอยไป OA ร้าน) · รอบ 232: ปลายทาง = <see cref="LineTargetKind.TenantMember"/> (ช่องส่วนตัวของสมาชิก — ไม่ใช่ห้องของแพลตฟอร์ม)</summary>
+    public async Task<LinePushResult> TryPushViaNextAccAsync(string lineUserId, IReadOnlyList<string> messages,
+        NotificationAudience audience = NotificationAudience.TenantBusiness)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
+        var texts = LineMessageLimits.Normalize(messages);
+        if (texts.Count == 0) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
+        // ฝ่ายค้าน 232 N1: ผู้เรียกประกาศผู้รับของเหตุการณ์ (TenantBusiness ตั้งต้น · PlatformBillingNotifier = PlatformAccount) — ปลายทางเดียวกัน = สมาชิกของบริษัทนั้น
+        var route = NotificationAudiencePolicy.LineRoute(audience, LineOaKind.NextAccOa, LineTargetKind.TenantMember, companyOaConfigured: false);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage);
+        return await PushCoreAsync(token, new
+        {
+            to = lineUserId,
+            messages = texts.Select(t => new { type = "text", text = t }).ToArray()
+        }, $"staff {CustomerLineLinkRule.Mask(lineUserId)}");
+    }
+
+    /// <summary>รอบ 212 D — Flex ถึง<b>พนักงาน</b>ผ่าน OA กลางแบบระบุชัด (คู่ของ <see cref="TryPushViaNextAccAsync"/>) · ใช้กับสลิปเงินเดือนที่ผูกผ่าน OA กลาง · คืนเหตุเมื่อล้ม</summary>
+    public async Task<LinePushResult> TryPushFlexViaNextAccAsync(string lineUserId, string altText, object flexContents)
+    {
+        if (string.IsNullOrWhiteSpace(lineUserId)) return LinePushResult.Fail("ผู้รับยังไม่ผูก LINE");
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.NextAccOa, LineTargetKind.TenantMember, companyOaConfigured: false);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        var token = await NextAccTokenAsync();
+        if (string.IsNullOrWhiteSpace(token)) return LinePushResult.Fail(NextAccLineConfigRule.NotConfiguredMessage);
+        return await PushCoreAsync(token, FlexPayload(lineUserId, altText, flexContents), $"staff flex {CustomerLineLinkRule.Mask(lineUserId)}");
+    }
+
+    /// <summary>รอบ 232 — เรื่องของ<b>ผู้ดูแลแพลตฟอร์ม</b>เข้ากลุ่ม LINE กลาง (<c>SiteSettings.LineMessagingGroupId</c>) · แอดมินปิดได้ (<c>OpsAlertsToGroup</c>) ·
+    /// ไม่มี token/กลุ่มกลาง ⇒ ล้มพร้อมเหตุ (ไม่ถอยไป OA ของบริษัทใด)</summary>
+    public async Task<LinePushResult> TryPushPlatformOpsAsync(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message)) return LinePushResult.Fail("ไม่มีข้อความให้ส่ง");
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.PlatformOps, LineOaKind.NextAccOa, LineTargetKind.PlatformGroup, companyOaConfigured: false);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        var nx = await _nextAcc.GetAsync();
+        if (!nx.OpsAlertsToGroup) return LinePushResult.Fail("ผู้ดูแลระบบปิด \"ส่งเรื่องของระบบเข้ากลุ่ม LINE กลาง\" ไว้");
+        if (!nx.HasToken) return LinePushResult.Fail(nx.Problem ?? NextAccLineConfigRule.NotConfiguredMessage);
+        if (string.IsNullOrWhiteSpace(nx.GroupId)) return LinePushResult.Fail("ยังไม่ได้ตั้ง Group ID ของกลุ่ม LINE กลาง (ผู้ดูแลระบบ → ตั้งค่าเว็บไซต์ → LINE OA กลาง)");
+        return await PushCoreAsync(nx.AccessToken, TextPayload(nx.GroupId, LineMessageLimits.Truncate(message, 5000)), "platform-ops");
+    }
+
+    /// <summary>token ของ OA กลาง (NextAcc) — ผ่าน resolver ตัวเดียว (รอบ 212 D)</summary>
+    private async Task<string?> NextAccTokenAsync() => (await _nextAcc.GetAsync()).AccessToken;
+
+    // Servers run UTC; recipients are Thai-based. Render times in ICT (UTC+7)
+    // so the LINE message matches what the user sees on the wall clock.
+    private static string NowIct() => DateTime.UtcNow.AddHours(7).ToString("dd/MM/yyyy HH:mm");
 }

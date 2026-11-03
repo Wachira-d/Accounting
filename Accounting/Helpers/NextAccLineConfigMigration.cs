@@ -11,5 +11,7 @@ public static class NextAccLineConfigMigration
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LineMessagingBasicId" text NULL;""",
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LineMessagingBotUserId" text NULL;""",
         """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LineMessagingGroupId" text NULL;""",
+        // รอบ 232 (232-Notify): กลุ่มกลางรับเฉพาะเรื่องของระบบ · แอดมินปิดได้ · ตั้งต้น true = พฤติกรรมเดิมของฟอร์มติดต่อ/แชท
+        """ALTER TABLE "SiteSettings" ADD COLUMN IF NOT EXISTS "LineMessagingOpsAlertsToGroup" boolean NOT NULL DEFAULT true;""",
     };
 }

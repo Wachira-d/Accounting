@@ -580,8 +580,11 @@ public class SubscriptionService : ISubscriptionService
     }
 
     /// <summary>รอบ 219 เฟส 0: คัดลอกสิทธิ์/โควตาของแพ็กเกจลง subscription — ตัวเดียวของการอนุมัติชำระ และดาวน์เกรดที่ถึงวันมีผล</summary>
-    private static void ApplyTemplate(Subscription sub, PlanTemplate template, BillingCycle cycle)
+    /// <returns>true = แถวนี้เคย "ไม่มีรอบ" (ฟรีถาวร/ค่าแทน) แล้วแม่แบบใหม่ไม่ฟรีถาวร ⇒ ปิดรอบผ่าน <see cref="SubscriptionExpiry.CloseOpenEnded"/> แล้ว (ผู้เรียกบันทึกประวัติ/แจ้ง)</returns>
+    private static bool ApplyTemplate(Subscription sub, PlanTemplate template, BillingCycle cycle)
     {
+        var nowUtc = DateTime.UtcNow;
+        var wasOpenEnded = SubscriptionExpiry.IsOpenEnded(sub.IsPermanentFree, sub.EndDate, nowUtc);
         sub.Plan = template.Plan;
         sub.BillingCycle = cycle;
         sub.PricePerCycle = PlatformPlanPricing.CyclePrice(template, cycle);
@@ -602,16 +605,78 @@ public class SubscriptionService : ISubscriptionService
         if (template.IsPermanentFree)
         {
             sub.Status = SubscriptionStatus.Active;
-            sub.EndDate = DateTime.UtcNow.AddYears(100);
+            sub.EndDate = SubscriptionExpiry.OpenEnded(nowUtc);   // รอบ 232: ค่าแทน "ไม่หมดอายุ" ตัวเดียว
             sub.NextBillingDate = null;
+            sub.ExpiryNeedsReview = false;
+            return false;
         }
+        // ฝ่ายค้าน 232-hub B1(ก): ธงฟรีถาวรถูกถอด (หรือค่าแทนค้างอยู่) ⇒ ตั้งรอบใหม่ผ่านตัวตั้งเดียว — ห้ามปล่อยค่าแทน 2126 ไว้บนแผนจ่ายเงิน
+        if (wasOpenEnded)
+        {
+            (sub.EndDate, sub.NextBillingDate) = SubscriptionExpiry.CloseOpenEnded(nowUtc, cycle);
+            sub.Status = SubscriptionStatus.Active;
+            sub.ExpiryNeedsReview = false;
+            return true;
+        }
+        return false;
     }
+
+    /// <summary>ฝ่ายค้าน 232-hub B1: <b>ผู้เขียนเดียว</b>ของการปิดสถานะ "ไม่มีรอบ" บนแผนจ่ายเงิน — ตั้ง EndDate/NextBillingDate ผ่าน <see cref="SubscriptionExpiry.CloseOpenEnded"/> ·
+    /// ปลด <c>ExpiryNeedsReview</c> · ประวัติ + audit (hash chain) + แจ้งเจ้าของบริษัท "แพ็กเกจเปลี่ยนเป็นแบบมีรอบ หมดอายุ &lt;วันที่&gt;" · ผู้เรียก: resync แม่แบบ (ฟรีถาวร→จ่ายเงิน) · แอดมินกด "กำหนดรอบ" · แพ็กเกจตามกำหนดถึงวันมีผล</summary>
+    private async Task CloseOpenEndedCoreAsync(Subscription sub, string performedBy, string reason, DateTime nowUtc, bool alreadyClosed)
+    {
+        var before = sub.EndDate;
+        if (!alreadyClosed)
+        {
+            (sub.EndDate, sub.NextBillingDate) = SubscriptionExpiry.CloseOpenEnded(nowUtc, sub.BillingCycle);
+            sub.Status = SubscriptionStatus.Active;
+        }
+        sub.ExpiryNeedsReview = false;
+        sub.UpdatedAt = nowUtc;
+        _db.SubscriptionHistories.Add(new SubscriptionHistory
+        {
+            SubscriptionId = sub.Id, Action = "OpenEndedClosed",
+            Notes = $"แพ็กเกจเปลี่ยนจาก \"ไม่มีรอบเรียกเก็บ\" เป็นแบบมีรอบ ({sub.BillingCycle}) หมดอายุ {sub.EndDate:yyyy-MM-dd} · {reason}",
+            PerformedBy = performedBy,
+        });
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = sub.CompanyId, Action = AuditAction.Update, EntityType = nameof(Subscription), EntityId = sub.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { endDate = before, isPermanentFree = true, expiryNeedsReview = true }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "OpenEndedClosed", ruleCode = "SUB-EXPIRY-CLOSE-OPEN-ENDED", endDate = sub.EndDate, nextBillingDate = sub.NextBillingDate, cycle = sub.BillingCycle.ToString(), reason, by = performedBy }),
+            Timestamp = nowUtc,
+        });
+        await SendSubscriptionNotificationToOwner(sub, NotificationType.SubscriptionExpiring,
+            "แพ็กเกจเปลี่ยนเป็นแบบมีรอบเรียกเก็บ",
+            $"แพ็กเกจ {sub.Plan} ของบริษัทเปลี่ยนเป็นแบบมีรอบ ({sub.BillingCycle}) — ใช้ได้ถึง {sub.EndDate:dd/MM/yyyy} จากนั้นต้องต่ออายุ ({reason})");
+    }
+
+    /// <summary>แอดมินกด "กำหนดรอบ" บนแถวที่ <c>ExpiryNeedsReview</c> (หน้าลูกค้า) — ผ่านผู้เขียนเดียว <see cref="CloseOpenEndedCoreAsync"/></summary>
+    public async Task<SubscriptionResponse> CloseOpenEndedAsync(Guid companyId, string performedBy, string? reason = null)
+    {
+        var now = DateTime.UtcNow;
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        if (sub.IsPermanentFree)
+            throw new BusinessRuleException("แพ็กเกจนี้เป็นฟรีถาวร (ธง IsPermanentFree) — ไม่มีรอบให้กำหนด ให้เปลี่ยนแม่แบบแพ็กเกจก่อน", "SUB-EXPIRY-PERMANENT-FREE");
+        if (!sub.ExpiryNeedsReview && !SubscriptionExpiry.IsOpenEnded(sub.EndDate, now))
+            throw new BusinessRuleException($"แพ็กเกจนี้มีรอบอยู่แล้ว (หมดอายุ {sub.EndDate:dd/MM/yyyy}) — ใช้ \"ปรับวันที่\" แทน", "SUB-EXPIRY-ALREADY-CLOSED");
+        await CloseOpenEndedCoreAsync(sub, performedBy, reason ?? "แอดมินกำหนดรอบ", now, alreadyClosed: false);
+        await _db.SaveChangesAsync();
+        return await GetSubscriptionAsync(companyId);
+    }
+
+    /// <summary>จำนวนแถวที่รอแอดมินตรวจ (งานพื้นหลังข้าม · แสดงใน JobRun)</summary>
+    public Task<int> CountExpiryNeedsReviewAsync()
+        => _db.Subscriptions.CountAsync(s => s.ExpiryNeedsReview);
 
     /// <summary>รอบ 231 (231-8): <see cref="ApplyTemplate"/> + ราคาต่อรอบบน subscription = <b>ราคาที่บริษัทนี้จ่ายจริง</b> (ราคาพิเศษผ่าน <see cref="PlatformPriceOverrideStore"/>) —
     /// ใบต่ออายุ/ส่วนต่างฝั่งเดิมใช้ <c>PricePerCycle</c> เป็น fallback เมื่อไม่มีแม่แบบ จึงต้องเป็นราคาพิเศษ ไม่ใช่ราคาตั้ง · ผู้เรียก: อนุมัติชำระ (ทุกชนิด) · ดาวน์เกรดถึงวันมีผล</summary>
-    private async Task ApplyTemplateWithPriceAsync(Subscription sub, PlanTemplate template, BillingCycle cycle, DateTime nowUtc)
+    private async Task ApplyTemplateWithPriceAsync(Subscription sub, PlanTemplate template, BillingCycle cycle, DateTime nowUtc, string performedBy = "System")
     {
-        ApplyTemplate(sub, template, cycle);
+        // ฝ่ายค้าน 232-hub B1(ก): ฟรีถาวร/ค่าแทน → แผนจ่ายเงิน = ปิดรอบ + ประวัติ/audit/แจ้งเจ้าของ (ทางอนุมัติชำระจะตั้ง EndDate จากวันชำระทับอีกที — ประวัติ/แจ้งยังบอกการเปลี่ยนชนิด)
+        if (ApplyTemplate(sub, template, cycle))
+            await CloseOpenEndedCoreAsync(sub, performedBy, $"เปลี่ยนเป็นแม่แบบ {template.Name}", nowUtc, alreadyClosed: true);
         sub.PricePerCycle = (await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, cycle, nowUtc, forRenewal: true)).Price;
     }
 
@@ -698,6 +763,7 @@ public class SubscriptionService : ISubscriptionService
             sub.IsPermanentFree,
             addOnCodes,
             planName,
+            IsOpenEnded: SubscriptionExpiry.IsOpenEnded(sub.IsPermanentFree, endDate, DateTime.UtcNow),
             ScheduledPlan: sub.ScheduledPlan,
             ScheduledBillingCycle: sub.ScheduledBillingCycle,
             ScheduledPlanEffectiveAt: sub.ScheduledPlanEffectiveAt,
@@ -2001,8 +2067,14 @@ public class SubscriptionService : ISubscriptionService
                     if (template.IsPermanentFree)
                     {
                         sub.Status = SubscriptionStatus.Active;
-                        sub.EndDate = DateTime.UtcNow.AddYears(100);
+                        sub.EndDate = SubscriptionExpiry.OpenEnded(DateTime.UtcNow);   // รอบ 232: ค่าแทน "ไม่หมดอายุ" ตัวเดียว
+                        sub.ExpiryNeedsReview = false;
                         sub.EnabledFeatures = template.EnabledFeatures;
+                    }
+                    else
+                    {
+                        // ฝ่ายค้าน 232-hub B1(ก): แม่แบบเลิกฟรีถาวร ⇒ ห้ามทิ้งค่าแทน 2126 ไว้ (เคยหลุดถึงจอเป็น "2669") — ตั้งรอบใหม่ + ประวัติ/audit/แจ้งเจ้าของ
+                        await CloseOpenEndedCoreAsync(sub, "System", $"แม่แบบ {template.Name} เลิกฟรีถาวร", DateTime.UtcNow, alreadyClosed: false);
                     }
                 }
                 sub.UpdatedAt = DateTime.UtcNow;
@@ -2288,11 +2360,15 @@ public class SubscriptionService : ISubscriptionService
         else if (!userBar.Unlimited && companyUsers.Count >= maxUsers - 1)
             alerts.Add(new UsageAlert("warning", "users", $"เหลือโควต้าผู้ใช้อีก {maxUsers - companyUsers.Count} คน"));
 
-        var daysLeft = (endDate - DateTime.UtcNow).Days;
-        if (daysLeft <= 0)
-            alerts.Add(new UsageAlert("danger", "subscription", "Subscription หมดอายุแล้ว กรุณาต่ออายุ"));
-        else if (daysLeft <= 7)
-            alerts.Add(new UsageAlert("warning", "subscription", $"Subscription จะหมดอายุใน {daysLeft} วัน"));
+        // รอบ 232: ไม่หมดอายุ (ฟรีถาวร/ค่าแทน 2126) = ไม่มีคำเตือนหมดอายุ · วันที่เหลือผ่าน SubscriptionExpiry ตัวเดียว (null = ไม่หมดอายุ ไม่ใช่ 36,500 วัน)
+        int? daysLeftDisplay = SubscriptionExpiry.IsOpenEnded(sub.IsPermanentFree, endDate, DateTime.UtcNow) ? null : UsageBarRule.DaysLeft(endDate, DateTime.UtcNow);
+        if (daysLeftDisplay is int daysLeft)
+        {
+            if (daysLeft <= 0)
+                alerts.Add(new UsageAlert("danger", "subscription", "Subscription หมดอายุแล้ว กรุณาต่ออายุ"));
+            else if (daysLeft <= 7)
+                alerts.Add(new UsageAlert("warning", "subscription", $"Subscription จะหมดอายุใน {daysLeft} วัน"));
+        }
 
         var ocrBar = bars[1];
         if (ocrBar.Level == 2)
@@ -2315,7 +2391,7 @@ public class SubscriptionService : ISubscriptionService
             Alerts: alerts,
             Bars: bars,
             StatusLabel: PlatformBillingCenterService.StatusLabel(status),
-            DaysLeft: UsageBarRule.DaysLeft(endDate, DateTime.UtcNow),
+            DaysLeft: daysLeftDisplay,
             PlanName: planName ?? plan.ToString());
     }
 
@@ -3459,9 +3535,11 @@ public class SubscriptionService : ISubscriptionService
         var activeSubscriptions = await _db.Subscriptions
             .Where(s => s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.PastDue)
             .ToListAsync();
+        WarnExpiryNeedsReviewOncePerDay(activeSubscriptions.Count(s => s.ExpiryNeedsReview), "ProcessSubscriptionNotificationsAsync");
 
         foreach (var sub in activeSubscriptions)
         {
+            if (sub.ExpiryNeedsReview) continue;   // รอบ 232 (B1 ข): แถวรอแอดมินกำหนดรอบ — ไม่เตือน/ไม่ออกใบต่ออายุ/ไม่เตือนตัดบัญชีจากค่าแทน 2126
             var daysUntilExpiry = (int)(sub.EndDate - now).TotalDays;
             var deactivationDate = sub.EndDate.AddDays(sub.DeactivationDaysAfterExpiry);
             var daysUntilDeactivation = (int)(deactivationDate - now).TotalDays;
@@ -3541,6 +3619,15 @@ public class SubscriptionService : ISubscriptionService
         }
     }
 
+    // รอบ 232 (B1 ข): เตือนแถวรอตรวจครั้งเดียวต่อวันต่อ process (งานรัน 6 ชม. · จำนวนจริงอยู่ใน JobRun ของ AccountPlanExpiryReminderJob)
+    private static DateTime _expiryReviewWarnedOn = DateTime.MinValue;
+    private void WarnExpiryNeedsReviewOncePerDay(int count, string where)
+    {
+        if (count <= 0 || _expiryReviewWarnedOn == DateTime.UtcNow.Date) return;
+        _expiryReviewWarnedOn = DateTime.UtcNow.Date;
+        _logger?.LogWarning("{Where}: ข้าม {Count} subscription ที่ ExpiryNeedsReview=true (แผนจ่ายเงินไม่มีรอบเรียกเก็บ — แอดมินต้องกด \"กำหนดรอบ\" ในหน้าลูกค้า)", where, count);
+    }
+
     public async Task ProcessExpiredSubscriptionsAsync()
     {
         var now = DateTime.UtcNow;
@@ -3555,7 +3642,7 @@ public class SubscriptionService : ISubscriptionService
         {
             var tpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.ScheduledPlan && p.IsActive);
             var fromPlan = sub.Plan;
-            if (tpl != null) await ApplyTemplateWithPriceAsync(sub, tpl, sub.ScheduledBillingCycle ?? sub.BillingCycle, now);
+            if (tpl != null) await ApplyTemplateWithPriceAsync(sub, tpl, sub.ScheduledBillingCycle ?? sub.BillingCycle, now, "System");
             _db.SubscriptionHistories.Add(new SubscriptionHistory
             {
                 SubscriptionId = sub.Id,
@@ -3616,7 +3703,7 @@ public class SubscriptionService : ISubscriptionService
         foreach (var sub in newlyExpired)
         {
             // ตัวที่ track อยู่อาจถูกเปลี่ยนในรอบนี้แล้ว (แพ็กเกจฟรีถาวร = ไม่หมดอายุ) — ตัดสินจากค่าปัจจุบัน ไม่ใช่ค่าที่ DB ใช้กรอง
-            if (sub.Status != SubscriptionStatus.Active || sub.EndDate >= now || sub.IsPermanentFree) continue;
+            if (sub.Status != SubscriptionStatus.Active || sub.EndDate >= now || sub.ExpiryNeedsReview || sub.IsPermanentFree) continue;   // รอบ 232 (B1 ข): แถวรอตรวจข้าม
             sub.Status = SubscriptionStatus.PastDue;
 
             _db.SubscriptionHistories.Add(new SubscriptionHistory

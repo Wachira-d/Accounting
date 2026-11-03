@@ -48,6 +48,7 @@ public class AdminLegalDocumentController : ControllerBase
     {
         d.Id, d.Version, effectiveDate = d.EffectiveDate.ToString("yyyy-MM-dd"), d.BodyMarkdown, d.ChangeSummary,
         d.CreatedAt, d.UpdatedAt, d.UpdatedBy,
+        d.BodyMarkdownEn,   // รอบ 232: เก็บแล้วต้อง echo กลับ (กฎ #4 A) — hydrate ช่องอังกฤษตอนเปิดแก้
     };
 
     /// <summary>ภาพรวม/รายละเอียดเอกสารหนึ่งชนิด: ฉบับปัจจุบัน (พร้อม markdown ให้ตั้งต้นร่างใหม่) · ร่าง · ประวัติ · URL สาธารณะ · โทเคนที่ใช้ได้</summary>
@@ -64,15 +65,18 @@ public class AdminLegalDocumentController : ControllerBase
             kind,
             title = LegalDocumentDefaults.Title(kind),
             publicUrl = baseUrl + LegalDocumentDefaults.PlatformPath(kind),
+            publicUrlEn = baseUrl + LegalDocumentDefaults.PlatformPath(kind) + "?lang=" + LegalDocumentLanguage.English,   // รอบ 232: ฉบับเดียว ภาษาเป็น query
             baseUrlFromSettings = fromSettings,
             current = new
             {
                 current.Version, effectiveDate = current.EffectiveDate.ToString("yyyy-MM-dd"), current.Source,
                 current.PublishedAt, current.ChangeSummary, current.BodyMarkdown,
+                current.BodyMarkdownEn, englishAvailable = !string.IsNullOrWhiteSpace(current.BodyMarkdownEn),   // รอบ 232
             },
             upcoming = upcoming == null ? null : new
             {
                 upcoming.Version, effectiveDate = upcoming.EffectiveDate.ToString("yyyy-MM-dd"), upcoming.ChangeSummary, upcoming.BodyMarkdown,
+                upcoming.BodyMarkdownEn,
             },
             draft = DraftDto(await _legal.GetDraftAsync(kind, ct)),
             history = (await _legal.GetHistoryAsync(kind, ct)).Select(HistoryDto).ToList(),
@@ -83,7 +87,8 @@ public class AdminLegalDocumentController : ControllerBase
         }));
     }
 
-    public sealed record DraftRequest(string? Version, DateTime? EffectiveDate, string? BodyMarkdown, string? ChangeSummary);
+    /// <summary>รอบ 232: <c>BodyMarkdownEn</c> = ฉบับอังกฤษของร่างเดียวกัน (null = ไม่เปลี่ยน · "" = ล้าง)</summary>
+    public sealed record DraftRequest(string? Version, DateTime? EffectiveDate, string? BodyMarkdown, string? ChangeSummary, string? BodyMarkdownEn = null);
 
     /// <summary>บันทึกร่าง (สร้างหรือแก้ร่างเดียวของชนิดนี้) — ไม่มีผลกับหน้าสาธารณะจนกว่าจะเผยแพร่</summary>
     [HttpPut("{kind}/draft")]
@@ -94,7 +99,7 @@ public class AdminLegalDocumentController : ControllerBase
             return NotFound(new ApiResponse<object>(false, null, "ชนิดเอกสารต้องเป็น privacy หรือ terms"));
         var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
         var eff = req.EffectiveDate is DateTime d ? DateOnly.FromDateTime(d) : (DateOnly?)null;
-        var draft = await _legal.SaveDraftAsync(kind, new LegalDraftInput(req.Version, eff, req.BodyMarkdown, req.ChangeSummary), actor, ct);
+        var draft = await _legal.SaveDraftAsync(kind, new LegalDraftInput(req.Version, eff, req.BodyMarkdown, req.ChangeSummary, req.BodyMarkdownEn), actor, ct);
         return Ok(new ApiResponse<object>(true, DraftDto(draft), "บันทึกร่างแล้ว (ยังไม่เผยแพร่)"));
     }
 
@@ -129,6 +134,24 @@ public class AdminLegalDocumentController : ControllerBase
             ? $"เผยแพร่ฉบับ {item.Version} แล้ว — ประกาศล่วงหน้า มีผล {item.EffectiveDate:yyyy-MM-dd}"
             : $"เผยแพร่ฉบับ {item.Version} แล้ว — มีผลทันที";
         return Ok(new ApiResponse<object>(true, HistoryDto(item), msg));
+    }
+
+    public sealed record EnglishRequest(string? BodyMarkdownEn);
+
+    /// <summary>รอบ 232 (ฝ่ายค้าน N3 · คำตัดสิน 232-Checkout-1): เติม/แก้ฉบับอังกฤษของฉบับที่เผยแพร่แล้ว <b>โดยไม่ขยับเลขฉบับ</b> (ไทยเป็นฉบับผูกพัน) ·
+    /// ว่าง = ล้างฉบับอังกฤษ (หน้าสาธารณะกลับไปแสดงไทย+ประกาศ) · audit chain ทุกครั้งที่เปลี่ยน</summary>
+    [HttpPut("{kind}/versions/{version}/english")]
+    [Accounting.Filters.RejectApiKey("แก้ข้อความอังกฤษของนโยบาย/ข้อกำหนดของแพลตฟอร์ม")]
+    public async Task<ActionResult<ApiResponse<object>>> SetPublishedEnglish(string kind, string version, [FromBody] EnglishRequest req, CancellationToken ct)
+    {
+        if (!LegalDocumentDefaults.IsKind(kind))
+            return NotFound(new ApiResponse<object>(false, null, "ชนิดเอกสารต้องเป็น privacy หรือ terms"));
+        var actor = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var ip = Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim();
+        if (string.IsNullOrWhiteSpace(ip)) ip = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var view = await _legal.SetPublishedEnglishAsync(kind, version, req.BodyMarkdownEn, actor, ip, ct);
+        return Ok(new ApiResponse<object>(true, new { view.Version, view.BodyMarkdownEn, englishAvailable = view.BodyMarkdownEn != null },
+            view.BodyMarkdownEn == null ? $"ล้างข้อความอังกฤษของฉบับ {view.Version} แล้ว (เลขฉบับคงเดิม)" : $"บันทึกข้อความอังกฤษของฉบับ {view.Version} แล้ว (เลขฉบับคงเดิม · ไทยเป็นฉบับผูกพัน)"));
     }
 
     [HttpDelete("{kind}/draft")]

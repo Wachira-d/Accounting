@@ -350,7 +350,8 @@ public class CmsRound211LineNotifyTests
         });
         var line = F4Proxy<ILineNotifyService>.Create((m, a) =>
         {
-            if (m == nameof(ILineNotifyService.TryPushToUserAsync)) { calls.Order.Add("line:" + a[1]); return lineOk; }
+            // รอบ 232: TryPushToUserAsync คืน LinePushResult (เดิม bool)
+            if (m == nameof(ILineNotifyService.TryPushToUserAsync)) { calls.Order.Add("line:" + a[1]); return lineOk ? LinePushResult.Success : LinePushResult.Fail("LINE ตอบ 400"); }
             return null;
         });
         var links = F4Proxy<ICustomerLineLinkService>.Create((m, a) =>

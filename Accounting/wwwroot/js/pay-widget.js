@@ -290,9 +290,30 @@
         // 3-D Secure ของบัตร: ต้องพาไปหน้าธนาคาร แล้วกลับมาตรวจสถานะจากเซิร์ฟเวอร์
         // (ห้ามเชื่อ query string ตอนกลับ)
         // รอบ 228: จดรายการไว้ก่อนออก (sessionStorage) ⇒ กลับมาแล้ว resume() ถามสถานะต่อ — ไม่ได้จด (โหมดส่วนตัว) = หน้าเดิมยังแสดงสถานะจริงจากเซิร์ฟเวอร์
-        if (intent.authorizeUrl && /^https:\/\//i.test(String(intent.authorizeUrl))) {
+        // รอบ 232: เซิร์ฟเวอร์ปิดรายการตั้งแต่สร้าง (charge ล้ม/ไม่มี QR/โหมดไม่ตรง) ⇒ บอกเหตุผลทันที ไม่รอ poll รอบแรก 2 วิ
+        if (intent.status === 'Failed' || intent.status === 'Expired') {
+          this._renderError(intent.failureMessage || 'เริ่มการชำระเงินไม่สำเร็จ — ลองใหม่อีกครั้ง', intent);
+          return;
+        }
+        // ฝ่ายค้าน 232 B1: บัตรที่ไม่ต้อง 3-D Secure สำเร็จทันที (ไม่มี QR/ลิงก์) ⇒ หน้าสำเร็จ — ห้ามตกไปตาข่าย "ไม่มี QR/ลิงก์" (ลูกค้ากดจ่ายซ้ำ = ตัดบัตรสองครั้ง)
+        if (intent.status === 'Succeeded') {
+          this._stopped = true;
+          this._renderDone(intent);
+          if (typeof this._opts.onPaid === 'function') this._opts.onPaid(intent);
+          return;
+        }
+        // รอบ 232: **QR ชนะลิงก์** — เซิร์ฟเวอร์ (GatewayChargeNextStep) ไม่ส่งทั้งคู่แล้ว แต่หน้านี้ยึดลำดับเดียวกันเผื่อรายการเก่าที่เก็บทั้งคู่ไว้ก่อนรอบ 232
+        // (ที่มา: พร้อมเพย์มีทั้ง QR + authorize_uri ⇒ เดิมพาออกไปหน้า offsite แล้วถูกส่งกลับหน้าเดิมทันที "เด้งกลับหน้าเดิม" ไม่เห็น QR)
+        if (!intent.qrPayload && intent.authorizeUrl && /^https:\/\//i.test(String(intent.authorizeUrl))) {
           this._rememberPending(intent);
           global.location.href = intent.authorizeUrl;
+          return;
+        }
+        // บัตรรอผลธนาคาร (ไม่มีลิงก์ 3DS) ⇒ ไปหน้ารอผลตามปกติ — ตัวตัดสินอยู่ฝั่งเซิร์ฟเวอร์ (GatewayChargeNextStep.MissingReason) · ตาข่ายนี้ดูเฉพาะวิธีที่ต้องมี QR/ลิงก์
+        const methodNow = intent.methodKind || intent.method || opts.method || 'PromptPay';
+        if (!intent.qrPayload && methodNow !== 'ManualSlip' && methodNow !== 'Card') {
+          // ไม่มีทั้ง QR และลิงก์ทั้งที่รายการยังรอ — ล้มดังแทนหน้าว่าง "กำลังรอการชำระเงิน…" (เซิร์ฟเวอร์ควรปิดรายการแล้ว — นี่คือตาข่ายชั้นที่สอง)
+          this._renderError('ผู้ให้บริการไม่ส่ง QR/ลิงก์หน้าชำระเงินกลับมา — ปิดหน้านี้แล้วลองใหม่อีกครั้ง', intent);
           return;
         }
 
@@ -433,11 +454,16 @@
     },
 
     _renderDone(intent) {
+      // รอบ 232 (232-Omise-2 · S3): ป้าย/หมายเหตุโหมดทดสอบมาจากเซิร์ฟเวอร์ (statusLabel/testNote) — หน้านี้ไม่มีข้อความของตัวเอง
+      const testNote = intent.testNote
+        ? `<div style="background:#fef3c7;color:#92400e;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;margin-top:10px">⚠️ ${esc(intent.testNote)}</div>`
+        : '';
       this._setBody(`
         <div style="padding:28px;text-align:center">
           <div style="font-size:40px">✅</div>
-          <div style="font-size:17px;font-weight:800;color:#166534;margin:8px 0 4px">ชำระเงินสำเร็จ</div>
+          <div style="font-size:17px;font-weight:800;color:#166534;margin:8px 0 4px">${esc(intent.statusLabel || 'ชำระเงินสำเร็จ')}</div>
           <div style="font-size:13px;color:#64748b">฿${money(intent.amount)}</div>
+          ${testNote}
           <button onclick="PayWidget.close()"
             style="margin-top:16px;background:#16a34a;color:#fff;border:0;border-radius:8px;
                    padding:9px 20px;font-size:14px;font-weight:600;cursor:pointer">เสร็จสิ้น</button>

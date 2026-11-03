@@ -189,7 +189,7 @@
                   <td>${c.documentCount != null ? c.documentCount.toLocaleString('th-TH') : '-'}</td>
                   <td>${c.lastActivityAt ? AdminLayout.date(c.lastActivityAt) : '<span style="color:#94a3b8">-</span>'}</td>
                   <td>${AdminLayout.date(c.createdAt)}</td>
-                  <td>${c.subscription ? (c.subscription.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : AdminLayout.date(c.subscription.endDate)) : '-'}</td>
+                  <td>${c.subscription ? AdminLayout.expiryLabel(c.subscription) : '-'}</td>
                   <td>
                     <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="showDetail('${c.id}')">จัดการ</button>
                   </td>
@@ -212,6 +212,17 @@
       } catch (err) {
         document.getElementById('customerList').innerHTML = `<div style="color:var(--admin-danger);padding:20px">${AdminLayout.esc(err.message)}</div>`;
       }
+    }
+
+    // รอบ 232 (ฝ่ายค้าน B1): กำหนดรอบให้แผนจ่ายเงินที่ค้างค่าแทน — เซิร์ฟเวอร์ตั้ง EndDate/NextBillingDate ผ่าน SubscriptionExpiry.CloseOpenEnded + ประวัติ/audit/แจ้งเจ้าของ
+    async function closeOpenEnded(companyId) {
+      const reason = prompt('เหตุผล (ไม่บังคับ) — บันทึกลงประวัติ/audit และแจ้งเจ้าของบริษัท:', 'กำหนดรอบเรียกเก็บหลังตรวจสอบ');
+      if (reason === null) return;
+      try {
+        const r = await AdminAPI.post('/companies/' + companyId + '/subscription/close-open-ended', { reason: reason || null });
+        AdminLayout.toast(r?.message || 'กำหนดรอบแล้ว');
+        await showDetail(companyId);
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 
     async function showDetail(companyId) {
@@ -370,8 +381,16 @@
                   <div class="info-item"><div class="label">รอบบิล</div><div class="value">${s.billingCycle}</div></div>
                   <div class="info-item"><div class="label">ราคา/รอบ</div><div class="value">${AdminLayout.money(s.pricePerCycle)}</div></div>
                   <div class="info-item"><div class="label">เริ่มต้น</div><div class="value">${AdminLayout.date(s.startDate)}</div></div>
-                  <div class="info-item"><div class="label">หมดอายุ</div><div class="value">${s.isPermanentFree ? '<span style="color:#16a34a">ไม่หมดอายุ (ฟรีถาวร)</span>' : AdminLayout.date(s.endDate)}</div></div>
-                  <div class="info-item"><div class="label">บิลถัดไป</div><div class="value">${s.isPermanentFree ? '-' : AdminLayout.date(s.nextBillingDate)}</div></div>
+                  <div class="info-item"><div class="label">หมดอายุ</div><div class="value">${AdminLayout.expiryLabel(s)}</div></div>
+                  <div class="info-item"><div class="label">บิลถัดไป</div><div class="value">${(s.isPermanentFree || s.isOpenEnded) ? '-' : AdminLayout.date(s.nextBillingDate)}</div></div>
+                </div>
+                ${(s.expiryNeedsReview || (!s.isPermanentFree && s.isOpenEnded)) ? `
+                <!-- รอบ 232 (ฝ่ายค้าน B1 ข/ค · S6): แผนจ่ายเงินที่ค้างค่าแทน "ไม่หมดอายุ" — งานต่ออายุ/เตือน/ปิดใช้ข้ามแถวนี้จนกว่าแอดมินกำหนดรอบ (ผู้เขียนเดียว SubscriptionService.CloseOpenEndedAsync) -->
+                <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                  <span>⚠️ <b>แผนจ่ายเงินไม่มีรอบเรียกเก็บ</b> — วันหมดอายุในฐานเป็นค่าแทน "ไม่หมดอายุ" (${AdminLayout.date(s.endDate)}) ทั้งที่ไม่ใช่ฟรีถาวร · ระบบ<u>ไม่ออกใบต่ออายุ/ไม่เตือน/ไม่ปิดใช้</u>แถวนี้จนกว่าจะกำหนดรอบ</span>
+                  <button class="admin-btn admin-btn-primary admin-btn-sm" onclick="closeOpenEnded('${AdminLayout.jsArg(currentDetail.id)}')">กำหนดรอบ (หมดอายุ = วันนี้ + 1 รอบ ${AdminLayout.esc(s.billingCycle || '')})</button>
+                </div>` : ''}
+                <div class="info-grid" style="display:none">
                 </div>
 
                 ${s.limits ? `

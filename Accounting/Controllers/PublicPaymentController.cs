@@ -71,11 +71,14 @@ public class PublicPaymentController : ControllerBase
     public sealed record PublicIntentResponse(
         Guid Id, string Status, string Method, decimal Amount, string Currency,
         string? QrPayload, DateTime? QrExpiresAt, string? AuthorizeUrl,
-        string? FailureMessage, bool IsTestMode);
+        string? FailureMessage, bool IsTestMode,
+        // รอบ 232 S3: ป้าย/หมายเหตุโหมดทดสอบจากเซิร์ฟเวอร์ (TestModePaymentPolicy ตัวเดียว) — หน้าจ่ายไม่มีข้อความเอง
+        string StatusLabel, string? TestNote);
 
     private static PublicIntentResponse Map(PaymentIntent i, bool testMode) => new(
         i.Id, i.Status.ToString(), i.MethodKind.ToString(), i.Amount, i.Currency,
-        i.QrPayload, i.QrExpiresAt, i.AuthorizeUrl, i.FailureMessage, testMode);
+        i.QrPayload, i.QrExpiresAt, i.AuthorizeUrl, i.FailureMessage, testMode,
+        TestModePaymentPolicy.StatusLabel(i.Status, testMode), TestModePaymentPolicy.PayerNote(i.Status, testMode, i.SourceKind));
 
     /// <summary>ฝ่ายค้านรอบ 219 รอบ 2: ตัวตัดสินเดียวกับด่านให้สิทธิ์ (โหมด ณ ตอนสร้างชนะ · แถวเดิมอ่าน config)</summary>
     private Task<bool> IsTestModeAsync(PaymentIntent i, CancellationToken ct)

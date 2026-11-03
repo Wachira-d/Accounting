@@ -1,72 +1,50 @@
 namespace Accounting.Services.Interfaces;
 
-/// <summary>ผล push ที่บอกเหตุ (รอบ 212 C) — <see cref="Error"/> ไม่มี LINE userId เต็ม (ปิดบังแล้ว) · ใช้ประทับบนแถว/ตอบผู้กด</summary>
-public sealed record LinePushResult(bool Ok, string? Error)
+/// <summary>ผล push ที่บอกเหตุ (รอบ 212 C) — <see cref="Error"/> ไม่มี LINE userId เต็ม (ปิดบังแล้ว) · ใช้ประทับบนแถว/ตอบผู้กด ·
+/// รอบ 232: <see cref="RuleCode"/> = กติกาของ <c>Helpers/NotificationAudiencePolicy</c> ที่ตัดสินเส้นทาง (null = ไม่ได้ถูกนโยบายกั้น)</summary>
+public sealed record LinePushResult(bool Ok, string? Error, string? RuleCode = null)
 {
     public static LinePushResult Success { get; } = new(true, null);
     public static LinePushResult Fail(string error) => new(false, error);
+    public static LinePushResult Denied(string ruleCode, string reason) => new(false, reason, ruleCode);
 }
 
+/// <summary>ช่องส่ง LINE ของระบบ — <b>ทุกเมธอดประกาศผู้รับ + OA ที่ใช้ชัดเจน</b> และเดินผ่าน <c>Helpers/NotificationAudiencePolicy.LineRoute</c> ตัวเดียว (รอบ 232 · คำตัดสิน 232-Notify)
+/// <list type="bullet">
+/// <item>เรื่องของ<b>ผู้เช่า</b> (TenantBusiness): <see cref="TryPushCompanyGroupAsync"/> · <see cref="TryPushToUserAsync"/> · <see cref="TryPushFlexToUserAsync"/> ใช้ <b>OA ของบริษัทเท่านั้น</b> — ไม่มี OA ⇒ ล้มพร้อมเหตุ
+/// <b>ไม่ถอยไป OA กลาง</b> (เดิม <c>ResolveConfigAsync</c> ถอยไป token+GroupId ของ OA กลาง ⇒ "เอกสารอนุมัติแล้ว" ของลูกค้าเด้งเข้าห้องแอดมินแพลตฟอร์ม)</item>
+/// <item>1:1 ถึงสมาชิก/พนักงาน/ลูกค้าของบริษัทที่ผูกกับ<b>บอทกลาง</b>เอง: <see cref="TryPushViaNextAccAsync"/> · <see cref="TryPushFlexViaNextAccAsync"/> (userId แยกตาม provider — ช่องส่วนตัวของเขา)</item>
+/// <item>เรื่องของ<b>แพลตฟอร์ม</b> (PlatformOps): <see cref="TryPushPlatformOpsAsync"/> เข้ากลุ่ม LINE กลางของผู้ดูแลระบบเท่านั้น</item>
+/// </list></summary>
 public interface ILineNotifyService
 {
-    Task SendMessageAsync(string message);
+    /// <summary>รอบ 232: ข้อความถึง<b>ผู้ดูแลแพลตฟอร์ม</b> (PlatformOps — ฟอร์มติดต่อ/แชทหน้าเว็บ NextAcc · ระบบล้ม) เข้ากลุ่ม LINE กลาง (<c>SiteSettings.LineMessagingGroupId</c>) ·
+    /// ปิดได้ที่หน้าแอดมิน (LINE OA กลาง → "ส่งเรื่องของระบบเข้ากลุ่มกลาง") · <b>ห้าม</b>ใช้กับเหตุการณ์ของผู้เช่า</summary>
+    Task<LinePushResult> TryPushPlatformOpsAsync(string message);
 
-    /// <summary>Push a personalised text message to a specific LINE user
-    /// (the "U..." userId from LINE Login / Messaging API webhook).
-    /// Used by the centralised NotificationEngine; no-op when LINE is
-    /// not configured or the userId is empty.</summary>
-    Task PushToUserAsync(string lineUserId, string message);
+    /// <summary>รอบ 232: ข้อความธุรกิจของบริษัท (TenantBusiness) เข้า<b>กลุ่ม LINE ของบริษัทนั้น</b> (<c>CompanySettings.LineDefaultGroupId</c>) ผ่าน OA ของบริษัท ·
+    /// ไม่มี OA/กลุ่ม ⇒ <c>Fail</c> พร้อมเหตุ + <c>RuleCode</c> (ไม่ถอยไป OA กลาง) · ผู้เรียกหลัก = <c>NotificationEngine</c> ช่อง "กลุ่ม LINE"</summary>
+    Task<LinePushResult> TryPushCompanyGroupAsync(Guid companyId, string message);
 
-    /// <summary>Company-aware push — resolves Channel Access Token from
-    /// CompanySettings.LineChannelAccessToken (falls back to global
-    /// appsettings if the company didn't configure their own).</summary>
-    Task PushToUserAsync(Guid? companyId, string lineUserId, string message);
+    /// <summary>1:1 ถึง userId ที่ผูกกับ <b>OA ของบริษัท</b> (ลูกค้าที่ผูกผ่าน webhook ต่อบริษัท · LINE id ที่ HR กรอกเอง) — OA ของบริษัทเท่านั้น ·
+    /// รอบ 205 W3: ผู้เรียกที่ต้อง "ประทับหลังส่งถึงจริง" ใช้ผล · รอบ 232: คืน <see cref="LinePushResult"/> (เดิม bool) + ไม่ถอยไป OA กลาง</summary>
+    Task<LinePushResult> TryPushToUserAsync(Guid companyId, string lineUserId, string message);
 
-    /// <summary>รอบ 205 W3: push แล้ว<b>บอกผล</b> (ไม่ตั้งค่า token / LINE ตอบไม่สำเร็จ / โยน ⇒ false · log แล้ว) — ผู้เรียกที่ต้อง
-    /// "ประทับหลังส่งถึงจริง" (เตือนนัดหมาย · แจ้งได้คิว) ใช้ตัวนี้</summary>
-    Task<bool> TryPushToUserAsync(Guid? companyId, string lineUserId, string message);
+    /// <summary>Flex 1:1 ผ่าน <b>OA ของบริษัท</b> (ส่งเอกสารให้ลูกค้า · สลิปเงินเดือนถึง LINE id ที่ HR กรอก) — คู่ของ <see cref="TryPushToUserAsync"/> ·
+    /// รอบ 232: คืนผล (เดิม <c>PushFlexToUserAsync</c> กลืนผลล้ม ⇒ ผู้เรียกรายงาน "ส่งแล้ว" ทั้งที่ LINE ปฏิเสธ) + ไม่ถอยไป OA กลาง</summary>
+    Task<LinePushResult> TryPushFlexToUserAsync(Guid companyId, string lineUserId, string altText, object flexContents);
 
-    /// <summary>รอบ 212 C: push ถึง<b>พนักงาน/ผู้ใช้ ERP</b> ผ่าน OA กลางของ NextAcc แบบระบุชัด (userId ของพนักงานผูกกับ OA กลางเท่านั้น —
-    /// userId ของ LINE แยกตาม provider) · ไม่เลือก OA ตามค่าตั้งบริษัท · ≤ 5 ก้อน × ≤ 5,000 ตัว ในคำขอเดียว · คืนเหตุเมื่อล้ม ·
-    /// <b>ห้ามใช้ส่งถึงลูกค้าปลายทาง</b> (ลูกค้าใช้ <see cref="TryPushToUserAsync"/> ตาม OA ที่ผูกไว้)</summary>
-    Task<LinePushResult> TryPushViaNextAccAsync(string lineUserId, IReadOnlyList<string> messages);
+    /// <summary>รอบ 212 C: push ถึง<b>พนักงาน/ผู้ใช้ ERP/ลูกค้า</b>ของบริษัทที่ผูกผ่าน OA กลางของ NextAcc แบบระบุชัด (userId ของ LINE แยกตาม provider) ·
+    /// ไม่เลือก OA ตามค่าตั้งบริษัท · ≤ 5 ก้อน × ≤ 5,000 ตัว ในคำขอเดียว · คืนเหตุเมื่อล้ม · รอบ 232: นโยบาย = TenantBusiness/PlatformAccount → TenantMember ผ่าน NextAccOa</summary>
+    /// <param name="audience">ผู้รับของเหตุการณ์ตามตาราง <c>NotificationAudiencePolicy</c> — ตั้งต้น TenantBusiness · ใบแจ้งหนี้/เตือนค่าบริการ (<c>PlatformBillingNotifier</c>) = PlatformAccount</param>
+    Task<LinePushResult> TryPushViaNextAccAsync(string lineUserId, IReadOnlyList<string> messages,
+        Accounting.Helpers.NotificationAudience audience = Accounting.Helpers.NotificationAudience.TenantBusiness);
 
     /// <summary>รอบ 212 D: Flex ถึง<b>พนักงาน</b>ผ่าน OA กลางแบบระบุชัด (คู่ของ <see cref="TryPushViaNextAccAsync"/>) — สลิปเงินเดือนของพนักงานที่ผูก
     /// "สลิป 123456" กับ OA กลาง · คืนเหตุเมื่อล้ม (ไม่กลืน) · ไม่ตั้ง token กลาง ⇒ ล้มพร้อมเหตุ (ไม่ถอยไป OA ร้าน)</summary>
     Task<LinePushResult> TryPushFlexViaNextAccAsync(string lineUserId, string altText, object flexContents);
 
-    /// <summary>Push a LINE Flex Message bubble to a specific user.
-    /// <paramref name="flexContents"/> is the "contents" payload LINE
-    /// expects (the bubble shape with header / body / footer / actions
-    /// — caller builds it). <paramref name="altText"/> is the fallback
-    /// shown in chat lists / push previews.</summary>
-    Task PushFlexToUserAsync(string lineUserId, string altText, object flexContents);
-    Task PushFlexToUserAsync(Guid? companyId, string lineUserId, string altText, object flexContents);
-
-    /// <summary>Send a test message using the per-company config to verify
-    /// the token + destination ID work. Returns (success, message) suitable
-    /// for echoing to the admin UI.</summary>
+    /// <summary>ปุ่ม "ทดสอบ" ของหน้าตั้งค่าบริษัท — ใช้ <b>token ของบริษัทเท่านั้น</b> (รอบ 232: เดิมทดสอบด้วย token ของ OA กลางเมื่อบริษัทยังไม่ตั้ง ⇒ "สำเร็จ" ทั้งที่ OA ของร้านยังไม่มี) ·
+    /// Returns (success, message) suitable for echoing to the admin UI.</summary>
     Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId);
-
-    Task NotifyDocumentApprovedAsync(Guid companyId, string documentNumber, string contactName, decimal amount);
-    Task NotifyPaymentReceivedAsync(Guid companyId, string documentNumber, decimal amount);
-    Task NotifyOverdueInvoiceAsync(Guid companyId, string documentNumber, string contactName, decimal amount, int daysOverdue);
-    Task NotifyBankSyncCompleteAsync(Guid companyId, string bankName, int newTransactions);
-
-    /// <summary>แจ้งกลุ่ม LINE ของที่พักเมื่อ**มีจองใหม่ / แขกส่งสลิป** (LDG-P2-06)
-    ///
-    /// <para>อีเมลแจ้งเจ้าของมีอยู่แล้วใน <c>LodgingService.TryNotifyAsync</c> —
-    /// ตัวนี้เพิ่มช่องทางที่ที่พักไทยเช็คจริงกว่า (เจ้าของรีสอร์ท/บ้านพักส่วนใหญ่
-    /// ไม่ได้เปิดอีเมลทั้งวัน แต่เปิด LINE ตลอด) · ใช้ token/กลุ่มเดิมที่บริษัทตั้งไว้
-    /// แล้ว ⇒ ลูกค้าไม่ต้องตั้งค่าอะไรเพิ่ม · ไม่ได้ตั้ง = เงียบ ไม่ error</para>
-    ///
-    /// <para>⚠️ ฝั่ง<b>แขก</b>ส่ง LINE ไม่ได้ — แขกจองแบบไม่ล็อกอิน เราไม่มี
-    /// LINE user id ของเขา (<c>Property.LineId</c> เป็น id ไว้ให้แขกติดต่อที่พัก
-    /// ไม่ใช่ปลายทาง push) · แขกได้อีเมล + หน้าการจองด้วย token ตามเดิม</para></summary>
-    Task NotifyLodgingBookingAsync(Guid companyId, string propertyName, string reservationNumber,
-        string guestName, string roomSummary, DateTime checkIn, DateTime checkOut, int nights,
-        decimal totalAmount, decimal depositRequired, bool isSlipUploaded);
-    Task NotifyECommerceSyncAsync(Guid companyId, string platform, int newOrders, decimal totalAmount);
-    Task NotifyPayrollCompletedAsync(Guid companyId, string runName, int employeeCount, decimal totalNet);
-    Task NotifyLowBalanceAsync(Guid companyId, string accountName, decimal balance, decimal threshold);
 }

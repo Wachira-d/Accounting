@@ -23,6 +23,8 @@ public class QuotaAddOnPaymentHandler : IPaymentCompletionHandler
 
     public async Task HandleSucceededAsync(PaymentIntent intent, CancellationToken ct = default)
     {
+        // รอบ 232 (232-Omise-2): ด่านชั้นสอง — เงินโหมดทดสอบห้ามมีผลทางธุรกิจ (dispatcher กันชั้นแรก · ตัวตัดสินเดียว TestModePaymentPolicy)
+        await Accounting.Helpers.TestModePaymentPolicy.GuardAsync(_db, intent, ct);
         var payer = intent.PayerCompanyId;
         var owned = payer is Guid payerId && Accounting.Helpers.PlatformRevenueSource.SourceBelongsToPayer(payer,
             await _db.CompanyQuotaAddOns.AsNoTracking().Where(p => p.Id == intent.SourceId && p.CompanyId == payerId)

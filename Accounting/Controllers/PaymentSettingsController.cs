@@ -30,11 +30,12 @@ public class PaymentSettingsController : ControllerBase
     private readonly IEnumerable<IPaymentProvider> _providers;
     private readonly ILogger<PaymentSettingsController> _logger;
     private readonly IPaymentProviderConfigService _configs;
+    private readonly IConfiguration? _config;
 
     public PaymentSettingsController(AccountingDbContext db, ISecretProtector secrets,
         IEnumerable<IPaymentProvider> providers, ILogger<PaymentSettingsController> logger,
-        IPaymentProviderConfigService configs)
-    { _db = db; _secrets = secrets; _providers = providers; _logger = logger; _configs = configs; }
+        IPaymentProviderConfigService configs, IConfiguration? config = null)
+    { _db = db; _secrets = secrets; _providers = providers; _logger = logger; _configs = configs; _config = config; }
 
     public sealed record ProviderOption(string Code, string DisplayName,
         List<string> Methods, bool SupportsRefund, bool SupportsWebhook,
@@ -75,12 +76,17 @@ public class PaymentSettingsController : ControllerBase
     }
 
     /// <summary>URL แจ้งเตือน — รูป path จาก <see cref="GatewayWebhookRoute.Path"/> ตัวเดียว (token ว่าง = URL เดิม)</summary>
-    private string WebhookUrl(string providerCode, string? token)
-        => $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.Path(providerCode, token)}";
+    private static string WebhookUrl(string origin, string providerCode, string? token)
+        => $"{origin}{GatewayWebhookRoute.Path(providerCode, token)}";
 
     /// <summary>URL แจ้งเตือนแบบปิดบังรหัส (ผู้ที่ไม่ใช่เจ้าของ · GWO-6)</summary>
-    private string MaskedWebhookUrl(string providerCode, string? token)
-        => $"{Request.Scheme}://{Request.Host}{GatewayWebhookRoute.MaskedPath(providerCode, token)}";
+    private static string MaskedWebhookUrl(string origin, string providerCode, string? token)
+        => $"{origin}{GatewayWebhookRoute.MaskedPath(providerCode, token)}";
+
+    /// <summary>รอบ 232: origin ที่ผู้ให้บริการเรียกถึงจริง (URL ของระบบที่ตั้งไว้ · ไม่ได้ตั้ง = คำขอนี้) — เดิม <c>Request.Host</c> หลัง reverse proxy
+    /// เป็นชื่อภายใน (ForwardedHeaders ส่งต่อแค่ For/Proto) ⇒ ร้านคัดลอก URL ที่ผู้ให้บริการเรียกไม่ถึง · ตัวตัดสิน <see cref="SystemBaseUrl.PublicOrigin"/></summary>
+    private async Task<string> PublicOriginAsync(CancellationToken ct)
+        => SystemBaseUrl.PublicOrigin(await SystemBaseUrl.ResolveAsync(_db, _config, ct), Request.Scheme, Request.Host.ToString());
 
     /// <summary>ข้อเท็จจริงของ config สำหรับตัวตัดสินเส้นทาง webhook — ตัวเดียวกับที่ปลายทาง webhook ใช้</summary>
     private static GatewayWebhookConfigFacts WebhookFacts(PaymentProviderConfig c)
@@ -88,7 +94,7 @@ public class PaymentSettingsController : ControllerBase
 
     /// <summary><paramref name="showToken"/> = ผู้ดูเป็นเจ้าของ (ด่าน <c>RequireOwnerAttribute.DenyAsync</c>) — ไม่ใช่ ⇒ URL ปิดบังรหัส (GWO-6) ·
     /// endpoint ที่มี <c>[RequireOwner]</c> อยู่แล้วส่ง true</summary>
-    private ConfigResponse Map(PaymentProviderConfig c, bool companyVatRegistered, bool showToken)
+    private ConfigResponse Map(PaymentProviderConfig c, bool companyVatRegistered, bool showToken, string origin)
     {
         return new(
         c.Id, c.ProviderCode, c.DisplayName, c.Mode.ToString(),
@@ -97,7 +103,7 @@ public class PaymentSettingsController : ControllerBase
         c.LastTestPassedAt, c.LastWebhookAt, c.LiveEnabledAt,
         // ด่าน: ตัวเดียวกับ SetMode (PaymentLiveGate ผ่าน IPaymentProviderConfigService) — ทดสอบผ่านหลังแก้คีย์ · คีย์ live ครบและตรวจผ่าน
         CanEnableLive: PaymentLiveGate.CanEnableLive(_configs.GateFacts(c)),
-        WebhookUrl: showToken ? WebhookUrl(c.ProviderCode, c.WebhookToken) : MaskedWebhookUrl(c.ProviderCode, c.WebhookToken),
+        WebhookUrl: showToken ? WebhookUrl(origin, c.ProviderCode, c.WebhookToken) : MaskedWebhookUrl(origin, c.ProviderCode, c.WebhookToken),
         EnabledMethods: ParseMethods(c.EnabledMethodsJson),
         IsActive: c.IsActive,
         FeeVatMode: c.FeeVatMode.ToString(),
@@ -107,7 +113,7 @@ public class PaymentSettingsController : ControllerBase
         FeeVatWarning: GatewaySettlementMath.FeeVatModeWarning(c.FeeVatMode, companyVatRegistered),
         // GWO-1: แสดง URL เดิมเฉพาะร้านที่ URL เดิมยังรับอยู่ (ตัวตัดสินเดียวกับปลายทาง webhook) — ร้านใหม่ไม่เห็น URL ที่ระบบไม่รับ
         LegacyWebhookUrl: string.IsNullOrEmpty(c.WebhookToken) || !GatewayWebhookRoute.AcceptsLegacy(WebhookFacts(c), DateTime.UtcNow)
-            ? null : WebhookUrl(c.ProviderCode, null),
+            ? null : WebhookUrl(origin, c.ProviderCode, null),
         WebhookUrlWarning: GatewayWebhookRoute.LegacyUrlWarning(c.LastLegacyWebhookAt, c.LastLegacySkippedAt, WebhookFacts(c), DateTime.UtcNow),
         ProviderNotice: _providers.FirstOrDefault(p => p.ProviderCode == c.ProviderCode)?.PendingVerificationNotice,
         WebhookTokenMasked: !showToken && !string.IsNullOrEmpty(c.WebhookToken),
@@ -162,7 +168,8 @@ public class PaymentSettingsController : ControllerBase
         // GWO-6: URL ที่มีรหัสลับเต็มเห็นเฉพาะเจ้าของ (ด่านเดียวกับ [RequireOwner]) — คีย์ API/บทบาทอื่นเห็นแบบปิดบัง
         var showToken = await Accounting.Filters.RequireOwnerAttribute.DenyAsync(HttpContext, _db, companyId,
             "ดูรหัสลับใน URL แจ้งเตือน") == null;
-        return Ok(new ApiResponse<List<ConfigResponse>>(true, rows.Select(c => Map(c, vatRegistered, showToken)).ToList()));
+        var origin = await PublicOriginAsync(ct);
+        return Ok(new ApiResponse<List<ConfigResponse>>(true, rows.Select(c => Map(c, vatRegistered, showToken, origin)).ToList()));
     }
 
     public sealed record SaveConfigRequest(
@@ -243,7 +250,7 @@ public class PaymentSettingsController : ControllerBase
         cfg.UpdatedAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<ConfigResponse>(true,
-            Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true), "บันทึกการตั้งค่าแล้ว"));
+            Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true, await PublicOriginAsync(ct)), "บันทึกการตั้งค่าแล้ว"));
     }
 
     [HttpPost("{providerCode}/test")]
@@ -328,7 +335,7 @@ public class PaymentSettingsController : ControllerBase
         await _db.SaveChangesAsync(ct);
         _logger.LogWarning("บริษัท {Company} ออกรหัสลับ URL แจ้งเตือนใหม่ของ {Provider}", companyId, providerCode);
         return Ok(new ApiResponse<ConfigResponse>(true,
-            Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true),
+            Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true, await PublicOriginAsync(ct)),
             "ออกรหัสใหม่แล้ว — URL เดิมที่มีรหัสเก่าใช้ไม่ได้ทันที: คัดลอก URL ด้านบนไปตั้งในแดชบอร์ดผู้ให้บริการทั้งโหมดทดสอบและโหมดใช้งานจริงตอนนี้ "
             + "(ระหว่างนี้รายการที่ค้างกด \"ตรวจสถานะสด\" ที่หน้ารายการรับชำระออนไลน์)"));
     }
@@ -352,7 +359,7 @@ public class PaymentSettingsController : ControllerBase
         // ถอยกลับโหมดทดสอบทำได้เสมอ · audit hash chain ทั้งสองทาง
         await _configs.SetModeAsync(cfg, req.Mode, platform: null,
             new PaymentConfigActor(User?.Identity?.Name, HttpContext.Connection.RemoteIpAddress?.ToString()), ct);
-        return Ok(new ApiResponse<ConfigResponse>(true, Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true),
+        return Ok(new ApiResponse<ConfigResponse>(true, Map(cfg, await CompanyVatStatus.IsRegisteredAsync(_db, companyId, ct), showToken: true, await PublicOriginAsync(ct)),
             req.Mode == PaymentProviderMode.Live
                 ? "เปิดใช้งานรับชำระเงินจริงแล้ว"
                 : "กลับสู่โหมดทดสอบแล้ว — เงินจะไม่เข้าจริง"));

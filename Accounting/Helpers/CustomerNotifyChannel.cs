@@ -9,7 +9,7 @@ public sealed record CustomerLineTarget(Guid? SiteCustomerId, string? RecordKind
     public static CustomerLineTarget ForContact(Guid contactId) => new(null, null, null, contactId);
 }
 
-/// <summary>ผลตัดสินช่องทาง LINE ของบริษัท — <c>Scope</c> = OA ที่ "ส่งจริง" (ตรงกับ <c>LineNotifyService.ResolveConfigAsync</c>) ·
+/// <summary>ผลตัดสินช่องทาง LINE ของบริษัท — <c>Scope</c> = OA ที่ "ส่งจริง" (รอบ 232: เงื่อนไขเดียวกับ <c>LineNotifyService.ResolveCompanyOaAsync</c> — เปิด LINE + token ถอดได้ ⇒ OA ของบริษัท · ไม่งั้นลูกค้าผูกกับบอทกลาง 1:1 ส่งผ่าน <c>TryPushViaNextAccAsync</c> ไม่ใช่ fallback ของเส้นบริษัท) ·
 /// <c>CanLink</c> = ลูกค้าผูกเองได้ (ต้องมี token + secret ของ webhook + basic id สำหรับปุ่มเพิ่มเพื่อน)</summary>
 public sealed record CustomerLineChannel(string Scope, string? BasicId, bool CanPush, bool CanLink, string? Problem, string? CurrentDestination);
 
@@ -20,7 +20,7 @@ public sealed record CustomerEmailFallbackOption(string Value, string Label);
 /// **ตัวตัดสินช่องทางแจ้งลูกค้าปลายทาง (LINE/อีเมล) ตัวเดียว** — รอบ 211 · คำตัดสินข้อ 170
 /// <list type="bullet">
 /// <item>LINE: บริษัทเปิด LINE + มี token ของตัวเอง ⇒ OA ของบริษัท · ไม่งั้น ⇒ OA ของ NextAcc (หน้าแอดมิน → config <c>Line:*</c> · <c>INextAccLineConfig</c>) — <b>กติกาเดียวกับที่ push ใช้อยู่เดิม</b>
-///   (<c>LineNotifyService.ResolveConfigAsync</c>) ⇒ ค่าเริ่มต้นไม่เปลี่ยนพฤติกรรมการส่ง</item>
+///   (รอบ 232: ฝั่ง push แยกเป็น <c>TryPushToUserAsync(companyId…)</c> = OA ของบริษัทเท่านั้น และ <c>TryPushViaNextAccAsync</c> = บอทกลาง — <c>BookingNotifier</c> เลือกตาม <c>LineViaNextAcc</c> ของลิงก์ ไม่มีการถอย) ⇒ ค่าเริ่มต้นไม่เปลี่ยนพฤติกรรมการส่ง</item>
 /// <item>userId ของ LINE ผูกกับ OA (provider) ⇒ ลิงก์ที่ผูกกับ OA อื่นใช้ไม่ได้ (<see cref="LinkUsable"/>) — ร้านสลับ OA = ลูกค้าต้องผูกใหม่</item>
 /// <item>อีเมล: ร้านตั้ง + ทดสอบผ่าน (<c>CompanySettings.EmailConfigured</c>) ⇒ ผู้ส่งของร้าน แล้วถอยไปอีเมลของระบบเมื่อล้ม (ฝ่ายค้าน) · ไม่งั้น ⇒ อีเมลของระบบ (เดิม)</item>
 /// <item>ลำดับ: ลูกค้าผูก LINE เอง (opt-in) ⇒ LINE ก่อน แล้วอีเมล · ไม่ได้ผูก ⇒ อีเมลก่อน (เดิม)</item>

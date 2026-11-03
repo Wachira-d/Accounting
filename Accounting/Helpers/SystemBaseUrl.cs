@@ -26,6 +26,19 @@ public static class SystemBaseUrl
            || (!string.IsNullOrWhiteSpace(configBaseUrl)
                && !string.Equals(configBaseUrl.Trim().TrimEnd('/'), ShippedDefault, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>รอบ 232: origin สาธารณะสำหรับ URL ที่ระบบภายนอกต้องเรียกกลับ (webhook ของผู้ให้บริการรับชำระ) — URL ของระบบที่ตั้งไว้ก่อน ·
+    /// ไม่ได้ตั้ง ⇒ scheme/host ของคำขอ · ที่มา: หน้าตั้งค่าแสดง <c>Request.Host</c> ซึ่งหลัง reverse proxy เป็นชื่อภายใน (ForwardedHeaders ของเรา
+    /// ส่งต่อแค่ For/Proto ไม่ส่ง Host) ⇒ ผู้ดูแลคัดลอก URL ที่ผู้ให้บริการเรียกไม่ถึงไปตั้งในแดชบอร์ด</summary>
+    public static string PublicOrigin(string? resolvedBaseUrl, string requestScheme, string requestHost)
+    {
+        // ฝ่ายค้าน 232 B2: ค่าที่มากับซอร์ส (app.nextacc.com) ≠ ตั้งแล้ว — ตัดสินด้วย IsConfigured ตัวเดียว ผู้เรียกไม่ต้องเช็คเอง
+        if (IsConfigured(null, resolvedBaseUrl)
+            && Uri.TryCreate(resolvedBaseUrl!.Trim(), UriKind.Absolute, out var b)
+            && (b.Scheme == Uri.UriSchemeHttps || b.Scheme == Uri.UriSchemeHttp))
+            return b.GetLeftPart(UriPartial.Authority);
+        return $"{requestScheme}://{requestHost}";
+    }
+
     public static async Task<string?> ResolveAsync(AccountingDbContext db, IConfiguration? config, CancellationToken ct = default)
     {
         var admin = await db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct);
