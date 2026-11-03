@@ -383,7 +383,7 @@ public class PlatformPriceOverrideRound231Tests
     {
         var v = SubscriptionGatePolicy.Decide(Read(blockReads: true, planActive: false));
         Assert.Equal(SubscriptionGateReason.PlanExpired, v.Block);
-        var shadow = SubscriptionGatePolicy.Decide(Read(blockReads: true, planActive: false, mode: SubscriptionWriteGateMode.Shadow));
+        var shadow = SubscriptionGatePolicy.Decide(Read(blockReads: true, planActive: false, mode: SubscriptionWriteGateMode.LogOnly));
         Assert.Equal(SubscriptionGateReason.None, shadow.Block);
         Assert.Contains(SubscriptionGateReason.PlanExpired, shadow.LogOnly);
     }
@@ -418,7 +418,7 @@ public class PlatformPriceOverrideRound231Tests
         Assert.False(SubscriptionGatePolicy.NeedsReadFactsWhenExpired(SubscriptionStatus.Active, false, SubscriptionWriteGateMode.Enforce, true));
         Assert.False(SubscriptionGatePolicy.NeedsReadFactsWhenExpired(SubscriptionStatus.Expired, false, SubscriptionWriteGateMode.Off, true));
         Assert.False(SubscriptionGatePolicy.NeedsReadFactsWhenExpired(SubscriptionStatus.Expired, true, SubscriptionWriteGateMode.Enforce, true));   // คำขอเขียน = ด่านเขียนเดิมดูแล
-        Assert.True(SubscriptionGatePolicy.NeedsWriteFacts(SubscriptionStatus.Active, true, SubscriptionWriteGateMode.Shadow));   // ด่านเขียนเดิมไม่เปลี่ยน
+        Assert.True(SubscriptionGatePolicy.NeedsWriteFacts(SubscriptionStatus.Active, true, SubscriptionWriteGateMode.LogOnly));   // ด่านเขียนเดิมไม่เปลี่ยน
     }
 
     // ═════════ override เพดาน — ตัวแปลงค่าเดิม (231-11) ═════════
