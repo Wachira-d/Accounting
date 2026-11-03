@@ -309,7 +309,9 @@
           global.location.href = intent.authorizeUrl;
           return;
         }
-        if (!intent.qrPayload && (opts.method || 'PromptPay') !== 'ManualSlip') {
+        // บัตรรอผลธนาคาร (ไม่มีลิงก์ 3DS) ⇒ ไปหน้ารอผลตามปกติ — ตัวตัดสินอยู่ฝั่งเซิร์ฟเวอร์ (GatewayChargeNextStep.NeedsPayerStep) · ตาข่ายนี้ดูเฉพาะวิธีที่ต้องมี QR/ลิงก์
+        const methodNow = intent.methodKind || intent.method || opts.method || 'PromptPay';
+        if (!intent.qrPayload && methodNow !== 'ManualSlip' && methodNow !== 'Card') {
           // ไม่มีทั้ง QR และลิงก์ทั้งที่รายการยังรอ — ล้มดังแทนหน้าว่าง "กำลังรอการชำระเงิน…" (เซิร์ฟเวอร์ควรปิดรายการแล้ว — นี่คือตาข่ายชั้นที่สอง)
           this._renderError('ผู้ให้บริการไม่ส่ง QR/ลิงก์หน้าชำระเงินกลับมา — ปิดหน้านี้แล้วลองใหม่อีกครั้ง', intent);
           return;

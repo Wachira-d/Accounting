@@ -13,7 +13,7 @@ namespace Accounting.Helpers;
 ///
 /// <para><b>กติกา:</b> QR มา ⇒ QR ชนะเสมอ (ไม่พาออกจากหน้า) · ไม่มี QR แต่มีลิงก์ https ⇒ พาไป · ไม่มีทั้งคู่ทั้งที่ charge ยังรอ ⇒
 /// <see cref="MissingReason"/> คืนข้อความไทย (ผู้เรียกปิดรายการเป็นล้มเหลวพร้อมเหตุผล — ไม่ปล่อยให้ผู้จ่ายนั่งรอ "กำลังรอการชำระเงิน…" กับหน้าว่าง)
-/// · สลิปโอน (<see cref="PaymentMethodKind.ManualSlip"/>) ไม่มีขั้นถัดไปที่ผู้ให้บริการต้องส่ง ⇒ ไม่ตัดสิน</para>
+/// · สลิปโอน (<see cref="PaymentMethodKind.ManualSlip"/>) และบัตร (<see cref="PaymentMethodKind.Card"/> — รอผลธนาคาร) ไม่มีขั้นถัดไปที่ผู้ให้บริการต้องส่ง ⇒ ไม่ตัดสิน</para>
 /// </summary>
 public static class GatewayChargeNextStep
 {
@@ -36,7 +36,9 @@ public static class GatewayChargeNextStep
     /// <b>ตั้งใจ</b>ให้เรียกเฉพาะตอนสร้าง (<c>StartAsync</c>) — ตอน poll/Refresh ไม่ตัดสิน (N1): charge ที่ pending อยู่เคยมี QR แล้ว</summary>
     public static string? MissingReason(PaymentMethodKind method, PaymentIntentStatus status, string? qrPayload, string? authorizeUrl)
     {
-        if (method == PaymentMethodKind.ManualSlip || status != PaymentIntentStatus.Pending) return null;
+        // บัตร: ผู้จ่ายกรอกบัตรไปแล้ว — Pending ที่ไม่มีลิงก์ 3-D Secure = รอผลจากธนาคาร (webhook/poll ตัดสินต่อ) ไม่ใช่ "ไม่มีทางจ่าย"
+        // (CI รอบ 232: Db test ตัดบัตรที่บันทึกไว้แล้วรอผล ถูกปิดเป็น Failed ผิด) · ต้องมีขั้นถัดไปเฉพาะ QR/วิธีที่พาไปหน้าธนาคาร
+        if (!NeedsPayerStep(method) || status != PaymentIntentStatus.Pending) return null;
         if (!string.IsNullOrWhiteSpace(qrPayload) || IsHttps(authorizeUrl)) return null;
         return method == PaymentMethodKind.PromptPay
             ? "ผู้ให้บริการสร้างรายการแล้วแต่ไม่ส่ง QR พร้อมเพย์กลับมา — ลองใหม่อีกครั้ง ถ้ายังเป็นอยู่ให้ผู้ดูแลระบบตรวจว่าบัญชีผู้ให้บริการเปิดใช้พร้อมเพย์แล้ว"
@@ -54,6 +56,10 @@ public static class GatewayChargeNextStep
             return "เชื่อมต่อผู้ให้บริการรับชำระเงินไม่ได้ (เครือข่าย/DNS/ใบรับรอง) — ตรวจว่าเซิร์ฟเวอร์ออกอินเทอร์เน็ตได้ แล้วลองใหม่";
         return string.IsNullOrWhiteSpace(ex.Message) ? "เริ่มการชำระเงินไม่สำเร็จ" : ex.Message;
     }
+
+    /// <summary>วิธีที่ผู้จ่ายต้องทำขั้นถัดไปเอง (สแกน QR / ไปหน้าธนาคาร) — บัตรกับสลิปโอนไม่ต้อง</summary>
+    public static bool NeedsPayerStep(PaymentMethodKind method)
+        => method is not (PaymentMethodKind.Card or PaymentMethodKind.ManualSlip);
 
     private static bool IsHttps(string? url)
         => !string.IsNullOrWhiteSpace(url)
