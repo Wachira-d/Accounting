@@ -69,7 +69,12 @@
         <div class="muted" style="margin:6px 0">ฉบับไทยเป็นฉบับที่มีผลผูกพัน · ข้อความอังกฤษเป็นคำแปลประกอบ ⇒ แก้ได้โดยเลขฉบับ/วันมีผล/หลักฐานการยอมรับไม่เปลี่ยน ·
           เว้นว่างแล้วบันทึก = ล้างฉบับอังกฤษ · ทุกครั้งบันทึกลงประวัติตรวจสอบ</div>
         <textarea class="editor" id="curBodyEn" spellcheck="false" style="min-height:160px"></textarea>
-        <div style="margin-top:8px"><button class="admin-btn admin-btn-outline" id="saveCurEnBtn">💾 บันทึกข้อความอังกฤษของฉบับปัจจุบัน</button></div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="admin-btn admin-btn-outline" id="saveCurEnBtn">💾 บันทึกข้อความอังกฤษของฉบับปัจจุบัน</button>
+          <!-- รอบ 232 ต่อ: คำแปลตั้งต้นจากเซิร์ฟเวอร์ (LegalDocumentDefaults.PlatformBuiltInEn) — เติมเฉพาะช่องว่าง/ผู้ใช้ยืนยันทับ · ไม่บันทึกเอง -->
+          <button class="admin-btn admin-btn-outline" id="fillCurEnBtn" type="button">🌐 ใส่คำแปลตั้งต้น (อังกฤษ)</button>
+        </div>
+        <div class="muted" id="curEnBuiltinNote" style="margin-top:6px"></div>
       </details>
       <div class="muted" id="baseUrlNote" style="margin-top:6px"></div>
       <div id="upcomingBox" class="muted" style="margin-top:8px"></div>
@@ -116,7 +121,12 @@
           <textarea class="editor" id="dBodyEn" spellcheck="false" placeholder="## 1. Heading&#10;Paragraph...&#10;- item"></textarea>
           <div><div id="previewWarningsEn"></div><div class="preview" id="previewPaneEn"><span class="muted">กด "ดูตัวอย่างอังกฤษ"</span></div></div>
         </div>
-        <div style="margin-top:8px"><button class="admin-btn admin-btn-outline" id="previewEnBtn">👁 ดูตัวอย่างอังกฤษ</button></div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="admin-btn admin-btn-outline" id="previewEnBtn">👁 ดูตัวอย่างอังกฤษ</button>
+          <!-- รอบ 232 ต่อ: คำแปลตั้งต้นจากเซิร์ฟเวอร์ — เติมเฉพาะช่องว่าง/ผู้ใช้ยืนยันทับ · ต้องกด "บันทึกร่าง" เอง -->
+          <button class="admin-btn admin-btn-outline" id="fillDraftEnBtn" type="button">🌐 ใส่คำแปลตั้งต้น (อังกฤษ)</button>
+        </div>
+        <div class="muted" id="draftEnBuiltinNote" style="margin-top:6px"></div>
       </details>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="admin-btn admin-btn-outline" id="previewBtn">👁 ดูตัวอย่าง</button>
@@ -158,6 +168,8 @@
         document.getElementById('previewBtn').addEventListener('click', () => this.preview());
         document.getElementById('previewEnBtn').addEventListener('click', () => this.preview('en'));
         document.getElementById('saveCurEnBtn').addEventListener('click', () => this.saveCurrentEnglish());
+        document.getElementById('fillCurEnBtn').addEventListener('click', () => this.fillBuiltInEnglish('curBodyEn', 'curEnBuiltinNote'));
+        document.getElementById('fillDraftEnBtn').addEventListener('click', () => this.fillBuiltInEnglish('dBodyEn', 'draftEnBuiltinNote'));
         document.getElementById('saveBtn').addEventListener('click', () => this.save());
         document.getElementById('publishBtn').addEventListener('click', () => this.publish());
         this.load();
@@ -273,6 +285,8 @@
         document.getElementById('dBodyEn').value = dr ? (dr.bodyMarkdownEn || '') : '';   // รอบ 232: hydrate ช่องอังกฤษ (เก็บแล้วต้อง echo กลับ)
         document.getElementById('dBodyEn').oninput = () => { this._dirty = true; document.getElementById('publishBtn').disabled = true; };
         document.getElementById('previewPaneEn').innerHTML = '<span class="muted">กด "ดูตัวอย่างอังกฤษ"</span>';
+        document.getElementById('draftEnBuiltinNote').textContent = '';   // รอบ 232 ต่อ: คำเตือนคำแปลตั้งต้นไม่ค้างข้ามชนิด/การโหลดใหม่
+        document.getElementById('curEnBuiltinNote').textContent = '';
         document.getElementById('discardBtn').disabled = !dr;
         document.getElementById('publishBtn').disabled = !dr;
         document.getElementById('previewPane').innerHTML = '<span class="muted">กด "ดูตัวอย่าง" เพื่อดูหน้าตาที่ลูกค้าจะเห็น</span>';
@@ -337,11 +351,25 @@
         } catch (e) { AdminLayout.toast('บันทึกข้อความอังกฤษไม่สำเร็จ: ' + e.message, 'error'); }
       },
 
+      /** รอบ 232 ต่อ: เติมช่องอังกฤษด้วยคำแปลตั้งต้นของระบบ (ข้อความมีโทเคน — ค่ามาจากเซิร์ฟเวอร์ ไม่มีสำเนาในหน้านี้) ·
+       *  ช่องมีข้อความอยู่แล้ว ⇒ ถามก่อนทับ · ไม่บันทึกให้ — ผู้ใช้ตรวจแล้วกดบันทึกเอง */
+      async fillBuiltInEnglish(fieldId, noteId) {
+        const field = document.getElementById(fieldId);
+        if (field.value.trim() && !confirm('ช่องภาษาอังกฤษมีข้อความอยู่แล้ว — แทนที่ด้วยคำแปลตั้งต้นของระบบ?')) return;
+        try {
+          const res = await AdminAPI.get(`${this.base}/${this.kind}/builtin-en`);
+          field.value = (res.data && res.data.markdown) || '';
+          document.getElementById(noteId).textContent = '⚠️ ' + ((res.data && res.data.warning) || '');
+          if (fieldId === 'dBodyEn') { this._dirty = true; document.getElementById('publishBtn').disabled = true; }
+          AdminLayout.toast('ใส่คำแปลตั้งต้นแล้ว — ตรวจให้ตรงกับฉบับไทยแล้วกดบันทึก');
+        } catch (e) { AdminLayout.toast('ดึงคำแปลตั้งต้นไม่สำเร็จ: ' + e.message, 'error'); }
+      },
+
       /** รอบ 232: lang = 'en' ⇒ ตัวอย่างฉบับอังกฤษ (ตัวแปลงเดียวกัน — โทเคนผู้ควบคุมข้อมูลชุดเดียวกัน) */
       async preview(lang) {
         const en = lang === 'en';
         try {
-          const res = await AdminAPI.post(`${this.base}/${this.kind}/preview`, { bodyMarkdown: document.getElementById(en ? 'dBodyEn' : 'dBody').value });
+          const res = await AdminAPI.post(`${this.base}/${this.kind}/preview`, { bodyMarkdown: document.getElementById(en ? 'dBodyEn' : 'dBody').value, language: en ? 'en' : null });
           // HTML แปลง + encode ที่เซิร์ฟเวอร์ (ตัวเดียวกับหน้าสาธารณะ) — วางได้ตรง ๆ
           document.getElementById(en ? 'previewPaneEn' : 'previewPane').innerHTML = res.data.html || '<span class="muted">(ว่าง)</span>';
           const w = res.data.warnings || [];

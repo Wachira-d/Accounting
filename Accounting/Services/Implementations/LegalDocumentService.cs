@@ -30,13 +30,19 @@ public class LegalDocumentService : ILegalDocumentService
 
     private static DateOnly Today => LegalDocumentPolicy.TodayBangkok(DateTime.UtcNow);
 
-    private static LegalDocumentView BuiltIn(string kind) => new(
-        kind, LegalDocumentDefaults.Title(kind), LegalDocumentDefaults.BuiltInVersion, LegalDocumentDefaults.BuiltInEffectiveDate,
-        LegalDocumentDefaults.PlatformBuiltIn(kind), "builtin", null, null);
+    /// <summary>ฉบับตั้งต้นในโค้ด — รอบ 232 ต่อ: มีคำแปลอังกฤษตั้งต้น (<see cref="LegalDocumentDefaults.PlatformBuiltInEn"/>) ไปด้วย ·
+    /// ฉบับที่แอดมินเผยแพร่เอง (<see cref="ToView"/>) ไม่เติมอัตโนมัติ — ไทยอาจถูกแก้แล้ว คำแปลตั้งต้นจะไม่ตรง</summary>
+    private static LegalDocumentView BuiltIn(string kind)
+    {
+        return new(kind, LegalDocumentDefaults.Title(kind), LegalDocumentDefaults.BuiltInVersion, LegalDocumentDefaults.BuiltInEffectiveDate,
+            LegalDocumentDefaults.PlatformBuiltIn(kind), "builtin", null, null, LegalDocumentDefaults.PlatformBuiltInEn(kind));
+    }
 
-    private static LegalDocumentView ToView(LegalDocumentVersion r) => new(
-        r.Kind, LegalDocumentDefaults.Title(r.Kind), r.Version, DateOnly.FromDateTime(r.EffectiveDate), r.BodyMarkdown,
-        "published", r.PublishedAt, r.ChangeSummary, string.IsNullOrWhiteSpace(r.BodyMarkdownEn) ? null : r.BodyMarkdownEn);
+    private static LegalDocumentView ToView(LegalDocumentVersion r)
+    {
+        return new(r.Kind, LegalDocumentDefaults.Title(r.Kind), r.Version, DateOnly.FromDateTime(r.EffectiveDate), r.BodyMarkdown,
+            "published", r.PublishedAt, r.ChangeSummary, string.IsNullOrWhiteSpace(r.BodyMarkdownEn) ? null : r.BodyMarkdownEn);
+    }
 
     private Task<List<LegalDocumentVersion>> PublishedRowsAsync(string kind, CancellationToken ct)
         => _db.LegalDocumentVersions.AsNoTracking()
@@ -88,13 +94,14 @@ public class LegalDocumentService : ILegalDocumentService
             RefundPublished: r.Source == "published");
     }
 
-    public async Task<string> RenderPlatformAsync(string markdown, CancellationToken ct = default)
+    public async Task<string> RenderPlatformAsync(string markdown, CancellationToken ct = default, string? language = null)
     {
         var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
         // ตัวตั้งเดียวกับ LegalController.GetPolicy: ชื่อนิติบุคคลผู้ให้บริการ → ชื่อเว็บ · อีเมลผู้ขาย → อีเมลติดต่อทั่วไป
         var tokens = LegalDocumentDefaults.BuildPlatformTokens(
             FirstNonEmpty(s?.PlatformSellerName, s?.SiteName), s?.PlatformSellerTaxId, s?.PlatformSellerAddress,
-            FirstNonEmpty(s?.PlatformSellerPhone, s?.ContactPhone), FirstNonEmpty(s?.PlatformSellerEmail, s?.ContactEmail), s?.SiteName);
+            FirstNonEmpty(s?.PlatformSellerPhone, s?.ContactPhone), FirstNonEmpty(s?.PlatformSellerEmail, s?.ContactEmail), s?.SiteName,
+            english: LegalDocumentLanguage.Normalize(language) == LegalDocumentLanguage.English);
         return LegalMarkdown.Render(markdown, tokens);
     }
 

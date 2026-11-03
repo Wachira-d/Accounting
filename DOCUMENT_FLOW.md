@@ -2597,6 +2597,15 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **นโยบาย 2 ภาษา (232-Checkout-1):** `Helpers/LegalDocumentLanguage.Pick` ตัวเดียว — `GET api/legal/documents/{kind}?lang=en` · `storefront/legal/{kind}?lang=` · `public/reservations/legal/…?lang=` · ฉบับ/วันมีผล/หลักฐานเดียวกัน · ไม่มี EN = ไทย + ประกาศ ·
   เติม/แก้ EN ของฉบับที่เผยแพร่แล้ว **ไม่ขยับเลขฉบับ** (ฝ่ายค้าน N3 · `PUT api/admin/legal-documents/{kind}/versions/{version}/english` → `SetPublishedEnglishAsync` · ตัวตัดสิน `PublishedEnglishRefusal` · audit chain `LegalDocumentEnglishUpdated` · ไทยเป็นฉบับผูกพัน) ·
   หน้าแอดมิน CMS เตือนว่า EN ของร้านแสดงเฉพาะโหมด "เขียนเอง" (แม่แบบ = ล้าง EN · ฝ่ายค้าน N4)
+- **คำแปลอังกฤษตั้งต้น (รอบ 232 ต่อ · เจ้าของ "แปลนโยบายเป็นภาษาอังกฤษให้เลย"):** ตัวตั้งเดียว `Helpers/LegalDocumentDefaults.En.cs` —
+  `PlatformBuiltInEn(kind)` (privacy/terms/refund ของแพลตฟอร์ม) · `ShopTemplateEn(kind)` (แม่แบบร้าน CMS) · ทุกฉบับปิดท้าย `EnglishPrevailClause` (ไทยผูกพัน) ·
+  โทเคน/ตัวเลข/โครงหัวข้อตรงฉบับไทย (ล็อกด้วย `LegalDocumentDefaultsEnRound232Tests`) · **ต่อสาย:** (1) ฉบับตั้งต้นในโค้ด (`LegalDocumentService.BuiltIn` — ยังไม่มีฉบับเผยแพร่ในฐาน) มี EN ⇒
+  `/privacy.html?lang=en` ฯลฯ แสดงคำแปลแทน "ไทย + ประกาศ" · **ฉบับที่แอดมินเผยแพร่เองไม่เติมอัตโนมัติ** (`ToView` ไม่แตะ — ไทยอาจถูกแก้แล้ว) ·
+  (2) หน้าร้าน CMS โหมดแม่แบบ ⇒ คำแปลแม่แบบ · ร้านเขียนไทยเอง ⇒ EN เฉพาะที่ร้านเขียน (ตัวตัดสิน `CmsLegalPages.EffectiveMarkdownEn`) · หน้านโยบายของหน้าจองโต๊ะใช้แม่แบบ EN ·
+  (3) ค่าโทเคนที่เป็นข้อความ ("ยังไม่ได้ตั้งค่า" · "ยังไม่ได้ระบุ" · การหักมัดจำ · ปิดเลขผู้เสียภาษีบุคคลธรรมดา) ออกเป็นอังกฤษเมื่อแสดงฉบับอังกฤษ
+  (`BuildPlatformTokens/BuildShopTokens/BuildRefundTokens/BookingPageRefundTokens(…, english)` · `RenderPlatformAsync(md, ct, language)`) — ค่าเริ่มต้นไทยเดิม ⇒ เลขฉบับ `ShopPolicyVersion` ไม่ขยับ ·
+  (4) แอดมิน `/admin/legal.html` ปุ่ม "🌐 ใส่คำแปลตั้งต้น (อังกฤษ)" ทั้งช่อง EN ของร่างและของฉบับปัจจุบัน ← `GET api/admin/legal-documents/{kind}/builtin-en` (SystemAdmin · อ่านอย่างเดียว ·
+  คืน markdown ที่**ยังมีโทเคน** + html ตัวอย่าง + คำเตือน) — เติมเฉพาะช่องว่าง/ยืนยันทับ · ไม่บันทึกให้ · สำเนาให้เจ้าของคัดลอก: `erp-review/2026-11-03/legal-en/*.en.md`
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -7292,3 +7301,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม SourceLine — §2.4a ป้าย lifecycle "ไม่ทราบสัดส่วน" ทั้งที่ยอดเท่าเป๊ะ: ตัวตัดสินเดียว `Helpers/SourceLineBackfill` ประทับ/ย้าย `SourceLineId` ทุกทางเข้า (สร้าง · แก้ไข · OCR link-po) + ป้ายมองทะลุ GRN/DN + งานซ่อมข้อมูลเก่า `SourceLineBackfillJob` — เทสต์ `SourceLineBackfillTests` · `SourceLineBackfillDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout + นโยบาย 2 ภาษา — §2.12 ใหม่ (`PublicCheckoutController` · `PublicCheckoutService` · `PublicCheckoutPolicy` · `SiteSettings.PublicCheckoutEnabled`) · `LegalDocumentLanguage` 2 ภาษาทุกหน้านโยบาย (แพลตฟอร์ม/CMS/จองโต๊ะ) — เทสต์ `PublicCheckoutRound232Tests` · `LegalDocumentLanguageRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำแปลอังกฤษตั้งต้นของนโยบาย (`LegalDocumentDefaults.En.cs` · `CmsLegalPages.EffectiveMarkdownEn` · `builtin-en`) — เทสต์ `LegalDocumentDefaultsEnRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

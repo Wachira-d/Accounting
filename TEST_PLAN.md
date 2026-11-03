@@ -12,7 +12,8 @@
 | PC232-09 | ติ๊กยอมรับข้อกำหนด+คืนเงิน | ไม่ติ๊ก/ฉบับเก่า ⇒ 400 ไม่สร้างรายการ · ติ๊ก ⇒ `PolicyAcceptance` ผูก `platform-subscription`/paymentId (ช่องเดียวกับในระบบ) · เริ่ม intent ตรวจซ้ำ | `required_call_site` CreateOrder/StartIntent |
 | PC232-10 | หน้าสำเร็จ | poll 2→10 วิ ≤ 15 นาที · ไม่เชื่อ query · ผลลัพธ์ `Resolve`: Approved ⇒ เปิดสิทธิ์ · เงินจริงเข้าแต่รายการไม่อนุมัติ ⇒ "รอตรวจ" (ไม่โกหกว่าเปิดแล้ว) · Failed/Expired/Cancelled ⇒ ล้มเหลว · ใบเสร็จดาวน์โหลดเมื่อ `ReceiptNumber` มี | pure `อนุมัติแล้ว_เปิดสิทธิ์` · `เงินจริงเข้าแต่รายการยังไม่อนุมัติ_*` · `ล้มเหลว_*` · `ยังไม่ได้รับเงิน` |
 | PC232-11 | สิทธิ์/ความปลอดภัย | endpoint ที่แตะเงิน `[Authorize]` + `RequireOwnerAttribute.DenyAsync` + service ตรวจ Owner ซ้ำ · `RejectApiKey` · rate-limit ต่อ IP+ทั้งระบบ fail-closed · ไม่เปิดข้อมูลบริษัทอื่น (ทุก query กรอง CompanyId) · intent status ต้องตรง paymentId | `PublicCheckoutController` · `required_call_site` |
-| PC232-12 | นโยบาย 2 ภาษา | `?lang=en` มี EN ⇒ EN + title EN · ไม่มี EN ⇒ ไทย + `languageNotice` (ไม่แต่ง) · th ⇒ ไทย + `englishAvailable` · ฉบับ/วันมีผล/ConsentVersion เท่ากันทั้งสองภาษา · ประวัติฉบับคง lang · แอดมิน/ร้านแก้ EN แล้ว echo กลับ · แม่แบบร้าน/หน้าจองโต๊ะ = ไทย + ประกาศ | pure `LegalDocumentLanguageRound232Tests` (9) · `LegalController.GetDocument` · `CmsRenderingService.GetLegalPageAsync` |
+| PC232-12 | นโยบาย 2 ภาษา | `?lang=en` มี EN ⇒ EN + title EN · ไม่มี EN ⇒ ไทย + `languageNotice` (ไม่แต่ง) · th ⇒ ไทย + `englishAvailable` · ฉบับ/วันมีผล/ConsentVersion เท่ากันทั้งสองภาษา · ประวัติฉบับคง lang · แอดมิน/ร้านแก้ EN แล้ว echo กลับ · แม่แบบร้าน/หน้าจองโต๊ะ = ไทย + ประกาศ (รอบ 232 ต่อ: มีคำแปลแม่แบบแล้ว ⇒ EN — ดู PC232-13) | pure `LegalDocumentLanguageRound232Tests` (9) · `LegalController.GetDocument` · `CmsRenderingService.GetLegalPageAsync` |
+| PC232-13 | คำแปลอังกฤษตั้งต้น (รอบ 232 ต่อ) | `PlatformBuiltInEn`/`ShopTemplateEn` ทุกชนิดไม่ว่าง · ไม่มีอักษรไทย · โทเคน `{{…}}` ชุด/จำนวนเท่าไทย · ตัวเลขไทย ⊆ อังกฤษ (เกินได้เฉพาะปี ค.ศ.) · หัวข้อ/เลขข้อ/ตาราง/รายการเท่ากัน · ปิดท้าย "Thai version prevails" · ชนิดไม่รู้จัก ⇒ โยน · ฉบับตั้งต้นในโค้ดมี EN (ฉบับที่แอดมินเผยแพร่เองไม่เติม) · หน้าร้านโหมดแม่แบบ ⇒ EN แม่แบบ / ร้านเขียนไทยเองไม่มี EN ⇒ ไทย + ประกาศ · ค่าโทเคนข้อความเป็นอังกฤษเมื่อแสดง EN (ค่าเริ่มต้นไทยเดิม) · ปุ่ม "ใส่คำแปลตั้งต้น" เติมเฉพาะช่องว่าง/ยืนยันทับ ไม่บันทึกเอง | pure `LegalDocumentDefaultsEnRound232Tests` · `required_call_site_check` (BuiltIn · ToView ทิศตรงข้าม · GetDocument · GetLegalPageAsync · ShopLegal · BuiltInEnglish) |
 
 ## SL232 — ป้าย lifecycle "ไม่ทราบสัดส่วน" ทั้งที่ยอดเท่าเป๊ะ: SourceLineId ทุกทางเข้า + งานซ่อมข้อมูลเก่า (รอบ 232 · `DOCUMENT_FLOW.md` §2.4a)
 
@@ -601,7 +602,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **763 ไฟล์ · 7,973 `[Fact]` + 1,221 `[Theory]` (5,698 `InlineData`)** ณ 2026-11-03 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **764 ไฟล์ · 7,977 `[Fact]` + 1,226 `[Theory]` (5,698 `InlineData`)** ณ 2026-11-03 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 

@@ -12,7 +12,7 @@ namespace Accounting.Helpers;
 /// ตัวตนผู้ควบคุมข้อมูลไม่ฝังในข้อความ — อ้างผ่านโทเคน แทนค่าตอนแสดง (<c>LegalMarkdown.Render</c> — แทนหลังแปลง)
 /// ⇒ แก้ชื่อ/ที่อยู่ที่หน้าตั้งค่าแล้วทุกฉบับตามทันที (defect class "สอง renderer ห้าม drift")
 /// </summary>
-public static class LegalDocumentDefaults
+public static partial class LegalDocumentDefaults
 {
     public const string KindPrivacy = "privacy";
     public const string KindTerms = "terms";
@@ -66,18 +66,19 @@ public static class LegalDocumentDefaults
         ("site.name",          "ชื่อเว็บไซต์/บริการ"),
     };
 
-    /// <summary>ค่าโทเคนของเอกสารแพลตฟอร์ม — ค่าที่ยังไม่ตั้งแสดงเป็นข้อความบอกตรง ๆ (ไม่ใช่ว่างเงียบ · ไม่ใช่ค่าตัวอย่าง)</summary>
+    /// <summary>ค่าโทเคนของเอกสารแพลตฟอร์ม — ค่าที่ยังไม่ตั้งแสดงเป็นข้อความบอกตรง ๆ (ไม่ใช่ว่างเงียบ · ไม่ใช่ค่าตัวอย่าง) ·
+    /// รอบ 232 ต่อ: <paramref name="english"/> = กำลังแสดงฉบับอังกฤษ ⇒ ข้อความ "ยังไม่ได้ตั้งค่า" เป็นอังกฤษ (ค่าที่ตั้งแล้วใช้ตามเดิม)</summary>
     public static Dictionary<string, string?> BuildPlatformTokens(
-        string? controllerName, string? taxId, string? address, string? phone, string? email, string? siteName)
+        string? controllerName, string? taxId, string? address, string? phone, string? email, string? siteName, bool english = false)
     {
         static string Or(string? v, string missing) => string.IsNullOrWhiteSpace(v) ? missing : v.Trim();
         return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
         {
-            ["controller.name"] = Or(controllerName, "ผู้ให้บริการ (ยังไม่ได้ตั้งค่า)"),
+            ["controller.name"] = Or(controllerName, english ? "The Service Provider (not yet configured)" : "ผู้ให้บริการ (ยังไม่ได้ตั้งค่า)"),
             ["controller.taxId"] = Or(taxId, "-"),
             ["controller.address"] = Or(address, "-"),
             ["controller.phone"] = Or(phone, "-"),
-            ["controller.email"] = Or(email, "ยังไม่ได้ตั้งค่าอีเมลติดต่อ"),
+            ["controller.email"] = Or(email, english ? "contact email not yet configured" : "ยังไม่ได้ตั้งค่าอีเมลติดต่อ"),
             ["site.name"] = Or(siteName, "NextAcc"),
         };
     }
