@@ -388,7 +388,7 @@ public class OverageService : IOverageService
                 VALUES (gen_random_uuid(), {0}, 1, now(), 'system:overage', false) ON CONFLICT DO NOTHING;
                 """, new object[] { companyId }, ct);
         }
-        var sql = $"""UPDATE "CompanyOveragePolicies" SET "{column}" = {{1}}, "UpdatedAt" = now() WHERE "CompanyId" = {{0}} AND "IsDeleted" = false AND ("{column}" IS NULL OR "{column}" <> {{1}});""";
+        var sql = $$"""UPDATE "CompanyOveragePolicies" SET "{{column}}" = {1}, "UpdatedAt" = now() WHERE "CompanyId" = {0} AND "IsDeleted" = false AND ("{{column}}" IS NULL OR "{{column}}" <> {1});""";
         return await _db.Database.ExecuteSqlRawAsync(sql, new object[] { companyId, period }, ct) == 1;
     }
 

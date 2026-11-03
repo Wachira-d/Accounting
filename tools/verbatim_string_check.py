@@ -127,6 +127,10 @@ def _raw_brace_overflow(body, k):
         while j + run < n and body[j + run] == ch:
             run += 1
         if ch == "{":
+            if run >= 2 * k:
+                # รอบ 231: `$"""… {{1}} …"""` — ปีกกาเปิดติดกัน ≥ 2k = CS9006
+                # (เนื้อหาปีกกา run−k ตัว ≥ k ⇒ `$` ไม่พอ) — ต้องเพิ่ม `$` แล้วใช้ปีกกาเดี่ยวเป็นเนื้อหา
+                return True
             if run >= k:
                 depth += 1
                 j += k
@@ -313,6 +317,15 @@ BAD_RAW_BRACE = '''class A {
 
 # ถูกกฎ: เพิ่ม `$` เป็น 3 ⇒ `}}` สองตัวเป็นเนื้อหาได้ · และเคสที่มีปีกกาปิด
 # เดี่ยวท้ายสตริงซึ่งถูกต้องอยู่แล้วกับ `$$`
+# รอบ 231 (CS9006 จริงจาก OverageService): `$` ตัวเดียวแต่เขียน `{{0}}` หวังให้เป็นเนื้อหา `{0}` ของ SQL parameter
+BAD_RAW_OPEN_BRACE = '''class A {
+    string S(string c) => $"""UPDATE "T" SET "{c}" = {{1}} WHERE "Id" = {{0}};""";
+}'''
+# ถูกกฎ: `$$` ⇒ ปีกกาเดี่ยวเป็นเนื้อหา · hole ใช้ `{{c}}`
+GOOD_RAW_OPEN_BRACE = '''class A {
+    string S(string c) => $$"""UPDATE "T" SET "{{c}}" = {1} WHERE "Id" = {0};""";
+}'''
+
 GOOD_RAW_BRACE = '''class A {
     string J(string v) => $$$"""{"corrections":{"document_date":"{{{v}}}"}}""";
     string K(string u, string t) => $$"""{"@type":"WebPage","url":"{{u}}/{{t}}"}""";
@@ -352,6 +365,14 @@ def self_test():
         ok = False
     else:
         print("✅ self-test: จับ CS9007 ปีกกาปิดเกินจำนวน `$` ได้")
+    if not scan_text(BAD_RAW_OPEN_BRACE):
+        print("❌ self-test: CS9006 ($ ไม่พอกับ `{{` ในเนื้อหา) — จับไม่ได้")
+        ok = False
+    elif scan_text(GOOD_RAW_OPEN_BRACE):
+        print("❌ self-test: false positive บน `$$` + ปีกกาเดี่ยว")
+        ok = False
+    else:
+        print("✅ self-test: จับ CS9006 ปีกกาเปิดเกินจำนวน `$` ได้")
     if scan_text(GOOD_RAW_BRACE):
         print("❌ self-test: ฟ้องผิดบน interpolated raw string ที่ถูกกฎ")
         for p in scan_text(GOOD_RAW_BRACE):
