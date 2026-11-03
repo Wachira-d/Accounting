@@ -265,9 +265,11 @@ public class PlatformCardBillingRound230Tests
     {
         var h = new QueueHandler(
             (HttpStatusCode.OK, """{"object":"token","id":"tokn_1","card":{"id":"card_new","fingerprint":"fp1","brand":"Visa","last_digits":"4242"}}"""),
-            (HttpStatusCode.OK, """{"object":"customer","id":"cust_9","livemode":true,"cards":{"data":[
+            (HttpStatusCode.OK, """
+{"object":"customer","id":"cust_9","livemode":true,"cards":{"data":[
                 {"id":"card_old","fingerprint":"fp0","brand":"MasterCard","last_digits":"5555","expiration_month":1,"expiration_year":2027},
-                {"id":"card_new","fingerprint":"fp1","brand":"Visa","last_digits":"4242","expiration_month":12,"expiration_year":2030,"livemode":true}]}}"""));
+                {"id":"card_new","fingerprint":"fp1","brand":"Visa","last_digits":"4242","expiration_month":12,"expiration_year":2030,"livemode":true}]}}
+"""));
         var s = await Provider(h).SaveCardAsync(Cfg(), "tokn_1", null, "NextAcc tenant x", "a@b.co");
         Assert.Equal("cust_9", s.CustomerRef);
         Assert.Equal("card_new", s.CardRef);
@@ -285,8 +287,10 @@ public class PlatformCardBillingRound230Tests
     [Fact]
     public void SaveCard_เลขบัตรไม่ตรง_ใช้ลายนิ้วมือ_ไม่ตรงทั้งคู่_ไม่เดา()
     {
-        using var doc = JsonDocument.Parse("""{"id":"cust_9","cards":{"data":[{"id":"card_a","fingerprint":"fp1","created_at":"2026-11-01T00:00:00Z"},
-            {"id":"card_b","fingerprint":"fp1","created_at":"2026-11-03T00:00:00Z"},{"id":"card_c","fingerprint":"fp2"}]}}""");
+        using var doc = JsonDocument.Parse("""
+{"id":"cust_9","cards":{"data":[{"id":"card_a","fingerprint":"fp1","created_at":"2026-11-01T00:00:00Z"},
+            {"id":"card_b","fingerprint":"fp1","created_at":"2026-11-03T00:00:00Z"},{"id":"card_c","fingerprint":"fp2"}]}}
+""");
         Assert.Equal("card_b", OmisePaymentProvider.ParseSavedCustomerCard(doc.RootElement, "card_zzz", "fp1")!.CardRef);
         Assert.Null(OmisePaymentProvider.ParseSavedCustomerCard(doc.RootElement, "card_zzz", "fp9"));
         Assert.Null(OmisePaymentProvider.ParseSavedCustomerCard(doc.RootElement, null, null));
@@ -310,8 +314,10 @@ public class PlatformCardBillingRound230Tests
     [Fact]
     public void Transfer_ไม่มีnet_ค่าธรรมเนียมโอนหักเพิ่ม_มีnet_ใช้net()
     {
-        using var noNet = JsonDocument.Parse("""{"object":"transfer","id":"trsf_1","amount":100000,"fee":3000,"fee_vat":210,"paid":true,"livemode":true,
-            "created_at":"2026-11-02T01:00:00Z","paid_at":"2026-11-03T02:00:00Z","transactions":[{"id":"trxn_1","origin":"chrg_a"},"chrg_b","trxn_2"]}""");
+        using var noNet = JsonDocument.Parse("""
+{"object":"transfer","id":"trsf_1","amount":100000,"fee":3000,"fee_vat":210,"paid":true,"livemode":true,
+            "created_at":"2026-11-02T01:00:00Z","paid_at":"2026-11-03T02:00:00Z","transactions":[{"id":"trxn_1","origin":"chrg_a"},"chrg_b","trxn_2"]}
+""");
         var a = OmisePaymentProvider.ParseTransfer(noNet.RootElement)!;
         Assert.Equal(1032.10m, a.WalletDebit);
         Assert.Equal(1000m, a.NetToBank);
@@ -401,8 +407,10 @@ public class PlatformCardBillingRound230Tests
     public void B1_หาchargeจากmetadata_พบเฉพาะรายการตรง()
     {
         var id = Guid.NewGuid();
-        using var doc = JsonDocument.Parse($$"""{"object":"list","data":[{"id":"chrg_other","status":"successful","paid":true,"amount":100,"metadata":{"intentId":"{{Guid.NewGuid()}}"}},
-            {"id":"chrg_mine","status":"successful","paid":true,"amount":99000,"metadata":{"intentId":"{{id}}"}}]}""");
+        using var doc = JsonDocument.Parse($$$"""
+{"object":"list","data":[{"id":"chrg_other","status":"successful","paid":true,"amount":100,"metadata":{"intentId":"{{{Guid.NewGuid()}}}"}},
+            {"id":"chrg_mine","status":"successful","paid":true,"amount":99000,"metadata":{"intentId":"{{{id}}}"}}]}
+""");
         var hit = OmisePaymentProvider.FindChargeInList(doc.RootElement, id);
         Assert.Equal("chrg_mine", hit!.ProviderRef);
         Assert.Equal(PaymentIntentStatus.Succeeded, hit.Status);

@@ -315,8 +315,10 @@ public class PlatformCardBillingRound230DbTests
         // ยอดที่หักจากยอดคงเหลือ = (990 − 36.13) + (500 − 18.25) = 1,435.62 · ไม่มีค่าธรรมเนียมโอน · ผู้ให้บริการไม่ระบุ charge
         var createdIso = DateTime.UtcNow.AddDays(-1).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
         var paidIso = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", System.Globalization.CultureInfo.InvariantCulture);
-        var transfers = $$"""{"object":"list","data":[{"object":"transfer","id":"trsf_t230_{{refSuffix}}","amount":143562,"paid":true,"livemode":true,
-            "created_at":"{{createdIso}}","paid_at":"{{paidIso}}"}]}""";
+        var transfers = $$"""
+{"object":"list","data":[{"object":"transfer","id":"trsf_t230_{{refSuffix}}","amount":143562,"paid":true,"livemode":true,
+            "created_at":"{{createdIso}}","paid_at":"{{paidIso}}"}]}
+""";
         var imports = new List<ProviderTransferDraftRequest>();
         var import = F4Proxy<ISettlementImportService>.Create((name, args) =>
         {

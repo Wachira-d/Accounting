@@ -19,14 +19,14 @@ namespace Accounting.Services.Implementations.Tax;
 public static class CitPeriodFigures
 {
     /// <param name="Expenses">ค่าใช้จ่ายจาก GL (ไม่รวม 580xx) <b>+ ค่าเสื่อมที่ยังไม่ลงบัญชี</b> (<see cref="UnbookedDepreciation"/>) — เท่ากับ ภ.ง.ด.50</param>
-    public sealed record Figures(decimal Revenue, decimal Expenses, decimal CitExpenseExcluded, decimal Section65TerAddBack,
+    public sealed record PeriodFigures(decimal Revenue, decimal Expenses, decimal CitExpenseExcluded, decimal Section65TerAddBack,
         decimal EntertainmentExpense, decimal EntertainmentExcess, decimal UnbookedDepreciation = 0m)
     {
         public decimal AccountingProfit => Revenue - Expenses;
         public decimal AutoAddBack => Section65TerAddBack + EntertainmentExcess;
     }
 
-    public static async Task<Figures> LoadAsync(AccountingDbContext db, ITaxService tax, Guid companyId,
+    public static async Task<PeriodFigures> LoadAsync(AccountingDbContext db, ITaxService tax, Guid companyId,
         CitCalculation.TaxPeriodRange range, decimal paidUpCapital)
     {
         var start = range.Start;
@@ -45,7 +45,7 @@ public static class CitPeriodFigures
         var entertainment = expenseRows.Where(x => CitCalculation.IsEntertainmentAccount(x.Code, x.Name)).Sum(x => x.Amt);
         var section65 = await tax.ComputeSection65TerAddBackAsync(companyId, start, range.EndInclusive);
         var unbookedDep = await UnbookedDepreciationAsync(db, companyId, start, range.EndInclusive);
-        return new Figures(revenue, expenses + unbookedDep, expensesAll - expenses, section65, entertainment,
+        return new PeriodFigures(revenue, expenses + unbookedDep, expensesAll - expenses, section65, entertainment,
             CitCalculation.EntertainmentExcess(entertainment, revenue, paidUpCapital, range.IsHalfYear), unbookedDep);
     }
 
