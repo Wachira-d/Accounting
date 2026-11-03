@@ -38,7 +38,9 @@ public interface IPaymentProviderConfigService
     /// <summary>เปิด/ปิดช่องทาง (ปิดฉุกเฉิน) — ปิด ⇒ ทุกหน้าจ่ายกลับไปเส้นแนบสลิปทันที · audit</summary>
     Task SetActiveAsync(PaymentProviderConfig cfg, bool active, string? reason, PaymentConfigActor actor, CancellationToken ct = default);
     /// <summary>ทดลองจ่าย ฿20 (โหมดทดสอบเท่านั้น · ไม่ลงบัญชี) — คืน intent ให้หน้าจ่ายกลางแสดง QR</summary>
-    Task<PaymentIntent> StartSelfTestAsync(PaymentProviderConfig cfg, string? returnUrl, CancellationToken ct = default);
+    /// <summary>รอบ 232: <paramref name="method"/>/<paramref name="cardToken"/> = วิธีที่ผู้ทดลองเลือก (ผู้เรียกตรวจว่าอยู่ในชุดที่เปิดแล้ว) — ค่าตั้งต้นพร้อมเพย์ (ผู้เรียกเดิม)</summary>
+    Task<PaymentIntent> StartSelfTestAsync(PaymentProviderConfig cfg, string? returnUrl, CancellationToken ct = default,
+        PaymentMethodKind method = PaymentMethodKind.PromptPay, string? cardToken = null);
 }
 
 public class PaymentProviderConfigService : IPaymentProviderConfigService
@@ -182,8 +184,13 @@ public class PaymentProviderConfigService : IPaymentProviderConfigService
             _logger.LogWarning("บริษัท {Company} ปิดช่องทางรับชำระ {Provider}: {Reason}", cfg.CompanyId, cfg.ProviderCode, reason);
     }
 
-    public async Task<PaymentIntent> StartSelfTestAsync(PaymentProviderConfig cfg, string? returnUrl, CancellationToken ct = default)
+    public async Task<PaymentIntent> StartSelfTestAsync(PaymentProviderConfig cfg, string? returnUrl, CancellationToken ct = default,
+        PaymentMethodKind method = PaymentMethodKind.PromptPay, string? cardToken = null)
     {
+        if (method == PaymentMethodKind.ManualSlip)
+            throw new BusinessRuleException("ทดลองจ่ายใช้กับช่องทางออนไลน์เท่านั้น (โอนแล้วแนบสลิปไม่ผ่านผู้ให้บริการ)", PaymentLiveGate.RuleCode);
+        if (method == PaymentMethodKind.Card && string.IsNullOrWhiteSpace(cardToken))
+            throw new BusinessRuleException("ทดลองจ่ายด้วยบัตรต้องกรอกบัตรทดสอบในหน้าชำระก่อน", PaymentLiveGate.RuleCode);
         if (PaymentLiveGate.SelfTestRefusal(PaymentSourceKind.GatewaySelfTest, cfg.Mode) is string refusal)
             throw new BusinessRuleException(refusal, PaymentLiveGate.RuleCode);
         if (!cfg.IsActive)
@@ -194,8 +201,9 @@ public class PaymentProviderConfigService : IPaymentProviderConfigService
             throw new BusinessRuleException(keyBad, PaymentLiveGate.RuleCode);
         // SourceId ใหม่ทุกครั้ง — การทดลองครั้งก่อนที่สำเร็จแล้วต้องไม่ขวางการทดลองครั้งใหม่ ("รายการนี้ชำระแล้ว")
         return await _intents.StartAsync(cfg.CompanyId, new StartPaymentRequest(
-            PaymentSourceKind.GatewaySelfTest, Guid.NewGuid(), PaymentLiveGate.SelfTestAmount, PaymentMethodKind.PromptPay,
-            Description: "ทดลองจ่าย (โหมดทดสอบ — เงินไม่เข้าจริง)", ReturnUrl: returnUrl), providerCode: cfg.ProviderCode, ct: ct);
+            PaymentSourceKind.GatewaySelfTest, Guid.NewGuid(), PaymentLiveGate.SelfTestAmount, method,
+            Description: "ทดลองจ่าย (โหมดทดสอบ — เงินไม่เข้าจริง)", ReturnUrl: returnUrl,
+            CardToken: method == PaymentMethodKind.Card ? cardToken : null), providerCode: cfg.ProviderCode, ct: ct);
     }
 
     private void Audit(PaymentProviderConfig cfg, string action, PaymentConfigActor actor, object values)

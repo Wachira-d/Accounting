@@ -54,14 +54,18 @@ public class PlatformPayTestController : ControllerBase
         var refusal = await RefusalAsync(User.IsInRole("SystemAdmin"), ct);
         // ข้อความช่องติ๊ก/ฉบับ/ลิงก์จากเอกสารที่เผยแพร่จริง (ตัวเดียวกับหน้าชำระค่าบริการ — ไม่พิมพ์ในหน้าเว็บ)
         var policy = PurchasePolicyAcceptance.PlatformInfo((await _legal.GetPurchasePolicyVersionAsync(ct)).Version);
+        // รอบ 232: วิธีจ่ายที่เปิดจริง + ช่องบัตร (ตัวเดียวกับหน้าซื้อแพ็กเกจสาธารณะ — PlatformPaymentService.StatusAsync) ⇒ หน้าให้เลือกวิธีก่อนจ่าย ครบลูปเหมือนหน้าจริง
+        var status = refusal == null ? await _platform.StatusAsync(ct) : null;
         return Ok(new ApiResponse<object>(true, new
         {
             available = refusal == null, reason = refusal, amount = PaymentLiveGate.SelfTestAmount,
             policy = new { text = policy.Text, version = policy.Version, termsUrl = policy.TermsUrl, refundUrl = policy.RefundUrl },
+            methodOptions = status == null ? new List<object>() : PlatformPayMethods.Options(status.Methods),
+            card = status?.Card is { } c ? new { providerCode = c.ProviderCode, scriptUrl = c.ScriptUrl, publicKey = c.PublicKey, isTestMode = c.IsTestMode } : null,
         }));
     }
 
-    public sealed record StartRequest(string? ReturnUrl);
+    public sealed record StartRequest(string? ReturnUrl, string? Method = null, string? CardToken = null);
 
     [HttpPost("intents")]
     public async Task<ActionResult<ApiResponse<object>>> Start([FromBody] StartRequest? req, CancellationToken ct)
@@ -78,10 +82,15 @@ public class PlatformPayTestController : ControllerBase
         if (cfg == null) return StatusCode(403, new ApiResponse<object>(false, null, "ยังไม่ได้ตั้งค่าช่องทางรับชำระของ NextAcc"));
         try
         {
-            var i = await _configs.StartSelfTestAsync(cfg, req?.ReturnUrl, ct);
+            // วิธีที่เลือกต้องอยู่ในชุดที่เปิดจริง (เซิร์ฟเวอร์ตัดสิน — หน้าเว็บส่งแค่ชื่อ)
+            var status = await _platform.StatusAsync(ct);
+            if (PlatformPayMethods.Pick(req?.Method, status.Methods) is not PaymentMethodKind method)
+                return BadRequest(new ApiResponse<object>(false, null, "วิธีชำระนี้ยังไม่เปิดในช่องทางของ NextAcc — เลือกวิธีอื่น หรือเปิดวิธีนี้ในหน้าช่องทางรับชำระของแอดมิน"));
+            var i = await _configs.StartSelfTestAsync(cfg, req?.ReturnUrl, ct, method, req?.CardToken);
             return Ok(new ApiResponse<object>(true, Map(i)));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (BusinessRuleException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
     }
 
     [HttpGet("intents/{intentId:guid}")]

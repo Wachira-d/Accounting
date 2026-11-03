@@ -49,14 +49,18 @@
           <div class="line"><span>รายการ</span><b>ทดสอบการชำระค่าบริการ</b></div>
           <div class="line"><span>ยอดชำระ</span><b>฿${esc(Number(d.amount || 0).toFixed(2))}</b></div>
           <div id="testPolicy">${PolicyAccept.html(d.policy)}</div>
-          <button class="btn" id="payBtn">ชำระด้วยพร้อมเพย์ (QR ทดสอบ)</button>
+          <button class="btn" id="payBtn">ชำระเงิน (ทดสอบ)</button>
           <p class="muted">หน้านี้แสดงขั้นตอนชำระเงินเหมือนหน้าจริงของผู้ใช้ — ข้อกำหนดและนโยบายการยกเลิกและคืนเงินแสดงก่อนชำระทุกครั้ง ·
             <a href="/terms.html" target="_blank" rel="noopener">ข้อกำหนด</a> · <a href="/refund-policy.html" target="_blank" rel="noopener">นโยบายการยกเลิกและคืนเงิน</a> ·
             <a href="/privacy.html" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a></p>`;
         const onPaid = () => { box.insertAdjacentHTML('beforeend', '<p class="muted">✅ ทดลองชำระสำเร็จ</p>'); };
         document.getElementById('payBtn').addEventListener('click', () => {
           try { PolicyAccept.require('testPolicy'); } catch (e) { alert(e.message); return; }
-          PayWidget.open({ publicBase: '/api/platform-pay-test', method: 'PromptPay', authHeader: auth, onPaid });
+          // รอบ 232: ให้เลือกวิธีก่อนจ่ายเหมือนหน้าจริง — วิธี/ป้าย/ช่องบัตรมาจากเซิร์ฟเวอร์ (ชุดเดียวกับหน้าซื้อแพ็กเกจ) · เปิดวิธีเดียว = ไปวิธีนั้นเลย
+          const methods = d.methodOptions || [];
+          if (!methods.length) { alert('ยังไม่มีวิธีชำระที่เปิดในช่องทางของ NextAcc — เปิดวิธีในหน้าช่องทางรับชำระของแอดมินก่อน'); return; }
+          PayWidget.open({ publicBase: '/api/platform-pay-test', methods, method: methods.length === 1 ? methods[0].code : undefined,
+            card: d.card || null, authHeader: auth, onPaid });
         });
         // รอบ 232: หน้านี้ใช้ header ของตัวเอง (admin_token) ⇒ PayWidget.resume() อัตโนมัติ **ไม่ทำงาน** (รอให้หน้าเรียกเองพร้อม authHeader)
         // เดิมไม่เคยเรียก ⇒ กลับจากหน้าผู้ให้บริการ (?payReturn=1) แล้วหน้าแสดงเหมือนไม่มีอะไรเกิดขึ้น = "เด้งกลับหน้าเดิม" เงียบ ๆ

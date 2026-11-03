@@ -6261,3 +6261,5 @@ _รอบ 231 ความลับ — ภาคผนวกฝ่ายค้
   ยังนับแกนวางบิล (ตั้งใจ) · checker +1 (`BuildScanLinesAsync` must แท็ก) · TEST_PLAN SL232-09..11 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — ยังไม่ commit
 
 - รอบ 232 (แก้หลังผู้ใช้รายงาน): แท็บ "โควตาเสริม" และ "ส่วนเสริม" ใน hub แอดมินพาไปหน้า login ของลูกค้า — สองหน้าเป็น /pages/* ใช้เปลือกผู้เช่า (อ่าน token) แต่พอร์ทัลแอดมินมีแค่ admin_token ⇒ ย้ายเป็น `/admin/quota.html` · `/admin/addons.html` ใต้เปลือกแอดมิน + `admin/admin-tenant-compat.js` (API/Layout ของหน้าเดิมเดินผ่าน AdminAPI/AdminLayout) · URL เดิมเป็นหน้า redirect · ลิงก์ "การใช้งานรายบริษัท" ชี้ /admin/customers.html (แท็บตรวจสอบการใช้งาน) · เอกสารรอบก่อนใน erp-review คงข้อความเดิม (บันทึกประวัติ)
+
+- รอบ 232 (ผู้ใช้ขอ): หน้าทดลองจ่าย (/platform-pay-test.html) ให้เลือกวิธีก่อนจ่ายเหมือนหน้าจริง — เดิมล็อกพร้อมเพย์ · วิธี/ป้าย/ช่องบัตรจาก `PlatformPaymentService.StatusAsync` ชุดเดียวกับหน้าซื้อแพ็กเกจ (`PlatformPayMethods.Options`) · เซิร์ฟเวอร์ตรวจวิธีที่เลือก (`PlatformPayMethods.Pick` — ไม่เปิด/สลิป ⇒ 400) · `StartSelfTestAsync(method, cardToken)` (ผู้เรียกเดิมได้พร้อมเพย์ตามเดิม) · บัตรทดสอบเดินช่องกรอกบัตร + 3-D Secure ของ widget ครบลูป

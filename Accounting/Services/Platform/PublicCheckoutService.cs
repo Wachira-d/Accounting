@@ -101,7 +101,7 @@ public class PublicCheckoutService : IPublicCheckoutService
         var registrationEnabled = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => (bool?)s.RegistrationEnabled).FirstOrDefaultAsync(ct);
         return new PublicCheckoutCatalog(avail.Enabled, avail.OnlineAvailable, avail.IsTestMode, avail.Reason, plans, cycles,
             avail.OnlineAvailable
-                ? status.Methods.Select(m => (object)new { code = m, label = Enum.TryParse<PaymentMethodKind>(m, out var k) ? PlatformPayMethods.Label(k) : m }).ToList()
+                ? PlatformPayMethods.Options(status.Methods)
                 : new List<object>(),
             avail.OnlineAvailable && status.Card is { } c ? new { providerCode = c.ProviderCode, scriptUrl = c.ScriptUrl, publicKey = c.PublicKey, isTestMode = c.IsTestMode } : null,
             new
