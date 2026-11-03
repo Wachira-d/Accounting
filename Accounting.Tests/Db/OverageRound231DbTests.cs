@@ -101,7 +101,8 @@ public class OverageRound231DbTests
         var d1 = await svc.DecideAsync(cid, OverageResources.Documents);
         Assert.True(d1.Allowed);
         Assert.Equal(5m, d1.UnitPrice);
-        var r1 = await svc.RecordAsync(cid, OverageResources.Documents, 1, "doc-overage:" + Guid.NewGuid().ToString("N"), "Document", Guid.NewGuid(), true, d1.UnitPrice);
+        var key1 = "doc-overage:" + Guid.NewGuid().ToString("N");
+        var r1 = await svc.RecordAsync(cid, OverageResources.Documents, 1, key1, "Document", Guid.NewGuid(), true, d1.UnitPrice);
         Assert.True(r1.Recorded); Assert.Equal(5m, r1.ChargedAmount);
         var r2 = await svc.RecordAsync(cid, OverageResources.Documents, 1, "doc-overage:" + Guid.NewGuid().ToString("N"), "Document", Guid.NewGuid(), true, d1.UnitPrice);
         Assert.Equal(5m, r2.ChargedAmount);
@@ -113,8 +114,8 @@ public class OverageRound231DbTests
         Assert.Equal(OverageResources.RuleCap, d2.RuleCode);
         Assert.Equal(10m, (await svc.MonthSummaryAsync(cid)).TotalAmount);
 
-        // คีย์ซ้ำ = ไม่คิดซ้ำ
-        var dup = await svc.RecordAsync(cid, OverageResources.Documents, 1, r1.UsageEventId.ToString()!, "Document", Guid.NewGuid(), true, 5m);
+        // คีย์ซ้ำ (idempotency key เดิม — ไม่ใช่ UsageEventId) = ไม่คิดซ้ำ
+        var dup = await svc.RecordAsync(cid, OverageResources.Documents, 1, key1, "Document", Guid.NewGuid(), true, 5m);
         Assert.False(dup.Recorded);
         Assert.Equal(10m, await svc.SpentThisMonthAsync(cid));
 
@@ -159,18 +160,22 @@ public class OverageRound231DbTests
         Assert.Equal(OverageResources.RuleLocked, locked.RuleCode);
         Assert.Equal(OveragePolicy.UnpaidLockAction.None, await svc.ApplyUnpaidLockAsync(cid, overdue, 7, "USAGE-TEST-1"));   // ไม่ล็อกซ้ำ
 
-        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
-            svc.SetPolicyAsync(cid, new OveragePolicyUpdate(OverageMode.AllowOverage, null, null, true, OveragePolicy.PolicyVersion), Owner));
-        Assert.Equal(OverageResources.RuleLocked, ex.RuleCode);
         Assert.Contains("USAGE-TEST-1", (await svc.MonthSummaryAsync(cid)).LockedInvoiceNumber ?? "");
 
         // ฝ่ายค้าน N3: ระหว่างล็อก แก้เพดานได้ถ้าไม่เปลี่ยนโหมด (ยังล็อกอยู่)
         var edited = await svc.SetPolicyAsync(cid, new OveragePolicyUpdate(OverageMode.AllowOverage, 999m, null, true, OveragePolicy.PolicyVersion), Owner);
         Assert.Equal(999m, edited.MonthlyCapAmount); Assert.True(edited.Locked);
+        // ปิดเองได้ (HardLock) แต่ "เปิดใหม่" ระหว่างล็อกไม่ได้ (HardLock → AllowOverage = ด่าน RuleLocked)
+        Assert.Equal(OverageMode.HardLock, (await svc.SetPolicyAsync(cid, new OveragePolicyUpdate(OverageMode.HardLock, null, null, false, null), Owner)).Mode);
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            svc.SetPolicyAsync(cid, new OveragePolicyUpdate(OverageMode.AllowOverage, null, null, true, OveragePolicy.PolicyVersion), Owner));
+        Assert.Equal(OverageResources.RuleLocked, ex.RuleCode);
 
         // ชำระครบ (ไม่มีใบค้าง) ⇒ งานทวงหนี้รอบถัดไป (ประเมินบริษัทจาก LockedOverageCompaniesAsync) ⇒ ปลด ⇒ ผ่านอีกครั้ง (ทิศตรงข้าม)
         Assert.Equal(OveragePolicy.UnpaidLockAction.Unlock, await svc.ApplyUnpaidLockAsync(cid, new List<DunningInvoice>(), 7, null));
         Assert.DoesNotContain(cid, await OverageService.LockedOverageCompaniesAsync(db, default));
+        // ปลดแล้ว ⇒ ผู้เช่าเปิดใหม่ได้ ⇒ ผ่าน
+        Assert.False((await svc.SetPolicyAsync(cid, new OveragePolicyUpdate(OverageMode.AllowOverage, null, null, true, OveragePolicy.PolicyVersion), Owner)).Locked);
         Assert.True((await svc.DecideAsync(cid, OverageResources.Documents)).Allowed);
         Assert.True(await db.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == cid && a.NewValues!.Contains(OverageService.RuleLocked)));
         Assert.True(await db.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == cid && a.NewValues!.Contains(OverageService.RuleUnlocked)));

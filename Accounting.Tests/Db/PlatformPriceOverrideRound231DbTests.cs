@@ -192,7 +192,7 @@ public class PlatformPriceOverrideRound231DbTests
         alreadyWritten.LastPaymentDate = DateTime.UtcNow;
         await db.SaveChangesAsync();
 
-        var backfill = PlatformPriceOverrideMigration.Statements().Single(s => s.Contains("UPDATE \"Subscriptions\" SET \"Kind\""));
+        var backfill = PlatformPriceOverrideMigration.Statements().Single(s => s.Contains("UPDATE \"Subscriptions\" s SET \"Kind\" = CASE"));
         await db.Database.ExecuteSqlRawAsync(backfill);
 
         async Task<SubscriptionKind> KindOf(Guid id) => (await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == id)).Kind;
