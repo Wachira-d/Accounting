@@ -106,6 +106,11 @@
               ${c.mode === 'Test' ? `<button class="admin-btn admin-btn-outline" onclick="Page.selfTest()">ทดลองจ่าย ฿${e(d.selfTestAmount)} (โหมดทดสอบ)</button>` : ''}
             </div>
             <div class="muted" id="gTestResult" style="margin-top:8px"></div>
+            <!-- รอบ 232 (ผู้ใช้หาสวิตช์ไม่เจอ): ทางลัดไปหน้าทดลองจ่ายแบบเลือกวิธี + สวิตช์หน้าซื้อแพ็กเกจสาธารณะ (หน้าที่ส่งให้ Omise ตรวจ) -->
+            <div class="row" style="margin-top:8px">
+              <a class="admin-btn admin-btn-outline" href="/platform-pay-test.html" target="_blank" rel="noopener">เปิดหน้าทดลองจ่าย (เลือกวิธีได้) ↗</a>
+              <a class="admin-btn admin-btn-outline" href="/admin/site-settings.html?tab=services#publicCheckoutCard">🛒 เปิด/ปิดหน้าซื้อแพ็กเกจสาธารณะ (ส่งให้ Omise ตรวจ)</a>
+            </div>
           </div>
           <div class="admin-card" style="margin-bottom:14px">
             <div class="admin-card-header"><span class="admin-card-title">🚦 เปิดรับเงินจริง / ปิดฉุกเฉิน</span></div>

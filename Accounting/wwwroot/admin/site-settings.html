@@ -640,6 +640,15 @@
       await loadPublicCheckout();
     });
     loadPublicCheckout();
+    // รอบ 232: ลิงก์ตรง ?tab=<แท็บ>#<การ์ด> (เช่น ทางลัดจากหน้าช่องทางรับชำระ) ⇒ เปิดแท็บนั้นแล้วเลื่อนไปการ์ด — เดิมสวิตช์หน้าซื้อแพ็กเกจอยู่ท้ายแท็บ "แพ็กเกจบริการ" หาไม่เจอ
+    (function openFromUrl() {
+      let tab = null;
+      try { tab = new URLSearchParams(location.search).get('tab'); } catch { tab = null; }
+      if (tab && document.getElementById('tab-' + tab)) switchTab(tab);
+      const id = (location.hash || '').slice(1);
+      const el = id && /^[A-Za-z][\w-]*$/.test(id) ? document.getElementById(id) : null;
+      if (el) setTimeout(() => { el.scrollIntoView({ behavior: 'smooth', block: 'start' }); el.style.outline = '2px solid #6366f1'; }, 300);
+    })();
 
     // ===== Load Settings =====
     async function loadSettings() {
