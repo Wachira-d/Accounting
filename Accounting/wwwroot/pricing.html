@@ -19,7 +19,8 @@
     .pc-banner { border-radius:10px; padding:12px 16px; margin-bottom:18px; font-size:.9rem }
     .pc-banner.test { background:#fffbeb; border:1px solid #fcd34d; color:#92400e }
     .pc-banner.off { background:#fef2f2; border:1px solid #fecaca; color:#991b1b }
-    .pc-grid { display:grid; grid-template-columns:1fr 340px; gap:28px; align-items:start }
+    .pc-grid { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:28px; align-items:start }
+    .pc-grid > * { min-width:0 }   /* รอบ 232: กันคอลัมน์ตะกร้าหลุดจอมือถือ */
     .pc-cycles { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px }
     .pc-cycles button { border:1px solid var(--gray-300); background:#fff; border-radius:9999px; padding:6px 14px; cursor:pointer; font-size:.9rem }
     .pc-cycles button.on { background:var(--primary); color:#fff; border-color:var(--primary) }
@@ -38,7 +39,7 @@
     .pc-links { margin-top:30px; font-size:.85rem; color:var(--gray-500) }
     .pc-links a { color:var(--primary) }
     .pc-err { color:#b91c1c; font-size:.85rem; margin-top:8px }
-    @media (max-width:860px) { .pc-grid { grid-template-columns:1fr } .pc-cart { position:static } }
+    @media (max-width:860px) { .pc-grid { grid-template-columns:minmax(0,1fr) } .pc-cart { position:static } }
   </style>
 </head>
 <body>

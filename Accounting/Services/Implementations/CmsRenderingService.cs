@@ -114,14 +114,16 @@ public class CmsRenderingService : ICmsRenderingService
 
     /// <summary>ฝ่ายค้านรอบ 214 S3/S4: โทเคนของหน้านโยบายร้าน = โทเคนเนื้อหาเว็บ + กติกาเผยแพร่ (<c>CmsLegalPages.BuildShopTokens</c> —
     /// เลขผู้เสียภาษีเฉพาะนิติบุคคล · ค่าที่ขาดบอก "ยังไม่ได้ระบุ")</summary>
-    private async Task<Dictionary<string, string?>> BuildLegalTokensAsync(Guid companyId, Models.Entities.Site site, string? kind = null)
+    private async Task<Dictionary<string, string?>> BuildLegalTokensAsync(Guid companyId, Models.Entities.Site site, string? kind = null, bool english = false)
     {
         var juristicId = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.JuristicId).FirstOrDefaultAsync();
-        var tokens = Accounting.Helpers.CmsLegalPages.BuildShopTokens(await BuildContentTokensAsync(companyId, site), !string.IsNullOrWhiteSpace(juristicId));
+        // รอบ 232 ต่อ: english = กำลังแสดงฉบับอังกฤษ ⇒ ข้อความแทนค่า ("ยังไม่ได้ระบุ" · การหักมัดจำ) เป็นอังกฤษ — ไม่ให้ไทยโผล่กลางประโยคอังกฤษ
+        var tokens = Accounting.Helpers.CmsLegalPages.BuildShopTokens(await BuildContentTokensAsync(companyId, site), !string.IsNullOrWhiteSpace(juristicId),
+            english: english);
         // รอบ 219 ส่วน B: นโยบายคืนเงินอ่านตัวเลขจากค่าตั้งของร้าน (ตัวเดียวกับเลขฉบับ — CmsLegalPages.BuildRefundTokens)
         if (kind == Accounting.Helpers.LegalDocumentDefaults.KindRefund)
             foreach (var kv in Accounting.Helpers.CmsLegalPages.BuildRefundTokens(await ForfeitPercentAsync(companyId, site.Id),
-                         site.RefundReturnWindowDays, site.RefundProcessingDays))
+                         site.RefundReturnWindowDays, site.RefundProcessingDays, english))
                 tokens[kv.Key] = kv.Value;
         return tokens;
     }
@@ -142,10 +144,13 @@ public class CmsRenderingService : ICmsRenderingService
         if (site == null) return null;
         var (url, custom, updatedAt) = LegalFields(site, kind);
         var link = Accounting.Helpers.CmsLegalPages.Resolve(kind, url, custom);
-        var tokens = await BuildLegalTokensAsync(companyId, site, kind);
-        // รอบ 232 (232-Checkout-1): ภาษาเป็นแค่การแสดง — ฉบับอังกฤษมีเฉพาะข้อความที่ร้านเขียนเอง (แม่แบบของระบบเป็นไทย) · ขอ en แต่ไม่มี ⇒ ไทย + ประกาศ (ไม่แต่ง)
+        // รอบ 232 (232-Checkout-1): ภาษาเป็นแค่การแสดง · ขอ en แต่ไม่มี ⇒ ไทย + ประกาศ (ไม่แต่ง)
+        // รอบ 232 ต่อ: โหมดแม่แบบมีคำแปลอังกฤษของระบบแล้ว (LegalDocumentDefaults.ShopTemplateEn) · ร้านเขียนไทยเอง ⇒ อังกฤษเฉพาะที่ร้านเขียน
+        // (ตัวตัดสินเดียว CmsLegalPages.EffectiveMarkdownEn — ไม่เอาคำแปลแม่แบบไปคู่กับข้อความไทยของร้านที่ไม่ตรงกัน)
         var thai = Accounting.Helpers.CmsLegalPages.EffectiveMarkdown(kind, custom);
-        var choice = Accounting.Helpers.LegalDocumentLanguage.Pick(thai, string.IsNullOrWhiteSpace(custom) ? null : LegalMarkdownEn(site, kind), lang);
+        var choice = Accounting.Helpers.LegalDocumentLanguage.Pick(thai,
+            Accounting.Helpers.CmsLegalPages.EffectiveMarkdownEn(kind, custom, LegalMarkdownEn(site, kind)), lang);
+        var tokens = await BuildLegalTokensAsync(companyId, site, kind, choice.Language == Accounting.Helpers.LegalDocumentLanguage.English);
         return new StorefrontLegalPageResponse
         {
             Kind = kind,

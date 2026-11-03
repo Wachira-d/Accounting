@@ -115,8 +115,8 @@ const AdminLayout = {
     groups: [
       { label: 'แม่แบบแพ็กเกจ', tabs: [
         { id: 'plans', label: '💎 แพ็กเกจ (โควตา · ฟีเจอร์ · ราคา)', href: '/admin/plans.html' },
-        { id: 'admin-quota', label: '📏 โควตาเสริม · ราคาส่วนเกิน', href: '/pages/admin-quota.html' },
-        { id: 'admin-addons', label: '🧩 ส่วนเสริมและราคา', href: '/pages/admin-addons.html' },
+        { id: 'admin-quota', label: '📏 โควตาเสริม · ราคาส่วนเกิน', href: '/admin/quota.html' },
+        { id: 'admin-addons', label: '🧩 ส่วนเสริมและราคา', href: '/admin/addons.html' },
         { id: 'subscription-enforcement', label: '🚦 บังคับแพ็กเกจ', href: '/admin/subscription-enforcement.html' } ] },
       { label: 'บัญชีลูกค้า', tabs: [
         { id: 'account-subs', label: '🎫 License · ราคาพิเศษ · ทดลองใช้', href: '/admin/account-subscriptions.html' } ] },

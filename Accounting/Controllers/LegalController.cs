@@ -110,7 +110,7 @@ public class LegalController : ControllerBase
         var s = await _db.SiteSettings.AsNoTracking().FirstOrDefaultAsync(ct);
         // รอบ 232: ภาษาเป็นแค่การแสดง — ฉบับ/วันมีผล/ประวัติ/ConsentVersion เหมือนกันทั้ง th/en · ไม่มี en = ไทย + ประกาศ (ไม่แต่ง)
         var choice = LegalDocumentLanguage.Pick(doc.BodyMarkdown, doc.BodyMarkdownEn, lang);
-        var html = await _legal.RenderPlatformAsync(choice.Markdown, ct);
+        var html = await _legal.RenderPlatformAsync(choice.Markdown, ct, choice.Language);   // รอบ 232 ต่อ: ค่า "ยังไม่ได้ตั้งค่า" ตามภาษาที่แสดง
         var isUpcoming = doc.EffectiveDate > LegalDocumentPolicy.TodayBangkok(DateTime.UtcNow);
         return Ok(new ApiResponse<LegalDocumentDto>(true, new LegalDocumentDto(
             doc.Kind, LegalDocumentLanguage.TitleFor(doc.Kind, choice.Language), doc.Version, doc.EffectiveDate.ToString("yyyy-MM-dd"), html, doc.Source, doc.ChangeSummary,

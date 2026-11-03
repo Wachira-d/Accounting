@@ -1741,10 +1741,10 @@ const Layout = {
       description: 'รายเดือน: แต่ละบริษัทออกเอกสารอะไรกี่ใบ · สแกน OCR · เรียก AI (จ่ายจริงเท่าไร) · ส่งอีเมล/e-Tax' },
     { id: 'admin-help', label: 'จัดการคู่มือ/วิดีโอสอน', icon: '🎓', href: '/admin/help-content.html', platformAdmin: true,
       description: 'อัปโหลดวิดีโอสอนหรือวางลิงก์ YouTube/Facebook/TikTok · แยกหมวดตามเรื่องและตามโมดูลธุรกิจ · เผยแพร่/พักไว้เป็นร่างได้' },
-    { id: 'admin-addons', label: 'ส่วนเสริมและราคา', icon: '💰', href: '/pages/admin-addons.html', platformAdmin: true,
+    { id: 'admin-addons', label: 'ส่วนเสริมและราคา', icon: '💰', href: '/admin/addons.html', platformAdmin: true,
       description: 'แคตตาล็อกส่วนเสริม: ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย (ราคาเก่าไม่ถูกแก้ย้อนหลัง)' },
     // รอบ 229 (QUOTA_ADDON §D.2): โควตา — เพดานต่อแพ็กเกจ (รวมจำนวนเว็บ CMS) · แคตตาล็อกโควตาเสริม · override รายบริษัท · ตรวจสลิป
-    { id: 'admin-quota', label: 'โควตาและโควตาเสริม', icon: '📏', href: '/pages/admin-quota.html', platformAdmin: true,
+    { id: 'admin-quota', label: 'โควตาและโควตาเสริม', icon: '📏', href: '/admin/quota.html', platformAdmin: true,
       description: 'เพดานต่อแพ็กเกจ (เว็บ CMS · หน้า/สินค้าต่อเว็บ · ที่พัก) · ขายโควตาเพิ่ม (ราคาเดือน/ปี · วิธีซื้อ · ซื้อได้สูงสุด) · override รายบริษัทพร้อมเหตุผล · ตรวจสลิป' },
     // รอบ 205 ทีม E — ทางนำเข้าหลักทุกชนิด (IMPORT_ETL_REVIEW §2.8): วางไฟล์ → เซิร์ฟเวอร์อ่าน/จับคู่/แปลง/ตรวจ → ผู้ใช้แค่ตรวจและยืนยัน ·
     // รอบ 206: ผูก BulkImport เหมือนเมนู import-export เดิม ("จำกัดตามหน้าเดิม") — คู่กับ ("/companies/*/import", BulkImport) ใน

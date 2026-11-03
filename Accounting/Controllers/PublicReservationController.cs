@@ -98,14 +98,16 @@ public class PublicReservationController : ControllerBase
             .FirstOrDefaultAsync(ct);
         if (c == null) return NotFound();
         // ฝ่ายค้านรอบ 214 S3: หน้านี้เปิดได้ด้วย companyId อย่างเดียว ⇒ เปิดเผยเท่าที่หน้าจองแสดงอยู่แล้ว (ชื่อ · เบอร์) — ที่อยู่/อีเมล/เลขผู้เสียภาษีไม่ออก
+        // รอบ 232: ตัวตัดสินภาษาตัวเดียวกับหน้าแพลตฟอร์ม/CMS · รอบ 232 ต่อ: หน้านี้ใช้แม่แบบเสมอ ⇒ คำแปลแม่แบบของระบบ (ShopTemplateEn — ตัวตั้งเดียว)
+        var choice = Accounting.Helpers.LegalDocumentLanguage.Pick(Accounting.Helpers.LegalDocumentDefaults.ShopTemplate(kind),
+            Accounting.Helpers.LegalDocumentDefaults.ShopTemplateEn(kind), lang);
+        var english = choice.Language == Accounting.Helpers.LegalDocumentLanguage.English;
         var tokens = Accounting.Helpers.CmsLegalPages.BuildShopTokens(
             Accounting.Helpers.CmsContentTokens.BuildValues(c.Name, c.NameEn, c.Phone, null, null, null, c.Website),
-            isJuristic: false, bookingPageScope: true);
+            isJuristic: false, bookingPageScope: true, english: english);
         // รอบ 219 ส่วน B: นโยบายคืนเงินบนหน้าจองโต๊ะ — ไม่มีค่าตั้งของเว็บ ⇒ โทเคนชี้ไปเงื่อนไขบนหน้าจอง (ไม่เดาตัวเลข)
         if (kind == Accounting.Helpers.LegalDocumentDefaults.KindRefund)
-            foreach (var kv in Accounting.Helpers.CmsLegalPages.BookingPageRefundTokens()) tokens[kv.Key] = kv.Value;
-        // รอบ 232: ตัวตัดสินภาษาตัวเดียวกับหน้าแพลตฟอร์ม/CMS — แม่แบบไม่มีฉบับอังกฤษ ⇒ ขอ en ได้ไทย + ประกาศ (ไม่แปลเอง)
-        var choice = Accounting.Helpers.LegalDocumentLanguage.Pick(Accounting.Helpers.LegalDocumentDefaults.ShopTemplate(kind), null, lang);
+            foreach (var kv in Accounting.Helpers.CmsLegalPages.BookingPageRefundTokens(english)) tokens[kv.Key] = kv.Value;
         var html = Accounting.Helpers.LegalMarkdown.Render(choice.Markdown, tokens);
         return Ok(new ApiResponse<ShopLegalDto>(true,
             new ShopLegalDto(kind, Accounting.Helpers.LegalDocumentLanguage.TitleFor(kind, choice.Language), c.Name ?? "", html,

@@ -81,7 +81,7 @@
             <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13px">🌐 ฉบับภาษาอังกฤษ (English version) — ไม่บังคับ</summary>
               <textarea class="form-input" id="sgLgMdEn_${k}" rows="10" spellcheck="false" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;margin-top:6px" placeholder="## 1. Heading&#10;Paragraph..."></textarea>
               <div class="sg-hint">ลูกค้ากด English ที่หน้านโยบาย (?lang=en) · เว้นว่าง = ยังไม่มีฉบับอังกฤษ ลูกค้าเห็นฉบับไทยพร้อมประกาศ "English version not available yet" · ฉบับไทยเป็นฉบับที่มีผล</div>
-              <div class="sg-hint" style="color:var(--amber-700,#b45309)">⚠️ ข้อความอังกฤษแสดงเฉพาะเมื่อเลือก "เขียนเอง / ปรับแม่แบบ" — เลือก "ใช้แม่แบบของระบบ" แล้วบันทึก ⇒ ข้อความอังกฤษของร้านถูกล้าง (แม่แบบยังไม่มีฉบับอังกฤษ ลูกค้าเห็นไทย + ประกาศ) · "ใช้ลิงก์ของร้านเอง" ⇒ ลูกค้าไปหน้าของร้าน ไม่เห็นข้อความนี้</div>
+              <div class="sg-hint" style="color:var(--amber-700,#b45309)">⚠️ ข้อความอังกฤษช่องนี้ใช้เฉพาะเมื่อเลือก "เขียนเอง / ปรับแม่แบบ" — เลือก "ใช้แม่แบบของระบบ" แล้วบันทึก ⇒ ข้อความอังกฤษของร้านถูกล้าง และลูกค้าที่กด English เห็นคำแปลอังกฤษของแม่แบบระบบ (ฉบับไทยเป็นฉบับที่มีผล) · เขียนไทยเองแต่เว้นช่องนี้ว่าง ⇒ ลูกค้าเห็นไทย + ประกาศ (ระบบไม่เอาคำแปลแม่แบบมาคู่กับข้อความที่ร้านแก้) · "ใช้ลิงก์ของร้านเอง" ⇒ ลูกค้าไปหน้าของร้าน ไม่เห็นข้อความนี้</div>
             </details>
           </div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;background:var(--gray-50);border-radius:8px;padding:8px 10px">
@@ -186,7 +186,7 @@
       const body = {};
       body[f.url] = mode === 'external' ? $('sgLgUrl_' + k).value.trim() : '';
       body[f.md] = mode === 'default' ? '' : $('sgLgMd_' + k).value;   // ลิงก์ของร้าน: เก็บข้อความที่เขียนไว้ต่อ (สลับกลับมาไม่หาย) · แม่แบบ: ล้าง
-      body[f.mdEn] = mode === 'default' ? '' : $('sgLgMdEn_' + k).value;   // รอบ 232: ฉบับอังกฤษตามฉบับไทย (แม่แบบ = ไม่มีฉบับอังกฤษของร้าน)
+      body[f.mdEn] = mode === 'default' ? '' : $('sgLgMdEn_' + k).value;   // รอบ 232: ฉบับอังกฤษตามฉบับไทย (แม่แบบ = ไม่มีฉบับอังกฤษของร้าน · รอบ 232 ต่อ: หน้าร้านใช้คำแปลแม่แบบของระบบแทน — CmsLegalPages.EffectiveMarkdownEn)
       if (await this._update(body, 'sgLg_' + k, 'บันทึกนโยบายแล้ว')) this.hydrateLegal(k);
     },
     async saveRefund() {

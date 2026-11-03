@@ -103,7 +103,7 @@ public class AdminLegalDocumentController : ControllerBase
         return Ok(new ApiResponse<object>(true, DraftDto(draft), "บันทึกร่างแล้ว (ยังไม่เผยแพร่)"));
     }
 
-    public sealed record PreviewRequest(string? BodyMarkdown);
+    public sealed record PreviewRequest(string? BodyMarkdown, string? Language = null);   // รอบ 232 ต่อ: "en" = ตัวอย่างฉบับอังกฤษ (ค่า "ยังไม่ได้ตั้งค่า" เป็นอังกฤษ)
 
     /// <summary>ตัวอย่าง HTML ของข้อความที่กำลังแก้ (ตัวแปลงเดียวกับหน้าสาธารณะ) + คำเตือน (ลิงก์ที่ไม่รับ · แท็ก HTML · โทเคนที่ไม่รู้จัก) — ไม่เขียนอะไร</summary>
     [HttpPost("{kind}/preview")]
@@ -114,7 +114,7 @@ public class AdminLegalDocumentController : ControllerBase
         var md = req.BodyMarkdown ?? "";
         if (md.Length > LegalMarkdown.MaxLength)   // ฝ่ายค้าน S1: เพดานเท่าที่เก็บได้จริง
             return BadRequest(new ApiResponse<object>(false, null, "เนื้อความยาวเกินไป"));
-        var html = await _legal.RenderPlatformAsync(md, ct);
+        var html = await _legal.RenderPlatformAsync(md, ct, req.Language);
         var warnings = LegalMarkdown.Warnings(md, LegalDocumentDefaults.PlatformTokens.Select(t => t.Token));
         return Ok(new ApiResponse<object>(true, new { html, warnings }));
     }
@@ -134,6 +134,24 @@ public class AdminLegalDocumentController : ControllerBase
             ? $"เผยแพร่ฉบับ {item.Version} แล้ว — ประกาศล่วงหน้า มีผล {item.EffectiveDate:yyyy-MM-dd}"
             : $"เผยแพร่ฉบับ {item.Version} แล้ว — มีผลทันที";
         return Ok(new ApiResponse<object>(true, HistoryDto(item), msg));
+    }
+
+    /// <summary>รอบ 232 ต่อ (เจ้าของ: "แปลนโยบายเป็นภาษาอังกฤษให้เลย"): คำแปลอังกฤษของ<b>ฉบับตั้งต้นของระบบ</b> — ปุ่ม "ใส่คำแปลตั้งต้น (อังกฤษ)" ดึงไปเติมช่อง
+    /// อังกฤษของร่าง/ฉบับปัจจุบัน (หน้าเว็บเติมเฉพาะช่องว่างหรือเมื่อผู้ใช้ยืนยันทับ) · ไม่เขียนอะไร ·
+    /// <c>markdown</c> = ข้อความ<b>ยังมีโทเคน</b> <c>{{controller.*}}</c> (ตัวตนผู้ให้บริการไม่ฝังลงข้อความที่เก็บ — แก้หน้าตั้งค่าแล้วทุกฉบับตาม) ·
+    /// <c>html</c> = ตัวอย่างหลังแทนโทเคนด้วยค่าปัจจุบัน (ตัวแปลงเดียวกับหน้าสาธารณะ) · ตัวตั้งเดียว <see cref="LegalDocumentDefaults.PlatformBuiltInEn"/></summary>
+    [HttpGet("{kind}/builtin-en")]
+    public async Task<ActionResult<ApiResponse<object>>> BuiltInEnglish(string kind, CancellationToken ct)
+    {
+        if (!LegalDocumentDefaults.IsKind(kind))
+            return NotFound(new ApiResponse<object>(false, null, "ชนิดเอกสารต้องเป็น privacy · terms หรือ refund"));
+        var md = LegalDocumentDefaults.PlatformBuiltInEn(kind);
+        var html = await _legal.RenderPlatformAsync(md, ct, LegalDocumentLanguage.English);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            kind, basedOnVersion = LegalDocumentDefaults.BuiltInVersion, markdown = md, html,
+            warning = "คำแปลนี้แปลจากฉบับตั้งต้นของระบบ — ถ้าแก้ฉบับไทยไปแล้วให้ตรวจให้ตรงก่อนบันทึก (ฉบับไทยเป็นฉบับผูกพัน)",
+        }));
     }
 
     public sealed record EnglishRequest(string? BodyMarkdownEn);

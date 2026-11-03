@@ -17,13 +17,14 @@
     .pc-banner { border-radius:10px; padding:12px 16px; margin-bottom:18px; font-size:.9rem }
     .pc-banner.test { background:#fffbeb; border:1px solid #fcd34d; color:#92400e }
     .pc-banner.off { background:#fef2f2; border:1px solid #fecaca; color:#991b1b }
-    .co-grid { display:grid; grid-template-columns:1fr 340px; gap:28px; align-items:start }
+    .co-grid { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:28px; align-items:start }
+    .co-grid > * { min-width:0 }   /* รอบ 232: ชื่อบริษัทยาวใน select ดันคอลัมน์ตะกร้าหลุดจอมือถือ (ข้อความ error ของยอดอยู่ในคอลัมน์นั้น) */
     .co-card { border:1px solid var(--gray-200); border-radius:14px; padding:20px; background:#fff; margin-bottom:18px }
     .co-card h2 { font-size:1.05rem; font-weight:700; margin-bottom:10px }
     .co-card.done h2::after { content:' ✓'; color:#059669 }
     .co-card.locked { opacity:.55; pointer-events:none }
     .co-field { margin-bottom:10px } .co-field label { display:block; font-size:.85rem; color:var(--gray-600); margin-bottom:3px }
-    .co-field input, .co-field select { width:100%; border:1px solid var(--gray-300); border-radius:8px; padding:9px 10px; font-size:.95rem }
+    .co-field input, .co-field select { width:100%; max-width:100%; text-overflow:ellipsis; border:1px solid var(--gray-300); border-radius:8px; padding:9px 10px; font-size:.95rem }
     .co-tabs { display:flex; gap:8px; margin-bottom:12px } .co-tabs button { border:1px solid var(--gray-300); background:#fff; border-radius:9999px; padding:6px 14px; cursor:pointer }
     .co-tabs button.on { background:var(--primary); color:#fff; border-color:var(--primary) }
     .pc-row { display:flex; justify-content:space-between; font-size:.9rem; padding:5px 0; border-bottom:1px dashed var(--gray-200) }
@@ -33,7 +34,7 @@
     .co-policy { font-size:.9rem; line-height:1.7; display:flex; gap:8px; align-items:flex-start }
     .co-policy a { color:var(--primary) }
     .sticky { position:sticky; top:90px }
-    @media (max-width:860px) { .co-grid { grid-template-columns:1fr } .sticky { position:static } }
+    @media (max-width:860px) { .co-grid { grid-template-columns:minmax(0,1fr) } .sticky { position:static } }
   </style>
 </head>
 <body>
@@ -82,7 +83,9 @@
           <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
             <button class="btn btn-primary" id="payBtn" type="button" disabled>ชำระเงิน</button>
           </div>
-          <div style="font-size:.8rem;color:var(--gray-500);margin-top:10px">ชำระด้วยบัตรเครดิต/เดบิต หรือพร้อมเพย์ (QR) ภายในหน้านี้ · ข้อมูลบัตรส่งตรงถึงผู้ให้บริการชำระเงิน ไม่ผ่านเซิร์ฟเวอร์ของเรา ·
+          <div class="co-err" id="payBlocked"></div>
+          <div style="font-size:.85rem;margin-top:10px" id="payMethods"></div>
+          <div style="font-size:.8rem;color:var(--gray-500);margin-top:6px">ข้อมูลบัตรส่งตรงถึงผู้ให้บริการชำระเงิน ไม่ผ่านเซิร์ฟเวอร์ของเรา ·
             ใบเสร็จ/ใบกำกับภาษีออกอัตโนมัติเมื่อชำระสำเร็จ</div>
         </div>
       </div>
@@ -224,6 +227,16 @@
         updatePayButton() {
           const ok = !!(this.companyId && this.quote && $('policyAccept').checked && this.catalog && this.catalog.onlineAvailable);
           $('payBtn').disabled = !ok;
+          // รอบ 232 (ผู้ใช้: "ปุ่มชำระเงินกดไม่ได้"): บอกเหตุที่ปุ่มยังกดไม่ได้ตรงใต้ปุ่ม — ข้อความ error ของยอดเดิมอยู่แค่ในคอลัมน์ตะกร้า (หลุดจอมือถือ)
+          const why = ok ? '' : !(this.catalog && this.catalog.onlineAvailable) ? ((this.catalog && this.catalog.reason) || 'ยังชำระออนไลน์ไม่ได้ในขณะนี้')
+            : !this.companyId ? 'เข้าสู่ระบบ/สมัคร และเลือกบริษัทก่อน'
+            : !this.quote ? ($('quoteErr').textContent || 'กำลังคำนวณยอด…')
+            : !$('policyAccept').checked ? 'ติ๊กยอมรับข้อกำหนดและนโยบายการยกเลิกและคืนเงินก่อน' : '';
+          $('payBlocked').textContent = why;
+          // วิธีชำระที่รับ (ป้ายจากเซิร์ฟเวอร์) — ผู้ซื้อเลือกวิธีในหน้าต่างชำระที่เปิดหลังกดปุ่ม
+          const ms = (this.catalog && this.catalog.methodOptions) || [];
+          $('payMethods').innerHTML = ms.length
+            ? `วิธีชำระที่รับ: <b>${ms.map(m => esc(m.label || m.code)).join(' · ')}</b> — เลือกวิธีในหน้าต่างชำระที่เปิดขึ้นหลังกด "ชำระเงิน"` : '';
           $('payBtn').textContent = this.quote ? `ชำระเงิน ฿${money(this.quote.amountDue)}` + (this.catalog && this.catalog.isTestMode ? ' (ทดสอบ)' : '') : 'ชำระเงิน';
         },
         async resumeOrder() {

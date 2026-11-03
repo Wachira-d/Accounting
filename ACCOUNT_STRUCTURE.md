@@ -427,7 +427,7 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
 
   **รอบ 213 (คำตัดสินข้อ 172)**: เพดานเฉพาะบริษัท `Subscription.MaxSharedMessagesPerMonth` แก้ได้ที่ /admin/customers.html + /admin/account-subscriptions.html
   (`AdminNotifyQuotaController` `api/admin/companies/{id}/notify-quota` · ว่าง = ตามแพ็กเกจ · -1 = ไม่จำกัด · SubscriptionHistory + audit chain · ยอดใช้/โบนัสอ่านอย่างเดียว) ·
-  ขนาด/อายุแพ็ก `notify.topup` ตั้งที่ /pages/admin-addons.html (`ApiFeature.PackSize/PackValidDays` → `NotifyQuotaPolicy.TopUpPack` · ว่าง = 500/60 · มีผลกับการซื้อครั้งถัดไป ·
+  ขนาด/อายุแพ็ก `notify.topup` ตั้งที่ /admin/addons.html (`ApiFeature.PackSize/PackValidDays` → `NotifyQuotaPolicy.TopUpPack` · ว่าง = 500/60 · มีผลกับการซื้อครั้งถัดไป ·
   `UnitLabel` ประกอบจากขนาด) · ข้อความที่ค้างเพราะโควตาเต็ม ⇒ ส่งซ้ำได้หลังเติม (`GET/POST …/customer-notify/pending[/resend]` · ใช้โควตาปกติ · DOCUMENT_FLOW §6.5)
   **ฝ่ายค้านรอบ 213**: หน่วย ณ ตอนซื้อเก็บบน `UsageEvent.UnitLabelSnapshot` — `UsageInvoicingJob` แยกบรรทัดตามหน่วยนั้น (`AddOnBilling.InvoiceUnit` · แถวเก่า/ฟีเจอร์อื่น = ป้ายของฟีเจอร์) ·
   ซื้อแพ็กส่งขนาด/ราคาที่เห็น เทียบใต้ล็อกก่อนคิดเงิน ไม่ตรง ⇒ 409 (ไม่คิดเงิน) · แอดมินคืนค่าแพ็กตั้งต้นได้
@@ -576,7 +576,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 
 | ชั้น | ที่อยู่ | หน้าที่ |
 | --- | --- | --- |
-| แคตตาล็อก + ราคา | `ApiFeature` / `ApiPricingPlan` · หน้า `/pages/admin-addons.html` (SystemAdmin) | ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย — **ตั้งราคาใหม่ไม่แก้ราคาเดิม** (ปิดแผนเก่า เปิดแผนใหม่) |
+| แคตตาล็อก + ราคา | `ApiFeature` / `ApiPricingPlan` · หน้า `/admin/addons.html` (SystemAdmin) | ตั้งราคา · วันทดลองใช้ · แพ็กเกจขั้นต่ำ · เปิด/ปิดการขาย — **ตั้งราคาใหม่ไม่แก้ราคาเดิม** (ปิดแผนเก่า เปิดแผนใหม่) |
 | สวิตช์ของลูกค้า | `CompanyFeature` · หน้า `/pages/addons.html` | เปิด/ปิดเอง · ติ๊กยอมรับค่าใช้จ่ายแยกจากปุ่มเปิด · ปิดแล้วหยุดคิดเงินทันที |
 | ตัวตัดสินสิทธิ์ | `IEntitlementService.CheckAsync` (เซิร์ฟเวอร์) · `Layout.hasFeature` (หน้าเว็บ) | ชื่อที่มีจุด = add-on code · ไม่มีจุด = ความสามารถของแพ็กเกจ — **ตัวเดียวตอบทั้งสองแกน** |
 | ค่าเหมารายเดือน | `AddOnMonthlyBillingJob` + `AddOnBilling.FlatAmount` | ทดลองใช้/ของแถม = ฿0 **แต่ยังบันทึกแถว** ให้เห็นในบิล |
@@ -615,7 +615,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 **สวิตช์ของภารกิจแลกโควตา (§12) ตั้งได้จริงแล้วทั้ง 3 ชั้น** — `/api/admin/metering/quota-rewards`
 (สร้าง/แก้/เปิด-ปิดภารกิจ + ยอด 30 วันล่าสุดไว้เทียบว่าคุ้ม lead ไหม) ·
 `quota-rewards/plan` (ต่อแพ็กเกจ) · `quota-rewards/block-company` (ระงับรายบริษัท + AuditLog)
-ทั้งหมดอยู่ในหน้า `/pages/admin-addons.html` — ก่อนหน้านี้กลไกครบแต่**ไม่มีทางเปิดใช้เลย**
+ทั้งหมดอยู่ในหน้า `/admin/addons.html` — ก่อนหน้านี้กลไกครบแต่**ไม่มีทางเปิดใช้เลย**
 
 **ขายเฉพาะของที่มีจริง** — `lodging.promo` ถูก unpublish แล้ว: `LodgingReservation.PromoCode`
 เก็บเป็นข้อความเฉย ๆ `LodgingPricingEngine` ไม่เคยอ่านมาคิดส่วนลด ⇒ เปิดขายไปก็ไม่ได้อะไร
@@ -627,7 +627,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 | ทรัพยากรที่มีเพดาน/ขายเพิ่มได้ | `Models/Constants/QuotaResources` (closed list) | เว็บ CMS · หน้า/สินค้าต่อเว็บ (ตั้งได้ ไม่ขาย) · ที่นั่ง · พื้นที่ (GB) · ที่พัก · หน้า OCR — มีเฉพาะที่มีด่านจริง (สาขา/คลัง/POS/โดเมน/แบนด์วิดท์ยังไม่อยู่) · AI/การจอง/รายการบัญชี **ไม่อยู่โดยตั้งใจ** |
 | เพดานที่มีผล | `Helpers/QuotaLimitPolicy.Effective` | override รายบริษัท → `PlanQuotaAllowance` ของแพ็กเกจ (ทดลอง = TrialIncluded) → ช่องเดิมของแพ็กเกจ (ผู้ใช้/พื้นที่/OCR — ไม่ทำสำเนา) → ไม่จำกัด · + ที่ซื้อและยังมีผล (`IsLive`: Active และ now ∈ [start, end)) · **นับต่อบริษัท** · -1 = ไม่จำกัด |
 | ด่าน "เพิ่มได้ไหม" | `IQuotaGate.CheckAsync` ใต้ `LockAsync` (pg_advisory_xact_lock ต่อ บริษัท+ทรัพยากร) ในธุรกรรมเดียวกับ insert | จุดเรียก: `CmsSiteService.CreateSiteAsync` · `CompanyService.AddUserAsync` · (ที่พัก `LodgingPropertyQuota` · พื้นที่ `QuotaStorageLimit` ใน `GetStorageStatusAsync` · OCR = เครดิตในตัวนับเดิม) · **เกินเพดาน = บล็อกการเพิ่มเท่านั้น** ของเดิมไม่ถูกลบ/ปิด (229-2) · ข้อความปฏิเสธมีทางไปต่อ + `ruleCode QUOTA-FULL:<resource>` |
-| แคตตาล็อก + ราคา | `QuotaAddOnOffers` (แอดมิน `/pages/admin-quota.html` · `api/admin/quota/offers`) | 1 ข้อเสนอต่อทรัพยากร · ขนาดหน่วย · ราคาเดือน/ปี · วิธีซื้อที่เปิด · ซื้อได้สูงสุด/บริษัท · ขั้นต่ำ 1 เดือน · อายุเดือนเดียว · ไม่มีราคา = ซื้อไม่ได้ (ไม่ขายฟรีเงียบ) |
+| แคตตาล็อก + ราคา | `QuotaAddOnOffers` (แอดมิน `/admin/quota.html` · `api/admin/quota/offers`) | 1 ข้อเสนอต่อทรัพยากร · ขนาดหน่วย · ราคาเดือน/ปี · วิธีซื้อที่เปิด · ซื้อได้สูงสุด/บริษัท · ขั้นต่ำ 1 เดือน · อายุเดือนเดียว · ไม่มีราคา = ซื้อไม่ได้ (ไม่ขายฟรีเงียบ) |
 | ยอด | `Helpers/QuotaAddOnPricing` | เดือนเดียว = ราคาเต็มถึงสิ้นเดือนไทย (Consumable 60 วัน) · รายเดือน = เดือนแรกตามวัน แล้ว `UsageEvent` รายเดือน (`qadd:{id}:{yyyy-MM}`) · ถึงวันหมดอายุ = `round(R×D/C,2)` ต่อหน่วย (R = ราคาปีหรือเดือน×12) ขั้นต่ำ 1 เดือน · ฟรีถาวร/ทดลองไม่มีโหมดนี้ |
 | เงิน → สิทธิ์ → เอกสาร | `QuotaAddOnPurchaseService` · `PaymentSourceKind.QuotaAddOnPurchase` (ใน `PlatformRevenueSource`) · `QuotaAddOnPaymentHandler` | intent ใต้บริษัทผู้ให้บริการ (ยอดจากเซิร์ฟเวอร์ · ติ๊กยอมรับนโยบาย `platform-quota-addon`) หรือโอน+สลิป → แอดมินอนุมัติ · **ให้สิทธิ์เมื่อรับเงินแล้วเท่านั้น** · ใบกำกับ/ใบเสร็จ `IssueAddOnReceiptAsync` อ้างอิง `QADD-…` (ขาเงินเข้าตามชนิด intent) · คืนเงิน = ใบลดหนี้เส้นรอบ 228 (หาใบเดิมด้วยอ้างอิงเดียวกัน) |
 | ต่ออายุ | `QuotaRenewalLines` | โหมดถึงวันหมดอายุต่อพร้อมแพ็กเกจเป็นค่าตั้งต้น · ใบต่ออายุหลายบรรทัด · ตัดชำระใบ ⇒ รอบใหม่ · ใบออกแล้ว**ยังไม่มีการชำระ/แจ้งชำระ** = เปลี่ยนได้ (ยกเลิกใบเดิม + ออกใบใหม่ทันที — รอบ 230 ข้อ 230-Q3) · มีการชำระ/แจ้งชำระแล้ว = 409 `QUOTA-RENEW-LOCKED` · บริษัทใต้ License ยังไม่รวม |
@@ -799,7 +799,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 | --- | --- | --- |
 | ทรัพยากรที่คิดส่วนเกิน (231-2) | `Models/Constants/OverageResources` (closed list) | เอกสาร · `ocr.pages.month` · `notify.messages` · `storage.gb` (GB-เดือน) — มิเตอร์ `overage.<resource>` (`documents.overage` เดิมอ่านย้อนหลังได้ · เขียนใหม่ไม่ใช้) · Capacity (ที่นั่ง/เว็บ/ที่พัก/หน้า-สินค้าต่อเว็บ) **ไม่คิดส่วนเกิน** = ซื้อโควตาเสริม §6.1b-Q |
 | นโยบายของบริษัท (231-1) | `CompanyOveragePolicies` (1 แถว/บริษัท · `Helpers/OverageMigration`) · `OverageService.SetPolicyAsync` · `PUT api/companies/{cid}/quota/overage-policy` (`BillingManage`) | **ไม่มีแถว = HardLock** (พฤติกรรมเดิมทุกด่าน) · AllowOverage ต้องยอมรับฉบับ `OveragePolicy.PolicyVersion` + มีราคาอย่างน้อย 1 รายการที่เลือก · `ResourcesCsv` ว่าง = ทุกรายการที่มีราคา · `MonthlyCapAmount` ว่าง = ไม่จำกัด (ถึง ⇒ ล็อกจนสิ้นเดือน) · `LockedByUnpaidAt` ระบบตั้งเท่านั้น (ผู้เช่าเปิดเองไม่ได้จนกว่าจะชำระ) · audit `PLATFORM-OVERAGE-POLICY` |
-| ราคา (231-3) | `OverageRates` (ระดับแพลตฟอร์ม) · `Helpers/OverageRateResolver.Pick` · `OverageService.UpsertRateAsync` · `PUT api/admin/quota/overage-rates` · หน้า `/pages/admin-quota.html` ข้อ 5 | แถวแม่แบบแพ็กเกจชนะแถวทั่วไป · ในกลุ่มเดียวกันเอาที่เริ่มมีผลล่าสุด · แก้ = ปิดแถวเดิม (`EffectiveToUtc`) + แถวใหม่ (ประวัติ · ราคา snapshot บน `UsageEvent.UnitPriceSnapshot`) · ว่าง/0 = ปิดราคา ⇒ **เปิดส่วนเกินไม่ได้** (ไม่คิด 0) · audit `PLATFORM-OVERAGE-RATE` |
+| ราคา (231-3) | `OverageRates` (ระดับแพลตฟอร์ม) · `Helpers/OverageRateResolver.Pick` · `OverageService.UpsertRateAsync` · `PUT api/admin/quota/overage-rates` · หน้า `/admin/quota.html` ข้อ 5 | แถวแม่แบบแพ็กเกจชนะแถวทั่วไป · ในกลุ่มเดียวกันเอาที่เริ่มมีผลล่าสุด · แก้ = ปิดแถวเดิม (`EffectiveToUtc`) + แถวใหม่ (ประวัติ · ราคา snapshot บน `UsageEvent.UnitPriceSnapshot`) · ว่าง/0 = ปิดราคา ⇒ **เปิดส่วนเกินไม่ได้** (ไม่คิด 0) · audit `PLATFORM-OVERAGE-RATE` |
 | ด่าน (§B.4) | `Helpers/OveragePolicy.Decide` (pure) ← `IOverageService.DecideAsync` ตัวเดียวของ 4 ทางเข้า | ลำดับ: ไม่ได้เปิด `OVERAGE-OFF` → ถูกล็อกเพราะค้าง `OVERAGE-LOCKED` → ทรัพยากรไม่ได้เลือก → ไม่มีราคา `OVERAGE-NO-RATE` → ถึงเพดานเงิน `OVERAGE-CAP` → ผ่าน (Units = ceil(adding/UnitSize) · Amount ปัด 2 AwayFromZero) · เอกสาร: ใบที่กฎหมายบังคับออกได้เสมอ (HardLock ⇒ มิเตอร์ราคา 0 `(ไม่คิดเงิน)`) · ใบที่รอได้ 409 `QUOTA-DOCUMENTS` + เหตุต่อท้าย · OCR: โควตา+โบนัส+เครดิตหมดแล้วค่อยถาม (429 + เหตุ) · ข้อความ: ขั้น 4 ก่อน Full (`KindOverage` · ส่งล้ม = ถอน UsageEvent) · พื้นที่: `CanFitStorageAsync` ยอมให้เกิน · คิด GB-เดือนสิ้นเดือน `OveragePolicy.StorageOverageGbMonth` จาก `UsageDailySnapshots` |
 | มิเตอร์/ใบ/ทวง (§B.5 · 231-4) | `UsageMeteringService` (+`UnitPriceOverride`) · `UsageInvoicingJob` · `PlatformDunningService` · `OveragePolicy.UnpaidLock`/`ForSuspension` | ไม่สร้างเส้นเงินที่สอง: UsageEvent idempotent → ใบ `USAGE-` หลายบรรทัด (ชื่อ `OverageResources.InvoiceName` · งวดเดือนไทย · ครบกำหนด = วันออก + `OverageGraceDays`) · ขั้นต่ำ `OverageMinInvoiceAmount` (ยกยอด) · แถว 0 บาท = ปิดงวดโดยไม่มีใบ · ค้างเกินผ่อนผัน ⇒ ขั้น 1 ล็อก (แจ้ง `co:{id}:overage-locked`) ⇒ ขั้น 2 dunning เดิม (`OverageUnpaidAction` LockThenDunning ตั้งต้น / LockOverageOnly = ใบ USAGE- ไม่นับเข้าระงับ แต่ยังเตือน) · ชำระครบ ⇒ ปลด |
 | ค่าตั้งแพลตฟอร์ม | `PlatformBillingSettings` +5 คอลัมน์ · `PlatformBillingSettingsRules.ValidateOverage`/`FromRow` (บีบช่วง) · หน้า `/admin/platform-billing.html` | `OverageGraceDays` 1–60 (ตั้งต้น 7) · `OverageUnpaidAction` · `OverageMinInvoiceAmount` 0–100,000 (ตั้งต้น 50) · `QuotaWarnPercents` ≤ 5 ค่า 1–100 (ตั้งต้น 80,90,100) · `OverageAutoChargeSavedCard` (เก็บ/echo แล้ว — **ยังไม่มีผู้อ่าน** ใน `PlatformAutoChargePolicy` · F2 ข้อ 2) |
@@ -867,7 +867,7 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 
 | กลุ่มแท็บ | หน้า (URL เดิมทั้งหมด — ไม่ redirect ไม่ลบ API) |
 | --- | --- |
-| แม่แบบแพ็กเกจ | `/admin/plans.html` (โควตา · ฟีเจอร์ · ราคา · **โควตา CMS/ที่พัก**) · `/pages/admin-quota.html` (โควตาเสริม · ราคาส่วนเกิน · override รายบริษัท — เพดานต่อแพ็กเกจเป็นตารางอ่านอย่างเดียว ชี้กลับฟอร์มแพ็กเกจ) · `/pages/admin-addons.html` · `/admin/subscription-enforcement.html` |
+| แม่แบบแพ็กเกจ | `/admin/plans.html` (โควตา · ฟีเจอร์ · ราคา · **โควตา CMS/ที่พัก**) · `/admin/quota.html` (โควตาเสริม · ราคาส่วนเกิน · override รายบริษัท — เพดานต่อแพ็กเกจเป็นตารางอ่านอย่างเดียว ชี้กลับฟอร์มแพ็กเกจ) · `/admin/addons.html` · `/admin/subscription-enforcement.html` |
 | บัญชีลูกค้า | `/admin/account-subscriptions.html` (License · ราคาพิเศษราย License · ทดลองใช้) — ราคาพิเศษ/ชนิดบัญชีรายบริษัทยังอยู่ในหน้า "ลูกค้า/บริษัท" (`price-override-admin.js` การ์ดเดียวกัน 2 ที่) |
 | รายการชำระ / ใบแจ้งหนี้ | `/admin/platform-billing.html` · `/admin/payments.html` · `/admin/coupons.html` |
 | Gateway | `/admin/platform-gateway.html` · `/admin/platform-card-ops.html` |
@@ -1263,7 +1263,7 @@ _ปิดรอบโดยไม่ออกใบ · ต่ำกว่า �
 _§6.1b ชั้น add-on (`AddOnCodes`/`CompanyFeature`/`IEntitlementService`) + โควตาเอกสาร_
 _(`IQuotaService`: สถานะ/top-up/ภารกิจแลกโควตา · `DocumentQuotaPolicy` ตัดสิน "นับไหม"_
 _กับ "บล็อกได้ไหม" แยกกัน — เอกสารที่กฎหมายบังคับออกได้เสมอ) · หน้า `/pages/addons.html`_
-_(ลูกค้า) + `/pages/admin-addons.html` (SystemAdmin) · `SubscriptionResponse.EnabledAddOnCodes`_
+_(ลูกค้า) + `/admin/addons.html` (SystemAdmin) · `SubscriptionResponse.EnabledAddOnCodes`_
 _→ `Layout.hasFeature` ตัวเดียวตอบทั้ง bitmask และ add-on code)_
 _ก่อนหน้า: 2026-09-03 (rev 22 — **ที่พัก (Lodging)** §3.1b: LodgingProperty ผูก Site/Branch ·_
 _seed ตอนสร้างเว็บโรงแรม · สิทธิ์ Lodging.Manage/Settings · scope สาธารณะ SiteId+token)_

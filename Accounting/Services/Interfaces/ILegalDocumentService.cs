@@ -4,7 +4,7 @@ namespace Accounting.Services.Interfaces;
 public sealed record LegalDocumentView(
     string Kind, string Title, string Version, DateOnly EffectiveDate, string BodyMarkdown,
     string Source, DateTime? PublishedAt, string? ChangeSummary,
-    // รอบ 232 (232-Checkout-1): ฉบับอังกฤษของฉบับเดียวกัน (null = ยังไม่มี · ฉบับตั้งต้นในโค้ดไม่มี) — เลือกแสดงด้วย Helpers/LegalDocumentLanguage.Pick
+    // รอบ 232 (232-Checkout-1): ฉบับอังกฤษของฉบับเดียวกัน (null = ยังไม่มี · ฉบับตั้งต้นในโค้ด = คำแปลตั้งต้น LegalDocumentDefaults.PlatformBuiltInEn รอบ 232 ต่อ) — เลือกแสดงด้วย Helpers/LegalDocumentLanguage.Pick
     string? BodyMarkdownEn = null);
 
 /// <summary>เวอร์ชันของสองเอกสาร + เวอร์ชันความยินยอมรวม (<c>LegalDocumentPolicy.ConsentVersion</c>)</summary>
@@ -47,7 +47,8 @@ public interface ILegalDocumentService
     Task<LegalPurchasePolicyVersion> GetPurchasePolicyVersionAsync(CancellationToken ct = default);
 
     /// <summary>แปลง markdown + แทนโทเคนผู้ควบคุมข้อมูลจาก SiteSettings (ตัวตั้งเดียวกับ /api/legal/policy)</summary>
-    Task<string> RenderPlatformAsync(string markdown, CancellationToken ct = default);
+    /// <param name="language">รอบ 232 ต่อ: ภาษาที่แสดงจริง (ผล <c>LegalDocumentLanguage.Pick</c>) — en ⇒ ข้อความ "ยังไม่ได้ตั้งค่า" ของโทเคนเป็นอังกฤษ · null/th = ไทย</param>
+    Task<string> RenderPlatformAsync(string markdown, CancellationToken ct = default, string? language = null);
 
     Task<List<LegalHistoryItem>> GetHistoryAsync(string kind, CancellationToken ct = default);
 

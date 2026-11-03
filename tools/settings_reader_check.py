@@ -69,7 +69,7 @@ ENTITIES = {
     'TaxRuleConfig': ('Accounting/Models/Entities/Payroll.cs', None, ['Accounting/wwwroot/pages/payroll.html']),
     # รอบ 212 C: ชุดสรุปประจำวันทาง LINE — ค่าที่ผู้ใช้ตั้ง (สถานะ LastSent/LastRun เป็นของระบบ) · ผู้อ่าน = StaffDailySummaryService/Plan
     # รอบ 213 (คำตัดสินข้อ 172): ขนาด/อายุแพ็ก notify.topup ที่แอดมินตั้ง — ผู้อ่าน = NotifyQuotaService.LoadPackAsync → NotifyQuotaPolicy.TopUpPack
-    'ApiFeature': ('Accounting/Models/Entities/Metering.cs', {'PackSize', 'PackValidDays'}, ['Accounting/wwwroot/pages/admin-addons.html']),
+    'ApiFeature': ('Accounting/Models/Entities/Metering.cs', {'PackSize', 'PackValidDays'}, ['Accounting/wwwroot/admin/addons.html']),
     # รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บค่าบริการ NextAcc — ผู้อ่าน = PlatformBillingSettingsRules.FromRow → นโยบายที่
     # SubscriptionService (ใบต่ออายุล่วงหน้า/ระงับเส้นหมดอายุ) · PlatformDunningPolicy · PlatformBillingNotifier · PlatformPaymentLinkRules ใช้
     'PlatformBillingSettings': ('Accounting/Models/Entities/PlatformBilling.cs',

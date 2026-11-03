@@ -44,6 +44,17 @@ public static class CmsLegalPages
     public const string NotSpecified = "ยังไม่ได้ระบุ";
     public const string TaxIdWithheld = "ไม่แสดงบนเว็บ (ผู้ประกอบการบุคคลธรรมดา — เลขประจำตัวผู้เสียภาษีคือเลขบัตรประชาชน)";
     public const string AskTheShop = "สอบถามได้ที่ร้านตามเบอร์โทรด้านล่าง";
+    // รอบ 232 ต่อ: คู่ภาษาอังกฤษ — ใช้เมื่อแสดงแม่แบบ/ข้อความฉบับอังกฤษ (ShopTemplateEn) ไม่ให้ข้อความไทยโผล่กลางประโยคอังกฤษ
+    public const string NotSpecifiedEn = "not specified";
+    public const string TaxIdWithheldEn = "not shown on the website (individual business operator — the taxpayer identification number is the national ID number)";
+    public const string AskTheShopEn = "please ask the Shop at the telephone number below";
+
+    /// <summary>รอบ 232 ต่อ: markdown ฉบับอังกฤษที่หน้าร้านใช้ — ร้านไม่ได้เขียนเอง (โหมดแม่แบบ) ⇒ คำแปลแม่แบบ <see cref="LegalDocumentDefaults.ShopTemplateEn"/> ·
+    /// ร้านเขียนไทยเอง ⇒ เฉพาะอังกฤษที่ร้านเขียน (null = ไม่มี · ไม่เอาคำแปลแม่แบบไปปนกับข้อความไทยของร้านที่ไม่ตรงกัน) · คู่กับ <see cref="EffectiveMarkdown"/></summary>
+    public static string? EffectiveMarkdownEn(string kind, string? customMarkdown, string? customMarkdownEn)
+        => string.IsNullOrWhiteSpace(customMarkdown)
+            ? LegalDocumentDefaults.ShopTemplateEn(kind)
+            : (string.IsNullOrWhiteSpace(customMarkdownEn) ? null : customMarkdownEn);
 
     /// <summary>ฝ่ายค้านรอบ 214 S3/S4 — ค่าโทเคนของหน้านโยบาย/ข้อกำหนดของร้าน (ตัวเดียว · ทุกทางแสดงใช้):
     /// <list type="bullet">
@@ -53,25 +64,29 @@ public static class CmsLegalPages
     /// <item><paramref name="bookingPageScope"/> = หน้าจองโต๊ะที่ไม่ผูกเว็บ (ใครรู้ companyId ก็เปิดได้) ⇒ เปิดเผยเท่าที่หน้าจองแสดงอยู่แล้ว
     /// (ชื่อ · เบอร์โทร) — ที่อยู่/อีเมล/เลขผู้เสียภาษี ไม่แสดง</item>
     /// </list></summary>
-    public static Dictionary<string, string?> BuildShopTokens(IReadOnlyDictionary<string, string?> contentTokens, bool isJuristic, bool bookingPageScope = false)
+    public static Dictionary<string, string?> BuildShopTokens(IReadOnlyDictionary<string, string?> contentTokens, bool isJuristic, bool bookingPageScope = false,
+        bool english = false)
     {
         var t = new Dictionary<string, string?>(contentTokens, StringComparer.OrdinalIgnoreCase);
+        var notSpecified = english ? NotSpecifiedEn : CmsLegalPages.NotSpecified;
+        var askTheShop = english ? AskTheShopEn : CmsLegalPages.AskTheShop;
+        var taxIdWithheld = english ? TaxIdWithheldEn : CmsLegalPages.TaxIdWithheld;
         string? Get(string k) => t.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v) ? v!.Trim() : null;
         var name = Get("company.name");
-        t["company.name"] = name ?? NotSpecified;
-        t["site.name"] = Get("site.name") ?? name ?? NotSpecified;
-        t["company.phone"] = Get("company.phone") ?? NotSpecified;
+        t["company.name"] = name ?? notSpecified;
+        t["site.name"] = Get("site.name") ?? name ?? notSpecified;
+        t["company.phone"] = Get("company.phone") ?? notSpecified;
         if (bookingPageScope)
         {
-            t["company.address"] = AskTheShop;
-            t["company.email"] = AskTheShop;
-            t["company.taxId"] = AskTheShop;
+            t["company.address"] = askTheShop;
+            t["company.email"] = askTheShop;
+            t["company.taxId"] = askTheShop;
         }
         else
         {
-            t["company.address"] = Get("company.address") ?? NotSpecified;
-            t["company.email"] = Get("company.email") ?? NotSpecified;
-            t["company.taxId"] = isJuristic ? (Get("company.taxId") ?? NotSpecified) : TaxIdWithheld;
+            t["company.address"] = Get("company.address") ?? notSpecified;
+            t["company.email"] = Get("company.email") ?? notSpecified;
+            t["company.taxId"] = isJuristic ? (Get("company.taxId") ?? notSpecified) : taxIdWithheld;
         }
         return t;
     }
@@ -120,28 +135,30 @@ public static class CmsLegalPages
     };
 
     /// <summary>ข้อความการหักมัดจำตามค่าตั้ง <c>Site.DepositForfeitOnCancelPercent</c> — null/0 = คืนมัดจำเต็ม</summary>
-    private static string DepositForfeitText(decimal? forfeitPercent)
+    private static string DepositForfeitText(decimal? forfeitPercent, bool english = false)
         => forfeitPercent is decimal p && p > 0m
-            ? $"ร้านหักมัดจำ {Math.Min(p, 100m):0.##}% ของมัดจำที่ชำระแล้ว ส่วนที่เหลือคืนให้ท่าน"
-            : "ร้านคืนมัดจำเต็มจำนวน (ไม่มีการริบมัดจำ)";
+            ? (english
+                ? $"the Shop retains {Math.Min(p, 100m).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}% of the deposit paid and refunds the remainder to you"
+                : $"ร้านหักมัดจำ {Math.Min(p, 100m):0.##}% ของมัดจำที่ชำระแล้ว ส่วนที่เหลือคืนให้ท่าน")
+            : (english ? "the Shop refunds the deposit in full (no deposit is forfeited)" : "ร้านคืนมัดจำเต็มจำนวน (ไม่มีการริบมัดจำ)");
 
     /// <summary>จำนวนวันที่ใช้จริง — ค่าตั้งนอกช่วง 1–365 ⇒ ค่าเริ่มต้น</summary>
     public static int Days(int? configured, int fallback) => configured is int d && d >= 1 && d <= 365 ? d : fallback;
 
     /// <summary>ค่าโทเคนนโยบายคืนเงินจากค่าตั้งของเว็บ — ตัวเดียวของหน้าแสดง ตัวอย่าง และเลขฉบับ (<see cref="ShopPolicyVersion"/>)</summary>
-    public static Dictionary<string, string?> BuildRefundTokens(decimal? forfeitPercent, int? returnWindowDays, int? refundProcessingDays)
+    public static Dictionary<string, string?> BuildRefundTokens(decimal? forfeitPercent, int? returnWindowDays, int? refundProcessingDays, bool english = false)
         => new(StringComparer.OrdinalIgnoreCase)
         {
-            ["shop.depositForfeit"] = DepositForfeitText(forfeitPercent),
+            ["shop.depositForfeit"] = DepositForfeitText(forfeitPercent, english),
             ["shop.returnWindowDays"] = Days(returnWindowDays, DefaultReturnWindowDays).ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["shop.refundProcessingDays"] = Days(refundProcessingDays, DefaultRefundProcessingDays).ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
 
     /// <summary>หน้าจองโต๊ะ (ไม่ผูกเว็บ) — ไม่มีค่าตั้งของเว็บ ⇒ บอกให้ดูหน้าจองแทนการเดาตัวเลข</summary>
-    public static Dictionary<string, string?> BookingPageRefundTokens()
+    public static Dictionary<string, string?> BookingPageRefundTokens(bool english = false)
         => new(StringComparer.OrdinalIgnoreCase)
         {
-            ["shop.depositForfeit"] = "เป็นไปตามเงื่อนไขมัดจำที่แสดงบนหน้าจอง",
+            ["shop.depositForfeit"] = english ? "subject to the deposit terms shown on the booking page" : "เป็นไปตามเงื่อนไขมัดจำที่แสดงบนหน้าจอง",
             ["shop.returnWindowDays"] = DefaultReturnWindowDays.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["shop.refundProcessingDays"] = DefaultRefundProcessingDays.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };

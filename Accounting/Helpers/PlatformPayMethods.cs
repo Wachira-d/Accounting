@@ -52,6 +52,22 @@ public static class PlatformPayMethods
         return chosen.Where(m => IsPayable(m, cardClientReady)).Select(m => m.ToString()).ToList();
     }
 
+    /// <summary>ตัวเลือกวิธีจ่ายที่หน้าเลือกวิธี (pay-widget) แสดง — {code, label} จากชื่อ enum ที่ <see cref="Effective"/> คืน · ป้ายจาก <see cref="Label"/> ตัวเดียว ·
+    /// ผู้เรียก: หน้าซื้อแพ็กเกจสาธารณะ · หน้าทดลองจ่าย (รอบ 232 — เดิมหน้าทดลองจ่ายล็อกพร้อมเพย์อย่างเดียว ไม่มีให้เลือกวิธี)</summary>
+    public static List<object> Options(IEnumerable<string> effectiveMethods)
+        => effectiveMethods.Select(m => (object)new { code = m, label = Enum.TryParse<PaymentMethodKind>(m, out var k) ? Label(k) : m }).ToList();
+
+    /// <summary>วิธีที่ผู้จ่ายเลือก ⇒ enum เมื่ออยู่ในชุดที่เปิดจริง · ไม่ส่ง = พร้อมเพย์ถ้าเปิด ไม่งั้นวิธีแรก · ไม่อยู่ในชุด/ชุดว่าง = null (ผู้เรียกปฏิเสธพร้อมเหตุผล)</summary>
+    public static PaymentMethodKind? Pick(string? requested, IReadOnlyCollection<string> effectiveMethods)
+    {
+        if (effectiveMethods.Count == 0) return null;
+        var want = string.IsNullOrWhiteSpace(requested)
+            ? (effectiveMethods.Contains(nameof(PaymentMethodKind.PromptPay), StringComparer.OrdinalIgnoreCase) ? nameof(PaymentMethodKind.PromptPay) : effectiveMethods.First())
+            : requested.Trim();
+        var hit = effectiveMethods.FirstOrDefault(m => string.Equals(m, want, StringComparison.OrdinalIgnoreCase));
+        return hit != null && Enum.TryParse<PaymentMethodKind>(hit, true, out var k) && k != PaymentMethodKind.ManualSlip ? k : null;
+    }
+
     /// <summary>ชื่อวิธีที่แอดมินส่งมาแต่ผู้ให้บริการไม่รองรับ/ไม่ใช่ชื่อวิธี (ด่านตอนบันทึก) — ว่าง = ใช้ได้ทั้งหมด</summary>
     public static List<string> Unknown(IEnumerable<PaymentMethodKind> providerSupported, IEnumerable<string> requested)
     {
