@@ -297,6 +297,15 @@ public class PlatformBillingPhase0DbTests
     };
 
     /// <summary>ฝ่ายค้าน 233 B1: ฟรีถาวร → ซื้อ (แอดมินอนุมัติสลิปที่โอน 5 วันก่อน) ⇒ ApplyTemplate ไม่ปิดรอบด้วย UtcNow ทับ — EndDate = รายการชำระ = วันรับเงิน + 1 เดือน</summary>
+    /// <summary>ผู้ตรวจต้องเป็น User จริง (FK SubscriptionPayments.ReviewedByUserId) — Guid สุ่มชน FK บน PostgreSQL (แบบเดียวกับ PlatformCouponProrationDbTests)</summary>
+    private static async Task<string> ReviewerIdAsync(Accounting.Data.AccountingDbContext db)
+    {
+        var reviewer = new User { Email = $"r233-admin-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "แอดมินทดสอบ 233", IsSystemAdmin = true };
+        db.Users.Add(reviewer);
+        await db.SaveChangesAsync();
+        return reviewer.Id.ToString();
+    }
+
     [Fact]
     public async Task Round233_B1_permanent_free_purchase_end_date_matches_payment_record()
     {
@@ -310,7 +319,7 @@ public class PlatformBillingPhase0DbTests
         db.SubscriptionPayments.Add(pay);
         await db.SaveChangesAsync();
         await new SubscriptionService(db, Notifications()).ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "test", null),
-            Guid.NewGuid().ToString(), systemConfirmed: false);
+            await ReviewerIdAsync(db), systemConfirmed: false);
         var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
         var paid = await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == pay.Id);
         if ((await TemplateAsync(db, SubscriptionPlan.Pro)) is { IsPermanentFree: false })
@@ -333,7 +342,7 @@ public class PlatformBillingPhase0DbTests
         db.SubscriptionPayments.Add(pay);
         await db.SaveChangesAsync();
         await new SubscriptionService(db, Notifications()).ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "test", null),
-            Guid.NewGuid().ToString(), systemConfirmed: false);
+            await ReviewerIdAsync(db), systemConfirmed: false);
         var after = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
         var paid = await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == pay.Id);
         Assert.True(paid.PaymentDate < DateTime.UtcNow.AddDays(-4), "วันรับเงินต้องเป็นวันในสลิป");
@@ -368,7 +377,7 @@ public class PlatformBillingPhase0DbTests
         db.SubscriptionPayments.Add(pay);
         await db.SaveChangesAsync();
         await new SubscriptionService(db, Notifications()).ReviewPaymentAsync(pay.Id, new ReviewSubscriptionPaymentRequest(true, "test", null),
-            Guid.NewGuid().ToString(), systemConfirmed: false);
+            await ReviewerIdAsync(db), systemConfirmed: false);
         var afterSub = await db.Subscriptions.AsNoTracking().SingleAsync(s => s.Id == sub.Id);
         var afterAcct = await db.AccountSubscriptions.AsNoTracking().SingleAsync(a => a.Id == acct.Id);
         Assert.True((afterAcct.EndDate - afterSub.EndDate).Duration() < TimeSpan.FromSeconds(1),
