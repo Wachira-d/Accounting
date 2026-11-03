@@ -6259,3 +6259,5 @@ _รอบ 231 ความลับ — ภาคผนวกฝ่ายค้
   Db test รอบสอง Candidates = 0 + ใบใหม่หลัง watermark ถูกเห็น · **S5** `Helpers/OcrSourceLineNote` แท็ก `[SRC-LINE]` (ล้างผ่าน `OcrLineBuildNotes.Recomputed`) → DTO `SourceLinesStamped`/`SourceLineWarning` → `document-scan.html`
   แบนเนอร์ · **N4** doc-comment ที่ query dangling (global filter + RemoveRange จริง) · **N5** เทสต์ข้อความ 422 สองชั้นระบุชื่อใบทั้งสอง (`PartialConvertPolicyTests.รอบ232_N5_*`) · **N6** จด DOCUMENT_FLOW §2.4a ว่า PI ชี้ GRN ที่ยกเลิก
   ยังนับแกนวางบิล (ตั้งใจ) · checker +1 (`BuildScanLinesAsync` must แท็ก) · TEST_PLAN SL232-09..11 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — ยังไม่ commit
+
+- รอบ 232 (แก้หลังผู้ใช้รายงาน): แท็บ "โควตาเสริม" และ "ส่วนเสริม" ใน hub แอดมินพาไปหน้า login ของลูกค้า — สองหน้าเป็น /pages/* ใช้เปลือกผู้เช่า (อ่าน token) แต่พอร์ทัลแอดมินมีแค่ admin_token ⇒ ย้ายเป็น `/admin/quota.html` · `/admin/addons.html` ใต้เปลือกแอดมิน + `admin/admin-tenant-compat.js` (API/Layout ของหน้าเดิมเดินผ่าน AdminAPI/AdminLayout) · URL เดิมเป็นหน้า redirect · ลิงก์ "การใช้งานรายบริษัท" ชี้ /admin/customers.html (แท็บตรวจสอบการใช้งาน) · เอกสารรอบก่อนใน erp-review คงข้อความเดิม (บันทึกประวัติ)
