@@ -98,6 +98,20 @@ def file_namespace(src: str) -> str:
     return m.group(1) if m else ''
 
 
+def namespace_segments(src: str):
+    """รอบ 231: ไฟล์ที่ประกาศหลาย namespace block (เช่น enum ใน Accounting.Models.Enums + entity ใน
+    Accounting.Models.Entities ในไฟล์เดียว) — C# ไม่ให้ block หนึ่งเห็น type ของอีก block โดยอัตโนมัติ
+    (CS0246 จริง: Overage.cs ใช้ OverageMode ใน block Entities โดยไม่มี using) ⇒ ตรวจแยกต่อ block"""
+    ms = list(NAMESPACE_DECL.finditer(src))
+    if len(ms) <= 1:
+        return [(ms[0].group(1) if ms else '', src)]
+    segs = []
+    for i, m in enumerate(ms):
+        end = ms[i + 1].start() if i + 1 < len(ms) else len(src)
+        segs.append((m.group(1), src[m.start():end]))
+    return segs
+
+
 def visible_namespaces(ns: str, usings: set) -> set:
     """namespace ที่ไฟล์นี้อ้าง type ได้โดยไม่ต้อง qualify"""
     vis = set(usings)
@@ -112,19 +126,26 @@ def build_index(files):
     index = {}
     for f in files:
         src = strip_noise(f.read_text(encoding='utf-8', errors='replace'))
-        ns = file_namespace(src)
-        for _, name in TYPE_DECL.findall(src):
-            index.setdefault(name, set()).add(ns)
+        for ns, seg in namespace_segments(src):
+            for _, name in TYPE_DECL.findall(seg):
+                index.setdefault(name, set()).add(ns)
     return index
 
 
 def check_file(f: Path, index: dict):
     raw = f.read_text(encoding='utf-8', errors='replace')
     src = strip_noise(raw)
-    ns = file_namespace(src)
     usings = set(USING_DECL.findall(src))
+    problems = []
+    seen = set()
+    for ns, seg in namespace_segments(src):
+        problems += _check_segment(raw, seg, ns, usings, index, seen)
+    return sorted(problems)
+
+
+def _check_segment(raw: str, src: str, ns: str, usings: set, index: dict, seen: set):
     vis = visible_namespaces(ns, usings)
-    # ชื่อที่ประกาศ "ในไฟล์นี้เอง" — ไม่ต้อง using
+    # ชื่อที่ประกาศ "ใน block นี้เอง" — ไม่ต้อง using
     declared_here = {n for _, n in TYPE_DECL.findall(src)} | set(DECL_AFTER.findall(src))
 
     used_as_type = set()
@@ -135,7 +156,6 @@ def check_file(f: Path, index: dict):
     used_as_type -= FRAMEWORK_MEMBERS
 
     problems = []
-    seen = set()
     for tok in sorted(used_as_type):
         if tok in seen or tok in declared_here:
             continue
@@ -149,7 +169,7 @@ def check_file(f: Path, index: dict):
         line = next((i for i, l in enumerate(raw.splitlines(), 1)
                      if re.search(rf'(?<![\w.]){re.escape(tok)}\b', l)), 0)
         problems.append((line, tok, sorted(owners)))
-    return sorted(problems)
+    return problems
 
 
 def main():

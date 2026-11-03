@@ -1,3 +1,5 @@
+using Accounting.Models.Enums;
+
 namespace Accounting.Models.Enums
 {
     /// <summary>รอบ 231 (คำตัดสินข้อ 231-1): เมื่อโควตาของแพ็กเกจเต็ม — ค่าตั้งต้น <see cref="HardLock"/> (พฤติกรรมเดิม) · ผู้เช่า (Owner/BillingManage) เปิด <see cref="AllowOverage"/> เอง</summary>
