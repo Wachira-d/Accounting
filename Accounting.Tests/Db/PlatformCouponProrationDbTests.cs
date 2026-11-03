@@ -178,7 +178,10 @@ public class PlatformCouponProrationDbTests
         // บริษัท B: จองแล้วถูกปฏิเสธ ⇒ ปลด (ไม่นับเข้าเพดาน)
         var (b, _) = await SeedAsync(db, SubscriptionPlan.FreeTrial, SubscriptionStatus.Trial, BillingCycle.Monthly, 10);
         var rb = await svc.ConvertTrialAsync(b, new ConvertTrialRequest(SubscriptionPlan.Pro, BillingCycle.Monthly, coupon.Code), "owner");
-        await svc.ReviewPaymentAsync(rb.Payment!.Id, new ReviewSubscriptionPaymentRequest(false, null, "สลิปไม่ตรง"), "system");
+        // ปฏิเสธต้องมีผู้ตรวจที่เป็นคนจริง (FK ReviewedByUserId · ระบบไม่แต่ง user id)
+        var reviewer = new User { Email = $"coupon-admin-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "แอดมินทดสอบ", IsSystemAdmin = true };
+        db.Users.Add(reviewer); await db.SaveChangesAsync();
+        await svc.ReviewPaymentAsync(rb.Payment!.Id, new ReviewSubscriptionPaymentRequest(false, null, "สลิปไม่ตรง"), reviewer.Id.ToString());
         Assert.Equal(PlatformCouponRedemptionStatus.Released,
             (await db.PlatformCouponRedemptions.AsNoTracking().SingleAsync(r => r.SourceId == rb.Payment!.Id)).Status);
 
