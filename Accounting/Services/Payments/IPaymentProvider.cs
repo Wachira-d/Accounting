@@ -40,7 +40,12 @@ public sealed record ChargeRequest(
     string? ReturnUrl,
     string? CustomerEmail,
     string? CustomerPhone,
-    string Description);
+    string Description,
+    // รอบ 230 (PLATFORM_OMISE_AUDIT §5.2): ตัดด้วยบัตรที่บันทึกไว้ — เลขอ้างอิงลูกค้า/บัตรของผู้ให้บริการ (ไม่ใช่เลขบัตร) · มีค่า ⇒ ไม่ต้องมีโทเคน
+    string? CustomerRef = null,
+    string? SavedCardRef = null,
+    // รอบ 230 (§5.6 เฉพาะเส้นบัตรที่บันทึก): คีย์กันซ้ำของคำขอสร้าง charge — หมดเวลาแล้วลองใหม่ไม่ได้ charge ซ้อน (ผู้ให้บริการรองรับ = ส่ง · ไม่รองรับ = ไม่สนใจ)
+    string? IdempotencyKey = null);
 
 /// <summary>ผลการสร้าง/อ่าน charge จาก provider — แปลเป็นภาษากลางแล้ว</summary>
 public sealed record ProviderCharge(
@@ -87,6 +92,36 @@ public sealed record VerifiedWebhookEvent(
 
 /// <summary>รอบ 228 (§5.4): ข้อพิพาท/chargeback ตามผู้ให้บริการ — แปลเป็นภาษากลางแล้ว · <c>Amount</c> = ยอดที่ถูกโต้แย้ง (บาท)</summary>
 public sealed record ProviderDispute(string ProviderRef, PaymentDisputeState State, string? RawStatus, decimal Amount, string? Reason);
+
+/// <summary>รอบ 230 (§5.2): บัตรที่ผู้ให้บริการบันทึกไว้ให้ลูกค้ารายหนึ่ง — <b>ไม่มีเลขบัตร</b> · เดือน/ปีหมดอายุ = ข้อมูลแสดงผลตามที่ผู้ให้บริการรายงาน
+/// (<c>LiveMode</c> null = ไม่ส่ง)</summary>
+public sealed record ProviderSavedCard(string CustomerRef, string CardRef, string? Brand, string? Last4, int? ValidMonth, int? ValidYear, bool? LiveMode);
+
+/// <summary>ผลการลบบัตรที่ผู้ให้บริการ — <c>Removed</c> = ไม่อยู่ที่ผู้ให้บริการแล้ว (ลบสำเร็จ หรือไม่พบอยู่แล้ว) · ไม่สำเร็จ = ข้อความไทย</summary>
+public sealed record ProviderCardRemoval(bool Removed, string? Problem);
+
+/// <summary>รอบ 230 (§5.3): รอบโอน (payout) หนึ่งรอบตามผู้ให้บริการ — แปลเป็นภาษากลางแล้ว
+/// <para><c>WalletDebit</c> = ยอดที่หักจากยอดคงเหลือที่ผู้ให้บริการ (ยอดโอน + ค่าธรรมเนียมโอน) · <c>NetToBank</c> = ยอดที่เข้าธนาคาร ·
+/// <c>ChargeRefs</c> = เลข charge ที่ผู้ให้บริการระบุว่าอยู่ในรอบนี้ (null = ไม่ระบุ — ห้ามเดา ⇒ ผู้เรียกจับคู่ด้วยยอด) ·
+/// <c>ShapeNote</c> = สิ่งที่ adapter ยังไม่ยืนยันกับระบบทดสอบของผู้ให้บริการ (แสดงให้ผู้ตรวจ)</para></summary>
+public sealed record ProviderSettlement(
+    string Ref, decimal WalletDebit, decimal NetToBank, decimal TransferFee, decimal TransferFeeVat,
+    string? RawStatus, bool Paid, DateTime? CreatedAtUtc, DateTime? PaidAtUtc,
+    IReadOnlyList<string>? ChargeRefs, bool? LiveMode, string? ShapeNote = null);
+
+/// <summary>รอบ 230 ฝ่ายค้าน B1: ผู้ให้บริการตอบแบบที่<b>ไม่รู้ว่าสร้าง charge แล้วหรือยัง</b> (5xx/408) — ผู้เรียกห้ามตีเป็น "ล้มเหลว"
+/// (เส้นตัดบัตรที่บันทึกไว้: เก็บรายการเป็นรอผล แล้วหา charge จาก metadata ภายหลังด้วย <see cref="IPaymentProvider.FindChargeForIntentAsync"/>)</summary>
+public sealed class ProviderOutcomeUnknownException : Exception
+{
+    public ProviderOutcomeUnknownException(string message) : base(message) { }
+}
+
+/// <summary>รอบ 230 ฝ่ายค้าน (nice): ผู้ให้บริการปฏิเสธการตัดโดยไม่มีผู้ใช้อยู่ เพราะต้องยืนยันตัวตนกับธนาคาร (3-D Secure) — ไม่มีเงินออก ·
+/// ผู้เรียกบอกผู้จ่ายให้ชำระเอง (ลองใหม่อัตโนมัติไม่ช่วย)</summary>
+public sealed class ProviderActionRequiredException : Exception
+{
+    public ProviderActionRequiredException(string message) : base(message) { }
+}
 
 /// <summary>ผลการทดสอบเชื่อมต่อ — ข้อความต้องเป็นภาษาคนที่บอก **ทางแก้**
 /// ไม่ใช่ error code ของ provider</summary>
@@ -184,6 +219,30 @@ public interface IPaymentProvider
     Task<VerifiedWebhookEvent?> VerifyWebhookAsync(
         string rawBody, IReadOnlyDictionary<string, string> headers,
         PaymentProviderConfig config, CancellationToken ct = default);
+
+    // ── รอบ 230 (PLATFORM_OMISE_AUDIT §5.2/§5.3) — ค่าตั้งต้น = เจ้านี้ไม่รองรับ (ไม่ throw ตอนถามความสามารถ) ──
+
+    /// <summary>บันทึกบัตรไว้กับผู้ให้บริการเพื่อตัดภายหลังได้ไหม</summary>
+    bool SupportsSavedCards => false;
+
+    /// <summary>บันทึกบัตรจากโทเคน (ใช้ครั้งเดียว) ไว้กับลูกค้าของผู้ให้บริการ — <paramref name="existingCustomerRef"/> null = สร้างลูกค้าใหม่ ·
+    /// ล้ม ⇒ InvalidOperationException ข้อความไทย (ยังไม่ได้ตัดเงิน) · เจ้าที่ไม่รองรับ ⇒ NotSupportedException</summary>
+    Task<ProviderSavedCard> SaveCardAsync(PaymentProviderConfig config, string cardToken, string? existingCustomerRef,
+        string customerDescription, string? customerEmail, CancellationToken ct = default)
+        => throw new NotSupportedException("ผู้ให้บริการรายนี้ไม่รองรับการบันทึกบัตร");
+
+    /// <summary>ลบบัตรที่บันทึกไว้ที่ผู้ให้บริการ — ไม่พบอยู่แล้ว = ลบแล้ว · ไม่โยนเมื่อผู้ให้บริการปฏิเสธ (คืนข้อความ)</summary>
+    Task<ProviderCardRemoval> RemoveSavedCardAsync(PaymentProviderConfig config, string customerRef, string cardRef, CancellationToken ct = default)
+        => Task.FromResult(new ProviderCardRemoval(false, "ผู้ให้บริการรายนี้ไม่รองรับการบันทึกบัตร"));
+
+    /// <summary>ฝ่ายค้าน B1: หา charge ของรายการนี้จาก metadata (<c>intentId</c>) เมื่อการสร้าง charge ผลไม่แน่ชัด (ไม่มีเลขอ้างอิง) —
+    /// null = ไม่พบ (หรือเจ้านี้ไม่รองรับ) · โยนเมื่อถามผู้ให้บริการไม่ได้ (ผู้เรียกลองใหม่รอบหน้า)</summary>
+    Task<ProviderCharge?> FindChargeForIntentAsync(PaymentIntent intent, PaymentProviderConfig config, CancellationToken ct = default)
+        => Task.FromResult<ProviderCharge?>(null);
+
+    /// <summary>รอบโอนตั้งแต่ <paramref name="sinceUtc"/> (โหมดของ config) — ค่าตั้งต้นว่าง (เจ้านี้ไม่มี API รอบโอน ⇒ ผู้ใช้บันทึกรอบโอนด้วยมือตามเดิม)</summary>
+    Task<IReadOnlyList<ProviderSettlement>> ListSettlementsAsync(PaymentProviderConfig config, DateTime sinceUtc, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<ProviderSettlement>>(Array.Empty<ProviderSettlement>());
 
     /// <summary>ปุ่ม "ทดสอบเชื่อมต่อ" — ต้องตรวจถึงขั้น <b>webhook มาถึงจริง</b>
     /// เพราะ "คีย์ถูกแต่ webhook ไม่ถึง" คือเคสที่พบบ่อยที่สุดและทำให้ลูกค้าจ่ายเงินแล้ว

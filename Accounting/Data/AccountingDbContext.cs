@@ -26,6 +26,9 @@ public class AccountingDbContext : DbContext
     public DbSet<CompanyQuotaOverride> CompanyQuotaOverrides => Set<CompanyQuotaOverride>();
     public DbSet<QuotaAddOnOffer> QuotaAddOnOffers => Set<QuotaAddOnOffer>();
     public DbSet<CompanyQuotaAddOn> CompanyQuotaAddOns => Set<CompanyQuotaAddOn>();
+    // รอบ 230 — คูปองแพลตฟอร์ม (ตาราง/index ต้องตรงกับ Helpers/PlatformCouponMigration)
+    public DbSet<PlatformCoupon> PlatformCoupons => Set<PlatformCoupon>();
+    public DbSet<PlatformCouponRedemption> PlatformCouponRedemptions => Set<PlatformCouponRedemption>();
     public DbSet<LineOaSwitchEvent> LineOaSwitchEvents => Set<LineOaSwitchEvent>();   // รอบ 212 แพ็ก B
     public DbSet<LineOaDestinationSighting> LineOaDestinationSightings => Set<LineOaDestinationSighting>();   // รอบ 212 ฝ่ายค้าน (B+D) ข้อ 4
     public DbSet<PayslipShareToken> PayslipShareTokens => Set<PayslipShareToken>();
@@ -85,6 +88,12 @@ public class AccountingDbContext : DbContext
     public DbSet<PlatformBillingSettings> PlatformBillingSettings => Set<PlatformBillingSettings>();   // รอบ 219 เฟส 2 — ค่าตั้งการเรียกเก็บค่าบริการ NextAcc (แถวเดียว)
     public DbSet<PlatformBillingNotice> PlatformBillingNotices => Set<PlatformBillingNotice>();   // รอบ 219 เฟส 2 ขั้น 2 — ใบแจ้งหนี้/แจ้งเตือนที่ส่ง (unique คีย์+ช่อง)
     public DbSet<PlatformDunningState> PlatformDunningStates => Set<PlatformDunningState>();
+    // รอบ 230 (PLATFORM_OMISE_AUDIT §5.2/§5.3) — บัตรที่บันทึก · คำสั่งตัดอัตโนมัติ · ความพยายามตัด · สวิตช์แพลตฟอร์ม · รอบโอนจากผู้ให้บริการ (Helpers/PlatformCardBillingMigration)
+    public DbSet<PlatformSavedCard> PlatformSavedCards => Set<PlatformSavedCard>();
+    public DbSet<PlatformAutoChargeMandate> PlatformAutoChargeMandates => Set<PlatformAutoChargeMandate>();
+    public DbSet<PlatformAutoChargeAttempt> PlatformAutoChargeAttempts => Set<PlatformAutoChargeAttempt>();
+    public DbSet<PlatformAutoChargeSettings> PlatformAutoChargeSettings => Set<PlatformAutoChargeSettings>();
+    public DbSet<PlatformProviderTransfer> PlatformProviderTransfers => Set<PlatformProviderTransfer>();
     public DbSet<PlatformPaymentLink> PlatformPaymentLinks => Set<PlatformPaymentLink>();   // รอบ 219 เฟส 2 ขั้น 4 — ลิงก์ชำระใบแจ้งหนี้ค่าบริการ (เก็บ hash)   // รอบ 219 เฟส 2 ขั้น 2 — สถานะทวงหนี้ต่อบริษัท (watermark)
     public DbSet<PolicyAcceptance> PolicyAcceptances => Set<PolicyAcceptance>();   // รอบ 219 ส่วน B — หลักฐานติ๊กยอมรับข้อกำหนด+นโยบายคืนเงินก่อนชำระ (Helpers/PurchasePolicyAcceptance)
     public DbSet<PlatformErasureRequest> PlatformErasureRequests => Set<PlatformErasureRequest>();   // รอบ 214 ต่อ (ฐ) — คำขอลบระดับแพลตฟอร์ม (ไม่มี CompanyId)
@@ -778,6 +787,13 @@ public class AccountingDbContext : DbContext
             e.Property(p => p.WhtCertificateFileName).HasMaxLength(500);
             e.Property(p => p.PaymentNumber).HasMaxLength(50);
             e.Property(p => p.Amount).HasPrecision(18, 2);
+            // รอบ 230 (คอลัมน์: Helpers/PlatformCouponMigration)
+            e.Property(p => p.ProrationFromPlan).HasMaxLength(32);
+            e.Property(p => p.QuotedAmount).HasPrecision(18, 2);
+            e.Property(p => p.ListAmount).HasPrecision(18, 2);
+            e.Property(p => p.CouponCode).HasMaxLength(40);
+            e.Property(p => p.CouponDiscountAmount).HasPrecision(18, 2);
+            e.Property(p => p.AmountOverrideReason).HasMaxLength(500);
             e.Property(p => p.Currency).HasMaxLength(3);
             e.Property(p => p.FromBankName).HasMaxLength(100);
             e.Property(p => p.FromAccountNumber).HasMaxLength(50);
@@ -1098,6 +1114,64 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => x.CompanyId).IsUnique().HasDatabaseName("UX_PlatformDunningStates_Company");
             e.Property(x => x.OverdueAmount).HasPrecision(18, 2);
             e.Property(x => x.LastAction).HasMaxLength(300);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        // ===== รอบ 230 (PLATFORM_OMISE_AUDIT §5.2/§5.3) — ชื่อ index/เงื่อนไขตรงกับ Helpers/PlatformCardBillingMigration =====
+        modelBuilder.Entity<PlatformSavedCard>(e =>
+        {
+            e.HasIndex(x => new { x.PayerCompanyId, x.PlatformCompanyId }).HasDatabaseName("IX_PlatformSavedCards_Payer");
+            e.HasIndex(x => new { x.ProviderCode, x.CardRef }).IsUnique().HasDatabaseName("UX_PlatformSavedCards_ProviderCard")
+                .HasFilter("\"RemovedAt\" IS NULL AND \"IsDeleted\" = false");
+            e.Property(x => x.ProviderCode).HasMaxLength(40);
+            e.Property(x => x.CustomerRef).HasMaxLength(100);
+            e.Property(x => x.CardRef).HasMaxLength(100);
+            e.Property(x => x.Brand).HasMaxLength(40);
+            e.Property(x => x.Last4).HasMaxLength(4);
+            e.Property(x => x.RemovedBy).HasMaxLength(256);
+            e.Property(x => x.RemovedReason).HasMaxLength(300);
+            e.Property(x => x.ProviderRemoveProblem).HasMaxLength(500);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PlatformAutoChargeMandate>(e =>
+        {
+            e.HasIndex(x => new { x.PlatformCompanyId, x.PayerCompanyId }).IsUnique().HasDatabaseName("UX_PlatformAutoChargeMandates_Payer");
+            e.Property(x => x.ConsentVersion).HasMaxLength(150);
+            e.Property(x => x.EnabledBy).HasMaxLength(256);
+            e.Property(x => x.DisabledBy).HasMaxLength(256);
+            e.Property(x => x.DisabledReason).HasMaxLength(300);
+            e.Property(x => x.AdminBlockedBy).HasMaxLength(256);
+            e.Property(x => x.AdminBlockedReason).HasMaxLength(300);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PlatformAutoChargeAttempt>(e =>
+        {
+            e.HasIndex(x => new { x.DocumentId, x.AttemptNo }).IsUnique().HasDatabaseName("UX_PlatformAutoChargeAttempts_Doc_No");
+            e.HasIndex(x => new { x.PayerCompanyId, x.AttemptedAt }).HasDatabaseName("IX_PlatformAutoChargeAttempts_Payer");
+            e.Property(x => x.Amount).HasPrecision(18, 2);
+            e.Property(x => x.Outcome).HasMaxLength(20);
+            e.Property(x => x.Detail).HasMaxLength(500);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PaymentIntent>().Property(x => x.SavedCardRef).HasMaxLength(100);   // ฝ่ายค้านรอบ 230 B2
+        modelBuilder.Entity<PdpaConsentRecord>().Property(x => x.UserAgent).HasMaxLength(500);   // ฝ่ายค้านรอบ 230 S2
+        modelBuilder.Entity<PlatformAutoChargeSettings>(e =>
+        {
+            e.Property(x => x.ChangedBy).HasMaxLength(256);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PlatformProviderTransfer>(e =>
+        {
+            e.HasIndex(x => new { x.ProviderCode, x.TransferRef }).IsUnique().HasDatabaseName("UX_PlatformProviderTransfers_Ref");
+            e.HasIndex(x => new { x.PlatformCompanyId, x.ProviderCreatedAt }).HasDatabaseName("IX_PlatformProviderTransfers_Platform");
+            e.Property(x => x.ProviderCode).HasMaxLength(40);
+            e.Property(x => x.TransferRef).HasMaxLength(100);
+            foreach (var p in new[] { nameof(PlatformProviderTransfer.WalletDebit), nameof(PlatformProviderTransfer.NetToBank),
+                         nameof(PlatformProviderTransfer.TransferFee), nameof(PlatformProviderTransfer.TransferFeeVat) })
+                e.Property<decimal>(p).HasPrecision(18, 2);
+            e.Property(x => x.RawStatus).HasMaxLength(40);
+            e.Property(x => x.MatchMethod).HasMaxLength(20);
+            e.Property(x => x.Problem).HasMaxLength(500);
             e.HasQueryFilter(x => !x.IsDeleted);
         });
 
@@ -3684,6 +3758,33 @@ public class AccountingDbContext : DbContext
                 .HasFilter("\"RequestKey\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_CompanyQuotaAddOns_Company_RequestKey");
             e.HasIndex(x => x.RenewedFromId).IsUnique()
                 .HasFilter("\"RenewedFromId\" IS NOT NULL AND \"IsDeleted\" = false").HasDatabaseName("UX_CompanyQuotaAddOns_RenewedFrom");
+            e.Property(x => x.CouponCode).HasMaxLength(40);
+            e.Property(x => x.CouponDiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.ListAmount).HasPrecision(18, 2);
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 230 — คูปองแพลตฟอร์ม (ตาราง/index ต้องตรงกับ Helpers/PlatformCouponMigration)
+        modelBuilder.Entity<PlatformCoupon>(e =>
+        {
+            e.Property(x => x.Code).HasMaxLength(40);
+            e.Property(x => x.Description).HasMaxLength(300);
+            e.Property(x => x.Value).HasPrecision(18, 2);
+            e.Property(x => x.PlansCsv).HasMaxLength(200);
+            e.Property(x => x.CyclesCsv).HasMaxLength(200);
+            e.Property(x => x.AddOnResourcesCsv).HasMaxLength(400);
+            e.HasIndex(x => x.Code).IsUnique().HasFilter("\"IsDeleted\" = false").HasDatabaseName("UX_PlatformCoupons_Code");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<PlatformCouponRedemption>(e =>
+        {
+            e.Property(x => x.SourceKind).HasMaxLength(40);
+            e.Property(x => x.ListAmount).HasPrecision(18, 2);
+            e.Property(x => x.DiscountAmount).HasPrecision(18, 2);
+            e.Property(x => x.AmountAfter).HasPrecision(18, 2);
+            e.Property(x => x.ReleaseReason).HasMaxLength(300);
+            e.HasIndex(x => new { x.CouponId, x.SourceKind, x.SourceId }).IsUnique().HasFilter("\"IsDeleted\" = false")
+                .HasDatabaseName("UX_PlatformCouponRedemptions_Source");
+            e.HasIndex(x => new { x.CouponId, x.CompanyId, x.Status }).HasDatabaseName("IX_PlatformCouponRedemptions_Coupon_Company");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 212 แพ็ก B: การสลับ LINE OA → คำเชิญผูกใหม่ (ตาราง/index ต้องตรงกับ CmsRound212NotifyStatements + Helpers/CustomerRelinkMigration)

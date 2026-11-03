@@ -91,6 +91,14 @@ public static class QuotaLimitPolicy
             canBuy ? QuotaResources.BuyUrl(resourceKey) : null);
     }
 
+    /// <summary>รอบ 230: % ความยาวหลอด (0–100 · ปัด AwayFromZero) — เดิม <c>js/quota-ui.js</c> คิดเอง · ไม่จำกัด/ไม่รู้ = 0 · เพดาน 0 หรือเต็ม = 100</summary>
+    public static int Percent(int? used, int? limit, int warnLevel)
+    {
+        if (limit is int max && max > 0 && used is int u)
+            return (int)Math.Min(100m, Math.Max(0m, Math.Round(u * 100m / max, 0, MidpointRounding.AwayFromZero)));
+        return warnLevel == 2 ? 100 : 0;
+    }
+
     /// <summary>ระดับเตือนของหลอด (0 ปกติ · 1 ≥ 80% · 2 เต็ม/เกิน) — หน้าเว็บแสดงอย่างเดียว</summary>
     public static int WarnLevel(int used, int? limit)
     {

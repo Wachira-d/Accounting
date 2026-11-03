@@ -104,6 +104,11 @@ public class FinancialManagementController : ControllerBase
     public async Task<ActionResult<ApiResponse<List<CITResponse>>>> GetCITs(Guid companyId)
         => Ok(new ApiResponse<List<CITResponse>>(true, await _svc.GetCITListAsync(companyId)));
 
+    /// <summary>รอบ 230 N5 — ช่วงงวดที่จะคำนวณ (ตามรอบบัญชีบริษัท) ให้หน้าแสดงก่อนกดคำนวณ</summary>
+    [HttpGet("cit/period")]
+    public async Task<ActionResult<ApiResponse<CitPeriodPreviewResponse>>> PreviewCITPeriod(Guid companyId, [FromQuery] string taxYear, [FromQuery] string taxPeriod)
+        => Ok(new ApiResponse<CitPeriodPreviewResponse>(true, await _svc.PreviewCITPeriodAsync(companyId, taxYear, taxPeriod)));
+
     [HttpPost("cit/{id:guid}/post")]
     public async Task<ActionResult<ApiResponse<CITResponse>>> PostCIT(Guid companyId, Guid id)
         => Ok(new ApiResponse<CITResponse>(true, await _svc.PostCITAsync(companyId, id, UserId), "บันทึกภาษีสำเร็จ"));

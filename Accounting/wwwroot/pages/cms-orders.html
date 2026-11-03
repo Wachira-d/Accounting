@@ -50,56 +50,10 @@
       <button class="btn btn-primary btn-sm" onclick="Page.openGatewayModal()">⚙️ ตั้งค่าวิธีรับเงิน</button>
     </div>
 
+    <!-- รอบ 230 (CMS_SETTINGS_UX_AUDIT §6 ค้างข้อ 1): ค่าสินค้าตามสั่ง (มัดจำ · ริบมัดจำ · วันปิด · ตัดรอบ · ใบกำกับมัดจำ · VAT ค่าส่ง) ย้ายไป
+         ตั้งค่าเว็บ › สินค้าตามสั่ง / พรีออเดอร์ (ที่เดียว · js/cms-mto-settings-admin.js) — modal เดิมถูกถอด ห้ามสองฟอร์มแก้ค่าเดียวกัน -->
     <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-      <button class="btn btn-secondary btn-sm" onclick="Page.openMtoModal()" title="ตั้งค่าสินค้าตามสั่ง: มารับเอง · มัดจำ · วันเปิดร้าน · ค่าส่งเหมาจ่าย">⚙️ การรับสินค้า / มัดจำ / วันเปิดร้าน</button>
-    </div>
-
-    <!-- ทีม K: ตั้งค่าสินค้าตามสั่ง (อ่าน/เขียนผ่าน commerce/config — ตรวจที่เซิร์ฟเวอร์) -->
-    <div class="modal-overlay" id="mtoModal">
-      <div class="modal" style="max-width:560px">
-        <div class="modal-header">
-          <h3 class="modal-title">⚙️ การรับสินค้า · มัดจำ · วันเปิดร้าน</h3>
-          <button class="modal-close" onclick="Layout.closeModal('mtoModal')">&times;</button>
-        </div>
-        <div class="modal-body" style="display:grid;gap:12px">
-          <!-- รอบ 228 (แพ็ก D): "มารับเองที่ร้าน" แก้ที่เดียว (ตั้งค่าร้านค้า › การสั่งซื้อ) — ที่นี่อ่านอย่างเดียว -->
-          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mtoPickup" disabled> เปิดให้ลูกค้าเลือก "มารับเองที่ร้าน" (ไม่มีค่าส่ง)
-            <a id="mtoPickupLink" href="/pages/cms-store-settings.html?tab=general" style="color:var(--primary);font-size:12px">แก้ที่ ตั้งค่าร้านค้า →</a></label>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label">ค่าส่งเหมาจ่าย (ร้านที่ไม่ได้ตั้งโซน)</label><input type="number" class="form-input" id="mtoFlatRate" readonly disabled placeholder="ไม่ได้ตั้ง"></div>
-            <div class="form-group"><label class="form-label">ส่งฟรีเมื่อยอดสินค้าครบ</label><input type="number" class="form-input" id="mtoFreeAbove" readonly disabled placeholder="ไม่มี"></div>
-          </div>
-          <!-- รอบ 228 (CMS_SETTINGS_UX_AUDIT แพ็ก C): ค่าส่งเหมาจ่าย/ส่งฟรีแก้ที่เดียว — ที่นี่อ่านอย่างเดียว (ห้ามสองฟอร์มแก้ค่าเดียวกัน) -->
-          <div style="font-size:12px;color:#1e3a8a;margin-top:-6px">แก้ค่าส่งเหมาจ่าย/ส่งฟรีที่ <a id="mtoShipLink" href="/pages/cms-site-settings.html?group=shipping" style="color:var(--primary)">ตั้งค่าเว็บ › การจัดส่ง / รับเอง →</a></div>
-          <div style="font-size:12px;color:var(--gray-500);margin-top:-6px">ค่าส่งตามโซน/น้ำหนัก ตั้งที่อัตราค่าส่งของโซน · ค่าส่งเป็นบรรทัดในใบขายพร้อม VAT ตามสินค้าในบิล</div>
-          <hr style="border:none;border-top:1px solid var(--gray-200)">
-          <div class="form-group"><label class="form-label">เงื่อนไขชำระของออเดอร์ที่มีสินค้าตามสั่ง</label><select class="form-input" id="mtoTerm" onchange="Page.onMtoTermChange()"></select></div>
-          <div class="form-row" id="mtoDepositRow">
-            <div class="form-group" id="mtoPctWrap"><label class="form-label">มัดจำ (%)</label><input type="number" class="form-input" id="mtoPct" min="1" max="99" step="0.01"></div>
-            <div class="form-group" id="mtoFixedWrap"><label class="form-label">มัดจำ (บาท)</label><input type="number" class="form-input" id="mtoFixed" min="1" step="0.01"></div>
-          </div>
-          <!-- ทีม Q (คำตัดสินข้อ 156): วิธีออกเอกสารภาษีของมัดจำ — ตัวเลือก + คำอธิบายผลภาษีมาจากเซิร์ฟเวอร์ทั้งหมด -->
-          <div class="form-group"><label class="form-label">ใบกำกับภาษีเมื่อลูกค้าจ่ายมัดจำ</label><select class="form-input" id="mtoDepositInvoicing" onchange="Page.onDepositInvoicingChange()"></select></div>
-          <div id="mtoDepositInvoicingHelp" style="font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:8px;padding:8px 10px;margin-top:-6px;white-space:pre-wrap"></div>
-          <!-- รอบ 206 (คำตัดสินข้อ 165): VAT ค่าส่งบิลหลายอัตรา + ริบมัดจำเมื่อยกเลิก — ตัวเลือก/คำอธิบายจากเซิร์ฟเวอร์ (Helpers.ShippingVatAllocation · SiteOrderDepositForfeit) -->
-          <div class="form-group"><label class="form-label">VAT ค่าจัดส่งเมื่อสินค้าในบิลหลายอัตรา</label><select class="form-input" id="mtoShipVat" onchange="Page.onShipVatChange()"></select></div>
-          <div id="mtoShipVatHelp" style="font-size:12px;color:var(--gray-600);background:var(--gray-50);border-radius:8px;padding:8px 10px;margin-top:-6px;white-space:pre-wrap"></div>
-          <div class="form-group"><label class="form-label">ยกเลิกออเดอร์หลังจ่ายมัดจำ — ริบมัดจำคงเหลือ (%)</label><input type="number" class="form-input" id="mtoForfeitPct" min="0" max="100" step="0.01" placeholder="ว่าง = ไม่ริบเอง (รอพนักงานตัดสินที่หน้าเงินมัดจำ)">
-            <div style="font-size:12px;color:var(--gray-500);margin-top:4px">ตั้งแล้วระบบริบส่วนนี้เข้ารายได้ค่าธรรมเนียมอัตโนมัติตอนยกเลิก (ใบมัดจำที่ออกแล้ว · ไม่รวมเงินประกัน) · ส่วนที่เหลือรอคืน — ระบบไม่คืนเงินเอง</div></div>
-          <div style="font-size:12px;color:var(--gray-500);margin-top:-6px">มีผลกับออเดอร์ที่สั่งหลังบันทึก — ออเดอร์ที่ค้างอยู่ใช้วิธีที่ตรึงไว้ตอนสั่ง</div>
-          <hr style="border:none;border-top:1px solid var(--gray-200)">
-          <div class="form-group"><label class="form-label">วันปิดร้านประจำสัปดาห์ (ไม่นับเป็นวันผลิต/รับของ)</label><div id="mtoClosedDays" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label">ตัดรอบรับออร์เดอร์ (ชั่วโมง 0–23 · ว่าง = ไม่ตัดรอบ)</label><input type="number" class="form-input" id="mtoCutoff" min="0" max="23"></div>
-            <div class="form-group" style="display:flex;align-items:flex-end"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="mtoHolidays"> ข้ามวันหยุดบริษัท (หน้า "วันหยุด")</label></div>
-          </div>
-          <div style="font-size:12px;color:#1e3a8a">วันหยุด/วันปิดของเว็บ (ตั้งที่ค่าตั้งการจอง › วันหยุด / วันพิเศษของเว็บไซต์) ใช้กับวันรับของด้วย — ตั้งที่เดียว (รอบ 228)</div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('mtoModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.saveMto()">บันทึก</button>
-        </div>
-      </div>
+      <a class="btn btn-secondary btn-sm" id="mtoSettingsLink" href="/pages/cms-site-settings.html?group=mto" title="มัดจำ · วันปิดร้าน · รับออเดอร์ของวันถัดไปถึงกี่โมง — ตั้งที่ ตั้งค่าเว็บ">⚙️ สินค้าตามสั่ง: มัดจำ / วันปิด / ตัดรอบ →</a>
     </div>
 
     <div class="grid grid-4 gap-4" style="margin-bottom:18px">
@@ -278,6 +232,9 @@
         CmsSiteContext.setUrl(v);
         CmsSiteContext.renderCrumb('cmsCrumb', this.sites, v, 'คำสั่งซื้อ', 'cms-orders');
         document.getElementById('tabQueue').style.display = this.allSites ? 'none' : '';
+        // รอบ 230: ลิงก์ค่าสินค้าตามสั่งไปศูนย์ตั้งค่าเว็บของเว็บนี้ (ทุกไซต์ = ไม่มีเว็บเดียวให้ตั้ง ⇒ ซ่อน)
+        const mto = document.getElementById('mtoSettingsLink');
+        if (mto) { mto.style.display = this.allSites ? 'none' : ''; mto.href = '/pages/cms-site-settings.html?siteId=' + encodeURIComponent(this.siteId || '') + '&group=mto'; }
         if (this.allSites && this.view === 'queue') this.view = 'list';
         this._applyView();
         await this.load();
@@ -365,74 +322,6 @@
           this._commerceConfig = cfgRes?.data || null;
         } catch (e) { /* silently — owner can still open the modal */ }
       },
-      // ===== ทีม K: ตั้งค่าสินค้าตามสั่ง =====
-      async openMtoModal() {
-        const api = Layout.api(); if (!api || !this.siteId) { Layout.toast('กรุณาเลือกเว็บไซต์', 'warning'); return; }
-        let c;
-        try { c = (await api.cmsGetCommerceConfig(this.siteId)).data; } catch (e) { Layout.toast(e.message, 'error'); return; }
-        this._commerceConfig = c;
-        document.getElementById('mtoPickup').checked = !!c.enablePickup;
-        document.getElementById('mtoPickupLink').href = '/pages/cms-store-settings.html?siteId=' + encodeURIComponent(this.siteId || '') + '&tab=general';
-        document.getElementById('mtoFlatRate').value = c.flatShippingRate ?? '';
-        document.getElementById('mtoFreeAbove').value = c.freeShippingThreshold ?? '';
-        document.getElementById('mtoShipLink').href = '/pages/cms-site-settings.html?siteId=' + encodeURIComponent(this.siteId || '') + '&group=shipping';
-        document.getElementById('mtoTerm').innerHTML = (c.paymentTermModes || []).map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.mtoPaymentTermMode ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
-        document.getElementById('mtoPct').value = c.mtoDepositPercent ?? '';
-        document.getElementById('mtoFixed').value = c.mtoDepositFixedAmount ?? '';
-        this._depositInvoicingModes = c.depositInvoicingModes || [];
-        document.getElementById('mtoDepositInvoicing').innerHTML = this._depositInvoicingModes.map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.mtoDepositInvoicing ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
-        this.onDepositInvoicingChange();
-        this._shipVatModes = c.shippingVatAllocationOptions || [];
-        document.getElementById('mtoShipVat').innerHTML = this._shipVatModes.map(m => `<option value="${Layout.esc(m.value)}" ${m.value === c.shippingVatAllocation ? 'selected' : ''}>${Layout.esc(m.label)}</option>`).join('');
-        this.onShipVatChange();
-        document.getElementById('mtoForfeitPct').value = c.depositForfeitOnCancelPercent ?? '';
-        const closed = new Set((c.mtoClosedWeekdays || '').split(',').filter(Boolean));
-        const names = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
-        document.getElementById('mtoClosedDays').innerHTML = names.map((n, i) => `<label style="display:flex;gap:4px;align-items:center"><input type="checkbox" data-dow="${i}" ${closed.has(String(i)) ? 'checked' : ''}> ${n}</label>`).join('');
-        document.getElementById('mtoCutoff').value = c.mtoCutoffHour ?? '';
-        document.getElementById('mtoHolidays').checked = c.mtoSkipCompanyHolidays !== false;
-        this.onMtoTermChange();
-        Layout.openModal('mtoModal');
-      },
-      onShipVatChange() {
-        const v = document.getElementById('mtoShipVat').value;
-        const m = (this._shipVatModes || []).find(x => x.value === v);
-        document.getElementById('mtoShipVatHelp').textContent = m?.description || '';
-      },
-      onDepositInvoicingChange() {
-        const v = document.getElementById('mtoDepositInvoicing').value;
-        const m = (this._depositInvoicingModes || []).find(x => x.value === v);
-        document.getElementById('mtoDepositInvoicingHelp').textContent = m?.description || '';
-      },
-      onMtoTermChange() {
-        const t = document.getElementById('mtoTerm').value;
-        document.getElementById('mtoPctWrap').style.display = t === 'deposit_percent' ? '' : 'none';
-        document.getElementById('mtoFixedWrap').style.display = t === 'deposit_fixed' ? '' : 'none';
-      },
-      async saveMto() {
-        const api = Layout.api(); if (!api || !this.siteId) return;
-        const closed = [...document.querySelectorAll('#mtoClosedDays input:checked')].map(x => x.dataset.dow).join(',');
-        const cutoff = Layout.intOrNull('mtoCutoff');
-        const body = {
-          mtoPaymentTermMode: document.getElementById('mtoTerm').value,
-          mtoDepositPercent: Layout.numOrNull('mtoPct'),
-          mtoDepositFixedAmount: Layout.numOrNull('mtoFixed'),
-          mtoDepositInvoicing: document.getElementById('mtoDepositInvoicing').value || null,
-          shippingVatAllocation: document.getElementById('mtoShipVat').value || null,
-          depositForfeitOnCancelPercent: Layout.numOrNull('mtoForfeitPct'),
-          clearDepositForfeitOnCancelPercent: Layout.numOrNull('mtoForfeitPct') == null,
-          mtoClosedWeekdays: closed,
-          mtoCutoffHour: cutoff,
-          clearMtoCutoffHour: cutoff == null,
-          mtoSkipCompanyHolidays: document.getElementById('mtoHolidays').checked,
-        };
-        try {
-          await api.cmsUpdateCommerceConfig(this.siteId, body);
-          Layout.closeModal('mtoModal');
-          Layout.toast('บันทึกการตั้งค่าแล้ว');
-        } catch (e) { Layout.toast(e.message, 'error'); }
-      },
-
       // รอบ 228 (แพ็ก A): ฟอร์มบัญชีรับโอนย้ายไปศูนย์ตั้งค่าเว็บ — modal นี้เหลือกล่อง "ย้ายแล้ว" พร้อมลิงก์ไปเว็บเดียวกัน
       openGatewayModal() {
         const id = encodeURIComponent(this.siteId || '');

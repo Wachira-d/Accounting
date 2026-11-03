@@ -82,8 +82,12 @@ const AdminLayout = {
     { id: 'payments', label: 'ตรวจสอบการชำระ', icon: '💳', href: '/admin/payments.html' },
     // รอบ 219 เฟส 2 (คำตัดสินข้อ 180): ค่าตั้งการเรียกเก็บ · ใบค้างชำระทุกบริษัท · ทวงหนี้/ระงับ · ลิงก์ชำระ
     { id: 'platform-billing', label: 'เรียกเก็บค่าบริการ', icon: '🧾', href: '/admin/platform-billing.html' },
+    // รอบ 230 (คำตัดสินข้อ 230-Q2): คูปอง/โค้ดส่วนลดของ NextAcc (ค่าแพ็กเกจ · ส่วนต่างอัปเกรด · โควตาเสริม)
+    { id: 'platform-coupons', label: 'คูปอง/โค้ดส่วนลด', icon: '🎟️', href: '/admin/coupons.html' },
     // รอบ 219 ส่วน B (คำตัดสินข้อ 179): ช่องทางรับชำระค่าบริการของ NextAcc (Omise) — คีย์ · ทดสอบ · ทดลองจ่าย · เปิดรับเงินจริง · ปิดฉุกเฉิน · หน้าทดลองจ่าย
     { id: 'platform-gateway', label: 'ช่องทางรับชำระของ NextAcc', icon: '🏦', href: '/admin/platform-gateway.html' },
+    // รอบ 230 (PLATFORM_OMISE_AUDIT §5.2/§5.3): ตัดบัตรอัตโนมัติ (สวิตช์ · คำสั่งตัดต่อบริษัท · ความพยายาม) + รอบโอนจากผู้ให้บริการ → ร่างรอบโอน (ไม่ลงบัญชี)
+    { id: 'platform-card-ops', label: 'ตัดบัตรอัตโนมัติ + รอบโอน', icon: '💳', href: '/admin/platform-card-ops.html' },
     { section: 'เชื่อมต่อระบบ' },
     { id: 'integrations', label: 'Integration', icon: '🔗', href: '/admin/integrations.html' },
     { section: 'ตั้งค่าระบบบัญชี' },

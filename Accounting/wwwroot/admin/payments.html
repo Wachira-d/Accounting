@@ -252,6 +252,21 @@
                   ${p.slipOcrReference ? ` · อ้างอิง ${AdminLayout.esc(p.slipOcrReference)}` : ''}
                 </div>` : ''}
 
+              ${p.isProration || p.couponCode || p.amountOverrideReason ? `<div style="border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+                ${p.isProration ? `<div>📐 ${AdminLayout.esc(p.prorationNote || 'ส่วนต่างอัปเกรดกลางรอบ')} — อนุมัติแล้วเปลี่ยนแพ็กเกจทันที <b>ไม่ขยับวันหมดอายุ</b></div>` : ''}
+                ${p.couponCode ? `<div>🎟️ คูปอง ${AdminLayout.esc(p.couponCode)} — ราคา ${AdminLayout.money(p.listAmount)} ลด ${AdminLayout.money(p.couponDiscountAmount)}</div>` : ''}
+                ${p.amountOverrideReason ? `<div>✏️ แอดมินแก้ยอด: ${AdminLayout.esc(p.amountOverrideReason)}</div>` : ''}
+              </div>` : ''}
+              ${(p.status === 'Pending' || p.status === 'UnderReview') && !p.platformInvoiceDocumentId ? `
+                <div class="admin-form-group" style="border:1px dashed #cbd5e1;border-radius:8px;padding:10px">
+                  <label class="admin-label">✏️ แก้ยอดที่ต้องชำระ (รอบ 230 — ส่วนลดพิเศษ/ราคาที่ตกลง · มีผลกับการชำระออนไลน์ที่จะเริ่มใหม่ · ต้องมีเหตุผล)</label>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap">
+                    <input class="admin-input" id="overrideAmount" type="number" min="0.01" step="0.01" placeholder="${Number(p.amount || 0).toFixed(2)}" style="max-width:160px">
+                    <input class="admin-input" id="overrideReason" maxlength="500" placeholder="เหตุผล (บังคับ)" style="flex:1;min-width:180px">
+                    <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="overrideAmount('${String(p.id || '').replace(/[^0-9a-fA-F-]/g, '')}')">บันทึกยอดใหม่</button>
+                  </div>
+                </div>` : ''}
+
               ${p.referenceNumber ? `<div class="admin-mb"><div class="admin-label">เลขอ้างอิง</div>${AdminLayout.esc(p.referenceNumber)}</div>` : ''}
               ${p.notes ? `<div class="admin-mb"><div class="admin-label">หมายเหตุลูกค้า</div>${AdminLayout.esc(p.notes)}</div>` : ''}
 
@@ -290,6 +305,19 @@
     // ฝ่ายค้าน S9: สลิปไม่เสิร์ฟเป็นไฟล์สาธารณะแล้ว — ดาวน์โหลดผ่าน endpoint ที่ตรวจสิทธิ์ SystemAdmin
     async function downloadSlip(paymentId) {
       try { await AdminAPI.platformPaymentSlip(paymentId); } catch (err) { AdminLayout.toast(err.message, 'error'); }
+    }
+
+    // รอบ 230 (ข้อ 178 ①): แอดมินแก้ยอดรายการที่ยังไม่จ่าย — เซิร์ฟเวอร์ตรวจ (สถานะ · ไม่มีการชำระออนไลน์ค้าง · เหตุผล) + audit chain
+    async function overrideAmount(paymentId) {
+      const amount = Number(document.getElementById('overrideAmount')?.value || 0);
+      const reason = String(document.getElementById('overrideReason')?.value || '').trim();
+      if (!(amount > 0)) { AdminLayout.toast('กรอกยอดใหม่ (มากกว่า 0)', 'error'); return; }
+      if (!reason) { AdminLayout.toast('ระบุเหตุผล', 'error'); return; }
+      try {
+        const r = await AdminAPI.post(`/subscription-payments/${paymentId}/amount`, { amount, reason });
+        AdminLayout.toast(r.message || 'แก้ยอดแล้ว');
+        showReview(paymentId); loadPending();
+      } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 
     async function reviewPayment(paymentId, approve) {

@@ -40,7 +40,7 @@
       opts = opts || {};
       if (!items.length) return '<div class="muted" style="font-size:13px">ไม่มีรายการ</div>';
       return items.map(it => {
-        const pct = (it.limit != null && it.limit > 0 && it.used != null) ? Math.min(100, Math.round(it.used * 100 / it.limit)) : (it.warnLevel === 2 ? 100 : 0);
+        const pct = Number(it.percent) || 0;   // รอบ 230: ความยาวหลอดคิดที่เซิร์ฟเวอร์ (QuotaLimitPolicy.Percent) — ไม่คิดเองในหน้าเว็บ
         const color = it.warnLevel === 2 ? '#dc2626' : it.warnLevel === 1 ? '#d97706' : '#16a34a';
         const buy = (opts.buy !== false && it.canBuy)
           ? `<button type="button" class="btn btn-secondary btn-sm" data-quota-buy="${esc(it.resource)}" style="margin-left:8px">➕ ซื้อเพิ่ม</button>` : '';
@@ -143,8 +143,13 @@
           <button type="button" class="btn btn-secondary btn-sm" data-q-step="1" ${b.units >= max ? 'disabled' : ''}>+</button>
           <span class="muted" style="font-size:12px">${esc(o.unit)}</span></div>
         <div style="margin-bottom:6px"><b>2) ใช้แบบไหน</b></div>${modes}
-        <div style="margin:10px 0 6px"><b>3) สรุป</b> — ${sel && sel.allowed ? `ยอดชำระ <b style="font-size:18px">฿${money(sel.amount)}</b> (${esc(vat)})
+        <div style="margin:10px 0 6px"><b>3) สรุป</b> — ${sel && sel.allowed ? `ยอดชำระ <b style="font-size:18px">฿${money(this._couponFor(sel) ? this._couponFor(sel).amountAfter : sel.amount)}</b> (${esc(vat)})
+          ${this._couponFor(sel) ? `<div style="font-size:12px;color:#166534">${esc(this._couponFor(sel).label)} — ราคา ฿${money(this._couponFor(sel).listAmount)} ลด ฿${money(this._couponFor(sel).discount)}</div>` : ''}
           ${sel.nextMonthlyAmount ? `<div class="muted" style="font-size:12px">เดือนถัดไป ฿${money(sel.nextMonthlyAmount)}/เดือน เข้าใบแจ้งหนี้ค่าใช้งาน · ยกเลิกได้มีผลสิ้นเดือน</div>` : ''}` : 'เลือกวิธีที่ซื้อได้'}</div>
+        ${sel && sel.allowed ? `<div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+          <input id="quotaCoupon" class="form-input" maxlength="40" placeholder="โค้ดส่วนลด (ถ้ามี)" value="${esc(b.couponCode || '')}" style="max-width:200px;text-transform:uppercase">
+          <button type="button" class="btn btn-secondary btn-sm" data-q-coupon="1">ใช้โค้ด</button>
+          ${b.couponProblem ? `<span style="color:#b91c1c;font-size:12px">${esc(b.couponProblem)}</span>` : ''}</div>` : ''}
         <div id="quotaBuyPolicy">${global.PolicyAccept ? PolicyAccept.html(pay.policy) : ''}</div>
         <div class="muted" style="font-size:12px">ใช้ได้ทันทีเมื่อชำระสำเร็จ · ได้ใบกำกับภาษี/ใบเสร็จ · ค่าบริการไม่คืนเงิน (ตามนโยบาย) · ของที่สร้างไว้ไม่ถูกลบเมื่อโควตาหมด</div>`;
       const foot = (sel && sel.allowed)
@@ -161,6 +166,29 @@
       box.querySelectorAll('input[name="quotaMode"]').forEach(x => x.addEventListener('change', () => { b.mode = x.value; this._renderBuy(); }));
       box.querySelectorAll('[data-q-pay]').forEach(x => x.addEventListener('click', () => this._checkout(x.getAttribute('data-q-pay'))));
       box.querySelectorAll('[data-q-slip]').forEach(x => x.addEventListener('click', () => this._checkout(null)));
+      box.querySelectorAll('[data-q-coupon]').forEach(x => x.addEventListener('click', () => this._applyCoupon()));
+    },
+
+    /** รอบ 230: ผลคูปองที่เซิร์ฟเวอร์คิดไว้ของวิธี/จำนวนที่เลือกอยู่ (null = ไม่มี/ไม่ตรงกับที่เลือกแล้ว) */
+    _couponFor(sel) {
+      const c = this._buy && this._buy.coupon;
+      return c && sel && c.mode === sel.mode && c.units === this._buy.units && c.ok ? c : null;
+    },
+
+    /** รอบ 230: ถามเซิร์ฟเวอร์ว่าคูปองใช้ได้ไหม/ลดเท่าไร (ไม่จอง — จองจริงตอนสร้างรายการ) */
+    async _applyCoupon() {
+      const b = this._buy; if (!b) return;
+      const code = String((document.getElementById('quotaCoupon') || {}).value || '').trim();
+      b.couponCode = code; b.coupon = null; b.couponProblem = null;
+      if (code) {
+        try {
+          const r = await API.get(`/api/companies/${this.cid()}/quota/coupon-preview?resource=${encodeURIComponent(b.resource)}&mode=${encodeURIComponent(b.mode)}&units=${b.units}&code=${encodeURIComponent(code)}`);
+          const d = (r && r.data) || {};
+          if (d.ok) b.coupon = Object.assign({ mode: b.mode, units: b.units }, d);
+          else b.couponProblem = d.problem || 'ใช้คูปองนี้ไม่ได้';
+        } catch (e) { b.couponProblem = e.message || 'ตรวจคูปองไม่สำเร็จ'; }
+      }
+      this._renderBuy();
     },
 
     /** สร้างรายการ (ยอดที่เห็นไปเทียบ) แล้วจ่ายออนไลน์ / เปิดฟอร์มสลิป */
@@ -172,7 +200,8 @@
       let row;
       try {
         const r = await API.request('POST', `/api/companies/${this.cid()}/quota/purchases`,
-          { resource: b.resource, mode: b.mode, units: b.units, expectedPerUnit: sel.perUnit, expectedAmount: sel.amount },
+          { resource: b.resource, mode: b.mode, units: b.units, expectedPerUnit: sel.perUnit, expectedAmount: sel.amount,
+            couponCode: this._couponFor(sel) ? b.couponCode : null },
           false, null, { 'Idempotency-Key': b.key });
         row = r && r.data;
       } catch (e) {
@@ -296,7 +325,7 @@
           <span style="flex:1">${esc(i.label)} — จำนวน
             <input type="number" min="1" value="${i.renewUnits}" data-q-units="${esc(i.id)}" ${i.locked || !i.offerAvailable ? 'disabled' : ''} style="width:64px;display:inline-block" class="form-input">
             ${i.offerAvailable ? `· หน่วยละ ฿${money(i.perUnit)}/รอบ = <b>฿${money(i.amount)}</b>` : '· <span style="color:#b45309">เลิกขายแล้ว — หมดพร้อมรอบนี้ (ข้อมูลไม่หาย)</span>'}
-            ${i.locked ? '<span class="muted"> · อยู่ในใบแจ้งหนี้แล้ว</span>' : ''}</span></label>`).join('')
+            ${i.locked ? '<span class="muted"> · อยู่ในใบแจ้งหนี้ที่ชำระ/แจ้งชำระแล้ว</span>' : i.inInvoice ? '<span class="muted"> · อยู่ในใบแจ้งหนี้ (แก้แล้วระบบออกใบใหม่ให้)</span>' : ''}</span></label>`).join('')
           : '<div class="muted" style="font-size:13px">ไม่มีโควตาเสริมแบบ "ถึงวันหมดอายุแพ็กเกจ" ที่จะต่อ</div>'}`;
       const save = async (id) => {
         const cb = el.querySelector(`[data-q-renew="${id}"]`), u = el.querySelector(`[data-q-units="${id}"]`);

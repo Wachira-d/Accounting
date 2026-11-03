@@ -61,10 +61,17 @@
   <script src="/js/site-transfer-account.js"></script><!-- รอบ 228 แพ็ก A: การ์ดบัญชีรับโอน/พร้อมเพย์ของทุกเว็บ -->
   <script src="/js/booking-payment-admin.js"></script><!-- รอบ 218: ลงทะเบียน CmsSiteSettingsExt.payment (มัดจำ/ชำระเต็ม/โอน-QR-สลิปของการจอง) -->
   <script src="/js/booking-fulfillment-admin.js"></script><!-- รอบ 226 · รอบ 228 แพ็ก C: กลุ่ม "การจัดส่ง / รับเอง" (CmsSiteSettingsExt.shipping) -->
+  <script src="/js/cms-site-info-admin.js"></script><!-- รอบ 230: กลุ่ม "ข้อมูลร้าน" + "กฎหมาย / นโยบาย" (ย้ายจาก cms-edit แท็บ SEO) -->
+  <script src="/js/cms-mto-settings-admin.js"></script><!-- รอบ 230: กลุ่ม "สินค้าตามสั่ง / พรีออเดอร์" (ย้ายจาก modal หน้าคำสั่งซื้อ) -->
+  <script src="/js/booking-site-settings-admin.js"></script><!-- รอบ 230: ค่าการจองระดับเว็บ (ย้ายจาก cms-edit › บริการจอง) ต่อท้ายกลุ่ม "การจอง / บริการ" -->
+  <script src="/js/class-term-admin.js"></script><!-- รอบ 230: กลุ่ม "คลาส & เทอม" (ย้ายจากหน้าทำงานการจอง) -->
   <script>
     /* หน้า "ตั้งค่าเว็บ" (รอบ 215 เฟส 2 · erp-review/2026-10-30/CMS_UX_REDESIGN.md §4.4) — ศูนย์รวมค่าตั้งรายเว็บ
      *
      * กติกา: ค่าตั้งที่ "ย้ายมาแล้ว" แก้ที่นี่ที่เดียว (ที่เดิมเหลือกล่อง "ย้ายแล้ว") — ตอนนี้:
+     *   • รอบ 230: ข้อมูลร้าน (ติดต่อ) · กฎหมาย/นโยบาย (PDPA · นโยบาย 3 ฉบับ · ค่าคืนเงิน) — cms-site-info-admin.js · สินค้าตามสั่ง — cms-mto-settings-admin.js ·
+     *     ค่าการจองระดับเว็บ (ผู้ให้บริการ · เวลาเปิดร้าน/วันหยุด · การรับจอง · เตือน · สมาชิก · ฟอร์ม · เอกสาร · ค่าตอบแทน) — booking-site-settings-admin.js ·
+     *     คลาส & เทอม — class-term-admin.js
      *   • การจอง/บริการ › "ลูกค้าเลือกผู้ให้บริการได้ไหม" (SiteBookingSettings.DefaultResourceMode · คำตัดสินข้อ 176)
      *   • การชำระเงิน › มัดจำ/ชำระเต็ม/โอน-QR-สลิปของการจอง (รอบ 218 · /js/booking-payment-admin.js ผ่าน CmsSiteSettingsExt.payment)
      *   • การแจ้งเตือน › ตารางแจ้งลูกค้ารายเว็บ (CustomerNotify.mountRules — ทุกประเภทเว็บ · เดิมมีแค่เว็บที่มีออเดอร์)
@@ -87,19 +94,26 @@
         const mods = Array.isArray(s.modules) ? s.modules : [];
         const id = enc(this.siteId || '');
         return [
-          { key: 'general',  label: 'ทั่วไป', render: () => this.links('ทั่วไป', 'ชื่อ · ประเภทธุรกิจ · ข้อมูลติดต่อที่แสดงบนเว็บ · สาขาที่ออกเอกสาร/คลังที่ตัดสต็อก', [
-              ['ข้อมูลติดต่อ · สาขาและคลังของเว็บ', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › ข้อมูลร้าน · นโยบาย · SEO (ส่วนข้อมูลติดต่อ / สาขาและคลัง)'],
-              ['ประเภทธุรกิจ / เติมเทมเพลต', '/pages/cms-sites.html', 'เว็บไซต์ทั้งหมด › การ์ดเว็บ › ⋯'],
+          // รอบ 230: ข้อมูลร้าน (ติดต่อ) แก้ที่นี่ — เนื้อหาจริงจาก CmsSiteSettingsExt.general (cms-site-info-admin.js) · ทางสำรองด้านล่างเป็นลิงก์
+          { key: 'general',  label: 'ข้อมูลร้าน', render: () => this.links('ข้อมูลร้าน', 'ข้อมูลติดต่อที่แสดงบนเว็บ · ประเภทธุรกิจ · สาขาที่ออกเอกสาร/คลังที่ตัดสต็อก', [
+              ['สาขาและคลังของเว็บ', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › SEO · เครื่องมือวัดผล · สาขา/คลัง'],
+              ['ประเภทธุรกิจ / เติมแบบเว็บสำเร็จรูป', '/pages/cms-sites.html', 'เว็บไซต์ทั้งหมด › การ์ดเว็บ › ⋯'],
             ]) },
-          { key: 'seo',      label: 'โดเมน & SEO', render: () => this.links('โดเมน & SEO', 'โดเมน · meta · analytics · captcha · ภาษา', [
+          { key: 'seo',      label: 'โดเมน & SEO', render: () => this.links('โดเมน & SEO', 'โดเมน · ชื่อ/คำอธิบายที่ขึ้นใน Google · เครื่องมือวัดผลโฆษณา · กันสแปมฟอร์ม · ภาษา', [
               ['โดเมน', `/pages/cms-edit.html?siteId=${id}&tab=domain`, 'หน้าเว็บ › โดเมน'],
-              ['SEO · Analytics · CAPTCHA', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › ข้อมูลร้าน · นโยบาย · SEO'],
+              ['SEO · เครื่องมือวัดผล · กันสแปมฟอร์ม', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › SEO · เครื่องมือวัดผล · สาขา/คลัง'],
               ['ภาษา', `/pages/cms-edit.html?siteId=${id}&tab=languages`, 'หน้าเว็บ › ภาษา'],
             ]) },
           mods.includes('bookings') && { key: 'booking', label: 'การจอง / บริการ', render: () => this.renderBooking() },
+          mods.includes('bookings') && { key: 'classes', label: 'คลาส & เทอม', render: () => this.links('คลาส & เทอม', 'ตารางคลาสประจำ (เทอม) · สร้างคลาสล่วงหน้า', [
+              ['ตารางคลาส', `/pages/cms-bookings.html?siteId=${id}`, 'การจอง › ตารางคลาส'],
+            ]) },
           mods.includes('lodging') && { key: 'lodging', label: 'ที่พัก', render: () => this.links('ที่พัก', 'เวลาเข้า-ออก · กติกา · มัดจำ · ภาษี · ข้อความถึงแขก · ห้อง/ราคา', [
               ['ค่าตั้งที่พัก (ห้อง · ราคา · นโยบาย · มัดจำ)', `/pages/lodging-settings.html?siteId=${id}`, 'ตั้งค่าที่พัก'],
             ]) },
+          // รอบ 230 (CMS_SETTINGS_UX_AUDIT §6 ค้างข้อ 1): สินค้าตามสั่ง/พรีออเดอร์ — เนื้อหาจริงจาก CmsSiteSettingsExt.mto (ย้ายจาก modal หน้าคำสั่งซื้อ)
+          // ฝ่ายค้านรอบ 230 S3: แสดงเมื่อเว็บมีคำสั่งซื้อ หรือมีสินค้า (productCount จากเซิร์ฟเวอร์) หรือเข้ามาด้วย ?group=mto (ลิงก์จากหน้าคำสั่งซื้อ) — ไม่พาไปกลุ่มอื่นเงียบ ๆ
+          (mods.includes('orders') || Number(s.productCount || 0) > 0 || this._wantMto) && { key: 'mto', label: 'สินค้าตามสั่ง / พรีออเดอร์', render: () => this.links('สินค้าตามสั่ง / พรีออเดอร์', 'มัดจำ · วันปิด · ตัดรอบ', []) },
           mods.includes('orders') && { key: 'orders', label: 'การสั่งซื้อ', render: () => this.links('การสั่งซื้อ', 'รับคำสั่งซื้อ · ยืนยันอัตโนมัติ · ขอใบเสนอราคา · รีวิว · เลขคำสั่งซื้อ · ช่องฟอร์ม · คูปอง', [
               ['สวิตช์ร้าน · เลขคำสั่งซื้อ', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › การสั่งซื้อ'],
               ['ฟอร์มสั่งซื้อ', `/pages/cms-store-settings.html?siteId=${id}&tab=form`, 'ตั้งค่าร้านค้า › ฟอร์มสั่งซื้อ'],
@@ -115,17 +129,16 @@
           { key: 'notify',   label: 'การแจ้งเตือน / LINE', render: () => this.renderNotify(mods) },
           { key: 'members',  label: 'สมาชิก', render: () => this.links('สมาชิก', 'สั่งซื้อ/จองโดยไม่ต้องสมัคร · ต้องเป็นสมาชิกก่อนจอง · รายชื่อสมาชิก', [
               mods.includes('orders') && ['สั่งซื้อแบบแขก / ต้องมีบัญชี', `/pages/cms-store-settings.html?siteId=${id}&tab=general`, 'ตั้งค่าร้านค้า › การสั่งซื้อ'],
-              mods.includes('bookings') && ['ต้องเป็นสมาชิกก่อนจอง', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › ค่าตั้งการจองของเว็บไซต์'],
+              mods.includes('bookings') && ['ต้องเป็นสมาชิกก่อนจอง', `/pages/cms-site-settings.html?siteId=${id}&group=booking`, 'ตั้งค่าเว็บ › การจอง / บริการ › สมาชิก'],
               ['รายชื่อลูกค้า/สมาชิกของเว็บ', `/pages/cms-edit.html?siteId=${id}&tab=customers`, 'หน้าเว็บ › ลูกค้า'],
             ].filter(Boolean)) },
-          { key: 'legal',    label: 'กฎหมาย / นโยบาย', render: () => this.links('กฎหมาย / นโยบาย', 'นโยบายความเป็นส่วนตัว · ช่องยินยอม · แบนเนอร์คุกกี้ · นโยบายร้าน', [
-              ['ข้อมูลส่วนบุคคล (PDPA) · ลิงก์นโยบาย · ข้อความยินยอม', `/pages/cms-edit.html?siteId=${id}&tab=seo`, 'หน้าเว็บ › ข้อมูลร้าน · นโยบาย · SEO (ส่วน PDPA)'],
-            ]) },
+          // รอบ 230: เนื้อหาจริงจาก CmsSiteSettingsExt.legal (ย้ายจาก cms-edit แท็บ SEO) — ทางสำรองไม่มีที่แก้อื่นแล้ว
+          { key: 'legal',    label: 'กฎหมาย / นโยบาย', render: () => this.links('กฎหมาย / นโยบาย', 'นโยบายความเป็นส่วนตัว · ช่องยินยอม · แบนเนอร์คุกกี้ · นโยบายร้าน', []) },
           { key: 'team',     label: 'ทีมงานของเว็บ', render: () => this.links('ทีมงานของเว็บ', 'บทบาทรายเว็บ (แอดมิน · บรรณาธิการ · จัดการคำสั่งซื้อ …) — ต่างจาก "จัดการทีม" ของบริษัท', [
               ['ทีมงาน & สิทธิ์ของเว็บนี้', `/pages/cms-edit.html?siteId=${id}&tab=team`, 'หน้าเว็บ › ทีม'],
             ]) },
-          { key: 'advanced', label: 'ขั้นสูง', render: () => this.links('ขั้นสูง', 'URL Redirects · โค้ดหัวเว็บ', [
-              ['URL Redirects', `/pages/cms-edit.html?siteId=${id}&tab=redirects`, 'หน้าเว็บ › Redirects'],
+          { key: 'advanced', label: 'ขั้นสูง', render: () => this.links('ขั้นสูง', 'ย้ายลิงก์เก่าไปหน้าใหม่ · โค้ดหัวเว็บ', [
+              ['ย้ายลิงก์เก่าไปหน้าใหม่ (Redirects)', `/pages/cms-edit.html?siteId=${id}&tab=redirects`, 'หน้าเว็บ › Redirects'],
             ]) },
         ].filter(Boolean);
       },
@@ -145,7 +158,10 @@
         CmsSiteContext.renderCrumb('cmsCrumb', this.sites, this.siteId, 'ตั้งค่าเว็บ', 'cms-site-settings',
           { beforeLeave: () => !window.CmsDirtyGuard || CmsDirtyGuard.confirmLeave() });   // รอบ 228 แพ็ก B: สลับเว็บขณะมีค่าค้าง ⇒ ถาม
         const want = qs.get('group');
+        this._wantMto = want === 'mto';
         this.group = this.groups().some(g => g.key === want) ? want : (this.groups().find(g => g.key === 'booking') || this.groups()[0]).key;
+        // ฝ่ายค้านรอบ 230 S3: ลิงก์ขอกลุ่มที่เว็บนี้ไม่มี ⇒ บอก (ไม่สลับไปกลุ่มอื่นเงียบ ๆ)
+        if (want && want !== this.group) Layout.toast('กลุ่มนี้ไม่มีในเว็บนี้ — แสดงกลุ่มแรกแทน', 'info', 6000);
         await this.render();
         this.renderCompany();
         this.renderSetupStatus();
@@ -187,6 +203,7 @@
       },
 
       async render() {
+        const token = (this._renderToken = (this._renderToken || 0) + 1);   // ฝ่ายค้านรอบ 230 N1: การวาดที่ซ้อนกัน — ตัวเก่าห้ามต่อการ์ดซ้ำ
         const groups = this.groups();
         const nav = document.getElementById('sgNav');
         nav.innerHTML = groups.map(g => `<button type="button" role="tab" aria-selected="${g.key === this.group}" data-group="${esc(g.key)}">${esc(g.label)}</button>`).join('');
@@ -213,10 +230,16 @@
           catch (e) { body.innerHTML = `<div class="sg-card" style="color:#b91c1c">โหลดส่วนนี้ไม่สำเร็จ: ${esc(e.message || e)}</div>`; }
           return;
         }
-        body.innerHTML = await g.render();
+        const html = await g.render();
+        if (token !== this._renderToken) return;   // มีการวาดใหม่กว่ามาแล้ว
+        body.innerHTML = html;
         watchCards();
         this.renderGroupStatus();
-        if (g.key === 'booking') this.wireBooking();
+        if (g.key === 'booking') {
+          this.wireBooking();
+          // รอบ 230: ค่าการจองระดับเว็บ (ย้ายจาก cms-edit) ต่อท้ายการ์ด "ลูกค้าเลือกผู้ให้บริการได้ไหม" — แต่ละการ์ดบันทึกเอง + ตัวกันค่าหายรายการ์ด
+          if (window.BookingSiteAdmin && token === this._renderToken) await BookingSiteAdmin.mount(body, this.ctx(), () => token === this._renderToken);
+        }
         if (g.key === 'notify') this.mountNotify();
       },
 
@@ -260,8 +283,8 @@
         const over = Array.isArray(d.resourceModeOverrides) ? d.resourceModeOverrides : [];
         const id = enc(this.siteId || '');
         return `<div class="sg-card"><h3>ผู้ให้บริการ / ห้อง / อุปกรณ์ ${CmsSiteContext.scopeBadge('site', this.site && this.site.name)}</h3>
-            <div class="sg-hint" style="margin-bottom:10px">การจัดสรรผู้ให้บริการของเว็บ: <b>${d.providerAllocationEnabled ? (Number(d.activeProviderCount || 0) > 0 ? 'เปิดอยู่' : 'เปิดอยู่ · ยังไม่มีผู้ให้บริการ') : 'ปิดอยู่ — ทุกบริการนับความจุอย่างเดียว (ค่าด้านล่างมีผลเมื่อเปิด)'}</b>
-              · <a href="/pages/cms-edit.html?siteId=${id}&tab=booking" style="color:var(--primary)">เปิด/ปิด · ผู้ให้บริการ · ตรรกะแนะนำ →</a></div>
+            <div class="sg-hint" style="margin-bottom:10px">ช่าง/พนักงาน/ห้องที่ให้บริการของเว็บ: <b>${d.providerAllocationEnabled ? (Number(d.activeProviderCount || 0) > 0 ? 'ใช้อยู่' : 'ใช้อยู่ · ยังไม่มีรายชื่อ') : 'ไม่ใช้ — ไม่ต้องระบุคน นับแค่จำนวนคิว (ค่าด้านล่างมีผลเมื่อเปิดใช้)'}</b>
+              · เปิด/ปิด + วิธีเลือกคนให้อัตโนมัติ อยู่การ์ดถัดไป · <a href="/pages/cms-edit.html?siteId=${id}&tab=booking#bkSecProviders" style="color:var(--primary)">รายชื่อผู้ให้บริการ →</a></div>
             <fieldset style="border:0;padding:0;margin:0"><legend style="font-weight:600;font-size:14px;margin-bottom:4px">ลูกค้าเลือกผู้ให้บริการได้ไหม
               <span class="sg-hint">(ค่าเริ่มต้นของทุกบริการที่ตั้ง "ตามค่าเว็บ")</span></legend>
               ${opts.map(m => `<label style="display:flex;gap:8px;align-items:center;font-size:14px;padding:3px 0"><input type="radio" name="sgDefMode" value="${m}"${m === cur ? ' checked' : ''}> ${esc(label(m))}</label>`).join('')}
@@ -277,8 +300,8 @@
               + `<div style="margin-top:10px"><button class="btn btn-sm btn-ghost" data-inherit-all="1">ให้ทุกบริการใช้ตามค่าเว็บ</button></div>`
               : '<div class="sg-hint">ทุกบริการใช้ตามค่าเว็บ</div>'}
           </div>
-          ${this.links('ค่าตั้งการจองอื่น', 'เวลาทำการ · วันหยุด · จองล่วงหน้า · เตือนก่อนนัด · ข้อมูลที่ลูกค้ากรอก · เอกสารแต่ละขั้น', [
-            ['ค่าตั้งการจองของเว็บไซต์', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › ค่าตั้งการจองของเว็บไซต์'],
+          ${window.BookingSiteAdmin ? '' : this.links('ค่าตั้งการจองอื่น', 'เวลาทำการ · วันหยุด · จองล่วงหน้า · เตือนก่อนนัด · ข้อมูลที่ลูกค้ากรอก · เอกสารแต่ละขั้น', [
+            ['บริการ · ผู้ให้บริการ', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง'],
           ])}`;
       },
 
@@ -299,11 +322,16 @@
         try {
           await Layout.api().cmsUpdateBookingSiteSettings(this.siteId, body);
           Layout.toast('บันทึกแล้ว', 'success');
+          // รอบ 230: กลุ่มนี้มีหลายการ์ดที่บันทึกแยกกัน — การ์ดอื่นยังมีค่าค้าง ⇒ ไม่วาดทั้งกลุ่มใหม่ (ค่าที่พิมพ์ไม่หาย · ตัวอย่างอัปเดตเมื่อเปิดกลุ่มใหม่)
+          if (window.CmsDirtyGuard) CmsDirtyGuard.reset(sel.closest('.sg-card'));
+          if (window.CmsDirtyGuard && CmsDirtyGuard.isDirty()) { Layout.toast('การ์ดอื่นยังมีค่าที่ยังไม่บันทึก — ตัวอย่างจะอัปเดตเมื่อเปิดกลุ่มนี้ใหม่', 'info', 6000); return; }
           await this.render();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 
       async inherit(ids) {
+        // รอบ 230: ปุ่มนี้วาดกลุ่มใหม่หลังบันทึก — การ์ดอื่นมีค่าค้าง ⇒ ถามก่อน (ไม่ทิ้งค่าเงียบ)
+        if (window.CmsDirtyGuard && !CmsDirtyGuard.confirmLeave()) return;
         try {
           const r = await Layout.api().cmsInheritBookingResourceMode(this.siteId, { serviceIds: ids });
           Layout.toast(r && r.message ? r.message : 'บันทึกแล้ว', 'success');
@@ -315,11 +343,11 @@
       renderNotify(mods) {
         const id = enc(this.siteId || '');
         const more = [
-          mods.includes('bookings') && ['เตือนก่อนนัด · ข้อความเตือน · ถือคิวสำรอง', `/pages/cms-edit.html?siteId=${id}&tab=booking`, 'หน้าเว็บ › บริการจอง › แจ้งเตือนลูกค้า'],
+          mods.includes('bookings') && ['เตือนก่อนนัด · ข้อความเตือน · กันที่ให้คิวสำรอง', `/pages/cms-site-settings.html?siteId=${id}&group=booking`, 'ตั้งค่าเว็บ › การจอง / บริการ › เตือนก่อนนัด & คิวสำรอง'],
           mods.includes('lodging') && ['ข้อความยืนยันถึงแขก · อีเมลผู้รับแจ้ง', `/pages/lodging-settings.html?siteId=${id}`, 'ตั้งค่าที่พัก › ข้อความ & การแจ้งเตือน'],
         ].filter(Boolean);
         return `<div class="sg-card"><h3>💬 แจ้งลูกค้าของเว็บนี้ ${CmsSiteContext.scopeBadge('site', this.site && this.site.name)}</h3>
-            <div class="sg-hint" style="margin-bottom:10px">ประเภทข้อความ × LINE/อีเมล — "ตามค่าที่สืบทอด" = ใช้ค่าของบริษัท (ตั้งที่ ตั้งค่าบริษัท › การแจ้งเตือน) · ป้ายและผลมาจากเซิร์ฟเวอร์</div>
+            <div class="sg-hint" style="margin-bottom:10px">ประเภทข้อความ × LINE/อีเมล — "ตามค่าบริษัท" = ใช้ค่าที่ตั้งไว้ที่ ตั้งค่าบริษัท › การแจ้งเตือน · ป้ายและผลมาจากเซิร์ฟเวอร์</div>
             <div id="sgNotifyRules"></div></div>
           ${more.length ? this.links('การแจ้งเตือนเฉพาะงาน', 'เวลาเตือน/ข้อความ ของการจองและที่พัก', more) : ''}`;
       },

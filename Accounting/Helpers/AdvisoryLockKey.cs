@@ -150,6 +150,11 @@ public static class AdvisoryLockKey
     /// <summary>รอบ 219 เฟส 2 (ฝ่ายค้าน S3): ตรวจ/อนุมัติรายการชำระค่าบริการ NextAcc — part = SubscriptionId (ทุกรายการของบริษัทเดียวเรียงกัน:
     /// อนุมัติซ้ำ/สองรายการของใบเดียว/ต่ออายุซ้อน ไม่แทรกกัน) · ผู้ใช้เดียว <c>Helpers/SubscriptionPaymentLock</c></summary>
     public const string SubscriptionPaymentReview = "sub-pay-review";
+    /// <summary>รอบ 230: จองคูปองแพลตฟอร์ม — part = id คูปอง (สองบริษัท/สองแท็บพร้อมกันไม่ทะลุเพดานรวม/ต่อบริษัท) · ผู้ใช้เดียว <c>PlatformCouponStore.ReserveAsync</c></summary>
+    public const string PlatformCoupon = "platform-coupon";
+    /// <summary>รอบ 230 (PLATFORM_OMISE_AUDIT §5.2): บัตรที่บันทึก/คำสั่งตัดอัตโนมัติของบริษัทผู้จ่าย — part = id บริษัทผู้จ่าย
+    /// (บันทึกบัตร · ลบ · ตั้งบัตรตั้งต้น · เปิด/ปิดตัดอัตโนมัติ ไม่แทรกกัน) · ผู้ใช้เดียว <c>PlatformSavedCardService</c></summary>
+    public const string PlatformSavedCard = "platform-saved-card";
     /// <summary>เช็คเอาต์ / ออกใบเช็คเอาต์ใหม่ของการจองที่พัก — part = id การจอง (รอบ 201 ฝ่ายค้าน X7: สองคำขอพร้อมกันผ่านด่าน
     /// "ยังไม่มีใบ/ใบเดิมถูกยกเลิก" ทั้งคู่ ⇒ ใบกำกับสองใบ) · session lock (<c>JobLock.RunExclusiveAsync</c>) เพราะเส้นออกเอกสาร/ใช้มัดจำ
     /// เปิดธุรกรรมของตัวเองหลายขั้น (xact lock จะหลุดตั้งแต่ขั้นแรก)</summary>

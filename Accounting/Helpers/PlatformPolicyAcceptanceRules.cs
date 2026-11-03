@@ -64,6 +64,7 @@ public static class PlatformPolicyAcceptanceRules
     {
         r.SubjectContact = anonymisedEmail;
         r.IpAddress = null;
+        r.UserAgent = null;   // รอบ 230 ฝ่ายค้าน S2
         r.PseudonymisedAt ??= nowUtc;
     }
 
@@ -76,7 +77,7 @@ public static class PlatformPolicyAcceptanceRules
         if (c.EvidenceSource == PdpaConsentEvidence.SourceStaff) return StaffEnteredLabel;
         if (c.PseudonymisedAt != null) return CheckLabel(PdpaConsentEvidence.EvidenceCheck.LegacyUnverifiable);
         return CheckLabel(PdpaConsentEvidence.Check(c.EvidenceHash, c.SubjectContact, c.Purpose, c.PolicyVersion,
-            c.GrantedAt, c.Channel, c.IpAddress, null));
+            c.GrantedAt, c.Channel, c.IpAddress, c.UserAgent));   // รอบ 230 ฝ่ายค้าน S2: แถวเดิม UserAgent = null ⇒ ผลเดิม
     }
 
     /// <summary>แถวที่ลบตามคำขอก่อนเวลานี้ = พ้น legal hold ลบจริงได้</summary>

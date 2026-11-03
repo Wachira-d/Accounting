@@ -6112,3 +6112,57 @@ _รอบ 228 CI (run 41501816418): ต้นเหตุ 11340 ลดสอง
 ตัวออกเอกสารตอบ "ล้ม" ⇒ ผู้เรียกลงใบสำคัญสำรอง Cr บัญชีพักอีกขา · แก้: ตัวออกถามฐานก่อน — ใบลดหนี้ออกเลขแล้ว = สำเร็จ (ไม่ลงสำรองซ้ำ) · Db เทสต์ส่ง VendorIntelligenceService จริง +
 ทิศ "งานข้างเคียงโยน" ล็อก 11340 −107 ครั้งเดียว — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 
+_รอบ 230 ทีมภาษี (2026-11-03 · `erp-review/2026-11-01/TAX_PENALTY_AUDIT.md` §6): เครื่องคำนวณ CIT หน้าบริหารการเงินผ่านกติกาตัวเดียว `Helpers/CitCalculation` —
+SME ต่อบริษัท (ทุน ≤ 5 ล. และรายได้ ≤ 30 ล. · กำหนดเองต้องมีเหตุผล) · อัตราจากแถว `CitRateBracket` ตามปีรอบบัญชี (`CitRateTable`) · รอบบัญชีของบริษัท · ภ.ง.ด.51 = ภาษีของประมาณการ ÷ 2
+(ช่องประมาณการ · §67 ทวิ(2) ตามกำไรจริงครึ่งปี · รอบไม่ถึง 12 เดือนไม่คิด) · ไม่หัก 580xx (ภ.ง.ด.50/ตัวเทียบความสด/ไฟล์ ภ.ง.ด.51 ตัวกรองเดียวกัน) + บวกกลับ §65 ตรี อัตโนมัติ + ส่วนเกินค่ารับรอง
+(เพดานตัวเดียว) − รายได้ยกเว้น · ตั้งหนี้ ณ วันสิ้นงวด + ด่านงวดปิด/ยังไม่จบ · คอลัมน์ใหม่ 11 ช่องบน `CorporateIncomeTaxes` · §67 ตรี อ่าน `EstimatedAnnualProfit` ·
+เงินทดแทนรายคนจากค่าจ้าง ม.5 เต็ม (`WorkersCompensationBase.ManualRowWage`) · หน้าอากร: ตาราง + ปุ่มลงบัญชีใบที่บันทึกเลขใบเสร็จอย่างเดียว (`GET stamp-duty/marked-only`) ·
+เทสต์ `CitCalculationTests` · `PayrollDetailAmountsTests` · Db `CitCalculatorDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — ยังไม่ commit_
+
+_รอบ 230 (2026-11-03) — ปิดงานค้าง `erp-review/2026-11-02/CMS_SETTINGS_UX_AUDIT.md` §6 (ค้างไปรอบหน้า ข้อ 1–5): (1) ค่าสินค้าตามสั่ง (มัดจำ · ริบ · ใบกำกับมัดจำ · VAT ค่าส่ง · วันปิด · ตัดรอบ)
+ย้ายจาก modal หน้าคำสั่งซื้อเข้าศูนย์ตั้งค่าเว็บกลุ่ม `mto` (`js/cms-mto-settings-admin.js`) · (2) wizard สร้างเว็บ 6 ขั้น (ธุรกิจ → แบบเว็บ → ข้อมูลร้าน → รับเงิน → ส่งของ/การจอง → ตรวจทาน)
+ทำต่อได้ด้วย `?setup=` + ปุ่มบนการ์ดเว็บ · (3) ข้อมูลติดต่อ + PDPA/นโยบาย 3 ฉบับ/ค่าคืนเงิน ย้ายจากแท็บ SEO เข้ากลุ่ม "ข้อมูลร้าน" / "กฎหมาย / นโยบาย" (`js/cms-site-info-admin.js`) ·
+(4) ค่าการจองระดับเว็บ (สวิตช์ผู้ให้บริการ · เวลาเปิดร้าน/วันหยุด · การรับจอง · เตือน/คิวสำรอง · สมาชิก · ฟอร์มจอง · เอกสาร) + กติกาค่าตอบแทน (จากรายงานผู้ให้บริการ · ป้ายจาก
+`InstructorPayRule.ModeOptions`) ต่อท้ายกลุ่ม "การจอง / บริการ" (`js/booking-site-settings-admin.js`) · เทอมคลาสเข้ากลุ่ม "คลาส & เทอม" (`js/class-term-admin.js` · สร้างคลาสล่วงหน้าทันที · เลิก prompt) ·
+(5) ถ้อยคำ §5 บนหน้า CMS · Q2 ทิศกลับไม่ทำ (เปลี่ยนรอบว่างที่ตั้งไว้แล้วเงียบ ๆ — รอคำตัดสิน) · ทุกการ์ดส่งเฉพาะช่องของตัวเอง (null = คงค่าเดิม) · ไม่มี endpoint/คอลัมน์ใหม่ ·
+sim `tools/cms_settings_hub_sim.js` (13 negative) · `settings_reader_check` หน้าแก้ `SiteCommerceConfig` = ไฟล์ใหม่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 230 Omise (2026-11-03 · `erp-review/2026-11-02/PLATFORM_OMISE_AUDIT.md` §7.3): สร้าง §5.2 + §5.3 ของค่าบริการ NextAcc —
+(1) **บัตรที่บันทึก + ตัดบัตรอัตโนมัติ**: ติ๊ก "บันทึกบัตรเพื่อตัดอัตโนมัติ" ตอนชำระด้วยบัตร (ข้อความ/ฉบับ `PlatformSavedCardRules` · ยินยอม PDPA ใต้บริษัทผู้ให้บริการ hash v2) ⇒
+ผู้ให้บริการสร้างลูกค้า/ผูกบัตร (`IPaymentProvider.SaveCardAsync`) · เก็บเลขอ้างอิง+ยี่ห้อ+4 ตัวท้าย+วันหมดอายุเท่านั้น · ศูนย์บิลดู/ลบ/ตั้งต้น/ปิด-เปิด (ถอน/ยินยอมใหม่) ·
+งาน `PlatformAutoChargeJob` (JobLock · สวิตช์แพลตฟอร์มค่าตั้งต้นปิด · แอดมินระงับต่อบริษัท) ตัดใบถึงกำหนดผ่าน `IPlatformPaymentService` ด้วยบัตรตั้งต้นที่ยืนยันแล้ว
+(ครั้งที่ 1 = วันครบกำหนด · ลองใหม่ตามวันเตือนหลังเกินกำหนดของนโยบายทวงหนี้ · unique ใบ+ครั้งที่ · หัวกันซ้ำ) · แพ็กเกจยกเลิก/หมดอายุ/ระงับโดยแอดมินไม่ตัด · แจ้งผู้เช่าทุกผล ·
+(2) **แก้บั๊กแฝง**: charge ที่สำเร็จทันทีตอนสร้าง (บัตรไม่ต้อง 3DS) เดิมถูกประทับ Succeeded โดยไม่ยืนยัน/ไม่ส่งต่อ handler ⇒ ยืนยันผ่าน `ApplyChargeAsync` หลัง commit ·
+(3) **รอบโอน → ร่าง**: `PlatformTransferPullJob`/ปุ่มแอดมินดึง transfers (`IPaymentProvider.ListSettlementsAsync`) → `Helpers/PlatformTransferMatch` → `ImportProviderTransferDraftAsync`
+(ด่านชุดเดียวกับประกอบรอบโอนจากรายการรับชำระ · ตัวกลาง `ImportGatewayIntentsCoreAsync`) = ร่างเท่านั้น ไม่ลงบัญชี · หน้าแอดมิน `/admin/platform-card-ops.html` ·
+เทสต์ `PlatformCardBillingRound230Tests` + Db `PlatformCardBillingRound230DbTests` (TEST_PLAN PB230) · รูปข้อมูล token/transfer/Idempotency-Key ต้องยืนยันใน sandbox ก่อนเปิดสวิตช์ —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 230 โควตา/บิล (`erp-review/2026-11-02/QUOTA_ADDON_SUBSCRIPTION_AUDIT.md` §"สถานะการลงมือ รอบ 230" · `PLATFORM_OMISE_AUDIT.md` §7.1 · คำตัดสินข้อ 230-Q1..Q4 · ACCOUNT_STRUCTURE §6.2e):
+**ส่วนต่างอัปเกรดกลางรอบ** (`Helpers/PlatformProration` · รายการ `IsProration` · วันหมดอายุคงเดิม · ใบต่ออายุแพ็กเกจเดิมถูกแทนที่ · ล้าสมัย ⇒ พักให้แอดมิน · `GET plan-quote`) ·
+**คูปอง** (`PlatformCoupons`/`PlatformCouponRedemptions` · `Helpers/PlatformCouponRule` · `PlatformCouponStore` จองใต้ล็อก/นับเมื่อเงินเข้า/ปลด · ใบกำกับส่วนลดก่อน VAT `SplitDiscounted` · แอดมิน `/admin/coupons.html`) ·
+**แอดมินแก้ยอด** (`POST api/admin/subscription-payments/{id}/amount` · audit) · อนุมัติอัตโนมัติเทียบ `QuotedAmount` (`PlatformPlanPricing.AutoApproveExpected`) ·
+**ใบต่ออายุยังไม่จ่าย ⇒ เปลี่ยนรายการได้** (ยกเลิก+ออกใหม่ · จ่ายแล้ว 409) · **hub 4 แท็บ** + หลอดคิดที่เซิร์ฟเวอร์ (`Helpers/UsageBarRule` · `QuotaSummaryItem.Percent`) ·
+กติกา `required_call_site_check` +16 (`_R230Q_WHY` · กติการอบ 227 S2 ของใบเสร็จย้ายไป `SplitDiscounted` ที่เรียก `SplitReceived`) · เทสต์ `PlatformCouponProrationRound230Tests` · `Db/PlatformCouponProrationDbTests` · `Db/QuotaAddOnPaymentDbTests` ปรับ (409 ต้องมีรายการแจ้งชำระ) —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 230 ฝ่ายค้าน (TAX_PENALTY_AUDIT §6 ภาคผนวก): B1 คอมไพล์ (`entertainmentCap`) · S1 ไฟล์ ภ.ง.ด.51 จากรายการที่ตั้งหนี้แล้วหรือ `Tax/CitPeriodFigures` ตัวเดียว (เลิกยกเว้นจาก CreatedAt · ครบกำหนด 31 ส.ค.) ·
+S2 ครบกำหนด/เงินเพิ่ม ภ.ง.ด.51/50 จาก `PeriodEnd` (`CitPayment.DueKey`) · S3 แถวเดิม 409 คำนวณใหม่ · S4 ขาดทุนยกมาตัวเดียว (`LossCarryForwardAvailable` · คอลัมน์ `LossCarryForwardUsed`) ·
+S5 เครดิตภาษีถูกหัก `CreditableInPeriod` ทั้งสองจอ · S6 ค่ารับรอง 54460/ชื่อ · S7 580xx แคบลง (+ผังลูก) · S8 `NoTaxDue` หลังด่านงวด · S9 เงินทดแทนคิดใหม่เมื่อรายได้เปลี่ยน ·
+N1 ขอบวันสุดท้าย · N2 ข้อความงวดปิด · N3 รอบแรกตามรอบบัญชี · N4 แบ่งหน้า + "ลงบัญชีด้วยมือแล้ว — ซ่อน" (คอลัมน์ `StampDutyRecords.ManualPostingConfirmedAt/By`) · N5 `GET financial/cit/period` · N6 ปีให้ตารางอัตรา ·
+พบ: ภ.ง.ด.50 บวกค่าเสื่อม `AssetDepreciation` ซ้ำกับ GL (ไม่แก้ — ต้องยืนยัน) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — ยังไม่ commit_
+
+_รอบ 230 Omise — ฝ่ายค้าน (2026-11-03 · `PLATFORM_OMISE_AUDIT.md` §7.4): B1 ตัดบัตรที่บันทึกแล้วหมดเวลา/5xx/เครือข่ายขาด = **รอผล** (ไม่ใช่ล้มเหลว) + หา charge จาก metadata
+(`IPaymentProvider.FindChargeForIntentAsync` · ตัวตัดสิน `Helpers/SavedCardChargeOutcome`) · ตรวจความพยายามที่ล้มซ้ำ 7 วัน · B2 `PaymentIntent.SavedCardRef` — โทเคนใหม่/บัตรคนละใบห้ามใช้รายการเปิดเดิม ·
+ยืนยันบัตรเฉพาะรายการที่สร้างในคำขอนี้และตัดด้วยบัตรใบนั้น · S1 นิติบุคคลรับทราบภาษีหัก ณ ที่จ่ายแยก · S2 ฉบับที่แสดงบังคับ + `PdpaConsentRecord.UserAgent` ใน hash ·
+S3 คำสั่งตัดเปิดเมื่อบัตรยืนยันแล้ว + ทิ้งบัตรเมื่อเริ่มชำระไม่สำเร็จ · S4 watermark `LastProcessedAt` · S5 จับคู่ใหม่ถือ JobLock + ร่างที่ยกเลิก = ไม่มีร่าง ·
+S6 ความยินยอมอยู่ใน DSR/ข้อมูลของฉัน + ลบตามคำขอ + ปิดแล้วเสนอลบบัตร · S7 ระงับโดยทวงหนี้ต้องตรงประวัติ · nice: ต้องยืนยันตัวตน = จบหยุดลองใหม่ · VAT ค่าธรรมเนียมโอนคงไว้ ·
+วิธีชำระ = บัตร · ไม่ตัดใบที่แจ้งภาษีหักไว้ · TEST_PLAN PB230-15..20 — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_
+
+_รอบ 230 คำตัดสินค่าเสื่อม: ภ.ง.ด.50 (`GenerateCitReport`) + เครื่องคำนวณ + ไฟล์ ภ.ง.ด.51 นับ `AssetDepreciation` เพิ่มเฉพาะแถวที่ยังไม่ลงบัญชี (`CitCalculation.Unbooked` ·
+`Tax/CitPeriodFigures.UnbookedDepreciationAsync`) — เดิมบวกแถวที่ `FixedAssetService` ลง JE แล้วซ้ำกับค่าใช้จ่าย GL · รายงานที่สร้างก่อนแก้: ตัวเทียบ/สร้างใหม่ · เทสต์ pure + Db — ยังไม่ได้คอมไพล์ในเครื่องนี้ — ยังไม่ commit_
+
+_รอบ 230 โควตา/บิล ภาคผนวกฝ่ายค้าน (B1 + S1–S6 + N1–N8 · `QUOTA_ADDON_SUBSCRIPTION_AUDIT.md` §ภาคผนวกฝ่ายค้านรอบ 230): เริ่มชำระออนไลน์ใช้ `AutoApproveExpected` ตัวเดียวกับ handler (QuotedAmount เฉพาะส่วนต่าง/คูปอง/แอดมินแก้) ·
+`RenewalInvoiceClaims` ตัวตัดสินเดียว "ใบต่ออายุถูกจ่ายแล้ว" · เปลี่ยนรายการต่ออายุใต้ล็อกการอนุมัติ + `HandleStaleRenewalInvoiceAsync` คืนผล · `ExpireStaleQuotedPaymentsAsync` · `RedeemProblemAsync` ·
+เหลือ 0 ตัดสินใน `Apply` · `AdjustForOverrideAsync` · `StaleReason(now)` · `SupersedePendingPaymentsAsync` · `HoldForAdminAsync` ตัวเดียว · ดูผลคูปองจำกัดอัตรา · ล็อกบริษัทของคูปองครั้งแรก · ช่วงวันที่ใบส่วนต่าง ·
+ประวัติล้างการเปลี่ยนที่รอ · โปรโมชันทดลองใช้ใน hub · ส่วนลดบนใบเมื่อรับเกิน · เตือนแก้ยอดหลังแนบสลิป — เทสต์เพิ่มใน `PlatformCouponProrationRound230Tests` · `Db/PlatformCouponProrationDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit (เติมในคอมมิตตามหลัง)_

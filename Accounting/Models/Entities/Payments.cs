@@ -218,6 +218,9 @@ public class PaymentIntent : TenantEntity
     /// <summary>กันสร้าง intent ซ้ำสำหรับการจ่ายครั้งเดียวกัน —
     /// <c>"{SourceKind}:{SourceId}:{Amount}:{seq}"</c> · unique ต่อบริษัท</summary>
     public string IdempotencyKey { get; set; } = null!;
+    /// <summary>รอบ 230 ฝ่ายค้าน B2: เลขอ้างอิงบัตรที่บันทึกไว้ของผู้ให้บริการที่ใช้ตัดรายการนี้ (ไม่ใช่เลขบัตร) — null = ไม่ใช่บัตรที่บันทึก ·
+    /// ใช้ตัดสินว่าใช้รายการเปิดเดิมซ้ำได้ไหม (บัตรคนละใบ/โทเคนใหม่ = ห้ามใช้ซ้ำ) และยืนยันบัตรจากรายการที่ตัดด้วยบัตรนั้นจริงเท่านั้น</summary>
+    public string? SavedCardRef { get; set; }
 
     public ICollection<PaymentIntentEvent> Events { get; set; } = new List<PaymentIntentEvent>();
 }

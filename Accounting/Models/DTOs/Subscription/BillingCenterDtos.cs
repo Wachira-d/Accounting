@@ -30,7 +30,12 @@ public sealed record BillingCenterPayment(
     string? RejectionReason,
     /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: หักภาษี ณ ที่จ่ายแล้วยังไม่ส่งหนังสือรับรอง 50 ทวิ (หน้าเว็บแสดงปุ่มส่ง) — เซิร์ฟเวอร์ตัดสิน</summary>
     bool NeedsWhtCertificate = false,
-    decimal WithholdingTaxAmount = 0m);
+    decimal WithholdingTaxAmount = 0m,
+    /// <summary>รอบ 230: รายการชำระค่าแพ็กเกจ/ส่วนต่างอัปเกรดที่ยังไม่จ่าย (ไม่มีสลิป · ไม่ผูกใบแจ้งหนี้) ⇒ หน้าเว็บแสดงปุ่ม "ชำระ" — เซิร์ฟเวอร์ตัดสิน</summary>
+    bool CanPayNow = false,
+    /// <summary>รอบ 230: ส่วนลดคูปองของรายการ (0 = ไม่มี) · ยอดก่อนคูปอง</summary>
+    decimal CouponDiscountAmount = 0m,
+    string? CouponCode = null);
 
 public sealed record BillingCenterAddOn(
     string FeatureCode, string Name, string PaymentStatus, string PaymentStatusLabel, string BillingChoice, string BillingChoiceLabel,

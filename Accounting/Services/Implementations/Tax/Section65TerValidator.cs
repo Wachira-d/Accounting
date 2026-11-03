@@ -315,9 +315,8 @@ public static class Section65TerValidator
         }
         else if (entertainmentTotal > 0)
         {
-            var cap = Math.Min(
-                Math.Max((ctx.AnnualRevenue ?? 0m) * 0.003m, (ctx.PaidUpCapital ?? 0m) * 0.003m),
-                10_000_000m);
+            // รอบ 230: เพดานจากตัวตั้งเดียว (ภ.ง.ด.50 + เครื่องคำนวณ CIT ใช้ตัวเดียวกัน)
+            var cap = Accounting.Helpers.CitCalculation.EntertainmentCap(ctx.AnnualRevenue ?? 0m, ctx.PaidUpCapital ?? 0m);
             var priorYtd = ctx.PriorYtdEntertainmentExpense ?? 0m;
             var combined = priorYtd + entertainmentTotal;
             var totalExcess = Math.Max(0m, combined - cap);

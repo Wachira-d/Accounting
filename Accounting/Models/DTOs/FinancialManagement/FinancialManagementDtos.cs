@@ -90,11 +90,17 @@ public record AccruedExpenseResponse(
     Guid? AccrualJournalId, Guid? PaymentJournalId);
 
 // ===== 6. Corporate Income Tax =====
+/// <summary>รอบ 230: <paramref name="WithholdingTaxCredit"/>/<paramref name="PrepaidTaxCredit"/> ว่าง (null) = ระบบดึงให้ (ภาษีถูกหักจากทะเบียนหนังสือรับรอง ·
+/// ภ.ง.ด.51 ที่ตั้งหนี้แล้วของปีเดียวกัน) · <paramref name="EstimatedAnnualProfit"/> ว่าง = กำไรครึ่งปี × 2 · <paramref name="SmeOverride"/> ต้องมี
+/// <paramref name="SmeOverrideReason"/> · <paramref name="ShortFiscalYear"/> = true ⇒ รอบไม่ถึง 12 เดือน ไม่ต้องยื่น ภ.ง.ด.51</summary>
 public record CalculateCITRequest(
     string TaxYear, string TaxPeriod,
     decimal? AddBackItems, decimal? DeductionItems,
     decimal? WithholdingTaxCredit, decimal? PrepaidTaxCredit,
-    string? Notes);
+    string? Notes,
+    decimal? ExemptIncome = null, decimal? EstimatedAnnualProfit = null, string? HalfYearBasis = null,
+    bool? SmeOverride = null, string? SmeOverrideReason = null, bool? ShortFiscalYear = null,
+    decimal? LossCarryForward = null);
 
 public record CITResponse(
     Guid Id, string TaxYear, string TaxPeriod,
@@ -102,7 +108,15 @@ public record CITResponse(
     decimal AddBackItems, decimal DeductionItems, decimal TaxableProfit,
     decimal TaxRate, decimal TaxAmount,
     decimal WithholdingTaxCredit, decimal PrepaidTaxCredit, decimal NetTaxPayable,
-    string Status, string? Notes, Guid? JournalEntryId);
+    string Status, string? Notes, Guid? JournalEntryId,
+    DateTime? PeriodStart = null, DateTime? PeriodEnd = null, bool? IsSme = null, string? SmeReason = null, string? SmeOverrideReason = null,
+    decimal AutoAddBack = 0m, decimal ExemptIncome = 0m, decimal CitExpenseExcluded = 0m,
+    decimal? EstimatedAnnualProfit = null, string? HalfYearBasis = null, string? CalculationNote = null,
+    decimal LossCarryForwardUsed = 0m);
+
+/// <summary>รอบ 230 N5 — งวดภาษีที่เซิร์ฟเวอร์คิดจากรอบบัญชีบริษัท (หน้าแสดงก่อนกดคำนวณ)</summary>
+public record CitPeriodPreviewResponse(string TaxPeriod, int FiscalYear, DateTime PeriodStart, DateTime PeriodEnd, DateTime PostingDate,
+    DateTime PaperDueDate, string Label, string? Warning);
 
 // ===== 7. Profit Appropriation =====
 public record CreateProfitAppropriationRequest(

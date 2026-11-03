@@ -10,7 +10,9 @@ using Microsoft.EntityFrameworkCore;
 namespace Accounting.Services.Payments;
 
 /// <summary>คำขอซื้อโควตาเสริม — <paramref name="ExpectedPerUnit"/>/<paramref name="ExpectedAmount"/> = ยอดที่ผู้ซื้อเห็น (ไม่ตรงของจริง ⇒ 409 · ยังไม่คิดเงิน)</summary>
-public sealed record QuotaPurchaseRequest(string ResourceKey, QuotaAddOnMode Mode, int Units, decimal? ExpectedPerUnit, decimal? ExpectedAmount);
+/// <para>รอบ 230: <paramref name="CouponCode"/> = คูปองแพลตฟอร์ม — ยอดที่เทียบ (<c>Expected*</c>) คือยอด<b>ก่อน</b>คูปอง · ส่วนลดตัดสินที่เซิร์ฟเวอร์ใต้ล็อก (ใช้ไม่ได้ = 400 ไม่สร้างรายการ)</para>
+public sealed record QuotaPurchaseRequest(string ResourceKey, QuotaAddOnMode Mode, int Units, decimal? ExpectedPerUnit, decimal? ExpectedAmount,
+    string? CouponCode = null);
 
 /// <summary>ข้อเสนอที่เปลี่ยนระหว่างที่ผู้ซื้อดูอยู่ (409) — ลอก <c>NotifyTopUpOfferChangedException</c></summary>
 public sealed class QuotaOfferChangedException : BusinessRuleException
@@ -255,6 +257,15 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
             ProrationNote = q.Note + (renewalIssued ? " · ใบแจ้งหนี้ต่ออายุรอบหน้าออกแล้ว — รายการนี้หมดพร้อมรอบปัจจุบัน (ซื้อใหม่เมื่อต่ออายุ)" : ""),
             RequestKey = requestKey, CreatedBy = actor,
         };
+        // รอบ 230 (คำตัดสินข้อ 230-Q2): คูปองแพลตฟอร์ม — จองใต้ล็อกในธุรกรรมเดียวกับการสร้างรายการ · ยอดที่ต้องจ่าย = หลังส่วนลด (ไม่ต่ำกว่า 0) ·
+        // ราคาต่อหน่วยบนรายการคงเดิม (ส่วนลดแสดงบนใบเสร็จเป็นส่วนลดของบรรทัดก่อน VAT)
+        if (PlatformCouponRule.Normalize(req.CouponCode) is string couponCode)
+        {
+            var (coupon, eval) = await PlatformCouponStore.ReserveAsync(_db, companyId, couponCode, PlatformCouponScope.QuotaAddOn,
+                null, null, res.Key, q.Amount, PlatformCouponRule.SourceQuotaAddOn, row.Id, actor, now, ct);
+            row.CouponId = coupon.Id; row.CouponCode = coupon.Code; row.CouponDiscountAmount = eval.Discount;
+            row.ListAmount = q.Amount; row.AmountDue = eval.AmountAfter;
+        }
         _db.CompanyQuotaAddOns.Add(row);
         _db.AddChainedAuditLog(new AuditLog
         {
@@ -262,7 +273,8 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
             NewValues = System.Text.Json.JsonSerializer.Serialize(new
             {
                 action = "QuotaAddOnPurchaseCreated", resource = res.Key, mode = req.Mode.ToString(), row.Units, row.UnitSize,
-                perUnit = q.PerUnit, amount = q.Amount, periodEnd = q.PeriodEndUtc, note = q.Note, by = actor,
+                perUnit = q.PerUnit, amount = q.Amount, amountDue = row.AmountDue, coupon = row.CouponCode, discount = row.CouponDiscountAmount,
+                periodEnd = q.PeriodEndUtc, note = q.Note, by = actor,
             }),
             Timestamp = now,
         });
@@ -466,8 +478,36 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
                         staleness, row.Id, companyId, amount);
                     throw new BusinessRuleException(row.AttentionReason, StaleRuleCode);
                 }
+                // รอบ 230 (ฝ่ายค้าน S3): คูปองที่การจองหมดอายุระหว่างค้าง + เกินเพดานแล้ว ⇒ ไม่เปิดเอง (ล้มดัง)
+                await RefuseIfCouponOverCapAsync(row, companyId, intentId, amount, actor, ct);
                 await ActivateAsync(row, paidAt, intentId, amount, actor, ct);
             }, ct);
+
+    /// <summary>รอบ 230 (ฝ่ายค้าน S3): เงินเข้าผ่าน gateway ของรายการที่มีคูปอง — การจองหมดอายุ/ถูกปลดแล้ว + เกินเพดาน ⇒ ไม่เปิดสิทธิ์เอง: เงินที่รับบันทึกไว้ ·
+    /// เรื่องค้าง <c>PLATFORM-COUPON</c> + audit + โยน (ล้มดังถึงผู้ส่งต่อ) ให้แอดมินอนุมัติ (นับเกิน) หรือคืนเงินส่วนต่าง · นับใต้ล็อกของคูปองในธุรกรรมสั้น</summary>
+    private async Task RefuseIfCouponOverCapAsync(CompanyQuotaAddOn row, Guid companyId, Guid intentId, decimal amount, string actor, CancellationToken ct)
+    {
+        if (row.CouponId == null) return;
+        string? over;
+        await using (var ctx = _db.Database.IsRelational() && _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync(ct) : null)
+        {
+            over = await PlatformCouponStore.RedeemProblemAsync(_db, companyId, PlatformCouponRule.SourceQuotaAddOn, row.Id, ct);
+            if (ctx != null) await ctx.CommitAsync(ct);
+        }
+        if (over == null) return;
+        row.ReceivedAmount = amount; row.PaymentIntentId = intentId;
+        row.AttentionRule = PlatformCouponRule.RuleCode;
+        row.AttentionReason = $"เงินเข้า {amount:N2} บาท (intent {intentId:N}) แต่ {over}";
+        row.UpdatedAt = DateTime.UtcNow; row.UpdatedBy = actor;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = companyId, EntityType = nameof(CompanyQuotaAddOn), EntityId = row.Id.ToString(), Action = AuditAction.Update,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "quota-addon-paid-coupon-overcap", ruleCode = PlatformCouponRule.RuleCode, intentId, amount }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        throw new BusinessRuleException(row.AttentionReason, PlatformCouponRule.RuleCode);
+    }
 
     /// <summary>รับเงินแล้ว ⇒ เปิดสิทธิ์ (+ เครดิต OCR) + ใบกำกับ/ใบเสร็จ + audit · เรียกใต้ล็อกของรายการเท่านั้น</summary>
     private async Task ActivateAsync(CompanyQuotaAddOn row, DateTime paidAtUtc, Guid? intentId, decimal amountReceived, string actor, CancellationToken ct)
@@ -517,11 +557,24 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
             }),
             Timestamp = now,
         });
-        await _db.SaveChangesAsync(ct);
+        // รอบ 230: เงินเข้าแล้ว ⇒ นับการใช้คูปอง (idempotent · UPDATE แบบมีเงื่อนไข) · ฝ่ายค้าน N2: นับและเปิดสิทธิ์ในธุรกรรมเดียวกัน (ล้มกลางทาง = ไม่นับ/ไม่เปิดทั้งคู่)
+        await using (var tx = row.CouponId != null && _db.Database.IsRelational() && _db.Database.CurrentTransaction == null
+            ? await _db.Database.BeginTransactionAsync(ct) : null)
+        {
+            if (row.CouponId != null)
+                await PlatformCouponStore.RedeemAsync(_db, row.CompanyId, PlatformCouponRule.SourceQuotaAddOn, row.Id, actor, ct);
+            await _db.SaveChangesAsync(ct);
+            if (tx != null) await tx.CommitAsync(ct);
+        }
 
         // ใบกำกับภาษี/ใบเสร็จรับเงิน (ขายเงินสด) ใน tenant ผู้ให้บริการ — เส้นเดิมของส่วนเสริม (§86/4 · gap-free · รายงานภาษีขาย)
         await IssueReceiptAsync(row, amountReceived, paidAtUtc, intentId, ct);
     }
+
+    /// <summary>ฝ่ายค้าน N7: ส่วนลดบนใบ = ราคาก่อนคูปอง − เงินที่รับจริง (ไม่ติดลบ) — รับเกินยอดหลังลด ⇒ ส่วนลดลดลง (ราคาเต็มบนใบไม่เกินราคาก่อนคูปอง) · ไม่มีคูปอง = 0</summary>
+    internal static decimal ReceiptDiscount(CompanyQuotaAddOn row, decimal amountReceived)
+        => row.CouponDiscountAmount <= 0m ? 0m
+            : Math.Max(0m, PlatformCouponRule.R2((row.ListAmount ?? row.AmountDue + row.CouponDiscountAmount) - amountReceived));
 
     /// <summary>ใบกำกับภาษี/ใบเสร็จของเงินที่รับ (idempotent ด้วยเลขอ้างอิง) · ล้ม ⇒ audit + log error (ไม่โยน — สิทธิ์เปิดแล้ว)</summary>
     private async Task<string?> IssueReceiptAsync(CompanyQuotaAddOn row, decimal amountReceived, DateTime paidAtUtc, Guid? intentId, CancellationToken ct)
@@ -532,9 +585,11 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
             var res = QuotaResources.Find(row.ResourceKey);
             var unitText = row.UnitSize > 1 ? $"{row.Units:N0} × {row.UnitSize:N0} {res?.Unit}" : $"{row.Units:N0} {res?.Unit}";
             var desc = $"โควตาเสริม {res?.Label ?? row.ResourceKey} {unitText} · {ModeLabel(row.Mode)} · หน่วยละ {row.UnitPriceSnapshot:N2} บาท"
-                + (string.IsNullOrWhiteSpace(row.ProrationNote) ? "" : $" · {row.ProrationNote}");
+                + (string.IsNullOrWhiteSpace(row.ProrationNote) ? "" : $" · {row.ProrationNote}")
+                + (row.CouponDiscountAmount > 0m ? $" · ส่วนลดคูปอง {row.CouponCode}" : "");
+            // รอบ 230: ส่วนลดคูปองเป็นส่วนลดของบรรทัดก่อน VAT (§86/4) — ใบ = เงินที่รับพอดี
             var doc = await _issuer.IssueAddOnReceiptAsync(row.CompanyId, desc.Length > 480 ? desc[..480] : desc, amountReceived, paidAtUtc,
-                ReceiptReference(row.Id, intentId), intentId);
+                ReceiptReference(row.Id, intentId), intentId, ReceiptDiscount(row, amountReceived));
             if (doc != null)
             {
                 row.ReceiptDocumentId = doc.DocumentId; row.ReceiptNumber = doc.DocumentNumber;
@@ -579,6 +634,7 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
     {
         var row = await LoadAsync(companyId, purchaseId, ct);
         var now = DateTime.UtcNow;
+        Guid? reissueAfter = null;
         if (row.Status is QuotaAddOnStatus.AwaitingPayment or QuotaAddOnStatus.Rejected)
         {
             // ยังไม่ได้จ่าย ⇒ ยกเลิกรายการได้ทันที (ไม่มีเงิน/สิทธิ์เกี่ยวข้อง) — มีรายการชำระออนไลน์ค้าง ⇒ ห้าม (เงินอาจกำลังเข้า)
@@ -586,6 +642,8 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
                     && i.PayerCompanyId == companyId && (i.Status == PaymentIntentStatus.Pending || i.Status == PaymentIntentStatus.Created), ct))
                 throw new BusinessRuleException("มีรายการชำระออนไลน์ค้างอยู่ — รอให้หมดอายุก่อนยกเลิก", "QUOTA-CANCEL-PENDING", 409);
             row.Status = QuotaAddOnStatus.Cancelled;
+            if (row.CouponId != null)   // รอบ 230: ปลดการจองคูปอง (ไม่นับเข้าเพดาน)
+                await PlatformCouponStore.ReleaseAsync(_db, companyId, PlatformCouponRule.SourceQuotaAddOn, row.Id, "ผู้ซื้อยกเลิกรายการที่ยังไม่จ่าย", actor, ct);
         }
         else if (row.Status == QuotaAddOnStatus.Active && row.Mode == QuotaAddOnMode.RecurringMonthly)
         {
@@ -595,10 +653,9 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
         }
         else if (row.Status == QuotaAddOnStatus.Active && row.Mode == QuotaAddOnMode.Coterm)
         {
-            // ฝ่ายค้าน S1: อยู่ในใบต่ออายุที่ออกแล้ว ⇒ ล็อก (เหมือน SetRenewalAsync) — ไม่งั้นเอาออกแล้วจ่ายใบ ระบบยังต่อให้ = silent no-op
-            if (row.RenewalInvoiceDocumentId != null)
-                throw new BusinessRuleException("ใบแจ้งหนี้ต่ออายุรอบหน้าออกแล้ว (รวมรายการนี้) — ยกเลิกการต่อไม่ได้ (ติดต่อผู้ดูแลระบบเพื่อออกใบใหม่)",
-                    "QUOTA-RENEW-LOCKED", 409);
+            // ฝ่ายค้าน S1 + รอบ 230: อยู่ในใบต่ออายุที่ออกแล้ว — ยังไม่มีการชำระ ⇒ ยกเลิกใบเดิม + ออกใบใหม่ไม่มีบรรทัดนี้ · มีการชำระแล้ว ⇒ 409 (ไม่ silent no-op)
+            if (row.RenewalInvoiceDocumentId is Guid lockedInvoice)
+                reissueAfter = await PrepareRenewalSupersedeAsync(companyId, lockedInvoice, actor, "ผู้เช่าเลิกต่อโควตาเสริมที่อยู่ในใบต่ออายุ", ct);
             row.RenewWithPlan = false;   // ไม่ต่อรอบหน้า — ใช้ได้ถึงวันหมดอายุที่จ่ายไว้
         }
         else throw new BusinessRuleException("รายการนี้ยกเลิกไม่ได้ (เดือนเดียว = หมดเองเมื่อครบกำหนด)", "QUOTA-CANCEL-STATE", 409);
@@ -610,6 +667,7 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
             Timestamp = now,
         });
         await _db.SaveChangesAsync(ct);
+        if (reissueAfter != null) await ReissueRenewalAsync(companyId);
         return row;
     }
 
@@ -618,10 +676,11 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
         var row = await LoadAsync(companyId, purchaseId, ct);
         if (row.Mode != QuotaAddOnMode.Coterm || row.Status != QuotaAddOnStatus.Active)
             throw new BusinessRuleException("เลือกต่ออายุได้เฉพาะโควตาเสริมแบบ \"ถึงวันหมดอายุแพ็กเกจ\" ที่ใช้งานอยู่", "QUOTA-RENEW-STATE", 409);
-        // ห้าม silent no-op: ใบต่ออายุออกแล้ว ⇒ ล็อก (เปลี่ยนรายการต้องให้ผู้ดูแลระบบออกใบใหม่)
-        if (row.RenewalInvoiceDocumentId != null)
-            throw new BusinessRuleException("ใบแจ้งหนี้ต่ออายุรอบหน้าออกแล้ว — เปลี่ยนรายการต่ออายุไม่ได้ (ติดต่อผู้ดูแลระบบเพื่อออกใบใหม่)",
-                "QUOTA-RENEW-LOCKED", 409);
+        // รอบ 230 (§E ข้อ 4 · แทนการล็อก 409 ของรอบ 229): ใบต่ออายุออกแล้ว — <b>ยังไม่มีการชำระ/แจ้งชำระ</b> ⇒ ยกเลิกใบเดิม (เส้นยกเลิกเอกสาร) + ออกใบใหม่ตามรายการที่แก้ ·
+        // มีการชำระ/แจ้งชำระแล้ว ⇒ 409 พร้อมเหตุ (ไม่ silent no-op · ใบที่รับเงินแล้วต้องใช้ใบลดหนี้โดยผู้ดูแลระบบ)
+        Guid? supersede = null;
+        if (row.RenewalInvoiceDocumentId is Guid lockedInvoice)
+            supersede = await PrepareRenewalSupersedeAsync(companyId, lockedInvoice, actor, "ผู้เช่าเปลี่ยนรายการโควตาเสริมที่ต่อพร้อมแพ็กเกจ", ct);
         if (units is int u)
         {
             if (u < 1) throw new BusinessRuleException("จำนวนที่ต่อต้องอย่างน้อย 1 (ไม่ต่อ = เอาเครื่องหมายออก)");
@@ -633,7 +692,59 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
         row.RenewUnits = units;
         row.UpdatedAt = DateTime.UtcNow; row.UpdatedBy = actor;
         await _db.SaveChangesAsync(ct);
+        if (supersede != null) await ReissueRenewalAsync(companyId);
         return row;
+    }
+
+    /// <summary>รอบ 230 (§E ข้อ 4 · ฝ่ายค้าน S2): แทนที่ใบต่ออายุที่ออกแล้ว — <b>ใต้ล็อกตัวเดียวกับการอนุมัติรายการชำระของ subscription นี้</b>
+    /// (session lock คีย์ <c>SubscriptionPaymentReview</c> — เงินเข้าระหว่างนี้รอจนจบ): ตรวจ "ยังไม่มีใครจ่าย" (<see cref="RenewalInvoiceClaims"/> ตัวเดียว) →
+    /// ยกเลิกใบผ่านเส้นยกเลิกเอกสาร (<c>HandleStaleRenewalInvoiceAsync</c> คืนผล) → <b>เฉพาะเมื่อยกเลิกได้</b>จึงปลดตัวชี้ (แพ็กเกจ + ทุกบรรทัด) + ประวัติ + audit ·
+    /// ยกเลิกไม่ได้ ⇒ 409 พร้อมเหตุ (ไม่มีอะไรเปลี่ยน) · ผู้เรียกบันทึกการเปลี่ยนของตัวเองแล้วเรียก <see cref="ReissueRenewalAsync"/></summary>
+    private async Task<Guid> PrepareRenewalSupersedeAsync(Guid companyId, Guid invoiceId, string actor, string cause, CancellationToken ct)
+    {
+        var subId = await _db.Subscriptions.AsNoTracking().Where(s => s.CompanyId == companyId && !s.IsDeleted).Select(s => (Guid?)s.Id).FirstOrDefaultAsync(ct)
+            ?? throw new BusinessRuleException("ไม่พบแพ็กเกจของบริษัทนี้", "QUOTA-RENEW-LOCKED", 409);
+        return await SessionAdvisoryLock.RunAsync(_db, AdvisoryLockKey.For(AdvisoryLockKey.SubscriptionPaymentReview, subId.ToString("N")), async () =>
+        {
+            if (await RenewalInvoiceClaims.ClaimProblemAsync(_db, subId, invoiceId, null, ct) is string claimed)
+                throw new BusinessRuleException(claimed + " — เปลี่ยนรายการต่ออายุไม่ได้", "QUOTA-RENEW-LOCKED", 409);
+            // ยกเลิกใบก่อน — ไม่สำเร็จ ⇒ ไม่ปลดตัวชี้ (ไม่ทิ้งใบที่ยังเปิดอยู่โดยไม่มีตัวชี้) · โหมด PDF เดี่ยว (ไม่มีเอกสารจริง) = NotFound ⇒ ปลดได้
+            var outcome = _services.GetService(typeof(ISaasBillingDocumentService)) is ISaasBillingDocumentService billing
+                ? await billing.HandleStaleRenewalInvoiceAsync(subId, invoiceId, cause)
+                : StaleRenewalOutcome.NotFound;
+            if (outcome is not (StaleRenewalOutcome.Voided or StaleRenewalOutcome.NotFound))
+                throw new BusinessRuleException($"ยกเลิกใบแจ้งหนี้ต่ออายุเดิมไม่สำเร็จ ({outcome}) — เปลี่ยนรายการต่ออายุไม่ได้ตอนนี้ (ผู้ดูแลระบบได้รับเรื่องในประวัติแพ็กเกจแล้ว)",
+                    "QUOTA-RENEW-LOCKED", 409);
+            var sub = await _db.Subscriptions.FirstAsync(s => s.Id == subId, ct);
+            await _db.Entry(sub).ReloadAsync(ct);
+            var oldNo = sub.RenewalInvoiceDocumentId == invoiceId ? RenewalInvoiceSupersede.Apply(sub) : null;
+            var lines = await _db.CompanyQuotaAddOns.Where(r => r.CompanyId == companyId && r.RenewalInvoiceDocumentId == invoiceId).ToListAsync(ct);
+            foreach (var l in lines) { l.RenewalInvoiceDocumentId = null; l.RenewUnitPrice = null; l.UpdatedAt = DateTime.UtcNow; l.UpdatedBy = actor; }
+            _db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = sub.Id, Action = "RenewalInvoiceSuperseded",
+                Notes = $"ใบแจ้งหนี้ต่ออายุ {oldNo ?? invoiceId.ToString()} ถูกแทนที่ ({cause} · ยังไม่มีการชำระ · ผลยกเลิกใบ {outcome}) — ออกใบใหม่ตามรายการที่แก้",
+                PerformedBy = actor,
+            });
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, Action = AuditAction.Update, EntityType = "Document", EntityId = invoiceId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "QuotaRenewalInvoiceSuperseded", ruleCode = "QUOTA-RENEW-REISSUE", outcome = outcome.ToString(), lines = lines.Count, by = actor }),
+                Timestamp = DateTime.UtcNow,
+            });
+            await _db.SaveChangesAsync(ct);
+            return invoiceId;
+        }, ct);
+    }
+
+    /// <summary>รอบ 230: หลังบันทึกรายการใหม่ (ใบเดิมยกเลิกแล้วใน <see cref="PrepareRenewalSupersedeAsync"/>) — ออกใบต่ออายุใหม่ทันที (ล้ม = งานต่ออายุออกให้รอบถัดไป · ไม่ทำให้การเลือกพัง)</summary>
+    private async Task ReissueRenewalAsync(Guid companyId)
+    {
+        if (_services.GetService(typeof(ISaasBillingDocumentService)) is not ISaasBillingDocumentService billing) return;
+        var subId = await _db.Subscriptions.AsNoTracking().Where(s => s.CompanyId == companyId && !s.IsDeleted).Select(s => (Guid?)s.Id).FirstOrDefaultAsync();
+        if (subId is not Guid sid) return;
+        try { await billing.GenerateRenewalInvoiceAsync(sid); }
+        catch (Exception ex) { _logger.LogError(ex, "ออกใบต่ออายุใหม่หลังเปลี่ยนรายการไม่สำเร็จ (sub {Sub}) — งานต่ออายุจะออกให้รอบถัดไป", sid); }
     }
 
     public Task<List<CompanyQuotaAddOn>> PurchasesAsync(Guid companyId, CancellationToken ct = default)
@@ -649,19 +760,25 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
         var cycle = sub.ScheduledPlan != null ? (sub.ScheduledBillingCycle ?? sub.BillingCycle) : sub.BillingCycle;
         var lines = await QuotaRenewalLines.CandidatesAsync(_db, companyId, sub.EndDate, PlatformPlanPricing.MonthsOf(cycle), includeOptedOut: true, ct);
         var invoiceIssued = sub.RenewalInvoiceNumber != null && sub.RenewalInvoiceForEndDate == sub.EndDate;
+        // รอบ 230: ใบออกแล้วแต่ยังไม่มีการชำระ/แจ้งชำระ ⇒ ยังเปลี่ยนได้ (ระบบออกใบใหม่ให้) · ล็อกเฉพาะเมื่อมีการชำระ/แจ้งชำระแล้ว (ตัวตัดสินเดียวกับ PrepareRenewalSupersedeAsync)
+        var lockedInvoices = (await _db.SubscriptionPayments.AsNoTracking()
+            .Where(p => p.Subscription.CompanyId == companyId && p.PlatformInvoiceDocumentId != null
+                && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview || p.Status == SubscriptionPaymentStatus.Approved))
+            .Select(p => p.PlatformInvoiceDocumentId!.Value).Distinct().ToListAsync(ct)).ToHashSet();
         return new
         {
             endDate = sub.EndDate, cycleMonths = PlatformPlanPricing.MonthsOf(cycle), invoiceIssued, invoiceNumber = invoiceIssued ? sub.RenewalInvoiceNumber : null,
             licenseManaged = sub.AccountSubscriptionId != null,
             note = sub.AccountSubscriptionId != null
                 ? "บริษัทนี้ใช้แพ็กเกจจาก License — โควตาเสริมแบบถึงวันหมดอายุหมดพร้อม License (ต่ออายุพร้อมใบแจ้งหนี้ยังไม่รองรับในรุ่นนี้ — ซื้อใหม่หลังต่ออายุ)"
-                : invoiceIssued ? $"ใบแจ้งหนี้ต่ออายุ {sub.RenewalInvoiceNumber} ออกแล้ว — รายการที่ติ๊กไว้อยู่ในใบนั้น (เปลี่ยนไม่ได้แล้ว)"
+                : invoiceIssued ? $"ใบแจ้งหนี้ต่ออายุ {sub.RenewalInvoiceNumber} ออกแล้ว — เปลี่ยนรายการได้จนกว่าจะชำระ (ระบบยกเลิกใบเดิมและออกใบใหม่ให้) · ชำระ/แจ้งชำระแล้วเปลี่ยนไม่ได้"
                 : "ค่าตั้งต้น = ต่อทุกรายการที่ใช้อยู่ · เอาเครื่องหมายออกเพื่อไม่ต่อ (หมดพร้อมรอบปัจจุบัน ข้อมูลไม่หาย)",
             items = lines.Select(l => (object)new
             {
                 id = l.Row.Id, resource = l.Row.ResourceKey, label = QuotaResources.Find(l.Row.ResourceKey)?.Label ?? l.Row.ResourceKey,
                 currentUnits = l.Row.Units, renewUnits = l.Units, renew = l.Row.RenewWithPlan, perUnit = l.PerUnit, amount = l.Amount,
-                locked = l.Row.RenewalInvoiceDocumentId != null, offerAvailable = l.OfferAvailable,
+                locked = l.Row.RenewalInvoiceDocumentId is Guid ri && lockedInvoices.Contains(ri), inInvoice = l.Row.RenewalInvoiceDocumentId != null,
+                offerAvailable = l.OfferAvailable,
             }).ToList(),
         };
     }
@@ -689,6 +806,8 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
                 continue;
             var hadSlip = e.Status == QuotaAddOnStatus.PendingReview;
             e.Status = QuotaAddOnStatus.Cancelled; e.UpdatedAt = now; e.UpdatedBy = "system:quota-addon";
+            if (e.CouponId != null)   // รอบ 230: ปลดการจองคูปองของรายการค้างที่ถูกยกเลิก
+                await PlatformCouponStore.ReleaseAsync(_db, e.CompanyId, PlatformCouponRule.SourceQuotaAddOn, e.Id, "ค้างไม่จ่ายเกิน 14 วัน", "system:quota-addon", ct);
             if (hadSlip)
             {
                 e.AttentionRule = "QUOTA-SLIP-UNREVIEWED";

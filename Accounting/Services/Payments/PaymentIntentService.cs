@@ -20,7 +20,10 @@ public sealed record StartPaymentRequest(
     Guid? SiteId = null,
     Guid? ContactId = null,
     // รอบ 219 เฟส 0: บริษัทผู้จ่ายของรายการค่าบริการ NextAcc (PlatformRevenueSource) — รายการของร้านไม่ต้องส่ง
-    Guid? PayerCompanyId = null);
+    Guid? PayerCompanyId = null,
+    // รอบ 230 (PLATFORM_OMISE_AUDIT §5.2): ตัดด้วยบัตรที่บันทึกไว้ (เลขอ้างอิงของผู้ให้บริการ — ไม่ใช่เลขบัตร) · มีค่า ⇒ ไม่ต้องมีโทเคน
+    string? CustomerRef = null,
+    string? SavedCardRef = null);
 
 public interface IPaymentIntentService
 {
@@ -243,6 +246,8 @@ public class PaymentIntentService : IPaymentIntentService
             && i.Amount == request.Amount
             && i.MethodKind == request.Method
             && i.IsTestMode == currentMode
+            // ฝ่ายค้านรอบ 230 B2: บัตร — โทเคนใหม่ (ใช้ครั้งเดียว) ห้ามได้รายการเดิม · บัตรที่บันทึกต้องเป็นใบเดียวกัน (ตัวตัดสินเดียว SavedCardChargeOutcome)
+            && SavedCardChargeOutcome.ReuseOpenIntent(request.Method, !string.IsNullOrWhiteSpace(request.CardToken), request.SavedCardRef, i.SavedCardRef)
             && (i.QrExpiresAt == null || i.QrExpiresAt > DateTime.UtcNow));
         if (reusable != null)
         {
@@ -288,6 +293,7 @@ public class PaymentIntentService : IPaymentIntentService
             AttemptCount = existing.Count + 1,
             IdempotencyKey = PaymentIntentPolicy.IdempotencyKey(
                 request.SourceKind, request.SourceId, request.Amount, existing.Count + 1),
+            SavedCardRef = string.IsNullOrWhiteSpace(request.SavedCardRef) ? null : request.SavedCardRef,   // ฝ่ายค้านรอบ 230 B2
         };
         _db.PaymentIntents.Add(intent);
         AddEvent(intent, PaymentEventSource.System, null, PaymentIntentStatus.Created,
@@ -296,20 +302,32 @@ public class PaymentIntentService : IPaymentIntentService
 
         // เรียก provider **หลัง** บันทึกแถวแล้ว — ถ้า provider สร้าง charge สำเร็จแต่เรา
         // ล้มก่อนบันทึก จะมี charge ลอยที่ผูกกับอะไรไม่ได้ (เงินลูกค้าหายในระบบเรา)
+        ProviderCharge? syncSucceeded = null;
         try
         {
             var charge = await provider.CreateChargeAsync(intent,
                 new ChargeRequest(request.Method, request.CardToken, returnUrl,
                     request.CustomerEmail, request.CustomerPhone,
-                    request.Description ?? $"{request.SourceKind} {request.SourceId:N}"),
+                    request.Description ?? $"{request.SourceKind} {request.SourceId:N}",
+                    CustomerRef: request.CustomerRef, SavedCardRef: request.SavedCardRef,
+                    // รอบ 230: บัตรที่บันทึก (ตัดโดยไม่มีผู้ใช้รอ) ⇒ คีย์กันซ้ำของคำขอ = คีย์ของรายการ (ไม่ซ้ำต่อครั้งที่)
+                    IdempotencyKey: string.IsNullOrWhiteSpace(request.CustomerRef) ? null : intent.IdempotencyKey),
                 config ?? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = code }, ct);
 
             ApplyChargeToEntity(intent, charge);
+            // รอบ 230: charge ที่สำเร็จทันที (บัตรที่บันทึก/บัตรไม่ต้อง 3-D Secure) — เดิมประทับ Succeeded ตรงนี้โดยไม่ประทับเวลายืนยันและไม่ส่งต่อ handler
+            // แล้ว webhook ที่ตามมาเป็น "ซ้ำ" ⇒ เงินเข้าแต่ใบไม่ถูกตัดชำระ · ตอนนี้: เก็บเป็น Pending แล้วยืนยันผ่าน ApplyChargeAsync หลัง commit (ทางเดียวกับ webhook)
+            if (intent.Status == PaymentIntentStatus.Succeeded)
+            {
+                syncSucceeded = charge;
+                intent.Status = PaymentIntentStatus.Pending;
+            }
             AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Created, intent.Status,
                 note: "สร้าง charge ที่ผู้ให้บริการแล้ว");
             // รอบ 219 ส่วน B ฝ่ายค้าน B3: โหมดของ charge ต้องตรงโหมดที่ประทับ — คีย์จริงในช่องทดสอบ ⇒ ไม่แสดง QR/ไม่ประมวลผล (ล้มดัง)
             if (PaymentLiveModeGuard.Mismatch(charge.LiveMode, intent.IsTestMode == true) is string modeBad)
             {
+                syncSucceeded = null;
                 intent.Status = PaymentIntentStatus.Failed;
                 intent.FailureCode = "live_mode_mismatch";
                 intent.FailureMessage = modeBad;
@@ -319,9 +337,33 @@ public class PaymentIntentService : IPaymentIntentService
                 _logger.LogError("โหมด charge ไม่ตรงโหมดของ intent {Intent} ({Provider}): {Why}", intent.Id, code, modeBad);
             }
         }
+        catch (Exception ex) when (!string.IsNullOrWhiteSpace(request.CustomerRef)
+                                   && SavedCardChargeOutcome.IsUnknown(ex, ct.IsCancellationRequested))
+        {
+            // ฝ่ายค้านรอบ 230 B1: ตัดบัตรที่บันทึก (ไม่มีผู้ใช้รอ) แล้วผลไม่แน่ชัด — ผู้ให้บริการอาจตัดเงินแล้ว ⇒ ห้ามปิดเป็นล้มเหลว
+            // (ลองใหม่ = ตัดซ้ำ) · คง "รอผล" + เครื่องหมาย แล้ว RefreshAsync หา charge จาก metadata (FindChargeForIntentAsync)
+            syncSucceeded = null;
+            intent.Status = PaymentIntentStatus.Pending;
+            intent.FailureCode = SavedCardChargeOutcome.UnknownCode;
+            intent.FailureMessage = "ยังไม่รู้ผลการตัดบัตรจากผู้ให้บริการ — ระบบจะตรวจซ้ำอัตโนมัติ (ห้ามตัดซ้ำ)";
+            AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Created, PaymentIntentStatus.Pending,
+                note: "⚠️ ผลการสร้าง charge ไม่แน่ชัด: " + ex.Message);
+            _logger.LogError(ex, "ผลการตัดบัตรที่บันทึกไม่แน่ชัด intent {Intent} provider {Provider} — คงรอผล", intent.Id, code);
+        }
+        catch (ProviderActionRequiredException ex)
+        {
+            // ฝ่ายค้านรอบ 230 (nice): ต้องยืนยันตัวตนกับธนาคาร — ไม่มีเงินออก · ผู้จ่ายต้องชำระเอง
+            syncSucceeded = null;
+            intent.Status = PaymentIntentStatus.Failed;
+            intent.FailureCode = SavedCardChargeOutcome.ActionRequiredCode;
+            intent.FailureMessage = ex.Message;
+            AddEvent(intent, PaymentEventSource.System, PaymentIntentStatus.Created, PaymentIntentStatus.Failed, note: ex.Message);
+            _logger.LogWarning("ตัดบัตรที่บันทึกไม่ได้เพราะต้องยืนยันตัวตน intent {Intent}", intent.Id);
+        }
         catch (Exception ex)
         {
             // ล้มตอนสร้าง charge = ยังไม่มีเงินไปไหน ปิดใบนี้แล้วให้ลูกค้าลองใหม่ได้
+            syncSucceeded = null;
             intent.Status = PaymentIntentStatus.Failed;
             intent.FailureCode = "create_charge_failed";
             intent.FailureMessage = ex.Message;
@@ -333,6 +375,8 @@ public class PaymentIntentService : IPaymentIntentService
 
         await _db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
+        if (syncSucceeded != null)
+            return await ApplyChargeAsync(intent.Id, syncSucceeded, PaymentEventSource.System, "system:charge-create", ct);
         return intent;
     }
 
@@ -621,6 +665,22 @@ public class PaymentIntentService : IPaymentIntentService
             : null;
 
         var provider = Resolve(intent.ProviderCode);
+        // ฝ่ายค้านรอบ 230 B1: การตัดบัตรที่บันทึกที่ผลไม่แน่ชัด (ไม่มีเลขอ้างอิง) ⇒ หา charge จาก metadata · พบ = ใช้สถานะของผู้ให้บริการ ·
+        // ไม่พบเกินกำหนด = ปิดเป็นล้มเหลว (เงินเข้าทีหลังยังเปลี่ยนเป็นสำเร็จได้) · ยังไม่ถึงกำหนด = รอรอบหน้า
+        if (string.IsNullOrWhiteSpace(intent.ProviderRef) && intent.FailureCode == SavedCardChargeOutcome.UnknownCode)
+        {
+            var cfgForFind = config == null
+                ? new PaymentProviderConfig { CompanyId = companyId, ProviderCode = intent.ProviderCode }
+                : PaymentConfigForIntent.For(config, intent.IsTestMode);
+            var found = await provider.FindChargeForIntentAsync(intent, cfgForFind, ct);
+            if (found != null)
+                return await ApplyChargeAsync(intentId, found, PaymentEventSource.Poll, "poll:find-charge", ct);
+            if (SavedCardChargeOutcome.GiveUp(intent.CreatedAt, DateTime.UtcNow))
+                return await ApplyChargeAsync(intentId, new ProviderCharge("", PaymentIntentStatus.Failed, SavedCardChargeOutcome.NotFoundCode, intent.Amount,
+                    FailureCode: SavedCardChargeOutcome.NotFoundCode,
+                    FailureMessage: "ไม่พบรายการตัดบัตรที่ผู้ให้บริการ — ไม่มีการตัดเงิน"), PaymentEventSource.Poll, "poll:find-charge", ct);
+            return intent;
+        }
         // รอบ 227 (PLATFORM_OMISE_AUDIT A-12): ถามด้วยคีย์ของโหมดที่รายการถูกสร้าง — ช่องทางอาจถูกสลับโหมด/ปิดฉุกเฉินหลังลูกค้าสแกนแล้ว
         ProviderCharge charge;
         try

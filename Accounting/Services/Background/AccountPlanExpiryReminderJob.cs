@@ -102,6 +102,9 @@ public class AccountPlanExpiryReminderJob : BackgroundService
             catch (Exception ex) { _logger.LogError(ex, "ProcessExpiredSubscriptionsAsync failed"); }
             try { await subscriptionService.ProcessSubscriptionNotificationsAsync(); }
             catch (Exception ex) { _logger.LogError(ex, "ProcessSubscriptionNotificationsAsync failed"); }
+            // รอบ 230 (ฝ่ายค้าน S3): รายการค่าแพ็กเกจที่มีคูปอง/ส่วนต่างค้างเกินระยะจอง ⇒ ยกเลิก + ปลดคูปอง (ไม่กินเพดานคนอื่น)
+            try { await subscriptionService.ExpireStaleQuotedPaymentsAsync(); }
+            catch (Exception ex) { _logger.LogError(ex, "ExpireStaleQuotedPaymentsAsync failed"); }
         }
     }
 

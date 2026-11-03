@@ -26,6 +26,10 @@ public interface ISubscriptionService
     Task<SubscriptionGateState?> GetGateStateAsync(Guid companyId);
     /// <summary>รอบ 219 เฟส 0 (G-0): อัปเกรด = รายการชำระรอเงินเข้า · ดาวน์เกรด/เปลี่ยนรอบ = มีผลวันครบรอบ</summary>
     Task<PlanPurchaseResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy);
+    /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): ดูราคา/วันมีผลของการเปลี่ยนแพ็กเกจก่อนยืนยัน (ส่วนต่างตามวันที่เหลือ · คูปอง) — ไม่สร้าง/ไม่จองอะไร</summary>
+    Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycle, string? couponCode);
+    /// <summary>รอบ 230 (ข้อ 178 ①): แอดมินแก้ยอดรายการชำระค่าแพ็กเกจที่ยังไม่จ่าย — เหตุผลบังคับ · audit chain · ห้ามเมื่อมีการชำระออนไลน์ค้าง</summary>
+    Task<SubscriptionPaymentResponse> OverridePaymentAmountAsync(Guid paymentId, decimal amount, string reason, string performedBy);
     /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): แพ็กเกจที่ชำระแล้วและยังไม่สิ้นรอบ ⇒ ยกเลิกมีผลสิ้นรอบ (<c>SubscriptionCancelPolicy</c>) · คืนข้อความถึงผู้ใช้</summary>
     Task<string> CancelSubscriptionAsync(Guid companyId, string performedBy);
     /// <summary>รอบ 219 ส่วน B: กลับมาใช้ต่อก่อนสิ้นรอบ (ยกเลิกการยกเลิก) · ไม่อยู่ระหว่างรอยกเลิก/พ้นรอบแล้ว ⇒ BusinessRuleException</summary>
@@ -103,6 +107,8 @@ public interface ISubscriptionService
     // Background: Check expired trials & subscriptions
     Task ProcessExpiredTrialsAsync();
     Task ProcessSubscriptionNotificationsAsync(); // ตรวจสอบและส่งแจ้งเตือน
+    /// <summary>รอบ 230 (ฝ่ายค้าน S3): ยกเลิกรายการค่าแพ็กเกจที่มีคูปอง/ส่วนต่าง ค้างไม่จ่ายเกินระยะจอง + ปลดคูปอง — คืนจำนวนที่ยกเลิก</summary>
+    Task<int> ExpireStaleQuotedPaymentsAsync();
     Task ProcessExpiredSubscriptionsAsync();       // ตรวจสอบ subscription หมดอายุ
 }
 

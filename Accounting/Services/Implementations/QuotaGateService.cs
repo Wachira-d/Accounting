@@ -11,7 +11,11 @@ namespace Accounting.Services.Implementations;
 /// <summary>1 แถวของหน้าสรุปโควตา — เซิร์ฟเวอร์คำนวณทุกช่อง หน้าเว็บแสดงอย่างเดียว (D-4: เดิม 3 หน้าใช้เกณฑ์ "ไม่จำกัด" 3 แบบ)</summary>
 public sealed record QuotaSummaryItem(string Resource, string Label, string Unit, string Kind, int? Used, int? Limit, bool Unlimited,
     int? Included, int Purchased, int WarnLevel, string UsedText, string LimitText, bool PerSite, string? Note, bool CanBuy, string? BuyUrl,
-    string Source);
+    string Source)
+{
+    /// <summary>รอบ 230: ความยาวหลอด (%) คิดที่เซิร์ฟเวอร์ — <c>js/quota-ui.js</c> เดิมคิดเอง (F2 ข้อ 5)</summary>
+    public int Percent => QuotaLimitPolicy.Percent(Used, Limit, WarnLevel);
+}
 
 /// <summary>
 /// รอบ 229 (QUOTA_ADDON_SUBSCRIPTION_AUDIT §B.1/§B.4) — <b>ด่านโควตาตัวเดียว</b> "เพิ่มได้ไหม" ของทุกทางเข้าที่สร้างของที่นับ

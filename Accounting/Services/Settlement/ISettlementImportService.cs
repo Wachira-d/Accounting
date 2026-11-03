@@ -28,6 +28,11 @@ public interface ISettlementImportService
     Task<SettlementImportResult> ImportFromPaymentIntentsAsync(Guid companyId, Guid userId, SettlementIntentBatchRequest request,
         CancellationToken ct = default);
 
+    /// <summary>รอบ 230 (PLATFORM_OMISE_AUDIT §5.3): <b>ร่าง</b>รอบโอนจากรอบโอนที่ดึงจาก API ของผู้ให้บริการ — เฉพาะรายการที่จับคู่ไว้ + ค่าธรรมเนียมโอน ·
+    /// ด่านชุดเดียวกับ <see cref="ImportFromPaymentIntentsAsync"/> · ไม่ลงบัญชี</summary>
+    Task<SettlementImportResult> ImportProviderTransferDraftAsync(Guid companyId, Guid userId, ProviderTransferDraftRequest request,
+        CancellationToken ct = default);
+
     /// <summary>รอบโอน 1 รอบพร้อมบรรทัด + ผู้สมัครจับคู่ของบรรทัดที่รอคนตัดสิน</summary>
     Task<SettlementBatchView> GetBatchAsync(Guid companyId, Guid batchId, CancellationToken ct = default);
 
@@ -67,3 +72,8 @@ public interface ISettlementChannelService
     Task<SettlementChannelView> UpdateAsync(Guid companyId, Guid userId, Guid channelId, SettlementChannelUpsertRequest request,
         CancellationToken ct = default);
 }
+
+/// <summary>รอบ 230: ข้อมูลร่างรอบโอนจาก API ของผู้ให้บริการ — <c>NetToBank</c> = ยอดเข้าธนาคาร (ตัวตั้ง) · <c>IntentIds</c> = ผลของ <c>PlatformTransferMatch</c></summary>
+public sealed record ProviderTransferDraftRequest(
+    Guid ChannelId, string PayoutRef, DateTime PayoutDate, decimal NetToBank, decimal TransferFee, decimal TransferFeeVat,
+    IReadOnlyList<Guid> IntentIds, string? Note);

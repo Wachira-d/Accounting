@@ -60,7 +60,27 @@ public class QuotaController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> Offers(Guid companyId, [FromQuery] int units = 1, CancellationToken ct = default)
         => Ok(new ApiResponse<object>(true, await _purchases.OffersAsync(companyId, Math.Clamp(units, 1, QuotaAddOnPricing.MaxUnitsPerPurchase), ct)));
 
-    public sealed record CreatePurchaseBody(string Resource, string Mode, int Units, decimal? ExpectedPerUnit, decimal? ExpectedAmount);
+    public sealed record CreatePurchaseBody(string Resource, string Mode, int Units, decimal? ExpectedPerUnit, decimal? ExpectedAmount,
+        string? CouponCode = null);
+
+    /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q2): ดูผลคูปองกับยอดของวิธีซื้อที่เลือก (ไม่จอง · ยอดคิดที่เซิร์ฟเวอร์) — หน้าต่างซื้อแสดงส่วนลด/ยอดหลังส่วนลด</summary>
+    [HttpGet("coupon-preview")]
+    [Accounting.Filters.RejectApiKey("ตรวจคูปอง")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.BillingManage)]
+    public async Task<ActionResult<ApiResponse<object>>> CouponPreview(Guid companyId, [FromQuery] string resource, [FromQuery] string mode,
+        [FromQuery] int units, [FromQuery] string code, [FromServices] IChatRateLimiter rate, CancellationToken ct)
+    {
+        // ฝ่ายค้าน N1: กันเดารหัสคูปอง — นับต่อผู้ใช้ข้ามเครื่อง (ตัวนับ DB เดิม) · ข้อความ "ใช้ไม่ได้" แบบเดียวกันทุกเหตุที่บอกว่ารหัสมีจริงไหม
+        if (!await rate.TryConsumeAsync($"coupon-preview:{User.Identity?.Name ?? companyId.ToString()}", 10, 100, ct, failClosed: true))
+            return StatusCode(429, new ApiResponse<object>(false, null, "ตรวจโค้ดบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่"));
+        if (!Enum.TryParse<QuotaAddOnMode>(mode, true, out var m))
+            return BadRequest(new ApiResponse<object>(false, null, "วิธีซื้อไม่ถูกต้อง"));
+        var q = await _purchases.QuoteAsync(companyId, resource ?? "", m, Math.Clamp(units, 1, QuotaAddOnPricing.MaxUnitsPerPurchase), ct);
+        if (!q.Allowed) return Ok(new ApiResponse<object>(true, new { ok = false, problem = q.DenyReason, listAmount = 0m, discount = 0m, amountAfter = 0m }));
+        var ev = await PlatformCouponStore.PreviewAsync(_db, companyId, code, PlatformCouponScope.QuotaAddOn, null, null, resource, q.Amount, DateTime.UtcNow, ct);
+        if (ev == null) return Ok(new ApiResponse<object>(true, new { ok = false, problem = "กรอกรหัสคูปอง", listAmount = q.Amount, discount = 0m, amountAfter = q.Amount }));
+        return Ok(new ApiResponse<object>(true, new { ok = ev.Ok, problem = ev.Problem, label = ev.Label, listAmount = ev.ListAmount, discount = ev.Discount, amountAfter = ev.AmountAfter }));
+    }
 
     [HttpPost("purchases")]
     [Accounting.Filters.RejectApiKey("ซื้อโควตาเสริม")]
@@ -72,7 +92,7 @@ public class QuotaController : ControllerBase
         try
         {
             var row = await _purchases.CreateAsync(companyId,
-                new QuotaPurchaseRequest(body.Resource ?? "", mode, body.Units, body.ExpectedPerUnit, body.ExpectedAmount), Actor, IdempotencyKeyHeader(), ct);
+                new QuotaPurchaseRequest(body.Resource ?? "", mode, body.Units, body.ExpectedPerUnit, body.ExpectedAmount, body.CouponCode), Actor, IdempotencyKeyHeader(), ct);
             return Ok(new ApiResponse<object>(true, Map(row), "สร้างรายการแล้ว — ชำระเงินเพื่อเริ่มใช้ได้ทันที"));
         }
         catch (QuotaOfferChangedException ex)
@@ -192,6 +212,7 @@ public class QuotaController : ControllerBase
             rejectedReason = p.RejectedReason, receiptNumber = p.ReceiptNumber, receiptDocumentId = p.ReceiptDocumentId,
             receivedAmount = p.ReceivedAmount, attentionRule = p.AttentionRule, attentionReason = p.AttentionReason, offlineReference = p.OfflineReference,
             slipUploadedAt = p.SlipUploadedAt, createdAt = p.CreatedAt,
+            couponCode = p.CouponCode, couponDiscount = p.CouponDiscountAmount, listAmount = p.ListAmount,
             canPay = p.Status == QuotaAddOnStatus.AwaitingPayment || p.Status == QuotaAddOnStatus.Rejected,
             canCancel = p.Status is QuotaAddOnStatus.AwaitingPayment or QuotaAddOnStatus.Rejected
                 || (p.Status == QuotaAddOnStatus.Active && p.Mode == QuotaAddOnMode.RecurringMonthly && !p.CancelAtPeriodEnd),

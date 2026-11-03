@@ -153,6 +153,8 @@ public class LegalController : ControllerBase
         var payload = new
         {
             generatedAt = DateTime.UtcNow, policyAcceptances = rows,
+            // รอบ 230 ฝ่ายค้าน S6: ความยินยอมบันทึกบัตร/ตัดบัตรอัตโนมัติ (ทุกบริษัท · ครบทุกช่องของเจ้าของข้อมูลเอง)
+            savedCardConsents = await Accounting.Services.Payments.PlatformSavedCardService.ConsentRowsForUserAsync(_db, uid, null, includeNetwork: true, ct),
             erasureRequest = erase == null ? null : new { erase.Status, erase.RequestedAt, erase.DueAt, erase.ResolvedAt, erase.ResolutionNote },
             // ฝ่ายค้านรอบ 214 B2: ต้องโอนความเป็นเจ้าของก่อน (ผู้ใช้เห็นก่อนยื่น)
             ownershipBlockers = await _pdpa.ErasureOwnershipBlockersAsync(uid, ct),

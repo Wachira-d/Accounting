@@ -35,6 +35,9 @@
     .cls-fill { height:4px;background:var(--gray-200);border-radius:2px;margin-top:4px;overflow:hidden }
     .cls-fill > span { display:block;height:100% }
     @media (max-width: 720px) { .cls-week { grid-template-columns:1fr } }
+      /* รอบ 230: การ์ดของตัวแก้เทอมคลาส (class-term-admin.js — ใช้คลาสชุดเดียวกับศูนย์ตั้งค่าเว็บ) */
+    #clsTermsFallback .sg-card { background:#fff; border:1px solid var(--gray-200); border-radius:12px; padding:14px 16px }
+    #clsTermsFallback .sg-card h3 { font-size:15px; font-weight:600; margin:0 0 4px } .sg-hint { font-size:12px; color:var(--gray-500) }
   </style>
 </head>
 <body>
@@ -123,17 +126,12 @@
           <button class="btn btn-secondary btn-sm" onclick="Page.clsThisWeek()">สัปดาห์นี้</button>
           <button class="btn btn-secondary btn-sm" onclick="Page.clsShiftWeek(1)" title="สัปดาห์ถัดไป">▶</button>
           <span id="clsWeekLabel" style="font-size:13px;color:var(--gray-600)"></span>
-          <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="Page.clsOpenTerm(null)">+ เทอมคลาสใหม่</button>
+          <a class="btn btn-secondary btn-sm" style="margin-left:auto" id="clsTermsLink" href="/pages/cms-site-settings.html?group=classes">⚙️ เทอมคลาส (ตารางคลาสประจำ) →</a>
         </div>
         <div class="cls-week" id="clsWeek"></div>
-        <div class="bk-sec" style="margin-top:14px">
-          <h4>เทอมคลาส (ตารางซ้ำรายสัปดาห์)</h4>
-          <div style="font-size:12px;color:var(--gray-500);margin-bottom:6px">บริการที่มีเทอม ⇒ หน้าเว็บเปิดจองเฉพาะรอบในตารางคลาส (เวลาทำการรายสัปดาห์ของบริการนั้นไม่ใช้) · กด "สร้างรอบ" เพื่อเติมรอบล่วงหน้า — กดซ้ำได้ ไม่ซ้ำ และไม่ลบรอบที่มีคนจอง · แก้ครู/ที่นั่งของรอบที่สร้างแล้วทำที่รอบนั้น</div>
-          <div class="table-container"><table class="table" style="font-size:13px">
-            <thead><tr><th>บริการ / เทอม</th><th>วัน · เวลา</th><th>ช่วงเทอม</th><th>ผู้สอน · ที่นั่ง</th><th>สถานะ</th><th>ดำเนินการ</th></tr></thead>
-            <tbody id="clsTerms"><tr><td colspan="6" class="text-center text-gray-400">-</td></tr></tbody>
-          </table></div>
-        </div>
+        <!-- รอบ 230 (CMS_SETTINGS_UX_AUDIT §6 ค้างข้อ 4 · §2): เทอมคลาส (ค่าตั้งของสิ่งที่ขาย) ย้ายไป ตั้งค่าเว็บ › คลาส & เทอม (js/class-term-admin.js · ที่เดียว) —
+             หน้านี้เหลือปฏิทินสัปดาห์ + รายชื่อคนเรียน/เช็คอิน (งานประจำวัน) · ผู้ที่เข้าศูนย์ตั้งค่าเว็บไม่ได้ ⇒ ตัวแก้เดียวกันแสดงที่ #clsTermsFallback (ทางไปต่อ — ไม่ใช่สำเนา) -->
+        <div id="clsTermsFallback" style="margin-top:14px"></div>
       </div>
     </div>
 
@@ -180,45 +178,6 @@
       </div>
     </div>
 
-    <!-- รอบ 209 P4: เทอมคลาส -->
-    <div class="modal-overlay" id="clsTermModal">
-      <div class="modal" style="max-width:600px">
-        <div class="modal-header">
-          <h3 class="modal-title" id="clsTermTitle">เทอมคลาส</h3>
-          <button class="modal-close" onclick="Layout.closeModal('clsTermModal')">&times;</button>
-        </div>
-        <div class="modal-body">
-          <div class="form-group"><label class="form-label" for="ctService">บริการ (คลาส)</label>
-            <select class="form-input" id="ctService" onchange="Page.clsFillInstructors()"></select></div>
-          <div class="form-group"><label class="form-label" for="ctTitle">ชื่อเทอม (ไม่บังคับ)</label>
-            <input type="text" class="form-input" id="ctTitle" maxlength="200" placeholder="เช่น เทอมหนาว 2569"></div>
-          <div class="form-group"><span class="form-label">วันในสัปดาห์</span>
-            <div id="ctDays" style="display:flex;gap:10px;flex-wrap:wrap;font-size:13px"></div></div>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label" for="ctStart">เวลาเริ่มคลาส</label><input type="time" class="form-input" id="ctStart" value="18:00"></div>
-            <div class="form-group"><label class="form-label" for="ctCapacity">ที่นั่งต่อรอบ (ว่าง = ความจุของบริการ)</label><input type="number" min="1" max="10000" class="form-input" id="ctCapacity"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label" for="ctFrom">เริ่มเทอม</label><input type="date" class="form-input" id="ctFrom"></div>
-            <div class="form-group"><label class="form-label" for="ctTo">สิ้นสุดเทอม (ว่าง = ไม่กำหนด)</label><input type="date" class="form-input" id="ctTo"></div>
-          </div>
-          <div class="form-row">
-            <div class="form-group"><label class="form-label" for="ctInstructor">ผู้สอนประจำ</label>
-              <select class="form-input" id="ctInstructor"><option value="">— ระบบจัดผู้ให้บริการตามปกติ —</option></select></div>
-            <div class="form-group"><label class="form-label" for="ctStatus">สถานะ</label>
-              <select class="form-input" id="ctStatus"><option value="Active">ใช้งาน (สร้างรอบได้)</option><option value="Ended">สิ้นสุดแล้ว (หยุดสร้างรอบ)</option></select></div>
-          </div>
-          <label style="font-size:13px"><input type="checkbox" id="ctSkipHolidays" checked> ข้ามวันหยุดบริษัท (หน้า "วันหยุด")</label>
-          <div class="form-group" style="margin-top:8px"><label class="form-label" for="ctNotes">หมายเหตุ</label><input type="text" class="form-input" id="ctNotes"></div>
-          <div style="font-size:11px;color:var(--gray-500)">เวลาจบ = เวลาเริ่ม + ระยะเวลาของบริการ · ผู้สอนต้องเป็นผู้ให้บริการที่รับบริการนี้</div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="Layout.closeModal('clsTermModal')">ยกเลิก</button>
-          <button class="btn btn-primary" onclick="Page.clsSaveTerm()">บันทึกเทอม</button>
-        </div>
-      </div>
-    </div>
-
     <!-- รอบ 209 P4: รอบเรียน — roster/เช็คอิน · ครูแทน · ที่นั่ง · ยกเลิกทั้งคลาส -->
     <div class="modal-overlay" id="clsSessionModal">
       <div class="modal" style="max-width:760px">
@@ -240,6 +199,7 @@
   <script src="/js/layout.js"></script>
   <script src="/js/cms-site-context.js"></script>
   <script src="/js/booking-payment-admin.js"></script>
+  <script src="/js/class-term-admin.js"></script><!-- รอบ 230: ตัวแก้เทอมคลาส (ทางไปต่อของผู้ที่เข้าศูนย์ตั้งค่าเว็บไม่ได้) -->
   <script>
     // ป้ายสถานะอยู่ที่ Layout.ENUM_LABELS ที่เดียว — ที่นี่แค่มอบต่อ
     const STATUS_LABEL = Layout.ENUM_LABELS.bookingStatus;
@@ -275,6 +235,8 @@
 
       async init() {
         if (!Layout.init('cms-bookings')) return;
+        // ฝ่ายค้านรอบ 230 S2: สิทธิ์เมนูมาถึงหลังวาด ⇒ ตัดสินลิงก์/ตัวแก้เทอมคลาสใหม่ (เฉพาะเมื่อเปิดแท็บตารางคลาสอยู่)
+        document.addEventListener('layout:permissions', () => { const b = document.getElementById('clsBody'); if (b && b.style.display !== 'none' && this.clsWeekStart) this.clsTermsHome(); });
         this.setRange('today', true);
         await this.loadSites();
       },
@@ -812,7 +774,7 @@
       // ── รอบ 209 P4: ตารางคลาส — ทุกการตัดสิน (ที่นั่ง · ปุ่มเช็คอิน/ยกเลิก · ป้ายสถานะ · สร้างรอบ) มาจากเซิร์ฟเวอร์ ──
       panel: 'list',
       clsWeekStart: null,
-      clsSessions: [], clsTermsData: [], clsServices: [], clsResources: [], clsCurrent: null, clsEditTermId: null,
+      clsSessions: [], clsServices: [], clsResources: [], clsCurrent: null,
       showPanel(p) {
         this.panel = p;
         document.getElementById('bkPanelList').style.display = p === 'list' ? '' : 'none';
@@ -827,8 +789,23 @@
         document.getElementById('clsBody').style.display = all ? 'none' : '';
         if (all) return;
         if (!this.clsWeekStart) this.clsWeekStart = this._mondayOf(this._todayBkk());
+        await this.clsTermsHome();
         await this.clsLoadMeta();
         await this.clsReload();
+      },
+      // รอบ 230: เทอมคลาสแก้ที่ ตั้งค่าเว็บ › คลาส & เทอม · ไม่มีสิทธิ์ศูนย์ตั้งค่าเว็บ (เมนู cms-sites) ⇒ ตัวแก้เดียวกันแสดงในหน้านี้ (ทางไปต่อ ไม่ใช่สำเนา) ·
+      // ฝ่ายค้านรอบ 230 S2: เรียกซ้ำเมื่อสิทธิ์มาถึง (layout:permissions — ก่อนนั้น hasMenuAccess = true เสมอ)
+      async clsTermsHome() {
+        if (this.allSites || !this.siteId) return;
+        const link = document.getElementById('clsTermsLink');
+        const hub = Layout.hasMenuAccess('cms-sites');
+        if (link) { link.href = '/pages/cms-site-settings.html?siteId=' + encodeURIComponent(this.siteId) + '&group=classes'; link.style.display = hub ? '' : 'none'; }
+        const fb = document.getElementById('clsTermsFallback');
+        if (!fb) return;
+        if (hub || !window.ClassTermAdmin) { fb.innerHTML = ''; fb.dataset.site = ''; return; }
+        if (fb.dataset.site === this.siteId) return;   // วาดแล้วสำหรับเว็บนี้
+        fb.dataset.site = this.siteId;
+        await ClassTermAdmin.mount(fb, { siteId: this.siteId });
       },
       _mondayOf(ymd) { const dow = new Date(ymd + 'T00:00:00Z').getUTCDay(); return this._addDays(ymd, dow === 0 ? -6 : 1 - dow); },
       _weekdayName(ymd, style) { return new Date(ymd + 'T00:00:00Z').toLocaleDateString('th-TH', { weekday: style || 'long', timeZone: 'UTC' }); },
@@ -854,12 +831,10 @@
         const svc = document.getElementById('clsServiceFilter').value;
         const q = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` + (svc ? `&serviceId=${encodeURIComponent(svc)}` : '');
         try {
-          const [ss, tt] = await Promise.all([api.cmsClassSessions(this.siteId, q), api.cmsClassTerms(this.siteId, svc ? `?serviceId=${encodeURIComponent(svc)}` : '')]);
+          const ss = await api.cmsClassSessions(this.siteId, q);
           this.clsSessions = ss.data || [];
-          this.clsTermsData = tt.data || [];
         } catch (e) { Layout.toast('โหลดตารางคลาสไม่สำเร็จ: ' + e.message, 'error'); return; }
         this.clsRenderWeek(from);
-        this.clsRenderTerms();
       },
       clsRenderWeek(from) {
         const days = [0, 1, 2, 3, 4, 5, 6].map(i => this._addDays(from, i));
@@ -878,99 +853,6 @@
           }).join('');
           return `<div class="cls-day"><h5>${Layout.esc(this._weekdayName(d))} ${Layout.esc(Layout.date(d))}</h5>${cards || '<div style="font-size:11px;color:var(--gray-400)">ไม่มีคลาส</div>'}</div>`;
         }).join('');
-      },
-      clsRenderTerms() {
-        const body = document.getElementById('clsTerms');
-        if (!this.clsTermsData.length) { body.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400">ยังไม่มีเทอมคลาส — กด "+ เทอมคลาสใหม่"</td></tr>'; return; }
-        body.innerHTML = this.clsTermsData.map(t => `<tr>
-          <td><strong>${Layout.esc(t.serviceName)}</strong>${t.title ? `<div style="font-size:11px;color:var(--gray-500)">${Layout.esc(t.title)}</div>` : ''}</td>
-          <td>${Layout.esc(t.weekdaysLabel)}<div style="font-size:11px">${Layout.esc(t.startTime)}–${Layout.esc(t.endTime)}</div></td>
-          <td>${Layout.date(t.startDate)} – ${t.endDate ? Layout.date(t.endDate) : 'ไม่กำหนด'}<div style="font-size:11px;color:var(--gray-500)">รอบที่ยังไม่ถึง ${Number(t.upcomingSessions)}${t.lastSessionDate ? ' · ถึง ' + Layout.date(t.lastSessionDate) : ''}</div></td>
-          <td>${Layout.esc(t.instructorName || '—')}<div style="font-size:11px">${Number(t.effectiveCapacity)} ที่/รอบ</div></td>
-          <td>${Layout.esc(t.statusLabel)}</td>
-          <td class="row-actions" style="white-space:nowrap">
-            <button class="btn btn-secondary" onclick="Page.clsOpenTerm('${Layout.jsArg(t.id)}')">แก้ไข</button>
-            <button class="btn btn-primary" onclick="Page.clsGenerate('${Layout.jsArg(t.id)}')">สร้างรอบ</button>
-            <button class="btn btn-secondary" onclick="Page.clsDeleteTerm('${Layout.jsArg(t.id)}')">ลบ</button>
-          </td></tr>`).join('');
-      },
-      clsOpenTerm(id) {
-        const t = id ? this.clsTermsData.find(x => x.id === id) : null;
-        if (id && !t) return;
-        this.clsEditTermId = id || null;
-        document.getElementById('clsTermTitle').textContent = t ? 'แก้เทอมคลาส' : 'เทอมคลาสใหม่';
-        const svcSel = document.getElementById('ctService');
-        svcSel.innerHTML = this.clsServices.map(s => `<option value="${Layout.esc(s.id)}">${Layout.esc(s.name)}</option>`).join('');
-        svcSel.value = t ? t.bookingServiceId : (document.getElementById('clsServiceFilter').value || (this.clsServices[0] || {}).id || '');
-        svcSel.disabled = !!t;   // ย้ายเทอมข้ามบริการไม่ได้ (server ปฏิเสธ) — ล็อกช่องพร้อมบอกเหตุ ไม่ให้กดแล้วไม่มีผล
-        svcSel.title = t ? 'ย้ายเทอมไปบริการอื่นไม่ได้ — สร้างเทอมใหม่ที่บริการนั้น' : '';
-        const picked = t ? t.weekdays : [];
-        // 2026-11-01 = วันอาทิตย์ ⇒ ชื่อวันจากปฏิทินของเบราว์เซอร์ (ไม่เก็บตารางชื่อวันในหน้า)
-        document.getElementById('ctDays').innerHTML = [1, 2, 3, 4, 5, 6, 0].map(n => `<label><input type="checkbox" class="ct-day" value="${n}" ${picked.includes(n) ? 'checked' : ''}> ${Layout.esc(this._weekdayName(this._addDays('2026-11-01', n), 'short'))}</label>`).join('');
-        document.getElementById('ctTitle').value = t ? (t.title || '') : '';
-        document.getElementById('ctStart').value = t ? t.startTime : '18:00';
-        document.getElementById('ctCapacity').value = t && t.capacityOverride != null ? t.capacityOverride : '';
-        document.getElementById('ctFrom').value = t ? t.startDate : this._todayBkk();
-        document.getElementById('ctTo').value = t && t.endDate ? t.endDate : '';
-        document.getElementById('ctStatus').value = t ? t.status : 'Active';
-        document.getElementById('ctSkipHolidays').checked = t ? !!t.skipHolidays : true;
-        document.getElementById('ctNotes').value = t ? (t.notes || '') : '';
-        this.clsFillInstructors(t ? t.instructorResourceId : null);
-        Layout.openModal('clsTermModal');
-      },
-      clsFillInstructors(selected) {
-        const svc = document.getElementById('ctService').value;
-        const sel = document.getElementById('ctInstructor');
-        const pool = this.clsResources.filter(r => Array.isArray(r.serviceIds) && r.serviceIds.includes(svc));
-        sel.innerHTML = '<option value="">— ระบบจัดผู้ให้บริการตามปกติ —</option>' + pool.map(r => `<option value="${Layout.esc(r.id)}">${Layout.esc(r.name)}</option>`).join('');
-        sel.value = selected && pool.some(r => r.id === selected) ? selected : '';
-      },
-      async clsSaveTerm() {
-        const api = Layout.api(); if (!api) return;
-        const cap = document.getElementById('ctCapacity').value;
-        const to = document.getElementById('ctTo').value;
-        const body = {
-          bookingServiceId: document.getElementById('ctService').value,
-          title: document.getElementById('ctTitle').value.trim() || null,
-          weekdays: Array.from(document.querySelectorAll('.ct-day')).filter(x => x.checked).map(x => Number(x.value)),
-          startTime: document.getElementById('ctStart').value,
-          startDate: (document.getElementById('ctFrom').value || this._todayBkk()) + 'T00:00:00',
-          endDate: to ? to + 'T00:00:00' : null,
-          instructorResourceId: document.getElementById('ctInstructor').value || null,
-          capacityOverride: cap === '' ? null : Number(cap),
-          skipHolidays: document.getElementById('ctSkipHolidays').checked,
-          status: document.getElementById('ctStatus').value,
-          notes: document.getElementById('ctNotes').value.trim() || null,
-        };
-        try {
-          if (this.clsEditTermId) await api.cmsUpdateClassTerm(this.siteId, this.clsEditTermId, body);
-          else await api.cmsCreateClassTerm(this.siteId, body);
-          Layout.toast('บันทึกเทอมแล้ว — กด "สร้างรอบ" เพื่อเติมรอบลงตาราง');
-          Layout.closeModal('clsTermModal');
-          await this.clsReload();
-        } catch (e) { Layout.toast('บันทึกเทอมไม่สำเร็จ: ' + e.message, 'error'); }
-      },
-      async clsGenerate(id) {
-        const api = Layout.api(); if (!api) return;
-        const w = prompt('สร้างรอบล่วงหน้ากี่สัปดาห์ (1–52) — เริ่มจากวันนี้หรือวันเริ่มเทอม', '8');
-        if (w === null) return;
-        try {
-          const r = (await api.cmsGenerateClassSessions(this.siteId, id, { weeks: Number(w) || 0 })).data || {};
-          Layout.toast(`สร้างใหม่ ${Number(r.created || 0)} รอบ · มีอยู่แล้ว ${Number(r.alreadyExisting || 0)} · ลบรอบเก่าที่ไม่มีคนจอง ${Number(r.removed || 0)}`, 'success', 10000);
-          (r.skipped || []).forEach(s => Layout.toast(`ข้าม ${Layout.date(s.date)} — ${s.reason}`, 'warning', 10000));
-          (r.notices || []).forEach(n => Layout.toast(n, 'warning', 15000));
-          await this.clsReload();
-        } catch (e) { Layout.toast('สร้างรอบไม่สำเร็จ: ' + e.message, 'error'); }
-      },
-      async clsDeleteTerm(id) {
-        const api = Layout.api(); if (!api) return;
-        if (!confirm('ลบเทอมนี้? รอบที่ยังไม่ถึงและไม่มีผู้จองจะถูกลบด้วย (มีผู้จอง = ต้องยกเลิกคลาสก่อน)')) return;
-        try {
-          const r = await api.cmsDeleteClassTerm(this.siteId, id);
-          (r.data || []).forEach(n => Layout.toast(n, 'warning', 10000));
-          Layout.toast('ลบเทอมแล้ว');
-          await this.clsReload();
-        } catch (e) { Layout.toast('ลบเทอมไม่สำเร็จ: ' + e.message, 'error'); }
       },
       async clsOpenSession(id) {
         const api = Layout.api(); if (!api) return;

@@ -1582,6 +1582,7 @@ public class PayrollService : IPayrollService
             var d = run.Details.FirstOrDefault(x => x.EmployeeId == employeeId && !x.IsDeleted)
                 ?? throw new KeyNotFoundException("ไม่พบพนักงานในรอบนี้");
             var baseBefore = d.SocialSecurityBase;
+            var grossBefore = d.GrossIncome;   // รอบ 230 S9: ฐานชนเพดาน ⇒ เงินทดแทนตามรายได้รวม — รายได้เปลี่ยนต้องคิดใหม่
 
             // ตัวเติมยอดรายคนตัวเดียว (ใช้ร่วมกับ ➕ เพิ่มพนักงานเข้ารอบ — AddPayrollDetailAsync) ·
             // ปกส. จากฐาน · บังคับระบุภาษีเมื่อรายได้เปลี่ยน (§54) · รวม Gross/หัก/สุทธิ · ห้ามสุทธิติดลบ
@@ -1591,29 +1592,35 @@ public class PayrollService : IPayrollService
             // ★ รอบ 201 (PR2 · X1/ข้อ 71): ฐาน ปกส. เปลี่ยน ⇒ (ก) ด่านธงประกันสังคมของพนักงานตัวเดียวกับ ➕
             //   (ไม่บล็อกแถวที่ขัดอยู่แล้วแต่ผู้ใช้ไม่ได้แตะฐาน — รอบนำเข้าเดิมยังแก้ช่องอื่นได้) · (ข) กองทุนเงินทดแทนคิดใหม่
             //   ผ่านตัวเติมยอดตัวเดียวกับแถวที่เพิ่ม — ยกเว้นรอบนำเข้า (ไม่แตะ · X3)
-            if (d.SocialSecurityBase != baseBefore)
+            //   รอบ 230 S9: ฐาน ปกส. ชนเพดานแล้วรายได้เปลี่ยน ⇒ เงินทดแทนคิดใหม่ด้วย (ด่านธงยังทำเฉพาะเมื่อแก้ฐาน — คงพฤติกรรมเดิม)
+            if (Accounting.Helpers.PayrollDetailAmounts.WorkersCompensationInputsChanged(baseBefore, d.SocialSecurityBase, grossBefore, d.GrossIncome, ssoParams.MaxBase))
             {
                 var emp = await _db.Set<Employee>().AsNoTracking()
                     .Where(e => e.Id == employeeId && e.CompanyId == companyId)
                     .Select(e => new { e.EmployeeCode, e.FirstNameTh, e.LastNameTh, e.IsSubjectToSocialSecurity })
                     .FirstOrDefaultAsync()
                     ?? throw new KeyNotFoundException("ไม่พบพนักงาน (อาจถูกลบไปแล้ว)");
-                var flagProblem = Accounting.Helpers.PayrollSsoFlagGuard.Check(emp.IsSubjectToSocialSecurity,
-                    d.SocialSecurityBase, d.GrossIncome, $"{emp.FirstNameTh} {emp.LastNameTh} ({emp.EmployeeCode})".Trim());
-                if (flagProblem != null)
-                    throw new Accounting.Helpers.BusinessRuleException(flagProblem, "PAYROLL-SSO-FLAG-MISMATCH");
+                if (d.SocialSecurityBase != baseBefore)
+                {
+                    var flagProblem = Accounting.Helpers.PayrollSsoFlagGuard.Check(emp.IsSubjectToSocialSecurity,
+                        d.SocialSecurityBase, d.GrossIncome, $"{emp.FirstNameTh} {emp.LastNameTh} ({emp.EmployeeCode})".Trim());
+                    if (flagProblem != null)
+                        throw new Accounting.Helpers.BusinessRuleException(flagProblem, "PAYROLL-SSO-FLAG-MISMATCH");
+                }
                 var wcSettings = await _db.Set<CompanySettings>().AsNoTracking()
                     .FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted);
                 var wcBefore = d.WorkersCompensation;
                 if (!Accounting.Helpers.PayrollDetailAmounts.ApplyWorkersCompensation(d, run.IsExternalImport,
                         wcSettings?.WorkersCompensationEnabled == true, wcSettings?.WorkersCompensationRatePercent ?? 0m,
-                        emp.IsSubjectToSocialSecurity))
+                        emp.IsSubjectToSocialSecurity, ssoParams.MaxBase))
                     notice = "รอบนี้นำเข้าจากระบบนอก — ระบบไม่คิดกองทุนเงินทดแทนใหม่ตามฐานที่แก้ (แถวนำเข้าไม่มียอดเงินทดแทน)";
                 else if (d.WorkersCompensation != wcBefore)
                     // ฝ่ายค้าน PR2 (WC-1): เงินทดแทนเปลี่ยนตามฐาน ปกส. ที่แก้ — ต้องบอก (เส้นคำนวณรอบคิดจากค่าจ้างตามกฎหมายของงวด
                     // ซึ่งอาจต่างจากฐาน ปกส. ที่ติดเพดาน) ห้ามเปลี่ยนตัวเลข กท.20ก เงียบ ๆ
-                    notice = $"คิดกองทุนเงินทดแทนของพนักงานคนนี้ใหม่จากฐาน ปกส. ที่แก้ ({d.SocialSecurityBase:N2} บาท): "
-                        + $"{wcBefore:N2} → {d.WorkersCompensation:N2} บาท — ถ้าค่าจ้างตาม ม.5 ต่างจากฐาน ปกส. ให้คำนวณรอบใหม่แทน";
+                    // รอบ 230: ฐานเงินทดแทน = ค่าจ้าง ม.5 เต็ม (ฐาน ปกส. ชนเพดาน ⇒ ใช้รายได้รวมงวด) — บอกค่าจ้างที่ใช้จริง
+                    notice = $"คิดกองทุนเงินทดแทนของพนักงานคนนี้ใหม่จากค่าจ้าง {d.WorkersCompensationWage ?? 0m:N2} บาท "
+                        + $"(ฐาน ปกส. ที่แก้ {d.SocialSecurityBase:N2}{(d.SocialSecurityBase >= ssoParams.MaxBase ? " ชนเพดาน ปกส. ⇒ ใช้รายได้รวมงวด" : "")}): "
+                        + $"{wcBefore:N2} → {d.WorkersCompensation:N2} บาท — ถ้าค่าจ้างตาม ม.5 ต่างจากนี้ ให้คำนวณรอบใหม่แทน";
             }
             // รอบ 202: ฐาน ปกส. มากกว่ารายได้งวดนี้ ⇒ บอก (ไม่บล็อก) — ตัวตัดสินเดียวกับ ➕ เพิ่มพนักงาน
             var ssoAboveWages = Accounting.Helpers.PayrollSsoFlagGuard.BaseAboveWagesNotice(d.SocialSecurityBase, d.GrossIncome);
@@ -1893,7 +1900,7 @@ public class PayrollService : IPayrollService
                 .FirstOrDefaultAsync(c => c.CompanyId == companyId && !c.IsDeleted);
             if (!Accounting.Helpers.PayrollDetailAmounts.ApplyWorkersCompensation(d, run.IsExternalImport,
                     settings?.WorkersCompensationEnabled == true, settings?.WorkersCompensationRatePercent ?? 0m,
-                    emp.IsSubjectToSocialSecurity))
+                    emp.IsSubjectToSocialSecurity, ssoParams.MaxBase))
                 notices.Add("รอบนี้นำเข้าจากระบบนอก — ไม่ได้คิดกองทุนเงินทดแทนให้แถวที่เพิ่ม (คงศูนย์เท่าแถวนำเข้าอื่น)");
             // รอบ 202: ฐาน ปกส. มากกว่ารายได้งวดนี้ ⇒ บอก (ไม่บล็อก) — ตัวตัดสินเดียวกับ ✏️ แก้ยอด
             var ssoAboveWages = Accounting.Helpers.PayrollSsoFlagGuard.BaseAboveWagesNotice(d.SocialSecurityBase, d.GrossIncome);

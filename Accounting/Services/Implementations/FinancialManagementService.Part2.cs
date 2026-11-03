@@ -14,71 +14,161 @@ public partial class FinancialManagementService
 
     public async Task<CITResponse> CalculateCITAsync(Guid companyId, CalculateCITRequest request, string userId)
     {
-        // Calculate revenue & expenses from journal entries for the tax year
-        var taxYear = int.Parse(request.TaxYear);
-        var ceYear = taxYear > 2400 ? taxYear - 543 : taxYear;
-        var yearStart = new DateTime(ceYear, 1, 1);
-        var yearEnd = yearStart.AddYears(1);
+        // ══ รอบ 230 (TAX_PENALTY_AUDIT §6 · กติกาที่ Helpers/CitCalculation ตัวเดียว) ══
+        // เดิม: ขั้นบันได SME กับทุกบริษัท · รอบ ม.ค.–ธ.ค. เสมอ · ภ.ง.ด.51 คิดจากกำไร 6 เดือนตรง ๆ · หักค่าใช้จ่ายภาษี 580xx · ไม่บวกกลับ §65 ตรี
+        var period = CitCalculation.NormalizePeriod(request.TaxPeriod)
+            ?? throw new BusinessRuleException($"รอบภาษี \"{request.TaxPeriod}\" ไม่รู้จัก (HalfYear/Annual)", "CIT-POST-PERIOD");
+        var ceYear = CitPayment.CeYear(request.TaxYear)
+            ?? throw new BusinessRuleException($"ปีภาษี \"{request.TaxYear}\" อ่านไม่ได้ — กรอกปี พ.ศ. หรือ ค.ศ. ของรอบบัญชี", "CIT-POST-PERIOD");
+        var isHalf = period == CitCalculation.HalfYear;
+        var negative = CitCalculation.RejectNegative(("รายจ่ายบวกกลับ", request.AddBackItems), ("รายจ่ายหักเพิ่ม", request.DeductionItems),
+            ("รายได้ที่ได้รับยกเว้น", request.ExemptIncome), ("ภาษีหัก ณ ที่จ่าย", request.WithholdingTaxCredit), ("ภาษีจ่ายล่วงหน้า", request.PrepaidTaxCredit), ("ผลขาดทุนยกมา", request.LossCarryForward));
+        if (negative != null) throw new BusinessRuleException(negative, "CIT-NEGATIVE");
+        if (isHalf && request.PrepaidTaxCredit is > 0m)
+            throw new BusinessRuleException("ภ.ง.ด.51 ไม่มี \"ภาษีจ่ายล่วงหน้า\" ให้หัก (ใช้ตอน ภ.ง.ด.50) — ล้างช่องนี้แล้วคำนวณใหม่", "CIT-PND51-PREPAID");
+        if (isHalf && request.LossCarryForward is not null)
+            throw new BusinessRuleException("ผลขาดทุนยกมาใช้กับ ภ.ง.ด.50 (ทั้งรอบ) — ล้างช่องนี้สำหรับ ภ.ง.ด.51", "CIT-PND51-LOSS");
+        if (!isHalf && (request.EstimatedAnnualProfit != null || request.HalfYearBasis != null || request.ShortFiscalYear == true))
+            throw new BusinessRuleException("ช่องประมาณการกำไร / วิธียื่น / รอบไม่ถึง 12 เดือน ใช้กับ ภ.ง.ด.51 (ครึ่งปี) เท่านั้น", "CIT-PND51-ONLY");
 
-        if (request.TaxPeriod == "HalfYear")
+        var company = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => new { c.FiscalYearStartMonth, c.PaidUpCapital, c.CreatedAt }).FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+        // (2) รอบบัญชีของบริษัท (Company.FiscalYearStartMonth) — ไม่ใช่ ม.ค.–ธ.ค.
+        var range = CitCalculation.PeriodFor(ceYear, company.FiscalYearStartMonth, period);
+        var notes = new List<string>();
+        if (FiscalYear.NormalizeStartMonth(company.FiscalYearStartMonth) != 1)
+            notes.Add($"รอบบัญชีบริษัท {range.FullYear.Start:dd/MM/yyyy}–{range.FullYear.EndInclusive:dd/MM/yyyy} (หน้านำส่งคิดกำหนดยื่น/เงินเพิ่มจากวันสิ้นงวดนี้)");
+        if (!CitRateTable.HasScheduleFor(ceYear))
+            notes.Add($"⚠️ ตารางอัตราไม่มีรอบบัญชี {ceYear + 543} — ใช้ชุดที่ใกล้ที่สุด (ต้องยืนยันกับผู้ทำบัญชี)");
+
+        // (3) รอบแรก/ไม่ถึง 12 เดือน — ไม่ต้องยื่น ภ.ง.ด.51 (ผู้ใช้ประกาศ · ระบบเตือนเมื่อเริ่มใช้ระบบในรอบนี้)
+        if (isHalf)
         {
-            yearEnd = yearStart.AddMonths(6);
+            var (exempt, exemptNote) = CitCalculation.Pnd51Exemption(request.ShortFiscalYear, company.CreatedAt, range.FullYear);
+            if (exempt)
+                throw new BusinessRuleException($"{exemptNote} — ไม่ต้องคำนวณ/ตั้งหนี้ ภ.ง.ด.51 ของรอบนี้ (ภาษีทั้งรอบคำนวณที่ ภ.ง.ด.50)", CitCalculation.Pnd51ExemptRuleCode);
+            if (exemptNote != null) notes.Add(exemptNote);
         }
 
-        var revenue = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId
-                && j.EntryDate >= yearStart && j.EntryDate < yearEnd)
-            .WherePeriodActivity()   // ★ ทีม O 2026-10-22 — Posted + Reversed · ไม่นับใบปิดบัญชี (เดิม Posted อย่างเดียว ⇒ รายการที่ยกเลิกถูกหักซ้ำ)
-            .SelectMany(j => j.Lines)
-            .Where(l => l.Account.AccountType == AccountType.Revenue)
-            .SumAsync(l => l.CreditAmount - l.DebitAmount);
+        // ฐาน GL + บวกกลับ §65 ตรี + ส่วนเกินค่ารับรอง — ตัวโหลดตัวเดียวกับไฟล์ ภ.ง.ด.51 (Tax/CitPeriodFigures · ฝ่ายค้าน S1) · ไม่หัก 580xx (4)
+        var fig = await Tax.CitPeriodFigures.LoadAsync(_db, _tax, companyId, range, company.PaidUpCapital);
+        var revenue = fig.Revenue;
+        var expenses = fig.Expenses;
+        var citExpenseExcluded = fig.CitExpenseExcluded;
+        var accountingProfit = fig.AccountingProfit;
+        var section65Ter = fig.Section65TerAddBack;
+        var entertainmentExcess = fig.EntertainmentExcess;
+        var autoAddBack = fig.AutoAddBack;
 
-        var expenses = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId
-                && j.EntryDate >= yearStart && j.EntryDate < yearEnd)
-            .WherePeriodActivity()   // ★ ทีม O 2026-10-22 — Posted + Reversed · ไม่นับใบปิดบัญชี (เดิม Posted อย่างเดียว ⇒ รายการที่ยกเลิกถูกหักซ้ำ)
-            .SelectMany(j => j.Lines)
-            .Where(l => l.Account.AccountType == AccountType.Expense)
-            .SumAsync(l => l.DebitAmount - l.CreditAmount);
-
-        var accountingProfit = revenue - expenses;
-        var addBack = request.AddBackItems ?? 0;
-        var deductions = request.DeductionItems ?? 0;
-        var taxableProfit = accountingProfit + addBack - deductions;
-
-        // Thai SME CIT progressive rates: first 300K exempt, 300K-3M at 15%, above 3M at 20%
-        decimal taxRate = 20;
-        decimal taxAmount;
-        if (taxableProfit <= 0)
+        var addBack = request.AddBackItems ?? 0m;
+        var deductions = request.DeductionItems ?? 0m;
+        var exemptIncome = request.ExemptIncome ?? 0m;
+        // ฝ่ายค้าน S4: ผลขาดทุนยกมา (ภ.ง.ด.50) — ว่าง = ตัวตั้งเดียวกับรายงาน ภ.ง.ด.50 (FIFO 5 รอบ จากรายงานที่ยื่นแล้ว) · ครึ่งปีไม่หัก (ประมาณการ)
+        var profitBeforeLoss = CitCalculation.TaxableProfit(accountingProfit, autoAddBack, addBack, exemptIncome, deductions);
+        decimal lossUsed = 0m;
+        if (!isHalf)
         {
-            taxAmount = 0;
+            if (request.LossCarryForward is decimal userLoss)
+                lossUsed = CitCalculation.LossCarryForwardUsed(userLoss, profitBeforeLoss);
+            else
+            {
+                var prior = await _db.TaxReports.AsNoTracking()
+                    .Where(t => t.CompanyId == companyId && t.TaxType == TaxType.CorporateIncomeTax
+                        && t.Year >= ceYear - 5 && t.Year < ceYear
+                        && TaxFilingLockPolicy.DeclaredOrFiledStatuses.Contains(t.Status))
+                    .Select(t => new { t.Year, t.NetVat }).ToListAsync();
+                var available = CitCalculation.LossCarryForwardAvailable(prior.Select(p => (p.Year, p.NetVat)), ceYear);
+                lossUsed = CitCalculation.LossCarryForwardUsed(available, profitBeforeLoss);
+                if (lossUsed > 0m)
+                    notes.Add($"หักผลขาดทุนยกมา {lossUsed:N2} (จากรายงาน ภ.ง.ด.50 ที่ยื่นแล้ว 5 รอบก่อน — ตัวเดียวกับหน้ารายงานภาษี · แก้ได้ที่ช่องผลขาดทุนยกมา)");
+            }
+        }
+        var taxableProfit = CitCalculation.TaxableProfit(accountingProfit, autoAddBack, addBack, exemptIncome, deductions + lossUsed);
+
+        // (1) SME ต่อบริษัท — ทุนที่ชำระแล้ว ≤ 5 ล. และรายได้ทั้งรอบ ≤ 30 ล. (ครึ่งปี = รายได้ครึ่งปี × 2) · ผู้ใช้กำหนดเองได้พร้อมเหตุผล
+        var sme = CitCalculation.DecideSme(company.PaidUpCapital, isHalf ? revenue * 2m : revenue, request.SmeOverride, request.SmeOverrideReason);
+
+        decimal taxAmount;
+        decimal? estimatedAnnual = null;
+        string? basis = null;
+        if (isHalf)
+        {
+            // (3) §67 ทวิ — ประมาณการทั้งรอบ × อัตรา ÷ 2 (หรือกำไรจริงครึ่งปี §67 ทวิ(2))
+            var h = CitCalculation.HalfYearTax(taxableProfit, request.EstimatedAnnualProfit, request.HalfYearBasis, sme.IsSme, ceYear);
+            taxAmount = h.HalfYearTax;
+            estimatedAnnual = h.EstimatedAnnualProfit;
+            basis = h.Basis;
+            notes.Insert(0, h.Note);
         }
         else
         {
-            // SME simplified: first 300K exempt, 300K-3M at 15%, above 3M at 20%
-            taxAmount = taxableProfit <= 300000 ? 0
-                : taxableProfit <= 3000000 ? (taxableProfit - 300000) * 0.15m
-                : 300000 * 0 + 2700000 * 0.15m + (taxableProfit - 3000000) * 0.20m;
+            taxAmount = CitRateTable.Compute(taxableProfit, sme.IsSme, ceYear);
         }
 
-        var whtCredit = request.WithholdingTaxCredit ?? 0;
-        var prepaidCredit = request.PrepaidTaxCredit ?? 0;
-        var netPayable = Math.Max(0, taxAmount - whtCredit - prepaidCredit);
+        // เครดิต: ว่าง = ระบบดึง — ภาษีถูกหัก (หนังสือรับรองที่ได้รับแล้ว ลงวันที่ในงวด) · ภ.ง.ด.50 หัก ภ.ง.ด.51 ที่ตั้งหนี้แล้วของรอบเดียวกัน
+        var whtCredit = request.WithholdingTaxCredit ?? await _db.WhtCreditsReceived.AsNoTracking()
+            .CreditableInPeriod(companyId, range.Start, range.EndInclusive).SumAsync(w => (decimal?)w.WhtAmount) ?? 0m;
+        if (request.WithholdingTaxCredit is null)
+        {
+            if (whtCredit > 0m) notes.Add($"ภาษีถูกหัก ณ ที่จ่าย {whtCredit:N2} ดึงจากหนังสือรับรองที่ได้รับแล้วซึ่งลงวันที่ในงวด (กติกาเดียวกับ ภ.ง.ด.50)");
+            var undated = await _db.WhtCreditsReceived.AsNoTracking().CreditableUndated(companyId, ceYear).CountAsync();
+            if (undated > 0) notes.Add($"⚠️ หนังสือรับรองที่ได้รับแล้ว {undated} ใบไม่มีวันที่ — ไม่ได้นับเป็นเครดิต (กรอกวันที่ในทะเบียน หรือกรอกยอดเอง)");
+        }
+        var prepaidCredit = isHalf ? 0m : request.PrepaidTaxCredit ?? await DefaultCitPrepaidCreditAsync(companyId, ceYear);
+        if (!isHalf && request.PrepaidTaxCredit is null && prepaidCredit > 0m)
+            notes.Add($"ภาษีจ่ายล่วงหน้า {prepaidCredit:N2} = ภ.ง.ด.51 ที่ตั้งหนี้แล้วของรอบเดียวกัน");
+        var netPayable = CitPayment.Split(taxAmount, prepaidCredit, whtCredit).Payable;
+
+        var effectiveRate = taxableProfit > 0m && !isHalf ? Math.Round(taxAmount / taxableProfit * 100m, 2, MidpointRounding.AwayFromZero)
+            : estimatedAnnual is > 0m ? Math.Round(taxAmount * 2m / estimatedAnnual.Value * 100m, 2, MidpointRounding.AwayFromZero) : 0m;
+        notes.Insert(0, sme.Reason);
+        notes.Add($"กำไรทางบัญชี {accountingProfit:N2} (ไม่หักค่าใช้จ่ายภาษีเงินได้ 580xx {citExpenseExcluded:N2}) + บวกกลับ §65 ตรี {section65Ter:N2}"
+            + $" + ส่วนเกินค่ารับรอง {entertainmentExcess:N2} + บวกกลับที่กรอก {addBack:N2} − รายได้ยกเว้น {exemptIncome:N2} − หักเพิ่ม {deductions:N2}"
+            + $" − ผลขาดทุนยกมา {lossUsed:N2} = กำไรสุทธิทางภาษี {taxableProfit:N2}");
 
         var entity = new CorporateIncomeTax
         {
-            CompanyId = companyId, TaxYear = request.TaxYear, TaxPeriod = request.TaxPeriod,
+            CompanyId = companyId, TaxYear = request.TaxYear.Trim(), TaxPeriod = period,
             TotalRevenue = revenue, TotalExpenses = expenses, AccountingProfit = accountingProfit,
             AddBackItems = addBack, DeductionItems = deductions, TaxableProfit = taxableProfit,
-            TaxRate = taxRate, TaxAmount = Math.Round(taxAmount, 2, MidpointRounding.AwayFromZero),
+            TaxRate = effectiveRate, TaxAmount = taxAmount,
             WithholdingTaxCredit = whtCredit, PrepaidTaxCredit = prepaidCredit,
-            NetTaxPayable = Math.Round(netPayable, 2, MidpointRounding.AwayFromZero),
-            Notes = request.Notes, CreatedBy = userId
+            NetTaxPayable = netPayable,
+            Notes = request.Notes, CreatedBy = userId,
+            PeriodStart = range.Start, PeriodEnd = range.EndInclusive,
+            IsSme = sme.IsSme, SmeReason = sme.Reason, SmeOverrideReason = sme.Overridden ? request.SmeOverrideReason!.Trim() : null,
+            AutoAddBack = autoAddBack, ExemptIncome = exemptIncome, CitExpenseExcluded = citExpenseExcluded, LossCarryForwardUsed = lossUsed,
+            EstimatedAnnualProfit = estimatedAnnual, HalfYearBasis = basis,
+            CalculationNote = string.Join("\n", notes),
         };
 
         _db.Set<CorporateIncomeTax>().Add(entity);
         await _db.SaveChangesAsync();
         return MapCIT(entity);
+    }
+
+    /// <summary>ภ.ง.ด.51 ที่ตั้งหนี้แล้วของรอบเดียวกัน (ค่าตั้งต้น "ภาษีจ่ายล่วงหน้า" ของ ภ.ง.ด.50) = ยอดที่ JE ตั้งหนี้ลง 11920 (NetTaxPayable) ·
+    /// ตัวหารายการเดียวกับไฟล์ ภ.ง.ด.51 (<see cref="Tax.CitPeriodFigures.LivePostedHalfYearAsync"/>)</summary>
+    private async Task<decimal> DefaultCitPrepaidCreditAsync(Guid companyId, int ceYear)
+        => (await Tax.CitPeriodFigures.LivePostedHalfYearAsync(_db, companyId, ceYear))?.NetTaxPayable ?? 0m;
+
+    public async Task<CitPeriodPreviewResponse> PreviewCITPeriodAsync(Guid companyId, string taxYear, string taxPeriod)
+    {
+        var period = CitCalculation.NormalizePeriod(taxPeriod)
+            ?? throw new BusinessRuleException($"รอบภาษี \"{taxPeriod}\" ไม่รู้จัก (HalfYear/Annual)", "CIT-POST-PERIOD");
+        var ceYear = CitPayment.CeYear(taxYear)
+            ?? throw new BusinessRuleException($"ปีภาษี \"{taxYear}\" อ่านไม่ได้ — กรอกปี พ.ศ. หรือ ค.ศ. ของรอบบัญชี", "CIT-POST-PERIOD");
+        var startMonth = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.FiscalYearStartMonth).FirstOrDefaultAsync();
+        var range = CitCalculation.PeriodFor(ceYear, startMonth, period);
+        var type = CitPayment.TypeOf(period)!;
+        // วันครบกำหนดจากตารางวันที่ตัวเดียว (เดือนสิ้นงวดจริง — ตัวเดียวกับหน้านำส่ง · รอบ 230 S2)
+        var due = CitPayment.DueKey(type, ceYear, range.EndInclusive, startMonth);
+        var paper = TaxFilingDeadline.For(type, due.Year, due.Month).Paper;
+        var label = $"{(range.IsHalfYear ? "ภ.ง.ด.51 ครึ่งปีแรก" : "ภ.ง.ด.50 รอบบัญชี")} {ceYear + 543}: {range.Start:dd/MM/yyyy}–{range.EndInclusive:dd/MM/yyyy} · "
+            + $"ลงบัญชีตั้งหนี้วันที่ {range.PostingDate:dd/MM/yyyy} · กำหนดยื่น (แบบกระดาษ) {paper:dd/MM/yyyy}";
+        var warn = range.PostingDate.Date > DateTime.UtcNow.AddHours(7).Date ? "งวดยังไม่สิ้นสุด — คำนวณดูได้ แต่บันทึก (ตั้งหนี้) ได้หลังสิ้นงวด" : null;
+        return new CitPeriodPreviewResponse(period, ceYear, range.Start, range.EndInclusive, range.PostingDate, paper, label, warn);
     }
 
     public async Task<List<CITResponse>> GetCITListAsync(Guid companyId)
@@ -96,8 +186,8 @@ public partial class FinancialManagementService
             .FirstOrDefaultAsync(c => c.Id == id && c.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบข้อมูล");
 
-        if (entity.Status == "Filed") throw new InvalidOperationException("ยื่นแล้ว");
-        if (entity.TaxAmount <= 0) { entity.Status = "Filed"; await _db.SaveChangesAsync(); return MapCIT(entity); }
+        if (entity.Status is "Filed" or CitCalculation.NoTaxDueStatus)
+            throw new BusinessRuleException(entity.Status == "Filed" ? "รายการนี้ตั้งหนี้ภาษีแล้ว" : "รายการนี้บันทึกแล้วว่าไม่มีภาษีต้องชำระ", "CIT-POST-DONE", 409);
 
         // ══ รอบ 228 (TAX_PENALTY_AUDIT §3 ข้อ 1 · ฝ่ายค้าน S1/S2) — ตั้งหนี้ให้เส้นชำระ (หน้านำส่ง ภ.ง.ด.51/50 · Helpers/CitPayment) ล้างได้พอดี ══
         // รูป JE จากตัวตั้งเดียว CitPayment.AccrualPlan: ภ.ง.ด.51 Dr 11920 = ยอดที่ต้องชำระ / Cr 21920 (ไม่แตะ 11910 — ใช้ครั้งเดียวตอน ภ.ง.ด.50) ·
@@ -107,6 +197,24 @@ public partial class FinancialManagementService
             ?? throw new BusinessRuleException($"รอบภาษี \"{entity.TaxPeriod}\" ไม่รู้จัก (HalfYear/Annual)", "CIT-POST-PERIOD");
         var ceYear = CitPayment.CeYear(entity.TaxYear)
             ?? throw new BusinessRuleException($"ปีภาษี \"{entity.TaxYear}\" อ่านไม่ได้", "CIT-POST-PERIOD");
+
+        // ══ รอบ 230 (5) + ฝ่ายค้าน S3/S8: ลงบัญชี ณ วันสิ้นงวดที่เก็บไว้ตอนคำนวณ (ไม่ใช่วันที่กด) · แถวก่อนรอบ 230 ไม่มีวันสิ้นงวด ⇒ ให้คำนวณใหม่
+        // (ไม่เดารอบจากค่าตั้งปัจจุบัน) · ด่านงวด (ยังไม่จบ/ปิดแล้ว) ทำก่อนทุกทาง รวมรายการภาษี 0 · ภาษี 0 ⇒ สถานะ NoTaxDue (ไม่ใช่ "Filed" — ไม่ได้ยื่นอะไร)
+        if (entity.PeriodEnd is not DateTime storedEnd)
+            throw new BusinessRuleException(
+                "รายการคำนวณนี้บันทึกก่อนรอบ 230 (ไม่มีวันสิ้นงวดตามรอบบัญชีบริษัท) — คำนวณใหม่ก่อนลงบัญชี", CitCalculation.RecalculateRuleCode, 409);
+        var postingDate = storedEnd.Date;
+        var postRange = new CitCalculation.TaxPeriodRange(ceYear, entity.PeriodStart ?? postingDate, postingDate, entity.TaxPeriod == CitCalculation.HalfYear,
+            FiscalYear.RangeFor(ceYear, 1));   // FullYear ไม่ถูกใช้ในด่านลงบัญชี (PostingRefusal อ่านแค่วันสิ้นงวด/ชนิด/ปี)
+        var closedReason = await Journal.JournalEntryBuilder.ClosedPeriodReasonAsync(_db, companyId, postingDate);
+        var (refusal, refusalCode) = CitCalculation.PostingRefusal(postRange, DateTime.UtcNow.AddHours(7).Date, closedReason);
+        if (refusal != null) throw new BusinessRuleException(refusal, refusalCode, 409);
+        if (entity.TaxAmount <= 0)
+        {
+            entity.Status = CitCalculation.NoTaxDueStatus;
+            await _db.SaveChangesAsync();
+            return MapCIT(entity);
+        }
 
         // S2: รอบเดียวกัน (ปี ค.ศ. + ครึ่งปี/ทั้งปี) ตั้งหนี้ซ้ำไม่ได้ ถ้ารายการอื่นยังมี JE ที่มีผล — คำนวณใหม่ต้องกลับรายการ JE เดิมก่อน (ไม่งั้น 21920 ตั้งสองเท่า)
         var otherJeIds = (await _db.Set<CorporateIncomeTax>().AsNoTracking()
@@ -125,13 +233,16 @@ public partial class FinancialManagementService
                     + "ถ้าคำนวณใหม่ ให้กลับรายการ JE เดิมที่หน้าสมุดรายวันก่อน แล้วค่อยบันทึกรายการนี้ (กันหนี้ 21920 ตั้งซ้ำ)", "CIT-POST-DUP", 409);
         }
 
+        // ══ รอบ 230 (5): ลงบัญชี ณ วันสิ้นงวด (สิ้นครึ่งปี/สิ้นรอบบัญชีของบริษัท) ไม่ใช่วันที่กด — ภาษีอยู่ในงบของงวดที่เกิด ·
+        // งวดยังไม่จบ/งวดบัญชีปิดแล้ว ⇒ ปฏิเสธพร้อมทางไปต่อ (ตัวตัดสินงวดปิดตัวเดียวกับใบสำคัญทั่วไป) · แถวก่อนรอบ 230 ไม่มี PeriodEnd ⇒ คิดจากเดือนเริ่มรอบปัจจุบัน
+
         async Task<ChartOfAccount> Req(string code, Func<ChartOfAccount, bool>? fallback, string name)
         {
             var exact = await _db.ChartOfAccounts.FirstOrDefaultAsync(a => a.CompanyId == companyId && a.AccountCode == code && a.IsActive);
             if (exact != null) return exact;
             if (fallback != null)
             {
-                var alt = (await _db.ChartOfAccounts.Where(a => a.CompanyId == companyId && a.IsActive).ToListAsync()).Where(fallback)
+                var alt = (await _db.ChartOfAccounts.Include(a => a.ParentAccount).Where(a => a.CompanyId == companyId && a.IsActive).ToListAsync()).Where(fallback)
                     .OrderBy(a => a.AccountCode).FirstOrDefault();
                 if (alt != null) return alt;
             }
@@ -148,7 +259,7 @@ public partial class FinancialManagementService
             switch (pl.Role)
             {
                 case CitPayment.AccrualRole.Expense:
-                    accId = (await Req("58000", a => a.AccountCode.StartsWith("580") && a.AccountType == AccountType.Expense, "ภาษีเงินได้นิติบุคคล (ค่าใช้จ่าย)")).Id;
+                    accId = (await Req("58000", a => CitCalculation.IsCitExpenseAccount(a.AccountCode, a.AccountType, a.ParentAccount?.AccountCode), "ภาษีเงินได้นิติบุคคล (ค่าใช้จ่าย)")).Id;
                     desc = "ภาษีเงินได้นิติบุคคล (ภ.ง.ด.50)"; break;
                 case CitPayment.AccrualRole.Prepaid:
                     accId = (await Req(CitPayment.PrepaidCode, null, "ภาษีเงินได้นิติบุคคลจ่ายล่วงหน้า")).Id;
@@ -179,14 +290,14 @@ public partial class FinancialManagementService
 
         if (lines.Count > 0)
         {
-            var jeNum = await NextJvNumberAsync(companyId);
-            var fpId = await GetFiscalPeriodIdAsync(companyId, DateTime.UtcNow);
+            var jeNum = await Journal.JournalEntryBuilder.NextJournalNumberAsync(_db, companyId, "JV", postingDate);
+            var fpId = await GetFiscalPeriodIdAsync(companyId, postingDate);
 
             var je = new JournalEntry
             {
-                CompanyId = companyId, EntryNumber = jeNum, EntryDate = DateTime.UtcNow,
+                CompanyId = companyId, EntryNumber = jeNum, EntryDate = postingDate,
                 JournalType = JournalType.General,
-                Description = $"ภาษีเงินได้นิติบุคคล {entity.TaxYear} ({entity.TaxPeriod})",
+                Description = $"ภาษีเงินได้นิติบุคคล {entity.TaxYear} ({entity.TaxPeriod}) — งวดสิ้นสุด {postingDate:dd/MM/yyyy}",
                 Reference = $"CIT-{entity.TaxYear}-{entity.TaxPeriod}",
                 Status = JournalEntryStatus.Posted, IsAutoGenerated = true, FiscalPeriodId = fpId,
                 TotalDebit = jeTotal, TotalCredit = jeTotal,
@@ -206,7 +317,9 @@ public partial class FinancialManagementService
         c.Id, c.TaxYear, c.TaxPeriod, c.TotalRevenue, c.TotalExpenses, c.AccountingProfit,
         c.AddBackItems, c.DeductionItems, c.TaxableProfit, c.TaxRate, c.TaxAmount,
         c.WithholdingTaxCredit, c.PrepaidTaxCredit, c.NetTaxPayable,
-        c.Status, c.Notes, c.JournalEntryId);
+        c.Status, c.Notes, c.JournalEntryId,
+        c.PeriodStart, c.PeriodEnd, c.IsSme, c.SmeReason, c.SmeOverrideReason,
+        c.AutoAddBack, c.ExemptIncome, c.CitExpenseExcluded, c.EstimatedAnnualProfit, c.HalfYearBasis, c.CalculationNote, c.LossCarryForwardUsed);
 
     // ==================== 7. PROFIT APPROPRIATION ====================
 

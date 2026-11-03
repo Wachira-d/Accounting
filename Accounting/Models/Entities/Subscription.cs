@@ -375,4 +375,25 @@ public class SubscriptionPayment : BaseEntity
     public DateTime? AttentionAt { get; set; }
     /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ไฟล์หนังสือรับรอง 50 ทวิ ที่ผู้เช่าส่ง (เก็บที่เดียวกับสลิป — ไม่เสิร์ฟตรง) · null = ยังไม่ส่ง</summary>
     public string? WhtCertificateFileName { get; set; }
+
+    // ===== รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2) — ส่วนต่างอัปเกรดกลางรอบ · ยอดที่เซิร์ฟเวอร์เสนอ · คูปอง · แอดมินแก้ยอด (คอลัมน์: Helpers/PlatformCouponMigration) =====
+    /// <summary>รายการนี้คือ<b>ส่วนต่างอัปเกรดกลางรอบ</b> (<c>Helpers/PlatformProration</c>) — อนุมัติ ⇒ เปลี่ยนแพ็กเกจทันที <b>ไม่ขยับวันหมดอายุ</b> · <c>RequestedPeriodMonths = 0</c></summary>
+    public bool IsProration { get; set; }
+    /// <summary>แพ็กเกจเดิมตอนคิดส่วนต่าง (ชื่อ enum) — เทียบตอนเงินเข้า (เปลี่ยนแล้ว = ล้าสมัย ⇒ พักให้แอดมิน)</summary>
+    public string? ProrationFromPlan { get; set; }
+    public int? ProrationDays { get; set; }
+    public int? ProrationCycleDays { get; set; }
+    /// <summary>วันหมดอายุของรอบที่คิดส่วนต่าง (เทียบตอนเงินเข้า · คลาดเคลื่อน ≤ 1 วินาที)</summary>
+    public DateTime? ProrationCycleEndUtc { get; set; }
+    /// <summary>ยอดที่<b>เซิร์ฟเวอร์</b>เสนอ (หลังส่วนต่าง/คูปอง/แอดมินแก้) — ช่องทางออนไลน์อนุมัติอัตโนมัติเมื่อเงินเข้า = ค่านี้ (<c>PlatformPlanPricing.AutoApproveExpected</c>) ·
+    /// null = รายการแบบเดิม (ต้องเท่าราคาเต็มของแพ็กเกจ)</summary>
+    public decimal? QuotedAmount { get; set; }
+    /// <summary>ยอดก่อนคูปอง (รวม VAT ตามค่าตั้ง) · null = ไม่มีคูปอง</summary>
+    public decimal? ListAmount { get; set; }
+    public Guid? CouponId { get; set; }
+    public string? CouponCode { get; set; }
+    /// <summary>ส่วนลดจากคูปอง (รวม VAT ตามค่าตั้ง) — ใบกำกับแสดงเป็นส่วนลดของบรรทัดก่อน VAT (§86/4 · <c>PlatformCouponRule.SplitDiscounted</c>)</summary>
+    public decimal CouponDiscountAmount { get; set; }
+    /// <summary>เหตุผลที่แอดมินแก้ยอด (audit chain <c>PLATFORM-ADMIN-PRICE-OVERRIDE</c>) · null = ไม่เคยแก้</summary>
+    public string? AmountOverrideReason { get; set; }
 }

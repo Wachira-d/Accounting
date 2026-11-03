@@ -261,25 +261,80 @@ const Page = {
       document.getElementById('citBody').innerHTML = (res.data || []).length === 0
         ? '<tr><td colspan="9" class="text-center">ไม่มีข้อมูล</td></tr>'
         : res.data.map(c => `<tr>
-          <td>${Layout.esc(c.taxYear)}</td><td>${c.taxPeriod === 'Annual' ? 'ประจำปี' : 'ครึ่งปี'}</td>
+          <td>${Layout.esc(c.taxYear)}${c.periodEnd ? `<div class="text-xs" style="color:#64748b">${Layout.date(c.periodStart)}–${Layout.date(c.periodEnd)}</div>` : ''}</td>
+          <td>${c.taxPeriod === 'Annual' ? 'ประจำปี' : 'ครึ่งปี'}${c.isSme == null ? '' : `<div class="text-xs" style="color:#64748b" title="${Layout.esc(c.smeReason || '')}">${c.isSme ? 'SME' : 'อัตรา 20%'}${c.smeOverrideReason ? ' (กำหนดเอง)' : ''}</div>`}</td>
           <td class="text-right">${this.fmt(c.totalRevenue)}</td><td class="text-right">${this.fmt(c.totalExpenses)}</td>
-          <td class="text-right">${this.fmt(c.taxableProfit)}</td><td class="text-right">${this.fmt(c.taxAmount)}</td>
-          <td class="text-right">${this.fmt(c.netTaxPayable)}</td><td>${this.statusBadge(c.status)}</td>
+          <td class="text-right" title="${Layout.esc(c.calculationNote || '')}">${this.fmt(c.taxableProfit)}${c.estimatedAnnualProfit != null ? `<div class="text-xs" style="color:#64748b">ประมาณการทั้งปี ${this.fmt(c.estimatedAnnualProfit)}</div>` : ''}</td><td class="text-right">${this.fmt(c.taxAmount)}</td>
+          <td class="text-right">${this.fmt(c.netTaxPayable)}</td><td>${c.status === 'NoTaxDue' ? '<span class="badge badge-success">ไม่มีภาษีต้องชำระ</span>' : this.statusBadge(c.status)}</td>
           <td>${c.status === 'Draft' ? `<button class="btn btn-sm btn-primary" onclick="Page.postCIT('${c.id}')">บันทึก</button>` : ''}</td>
         </tr>`).join('');
     } catch (e) { console.error('loadCIT:', e); }
   },
+  /** รอบ 230: ฟอร์มใหม่ทุกครั้ง (ห้ามค้างค่าใบก่อน) · ปีตั้งต้น = ปีปัจจุบัน (พ.ศ.) */
+  openCIT() {
+    document.getElementById('citYear').value = String(new Date().getFullYear() + 543);
+    document.getElementById('citPeriod').value = 'Annual';
+    ['citAddBack', 'citDeduct', 'citExempt'].forEach(id => { document.getElementById(id).value = 0; });
+    ['citWht', 'citPrepaid', 'citEstimate', 'citSmeReason', 'citLoss'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('citSme').value = '';
+    document.getElementById('citBasis').value = 'Estimate';
+    document.getElementById('citShortYear').checked = false;
+    this.citToggle();
+    this.showModal('citModal');
+  },
+  /** ช่องที่ใช้กับงวด/วิธีที่เลือกเท่านั้น — ช่องที่ซ่อนส่ง null (เซิร์ฟเวอร์ปฏิเสธถ้าส่งผิดงวด ไม่ใช่ทิ้งเงียบ) */
+  /** รอบ 230 N5: ช่วงงวด/วันลงบัญชี/กำหนดยื่น — เซิร์ฟเวอร์คิดจากรอบบัญชีบริษัท (หน้าไม่คิดเอง) · คำตอบเก่าไม่ทับคำตอบใหม่ */
+  async citPeriodPreview() {
+    const box = document.getElementById('citPeriodInfo');
+    const year = document.getElementById('citYear').value;
+    const period = document.getElementById('citPeriod').value;
+    const key = year + '|' + period;
+    this._citPreviewKey = key;
+    box.textContent = '';
+    if (!year) return;
+    try {
+      const res = await this.api.previewCITPeriod(year, period);
+      if (this._citPreviewKey !== key) return;
+      const d = res?.data;
+      box.textContent = d ? d.label + (d.warning ? ' · ⚠️ ' + d.warning : '') : '';
+    } catch (e) { if (this._citPreviewKey === key) box.textContent = e.message; }
+  },
+  citToggle() {
+    this.citPeriodPreview();
+    const half = document.getElementById('citPeriod').value === 'HalfYear';
+    document.getElementById('citHalfRows').style.display = half ? '' : 'none';
+    document.getElementById('citPrepaidGroup').style.display = half ? 'none' : '';
+    document.getElementById('citLossGroup').style.display = half ? 'none' : '';
+    document.getElementById('citEstimateGroup').style.display = document.getElementById('citBasis').value === 'Estimate' ? '' : 'none';
+    document.getElementById('citSmeReasonRow').style.display = document.getElementById('citSme').value ? '' : 'none';
+  },
   async submitCIT() {
+    // ว่าง = null (เซิร์ฟเวอร์ดึงค่าตั้งต้นให้) · ตัวเลข 0 = 0 จริง
+    const num = (id) => { const v = document.getElementById(id).value; return v === '' ? null : parseFloat(v); };
+    const half = document.getElementById('citPeriod').value === 'HalfYear';
+    const sme = document.getElementById('citSme').value;
+    const basis = document.getElementById('citBasis').value;
     try {
       const res = await this.api.calculateCIT({
         taxYear: document.getElementById('citYear').value,
         taxPeriod: document.getElementById('citPeriod').value,
-        addBackItems: parseFloat(document.getElementById('citAddBack').value) || 0,
-        deductionItems: parseFloat(document.getElementById('citDeduct').value) || 0,
-        withholdingTaxCredit: parseFloat(document.getElementById('citWht').value) || 0,
-        prepaidTaxCredit: parseFloat(document.getElementById('citPrepaid').value) || 0
+        addBackItems: num('citAddBack') ?? 0,
+        deductionItems: num('citDeduct') ?? 0,
+        exemptIncome: num('citExempt') ?? 0,
+        withholdingTaxCredit: num('citWht'),
+        prepaidTaxCredit: half ? null : num('citPrepaid'),
+        lossCarryForward: half ? null : num('citLoss'),
+        estimatedAnnualProfit: half && basis === 'Estimate' ? num('citEstimate') : null,
+        halfYearBasis: half ? basis : null,
+        shortFiscalYear: half && document.getElementById('citShortYear').checked ? true : null,
+        smeOverride: sme === '' ? null : sme === 'true',
+        smeOverrideReason: sme === '' ? null : document.getElementById('citSmeReason').value.trim() || null
       });
-      if (res?.success) { Layout.toast('คำนวณสำเร็จ', 'success'); this.hideModal('citModal'); this.loadCIT(); }
+      if (res?.success) {
+        Layout.toast('คำนวณสำเร็จ', 'success');
+        if (res.data?.calculationNote) Layout.toast(res.data.calculationNote.split('\n')[0], 'info');
+        this.hideModal('citModal'); this.loadCIT();
+      }
     } catch (e) { Layout.toast(e.message, 'error'); }
   },
   async postCIT(id) {

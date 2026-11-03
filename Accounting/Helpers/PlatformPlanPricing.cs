@@ -45,6 +45,12 @@ public static class PlatformPlanPricing
     public static bool ClaimedAmountAcceptable(decimal claimed, decimal due)
         => claimed <= 0m || Math.Abs(claimed - due) <= 0.01m;
 
+    /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · ข้อ 178 (ฉ)): ยอดที่ช่องทางออนไลน์<b>อนุมัติอัตโนมัติได้</b> — รายการที่เซิร์ฟเวอร์เสนอยอดเอง
+    /// (ส่วนต่างอัปเกรด · คูปอง · แอดมินแก้ยอด: <c>SubscriptionPayment.QuotedAmount</c>) ⇒ ค่านั้น · รายการแบบเดิม ⇒ ราคาเต็มของแพ็กเกจ (กติกาเดิม) ·
+    /// เดิมด่านนี้รู้จักแค่ราคาเต็ม ⇒ รายการที่มีส่วนลดจากเซิร์ฟเวอร์เองถูกพักให้แอดมินทุกใบ</summary>
+    public static decimal AutoApproveExpected(decimal? quotedAmount, decimal listPrice)
+        => quotedAmount is decimal q && q > 0m ? q : listPrice;
+
     public enum ChangeKind { Upgrade, Downgrade, Same }
 
     /// <summary>เปลี่ยนแพ็กเกจเป็นอัปเกรดหรือดาวน์เกรด — เทียบราคาต่อเดือนของแพ็กเกจ (ไม่ใช่ลำดับ enum)

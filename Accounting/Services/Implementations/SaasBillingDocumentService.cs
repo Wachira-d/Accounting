@@ -342,12 +342,12 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
 
     public const string RuleStaleVoided = "PLATFORM-STALE-RENEWAL-VOIDED", RuleStaleCreditNote = "PLATFORM-STALE-RENEWAL-CREDIT-NOTE-NEEDED";
 
-    public async Task HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string cause)
+    public async Task<StaleRenewalOutcome> HandleStaleRenewalInvoiceAsync(Guid subscriptionId, Guid invoiceDocumentId, string cause)
     {
         try
         {
             var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.Id == subscriptionId);
-            if (sub == null) return;
+            if (sub == null) return StaleRenewalOutcome.NotFound;
             var outcome = _issuer == null ? StaleRenewalOutcome.Failed : await _issuer.VoidStaleRenewalInvoiceAsync(invoiceDocumentId);
             var (action, rule, note) = outcome switch
             {
@@ -378,8 +378,9 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             await _db.SaveChangesAsync();
             if (outcome != StaleRenewalOutcome.Voided)
                 _logger.LogError("ใบต่ออายุที่ล้าสมัย {Doc} ต้องจัดการด้วยมือ ({Outcome}) — sub {Sub}", invoiceDocumentId, outcome, subscriptionId);
+            return outcome;
         }
-        catch (Exception ex) { _logger.LogError(ex, "จัดการใบต่ออายุที่ล้าสมัยไม่สำเร็จ (sub {Sub} · ใบ {Doc})", subscriptionId, invoiceDocumentId); }
+        catch (Exception ex) { _logger.LogError(ex, "จัดการใบต่ออายุที่ล้าสมัยไม่สำเร็จ (sub {Sub} · ใบ {Doc})", subscriptionId, invoiceDocumentId); return StaleRenewalOutcome.Failed; }
     }
 
     /// <summary>อ้างอิงการรับชำระใบแจ้งหนี้ค่าบริการต่อรายการ — ตัวเดียวทั้งฝั่งเขียนและฝั่งกันซ้ำ</summary>
@@ -657,14 +658,18 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         decimal subtotal, vat, grandTotal;
         // ฝ่ายค้านรอบ 227 S2: ใบเสร็จของเงินที่รับแล้ว = เงินที่รับพอดี (รวม VAT เสมอ — ตัวแยกเดียวกับเส้นเอกสารจริง PlatformMoneyInAccount.SplitReceived) ·
         // เดิมโหมด "ราคาไม่รวม VAT" ออกยอด = เงินที่รับ + VAT (สูงกว่าเงินที่ได้รับ)
-        (subtotal, vat) = Accounting.Helpers.PlatformMoneyInAccount.SplitReceived(gross, isTaxInvoice);
+        // รอบ 230 (§86/4): คูปอง ⇒ ราคาเต็ม − ส่วนลด (ก่อน VAT) = มูลค่าก่อนภาษี · ตัวแยกเดียวกับเส้นเอกสารจริง (PlatformCouponRule.SplitDiscounted)
+        var (fullBase, discountBase, netBase, vatPart) = Accounting.Helpers.PlatformCouponRule.SplitDiscounted(gross, payment.CouponDiscountAmount, isTaxInvoice);
+        subtotal = netBase; vat = vatPart;
         grandTotal = gross;
 
         var title = isTaxInvoice ? "ใบกำกับภาษี / ใบเสร็จรับเงิน" : "ใบเสร็จรับเงิน";
         var buyerBranch = string.IsNullOrWhiteSpace(buyer.BranchCode) ? "00000" : buyer.BranchCode!;
         var buyerBranchLabel = buyerBranch == "00000" ? "สำนักงานใหญ่" : $"สาขาที่ {buyerBranch}";
         var sellerBranchLabel = sellerBranch == "00000" ? "สำนักงานใหญ่" : $"สาขาที่ {sellerBranch}";
-        var periodLabel = $"{payment.RequestedPlan} · {payment.RequestedBillingCycle} · {payment.RequestedPeriodMonths} เดือน";
+        var periodLabel = payment.IsProration && payment.ProrationCycleEndUtc is DateTime pEnd && payment.ProrationDays is int pd && payment.ProrationCycleDays is int pc
+            ? Accounting.Helpers.PlatformProration.ReceiptDescription(payment.ProrationFromPlan ?? "-", payment.RequestedPlan.ToString(), pEnd, pd, pc)
+            : $"{payment.RequestedPlan} · {payment.RequestedBillingCycle} · {payment.RequestedPeriodMonths} เดือน";
         var extendedTo = payment.SubscriptionExtendedTo;
 
         var sb = new StringBuilder();
@@ -705,7 +710,9 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         sb.Append("<table><thead><tr><th>รายการ</th><th class='r'>จำนวนเงิน</th></tr></thead><tbody>");
         var extLabel = extendedTo.HasValue ? $" (ต่ออายุถึง {extendedTo.Value.AddHours(7):dd/MM/yyyy})" : "";
         sb.Append($"<tr><td>ค่าบริการระบบบัญชีออนไลน์ — {Enc(periodLabel)}{Enc(extLabel)}</td>");
-        sb.Append($"<td class='r'>{subtotal:N2}</td></tr>");
+        sb.Append($"<td class='r'>{fullBase:N2}</td></tr>");
+        if (discountBase > 0m)
+            sb.Append($"<tr><td>ส่วนลด{(string.IsNullOrWhiteSpace(payment.CouponCode) ? "" : " คูปอง " + Enc(payment.CouponCode))}</td><td class='r'>-{discountBase:N2}</td></tr>");
         sb.Append("</tbody></table>");
 
         // summary

@@ -30,7 +30,7 @@ public partial class CmsBookingService
                 Cancellation = s.FreeCancellationHours is int h
                     ? $"ยกเลิกฟรีก่อน {h} ชม. · หลังจากนั้นค่าธรรมเนียม {(s.CancellationFeePercent ?? 0m):0.##}% (ไม่เกินมัดจำ)"
                     : "ไม่ได้ตั้งเวลายกเลิกฟรี — ยกเลิกเมื่อไรก็ไม่มีค่าธรรมเนียม",
-                Where = "CMS › บริการจอง › แก้บริการ (การชำระล่วงหน้า · ยกเลิกฟรีก่อน)",
+                Where = "หน้าเว็บ › บริการจอง › แก้บริการ (ลูกค้าต้องจ่ายก่อนไหม · ยกเลิกฟรีก่อน)",
                 Warning = eff.Problem ?? BookingPayFirst.DepositConflict(s.BookingType, s.DepositAmount, s.DepositPercent),
             });
         }
@@ -44,7 +44,7 @@ public partial class CmsBookingService
                 Deposit = PaymentTermMode.Label(mode)
                     + (cfg.MtoDepositPercent is decimal p && p > 0m ? $" · {p:0.##}%" : "") + (cfg.MtoDepositFixedAmount is decimal f && f > 0m ? $" · ฿{f:N2}" : ""),
                 Cancellation = cfg.DepositForfeitOnCancelPercent is decimal fp ? $"ยกเลิกแล้วริบมัดจำ {fp:0.##}%" : "ไม่ได้ตั้งการริบมัดจำ",
-                Where = "คำสั่งซื้อ › ⚙️ การรับสินค้า / มัดจำ / วันเปิดร้าน",
+                Where = "ตั้งค่าเว็บ › สินค้าตามสั่ง / พรีออเดอร์",   // รอบ 230: ย้ายจาก modal หน้าคำสั่งซื้อ
             });
         }
         var props = await _db.LodgingProperties.AsNoTracking()

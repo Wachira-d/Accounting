@@ -167,6 +167,13 @@ public class QuotaAddOnPaymentDbTests
         var invoiceId = Guid.NewGuid();
         var co = await RowAsync(db, cid, QuotaAddOnMode.Coterm, now.AddDays(-5), sub.EndDate, QuotaAddOnStatus.Active);
         co.RenewalInvoiceDocumentId = invoiceId; co.RenewUnitPrice = 1990m; co.RenewUnits = 2;
+        // รอบ 230: ล็อกเฉพาะใบที่มีการแจ้งชำระ/ชำระแล้ว (ใบที่ยังไม่มีใครจ่าย ⇒ ออกใบใหม่ — เทสต์ทิศตรงข้ามอยู่ใน PlatformCouponProrationDbTests)
+        db.SubscriptionPayments.Add(new SubscriptionPayment
+        {
+            SubscriptionId = sub.Id, PaymentNumber = "SP-T230-" + Guid.NewGuid().ToString("N")[..8], Amount = 3980m, PaymentDate = now,
+            RequestedPlan = sub.Plan, RequestedBillingCycle = sub.BillingCycle, Status = SubscriptionPaymentStatus.Pending, PlatformInvoiceDocumentId = invoiceId,
+            SlipFileName = "slip.jpg",
+        });
         await db.SaveChangesAsync();
         var locked = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).CancelAsync(cid, co.Id, "owner"));
         Assert.Equal("QUOTA-RENEW-LOCKED", locked.RuleCode);

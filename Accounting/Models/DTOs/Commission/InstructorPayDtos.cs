@@ -12,4 +12,7 @@ public record SaveResourcePayRequest(Guid? EmployeeId, InstructorPayMode Mode, d
 /// <summary>ตัวเลือกพนักงาน (ชื่อเท่านั้น)</summary>
 public record PayEmployeeOption(Guid Id, string Name);
 
-public record ResourcePaySettingsResponse(List<ResourcePayResponse> Resources, List<PayEmployeeOption> Employees);
+/// <summary>รอบ 230: ตัวเลือกกติกาค่าตอบแทน (ค่า + ป้ายไทยจากเซิร์ฟเวอร์ — หน้าไม่มีสำเนาตาราง · <c>InstructorPayRule.ModeOptions</c>)</summary>
+public record PayModeOption(string Value, string Label);
+
+public record ResourcePaySettingsResponse(List<ResourcePayResponse> Resources, List<PayEmployeeOption> Employees, IReadOnlyList<PayModeOption> Modes);

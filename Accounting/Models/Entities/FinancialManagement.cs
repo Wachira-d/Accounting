@@ -204,6 +204,30 @@ public class CorporateIncomeTax : TenantEntity
     public string? Notes { get; set; }
     public Guid? JournalEntryId { get; set; }
     public JournalEntry? JournalEntry { get; set; }
+
+    // ══ รอบ 230 (TAX_PENALTY_AUDIT §6 · Helpers/CitCalculation) — ข้อเท็จจริงของการคำนวณ (แถวก่อนรอบ 230 = null/0) ══
+    /// <summary>วันแรก/วันสุดท้ายของงวดตามรอบบัญชีบริษัท — วันสุดท้าย = วันที่ลงบัญชีตั้งหนี้ (null = แถวเดิม ⇒ คำนวณจากเดือนเริ่มรอบปัจจุบัน)</summary>
+    public DateTime? PeriodStart { get; set; }
+    public DateTime? PeriodEnd { get; set; }
+    /// <summary>ใช้ขั้นบันได SME ไหม (null = แถวเดิม — ใช้ขั้นบันไดกับทุกบริษัท)</summary>
+    public bool? IsSme { get; set; }
+    public string? SmeReason { get; set; }
+    /// <summary>เหตุผลที่ผู้ใช้กำหนดสถานะ SME เอง — null = ระบบตัดสินจากทุน/รายได้</summary>
+    public string? SmeOverrideReason { get; set; }
+    /// <summary>บวกกลับ §65 ตรี อัตโนมัติ (รายจ่ายต้องห้ามจากเอกสาร + เงินเพิ่ม/ค่าปรับ + ส่วนเกินค่ารับรอง) — แยกจาก <see cref="AddBackItems"/> ที่ผู้ใช้กรอก</summary>
+    public decimal AutoAddBack { get; set; }
+    /// <summary>รายได้ที่ได้รับยกเว้น (หักออกจากกำไร)</summary>
+    public decimal ExemptIncome { get; set; }
+    /// <summary>ค่าใช้จ่ายภาษีเงินได้ (580xx) ที่ตัดออกจากค่าใช้จ่าย (§65 ตรี(6 ทวิ))</summary>
+    public decimal CitExpenseExcluded { get; set; }
+    /// <summary>ผลขาดทุนสุทธิยกมาที่หักในรอบนี้ (ภ.ง.ด.50 · §65 ตรี(12) · ฝ่ายค้าน S4) — ว่างตอนคำนวณ = ตัวตั้งเดียวกับรายงาน ภ.ง.ด.50</summary>
+    public decimal LossCarryForwardUsed { get; set; }
+    /// <summary>ภ.ง.ด.51 — ประมาณการกำไรสุทธิทั้งรอบที่ใช้คิดภาษี (§67 ทวิ · ฐานของ §67 ตรี ตอน ภ.ง.ด.50)</summary>
+    public decimal? EstimatedAnnualProfit { get; set; }
+    /// <summary>ภ.ง.ด.51 — <c>Estimate</c> (§67 ทวิ(1)) / <c>ActualHalfYear</c> (§67 ทวิ(2))</summary>
+    public string? HalfYearBasis { get; set; }
+    /// <summary>คำอธิบายการคำนวณที่เซิร์ฟเวอร์สร้าง (SME · ฐาน · บวกกลับ · คำเตือน) — หน้าแสดง</summary>
+    public string? CalculationNote { get; set; }
 }
 
 // ===================================================================
