@@ -719,8 +719,34 @@ public class AdminController : ControllerBase
             }
         }
 
+        // รอบ 236 (คำตัดสิน 236-1 · เจ้าของ: "ตกลงบริษัทนี้เป็น Enterprise หรือ Free"): แพ็กเกจที่มีผล + ที่มา + ซื้อเองได้ไหม — ตัวตัดสินเดียว
+        // (PlanIdentityResolver ผ่าน PlanIdentityReader) · ป้ายหัวโมดัล/แท็บ Subscription อ่านค่านี้ (แถวบริษัทเป็นข้อมูลรอง "ใช้เมื่อถอดออกจาก License")
+        object? effectivePlan = null;
+        if (company.Subscription != null)
+        {
+            var nowUtc = DateTime.UtcNow;
+            var identity = await Accounting.Services.Platform.PlanIdentityReader.ForSubscriptionAsync(_db, company.Subscription);
+            var purchase = Accounting.Helpers.PlanIdentityResolver.CompanyPurchase(identity, nowUtc);
+            effectivePlan = new
+            {
+                source = identity.Source,
+                viaLicense = identity.ViaLicense,
+                plan = identity.Plan.ToString(),
+                planName = identity.PlanName,
+                status = identity.Status.ToString(),
+                statusLabel = Accounting.Helpers.PlanIdentityResolver.StatusLabel(identity.Status),
+                endDate = identity.EndDate,
+                isOpenEnded = Accounting.Helpers.SubscriptionExpiry.IsOpenEnded(!identity.ViaLicense && company.Subscription.IsPermanentFree, identity.EndDate, nowUtc),
+                label = Accounting.Helpers.PlanIdentityResolver.Label(identity, company.Subscription.IsPermanentFree),
+                licenseOwner = identity.License?.OwnerName ?? identity.License?.OwnerEmail,
+                mayPurchase = purchase.Allowed,
+                purchaseBlocked = purchase.Allowed ? null : Accounting.Services.Platform.PlanIdentityReader.RefusalMessage(purchase),
+            };
+        }
+
         return Ok(new ApiResponse<object>(true, new
         {
+            effectivePlan,
             company = new
             {
                 company.Id, company.Name, company.NameEn, company.TaxId, company.BranchCode,
@@ -2043,6 +2069,12 @@ public class AdminController : ControllerBase
         var subId = await _db.Subscriptions.Where(s => s.CompanyId == companyId)
             .Select(s => (Guid?)s.Id).FirstOrDefaultAsync();
         if (subId == null) return NotFound(new ApiResponse<object>(false, null, "ไม่พบ subscription"));
+        // รอบ 236 (236-2): License คุมอยู่ ⇒ 409 พร้อมชื่อ License/ผู้ถือ/วันหมดอายุ/ทางไปต่อ (ไม่ใช่ "อาจเป็นแพ็กเกจฟรี" ลอย ๆ)
+        // B1: ผู้ถือ License เป็นเจ้าของบริษัท + แพ็กระดับ License = ใบต่ออายุ License (ยอม) — ตัวตัดสินเดียวกับ GenerateRenewalInvoiceAsync
+        var subRow = await _db.Subscriptions.AsNoTracking().FirstAsync(s => s.Id == subId.Value);
+        var renewVerdict = await Accounting.Services.Platform.PlanIdentityReader.SystemVerdictAsync(_db, subRow);
+        if (!renewVerdict.Allowed)
+            throw new BusinessRuleException(Accounting.Services.Platform.PlanIdentityReader.RefusalMessage(renewVerdict), PlanIdentityResolver.LicenseCoveredRuleCode, 409);
         var number = await _billing.GenerateRenewalInvoiceAsync(subId.Value);
         return number == null
             ? BadRequest(new ApiResponse<object>(false, null, "ออกใบแจ้งหนี้ไม่ได้ (อาจเป็นแพ็กเกจฟรี/ไม่มีราคา)"))

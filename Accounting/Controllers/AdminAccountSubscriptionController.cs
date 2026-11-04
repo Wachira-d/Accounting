@@ -350,6 +350,8 @@ public class AdminAccountSubscriptionController : ControllerBase
             Notes = $"Admin attached company {companyId} to Account Plan {ap.Id}",
             PerformedBy = JwtHelper.GetUserIdFromClaims(User).ToString()
         });
+        // รอบ 236 (ฝ่ายค้าน S1): รายการค่าแพ็กเกจระดับบริษัทที่ยังรอชำระ ⇒ ยกเลิกในธุรกรรมเดียวกับการผูก
+        await _subSvc.CancelPendingPlanPaymentsForLicenseAsync(sub.Id, companyId, JwtHelper.GetUserIdFromClaims(User).ToString());
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
         return Ok(new ApiResponse<string>(true, null, "ผูกบริษัทเข้า License สำเร็จ"));

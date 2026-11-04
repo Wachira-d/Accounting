@@ -37,10 +37,15 @@ public class PlatformDunningService : IPlatformDunningService
     private readonly ILogger<PlatformDunningService> _logger;
     /// <summary>รอบ 231 (คำตัดสินข้อ 231-4): ขั้น 1 ของใบส่วนเกินค้างชำระ — ล็อก/ปลดสิทธิ์ส่วนเกิน (null ในเทสต์เดิม = ไม่มีขั้น 1)</summary>
     private readonly IOverageService? _overage;
+    /// <summary>รอบ 236 (ฝ่ายค้าน S2): กระดิ่งผู้ดูแลระบบแพลตฟอร์มเรื่องใบต่ออายุของบริษัทที่ License คุม (null ในเทสต์เดิม = audit อย่างเดียว)</summary>
+    private readonly INotificationService? _notifications;
+
+    /// <summary>รหัสกฎเรื่องค้าง: ใบต่ออายุแพ็กเกจระดับบริษัทที่ License คุมอยู่ — ไม่ทวง/ไม่ระงับ รอแอดมินยกเลิกใบหรือเก็บต่อ</summary>
+    public const string RuleLicenseCoveredInvoice = "PLATFORM-LICENSE-COVERED-INVOICE";
 
     public PlatformDunningService(AccountingDbContext db, IPlatformBillingNotifier notifier, ISubscriptionGateShadowLog gate,
-        IConfiguration config, ILogger<PlatformDunningService> logger, IOverageService? overage = null)
-    { _db = db; _notifier = notifier; _gate = gate; _config = config; _logger = logger; _overage = overage; }
+        IConfiguration config, ILogger<PlatformDunningService> logger, IOverageService? overage = null, INotificationService? notifications = null)
+    { _db = db; _notifier = notifier; _gate = gate; _config = config; _logger = logger; _overage = overage; _notifications = notifications; }
 
     public async Task<DunningEvaluation?> EvaluateCompanyAsync(Guid companyId, bool sendReminders, CancellationToken ct = default)
     {
@@ -76,6 +81,31 @@ public class PlatformDunningService : IPlatformDunningService
         var invoices = rows.Select(r => new DunningInvoice(r.Id, r.DocumentNumber, r.DueDate, r.DocumentDate, r.BalanceDue,
             Excluded: PlatformDunningPolicy.Excluded(linked.Contains(r.Id), sub.CancelAtPeriodEnd, sub.RenewalInvoiceDocumentId == r.Id,
                 PlatformInvoiceRules.SupersededRenewalReason(r.Reference, r.Id, sub.RenewalInvoiceDocumentId) != null, unlinkedRenewalSlip))).ToList();
+        // รอบ 236 (ฝ่ายค้าน S2): License คุมบริษัทนี้ (ไม่ใช่กรณีผู้ถือต่ออายุ License) ⇒ ใบต่ออายุแพ็กเกจระดับบริษัท = ไม่ทวง/ไม่นับระงับ (แพ็กนั้นไม่มีผล) ·
+        // ขึ้นเรื่องค้างให้แอดมินครั้งเดียวต่อใบ (audit chain + กระดิ่ง) — ยกเลิกใบหรือเก็บต่อ · ใบยังชำระมือได้ · ใบค่าใช้งานทวงตามเดิม
+        var licenseHeld = new List<PlatformInvoiceRow>();
+        if (await Accounting.Services.Platform.PlanIdentityReader.StopsCompanyPlanBillingAsync(_db, sub, ct))
+            for (var i = 0; i < rows.Count; i++)
+                if (PlatformInvoiceRules.KindOf(rows[i].Reference) == PlatformInvoiceKind.Renewal)
+                {
+                    if (!invoices[i].Excluded) invoices[i] = invoices[i] with { Excluded = true };
+                    licenseHeld.Add(rows[i]);
+                }
+        var licenseAttention = new List<PlatformInvoiceRow>();
+        foreach (var held in licenseHeld)
+        {
+            var heldKey = held.Id.ToString();
+            if (await _db.AuditLogs.AsNoTracking().AnyAsync(a => a.CompanyId == companyId && a.EntityType == "Document" && a.EntityId == heldKey
+                    && a.NewValues != null && a.NewValues.Contains(RuleLicenseCoveredInvoice), ct)) continue;
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserEmail = "system:dunning", Action = AuditAction.Update, EntityType = "Document", EntityId = heldKey,
+                NewValues = JsonSerializer.Serialize(new { invoice = held.DocumentNumber, ruleCode = RuleLicenseCoveredInvoice,
+                    reason = "ใบต่ออายุแพ็กเกจระดับบริษัทของบริษัทที่ License คุมอยู่ — ไม่ทวงอัตโนมัติ · แอดมินยกเลิกใบหรือเก็บต่อ" }),
+                Timestamp = now,
+            });
+            licenseAttention.Add(held);
+        }
 
         var state = await _db.PlatformDunningStates.FirstOrDefaultAsync(s => s.CompanyId == companyId, ct);
         if (state == null) { state = new PlatformDunningState { CompanyId = companyId, CreatedBy = "system:dunning" }; _db.PlatformDunningStates.Add(state); }
@@ -157,6 +187,17 @@ public class PlatformDunningService : IPlatformDunningService
         state.UpdatedAt = now;
         await _db.SaveChangesAsync(ct);
         if (tx != null) await tx.CommitAsync(ct);
+        foreach (var held in licenseAttention)
+        {
+            try
+            {
+                await PlatformPaymentAttention.NotifyAdminsAboutIntentAsync(_db, _notifications,
+                    $"ใบต่ออายุ {held.DocumentNumber} ของบริษัทที่ License คุม — ต้องตัดสิน",
+                    $"บริษัทนี้ใช้สิทธิ์ผ่าน License แพ็กเกจระดับบริษัทในใบนี้จึงไม่มีผล — ระบบไม่ทวง/ไม่ตัดบัตร/ไม่ระงับจากใบนี้ · ยกเลิกใบ (ใบลดหนี้) หรือเก็บต่อหากลูกค้าต้องการจ่าย",
+                    held.Id, PlatformPaymentAttention.AdminPageUrl, ct);
+            }
+            catch (Exception ex) { _logger.LogError(ex, "แจ้งผู้ดูแลระบบเรื่องใบต่ออายุใต้ License ไม่สำเร็จ ({Doc}) — audit ประทับแล้ว", held.Id); }
+        }
         var sent = 0;
         foreach (var m in outbox)
         {

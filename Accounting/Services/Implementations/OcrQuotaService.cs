@@ -88,12 +88,13 @@ public class OcrQuotaService : IOcrQuotaService
 
     public async Task<OcrQuotaStatus> GetQuotaStatusAsync(Guid companyId)
     {
+        // รอบ 236 (ฝ่ายค้าน S3): เดิมกรองสถานะแถวบริษัทใน query ⇒ แถวที่ค้าง Suspended ใต้ License ที่ยัง Active ถูกตัด OCR ทั้งที่สิทธิ์มาจาก License ·
+        // ตอนนี้ตัดสินด้วยตัวเดียว PlanIdentityResolver.CompanyRowUsable (License ⇒ ตามสถานะ License · ไม่ผูก ⇒ กติกาเดิม) — แถวเก่าที่ค้าง Suspended ได้ผลถูกทันที ไม่ต้อง migrate
         var sub = await _db.Subscriptions
-            .FirstOrDefaultAsync(s => s.CompanyId == companyId
-                && s.Status != SubscriptionStatus.Cancelled
-                && s.Status != SubscriptionStatus.Suspended);
+            .FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
 
-        if (sub == null)
+        if (sub == null || !Accounting.Helpers.PlanIdentityResolver.CompanyRowUsable(sub.Status,
+                await Accounting.Services.Platform.PlanIdentityReader.ForSubscriptionAsync(_db, sub), DateTime.UtcNow))
             return new OcrQuotaStatus(0, 0, 0, 0, 0, DateTime.UtcNow, 0, 0);
 
         // Self-heal: when the subscription's OCR quotas don't match the
@@ -219,12 +220,12 @@ public class OcrQuotaService : IOcrQuotaService
                 .FromSqlInterpolated($@"
                     SELECT * FROM ""Subscriptions""
                     WHERE ""CompanyId"" = {companyId}
-                      AND ""Status"" != {(int)SubscriptionStatus.Cancelled}
-                      AND ""Status"" != {(int)SubscriptionStatus.Suspended}
                       AND ""IsDeleted"" = false
                     FOR UPDATE")
                 .FirstOrDefaultAsync();
-            if (sub == null) return false;
+            // รอบ 236 (ฝ่ายค้าน S3): สถานะตัดสินด้วยตัวเดียวกับ GetQuotaStatusAsync (License ⇒ ตามสถานะ License · ไม่ผูก ⇒ แถวต้องไม่ถูกยกเลิก/ระงับ)
+            if (sub == null || !Accounting.Helpers.PlanIdentityResolver.CompanyRowUsable(sub.Status,
+                    await Accounting.Services.Platform.PlanIdentityReader.ForSubscriptionAsync(_db, sub), DateTime.UtcNow)) return false;
 
             // Lazy monthly reset — ล้างตัวนับทุกตัวผ่านตัวกลางตัวเดียว (เดิมล้างแค่ OCR รวม
             // ⇒ ตัวนับ Azure/local สะสมข้ามเดือนไม่รู้จบ) — Helpers/SubscriptionUsageRollover

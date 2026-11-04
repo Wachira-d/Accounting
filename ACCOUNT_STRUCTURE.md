@@ -214,6 +214,11 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
 - **ตัวตนแพ็กเกจ (ระดับ/ชื่อ/สถานะ/วันหมดอายุ/ที่มา)** ตัวเดียว `Helpers/PlanIdentityResolver` — บริษัทที่ผูก License ⇒ ของ License · ใช้ที่ overlay ของ
   `SubscriptionService` (หน้าแพ็กเกจ + gate) · `DashboardService` (เดิมอ่านแถวบริษัท ⇒ แดชบอร์ด "Free" ขณะหน้าแพ็กเกจ "Enterprise") · `CompanyResponse.Subscription`
   (+ `PlanName`/`Source`) · หน้าราคา/แพ็กเกจทุกหน้าอ่าน `GET api/subscription/plans` จุดเดียว + `PlanDisplay` (รอบ 205 เพิ่ม `account-subscription.html`)
+- **รอบ 236 (คำตัดสิน 236-1…236-6) — License คือตัวคุมเดียวของบริษัทที่ผูกอยู่:** ตัวเดียวกันตอบเพิ่ม `LicenseActive` (สูตร IsActive ของสาย License ที่
+  `GetEffectivePlanAsync` เรียก) · `CompanyPurchase` (บริษัทซื้อ/ต่ออายุ/เปลี่ยนแพ็กเกจระดับบริษัทเองได้ไหม — ผูก License ที่ไม่ถูกลบ ⇒ **ไม่ได้** ยกเว้นผู้ถือ License จ่ายแพ็กระดับเดียวกับ License = ต่ออายุ License (236-6) · เหตุบอก License ·
+  ผู้ถือ · วันหมดอายุ · ทางไปต่อ "ผู้ถือ License จัดการที่หน้า License / ถอดบริษัทออกจาก License ก่อน") · `Label`/`StatusLabel` (ป้าย/ตารางสถานะเดียว) ·
+  ตัวอ่าน `Services/Platform/PlanIdentityReader` · ด่านเงินทุกทางเข้า + จอแอดมิน/ศูนย์บิล/หน้าซื้อ ดู DOCUMENT_FLOW §2.12d · แถว `Subscription` ของบริษัทที่ผูก
+  License = **พักอยู่** (แสดงเป็นข้อมูลรอง · ไม่เตือน/ไม่เดินสถานะหมดอายุ · ไม่ออกใบต่ออายุ · ผูกแล้วยกเลิกรายการรอชำระ — 236-7) จนกว่าจะถอด · License หมดอายุแต่ยังผูก = ยังคุม (อ่านอย่างเดียว) ⇒ ต้องถอดก่อนซื้อเอง
 - **หน้าจัดการทีม** — `GET api/company/{id}/users` / `roles` ของผู้ที่ไม่ใช่สมาชิก = **403** ข้อความไทย (`CompanyMembershipGuard` · เดิม 401 ⇒ ถูกเด้งออกจากระบบ) ·
   แอดมินแพลตฟอร์มอ่านได้ · `api.js` ปุ่ม "🔐 สิทธิ์"/ลบบริษัท เดิมยิง `api/companies/…` (404) → `api/company/…`
 

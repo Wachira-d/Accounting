@@ -22,7 +22,10 @@ public interface ISubscriptionService
     // Subscription Management
     /// <summary>รอบ 219 เฟส 0 (G-0): "เลือกแพ็กเกจ" — จ่ายก่อนเปิด (สร้างรายการชำระ) · ไม่เปิดแพ็กเกจจ่ายเงินทันทีอีกต่อไป</summary>
     Task<PlanPurchaseResponse> ConvertTrialAsync(Guid companyId, ConvertTrialRequest request, string performedBy);
-    Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId);
+    /// <summary>รอบ 236 (ฝ่ายค้าน S1): ผูกบริษัทเข้า License ⇒ ยกเลิกรายการค่าแพ็กเกจที่รอชำระ (ไม่มีสลิป/ไม่ผูกใบ/ไม่มีชำระออนไลน์ที่เริ่มแล้ว) · ผู้เรียก SaveChanges</summary>
+    Task<int> CancelPendingPlanPaymentsForLicenseAsync(Guid subscriptionId, Guid companyId, string performedBy);
+    /// <param name="viewerUserId">รอบ 236 B1: ผู้ดู — ผู้ถือ License เห็นทางต่ออายุ License (<c>LicenseRenewalPlan</c>) · null = ไม่ทราบ (ไม่ใช่ผู้ถือ)</param>
+    Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId, Guid? viewerUserId = null);
     /// <summary>แพ็กเกจ/สถานะ/ฟีเจอร์ที่มีผลจริง (overlay User License + mask ที่เจ้าของปิดเอง — สูตรเดียวกับ
     /// <see cref="GetSubscriptionAsync"/>) <b>โดยไม่นับการใช้งาน</b> — สำหรับ <c>SubscriptionCheckMiddleware</c> ที่ถูกเรียก
     /// ทุกคำขอ (GetSubscriptionAsync นับสมุดรายวัน/ไฟล์แนบทุกครั้ง) · <c>null</c> = ยังไม่มี subscription (ไม่สร้างให้)</summary>
@@ -30,7 +33,8 @@ public interface ISubscriptionService
     /// <summary>รอบ 219 เฟส 0 (G-0): อัปเกรด = รายการชำระรอเงินเข้า · ดาวน์เกรด/เปลี่ยนรอบ = มีผลวันครบรอบ</summary>
     Task<PlanPurchaseResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy);
     /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): ดูราคา/วันมีผลของการเปลี่ยนแพ็กเกจก่อนยืนยัน (ส่วนต่างตามวันที่เหลือ · คูปอง) — ไม่สร้าง/ไม่จองอะไร</summary>
-    Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycle, string? couponCode);
+    /// <param name="actorUserId">รอบ 236 B1: ผู้ดูใบเสนอ — ผู้ถือ License + แพ็กระดับ License ⇒ ใบเสนอ "ต่ออายุ License" · null = ไม่ใช่ผู้ถือ</param>
+    Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycle, string? couponCode, Guid? actorUserId = null);
     /// <summary>รอบ 230 (ข้อ 178 ①): แอดมินแก้ยอดรายการชำระค่าแพ็กเกจที่ยังไม่จ่าย — เหตุผลบังคับ · audit chain · ห้ามเมื่อมีการชำระออนไลน์ค้าง</summary>
     Task<SubscriptionPaymentResponse> OverridePaymentAmountAsync(Guid paymentId, decimal amount, string reason, string performedBy);
     /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): แพ็กเกจที่ชำระแล้วและยังไม่สิ้นรอบ ⇒ ยกเลิกมีผลสิ้นรอบ (<c>SubscriptionCancelPolicy</c>) · คืนข้อความถึงผู้ใช้</summary>

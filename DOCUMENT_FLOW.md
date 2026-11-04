@@ -2683,6 +2683,38 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **บันทึกบัตรใน checkout (ข้อ 10 · 235-10):** `Services/Payments/PlatformSavedCardStart` ตัวเดียว (platform-pay + `PublicCheckoutController.StartIntent`) · `checkout.html` ดึง `public/checkout/companies/{id}/saved-card-offer` (ด่านเจ้าของเดียวกับ StartIntent · ข้อความจาก `OfferAsync` ตัวเดียวกับ platform-pay) ส่ง `savedCardOffer` ให้ PayWidget
 - เทสต์ `PlatformRound235Tests` · `PlatformRound235DbTests` · `PublicCheckoutRound233DbTests.R235_*` · Last verified working tree รอบ 235 (sha เติมในคอมมิตตามหลัง)
 
+### 2.12d บริษัทใต้ License — แพ็กเกจที่มีผลตัวเดียว + ด่านซื้อแพ็กเกจระดับบริษัท (รอบ 236 · คำตัดสิน 236-1…236-6)
+
+- **ที่มา (เจ้าของ 2026-11-04):** บริษัท "เน็ก แอค" ผูก License Enterprise (ผู้ถือ สมฤทธิ์ · ถึง 31/12/2593) แต่หัวโมดัลแอดมิน "Free Edition · Active" · แท็บ Subscription
+  "Free Edition ฟรีถาวร" · ดรอปดาวน์หน้าซื้อ "(FreeTrial · Active)" · สรุปตะกร้า "แพ็กเกจปัจจุบัน Free Edition → Enterprise" และ**ให้จ่าย ฿10,000 ซื้อ Enterprise 12 เดือน**
+  (แถว `Subscription` ของบริษัทที่ซื้อไม่มีผล — `GetEffectivePlanAsync` ใช้ License) ⇒ เก็บเงินซ้ำ/ขายของที่มีอยู่แล้ว
+- **ตัวตัดสินเดียว:** `Helpers/PlanIdentityResolver` (pure) — `Resolve` (ผูก License ที่ไม่ถูกลบ ⇒ ของ License) · `LicenseActive` (สูตรเดียวกับ IsActive ของสาย License
+  ใน `GetEffectivePlanAsync` — ย้ายมาที่นี่) · `CompanyPurchase` (ซื้อเองได้ไหม + เหตุ + ทางไปต่อ) · `Label` (ป้ายเดียว — ไม่พิมพ์ชื่อ enum) · `StatusLabel` (ตารางเดียว ·
+  `PlatformBillingCenterService.StatusLabel` เรียกตัวนี้) · ตัวอ่านฐาน `Services/Platform/PlanIdentityReader` (static — ไม่สร้างวง DI)
+- **ด่านเงิน (`PlanIdentityReader.EnsureCompanyMayPurchaseAsync` ⇒ 409 `PLATFORM-LICENSE-COVERED` ข้อความ: License · ผู้ถือ · วันหมดอายุ · "ผู้ถือ License ต่ออายุที่หน้า License
+  หรือติดต่อผู้ดูแลระบบ · ถ้าต้องการให้บริษัทจ่ายเอง ถอดบริษัทออกจาก License ก่อน"):** `SubscriptionService.RequestPlanPaymentAsync` (ทางเดียวของ ConvertTrial/
+  RequestRenewalPayment/ChangeSubscription) · `ChangeSubscriptionAsync` (รวมเส้นตั้งเวลาดาวน์เกรด) · `SubmitPaymentAsync` · `RecordManualPaymentAsync` (แอดมิน) ·
+  `PublicCheckoutService.CreateOrderAsync` (ก่อน resume/ต่ออายุ/ซื้อใหม่) · `PlatformPaymentService.StartSubscriptionPaymentAsync` (รายการค่าแพ็กเกจที่ค้างจากก่อนผูก) ·
+  `UploadPaymentSlipAsync` (รายการไม่ผูกใบ) · `AdminController.IssueRenewalInvoice` · `SaasBillingDocumentService.GenerateRenewalInvoiceAsync` (คืน null) — ล็อกด้วย
+  `tools/required_call_site_check.py` R236 · **ไม่กัน:** ชำระใบแจ้งหนี้ที่ออกแล้ว (`SubmitInvoicePaymentAsync` — หนี้จริง) · อนุมัติรายการที่เงินเข้าแล้ว (`ReviewPaymentAsync` —
+  preview ตรวจสลิปขึ้น `LicenseNotice`)
+- **ข้อยกเว้น — ต่ออายุ License (236-6 · ฝ่ายค้าน B1):** ผู้ทำรายการเป็นผู้ถือ License + แพ็กระดับเดียวกับ License (`MayCascadeToAccountPlan`) ⇒ ยอม (`PurchaseVerdict.LicenseRenewal`) ·
+  ใบเสนอ/ตะกร้า `PlanPurchasePreview.ForLicenseRenewal` ("ต่ออายุ License · ครอบทุกบริษัทใต้ License" + วันหมดอายุใหม่ของ License) · อนุมัติแล้ว `ReviewPaymentLockedAsync` ยืด License
+  (`AccountPlanExtendedViaSlip` เดิม) · ผู้ทำรายการ = UserId ผู้ล็อกอิน (hub · checkout · แจ้งชำระ · แนบสลิป · เริ่มชำระออนไลน์) · งานระบบใช้ `SystemVerdictAsync` (ผู้ถือเป็นเจ้าของบริษัท) ·
+  หน้าเว็บ: `LicenseRenewalPlan` (ศูนย์บิล/หน้า subscription เหลือเฉพาะแพ็กระดับ License) · ดรอปดาวน์ checkout ติดป้าย "ต่ออายุ License ได้"/"ซื้อเองไม่ได้"
+- **ผูกเข้า License (236-7 · S1):** ทุกทางผูกเรียก `CancelPendingPlanPaymentsForLicenseAsync` (ยกเลิกรายการรอชำระที่ไม่มีสลิป/ใบ/intent + audit chain)
+- **ใบเสนอ/preview "ชำระไม่ได้":** `QuotePlanChangeAsync` (hub · หน้า subscription) · `PublicCheckoutService.QuoteAsync` (ตะกร้า) · `PreviewManualPaymentAsync` (แอดมิน) ⇒
+  `PlanPurchasePreview.RefusedByLicense` — "แพ็กเกจปัจจุบัน" = แพ็กเกจของ License · ยอด 0 · ไม่มีปุ่มชำระ/ยืนยัน
+- **จอที่อ่านแพ็กเกจที่มีผล:** หัวโมดัล + แท็บ Subscription แอดมิน (`GET admin/customers/{id}` → `effectivePlan` · แถวบริษัทแสดงเป็น "พักอยู่ — มีผลเมื่อถอดออกจาก License") ·
+  ศูนย์บิลผู้เช่า (`BillingCenterPlan.Source/LicenseOwner/PurchaseBlocked/DormantCompanyPlan`) · `SubscriptionResponse.PlanSource/LicenseOwner/PurchaseBlocked` (หน้า subscription
+  ซ่อนปุ่มเลือกแพ็กเกจ) · ดรอปดาวน์หน้าซื้อ (`OwnedCompaniesAsync.Label/PurchaseBlocked`)
+- **เตือน/ทวง/สถานะ (236-4 · 236-8):** `ProcessSubscriptionNotificationsAsync` ข้ามแถวบริษัทที่ License (ไม่ถูกลบ) คุมอยู่ · `ProcessExpiredSubscriptionsAsync` ข้ามทั้งแถว
+  (ไม่ตั้ง PastDue/Suspended) · โควตา OCR อ่าน `PlanIdentityResolver.CompanyRowUsable` (แถวค้าง Suspended ใต้ License ที่ Active ใช้ได้ — ไม่ต้อง migrate) · ตัดบัตรอัตโนมัติข้ามใบต่ออายุ ·
+  ทวงหนี้ไม่ทวง/ไม่ระงับจากใบต่ออายุ + เรื่องค้างแอดมิน `PLATFORM-LICENSE-COVERED-INVOICE` · ใบ USAGE- ตามเดิม · อีเมลเตือน License ชี้ทางต่ออายุจริง (`LicenseRenewalHowTo`)
+- **ขอบเขต (236-3):** License หมดอายุ/ถูกระงับแต่บริษัทยังผูก ⇒ ยังเป็นตัวคุม (ตรง `GetEffectivePlanAsync` — อ่านอย่างเดียว) ⇒ ปฏิเสธพร้อมทาง "ถอดออกก่อน" · ถอด/ลบ License ⇒
+  แถวบริษัทกลับมามีผลและซื้อได้ · ผู้ถือ License ที่หมดอายุยังต่ออายุผ่านเส้นเดิมได้ (cascade ฟื้นสถานะ)
+- เทสต์ `EffectivePlanRound236Tests` · Db `LicensePurchaseGuardRound236DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)
@@ -7381,3 +7413,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำ�
 
 _Last verified against codebase: 2026-11-04 (รอบ 234 ทีมหัก ณ ที่จ่ายอัตโนมัติ — §2.12b `PlatformWhtSuggestion`/`PlatformPayerProfileGate`/`PlatformWhtCertificateStatus` · ทุกเส้นชำระ NextAcc เก็บยอดสุทธิ + ภาษีหัก · ด่านข้อมูลบริษัท · 50 ทวิ จากลูกค้าผูกทะเบียนภาษีถูกหัก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-04 (รอบ 235 ทีมปิดงานค้างนอกเส้นบิล + ฝ่ายค้าน 235-X — (1) K-5 ศักราช: ตัวตัดสินกลาง `ThaiDate.TryNormalizeEra`/`NormalizeEra`/`IsOutOfEra` แทน `AddYears(±543)` 18+2 จุด · แปลงแล้วยังนอกช่วง/29 ก.พ. ไม่มีจริง = 400 (integration) / อ่านไม่ได้ (statement) · งานซ่อม `reports/repair-dates` (JournalManage) ครอบสองทิศ + ข้ามงวดปิด/ออกเลขแล้ว/แบบภาษียื่นแล้ว (`Helpers/BuddhistDateRepairPolicy`) · ปุ่มบนบัญชีแยกประเภทจาก `eraRepair` ของเซิร์ฟเวอร์ (2) อัตราจำกัดเส้นสมัคร/รีเซ็ตรหัสผ่าน/สมัครประตูลูกค้า: ต่อ IP (IPv6 /64) fail-closed · ทั้งระบบ = เตือนแอดมิน · ตารางนับใช้ไม่ได้ = 503 (`Helpers/AuthRateLimitPolicy` · `IChatRateLimiter.ConsumeAsync`) (3) รายงานเงินทดสอบที่ลงบัญชีไปแล้ว + หลักฐาน — เทสต์ `BuddhistEraNormalizeRound235Tests` · `BuddhistDateRepairPolicyRound235Tests` · `AuthRateLimitRound235Tests` · `TestModeLegacyEffectPolicyRound235Tests` · Db `BuddhistDateRepairDbTests` · `AuthRateLimitSharedDbTests` · `TestModeLegacyEffectsDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-04 (รอบ 236 — §2.12d บริษัทใต้ License: แพ็กเกจที่มีผลตัวเดียว `PlanIdentityResolver` (+ `LicenseActive`/`CompanyPurchase`/`Label`) ผ่าน `PlanIdentityReader` · ด่านซื้อแพ็กเกจระดับบริษัททุกทางเข้า (409 `PLATFORM-LICENSE-COVERED`) · ใบเสนอ/preview `RefusedByLicense` · ไม่เตือน/ไม่ออกใบต่ออายุแถวบริษัทที่ License คุม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

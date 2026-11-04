@@ -238,6 +238,7 @@
           transferReference: null, notes: null, withholdingTaxAmount: 0 });
         const d = r.data || {}; const pv = d.preview || {}; const w = d.withholding;
         box.innerHTML = `<div style="font-size:13px;line-height:1.6"><b>${AdminLayout.esc(pv.headline || '')}</b>
+          ${pv.allowed === false && pv.nextStep ? `<div style="color:#b91c1c">→ ${AdminLayout.esc(pv.nextStep)}</div>` : ''}
           <ul style="margin:4px 0 0 18px;padding:0">${(pv.lines || []).map(l => `<li>${AdminLayout.esc(l)}</li>`).join('')}</ul>
           ${w ? `<div style="color:#0c4a6e">ภาษีหัก ณ ที่จ่าย: ${AdminLayout.esc(w.line || w.reason || '')}</div>` : ''}</div>`;
       } catch (e) { box.innerHTML = `<div style="color:var(--admin-danger);font-size:12px">${AdminLayout.esc(e.message)}</div>`; }
@@ -269,6 +270,9 @@
       const s = d.subscription;
       const t = d.trial;
       const ap = d.accountPlan;
+      // รอบ 236 (คำตัดสิน 236-1): แพ็กเกจที่มีผลจริงจากเซิร์ฟเวอร์ (PlanIdentityResolver ตัวเดียว — License ชนะ) · แถวบริษัท (s) เป็นข้อมูลรองเมื่อผูก License
+      const ep = d.effectivePlan;
+      const viaLicense = !!(ep && ep.viaLicense);
       // Banner shown above the subscription panel when the company is covered
       // by a parent Account Plan. Pure HTML, plugged into the existing template
       // a few lines below.
@@ -297,7 +301,9 @@
         <div class="admin-modal-overlay" onclick="if(event.target===this)closeModal()">
           <div class="admin-modal" style="max-width:1100px;max-height:90vh;overflow-y:auto">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px">
-              <h3 style="margin:0">${AdminLayout.esc(c.name)} ${s ? AdminLayout.planBadge(s.plan) + ' ' + AdminLayout.statusBadge(s.status) : ''}</h3>
+              <h3 style="margin:0">${AdminLayout.esc(c.name)} ${ep ? AdminLayout.planBadge(ep.plan) + ' ' + `<span class="admin-badge-sm" title="${AdminLayout.esc(ep.status)}">${AdminLayout.esc(ep.statusLabel || ep.status)}</span>`
+                + (viaLicense ? ' <span style="background:#ecfeff;color:#0c4a6e;border:1px solid #67e8f9;padding:1px 6px;border-radius:8px;font-size:11px;font-weight:600">🎫 ผ่าน License</span>' : '')
+                : (s ? AdminLayout.planBadge(s.plan) + ' ' + AdminLayout.statusBadge(s.status) : '')}</h3>
               <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="closeModal()" style="font-size:18px;padding:2px 10px">&times;</button>
             </div>
 
@@ -392,17 +398,21 @@
 
             <!-- Subscription -->
             <div class="detail-panel" id="panel-subscription">
-              ${ap ? `
-                <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:#9a3412;line-height:1.6">
-                  ⚠️ <strong>อ่านลำดับการ resolver:</strong> บริษัทนี้อยู่ใต้ Account Plan
-                  <strong>${AdminLayout.esc(ap.planName)}</strong> ของ <strong>${AdminLayout.esc(ap.ownerName)}</strong>
-                  → quota / features ที่ใช้จริง <strong>ดูจาก Account Plan</strong>
-                  (หมดอายุ ${new Date(ap.endDate).toLocaleDateString('th-TH')}) ·
-                  ค่าด้านล่างนี้เป็น Subscription ระดับบริษัทเฉพาะตอน "ถอดออกจาก Account Plan" หรือใช้แยกบิลเท่านั้น
+              ${ep ? `
+                <div style="border:2px solid ${viaLicense ? '#67e8f9' : '#e2e8f0'};border-radius:10px;padding:12px 16px;margin-bottom:14px">
+                  <div style="font-weight:700;margin-bottom:8px">แพ็กเกจที่มีผลจริง</div>
+                  <div class="info-grid">
+                    <div class="info-item"><div class="label">แพ็กเกจ</div><div class="value">${AdminLayout.planBadge(ep.plan)}</div></div>
+                    <div class="info-item"><div class="label">ที่มา</div><div class="value">${viaLicense ? '🎫 License ของ ' + AdminLayout.esc(ep.licenseOwner || '-') : 'Subscription ของบริษัท'}</div></div>
+                    <div class="info-item"><div class="label">สถานะ</div><div class="value">${`<span class="admin-badge-sm" title="${AdminLayout.esc(ep.status)}">${AdminLayout.esc(ep.statusLabel || ep.status)}</span>`}</div></div>
+                    <div class="info-item"><div class="label">หมดอายุ</div><div class="value">${ep.isOpenEnded ? 'ไม่หมดอายุ' : AdminLayout.date(ep.endDate)}</div></div>
+                  </div>
+                  ${ep.purchaseBlocked ? `<div style="margin-top:8px;font-size:12px;color:#9a3412;line-height:1.6">⛔ ${AdminLayout.esc(ep.purchaseBlocked)}</div>` : ''}
                 </div>
+                ${viaLicense && s ? `<div style="font-size:12px;color:#64748b;margin:0 0 6px">Subscription ระดับบริษัท <b>(พักอยู่ — มีผลเมื่อถอดบริษัทออกจาก License เท่านั้น · ห้ามขาย/ต่ออายุแถวนี้)</b>:</div>` : ''}
               ` : ''}
               ${s ? `
-                <div class="info-grid">
+                <div class="info-grid" style="${viaLicense ? 'opacity:.6' : ''}">
                   <div class="info-item"><div class="label">แพ็กเกจ</div><div class="value">${AdminLayout.planBadge(s.plan)}</div></div>
                   <div class="info-item"><div class="label">สถานะ Subscription</div><div class="value">${AdminLayout.statusBadge(s.status)}</div></div>
                   <div class="info-item"><div class="label">รอบบิล</div><div class="value">${s.billingCycle}</div></div>

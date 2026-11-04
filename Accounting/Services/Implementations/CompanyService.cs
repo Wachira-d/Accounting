@@ -204,6 +204,9 @@ public class CompanyService : ICompanyService
             if (sub.AccountSubscriptionId == null)
             {
                 sub.AccountSubscriptionId = acct.Id;
+                // รอบ 236 (ฝ่ายค้าน S1): ทางผูกเดียวกัน — บริษัทเพิ่งสร้างปกติไม่มีรายการค้าง แต่เดินด่านเดียวกับทางผูกอื่น
+                if (_subscriptionService != null)
+                    await _subscriptionService.CancelPendingPlanPaymentsForLicenseAsync(sub.Id, companyId, "system:auto-attach-license");
                 await _db.SaveChangesAsync();
             }
         }

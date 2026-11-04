@@ -34,7 +34,7 @@ public interface IPlatformPaymentService
     /// <param name="allowTestMode">รอบ 232 (ฝ่ายค้าน S1): true เฉพาะหน้าซื้อแพ็กเกจสาธารณะ (<c>PublicCheckoutService</c>) — ให้โหมดทดสอบผ่านด่านช่องทางได้
     /// (<see cref="PlatformPayAvailability.StartRefusal"/>) · ด่านอื่นเหมือนเดิมทั้งหมด · ผู้เรียกเดิมไม่ส่ง ⇒ โหมดทดสอบถูกปฏิเสธเหมือนเดิม</param>
     Task<PaymentIntent> StartSubscriptionPaymentAsync(Guid payerCompanyId, Guid subscriptionPaymentId, PaymentMethodKind method, string? returnUrl,
-        string? cardToken, CancellationToken ct = default, PlatformCardRefs? savedCard = null, bool allowTestMode = false);
+        string? cardToken, CancellationToken ct = default, PlatformCardRefs? savedCard = null, bool allowTestMode = false, Guid? actorUserId = null);
     /// <summary>สถานะสดของรายการที่บริษัทนี้เป็นผู้จ่าย — รายการของบริษัทอื่น/ของร้าน ⇒ null</summary>
     Task<PaymentIntent?> RefreshForPayerAsync(Guid payerCompanyId, Guid intentId, CancellationToken ct = default);
     /// <summary>ต้นทางของรายการ (ส่วนเสริม: CompanyFeature.Id · แพ็กเกจ: SubscriptionPayment.Id) — ใช้ผูกหลักฐานยอมรับนโยบาย</summary>
@@ -152,7 +152,7 @@ public class PlatformPaymentService : IPlatformPaymentService
     }
 
     public async Task<PaymentIntent> StartSubscriptionPaymentAsync(Guid payerCompanyId, Guid subscriptionPaymentId, PaymentMethodKind method,
-        string? returnUrl, string? cardToken, CancellationToken ct = default, PlatformCardRefs? savedCard = null, bool allowTestMode = false)
+        string? returnUrl, string? cardToken, CancellationToken ct = default, PlatformCardRefs? savedCard = null, bool allowTestMode = false, Guid? actorUserId = null)
     {
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == subscriptionPaymentId && p.Subscription.CompanyId == payerCompanyId)
@@ -169,6 +169,9 @@ public class PlatformPaymentService : IPlatformPaymentService
         // รายการที่ผูกใบแจ้งหนี้ (ศูนย์บิล/ลิงก์ชำระ) ยอด = ยอดค้างของใบ (เซิร์ฟเวอร์) ไม่ใช่ราคาแพ็กเกจ — handler ก็ข้ามด่านราคาเหมือนกัน
         if (pay.PlatformInvoiceDocumentId == null)
         {
+            // รอบ 236 (236-2): รายการค่าแพ็กเกจระดับบริษัทที่สร้างก่อนบริษัทถูกผูก License ⇒ ไม่เริ่มเก็บเงิน (จ่ายแล้วไม่มีผล) · รายการชำระใบแจ้งหนี้ (หนี้จริง) ไม่ถูกกัน
+            // ฝ่ายค้าน B1: ผู้ถือ License จ่ายแพ็กระดับ License = ต่ออายุ License (ยอม) · ผู้เรียกที่ไม่ส่งผู้ทำรายการ (งานระบบ) = ไม่ใช่ผู้ถือ
+            await Accounting.Services.Platform.PlanIdentityReader.EnsureCompanyMayPurchaseAsync(_db, payerCompanyId, actorUserId, pay.RequestedPlan, ct);
             var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == pay.RequestedPlan && t.IsActive, ct);
             // รอบ 230 โควตา/บิล (ฝ่ายค้าน B1): ตัวตัดสินเดียวกับ handler — รายการที่เซิร์ฟเวอร์เสนอยอดเอง (ส่วนต่างอัปเกรด/คูปอง/แอดมินแก้) เทียบ QuotedAmount ·
             // รายการราคาเต็มเทียบราคาแพ็กเกจปัจจุบันตามเดิม (ราคาเปลี่ยน = ปฏิเสธ)

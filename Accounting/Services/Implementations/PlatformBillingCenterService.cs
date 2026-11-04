@@ -15,7 +15,8 @@ namespace Accounting.Services.Implementations;
 /// </summary>
 public interface IPlatformBillingCenterService
 {
-    Task<BillingCenterSummary> GetSummaryAsync(Guid companyId, bool canPay, bool canManagePlan, CancellationToken ct = default);
+    /// <param name="viewerUserId">รอบ 236 B1: ผู้ดู — ผู้ถือ License เห็นทางต่ออายุ License · null = ไม่ใช่ผู้ถือ</param>
+    Task<BillingCenterSummary> GetSummaryAsync(Guid companyId, bool canPay, bool canManagePlan, CancellationToken ct = default, Guid? viewerUserId = null);
 }
 
 public class PlatformBillingCenterService : IPlatformBillingCenterService
@@ -31,7 +32,7 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
         ILegalDocumentService legal, ISubscriptionGateShadowLog gate, IConfiguration config)
     { _db = db; _platform = platform; _legal = legal; _gate = gate; _config = config; }
 
-    public async Task<BillingCenterSummary> GetSummaryAsync(Guid companyId, bool canPay, bool canManagePlan, CancellationToken ct = default)
+    public async Task<BillingCenterSummary> GetSummaryAsync(Guid companyId, bool canPay, bool canManagePlan, CancellationToken ct = default, Guid? viewerUserId = null)
     {
         var now = DateTime.UtcNow;
         var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId, ct)
@@ -57,6 +58,24 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             SubscriptionCancelPolicy.ResumeRefusal(sub.CancelAtPeriodEnd, sub.Status, sub.EndDate, now) == null,
             sub.CancelAtPeriodEnd ? SubscriptionCancelPolicy.Message(SubscriptionCancelPolicy.Outcome.AtPeriodEnd, sub.EndDate) : null,
             IsOpenEnded: openEnded);
+        // รอบ 236 (คำตัดสิน 236-1/236-2 · เจ้าของ: "ตกลงบริษัทนี้เป็น Enterprise หรือ Free"): แพ็กเกจที่แสดง = แพ็กเกจที่มีผล (PlanIdentityResolver — License ชนะ)
+        // แถวบริษัทที่พักอยู่เป็นข้อมูลรอง · License คุมอยู่ ⇒ ไม่มีใบต่ออายุ/ยกเลิก/ใช้ต่อของแถวบริษัท + เหตุที่ซื้อเองไม่ได้
+        var identity = await Accounting.Services.Platform.PlanIdentityReader.ForSubscriptionAsync(_db, sub, ct);
+        var purchase = Accounting.Services.Platform.PlanIdentityReader.Verdict(identity, viewerUserId, null);
+        if (identity.ViaLicense)
+            plan = plan with
+            {
+                Plan = identity.Plan.ToString(), PlanName = identity.PlanName, Status = identity.Status.ToString(), StatusLabel = StatusLabel(identity.Status),
+                PricePerCycle = 0m, EndDate = SubscriptionExpiry.DisplayEnd(false, identity.EndDate, now), IsPermanentFree = false,
+                NextRenewalInvoiceAt = null, ScheduledPlan = null, ScheduledPlanEffectiveAt = null,
+                CancelAtPeriodEnd = false, CancelEffectiveAt = null, CanCancel = false, CanReactivate = false, CancelNote = null,
+                IsOpenEnded = SubscriptionExpiry.IsOpenEnded(identity.EndDate, now),
+                Source = identity.Source, LicenseOwner = identity.License?.OwnerName ?? identity.License?.OwnerEmail,
+                DormantCompanyPlan = $"{planName ?? sub.Plan.ToString()} · {StatusLabel(sub.Status)} — ใช้เมื่อถอดบริษัทออกจาก License",
+            };
+        if (!purchase.Allowed)
+            plan = plan with { PurchaseBlocked = Accounting.Services.Platform.PlanIdentityReader.RefusalMessage(purchase), PurchaseNextStepUrl = purchase.NextStepUrl,
+                LicenseRenewalPlan = purchase.HolderMayRenew ? identity.Plan.ToString() : null };
 
         // ── ใบแจ้งหนี้ ──
         var invoices = platformId is Guid pid
@@ -215,16 +234,8 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
         return null;
     }
 
-    internal static string StatusLabel(SubscriptionStatus s) => s switch
-    {
-        SubscriptionStatus.Trial => "ทดลองใช้",
-        SubscriptionStatus.Active => "ใช้งานอยู่",
-        SubscriptionStatus.PastDue => "เกินกำหนดต่ออายุ",
-        SubscriptionStatus.Cancelled => "ยกเลิกแล้ว",
-        SubscriptionStatus.Expired => "หมดอายุ",
-        SubscriptionStatus.Suspended => "ถูกระงับ",
-        _ => s.ToString(),
-    };
+    /// <summary>รอบ 236: ตารางเดียวอยู่ที่ <see cref="PlanIdentityResolver.StatusLabel"/> (ป้ายแพ็กเกจของหน้าซื้อ/แอดมินใช้ตัวเดียวกัน)</summary>
+    internal static string StatusLabel(SubscriptionStatus s) => PlanIdentityResolver.StatusLabel(s);
 
     internal static string PaymentStatusLabel(SubscriptionPaymentStatus s, bool hasSlip) => s switch
     {

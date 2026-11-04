@@ -120,6 +120,8 @@ public class AccountPlanExpiryReminderJob : BackgroundService
         int bucket = 0;
         string? subject = null; string? body = null;
         var planName = a.PlanTemplate?.Name ?? "Plan";
+        // รอบ 236 (ฝ่ายค้าน B1): ทางต่ออายุที่มีอยู่จริง — ข้อความเดียว (PlanIdentityResolver) · HtmlEncode เพราะชื่อแพ็กมาจากแอดมิน
+        var howTo = System.Net.WebUtility.HtmlEncode(Accounting.Helpers.PlanIdentityResolver.LicenseRenewalHowTo(planName));
 
         if (daysLeft <= 0 && (a.ExpiryRemindersSentMask & 8) == 0)
         {
@@ -129,7 +131,8 @@ public class AccountPlanExpiryReminderJob : BackgroundService
                  + $"<p>Account Plan <strong>{planName}</strong> ของคุณหมดอายุเมื่อวันที่ <strong>{a.EndDate:yyyy-MM-dd}</strong></p>"
                  + $"<p>ระบบจะให้คุณใช้งานต่อในช่วง Grace Period {a.GracePeriodDays} วัน · "
                  + $"หลังจากนั้นบริษัทใต้ Plan จะกลายเป็นโหมด readonly (ดูได้ บันทึกไม่ได้)</p>"
-                 + $"<p>โปรดต่ออายุที่หน้าจัดการ License เพื่อใช้งานบริษัทใต้ Plan ต่อเนื่อง</p>";
+                 + $"<p>โปรดต่ออายุเพื่อใช้งานบริษัทใต้ Plan ต่อเนื่อง</p>"
+                 + $"<p>{howTo}</p>";   // รอบ 236 B1: ทางต่ออายุที่มีอยู่จริง
             // WP-A3 cascade: flip the per-company Subscription rows under this
             // License to Expired ด้วย — ไม่ใช่แค่ตั้ง flag ที่ account row.
             // (เดิม comment ว่าจะ cascade แต่โค้ดไม่ได้ทำ → admin dashboard โชว์
@@ -165,7 +168,8 @@ public class AccountPlanExpiryReminderJob : BackgroundService
             subject = $"⚠️ Account Plan ({planName}) จะหมดอายุพรุ่งนี้";
             body = $"<p>เรียน คุณ{a.Owner.FullName}</p>"
                  + $"<p>Account Plan <strong>{planName}</strong> จะหมดอายุ <strong>พรุ่งนี้</strong> ({a.EndDate:yyyy-MM-dd})</p>"
-                 + $"<p>เพื่อให้บริษัทใต้ Plan ทุกแห่งใช้งานต่อเนื่อง — โปรดต่ออายุก่อนหมดอายุ</p>";
+                 + $"<p>เพื่อให้บริษัทใต้ Plan ทุกแห่งใช้งานต่อเนื่อง — โปรดต่ออายุก่อนหมดอายุ</p>"
+                 + $"<p>{howTo}</p>";   // รอบ 236 B1: ทางต่ออายุที่มีอยู่จริง
         }
         else if (daysLeft <= 3 && daysLeft > 1 && (a.ExpiryRemindersSentMask & 2) == 0)
         {
@@ -173,7 +177,8 @@ public class AccountPlanExpiryReminderJob : BackgroundService
             subject = $"📅 Account Plan ({planName}) จะหมดอายุใน 3 วัน";
             body = $"<p>เรียน คุณ{a.Owner.FullName}</p>"
                  + $"<p>Account Plan <strong>{planName}</strong> ของคุณจะหมดอายุในวันที่ <strong>{a.EndDate:yyyy-MM-dd}</strong></p>"
-                 + $"<p>เหลือเวลาอีก {daysLeft} วัน — แนะนำให้ต่ออายุล่วงหน้าเพื่อกัน Service หยุดชะงัก</p>";
+                 + $"<p>เหลือเวลาอีก {daysLeft} วัน — แนะนำให้ต่ออายุล่วงหน้าเพื่อกัน Service หยุดชะงัก</p>"
+                 + $"<p>{howTo}</p>";   // รอบ 236 B1: ทางต่ออายุที่มีอยู่จริง
         }
         else if (daysLeft <= 7 && daysLeft > 3 && (a.ExpiryRemindersSentMask & 1) == 0)
         {
@@ -181,7 +186,8 @@ public class AccountPlanExpiryReminderJob : BackgroundService
             subject = $"📅 Account Plan ({planName}) จะหมดอายุใน {daysLeft} วัน";
             body = $"<p>เรียน คุณ{a.Owner.FullName}</p>"
                  + $"<p>Account Plan <strong>{planName}</strong> ของคุณจะหมดอายุในวันที่ <strong>{a.EndDate:yyyy-MM-dd}</strong></p>"
-                 + $"<p>เหลือเวลา {daysLeft} วัน — โปรดต่ออายุเพื่อให้ License คุ้มครองบริษัทใต้ Plan ต่อ</p>";
+                 + $"<p>เหลือเวลา {daysLeft} วัน — โปรดต่ออายุเพื่อให้ License คุ้มครองบริษัทใต้ Plan ต่อ</p>"
+                 + $"<p>{howTo}</p>";   // รอบ 236 B1: ทางต่ออายุที่มีอยู่จริง
         }
 
         if (bucket == 0 || subject == null || body == null) return;

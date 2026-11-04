@@ -318,6 +318,42 @@ public static class PlanPurchasePreview
             "ชำระรายการนี้ไม่ได้", dateLine, new List<string> { dateLine, reason }, new List<string> { reason });
     }
 
+    /// <summary>รอบ 236 (คำตัดสิน 236-2): บริษัทอยู่ใต้ License ⇒ ชำระไม่ได้ — "แพ็กเกจปัจจุบัน" = แพ็กเกจของ License (ตัวตน <see cref="PlanIdentityResolver"/>)
+    /// ไม่ใช่แถวบริษัทที่ไม่มีผล · เหตุ/ทางไปต่อจาก <see cref="PlanIdentityResolver.CompanyPurchase"/> ตัวเดียว (กล่องสรุป · ใต้ปุ่ม · error ตอนสร้างรายการ)</summary>
+    public static Result RefusedByLicense(PlanIdentityResolver.PlanIdentity id, Target tgt, PlanIdentityResolver.PurchaseVerdict verdict, DateTime nowUtc)
+    {
+        var curName = string.IsNullOrWhiteSpace(id.PlanName) ? id.Plan.ToString() : id.PlanName!;
+        var curOpen = SubscriptionExpiry.IsOpenEnded(id.EndDate, nowUtc);
+        var dateLine = curOpen ? $"ปัจจุบัน: {curName} (ผ่าน License) ไม่มีวันหมดอายุ" : $"ปัจจุบัน: {curName} (ผ่าน License) ใช้ได้ถึง {BeDate(id.EndDate)}";
+        var reason = verdict.Reason ?? "บริษัทนี้อยู่ใต้ License — ซื้อแพ็กเกจระดับบริษัทไม่ได้";
+        return new Result(PreviewKind.Refused.ToString(), false, reason, verdict.NextStep, verdict.NextStepUrl,
+            id.Plan.ToString(), curName, "", curOpen ? null : id.EndDate,
+            tgt.Plan.ToString(), tgt.PlanName, tgt.Cycle.ToString(),
+            null, null, false, null, 0m, 0m, null, null, null, 0m, 0m, false,
+            "ชำระรายการนี้ไม่ได้ — บริษัทนี้ใช้แพ็กเกจผ่าน License", dateLine, new List<string> { dateLine, reason }, new List<string> { reason });
+    }
+
+    /// <summary>รอบ 236 (ฝ่ายค้าน B1 · คำตัดสิน 236-6): ผู้ถือ License จ่ายแพ็กระดับเดียวกับ License ผ่านหน้าซื้อของบริษัท ⇒ <b>ต่ออายุ License</b>
+    /// (ตอนอนุมัติ <c>ReviewPaymentLockedAsync</c> ยืด License ด้วย <see cref="PaidPeriod"/> ตัวเดียวกันนี้ — แพ็กเดิม · นับจากวันหมดอายุเดิมของ License หรือวันชำระ) ·
+    /// ป้าย/ข้อความบอกตรง ๆ ว่าไม่ใช่การซื้อแพ็กระดับบริษัท · วันหมดอายุใหม่ = ของ License</summary>
+    public static Result ForLicenseRenewal(PlanIdentityResolver.PlanIdentity id, Target tgt, Money m, DateTime nowUtc, bool vatIncluded)
+    {
+        var l = id.License ?? throw new ArgumentException("ต้องเป็นตัวตนที่มาจาก License", nameof(id));
+        var name = string.IsNullOrWhiteSpace(l.PlanName) ? l.Plan.ToString() : l.PlanName!;
+        var months = PlatformPlanPricing.MonthsOf(tgt.Cycle);
+        var newEnd = PaidPeriod(PlatformPlanPricing.ChangeKind.Same, true, false, l.Status == SubscriptionStatus.Trial,
+            isProration: false, isCycleChange: false, l.EndDate, nowUtc, months).EndUtc;
+        var dateLine = $"License {name} ใช้ได้ถึง {BeDate(l.EndDate)} → {BeDate(newEnd)} (ถ้าชำระวันนี้ · ครอบทุกบริษัทใต้ License)";
+        var money = vatIncluded ? $"ยอดชำระ ฿{R2(m.AmountDue):N2} (รวม VAT 7% แล้ว)" : $"ยอดชำระ ฿{R2(m.AmountDue):N2}";
+        var notes = new List<string> { "เป็นการต่ออายุ License ของคุณ — ไม่ใช่การซื้อแพ็กเกจระดับบริษัท (บริษัทใช้สิทธิ์ตาม License ต่อเนื่อง)" };
+        return new Result("LicenseRenewal", true, null, null, null,
+            l.Plan.ToString(), name, "", SubscriptionExpiry.IsOpenEnded(l.EndDate, nowUtc) ? null : l.EndDate,
+            tgt.Plan.ToString(), tgt.PlanName, tgt.Cycle.ToString(),
+            l.EndDate > nowUtc ? l.EndDate : nowUtc, newEnd, false, null,
+            R2(m.ListPrice), 0m, null, null, null, R2(m.CouponDiscount), R2(m.AmountDue), vatIncluded,
+            PlanIdentityResolver.LicenseRenewalHeadline, dateLine, new List<string> { dateLine, money }.Concat(notes).ToList(), notes);
+    }
+
     /// <summary>ฝ่ายค้าน N5: ข้อความป้าย "ต่ำกว่าแพ็กปัจจุบัน" บน <c>/pricing.html</c> (ต่อบริษัทที่ผู้ใช้เป็นเจ้าของ) — เซิร์ฟเวอร์ประกอบ หน้าเว็บแสดงอย่างเดียว ·
     /// วันมีผลตัวเดียวกับการตั้งเวลาดาวน์เกรด (<see cref="PlatformPlanPricing.ScheduledChangeEffectiveAt"/>)</summary>
     public static string LowerPlanNote(string companyName, string currentPlanName, bool isPermanentFree, DateTime endUtc, DateTime nowUtc)
