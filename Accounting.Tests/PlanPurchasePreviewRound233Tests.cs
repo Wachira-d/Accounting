@@ -226,7 +226,7 @@ public class PlanPurchasePreviewRound233Tests
         var now = ThaiTen(2026, 11, 3);
         var cur = Cur(SubscriptionPlan.Enterprise, "Enterprise", BillingCycle.Annual, SubscriptionStatus.Active, end, 4_990m);
         var tgt = Tgt(SubscriptionPlan.Pro, "Professional", BillingCycle.Annual, 1_490m);
-        var decision = PublicCheckoutPolicy.DecideOrder(cur.Status, false, cur.Plan, cur.Cycle, cur.MonthlyPrice, tgt.Plan, tgt.Cycle, tgt.MonthlyPrice, 0m, false, false);
+        var decision = PublicCheckoutPolicy.DecideOrder(cur.Status, false, cur.Plan, cur.Cycle, cur.MonthlyPrice, tgt.Plan, tgt.Cycle, tgt.MonthlyPrice, 0m, false);
         Assert.Equal(PublicCheckoutPolicy.OrderKind.Refused, decision.Kind);
         var pv = PlanPurchasePreview.Refused(cur, tgt, decision.Refusal, now);
         Assert.False(pv.Allowed);
@@ -275,7 +275,7 @@ public class PlanPurchasePreviewRound233Tests
     public void ทิศตรงข้าม_อัปเกรด_ไม่ถูกปฏิเสธ()
     {
         var d = PublicCheckoutPolicy.DecideOrder(SubscriptionStatus.Active, false, SubscriptionPlan.Basic, BillingCycle.Annual, 590m,
-            SubscriptionPlan.Pro, BillingCycle.Annual, 1_490m, 6_916.44m, false, false);
+            SubscriptionPlan.Pro, BillingCycle.Annual, 1_490m, 6_916.44m, false);
         Assert.Equal(PublicCheckoutPolicy.OrderKind.Change, d.Kind);
     }
 
