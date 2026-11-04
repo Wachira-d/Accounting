@@ -373,11 +373,11 @@ public static class BankCsvParser
         {
             foreach (var ci in cultures)
             {
-                if (DateTime.TryParseExact(s, fmt, ci, DateTimeStyles.AssumeLocal, out date))
-                {
-                    if (date.Year > 2400) date = date.AddYears(-543);
+                // ศักราชผ่านตัวตัดสินกลาง ThaiDate.TryNormalizeEra (รอบ 235 K-5 — เดิม "ปี > 2400 ⇒ AddYears(-543)" เขียนเอง ⇒ 29/02/2572
+                // (ค.ศ. 2029 ไม่มี 29 ก.พ.) ถูกปัดเป็น 28 ก.พ. เงียบ ๆ และ th-TH อ่านปี ค.ศ. เป็น พ.ศ. ⇒ ปี 14xx หลุดผ่าน) · แปลงไม่ได้ = ลองรูปแบบถัดไป
+                if (DateTime.TryParseExact(s, fmt, ci, DateTimeStyles.AssumeLocal, out date)
+                    && ThaiDate.TryNormalizeEra(date, out date))
                     return true;
-                }
             }
         }
 
@@ -387,12 +387,11 @@ public static class BankCsvParser
         var fallbackCulture = order == DateOrder.MonthFirst
             ? new CultureInfo("en-US")
             : new CultureInfo("th-TH");
-        if (DateTime.TryParse(s, fallbackCulture, DateTimeStyles.AssumeLocal, out date))
-        {
-            if (date.Year > 2400) date = date.AddYears(-543);
+        if (DateTime.TryParse(s, fallbackCulture, DateTimeStyles.AssumeLocal, out date)
+            && ThaiDate.TryNormalizeEra(date, out date))
             return true;
-        }
 
+        date = default;
         return false;
     }
 

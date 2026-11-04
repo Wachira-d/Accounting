@@ -60,8 +60,9 @@ public class QuotaController : ControllerBase
     public async Task<ActionResult<ApiResponse<object>>> Offers(Guid companyId, [FromQuery] int units = 1, CancellationToken ct = default)
         => Ok(new ApiResponse<object>(true, await _purchases.OffersAsync(companyId, Math.Clamp(units, 1, QuotaAddOnPricing.MaxUnitsPerPurchase), ct)));
 
+    /// <summary>รอบ 235 (235-5): <c>WithholdTax</c> = ติ๊ก "หัก ณ ที่จ่าย" (ยอดหักจากเซิร์ฟเวอร์ · หน้าเว็บส่งแค่ true/false)</summary>
     public sealed record CreatePurchaseBody(string Resource, string Mode, int Units, decimal? ExpectedPerUnit, decimal? ExpectedAmount,
-        string? CouponCode = null);
+        string? CouponCode = null, bool? WithholdTax = null);
 
     /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q2): ดูผลคูปองกับยอดของวิธีซื้อที่เลือก (ไม่จอง · ยอดคิดที่เซิร์ฟเวอร์) — หน้าต่างซื้อแสดงส่วนลด/ยอดหลังส่วนลด</summary>
     [HttpGet("coupon-preview")]
@@ -82,6 +83,25 @@ public class QuotaController : ControllerBase
         return Ok(new ApiResponse<object>(true, new { ok = ev.Ok, problem = ev.Problem, label = ev.Label, listAmount = ev.ListAmount, discount = ev.Discount, amountAfter = ev.AmountAfter }));
     }
 
+    /// <summary>รอบ 235 (คำตัดสิน 235-5): ภาษีหัก ณ ที่จ่ายที่ระบบเสนอสำหรับยอดของวิธีซื้อที่เลือก (หลังคูปอง) — ตัวตัดสินเดียวกับตอนสร้างรายการ
+    /// (<c>PlatformWithholdingReader.ForReceivedAsync</c> · ราคาครั้งเดียว ⇒ เกณฑ์ ฿1,000 ดูยอดครั้งนี้) · หน้าเว็บแสดงช่องติ๊กเมื่อ <c>eligible</c> (ค่าตั้งต้น = <c>defaultChecked</c>)</summary>
+    [HttpGet("withholding-preview")]
+    [Accounting.Filters.RejectApiKey("ดูภาษีหัก ณ ที่จ่าย")]
+    [Accounting.Filters.RequirePermission(PermissionKeys.BillingManage)]
+    public async Task<ActionResult<ApiResponse<object>>> WithholdingPreview(Guid companyId, [FromQuery] string resource, [FromQuery] string mode,
+        [FromQuery] int units, [FromQuery] string? code, CancellationToken ct)
+    {
+        if (!Enum.TryParse<QuotaAddOnMode>(mode, true, out var m))
+            return BadRequest(new ApiResponse<object>(false, null, "วิธีซื้อไม่ถูกต้อง"));
+        var q = await _purchases.QuoteAsync(companyId, resource ?? "", m, Math.Clamp(units, 1, QuotaAddOnPricing.MaxUnitsPerPurchase), ct);
+        if (!q.Allowed) return Ok(new ApiResponse<object>(true, null));
+        var amount = q.Amount;
+        if (PlatformCouponRule.Normalize(code) != null
+            && await PlatformCouponStore.PreviewAsync(_db, companyId, code, PlatformCouponScope.QuotaAddOn, null, null, resource, q.Amount, DateTime.UtcNow, ct) is { Ok: true } ev)
+            amount = ev.AmountAfter;
+        return Ok(new ApiResponse<object>(true, await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, companyId, amount, true, null, ct)));
+    }
+
     [HttpPost("purchases")]
     [Accounting.Filters.RejectApiKey("ซื้อโควตาเสริม")]
     [Accounting.Filters.RequirePermission(PermissionKeys.BillingManage)]
@@ -92,7 +112,7 @@ public class QuotaController : ControllerBase
         try
         {
             var row = await _purchases.CreateAsync(companyId,
-                new QuotaPurchaseRequest(body.Resource ?? "", mode, body.Units, body.ExpectedPerUnit, body.ExpectedAmount, body.CouponCode), Actor, IdempotencyKeyHeader(), ct);
+                new QuotaPurchaseRequest(body.Resource ?? "", mode, body.Units, body.ExpectedPerUnit, body.ExpectedAmount, body.CouponCode, body.WithholdTax), Actor, IdempotencyKeyHeader(), ct);
             return Ok(new ApiResponse<object>(true, Map(row), "สร้างรายการแล้ว — ชำระเงินเพื่อเริ่มใช้ได้ทันที"));
         }
         catch (QuotaOfferChangedException ex)
@@ -213,6 +233,8 @@ public class QuotaController : ControllerBase
             receivedAmount = p.ReceivedAmount, attentionRule = p.AttentionRule, attentionReason = p.AttentionReason, offlineReference = p.OfflineReference,
             slipUploadedAt = p.SlipUploadedAt, createdAt = p.CreatedAt,
             couponCode = p.CouponCode, couponDiscount = p.CouponDiscountAmount, listAmount = p.ListAmount,
+            withholdingTaxAmount = p.WithholdingTaxAmount,   // รอบ 235 (235-5): ภาษีหัก · amountDue = ยอดสุทธิที่ตัด/โอน
+            grossAmount = PlatformWhtSuggestion.GrossOf(p.AmountDue, p.WithholdingTaxAmount),   // ยอดเต็มบนใบ (เซิร์ฟเวอร์คิด)
             canPay = p.Status == QuotaAddOnStatus.AwaitingPayment || p.Status == QuotaAddOnStatus.Rejected,
             canCancel = p.Status is QuotaAddOnStatus.AwaitingPayment or QuotaAddOnStatus.Rejected
                 || (p.Status == QuotaAddOnStatus.Active && p.Mode == QuotaAddOnMode.RecurringMonthly && !p.CancelAtPeriodEnd),

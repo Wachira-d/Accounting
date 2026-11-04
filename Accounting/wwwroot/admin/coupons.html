@@ -40,7 +40,8 @@
       <div style="margin-top:8px"><div class="muted">รอบบิลที่ใช้ได้ (ไม่เลือก = ทุกรอบ)</div><div class="checks" id="cCycles"></div></div>
       <div style="margin-top:8px"><div class="muted">โควตาเสริมที่ใช้ได้ (ไม่เลือก = ทุกรายการ)</div><div class="checks" id="cResources"></div></div>
       <div class="checks" style="margin-top:10px">
-        <label><input type="checkbox" id="cFirst"> ใช้ได้เฉพาะการชำระครั้งแรกของบริษัท</label>
+        <label>ค่าแพ็กเกจ: ใช้กับ<select id="cPurchaseKinds"><option value="New">ซื้อใหม่/อัปเกรดเท่านั้น</option><option value="Both">ซื้อใหม่และต่ออายุ</option><option value="Renewal">ต่ออายุเท่านั้น</option></select></label>
+                <label><input type="checkbox" id="cFirst"> ใช้ได้เฉพาะการชำระครั้งแรกของบริษัท</label>
         <label><input type="checkbox" id="cActive" checked> เปิดใช้</label>
       </div>
       <div style="margin-top:12px;display:flex;gap:8px">
@@ -109,6 +110,7 @@
           appliesTo: document.getElementById('cScope').value,
           plans: this.checked('plan'), cycles: this.checked('cycle'), addOnResources: this.checked('res'),
           firstPaymentOnly: document.getElementById('cFirst').checked,
+          purchaseKinds: document.getElementById('cPurchaseKinds').value,
           isActive: document.getElementById('cActive').checked,
         };
       },
@@ -128,6 +130,7 @@
         document.getElementById('cMaxCompany').value = '1';
         document.getElementById('cKind').value = 'Percent'; document.getElementById('cScope').value = 'Both';
         document.getElementById('cFirst').checked = false; document.getElementById('cActive').checked = true;
+        document.getElementById('cPurchaseKinds').value = 'New';
         ['plan', 'cycle', 'res'].forEach(n => this.setChecked(n, []));
       },
 
@@ -143,6 +146,7 @@
         document.getElementById('cMaxCompany').value = c.maxUsesPerCompany ?? '';
         document.getElementById('cDesc').value = c.description || '';
         document.getElementById('cFirst').checked = !!c.firstPaymentOnly; document.getElementById('cActive').checked = !!c.isActive;
+        document.getElementById('cPurchaseKinds').value = c.purchaseKinds || 'New';
         this.setChecked('plan', c.plans); this.setChecked('cycle', c.cycles); this.setChecked('res', c.addOnResources);
         window.scrollTo({ top: 0, behavior: 'smooth' });
       },
@@ -153,6 +157,7 @@
           code: c.code, description: c.description, kind: c.kind, value: c.value, validFromUtc: c.validFromUtc, validToUtc: c.validToUtc,
           maxUsesTotal: c.maxUsesTotal, maxUsesPerCompany: c.maxUsesPerCompany, appliesTo: c.appliesTo,
           plans: c.plans, cycles: c.cycles, addOnResources: c.addOnResources, firstPaymentOnly: c.firstPaymentOnly, isActive: !c.isActive,
+          purchaseKinds: c.purchaseKinds || 'New',   // รอบ 235: สลับเปิด/ปิดต้องไม่ล้างค่าตั้ง (เก็บแล้วต้อง echo กลับ)
         };
         try { const r = await AdminAPI.put(`${this.base}/${id}`, body); AdminLayout.toast(r.message || 'บันทึกแล้ว'); await this.load(); }
         catch (e) { AdminLayout.toast(e.message, 'error'); }
@@ -192,7 +197,7 @@
         el.innerHTML = this.rows.length === 0 ? '<div class="muted">ยังไม่มีคูปอง</div>' : `<table class="admin-table"><thead><tr>
             <th>รหัส</th><th>ส่วนลด</th><th>ใช้กับ</th><th>ช่วงเวลา</th><th class="text-right">ใช้แล้ว / จอง / เพดาน</th><th>สถานะ</th><th></th></tr></thead><tbody>
           ${this.rows.map(c => `<tr>
-            <td><strong>${this.esc(c.code)}</strong>${c.description ? `<div class="muted">${this.esc(c.description)}</div>` : ''}${c.firstPaymentOnly ? '<div class="muted">ครั้งแรกเท่านั้น</div>' : ''}</td>
+            <td><strong>${this.esc(c.code)}</strong>${c.description ? `<div class="muted">${this.esc(c.description)}</div>` : ''}${c.firstPaymentOnly ? '<div class="muted">ครั้งแรกเท่านั้น</div>' : ''}${c.purchaseKindsLabel ? `<div class="muted">${this.esc(c.purchaseKindsLabel)}</div>` : ''}</td>
             <td>${this.esc(c.label)}</td>
             <td class="muted">${this.esc(c.appliesTo)}${c.plans.length ? ' · ' + this.esc(c.plans.join(', ')) : ''}${c.cycles.length ? ' · ' + this.esc(c.cycles.join(', ')) : ''}${c.addOnResources.length ? ' · ' + this.esc(c.addOnResources.join(', ')) : ''}</td>
             <td class="muted">${c.validFromUtc ? AdminLayout.date(c.validFromUtc) : 'ทันที'} – ${c.validToUtc ? this.esc(this.utcToDate(c.validToUtc, true)) : 'ไม่หมดอายุ'}</td>

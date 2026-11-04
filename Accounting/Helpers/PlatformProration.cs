@@ -24,9 +24,9 @@ public static class PlatformProration
 
     private static DateTime ThaiDate(DateTime utc) => utc.AddHours(7).Date;
 
-    /// <summary>วันเริ่มรอบปัจจุบัน = วันหมดอายุ − เดือนของรอบ (รอบถูกสร้างด้วย <c>baseDate.AddMonths(months)</c> เสมอ)</summary>
+    /// <summary>วันเริ่มรอบปัจจุบัน = วันหมดอายุ − เดือนของรอบ (รอบถูกสร้างด้วย <c>PlatformPlanPricing.AddCycleMonths</c> บนปฏิทินไทย — รอบ 235 K-4 · แถวเก่าที่สร้างด้วย AddMonths บน UTC อาจต่าง ≤ 1 วันที่สิ้นเดือน)</summary>
     private static DateTime CycleStartUtc(DateTime cycleEndUtc, int cycleMonths)
-        => cycleEndUtc.AddMonths(-(cycleMonths <= 0 ? 1 : cycleMonths));
+        => PlatformPlanPricing.AddCycleMonths(cycleEndUtc, -(cycleMonths <= 0 ? 1 : cycleMonths));   // รอบ 235 K-4: ปฏิทินไทย (คู่กับ PaidPeriod)
 
     /// <summary>คิดส่วนต่างอัปเกรด — <paramref name="oldPricePerCycle"/>/<paramref name="newPricePerCycle"/> = ราคาต่อรอบบิลเดียวกัน (รอบของ subscription ปัจจุบัน)</summary>
     public static Result Upgrade(decimal oldPricePerCycle, decimal newPricePerCycle, int cycleMonths, DateTime cycleEndUtc, DateTime nowUtc,
@@ -79,7 +79,7 @@ public static class PlatformProration
         DateTime cycleEndUtc, DateTime nowUtc, bool planActive = true, bool isTrial = false, bool isPermanentFree = false)
     {
         var start = CycleStartUtc(cycleEndUtc, oldCycleMonths);
-        var newEnd = newCycleMonths > 0 ? nowUtc.AddMonths(newCycleMonths) : nowUtc;
+        var newEnd = newCycleMonths > 0 ? PlatformPlanPricing.AddCycleMonths(nowUtc, newCycleMonths) : nowUtc;   // รอบ 235 K-4
         CycleChangeResult No(string why) => new(false, 0m, 0m, 0, 0, newCycleMonths, cycleEndUtc, nowUtc, newEnd, "", why);
         if (newCycleMonths <= 0 || oldCycleMonths <= 0) return No("รอบบิลไม่ถูกต้อง");
         if (newCycleMonths <= oldCycleMonths) return No("รอบบิลใหม่ไม่ยาวกว่ารอบเดิม — เปลี่ยนรอบมีผลวันครบรอบ (ไม่คืนเงิน)");

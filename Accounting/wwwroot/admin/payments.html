@@ -278,13 +278,14 @@
                 2. ถ้าบริษัทนี้อยู่ใต้ <strong>Account Plan</strong> ของ User → ยืด <code>AccountSubscription.EndDate</code> + flip status เป็น Active ให้ด้วย (กัน License แม่หมดอายุก่อนลูก) — quota บน Account Plan ไม่ถูก overwrite
               </div>
 
+              <div id="reviewPreview" class="admin-mb"><div style="font-size:12px;color:#64748b">กำลังคำนวณสิ่งที่จะเกิดเมื่ออนุมัติ…</div></div>
               <div class="admin-form-group">
                 <label class="admin-label">ภาษีหัก ณ ที่จ่าย (บาท · ตาม 50 ทวิ ของลูกค้า — เว้นว่าง = ไม่มี/ไม่เปลี่ยน)</label>
-                <input class="admin-input" id="reviewWht" type="number" min="0" step="0.01" placeholder="0.00" value="${Number(p.withholdingTaxAmount || 0) > 0 ? Number(p.withholdingTaxAmount) : ''}">
+                <input class="admin-input" id="reviewWht" type="number" min="0" step="0.01" placeholder="0.00" oninput="queueReviewPreview('${String(p.id || '').replace(/[^0-9a-fA-F-]/g, '')}')" value="${Number(p.withholdingTaxAmount || 0) > 0 ? Number(p.withholdingTaxAmount) : ''}">
               </div>
               <div class="admin-form-group">
                 <label class="admin-label">เงินที่รับจริงตามสลิป (บาท · เว้นว่าง = ยอดของรายการ) — เงิน + ภาษีหัก ต้องไม่เกินยอดค้างของใบ</label>
-                <input class="admin-input" id="reviewAmountReceived" type="number" min="0" step="0.01" placeholder="${Number(p.amount || 0).toFixed(2)}">
+                <input class="admin-input" id="reviewAmountReceived" type="number" min="0" step="0.01" oninput="queueReviewPreview('${String(p.id || '').replace(/[^0-9a-fA-F-]/g, '')}')" placeholder="${Number(p.amount || 0).toFixed(2)}">
               </div>
               <div class="admin-form-group">
                 <label class="admin-label">หมายเหตุ Admin</label>
@@ -299,6 +300,7 @@
             </div>
           </div>
         `;
+        loadReviewPreview(paymentId);   // รอบ 235 (K-7): สิ่งที่จะเกิดเมื่ออนุมัติ — preview ตัวเดียวกับหน้าผู้เช่า
       } catch (err) {
         AdminLayout.toast(err.message, 'error');
       }
@@ -367,7 +369,7 @@
               <div style="display:flex;gap:8px">
                 <input class="admin-input" id="recSearch" placeholder="ค้นหาชื่อ/เลขภาษี" oninput="reloadRecCompanies()" style="flex:1">
               </div>
-              <select class="admin-input" id="recCompany" style="margin-top:6px"><option value="">— เลือกบริษัท —</option></select>
+              <select class="admin-input" id="recCompany" style="margin-top:6px" onchange="queueRecPreview()"><option value="">— เลือกบริษัท —</option></select>
             </div>
 
             <div class="admin-grid-2">
@@ -386,15 +388,15 @@
               </div>
               <div class="admin-form-group">
                 <label class="admin-label">จำนวนเดือนที่ต่อ *</label>
-                <input class="admin-input" id="recMonths" type="number" min="1" value="12">
+                <input class="admin-input" id="recMonths" type="number" min="1" value="12" oninput="queueRecPreview()">
               </div>
               <div class="admin-form-group">
                 <label class="admin-label">วันที่รับเงิน *</label>
-                <input class="admin-input" id="recDate" type="date" value="${today}">
+                <input class="admin-input" id="recDate" type="date" value="${today}" onchange="queueRecPreview()">
               </div>
               <div class="admin-form-group">
                 <label class="admin-label">ยอดเงินที่ได้รับจริง (บาท) *</label>
-                <input class="admin-input" id="recAmount" type="number" min="0" step="0.01" value="0">
+                <input class="admin-input" id="recAmount" type="number" min="0" step="0.01" value="0" oninput="recSyncWhtHint()">
                 <div style="font-size:11px;color:#64748b;margin-top:2px">เงินที่เข้าบัญชีจริง (หลังลูกค้าหักภาษีแล้ว)</div>
               </div>
               <div class="admin-form-group">
@@ -403,6 +405,13 @@
                 <div style="font-size:11px;color:#64748b;margin-top:2px" id="recWhtHint">
                   ลูกค้านิติบุคคลหักค่าบริการ 3% — ใส่ยอดที่ถูกหัก (0 = ไม่ถูกหัก)
                 </div>
+              </div>
+              <div class="admin-form-group">
+                <!-- รอบ 235 (ฝ่ายค้าน S-5): ทางยกเว้นเมื่อ 50 ทวิ จริงต่างจากกติกา (หักเกิน 3% / ผู้จ่ายบุคคลธรรมดา) — เหตุผล ≥ 10 ตัวอักษร · audit -->
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px">
+                  <input type="checkbox" id="recWhtCert" onchange="queueRecPreview()"> บันทึกตามหนังสือรับรอง 50 ทวิ จริง (ยอดต่างจากกติกา)
+                </label>
+                <input class="admin-input" id="recWhtCertReason" maxlength="300" placeholder="เหตุผล (อย่างน้อย 10 ตัวอักษร — บันทึก audit)" oninput="queueRecPreview()" style="margin-top:4px">
               </div>
               <div class="admin-form-group">
                 <label class="admin-label">วิธีรับเงิน</label>
@@ -438,6 +447,8 @@
               <label class="admin-label">หมายเหตุ</label>
               <textarea class="admin-input" id="recNotes" rows="2"></textarea>
             </div>
+
+            <div id="recPreview" class="admin-mb"></div>
 
             <div class="admin-modal-actions">
               <button class="admin-btn admin-btn-success" id="recSubmitBtn" onclick="submitRecord()">บันทึก + ต่ออายุ</button>
@@ -493,6 +504,7 @@
 
     // แสดงยอดตามใบกำกับให้เห็นชัดว่าจะออกเอกสารเท่าไร (รับจริง + ที่ถูกหัก)
     function recSyncWhtHint() {
+      queueRecPreview();   // รอบ 235 (K-7/ข้อ 6): ยอด/ภาษีหักเปลี่ยน ⇒ ถามเซิร์ฟเวอร์ใหม่
       const amt = parseFloat(document.getElementById('recAmount')?.value || '0') || 0;
       const wht = parseFloat(document.getElementById('recWht')?.value || '0') || 0;
       const el = document.getElementById('recWhtHint');
@@ -535,6 +547,8 @@
         // ยอดตามใบกำกับ = เงินที่ได้รับจริง + ภาษีที่ลูกค้าหักไว้ — ไม่ส่งตัวนี้
         // เอกสารที่ออกจะมีแต่ยอดสุทธิ ⇒ รายได้ต่ำไป + เสียเครดิตภาษี 3%
         withholdingTaxAmount: waived ? 0 : (parseFloat(document.getElementById('recWht')?.value || '0') || 0),
+        whtPerCertificate: !waived && !!document.getElementById('recWhtCert')?.checked,
+        whtOverrideReason: (document.getElementById('recWhtCertReason')?.value || '').trim() || null,
         waiveReason: waived ? document.getElementById('recWaiveReason').value : null,
         transferReference: document.getElementById('recRef').value || null,
         notes: document.getElementById('recNotes').value || null
@@ -562,6 +576,83 @@
     function closeRecord() {
       document.getElementById('recordModal').style.display = 'none';
       document.getElementById('recordModal').innerHTML = '';
+    }
+
+
+    // ═══ รอบ 235 (K-7 · ข้อ 6 · คำตัดสิน 235-3/235-6): สิ่งที่จะเกิดก่อนกด — PlanPurchasePreview ตัวเดียวกับหน้าผู้เช่า (server computes · page displays) ═══
+    function renderAdminPreview(d) {
+      if (!d || !d.preview) return '';
+      const pv = d.preview;
+      const lines = (pv.lines || []).map(l => `<li>${AdminLayout.esc(l)}</li>`).join('');
+      const w = d.withholding;
+      const whtLine = w && w.eligible && w.suggestedAmount > 0
+        ? `<div style="margin-top:6px;color:#0c4a6e">💡 ระบบเสนอภาษีหัก ณ ที่จ่าย ${AdminLayout.money(w.suggestedAmount)} (${AdminLayout.esc(String(w.ratePercent))}% ของฐานก่อน VAT ${AdminLayout.money(w.baseAmount)}) — ${AdminLayout.esc(w.line || w.reason || '')}</div>`
+        : (w && w.reason ? `<div style="margin-top:6px;color:#64748b">ภาษีหัก ณ ที่จ่าย: ${AdminLayout.esc(w.reason)}</div>` : '');
+      const prob = d.withholdingProblem ? `<div style="margin-top:6px;color:var(--admin-danger)">⚠️ ${AdminLayout.esc(d.withholdingProblem)}</div>` : '';
+      const refused = pv.allowed === false && pv.refusalReason ? `<div style="color:var(--admin-danger)">⛔ ${AdminLayout.esc(pv.refusalReason)}</div>` : '';
+      return `<div style="border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.6">
+          <div style="font-weight:700">🔎 ถ้ากดตอนนี้: ${AdminLayout.esc(pv.headline || '')}</div>${refused}
+          <ul style="margin:6px 0 0 18px;padding:0">${lines}</ul>${whtLine}${prob}</div>`;
+    }
+
+    let reviewPreviewTimer = null;
+    function queueReviewPreview(paymentId) { clearTimeout(reviewPreviewTimer); reviewPreviewTimer = setTimeout(() => loadReviewPreview(paymentId), 300); }
+    async function loadReviewPreview(paymentId) {
+      const box = document.getElementById('reviewPreview'); if (!box) return;
+      const wht = document.getElementById('reviewWht')?.value ?? '';
+      const received = document.getElementById('reviewAmountReceived')?.value ?? '';
+      const key = paymentId + '|' + wht + '|' + received;
+      box.dataset.key = key;
+      try {
+        const res = await AdminAPI.approvalPreview(paymentId, wht, received);
+        if (box.dataset.key !== key) return;   // ผลเก่ามาช้า — ไม่ทับค่าที่กรอกล่าสุด
+        box.innerHTML = renderAdminPreview(res.data);
+      } catch (err) { if (box.dataset.key === key) box.innerHTML = `<div style="color:var(--admin-danger);font-size:12px">${AdminLayout.esc(err.message)}</div>`; }
+    }
+
+    let recPreviewTimer = null;
+    function queueRecPreview() { clearTimeout(recPreviewTimer); recPreviewTimer = setTimeout(loadRecPreview, 300); }
+    function recBody() {
+      const waived = !!document.getElementById('recWaive')?.checked;
+      const dateVal = document.getElementById('recDate')?.value;
+      return {
+        amount: waived ? 0 : parseFloat(document.getElementById('recAmount')?.value || '0') || 0,
+        paymentDate: dateVal ? new Date(dateVal).toISOString() : new Date().toISOString(),
+        paymentMethod: document.getElementById('recMethod')?.value || 'BankTransfer',
+        requestedPlan: document.getElementById('recPlan')?.value,
+        requestedBillingCycle: document.getElementById('recCycle')?.value,
+        requestedPeriodMonths: parseInt(document.getElementById('recMonths')?.value || '0', 10),
+        isWaived: waived,
+        withholdingTaxAmount: waived ? 0 : (parseFloat(document.getElementById('recWht')?.value || '0') || 0),
+        whtPerCertificate: !waived && !!document.getElementById('recWhtCert')?.checked,
+        whtOverrideReason: (document.getElementById('recWhtCertReason')?.value || '').trim() || null,
+        waiveReason: waived ? document.getElementById('recWaiveReason')?.value : null,
+        transferReference: null, notes: null,
+      };
+    }
+    async function loadRecPreview() {
+      const box = document.getElementById('recPreview'); if (!box) return;
+      const companyId = document.getElementById('recCompany')?.value;
+      const body = recBody();
+      if (!companyId || !body.requestedPlan || body.requestedPeriodMonths <= 0) { box.innerHTML = ''; return; }
+      const key = companyId + '|' + JSON.stringify(body);
+      box.dataset.key = key;
+      try {
+        const res = await AdminAPI.previewManualPayment(companyId, body);
+        if (box.dataset.key !== key) return;
+        const d = res.data || {};
+        const w = d.withholding;
+        const useBtn = !body.isWaived && w && w.eligible && w.suggestedAmount > 0 && Number(body.withholdingTaxAmount) !== Number(w.suggestedAmount)
+          ? `<button class="admin-btn admin-btn-outline admin-btn-sm" style="margin-top:6px" onclick="recUseSuggestedWht(${Number(w.netAmount)}, ${Number(w.suggestedAmount)})">ใช้ยอดที่ระบบเสนอ (รับ ${AdminLayout.money(w.netAmount)} + หัก ${AdminLayout.money(w.suggestedAmount)})</button>` : '';
+        box.innerHTML = renderAdminPreview(d) + useBtn;
+      } catch (err) { if (box.dataset.key === key) box.innerHTML = `<div style="color:var(--admin-danger);font-size:12px">${AdminLayout.esc(err.message)}</div>`; }
+    }
+    /** ใช้ยอดที่เซิร์ฟเวอร์เสนอ: เงินที่รับ = ยอดสุทธิ · ภาษีหัก = ยอดเสนอ (ตัวเลขจากเซิร์ฟเวอร์ทั้งคู่ — หน้าเว็บไม่คิดเอง) · แก้ต่อได้ */
+    function recUseSuggestedWht(net, wht) {
+      const amt = document.getElementById('recAmount'); const w = document.getElementById('recWht');
+      if (amt) amt.value = Number(net).toFixed(2);
+      if (w) w.value = Number(wht).toFixed(2);
+      recSyncWhtHint();
     }
 
     async function dlReceipt(paymentId) {

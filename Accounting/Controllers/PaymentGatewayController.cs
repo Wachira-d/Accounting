@@ -395,6 +395,120 @@ public class PaymentGatewayController : ControllerBase
             "ยืนยันการรับเงินแล้ว — ระบบดำเนินการต่อให้ต้นทางเรียบร้อย"));
     }
 
+    /// <summary>รอบ 235 (คำตัดสิน 235-X3 + ฝ่ายค้าน B1/S5): <b>เงินโหมดทดสอบที่ลงบัญชีไปแล้วก่อนรอบ 232</b> — รายงานอ่านอย่างเดียวบนหน้า "รายการรับชำระออนไลน์" ·
+    /// ตัวคัดกรอง/หลักฐาน <see cref="TestModeLegacyEffectPolicy"/> + ผู้โหลด <see cref="TestModeLegacyEffects"/> · ไม่กลับรายการอัตโนมัติ (ห้ามแก้เงียบ) ·
+    /// ส่ง <c>truncated</c> + จำนวนรวมให้หน้าเว็บบอกว่าถูกตัด · tenant = <paramref name="companyId"/> ทุก query</summary>
+    [HttpGet("intents/test-mode-legacy")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ViewPayments)]
+    public async Task<ActionResult<ApiResponse<object>>> TestModeLegacy(Guid companyId, CancellationToken ct)
+    {
+        var report = await TestModeLegacyEffects.ForCompanyAsync(_db, companyId, ct);
+        var rows = report.Rows;
+        return Ok(new ApiResponse<object>(true, new
+        {
+            count = rows.Count,
+            truncated = report.Truncated,
+            totalCandidates = report.TotalCandidates,
+            scannedCandidates = report.ScannedCandidates,
+            maxRows = TestModeLegacyEffectPolicy.MaxRows,
+            unprovenCount = rows.Count(r => !TestModeLegacyEffectPolicy.IsProven(r.Evidence)),
+            items = rows.Select(r => new
+            {
+                intentId = r.IntentId,
+                sourceKind = r.SourceKind.ToString(),
+                sourceKindLabel = PaymentIntentPolicy.SourceKindLabel(r.SourceKind),
+                r.SourceId, r.Amount,
+                status = r.Status.ToString(),
+                // ป้าย "(ทดสอบ — ไม่ลงบัญชี)" เฉพาะแถวที่พิสูจน์ได้ — แถวที่มีแค่โหมดของช่องทางห้ามยืนยันว่าไม่มีเงินจริง (B1)
+                statusLabel = TestModeLegacyEffectPolicy.IsProven(r.Evidence)
+                    ? TestModePaymentPolicy.StatusLabel(r.Status, true) : PaymentIntentPolicy.StatusLabel(r.Status),
+                evidence = r.Evidence.ToString(),
+                evidenceLabel = TestModeLegacyEffectPolicy.EvidenceLabel(r.Evidence),
+                proven = TestModeLegacyEffectPolicy.IsProven(r.Evidence),
+                r.ConfirmedAt, r.CreatedAt,
+                effects = r.Effects.Select(e => new
+                {
+                    kind = e.Kind.ToString(), label = e.Label, number = e.Number, href = e.Href,
+                    paymentId = e.PaymentId, documentId = e.DocumentId, canReverseHere = e.CanReverseHere, hint = e.Hint,
+                }),
+            }),
+        }));
+    }
+
+    /// <summary>รอบ 235 (คำตัดสิน 235-X3 + ฝ่ายค้าน B1/S4): กลับรายการ "รับชำระเอกสาร" ที่เกิดจากเงินโหมดทดสอบ — เดินเส้นเดิม <c>IDocumentService.VoidPaymentAsync</c>
+    /// (กลับ JE รับเงิน + คืนยอดค้างของใบ · ห้ามลบ JE ตรง) · ตัดสินซ้ำฝั่งเซิร์ฟเวอร์ด้วยเส้นเดียวกับรายงาน (<see cref="TestModeLegacyEffects.EvaluateAsync"/>):
+    /// เข้าข่าย + <b>มีหลักฐานว่าเป็นทดสอบ</b> (ประทับ/เลขอ้างอิงทดสอบ — โหมดของช่องทางอย่างเดียวไม่พอ) + การชำระนี้เป็นผลของ intent นี้จริง ·
+    /// สิทธิ์: กระทบยอดบัญชี (ยืนยันมือ) + สิทธิ์ยกเลิกเอกสารชนิดนั้น · ห้ามคีย์ API · audit chain <b>ในธุรกรรมเดียวกับการยกเลิก</b> (hook beforeCommit) ·
+    /// กดซ้ำหลังสำเร็จ ⇒ 200 "กลับรายการไปแล้ว"</summary>
+    [HttpPost("intents/{intentId:guid}/test-mode-legacy/reverse/{paymentId:guid}")]
+    [Accounting.Filters.RejectApiKey("กลับรายการเงินทดสอบที่ลงบัญชีไปแล้ว")]
+    [Accounting.Filters.RequirePermission(PaymentGatewayPermissionScope.ConfirmManually)]
+    public async Task<ActionResult<ApiResponse<object>>> ReverseTestModeLegacy(Guid companyId, Guid intentId, Guid paymentId,
+        [FromServices] Accounting.Services.Interfaces.IDocumentService documents, CancellationToken ct)
+    {
+        var intent = await _db.PaymentIntents.AsNoTracking()
+            .FirstOrDefaultAsync(i => i.Id == intentId && i.CompanyId == companyId && !i.IsDeleted, ct);
+        if (intent == null)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบรายการชำระเงิน"));
+
+        // กดซ้ำ: การชำระนี้ของ intent นี้ถูกยกเลิกไปแล้ว ⇒ ตอบชัด ไม่ใช่ "ไม่พบ"
+        var reference = GatewayPaymentRecord.Reference(intentId);
+        var alreadyVoided = await _db.Payments.AsNoTracking().IgnoreQueryFilters()
+            .AnyAsync(p => p.Id == paymentId && p.CompanyId == companyId && p.IsDeleted
+                && (p.PaymentIntentId == intentId || p.Reference == reference), ct);
+        if (alreadyVoided)
+            return Ok(new ApiResponse<object>(true, new { paymentId, alreadyReversed = true }, "รายการรับชำระนี้ถูกกลับรายการไปแล้ว"));
+
+        var row = await TestModeLegacyEffects.EvaluateAsync(_db, companyId, intentId, ct);
+        // ผลที่กลับรายการได้เท่านั้นมี PaymentId (CanReverseHere — หลักฐานพอ + ชนิดรับชำระเอกสาร)
+        var effect = row?.Effects.FirstOrDefault(e => e.PaymentId == paymentId);
+        var evidence = row?.Evidence ?? TestModeLegacyEffectPolicy.TestEvidence.None;
+        if (TestModeLegacyEffectPolicy.ReverseRefusal(row != null, effect != null, effect?.Kind, evidence) is string refusal)
+            return Conflict(new ApiResponse<object>(false, null, refusal));
+
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var docType = await _db.Payments.AsNoTracking()
+            .Where(p => p.Id == paymentId && p.CompanyId == companyId && !p.IsDeleted)
+            .Select(p => (DocumentType?)p.Document.DocumentType).FirstOrDefaultAsync(ct);
+        if (docType is not DocumentType dt)
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบการชำระเงิน"));
+        if (!await DocumentPermissionHelper.CanVoidAsync(_permissions, companyId, userId, dt))
+            return StatusCode(403, new ApiResponse<object>(false, null, $"ไม่มีสิทธิ์ยกเลิกการชำระของเอกสาร {dt} (ต้องการ Document.Void)"));
+
+        var audited = false;
+        var voided = await documents.VoidPaymentAsync(companyId, paymentId, PaymentVoidCause.User, beforeCommit: locked =>
+        {
+            // ในธุรกรรมเดียวกับการยกเลิก — ล้ม = rollback ทั้งก้อน · กันเพิ่มซ้ำเมื่อ execution strategy ลองใหม่
+            if (!audited)
+            {
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, UserId = userId,
+                    UserEmail = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value,
+                    Action = AuditAction.Update, EntityType = nameof(PaymentIntent), EntityId = intentId.ToString(),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        ruleCode = TestModeLegacyEffectPolicy.ReverseRuleCode,
+                        legalReference = TestModePaymentPolicy.RuleCode,
+                        action = "void-payment",
+                        paymentId = locked.Id, documentId = locked.DocumentId, intent.Amount,
+                        evidence = evidence.ToString(),
+                        note = "กลับรายการผลทางบัญชีของเงินโหมดทดสอบ (ก่อนรอบ 232) ผ่าน VoidPaymentAsync",
+                    }),
+                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    Timestamp = DateTime.UtcNow,
+                });
+                audited = true;
+            }
+            return Task.CompletedTask;
+        });
+        if (!audited)   // คำขออื่นยกเลิกไปก่อน (no-op idempotent ของ VoidPaymentAsync)
+            return Ok(new ApiResponse<object>(true, new { paymentId, alreadyReversed = true }, "รายการรับชำระนี้ถูกกลับรายการไปแล้ว (โดยคำขออื่น)"));
+        var notice = string.Join(" · ", new[] { voided.EtaxCancellationFlag, voided.OutputVatNotice }.Where(n => !string.IsNullOrWhiteSpace(n)));
+        return Ok(new ApiResponse<object>(true, new { paymentId, notice },
+            notice.Length == 0 ? "กลับรายการรับชำระของเงินทดสอบแล้ว" : "กลับรายการรับชำระของเงินทดสอบแล้ว — " + notice));
+    }
+
     /// <summary>รอบ 205 ทีม W1 (R-01 · BOOKING_REVENUE_AUDIT G-2): <b>ส่งต่อใหม่</b> — เงินเข้าแล้ว (Succeeded) แต่ handler ของต้นทางล้ม/ไม่มี
     /// ⇒ ใบ/JE/การจองไม่ถูกบันทึก · เดิมทางเดียวคือบันทึกรับเงินด้วยมือ (สองความจริง) · ตอนนี้กดส่งต่อให้ handler ตัวเดิม (idempotent — L-1/S-1) ·
     /// ตัดสิน "ค้างไหม" ด้วย <see cref="PaymentRedispatchPolicy"/> จากประวัติ: ไม่ค้าง = 200 + <c>noOp</c> พร้อมข้อความ ไม่รัน handler ·

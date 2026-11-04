@@ -1989,6 +1989,18 @@ public class AdminController : ControllerBase
         return Ok(new ApiResponse<SubscriptionPaymentListResponse>(true, result));
     }
 
+    /// <summary>รอบ 235 (K-7/ข้อ 6 · คำตัดสิน 235-3/235-6): ดูผลก่อนกด "บันทึก + ต่ออายุ" — วันหมดอายุเดิม → ใหม่ (ตัวคำนวณเดียวกับตอนอนุมัติ) ·
+    /// ภาษีหักที่ระบบเสนอ + ผลตรวจยอดที่กรอก (ตัวตรวจเดียวกับตอนบันทึก) · อ่านอย่างเดียว</summary>
+    [HttpPost("companies/{companyId:guid}/subscription-payments/record/preview")]
+    public async Task<ActionResult<ApiResponse<AdminPaymentPreview>>> PreviewManualPayment(Guid companyId, [FromBody] RecordManualPaymentRequest request)
+        => Ok(new ApiResponse<AdminPaymentPreview>(true, await _subscriptionService.PreviewManualPaymentAsync(companyId, request)));
+
+    /// <summary>รอบ 235 (K-7): ดูผลก่อนอนุมัติรายการรอตรวจ (หน้าตรวจสลิป) — <c>wht</c>/<c>received</c> = ค่าที่กรอกในช่อง (ว่าง = ค่าของรายการ) · อ่านอย่างเดียว</summary>
+    [HttpGet("subscription-payments/{paymentId:guid}/approval-preview")]
+    public async Task<ActionResult<ApiResponse<AdminPaymentPreview>>> PreviewPaymentApproval(Guid paymentId,
+        [FromQuery] decimal? wht = null, [FromQuery] decimal? received = null)
+        => Ok(new ApiResponse<AdminPaymentPreview>(true, await _subscriptionService.PreviewPaymentApprovalAsync(paymentId, wht, received)));
+
     /// <summary>WP-C1: admin บันทึกรับเงินเอง (เงินสด/โอนนอกระบบ) หรือยกเว้นค่าบริการ
     /// → สร้าง payment record + อนุมัติทันที + ต่ออายุ. แทนการต่ออายุแบบไร้ร่องรอย.</summary>
     [HttpPost("companies/{companyId:guid}/subscription-payments/record")]

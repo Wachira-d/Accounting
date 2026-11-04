@@ -166,4 +166,96 @@ public class PlatformRefundCreditNoteDbTests
             }
         });
     }
+
+    /// <summary>รอบ 235 (ฝ่ายค้าน S-4): คืนเงินเต็มของรายการที่ผู้เช่าหัก ณ ที่จ่าย — ใบลดหนี้ลดเต็มยอด (ฐาน+VAT ใบเดิม − ใบลดหนี้ = 0) · 11910 สุทธิ 0 ·
+    /// แถวทะเบียน 50 ทวิ ที่ยัง Pending ⇒ หมดสิทธิ์เครดิต (Expired + เหตุผล) · เดิม: ใบลดหนี้ลดแค่เงินที่คืน ⇒ ฐานค้าง 28.04 + 11910 ค้าง 30</summary>
+    [Fact]
+    public async Task R235_คืนเงินเต็มรายการที่หักภาษี_ใบลดหนี้ลดเต็มยอด_11910สุทธิศูนย์_ทะเบียนPendingหมดสิทธิ์()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var f = await PlatformBillingPhase2DbTests.SeedAsync(db);
+        var platformCo = await db.Companies.SingleAsync(c => c.Id == f.PlatformId);
+        platformCo.IsVatRegistered = true;
+        var acc = new Dictionary<string, ChartOfAccount>();
+        foreach (var (code, name, type) in new[]
+                 {
+                     ("111", "เงินสด", AccountType.Asset), ("11310", "ลูกหนี้การค้า", AccountType.Asset), ("11910", "ภาษีถูกหัก ณ ที่จ่าย", AccountType.Asset),
+                     (GatewayAccountResolver.StandardClearingCode, "ลูกหนี้ผู้ให้บริการรับชำระเงิน", AccountType.Asset),
+                     ("41000", "รายได้ค่าบริการ", AccountType.Revenue), ("21911", "ภาษีขาย", AccountType.Liability),
+                 })
+        {
+            var a = new ChartOfAccount { CompanyId = f.PlatformId, AccountCode = code, AccountName = name, AccountType = type, Level = 4, IsActive = true };
+            db.ChartOfAccounts.Add(a);
+            acc[code] = a;
+        }
+        var featureRowId = Guid.NewGuid();
+        var intent = new PaymentIntent
+        {
+            CompanyId = f.PlatformId, PayerCompanyId = f.BuyerId, SourceKind = PaymentSourceKind.AddOnPurchase, SourceId = featureRowId,
+            ProviderCode = OmisePaymentProvider.Code, Amount = 1_040m, Status = PaymentIntentStatus.Refunded, IsTestMode = false,
+            ConfirmedAt = DateTime.UtcNow.AddDays(-3), ProviderRef = "chrg_test_r235", IdempotencyKey = "t235-" + Guid.NewGuid().ToString("N"),
+        };
+        db.PaymentIntents.Add(intent);
+        // ใบเดิม: ฐาน 1,000 + VAT 70 = 1,070 · ผู้เช่าหัก 3% = 30 ⇒ เงินที่รับ (TotalAmount) 1,040 · Dr บัญชีพัก 1,040 + Dr 11910 30 / Cr รายได้ 1,000 + Cr ภาษีขาย 70
+        var original = new Document
+        {
+            CompanyId = f.PlatformId, ContactId = f.ContactId, DocumentType = DocumentType.TaxInvoice, Status = DocumentStatus.Paid,
+            DocumentNumber = "TIV-R235-" + Guid.NewGuid().ToString("N")[..6], Reference = AddOnPurchaseService.ReceiptReference(featureRowId, intent.Id, null),
+            DocumentDate = DateTime.UtcNow.Date.AddDays(-3), SubTotal = 1_000m, VatAmount = 70m, WithholdingTaxAmount = 30m, TotalAmount = 1_040m, BalanceDue = 0m,
+            PaidAmount = 1_040m, Currency = "THB", ExchangeRate = 1m, PaymentAccountId = acc[GatewayAccountResolver.StandardClearingCode].Id,
+            Lines = new List<DocumentLine> { new() { Description = "ค่าส่วนเสริม", Quantity = 1m, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7m, VatAmount = 70m,
+                WithholdingTaxRate = 3m, AccountId = acc["41000"].Id } },
+        };
+        db.Documents.Add(original);
+        db.JournalEntries.Add(new JournalEntry
+        {
+            CompanyId = f.PlatformId, EntryNumber = "RV-R235-" + Guid.NewGuid().ToString("N")[..6], EntryDate = original.DocumentDate, Status = JournalEntryStatus.Posted,
+            SourceDocumentId = original.Id, TotalDebit = 1_070m, TotalCredit = 1_070m,
+            Lines = new List<JournalEntryLine>
+            {
+                new() { AccountId = acc[GatewayAccountResolver.StandardClearingCode].Id, DebitAmount = 1_040m, LineOrder = 1 },
+                new() { AccountId = acc["11910"].Id, DebitAmount = 30m, LineOrder = 2 },
+                new() { AccountId = acc["41000"].Id, CreditAmount = 1_000m, LineOrder = 3 },
+                new() { AccountId = acc["21911"].Id, CreditAmount = 70m, LineOrder = 4 },
+            },
+        });
+        var credit = new WhtCreditReceived
+        {
+            CompanyId = f.PlatformId, TaxYear = DateTime.UtcNow.Year, PayerName = "ผู้เช่า", WhtAmount = 30m, IncomeAmount = 1_000m, WhtRate = 3m,
+            Status = WhtCreditStatus.Pending, DocumentId = original.Id,
+        };
+        db.WhtCreditsReceived.Add(credit);
+        await db.SaveChangesAsync();
+
+        await WithPlatformAsync(db, f.PlatformId, async () =>
+        {
+            var docs = new DocumentService(db, new AccountingService(db), AllowAll<ISubscriptionService>.Create(), null!, null!,
+                NullLogger<DocumentService>.Instance, null!,
+                new Accounting.Services.Implementations.Ocr.VendorIntelligenceService(db, NullLogger<Accounting.Services.Implementations.Ocr.VendorIntelligenceService>.Instance),
+                null!);
+            var providers = new IPaymentProvider[] { new OmisePaymentProvider(null!, null!, NullLogger<OmisePaymentProvider>.Instance) };
+            var resolver = new GatewayAccountResolver(db, providers, NullLogger<GatewayAccountResolver>.Instance);
+            var issuer = new PlatformBillingDocumentIssuer(db, new F4ServiceMap().Add<IDocumentService>(docs),
+                NullLogger<PlatformBillingDocumentIssuer>.Instance, resolver);
+            var refunds = new GatewayRefundService(db, providers, F4Proxy<IPaymentIntentService>.Create((_, _) => null), resolver,
+                NullLogger<GatewayRefundService>.Instance, issuer);
+            var r = await refunds.RecordLegacyRefundAsync(f.PlatformId, intent.Id, 1_040m, DateTime.UtcNow.AddHours(-1), "rfnd_test_r235",
+                "คืนเต็มจำนวน", GatewayLegacyRefundJournal.BookNow, "tester", null, null);
+            Assert.True(r.Ok, r.Message);
+
+            using var check = DbTestDatabase.TryCreateContext()!;
+            var cn = await check.Documents.AsNoTracking().SingleAsync(d => d.CompanyId == f.PlatformId && d.DocumentType == DocumentType.CreditNote
+                && d.RelatedDocumentId == original.Id);
+            Assert.Equal(1_040m, cn.TotalAmount);                                                      // เงินที่คืน
+            Assert.Equal(30m, cn.WithholdingTaxAmount);                                                // ภาษีหักส่วนที่คืน (ทั้งหมด)
+            Assert.Equal(0m, original.SubTotal + original.VatAmount - (cn.SubTotal + cn.VatAmount));   // ใบเดิม − ใบลดหนี้ (เต็มยอด) = 0
+            var gl = await BalancesAsync(check, f.PlatformId);
+            Assert.Equal(0m, gl.GetValueOrDefault("11910"));
+            Assert.Equal(0m, gl.GetValueOrDefault("41000"));
+            Assert.Equal(0m, gl.GetValueOrDefault("21911"));
+            Assert.Equal(0m, gl.GetValueOrDefault(GatewayAccountResolver.StandardClearingCode));
+            Assert.Equal(WhtCreditStatus.Expired, (await check.WhtCreditsReceived.AsNoTracking().SingleAsync(w => w.Id == credit.Id)).Status);
+        });
+    }
 }

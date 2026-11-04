@@ -247,11 +247,22 @@ public class AccountingController : ControllerBase
         return Ok(new ApiResponse<string>(true, null, $"สร้างรายการย่อยใหม่สำเร็จ {count} ใบสำคัญ"));
     }
 
+    /// <summary>ซ่อมวันที่ศักราชปนที่ persist แล้ว — รอบ 235 (ฝ่ายค้าน S2): สิทธิ์ JournalManage (แก้วันที่ใบสำคัญ) · ข้ามงวดปิด/ออกเลขแล้ว/แบบภาษียื่นแล้ว</summary>
     [HttpPost("reports/repair-dates")]
-    public async Task<ActionResult<ApiResponse<string>>> RepairBuddhistDates(Guid companyId)
+    [RequirePermission(PermissionKeys.JournalManage)]
+    public async Task<ActionResult<ApiResponse<object>>> RepairBuddhistDates(Guid companyId)
     {
-        var count = await _accountingService.RepairBuddhistDatesAsync(companyId);
-        return Ok(new ApiResponse<string>(true, null, $"แก้ไขวันที่สำเร็จ {count} รายการ"));
+        var r = await _accountingService.RepairBuddhistDatesAsync(companyId,
+            User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value, HttpContext.Connection.RemoteIpAddress?.ToString());
+        // รอบ 235 K-5: แก้ไม่ได้ (29 ก.พ. ไม่มีจริง) / ข้าม (ต้องเอกสารปรับปรุง) บอกผู้ใช้ตรง ๆ (ห้าม 200 ที่ดูเหมือนครบ)
+        var parts = new List<string> { $"แก้ไขวันที่สำเร็จ {r.Fixed} รายการ" };
+        if (r.Unresolved > 0)
+            parts.Add($"แก้อัตโนมัติไม่ได้ {r.Unresolved} รายการ (วันที่ 29 ก.พ. ไม่มีจริงหลังแปลงศักราช — แก้มือ)");
+        if (r.Skipped > 0)
+            parts.Add($"ข้าม {r.Skipped} รายการ (ต้องแก้ด้วยเอกสารปรับปรุง): "
+                + string.Join(" · ", r.SkippedByReason.Select(kv => $"{kv.Key} ×{kv.Value}")));
+        return Ok(new ApiResponse<object>(true, new { fixedCount = r.Fixed, unresolved = r.Unresolved, skipped = r.Skipped, r.SkippedByReason },
+            string.Join(" · ", parts) + (r.Unresolved + r.Skipped > 0 ? " — รายการทั้งหมดอยู่ใน audit log 'BuddhistDateRepair'" : "")));
     }
 
     // ===== Reports =====

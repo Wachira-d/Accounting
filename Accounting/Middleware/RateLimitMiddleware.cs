@@ -8,6 +8,7 @@ public class RateLimitMiddleware
     private readonly int _anonymousMaxPerMinute;
     private readonly int _authenticatedMaxPerMinute;
     private readonly int _authEndpointMaxPerMinute;       // F16 — stricter tier
+    private readonly Accounting.Helpers.AuthRateLimitPolicy.Settings _authSettings;   // รอบ 235 — ถัง DB ของเส้น auth
     private static readonly ConcurrentDictionary<string, SlidingWindow> Windows = new();
 
     public RateLimitMiddleware(RequestDelegate next, IConfiguration config)
@@ -20,27 +21,8 @@ public class RateLimitMiddleware
         // brute-force credential stuffing. Default 10/min per IP — เพียงพอ
         // กับ legitimate user แต่จำกัด script-driven attacks.
         _authEndpointMaxPerMinute = int.Parse(config["RateLimit:AuthEndpointMaxPerMinute"] ?? "10");
+        _authSettings = Accounting.Helpers.AuthRateLimitPolicy.Settings.From(config);
     }
-
-    private static bool IsAuthEndpoint(string path) =>
-        path.StartsWith("/api/auth/login", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/auth/register", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/auth/refresh", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/auth/forgot-password", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/auth/reset-password", StringComparison.OrdinalIgnoreCase)
-        // ⚠️ เส้น SSO ต้องอยู่ tier เดียวกับ login — ไม่งั้นตกไป tier anonymous
-        // (600/นาที/IP) ซึ่งเปิดช่อง: ยิงซ้ำ ๆ = **email bombing เหยื่อ**ด้วย
-        // ลิงก์ยืนยันที่ดูเหมือนระบบส่งเอง · เดา token ได้ 600 ครั้ง/นาที ·
-        // เอนูมอีเมลจากข้อความตอบกลับที่ต่างกันระหว่าง "มีบัญชี" กับ "ไม่มี"
-        || path.StartsWith("/api/auth/sso", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/auth/external-logins", StringComparison.OrdinalIgnoreCase)
-        // ⚠️ ประตูล็อกอินของ **ลูกค้า/คู่ค้า** ก็เป็นประตูล็อกอิน (ผลตรวจทีม A · A-07)
-        // เดิมตกไป tier anonymous 600/นาที ⇒ ยิงเดารหัสผ่านลูกค้าได้ 60 เท่าของ
-        // เพดานที่ตั้งใจ · และเส้นผูกบัญชีหน้าร้านก็อยู่ในกลุ่มเดียวกัน
-        || path.StartsWith("/api/portal/login", StringComparison.OrdinalIgnoreCase)
-        || path.StartsWith("/api/portal/register", StringComparison.OrdinalIgnoreCase)
-        || path.EndsWith("/portal/login", StringComparison.OrdinalIgnoreCase)
-        || path.EndsWith("/portal/register", StringComparison.OrdinalIgnoreCase);
 
     public async Task InvokeAsync(HttpContext context)
     {
@@ -65,7 +47,9 @@ public class RateLimitMiddleware
         string clientKey;
         int limit;
 
-        if (IsAuthEndpoint(path))
+        // เส้นยืนยันตัวตน — รายชื่อ + กลุ่มอยู่ที่ตัวตั้งเดียว Helpers/AuthRateLimitPolicy.Classify (รอบ 235 · เดิม IsAuthEndpoint ในไฟล์นี้)
+        var group = Accounting.Helpers.AuthRateLimitPolicy.Classify(path);
+        if (group != Accounting.Helpers.AuthRateLimitPolicy.RouteGroup.None)
         {
             // F16 — auth-endpoint tier: per-IP strict cap (ไม่ใช้ user id
             // เพราะยังไม่ได้ login). 10/min default → คนพิมพ์รหัสผ่านผิด 9
@@ -74,30 +58,46 @@ public class RateLimitMiddleware
             clientKey = $"auth:{context.Connection.RemoteIpAddress}";
             limit = _authEndpointMaxPerMinute;
 
-            // ⚠️ ตัวนับในหน่วยความจำเป็น **per-process** (ผลตรวจทีม G · G-06) ⇒
-            // deploy N instance = เพดานจริงกลายเป็น 10 × N ต่อ IP ซึ่งเป็นการ
-            // ปิดด่านที่ตั้งใจกัน credential stuffing โดยไม่ได้ตั้งใจ
+            // ⚠️ ตัวนับในหน่วยความจำเป็น **per-process** (ผลตรวจทีม G · G-06) ⇒ deploy N instance = เพดาน 10 × N ต่อ IP
             //
-            // tier นี้ (และ tier นี้เท่านั้น) นับซ้ำที่ฐานข้อมูลด้วย atomic upsert
-            // — tier ทั่วไป 600/3000 ปล่อยเป็น per-process ได้ เพราะไม่ใช่ control
-            // ด้านความปลอดภัย และการยิง DB ทุก request จะแพงเกินคุ้ม
-            //
-            // fail-open เหมือน `ChatRateLimiter` (ตารางนับพัง ≠ เหตุผลที่จะปิด
-            // ประตูล็อกอินทั้งระบบ) — ตัวนับในหน่วยความจำยังทำงานอยู่เป็นชั้นแรก
+            // ถังที่ฐานข้อมูล (atomic upsert · IChatRateLimiter) คือ<b>ตัวตัดสิน</b>ของเส้น auth — ถังเดิม auth:{ip} fail-open (ตารางนับพัง
+            // ≠ เหตุผลจะปิดประตูล็อกอินทั้งระบบ · ตัวนับในหน่วยความจำข้างล่างยังเป็นชั้นสำรองของกรณีนี้) · รอบ 235 (OMISE_READINESS S4):
+            // สมัครบัญชี / ลืม-ตั้งรหัสผ่าน / สมัครประตูลูกค้า มีถังเพิ่มต่อ IP (+ ทั้งระบบ) แบบ <b>fail-closed</b> — กติกา/ค่าตั้งอยู่ที่
+            // Helpers/AuthRateLimitPolicy ที่เดียว · tier ทั่วไป 600/3000 คงเป็น per-process ได้ เพราะไม่ใช่ control ด้านความปลอดภัย
+            // (กันยิงถล่มเฉย ๆ) และการยิง DB ทุก request จะแพงเกินคุ้ม
             var shared = context.RequestServices
                 .GetService(typeof(Accounting.Services.Interfaces.IChatRateLimiter))
                 as Accounting.Services.Interfaces.IChatRateLimiter;
-            if (shared != null
-                && !await shared.TryConsumeAsync(clientKey, _authEndpointMaxPerMinute,
-                        _authEndpointMaxPerMinute * 60, context.RequestAborted))
+            var buckets = Accounting.Helpers.AuthRateLimitPolicy.BucketsFor(group,
+                Accounting.Helpers.AuthRateLimitPolicy.ClientKey(context.Connection.RemoteIpAddress), _authSettings);
+            // ทุกถังตัดสินด้วย AuthRateLimitPolicy.Decide ตัวเดียว (ไม่มีตัวนับร่วม = Unavailable ⇒ เส้น fail-closed ปฏิเสธ ไม่ปล่อยเงียบ)
+            var verdict = Accounting.Helpers.AuthRateLimitPolicy.Verdict.Pass;
+            foreach (var b in buckets)
             {
-                await shared.RecordStrikeAsync(clientKey, context.RequestAborted);
-                context.Response.StatusCode = 429;
+                Accounting.Helpers.RateConsumeOutcome? outcome = shared == null ? null
+                    : await shared.ConsumeAsync(b.Key, b.PerMinute, b.PerDay, context.RequestAborted);
+                var v = Accounting.Helpers.AuthRateLimitPolicy.Decide(b, outcome);
+                if (v == Accounting.Helpers.AuthRateLimitPolicy.Verdict.Alert)
+                {
+                    await AlertPlatformOnceAsync(context, shared!, b);
+                    continue;
+                }
+                if (v == Accounting.Helpers.AuthRateLimitPolicy.Verdict.Pass) continue;
+                if (v == Accounting.Helpers.AuthRateLimitPolicy.Verdict.Deny && shared != null)
+                    await shared.RecordStrikeAsync(b.Key, context.RequestAborted);
+                verdict = v;
+                break;
+            }
+            if (verdict != Accounting.Helpers.AuthRateLimitPolicy.Verdict.Pass)
+            {
+                var unavailable = verdict == Accounting.Helpers.AuthRateLimitPolicy.Verdict.DenyUnavailable;
+                context.Response.StatusCode = unavailable ? 503 : 429;
                 context.Response.Headers.Append("Retry-After", "60");
                 await context.Response.WriteAsJsonAsync(new
                 {
                     success = false,
-                    message = "พยายามเข้าสู่ระบบบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่"
+                    message = unavailable ? Accounting.Helpers.AuthRateLimitPolicy.UnavailableMessage
+                        : Accounting.Helpers.AuthRateLimitPolicy.DeniedMessage(group)
                 });
                 return;
             }
@@ -137,6 +137,27 @@ public class RateLimitMiddleware
         }
 
         await _next(context);
+    }
+
+    /// <summary>รอบ 235 (ฝ่ายค้าน S1): ถังทั้งระบบเกิน = สัญญาณเตือนแอดมิน ไม่ปฏิเสธ — log Warning + กลุ่ม LINE ของผู้ดูแลแพลตฟอร์ม (เส้น PlatformOps เดิม
+    /// <c>ILineNotifyService.TryPushPlatformOpsAsync</c>) <b>วันละครั้งต่อถังข้ามทุกเครื่อง</b> (กันซ้ำด้วยตัวนับร่วม 1/1) · ส่งไม่สำเร็จไม่กระทบคำขอ</summary>
+    private static async Task AlertPlatformOnceAsync(HttpContext context, Accounting.Services.Interfaces.IChatRateLimiter shared,
+        Accounting.Helpers.AuthRateLimitPolicy.Bucket b)
+    {
+        var logger = context.RequestServices.GetService(typeof(ILogger<RateLimitMiddleware>)) as ILogger<RateLimitMiddleware>;
+        logger?.LogWarning("เส้น auth เกินเพดานทั้งระบบ {Bucket} ({PerMinute}/นาที · {PerDay}/วัน) — สัญญาณเตือน ไม่ปฏิเสธ", b.Key, b.PerMinute, b.PerDay);
+        try
+        {
+            var first = await shared.ConsumeAsync(Accounting.Helpers.AuthRateLimitPolicy.AlertOnceKey(b, DateTime.UtcNow), 1, 1, context.RequestAborted);
+            if (first != Accounting.Helpers.RateConsumeOutcome.Allowed) return;
+            if (context.RequestServices.GetService(typeof(Accounting.Services.Interfaces.ILineNotifyService))
+                    is Accounting.Services.Interfaces.ILineNotifyService line)
+                await line.TryPushPlatformOpsAsync(Accounting.Helpers.AuthRateLimitPolicy.AlertMessage(b));
+        }
+        catch (Exception ex)
+        {
+            logger?.LogError(ex, "แจ้งผู้ดูแลแพลตฟอร์มเรื่องเพดานทั้งระบบ {Bucket} ไม่สำเร็จ", b.Key);
+        }
     }
 
     /// <summary>ลบหน้าต่างที่ไม่มี request มาเกิน 5 นาที — เรียกแบบ amortize

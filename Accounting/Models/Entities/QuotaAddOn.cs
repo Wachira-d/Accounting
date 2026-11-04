@@ -142,5 +142,9 @@ namespace Accounting.Models.Entities
         public string? CouponCode { get; set; }
         public decimal CouponDiscountAmount { get; set; }
         public decimal? ListAmount { get; set; }
+        /// <summary>รอบ 235 (คำตัดสิน 235-5 · ต่อจาก 234-6): ภาษีหัก ณ ที่จ่ายที่ผู้เช่าหัก (ตัวตัดสินเดียว <c>PlatformWhtSuggestion</c> ผ่าน
+        /// <c>PlatformWithholdingReader.ForReceivedAsync</c> · ราคาครั้งเดียว ⇒ เกณฑ์ ฿1,000 ดูยอดครั้งนี้ — 234-2) · <see cref="AmountDue"/> = ยอดสุทธิที่ตัด/โอน ·
+        /// ยอดเต็มบนใบ = AmountDue + ช่องนี้ (<c>PlatformWhtSuggestion.GrossOf</c>) · 0 = ไม่หัก (คอลัมน์: Helpers/PlatformCouponMigration)</summary>
+        public decimal WithholdingTaxAmount { get; set; }
     }
 }

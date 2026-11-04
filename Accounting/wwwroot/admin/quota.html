@@ -250,14 +250,14 @@
         if (!rows.length) { el.innerHTML = '<span class="muted">ไม่มีรายการในสถานะนี้</span>'; return; }
         el.innerHTML = `<table class="rpt"><thead><tr><th>บริษัท</th><th>รายการ</th><th>ยอด</th><th>สลิป</th><th>สถานะ</th><th></th></tr></thead><tbody>
           ${rows.map(r => { const p = r.purchase; return `<tr><td>${this.esc(r.companyName)}</td><td>${this.esc(p.label)} × ${p.units} · ${this.esc(p.modeLabel)}<div class="muted">${this.esc(p.note || '')}</div></td>
-            <td>${this.money(p.amountDue)}</td>
+            <td>${this.money(p.amountDue)}${Number(p.withholdingTaxAmount || 0) > 0 ? `<div class="muted">หัก ณ ที่จ่าย ${this.money(p.withholdingTaxAmount)} (ยอดเต็ม ${this.money(p.grossAmount)})</div>` : ''}</td>
             <td>${r.hasSlip ? `<a href="#" onclick="AQ.openSlip('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}');return false">เปิดดูสลิป</a>` : '<span class="muted">—</span>'}</td>
             <td>${this.esc(p.statusLabel)}${p.receiptNumber ? `<div class="muted">ใบเสร็จ ${this.esc(p.receiptNumber)}</div>` : ''}
               ${r.intentStatus ? `<div class="muted">ชำระออนไลน์: ${this.esc(r.intentStatus)}</div>` : ''}
               ${r.refunded ? '<div class="warn">คืนเงินแล้ว</div>' : ''}
               ${p.attentionReason ? `<div class="warn">⚠️ ${this.esc(p.attentionRule || '')}: ${this.esc(p.attentionReason)}</div>` : ''}</td>
             <td style="white-space:nowrap">${p.status === 'PendingReview' || p.status === 'AwaitingPayment'
-              ? `<button class="btn btn-primary btn-sm" onclick="AQ.review('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}',true,${r.hasSlip ? 'true' : 'false'},${Number(p.amountDue)})">อนุมัติ</button>
+              ? `<button class="btn btn-primary btn-sm" onclick="AQ.review('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}',true,${r.hasSlip ? 'true' : 'false'},${Number(p.amountDue)},${Number(p.withholdingTaxAmount || 0)},${Number(p.grossAmount || p.amountDue)})">อนุมัติ</button>
                  <button class="btn btn-secondary btn-sm" onclick="AQ.review('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}',false)">ปฏิเสธ</button>` : ''}
               ${p.status === 'Active' ? `<button class="btn btn-secondary btn-sm" onclick="AQ.revoke('${Layout.jsArg(r.companyId)}','${Layout.jsArg(p.id)}')">เพิกถอนสิทธิ์</button>` : ''}</td></tr>`; }).join('')}
           </tbody></table>`;
@@ -275,13 +275,17 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // ฝ่ายค้าน S2/S7: ยอดรับจริง + วันที่โอน = ยอด/วันที่บนใบเสร็จ · ไม่มีสลิป ⇒ ต้องมีหลักฐานรับเงินนอกระบบ + เหตุผล (เซิร์ฟเวอร์บังคับ)
-      async review(cid, id, approve, hasSlip, due) {
-        let reason = null, offlineReference = null, receivedAmount = null, transferDate = null;
+      async review(cid, id, approve, hasSlip, due, wht, gross) {
+        let reason = null, offlineReference = null, receivedAmount = null, transferDate = null, withholdingTaxAmount = null;
         if (!approve) { reason = prompt('เหตุผลที่ไม่อนุมัติ (ผู้เช่าจะเห็น):'); if (!reason) return; }
         else {
           if (!hasSlip) {
             offlineReference = prompt('รายการนี้ไม่มีสลิป — ระบุหลักฐานการรับเงิน (เลขอ้างอิงการโอน/ใบนำฝาก):'); if (!offlineReference) return;
             reason = prompt('เหตุผลที่อนุมัติโดยไม่มีสลิป (บันทึก audit):'); if (!reason) return;
+          }
+          // รอบ 235 (ฝ่ายค้าน S-3): ผู้จ่ายหมดสิทธิ์หัก ณ ที่จ่าย ⇒ แอดมินล้างภาษีหักเป็น 0 แล้วรับเต็มยอด (เซิร์ฟเวอร์คิดยอดเต็มเอง)
+          if (Number(wht || 0) > 0 && confirm('รายการนี้ผู้เช่าหักภาษี ณ ที่จ่าย ' + Number(wht).toFixed(2) + ' บาท — กด OK เพื่อล้างภาษีหักเป็น 0 และรับเต็มยอด (เฉพาะเมื่อไม่มี 50 ทวิ จริง/ผู้จ่ายหมดสิทธิ์หัก) · Cancel = คงตามเดิม')) {
+            withholdingTaxAmount = 0; due = gross;
           }
           const amt = prompt('ยอดเงินที่รับจริง (บาท) — ยอดบนใบเสร็จ', String(due ?? '')); if (amt === null) return;
           receivedAmount = Number(amt);
@@ -290,7 +294,7 @@
           if (!confirm('อนุมัติ = เปิดโควตาให้ทันทีและออกใบกำกับภาษี/ใบเสร็จ — ตรวจยอดเงินเข้าแล้วใช่ไหม?')) return;
         }
         try { const r = await API.post(`/api/admin/quota/purchases/${encodeURIComponent(cid)}/${encodeURIComponent(id)}/review`,
-            { approve, reason, offlineReference, receivedAmount, transferDate });
+            { approve, reason, offlineReference, receivedAmount, transferDate, withholdingTaxAmount });
           Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); this.loadPurchases(); }
         catch (e) { Layout.toast(e.message, 'error'); }
       },

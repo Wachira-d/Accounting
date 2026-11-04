@@ -392,7 +392,23 @@ public record RecordManualPaymentRequest(
     /// <summary>ภาษีหัก ณ ที่จ่ายที่ลูกค้าหักจากค่าบริการงวดนี้ (นิติบุคคลหักบริการ 3%
     /// ตาม ท.ป.4/2528). <c>Amount</c> = เงินที่ได้รับจริง ⇒ ยอดตามใบกำกับ = Amount + ตัวนี้.
     /// ไม่ระบุ = ไม่ถูกหัก</summary>
-    decimal WithholdingTaxAmount = 0m);
+    decimal WithholdingTaxAmount = 0m,
+    /// <summary>รอบ 235 (ฝ่ายค้าน S-5): ทางยกเว้นเมื่อหนังสือรับรอง 50 ทวิ จริงต่างจากกติกา (หักเกิน 3% · ผู้จ่ายบุคคลธรรมดา) — ติ๊ก + เหตุผล ≥ 10 ตัวอักษร ⇒ บันทึกตามใบจริง + audit
+    /// <c>PLATFORM-WHT-MANUAL-OVERRIDE</c> · ไม่ติ๊ก = ด่านเดิม · ยอดติดลบไม่มีทางยกเว้น</summary>
+    bool WhtPerCertificate = false,
+    string? WhtOverrideReason = null);
+
+/// <summary>รอบ 235 (K-7 · ข้อ 6 · คำตัดสิน 235-3/235-6): สิ่งที่จะเกิดถ้าแอดมินกดอนุมัติ/บันทึกรับเงิน — <c>Preview</c> = <c>PlanPurchasePreview</c> ตัวเดียวกับหน้าผู้เช่า
+/// (วันที่เดิม → ใหม่ · เครดิต · ภาษีหัก) · <c>Withholding</c> = ยอดภาษีหักที่ระบบเสนอ (<c>PlatformWhtSuggestion</c> · แอดมินแก้ได้ในกรอบ <c>WithholdingProblem</c>) ·
+/// <c>GrossAmount</c> = ยอดเต็ม (เงินที่รับ + ภาษีหัก) · <c>WithholdingProblem</c> = ยอดภาษีหักที่กรอกใช้ไม่ได้ (null = ใช้ได้ — ตัวตรวจเดียวกับตอนบันทึก)</summary>
+public record AdminPaymentPreview(
+    global::Accounting.Helpers.PlanPurchasePreview.Result Preview,
+    global::Accounting.Helpers.PlatformWhtSuggestion.Result? Withholding,
+    decimal GrossAmount,
+    decimal WithholdingTaxAmount,
+    decimal NetAmount,
+    string? WithholdingProblem,
+    decimal? ServerPrice = null);
 
 public record SubscriptionPaymentResponse(
     Guid Id,

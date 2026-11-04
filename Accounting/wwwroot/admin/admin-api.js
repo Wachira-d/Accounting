@@ -133,6 +133,7 @@ const AdminAPI = {
   platformConfirmWhtCertificate(paymentId, certificateNumber, certificateDate, whtAmount) { return this.post(`/platform-billing/wht-certificates/${paymentId}/confirm`, { certificateNumber, certificateDate, whtAmount }); },
   platformRejectWhtCertificate(paymentId, reason) { return this.post(`/platform-billing/wht-certificates/${paymentId}/reject`, { reason }); },
   platformRemindWhtCertificate(paymentId) { return this.post(`/platform-billing/wht-certificates/${paymentId}/remind`, {}); },
+  platformRemindQuotaWht(purchaseId) { return this.post(`/platform-billing/wht-certificates/quota-addons/${purchaseId}/remind`, {}); },   // รอบ 235 N-4
   platformBackfillWhtCertificates() { return this.post('/platform-billing/wht-certificates/backfill', {}); },
   platformPaymentSlip(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/slip`, `slip-${paymentId}`); },
 
@@ -185,6 +186,9 @@ const AdminAPI = {
   paymentDetail(id) { return this.get(`/subscription-payments/${id}`); },
   reviewPayment(id, approve, notes, withholdingTaxAmount = null, amountReceived = null) { return this.post(`/subscription-payments/${id}/review`, { approve, reviewNotes: notes, withholdingTaxAmount, amountReceived }); },
   recordManualPayment(companyId, data) { return this.post(`/companies/${companyId}/subscription-payments/record`, data); },
+  // รอบ 235 (K-7): ดูผลก่อนบันทึก/อนุมัติ — PlanPurchasePreview ตัวเดียวกับหน้าผู้เช่า (server computes · page displays)
+  previewManualPayment(companyId, data) { return this.post(`/companies/${companyId}/subscription-payments/record/preview`, data); },
+  approvalPreview(id, wht, received) { const q = new URLSearchParams(); if (wht !== null && wht !== undefined && wht !== '') q.set('wht', wht); if (received !== null && received !== undefined && received !== '') q.set('received', received); const qs = q.toString(); return this.get(`/subscription-payments/${id}/approval-preview${qs ? '?' + qs : ''}`); },
 
   // Company specifics
   companyTrial(id) { return this.get(`/companies/${id}/trial`); },

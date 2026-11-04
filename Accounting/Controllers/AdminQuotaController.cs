@@ -266,7 +266,9 @@ public class AdminQuotaController : ControllerBase
     }
 
     /// <summary>ฝ่ายค้าน S2/S7: <c>OfflineReference</c> บังคับเมื่ออนุมัติรายการที่ไม่มีสลิป · <c>ReceivedAmount</c>/<c>TransferDate</c> = ยอด/วันที่บนใบเสร็จ</summary>
-    public sealed record ReviewBody(bool Approve, string? Reason, string? OfflineReference = null, decimal? ReceivedAmount = null, DateTime? TransferDate = null);
+    /// <remarks>รอบ 235 (ฝ่ายค้าน S-3): <c>WithholdingTaxAmount</c> = 0 ⇒ ล้างภาษีหักของรายการ รับเต็มยอด (ผู้จ่ายหมดสิทธิ์หัก) · null = ไม่เปลี่ยน</remarks>
+    public sealed record ReviewBody(bool Approve, string? Reason, string? OfflineReference = null, decimal? ReceivedAmount = null, DateTime? TransferDate = null,
+        decimal? WithholdingTaxAmount = null);
 
     /// <summary>อนุมัติ ⇒ เปิดสิทธิ์ทันที + ใบกำกับ/ใบเสร็จ · ปฏิเสธ ⇒ ต้องมีเหตุผล (ผู้เช่าเห็น · ยังไม่ได้ให้สิทธิ์ จึงไม่มีอะไรต้องถอน)</summary>
     [HttpPost("purchases/{companyId:guid}/{purchaseId:guid}/review")]
@@ -275,7 +277,7 @@ public class AdminQuotaController : ControllerBase
     {
         var row = b.Approve
             ? await svc.ApproveAsync(companyId, purchaseId, Actor, ct, b.OfflineReference, b.Reason, b.ReceivedAmount,
-                b.TransferDate is DateTime td ? DateTime.SpecifyKind(td.Date.AddHours(12 - 7), DateTimeKind.Utc) : null)
+                b.TransferDate is DateTime td ? DateTime.SpecifyKind(td.Date.AddHours(12 - 7), DateTimeKind.Utc) : null, b.WithholdingTaxAmount)
             : await svc.RejectAsync(companyId, purchaseId, b.Reason ?? "", Actor, ct);
         return Ok(new ApiResponse<object>(true, QuotaController.Map(row),
             b.Approve ? (row.ReceiptNumber != null ? $"อนุมัติแล้ว — ใบเสร็จ/ใบกำกับ {row.ReceiptNumber}" : "อนุมัติแล้ว — ⚠️ ออกใบเสร็จไม่สำเร็จ (ดู audit · ออกด้วยมือในบริษัทผู้ให้บริการ)")

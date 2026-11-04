@@ -34,6 +34,7 @@
       </div>
     </div>
     <div id="state">กำลังโหลด...</div>
+    <div id="tenantTestLegacy"></div>
   </div>
 
   <script src="/admin/admin-api.js"></script>
@@ -42,7 +43,22 @@
   <script>
     const Page = {
       d: null,
-      init() { AdminLayout.init('platform-gateway'); this.load(); },
+      init() { AdminLayout.init('platform-gateway'); this.load(); this.loadTenantLegacy(); },
+      // รอบ 235 (คำตัดสิน 235-3): จำนวนร้านที่มีเงินโหมดทดสอบลงบัญชีค้าง (ก่อนรอบ 232) — อ่านอย่างเดียว · ร้านกลับรายการเองที่หน้า "รายการรับชำระออนไลน์"
+      async loadTenantLegacy() {
+        const box = document.getElementById('tenantTestLegacy');
+        try {
+          const d = (await AdminAPI.get('/platform-gateway/tenant-test-mode-legacy')).data || {};
+          box.innerHTML = d.intents
+            ? `<div class="admin-card"><b>🧪 เงินโหมดทดสอบของร้านที่ลงบัญชีไปแล้ว (ก่อนรอบ 232)</b>
+                <div>${this.esc(d.companies)} ร้าน · ${this.esc(d.intents)} รายการ (มีหลักฐานว่าเป็นทดสอบ ${this.esc(d.proven)} · พิสูจน์ไม่ได้ ${this.esc(d.unproven)})
+                  — ระบบไม่กลับรายการอัตโนมัติ · ร้านเห็นรายงานที่หน้า "รายการรับชำระออนไลน์" ของตัวเอง</div>
+                ${d.truncated ? `<div class="muted">⚠️ นับจาก ${this.esc(d.maxRows)} รายการล่าสุดเท่านั้น (มีมากกว่านี้)</div>` : ''}</div>`
+            : '';
+        } catch (e) {
+          box.innerHTML = `<div class="admin-card bad">นับเงินโหมดทดสอบของร้านไม่สำเร็จ: ${this.esc(e.message)}</div>`;
+        }
+      },
       esc(s) { return AdminLayout.esc(s == null ? '' : String(s)); },
       dt(v) { return v ? new Date(v).toLocaleString('th-TH') : '—'; },
       async load() {

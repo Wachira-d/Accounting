@@ -86,7 +86,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                     // รอบ 234 (คำตัดสิน 234-W1): ผู้เช่าหักภาษี ⇒ ผูกรายการกับแถวทะเบียนภาษีถูกหัก (Pending) ที่ GL ของใบนี้สร้าง — ตัวผูกเดียว
                     if (t.WithholdingTaxAmount > 0m) await Accounting.Services.Platform.PlatformWhtCertificateService.LinkCoreAsync(_db, t);
                     await _db.SaveChangesAsync();
-                    await SendEmailAsync(companyId, issued.DocumentNumber, issued.IsTaxInvoice);
+                    await SendEmailAsync(companyId, issued.DocumentNumber, issued.IsTaxInvoice, t);
                     return;
                 }
                 // ออกไม่สำเร็จ → ตกลงไปโหมด PDF เดิม (เงินเข้าแล้วต้องมีหลักฐานเสมอ)
@@ -102,9 +102,9 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                 }
             }
 
+            // รอบ 235 (ข้อ 8): ออกใบกำกับไหม = ตัวตัดสินเดียวกับตัวออกใบ/preview (เดิมนิพจน์ซ้ำ)
             var isTaxInvoice = settings != null
-                && settings.PlatformIsVatRegistered
-                && IsValidTaxId(settings.PlatformSellerTaxId);
+                && Accounting.Helpers.PlanPurchasePreview.IssuesTaxInvoice(settings.PlatformIsVatRegistered, settings.PlatformSellerTaxId);
 
             var now = DateTime.UtcNow;
             var receiptNumber = await NextReceiptNumberAsync(isTaxInvoice, now);
@@ -140,7 +140,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             tracked.ReceiptIsTaxInvoice = isTaxInvoice;
             await _db.SaveChangesAsync();
 
-            await SendEmailAsync(companyId, receiptNumber, isTaxInvoice);
+            await SendEmailAsync(companyId, receiptNumber, isTaxInvoice, tracked);
         }
         catch (Exception ex)
         {
@@ -216,7 +216,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         return $"{prefix}-{period}-{count + 1:D4}";
     }
 
-    private async Task SendEmailAsync(Guid companyId, string receiptNumber, bool isTaxInvoice)
+    private async Task SendEmailAsync(Guid companyId, string receiptNumber, bool isTaxInvoice, SubscriptionPayment payment)
     {
         if (_email == null) return;
         try
@@ -229,8 +229,17 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             if (owner == null || string.IsNullOrWhiteSpace(owner.Email)) return;
 
             var docLabel = isTaxInvoice ? "ใบกำกับภาษี/ใบเสร็จรับเงิน" : "ใบเสร็จรับเงิน";
+            // รอบ 235 (K-8 · คำตัดสิน 235-4): แพ็ก · รอบ · ใช้ได้ถึง (พ.ศ. ตัวแปลงเดียว) · ยอด · หัก ณ ที่จ่าย — ตัวเดียวกับอีเมลคำสั่งซื้อ (PlatformPurchaseEmailText) ·
+            // รายการตัดชำระใบอย่างเดียว (ไม่มีเดือน) ⇒ ไม่บอกแพ็ก/วันหมดอายุ (ไม่แต่ง)
+            var renews = payment.RequestedPeriodMonths > 0 || payment.IsProration || payment.IsCycleChange;
+            var planName = renews
+                ? await _db.PlanTemplates.AsNoTracking().Where(t => t.Plan == payment.RequestedPlan).Select(t => t.Name).FirstOrDefaultAsync() ?? payment.RequestedPlan.ToString()
+                : null;
+            var detail = Accounting.Helpers.PlatformPurchaseEmailText.Lines(planName, renews ? (BillingCycle?)payment.RequestedBillingCycle : null,
+                renews ? payment.SubscriptionExtendedTo : null, validUntilIsEstimate: false, payment.Amount, payment.WithholdingTaxAmount);
             var msg = $"{docLabel}เลขที่ {receiptNumber} สำหรับค่าบริการที่ชำระเรียบร้อยแล้ว "
-                    + "ออกให้เรียบร้อย — ดาวน์โหลดได้จากหน้าการชำระเงินในระบบ ขอบคุณที่ใช้บริการ";
+                    + "ออกให้เรียบร้อย — ดาวน์โหลดได้จากหน้าการชำระเงินในระบบ ขอบคุณที่ใช้บริการ · "
+                    + string.Join(" · ", detail.Select(l => System.Net.WebUtility.HtmlEncode(l)));   // ข้อความต่อเข้า HTML (ชื่อแพ็กแอดมินตั้ง) — encode (กฎเหล็ก #4 C)
             await _email.SendNotificationEmailAsync(owner.Email, owner.FullName ?? "ลูกค้า",
                 $"{docLabel} {receiptNumber}", msg, "/pages/subscription.html");
         }
@@ -438,7 +447,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             if (_issuer != null && await _issuer.IsEnabledAsync())
             {
                 var planLine = $"ค่าบริการระบบบัญชีออนไลน์ แพ็กเกจ {renewPlan} ({months} เดือน) "
-                    + $"— รอบถัดไปถึง {sub.EndDate.AddMonths(months):dd/MM/yyyy}";
+                    + $"— รอบถัดไปถึง {Accounting.Helpers.QuotaAddOnPricing.ThaiDateText(Accounting.Helpers.PlatformPlanPricing.AddCycleMonths(sub.EndDate, months).AddHours(7).Date)}";   // รอบ 235 K-4: ปฏิทินไทย + พ.ศ. (ตัวแปลงเดียว)
                 var reference = Accounting.Helpers.PlatformInvoiceRules.RenewalReferencePrefix + sub.Id.ToString()[..8].ToUpper();
                 // รอบ 229 (QUOTA_ADDON §B.6 · คำตัดสินข้อ 229-3): โควตาเสริมแบบ "ถึงวันหมดอายุ" ที่ติ๊กต่อ (ค่าตั้งต้น = ต่อ) ⇒ บรรทัดละรายการในใบเดียวกัน
                 // (ราคาเต็มรอบ round(u × R, 2)) · ไม่มีรายการ ⇒ ใบบรรทัดเดียวตามเดิม · ตัดชำระใบนี้ ⇒ SubscriptionService สร้างรอบใหม่ของบรรทัดเหล่านี้
@@ -604,7 +613,7 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         DateTime dueDate, decimal amount, SubscriptionPlan plan, BillingCycle cycle, int months)
     {
         var seller = Seller(s);
-        var isVat = s != null && s.PlatformIsVatRegistered && IsValidTaxId(seller.TaxId);
+        var isVat = s != null && Accounting.Helpers.PlanPurchasePreview.IssuesTaxInvoice(s.PlatformIsVatRegistered, seller.TaxId);   // รอบ 235 (ข้อ 8): ตัวตัดสินเดียว · seller.TaxId = PlatformSellerTaxId
         decimal subtotal, vat, grand;
         if (isVat)
         {

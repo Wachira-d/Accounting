@@ -122,16 +122,16 @@ public static class PublicCheckoutPolicy
     public const string ShorterCycleRefusal = "ลดรอบบิลได้ที่หน้าแพ็กเกจในระบบ — มีผลสิ้นรอบ (หน้าซื้อแพ็กเกจออนไลน์รับเฉพาะซื้อใหม่ · ต่ออายุ · อัปเกรด)";
     public const string NoPaymentChangeRefusal = "การเปลี่ยนนี้ไม่มียอดต้องชำระตอนนี้ (มีผลสิ้นรอบ) — ทำได้ที่หน้าแพ็กเกจในระบบ";
     public const string RenewalInvoiceIssuedRefusal = "ออกใบแจ้งหนี้ต่ออายุรอบนี้แล้ว — ชำระจากใบแจ้งหนี้ที่ศูนย์บิลในระบบ (ไม่สร้างรายการซ้ำ)";
-    public const string RenewalCouponRefusal = "คูปองใช้กับการต่ออายุผ่านหน้านี้ไม่ได้ — ต่ออายุโดยไม่ใส่คูปอง หรือติดต่อผู้ดูแลระบบ";
 
     /// <summary>ตัวตัดสินเดียวของชนิดคำสั่งซื้อ — pure · เรียก<b>ก่อน</b> <c>ConvertTrialAsync</c>/<c>SubmitPaymentAsync</c> (เดิมเรียกตรง ⇒ Active+เดิม = Payment null แล้ว throw
     /// ต่ออายุไม่ได้ · ดาวน์เกรด = <c>ChangeSubscriptionAsync</c> บันทึก <c>ScheduledPlan</c> ก่อนแล้วจึง throw = side-effect เงียบ)</summary>
     /// <param name="changeQuoteAmount">ยอดจาก <c>QuotePlanChangeAsync</c> (อ่านอย่างเดียว · ตัวตัดสินเดียวกับตอนยืนยัน) — ≤ 0 บนเส้นเปลี่ยน = จะถูกตั้งเวลา ไม่ใช่จ่าย ⇒ ปฏิเสธ</param>
     /// <param name="renewalInvoiceIssued">ใบแจ้งหนี้ต่ออายุรอบนี้ออกแล้ว (<c>RenewalInvoiceForEndDate == EndDate</c>) ⇒ ต่ออายุซ้ำไม่ได้</param>
+    /// <remarks>รอบ 235: ถอดพารามิเตอร์ <c>hasCoupon</c> — ต่ออายุพร้อมคูปองไม่ถูกปฏิเสธที่นี่แล้ว (เส้น <c>RequestRenewalPaymentAsync</c> จองคูปองใต้ล็อก)</remarks>
     public static OrderDecision DecideOrder(SubscriptionStatus status, bool isPermanentFree,
         SubscriptionPlan currentPlan, BillingCycle currentCycle, decimal currentMonthlyPrice,
         SubscriptionPlan targetPlan, BillingCycle targetCycle, decimal targetMonthlyPrice,
-        decimal changeQuoteAmount, bool renewalInvoiceIssued, bool hasCoupon)
+        decimal changeQuoteAmount, bool renewalInvoiceIssued)
     {
         // ทดลองใช้/หมดอายุ/ค้างชำระ/ฟรีถาวร ⇒ ซื้อเต็มรอบ (ConvertTrialAsync ไม่เข้าเส้น ChangeSubscriptionAsync — เงื่อนไขเดียวกับในนั้น)
         if (status != SubscriptionStatus.Active || isPermanentFree) return new OrderDecision(OrderKind.NewPurchase, null);
@@ -143,7 +143,7 @@ public static class PublicCheckoutPolicy
         if (samePlan && targetCycle == currentCycle)
         {
             if (renewalInvoiceIssued) return new OrderDecision(OrderKind.Refused, RenewalInvoiceIssuedRefusal);
-            if (hasCoupon) return new OrderDecision(OrderKind.Refused, RenewalCouponRefusal);
+            // รอบ 235 (K-2 · คำตัดสิน 235-1 แทน 233-5): คูปองใช้กับการต่ออายุได้แล้ว — ตัดสินที่ PlatformCouponRule (PurchaseKinds) ตอนดูราคา/จอง ไม่ใช่ที่นี่
             return new OrderDecision(OrderKind.Renewal, null);
         }
         if (kind != PlatformPlanPricing.ChangeKind.Upgrade && months < currentMonths) return new OrderDecision(OrderKind.Refused, ShorterCycleRefusal);

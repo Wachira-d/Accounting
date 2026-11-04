@@ -11,6 +11,10 @@ public interface IChatRateLimiter
     /// <para><paramref name="failClosed"/> = true: ตารางนับใช้ไม่ได้ ⇒ ปฏิเสธ (ด่านกันเดา/ไล่ข้อมูล เช่น ค้นการจองของแขก) · false = ปล่อยผ่าน (แชต — เดิม)</para>
     Task<bool> TryConsumeAsync(string key, int perMinute, int perDay, CancellationToken ct = default, bool failClosed = false);
 
+    /// <summary>รอบ 235 (ฝ่ายค้าน N4): นับ 1 ครั้งแล้วคืน<b>สถานะ</b> — แยก "เกินเพดาน" กับ "ตารางนับใช้ไม่ได้" ให้ผู้เรียกตอบคนละข้อความ ·
+    /// ไม่ตัดสิน fail-open/closed เอง (ผู้เรียกตัดสิน — <c>Helpers/AuthRateLimitPolicy.Verdict</c>)</summary>
+    Task<Accounting.Helpers.RateConsumeOutcome> ConsumeAsync(string key, int perMinute, int perDay, CancellationToken ct = default);
+
     /// <summary>นับ "strike" (จำนวนครั้งที่ชนเพดาน) ในหน้าต่าง 1 ชม.
     /// — ใช้ยกระดับเป็น challenge เมื่อยิงรัวซ้ำ ๆ</summary>
     Task<int> RecordStrikeAsync(string key, CancellationToken ct = default);

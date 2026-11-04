@@ -229,4 +229,44 @@ public class QuotaAddOnPaymentDbTests
             Company(db).AddUserAsync(cid, owner.Id, new Accounting.Models.DTOs.Company.AddCompanyUserRequest($"m-{Guid.NewGuid():N}@test.local", UserRole.Viewer)));
         Assert.Equal("QUOTA-FULL:users", full.RuleCode);
     }
+
+    /// <summary>รอบ 235 (ฝ่ายค้าน S-3): รายการโควตาเสริมที่หัก ณ ที่จ่ายแต่ผู้จ่ายหมดสิทธิ์หัก (ไม่ใช่นิติบุคคลแล้ว) — สลิป = ปฏิเสธพร้อมทางไปต่อ ·
+    /// เงินเข้า = พักให้แอดมิน (เรื่องค้าง · ไม่เปิดสิทธิ์) · แอดมินอนุมัติโดยไม่ล้างภาษีหัก = บอกเหตุ · ล้างเป็น 0 + รับเต็มยอด = ผ่าน ·
+    /// ทิศตรงข้าม: รายการที่ไม่ได้หักของผู้จ่ายเดียวกันแนบสลิปได้ตามเดิม</summary>
+    [Fact]
+    public async Task R235_หักณที่จ่ายแต่หมดสิทธิ์_สลิปปฏิเสธ_เงินเข้าพัก_แอดมินล้างภาษีหักแล้วรับเต็ม()
+    {
+        await using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม (หลักฐานคือ job db-test)"); return; }
+        var cid = await SeedCompanyAsync(db);
+        var co = await db.Companies.FirstAsync(c => c.Id == cid);
+        co.TaxId = "";   // ผู้จ่ายไม่ใช่นิติบุคคลแล้ว (คอลัมน์ NOT NULL — ไม่มีเลข = "")
+        await db.SaveChangesAsync();
+        var now = DateTime.UtcNow;
+        var wht = await RowAsync(db, cid, QuotaAddOnMode.OneOffMonth, now.AddMinutes(-5), now.AddDays(20), due: 193m);
+        wht.WithholdingTaxAmount = 6m;
+        await db.SaveChangesAsync();
+
+        var slip = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).UploadSlipAsync(cid, wht.Id, "uploads/slips/r235.png", null, "owner"));
+        Assert.Equal(PlatformPayerProfileGate.RuleCode, slip.RuleCode);
+        Assert.Contains("ซื้อใหม่โดยไม่ติ๊กหัก", slip.Message);
+
+        await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).MarkPaidByGatewayAsync(cid, wht.Id, Guid.NewGuid(), 193m, "test"));
+        var held = await ReloadAsync(wht.Id);
+        Assert.NotEqual(QuotaAddOnStatus.Active, held.Status);
+        Assert.Equal(PlatformPayerProfileGate.RuleCode, held.AttentionRule);
+
+        var refused = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(db).ApproveAsync(cid, wht.Id, "admin", default, "BANK-REF-235", "รับโอนนอกระบบ", 193m));
+        Assert.Contains("ตั้งภาษีหัก ณ ที่จ่ายเป็น 0", refused.Message);
+        await Svc(db).ApproveAsync(cid, wht.Id, "admin", default, "BANK-REF-235", "รับโอนนอกระบบ", 199m, null, withholdingTaxAmount: 0m);
+        var ok = await ReloadAsync(wht.Id);
+        Assert.Equal(QuotaAddOnStatus.Active, ok.Status);
+        Assert.Equal(0m, ok.WithholdingTaxAmount);
+        Assert.Equal(199m, ok.AmountDue);   // ยอดเต็มคงที่ (สุทธิ 193 + ภาษีหัก 6)
+
+        // ทิศตรงข้าม: ไม่ได้หัก ⇒ แนบสลิปได้ตามเดิม
+        var plain = await RowAsync(db, cid, QuotaAddOnMode.OneOffMonth, now.AddMinutes(-5), now.AddDays(20));
+        await Svc(db).UploadSlipAsync(cid, plain.Id, "uploads/slips/r235b.png", null, "owner");
+        Assert.Equal(QuotaAddOnStatus.PendingReview, (await ReloadAsync(plain.Id)).Status);
+    }
 }

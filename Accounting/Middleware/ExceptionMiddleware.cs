@@ -67,6 +67,9 @@ public class ExceptionMiddleware
         // (integration/สร้างอัตโนมัติ) — เดิมตกไป 500 "ข้อผิดพลาดภายในระบบ" ทั้งที่ผู้ใช้แก้เองได้ · DbUpdateConcurrencyException คง 500 (บั๊กจริง)
         Microsoft.EntityFrameworkCore.DbUpdateException dbe
             when dbe.InnerException is Npgsql.PostgresException { SqlState: "23503" } => 409,
+        // รอบ 235 (ผู้ใช้รายงาน REF:42DAB82F): ข้อความยาวเกินคอลัมน์ — ผู้ใช้แก้เองได้ (ย่อข้อความ) ⇒ 400 ไม่ใช่ 500
+        Microsoft.EntityFrameworkCore.DbUpdateException dbe
+            when dbe.InnerException is Npgsql.PostgresException { SqlState: "22001" } => 400,
         Accounting.Services.Implementations.DocumentApprovalWarningsException => 409,
         _ => 500
     };
@@ -164,6 +167,11 @@ public class ExceptionMiddleware
                     Accounting.Helpers.ForeignKeyViolation.Message(
                         Accounting.Helpers.ForeignKeyViolation.Classify(fk.MessageText, context.Request.Method),
                         fk.ConstraintName, refCode)),
+            // รอบ 235 (REF:42DAB82F): บอกอาการ ไม่เดาชื่อช่อง (ที่นี่ไม่รู้ว่าคอลัมน์ไหน) — รหัสอ้างอิงพาผู้ดูแลไปดู Error Logs ได้
+            Microsoft.EntityFrameworkCore.DbUpdateException dbe
+                when dbe.InnerException is Npgsql.PostgresException { SqlState: "22001" }
+                => (HttpStatusCode.BadRequest,
+                    $"ข้อความบางช่องยาวเกินที่ระบบรองรับ — ย่อข้อความในช่องที่กรอกยาว ๆ แล้วลองบันทึกใหม่ (รหัสอ้างอิง {refCode})"),
             Accounting.Services.Implementations.DocumentApprovalWarningsException awe
                 => (HttpStatusCode.Conflict,
                     $"{awe.Message}: {string.Join(" · ", awe.Warnings)} — เปิดเอกสารที่หน้าเอกสาร ตรวจแล้วกด “อนุมัติ” (รับทราบคำเตือน)"),

@@ -229,6 +229,17 @@ public static class PlatformPlanPricing
         return DateTime.SpecifyKind(bkk.AddDays(1).AddMilliseconds(-1).AddHours(-7), DateTimeKind.Utc);
     }
 
+    /// <summary>รอบ 235 (K-4 · คำตัดสิน 235-2): <b>บวกเดือนบนปฏิทินไทย</b> (UTC+7) แล้วแปลงกลับเป็น UTC — ตัวเดียวของวันหมดอายุรอบบิลทุกจุด
+    /// (เดิม <c>AddMonths</c> บนเวลา UTC ⇒ จ่าย 00:00–06:59 น. ไทยของวันสิ้นเดือนได้วันเพิ่ม: 31 ม.ค. 06:30 ไทย = 30 ม.ค. 23:30 UTC + 1 เดือน = 28 ก.พ. 23:30 UTC = 1 มี.ค. ไทย) ·
+    /// ตอนนี้ 31 ม.ค. 06:30 ไทย + 1 เดือน = 28/29 ก.พ. 06:30 ไทย (สิ้นเดือนที่สั้นกว่า = วันสุดท้ายของเดือน — กติกา <c>AddMonths</c> เดิมแต่บนวันไทย) ·
+    /// เวลาของวันคงเดิม · ติดลบได้ (ย้อนหาวันเริ่มรอบ) · มีผลเฉพาะรอบที่คิดใหม่ (แถวเดิมไม่แตะ — ไม่ต้อง migration)</summary>
+    public static DateTime AddCycleMonths(DateTime utc, int months)
+    {
+        if (months == 0) return utc;
+        var thai = DateTime.SpecifyKind(utc, DateTimeKind.Unspecified).AddHours(7).AddMonths(months);
+        return DateTime.SpecifyKind(thai.AddHours(-7), utc.Kind == DateTimeKind.Unspecified ? DateTimeKind.Unspecified : utc.Kind);
+    }
+
     /// <summary>ฝ่ายค้าน S4/N1: ซื้อแพ็กเกจเดิมซ้ำ (ต่ออายุ/เปลี่ยนรอบของแพ็กเกจเดิม) = งาน "ต่ออายุ" · แพ็กเกจต่าง = "อัปเกรด" — ตัวเดียวของทุกจุดเรียก resolver</summary>
     public static bool IsRenewalPurchase(SubscriptionPlan currentPlan, SubscriptionPlan targetPlan) => currentPlan == targetPlan;
 

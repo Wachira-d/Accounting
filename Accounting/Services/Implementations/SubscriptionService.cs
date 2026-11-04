@@ -401,6 +401,25 @@ public class SubscriptionService : ISubscriptionService
             + "(ระหว่างนี้ใช้งานตามสิทธิ์เดิมได้ตามปกติ)");
     }
 
+    /// <summary>รอบ 235 (K-2 · คำตัดสิน 235-1 แทน 233-5): ต่ออายุแพ็กเดิม+รอบเดิม (หน้าซื้อแพ็กเกจสาธารณะ) — เส้นเดียวกับซื้อใหม่ <see cref="RequestPlanPaymentAsync"/>
+    /// (ยอดจากเซิร์ฟเวอร์ = ราคาต่ออายุ · คูปองจองใต้ล็อก + ตรวจ "ใช้กับต่ออายุได้" · <c>QuotedAmount</c> · ภาษีหักจากตัวตัดสินเดียว) · อนุมัติแล้วต่อจากวันหมดอายุเดิม
+    /// (<see cref="PlanPurchasePreview.PaidPeriod"/> แพ็กเดิม) · คูปองนับเมื่อเงินเข้า (<c>PlatformCouponStore.RedeemAsync</c> ใน <c>ReviewPaymentLockedAsync</c> — กติกาเดิม) ·
+    /// ไม่แจ้ง "รอตรวจ" ตอนสร้าง (ยังไม่จ่าย — 235-9) · ใบต่ออายุรอบนี้ออกแล้ว ⇒ ปฏิเสธ (ชำระจากใบ)</summary>
+    public async Task<SubscriptionPaymentResponse> RequestRenewalPaymentAsync(Guid companyId, SubscriptionPlan plan, BillingCycle cycle, string? couponCode,
+        bool? withholdTax, string performedBy)
+    {
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        if (!PlatformPlanPricing.IsRenewalPurchase(sub.Plan, plan) || sub.BillingCycle != cycle)
+            throw new BusinessRuleException("รายการต่ออายุต้องเป็นแพ็กเกจและรอบบิลเดิม — เปลี่ยนแพ็กเกจ/รอบบิลใช้เส้นซื้อ/อัปเกรด", PublicCheckoutPolicy.RuleCode);
+        if (PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(sub.RenewalInvoiceForEndDate, sub.EndDate) != null)
+            throw new BusinessRuleException(PublicCheckoutPolicy.RenewalInvoiceIssuedRefusal, PublicCheckoutPolicy.RuleCode, 409);
+        var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == plan && p.IsActive)
+            ?? throw new BusinessRuleException($"ไม่พบแพ็กเกจ {plan} ที่เปิดขาย");
+        return await RequestPlanPaymentAsync(sub, template, cycle, null, performedBy,
+            "RenewalRequested", "ต่ออายุผ่านหน้าซื้อแพ็กเกจออนไลน์", couponCode: couponCode, withholdTax: withholdTax);
+    }
+
     /// <summary>รอบ 219 เฟส 0: สร้าง (หรือใช้ซ้ำ) รายการชำระค่าแพ็กเกจที่<b>ยอดมาจากเซิร์ฟเวอร์</b> (<see cref="PlatformPlanPricing.AmountDue"/>) —
     /// ทางเดียวของผู้เช่าในการขอแพ็กเกจจ่ายเงิน · ใช้ซ้ำรายการรอชำระที่แพ็กเกจ/รอบ/ยอดเดียวกัน (กดซ้ำไม่เกิดหลายรายการ)
     /// <para>รอบ 230: <paramref name="proration"/> (ใช้ได้) ⇒ ยอด = ส่วนต่างตามวันที่เหลือ · <c>RequestedPeriodMonths = 0</c> (อนุมัติแล้วไม่ขยับวันหมดอายุ) ·
@@ -488,8 +507,11 @@ public class SubscriptionService : ISubscriptionService
             if (code != null || prorated || cycleChanged) await SupersedePendingPaymentsAsync(sub, code, prorated || cycleChanged, performedBy);
             if (code != null)
             {
+                // รอบ 235 (K-2): ต่ออายุแพ็กเดิม+รอบเดิม ⇒ คูปองต้องอนุญาต "ต่ออายุ" (PurchaseKinds) — ตัวตัดสินเดียวกับ preview
+                var renewalTarget = PlatformCouponRule.IsRenewalTarget(sub.Status, sub.IsPermanentFree, sub.Plan, sub.BillingCycle, template.Plan, cycle, prorated, cycleChanged);
                 var (coupon, eval) = await PlatformCouponStore.ReserveAsync(_db, sub.CompanyId, code, PlatformCouponScope.Subscription,
-                    template.Plan.ToString(), cycle.ToString(), null, listAmount, PlatformCouponRule.SourceSubscriptionPayment, payment.Id, performedBy, now);
+                    template.Plan.ToString(), cycle.ToString(), null, listAmount, PlatformCouponRule.SourceSubscriptionPayment, payment.Id, performedBy, now,
+                    isRenewal: renewalTarget, renewalSpecialPrice: renewalTarget && effective.Applied);   // S-2: ราคาพิเศษต่ออายุ ⇒ ไม่ลดซ้อน
                 amount = eval.AmountAfter;
                 payment.CouponId = coupon.Id; payment.CouponCode = coupon.Code; payment.CouponDiscountAmount = eval.Discount;
                 payment.ListAmount = listAmount;
@@ -1193,8 +1215,11 @@ public class SubscriptionService : ISubscriptionService
         async Task<PlanChangeQuote> Pay(string kind, bool prorated, BillingCycle c, decimal list, int? d, int? cd, DateTime? end, string msg,
             decimal? standard = null, decimal? credit = null, DateTime? newEnd = null, string? special = null, decimal? oldBasis = null, decimal? newCyclePrice = null)
         {
+            // รอบ 235 (K-2): ต่ออายุ/ซื้อใหม่ของคูปอง — ตัวตัดสินเดียวกับตอนจอง (RequestPlanPaymentAsync)
             var ev = await PlatformCouponStore.PreviewAsync(_db, companyId, couponCode, PlatformCouponScope.Subscription,
-                plan.ToString(), c.ToString(), null, list, now);
+                plan.ToString(), c.ToString(), null, list, now,
+                isRenewal: PlatformCouponRule.IsRenewalTarget(sub.Status, sub.IsPermanentFree, sub.Plan, sub.BillingCycle, plan, c, prorated, kind == "CycleChange"),
+                renewalSpecialPrice: standard is decimal st && st > list);   // S-2: ราคาพิเศษ (ราคาตั้ง > ยอดที่คิด) — ผลเฉพาะเมื่อเป็นต่ออายุ
             var ok = ev is { Ok: true };
             return new PlanChangeQuote(kind, prorated, plan.ToString(), c.ToString(), list, ok ? ev!.Discount : 0m, ok ? ev!.AmountAfter : list,
                 d, cd, end, null, msg, ok ? ev!.Label : null, ev is { Ok: false } ? ev.Problem : null,
@@ -2672,24 +2697,31 @@ public class SubscriptionService : ISubscriptionService
 
         await _db.SaveChangesAsync();
 
-        // Notify admins about pending payment
+        // รอบ 235 (คำตัดสิน 235-9 · ค้างจากรอบ 232): แจ้ง "รอตรวจสอบ" เฉพาะเมื่อมีหลักฐานการจ่าย (สลิป) — สร้างรายการเฉย ๆ ยังไม่มีเงิน ⇒ ไม่แจ้ง
+        // (เดิมแจ้งทุกครั้ง ⇒ ต่ออายุผ่านหน้าซื้อแพ็กเกจ = เจ้าของได้ข้อความว่ามีเงินรอตรวจทั้งที่ยังไม่จ่าย) · สลิปที่แนบภายหลังแจ้งจาก UploadPaymentSlipAsync
+        if (PlatformPaymentReviewNotice.ShouldNotify(payment.SlipFileName != null, hadSlipBefore: false, payment.Status == SubscriptionPaymentStatus.Pending))
+            await NotifyPaymentPendingReviewAsync(companyId, payment);
+
+        return MapPaymentToResponse(payment);
+    }
+
+    /// <summary>รอบ 235: แจ้งเจ้าของ/แอดมินบริษัทว่ามีการชำระรอตรวจ — เรียกเฉพาะเมื่อ <see cref="PlatformPaymentReviewNotice.ShouldNotify"/> (ตัวตัดสินเดียว)</summary>
+    private async Task NotifyPaymentPendingReviewAsync(Guid companyId, SubscriptionPayment payment)
+    {
         var adminUsers = await _db.CompanyUsers
             .Where(cu => cu.CompanyId == companyId && (cu.Role == UserRole.Owner || cu.Role == UserRole.SystemAdmin))
             .Select(cu => cu.UserId)
             .ToListAsync();
-
         foreach (var adminId in adminUsers)
         {
             await NotifyUserAsync(adminId, companyId,
                 Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded,
                 NotificationType.SubscriptionPaymentPending,
-                "มีการชำระเงิน Subscription รอตรวจสอบ",
-                $"การชำระเงิน {payment.PaymentNumber} จำนวน {payment.Amount:N2} THB รอการตรวจสอบ",
+                PlatformPaymentReviewNotice.Title,
+                PlatformPaymentReviewNotice.Message(payment.PaymentNumber, payment.Amount),
                 $"/admin/subscription-payments/{payment.Id}",
                 "SubscriptionPayment", payment.Id);
         }
-
-        return MapPaymentToResponse(payment);
     }
 
     /// <summary>
@@ -2913,6 +2945,7 @@ public class SubscriptionService : ISubscriptionService
         // (ไม่ใช่วันที่กดเลือกแพ็กเกจ) · รายการที่ลูกค้าแจ้งวันที่โอนเองคงวันเดิม (บีบแล้วตอนแจ้ง)
         if (payment.SlipFileName == null && payment.TransferReference == null && payment.FromBankName == null)
             payment.PaymentDate = DateTime.UtcNow;
+        var hadSlipBefore = payment.SlipFileName != null;   // รอบ 235: แนบซ้ำ/เปลี่ยนไฟล์ ⇒ ไม่แจ้งซ้ำ
         payment.SlipFileName = fileName;
         payment.SlipOriginalFileName = originalFileName;
         payment.SlipContentType = contentType;
@@ -2920,6 +2953,12 @@ public class SubscriptionService : ISubscriptionService
         payment.SlipStoragePath = storagePath;
 
         await _db.SaveChangesAsync();
+        // รอบ 235 (คำตัดสิน 235-9): มีสลิปแล้ว = มีหลักฐานการจ่าย ⇒ แจ้งรอตรวจ (ตัวตัดสินเดียว · ครั้งแรกของรายการ)
+        if (PlatformPaymentReviewNotice.ShouldNotify(true, hadSlipBefore, payment.Status == SubscriptionPaymentStatus.Pending))
+        {
+            var slipCompanyId = await _db.Subscriptions.AsNoTracking().Where(x => x.Id == payment.SubscriptionId).Select(x => x.CompanyId).FirstOrDefaultAsync();
+            if (slipCompanyId != Guid.Empty) await NotifyPaymentPendingReviewAsync(slipCompanyId, payment);
+        }
         return MapPaymentToResponse(payment);
     }
 
@@ -3642,6 +3681,15 @@ public class SubscriptionService : ISubscriptionService
             && await Journal.JournalEntryBuilder.ClosedPeriodReasonAsync(_db, pcid, ThaiDate.CalendarDateUtc(paidOn)) is string closedReason)
             throw new BusinessRuleException($"วันรับเงิน {paidOn.AddHours(7):dd/MM/yyyy} อยู่ในงวดบัญชีที่ปิดแล้วของบริษัทผู้ให้บริการ — {closedReason}");
 
+        // รอบ 235 (ข้อ 6 · คำตัดสิน 235-6): ภาษีหัก ณ ที่จ่ายที่แอดมินกรอก — ตัวตรวจเดียวกับเส้นตรวจสลิป/ใบ (นิติบุคคล · ≤ อัตรา ม.40(2) ของฐานก่อน VAT ·
+        // ไม่ติดลบ) · เดิมรับทุกค่า (ติดลบถูกตัดเป็น 0 เงียบ · บุคคลธรรมดา/เกินอัตราผ่าน) ⇒ ใบเต็มยอดผิด + ทะเบียนภาษีถูกหักผิด
+        var manualWhtProblem = request.IsWaived ? null : ManualWithholdingProblem(request.WithholdingTaxAmount, request.Amount,
+            await Accounting.Services.Platform.PlatformWithholdingReader.PlatformIssuesTaxInvoiceAsync(_db), await PayerIsJuristicAsync(companyId));
+        // ฝ่ายค้าน S-5: 50 ทวิ จริงต่างจากกติกา ⇒ ทางยกเว้น (ติ๊ก + เหตุผล ≥ 10 + audit) · ไม่ติ๊ก/ติดลบ ⇒ ปฏิเสธพร้อมบอกทางไปต่อ
+        if (ManualWithholdingOverrideRefusal(manualWhtProblem, request.WithholdingTaxAmount, request.WhtPerCertificate, request.WhtOverrideReason) is string whtRefusal)
+            throw new BusinessRuleException(whtRefusal, "PLATFORM-WHT-INVALID", 400);
+        var whtOverridden = manualWhtProblem != null;
+
         var paymentNumber = await NextPaymentNumberAsync(sub);
 
         var kindLabel = request.IsWaived ? "ยกเว้นค่าบริการ" : "บันทึกรับเงินโดย admin";
@@ -3665,6 +3713,17 @@ public class SubscriptionService : ISubscriptionService
             CreatedBy = performedBy
         };
         _db.SubscriptionPayments.Add(payment);
+        if (whtOverridden)
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, Action = AuditAction.Update, EntityType = nameof(SubscriptionPayment), EntityId = payment.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "PlatformWhtManualOverride", ruleCode = ManualWhtOverrideRuleCode, payment.PaymentNumber, wht = request.WithholdingTaxAmount,
+                    amount = request.Amount, gateProblem = manualWhtProblem, reason = request.WhtOverrideReason!.Trim(), by = performedBy,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
 
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
@@ -3683,6 +3742,112 @@ public class SubscriptionService : ISubscriptionService
                 $"{kindLabel}" + (string.IsNullOrWhiteSpace(request.Notes) ? "" : $" — {request.Notes}"),
                 null),
             performedBy);
+    }
+
+    /// <summary>รอบ 235 (ข้อ 6): ตัวตรวจยอดภาษีหักที่แอดมินกรอกตอนบันทึกรับเงินเอง — ยอดเต็ม = เงินที่รับ + ภาษีหัก (ใบออกเต็มยอด) ·
+    /// ตัวตรวจเดียว <see cref="PlatformInvoiceRules.WithholdingProblem"/> (ฐานก่อน VAT ผ่าน <see cref="PlatformWhtSuggestion.BaseOfReceived"/>) · 0 = ไม่หัก</summary>
+    internal static string? ManualWithholdingProblem(decimal wht, decimal amountReceived, bool vatIncluded, bool payerIsJuristic)
+    {
+        if (wht == 0m) return null;
+        var gross = PlatformWhtSuggestion.GrossOf(amountReceived, Math.Max(0m, wht));
+        return PlatformInvoiceRules.WithholdingProblem(wht, gross, gross, PlatformWhtSuggestion.BaseOfReceived(gross, vatIncluded), payerIsJuristic);
+    }
+
+    public const string ManualWhtOverrideRuleCode = "PLATFORM-WHT-MANUAL-OVERRIDE";
+    public const int ManualWhtOverrideReasonMin = 10;
+
+    /// <summary>ฝ่ายค้าน S-5: ด่านภาษีหักที่แอดมินกรอก + ทางยกเว้น — null = บันทึกได้ (ไม่มีปัญหา หรือยกเว้นถูกต้อง) · ข้อความ = ปฏิเสธพร้อมทางไปต่อ ·
+    /// ยกเว้นได้เฉพาะ "ตามหนังสือรับรองจริง" (ติ๊ก + เหตุผล ≥ 10 ตัวอักษร) · ยอดติดลบไม่มีทางยกเว้น</summary>
+    internal static string? ManualWithholdingOverrideRefusal(string? gateProblem, decimal wht, bool perCertificate, string? reason)
+    {
+        if (gateProblem == null) return null;
+        if (wht < 0m) return gateProblem;
+        if (perCertificate && (reason ?? "").Trim().Length >= ManualWhtOverrideReasonMin) return null;
+        return $"{gateProblem} — ถ้าหนังสือรับรอง 50 ทวิ จริงระบุยอดนี้ ติ๊ก \"บันทึกตามหนังสือรับรองจริง\" พร้อมเหตุผลอย่างน้อย {ManualWhtOverrideReasonMin} ตัวอักษร (บันทึก audit)";
+    }
+
+    /// <summary>รอบ 235 (K-7/ข้อ 6 · คำตัดสิน 235-3/235-6): ดูผลก่อนบันทึกรับเงินเอง — <b>อ่านอย่างเดียว</b> · วันที่ผ่าน <see cref="PlanPurchasePreview.ForPurchase"/>
+    /// (วันรับเงิน = <see cref="PlatformPlanPricing.ApprovedPaymentDate"/> แบบแอดมินกรอก · เดือนตามที่กรอก — ตัวเดียวกับตอนอนุมัติ) · ภาษีหักที่ระบบเสนอ =
+    /// <see cref="Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync"/> ของราคาเซิร์ฟเวอร์ (มูลค่าสัญญาต่อปี 234-2) · ยอดที่กรอกตรวจด้วยตัวเดียวกับตอนบันทึก</summary>
+    public async Task<AdminPaymentPreview> PreviewManualPaymentAsync(Guid companyId, RecordManualPaymentRequest request)
+    {
+        var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        var target = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == request.RequestedPlan && p.IsActive)
+            ?? throw new BusinessRuleException($"ไม่พบแพ็กเกจ {request.RequestedPlan} ที่เปิดขาย");
+        var currentTpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.Plan && p.IsActive);
+        var now = DateTime.UtcNow;
+        var vat = await Accounting.Services.Platform.PlatformWithholdingReader.PlatformIssuesTaxInvoiceAsync(_db);
+        var cycleMonths = PlatformPlanPricing.MonthsOf(request.RequestedBillingCycle);
+        var serverPrice = cycleMonths > 0
+            ? await PlatformPriceOverrideStore.AmountDueAsync(_db, companyId, sub.AccountSubscriptionId, target, request.RequestedBillingCycle, now, currentPlan: sub.Plan)
+            : 0m;
+        var wht = request.IsWaived ? 0m : decimal.Round(request.WithholdingTaxAmount, 2, MidpointRounding.AwayFromZero);
+        var received = request.IsWaived ? 0m : decimal.Round(request.Amount, 2, MidpointRounding.AwayFromZero);
+        var gross = PlatformWhtSuggestion.GrossOf(received, wht);
+        // ภาษีหักที่ระบบเสนอ: ฐาน = ยอดเต็มที่กรอก (ยังไม่กรอก ⇒ ราคาของเซิร์ฟเวอร์) — แอดมินกด "ใช้ยอดที่ระบบเสนอ" ⇒ เงินที่รับ = ยอดเต็ม − ภาษีหัก
+        var suggestBase = gross > 0m ? gross : serverPrice;
+        var suggestion = request.IsWaived || suggestBase <= 0m ? null
+            : await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, companyId, suggestBase, true,
+                PlatformWhtSuggestion.AnnualContractGross(serverPrice > 0m ? serverPrice : suggestBase, cycleMonths > 0 ? cycleMonths : request.RequestedPeriodMonths));
+        var gate = request.IsWaived ? null : ManualWithholdingProblem(request.WithholdingTaxAmount, received, vat, await PayerIsJuristicAsync(companyId));
+        // ฝ่ายค้าน S-5: ทางยกเว้นที่ถูกต้อง ⇒ ไม่ปฏิเสธ แต่ยังบอกว่าต่างจากกติกา (แอดมินเห็นก่อนกด)
+        var problem = ManualWithholdingOverrideRefusal(gate, request.WithholdingTaxAmount, request.WhtPerCertificate, request.WhtOverrideReason)
+            ?? (gate != null ? $"บันทึกตามหนังสือรับรองจริง (ต่างจากกติกา: {gate})" : null);
+        var paidAt = PlatformPlanPricing.ApprovedPaymentDate(false, null, true, request.PaymentDate, now, now);
+        var preview = PlanPurchasePreview.ForPurchase(PlanPurchasePreview.CurrentOf(sub, currentTpl), PlanPurchasePreview.TargetOf(target, request.RequestedBillingCycle),
+            new PlanPurchasePreview.Money(gross > 0m || request.IsWaived ? gross : serverPrice, 0m, gross > 0m || request.IsWaived ? gross : serverPrice), now, vat,
+            paidAtUtc: paidAt, months: request.RequestedPeriodMonths, approvedAtUtc: now, withholdingTax: wht);   // ยังไม่กรอกยอด ⇒ แสดงราคาของเซิร์ฟเวอร์
+        return new AdminPaymentPreview(preview, suggestion, gross, wht, received, problem, serverPrice > 0m ? (decimal?)serverPrice : null);
+    }
+
+    /// <summary>รอบ 235 (K-7 · คำตัดสิน 235-3): ดูผลก่อนแอดมินอนุมัติรายการรอตรวจ — <b>อ่านอย่างเดียว</b> · แยกเส้นเหมือน <c>ReviewPaymentLockedAsync</c>
+    /// (ตัดชำระใบอย่างเดียว · เปลี่ยนรอบ · ส่วนต่างอัปเกรด · ซื้อ/ต่ออายุ) แล้วส่งตัวเลขของรายการเข้า <see cref="PlanPurchasePreview"/> ตัวเดียว ·
+    /// ยอดภาษีหัก/เงินที่รับที่แอดมินกรอก = กติกาเดียวกับตอนอนุมัติ (ยอดเต็มคงที่ · <see cref="PlatformInvoiceRules.AdminLinkedAmountsProblem"/> + <see cref="PlatformInvoiceRules.WithholdingProblem"/>)</summary>
+    public async Task<AdminPaymentPreview> PreviewPaymentApprovalAsync(Guid paymentId, decimal? withholdingTaxAmount = null, decimal? amountReceived = null)
+    {
+        var p = await _db.SubscriptionPayments.AsNoTracking().Include(x => x.Subscription).FirstOrDefaultAsync(x => x.Id == paymentId)
+            ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
+        var sub = p.Subscription;
+        var now = DateTime.UtcNow;
+        var vat = await Accounting.Services.Platform.PlatformWithholdingReader.PlatformIssuesTaxInvoiceAsync(_db);
+        var currentTpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == sub.Plan && t.IsActive);
+        var cur = PlanPurchasePreview.CurrentOf(sub, currentTpl);
+        var gross = PlatformWhtSuggestion.GrossOf(p.Amount, p.WithholdingTaxAmount);
+        var newWht = decimal.Round(withholdingTaxAmount ?? p.WithholdingTaxAmount, 2, MidpointRounding.AwayFromZero);
+        var cash = decimal.Round(amountReceived ?? (gross - newWht), 2, MidpointRounding.AwayFromZero);
+        string? problem = null;
+        if (withholdingTaxAmount != null || amountReceived != null)
+        {
+            problem = PlatformInvoiceRules.AdminLinkedAmountsProblem(cash, newWht, gross);
+            if (problem == null && newWht > 0m)
+                problem = PlatformInvoiceRules.WithholdingProblem(newWht, gross, gross, PlatformWhtSuggestion.BaseOfReceived(gross, vat), await PayerIsJuristicAsync(sub.CompanyId));
+        }
+        var suggestion = gross > 0m
+            ? await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, sub.CompanyId, gross, true,
+                await PlanContractGrossAsync(sub.CompanyId, p.RequestedPlan, p.RequestedBillingCycle))
+            : null;
+        PlanPurchasePreview.Result preview;
+        if (PlatformInvoiceRules.IsInvoiceOnlyPayment(p.PlatformInvoiceDocumentId, p.RequestedPeriodMonths))
+            preview = PlanPurchasePreview.ForInvoiceOnly(cur, gross, newWht, vat, now);
+        else
+        {
+            var target = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(t => t.Plan == p.RequestedPlan && t.IsActive);
+            var tgt = target != null ? PlanPurchasePreview.TargetOf(target, p.RequestedBillingCycle)
+                : new PlanPurchasePreview.Target(p.RequestedPlan, p.RequestedPlan.ToString(), p.RequestedBillingCycle, 0m);
+            var paidAt = PlatformPlanPricing.ApprovedPaymentDate(false, null, p.Kind is SubscriptionPaymentKind.ManualByAdmin or SubscriptionPaymentKind.Waived,
+                p.PaymentDate, p.CreatedAt, now);
+            var months = p.IsCycleChange
+                ? (p.RequestedPeriodMonths > 0 ? p.RequestedPeriodMonths : PlatformPlanPricing.MonthsOf(p.RequestedBillingCycle))
+                : p.RequestedPeriodMonths;
+            var list = p.ListAmount ?? gross;
+            preview = PlanPurchasePreview.ForPurchase(cur, tgt,
+                new PlanPurchasePreview.Money(list, p.CouponDiscountAmount, gross, Prorated: p.IsProration, CycleChange: p.IsCycleChange,
+                    DaysRemaining: p.ProrationDays, CycleDays: p.ProrationCycleDays, CycleChangeCredit: p.CycleChangeCredit,
+                    CouponLabel: p.CouponCode != null ? $"คูปอง {p.CouponCode}" : null),
+                now, vat, paidAtUtc: paidAt, months: months, approvedAtUtc: now, withholdingTax: newWht);
+        }
+        return new AdminPaymentPreview(preview, suggestion, gross, newWht, cash, problem);
     }
 
     public async Task<SubscriptionPaymentListResponse> GetAllPendingPaymentsAsync()

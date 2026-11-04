@@ -1,9 +1,11 @@
+using System.Security.Claims;
 using Accounting.Data;
 using Accounting.Helpers;
 using Accounting.Models.DTOs;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
 using Accounting.Services.Interfaces;
+using Accounting.Services.Payments;
 using Accounting.Services.Platform;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -31,10 +33,11 @@ public class PublicCheckoutController : ControllerBase
     private readonly IChatRateLimiter _rate;
     private readonly ISaasBillingDocumentService _billing;
     private readonly IConfiguration _config;
+    private readonly IPlatformSavedCardService _savedCards;
 
     public PublicCheckoutController(AccountingDbContext db, IPublicCheckoutService checkout, ILegalDocumentService legal, IChatRateLimiter rate,
-        ISaasBillingDocumentService billing, IConfiguration config)
-    { _db = db; _checkout = checkout; _legal = legal; _rate = rate; _billing = billing; _config = config; }
+        ISaasBillingDocumentService billing, IConfiguration config, IPlatformSavedCardService savedCards)
+    { _db = db; _checkout = checkout; _legal = legal; _rate = rate; _billing = billing; _config = config; _savedCards = savedCards; }
 
     private string Ip() => Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',')[0].Trim() is { Length: > 0 } f ? f
         : HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -157,8 +160,21 @@ public class PublicCheckoutController : ControllerBase
     }
 
     /// <summary>ช่องของ <c>PayWidget</c> โหมด publicBase — ยอดไม่รับจากหน้าเว็บ · ติ๊กยอมรับนโยบายต้องมีสำหรับรายการนี้</summary>
+    /// รอบ 235 (ข้อ 10): + ช่องบันทึกบัตร (ชื่อเดียวกับ platform-pay — PayWidget ส่งเมื่อหน้าส่ง <c>savedCardOffer</c>) ⇒ <see cref="PlatformSavedCardStart"/> ตัวเดียว
     public sealed record StartRequest(PaymentMethodKind Method = PaymentMethodKind.PromptPay, string? ReturnUrl = null, string? CardToken = null,
-        bool PolicyAccepted = false, string? PolicyVersionShown = null);
+        bool PolicyAccepted = false, string? PolicyVersionShown = null,
+        bool SaveCard = false, bool SaveCardConsent = false, string? SaveCardConsentVersionShown = null, bool SaveCardWhtAcknowledged = false);
+
+    /// <summary>รอบ 235 (ข้อ 10 · ฝ่ายค้าน N-6): ข้อเสนอ "บันทึกบัตรเพื่อตัดอัตโนมัติ" ของหน้าซื้อสาธารณะ — ด่านสิทธิ์<b>เดียวกับ StartIntent</b> (เจ้าของบริษัท)
+    /// ข้อความ/ฉบับ/คำเตือนภาษีหักจากตัวเดียวกับ platform-pay (<c>IPlatformSavedCardService.OfferAsync</c>) · ผู้ซื้อที่เพิ่งสมัคร = เจ้าของบริษัทใหม่ ⇒ ได้ข้อเสนอเหมือนกัน</summary>
+    [HttpGet("companies/{companyId:guid}/saved-card-offer")]
+    [Authorize]
+    [Accounting.Filters.RejectApiKey("ดูข้อเสนอบันทึกบัตร")]
+    public async Task<ActionResult<ApiResponse<object>>> SavedCardOffer(Guid companyId, CancellationToken ct)
+    {
+        if (await OwnerDenyAsync(companyId, "ชำระค่าแพ็กเกจ") is { } deny) return deny;
+        return Ok(new ApiResponse<object>(true, await _savedCards.OfferAsync(companyId, ct)));
+    }
 
     [HttpPost("companies/{companyId:guid}/orders/{paymentId:guid}/intents")]
     [Authorize]
@@ -174,8 +190,11 @@ public class PublicCheckoutController : ControllerBase
                 PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentId, ct);
             await PurchasePolicyAcceptance.EnforcePlatformForUserAsync(_db, _legal, companyId, User, PurchasePolicyAcceptance.ChannelPlatformSubscription,
                 paymentId, req.PolicyAccepted && !alreadyAccepted, req.PolicyVersionShown, Ip(), Request.Headers.UserAgent.ToString(), ct);
-            var intent = await _checkout.StartIntentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct);
-            await _db.SaveChangesAsync(ct);   // หลักฐานการยอมรับ (ถ้าเพิ่งบันทึก)
+            // รอบ 235 (ข้อ 10): บันทึกบัตร (ถ้าติ๊ก) — เส้นเดียวกับ platform-pay (ยินยอม · ทิ้งบัตรเมื่อเริ่มไม่สำเร็จ · ผูกรายการแรก · SaveChanges หลักฐานการยอมรับ)
+            var intent = await PlatformSavedCardStart.StartAsync(_db, _savedCards, companyId,
+                new PlatformSavedCardStart.Request(req.Method, req.CardToken, req.SaveCard, req.SaveCardConsent, req.SaveCardConsentVersionShown, req.SaveCardWhtAcknowledged),
+                new PlatformCardActor(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(System.Security.Claims.ClaimTypes.Email), Ip(), Request.Headers.UserAgent.ToString()),
+                saved => _checkout.StartIntentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct, saved), ct);
             return Ok(new ApiResponse<object>(true, Map(intent)));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }

@@ -102,6 +102,14 @@ public interface ISubscriptionService
     /// <summary>WP-C1: admin บันทึกรับเงินเอง/ยกเว้น — สร้าง payment แล้วอนุมัติ
     /// ทันทีผ่านเส้น renewal เดิม (ต่ออายุ+ประวัติ+ใบเสร็จ). ทุกบาทมี record.</summary>
     Task<SubscriptionPaymentResponse> RecordManualPaymentAsync(Guid companyId, RecordManualPaymentRequest request, string performedBy);
+    /// <summary>รอบ 235 (K-7/ข้อ 6): ดูผลก่อนบันทึกรับเงินเอง (อ่านอย่างเดียว) — วันที่จากตัวคำนวณเดียวกับตอนอนุมัติ · ภาษีหักที่ระบบเสนอ + ตรวจยอดที่กรอก</summary>
+    Task<AdminPaymentPreview> PreviewManualPaymentAsync(Guid companyId, RecordManualPaymentRequest request);
+    /// <summary>รอบ 235 (K-7): ดูผลก่อนแอดมินอนุมัติรายการรอตรวจ (อ่านอย่างเดียว) — <paramref name="withholdingTaxAmount"/>/<paramref name="amountReceived"/> = ค่าที่กรอกในหน้าตรวจสลิป</summary>
+    Task<AdminPaymentPreview> PreviewPaymentApprovalAsync(Guid paymentId, decimal? withholdingTaxAmount = null, decimal? amountReceived = null);
+    /// <summary>รอบ 235 (K-2 · คำตัดสิน 235-1): ต่ออายุแพ็กเดิม+รอบเดิมพร้อมคูปองได้ — สร้างรายการรอชำระผ่าน <c>RequestPlanPaymentAsync</c> ตัวเดียว
+    /// (จองคูปองใต้ล็อก · ยอดจากเซิร์ฟเวอร์ · ภาษีหักจากตัวตัดสินเดียว · ไม่แจ้ง "รอตรวจ" เพราะยังไม่จ่าย)</summary>
+    Task<SubscriptionPaymentResponse> RequestRenewalPaymentAsync(Guid companyId, SubscriptionPlan plan, BillingCycle cycle, string? couponCode,
+        bool? withholdTax, string performedBy);
     Task<SubscriptionPaymentListResponse> GetAllPendingPaymentsAsync(); // Admin: ดูรายการชำระเงินรอตรวจสอบทั้งหมด
 
     // Usage Monitor

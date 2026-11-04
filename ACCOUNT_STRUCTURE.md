@@ -1409,6 +1409,15 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
 - **แอดมิน**: `api/admin/public-checkout` (GET สถานะ+URL ที่ส่ง Omise · PUT สวิตช์ · audit chain `public-checkout-switch`) · การ์ดใน `/admin/site-settings.html` แท็บบริการ · ไม่แตะ `AdminController`
 - **ยังไม่ทำ**: ส่วนเสริม/โควตาเพิ่มในตะกร้า (ซื้อหลังเข้าระบบที่ hub §6.2h) · Db test ของ service (ล็อกด้วย `required_call_site` 6 กติกา)
 
+### 6.2l ปิดงานค้างแพ็กเกจ/บิล (รอบ 235 · คำตัดสิน 235-1…235-10 · DOCUMENT_FLOW §2.12c)
+
+- **คอลัมน์ใหม่ (`Helpers/PlatformCouponMigration` — ADD COLUMN IF NOT EXISTS · ไม่ backfill):** `PlatformCoupons.PurchaseKinds` (int · DEFAULT 1 = ซื้อใหม่เท่านั้น ทั้งแถวเดิมและคูปองใหม่ (ฝ่ายค้าน S-1) —
+  ผู้อ่าน `PlatformCouponRule.Apply` · ตั้ง/echo ที่ `AdminPlatformCouponController` + `/admin/coupons.html` · สลับเปิด/ปิดส่งค่าเดิมกลับ) ·
+  `CompanyQuotaAddOns.WithholdingTaxAmount` (numeric(18,2) · DEFAULT 0 — ผู้อ่าน: ตัวออกใบ `IssueAddOnReceiptAsync` · ส่วนลดบนใบ `ReceiptDiscount` · หน้า `quota-ui.js` ผ่าน `QuotaController.Map`)
+- **ความหมายยอดโควตาเสริม:** `AmountDue` = ยอดที่ตัด/โอน (สุทธิหลังภาษีหัก) · ยอดเต็มบนใบ = `AmountDue + WithholdingTaxAmount` (`PlatformWhtSuggestion.GrossOf`) · `ListAmount` = ก่อนคูปอง (เดิม)
+- **วันหมดอายุ:** บวกเดือนบนปฏิทินไทย (`PlatformPlanPricing.AddCycleMonths`) — Subscription/AccountSubscription ที่จ่ายรอบใหม่ · EndDate ที่ประทับไปแล้วไม่แตะ
+- **ไม่มี entity ใหม่** · DTO ใหม่ `AdminPaymentPreview` (preview หน้าแอดมิน) · `PublicCheckoutOrder.PlanName/ValidUntilUtc` (อีเมล)
+
 ### 6.2k หัก ณ ที่จ่ายค่าบริการ + ข้อมูลผู้ซื้อ + 50 ทวิ จากลูกค้า (รอบ 234 · คำตัดสิน 234-1…234-6 · 234-W1…W4)
 
 - **คอลัมน์ใหม่:** `Subscriptions.WithholdTaxPreference` (bool? — ค่าตั้ง "หักทุกครั้ง" · ผู้อ่าน: ช่องติ๊กศูนย์บิล/checkout + ตัดบัตรอัตโนมัติ) ·

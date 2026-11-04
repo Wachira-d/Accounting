@@ -1355,6 +1355,9 @@ const API = {
         API.post(`${base}/pay/intents/${id}/confirm-manually`, { reason }),
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ให้ handler ของต้นทาง — เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง (redispatchPending)
       redispatchPaymentIntent: (id) => API.post(`${base}/pay/intents/${id}/redispatch`, {}),
+      // รอบ 235 (คำตัดสิน 235-3): เงินโหมดทดสอบที่ลงบัญชีไปแล้ว — รายงาน + กลับรายการรับชำระผ่านเส้นยกเลิกเดิม
+      listTestModeLegacyPayments: () => API.get(`${base}/pay/intents/test-mode-legacy`),
+      reverseTestModeLegacyPayment: (intentId, paymentId) => API.post(`${base}/pay/intents/${intentId}/test-mode-legacy/reverse/${paymentId}`, {}),
       // รอบ 228 ฝ่ายค้าน S5: รับทราบ/จัดการข้อพิพาทแล้ว
       acknowledgePaymentDispute: (id, note) => API.post(`${base}/pay/intents/${id}/dispute/acknowledge`, { note: note || null }),
       refundPaymentIntent: (id, amount, reason) =>

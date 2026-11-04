@@ -5259,6 +5259,10 @@ public static class DatabaseMigrationHelper
             // ===== หักเงินมัดจำบนใบรับเงินสุดท้าย (display-only) =====
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedRef" varchar(100) NULL;""",
+            // รอบ 235 (ผู้ใช้รายงาน 22001): เลขอ้างอิงมัดจำหลายใบ / เงื่อนไขชำระยาวเกิน 100 ⇒ 500 ตอนสร้างเอกสาร ·
+            // ขยายตาม Helpers/DocumentFieldLimits (เพิ่มความยาว varchar ใน PostgreSQL ไม่ rewrite ตาราง · รันซ้ำได้)
+            """ALTER TABLE "Documents" ALTER COLUMN "DepositAppliedRef" TYPE varchar(1000);""",
+            """ALTER TABLE "Documents" ALTER COLUMN "PaymentTerms" TYPE varchar(500);""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DepositAppliedDrivesJournal" boolean NOT NULL DEFAULT false;""",
             // ส่วนลดท้ายบิล (จากยอดรวม) — เฉลี่ย pro-rata ลงบรรทัด
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "BillDiscountPercent" numeric(9,4) NOT NULL DEFAULT 0;""",
@@ -7051,17 +7055,8 @@ public static class DatabaseMigrationHelper
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_KnowledgeChunks_Key" ON "KnowledgeChunks" ("SourceKey") WHERE "CompanyId" IS NULL;""",
             """CREATE UNIQUE INDEX IF NOT EXISTS "IX_KnowledgeChunks_TenantKey" ON "KnowledgeChunks" ("CompanyId", "SourceKey") WHERE "CompanyId" IS NOT NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_KnowledgeChunks_Audience" ON "KnowledgeChunks" ("Audience", "IsActive") WHERE "IsDeleted" = false;""",
-            // ตัวนับ rate limit ที่ใช้ร่วมกันข้าม instance (atomic upsert)
-            """
-            CREATE TABLE IF NOT EXISTS "ChatRateBuckets" (
-                "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
-                "BucketKey" varchar(120) NOT NULL,
-                "WindowStart" timestamp NOT NULL,
-                "Count" integer NOT NULL DEFAULT 0
-            );
-            """,
-            """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ChatRateBuckets_Key" ON "ChatRateBuckets" ("BucketKey", "WindowStart");""",
-            """CREATE INDEX IF NOT EXISTS "IX_ChatRateBuckets_Window" ON "ChatRateBuckets" ("WindowStart");""",
+            // ตัวนับ rate limit ที่ใช้ร่วมกันข้าม instance (atomic upsert) — ตัวตั้งเดียว ChatRateBucketStatements (รอบ 235: Db test ใช้ร่วม)
+            ChatRateBucketDdl[0], ChatRateBucketDdl[1], ChatRateBucketDdl[2],
             // challenge (กันบอทยิงรัวซ้ำ) + คำถามที่ตอบไม่ได้ (feed หา KB gap)
             """ALTER TABLE "ChatConversations" ADD COLUMN IF NOT EXISTS "PendingChallenge" varchar(20) NULL;""",
             """ALTER TABLE "ChatMessages" ADD COLUMN IF NOT EXISTS "NoContextFound" boolean NOT NULL DEFAULT false;""",
@@ -7810,6 +7805,24 @@ public static class DatabaseMigrationHelper
               AND fp."EndDate"   >= (date_trunc('day', je."EntryDate" AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'));
         """,
     };
+
+    /// <summary>ตาราง <c>ChatRateBuckets</c> (ตัวนับ rate limit ข้าม instance ของ <c>ChatRateLimiter</c> · เส้น auth ของ <c>RateLimitMiddleware</c>) —
+    /// ตัวตั้งเดียวของ DDL · รันในชุด <see cref="GetFullTextSearchStatements"/> · Db test สร้างตารางจากที่นี่ (รอบ 235)</summary>
+    private static readonly string[] ChatRateBucketDdl =
+    {
+        """
+        CREATE TABLE IF NOT EXISTS "ChatRateBuckets" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "BucketKey" varchar(120) NOT NULL,
+            "WindowStart" timestamp NOT NULL,
+            "Count" integer NOT NULL DEFAULT 0
+        );
+        """,
+        """CREATE UNIQUE INDEX IF NOT EXISTS "IX_ChatRateBuckets_Key" ON "ChatRateBuckets" ("BucketKey", "WindowStart");""",
+        """CREATE INDEX IF NOT EXISTS "IX_ChatRateBuckets_Window" ON "ChatRateBuckets" ("WindowStart");""",
+    };
+
+    internal static IReadOnlyList<string> ChatRateBucketStatements() => ChatRateBucketDdl;
 
     /// <summary>
     /// <b>ทีม W1d P2-6 (ฝ่ายค้าน W1c)</b> — คีย์ตัวเรียนรู้ที่ persist ไว้ด้วยเลขผู้เสียภาษี<b>เลขไทย</b> ⇒ แปลงเป็นเลขอารบิก ·

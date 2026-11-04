@@ -64,14 +64,15 @@ public static class PlatformCouponStore
 
     /// <summary>ดูผลคูปอง (ไม่จอง) — หน้าเว็บแสดงยอดก่อนยืนยัน · ไม่มีรหัส = ไม่ลด</summary>
     public static async Task<PlatformCouponRule.Evaluation?> PreviewAsync(AccountingDbContext db, Guid companyId, string? code,
-        PlatformCouponScope scope, string? plan, string? cycle, string? resource, decimal price, DateTime nowUtc, CancellationToken ct = default)
+        PlatformCouponScope scope, string? plan, string? cycle, string? resource, decimal price, DateTime nowUtc, CancellationToken ct = default,
+        bool isRenewal = false, bool renewalSpecialPrice = false)
     {
         if (PlatformCouponRule.Normalize(code) == null) return null;
         var coupon = await FindAsync(db, code, ct);
         var (total, mine) = coupon == null ? (0, 0) : await CountAsync(db, coupon.Id, companyId, nowUtc, null, ct);
         var first = coupon?.FirstPaymentOnly == true && await IsFirstPaymentAsync(db, companyId, ct);
         return PlatformCouponRule.Apply(coupon, price,
-            new PlatformCouponRule.Target(scope, plan, cycle, resource, first), nowUtc, total, mine);
+            new PlatformCouponRule.Target(scope, plan, cycle, resource, first, isRenewal, renewalSpecialPrice), nowUtc, total, mine);   // รอบ 235 K-2 · S-2
     }
 
     private static Task LockAsync(AccountingDbContext db, Guid couponId, CancellationToken ct)
@@ -130,7 +131,7 @@ public static class PlatformCouponStore
     /// <summary>จองคูปองให้รายการที่กำลังสร้าง (ผู้เรียกต้องอยู่ในธุรกรรม และ SaveChanges/commit เอง) — ใช้ไม่ได้ ⇒ <see cref="BusinessRuleException"/> 400 ข้อความไทย (ไม่สร้างรายการ)</summary>
     public static async Task<(PlatformCoupon Coupon, PlatformCouponRule.Evaluation Eval)> ReserveAsync(AccountingDbContext db, Guid companyId, string code,
         PlatformCouponScope scope, string? plan, string? cycle, string? resource, decimal price, string sourceKind, Guid sourceId, string actor,
-        DateTime nowUtc, CancellationToken ct = default)
+        DateTime nowUtc, CancellationToken ct = default, bool isRenewal = false, bool renewalSpecialPrice = false)
     {
         var coupon = await FindAsync(db, code, ct)
             ?? throw new BusinessRuleException(PlatformCouponRule.InvalidCodeMessage, PlatformCouponRule.RuleCode);
@@ -140,7 +141,7 @@ public static class PlatformCouponStore
         if (coupon.FirstPaymentOnly) await LockKeyAsync(db, AdvisoryLockKey.For(companyId, AdvisoryLockKey.PlatformCoupon, "first-payment"), ct);
         var (total, mine) = await CountAsync(db, coupon.Id, companyId, nowUtc, sourceId, ct);
         var first = coupon.FirstPaymentOnly && await IsFirstPaymentAsync(db, companyId, ct, sourceId, nowUtc);
-        var eval = PlatformCouponRule.Apply(coupon, price, new PlatformCouponRule.Target(scope, plan, cycle, resource, first), nowUtc, total, mine);
+        var eval = PlatformCouponRule.Apply(coupon, price, new PlatformCouponRule.Target(scope, plan, cycle, resource, first, isRenewal, renewalSpecialPrice), nowUtc, total, mine);   // รอบ 235 K-2 · S-2
         if (!eval.Ok) throw new BusinessRuleException(eval.Problem ?? PlatformCouponRule.InvalidCodeMessage, PlatformCouponRule.RuleCode);
         db.PlatformCouponRedemptions.Add(new PlatformCouponRedemption
         {

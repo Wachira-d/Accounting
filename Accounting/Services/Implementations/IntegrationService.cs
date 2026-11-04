@@ -95,13 +95,9 @@ public class IntegrationService : IIntegrationService
 
     private static DateTime NormalizeDate(DateTime date)
     {
-        // แปลง พ.ศ.↔ค.ศ. ก่อน
-        if (date.Year < 1900)
-            date = date.AddYears(543);
-        else if (date.Year > 2400)
-            date = new DateTime(date.Year - 543, date.Month, date.Day, date.Hour, date.Minute, date.Second, date.Kind);
-        // แล้ว anchor เป็น "วันที่ไทย ณ 00:00 UTC" — กัน timestamptz shift
-        return Accounting.Helpers.ThaiDate.CalendarDateUtc(date);
+        // แปลงศักราชผ่านตัวตัดสินกลางตัวเดียว (รอบ 235 K-5 — เดิมสำเนาสูตร) · วันที่ไม่มีจริง (29 ก.พ. ข้ามศักราช) ⇒ 400 ไม่ปัดเงียบ
+        // แล้ว anchor เป็น "วันที่ไทย ณ 00:00 UTC" — กัน timestamptz shift (CalendarDateUtc เจอปีที่แปลงแล้ว ⇒ ไม่แปลงซ้ำ)
+        return Accounting.Helpers.ThaiDate.CalendarDateUtc(Accounting.Helpers.ThaiDate.NormalizeEra(date));
     }
 
     /// <summary>Batch-load chart of accounts by codes in one query instead of N+1.</summary>
