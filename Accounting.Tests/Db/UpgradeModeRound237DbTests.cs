@@ -104,6 +104,7 @@ public class UpgradeModeRound237DbTests
         var (low, high) = tiers.Value;
         var svc = new SubscriptionService(db, Notifications());
         var (cid, sub) = await SeedAsync(db);
+        var originalEnd = sub.EndDate;   // sub เป็นแถวที่ context ติดตามอยู่ — อนุมัติแล้วถูกแก้ในหน่วยความจำ (CI รอบ 237)
 
         await WithOfferAsync(db, PlatformUpgradeModeOffer.CustomerChooses, async () =>
         {
@@ -141,7 +142,7 @@ public class UpgradeModeRound237DbTests
             Assert.Equal(SubscriptionPlan.Pro, after.Plan);
             var wantEnd = PlatformPlanPricing.AddCycleMonths(approved.PaymentDate, 12);   // รอบใหม่ 12 เดือนนับจากวันชำระ
             Assert.True(Math.Abs((after.EndDate - wantEnd).TotalSeconds) < 1, $"EndDate {after.EndDate:O} ≠ วันชำระ + 12 เดือน {wantEnd:O}");
-            Assert.True(after.EndDate > sub.EndDate.AddDays(100));   // ไม่ใช่วันหมดอายุเดิม
+            Assert.True(after.EndDate > originalEnd.AddDays(100));   // ไม่ใช่วันหมดอายุเดิม
             Assert.Equal((DateTime?)after.EndDate, approved.SubscriptionExtendedTo);
             Assert.True(await db.SubscriptionHistories.AsNoTracking().AnyAsync(h => h.SubscriptionId == sub.Id && h.Action == "PlanUpgradeRestartApplied"));
         });
