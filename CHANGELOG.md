@@ -6313,3 +6313,16 @@ _รอบ 235 ฝ่ายค้านบิล (2026-11-04 · DECISIONS 235-1b
 บันทึกรับเงินมือทางยกเว้นตาม 50 ทวิ จริง (audit) · การ์ด 50 ทวิ รวมโควตาเสริม · ออกใบโควตาเสริมไม่สำเร็จ = เรื่องค้าง · ข้อเสนอบันทึกบัตรใช้ด่านเจ้าของ — ยังไม่ได้คอมไพล์ในเครื่องนี้_
 
 _รอบ 235 — ผู้ใช้รายงาน 500 `22001 value too long for type character varying(100)` ตอนสร้างเอกสาร (REF:42DAB82F · 2026-11-04): หน้าเว็บต่อเลขมัดจำหลายใบ (หรือ id 36 ตัวเมื่อหาเลขใบไม่เจอ) ลง `DepositAppliedRef` varchar(100) ⇒ 3 ใบก็เกิน · ขยาย `DepositAppliedRef` → 1000, `PaymentTerms` → 500 (ตัวตั้ง `Helpers/DocumentFieldLimits`) · ตรวจก่อนบันทึกทุกเส้นเขียนใน `DocumentService` (สร้าง · แก้ · เติมใบกำกับ · `MergeDepositRef`) ⇒ 400 ระบุช่อง · `ExceptionMiddleware` แปลง 22001 ที่หลุดจากทางอื่นเป็น 400 ข้อความไทย · ช่องเลขใบกำกับผู้ขายมี `maxlength=100` · เทสต์ `DocumentFieldLimitsRound235Tests`_
+
+_รอบ 236 — เจ้าของรายงาน (2026-11-04): บริษัท "เน็ก แอค" ผูก License Enterprise (สมฤทธิ์ · ถึง 31/12/2593) แต่หัวโมดัลแอดมิน/แท็บ Subscription บอก "Free Edition" · ดรอปดาวน์หน้าซื้อ "(FreeTrial · Active)" ·
+ตะกร้า "Free Edition → Enterprise" และให้จ่าย ฿10,000 ซื้อ Enterprise ระดับบริษัท (ไม่มีผล — resolver ใช้ License) · **สาเหตุ:** ตัวตัดสินตัวตนแพ็กเกจ `PlanIdentityResolver` (รอบ 205) มีอยู่แล้ว
+แต่จอแอดมิน/ศูนย์บิล/หน้าซื้อยังอ่านแถว `Subscription` ของบริษัทตรง ๆ และไม่มีด่าน "บริษัทใต้ License ซื้อเองไม่ได้" ในทางเข้าใดเลย · **แก้:** ขยายตัวตัดสินเดิม (`LicenseActive` ·
+`CompanyPurchase` · `Label` · `StatusLabel` ตารางเดียว) + ตัวอ่าน `Services/Platform/PlanIdentityReader` · ด่านเงินทุกทางเข้า (409 `PLATFORM-LICENSE-COVERED`) · ใบเสนอ/preview
+`PlanPurchasePreview.RefusedByLicense` · จอแอดมิน/ศูนย์บิล/หน้า subscription/หน้าซื้ออ่านแพ็กเกจที่มีผล (แถวบริษัท = พักอยู่) · ไม่เตือนหมดอายุ/ไม่ออกใบต่ออายุแถวบริษัทที่ License คุม ·
+DECISIONS 236-1…236-6 (236-3 · 236-6 รอเจ้าของ) · DOCUMENT_FLOW §2.12d · เทสต์ `EffectivePlanRound236Tests` · Db `LicensePurchaseGuardRound236DbTests` · `required_call_site_check` R236 —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 236 ฝ่ายค้าน (2026-11-04 · DECISIONS 236-4/236-6 แก้ · 236-7 · 236-8): B1 คืนทางต่ออายุ License ผ่านบริษัท (ผู้ถือ + แพ็กระดับ License — preview "ต่ออายุ License" + วันหมดอายุของ License ·
+ทุกทางเข้าส่งผู้ทำรายการ · อีเมลเตือน License ชี้ทางจริง) · S1 ผูก License ยกเลิกรายการรอชำระเก่า + ด่านแนบสลิป + คำเตือนในหน้าตรวจสลิป · S2 ตัดบัตร/ทวงหนี้ข้ามใบต่ออายุใต้ License + เรื่องค้างแอดมิน ·
+S3 งานหมดอายุข้ามแถวใต้ License + OCR อ่านสถานะ License (`CompanyRowUsable`) · S4 เทสต์ RuleCode ทุกจุด + StartSubscriptionPayment/GenerateRenewalInvoice + กติกา checker ใหม่พร้อม negative test ·
+N1 ป้ายสถานะจากเซิร์ฟเวอร์ (แอดมิน) · ดรอปดาวน์ checkout ติดป้ายเหตุ · แบนเนอร์ License หน้า subscription ใช้ป้ายเซิร์ฟเวอร์ + "ของคุณ" เฉพาะผู้ถือ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

@@ -19,7 +19,18 @@ public sealed record BillingCenterPlan(
     string? ScheduledPlan, DateTime? ScheduledPlanEffectiveAt,
     bool CancelAtPeriodEnd, DateTime? CancelEffectiveAt, bool CanCancel, bool CanReactivate, string? CancelNote,
     /// <summary>รอบ 232: "ไม่หมดอายุ" ตัดสินจาก <c>SubscriptionExpiry</c> (ธงฟรีถาวร <b>หรือ</b> ค่าแทนในฐาน) — หน้าเว็บแสดง "ไม่หมดอายุ" ไม่ใช่ปี 2669</summary>
-    bool IsOpenEnded = false);
+    bool IsOpenEnded = false,
+    /// <summary>รอบ 236 (คำตัดสิน 236-1): ที่มาของแพ็กเกจที่แสดง — "License" | "Company" (<c>PlanIdentityResolver</c>) · License ⇒ แพ็กเกจ/สถานะ/วันหมดอายุเป็นของ License</summary>
+    string Source = "Company",
+    /// <summary>รอบ 236: ผู้ถือ License (ชื่อ/อีเมล) · null = ไม่ผูก</summary>
+    string? LicenseOwner = null,
+    /// <summary>รอบ 236 (236-2): เหตุ + ทางไปต่อเมื่อซื้อ/ต่ออายุ/เปลี่ยนแพ็กเกจเองไม่ได้ (License คุมอยู่) · null = ซื้อได้ — หน้าเว็บซ่อนตัวเลือกแพ็กเกจ</summary>
+    string? PurchaseBlocked = null,
+    string? PurchaseNextStepUrl = null,
+    /// <summary>รอบ 236: แพ็กเกจระดับบริษัทที่พักอยู่ ("Free Edition · ใช้เมื่อถอดออกจาก License") — ข้อมูลรอง · null = ไม่ผูก License</summary>
+    string? DormantCompanyPlan = null,
+    /// <summary>รอบ 236 (ฝ่ายค้าน B1): ผู้ดูเป็นผู้ถือ License ⇒ แพ็ก (ชื่อ enum) ที่เลือกได้เพื่อ "ต่ออายุ License" · null = เลือกไม่ได้</summary>
+    string? LicenseRenewalPlan = null);
 
 public sealed record BillingCenterInvoice(
     Guid Id, string DocumentNumber, string Kind, string KindLabel, DateTime DocumentDate, DateTime? DueDate,

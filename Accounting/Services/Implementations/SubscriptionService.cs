@@ -430,6 +430,10 @@ public class SubscriptionService : ISubscriptionService
         PlatformProration.Result? proration = null, string? couponCode = null, PlatformProration.CycleChangeResult? cycleChange = null,
         bool? withholdTax = null)
     {
+        // รอบ 236 (คำตัดสิน 236-2): ด่านเงิน — บริษัทที่ License คุมอยู่ซื้อ/ต่ออายุ/อัปเกรดแพ็กเกจระดับบริษัทไม่ได้ (จ่ายแล้วไม่มีผล) · ทางเดียวของ
+        // ConvertTrialAsync/RequestRenewalPaymentAsync/ChangeSubscriptionAsync ⇒ เรียกก่อนคิดยอด/เขียนอะไร
+        // รอบ 236 B1: ผู้ถือ License จ่ายแพ็กระดับเดียวกับ License = ต่ออายุ License (ยอม · อนุมัติแล้วยืด License — AccountPlanExtendedViaSlip)
+        await Accounting.Services.Platform.PlanIdentityReader.EnsureCompanyMayPurchaseAsync(_db, sub.CompanyId, Accounting.Services.Platform.PlanIdentityReader.ActorOf(performedBy), template.Plan);
         var prorated = proration?.Applies == true;
         var cycleChanged = cycleChange?.Applies == true;
         var months = prorated ? 0 : PlatformPlanPricing.MonthsOf(cycle);
@@ -610,6 +614,37 @@ public class SubscriptionService : ISubscriptionService
         });
     }
 
+    /// <summary>รอบ 236 (ฝ่ายค้าน S1): บริษัทถูกผูกเข้า License ⇒ ยกเลิกรายการชำระค่าแพ็กเกจระดับบริษัทที่ยังรอชำระทั้งหมด (ไม่ผูกใบแจ้งหนี้ · ไม่มีสลิป ·
+    /// ไม่มีการชำระออนไลน์ที่เริ่ม/สำเร็จแล้ว) — เดิมค้างตลอดไป (ชำระต่อไม่ได้เพราะด่าน License · ไม่หมดอายุเองถ้าไม่มีคูปอง) · ทางยกเลิกเดิม
+    /// <see cref="CancelQuotedPaymentAsync"/> (ปลดคูปอง + ประวัติ) + audit chain · มีสลิป/intent = ไม่แตะ (เงินอาจเข้าแล้ว — แอดมินตรวจ เห็นคำเตือน License ใน preview) ·
+    /// ผู้เรียก SaveChanges (อยู่ในธุรกรรมเดียวกับการผูก) · ทางผูก: <c>AccountSubscriptionController.Attach</c> · <c>AdminAccountSubscriptionController.AdminAttach</c> ·
+    /// <c>CompanyService</c> (ผูกอัตโนมัติตอนสร้างบริษัท)</summary>
+    public async Task<int> CancelPendingPlanPaymentsForLicenseAsync(Guid subscriptionId, Guid companyId, string performedBy)
+    {
+        var rows = await _db.SubscriptionPayments
+            .Where(p => p.SubscriptionId == subscriptionId && p.Status == SubscriptionPaymentStatus.Pending
+                && p.SlipFileName == null && p.PlatformInvoiceDocumentId == null)
+            .ToListAsync();
+        var n = 0;
+        foreach (var p in rows)
+        {
+            if (await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.SourceKind == PaymentSourceKind.SubscriptionPayment && i.SourceId == p.Id
+                    && (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending || i.Status == PaymentIntentStatus.Succeeded)))
+                continue;
+            const string reason = "บริษัทถูกผูกเข้า License — แพ็กเกจระดับบริษัทไม่มีผล (ยกเลิกรายการรอชำระอัตโนมัติ)";
+            await CancelQuotedPaymentAsync(subscriptionId, companyId, p, reason, "PaymentCancelledLicenseAttached", performedBy);
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserEmail = performedBy, Action = AuditAction.Update, EntityType = nameof(SubscriptionPayment), EntityId = p.Id.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new { paymentNumber = p.PaymentNumber, status = "Cancelled", reason,
+                    ruleCode = Accounting.Helpers.PlanIdentityResolver.LicenseCoveredRuleCode }),
+                Timestamp = DateTime.UtcNow,
+            });
+            n++;
+        }
+        return n;
+    }
+
     /// <summary>รอบ 230 (ฝ่ายค้าน S3): รายการค่าแพ็กเกจที่มีคูปอง/ส่วนต่างอัปเกรด ค้างไม่จ่ายเกิน <see cref="PlatformCouponRule.ReservationDays"/> วัน
     /// (ไม่มีสลิป · ไม่มีการชำระออนไลน์ค้าง/สำเร็จ) ⇒ ยกเลิก + ปลดคูปอง (เหมือนโควตาเสริมค้าง 14 วัน) — งาน <c>AccountPlanExpiryReminderJob</c> ทุกรอบ · idempotent</summary>
     public async Task<int> ExpireStaleQuotedPaymentsAsync()
@@ -745,7 +780,7 @@ public class SubscriptionService : ISubscriptionService
         sub.PricePerCycle = (await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, cycle, nowUtc, forRenewal: true)).Price;
     }
 
-    public async Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId)
+    public async Task<SubscriptionResponse> GetSubscriptionAsync(Guid companyId, Guid? viewerUserId = null)
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId);
 
@@ -818,6 +853,9 @@ public class SubscriptionService : ISubscriptionService
         }
 
         var current = await GetUsageCurrentAsync(sub);   // รอบ 231: ใช้ร่วมกับหลอดเอกสาร (DocumentsBar) — เรียกครั้งเดียว
+        // รอบ 236 (236-1/236-2): ที่มา + ด่านซื้อจากตัวตัดสินเดียว (PlanIdentityResolver) — หน้า billing/subscription ซ่อนปุ่มซื้อเมื่อ License คุมอยู่
+        var identity = await Accounting.Services.Platform.PlanIdentityReader.ForSubscriptionAsync(_db, sub);
+        var purchaseVerdict = Accounting.Services.Platform.PlanIdentityReader.Verdict(identity, viewerUserId, null);
         return new SubscriptionResponse(
             sub.Id, sub.CompanyId, plan, status, sub.BillingCycle,
             sub.PricePerCycle, sub.StartDate, endDate, sub.NextBillingDate,
@@ -840,7 +878,12 @@ public class SubscriptionService : ISubscriptionService
             DocumentsBar: UsageBarRule.Documents(current.DocumentsThisMonth,
                 Accounting.Helpers.DocumentQuotaPolicy.EffectiveLimit(maxDocs, sub.DocumentBonusQuota, sub.DocumentBonusExpiresAt, DateTime.UtcNow, used: current.DocumentsThisMonth)),
             LimitTexts: UsageBarRule.LimitTexts(maxUsers, maxCompanies, maxDocs, maxJournals, acct?.MaxOcrPagesPerMonth ?? sub.MaxOcrPagesPerMonth, maxStorage, sub.MaxSharedMessagesPerMonth),
-            Unlimited: UsageBarRule.UnlimitedFlags(maxUsers, maxCompanies, maxDocs, maxJournals, acct?.MaxOcrPagesPerMonth ?? sub.MaxOcrPagesPerMonth, maxStorage, sub.MaxSharedMessagesPerMonth));
+            Unlimited: UsageBarRule.UnlimitedFlags(maxUsers, maxCompanies, maxDocs, maxJournals, acct?.MaxOcrPagesPerMonth ?? sub.MaxOcrPagesPerMonth, maxStorage, sub.MaxSharedMessagesPerMonth),
+            PlanSource: identity.Source,
+            LicenseOwner: identity.License is { } lic ? (lic.OwnerName ?? lic.OwnerEmail) : null,
+            PurchaseBlocked: purchaseVerdict.Allowed ? null : Accounting.Services.Platform.PlanIdentityReader.RefusalMessage(purchaseVerdict),
+            PurchaseNextStepUrl: purchaseVerdict.NextStepUrl,
+            LicenseRenewalPlan: purchaseVerdict.HolderMayRenew ? identity.Plan.ToString() : null);
     }
 
     /// <summary>ผลของ overlay แพ็กเกจ (บริษัท ↔ User License) + mask ที่เจ้าของบริษัทปิดเอง — ตัวเดียวของ
@@ -866,7 +909,8 @@ public class SubscriptionService : ISubscriptionService
         // รอบ 205 ทีม I: ตัวตนแพ็กเกจ (ระดับ/ชื่อ/สถานะ) ผ่านตัวตัดสินตัวเดียวกับแดชบอร์ด/รายการบริษัท — Helpers/PlanIdentityResolver
         var identity = Accounting.Helpers.PlanIdentityResolver.Resolve(sub.Plan, sub.Status, sub.EndDate, null,
             acct != null
-                ? new Accounting.Helpers.PlanIdentityResolver.LicenseSide(acct.PlanTemplate.Plan, acct.PlanTemplate.Name, acct.Status, acct.EndDate)
+                ? new Accounting.Helpers.PlanIdentityResolver.LicenseSide(acct.PlanTemplate.Plan, acct.PlanTemplate.Name, acct.Status, acct.EndDate,
+                    acct.Id, GracePeriodDays: acct.GracePeriodDays)
                 : null);
         plan = identity.Plan;
         planName = identity.PlanName;
@@ -1034,6 +1078,9 @@ public class SubscriptionService : ISubscriptionService
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        // รอบ 236 (236-2): License คุมอยู่ ⇒ เปลี่ยน/ตั้งเวลาเปลี่ยนแพ็กเกจระดับบริษัทไม่ได้ (ทั้งเส้นจ่ายเงินและเส้นตั้งเวลาที่ไม่จ่าย — แถวบริษัทไม่มีผล = silent no-op) ·
+        // B1: ผู้ถือ License + แพ็กระดับ License ⇒ ยอม (ต่ออายุ License)
+        await Accounting.Services.Platform.PlanIdentityReader.EnsureCompanyMayPurchaseAsync(_db, companyId, Accounting.Services.Platform.PlanIdentityReader.ActorOf(performedBy), request.NewPlan);
 
         if (sub.Status != SubscriptionStatus.Active)
             throw new InvalidOperationException("สามารถเปลี่ยน plan ได้เฉพาะ subscription ที่ active เท่านั้น");
@@ -1147,8 +1194,13 @@ public class SubscriptionService : ISubscriptionService
 
     /// <summary>รอบ 230 (D-8 · คำตัดสินข้อ 230-Q1/230-Q2): ดูราคาก่อนยืนยัน — ใช้ตัวตัดสินเดียวกับ <see cref="ConvertTrialAsync"/>/<see cref="ChangeSubscriptionAsync"/>
     /// (จำแนกทิศ · ส่วนต่าง · ราคาเต็ม · คูปอง) · ไม่สร้าง/ไม่จองอะไร</summary>
-    public async Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested, string? couponCode)
+    public async Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested, string? couponCode,
+        Guid? actorUserId = null)
     {
+        // รอบ 236 (236-2): License คุมอยู่ ⇒ ใบเสนอ "ชำระไม่ได้" (ยอด 0 · ไม่มีปุ่มยืนยัน) — ตัวตัดสินเดียวกับด่านตอนสร้างรายการ ·
+        // B1: ผู้ถือ License + แพ็กระดับ License ⇒ ใบเสนอปกติ แต่ preview = "ต่ออายุ License" (วันหมดอายุใหม่ของ License)
+        var (licenseRefused, licenseRenewal) = await LicenseQuoteAsync(companyId, plan, cycleRequested, actorUserId);
+        if (licenseRefused != null) return licenseRefused;
         var q = await QuotePlanChangeCoreAsync(companyId, plan, cycleRequested, couponCode);
         // รอบ 234 (คำตัดสิน 234-1): ภาษีหัก ณ ที่จ่ายที่ระบบเสนอสำหรับยอดนี้ (แสดงช่องติ๊ก + "หัก X% (฿…) — ชำระ ฿…") — ตัวตัดสินเดียวกับตอนสร้างรายการ
         var payer = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, companyId);
@@ -1156,7 +1208,36 @@ public class SubscriptionService : ISubscriptionService
             ? await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, companyId, q.AmountDue, true,
                 await PlanContractGrossAsync(companyId, plan, Enum.TryParse<BillingCycle>(q.Cycle, out var qcy) ? (BillingCycle?)qcy : null))
             : null;
-        return q with { Preview = await PlanPreviewForQuoteAsync(companyId, plan, q, DateTime.UtcNow), Withholding = wht, PayerProfile = payer };
+        var preview = licenseRenewal != null
+            ? PlanPurchasePreview.ForLicenseRenewal(licenseRenewal, await QuoteTargetAsync(plan, Enum.TryParse<BillingCycle>(q.Cycle, out var lcy) ? lcy : (cycleRequested ?? BillingCycle.Monthly)),
+                new PlanPurchasePreview.Money(q.ListAmount, q.Discount, q.AmountDue, CouponLabel: q.CouponLabel), DateTime.UtcNow,
+                await Accounting.Services.Platform.PlatformWithholdingReader.PlatformIssuesTaxInvoiceAsync(_db))
+            : await PlanPreviewForQuoteAsync(companyId, plan, q, DateTime.UtcNow);
+        return q with { Preview = preview, Withholding = wht, PayerProfile = payer,
+            Message = licenseRenewal != null ? Accounting.Helpers.PlanIdentityResolver.LicenseRenewalHeadline : q.Message };
+    }
+
+    /// <summary>รอบ 236 (236-2 · B1): ใบเสนอของบริษัทที่ License คุมอยู่ — (ใบปฏิเสธ, null) · (null, ตัวตน) = ผู้ถือต่ออายุ License · (null, null) = ซื้อได้ปกติ ·
+    /// preview ปฏิเสธ = <see cref="PlanPurchasePreview.RefusedByLicense"/></summary>
+    private async Task<(PlanChangeQuote? Refused, Accounting.Helpers.PlanIdentityResolver.PlanIdentity? Renewal)> LicenseQuoteAsync(
+        Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested, Guid? actorUserId)
+    {
+        var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId && !s.IsDeleted);
+        if (sub == null) return (null, null);
+        var id = await Accounting.Services.Platform.PlanIdentityReader.ForSubscriptionAsync(_db, sub);
+        var verdict = Accounting.Services.Platform.PlanIdentityReader.Verdict(id, actorUserId, plan);
+        if (verdict.LicenseRenewal) return (null, id);
+        if (verdict.Allowed) return (null, null);
+        var cycle = cycleRequested ?? sub.BillingCycle;
+        var msg = Accounting.Services.Platform.PlanIdentityReader.RefusalMessage(verdict);
+        return (new PlanChangeQuote("LicenseCovered", false, plan.ToString(), cycle.ToString(), 0m, 0m, 0m, null, null, null, null, msg,
+            Blocked: msg, Preview: PlanPurchasePreview.RefusedByLicense(id, await QuoteTargetAsync(plan, cycle), verdict, DateTime.UtcNow)), null);
+    }
+
+    private async Task<PlanPurchasePreview.Target> QuoteTargetAsync(SubscriptionPlan plan, BillingCycle cycle)
+    {
+        var tpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == plan && p.IsActive);
+        return tpl != null ? PlanPurchasePreview.TargetOf(tpl, cycle) : new PlanPurchasePreview.Target(plan, plan.ToString(), cycle, 0m);
     }
 
     /// <summary>รอบ 234 (คำตัดสิน 234-2): มูลค่าสัญญาค่าแพ็กเกจต่อปี (รวม VAT) ของแพ็กเกจ/รอบที่จะจ่าย — ราคาพิเศษของบริษัท (ตัวตัดสินเดียวกับตอนสร้างรายการ) × รอบต่อปี</summary>
@@ -1539,10 +1620,8 @@ public class SubscriptionService : ISubscriptionService
         var now = DateTime.UtcNow;
         var inGrace = acct.Status == SubscriptionStatus.Expired
                       && now <= acct.EndDate.AddDays(acct.GracePeriodDays);
-        var active = (acct.Status == SubscriptionStatus.Trial
-                      || acct.Status == SubscriptionStatus.Active
-                      || acct.Status == SubscriptionStatus.PastDue)
-                     && now <= acct.EndDate.AddDays(acct.GracePeriodDays);
+        // รอบ 236: สูตร "License ยังใช้งานได้" ตัวเดียว (PlanIdentityResolver.LicenseActive — ด่านซื้อ/ป้ายแพ็กเกจใช้ตัวเดียวกัน)
+        var active = Accounting.Helpers.PlanIdentityResolver.LicenseActive(acct.Status, acct.EndDate, acct.GracePeriodDays, now);
         return new EffectivePlan(
             Source: "Account",
             IsActive: active,
@@ -2639,6 +2718,8 @@ public class SubscriptionService : ISubscriptionService
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        // รอบ 236 (236-2): แจ้งชำระค่าแพ็กเกจระดับบริษัท ⇒ ด่านเดียวกับเส้นสร้างรายการ (License คุมอยู่ = ปฏิเสธ · B1 ผู้ถือ License ต่ออายุ = ยอม)
+        await Accounting.Services.Platform.PlanIdentityReader.EnsureCompanyMayPurchaseAsync(_db, companyId, Accounting.Services.Platform.PlanIdentityReader.ActorOf(performedBy), request.RequestedPlan);
 
         // รอบ 219 เฟส 0 (G-4 · คำตัดสินข้อ 178): ยอด/ระยะเวลามาจากตารางราคาของเซิร์ฟเวอร์ (PlatformPlanPricing) — เดิมเก็บ Amount/
         // RequestedPeriodMonths จาก body ตรง ๆ ⇒ ฿1 ขอ Enterprise 120 เดือนได้ · ยอดที่แจ้งมาไม่ตรง = 409 พร้อมยอดที่ถูก (ไม่เดา)
@@ -2940,6 +3021,13 @@ public class SubscriptionService : ISubscriptionService
 
         if (payment.Status != SubscriptionPaymentStatus.Pending)
             throw new InvalidOperationException("ไม่สามารถอัพโหลดสลิปได้ เนื่องจากสถานะไม่ใช่รอตรวจสอบ");
+        // รอบ 236 (ฝ่ายค้าน S1): แนบสลิปรายการค่าแพ็กเกจระดับบริษัท (ไม่ผูกใบแจ้งหนี้) ⇒ ด่านเดียวกับเส้นสร้างรายการ · ใบแจ้งหนี้ที่ออกแล้ว = หนี้จริง ไม่กัน
+        if (payment.PlatformInvoiceDocumentId == null)
+        {
+            var slipCompany = await _db.Subscriptions.AsNoTracking().Where(x => x.Id == payment.SubscriptionId).Select(x => x.CompanyId).FirstOrDefaultAsync();
+            await Accounting.Services.Platform.PlanIdentityReader.EnsureCompanyMayPurchaseAsync(_db, slipCompany,
+                Accounting.Services.Platform.PlanIdentityReader.ActorOf(performedBy), payment.RequestedPlan);
+        }
 
         // ฝ่ายค้านรอบ 219 (หมายเหตุ): รายการที่ระบบสร้างจากการเลือกแพ็กเกจ (ยังไม่โอน — ไม่มีรายละเอียดการโอน/สลิป) ⇒ วันรับเงิน = เวลาที่แนบสลิปครั้งแรก
         // (ไม่ใช่วันที่กดเลือกแพ็กเกจ) · รายการที่ลูกค้าแจ้งวันที่โอนเองคงวันเดิม (บีบแล้วตอนแจ้ง)
@@ -3654,6 +3742,8 @@ public class SubscriptionService : ISubscriptionService
     {
         var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        // รอบ 236 (236-2): แอดมินบันทึกรับเงินค่าแพ็กเกจระดับบริษัท — License คุมอยู่ ⇒ ปฏิเสธ (ต่ออายุ License ที่หน้า License ของแอดมิน · หรือถอดบริษัทก่อน)
+        await Accounting.Services.Platform.PlanIdentityReader.EnsureCompanyMayPurchaseAsync(_db, companyId, null, request.RequestedPlan);   // แอดมินไม่ใช่ผู้ถือ License ⇒ ยอมไม่ได้
 
         if (request.RequestedPeriodMonths <= 0)
             throw new InvalidOperationException("จำนวนเดือนที่ต่ออายุต้องมากกว่า 0");
@@ -3777,6 +3867,12 @@ public class SubscriptionService : ISubscriptionService
             ?? throw new BusinessRuleException($"ไม่พบแพ็กเกจ {request.RequestedPlan} ที่เปิดขาย");
         var currentTpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.Plan && p.IsActive);
         var now = DateTime.UtcNow;
+        // รอบ 236 (236-2): License คุมอยู่ ⇒ แอดมินเห็น "บันทึกไม่ได้ + ทางไปต่อ" ก่อนกด (ตัวตัดสินเดียวกับด่านใน RecordManualPaymentAsync)
+        var licenseIdentity = await Accounting.Services.Platform.PlanIdentityReader.ForSubscriptionAsync(_db, sub);
+        var licenseVerdict = Accounting.Services.Platform.PlanIdentityReader.Verdict(licenseIdentity, null, request.RequestedPlan);
+        if (!licenseVerdict.Allowed)
+            return new AdminPaymentPreview(PlanPurchasePreview.RefusedByLicense(licenseIdentity, PlanPurchasePreview.TargetOf(target, request.RequestedBillingCycle), licenseVerdict, now),
+                null, 0m, 0m, 0m, null, null);   // เหตุ/ทางไปต่ออยู่ใน Preview (Allowed=false · RefusalReason · NextStep) — ไม่ยืมช่องปัญหาภาษีหัก
         var vat = await Accounting.Services.Platform.PlatformWithholdingReader.PlatformIssuesTaxInvoiceAsync(_db);
         var cycleMonths = PlatformPlanPricing.MonthsOf(request.RequestedBillingCycle);
         var serverPrice = cycleMonths > 0
@@ -3847,7 +3943,21 @@ public class SubscriptionService : ISubscriptionService
                     CouponLabel: p.CouponCode != null ? $"คูปอง {p.CouponCode}" : null),
                 now, vat, paidAtUtc: paidAt, months: months, approvedAtUtc: now, withholdingTax: newWht);
         }
-        return new AdminPaymentPreview(preview, suggestion, gross, newWht, cash, problem);
+        // รอบ 236 (ฝ่ายค้าน S1): อนุมัติไม่ถูกกัน (เงินอาจเข้าแล้ว) แต่แอดมินต้องเห็นว่าบริษัทอยู่ใต้ License ก่อนกด
+        string? licenseNotice = null;
+        if (!PlatformInvoiceRules.IsInvoiceOnlyPayment(p.PlatformInvoiceDocumentId, p.RequestedPeriodMonths))
+        {
+            var lid = await Accounting.Services.Platform.PlanIdentityReader.ForSubscriptionAsync(_db, sub);
+            if (lid.ViaLicense)
+            {
+                var payer = Accounting.Services.Platform.PlanIdentityReader.ActorOf(p.CreatedBy);
+                var lv = Accounting.Services.Platform.PlanIdentityReader.Verdict(lid, payer, p.RequestedPlan);
+                licenseNotice = lv.LicenseRenewal
+                    ? $"⚠️ บริษัทนี้อยู่ใต้ License — รายการนี้ของผู้ถือ License แพ็กระดับเดียวกัน ⇒ อนุมัติแล้ว{Accounting.Helpers.PlanIdentityResolver.LicenseRenewalHeadline}"
+                    : $"⚠️ บริษัทนี้อยู่ใต้ License — แพ็กเกจระดับบริษัทที่อนุมัติจะไม่มีผลจนกว่าจะถอดออกจาก License · {Accounting.Services.Platform.PlanIdentityReader.RefusalMessage(lv)}";
+            }
+        }
+        return new AdminPaymentPreview(preview, suggestion, gross, newWht, cash, problem, LicenseNotice: licenseNotice);
     }
 
     public async Task<SubscriptionPaymentListResponse> GetAllPendingPaymentsAsync()
@@ -3876,10 +3986,13 @@ public class SubscriptionService : ISubscriptionService
             .Where(s => s.Status == SubscriptionStatus.Active || s.Status == SubscriptionStatus.PastDue)
             .ToListAsync();
         WarnExpiryNeedsReviewOncePerDay(activeSubscriptions.Count(s => s.ExpiryNeedsReview), "ProcessSubscriptionNotificationsAsync");
+        // รอบ 236 (236-4): แถวบริษัทที่ License คุมอยู่ไม่มีผล ⇒ ไม่เตือน "ใกล้หมดอายุ/จะถูกระงับ" และไม่ออกใบต่ออายุ (License มีงานเตือนของตัวเอง — AccountPlanExpiryReminderJob)
+        var licenseGoverned = await Accounting.Services.Platform.PlanIdentityReader.LicenseGovernedSubscriptionIdsAsync(_db, activeSubscriptions);
 
         foreach (var sub in activeSubscriptions)
         {
             if (sub.ExpiryNeedsReview) continue;   // รอบ 232 (B1 ข): แถวรอแอดมินกำหนดรอบ — ไม่เตือน/ไม่ออกใบต่ออายุ/ไม่เตือนตัดบัญชีจากค่าแทน 2126
+            if (licenseGoverned.Contains(sub.Id)) continue;   // รอบ 236 (236-4): License คุมอยู่ ⇒ แถวบริษัทพักอยู่
             var daysUntilExpiry = (int)(sub.EndDate - now).TotalDays;
             var deactivationDate = sub.EndDate.AddDays(sub.DeactivationDaysAfterExpiry);
             var daysUntilDeactivation = (int)(deactivationDate - now).TotalDays;
@@ -3925,10 +4038,11 @@ public class SubscriptionService : ISubscriptionService
         var expiringToday = await _db.Subscriptions
             .Where(s => s.Status == SubscriptionStatus.Active && s.EndDate >= todayStart && s.EndDate < todayEnd)
             .ToListAsync();
+        var governedToday = await Accounting.Services.Platform.PlanIdentityReader.LicenseGovernedSubscriptionIdsAsync(_db, expiringToday);   // รอบ 236
 
         foreach (var sub in expiringToday)
         {
-            if (sub.NotifyOnExpiry)
+            if (sub.NotifyOnExpiry && !governedToday.Contains(sub.Id))
             {
                 await SendSubscriptionNotificationToOwner(sub, NotificationType.SubscriptionExpired,
                     "Subscription หมดอายุวันนี้",
@@ -3940,10 +4054,11 @@ public class SubscriptionService : ISubscriptionService
         var expiredSubscriptions = await _db.Subscriptions
             .Where(s => s.Status == SubscriptionStatus.Expired || s.Status == SubscriptionStatus.PastDue)
             .ToListAsync();
+        var governedExpired = await Accounting.Services.Platform.PlanIdentityReader.LicenseGovernedSubscriptionIdsAsync(_db, expiredSubscriptions);   // รอบ 236
 
         foreach (var sub in expiredSubscriptions)
         {
-            if (!sub.NotifyAfterExpiry) continue;
+            if (!sub.NotifyAfterExpiry || governedExpired.Contains(sub.Id)) continue;
 
             var daysSinceExpiry = (int)(now - sub.EndDate).TotalDays;
             var notifyDays = ParseDaysList(sub.NotifyDaysAfterExpiry);
@@ -4039,9 +4154,12 @@ public class SubscriptionService : ISubscriptionService
         var newlyExpired = await _db.Subscriptions
             .Where(s => s.Status == SubscriptionStatus.Active && s.EndDate < now && !s.CancelAtPeriodEnd)
             .ToListAsync();
+        // รอบ 236 (ฝ่ายค้าน S3): แถวบริษัทที่ License คุมอยู่ไม่มีผล ⇒ ไม่เดินสถานะ PastDue/Suspended (ข้ามทั้งแถว — เดิมเดินแล้วไปโดนด่านที่อ่านสถานะแถวบริษัทตรง ๆ)
+        var governedExpiring = await Accounting.Services.Platform.PlanIdentityReader.LicenseGovernedSubscriptionIdsAsync(_db, newlyExpired);
 
         foreach (var sub in newlyExpired)
         {
+            if (governedExpiring.Contains(sub.Id)) continue;
             // ตัวที่ track อยู่อาจถูกเปลี่ยนในรอบนี้แล้ว (แพ็กเกจฟรีถาวร = ไม่หมดอายุ) — ตัดสินจากค่าปัจจุบัน ไม่ใช่ค่าที่ DB ใช้กรอง
             if (sub.Status != SubscriptionStatus.Active || sub.EndDate >= now || sub.ExpiryNeedsReview || sub.IsPermanentFree) continue;   // รอบ 232 (B1 ข): แถวรอตรวจข้าม
             sub.Status = SubscriptionStatus.PastDue;
@@ -4061,9 +4179,12 @@ public class SubscriptionService : ISubscriptionService
         var pastDue = await _db.Subscriptions
             .Where(s => s.Status == SubscriptionStatus.PastDue)
             .ToListAsync();
+        // รอบ 236 (ฝ่ายค้าน S3 · 236-4 แก้): แถวที่ License คุมอยู่ ⇒ ไม่ระงับ ไม่แจ้ง (ข้ามทั้งแถว)
+        var governedPastDue = await Accounting.Services.Platform.PlanIdentityReader.LicenseGovernedSubscriptionIdsAsync(_db, pastDue);
 
         foreach (var sub in pastDue)
         {
+            if (governedPastDue.Contains(sub.Id)) continue;
             var deactivationDate = sub.EndDate.AddDays(sub.DeactivationDaysAfterExpiry);
             // รอบ 219 เฟส 2 ขั้น 2 (คำตัดสินข้อ 180): สวิตช์ "ระงับอัตโนมัติ" ของแอดมินครอบเส้นหมดอายุด้วย (ปิด = คง PastDue ให้แอดมินตามเอง) · ค่าตั้งต้นเปิด = พฤติกรรมเดิม
             if (now >= deactivationDate && autoSuspend)

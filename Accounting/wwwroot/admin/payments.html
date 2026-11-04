@@ -589,10 +589,13 @@
         ? `<div style="margin-top:6px;color:#0c4a6e">💡 ระบบเสนอภาษีหัก ณ ที่จ่าย ${AdminLayout.money(w.suggestedAmount)} (${AdminLayout.esc(String(w.ratePercent))}% ของฐานก่อน VAT ${AdminLayout.money(w.baseAmount)}) — ${AdminLayout.esc(w.line || w.reason || '')}</div>`
         : (w && w.reason ? `<div style="margin-top:6px;color:#64748b">ภาษีหัก ณ ที่จ่าย: ${AdminLayout.esc(w.reason)}</div>` : '');
       const prob = d.withholdingProblem ? `<div style="margin-top:6px;color:var(--admin-danger)">⚠️ ${AdminLayout.esc(d.withholdingProblem)}</div>` : '';
-      const refused = pv.allowed === false && pv.refusalReason ? `<div style="color:var(--admin-danger)">⛔ ${AdminLayout.esc(pv.refusalReason)}</div>` : '';
+      // รอบ 236 (ฝ่ายค้าน S1): บริษัทอยู่ใต้ License — ข้อความจากเซิร์ฟเวอร์ (อนุมัติได้ แต่ต้องรู้ก่อนกด)
+      const lic = d.licenseNotice ? `<div style="margin-top:6px;color:#9a3412;font-weight:600">${AdminLayout.esc(d.licenseNotice)}</div>` : '';
+      const refused = pv.allowed === false && pv.refusalReason ? `<div style="color:var(--admin-danger)">⛔ ${AdminLayout.esc(pv.refusalReason)}</div>`
+        + (pv.nextStep ? `<div style="color:#475569">→ ${AdminLayout.esc(pv.nextStep)}</div>` : '') : '';   // รอบ 236: ทางไปต่อ (เช่น License คุมอยู่)
       return `<div style="border:1px solid #bbf7d0;background:#f0fdf4;border-radius:8px;padding:10px 14px;font-size:13px;line-height:1.6">
           <div style="font-weight:700">🔎 ถ้ากดตอนนี้: ${AdminLayout.esc(pv.headline || '')}</div>${refused}
-          <ul style="margin:6px 0 0 18px;padding:0">${lines}</ul>${whtLine}${prob}</div>`;
+          <ul style="margin:6px 0 0 18px;padding:0">${lines}</ul>${whtLine}${prob}${lic}</div>`;
     }
 
     let reviewPreviewTimer = null;

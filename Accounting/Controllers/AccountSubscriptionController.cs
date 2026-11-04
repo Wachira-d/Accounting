@@ -217,6 +217,8 @@ public class AccountSubscriptionController : ControllerBase
         sub.AccountSubscriptionId = acct.Id;
         sub.UpdatedBy = userId.ToString();
         sub.UpdatedAt = DateTime.UtcNow;
+        // รอบ 236 (ฝ่ายค้าน S1): รายการค่าแพ็กเกจระดับบริษัทที่ยังรอชำระ ⇒ ยกเลิก (บันทึกพร้อมการผูก)
+        await _subSvc.CancelPendingPlanPaymentsForLicenseAsync(sub.Id, sub.CompanyId, userId.ToString());
         await _db.SaveChangesAsync();
         return Ok(new ApiResponse<string>(true, null, "ผูกบริษัทเข้า Account Plan สำเร็จ"));
     }
@@ -252,9 +254,16 @@ public class AccountSubscriptionController : ControllerBase
     {
         var eff = await subSvc.GetEffectivePlanAsync(companyId);
         if (eff == null) return Ok(new ApiResponse<object>(true, new { hasPlan = false }));
+        // รอบ 236 (ฝ่ายค้าน ข้อ 4): ป้าย/ผู้ถือ/สถานะไทยจากตัวตัดสินเดียว — แบนเนอร์หน้า subscription ใช้คำว่า "License ของคุณ" เฉพาะผู้ถือ
+        var identity = await Accounting.Services.Platform.PlanIdentityReader.ForCompanyAsync(_db, companyId);
+        var viewer = Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var vid) ? vid : (Guid?)null;
         return Ok(new ApiResponse<object>(true, new
         {
             hasPlan = true,
+            label = identity == null ? null : PlanIdentityResolver.Label(identity),
+            statusLabel = identity == null ? null : PlanIdentityResolver.StatusLabel(identity.Status),
+            licenseOwner = identity?.License?.OwnerName ?? identity?.License?.OwnerEmail,
+            viewerIsLicenseHolder = identity != null && Accounting.Services.Platform.PlanIdentityReader.IsHolder(identity, viewer),
             source = eff.Source,
             isActive = eff.IsActive,
             inGrace = eff.InGrace,

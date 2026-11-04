@@ -104,7 +104,8 @@ public class PlatformPaymentController : ControllerBase
                 PurchasePolicyAcceptance.ChannelPlatformSubscription, paymentId, req.PolicyAccepted, req.PolicyVersionShown,
                 HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString(), ct);
             var intent = await StartMaybeSavedAsync(companyId, req,
-                saved => _platform.StartSubscriptionPaymentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct, saved), ct);
+                saved => _platform.StartSubscriptionPaymentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct, saved,
+                    actorUserId: JwtHelper.GetUserIdFromClaims(User)), ct);   // รอบ 236 B1
             return Ok(new ApiResponse<object>(true, Map(intent)));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }

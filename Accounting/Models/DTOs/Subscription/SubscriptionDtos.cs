@@ -180,7 +180,17 @@ public record SubscriptionResponse(
     global::Accounting.Helpers.UsageBarRule.Bar? DocumentsBar = null,
     /// <summary>รอบ 231 (P0 จ): ข้อความเพดาน users/companies/docs/journals/ocr/storage/messages ("ไม่จำกัด" ตัดสินที่เซิร์ฟเวอร์ — UsageBarRule.LimitTexts)</summary>
     Dictionary<string, string>? LimitTexts = null,
-    Dictionary<string, bool>? Unlimited = null);
+    Dictionary<string, bool>? Unlimited = null,
+    /// <summary>รอบ 236 (คำตัดสิน 236-1): ที่มาของแพ็กเกจที่มีผล — "License" | "Company" (<c>PlanIdentityResolver</c> ตัวเดียว)</summary>
+    string? PlanSource = null,
+    /// <summary>รอบ 236: ผู้ถือ License (ชื่อ/อีเมล) เมื่อที่มาเป็น License · null = ไม่ผูก</summary>
+    string? LicenseOwner = null,
+    /// <summary>รอบ 236 (236-2): เหตุ + ทางไปต่อเมื่อบริษัทซื้อ/ต่ออายุ/เปลี่ยนแพ็กเกจเองไม่ได้ (License คุมอยู่) · null = ซื้อได้ — หน้าเว็บซ่อนปุ่มซื้อ แสดงข้อความนี้แทน</summary>
+    string? PurchaseBlocked = null,
+    /// <summary>รอบ 236: ลิงก์ทางไปต่อของ <see cref="PurchaseBlocked"/> (หน้า License)</summary>
+    string? PurchaseNextStepUrl = null,
+    /// <summary>รอบ 236 (ฝ่ายค้าน B1): ผู้ดูเป็นผู้ถือ License ⇒ แพ็ก (ชื่อ enum) ที่เลือกได้เพื่อ "ต่ออายุ License" · null = เลือกไม่ได้</summary>
+    string? LicenseRenewalPlan = null);
 
 public record UsageLimits(
     int MaxUsers,
@@ -408,7 +418,9 @@ public record AdminPaymentPreview(
     decimal WithholdingTaxAmount,
     decimal NetAmount,
     string? WithholdingProblem,
-    decimal? ServerPrice = null);
+    decimal? ServerPrice = null,
+    /// <summary>รอบ 236 (ฝ่ายค้าน S1): บริษัทอยู่ใต้ License — คำเตือนก่อนอนุมัติ (ต่ออายุ License / แพ็กบริษัทจะไม่มีผล) · null = ไม่ผูก License</summary>
+    string? LicenseNotice = null);
 
 public record SubscriptionPaymentResponse(
     Guid Id,

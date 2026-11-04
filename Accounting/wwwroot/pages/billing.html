@@ -163,12 +163,14 @@
         const p = d.plan;
         document.getElementById('plan').innerHTML = `
           <div style="display:flex;gap:18px;flex-wrap:wrap">
-            <div><div class="muted">แพ็กเกจ</div><b>${e(p.planName || p.plan)}</b></div>
+            <div><div class="muted">แพ็กเกจ</div><b>${e(p.planName || p.plan)}</b>${p.source === 'License' ? ` <span class="pill">ผ่าน License${p.licenseOwner ? ' ของ ' + e(p.licenseOwner) : ''}</span>` : ''}</div>
             <div><div class="muted">สถานะ</div><b>${e(p.statusLabel)}</b></div>
-            <div><div class="muted">ราคา/รอบ</div><b>฿${Layout.money(p.pricePerCycle)}</b>${p.specialPriceNote ? `<div style="color:#166534;font-size:12px;font-weight:600">★ ${Layout.esc(p.specialPriceNote)}</div>` : ''}</div>
+            ${p.source === 'License' ? '' : `<div><div class="muted">ราคา/รอบ</div><b>฿${Layout.money(p.pricePerCycle)}</b>${p.specialPriceNote ? `<div style="color:#166534;font-size:12px;font-weight:600">★ ${Layout.esc(p.specialPriceNote)}</div>` : ''}</div>`}
             <div><div class="muted">ใช้ได้ถึง</div><b>${p.isPermanentFree ? 'ไม่หมดอายุ (ฟรีถาวร)' : p.isOpenEnded ? '<span style="color:#b45309">ไม่มีรอบเรียกเก็บ — ผู้ดูแลระบบ NextAcc กำลังตรวจ</span>' : (p.endDate ? Layout.date(p.endDate) : '-')}</b></div>
             <div><div class="muted">ออกใบแจ้งหนี้ต่ออายุ</div><b>${p.nextRenewalInvoiceAt ? Layout.date(p.nextRenewalInvoiceAt) : '-'}</b></div>
           </div>
+          ${p.purchaseBlocked ? `<div class="note warn" style="margin-top:10px">🎫 ${e(p.purchaseBlocked)}${p.purchaseNextStepUrl ? ` · <a href="${e(p.purchaseNextStepUrl)}">หน้า License</a>` : ''}</div>` : ''}
+          ${p.dormantCompanyPlan ? `<div class="muted" style="margin-top:6px;font-size:12px">แพ็กเกจระดับบริษัท (พักอยู่): ${e(p.dormantCompanyPlan)}</div>` : ''}
           ${p.scheduledPlan ? `<div class="note" style="margin-top:10px">เปลี่ยนเป็น ${e(p.scheduledPlan)} มีผล ${Layout.date(p.scheduledPlanEffectiveAt)}</div>` : ''}
           ${p.cancelNote ? `<div class="note warn" style="margin-top:10px">${e(p.cancelNote)}</div>` : ''}
           <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
@@ -381,11 +383,15 @@
         const el = document.getElementById('planChange'); if (!el) return;
         const d = Bill.data || {}, e = Layout.esc;
         if (!d.canManagePlan) { el.innerHTML = '<div class="muted">เฉพาะเจ้าของบริษัทเปลี่ยนแพ็กเกจได้</div>'; return; }
+        // รอบ 236 (คำตัดสิน 236-2): License คุมอยู่ ⇒ ไม่มีตัวเลือกซื้อ/เปลี่ยนแพ็กเกจ — เหตุ + ทางไปต่อจากเซิร์ฟเวอร์ (PlanIdentityResolver.CompanyPurchase)
+        // ฝ่ายค้าน B1: ผู้ถือ License ⇒ เลือกได้เฉพาะแพ็กระดับ License (= ต่ออายุ License · ใบเสนอจากเซิร์ฟเวอร์บอกวันหมดอายุใหม่ของ License)
+        const renewOnly = d.plan && d.plan.purchaseBlocked ? d.plan.licenseRenewalPlan : null;
+        if (d.plan && d.plan.purchaseBlocked && !renewOnly) { el.innerHTML = `<div class="note warn">🎫 ${e(d.plan.purchaseBlocked)}</div>`; return; }
         await this.ensurePlans();
         const cur = d.plan || {};
         if (!this.cycle) this.cycle = cur.billingCycle || 'Monthly';
-        const plans = this.plans.filter(p => !p.isTrialOnly && p.plan !== 'FreeTrial');
-        el.innerHTML = `
+        const plans = this.plans.filter(p => !p.isTrialOnly && p.plan !== 'FreeTrial' && (!renewOnly || p.plan === renewOnly));
+        el.innerHTML = (renewOnly ? `<div class="note" style="margin-bottom:10px">🎫 ${e(d.plan.purchaseBlocked)}</div>` : '') + `
           <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
             <span class="muted">รอบบิล</span>
             ${['Monthly', 'Quarterly', 'SemiAnnual', 'Annual'].map(c => `<button type="button" class="btn btn-sm ${c === this.cycle ? 'btn-primary' : 'btn-secondary'}" data-cycle="${c}">${e(this.cycleLabel(c))}</button>`).join('')}

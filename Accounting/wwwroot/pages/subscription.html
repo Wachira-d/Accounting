@@ -165,13 +165,13 @@
               <div style="background:linear-gradient(135deg,#ecfeff,#fef9c3);border:1px solid #67e8f9;border-radius:12px;padding:14px 18px;margin-bottom:18px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">
                 <div style="font-size:32px">🎫</div>
                 <div style="flex:1;min-width:260px">
-                  <div style="font-weight:700;font-size:15px;color:#0c4a6e">บริษัทนี้อยู่ใต้ License ของคุณ</div>
+                  <div style="font-weight:700;font-size:15px;color:#0c4a6e">${d.viewerIsLicenseHolder ? 'บริษัทนี้อยู่ใต้ License ของคุณ' : 'บริษัทนี้อยู่ใต้ License' + (d.licenseOwner ? ' ของ ' + Layout.esc(d.licenseOwner) : '')}</div>
                   <div style="font-size:12px;color:#475569;margin-top:2px">
-                    สถานะ ${d.status} · หมดอายุ ${Layout.date(d.endDate)}
+                    ${Layout.esc(d.label || '')} · สถานะ ${Layout.esc(d.statusLabel || d.status)} · หมดอายุ ${Layout.date(d.endDate)}
                     · MaxUsers ${d.maxUsers} · MaxDocs ${d.maxDocumentsPerMonth}/เดือน (รวมทุกบริษัทใต้ License)
                   </div>
                 </div>
-                <a href="/pages/account-subscription.html" class="btn btn-primary btn-sm">จัดการ License</a>
+                ${d.viewerIsLicenseHolder ? '<a href="/pages/account-subscription.html" class="btn btn-primary btn-sm">จัดการ License</a>' : ''}
               </div>`;
           } else if (d.source === 'Company') {
             banner.innerHTML = `
@@ -392,7 +392,10 @@
       renderPlans() {
         const grid = document.getElementById('plansGrid');
         const currentPlan = this.subscription?.plan;
-        grid.innerHTML = this.plans.map(p => {
+        // รอบ 236 (คำตัดสิน 236-2): License คุมอยู่ ⇒ ซื้อ/เปลี่ยนแพ็กเกจเองไม่ได้ — เหตุ + ทางไปต่อจากเซิร์ฟเวอร์ (SubscriptionResponse.purchaseBlocked) แทนปุ่มเลือก
+        const blocked = this.subscription?.purchaseBlocked || null;
+        const renewPlan = this.subscription?.licenseRenewalPlan || null;   // ฝ่ายค้าน B1: ผู้ถือ License ต่ออายุ License ได้ด้วยแพ็กนี้
+        grid.innerHTML = (blocked ? `<div style="grid-column:1/-1;background:#ecfeff;border:1px solid #67e8f9;border-radius:10px;padding:10px 14px;font-size:13px;color:#0c4a6e">🎫 ${Layout.esc(blocked)}</div>` : '') + this.plans.map(p => {
           const price = this.getPrice(p);
           const isCurrent = p.plan === currentPlan;
           const features = this.getPlanFeatures(p);
@@ -410,7 +413,8 @@
             <div style="font-size:12px;color:var(--gray-500);padding:8px 0;border-top:1px solid var(--gray-100)">
               ทดลองฟรี ${p.trialDurationDays} วัน | ขยายได้ ${p.trialMaxExtensions} ครั้ง | Grace ${p.trialGracePeriodDays} วัน
             </div>
-            ${isCurrent ? '<button class="btn btn-secondary w-full" disabled>แพ็กเกจปัจจุบัน</button>' :
+            ${blocked && renewPlan === p.plan ? `<button class="btn btn-primary w-full" onclick="Sub.selectPlan('${Layout.jsArg(p.plan)}')">ต่ออายุ License</button>` :
+              isCurrent ? '<button class="btn btn-secondary w-full" disabled>แพ็กเกจปัจจุบัน</button>' : blocked ? '<button class="btn btn-secondary w-full" disabled>ซื้อผ่าน License เท่านั้น</button>' :
               `<button class="btn btn-primary w-full" onclick="Sub.selectPlan('${Layout.jsArg(p.plan)}')">
                 เลือกแพ็กเกจนี้
               </button>`}

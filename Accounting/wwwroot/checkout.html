@@ -284,7 +284,13 @@
             $('meEmail').textContent = me.email || '';
             $('accountKnown').hidden = false; $('accountForm').hidden = true; $('cardAccount').classList.add('done');
             const sel = $('companySel');
-            sel.innerHTML = (me.companies || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)} (${esc(c.plan)} · ${esc(c.status)})</option>`).join('');
+            // รอบ 236: ป้ายแพ็กเกจที่มีผลจากเซิร์ฟเวอร์ (License ชนะ · ไม่ใช่ชื่อ enum "FreeTrial · Active") — หน้าเว็บแสดงอย่างเดียว
+            // ฝ่ายค้าน N1: purchaseBlocked (เหตุจากเซิร์ฟเวอร์) ⇒ ติดป้ายบนตัวเลือก + เหตุเต็มใน title (ไม่ซ่อน — เลือกแล้วกล่องสรุปบอกเหตุ/ทางไปต่อ) ·
+            // licenseRenewalPlan = ผู้ถือ License ต่ออายุ License ได้ด้วยแพ็กนั้น
+            sel.innerHTML = (me.companies || []).map(c => {
+              const tag = c.purchaseBlocked ? (c.licenseRenewalPlan ? ' — ต่ออายุ License ได้' : ' — ซื้อเองไม่ได้ (ผ่าน License)') : '';
+              return `<option value="${esc(c.id)}"${c.purchaseBlocked ? ` title="${esc(c.purchaseBlocked)}"` : ''}>${esc(c.name)} (${esc(c.label || c.plan)})${esc(tag)}</option>`;
+            }).join('');
             $('noCompany').hidden = me.companies.length > 0;
             if (me.companies.length === 0) { this.companyId = null; this.refreshQuote(); return; }
             if (this.resume.company && me.companies.some(c => c.id === this.resume.company)) sel.value = this.resume.company;

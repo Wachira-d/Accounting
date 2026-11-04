@@ -104,7 +104,9 @@ public class PublicCheckoutController : ControllerBase
         return Ok(new ApiResponse<object>(true, new
         {
             userId = uid, email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value,
-            companies = rows.Select(r => new { id = r.Id, name = r.Name, plan = r.Plan, status = r.Status, lowerPlans = r.LowerPlans, lowerNote = r.LowerNote }).ToList(),
+            // รอบ 236: label = ป้ายแพ็กเกจที่มีผล (PlanIdentityResolver.Label) · purchaseBlocked = เหตุที่ซื้อเองไม่ได้ (License คุมอยู่) — หน้าเว็บแสดงอย่างเดียว
+            companies = rows.Select(r => new { id = r.Id, name = r.Name, plan = r.Plan, status = r.Status, lowerPlans = r.LowerPlans, lowerNote = r.LowerNote,
+                label = r.Label, purchaseBlocked = r.PurchaseBlocked, licenseRenewalPlan = r.LicenseRenewalPlan }).ToList(),
         }));
     }
 
@@ -121,7 +123,7 @@ public class PublicCheckoutController : ControllerBase
         var uid = JwtHelper.GetUserIdFromClaims(User);
         if (!await UserQuoteRateOkAsync(uid, ct)) return TooManyOf<PublicCheckoutQuote>("คำขอถี่เกินไป — รอสักครู่แล้วลองใหม่");
         if (!await CouponAttemptOkAsync(uid, coupon, ct)) return TooManyOf<PublicCheckoutQuote>(PublicCheckoutPolicy.CouponTooManyMessage);
-        return Ok(new ApiResponse<PublicCheckoutQuote>(true, await _checkout.QuoteAsync(companyId, plan, cycle, coupon, ct)));
+        return Ok(new ApiResponse<PublicCheckoutQuote>(true, await _checkout.QuoteAsync(companyId, plan, cycle, coupon, ct, uid)));   // รอบ 236 B1
     }
 
     /// <param name="WithholdTax">รอบ 234 (คำตัดสิน 234-1): ผู้ซื้อติ๊ก "หัก ณ ที่จ่าย" — ส่งแค่ true/false · ยอดหักคิดที่เซิร์ฟเวอร์ (null = ไม่หัก)</param>
@@ -194,7 +196,7 @@ public class PublicCheckoutController : ControllerBase
             var intent = await PlatformSavedCardStart.StartAsync(_db, _savedCards, companyId,
                 new PlatformSavedCardStart.Request(req.Method, req.CardToken, req.SaveCard, req.SaveCardConsent, req.SaveCardConsentVersionShown, req.SaveCardWhtAcknowledged),
                 new PlatformCardActor(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(System.Security.Claims.ClaimTypes.Email), Ip(), Request.Headers.UserAgent.ToString()),
-                saved => _checkout.StartIntentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct, saved), ct);
+                saved => _checkout.StartIntentAsync(companyId, paymentId, req.Method, req.ReturnUrl, req.CardToken, ct, saved, JwtHelper.GetUserIdFromClaims(User)), ct);
             return Ok(new ApiResponse<object>(true, Map(intent)));
         }
         catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }

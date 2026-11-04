@@ -142,7 +142,8 @@ public class SubscriptionController : ControllerBase
     [HttpGet("{companyId:guid}")]
     public async Task<ActionResult<ApiResponse<SubscriptionResponse>>> GetSubscription(Guid companyId)
     {
-        var result = await _subscriptionService.GetSubscriptionAsync(companyId);
+        var result = await _subscriptionService.GetSubscriptionAsync(companyId,
+            Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var viewerId) ? viewerId : null);   // รอบ 236 B1: ผู้ถือ License เห็นทางต่ออายุ
         // S200-2: เมนูล็อกตามโหมดที่มีผลจริง — ค่ามาจากตัวตัดสินเดียวกับ middleware (หน้าเว็บห้าม hardcode)
         var enforcement = Accounting.Helpers.SubscriptionEnforcementResolver.Resolve(
             await _gateSwitch.ReadAdminSwitchAsync(HttpContext.RequestAborted), _config);
@@ -221,7 +222,7 @@ public class SubscriptionController : ControllerBase
         if (!string.IsNullOrWhiteSpace(coupon)
             && !await rate.TryConsumeAsync($"coupon-preview:{JwtHelper.GetUserIdFromClaims(User)}", 10, 100, default, failClosed: true))
             return StatusCode(429, new ApiResponse<PlanChangeQuote>(false, null!, "ตรวจโค้ดบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่"));
-        var q = await _subscriptionService.QuotePlanChangeAsync(companyId, plan, cycle, coupon);
+        var q = await _subscriptionService.QuotePlanChangeAsync(companyId, plan, cycle, coupon, JwtHelper.GetUserIdFromClaims(User));   // รอบ 236 B1
         return Ok(new ApiResponse<PlanChangeQuote>(true, q, q.Message));
     }
 

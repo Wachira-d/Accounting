@@ -62,7 +62,8 @@ public class BillingCenterController : ControllerBase
     public async Task<ActionResult<ApiResponse<BillingCenterSummary>>> Get(Guid companyId, CancellationToken ct)
     {
         if (await RequireBillingAsync(companyId, "ดูศูนย์บิล") is { } deny) return deny;
-        var summary = await _center.GetSummaryAsync(companyId, canPay: true, canManagePlan: IsOwnerOrAdmin(companyId), ct);
+        var summary = await _center.GetSummaryAsync(companyId, canPay: true, canManagePlan: IsOwnerOrAdmin(companyId), ct,
+            Guid.TryParse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value, out var viewerId) ? viewerId : null);   // รอบ 236 B1
         return Ok(new ApiResponse<BillingCenterSummary>(true, summary));
     }
 

@@ -427,6 +427,11 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
             // รอบ 219 เฟส 2 ขั้น 3: ผู้เช่ายกเลิกเมื่อสิ้นรอบ ⇒ ไม่ออกใบต่ออายุ (ใช้ได้ถึงสิ้นรอบ ไม่ต่อ)
             if (sub.CancelAtPeriodEnd) return null;
 
+            // รอบ 236 (คำตัดสิน 236-2/236-4): บริษัทที่ License คุมอยู่ ⇒ ไม่ออกใบต่ออายุแพ็กเกจระดับบริษัท (แถวบริษัทไม่มีผล — ทวงเงินค่าของที่ลูกค้าไม่ได้ใช้) ·
+            // ตัวตัดสินเดียวกับด่านซื้อ (PlanIdentityResolver.CompanyPurchase ผ่าน PlanIdentityReader) · แอดมินกดปุ่มเองได้ข้อความเต็มจาก AdminController ·
+            // ฝ่ายค้าน B1: ผู้ถือ License เป็นเจ้าของบริษัท + แพ็กระดับ License ⇒ ใบนี้คือการต่ออายุ License (ยอม — งานระบบไม่มีผู้ทำรายการ ใช้ SystemVerdictAsync)
+            if (!(await Accounting.Services.Platform.PlanIdentityReader.SystemVerdictAsync(_db, sub)).Allowed) return null;
+
             var buyer = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == sub.CompanyId);
             if (buyer == null) return null;
 

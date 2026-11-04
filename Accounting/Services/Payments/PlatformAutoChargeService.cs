@@ -140,6 +140,7 @@ public class PlatformAutoChargeService : IPlatformAutoChargeService
             .Where(a => a.PlatformCompanyId == pid && ids.Contains(a.DocumentId))
             .Select(a => new { a.DocumentId, a.AttemptNo, a.AttemptedAt, a.Outcome }).ToListAsync(ct);
         var now = DateTime.UtcNow;
+        var stopsPlanBilling = await Accounting.Services.Platform.PlanIdentityReader.StopsCompanyPlanBillingAsync(_db, sub, ct);   // รอบ 236 S2
         foreach (var r in rows.OrderBy(x => x.DueDate))
         {
             var excluded = PlatformDunningPolicy.Excluded(awaiting.Contains(r.Id), sub.CancelAtPeriodEnd, sub.RenewalInvoiceDocumentId == r.Id,
@@ -149,6 +150,9 @@ public class PlatformAutoChargeService : IPlatformAutoChargeService
             if (d.AttemptNo is not int no) continue;
             // รอบ 231 (231-4): ใบค่าใช้งาน/ส่วนเกิน USAGE- ตัดอัตโนมัติเฉพาะเมื่อแอดมินเปิด OverageAutoChargeSavedCard (ปิด = ผู้เช่าชำระเองที่ศูนย์บิล · ทวงหนี้ตามเดิม)
             if (!PlatformAutoChargePolicy.AutoChargeAllowedForKind(PlatformInvoiceRules.KindOf(r.Reference), overageAutoChargeSavedCard)) { t.Skipped++; continue; }
+            // รอบ 236 (ฝ่ายค้าน S2): License คุมบริษัทนี้ (ไม่ใช่กรณีผู้ถือต่ออายุ License) ⇒ ไม่ตัดบัตรค่าแพ็กเกจระดับบริษัท (ใบต่ออายุ) — แพ็กนั้นไม่มีผล ·
+            // ใบยังชำระมือได้ที่ศูนย์บิล · งานทวงหนี้ขึ้นเรื่องค้างให้แอดมินยกเลิกใบ/เก็บต่อ (PlatformDunningService) · ใบค่าใช้งานตัดตามเดิม
+            if (PlatformInvoiceRules.KindOf(r.Reference) == PlatformInvoiceKind.Renewal && stopsPlanBilling) { t.Skipped++; continue; }
             if (await OpenOnlinePaymentAsync(sub.Id, r.Id, ct)) { t.Skipped++; continue; }   // ผู้เช่าเริ่มจ่ายออนไลน์ไว้ (QR/3DS) — ไม่ตัดซ้อน
             // ฝ่ายค้าน (nice): ผู้เช่าแจ้งภาษีหัก ณ ที่จ่ายไว้กับรายการของใบนี้ ⇒ ไม่ตัด (ตัดเต็มยอดจะล้างยอดภาษีที่แจ้งไว้) ·
             // รอบ 234 (คำตัดสิน 234-3): บริษัทตั้ง "หัก ณ ที่จ่ายทุกครั้ง" ⇒ ระบบคิดยอดหักเอง (ตัดยอดสุทธิ) — ไม่ล้างภาษีที่แจ้ง ⇒ ตัดต่อได้
