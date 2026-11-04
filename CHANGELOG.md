@@ -6326,3 +6326,18 @@ _รอบ 236 ฝ่ายค้าน (2026-11-04 · DECISIONS 236-4/236-6 แ
 ทุกทางเข้าส่งผู้ทำรายการ · อีเมลเตือน License ชี้ทางจริง) · S1 ผูก License ยกเลิกรายการรอชำระเก่า + ด่านแนบสลิป + คำเตือนในหน้าตรวจสลิป · S2 ตัดบัตร/ทวงหนี้ข้ามใบต่ออายุใต้ License + เรื่องค้างแอดมิน ·
 S3 งานหมดอายุข้ามแถวใต้ License + OCR อ่านสถานะ License (`CompanyRowUsable`) · S4 เทสต์ RuleCode ทุกจุด + StartSubscriptionPayment/GenerateRenewalInvoice + กติกา checker ใหม่พร้อม negative test ·
 N1 ป้ายสถานะจากเซิร์ฟเวอร์ (แอดมิน) · ดรอปดาวน์ checkout ติดป้ายเหตุ · แบนเนอร์ License หน้า subscription ใช้ป้ายเซิร์ฟเวอร์ + "ของคุณ" เฉพาะผู้ถือ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 237 — K-1 อัปเกรดกลางรอบ 2 แบบเลือกได้ (เจ้าของ 2026-11-04: "ทำให้ระบบรองรับทั้ง 2 ทาง สามารถเลือกได้" · DECISIONS 237-1…237-7 · DOCUMENT_FLOW §2.12e · ACCOUNT_STRUCTURE §6.2m ·
+MATRIX K-1 ปิด): ตัวตัดสินเดียว `PlatformProration.UpgradeByMode` — แบบ ก คงวันหมดอายุ (`Upgrade` เดิม ตัวเลขเดิม) / แบบ ข เริ่มรอบใหม่ (`CycleChange` รอบเท่าเดิม ·
+ราคาเต็ม − มูลค่าคงเหลือ · วันชำระ + รอบ) · เครดิต ≥ ราคาเต็ม ⇒ ปฏิเสธแบบ ข (ไม่สร้างยอด 0) · ค่าตั้ง `SiteSettings.PlatformUpgradeModeOffer` (CustomerChooses ค่าตั้งต้น /
+KeepExpiryOnly / RestartCycleOnly · `/admin/site-settings.html` + `AdminPlatformUpgradeModeController` audit chain) · ทุกทางเข้าส่ง `upgradeMode` ตรวจซ้ำ `ResolveMode` ·
+ใบเสนอ `UpgradeOptions` (hub billing/subscription · checkout แสดงเทียบ) · แบบที่เลือกประทับ `SubscriptionPayment.UpgradeMode` (คอลัมน์ใหม่ `PlatformUpgradeModeMigration`) ·
+อนุมัติ `ApprovalRouteOf` ไม่อ่านค่าตั้ง · License ขยับตามแบบ ข (แพ็กตรง) · ใบเสร็จ/ศูนย์บิล/หน้าตรวจสลิป `RestartUpgradeDescription` · คูปองหลังเครดิต ·
+ตัวอย่างเจ้าของ: ก ฿6,916.44 ถึง 01/01/2570 · ข ฿10,663.89 ถึง 01/04/2570 — เทสต์ `UpgradeModeRound237Tests` · Db `UpgradeModeRound237DbTests` · R237 ใน
+`required_call_site_check.py` (+ negative test 4 เคส) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 237 ฝ่ายค้าน (2026-11-04 · DECISIONS 237-8/237-9): S3 เครดิตแบบ ข คิดใหม่ ณ วันชำระ (`RemainingDays` ตัวนับเดียวของ `Upgrade`/`CycleChange` · `RestartCreditDrift`) ⇒ ไม่ตรง =
+พักให้แอดมิน · อนุมัติตามยอดเดิมต้องมีเหตุผล + audit · S4 `DecideOrder(upgradeBlocked:)` แทนยอดที่แต่งขึ้น (ผู้เรียกจริง 1 · เทสต์ 5 จุดไม่ต้องแก้ — พารามิเตอร์ท้าย optional) ·
+N1 ข้อความพัก/ปฏิเสธแยก "อัปเกรดแบบเริ่มรอบใหม่" · N2 `SubscriptionPayment.PaidPeriodStartUtc` (คอลัมน์ใหม่) ใช้บนใบเสร็จ/ศูนย์บิล · N3 บรรทัดเทียบแบบ ก ไม่ขึ้น "มูลค่าคงเหลือ" + บอกแบบที่ค่าตั้งไม่เปิด ·
+N4 รายการค้างแถวเก่า (null) = แบบ ก · N5 Db test อยู่ collection `SubscriptionExpirySweep` · เทสต์ Db S1 License แพ็กตรง/ไม่ตรง · S2 เครดิตครอบยอด · S3 พัก/เหตุผล/audit · N4 · N6 ค่าตั้งผิด 400 + audit + หน้าซื้อส่งแบบที่ไม่เปิด —
+ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

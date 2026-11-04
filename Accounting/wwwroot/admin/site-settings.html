@@ -324,6 +324,21 @@
           <button class="admin-btn admin-btn-primary admin-btn-sm" type="button" id="publicCheckoutSave">บันทึก</button>
         </div>
       </div>
+      <!-- รอบ 237 (K-1 · DECISIONS 237-1): แบบอัปเกรดแพ็กเกจกลางรอบที่เปิดให้ลูกค้า — ป้าย/ตัวเลือกจากเซิร์ฟเวอร์ (api/admin/platform-upgrade-mode · Helpers/PlatformProration) -->
+      <div class="admin-card" id="upgradeModeCard">
+        <div class="admin-card-header">
+          <div>
+            <div class="admin-card-title">⬆️ อัปเกรดแพ็กเกจกลางรอบ — คิดเงินแบบไหน</div>
+            <div style="font-size:13px;color:#94a3b8;margin-top:4px">แบบคงวันหมดอายุ = จ่ายส่วนต่างเฉพาะวันที่เหลือ วันหมดอายุเดิม ·
+              แบบเริ่มรอบใหม่ = จ่ายเต็มรอบหักมูลค่าคงเหลือแพ็กเดิม รอบใหม่นับจากวันชำระ · มีผลกับใบเสนอ/รายการใหม่ (รายการที่สร้างแล้วใช้แบบที่ลูกค้าเลือกตอนซื้อ)</div>
+          </div>
+        </div>
+        <div id="upgradeModeChoices" style="display:flex;flex-direction:column;gap:6px;margin-top:12px;font-size:14px">กำลังโหลด...</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">
+          <button class="admin-btn admin-btn-primary admin-btn-sm" type="button" id="upgradeModeSave">บันทึก</button>
+          <span id="upgradeModeState" style="font-size:13px;color:#64748b"></span>
+        </div>
+      </div>
     </div>
 
     <!-- Tab 4: System -->
@@ -640,6 +655,28 @@
       await loadPublicCheckout();
     });
     loadPublicCheckout();
+
+    // ===== รอบ 237 (K-1): แบบอัปเกรดกลางรอบ — ตัวเลือก/ป้ายจากเซิร์ฟเวอร์ (หน้านี้แสดง + ส่งค่าที่เลือกกลับเท่านั้น) =====
+    function renderUpgradeMode(d) {
+      const esc = AdminLayout.esc;
+      document.getElementById('upgradeModeChoices').innerHTML = (d.choices || []).map(c =>
+        `<label style="display:flex;gap:8px;align-items:center"><input type="radio" name="upgradeModeOffer" value="${esc(c.value)}" ${c.value === d.offer ? 'checked' : ''}> ${esc(c.label)}</label>`).join('');
+      document.getElementById('upgradeModeState').textContent = 'ตอนนี้: ' + (d.offerLabel || d.offer);
+    }
+    async function loadUpgradeMode() {
+      try { renderUpgradeMode((await AdminAPI.get('/platform-upgrade-mode')).data || {}); }
+      catch (e) { document.getElementById('upgradeModeChoices').textContent = 'โหลดไม่สำเร็จ: ' + e.message; }
+    }
+    document.getElementById('upgradeModeSave').addEventListener('click', async () => {
+      const sel = document.querySelector('input[name="upgradeModeOffer"]:checked');
+      if (!sel) { AdminLayout.toast('เลือกแบบก่อนบันทึก', 'warning'); return; }
+      try {
+        const res = await AdminAPI.put('/platform-upgrade-mode', { offer: sel.value });
+        AdminLayout.toast(res.message || 'บันทึกแล้ว');
+        if (res.data) renderUpgradeMode(res.data);
+      } catch (e) { AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+    });
+    loadUpgradeMode();
     // รอบ 232: ลิงก์ตรง ?tab=<แท็บ>#<การ์ด> (เช่น ทางลัดจากหน้าช่องทางรับชำระ) ⇒ เปิดแท็บนั้นแล้วเลื่อนไปการ์ด — เดิมสวิตช์หน้าซื้อแพ็กเกจอยู่ท้ายแท็บ "แพ็กเกจบริการ" หาไม่เจอ
     (function openFromUrl() {
       let tab = null;

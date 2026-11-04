@@ -244,10 +244,16 @@
             rows.push(`<div class="pv-box bad"><div class="pv-h">⛔ ${esc(pv.headline)}</div><div>${esc(pv.dateLine)}</div><div style="margin-top:4px">${esc(pv.refusalReason)}</div>`
               + (pv.nextStep ? `<div style="margin-top:6px">→ ${pv.nextStepUrl ? `<a href="${esc(pv.nextStepUrl)}">${esc(pv.nextStep)}</a>` : esc(pv.nextStep)}</div>` : '') + '</div>');
           } else if (q) {
+            // รอบ 237 (K-1 · 237-6): อัปเกรดกลางรอบ — ตัวเลือกแบบคิดเงิน (ยอด/เครดิต/วันหมดอายุใหม่ต่อแบบจากเซิร์ฟเวอร์) · เลือกแล้วขอยอดใหม่
+            const opts = q.upgradeOptions || [];
+            if (opts.length > 1) rows.push('<div class="pv-modes">' + opts.map(o => `<label class="pv-box ${o.allowed ? 'ok' : 'bad'}" style="display:block;cursor:pointer;margin-bottom:6px">`
+              + `<input type="radio" name="coUpgradeMode" value="${esc(o.mode)}" ${o.selected ? 'checked' : ''}> <b>${esc(o.label)}</b>`
+              + `<div>${o.allowed ? 'ยอด ฿' + money(o.amountDue) : 'ชำระแบบนี้ไม่ได้ — ' + esc(o.refusalReason || '')}${o.credit > 0 ? ' · มูลค่าคงเหลือแพ็กเดิม −฿' + money(o.credit) : ''}</div>`
+              + `<div style="font-size:.8rem">📅 ${esc(o.dateLine)}</div></label>`).join('') + '</div>');
             if (pv && pv.currentPlanName) rows.push(`<div class="pc-row"><span>แพ็กเกจปัจจุบัน</span><span>${esc(pv.currentPlanName)} → ${esc(pv.newPlanName)}</span></div>`);
             if (pv && pv.credit > 0) {
               // เครดิตแพ็กเดิม: ราคาส่วนที่ซื้อ − เครดิต = ยอดก่อนคูปอง (ผลรวมตรงยอดที่คิดจริง — เซิร์ฟเวอร์แตกให้)
-              rows.push(`<div class="pc-row"><span>ค่า ${esc(pv.newPlanName)}${pv.daysRemaining ? ` (${pv.daysRemaining}/${pv.cycleDays} วัน)` : ''}</span><span>฿${money(pv.listPrice)}</span></div>`);
+              rows.push(`<div class="pc-row"><span>ค่า ${esc(pv.newPlanName)}${pv.daysRemaining && pv.kind === 'Upgrade' ? ` (${pv.daysRemaining}/${pv.cycleDays} วัน)` : ''}</span><span>฿${money(pv.listPrice)}</span></div>`);
               rows.push(`<div class="pc-row" style="color:#166534"><span>เครดิตจากแพ็กเดิม${pv.creditFormula ? ` <small>(${esc(pv.creditFormula)})</small>` : ''}</span><span>−฿${money(pv.credit)}</span></div>`);
             } else rows.push(`<div class="pc-row"><span>ราคาแพ็กเกจ</span><span>฿${money(q.listAmount)}</span></div>`);
             if (q.discount > 0) rows.push(`<div class="pc-row"><span>ส่วนลด${q.couponCode ? ' (' + esc(q.couponCode) + ')' : ''}</span><span>−฿${money(q.discount)}</span></div>`);
@@ -266,11 +272,13 @@
             if (!pv) rows.push(`<div style="font-size:.8rem;color:var(--gray-500);margin-top:6px">${esc(q.note)}</div>`);
           } else rows.push('<div style="color:var(--gray-500);font-size:.85rem;margin-top:6px">ยอดสุดท้าย (รวมคูปอง/ราคาพิเศษ) จะแสดงหลังระบุบริษัท</div>');
           $('summary').innerHTML = rows.join('');
+          document.querySelectorAll('input[name="coUpgradeMode"]').forEach(r => r.addEventListener('change', () => { this.upgradeMode = r.value; this.order = null; this.refreshQuote(); }));
         },
         async refreshQuote() {
           $('quoteErr').textContent = '';
           try {
             const qs = new URLSearchParams({ plan: this.cart.plan, cycle: this.cart.cycle }); if (this.cart.coupon) qs.set('coupon', this.cart.coupon);
+            if (this.companyId && this.upgradeMode) qs.set('upgradeMode', this.upgradeMode);   // รอบ 237: แบบอัปเกรดที่เลือก (บริษัทที่มีแพ็กเกจอยู่)
             const url = this.companyId ? `/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/quote?${qs}` : `/api/public/checkout/quote?${qs}`;
             const j = await api(url);
             this.quote = j.data; this.whtOn = null; this.renderWht(); this.renderPayer(); this.renderSummary(this.quote);
@@ -375,6 +383,7 @@
                 plan: this.cart.plan, cycle: this.cart.cycle, couponCode: this.cart.coupon || null,
                 policyAccepted: $('policyAccept').checked, policyVersionShown: this.catalog.policy.version,
                 withholdTax: this.whtChoice(),
+                upgradeMode: (this.quote && this.quote.upgradeMode) || null,   // รอบ 237: แบบของใบเสนอที่เห็น (เซิร์ฟเวอร์ตรวจซ้ำกับค่าตั้ง)
               }) });
               this.order = j.data;
               ok.textContent = `${j.data.resumed ? 'ใช้รายการเดิม' : 'สร้างรายการ'} ${j.data.paymentNumber} ยอด ฿${money(j.data.amount)}`;

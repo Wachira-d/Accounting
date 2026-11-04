@@ -701,6 +701,12 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
         var sellerBranchLabel = sellerBranch == "00000" ? "สำนักงานใหญ่" : $"สาขาที่ {sellerBranch}";
         var periodLabel = payment.IsProration && payment.ProrationCycleEndUtc is DateTime pEnd && payment.ProrationDays is int pd && payment.ProrationCycleDays is int pc
             ? Accounting.Helpers.PlatformProration.ReceiptDescription(payment.ProrationFromPlan ?? "-", payment.RequestedPlan.ToString(), pEnd, pd, pc)
+            // รอบ 237 (K-1): อัปเกรดแบบเริ่มรอบใหม่ — ข้อความตัวเดียวกับใบในบริษัทผู้ให้บริการ (PlatformProration.RestartUpgradeDescription)
+            : payment.IsCycleChange && payment.UpgradeMode == Accounting.Models.Enums.PlatformUpgradeMode.RestartCycle
+              && payment.ProrationCycleEndUtc is DateTime rcEnd && payment.ProrationDays is int rcD && payment.ProrationCycleDays is int rcC
+            ? Accounting.Helpers.PlatformProration.RestartUpgradeDescription(payment.ProrationFromPlan ?? "-", payment.RequestedPlan.ToString(),
+                payment.RequestedPeriodMonths, payment.CycleChangeCredit ?? 0m, rcD, rcC, rcEnd,
+                payment.PaidPeriodStartUtc, payment.SubscriptionExtendedTo)   // ฝ่ายค้าน 237 N2: วันเริ่มรอบที่ประทับ (ตัวเดียวกับที่คิด EndDate)
             : $"{payment.RequestedPlan} · {payment.RequestedBillingCycle} · {payment.RequestedPeriodMonths} เดือน";
         var extendedTo = payment.SubscriptionExtendedTo;
 

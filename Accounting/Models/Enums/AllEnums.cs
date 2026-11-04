@@ -2791,3 +2791,22 @@ public enum PayrollIncomeNature
     /// รวมครั้งเดียว ไม่ประมาณการซ้ำ)</summary>
     Bonus = 5,
 }
+
+/// <summary>รอบ 237 (K-1 · คำตัดสินเจ้าของ 2026-11-04 "ทำให้ระบบรองรับทั้ง 2 ทาง สามารถเลือกได้" · DECISIONS 237-1) — วิธีคิดเงินเมื่ออัปเกรดแพ็กเกจกลางรอบ ·
+/// ตัวตัดสินยอด/เครดิต/วันหมดอายุตัวเดียว <c>Helpers/PlatformProration.UpgradeByMode</c> · ประทับบน <c>SubscriptionPayment.UpgradeMode</c> ตอนสร้างรายการ (null = แถวเก่า = แบบ ก)</summary>
+public enum PlatformUpgradeMode
+{
+    /// <summary>แบบ ก — วันหมดอายุคงเดิม · จ่ายส่วนต่างเฉพาะวันที่เหลือ (คำตัดสินเจ้าของข้อ 178 · 233-2 — พฤติกรรมเดิม)</summary>
+    KeepExpiry = 1,
+    /// <summary>แบบ ข — รอบใหม่เต็มรอบเริ่มวันชำระ · ราคาเต็มรอบ − มูลค่าคงเหลือแพ็กเดิม</summary>
+    RestartCycle = 2,
+}
+
+/// <summary>รอบ 237 (DECISIONS 237-1): ค่าตั้งแพลตฟอร์ม "เปิดแบบอัปเกรดไหนให้ลูกค้า" (<c>SiteSettings.PlatformUpgradeModeOffer</c> · แก้ที่ /admin/site-settings.html แท็บแพ็กเกจบริการ) ·
+/// ค่าตั้งต้น CustomerChooses (เลือกแบบ ก ไว้ให้ = พฤติกรรมเดิม)</summary>
+public enum PlatformUpgradeModeOffer
+{
+    CustomerChooses = 0,
+    KeepExpiryOnly = 1,
+    RestartCycleOnly = 2,
+}

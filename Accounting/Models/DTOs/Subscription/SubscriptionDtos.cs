@@ -70,7 +70,10 @@ public record ConvertTrialRequest(
     string? PolicyVersionShown = null,
     /// <summary>รอบ 234 (คำตัดสิน 234-1): ผู้เช่าติ๊ก "หัก ณ ที่จ่าย" — หน้าเว็บส่งแค่ true/false · ยอดหักคิดที่เซิร์ฟเวอร์ (<c>PlatformWhtSuggestion</c>) ·
     /// null = ไม่ได้เลือก (ไม่หัก · พฤติกรรมเดิมของผู้เรียกที่ไม่รู้จักช่องนี้)</summary>
-    bool? WithholdTax = null);
+    bool? WithholdTax = null,
+    /// <summary>รอบ 237 (K-1): แบบอัปเกรดที่ลูกค้าเลือก (มีผลเมื่อเป็นอัปเกรดกลางรอบของแพ็กเกจจ่ายเงินที่ใช้งานอยู่ — ส่งต่อให้ <c>ChangeSubscriptionAsync</c>) ·
+    /// null = ค่าที่ค่าตั้งเลือกไว้ให้ · แบบที่ค่าตั้งไม่เปิด ⇒ 400 (<c>PlatformProration.ResolveMode</c>)</summary>
+    PlatformUpgradeMode? UpgradeMode = null);
 
 public record ChangeSubscriptionRequest(
     SubscriptionPlan NewPlan,
@@ -80,7 +83,24 @@ public record ChangeSubscriptionRequest(
     // รอบ 230 (คำตัดสินข้อ 230-Q2): คูปองแพลตฟอร์ม (ตัดสินที่เซิร์ฟเวอร์ตอนสร้างรายการชำระ — ใช้ไม่ได้ = 400 ไม่สร้างรายการ)
     string? CouponCode = null,
     // รอบ 234 (คำตัดสิน 234-1): ผู้เช่าติ๊ก "หัก ณ ที่จ่าย" (null = ไม่ได้เลือก ⇒ ไม่หัก) — ยอดคิดที่เซิร์ฟเวอร์
-    bool? WithholdTax = null);
+    bool? WithholdTax = null,
+    // รอบ 237 (K-1): แบบอัปเกรดกลางรอบที่ลูกค้าเลือก (KeepExpiry | RestartCycle) · null = ค่าที่ค่าตั้งเลือกไว้ให้ · เซิร์ฟเวอร์ตรวจซ้ำกับค่าตั้ง (ไม่เปิด ⇒ 400)
+    PlatformUpgradeMode? UpgradeMode = null);
+
+/// <summary>รอบ 237 (K-1 · DECISIONS 237-1/237-6): ตัวเลือกแบบอัปเกรดหนึ่งแบบที่หน้าเว็บแสดงเทียบกัน — ทุกค่ามาจากเซิร์ฟเวอร์ (<c>PlatformProration.UpgradeByMode</c> →
+/// <c>PlanPurchasePreview.ForPurchase</c>) · หน้าเว็บแสดง + ส่ง <see cref="Mode"/> กลับตอนยืนยันเท่านั้น</summary>
+public record UpgradeModeOption(
+    string Mode,
+    string Label,
+    bool Selected,
+    bool Allowed,
+    string? RefusalReason,
+    decimal AmountDue,
+    decimal Credit,
+    DateTime? NewEndUtc,
+    string Headline,
+    string DateLine,
+    IReadOnlyList<string> Lines);
 
 /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): ผลคิด "ถ้าเปลี่ยนเป็นแพ็กเกจนี้ ต้องจ่ายเท่าไร มีผลเมื่อไร" — เซิร์ฟเวอร์คิดทุกตัวเลข หน้าเว็บแสดงอย่างเดียว ·
 /// <paramref name="Kind"/> = Upgrade | Downgrade | Same | New (ทดลองใช้/หมดอายุ — ซื้อเต็มรอบ) · <paramref name="Prorated"/> = คิดส่วนต่างตามวันที่เหลือ (วันหมดอายุคงเดิม) ·
@@ -118,7 +138,13 @@ public record PlanChangeQuote(
     /// + บรรทัด "หัก X% (฿…) — ชำระ ฿…" · null = ไม่มียอดต้องจ่าย</summary>
     global::Accounting.Helpers.PlatformWhtSuggestion.Result? Withholding = null,
     /// <summary>รอบ 234: ข้อมูลผู้ซื้อสำหรับใบกำกับ (<c>Helpers/PlatformPayerProfileGate</c>) — คำเตือน/สิ่งที่ขาด</summary>
-    global::Accounting.Helpers.PlatformPayerProfileGate.Result? PayerProfile = null);
+    global::Accounting.Helpers.PlatformPayerProfileGate.Result? PayerProfile = null,
+    /// <summary>รอบ 237 (K-1): แบบอัปเกรดของใบเสนอนี้ (KeepExpiry | RestartCycle) · null = ไม่ใช่อัปเกรดกลางรอบ (ซื้อใหม่/เปลี่ยนรอบ/ดาวน์เกรด)</summary>
+    string? UpgradeMode = null,
+    /// <summary>ค่าตั้งแพลตฟอร์มที่ใช้ตัดสิน (CustomerChooses | KeepExpiryOnly | RestartCycleOnly)</summary>
+    string? UpgradeModeOffer = null,
+    /// <summary>ตัวเลือกที่เปิดให้ (ทีละแบบ พร้อมยอด/เครดิต/วันหมดอายุใหม่) — มากกว่า 1 ⇒ หน้าเว็บแสดงเทียบกันให้เลือก</summary>
+    IReadOnlyList<UpgradeModeOption>? UpgradeOptions = null);
 
 /// <summary>รอบ 230: แอดมินแก้ยอดของรายการชำระค่าแพ็กเกจที่ยังไม่จ่าย (คำตัดสินเจ้าของข้อ 178 ① — ยืดหยุ่นได้เสมอ · audit chain)</summary>
 public record OverridePaymentAmountRequest(decimal Amount, string? Reason);
@@ -478,7 +504,10 @@ public record SubscriptionPaymentResponse(
     string? CycleChangeNote = null,
     /// <summary>ราคาตั้ง (แม่แบบ) ก่อนราคาพิเศษ · null = ไม่มีราคาพิเศษ</summary>
     decimal? StandardAmount = null,
-    Guid? PriceOverrideId = null);
+    Guid? PriceOverrideId = null,
+    /// <summary>รอบ 237 (K-1 · กฎ #4 A echo): แบบอัปเกรดที่ลูกค้าเลือกตอนซื้อ (KeepExpiry | RestartCycle · null = แถวเก่า/ไม่ใช่อัปเกรด) + ป้ายไทย</summary>
+    string? UpgradeMode = null,
+    string? UpgradeModeLabel = null);
 
 public record SubscriptionPaymentListResponse(
     List<SubscriptionPaymentResponse> Payments,

@@ -1423,6 +1423,17 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
 - **วันหมดอายุ:** บวกเดือนบนปฏิทินไทย (`PlatformPlanPricing.AddCycleMonths`) — Subscription/AccountSubscription ที่จ่ายรอบใหม่ · EndDate ที่ประทับไปแล้วไม่แตะ
 - **ไม่มี entity ใหม่** · DTO ใหม่ `AdminPaymentPreview` (preview หน้าแอดมิน) · `PublicCheckoutOrder.PlanName/ValidUntilUtc` (อีเมล)
 
+### 6.2m อัปเกรดกลางรอบ 2 แบบ เลือกได้ (รอบ 237 · K-1 · คำตัดสิน 237-1…237-7 · DOCUMENT_FLOW §2.12e)
+
+- **คอลัมน์ใหม่ (`Helpers/PlatformUpgradeModeMigration` — ADD COLUMN IF NOT EXISTS · ไม่ backfill):** `SiteSettings.PlatformUpgradeModeOffer` (int NOT NULL DEFAULT 0 =
+  CustomerChooses — แถวเดิมได้พฤติกรรมเดิม · ผู้อ่าน `SubscriptionService.UpgradeModeOfferAsync` · แก้ที่ `AdminPlatformUpgradeModeController` + audit chain) ·
+  `SubscriptionPayments.UpgradeMode` (int NULL — KeepExpiry=1 / RestartCycle=2 · null = แถวก่อนรอบ 237 = แบบคงวันหมดอายุตามธงเดิม · ผู้อ่าน: เส้นอนุมัติ `ApprovalRouteOf` ·
+  ข้อความใบเสร็จ/ศูนย์บิล · echo `SubscriptionPaymentResponse.UpgradeMode/UpgradeModeLabel`) · `SubscriptionPayments.PaidPeriodStartUtc` (timestamptz NULL — วันเริ่มรอบจริงที่ประทับตอนอนุมัติ ·
+  ผู้อ่าน: ข้อความใบเสร็จ/ศูนย์บิล/หน้าตรวจสลิปของแบบ ข · ฝ่ายค้าน N2)
+- **วันหมดอายุ:** แบบ ก ไม่ขยับ (ทั้ง Subscription และ AccountSubscription) · แบบ ข = วันชำระ + เดือนของรอบ (Subscription · และ AccountSubscription เมื่อแพ็กตรง License และยาวกว่าเดิม)
+- **เงิน:** ยอดรวม VAT ตามค่าตั้งเดิม · เครดิตแบบ ข เป็นส่วนลดก่อน VAT บนใบ (เส้นเดียวกับเปลี่ยนรอบบิล) · คูปองหักหลังเครดิต · เครดิต ≥ ราคาเต็ม ⇒ ไม่ขาย (237-3)
+- **ไม่มี entity ใหม่** · DTO ใหม่ `UpgradeModeOption` · ช่องใหม่ `PlanChangeQuote.UpgradeMode/UpgradeModeOffer/UpgradeOptions` · `PublicCheckoutQuote.UpgradeMode/UpgradeOptions`
+
 ### 6.2k หัก ณ ที่จ่ายค่าบริการ + ข้อมูลผู้ซื้อ + 50 ทวิ จากลูกค้า (รอบ 234 · คำตัดสิน 234-1…234-6 · 234-W1…W4)
 
 - **คอลัมน์ใหม่:** `Subscriptions.WithholdTaxPreference` (bool? — ค่าตั้ง "หักทุกครั้ง" · ผู้อ่าน: ช่องติ๊กศูนย์บิล/checkout + ตัดบัตรอัตโนมัติ) ·

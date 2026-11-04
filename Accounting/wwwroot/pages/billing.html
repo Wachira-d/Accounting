@@ -371,7 +371,7 @@
     // ───────── รอบ 230: แท็บแพ็กเกจ — เปลี่ยน/อัปเกรด (ส่วนต่างตามวันที่เหลือ · คูปอง) + ชำระรายการที่รอ ─────────
     // ทุกตัวเลข (ยอด · ส่วนต่าง · ส่วนลด · วันมีผล · ข้อความ) มาจาก GET …/plan-quote — หน้าเว็บแสดงอย่างเดียว
     const PlanTab = {
-      plans: null, cycle: null, quote: null, couponCode: '', _payId: null,
+      plans: null, cycle: null, quote: null, couponCode: '', _payId: null, upgradeMode: null,
       cycleLabel(c) { return ({ Monthly: 'รายเดือน', Quarterly: 'ราย 3 เดือน', SemiAnnual: 'ราย 6 เดือน', Annual: 'รายปี' })[c] || c; },
       priceOf(p, c) { return ({ Monthly: p.monthlyPrice, Quarterly: p.quarterlyPrice, SemiAnnual: p.semiAnnualPrice, Annual: p.annualPrice })[c]; },
       async ensurePlans() {
@@ -412,6 +412,7 @@
         try {
           const q = new URLSearchParams({ plan, cycle: this.cycle });
           if (this.couponCode) q.set('coupon', this.couponCode);
+          if (this.upgradeMode && this.quote && this.quote.plan === plan) q.set('upgradeMode', this.upgradeMode);   // รอบ 237: แบบที่ลูกค้าเลือก (เปลี่ยนแพ็ก = เริ่มจากค่าที่ระบบเลือกไว้ให้)
           const r = await API.get(`/api/subscription/${Bill.cid()}/plan-quote?${q.toString()}`);
           this.quote = r.data;
           if (!Bill.data.payOptions) await Bill.load();
@@ -426,11 +427,12 @@
         el.innerHTML = `<div class="quote-box">
           <div style="font-weight:700;margin-bottom:6px">${e(q.plan)} · ${e(this.cycleLabel(q.cycle))}</div>
           <div class="note ${q.blocked ? 'warn' : ''}" style="margin-bottom:8px">${e(q.message)}</div>
+          ${this.modesHtml(q)}
           ${this.previewHtml(q.preview)}
           ${pays ? `
             ${q.specialPriceNote ? `<div class="quote-row" style="color:#166534;font-weight:600"><span>★ ${e(q.specialPriceNote)}</span><span style="text-decoration:line-through;color:#94a3b8">฿${Layout.money(q.standardAmount)}</span></div>` : ''}
-            <div class="quote-row"><span>${q.prorated ? `ส่วนต่าง (${q.daysRemaining}/${q.cycleDays} วัน)` : q.kind === 'CycleChange' ? `ค่ารอบใหม่ หักมูลค่าคงเหลือรอบเดิม ฿${Layout.money(q.cycleChangeCredit || 0)} (${q.daysRemaining}/${q.cycleDays} วัน)` : 'ราคาแพ็กเกจ'}</span><span>฿${Layout.money(q.listAmount)}</span></div>
-            ${q.kind === 'CycleChange' && q.newPeriodEndUtc ? `<div class="quote-row" style="color:#475569;font-size:12px"><span>รอบใหม่เริ่มวันที่ชำระ · ใช้ได้ถึง</span><span>${Layout.date(q.newPeriodEndUtc)}</span></div>` : ''}
+            <div class="quote-row"><span>${q.prorated ? `ส่วนต่าง (${q.daysRemaining}/${q.cycleDays} วัน)` : q.cycleChangeCredit != null ? `ค่ารอบใหม่ หักมูลค่าคงเหลือรอบเดิม ฿${Layout.money(q.cycleChangeCredit || 0)} (${q.daysRemaining}/${q.cycleDays} วัน)` : 'ราคาแพ็กเกจ'}</span><span>฿${Layout.money(q.listAmount)}</span></div>
+            ${q.cycleChangeCredit != null && q.newPeriodEndUtc ? `<div class="quote-row" style="color:#475569;font-size:12px"><span>รอบใหม่เริ่มวันที่ชำระ · ใช้ได้ถึง</span><span>${Layout.date(q.newPeriodEndUtc)}</span></div>` : ''}
             ${q.discount > 0 ? `<div class="quote-row" style="color:#166534"><span>${e(q.couponLabel || 'ส่วนลด')}</span><span>−฿${Layout.money(q.discount)}</span></div>` : ''}
             <div class="quote-row" style="font-size:16px;font-weight:800;border-top:1px solid #e2e8f0;padding-top:6px"><span>ยอดชำระ</span><span>฿${Layout.money(q.amountDue)}</span></div>
             ${this.whtBlock(q.withholding)}
@@ -446,6 +448,7 @@
         if (cb) cb.addEventListener('click', () => { this.couponCode = String(document.getElementById('planCoupon').value || '').trim(); this.loadQuote(q.plan); });
         const go = document.getElementById('planConfirm');
         if (go) go.addEventListener('click', () => this.confirm());
+        el.querySelectorAll('input[name="planUpgradeMode"]').forEach(r => r.addEventListener('change', () => { this.upgradeMode = r.value; this.loadQuote(q.plan); }));
         const wcb = document.getElementById('planWht');
         if (wcb) wcb.addEventListener('change', () => {
           const w = q.withholding, net = document.getElementById('planWhtNet');
@@ -476,12 +479,28 @@
         const q = this.quote, cb = document.getElementById('planWht');
         return q && q.withholding && q.withholding.eligible && cb ? !!cb.checked : null;
       },
+      // รอบ 237 (K-1 · 237-6): อัปเกรดกลางรอบ — ตัวเลือกแบบคิดเงินที่ค่าตั้งเปิด (ยอด/เครดิต/วันหมดอายุใหม่ต่อแบบจากเซิร์ฟเวอร์) แสดงเทียบกัน · เลือกแล้วขอใบเสนอใหม่
+      // (ยอดที่ยืนยัน = ใบเสนอของแบบที่เลือก) — หน้านี้ไม่คำนวณเอง · มีแบบเดียว ⇒ ไม่แสดงตัวเลือก (บอกแบบใน preview แล้ว)
+      modesHtml(q) {
+        const opts = q.upgradeOptions || [];
+        if (opts.length < 2) return '';
+        const e = Layout.esc;
+        return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:8px;margin-bottom:8px">${opts.map(o => `
+          <label class="note ${o.allowed ? '' : 'bad'}" style="display:block;cursor:pointer;${o.selected ? 'outline:2px solid #2563eb' : ''}">
+            <div style="display:flex;gap:6px;align-items:flex-start"><input type="radio" name="planUpgradeMode" value="${e(o.mode)}" ${o.selected ? 'checked' : ''} style="margin-top:3px">
+              <b>${e(o.label)}</b></div>
+            <div style="font-size:18px;font-weight:800;margin:4px 0">${o.allowed ? '฿' + Layout.money(o.amountDue) : 'ชำระแบบนี้ไม่ได้'}</div>
+            ${o.credit > 0 ? `<div style="color:#166534;font-size:12px">มูลค่าคงเหลือแพ็กเดิม −฿${Layout.money(o.credit)}</div>` : ''}
+            <div style="font-size:12px">📅 ${e(o.dateLine)}</div>
+            ${o.allowed ? '' : `<div style="font-size:12px">${e(o.refusalReason || '')}</div>`}
+          </label>`).join('')}</div>`;
+      },
       // รอบ 233 (คำตัดสิน 233-*): "สิ่งที่จะได้ถ้าจ่ายเงินนี้" — แพ็ก/วันหมดอายุเดิม → ใหม่ · เครดิตแพ็กเดิม · เหตุผลของวันที่ (PlanPurchasePreview จากเซิร์ฟเวอร์ ·
       // ตัวคำนวณวันที่ตัวเดียวกับตอนอนุมัติชำระ) — หน้านี้แสดงอย่างเดียว ไม่คำนวณวันที่/เครดิตเอง
       previewHtml(pv) {
         if (!pv) return '';
         const e = Layout.esc;
-        const credit = pv.credit > 0 ? `<div class="quote-row"><span>ค่า ${e(pv.newPlanName)}${pv.daysRemaining ? ` (${pv.daysRemaining}/${pv.cycleDays} วัน)` : ''}</span><span>฿${Layout.money(pv.listPrice)}</span></div>
+        const credit = pv.credit > 0 ? `<div class="quote-row"><span>ค่า ${e(pv.newPlanName)}${pv.daysRemaining && pv.kind === 'Upgrade' ? ` (${pv.daysRemaining}/${pv.cycleDays} วัน)` : ''}</span><span>฿${Layout.money(pv.listPrice)}</span></div>
           <div class="quote-row" style="color:#166534"><span>เครดิตจากแพ็กเดิม${pv.creditFormula ? ` (${e(pv.creditFormula)})` : ''}</span><span>−฿${Layout.money(pv.credit)}</span></div>` : '';
         return `<div class="note ${pv.allowed ? '' : pv.kind === 'Same' ? 'warn' : 'bad'}" style="margin-bottom:8px">
           <div style="font-weight:700">${e(pv.headline)}</div>
@@ -502,9 +521,10 @@
             ? await API.post(`/api/subscription/${Bill.cid()}/convert`, { plan: q.plan, billingCycle: q.cycle, promoCode: coupon,
                 policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown, withholdTax: this.whtChoice() })
             : await API.put(`/api/subscription/${Bill.cid()}/plan`, { newPlan: q.plan, newBillingCycle: this.cycle, couponCode: coupon,
-                policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown, withholdTax: this.whtChoice() });
+                policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown, withholdTax: this.whtChoice(),
+                upgradeMode: q.upgradeMode || null });   // รอบ 237: แบบของใบเสนอที่เห็น (เซิร์ฟเวอร์ตรวจซ้ำกับค่าตั้ง)
           Layout.toast(res?.message || 'บันทึกแล้ว', 'success');
-          this.quote = null; this.couponCode = '';
+          this.quote = null; this.couponCode = ''; this.upgradeMode = null;
           await Bill.load();
           const pay = res?.data?.payment;
           if (pay && pay.amount > 0) this.openPay(pay.id, pay);
