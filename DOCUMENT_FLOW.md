@@ -2624,6 +2624,31 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   แพลนบัญชีใช้ `PaidPeriod` เดียวกัน · ใบกำกับ/preview ตัดสิน VAT ด้วย `PlanPurchasePreview.IssuesTaxInvoice` · `/me` คืน `lowerNote`
 - **ค้าง:** K-1 K-2 K-4 K-5 K-7 K-8 ใน MATRIX §5 (แบบ ข เป็นค่าตั้ง · คูปองต่ออายุ · preview หน้า License/แอดมิน/อีเมล · AddMonths บน UTC ช่วงตีสอง)
 
+### 2.12b หัก ณ ที่จ่ายค่าบริการ NextAcc อัตโนมัติ + ด่านข้อมูลบริษัทก่อนชำระ + 50 ทวิ จากลูกค้า (รอบ 234 · คำตัดสิน 234-1…234-6 · 234-W1…W4)
+
+- **ตัวตัดสิน (pure):** `Helpers/PlatformWhtSuggestion` (ควรหักไหม · อัตรา ม.40(2) จาก `ThaiWhtRateTable` · ฐานก่อน VAT · เกณฑ์ ฿1,000 `ShouldWithhold` ต่อครั้งจ่าย ·
+  ยอดหักปัด AwayFromZero · ยอดสุทธิ · เหตุผล/บรรทัดไทย) · `Helpers/PlatformPayerProfileGate` (ข้อมูลผู้ซื้อ §86/4: ชื่อ · ที่อยู่ · เลข 13 หลัก+checksum · สาขา 5 หลัก ·
+  ชนิดผู้ซื้อจากเลขผู้เสียภาษี) · `Helpers/PlatformWhtCertificateStatus` (สถานะ 50 ทวิ: รอส่ง/รอตรวจ/ยืนยันแล้ว/ตีกลับ) · ตัวอ่านฐาน `Services/Platform/PlatformWithholdingReader`
+- **ทุกเส้นที่ผู้เช่าจ่าย NextAcc:** ซื้อ/อัปเกรด/เปลี่ยนรอบ (`RequestPlanPaymentAsync` ผ่าน `ConvertTrialRequest.WithholdTax`/`ChangeSubscriptionRequest.WithholdTax`) ·
+  ต่ออายุผ่าน checkout (`SubmitPaymentAsync` · `SubmitSubscriptionPaymentRequest.WithholdTax`) · checkout (`OrderRequest.WithholdTax`) · ศูนย์บิล (ช่องติ๊กในใบเสนอ ·
+  ใบแจ้งหนี้เติมยอดเสนอในช่องกรอกเอง) · ลิงก์ชำระ (เติมยอดเสนอ) · ตัดบัตรอัตโนมัติ (ค่าตั้ง `Subscription.WithholdTaxPreference = true`) ⇒ `Amount` = **ยอดสุทธิ**
+  (ตัดบัตร/QR/โอน) · `WithholdingTaxAmount` = ภาษีหัก · หน้าเว็บส่งแค่ true/false · null = ไม่หัก (เส้นเดิม) · ยอดเต็ม = `PlatformWhtSuggestion.GrossOf` ใช้เทียบราคา
+  (เริ่มชำระออนไลน์ · handler · กดซ้ำ · resume) · **ยังไม่ครอบ:** ส่วนเสริม/โควตาเสริม (234-6)
+- **ด่าน:** นิติบุคคลขอหักแต่ข้อมูลบริษัทไม่ครบ ⇒ 400 `PLATFORM-PAYER-PROFILE` + สิ่งที่ขาด (รวมเส้นชำระใบที่กรอกภาษีเอง — **เข้มขึ้น**) · บุคคลธรรมดา/ไม่ติ๊ก ⇒ จ่ายได้ตามเดิม ·
+  การ์ด "ข้อมูลบริษัทสำหรับใบกำกับภาษี" (ศูนย์บิล) + กล่องในขั้นชำระ + ช่องตอนสมัคร (checkout) บันทึกผ่าน `PUT /api/companies/{id}` (audit เมื่อชื่อ/เลข/สาขา/ที่อยู่เปลี่ยน)
+- **เอกสาร/บัญชีผู้ให้บริการ:** ใบเสร็จ/ใบกำกับเต็มยอด (ฐาน+VAT = สุทธิ + ภาษีหัก) + อัตราหักบนบรรทัด ⇒ Dr เงิน (สุทธิ) + Dr 11910 / Cr รายได้ + VAT (ตัวออกใบเดิม) ·
+  ผัง 11910 ไม่มี ⇒ สร้างจากผังมาตรฐานก่อนออกใบ · เงินเข้าออนไลน์ที่หัก ⇒ อนุมัติ + เรื่องค้าง `RuleWhtCertPending`
+- **50 ทวิ จากลูกค้า → ทะเบียนภาษีถูกหักของผู้ให้บริการ (ทะเบียนเดียว `WhtCreditReceived`):** แถว Pending เกิดจาก GL (`SyncWhtCreditReceivedAsync`) · รายการชำระผูกแถว
+  (`SubscriptionPayment.WhtCreditId` · `PlatformWhtCertificateService.LinkCoreAsync` หลังออกใบเสร็จ/ตัดชำระ/ส่งไฟล์/backfill) · ผู้เช่าส่งไฟล์ ⇒ รอตรวจ (ยัง Pending) ·
+  แอดมินยืนยันเลขที่/วันที่ (`/admin/platform-billing.html` การ์ด "📄 50 ทวิ จากลูกค้า") ⇒ `WhtCreditService.MarkReceivedAsync` = เครดิต ภ.ง.ด.50/51 ได้ · ตีกลับ (เหตุผล ⇒ ผู้เช่าเห็น + กระดิ่ง) ·
+  ทวงวันละครั้ง · ผูกรายการเก่า (ปุ่ม · JobLock · ไม่ประทับ Received เอง)
+- **ตัวอย่าง:** Pro รายปี ฿15,198 รวม VAT ⇒ ฐาน 14,203.74 · หัก 3% = 426.11 · ตัดบัตร/โอน 14,771.89 · ใบกำกับ 15,198 (ฐาน 14,203.74 + VAT 994.26)
+- **ฝ่ายค้าน 234 (แก้แล้ว):** เกณฑ์ ฿1,000 = มูลค่าสัญญาต่อปีก่อน VAT (ราคาต่อรอบ × รอบต่อปี) ⇒ เข้าเกณฑ์ทุกงวด (Starter รายเดือน 590 ⇒ หัก 16.54/งวด) · ต่ำกว่าเกณฑ์ไม่ติ๊กให้แต่ไม่ห้าม ·
+  ค่าตั้ง "หักทุกครั้ง" ตั้งที่ `PUT billing-center/withholding-preference` เท่านั้น · ตัดบัตรอัตโนมัติตัดยอดสุทธิเฉพาะคำสั่งตัดที่ยินยอมข้อความฉบับ `autocharge-2` (ฉบับเดิมตัดเต็มยอด) ·
+  รายการแจ้งหักของผู้เช่าค้าง ⇒ ตัวตัดอัตโนมัติข้ามใบ · เงินเข้าแต่หมดสิทธิ์หัก ⇒ พักให้แอดมิน · แอดมินแก้ภาษีหัก = ยอดเต็มคงที่ · ผัง 11910 สร้างไม่ได้ ⇒ ล้มดัง (เรื่องค้าง) ·
+  การ์ดข้อมูลบริษัทบันทึกผ่าน `PUT billing-center/payer-profile` (ประเภทผู้ซื้อตรวจด้วย `PlatformPayerProfileGate.Normalize`) · ยืนยัน 50 ทวิ ต้องกรอกยอดบนใบให้ตรงยอดหัก
+- เทสต์ `PlatformWhtSuggestionRound234Tests` · `PlatformWhtRound234DbTests` · `PlatformBillingPhase2DbTests.Juristic_tenant_withholding_reduces_transfer_individual_refused` (สองทิศ) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)
@@ -7320,4 +7345,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม SourceLine 
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout + นโยบาย 2 ภาษา — §2.12 ใหม่ (`PublicCheckoutController` · `PublicCheckoutService` · `PublicCheckoutPolicy` · `SiteSettings.PublicCheckoutEnabled`) · `LegalDocumentLanguage` 2 ภาษาทุกหน้านโยบาย (แพลตฟอร์ม/CMS/จองโต๊ะ) — เทสต์ `PublicCheckoutRound232Tests` · `LegalDocumentLanguageRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำแปลอังกฤษตั้งต้นของนโยบาย (`LegalDocumentDefaults.En.cs` · `CmsLegalPages.EffectiveMarkdownEn` · `builtin-en`) — เทสต์ `LegalDocumentDefaultsEnRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 
-_Last verified against codebase: 2026-11-03 (รอบ 233 ทีม License case matrix — §2.12a "สิ่งที่จะได้ถ้าจ่าย" `Helpers/PlanPurchasePreview` (preview + `PaidPeriod` ตัวคำนวณวันที่เดียวกับตอนอนุมัติ) · ปฏิเสธบนหน้าซื้อเป็นใบเสนอ `Allowed=false` · ทดลอง → ซื้อเริ่มวันชำระ · ExpiryNeedsReview · เครดิตเปลี่ยนรอบเป็นส่วนลดก่อน VAT · ThaiDateText 29 ก.พ. — เทสต์ `PlanPurchasePreviewRound233Tests` · `PlatformBillingPhase0DbTests.Round233_*` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-04 (รอบ 234 ทีมหัก ณ ที่จ่ายอัตโนมัติ — §2.12b `PlatformWhtSuggestion`/`PlatformPayerProfileGate`/`PlatformWhtCertificateStatus` · ทุกเส้นชำระ NextAcc เก็บยอดสุทธิ + ภาษีหัก · ด่านข้อมูลบริษัท · 50 ทวิ จากลูกค้าผูกทะเบียนภาษีถูกหัก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

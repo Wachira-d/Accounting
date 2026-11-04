@@ -83,12 +83,23 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                     // ไม่ต้องแนบไฟล์ — PDF ดึงสด ๆ จากเอกสารจริงตอนดาวน์โหลด
                     // (แนบไว้จะกลายเป็นสำเนาที่ค้างเมื่อเอกสารถูกแก้/ยกเลิก)
                     t.ReceiptAttachmentId = null;
+                    // รอบ 234 (คำตัดสิน 234-W1): ผู้เช่าหักภาษี ⇒ ผูกรายการกับแถวทะเบียนภาษีถูกหัก (Pending) ที่ GL ของใบนี้สร้าง — ตัวผูกเดียว
+                    if (t.WithholdingTaxAmount > 0m) await Accounting.Services.Platform.PlatformWhtCertificateService.LinkCoreAsync(_db, t);
                     await _db.SaveChangesAsync();
                     await SendEmailAsync(companyId, issued.DocumentNumber, issued.IsTaxInvoice);
                     return;
                 }
                 // ออกไม่สำเร็จ → ตกลงไปโหมด PDF เดิม (เงินเข้าแล้วต้องมีหลักฐานเสมอ)
                 _logger.LogWarning("ออกเอกสารจริงไม่สำเร็จ (payment {PaymentId}) — ใช้ PDF เดี่ยวแทน", paymentId);
+                // ฝ่ายค้าน 234 S4: รายการที่ผู้เช่าหักภาษี ⇒ ใบ PDF เดี่ยวไม่ลงบัญชี (ขา 11910/ทะเบียนภาษีถูกหักหาย) — ล้มดัง: เรื่องค้างบนรายการ + audit + หน้าแอดมิน
+                if (payment.WithholdingTaxAmount > 0m)
+                {
+                    var why = $"ออกใบเสร็จ/ใบกำกับในบริษัทผู้ให้บริการไม่สำเร็จ (รายการหักภาษี ณ ที่จ่าย {payment.WithholdingTaxAmount:N2}) — "
+                        + (_issuer.LastFailureReason ?? "ดูบันทึกระบบ") + " · ใบ PDF ที่ออกแทนไม่ลงบัญชี/ไม่เข้าทะเบียนภาษีถูกหัก";
+                    Accounting.Helpers.PlatformPaymentAttention.Flag(_db, payment, companyId, why,
+                        Accounting.Helpers.PlatformPaymentAttention.RuleSettleFailed, "system:platform-billing");
+                    await _db.SaveChangesAsync();
+                }
             }
 
             var isTaxInvoice = settings != null
@@ -299,6 +310,8 @@ public class SaasBillingDocumentService : ISaasBillingDocumentService
                     payment.ReceiptNumber = res.ReceiptNumber;
                     payment.ReceiptIssuedAt = DateTime.UtcNow;
                     payment.ReceiptIsTaxInvoice = res.ReceiptIsTaxInvoice;
+                    // รอบ 234 (คำตัดสิน 234-W1): ผูกทะเบียนภาษีถูกหัก (แถวจาก GL ของใบแจ้งหนี้/ใบเสร็จ) — บันทึกพร้อม SaveChanges ของเมธอดนี้
+                    if (payment.WithholdingTaxAmount > 0m) await Accounting.Services.Platform.PlatformWhtCertificateService.LinkCoreAsync(_db, payment);
                     if (payment.AttentionRule == Accounting.Helpers.PlatformPaymentAttention.RuleSettleFailed)
                         Accounting.Helpers.PlatformPaymentAttention.Clear(_db, payment, buyerId, "system:platform-billing", $"ตัดชำระสำเร็จ · ใบเสร็จ {res.ReceiptNumber}");
                 }

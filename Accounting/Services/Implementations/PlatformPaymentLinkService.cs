@@ -18,7 +18,10 @@ public sealed record PaymentLinkRow(Guid Id, Guid DocumentId, string InvoiceNumb
 /// <summary>หน้าสาธารณะของลิงก์ — ข้อมูลขั้นต่ำของใบ (ไม่มีที่อยู่/เลขภาษี/อีเมล/โทร)</summary>
 public sealed record PaymentLinkPublicView(
     string State, string? Message, string SellerName, string BuyerName, string InvoiceNumber, DateTime InvoiceDate, DateTime? DueDate,
-    decimal AmountDue, List<string> Lines, object? PayOptions, bool CanPay, string? PendingPaymentNumber);
+    decimal AmountDue, List<string> Lines, object? PayOptions, bool CanPay, string? PendingPaymentNumber,
+    /// <summary>รอบ 234 (คำตัดสิน 234-1): ยอดภาษีหัก ณ ที่จ่ายที่ระบบเสนอ (เติมในช่อง · แก้ได้ในกรอบ WithholdingProblem) + ข้อความ — เฉพาะผู้ซื้อที่เข้าเกณฑ์ ·
+    /// หน้าลิงก์ไม่เปิดเผยรายละเอียดข้อมูลบริษัท (ผู้เปิดลิงก์ไม่ได้ล็อกอิน)</summary>
+    decimal? SuggestedWithholdingTaxAmount = null, string? WithholdingLine = null);
 
 /// <summary>
 /// รอบ 219 เฟส 2 ขั้น 4 (PLATFORM_BILLING_AUDIT §4 · คำตัดสินข้อ 180) — ลิงก์ชำระใบแจ้งหนี้ค่าบริการ: แอดมินสร้างให้ใบที่มีอยู่แล้ว (ห้ามยอดอิสระ) ·
@@ -188,11 +191,17 @@ public class PlatformPaymentLinkService : IPlatformPaymentLinkService
                     && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview))
                 .Select(p => p.PaymentNumber).FirstOrDefaultAsync(ct);
         var pay = valid ? await Accounting.Controllers.PlatformPayInfo.BuildAsync(_db, _platform, _legal, ct) : null;
+        // รอบ 234: ยอดภาษีหักที่ระบบเสนอ — ตัวตัดสินเดียว (ผู้ซื้อของลิงก์ · ยอดค้างของใบ)
+        var wht = valid && inv != null
+            ? Accounting.Services.Platform.PlatformWithholdingReader.ForInvoice(
+                await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, link.BuyerCompanyId, ct), inv.BalanceDue, inv.TotalAmount, inv.SubTotal, true)
+            : null;
         return new PaymentLinkPublicView(state.ToString(),
             pending != null ? $"แจ้งชำระแล้ว ({pending}) — รอผู้ดูแลระบบตรวจสอบ" : PlatformPaymentLinkRules.Message(state),
             string.IsNullOrWhiteSpace(seller) ? "NextAcc" : seller!, PlatformPaymentLinkRules.MaskedBuyerName(buyer),
             inv?.DocumentNumber ?? "-", inv?.DocumentDate ?? link.CreatedAt, inv?.DueDate,
-            valid ? inv!.BalanceDue : 0m, lines, pay, valid && pending == null, pending);
+            valid ? inv!.BalanceDue : 0m, lines, pay, valid && pending == null, pending,
+            wht is { Eligible: true } ? wht.SuggestedAmount : null, wht is { Eligible: true } ? wht.Line : null);
     }
 
     public async Task<(Guid LinkId, Guid BuyerCompanyId, Guid DocumentId)?> ResolveForPaymentAsync(string token, CancellationToken ct = default)

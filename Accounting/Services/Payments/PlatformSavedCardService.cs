@@ -160,7 +160,8 @@ public class PlatformSavedCardService : IPlatformSavedCardService
         var pendingActivation = mandate?.Enabled != true && cards.Any(c => c.VerifiedAt == null && c.ConsentRecordId != null);
         return new SavedCardsSummary(unavailable == null, unavailable, views, global, mandate?.Enabled == true, mandate?.AdminBlockedAt != null,
             mandate?.AdminBlockedReason, block, PlatformSavedCardRules.Text(pv), version, attempts,
-            NeedsReconsent: mandate?.Enabled == true && mandate.ConsentVersion != version,
+            // ฝ่ายค้าน 234 S2: ยินยอมฉบับข้อความเดิม (ตัดเต็มยอด) ⇒ ยังตัดได้ แต่แสดงปุ่ม "ยืนยันความยินยอมฉบับปัจจุบัน" (จำเป็นถ้าจะตัดยอดสุทธิหลังหัก ณ ที่จ่าย)
+            NeedsReconsent: mandate?.Enabled == true && !PlatformSavedCardRules.MandateAllowsNetCharge(mandate.ConsentVersion, version),
             WhtWarning: juristic ? PlatformSavedCardRules.WhtWarningText : null, WhtAcknowledged: mandate?.WhtAcknowledgedAt != null,
             PendingActivation: pendingActivation);
     }

@@ -156,7 +156,7 @@ public class PlatformPaymentService : IPlatformPaymentService
     {
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == subscriptionPaymentId && p.Subscription.CompanyId == payerCompanyId)
-            .Select(p => new { p.Id, p.Amount, p.Status, p.PaymentNumber, p.SlipFileName, p.RequestedPlan, p.RequestedBillingCycle,
+            .Select(p => new { p.Id, p.Amount, p.WithholdingTaxAmount, p.Status, p.PaymentNumber, p.SlipFileName, p.RequestedPlan, p.RequestedBillingCycle,
                 p.PlatformInvoiceDocumentId, Held = p.AttentionReason != null, p.QuotedAmount, p.Subscription.AccountSubscriptionId, p.SubscriptionId })
             .FirstOrDefaultAsync(ct)
             ?? throw new InvalidOperationException("ไม่พบรายการชำระค่าแพ็กเกจของบริษัทนี้");
@@ -176,11 +176,24 @@ public class PlatformPaymentService : IPlatformPaymentService
             var listPrice = PlatformPlanPricing.AutoApproveExpected(pay.QuotedAmount,
                 template == null ? 0m : await PlatformPriceOverrideStore.AmountDueAsync(_db, payerCompanyId, pay.AccountSubscriptionId, template, pay.RequestedBillingCycle, DateTime.UtcNow,
                     currentPlan: await _db.Subscriptions.AsNoTracking().Where(s => s.Id == pay.SubscriptionId).Select(s => (SubscriptionPlan?)s.Plan).FirstOrDefaultAsync(ct), ct: ct));   // ฝ่ายค้าน S4
-            if ((template == null && pay.QuotedAmount == null) || listPrice <= 0m || !PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m)
+            // รอบ 234: รายการที่ผู้เช่าหักภาษี ณ ที่จ่าย — ราคาเทียบกับยอดเต็ม (เงินที่จะรับ + ภาษีหัก · PlatformWhtSuggestion.GrossOf) · ยอดเก็บเงินจริง = Amount (สุทธิ)
+            if ((template == null && pay.QuotedAmount == null) || listPrice <= 0m
+                || !PlatformPlanPricing.ClaimedAmountAcceptable(PlatformWhtSuggestion.GrossOf(pay.Amount, pay.WithholdingTaxAmount), listPrice) || pay.Amount <= 0m)
                 throw new InvalidOperationException("ยอดของรายการชำระนี้ไม่ตรงกับราคาแพ็กเกจปัจจุบัน (ราคาอาจเปลี่ยนหลังสร้างรายการ) — "
                     + "กรุณาเลือกแพ็กเกจใหม่เพื่อสร้างรายการชำระตามราคาปัจจุบัน หรือติดต่อผู้ดูแลระบบ");
         }
         else if (pay.Amount <= 0m) throw new InvalidOperationException("รายการชำระใบแจ้งหนี้นี้ไม่มียอด");
+        // ฝ่ายค้าน 234 S1: รายการที่ผู้เช่าหักภาษี ⇒ ตรวจสิทธิ์หักซ้ำก่อนเก็บเงินยอดสุทธิ (ผู้ซื้อยังเป็นนิติบุคคล + ข้อมูลบริษัทครบ · ตัวตัดสินเดียว)
+        if (pay.WithholdingTaxAmount > 0m)
+        {
+            var payerNow = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, payerCompanyId, ct);
+            var whyNot = !payerNow.IsJuristic
+                ? "บริษัทไม่ใช่นิติบุคคลแล้ว (เลขผู้เสียภาษีเปลี่ยน) จึงหักภาษี ณ ที่จ่ายไม่ได้"
+                : PlatformPayerProfileGate.WithholdingRefusal(payerNow);
+            if (whyNot != null)
+                throw new InvalidOperationException($"รายการ {pay.PaymentNumber} ตั้งหักภาษี ณ ที่จ่ายไว้ แต่{whyNot} — แก้ข้อมูลบริษัทที่ศูนย์บิล "
+                    + "หรือเลือกแพ็กเกจใหม่แบบไม่ติ๊กหัก ณ ที่จ่าย แล้วชำระอีกครั้ง");
+        }
         // ยอด = ยอดของรายการชำระที่เซิร์ฟเวอร์คำนวณตอนสร้าง (PlatformPlanPricing.AmountDue) — handler ตรวจกับตารางราคาอีกชั้น
         return await StartCoreAsync(payerCompanyId, PaymentSourceKind.SubscriptionPayment, pay.Id, pay.Amount, method,
             $"ค่าแพ็กเกจ {pay.PaymentNumber}", returnUrl, cardToken, ct, savedCard, allowTestMode);

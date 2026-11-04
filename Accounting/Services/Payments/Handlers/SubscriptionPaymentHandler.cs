@@ -47,7 +47,7 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
         // (PayerCompanyId — intent อยู่ใต้บริษัทผู้ให้บริการ ตรวจแล้วใน DispatchSucceededAsync ด้วย PlatformRevenueSource)
         var pay = await _db.SubscriptionPayments.AsNoTracking()
             .Where(p => p.Id == intent.SourceId)
-            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.Subscription.CompanyId, p.Subscription.AccountSubscriptionId, p.RequestedPlan, p.RequestedBillingCycle, p.ReviewNotes, p.PlatformInvoiceDocumentId, p.QuotedAmount, p.SubscriptionId })
+            .Select(p => new { p.Id, p.PaymentNumber, p.Status, p.Amount, p.WithholdingTaxAmount, p.Subscription.CompanyId, p.Subscription.AccountSubscriptionId, p.RequestedPlan, p.RequestedBillingCycle, p.ReviewNotes, p.PlatformInvoiceDocumentId, p.QuotedAmount, p.SubscriptionId })
             .FirstOrDefaultAsync(ct);
         if (pay != null && !Accounting.Helpers.PlatformRevenueSource.SourceBelongsToPayer(intent.PayerCompanyId, pay.CompanyId))
         {
@@ -125,7 +125,10 @@ public class SubscriptionPaymentHandler : IPaymentCompletionHandler
             template == null ? 0m : await Accounting.Helpers.PlatformPriceOverrideStore.AmountDueAsync(_db, pay.CompanyId, pay.AccountSubscriptionId, template, pay.RequestedBillingCycle, DateTime.UtcNow,
                 currentPlan: await _db.Subscriptions.AsNoTracking().Where(s => s.Id == pay.SubscriptionId).Select(s => (SubscriptionPlan?)s.Plan).FirstOrDefaultAsync(ct), ct: ct));   // ฝ่ายค้าน S4: ซื้อแพ็กเกจเดิมซ้ำ = ต่ออายุ
         if (pay.PlatformInvoiceDocumentId == null
-            && ((template == null && pay.QuotedAmount == null) || listPrice <= 0m || !Accounting.Helpers.PlatformPlanPricing.ClaimedAmountAcceptable(pay.Amount, listPrice) || pay.Amount <= 0m))
+            // รอบ 234: ผู้เช่าหักภาษี ณ ที่จ่าย ⇒ เงินเข้า = Amount (สุทธิ · ตรวจข้างบนแล้ว) · ราคาเทียบยอดเต็ม (Amount + ภาษีหัก — PlatformWhtSuggestion.GrossOf ตัวเดียวกับตอนเริ่มชำระ)
+            && ((template == null && pay.QuotedAmount == null) || listPrice <= 0m
+                || !Accounting.Helpers.PlatformPlanPricing.ClaimedAmountAcceptable(Accounting.Helpers.PlatformWhtSuggestion.GrossOf(pay.Amount, pay.WithholdingTaxAmount), listPrice)
+                || pay.Amount <= 0m))
         {
             _logger.LogError("ยอดรายการค่าบริการ {No} ({Amount:N2}) ไม่สอดคล้องกับราคาแพ็กเกจ ({List:N2}) — ไม่อนุมัติอัตโนมัติ (intent {Intent})",
                 pay.PaymentNumber, pay.Amount, listPrice, intent.Id);

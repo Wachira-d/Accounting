@@ -379,7 +379,7 @@ public class SubscriptionService : ISubscriptionService
 
         if (sub.Status == SubscriptionStatus.Active && !sub.IsPermanentFree)
             return await ChangeSubscriptionAsync(companyId,
-                new ChangeSubscriptionRequest(request.Plan, request.BillingCycle, CouponCode: request.PromoCode), performedBy);
+                new ChangeSubscriptionRequest(request.Plan, request.BillingCycle, CouponCode: request.PromoCode, WithholdTax: request.WithholdTax), performedBy);
 
         var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.Plan && p.IsActive)
             ?? throw new KeyNotFoundException($"ไม่พบ plan template สำหรับ {request.Plan}");
@@ -395,7 +395,7 @@ public class SubscriptionService : ISubscriptionService
         // รอบ 230 (คำตัดสินข้อ 230-Q2): โค้ดที่ไม่ใช่โปรโมชันแปลงทดลองใช้ของบริษัทนี้ ⇒ คูปองแพลตฟอร์ม (ใช้ไม่ได้ = 400 พร้อมเหตุ — เดิมโค้ดผิดถูกเพิกเฉยเงียบ ๆ)
         var coupon = discount == null && !string.IsNullOrWhiteSpace(request.PromoCode) ? request.PromoCode : null;
         var payment = await RequestPlanPaymentAsync(sub, template, request.BillingCycle, discount, performedBy,
-            "PlanPurchaseRequested", "ขอเปลี่ยนเป็นแพ็กเกจจ่ายเงิน", couponCode: coupon);
+            "PlanPurchaseRequested", "ขอเปลี่ยนเป็นแพ็กเกจจ่ายเงิน", couponCode: coupon, withholdTax: request.WithholdTax);
         return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), payment,
             $"สร้างรายการชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาทแล้ว — แพ็กเกจ {template.Name} จะเปิดใช้เมื่อชำระเงินและผู้ดูแลระบบยืนยัน "
             + "(ระหว่างนี้ใช้งานตามสิทธิ์เดิมได้ตามปกติ)");
@@ -408,7 +408,8 @@ public class SubscriptionService : ISubscriptionService
     /// ทุกรายการที่เส้นนี้สร้าง ประทับ <c>QuotedAmount</c> (ยอดของเซิร์ฟเวอร์ — ช่องทางออนไลน์อนุมัติอัตโนมัติเมื่อเงินเข้าเท่ายอดนี้)</para></summary>
     private async Task<SubscriptionPaymentResponse> RequestPlanPaymentAsync(Subscription sub, PlanTemplate template,
         BillingCycle cycle, decimal? discountPercent, string performedBy, string historyAction, string note,
-        PlatformProration.Result? proration = null, string? couponCode = null, PlatformProration.CycleChangeResult? cycleChange = null)
+        PlatformProration.Result? proration = null, string? couponCode = null, PlatformProration.CycleChangeResult? cycleChange = null,
+        bool? withholdTax = null)
     {
         var prorated = proration?.Applies == true;
         var cycleChanged = cycleChange?.Applies == true;
@@ -425,12 +426,42 @@ public class SubscriptionService : ISubscriptionService
                 : "แพ็กเกจนี้ไม่มีค่าบริการตามตารางราคา — ติดต่อผู้ดูแลระบบ NextAcc เพื่อเปลี่ยนแพ็กเกจ");
         var code = PlatformCouponRule.Normalize(couponCode);
 
-        // กดซ้ำ = รายการเดิม (แพ็กเกจ/รอบ/ชนิด/คูปอง/ยอดก่อนคูปองเดียวกัน · ยังไม่จ่าย)
+        // กดซ้ำ = รายการเดิม (แพ็กเกจ/รอบ/ชนิด/คูปอง/ยอดก่อนคูปองเดียวกัน · ยังไม่จ่าย) — รอบ 234: ยอดเต็ม = เงินที่จะรับ + ภาษีหัก (รายการที่หักแล้วยังจับได้)
         var existing = await _db.SubscriptionPayments
             .FirstOrDefaultAsync(p => p.SubscriptionId == sub.Id && p.Status == SubscriptionPaymentStatus.Pending
                 && p.RequestedPlan == template.Plan && p.RequestedBillingCycle == cycle && p.IsProration == prorated && p.IsCycleChange == cycleChanged
-                && p.CouponCode == code && (p.ListAmount ?? p.Amount) == listAmount && p.PlatformInvoiceDocumentId == null);
-        if (existing != null) return MapPaymentToResponse(existing);
+                && p.CouponCode == code && (p.ListAmount ?? (p.Amount + p.WithholdingTaxAmount)) == listAmount && p.PlatformInvoiceDocumentId == null);
+        if (existing != null)
+        {
+            // รอบ 234 (คำตัดสิน 234-1): ตัวเลือก "หัก ณ ที่จ่าย" เปลี่ยน ⇒ คิดยอดหัก/ยอดสุทธิใหม่บนรายการเดิม (ยังไม่มีสลิป/ไม่เริ่มชำระออนไลน์) · ไม่ได้เลือก (null) = คงเดิม
+            if (withholdTax is bool w0)
+            {
+                var gross0 = PlatformWhtSuggestion.GrossOf(existing.Amount, existing.WithholdingTaxAmount);
+                var d0 = await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, sub.CompanyId, gross0, w0,
+                    PlatformWhtSuggestion.AnnualContractGross(effective.Price, PlatformPlanPricing.MonthsOf(cycle)));
+                Accounting.Services.Platform.PlatformWithholdingReader.ThrowIfProfileBlocks(d0, w0);
+                if (d0.WithholdingAmount != existing.WithholdingTaxAmount)
+                {
+                    var started = existing.SlipFileName != null || await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.SourceKind == PaymentSourceKind.SubscriptionPayment
+                        && i.SourceId == existing.Id && (i.Status == PaymentIntentStatus.Created || i.Status == PaymentIntentStatus.Pending
+                            || i.Status == PaymentIntentStatus.Succeeded));
+                    if (started)
+                        throw new BusinessRuleException(
+                            $"รายการ {existing.PaymentNumber} เริ่มชำระด้วยยอดเดิมแล้ว — ทำรายการนั้นให้เสร็จ (หรือรอหมดอายุ) ก่อนเปลี่ยนการหักภาษี ณ ที่จ่าย",
+                            "PLATFORM-WHT-LOCKED", 409);
+                    existing.Amount = d0.NetAmount;
+                    existing.WithholdingTaxAmount = d0.WithholdingAmount;
+                    _db.SubscriptionHistories.Add(new SubscriptionHistory
+                    {
+                        SubscriptionId = sub.Id, Action = "PaymentWithholdingChanged",
+                        Notes = $"{existing.PaymentNumber}: {d0.Reason} · ยอดเต็ม {gross0:N2} · ภาษีหัก {d0.WithholdingAmount:N2} · ชำระ {d0.NetAmount:N2}",
+                        PerformedBy = performedBy
+                    });
+                }
+                await _db.SaveChangesAsync();
+            }
+            return MapPaymentToResponse(existing);
+        }
 
         Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction? tx = null;
         if (code != null && _db.Database.IsRelational() && _db.Database.CurrentTransaction == null)
@@ -463,7 +494,14 @@ public class SubscriptionService : ISubscriptionService
                 payment.CouponId = coupon.Id; payment.CouponCode = coupon.Code; payment.CouponDiscountAmount = eval.Discount;
                 payment.ListAmount = listAmount;
             }
-            payment.Amount = amount;
+            // รอบ 234 (คำตัดสิน 234-1): ภาษีหัก ณ ที่จ่าย — ตัวตัดสินเดียว PlatformWhtSuggestion (นิติบุคคล · ข้อมูลบริษัทครบ · ฐานก่อน VAT ≥ 1,000 · ผู้เช่าติ๊ก) ·
+            // Amount = เงินที่จะรับ (สุทธิ — ยอดตัดบัตร/QR/โอน) · WithholdingTaxAmount = ภาษีหัก · ยอดเต็ม (QuotedAmount/ราคา) = ผลรวมสองช่อง (PlatformWhtSuggestion.GrossOf)
+            var whtD = await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, sub.CompanyId, amount, withholdTax == true,
+                PlatformWhtSuggestion.AnnualContractGross(effective.Price, PlatformPlanPricing.MonthsOf(cycle)));   // 234-2 สัญญาต่อเนื่อง: มูลค่าต่อปี
+            Accounting.Services.Platform.PlatformWithholdingReader.ThrowIfProfileBlocks(whtD, withholdTax == true);
+            // ฝ่ายค้าน 234 S2: ติ๊กครั้งเดียว = มีผลเฉพาะรายการนี้ — ค่าตั้ง "หักทุกครั้ง" (ตัดบัตรอัตโนมัติ) ตั้งได้ที่ PUT withholding-preference เท่านั้น (audit + IP)
+            payment.Amount = whtD.NetAmount;
+            payment.WithholdingTaxAmount = whtD.WithholdingAmount;
             // รอบ 231 (231-8): ตามรอยราคาพิเศษ — ราคาตั้งเก็บไว้ให้ประวัติ/แอดมินเห็นส่วนต่าง (ใบกำกับแสดงราคาที่ตกลงเป็นราคาขาย ไม่ใช่ราคาตั้ง−ส่วนลด)
             payment.PriceOverrideId = effective.OverrideId;
             payment.StandardAmount = effective.Applied && !prorated && !cycleChanged ? PlatformPlanPricing.AmountDue(effective.ListPrice, discountPercent) : null;
@@ -500,6 +538,7 @@ public class SubscriptionService : ISubscriptionService
                         + (cycleChanged ? $" · เปลี่ยนรอบบิล หักมูลค่าคงเหลือ {cycleChange!.Credit:N2} ({cycleChange.DaysRemaining}/{cycleChange.CycleDays} วัน) รอบใหม่เริ่มวันที่ชำระ" : "")
                         + (effective.Applied ? $" · ราคาพิเศษ (ราคาตั้ง {effective.ListPrice:N2}/รอบ → {effective.Price:N2})" : "")
                         + (payment.CouponCode != null ? $" · คูปอง {payment.CouponCode} ลด {payment.CouponDiscountAmount:N2}" : "")
+                        + (whtD.Withhold ? $" · หักภาษี ณ ที่จ่าย {whtD.WithholdingAmount:N2} ชำระสุทธิ {whtD.NetAmount:N2} (รอ 50 ทวิ)" : "")
                         + " — รอชำระ (ยังไม่เปิดแพ็กเกจ)",
                 PerformedBy = performedBy
             });
@@ -993,7 +1032,7 @@ public class SubscriptionService : ISubscriptionService
             {
                 var ccPay = await RequestPlanPaymentAsync(sub, template, cycle, null, performedBy, "CycleChangeRequested",
                     $"ขอเปลี่ยนรอบบิล {sub.BillingCycle} → {cycle}" + (template.Plan != sub.Plan ? $" พร้อมเปลี่ยนเป็น {template.Plan}" : ""),
-                    couponCode: request.CouponCode, cycleChange: cc);
+                    couponCode: request.CouponCode, cycleChange: cc, withholdTax: request.WithholdTax);
                 return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), ccPay,
                     $"สร้างรายการชำระ {ccPay.PaymentNumber} ยอด {ccPay.Amount:N2} บาทแล้ว ({cc.Note}) — "
                     + (template.Plan != sub.Plan ? $"เปลี่ยนเป็น {template.Name} ราย{PlatformPlanPricing.CycleLabel(cycle)}" : $"รอบบิลราย{PlatformPlanPricing.CycleLabel(cycle)}")
@@ -1007,14 +1046,14 @@ public class SubscriptionService : ISubscriptionService
             if (pr.Applies)
             {
                 var prorated = await RequestPlanPaymentAsync(sub, template, sub.BillingCycle, null, performedBy,
-                    "PlanUpgradeProrated", $"ขออัปเกรดจาก {sub.Plan} (ส่วนต่างตามวันที่เหลือ)", pr, request.CouponCode);
+                    "PlanUpgradeProrated", $"ขออัปเกรดจาก {sub.Plan} (ส่วนต่างตามวันที่เหลือ)", pr, request.CouponCode, withholdTax: request.WithholdTax);
                 return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), prorated,
                     $"สร้างรายการชำระส่วนต่าง {prorated.PaymentNumber} ยอด {prorated.Amount:N2} บาทแล้ว ({pr.Note}) — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงิน "
                     + $"· ใช้ได้ถึงวันเดิม {sub.EndDate.AddHours(7):dd/MM/yyyy} · รอบถัดไปคิดราคา {template.Name}"
                     + (cycle != sub.BillingCycle ? " · รอบบิลสั้นลงคงเดิม — เปลี่ยนรอบบิลสั้นลงได้หลังอัปเกรด (มีผลวันครบรอบ)" : ""));
             }
             var payment = await RequestPlanPaymentAsync(sub, template, cycle, null, performedBy,
-                "PlanUpgradeRequested", $"ขออัปเกรดจาก {sub.Plan}", couponCode: request.CouponCode);
+                "PlanUpgradeRequested", $"ขออัปเกรดจาก {sub.Plan}", couponCode: request.CouponCode, withholdTax: request.WithholdTax);
             return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), payment,
                 $"สร้างรายการชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาทแล้ว — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงินและผู้ดูแลระบบยืนยัน "
                 + $"(เริ่มรอบใหม่จากวันที่ชำระ · {pr.NotApplicableReason})");
@@ -1089,7 +1128,25 @@ public class SubscriptionService : ISubscriptionService
     public async Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested, string? couponCode)
     {
         var q = await QuotePlanChangeCoreAsync(companyId, plan, cycleRequested, couponCode);
-        return q with { Preview = await PlanPreviewForQuoteAsync(companyId, plan, q, DateTime.UtcNow) };
+        // รอบ 234 (คำตัดสิน 234-1): ภาษีหัก ณ ที่จ่ายที่ระบบเสนอสำหรับยอดนี้ (แสดงช่องติ๊ก + "หัก X% (฿…) — ชำระ ฿…") — ตัวตัดสินเดียวกับตอนสร้างรายการ
+        var payer = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, companyId);
+        var wht = q.AmountDue > 0m
+            ? await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, companyId, q.AmountDue, true,
+                await PlanContractGrossAsync(companyId, plan, Enum.TryParse<BillingCycle>(q.Cycle, out var qcy) ? (BillingCycle?)qcy : null))
+            : null;
+        return q with { Preview = await PlanPreviewForQuoteAsync(companyId, plan, q, DateTime.UtcNow), Withholding = wht, PayerProfile = payer };
+    }
+
+    /// <summary>รอบ 234 (คำตัดสิน 234-2): มูลค่าสัญญาค่าแพ็กเกจต่อปี (รวม VAT) ของแพ็กเกจ/รอบที่จะจ่าย — ราคาพิเศษของบริษัท (ตัวตัดสินเดียวกับตอนสร้างรายการ) × รอบต่อปี</summary>
+    private async Task<decimal?> PlanContractGrossAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested)
+    {
+        var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var template = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == plan && p.IsActive);
+        if (sub == null || template == null) return null;
+        var cycle = cycleRequested ?? sub.BillingCycle;
+        var eff = await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, cycle, DateTime.UtcNow,
+            forRenewal: PlatformPlanPricing.IsRenewalPurchase(sub.Plan, template.Plan));
+        return PlatformWhtSuggestion.AnnualContractGross(eff.Price, PlatformPlanPricing.MonthsOf(cycle));
     }
 
     /// <summary>รอบ 233 (คำตัดสิน 233-*): แปลงใบเสนอ (ตัวเลขจากตัวคิดราคาเดิม) เป็น "สิ่งที่จะได้" ผ่าน <see cref="PlanPurchasePreview"/> ตัวเดียว —
@@ -1227,7 +1284,20 @@ public class SubscriptionService : ISubscriptionService
             throw new BusinessRuleException("มีการชำระออนไลน์ของรายการนี้ค้าง/สำเร็จแล้ว — แก้ยอดไม่ได้ (รอหมดอายุ หรืออนุมัติตามเงินที่รับจริง)", "PLATFORM-ADMIN-PRICE-OVERRIDE", 409);
         var before = payment.Amount;
         var beforeDiscount = payment.CouponDiscountAmount;
-        payment.Amount = newAmount;
+        // รอบ 234: ยอดที่แอดมินแก้ = ยอดเต็ม (ก่อนหัก) · รายการที่ผู้เช่าเลือกหัก ⇒ คิดภาษีหัก/ยอดสุทธิใหม่ด้วยตัวตัดสินเดียว (เงินที่ตัด/โอน = สุทธิ)
+        var overrideWht = 0m;
+        if (payment.WithholdingTaxAmount > 0m)
+        {
+            var od = await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, payment.Subscription.CompanyId, newAmount, true);
+            // ฝ่ายค้าน 234 N6: ผู้จ่ายหมดสิทธิ์หักแล้ว (ไม่ใช่นิติบุคคล/ข้อมูลบริษัทไม่ครบ) ⇒ บอกแอดมินชัด ไม่ล้างภาษีหักเป็น 0 เงียบ ๆ
+            if (!od.Withhold)
+                throw new BusinessRuleException(
+                    $"รายการนี้ผู้เช่าเลือกหักภาษี ณ ที่จ่ายไว้ แต่ตอนนี้หักไม่ได้แล้ว: {od.ProfileProblem ?? od.Reason} — ให้ผู้เช่าแก้ข้อมูลบริษัทก่อน "
+                    + "หรือปฏิเสธรายการนี้แล้วให้ผู้เช่าสร้างรายการใหม่แบบไม่หัก", "PLATFORM-WHT-INVALID", 409);
+            overrideWht = od.WithholdingAmount;
+        }
+        payment.Amount = newAmount - overrideWht;
+        payment.WithholdingTaxAmount = overrideWht;
         payment.QuotedAmount = newAmount;
         // ฝ่ายค้าน S5: รายการมีคูปอง ⇒ ส่วนลดบนใบ = ราคาก่อนคูปอง − ยอดใหม่ (ไม่ติดลบ) — ไม่งั้นใบกำกับบวกส่วนลดเดิมกลับเป็น "ราคาเต็ม" ที่ไม่จริง ·
         // ยอดใหม่ ≥ ราคาก่อนคูปอง ⇒ ปลดคูปอง (ไม่นับการใช้) · แก้แถวการใช้ในธุรกรรมเดียวกัน
@@ -2562,12 +2632,17 @@ public class SubscriptionService : ISubscriptionService
             throw new BusinessRuleException(
                 $"ยอดที่แจ้ง ({request.Amount:N2} บาท) ไม่ตรงกับค่าบริการ {template.Name} รอบนี้ ({due:N2} บาท) — กรุณาแจ้งยอดตามราคาเต็ม "
                 + "(ถ้าหักภาษี ณ ที่จ่าย ให้แนบหนังสือรับรองกับสลิป ผู้ดูแลระบบจะบันทึกให้)", "PLATFORM-PRICE-MISMATCH", 409);
+        // รอบ 234 (คำตัดสิน 234-1): ผู้เช่าติ๊ก "หัก ณ ที่จ่าย" (เช่น ต่ออายุผ่านหน้า checkout) — ยอดเต็ม = due · ยอดหัก/สุทธิคิดที่ตัวตัดสินเดียว
+        var submitWht = await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, companyId, due, request.WithholdTax == true,
+            PlatformWhtSuggestion.AnnualContractGross(effectiveSubmit.Price, months));
+        Accounting.Services.Platform.PlatformWithholdingReader.ThrowIfProfileBlocks(submitWht, request.WithholdTax == true);
 
         var payment = new SubscriptionPayment
         {
             SubscriptionId = sub.Id,
             PaymentNumber = await NextPaymentNumberAsync(sub),
-            Amount = due,
+            Amount = submitWht.NetAmount,
+            WithholdingTaxAmount = submitWht.WithholdingAmount,
             // ฝ่ายค้านรอบ 219 (หมายเหตุ): วันรับเงิน (= วันที่บนใบเสร็จ/ใบกำกับ) ถูกบีบที่เซิร์ฟเวอร์ — ไม่เป็นอนาคต ไม่ย้อนเกิน 31 วัน
             PaymentDate = PlatformPlanPricing.ClampPaymentDate(request.PaymentDate, DateTime.UtcNow, DateTime.UtcNow),
             PaymentMethod = request.PaymentMethod,
@@ -2590,7 +2665,8 @@ public class SubscriptionService : ISubscriptionService
         {
             SubscriptionId = sub.Id,
             Action = "PaymentSubmitted",
-            Notes = $"Payment {payment.PaymentNumber} submitted: {payment.Amount:N2} THB",
+            Notes = $"Payment {payment.PaymentNumber} submitted: {payment.Amount:N2} THB"
+                    + (payment.WithholdingTaxAmount > 0m ? $" (หักภาษี ณ ที่จ่าย {payment.WithholdingTaxAmount:N2} · ยอดเต็ม {due:N2})" : ""),
             PerformedBy = performedBy
         });
 
@@ -2636,6 +2712,9 @@ public class SubscriptionService : ISubscriptionService
         var wht = request.WithholdingTaxAmount is decimal w && w > 0m ? decimal.Round(w, 2, MidpointRounding.AwayFromZero) : 0m;
         if (PlatformInvoiceRules.WithholdingProblem(wht, balance, inv.TotalAmount, inv.SubTotal, wht > 0m && await PayerIsJuristicAsync(companyId)) is string whtProblem)
             throw new BusinessRuleException(whtProblem, "PLATFORM-WHT-INVALID", 400);
+        // รอบ 234 (คำตัดสิน 234-5): นิติบุคคลที่จะหัก ณ ที่จ่าย ต้องมีข้อมูลบริษัทสำหรับใบกำกับครบก่อน (ตัวตัดสินเดียว PlatformPayerProfileGate) · ไม่หัก = จ่ายได้ตามเดิม
+        if (wht > 0m && PlatformPayerProfileGate.WithholdingRefusal(await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, companyId)) is string profileProblem)
+            throw new BusinessRuleException(profileProblem, PlatformPayerProfileGate.RuleCode, 400);
         var cash = balance - wht;
 
         var isRenewal = inv.Id == sub.RenewalInvoiceDocumentId;
@@ -2738,7 +2817,19 @@ public class SubscriptionService : ISubscriptionService
             ?? throw new KeyNotFoundException("ไม่พบรายการชำระเงิน");
         if (payment.WithholdingTaxAmount <= 0m)
             throw new BusinessRuleException("รายการนี้ไม่ได้หักภาษี ณ ที่จ่าย — ไม่ต้องส่งหนังสือรับรอง", "PLATFORM-WHT-CERT-NOT-NEEDED", 409);
+        // รอบ 234 (คำตัดสิน 234-W2): ผูกทะเบียนภาษีถูกหักของผู้ให้บริการ (ตัวผูกเดียว) · ยืนยันแล้ว = ปิดรับไฟล์ (ไม่ทับหลักฐานที่ตรวจแล้ว) ·
+        // ส่ง/ส่งใหม่ ⇒ "รอตรวจ" (แถวยัง Pending จนแอดมินยืนยัน) · ล้างเหตุตีกลับเดิม
+        var creditId = await Accounting.Services.Platform.PlatformWhtCertificateService.LinkCoreAsync(_db, payment);
+        var platformIdForCredit = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db);   // ฝ่ายค้าน 234 N4
+        var creditStatus = creditId is Guid ci
+            ? await _db.WhtCreditsReceived.AsNoTracking().Where(w => w.Id == ci && w.CompanyId == platformIdForCredit).Select(w => (WhtCreditStatus?)w.Status).FirstOrDefaultAsync()
+            : null;
+        if (creditStatus is WhtCreditStatus.Received or WhtCreditStatus.Claimed)
+            throw new BusinessRuleException("หนังสือรับรอง 50 ทวิ ของรายการนี้ NextAcc ยืนยันแล้ว — ไม่ต้องส่งอีก", PlatformWhtCertificateStatus.RuleCode, 409);
         payment.WhtCertificateFileName = storedFileName;
+        payment.WhtCertificateSubmittedAt = DateTime.UtcNow;
+        payment.WhtCertificateRejectedReason = null;
+        payment.WhtCertificateRejectedAt = null;
         _db.SubscriptionHistories.Add(new SubscriptionHistory
         {
             SubscriptionId = payment.SubscriptionId, Action = "WhtCertificateSubmitted",
@@ -2964,21 +3055,41 @@ public class SubscriptionService : ISubscriptionService
                 payment.WithholdingTaxAmount = decimal.Round(adminWht, 2, MidpointRounding.AwayFromZero);
             }
         }
-        else if (request.Approve && request.WithholdingTaxAmount is decimal plainWht && plainWht != payment.WithholdingTaxAmount)
+        else if (request.Approve && (request.WithholdingTaxAmount != null || request.AmountReceived != null))
         {
-            // ฝ่ายค้านรอบสุดท้าย 4c: รายการไม่ผูกใบ — ตัวตรวจเดียวกัน (นิติบุคคล · อัตรา ม.40(2) ของฐานก่อน VAT ของยอดรวมก่อนหัก)
-            var gross = payment.Amount + plainWht;
-            var vatRegistered = await _db.SiteSettings.AsNoTracking().OrderBy(x => x.CreatedAt).Select(x => x.PlatformIsVatRegistered).FirstOrDefaultAsync();
-            var pre = vatRegistered ? decimal.Round(gross * 100m / 107m, 2, MidpointRounding.AwayFromZero) : gross;
-            if (PlatformInvoiceRules.WithholdingProblem(plainWht, gross, gross, pre, plainWht > 0m && await PayerIsJuristicAsync(payment.Subscription.CompanyId)) is string whtProblem)
+            // ฝ่ายค้านรอบสุดท้าย 4c + ฝ่ายค้าน 234 B1: รายการไม่ผูกใบ — <b>ยอดเต็มคงที่เสมอ</b> (= เงินที่จะรับ + ภาษีหักเดิม · ราคาที่ตกลง) · แอดมินกรอกภาษีหักจาก 50 ทวิ
+            // และ/หรือเงินที่รับจริงตามสลิป ⇒ เงินที่รับ = ยอดเต็ม − ภาษีหักใหม่ (ไม่กรอก) · ตรวจด้วยกติกาเดียวกับเส้นใบ (เงิน + ภาษีหัก ≤ ยอดเต็ม · AdminLinkedAmountsProblem)
+            // + ตัวตรวจภาษีเดียว (นิติบุคคล · อัตรา ม.40(2) ของฐานก่อน VAT) — เช่น ผู้เช่าติ๊กหักแต่โอนเต็ม ⇒ ภาษีหัก 0 + รับ 15,198 ⇒ ใบเต็ม 15,198
+            var gross = PlatformWhtSuggestion.GrossOf(payment.Amount, payment.WithholdingTaxAmount);
+            var newWht = decimal.Round(request.WithholdingTaxAmount ?? payment.WithholdingTaxAmount, 2, MidpointRounding.AwayFromZero);
+            var cash = decimal.Round(request.AmountReceived ?? (gross - newWht), 2, MidpointRounding.AwayFromZero);
+            if (PlatformInvoiceRules.AdminLinkedAmountsProblem(cash, newWht, gross) is string amountProblem)
+                throw new BusinessRuleException(amountProblem, "PLATFORM-WHT-INVALID", 400);
+            // รอบ 234: ฐานก่อน VAT ผ่านตัวแยกเดียวกับใบที่ออก/ยอดที่ระบบเสนอ (PlatformWhtSuggestion.BaseOfReceived · ธง VAT ตัวเดียวกับตัวออกใบ)
+            var pre = PlatformWhtSuggestion.BaseOfReceived(gross, await Accounting.Services.Platform.PlatformWithholdingReader.PlatformIssuesTaxInvoiceAsync(_db));
+            if (newWht > 0m && PlatformInvoiceRules.WithholdingProblem(newWht, gross, gross, pre, await PayerIsJuristicAsync(payment.Subscription.CompanyId)) is string whtProblem)
                 throw new BusinessRuleException(whtProblem, "PLATFORM-WHT-INVALID", 400);
-            payment.WithholdingTaxAmount = plainWht;
+            payment.WithholdingTaxAmount = newWht;
+            payment.Amount = cash;
         }
 
         // รอบ 230 (ฝ่ายค้าน S3): คูปองที่การจองหมดอายุระหว่างค้างชำระ ⇒ นับเพดานใหม่ใต้ล็อกของคูปอง · เกินแล้ว + ระบบยืนยัน ⇒ พักให้แอดมิน (แอดมินอนุมัติ = ตัดสินแล้ว)
         if (request.Approve && systemConfirmed && payment.CouponId != null
             && await PlatformCouponStore.RedeemProblemAsync(_db, payment.Subscription.CompanyId, PlatformCouponRule.SourceSubscriptionPayment, payment.Id) is string couponOver)
             return await HoldForAdminAsync(payment, request, performedBy, lockTx, $"เงินเข้า {payment.PaymentNumber} แล้วแต่ {couponOver}");
+
+        // ฝ่ายค้าน 234 S1: เงินเข้าออนไลน์ของรายการที่ผู้เช่าหักภาษี — ตรวจสิทธิ์หักซ้ำ ณ ตอนเงินเข้า (ผู้ซื้อยังเป็นนิติบุคคล + ข้อมูลบริษัทครบ · ตัวตัดสินเดียว) ·
+        // ไม่ผ่าน ⇒ พักให้แอดมิน (ไม่อนุมัติอัตโนมัติ — ใบเสร็จ/50 ทวิ จะออกในนามที่ไม่ตรง) · แอดมินอนุมัติเอง = ตัดสินแล้ว (กรอกภาษีหัก/เงินที่รับได้)
+        if (request.Approve && systemConfirmed && payment.WithholdingTaxAmount > 0m)
+        {
+            var payerNow = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, payment.Subscription.CompanyId);
+            var whyNot = !payerNow.IsJuristic
+                ? "ผู้ซื้อไม่ใช่นิติบุคคลแล้ว (เลขผู้เสียภาษีเปลี่ยน) — หักภาษี ณ ที่จ่ายไม่ได้"
+                : PlatformPayerProfileGate.WithholdingRefusal(payerNow);
+            if (whyNot != null)
+                return await HoldForAdminAsync(payment, request, performedBy, lockTx,
+                    $"เงินเข้า {payment.PaymentNumber} (ยอดสุทธิหลังหัก {payment.WithholdingTaxAmount:N2}) แต่ {whyNot} — ตรวจแล้วอนุมัติ (กรอกภาษีหัก/เงินที่รับจริง) หรือคืนเงิน");
+        }
 
         payment.ReviewedByUserId = reviewerUserId;
         payment.ReviewedAt = DateTime.UtcNow;

@@ -68,6 +68,9 @@ public interface IPlatformBillingDocumentIssuer
     /// <param name="counterAccountId">ฝ่ายค้าน B1: ขา counter ของใบลดหนี้ (ช่องทางเงินของใบ) — บัญชีพักผู้ให้บริการรับชำระ (ปกติ: เงินคืนออกจากยอดที่ผู้ให้บริการถือ) ·
     /// ลูกหนี้ (ออกใหม่หลังลงใบสำคัญสำรอง Dr ลูกหนี้/Cr บัญชีพักแล้ว) — ห้ามปล่อยให้ตกเงินสดตั้งต้น (เงินสดหายสองครั้ง)</param>
     Task<PlatformRefundCreditResult> IssueRefundCreditNoteAsync(Guid intentId, decimal refundAmount, string refundRef, string reason, Guid counterAccountId);
+
+    /// <summary>ฝ่ายค้าน 234 S4: เหตุที่การออกเอกสารครั้งล่าสุดของ scope นี้ล้ม (null = ไม่ล้ม/ไม่รู้) — ผู้เรียกใช้ประทับเรื่องค้างให้แอดมินเห็น (ล้มดัง)</summary>
+    string? LastFailureReason => null;
 }
 
 /// <summary>รอบ 228: ผลออกใบลดหนี้ของการคืนเงินค่าบริการ — <c>Ok=false</c> ⇒ <c>Problem</c> = เหตุ + ทางไปต่อ (ไทย)</summary>
@@ -131,6 +134,12 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             await Documents.RecordAutoApproveFailureAsync(d.TenantId, d.DocumentId, channel, ex);
     }
 
+    /// <summary>รอบ 234: ผังภาษีถูกหัก ณ ที่จ่าย (ลูกหนี้กรมสรรพากร) ของ tenant ผู้ให้บริการ — ตัวเดียวกับที่ DocumentService ลง (Dr 11910)</summary>
+    public const string WhtReceivableAccountCode = "11910";
+
+    /// <summary>ฝ่ายค้าน 234 S4: เหตุที่ออกเอกสารครั้งล่าสุดล้ม (ผู้เรียกประทับเรื่องค้าง)</summary>
+    public string? LastFailureReason { get; private set; }
+
     public async Task<PlatformDocResult?> IssuePaidReceiptAsync(SubscriptionPayment payment, Company buyer)
     {
         (Guid TenantId, Guid DocumentId)? draft = null;
@@ -162,6 +171,15 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             // (กันเศษสตางค์จากการปัดอัตรา 3.00%)
             var whtRate = wht > 0m && baseAmount > 0m
                 ? decimal.Round(wht / baseAmount * 100m, 4, MidpointRounding.AwayFromZero) : 0m;
+
+            // รอบ 234 (คำตัดสิน 234-6): ผู้เช่าหัก ณ ที่จ่าย ⇒ ใบลง Dr เงินที่รับ (สุทธิ) + Dr 11910 ภาษีถูกหัก ณ ที่จ่าย / Cr รายได้ + VAT (เต็มยอด) —
+            // tenant ผู้ให้บริการที่ผังยังไม่มี 11910 (บริษัทเก่า) ⇒ สร้างจากผังมาตรฐานก่อน (ไม่งั้น JE ขาดขา 11910 แล้วไม่สมดุล)
+            // ฝ่ายค้าน 234 S4: สร้างไม่ได้ (ผังไม่มาตรฐาน — ไม่มีกลุ่ม 119) ⇒ ล้มดัง ไม่ออกใบที่ไม่มีขา 11910 เงียบ ๆ
+            if (wht > 0m && await Accounting.Helpers.SettlementChartSeed.EnsureStandardAccountAsync(_db, tenantId.Value, WhtReceivableAccountCode) == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"บริษัทผู้ให้บริการไม่มีผัง {WhtReceivableAccountCode} ภาษีถูกหัก ณ ที่จ่าย และไม่มีกลุ่ม 119 ให้ระบบสร้างให้ — เพิ่มผัง {WhtReceivableAccountCode} ที่หน้า \"ผังบัญชี\" "
+                    + $"ของบริษัทผู้ให้บริการ แล้วออกใบเสร็จของรายการ {payment.PaymentNumber} (เต็มยอด + ภาษีหัก {wht:N2}) ด้วยมือ",
+                    "PLATFORM-WHT-ACCOUNT-MISSING", 409);
 
             var desc = BuildServiceDescription(payment, buyer);
             var req = new CreateDocumentRequest(
@@ -206,6 +224,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             // เงินเข้าแล้วต้องบันทึกได้เสมอ — ล้มตรงนี้ให้ตกกลับไปโหมด PDF เดิม
             _logger.LogError(ex, "ออกเอกสารค่าบริการผ่าน tenant ไม่สำเร็จ (payment {PaymentId}) — ใช้โหมด PDF เดิมแทน",
                 payment.Id);
+            LastFailureReason = ex.Message;
             await NoteDraftFailureAsync(draft, "ออกใบเสร็จค่าบริการแพลตฟอร์ม", ex);
             return null;
         }

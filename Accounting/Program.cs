@@ -338,6 +338,8 @@ builder.Services.AddScoped<IDocumentService, DocumentService>();
 builder.Services.AddScoped<ITaxService, TaxService>();
 // ทะเบียนภาษีที่เราถูกหัก ณ ที่จ่าย → เครดิต ภ.ง.ด.51/50 (WHT_CREDIT_PLAN.md)
 builder.Services.AddScoped<Accounting.Services.Implementations.WhtCreditService>();
+// รอบ 234 (คำตัดสิน 234-W*): ติดตาม 50 ทวิ ที่ผู้เช่าส่งให้ NextAcc — ผูกเข้าทะเบียนภาษีถูกหักของบริษัทผู้ให้บริการ (ทะเบียนเดียว)
+builder.Services.AddScoped<Accounting.Services.Platform.PlatformWhtCertificateService>();
 builder.Services.AddScoped<ITaxFilingExportService, TaxFilingExportService>();
 
 // New modules

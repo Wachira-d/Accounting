@@ -67,7 +67,10 @@ public record ConvertTrialRequest(
     BillingCycle BillingCycle,
     string? PromoCode = null,
     bool PolicyAccepted = false,
-    string? PolicyVersionShown = null);
+    string? PolicyVersionShown = null,
+    /// <summary>รอบ 234 (คำตัดสิน 234-1): ผู้เช่าติ๊ก "หัก ณ ที่จ่าย" — หน้าเว็บส่งแค่ true/false · ยอดหักคิดที่เซิร์ฟเวอร์ (<c>PlatformWhtSuggestion</c>) ·
+    /// null = ไม่ได้เลือก (ไม่หัก · พฤติกรรมเดิมของผู้เรียกที่ไม่รู้จักช่องนี้)</summary>
+    bool? WithholdTax = null);
 
 public record ChangeSubscriptionRequest(
     SubscriptionPlan NewPlan,
@@ -75,7 +78,9 @@ public record ChangeSubscriptionRequest(
     bool PolicyAccepted = false,
     string? PolicyVersionShown = null,
     // รอบ 230 (คำตัดสินข้อ 230-Q2): คูปองแพลตฟอร์ม (ตัดสินที่เซิร์ฟเวอร์ตอนสร้างรายการชำระ — ใช้ไม่ได้ = 400 ไม่สร้างรายการ)
-    string? CouponCode = null);
+    string? CouponCode = null,
+    // รอบ 234 (คำตัดสิน 234-1): ผู้เช่าติ๊ก "หัก ณ ที่จ่าย" (null = ไม่ได้เลือก ⇒ ไม่หัก) — ยอดคิดที่เซิร์ฟเวอร์
+    bool? WithholdTax = null);
 
 /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): ผลคิด "ถ้าเปลี่ยนเป็นแพ็กเกจนี้ ต้องจ่ายเท่าไร มีผลเมื่อไร" — เซิร์ฟเวอร์คิดทุกตัวเลข หน้าเว็บแสดงอย่างเดียว ·
 /// <paramref name="Kind"/> = Upgrade | Downgrade | Same | New (ทดลองใช้/หมดอายุ — ซื้อเต็มรอบ) · <paramref name="Prorated"/> = คิดส่วนต่างตามวันที่เหลือ (วันหมดอายุคงเดิม) ·
@@ -108,7 +113,12 @@ public record PlanChangeQuote(
     /// <summary>รอบ 233 ฝ่ายค้าน N2: ราคาจริงของรอบใหม่ (รายการเปลี่ยนรอบ) — preview แสดงราคานี้ ไม่ใช่ "ยอด + เครดิต" (ผิดเมื่อเครดิตเกินค่ารอบ)</summary>
     decimal? NewCyclePrice = null,
     /// <summary>รอบ 233 (คำตัดสิน 233-*): "สิ่งที่จะได้ถ้าจ่ายเงินนี้" — แพ็ก/วันหมดอายุเดิม → ใหม่ · เครดิต · ยอด · เหตุที่ทำไม่ได้ (<c>Helpers/PlanPurchasePreview</c> ตัวเดียว)</summary>
-    global::Accounting.Helpers.PlanPurchasePreview.Result? Preview = null);
+    global::Accounting.Helpers.PlanPurchasePreview.Result? Preview = null,
+    /// <summary>รอบ 234 (คำตัดสิน 234-1): ภาษีหัก ณ ที่จ่ายที่ระบบเสนอสำหรับยอดนี้ (<c>Helpers/PlatformWhtSuggestion</c> ตัวเดียว) — <c>Eligible</c> ⇒ หน้าเว็บแสดงช่องติ๊ก
+    /// + บรรทัด "หัก X% (฿…) — ชำระ ฿…" · null = ไม่มียอดต้องจ่าย</summary>
+    global::Accounting.Helpers.PlatformWhtSuggestion.Result? Withholding = null,
+    /// <summary>รอบ 234: ข้อมูลผู้ซื้อสำหรับใบกำกับ (<c>Helpers/PlatformPayerProfileGate</c>) — คำเตือน/สิ่งที่ขาด</summary>
+    global::Accounting.Helpers.PlatformPayerProfileGate.Result? PayerProfile = null);
 
 /// <summary>รอบ 230: แอดมินแก้ยอดของรายการชำระค่าแพ็กเกจที่ยังไม่จ่าย (คำตัดสินเจ้าของข้อ 178 ① — ยืดหยุ่นได้เสมอ · audit chain)</summary>
 public record OverridePaymentAmountRequest(decimal Amount, string? Reason);
@@ -350,7 +360,9 @@ public record SubmitSubscriptionPaymentRequest(
     string? CustomerNotes,
     /// <summary>รอบ 219 ส่วน B ฝ่ายค้าน S6: แจ้งชำระค่าแพ็กเกจ = ซื้อ ⇒ ติ๊กยอมรับข้อกำหนด + นโยบายคืนเงิน (บังคับที่ endpoint ผู้เช่า)</summary>
     bool PolicyAccepted = false,
-    string? PolicyVersionShown = null);
+    string? PolicyVersionShown = null,
+    /// <summary>รอบ 234 (คำตัดสิน 234-1): ผู้เช่าติ๊ก "หัก ณ ที่จ่าย" — <see cref="Amount"/> ยังเป็นยอดเต็มตามราคา · เซิร์ฟเวอร์คิดยอดหัก/ยอดสุทธิเอง</summary>
+    bool? WithholdTax = null);
 
 public record ReviewSubscriptionPaymentRequest(
     bool Approve,

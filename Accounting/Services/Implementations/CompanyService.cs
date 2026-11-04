@@ -270,6 +270,8 @@ public class CompanyService : ICompanyService
 
         var company = await _db.Companies.FindAsync(companyId)
             ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+        // รอบ 234 (คำตัดสิน 234-4): ข้อมูลผู้ซื้อที่ใบกำกับค่าบริการ/50 ทวิ ใช้ (ชื่อ · เลขผู้เสียภาษี · สาขา · ที่อยู่) — เก็บค่าก่อนแก้ไว้ลง audit chain
+        var identityBefore = new { company.Name, company.TaxId, company.BranchCode, company.Address, company.District, company.Province };
 
         if (request.Name != null) company.Name = request.Name;
         if (request.NameEn != null) company.NameEn = request.NameEn;
@@ -352,6 +354,20 @@ public class CompanyService : ICompanyService
                 if (request.VatRate.HasValue) cs.DefaultVatRate = request.VatRate.Value;
             }
         }
+
+        var identityAfter = new { company.Name, company.TaxId, company.BranchCode, company.Address, company.District, company.Province };
+        if (!Equals(identityBefore, identityAfter))
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, UserId = userId, Action = AuditAction.Update, EntityType = nameof(Company), EntityId = companyId.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(identityBefore),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    identityAfter.Name, identityAfter.TaxId, identityAfter.BranchCode, identityAfter.Address, identityAfter.District, identityAfter.Province,
+                    ruleCode = Accounting.Helpers.PlatformPayerProfileGate.RuleCode, legalReference = "ป.รัษฎากร §86/4",
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
 
         await _db.SaveChangesAsync();
 

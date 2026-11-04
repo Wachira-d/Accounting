@@ -128,6 +128,12 @@ const AdminAPI = {
   platformRetrySettle(paymentId) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/retry-settle`, {}); },
   platformResolvePaymentException(paymentId, note) { return this.post(`/platform-billing/payment-exceptions/${paymentId}/resolve`, { note }); },
   platformWhtCertificate(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/wht-certificate`, `50tawi-${paymentId}`); },
+  // รอบ 234 (คำตัดสิน 234-W*): 50 ทวิ จากลูกค้า
+  platformWhtCertificates(overdueDays, all) { return this.get(`/platform-billing/wht-certificates?overdueDays=${encodeURIComponent(overdueDays || '')}&all=${all ? 'true' : 'false'}`); },
+  platformConfirmWhtCertificate(paymentId, certificateNumber, certificateDate, whtAmount) { return this.post(`/platform-billing/wht-certificates/${paymentId}/confirm`, { certificateNumber, certificateDate, whtAmount }); },
+  platformRejectWhtCertificate(paymentId, reason) { return this.post(`/platform-billing/wht-certificates/${paymentId}/reject`, { reason }); },
+  platformRemindWhtCertificate(paymentId) { return this.post(`/platform-billing/wht-certificates/${paymentId}/remind`, {}); },
+  platformBackfillWhtCertificates() { return this.post('/platform-billing/wht-certificates/backfill', {}); },
   platformPaymentSlip(paymentId) { return this.downloadFile(`/platform-billing/subscription-payments/${paymentId}/slip`, `slip-${paymentId}`); },
 
   // Customers

@@ -12,7 +12,10 @@ public static class PlatformSavedCardRules
     /// <summary>ช่องทางของหลักฐาน (ต่อด้วยบริษัทผู้จ่ายใน canonical)</summary>
     public const string ConsentChannel = "billing-center:saved-card";
     /// <summary>ฉบับของ<b>ข้อความ</b>ยินยอม — แก้ <see cref="Text"/> เมื่อไรต้องขยับค่านี้ (หลักฐานต้องชี้ข้อความที่ผู้ใช้เห็นจริง)</summary>
-    public const string ConsentTextVersion = "autocharge-1";
+    public const string ConsentTextVersion = "autocharge-2";
+    /// <summary>ฝ่ายค้าน 234 S2: ฉบับข้อความก่อนหน้า ("ตัดเต็มยอด ไม่หักภาษี ณ ที่จ่าย") — คำสั่งตัดที่ยินยอมฉบับนี้ <b>ยังตัดได้</b> (เต็มยอด) จนกว่าจะยินยอมฉบับใหม่ ·
+    /// ฉบับใหม่ (<see cref="ConsentTextVersion"/>) บอกเรื่อง "ตั้งหัก ณ ที่จ่าย ⇒ ตัดยอดสุทธิ + ส่ง 50 ทวิ" ⇒ ตัดยอดสุทธิได้เฉพาะฉบับนี้ (<see cref="MandateAllowsNetCharge"/>)</summary>
+    public const string LegacyFullChargeTextVersion = "autocharge-1";
 
     public const string RuleSave = "PLATFORM-SAVED-CARD-SAVE", RuleRemove = "PLATFORM-SAVED-CARD-REMOVE",
         RuleDefault = "PLATFORM-SAVED-CARD-DEFAULT", RuleMandate = "PLATFORM-AUTOCHARGE-MANDATE",
@@ -24,8 +27,8 @@ public static class PlatformSavedCardRules
     public const string VersionMissingMessage = "หน้าเว็บไม่ได้ส่งฉบับข้อความยินยอมที่แสดง — กรุณาโหลดหน้าใหม่แล้วติ๊กอีกครั้ง";
     /// <summary>ฝ่ายค้าน S1: ข้อความรับทราบแยกของผู้จ่ายนิติบุคคล (ตัดเต็มยอด ไม่หักภาษี ณ ที่จ่าย)</summary>
     public const string WhtWarningText = "บริษัทของท่านเป็นนิติบุคคล — การตัดบัตรอัตโนมัติตัดเต็มยอดค้างของใบแจ้งหนี้ โดยไม่หักภาษี ณ ที่จ่าย "
-        + "ถ้าบริษัทต้องหักภาษี ณ ที่จ่าย (ม.40(2) · 3%) ให้ปิดการตัดอัตโนมัติแล้วชำระเองที่ศูนย์บิลพร้อมแนบหนังสือรับรอง 50 ทวิ · "
-        + "ติ๊กช่องนี้เพื่อรับทราบว่าบริษัทจะไม่หักภาษี ณ ที่จ่ายสำหรับยอดที่ตัดอัตโนมัติ";
+        + "เว้นแต่บริษัทตั้งค่า \"หักภาษี ณ ที่จ่ายทุกครั้ง\" ที่การ์ดข้อมูลบริษัทในศูนย์บิล — ระบบจะตัดยอดสุทธิหลังหัก (ม.40(2) · 3%) และบริษัทต้องส่งหนังสือรับรอง 50 ทวิ ที่ศูนย์บิล · "
+        + "ติ๊กช่องนี้เพื่อรับทราบเงื่อนไขภาษีหัก ณ ที่จ่ายของยอดที่ตัดอัตโนมัติ";
     public const string WhtAckMissingMessage = "บริษัทนิติบุคคลต้องติ๊กรับทราบเรื่องภาษีหัก ณ ที่จ่ายก่อนเปิดตัดบัตรอัตโนมัติ (หรือไม่ติ๊กบันทึกบัตร แล้วชำระเอง)";
     /// <summary>ต่อท้ายฉบับในหลักฐานเมื่อผู้จ่ายนิติบุคคลรับทราบเรื่องภาษีหัก ณ ที่จ่าย (hash ครอบข้อความที่แสดงเพิ่ม)</summary>
     public const string WhtAckVersionSuffix = "+wht-ack";
@@ -38,7 +41,8 @@ public static class PlatformSavedCardRules
     /// <summary>ข้อความยินยอม (ดีไซน์ §7.1 ที่ผู้ประสานงานตัดสินไว้) + เรื่องภาษีหัก ณ ที่จ่าย (ตัดเต็มยอด — ผู้ที่ต้องหักให้ปิดการตัดอัตโนมัติ)</summary>
     public static string Text(string purchasePolicyVersion)
         => "ข้าพเจ้ายินยอมให้ NextAcc บันทึกบัตรนี้ไว้กับผู้ให้บริการรับชำระเงิน (NextAcc ไม่เก็บเลขบัตร) และตัดเงินค่าแพ็กเกจ/ค่าส่วนเสริม/ค่าใช้งาน"
-           + "ตามใบแจ้งหนี้ที่ถึงกำหนดโดยอัตโนมัติ ตามราคาที่แสดงในศูนย์บิล (ตัดเต็มยอดค้างของใบ ไม่หักภาษี ณ ที่จ่าย) · "
+           + "ตามใบแจ้งหนี้ที่ถึงกำหนดโดยอัตโนมัติ ตามราคาที่แสดงในศูนย์บิล (ตัดเต็มยอดค้างของใบ — ถ้าบริษัทตั้ง \"หักภาษี ณ ที่จ่ายทุกครั้ง\" ไว้ "
+           + "จะตัดยอดสุทธิหลังหักภาษี ณ ที่จ่าย และบริษัทต้องส่งหนังสือรับรอง 50 ทวิ ที่ศูนย์บิล) · "
            + "ยกเลิกการตัดอัตโนมัติได้ทุกเมื่อที่ศูนย์บิล (มีผลกับรอบถัดไป) · ไม่มีการคืนเงินตามนโยบายการยกเลิกและคืนเงิน ฉบับ "
            + purchasePolicyVersion;
 
@@ -58,6 +62,20 @@ public static class PlatformSavedCardRules
     /// <summary>ฉบับที่ประทับลงหลักฐาน = ฉบับที่แสดง (+ เครื่องหมายรับทราบภาษีหัก ณ ที่จ่ายของนิติบุคคล)</summary>
     public static string EvidenceVersion(string versionShown, bool whtAcknowledged)
         => whtAcknowledged ? versionShown + WhtAckVersionSuffix : versionShown;
+
+    /// <summary>ฉบับข้อความ+นโยบายของคำสั่งตัด (ตัดเครื่องหมายรับทราบภาษีหักท้าย)</summary>
+    public static string? MandateBase(string? mandateConsentVersion)
+        => mandateConsentVersion?.EndsWith(WhtAckVersionSuffix, StringComparison.Ordinal) == true
+            ? mandateConsentVersion[..^WhtAckVersionSuffix.Length] : mandateConsentVersion;
+
+    /// <summary>ฉบับเดียวกันแต่ข้อความรุ่นก่อน (ตัดเต็มยอด) — ใช้ยอมรับคำสั่งตัดเดิม</summary>
+    public static string LegacyVersionOf(string currentConsentVersion)
+        => currentConsentVersion.StartsWith(ConsentTextVersion, StringComparison.Ordinal)
+            ? LegacyFullChargeTextVersion + currentConsentVersion[ConsentTextVersion.Length..] : currentConsentVersion;
+
+    /// <summary>ฝ่ายค้าน 234 S2: คำสั่งตัดนี้ยินยอมข้อความฉบับที่บอกเรื่อง "ตัดยอดสุทธิหลังหัก ณ ที่จ่าย" แล้วหรือยัง — ยัง ⇒ ตัดเต็มยอด (ไม่หัก) จนกว่าจะยินยอมใหม่</summary>
+    public static bool MandateAllowsNetCharge(string? mandateConsentVersion, string currentConsentVersion)
+        => MandateBase(mandateConsentVersion) == currentConsentVersion;
 
     /// <summary>วันสุดท้ายที่บัตรใช้ได้ (สิ้นเดือนหมดอายุ) — เดือน/ปีไม่สมเหตุผล ⇒ null (ไม่ทราบ — ไม่เดา)</summary>
     public static DateTime? ValidUntil(int? month, int? year)
@@ -120,10 +138,10 @@ public static class PlatformSavedCardRules
         if (adminBlocked) return "ผู้ดูแลระบบ NextAcc ระงับการตัดบัตรอัตโนมัติของบริษัทนี้ไว้";
         if (!mandateEnabled) return "ยังไม่ได้เปิดตัดบัตรอัตโนมัติ (เปิดเองเมื่อชำระครั้งแรกด้วยบัตรที่บันทึกสำเร็จ)";
         if (WhtAckProblem(payerIsJuristic, whtAcknowledged) is string wht) return wht;
-        // ฉบับในคำสั่งตัดอาจมีเครื่องหมายรับทราบภาษีหัก ณ ที่จ่ายต่อท้าย — เทียบเฉพาะฉบับข้อความ+นโยบาย
-        var mandateBase = mandateConsentVersion?.EndsWith(WhtAckVersionSuffix, StringComparison.Ordinal) == true
-            ? mandateConsentVersion[..^WhtAckVersionSuffix.Length] : mandateConsentVersion;
-        if (mandateBase != currentConsentVersion)
+        // ฉบับในคำสั่งตัดอาจมีเครื่องหมายรับทราบภาษีหัก ณ ที่จ่ายต่อท้าย — เทียบเฉพาะฉบับข้อความ+นโยบาย ·
+        // ฝ่ายค้าน 234 S2: ฉบับข้อความก่อนหน้า (นโยบายเดียวกัน) ยังตัดได้แบบเต็มยอด
+        var mandateBase = MandateBase(mandateConsentVersion);
+        if (mandateBase != currentConsentVersion && mandateBase != LegacyVersionOf(currentConsentVersion))
             return "นโยบาย/ข้อความยินยอมมีฉบับใหม่ — กดเปิดตัดบัตรอัตโนมัติอีกครั้งเพื่อยืนยัน (ระบบหยุดตัดจนกว่าจะยืนยัน)";
         if (defaultCardProblem != null) return defaultCardProblem;
         return null;

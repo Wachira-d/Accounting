@@ -243,4 +243,7 @@ public static class AdvisoryLockKey
 
     /// <summary>เครื่องมือย้ายไฟล์ดิสก์ → object storage (ทีม FS 2026-11-02) — ทั้งระบบรอบเดียว · part = "all" · ผ่าน <c>JobLock.RunExclusiveAsync</c></summary>
     public const string FileStorageMigrate = "file-storage-migrate";
+
+    /// <summary>รอบ 234 (คำตัดสิน 234-W4): ผูกรายการชำระค่าบริการที่มีภาษีหักกับทะเบียนภาษีถูกหัก (backfill ครั้งเดียว) — part = "all" · ผ่าน <c>JobLock.RunExclusiveAsync</c></summary>
+    public const string PlatformWhtCreditBackfill = "platform-wht-credit-backfill";
 }

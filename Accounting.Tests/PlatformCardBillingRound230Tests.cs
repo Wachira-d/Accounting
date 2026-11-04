@@ -25,7 +25,7 @@ public class PlatformCardBillingRound230Tests
     public void Consent_ไม่ติ๊ก_ฉบับเก่า_ปฏิเสธ_ฉบับตรง_ผ่าน()
     {
         var v = PlatformSavedCardRules.Version("2.1");
-        Assert.Equal("autocharge-1/2.1", v);
+        Assert.Equal("autocharge-2/2.1", v);   // รอบ 234 S2: ข้อความฉบับ 2 (บอกเรื่องตัดยอดสุทธิเมื่อตั้งหัก ณ ที่จ่าย)
         Assert.Equal(PlatformSavedCardRules.MissingMessage, PlatformSavedCardRules.ConsentProblem(false, v, v));
         Assert.Equal(PlatformSavedCardRules.StaleMessage, PlatformSavedCardRules.ConsentProblem(true, "autocharge-1/2.0", v));
         Assert.Null(PlatformSavedCardRules.ConsentProblem(true, v, v));
