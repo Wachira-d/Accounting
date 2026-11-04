@@ -506,19 +506,35 @@
           <div class="form-group"><label class="form-label">โค้ดส่วนลด (ถ้ามี)</label><input type="text" class="form-input" id="promoCode" placeholder="กรอกโค้ดส่วนลด"></div>
           <input type="hidden" id="upgradePlan" value="${Layout.esc(plan)}">
           <input type="hidden" id="upgradeCycle" value="${cycleEnum}">
+          <input type="hidden" id="upgradeMode" value="">
+          <div id="upgradeModes"></div>
           <div id="upgradePolicy">${PolicyAccept.html((await this.platformPayInfo())?.policy)}</div>`;
         Layout.openModal('upgradeModal');
+        await this.loadUpgradeQuote(plan, cycleEnum, null);
+      },
+
+      // รอบ 237 (K-1 · 237-6): ใบเสนอจากเซิร์ฟเวอร์ (+ ตัวเลือกแบบอัปเกรดเมื่อค่าตั้งเปิดให้เลือก — ยอด/เครดิต/วันหมดอายุต่อแบบมาจากเซิร์ฟเวอร์) · เลือกแล้วขอใบเสนอใหม่
+      async loadUpgradeQuote(plan, cycleEnum, mode) {
         // รอบ 230 (D-8 · คำตัดสินข้อ 230-Q1): ยอด/ส่วนต่างตามวันที่เหลือ/วันมีผล จากเซิร์ฟเวอร์ (ตัวตัดสินเดียวกับตอนยืนยัน) — ไม่ใช่ราคาเต็มที่หน้าเว็บเดา
         try {
-          const qr = await API.get(`/api/subscription/${Layout.getCompanyId()}/plan-quote?plan=${encodeURIComponent(plan)}&cycle=${encodeURIComponent(cycleEnum)}`);
+          const qr = await API.get(`/api/subscription/${Layout.getCompanyId()}/plan-quote?plan=${encodeURIComponent(plan)}&cycle=${encodeURIComponent(cycleEnum)}${mode ? '&upgradeMode=' + encodeURIComponent(mode) : ''}`);
           const q = qr?.data;
           if (q) {
+            document.getElementById('upgradeMode').value = q.upgradeMode || '';
+            const opts = q.upgradeOptions || [];
+            document.getElementById('upgradeModes').innerHTML = opts.length < 2 ? '' : `<div class="form-group"><label class="form-label">คิดเงินอัปเกรดแบบไหน</label>${opts.map(o => `
+              <label class="sub-card" style="display:block;margin-bottom:6px;cursor:pointer;${o.selected ? 'border-color:var(--primary)' : ''}">
+                <input type="radio" name="upgradeModePick" value="${Layout.esc(o.mode)}" ${o.selected ? 'checked' : ''}> <b>${Layout.esc(o.label)}</b>
+                <div class="text-sm">${o.allowed ? 'ยอด ฿' + this.formatMoney(o.amountDue) : 'ชำระแบบนี้ไม่ได้ — ' + Layout.esc(o.refusalReason || '')}${o.credit > 0 ? ' · มูลค่าคงเหลือแพ็กเดิม −฿' + this.formatMoney(o.credit) : ''}</div>
+                <div class="text-xs text-gray-500">📅 ${Layout.esc(o.dateLine)}</div>
+              </label>`).join('')}</div>`;
+            document.querySelectorAll('input[name="upgradeModePick"]').forEach(r => r.addEventListener('change', () => this.loadUpgradeQuote(plan, cycleEnum, r.value)));
             // รอบ 233: "สิ่งที่จะได้" จากเซิร์ฟเวอร์ (PlanPurchasePreview) — วันหมดอายุเดิม → ใหม่ / เหตุที่ทำไม่ได้ · แสดงอย่างเดียว
             const pv = q.preview;
             document.getElementById('upgradeQuoteNote').textContent = pv
               ? [pv.headline, '📅 ' + pv.dateLine, pv.allowed ? '' : (pv.refusalReason || ''), ...(pv.notes || []).filter(n => n !== pv.refusalReason)].filter(Boolean).join('\n')
               : (q.message || '');
-            document.getElementById('upgradeQuoteAmount').textContent = q.amountDue > 0 ? `฿${this.formatMoney(q.amountDue)}` : 'ไม่ต้องชำระตอนนี้';
+            document.getElementById('upgradeQuoteAmount').textContent = q.amountDue > 0 ? `฿${this.formatMoney(q.amountDue)}` : (q.blocked ? 'ชำระไม่ได้' : 'ไม่ต้องชำระตอนนี้');
           }
         } catch (e) { document.getElementById('upgradeQuoteNote').textContent = 'ยอดจริงคิดตอนกดยืนยัน (อัปเกรดกลางรอบ = จ่ายส่วนต่างตามวันที่เหลือ · แพ็กเกจที่ถูกลง = มีผลวันครบรอบ)'; }
       },
@@ -533,7 +549,8 @@
           const pol = PolicyAccept.require('upgradePolicy');
           // รอบ 219 เฟส 0 (G-0): ไม่เปิดแพ็กเกจทันที — เซิร์ฟเวอร์คืนรายการชำระ (ยอดของเซิร์ฟเวอร์) หรือการเปลี่ยนที่รอมีผล + ข้อความ
           const res = await API.post(`/api/subscription/${cid}/convert`, { plan, billingCycle: cycle, promoCode: promo || null,
-            policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown });
+            policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown,
+            upgradeMode: document.getElementById('upgradeMode').value || null });   // รอบ 237: แบบของใบเสนอที่เห็น (เซิร์ฟเวอร์ตรวจซ้ำกับค่าตั้ง)
           Layout.closeModal('upgradeModal');
           const r = res?.data || {};
           if (r.payment) { await this.openPay(r.payment, res.message); }

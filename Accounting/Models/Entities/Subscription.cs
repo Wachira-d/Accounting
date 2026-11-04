@@ -435,4 +435,13 @@ public class SubscriptionPayment : BaseEntity
     public bool IsCycleChange { get; set; }
     /// <summary>มูลค่าคงเหลือของรอบเดิมที่หักให้ (บาท · = ราคาเดิมต่อรอบ × D/C) — บรรทัดที่สองบนใบเสร็จเป็น <c>DiscountAmount</c> ของบรรทัดแรก</summary>
     public decimal? CycleChangeCredit { get; set; }
+
+    /// <summary>รอบ 237 (K-1 · DECISIONS 237-5): แบบอัปเกรดที่ลูกค้าเลือกตอนซื้อ (<c>Helpers/PlatformProration.UpgradeByMode</c>) — อนุมัติใช้ค่านี้ ไม่ใช่ค่าตั้งปัจจุบัน
+    /// (<c>PlatformProration.ApprovalRouteOf</c>) · RestartCycle ⇒ <see cref="IsCycleChange"/> = true รอบเท่าเดิม · null = แถวก่อนรอบ 237 / ไม่ใช่อัปเกรด (ตามธงเดิม) ·
+    /// คอลัมน์: <c>Helpers/PlatformUpgradeModeMigration</c></summary>
+    public PlatformUpgradeMode? UpgradeMode { get; set; }
+
+    /// <summary>รอบ 237 (ฝ่ายค้าน N2): วันเริ่มรอบที่จ่ายจริงตอนอนุมัติ (<c>PlanPurchasePreview.PaidPeriod.StartUtc</c> — ตัวเดียวกับที่คิด EndDate) · ผู้อ่าน: ข้อความใบเสร็จ/ศูนย์บิล/หน้าตรวจสลิป
+    /// ของอัปเกรดแบบเริ่มรอบใหม่ (<c>PlatformProration.RestartUpgradeDescription</c>) · null = ยังไม่อนุมัติ/แถวเก่า</summary>
+    public DateTime? PaidPeriodStartUtc { get; set; }
 }

@@ -252,7 +252,8 @@
                   ${p.slipOcrReference ? ` · อ้างอิง ${AdminLayout.esc(p.slipOcrReference)}` : ''}
                 </div>` : ''}
 
-              ${p.isProration || p.isCycleChange || p.standardAmount != null || p.couponCode || p.amountOverrideReason ? `<div style="border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+              ${p.isProration || p.isCycleChange || p.upgradeMode || p.standardAmount != null || p.couponCode || p.amountOverrideReason ? `<div style="border:1px solid #c7d2fe;background:#eef2ff;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px">
+                ${p.upgradeModeLabel ? `<div>⬆️ แบบอัปเกรดที่ลูกค้าเลือกตอนซื้อ: <b>${AdminLayout.esc(p.upgradeModeLabel)}</b> (อนุมัติใช้แบบนี้ แม้ค่าตั้งเปลี่ยนภายหลัง)</div>` : ''}
                 ${p.isCycleChange ? `<div>🔁 ${AdminLayout.esc(p.cycleChangeNote || 'เปลี่ยนรอบบิลกลางรอบ')} — อนุมัติแล้ว <b>รอบใหม่เริ่มวันที่ชำระ</b> (วันหมดอายุเดิมไม่ใช้)</div>` : ''}
                 ${p.standardAmount != null ? `<div>★ ราคาพิเศษของบริษัทนี้ — ราคาตั้ง ${AdminLayout.money(p.standardAmount)} → คิด ${AdminLayout.money(p.quotedAmount != null ? p.quotedAmount : p.amount)}</div>` : ''}
                 ${p.isProration ? `<div>📐 ${AdminLayout.esc(p.prorationNote || 'ส่วนต่างอัปเกรดกลางรอบ')} — อนุมัติแล้วเปลี่ยนแพ็กเกจทันที <b>ไม่ขยับวันหมดอายุ</b></div>` : ''}

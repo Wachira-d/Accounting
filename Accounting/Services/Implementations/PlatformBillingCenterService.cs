@@ -154,6 +154,11 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
                 // รอบ 230: ส่วนต่างอัปเกรดกลางรอบ — บอกตามจริง (ไม่ใช่ "แพ็กเกจ 0 เดือน")
                 p.IsProration
                     ? $"ส่วนต่างอัปเกรด {p.ProrationFromPlan} → {p.RequestedPlan} ({p.ProrationDays}/{p.ProrationCycleDays} วัน)"
+                    // รอบ 237 (K-1): อัปเกรดแบบเริ่มรอบใหม่ — ข้อความตัวเดียวกับใบเสร็จ
+                    : p.IsCycleChange && p.UpgradeMode == Accounting.Models.Enums.PlatformUpgradeMode.RestartCycle && p.ProrationCycleEndUtc is DateTime rcEnd
+                    ? Accounting.Helpers.PlatformProration.RestartUpgradeDescription(p.ProrationFromPlan ?? "-", p.RequestedPlan.ToString(), p.RequestedPeriodMonths,
+                        p.CycleChangeCredit ?? 0m, p.ProrationDays ?? 0, p.ProrationCycleDays ?? 0, rcEnd,
+                        p.PaidPeriodStartUtc, p.SubscriptionExtendedTo)   // ฝ่ายค้าน 237 N2
                     // รอบ 231 (ฝ่ายค้าน S1): รายการเปลี่ยนรอบบิล — บอกเครดิตที่หักและรอบใหม่นับจากวันชำระ
                     : p.IsCycleChange
                     ? $"เปลี่ยนรอบบิลเป็นราย{Accounting.Helpers.PlatformPlanPricing.CycleLabel(p.RequestedBillingCycle)} {p.RequestedPlan} (หักมูลค่าคงเหลือ {p.CycleChangeCredit ?? 0m:N2} · {p.ProrationDays}/{p.ProrationCycleDays} วัน · รอบใหม่นับจากวันชำระ)"

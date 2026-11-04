@@ -114,7 +114,7 @@ public class PublicCheckoutController : ControllerBase
     [HttpGet("companies/{companyId:guid}/quote")]
     [Authorize]
     public async Task<ActionResult<ApiResponse<PublicCheckoutQuote>>> CompanyQuote(Guid companyId, [FromQuery] SubscriptionPlan plan, [FromQuery] BillingCycle cycle,
-        [FromQuery] string? coupon, CancellationToken ct)
+        [FromQuery] string? coupon, CancellationToken ct, [FromQuery] PlatformUpgradeMode? upgradeMode = null)   // รอบ 237 (K-1): แบบอัปเกรดที่ผู้ซื้อเลือก
     {
         if (await OwnerDenyAsync(companyId, "ดูยอดแพ็กเกจ") is { } deny) return deny;
         var avail = await _checkout.AvailabilityAsync(ct);
@@ -123,12 +123,12 @@ public class PublicCheckoutController : ControllerBase
         var uid = JwtHelper.GetUserIdFromClaims(User);
         if (!await UserQuoteRateOkAsync(uid, ct)) return TooManyOf<PublicCheckoutQuote>("คำขอถี่เกินไป — รอสักครู่แล้วลองใหม่");
         if (!await CouponAttemptOkAsync(uid, coupon, ct)) return TooManyOf<PublicCheckoutQuote>(PublicCheckoutPolicy.CouponTooManyMessage);
-        return Ok(new ApiResponse<PublicCheckoutQuote>(true, await _checkout.QuoteAsync(companyId, plan, cycle, coupon, ct, uid)));   // รอบ 236 B1
+        return Ok(new ApiResponse<PublicCheckoutQuote>(true, await _checkout.QuoteAsync(companyId, plan, cycle, coupon, ct, uid, upgradeMode)));   // รอบ 236 B1 · รอบ 237
     }
 
     /// <param name="WithholdTax">รอบ 234 (คำตัดสิน 234-1): ผู้ซื้อติ๊ก "หัก ณ ที่จ่าย" — ส่งแค่ true/false · ยอดหักคิดที่เซิร์ฟเวอร์ (null = ไม่หัก)</param>
     public sealed record OrderRequest(SubscriptionPlan Plan, BillingCycle Cycle, string? CouponCode, bool PolicyAccepted, string? PolicyVersionShown,
-        bool? WithholdTax = null);
+        bool? WithholdTax = null, PlatformUpgradeMode? UpgradeMode = null);   // รอบ 237 (K-1): แบบอัปเกรด — เซิร์ฟเวอร์ตรวจกับค่าตั้ง (ไม่เปิด ⇒ 400)
 
     /// <summary>สร้าง (หรือใช้ต่อ) รายการค่าแพ็กเกจ — ติ๊กยอมรับข้อกำหนด+นโยบายคืนเงินบังคับ (ตรวจก่อนสร้าง · หลักฐานผูกรายการ) · ยอดจากเซิร์ฟเวอร์ · อีเมลยืนยัน</summary>
     [HttpPost("companies/{companyId:guid}/orders")]
@@ -146,7 +146,7 @@ public class PublicCheckoutController : ControllerBase
         if (PurchasePolicyAcceptance.Problem(false, req.PolicyAccepted, req.PolicyVersionShown, current.Version) is string problem)
             return BadRequest(new ApiResponse<object>(false, null, problem));
         var uid = JwtHelper.GetUserIdFromClaims(User);
-        var order = await _checkout.CreateOrderAsync(uid, companyId, req.Plan, req.Cycle, req.CouponCode, ct, req.WithholdTax);
+        var order = await _checkout.CreateOrderAsync(uid, companyId, req.Plan, req.Cycle, req.CouponCode, ct, req.WithholdTax, req.UpgradeMode);
         // หลักฐานการยอมรับผูกกับรายการ (ช่องเดียวกับหน้าชำระในระบบ) · ฝ่ายค้าน S5: ผู้ใช้คนนี้ยอมรับฉบับนี้ของรายการนี้ไว้แล้ว (resume/กดซ้ำ) ⇒ ไม่เพิ่มแถวซ้ำ
         var alreadyAccepted = await PurchasePolicyAcceptance.UserAlreadyAcceptedAsync(_db, _legal, companyId, User,
             PurchasePolicyAcceptance.ChannelPlatformSubscription, order.PaymentId, ct);

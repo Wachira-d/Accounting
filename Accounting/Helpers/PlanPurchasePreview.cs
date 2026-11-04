@@ -53,7 +53,8 @@ public static class PlanPurchasePreview
     public sealed record Money(decimal ListPrice, decimal CouponDiscount, decimal AmountDue,
         bool Prorated = false, bool CycleChange = false, decimal? OldPriceBasis = null,
         int? DaysRemaining = null, int? CycleDays = null, decimal? CycleChangeCredit = null,
-        string? CouponLabel = null, string? CouponProblem = null, string? SpecialPriceNote = null, decimal? NewCyclePrice = null);
+        string? CouponLabel = null, string? CouponProblem = null, string? SpecialPriceNote = null, decimal? NewCyclePrice = null,
+        PlatformUpgradeMode? UpgradeMode = null);
 
     /// <summary>ข้อความเมื่อมูลค่าคงเหลือครอบค่ารอบใหม่ทั้งหมด — ตัวเดียวกับที่ <c>RequestPlanPaymentAsync</c> ปฏิเสธ (preview บอกก่อนกด)</summary>
     public const string CreditCoversAllRefusal = "มูลค่าคงเหลือของรอบเดิมครอบคลุมค่ารอบใหม่ทั้งหมด — ติดต่อผู้ดูแลระบบ NextAcc ให้บันทึกเปลี่ยนรอบแบบยกเว้นค่าบริการ (ยอด 0)";
@@ -139,17 +140,22 @@ public static class PlanPurchasePreview
         var notes = new List<string>();   // เหตุผลของวันที่ + ผลข้างเคียง (หน้าเว็บแสดงเป็นหัวข้อย่อย — ไม่กรองข้อความเอง)
         var money = new List<string>();   // บรรทัดเงิน
 
+        // รอบ 237 (K-1): อัปเกรดแบบเริ่มรอบใหม่หักเครดิต = เส้นคำนวณเดียวกับเปลี่ยนรอบ (PreviewKind.CycleChange) แต่หัวข้อ/วันที่บอกแบบที่ลูกค้าเลือก
+        var restartUpgrade = kind == PreviewKind.CycleChange && m.UpgradeMode == PlatformUpgradeMode.RestartCycle;
         var headline = kind switch
         {
             PreviewKind.Renewal => $"ต่ออายุ {tgt.PlanName} {PublicCycle(tgt.Cycle)}",
             PreviewKind.Upgrade => $"อัปเกรด {cur.PlanName} → {tgt.PlanName} (จ่ายส่วนต่างเฉพาะวันที่เหลือ)",
             PreviewKind.UpgradeRestart => samePlan ? $"เปลี่ยนเป็น {tgt.PlanName} {PublicCycle(tgt.Cycle)}" : $"อัปเกรด {cur.PlanName} → {tgt.PlanName} {PublicCycle(tgt.Cycle)}",
+            PreviewKind.CycleChange when restartUpgrade => $"อัปเกรด {cur.PlanName} → {tgt.PlanName} แบบเริ่มรอบใหม่ {PublicCycle(tgt.Cycle)} (หักมูลค่าคงเหลือแพ็กเดิม)",
             PreviewKind.CycleChange => $"เปลี่ยนเป็น {tgt.PlanName} {PublicCycle(tgt.Cycle)} (หักมูลค่าคงเหลือรอบเดิม)",
             _ => $"ซื้อ {tgt.PlanName} {PublicCycle(tgt.Cycle)}",
         };
         var endUnchanged = kind == PreviewKind.Upgrade;
         var dateLine = endUnchanged
             ? $"ใช้ได้ถึง {BeDate(cur.EndUtc)} (วันหมดอายุคงเดิม) — ได้ {tgt.PlanName} ทันทีเมื่อชำระ"
+            : restartUpgrade
+                ? $"ใช้ได้ตั้งแต่วันที่ชำระ {BeDate(start)} ถึง {BeDate(end)} (เดิมถึง {BeDate(cur.EndUtc)}) — ได้ {tgt.PlanName} ทันทีเมื่อชำระ"
             : curOpen || cur.IsTrial || cur.IsPermanentFree || curExpired
                 ? $"ใช้ได้ตั้งแต่วันที่ชำระ {BeDate(start)} ถึง {BeDate(end)}"
                 : $"ใช้ได้ถึง {BeDate(cur.EndUtc)} → {BeDate(end)}";
@@ -165,6 +171,8 @@ public static class PlanPurchasePreview
             notes.Add("แพ็กเกจเดิมไม่มีวันหมดอายุ — รอบที่จ่ายนับจากวันที่ชำระ");
         else if (kind == PreviewKind.UpgradeRestart && daysLeft > 0)
             notes.Add($"เริ่มรอบใหม่จากวันที่ชำระ — วันที่เหลือของ {cur.PlanName} {daysLeft} วันไม่ถูกนำมาหัก (ส่วนต่างคิดตามวันที่เหลือใช้ไม่ได้กับรายการนี้)");
+        else if (restartUpgrade)
+            notes.Add($"เริ่มรอบใหม่ {cycleMonths} เดือนจากวันที่ชำระ — วันที่เหลือของ {cur.PlanName} {daysLeft} วันถูกคิดเป็นเครดิตหักจากยอดแล้ว (วันหมดอายุเดิมไม่ใช้)");
         else if (kind == PreviewKind.CycleChange)
             notes.Add("รอบใหม่เริ่มวันที่ชำระ — วันหมดอายุเดิมไม่ใช้แล้ว (มูลค่าคงเหลือถูกหักจากยอดแล้ว)");
 
@@ -184,7 +192,9 @@ public static class PlanPurchasePreview
             listPrice = m.NewCyclePrice is decimal np ? R2(np) : R2(m.ListPrice + cc);
             credit = R2(Math.Min(cc, listPrice));
             if (cc > listPrice) notes.Add($"มูลค่าคงเหลือรอบเดิม ฿{R2(cc):N2} มากกว่าค่ารอบใหม่ — ส่วนเกินไม่คืน");
-            creditFormula = m.DaysRemaining is int d2 && m.CycleDays is int c2 ? $"มูลค่าคงเหลือรอบเดิม {d2}/{c2} วัน" : "มูลค่าคงเหลือรอบเดิม";
+            creditFormula = restartUpgrade && m.DaysRemaining is int d3 && m.CycleDays is int c3
+                ? $"มูลค่าคงเหลือ {cur.PlanName} {d3}/{c3} วัน"   // รอบ 237: เครดิตของแพ็กเดิม (ยอดที่จ่ายจริง × วันที่เหลือ)
+                : m.DaysRemaining is int d2 && m.CycleDays is int c2 ? $"มูลค่าคงเหลือรอบเดิม {d2}/{c2} วัน" : "มูลค่าคงเหลือรอบเดิม";
             money.Add($"ค่า {tgt.PlanName} {PublicCycle(tgt.Cycle)} ฿{listPrice:N2}");
             money.Add($"หักเครดิต{creditFormula} −฿{credit:N2}");
         }
@@ -205,7 +215,10 @@ public static class PlanPurchasePreview
             notes.Add($"การเปลี่ยนเป็น {cur.ScheduledPlan} ที่รอมีผล{(cur.ScheduledEffectiveAtUtc is DateTime se ? " " + BeDate(se) : "")} จะถูกยกเลิก");
 
         var covered = kind == PreviewKind.CycleChange && m.AmountDue <= 0m;   // N2: RequestPlanPaymentAsync ปฏิเสธยอด 0 — บอกก่อนกด
-        return new Result(kind.ToString(), !covered, covered ? CreditCoversAllRefusal : null, covered ? "ติดต่อผู้ดูแลระบบ NextAcc" : null, null,
+        // รอบ 237 (237-3): แบบเริ่มรอบใหม่ที่เครดิตครอบยอด ⇒ ข้อความของแบบนั้น (ทางไปต่อ = แบบคงวันหมดอายุ) — ตัวเดียวกับด่านสร้างรายการ
+        var coveredReason = restartUpgrade ? PlatformProration.RestartCreditCoversAllRefusal : CreditCoversAllRefusal;
+        var coveredNext = restartUpgrade ? "เลือกแบบคงวันหมดอายุเดิม หรือติดต่อผู้ดูแลระบบ NextAcc" : "ติดต่อผู้ดูแลระบบ NextAcc";
+        return new Result(kind.ToString(), !covered, covered ? coveredReason : null, covered ? coveredNext : null, null,
             cur.Plan.ToString(), cur.PlanName, cur.Cycle.ToString(), curOpen ? null : cur.EndUtc,
             tgt.Plan.ToString(), tgt.PlanName, tgt.Cycle.ToString(),
             start, end, endUnchanged, null,

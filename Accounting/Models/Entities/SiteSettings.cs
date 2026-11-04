@@ -312,4 +312,8 @@ public class SiteSettings : BaseEntity
     /// <summary>รอบ 232 (คำตัดสิน 232-Checkout-2): เปิดหน้าซื้อแพ็กเกจสาธารณะ <c>/pricing.html</c> → <c>/checkout.html</c> (cart + checkout ที่จบในเว็บ — Omise ตรวจก่อนเปิดบัญชี) ·
     /// ค่าเริ่มต้น<b>ปิด</b> · ตัวตัดสินเดียว <c>Helpers/PublicCheckoutPolicy.Decide</c> (ผู้อ่าน: <c>Services/Platform/PublicCheckoutService</c>) · แก้ที่ <c>api/admin/public-checkout</c></summary>
     public bool PublicCheckoutEnabled { get; set; } = false;
+    /// <summary>รอบ 237 (K-1 · DECISIONS 237-1): แบบอัปเกรดกลางรอบที่เปิดให้ลูกค้า — CustomerChooses (ค่าตั้งต้น · เลือกแบบคงวันหมดอายุไว้ให้) /
+    /// KeepExpiryOnly / RestartCycleOnly · ผู้อ่าน: <c>SubscriptionService.UpgradeModeOfferAsync</c> (ใบเสนอ + ด่านสร้างรายการ) · แก้ที่ <c>api/admin/platform-upgrade-mode</c> (audit chain) ·
+    /// <b>ไม่</b>ถูกอ่านตอนอนุมัติ (รายการใช้แบบที่ประทับตอนซื้อ — 237-5) · คอลัมน์: <c>Helpers/PlatformUpgradeModeMigration</c></summary>
+    public Accounting.Models.Enums.PlatformUpgradeModeOffer PlatformUpgradeModeOffer { get; set; } = Accounting.Models.Enums.PlatformUpgradeModeOffer.CustomerChooses;
 }

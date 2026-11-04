@@ -2715,6 +2715,38 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   แถวบริษัทกลับมามีผลและซื้อได้ · ผู้ถือ License ที่หมดอายุยังต่ออายุผ่านเส้นเดิมได้ (cascade ฟื้นสถานะ)
 - เทสต์ `EffectivePlanRound236Tests` · Db `LicensePurchaseGuardRound236DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12e อัปเกรดกลางรอบ 2 แบบ เลือกได้ (รอบ 237 · K-1 · คำตัดสิน 237-1…237-7)
+
+- **ที่มา (เจ้าของ 2026-11-04 คำต่อคำ):** "ทำให้ระบบรองรับทั้ง 2 ทาง สามารถเลือกได้" — เดิมอัปเกรดกลางรอบมีกติกาเดียว (แบบ ก คงวันหมดอายุ · ข้อ 178/233-2)
+- **ตัวตัดสินเดียว `PlatformProration.UpgradeByMode(mode, ราคาเดิมจ่ายจริง, ราคาใหม่, เดือนของรอบ, วันหมดอายุ, วันนี้)`** → `UpgradeDecision` (Route · Amount · Credit · NewEndUtc):
+  **แบบ ก KeepExpiry** = `Upgrade` เดิม (ส่วนต่าง × D/C · วันหมดอายุคงเดิม — ตัวเลขเดิมทุกตัว) · **แบบ ข RestartCycle** = `CycleChange(…, sameCycleUpgrade: true)` (รอบเท่าเดิม ·
+  ราคาเต็มรอบ − เดิม × D/C · วันหมดอายุใหม่ = วันชำระ + รอบ) · ใช้ไม่ได้ (ทดลอง/ไม่มีค่าบริการ/ไม่มีวันหมดอายุ/เหลือ &lt; 1 วัน) ⇒ FullRestart เส้นสำรองเดิม ·
+  **เครดิต ≥ ราคาเต็มรอบ ⇒ Refused** (237-3: ไม่สร้างยอด 0 · ไม่ตัดเครดิตทิ้งเงียบ · ไม่คืนเงิน — ทางไปต่อ = แบบ ก / ติดต่อแอดมิน)
+- **ตัวอย่างเจ้าของ** (Starter รายปี ฿6,018 จ่าย 01/01/2569 · วันนี้ 01/04/2569 เหลือ 275/365 → Pro ฿15,198): ก ฿6,916.44 ใช้ได้ถึง 01/01/2570 ·
+  ข ฿15,198 − ฿4,534.11 = **฿10,663.89** ใช้ได้ถึง **01/04/2570** (ต่างกัน ฿3,747.45 = ค่า Pro 90 วัน)
+- **ค่าตั้ง (237-1):** `SiteSettings.PlatformUpgradeModeOffer` = CustomerChooses (ค่าตั้งต้น · เลือกแบบ ก ไว้ให้ = พฤติกรรมเดิม) / KeepExpiryOnly / RestartCycleOnly ·
+  แก้ที่ `/admin/site-settings.html` แท็บแพ็กเกจบริการ (`api/admin/platform-upgrade-mode` · audit chain `PLATFORM-UPGRADE-MODE`) · ผู้อ่านตัวเดียว `SubscriptionService.UpgradeModeOfferAsync`
+- **ทางเข้า (ทุกตัวส่ง `upgradeMode` · เซิร์ฟเวอร์ตรวจซ้ำด้วย `PlatformProration.ResolveMode` — ไม่เปิด ⇒ 400 / ใบเสนอ Blocked):** `GET …/plan-quote?upgradeMode=` (hub
+  `billing.html` · `subscription.html`) · `PUT …/plan` / `POST …/convert` (`ChangeSubscriptionRequest/ConvertTrialRequest.UpgradeMode`) · หน้าซื้อสาธารณะ
+  `GET companies/{id}/quote?upgradeMode=` + `POST orders {upgradeMode}` (`PublicCheckoutService` — รายการค้างคนละแบบไม่ resume) · ใบเสนอคืน `UpgradeMode` + `UpgradeOptions`
+  (ทุกแบบที่เปิด: ยอด · เครดิต · วันหมดอายุใหม่ พ.ศ. · เหตุ) ⇒ หน้าเว็บแสดงเทียบกัน เลือกแล้วขอใบเสนอใหม่ (server computes · page displays)
+- **สร้างรายการ:** แบบ ก = รายการส่วนต่างเดิม (`IsProration`) · แบบ ข = รายการเริ่มรอบใหม่หักเครดิต (`IsCycleChange` + `CycleChangeCredit` รอบเท่าเดิม) · ทั้งคู่ประทับ
+  `SubscriptionPayment.UpgradeMode` (คอลัมน์ใหม่ nullable · null = แถวเก่า = แบบ ก ตามธง) · **คูปองคิดบนยอดหลังหักเครดิต** (237-4 · ใบกำกับ: เครดิต + คูปอง = ส่วนลดก่อน VAT
+  ผ่าน `InvoiceDiscountGross` เดิม) · ภาษีหัก ณ ที่จ่ายฐาน = ยอดหลังคูปองของแบบที่เลือก (ตัวตัดสินเดิม `PlatformWhtSuggestion`)
+- **อนุมัติ/เงินเข้า (237-5):** `ReviewPaymentLockedAsync` ตัดสินเส้นด้วย `PlatformProration.ApprovalRouteOf(payment.UpgradeMode, IsProration, IsCycleChange)` — **ไม่อ่านค่าตั้ง**
+  (แอดมินเปลี่ยนค่าตั้งระหว่างรอเงินเข้า ⇒ รายการเดิมยังได้แบบที่ลูกค้าเลือก) · แบบ ข เดินเส้นเปลี่ยนรอบเดิม (`PaidPeriod isCycleChange` · ประวัติ `PlanUpgradeRestartApplied`) ·
+  วันเริ่มรอบจริงประทับ `SubscriptionPayment.PaidPeriodStartUtc` (ตัวเดียวกับที่คิด EndDate — ใบเสร็จ/ศูนย์บิลอ่านค่านี้) ·
+  **237-8:** คิดเครดิตใหม่ ณ วันชำระจริง (`UpgradeByMode` → ตัวนับวันคงเหลือเดียว `PlatformProration.RemainingDays`) — วันคงเหลือ ≠ `ProrationDays` ที่ประทับ ⇒
+  เงินเข้าระบบ = พักให้แอดมิน (`RestartCreditDrift` ข้อความยอดเดิม vs ยอดที่ถูก) · แอดมินอนุมัติตามยอดเดิมต้องกรอกเหตุผล (ไม่กรอก ⇒ 400 `PLATFORM-UPGRADE-RESTART-CREDIT-DRIFT` ·
+  กรอก ⇒ audit chain) หรือปฏิเสธให้ลูกค้าสร้างใหม่ · วันเดียวกัน = ผ่านปกติ · หน้าซื้อสาธารณะ: ใบเสนออัปเกรดที่แบบใช้ไม่ได้ส่งธง `upgradeBlocked` เข้า `PublicCheckoutPolicy.DecideOrder` (ไม่แต่งยอด)
+- **License (237-7):** แบบ ข ของบริษัทที่ผูก License + แพ็กที่จ่าย = แพ็กของ License (`MayCascadeToAccountPlan`) ⇒ License ขยับแบบเดียวกัน (`PaidPeriod isCycleChange` ·
+  เฉพาะเมื่อยาวกว่าเดิม) · แบบ ก ไม่ขยับทั้งบริษัทและ License
+- **เอกสาร/จอแอดมิน:** ใบกำกับ/ใบเสร็จ (`PlatformBillingDocumentIssuer.BuildServiceDescription` · โหมด PDF `SaasBillingDocumentService.BuildHtml`) · ศูนย์บิล · หน้าตรวจสลิป
+  = `PlatformProration.RestartUpgradeDescription` ("ค่าอัปเกรดแพ็กเกจ … แบบเริ่มรอบใหม่ 12 เดือน (วันชำระ–วันหมดอายุ) · หักมูลค่าคงเหลือ…") · `SubscriptionPaymentResponse.UpgradeMode/UpgradeModeLabel`
+  (`/admin/payments.html`) · preview ก่อนอนุมัติส่ง `UpgradeMode` · "บันทึกรับเงินเอง" แสดงบรรทัดเทียบ 2 แบบ (`ModeSummaryLine`) — ยอด/เดือนยังเป็นของแอดมิน
+- **ไม่เปลี่ยน:** ดาวน์เกรด/รอบสั้นลง (Scheduled*) · ต่ออายุแพ็กเดิมรอบเดิม · รอบยาวขึ้น (CycleChange เดิม — เริ่มรอบใหม่อยู่แล้ว · UpgradeMode null)
+- เทสต์ `UpgradeModeRound237Tests` · Db `UpgradeModeRound237DbTests` · ล็อก `tools/required_call_site_check.py` R237 — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)
@@ -7414,3 +7446,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำ�
 _Last verified against codebase: 2026-11-04 (รอบ 234 ทีมหัก ณ ที่จ่ายอัตโนมัติ — §2.12b `PlatformWhtSuggestion`/`PlatformPayerProfileGate`/`PlatformWhtCertificateStatus` · ทุกเส้นชำระ NextAcc เก็บยอดสุทธิ + ภาษีหัก · ด่านข้อมูลบริษัท · 50 ทวิ จากลูกค้าผูกทะเบียนภาษีถูกหัก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-04 (รอบ 235 ทีมปิดงานค้างนอกเส้นบิล + ฝ่ายค้าน 235-X — (1) K-5 ศักราช: ตัวตัดสินกลาง `ThaiDate.TryNormalizeEra`/`NormalizeEra`/`IsOutOfEra` แทน `AddYears(±543)` 18+2 จุด · แปลงแล้วยังนอกช่วง/29 ก.พ. ไม่มีจริง = 400 (integration) / อ่านไม่ได้ (statement) · งานซ่อม `reports/repair-dates` (JournalManage) ครอบสองทิศ + ข้ามงวดปิด/ออกเลขแล้ว/แบบภาษียื่นแล้ว (`Helpers/BuddhistDateRepairPolicy`) · ปุ่มบนบัญชีแยกประเภทจาก `eraRepair` ของเซิร์ฟเวอร์ (2) อัตราจำกัดเส้นสมัคร/รีเซ็ตรหัสผ่าน/สมัครประตูลูกค้า: ต่อ IP (IPv6 /64) fail-closed · ทั้งระบบ = เตือนแอดมิน · ตารางนับใช้ไม่ได้ = 503 (`Helpers/AuthRateLimitPolicy` · `IChatRateLimiter.ConsumeAsync`) (3) รายงานเงินทดสอบที่ลงบัญชีไปแล้ว + หลักฐาน — เทสต์ `BuddhistEraNormalizeRound235Tests` · `BuddhistDateRepairPolicyRound235Tests` · `AuthRateLimitRound235Tests` · `TestModeLegacyEffectPolicyRound235Tests` · Db `BuddhistDateRepairDbTests` · `AuthRateLimitSharedDbTests` · `TestModeLegacyEffectsDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-04 (รอบ 236 — §2.12d บริษัทใต้ License: แพ็กเกจที่มีผลตัวเดียว `PlanIdentityResolver` (+ `LicenseActive`/`CompanyPurchase`/`Label`) ผ่าน `PlanIdentityReader` · ด่านซื้อแพ็กเกจระดับบริษัททุกทางเข้า (409 `PLATFORM-LICENSE-COVERED`) · ใบเสนอ/preview `RefusedByLicense` · ไม่เตือน/ไม่ออกใบต่ออายุแถวบริษัทที่ License คุม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-04 (รอบ 237 — §2.12e อัปเกรดกลางรอบ 2 แบบเลือกได้ (K-1): ตัวตัดสินเดียว `PlatformProration.UpgradeByMode` (คงวันหมดอายุ / เริ่มรอบใหม่หักเครดิต · เครดิตครอบยอด = ปฏิเสธ) · ค่าตั้ง `SiteSettings.PlatformUpgradeModeOffer` · แบบที่เลือกประทับ `SubscriptionPayment.UpgradeMode` · อนุมัติ `ApprovalRouteOf` ไม่อ่านค่าตั้ง · License ขยับตามแบบ ข — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

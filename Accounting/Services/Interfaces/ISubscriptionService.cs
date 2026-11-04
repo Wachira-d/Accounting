@@ -34,7 +34,9 @@ public interface ISubscriptionService
     Task<PlanPurchaseResponse> ChangeSubscriptionAsync(Guid companyId, ChangeSubscriptionRequest request, string performedBy);
     /// <summary>รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): ดูราคา/วันมีผลของการเปลี่ยนแพ็กเกจก่อนยืนยัน (ส่วนต่างตามวันที่เหลือ · คูปอง) — ไม่สร้าง/ไม่จองอะไร</summary>
     /// <param name="actorUserId">รอบ 236 B1: ผู้ดูใบเสนอ — ผู้ถือ License + แพ็กระดับ License ⇒ ใบเสนอ "ต่ออายุ License" · null = ไม่ใช่ผู้ถือ</param>
-    Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycle, string? couponCode, Guid? actorUserId = null);
+    /// <param name="upgradeMode">รอบ 237 (K-1): แบบอัปเกรดกลางรอบที่ลูกค้าเลือกดู · null = แบบที่ค่าตั้งเลือกไว้ให้ · ไม่เปิด ⇒ ใบเสนอ Blocked</param>
+    Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycle, string? couponCode, Guid? actorUserId = null,
+        PlatformUpgradeMode? upgradeMode = null);
     /// <summary>รอบ 230 (ข้อ 178 ①): แอดมินแก้ยอดรายการชำระค่าแพ็กเกจที่ยังไม่จ่าย — เหตุผลบังคับ · audit chain · ห้ามเมื่อมีการชำระออนไลน์ค้าง</summary>
     Task<SubscriptionPaymentResponse> OverridePaymentAmountAsync(Guid paymentId, decimal amount, string reason, string performedBy);
     /// <summary>รอบ 219 ส่วน B (คำตัดสินข้อ 179): แพ็กเกจที่ชำระแล้วและยังไม่สิ้นรอบ ⇒ ยกเลิกมีผลสิ้นรอบ (<c>SubscriptionCancelPolicy</c>) · คืนข้อความถึงผู้ใช้</summary>

@@ -128,10 +128,12 @@ public static class PublicCheckoutPolicy
     /// <param name="changeQuoteAmount">ยอดจาก <c>QuotePlanChangeAsync</c> (อ่านอย่างเดียว · ตัวตัดสินเดียวกับตอนยืนยัน) — ≤ 0 บนเส้นเปลี่ยน = จะถูกตั้งเวลา ไม่ใช่จ่าย ⇒ ปฏิเสธ</param>
     /// <param name="renewalInvoiceIssued">ใบแจ้งหนี้ต่ออายุรอบนี้ออกแล้ว (<c>RenewalInvoiceForEndDate == EndDate</c>) ⇒ ต่ออายุซ้ำไม่ได้</param>
     /// <remarks>รอบ 235: ถอดพารามิเตอร์ <c>hasCoupon</c> — ต่ออายุพร้อมคูปองไม่ถูกปฏิเสธที่นี่แล้ว (เส้น <c>RequestRenewalPaymentAsync</c> จองคูปองใต้ล็อก)</remarks>
+    /// <param name="upgradeBlocked">รอบ 237 (ฝ่ายค้าน S4): ใบเสนอ<b>อัปเกรด</b>ที่ "แบบที่เลือก" ใช้ไม่ได้ (ค่าตั้งไม่เปิด / เครดิตครอบยอด — ยอด 0 แต่ไม่ใช่การตั้งเวลา) ⇒
+    /// ไม่ตีเป็น NoPaymentChange (ข้อความผิด + ตัวเลือกแบบอื่นหาย) · ยังเป็นคำสั่งซื้อเปลี่ยนแพ็ก — ใบเสนอบอกเหตุเอง และด่านแบบที่ <c>ChangeSubscriptionAsync</c> ปฏิเสธตอนสร้างรายการ</param>
     public static OrderDecision DecideOrder(SubscriptionStatus status, bool isPermanentFree,
         SubscriptionPlan currentPlan, BillingCycle currentCycle, decimal currentMonthlyPrice,
         SubscriptionPlan targetPlan, BillingCycle targetCycle, decimal targetMonthlyPrice,
-        decimal changeQuoteAmount, bool renewalInvoiceIssued)
+        decimal changeQuoteAmount, bool renewalInvoiceIssued, bool upgradeBlocked = false)
     {
         // ทดลองใช้/หมดอายุ/ค้างชำระ/ฟรีถาวร ⇒ ซื้อเต็มรอบ (ConvertTrialAsync ไม่เข้าเส้น ChangeSubscriptionAsync — เงื่อนไขเดียวกับในนั้น)
         if (status != SubscriptionStatus.Active || isPermanentFree) return new OrderDecision(OrderKind.NewPurchase, null);
@@ -148,7 +150,8 @@ public static class PublicCheckoutPolicy
         }
         if (kind != PlatformPlanPricing.ChangeKind.Upgrade && months < currentMonths) return new OrderDecision(OrderKind.Refused, ShorterCycleRefusal);
         // อัปเกรด / รอบยาวขึ้น — ต้องมียอดให้จ่ายจริง (ไม่งั้น ChangeSubscriptionAsync จะตั้งเวลาเปลี่ยน = side-effect ที่หน้านี้ไม่ได้ขอ)
-        if (changeQuoteAmount <= 0m) return new OrderDecision(OrderKind.Refused, NoPaymentChangeRefusal);
+        if (changeQuoteAmount <= 0m && !(upgradeBlocked && kind == PlatformPlanPricing.ChangeKind.Upgrade))
+            return new OrderDecision(OrderKind.Refused, NoPaymentChangeRefusal);
         return new OrderDecision(OrderKind.Change, null);
     }
 

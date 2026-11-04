@@ -379,7 +379,8 @@ public class SubscriptionService : ISubscriptionService
 
         if (sub.Status == SubscriptionStatus.Active && !sub.IsPermanentFree)
             return await ChangeSubscriptionAsync(companyId,
-                new ChangeSubscriptionRequest(request.Plan, request.BillingCycle, CouponCode: request.PromoCode, WithholdTax: request.WithholdTax), performedBy);
+                new ChangeSubscriptionRequest(request.Plan, request.BillingCycle, CouponCode: request.PromoCode, WithholdTax: request.WithholdTax,
+                    UpgradeMode: request.UpgradeMode), performedBy);   // รอบ 237: แบบอัปเกรดที่ลูกค้าเลือกไหลต่อ (ตรวจกับค่าตั้งที่ ChangeSubscriptionAsync)
 
         var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == request.Plan && p.IsActive)
             ?? throw new KeyNotFoundException($"ไม่พบ plan template สำหรับ {request.Plan}");
@@ -428,7 +429,7 @@ public class SubscriptionService : ISubscriptionService
     private async Task<SubscriptionPaymentResponse> RequestPlanPaymentAsync(Subscription sub, PlanTemplate template,
         BillingCycle cycle, decimal? discountPercent, string performedBy, string historyAction, string note,
         PlatformProration.Result? proration = null, string? couponCode = null, PlatformProration.CycleChangeResult? cycleChange = null,
-        bool? withholdTax = null)
+        bool? withholdTax = null, PlatformUpgradeMode? upgradeMode = null)
     {
         // รอบ 236 (คำตัดสิน 236-2): ด่านเงิน — บริษัทที่ License คุมอยู่ซื้อ/ต่ออายุ/อัปเกรดแพ็กเกจระดับบริษัทไม่ได้ (จ่ายแล้วไม่มีผล) · ทางเดียวของ
         // ConvertTrialAsync/RequestRenewalPaymentAsync/ChangeSubscriptionAsync ⇒ เรียกก่อนคิดยอด/เขียนอะไร
@@ -445,7 +446,8 @@ public class SubscriptionService : ISubscriptionService
             : PlatformPlanPricing.AmountDue(effective.Price, discountPercent);
         if (listAmount <= 0m)
             throw new BusinessRuleException(cycleChanged
-                ? "มูลค่าคงเหลือของรอบเดิมครอบคลุมค่ารอบใหม่ทั้งหมด — ติดต่อผู้ดูแลระบบ NextAcc ให้บันทึกเปลี่ยนรอบแบบยกเว้นค่าบริการ (ยอด 0)"
+                ? (upgradeMode == PlatformUpgradeMode.RestartCycle ? PlatformProration.RestartCreditCoversAllRefusal   // รอบ 237 (237-3)
+                    : "มูลค่าคงเหลือของรอบเดิมครอบคลุมค่ารอบใหม่ทั้งหมด — ติดต่อผู้ดูแลระบบ NextAcc ให้บันทึกเปลี่ยนรอบแบบยกเว้นค่าบริการ (ยอด 0)")
                 : "แพ็กเกจนี้ไม่มีค่าบริการตามตารางราคา — ติดต่อผู้ดูแลระบบ NextAcc เพื่อเปลี่ยนแพ็กเกจ");
         var code = PlatformCouponRule.Normalize(couponCode);
 
@@ -453,6 +455,8 @@ public class SubscriptionService : ISubscriptionService
         var existing = await _db.SubscriptionPayments
             .FirstOrDefaultAsync(p => p.SubscriptionId == sub.Id && p.Status == SubscriptionPaymentStatus.Pending
                 && p.RequestedPlan == template.Plan && p.RequestedBillingCycle == cycle && p.IsProration == prorated && p.IsCycleChange == cycleChanged
+                // รอบ 237: แบบอัปเกรดต่างกัน = คนละคำขอ (ยอด/วันหมดอายุคนละชุด) · ฝ่ายค้าน N4: แถวก่อนรอบ 237 (null) ของเส้นอัปเกรด = แบบ ก ⇒ ใช้ซ้ำได้
+                && (upgradeMode == null ? p.UpgradeMode == null : (p.UpgradeMode ?? PlatformUpgradeMode.KeepExpiry) == upgradeMode)
                 && p.CouponCode == code && (p.ListAmount ?? (p.Amount + p.WithholdingTaxAmount)) == listAmount && p.PlatformInvoiceDocumentId == null);
         if (existing != null)
         {
@@ -552,6 +556,8 @@ public class SubscriptionService : ISubscriptionService
                 payment.ProrationCycleDays = cycleChange.CycleDays;
                 payment.ProrationCycleEndUtc = cycleChange.CycleEndUtc;
             }
+            // รอบ 237 (K-1 · 237-5): แบบอัปเกรดที่ลูกค้าเลือก ประทับบนรายการ — ตอนอนุมัติใช้ค่านี้ (PlatformProration.ApprovalRouteOf) ไม่ใช่ค่าตั้งปัจจุบัน
+            payment.UpgradeMode = upgradeMode;
             _db.SubscriptionPayments.Add(payment);
             _db.SubscriptionHistories.Add(new SubscriptionHistory
             {
@@ -561,7 +567,8 @@ public class SubscriptionService : ISubscriptionService
                 ToPlan = template.Plan,
                 Notes = $"{note}: {payment.PaymentNumber} {template.Plan} ({cycle}) {amount:N2} THB"
                         + (prorated ? $" · ส่วนต่าง {proration!.DaysRemaining}/{proration.CycleDays} วัน (วันหมดอายุเดิม)" : "")
-                        + (cycleChanged ? $" · เปลี่ยนรอบบิล หักมูลค่าคงเหลือ {cycleChange!.Credit:N2} ({cycleChange.DaysRemaining}/{cycleChange.CycleDays} วัน) รอบใหม่เริ่มวันที่ชำระ" : "")
+                        + (cycleChanged ? (upgradeMode == PlatformUpgradeMode.RestartCycle ? " · อัปเกรดแบบเริ่มรอบใหม่" : " · เปลี่ยนรอบบิล")
+                            + $" หักมูลค่าคงเหลือ {cycleChange!.Credit:N2} ({cycleChange.DaysRemaining}/{cycleChange.CycleDays} วัน) รอบใหม่เริ่มวันที่ชำระ" : "")
                         + (effective.Applied ? $" · ราคาพิเศษ (ราคาตั้ง {effective.ListPrice:N2}/รอบ → {effective.Price:N2})" : "")
                         + (payment.CouponCode != null ? $" · คูปอง {payment.CouponCode} ลด {payment.CouponDiscountAmount:N2}" : "")
                         + (whtD.Withhold ? $" · หักภาษี ณ ที่จ่าย {whtD.WithholdingAmount:N2} ชำระสุทธิ {whtD.NetAmount:N2} (รอ 50 ทวิ)" : "")
@@ -1110,22 +1117,40 @@ public class SubscriptionService : ISubscriptionService
         }
         if (kind == PlatformPlanPricing.ChangeKind.Upgrade)
         {
-            // รอบ 230 (คำตัดสินข้อ 230-Q1 · §7.1): อัปเกรดกลางรอบ = จ่ายส่วนต่างของวันที่เหลือ · วันหมดอายุคงเดิม (แทน "เริ่มรอบใหม่ — ส่วนที่เหลือสละ")
-            var pr = await ProrationForAsync(sub, current, template, DateTime.UtcNow);
-            if (pr.Applies)
+            // รอบ 237 (K-1 · 237-1/237-6): แบบอัปเกรดที่ลูกค้าเลือก — เซิร์ฟเวอร์ตรวจซ้ำกับค่าตั้ง (แบบที่ไม่เปิด ⇒ 400 · ไม่สร้างรายการ)
+            var (upMode, modeRefusal) = PlatformProration.ResolveMode(await UpgradeModeOfferAsync(), request.UpgradeMode);
+            if (modeRefusal != null) throw new BusinessRuleException(modeRefusal, PlatformProration.UpgradeModeRuleCode);
+            // รอบ 230 (คำตัดสินข้อ 230-Q1 · §7.1): แบบ ก อัปเกรดกลางรอบ = จ่ายส่วนต่างของวันที่เหลือ · วันหมดอายุคงเดิม ·
+            // รอบ 237 แบบ ข = ราคาเต็มรอบ − มูลค่าคงเหลือ · เริ่มรอบใหม่วันชำระ — ตัวตัดสินเดียว PlatformProration.UpgradeByMode
+            var up = await UpgradeDecisionForAsync(sub, current, template, DateTime.UtcNow, upMode!.Value);
+            if (up.Route == PlatformProration.UpgradeRoute.Refused)
+                throw new BusinessRuleException(up.RefusalReason!, PlatformProration.UpgradeModeRuleCode);
+            if (up.Route == PlatformProration.UpgradeRoute.KeepExpiryProration)
             {
+                var pr = up.Proration;
                 var prorated = await RequestPlanPaymentAsync(sub, template, sub.BillingCycle, null, performedBy,
-                    "PlanUpgradeProrated", $"ขออัปเกรดจาก {sub.Plan} (ส่วนต่างตามวันที่เหลือ)", pr, request.CouponCode, withholdTax: request.WithholdTax);
+                    "PlanUpgradeProrated", $"ขออัปเกรดจาก {sub.Plan} (ส่วนต่างตามวันที่เหลือ)", pr, request.CouponCode, withholdTax: request.WithholdTax, upgradeMode: up.Mode);
                 return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), prorated,
                     $"สร้างรายการชำระส่วนต่าง {prorated.PaymentNumber} ยอด {prorated.Amount:N2} บาทแล้ว ({pr.Note}) — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงิน "
                     + $"· ใช้ได้ถึงวันเดิม {sub.EndDate.AddHours(7):dd/MM/yyyy} · รอบถัดไปคิดราคา {template.Name}"
                     + (cycle != sub.BillingCycle ? " · รอบบิลสั้นลงคงเดิม — เปลี่ยนรอบบิลสั้นลงได้หลังอัปเกรด (มีผลวันครบรอบ)" : ""));
             }
+            if (up.Route == PlatformProration.UpgradeRoute.RestartWithCredit)
+            {
+                // รอบ 237 แบบ ข: เส้นรายการ "เริ่มรอบใหม่หักเครดิต" ตัวเดียวกับเปลี่ยนรอบบิล (IsCycleChange · รอบเท่าเดิม) + ประทับแบบที่เลือก
+                var restarted = await RequestPlanPaymentAsync(sub, template, sub.BillingCycle, null, performedBy,
+                    "PlanUpgradeRestartRequested", $"ขออัปเกรดจาก {sub.Plan} แบบเริ่มรอบใหม่ (หักมูลค่าคงเหลือ)",
+                    couponCode: request.CouponCode, cycleChange: up.Restart, withholdTax: request.WithholdTax, upgradeMode: up.Mode);
+                return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), restarted,
+                    $"สร้างรายการชำระ {restarted.PaymentNumber} ยอด {restarted.Amount:N2} บาทแล้ว ({up.Note}) — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงิน "
+                    + "· รอบใหม่เริ่มวันที่ชำระ (วันหมดอายุเดิมไม่ใช้แล้ว)"
+                    + (cycle != sub.BillingCycle ? " · รอบบิลคงเดิม — เปลี่ยนรอบบิลสั้นลงได้หลังอัปเกรด (มีผลวันครบรอบ)" : ""));
+            }
             var payment = await RequestPlanPaymentAsync(sub, template, cycle, null, performedBy,
-                "PlanUpgradeRequested", $"ขออัปเกรดจาก {sub.Plan}", couponCode: request.CouponCode, withholdTax: request.WithholdTax);
+                "PlanUpgradeRequested", $"ขออัปเกรดจาก {sub.Plan}", couponCode: request.CouponCode, withholdTax: request.WithholdTax, upgradeMode: up.Mode);
             return new PlanPurchaseResponse(await GetSubscriptionAsync(companyId), payment,
                 $"สร้างรายการชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาทแล้ว — อัปเกรดเป็น {template.Name} มีผลทันทีเมื่อชำระเงินและผู้ดูแลระบบยืนยัน "
-                + $"(เริ่มรอบใหม่จากวันที่ชำระ · {pr.NotApplicableReason})");
+                + $"(เริ่มรอบใหม่จากวันที่ชำระ · {up.Note})");
         }
 
         if (template.Plan == sub.Plan && cycle == sub.BillingCycle)
@@ -1171,15 +1196,24 @@ public class SubscriptionService : ISubscriptionService
     /// ไม่มีแม่แบบของแพ็กเกจเดิม ⇒ ราคาต่อรอบที่บันทึกบน subscription</summary>
     /// <para>รอบ 231 (231-8): ราคา<b>ทั้งสองฝั่ง</b>ผ่านตัวตัดสินราคาพิเศษ — ฝั่งเดิม = ราคาที่บริษัทจ่ายจริง (override ของแพ็กเกจเดิมถ้ามี · ไม่งั้นแม่แบบ ·
     /// ไม่มีแม่แบบ = <c>PricePerCycle</c> ที่บันทึก) · ฝั่งใหม่ = ราคาพิเศษของแพ็กเกจใหม่ — ใช้ราคาตั้งฝั่งเดิมจะคิดส่วนต่างมาก/น้อยเกิน (§C.2)</para>
-    private async Task<PlatformProration.Result> ProrationForAsync(Subscription sub, PlanTemplate? current, PlanTemplate target, DateTime nowUtc)
+    /// <para>รอบ 237 (K-1 · 237-2): คืนผลของ<b>ตัวตัดสินเดียวทั้ง 2 แบบ</b> (<see cref="PlatformProration.UpgradeByMode"/>) — แบบ ก ได้ส่วนต่างเดิมทุกตัวเลข ·
+    /// แบบ ข ได้ราคาเต็มรอบปัจจุบัน − มูลค่าคงเหลือ (รอบเท่าเดิม · เริ่มวันชำระ) · ใบเสนอ/สร้างรายการเรียกตัวนี้ตัวเดียว</para>
+    private async Task<PlatformProration.UpgradeDecision> UpgradeDecisionForAsync(Subscription sub, PlanTemplate? current, PlanTemplate target, DateTime nowUtc,
+        PlatformUpgradeMode mode)
     {
         var oldPrice = await OldCyclePriceBasisAsync(sub, current, sub.BillingCycle, nowUtc);
         var newPrice = (await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, target, sub.BillingCycle, nowUtc,
             forRenewal: PlatformPlanPricing.IsRenewalPurchase(sub.Plan, target.Plan))).Price;
-        return PlatformProration.Upgrade(oldPrice, newPrice,
+        return PlatformProration.UpgradeByMode(mode, oldPrice, newPrice,
             PlatformPlanPricing.MonthsOf(sub.BillingCycle), sub.EndDate, nowUtc,
             planActive: sub.Status == SubscriptionStatus.Active, isTrial: sub.Status == SubscriptionStatus.Trial, isPermanentFree: sub.IsPermanentFree);
     }
+
+    /// <summary>รอบ 237 (K-1 · 237-1): ค่าตั้งแพลตฟอร์ม "เปิดแบบอัปเกรดไหน" — ผู้อ่านตัวเดียว (ใบเสนอ + ด่านสร้างรายการ) · ไม่มีแถวค่าตั้ง = CustomerChooses ·
+    /// <b>ตอนอนุมัติไม่อ่าน</b> (ใช้ <c>SubscriptionPayment.UpgradeMode</c> ที่ประทับตอนซื้อ — 237-5)</summary>
+    private async Task<PlatformUpgradeModeOffer> UpgradeModeOfferAsync()
+        => await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => (PlatformUpgradeModeOffer?)s.PlatformUpgradeModeOffer).FirstOrDefaultAsync()
+           ?? PlatformUpgradeModeOffer.CustomerChooses;
 
     /// <summary>รอบ 231 (231-9): เปลี่ยนรอบบิลกลางรอบ (ตัวเดียวของ "ขอเปลี่ยน" และ "ดูราคา") — ราคาเดิมต่อรอบเดิม / ราคาใหม่ต่อรอบใหม่ ผ่านราคาพิเศษทั้งสองฝั่ง</summary>
     private async Task<PlatformProration.CycleChangeResult> CycleChangeForAsync(Subscription sub, PlanTemplate? current, PlanTemplate target,
@@ -1195,13 +1229,13 @@ public class SubscriptionService : ISubscriptionService
     /// <summary>รอบ 230 (D-8 · คำตัดสินข้อ 230-Q1/230-Q2): ดูราคาก่อนยืนยัน — ใช้ตัวตัดสินเดียวกับ <see cref="ConvertTrialAsync"/>/<see cref="ChangeSubscriptionAsync"/>
     /// (จำแนกทิศ · ส่วนต่าง · ราคาเต็ม · คูปอง) · ไม่สร้าง/ไม่จองอะไร</summary>
     public async Task<PlanChangeQuote> QuotePlanChangeAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested, string? couponCode,
-        Guid? actorUserId = null)
+        Guid? actorUserId = null, PlatformUpgradeMode? upgradeMode = null)
     {
         // รอบ 236 (236-2): License คุมอยู่ ⇒ ใบเสนอ "ชำระไม่ได้" (ยอด 0 · ไม่มีปุ่มยืนยัน) — ตัวตัดสินเดียวกับด่านตอนสร้างรายการ ·
         // B1: ผู้ถือ License + แพ็กระดับ License ⇒ ใบเสนอปกติ แต่ preview = "ต่ออายุ License" (วันหมดอายุใหม่ของ License)
         var (licenseRefused, licenseRenewal) = await LicenseQuoteAsync(companyId, plan, cycleRequested, actorUserId);
         if (licenseRefused != null) return licenseRefused;
-        var q = await QuotePlanChangeCoreAsync(companyId, plan, cycleRequested, couponCode);
+        var q = await QuotePlanChangeCoreAsync(companyId, plan, cycleRequested, couponCode, upgradeMode);
         // รอบ 234 (คำตัดสิน 234-1): ภาษีหัก ณ ที่จ่ายที่ระบบเสนอสำหรับยอดนี้ (แสดงช่องติ๊ก + "หัก X% (฿…) — ชำระ ฿…") — ตัวตัดสินเดียวกับตอนสร้างรายการ
         var payer = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, companyId);
         var wht = q.AmountDue > 0m
@@ -1213,7 +1247,26 @@ public class SubscriptionService : ISubscriptionService
                 new PlanPurchasePreview.Money(q.ListAmount, q.Discount, q.AmountDue, CouponLabel: q.CouponLabel), DateTime.UtcNow,
                 await Accounting.Services.Platform.PlatformWithholdingReader.PlatformIssuesTaxInvoiceAsync(_db))
             : await PlanPreviewForQuoteAsync(companyId, plan, q, DateTime.UtcNow);
-        return q with { Preview = preview, Withholding = wht, PayerProfile = payer,
+        // รอบ 237 (K-1 · 237-6): อัปเกรดกลางรอบ ⇒ ตัวเลือกทุกแบบที่ค่าตั้งเปิด พร้อมยอด/เครดิต/วันหมดอายุใหม่ของแต่ละแบบ (ตัวตัดสินเดียวกับตอนสร้างรายการ ·
+        // preview ตัวเดียวกัน) — แบบที่เลือกอยู่ = ใบเสนอนี้ · ผู้ถือต่ออายุ License ไม่แสดงตัวเลือก (preview เป็นของ License)
+        // แบบที่ขอใช้ไม่ได้ (ไม่เปิด) ⇒ preview ต้องบอก "ชำระไม่ได้" ด้วย (ไม่ปล่อยให้กล่องสรุปดูเหมือนจ่ายได้) — เหตุเดียวกับด่านสร้างรายการ
+        if (q.Blocked != null && q.UpgradeMode != null && preview.Allowed)
+            preview = preview with { Allowed = false, RefusalReason = q.Blocked, Notes = preview.Notes.Append(q.Blocked).ToList(), Lines = preview.Lines.Append(q.Blocked).ToList() };
+        IReadOnlyList<UpgradeModeOption>? options = null;
+        if (q.UpgradeMode != null && licenseRenewal == null
+            && Enum.TryParse<PlatformUpgradeModeOffer>(q.UpgradeModeOffer, out var offer) && Enum.TryParse<PlatformUpgradeMode>(q.UpgradeMode, out var chosen))
+        {
+            var list = new List<UpgradeModeOption>();
+            foreach (var m in PlatformProration.OfferedModes(offer))
+            {
+                var qm = m == chosen ? q : await QuotePlanChangeCoreAsync(companyId, plan, cycleRequested, couponCode, m);
+                var pv = m == chosen ? preview : await PlanPreviewForQuoteAsync(companyId, plan, qm, DateTime.UtcNow);
+                list.Add(new UpgradeModeOption(m.ToString(), PlatformProration.ModeLabel(m), m == chosen, pv.Allowed && qm.Blocked == null,
+                    qm.Blocked ?? pv.RefusalReason, qm.AmountDue, pv.Credit, pv.NewEndUtc, pv.Headline, pv.DateLine, pv.Lines));
+            }
+            options = list;
+        }
+        return q with { Preview = preview, Withholding = wht, PayerProfile = payer, UpgradeOptions = options,
             Message = licenseRenewal != null ? Accounting.Helpers.PlanIdentityResolver.LicenseRenewalHeadline : q.Message };
     }
 
@@ -1270,12 +1323,15 @@ public class SubscriptionService : ISubscriptionService
             .Select(s => new { s.PlatformIsVatRegistered, s.PlatformSellerTaxId }).FirstOrDefaultAsync();
         var vat = vs != null && PlanPurchasePreview.IssuesTaxInvoice(vs.PlatformIsVatRegistered, vs.PlatformSellerTaxId);
         return PlanPurchasePreview.ForPurchase(cur, tgt, new PlanPurchasePreview.Money(q.ListAmount, q.Discount, q.AmountDue,
-            Prorated: q.Prorated, CycleChange: q.Kind == "CycleChange" && q.CycleChangeCredit != null, OldPriceBasis: q.OldPriceBasis,
+            Prorated: q.Prorated, CycleChange: (q.Kind == "CycleChange" || q.UpgradeMode == nameof(PlatformUpgradeMode.RestartCycle)) && q.CycleChangeCredit != null,
+            OldPriceBasis: q.OldPriceBasis,
             DaysRemaining: q.DaysRemaining, CycleDays: q.CycleDays, CycleChangeCredit: q.CycleChangeCredit,
-            CouponLabel: q.CouponLabel, CouponProblem: q.CouponProblem, SpecialPriceNote: q.SpecialPriceNote, NewCyclePrice: q.NewCyclePrice), nowUtc, vat);
+            CouponLabel: q.CouponLabel, CouponProblem: q.CouponProblem, SpecialPriceNote: q.SpecialPriceNote, NewCyclePrice: q.NewCyclePrice,
+            UpgradeMode: Enum.TryParse<PlatformUpgradeMode>(q.UpgradeMode, out var um) ? (PlatformUpgradeMode?)um : null), nowUtc, vat);   // รอบ 237: หัวข้อ/เหตุผลตามแบบที่เลือก
     }
 
-    private async Task<PlanChangeQuote> QuotePlanChangeCoreAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested, string? couponCode)
+    private async Task<PlanChangeQuote> QuotePlanChangeCoreAsync(Guid companyId, SubscriptionPlan plan, BillingCycle? cycleRequested, string? couponCode,
+        PlatformUpgradeMode? upgradeMode = null)
     {
         var sub = await _db.Subscriptions.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบ subscription");
@@ -1299,7 +1355,7 @@ public class SubscriptionService : ISubscriptionService
             // รอบ 235 (K-2): ต่ออายุ/ซื้อใหม่ของคูปอง — ตัวตัดสินเดียวกับตอนจอง (RequestPlanPaymentAsync)
             var ev = await PlatformCouponStore.PreviewAsync(_db, companyId, couponCode, PlatformCouponScope.Subscription,
                 plan.ToString(), c.ToString(), null, list, now,
-                isRenewal: PlatformCouponRule.IsRenewalTarget(sub.Status, sub.IsPermanentFree, sub.Plan, sub.BillingCycle, plan, c, prorated, kind == "CycleChange"),
+                isRenewal: PlatformCouponRule.IsRenewalTarget(sub.Status, sub.IsPermanentFree, sub.Plan, sub.BillingCycle, plan, c, prorated, kind == "CycleChange" || credit != null),
                 renewalSpecialPrice: standard is decimal st && st > list);   // S-2: ราคาพิเศษ (ราคาตั้ง > ยอดที่คิด) — ผลเฉพาะเมื่อเป็นต่ออายุ
             var ok = ev is { Ok: true };
             return new PlanChangeQuote(kind, prorated, plan.ToString(), c.ToString(), list, ok ? ev!.Discount : 0m, ok ? ev!.AmountAfter : list,
@@ -1342,18 +1398,40 @@ public class SubscriptionService : ISubscriptionService
         }
         if (kind == PlatformPlanPricing.ChangeKind.Upgrade)
         {
-            var pr = await ProrationForAsync(sub, current, template, now);
-            if (pr.Applies)
+            // รอบ 237 (K-1 · 237-1/237-6): แบบอัปเกรดตามค่าตั้ง + คำขอ — ตัวตัดสินเดียวกับด่านสร้างรายการ (ChangeSubscriptionAsync) · ไม่เปิด ⇒ ใบเสนอ "ชำระไม่ได้"
+            var offer = await UpgradeModeOfferAsync();
+            var (upMode, modeRefusal) = PlatformProration.ResolveMode(offer, upgradeMode);
+            if (modeRefusal != null)
+                return new PlanChangeQuote("Upgrade", false, plan.ToString(), sub.BillingCycle.ToString(), 0m, 0m, 0m, null, null, sub.EndDate, null, modeRefusal,
+                    Blocked: modeRefusal, UpgradeMode: upgradeMode?.ToString(), UpgradeModeOffer: offer.ToString());
+            var up = await UpgradeDecisionForAsync(sub, current, template, now, upMode!.Value);
+            var modeTag = new { Mode = up.Mode.ToString(), Offer = offer.ToString() };
+            if (up.Route == PlatformProration.UpgradeRoute.KeepExpiryProration)
+            {
+                var pr = up.Proration;
                 return await Pay("Upgrade", true, sub.BillingCycle, pr.Amount, pr.DaysRemaining, pr.CycleDays, sub.EndDate,
                     $"จ่ายส่วนต่างเฉพาะวันที่เหลือ ({pr.Note}) — เปลี่ยนเป็น {template.Name} ทันทีเมื่อชำระ · ใช้ได้ถึงวันเดิม · รอบถัดไปคิดราคา {template.Name}"
                     + (cycle != sub.BillingCycle ? " · รอบบิลสั้นลงคงเดิม (เปลี่ยนรอบบิลสั้นลงได้หลังอัปเกรด มีผลวันครบรอบ)" : ""),
                     standard: effectiveCurrentCycle.Applied ? PlatformPlanPricing.AmountDue(effectiveCurrentCycle.ListPrice, null) : null, special: specialNoteCurrentCycle,   // S10
-                    oldBasis: pr.OldPricePerCycle);   // รอบ 233: แตกบรรทัดเครดิตแพ็กเดิมใน preview
+                    oldBasis: pr.OldPricePerCycle) with { UpgradeMode = modeTag.Mode, UpgradeModeOffer = modeTag.Offer };   // รอบ 233: แตกบรรทัดเครดิตแพ็กเดิมใน preview
+            }
+            if (up.Route == PlatformProration.UpgradeRoute.RestartWithCredit)
+                // รอบ 237 แบบ ข: ราคาเต็มรอบ (รอบปัจจุบัน · ราคาพิเศษ) − มูลค่าคงเหลือ · รอบใหม่เริ่มวันชำระ · คูปองคิดบนยอดหลังหักเครดิต (237-4)
+                return await Pay("Upgrade", false, sub.BillingCycle, up.Amount, up.DaysRemaining, up.CycleDays, sub.EndDate,
+                    $"เริ่มรอบใหม่วันที่ชำระ ({up.Note}) — เปลี่ยนเป็น {template.Name} ทันทีเมื่อชำระ · วันหมดอายุเดิมไม่ใช้แล้ว (มูลค่าคงเหลือถูกหักจากยอดแล้ว)"
+                    + (cycle != sub.BillingCycle ? " · รอบบิลคงเดิม (เปลี่ยนรอบบิลสั้นลงได้หลังอัปเกรด มีผลวันครบรอบ)" : ""),
+                    standard: effectiveCurrentCycle.Applied ? PlatformPlanPricing.AmountDue(effectiveCurrentCycle.ListPrice, null) : null, special: specialNoteCurrentCycle,
+                    credit: up.Credit, newEnd: up.NewEndUtc, newCyclePrice: up.NewCyclePrice) with { UpgradeMode = modeTag.Mode, UpgradeModeOffer = modeTag.Offer };
+            if (up.Route == PlatformProration.UpgradeRoute.Refused)
+                // 237-3: เครดิต ≥ ราคาเต็มรอบ ⇒ ชำระแบบนี้ไม่ได้ (ไม่สร้างยอด 0 · ไม่คืนเงิน) — preview แสดงเหตุ + ตัวเลขที่ทำให้ปฏิเสธ
+                return new PlanChangeQuote("Upgrade", false, plan.ToString(), sub.BillingCycle.ToString(), 0m, 0m, 0m, up.DaysRemaining, up.CycleDays, sub.EndDate, null,
+                    up.RefusalReason!, Blocked: up.RefusalReason, CycleChangeCredit: up.Credit, NewPeriodEndUtc: up.NewEndUtc, NewCyclePrice: up.NewCyclePrice,
+                    UpgradeMode: modeTag.Mode, UpgradeModeOffer: modeTag.Offer);
             var daysLeft = UsageBarRule.DaysLeft(sub.EndDate, now);
             return await Pay("Upgrade", false, cycle, PlatformPlanPricing.AmountDue(effective.Price, null), null, null, null,
-                $"ชำระ {template.Name} เต็มรอบ — เริ่มรอบใหม่จากวันที่ชำระ ({pr.NotApplicableReason})"
+                $"ชำระ {template.Name} เต็มรอบ — เริ่มรอบใหม่จากวันที่ชำระ ({up.Note})"
                 + (daysLeft > 0 ? $" · วันที่เหลือของแพ็กเกจเดิม {daysLeft} วันไม่ถูกนำมาหัก" : ""),
-                standard: PlatformPlanPricing.AmountDue(effective.ListPrice, null));
+                standard: PlatformPlanPricing.AmountDue(effective.ListPrice, null)) with { UpgradeMode = modeTag.Mode, UpgradeModeOffer = modeTag.Offer };
         }
         if (template.Plan == sub.Plan && cycle == sub.BillingCycle)
             return new PlanChangeQuote("Same", false, plan.ToString(), cycle.ToString(), 0m, 0m, 0m, null, null, sub.EndDate, null,
@@ -3230,6 +3308,8 @@ public class SubscriptionService : ISubscriptionService
         var invoiceOnly = forceInvoiceOnly || PlatformInvoiceRules.IsInvoiceOnlyPayment(payment.PlatformInvoiceDocumentId, payment.RequestedPeriodMonths);
         // รอบ 219 เฟส 2 (S9 · ผู้ประสานงาน): อนุมัติการชำระที่เริ่มรอบใหม่/ต่ออายุ "โดยไม่ได้จ่ายใบต่ออายุที่ออกไว้" ⇒ ใบต่ออายุของรอบเดิมค้างเป็นหนี้เท็จ
         Guid? staleRenewalId = null;
+        // รอบ 237 (K-1 · 237-5): เส้นอนุมัติตัดสินจากสิ่งที่ประทับบนรายการตอนซื้อ (ธง + แบบอัปเกรดที่ลูกค้าเลือก) — ไม่อ่านค่าตั้งปัจจุบัน
+        var approvalRoute = PlatformProration.ApprovalRouteOf(payment.UpgradeMode, payment.IsProration, payment.IsCycleChange);
         if (request.Approve && invoiceOnly)
         {
             payment.Status = SubscriptionPaymentStatus.Approved;
@@ -3254,9 +3334,11 @@ public class SubscriptionService : ISubscriptionService
                     $"การชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท ได้รับการยืนยันแล้ว",
                     "/pages/billing.html", "SubscriptionPayment", payment.Id);
         }
-        else if (request.Approve && payment.IsCycleChange)
+        else if (request.Approve && approvalRoute is PlatformProration.ApprovalRoute.CycleChange or PlatformProration.ApprovalRoute.RestartCycleUpgrade)
         {
-            // รอบ 231 (คำตัดสินข้อ 231-9 · §B.8): เปลี่ยนรอบบิลกลางรอบ — รอบใหม่ "เริ่มใหม่" วันที่ชำระ · วันหมดอายุใหม่ = วันชำระ + เดือนของรอบใหม่ · สิทธิ์สลับเมื่อเงินเข้า
+            // รอบ 231 (คำตัดสินข้อ 231-9 · §B.8): เปลี่ยนรอบบิลกลางรอบ — รอบใหม่ "เริ่มใหม่" วันที่ชำระ · วันหมดอายุใหม่ = วันชำระ + เดือนของรอบใหม่ · สิทธิ์สลับเมื่อเงินเข้า ·
+            // รอบ 237 (K-1): อัปเกรดแบบเริ่มรอบใหม่ (แบบ ข) ใช้เส้นเดียวกัน (รอบเท่าเดิม) — ต่างแค่ข้อความ + License ยืดตามแบบเดียวกัน
+            var restartUpgrade = approvalRoute == PlatformProration.ApprovalRoute.RestartCycleUpgrade;
             var sub = payment.Subscription;
             var now = DateTime.UtcNow;
             var template = await _db.PlanTemplates.FirstOrDefaultAsync(p => p.Plan == payment.RequestedPlan && p.IsActive);
@@ -3265,14 +3347,43 @@ public class SubscriptionService : ISubscriptionService
                 : PlatformProration.StaleReason(payment.ProrationCycleEndUtc ?? sub.EndDate, sub.EndDate, payment.ProrationFromPlan ?? sub.Plan.ToString(), sub.Plan.ToString(), now);
             var ccRenewalClaim = sub.RenewalInvoiceDocumentId is Guid oldRenewalCc
                 ? await RenewalInvoiceClaims.ClaimProblemAsync(_db, sub.Id, oldRenewalCc, payment.Id) : null;
+            // ฝ่ายค้าน 237 N1: คำในข้อความพัก/ปฏิเสธตามชนิดรายการ (อัปเกรดแบบเริ่มรอบใหม่ ≠ เปลี่ยนรอบบิล)
+            var ccWhat = restartUpgrade ? "อัปเกรดแบบเริ่มรอบใหม่" : "เปลี่ยนรอบบิล";
             if ((ccStale != null || ccRenewalClaim != null) && systemConfirmed)
                 return await HoldForAdminAsync(payment, request, performedBy, lockTx,
-                    $"เงินค่าเปลี่ยนรอบบิล {payment.PaymentNumber} เข้าแล้วแต่ต้องให้คนตัดสิน: {ccStale ?? ccRenewalClaim} — ตรวจแล้วอนุมัติ (เริ่มรอบใหม่) หรือคืนเงิน");
+                    $"เงินค่า{ccWhat} {payment.PaymentNumber} เข้าแล้วแต่ต้องให้คนตัดสิน: {ccStale ?? ccRenewalClaim} — ตรวจแล้วอนุมัติ (เริ่มรอบใหม่) หรือคืนเงิน");
             // ฝ่ายค้าน S3: ใบต่ออายุเดิมถูกจ่าย/แจ้งชำระแล้ว ⇒ ไม่ทับ EndDate เอง — แอดมินต้องจัดการใบนั้นก่อน (ยกเลิก/จับคู่) แล้วค่อยอนุมัติ
             if (ccRenewalClaim != null)
                 throw new BusinessRuleException(
-                    $"อนุมัติเปลี่ยนรอบบิล {payment.PaymentNumber} ไม่ได้: {ccRenewalClaim} — จัดการใบต่ออายุเดิมก่อน (ยกเลิก/จับคู่การชำระ) ระบบไม่ทับวันหมดอายุเอง",
+                    $"อนุมัติ{ccWhat} {payment.PaymentNumber} ไม่ได้: {ccRenewalClaim} — จัดการใบต่ออายุเดิมก่อน (ยกเลิก/จับคู่การชำระ) ระบบไม่ทับวันหมดอายุเอง",
                     PlatformProration.RenewalClaimRuleCode);
+            // รอบ 237 (คำตัดสิน 237-8 · ฝ่ายค้าน S3): เครดิตแบบ ข ต้องตรงกับวันที่เงินเข้า — คิดใหม่ ณ วันชำระจริงด้วยตัวตัดสินเดียว (UpgradeByMode → RemainingDays) ·
+            // วันคงเหลือต่างจากที่ประทับ ⇒ เงินเข้าระบบ = พักให้แอดมิน (ไม่ประทับผลเอง) · แอดมินอนุมัติตามยอดเดิมต้องระบุเหตุผล (audit chain) · วันเดียวกัน = ผ่านปกติ
+            if (restartUpgrade && template != null)
+            {
+                var rcPaidAt = PlatformPlanPricing.ApprovedPaymentDate(systemConfirmed, gatewayPaidAtUtc,
+                    payment.Kind is SubscriptionPaymentKind.ManualByAdmin or SubscriptionPaymentKind.Waived, payment.PaymentDate, payment.CreatedAt, now);
+                var rcCurrentTpl = await _db.PlanTemplates.AsNoTracking().FirstOrDefaultAsync(p => p.Plan == sub.Plan && p.IsActive);
+                var rcAtPayment = await UpgradeDecisionForAsync(sub, rcCurrentTpl, template, rcPaidAt, PlatformUpgradeMode.RestartCycle);
+                var drift = PlatformProration.RestartCreditDrift(rcAtPayment, payment.ProrationDays, payment.CycleChangeCredit,
+                    payment.ListAmount ?? PlatformWhtSuggestion.GrossOf(payment.Amount, payment.WithholdingTaxAmount), rcPaidAt);
+                if (drift != null && systemConfirmed)
+                    return await HoldForAdminAsync(payment, request, performedBy, lockTx,
+                        $"เงินค่า{ccWhat} {payment.PaymentNumber} เข้าแล้วแต่เครดิตไม่ตรงวันชำระ: {drift} — {PlatformProration.RestartCreditDriftNextStep}");
+                if (drift != null)
+                {
+                    if (string.IsNullOrWhiteSpace(request.ReviewNotes))
+                        throw new BusinessRuleException($"อนุมัติ{ccWhat} {payment.PaymentNumber} ตามยอดเดิมต้องระบุเหตุผล: {drift} — {PlatformProration.RestartCreditDriftNextStep}",
+                            PlatformProration.RestartCreditDriftRuleCode);
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = sub.CompanyId, UserEmail = performedBy, Action = AuditAction.Update, EntityType = nameof(SubscriptionPayment), EntityId = payment.Id.ToString(),
+                        NewValues = System.Text.Json.JsonSerializer.Serialize(new { paymentNumber = payment.PaymentNumber, approvedDespite = drift, reason = request.ReviewNotes,
+                            ruleCode = PlatformProration.RestartCreditDriftRuleCode }),
+                        Timestamp = DateTime.UtcNow,
+                    });
+                }
+            }
             payment.Status = SubscriptionPaymentStatus.Approved;
             var fromPlan = sub.Plan;
             var fromCycle = sub.BillingCycle;
@@ -3300,6 +3411,8 @@ public class SubscriptionService : ISubscriptionService
             if (template != null) await ApplyTemplateWithPriceAsync(sub, template, payment.RequestedBillingCycle, now, paidPeriodEndUtc: ccPeriod.EndUtc);
             else { sub.Plan = payment.RequestedPlan; sub.BillingCycle = payment.RequestedBillingCycle; }
             sub.EndDate = ccPeriod.EndUtc;
+            // ฝ่ายค้าน 237 N2: วันเริ่มรอบจริง (อาจเป็นเวลาอนุมัติเมื่อวันรับเงินย้อนหลังเกินรอบ) ประทับบนรายการ — ใบเสร็จ/ศูนย์บิลใช้ค่านี้ (ไม่เดาจาก PaymentDate)
+            payment.PaidPeriodStartUtc = ccPeriod.StartUtc;
             if (ccPeriod.StartedAtApproval)
                 _db.SubscriptionHistories.Add(new SubscriptionHistory
                 {
@@ -3315,23 +3428,61 @@ public class SubscriptionService : ISubscriptionService
             payment.SubscriptionExtendedTo = sub.EndDate;
             _db.SubscriptionHistories.Add(new SubscriptionHistory
             {
-                SubscriptionId = sub.Id, Action = "CycleChangeApplied", FromPlan = fromPlan, ToPlan = payment.RequestedPlan, ToStatus = sub.Status,
-                Notes = $"Payment {payment.PaymentNumber} approved — เปลี่ยนรอบบิล {fromCycle} → {payment.RequestedBillingCycle}"
-                        + (fromPlan != payment.RequestedPlan ? $" พร้อมเปลี่ยน {fromPlan} → {payment.RequestedPlan}" : "")
+                SubscriptionId = sub.Id, Action = restartUpgrade ? "PlanUpgradeRestartApplied" : "CycleChangeApplied", FromPlan = fromPlan, ToPlan = payment.RequestedPlan, ToStatus = sub.Status,
+                Notes = $"Payment {payment.PaymentNumber} approved — "
+                        + (restartUpgrade ? $"อัปเกรด {fromPlan} → {payment.RequestedPlan} แบบเริ่มรอบใหม่ (แบบที่ลูกค้าเลือกตอนซื้อ)"
+                            : $"เปลี่ยนรอบบิล {fromCycle} → {payment.RequestedBillingCycle}" + (fromPlan != payment.RequestedPlan ? $" พร้อมเปลี่ยน {fromPlan} → {payment.RequestedPlan}" : ""))
                         + $" · หักมูลค่าคงเหลือ {payment.CycleChangeCredit ?? 0m:N2} ({payment.ProrationDays}/{payment.ProrationCycleDays} วัน) · รอบใหม่ถึง {sub.EndDate:yyyy-MM-dd}"
                         + (ccStale != null ? $" · แอดมินอนุมัติแม้ล้าสมัย: {ccStale}" : ""),
                 PerformedBy = performedBy
             });
+            // รอบ 237 (K-1 · 237-7): อัปเกรดแบบเริ่มรอบใหม่ของบริษัทที่ผูก License ⇒ License ขยับแบบเดียวกัน (รอบใหม่นับจากวันชำระ · ตัวคำนวณวันที่ตัวเดียว) —
+            // เฉพาะแพ็กที่จ่าย = แพ็กของ License (MayCascadeToAccountPlan · ตัวเดียวกับเส้นซื้อ/ต่ออายุ) และเฉพาะเมื่อวันใหม่ยาวกว่าเดิม (ไม่ตัดอายุ License) ·
+            // แบบคงวันหมดอายุ (KeepExpiry) ไม่ขยับทั้งบริษัทและ License — เหมือนกัน
+            if (restartUpgrade && sub.AccountSubscriptionId is Guid rcAcctId)
+            {
+                var rcAcct = await _db.AccountSubscriptions.FirstOrDefaultAsync(a => a.Id == rcAcctId && !a.IsDeleted);
+                var rcAcctPlan = rcAcct == null ? (SubscriptionPlan?)null
+                    : await _db.PlanTemplates.AsNoTracking().IgnoreQueryFilters().Where(t => t.Id == rcAcct.PlanTemplateId).Select(t => (SubscriptionPlan?)t.Plan).FirstOrDefaultAsync();
+                if (rcAcct != null && PlatformPlanPricing.MayCascadeToAccountPlan(payment.RequestedPlan, rcAcctPlan))
+                {
+                    var rcNewEnd = PlanPurchasePreview.PaidPeriod(PlatformPlanPricing.ChangeKind.Same, false, false, rcAcct.Status == SubscriptionStatus.Trial,
+                        isProration: false, isCycleChange: true, rcAcct.EndDate, payment.PaymentDate, ccMonths, approvedAtUtc: now).EndUtc;
+                    if (rcNewEnd > rcAcct.EndDate)
+                    {
+                        rcAcct.EndDate = rcNewEnd;
+                        rcAcct.LastPaidAt = payment.PaymentDate;
+                        if (rcAcct.Status is SubscriptionStatus.Expired or SubscriptionStatus.PastDue or SubscriptionStatus.Trial) rcAcct.Status = SubscriptionStatus.Active;
+                        rcAcct.UpdatedBy = performedBy; rcAcct.UpdatedAt = DateTime.UtcNow;
+                        rcAcct.ExpiryRemindersSentMask = 0; rcAcct.LastExpiryReminderAt = null;
+                        _db.SubscriptionHistories.Add(new SubscriptionHistory
+                        {
+                            SubscriptionId = sub.Id, AccountSubscriptionId = rcAcct.Id, Action = "AccountPlanExtendedViaSlip", ToStatus = rcAcct.Status,
+                            Notes = $"Account Plan EndDate → {rcNewEnd:yyyy-MM-dd} (อัปเกรดแบบเริ่มรอบใหม่ {payment.PaymentNumber} · company {sub.CompanyId})",
+                            PerformedBy = performedBy
+                        });
+                    }
+                }
+                else if (rcAcct != null)
+                    _db.SubscriptionHistories.Add(new SubscriptionHistory
+                    {
+                        SubscriptionId = sub.Id, AccountSubscriptionId = rcAcct.Id, Action = "AccountPlanCascadeSkipped",
+                        Notes = $"ไม่ขยับ License — รายการ {payment.PaymentNumber} อัปเกรดเป็น {payment.RequestedPlan} ไม่ตรงแพลนบัญชี ({rcAcctPlan?.ToString() ?? "ไม่ทราบ"})",
+                        PerformedBy = performedBy
+                    });
+            }
             var ccOwner = await _db.CompanyUsers.Where(cu => cu.CompanyId == sub.CompanyId && cu.Role == UserRole.Owner)
                 .Select(cu => cu.UserId).FirstOrDefaultAsync();
             if (ccOwner != Guid.Empty)
                 await NotifyUserAsync(ccOwner, sub.CompanyId,
                     Models.Constants.NotificationEvents.SubscriptionPaymentSucceeded, NotificationType.SubscriptionPaymentApproved,
-                    "เปลี่ยนรอบบิลแล้ว",
-                    $"ได้รับชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท — รอบบิลราย{PlatformPlanPricing.CycleLabel(payment.RequestedBillingCycle)} เริ่มแล้ว ใช้ได้ถึง {sub.EndDate.AddHours(7):dd/MM/yyyy}",
+                    restartUpgrade ? "อัปเกรดแพ็กเกจแล้ว (เริ่มรอบใหม่)" : "เปลี่ยนรอบบิลแล้ว",
+                    restartUpgrade
+                        ? $"ได้รับชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท — ใช้แพ็กเกจ {payment.RequestedPlan} ได้ทันที รอบใหม่ใช้ได้ถึง {sub.EndDate.AddHours(7):dd/MM/yyyy}"
+                        : $"ได้รับชำระ {payment.PaymentNumber} ยอด {payment.Amount:N2} บาท — รอบบิลราย{PlatformPlanPricing.CycleLabel(payment.RequestedBillingCycle)} เริ่มแล้ว ใช้ได้ถึง {sub.EndDate.AddHours(7):dd/MM/yyyy}",
                     "/pages/billing.html", "SubscriptionPayment", payment.Id);
         }
-        else if (request.Approve && payment.IsProration)
+        else if (request.Approve && approvalRoute == PlatformProration.ApprovalRoute.KeepExpiryProration)
         {
             // รอบ 230 (คำตัดสินข้อ 230-Q1): ส่วนต่างอัปเกรดกลางรอบ — เปลี่ยนแพ็กเกจทันที <b>วันหมดอายุคงเดิม</b> (ไม่ต่ออายุ · ไม่เริ่มรอบใหม่)
             var sub = payment.Subscription;
@@ -3894,6 +4045,17 @@ public class SubscriptionService : ISubscriptionService
         var preview = PlanPurchasePreview.ForPurchase(PlanPurchasePreview.CurrentOf(sub, currentTpl), PlanPurchasePreview.TargetOf(target, request.RequestedBillingCycle),
             new PlanPurchasePreview.Money(gross > 0m || request.IsWaived ? gross : serverPrice, 0m, gross > 0m || request.IsWaived ? gross : serverPrice), now, vat,
             paidAtUtc: paidAt, months: request.RequestedPeriodMonths, approvedAtUtc: now, withholdingTax: wht);   // ยังไม่กรอกยอด ⇒ แสดงราคาของเซิร์ฟเวอร์
+        // รอบ 237 (K-1 · 237-6): อัปเกรดกลางรอบของแพ็กเกจจ่ายเงินที่ใช้งานอยู่ ⇒ แสดงยอด/เครดิต/วันหมดอายุของทั้ง 2 แบบ (ตัวตัดสินเดียวกับหน้าลูกค้า) ให้แอดมินตัดสินยอด —
+        // การบันทึกรับเงินเองยังเป็น "ยอด/เดือนตามที่แอดมินกรอก เริ่มวันชำระ" เหมือนเดิม (แอดมินยืดหยุ่นได้เสมอ · คำตัดสินเจ้าของข้อ 178 ①)
+        if (sub.Status == SubscriptionStatus.Active && !sub.IsPermanentFree && sub.Plan != target.Plan
+            && PlatformPlanPricing.Classify(currentTpl?.MonthlyPrice ?? 0m, target.MonthlyPrice) == PlatformPlanPricing.ChangeKind.Upgrade)
+        {
+            var compare = new List<string>();
+            var offeredNow = PlatformProration.OfferedModes(await UpgradeModeOfferAsync());   // ฝ่ายค้าน N3: บอกแบบที่ค่าตั้งปัจจุบันไม่เปิดให้ลูกค้า
+            foreach (var m in PlatformProration.OfferedModes(PlatformUpgradeModeOffer.CustomerChooses))
+                compare.Add("เทียบแบบที่ลูกค้าซื้อเอง — " + PlatformProration.ModeSummaryLine(await UpgradeDecisionForAsync(sub, currentTpl, target, now, m), offeredNow.Contains(m)));
+            preview = preview with { Notes = preview.Notes.Concat(compare).ToList(), Lines = preview.Lines.Concat(compare).ToList() };
+        }
         return new AdminPaymentPreview(preview, suggestion, gross, wht, received, problem, serverPrice > 0m ? (decimal?)serverPrice : null);
     }
 
@@ -3940,7 +4102,8 @@ public class SubscriptionService : ISubscriptionService
             preview = PlanPurchasePreview.ForPurchase(cur, tgt,
                 new PlanPurchasePreview.Money(list, p.CouponDiscountAmount, gross, Prorated: p.IsProration, CycleChange: p.IsCycleChange,
                     DaysRemaining: p.ProrationDays, CycleDays: p.ProrationCycleDays, CycleChangeCredit: p.CycleChangeCredit,
-                    CouponLabel: p.CouponCode != null ? $"คูปอง {p.CouponCode}" : null),
+                    CouponLabel: p.CouponCode != null ? $"คูปอง {p.CouponCode}" : null,
+                    UpgradeMode: p.UpgradeMode),   // รอบ 237: แบบที่ลูกค้าเลือกตอนซื้อ (ไม่ใช่ค่าตั้งปัจจุบัน — ตัวเดียวกับตอนอนุมัติ)
                 now, vat, paidAtUtc: paidAt, months: months, approvedAtUtc: now, withholdingTax: newWht);
         }
         // รอบ 236 (ฝ่ายค้าน S1): อนุมัติไม่ถูกกัน (เงินอาจเข้าแล้ว) แต่แอดมินต้องเห็นว่าบริษัทอยู่ใต้ License ก่อนกด
@@ -4311,10 +4474,16 @@ public class SubscriptionService : ISubscriptionService
             p.IsCycleChange,
             p.CycleChangeCredit,
             p.IsCycleChange && p.ProrationDays is int cd && p.ProrationCycleDays is int cc
-                ? $"เปลี่ยนรอบบิลเป็นราย{PlatformPlanPricing.CycleLabel(p.RequestedBillingCycle)} — หักมูลค่าคงเหลือรอบเดิม {p.CycleChangeCredit ?? 0m:N2} บาท ({cd}/{cc} วัน) · อนุมัติแล้วรอบใหม่ {p.RequestedPeriodMonths} เดือนเริ่มวันที่ชำระ"
+                ? (p.UpgradeMode == PlatformUpgradeMode.RestartCycle && p.ProrationCycleEndUtc is DateTime rcEnd
+                    // รอบ 237 (K-1): อัปเกรดแบบเริ่มรอบใหม่ — ข้อความตัวเดียวกับใบเสร็จ (PlatformProration.RestartUpgradeDescription)
+                    ? PlatformProration.RestartUpgradeDescription(p.ProrationFromPlan ?? "-", p.RequestedPlan.ToString(), p.RequestedPeriodMonths, p.CycleChangeCredit ?? 0m,
+                        cd, cc, rcEnd, p.PaidPeriodStartUtc, p.SubscriptionExtendedTo)   // ฝ่ายค้าน N2: วันเริ่มรอบที่ประทับตอนอนุมัติ
+                    : $"เปลี่ยนรอบบิลเป็นราย{PlatformPlanPricing.CycleLabel(p.RequestedBillingCycle)} — หักมูลค่าคงเหลือรอบเดิม {p.CycleChangeCredit ?? 0m:N2} บาท ({cd}/{cc} วัน) · อนุมัติแล้วรอบใหม่ {p.RequestedPeriodMonths} เดือนเริ่มวันที่ชำระ")
                 : null,
             p.StandardAmount,
-            p.PriceOverrideId);
+            p.PriceOverrideId,
+            p.UpgradeMode?.ToString(),
+            p.UpgradeMode is PlatformUpgradeMode um ? PlatformProration.ModeLabel(um) : null);
     }
 
     private static PlanTemplateResponse MapTemplateToResponse(PlanTemplate t)

@@ -13029,11 +13029,11 @@ RULES += [
 _R230Q_WHY = "รอบ 230 โควตา/บิล: "
 RULES += [
     dict(file="Services/Implementations/SubscriptionService.cs", method="ChangeSubscriptionAsync",
-         must=["ProrationForAsync(sub, current, template", "RequestPlanPaymentAsync(", "request.CouponCode"],
-         before=[("ProrationForAsync(sub, current, template", "RequestPlanPaymentAsync(sub, template, sub.BillingCycle")],
+         must=["UpgradeDecisionForAsync(sub, current, template", "RequestPlanPaymentAsync(", "request.CouponCode"],   # รอบ 237: ตัวคิดทั้ง 2 แบบ (เดิม ProrationForAsync)
+         before=[("UpgradeDecisionForAsync(sub, current, template", "RequestPlanPaymentAsync(sub, template, sub.BillingCycle")],
          why=_R230Q_WHY + "230-Q1 อัปเกรดกลางรอบคิดส่วนต่างด้วยตัวคิดตัวเดียว (PlatformProration) ก่อนสร้างรายการ · คูปองตัดสินที่เซิร์ฟเวอร์"),
     dict(file="Services/Implementations/SubscriptionService.cs", method="QuotePlanChangeCoreAsync",   # รอบ 233: ตัวคิดย้ายเข้า Core · ตัวนอกห่อ preview
-         must=["ProrationForAsync(sub, current, template", "PlatformCouponStore.PreviewAsync(", "PlatformPlanPricing.ScheduleBlockedByIssuedRenewal("],
+         must=["UpgradeDecisionForAsync(sub, current, template", "PlatformCouponStore.PreviewAsync(", "PlatformPlanPricing.ScheduleBlockedByIssuedRenewal("],
          why=_R230Q_WHY + "230-Q1/Q2 หน้าดูราคาใช้ตัวตัดสินเดียวกับตอนยืนยัน (ส่วนต่าง · คูปอง · ดาวน์เกรดถูกบล็อกเมื่อออกใบต่ออายุแล้ว)"),
     dict(file="Services/Implementations/SubscriptionService.cs", method="RequestPlanPaymentAsync",
          must=["PlatformCouponStore.ReserveAsync(", "payment.QuotedAmount = prorated || cycleChanged || code != null || effective.Applied ? amount : null", "BeginTransactionAsync(", "tx.CommitAsync(",
@@ -13114,8 +13114,8 @@ RULES += [
                "payment.PriceOverrideId = effective.OverrideId"],
          forbid=["PlatformPlanPricing.AmountDue(template, cycle", "PlatformPlanPricing.CyclePrice("],
          why=_R231_WHY + "231-8 คำขอแพ็กเกจ/แปลงทดลองใช้คิดราคาพิเศษผ่าน resolver เดียว (คูปองซ้อนทีหลัง) · ห้ามราคาแม่แบบตรง"),
-    dict(file=_SUBSVC, method="ProrationForAsync",
-         must=["OldCyclePriceBasisAsync(sub, current", "PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, target", "PlatformPlanPricing.IsRenewalPurchase(sub.Plan, target.Plan)", "PlatformProration.Upgrade("],
+    dict(file=_SUBSVC, method="UpgradeDecisionForAsync",   # รอบ 237: เดิม ProrationForAsync — ตัวคิดทั้ง 2 แบบผ่าน PlatformProration.UpgradeByMode
+         must=["OldCyclePriceBasisAsync(sub, current", "PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, target", "PlatformPlanPricing.IsRenewalPurchase(sub.Plan, target.Plan)", "PlatformProration.UpgradeByMode("],
          forbid=["PlatformPlanPricing.CyclePrice("],
          why=_R231_WHY + "231-8 ส่วนต่างอัปเกรดคิดราคาพิเศษทั้งสองฝั่ง (§C.2)"),
     dict(file=_SUBSVC, method="CycleChangeForAsync",
@@ -13125,7 +13125,7 @@ RULES += [
          why=_R231_WHY + "231-9 เปลี่ยนรอบบิลคิดราคาพิเศษทั้งสองฝั่งผ่านตัวคิดเดียว"),
     dict(file=_SUBSVC, method="ChangeSubscriptionAsync",
          must=["CycleChangeForAsync(sub, current, template, cycle", "cycleChange: cc", "PlatformPlanPricing.MonthsOf(cycle) > PlatformPlanPricing.MonthsOf(sub.BillingCycle)"],
-         before=[("CycleChangeForAsync(sub, current, template, cycle", "ProrationForAsync(sub, current, template")],
+         before=[("CycleChangeForAsync(sub, current, template, cycle", "UpgradeDecisionForAsync(sub, current, template")],
          why=_R231_WHY + "231-9 รอบยาวขึ้นกลางรอบ = รายการเปลี่ยนรอบ (ก่อนตกไปเส้นส่วนต่าง) · สั้นลง = Scheduled* เดิม"),
     dict(file=_SUBSVC, method="QuotePlanChangeCoreAsync",
          must=["PlatformPriceOverrideStore.ResolveForSubscriptionAsync(", "CycleChangeForAsync(sub, current, template, cycle", "StandardAmount:"],
@@ -13976,6 +13976,84 @@ RULES += [
     dict(file="Services/Background/AccountPlanExpiryReminderJob.cs", method="ProcessOne",
          must=["PlanIdentityResolver.LicenseRenewalHowTo("],
          why=_R236_WHY + "ฝ่ายค้าน B1 อีเมลเตือน License ชี้ทางต่ออายุที่มีอยู่จริง (ไม่ใช่ 'หน้าจัดการ License')"),
+]
+
+# รอบ 237 (K-1 · คำตัดสินเจ้าของ 2026-11-04 "ทำให้ระบบรองรับทั้ง 2 ทาง สามารถเลือกได้" · DECISIONS 237-1…237-7): อัปเกรดกลางรอบ 2 แบบ ตัวตัดสินเดียว
+# PlatformProration.UpgradeByMode · ค่าตั้งตรวจซ้ำทุกทางเข้า (ใบเสนอ · สร้างรายการ) · อนุมัติใช้แบบที่ประทับบนรายการ (ห้ามอ่านค่าตั้งตอนอนุมัติ)
+_R237_WHY = "รอบ 237 (K-1 · DECISIONS 237-*): "
+RULES += [
+    dict(file=_SUBSVC, method="ChangeSubscriptionAsync",
+         must=["PlatformProration.ResolveMode(", "UpgradeModeOfferAsync(", "UpgradeDecisionForAsync(sub, current, template", "PlatformProration.UpgradeRoute.Refused",
+               "cycleChange: up.Restart", "upgradeMode: up.Mode"],
+         must_re=[r"if\s*\(\s*modeRefusal\s*!=\s*null\s*\)\s*throw\b"],
+         before=[("PlatformProration.ResolveMode(", "UpgradeDecisionForAsync(sub, current, template")],
+         why=_R237_WHY + "237-1 แบบที่ค่าตั้งไม่เปิด ⇒ 400 ก่อนคิดยอด · 237-2 ยอด/เครดิตจากตัวตัดสินเดียว · 237-5 ประทับแบบที่เลือกบนรายการ"),
+    dict(file=_SUBSVC, method="QuotePlanChangeCoreAsync",
+         must=["PlatformProration.ResolveMode(", "UpgradeModeOfferAsync(", "credit: up.Credit", "newEnd: up.NewEndUtc"],
+         why=_R237_WHY + "237-6 ใบเสนอใช้ตัวตัดสินเดียวกับตอนสร้างรายการ (คูปองคิดบนยอดหลังหักเครดิต — 237-4)"),
+    dict(file=_SUBSVC, method="QuotePlanChangeAsync",
+         must=["PlatformProration.OfferedModes(", "UpgradeOptions = options", "PlanPreviewForQuoteAsync(companyId, plan, qm"],
+         why=_R237_WHY + "237-6 ตัวเลือกทุกแบบที่เปิด พร้อม preview ของแต่ละแบบจากเซิร์ฟเวอร์ (หน้าเว็บแสดงอย่างเดียว)"),
+    dict(file=_SUBSVC, method="PlanPreviewForQuoteAsync",
+         must=["UpgradeMode: Enum.TryParse<PlatformUpgradeMode>(q.UpgradeMode"],
+         why=_R237_WHY + "preview บอกแบบที่เลือก (หัวข้อ/วันที่/เหตุปฏิเสธของแบบ ข)"),
+    dict(file=_SUBSVC, method="RequestPlanPaymentAsync",
+         must=["payment.UpgradeMode = upgradeMode", "(p.UpgradeMode ?? PlatformUpgradeMode.KeepExpiry) == upgradeMode", "PlatformProration.RestartCreditCoversAllRefusal"],
+         why=_R237_WHY + "237-5 แบบที่เลือกประทับบนรายการ · กดซ้ำคนละแบบ = คนละรายการ · 237-3 เครดิตครอบยอด = ข้อความของแบบ ข"),
+    dict(file=_SUBSVC, method="ReviewPaymentLockedAsync",
+         must=["PlatformProration.ApprovalRouteOf(payment.UpgradeMode, payment.IsProration, payment.IsCycleChange)",
+               "PlatformPlanPricing.MayCascadeToAccountPlan(payment.RequestedPlan, rcAcctPlan)",
+               "PlatformProration.RestartCreditDrift(", "payment.PaidPeriodStartUtc = ccPeriod.StartUtc", "PlatformProration.RestartCreditDriftRuleCode"],
+         must_re=[r"if\s*\(\s*drift\s*!=\s*null\s*&&\s*systemConfirmed\s*\)\s*return\s+await\s+HoldForAdminAsync\("],
+         before=[("PlatformProration.ApprovalRouteOf(", "approvalRoute is PlatformProration.ApprovalRoute.CycleChange")],
+         forbid=["UpgradeModeOfferAsync(", "PlatformUpgradeModeOffer"],
+         why=_R237_WHY + "237-5 อนุมัติใช้แบบที่ประทับตอนซื้อ (ห้ามอ่านค่าตั้งปัจจุบัน) · 237-7 License ขยับแบบเดียวกัน (แพ็กตรง License เท่านั้น)"),
+    dict(file=_SUBSVC, method="PreviewPaymentApprovalAsync",
+         must=["UpgradeMode: p.UpgradeMode"],
+         why=_R237_WHY + "preview แอดมินก่อนอนุมัติบอกแบบที่ลูกค้าเลือก (ตัวเดียวกับตอนอนุมัติ)"),
+    dict(file=_SUBSVC, method="PreviewManualPaymentAsync",
+         must=["PlatformProration.ModeSummaryLine(", "UpgradeDecisionForAsync("],
+         why=_R237_WHY + "237-6 หน้าบันทึกรับเงินเองเทียบยอด 2 แบบจากตัวตัดสินเดียว"),
+    dict(file=_SUBSVC, method="MapPaymentToResponse",
+         must=["p.UpgradeMode?.ToString()", "PlatformProration.ModeLabel(", "PlatformProration.RestartUpgradeDescription("],
+         why=_R237_WHY + "กฎ #4 A เก็บแล้วต้อง echo กลับ (หน้าตรวจสลิป/ศูนย์บิล)"),
+    dict(file=_R232_CHECKOUT, method="CreateOrderAsync",
+         must=["UpgradeMode: upgradeMode", "pending.UpgradeMode", "_subs.QuotePlanChangeAsync(companyId, plan, cycle, code, userId, upgradeMode)"],
+         why=_R237_WHY + "หน้าซื้อสาธารณะส่งแบบที่เลือกเข้าเส้นเดียวกับ hub · รายการค้างคนละแบบไม่ใช้ต่อ"),
+    dict(file=_R232_CHECKOUT, method="DecideOrderAsync",
+         must=["_subs.QuotePlanChangeAsync(sub.CompanyId, template.Plan, cycle, code, actorUserId, upgradeMode)", "upgradeBlocked: q is { UpgradeMode: not null, Blocked: not null }"],
+         forbid=["Math.Max(q.ListAmount"],   # ฝ่ายค้าน S4: ห้ามแต่งยอดส่ง DecideOrder
+         why=_R237_WHY + "ตะกร้าคิดยอดตามแบบที่เลือก (ตัวตัดสินเดียวกับตอนสร้างรายการ)"),
+    dict(file=_R232_CHECKOUT, method="QuoteAsync",
+         must=["q.UpgradeOptions"],
+         why=_R237_WHY + "ตะกร้าได้ตัวเลือกทุกแบบ + แบบที่เลือกใช้ไม่ได้ = ใบเสนอพร้อมเหตุ (ไม่ใช่ error ลอย)"),
+    dict(file=PLATFORM, method="BuildServiceDescription",
+         must=["PlatformProration.RestartUpgradeDescription("],
+         why=_R237_WHY + "ใบกำกับ/ใบเสร็จบอกแบบ + ช่วงรอบใหม่ + เครดิต"),
+    dict(file="Services/Implementations/SaasBillingDocumentService.cs", method="BuildHtml",
+         must=["PlatformProration.RestartUpgradeDescription("],
+         why=_R237_WHY + "ใบเสร็จโหมด PDF ข้อความเดียวกับใบในบริษัทผู้ให้บริการ"),
+    dict(file="Services/Implementations/PlatformBillingCenterService.cs", method="GetSummaryAsync",
+         must=["PlatformProration.RestartUpgradeDescription("],
+         why=_R237_WHY + "ศูนย์บิลบอกรายการอัปเกรดแบบเริ่มรอบใหม่ตามจริง"),
+    dict(file="Controllers/AdminPlatformUpgradeModeController.cs", method="Set",
+         must=["AddChainedAuditLog(", "PlatformProration.UpgradeModeRuleCode"],
+         why=_R237_WHY + "237-1 เปลี่ยนค่าตั้งลง audit chain ทุกครั้ง"),
+]
+REVIEWER_CASES += [
+    # อนุมัติกลับไปอ่านค่าตั้งปัจจุบันแทนแบบที่ประทับ ⇒ ต้องฟ้อง
+    ("R237a", "ReviewPaymentLockedAsync",
+     "var approvalRoute = PlatformProration.ApprovalRouteOf(payment.UpgradeMode, payment.IsProration, payment.IsCycleChange);",
+     "var approvalRoute = PlatformProration.ApprovalRouteOf(await UpgradeModeOfferAsync() == PlatformUpgradeModeOffer.RestartCycleOnly ? PlatformUpgradeMode.RestartCycle : null, payment.IsProration, payment.IsCycleChange);", True),
+    # ถอดด่าน "แบบที่ไม่เปิด" (คิดยอดต่อทั้งที่ค่าตั้งไม่เปิด) ⇒ ต้องฟ้อง
+    ("R237b", "ChangeSubscriptionAsync",
+     "if (modeRefusal != null) throw new BusinessRuleException(modeRefusal, PlatformProration.UpgradeModeRuleCode);", "_ = modeRefusal;", True),
+    # ไม่ประทับแบบบนรายการ ⇒ ต้องฟ้อง
+    ("R237c", "RequestPlanPaymentAsync", "payment.UpgradeMode = upgradeMode;", "", True),
+    # รูปถูก: ขึ้นบรรทัดใหม่ในการเรียกตัวตัดสิน ต้องไม่ฟ้อง
+    # 237-8: ถอดการพักเมื่อเครดิตไม่ตรงวันชำระ (ระบบประทับผลเอง) ⇒ ต้องฟ้อง
+    ("R237e", "ReviewPaymentLockedAsync", "if (drift != null && systemConfirmed)\n", "if (false)\n", True),
+    ("R237d", "ChangeSubscriptionAsync", "var (upMode, modeRefusal) = PlatformProration.ResolveMode(", "var (upMode, modeRefusal) = PlatformProration\n                .ResolveMode(", False),
 ]
 
 def main() -> int:

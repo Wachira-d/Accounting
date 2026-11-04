@@ -215,14 +215,15 @@ public class SubscriptionController : ControllerBase
     [HttpGet("{companyId:guid}/plan-quote")]
     [Accounting.Filters.RejectApiKey("ดูราคาเปลี่ยนแพ็กเกจ")]
     public async Task<ActionResult<ApiResponse<PlanChangeQuote>>> PlanQuote(Guid companyId, [FromQuery] SubscriptionPlan plan,
-        [FromServices] IChatRateLimiter rate, [FromQuery] BillingCycle? cycle = null, [FromQuery] string? coupon = null)
+        [FromServices] IChatRateLimiter rate, [FromQuery] BillingCycle? cycle = null, [FromQuery] string? coupon = null,
+        [FromQuery] PlatformUpgradeMode? upgradeMode = null)   // รอบ 237 (K-1): แบบอัปเกรดที่ลูกค้าเลือกดู (เซิร์ฟเวอร์ตรวจกับค่าตั้ง)
     {
         // เจ้าของเท่านั้น (เข้มกว่า BillingManage — เส้นยืนยันก็ต้องเป็นเจ้าของ) · ฝ่ายค้าน N1: มีโค้ด ⇒ นับต่อผู้ใช้กันเดารหัส
         if (await RequireOwnerAsync(companyId, "ดูราคาเปลี่ยนแพ็กเกจ") is { } deny) return deny;
         if (!string.IsNullOrWhiteSpace(coupon)
             && !await rate.TryConsumeAsync($"coupon-preview:{JwtHelper.GetUserIdFromClaims(User)}", 10, 100, default, failClosed: true))
             return StatusCode(429, new ApiResponse<PlanChangeQuote>(false, null!, "ตรวจโค้ดบ่อยเกินไป — กรุณารอสักครู่แล้วลองใหม่"));
-        var q = await _subscriptionService.QuotePlanChangeAsync(companyId, plan, cycle, coupon, JwtHelper.GetUserIdFromClaims(User));   // รอบ 236 B1
+        var q = await _subscriptionService.QuotePlanChangeAsync(companyId, plan, cycle, coupon, JwtHelper.GetUserIdFromClaims(User), upgradeMode);   // รอบ 236 B1 · รอบ 237
         return Ok(new ApiResponse<PlanChangeQuote>(true, q, q.Message));
     }
 

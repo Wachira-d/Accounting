@@ -922,6 +922,13 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         if (payment.IsProration && payment.ProrationCycleEndUtc is DateTime end && payment.ProrationDays is int d && payment.ProrationCycleDays is int c)
             desc = Accounting.Helpers.PlatformProration.ReceiptDescription(payment.ProrationFromPlan ?? "-", payment.RequestedPlan.ToString(), end, d, c)
                    + $" — {buyer.Name}";
+        // รอบ 237 (K-1): อัปเกรดแบบเริ่มรอบใหม่ — บอกแบบ + ช่วงรอบใหม่ (วันชำระ → วันหมดอายุที่ประทับ) + เครดิตที่หัก (ข้อความตัวเดียวกับหน้าตรวจสลิป/ศูนย์บิล)
+        else if (payment.IsCycleChange && payment.UpgradeMode == Accounting.Models.Enums.PlatformUpgradeMode.RestartCycle
+                 && payment.ProrationCycleEndUtc is DateTime rcEnd && payment.ProrationDays is int rcD && payment.ProrationCycleDays is int rcC)
+            desc = Accounting.Helpers.PlatformProration.RestartUpgradeDescription(payment.ProrationFromPlan ?? "-", payment.RequestedPlan.ToString(),
+                       payment.RequestedPeriodMonths, payment.CycleChangeCredit ?? 0m, rcD, rcC, rcEnd,
+                       payment.PaidPeriodStartUtc, payment.SubscriptionExtendedTo)   // ฝ่ายค้าน 237 N2: วันเริ่มรอบที่ประทับ (ตัวเดียวกับที่คิด EndDate)
+                   + $" — {buyer.Name}";
         else
         {
             var months = payment.RequestedPeriodMonths > 0 ? payment.RequestedPeriodMonths : 1;
