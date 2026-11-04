@@ -363,6 +363,11 @@ public class PlatformWhtRound234DbTests
         contact.Address = contactAddress;
         // ทิศตรงข้าม (2): ผู้เช่าอีกรายในบริษัทผู้ให้บริการเดียวกัน ไม่มีที่อยู่บริษัทเลย · ไม่หัก (ด่านไม่บล็อกการจ่าย) ⇒ ไม่แต่งที่อยู่ · ใบกำกับเต็มรูปไม่ออก (เหตุชัด ไม่โยนขึ้นผู้เรียก)
         var g = await PlatformBillingPhase2DbTests.SeedAsync(db, f.PlatformId);
+        // ผู้ซื้อต้องเป็นนิติบุคคลจริง (เลข checksum ผ่าน · คนละเลขกับผู้เช่าแรก) — ด่าน §86/4 บล็อกที่อยู่ว่างเฉพาะผู้ซื้อนิติบุคคล ·
+        // บุคคล/เลขไม่ผ่าน checksum ได้แค่คำเตือนแล้วออกใบได้ (CI รอบ 234: seed เดิม 0105556000002 checksum ไม่ผ่าน ⇒ ใบออก)
+        var gBuyer = await db.Companies.SingleAsync(c => c.Id == g.BuyerId);
+        gBuyer.TaxId = "0105556000220"; gBuyer.Address = null;
+        await db.SaveChangesAsync();
         var pay2 = new SubscriptionPayment
         {
             SubscriptionId = g.Sub.Id, PaymentNumber = "SP-234S4N-" + Guid.NewGuid().ToString("N")[..6], Amount = 1_070m, WithholdingTaxAmount = 0m,
