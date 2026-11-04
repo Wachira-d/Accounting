@@ -38,6 +38,11 @@ public class Subscription : BaseEntity
     public bool CancelAtPeriodEnd { get; set; }
     public DateTime? CancelRequestedAt { get; set; }
 
+    /// <summary>รอบ 234 (คำตัดสิน 234-3): ค่าตั้งของบริษัท "หักภาษี ณ ที่จ่ายทุกครั้งที่ชำระค่าบริการ NextAcc" — null = ยังไม่เคยเลือก (หน้าเว็บติ๊กให้เมื่อเข้าเกณฑ์) ·
+    /// true/false = ตัวเลือกล่าสุดของผู้เช่า (ประทับเมื่อเลือกที่หน้าชำระ/การ์ดข้อมูลบริษัท) · ผู้อ่าน: ค่าตั้งต้นของช่องติ๊ก (ศูนย์บิล · checkout) +
+    /// ตัดบัตรอัตโนมัติ (<c>PlatformAutoChargeService</c> — true ⇒ ตัดยอดสุทธิ + ประทับภาษีหัก) · ยอดหักคิดที่ <c>Helpers/PlatformWhtSuggestion</c> เสมอ</summary>
+    public bool? WithholdTaxPreference { get; set; }
+
 
     // WP-B1: ใบแจ้งหนี้ต่ออายุที่ออกล่วงหน้าก่อนหมดอายุ. ผูกกับ EndDate ที่ออกให้
     // → รอบใหม่ (EndDate เปลี่ยนหลังจ่าย) จะออกใบใหม่ ไม่ออกซ้ำรอบเดิม (idempotent).
@@ -388,6 +393,16 @@ public class SubscriptionPayment : BaseEntity
     public DateTime? AttentionAt { get; set; }
     /// <summary>ฝ่ายค้านรอบสุดท้าย 4a: ไฟล์หนังสือรับรอง 50 ทวิ ที่ผู้เช่าส่ง (เก็บที่เดียวกับสลิป — ไม่เสิร์ฟตรง) · null = ยังไม่ส่ง</summary>
     public string? WhtCertificateFileName { get; set; }
+    /// <summary>รอบ 234 (คำตัดสิน 234-W1): แถวทะเบียน "ภาษีถูกหัก ณ ที่จ่าย" (<c>WhtCreditReceived</c>) ในบริษัทผู้ให้บริการที่ผูกกับรายการนี้ —
+    /// แถวเกิดจาก GL (Dr 11910 ของใบเสร็จ/ใบแจ้งหนี้ · <c>DocumentService.SyncWhtCreditReceivedAsync</c> ตัวเดียว) · ตัวผูก <c>PlatformWhtCertificateService.LinkCreditAsync</c></summary>
+    public Guid? WhtCreditId { get; set; }
+    /// <summary>รอบ 234 (234-W2): ผู้เช่าส่ง 50 ทวิ ล่าสุดเมื่อ (สถานะ "รอตรวจ" จนแอดมินยืนยัน)</summary>
+    public DateTime? WhtCertificateSubmittedAt { get; set; }
+    /// <summary>รอบ 234 (234-W3): แอดมินตีกลับ 50 ทวิ — เหตุผล (ผู้เช่าเห็นในศูนย์บิล · ส่งใหม่ = ล้างค่า) · null = ไม่ถูกตีกลับ</summary>
+    public string? WhtCertificateRejectedReason { get; set; }
+    public DateTime? WhtCertificateRejectedAt { get; set; }
+    /// <summary>รอบ 234 (234-W3): ทวง 50 ทวิ ครั้งล่าสุด (กันทวงถี่)</summary>
+    public DateTime? WhtCertificateRemindedAt { get; set; }
 
     // ===== รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2) — ส่วนต่างอัปเกรดกลางรอบ · ยอดที่เซิร์ฟเวอร์เสนอ · คูปอง · แอดมินแก้ยอด (คอลัมน์: Helpers/PlatformCouponMigration) =====
     /// <summary>รายการนี้คือ<b>ส่วนต่างอัปเกรดกลางรอบ</b> (<c>Helpers/PlatformProration</c>) — อนุมัติ ⇒ เปลี่ยนแพ็กเกจทันที <b>ไม่ขยับวันหมดอายุ</b> · <c>RequestedPeriodMonths = 0</c></summary>

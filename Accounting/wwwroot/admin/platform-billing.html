@@ -53,6 +53,19 @@
       <div class="section-title">🚨 รายการชำระที่ต้องจัดการ</div>
       <div id="paymentExceptions">กำลังโหลด...</div>
     </div>
+    <!-- รอบ 234 (คำตัดสิน 234-W*): 50 ทวิ จากลูกค้า — สถานะ/ป้าย/เกินกำหนด จากเซิร์ฟเวอร์ (PlatformWhtCertificateStatus) · ยืนยัน = เข้าทะเบียนภาษีถูกหักของบริษัทผู้ให้บริการ (ทะเบียนเดียว) -->
+    <div class="admin-card" id="whtCerts">
+      <div class="section-title">📄 50 ทวิ จากลูกค้า (ภาษีที่ NextAcc ถูกหัก ณ ที่จ่าย)</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <label style="font-size:13px">เกินกำหนดเมื่อค้างเกิน <input class="admin-input" type="number" id="whtOverdueDays" min="1" style="width:80px"> วัน</label>
+        <label style="font-size:13px"><input type="checkbox" id="whtAll"> แสดงที่ยืนยันแล้ว</label>
+        <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.loadWhtCerts()">รีเฟรช</button>
+        <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.backfillWht()">ผูกทะเบียนรายการเก่า</button>
+        <a class="admin-btn admin-btn-outline admin-btn-sm" id="whtRegisterLink" href="/pages/wht-credit.html" target="_blank" rel="noopener">เปิดทะเบียนภาษีถูกหัก (บริษัทผู้ให้บริการ)</a>
+      </div>
+      <div id="whtCertSummary" class="pb-note"></div>
+      <div id="whtCertList">กำลังโหลด...</div>
+    </div>
     <!-- ขั้น 2: ใบค้างทุกบริษัท + สถานะทวงหนี้ (ค่าทุกช่องจากเซิร์ฟเวอร์ · esc ทุกช่องข้อความ) -->
     <div class="admin-card">
       <div class="section-title">🧾 ใบแจ้งหนี้ค่าบริการที่ค้าง (ทุกบริษัท)</div>
@@ -248,7 +261,57 @@
       try { await AdminAPI.platformResolvePaymentException(id, note); AdminLayout.toast('บันทึกแล้ว'); this.loadExceptions(); }
       catch (err) { AdminLayout.toast(err.message, 'error'); }
     };
+    // ───────── รอบ 234 (คำตัดสิน 234-W*): 50 ทวิ จากลูกค้า ─────────
+    PB.loadWhtCerts = async function () {
+      const e = AdminLayout.esc, el = document.getElementById('whtCertList'), sum = document.getElementById('whtCertSummary');
+      const daysEl = document.getElementById('whtOverdueDays');
+      let days = Number(daysEl.value) || null;
+      try {
+        const r = await AdminAPI.platformWhtCertificates(days, document.getElementById('whtAll').checked);
+        const d = r.data;
+        if (!daysEl.value) daysEl.value = d.overdueDays;
+        sum.textContent = `รอส่ง ${d.awaitingUpload} · รอตรวจ ${d.awaitingReview} · เกินกำหนด ${d.overdue}`;
+        el.innerHTML = this.table(d.rows, ['บริษัท', 'รายการ', 'ภาษีหัก', 'อนุมัติเมื่อ', 'สถานะ', 'ทะเบียน', ''],
+          x => [e(x.companyName), `${e(x.paymentNumber)}${x.receiptNumber ? `<div style="font-size:11px;color:#64748b">ใบเสร็จ ${e(x.receiptNumber)}</div>` : ''}`,
+            AdminLayout.money(x.withholdingTaxAmount),
+            `${AdminLayout.date(x.approvedAt)}${x.daysSinceApproval != null ? `<div style="font-size:11px;color:${x.overdue ? '#b91c1c' : '#64748b'}">${x.daysSinceApproval} วัน${x.overdue ? ' · เกินกำหนด' : ''}</div>` : ''}`,
+            `${e(x.stateLabel)}${x.rejectedReason ? `<div style="font-size:11px;color:#b91c1c">${e(x.rejectedReason)}</div>` : ''}`,
+            x.registerNote ? `<span style="font-size:11px;color:#b45309">${e(x.registerNote)}</span>`
+              : `${e(x.whtCreditStatus || '')}${x.certificateNumber ? `<div style="font-size:11px">เลขที่ ${e(x.certificateNumber)}</div>` : ''}`,
+            `<div style="display:flex;gap:4px;flex-wrap:wrap">
+              ${x.hasFile ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.whtCert('${PB.gid(x.paymentId)}')">ดูไฟล์</button>` : ''}
+              ${x.state === 'AwaitingReview' ? `<button class="admin-btn admin-btn-primary admin-btn-sm" onclick="PB.confirmWht('${PB.gid(x.paymentId)}')">ยืนยัน</button>
+                <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.rejectWht('${PB.gid(x.paymentId)}')">ตีกลับ</button>` : ''}
+              ${x.state === 'AwaitingUpload' || x.state === 'Rejected' ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.remindWht('${PB.gid(x.paymentId)}')">ทวง</button>` : ''}</div>`],
+          'ไม่มีรายการ ✅');
+      } catch (err) { el.textContent = err.message; }
+    };
+    PB.confirmWht = async function (id) {
+      const no = prompt('เลขที่หนังสือรับรอง 50 ทวิ (ตามที่พิมพ์บนใบ)');
+      if (!no) return;
+      const dt = prompt('วันที่บนใบ (YYYY-MM-DD · เว้นว่างได้)') || null;
+      const amtRaw = prompt('ยอดภาษีที่หักตามใบ (บาท — เซิร์ฟเวอร์เทียบกับยอดหักของรายการ)');
+      if (amtRaw == null) return;
+      const amt = String(amtRaw).trim() === '' ? null : Number(String(amtRaw).replace(/,/g, ''));
+      try { const r = await AdminAPI.platformConfirmWhtCertificate(id, no, dt, amt); AdminLayout.toast(r.message || 'ยืนยันแล้ว'); this.loadWhtCerts(); this.loadExceptions(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.rejectWht = async function (id) {
+      const reason = prompt('เหตุผลที่ตีกลับ (ผู้เช่าจะเห็นข้อความนี้)');
+      if (!reason) return;
+      try { await AdminAPI.platformRejectWhtCertificate(id, reason); AdminLayout.toast('ตีกลับแล้ว'); this.loadWhtCerts(); this.loadExceptions(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.remindWht = async function (id) {
+      try { const r = await AdminAPI.platformRemindWhtCertificate(id); AdminLayout.toast(r.message || 'ทวงแล้ว'); this.loadWhtCerts(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
+    PB.backfillWht = async function () {
+      try { const r = await AdminAPI.platformBackfillWhtCertificates(); AdminLayout.toast(r.message || 'เสร็จแล้ว', r.success ? undefined : 'error'); this.loadWhtCerts(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
+    };
     PB.loadSettings();
+    PB.loadWhtCerts();
     PB.loadRevenue();
     PB.loadExceptions();
     PB.loadOpen();

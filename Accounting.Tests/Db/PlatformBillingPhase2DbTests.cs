@@ -702,6 +702,15 @@ public class PlatformBillingPhase2DbTests
             Assert.Equal("PLATFORM-WHT-INVALID", tooHigh.RuleCode);
             await Assert.ThrowsAsync<BusinessRuleException>(() => svc.SubmitInvoicePaymentAsync(other.BuyerId, invP.Id,
                 new SubmitInvoicePaymentRequest(null, null, null, null, 30m), "owner"));
+            // รอบ 234 (คำตัดสิน 234-5): นิติบุคคลที่จะหัก ณ ที่จ่าย ต้องมีข้อมูลบริษัทสำหรับใบกำกับครบก่อน (ยังไม่มีที่อยู่ ⇒ 400 + สิ่งที่ขาด · ไม่เกิดรายการ)
+            var noProfile = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.SubmitInvoicePaymentAsync(f.BuyerId, inv.Id,
+                new SubmitInvoicePaymentRequest(null, null, null, null, 30m), "owner"));
+            Assert.Equal(PlatformPayerProfileGate.RuleCode, noProfile.RuleCode);
+            Assert.Contains("ที่อยู่", noProfile.Message);
+            Assert.False(await db.SubscriptionPayments.AnyAsync(p => p.PlatformInvoiceDocumentId == inv.Id));
+            var b2 = await db.Companies.FirstAsync(c => c.Id == f.BuyerId);
+            b2.Address = "99 ถนนทดสอบ แขวงทดสอบ เขตทดสอบ กรุงเทพฯ 10110";
+            await db.SaveChangesAsync();
             var pay = await svc.SubmitInvoicePaymentAsync(f.BuyerId, inv.Id, new SubmitInvoicePaymentRequest(null, null, null, null, 30m), "owner");
             Assert.Equal(1040m, pay.Amount);   // โอน + ภาษีหัก = ยอดค้าง
             Assert.Equal(30m, (await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == pay.Id)).WithholdingTaxAmount);

@@ -24,7 +24,10 @@ public sealed record BillingCenterPlan(
 public sealed record BillingCenterInvoice(
     Guid Id, string DocumentNumber, string Kind, string KindLabel, DateTime DocumentDate, DateTime? DueDate,
     decimal TotalAmount, decimal BalanceDue, string State, string StateLabel, int? DaysPastDue,
-    bool CanPay, string? CannotPayReason, string? PendingPaymentNumber, List<string> LineSummary);
+    bool CanPay, string? CannotPayReason, string? PendingPaymentNumber, List<string> LineSummary,
+    /// <summary>รอบ 234 (คำตัดสิน 234-1): ภาษีหัก ณ ที่จ่ายที่ระบบเสนอสำหรับยอดค้างของใบ (<c>PlatformWhtSuggestion</c>) — หน้าเว็บเติมยอดในช่อง (แก้ได้ในกรอบ
+    /// <c>PlatformInvoiceRules.WithholdingProblem</c>) · null = ใบไม่ค้าง</summary>
+    global::Accounting.Helpers.PlatformWhtSuggestion.Result? Withholding = null);
 
 public sealed record BillingCenterPayment(
     Guid Id, string PaymentNumber, decimal Amount, DateTime PaymentDate, string Status, string StatusLabel,
@@ -37,7 +40,12 @@ public sealed record BillingCenterPayment(
     bool CanPayNow = false,
     /// <summary>รอบ 230: ส่วนลดคูปองของรายการ (0 = ไม่มี) · ยอดก่อนคูปอง</summary>
     decimal CouponDiscountAmount = 0m,
-    string? CouponCode = null);
+    string? CouponCode = null,
+    /// <summary>รอบ 234 (คำตัดสิน 234-W2): สถานะ 50 ทวิ (<c>PlatformWhtCertificateStatus</c> — รอส่ง/รอตรวจ/ยืนยันแล้ว/ตีกลับ) · ป้าย · เหตุตีกลับ · ส่งได้ไหม</summary>
+    string? WhtCertificateState = null,
+    string? WhtCertificateStateLabel = null,
+    string? WhtCertificateRejectedReason = null,
+    bool CanUploadWhtCertificate = false);
 
 public sealed record BillingCenterAddOn(
     string FeatureCode, string Name, string PaymentStatus, string PaymentStatusLabel, string BillingChoice, string BillingChoiceLabel,
@@ -66,4 +74,11 @@ public sealed record BillingCenterSummary(
     bool CanPay,
     bool CanManagePlan,
     /// <summary>รอบ 228 (§5.7): ใบเสร็จ/ใบกำกับภาษี/ใบลดหนี้ค่าบริการ (ล่าสุดก่อน) — null = ยังไม่ตั้งบริษัทผู้ให้บริการ</summary>
-    List<BillingCenterReceipt>? Receipts = null);
+    List<BillingCenterReceipt>? Receipts = null,
+    /// <summary>รอบ 234 (คำตัดสิน 234-4): การ์ด "ข้อมูลบริษัทสำหรับใบกำกับภาษี" — ชนิดผู้ซื้อ/สิ่งที่ขาด/คำเตือน (<c>PlatformPayerProfileGate</c>)</summary>
+    global::Accounting.Helpers.PlatformPayerProfileGate.Result? PayerProfile = null,
+    /// <summary>รอบ 234 (คำตัดสิน 234-3): ค่าตั้ง "หัก ณ ที่จ่ายทุกครั้ง" (null = ยังไม่เลือก — หน้าเว็บติ๊กให้เมื่อเข้าเกณฑ์) · echo ของ <c>Subscription.WithholdTaxPreference</c></summary>
+    bool? WithholdTaxPreference = null);
+
+/// <summary>รอบ 234 (คำตัดสิน 234-3): ตั้งค่า "หักภาษี ณ ที่จ่ายทุกครั้งที่ชำระค่าบริการ" (รวมตัดบัตรอัตโนมัติ)</summary>
+public sealed record WithholdingPreferenceRequest(bool WithholdTax);

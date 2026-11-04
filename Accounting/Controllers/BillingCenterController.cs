@@ -9,6 +9,7 @@ using Accounting.Services.Implementations;
 using Accounting.Services.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Accounting.Controllers;
 
@@ -160,6 +161,60 @@ public class BillingCenterController : ControllerBase
             return Ok(new ApiResponse<SubscriptionPaymentResponse>(true, r, "ส่งหนังสือรับรองแล้ว — ผู้ดูแลระบบจะตรวจสอบ"));
         }
         catch { SubscriptionSlipUpload.DeleteStored(stored); throw; }
+    }
+
+    public record PayerProfileRequest(string? BuyerType, string? Name, string? Address, string? TaxId, string? BranchCode);
+
+    /// <summary>ฝ่ายค้าน 234 N2: การ์ด "ข้อมูลบริษัทสำหรับใบกำกับภาษี" — ประเภทผู้ซื้อมีผลจริง (ตัวตัดสินเดียว <c>PlatformPayerProfileGate.Normalize</c>) ·
+    /// บันทึกผ่านเส้นแก้ข้อมูลบริษัทเดิม (<c>ICompanyService.UpdateAsync</c> — เจ้าของเท่านั้น · audit ชื่อ/เลข/สาขา/ที่อยู่) · บุคคลธรรมดาเว้นเลข = ล้างเลขเดิม</summary>
+    [HttpPut("payer-profile")]
+    public async Task<ActionResult<ApiResponse<object>>> SavePayerProfile(Guid companyId, [FromBody] PayerProfileRequest req,
+        [FromServices] ICompanyService companies, CancellationToken ct)
+    {
+        if (await RequireBillingAsync(companyId, "แก้ข้อมูลบริษัทสำหรับใบกำกับภาษี") is { } deny) return deny;
+        var (v, problem) = PlatformPayerProfileGate.Normalize(new PlatformPayerProfileGate.Input(req?.BuyerType, req?.Name, req?.Address, req?.TaxId, req?.BranchCode));
+        if (problem != null) throw new BusinessRuleException(problem, PlatformPayerProfileGate.RuleCode, 400);
+        await companies.UpdateAsync(companyId, JwtHelper.GetUserIdFromClaims(User), new Accounting.Models.DTOs.Company.UpdateCompanyRequest(
+            Name: v!.Name, NameEn: null, TaxId: v.TaxId, BranchCode: v.BranchCode, BranchName: null, BusinessType: null, IndustryType: null, JuristicId: null,
+            IsVatRegistered: null, VatRate: null, IsWhtRegistered: null, IsSocialSecurityRegistered: null, SocialSecurityAccountNo: null,
+            Address: v.Address ?? "", BuildingNumber: null, BuildingName: null, Moo: null, StreetName: null, SubDistrict: null, District: null, Province: null,
+            PostalCode: null, Phone: null, Fax: null, Email: null, Website: null, FiscalYearStartMonth: null, IsSetupComplete: null));
+        var payer = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, companyId, ct);
+        return Ok(new ApiResponse<object>(true, payer, payer.Warning ?? "บันทึกข้อมูลบริษัทแล้ว"));
+    }
+
+    /// <summary>รอบ 234 (คำตัดสิน 234-3): ค่าตั้ง "หักภาษี ณ ที่จ่ายทุกครั้งที่ชำระค่าบริการ NextAcc" (ค่าตั้งต้นของช่องติ๊ก + ตัดบัตรอัตโนมัติ) ·
+    /// เปิด (true) ได้เฉพาะนิติบุคคลที่ข้อมูลบริษัทครบ (<c>PlatformPayerProfileGate</c> — ไม่ครบ = 400 + สิ่งที่ขาด) · ปิดได้เสมอ · audit</summary>
+    [HttpPut("withholding-preference")]
+    public async Task<ActionResult<ApiResponse<object>>> SetWithholdingPreference(Guid companyId, [FromBody] WithholdingPreferenceRequest req, CancellationToken ct)
+    {
+        if (await RequireBillingAsync(companyId, "ตั้งค่าการหักภาษี ณ ที่จ่าย") is { } deny) return deny;
+        var sub = await _db.Subscriptions.FirstOrDefaultAsync(s => s.CompanyId == companyId, ct)
+            ?? throw new KeyNotFoundException("ไม่พบ subscription");
+        var payer = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, companyId, ct);
+        if (req.WithholdTax)
+        {
+            if (!payer.IsJuristic)
+                throw new BusinessRuleException("หักภาษี ณ ที่จ่ายได้เฉพาะผู้ซื้อที่เป็นนิติบุคคล — กรอกเลขผู้เสียภาษีของบริษัท (ขึ้นต้นด้วย 0) ในการ์ดข้อมูลบริษัทก่อน",
+                    PlatformPayerProfileGate.RuleCode, 400);
+            if (PlatformPayerProfileGate.WithholdingRefusal(payer) is string problem)
+                throw new BusinessRuleException(problem, PlatformPayerProfileGate.RuleCode, 400);
+        }
+        var before = sub.WithholdTaxPreference;
+        sub.WithholdTaxPreference = req.WithholdTax;
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        _db.AddChainedAuditLog(new Accounting.Models.Entities.AuditLog
+        {
+            CompanyId = companyId, UserId = userId, Action = AuditAction.Update, EntityType = "Subscription", EntityId = sub.Id.ToString(),
+            OldValues = System.Text.Json.JsonSerializer.Serialize(new { withholdTaxPreference = before }),
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { withholdTaxPreference = req.WithholdTax, ruleCode = PlatformPayerProfileGate.RuleCode,
+                legalReference = "ท.ป.4/2528 · ม.40(2)" }),
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(), Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(new ApiResponse<object>(true, new { withholdTaxPreference = sub.WithholdTaxPreference },
+            req.WithholdTax ? "ตั้งค่าแล้ว — หักภาษี ณ ที่จ่ายทุกครั้งที่ชำระค่าบริการ · ส่งหนังสือรับรอง 50 ทวิ ที่ประวัติการชำระ · ตัดบัตรอัตโนมัติจะตัดยอดสุทธิเมื่อยืนยันความยินยอมตัดบัตรฉบับปัจจุบันแล้ว (การ์ดบัตรที่บันทึกไว้)"
+                : "ตั้งค่าแล้ว — ชำระค่าบริการเต็มจำนวน (ไม่หักภาษี ณ ที่จ่าย)"));
     }
 
     public record PrepareOnlineRequest(bool PolicyAccepted, string? PolicyVersionShown, decimal? WithholdingTaxAmount = null);

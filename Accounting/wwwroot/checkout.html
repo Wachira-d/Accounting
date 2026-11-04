@@ -67,6 +67,13 @@
             <form id="formRegister" autocomplete="on">
               <div class="co-field"><label for="rCompany">ชื่อบริษัท/กิจการ</label><input id="rCompany" required maxlength="200"></div>
               <div class="co-field"><label for="rName">ชื่อ-นามสกุล</label><input id="rName" required maxlength="100"></div>
+              <!-- รอบ 234 (คำตัดสิน 234-4): ประเภทผู้ซื้อ + เลขผู้เสียภาษี (บุคคลธรรมดาไม่บังคับ) — บันทึกผ่านเส้นแก้ข้อมูลบริษัทเดิมหลังสร้างบัญชี -->
+              <div class="co-field"><label>ผู้ซื้อ (สำหรับใบกำกับภาษี)</label>
+                <label style="display:inline;margin-right:12px"><input type="radio" name="rBuyer" value="Individual" checked> บุคคลธรรมดา</label>
+                <label style="display:inline"><input type="radio" name="rBuyer" value="Juristic"> นิติบุคคล</label></div>
+              <div class="co-field"><label for="rTaxId">เลขประจำตัวผู้เสียภาษี 13 หลัก <span id="rTaxHint">(ไม่บังคับ)</span></label><input id="rTaxId" inputmode="numeric" maxlength="13" autocomplete="off"></div>
+              <div class="co-field" id="rAddrField" hidden><label for="rAddr">ที่อยู่ตามทะเบียน (นิติบุคคล)</label><input id="rAddr" maxlength="500"></div>
+              <div class="co-err" id="rTaxWarn" style="color:#92400e"></div>
               <div class="co-field"><label for="rEmail">อีเมล</label><input id="rEmail" type="email" required autocomplete="email"></div>
               <div class="co-field"><label for="rPass">รหัสผ่าน (อย่างน้อย 8 ตัวอักษร)</label><input id="rPass" type="password" required minlength="8" autocomplete="new-password"></div>
               <label class="co-policy"><input type="checkbox" id="rAgree" required> <span id="rAgreeText">ยอมรับ <a href="/terms.html" target="_blank" rel="noopener">ข้อกำหนดการใช้งาน</a> และ <a href="/privacy.html" target="_blank" rel="noopener">นโยบายความเป็นส่วนตัว</a> ของ NextAcc</span></label>
@@ -84,6 +91,8 @@
         </div>
         <div class="co-card locked" id="cardPay">
           <h2>2. ยืนยันและชำระเงิน</h2>
+          <div id="payerBox"></div>
+          <div id="whtBox"></div>
           <label class="co-policy"><input type="checkbox" id="policyAccept"> <span id="policyText">กำลังโหลดข้อความนโยบาย…</span></label>
           <div class="co-err" id="payErr"></div>
           <div class="co-ok" id="payOk"></div>
@@ -149,6 +158,8 @@
           if (!d.registrationOpen) { $('formRegister').innerHTML = '<div class="co-err">ระบบปิดรับสมัครสมาชิกใหม่ชั่วคราว — เข้าสู่ระบบด้วยบัญชีที่มีอยู่</div>'; this.tab('login'); }
           document.querySelectorAll('.co-tabs button').forEach(b => b.addEventListener('click', () => this.tab(b.dataset.tab)));
           $('formRegister').addEventListener('submit', ev => { ev.preventDefault(); this.register(); });
+          document.querySelectorAll('input[name=rBuyer]').forEach(r => r.addEventListener('change', () => this.buyerHint()));
+          this.buyerHint();
           $('formLogin').addEventListener('submit', ev => { ev.preventDefault(); this.login(); });
           $('logoutLink').addEventListener('click', ev => { ev.preventDefault(); try { localStorage.removeItem('token'); localStorage.removeItem('user'); } catch (_) { /* ignore */ } location.reload(); });
           $('companySel').addEventListener('change', () => { this.companyId = $('companySel').value; this.order = null; this.refreshQuote(); });
@@ -157,6 +168,66 @@
           $('main').hidden = false;
           this.renderSummary();
           if (token()) await this.loadMe(); else this.refreshQuote();
+        },
+        // รอบ 234 (คำตัดสิน 234-4): คำเตือนก่อนสมัคร — นิติบุคคลที่ไม่กรอกเลข ⇒ ใบกำกับออกในนามบุคคล/หัก ณ ที่จ่ายไม่ได้ (ข้อความตัวเดียวกับเซิร์ฟเวอร์: PlatformPayerProfileGate.NoTaxIdWarning — แสดงเต็มหลังสร้างบัญชี)
+        buyerHint() {
+          const j = (document.querySelector('input[name=rBuyer]:checked') || {}).value === 'Juristic';
+          $('rTaxHint').textContent = j ? '(นิติบุคคล — กรอกเพื่อรับใบกำกับภาษีในนามบริษัทและหัก ณ ที่จ่ายได้)' : '(ไม่บังคับ)';
+          $('rAddrField').hidden = !j;
+        },
+        // รอบ 234: ข้อมูลผู้ซื้อ (สถานะ/คำเตือน/สิ่งที่ขาดจากเซิร์ฟเวอร์) + ฟอร์มสั้นบันทึกลงบริษัท (PUT /api/companies/{id} — เส้นแก้ข้อมูลบริษัทเดิม)
+        renderPayer() {
+          const box = $('payerBox'); const p = this.quote && this.quote.payerProfile;
+          if (!box) return;
+          if (!p || !this.companyId) { box.innerHTML = ''; return; }
+          const j = p.buyerKind === 'Juristic';
+          box.innerHTML = `<div class="pv-box ${p.complete ? 'ok' : 'bad'}" style="margin-bottom:10px">
+              <div class="pv-h">ข้อมูลผู้ซื้อสำหรับใบกำกับภาษี: ${esc(p.buyerKindLabel)}${p.complete ? ' — ครบ' : ''}</div>
+              ${p.warning ? `<div>${esc(p.warning)}</div>` : ''}
+              ${p.complete ? '' : `<div style="display:grid;gap:6px;margin-top:8px">
+                <label><input type="radio" name="pBuyer" value="Juristic" ${j ? 'checked' : ''}> นิติบุคคล</label>
+                <label><input type="radio" name="pBuyer" value="Individual" ${j ? '' : 'checked'}> บุคคลธรรมดา</label>
+                <input id="pName" placeholder="ชื่อผู้ซื้อตามทะเบียน" maxlength="100" value="${esc(p.name || '')}">
+                <input id="pAddr" placeholder="ที่อยู่ตามทะเบียน" maxlength="500" value="${esc(p.address || '')}">
+                <input id="pTax" placeholder="เลขผู้เสียภาษี 13 หลัก" inputmode="numeric" maxlength="13" value="${esc(p.taxId && /^\d{13}$/.test(p.taxId) ? p.taxId : '')}">
+                <input id="pBranch" placeholder="รหัสสาขา 5 หลัก (สำนักงานใหญ่ 00000)" inputmode="numeric" maxlength="5" value="${esc(p.branchCode || '00000')}">
+                <button type="button" class="btn btn-secondary" id="pSave">บันทึกข้อมูลบริษัท</button>
+                <div class="co-err" id="pErr"></div></div>`}
+            </div>`;
+          const save = $('pSave');
+          if (save) save.addEventListener('click', () => this.savePayer());
+        },
+        async savePayer() {
+          // ฝ่ายค้าน 234 N2: ประเภทผู้ซื้อมีผลจริง — เซิร์ฟเวอร์ตรวจด้วย PlatformPayerProfileGate.Normalize ตัวเดียว (เส้นเดียวกับการ์ดศูนย์บิล)
+          const body = { buyerType: (document.querySelector('input[name=pBuyer]:checked') || {}).value || '', name: $('pName').value, address: $('pAddr').value,
+            taxId: $('pTax').value, branchCode: $('pBranch').value };
+          try {
+            await api(`/api/subscription/${encodeURIComponent(this.companyId)}/billing-center/payer-profile`, { method: 'PUT', body: JSON.stringify(body) });
+            this.order = null; await this.refreshQuote();
+          } catch (e) { const er = $('pErr'); if (er) er.textContent = e.message; }
+        },
+        // รอบ 234 (คำตัดสิน 234-1): ช่องติ๊ก "หัก ณ ที่จ่าย" — ยอดหัก/สุทธิมาจากเซิร์ฟเวอร์ (quote.withholding) · ส่งแค่ true/false ตอนสร้างรายการ
+        renderWht() {
+          const box = $('whtBox'); const w = this.quote && this.quote.withholding;
+          if (!box) return;
+          if (!w || !this.companyId) { box.innerHTML = ''; return; }
+          if (!w.eligible) {
+            box.innerHTML = w.profileProblem ? `<div class="co-err" style="margin-bottom:8px">${esc(w.reason)} — ${esc(w.profileProblem)}</div>` : '';
+            return;
+          }
+          if (this.whtOn == null) {
+            const pref = this.quote.withholdTaxPreference;   // ค่าตั้งที่ตั้งไว้ชนะ · ไม่ได้ตั้ง = เข้าเกณฑ์ ฿1,000 (เซิร์ฟเวอร์ตัดสิน)
+            this.whtOn = pref === true || pref === false ? pref : !!w.defaultChecked;
+          }
+          box.innerHTML = `<label class="co-policy" style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px;margin-bottom:10px">
+              <input type="checkbox" id="whtOn" ${this.whtOn ? 'checked' : ''}> <span>${esc(w.line)}</span></label>`;
+          $('whtOn').addEventListener('change', () => { this.whtOn = $('whtOn').checked; this.order = null; this.renderSummary(this.quote); this.updatePayButton(); });
+        },
+        whtChoice() { const w = this.quote && this.quote.withholding; return w && w.eligible ? !!this.whtOn : null; },
+        payable() {
+          const q = this.quote; if (!q) return 0;
+          const w = q.withholding;
+          return w && w.eligible && this.whtOn ? w.netAmount : q.amountDue;
         },
         saveCart() { try { localStorage.setItem(CART_KEY, JSON.stringify(this.cart)); } catch (_) { /* ignore */ } },
         tab(t) {
@@ -181,6 +252,10 @@
             } else rows.push(`<div class="pc-row"><span>ราคาแพ็กเกจ</span><span>฿${money(q.listAmount)}</span></div>`);
             if (q.discount > 0) rows.push(`<div class="pc-row"><span>ส่วนลด${q.couponCode ? ' (' + esc(q.couponCode) + ')' : ''}</span><span>−฿${money(q.discount)}</span></div>`);
             rows.push(`<div class="pc-row total"><span>ยอดชำระ</span><span>฿${money(q.amountDue)}</span></div>`);
+            if (q.withholding && q.withholding.eligible && this.whtOn) {
+              rows.push(`<div class="pc-row"><span>หัก ณ ที่จ่าย ${esc(String(q.withholding.ratePercent))}% (ส่ง 50 ทวิ ภายหลัง)</span><span>−฿${money(q.withholding.suggestedAmount)}</span></div>`);
+              rows.push(`<div class="pc-row total"><span>ยอดตัดบัตร/โอน</span><span>฿${money(q.withholding.netAmount)}</span></div>`);
+            }
             if (pv) {
               // วันที่ใหม่เป็นข้อความไทย พ.ศ. ที่เซิร์ฟเวอร์ประกอบ (ตัวคำนวณวันที่ตัวเดียวกับตอนอนุมัติชำระ) — หน้าเว็บไม่คำนวณวันที่เอง
               const extra = pv.notes || [];   // เหตุผลของวันที่ + ผลข้างเคียง (เซิร์ฟเวอร์แยกจากบรรทัดเงินให้แล้ว)
@@ -198,7 +273,7 @@
             const qs = new URLSearchParams({ plan: this.cart.plan, cycle: this.cart.cycle }); if (this.cart.coupon) qs.set('coupon', this.cart.coupon);
             const url = this.companyId ? `/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/quote?${qs}` : `/api/public/checkout/quote?${qs}`;
             const j = await api(url);
-            this.quote = j.data; this.renderSummary(this.quote);
+            this.quote = j.data; this.whtOn = null; this.renderWht(); this.renderPayer(); this.renderSummary(this.quote);
           } catch (e) { this.quote = null; this.renderSummary(null); $('quoteErr').textContent = e.message; }
           this.updatePayButton();
         },
@@ -236,6 +311,16 @@
             const t = j.data.accessToken || j.data.token;
             localStorage.setItem('token', t); localStorage.setItem('user', JSON.stringify(j.data.user || j.data));
             await this.loadMe();
+            // รอบ 234 + ฝ่ายค้าน N2: ประเภทผู้ซื้อ/เลขผู้เสียภาษีที่กรอกตอนสมัคร ⇒ บันทึกผ่านเส้นเดียวกับการ์ดข้อมูลบริษัท (ตรวจด้วยตัวตัดสินเดียว) แล้วคิดยอดใหม่
+            const tax = $('rTaxId').value.trim();
+            const jur = (document.querySelector('input[name=rBuyer]:checked') || {}).value === 'Juristic';
+            if (this.companyId && (tax || jur)) {
+              try {
+                await api(`/api/subscription/${encodeURIComponent(this.companyId)}/billing-center/payer-profile`, { method: 'PUT', body: JSON.stringify({
+                  buyerType: jur ? 'Juristic' : 'Individual', name: $('rCompany').value, address: $('rAddr').value, taxId: tax, branchCode: '00000' }) });
+                await this.refreshQuote();
+              } catch (e2) { $('rTaxWarn').textContent = e2.message + ' — แก้ได้ที่กล่อง "ข้อมูลผู้ซื้อ" ด้านล่าง'; }
+            }
           } catch (e) { err.textContent = e.message; }
         },
         async login() {
@@ -262,7 +347,7 @@
           const ms = (this.catalog && this.catalog.methodOptions) || [];
           $('payMethods').innerHTML = ms.length
             ? `วิธีชำระที่รับ: <b>${ms.map(m => esc(m.label || m.code)).join(' · ')}</b> — เลือกวิธีในหน้าต่างชำระที่เปิดขึ้นหลังกด "ชำระเงิน"` : '';
-          $('payBtn').textContent = refused ? 'ชำระไม่ได้' : this.quote ? `ชำระเงิน ฿${money(this.quote.amountDue)}` + (this.catalog && this.catalog.isTestMode ? ' (ทดสอบ)' : '') : 'ชำระเงิน';
+          $('payBtn').textContent = refused ? 'ชำระไม่ได้' : this.quote ? `ชำระเงิน ฿${money(this.payable())}` + (this.catalog && this.catalog.isTestMode ? ' (ทดสอบ)' : '') : 'ชำระเงิน';
         },
         async resumeOrder() {
           // กลับมาชำระต่อ: สถานะจากเซิร์ฟเวอร์ (ไม่เชื่อ query) — จ่ายแล้ว ⇒ ไปหน้าสำเร็จ · ยังค้าง ⇒ ใช้รายการเดิม
@@ -283,12 +368,15 @@
               const j = await api(`/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/orders`, { method: 'POST', body: JSON.stringify({
                 plan: this.cart.plan, cycle: this.cart.cycle, couponCode: this.cart.coupon || null,
                 policyAccepted: $('policyAccept').checked, policyVersionShown: this.catalog.policy.version,
+                withholdTax: this.whtChoice(),
               }) });
               this.order = j.data;
               ok.textContent = `${j.data.resumed ? 'ใช้รายการเดิม' : 'สร้างรายการ'} ${j.data.paymentNumber} ยอด ฿${money(j.data.amount)}`;
-              if (Math.abs(Number(j.data.amount) - Number(this.quote.amountDue)) > 0.009) {
+              if (Math.abs(Number(j.data.amount) - Number(this.payable())) > 0.009) {
                 // ยอดจริงต่างจากที่โชว์ (ราคาพิเศษ/คูปองเปลี่ยน) — บอกก่อนจ่าย ไม่เงียบ
-                this.quote = Object.assign({}, this.quote, { amountDue: j.data.amount, discount: j.data.couponDiscountAmount || 0, listAmount: j.data.listAmount || this.quote.listAmount });
+                // รอบ 234: ยอดรายการ = สุทธิหลังหัก ณ ที่จ่าย ⇒ ยอดเต็ม = amount + withholdingTaxAmount (ไม่ทับยอดเสนอด้วยยอดสุทธิ)
+                this.quote = Object.assign({}, this.quote, { amountDue: Number(j.data.amount) + Number(j.data.withholdingTaxAmount || 0), discount: j.data.couponDiscountAmount || 0, listAmount: j.data.listAmount || this.quote.listAmount,
+                  withholding: (j.data.withholdingTaxAmount > 0 && this.quote.withholding) ? Object.assign({}, this.quote.withholding, { suggestedAmount: j.data.withholdingTaxAmount, netAmount: j.data.amount }) : this.quote.withholding });
                 this.renderSummary(this.quote); this.updatePayButton();
                 ok.textContent += ' — ยอดอัปเดตตามรายการจริง กดชำระเงินอีกครั้งเพื่อยืนยัน';
                 btn.disabled = false; return;

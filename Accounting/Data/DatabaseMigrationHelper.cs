@@ -818,6 +818,10 @@ public static class DatabaseMigrationHelper
             """
             ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "RenewalInvoiceForEndDate" timestamptz NULL;
             """,
+            // รอบ 234 (คำตัดสิน 234-3): ค่าตั้ง "หัก ณ ที่จ่ายทุกครั้งที่ชำระค่าบริการ NextAcc" (null = ยังไม่เลือก · ไม่ UPDATE แถวเดิม)
+            """
+            ALTER TABLE "Subscriptions" ADD COLUMN IF NOT EXISTS "WithholdTaxPreference" boolean NULL;
+            """,
 
             // ===== Subscriptions: Notification settings =====
             """

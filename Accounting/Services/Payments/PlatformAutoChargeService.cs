@@ -36,6 +36,9 @@ public interface IPlatformAutoChargeService
 
 public class PlatformAutoChargeService : IPlatformAutoChargeService
 {
+    /// <summary>ผู้สร้างรายการชำระของตัวตัดอัตโนมัติ (แยกรายการที่ผู้เช่าแจ้งเองออกจากรายการของระบบ · ฝ่ายค้าน 234 S3)</summary>
+    public const string AutoChargeActor = "system:autocharge";
+
     public const int MaxPayersPerRun = 500;
     /// <summary>แถวที่จองแล้วแต่ไม่มีผล (เครื่องล้มกลางคัน) เกินกี่นาทีจึงถือว่าล้ม</summary>
     public const int StaleClaimMinutes = 60;
@@ -147,12 +150,18 @@ public class PlatformAutoChargeService : IPlatformAutoChargeService
             // รอบ 231 (231-4): ใบค่าใช้งาน/ส่วนเกิน USAGE- ตัดอัตโนมัติเฉพาะเมื่อแอดมินเปิด OverageAutoChargeSavedCard (ปิด = ผู้เช่าชำระเองที่ศูนย์บิล · ทวงหนี้ตามเดิม)
             if (!PlatformAutoChargePolicy.AutoChargeAllowedForKind(PlatformInvoiceRules.KindOf(r.Reference), overageAutoChargeSavedCard)) { t.Skipped++; continue; }
             if (await OpenOnlinePaymentAsync(sub.Id, r.Id, ct)) { t.Skipped++; continue; }   // ผู้เช่าเริ่มจ่ายออนไลน์ไว้ (QR/3DS) — ไม่ตัดซ้อน
-            // ฝ่ายค้าน (nice): ผู้เช่าแจ้งภาษีหัก ณ ที่จ่ายไว้กับรายการของใบนี้ ⇒ ไม่ตัด (ตัดเต็มยอดจะล้างยอดภาษีที่แจ้งไว้)
+            // ฝ่ายค้าน (nice): ผู้เช่าแจ้งภาษีหัก ณ ที่จ่ายไว้กับรายการของใบนี้ ⇒ ไม่ตัด (ตัดเต็มยอดจะล้างยอดภาษีที่แจ้งไว้) ·
+            // รอบ 234 (คำตัดสิน 234-3): บริษัทตั้ง "หัก ณ ที่จ่ายทุกครั้ง" ⇒ ระบบคิดยอดหักเอง (ตัดยอดสุทธิ) — ไม่ล้างภาษีที่แจ้ง ⇒ ตัดต่อได้
+            // ฝ่ายค้าน 234 S3: รายการแจ้งหักที่ผู้เช่าทำเอง (ยังค้าง) ⇒ ข้ามเสมอ (ไม่ล้างยอดที่แจ้ง · นับเป็น "ข้าม" ไม่ใช่ล้ม · ไม่แจ้ง "ตัดไม่สำเร็จ") —
+            // ยกเว้นรายการที่ตัวตัดอัตโนมัติสร้างเอง (ครั้งก่อนตัดไม่ผ่าน) ซึ่งคิดภาษีหักจากตัวตัดสินเดียวอยู่แล้ว
             if (await _db.SubscriptionPayments.AsNoTracking().AnyAsync(p => p.SubscriptionId == sub.Id && p.PlatformInvoiceDocumentId == r.Id
-                    && p.WithholdingTaxAmount > 0m
+                    && p.WithholdingTaxAmount > 0m && p.CreatedBy != AutoChargeActor
                     && (p.Status == SubscriptionPaymentStatus.Pending || p.Status == SubscriptionPaymentStatus.UnderReview), ct))
             { t.Skipped++; continue; }
-            await ChargeInvoiceAsync(pid, payer, r, no, retryDays, card, t, ct);
+            await ChargeInvoiceAsync(pid, payer, r, no, retryDays, card, t, ct,
+                // ฝ่ายค้าน 234 S2: ตัดยอดสุทธิเฉพาะเมื่อตั้ง "หักทุกครั้ง" (PUT withholding-preference) และยินยอมตัดบัตรด้วยข้อความฉบับที่บอกเรื่องตัดยอดสุทธิ —
+                // ยินยอมฉบับเดิม (ตัดเต็มยอด) ⇒ ตัดเต็มยอดจนกว่าจะยินยอมใหม่
+                sub.WithholdTaxPreference == true && PlatformSavedCardRules.MandateAllowsNetCharge(m.ConsentVersion, version));
         }
     }
 
@@ -169,13 +178,22 @@ public class PlatformAutoChargeService : IPlatformAutoChargeService
     }
 
     private async Task ChargeInvoiceAsync(Guid pid, Guid payer, PlatformInvoiceRow inv, int attemptNo, IReadOnlyList<int> retryDays,
-        PlatformCardRefs card, Tally t, CancellationToken ct)
+        PlatformCardRefs card, Tally t, CancellationToken ct, bool withholdPreference = false)
     {
+        // รอบ 234 (คำตัดสิน 234-3): ค่าตั้ง "หัก ณ ที่จ่ายทุกครั้ง" ⇒ ภาษีหักของยอดค้างจากตัวตัดสินเดียว (นิติบุคคล · ข้อมูลครบ · ฐานก่อน VAT ≥ 1,000) ·
+        // ไม่เข้าเกณฑ์ ⇒ ตัดเต็มยอดตามเดิม · ยอดตัดบัตร = ยอดค้าง − ภาษีหัก (SubmitInvoicePaymentAsync ตรวจซ้ำด้วย WithholdingProblem + ด่านข้อมูลบริษัท)
+        decimal? autoWht = null;
+        if (withholdPreference)
+        {
+            var w = Accounting.Services.Platform.PlatformWithholdingReader.ForInvoice(
+                await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, payer, ct), inv.BalanceDue, inv.TotalAmount, inv.SubTotal, true);
+            if (w.Withhold) autoWht = w.WithholdingAmount;
+        }
         // ── 1. จองครั้งนี้ (unique ใบ + ครั้งที่) — อีกเครื่อง/อีกรอบจองไปแล้ว ⇒ ไม่ทำซ้ำ ──
         var attempt = new PlatformAutoChargeAttempt
         {
             PlatformCompanyId = pid, PayerCompanyId = payer, DocumentId = inv.Id, AttemptNo = attemptNo, SavedCardId = card.SavedCardId,
-            Amount = decimal.Round(inv.BalanceDue, 2, MidpointRounding.AwayFromZero), Outcome = PlatformAutoChargePolicy.OutcomeClaimed,
+            Amount = decimal.Round(inv.BalanceDue - (autoWht ?? 0m), 2, MidpointRounding.AwayFromZero), Outcome = PlatformAutoChargePolicy.OutcomeClaimed,
             AttemptedAt = DateTime.UtcNow, CreatedBy = "system:autocharge",
         };
         _db.PlatformAutoChargeAttempts.Add(attempt);
@@ -194,7 +212,7 @@ public class PlatformAutoChargeService : IPlatformAutoChargeService
         try
         {
             var payment = await _subs.SubmitInvoicePaymentAsync(payer, inv.Id,
-                new SubmitInvoicePaymentRequest(null, null, null, $"ตัดบัตรอัตโนมัติ ครั้งที่ {attemptNo}", null), "system:autocharge");
+                new SubmitInvoicePaymentRequest(null, null, null, $"ตัดบัตรอัตโนมัติ ครั้งที่ {attemptNo}", autoWht), AutoChargeActor);
             attempt.SubscriptionPaymentId = payment.Id;
             // ฝ่ายค้าน (nice): วิธีชำระของรายการ = บัตร (ตัวแจ้งชำระประทับโอนเงินเป็นค่าตั้งต้น)
             var sp = await _db.SubscriptionPayments.FirstOrDefaultAsync(p => p.Id == payment.Id, ct);

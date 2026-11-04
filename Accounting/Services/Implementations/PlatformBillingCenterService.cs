@@ -78,6 +78,8 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             .GroupBy(p => p.InvoiceId)
             .ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.CreatedAt).First());
 
+        // รอบ 234 (คำตัดสิน 234-1/234-4): ข้อมูลผู้ซื้อ + ยอดภาษีหักที่ระบบเสนอต่อใบ — ตัวตัดสินเดียว (PlatformWithholdingReader → PlatformWhtSuggestion)
+        var payer = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, companyId, ct);
         var invoiceDtos = new List<BillingCenterInvoice>();
         foreach (var inv in invoices)
         {
@@ -100,7 +102,8 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             invoiceDtos.Add(new BillingCenterInvoice(inv.Id, inv.DocumentNumber, kind.ToString(), PlatformInvoiceRules.KindLabel(kind),
                 inv.DocumentDate, inv.DueDate, inv.TotalAmount, open ? inv.BalanceDue : 0m, state.ToString(),
                 PlatformInvoiceRules.StateLabel(state, late), open ? late : null, reason == null, reason,
-                pending?.PaymentNumber, lines));
+                pending?.PaymentNumber, lines,
+                open ? Accounting.Services.Platform.PlatformWithholdingReader.ForInvoice(payer, inv.BalanceDue, inv.TotalAmount, inv.SubTotal, true) : null));
         }
         var openList = invoiceDtos.Where(i => i.BalanceDue > 0m).ToList();
 
@@ -116,8 +119,16 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             foreach (var x in await _db.Documents.AsNoTracking().Where(d => d.CompanyId == p3 && payInvIds.Contains(d.Id))
                          .Select(d => new { d.Id, d.DocumentNumber }).ToListAsync(ct))
                 invNumbers[x.Id] = x.DocumentNumber;
+        // รอบ 234 (คำตัดสิน 234-W2): สถานะ 50 ทวิ จากทะเบียนภาษีถูกหักของผู้ให้บริการ (ยืนยันแล้ว = แถว Received/Claimed เท่านั้น)
+        var creditIds = payments.Where(p => p.WhtCreditId != null).Select(p => p.WhtCreditId!.Value).Distinct().ToList();
+        var creditStatus = creditIds.Count == 0 ? new Dictionary<Guid, WhtCreditStatus>()
+            : await _db.WhtCreditsReceived.AsNoTracking().Where(w => creditIds.Contains(w.Id) && !w.IsDeleted && w.CompanyId == platformId)   // ฝ่ายค้าน 234 N4: ทะเบียนของบริษัทผู้ให้บริการเท่านั้น
+                .ToDictionaryAsync(w => w.Id, w => w.Status, ct);
         var paymentDtos = payments.Select(p =>
         {
+            var whtState = PlatformWhtCertificateStatus.Of(p.WithholdingTaxAmount, p.Status == SubscriptionPaymentStatus.Approved,
+                p.WhtCertificateFileName != null, p.WhtCertificateRejectedReason,
+                p.WhtCreditId is Guid wc && creditStatus.TryGetValue(wc, out var cs) ? (WhtCreditStatus?)cs : null);
             string? invNo = p.PlatformInvoiceDocumentId is Guid g && invNumbers.TryGetValue(g, out var n) ? n : null;
             return new BillingCenterPayment(p.Id, p.PaymentNumber, p.Amount, p.PaymentDate, p.Status.ToString(),
                 PaymentStatusLabel(p.Status, p.SlipFileName != null),
@@ -135,7 +146,11 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
                     && p.Status is not (SubscriptionPaymentStatus.Rejected or SubscriptionPaymentStatus.Cancelled),
                 p.WithholdingTaxAmount,
                 canPay && p.Status == SubscriptionPaymentStatus.Pending && p.SlipFileName == null && p.PlatformInvoiceDocumentId == null && p.Amount > 0m,
-                p.CouponDiscountAmount, p.CouponCode);
+                p.CouponDiscountAmount, p.CouponCode,
+                whtState == PlatformWhtCertificateStatus.State.NotRequired ? null : whtState.ToString(),
+                whtState == PlatformWhtCertificateStatus.State.NotRequired ? null : PlatformWhtCertificateStatus.Label(whtState),
+                whtState == PlatformWhtCertificateStatus.State.Rejected ? p.WhtCertificateRejectedReason : null,
+                PlatformWhtCertificateStatus.TenantCanUpload(whtState));
         }).ToList();
 
         // ── ส่วนเสริม ──
@@ -179,7 +194,7 @@ public class PlatformBillingCenterService : IPlatformBillingCenterService
             invoiceDtos, paymentDtos, addOns,
             pay,
             PlatformBillingSettingsRules.DescribeSuspension(policy, mode == SubscriptionEnforcementMode.Enforce),
-            canPay, canManagePlan, receipts);
+            canPay, canManagePlan, receipts, payer, sub.WithholdTaxPreference);
     }
 
     /// <summary>ป้ายชนิดเอกสารที่ผู้เช่าได้รับ (ตัวเดียวของศูนย์บิล)</summary>

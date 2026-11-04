@@ -149,14 +149,8 @@ public static class PlatformInvoiceRules
         return null;
     }
 
-    /// <summary>ฝ่ายค้าน S4 + รอบสุดท้าย 4b: ฐานภาษีหัก ณ ที่จ่ายของยอดที่จะจ่าย = ยอดก่อน VAT ของใบตามสัดส่วน (ยอดค้าง ÷ ยอดรวม) · ไม่รู้ยอดก่อน VAT ⇒ ยอดค้าง</summary>
-    private static decimal WithholdingBase(decimal balanceDue, decimal totalAmount, decimal subTotal)
-        => subTotal > 0m && totalAmount > 0m
-            ? decimal.Round(subTotal * Math.Min(1m, balanceDue / totalAmount), 2, MidpointRounding.AwayFromZero)
-            : balanceDue;
-
     /// <summary>ฝ่ายค้าน S4: ภาษีหัก ณ ที่จ่ายที่ผู้เช่านิติบุคคลหักจากค่าบริการ — อัตรา ม.40(2) ค่าบริการ นิติบุคคล จาก <c>ThaiWhtRateTable</c> (ตารางเดียว) ·
-    /// ไม่ระบุ/0 = ไม่หัก · ผู้จ่ายไม่ใช่นิติบุคคล = หักไม่ได้ · ต้อง &lt; ยอดค้าง · ไม่เกินอัตราคูณฐานก่อน VAT (<see cref="WithholdingBase"/> — รอบสุดท้าย 4b
+    /// ไม่ระบุ/0 = ไม่หัก · ผู้จ่ายไม่ใช่นิติบุคคล = หักไม่ได้ · ต้อง &lt; ยอดค้าง · ไม่เกินอัตราคูณฐานก่อน VAT (<see cref="PlatformWhtSuggestion.BaseOfInvoice"/> — รอบสุดท้าย 4b
     /// เดิมคูณยอดรวม VAT ⇒ หักเกินได้ 7%) ⇒ เงินโอน + ภาษีหัก = ยอดค้าง · null = ใช้ได้</summary>
     public static string? WithholdingProblem(decimal? wht, decimal balanceDue, decimal totalAmount, decimal subTotal, bool payerIsJuristic)
     {
@@ -164,8 +158,9 @@ public static class PlatformInvoiceRules
         if (w < 0m) return "ภาษีหัก ณ ที่จ่ายติดลบไม่ได้";
         if (!payerIsJuristic) return "หักภาษี ณ ที่จ่ายได้เฉพาะผู้จ่ายที่เป็นนิติบุคคล (เลขผู้เสียภาษีของบริษัทต้องเป็นนิติบุคคล) — ถ้าไม่ได้หัก ให้เว้นว่าง";
         if (w >= balanceDue) return "ภาษีหัก ณ ที่จ่ายต้องน้อยกว่ายอดค้างของใบ";
-        var rate = ThaiWhtRateTable.Find("40(2)")?.JuristicRate ?? 3m;
-        var cap = decimal.Round(WithholdingBase(balanceDue, totalAmount, subTotal) * rate / 100m, 2, MidpointRounding.AwayFromZero);
+        // รอบ 234: อัตรา/ฐาน/เพดาน มาจากตัวตัดสินเดียว PlatformWhtSuggestion (ยอดที่ระบบเสนอ = เพดานของการตรวจ — ไม่มีสูตรที่สอง)
+        var rate = PlatformWhtSuggestion.RatePercent;
+        var cap = PlatformWhtSuggestion.MaxWithholding(PlatformWhtSuggestion.BaseOfInvoice(balanceDue, totalAmount, subTotal));
         if (w > cap)
             return $"ภาษีหัก ณ ที่จ่าย {w:N2} บาท เกินอัตรา {rate:0.##}% ของค่าบริการก่อน VAT (ไม่เกิน {cap:N2} บาท · ม.40(2) ท.ป.4/2528) — ตรวจหนังสือรับรอง 50 ทวิ อีกครั้ง";
         return null;

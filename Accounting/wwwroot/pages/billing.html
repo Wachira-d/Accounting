@@ -50,6 +50,9 @@
     <section class="hub-pane" data-pane="plan">
       <div class="card"><h3>แพ็กเกจปัจจุบัน <a href="/pages/subscription.html" class="muted" style="font-weight:400;margin-left:8px">รายละเอียด / ทดลองใช้ →</a></h3><div id="plan">กำลังโหลด...</div></div>
       <div class="card" id="planPendingCard" style="display:none"><h3>รายการชำระค่าแพ็กเกจที่รอชำระ</h3><div id="planPending"></div></div>
+      <!-- รอบ 234 (คำตัดสิน 234-4): ข้อมูลผู้ซื้อสำหรับใบกำกับภาษี §86/4 + ค่าตั้ง "หัก ณ ที่จ่ายทุกครั้ง" — สถานะ/สิ่งที่ขาด/คำเตือนจากเซิร์ฟเวอร์ (PlatformPayerProfileGate) ·
+           บันทึกผ่านเส้นแก้ข้อมูลบริษัทเดิม (PUT /api/companies/{id}) -->
+      <div class="card" id="payerCard"><h3>ข้อมูลบริษัทสำหรับใบกำกับภาษี</h3><div id="payerProfile">กำลังโหลด...</div></div>
       <!-- รอบ 230 (คำตัดสินข้อ 230-Q1/230-Q2 · D-8): เปลี่ยน/อัปเกรด — ราคา/ส่วนต่างตามวันที่เหลือ/คูปอง คิดที่เซิร์ฟเวอร์ (GET …/plan-quote) -->
       <div class="card"><h3>เปลี่ยน / อัปเกรดแพ็กเกจ</h3><div id="planChange">กำลังโหลด...</div></div>
       <!-- รอบ 231 (§B.7): นโยบายเมื่อโควตาเต็ม — การ์ดเต็มอยู่แท็บ "ใช้ไปเท่าไร" (ตัวเดียว) -->
@@ -141,6 +144,7 @@
           const res = await API.get(this.base());
           this.data = res.data;
           this.render();
+          PayerCard.render();   // รอบ 234
           PlanTab.render();   // รอบ 232: เดิม `if (window.PlanTab)` — const ระดับสคริปต์ไม่อยู่บน window ⇒ ไม่เคยเรนเดอร์ (การ์ดค้าง "กำลังโหลด...")
         } catch (e) {
           document.getElementById('plan').innerHTML = `<div class="note bad">${Layout.esc(e.message || 'โหลดไม่สำเร็จ')}</div>`;
@@ -195,7 +199,7 @@
         document.getElementById('planPending').innerHTML = pending.map(x => `
           <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid #f1f5f9">
             <div><b>${e(x.paymentNumber)}</b> · ${e(x.purpose)}${x.couponCode ? ` <span class="muted">(คูปอง ${e(x.couponCode)} ลด ฿${Layout.money(x.couponDiscountAmount)})</span>` : ''}</div>
-            <div><b>฿${Layout.money(x.amount)}</b> <button class="btn btn-primary btn-sm" onclick="PlanTab.openPay('${Layout.jsArg(x.id)}')">ชำระ</button></div>
+            <div><b>฿${Layout.money(x.amount)}</b>${x.withholdingTaxAmount > 0 ? ` <span class="muted">(หัก ณ ที่จ่าย ฿${Layout.money(x.withholdingTaxAmount)})</span>` : ''} <button class="btn btn-primary btn-sm" onclick="PlanTab.openPay('${Layout.jsArg(x.id)}')">ชำระ</button></div>
           </div>`).join('');
 
         const pays = d.payments || [];
@@ -209,7 +213,8 @@
                 <td>${e(x.statusLabel)}${x.rejectionReason ? `<div class="muted">${e(x.rejectionReason)}</div>` : ''}
                   ${x.canPayNow ? `<div><button class="btn btn-primary btn-sm" style="margin-top:4px" onclick="PlanTab.openPay('${Layout.jsArg(x.id)}')">ชำระ</button></div>` : ''}</td>
                 <td>${x.hasReceipt ? `<button class="btn btn-secondary btn-sm" onclick="Bill.receipt('${Layout.jsArg(x.id)}','${Layout.jsArg(x.receiptNumber)}')">${e(x.receiptNumber)}</button>` : '-'}
-                  ${x.needsWhtCertificate ? `<div><label class="btn btn-secondary btn-sm" style="margin-top:4px">ส่ง 50 ทวิ (${Layout.money(x.withholdingTaxAmount)})
+                  ${x.whtCertificateStateLabel ? `<div class="muted" style="margin-top:4px">50 ทวิ: <b>${e(x.whtCertificateStateLabel)}</b>${x.whtCertificateRejectedReason ? ` — ${e(x.whtCertificateRejectedReason)}` : ''}</div>` : ''}
+                  ${(x.needsWhtCertificate || x.canUploadWhtCertificate) ? `<div><label class="btn btn-secondary btn-sm" style="margin-top:4px">${x.whtCertificateState === 'AwaitingReview' ? 'ส่ง 50 ทวิ ใหม่' : 'ส่ง 50 ทวิ'} (${Layout.money(x.withholdingTaxAmount)})
                     <input type="file" accept="image/*,application/pdf" style="display:none" onchange="Bill.whtCert('${Layout.jsArg(x.id)}', this)"></label></div>` : ''}</td>
               </tr>`).join('')}
             </tbody></table></div>`;
@@ -263,6 +268,7 @@
         document.getElementById('payModalBody').innerHTML = `
           <div class="note" style="margin-bottom:10px"><b>ยอดที่ต้องชำระ ฿${Layout.money(i.balanceDue)}</b>
             ${(i.lineSummary || []).length ? `<div class="muted" style="margin-top:4px">${i.lineSummary.map(e).join('<br>')}</div>` : ''}</div>
+          ${PlanTab.whtNote(i.withholding)}
           ${po.bankTransferInstructions
             ? `<div class="note" style="white-space:pre-line;margin-bottom:10px"><b>โอนเงินค่าบริการให้ NextAcc</b>\n${e(po.bankTransferInstructions)}</div>`
             : `<div class="note bad" style="margin-bottom:10px">${e(po.fallbackNote || '')}</div>`}
@@ -271,7 +277,8 @@
             <label>ไฟล์สลิป (รูปหรือ PDF)<input type="file" name="file" accept="image/*,application/pdf" class="form-input"></label>
             <label>วันที่โอน<input type="date" name="paymentDate" class="form-input"></label>
             <label>อ้างอิงการโอน (ถ้ามี)<input name="transferReference" maxlength="100" class="form-input"></label>
-            <label>ภาษีหัก ณ ที่จ่าย (บาท · เฉพาะนิติบุคคล — โอน = ยอดค้าง − ภาษีหัก · แนบ 50 ทวิ กับสลิป)<input type="number" name="withholdingTaxAmount" min="0" step="0.01" class="form-input" placeholder="เว้นว่าง = ไม่หัก"></label>
+            <label>ภาษีหัก ณ ที่จ่าย (บาท · เฉพาะนิติบุคคล — โอน = ยอดค้าง − ภาษีหัก · แนบ 50 ทวิ กับสลิป)<input type="number" name="withholdingTaxAmount" min="0" step="0.01" class="form-input" placeholder="เว้นว่าง = ไม่หัก"
+              value="${i.withholding && i.withholding.eligible && (d.withholdTaxPreference === true || (d.withholdTaxPreference !== false && i.withholding.defaultChecked)) ? e(Number(i.withholding.suggestedAmount).toFixed(2)) : ''}"></label>
             <label>หมายเหตุ<input name="customerNotes" maxlength="500" class="form-input"></label>
           </form>
           <div id="billPolicy" style="margin-top:10px">${PolicyAccept.html(po.policy)}</div>`;
@@ -420,6 +427,7 @@
             ${q.kind === 'CycleChange' && q.newPeriodEndUtc ? `<div class="quote-row" style="color:#475569;font-size:12px"><span>รอบใหม่เริ่มวันที่ชำระ · ใช้ได้ถึง</span><span>${Layout.date(q.newPeriodEndUtc)}</span></div>` : ''}
             ${q.discount > 0 ? `<div class="quote-row" style="color:#166534"><span>${e(q.couponLabel || 'ส่วนลด')}</span><span>−฿${Layout.money(q.discount)}</span></div>` : ''}
             <div class="quote-row" style="font-size:16px;font-weight:800;border-top:1px solid #e2e8f0;padding-top:6px"><span>ยอดชำระ</span><span>฿${Layout.money(q.amountDue)}</span></div>
+            ${this.whtBlock(q.withholding)}
             <div style="display:flex;gap:6px;align-items:center;margin:8px 0;flex-wrap:wrap">
               <input id="planCoupon" class="form-input" maxlength="40" placeholder="โค้ดส่วนลด (ถ้ามี)" value="${e(this.couponCode)}" style="max-width:200px;text-transform:uppercase">
               <button type="button" class="btn btn-secondary btn-sm" id="planCouponBtn">ใช้โค้ด</button>
@@ -432,6 +440,35 @@
         if (cb) cb.addEventListener('click', () => { this.couponCode = String(document.getElementById('planCoupon').value || '').trim(); this.loadQuote(q.plan); });
         const go = document.getElementById('planConfirm');
         if (go) go.addEventListener('click', () => this.confirm());
+        const wcb = document.getElementById('planWht');
+        if (wcb) wcb.addEventListener('change', () => {
+          const w = q.withholding, net = document.getElementById('planWhtNet');
+          if (net) net.innerHTML = `<span>${wcb.checked ? 'ยอดโอน/ตัดบัตร (หลังหัก ฿' + Layout.money(w.suggestedAmount) + ')' : 'ยอดโอน/ตัดบัตร (ไม่หัก)'}</span><span><b>฿${Layout.money(wcb.checked ? w.grossAmount - w.suggestedAmount : w.grossAmount)}</b></span>`;
+        });
+      },
+      // รอบ 234 (คำตัดสิน 234-1): ภาษีหัก ณ ที่จ่ายที่เซิร์ฟเวอร์เสนอ (PlatformWhtSuggestion) — หน้านี้แสดง + ช่องติ๊กอย่างเดียว (ยอดหัก/สุทธิมาจากเซิร์ฟเวอร์ทั้งคู่)
+      whtNote(w) {
+        if (!w) return '';
+        const e = Layout.esc;
+        if (w.eligible) return `<div class="note warn" style="margin-bottom:10px">${e(w.line || '')}</div>`;
+        if (w.profileProblem) return `<div class="note bad" style="margin-bottom:10px">${e(w.reason)}<div style="margin-top:4px">${e(w.profileProblem)} · <a href="#tab=plan" onclick="PayerCard.focus(); return false;">กรอกข้อมูลบริษัท</a></div></div>`;
+        return '';
+      },
+      whtBlock(w) {
+        if (!w) return '';
+        const e = Layout.esc;
+        if (!w.eligible) return this.whtNote(w);
+        const pref = (Bill.data || {}).withholdTaxPreference;
+        const checked = pref === true || pref === false ? pref : !!w.defaultChecked;   // ค่าตั้งที่ผู้เช่าตั้งไว้ชนะ · ไม่ได้ตั้ง = เข้าเกณฑ์ ฿1,000 (เซิร์ฟเวอร์ตัดสิน)
+        return `<div class="note warn" style="margin:8px 0">
+          <label style="display:flex;gap:8px;align-items:flex-start"><input type="checkbox" id="planWht" ${checked ? 'checked' : ''} style="margin-top:3px">
+            <span><b>หัก ณ ที่จ่าย ${e(String(w.ratePercent))}%</b> — ${e(w.line || '')}</span></label>
+          <div class="quote-row" id="planWhtNet" style="margin-top:6px"><span>${checked ? 'ยอดโอน/ตัดบัตร (หลังหัก ฿' + Layout.money(w.suggestedAmount) + ')' : 'ยอดโอน/ตัดบัตร (ไม่หัก)'}</span><span><b>฿${Layout.money(checked ? w.grossAmount - w.suggestedAmount : w.grossAmount)}</b></span></div>
+        </div>`;
+      },
+      whtChoice() {
+        const q = this.quote, cb = document.getElementById('planWht');
+        return q && q.withholding && q.withholding.eligible && cb ? !!cb.checked : null;
       },
       // รอบ 233 (คำตัดสิน 233-*): "สิ่งที่จะได้ถ้าจ่ายเงินนี้" — แพ็ก/วันหมดอายุเดิม → ใหม่ · เครดิตแพ็กเดิม · เหตุผลของวันที่ (PlanPurchasePreview จากเซิร์ฟเวอร์ ·
       // ตัวคำนวณวันที่ตัวเดียวกับตอนอนุมัติชำระ) — หน้านี้แสดงอย่างเดียว ไม่คำนวณวันที่/เครดิตเอง
@@ -457,9 +494,9 @@
         try {
           const res = q.kind === 'New'
             ? await API.post(`/api/subscription/${Bill.cid()}/convert`, { plan: q.plan, billingCycle: q.cycle, promoCode: coupon,
-                policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown })
+                policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown, withholdTax: this.whtChoice() })
             : await API.put(`/api/subscription/${Bill.cid()}/plan`, { newPlan: q.plan, newBillingCycle: this.cycle, couponCode: coupon,
-                policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown });
+                policyAccepted: pol.policyAccepted, policyVersionShown: pol.policyVersionShown, withholdTax: this.whtChoice() });
           Layout.toast(res?.message || 'บันทึกแล้ว', 'success');
           this.quote = null; this.couponCode = '';
           await Bill.load();
@@ -476,7 +513,8 @@
         const opts = (po.methodOptions || []);
         document.getElementById('planPayTitle').textContent = `ชำระ ${p.paymentNumber}`;
         document.getElementById('planPayBody').innerHTML = `
-          <div class="note" style="margin-bottom:10px"><b>ยอดที่ต้องชำระ ฿${Layout.money(p.amount)}</b></div>
+          <div class="note" style="margin-bottom:10px"><b>ยอดที่ต้องชำระ ฿${Layout.money(p.amount)}</b>
+            ${p.withholdingTaxAmount > 0 ? `<div class="muted" style="margin-top:4px">หักภาษี ณ ที่จ่ายแล้ว ฿${Layout.money(p.withholdingTaxAmount)} (ยอดเต็ม ฿${Layout.money(Number(p.amount) + Number(p.withholdingTaxAmount))}) — ส่งหนังสือรับรอง 50 ทวิ ภายหลังที่ "ประวัติการชำระ"</div>` : ''}</div>
           <div id="planPayPolicy">${PolicyAccept.html(po.policy)}</div>
           ${po.online ? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">${opts.map(m =>
               `<button type="button" class="btn btn-primary btn-sm" data-pp="${e(m.code)}">ชำระด้วย ${e(m.label)}</button>`).join('')}</div>`
@@ -520,7 +558,65 @@
         finally { btn.disabled = false; }
       },
     };
+    // ───────── รอบ 234 (คำตัดสิน 234-4): การ์ด "ข้อมูลบริษัทสำหรับใบกำกับภาษี" ─────────
+    // สถานะ/สิ่งที่ขาด/คำเตือนมาจากเซิร์ฟเวอร์ (PlatformPayerProfileGate) · บันทึกผ่าน PUT /api/companies/{id} (เส้นแก้ข้อมูลบริษัทเดิม — ห้ามที่เก็บที่สอง)
+    const PayerCard = {
+      focus() { HubTabs.show('plan', true); const c = document.getElementById('payerCard'); if (c) c.scrollIntoView({ behavior: 'smooth' }); },
+      render() {
+        const el = document.getElementById('payerProfile'); if (!el) return;
+        const d = Bill.data || {}, p = d.payerProfile, e = Layout.esc;
+        if (!p) { el.innerHTML = ''; return; }
+        const kindJ = p.buyerKind === 'Juristic';
+        el.innerHTML = `
+          <div style="display:flex;gap:18px;flex-wrap:wrap;margin-bottom:8px">
+            <div><div class="muted">ประเภทผู้ซื้อ (ตามเลขผู้เสียภาษี)</div><b>${e(p.buyerKindLabel)}</b></div>
+            <div><div class="muted">สถานะ</div><b style="color:${p.complete ? '#166534' : '#b45309'}">${p.complete ? 'ครบ — ออกใบกำกับเต็มรูปในนามบริษัทได้' : 'ยังไม่ครบ'}</b></div>
+          </div>
+          ${p.warning ? `<div class="note warn" style="margin-bottom:8px">${e(p.warning)}</div>` : ''}
+          ${d.canManagePlan ? `<form id="payerForm" style="display:grid;gap:8px;max-width:560px">
+            <div style="display:flex;gap:14px;flex-wrap:wrap"><span class="muted">ประเภทผู้ซื้อ</span>
+              <label><input type="radio" name="buyerType" value="Juristic" ${kindJ ? 'checked' : ''}> นิติบุคคล</label>
+              <label><input type="radio" name="buyerType" value="Individual" ${kindJ ? '' : 'checked'}> บุคคลธรรมดา</label></div>
+            <label>ชื่อผู้ซื้อ (ตามทะเบียน)<input name="name" class="form-input" maxlength="100" value="${Layout.esc(p.name || '')}"></label>
+            <label>ที่อยู่ตามทะเบียน<input name="address" class="form-input" maxlength="500" value="${Layout.esc(p.address || '')}"></label>
+            <label>เลขประจำตัวผู้เสียภาษี 13 หลัก<span class="muted"> (บุคคลธรรมดาไม่บังคับ)</span><input name="taxId" class="form-input" inputmode="numeric" maxlength="13" value="${e(p.taxId && /^\d{13}$/.test(p.taxId) ? p.taxId : '')}"></label>
+            <label data-juristic-only>รหัสสาขา 5 หลัก (สำนักงานใหญ่ = 00000)<input name="branchCode" class="form-input" inputmode="numeric" maxlength="5" value="${e(p.branchCode || '00000')}"></label>
+            <div><button type="button" class="btn btn-primary btn-sm" id="payerSave">บันทึกข้อมูลบริษัท</button></div>
+          </form>
+          ${p.isJuristic ? `<label style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="payerWhtPref" ${d.withholdTaxPreference ? 'checked' : ''} style="margin-top:3px">
+            <span>หักภาษี ณ ที่จ่ายทุกครั้งที่ชำระค่าบริการ NextAcc (รวมตัดบัตรอัตโนมัติ — ระบบคิดยอดหักให้ ชำระยอดสุทธิ · ส่งหนังสือรับรอง 50 ทวิ ที่ประวัติการชำระ)</span></label>` : ''}`
+          : '<div class="muted">เฉพาะเจ้าของบริษัทแก้ข้อมูลนี้ได้</div>'}`;
+        const form = document.getElementById('payerForm');
+        if (form) {
+          const sync = () => { const j = form.buyerType.value === 'Juristic'; form.querySelectorAll('[data-juristic-only]').forEach(x => { x.style.display = j ? '' : 'none'; }); };
+          form.querySelectorAll('input[name=buyerType]').forEach(r => r.addEventListener('change', sync)); sync();
+          document.getElementById('payerSave').addEventListener('click', () => this.save());
+        }
+        const pref = document.getElementById('payerWhtPref');
+        if (pref) pref.addEventListener('change', () => this.setPref(pref.checked, pref));
+      },
+      async save() {
+        const f = document.getElementById('payerForm'); if (!f) return;
+        // ฝ่ายค้าน 234 N2: ประเภทผู้ซื้อมีผลจริง — เซิร์ฟเวอร์ตรวจ/ปรับข้อมูลด้วย PlatformPayerProfileGate.Normalize ตัวเดียว (บุคคลธรรมดาเว้นเลข = ล้างเลขเดิม)
+        const body = { buyerType: f.buyerType.value, name: String(f.name.value || ''), address: String(f.address.value || ''),
+          taxId: String(f.taxId.value || ''), branchCode: String(f.branchCode.value || '') };
+        try {
+          const r = await API.put(`${Bill.base()}/payer-profile`, body);
+          Layout.toast(r?.message || 'บันทึกข้อมูลบริษัทแล้ว', 'success');
+          PlanTab.quote = null;
+          await Bill.load();
+        } catch (err) { Layout.toast(err.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+      async setPref(on, cb) {
+        try {
+          const r = await API.put(`${Bill.base()}/withholding-preference`, { withholdTax: !!on });
+          Layout.toast(r?.message || 'บันทึกแล้ว', 'success'); await Bill.load();
+        } catch (err) { if (cb) cb.checked = !on; Layout.toast(err.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+    };
+
     // รอบ 232: const ระดับสคริปต์ไม่อยู่บน window — สคริปต์อื่น/onclick ที่อ้าง window.X ต้องมีผู้ผูก (tools/window_global_check.py)
+    window.PayerCard = PayerCard;
     window.Bill = Bill;
     window.HubTabs = HubTabs;
     window.PlanTab = PlanTab;

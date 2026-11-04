@@ -71,7 +71,9 @@
             <label>ไฟล์สลิป (รูปหรือ PDF)<input type="file" name="file" accept="image/*,application/pdf"></label>
             <label>วันที่โอน<input type="date" name="paymentDate"></label>
             <label>อ้างอิงการโอน (ถ้ามี)<input type="text" name="transferReference" maxlength="100"></label>
-            <label>ภาษีหัก ณ ที่จ่าย (บาท · เฉพาะนิติบุคคล — โอน = ยอดค้าง − ภาษีหัก)<input type="number" name="withholdingTaxAmount" min="0" step="0.01" placeholder="เว้นว่าง = ไม่หัก"></label>
+            ${v.withholdingLine ? `<div class="note">${esc(v.withholdingLine)}</div>` : ''}
+            <label>ภาษีหัก ณ ที่จ่าย (บาท · เฉพาะนิติบุคคล — โอน = ยอดค้าง − ภาษีหัก)<input type="number" name="withholdingTaxAmount" min="0" step="0.01" placeholder="เว้นว่าง = ไม่หัก"
+              value="${v.suggestedWithholdingTaxAmount != null ? esc(Number(v.suggestedWithholdingTaxAmount).toFixed(2)) : ''}"></label>
             <label>หมายเหตุ<input type="text" name="customerNotes" maxlength="500"></label>
           </form>
           <div id="pol" style="margin:10px 0">${PolicyAccept.html(po.policy)}</div>

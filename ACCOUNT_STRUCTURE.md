@@ -1409,6 +1409,16 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
 - **แอดมิน**: `api/admin/public-checkout` (GET สถานะ+URL ที่ส่ง Omise · PUT สวิตช์ · audit chain `public-checkout-switch`) · การ์ดใน `/admin/site-settings.html` แท็บบริการ · ไม่แตะ `AdminController`
 - **ยังไม่ทำ**: ส่วนเสริม/โควตาเพิ่มในตะกร้า (ซื้อหลังเข้าระบบที่ hub §6.2h) · Db test ของ service (ล็อกด้วย `required_call_site` 6 กติกา)
 
+### 6.2k หัก ณ ที่จ่ายค่าบริการ + ข้อมูลผู้ซื้อ + 50 ทวิ จากลูกค้า (รอบ 234 · คำตัดสิน 234-1…234-6 · 234-W1…W4)
+
+- **คอลัมน์ใหม่:** `Subscriptions.WithholdTaxPreference` (bool? — ค่าตั้ง "หักทุกครั้ง" · ผู้อ่าน: ช่องติ๊กศูนย์บิล/checkout + ตัดบัตรอัตโนมัติ) ·
+  `SubscriptionPayments.WhtCreditId` / `WhtCertificateSubmittedAt` / `WhtCertificateRejectedReason` / `WhtCertificateRejectedAt` / `WhtCertificateRemindedAt`
+  (`Helpers/PlatformBillingPhase2Migration` — ADD COLUMN อย่างเดียว)
+- **ความหมายของยอดบนรายการชำระค่าบริการ:** `Amount` = เงินที่รับ (สุทธิหลังผู้เช่าหัก) · `WithholdingTaxAmount` = ภาษีหัก · ยอดเต็ม = ผลรวม (ฐานเครดิตอัปเกรด/ราคาเทียบ/ใบเสร็จ) ·
+  `QuotedAmount` = ยอดเต็ม
+- **ข้อมูลผู้ซื้อ:** ใช้ช่องของ `Company` เดิม (Name · TaxId · BranchCode · Address/District/Province) — ไม่มีที่เก็บที่สอง · ชนิดผู้ซื้อ = จากเลขผู้เสียภาษี
+- **บริษัทผู้ให้บริการ:** ทะเบียนภาษีถูกหัก `WhtCreditReceived` แถวเดียวต่อใบ (จาก GL Dr 11910) · ผูกกับรายการชำระ · ยืนยัน 50 ทวิ ⇒ Received (เครดิต ภ.ง.ด.50/51)
+
 ### 6.2j "สิ่งที่ลูกค้าจะได้ก่อนจ่าย" + เมทริกซ์ทุกเคส license (รอบ 233 · คำตัดสิน 233-1…233-8 · `erp-review/2026-11-03/LICENSE_CASE_MATRIX.md`)
 
 - **ไม่มี entity/คอลัมน์ใหม่** — `PlanChangeQuote.Preview` / `PublicCheckoutQuote.Preview` (DTO) จาก `Helpers/PlanPurchasePreview` · `PlanChangeQuote.OldPriceBasis` (ฐานเครดิต = ยอดจ่ายจริง)

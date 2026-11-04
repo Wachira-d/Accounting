@@ -602,7 +602,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **766 ไฟล์ · 8,017 `[Fact]` + 1,227 `[Theory]` (5,703 `InlineData`)** ณ 2026-11-03 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **768 ไฟล์ · 8,044 `[Fact]` + 1,227 `[Theory]` (5,703 `InlineData`)** ณ 2026-11-04 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -7795,3 +7795,23 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | LC233-14 | ฝ่ายค้าน S5: resume ส่วนต่างเก่า · แพลนบัญชี | คิดยอดใหม่ ยกเลิกใบเก่า ไม่ซ้อน · แพลนบัญชี = subscription | `S5_*` · Db `Resume_stale_*` · `Round233_K3_*` |
 | LC233-15 | ฝ่ายค้าน S6: QuoteAsync/CreateOrderAsync ปฏิเสธ · OwnedCompaniesAsync | Allowed=false ไม่สร้าง · throw ข้อความเดียวกัน ไม่มี ScheduledPlan/รายการ · เฉพาะ Owner + lowerPlans | `PublicCheckoutRound233DbTests` |
 | LC233-16 | ฝ่ายค้าน N2/N3/N5/N7 | ราคาจริงรอบใหม่ + ปฏิเสธเมื่อเครดิตครอบ · VAT ตัวเดียวกับตัวออกใบ · ป้ายจากเซิร์ฟเวอร์ · ค่าแทน ⇒ ดาวน์เกรดทันที | `N2_*` `N3_*` `N5_*` `N7_*` |
+
+## WHT234 — หัก ณ ที่จ่ายค่าบริการ NextAcc อัตโนมัติ + ด่านข้อมูลบริษัท + 50 ทวิ จากลูกค้า (รอบ 234 · คำตัดสิน 234-1…234-6 · 234-W1…W4)
+
+| เคส | ล็อกด้วย |
+| --- | --- |
+| Pro รายปี 15,198 รวม VAT ⇒ ฐาน 14,203.74 · หัก 426.11 · ชำระ 14,771.89 · ยอดเต็มกลับ = ราคา | `PlatformWhtSuggestionRound234Tests.Pro_annual_15198_vat_inclusive_juristic_withholds_3_percent_of_base` |
+| เกณฑ์ ฿1,000 บนฐานก่อน VAT สองทิศ (1,070 หัก 30 · 1,069.99 ไม่หัก) | `…Threshold_1000_on_base_before_vat_both_directions` |
+| บุคคลธรรมดา/สมัครใหม่ไม่มีเลข ⇒ ไม่หัก · ไม่ติ๊ก ⇒ ชำระเต็ม (ยังเห็นข้อเสนอ) · ปัด AwayFromZero · ข้อมูลไม่ครบ ⇒ ไม่หัก + สิ่งที่ขาด | `…Individual_or_no_tax_id_never_withholds` · `…Tenant_opt_out…` · `…Rounding_is_away_from_zero_not_bankers` · `…Juristic_with_incomplete_profile…` |
+| ยอดเสนอของใบ = เพดาน `WithholdingProblem` (ไม่มีสูตรที่สอง · ตัวตรวจไม่ถดถอย) | `…Invoice_suggestion_equals_withholding_problem_cap` |
+| ด่านข้อมูลผู้ซื้อ: ครบ · สาขาว่าง = 00000 · สาขาผิด · ไม่มีเลข (เตือน ไม่บล็อก) · checksum ผิด · ที่อยู่แบบโครงสร้าง | `…Profile_gate_*` |
+| สถานะ 50 ทวิ + เกินกำหนด/ทวง/ยืนยัน/ตีกลับ สองทิศ | `…Wht_certificate_state_both_directions` · `…Wht_certificate_overdue_remind_confirm_reject_guards` |
+| (Db) ติ๊กหัก ⇒ Amount สุทธิ + WithholdingTaxAmount · ไม่ติ๊ก ⇒ เต็ม · เปลี่ยนใจบนรายการเดิม · ข้อมูลไม่ครบ ⇒ 400 ไม่เกิดรายการ · เงินเข้าออนไลน์ยอดสุทธิ ⇒ อนุมัติ + รอ 50 ทวิ · ใบเต็มยอด + อัตราหัก | `PlatformWhtRound234DbTests.Juristic_buyer_ticks_withholding_payment_is_net_plus_wht_and_receipt_is_full_amount` |
+| (Db) ส่งไฟล์ ⇒ ผูกแถวทะเบียนเดิม (ไม่ซ้อน) รอตรวจ · ตีกลับ ⇒ ไม่เครดิต · ส่งใหม่ · ยืนยัน ⇒ Received · ยืนยันแล้วปิดรับไฟล์ · ไม่มีภาษีหัก ⇒ ไม่ผูก · backfill ผูกอย่างเดียว | `PlatformWhtRound234DbTests.Wht_certificate_upload_links_register_confirm_credits_reject_does_not` |
+| (Db) ชำระใบกรอกภาษีเอง: นิติบุคคลไม่มีที่อยู่ ⇒ `PLATFORM-PAYER-PROFILE` · มีที่อยู่ ⇒ ผ่านเท่าเดิม | `PlatformBillingPhase2DbTests.Juristic_tenant_withholding_reduces_transfer_individual_refused` |
+| ทุกเส้นเรียกตัวตัดสินเดียว (ห้ามคิดยอดหักเอง) + negative ในตัว | `tools/required_call_site_check.py` (`_R234_*`) |
+| (ฝ่ายค้าน B2) เกณฑ์ตามมูลค่าสัญญาต่อปี: Starter รายเดือน 590 ⇒ หัก 16.54 ติ๊กให้ · ส่วนเสริมครั้งเดียว ⇒ ไม่ติ๊ก · สัญญา < 1,000 ⇒ ข้อความตามจริง · ต่ำกว่าเกณฑ์ติ๊กเองได้ | `PlatformWhtSuggestionRound234Tests.Starter_monthly_590_contract_per_year_meets_threshold_so_every_installment_defaults_to_withhold` · `…Threshold_1000_on_base_before_vat_both_directions_and_below_is_not_forbidden` |
+| (ฝ่ายค้าน S4 · Db) ใบเสร็จจริง: Dr เงินสุทธิ + Dr 11910 / Cr รายได้ + VAT เต็ม · แถวทะเบียน Pending · ผังไม่มีกลุ่ม 119 ⇒ ล้มดัง ไม่ออกใบ | `PlatformWhtRound234DbTests.S4_real_receipt_posts_net_cash_plus_11910_full_revenue_and_register_row` · `…S4_non_standard_chart_without_119_fails_loudly_no_silent_receipt` |
+| (ฝ่ายค้าน B1/S1 · Db) แอดมินภาษีหัก 0 + รับเต็ม ⇒ ยอดเต็มคงที่ · เกินยอดเต็ม ⇒ ปฏิเสธ · เงินเข้าแต่ผู้ซื้อเป็นบุคคลแล้ว ⇒ พักให้แอดมิน | `PlatformWhtRound234DbTests.B1_admin_zero_wht_full_transfer_keeps_gross_and_S1_payer_lost_eligibility_holds` |
+| (ฝ่ายค้าน S2/N1/N2) ยินยอมฉบับเดิมยังตัดเต็มยอด · ตัดยอดสุทธิเฉพาะฉบับใหม่ · ยอดบนใบต้องตรง · ประเภทผู้ซื้อ | `PlatformWhtSuggestionRound234Tests.Saved_card_legacy_consent_*` · `…Wht_certificate_amount_mismatch` · `…Payer_profile_normalize_*` |
+

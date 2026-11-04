@@ -419,6 +419,63 @@ public class AdminPlatformBillingController : ControllerBase
             ?? NotFound(new ApiResponse<object>(false, null, "ไม่พบหนังสือรับรอง"));
     }
 
+    // ═══════════ รอบ 234 (คำตัดสิน 234-W*): 50 ทวิ จากลูกค้า — ติดตาม · ยืนยันเข้าทะเบียนภาษีถูกหัก · ตีกลับ · ทวง · ผูกรายการเก่า ═══════════
+    // ทะเบียนเดียว = WhtCreditReceived ของบริษัทผู้ให้บริการ (หน้า /pages/wht-credit.html) · ตัวตัดสินสถานะ PlatformWhtCertificateStatus
+
+    [HttpGet("wht-certificates")]
+    public async Task<ActionResult<ApiResponse<object>>> WhtCertificates([FromServices] Accounting.Services.Platform.PlatformWhtCertificateService svc,
+        [FromQuery] int? overdueDays, [FromQuery] bool all = false, CancellationToken ct = default)
+    {
+        var days = overdueDays is int d && d > 0 ? d : PlatformWhtCertificateStatus.DefaultOverdueDays;
+        var rows = await svc.ListAsync(days, all, ct);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            overdueDays = days, platformCompanyId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct), rows,
+            awaitingUpload = rows.Count(r => r.State == nameof(PlatformWhtCertificateStatus.State.AwaitingUpload) || r.State == nameof(PlatformWhtCertificateStatus.State.Rejected)),
+            awaitingReview = rows.Count(r => r.State == nameof(PlatformWhtCertificateStatus.State.AwaitingReview)),
+            overdue = rows.Count(r => r.Overdue),
+        }));
+    }
+
+    public record ConfirmWhtCertificateRequest(string? CertificateNumber, DateTime? CertificateDate, decimal? WhtAmount = null);
+    public record RejectWhtCertificateRequest(string? Reason);
+
+    [HttpPost("wht-certificates/{paymentId:guid}/confirm")]
+    public async Task<ActionResult<ApiResponse<object>>> ConfirmWhtCertificate(Guid paymentId, [FromBody] ConfirmWhtCertificateRequest req,
+        [FromServices] Accounting.Services.Platform.PlatformWhtCertificateService svc, CancellationToken ct)
+    {
+        var row = await svc.ConfirmAsync(paymentId, req?.CertificateNumber, req?.CertificateDate, AdminActor(), ct, req?.WhtAmount);
+        return Ok(new ApiResponse<object>(true, row, "ยืนยันแล้ว — เข้าทะเบียนภาษีถูกหัก ณ ที่จ่ายของบริษัทผู้ให้บริการ (เครดิต ภ.ง.ด.50/51 ได้)"));
+    }
+
+    [HttpPost("wht-certificates/{paymentId:guid}/reject")]
+    public async Task<ActionResult<ApiResponse<object>>> RejectWhtCertificate(Guid paymentId, [FromBody] RejectWhtCertificateRequest req,
+        [FromServices] Accounting.Services.Platform.PlatformWhtCertificateService svc, CancellationToken ct)
+    {
+        await svc.RejectAsync(paymentId, req?.Reason, AdminActor(), ct);
+        return Ok(new ApiResponse<object>(true, null, "ตีกลับแล้ว — แจ้งผู้เช่าให้ส่งใหม่"));
+    }
+
+    [HttpPost("wht-certificates/{paymentId:guid}/remind")]
+    public async Task<ActionResult<ApiResponse<object>>> RemindWhtCertificate(Guid paymentId,
+        [FromServices] Accounting.Services.Platform.PlatformWhtCertificateService svc, CancellationToken ct)
+    {
+        await svc.RemindAsync(paymentId, AdminActor(), ct);
+        return Ok(new ApiResponse<object>(true, null, "ส่งคำทวงถึงเจ้าของบริษัทแล้ว"));
+    }
+
+    /// <summary>234-W4: ผูกรายการเก่า (อนุมัติก่อนรอบ 234 · มีภาษีหัก) กับทะเบียน — รันซ้ำได้ · ไม่ประทับ "ได้รับใบแล้ว" เอง</summary>
+    [HttpPost("wht-certificates/backfill")]
+    public async Task<ActionResult<ApiResponse<object>>> BackfillWhtCertificates([FromServices] Accounting.Services.Platform.PlatformWhtCertificateService svc, CancellationToken ct)
+    {
+        var r = await svc.BackfillAsync(AdminActor(), ct);
+        if (r is not { } res) return StatusCode(409, new ApiResponse<object>(false, null, "มีการผูกทะเบียนกำลังรันอยู่ที่เครื่องอื่น — ลองใหม่ภายหลัง"));
+        return Ok(new ApiResponse<object>(true, new { res.Linked, res.Missing },
+            $"ผูกทะเบียนแล้ว {res.Linked} รายการ" + (res.Missing > 0 ? $" · ยังไม่มีแถวในทะเบียน {res.Missing} รายการ (ใบเสร็จยังไม่ออก/ไม่มีขา 11910)" : "")));
+    }
+
+    private string AdminActor() => User.FindFirstValue(ClaimTypes.Email) ?? $"admin:{JwtHelper.GetUserIdFromClaims(User)}";
+
     public record ResolveAttentionRequest(string? Note);
 
     /// <summary>แอดมินจัดการเรื่องค้างนอกระบบแล้ว (คืนเงินส่วนเกิน · ออกใบลดหนี้ · บันทึกด้วยมือ) — หมายเหตุบังคับ · audit chain</summary>

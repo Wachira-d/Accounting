@@ -21,6 +21,12 @@ public static class PlatformBillingPhase2Migration
         """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "AttentionRule" varchar(60) NULL;""",
         """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "AttentionAt" timestamp without time zone NULL;""",
         """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WhtCertificateFileName" varchar(500) NULL;""",
+        // รอบ 234 (คำตัดสิน 234-W*): ติดตาม 50 ทวิ จากลูกค้า — ผูกแถวทะเบียนภาษีถูกหัก (บริษัทผู้ให้บริการ) · ส่ง/ตีกลับ/ทวง (ไม่ UPDATE แถวเดิม — backfill ผ่านปุ่มแอดมิน)
+        """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WhtCreditId" uuid NULL;""",
+        """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WhtCertificateSubmittedAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WhtCertificateRejectedReason" varchar(500) NULL;""",
+        """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WhtCertificateRejectedAt" timestamp without time zone NULL;""",
+        """ALTER TABLE "SubscriptionPayments" ADD COLUMN IF NOT EXISTS "WhtCertificateRemindedAt" timestamp without time zone NULL;""",
         // dedupe ก่อนสร้าง unique index (รันซ้ำได้ — หลังมี index แล้วไม่มีแถวเข้าเงื่อนไข): รายการเปิดซ้อนบนใบเดียว
         // (ก) ไม่มีสลิป + มีรายการอื่นที่ "ดีกว่า" (มีสลิป หรือใหม่กว่า) ⇒ ยกเลิก (ยังไม่มีเงิน/หลักฐาน) — ยกเว้นมี intent ที่ยังไม่จบผูกอยู่
         // (ข) มีสลิปทั้งคู่ ⇒ ไม่ยกเลิก (มีหลักฐานเงิน) — พักให้แอดมินตัดสิน (AttentionReason) ตัวที่เก่ากว่า
