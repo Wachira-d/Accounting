@@ -240,7 +240,7 @@ public class QuotaAddOnPaymentDbTests
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม (หลักฐานคือ job db-test)"); return; }
         var cid = await SeedCompanyAsync(db);
         var co = await db.Companies.FirstAsync(c => c.Id == cid);
-        co.TaxId = null;   // ผู้จ่ายไม่ใช่นิติบุคคลแล้ว
+        co.TaxId = "";   // ผู้จ่ายไม่ใช่นิติบุคคลแล้ว (คอลัมน์ NOT NULL — ไม่มีเลข = "")
         await db.SaveChangesAsync();
         var now = DateTime.UtcNow;
         var wht = await RowAsync(db, cid, QuotaAddOnMode.OneOffMonth, now.AddMinutes(-5), now.AddDays(20), due: 193m);
