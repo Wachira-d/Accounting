@@ -32,7 +32,9 @@ public class AdminPlatformCouponController : ControllerBase
 
     public sealed record CouponBody(string Code, string? Description, PlatformCouponKind Kind, decimal Value, DateTime? ValidFromUtc, DateTime? ValidToUtc,
         int? MaxUsesTotal, int? MaxUsesPerCompany, PlatformCouponScope AppliesTo, List<string>? Plans, List<string>? Cycles, List<string>? AddOnResources,
-        bool FirstPaymentOnly, bool IsActive = true);
+        bool FirstPaymentOnly, bool IsActive = true,
+        // รอบ 235 (K-2 · ฝ่ายค้าน S-1): ใช้กับซื้อใหม่/ต่ออายุ/ทั้งสอง — ไม่ส่ง = New (ซื้อใหม่เท่านั้น — นโยบาย 233-5 จนแอดมินเปิดต่ออายุเอง)
+        PlatformCouponPurchaseKinds PurchaseKinds = PlatformCouponPurchaseKinds.New);
 
     private static object Map(PlatformCoupon c, int reserved, int redeemed, DateTime now) => new
     {
@@ -41,6 +43,7 @@ public class AdminPlatformCouponController : ControllerBase
         usedCount = c.UsedCount, reservedCount = reserved, redeemedCount = redeemed,
         appliesTo = c.AppliesTo.ToString(), plans = Split(c.PlansCsv), cycles = Split(c.CyclesCsv), addOnResources = Split(c.AddOnResourcesCsv),
         firstPaymentOnly = c.FirstPaymentOnly, isActive = c.IsActive, label = PlatformCouponRule.LabelOf(c),
+        purchaseKinds = c.PurchaseKinds.ToString(), purchaseKindsLabel = PlatformCouponRule.PurchaseKindsLabel(c.PurchaseKinds),   // รอบ 235 (K-2) · echo กลับ
         // ป้ายสถานะจากเซิร์ฟเวอร์ (หน้าเว็บไม่ตัดสินเอง)
         statusLabel = !c.IsActive ? "ปิดใช้" : c.ValidToUtc is DateTime to && now >= to ? "หมดอายุ"
             : c.ValidFromUtc is DateTime f && now < f ? "ยังไม่เริ่ม" : c.MaxUsesTotal is int m && redeemed + reserved >= m ? "ใช้ครบแล้ว" : "ใช้ได้",
@@ -99,7 +102,7 @@ public class AdminPlatformCouponController : ControllerBase
     }
 
     private string? Validate(CouponBody b)
-        => PlatformCouponRule.AdminProblem(b.Code, b.Kind, b.Value, b.ValidFromUtc, b.ValidToUtc, b.MaxUsesTotal, b.MaxUsesPerCompany, b.AppliesTo)
+        => PlatformCouponRule.AdminProblem(b.Code, b.Kind, b.Value, b.ValidFromUtc, b.ValidToUtc, b.MaxUsesTotal, b.MaxUsesPerCompany, b.AppliesTo, b.PurchaseKinds)
            ?? ListProblem(b);
 
     private static string? ListProblem(CouponBody b)
@@ -121,6 +124,7 @@ public class AdminPlatformCouponController : ControllerBase
         c.MaxUsesTotal = b.MaxUsesTotal; c.MaxUsesPerCompany = b.MaxUsesPerCompany;
         c.AppliesTo = b.AppliesTo; c.PlansCsv = Csv(b.Plans); c.CyclesCsv = Csv(b.Cycles); c.AddOnResourcesCsv = Csv(b.AddOnResources);
         c.FirstPaymentOnly = b.FirstPaymentOnly; c.IsActive = b.IsActive;
+        c.PurchaseKinds = b.PurchaseKinds;   // รอบ 235 (K-2)
     }
 
     private void Audit(PlatformCoupon c, string action, object? before)
@@ -132,7 +136,7 @@ public class AdminPlatformCouponController : ControllerBase
             {
                 action, ruleCode = PlatformCouponRule.RuleCode, c.Code, kind = c.Kind.ToString(), c.Value, c.ValidFromUtc, c.ValidToUtc,
                 c.MaxUsesTotal, c.MaxUsesPerCompany, appliesTo = c.AppliesTo.ToString(), c.PlansCsv, c.CyclesCsv, c.AddOnResourcesCsv,
-                c.FirstPaymentOnly, c.IsActive, by = Actor,
+                c.FirstPaymentOnly, c.IsActive, purchaseKinds = c.PurchaseKinds.ToString(), by = Actor,
             }),
             Timestamp = DateTime.UtcNow,
         });

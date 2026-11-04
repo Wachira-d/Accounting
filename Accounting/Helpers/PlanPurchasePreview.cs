@@ -91,7 +91,7 @@ public static class PlanPurchasePreview
     /// <item>ส่วนต่างอัปเกรด (<paramref name="isProration"/>) ⇒ [วันชำระ, วันหมดอายุเดิม] — วันหมดอายุคงเดิม (คำตัดสินเจ้าของข้อ 178 · 233-2)</item>
     /// <item>เปลี่ยนรอบบิล (<paramref name="isCycleChange"/>) ⇒ [วันชำระ, วันชำระ + เดือนของรอบใหม่] (231-9)</item>
     /// <item>อื่น ๆ ⇒ เริ่ม = <see cref="PlatformPlanPricing.PeriodStart"/> (ต่ออายุแพ็กเดิม = max(วันหมดอายุเดิม, วันชำระ) · อัปเกรด/ทดลองใช้/ฟรีถาวร/วันหมดอายุค่าแทน = วันชำระ ·
-    /// ดาวน์เกรดระหว่างรอบ = วันหมดอายุเดิม) · สิ้นสุด = เริ่ม + <paramref name="months"/> (AddMonths: 31 ม.ค. + 1 เดือน = 28/29 ก.พ.)</item>
+    /// ดาวน์เกรดระหว่างรอบ = วันหมดอายุเดิม) · สิ้นสุด = เริ่ม + <paramref name="months"/> บนปฏิทินไทย (<see cref="PlatformPlanPricing.AddCycleMonths"/> — 31 ม.ค. ไทย + 1 เดือน = 28/29 ก.พ. ไทย · รอบ 235 K-4)</item>
     /// <item><b>ฝ่ายค้าน B2</b> (<paramref name="approvedAtUtc"/> = เวลาอนุมัติ): วันรับเงินย้อนหลังจนวันหมดอายุที่คิดได้ ≤ เวลาอนุมัติ ⇒ ลูกค้าต้องได้รอบที่ใช้ได้จริง —
     /// นับจากเวลาอนุมัติแทน (<see cref="PaidPeriodResult.StartedAtApproval"/> + <see cref="BackdatedNote"/>) · ทิศตรงข้าม: โอนก่อนหมดอายุแล้วอนุมัติหลังหมด ⇒ ยังต่อจากวันหมดอายุเดิม
     /// (ผลยังเลยเวลาอนุมัติ — คำตัดสิน 233-1b) · ส่วนต่างอัปเกรดไม่ใช้กติกานี้ (รอบที่คิดจบแล้ว = <c>PlatformProration.StaleReason</c> พักให้แอดมิน)</item>
@@ -102,9 +102,9 @@ public static class PlanPurchasePreview
         if (isProration) return new PaidPeriodResult(paidAtUtc, currentEndUtc, false);
         var m = months > 0 ? months : 0;
         var start = isCycleChange ? paidAtUtc : PlatformPlanPricing.PeriodStart(kind, samePlan, isPermanentFree, currentEndUtc, paidAtUtc, isTrial);
-        var end = start.AddMonths(m);
+        var end = PlatformPlanPricing.AddCycleMonths(start, m);   // รอบ 235 K-4: บวกเดือนบนวันไทย
         if (m > 0 && approvedAtUtc is DateTime appr && end <= appr)
-            return new PaidPeriodResult(appr, appr.AddMonths(m), true);
+            return new PaidPeriodResult(appr, PlatformPlanPricing.AddCycleMonths(appr, m), true);
         return new PaidPeriodResult(start, end, false);
     }
 
@@ -115,7 +115,12 @@ public static class PlanPurchasePreview
     // ═════════ ผล preview ═════════
 
     /// <summary>ซื้อ/ต่ออายุ/อัปเกรด/เปลี่ยนรอบที่ต้องจ่ายตอนนี้ — <paramref name="m"/> = ตัวเลขจากตัวคิดราคาเดิม</summary>
-    public static Result ForPurchase(Current cur, Target tgt, Money m, DateTime nowUtc, bool vatIncluded)
+    /// <remarks>รอบ 235 (K-7 · คำตัดสิน 235-3): หน้าแอดมิน (ตรวจสลิป · บันทึกรับเงินเอง) เรียกตัวเดียวกันด้วย <paramref name="paidAtUtc"/> = วันรับเงินที่จะประทับ
+    /// (<c>PlatformPlanPricing.ApprovedPaymentDate</c>) · <paramref name="months"/> = เดือนของรายการ (แอดมินกรอกต่างจากรอบได้) · <paramref name="approvedAtUtc"/> = เวลาอนุมัติ
+    /// (กติกาวันรับเงินย้อนหลังเกินรอบ 233-1b) · <paramref name="withholdingTax"/> &gt; 0 ⇒ บรรทัด "หักภาษี ณ ที่จ่าย · รับสุทธิ" (ยอดชำระ = ยอดเต็มก่อนหัก) —
+    /// ไม่ส่ง = พฤติกรรมเดิมของหน้าผู้เช่า (วันชำระ = <paramref name="nowUtc"/> · เดือนของรอบ)</remarks>
+    public static Result ForPurchase(Current cur, Target tgt, Money m, DateTime nowUtc, bool vatIncluded,
+        DateTime? paidAtUtc = null, int? months = null, DateTime? approvedAtUtc = null, decimal withholdingTax = 0m)
     {
         var samePlan = PlatformPlanPricing.IsRenewalPurchase(cur.Plan, tgt.Plan);
         var changeKind = PlatformPlanPricing.Classify(cur.MonthlyPrice, tgt.MonthlyPrice);
@@ -126,8 +131,10 @@ public static class PlanPurchasePreview
             : !cur.ActivePaid ? (samePlan && !cur.IsTrial && !cur.IsPermanentFree ? PreviewKind.Renewal : PreviewKind.NewPurchase)
             : samePlan && tgt.Cycle == cur.Cycle ? PreviewKind.Renewal
             : PreviewKind.UpgradeRestart;
-        var months = PlatformPlanPricing.MonthsOf(tgt.Cycle);
-        var (start, end) = PaidPeriod(changeKind, samePlan, cur.IsPermanentFree, cur.IsTrial, m.Prorated, m.CycleChange, cur.EndUtc, nowUtc, months);
+        var paidAt = paidAtUtc ?? nowUtc;
+        var cycleMonths = months is int mo && mo > 0 ? mo : PlatformPlanPricing.MonthsOf(tgt.Cycle);
+        var period = PaidPeriod(changeKind, samePlan, cur.IsPermanentFree, cur.IsTrial, m.Prorated, m.CycleChange, cur.EndUtc, paidAt, cycleMonths, approvedAtUtc);
+        var (start, end) = period;
         var daysLeft = DaysLeft(cur.EndUtc, nowUtc, curOpen);
         var notes = new List<string>();   // เหตุผลของวันที่ + ผลข้างเคียง (หน้าเว็บแสดงเป็นหัวข้อย่อย — ไม่กรองข้อความเอง)
         var money = new List<string>();   // บรรทัดเงิน
@@ -149,7 +156,7 @@ public static class PlanPurchasePreview
 
         // เหตุผลของวันที่ — ทุกเคสต้องบอกว่าวันที่เหลือไปไหน (เจ้าของ: "จะเปลี่ยนวันหมดอายุเป็นวันที่เท่าไหร่")
         if (kind == PreviewKind.Renewal && !curExpired && !curOpen && start > nowUtc)
-            notes.Add($"ต่อจากวันหมดอายุเดิม {BeDate(cur.EndUtc)} อีก {months} เดือน — วันที่เหลือ {daysLeft} วันไม่หาย");
+            notes.Add($"ต่อจากวันหมดอายุเดิม {BeDate(cur.EndUtc)} อีก {cycleMonths} เดือน — วันที่เหลือ {daysLeft} วันไม่หาย");
         else if (cur.IsTrial && !curExpired)
             notes.Add($"การทดลองใช้สิ้นสุดเมื่อชำระ — วันทดลองที่เหลือ {daysLeft} วันไม่ถูกนำไปต่อท้าย · รอบที่จ่ายเริ่มวันที่ชำระ ได้สิทธิ์เต็มทันที");
         else if (curExpired && !cur.IsPermanentFree)
@@ -187,6 +194,10 @@ public static class PlanPurchasePreview
         if (m.CouponDiscount > 0m) money.Add($"{m.CouponLabel ?? "ส่วนลดคูปอง"} −฿{m.CouponDiscount:N2}");
         if (m.CouponProblem != null) notes.Add($"คูปองใช้ไม่ได้: {m.CouponProblem}");
         money.Add(vatIncluded ? $"ยอดชำระ ฿{m.AmountDue:N2} (รวม VAT 7% แล้ว · ใบกำกับภาษีออกเมื่อชำระ)" : $"ยอดชำระ ฿{m.AmountDue:N2} (ใบเสร็จรับเงินออกเมื่อชำระ)");
+        // รอบ 235 (K-7/ข้อ 6): ภาษีหัก ณ ที่จ่ายของรายการ (ยอดจากตัวตัดสินเดียว PlatformWhtSuggestion — ผู้เรียกส่งยอดที่รายการเก็บ/ระบบเสนอ) · ใบออกเต็มยอด
+        if (withholdingTax > 0m)
+            money.Add($"หักภาษี ณ ที่จ่าย −฿{R2(withholdingTax):N2} — รับสุทธิ ฿{R2(m.AmountDue - withholdingTax):N2} (ใบออกเต็มยอด · รอหนังสือรับรอง 50 ทวิ)");
+        if (period.StartedAtApproval) notes.Add(BackdatedNote);
 
         // ผลข้างเคียงที่ลูกค้าต้องรู้ (อนุมัติชำระล้างให้จริง — ReviewPaymentLockedAsync)
         if (cur.CancelAtPeriodEnd) notes.Add("การยกเลิกเมื่อสิ้นรอบที่ตั้งไว้จะถูกยกเลิก (ชำระ = ใช้ต่อ)");
@@ -201,6 +212,22 @@ public static class PlanPurchasePreview
             listPrice, credit, creditFormula, m.DaysRemaining, m.CycleDays,
             R2(m.CouponDiscount), R2(m.AmountDue), vatIncluded, headline, dateLine,
             new List<string> { dateLine }.Concat(notes).Concat(money).ToList(), notes);
+    }
+
+    /// <summary>รอบ 235 (K-7): รายการที่เป็น "ตัดชำระใบแจ้งหนี้อย่างเดียว" (<c>PlatformInvoiceRules.IsInvoiceOnlyPayment</c> — ใบค่าใช้งาน/ส่วนเสริม ไม่มีเดือนต่ออายุ) —
+    /// อนุมัติแล้ววันหมดอายุคงเดิม · หน้าแอดมินแสดงก่อนกด (ตัวเดียวกับ <see cref="ForPurchase"/> ในแง่บรรทัดเงิน/ภาษีหัก)</summary>
+    public static Result ForInvoiceOnly(Current cur, decimal amountDue, decimal withholdingTax, bool vatIncluded, DateTime nowUtc)
+    {
+        var curOpen = SubscriptionExpiry.IsOpenEnded(cur.IsPermanentFree, cur.EndUtc, nowUtc);
+        var dateLine = curOpen ? $"แพ็กเกจ {cur.PlanName} ไม่มีวันหมดอายุ (ไม่เปลี่ยน)" : $"ใช้ได้ถึง {BeDate(cur.EndUtc)} (วันหมดอายุคงเดิม — รายการนี้ตัดชำระใบแจ้งหนี้ ไม่ต่ออายุ)";
+        var money = new List<string> { vatIncluded ? $"ยอดชำระ ฿{R2(amountDue):N2} (รวม VAT 7% แล้ว)" : $"ยอดชำระ ฿{R2(amountDue):N2}" };
+        if (withholdingTax > 0m)
+            money.Add($"หักภาษี ณ ที่จ่าย −฿{R2(withholdingTax):N2} — รับสุทธิ ฿{R2(amountDue - withholdingTax):N2} (รอหนังสือรับรอง 50 ทวิ)");
+        return new Result(PreviewKind.Same.ToString(), true, null, null, null,
+            cur.Plan.ToString(), cur.PlanName, cur.Cycle.ToString(), curOpen ? null : cur.EndUtc,
+            cur.Plan.ToString(), cur.PlanName, cur.Cycle.ToString(), null, curOpen ? null : cur.EndUtc, true, null,
+            R2(amountDue), 0m, null, null, null, 0m, R2(amountDue), vatIncluded,
+            "ตัดชำระใบแจ้งหนี้ค่าบริการ — ไม่ต่ออายุแพ็กเกจ", dateLine, new List<string> { dateLine }.Concat(money).ToList(), new List<string>());
     }
 
     /// <summary>ดาวน์เกรด/รอบสั้นลง/ราคาเท่ากันต่างแพ็ก (Active) — ไม่ต้องจ่าย มีผลวันครบรอบ (<paramref name="blocked"/> = ใบต่ออายุออกแล้ว ⇒ ทำไม่ได้ตอนนี้)</summary>
@@ -234,7 +261,7 @@ public static class PlanPurchasePreview
     /// <summary>ยังไม่ล็อกอิน/ยังไม่มีบริษัท — ซื้อใหม่ นับจากวันที่ชำระ (บริษัทที่มีแพ็กเกจอยู่แล้วคำนวณใหม่หลังเลือกบริษัท)</summary>
     public static Result ForAnonymous(Target tgt, decimal listPrice, DateTime nowUtc)
     {
-        var end = nowUtc.AddMonths(Math.Max(0, PlatformPlanPricing.MonthsOf(tgt.Cycle)));
+        var end = PlatformPlanPricing.AddCycleMonths(nowUtc, Math.Max(0, PlatformPlanPricing.MonthsOf(tgt.Cycle)));
         var dateLine = $"ถ้าชำระวันนี้: ใช้ได้ {BeDate(nowUtc)} ถึง {BeDate(end)}";
         var notes = new List<string> { "บริษัทที่มีแพ็กเกจอยู่แล้ว — ระบบคำนวณวันหมดอายุใหม่/เครดิตแพ็กเดิมให้หลังเข้าสู่ระบบและเลือกบริษัท" };
         var lines = new List<string> { dateLine, $"ค่า {tgt.PlanName} {PublicCycle(tgt.Cycle)} ฿{R2(listPrice):N2}" }.Concat(notes).ToList();
@@ -245,14 +272,13 @@ public static class PlanPurchasePreview
     }
 
     /// <summary>เหตุที่หน้าซื้อแพ็กเกจสาธารณะชำระไม่ได้ (ตัวจำแนกจาก <see cref="PublicCheckoutPolicy.DecideOrder"/>)</summary>
-    private enum RefusalCause { Downgrade, ShorterCycle, RenewalInvoiceIssued, RenewalCoupon, NoPaymentChange, Other }
+    private enum RefusalCause { Downgrade, ShorterCycle, RenewalInvoiceIssued, NoPaymentChange, Other }
 
     private static RefusalCause CauseOf(string? refusal) => refusal switch
     {
         PublicCheckoutPolicy.DowngradeRefusal => RefusalCause.Downgrade,
         PublicCheckoutPolicy.ShorterCycleRefusal => RefusalCause.ShorterCycle,
         PublicCheckoutPolicy.RenewalInvoiceIssuedRefusal => RefusalCause.RenewalInvoiceIssued,
-        PublicCheckoutPolicy.RenewalCouponRefusal => RefusalCause.RenewalCoupon,
         PublicCheckoutPolicy.NoPaymentChangeRefusal => RefusalCause.NoPaymentChange,
         _ => RefusalCause.Other,
     };
@@ -278,9 +304,6 @@ public static class PlanPurchasePreview
             RefusalCause.RenewalInvoiceIssued => (
                 $"ออกใบแจ้งหนี้ต่ออายุรอบที่หมด {BeDate(cur.EndUtc)} แล้ว — ชำระจากใบแจ้งหนี้นั้น (ไม่สร้างรายการซ้ำ) · ชำระแล้วใช้ได้ถึง {BeDate(renewalEnd)}",
                 "ไปที่ใบแจ้งหนี้ & ใบเสร็จเพื่อชำระใบต่ออายุ", DocsTabUrl),
-            RefusalCause.RenewalCoupon => (
-                $"คูปองใช้กับการต่ออายุไม่ได้ — ลบรหัสคูปองแล้วต่ออายุ {cur.PlanName} ได้ (ใช้ได้{endText} → {BeDate(renewalEnd)}) · ส่วนลดต่ออายุตามข้อตกลงให้ติดต่อผู้ดูแลระบบ (ราคาพิเศษ)",
-                "ลบรหัสคูปองในช่องคูปอง", (string?)null),
             RefusalCause.NoPaymentChange => (
                 $"การเปลี่ยนเป็น {tgt.PlanName} {PublicCycle(tgt.Cycle)} ไม่มียอดต้องชำระตอนนี้ — ตั้งได้ที่หน้าแพ็กเกจในระบบ มีผล {BeDate(effective)}",
                 "ไปหน้าแพ็กเกจในระบบ", PlanTabUrl),

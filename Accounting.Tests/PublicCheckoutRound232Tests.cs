@@ -137,8 +137,8 @@ public class PublicCheckoutRound232Tests
     // ═══════════ ⑥ ฝ่ายค้าน B1: ชนิดคำสั่งซื้อ — ตัดสินก่อนมี side-effect ═══════════
     private static PublicCheckoutPolicy.OrderDecision Order(SubscriptionStatus status, SubscriptionPlan cur, BillingCycle curCycle, decimal curPrice,
         SubscriptionPlan target, BillingCycle targetCycle, decimal targetPrice, decimal quote = 990m, bool permanentFree = false,
-        bool renewalInvoiceIssued = false, bool coupon = false)
-        => PublicCheckoutPolicy.DecideOrder(status, permanentFree, cur, curCycle, curPrice, target, targetCycle, targetPrice, quote, renewalInvoiceIssued, coupon);
+        bool renewalInvoiceIssued = false)
+        => PublicCheckoutPolicy.DecideOrder(status, permanentFree, cur, curCycle, curPrice, target, targetCycle, targetPrice, quote, renewalInvoiceIssued);
 
     [Theory]
     [InlineData(SubscriptionStatus.Trial)]
@@ -164,13 +164,13 @@ public class PublicCheckoutRound232Tests
     }
 
     [Fact]
-    public void ต่ออายุ_แต่ใบแจ้งหนี้ต่ออายุออกแล้ว_หรือใส่คูปอง_ปฏิเสธพร้อมทางไปต่อ()
+    public void ต่ออายุ_แต่ใบแจ้งหนี้ต่ออายุออกแล้ว_ปฏิเสธพร้อมทางไปต่อ()
     {
         var inv = Order(SubscriptionStatus.Active, SubscriptionPlan.Pro, BillingCycle.Annual, 1990m, SubscriptionPlan.Pro, BillingCycle.Annual, 1990m, renewalInvoiceIssued: true);
         Assert.Equal(PublicCheckoutPolicy.OrderKind.Refused, inv.Kind);
         Assert.Equal(PublicCheckoutPolicy.RenewalInvoiceIssuedRefusal, inv.Refusal);
-        var cp = Order(SubscriptionStatus.Active, SubscriptionPlan.Pro, BillingCycle.Annual, 1990m, SubscriptionPlan.Pro, BillingCycle.Annual, 1990m, coupon: true);
-        Assert.Equal(PublicCheckoutPolicy.RenewalCouponRefusal, cp.Refusal);
+        // รอบ 235 (K-2 · คำตัดสิน 235-1 แทน 233-5): คูปองไม่ใช่เหตุปฏิเสธที่นี่แล้ว — ตัดสินที่ PlatformCouponRule (PurchaseKinds) ตอนดูราคา/จอง
+        // (เทสต์: PlatformRound235Tests.K2_* · Db: PlatformRound235DbTests.K2_*)
     }
 
     [Fact]

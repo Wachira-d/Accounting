@@ -11,8 +11,10 @@ namespace Accounting.Services.Payments;
 
 /// <summary>คำขอซื้อโควตาเสริม — <paramref name="ExpectedPerUnit"/>/<paramref name="ExpectedAmount"/> = ยอดที่ผู้ซื้อเห็น (ไม่ตรงของจริง ⇒ 409 · ยังไม่คิดเงิน)</summary>
 /// <para>รอบ 230: <paramref name="CouponCode"/> = คูปองแพลตฟอร์ม — ยอดที่เทียบ (<c>Expected*</c>) คือยอด<b>ก่อน</b>คูปอง · ส่วนลดตัดสินที่เซิร์ฟเวอร์ใต้ล็อก (ใช้ไม่ได้ = 400 ไม่สร้างรายการ)</para>
+/// <para>รอบ 235 (คำตัดสิน 235-5): <paramref name="WithholdTax"/> = ผู้เช่าติ๊ก "หัก ณ ที่จ่าย" — ยอดหักจากตัวตัดสินเดียว (<c>PlatformWithholdingReader.ForReceivedAsync</c> ·
+/// ราคาครั้งเดียว ⇒ เกณฑ์ ฿1,000 ดูยอดครั้งนี้ — 234-2) · null/false = ไม่หัก (ผู้เรียกเดิม)</para>
 public sealed record QuotaPurchaseRequest(string ResourceKey, QuotaAddOnMode Mode, int Units, decimal? ExpectedPerUnit, decimal? ExpectedAmount,
-    string? CouponCode = null);
+    string? CouponCode = null, bool? WithholdTax = null);
 
 /// <summary>ข้อเสนอที่เปลี่ยนระหว่างที่ผู้ซื้อดูอยู่ (409) — ลอก <c>NotifyTopUpOfferChangedException</c></summary>
 public sealed class QuotaOfferChangedException : BusinessRuleException
@@ -35,7 +37,8 @@ public interface IQuotaAddOnPurchaseService
         DateTime? transferDateUtc = null);
     /// <summary>แอดมินอนุมัติ — จากสลิปที่รอตรวจ หรือ (ไม่มีสลิป) ต้องมีหลักฐานรับเงินนอกระบบ + เหตุผล · ยอดรับจริง/วันที่โอน = ยอด/วันที่บนใบเสร็จ (§78/1)</summary>
     Task<CompanyQuotaAddOn> ApproveAsync(Guid companyId, Guid purchaseId, string actor, CancellationToken ct = default,
-        string? offlineReference = null, string? reason = null, decimal? receivedAmount = null, DateTime? transferDateUtc = null);
+        string? offlineReference = null, string? reason = null, decimal? receivedAmount = null, DateTime? transferDateUtc = null,
+        decimal? withholdingTaxAmount = null);
     /// <summary>ฝ่ายค้าน S8: แอดมินเพิกถอนสิทธิ์ของการซื้อที่ใช้งานอยู่ (เช่น คืนเงินแล้ว) — มีผลทันที · ไม่ลบข้อมูลผู้ใช้ · audit</summary>
     Task<CompanyQuotaAddOn> RevokeAsync(Guid companyId, Guid purchaseId, string reason, string actor, CancellationToken ct = default);
     /// <summary>ฝ่ายค้าน S5: ออกใบเสร็จอีกครั้งของรายการออนไลน์ที่เงินเข้าแล้วแต่ไม่มีใบ · null = ออกไม่ได้</summary>
@@ -266,6 +269,17 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
             row.CouponId = coupon.Id; row.CouponCode = coupon.Code; row.CouponDiscountAmount = eval.Discount;
             row.ListAmount = q.Amount; row.AmountDue = eval.AmountAfter;
         }
+        // รอบ 235 (คำตัดสิน 235-5 · ต่อจาก 234-6): ภาษีหัก ณ ที่จ่าย — ตัวตัดสินเดียว (นิติบุคคล · ข้อมูลบริษัทครบ · ฐานก่อน VAT ของยอดหลังคูปอง) ·
+        // ราคาครั้งเดียว ไม่รู้มูลค่าสัญญา ⇒ เกณฑ์ ฿1,000 ดูยอดครั้งนี้ (contract = null — 234-2) · AmountDue = ยอดสุทธิที่ตัด/โอน · ใบออกเต็มยอด
+        if (req.WithholdTax == true)
+        {
+            var whtD = await Accounting.Services.Platform.PlatformWithholdingReader.ForReceivedAsync(_db, companyId, row.AmountDue, true, null, ct);
+            Accounting.Services.Platform.PlatformWithholdingReader.ThrowIfProfileBlocks(whtD, true);
+            if (!whtD.Withhold)
+                throw new BusinessRuleException($"หักภาษี ณ ที่จ่ายรายการนี้ไม่ได้ — {whtD.Reason}", PlatformPayerProfileGate.RuleCode, 400);
+            row.WithholdingTaxAmount = whtD.WithholdingAmount;
+            row.AmountDue = whtD.NetAmount;
+        }
         _db.CompanyQuotaAddOns.Add(row);
         _db.AddChainedAuditLog(new AuditLog
         {
@@ -274,7 +288,7 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
             {
                 action = "QuotaAddOnPurchaseCreated", resource = res.Key, mode = req.Mode.ToString(), row.Units, row.UnitSize,
                 perUnit = q.PerUnit, amount = q.Amount, amountDue = row.AmountDue, coupon = row.CouponCode, discount = row.CouponDiscountAmount,
-                periodEnd = q.PeriodEndUtc, note = q.Note, by = actor,
+                withholdingTax = row.WithholdingTaxAmount, periodEnd = q.PeriodEndUtc, note = q.Note, by = actor,
             }),
             Timestamp = now,
         });
@@ -287,6 +301,18 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
         => await _db.CompanyQuotaAddOns.FirstOrDefaultAsync(p => p.Id == purchaseId && p.CompanyId == companyId, ct)
            ?? throw new BusinessRuleException("ไม่พบรายการซื้อโควตาเสริมของบริษัทนี้", "QUOTA-NOT-FOUND", 404);
 
+    /// <summary>ทางไปต่อของผู้เช่าเมื่อหมดสิทธิ์หัก ณ ที่จ่ายหลังสร้างรายการ (ข้อความเดียว)</summary>
+    internal const string WithholdingWayForward = "ยกเลิกรายการนี้แล้วซื้อใหม่โดยไม่ติ๊กหัก ณ ที่จ่าย (หรือแก้ข้อมูลบริษัทให้ครบ)";
+
+    /// <summary>รอบ 235 (235-5 · ฝ่ายค้าน S-3): รายการที่หักภาษี — ตรวจสิทธิ์หักซ้ำ ณ ตอนนี้ (ข้อมูลบริษัทอาจเปลี่ยนหลังสร้างรายการ) ·
+    /// ตัวตัดสินเดียว <see cref="PlatformPayerProfileGate.WithholdingRefusal"/> · ทุกเส้นที่รับเงิน: เริ่มชำระออนไลน์ · แนบสลิป · แอดมินอนุมัติ · เงินเข้า · null = ผ่าน/ไม่ได้หัก</summary>
+    private async Task<string?> WithholdingNowRefusalAsync(CompanyQuotaAddOn row, Guid companyId, CancellationToken ct)
+    {
+        if (row.WithholdingTaxAmount <= 0m) return null;
+        var payerNow = await Accounting.Services.Platform.PlatformWithholdingReader.PayerAsync(_db, companyId, ct);
+        return !payerNow.IsJuristic ? "ผู้ซื้อไม่ใช่นิติบุคคลแล้ว (เลขผู้เสียภาษีเปลี่ยน) — หักภาษี ณ ที่จ่ายไม่ได้" : PlatformPayerProfileGate.WithholdingRefusal(payerNow);
+    }
+
     public async Task<PaymentIntent> StartOnlineAsync(Guid companyId, Guid purchaseId, PaymentMethodKind method, string? returnUrl, string? cardToken,
         CancellationToken ct = default)
     {
@@ -297,6 +323,9 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
         if (row.Status is not (QuotaAddOnStatus.AwaitingPayment or QuotaAddOnStatus.Rejected))
             throw new InvalidOperationException("รายการนี้ไม่อยู่ในสถานะรอชำระ");
         if (row.AmountDue <= 0m) throw new InvalidOperationException("รายการนี้ไม่มียอดค้างชำระ");
+        // รอบ 235 (235-5 · ฝ่ายค้าน 234 S1 แบบเดียวกับค่าแพ็กเกจ): รายการที่หักภาษี ⇒ ตรวจสิทธิ์หักซ้ำก่อนเก็บยอดสุทธิ (ข้อมูลบริษัทเปลี่ยนหลังสร้างรายการ)
+        if (await WithholdingNowRefusalAsync(row, companyId, ct) is string whyNot)
+            throw new BusinessRuleException($"{whyNot} — {WithholdingWayForward}", PlatformPayerProfileGate.RuleCode, 409);
         await RefuseIfStaleAsync(row);   // ฝ่ายค้าน B2: ข้อเสนอเก่า (ข้ามเดือน/หมดช่วง/วันหมดอายุแพ็กเกจเปลี่ยน) ⇒ 409 สร้างรายการใหม่
         var res = QuotaResources.Find(row.ResourceKey);
         // ยอด = AmountDue ที่เซิร์ฟเวอร์คิดตอนสร้างรายการ (QuotaAddOnPricing) — ไม่รับยอดจากหน้าเว็บ
@@ -311,6 +340,9 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
         if (row.Status is not (QuotaAddOnStatus.AwaitingPayment or QuotaAddOnStatus.Rejected))
             throw new BusinessRuleException("รายการนี้ไม่อยู่ในสถานะรอชำระ — แนบสลิปไม่ได้", "QUOTA-SLIP-STATE", 409);
         await RefuseIfStaleAsync(row);
+        // ฝ่ายค้าน S-3: สลิปของรายการที่หักภาษีแต่หมดสิทธิ์หักแล้ว ⇒ ปฏิเสธพร้อมทางไปต่อ (ไม่รับสลิปยอดสุทธิที่ออกใบไม่ได้)
+        if (await WithholdingNowRefusalAsync(row, companyId, ct) is string slipWhy)
+            throw new BusinessRuleException($"{slipWhy} — {WithholdingWayForward}", PlatformPayerProfileGate.RuleCode, 409);
         if (await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.SourceKind == PaymentSourceKind.QuotaAddOnPurchase && i.SourceId == row.Id
                 && i.PayerCompanyId == companyId && (i.Status == PaymentIntentStatus.Succeeded || i.Status == PaymentIntentStatus.Pending), ct))
             throw new BusinessRuleException(PlatformDoublePayment.SlipAfterOnlineMessage, PlatformDoublePayment.RuleCode, 409);
@@ -327,7 +359,8 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
     }
 
     public Task<CompanyQuotaAddOn> ApproveAsync(Guid companyId, Guid purchaseId, string actor, CancellationToken ct = default,
-        string? offlineReference = null, string? reason = null, decimal? receivedAmount = null, DateTime? transferDateUtc = null)
+        string? offlineReference = null, string? reason = null, decimal? receivedAmount = null, DateTime? transferDateUtc = null,
+        decimal? withholdingTaxAmount = null)
         => SessionAdvisoryLock.RunAsync(_db, AdvisoryLockKey.For(companyId, SessionAdvisoryLock.PlatformQuotaAddOnPayment, purchaseId.ToString("N")),
             async () =>
             {
@@ -348,6 +381,17 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
                 }
                 else if (row.Status != QuotaAddOnStatus.PendingReview)
                     throw new BusinessRuleException($"อนุมัติไม่ได้ — สถานะ {StatusLabel(row.Status)}", "QUOTA-APPROVE-STATE", 409);
+                // ฝ่ายค้าน S-3: แอดมินแก้ภาษีหักเป็น 0 ⇒ รับเต็มยอด (ยอดเต็มคงที่ = สุทธิ + ภาษีหักเดิม) · ค่าอื่นไม่รับ (ยอดหักมาจากตัวตัดสินเดียวตอนสร้าง)
+                if (withholdingTaxAmount is decimal newWht && newWht != row.WithholdingTaxAmount)
+                {
+                    if (newWht != 0m)
+                        throw new BusinessRuleException("แก้ภาษีหัก ณ ที่จ่ายของโควตาเสริมได้เฉพาะเป็น 0 (รับเต็มยอด) — ยอดหักอื่นให้ผู้เช่าสร้างรายการใหม่", "PLATFORM-WHT-INVALID", 400);
+                    row.AmountDue = PlatformWhtSuggestion.GrossOf(row.AmountDue, row.WithholdingTaxAmount);
+                    row.WithholdingTaxAmount = 0m;
+                }
+                if (await WithholdingNowRefusalAsync(row, companyId, ct) is string approveWhy)
+                    throw new BusinessRuleException($"{approveWhy} — แอดมิน: ตั้งภาษีหัก ณ ที่จ่ายเป็น 0 แล้วรับเต็มยอด {PlatformWhtSuggestion.GrossOf(row.AmountDue, row.WithholdingTaxAmount):N2} บาท (ผู้เช่าโอนเพิ่มส่วนต่าง)",
+                        PlatformPayerProfileGate.RuleCode, 409);
                 await RefuseIfStaleAsync(row);   // B2: ข้อเสนอล้าสมัย ⇒ ไม่เปิดสิทธิ์ที่ช่วงใช้ไม่ได้ (คืนเงิน/ให้ลูกค้าสร้างรายการใหม่)
                 var received = QuotaAddOnPricing.R2(receivedAmount ?? row.AmountDue);
                 if (received < row.AmountDue)
@@ -478,6 +522,22 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
                         staleness, row.Id, companyId, amount);
                     throw new BusinessRuleException(row.AttentionReason, StaleRuleCode);
                 }
+                // ฝ่ายค้าน S-3: เงินเข้า (ยอดสุทธิ) แต่หมดสิทธิ์หักแล้ว ⇒ พักให้แอดมิน (ไม่เปิดสิทธิ์/ไม่ออกใบในนามที่ไม่ตรง) — เรื่องค้าง + audit + ล้มดังถึงผู้ส่งต่อ
+                if (await WithholdingNowRefusalAsync(row, companyId, ct) is string paidWhy)
+                {
+                    row.ReceivedAmount = amount; row.PaymentIntentId = intentId;
+                    row.AttentionRule = PlatformPayerProfileGate.RuleCode;
+                    row.AttentionReason = $"เงินเข้า {amount:N2} บาท (ยอดสุทธิหลังหัก {row.WithholdingTaxAmount:N2}) แต่ {paidWhy} — แอดมินตรวจแล้วอนุมัติ (ตั้งภาษีหักเป็น 0 + เก็บส่วนต่าง) หรือคืนเงิน";
+                    row.UpdatedAt = DateTime.UtcNow; row.UpdatedBy = actor;
+                    _db.AddChainedAuditLog(new AuditLog
+                    {
+                        CompanyId = companyId, EntityType = nameof(CompanyQuotaAddOn), EntityId = row.Id.ToString(), Action = AuditAction.Update,
+                        NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "quota-addon-paid-wht-refused", ruleCode = PlatformPayerProfileGate.RuleCode, intentId, amount, reason = paidWhy }),
+                        Timestamp = DateTime.UtcNow,
+                    });
+                    await _db.SaveChangesAsync(ct);
+                    throw new BusinessRuleException(row.AttentionReason, PlatformPayerProfileGate.RuleCode);
+                }
                 // รอบ 230 (ฝ่ายค้าน S3): คูปองที่การจองหมดอายุระหว่างค้าง + เกินเพดานแล้ว ⇒ ไม่เปิดเอง (ล้มดัง)
                 await RefuseIfCouponOverCapAsync(row, companyId, intentId, amount, actor, ct);
                 await ActivateAsync(row, paidAt, intentId, amount, actor, ct);
@@ -571,10 +631,12 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
         await IssueReceiptAsync(row, amountReceived, paidAtUtc, intentId, ct);
     }
 
-    /// <summary>ฝ่ายค้าน N7: ส่วนลดบนใบ = ราคาก่อนคูปอง − เงินที่รับจริง (ไม่ติดลบ) — รับเกินยอดหลังลด ⇒ ส่วนลดลดลง (ราคาเต็มบนใบไม่เกินราคาก่อนคูปอง) · ไม่มีคูปอง = 0</summary>
+    /// <summary>ฝ่ายค้าน N7: ส่วนลดบนใบ = ราคาก่อนคูปอง − เงินที่รับจริง (ไม่ติดลบ) — รับเกินยอดหลังลด ⇒ ส่วนลดลดลง (ราคาเต็มบนใบไม่เกินราคาก่อนคูปอง) · ไม่มีคูปอง = 0 ·
+    /// รอบ 235: ภาษีหัก ⇒ เทียบกับยอดเต็ม (เงินที่รับ + ภาษีหัก — PlatformWhtSuggestion.GrossOf) ไม่งั้นภาษีหักกลายเป็นส่วนลดบนใบ</summary>
     internal static decimal ReceiptDiscount(CompanyQuotaAddOn row, decimal amountReceived)
         => row.CouponDiscountAmount <= 0m ? 0m
-            : Math.Max(0m, PlatformCouponRule.R2((row.ListAmount ?? row.AmountDue + row.CouponDiscountAmount) - amountReceived));
+            : Math.Max(0m, PlatformCouponRule.R2((row.ListAmount ?? row.AmountDue + row.CouponDiscountAmount + row.WithholdingTaxAmount)
+                - PlatformWhtSuggestion.GrossOf(amountReceived, row.WithholdingTaxAmount)));
 
     /// <summary>ใบกำกับภาษี/ใบเสร็จของเงินที่รับ (idempotent ด้วยเลขอ้างอิง) · ล้ม ⇒ audit + log error (ไม่โยน — สิทธิ์เปิดแล้ว)</summary>
     private async Task<string?> IssueReceiptAsync(CompanyQuotaAddOn row, decimal amountReceived, DateTime paidAtUtc, Guid? intentId, CancellationToken ct)
@@ -588,8 +650,9 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
                 + (string.IsNullOrWhiteSpace(row.ProrationNote) ? "" : $" · {row.ProrationNote}")
                 + (row.CouponDiscountAmount > 0m ? $" · ส่วนลดคูปอง {row.CouponCode}" : "");
             // รอบ 230: ส่วนลดคูปองเป็นส่วนลดของบรรทัดก่อน VAT (§86/4) — ใบ = เงินที่รับพอดี
+            // รอบ 235 (235-5): ภาษีหัก ⇒ ใบเต็มยอด + Dr 11910 (ตัวออกใบเดียวกับค่าแพ็กเกจ)
             var doc = await _issuer.IssueAddOnReceiptAsync(row.CompanyId, desc.Length > 480 ? desc[..480] : desc, amountReceived, paidAtUtc,
-                ReceiptReference(row.Id, intentId), intentId, ReceiptDiscount(row, amountReceived));
+                ReceiptReference(row.Id, intentId), intentId, ReceiptDiscount(row, amountReceived), row.WithholdingTaxAmount);
             if (doc != null)
             {
                 row.ReceiptDocumentId = doc.DocumentId; row.ReceiptNumber = doc.DocumentNumber;
@@ -598,6 +661,13 @@ public class QuotaAddOnPurchaseService : IQuotaAddOnPurchaseService
             }
             else
             {
+                // รอบ 235 (ฝ่ายค้าน N-5 · F2 ข้อ 7): ออกใบไม่สำเร็จ ⇒ ล้มดังบน "ตัวข้อมูลที่ผู้ใช้เปิดดู" — เรื่องค้างบนรายการ (หน้าแอดมินโควตาเสริมแสดง ⚠️)
+                // + เหตุจริงจากตัวออกใบ (เช่น ผัง 11910 ไม่มีของรายการที่หัก ณ ที่จ่าย PLATFORM-WHT-ACCOUNT-MISSING) — ไม่ใช่แค่ log/audit
+                row.AttentionRule = PlatformPaymentAttention.RuleSettleFailed;
+                var failWhy = $"รับเงิน {amountReceived:N2} บาทแล้วแต่ออกใบเสร็จ/ใบกำกับไม่สำเร็จ"
+                    + (row.WithholdingTaxAmount > 0m ? $" (เต็มยอด + ภาษีหัก {row.WithholdingTaxAmount:N2})" : "")
+                    + $" — {_issuer.LastFailureReason ?? "ดูบันทึกระบบ"} · แก้แล้วออกใบอีกครั้ง";
+                row.AttentionReason = failWhy.Length > 500 ? failWhy[..500] : failWhy;
                 _db.AddChainedAuditLog(new AuditLog
                 {
                     CompanyId = row.CompanyId, EntityType = nameof(CompanyQuotaAddOn), EntityId = row.Id.ToString(), Action = AuditAction.Update,

@@ -732,7 +732,7 @@
           <div class="form-row supplier-invoice-only" style="display:none">
             <div class="form-group">
               <label class="form-label" id="fSupplierInvoiceNumberLabel" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (ไม่ใช่เลขที่เอกสารของเรา) — ใช้กระทบกับ statement ของผู้ขายและเป็นหลักฐานเคลม VAT ในสรรพากร">เลขใบกำกับของผู้ขาย</label>
-              <input type="text" class="form-input" id="fSupplierInvoiceNumber" placeholder="เช่น INV-2026-0042">
+              <input type="text" class="form-input" id="fSupplierInvoiceNumber" maxlength="100" placeholder="เช่น INV-2026-0042">
             </div>
             <div class="form-group">
               <label class="form-label" id="fSupplierTaxInvoiceDateLabel" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — ใช้กำหนดงวด ภพ.30 ที่จะเคลมภาษีซื้อ (อาจต่างจากวันที่เราบันทึก)">วันที่ใบกำกับของผู้ขาย</label>
@@ -1182,7 +1182,7 @@
               <div class="form-row-2-1">
                 <div class="form-group">
                   <label class="form-label" data-help="เลขที่ใบกำกับภาษีของผู้ขาย (เล่มที่/เลขที่)">เลขที่ใบกำกับ <span class="req">*</span></label>
-                  <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" placeholder="เช่น INV-2026-0042">
+                  <input type="text" class="form-input" id="fSupplierInvoiceNumberPV" maxlength="100" placeholder="เช่น INV-2026-0042">
                 </div>
                 <div class="form-group">
                   <label class="form-label" data-help="วันที่บนใบกำกับภาษีของผู้ขาย — กำหนดงวด ภพ.30">วันที่ใบกำกับ <span class="req">*</span></label>

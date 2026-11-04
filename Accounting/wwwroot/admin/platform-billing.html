@@ -283,8 +283,22 @@
               ${x.state === 'AwaitingReview' ? `<button class="admin-btn admin-btn-primary admin-btn-sm" onclick="PB.confirmWht('${PB.gid(x.paymentId)}')">ยืนยัน</button>
                 <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.rejectWht('${PB.gid(x.paymentId)}')">ตีกลับ</button>` : ''}
               ${x.state === 'AwaitingUpload' || x.state === 'Rejected' ? `<button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.remindWht('${PB.gid(x.paymentId)}')">ทวง</button>` : ''}</div>`],
-          'ไม่มีรายการ ✅');
+          'ไม่มีรายการ ✅')
+          // รอบ 235 (ฝ่ายค้าน N-4): โควตาเสริมที่ผู้เช่าหัก ณ ที่จ่าย — แถวทะเบียนของใบเสร็จ (ยืนยัน/แนบไฟล์ที่ wht-credit.html ของบริษัทผู้ให้บริการ)
+          + `<h4 style="margin:14px 0 6px;font-size:14px">โควตาเสริมที่หัก ณ ที่จ่าย</h4>`
+          + this.table(d.quotaAddOns || [], ['บริษัท', 'รายการ', 'ภาษีหัก', 'ชำระเมื่อ', 'ทะเบียน', ''],
+            x => [e(x.companyName), `${e(x.label)}${x.receiptNumber ? `<div style="font-size:11px;color:#64748b">ใบเสร็จ ${e(x.receiptNumber)}</div>` : ''}`,
+              AdminLayout.money(x.withholdingTaxAmount), AdminLayout.date(x.paidAt),
+              x.registerNote ? `<span style="font-size:11px;color:#b45309">${e(x.registerNote)}</span>`
+                : `${e(x.whtCreditStatus || '')}${x.certificateNumber ? `<div style="font-size:11px">เลขที่ ${e(x.certificateNumber)}</div>` : ''}`,
+              `${x.lastRemindedAt ? `<div style="font-size:11px;color:#64748b">ทวงล่าสุด ${AdminLayout.date(x.lastRemindedAt)}</div>` : ''}
+               <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="PB.remindQuotaWht('${PB.gid(x.purchaseId)}')">ทวง</button>`],
+            'ไม่มีรายการ ✅');
       } catch (err) { el.textContent = err.message; }
+    };
+    PB.remindQuotaWht = async function (id) {
+      try { const r = await AdminAPI.platformRemindQuotaWht(id); AdminLayout.toast(r.message || 'ทวงแล้ว'); this.loadWhtCerts(); }
+      catch (err) { AdminLayout.toast(err.message, 'error'); }
     };
     PB.confirmWht = async function (id) {
       const no = prompt('เลขที่หนังสือรับรอง 50 ทวิ (ตามที่พิมพ์บนใบ)');

@@ -72,5 +72,11 @@ public static class PlatformCouponMigration
         """ALTER TABLE "CompanyQuotaAddOns" ADD COLUMN IF NOT EXISTS "CouponCode" varchar(40) NULL;""",
         """ALTER TABLE "CompanyQuotaAddOns" ADD COLUMN IF NOT EXISTS "CouponDiscountAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
         """ALTER TABLE "CompanyQuotaAddOns" ADD COLUMN IF NOT EXISTS "ListAmount" numeric(18,2) NULL;""",
+        // รอบ 235 (K-2 · ฝ่ายค้าน S-1): คูปองใช้กับซื้อใหม่/ต่ออายุ — แถวที่มีอยู่ก่อนคอลัมน์นี้ = 1 "ซื้อใหม่เท่านั้น" (คงนโยบาย 233-5 ของคูปองเดิม —
+        // ไม่ให้คูปองที่แอดมินออกไว้กลายเป็นลดต่ออายุได้เงียบ ๆ) · คูปองใหม่ค่าตั้งต้นเดียวกัน (แอดมินเปิดต่ออายุเอง) ⇒ DEFAULT 1 เติมแถวเดิมตอนเพิ่มคอลัมน์ครั้งเดียว ·
+        // บูตซ้ำ/สองเครื่องพร้อมกัน = IF NOT EXISTS ไม่แตะค่าที่แอดมินตั้งภายหลัง (ไม่มี UPDATE ที่รันทุกบูต)
+        """ALTER TABLE "PlatformCoupons" ADD COLUMN IF NOT EXISTS "PurchaseKinds" integer NOT NULL DEFAULT 1;""",
+        // รอบ 235 (คำตัดสิน 234-6 → 235-5): ภาษีหัก ณ ที่จ่ายของโควตาเสริม — AmountDue = ยอดสุทธิที่ตัด/โอน · ใบออกเต็มยอด (AmountDue + ช่องนี้)
+        """ALTER TABLE "CompanyQuotaAddOns" ADD COLUMN IF NOT EXISTS "WithholdingTaxAmount" numeric(18,2) NOT NULL DEFAULT 0;""",
     };
 }

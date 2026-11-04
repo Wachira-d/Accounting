@@ -225,6 +225,33 @@
       } catch (err) { AdminLayout.toast(err.message, 'error'); }
     }
 
+    // รอบ 235 (K-7): ตัวอย่าง "ถ้าบันทึกรับเงินวันนี้" — เซิร์ฟเวอร์คิด (ราคา · วันหมดอายุเดิม → ใหม่ · ภาษีหักที่เสนอ) หน้านี้แสดงอย่างเดียว
+    async function customerPlanPreview(companyId) {
+      const box = document.getElementById('cpvBox'); if (!box) return;
+      const plan = document.getElementById('cpvPlan')?.value; const cycle = document.getElementById('cpvCycle')?.value;
+      if (!plan) { box.innerHTML = '<div style="color:#64748b;font-size:12px">เลือกแพ็กเกจก่อน</div>'; return; }
+      const months = { Monthly: 1, Quarterly: 3, SemiAnnual: 6, Annual: 12 }[cycle] || 1;
+      box.innerHTML = '<div style="color:#64748b;font-size:12px">กำลังคำนวณ…</div>';
+      try {
+        const r = await AdminAPI.previewManualPayment(companyId, { amount: 0, paymentDate: new Date().toISOString(), paymentMethod: 'BankTransfer',
+          requestedPlan: plan, requestedBillingCycle: cycle, requestedPeriodMonths: months, isWaived: false, waiveReason: null,
+          transferReference: null, notes: null, withholdingTaxAmount: 0 });
+        const d = r.data || {}; const pv = d.preview || {}; const w = d.withholding;
+        box.innerHTML = `<div style="font-size:13px;line-height:1.6"><b>${AdminLayout.esc(pv.headline || '')}</b>
+          <ul style="margin:4px 0 0 18px;padding:0">${(pv.lines || []).map(l => `<li>${AdminLayout.esc(l)}</li>`).join('')}</ul>
+          ${w ? `<div style="color:#0c4a6e">ภาษีหัก ณ ที่จ่าย: ${AdminLayout.esc(w.line || w.reason || '')}</div>` : ''}</div>`;
+      } catch (e) { box.innerHTML = `<div style="color:var(--admin-danger);font-size:12px">${AdminLayout.esc(e.message)}</div>`; }
+    }
+
+    async function loadCustomerPreviewPlans(currentPlan, currentCycle) {
+      const sel = document.getElementById('cpvPlan'); if (!sel) return;
+      try {
+        const res = await AdminAPI.plans(false);
+        sel.innerHTML = (res.data || []).map(p => `<option value="${AdminLayout.esc(p.plan)}" ${p.plan === currentPlan ? 'selected' : ''}>${AdminLayout.esc(p.name)}</option>`).join('');
+        const cy = document.getElementById('cpvCycle'); if (cy && currentCycle) cy.value = currentCycle;
+      } catch (e) { sel.innerHTML = ''; }
+    }
+
     async function showDetail(companyId) {
       window.currentCompanyId = companyId;
       try {
@@ -393,6 +420,21 @@
                 <div class="info-grid" style="display:none">
                 </div>
 
+                <!-- รอบ 235 (K-7 · คำตัดสิน 235-3): ดูผลก่อนบันทึกรับเงิน/เปลี่ยนแพ็ก — PlanPurchasePreview ตัวเดียวกับหน้าผู้เช่า (วันที่เดิม → ใหม่ · ภาษีหักที่ระบบเสนอ) · อ่านอย่างเดียว -->
+                <div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#f8fafc;border:1px solid #e2e8f0">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:6px">🔎 ดูผลก่อนบันทึกรับเงิน / เปลี่ยนแพ็ก (ถ้ารับเงินวันนี้)</div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                    <select class="admin-input" id="cpvPlan" style="max-width:200px"></select>
+                    <select class="admin-input" id="cpvCycle" style="max-width:160px">
+                      <option value="Monthly">รายเดือน</option><option value="Quarterly">ราย 3 เดือน</option>
+                      <option value="SemiAnnual">ราย 6 เดือน</option><option value="Annual">รายปี</option>
+                    </select>
+                    <button class="admin-btn admin-btn-outline admin-btn-sm" onclick="customerPlanPreview('${AdminLayout.jsArg(currentDetail.id)}')">ดูผล</button>
+                    <a class="admin-btn admin-btn-outline admin-btn-sm" href="/admin/payments.html">ไปบันทึกรับเงิน →</a>
+                  </div>
+                  <div id="cpvBox" style="margin-top:8px"></div>
+                </div>
+
                 ${s.limits ? `
                 <div style="margin-top:16px">
                   <h4 style="font-size:14px;margin-bottom:4px">Usage Limits
@@ -544,6 +586,7 @@
       // Populate the License dropdown only when the company is NOT attached —
       // the select element only exists in that branch of the template.
       if (!ap) loadAttachLicenseOptions();
+      if (s) loadCustomerPreviewPlans(s.plan, s.billingCycle);   // รอบ 235 (K-7)
       if (typeof NotifyQuotaAdmin !== 'undefined') NotifyQuotaAdmin.mount(document.getElementById('nqaCompany'), c.id);
       // รอบ 231 (231-8): ราคาพิเศษรายบริษัท
       if (typeof PriceOverrideAdmin !== 'undefined') PriceOverrideAdmin.mount(document.getElementById('priceOverrideCompany'), { companyId: c.id });

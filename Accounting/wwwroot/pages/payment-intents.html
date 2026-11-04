@@ -97,6 +97,10 @@
             stuckMinutes: d.stuckMinutes,
           };
           this.statusOptions = d.statusOptions || [];
+          // รอบ 235 (คำตัดสิน 235-3): เงินโหมดทดสอบที่ลงบัญชีไปแล้วก่อนรอบ 232 — เซิร์ฟเวอร์คัดกรอง/ตัดสินทั้งหมด หน้าเว็บแค่แสดง ·
+          // โหลดไม่ได้ = บอกตรง ๆ (ไม่ใช่ซ่อนเหมือนไม่มีรายการ)
+          try { this.legacy = (await api.listTestModeLegacyPayments())?.data || { count: 0, items: [] }; this.legacyError = null; }
+          catch (e2) { this.legacy = null; this.legacyError = e2.message || 'โหลดไม่สำเร็จ'; }
           this.render();
         } catch (e) {
           document.getElementById('body').innerHTML =
@@ -118,6 +122,7 @@
         const rows = this.visible();
         const stuckCount = this.summary.stuck || 0;
         document.getElementById('body').innerHTML = `
+          ${this.legacyHtml()}
           ${this.summary.refundedAwaitingCreditNote ? `<div class="banner warn">
             🧾 มี <b>${this.summary.refundedAwaitingCreditNote}</b> รายการที่<b>คืนเงินแล้ว แต่ยังไม่พบใบลดหนี้</b> (§86/10) —
             ระบบลงบัญชีคืนเงินแล้ว (ยอดรอใบลดหนี้อยู่ที่ลูกหนี้การค้า) · เปิดเอกสารต้นทางแล้วออกใบลดหนี้เพื่อลดภาษีขาย
@@ -231,6 +236,53 @@
         if (note === null) return;
         try { const res = await api.acknowledgePaymentDispute(id, note); Layout.toast(res?.message || 'บันทึกแล้ว'); await this.load(); }
         catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+      },
+
+      // รอบ 235 (คำตัดสิน 235-3): รายงาน "เงินทดสอบที่ลงบัญชีไปแล้ว" — ป้าย/ทางไปต่อ/สิทธิ์กดมาจากเซิร์ฟเวอร์ (TestModeLegacyEffectPolicy)
+      legacyHtml() {
+        const esc = Layout.esc;
+        if (this.legacyError) return `<div class="banner warn">ตรวจ "เงินโหมดทดสอบที่ลงบัญชีไปแล้ว" ไม่สำเร็จ: ${esc(this.legacyError)}</div>`;
+        const L = this.legacy;
+        if (!L || !L.count) return '';
+        const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const rows = (L.items || []).map(r => {
+          const effects = (r.effects || []).map(e => `<li style="margin:4px 0">
+              ${esc(e.label)} — ${e.href ? `<a href="${esc(e.href)}" target="_blank" rel="noopener">${esc(e.number || 'เปิด')}</a>` : esc(e.number || '')}
+              ${e.canReverseHere && e.paymentId
+                ? `<button class="btn btn-sm btn-danger" style="margin-left:6px" data-intent="${esc(r.intentId)}" data-payment="${esc(e.paymentId)}" onclick="Page.reverseLegacy(this.dataset.intent, this.dataset.payment)">↩️ กลับรายการ</button>`
+                : ''}
+              <div class="text-xs" style="color:#6b7280">${esc(e.hint || '')}</div></li>`).join('');
+          return `<tr><td>${esc(r.sourceKindLabel || r.sourceKind)}</td><td class="num">${money(r.amount)}</td>
+            <td>${esc(r.statusLabel || r.status)}<div class="text-xs" style="color:${r.proven ? '#6b7280' : '#b45309'}">${esc(r.evidenceLabel || '')}</div></td>
+            <td>${r.confirmedAt ? esc(new Date(r.confirmedAt).toLocaleString('th-TH')) : '—'}</td>
+            <td><ul style="margin:0;padding-left:16px">${effects}</ul></td></tr>`;
+        }).join('');
+        // ถูกตัด (เกินเพดานต่อรายงาน) — บอกตรง ๆ ไม่ให้ดูเหมือนครบ (ฝ่ายค้าน S5) · จำนวน/เพดานมาจากเซิร์ฟเวอร์
+        const truncated = L.truncated ? `<div style="margin-top:6px">⚠️ แสดงจากรายการล่าสุด ${esc(String(L.maxRows))} รายการ จากทั้งหมด ${esc(String(L.totalCandidates))} — กลับรายการชุดนี้แล้วโหลดใหม่เพื่อดูที่เหลือ</div>` : '';
+        // ห้ามยืนยันว่า "เงินไม่ได้เข้าจริง" กับแถวที่พิสูจน์ไม่ได้ (ฝ่ายค้าน B1) — ป้ายต่อแถวมาจากเซิร์ฟเวอร์ (evidenceLabel)
+        return `<div class="card banner warn">
+            🧪 พบ <b>${esc(String(L.count))}</b> รายการรับชำระออนไลน์ที่<b>ระบบลงบัญชีไปแล้ว</b> ทั้งที่รายการเป็น (หรืออาจเป็น) <b>โหมดทดสอบ</b> (ก่อนระบบกันเงินทดสอบ) —
+            ระบบ<b>ไม่กลับรายการให้อัตโนมัติ</b> · ตรวจหลักฐานในแต่ละแถวแล้วกลับรายการเองตามทางที่ระบุ
+            ${L.unprovenCount ? `<div style="margin-top:6px">${esc(String(L.unprovenCount))} รายการพิสูจน์ไม่ได้ว่าเป็นเงินทดสอบ — ตรวจกับแดชบอร์ดผู้ให้บริการก่อน</div>` : ''}
+            ${truncated}
+            <div style="overflow-x:auto;margin-top:8px"><table class="table"><thead><tr><th>ต้นทาง</th><th>ยอด</th><th>สถานะ / หลักฐาน</th><th>ยืนยันเมื่อ</th><th>ผลทางบัญชีที่ค้าง</th></tr></thead>
+            <tbody>${rows}</tbody></table></div></div>`;
+      },
+
+      async reverseLegacy(intentId, paymentId) {
+        const api = Layout.api(); if (!api) return;
+        if (!(await Layout.confirmDanger({
+          title: 'กลับรายการรับชำระของเงินทดสอบ',
+          message: 'ระบบจะ<strong>ยกเลิกการรับชำระ</strong>นี้ด้วยเส้นยกเลิกเดิม (กลับ JE รับเงิน · คืนยอดค้างให้เอกสาร) และบันทึกใน audit log<br>'
+            + 'ใช้เฉพาะเมื่อแน่ใจว่าเงินก้อนนี้เป็น<strong>เงินทดสอบ</strong> (ไม่มีเงินจริงเข้า)',
+        }))) return;
+        try {
+          const res = await api.reverseTestModeLegacyPayment(intentId, paymentId);
+          Layout.toast(res?.message || 'กลับรายการแล้ว');
+        } catch (e) {
+          alert(e.message || 'กลับรายการไม่สำเร็จ');
+        }
+        await this.load();
       },
 
       // รอบ 205 ทีม W1 (R-01): ส่งต่อใหม่ — ปุ่มโผล่เฉพาะแถวที่เซิร์ฟเวอร์บอกว่าค้าง · ผล/เหตุผลมาจากเซิร์ฟเวอร์ทั้งหมด

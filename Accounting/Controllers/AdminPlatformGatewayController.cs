@@ -157,6 +157,16 @@ public class AdminPlatformGatewayController : ControllerBase
         }));
     }
 
+    /// <summary>รอบ 235 (คำตัดสิน 235-3): จำนวนร้านที่มี "เงินโหมดทดสอบที่ลงบัญชีไปแล้วก่อนรอบ 232" ค้างอยู่ — <b>อ่านอย่างเดียว</b> (ไม่แสดงรายละเอียดของร้าน ·
+    /// การกลับรายการเป็นงานของร้านบนหน้า "รายการรับชำระออนไลน์") · ตัวคัดกรอง/ผู้โหลดตัวเดียวกับฝั่งร้าน (<see cref="TestModeLegacyEffects"/>)</summary>
+    [HttpGet("tenant-test-mode-legacy")]
+    public async Task<ActionResult<ApiResponse<object>>> TenantTestModeLegacy(CancellationToken ct = default)
+    {
+        var (companies, intents, proven, truncated) = await TestModeLegacyEffects.CountAllAsync(_db, ct);
+        return Ok(new ApiResponse<object>(true, new { companies, intents, proven, unproven = intents - proven, truncated,
+            maxRows = TestModeLegacyEffectPolicy.MaxRows }));
+    }
+
     /// <summary>รอบ 227 (PLATFORM_OMISE_AUDIT C-6): รายการรับชำระค่าบริการออนไลน์ล่าสุดของ NextAcc — มุมมองเดียวที่เทียบ "ผู้ให้บริการ ↔ ระบบ" ได้:
     /// สถานะ · เลขอ้างอิงผู้ให้บริการ · ค่าธรรมเนียม · ผู้จ่าย · ต้นทาง (เลขรายการชำระ/ส่วนเสริม) · ใบเสร็จที่ออก · เข้ารอบโอนแล้วไหม · เงินเข้าแต่ต้นทางยังไม่บันทึก (⚠️) ·
     /// อ่านอย่างเดียว (งานแก้ = หน้ารายการรับชำระออนไลน์ของบริษัทผู้ให้บริการ / ศูนย์บิลแอดมิน)</summary>

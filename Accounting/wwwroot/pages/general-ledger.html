@@ -345,13 +345,17 @@
               msg += `<div style="font-size:12px;color:${d.sampleLines.lineCount === 0 ? 'red;font-weight:600' : '#666'}">Lines ในตัวอย่าง: ${d.sampleLines.lineCount} รายการ</div>`;
             }
           }
-          // Detect bad dates (year < 1900 means Buddhist calendar double-conversion)
-          const minYear = d.dateRange?.minDate ? parseInt(d.dateRange.minDate.split('-')[0]) : 9999;
-          if (minYear < 1900 && d.totalEntries > 0) {
+          // รอบ 235 (ฝ่ายค้าน S3): ปีนอกช่วง ค.ศ. ทั้งสองทิศ — เซิร์ฟเวอร์ตัดสิน (eraRepair) หน้าเว็บแค่แสดง
+          const er = d.eraRepair || {};
+          this.eraRepair = er;
+          if (er.needed && d.totalEntries > 0) {
+            const dirs = [];
+            if (er.underflow) dirs.push(`ปี ${Layout.esc(String(er.minYear))} (น้อยกว่า 1900 — ถูกลบ 543 ซ้ำ ⇒ จะ <b>+543</b>)`);
+            if (er.overflow) dirs.push(`ปี ${Layout.esc(String(er.maxYear))} (ตั้งแต่ 2400 — เป็น พ.ศ. ที่ไม่ได้แปลง ⇒ จะ <b>−543</b>)`);
             msg += `<div style="margin-top:12px;background:#fee2e2;padding:8px 12px;border-radius:4px;color:#dc2626;font-weight:600">`;
-            msg += `⚠️ พบปัญหา: วันที่ถูกเก็บเป็นปี ${minYear} (ค.ศ. ${minYear} แทนที่จะเป็น ${minYear + 543})`;
-            msg += `<div style="font-weight:400;font-size:12px;margin-top:4px">สาเหตุ: ระบบแปลง พ.ศ.→ค.ศ. ซ้ำ ทำให้ปีผิด (${minYear + 543} - 543 = ${minYear})</div>`;
-            msg += `<button class="btn btn-primary" onclick="Page.repairDates()" style="margin-top:8px;font-size:13px">แก้ไขวันที่ทั้งหมด (+543 ปี)</button>`;
+            msg += `⚠️ พบปัญหา: วันที่ถูกเก็บเป็น ${dirs.join(' และ ')}`;
+            msg += `<div style="font-weight:400;font-size:12px;margin-top:4px">${Layout.esc(er.skipNote || '')}</div>`;
+            msg += `<button class="btn btn-primary" onclick="Page.repairDates()" style="margin-top:8px;font-size:13px">แก้ไขศักราชของวันที่</button>`;
             msg += `</div>`;
           } else if (d.totalLines === 0 && d.totalEntries > 0) {
             msg += `<div style="margin-top:12px;background:#fee2e2;padding:8px;border-radius:4px;color:#dc2626;font-weight:600">`;
@@ -384,7 +388,11 @@
       },
       async repairDates() {
         const api = Layout.api(); if (!api) return;
-        if (!confirm('ระบบจะแก้ไขวันที่ทั้งหมดที่ปีน้อยกว่า 1900 โดยบวก 543 ปี (เช่น 1483→2026) ดำเนินการ?')) return;
+        const er = this.eraRepair || {};
+        const dirs = [];
+        if (er.underflow) dirs.push('ปีน้อยกว่า 1900 จะถูก +543 (เช่น 1483→2026)');
+        if (er.overflow) dirs.push('ปีตั้งแต่ 2400 จะถูก −543 (เช่น 2569→2026)');
+        if (!confirm(`ระบบจะแก้ศักราชของวันที่: ${dirs.join(' · ') || 'ไม่พบปีนอกช่วง'}\n\n${er.skipNote || ''}\n\nบันทึกใน audit log · ดำเนินการ?`)) return;
         try {
           const res = await api.repairDates();
           Layout.toast(res.message || 'แก้ไขวันที่สำเร็จ', 'success');

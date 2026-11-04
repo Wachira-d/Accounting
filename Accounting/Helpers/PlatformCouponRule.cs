@@ -1,4 +1,5 @@
 using Accounting.Models.Entities;
+using Accounting.Models.Enums;
 
 namespace Accounting.Helpers;
 
@@ -21,7 +22,29 @@ public static class PlatformCouponRule
     public const string InvalidCodeMessage = "โค้ดส่วนลดไม่ถูกต้องหรือใช้ไม่ได้แล้ว";
 
     /// <summary>สิ่งที่กำลังจะซื้อ</summary>
-    public sealed record Target(PlatformCouponScope Scope, string? Plan, string? Cycle, string? AddOnResource, bool IsFirstPayment);
+    /// <summary>สิ่งที่กำลังจะซื้อ — รอบ 235 (K-2): <see cref="IsRenewal"/> = ต่ออายุแพ็กเดิม+รอบเดิม (<see cref="IsRenewalTarget"/>) ตรวจกับ <c>PlatformCoupon.PurchaseKinds</c></summary>
+    /// <para>ฝ่ายค้าน S-1b (235-1b): <see cref="RenewalSpecialPrice"/> = การต่ออายุนี้ได้ราคาพิเศษ (<c>PlatformPriceOverrideStore</c> · AppliesToRenewals) อยู่แล้ว ⇒ คูปองไม่ลดซ้อน</para>
+    public sealed record Target(PlatformCouponScope Scope, string? Plan, string? Cycle, string? AddOnResource, bool IsFirstPayment, bool IsRenewal = false,
+        bool RenewalSpecialPrice = false);
+
+    /// <summary>ฝ่ายค้าน S-2 (235-1b): ข้อความเดียวของ "ส่วนลดซ้อนตอนต่ออายุ"</summary>
+    public const string RenewalSpecialPriceMessage = "บริษัทนี้ได้ราคาพิเศษสำหรับการต่ออายุอยู่แล้ว — คูปองไม่ลดซ้ำ (ต่ออายุโดยไม่ใส่คูปอง)";
+
+    /// <summary>รอบ 235 (K-2 · คำตัดสิน 235-1): รายการค่าแพ็กเกจนี้นับเป็น "ต่ออายุ" ของคูปองไหม — <b>ตัวเดียว</b>ของ preview (<c>QuotePlanChangeCoreAsync</c> ·
+    /// <c>PublicCheckoutService.QuoteAsync</c>) และตอนจอง (<c>RequestPlanPaymentAsync</c>): แพ็กเดิม + รอบเดิม + ไม่ใช่ทดลองใช้/ฟรีถาวร + ไม่ใช่ส่วนต่าง/เปลี่ยนรอบ
+    /// (หมดอายุแล้วซื้อแพ็กเดิมรอบเดิม = ต่ออายุช้า ⇒ นับเป็นต่ออายุ) · อื่น ๆ = ซื้อใหม่/อัปเกรด</summary>
+    public static bool IsRenewalTarget(SubscriptionStatus status, bool isPermanentFree, SubscriptionPlan currentPlan, BillingCycle currentCycle,
+        SubscriptionPlan targetPlan, BillingCycle targetCycle, bool prorated = false, bool cycleChange = false)
+        => !prorated && !cycleChange && !isPermanentFree && status != SubscriptionStatus.Trial
+           && PlatformPlanPricing.IsRenewalPurchase(currentPlan, targetPlan) && currentCycle == targetCycle;
+
+    /// <summary>ป้ายไทยของ <see cref="PlatformCouponPurchaseKinds"/> (หน้าแอดมิน/ข้อความปฏิเสธ — หน้าเว็บไม่มีตารางป้ายเอง)</summary>
+    public static string PurchaseKindsLabel(PlatformCouponPurchaseKinds k) => k switch
+    {
+        PlatformCouponPurchaseKinds.New => "ซื้อใหม่/อัปเกรดเท่านั้น",
+        PlatformCouponPurchaseKinds.Renewal => "ต่ออายุเท่านั้น",
+        _ => "ซื้อใหม่และต่ออายุ",
+    };
 
     /// <summary>ผล — <see cref="Ok"/>=false ⇒ <see cref="Problem"/> (ไทย · ไม่คิดเงิน)</summary>
     public sealed record Evaluation(bool Ok, decimal ListAmount, decimal Discount, decimal AmountAfter, string? Problem, string Label);
@@ -37,7 +60,7 @@ public static class PlatformCouponRule
 
     /// <summary>ปัญหาของค่าที่แอดมินกรอก (null = บันทึกได้)</summary>
     public static string? AdminProblem(string? code, PlatformCouponKind kind, decimal value, DateTime? fromUtc, DateTime? toUtc,
-        int? maxTotal, int? maxPerCompany, PlatformCouponScope scope)
+        int? maxTotal, int? maxPerCompany, PlatformCouponScope scope, PlatformCouponPurchaseKinds purchaseKinds = PlatformCouponPurchaseKinds.Both)
     {
         var c = Normalize(code);
         if (c == null) return "กรอกรหัสคูปอง";
@@ -50,6 +73,7 @@ public static class PlatformCouponRule
         if (maxTotal is int mt && mt < 1) return "จำนวนครั้งรวมต้องอย่างน้อย 1 (หรือเว้นว่าง = ไม่จำกัด)";
         if (maxPerCompany is int mc && mc < 1) return "จำนวนครั้งต่อบริษัทต้องอย่างน้อย 1 (หรือเว้นว่าง = ไม่จำกัด)";
         if ((scope & PlatformCouponScope.Both) == PlatformCouponScope.None) return "เลือกว่าคูปองใช้กับค่าแพ็กเกจหรือโควตาเสริม";
+        if ((purchaseKinds & PlatformCouponPurchaseKinds.Both) == PlatformCouponPurchaseKinds.None) return "เลือกว่าคูปองใช้กับซื้อใหม่ ต่ออายุ หรือทั้งสอง";
         return null;
     }
 
@@ -79,6 +103,13 @@ public static class PlatformCouponRule
         if (t.Scope == PlatformCouponScope.Subscription && !InCsv(c.PlansCsv, t.Plan)) return No($"คูปอง {c.Code} ใช้กับแพ็กเกจนี้ไม่ได้");
         if (t.Scope == PlatformCouponScope.Subscription && !InCsv(c.CyclesCsv, t.Cycle)) return No($"คูปอง {c.Code} ใช้กับรอบบิลนี้ไม่ได้");
         if (t.Scope == PlatformCouponScope.QuotaAddOn && !InCsv(c.AddOnResourcesCsv, t.AddOnResource)) return No($"คูปอง {c.Code} ใช้กับรายการนี้ไม่ได้");
+        // รอบ 235 (K-2): ซื้อใหม่/ต่ออายุ — เฉพาะค่าแพ็กเกจ (โควตาเสริมไม่มีความหมายของ "ต่ออายุ" ในเส้นนี้) · ค่าตั้งต้น Both = ใช้ได้ทั้งสอง
+        if (t.Scope == PlatformCouponScope.Subscription
+            && (c.PurchaseKinds & (t.IsRenewal ? PlatformCouponPurchaseKinds.Renewal : PlatformCouponPurchaseKinds.New)) == PlatformCouponPurchaseKinds.None)
+            return No(t.IsRenewal ? $"คูปอง {c.Code} ใช้กับการต่ออายุไม่ได้ (ใช้ได้เฉพาะซื้อใหม่/อัปเกรด) — ต่ออายุโดยไม่ใส่คูปอง"
+                                  : $"คูปอง {c.Code} ใช้ได้เฉพาะการต่ออายุแพ็กเกจเดิม");
+        // ฝ่ายค้าน S-2: ต่ออายุที่ได้ราคาพิเศษอยู่แล้ว ⇒ ไม่ลดซ้อน (ซื้อใหม่คงพฤติกรรมเดิม 231-8: ราคาพิเศษ → คูปอง)
+        if (t.Scope == PlatformCouponScope.Subscription && t.IsRenewal && t.RenewalSpecialPrice) return No(RenewalSpecialPriceMessage);
         if (c.FirstPaymentOnly && !t.IsFirstPayment) return No($"คูปอง {c.Code} ใช้ได้เฉพาะการชำระครั้งแรก");
         if (c.MaxUsesTotal is int mt && usedTotal >= mt) return No($"คูปอง {c.Code} ถูกใช้ครบ {mt:N0} ครั้งแล้ว");
         if (c.MaxUsesPerCompany is int mc && usedByCompany >= mc) return No($"บริษัทนี้ใช้คูปอง {c.Code} ครบ {mc:N0} ครั้งแล้ว");

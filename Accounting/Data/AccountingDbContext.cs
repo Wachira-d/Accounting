@@ -3822,6 +3822,7 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.CouponCode).HasMaxLength(40);
             e.Property(x => x.CouponDiscountAmount).HasPrecision(18, 2);
             e.Property(x => x.ListAmount).HasPrecision(18, 2);
+            e.Property(x => x.WithholdingTaxAmount).HasPrecision(18, 2);   // รอบ 235 (235-5)
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 230 — คูปองแพลตฟอร์ม (ตาราง/index ต้องตรงกับ Helpers/PlatformCouponMigration)

@@ -150,6 +150,7 @@
           <input id="quotaCoupon" class="form-input" maxlength="40" placeholder="โค้ดส่วนลด (ถ้ามี)" value="${esc(b.couponCode || '')}" style="max-width:200px;text-transform:uppercase">
           <button type="button" class="btn btn-secondary btn-sm" data-q-coupon="1">ใช้โค้ด</button>
           ${b.couponProblem ? `<span style="color:#b91c1c;font-size:12px">${esc(b.couponProblem)}</span>` : ''}</div>` : ''}
+        <div id="quotaWhtBox"></div>
         <div id="quotaBuyPolicy">${global.PolicyAccept ? PolicyAccept.html(pay.policy) : ''}</div>
         <div class="muted" style="font-size:12px">ใช้ได้ทันทีเมื่อชำระสำเร็จ · ได้ใบกำกับภาษี/ใบเสร็จ · ค่าบริการไม่คืนเงิน (ตามนโยบาย) · ของที่สร้างไว้ไม่ถูกลบเมื่อโควตาหมด</div>`;
       const foot = (sel && sel.allowed)
@@ -167,6 +168,32 @@
       box.querySelectorAll('[data-q-pay]').forEach(x => x.addEventListener('click', () => this._checkout(x.getAttribute('data-q-pay'))));
       box.querySelectorAll('[data-q-slip]').forEach(x => x.addEventListener('click', () => this._checkout(null)));
       box.querySelectorAll('[data-q-coupon]').forEach(x => x.addEventListener('click', () => this._applyCoupon()));
+      if (sel && sel.allowed) this._loadWht(sel);
+    },
+
+    /** รอบ 235 (คำตัดสิน 235-5): ภาษีหัก ณ ที่จ่ายที่เซิร์ฟเวอร์เสนอ (ยอดหลังคูปองของวิธีที่เลือก) — หน้าเว็บแสดงข้อความ/ช่องติ๊กอย่างเดียว ไม่คิดยอดเอง ·
+     *  ค่าที่ผู้ใช้ติ๊กไว้ชนะค่าตั้งต้น (userTouched) · ผลที่มาช้าของวิธี/จำนวน/คูปองเดิมไม่ทับของใหม่ */
+    async _loadWht(sel) {
+      const b = this._buy; if (!b) return;
+      const key = [b.resource, sel.mode, b.units, this._couponFor(sel) ? b.couponCode : ''].join('|');
+      b.whtKey = key;
+      let w = null;
+      try {
+        const qs = `resource=${encodeURIComponent(b.resource)}&mode=${encodeURIComponent(sel.mode)}&units=${b.units}`
+          + (this._couponFor(sel) ? `&code=${encodeURIComponent(b.couponCode)}` : '');
+        const r = await API.get(`/api/companies/${this.cid()}/quota/withholding-preview?${qs}`);
+        w = r && r.data;
+      } catch (e) { w = null; }
+      if (!this._buy || this._buy.whtKey !== key) return;
+      const box = document.getElementById('quotaWhtBox'); if (!box) return;
+      if (!w || !w.eligible) { box.innerHTML = w && w.reason && w.outcome !== 'NothingDue' ? `<div class="muted" style="font-size:12px;margin-bottom:6px">${esc(w.reason)}</div>` : ''; b.wht = null; return; }
+      b.wht = w;
+      const checked = b.whtTouched ? !!b.whtChoice : !!w.defaultChecked;
+      box.innerHTML = `<label style="display:flex;gap:8px;align-items:flex-start;font-size:13px;margin-bottom:8px">
+          <input type="checkbox" id="quotaWht" ${checked ? 'checked' : ''} style="margin-top:3px;width:auto">
+          <span><b>หัก ณ ที่จ่าย ${esc(String(w.ratePercent))}%</b> — ${esc(w.line || w.reason || '')}</span></label>`;
+      const cb = document.getElementById('quotaWht');
+      if (cb) cb.addEventListener('change', () => { b.whtTouched = true; b.whtChoice = cb.checked; });
     },
 
     /** รอบ 230: ผลคูปองที่เซิร์ฟเวอร์คิดไว้ของวิธี/จำนวนที่เลือกอยู่ (null = ไม่มี/ไม่ตรงกับที่เลือกแล้ว) */
@@ -201,7 +228,9 @@
       try {
         const r = await API.request('POST', `/api/companies/${this.cid()}/quota/purchases`,
           { resource: b.resource, mode: b.mode, units: b.units, expectedPerUnit: sel.perUnit, expectedAmount: sel.amount,
-            couponCode: this._couponFor(sel) ? b.couponCode : null },
+            couponCode: this._couponFor(sel) ? b.couponCode : null,
+            // รอบ 235: ส่งแค่ true/false — ยอดหักคิดที่เซิร์ฟเวอร์ (ไม่มีช่องติ๊ก = ไม่ส่ง ⇒ ไม่หัก)
+            withholdTax: document.getElementById('quotaWht') ? !!document.getElementById('quotaWht').checked : null },
           false, null, { 'Idempotency-Key': b.key });
         row = r && r.data;
       } catch (e) {

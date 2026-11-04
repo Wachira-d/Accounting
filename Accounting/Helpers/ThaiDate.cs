@@ -33,14 +33,63 @@ public static class ThaiDate
         // 1483 (ค.ศ. ถูกลบ 543 เกิน) → ปรับกลับให้อยู่ในช่วง ค.ศ. กัน bug
         // ทุกทาง (create/update/import/OCR/auto-receipt) เขียนปีเพี้ยนลง DB
         // ซึ่งทำให้ aging/เลขเอกสาร (yyyyMMdd) ผิด ~543 ปี. AddYears กัน Feb29.
-        if (dt.Year > 2400) dt = dt.AddYears(-543);
-        else if (dt.Year < 1900) dt = dt.AddYears(543);
+        // รอบ 235 (K-5): ใช้ตัวตัดสินศักราชตัวเดียว NormalizeEraLenient — ผู้เรียกเดิมทั้งระบบเคยได้ "ปัด 29 ก.พ. ที่ไม่มีจริงเป็น 28"
+        // จาก AddYears จึงคงพฤติกรรมนั้น (เส้นนำเข้าที่ต้องล้มดังใช้ NormalizeEra แทน)
+        dt = NormalizeEraLenient(dt);
         // ตีความ dt ว่าเป็น instant UTC (Unspecified/Local → treat เป็น UTC
         // เพื่อไม่ double-shift; midnight Unspecified → Bangkok 07:00 = วันเดิม)
         var utc = dt.Kind == DateTimeKind.Utc ? dt : DateTime.SpecifyKind(dt, DateTimeKind.Utc);
         var bkk = TimeZoneInfo.ConvertTimeFromUtc(utc, Bkk());
         return new DateTime(bkk.Year, bkk.Month, bkk.Day, 0, 0, 0, DateTimeKind.Utc);
     }
+
+    // ═══ ตัวตัดสินศักราชของ "ค่า DateTime" ตัวเดียว (รอบ 235 · LICENSE_CASE_MATRIX K-5) ═══
+    // เดิมสูตร "ปี < 1900 ⇒ +543 · ปี > 2400 ⇒ −543" ถูกเขียนซ้ำ 3 ที่ (ที่นี่ · AccountingService.NormalizeDate ·
+    // IntegrationService.NormalizeDate) ด้วยวิธีต่างกัน: ที่นี่ AddYears (ปัด 29 ก.พ.) · สองเซอร์วิสใช้ new DateTime(ปี−543,…) (โยน
+    // ArgumentOutOfRange เป็น HTTP 500) ⇒ วันที่เดียวกันเข้าคนละเส้นได้คนละผล · เกณฑ์ปีอิงตาราง NormalizeYear (≥ 2400 = พ.ศ.)
+    //
+    // ข้อเท็จจริงเรื่องปีอธิกสุรทิน: ถ้าปี Y เป็นอธิกสุรทิน (Y % 4 == 0) ⇒ Y ± 543 ไม่เป็นเสมอ ⇒ ค่า DateTime ที่ "ถือ" 29 ก.พ. ของปี
+    // ศักราชผิด แปลงแล้ว<b>ไม่มีวันจริงรองรับ</b> (เช่น DateTime 2572-02-29 = 29 ก.พ. พ.ศ. 2572 = ค.ศ. 2029 ไม่มี 29 ก.พ.) ·
+    // ส่วน 29 ก.พ. พ.ศ. 2567 ของจริง (= ค.ศ. 2024) ถือใน DateTime ปี 2567 ไม่ได้ตั้งแต่ต้น ⇒ ต้องแปลง "ตัวเลขปี" ก่อนสร้างวันที่
+    // (ทาง <see cref="TryParseFlexible"/> / <see cref="NormalizeYear"/>) ห้ามแปลงทีหลังจาก DateTime
+
+    /// <summary>ปีนี้อยู่นอกช่วง ค.ศ. ที่เก็บได้ (ปน พ.ศ. หรือถูกลบ 543 เกิน) — เกณฑ์เดียวกับ <see cref="NormalizeEra"/></summary>
+    public static bool IsOutOfEra(int year) => year >= 2400 || year < 1900;
+
+    /// <summary>แปลงค่า <see cref="DateTime"/> ที่ศักราชปน ให้เป็น ค.ศ. — ปี ≥ 2400 = พ.ศ. (−543) · ปี &lt; 1900 = ค.ศ. ที่ถูกลบ 543 เกิน (+543) ·
+    /// ช่วงอื่นคืนค่าเดิมทุก bit (ใบที่ถูกอยู่แล้วไม่ถูกแตะ · เรียกซ้ำได้ผลเดิม) · คงเวลาและ Kind ·
+    /// คืน false เมื่อวันนั้น<b>ไม่มีจริง</b>ในศักราชปลายทาง (29 ก.พ. — ดูหมายเหตุบนสุด) หรือแปลงครั้งเดียวแล้วปียังนอกช่วง — ห้ามปัดเป็นวันที่ "ดูใช้ได้"</summary>
+    public static bool TryNormalizeEra(DateTime dt, out DateTime value)
+    {
+        value = dt;
+        if (!IsOutOfEra(dt.Year)) return true;
+        var shift = dt.Year >= 2400 ? -543 : 543;
+        var target = dt.Year + shift;
+        // ฝ่ายค้าน N1: แปลงครั้งเดียวแล้วยังนอกช่วง (เช่นปี 3000 ⇒ 2457 · ปี 500 ⇒ 1043) = ไม่ใช่ศักราชปน แต่เป็นค่าเสีย ⇒ false
+        // (ห้ามแปลงซ้ำ/แกว่ง — ผู้เรียกรอบถัดไปต้องไม่ได้ค่าต่างจากรอบนี้)
+        if (IsOutOfEra(target)) return false;
+        if (dt.Month == 2 && dt.Day == 29 && !DateTime.IsLeapYear(target)) return false;
+        value = dt.AddYears(shift);
+        return true;
+    }
+
+    /// <summary>เหมือน <see cref="TryNormalizeEra"/> แต่วันที่ไม่มีจริง ⇒ โยน <see cref="BusinessRuleException"/> (HTTP 400 ข้อความไทย)
+    /// — สำหรับเส้นนำเข้า/integration ที่ต้องล้มดังแทนการแต่งวันที่</summary>
+    public static DateTime NormalizeEra(DateTime dt)
+    {
+        if (TryNormalizeEra(dt, out var v)) return v;
+        var target = dt.Year + (dt.Year >= 2400 ? -543 : 543);
+        throw IsOutOfEra(target)
+            ? new BusinessRuleException(
+                $"ปี {dt.Year} อยู่นอกช่วงที่ระบบรับ (ค.ศ. 1900–2399 หรือ พ.ศ. 2443–2942) — ตรวจวันที่ในไฟล์/คำขอ", "DATE-ERA-OUT-OF-RANGE")
+            : new BusinessRuleException(
+                $"วันที่ {dt.Day:00}/{dt.Month:00}/{dt.Year} ไม่มีจริงเมื่อแปลงศักราช (ปี {target} ไม่มี 29 ก.พ.) — ตรวจวันที่ในไฟล์/คำขอ",
+                "DATE-ERA-NONEXISTENT");
+    }
+
+    /// <summary>ตัวแปลงแบบผ่อนผันของ <see cref="CalendarDateUtc"/> (พฤติกรรมเดิมทั้งระบบ): วันที่ไม่มีจริง ⇒ ปัดตาม <c>AddYears</c> (29 ⇒ 28 ก.พ.)</summary>
+    private static DateTime NormalizeEraLenient(DateTime dt)
+        => TryNormalizeEra(dt, out var v) ? v : dt.AddYears(dt.Year >= 2400 ? -543 : 543);
 
     /// <summary>nullable overload.</summary>
     public static DateTime? CalendarDateUtc(DateTime? dt)

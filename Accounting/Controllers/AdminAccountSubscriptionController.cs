@@ -417,7 +417,7 @@ public class AdminAccountSubscriptionController : ControllerBase
         // parses Kind=Utc. Legacy timestamp mode tolerates Utc on plain
         // `timestamp` columns, but we still defend against past dates which
         // would create a License that's expired on day-0.
-        var endDate = req.CustomEndDate ?? DateTime.UtcNow.AddMonths(1);
+        var endDate = req.CustomEndDate ?? PlatformPlanPricing.AddCycleMonths(DateTime.UtcNow, 1);   // รอบ 235 (K-4 · ฝ่ายค้าน N-2): ปฏิทินไทย
         if (endDate <= DateTime.UtcNow)
             return BadRequest(new ApiResponse<Guid>(false, default, "วันหมดอายุต้องอยู่หลังวันนี้"));
         if (endDate.Kind != DateTimeKind.Utc) endDate = DateTime.SpecifyKind(endDate, DateTimeKind.Utc);

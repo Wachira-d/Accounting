@@ -428,9 +428,10 @@ public class AdminPlatformBillingController : ControllerBase
     {
         var days = overdueDays is int d && d > 0 ? d : PlatformWhtCertificateStatus.DefaultOverdueDays;
         var rows = await svc.ListAsync(days, all, ct);
+        var quotaAddOns = await svc.ListQuotaAddOnsAsync(all, ct);   // รอบ 235 (ฝ่ายค้าน N-4): โควตาเสริมที่หัก ณ ที่จ่าย (อ่านจากทะเบียน)
         return Ok(new ApiResponse<object>(true, new
         {
-            overdueDays = days, platformCompanyId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct), rows,
+            overdueDays = days, platformCompanyId = await PlatformInvoiceQueries.PlatformTenantIdAsync(_db, ct), rows, quotaAddOns,
             awaitingUpload = rows.Count(r => r.State == nameof(PlatformWhtCertificateStatus.State.AwaitingUpload) || r.State == nameof(PlatformWhtCertificateStatus.State.Rejected)),
             awaitingReview = rows.Count(r => r.State == nameof(PlatformWhtCertificateStatus.State.AwaitingReview)),
             overdue = rows.Count(r => r.Overdue),
@@ -461,6 +462,15 @@ public class AdminPlatformBillingController : ControllerBase
         [FromServices] Accounting.Services.Platform.PlatformWhtCertificateService svc, CancellationToken ct)
     {
         await svc.RemindAsync(paymentId, AdminActor(), ct);
+        return Ok(new ApiResponse<object>(true, null, "ส่งคำทวงถึงเจ้าของบริษัทแล้ว"));
+    }
+
+    /// <summary>รอบ 235 (ฝ่ายค้าน N-4): ทวง 50 ทวิ ของโควตาเสริม (วันละครั้ง · เส้นแจ้งเตือนเดิม)</summary>
+    [HttpPost("wht-certificates/quota-addons/{purchaseId:guid}/remind")]
+    public async Task<ActionResult<ApiResponse<object>>> RemindQuotaWhtCertificate(Guid purchaseId,
+        [FromServices] Accounting.Services.Platform.PlatformWhtCertificateService svc, CancellationToken ct)
+    {
+        await svc.RemindQuotaAddOnAsync(purchaseId, AdminActor(), ct);
         return Ok(new ApiResponse<object>(true, null, "ส่งคำทวงถึงเจ้าของบริษัทแล้ว"));
     }
 

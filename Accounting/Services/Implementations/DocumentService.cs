@@ -1368,7 +1368,7 @@ public partial class DocumentService : IDocumentService
                 // Counterparty tax-invoice metadata — only meaningful for
                 // supplier-issued doc types (PurchaseInvoice, CertificateInLieu).
                 // Stored unconditionally though so partner sync can round-trip.
-                SupplierInvoiceNumber = request.SupplierInvoiceNumber,
+                SupplierInvoiceNumber = Checked(request.SupplierInvoiceNumber, DocumentFieldLimits.SupplierInvoiceNumber, "เลขใบกำกับของผู้ขาย"),
                 SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate,
                 // PV: "ใช้งานใบกำกับภาษี" checkbox + supplier branch snapshot.
                 // Branch defaults to "00000" (สำนักงานใหญ่) when flag is on but
@@ -1378,7 +1378,7 @@ public partial class DocumentService : IDocumentService
                     ? (request.SupplierBranchCode ?? contact.BranchCode ?? "00000")
                     : request.SupplierBranchCode,
                 CreditDays = request.CreditDays,
-                PaymentTerms = request.PaymentTerms,
+                PaymentTerms = Checked(request.PaymentTerms, DocumentFieldLimits.PaymentTerms, "เงื่อนไขการชำระ"),
                 DocumentLanguage = request.DocumentLanguage?.Trim().ToLowerInvariant() is "th" or "en"
                     ? request.DocumentLanguage!.Trim().ToLowerInvariant() : null,
                 // เงินมัดจำ/รับล่วงหน้า — เฉพาะใบเสร็จ/ใบสำคัญรับ
@@ -1404,7 +1404,7 @@ public partial class DocumentService : IDocumentService
                 CombinedInvoiceTaxInvoice = request.CombinedInvoiceTaxInvoice
                     && request.DocumentType == DocumentType.TaxInvoice,
                 DepositAppliedAmount = request.DepositAppliedAmount ?? 0m,
-                DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(),
+                DepositAppliedRef = Checked(string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(), DocumentFieldLimits.DepositAppliedRef, "อ้างอิงมัดจำที่หัก"),
                 OriginModule = string.IsNullOrWhiteSpace(originModule) ? null : originModule.Trim(),
                 QuotaCountDeferred = quotaDeferred,
                 DepositAppliedDrivesJournal = request.DepositAppliedDrivesJournal ?? false,
@@ -2939,7 +2939,7 @@ public partial class DocumentService : IDocumentService
         if (request.CustomTermsAndConditions != null) doc.CustomTermsAndConditions = request.CustomTermsAndConditions;
         if (request.RevenueContractId.HasValue) doc.RevenueContractId = request.RevenueContractId.Value;
         if (request.PerformanceObligationId.HasValue) doc.PerformanceObligationId = request.PerformanceObligationId.Value;
-        if (request.SupplierInvoiceNumber != null) doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
+        if (request.SupplierInvoiceNumber != null) doc.SupplierInvoiceNumber = Checked(request.SupplierInvoiceNumber, DocumentFieldLimits.SupplierInvoiceNumber, "เลขใบกำกับของผู้ขาย");
         if (request.SupplierTaxInvoiceDate.HasValue) doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
         await ApplyInputVatClaimPeriodAsync(companyId, doc, request.InputVatClaimPeriod);
         if (request.HasTaxInvoiceReference.HasValue) doc.HasTaxInvoiceReference = request.HasTaxInvoiceReference.Value;
@@ -2956,7 +2956,7 @@ public partial class DocumentService : IDocumentService
             if (!request.DueDate.HasValue && doc.CreditDays is >= 0)
                 doc.DueDate = doc.DocumentDate.AddDays(doc.CreditDays.Value);
         }
-        if (request.PaymentTerms != null) doc.PaymentTerms = request.PaymentTerms;
+        if (request.PaymentTerms != null) doc.PaymentTerms = Checked(request.PaymentTerms, DocumentFieldLimits.PaymentTerms, "เงื่อนไขการชำระ");
         // ภาษาเอกสาร — รับเฉพาะ th/en; "" = ล้างกลับไปใช้ค่าตั้งต้นของบริษัท
         if (request.DocumentLanguage != null)
         {
@@ -3053,7 +3053,7 @@ public partial class DocumentService : IDocumentService
             doc.DepositPolicyNote = null;
         }
         if (request.DepositAppliedAmount.HasValue) doc.DepositAppliedAmount = request.DepositAppliedAmount.Value;
-        if (request.DepositAppliedRef != null) doc.DepositAppliedRef = string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim();
+        if (request.DepositAppliedRef != null) doc.DepositAppliedRef = Checked(string.IsNullOrWhiteSpace(request.DepositAppliedRef) ? null : request.DepositAppliedRef.Trim(), DocumentFieldLimits.DepositAppliedRef, "อ้างอิงมัดจำที่หัก");
         if (request.DepositAppliedDrivesJournal.HasValue)
         {
             // P0-1 รอบ 193 — ด่านเดียวกับตอนสร้าง (ห้ามให้ทางแก้ไขเลี่ยงด่านได้)
@@ -3594,7 +3594,7 @@ public partial class DocumentService : IDocumentService
 
         // เติม/แก้เฉพาะ field ที่ส่งมา (null = คงค่าเดิม)
         if (request.SupplierInvoiceNumber != null)
-            doc.SupplierInvoiceNumber = request.SupplierInvoiceNumber;
+            doc.SupplierInvoiceNumber = Checked(request.SupplierInvoiceNumber, DocumentFieldLimits.SupplierInvoiceNumber, "เลขใบกำกับของผู้ขาย");
         if (request.SupplierTaxInvoiceDate.HasValue)
             doc.SupplierTaxInvoiceDate = request.SupplierTaxInvoiceDate.Value;
         if (request.SupplierBranchCode != null)
@@ -4322,7 +4322,15 @@ public partial class DocumentService : IDocumentService
             ? new List<string>()
             : existing.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
         if (!string.IsNullOrWhiteSpace(add) && !refs.Contains(add.Trim())) refs.Add(add.Trim());
-        return string.Join(", ", refs);
+        // รอบ 235 (22001): หักหลายใบจนเลขอ้างอิงยาวเกินคอลัมน์ ⇒ บอกผู้ใช้ (400) แทน 500 ตอน SaveChanges
+        return Checked(string.Join(", ", refs), DocumentFieldLimits.DepositAppliedRef, "อ้างอิงมัดจำที่หัก")!;
+    }
+
+    /// <summary>รอบ 235 (22001) — ตรวจความยาวผ่านตัวตั้งเดียว <see cref="DocumentFieldLimits"/> แล้วคืนค่าเดิม (ใช้ในตัวกำหนดค่า entity ได้)</summary>
+    private static string? Checked(string? value, int max, string label)
+    {
+        DocumentFieldLimits.Require(value, max, label);
+        return value;
     }
 
     private async Task<ChartOfAccount?> ResolveDepositBaseAccountAsync(Guid companyId, Guid depositId)
@@ -11194,7 +11202,7 @@ public partial class DocumentService : IDocumentService
     /// ใช้ทั้งจาก endpoint โดยตรง และจาก VoidDocumentAsync (cascade).
     /// </summary>
     public async Task<PaymentVoidResult> VoidPaymentAsync(Guid companyId, Guid paymentId,
-        PaymentVoidCause cause = PaymentVoidCause.User)
+        PaymentVoidCause cause = PaymentVoidCause.User, Func<Payment, Task>? beforeCommit = null)
     {
         var payment = await _db.Payments.FirstOrDefaultAsync(p => p.Id == paymentId
             && p.CompanyId == companyId && !p.IsDeleted)
@@ -11263,6 +11271,8 @@ public partial class DocumentService : IDocumentService
                     (etaxCancellationFlag, outputVatNotice) = await ReverseMultiDocPaymentInternalAsync(companyId, locked, "ยกเลิกการชำระเงิน", cause: cause);
                 else
                     (etaxCancellationFlag, outputVatNotice) = await ReversePaymentInternalAsync(companyId, locked, doc, "ยกเลิกการชำระเงิน", cause: cause);
+                // รอบ 235 (ฝ่ายค้าน S4): งานของผู้เรียก (audit) อยู่ในธุรกรรมเดียวกับการยกเลิก — ล้ม = rollback ทั้งก้อน
+                if (beforeCommit != null) await beforeCommit(locked);
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
             }

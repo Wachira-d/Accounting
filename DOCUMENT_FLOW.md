@@ -1259,6 +1259,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
       + "หักมูลค่ามัดจำ" อยู่ในรายการช่องที่ห้ามแก้ย้อนหลัง §86/4 (B4) · แถวมัดจำบนกระดาษดู `DepositBaseDeducted` ไม่ดู `DepositAppliedAmount` ⇒ ที่พักมัดจำสองแบบพิมพ์ถูก (B5)
       · ⚠️ ที่รู้: ร่างที่มีฐานมัดจำแล้วเลือกมัดจำ VAT พักแบบขับ JE เพิ่ม ⇒ ด่าน "ห้ามหักสองชั้น" ล้ม (ฟอร์มยังไม่มีปุ่มล้างฐานมัดจำ — ทางไปต่อ: สร้างใบใหม่) ·
       ป้ายแถวมัดจำพิมพ์ `DepositAppliedRef` ทั้งสตริง (รวมเลขมัดจำ VAT พักที่ `MergeDepositRef` ต่อท้าย)
+      · **รอบ 235 (ผู้ใช้รายงาน 22001 REF:42DAB82F)** ความยาวช่องข้อความอิสระบนเอกสารมีตัวตั้งเดียว `Helpers/DocumentFieldLimits` (เลขใบกำกับผู้ขาย 100 · เงื่อนไขชำระ 500 · `DepositAppliedRef` 1000 — คอลัมน์ขยายตามใน `DatabaseMigrationHelper`) · สร้าง/แก้/เติมใบกำกับ/`MergeDepositRef` ตรวจก่อนบันทึก ⇒ เกินได้ 400 ระบุชื่อช่อง (`DOC-FIELD-TOO-LONG`) · 22001 ที่หลุดจากทางอื่น (integration) ⇒ `ExceptionMiddleware` ตอบ 400 ไม่ใช่ 500
     - **void/purge ใบสุดท้าย** ⇒ `ReverseDepositRealizationsForAsync` กลับ/ลบ JE รับรู้ที่ผูกใบนั้น + คืน `DepositRealizedAmount` (ล้าง RecognizedAt เมื่อ JE มีขา 21913) ·
       กู้ใบแล้วอนุมัติใหม่ = รับรู้อีกครั้ง (ไม่นับ JE ที่ถูกกลับ)
     - deferred → recognize (`RealizeDepositAsync`): JE ย้าย 21913 → 21911 +
@@ -1820,6 +1821,7 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   ไม่มี QR แต่มีลิงก์ https ⇒ พาไปหน้าธนาคาร/3-D Secure แล้วกลับ `ReturnUrl` (+`?payReturn=1` → `PayWidget.resume()`; หน้าที่ใช้ header ของตัวเอง เช่น `platform-pay-test.html` ต้องเรียก `resume({authHeader})` เอง) ·
   Pending แต่ไม่มีทั้งคู่ (ไม่ใช่สลิปโอน) ⇒ `StartAsync` ปิดรายการ `Failed` รหัส `no_next_step` พร้อมเหตุผลไทยก่อน commit (เงินเข้าทีหลังยัง Failed→Succeeded ได้ตามนโยบายเดิม) · หมดเวลา 20 วิ/เครือข่ายขาด ⇒ `FailureMessage` ไทย (`TransportFailureText`) ·
   **เงินโหมดทดสอบไม่มีผลทางธุรกิจ (คำตัดสิน 232-Omise-2 · `Helpers/TestModePaymentPolicy` = ตัวตั้งเดียวของ "เงินทดสอบ" ขาเข้า+ขาคืน — รวม `GatewayTestPaymentRules` เดิมแล้ว · โหมดจาก `PaymentIntentTestMode.ResolveAsync` null→config ทุกจุด):** intent คีย์ทดสอบ (IsTestMode/config.Mode=Test) ของทุกต้นทางยกเว้น GatewaySelfTest ⇒ `DispatchSucceededAsync` **ด่านแรกก่อน `EntitlementBlockReason`** (ด่านสิทธิ์ไม่รู้จักโหมดทดสอบอีก — ค่าบริการ/ส่วนเสริมทดสอบ = เหตุการณ์ 🧪 ไม่ใช่งานค้างส่งต่อใหม่) ไม่เรียก handler (ไม่มี JE/ใบเสร็จ/สต็อก/ตัดชำระ · ต้นทางคงรอชำระ · เหตุการณ์ `🧪 โหมดทดสอบ — ไม่ลงบัญชี` บน intent · ไม่ใช่งานค้างส่งต่อใหม่) + `GuardAsync` ชั้นสองใน handler ทั้ง 8 · ป้าย `TestModePaymentPolicy.StatusLabel` "(ทดสอบ — ไม่ลงบัญชี)" ในรายการรับชำระ + ทุก intent response ส่ง `statusLabel`/`testNote` (`PayerNote`) ให้หน้าจ่ายแสดง (widget ไม่มีข้อความเอง) · widget: `Succeeded` ตั้งแต่สร้าง (บัตรไม่ 3DS) ⇒ หน้าสำเร็จก่อนตาข่าย "ไม่มี QR/ลิงก์" · `MissingReason` ยิงเฉพาะ `StartAsync` (poll ไม่ตัดสิน — ตั้งใจ) ·
+  **รอบ 235 — เงินทดสอบที่ลงบัญชีไปแล้วก่อนรอบ 232 (คำตัดสิน 235-X3 + ฝ่ายค้าน B1/S4/S5):** ไม่กลับรายการอัตโนมัติ · หน้า "รายการรับชำระออนไลน์" แสดงรายงาน (`GET pay/intents/test-mode-legacy` · ผู้โหลด `Services/Payments/TestModeLegacyEffects` (กรองก่อน Take: สร้างก่อน `GuardSinceUtc` · `IsTestMode != false` · เพดาน 2000 + `truncated` · ผลโหลดเป็นชุด) · ตัวคัดกรอง/หลักฐาน `Helpers/TestModeLegacyEffectPolicy`) · หลักฐาน: ประทับ true / เลข Omise `chrg_test_` = พิสูจน์ได้ · มีแค่โหมดปัจจุบันของช่องทาง = พิสูจน์ไม่ได้ (ไม่มีปุ่ม · ห้ามป้าย "ไม่มีเงินจริง") · รับชำระเอกสารที่พิสูจน์ได้ ⇒ ปุ่ม "กลับรายการ" (`POST pay/intents/{id}/test-mode-legacy/reverse/{paymentId}` → `VoidPaymentAsync` เดิม + `beforeCommit` เขียน audit chain `PAY-TEST-LEGACY-REVERSE` ในธุรกรรมเดียวกัน · สิทธิ์ BankReconcile + Document.Void · กดซ้ำ = "ถูกกลับรายการไปแล้ว") · ออเดอร์/POS/ที่พัก/การจอง ⇒ ลิงก์ไปเส้นยกเลิก/ใบลดหนี้ของต้นทาง · แอดมิน: `GET admin/platform-gateway/tenant-test-mode-legacy` นับร้าน/รายการ/พิสูจน์ได้-ไม่ได้ (อ่านอย่างเดียว)
   URL แจ้งเตือน (webhook) ที่หน้าตั้งค่าร้าน (`PaymentSettingsController`) และแอดมินแพลตฟอร์ม (`AdminPlatformGatewayController`) ใช้ `SystemBaseUrl.PublicOrigin` (URL ระบบที่ตั้งไว้ก่อน · ไม่ตั้ง = คำขอ) — เทสต์ `GatewayChargeNextStepRound232Tests` · Last verified `commit <เติมในคอมมิตตามหลัง>`
 - **รอบ 231 — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ · ชนิด subscription · audit License (คำตัดสินข้อ 231-8..231-11 · `ACCOUNT_STRUCTURE.md` §6.2f):**
   ทุกจุดที่คิดราคาแพ็กเกจ (ใบต่ออายุ · ส่วนต่าง · ดูราคา · คำขอ/แปลงทดลองใช้ · แจ้งชำระ · อนุมัติอัตโนมัติ · แอดมินเปลี่ยนแพ็กเกจ) ผ่าน `Helpers/PlatformPriceOverrideStore` → `PlatformPlanPricing.EffectiveCyclePrice`
@@ -2622,7 +2624,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ฝ่ายค้าน 233:** วันรับเงินย้อนจนรอบจบก่อนอนุมัติ ⇒ นับจากเวลาอนุมัติ + ประวัติ `PaidPeriodStartedAtApproval` (233-1b) · ฟรีถาวร→ซื้อ ApplyTemplate ใช้วันหมดอายุของรอบที่จ่าย ·
   ฐานเครดิต = `Amount + WithholdingTaxAmount` · Approved ยอด 0 = เครดิต 0 · `CreateOrderAsync` resume ส่วนต่างเก่า ⇒ `MustRequote` (ยอดไม่ตรง + ยังไม่เริ่มชำระ ⇒ ออกใหม่ ยกเลิกใบเก่า) ·
   แพลนบัญชีใช้ `PaidPeriod` เดียวกัน · ใบกำกับ/preview ตัดสิน VAT ด้วย `PlanPurchasePreview.IssuesTaxInvoice` · `/me` คืน `lowerNote`
-- **ค้าง:** K-1 K-2 K-4 K-5 K-7 K-8 ใน MATRIX §5 (แบบ ข เป็นค่าตั้ง · คูปองต่ออายุ · preview หน้า License/แอดมิน/อีเมล · AddMonths บน UTC ช่วงตีสอง)
+- **ค้าง:** K-1 (แบบ ข เป็นค่าตั้ง — รอเจ้าของ) · K-5 (AddYears(543) งานนำเข้า — ทีมอื่น) · **K-2 K-4 K-7 K-8 ปิดแล้วรอบ 235 (§2.12c)**
 
 ### 2.12b หัก ณ ที่จ่ายค่าบริการ NextAcc อัตโนมัติ + ด่านข้อมูลบริษัทก่อนชำระ + 50 ทวิ จากลูกค้า (รอบ 234 · คำตัดสิน 234-1…234-6 · 234-W1…W4)
 
@@ -2635,7 +2637,7 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ต่ออายุผ่าน checkout (`SubmitPaymentAsync` · `SubmitSubscriptionPaymentRequest.WithholdTax`) · checkout (`OrderRequest.WithholdTax`) · ศูนย์บิล (ช่องติ๊กในใบเสนอ ·
   ใบแจ้งหนี้เติมยอดเสนอในช่องกรอกเอง) · ลิงก์ชำระ (เติมยอดเสนอ) · ตัดบัตรอัตโนมัติ (ค่าตั้ง `Subscription.WithholdTaxPreference = true`) ⇒ `Amount` = **ยอดสุทธิ**
   (ตัดบัตร/QR/โอน) · `WithholdingTaxAmount` = ภาษีหัก · หน้าเว็บส่งแค่ true/false · null = ไม่หัก (เส้นเดิม) · ยอดเต็ม = `PlatformWhtSuggestion.GrossOf` ใช้เทียบราคา
-  (เริ่มชำระออนไลน์ · handler · กดซ้ำ · resume) · **ยังไม่ครอบ:** ส่วนเสริม/โควตาเสริม (234-6)
+  (เริ่มชำระออนไลน์ · handler · กดซ้ำ · resume) · **รอบ 235:** โควตาเสริมครอบแล้ว (§2.12c) · ส่วนเสริม (CompanyFeature) ยังไม่ครอบ (235-5)
 - **ด่าน:** นิติบุคคลขอหักแต่ข้อมูลบริษัทไม่ครบ ⇒ 400 `PLATFORM-PAYER-PROFILE` + สิ่งที่ขาด (รวมเส้นชำระใบที่กรอกภาษีเอง — **เข้มขึ้น**) · บุคคลธรรมดา/ไม่ติ๊ก ⇒ จ่ายได้ตามเดิม ·
   การ์ด "ข้อมูลบริษัทสำหรับใบกำกับภาษี" (ศูนย์บิล) + กล่องในขั้นชำระ + ช่องตอนสมัคร (checkout) บันทึกผ่าน `PUT /api/companies/{id}` (audit เมื่อชื่อ/เลข/สาขา/ที่อยู่เปลี่ยน)
 - **เอกสาร/บัญชีผู้ให้บริการ:** ใบเสร็จ/ใบกำกับเต็มยอด (ฐาน+VAT = สุทธิ + ภาษีหัก) + อัตราหักบนบรรทัด ⇒ Dr เงิน (สุทธิ) + Dr 11910 / Cr รายได้ + VAT (ตัวออกใบเดิม) ·
@@ -2650,6 +2652,36 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   รายการแจ้งหักของผู้เช่าค้าง ⇒ ตัวตัดอัตโนมัติข้ามใบ · เงินเข้าแต่หมดสิทธิ์หัก ⇒ พักให้แอดมิน · แอดมินแก้ภาษีหัก = ยอดเต็มคงที่ · ผัง 11910 สร้างไม่ได้ ⇒ ล้มดัง (เรื่องค้าง) ·
   การ์ดข้อมูลบริษัทบันทึกผ่าน `PUT billing-center/payer-profile` (ประเภทผู้ซื้อตรวจด้วย `PlatformPayerProfileGate.Normalize`) · ยืนยัน 50 ทวิ ต้องกรอกยอดบนใบให้ตรงยอดหัก
 - เทสต์ `PlatformWhtSuggestionRound234Tests` · `PlatformWhtRound234DbTests` · `PlatformBillingPhase2DbTests.Juristic_tenant_withholding_reduces_transfer_individual_refused` (สองทิศ) — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
+### 2.12c ปิดงานค้างแพ็กเกจ/บิล (รอบ 235 · คำตัดสิน 235-1…235-10 · MATRIX §5 K-2/K-4/K-7/K-8 + 234-6/234-W3)
+
+- **คูปองตอนต่ออายุ (K-2 · 235-1 แทน 233-5):** ต่ออายุแพ็กเดิม+รอบเดิมผ่านหน้าซื้อสาธารณะ ⇒ `SubscriptionService.RequestRenewalPaymentAsync` → `RequestPlanPaymentAsync` ตัวเดียวกับซื้อใหม่
+  (ราคาต่ออายุจากเซิร์ฟเวอร์ · คูปองจองใต้ล็อก · `QuotedAmount` · ภาษีหักจากตัวตัดสินเดียว) — เดิม `SubmitPaymentAsync` (ไม่รับคูปอง ⇒ ปฏิเสธ `RenewalCouponRefusal` ซึ่งถูกถอดแล้ว) ·
+  ชนิดการซื้อของคูปอง `PlatformCoupon.PurchaseKinds` (New/Renewal/Both · **ค่าตั้งต้น New ซื้อใหม่เท่านั้น ทั้งคูปองเดิม (DEFAULT 1) และใหม่** — แอดมินเปิดต่ออายุเองที่ `/admin/coupons.html`) ตัดสินใน `PlatformCouponRule.Apply` ตัวเดียว ·
+  ต่ออายุที่ได้ราคาพิเศษอยู่แล้ว ⇒ คูปองไม่ลดซ้อน (235-1b)
+  (ต่ออายุ = `PlatformCouponRule.IsRenewalTarget`: แพ็กเดิม+รอบเดิม · ไม่ใช่ทดลอง/ฟรีถาวร/ส่วนต่าง/เปลี่ยนรอบ) ทั้ง preview (`QuotePlanChangeCoreAsync` · `PublicCheckoutService.QuoteAsync`) และตอนจอง ·
+  ใบกำกับ = ส่วนลดของบรรทัดก่อน VAT (`PlatformCouponRule.SplitDiscounted` เดิม) · นับการใช้เมื่อเงินเข้า (`PlatformCouponStore.RedeemAsync` ใน `ReviewPaymentLockedAsync` เดิม) ·
+  คูปอง "ซื้อใหม่เท่านั้น" ตอนต่ออายุ ⇒ ใบเสนอ/สร้างรายการ 400 พร้อมเหตุ (ไม่เงียบ · ไม่เกิดรายการ)
+- **ปฏิทินไทย (K-4 · 235-2):** `PlatformPlanPricing.AddCycleMonths` (UTC+7 → AddMonths → กลับ UTC) ใช้ใน `PlanPurchasePreview.PaidPeriod` (preview + อนุมัติทุกเส้น) · `PlatformProration` (วันเริ่มรอบ/วันหมดอายุรอบใหม่) ·
+  `SubscriptionExpiry.CloseOpenEnded` · บรรทัดใบต่ออายุ (พ.ศ.) — 31 ม.ค. 06:30 ไทย + 1 เดือน = 28/29 ก.พ. (เดิม 1 มี.ค.) · มีผลรอบที่คิดใหม่ (EndDate ที่ประทับแล้วไม่แตะ — ไม่ต้อง migration)
+- **preview หน้าแอดมิน (K-7 · 235-3) + ภาษีหักที่แอดมินกรอก (ข้อ 6 · 235-6):** `POST admin/companies/{id}/subscription-payments/record/preview` (`PreviewManualPaymentAsync`) ·
+  `GET admin/subscription-payments/{id}/approval-preview?wht=&received=` (`PreviewPaymentApprovalAsync` — แยกเส้นเหมือน `ReviewPaymentLockedAsync`: ตัดชำระใบอย่างเดียว `ForInvoiceOnly` · เปลี่ยนรอบ · ส่วนต่าง · ซื้อ/ต่ออายุ) ⇒
+  `PlanPurchasePreview.ForPurchase(…, paidAtUtc, months, approvedAtUtc, withholdingTax)` ตัวเดียวกับหน้าผู้เช่า (วันรับเงิน = `ApprovedPaymentDate` แบบแอดมินกรอก) + ภาษีหักที่ระบบเสนอ
+  (`PlatformWithholdingReader.ForReceivedAsync`) · `/admin/payments.html` (กล่องตรวจสลิป + ฟอร์มบันทึกรับเงิน ปุ่ม "ใช้ยอดที่ระบบเสนอ") · `/admin/customers.html` (กล่อง "ดูผลก่อนบันทึกรับเงิน/เปลี่ยนแพ็ก") ·
+  `RecordManualPaymentAsync` ตรวจภาษีหักที่กรอกด้วย `ManualWithholdingProblem` → `PlatformInvoiceRules.WithholdingProblem` (นิติบุคคล · ≤ 3% ฐานก่อน VAT · ไม่ติดลบ — เดิมรับทุกค่า) ⇒ 400 `PLATFORM-WHT-INVALID`
+- **อีเมล (K-8 · 235-4):** `Helpers/PlatformPurchaseEmailText.Lines` ตัวเดียว — คำสั่งซื้อ (`SendOrderEmailAsync` · วันที่ "ถ้าชำระวันนี้" จาก preview · `PublicCheckoutOrder.PlanName/ValidUntilUtc`) ·
+  ใบเสร็จ (`SaasBillingDocumentService.SendEmailAsync` · วันหมดอายุที่ประทับ `SubscriptionExtendedTo`) — แพ็ก · รอบ · ใช้ได้ถึง (พ.ศ.) · ยอด · หัก ณ ที่จ่าย (ยอดเต็ม/ภาษีหัก/สุทธิ + เตือน 50 ทวิ) · HtmlEncode ทุกบรรทัด
+- **ภาษีหักโควตาเสริม (ข้อ 5 · 235-5):** `QuotaPurchaseRequest.WithholdTax` ⇒ `PlatformWithholdingReader.ForReceivedAsync(ยอดหลังคูปอง, contract = null)` (ราคาครั้งเดียว ⇒ เกณฑ์ดูยอดครั้งนี้ — 234-2) ·
+  `CompanyQuotaAddOn.WithholdingTaxAmount` (คอลัมน์ใหม่) · `AmountDue` = ยอดสุทธิ (บัตร/QR/สลิปเทียบยอดนี้) · ใบ `IssueAddOnReceiptAsync(…, withholdingReceived)` เต็มยอด + อัตราบนบรรทัด ⇒ Dr 11910 ⇒ แถว
+  `WhtCreditReceived` Pending จาก GL (เส้นเดิม) · ตรวจสิทธิ์หักซ้ำทุกเส้นรับเงิน (ออนไลน์ · สลิปปฏิเสธ · แอดมินล้างภาษีหักเป็น 0 ได้ · เงินเข้าพักให้แอดมิน — 235-5b) · ออกใบไม่สำเร็จ ⇒ เรื่องค้าง `PLATFORM-SETTLE-FAILED` บนรายการ · หน้า `quota-ui.js` ช่องติ๊กจาก `GET quota/withholding-preview` · **ส่วนเสริม (CompanyFeature) ยังไม่ครอบ** (235-5)
+- **50 ทวิ → ไฟล์แนบแถวทะเบียน (ข้อ 7 · 235-7 ปิด 234-W3):** แอดมินยืนยัน ⇒ `PlatformWhtCertificateService.CertificateAttachmentAsync` สร้าง FileAttachment (บริษัทผู้ให้บริการ · EntityType WhtCredit) ที่<b>อ้างไฟล์เดิม</b>
+  (ไม่คัดลอกไบต์ · idempotent) ⇒ `MarkReceivedAsync(…, attachmentId)` ⇒ `wht-credit.html` ปุ่ม "📎 ดูไฟล์" (endpoint ไฟล์แนบเดิม ตรวจสิทธิ์) · ลบที่หน้านั้น = ถอดแถว ไฟล์คงไว้ (`AttachmentRetention`)
+- **คืนเงินรายการที่หัก (235-11):** ใบลดหนี้ลดเต็มยอดส่วนที่คืน (เงินที่คืน + ภาษีหักตามสัดส่วน `PlatformRefundCreditNote.WithholdingShare`) ⇒ Cr 11910 ส่วนนั้น · ทะเบียน 50 ทวิ Pending ลด/หมดสิทธิ์ · ยืนยันแล้ว ⇒ เรื่องค้าง `PLATFORM-WHT-REFUND`
+- **แอดมินบันทึกรับเงินเอง ทางยกเว้น (235-6b):** ติ๊ก "ตามหนังสือรับรองจริง" + เหตุผล ≥ 10 ⇒ audit `PLATFORM-WHT-MANUAL-OVERRIDE` · การ์ด 50 ทวิ ของแอดมินรวมโควตาเสริม (อ่านทะเบียน · ทวงวันละครั้ง)
+- **ใบกำกับไหม (ข้อ 8 · 235-8):** `SaasBillingDocumentService` (ใบเสร็จ PDF เดี่ยว + ใบแจ้งหนี้ PDF) ใช้ `PlanPurchasePreview.IssuesTaxInvoice` ตัวเดียว
+- **แจ้ง "รอตรวจสอบ" (ข้อ 9 · 235-9):** `Helpers/PlatformPaymentReviewNotice.ShouldNotify` — สร้างรายการ (ยังไม่มีสลิป) ⇒ ไม่แจ้ง · แนบสลิปครั้งแรก (`UploadPaymentSlipAsync`) ⇒ แจ้ง · แนบซ้ำไม่แจ้ง
+- **บันทึกบัตรใน checkout (ข้อ 10 · 235-10):** `Services/Payments/PlatformSavedCardStart` ตัวเดียว (platform-pay + `PublicCheckoutController.StartIntent`) · `checkout.html` ดึง `public/checkout/companies/{id}/saved-card-offer` (ด่านเจ้าของเดียวกับ StartIntent · ข้อความจาก `OfferAsync` ตัวเดียวกับ platform-pay) ส่ง `savedCardOffer` ให้ PayWidget
+- เทสต์ `PlatformRound235Tests` · `PlatformRound235DbTests` · `PublicCheckoutRound233DbTests.R235_*` · Last verified working tree รอบ 235 (sha เติมในคอมมิตตามหลัง)
 
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
@@ -7348,3 +7380,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public chec
 _Last verified against codebase: 2026-11-03 (รอบ 232 ต่อ — คำแปลอังกฤษตั้งต้นของนโยบาย (`LegalDocumentDefaults.En.cs` · `CmsLegalPages.EffectiveMarkdownEn` · `builtin-en`) — เทสต์ `LegalDocumentDefaultsEnRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 
 _Last verified against codebase: 2026-11-04 (รอบ 234 ทีมหัก ณ ที่จ่ายอัตโนมัติ — §2.12b `PlatformWhtSuggestion`/`PlatformPayerProfileGate`/`PlatformWhtCertificateStatus` · ทุกเส้นชำระ NextAcc เก็บยอดสุทธิ + ภาษีหัก · ด่านข้อมูลบริษัท · 50 ทวิ จากลูกค้าผูกทะเบียนภาษีถูกหัก — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-04 (รอบ 235 ทีมปิดงานค้างนอกเส้นบิล + ฝ่ายค้าน 235-X — (1) K-5 ศักราช: ตัวตัดสินกลาง `ThaiDate.TryNormalizeEra`/`NormalizeEra`/`IsOutOfEra` แทน `AddYears(±543)` 18+2 จุด · แปลงแล้วยังนอกช่วง/29 ก.พ. ไม่มีจริง = 400 (integration) / อ่านไม่ได้ (statement) · งานซ่อม `reports/repair-dates` (JournalManage) ครอบสองทิศ + ข้ามงวดปิด/ออกเลขแล้ว/แบบภาษียื่นแล้ว (`Helpers/BuddhistDateRepairPolicy`) · ปุ่มบนบัญชีแยกประเภทจาก `eraRepair` ของเซิร์ฟเวอร์ (2) อัตราจำกัดเส้นสมัคร/รีเซ็ตรหัสผ่าน/สมัครประตูลูกค้า: ต่อ IP (IPv6 /64) fail-closed · ทั้งระบบ = เตือนแอดมิน · ตารางนับใช้ไม่ได้ = 503 (`Helpers/AuthRateLimitPolicy` · `IChatRateLimiter.ConsumeAsync`) (3) รายงานเงินทดสอบที่ลงบัญชีไปแล้ว + หลักฐาน — เทสต์ `BuddhistEraNormalizeRound235Tests` · `BuddhistDateRepairPolicyRound235Tests` · `AuthRateLimitRound235Tests` · `TestModeLegacyEffectPolicyRound235Tests` · Db `BuddhistDateRepairDbTests` · `AuthRateLimitSharedDbTests` · `TestModeLegacyEffectsDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

@@ -249,16 +249,8 @@ public class PlanPurchasePreviewRound233Tests
         Assert.Contains("มีผล 01/03/2570", pv.RefusalReason);
     }
 
-    [Fact]
-    public void ต่ออายุพร้อมคูปอง_ปฏิเสธ_บอกให้ลบคูปองและวันที่จะได้()
-    {
-        var end = ThaiMidnight(2027, 1, 1);
-        var cur = Cur(SubscriptionPlan.Pro, "Professional", BillingCycle.Annual, SubscriptionStatus.Active, end, 1_490m);
-        var pv = PlanPurchasePreview.Refused(cur, Tgt(SubscriptionPlan.Pro, "Professional", BillingCycle.Annual, 1_490m),
-            PublicCheckoutPolicy.RenewalCouponRefusal, ThaiTen(2026, 11, 3));
-        Assert.Contains("ลบรหัสคูปอง", pv.RefusalReason);
-        Assert.Contains("01/01/2570 → 01/01/2571", pv.RefusalReason);
-    }
+    // รอบ 235 (K-2): เทสต์ "ต่ออายุพร้อมคูปอง_ปฏิเสธ" ถูกถอด — คูปองใช้กับการต่ออายุได้แล้ว (คำตัดสิน 235-1 แทน 233-5) ·
+    // ทิศใหม่: PlatformRound235Tests.K2_คูปองค่าตั้งต้นBoth_ใช้ตอนต่ออายุได้ · K2_ทิศตรงข้าม_คูปองซื้อใหม่เท่านั้น_ไม่ลดตอนต่ออายุ
 
     [Fact]
     public void ใบต่ออายุออกแล้ว_ปฏิเสธ_พาไปใบแจ้งหนี้()

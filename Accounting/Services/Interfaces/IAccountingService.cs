@@ -72,7 +72,9 @@ public interface IAccountingService
     Task<GeneralLedgerResponse> GetGeneralLedgerForUserAsync(Guid companyId, Guid userId, DateTime fromDate, DateTime toDate, Guid? accountId = null, Guid? dimensionId = null, Guid? branchId = null, Guid? projectId = null);
     Task<object> GetGlDebugAsync(Guid companyId, DateTime? fromDate = null, DateTime? toDate = null);
     Task<int> RebuildMissingLinesAsync(Guid companyId);
-    Task<int> RepairBuddhistDatesAsync(Guid companyId);
+    /// <summary>ซ่อมวันที่ศักราชปนที่ persist แล้ว (ปี &lt; 1900 หรือ ≥ 2400) · audit แถวเดียว · วันที่ไม่มีจริง (29 ก.พ.) = Unresolved ไม่แต่ง ·
+    /// งวดปิด/ออกเลขแล้ว/แบบภาษียื่นแล้ว = ข้าม (Helpers/BuddhistDateRepairPolicy)</summary>
+    Task<Accounting.Helpers.BuddhistDateRepairPolicy.Result> RepairBuddhistDatesAsync(Guid companyId, string? actorEmail = null, string? ipAddress = null);
 
     // Reports
     Task<TrialBalanceResponse> GetTrialBalanceAsync(Guid companyId, DateTime asOfDate, Guid? projectId = null, Guid? branchId = null, Guid? dimensionId = null);

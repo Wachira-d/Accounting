@@ -331,8 +331,11 @@ public interface IDocumentService
     /// <summary>ยกเลิกการชำระเงิน: reverse JE + คืนยอดเอกสาร · รอบ 200 ทีม V1 (คำตัดสินข้อ 11): ใบเสร็จอัตโนมัติที่ e-Tax ถึงกรมสรรพากรแล้ว ⇒
     /// ผู้ใช้/ยกเลิกการลงบัญชี = ปฏิเสธพร้อมทางไปต่อ · เช็คเด้ง = กลับรายการเงินเสมอ + ติดธง "ต้องยกเลิกทาง e-Tax" บนใบเสร็จ (ตัวตัดสิน
     /// <c>DocumentVoidPreconditions.AutoReceiptOnPaymentVoid</c>)</summary>
+    /// <para>รอบ 235 (ฝ่ายค้าน S4): <paramref name="beforeCommit"/> = งานของผู้เรียกที่ต้อง commit <b>ในธุรกรรมเดียวกับ</b>การยกเลิก (เช่น audit ของผู้เรียก) ·
+    /// ไม่ถูกเรียกเมื่อการชำระถูกยกเลิกไปแล้ว (no-op idempotent)</para>
     Task<PaymentVoidResult> VoidPaymentAsync(Guid companyId, Guid paymentId,
-        Accounting.Helpers.PaymentVoidCause cause = Accounting.Helpers.PaymentVoidCause.User);
+        Accounting.Helpers.PaymentVoidCause cause = Accounting.Helpers.PaymentVoidCause.User,
+        Func<Accounting.Models.Entities.Payment, Task>? beforeCommit = null);
     /// <summary>รอบ 200 ทีม V1 (คำตัดสินข้อ 9) — "ยกเลิกและออกใบแทน" ใบขายที่รอบโอน settlement ที่ลงบัญชีแล้วรับชำระ: ใบเดิม Voided ·
     /// ใบใหม่ยอด/บรรทัด/อัตรา VAT/tax point เท่าเดิม (ต่างได้เฉพาะผู้ซื้อ/หมายเหตุ/คำบรรยาย) · การรับชำระ + JE ที่อ้างใบ + คู่จับของรอบโอน ย้ายไปใบใหม่
     /// ในธุรกรรมเดียว · ออกเลขใหม่ ⇒ <b>ผู้เรียกต้องตรวจสิทธิ์ยกเลิก + อนุมัติมาก่อน</b></summary>

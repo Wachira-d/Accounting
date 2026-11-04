@@ -46,7 +46,7 @@ public static class SubscriptionExpiry
     public static (DateTime EndDate, DateTime NextBillingDate) CloseOpenEnded(DateTime nowUtc, Models.Enums.BillingCycle cycle)
     {
         var months = PlatformPlanPricing.MonthsOf(cycle);
-        var end = nowUtc.AddMonths(months > 0 ? months : 1);
+        var end = PlatformPlanPricing.AddCycleMonths(nowUtc, months > 0 ? months : 1);   // รอบ 235 K-4: บวกเดือนบนปฏิทินไทย (ตัวเดียวกับ PaidPeriod)
         return (end, end);
     }
 

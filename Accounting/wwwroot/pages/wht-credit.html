@@ -299,10 +299,18 @@
             <td class="text-right"><b>${Layout.money(r.whtAmount)}</b></td>
             <td>${r.documentNumber ? Layout.esc(r.documentNumber) : '—'}</td>
             <td style="white-space:nowrap">
+              ${r.attachmentId ? `<button class="btn btn-sm btn-secondary" style="margin-right:4px" title="หนังสือรับรอง 50 ทวิ ที่แนบ" onclick="Page.openFile('${String(r.attachmentId).replace(/[^0-9a-fA-F-]/g, '')}')">📎 ดูไฟล์</button>` : ''}
               ${r.status === 'Claimed' ? '' : `<button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${r.id}')">แก้ไข</button>`}
               ${r.status === 'Pending' ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
             </td>
           </tr>`).join('');
+      },
+
+      /** รอบ 235 (234-W3 ปิด): เปิดไฟล์ 50 ทวิ ที่แนบกับแถว (รวมไฟล์ที่ลูกค้าส่งให้ NextAcc — แนบอัตโนมัติตอนแอดมินยืนยัน) ผ่าน endpoint ไฟล์แนบเดิม (ตรวจสิทธิ์) */
+      async openFile(attachmentId) {
+        const cid = Layout.getCompanyId();
+        try { await API.download(`/api/companies/${cid}/attachments/${attachmentId}/download`, '50tawi'); }
+        catch (e) { Layout.toast(e.message || 'เปิดไฟล์ไม่สำเร็จ', 'error'); }
       },
 
       calc() {

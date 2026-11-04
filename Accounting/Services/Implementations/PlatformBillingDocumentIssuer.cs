@@ -59,8 +59,10 @@ public interface IPlatformBillingDocumentIssuer
     /// <b>idempotent</b> ด้วย <paramref name="reference"/> (มีใบที่อ้างอิงนี้แล้ว = คืนใบเดิม) · ขาเงินเข้า = บัญชีพักผู้ให้บริการรับชำระเมื่อจ่ายผ่าน gateway
     /// (<paramref name="gatewayIntentId"/>) ไม่ใช่ธนาคาร · คืน null เมื่อยังไม่ตั้ง tenant/ล้ม (ไม่โยน — เงินเข้าแล้วต้องบันทึกสิทธิ์ได้เสมอ)</summary>
     /// <param name="discountReceived">รอบ 230: ส่วนลดคูปอง (รวม VAT) — &gt; 0 ⇒ บรรทัดราคาเต็ม + ส่วนลดของบรรทัดก่อน VAT (§86/4) · ฐานหลังส่วนลด + VAT = เงินที่รับ</param>
+    /// <param name="withholdingReceived">รอบ 235 (คำตัดสิน 235-5): ภาษีหัก ณ ที่จ่ายที่ผู้เช่าหัก — &gt; 0 ⇒ ใบออก<b>เต็มยอด</b> (เงินที่รับ + ภาษีหัก) + อัตราหักบนบรรทัด
+    /// ⇒ JE Dr เงิน (สุทธิ) + Dr 11910 (ผังสร้างจากมาตรฐานถ้าไม่มี · สร้างไม่ได้ = ล้มดัง) — ตัวเดียวกับ <see cref="IssuePaidReceiptAsync"/></param>
     Task<PlatformDocResult?> IssueAddOnReceiptAsync(Guid buyerCompanyId, string description, decimal amountReceived, DateTime paidAt,
-        string reference, Guid? gatewayIntentId, decimal discountReceived = 0m);
+        string reference, Guid? gatewayIntentId, decimal discountReceived = 0m, decimal withholdingReceived = 0m);
 
     /// <summary>รอบ 228 (PLATFORM_OMISE_AUDIT §5.5 · §86/10): ออก<b>ใบลดหนี้</b> (อนุมัติทันที) อ้างใบกำกับ/ใบเสร็จเดิมของรายการชำระค่าบริการออนไลน์ที่แอดมินคืนเงิน —
     /// ใน tenant ผู้ให้บริการ (ตัวเดียวกับ intent) · ยอด = เงินที่คืน (รวม VAT) · ด่าน Σ ใบลดหนี้ ≤ ใบเดิม (<c>Helpers/PlatformRefundCreditNote</c>) ·
@@ -621,7 +623,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
     }
 
     public async Task<PlatformDocResult?> IssueAddOnReceiptAsync(Guid buyerCompanyId, string description, decimal amountReceived, DateTime paidAt,
-        string reference, Guid? gatewayIntentId, decimal discountReceived = 0m)
+        string reference, Guid? gatewayIntentId, decimal discountReceived = 0m, decimal withholdingReceived = 0m)
     {
         (Guid TenantId, Guid DocumentId)? draft = null;
         try
@@ -648,7 +650,15 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
 
             var isVat = Accounting.Helpers.PlanPurchasePreview.IssuesTaxInvoice(settings.PlatformIsVatRegistered, settings.PlatformSellerTaxId);   // รอบ 233 N3: ตัวตัดสินเดียวกับ preview
             // ฝ่ายค้านรอบ 227 S2: ใบ = เงินที่รับพอดี (ฐาน + VAT บังคับ = ยอด) · รอบ 230: คูปอง ⇒ ส่วนลดของบรรทัดก่อน VAT (ตัวแยกเดียว PlatformCouponRule.SplitDiscounted)
-            var (fullBase, discountBase, baseAmount, vatAmount) = Accounting.Helpers.PlatformCouponRule.SplitDiscounted(amountReceived, discountReceived, isVat);
+            // รอบ 235 (คำตัดสิน 235-5): ผู้เช่าหัก ณ ที่จ่าย ⇒ ใบเต็มยอด (สุทธิ + ภาษีหัก — PlatformWhtSuggestion.GrossOf ตัวเดียว) · อัตราคำนวณกลับจากยอดจริง (กันเศษสตางค์)
+            var whtIn = Math.Max(0m, withholdingReceived);
+            var grossReceived = Accounting.Helpers.PlatformWhtSuggestion.GrossOf(amountReceived, whtIn);
+            var (fullBase, discountBase, baseAmount, vatAmount) = Accounting.Helpers.PlatformCouponRule.SplitDiscounted(grossReceived, discountReceived, isVat);
+            var whtRate = whtIn > 0m && baseAmount > 0m ? decimal.Round(whtIn / baseAmount * 100m, 4, MidpointRounding.AwayFromZero) : 0m;
+            if (whtIn > 0m && await Accounting.Helpers.SettlementChartSeed.EnsureStandardAccountAsync(_db, tenantId.Value, WhtReceivableAccountCode) == null)
+                throw new Accounting.Helpers.BusinessRuleException(
+                    $"บริษัทผู้ให้บริการไม่มีผัง {WhtReceivableAccountCode} ภาษีถูกหัก ณ ที่จ่าย และไม่มีกลุ่ม 119 ให้ระบบสร้าง — เพิ่มผังก่อน แล้วออกใบเสร็จของ {reference} (เต็มยอด + ภาษีหัก {whtIn:N2}) ด้วยมือ",
+                    "PLATFORM-WHT-ACCOUNT-MISSING", 409);
             var req = new CreateDocumentRequest(
                 DocumentType: isVat ? DocumentType.TaxInvoice : DocumentType.Receipt,
                 // ฝ่ายค้านรอบ 227 N4: วันที่ใบ = วันที่ตามเวลาไทยของเวลารับเงิน (เงินเข้า 00:30 น. ไทย = วันนี้ ไม่ใช่เมื่อวานตาม UTC)
@@ -661,7 +671,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 {
                     new(Description: description, Quantity: 1m, Unit: "รายการ",
                         UnitPrice: fullBase, DiscountPercent: 0m,
-                        VatRate: isVat ? 7m : 0m, WithholdingTaxRate: 0m,
+                        VatRate: isVat ? 7m : 0m, WithholdingTaxRate: whtRate,   // รอบ 235: ภาษีหักบนบรรทัด ⇒ Dr 11910
                         AccountId: null,
                         AccountCode: string.IsNullOrWhiteSpace(settings.PlatformRevenueAccountCode) ? "41000" : settings.PlatformRevenueAccountCode,
                         DiscountAmount: discountBase > 0m ? discountBase : null,
@@ -687,9 +697,60 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
         catch (Exception ex)
         {
             _logger.LogError(ex, "ออกเอกสารค่าส่วนเสริมผ่าน tenant ไม่สำเร็จ (company {CompanyId} · อ้างอิง {Ref})", buyerCompanyId, reference);
+            LastFailureReason = ex.Message;   // รอบ 235 (ฝ่ายค้าน N-5): ผู้เรียกประทับเรื่องค้างพร้อมเหตุจริง (ไม่ใช่แค่ log)
             await NoteDraftFailureAsync(draft, "ออกใบเสร็จค่าส่วนเสริมแพลตฟอร์ม", ex);
             return null;
         }
+    }
+
+    /// <summary>รอบ 235 (ฝ่ายค้าน S-4): ทะเบียนภาษีถูกหัก (แถวของใบเดิม · ทะเบียนเดียว <see cref="WhtCreditService"/>) หลังคืนเงินรายการที่หัก ณ ที่จ่าย —
+    /// ตัวตัดสิน <see cref="Accounting.Helpers.PlatformRefundCreditNote.RegistryActionFor"/>: Pending ⇒ ลดยอด (คืนบางส่วน) / ตัดสิทธิ์ผ่าน <c>WhtCreditService.ExpireAsync</c> + เหตุผล (คืนครบ) ·
+    /// Received/Claimed ⇒ ไม่แตะ — เรื่องค้าง <c>PLATFORM-WHT-REFUND</c> บนรายการชำระ/รายการโควตาเสริม (แอดมินขอ 50 ทวิ ฉบับใหม่/ยกเลิกกับลูกค้า) · audit chain ทุกกรณี</summary>
+    private async Task AdjustWhtCreditAfterRefundAsync(Guid tenantId, Guid originalId, decimal remainingAfter, decimal share, string creditNoteNumber, PaymentIntent intent)
+    {
+        var row = await _db.WhtCreditsReceived.FirstOrDefaultAsync(w => w.CompanyId == tenantId && !w.IsDeleted && w.DocumentId == originalId);
+        var action = Accounting.Helpers.PlatformRefundCreditNote.RegistryActionFor(row?.Status, share, remainingAfter);
+        var why = $"คืนเงินอ้างใบลดหนี้ {creditNoteNumber} — ภาษีหัก ณ ที่จ่ายส่วนที่คืน {share:N2} บาท";
+        switch (action)
+        {
+            case Accounting.Helpers.PlatformRefundCreditNote.RegistryAction.Reduce:
+                row!.WhtAmount = Math.Max(0m, decimal.Round(row.WhtAmount - share, 2, MidpointRounding.AwayFromZero));
+                row.Notes = $"{row.Notes} | {why} (ลดยอดเครดิต)".TrimStart(' ', '|');
+                row.UpdatedAt = DateTime.UtcNow;
+                break;
+            case Accounting.Helpers.PlatformRefundCreditNote.RegistryAction.Expire:
+                await new WhtCreditService(_db, Microsoft.Extensions.Logging.Abstractions.NullLogger<WhtCreditService>.Instance)
+                    .ExpireAsync(tenantId, row!.Id, $"{why} — คืนเงินเต็มจำนวน หมดสิทธิ์เครดิต");
+                break;
+            case Accounting.Helpers.PlatformRefundCreditNote.RegistryAction.AttentionConfirmed:
+                var msg = $"{why} แต่ทะเบียน 50 ทวิ ยืนยัน/ใช้เครดิตแล้ว ({row!.CertificateNumber}) — ขอให้ลูกค้าออกหนังสือรับรองฉบับใหม่/ยกเลิก แล้วแก้ทะเบียนที่ wht-credit.html";
+                if (intent.SourceKind == Accounting.Models.Enums.PaymentSourceKind.SubscriptionPayment)
+                {
+                    var pay = await _db.SubscriptionPayments.FirstOrDefaultAsync(p => p.Id == intent.SourceId);
+                    if (pay != null)
+                        Accounting.Helpers.PlatformPaymentAttention.Flag(_db, pay, intent.PayerCompanyId ?? Guid.Empty, msg,
+                            Accounting.Helpers.PlatformRefundCreditNote.WhtRefundRuleCode, Actor);
+                }
+                else if (intent.SourceKind == Accounting.Models.Enums.PaymentSourceKind.QuotaAddOnPurchase)
+                {
+                    var q = await _db.CompanyQuotaAddOns.FirstOrDefaultAsync(x => x.Id == intent.SourceId);
+                    if (q != null) { q.AttentionRule = Accounting.Helpers.PlatformRefundCreditNote.WhtRefundRuleCode; q.AttentionReason = msg.Length > 500 ? msg[..500] : msg; }
+                }
+                break;
+            default:
+                return;
+        }
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = tenantId, EntityType = "WhtCreditReceived", EntityId = row?.Id.ToString() ?? originalId.ToString(), Action = AuditAction.Update,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                action = "platform-refund-wht-credit", ruleCode = Accounting.Helpers.PlatformRefundCreditNote.WhtRefundRuleCode, outcome = action.ToString(),
+                share, remainingAfter, creditNote = creditNoteNumber, intentId = intent.Id,
+            }),
+            Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync();
     }
 
     public async Task<PlatformRefundCreditResult> IssueRefundCreditNoteAsync(Guid intentId, decimal refundAmount, string refundRef, string reason, Guid counterAccountId)
@@ -740,7 +801,7 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             var original = originalId is Guid oid
                 ? await _db.Documents.AsNoTracking()
                     .Where(d => d.Id == oid && d.CompanyId == tenantId.Value && !d.IsDeleted)
-                    .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.DocumentType, d.Status, d.TotalAmount, d.VatAmount, d.ContactId, d.BranchId })
+                    .Select(d => new { d.Id, d.DocumentNumber, d.DocumentDate, d.DocumentType, d.Status, d.TotalAmount, d.VatAmount, d.ContactId, d.BranchId, d.WithholdingTaxAmount })
                     .FirstOrDefaultAsync()
                 : null;
             var credited = original == null ? 0m : await _db.Documents.AsNoTracking()
@@ -748,8 +809,17 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                     && d.RelatedDocumentId == original.Id && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
                     && (dup == null || d.Id != dup.Id))
                 .SumAsync(d => (decimal?)d.TotalAmount) ?? 0m;
+            // รอบ 235 (ฝ่ายค้าน S-4): ใบเดิมที่ผู้เช่าหัก ณ ที่จ่าย (TotalAmount = ยอดสุทธิ · WithholdingTaxAmount = ภาษีหัก) ⇒ ใบลดหนี้ลดเต็มยอดส่วนที่คืน
+            // (เงินที่คืน + ภาษีหักตามสัดส่วน) และกลับขา 11910 ส่วนนั้น (DocumentService: ใบลดหนี้ขายที่มี WHT ⇒ Cr 11910) — เดิมลดแค่เงินที่คืน ⇒ ใบเดิม − ใบลดหนี้ ≠ 0 · 11910 ค้าง
+            var creditedWht = original == null ? 0m : await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == tenantId.Value && !d.IsDeleted && d.DocumentType == DocumentType.CreditNote
+                    && d.RelatedDocumentId == original.Id && d.Status != DocumentStatus.Voided && d.Status != DocumentStatus.Rejected
+                    && (dup == null || d.Id != dup.Id))
+                .SumAsync(d => (decimal?)d.WithholdingTaxAmount) ?? 0m;
+            var whtShare = original == null ? 0m
+                : Accounting.Helpers.PlatformRefundCreditNote.WithholdingShare(refundAmount, original.TotalAmount, original.WithholdingTaxAmount, credited, creditedWht);
             var plan = Accounting.Helpers.PlatformRefundCreditNote.Decide(refundAmount, original != null, original?.Status == DocumentStatus.Voided,
-                original?.TotalAmount ?? 0m, credited, (original?.VatAmount ?? 0m) > 0m);
+                original?.TotalAmount ?? 0m, credited, (original?.VatAmount ?? 0m) > 0m, whtShare);
             if (!plan.Ok || original == null) return new PlatformRefundCreditResult(false, null, null, plan.Problem);
 
             Guid cnId;
@@ -770,7 +840,9 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                         // ฝ่ายค้าน N4: เหตุผลที่แอดมินระบุพิมพ์บนใบ (§86/10 บังคับระบุสาเหตุ) — หมวดปิด Adjustment + ข้อความของแอดมิน
                         new(Description: Accounting.Helpers.PlatformRefundCreditNote.LineDescription(original.DocumentNumber, reason), Quantity: 1m, Unit: "รายการ",
                             UnitPrice: plan.BaseAmount, DiscountPercent: 0m,
-                            VatRate: isVat ? 7m : 0m, WithholdingTaxRate: 0m, AccountId: null,
+                            VatRate: isVat ? 7m : 0m,
+                            WithholdingTaxRate: Accounting.Helpers.PlatformRefundCreditNote.WithholdingRate(whtShare, plan.BaseAmount),   // S-4: Cr 11910 ส่วนที่คืน
+                            AccountId: null,
                             AccountCode: string.IsNullOrWhiteSpace(settings.PlatformRevenueAccountCode) ? "41000" : settings.PlatformRevenueAccountCode,
                             VatAmountOverride: isVat ? plan.VatAmount : null)
                     },
@@ -797,6 +869,10 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 Timestamp = DateTime.UtcNow,
             });
             await _db.SaveChangesAsync();
+            // รอบ 235 (ฝ่ายค้าน S-4): ทะเบียน 50 ทวิ ของใบเดิม — Pending ⇒ ลด/ตัดสิทธิ์ตามสัดส่วน · ยืนยันแล้ว ⇒ เรื่องค้างให้แอดมิน (ไม่แตะเอง)
+            if (whtShare > 0m)
+                await AdjustWhtCreditAfterRefundAsync(tenantId.Value, original.Id, original.WithholdingTaxAmount - creditedWht - whtShare, whtShare,
+                    approved.DocumentNumber, intent);
             _logger.LogInformation("ออกใบลดหนี้ {Cn} อ้างใบ {Orig} ของการคืนเงินค่าบริการ {Ref} ยอด {Amount}", approved.DocumentNumber, original.DocumentNumber, refundRef, refundAmount);
             return new PlatformRefundCreditResult(true, approved.Id, approved.DocumentNumber, null);
         }

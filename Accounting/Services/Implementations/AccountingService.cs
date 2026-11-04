@@ -1888,120 +1888,211 @@ public partial class AccountingService : IAccountingService
             postedLinesInRange,
             statusBreakdown,
             dateRange,
+            // รอบ 235 (ฝ่ายค้าน S3): ปุ่มซ่อมวันที่ตัดสินที่เซิร์ฟเวอร์ (เกณฑ์ ThaiDate.IsOutOfEra ตัวเดียว) — ทั้งสองทิศ (< 1900 ⇒ +543 · ≥ 2400 ⇒ −543)
+            eraRepair = new
+            {
+                needed = dateRange != null && (Accounting.Helpers.ThaiDate.IsOutOfEra(dateRange.minDate.Year) || Accounting.Helpers.ThaiDate.IsOutOfEra(dateRange.maxDate.Year)),
+                underflow = dateRange != null && dateRange.minDate.Year < 1900,
+                overflow = dateRange != null && dateRange.maxDate.Year >= 2400,
+                minYear = dateRange?.minDate.Year,
+                maxYear = dateRange?.maxDate.Year,
+                skipNote = "ข้ามรายการในงวดที่ปิด/ล็อกแล้ว · เอกสารที่ออกเลขแล้ว · รายการในแบบภาษีที่ยื่นแล้ว (ต้องแก้ด้วยเอกสารปรับปรุง) · วันที่ 29 ก.พ. ที่ไม่มีจริงหลังแปลงไม่แก้ให้",
+            },
             sampleEntry,
             sampleLines
         };
     }
 
-    public async Task<int> RepairBuddhistDatesAsync(Guid companyId)
+    /// <summary>ซ่อมวันที่ศักราชปนที่ <b>persist ไปแล้ว</b> (กฎ #4 F2 ข้อ 9) — ผู้ใช้กดเองจากหน้าบัญชีแยกประเภท (สิทธิ์ JournalManage)
+    ///
+    /// <para>รอบ 235 (K-5 + ฝ่ายค้าน S2): (1) แปลงผ่านตัวตัดสินกลาง <c>ThaiDate.TryNormalizeEra</c> ตัวเดียว (เดิม <c>AddYears(543)</c> 16 จุดเขียนเอง)
+    /// (2) ครอบทั้ง "ปี &lt; 1900" และ "ปี ≥ 2400" (เกณฑ์ <c>ThaiDate.IsOutOfEra</c>) (3) วันที่ที่ไม่มีจริงในศักราชปลายทาง (29 ก.พ.) <b>ไม่แต่ง</b> ⇒ Unresolved
+    /// (4) <b>ข้าม</b>แถวที่ห้ามแก้ตรง — งวดปิด/ล็อก · เอกสารออกเลขแล้ว · บรรทัดรายงานภาษีที่ยื่นแล้ว (ตัวตัดสิน <c>BuddhistDateRepairPolicy</c>) ⇒ ต้องแก้ด้วยเอกสารปรับปรุง ·
+    /// ไม่แก้เลขเอกสาร (5) ห้ามแก้เงียบ: audit chain แถวเดียวต่อการกด (จำนวนต่อตาราง · id ที่แก้ ≤ 200 · id ที่แก้ไม่ได้/ข้ามพร้อมเหตุ) ·
+    /// ใบที่ปีอยู่ในช่วง 1900–2399 ไม่ถูกแตะ (query ไม่ดึงมา)</para></summary>
+    public async Task<Accounting.Helpers.BuddhistDateRepairPolicy.Result> RepairBuddhistDatesAsync(Guid companyId, string? actorEmail = null, string? ipAddress = null)
     {
-        int totalFixed = 0;
+        int totalFixed = 0, unresolved = 0, skipped = 0;
+        var now = DateTime.UtcNow;
+        var byTable = new Dictionary<string, int>();
+        var skippedByReason = new Dictionary<string, int>();
+        var fixedIds = new List<string>();
+        var unresolvedIds = new List<string>();
+        var skippedIds = new List<string>();
+        var closed = (await _db.FiscalPeriods.AsNoTracking()
+                .Where(f => f.CompanyId == companyId && (f.Status == FiscalPeriodStatus.Closed || f.Status == FiscalPeriodStatus.Locked))
+                .Select(f => new { f.StartDate, f.EndDate }).ToListAsync())
+            .Select(f => (f.StartDate, f.EndDate)).ToList();
+
+        // คืนค่าที่แปลงแล้ว (หรือค่าเดิมถ้าแปลงไม่ได้) · ok=false ⇒ นับเป็นแก้ไม่ได้
+        DateTime Fix(DateTime d, ref bool ok)
+        {
+            if (!Accounting.Helpers.ThaiDate.IsOutOfEra(d.Year)) return d;
+            if (Accounting.Helpers.ThaiDate.TryNormalizeEra(d, out var v)) return v;
+            ok = false;
+            return d;
+        }
+        DateTime? FixN(DateTime? d, ref bool ok) => d.HasValue ? Fix(d.Value, ref ok) : null;
+        bool Closed(DateTime corrected) => Accounting.Helpers.BuddhistDateRepairPolicy.InClosedPeriod(corrected, closed);
+        // true = แก้ได้ · false = ข้าม/แก้ไม่ได้ (นับแล้ว)
+        bool Tally(string table, Guid id, bool ok, Accounting.Helpers.BuddhistDateRepairPolicy.Skip skip)
+        {
+            if (!ok) { unresolved++; unresolvedIds.Add($"{table}:{id}"); return false; }
+            if (skip != Accounting.Helpers.BuddhistDateRepairPolicy.Skip.None)
+            {
+                skipped++;
+                var msg = Accounting.Helpers.BuddhistDateRepairPolicy.Message(skip);
+                skippedByReason[msg] = skippedByReason.GetValueOrDefault(msg) + 1;
+                if (skippedIds.Count < 200) skippedIds.Add($"{table}:{id}:{skip}");
+                return false;
+            }
+            totalFixed++;
+            byTable[table] = byTable.GetValueOrDefault(table) + 1;
+            if (fixedIds.Count < 200) fixedIds.Add($"{table}:{id}");
+            return true;
+        }
+        Accounting.Helpers.BuddhistDateRepairPolicy.Skip Decide(DateTime corrected, bool numberIssued = false, bool taxFiled = false)
+            => Accounting.Helpers.BuddhistDateRepairPolicy.Decide(Closed(corrected), numberIssued, taxFiled);
 
         var badEntries = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId && j.EntryDate.Year < 1900)
+            .Where(j => j.CompanyId == companyId && (j.EntryDate.Year < 1900 || j.EntryDate.Year >= 2400))
             .ToListAsync();
         foreach (var entry in badEntries)
         {
-            entry.EntryDate = entry.EntryDate.AddYears(543);
-            entry.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var v = Fix(entry.EntryDate, ref ok);
+            if (Tally("JournalEntry", entry.Id, ok, ok ? Decide(v) : default)) { entry.EntryDate = v; entry.UpdatedAt = now; }
         }
-        totalFixed += badEntries.Count;
 
         var badDocs = await _db.Documents
-            .Where(d => d.CompanyId == companyId && d.DocumentDate.Year < 1900)
+            .Where(d => d.CompanyId == companyId && (d.DocumentDate.Year < 1900 || d.DocumentDate.Year >= 2400
+                || (d.DueDate.HasValue && (d.DueDate.Value.Year < 1900 || d.DueDate.Value.Year >= 2400))))
             .ToListAsync();
         foreach (var doc in badDocs)
         {
-            doc.DocumentDate = doc.DocumentDate.AddYears(543);
-            if (doc.DueDate.HasValue && doc.DueDate.Value.Year < 1900)
-                doc.DueDate = doc.DueDate.Value.AddYears(543);
-            doc.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var dd = Fix(doc.DocumentDate, ref ok);
+            var due = FixN(doc.DueDate, ref ok);
+            var skip = ok ? Decide(dd, Accounting.Helpers.BuddhistDateRepairPolicy.IsNumberIssued(doc.DocumentNumber)) : default;
+            if (Tally("Document", doc.Id, ok, skip)) { doc.DocumentDate = dd; doc.DueDate = due; doc.UpdatedAt = now; }
         }
-        totalFixed += badDocs.Count;
 
         var badPayments = await _db.Payments
-            .Where(p => p.CompanyId == companyId && p.PaymentDate.Year < 1900)
+            .Where(p => p.CompanyId == companyId && (p.PaymentDate.Year < 1900 || p.PaymentDate.Year >= 2400))
             .ToListAsync();
         foreach (var payment in badPayments)
         {
-            payment.PaymentDate = payment.PaymentDate.AddYears(543);
-            payment.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var v = Fix(payment.PaymentDate, ref ok);
+            if (Tally("Payment", payment.Id, ok, ok ? Decide(v) : default)) { payment.PaymentDate = v; payment.UpdatedAt = now; }
         }
-        totalFixed += badPayments.Count;
 
         var badBankTxns = await _db.BankTransactions
-            .Where(b => b.CompanyId == companyId && b.TransactionDate.Year < 1900)
+            .Where(b => b.CompanyId == companyId && (b.TransactionDate.Year < 1900 || b.TransactionDate.Year >= 2400))
             .ToListAsync();
         foreach (var bt in badBankTxns)
         {
-            bt.TransactionDate = bt.TransactionDate.AddYears(543);
-            bt.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var v = Fix(bt.TransactionDate, ref ok);
+            if (Tally("BankTransaction", bt.Id, ok, ok ? Decide(v) : default)) { bt.TransactionDate = v; bt.UpdatedAt = now; }
         }
-        totalFixed += badBankTxns.Count;
 
+        // ตารางเวลาของงานประจำ — ไม่ใช่รายการบัญชี ไม่มีงวด/เลข ⇒ ไม่มีเหตุข้าม
         var badRecurring = await _db.RecurringTransactions
-            .Where(r => r.CompanyId == companyId && r.StartDate.Year < 1900)
+            .Where(r => r.CompanyId == companyId && (r.StartDate.Year < 1900 || r.StartDate.Year >= 2400
+                || r.NextRunDate.Year < 1900 || r.NextRunDate.Year >= 2400
+                || (r.EndDate.HasValue && (r.EndDate.Value.Year < 1900 || r.EndDate.Value.Year >= 2400))
+                || (r.LastRunDate.HasValue && (r.LastRunDate.Value.Year < 1900 || r.LastRunDate.Value.Year >= 2400))))
             .ToListAsync();
         foreach (var r in badRecurring)
         {
-            r.StartDate = r.StartDate.AddYears(543);
-            if (r.EndDate.HasValue && r.EndDate.Value.Year < 1900)
-                r.EndDate = r.EndDate.Value.AddYears(543);
-            if (r.NextRunDate.Year < 1900)
-                r.NextRunDate = r.NextRunDate.AddYears(543);
-            if (r.LastRunDate.HasValue && r.LastRunDate.Value.Year < 1900)
-                r.LastRunDate = r.LastRunDate.Value.AddYears(543);
-            r.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var start = Fix(r.StartDate, ref ok);
+            var end = FixN(r.EndDate, ref ok);
+            var next = Fix(r.NextRunDate, ref ok);
+            var last = FixN(r.LastRunDate, ref ok);
+            if (Tally("RecurringTransaction", r.Id, ok, Accounting.Helpers.BuddhistDateRepairPolicy.Skip.None))
+            { r.StartDate = start; r.EndDate = end; r.NextRunDate = next; r.LastRunDate = last; r.UpdatedAt = now; }
         }
-        totalFixed += badRecurring.Count;
 
         var badAssets = await _db.FixedAssets
-            .Where(a => a.CompanyId == companyId && a.PurchaseDate.Year < 1900)
+            .Where(a => a.CompanyId == companyId && (a.PurchaseDate.Year < 1900 || a.PurchaseDate.Year >= 2400
+                || (a.DisposalDate.HasValue && (a.DisposalDate.Value.Year < 1900 || a.DisposalDate.Value.Year >= 2400))))
             .ToListAsync();
         foreach (var a in badAssets)
         {
-            a.PurchaseDate = a.PurchaseDate.AddYears(543);
-            if (a.DisposalDate.HasValue && a.DisposalDate.Value.Year < 1900)
-                a.DisposalDate = a.DisposalDate.Value.AddYears(543);
-            a.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var pd = Fix(a.PurchaseDate, ref ok);
+            var disp = FixN(a.DisposalDate, ref ok);
+            var skip = ok ? Decide(pd) : default;
+            if (skip == Accounting.Helpers.BuddhistDateRepairPolicy.Skip.None && ok && disp.HasValue) skip = Decide(disp.Value);
+            if (Tally("FixedAsset", a.Id, ok, skip)) { a.PurchaseDate = pd; a.DisposalDate = disp; a.UpdatedAt = now; }
         }
-        totalFixed += badAssets.Count;
 
         var badDeposits = await _db.DepositTransactions
-            .Where(d => d.CompanyId == companyId && d.TransactionDate.Year < 1900)
+            .Where(d => d.CompanyId == companyId && (d.TransactionDate.Year < 1900 || d.TransactionDate.Year >= 2400
+                || (d.ExpectedReturnDate.HasValue && (d.ExpectedReturnDate.Value.Year < 1900 || d.ExpectedReturnDate.Value.Year >= 2400))))
             .ToListAsync();
         foreach (var d in badDeposits)
         {
-            d.TransactionDate = d.TransactionDate.AddYears(543);
-            if (d.ExpectedReturnDate.HasValue && d.ExpectedReturnDate.Value.Year < 1900)
-                d.ExpectedReturnDate = d.ExpectedReturnDate.Value.AddYears(543);
-            d.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var td = Fix(d.TransactionDate, ref ok);
+            var ret = FixN(d.ExpectedReturnDate, ref ok);
+            if (Tally("DepositTransaction", d.Id, ok, ok ? Decide(td) : default)) { d.TransactionDate = td; d.ExpectedReturnDate = ret; d.UpdatedAt = now; }
         }
-        totalFixed += badDeposits.Count;
 
         var badStockMoves = await _db.StockMovements
-            .Where(s => s.CompanyId == companyId && s.MovementDate.Year < 1900)
+            .Where(s => s.CompanyId == companyId && (s.MovementDate.Year < 1900 || s.MovementDate.Year >= 2400))
             .ToListAsync();
         foreach (var s in badStockMoves)
         {
-            s.MovementDate = s.MovementDate.AddYears(543);
-            s.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var v = Fix(s.MovementDate, ref ok);
+            if (Tally("StockMovement", s.Id, ok, ok ? Decide(v) : default)) { s.MovementDate = v; s.UpdatedAt = now; }
         }
-        totalFixed += badStockMoves.Count;
 
         var badTaxLines = await _db.TaxReportLines
             .Where(l => _db.TaxReports.Any(r => r.Id == l.TaxReportId && r.CompanyId == companyId)
-                && l.TransactionDate.Year < 1900)
+                && (l.TransactionDate.Year < 1900 || l.TransactionDate.Year >= 2400))
+            .Select(l => new { Line = l, Filed = _db.TaxReports.Any(r => r.Id == l.TaxReportId && r.CompanyId == companyId && r.Status != TaxReportStatus.Draft) })
             .ToListAsync();
-        foreach (var l in badTaxLines)
+        foreach (var x in badTaxLines)
         {
-            l.TransactionDate = l.TransactionDate.AddYears(543);
-            l.UpdatedAt = DateTime.UtcNow;
+            var ok = true;
+            var v = Fix(x.Line.TransactionDate, ref ok);
+            if (Tally("TaxReportLine", x.Line.Id, ok, ok ? Decide(v, taxFiled: x.Filed) : default)) { x.Line.TransactionDate = v; x.Line.UpdatedAt = now; }
         }
-        totalFixed += badTaxLines.Count;
+
+        if (totalFixed > 0 || unresolved > 0 || skipped > 0)
+        {
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                UserEmail = actorEmail,
+                Action = AuditAction.Update,
+                EntityType = "BuddhistDateRepair",
+                EntityId = companyId.ToString(),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    ruleCode = Accounting.Helpers.BuddhistDateRepairPolicy.RuleCode,
+                    legalReference = "CLAUDE.md กฎอื่น: ภายในเก็บ ค.ศ. · กฎ #4 F2 ข้อ 9 · §86/4 · §87",
+                    fixedCount = totalFixed,
+                    unresolvedCount = unresolved,
+                    skippedCount = skipped,
+                    byTable,
+                    skippedByReason,
+                    fixedIds,
+                    fixedIdsTruncated = totalFixed > fixedIds.Count,
+                    unresolvedIds,
+                    skippedIds,
+                }),
+                IpAddress = ipAddress,
+                Timestamp = now,
+            });
+        }
 
         await _db.SaveChangesAsync();
-        return totalFixed;
+        return new Accounting.Helpers.BuddhistDateRepairPolicy.Result(totalFixed, unresolved, skipped, skippedByReason);
     }
 
     public async Task<int> RebuildMissingLinesAsync(Guid companyId)
@@ -2881,13 +2972,11 @@ public partial class AccountingService : IAccountingService
     private Task<string> GetNextEntryNumberAsync(Guid companyId, string prefix)
         => Journal.JournalEntryBuilder.NextJournalNumberAsync(_db, companyId, prefix, DateTime.UtcNow);
 
+    /// <summary>ศักราชของวันที่ใบสำคัญ — ตัวตัดสินกลาง <c>ThaiDate.NormalizeEra</c> (รอบ 235 K-5: เดิมสูตรสำเนา + <c>new DateTime(ปี−543,…)</c>
+    /// ทิ้งมิลลิวินาที และโยน ArgumentOutOfRange = HTTP 500 เมื่อ 29 ก.พ. ไม่มีจริง · ตอนนี้ = 400 ข้อความไทย)</summary>
     private static DateTime NormalizeDate(DateTime date)
     {
-        if (date.Year < 1900)
-            return date.AddYears(543);
-        if (date.Year > 2400)
-            return new DateTime(date.Year - 543, date.Month, date.Day, date.Hour, date.Minute, date.Second, date.Kind);
-        return date;
+        return Accounting.Helpers.ThaiDate.NormalizeEra(date);
     }
 
     private async Task ValidateFiscalPeriodOpenAsync(Guid? fiscalPeriodId)

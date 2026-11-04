@@ -58,34 +58,13 @@ public class PlatformPaymentController : ControllerBase
     private PlatformCardActor Actor() => new(JwtHelper.GetUserIdFromClaims(User), User.FindFirstValue(System.Security.Claims.ClaimTypes.Email),
         HttpContext.Connection.RemoteIpAddress?.ToString(), Request.Headers.UserAgent.ToString());
 
-    /// <summary>รอบ 230: ติ๊กบันทึกบัตร ⇒ บันทึกบัตรจากโทเคนก่อน (ยินยอมบังคับ · ผู้ให้บริการสร้างลูกค้า + ผูกบัตร) แล้วชำระด้วยบัตรที่บันทึก (โทเคนใช้ได้ครั้งเดียว) ·
-    /// ไม่ติ๊ก ⇒ null (ชำระด้วยโทเคนตามเดิม)</summary>
-    private async Task<PlatformCardRefs?> SaveCardIfAskedAsync(Guid companyId, StartRequest req, CancellationToken ct)
-    {
-        if (!req.SaveCard) return null;
-        if (req.Method != PaymentMethodKind.Card || string.IsNullOrWhiteSpace(req.CardToken))
-            throw new BusinessRuleException("บันทึกบัตรได้เฉพาะการชำระด้วยบัตร", PlatformSavedCardRules.RuleSave);
-        return await _savedCards.SaveFromTokenAsync(companyId, req.CardToken, req.SaveCardConsent, req.SaveCardConsentVersionShown,
-            req.SaveCardWhtAcknowledged, Actor(), ct);
-    }
-
-    /// <summary>ฝ่ายค้านรอบ 230 S3/B2: เริ่มชำระ (ด้วยบัตรที่เพิ่งบันทึกถ้ามี) — เริ่มไม่สำเร็จ ⇒ ทิ้งบัตรที่ยังไม่เคยใช้ (ไม่ค้างบัตร/ความยินยอมลอย) ·
-    /// ผูกรายการแรกเฉพาะรายการที่สร้างในคำขอนี้ (<c>startedAt</c>)</summary>
-    private async Task<PaymentIntent> StartMaybeSavedAsync(Guid companyId, StartRequest req, Func<PlatformCardRefs?, Task<PaymentIntent>> start,
+    /// <summary>รอบ 230 + รอบ 235 (ข้อ 10): เริ่มชำระพร้อมบันทึกบัตร (ถ้าติ๊ก) — เส้นเดียวกับหน้าซื้อแพ็กเกจสาธารณะ (<see cref="PlatformSavedCardStart"/>)</summary>
+    private Task<PaymentIntent> StartMaybeSavedAsync(Guid companyId, StartRequest req, Func<PlatformCardRefs?, Task<PaymentIntent>> start,
         CancellationToken ct)
     {
-        var startedAt = DateTime.UtcNow;
-        var saved = await SaveCardIfAskedAsync(companyId, req, ct);
-        PaymentIntent intent;
-        try { intent = await start(saved); }
-        catch (Exception) when (saved != null)
-        {
-            await _savedCards.DiscardUnusedAsync(companyId, saved.SavedCardId, "เริ่มชำระไม่สำเร็จหลังบันทึกบัตร", CancellationToken.None);
-            throw;
-        }
-        await _db.SaveChangesAsync(ct);   // หลักฐานการยอมรับ (ใบเดิมที่ใช้ซ้ำไม่ผ่าน SaveChanges ของ StartAsync)
-        if (saved != null) await _savedCards.BindFirstIntentAsync(companyId, saved.SavedCardId, intent, startedAt, ct);
-        return intent;
+        return PlatformSavedCardStart.StartAsync(_db, _savedCards, companyId,
+            new PlatformSavedCardStart.Request(req.Method, req.CardToken, req.SaveCard, req.SaveCardConsent, req.SaveCardConsentVersionShown, req.SaveCardWhtAcknowledged),
+            Actor(), start, ct);
     }
 
     [HttpPost("addons/{featureCode}/intents")]

@@ -24,8 +24,10 @@ public static class PlatformRefundCreditNote
         => $"{(refundRef ?? "").Trim()}/{refundedTotalAfter.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}";
 
     /// <summary>ยอดของใบลดหนี้ — ไม่ผ่าน (ยอด ≤ 0 · ไม่มีใบเดิม · ใบเดิมถูกยกเลิก · รวมใบลดหนี้เกินใบเดิม §86/10) ⇒ <c>Problem</c> (ข้อความไทยบอกทางไปต่อ)</summary>
+    /// <remarks>รอบ 235 (ฝ่ายค้าน S-4): <paramref name="withholdingShare"/> = ภาษีหัก ณ ที่จ่ายส่วนที่เกี่ยวกับเงินที่คืน (<see cref="WithholdingShare"/>) ⇒
+    /// ใบลดหนี้ลด<b>เต็มยอด</b> (ฐาน+VAT = เงินที่คืน + ภาษีหักส่วนนั้น) · ยอดสุทธิของใบลดหนี้ (TotalAmount) = เงินที่คืน ⇒ ด่าน Σ ≤ ใบเดิม (ยอดสุทธิ) เดิม</remarks>
     public static Plan Decide(decimal refundAmount, bool originalFound, bool originalVoided, decimal originalTotal,
-        decimal alreadyCredited, bool originalHasVat)
+        decimal alreadyCredited, bool originalHasVat, decimal withholdingShare = 0m)
     {
         if (refundAmount <= 0m) return new Plan(false, 0m, 0m, "ยอดคืนต้องมากกว่า 0");
         if (!originalFound)
@@ -35,9 +37,43 @@ public static class PlatformRefundCreditNote
         if (alreadyCredited + refundAmount > originalTotal + Tolerance)
             return new Plan(false, 0m, 0m,
                 $"ยอดใบลดหนี้รวม {alreadyCredited + refundAmount:N2} จะเกินยอดใบเดิม {originalTotal:N2} (§86/10) — ตรวจใบลดหนี้ที่ออกไปแล้วที่หน้าเอกสาร");
-        var (b, v) = PlatformMoneyInAccount.SplitReceived(refundAmount, originalHasVat);
+        var (b, v) = PlatformMoneyInAccount.SplitReceived(refundAmount + Math.Max(0m, withholdingShare), originalHasVat);
         return new Plan(true, b, v, null);
     }
+
+    /// <summary>รอบ 235 (ฝ่ายค้าน S-4): ภาษีหัก ณ ที่จ่ายส่วนที่ต้องกลับรายการกับเงินที่คืน — ตามสัดส่วน (เงินที่คืน ÷ ยอดสุทธิของใบเดิม) ·
+    /// การคืนครั้งสุดท้าย (คืนครบยอดสุทธิ) = ภาษีหักที่เหลือทั้งหมด (ไม่ทิ้งเศษสตางค์ค้าง 11910) · ไม่เกินส่วนที่ยังไม่ถูกกลับ · ปัด AwayFromZero</summary>
+    public static decimal WithholdingShare(decimal refundAmount, decimal originalNet, decimal originalWht, decimal alreadyCreditedNet, decimal alreadyCreditedWht)
+    {
+        if (originalWht <= 0m || refundAmount <= 0m || originalNet <= 0m) return 0m;
+        var remaining = Math.Max(0m, R2(originalWht - Math.Max(0m, alreadyCreditedWht)));
+        if (alreadyCreditedNet + refundAmount >= originalNet - Tolerance) return remaining;
+        return Math.Min(remaining, R2(originalWht * refundAmount / originalNet));
+    }
+
+    /// <summary>อัตราภาษีหักบนบรรทัดใบลดหนี้ (4 ตำแหน่ง · คำนวณกลับจากยอดจริง — แบบเดียวกับใบเสร็จ) — ฐาน 0 = 0</summary>
+    public static decimal WithholdingRate(decimal withholdingShare, decimal baseAmount)
+        => withholdingShare > 0m && baseAmount > 0m ? decimal.Round(withholdingShare / baseAmount * 100m, 4, MidpointRounding.AwayFromZero) : 0m;
+
+    /// <summary>เรื่องค้าง: คืนเงินรายการที่หักภาษีแต่แถวทะเบียน 50 ทวิ ยืนยัน/ใช้เครดิตแล้ว</summary>
+    public const string WhtRefundRuleCode = "PLATFORM-WHT-REFUND";
+
+    public enum RegistryAction { None, Reduce, Expire, AttentionConfirmed }
+
+    /// <summary>ทะเบียนภาษีถูกหักของใบเดิมหลังคืนเงิน — ยัง Pending: เหลือ 0 ⇒ ตัดสิทธิ์ (หมดสิทธิ์เครดิต + เหตุผล) · เหลือ &gt; 0 ⇒ ลดยอดตามสัดส่วน ·
+    /// Received/Claimed ⇒ <b>ไม่แตะเอง</b> (ใบจริงของลูกค้าอ้างยอดเดิม) ขึ้นเรื่องค้างให้แอดมินขอ 50 ทวิ ใหม่/ยกเลิก · ไม่มีแถว/หมดอายุแล้ว ⇒ ไม่ทำ</summary>
+    public static RegistryAction RegistryActionFor(global::Accounting.Models.Enums.WhtCreditStatus? status, decimal share, decimal remainingAfter)
+    {
+        if (share <= 0m || status is null) return RegistryAction.None;
+        return status switch
+        {
+            global::Accounting.Models.Enums.WhtCreditStatus.Pending => remainingAfter <= Tolerance ? RegistryAction.Expire : RegistryAction.Reduce,
+            global::Accounting.Models.Enums.WhtCreditStatus.Received or global::Accounting.Models.Enums.WhtCreditStatus.Claimed => RegistryAction.AttentionConfirmed,
+            _ => RegistryAction.None,
+        };
+    }
+
+    private static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
     /// <summary>เลขอ้างอิงบนใบลดหนี้ = ตัวกันออกซ้ำ (หนึ่งการคืนเงิน = หนึ่งใบ) · เลขคืนเงินของผู้ให้บริการ</summary>
     public static string Reference(string refundRef)

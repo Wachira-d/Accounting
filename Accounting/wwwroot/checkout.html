@@ -384,7 +384,16 @@
             }
             const base = `/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/orders/${encodeURIComponent(this.order.paymentId)}`;
             const success = `${location.origin}/checkout-success.html?company=${encodeURIComponent(this.companyId)}&payment=${encodeURIComponent(this.order.paymentId)}`;
+            // รอบ 235 (ข้อ 10 · คำตัดสิน 235-10): ข้อเสนอ "บันทึกบัตรเพื่อตัดอัตโนมัติ" — ข้อความยินยอมตัวเดียวกับ platform-pay (OfferAsync) ผ่าน endpoint ของหน้านี้ (เซิร์ฟเวอร์ตัดสินทั้งข้อความ/ฉบับ/คำเตือนภาษีหัก) ·
+            // ผู้ซื้อที่เพิ่งสมัครในหน้านี้ = เจ้าของบริษัทใหม่ ⇒ ได้ข้อเสนอเหมือนกัน · ดึงไม่ได้ = ไม่เสนอ (null — ไม่แต่งข้อความเอง) · การบันทึกจริงผ่าน PlatformSavedCardStart ตัวเดียวที่เซิร์ฟเวอร์
+            let savedCardOffer = null;
+            try {
+              const o = await api(`/api/public/checkout/companies/${encodeURIComponent(this.companyId)}/saved-card-offer`);   // N-6: ด่านเจ้าของเดียวกับ StartIntent
+              const d = o && o.data;
+              savedCardOffer = d && d.text && d.version ? d : null;
+            } catch (e) { savedCardOffer = null; }
             PayWidget.open({
+              savedCardOffer,
               companyId: this.companyId,
               publicBase: base,
               methods: this.catalog.methodOptions,         // ป้ายจากเซิร์ฟเวอร์ — ผู้ซื้อเลือกวิธีในหน้าต่าง

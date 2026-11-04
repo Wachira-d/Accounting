@@ -37,7 +37,9 @@ public sealed record PublicCheckoutQuote(string Plan, string Cycle, string Cycle
 public sealed record PublicCheckoutOrder(Guid CompanyId, string CompanyName, Guid PaymentId, string PaymentNumber, decimal Amount, string Plan,
     string Cycle, string Status, bool Resumed, string Message, string? CouponCode, decimal CouponDiscountAmount, decimal? ListAmount,
     /// <summary>รอบ 234: ภาษีหัก ณ ที่จ่ายของรายการ (0 = ไม่หัก) — <see cref="Amount"/> = ยอดที่ตัดบัตร/QR (สุทธิ)</summary>
-    decimal WithholdingTaxAmount = 0m);
+    decimal WithholdingTaxAmount = 0m,
+    /// <summary>รอบ 235 (K-8): ชื่อแพ็กเกจที่แสดง · วันหมดอายุใหม่ถ้าชำระวันนี้ (preview — อีเมลยืนยันคำสั่งซื้อ) · null = ไม่รู้ (รายการเดิมที่ใช้ต่อ)</summary>
+    string? PlanName = null, DateTime? ValidUntilUtc = null);
 
 /// <summary>สถานะที่หน้าสำเร็จแสดง — ตัดสินโดย <see cref="PublicCheckoutPolicy.Resolve"/> ตัวเดียว</summary>
 public sealed record PublicCheckoutOrderStatus(Guid CompanyId, Guid PaymentId, string PaymentNumber, decimal Amount, string Plan, string Cycle,
@@ -67,7 +69,7 @@ public interface IPublicCheckoutService
         CancellationToken ct = default, bool? withholdTax = null);
     /// <summary>เริ่มชำระออนไลน์ของรายการ — เส้นเดียว platform-pay ทั้ง Live/Test (Test ส่ง <c>allowTestMode</c>) · ยอดจากรายการเท่านั้น</summary>
     Task<PaymentIntent> StartIntentAsync(Guid companyId, Guid paymentId, PaymentMethodKind method, string? returnUrl, string? cardToken,
-        CancellationToken ct = default);
+        CancellationToken ct = default, PlatformCardRefs? savedCard = null);
     Task<PaymentIntent?> RefreshIntentAsync(Guid companyId, Guid intentId, CancellationToken ct = default);
     Task<PublicCheckoutOrderStatus?> OrderStatusAsync(Guid companyId, Guid paymentId, Guid? intentId, CancellationToken ct = default);
     /// <summary>อีเมลยืนยันคำสั่งซื้อ (ส่งไม่ได้ = log · ไม่ล้มคำสั่งซื้อ)</summary>
@@ -148,11 +150,22 @@ public class PublicCheckoutService : IPublicCheckoutService
             }
             if (decision.Kind == PublicCheckoutPolicy.OrderKind.Renewal)
             {
-                var renewalPreview = await RenewalPreviewAsync(sub, template, cycle, renewalAmount, ct);
-                // รอบ 234: ภาษีหักที่ระบบเสนอ (ตัวตัดสินเดียว) + ข้อมูลผู้ซื้อ
-                return new PublicCheckoutQuote(plan.ToString(), cycle.ToString(), PublicCheckoutPolicy.CycleLabel(cycle), renewalAmount, 0m, renewalAmount,
-                    null, null, "company", renewalPreview.DateLine, renewalPreview,
-                    await PlatformWithholdingReader.ForReceivedAsync(_db, cid, renewalAmount, true,
+                // รอบ 235 (K-2 · คำตัดสิน 235-1): คูปองตอนต่ออายุ — ตัวตัดสินเดียวกับตอนจอง (PlatformCouponStore → PlatformCouponRule · isRenewal) ·
+                // ใช้ไม่ได้ (เช่น ตั้ง "ซื้อใหม่เท่านั้น") = บอก ไม่เงียบ (เหมือนเส้นเปลี่ยน)
+                // ฝ่ายค้าน S-2 (235-1b): ต่ออายุที่ได้ราคาพิเศษอยู่แล้ว ⇒ คูปองไม่ลดซ้อน — ตัวตัดสินเดียวกับตอนจอง (ราคาพิเศษ forRenewal ตัวเดียวกับ RequestPlanPaymentAsync)
+                var renewalSpecial = code != null
+                    && (await PlatformPriceOverrideStore.ResolveForSubscriptionAsync(_db, sub, template, cycle, DateTime.UtcNow, forRenewal: true)).Applied;
+                var ev = await Accounting.Services.Implementations.PlatformCouponStore.PreviewAsync(_db, cid, code, PlatformCouponScope.Subscription, plan.ToString(), cycle.ToString(), null,
+                    renewalAmount, DateTime.UtcNow, ct, isRenewal: true, renewalSpecialPrice: renewalSpecial);
+                if (ev is { Ok: false }) throw new BusinessRuleException(ev.Problem ?? PlatformCouponRule.InvalidCodeMessage, PublicCheckoutPolicy.RuleCode);
+                var discount = ev is { Ok: true } ? ev.Discount : 0m;
+                var due = ev is { Ok: true } ? ev.AmountAfter : renewalAmount;
+                var renewalPreview = await RenewalPreviewAsync(sub, template, cycle,
+                    new PlanPurchasePreview.Money(renewalAmount, discount, due, CouponLabel: ev is { Ok: true } ? ev.Label : null), ct);
+                // รอบ 234: ภาษีหักที่ระบบเสนอ (ตัวตัดสินเดียว) + ข้อมูลผู้ซื้อ — ฐาน = ยอดหลังคูปอง (ใบลดก่อน VAT) · มูลค่าสัญญา = ราคาต่อรอบ (234-2)
+                return new PublicCheckoutQuote(plan.ToString(), cycle.ToString(), PublicCheckoutPolicy.CycleLabel(cycle), renewalAmount, discount, due,
+                    ev is { Ok: true } ? code : null, ev is { Ok: true } ? ev.Label : null, "company", renewalPreview.DateLine, renewalPreview,
+                    await PlatformWithholdingReader.ForReceivedAsync(_db, cid, due, true,
                         PlatformWhtSuggestion.AnnualContractGross(renewalAmount, PlatformPlanPricing.MonthsOf(cycle)), ct),
                     await PlatformWithholdingReader.PayerAsync(_db, cid, ct), sub.WithholdTaxPreference);
             }
@@ -214,15 +227,19 @@ public class PublicCheckoutService : IPublicCheckoutService
         => PlanPurchasePreview.Refused(await CurrentForPreviewAsync(sub, ct), PlanPurchasePreview.TargetOf(template, cycle), refusal, DateTime.UtcNow);
 
     /// <summary>รอบ 233 (233-1): ต่ออายุแพ็กเกจ+รอบเดิม — วันหมดอายุใหม่ = max(วันหมดอายุเดิม, วันชำระ) + รอบ (PlanPurchasePreview.PaidPeriod ตัวเดียวกับตอนอนุมัติ)</summary>
-    private async Task<PlanPurchasePreview.Result> RenewalPreviewAsync(Subscription sub, PlanTemplate template, BillingCycle cycle, decimal renewalAmount, CancellationToken ct)
+    private async Task<PlanPurchasePreview.Result> RenewalPreviewAsync(Subscription sub, PlanTemplate template, BillingCycle cycle, PlanPurchasePreview.Money money, CancellationToken ct)
     {
         // ฝ่ายค้าน N3: ธง VAT ตัวตัดสินเดียวกับตัวออกใบ
         var vs = await _db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt)
             .Select(s => new { s.PlatformIsVatRegistered, s.PlatformSellerTaxId }).FirstOrDefaultAsync(ct);
         var vat = vs != null && PlanPurchasePreview.IssuesTaxInvoice(vs.PlatformIsVatRegistered, vs.PlatformSellerTaxId);
         return PlanPurchasePreview.ForPurchase(await CurrentForPreviewAsync(sub, ct), PlanPurchasePreview.TargetOf(template, cycle),
-            new PlanPurchasePreview.Money(renewalAmount, 0m, renewalAmount), DateTime.UtcNow, vat);
+            money, DateTime.UtcNow, vat);
     }
+
+    /// <summary>รอบ 235 (K-8): วันหมดอายุใหม่ถ้าชำระวันนี้ ของการต่ออายุ — preview ตัวเดียว (PaidPeriod · ไม่คำนวณเอง)</summary>
+    private async Task<DateTime?> ValidUntilIfPaidTodayAsync(Subscription sub, PlanTemplate template, BillingCycle cycle, CancellationToken ct)
+        => (await RenewalPreviewAsync(sub, template, cycle, new PlanPurchasePreview.Money(0m, 0m, 0m), ct)).NewEndUtc;
 
     /// <summary>ฝ่ายค้าน B1: ชนิดคำสั่งซื้อ — <b>อ่านอย่างเดียว</b> (ไม่มี side-effect) · ตัวเดียวของยอดตะกร้า (QuoteAsync) และตอนยืนยัน (CreateOrderAsync) ·
     /// คืนใบเสนอ <c>QuotePlanChangeAsync</c> (เส้นซื้อใหม่/เปลี่ยน) หรือยอดต่ออายุ (<c>PlatformPriceOverrideStore.AmountDueAsync</c> + <c>currentPlan</c> ⇒ ราคาต่ออายุ ·
@@ -239,8 +256,7 @@ public class PublicCheckoutService : IPublicCheckoutService
         var q = renewalShape ? null : await _subs.QuotePlanChangeAsync(sub.CompanyId, template.Plan, cycle, code);
         var decision = PublicCheckoutPolicy.DecideOrder(sub.Status, sub.IsPermanentFree, sub.Plan, sub.BillingCycle, current?.MonthlyPrice ?? 0m,
             template.Plan, cycle, template.MonthlyPrice, q?.ListAmount ?? 0m,
-            renewalInvoiceIssued: PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(sub.RenewalInvoiceForEndDate, sub.EndDate) != null,
-            hasCoupon: code != null);
+            renewalInvoiceIssued: PlatformPlanPricing.ScheduleBlockedByIssuedRenewal(sub.RenewalInvoiceForEndDate, sub.EndDate) != null);
         var renewalAmount = decision.Kind == PublicCheckoutPolicy.OrderKind.Renewal
             ? await PlatformPriceOverrideStore.AmountDueAsync(_db, sub.CompanyId, sub.AccountSubscriptionId, template, cycle, DateTime.UtcNow,
                 currentPlan: sub.Plan, ct: ct)
@@ -304,14 +320,13 @@ public class PublicCheckoutService : IPublicCheckoutService
 
         if (decision.Kind == PublicCheckoutPolicy.OrderKind.Renewal)
         {
-            // ต่ออายุแพ็กเกจ+รอบเดิม — เส้นแจ้งชำระเดิม (ยอดตรวจซ้ำที่เซิร์ฟเวอร์ด้วยราคาต่ออายุ IsRenewalPurchase · อนุมัติแล้วต่อจากวันหมดอายุเดิม PeriodStart)
-            var months = PlatformPlanPricing.MonthsOf(cycle);
-            var renewed = await _subs.SubmitPaymentAsync(companyId, new SubmitSubscriptionPaymentRequest(sub.Id, renewalAmount, DateTime.UtcNow,
-                PaymentMethod.BankTransfer, null, null, null, null, null, plan, cycle, months,
-                "ต่ออายุผ่านหน้าซื้อแพ็กเกจออนไลน์ (รอชำระ)", PolicyAccepted: true, WithholdTax: withholdTax), userId.ToString());
+            // รอบ 235 (K-2 · คำตัดสิน 235-1/235-9): ต่ออายุแพ็กเกจ+รอบเดิม — เส้นสร้างรายการเดียวกับซื้อใหม่ (RequestPlanPaymentAsync ผ่าน RequestRenewalPaymentAsync:
+            // ราคาต่ออายุจากเซิร์ฟเวอร์ · คูปองจองใต้ล็อก · ภาษีหักจากตัวตัดสินเดียว) — เดิมใช้ SubmitPaymentAsync (ไม่รับคูปอง + แจ้ง "รอตรวจ" ทั้งที่ยังไม่จ่าย)
+            var renewed = await _subs.RequestRenewalPaymentAsync(companyId, plan, cycle, code, withholdTax, userId.ToString());
             return new PublicCheckoutOrder(companyId, company, renewed.Id, renewed.PaymentNumber, renewed.Amount, plan.ToString(), cycle.ToString(),
                 renewed.Status.ToString(), false, $"สร้างรายการต่ออายุ {renewed.PaymentNumber} ยอด {renewed.Amount:N2} บาทแล้ว — ต่อจากวันหมดอายุเดิมเมื่อชำระเงิน",
-                renewed.CouponCode, renewed.CouponDiscountAmount, renewed.ListAmount, renewed.WithholdingTaxAmount);
+                renewed.CouponCode, renewed.CouponDiscountAmount, renewed.ListAmount, renewed.WithholdingTaxAmount,
+                template.Name, await ValidUntilIfPaidTodayAsync(sub, template, cycle, ct));
         }
 
         // ซื้อใหม่ (ทดลองใช้/หมดอายุ/ฟรีถาวร) หรืออัปเกรด/รอบยาวขึ้น (Active) — ConvertTrialAsync → RequestPlanPaymentAsync ตัวเดียว (ยอดจากเซิร์ฟเวอร์)
@@ -320,18 +335,20 @@ public class PublicCheckoutService : IPublicCheckoutService
             throw new BusinessRuleException(result.Message, PublicCheckoutPolicy.RuleCode);
         var pay = result.Payment;
         return new PublicCheckoutOrder(companyId, company, pay.Id, pay.PaymentNumber, pay.Amount, plan.ToString(), cycle.ToString(), pay.Status.ToString(), false,
-            result.Message, pay.CouponCode, pay.CouponDiscountAmount, pay.ListAmount, pay.WithholdingTaxAmount);
+            result.Message, pay.CouponCode, pay.CouponDiscountAmount, pay.ListAmount, pay.WithholdingTaxAmount,
+            template.Name, (await _subs.QuotePlanChangeAsync(companyId, plan, cycle, null)).Preview?.NewEndUtc);   // รอบ 235 K-8: วันที่ "ถ้าชำระวันนี้" จาก preview ตัวเดียว
     }
 
     public async Task<PaymentIntent> StartIntentAsync(Guid companyId, Guid paymentId, PaymentMethodKind method, string? returnUrl, string? cardToken,
-        CancellationToken ct = default)
+        CancellationToken ct = default, PlatformCardRefs? savedCard = null)
     {
         var avail = await AvailabilityAsync(ct);
         if (!avail.Enabled) throw new BusinessRuleException(avail.Reason ?? PublicCheckoutPolicy.DisabledMessage, PublicCheckoutPolicy.RuleCode, 404);
         if (!avail.OnlineAvailable) throw new BusinessRuleException(avail.Reason ?? "ชำระออนไลน์ไม่ได้ในขณะนี้", PublicCheckoutPolicy.RuleCode);
         // ฝ่ายค้าน S1: เส้นเดียวทั้ง Live/Test — ด่านเดิมครบ (รายการรอชำระของบริษัทนี้ · ไม่ซ้อนสลิป/พัก · ยอดตรงราคาปัจจุบัน S3 · วิธีที่เปิด · PlatformDoublePayment) ·
         // ต่างกันเฉพาะโหมดทดสอบผ่านด่านช่องทางได้เมื่อหน้านี้ตัดสินว่าเป็นโหมดทดสอบ (intent ประทับ IsTestMode ⇒ TestModePaymentPolicy กันผลทางธุรกิจ)
-        return await _platform.StartSubscriptionPaymentAsync(companyId, paymentId, method, returnUrl, cardToken, ct, allowTestMode: avail.IsTestMode);
+        // รอบ 235 (ข้อ 10): บัตรที่เพิ่งบันทึก (เส้นเดียวกับ platform-pay — PlatformSavedCardStart) ⇒ ตัดด้วยบัตรนั้น
+        return await _platform.StartSubscriptionPaymentAsync(companyId, paymentId, method, returnUrl, cardToken, ct, savedCard, allowTestMode: avail.IsTestMode);
     }
 
     public Task<PaymentIntent?> RefreshIntentAsync(Guid companyId, Guid intentId, CancellationToken ct = default)
@@ -367,9 +384,15 @@ public class PublicCheckoutService : IPublicCheckoutService
         if (string.IsNullOrWhiteSpace(to)) return;
         static string E(string? s) => System.Net.WebUtility.HtmlEncode(s ?? "");
         var link = $"{publicOrigin}/checkout-success.html?company={order.CompanyId}&payment={order.PaymentId}";
+        // รอบ 235 (K-8 · คำตัดสิน 235-4): แพ็ก · รอบ · ใช้ได้ถึง (พ.ศ.) · ยอด · หัก ณ ที่จ่าย — ข้อความจากตัวเดียว PlatformPurchaseEmailText (HtmlEncode ทุกบรรทัด)
+        var detail = string.Join("", PlatformPurchaseEmailText.Lines(order.PlanName ?? order.Plan,
+                Enum.TryParse<BillingCycle>(order.Cycle, out var oc) ? (BillingCycle?)oc : null, order.ValidUntilUtc, validUntilIsEstimate: true,
+                order.Amount, order.WithholdingTaxAmount)
+            .Select(l => $"<li>{E(l)}</li>"));
         var html = $"""
             <p>สวัสดี — ระบบได้รับคำสั่งซื้อแพ็กเกจ NextAcc ของบริษัท <b>{E(order.CompanyName)}</b> แล้ว</p>
-            <p>เลขที่รายการ <b>{E(order.PaymentNumber)}</b> · แพ็กเกจ {E(order.Plan)} · รอบบิล {E(order.Cycle)} · ยอด <b>{order.Amount:N2} บาท</b></p>
+            <p>เลขที่รายการ <b>{E(order.PaymentNumber)}</b></p>
+            <ul>{detail}</ul>
             <p>ตรวจสถานะ/ชำระต่อได้ที่ <a href="{E(link)}">{E(link)}</a> (ต้องเข้าสู่ระบบด้วยอีเมลนี้)</p>
             <p>ใบเสร็จ/ใบกำกับภาษีจะออกอัตโนมัติเมื่อระบบยืนยันการรับเงิน และดาวน์โหลดได้จากหน้าเดียวกัน</p>
             """;

@@ -7,6 +7,11 @@ public enum PlatformCouponKind { Percent = 1, Fixed = 2 }
 [Flags]
 public enum PlatformCouponScope { None = 0, Subscription = 1, QuotaAddOn = 2, Both = 3 }
 
+/// <summary>รอบ 235 (K-2 · คำตัดสิน 235-1): คูปองค่าแพ็กเกจใช้กับการซื้อแบบไหน — <see cref="New"/> = ซื้อใหม่/อัปเกรด/เปลี่ยนรอบ ·
+/// <see cref="Renewal"/> = ต่ออายุแพ็กเดิม+รอบเดิม (<c>PlatformCouponRule.IsRenewalTarget</c>) · <see cref="Both"/> = ทั้งสอง ·
+/// ค่าตั้งต้น = <see cref="New"/> (ฝ่ายค้าน S-1: คูปองเดิม/ใหม่ไม่ลดต่ออายุจนแอดมินเลือกเปิด)</summary>
+public enum PlatformCouponPurchaseKinds { None = 0, New = 1, Renewal = 2, Both = 3 }
+
 /// <summary>รอบ 230: สถานะการใช้คูปองหนึ่งครั้ง — Reserved = ผูกกับรายการที่ยังไม่จ่าย (นับเข้าเพดานจนหมดอายุการจอง) · Redeemed = เงินเข้าแล้ว ·
 /// Released = รายการถูกยกเลิก/ปฏิเสธ (ไม่นับ)</summary>
 public enum PlatformCouponRedemptionStatus { Reserved = 1, Redeemed = 2, Released = 3 }
@@ -34,6 +39,8 @@ public class PlatformCoupon : BaseEntity
     /// <summary>จำนวนครั้งที่เงินเข้าแล้ว (นับตอน Redeemed ใต้ล็อก — ตัวแสดงผล · ตัวตัดสินเพดานนับจากตาราง redemption)</summary>
     public int UsedCount { get; set; }
     public PlatformCouponScope AppliesTo { get; set; } = PlatformCouponScope.Both;
+    /// <summary>รอบ 235 (K-2): ใช้กับซื้อใหม่/ต่ออายุ/ทั้งสอง (เฉพาะขอบเขตค่าแพ็กเกจ · โควตาเสริมไม่ดูช่องนี้) — ค่าตั้งต้น New (ฝ่ายค้าน S-1 · migration DEFAULT 1)</summary>
+    public PlatformCouponPurchaseKinds PurchaseKinds { get; set; } = PlatformCouponPurchaseKinds.New;
     /// <summary>แพ็กเกจที่ใช้ได้ (ชื่อ enum คั่นด้วย ",") · null/ว่าง = ทุกแพ็กเกจ</summary>
     public string? PlansCsv { get; set; }
     /// <summary>รอบบิลที่ใช้ได้ (Monthly,Quarterly,SemiAnnual,Annual) · null/ว่าง = ทุกรอบ</summary>

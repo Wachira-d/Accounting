@@ -87,6 +87,46 @@ public class PublicCheckoutRound233DbTests
         }
     }
 
+    /// <summary>รอบ 235 (K-2 · คำตัดสิน 235-1): ต่ออายุแพ็กเดิมรอบเดิมพร้อมคูปองผ่านหน้าซื้อสาธารณะ — ใบเสนอแสดงส่วนลด (preview ตัวเดียว) ·
+    /// สร้างรายการผ่านเส้นเดียวกับซื้อใหม่ (คูปองจอง · ยอดหลังลด · 12 เดือน) · อีเมลมีวันหมดอายุ "ถ้าชำระวันนี้" · ทิศตรงข้าม: คูปองซื้อใหม่เท่านั้น ⇒ บอก ไม่เงียบ ไม่เกิดรายการ</summary>
+    [Fact]
+    public async Task R235_ต่ออายุพร้อมคูปอง_ใบเสนอแสดงส่วนลด_สร้างรายการด้วยยอดหลังลด_คูปองซื้อใหม่เท่านั้นถูกปฏิเสธ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        await PricedAsync(db, SubscriptionPlan.Pro, 1_490m);
+        var (uid, cid, sub) = await SeedAsync(db, SubscriptionPlan.Pro, BillingCycle.Annual);
+        PlatformCoupon Make(PlatformCouponPurchaseKinds k) => new()
+        {
+            Code = "T235C-" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant(), Kind = PlatformCouponKind.Percent, Value = 10m,
+            AppliesTo = PlatformCouponScope.Subscription, PurchaseKinds = k, MaxUsesPerCompany = null, IsActive = true,
+        };
+        var both = Make(PlatformCouponPurchaseKinds.Both); var newOnly = Make(PlatformCouponPurchaseKinds.New);
+        db.PlatformCoupons.AddRange(both, newOnly);
+        await db.SaveChangesAsync();
+        await WithCheckoutEnabledAsync(db, async () =>
+        {
+            var svc = Svc(db);
+            var refused = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.QuoteAsync(cid, SubscriptionPlan.Pro, BillingCycle.Annual, newOnly.Code));
+            Assert.Contains("ต่ออายุไม่ได้", refused.Message);
+            await Assert.ThrowsAsync<BusinessRuleException>(() => svc.CreateOrderAsync(uid, cid, SubscriptionPlan.Pro, BillingCycle.Annual, newOnly.Code));
+            Assert.Equal(0, await db.SubscriptionPayments.CountAsync(p => p.SubscriptionId == sub.Id));
+
+            var q = await svc.QuoteAsync(cid, SubscriptionPlan.Pro, BillingCycle.Annual, both.Code);
+            Assert.Equal("Renewal", q.Preview!.Kind);
+            Assert.True(q.Discount > 0m);
+            Assert.Equal(q.ListAmount - q.Discount, q.AmountDue);
+            Assert.Equal(q.Discount, q.Preview.CouponDiscount);
+            var order = await svc.CreateOrderAsync(uid, cid, SubscriptionPlan.Pro, BillingCycle.Annual, both.Code);
+            Assert.Equal(q.AmountDue, order.Amount);
+            Assert.Equal(both.Code, order.CouponCode);
+            Assert.Equal(q.Preview.NewEndUtc, order.ValidUntilUtc);   // K-8: อีเมลบอกวันเดียวกับกล่องสรุป
+            var pay = await db.SubscriptionPayments.AsNoTracking().SingleAsync(p => p.Id == order.PaymentId);
+            Assert.Equal(12, pay.RequestedPeriodMonths);
+            Assert.Equal(both.Id, pay.CouponId);
+        });
+    }
+
     private static async Task<bool> DowngradeShapeAsync(Accounting.Data.AccountingDbContext db)
     {
         var ent = await PricedAsync(db, SubscriptionPlan.Enterprise, 4_990m);

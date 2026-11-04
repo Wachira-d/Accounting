@@ -28,6 +28,24 @@ public class ChatRateLimiter : IChatRateLimiter
 
     public async Task<bool> TryConsumeAsync(string key, int perMinute, int perDay, CancellationToken ct = default, bool failClosed = false)
     {
+        var outcome = await ConsumeAsync(key, perMinute, perDay, ct);
+        if (outcome != Accounting.Helpers.RateConsumeOutcome.Unavailable)
+            return outcome == Accounting.Helpers.RateConsumeOutcome.Allowed;
+        // fail-open โดยตั้งใจ: ตารางนับพัง ≠ เหตุผลที่จะปิดบริการทั้งระบบ
+        // (ด่านอื่นยังทำงาน — เพดานข้อความต่อห้อง/วัน อ่านจาก ChatMessages
+        // และ AiBudgetGuard คุมค่าใช้จ่ายจริง)
+        if (failClosed)
+        {
+            // ฝ่ายค้านรอบ 210: ด่านกันไล่ข้อมูล (ค้นการจอง/ออเดอร์ของแขก) ห้ามเปิดเงียบเมื่อตารางนับพัง — ปฏิเสธ + log Error (ล้มดัง)
+            _logger.LogError("ChatRateLimiter ใช้ไม่ได้ — ปฏิเสธคำขอของด่านแบบ fail-closed (key {Key})", key);
+            return false;
+        }
+        _logger.LogWarning("ChatRateLimiter ใช้ไม่ได้ — ปล่อยผ่านชั่วคราว (key {Key})", key);
+        return true;
+    }
+
+    public async Task<Accounting.Helpers.RateConsumeOutcome> ConsumeAsync(string key, int perMinute, int perDay, CancellationToken ct = default)
+    {
         var now = DateTime.UtcNow;
         var minuteWindow = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
         var dayWindow = new DateTime(now.Year, now.Month, now.Day, 0, 0, 0, DateTimeKind.Utc);
@@ -35,23 +53,14 @@ public class ChatRateLimiter : IChatRateLimiter
         {
             // นับนาทีก่อน — ชนเพดานนาทีแล้วไม่ต้องเปลืองการนับรายวัน
             var perMinuteCount = await BumpAsync("m:" + key, minuteWindow, ct);
-            if (perMinuteCount > perMinute) return false;
+            if (perMinuteCount > perMinute) return Accounting.Helpers.RateConsumeOutcome.Limited;
             var perDayCount = await BumpAsync("d:" + key, dayWindow, ct);
-            return perDayCount <= perDay;
+            return perDayCount <= perDay ? Accounting.Helpers.RateConsumeOutcome.Allowed : Accounting.Helpers.RateConsumeOutcome.Limited;
         }
         catch (Exception ex)
         {
-            // fail-open โดยตั้งใจ: ตารางนับพัง ≠ เหตุผลที่จะปิดบริการทั้งระบบ
-            // (ด่านอื่นยังทำงาน — เพดานข้อความต่อห้อง/วัน อ่านจาก ChatMessages
-            // และ AiBudgetGuard คุมค่าใช้จ่ายจริง)
-            if (failClosed)
-            {
-                // ฝ่ายค้านรอบ 210: ด่านกันไล่ข้อมูล (ค้นการจอง/ออเดอร์ของแขก) ห้ามเปิดเงียบเมื่อตารางนับพัง — ปฏิเสธ + log Error (ล้มดัง)
-                _logger.LogError(ex, "ChatRateLimiter ใช้ไม่ได้ — ปฏิเสธคำขอของด่านแบบ fail-closed (key {Key})", key);
-                return false;
-            }
-            _logger.LogWarning(ex, "ChatRateLimiter ใช้ไม่ได้ — ปล่อยผ่านชั่วคราว (key {Key})", key);
-            return true;
+            _logger.LogWarning(ex, "ChatRateLimiter นับไม่ได้ (key {Key})", key);
+            return Accounting.Helpers.RateConsumeOutcome.Unavailable;
         }
     }
 
