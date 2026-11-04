@@ -9,9 +9,9 @@ namespace Accounting.Helpers;
 /// <list type="bullet">
 /// <item>ชนิดผู้ซื้อ = จากเลขผู้เสียภาษี (<see cref="ContactTypeResolver.FromTaxId"/> — ตัวเดียวกับ <c>SubscriptionService.PayerIsJuristicAsync</c> และตัวออกใบ
 /// <c>PlatformBillingDocumentIssuer.EnsureContactAsync</c>) — ไม่มีคอลัมน์ "ประเภทผู้ซื้อ" ที่สอง (เลขขึ้นต้น 0 = นิติบุคคล/หน่วยงาน)</item>
-/// <item>ครบ = ชื่อ · ที่อยู่ (ข้อความ หรือ อำเภอ+จังหวัด) · เลขผู้เสียภาษี 13 หลัก + checksum (<see cref="ThaiTaxId.IsValid"/>) · สาขา 5 หลัก
+/// <item>ครบ = ชื่อ · ข้อความที่อยู่ (นิยามเดียวกับด่าน §86/4 ใบกำกับเต็มรูป) · เลขผู้เสียภาษี 13 หลัก + checksum (<see cref="ThaiTaxId.IsValid"/>) · สาขา 5 หลัก
 /// (ว่าง = <c>00000</c> สำนักงานใหญ่ — ค่าเดียวกับที่ตัวออกใบใช้)</item>
-/// <item>ผลต่อการชำระ: <b>ไม่บล็อก</b>การจ่ายของบุคคลธรรมดา/ข้อมูลไม่ครบ (ใบเสร็จ/ใบกำกับออกตามข้อมูลที่มี — กติกาเดิม) ·
+/// <item>ผลต่อการชำระ: <b>ไม่บล็อก</b>การจ่ายของบุคคลธรรมดา/ข้อมูลไม่ครบ (นิติบุคคลที่ไม่มีที่อยู่: ตัวออกใบไม่ออกใบกำกับเต็มรูป — ตกโหมด PDF สำรองพร้อมเหตุผล ไม่ประทับ "ผู้ซื้อไม่ประสงค์รับใบกำกับ" เอง ตามคำตัดสินรอบ 181) ·
 /// <b>นิติบุคคลที่จะหัก ณ ที่จ่าย ต้องครบก่อน</b> (<see cref="WithholdingRefusal"/> — 50 ทวิ และใบกำกับต้องตรงตัวผู้หัก)</item>
 /// </list>
 /// ผู้เรียก: <c>PlatformWhtSuggestion.Decide</c> (ทุกเส้นชำระ) · ศูนย์บิล/checkout แสดงการ์ด "ข้อมูลบริษัทสำหรับใบกำกับภาษี"
@@ -38,8 +38,9 @@ public static class PlatformPayerProfileGate
     /// <summary>รหัสสาขาที่ใช้ — ว่าง = สำนักงานใหญ่ (ค่าเดียวกับ <c>EnsureContactAsync</c>)</summary>
     public static string BranchOf(string? branchCode) => string.IsNullOrWhiteSpace(branchCode) ? HeadOfficeBranch : branchCode.Trim();
 
-    private static bool HasAddress(Facts f) =>
-        !string.IsNullOrWhiteSpace(f.Address) || (!string.IsNullOrWhiteSpace(f.District) && !string.IsNullOrWhiteSpace(f.Province));
+    // ต้องมีข้อความที่อยู่ (บ้านเลขที่/ถนน) — นิยามเดียวกับด่าน §86/4 ของใบกำกับเต็มรูป (DocumentService ตรวจ Address ของผู้ติดต่อ) ·
+    // เดิมยอม "อำเภอ + จังหวัด" อย่างเดียว ⇒ ผ่านด่านก่อนชำระแต่ใบกำกับล้มตอนอนุมัติ (CI รอบ 234)
+    private static bool HasAddress(Facts f) => !string.IsNullOrWhiteSpace(f.Address);
 
     public static Result Evaluate(Facts f)
     {

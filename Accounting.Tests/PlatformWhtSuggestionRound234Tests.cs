@@ -199,12 +199,17 @@ public class PlatformWhtSuggestionRound234Tests
     }
 
     [Fact]
-    public void Profile_gate_structured_address_counts()
+    public void Profile_gate_requires_street_address_same_as_full_tax_invoice()
     {
-        var p = PlatformPayerProfileGate.Evaluate(new PlatformPayerProfileGate.Facts("บริษัท ก จำกัด", Juristic, "00000", null, "เขตบางรัก", "กรุงเทพมหานคร"));
-        Assert.True(p.Complete);
-        var none = PlatformPayerProfileGate.Evaluate(new PlatformPayerProfileGate.Facts("บริษัท ก จำกัด", Juristic, "00000", " ", null, "กรุงเทพมหานคร"));
-        Assert.False(none.Complete);
+        // CI รอบ 234: เดิม "อำเภอ + จังหวัด" อย่างเดียวผ่านด่านก่อนชำระ แต่ใบกำกับเต็มรูป (§86/4) ตรวจข้อความที่อยู่ ⇒ ล้มตอนอนุมัติ — ตอนนี้นิยามเดียวกัน
+        var districtOnly = PlatformPayerProfileGate.Evaluate(new PlatformPayerProfileGate.Facts("บริษัท ก จำกัด", Juristic, "00000", null, "เขตบางรัก", "กรุงเทพมหานคร"));
+        Assert.False(districtOnly.Complete);
+        Assert.Contains("ที่อยู่ตามทะเบียน", districtOnly.Missing);
+        var blank = PlatformPayerProfileGate.Evaluate(new PlatformPayerProfileGate.Facts("บริษัท ก จำกัด", Juristic, "00000", " ", null, "กรุงเทพมหานคร"));
+        Assert.False(blank.Complete);
+        // ทิศตรงข้าม: มีข้อความที่อยู่ ⇒ ครบ (อำเภอ/จังหวัดไม่บังคับเพิ่ม)
+        var street = PlatformPayerProfileGate.Evaluate(new PlatformPayerProfileGate.Facts("บริษัท ก จำกัด", Juristic, "00000", "1 ถนนสีลม", null, null));
+        Assert.True(street.Complete);
     }
 
     // ───────── 234-W*: สถานะ 50 ทวิ จากลูกค้า (PlatformWhtCertificateStatus) ─────────
@@ -248,8 +253,9 @@ public class PlatformWhtSuggestionRound234Tests
     public void Saved_card_legacy_consent_still_charges_full_but_only_new_version_allows_net()
     {
         var v = PlatformSavedCardRules.Version("2.1");                       // autocharge-2/2.1
-        var legacy = PlatformSavedCardRules.LegacyVersionOf(v);              // autocharge-1/2.1
-        Assert.Equal("autocharge-1/2.1", legacy);
+        // ฉบับข้อความรุ่นก่อน (ตัวช่วยภายใน LegacyVersionOf/MandateBase เป็น private — ทดสอบผ่านเมธอด public ที่ใช้มัน)
+        var legacy = PlatformSavedCardRules.LegacyFullChargeTextVersion + "/2.1";   // autocharge-1/2.1
+        Assert.Equal("autocharge-2/2.1", v);
         Assert.Null(PlatformSavedCardRules.AutoChargeBlockReason(true, true, false, legacy, v, null));   // ไม่หยุดตัดทุกบริษัทเพราะขึ้นฉบับ
         Assert.Null(PlatformSavedCardRules.AutoChargeBlockReason(true, true, false, legacy + PlatformSavedCardRules.WhtAckVersionSuffix, v, null, true, true));
         Assert.False(PlatformSavedCardRules.MandateAllowsNetCharge(legacy, v));

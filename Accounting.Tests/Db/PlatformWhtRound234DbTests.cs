@@ -132,6 +132,12 @@ public class PlatformWhtRound234DbTests
             Assert.Equal(PlatformPaymentAttention.RuleWhtCertPending, approved.AttentionRule);
 
             // ใบเสร็จ/ใบกำกับ: บรรทัดเต็มยอด (ฐาน + VAT = ยอดเต็ม) + อัตราหัก ≈ 3% (ตัวออกใบจดคำขอ — DocumentService ปลอม)
+            // ผังผู้ให้บริการต้องมีกลุ่ม 119 ให้ตัวออกใบสร้าง 11910 (ฝ่ายค้าน 234 S4: ไม่มี ⇒ ล้มดังก่อนสร้างใบ — เทสต์ S4_non_standard_chart… ล็อกทิศนั้น)
+            db.ChartOfAccounts.Add(new ChartOfAccount
+            {
+                CompanyId = f.PlatformId, AccountCode = "119", AccountName = "สินทรัพย์หมุนเวียนอื่น", AccountType = AccountType.Asset, Level = 3, IsActive = true,
+            });
+            await db.SaveChangesAsync();
             var captured = new List<object?>();
             var docs = F4Proxy<IDocumentService>.Create((name, args) =>
             {
@@ -141,6 +147,7 @@ public class PlatformWhtRound234DbTests
             var issuer = new PlatformBillingDocumentIssuer(db, new F4ServiceMap().Add(docs), NullLogger<PlatformBillingDocumentIssuer>.Instance);
             var buyer = await db.Companies.AsNoTracking().SingleAsync(c => c.Id == f.BuyerId);
             await issuer.IssuePaidReceiptAsync(approved, buyer);
+            Assert.True(captured.Count == 1, issuer.LastFailureReason);   // ล้มก่อนสร้างใบ ⇒ เห็นเหตุจริง ไม่ใช่ "Sequence contains no elements"
             var req = Assert.IsType<CreateDocumentRequest>(captured.Single());
             var line = req.Lines.Single();
             Assert.Equal(DocumentType.TaxInvoice, req.DocumentType);
@@ -155,7 +162,17 @@ public class PlatformWhtRound234DbTests
         PlatformBillingPhase2DbTests.Fixture f, decimal wht)
     {
         // จำลองผลของ DocumentService.SyncWhtCreditReceivedAsync: ใบเสร็จ (เอกสารในบริษัทผู้ให้บริการ) ที่มีขา Dr 11910 ⇒ แถว Pending ผูก DocumentId
-        var receiptId = Guid.NewGuid();
+        // ใบเสร็จต้องมีจริงในตาราง Documents (FK_WhtCreditsReceived_Documents_DocumentId) — ใบอนุมัติแล้วของบริษัทผู้ให้บริการ ผู้ติดต่อ = ผู้เช่า
+        var receipt = new Document
+        {
+            CompanyId = f.PlatformId, ContactId = f.ContactId, DocumentType = DocumentType.Receipt,
+            DocumentNumber = "RC-T234-" + Guid.NewGuid().ToString("N")[..8], Status = DocumentStatus.Approved, Reference = "SP-234",
+            DocumentDate = DateTime.UtcNow.AddDays(-40), SubTotal = 14_203.74m, VatAmount = 994.26m, TotalAmount = 15_198m, BalanceDue = 0m, Currency = "THB",
+        };
+        receipt.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการระบบบัญชีออนไลน์ (ทดสอบ 234)", Quantity = 1, UnitPrice = 14_203.74m, Amount = 14_203.74m });
+        db.Documents.Add(receipt);
+        await db.SaveChangesAsync();
+        var receiptId = receipt.Id;
         var pay = new SubscriptionPayment
         {
             SubscriptionId = f.Sub.Id, PaymentNumber = "SP-234-" + Guid.NewGuid().ToString("N")[..6], Amount = 14_771.89m, WithholdingTaxAmount = wht,
@@ -310,8 +327,12 @@ public class PlatformWhtRound234DbTests
         {
             var issuer = RealIssuer(db);
             var buyer = await db.Companies.AsNoTracking().SingleAsync(c => c.Id == f.BuyerId);
+            // ผู้ติดต่อของผู้เช่าเกิดตอนบิลก่อนกรอกที่อยู่ (seed = ไม่มีที่อยู่ — สภาพจริงของ production) · บริษัทผู้เช่ามีที่อยู่แล้ว (ด่านข้อมูลผู้ซื้อผ่าน)
+            Assert.Null((await db.Contacts.AsNoTracking().SingleAsync(c => c.Id == f.ContactId)).Address);
             var res = await issuer.IssuePaidReceiptAsync(pay, buyer);
             Assert.True(res != null, issuer.LastFailureReason);
+            // ตัวออกใบเติมที่อยู่จากบริษัทผู้ซื้อให้ผู้ติดต่อ (เดิม: อนุมัติล้ม §86/4 "ขาดที่อยู่ผู้ซื้อ" ⇒ ตกโหมด PDF ไม่ลงบัญชี)
+            Assert.Equal(Address, (await db.Contacts.AsNoTracking().SingleAsync(c => c.Id == f.ContactId)).Address);
             using var check = DbTestDatabase.TryCreateContext()!;
             var gl = await (from l in check.JournalEntryLines.AsNoTracking()
                             join e in check.JournalEntries.AsNoTracking() on l.JournalEntryId equals e.Id
@@ -327,6 +348,43 @@ public class PlatformWhtRound234DbTests
             var reg = await check.WhtCreditsReceived.AsNoTracking().SingleAsync(w => w.CompanyId == f.PlatformId && w.DocumentId == res!.DocumentId);
             Assert.Equal(WhtCreditStatus.Pending, reg.Status);            // ทะเบียนจาก GL — รอ 50 ทวิ
             Assert.Equal(426.11m, reg.WhtAmount);
+        });
+    }
+
+    [Fact]
+    public async Task S4_contact_address_kept_when_present_and_never_invented_when_buyer_has_none()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม"); return; }
+        var (f, pay) = await SeedIssuingAsync(db, withGroup119: true);
+        // ทิศตรงข้าม (1): ผู้ติดต่อมีที่อยู่อยู่แล้ว ⇒ ไม่ทับ (เอกสารไม่มีสำเนาที่อยู่ของตัวเอง — ทับแล้วใบเก่าพิมพ์ซ้ำได้ที่อยู่ใหม่)
+        const string contactAddress = "1 ที่อยู่เดิมบนผู้ติดต่อ กรุงเทพฯ 10200";
+        var contact = await db.Contacts.SingleAsync(c => c.Id == f.ContactId);
+        contact.Address = contactAddress;
+        // ทิศตรงข้าม (2): ผู้เช่าอีกรายในบริษัทผู้ให้บริการเดียวกัน ไม่มีที่อยู่บริษัทเลย · ไม่หัก (ด่านไม่บล็อกการจ่าย) ⇒ ไม่แต่งที่อยู่ · ใบกำกับเต็มรูปไม่ออก (เหตุชัด ไม่โยนขึ้นผู้เรียก)
+        var g = await PlatformBillingPhase2DbTests.SeedAsync(db, f.PlatformId);
+        var pay2 = new SubscriptionPayment
+        {
+            SubscriptionId = g.Sub.Id, PaymentNumber = "SP-234S4N-" + Guid.NewGuid().ToString("N")[..6], Amount = 1_070m, WithholdingTaxAmount = 0m,
+            PaymentDate = DateTime.UtcNow, RequestedPlan = SubscriptionPlan.Pro, RequestedBillingCycle = BillingCycle.Monthly, RequestedPeriodMonths = 1,
+            Status = SubscriptionPaymentStatus.Approved, ReviewedAt = DateTime.UtcNow,
+        };
+        db.SubscriptionPayments.Add(pay2);
+        await db.SaveChangesAsync();
+        await WithIssuingPlatformAsync(db, f.PlatformId, async () =>
+        {
+            var issuer = RealIssuer(db);
+            var buyer = await db.Companies.AsNoTracking().SingleAsync(c => c.Id == f.BuyerId);
+            var res = await issuer.IssuePaidReceiptAsync(pay, buyer);
+            Assert.True(res != null, issuer.LastFailureReason);
+            Assert.Equal(contactAddress, (await db.Contacts.AsNoTracking().SingleAsync(c => c.Id == f.ContactId)).Address);
+
+            var noAddressBuyer = await db.Companies.AsNoTracking().SingleAsync(c => c.Id == g.BuyerId);
+            Assert.True(string.IsNullOrWhiteSpace(noAddressBuyer.Address));
+            Assert.Null(await issuer.IssuePaidReceiptAsync(pay2, noAddressBuyer));
+            Assert.Contains("ที่อยู่ผู้ซื้อ", issuer.LastFailureReason);
+            Assert.True(string.IsNullOrWhiteSpace((await db.Contacts.AsNoTracking().SingleAsync(c => c.Id == g.ContactId)).Address));
+            Assert.False(await db.Documents.AnyAsync(d => d.CompanyId == f.PlatformId && d.Reference == pay2.PaymentNumber && d.Status != DocumentStatus.Draft));
         });
     }
 

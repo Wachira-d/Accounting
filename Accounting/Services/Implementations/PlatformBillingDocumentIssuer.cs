@@ -524,6 +524,35 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
             // ผู้ติดต่อเดิมอาจถูกสร้างไว้เป็นผู้ขายอย่างเดียว — ต้องเป็นลูกค้าด้วย
             // ไม่งั้นสร้างเอกสารฝั่งขายไม่ผ่าน validation บทบาทคู่ค้า
             if (!existing.IsCustomer) { existing.IsCustomer = true; dirty = true; }
+            // รอบ 234 (แก้ CI · §86/4): แถวที่เกิดตอนบิลก่อนผู้เช่ากรอกที่อยู่ (ผู้ติดต่อไม่มีที่อยู่) — ผู้เช่ากรอกที่อยู่บริษัทแล้ว
+            // (ด่าน PlatformPayerProfileGate ผ่าน · ติ๊กหัก ณ ที่จ่ายได้) แต่ใบกำกับเต็มรูปอ่านที่อยู่จากผู้ติดต่อ ⇒ อนุมัติล้ม "ขาดที่อยู่ผู้ซื้อ"
+            // ⇒ ตกโหมด PDF ที่ไม่ลงบัญชี/ไม่เข้าทะเบียนภาษีถูกหัก · เติมเฉพาะช่องที่ว่าง (ไม่ทับที่อยู่ที่มีอยู่ — เอกสารไม่มีสำเนาที่อยู่ของตัวเอง
+            // ทับแล้วใบเก่าพิมพ์ซ้ำได้ที่อยู่ใหม่) · ค่ามาจากข้อมูลบริษัทผู้ซื้อจริง ไม่ใช่ค่าแต่ง — เดิมรับแค่เลขภาษี/สาขา (R2-C9) ลืมที่อยู่
+            // ฝ่ายค้าน (แก้ CI 234): S2 เติมเฉพาะแถวที่จับได้ด้วยกุญแจที่ยืนยันตัวตน (ExternalKey/TaxKey) — ไม่เติมแถวที่จับด้วยชื่ออย่างเดียว
+            // (อาจเป็นคนละรายที่ผู้ให้บริการสร้างมือ) · N1 เติมทั้งชุดเมื่อช่องที่อยู่ทุกช่องว่าง (ไม่ผสมสองแหล่ง — e-Tax XML อ่านช่องแยก) ·
+            // S1 audit chain การแก้ผู้ติดต่อโดยระบบ (กฎ M)
+            if (matchedBy is Accounting.Helpers.ContactMatchKind.ExternalKey or Accounting.Helpers.ContactMatchKind.TaxKey
+                && string.IsNullOrWhiteSpace(existing.Address) && string.IsNullOrWhiteSpace(existing.SubDistrict)
+                && string.IsNullOrWhiteSpace(existing.District) && string.IsNullOrWhiteSpace(existing.Province)
+                && string.IsNullOrWhiteSpace(existing.PostalCode)
+                && !string.IsNullOrWhiteSpace(buyer.Address))
+            {
+                existing.Address = buyer.Address;
+                existing.SubDistrict = buyer.SubDistrict;
+                existing.District = buyer.District;
+                existing.Province = buyer.Province;
+                existing.PostalCode = buyer.PostalCode;
+                dirty = true;
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = tenantId, EntityType = nameof(Contact), EntityId = existing.Id.ToString(), Action = AuditAction.Update,
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        action = "platform-contact-address-filled", reason = "ผู้ติดต่อของผู้เช่ายังไม่มีที่อยู่ — เติมจากข้อมูลบริษัทผู้ซื้อ (ใบกำกับเต็มรูป §86/4)",
+                        matchedBy = matchedBy.ToString(), buyer.Address, buyer.SubDistrict, buyer.District, buyer.Province, buyer.PostalCode,
+                    }),
+                });
+            }
             // ผูกกุญแจ tenant ให้แถวที่จับได้ด้วยเลข/ชื่อ (ถ้ายังไม่ผูกกับระบบใด) — รอบหน้าเจอด้วยกุญแจ (1) ทันที
             if (string.IsNullOrWhiteSpace(existing.ExternalSystem) && string.IsNullOrWhiteSpace(existing.ExternalId))
             {

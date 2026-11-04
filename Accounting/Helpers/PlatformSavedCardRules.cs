@@ -64,12 +64,12 @@ public static class PlatformSavedCardRules
         => whtAcknowledged ? versionShown + WhtAckVersionSuffix : versionShown;
 
     /// <summary>ฉบับข้อความ+นโยบายของคำสั่งตัด (ตัดเครื่องหมายรับทราบภาษีหักท้าย)</summary>
-    public static string? MandateBase(string? mandateConsentVersion)
+    private static string? MandateBase(string? mandateConsentVersion)
         => mandateConsentVersion?.EndsWith(WhtAckVersionSuffix, StringComparison.Ordinal) == true
             ? mandateConsentVersion[..^WhtAckVersionSuffix.Length] : mandateConsentVersion;
 
     /// <summary>ฉบับเดียวกันแต่ข้อความรุ่นก่อน (ตัดเต็มยอด) — ใช้ยอมรับคำสั่งตัดเดิม</summary>
-    public static string LegacyVersionOf(string currentConsentVersion)
+    private static string LegacyVersionOf(string currentConsentVersion)
         => currentConsentVersion.StartsWith(ConsentTextVersion, StringComparison.Ordinal)
             ? LegacyFullChargeTextVersion + currentConsentVersion[ConsentTextVersion.Length..] : currentConsentVersion;
 
