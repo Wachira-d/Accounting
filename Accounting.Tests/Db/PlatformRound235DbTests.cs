@@ -176,7 +176,7 @@ public class PlatformRound235DbTests
         await EnsureProTemplateAsync(db);
         var person = await PlatformBillingPhase2DbTests.SeedAsync(db, plan: SubscriptionPlan.Pro, status: SubscriptionStatus.Active, endInDays: 20);
         var personCo = await db.Companies.FirstAsync(c => c.Id == person.BuyerId);
-        personCo.TaxId = null;   // ไม่ใช่นิติบุคคล
+        personCo.TaxId = "";   // ไม่ใช่นิติบุคคล (คอลัมน์ NOT NULL — ไม่มีเลข = "")
         await db.SaveChangesAsync();
         var svc = new SubscriptionService(db, F4Proxy<INotificationService>.Create((_, _) => null));
         var reviewer = new User { Email = $"r235-admin-{Guid.NewGuid():N}@test.local", PasswordHash = "x", FullName = "แอดมินทดสอบ 235", IsSystemAdmin = true };
@@ -243,6 +243,12 @@ public class PlatformRound235DbTests
         var storage = F4Proxy<Accounting.Services.Storage.IFileStorage>.Create((name, args) =>
         {
             if (name == nameof(Accounting.Services.Storage.IFileStorage.DeleteAsync)) deleted.Add(args[0]?.ToString() ?? "");
+            // ctor ของ FileAttachmentService อ่าน Locator.AttachmentsRoot — proxy คืน null ⇒ NRE (CI รอบ 235)
+            if (name == "get_" + nameof(Accounting.Services.Storage.IFileStorage.Locator))
+            {
+                var root = Path.GetTempPath();
+                return new Accounting.Services.Storage.FileStorageLocator(root, root, root, root);
+            }
             return null;
         });
         var files = new FileAttachmentService(db, Microsoft.Extensions.Logging.Abstractions.NullLogger<FileAttachmentService>.Instance,

@@ -193,7 +193,7 @@ public class PlatformRefundCreditNoteDbTests
         var intent = new PaymentIntent
         {
             CompanyId = f.PlatformId, PayerCompanyId = f.BuyerId, SourceKind = PaymentSourceKind.AddOnPurchase, SourceId = featureRowId,
-            ProviderCode = OmisePaymentProvider.Code, Amount = 1_040m, Status = PaymentIntentStatus.Succeeded, IsTestMode = false,
+            ProviderCode = OmisePaymentProvider.Code, Amount = 1_040m, Status = PaymentIntentStatus.Refunded, IsTestMode = false,
             ConfirmedAt = DateTime.UtcNow.AddDays(-3), ProviderRef = "chrg_test_r235", IdempotencyKey = "t235-" + Guid.NewGuid().ToString("N"),
         };
         db.PaymentIntents.Add(intent);
