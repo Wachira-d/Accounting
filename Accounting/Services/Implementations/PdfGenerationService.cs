@@ -400,7 +400,13 @@ public partial class PdfGenerationService : IPdfGenerationService
         string? Title,
         // W9 R-61: ผู้ใช้เจ้าของช่องถูกถอดจากบริษัทแล้ว (Helpers/DepartedSignerRule) — รูปถูกถอด · renderer ทั้งสองพิมพ์
         // หมายเหตุ DocumentLabels.SigDeparted ใต้ชื่อ (ธงเดียว ห้ามสองตัวเรนเดอร์ตัดสินเอง)
-        bool Departed = false);
+        bool Departed = false,
+        // รอบ 239: ช่องลูกค้าของใบเสนอราคาที่ลูกค้ายอมรับออนไลน์ — เวลายอมรับ (UTC) + หมายเหตุลูกค้า · renderer ทั้งสองพิมพ์
+        // DocumentLabels.QtAcceptedOnline / QtAcceptNote ใต้ชื่อ (ค่าจาก ResolveSignersAsync ตัวเดียว ห้ามสองตัวเรนเดอร์อ่าน Document เอง)
+        DateTime? AcceptedOnlineAt = null,
+        string? AcceptNote = null,
+        // ฝ่ายค้าน S3: เนื้อหาเปลี่ยนหลังลูกค้ายอมรับ ⇒ ไม่มีรูป + renderer พิมพ์ DocumentLabels.QtAcceptContentChanged
+        bool AcceptContentChanged = false);
 
     /// <summary>The document's posted journal entry, summarised for the
     /// "การลงบัญชี (Dr./Cr.)" block printed at the end of the document when the
@@ -961,6 +967,33 @@ public partial class PdfGenerationService : IPdfGenerationService
         return new GlPostingSummary("(ประมาณการ — ก่อนอนุมัติ)", doc.DocumentDate, consolidated, totalDr, totalCr);
     }
 
+    /// <summary>รอบ 239 (ฝ่ายค้าน S3): ผู้ลงนามช่องลูกค้าจากการยอมรับออนไลน์ — เนื้อหาไม่ตรงกับฉบับที่ยอมรับ
+    /// (<see cref="Accounting.Helpers.QuotationAcceptance.ContentMatches"/> = false) ⇒ ไม่ใส่รูป + <c>AcceptContentChanged</c> (renderer พิมพ์
+    /// <c>DocumentLabels.QtAcceptContentChanged</c>) · null (ไม่มี hash — ใบก่อนรอบ 239) ⇒ พิมพ์ตามเดิม</summary>
+    internal static DocumentSigner QuotationAcceptanceSigner(Document doc, IEnumerable<DocumentLine>? lines, byte[]? signaturePng)
+    {
+        var changed = Accounting.Helpers.QuotationAcceptance.ContentMatches(doc, lines) == false;
+        var png = changed ? null : signaturePng;
+        return new DocumentSigner(png == null ? null : ImageDataUri(png), png, doc.QuotationAcceptedBy, null,
+            AcceptedOnlineAt: doc.QuotationAcceptedAt, AcceptNote: doc.QuotationAcceptNote, AcceptContentChanged: changed);
+    }
+
+    /// <summary>รอบ 239: วางผู้ยอมรับออนไลน์ลงช่องลูกค้า (slot 2) · ฝ่ายค้าน N: ยอมรับแบบไม่มีรูป (ไม่เซ็น/เนื้อหาเปลี่ยน) แต่ช่องนี้มีรูปลายเซ็นลูกค้าเดิม
+    /// จากเส้นอนุมัติภายนอกอยู่แล้ว ⇒ คงของเดิม (ไม่ทับรูปจริงด้วยค่าว่าง)</summary>
+    internal static void PlaceQuotationAcceptance(List<DocumentSigner> signers, DocumentSigner accepted)
+    {
+        if (signers.Count > 2)
+        {
+            if (accepted.SignatureImageBytes == null && signers[2].SignatureImageBytes is { Length: > 0 }) return;
+            signers[2] = accepted;
+        }
+        else
+        {
+            while (signers.Count < 2) signers.Add(new DocumentSigner(null, null, null, null));
+            signers.Add(accepted);
+        }
+    }
+
     /// <summary>Resolve the signers for a document, aligned positionally to the
     /// template's signature label slots (signers[0] → SignatureLabel1, etc.):
     ///   slot 0 = preparer  — the document creator (CreatedBy).
@@ -1142,6 +1175,22 @@ public partial class PdfGenerationService : IPdfGenerationService
                 ? raw : "data:image/png;base64," + raw;
             signers.Add(new DocumentSigner(dataUri, TryDecodeBase64Image(raw),
                 custSig.ApproverName, custSig.ApproverTitle));
+        }
+
+        // รอบ 239: QUOTATION ONLINE ACCEPTANCE (slot 2 = "ลูกค้าอนุมัติ") — ลูกค้ายอมรับผ่านลิงก์สาธารณะ (ชื่อ + เวลา + หมายเหตุ + ลายเซ็นถ้ามี) ·
+        // รูปอ่านจากที่เก็บกลางเฉพาะไฟล์ใต้โฟลเดอร์ของบริษัท/เอกสารนี้ · ฝ่ายค้าน S3: เนื้อหาเปลี่ยนหลังยอมรับ ⇒ ไม่พิมพ์รูป + ป้ายเตือน ·
+        // ฝ่ายค้าน N: ยอมรับแบบไม่เซ็นไม่ทับรูปลายเซ็นลูกค้าเดิมจากเส้นอนุมัติภายนอก · ใช้ร่วมทั้ง HTML และ QuestPDF (ตัวตัดสินใน 2 เมธอด pure ข้างล่าง)
+        if (doc.DocumentType == DocumentType.Quotation && doc.QuotationAcceptedAt != null)
+        {
+            byte[]? qtSig = null;
+            var store = _storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
+            if (Accounting.Helpers.QuotationAcceptance.IsOwnSignatureLocation(doc.QuotationAcceptSignaturePath,
+                    store.Locator.AttachmentsRoot, doc.CompanyId, doc.Id))
+            {
+                var b = TryReadImage(doc.QuotationAcceptSignaturePath);
+                if (Accounting.Helpers.SignatureImageValidator.LooksLikeStoredPng(b)) qtSig = b;
+            }
+            PlaceQuotationAcceptance(signers, QuotationAcceptanceSigner(doc, doc.Lines, qtSig));
         }
 
         // AUTHORIZED-SIGNATORY FALLBACK. The "ผู้อนุมัติ / ผู้มีอำนาจลงนาม"
@@ -2521,6 +2570,13 @@ public partial class PdfGenerationService : IPdfGenerationService
                 // W9 R-61: ผู้ลงนามออกจากบริษัทแล้ว — รูปถูกถอดที่ ApplySignerPolicyAsync · ป้ายผ่าน DocumentLabels (คู่กับ QuestPDF ComposeSignatures)
                 if (s is { Departed: true })
                     sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(L.SigDeparted)}</div>");
+                // รอบ 239: ลูกค้ายอมรับใบเสนอราคาออนไลน์ — เวลา (พ.ศ./เวลาไทย) + หมายเหตุ · ป้ายผ่าน DocumentLabels (คู่กับ QuestPDF ComposeSignatures)
+                if (s?.AcceptedOnlineAt is { } acceptedAt)
+                    sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(L.QtAcceptedOnline(acceptedAt))}</div>");
+                if (s?.AcceptedOnlineAt != null && !string.IsNullOrWhiteSpace(s.AcceptNote))
+                    sb.Append($"<div class='sig-title'>{WebUtility.HtmlEncode(L.QtAcceptNote)}: {WebUtility.HtmlEncode(s.AcceptNote!)}</div>");
+                if (s is { AcceptContentChanged: true })
+                    sb.Append($"<div class='sig-title' style='color:#b45309'>{WebUtility.HtmlEncode(L.QtAcceptContentChanged)}</div>");
                 sb.AppendLine("</td>");
             }
             // ป้ายลายเซ็น (EN) ที่ผู้ใช้ตั้งไว้ — ใช้เมื่อพิมพ์เอกสารภาษาอังกฤษ
@@ -2532,6 +2588,13 @@ public partial class PdfGenerationService : IPdfGenerationService
             if (template.SignatureCount >= 3 && sigL3 != null) Box(sigL3, sigAt(2));
             sb.AppendLine("</tr></table>");
         }
+
+        // รอบ 239: ใบเสนอราคาที่ลูกค้ายอมรับออนไลน์แต่เทมเพลตไม่มีช่องลูกค้า (ปิดลายเซ็น/มี 2 ช่อง) ⇒ บล็อกการยอมรับแยก — การยอมรับต้องไม่หายจากกระดาษ
+        // (เงื่อนไข "มีช่องไหม" จาก QuotationAcceptance.CustomerBoxShown ตัวเดียวกับ QuestPDF)
+        if (signers is { Count: > 2 } && signers[2].AcceptedOnlineAt is { } qtAt
+            && !Accounting.Helpers.QuotationAcceptance.CustomerBoxShown(template.ShowSignature, template.SignatureCount,
+                PickLangText(template.SignatureLabel3, template.SignatureLabel3En, lang)))
+            sb.AppendLine(QuotationAcceptanceBlockHtml(signers[2], qtAt, L));
 
         // ── การลงบัญชี (Dr./Cr.) — compact internal-audit footnote ─────────
         // One tight line per posting: "Dr 5xx ชื่อบัญชี ........ 1,940.00".

@@ -189,13 +189,17 @@ public class CompanyService : ICompanyService
             }
 
             // Auto-attach to creator's AccountSubscription if it has a slot.
+            // รอบ 238 ฝ่ายค้าน S2: ผูกอัตโนมัติเฉพาะ License ที่ยังไม่พ้นวันหมดอายุ (ช่วงผ่อนผัน PastDue ไม่ผูกเงียบ ๆ — บริษัทใหม่จะอ่านอย่างเดียวทันทีที่ผ่อนผันจบ) ·
+            // กติกาเดียว PlanIdentityResolver.MayAutoAttach · ผูกเองได้พร้อมคำเตือน (AttachLicenseGraceWarning)
+            var autoNow = DateTime.UtcNow;
             var acct = await _db.AccountSubscriptions
                 .Where(a => a.OwnerUserId == userId && !a.IsDeleted
                     && (a.Status == SubscriptionStatus.Trial
                         || a.Status == SubscriptionStatus.Active
-                        || a.Status == SubscriptionStatus.PastDue))
+                        || a.Status == SubscriptionStatus.PastDue)
+                    && a.EndDate >= autoNow)
                 .FirstOrDefaultAsync();
-            if (acct == null) return;
+            if (acct == null || !Accounting.Helpers.PlanIdentityResolver.MayAutoAttach(acct.Status, acct.EndDate, autoNow)) return;
 
             var used = await _db.Subscriptions.CountAsync(s => s.AccountSubscriptionId == acct.Id && !s.IsDeleted);
             if (used >= acct.MaxCompanies) return;  // out of slots — user manages manually

@@ -338,6 +338,15 @@ public class AdminAccountSubscriptionController : ControllerBase
         if (used >= ap.MaxCompanies)
             return BadRequest(new ApiResponse<string>(false, null, $"License ใช้ครบ {ap.MaxCompanies} บริษัทแล้ว — ต้องเพิ่ม MaxCompanies ก่อน"));
 
+        // รอบ 238 (คำตัดสิน 236-9 · ค่าตั้งต้นรอเจ้าของยืนยัน): เวลาที่บริษัทจ่ายเองไว้เดินต่อ ไม่คืนเงิน ⇒ บอกแอดมินในผลตอบ + ลงประวัติ
+        // ฝ่ายค้าน S2: License พ้นวันหมดอายุแล้ว (ช่วงผ่อนผัน) ⇒ เตือนด้วย
+        var attachNow = DateTime.UtcNow;
+        var warnParts = new[]
+        {
+            PlanIdentityResolver.AttachPaidTimeWarning(sub.Kind, sub.IsPermanentFree, sub.Status, sub.EndDate, sub.LastPaymentDate, attachNow),
+            PlanIdentityResolver.AttachLicenseGraceWarning(ap.EndDate, ap.GracePeriodDays, attachNow),
+        }.Where(p => p != null).ToList();
+        var paidWarning = warnParts.Count == 0 ? null : string.Join(" · ", warnParts);
         sub.AccountSubscriptionId = ap.Id;
         sub.UpdatedBy = JwtHelper.GetUserIdFromClaims(User).ToString();
         sub.UpdatedAt = DateTime.UtcNow;
@@ -347,14 +356,15 @@ public class AdminAccountSubscriptionController : ControllerBase
             SubscriptionId = sub.Id,
             AccountSubscriptionId = ap.Id,
             Action = "AttachedToAccountPlan",
-            Notes = $"Admin attached company {companyId} to Account Plan {ap.Id}",
+            Notes = $"Admin attached company {companyId} to Account Plan {ap.Id}" + (paidWarning == null ? "" : $" · {paidWarning}"),
             PerformedBy = JwtHelper.GetUserIdFromClaims(User).ToString()
         });
         // รอบ 236 (ฝ่ายค้าน S1): รายการค่าแพ็กเกจระดับบริษัทที่ยังรอชำระ ⇒ ยกเลิกในธุรกรรมเดียวกับการผูก
         await _subSvc.CancelPendingPlanPaymentsForLicenseAsync(sub.Id, companyId, JwtHelper.GetUserIdFromClaims(User).ToString());
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
-        return Ok(new ApiResponse<string>(true, null, "ผูกบริษัทเข้า License สำเร็จ"));
+        return Ok(new ApiResponse<string>(true, paidWarning,
+            paidWarning == null ? "ผูกบริษัทเข้า License สำเร็จ" : $"ผูกบริษัทเข้า License สำเร็จ · ⚠️ {paidWarning}"));
     }
 
     /// <summary>History feed for an Account Plan — pulls SubscriptionHistory

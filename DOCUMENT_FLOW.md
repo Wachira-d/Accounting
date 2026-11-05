@@ -2275,10 +2275,29 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   `Document.QuotationAcceptToken(+ExpiresAt)`; เรียกซ้ำ = revoke ลิงก์เก่า
 - **ฝั่งลูกค้า** (`PublicQuotationController`, AllowAnonymous):
   `GET /api/public/quotation/{token}` ดูรายการ+ยอด (sanitized) และ
-  `POST .../accept` บันทึก `QuotationAcceptedAt/By` + stamp หลักฐานลง Notes
-  (append-only) — **ไม่ auto-convert** เป็น invoice (ผู้ขายกดแปลงเองหลังเห็น
+  `POST .../accept` บันทึก `QuotationAcceptedAt/By` — **ไม่ auto-convert** เป็น invoice (ผู้ขายกดแปลงเองหลังเห็น
   การยอมรับ — กันเอกสารการเงินเกิดจาก anonymous click)
-- **หน้า**: `pages/quotation-accept.html` (standalone, ไม่ใช้ Layout)
+- **รอบ 239 — PDF + ลายเซ็น + หลักฐาน ม.9** (คำตัดสิน 239-1…239-6 · กติกาเดียว `Helpers/QuotationAcceptance` · ตัวตรวจรูป `Helpers/SignatureImageValidator`):
+  ① ทุกเส้นสาธารณะผ่านด่าน token เดียว `FindByTokenAsync` (hex · ใบเสนอราคา · ไม่ร่าง/ไม่ยกเลิก/ไม่ถูกลบ · ไม่หมดอายุ · ออกลิงก์ใหม่ = ลิงก์เดิมใช้ไม่ได้) ·
+  ② `GET …/{token}/pdf` = `IPdfGenerationService.GenerateDocumentPdfAsync(doc.CompanyId, doc.Id)` ตัวเดียวกับที่ผู้ขายดาวน์โหลด (ภาษาเอกสารผ่าน resolver กลาง · ไม่มีพารามิเตอร์อื่น ⇒
+  เอื้อมถึงใบอื่นไม่ได้) · จำกัดต่อ IP (`IChatRateLimiter` · PDF 10/นาที · ยอมรับ 10/นาที) · `Cache-Control: private, no-store` ·
+  ③ `POST …/accept` รับ `{acceptedBy, note?, signatureBase64?}` — ชื่อบังคับ · ลายเซ็นไม่บังคับ เว้น `CompanySettings.RequireSignatureForQuotationAccept`
+  (หน้า ตั้งค่า › "ต้องเซ็นเพื่อยอมรับใบเสนอราคา") · ลายเซ็นที่ส่งมาต้องผ่านตัวตรวจ (PNG จริง · ≤ 200KB · 40×20–2000×1000 · ไม่ว่าง) — ไม่ผ่าน = 400 ไม่ใช่ยอมรับแบบไม่เซ็น ·
+  ไฟล์ PNG (ไบต์ที่ตรวจแล้ว) เก็บบน `IFileStorage` ใต้ `{AttachmentsRoot}/quotation-acceptances/{companyId}/{docId}-{guid}.png` (ไม่อยู่ใน allow-list `/uploads` ⇒ ไม่มี URL สาธารณะ) ·
+  จองแบบอะตอมมิก `ExecuteUpdate … WHERE QuotationAcceptedAt IS NULL AND token เดิม` + แถว audit chain (`AddChainedAuditLog` · Action=Approve · `ETA-9`) ในธุรกรรมเดียว ·
+  หลักฐาน: `QuotationAcceptSignaturePath` · `QuotationAcceptNote` · `QuotationAcceptContentHash` (`DocumentSignedContent.Hash`) · `QuotationAcceptIp` ·
+  `QuotationAcceptUserAgentHash` · `QuotationAcceptTokenHash` (SHA-256) · **เลิกต่อข้อความลง Notes** (เนื้อหาเอกสารห้ามเปลี่ยนหลังยอมรับ — ใบเก่าที่ต่อไว้แล้วคงเดิม) ·
+  ยอมรับซ้ำ = ตอบสถานะเดิม (ไม่ทับ · ไม่มี audit/ไฟล์ซ้ำ) · `GET …/{token}/signature` = รูปลายเซ็นของใบนั้น (ไฟล์ต้องอยู่ใต้โฟลเดอร์บริษัท/เอกสารเดียวกัน) ·
+  ④ **กระดาษ**: `ResolveSignersAsync` (ใช้ร่วม HTML + QuestPDF) ตั้ง slot 2 "ลูกค้าอนุมัติ" = ชื่อ + รูป + `AcceptedOnlineAt` + `AcceptNote` (ทับลายเซ็นลูกค้าจากขั้นอนุมัติภายนอก) ·
+  ป้าย `DocumentLabels.QtAcceptedOnline` (ไทย พ.ศ. เวลาไทย / อังกฤษ ค.ศ. GMT+7) · เทมเพลตไม่มีช่องที่ 3 (`QuotationAcceptance.CustomerBoxShown`) ⇒ บล็อก "ลูกค้ายอมรับใบเสนอราคาออนไลน์"
+  แยก (HTML `QuotationAcceptanceBlockHtml` · QuestPDF `ComposeQuotationAcceptanceBlock`) ·
+  ⑤ **ผู้ขาย**: `DocumentResponse.QuotationAcceptNote/HasSignature/ContentMatches` + `GET /document/{id}/quotation-acceptance/signature` (ด่านอ่าน `GetDocumentForUserAsync`) → แผงในหน้ารายละเอียด ·
+  ⑥ **Rev ใหม่** ล้างหลักฐานทั้งชุดที่ `QuotationAcceptance.ClearOn` (ค่าเดิม + ตำแหน่งไฟล์อยู่ใน `DocumentRevision.SnapshotJson` · ไฟล์ไม่ถูกลบ — อายุเก็บตามเอกสาร) ·
+  ⑥b **ฝ่ายค้าน (239-9)**: เนื้อหาเปลี่ยนหลังยอมรับ (`QuotationAcceptance.ContentMatches` = false) ⇒ กระดาษไม่พิมพ์รูป + ป้าย `QtAcceptContentChanged` · ไม่มี hash ⇒ ตามเดิม ·
+  ยอมรับแบบไม่มีรูปไม่ทับรูปลายเซ็นลูกค้าเดิม · PDPA: DSR ครอบหลักฐาน · erase พ้นอายุเก็บ (MAX(RetentionUntil, วันที่ + 5 ปี)) ⇒ `ErasePii` + ลบไฟล์ ·
+  บริษัทถูกระงับยังดู/ดาวน์โหลด/ยอมรับได้ (239-7) ·
+  ⑦ **แปลง QT → SO/ใบแจ้งหนี้/ใบกำกับ: ลายเซ็นยอมรับไม่ถูกคัดลอก** (หลักฐานของข้อเสนอ ไม่ใช่ของใบกำกับ) — ใบลูกอ้างใบเสนอราคาผ่าน `RelatedDocumentId` เดิม · ใบแทน (settlement reissue) ไม่สืบทอด
+- **หน้า**: `pages/quotation-accept.html` (standalone, ไม่ใช้ Layout · ช่องวาด `/js/signature-pad.js` ตัวเดียวกับหน้าเซ็นรับสินค้า · ข้อความยินยอม ม.9 มาจาก API)
 - ปุ่ม "🔗 ลิงก์ยอมรับ" ในหน้ารายการเอกสาร (Quotation Approved/Sent)
 - **ลายเซ็นลูกค้าผ่านขั้นอนุมัติ** (`SignatureApprovalService.ExternalApproveQuotationAsync` · รอบ 193 O1 R3-3/B9): ถามคำเตือนก่อนบันทึกลายเซ็น (§3.2) ·
   ลายเซ็นเดิม**ใช้ซ้ำได้เฉพาะเนื้อหาเดิม** — ตัวตั้ง canonical ตัวเดียว `Helpers/DocumentSignedContent.Hash(doc, lines)` (**`v2:`** + SHA-256 · ครอบผู้ซื้อ ·
@@ -2307,7 +2326,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   บน canvas (มือถือ) + ชื่อผู้รับ → เก็บ `DeliverySignatureBase64/SignedAt/By`
   + stamp Notes; ลายเซ็น**ประทับลงช่อง "ผู้รับของ" (slot 1) บน PDF อัตโนมัติ**
   (`ResolveSignersAsync` override) พร้อมเวลาเซ็น (+07:00)
-- **หน้า**: `pages/delivery-sign.html` (standalone signature pad)
+- **หน้า**: `pages/delivery-sign.html` (ช่องวาด `/js/signature-pad.js` · รอบ 239)
+- **รอบ 239**: รูปที่ส่งมาตรวจด้วย `SignatureImageValidator` ตัวเดียวกับใบเสนอราคา (เดิมรับ base64 อะไรก็ได้ ≤ 700KB) · เก็บไบต์ที่ตรวจแล้วเป็น data URI · แถวเดิมไม่แตะ · ลำดับ (ฝ่ายค้าน S2): เพดานต่อ IP → หาใบจาก token → เซ็นแล้ว = สถานะเดิม → ตรวจรูป
 - ปุ่ม "✍️ ลิงก์เซ็นรับ" ในหน้ารายการเอกสาร (DeliveryNote Approved/Sent)
 
 ### 2.9 Consignment (ฝากขาย)
@@ -2713,7 +2733,17 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
   ทวงหนี้ไม่ทวง/ไม่ระงับจากใบต่ออายุ + เรื่องค้างแอดมิน `PLATFORM-LICENSE-COVERED-INVOICE` · ใบ USAGE- ตามเดิม · อีเมลเตือน License ชี้ทางต่ออายุจริง (`LicenseRenewalHowTo`)
 - **ขอบเขต (236-3):** License หมดอายุ/ถูกระงับแต่บริษัทยังผูก ⇒ ยังเป็นตัวคุม (ตรง `GetEffectivePlanAsync` — อ่านอย่างเดียว) ⇒ ปฏิเสธพร้อมทาง "ถอดออกก่อน" · ถอด/ลบ License ⇒
   แถวบริษัทกลับมามีผลและซื้อได้ · ผู้ถือ License ที่หมดอายุยังต่ออายุผ่านเส้นเดิมได้ (cascade ฟื้นสถานะ)
-- เทสต์ `EffectivePlanRound236Tests` · Db `LicensePurchaseGuardRound236DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+- **License หมดอายุ/ระงับ — ทำจริงรอบ 238 (236-3 · 236-9):** วันหมดอายุ ⇒ License **PastDue** ถึงสิ้นผ่อนผัน (`PlanIdentityResolver.LicenseStatusAfter` ใน `AccountPlanExpiryReminderJob` ·
+  เขียนได้เต็ม) ⇒ พ้นผ่อนผัน Expired (อ่านอย่างเดียว) · งานเตือน**ไม่แตะแถวบริษัท** (เลิก `CascadeExpiredFromLicense` · `LicenseLapseMigration` คืนแถวที่ถูก cascade) ·
+  ด่าน (`SubscriptionService.ResolveGateOverlayAsync` → `GetGateStateAsync`) ส่งสถานะจาก `PlanIdentityResolver.GateStatus` — License ระงับ/ยกเลิก ⇒ Expired
+  (อ่าน + ส่งออกได้ · เขียน 402 `PlanExpired` แทน 403 ทุกคำขอ) · **ไฟล์ยื่นแบบ/ส่งออกของบริษัทหมดอายุทุกบริษัท:** `SubscriptionGatePolicy.Decide` ยอม `IsComplianceOutput`
+  (`IsComplianceOutputPath`: `POST …/tax/e-filing/{form}` เขียนเฉพาะแถวบันทึกผลลัพธ์ `EFilingExports` + `TaxReports.EFilingExportedAt` · `POST …/import-export/export` ·
+  `POST …/reports/{id}/export/{format}` อ่านอย่างเดียว) ผ่านเฉพาะด่านหมดอายุ — บริษัทถูกระงับ (`Company.Status`) ยัง 403 · แจ้งเจ้าของบริษัทใต้ License T-7/วันหมดอายุ ·
+  ถอดเอง (เจ้าของบริษัท/ผู้ถือ · `detach-preview` · audit chain · แจ้งอีกฝ่าย) · ผูกบริษัทที่จ่ายเอง ⇒ คำเตือนเวลาเดินต่อ ไม่คืนเงิน (236-9 ค่าตั้งต้น)
+- **ฝ่ายค้านรอบ 238 (236-10):** License ระงับ/ยกเลิก ⇒ `InactiveReadOnly` เขียน 402 ทุกโหมดด่าน (partner LogOnly ด้วย · ไม่ fail-open เมื่ออ่านแผนไม่ได้) ·
+  e-Filing ไฟล์เดียวกันทุกตัวอักษร/ฟอร์ม/งวดภายใน 10 นาที ⇒ คืนแถว `EFilingExports` เดิม (`EFilingExportDedupe`) · ถอดแถวที่เลยวันหมดอายุ ⇒ Expired (อ่านอย่างเดียว · ซื้อได้) ·
+  ผูกอัตโนมัติเฉพาะ License ที่ยังไม่พ้นวันหมดอายุ · migration ครั้งเดียว (`OneShotDataFixes`)
+- เทสต์ `EffectivePlanRound236Tests` · `LicenseLapseRound238Tests` · Db `LicensePurchaseGuardRound236DbTests` · `LicenseLapseRound238DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 2.12e อัปเกรดกลางรอบ 2 แบบ เลือกได้ (รอบ 237 · K-1 · คำตัดสิน 237-1…237-7)
 
@@ -7447,3 +7477,4 @@ _Last verified against codebase: 2026-11-04 (รอบ 234 ทีมหัก �
 _Last verified against codebase: 2026-11-04 (รอบ 235 ทีมปิดงานค้างนอกเส้นบิล + ฝ่ายค้าน 235-X — (1) K-5 ศักราช: ตัวตัดสินกลาง `ThaiDate.TryNormalizeEra`/`NormalizeEra`/`IsOutOfEra` แทน `AddYears(±543)` 18+2 จุด · แปลงแล้วยังนอกช่วง/29 ก.พ. ไม่มีจริง = 400 (integration) / อ่านไม่ได้ (statement) · งานซ่อม `reports/repair-dates` (JournalManage) ครอบสองทิศ + ข้ามงวดปิด/ออกเลขแล้ว/แบบภาษียื่นแล้ว (`Helpers/BuddhistDateRepairPolicy`) · ปุ่มบนบัญชีแยกประเภทจาก `eraRepair` ของเซิร์ฟเวอร์ (2) อัตราจำกัดเส้นสมัคร/รีเซ็ตรหัสผ่าน/สมัครประตูลูกค้า: ต่อ IP (IPv6 /64) fail-closed · ทั้งระบบ = เตือนแอดมิน · ตารางนับใช้ไม่ได้ = 503 (`Helpers/AuthRateLimitPolicy` · `IChatRateLimiter.ConsumeAsync`) (3) รายงานเงินทดสอบที่ลงบัญชีไปแล้ว + หลักฐาน — เทสต์ `BuddhistEraNormalizeRound235Tests` · `BuddhistDateRepairPolicyRound235Tests` · `AuthRateLimitRound235Tests` · `TestModeLegacyEffectPolicyRound235Tests` · Db `BuddhistDateRepairDbTests` · `AuthRateLimitSharedDbTests` · `TestModeLegacyEffectsDbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-04 (รอบ 236 — §2.12d บริษัทใต้ License: แพ็กเกจที่มีผลตัวเดียว `PlanIdentityResolver` (+ `LicenseActive`/`CompanyPurchase`/`Label`) ผ่าน `PlanIdentityReader` · ด่านซื้อแพ็กเกจระดับบริษัททุกทางเข้า (409 `PLATFORM-LICENSE-COVERED`) · ใบเสนอ/preview `RefusedByLicense` · ไม่เตือน/ไม่ออกใบต่ออายุแถวบริษัทที่ License คุม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-04 (รอบ 237 — §2.12e อัปเกรดกลางรอบ 2 แบบเลือกได้ (K-1): ตัวตัดสินเดียว `PlatformProration.UpgradeByMode` (คงวันหมดอายุ / เริ่มรอบใหม่หักเครดิต · เครดิตครอบยอด = ปฏิเสธ) · ค่าตั้ง `SiteSettings.PlatformUpgradeModeOffer` · แบบที่เลือกประทับ `SubscriptionPayment.UpgradeMode` · อนุมัติ `ApprovalRouteOf` ไม่อ่านค่าตั้ง · License ขยับตามแบบ ข — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-04 (รอบ 238 — §2.12d License หมดอายุ/ระงับ (236-3 ทำจริง · 236-9): ผ่อนผันจริง `LicenseStatusAfter` · งานเตือนเลิก cascade แถวบริษัท + `LicenseLapseMigration` · ด่านเห็น License ระงับ/ยกเลิกเป็นหมดอายุ `GateStatus` · ไฟล์ยื่นแบบ/ส่งออกผ่านด่านหมดอายุ `IsComplianceOutputPath` · แจ้งเจ้าของบริษัทใต้ License · ถอดเอง (เจ้าของ/ผู้ถือ) + detach-preview + audit chain · คำเตือนผูกบริษัทที่จ่ายเอง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

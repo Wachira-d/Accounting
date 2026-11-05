@@ -162,6 +162,10 @@ public class SubscriptionCheckMiddleware
             BlockReadsWhenExpired = sub.BlockReadsWhenExpired,
             IsDataExport = SubscriptionGatePolicy.IsDataExportPath(path),
             AllowExportWhenExpired = sub.AllowExportWhenExpired,
+            // รอบ 238 (236-3 ข้อ 4): ไฟล์ยื่นแบบ/ส่งออก POST ผ่านด่าน "หมดอายุ" (ตัวตัดสินเส้นทางเดียว — ไม่ใช่ด่านระงับ)
+            IsComplianceOutput = SubscriptionGatePolicy.IsComplianceOutputPath(path, context.Request.Method),
+            // รอบ 238 ฝ่ายค้าน S1: License ระงับ/ยกเลิก ⇒ เขียนไม่ได้ทุกโหมด (ไม่พึ่ง eff ที่อาจอ่านไม่ได้)
+            InactiveReadOnly = sub.InactiveReadOnly,
         });
 
         // ===== โหมดเงา: ตัดสินแล้วบันทึก แต่ไม่บล็อก — แอดมินดูผลกระทบก่อนเปิดบังคับ =====

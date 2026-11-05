@@ -6341,3 +6341,31 @@ _รอบ 237 ฝ่ายค้าน (2026-11-04 · DECISIONS 237-8/237-9): S
 N1 ข้อความพัก/ปฏิเสธแยก "อัปเกรดแบบเริ่มรอบใหม่" · N2 `SubscriptionPayment.PaidPeriodStartUtc` (คอลัมน์ใหม่) ใช้บนใบเสร็จ/ศูนย์บิล · N3 บรรทัดเทียบแบบ ก ไม่ขึ้น "มูลค่าคงเหลือ" + บอกแบบที่ค่าตั้งไม่เปิด ·
 N4 รายการค้างแถวเก่า (null) = แบบ ก · N5 Db test อยู่ collection `SubscriptionExpirySweep` · เทสต์ Db S1 License แพ็กตรง/ไม่ตรง · S2 เครดิตครอบยอด · S3 พัก/เหตุผล/audit · N4 · N6 ค่าตั้งผิด 400 + audit + หน้าซื้อส่งแบบที่ไม่เปิด —
 ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 238 — คำตัดสิน 236-3 ทำจริง (ทีมตัดสิน · ผู้ประสานงานอนุมัติภายใต้คำมอบหมายเจ้าของ "ตั้งทีมตัดสิน") + 236-9 (ค่าตั้งต้น รอเจ้าของยืนยัน): บริษัทที่ผูก License ที่หมดอายุ/ระงับ
+**ยังอยู่ใต้ License** (ไม่ถอยอัตโนมัติ) แต่แก้ข้อบกพร่องจริง: (1) ผ่อนผัน 0 วัน — `AccountPlanExpiryReminderJob` ตั้ง Expired ทันทีที่ถึงวันหมดอายุทั้งที่อีเมลสัญญา "ผ่อนผัน N วัน" ⇒
+`PlanIdentityResolver.LicenseStatusAfter` (ในผ่อนผัน PastDue · พ้น Expired · ระงับ/ยกเลิกไม่แตะ) (2) งานเตือนเขียนแถวบริษัท (`CascadeExpiredFromLicense`) ขัด 236-1/236-4 ⇒ ถอดออก +
+`Helpers/LicenseLapseMigration` (idempotent: คืน FromStatus ของแถวที่ประวัติเปลี่ยนสถานะล่าสุดยังเป็น cascade · License Expired ในผ่อนผัน ⇒ PastDue) + ตัวตรวจทั้งเรพ `cascade_writer_errors`
+(3) License ระงับ/ยกเลิก ⇒ 403 ทั้งอ่านและส่งออก ⇒ `PlanIdentityResolver.GateStatus` ส่งให้ด่านเป็น Expired (อ่าน/ส่งออกได้ · เขียน 402 · ไม่เก็บลงฐาน) (4) โหมดอ่านอย่างเดียวบล็อกไฟล์ยื่นแบบ/ส่งออก ⇒
+`SubscriptionGatePolicy.IsComplianceOutputPath` + `SubscriptionGateFacts.IsComplianceOutput` (ผ่านเฉพาะด่านหมดอายุ · ทุกบริษัทที่หมดอายุ · ไม่ผ่านด่านระงับ) (5) แจ้งเจ้าของบริษัทใต้ License T-7/วันหมดอายุ บิต 16/32
+(6) ถอด: เจ้าของบริษัทหรือผู้ถือ License · audit chain · แจ้งอีกฝ่าย · `GET detach-preview` · `effective` + `graceEndsAt`/`canSelfDetach` · ปุ่มบนแบนเนอร์ `subscription.html` · หน้า License แสดง License หมดอายุที่ยังมีบริษัท
+(7) ผูกบริษัทที่จ่ายเอง ⇒ "เวลาที่จ่ายไว้ X วันยังเดินอยู่ ไม่คืนเงิน" (`AttachPaidTimeWarning` · `attach-preview` · Attach · AdminAttach) · กติกา R238 ใน `required_call_site_check` + เคสฝ่ายค้าน R238a–f ·
+เทสต์ `LicenseLapseRound238Tests` · Db `LicenseLapseRound238DbTests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 238 ฝ่ายค้าน (2026-11-05 · DECISIONS 236-10): B1/S4 migration ครั้งเดียวด้วยตาราง marker `OneShotDataFixes` + ไม่พลิก License ที่แอดมินตั้ง Expired เอง · B2 คืนสถานะ cascade เฉพาะแถวปลอดภัย +
+ถอดแถวที่เลยวันหมดอายุ ⇒ Expired (`CompanyStatusAfterDetach` · พรีวิวตรงผลจริง) · S1 `InactiveReadOnly` (License ระงับ/ยกเลิก เขียน 402 ทุกโหมด · ไม่ fail-open) · S2 ผูกอัตโนมัติเฉพาะ License ที่ยังไม่หมดอายุ +
+คำเตือนผูกในช่วงผ่อนผัน · S3 IDOR `effective` + พรีวิว/ถอด 404 · N1 `EFilingExportDedupe` · N2 ร่องรอยอีเมลล้ม (ประวัติ License + JobRun + ผลตอบถอด) · N3/N4 จดคำตัดสิน ·
+กติกา R238 เพิ่ม (marker · auto-attach · IDOR · ธงอ่านอย่างเดียว · ตั้งสถานะตอนถอด · e-Filing dedupe) + เคสฝ่ายค้าน R238g–k — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 239 — ใบเสนอราคาออนไลน์: ดาวน์โหลด PDF + ช่องเซ็น + ลายเซ็นประทับบนเอกสาร (เจ้าของ 2026-11-05 "ปรับให้โหลด PDF ได้ และมีช่องให้เซ็น เอาลายเซ็นบันทึกบนเอกสารในระบบไปเลย" ·
+DECISIONS 239-1…239-6 · DOCUMENT_FLOW §2.8/§2.8b): `GET /api/public/quotation/{token}/pdf` (ด่าน token เดียว · PDF ตัวเดียวกับผู้ขาย · จำกัดต่อ IP) ·
+`POST …/accept` รับลายเซ็น (ไม่บังคับ · ค่าตั้งใหม่ `CompanySettings.RequireSignatureForQuotationAccept`) ตรวจด้วย `Helpers/SignatureImageValidator` ตัวเดียว (ใช้กับเซ็นรับสินค้าด้วย) ·
+ไฟล์บน `IFileStorage` (ไม่มี URL สาธารณะ) · หลักฐาน ม.9 (IP · hash UA/token/เนื้อหา · audit chain) · จองอะตอมมิก · ยอมรับซ้ำ = สถานะเดิม · เลิกต่อข้อความลง Notes ·
+กระดาษสอง renderer: ช่อง "ลูกค้าอนุมัติ" + บล็อกแยกเมื่อเทมเพลตไม่มีช่อง (ป้าย `DocumentLabels.QtAccept*`) · หน้าเอกสารผู้ขายแสดงชื่อ/เวลา/หมายเหตุ/ลายเซ็น/เนื้อหาตรงไหม ·
+Rev ใหม่ล้างทั้งชุด (`QuotationAcceptance.ClearOn`) · แปลงเป็นใบลูกไม่คัดลอกลายเซ็น · ช่องวาดกลาง `/js/signature-pad.js` · เทสต์ `QuotationAcceptanceRound239Tests` +
+`Db/QuotationAcceptanceRound239DbTests` · ล็อกจุดเรียก `_R239_*` (8 กติกา + เคสฝ่ายค้าน R239a–f) · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+
+_รอบ 239 ฝ่ายค้าน (2026-11-05 · DECISIONS 239-7…239-9): S1 RGBA ขาวทึบไม่นับเป็นลายเซ็น · S2 `SignDelivery` ตรวจ token/สถานะก่อนถอดรูป + เพดานต่อ IP ·
+S3 เนื้อหาเปลี่ยนหลังยอมรับ ⇒ ไม่พิมพ์รูปลายเซ็น + ป้ายเตือน (สอง renderer · `QuotationAcceptance.ContentMatches` ตัวเดียวกับหน้าเอกสาร) · N: ตรวจพาธใต้รากที่เก็บ ·
+อ่านไฟล์ตรวจเบา + เพดาน · ไม่ทับลายเซ็นลูกค้าเดิมด้วยค่าว่าง · PDPA DSR/erase ครอบหลักฐานการยอมรับ/เซ็นรับ (legal hold ตามอายุเอกสาร) · `CleanText` surrogate ·
+เทสต์ race/SignDelivery/S1/S3 สองทิศ · ระงับบริษัทไม่ปิดเส้นสาธารณะ (239-7) · UA hash ไม่ใช่การทำให้ไม่ระบุตัวตน (239-8) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_

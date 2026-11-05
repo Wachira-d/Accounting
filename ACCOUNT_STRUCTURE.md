@@ -219,6 +219,19 @@ subscription เดิมโดยสิ้นเชิง — โควตา�
   ผู้ถือ · วันหมดอายุ · ทางไปต่อ "ผู้ถือ License จัดการที่หน้า License / ถอดบริษัทออกจาก License ก่อน") · `Label`/`StatusLabel` (ป้าย/ตารางสถานะเดียว) ·
   ตัวอ่าน `Services/Platform/PlanIdentityReader` · ด่านเงินทุกทางเข้า + จอแอดมิน/ศูนย์บิล/หน้าซื้อ ดู DOCUMENT_FLOW §2.12d · แถว `Subscription` ของบริษัทที่ผูก
   License = **พักอยู่** (แสดงเป็นข้อมูลรอง · ไม่เตือน/ไม่เดินสถานะหมดอายุ · ไม่ออกใบต่ออายุ · ผูกแล้วยกเลิกรายการรอชำระ — 236-7) จนกว่าจะถอด · License หมดอายุแต่ยังผูก = ยังคุม (อ่านอย่างเดียว) ⇒ ต้องถอดก่อนซื้อเอง
+- **รอบ 238 (คำตัดสิน 236-3 ทำจริง + 236-9) — License หมดอายุ/ระงับ:** ไม่ถอยไปใช้แถวบริษัทอัตโนมัติ แต่ —
+  **ผ่อนผันมีจริง** `LicenseStatusAfter` (หลังวันหมดอายุ ≤ `AccountSubscription.GracePeriodDays` ⇒ **PastDue** เขียนได้เต็ม · พ้น ⇒ Expired · ระงับ/ยกเลิกไม่แตะ · ผู้เรียกเดียว `AccountPlanExpiryReminderJob`) ·
+  งานเตือน **ไม่เขียนแถว `Subscription` ของบริษัทอีก** (เลิก `CascadeExpiredFromLicense` · ตัวตรวจ `cascade_writer_errors` ทั้งเรพ) — `Helpers/LicenseLapseMigration` (idempotent) คืน `FromStatus` ให้แถวที่ประวัติเปลี่ยนสถานะล่าสุดยังเป็น cascade + ประวัติ `CascadeExpiredRestored` ·
+  License ที่ Expired ในระยะผ่อนผัน ⇒ PastDue · **ด่าน** เห็น License ระงับ/ยกเลิกเป็นหมดอายุ (`GateStatus` · อ่าน/ส่งออกได้ เขียน 402 · ไม่เก็บลงฐาน · หน้าแพ็กเกจยังแสดงสถานะจริง) ·
+  ไฟล์ยื่นแบบ/ส่งออกผ่านด่านหมดอายุ (`SubscriptionGatePolicy.IsComplianceOutputPath` — ทุกบริษัทที่หมดอายุ · ไม่ผ่านด่านบริษัทถูกระงับ) · **แจ้งเจ้าของบริษัทใต้ License** (ไม่รวมผู้ถือ) T-7 / วันหมดอายุ
+  = บิต 16 / 32 ของ `ExpiryRemindersSentMask` (`LicenseLapseCompanyNotice` — วันสิ้นผ่อนผัน พ.ศ. · อ่าน/ส่งออก/ยื่นแบบได้เสมอ · ทางถอด) · **ถอด** `POST api/account-subscription/detach` = เจ้าของบริษัท **หรือ** ผู้ถือ License
+  (`MayDetach` · สมาชิกอื่น 403) · `AddChainedAuditLog` + ประวัติ `DetachedFromAccountPlan` · แจ้งอีกฝ่าย · `GET detach-preview/{companyId}` ("หลังถอดจะใช้ {Label} ถึง {วันที่} / ซื้อได้ทันที" — `DetachPreview`) ·
+  `GET effective/{companyId}` + `graceEndsAt` · `canSelfDetach` · หน้า License ของผู้ถือแสดง License ที่ Expired ซึ่งยังมีบริษัทผูก (ถอดได้) · **ผูกบริษัทที่จ่ายเอง** ⇒ เวลาที่จ่ายไว้เดินต่อ ไม่คืนเงิน
+  (236-9 ค่าตั้งต้น รอเจ้าของยืนยัน) — `AttachPaidTimeWarning` ใน `GET attach-preview/{companyId}` · `Attach` · `AdminAttach`
+- **รอบ 238 ฝ่ายค้าน (236-10):** migration ครั้งเดียว (ตาราง marker ใหม่ `OneShotDataFixes(Key, AppliedAt)` — ใช้ซ้ำได้กับงานซ่อมข้อมูลครั้งเดียวอื่น) · ไม่พลิก License ที่แอดมินตั้ง Expired เอง ·
+  คืนสถานะ cascade เฉพาะแถวที่ยังผูก/ฟรีถาวร/ยังไม่หมดอายุ · ถอดแถวที่เลยวันหมดอายุ ⇒ Expired ทันที (`CompanyStatusAfterDetach` + ประวัติ `DetachStatusSettled`) ·
+  License ระงับ/ยกเลิก ⇒ `SubscriptionGateState.InactiveReadOnly` เขียน 402 ทุกโหมด · ผูกอัตโนมัติตอนสร้างบริษัทเฉพาะ License ที่ยังไม่พ้นวันหมดอายุ (`MayAutoAttach`) ·
+  ผูกเองในช่วงผ่อนผัน ⇒ คำเตือน · `effective`/`*-preview`/`detach` 404 สำหรับผู้ไม่เกี่ยวข้อง (สมาชิกบริษัท/ผู้ถือ License เท่านั้น)
 - **หน้าจัดการทีม** — `GET api/company/{id}/users` / `roles` ของผู้ที่ไม่ใช่สมาชิก = **403** ข้อความไทย (`CompanyMembershipGuard` · เดิม 401 ⇒ ถูกเด้งออกจากระบบ) ·
   แอดมินแพลตฟอร์มอ่านได้ · `api.js` ปุ่ม "🔐 สิทธิ์"/ลบบริษัท เดิมยิง `api/companies/…` (404) → `api/company/…`
 

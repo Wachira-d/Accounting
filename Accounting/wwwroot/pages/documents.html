@@ -11290,6 +11290,8 @@
           this.loadDocumentChain(d.id, d.relatedDocumentId);
           // "รออนุมัติจากใคร" — โหลดขนานกับ chain (best-effort ไม่ block)
           this.loadApprovalStatus(d.id);
+          // รอบ 239: ลูกค้ายอมรับใบเสนอราคาออนไลน์ — ชื่อ · เวลา · หมายเหตุ · ลายเซ็น (ดึงรูปด้วย JWT ผ่าน endpoint ที่ตรวจสิทธิ์อ่าน)
+          this.renderQuotationAcceptance(d);
 
           let actions = '<button class="btn btn-secondary" onclick="Layout.closeModal(\'detailModal\')" data-i18n="common.close">ปิด</button>';
           actions += ` <button data-g="primary" class="btn btn-info" onclick="Page.showPdf('${d.id}')">PDF</button>`;
@@ -13777,6 +13779,41 @@
           }
           Layout.toast('ส่งขออนุมัติไม่สำเร็จ: ' + m, 'error');
         }
+      },
+
+      /** รอบ 239: แผง "ลูกค้ายอมรับออนไลน์" บนหน้ารายละเอียดใบเสนอราคา — ค่าทั้งหมดจากเซิร์ฟเวอร์ (DocumentResponse)
+       *  quotationAcceptContentMatches: true = เนื้อหาตรงกับที่ลูกค้ายอมรับ · false = เปลี่ยนแล้ว · null/undefined = ไม่ได้ตรวจ (ใบก่อนรอบ 239) */
+      async renderQuotationAcceptance(d) {
+        const host = document.getElementById('detailContent');
+        if (!host || !d || d.documentType !== 'Quotation' || !d.quotationAcceptedAt) return;
+        const old = document.getElementById('qtAcceptPanel');
+        if (old) old.remove();
+        const match = d.quotationAcceptContentMatches;
+        const matchTxt = match === true ? '✓ เนื้อหาเอกสารตรงกับฉบับที่ลูกค้ายอมรับ'
+          : match === false ? '⚠️ เนื้อหาเอกสารเปลี่ยนไปจากฉบับที่ลูกค้ายอมรับ' : '';
+        const box = document.createElement('div');
+        box.id = 'qtAcceptPanel';
+        box.style.cssText = 'background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;color:#14532d';
+        box.innerHTML = `✅ <b>ลูกค้ายอมรับใบเสนอราคาออนไลน์</b> — โดย ${Layout.esc(d.quotationAcceptedBy || '-')}
+          เมื่อ ${Layout.esc(new Date(d.quotationAcceptedAt).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }))} น.
+          ${d.quotationAcceptNote ? `<div style="margin-top:4px">หมายเหตุลูกค้า: ${Layout.esc(d.quotationAcceptNote)}</div>` : ''}
+          ${matchTxt ? `<div style="margin-top:4px;font-size:12px">${matchTxt}</div>` : ''}
+          ${d.quotationAcceptHasSignature ? '<div id="qtAcceptSig" style="margin-top:6px;font-size:12px;color:#64748b">กำลังโหลดลายเซ็น…</div>' : '<div style="margin-top:4px;font-size:12px;color:#64748b">ยอมรับโดยไม่เซ็นลายมือชื่อ</div>'}`;
+        host.insertAdjacentElement('afterbegin', box);
+        if (!d.quotationAcceptHasSignature) return;
+        const slot = document.getElementById('qtAcceptSig');
+        try {
+          const cid = Layout.getCompanyId();
+          const r = await fetch(`/api/companies/${cid}/document/${d.id}/quotation-acceptance/signature`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
+          });
+          if (!r.ok) throw new Error('โหลดลายเซ็นไม่สำเร็จ');
+          const url = URL.createObjectURL(await r.blob());
+          const img = document.createElement('img');
+          img.src = url; img.alt = 'ลายเซ็นลูกค้า';
+          img.style.cssText = 'max-height:90px;max-width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:6px;display:block';
+          if (slot) { slot.textContent = ''; slot.appendChild(img); }
+        } catch (e) { if (slot) slot.textContent = e.message; }
       },
 
       /** แผง "รออนุมัติจากใคร" ในหน้ารายละเอียด — โหลดหลัง render (best-effort)

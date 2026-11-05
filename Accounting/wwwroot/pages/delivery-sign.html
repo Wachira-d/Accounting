@@ -39,11 +39,13 @@
 </head>
 <body>
   <div class="card" id="card"><div class="err" id="loading">กำลังโหลด...</div></div>
+  <script src="/js/signature-pad.js"></script>
   <script>
+    // รอบ 239: ช่องวาดลายเซ็นใช้ตัวกลาง /js/signature-pad.js (pointer events · ย่อ PNG) — ตัวเดียวกับหน้ายอมรับใบเสนอราคา
     const token = new URLSearchParams(location.search).get('token');
     const card = document.getElementById('card');
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    let drawn = false;
+    let pad = null;
 
     async function load() {
       if (!token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
@@ -76,54 +78,27 @@
           <canvas id="pad"></canvas>
           <div class="pad-hint" id="padHint">✍️ เซ็นชื่อตรงนี้</div>
         </div>
-        <div style="text-align:right"><button class="clear-btn" onclick="clearPad()">ล้างลายเซ็น</button></div>
+        <div style="text-align:right"><button type="button" class="clear-btn" id="padClear">ล้างลายเซ็น</button></div>
         <input id="signName" placeholder="ชื่อ-นามสกุลผู้รับสินค้า *" maxlength="200">
         <input id="signNote" placeholder="หมายเหตุ เช่น ของครบ/กล่องบุบ (ถ้ามี)" maxlength="500">
-        <button class="primary" id="signBtn" onclick="submitSign()">✓ ยืนยันรับสินค้า</button>`;
+        <button class="primary" id="signBtn">✓ ยืนยันรับสินค้า</button>`;
       initPad();
     }
 
-    let ctx, canvas;
     function initPad() {
-      canvas = document.getElementById('pad');
-      const scale = window.devicePixelRatio || 1;
-      canvas.width = canvas.offsetWidth * scale;
-      canvas.height = canvas.offsetHeight * scale;
-      ctx = canvas.getContext('2d');
-      ctx.scale(scale, scale);
-      ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1e293b';
-      let last = null;
-      const pos = (e) => {
-        const rect = canvas.getBoundingClientRect();
-        const p = e.touches ? e.touches[0] : e;
-        return { x: p.clientX - rect.left, y: p.clientY - rect.top };
-      };
-      const start = (e) => { e.preventDefault(); last = pos(e); };
-      const move = (e) => {
-        if (!last) return;
-        e.preventDefault();
-        const p = pos(e);
-        ctx.beginPath(); ctx.moveTo(last.x, last.y); ctx.lineTo(p.x, p.y); ctx.stroke();
-        last = p; drawn = true;
-        document.getElementById('padHint').style.display = 'none';
-      };
-      const end = () => { last = null; };
-      canvas.addEventListener('mousedown', start); canvas.addEventListener('mousemove', move);
-      window.addEventListener('mouseup', end);
-      canvas.addEventListener('touchstart', start, { passive: false });
-      canvas.addEventListener('touchmove', move, { passive: false });
-      canvas.addEventListener('touchend', end);
-    }
-    function clearPad() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      drawn = false;
-      document.getElementById('padHint').style.display = 'flex';
+      const hint = document.getElementById('padHint');
+      pad = SignaturePad.create(document.getElementById('pad'), {
+        onChange: (hasInk) => { hint.style.display = hasInk ? 'none' : 'flex'; },
+      });
+      document.getElementById('padClear').addEventListener('click', () => pad.clear());
+      document.getElementById('signBtn').addEventListener('click', submitSign);
     }
 
     async function submitSign() {
       const name = (document.getElementById('signName').value || '').trim();
       if (!name) { alert('กรุณาระบุชื่อผู้รับสินค้า'); return; }
-      if (!drawn) { alert('กรุณาวาดลายเซ็นก่อน'); return; }
+      const signature = pad ? pad.toPngDataUrl() : null;
+      if (!signature) { alert('กรุณาวาดลายเซ็นก่อน'); return; }
       const btn = document.getElementById('signBtn');
       btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
       try {
@@ -132,7 +107,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             signedBy: name,
-            signatureBase64: canvas.toDataURL('image/png'),
+            signatureBase64: signature,
             note: (document.getElementById('signNote').value || '').trim() || null,
           }),
         });

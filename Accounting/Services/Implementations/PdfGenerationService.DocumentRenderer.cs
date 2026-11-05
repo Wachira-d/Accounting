@@ -210,6 +210,7 @@ public partial class PdfGenerationService
                         ComposeSummary(col, doc, template, accent, layout, L);
                         Safe(() => ComposeFooter(col, doc, template, accent, L, issuer));
                         Safe(() => ComposeSignatures(col, template, b, signers, lang));
+                        Safe(() => ComposeQuotationAcceptanceBlock(col, template, signers, lang));   // รอบ 239 — คู่กับ HTML QuotationAcceptanceBlockHtml
                         Safe(() => ComposeGlPosting(col, gl, lang, L));
                     });
 
@@ -1212,8 +1213,43 @@ public partial class PdfGenerationService
                     // W9 R-61: ผู้ลงนามออกจากบริษัทแล้ว — รูปถูกถอดที่ ApplySignerPolicyAsync · ป้ายเดียวกับ HTML
                     if (s is { Departed: true })
                         c.Item().AlignCenter().Text(L.SigDeparted).FontSize(9).FontColor("#666");
+                    // รอบ 239: ลูกค้ายอมรับใบเสนอราคาออนไลน์ — เวลา + หมายเหตุ (ป้ายเดียวกับ HTML Box)
+                    if (s?.AcceptedOnlineAt is { } acceptedAt)
+                        c.Item().AlignCenter().Text(L.QtAcceptedOnline(acceptedAt)).FontSize(9).FontColor("#666");
+                    if (s?.AcceptedOnlineAt != null && !string.IsNullOrWhiteSpace(s.AcceptNote))
+                        c.Item().AlignCenter().Text($"{L.QtAcceptNote}: {s.AcceptNote}").FontSize(9).FontColor("#666");
+                    if (s is { AcceptContentChanged: true })
+                        c.Item().AlignCenter().Text(L.QtAcceptContentChanged).FontSize(9).FontColor("#B45309");
                 });
             }
+        });
+    }
+
+    /// <summary>รอบ 239: บล็อก "ลูกค้ายอมรับใบเสนอราคาออนไลน์" (QuestPDF) — เมื่อเทมเพลตไม่มีช่องลูกค้า (<see cref="Accounting.Helpers.QuotationAcceptance.CustomerBoxShown"/>
+    /// ตัวเดียวกับ HTML) · ข้อมูลจาก signers[2] ที่ ResolveSignersAsync ตั้ง · ป้ายจาก DocumentLabels · คู่กับ HTML <c>QuotationAcceptanceBlockHtml</c></summary>
+    internal static void ComposeQuotationAcceptanceBlock(ColumnDescriptor col, EntTemplate t,
+        IReadOnlyList<DocumentSigner>? signers, string lang = "th")
+    {
+        if (signers is not { Count: > 2 } || signers[2].AcceptedOnlineAt is not { } acceptedAt) return;
+        if (Accounting.Helpers.QuotationAcceptance.CustomerBoxShown(t.ShowSignature, t.SignatureCount,
+                PickLangText(t.SignatureLabel3, t.SignatureLabel3En, lang)))
+            return;
+        var L = Accounting.Services.Implementations.Pdf.DocumentLabels.For(lang);
+        var s = signers[2];
+        col.Item().ShowEntire().PaddingTop(14).Border(0.5f).BorderColor("#CBD5E1").Padding(8).Column(c =>
+        {
+            c.Item().Text(L.QtAcceptHeading).Bold().FontSize(10);
+            if (s.SignatureImageBytes is { Length: > 0 })
+            {
+                try { c.Item().Height(14, Unit.Millimetre).Width(60, Unit.Millimetre).Image(s.SignatureImageBytes).FitArea(); }
+                catch { c.Item().Height(14, Unit.Millimetre).Text(""); }
+            }
+            c.Item().Text($"{L.QtAcceptBy}: {s.Name}").FontSize(10);
+            c.Item().Text(L.QtAcceptedOnline(acceptedAt)).FontSize(10);
+            if (!string.IsNullOrWhiteSpace(s.AcceptNote))
+                c.Item().Text($"{L.QtAcceptNote}: {s.AcceptNote}").FontSize(10);
+            if (s.AcceptContentChanged)
+                c.Item().Text(L.QtAcceptContentChanged).FontSize(10).FontColor("#B45309");
         });
     }
 

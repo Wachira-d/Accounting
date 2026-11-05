@@ -182,6 +182,29 @@ public class DocumentController : ControllerBase
         }, "สร้างลิงก์แล้ว — ส่งให้ลูกค้ากดยอมรับได้เลย (อายุ 30 วัน)"));
     }
 
+    /// <summary>รอบ 239: รูปลายเซ็นที่ลูกค้าเซ็นตอนยอมรับใบเสนอราคาออนไลน์ (ข้อมูลส่วนบุคคล) — ผ่านด่านอ่านเอกสารเดียวกับหน้าเอกสาร
+    /// (<c>GetDocumentForUserAsync</c>: ฝั่งเอกสาร + ชั้นความลับ · ไม่มีสิทธิ์ ⇒ โยนตามเดิม) · ไฟล์ต้องอยู่ใต้โฟลเดอร์ของบริษัท/เอกสารนี้ ·
+    /// ไม่มี URL สาธารณะ — หน้าเว็บดึงด้วย JWT แล้วทำเป็น blob</summary>
+    [HttpGet("{documentId:guid}/quotation-acceptance/signature")]
+    public async Task<IActionResult> GetQuotationAcceptanceSignature(Guid companyId, Guid documentId,
+        [FromServices] Accounting.Services.Storage.IFileStorage storage)
+    {
+        var visible = await _documentService.GetDocumentForUserAsync(companyId, documentId, JwtHelper.GetUserIdFromClaims(User));
+        if (visible.IsRedacted) return NotFound(new ApiResponse<object>(false, null, "ไม่พบลายเซ็น"));
+        var row = await _db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted)
+            .Select(d => new { d.QuotationAcceptSignaturePath, d.QuotationAcceptedAt })
+            .FirstOrDefaultAsync();
+        if (row?.QuotationAcceptedAt == null
+            || !QuotationAcceptance.IsOwnSignatureLocation(row.QuotationAcceptSignaturePath, storage.Locator.AttachmentsRoot, companyId, documentId))
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบลายเซ็น"));
+        var bytes = await storage.ReadAllBytesAsync(row.QuotationAcceptSignaturePath);
+        if (!SignatureImageValidator.LooksLikeStoredPng(bytes))   // ตรวจเต็มแล้วตอนรับ — ตอนอ่านตรวจแค่ magic + ขนาด
+            return NotFound(new ApiResponse<object>(false, null, "ไม่พบลายเซ็น"));
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return File(bytes!, "image/png");
+    }
+
     /// <summary>สร้าง/ต่ออายุลิงก์ "ลูกค้าเซ็นรับสินค้าออนไลน์" (POD) — เฉพาะ
     /// ใบส่งของที่อนุมัติแล้ว; token อายุ 14 วัน; เรียกซ้ำ = revoke ลิงก์เก่า.</summary>
     [HttpPost("{documentId:guid}/delivery-sign-link")]

@@ -869,6 +869,11 @@ public record DocumentResponse(
     // หลักฐานการยอมรับออนไลน์ (echo ให้ UI เตือนก่อนแก้ + โชว์สถานะ)
     DateTime? QuotationAcceptedAt = null,
     string? QuotationAcceptedBy = null,
+    /// <summary>รอบ 239: หมายเหตุที่ลูกค้าพิมพ์ตอนยอมรับ · มีลายเซ็นไหม (รูปดึงจาก <c>GET …/quotation-acceptance/signature</c>) ·
+    /// เนื้อหาตอนนี้ยังตรงกับที่ลูกค้ายอมรับไหม (null = ไม่มี hash — ใบที่ยอมรับก่อนรอบ 239)</summary>
+    string? QuotationAcceptNote = null,
+    bool QuotationAcceptHasSignature = false,
+    bool? QuotationAcceptContentMatches = null,
     // หลักฐานเซ็นรับของ (POD) บนใบส่งของ — ผูกพันเท่าการยอมรับใบเสนอราคา
     // UI ใช้เตือนก่อนแก้ว่า Rev ใหม่จะทำให้ลายเซ็นเดิมใช้ไม่ได้
     DateTime? DeliverySignedAt = null,

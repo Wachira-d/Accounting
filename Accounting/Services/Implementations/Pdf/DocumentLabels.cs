@@ -147,6 +147,22 @@ public sealed class DocumentLabels
     public string Reference => this["reference"];
     public string StatusVoided => this["status_voided"];
     public string SigDeparted => this["sig_departed"];
+    /// <summary>รอบ 239: ช่อง "ลูกค้าอนุมัติ" ของใบเสนอราคาที่ลูกค้ายอมรับออนไลน์ — ทั้งสอง renderer ใช้ข้อความนี้ (ห้าม literal)</summary>
+    public string QtAcceptHeading => this["qt_accept_heading"];
+    public string QtAcceptBy => this["qt_accept_by"];
+    public string QtAcceptNote => this["qt_accept_note"];
+    /// <summary>ฝ่ายค้านรอบ 239 S3: เนื้อหาใบเปลี่ยนหลังลูกค้ายอมรับ ⇒ ไม่ประทับรูปลายเซ็น พิมพ์ข้อความนี้แทน</summary>
+    public string QtAcceptContentChanged => this["qt_accept_content_changed"];
+    /// <summary>"ยอมรับออนไลน์ 5/11/2569 14:05 น." (ไทย = พ.ศ. · เวลาไทย) / "Accepted online 05 Nov 2026 14:05 (GMT+7)" — รับเวลา UTC</summary>
+    public string QtAcceptedOnline(DateTime utc)
+    {
+        var t = Accounting.Helpers.QuotationAcceptance.BangkokLocal(utc);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var when = IsEnglish
+            ? t.ToString("dd MMM yyyy HH:mm", inv)
+            : $"{t.Day}/{t.Month}/{t.Year + 543} {t.ToString("HH:mm", inv)}";
+        return string.Format(this["qt_accepted_online"], when);
+    }
     public string TaxId => this["tax_id"];
     public string TaxIdShort => this["tax_id_short"];
     public string Terms => this["terms"];
@@ -188,6 +204,12 @@ public sealed class DocumentLabels
         ["status_voided"] = "ยกเลิก",
         // W9 R-61: ผู้ลงนามที่ถูกถอดจากบริษัทแล้ว — ไม่วาดลายเซ็น คงชื่อ + หมายเหตุนี้ (Helpers/DepartedSignerRule)
         ["sig_departed"] = "ผู้ลงนามไม่อยู่ในบริษัทแล้ว",
+        // รอบ 239: การยอมรับใบเสนอราคาออนไลน์ (ช่องลูกค้าอนุมัติ)
+        ["qt_accept_heading"] = "ลูกค้ายอมรับใบเสนอราคาออนไลน์",
+        ["qt_accept_by"] = "ผู้ยอมรับ",
+        ["qt_accept_note"] = "หมายเหตุลูกค้า",
+        ["qt_accepted_online"] = "ยอมรับออนไลน์ {0} น.",
+        ["qt_accept_content_changed"] = "เนื้อหาเปลี่ยนหลังลูกค้ายอมรับ — ไม่ประทับลายเซ็น",
 
         // ── หัวข้อมูลเอกสาร ──
         ["doc_number"] = "เลขที่",
@@ -290,6 +312,11 @@ public sealed class DocumentLabels
         ["copy_duplicate"] = "COPY",
         ["status_voided"] = "VOID",
         ["sig_departed"] = "Signer no longer with the company",
+        ["qt_accept_heading"] = "Quotation accepted online by customer",
+        ["qt_accept_by"] = "Accepted by",
+        ["qt_accept_note"] = "Customer note",
+        ["qt_accepted_online"] = "Accepted online {0} (GMT+7)",
+        ["qt_accept_content_changed"] = "Content changed after customer acceptance — signature not applied",
 
         ["doc_number"] = "No.",
         ["doc_date"] = "Date",

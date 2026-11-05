@@ -76,6 +76,17 @@ public partial class TaxService
                 throw new ArgumentException($"FormType '{formType}' ยังไม่รองรับ — ใช้ได้: PND.1, PND.2, PND.3, PND.53, PND.54, PND.50, PP.30, PP.36");
         }
 
+        // รอบ 238 ฝ่ายค้าน N1: กดซ้ำได้ไฟล์เดิมทุกตัวอักษรภายในไม่กี่นาที ⇒ คืนแถวเดิม (ไม่เก็บเนื้อไฟล์ซ้ำไม่จำกัด — เส้นนี้ผ่านด่านหมดอายุ) · ตัวตัดสิน Helpers/EFilingExportDedupe
+        var dedupeNow = DateTime.UtcNow;
+        var dedupeSince = dedupeNow.AddMinutes(-Accounting.Helpers.EFilingExportDedupe.WindowMinutes);
+        var recent = await _db.EFilingExports
+            .Where(e => e.CompanyId == companyId && e.FormType == formType && e.PeriodYear == year && e.PeriodMonth == month
+                && e.GeneratedAt >= dedupeSince)
+            .OrderByDescending(e => e.GeneratedAt)
+            .FirstOrDefaultAsync();
+        if (recent != null && Accounting.Helpers.EFilingExportDedupe.ReuseExisting(recent.FileContent, recent.GeneratedAt, body, dedupeNow))
+            return recent;
+
         var export = new EFilingExport
         {
             CompanyId = companyId,

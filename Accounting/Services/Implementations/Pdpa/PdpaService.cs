@@ -176,7 +176,10 @@ public partial class PdpaService : IPdpaService
     private readonly AccountingDbContext _db;
     private static int _serial = 0;
 
-    public PdpaService(AccountingDbContext db) { _db = db; }
+    public PdpaService(AccountingDbContext db, Accounting.Services.Storage.IFileStorage? storage = null) { _db = db; _storage = storage; }
+    /// <summary>รอบ 239: ที่เก็บไฟล์ลายเซ็นยอมรับใบเสนอราคา (ลบไฟล์ของใบที่พ้นอายุเก็บตอนคำขอลบ) · null = ไม่ลบไฟล์ (แถวไม่ชี้แล้ว)</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
+    private readonly List<string> _erasedSignatureFiles = new();
 
     /// <summary>
     /// ผู้ใช้รายนี้เป็น "เจ้าของข้อมูลที่บริษัทนี้ประมวลผล" จริงไหม
@@ -352,12 +355,23 @@ public partial class PdpaService : IPdpaService
                 .Select(d => new {
                     d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate,
                     d.TotalAmount, d.Status, d.Currency,
+                    // รอบ 239 ฝ่ายค้าน N (ม.30/31): ข้อมูลที่เจ้าของข้อมูลให้ไว้ตอนยอมรับใบเสนอราคา/เซ็นรับสินค้าออนไลน์
+                    d.QuotationAcceptedAt, d.QuotationAcceptedBy, d.QuotationAcceptNote, d.QuotationAcceptIp,
+                    d.QuotationAcceptUserAgentHash, d.QuotationAcceptSignaturePath,
+                    d.DeliverySignedAt, d.DeliverySignedBy, HasDeliverySignature = d.DeliverySignatureBase64 != null,
                 }).ToListAsync(ct)
             : null;
         var docRows = docs?.Select(d => new Dictionary<string, object?> {
             ["id"] = d.Id, ["documentNumber"] = d.DocumentNumber,
             ["type"] = d.DocumentType.ToString(), ["date"] = d.DocumentDate,
             ["amount"] = d.TotalAmount, ["currency"] = d.Currency, ["status"] = d.Status.ToString(),
+            // รูปลายเซ็นไม่ฝังในรายงาน (ไฟล์ส่งออกเดินทางไปที่อื่นได้) — บอกว่ามี + ขอสำเนารูปผ่านหน้าเอกสารที่ตรวจสิทธิ์
+            ["quotationAcceptedAt"] = d.QuotationAcceptedAt, ["quotationAcceptedBy"] = d.QuotationAcceptedBy,
+            ["quotationAcceptNote"] = d.QuotationAcceptNote, ["quotationAcceptIp"] = d.QuotationAcceptIp,
+            ["quotationAcceptUserAgentSha256"] = d.QuotationAcceptUserAgentHash,
+            ["quotationAcceptHasSignature"] = d.QuotationAcceptSignaturePath != null,
+            ["deliverySignedAt"] = d.DeliverySignedAt, ["deliverySignedBy"] = d.DeliverySignedBy,
+            ["deliveryHasSignature"] = d.HasDeliverySignature,
         }).ToList() ?? new List<Dictionary<string, object?>>();
 
         var docIds = docs?.Select(x => x.Id).ToList() ?? new List<Guid>();
@@ -858,6 +872,24 @@ public partial class PdpaService : IPdpaService
                 changed++;
             }
 
+            // ── รอบ 239 ฝ่ายค้าน N: หลักฐานการยอมรับใบเสนอราคา/เซ็นรับสินค้าออนไลน์ของคู่ค้ารายนี้ (ม.33) ──
+            // ใบที่ยังอยู่ในอายุเก็บ (QuotationAcceptance.UnderLegalHold = MAX(RetentionUntil, วันที่เอกสาร + 5 ปี) · พ.ร.บ.การบัญชี ม.10 ·
+            // ป.รัษฎากร §87/3 · หลักฐานสัญญา) ⇒ legal hold คงไว้ · พ้นอายุแล้ว ⇒ ล้างชื่อ/หมายเหตุ/IP/รูปลายเซ็น (ErasePii ตัวเดียว)
+            var signedDocs = await _db.Documents
+                .Where(d => d.CompanyId == companyId && d.ContactId == contactId.Value
+                    && (d.QuotationAcceptedAt != null || d.DeliverySignedAt != null))
+                .ToListAsync(ct);
+            var nowUtc = DateTime.UtcNow;
+            foreach (var d in signedDocs.Where(d => !Accounting.Helpers.QuotationAcceptance.UnderLegalHold(d, nowUtc)))
+            {
+                var (erased, file) = Accounting.Helpers.QuotationAcceptance.ErasePii(d);
+                if (!erased) continue;
+                d.UpdatedAt = nowUtc;
+                d.UpdatedBy = actor;
+                changed++;
+                if (file != null && _storage != null) _erasedSignatureFiles.Add(file);
+            }
+
             // ── ผลสแกน OCR ของคู่ค้ารายนี้ (ม.33) ──
             // ⚠️ เดิมเส้นนี้ anonymise แต่ Users + Contacts ⇒ ผู้ที่ใช้สิทธิขอลบ
             // ยัง**ค้นเจอตัวเองได้เต็ม ๆ** ในตารางสแกน เพราะ `RawTextContent`
@@ -892,6 +924,17 @@ public partial class PdpaService : IPdpaService
         {
             // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: บันทึกใต้ "ขอบเขตการลบ" — audit เห็นว่าช่องไหนถูกลบ แต่ไม่เก็บชื่อ/อีเมล/ที่อยู่/ข้อความสแกนเดิม
             await _db.SaveUnderErasureScopeAsync(ct);
+            // ไฟล์ลายเซ็นของใบที่พ้นอายุเก็บ — ลบหลังบันทึกแถวสำเร็จ (แถวไม่ชี้ไฟล์แล้ว · ลบไม่ได้ = ไฟล์กำพร้าที่ไม่มีทางเปิด แต่ต้องบอกผู้ดูแล)
+            foreach (var f in _erasedSignatureFiles)
+            {
+                try { await _storage!.DeleteAsync(f, ct); }
+                catch (Accounting.Services.Storage.FileStorageException ex)
+                {
+                    throw new Accounting.Helpers.BusinessRuleException(
+                        $"ลบข้อมูลในฐานแล้ว แต่ลบไฟล์ลายเซ็นบนที่เก็บไม่สำเร็จ ({ex.Message}) — แจ้งผู้ดูแลระบบให้ลบไฟล์ {System.IO.Path.GetFileName(f)}", "PDPA-ERASE-FILE", 500);
+                }
+            }
+            _erasedSignatureFiles.Clear();
         }
         return changed;
     }

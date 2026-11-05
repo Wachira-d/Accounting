@@ -57,7 +57,13 @@ public sealed record SubscriptionGateFacts(
     /// <summary>คำขอนี้เป็นการส่งออกข้อมูล (<see cref="SubscriptionGatePolicy.IsDataExportPath"/>)</summary>
     bool IsDataExport = false,
     /// <summary>ผู้อ่านของ <c>TrialConfig.AllowDataExportAfterExpiry</c> — เมื่อบล็อกอ่านเพราะหมดอายุ ยังปล่อยเส้นส่งออกข้อมูล (PDPA portability)</summary>
-    bool AllowExportWhenExpired = false);
+    bool AllowExportWhenExpired = false,
+    /// <summary>รอบ 238 (คำตัดสิน 236-3 ข้อ 4): คำขอนี้สร้าง "ผลลัพธ์เชิงกฎหมาย" (ไฟล์ยื่นแบบ e-Filing · ส่งออกข้อมูล) — <see cref="SubscriptionGatePolicy.IsComplianceOutputPath"/> ·
+    /// ผ่าน<b>เฉพาะ</b>ด่านเขียน "หมดอายุ" (<see cref="SubscriptionGateReason.PlanExpired"/>) · ด่านบริษัทถูกระงับยังบล็อกเหมือนเดิม</summary>
+    bool IsComplianceOutput = false,
+    /// <summary>รอบ 238 ฝ่ายค้าน S1: License ระงับ/ยกเลิก (<c>PlanIdentityResolver.LicenseInactiveReadOnly</c>) ⇒ คำขอเขียนได้ 402 <b>ทุกโหมด</b> (Off/LogOnly/Enforce ·
+    /// ไม่พึ่ง <see cref="PlanActive"/>) ยกเว้นผลลัพธ์เชิงกฎหมาย (<see cref="IsComplianceOutput"/>) · ด่านบริษัทถูกระงับมาก่อนเสมอ</summary>
+    bool InactiveReadOnly = false);
 
 /// <summary>ผลตัดสิน</summary>
 /// <param name="Block">เหตุที่ต้องปฏิเสธ (<see cref="SubscriptionGateReason.None"/> = ผ่าน)</param>
@@ -353,6 +359,18 @@ public static class SubscriptionGatePolicy
         return p.Contains("/export") || p.Contains("/dsr/portability") || p.Contains("/dsr/access") || p.EndsWith("/pdf") || p.Contains("/download");
     }
 
+    /// <summary>รอบ 238 (คำตัดสิน 236-3 ข้อ 4): POST ที่เป็น "ผลลัพธ์เชิงกฎหมาย" ของบริษัทที่หมดอายุ/อ่านอย่างเดียว — ตัวตัดสินเดียวของ middleware
+    /// <para>ที่มา: โหมดอ่านอย่างเดียวบล็อกทุก POST ⇒ บริษัทที่ License/แพ็กเกจหมดอายุสร้างไฟล์ยื่น ภ.พ.30/ภ.ง.ด. ไม่ได้ (เสียค่าปรับเพราะแพ็กเกจหมด) และส่งออกข้อมูลของตัวเองไม่ได้ ·
+    /// เส้นที่ยอม (แคบ · จบที่รูปตรงตัว): <c>POST /api/companies/{id}/tax/e-filing/{form}</c> (เขียนเฉพาะแถวบันทึกการสร้างไฟล์ <c>EFilingExports</c> + ประทับ
+    /// <c>TaxReports.EFilingExportedAt</c> — ไม่แตะเอกสาร/สมุดรายวัน/สถานะการยื่น) · <c>POST …/import-export/export</c> · <c>POST …/reports/{id}/export/{format}</c> (อ่านอย่างเดียว) ·
+    /// ใช้กับทุกบริษัทที่หมดอายุ (ไม่เฉพาะสาย License) · <b>ไม่</b>ผ่านด่านบริษัทถูกระงับ</para></summary>
+    public static bool IsComplianceOutputPath(string? path, string? method)
+        => string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) && ComplianceOutputRoute.IsMatch(path ?? "");
+
+    private static readonly System.Text.RegularExpressions.Regex ComplianceOutputRoute = new(
+        @"^/api/companies/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(tax/e-filing/[A-Za-z0-9.\-]+|import-export/export|reports/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/export/[A-Za-z0-9]+)/?$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     /// <summary>เส้นทางนี้ต้องใช้ฟีเจอร์อะไร (คีย์ยาวสุดที่ตรงชนะ) · <c>null</c> = ไม่ต้อง หรือเป็นเส้นทางที่กฎหมาย/คำตัดสินยกเว้น
     /// (<see cref="FeatureExemptRoutes"/> ทุก method · <see cref="FeatureExemptEndpoints"/> เฉพาะ method นั้น — <paramref name="method"/> <c>null</c> =
     /// ไม่รู้ method ⇒ ไม่ใช้ข้อยกเว้นราย method) · ผลบอกด้วยว่าคีย์เพิ่งเริ่มมีผลไหม และคำขอเดียวกันเดิมถูกตัดสินด้วยคีย์ไหน</summary>
@@ -469,13 +487,18 @@ public static class SubscriptionGatePolicy
                     return new SubscriptionGateVerdict(SubscriptionGateReason.CompanySuspended, null, none);
                 logOnly.Add(SubscriptionGateReason.CompanySuspended);
             }
-            if (f.PlanActive == false)
+            // รอบ 238 (236-3 ข้อ 4): ไฟล์ยื่นแบบ/ส่งออก ผ่านด่าน "หมดอายุ" เท่านั้น (ด่านระงับข้างบนยังบล็อก)
+            if (f.PlanActive == false && !f.IsComplianceOutput)
             {
                 if (f.WriteMode == SubscriptionWriteGateMode.Enforce)
                     return new SubscriptionGateVerdict(SubscriptionGateReason.PlanExpired, null, logOnly);
                 logOnly.Add(SubscriptionGateReason.PlanExpired);
             }
         }
+        // รอบ 238 ฝ่ายค้าน S1: License ระงับ/ยกเลิก ⇒ เขียน 402 ทุกโหมด (เดิม 403 ไม่ขึ้นกับโหมด — ห้ามหลวมเป็น log อย่างเดียว · ไม่พึ่ง PlanActive ที่อาจอ่านไม่ได้)
+        if (f.IsWrite && f.InactiveReadOnly && !f.IsComplianceOutput)
+            return new SubscriptionGateVerdict(SubscriptionGateReason.PlanExpired, null, logOnly.Where(r => r != SubscriptionGateReason.PlanExpired).ToList());
+
         // รอบ 231 (231-10): BlockAccessOnExpiry ⇒ บล็อกอ่านด้วยเมื่อหมดอายุพ้นผ่อนผัน — โหมดเดียวกับด่านเขียน (Enforce = บล็อก · Shadow = log) ·
         // เส้นส่งออกข้อมูลยังผ่านเมื่อ AllowDataExportAfterExpiry (ทิศตรงข้าม: ไม่เปิดสวิตช์ = อ่านได้ตามเดิมทุกประการ)
         if (f.WriteMode != SubscriptionWriteGateMode.Off && !f.IsWrite && f.BlockReadsWhenExpired && f.PlanActive == false
