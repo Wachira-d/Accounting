@@ -19,6 +19,7 @@ public class AccountingDbContext : DbContext
     public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
     public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
+    public DbSet<SignEventOutboxEntry> SignEventOutbox => Set<SignEventOutboxEntry>();   // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ตาราง/index ตรงกับ Helpers/SignRequestMigration)
     public DbSet<DeferredNotification> DeferredNotifications => Set<DeferredNotification>();   // รอบ 217 — แจ้งเตือนตามหลัง (Helpers/DeferredNotifyPolicy)
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
     // รอบ 229 — โควตาเสริม (ตาราง/index ต้องตรงกับ Helpers/QuotaAddOnMigration)
@@ -3696,6 +3697,20 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.ResendCount).HasDefaultValue(0);
             e.HasIndex(x => new { x.CompanyId, x.MessageKey }).IsUnique().HasDatabaseName("UX_CustomerNotifyLogs_Company_Key");
             e.HasIndex(x => new { x.CompanyId, x.Status, x.CreatedAt }).HasDatabaseName("IX_CustomerNotifyLogs_Company_Status");   // รอบ 213: หน้าข้อความค้างส่ง
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น/ยอมรับ (ตรงกับ Helpers/SignRequestMigration)
+        modelBuilder.Entity<SignEventOutboxEntry>(e =>
+        {
+            e.ToTable("SignEventOutbox");
+            e.Property(x => x.EventKey).HasMaxLength(200);
+            e.Property(x => x.EventType).HasMaxLength(60);
+            e.Property(x => x.CallbackUrl).HasMaxLength(500);
+            e.Property(x => x.CallbackRef).HasMaxLength(200);
+            e.Property(x => x.LastError).HasMaxLength(1000);
+            e.HasIndex(x => new { x.CompanyId, x.EventKey }).IsUnique().HasDatabaseName("UX_SignEventOutbox_Company_Key");
+            e.HasIndex(x => new { x.Status, x.NextAttemptAt }).HasDatabaseName("IX_SignEventOutbox_Status_Next");
+            e.HasIndex(x => new { x.CompanyId, x.DocumentId }).HasDatabaseName("IX_SignEventOutbox_Company_Doc");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         modelBuilder.Entity<DeferredNotification>(e =>

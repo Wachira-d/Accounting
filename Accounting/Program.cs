@@ -642,11 +642,9 @@ builder.Services.AddHttpClient();
 // Webhook ขาออก — URL มาจากผู้เช่า (F-04)
 // ปิด auto-redirect: ด่านตรวจ IP ทำงานกับ URL ที่ผู้ใช้ตั้งไว้ ถ้าปลายทางตอบ
 // 302 ไป http://169.254.169.254 แล้ว HttpClient ตามไปเอง = ด่านถูกข้ามทั้งดุ้น
-builder.Services.AddHttpClient("WebhookClient")
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-    {
-        AllowAutoRedirect = false,
-    });
+// รอบ 240 (ฝ่ายค้าน S1/N2): "WebhookClient" + client ของ callback ต่อเอกสาร ใช้ handler เดียว (OutboundUrlGuard.CreatePublicOnlyHandler) —
+// ต่อเฉพาะ IP สาธารณะ ณ ตอนต่อจริง (ปิด DNS rebinding) · ไม่ผ่าน proxy · ไม่ตาม redirect · หมดเวลาต่อ · จำกัดขนาดคำตอบ
+Accounting.Helpers.OutboundUrlGuard.AddOutboundWebhookClients(builder.Services, SignEventDispatcher.HttpClientName);
 
 // ───── AI integration (DeepSeek + swappable providers + orchestrator) ─────
 // Provider implementations are registered as IAiProvider so the
@@ -734,6 +732,11 @@ builder.Services.AddScoped<Accounting.Services.Ai.IAdvancedAiAugmenter, Accounti
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IEmailSenderFactory, Accounting.Services.Implementations.Email.EmailSenderFactory>();
 builder.Services.AddScoped<IDocumentEmailService, DocumentEmailService>();
+// รอบ 240: ลิงก์ให้ลูกค้าเซ็น — ออกลิงก์/อีเมลในนามบริษัท/ป้ายสถานะ/ค่าตั้ง + ผู้ส่งเหตุการณ์จาก outbox (webhook ต่อเอกสาร · webhook ที่ลงทะเบียน · แจ้งผู้ขาย)
+builder.Services.AddScoped<ISignRequestService, SignRequestService>();
+builder.Services.AddScoped<SignEventDispatcher>();
+builder.Services.AddHostedService<Accounting.Services.Background.SignEventOutboxJob>();
+builder.Services.AddHostedService<Accounting.Services.Background.SignRequestAutomationJob>();
 
 // Error logging service
 builder.Services.AddScoped<IErrorLogService, ErrorLogService>();

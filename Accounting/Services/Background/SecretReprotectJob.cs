@@ -133,7 +133,8 @@ public static class SecretReprotectPass
             Col<CompanySettings>(r => r.LineChannelAccessToken),
             Col<CompanySettings>(r => r.LineChannelSecret),
             Col<CompanySettings>(r => r.EtaxCertificatePassword),
-            Col<CompanySettings>(r => r.EtaxRdApiSecret));
+            Col<CompanySettings>(r => r.EtaxRdApiSecret),
+            Col<CompanySettings>(r => r.SignCallbackSecret));   // รอบ 240 — รหัสลับลงนาม webhook ต่อเอกสาร
         if (onlyCompanyId == null)   // ค่าตั้งแพลตฟอร์ม ไม่มีบริษัท
             await Pass(db.SiteSettings.IgnoreQueryFilters(), "SiteSettings", _ => (Guid?)null,
                 Col<SiteSettings>(r => r.SystemSmtpPassword),

@@ -33,26 +33,52 @@ public class EmailSenderFactory : IEmailSenderFactory
         return settings == null ? GetGlobalFallbackSender() : GetSenderForSettings(settings);
     }
 
+    /// <summary>รอบ 240: บริษัทมีข้อมูลผู้ส่งของตัวเองครบไหม (ตัวตัดสินเดียวกับ <see cref="GetSenderForSettings"/> — ใช้ร่วมกับ
+    /// <c>OnBehalfEmailSender</c> ว่าเส้นนี้จะส่ง "จากบริษัท" หรือ "ผ่าน NextAcc ในนามบริษัท")</summary>
+    public static bool HasTenantSender(CompanySettings s) => s.EmailProvider switch
+    {
+        EmailProvider.MicrosoftGraph => AllPresent(s.EmailMsTenantId, s.EmailMsClientId, s.EmailMsClientSecret, s.EmailMsSenderUpn),
+        EmailProvider.GmailApi => AllPresent(s.EmailGmailClientId, s.EmailGmailClientSecret, s.EmailGmailRefreshToken, s.EmailFromAddress),
+        EmailProvider.Smtp => !string.IsNullOrWhiteSpace(s.EmailSmtpHost),
+        _ => false,
+    };
+
     public IEmailSender GetSenderForSettings(CompanySettings s)
     {
+        if (!HasTenantSender(s)) return GetGlobalFallbackSender();
         return s.EmailProvider switch
         {
-            EmailProvider.MicrosoftGraph when AllPresent(s.EmailMsTenantId, s.EmailMsClientId,
-                s.EmailMsClientSecret, s.EmailMsSenderUpn) =>
+            EmailProvider.MicrosoftGraph =>
                 new MicrosoftGraphEmailSender(s.EmailMsTenantId!, s.EmailMsClientId!,
                     _secrets.Unprotect(s.EmailMsClientSecret)!, s.EmailMsSenderUpn!, _httpFactory, _logger),
 
-            EmailProvider.GmailApi when AllPresent(s.EmailGmailClientId, s.EmailGmailClientSecret,
-                s.EmailGmailRefreshToken, s.EmailFromAddress) =>
+            EmailProvider.GmailApi =>
                 new GmailApiEmailSender(s.EmailGmailClientId!, _secrets.Unprotect(s.EmailGmailClientSecret)!,
                     _secrets.Unprotect(s.EmailGmailRefreshToken)!, s.EmailFromAddress!, _httpFactory, _logger),
 
-            EmailProvider.Smtp when !string.IsNullOrWhiteSpace(s.EmailSmtpHost) =>
+            EmailProvider.Smtp =>
                 new SmtpEmailSender(s.EmailSmtpHost!, s.EmailSmtpPort,
                     s.EmailSmtpUsername, _secrets.Unprotect(s.EmailSmtpPassword), s.EmailSmtpUseSsl, _logger),
 
             _ => GetGlobalFallbackSender()
         };
+    }
+
+    /// <summary>รอบ 240: ที่อยู่ผู้ส่งของแพลตฟอร์ม (ผู้ดูแลตั้งในหน้า admin ก่อน แล้ว appsettings <c>Email:FromAddress</c>) · ว่าง = null
+    /// (ผู้เรียกถอยไป <c>OnBehalfEmailSender.DefaultPlatformFrom</c>)</summary>
+    public string? PlatformFromAddress()
+    {
+        try
+        {
+            var s = _db.SiteSettings.AsNoTracking().Select(x => x.SystemEmailFromAddress).FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(s)) return s;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "อ่านที่อยู่ผู้ส่งของระบบจาก SiteSettings ไม่ได้ — ใช้ค่าจาก appsettings");
+        }
+        var c = _config["Email:FromAddress"];
+        return string.IsNullOrWhiteSpace(c) ? null : c;
     }
 
     public IEmailSender GetGlobalFallbackSender()

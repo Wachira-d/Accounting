@@ -79,6 +79,7 @@ public class PublicQuotationController : ControllerBase
             .Select(c => new { c.Name })
             .FirstOrDefaultAsync();
         var requireSignature = await RequireSignatureAsync(doc.CompanyId);
+        await MarkOpenedAsync(doc);
 
         return Ok(new ApiResponse<object>(true, new
         {
@@ -218,6 +219,9 @@ public class PublicQuotationController : ControllerBase
                     }),
                     IpAddress = ip, Timestamp = now,
                 });
+                // รอบ 240 (คำตัดสิน 240-3): เหตุการณ์ quotation.accepted ลง outbox ในธุรกรรมเดียวกัน — ส่งจริงในงานเบื้องหลัง
+                // (callback ต่อเอกสาร · webhook ที่ลงทะเบียน · แจ้งผู้ขาย) ⇒ ปลายทางล่มไม่ทำให้การยอมรับล้ม/ช้า
+                SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash);
                 await _db.SaveChangesAsync();
                 await tx.CommitAsync();
             }
@@ -249,6 +253,24 @@ public class PublicQuotationController : ControllerBase
         doc.QuotationAcceptNote = note;
         doc.QuotationAcceptSignaturePath = sigPath;
         return Ok(new ApiResponse<object>(true, AcceptedState(doc), decision.Message));
+    }
+
+    /// <summary>รอบ 240: ประทับ "ลูกค้าเปิดลิงก์แล้ว" ครั้งแรก (ป้ายสถานะบนรายการเอกสาร) — นับจากการโหลดหน้าสาธารณะเท่านั้น (ไม่มี tracking pixel ในอีเมล) ·
+    /// เขียนแบบมีเงื่อนไข (แถวของใบนี้ที่ยังไม่ประทับ) · ล้มไม่กระทบการเปิดดู</summary>
+    private async Task MarkOpenedAsync(Models.Entities.Document doc)
+    {
+        if (doc.SignLinkOpenedAt != null || doc.QuotationAcceptedAt != null || doc.DeliverySignedAt != null) return;
+        try
+        {
+            var now = DateTime.UtcNow;
+            await _db.Documents
+                .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId && d.SignLinkOpenedAt == null)
+                .ExecuteUpdateAsync(u => u.SetProperty(d => d.SignLinkOpenedAt, now));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "ประทับเวลาเปิดลิงก์ไม่สำเร็จ doc={DocId}", doc.Id);
+        }
     }
 
     /// <summary>ค่าตั้ง "ต้องเซ็นเพื่อยอมรับใบเสนอราคา" ของบริษัทเจ้าของใบ (ไม่มีแถว = ไม่บังคับ)</summary>
@@ -301,6 +323,7 @@ public class PublicQuotationController : ControllerBase
             .Where(c => c.Id == doc.CompanyId)
             .Select(c => new { c.Name })
             .FirstOrDefaultAsync();
+        await MarkOpenedAsync(doc);
 
         return Ok(new ApiResponse<object>(true, new
         {
@@ -339,14 +362,37 @@ public class PublicQuotationController : ControllerBase
         if (!sig.Ok)
             return BadRequest(new ApiResponse<string>(false, null, sig.Message ?? "กรุณาวาดลายเซ็น"));
 
-        doc.DeliverySignedAt = DateTime.UtcNow;
+        // รอบ 240: จองการเซ็นแบบอะตอมมิก (เฉพาะแถวที่ยังไม่เซ็น + token เดิม) + เหตุการณ์ delivery.signed ลง outbox ในธุรกรรมเดียว —
+        // กดพร้อมกันสองเครื่อง = เซ็นครั้งเดียว · เหตุการณ์เดียว (เดิมเขียนทับกันได้)
+        var now = DateTime.UtcNow;
+        var contentHash = DocumentSignedContent.Hash(doc, doc.Lines);   // เนื้อหาที่ลูกค้าเห็นตอนเซ็น (ก่อนต่อหมายเหตุ)
+        var tokenHash = QuotationAcceptance.Sha256Hex(token.ToLowerInvariant());
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        var claimed = await _db.Documents
+            .Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId
+                && d.DeliverySignedAt == null && d.DeliverySignToken == doc.DeliverySignToken)
+            .ExecuteUpdateAsync(u => u.SetProperty(d => d.DeliverySignedAt, now));
+        if (claimed == 0)
+        {
+            await tx.RollbackAsync();
+            var fresh = await FindDeliveryByTokenAsync(token);
+            if (fresh?.DeliverySignedAt == null)
+                return NotFound(new ApiResponse<string>(false, null, "ลิงก์ไม่ถูกต้องหรือหมดอายุ"));
+            return Ok(new ApiResponse<object>(true,
+                new { signedAt = fresh.DeliverySignedAt, signedBy = fresh.DeliverySignedBy },
+                "ใบส่งของนี้ถูกเซ็นรับไปแล้ว"));
+        }
+
+        doc.DeliverySignedAt = now;
         doc.DeliverySignedBy = request.SignedBy.Trim().Length > 200
             ? request.SignedBy.Trim()[..200] : request.SignedBy.Trim();
         doc.DeliverySignatureBase64 = sig.DataUri;   // ไบต์ที่ผ่านตัวตรวจแล้ว (ไม่ใช่ข้อความดิบจากคำขอ)
-        var stamp = $"\n[ลูกค้าเซ็นรับสินค้าออนไลน์] {doc.DeliverySignedBy} — {DateTime.UtcNow:yyyy-MM-dd HH:mm} UTC"
+        var stamp = $"\n[ลูกค้าเซ็นรับสินค้าออนไลน์] {doc.DeliverySignedBy} — {now:yyyy-MM-dd HH:mm} UTC"
             + (string.IsNullOrWhiteSpace(request.Note) ? "" : $" · หมายเหตุ: {request.Note.Trim()}");
         doc.Notes = (doc.Notes ?? "") + stamp;
+        SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.DeliverySign, now, doc.DeliverySignedBy, hasSignature: true, contentHash, tokenHash);
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         _logger.LogInformation("DeliveryNote {DocNo} signed online by {By} (company {Cid})",
             doc.DocumentNumber, doc.DeliverySignedBy, doc.CompanyId);

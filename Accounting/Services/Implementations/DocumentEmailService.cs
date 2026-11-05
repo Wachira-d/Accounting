@@ -18,6 +18,8 @@ public class DocumentEmailService : IDocumentEmailService
 
     /// <summary>ที่เก็บไฟล์กลาง (ทีม FS 2026-11-02) — อ่าน PDF/A-3 ของ e-Tax ที่เก็บไว้ · null (นอก DI) ⇒ FileStorageDefaults.Local</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
+    /// <summary>รอบ 240: เพดานอีเมลของแพลตฟอร์ม (<c>SignRequestEmail:PlatformDailyCapPerCompany</c>) + URL ของระบบ (ลิงก์แจ้งใช้ผิด) · null = ค่าเริ่มต้น</summary>
+    private readonly IConfiguration? _config;
 
     public DocumentEmailService(
         AccountingDbContext db,
@@ -25,8 +27,10 @@ public class DocumentEmailService : IDocumentEmailService
         IEtaxInvoiceService etaxService,
         ILogger<DocumentEmailService> logger,
         IPdfGenerationService? pdf = null,
-        Accounting.Services.Storage.IFileStorage? storage = null)
+        Accounting.Services.Storage.IFileStorage? storage = null,
+        IConfiguration? config = null)
     {
+        _config = config;
         _storage = storage;
         _db = db;
         _senderFactory = senderFactory;
@@ -80,14 +84,53 @@ public class DocumentEmailService : IDocumentEmailService
             CreatedBy = actorEmail
         };
 
-        var sender = await _senderFactory.GetSenderAsync(companyId);
+        // รอบ 240 (คำตัดสิน 240-4): ผู้ส่งจากตัวตัดสินเดียว — บริษัทตั้ง+ทดสอบผ่าน ⇒ ของบริษัท · ไม่งั้น ⇒ SMTP ของ NextAcc ในนามบริษัท
+        // (From = ที่อยู่ของแพลตฟอร์ม · Reply-To = บริษัท · หัวเนื้อหาบอกว่าส่งในนามใคร) — เดิมใส่ From ของบริษัทแม้ส่งผ่าน SMTP ของระบบ (ปลอมโดเมน)
+        var (plan, sender) = await ResolveOnBehalfSenderAsync(_db, _senderFactory, companyId, settings);
         log.Provider = sender.Provider;
+        log.SenderMode = plan.Mode;
+        if (plan.OnBehalf)
+        {
+            // คำตัดสิน 240-9 (ฝ่ายค้าน B1 — open relay): เส้นแพลตฟอร์มเท่านั้น · เส้น SMTP ของบริษัทพฤติกรรมเดิม
+            // (1) ผู้รับรวม To+Cc+Bcc ≤ 5 · เพดานต่อบริษัท/วัน (ยังไม่ยืนยันตัวตน = 20) · เพดานต่อผู้รับ — ถูกกัน ⇒ แถว Failed + 429 (ล้มดัง ไม่เรียกผู้ให้บริการ)
+            var (validTo, invalidTo) = SignEmailThrottle.ParseRecipients(new[] { req.To, req.Cc, req.Bcc });
+            var refusal = invalidTo.Count > 0
+                ? $"อีเมลผู้รับไม่ถูกต้อง: {string.Join(", ", invalidTo.Take(3))}"
+                : SignEmailThrottle.RecipientCountRefusal(validTo.Count);
+            if (refusal == null)
+            {
+                var quota = await PlatformEmailQuota.ForCompanyAsync(_db, _config, companyId, DateTime.UtcNow);
+                foreach (var r in validTo)
+                {
+                    var (sameDoc, any) = await PlatformEmailQuota.RecipientCountsAsync(_db, companyId, doc.Id, r, quota.DayStartUtc);
+                    refusal = SignEmailThrottle.Refusal(true, quota.SentToday, quota.Cap, sameDoc, any);
+                    if (refusal != null) break;
+                }
+            }
+            if (refusal != null)
+            {
+                log.Status = EmailLogStatus.Failed;
+                log.ErrorMessage = refusal;
+                _db.DocumentEmailLogs.Add(log);
+                await _db.SaveChangesAsync();
+                throw new BusinessRuleException(refusal, "EMAIL-PLATFORM-CAP", 429);
+            }
+            // (2) เนื้อหา = เทมเพลตคงที่: ค่าตั้งต้นของเซิร์ฟเวอร์ (หนีแล้ว) หรือข้อความที่ผู้ใช้พิมพ์เป็นข้อความล้วน (ไม่รับ HTML ดิบ) + หัวเปิดเผย + ท้ายอีเมล
+            var co = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => new { c.Name, c.TaxId }).FirstOrDefaultAsync();
+            var inner = string.IsNullOrWhiteSpace(req.Body) ? template.HtmlBody : SignRequestEmailText.PlainTextToHtml(req.Body);
+            var origin = await SystemBaseUrl.ResolveAsync(_db, _config);
+            body = SignRequestEmailText.WrapPlatformDocumentEmail(heading.IsEnglish, co?.Name, co?.TaxId, plan.ReplyTo, heading.Title,
+                doc.DocumentNumber, inner, origin == null ? null : $"{origin}/contact.html?topic=email-abuse");
+            subject = SignRequestEmailText.SafeSubject(subject);
+            log.Body = body;
+            log.Subject = subject;
+        }
 
         var msg = new EmailMessage
         {
-            FromAddress = ResolveFromAddress(settings),
-            FromName = settings.EmailFromName,
-            ReplyTo = settings.EmailReplyTo,
+            FromAddress = plan.FromAddress,
+            FromName = plan.FromName,
+            ReplyTo = plan.ReplyTo,
             Subject = subject,
             HtmlBody = body
         };
@@ -341,7 +384,11 @@ public class DocumentEmailService : IDocumentEmailService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         await _db.HydrateContactAsync(companyId, doc);
         var heading = await PdfGenerationService.ResolveDocumentHeadingAsync(_db, companyId, doc.Id);
-        return BuildDefaultTemplate(doc, heading, isEtaxByEmail);
+        var tpl = BuildDefaultTemplate(doc, heading, isEtaxByEmail);
+        if (isEtaxByEmail) return tpl;   // e-Tax by Email ส่งจากอีเมลที่ลงทะเบียนกับสรรพากรเสมอ (ไม่เปลี่ยน)
+        var settings = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == companyId);
+        var (plan, _) = await ResolveOnBehalfSenderAsync(_db, _senderFactory, companyId, settings);
+        return tpl with { SenderMode = plan.Mode, SenderNote = OnBehalfEmailSender.Describe(plan) };
     }
 
     /// <summary>หัว/เนื้ออีเมลเริ่มต้นของเอกสาร — <b>pure</b> (เทสต์ได้) ·
@@ -414,6 +461,30 @@ public class DocumentEmailService : IDocumentEmailService
             await _db.SaveChangesAsync();
         }
         return s;
+    }
+
+    /// <summary>รอบ 240: ผู้ส่ง + ผู้ส่งจริงของอีเมลถึงลูกค้าของบริษัท — ห่อ <see cref="OnBehalfEmailSender.Resolve"/> (ตัวตัดสินเดียว) ให้ทุกเส้นเรียกประโยคเดียว ·
+    /// ผู้ส่งของบริษัทใช้ได้เมื่อ "ตั้งแล้ว + ทดสอบผ่าน" (<c>EmailConfigured</c>) และมีข้อมูลครบ (<c>EmailSenderFactory.HasTenantSender</c>) ·
+    /// ผู้เรียก: <c>SendDocumentEmailAsync</c> · <c>SignRequestService.SendEmailAsync</c></summary>
+    internal static async Task<(OnBehalfEmailSender.Plan Plan, IEmailSender Sender)> ResolveOnBehalfSenderAsync(
+        AccountingDbContext db, IEmailSenderFactory factory, Guid companyId, CompanySettings? settings, CancellationToken ct = default)
+    {
+        var co = await db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => new { c.Name, c.Email }).FirstOrDefaultAsync(ct);
+        var verified = settings != null && settings.EmailConfigured
+            && Accounting.Services.Implementations.Email.EmailSenderFactory.HasTenantSender(settings);
+        var plan = OnBehalfEmailSender.Resolve(new OnBehalfEmailSender.Input(
+            CompanySenderVerified: verified,
+            // ผู้ส่งของบริษัทใช้ได้ ⇒ ที่อยู่จริงของผู้ส่ง (UPN/ชื่อผู้ใช้ SMTP) · ไม่ได้ ⇒ เฉพาะที่อยู่ที่บริษัทตั้งเอง (ไม่ใช้ค่าสำรองของ ResolveFromAddress
+            // ซึ่งเป็นที่อยู่ของระบบ — ห้ามกลายเป็น Reply-To)
+            CompanyFromAddress: verified ? ResolveFromAddress(settings!) : settings?.EmailFromAddress,
+            CompanyFromName: settings?.EmailFromName,
+            CompanyReplyTo: settings?.EmailReplyTo,
+            CompanyContactEmail: co?.Email,
+            CompanyName: co?.Name,
+            PlatformFromAddress: factory.PlatformFromAddress()));
+        var sender = plan.Mode == OnBehalfEmailSender.ModeCompany ? factory.GetSenderForSettings(settings!) : factory.GetGlobalFallbackSender();
+        return (plan, sender);
     }
 
     /// <summary>ที่อยู่ผู้ส่งของบริษัท — ตัวเดียว (รอบ 211: <c>BookingNotifier</c> ใช้ร่วมเมื่อส่งแจ้งลูกค้าผ่านอีเมลของร้าน)</summary>

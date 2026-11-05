@@ -223,6 +223,23 @@ public class Document : TenantEntity
     /// slot "ผู้รับของ" ของ PDF ใบส่งของ.</summary>
     public string? DeliverySignatureBase64 { get; set; }
 
+    // ── รอบ 240: ลิงก์ให้ลูกค้าเซ็น (ใบเสนอราคา/ใบส่งของ — ชนิดจาก Helpers/SignRequestKinds) · ส่งอีเมล · webhook ต่อเอกสาร ──
+    /// <summary>URL ของระบบต้นทางที่จะยิงกลับเมื่อลูกค้าเซ็น/ยอมรับ (ตั้งผ่าน partner API ตอนสร้าง/ขอลิงก์) — ผ่าน <c>SignCallbackUrlRule</c> ·
+    /// ลงนามด้วยรหัสลับของบริษัท (<c>CompanySettings.SignCallbackSecret</c>) · null = ไม่มี callback ต่อเอกสาร (ยังส่งเข้า webhook ที่ลงทะเบียนได้)</summary>
+    public string? SignCallbackUrl { get; set; }
+    /// <summary>รหัสอ้างอิงของระบบต้นทาง (≤ 200) — ส่งกลับใน payload <c>data.callbackRef</c></summary>
+    public string? SignCallbackRef { get; set; }
+    /// <summary>เวลาที่ออกลิงก์ฉบับปัจจุบัน (ออกใหม่ = ล้างสถานะติดตามข้างล่าง)</summary>
+    public DateTime? SignLinkIssuedAt { get; set; }
+    /// <summary>ส่งอีเมลลิงก์ฉบับปัจจุบันครั้งแรกสำเร็จเมื่อ (null = ยังไม่ส่งทางอีเมล)</summary>
+    public DateTime? SignLinkEmailedAt { get; set; }
+    /// <summary>ผู้รับที่ส่งสำเร็จ (คั่นด้วย ,) — ใช้ส่งอีเมลเตือนอัตโนมัติถึงคนเดิม</summary>
+    public string? SignLinkEmailedTo { get; set; }
+    /// <summary>ลูกค้าเปิดหน้าลิงก์ครั้งแรกเมื่อ — นับจากการโหลดหน้าสาธารณะเท่านั้น (ไม่มี tracking pixel)</summary>
+    public DateTime? SignLinkOpenedAt { get; set; }
+    /// <summary>ส่งอีเมลเตือนอัตโนมัติแล้วเมื่อ (หนึ่งครั้งต่อลิงก์)</summary>
+    public DateTime? SignReminderSentAt { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense
@@ -996,6 +1013,8 @@ public class Contact : TenantEntity
 
     public string? Phone { get; set; }
     public string? Email { get; set; }
+    /// <summary>รอบ 240: ผู้รับอีเมลขอเซ็นเอกสารล่าสุดของผู้ติดต่อนี้ (คั่นด้วย ,) — เติมช่องผู้รับให้อัตโนมัติครั้งถัดไป · ผู้เขียนเดียว <c>SignRequestService.SendEmailAsync</c></summary>
+    public string? SignLinkLastRecipients { get; set; }
     public string? ContactPerson { get; set; }
     /// <summary>รหัสผู้ติดต่อในระบบต้นทาง (integration เช่น TakeTime) — เก็บไว้
     /// match ผู้จำหน่าย/ลูกค้าเดิมเวลา sync รอบถัดไป กัน contact ซ้ำ. คู่กับ

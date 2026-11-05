@@ -151,9 +151,9 @@ public class DocumentController : ControllerBase
     /// ใหม่ (ลิงก์เดิมใช้ไม่ได้ — ทำหน้าที่ revoke ไปในตัว).</summary>
     [HttpPost("{documentId:guid}/quotation-accept-link")]
     public async Task<ActionResult<ApiResponse<object>>> CreateQuotationAcceptLink(
-        Guid companyId, Guid documentId)
+        Guid companyId, Guid documentId, [FromServices] ISignRequestService signs, [FromServices] IConfiguration config)
     {
-        var doc = await _db.Documents.FirstOrDefaultAsync(d =>
+        var doc = await _db.Documents.AsNoTracking().FirstOrDefaultAsync(d =>
             d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
         if (doc == null)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
@@ -163,22 +163,18 @@ public class DocumentController : ControllerBase
         var denyLink = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             doc.DocumentType, DocPerm.Create, "สร้างลิงก์ยอมรับของ");
         if (denyLink != null) return Forbid403<object>(denyLink);
-        if (doc.Status is Models.Enums.DocumentStatus.Draft or Models.Enums.DocumentStatus.Voided
-            or Models.Enums.DocumentStatus.Rejected)
-            return BadRequest(new ApiResponse<object>(false, null,
-                "ต้องอนุมัติใบเสนอราคาก่อนจึงส่งลิงก์ให้ลูกค้าได้"));
 
-        doc.QuotationAcceptToken = PublicQuotationController.NewToken();
-        doc.QuotationAcceptTokenExpiresAt = DateTime.UtcNow.AddDays(30);
-        await _db.SaveChangesAsync();
-
-        var url = $"{Request.Scheme}://{Request.Host}/pages/quotation-accept.html?token={doc.QuotationAcceptToken}";
+        // รอบ 240: ออกลิงก์ผ่านเส้นเดียวของทุกทางเข้า (สถานะที่ส่งได้ · token ใหม่ = ลิงก์เดิมใช้ไม่ได้ · ล้างสถานะติดตาม) — SignRequestService
+        // (เดิมยอมใบ "รออนุมัติ" ที่ยังเป็นเลข DRAFT · URL จาก Request.Host = ชื่อภายในหลัง proxy)
+        var origin = await SystemBaseUrl.OriginForRequestAsync(_db, config, Request.Scheme, Request.Host.ToString());
+        var link = await signs.IssueLinkAsync(companyId, documentId, new IssueSignLinkOptions(Regenerate: true), origin);
         return Ok(new ApiResponse<object>(true, new
         {
-            url,
-            token = doc.QuotationAcceptToken,
-            expiresAt = doc.QuotationAcceptTokenExpiresAt,
-            acceptedAt = doc.QuotationAcceptedAt,
+            url = link.Url,
+            token = link.Token,
+            expiresAt = link.ExpiresAt,
+            acceptedAt = link.SignedAt,
+            status = link.Status,
         }, "สร้างลิงก์แล้ว — ส่งให้ลูกค้ากดยอมรับได้เลย (อายุ 30 วัน)"));
     }
 
@@ -209,36 +205,112 @@ public class DocumentController : ControllerBase
     /// ใบส่งของที่อนุมัติแล้ว; token อายุ 14 วัน; เรียกซ้ำ = revoke ลิงก์เก่า.</summary>
     [HttpPost("{documentId:guid}/delivery-sign-link")]
     public async Task<ActionResult<ApiResponse<object>>> CreateDeliverySignLink(
-        Guid companyId, Guid documentId)
+        Guid companyId, Guid documentId, [FromServices] ISignRequestService signs, [FromServices] IConfiguration config)
     {
-        var doc = await _db.Documents.FirstOrDefaultAsync(d =>
+        var doc = await _db.Documents.AsNoTracking().FirstOrDefaultAsync(d =>
             d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted);
         if (doc == null)
             return NotFound(new ApiResponse<object>(false, null, "ไม่พบเอกสาร"));
         if (doc.DocumentType != Models.Enums.DocumentType.DeliveryNote)
             return BadRequest(new ApiResponse<object>(false, null,
                 "ลิงก์เซ็นรับสินค้าใช้ได้เฉพาะใบส่งของ (Delivery Note)"));
-        if (doc.Status is Models.Enums.DocumentStatus.Draft or Models.Enums.DocumentStatus.Voided
-            or Models.Enums.DocumentStatus.Rejected)
-            return BadRequest(new ApiResponse<object>(false, null,
-                "ต้องอนุมัติใบส่งของก่อนจึงส่งลิงก์ให้ลูกค้าเซ็นรับได้"));
         var denySign = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
             doc.DocumentType, DocPerm.Create, "สร้างลิงก์เซ็นรับของ");
         if (denySign != null) return Forbid403<object>(denySign);
 
-        doc.DeliverySignToken = PublicQuotationController.NewToken();
-        doc.DeliverySignTokenExpiresAt = DateTime.UtcNow.AddDays(14);
-        await _db.SaveChangesAsync();
-
-        var url = $"{Request.Scheme}://{Request.Host}/pages/delivery-sign.html?token={doc.DeliverySignToken}";
+        // รอบ 240: เส้นเดียวกับใบเสนอราคา (SignRequestService) — สถานะที่ส่งได้จาก SignRequestKinds.IssueRefusal (โยน BusinessRuleException = 400 ข้อความไทย)
+        var origin = await SystemBaseUrl.OriginForRequestAsync(_db, config, Request.Scheme, Request.Host.ToString());
+        var link = await signs.IssueLinkAsync(companyId, documentId, new IssueSignLinkOptions(Regenerate: true), origin);
         return Ok(new ApiResponse<object>(true, new
         {
-            url,
-            token = doc.DeliverySignToken,
-            expiresAt = doc.DeliverySignTokenExpiresAt,
-            signedAt = doc.DeliverySignedAt,
-            signedBy = doc.DeliverySignedBy,
+            url = link.Url,
+            token = link.Token,
+            expiresAt = link.ExpiresAt,
+            signedAt = link.SignedAt,
+            signedBy = link.SignedBy,
+            status = link.Status,
         }, "สร้างลิงก์แล้ว — ส่งให้ลูกค้าเซ็นรับสินค้าได้เลย (อายุ 14 วัน)"));
+    }
+
+    // ==================== รอบ 240: ส่งลิงก์ให้ลูกค้าเซ็นทางอีเมล · ป้ายสถานะ · ประวัติ webhook (DOCUMENT_FLOW §2.12f) ====================
+
+    /// <summary>ด่านร่วมของเส้นลิงก์เซ็น: เอกสารของบริษัทนี้ · ชนิดที่เซ็นได้ (SignRequestKinds) · สิทธิ์สร้างเอกสารชนิดนั้น · ชั้นความลับ (ส่งเนื้อหาออกนอกระบบ)</summary>
+    private async Task<ActionResult<ApiResponse<T>>?> DenySignRequestAsync<T>(Guid companyId, Guid documentId)
+    {
+        var type = await GetDocumentTypeAsync(companyId, documentId);
+        if (type == null) return NotFound(new ApiResponse<T>(false, default, "ไม่พบเอกสาร"));
+        if (SignRequestKinds.For(type.Value) == null)
+            return BadRequest(new ApiResponse<T>(false, default, "ลิงก์ให้ลูกค้าเซ็น/ยอมรับออนไลน์ใช้ได้เฉพาะใบเสนอราคาและใบส่งของ"));
+        var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User), type.Value, DocPerm.Create, "ส่งลิงก์ให้ลูกค้าเซ็น");
+        if (deny != null) return Forbid403<T>(deny);
+        var sens = await DenySensitiveAsync(companyId, documentId, "ส่งลิงก์ให้ลูกค้าเซ็น");
+        if (sens != null) return Forbid403<T>(sens);
+        return null;
+    }
+
+    public record PreviewSignRequestEmailBody(string? Message);
+
+    /// <summary>พรีวิวอีเมลขอเซ็น (หัว/เนื้อจากเซิร์ฟเวอร์ · ผู้ส่งที่จะใช้จริง · ผู้รับที่แนะนำ · ยอดส่งผ่านระบบวันนี้/เพดาน) — ไม่เปลี่ยนข้อมูล ·
+    /// ฝ่ายค้าน N7: ข้อความถึงลูกค้ามาทาง body (ไม่อยู่ใน query string ที่ไหลลง log/proxy)</summary>
+    [HttpPost("{documentId:guid}/sign-request/email-preview")]
+    public async Task<ActionResult<ApiResponse<SignEmailPreview>>> PreviewSignRequestEmail(Guid companyId, Guid documentId,
+        [FromBody] PreviewSignRequestEmailBody? body, [FromServices] ISignRequestService signs, [FromServices] IConfiguration config)
+    {
+        var deny = await DenySignRequestAsync<SignEmailPreview>(companyId, documentId);
+        if (deny != null) return deny;
+        var origin = await SystemBaseUrl.OriginForRequestAsync(_db, config, Request.Scheme, Request.Host.ToString());
+        return Ok(new ApiResponse<SignEmailPreview>(true, await signs.PreviewEmailAsync(companyId, documentId, origin, body?.Message)));
+    }
+
+    public record SendSignRequestEmailBody(List<string>? To, string? Message);
+
+    /// <summary>ส่งลิงก์ให้ลูกค้าเซ็นทางอีเมล (ฉบับละผู้รับ · ผู้ส่งจาก OnBehalfEmailSender · เพดาน SignEmailThrottle · บันทึกทุกฉบับ) ·
+    /// ส่งไม่ได้ทุกฉบับเพราะเพดาน = 429 · ผู้ให้บริการอีเมลล้มทุกฉบับ = 502 (ข้อความบอกเหตุ — ไม่ใช่ 200 กับของว่าง)</summary>
+    [HttpPost("{documentId:guid}/sign-request/email")]
+    public async Task<ActionResult<ApiResponse<SignEmailResult>>> SendSignRequestEmail(Guid companyId, Guid documentId,
+        [FromBody] SendSignRequestEmailBody body, [FromServices] ISignRequestService signs, [FromServices] IConfiguration config)
+    {
+        var deny = await DenySignRequestAsync<SignEmailResult>(companyId, documentId);
+        if (deny != null) return deny;
+        var origin = await SystemBaseUrl.OriginForRequestAsync(_db, config, Request.Scheme, Request.Host.ToString());
+        var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value ?? JwtHelper.GetUserIdFromClaims(User).ToString();
+        var r = await signs.SendEmailAsync(companyId, documentId, new SendSignEmailOptions(body?.To, body?.Message), origin, actor);
+        if (r.AllSent)
+            return Ok(new ApiResponse<SignEmailResult>(true, r, $"ส่งอีเมลแล้ว {r.Recipients.Count} ฉบับ"
+                + (r.SenderMode == OnBehalfEmailSender.ModePlatform ? " (ผ่านอีเมลของระบบ NextAcc ในนามบริษัท)" : "")));
+        var reasons = string.Join(" · ", r.Recipients.Where(x => !x.Sent).Select(x => $"{x.To}: {x.Error}"));
+        if (r.AnySent)
+            return Ok(new ApiResponse<SignEmailResult>(true, r, $"ส่งได้บางฉบับ — {reasons}"));
+        return StatusCode(r.Throttled ? 429 : 502, new ApiResponse<SignEmailResult>(false, r, $"ส่งอีเมลไม่สำเร็จ — {reasons}"));
+    }
+
+    /// <summary>ป้ายสถานะลิงก์เซ็นของหลายใบ (รายการเอกสาร) — ids คั่นด้วย , (≤ 200) · คืนเฉพาะใบที่มีป้าย · อ่านอย่างเดียว</summary>
+    [HttpGet("sign-request/statuses")]
+    public async Task<ActionResult<ApiResponse<Dictionary<Guid, SignRequestKinds.Chip>>>> GetSignRequestStatuses(Guid companyId,
+        [FromQuery] string? ids, [FromServices] ISignRequestService signs)
+    {
+        var list = (ids ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => Guid.TryParse(s, out var g) ? g : Guid.Empty).Where(g => g != Guid.Empty).Distinct().Take(200).ToList();
+        return Ok(new ApiResponse<Dictionary<Guid, SignRequestKinds.Chip>>(true, await signs.GetStatusesAsync(companyId, list)));
+    }
+
+    /// <summary>ประวัติเหตุการณ์ลูกค้าเซ็น (outbox: callback ต่อเอกสาร · webhook ที่ลงทะเบียน · แจ้งผู้ขาย) ของใบนี้</summary>
+    [HttpGet("{documentId:guid}/sign-request/events")]
+    public async Task<ActionResult<ApiResponse<List<SignEventDto>>>> GetSignRequestEvents(Guid companyId, Guid documentId,
+        [FromServices] ISignRequestService signs)
+        => Ok(new ApiResponse<List<SignEventDto>>(true, await signs.GetEventsAsync(companyId, documentId)));
+
+    /// <summary>ส่ง callback ต่อเอกสารซ้ำ (หลังเลิกลอง/ปลายทางแก้แล้ว) — งานเบื้องหลังส่งภายใน ~1 นาที · eventId เดิม (ปลายทางกันซ้ำได้)</summary>
+    [HttpPost("{documentId:guid}/sign-request/events/{eventRowId:guid}/retry")]
+    public async Task<ActionResult<ApiResponse<bool>>> RetrySignRequestEvent(Guid companyId, Guid documentId, Guid eventRowId,
+        [FromServices] ISignRequestService signs)
+    {
+        var deny = await DenySignRequestAsync<bool>(companyId, documentId);
+        if (deny != null) return deny;
+        var rows = await signs.GetEventsAsync(companyId, documentId, 200);
+        if (rows.All(r => r.Id != eventRowId)) return NotFound(new ApiResponse<bool>(false, false, "ไม่พบเหตุการณ์นี้ของเอกสารนี้"));
+        await signs.RetryEventAsync(companyId, eventRowId);
+        return Ok(new ApiResponse<bool>(true, true, "ตั้งให้ส่งซ้ำแล้ว — ระบบจะส่งภายใน ~1 นาที"));
     }
 
     private static DocumentEmailLogResponse MapEmailLog(Models.Entities.DocumentEmailLog l) => new(

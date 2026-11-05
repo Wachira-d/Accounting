@@ -469,6 +469,27 @@
             </span>
           </label>
         </div>
+        <!-- รอบ 240: ลิงก์ให้ลูกค้าเซ็น — อีเมลอัตโนมัติ/เตือน/webhook ต่อเอกสาร (API: /sign-requests/settings · เจ้าของบริษัทเท่านั้นที่บันทึกได้) -->
+        <div class="form-group" id="signRequestCard" style="grid-column:1/3;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="font-weight:600;margin-bottom:6px">ลิงก์ให้ลูกค้าเซ็น / ยอมรับเอกสาร (ใบเสนอราคา · ใบส่งของ)</div>
+          <div id="srSenderInfo" style="font-size:12px;color:#475569;margin-bottom:8px"></div>
+          <label class="form-checkbox" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:8px">
+            <input type="checkbox" id="srAutoEmail" style="margin-top:3px">
+            <span>ส่งอีเมลขอยอมรับอัตโนมัติเมื่ออนุมัติใบเสนอราคา <span style="display:block;font-size:11px;color:#94a3b8">ถึงอีเมลของผู้ติดต่อ · เฉพาะใบที่สร้างหลังเปิดค่านี้ · ระบบตรวจทุก ~10 นาที</span></span>
+          </label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <label for="srReminderDays" style="font-size:13px">ส่งอีเมลเตือนหลังส่งไปแล้ว</label>
+            <input id="srReminderDays" class="form-input" type="number" min="0" max="30" step="1" style="width:80px">
+            <span style="font-size:13px">วัน ถ้ายังไม่เซ็น (0 = ไม่เตือน · เตือนครั้งเดียวต่อลิงก์)</span>
+          </div>
+          <label for="srAllowedHosts" class="form-label" style="font-size:13px">โฮสต์ที่อนุญาตให้รับ webhook ต่อเอกสาร (คั่นด้วย , · ว่าง = ทุกโฮสต์สาธารณะที่เป็น https)</label>
+          <input id="srAllowedHosts" class="form-input" type="text" placeholder="erp.example.com, *.example.com">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+            <span id="srSecretInfo" style="font-size:12px;color:#475569"></span>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="Page.rotateSignSecret()">ออกรหัสลับลงนาม webhook ใหม่</button>
+            <button type="button" class="btn btn-sm btn-primary" onclick="Page.saveSignRequestSettings()">บันทึกส่วนนี้</button>
+          </div>
+        </div>
         <div class="form-group advanced-only" style="grid-column:1/3">
           <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
             <input type="checkbox" id="sShowProjectOnDocuments" style="margin-top:3px">
@@ -1329,10 +1350,53 @@
           Layout.toast('แปลงแล้ว — โปรดตรวจการสะกดก่อนบันทึก (ชื่อเฉพาะบางคำระบบเดาจากเสียง)', 'info');
         } catch (e) { Layout.toast(e.message || 'แปลงไม่สำเร็จ', 'error'); }
       },
+      // รอบ 240: ค่าตั้งลิงก์ให้ลูกค้าเซ็น — ค่าทั้งหมด/ป้ายผู้ส่งมาจากเซิร์ฟเวอร์ · บันทึกได้เฉพาะเจ้าของ (เซิร์ฟเวอร์ตัดสิน · 403 บอกเหตุ)
+      async loadSignRequestSettings() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        try {
+          const r = await api.get(`/api/companies/${cid}/sign-requests/settings`);
+          const s = r && r.data; if (!s) return;
+          document.getElementById('srAutoEmail').checked = !!s.autoEmailOnApprove;
+          document.getElementById('srReminderDays').value = s.reminderDays ?? 0;
+          document.getElementById('srAllowedHosts').value = s.callbackAllowedHosts || '';
+          document.getElementById('srSecretInfo').textContent = s.hasCallbackSecret
+            ? `รหัสลับลงนาม webhook: มีแล้ว (${s.callbackSecretHint || ''})` : 'ยังไม่มีรหัสลับลงนาม webhook (ต้องมีก่อนรับ callbackUrl ผ่าน API)';
+          document.getElementById('srSenderInfo').textContent = s.senderModeNow === 'company'
+            ? 'อีเมลขอเซ็นส่งจากอีเมลของบริษัท (ตั้งค่า → อีเมล ทดสอบผ่านแล้ว)'
+            : `ยังไม่ได้ตั้ง/ทดสอบอีเมลของบริษัท — อีเมลขอเซ็นจะส่งด้วยอีเมลของระบบ NextAcc ในนามบริษัท (ระบุชื่อบริษัท · ลูกค้าตอบกลับถึงบริษัท) · เพดาน ${Number(s.platformDailyCap)} ฉบับ/วัน`;
+        } catch (e) { /* ไม่มีสิทธิ์อ่าน/ล้ม — ส่วนนี้ว่างไว้ ไม่ขวางหน้าตั้งค่า */ }
+      },
+      async saveSignRequestSettings() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        try {
+          const r = await api.put(`/api/companies/${cid}/sign-requests/settings`, {
+            autoEmailOnApprove: !!document.getElementById('srAutoEmail').checked,
+            reminderDays: Number(document.getElementById('srReminderDays').value || 0),
+            callbackAllowedHosts: document.getElementById('srAllowedHosts').value || '',
+          });
+          Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
+          await this.loadSignRequestSettings();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async rotateSignSecret() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        if (!confirm('ออกรหัสลับใหม่? รหัสเดิมจะใช้ตรวจลายเซ็น webhook ไม่ได้ทันที — ระบบปลายทางต้องเปลี่ยนตาม')) return;
+        try {
+          const r = await api.post(`/api/companies/${cid}/sign-requests/settings/rotate-secret`, {});
+          const secret = r && r.data && r.data.secret;
+          if (secret) {
+            try { await navigator.clipboard.writeText(secret); } catch (_) { /* ไม่มีสิทธิ์ clipboard — ยังแสดงให้คัดลอกเอง */ }
+            prompt('รหัสลับลงนาม webhook (คัดลอกแล้ว — จะไม่แสดงเต็มอีก):', secret);
+          }
+          await this.loadSignRequestSettings();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+
       async init() {
         if (!Layout.init('settings')) return;
         Layout.setTitle('ตั้งค่า');
         await this.load();
+        this.loadSignRequestSettings();
         // deep link ?tab=email → เปิดแท็บนั้นให้เลย. ลิงก์จากหน้าอื่น (เช่น
         // "ตั้งค่าอีเมลบริษัท" ในฟอร์มรายการประจำ) เดิมมาถึงแล้วตกที่แท็บ
         // "ข้อมูลบริษัท" ผู้ใช้ต้องไล่หาเอง = ลิงก์ที่ไม่พาไปถึงปลายทางจริง

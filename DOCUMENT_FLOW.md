@@ -2777,6 +2777,55 @@ target งบทดลอง · บรรทัดเอกสาร · `ImportE
 - **ไม่เปลี่ยน:** ดาวน์เกรด/รอบสั้นลง (Scheduled*) · ต่ออายุแพ็กเดิมรอบเดิม · รอบยาวขึ้น (CycleChange เดิม — เริ่มรอบใหม่อยู่แล้ว · UpgradeMode null)
 - เทสต์ `UpgradeModeRound237Tests` · Db `UpgradeModeRound237DbTests` · ล็อก `tools/required_call_site_check.py` R237 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+### 2.12f ลิงก์ให้ลูกค้าเซ็น — อีเมลในนามบริษัท · webhook ต่อเอกสาร · อัตโนมัติ (รอบ 240 · คำตัดสิน 240-1…240-8)
+
+**สำรวจทั้งเรพ (240-1):** เอกสารที่ลูกค้าภายนอก "ลงนาม/ยอมรับ" ผ่านลิงก์ได้มี 2 ชนิด — ใบเสนอราคา (ยอมรับ + ลายเซ็น) และใบส่งของ (เซ็นรับสินค้า) ·
+ลิงก์สาธารณะอื่น (สลิปเงินเดือน · ใบจองที่พัก · ลิงก์ชำระเงิน · พอร์ทัลลูกค้า/ผู้ขาย) เป็น "ดู/จ่าย/ส่งสลิป" ไม่ใช่ลงนาม · ตัวตั้งเดียว `Helpers/SignRequestKinds`
+(ชนิด · ชื่อ event · หน้า · อายุลิงก์ · สถานะที่ส่งได้ · ป้าย) — ร่าง/**รออนุมัติ** (เลข DRAFT — เดิมหลุด) /ยกเลิก/ปฏิเสธ ส่งไม่ได้
+
+| ชนิด | ลิงก์ (อายุ) | สร้างลิงก์ | อีเมล | event |
+|---|---|---|---|---|
+| ใบเสนอราคา | `/pages/quotation-accept.html?token=` (30 วัน) | ปุ่ม "🔗 ลิงก์ยอมรับ" · API v1 `POST /documents/{id}/sign-link` | ปุ่ม "📧 ส่งให้ลูกค้ายอมรับทางอีเมล" · API `sendEmail:true` · อัตโนมัติเมื่ออนุมัติ (ค่าตั้ง) · เตือน N วัน | `quotation.accepted` |
+| ใบส่งของ | `/pages/delivery-sign.html?token=` (14 วัน) | ปุ่ม "✍️ ลิงก์เซ็นรับ" · API v1 | ปุ่ม "📧 ส่งให้ลูกค้าเซ็นรับทางอีเมล" · API · เตือน N วัน | `delivery.signed` |
+
+- **ออกลิงก์** — `SignRequestService.IssueLinkAsync` เส้นเดียว (หน้าเอกสาร `quotation-accept-link`/`delivery-sign-link` = ออกใหม่เสมอ · API = ใช้ลิงก์เดิมถ้ายังใช้ได้
+  เว้น `regenerate:true`) · ออกใหม่ล้างสถานะติดตาม · origin จาก `SystemBaseUrl.OriginForRequestAsync` (เดิม `Request.Host` — ชื่อภายในหลัง proxy)
+- **อีเมล** — `SignRequestService.SendEmailAsync`: ผู้รับ (ว่าง ⇒ ผู้รับล่าสุดของผู้ติดต่อ `Contact.SignLinkLastRecipients` ⇒ อีเมลผู้ติดต่อ · ≤ 5 · ฉบับละคน) ·
+  ลิงก์ที่ยังใช้ได้ (ไม่มี/หมดอายุ ⇒ ออกใหม่ · อีเมลเตือนต้องเป็นลิงก์เดิม) · ผู้ส่งจาก `DocumentEmailService.ResolveOnBehalfSenderAsync` → `Helpers/OnBehalfEmailSender`:
+  บริษัทตั้ง+ทดสอบผ่าน (`EmailConfigured` + `EmailSenderFactory.HasTenantSender`) ⇒ ผู้ส่งของบริษัท · ไม่งั้น ⇒ SMTP ของ NextAcc · From = ที่อยู่ของแพลตฟอร์ม
+  (`SiteSettings.SystemEmailFromAddress` → `Email:FromAddress` → `no-reply@nextacc.net` · **ไม่ใช้โดเมนบริษัท**) · ชื่อ "{บริษัท} ผ่าน NextAcc" · Reply-To = บริษัท ·
+  หัวเนื้อหา "ส่งในนาม {บริษัท} (เลขผู้เสียภาษี) ผ่านระบบ NextAcc" + ท้ายบอกเหตุที่ได้รับ/ไม่ใช่โฆษณา/ติดต่อบริษัท/ลิงก์แจ้งใช้ผิด (`Helpers/SignRequestEmailText`) ·
+  เพดาน `Helpers/SignEmailThrottle` (อีเมลระบบ 200 ฉบับ/บริษัท/วัน — `SignRequestEmail:PlatformDailyCapPerCompany` · ผู้รับเดิม 3/เอกสาร/วัน · 20/วัน) ·
+  ทุกฉบับลง `DocumentEmailLogs` (`Purpose` sign-request/-auto/sign-reminder · `SenderMode`) — ถูกกัน/ล้ม = แถว Failed + ข้อความ · หน้าเว็บ 429/502 พร้อมเหตุ
+- **อีเมลเอกสารทั่วไป** (`SendDocumentEmailAsync`) ใช้ตัวตัดสินผู้ส่งเดียวกัน (เดิมใส่ From ของบริษัทแม้ส่งผ่าน SMTP ของระบบ = ปลอมโดเมน) · e-Tax by Email ไม่เปลี่ยน (ต้องเป็นอีเมลที่ลงทะเบียนกับสรรพากร) ·
+  **เส้นแพลตฟอร์ม (240-9)**: เพดานชุดเดียวกัน (`Helpers/PlatformEmailQuota` + `SignEmailThrottle` · To+Cc+Bcc ≤ 5 · บริษัทยังไม่ยืนยันตัวตน = เลขภาษีไม่ถูก/ไม่เคยชำระ ⇒ 20/วัน · ถูกกัน = แถว Failed + 429) ·
+  เนื้อ = เทมเพลตคงที่ `SignRequestEmailText.WrapPlatformDocumentEmail` (ข้อความที่ผู้ใช้แก้ = ข้อความล้วน · ค่าตั้งต้นของเซิร์ฟเวอร์ใช้ได้) · หน้าต่างส่งอีเมลแสดงโหมดผู้ส่งจาก
+  `email-template` (`SenderMode`/`SenderNote`) · บริษัทที่ตั้ง SMTP แต่ยังไม่ทดสอบผ่าน = ส่งผ่าน NextAcc · เส้น SMTP ของบริษัท: เดิม
+- **ลูกค้าเปิด/เซ็น** — เปิดหน้าลิงก์ครั้งแรกประทับ `Document.SignLinkOpenedAt` (ไม่มี tracking pixel) · ยอมรับ (`Accept`) / เซ็นรับ (`SignDelivery` — จองแบบอะตอมมิกแล้ว) ⇒
+  `Helpers/SignEventOutbox.Enqueue` ใน**ธุรกรรมเดียวกัน** (eventId คงที่ต่อชนิด·เอกสาร·ลิงก์ · unique `(CompanyId, EventKey)`) — ไม่มีการยิงเครือข่ายในคำขอของลูกค้า
+- **ส่งเหตุการณ์** — งาน `SignEventOutboxJob` (1 นาที · JobLock) → `SignEventDispatcher`: แจ้งผู้ขาย `document.customer_signed` (ค่าตั้งต้น: กระดิ่งเจ้าของ + กลุ่ม LINE ถ้าผูก) ·
+  webhook ที่ลงทะเบียน (`WebhookService.TriggerAsync` — event ใหม่ 2 ชนิดในรายการ) — บันทึกแยกหลังแต่ละขั้น (ลองใหม่ไม่ยิงซ้ำ) · callback ต่อเอกสาร: ตรวจ
+  `SignCallbackUrlRule.Problem` กับรายชื่อโฮสต์ปัจจุบัน (ไม่ผ่าน/ payload ถูกล้าง ⇒ Dead พร้อมเหตุ) → `OutboundUrlGuard.CheckResolvedAsync` → client `SignWebhookClient`
+  (handler เดียวกับ `WebhookClient`: `OutboundUrlGuard.CreatePublicOnlyHandler` — ต่อเฉพาะ IP สาธารณะที่ resolve ตอนต่อ · ไม่ผ่าน proxy · ไม่ตาม redirect · ต่อ 5 วินาที ·
+  รอคำตอบ 10 วินาที · อ่านแค่หัว + body ≤ 2 KB) · ล้มที่แถวไหนถอยเวลาแถวนั้น (ไม่ล้มทั้งรอบ) · IP ที่ห่อ IPv4 (NAT64/6to4/Teredo/IPv4-compatible) ไม่อนุญาต · ลงนาม `X-NextAcc-Signature: t=…,v1=…` (`Helpers/WebhookSignature` — canonical เดียวกับ webhook
+  ที่ลงทะเบียน ซึ่งส่งหัวนี้เพิ่มจาก `X-Webhook-Signature` เดิม) + `X-NextAcc-Event` + `X-NextAcc-Event-Id` · 2xx = Delivered · ล้ม ⇒ 1m/5m/15m/1h/3h/6h/12h/24h ·
+  ครบ 8 ครั้ง = Dead (ปุ่ม "ส่งซ้ำ" ในหน้าต่างอีเมล · eventId เดิม) · payload จบเกิน 90 วันล้างเป็น `{}`
+- **Payload** (ไม่มีรูปลายเซ็น/IP/UA/token): `eventId · type · occurredAt (+07:00) · companyId · data{documentId, documentNumber, documentType, revisionNumber, acceptedBy,
+  hasSignature, contentHash, callbackRef} · links{document: /api/v1/documents/{id}/sign-status, pdf: /api/v1/documents/{id}/pdf}` (ต้องใช้ API key)
+- **ผู้เชื่อมต่อตรวจลายเซ็น**: แยกหัว `t`/`v1` → `expected = hex(HMAC_SHA256(secret, t + "." + rawBody))` → เทียบเวลาคงที่กับ `v1` ตัวใดตัวหนึ่ง → ปฏิเสธเมื่อ `|now − t| > 300` วินาที →
+  กันซ้ำด้วย `eventId` · ตอบ 2xx ภายใน 10 วินาที (งานยาวให้ทำต่อแบบ async)
+- **API v1** — `POST /api/v1/documents` รับ `signCallbackUrl`/`signCallbackRef` (ใบเสนอราคา/ใบส่งของ · ตรวจก่อนสร้าง · echo `signRequest`) · `POST /{id}/sign-link`
+  `{regenerate, callbackUrl, callbackRef, sendEmail, emailTo[], emailMessage}` · `GET /{id}/sign-status` · `GET /{id}/pdf` (เฉพาะชนิดที่เซ็นได้) · scope `documents:write` ·
+  สิทธิ์ Document.Create ของผู้ออกคีย์ + ด่านชั้นความลับเดียวกับหน้าเว็บ (ผู้ออกคีย์เป็นผู้ดู) · สร้างใบแล้วบันทึก callback ไม่ได้ ⇒ 500 `SIGN-CALLBACK-NOT-SAVED` + เลขใบ · callbackUrl ต้องมีรหัสลับลงนามของบริษัทก่อน (`CompanySettings.SignCallbackSecret` — เจ้าของออกที่ ตั้งค่า → ลิงก์ให้ลูกค้าเซ็น ·
+  เข้ารหัส · อยู่ในทะเบียน `SecretReprotectJob`) · โฮสต์ตาม `SignCallbackAllowedHosts` (ว่าง = โฮสต์สาธารณะใดก็ได้ · https · พอร์ต 443/8443 · ไม่มี user:pass)
+- **อัตโนมัติ** — `SignRequestAutomationJob` (10 นาที · JobLock): ใบเสนอราคาที่สร้างหลัง `SignLinkAutoEmailSince` (watermark ตอนเปิดค่าตั้ง) อนุมัติแล้ว ยังไม่เคยส่ง/ลองอัตโนมัติ ⇒
+  ส่งอีเมลถึงผู้ติดต่อ (ครอบทุกทางเข้าอนุมัติเพราะอ่านสถานะ · ไม่มีอีเมล = แถว Failed ครั้งเดียว) · `SignLinkReminderDays` > 0 ⇒ เตือนครั้งเดียวต่อลิงก์ถึงผู้รับเดิม ·
+  ไม่ได้ตั้ง URL ของระบบ ⇒ ไม่ส่ง + บันทึกผลงานเป็น "ล้ม" พร้อมเหตุ · ออก Rev ใหม่ล้างสถานะส่ง/เปิด/เตือน (`SignRequestKinds.ResetTracking` ผ่าน `QuotationAcceptance.ClearOn`)
+- **หน้าจอ** — รายการเอกสาร: ป้าย "สร้างลิงก์แล้ว · ส่งอีเมลแล้ว · ลูกค้าเปิดลิงก์แล้ว · ลูกค้ายอมรับ/เซ็นรับแล้ว · ลิงก์หมดอายุ" จาก `GET …/document/sign-request/statuses`
+  (เซิร์ฟเวอร์ตัดสิน `SignRequestKinds.Status`) · หน้าต่างอีเมล: พรีวิวจากเซิร์ฟเวอร์ (`POST …/sign-request/email-preview` · iframe sandbox) · ผู้ส่งที่จะใช้จริง · ยอดวันนี้/เพดาน · ประวัติ webhook + ส่งซ้ำ ·
+  ตั้งค่า: การ์ด "ลิงก์ให้ลูกค้าเซ็น" (`/api/companies/{id}/sign-requests/settings` · บันทึก/ออกรหัสลับ = เจ้าของเท่านั้น)
+- เทสต์ `SignRequestRound240Tests` · Db `SignRequestRound240DbTests` · ล็อก `tools/required_call_site_check.py` R240 — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
 ## 3. Lifecycle — สิ่งที่เกิดในแต่ละ transition
 
 ### 3.1 Create / Update (Draft → Draft)
@@ -7478,3 +7527,5 @@ _Last verified against codebase: 2026-11-04 (รอบ 235 ทีมปิดง
 _Last verified against codebase: 2026-11-04 (รอบ 236 — §2.12d บริษัทใต้ License: แพ็กเกจที่มีผลตัวเดียว `PlanIdentityResolver` (+ `LicenseActive`/`CompanyPurchase`/`Label`) ผ่าน `PlanIdentityReader` · ด่านซื้อแพ็กเกจระดับบริษัททุกทางเข้า (409 `PLATFORM-LICENSE-COVERED`) · ใบเสนอ/preview `RefusedByLicense` · ไม่เตือน/ไม่ออกใบต่ออายุแถวบริษัทที่ License คุม — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-04 (รอบ 237 — §2.12e อัปเกรดกลางรอบ 2 แบบเลือกได้ (K-1): ตัวตัดสินเดียว `PlatformProration.UpgradeByMode` (คงวันหมดอายุ / เริ่มรอบใหม่หักเครดิต · เครดิตครอบยอด = ปฏิเสธ) · ค่าตั้ง `SiteSettings.PlatformUpgradeModeOffer` · แบบที่เลือกประทับ `SubscriptionPayment.UpgradeMode` · อนุมัติ `ApprovalRouteOf` ไม่อ่านค่าตั้ง · License ขยับตามแบบ ข — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-04 (รอบ 238 — §2.12d License หมดอายุ/ระงับ (236-3 ทำจริง · 236-9): ผ่อนผันจริง `LicenseStatusAfter` · งานเตือนเลิก cascade แถวบริษัท + `LicenseLapseMigration` · ด่านเห็น License ระงับ/ยกเลิกเป็นหมดอายุ `GateStatus` · ไฟล์ยื่นแบบ/ส่งออกผ่านด่านหมดอายุ `IsComplianceOutputPath` · แจ้งเจ้าของบริษัทใต้ License · ถอดเอง (เจ้าของ/ผู้ถือ) + detach-preview + audit chain · คำเตือนผูกบริษัทที่จ่ายเอง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+
+_Last verified against codebase: 2026-11-05 (รอบ 240 — §2.12f ลิงก์ให้ลูกค้าเซ็น: ชนิด/สถานะ/ป้าย `SignRequestKinds` · อีเมลขอเซ็นในนามบริษัท `OnBehalfEmailSender` (ไม่ปลอมโดเมน · Reply-To บริษัท · ข้อความเปิดเผย) ใช้กับอีเมลเอกสารด้วย · เพดาน `SignEmailThrottle` · outbox `SignEventOutbox` ในธุรกรรมของการยอมรับ/เซ็นรับ (เซ็นรับจองแบบอะตอมมิกแล้ว) · webhook ต่อเอกสาร + ลายเซ็น canonical `WebhookSignature` + SSRF ตอนต่อจริง · API v1 sign-link/sign-status/pdf · งานอัตโนมัติ/เตือน · ฝ่ายค้าน 240-9/240-10: อีเมลเอกสารบนเส้นแพลตฟอร์มมีเพดาน+เทมเพลตคงที่ · handler ขาออกตัวเดียว · ตรวจ URL ตอนส่ง · ชั้นความลับ API — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

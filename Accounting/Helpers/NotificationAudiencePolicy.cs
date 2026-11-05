@@ -124,6 +124,8 @@ public static class NotificationAudiencePolicy
     {
         "document.approved", "document.payment_received", "ar.invoice_overdue", "bank.sync_completed", "ecommerce.sync_completed",
         "lodging.booking_created", "lodging.slip_uploaded",
+        // รอบ 240: ลูกค้าเซ็น/ยอมรับผ่านลิงก์ — ผู้ขายต้องรู้แม้ยังไม่ได้ตั้งตารางแจ้งเตือน (ค่าตั้งต้นเดียวกัน: กระดิ่งเจ้าของ + กลุ่ม LINE ถ้าผูกไว้)
+        "document.customer_signed",
     };
 
     /// <summary>ค่าตั้งต้นเมื่อบริษัทยังไม่ได้ตั้งแถวของคีย์นั้น: คีย์ที่ย้ายมา = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทเมื่อบริษัทผูกกลุ่มไว้แล้ว —

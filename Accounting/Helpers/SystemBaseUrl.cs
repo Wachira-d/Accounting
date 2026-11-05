@@ -39,6 +39,11 @@ public static class SystemBaseUrl
         return $"{requestScheme}://{requestHost}";
     }
 
+    /// <summary>รอบ 240: origin สาธารณะของลิงก์ที่ส่งถึงลูกค้า (ลิงก์เซ็น/ยอมรับ) จากคำขอของผู้ใช้ — URL ของระบบที่ตั้งไว้ก่อน · ไม่ได้ตั้ง ⇒ ของคำขอ
+    /// (เดิม DocumentController ประกอบจาก <c>Request.Host</c> ตรง ๆ — หลัง reverse proxy ได้ชื่อภายใน)</summary>
+    public static async Task<string> OriginForRequestAsync(AccountingDbContext db, IConfiguration? config, string requestScheme, string requestHost, CancellationToken ct = default)
+        => PublicOrigin(await ResolveAsync(db, config, ct), requestScheme, requestHost);
+
     public static async Task<string?> ResolveAsync(AccountingDbContext db, IConfiguration? config, CancellationToken ct = default)
     {
         var admin = await db.SiteSettings.AsNoTracking().OrderBy(s => s.CreatedAt).Select(s => s.AppBaseUrl).FirstOrDefaultAsync(ct);

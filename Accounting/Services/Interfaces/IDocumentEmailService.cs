@@ -44,4 +44,5 @@ public interface IDocumentEmailService
 
 public record EmailTestResult(bool Success, string? ErrorMessage, DateTime TestedAt);
 
-public record EmailTemplate(string Subject, string HtmlBody);
+/// <summary>รอบ 240 (ฝ่ายค้าน N5): <c>SenderMode</c>/<c>SenderNote</c> = ผู้ส่งที่จะใช้จริง (บริษัท / ผ่าน NextAcc ในนามบริษัท) จากเซิร์ฟเวอร์ — หน้าต่างส่งอีเมลแสดงอย่างเดียว</summary>
+public record EmailTemplate(string Subject, string HtmlBody, string? SenderMode = null, string? SenderNote = null);

@@ -256,6 +256,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.OverageMigration.Statements());   // รอบ 231 — ส่วนเกินโควตา (ราคา · นโยบายรายบริษัท · ค่าตั้ง) + snapshot การใช้งานรายเดือน/รายวัน (หลังรอบ 219 เฟส 2 — แตะ PlatformBillingSettings)
         list.AddRange(Accounting.Helpers.PlatformPriceOverrideMigration.Statements());   // รอบ 231 — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ · Subscriptions.Kind + backfill · ย้าย override เพดานไป CompanyQuotaOverrides (หลังรอบ 229/230)
         list.AddRange(Accounting.Helpers.PlatformUpgradeModeMigration.Statements());   // รอบ 237 — อัปเกรดกลางรอบ 2 แบบ: ค่าตั้งแพลตฟอร์ม + แบบที่ลูกค้าเลือกบนรายการชำระ
+        list.AddRange(Accounting.Helpers.SignRequestMigration.Statements());   // รอบ 240 — ลิงก์ให้ลูกค้าเซ็น: webhook ต่อเอกสาร · อีเมลขอเซ็น/เตือน · outbox เหตุการณ์ลูกค้าเซ็น
         list.AddRange(Accounting.Helpers.LicenseLapseMigration.Statements());   // รอบ 238 (236-3) — คืนสถานะแถวบริษัทที่ถูก cascade ตาม License · License ในระยะผ่อนผัน Expired → PastDue (idempotent)
         return list;
     }
