@@ -111,7 +111,8 @@ public class QuotationAcceptanceRound239DbTests
         Assert.True(SignatureImageValidator.Validate(Convert.ToBase64String(bytes!)).Ok);
 
         var audits = await db.AuditLogs.AsNoTracking()
-            .Where(a => a.CompanyId == cid && a.EntityType == nameof(Document) && a.EntityId == doc.Id.ToString()).ToListAsync();
+            .Where(a => a.CompanyId == cid && a.EntityType == nameof(Document) && a.EntityId == doc.Id.ToString()
+                && a.Action == AuditAction.Approve).ToListAsync();   // แถว Create ของการ seed ไม่นับ (CI รอบ 239)
         var audit = Assert.Single(audits);
         Assert.Equal(AuditAction.Approve, audit.Action);
         Assert.NotNull(audit.RowHash);   // อยู่ใน hash chain ของบริษัท
@@ -269,7 +270,7 @@ public class QuotationAcceptanceRound239DbTests
         var row = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == doc.Id && d.CompanyId == cid);
         Assert.Equal("คำขอที่มาก่อน", row.QuotationAcceptedBy);
         Assert.Null(row.QuotationAcceptSignaturePath);
-        Assert.Equal(0, await db.AuditLogs.CountAsync(a => a.CompanyId == cid && a.EntityId == doc.Id.ToString()));
+        Assert.Equal(0, await db.AuditLogs.CountAsync(a => a.CompanyId == cid && a.EntityId == doc.Id.ToString() && a.Action == AuditAction.Approve));
         var dir = Path.Combine(root, "uploads", QuotationAcceptance.StorageFolder, cid.ToString("N"));
         Assert.True(!Directory.Exists(dir) || Directory.GetFiles(dir).Length == 0);
     }
