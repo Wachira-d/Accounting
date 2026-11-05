@@ -54,4 +54,6 @@ public interface IEmailSenderFactory
     Task<IEmailSender> GetSenderAsync(Guid companyId, CancellationToken ct = default);
     IEmailSender GetSenderForSettings(CompanySettings settings);
     IEmailSender GetGlobalFallbackSender();
+    /// <summary>รอบ 240: ที่อยู่ผู้ส่งของแพลตฟอร์ม (ค่าตั้งผู้ดูแล → appsettings) · null = ยังไม่ตั้ง</summary>
+    string? PlatformFromAddress();
 }

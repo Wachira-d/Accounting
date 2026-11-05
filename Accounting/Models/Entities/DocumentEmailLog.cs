@@ -32,4 +32,9 @@ public class DocumentEmailLog : TenantEntity
 
     public bool IsEtaxByEmail { get; set; }          // true if part of eTax by email flow
     public bool IncludedRdTimestamp { get; set; }    // true if csemail@etax.teda.th was CC'd
+
+    /// <summary>รอบ 240: วัตถุประสงค์ — "sign-request" · "sign-request-auto" · "sign-reminder" · null = อีเมลเอกสารทั่วไป</summary>
+    public string? Purpose { get; set; }
+    /// <summary>รอบ 240: ส่งจากใคร (<c>OnBehalfEmailSender.ModeCompany</c>/<c>ModePlatform</c>) — ฐานนับเพดานรายวันของอีเมลระบบ</summary>
+    public string? SenderMode { get; set; }
 }

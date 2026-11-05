@@ -1,5 +1,4 @@
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Accounting.Data;
@@ -34,6 +33,7 @@ public class WebhookService : IWebhookService
     private static readonly HashSet<string> ReservedWebhookHeaders = new(StringComparer.OrdinalIgnoreCase)
     {
         "X-Webhook-Signature", "X-Webhook-Event", "X-Webhook-Delivery-Id",
+        WebhookSignature.HeaderName, WebhookSignature.EventHeader, WebhookSignature.EventIdHeader,
         "Host", "Content-Length", "Transfer-Encoding", "Connection", "Upgrade",
     };
 
@@ -264,6 +264,13 @@ public class WebhookService : IWebhookService
                 JsonSerializer.Serialize(new { @event = "cheque.cleared", data = new { id = Guid.Empty, chequeNumber = 1234567L, amount = 50000.00m, isInbound = false, clearedAt = DateTime.UtcNow, bankBalanceAfter = 250000.00m } })),
             new("cheque.bounced", "Fired when a cheque bounces (NSF, signature mismatch, etc.).",
                 JsonSerializer.Serialize(new { @event = "cheque.bounced", data = new { id = Guid.Empty, chequeNumber = 1234567L, amount = 50000.00m, isInbound = false, reason = "Insufficient funds" } })),
+            // รอบ 240: ลูกค้าเซ็น/ยอมรับผ่านลิงก์ (ชื่อ event จาก Helpers/SignRequestKinds · payload จาก Helpers/SignEventOutbox.BuildPayload)
+            new(SignRequestKinds.QuotationAccept.EventType, "Fired when the customer accepts a quotation through the online link (with or without a drawn signature).",
+                SignEventOutbox.BuildPayload(new SignEventOutbox.PayloadInput(Guid.Empty, SignRequestKinds.QuotationAccept.EventType, DateTime.UtcNow,
+                    Guid.Empty, Guid.Empty, "QT-0001", "Quotation", 0, "Somchai J.", true, "sha256-hex", "ERP-123"))),
+            new(SignRequestKinds.DeliverySign.EventType, "Fired when the customer signs for a delivery note through the online link.",
+                SignEventOutbox.BuildPayload(new SignEventOutbox.PayloadInput(Guid.Empty, SignRequestKinds.DeliverySign.EventType, DateTime.UtcNow,
+                    Guid.Empty, Guid.Empty, "DN-0001", "DeliveryNote", 0, "Somchai J.", true, null, null))),
             new("webhook.test", "Test event fired when you use the test endpoint.",
                 JsonSerializer.Serialize(new { @event = "webhook.test", data = new { message = "Hello from Accounting!" } }))
         };
@@ -330,7 +337,7 @@ public class WebhookService : IWebhookService
 
         try
         {
-            var httpClient = _httpClientFactory.CreateClient("WebhookClient");
+            var httpClient = _httpClientFactory.CreateClient(OutboundUrlGuard.WebhookClientName);
             httpClient.Timeout = TimeSpan.FromSeconds(registration.TimeoutSeconds > 0 ? registration.TimeoutSeconds : 30);
 
             var jsonPayload = delivery.PayloadJson;
@@ -376,11 +383,14 @@ public class WebhookService : IWebhookService
 
             // Add HMAC signature if secret is configured. Secret is stored
             // encrypted at rest — sign with the cleartext.
+            // รอบ 240: ลายเซ็นผ่านฟังก์ชัน canonical ตัวเดียว (Helpers/WebhookSignature) — หัวเดิม (body ล้วน) คงไว้ให้ผู้เชื่อมต่อเดิม +
+            // หัวใหม่ที่มีเวลาในลายเซ็น (กันยิงซ้ำ) ให้ผู้เชื่อมต่อใหม่ตรวจ
             var clearSecret = _secrets.Unprotect(registration.Secret);
             if (!string.IsNullOrWhiteSpace(clearSecret))
             {
-                var signature = ComputeHmacSha256(jsonPayload, clearSecret);
-                request.Headers.TryAddWithoutValidation("X-Webhook-Signature", $"sha256={signature}");
+                request.Headers.TryAddWithoutValidation(WebhookSignature.LegacyHeaderName, WebhookSignature.LegacySign(clearSecret, jsonPayload));
+                request.Headers.TryAddWithoutValidation(WebhookSignature.HeaderName,
+                    WebhookSignature.Sign(clearSecret, DateTimeOffset.UtcNow.ToUnixTimeSeconds(), jsonPayload));
             }
 
             request.Headers.TryAddWithoutValidation("X-Webhook-Event", eventType);
@@ -456,16 +466,6 @@ public class WebhookService : IWebhookService
         }
 
         return false;
-    }
-
-    private static string ComputeHmacSha256(string payload, string secret)
-    {
-        var keyBytes = Encoding.UTF8.GetBytes(secret);
-        var payloadBytes = Encoding.UTF8.GetBytes(payload);
-
-        using var hmac = new HMACSHA256(keyBytes);
-        var hash = hmac.ComputeHash(payloadBytes);
-        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private static WebhookRegistrationResponse MapToResponse(WebhookRegistration w)

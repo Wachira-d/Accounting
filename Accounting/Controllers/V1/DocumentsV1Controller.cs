@@ -36,11 +36,16 @@ public class DocumentsV1Controller : PublicApiControllerBase
     private readonly IDocumentService _documents;
     private readonly IPermissionService _permissions;
     private readonly ILogger<DocumentsV1Controller> _logger;
+    /// <summary>รอบ 240: ลิงก์ให้ลูกค้าเซ็น (ออกลิงก์ · อีเมล · webhook ต่อเอกสาร) — เส้นเดียวกับหน้าเอกสาร · null (นอก DI) = ไม่มีเส้นนี้ (ตอบ 503)</summary>
+    private readonly ISignRequestService? _signs;
+    private readonly IPdfGenerationService? _pdf;
+    private readonly IConfiguration? _config;
 
     public DocumentsV1Controller(AccountingDbContext db, IUsageMeteringService metering,
         IDocumentService documents, IPermissionService permissions,
-        ILogger<DocumentsV1Controller> logger) : base(db, metering)
-    { _documents = documents; _permissions = permissions; _logger = logger; }
+        ILogger<DocumentsV1Controller> logger, ISignRequestService? signs = null, IPdfGenerationService? pdf = null,
+        IConfiguration? config = null) : base(db, metering)
+    { _documents = documents; _permissions = permissions; _logger = logger; _signs = signs; _pdf = pdf; _config = config; }
 
     public record LineRequest(string Description, decimal Quantity, decimal UnitPrice,
         decimal VatRate = 7, string? Unit = null, decimal WithholdingTaxRate = 0);
@@ -59,7 +64,11 @@ public class DocumentsV1Controller : PublicApiControllerBase
         List<LineRequest>? Lines,
         // รหัสสาขา 5 หลักของคู่ค้า (ไม่บังคับ · รอบ 193 ทีม C3) — ใช้คู่กับ contactTaxId: เลขเดียวกันคนละสาขา = คนละผู้ติดต่อ
         // (ประกาศอธิบดีฯ 199 · §86/4) · ไม่ส่ง = "ไม่ระบุ" (แถวสำนักงานใหญ่ก่อน) · ส่งมาแล้วยังไม่มีแถวสาขานี้ = สร้างให้
-        string? ContactBranchCode = null);
+        string? ContactBranchCode = null,
+        // รอบ 240 (คำตัดสิน 240-2): webhook ต่อเอกสาร — ใบเสนอราคา/ใบส่งของที่ลูกค้าเซ็นออนไลน์ ⇒ ระบบยิง quotation.accepted / delivery.signed
+        // กลับมาที่ URL นี้ (https · ลงนาม X-NextAcc-Signature ด้วยรหัสลับของบริษัท) · signCallbackRef ส่งกลับใน data.callbackRef
+        string? SignCallbackUrl = null,
+        string? SignCallbackRef = null);
 
     /// <summary>สร้างเอกสาร (ค่าเริ่มต้นเป็นฉบับร่าง — เลขจริงออกตอนอนุมัติตาม §86/4)
     ///
@@ -94,6 +103,25 @@ public class DocumentsV1Controller : PublicApiControllerBase
         // รหัสสาขาผิดรูป = ตอบ 400 ชี้ช่อง — ห้ามถือเป็น "ไม่ระบุ" แล้วออกใบกำกับในนามสำนักงานใหญ่เงียบ ๆ (§86/4)
         if (!Helpers.TaxBranchCode.TryNormalize(req.ContactBranchCode, out _, out var branchError))
             return BadRequest(new ApiResponse<string>(false, null, $"contactBranchCode: {branchError}"));
+
+        // รอบ 240: webhook ต่อเอกสาร — ตรวจก่อนสร้าง (กติกาเดียวกับ /sign-link: SignCallbackUrlRule + ต้องมีรหัสลับของบริษัท) ไม่สร้างใบแล้วค่อยปฏิเสธ
+        Accounting.Models.Entities.Document? signProbe = null;
+        if (!string.IsNullOrWhiteSpace(req.SignCallbackUrl) || !string.IsNullOrWhiteSpace(req.SignCallbackRef))
+        {
+            if (Helpers.SignRequestKinds.For(docType) == null)
+                return BadRequest(new ApiResponse<string>(false, null,
+                    "signCallbackUrl ใช้ได้เฉพาะเอกสารที่ลูกค้าเซ็นออนไลน์ได้ (Quotation · DeliveryNote)"));
+            var signSettings = await Db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == ctx!.CompanyId, ct);
+            signProbe = new Accounting.Models.Entities.Document();
+            try
+            {
+                Accounting.Services.Implementations.SignRequestService.ApplyCallback(signProbe, signSettings, req.SignCallbackUrl, req.SignCallbackRef, clear: false);
+            }
+            catch (Accounting.Helpers.BusinessRuleException ex)
+            {
+                return BadRequest(new ApiResponse<string>(false, null, ex.Message));
+            }
+        }
 
         var contactId = await ResolveContactAsync(ctx!.CompanyId, req, docType, ct);
         if (contactId == null)
@@ -141,15 +169,30 @@ public class DocumentsV1Controller : PublicApiControllerBase
 
             var doc = await _documents.CreateDocumentAsync(ctx.CompanyId, create, "api:v1");
 
-            // เลขใบกำกับของผู้ขายเก็บแยก — ใช้ตรวจซ้ำและอ้างอิงตอนเคลมภาษีซื้อ
-            if (!string.IsNullOrWhiteSpace(req.SupplierInvoiceNumber))
+            // เลขใบกำกับของผู้ขายเก็บแยก — ใช้ตรวจซ้ำและอ้างอิงตอนเคลมภาษีซื้อ · รอบ 240: webhook ต่อเอกสารที่ตรวจแล้วข้างบน
+            if (!string.IsNullOrWhiteSpace(req.SupplierInvoiceNumber) || signProbe != null)
             {
-                var row = await Db.Documents.FirstOrDefaultAsync(
-                    d => d.Id == doc.Id && d.CompanyId == ctx.CompanyId, ct);
-                if (row != null)
+                // ฝ่ายค้าน N8: ขั้นนี้แยกจากธุรกรรมของ CreateDocumentAsync (เปิดธุรกรรมเองเสมอ) ⇒ ถ้าบันทึก callback ไม่ได้ ต้องล้มดังพร้อมเลขใบ
+                // (ไม่ใช่ตอบสำเร็จทั้งที่ใบไม่มี callback — ระบบต้นทางจะรอ webhook ที่ไม่มีวันมา)
+                try
                 {
-                    row.SupplierInvoiceNumber = req.SupplierInvoiceNumber.Trim();
+                    var row = await Db.Documents.FirstOrDefaultAsync(
+                        d => d.Id == doc.Id && d.CompanyId == ctx.CompanyId, ct)
+                        ?? throw new InvalidOperationException("ไม่พบใบที่เพิ่งสร้าง");
+                    if (!string.IsNullOrWhiteSpace(req.SupplierInvoiceNumber))
+                        row.SupplierInvoiceNumber = req.SupplierInvoiceNumber.Trim();
+                    if (signProbe != null)
+                    {
+                        row.SignCallbackUrl = signProbe.SignCallbackUrl;
+                        row.SignCallbackRef = signProbe.SignCallbackRef;
+                    }
                     await Db.SaveChangesAsync(ct);
+                }
+                catch (Exception ex) when (signProbe != null && ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "สร้างเอกสาร v1 แล้วแต่บันทึก signCallbackUrl ไม่สำเร็จ doc={DocId}", doc.Id);
+                    return StatusCode(500, new ApiResponse<object>(false, new { documentId = doc.Id, documentNumber = doc.DocumentNumber, code = "SIGN-CALLBACK-NOT-SAVED" },
+                        "สร้างเอกสารแล้ว (ฉบับร่าง) แต่บันทึก signCallbackUrl ไม่สำเร็จ — เรียก POST /api/v1/documents/{id}/sign-link พร้อม callbackUrl อีกครั้ง (ไม่ต้องสร้างใบใหม่)"));
                 }
             }
 
@@ -190,6 +233,13 @@ public class DocumentsV1Controller : PublicApiControllerBase
                     taxIdWarning = Helpers.ContactTaxBranchKey.TaxIdChecksumWarning(req.ContactTaxId),
                 },
                 billing = new { charged = usage.ChargedAmount, coveredByFreeQuota = usage.CoveredByFreeQuota },
+                // รอบ 240: echo ค่าที่เก็บ (กฎ #4 A "เก็บแล้วต้อง echo กลับ") · ลิงก์ออกได้หลัง /approve ผ่าน POST /{id}/sign-link
+                signRequest = signProbe == null ? null : new
+                {
+                    callbackUrl = signProbe.SignCallbackUrl,
+                    callbackRef = signProbe.SignCallbackRef,
+                    eventType = Helpers.SignRequestKinds.For(docType)?.EventType,
+                },
             }, missingBuyer.Count == 0
                 ? "สร้างเอกสารสำเร็จ (ฉบับร่าง) — เรียก /approve เพื่อออกเลขที่จริงและลงบัญชี"
                 : "สร้างเอกสารสำเร็จ (ฉบับร่าง) — ผู้ติดต่อยังขาด " + string.Join(", ", missingBuyer)
@@ -296,6 +346,155 @@ public class DocumentsV1Controller : PublicApiControllerBase
         {
             return BadRequest(new ApiResponse<string>(false, null, ex.Message));
         }
+    }
+
+    // ==================== รอบ 240: ลิงก์ให้ลูกค้าเซ็น (DOCUMENT_FLOW §2.12f · คำตัดสิน 240-2/240-4) ====================
+
+    /// <summary>คำขอออก/ใช้ลิงก์ — <c>regenerate</c> = ออก token ใหม่ (ลิงก์เดิมเพิกถอน) · <c>callbackUrl</c>/<c>callbackRef</c> = ตั้ง/เปลี่ยน webhook ต่อเอกสาร ·
+    /// <c>sendEmail</c> = ส่งอีเมลขอเซ็นถึง <c>emailTo</c> (ว่าง = ผู้รับล่าสุด/อีเมลของผู้ติดต่อ) ทันที</summary>
+    public record SignLinkRequest(bool Regenerate = false, string? CallbackUrl = null, string? CallbackRef = null,
+        bool SendEmail = false, List<string>? EmailTo = null, string? EmailMessage = null);
+
+    /// <summary>ออกลิงก์ให้ลูกค้าเซ็น/ยอมรับ (ใบเสนอราคา/ใบส่งของที่อนุมัติแล้ว) + ตั้ง webhook ต่อเอกสาร + (ถ้าขอ) ส่งอีเมลขอเซ็น — เส้นเดียวกับหน้าเอกสาร
+    /// (<c>SignRequestService</c>) · scope <c>documents:write</c> · สิทธิ์สร้างเอกสารชนิดนั้นของผู้ออกคีย์ (คีย์ทำได้ไม่เกินคนออก)</summary>
+    [HttpPost("{documentId:guid}/sign-link")]
+    public async Task<IActionResult> SignLink(Guid documentId, [FromBody] SignLinkRequest? req, CancellationToken ct)
+    {
+        var (ctx, error) = await ResolveCallerAsync("documents:write", Feature, ct);
+        if (error != null) return error;
+        if (_signs == null) return StatusCode(503, new ApiResponse<string>(false, null, "ระบบลิงก์ให้ลูกค้าเซ็นไม่พร้อม"));
+        var target = await Db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == ctx!.CompanyId && !d.IsDeleted)
+            .Select(d => new { d.DocumentType })
+            .FirstOrDefaultAsync(ct);
+        if (target == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสารนี้ในบริษัทของคุณ"));
+        var permError = await CheckCreatePermissionAsync(ctx!, target.DocumentType, ct);
+        if (permError != null) return permError;
+        if (await DenySensitiveForKeyAsync(ctx!, documentId, "ส่งลิงก์ให้ลูกค้าเซ็น", ct) is { } hidden) return hidden;
+
+        req ??= new SignLinkRequest();
+        var origin = await Helpers.SystemBaseUrl.OriginForRequestAsync(Db, _config, Request.Scheme, Request.Host.ToString(), ct);
+        try
+        {
+            var link = await _signs.IssueLinkAsync(ctx!.CompanyId, documentId,
+                new IssueSignLinkOptions(req.Regenerate, req.CallbackUrl, req.CallbackRef), origin, ct);
+            SignEmailResult? email = null;
+            if (req.SendEmail)
+                email = await _signs.SendEmailAsync(ctx.CompanyId, documentId,
+                    new SendSignEmailOptions(req.EmailTo, req.EmailMessage), origin, $"api:v1:{ctx.ApiKeyId}", ct);
+            var body = new
+            {
+                documentId,
+                kind = link.Kind,
+                eventType = link.EventType,
+                url = link.Url,
+                expiresAt = link.ExpiresAt,
+                signedAt = link.SignedAt,
+                callbackUrl = link.CallbackUrl,
+                callbackRef = link.CallbackRef,
+                status = link.Status,
+                email = email == null ? null : new
+                {
+                    senderMode = email.SenderMode,
+                    from = email.FromAddress,
+                    replyTo = email.ReplyTo,
+                    recipients = email.Recipients,
+                },
+            };
+            if (email != null && !email.AnySent)
+                return StatusCode(email.Throttled ? 429 : 502, new ApiResponse<object>(false, body,
+                    "ออกลิงก์แล้ว แต่ส่งอีเมลไม่สำเร็จ — " + string.Join(" · ", email.Recipients.Select(r => $"{r.To}: {r.Error}"))));
+            return Ok(new ApiResponse<object>(true, body, email == null ? "ออกลิงก์แล้ว" : "ออกลิงก์และส่งอีเมลแล้ว"));
+        }
+        catch (Accounting.Helpers.BusinessRuleException ex)
+        {
+            return BadRequest(new ApiResponse<string>(false, null, ex.Message));
+        }
+    }
+
+    /// <summary>สถานะการเซ็นของใบ (ลิงก์ที่ payload webhook ชี้มา) — ไม่มีรูปลายเซ็น/IP (PDPA) · scope <c>documents:write</c></summary>
+    [HttpGet("{documentId:guid}/sign-status")]
+    public async Task<IActionResult> SignStatus(Guid documentId, CancellationToken ct)
+    {
+        var (ctx, error) = await ResolveCallerAsync("documents:write", Feature, ct);
+        if (error != null) return error;
+        var doc = await Db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == ctx!.CompanyId && !d.IsDeleted, ct);
+        var kind = doc == null ? null : Helpers.SignRequestKinds.For(doc.DocumentType);
+        if (doc == null || kind == null) return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสารที่ลูกค้าเซ็นได้รายการนี้ในบริษัทของคุณ"));
+        if (await DenySensitiveForKeyAsync(ctx!, documentId, "ดูสถานะการเซ็นของ", ct) is { } hidden) return hidden;
+        var s = Helpers.SignRequestKinds.Read(doc);
+        return Ok(new ApiResponse<object>(true, new
+        {
+            documentId = doc.Id,
+            documentNumber = doc.DocumentNumber,
+            documentType = doc.DocumentType.ToString(),
+            revisionNumber = doc.RevisionNumber,
+            status = Helpers.SignRequestKinds.Status(doc, DateTime.UtcNow),
+            linkExpiresAt = s.ExpiresAt,
+            emailedAt = doc.SignLinkEmailedAt,
+            openedAt = doc.SignLinkOpenedAt,
+            signedAt = s.SignedAt,
+            signedBy = s.SignedBy,
+            hasSignature = doc.DocumentType == DocumentType.Quotation
+                ? !string.IsNullOrWhiteSpace(doc.QuotationAcceptSignaturePath)
+                : !string.IsNullOrWhiteSpace(doc.DeliverySignatureBase64),
+            contentHash = doc.QuotationAcceptContentHash,
+            callbackUrl = doc.SignCallbackUrl,
+            callbackRef = doc.SignCallbackRef,
+        }));
+    }
+
+    /// <summary>PDF ของใบที่ลูกค้าเซ็นได้ (ตัวเรนเดอร์เดียวกับที่ผู้ขายดาวน์โหลด — มีช่องลูกค้าอนุมัติ/ลายเซ็นเมื่อเซ็นแล้ว) · จำกัดเฉพาะชนิดที่เซ็นได้</summary>
+    [HttpGet("{documentId:guid}/pdf")]
+    public async Task<IActionResult> Pdf(Guid documentId, CancellationToken ct)
+    {
+        var (ctx, error) = await ResolveCallerAsync("documents:write", Feature, ct);
+        if (error != null) return error;
+        if (_pdf == null) return StatusCode(503, new ApiResponse<string>(false, null, "ระบบสร้าง PDF ไม่พร้อม"));
+        var type = await Db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == ctx!.CompanyId && !d.IsDeleted)
+            .Select(d => (DocumentType?)d.DocumentType).FirstOrDefaultAsync(ct);
+        if (type == null || Helpers.SignRequestKinds.For(type.Value) == null)
+            return NotFound(new ApiResponse<string>(false, null, "ไม่พบเอกสารที่ลูกค้าเซ็นได้รายการนี้ในบริษัทของคุณ"));
+        if (await DenySensitiveForKeyAsync(ctx!, documentId, "ดาวน์โหลด PDF ของ", ct) is { } hidden) return hidden;
+        var gen = await _pdf.GenerateDocumentPdfAsync(ctx!.CompanyId,
+            new Models.DTOs.DocumentTemplate.GeneratePdfRequest(documentId, null, null, null, null));
+        Response.Headers["Cache-Control"] = "private, no-store";
+        return File(gen.PdfData, "application/pdf", gen.FileName);
+    }
+
+    /// <summary>ผู้ออกคีย์ (คีย์ทำได้ไม่เกินสิทธิ์ของคนออก) · null = ระบุไม่ได้</summary>
+    private async Task<Guid?> KeyOwnerAsync(ApiCallerContext ctx, CancellationToken ct)
+        => ctx.ApiKeyId.HasValue
+            ? await Db.Set<ApiKey>().AsNoTracking().Where(k => k.Id == ctx.ApiKeyId.Value && k.CompanyId == ctx.CompanyId)
+                .Select(k => (Guid?)k.CreatedByUserId).FirstOrDefaultAsync(ct)
+            : null;
+
+    /// <summary>ฝ่ายค้าน S5: ด่านชั้นความลับเดียวกับหน้าเว็บ (<c>ISensitivityService.CanViewAsync</c> + ข้อความจาก <c>Helpers/SensitivityAccess</c>) โดยใช้ผู้ออกคีย์เป็นผู้ดู ·
+    /// ใบลับที่ผู้ออกคีย์ดูไม่ได้ ⇒ 403 (ออกลิงก์/ส่งอีเมล/PDF/สถานะ ไม่ได้) · ไม่มี ISensitivityService ใน DI = ผ่าน (พฤติกรรมเดียวกับหน้าเว็บ) · null = ผ่าน</summary>
+    private async Task<IActionResult?> DenySensitiveForKeyAsync(ApiCallerContext ctx, Guid documentId, string verb, CancellationToken ct)
+    {
+        var kind = await Db.Documents.AsNoTracking()
+            .Where(d => d.Id == documentId && d.CompanyId == ctx.CompanyId)
+            .Select(d => d.Sensitivity).FirstOrDefaultAsync(ct);
+        if (!Helpers.SensitivityAccess.NeedsCheck(kind)) return null;
+        if (HttpContext.RequestServices.GetService(typeof(ISensitivityService)) is not ISensitivityService svc) return null;
+        var owner = await KeyOwnerAsync(ctx, ct);
+        if (owner != null && await svc.CanViewAsync(ctx.CompanyId, owner.Value, kind)) return null;
+        return StatusCode(403, new ApiResponse<string>(false, null, Helpers.SensitivityAccess.DeniedMessage(kind, verb)));
+    }
+
+    /// <summary>ด่านสิทธิ์สร้างเอกสารของผู้ออกคีย์ (ออกลิงก์ = ส่งเอกสารออกไปหาลูกค้า) — null = ผ่าน</summary>
+    private async Task<IActionResult?> CheckCreatePermissionAsync(ApiCallerContext ctx, DocumentType docType, CancellationToken ct)
+    {
+        var owner = await KeyOwnerAsync(ctx, ct);
+        if (owner == null)
+            return StatusCode(403, new ApiResponse<string>(false, null, "ระบุผู้ออก API key ไม่ได้ — ออกคีย์ใหม่จากหน้าจัดการ API key"));
+        return await Helpers.DocumentPermissionHelper.CanCreateAsync(_permissions, ctx.CompanyId, owner.Value, docType)
+            ? null
+            : StatusCode(403, new ApiResponse<string>(false, null,
+                $"ผู้ออก API key นี้ไม่มีสิทธิ์สร้างเอกสาร {docType} — ให้สิทธิ์ Document.Create แก่ผู้ออกคีย์ หรือออกคีย์ใหม่ด้วยบัญชีที่มีสิทธิ์"));
     }
 
     /// <summary>

@@ -44,6 +44,9 @@ public static class NotificationEvents
     public const string PaymentVoucherGenerated = "document.pv_generated";
     public const string DocumentApproved        = "document.approved";
     public const string DocumentVoided          = "document.voided";
+    /// <summary>รอบ 240: ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์ — ผู้ส่งเดียว <c>SignEventDispatcher</c> (outbox) ·
+    /// ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) ผ่าน <c>NotificationAudiencePolicy.MigratedBroadcastKeys</c></summary>
+    public const string DocumentCustomerSigned  = "document.customer_signed";
     // ===== รอบ 232 (232-Notify): ย้ายจาก LineNotifyService.Notify*Async (ประกาศกลุ่ม LINE โดยไม่มีค่าตั้ง + ถอยไปกลุ่มกลางของแพลตฟอร์ม) =====
     // ค่าตั้งต้นเมื่อบริษัทยังไม่ตั้ง = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) — Helpers/NotificationAudiencePolicy.DefaultMatrix
     /// <summary>บันทึกรับชำระของเอกสารขาย (ตัดชำระ/ใบเสร็จ) — เดิม "💵 รับชำระเงินแล้ว" เข้ากลุ่ม LINE</summary>
@@ -144,6 +147,7 @@ public static class NotificationEvents
         ("Accounting", PaymentVoucherGenerated, "สร้างใบสำคัญจ่ายอัตโนมัติ"),
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
+        ("Accounting", DocumentCustomerSigned, "ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์"),
         ("Accounting", PaymentReceived, "บันทึกรับชำระเงินของเอกสาร"),
         ("Accounting", InvoiceOverdue, "ใบแจ้งหนี้เพิ่งเกินกำหนดชำระ (แจ้งภายใน)"),
         ("Accounting", BankSyncCompleted, "ซิงก์ธนาคารได้รายการใหม่"),

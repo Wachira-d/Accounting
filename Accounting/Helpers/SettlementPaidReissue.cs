@@ -396,6 +396,10 @@ public static class SettlementPaidReissue
         // รอบ 239: หลักฐานการยอมรับใบเสนอราคาออนไลน์ (ลายเซ็น/IP/hash) เป็นของใบเดิม — ไม่ตามไปใบแทน
         nameof(Document.QuotationAcceptSignaturePath), nameof(Document.QuotationAcceptNote), nameof(Document.QuotationAcceptContentHash),
         nameof(Document.QuotationAcceptIp), nameof(Document.QuotationAcceptUserAgentHash), nameof(Document.QuotationAcceptTokenHash),
+        // รอบ 240: ลิงก์ให้ลูกค้าเซ็น (webhook ต่อเอกสาร · สถานะส่ง/เปิด/เตือน) เป็นของใบเดิม — ใบแทนต้องออกลิงก์/ตั้ง callback ใหม่
+        nameof(Document.SignCallbackUrl), nameof(Document.SignCallbackRef), nameof(Document.SignLinkIssuedAt),
+        nameof(Document.SignLinkEmailedAt), nameof(Document.SignLinkEmailedTo), nameof(Document.SignLinkOpenedAt),
+        nameof(Document.SignReminderSentAt),
         nameof(Document.DeliverySignTokenExpiresAt), nameof(Document.DeliverySignedAt), nameof(Document.DeliverySignedBy),
         nameof(Document.DeliverySignatureBase64), nameof(Document.SettlementOrphanAckAt), nameof(Document.SettlementOrphanAckBy),
         nameof(Document.SettlementOrphanAckReason), nameof(Document.ReplacedByDocumentId), nameof(Document.ReplacesDocumentId),

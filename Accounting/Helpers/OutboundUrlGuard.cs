@@ -92,6 +92,74 @@ public static class OutboundUrlGuard
         return Result.Pass;
     }
 
+    /// <summary>ขนาดคำตอบสูงสุดที่ client ของ webhook ขาออกยอม buffer (ไบต์)</summary>
+    public const int MaxResponseBufferBytes = 64 * 1024;
+
+    /// <summary>รอบ 240 (ฝ่ายค้าน S1/N2): handler ตัวเดียวของทุก client ที่ยิงไป URL ที่ผู้เช่าตั้ง ("WebhookClient" · "SignWebhookClient") —
+    /// ไม่ผ่าน proxy (proxy resolve ชื่อเอง = ข้ามด่าน IP) · ไม่ตาม redirect · ต่อเฉพาะ IP สาธารณะ (<see cref="ConnectPublicOnlyAsync"/>) ·
+    /// หมดเวลาต่อ 5 วินาที · หัวคำตอบ ≤ 16 KB · ไม่ระบาย body ที่ทิ้ง</summary>
+    internal static System.Net.Http.SocketsHttpHandler CreatePublicOnlyHandler()
+    {
+        return new System.Net.Http.SocketsHttpHandler
+        {
+            UseProxy = false,
+            AllowAutoRedirect = false,
+            ConnectTimeout = TimeSpan.FromSeconds(5),
+            MaxResponseHeadersLength = 16,
+            MaxResponseDrainSize = 0,
+            ConnectCallback = ConnectPublicOnlyAsync,
+        };
+    }
+
+    /// <summary>รอบ 240 (ฝ่ายค้าน S1/N2/S7): ลงทะเบียน client ขาออกที่ยิงไป URL ของผู้เช่าทุกตัวด้วย handler เดียว — ผู้เรียก: Program.cs ·
+    /// <c>required_call_site_check</c> ล็อกว่าทั้งสองชื่อใช้ <see cref="CreatePublicOnlyHandler"/></summary>
+    public static IServiceCollection AddOutboundWebhookClients(this IServiceCollection services, string signClientName)
+    {
+        services.AddHttpClient(WebhookClientName, c => c.MaxResponseContentBufferSize = MaxResponseBufferBytes)
+            .ConfigurePrimaryHttpMessageHandler(CreatePublicOnlyHandler);
+        services.AddHttpClient(signClientName, c => c.MaxResponseContentBufferSize = MaxResponseBufferBytes)
+            .ConfigurePrimaryHttpMessageHandler(CreatePublicOnlyHandler);
+        return services;
+    }
+
+    /// <summary>ชื่อ client ของ webhook ที่ลงทะเบียน (<c>WebhookService</c>)</summary>
+    public const string WebhookClientName = "WebhookClient";
+
+    /// <summary>ตัวตัดสินของ <see cref="ConnectPublicOnlyAsync(System.Net.Http.SocketsHttpConnectionContext, CancellationToken)"/> แยกให้เทสต์เรียกตรงได้ —
+    /// resolve ชื่อ (หรือ IP ตรง) แล้วคืนที่อยู่ที่ต่อได้ · มีตัวไหนไม่สาธารณะ ⇒ โยน HttpRequestException</summary>
+    internal static async Task<IPAddress[]> ResolvePublicOnlyAsync(string host, CancellationToken ct)
+    {
+        host = host.Trim('[', ']');
+        IPAddress[] addresses = IPAddress.TryParse(host, out var literal)
+            ? new[] { literal }
+            : await Dns.GetHostAddressesAsync(host, ct);
+        if (addresses.Length == 0)
+            throw new System.Net.Http.HttpRequestException($"หาที่อยู่ของ {host} ไม่ได้");
+        foreach (var ip in addresses)
+            if (!IsPublic(ip))
+                throw new System.Net.Http.HttpRequestException($"ปลายทาง {host} ชี้ไปที่อยู่ภายใน ({ip}) — ไม่อนุญาต");
+        return addresses;
+    }
+
+    /// <summary>รอบ 240 (คำตัดสิน 240-2): ตัวเชื่อมต่อของ <c>SocketsHttpHandler.ConnectCallback</c> — resolve ชื่อ<b>ตอนต่อจริง</b> แล้วต่อเฉพาะ IP
+    /// สาธารณะ (ทุกตัวที่ได้ต้องสาธารณะ) ⇒ ปิดช่อง DNS rebinding ระหว่าง <see cref="CheckResolvedAsync"/> กับการต่อ (TOCTOU) ·
+    /// ใช้กับ client "SignWebhookClient" (Program.cs)</summary>
+    private static async ValueTask<Stream> ConnectPublicOnlyAsync(System.Net.Http.SocketsHttpConnectionContext context, CancellationToken ct)
+    {
+        var addresses = await ResolvePublicOnlyAsync(context.DnsEndPoint.Host, ct);
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(addresses, context.DnsEndPoint.Port, ct);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>IP นี้เป็นที่อยู่สาธารณะที่ยิงออกไปได้ไหม</summary>
     public static bool IsPublic(IPAddress ip)
     {
@@ -120,6 +188,12 @@ public static class OutboundUrlGuard
             if (ip.IsIPv6LinkLocal || ip.IsIPv6SiteLocal || ip.IsIPv6Multicast) return false;
             var b = ip.GetAddressBytes();
             if ((b[0] & 0xFE) == 0xFC) return false;                        // fc00::/7 unique-local
+            // รอบ 240 (ฝ่ายค้าน N1): ช่วงที่ห่อ/แปล IPv4 — ปลายทางจริงอาจเป็น IPv4 ภายใน ⇒ ไม่อนุญาตทั้งช่วง
+            if (b[0] == 0x00 && b[1] == 0x64 && b[2] == 0xFF && b[3] == 0x9B
+                && b.Skip(4).Take(8).All(x => x == 0)) return false;          // 64:ff9b::/96 NAT64
+            if (b[0] == 0x20 && b[1] == 0x02) return false;                 // 2002::/16 6to4
+            if (b[0] == 0x20 && b[1] == 0x01 && b[2] == 0x00 && b[3] == 0x00) return false;   // 2001::/32 Teredo
+            if (b.Take(12).All(x => x == 0)) return false;                  // ::a.b.c.d IPv4-compatible (รวม ::/96 ทั้งหมด)
             return true;
         }
 

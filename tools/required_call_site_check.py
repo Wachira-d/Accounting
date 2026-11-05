@@ -14232,6 +14232,197 @@ REVIEWER_CASES += [
 ]
 
 
+# ── รอบ 240: ลิงก์ให้ลูกค้าเซ็น — outbox ในธุรกรรมของการเซ็น · ผู้ส่งอีเมลจากตัวตัดสินเดียว + เพดาน · webhook ผ่านด่าน SSRF + ลายเซ็น canonical ──
+_R240_WHY = "รอบ 240 (คำตัดสิน 240-*): "
+_R240_SVC = "Services/Implementations/SignRequestService.cs"
+_R240_DISP = "Services/Implementations/SignEventDispatcher.cs"
+_R240_DEC = "Services/Implementations/DocumentEmailService.cs"
+RULES += [
+    dict(file=_R239_PUB, method="Accept",
+         must=["SignEventOutbox.Enqueue(", "SignRequestKinds.QuotationAccept"],
+         before=[("ExecuteUpdateAsync(", "SignEventOutbox.Enqueue("), ("SignEventOutbox.Enqueue(", "tx.CommitAsync(")],
+         forbid=["TriggerAsync(", "CreateClient("],
+         why=_R240_WHY + "240-3 ยอมรับสำเร็จ = เหตุการณ์ quotation.accepted 1 แถวในธุรกรรมเดียวกัน · ห้ามยิง webhook ในคำขอของลูกค้า (ปลายทางล่มต้องไม่ทำให้ยอมรับล้ม)"),
+    dict(file=_R239_PUB, method="SignDelivery",
+         must=["SignEventOutbox.Enqueue(", "SignRequestKinds.DeliverySign", "ExecuteUpdateAsync(", "tx.CommitAsync("],
+         must_re=[r"d\.DeliverySignedAt\s*==\s*null"],
+         before=[("ExecuteUpdateAsync(", "SignEventOutbox.Enqueue("), ("SignEventOutbox.Enqueue(", "tx.CommitAsync(")],
+         forbid=["TriggerAsync(", "CreateClient("],
+         why=_R240_WHY + "240-3 เซ็นรับสินค้า: จองแบบอะตอมมิก (แถวที่ยังไม่เซ็น) + delivery.signed ลง outbox ในธุรกรรมเดียว"),
+    dict(file=_R240_SVC, method="SendEmailAsync",
+         must=["LoadSignableAsync(", "DocumentEmailService.ResolveOnBehalfSenderAsync(", "SignEmailThrottle.Refusal(", "ComposeAsync(",
+               "_db.DocumentEmailLogs.Add(", "PlatformEmailQuota.ForCompanyAsync(", "PlatformEmailQuota.RecipientCountsAsync("],
+         before=[("SignEmailThrottle.Refusal(", "sender.SendAsync(")],
+         forbid=["GetGlobalFallbackSender(", "GetSenderForSettings(", "ResolveFromAddress("],
+         why=_R240_WHY + "240-4/240-6 อีเมลขอเซ็น: ผู้ส่ง (บริษัท/แพลตฟอร์มในนามบริษัท) จากตัวตัดสินเดียว · เพดาน/กันส่งถี่ก่อนเรียกผู้ให้บริการ · บันทึกทุกฉบับ"),
+    dict(file=_R240_SVC, method="LoadSignableAsync",
+         must=["SignRequestKinds.IssueRefusal(", "d.CompanyId == companyId"],
+         why=_R240_WHY + "240-1 ทุกทางเข้า (หน้าเอกสาร · API v1 · งานอัตโนมัติ) ผ่านด่านชนิด/สถานะเดียว + tenant"),
+    dict(file=_R240_SVC, method="IssueLinkAsync",
+         must=["LoadSignableAsync(", "ApplyCallback(", "SignRequestKinds.SetNewToken("],
+         why=_R240_WHY + "240-2 ออกลิงก์ + webhook ต่อเอกสารผ่านตัวตรวจเดียว"),
+    dict(file=_R240_SVC, method="ApplyCallback",
+         must=["SignCallbackUrlRule.Problem(", "SignCallbackSecret"],
+         before=[("SignCallbackUrlRule.Problem(", "doc.SignCallbackUrl = callbackUrl")],
+         why=_R240_WHY + "240-2 callbackUrl ผ่านกติกา URL (https · IP สาธารณะ · โฮสต์ที่อนุญาต) และต้องมีรหัสลับลงนามก่อนเก็บ"),
+    dict(file=_R240_DEC, method="ResolveOnBehalfSenderAsync",
+         must=["OnBehalfEmailSender.Resolve(", "HasTenantSender(", "PlatformFromAddress("],
+         must_re=[r"settings\.EmailConfigured"],
+         why=_R240_WHY + "240-4 ผู้ส่งของบริษัทเฉพาะเมื่อตั้งแล้ว+ทดสอบผ่าน · ไม่งั้นแพลตฟอร์มในนามบริษัท (ไม่ปลอมโดเมน)"),
+    dict(file=_R240_DEC, method="SendDocumentEmailAsync",
+         must=["ResolveOnBehalfSenderAsync(", "PlatformEmailQuota.ForCompanyAsync(", "PlatformEmailQuota.RecipientCountsAsync(",
+               "SignEmailThrottle.RecipientCountRefusal(", "SignEmailThrottle.Refusal(", "SignRequestEmailText.WrapPlatformDocumentEmail(",
+               "SignRequestEmailText.PlainTextToHtml(", "SignRequestEmailText.SafeSubject("],
+         must_re=[r"if\s*\(\s*plan\.OnBehalf\s*\)"],
+         before=[("SignEmailThrottle.Refusal(", "sender.SendAsync("), ("SignRequestEmailText.WrapPlatformDocumentEmail(", "sender.SendAsync(")],
+         forbid=["ResolveFromAddress(", "_senderFactory.GetSenderAsync(", "SignRequestEmailText.OnBehalfBanner("],
+         why=_R240_WHY + "240-4/240-9 (ฝ่ายค้าน B1) อีเมลเอกสาร: ผู้ส่งจากตัวตัดสินเดียว · เส้นแพลตฟอร์ม = เพดาน (บริษัท/วัน · ผู้รับ · To+Cc+Bcc) + "
+             "เทมเพลตคงที่ (ข้อความผู้ใช้เป็นข้อความล้วน) ก่อนเรียกผู้ให้บริการ — ไม่ใช่ open relay"),
+    dict(file=_R240_DISP, method="DeliverCallbackAsync",
+         must=["OutboundUrlGuard.CheckResolvedAsync(", "WebhookSignature.Sign(", "CreateClient(HttpClientName)", "ReadBoundedAsync("],
+         must_re=[r"SendAsync\(\s*req\s*,\s*HttpCompletionOption\.ResponseHeadersRead"],
+         before=[("OutboundUrlGuard.CheckResolvedAsync(", "client.SendAsync(")],
+         forbid=["new HMACSHA256(", "new HttpClient(", "ReadAsStringAsync("],
+         why=_R240_WHY + "240-2/240-3 callback: ด่าน SSRF ตอนส่ง (+ client ที่ต่อเฉพาะ IP สาธารณะ · ไม่ตาม redirect) · ลายเซ็นจากฟังก์ชัน canonical เดียว · "
+             "อ่านแค่หัวคำตอบ + body จำกัดขนาด (ฝ่ายค้าน S6)"),
+    dict(file=_R240_DISP, method="ProcessOneAsync",
+         must=["SignCallbackUrlRule.Problem(", "SignCallbackAllowedHosts", "DeliverCallbackAsync("],
+         before=[("SignCallbackUrlRule.Problem(", "DeliverCallbackAsync("), ("NotifySellerAsync(", "TriggerAsync(")],
+         why=_R240_WHY + "ฝ่ายค้าน S2/S3: ตรวจกติกา URL + โฮสต์ปัจจุบันก่อนส่งทุกครั้ง · บันทึกแยกหลังแจ้งผู้ขาย/หลัง webhook ที่ลงทะเบียน"),
+    dict(file=_R240_DISP, method="ProcessDueAsync",
+         must=["ProcessOneAsync(", "MarkAttemptFailedAsync("],
+         why=_R240_WHY + "ฝ่ายค้าน S3: ล้มที่แถวไหนถอยเวลาแถวนั้น ไม่ล้มทั้งรอบ"),
+    dict(file=_R240_SVC, method="RetryEventAsync",
+         must=["SignCallbackUrlRule.Problem("], must_lit=['"SIGN-EVENT-PURGED"'],
+         why=_R240_WHY + "ฝ่ายค้าน S2/N3: ส่งซ้ำมือต้องผ่านกติกา URL ปัจจุบัน และไม่ส่ง payload ที่ถูกล้างแล้ว"),
+    dict(file="Helpers/OutboundUrlGuard.cs", method="CreatePublicOnlyHandler",
+         must_re=[r"ConnectCallback\s*=\s*ConnectPublicOnlyAsync", r"UseProxy\s*=\s*false", r"AllowAutoRedirect\s*=\s*false", r"ConnectTimeout\s*="],
+         why=_R240_WHY + "ฝ่ายค้าน S1/N2: handler ของ client ขาออกทุกตัว — ต่อเฉพาะ IP สาธารณะ · ไม่ผ่าน proxy · ไม่ตาม redirect · หมดเวลาต่อ"),
+    dict(file="Helpers/OutboundUrlGuard.cs", method="AddOutboundWebhookClients",
+         must_re=[r"AddHttpClient\(\s*WebhookClientName[^;]*ConfigurePrimaryHttpMessageHandler\(\s*CreatePublicOnlyHandler\s*\)",
+                  r"AddHttpClient\(\s*signClientName[^;]*ConfigurePrimaryHttpMessageHandler\(\s*CreatePublicOnlyHandler\s*\)",
+                  r"MaxResponseContentBufferSize\s*=\s*MaxResponseBufferBytes"],
+         why=_R240_WHY + "ฝ่ายค้าน S7/N2: WebhookClient และ client ของ callback ต่อเอกสาร ลงทะเบียนด้วย handler ที่มี ConnectCallback ตัวเดียว"),
+    dict(file="Helpers/OutboundUrlGuard.cs", method="ConnectPublicOnlyAsync",
+         must=["ResolvePublicOnlyAsync("],
+         why=_R240_WHY + "240-2 ต่อเฉพาะที่อยู่ที่ผ่านด่าน IP สาธารณะ"),
+    dict(file="Helpers/OutboundUrlGuard.cs", method="ResolvePublicOnlyAsync",
+         must=["IsPublic("],
+         why=_R240_WHY + "240-2 ทุก IP ที่ resolve ได้ต้องสาธารณะ"),
+    dict(file="Controllers/V1/DocumentsV1Controller.cs", method="Pdf",
+         must=["ResolveCallerAsync(", "DenySensitiveForKeyAsync(", "SignRequestKinds.For("],
+         before=[("DenySensitiveForKeyAsync(", "GenerateDocumentPdfAsync(")],
+         why=_R240_WHY + "ฝ่ายค้าน S5: PDF ผ่าน API ผ่านด่านชั้นความลับเดียวกับหน้าเว็บ"),
+    dict(file="Controllers/V1/DocumentsV1Controller.cs", method="SignStatus",
+         must=["ResolveCallerAsync(", "DenySensitiveForKeyAsync("],
+         why=_R240_WHY + "ฝ่ายค้าน S5: สถานะการเซ็นผ่าน API ผ่านด่านชั้นความลับ"),
+    dict(file="Controllers/V1/DocumentsV1Controller.cs", method="DenySensitiveForKeyAsync",
+         must=["SensitivityAccess.NeedsCheck(", "CanViewAsync(", "KeyOwnerAsync("],
+         why=_R240_WHY + "ฝ่ายค้าน S5: ผู้ออกคีย์เป็นผู้ดู · ตัวตัดสินเดียวกับหน้าเว็บ"),
+    dict(file="Services/Implementations/WebhookService.cs", method="DeliverWebhookAsync",
+         must=["OutboundUrlGuard.CheckResolvedAsync(", "WebhookSignature.LegacySign(", "WebhookSignature.Sign("],
+         forbid=["new HMACSHA256(", "ComputeHmacSha256("],
+         why=_R240_WHY + "240-3 webhook ที่ลงทะเบียน: ลายเซ็นผ่านฟังก์ชัน canonical เดียวกับ callback ต่อเอกสาร (กฎ #4 C)"),
+    dict(file="Controllers/DocumentController.cs", method="DenySignRequestAsync",
+         must=["DenyDocAsync(", "DenySensitiveAsync(", "SignRequestKinds.For("],
+         why=_R240_WHY + "240-1 ส่งลิงก์ให้ลูกค้าเซ็น = สิทธิ์สร้างเอกสารชนิดนั้น + ชั้นความลับ"),
+    dict(file="Controllers/DocumentController.cs", method="SendSignRequestEmail",
+         must=["DenySignRequestAsync<", "signs.SendEmailAsync("],
+         before=[("DenySignRequestAsync<", "signs.SendEmailAsync(")],
+         why=_R240_WHY + "240-4 ด่านก่อนส่งอีเมล"),
+    dict(file="Controllers/V1/DocumentsV1Controller.cs", method="SignLink",
+         must=["ResolveCallerAsync(", "CheckCreatePermissionAsync(", "DenySensitiveForKeyAsync(", "_signs.IssueLinkAsync("],
+         before=[("CheckCreatePermissionAsync(", "_signs.IssueLinkAsync("), ("DenySensitiveForKeyAsync(", "_signs.IssueLinkAsync(")],
+         why=_R240_WHY + "240-2 partner API: scope + สิทธิ์ของผู้ออกคีย์ก่อนออกลิงก์/ส่งอีเมล"),
+    dict(file="Controllers/V1/DocumentsV1Controller.cs", method="Create",
+         must=["SignRequestService.ApplyCallback("], must_lit=['"SIGN-CALLBACK-NOT-SAVED"'],
+         why=_R240_WHY + "240-2 signCallbackUrl ตอนสร้างผ่านตัวตรวจเดียวกับ /sign-link (ตรวจก่อนสร้างใบ)"),
+    dict(file="Controllers/SignRequestController.cs", method="UpdateSettings",
+         must=["EnsureOwnerAccessAsync("], before=[("EnsureOwnerAccessAsync(", "UpdateSettingsAsync(")],
+         why=_R240_WHY + "240-7 ค่าตั้งที่ส่งอีเมล/ข้อมูลออกนอกระบบ = เจ้าของบริษัทเท่านั้น"),
+    dict(file="Controllers/SignRequestController.cs", method="RotateSecret",
+         must=["EnsureOwnerAccessAsync("], before=[("EnsureOwnerAccessAsync(", "RotateCallbackSecretAsync(")],
+         why=_R240_WHY + "240-2 รหัสลับลงนาม webhook = เจ้าของบริษัทเท่านั้น"),
+    dict(file="Services/Background/SignRequestJobs.cs", method="ExecuteAsync",
+         must=["JobLock.RunExclusiveAsync("],
+         why=_R240_WHY + "F4 #6 งานเบื้องหลังเดินทีละเครื่อง"),
+    dict(file="Services/Background/SignRequestJobs.cs", method="ExecuteAsync#1",
+         must=["JobLock.RunExclusiveAsync("],
+         why=_R240_WHY + "F4 #6 งานเบื้องหลังเดินทีละเครื่อง"),
+]
+REVIEWER_CASES += [
+    # ถอดการลง outbox ออกจากเส้นยอมรับ ⇒ ต้องฟ้อง
+    ("R240a", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash);", "", True),
+    # เส้นอีเมลเลือกผู้ส่ง/From เอง (ข้ามตัวตัดสิน) ⇒ ต้องฟ้อง
+    ("R240b", "SendEmailAsync", "var (plan, sender) = await DocumentEmailService.ResolveOnBehalfSenderAsync(_db, _senders, companyId, settings, ct);",
+     "var sender = _senders.GetGlobalFallbackSender(); var plan = new OnBehalfEmailSender.Plan(\"company\", DocumentEmailService.ResolveFromAddress(settings!), \"x\", null);", True),
+    # ถอดด่าน SSRF ตอนส่ง ⇒ ต้องฟ้อง
+    ("R240c", "DeliverCallbackAsync", "var check = await OutboundUrlGuard.CheckResolvedAsync(row.CallbackUrl, ct);", "var check = OutboundUrlGuard.Result.Pass;", True),
+    # เซ็นด้วยสูตรที่เขียนเอง ⇒ ต้องฟ้อง
+    ("R240d", "DeliverCallbackAsync", "WebhookSignature.Sign(secret, ts, body)",
+     "Convert.ToHexString(new HMACSHA256(System.Text.Encoding.UTF8.GetBytes(secret)).ComputeHash(System.Text.Encoding.UTF8.GetBytes(body)))", True),
+    # ถอดเพดาน/กันส่งถี่ ⇒ ต้องฟ้อง
+    ("R240e", "SendEmailAsync", "var refusal = SignEmailThrottle.Refusal(plan.OnBehalf, platformToday, cap, sameDoc, any);", "string? refusal = null;", True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .Enqueue( ⇒ ต้องไม่ฟ้อง
+    ("R240f", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept",
+     "SignEventOutbox\n                    .Enqueue(_db, doc, SignRequestKinds.QuotationAccept", False),
+    # เซ็นรับสินค้าไม่ลง outbox ⇒ ต้องฟ้อง
+    ("R240g", "SignDelivery", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.DeliverySign, now, doc.DeliverySignedBy, hasSignature: true, contentHash, tokenHash);", "", True),
+    # อีเมลเอกสารกลับไปใส่ From ของบริษัทผ่านผู้ส่งที่อาจเป็นของระบบ ⇒ ต้องฟ้อง
+    ("R240h", "SendDocumentEmailAsync", "var (plan, sender) = await ResolveOnBehalfSenderAsync(_db, _senderFactory, companyId, settings);",
+     "var sender = await _senderFactory.GetSenderAsync(companyId); var plan = new OnBehalfEmailSender.Plan(\"company\", ResolveFromAddress(settings), \"x\", null);", True),
+    # ฝ่ายค้าน B1: เส้นแพลตฟอร์มรับ HTML ดิบของผู้ใช้ ⇒ ต้องฟ้อง
+    ("R240j", "SendDocumentEmailAsync", "SignRequestEmailText.PlainTextToHtml(req.Body)", "req.Body!", True),
+    # ฝ่ายค้าน B1: ถอดเพดานของเส้นแพลตฟอร์ม ⇒ ต้องฟ้อง
+    ("R240k", "SendDocumentEmailAsync", "refusal = SignEmailThrottle.Refusal(true, quota.SentToday, quota.Cap, sameDoc, any);", "refusal = null;", True),
+    # ฝ่ายค้าน S7/N2: WebhookClient กลับไปใช้ HttpClientHandler ที่ไม่มี ConnectCallback ⇒ ต้องฟ้อง
+    ("R240l", "AddOutboundWebhookClients",
+     "services.AddHttpClient(WebhookClientName, c => c.MaxResponseContentBufferSize = MaxResponseBufferBytes)\n            .ConfigurePrimaryHttpMessageHandler(CreatePublicOnlyHandler);",
+     "services.AddHttpClient(WebhookClientName).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });", True),
+    # ฝ่ายค้าน S1: เปิด proxy ⇒ ต้องฟ้อง
+    ("R240m", "CreatePublicOnlyHandler", "UseProxy = false,", "UseProxy = true,", True),
+    # ฝ่ายค้าน S2: ถอดการตรวจกติกา URL ตอนส่ง ⇒ ต้องฟ้อง
+    ("R240n", "ProcessOneAsync", "if (SignCallbackUrlRule.Problem(row.CallbackUrl, hosts) is { } problem)", "if (false && hosts is { } problem)", True),
+    # ฝ่ายค้าน S5: PDF ผ่าน API ข้ามด่านชั้นความลับ ⇒ ต้องฟ้อง
+    ("R240o", "Pdf", "if (await DenySensitiveForKeyAsync(ctx!, documentId, \"ดาวน์โหลด PDF ของ\", ct) is { } hidden) return hidden;", "", True),
+    # ยิง webhook ในคำขอของลูกค้า ⇒ ต้องฟ้อง
+    ("R240i", "Accept", "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash);",
+     "SignEventOutbox.Enqueue(_db, doc, SignRequestKinds.QuotationAccept, now, name, sigPath != null, contentHash, tokenHash); await _hooks.TriggerAsync(doc.CompanyId, \"quotation.accepted\", new { });", True),
+]
+
+
+def program_outbound_clients_errors(text: str) -> list:
+    """รอบ 240 (ฝ่ายค้าน S7/N2): Program.cs (top-level — กติกาต่อเมธอดเข้าไม่ถึง) ต้องลงทะเบียน client ขาออกผ่าน
+    OutboundUrlGuard.AddOutboundWebhookClients เท่านั้น — ห้าม AddHttpClient ของสองชื่อนี้เองด้วย handler อื่น"""
+    errs = []
+    masked = mask(text)
+    if not pat("OutboundUrlGuard.AddOutboundWebhookClients(builder.Services, SignEventDispatcher.HttpClientName)").search(masked):
+        errs.append("Program.cs ไม่เรียก OutboundUrlGuard.AddOutboundWebhookClients(builder.Services, SignEventDispatcher.HttpClientName) — "
+                    + _R240_WHY + "client ขาออกต้องใช้ handler ที่ต่อเฉพาะ IP สาธารณะ")
+    for bad in (r'AddHttpClient\(\s*"WebhookClient"', r"AddHttpClient\(\s*SignEventDispatcher\.HttpClientName",
+                r"AddHttpClient\(\s*OutboundUrlGuard\.WebhookClientName"):
+        if re.search(bad, mask(text, keep_strings=True)):
+            errs.append(f"Program.cs ลงทะเบียน client ขาออกเอง (`{bad}`) — {_R240_WHY}ใช้ OutboundUrlGuard.AddOutboundWebhookClients ตัวเดียว")
+    return errs
+
+
+def program_outbound_clients_self_test() -> list:
+    good = 'var b = 1;\nAccounting.Helpers.OutboundUrlGuard.AddOutboundWebhookClients(builder.Services, SignEventDispatcher.HttpClientName);\n'
+    bad1 = 'var b = 1;\n'
+    bad2 = good + 'builder.Services.AddHttpClient("WebhookClient").ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler());\n'
+    commented = '// OutboundUrlGuard.AddOutboundWebhookClients(builder.Services, SignEventDispatcher.HttpClientName);\n'
+    fails = []
+    if program_outbound_clients_errors(good):
+        fails.append("self-test program_outbound_clients: ฟ้องผิดกับโค้ดที่ถูกต้อง")
+    if not program_outbound_clients_errors(bad1):
+        fails.append("self-test program_outbound_clients: ไม่เรียกแล้วไม่ฟ้อง")
+    if not program_outbound_clients_errors(bad2):
+        fails.append("self-test program_outbound_clients: ลงทะเบียน WebhookClient เองแล้วไม่ฟ้อง")
+    if not program_outbound_clients_errors(commented):
+        fails.append("self-test program_outbound_clients: การเรียกในคอมเมนต์ถูกนับ")
+    return fails
+
+
 def cascade_writer_errors(files) -> list:
     """รอบ 238 (236-3 ข้อ 2): ไม่มีผู้เขียนการเปลี่ยนสถานะแถวบริษัทแบบ CascadeExpiredFromLicense ใหม่ที่ใดในเรพ (migration อ่านได้อย่างเดียว)"""
     errs = []
@@ -14285,9 +14476,10 @@ def main() -> int:
     errs += line_config_errors(marker_files)
     errs += line_push_errors(marker_files)
     errs += cascade_writer_errors(cascade_writer_files())   # รอบ 238 (236-3 ข้อ 2)
+    errs += program_outbound_clients_errors((SRC / "Program.cs").read_text(encoding="utf-8"))   # รอบ 240 (ฝ่ายค้าน S7/N2)
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
           + notes_marker_self_test(marker_files) + line_config_self_test(marker_files) + line_push_self_test(marker_files)
-          + cascade_writer_self_test())
+          + cascade_writer_self_test() + program_outbound_clients_self_test())
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

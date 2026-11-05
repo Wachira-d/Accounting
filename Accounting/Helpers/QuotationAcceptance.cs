@@ -170,5 +170,7 @@ public static class QuotationAcceptance
         doc.QuotationAcceptIp = null;
         doc.QuotationAcceptUserAgentHash = null;
         doc.QuotationAcceptTokenHash = null;
+        // รอบ 240 (ฝ่ายค้าน N4): Rev ใหม่ = ลูกค้ายังไม่เคยเห็นฉบับนี้ ⇒ ล้างสถานะ "ส่งแล้ว/เปิดแล้ว/เตือนแล้ว" ด้วย (ป้าย + งานเตือนเริ่มใหม่)
+        SignRequestKinds.ResetTracking(doc);
     }
 }

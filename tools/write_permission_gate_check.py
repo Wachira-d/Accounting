@@ -198,6 +198,14 @@ GATE_MARKERS = (
     # รอบ 205 ทีม E — ด่านของ action ที่ระบุ batch ใน ImportHubController: หา batch ด้วย CompanyId (ไม่พบ = 404) แล้วเรียก DenyAsync ของชนิดข้อมูล
     # ของ batch (ImportExportPermissionScope.ForImport) · เทสต์ 403/404 ต่อ endpoint อยู่ใน Accounting.Tests/Db/ImportHubControllerGateDbTests
     "DenyBatchAsync(",
+    # รอบ 240 — ด่านร่วมของเส้นลิงก์เซ็นใน DocumentController (เอกสารของบริษัท · ชนิดที่เซ็นได้ · DenyDocAsync(Create) ของชนิดนั้น · ชั้นความลับ) ·
+    # ล็อกว่าเรียก DenyDocAsync + DenySensitiveAsync จริงโดย required_call_site_check (กติกา R240)
+    "DenySignRequestAsync<",
+    # รอบ 240 — ด่านสิทธิ์ของ partner API v1 (DocumentsV1Controller): ผู้ออกคีย์ต้องมีสิทธิ์อนุมัติ/สร้างเอกสารชนิดนั้น (ภายในเรียก
+    # DocumentPermissionHelper.CanApproveAsync/CanCreateAsync) — เดิม Approve "ผ่าน" เพราะช่วงเมธอดลากไปถึงตัวเมธอดด่านข้างล่าง (บังเอิญ) ·
+    # เพิ่มเส้น sign-link คั่นกลางแล้วความบังเอิญหาย ⇒ นับชื่อด่านตรง ๆ (จุดเรียกล็อกด้วย required_call_site_check R240)
+    "CheckApprovePermissionAsync(",
+    "CheckCreatePermissionAsync(",
 )
 
 # ด่านที่นับได้ "เฉพาะเมื่อไฟล์มีตัวบังคับอีกชิ้น" — ทางเข้าที่ยืนยันตัวด้วยคีย์ของระบบภายนอก

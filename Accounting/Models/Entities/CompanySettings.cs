@@ -314,6 +314,20 @@ public class CompanySettings : TenantEntity
     /// <c>View</c> (บอกหน้าลูกค้าว่าต้องเซ็นไหม)</summary>
     public bool RequireSignatureForQuotationAccept { get; set; } = false;
 
+    // ── รอบ 240: ลิงก์ให้ลูกค้าเซ็น — อีเมลอัตโนมัติ · เตือน · webhook ต่อเอกสาร (หน้า: ตั้งค่า → ลิงก์ให้ลูกค้าเซ็น · API: SignRequestController) ──
+    /// <summary>ส่งอีเมลขอยอมรับอัตโนมัติเมื่อใบเสนอราคาที่สร้างหลัง <see cref="SignLinkAutoEmailSince"/> ถูกอนุมัติ (ถึงอีเมลของผู้ติดต่อ) ·
+    /// ผู้อ่าน: <c>SignRequestService.RunAutomationAsync</c> (งาน <c>SignRequestAutomationJob</c> — ครอบทุกทางเข้าอนุมัติ: เว็บ/กฎ/มือถือ/LINE/API)</summary>
+    public bool SignLinkAutoEmailOnApprove { get; set; } = false;
+    /// <summary>watermark ของการส่งอัตโนมัติ — ประทับตอนเปิดค่าตั้ง (ใบที่สร้างก่อนเปิดไม่ถูกส่งย้อนหลังเงียบ ๆ)</summary>
+    public DateTime? SignLinkAutoEmailSince { get; set; }
+    /// <summary>ส่งอีเมลเตือนอัตโนมัติหลังส่งลิงก์ไปแล้ว N วันยังไม่เซ็น (0 = ปิด · ค่าตั้งต้น) — หนึ่งครั้งต่อลิงก์ · ผู้อ่าน: <c>SignRequestService.RunAutomationAsync</c></summary>
+    public int SignLinkReminderDays { get; set; } = 0;
+    /// <summary>รหัสลับลงนาม HMAC ของ webhook ต่อเอกสาร (<c>X-NextAcc-Signature</c>) — เข้ารหัสด้วย <c>ISecretProtector</c> · ผู้อ่าน: <c>SignEventDispatcher</c> ·
+    /// ไม่มีค่า ⇒ รับ callbackUrl ไม่ได้ (ปฏิเสธพร้อมทางไปต่อ)</summary>
+    public string? SignCallbackSecret { get; set; }
+    /// <summary>โฮสต์ที่อนุญาตให้รับ webhook ต่อเอกสาร (คั่นด้วย , · รองรับ *.example.com) · ว่าง = โฮสต์สาธารณะใดก็ได้ · ผู้อ่าน: <c>SignCallbackUrlRule.Problem</c></summary>
+    public string? SignCallbackAllowedHosts { get; set; }
+
     // ── พ.ร.บ.การบัญชี ม.7 — ผู้ทำบัญชี (Bookkeeper / CPD) ──
     // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)
     // ที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี. ไม่มี = ยื่นไม่ได้ (ผู้บริหารรับผิด
