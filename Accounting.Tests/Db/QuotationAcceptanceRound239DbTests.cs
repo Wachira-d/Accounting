@@ -134,7 +134,7 @@ public class QuotationAcceptanceRound239DbTests
         // การยอมรับเขียนด้วย ExecuteUpdate (ข้าม change tracker) ⇒ แถว doc ที่ context นี้ติดตามไว้ยังเป็นค่าเก่า — ล้างก่อนเรนเดอร์
         // (คำขอจริงใช้ context ใหม่ทุกครั้ง · CI รอบ 239)
         db.ChangeTracker.Clear();
-        var html = await new PdfGenerationService(db, new DocumentTemplateService(db))
+        var html = await new PdfGenerationService(db, new DocumentTemplateService(db), storage: storage)   // ที่เก็บเดียวกับตอนยอมรับ — ตัวเรนเดอร์อ่านเฉพาะไฟล์ใต้รากของมันเอง
             .GenerateDocumentHtmlAsync(cid, new GeneratePdfRequest(doc.Id, null, null, null, null));
         Assert.Contains("คุณเอ ใจดี", html);
         Assert.Contains("ยอมรับออนไลน์", html);

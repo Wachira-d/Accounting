@@ -1912,6 +1912,11 @@ public partial class AccountingService : IAccountingService
     /// ใบที่ปีอยู่ในช่วง 1900–2399 ไม่ถูกแตะ (query ไม่ดึงมา)</para></summary>
     public async Task<Accounting.Helpers.BuddhistDateRepairPolicy.Result> RepairBuddhistDatesAsync(Guid companyId, string? actorEmail = null, string? ipAddress = null)
     {
+        // ขอบช่วงศักราชเป็นการเทียบช่วงวันที่ ไม่ใช่ .Year — ใต้ EnableLegacyTimestampBehavior ค่า DateTime.MinValue/MaxValue ถูกเก็บเป็น ±infinity
+        // แล้ว EXTRACT(year)::int ล้น (22003) · PostgreSQL อาจประเมินเงื่อนไขนี้ก่อนตัวกรองบริษัท ⇒ แถวเดียวของบริษัทใดก็ทำให้ซ่อมล้มทั้งระบบ (CI รอบ 238/239) ·
+        // ค่า sentinel ±infinity ไม่ใช่ปีผิดศักราช — ไม่แตะ
+        var eraLow = new DateTime(1900, 1, 1);
+        var eraHigh = new DateTime(2400, 1, 1);
         int totalFixed = 0, unresolved = 0, skipped = 0;
         var now = DateTime.UtcNow;
         var byTable = new Dictionary<string, int>();
@@ -1955,7 +1960,7 @@ public partial class AccountingService : IAccountingService
             => Accounting.Helpers.BuddhistDateRepairPolicy.Decide(Closed(corrected), numberIssued, taxFiled);
 
         var badEntries = await _db.JournalEntries
-            .Where(j => j.CompanyId == companyId && (j.EntryDate.Year < 1900 || j.EntryDate.Year >= 2400))
+            .Where(j => j.CompanyId == companyId && ((j.EntryDate < eraLow && j.EntryDate > DateTime.MinValue) || (j.EntryDate >= eraHigh && j.EntryDate < DateTime.MaxValue)))
             .ToListAsync();
         foreach (var entry in badEntries)
         {
@@ -1965,8 +1970,8 @@ public partial class AccountingService : IAccountingService
         }
 
         var badDocs = await _db.Documents
-            .Where(d => d.CompanyId == companyId && (d.DocumentDate.Year < 1900 || d.DocumentDate.Year >= 2400
-                || (d.DueDate.HasValue && (d.DueDate.Value.Year < 1900 || d.DueDate.Value.Year >= 2400))))
+            .Where(d => d.CompanyId == companyId && ((d.DocumentDate < eraLow && d.DocumentDate > DateTime.MinValue) || (d.DocumentDate >= eraHigh && d.DocumentDate < DateTime.MaxValue)
+                || (d.DueDate.HasValue && ((d.DueDate.Value < eraLow && d.DueDate.Value > DateTime.MinValue) || (d.DueDate.Value >= eraHigh && d.DueDate.Value < DateTime.MaxValue)))))
             .ToListAsync();
         foreach (var doc in badDocs)
         {
@@ -1978,7 +1983,7 @@ public partial class AccountingService : IAccountingService
         }
 
         var badPayments = await _db.Payments
-            .Where(p => p.CompanyId == companyId && (p.PaymentDate.Year < 1900 || p.PaymentDate.Year >= 2400))
+            .Where(p => p.CompanyId == companyId && ((p.PaymentDate < eraLow && p.PaymentDate > DateTime.MinValue) || (p.PaymentDate >= eraHigh && p.PaymentDate < DateTime.MaxValue)))
             .ToListAsync();
         foreach (var payment in badPayments)
         {
@@ -1988,7 +1993,7 @@ public partial class AccountingService : IAccountingService
         }
 
         var badBankTxns = await _db.BankTransactions
-            .Where(b => b.CompanyId == companyId && (b.TransactionDate.Year < 1900 || b.TransactionDate.Year >= 2400))
+            .Where(b => b.CompanyId == companyId && ((b.TransactionDate < eraLow && b.TransactionDate > DateTime.MinValue) || (b.TransactionDate >= eraHigh && b.TransactionDate < DateTime.MaxValue)))
             .ToListAsync();
         foreach (var bt in badBankTxns)
         {
@@ -1999,10 +2004,10 @@ public partial class AccountingService : IAccountingService
 
         // ตารางเวลาของงานประจำ — ไม่ใช่รายการบัญชี ไม่มีงวด/เลข ⇒ ไม่มีเหตุข้าม
         var badRecurring = await _db.RecurringTransactions
-            .Where(r => r.CompanyId == companyId && (r.StartDate.Year < 1900 || r.StartDate.Year >= 2400
-                || r.NextRunDate.Year < 1900 || r.NextRunDate.Year >= 2400
-                || (r.EndDate.HasValue && (r.EndDate.Value.Year < 1900 || r.EndDate.Value.Year >= 2400))
-                || (r.LastRunDate.HasValue && (r.LastRunDate.Value.Year < 1900 || r.LastRunDate.Value.Year >= 2400))))
+            .Where(r => r.CompanyId == companyId && ((r.StartDate < eraLow && r.StartDate > DateTime.MinValue) || (r.StartDate >= eraHigh && r.StartDate < DateTime.MaxValue)
+                || (r.NextRunDate < eraLow && r.NextRunDate > DateTime.MinValue) || (r.NextRunDate >= eraHigh && r.NextRunDate < DateTime.MaxValue)
+                || (r.EndDate.HasValue && ((r.EndDate.Value < eraLow && r.EndDate.Value > DateTime.MinValue) || (r.EndDate.Value >= eraHigh && r.EndDate.Value < DateTime.MaxValue)))
+                || (r.LastRunDate.HasValue && ((r.LastRunDate.Value < eraLow && r.LastRunDate.Value > DateTime.MinValue) || (r.LastRunDate.Value >= eraHigh && r.LastRunDate.Value < DateTime.MaxValue)))))
             .ToListAsync();
         foreach (var r in badRecurring)
         {
@@ -2016,8 +2021,8 @@ public partial class AccountingService : IAccountingService
         }
 
         var badAssets = await _db.FixedAssets
-            .Where(a => a.CompanyId == companyId && (a.PurchaseDate.Year < 1900 || a.PurchaseDate.Year >= 2400
-                || (a.DisposalDate.HasValue && (a.DisposalDate.Value.Year < 1900 || a.DisposalDate.Value.Year >= 2400))))
+            .Where(a => a.CompanyId == companyId && ((a.PurchaseDate < eraLow && a.PurchaseDate > DateTime.MinValue) || (a.PurchaseDate >= eraHigh && a.PurchaseDate < DateTime.MaxValue)
+                || (a.DisposalDate.HasValue && ((a.DisposalDate.Value < eraLow && a.DisposalDate.Value > DateTime.MinValue) || (a.DisposalDate.Value >= eraHigh && a.DisposalDate.Value < DateTime.MaxValue)))))
             .ToListAsync();
         foreach (var a in badAssets)
         {
@@ -2030,8 +2035,8 @@ public partial class AccountingService : IAccountingService
         }
 
         var badDeposits = await _db.DepositTransactions
-            .Where(d => d.CompanyId == companyId && (d.TransactionDate.Year < 1900 || d.TransactionDate.Year >= 2400
-                || (d.ExpectedReturnDate.HasValue && (d.ExpectedReturnDate.Value.Year < 1900 || d.ExpectedReturnDate.Value.Year >= 2400))))
+            .Where(d => d.CompanyId == companyId && ((d.TransactionDate < eraLow && d.TransactionDate > DateTime.MinValue) || (d.TransactionDate >= eraHigh && d.TransactionDate < DateTime.MaxValue)
+                || (d.ExpectedReturnDate.HasValue && ((d.ExpectedReturnDate.Value < eraLow && d.ExpectedReturnDate.Value > DateTime.MinValue) || (d.ExpectedReturnDate.Value >= eraHigh && d.ExpectedReturnDate.Value < DateTime.MaxValue)))))
             .ToListAsync();
         foreach (var d in badDeposits)
         {
@@ -2042,7 +2047,7 @@ public partial class AccountingService : IAccountingService
         }
 
         var badStockMoves = await _db.StockMovements
-            .Where(s => s.CompanyId == companyId && (s.MovementDate.Year < 1900 || s.MovementDate.Year >= 2400))
+            .Where(s => s.CompanyId == companyId && ((s.MovementDate < eraLow && s.MovementDate > DateTime.MinValue) || (s.MovementDate >= eraHigh && s.MovementDate < DateTime.MaxValue)))
             .ToListAsync();
         foreach (var s in badStockMoves)
         {
@@ -2053,7 +2058,7 @@ public partial class AccountingService : IAccountingService
 
         var badTaxLines = await _db.TaxReportLines
             .Where(l => _db.TaxReports.Any(r => r.Id == l.TaxReportId && r.CompanyId == companyId)
-                && (l.TransactionDate.Year < 1900 || l.TransactionDate.Year >= 2400))
+                && ((l.TransactionDate < eraLow && l.TransactionDate > DateTime.MinValue) || (l.TransactionDate >= eraHigh && l.TransactionDate < DateTime.MaxValue)))
             .Select(l => new { Line = l, Filed = _db.TaxReports.Any(r => r.Id == l.TaxReportId && r.CompanyId == companyId && r.Status != TaxReportStatus.Draft) })
             .ToListAsync();
         foreach (var x in badTaxLines)
