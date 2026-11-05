@@ -127,7 +127,7 @@ public class QuotationAcceptanceRound239DbTests
         var row2 = await db.Documents.AsNoTracking().SingleAsync(d => d.Id == doc.Id && d.CompanyId == cid);
         Assert.Equal(row.QuotationAcceptedAt, row2.QuotationAcceptedAt);
         Assert.Equal("คุณเอ ใจดี", row2.QuotationAcceptedBy);
-        Assert.Equal(1, await db.AuditLogs.CountAsync(a => a.CompanyId == cid && a.EntityId == doc.Id.ToString()));
+        Assert.Equal(1, await db.AuditLogs.CountAsync(a => a.CompanyId == cid && a.EntityId == doc.Id.ToString() && a.Action == AuditAction.Approve));
         Assert.Single(Directory.GetFiles(Path.Combine(root, "uploads", QuotationAcceptance.StorageFolder, cid.ToString("N"))));
 
         // ตัวเรนเดอร์จริง (HTML): ช่องลูกค้าอนุมัติ = ชื่อ + เวลายอมรับ + รูปลายเซ็น
