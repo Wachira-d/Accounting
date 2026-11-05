@@ -13804,11 +13804,9 @@
         const slot = document.getElementById('qtAcceptSig');
         try {
           const cid = Layout.getCompanyId();
-          const r = await fetch(`/api/companies/${cid}/document/${d.id}/quotation-acceptance/signature`, {
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` },
-          });
-          if (!r.ok) throw new Error('โหลดลายเซ็นไม่สำเร็จ');
-          const url = URL.createObjectURL(await r.blob());
+          const f = await API.fetchFile(`/api/companies/${cid}/document/${d.id}/quotation-acceptance/signature`, 'signature.png');
+          if (!f) return;   // 401 ⇒ fetchFile พากลับหน้า login แล้ว
+          const url = URL.createObjectURL(f.blob);
           const img = document.createElement('img');
           img.src = url; img.alt = 'ลายเซ็นลูกค้า';
           img.style.cssText = 'max-height:90px;max-width:100%;background:#fff;border:1px solid #e2e8f0;border-radius:6px;display:block';

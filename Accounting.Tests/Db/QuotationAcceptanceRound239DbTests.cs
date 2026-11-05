@@ -106,7 +106,7 @@ public class QuotationAcceptanceRound239DbTests
         Assert.Equal(QuotationAcceptance.Sha256Hex("Mozilla/5.0 (test)"), row.QuotationAcceptUserAgentHash);
         Assert.Equal(QuotationAcceptance.Sha256Hex(doc.QuotationAcceptToken), row.QuotationAcceptTokenHash);
         Assert.Null(row.Notes);   // ไม่ต่อข้อความลง Notes อีก (เนื้อหาเอกสารไม่เปลี่ยนหลังยอมรับ)
-        Assert.True(QuotationAcceptance.IsOwnSignatureLocation(row.QuotationAcceptSignaturePath, cid, doc.Id));
+        Assert.True(QuotationAcceptance.IsOwnSignatureLocation(row.QuotationAcceptSignaturePath, storage.Locator.AttachmentsRoot, cid, doc.Id));
         var bytes = await storage.ReadAllBytesAsync(row.QuotationAcceptSignaturePath);
         Assert.True(SignatureImageValidator.Validate(Convert.ToBase64String(bytes!)).Ok);
 
