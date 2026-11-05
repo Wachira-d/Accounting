@@ -131,6 +131,9 @@ public class QuotationAcceptanceRound239DbTests
         Assert.Single(Directory.GetFiles(Path.Combine(root, "uploads", QuotationAcceptance.StorageFolder, cid.ToString("N"))));
 
         // ตัวเรนเดอร์จริง (HTML): ช่องลูกค้าอนุมัติ = ชื่อ + เวลายอมรับ + รูปลายเซ็น
+        // การยอมรับเขียนด้วย ExecuteUpdate (ข้าม change tracker) ⇒ แถว doc ที่ context นี้ติดตามไว้ยังเป็นค่าเก่า — ล้างก่อนเรนเดอร์
+        // (คำขอจริงใช้ context ใหม่ทุกครั้ง · CI รอบ 239)
+        db.ChangeTracker.Clear();
         var html = await new PdfGenerationService(db, new DocumentTemplateService(db))
             .GenerateDocumentHtmlAsync(cid, new GeneratePdfRequest(doc.Id, null, null, null, null));
         Assert.Contains("คุณเอ ใจดี", html);
