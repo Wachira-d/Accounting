@@ -718,8 +718,10 @@
       const label = sel.options[sel.selectedIndex].text;
       if (!confirm(`🔗 ผูกบริษัทนี้เข้ากับ License:\n${AdminLayout.esc(label)}\n\nบริษัทจะใช้ quota / สิทธิ์ / วันหมดอายุของ License นี้`)) return;
       try {
-        await AdminAPI.post('/companies/' + companyId + '/attach-to-account-plan', { accountSubscriptionId: apId });
-        AdminLayout.toast('ผูกเข้า License สำเร็จ');
+        const res = await AdminAPI.post('/companies/' + companyId + '/attach-to-account-plan', { accountSubscriptionId: apId });
+        // รอบ 238 (236-9): เซิร์ฟเวอร์บอก "เวลาที่จ่ายไว้ X วันยังเดินอยู่ ไม่คืนเงิน" เมื่อบริษัทจ่ายแพ็กเกจเองไว้ — แสดงข้อความของเซิร์ฟเวอร์ตรง ๆ
+        if (res?.data) alert(res.message);
+        else AdminLayout.toast(res?.message || 'ผูกเข้า License สำเร็จ');
         await refreshDetail(companyId);
       } catch (e) { AdminLayout.toast(e.message, 'error'); }
     }

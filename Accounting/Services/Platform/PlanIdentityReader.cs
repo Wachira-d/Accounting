@@ -55,6 +55,21 @@ public static class PlanIdentityReader
         return PlanIdentityResolver.Resolve(sub.Plan, sub.Status, sub.EndDate, companyPlanName, license);
     }
 
+    /// <summary>รอบ 238 (236-3 ข้อ 6): ตัวตนแพ็กเกจของบริษัท <b>เมื่อถอดออกจาก License แล้ว</b> — แถวบริษัทตามที่เก็บไว้ (ไม่แต่งสถานะ) ผ่านตัวอ่านเดียวกับ
+    /// <see cref="ForSubscriptionAsync"/> (ชื่อแพ็กเกจ = PlanTemplate) · ผู้เรียก: <c>AccountSubscriptionController.DetachPreview/Detach</c></summary>
+    public static Task<PlanIdentityResolver.PlanIdentity> AfterDetachAsync(AccountingDbContext db, Subscription sub, CancellationToken ct = default)
+        => ForSubscriptionAsync(db, new Subscription
+        {
+            // ฝ่ายค้าน B2: สถานะหลังถอดจาก helper เดียวกับที่ Detach ประทับจริง (เลยวันหมดอายุ ⇒ Expired) — พรีวิวกับผลจริงตรงกัน
+            Id = sub.Id, CompanyId = sub.CompanyId, Plan = sub.Plan, EndDate = sub.EndDate,
+            Status = PlanIdentityResolver.CompanyStatusAfterDetach(sub.Status, sub.EndDate, sub.IsPermanentFree, DateTime.UtcNow),
+            IsPermanentFree = sub.IsPermanentFree, AccountSubscriptionId = null,
+        }, ct);
+
+    /// <summary>รอบ 238: ผลพรีวิว "ถอดแล้วจะใช้อะไร" ของแถวบริษัท (ตัวเดียวของ detach-preview · ข้อความตอบหลังถอด)</summary>
+    public static async Task<PlanIdentityResolver.DetachPreviewResult> DetachPreviewAsync(AccountingDbContext db, Subscription sub, CancellationToken ct = default)
+        => PlanIdentityResolver.DetachPreview(await AfterDetachAsync(db, sub, ct), sub.IsPermanentFree, DateTime.UtcNow);
+
     /// <summary>ผู้ทำรายการจากสตริง performedBy (ผู้เรียกในแอปส่ง UserId.ToString()) · ไม่ใช่ Guid (แอดมิน/ระบบ/ลิงก์) ⇒ null = ไม่ใช่ผู้ถือ License</summary>
     public static Guid? ActorOf(string? performedBy) => Guid.TryParse(performedBy, out var g) ? g : null;
 

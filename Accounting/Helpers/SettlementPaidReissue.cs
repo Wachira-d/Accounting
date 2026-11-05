@@ -393,6 +393,9 @@ public static class SettlementPaidReissue
         nameof(Document.IsDeleted), nameof(Document.DocumentNumber), nameof(Document.Status),
         nameof(Document.QuotationAcceptToken), nameof(Document.QuotationAcceptTokenExpiresAt), nameof(Document.QuotationAcceptedAt),
         nameof(Document.QuotationAcceptedBy), nameof(Document.RevisionNumber), nameof(Document.DeliverySignToken),
+        // รอบ 239: หลักฐานการยอมรับใบเสนอราคาออนไลน์ (ลายเซ็น/IP/hash) เป็นของใบเดิม — ไม่ตามไปใบแทน
+        nameof(Document.QuotationAcceptSignaturePath), nameof(Document.QuotationAcceptNote), nameof(Document.QuotationAcceptContentHash),
+        nameof(Document.QuotationAcceptIp), nameof(Document.QuotationAcceptUserAgentHash), nameof(Document.QuotationAcceptTokenHash),
         nameof(Document.DeliverySignTokenExpiresAt), nameof(Document.DeliverySignedAt), nameof(Document.DeliverySignedBy),
         nameof(Document.DeliverySignatureBase64), nameof(Document.SettlementOrphanAckAt), nameof(Document.SettlementOrphanAckBy),
         nameof(Document.SettlementOrphanAckReason), nameof(Document.ReplacedByDocumentId), nameof(Document.ReplacesDocumentId),

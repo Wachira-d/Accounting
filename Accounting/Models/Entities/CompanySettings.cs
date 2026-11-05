@@ -309,6 +309,11 @@ public class CompanySettings : TenantEntity
     /// ผู้อ่านเดียว: <c>PettyCashService.IsTopUpEvidenceRequiredAsync</c> (ด่านใน <c>ReplenishWithEvidenceAsync</c> — ทุกทางเข้าของการเติม)</summary>
     public bool PettyCashTopUpEvidenceRequired { get; set; } = false;
 
+    /// <summary>รอบ 239: "ต้องเซ็นเพื่อยอมรับใบเสนอราคา" — true = ลูกค้าต้องวาดลายเซ็นในหน้าลิงก์ยอมรับ (ชื่อบังคับเสมอ) ·
+    /// false (ค่าตั้งต้น) = ลายเซ็นไม่บังคับ · ผู้อ่าน: <c>PublicQuotationController.Accept</c> (ด่านผ่าน <c>QuotationAcceptance.DecideAccept</c>) +
+    /// <c>View</c> (บอกหน้าลูกค้าว่าต้องเซ็นไหม)</summary>
+    public bool RequireSignatureForQuotationAccept { get; set; } = false;
+
     // ── พ.ร.บ.การบัญชี ม.7 — ผู้ทำบัญชี (Bookkeeper / CPD) ──
     // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)
     // ที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี. ไม่มี = ยื่นไม่ได้ (ผู้บริหารรับผิด

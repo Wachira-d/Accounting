@@ -55,6 +55,27 @@ public partial class PdfGenerationService
 
     private static string StampMm(decimal v) => v.ToString("0.##", CultureInfo.InvariantCulture);
 
+    /// <summary>รอบ 239: บล็อก "ลูกค้ายอมรับใบเสนอราคาออนไลน์" (HTML) — ใช้เมื่อเทมเพลตไม่มีช่องลูกค้า (<see cref="QuotationAcceptance.CustomerBoxShown"/>) ·
+    /// คู่กับ QuestPDF <c>ComposeQuotationAcceptanceBlock</c> (ข้อมูลชุดเดียวกันจาก signers[2] · ป้ายจาก <see cref="Pdf.DocumentLabels"/>) ·
+    /// ทุกค่าที่ลูกค้าพิมพ์ HtmlEncode · รูปผ่าน <see cref="HtmlImageSource"/></summary>
+    internal static string QuotationAcceptanceBlockHtml(DocumentSigner s, DateTime acceptedAtUtc, Pdf.DocumentLabels L)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("<div class='qt-acceptance' style='margin-top:14px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:6px;font-size:10pt;break-inside:avoid'>");
+        sb.Append($"<div style='font-weight:700'>{WebUtility.HtmlEncode(L.QtAcceptHeading)}</div>");
+        var src = HtmlImageSource.Attribute(s.SignatureImageDataUri);
+        if (src != null)
+            sb.Append($"<img src='{src}' alt='signature' style='height:14mm;max-width:60mm;object-fit:contain;display:block;margin:4px 0'/>");
+        sb.Append($"<div>{WebUtility.HtmlEncode(L.QtAcceptBy)}: {WebUtility.HtmlEncode(s.Name ?? "")}</div>");
+        sb.Append($"<div>{WebUtility.HtmlEncode(L.QtAcceptedOnline(acceptedAtUtc))}</div>");
+        if (!string.IsNullOrWhiteSpace(s.AcceptNote))
+            sb.Append($"<div>{WebUtility.HtmlEncode(L.QtAcceptNote)}: {WebUtility.HtmlEncode(s.AcceptNote!)}</div>");
+        if (s.AcceptContentChanged)
+            sb.Append($"<div style='color:#b45309'>{WebUtility.HtmlEncode(L.QtAcceptContentChanged)}</div>");
+        sb.Append("</div>");
+        return sb.ToString();
+    }
+
     /// <summary>บล็อกตราเหนือช่องลงนามของเอกสารขาย/ซื้อ (HTML) — ตำแหน่ง/ขนาด/ระยะเลื่อนจากกฎ · คู่กับ QuestPDF
     /// <c>BuildSignatureArea</c> ที่อ่าน <see cref="PdfBranding"/> ชุดเดียวกัน</summary>
     internal static string DocumentStampBlockHtml(DocumentStampPolicy.Decision d, string src)

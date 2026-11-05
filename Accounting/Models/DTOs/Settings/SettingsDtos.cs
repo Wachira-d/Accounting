@@ -148,7 +148,9 @@ public record UpdateCompanySettingsRequest(
     // รอบ 220 (คำตัดสินข้อ 181): ผังเงินเพิ่ม/เบี้ยปรับ/ค่าปรับ ตอนนำส่งภาษี-ประกันสังคม — "" = ล้าง (ใช้ 54820) · null = ไม่แก้ · ต้องเป็นผังค่าใช้จ่ายที่มีจริง
     string? PenaltyExpenseAccountCode = null,
     // 2026-11-02 (PETTY_CASH_AUDIT ส่วน C): เติมเงินสดย่อยต้องแนบสลิป (null = ไม่แก้)
-    bool? PettyCashTopUpEvidenceRequired = null);
+    bool? PettyCashTopUpEvidenceRequired = null,
+    // รอบ 239: ลูกค้าต้องเซ็นลายมือชื่อก่อนยอมรับใบเสนอราคาออนไลน์ (null = ไม่แก้)
+    bool? RequireSignatureForQuotationAccept = null);
 
 public record CompanySettingsResponse(
     Guid CompanyId,
@@ -311,6 +313,8 @@ public record CompanySettingsResponse(
     public string? PenaltyExpenseAccountCodeEffective { get; init; }
     /// <summary>เติมเงินสดย่อยต้องแนบสลิป (<c>CompanySettings.PettyCashTopUpEvidenceRequired</c>) · เก็บแล้วต้อง echo กลับ</summary>
     public bool PettyCashTopUpEvidenceRequired { get; init; }
+    /// <summary>รอบ 239: "ต้องเซ็นเพื่อยอมรับใบเสนอราคา" (<c>CompanySettings.RequireSignatureForQuotationAccept</c>) · เก็บแล้วต้อง echo กลับ</summary>
+    public bool RequireSignatureForQuotationAccept { get; init; }
 }
 
 // ===== Landing Page Services (Public) =====

@@ -2870,8 +2870,8 @@ public partial class DocumentService : IDocumentService
 
             // (4) reset หลักฐาน + ลิงก์ของ Rev เก่า — ข้อเสนอ/รายการเปลี่ยนแล้ว
             //     ลิงก์เดิมต้องใช้ต่อไม่ได้ (ขอลิงก์ใหม่ให้คู่ค้ายืนยัน Rev ปัจจุบัน)
-            doc.QuotationAcceptedAt = null;
-            doc.QuotationAcceptedBy = null;
+            // รอบ 239: หลักฐานการยอมรับออนไลน์ทั้งชุด (ชื่อ · เวลา · ลายเซ็น · hash · IP ฯลฯ) ล้างที่ตัวตั้งเดียว — ค่าเดิมอยู่ใน snapshot ข้างบน
+            Accounting.Helpers.QuotationAcceptance.ClearOn(doc);
             doc.QuotationAcceptToken = null;
             doc.QuotationAcceptTokenExpiresAt = null;
             doc.DeliverySignedAt = null;
@@ -4008,6 +4008,13 @@ public partial class DocumentService : IDocumentService
             // หลักฐานที่ผูกพันกับ revision นี้ (กำลังถูก reset — เก็บไว้ที่นี่)
             acceptedAt = doc.QuotationAcceptedAt,
             acceptedBy = doc.QuotationAcceptedBy,
+            // รอบ 239: หลักฐานการยอมรับออนไลน์ของ Rev นี้ (ไฟล์ลายเซ็นไม่ถูกลบ — ตำแหน่งเก็บไว้ที่นี่)
+            acceptNote = doc.QuotationAcceptNote,
+            acceptSignaturePath = doc.QuotationAcceptSignaturePath,
+            acceptContentHash = doc.QuotationAcceptContentHash,
+            acceptIp = doc.QuotationAcceptIp,
+            acceptUserAgentHash = doc.QuotationAcceptUserAgentHash,
+            acceptTokenHash = doc.QuotationAcceptTokenHash,
             deliverySignedAt = doc.DeliverySignedAt,
             deliverySignedBy = doc.DeliverySignedBy,
             lines = doc.Lines.Where(l => !l.IsDeleted).OrderBy(l => l.LineOrder).Select(l => new
@@ -20797,6 +20804,11 @@ public partial class DocumentService : IDocumentService
         CannotReviseReason: cannotReviseReason,
         QuotationAcceptedAt: d.QuotationAcceptedAt,
         QuotationAcceptedBy: d.QuotationAcceptedBy,
+        // รอบ 239: หลักฐานการยอมรับออนไลน์ที่หน้าเอกสารแสดง (รูปลายเซ็นดึงผ่าน endpoint ที่ตรวจสิทธิ์อ่าน — ไม่ฝังใน response รายการ)
+        QuotationAcceptNote: d.QuotationAcceptNote,
+        QuotationAcceptHasSignature: !string.IsNullOrWhiteSpace(d.QuotationAcceptSignaturePath),
+        // ตัวตัดสินเดียวกับกระดาษ (ฝ่ายค้าน S3) · บรรทัดไม่ได้โหลด (หน้ารายการ) / ไม่มี hash ⇒ null "ไม่ได้ตรวจ" ไม่ใช่ false
+        QuotationAcceptContentMatches: Accounting.Helpers.QuotationAcceptance.ContentMatches(d, d.Lines),
         DeliverySignedAt: d.DeliverySignedAt,
         DeliverySignedBy: d.DeliverySignedBy,
         DocumentLanguage: d.DocumentLanguage,

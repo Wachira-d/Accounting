@@ -8,8 +8,7 @@ namespace Accounting.Services.Background;
 
 /// <summary>
 /// Daily job: nudges AccountSubscription owners ahead of their plan expiring,
-/// then flips Status to Expired once the EndDate (+ grace period for the
-/// expiry email) has passed. Uses ExpiryRemindersSentMask + LastExpiryReminderAt
+/// then moves Status through the grace period. Uses ExpiryRemindersSentMask + LastExpiryReminderAt
 /// on the account row so a restart / crash doesn't re-send the same warning.
 ///
 /// Reminder buckets (bitmask):
@@ -17,6 +16,13 @@ namespace Accounting.Services.Background;
 ///   2 = 3-day warning
 ///   4 = 1-day warning
 ///   8 = "your plan has expired" notification
+///   16 = รอบ 238: แจ้งเจ้าของบริษัทใต้ License (ไม่ใช่ผู้ถือ) ล่วงหน้า 7 วัน
+///   32 = รอบ 238: แจ้งเจ้าของบริษัทใต้ License (ไม่ใช่ผู้ถือ) ในวันหมดอายุ
+///
+/// <para>รอบ 238 (คำตัดสิน 236-3): สถานะ License หลังวันหมดอายุมาจาก <c>PlanIdentityResolver.LicenseStatusAfter</c> ตัวเดียว
+/// (ในระยะผ่อนผัน = PastDue เขียนได้เต็ม · พ้นผ่อนผัน = Expired) — เดิมตั้ง Expired ทันทีที่ถึงวันหมดอายุ ⇒ ผ่อนผัน 0 วันทั้งที่อีเมลสัญญา N วัน ·
+/// <b>ไม่เขียนแถว Subscription ของบริษัทอีกแล้ว</b> (เดิม cascade เป็น Expired + ประวัติ <c>CascadeExpiredFromLicense</c> — ขัด 236-1/236-4: แถวบริษัทที่ License คุมไม่มีผล
+/// ห้ามเดินสถานะ · ถอดออกแล้วแพ็กเกจที่จ่ายไว้ต้องกลับมา) · แถวที่ถูก cascade ไปแล้วคืนสถานะด้วย <c>Helpers/LicenseLapseMigration</c></para>
 /// </summary>
 public class AccountPlanExpiryReminderJob : BackgroundService
 {
@@ -80,11 +86,15 @@ public class AccountPlanExpiryReminderJob : BackgroundService
 
         var recorder = scope.ServiceProvider.GetService<IJobRunRecorder>();
         var jobStart = now;
-        int processed = 0;
+        int processed = 0, mailSent = 0, mailFailed = 0;
         foreach (var a in rows)
         {
             if (ct.IsCancellationRequested) break;
-            try { await ProcessOne(db, email, a, now, ct); processed++; }
+            try
+            {
+                var (sent, failed) = await ProcessOne(db, email, a, now, ct);
+                processed++; mailSent += sent; mailFailed += failed;
+            }
             catch (Exception ex) { _logger.LogWarning(ex, "Reminder failed for AccountSub {Id}", a.Id); }
         }
         // รอบ 232 (ฝ่ายค้าน B1 ข): แถว ExpiryNeedsReview ที่งานต่ออายุ/เตือน/ปิดใช้ข้าม — นับให้เห็นใน JobRun (ไม่ใช่แค่ LogWarning)
@@ -92,8 +102,9 @@ public class AccountPlanExpiryReminderJob : BackgroundService
         var needsReview = 0;
         if (reviewSvc != null) { try { needsReview = await reviewSvc.CountExpiryNeedsReviewAsync(); } catch (Exception ex) { _logger.LogWarning(ex, "นับ ExpiryNeedsReview ไม่สำเร็จ"); } }
         if (recorder != null)
-            await recorder.RecordAsync("AccountPlanExpiryReminder", true,
-                $"ตรวจ {rows.Count} License, ประมวลผล {processed}" + (needsReview > 0 ? $" · ข้าม {needsReview} บริษัท (แผนจ่ายเงินไม่มีรอบ — รอแอดมินกำหนดรอบ)" : ""), processed, jobStart);
+            // รอบ 238 ฝ่ายค้าน N2: อีเมลล้มต้องมีร่องรอยใน JobRun (ไม่ใช่แค่ LogWarning) · ล้ม ⇒ งานรอบนี้ไม่ "สำเร็จสะอาด"
+            await recorder.RecordAsync("AccountPlanExpiryReminder", mailFailed == 0,
+                $"ตรวจ {rows.Count} License, ประมวลผล {processed} · อีเมลส่งได้ {mailSent} ล้ม {mailFailed}" + (needsReview > 0 ? $" · ข้าม {needsReview} บริษัท (แผนจ่ายเงินไม่มีรอบ — รอแอดมินกำหนดรอบ)" : ""), processed, jobStart);
 
         // WP-A3: per-company subscription lifecycle — เดิมเป็น manual-only
         // (เรียกจาก AdminController เท่านั้น) ทำให้ Active→PastDue→Suspended
@@ -112,7 +123,9 @@ public class AccountPlanExpiryReminderJob : BackgroundService
         }
     }
 
-    private async Task ProcessOne(AccountingDbContext db, IEmailService email, AccountSubscription a, DateTime now, CancellationToken ct)
+    /// <summary>License หนึ่งแถวต่อรอบ — internal ให้ Db test เรียกตรง (<c>LicenseLapseRound238DbTests</c>) · ผู้เรียกจริง: <see cref="RunOnce"/></summary>
+    /// <returns>(อีเมลส่งได้, ล้ม) — ฝ่ายค้าน N2 ผู้เรียกรวมลง JobRun</returns>
+    internal async Task<(int Sent, int Failed)> ProcessOne(AccountingDbContext db, IEmailService email, AccountSubscription a, DateTime now, CancellationToken ct)
     {
         var daysLeft = (int)Math.Ceiling((a.EndDate - now).TotalDays);
         // Bucket selection — only fire the highest-priority bucket we haven't
@@ -122,45 +135,27 @@ public class AccountPlanExpiryReminderJob : BackgroundService
         var planName = a.PlanTemplate?.Name ?? "Plan";
         // รอบ 236 (ฝ่ายค้าน B1): ทางต่ออายุที่มีอยู่จริง — ข้อความเดียว (PlanIdentityResolver) · HtmlEncode เพราะชื่อแพ็กมาจากแอดมิน
         var howTo = System.Net.WebUtility.HtmlEncode(Accounting.Helpers.PlanIdentityResolver.LicenseRenewalHowTo(planName));
+        var planHtml = System.Net.WebUtility.HtmlEncode(planName);
+
+        // รอบ 238 (คำตัดสิน 236-3 ข้อ 1): สถานะหลังวันหมดอายุจากตัวตัดสินเดียว — ในระยะผ่อนผัน = PastDue (เขียนได้เต็ม) · พ้นผ่อนผัน = Expired ·
+        // ไม่แตะแถว Subscription ของบริษัท (ข้อ 2 — เลิก cascade: แถวบริษัทที่ License คุมไม่มีผล · ถอดออกแล้วแพ็กเกจที่จ่ายไว้ต้องกลับมาตามเดิม)
+        var fromStatus = a.Status;
+        var nextStatus = Accounting.Helpers.PlanIdentityResolver.LicenseStatusAfter(a.Status, a.EndDate, a.GracePeriodDays, now);
+        var statusChanged = nextStatus != fromStatus;
+        if (statusChanged) a.Status = nextStatus;
+        var graceEndText = Accounting.Helpers.PlatformPurchaseEmailText.BeDate(
+            Accounting.Helpers.PlanIdentityResolver.LicenseGraceEndsAt(a.EndDate, a.GracePeriodDays));
 
         if (daysLeft <= 0 && (a.ExpiryRemindersSentMask & 8) == 0)
         {
             bucket = 8;
             subject = $"⏰ Account Plan ({planName}) ของคุณหมดอายุแล้ว";
-            body = $"<p>เรียน คุณ{a.Owner.FullName}</p>"
-                 + $"<p>Account Plan <strong>{planName}</strong> ของคุณหมดอายุเมื่อวันที่ <strong>{a.EndDate:yyyy-MM-dd}</strong></p>"
-                 + $"<p>ระบบจะให้คุณใช้งานต่อในช่วง Grace Period {a.GracePeriodDays} วัน · "
-                 + $"หลังจากนั้นบริษัทใต้ Plan จะกลายเป็นโหมด readonly (ดูได้ บันทึกไม่ได้)</p>"
+            body = $"<p>เรียน คุณ{System.Net.WebUtility.HtmlEncode(a.Owner.FullName)}</p>"
+                 + $"<p>Account Plan <strong>{planHtml}</strong> ของคุณหมดอายุเมื่อวันที่ <strong>{Accounting.Helpers.PlatformPurchaseEmailText.BeDate(a.EndDate)}</strong></p>"
+                 + $"<p>บริษัทใต้ Plan ใช้งานได้เต็มต่อถึงสิ้นระยะผ่อนผัน <strong>{graceEndText}</strong> ({a.GracePeriodDays} วัน) · "
+                 + "หลังจากนั้นเป็นโหมดอ่านอย่างเดียว (ดู/ส่งออกข้อมูล/สร้างไฟล์ยื่นแบบได้ · สร้าง/แก้ไขเอกสารไม่ได้)</p>"
                  + $"<p>โปรดต่ออายุเพื่อใช้งานบริษัทใต้ Plan ต่อเนื่อง</p>"
                  + $"<p>{howTo}</p>";   // รอบ 236 B1: ทางต่ออายุที่มีอยู่จริง
-            // WP-A3 cascade: flip the per-company Subscription rows under this
-            // License to Expired ด้วย — ไม่ใช่แค่ตั้ง flag ที่ account row.
-            // (เดิม comment ว่าจะ cascade แต่โค้ดไม่ได้ทำ → admin dashboard โชว์
-            // company ยัง Active ทั้งที่ License หมดแล้ว). resolver degrade อยู่แล้ว
-            // แต่ status flag ต้องตรงเพื่อให้ middleware/หน้า admin ทำงานถูก.
-            a.Status = SubscriptionStatus.Expired;
-            var childSubs = await db.Subscriptions
-                .Where(s => s.AccountSubscriptionId == a.Id && !s.IsDeleted
-                    && (s.Status == SubscriptionStatus.Active
-                        || s.Status == SubscriptionStatus.Trial
-                        || s.Status == SubscriptionStatus.PastDue))
-                .ToListAsync(ct);
-            foreach (var cs in childSubs)
-            {
-                var from = cs.Status;
-                cs.Status = SubscriptionStatus.Expired;
-                cs.UpdatedAt = now;
-                db.SubscriptionHistories.Add(new SubscriptionHistory
-                {
-                    SubscriptionId = cs.Id,
-                    AccountSubscriptionId = a.Id,
-                    Action = "CascadeExpiredFromLicense",
-                    FromStatus = from,
-                    ToStatus = SubscriptionStatus.Expired,
-                    Notes = $"License ({planName}) หมดอายุ {a.EndDate:yyyy-MM-dd} → cascade company subscription เป็น Expired",
-                    PerformedBy = "system:reminder-job"
-                });
-            }
         }
         else if (daysLeft <= 1 && daysLeft > 0 && (a.ExpiryRemindersSentMask & 4) == 0)
         {
@@ -190,11 +185,41 @@ public class AccountPlanExpiryReminderJob : BackgroundService
                  + $"<p>{howTo}</p>";   // รอบ 236 B1: ทางต่ออายุที่มีอยู่จริง
         }
 
-        if (bucket == 0 || subject == null || body == null) return;
+        // รอบ 238 (236-3 ข้อ 5): แจ้งเจ้าของบริษัทใต้ License (ไม่รวมผู้ถือ — ได้อีเมลข้างบนแล้ว) ล่วงหน้า 7 วัน (บิต 16) และวันหมดอายุ (บิต 32) ·
+        // ข้อความเดียว PlanIdentityResolver.LicenseLapseCompanyNotice (วันสิ้นผ่อนผัน พ.ศ. · อ่าน/ส่งออก/ยื่นแบบได้เสมอ · ทางถอดออก)
+        int coBucket = 0;
+        if (daysLeft <= 0 && (a.ExpiryRemindersSentMask & 32) == 0) coBucket = 32;
+        else if (daysLeft <= 7 && daysLeft > 0 && (a.ExpiryRemindersSentMask & 16) == 0) coBucket = 16;
+        var coMails = new List<(string To, string Subject, string Body)>();
+        if (coBucket != 0)
+        {
+            var holderId = a.OwnerUserId;
+            var owners = await (from s in db.Subscriptions
+                                join cu in db.CompanyUsers on s.CompanyId equals cu.CompanyId
+                                where s.AccountSubscriptionId == a.Id && !s.IsDeleted
+                                      && cu.Role == UserRole.Owner && cu.UserId != holderId
+                                select new { CompanyName = s.Company.Name, cu.User.Email, cu.User.FullName })
+                               .ToListAsync(ct);
+            var holderName = string.IsNullOrWhiteSpace(a.Owner.FullName) ? a.Owner.Email : a.Owner.FullName;
+            foreach (var o in owners.Where(o => !string.IsNullOrWhiteSpace(o.Email)))
+            {
+                var (coSubject, lines) = Accounting.Helpers.PlanIdentityResolver.LicenseLapseCompanyNotice(
+                    o.CompanyName, planName, holderName, a.EndDate, a.GracePeriodDays, expiryDay: coBucket == 32, daysLeft);
+                var coBody = $"<p>เรียน คุณ{System.Net.WebUtility.HtmlEncode(o.FullName)}</p>"
+                           + string.Concat(lines.Select(l => "<p>" + System.Net.WebUtility.HtmlEncode(l) + "</p>"));
+                coMails.Add((o.Email, coSubject, coBody));
+            }
+        }
+
+        if (!statusChanged && coBucket == 0 && (bucket == 0 || subject == null || body == null)) return (0, 0);
 
         // Stamp first, then send — better to risk a missed email than a spam.
-        a.ExpiryRemindersSentMask |= bucket;
-        a.LastExpiryReminderAt = now;
+        if (bucket != 0)
+        {
+            a.ExpiryRemindersSentMask |= bucket;
+            a.LastExpiryReminderAt = now;
+        }
+        if (coBucket != 0) a.ExpiryRemindersSentMask |= coBucket;
         a.UpdatedAt = now;
 
         // Audit row so admin can see what we did. SubscriptionId is required
@@ -208,30 +233,84 @@ public class AccountPlanExpiryReminderJob : BackgroundService
             .Select(s => (Guid?)s.Id).FirstOrDefaultAsync(ct);
         if (anchorSubId.HasValue)
         {
-            db.SubscriptionHistories.Add(new SubscriptionHistory
-            {
-                SubscriptionId = anchorSubId.Value,
-                AccountSubscriptionId = a.Id,
-                Action = $"AccountPlanReminder.{bucket}",
-                ToStatus = a.Status,
-                Notes = $"Reminder sent: {subject} (daysLeft={daysLeft})",
-                PerformedBy = "system:reminder-job"
-            });
+            if (statusChanged)
+                db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    // รอบ 238: ประวัติสถานะของ License (ไม่ใช่สถานะแถวบริษัท — แถวบริษัทไม่ถูกแตะ) · ชื่อขึ้นต้น "License" ⇒ LicenseLapseMigration ไม่นับเป็นการเปลี่ยนสถานะแถวบริษัท
+                    SubscriptionId = anchorSubId.Value,
+                    AccountSubscriptionId = a.Id,
+                    Action = "LicenseStatusAfterGrace",
+                    FromStatus = fromStatus,
+                    ToStatus = a.Status,
+                    Notes = $"License ({planName}) หมดอายุ {a.EndDate:yyyy-MM-dd} · ผ่อนผันถึง {graceEndText} ⇒ สถานะ License {fromStatus} → {a.Status} (แถวบริษัทไม่ถูกแตะ)",
+                    PerformedBy = "system:reminder-job"
+                });
+            if (bucket != 0)
+                db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    SubscriptionId = anchorSubId.Value,
+                    AccountSubscriptionId = a.Id,
+                    Action = $"AccountPlanReminder.{bucket}",
+                    ToStatus = a.Status,
+                    Notes = $"Reminder sent: {subject} (daysLeft={daysLeft})",
+                    PerformedBy = "system:reminder-job"
+                });
+            if (coBucket != 0)
+                db.SubscriptionHistories.Add(new SubscriptionHistory
+                {
+                    SubscriptionId = anchorSubId.Value,
+                    AccountSubscriptionId = a.Id,
+                    Action = $"AccountPlanReminder.{coBucket}",
+                    ToStatus = a.Status,
+                    Notes = $"แจ้งเจ้าของบริษัทใต้ License {coMails.Count} ราย (daysLeft={daysLeft})",
+                    PerformedBy = "system:reminder-job"
+                });
         }
 
         await db.SaveChangesAsync(ct);
 
         // Send after the save so a transient SMTP failure doesn't leave us in
         // a "sent but un-stamped" state where the next cycle resends.
-        try
+        // รอบ 238 ฝ่ายค้าน N2: นับผลการส่ง — ล้มต้องมีร่องรอยในประวัติของ License (และ JobRun ผ่านค่าที่คืน) ไม่ใช่แค่ LogWarning
+        int sent = 0, failed = 0;
+        var failedTo = new List<string>();
+        if (bucket != 0 && subject != null && body != null)
         {
-            await email.SendAsync(a.Owner.Email, subject, body);
-            _logger.LogInformation("Sent Account Plan reminder bucket={Bucket} to {Email} for AccountSub {Id}",
-                bucket, a.Owner.Email, a.Id);
+            try
+            {
+                await email.SendAsync(a.Owner.Email, subject, body);
+                sent++;
+                _logger.LogInformation("Sent Account Plan reminder bucket={Bucket} to {Email} for AccountSub {Id}",
+                    bucket, a.Owner.Email, a.Id);
+            }
+            catch (Exception ex)
+            {
+                failed++; failedTo.Add("ผู้ถือ License");
+                _logger.LogWarning(ex, "Reminder email send failed for AccountSub {Id}; mask already set", a.Id);
+            }
         }
-        catch (Exception ex)
+        foreach (var m in coMails)
         {
-            _logger.LogWarning(ex, "Reminder email send failed for AccountSub {Id}; mask already set", a.Id);
+            try { await email.SendAsync(m.To, m.Subject, m.Body); sent++; }
+            catch (Exception ex)
+            {
+                failed++; failedTo.Add("เจ้าของบริษัท");
+                _logger.LogWarning(ex, "แจ้งเจ้าของบริษัทใต้ License {Id} ไม่สำเร็จ; mask already set", a.Id);
+            }
         }
+        if (failed > 0 && anchorSubId.HasValue)
+        {
+            db.SubscriptionHistories.Add(new SubscriptionHistory
+            {
+                SubscriptionId = anchorSubId.Value,
+                AccountSubscriptionId = a.Id,
+                Action = "LicenseReminderDeliveryFailed",
+                ToStatus = a.Status,
+                Notes = $"ส่งอีเมลเตือน License ไม่สำเร็จ {failed} จาก {sent + failed} ฉบับ ({string.Join(", ", failedTo.Distinct())}) — ไม่ส่งซ้ำอัตโนมัติ (มาสก์ประทับแล้ว) · โปรดแจ้งเอง",
+                PerformedBy = "system:reminder-job"
+            });
+            await db.SaveChangesAsync(ct);
+        }
+        return (sent, failed);
     }
 }

@@ -256,6 +256,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.OverageMigration.Statements());   // รอบ 231 — ส่วนเกินโควตา (ราคา · นโยบายรายบริษัท · ค่าตั้ง) + snapshot การใช้งานรายเดือน/รายวัน (หลังรอบ 219 เฟส 2 — แตะ PlatformBillingSettings)
         list.AddRange(Accounting.Helpers.PlatformPriceOverrideMigration.Statements());   // รอบ 231 — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ · Subscriptions.Kind + backfill · ย้าย override เพดานไป CompanyQuotaOverrides (หลังรอบ 229/230)
         list.AddRange(Accounting.Helpers.PlatformUpgradeModeMigration.Statements());   // รอบ 237 — อัปเกรดกลางรอบ 2 แบบ: ค่าตั้งแพลตฟอร์ม + แบบที่ลูกค้าเลือกบนรายการชำระ
+        list.AddRange(Accounting.Helpers.LicenseLapseMigration.Statements());   // รอบ 238 (236-3) — คืนสถานะแถวบริษัทที่ถูก cascade ตาม License · License ในระยะผ่อนผัน Expired → PastDue (idempotent)
         return list;
     }
 
@@ -5248,6 +5249,15 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptedAt" timestamptz NULL;""",
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptedBy" varchar(200) NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_Documents_QuotationAcceptToken" ON "Documents" ("QuotationAcceptToken") WHERE "QuotationAcceptToken" IS NOT NULL;""",
+            // รอบ 239: หลักฐานการยอมรับออนไลน์ + ลายเซ็น (ไฟล์บนที่เก็บกลาง — ไม่ใช่ base64 ในแถว) · NULL = ใบเดิม/ยอมรับโดยไม่เซ็น
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptSignaturePath" varchar(500) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptNote" varchar(500) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptContentHash" varchar(80) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptIp" varchar(64) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptUserAgentHash" varchar(64) NULL;""",
+            """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "QuotationAcceptTokenHash" varchar(64) NULL;""",
+            // รอบ 239: บริษัทบังคับให้ลูกค้าเซ็นก่อนยอมรับใบเสนอราคา (DEFAULT false = ชื่ออย่างเดียวพอ — พฤติกรรมเดิม)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "RequireSignatureForQuotationAccept" boolean NOT NULL DEFAULT false;""",
 
             // ===== Delivery e-sign (ลูกค้าเซ็นรับสินค้าออนไลน์ — Proof of Delivery) =====
             """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "DeliverySignToken" varchar(80) NULL;""",

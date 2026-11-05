@@ -13149,7 +13149,7 @@ RULES += [
          forbid=["ApplyTemplate(sub, tpl"],
          why=_R231_WHY + "231-8 ดาวน์เกรดถึงวันมีผลก็ตั้งราคาพิเศษ"),
     dict(file=_SUBSVC, method="GetGateStateAsync",
-         must=["t.BlockAccessOnExpiry", "t.AllowDataExportAfterExpiry", "new SubscriptionGateState(ov.Plan, ov.Status, ov.Features, blockReads, allowExport)"],
+         must=["t.BlockAccessOnExpiry", "t.AllowDataExportAfterExpiry", "new SubscriptionGateState(ov.Plan, ov.GateStatus, ov.Features, blockReads, allowExport, ov.InactiveReadOnly)"],
          why=_R231_WHY + "231-10 ค่าตั้ง TrialConfig 2 ตัวมีผู้อ่านจริง (ด่านอ่านของทดลองใช้หมดอายุ)"),
     dict(file=_SUBSVC, method="ProcessExpiredTrialsAsync",
          must=["SubscriptionKindRule.AfterTrialExpired(", "NotificationEvents.SubscriptionExpired"],
@@ -14056,6 +14056,213 @@ REVIEWER_CASES += [
     ("R237d", "ChangeSubscriptionAsync", "var (upMode, modeRefusal) = PlatformProration.ResolveMode(", "var (upMode, modeRefusal) = PlatformProration\n                .ResolveMode(", False),
 ]
 
+# รอบ 238 (คำตัดสิน 236-3 · License หมดอายุ/ระงับ): ไม่ถอยไปใช้แถวบริษัทอัตโนมัติ แต่ผ่อนผันต้องมีจริง · งานเตือนห้ามเขียนแถวบริษัท ·
+# License ระงับ/ยกเลิก ⇒ ด่านเห็นเป็นหมดอายุ (อ่าน/ส่งออก) · ไฟล์ยื่นแบบ/ส่งออกผ่านด่านหมดอายุ · ถอดเองได้ (เจ้าของ/ผู้ถือ) + audit chain
+_R238_WHY = "รอบ 238 (คำตัดสิน 236-3): "
+_R238_JOB = "Services/Background/AccountPlanExpiryReminderJob.cs"
+_R238_ACCT = "Controllers/AccountSubscriptionController.cs"
+RULES += [
+    dict(file=_SUBSVC, method="ResolveGateOverlayAsync",
+         must=["PlanIdentityResolver.GateStatus(identity)", "new GateOverlay(plan, planName, status, features, acct, gateStatus",
+               "PlanIdentityResolver.LicenseInactiveReadOnly(identity)"],
+         why=_R238_WHY + "ข้อ 3 License ระงับ/ยกเลิก ⇒ ด่านเห็นเป็นหมดอายุ (อ่าน/ส่งออกได้ · เขียน 402) จากตัวตัดสินเดียว — ไม่ใช่ 403 ทุกคำขอ"),
+    dict(file=_SUBSVC, method="GetGateStateAsync",
+         must=["ov.GateStatus", "ov.Account == null", "ov.InactiveReadOnly"],
+         forbid=["new SubscriptionGateState(ov.Plan, ov.Status"],
+         why=_R238_WHY + "ข้อ 3 สถานะที่ส่งให้ middleware = GateStatus (สถานะจริงของ License แสดงบนหน้าแพ็กเกจเท่านั้น) · นโยบายทดลองของแถวบริษัทไม่บล็อกบริษัทที่ License คุม"),
+    dict(file=_R238_JOB, method="ProcessOne",
+         must=["PlanIdentityResolver.LicenseStatusAfter(", "PlanIdentityResolver.LicenseLapseCompanyNotice(", "cu.UserId != holderId"],
+         forbid=["a.Status = SubscriptionStatus.Expired", "db.Subscriptions.Where(s => s.AccountSubscriptionId == a.Id && !s.IsDeleted && (s.Status"],
+         forbid_lit=["CascadeExpiredFromLicense"],
+         why=_R238_WHY + "ข้อ 1 สถานะหลังวันหมดอายุจากตัวตัดสินเดียว (ผ่อนผัน = PastDue) · ข้อ 2 ห้ามเขียนแถวบริษัท (เลิก cascade) · ข้อ 5 แจ้งเจ้าของบริษัทใต้ License (ไม่รวมผู้ถือ)"),
+    dict(file=_R238_JOB, method="RunOnce",
+         forbid_lit=["CascadeExpiredFromLicense"],
+         why=_R238_WHY + "ข้อ 2 ไม่มีผู้เขียนการเปลี่ยนสถานะ CascadeExpiredFromLicense ใหม่"),
+    dict(file="Helpers/SubscriptionGatePolicy.cs", method="Decide",
+         must=["f.PlanActive == false && !f.IsComplianceOutput", "f.IsWrite && f.InactiveReadOnly && !f.IsComplianceOutput"],
+         before=[("f.CompanySuspended == true", "!f.IsComplianceOutput")],
+         why=_R238_WHY + "ข้อ 4 ไฟล์ยื่นแบบ/ส่งออกผ่านเฉพาะด่านหมดอายุ — ด่านบริษัทถูกระงับมาก่อนและยังบล็อก · ฝ่ายค้าน S1 License ระงับ/ยกเลิก ⇒ เขียน 402 ทุกโหมด"),
+    dict(file="Middleware/SubscriptionMiddleware.cs", method="InvokeAsync",
+         must=["IsComplianceOutput = SubscriptionGatePolicy.IsComplianceOutputPath(path, context.Request.Method)", "InactiveReadOnly = sub.InactiveReadOnly"],
+         why=_R238_WHY + "ข้อ 4 middleware ส่งข้อเท็จจริง 'ผลลัพธ์เชิงกฎหมาย' จากตัวตัดสินเส้นทางเดียว · ฝ่ายค้าน S1 ธงอ่านอย่างเดียวของ License ระงับ"),
+    dict(file=_R238_ACCT, method="Detach",
+         must=["DetachRightsAsync(", "AddChainedAuditLog(", "PlanIdentityReader.DetachPreviewAsync(", "email.TrySendAsync(",
+               "PlanIdentityResolver.CompanyStatusAfterDetach(", "MayViewCompanyPlanAsync("],
+         must_re=[r"if\s*\(\s*!isOwner\s*&&\s*!isHolder\s*\)\s*return\s+StatusCode\(\s*403"],
+         before=[("DetachRightsAsync(", "sub.AccountSubscriptionId = null"), ("sub.AccountSubscriptionId = null", "AddChainedAuditLog(")],
+         why=_R238_WHY + "ข้อ 6 ถอดได้เฉพาะเจ้าของบริษัท/ผู้ถือ License · audit chain · แจ้งอีกฝ่าย · ผลตอบบอกแพ็กเกจหลังถอด"),
+    dict(file=_R238_ACCT, method="DetachPreview",
+         must=["DetachRightsAsync(", "PlanIdentityReader.DetachPreviewAsync(", "PlanIdentityResolver.MayDetach("],
+         why=_R238_WHY + "ข้อ 6 พรีวิว 'หลังถอดจะใช้…' จากตัวตัดสินเดียว (หน้าเว็บไม่เดา)"),
+    dict(file=_R238_ACCT, method="Effective",
+         must=["PlanIdentityResolver.LicenseGraceEndsAt(", "PlanIdentityResolver.MayDetach(", "canSelfDetach =", "PlanIdentityResolver.LicenseLapseNote(",
+               "MayViewCompanyPlanAsync("],
+         must_re=[r"if\s*\(\s*!await\s+MayViewCompanyPlanAsync\(JwtHelper\.GetUserIdFromClaims\(User\),\s*companyId\)\)\s*return\s+NotFound\("],
+         before=[("MayViewCompanyPlanAsync(", "GetEffectivePlanAsync(")],
+         why=_R238_WHY + "ข้อ 6 graceEndsAt/canSelfDetach/lapseNote คิดที่เซิร์ฟเวอร์ · ฝ่ายค้าน S3 (IDOR) สมาชิก/ผู้ถือเท่านั้น ไม่งั้น 404 ก่อนอ่าน/เขียนอะไร"),
+    dict(file=_R238_ACCT, method="Attach",
+         must=["AttachWarnings(sub, acct,"],
+         why=_R238_WHY + "236-9 ผูกบริษัทที่จ่ายเอง ⇒ เตือนว่าเวลาที่จ่ายไว้เดินต่อ ไม่คืนเงิน · ฝ่ายค้าน S2 License ในช่วงผ่อนผัน"),
+    dict(file=_R238_ACCT, method="AttachWarnings",
+         must=["PlanIdentityResolver.AttachPaidTimeWarning(", "PlanIdentityResolver.AttachLicenseGraceWarning("],
+         why=_R238_WHY + "236-9 + ฝ่ายค้าน S2 คำเตือนตอนผูกข้อความเดียว (preview/Attach)"),
+    dict(file="Controllers/AdminAccountSubscriptionController.cs", method="AdminAttach",
+         must=["PlanIdentityResolver.AttachPaidTimeWarning(", "PlanIdentityResolver.AttachLicenseGraceWarning("],
+         why=_R238_WHY + "236-9 แอดมินผูกบริษัทที่จ่ายเอง ⇒ เตือนในผลตอบ + ลงประวัติ · ฝ่ายค้าน S2 License ในช่วงผ่อนผัน"),
+    dict(file="Services/Implementations/CompanyService.cs", method="EnsureSubscriptionForNewCompanyAsync",
+         must=["PlanIdentityResolver.MayAutoAttach("],
+         why=_R238_WHY + "ฝ่ายค้าน S2 ผูก License อัตโนมัติเฉพาะ License ที่ยังไม่พ้นวันหมดอายุ (ช่วงผ่อนผันไม่ผูกเงียบ ๆ)"),
+    dict(file="Helpers/LicenseLapseMigration.cs", method="Statements",
+         must_lit=["{RestoreCascadedSql()}", "{GraceLicenseSql()}", "IF NOT EXISTS (SELECT 1 FROM \"OneShotDataFixes\" WHERE \"Key\"", "INSERT INTO \"OneShotDataFixes\""],
+         why=_R238_WHY + "ฝ่ายค้าน B1/S4 ซ่อมข้อมูลครั้งเดียว (marker) — บูตถัดไปไม่สแกน/ไม่ทับสถานะที่แอดมิน/ผู้ใช้ตั้งภายหลัง"),
+    dict(file="Helpers/LicenseLapseMigration.cs", method="GraceLicenseSql",
+         must_lit=["LicenseStatusChanged"],
+         why=_R238_WHY + "ฝ่ายค้าน B1 License ที่แอดมินตั้ง Expired เองไม่ถูกพลิกเป็น PastDue"),
+    dict(file="Helpers/LicenseLapseMigration.cs", method="RestoreCascadedSql",
+         must_lit=["s.\"AccountSubscriptionId\" IS NOT NULL OR s.\"IsPermanentFree\" = true OR s.\"EndDate\" >"],
+         why=_R238_WHY + "ฝ่ายค้าน B2 คืนสถานะเฉพาะแถวที่ปลอดภัย (ยังผูก/ฟรีถาวร/ยังไม่หมดอายุ) — แถวที่ถอดแล้วและหมดอายุคง Expired"),
+    dict(file="Services/Implementations/TaxService.EFiling.cs", method="GenerateEFilingAsync",
+         must=["EFilingExportDedupe.ReuseExisting("],
+         before=[("EFilingExportDedupe.ReuseExisting(", "_db.EFilingExports.Add(")],
+         why=_R238_WHY + "ฝ่ายค้าน N1 เส้นยื่นแบบที่ผ่านด่านหมดอายุไม่เก็บไฟล์ซ้ำไม่จำกัด"),
+]
+REVIEWER_CASES += [
+    # คืน cascade แถวบริษัทในงานเตือน ⇒ ต้องฟ้อง
+    ("R238a", "ProcessOne", "if (statusChanged) a.Status = nextStatus;",
+     "if (statusChanged) a.Status = nextStatus;\n        foreach (var cs in db.Subscriptions.Local) db.SubscriptionHistories.Add(new SubscriptionHistory { Action = \"CascadeExpiredFromLicense\" });", True),
+    # กลับไปตั้ง Expired ทันทีที่หมดอายุ (ผ่อนผัน 0 วัน) ⇒ ต้องฟ้อง
+    ("R238b", "ProcessOne", "var nextStatus = Accounting.Helpers.PlanIdentityResolver.LicenseStatusAfter(a.Status, a.EndDate, a.GracePeriodDays, now);",
+     "var nextStatus = daysLeft <= 0 ? SubscriptionStatus.Expired : a.Status;", True),
+    # ส่งสถานะจริงของ License (Suspended) ให้ด่าน ⇒ ต้องฟ้อง
+    ("R238c", "GetGateStateAsync", "new SubscriptionGateState(ov.Plan, ov.GateStatus,", "new SubscriptionGateState(ov.Plan, ov.Status,", True),
+    # ถอดด่านสิทธิ์ (ใครก็ถอดได้) ⇒ ต้องฟ้อง
+    ("R238d", "Detach", "if (!isOwner && !isHolder)\n            return StatusCode(403, new ApiResponse<string>",
+     "if (false)\n            return StatusCode(403, new ApiResponse<string>", True),
+    # ยอมไฟล์ยื่นแบบก่อนด่านบริษัทถูกระงับ ⇒ ต้องฟ้อง
+    ("R238f", "Decide", "if (f.PlanActive == false && !f.IsComplianceOutput)", "if (f.PlanActive == false)", True),
+    # ถอดโดยไม่ลง audit chain ⇒ ต้องฟ้อง
+    ("R238e", "Detach", "_db.AddChainedAuditLog(new AuditLog", "_db.AuditLogs.Add(new AuditLog", True),
+    # ฝ่ายค้าน B1/S4: ถอด marker ออก (ซ่อมทุกบูต) ⇒ ต้องฟ้อง
+    ("R238g", "Statements", "IF NOT EXISTS (SELECT 1 FROM \"OneShotDataFixes\" WHERE \"Key\" = '{MarkerKey}') THEN", "IF true THEN", True),
+    # ฝ่ายค้าน S2: ผูกอัตโนมัติไม่ตรวจวันหมดอายุ ⇒ ต้องฟ้อง
+    ("R238h", "EnsureSubscriptionForNewCompanyAsync", "|| !Accounting.Helpers.PlanIdentityResolver.MayAutoAttach(acct.Status, acct.EndDate, autoNow)", "", True),
+    # ฝ่ายค้าน S3: effective ไม่ตรวจสมาชิก ⇒ ต้องฟ้อง
+    ("R238i", "Effective", "if (!await MayViewCompanyPlanAsync(JwtHelper.GetUserIdFromClaims(User), companyId))", "if (false)", True),
+    # ฝ่ายค้าน S1: ถอดธงอ่านอย่างเดียวออกจาก Decide ⇒ ต้องฟ้อง
+    ("R238j", "Decide", "if (f.IsWrite && f.InactiveReadOnly && !f.IsComplianceOutput)", "if (false)", True),
+    # ฝ่ายค้าน B2: ถอดแล้วไม่ตั้งสถานะปลายทาง ⇒ ต้องฟ้อง
+    ("R238k", "Detach", "var settled = PlanIdentityResolver.CompanyStatusAfterDetach(sub.Status, sub.EndDate, sub.IsPermanentFree, now);", "var settled = sub.Status;", True),
+]
+
+
+# ── รอบ 239: ยอมรับใบเสนอราคาออนไลน์ + ลายเซ็น + PDF สาธารณะ (คำตัดสิน 239-1..239-6) — ด่าน token/ลายเซ็น/audit ต้องถูกเรียกจริงในเส้นสาธารณะ ──
+_R239_WHY = "รอบ 239 (คำตัดสิน 239-*): "
+_R239_PUB = "Controllers/PublicQuotationController.cs"
+RULES += [
+    dict(file=_R239_PUB, method="Accept",
+         must=["FindByTokenAsync(", "RequireSignatureAsync(", "QuotationAcceptance.DecideAccept(", "DocumentSignedContent.Hash(",
+               "AddChainedAuditLog(", "ExecuteUpdateAsync("],
+         must_re=[r"SignatureStore\s*\.\s*WriteAsync\(\s*sigPath\s*,\s*png\b", r"d\.QuotationAcceptedAt\s*==\s*null"],
+         before=[("FindByTokenAsync(", "QuotationAcceptance.DecideAccept("), ("QuotationAcceptance.DecideAccept(", "SignatureStore.WriteAsync("),
+                 ("ExecuteUpdateAsync(", "AddChainedAuditLog(")],
+         forbid=["_db.AuditLogs.Add(", "doc.Notes =", "request.SignatureBase64.Trim("],
+         why=_R239_WHY + "ยอมรับผ่านด่าน token + ตัวตัดสินเดียว (ชื่อ/ค่าตั้งบังคับลายเซ็น/ตัวตรวจลายเซ็น) · เขียนเฉพาะไบต์ที่ตรวจแล้ว · จองแบบอะตอมมิก "
+             "(แถวที่ยังไม่ยอมรับ) + audit chain · ไม่ต่อข้อความลง Notes (เนื้อหาเอกสารห้ามเปลี่ยนหลังยอมรับ)"),
+    dict(file=_R239_PUB, method="Pdf",
+         must=["OverRateAsync(", "FindByTokenAsync("],
+         must_re=[r"GenerateDocumentPdfAsync\(\s*doc\.CompanyId\s*,\s*new\s+Models\.DTOs\.DocumentTemplate\.GeneratePdfRequest\(\s*doc\.Id\s*,\s*null\s*,\s*null\s*,\s*null\s*,\s*null\s*\)"],
+         before=[("FindByTokenAsync(", "GenerateDocumentPdfAsync(")],
+         why=_R239_WHY + "PDF สาธารณะ: สิทธิ์จาก token อย่างเดียว · เอกสาร/บริษัทมาจากแถวของ token เท่านั้น (ไม่มีพารามิเตอร์อื่น) · ภาษาผ่าน resolver กลาง (Language = null)"),
+    dict(file=_R239_PUB, method="Signature",
+         must=["OverRateAsync(", "FindByTokenAsync(", "QuotationAcceptance.IsOwnSignatureLocation(", "SignatureImageValidator.LooksLikeStoredPng(",
+               "SignatureStore.Locator.AttachmentsRoot"],
+         before=[("QuotationAcceptance.IsOwnSignatureLocation(", "ReadAllBytesAsync(")],
+         why=_R239_WHY + "รูปลายเซ็น (ข้อมูลส่วนบุคคล) อ่านผ่าน token ของใบนั้น + ไฟล์ต้องอยู่ใต้โฟลเดอร์ของบริษัท/เอกสารเดียวกัน"),
+    dict(file=_R239_PUB, method="FindByTokenAsync",
+         must=["Uri.IsHexDigit"],
+         must_re=[r"QuotationAcceptTokenExpiresAt\s+is\s*\{\s*\}\s*exp\s*&&\s*exp\s*<\s*DateTime\.UtcNow\s*\)\s*return\s+null",
+                  r"d\.DocumentType\s*==\s*DocumentType\.Quotation", r"d\.Status\s*!=\s*DocumentStatus\.Voided"],
+         why=_R239_WHY + "ด่าน token ตัวเดียวของทุกเส้นสาธารณะ — หมดอายุ/ไม่ใช่ใบเสนอราคา/ยกเลิก = ไม่พบ"),
+    dict(file=_R239_PUB, method="SignDelivery",
+         must=["SignatureImageValidator.Validate(", "OverRateAsync(", "FindDeliveryByTokenAsync("],
+         must_re=[r"DeliverySignatureBase64\s*=\s*sig\.DataUri"],
+         before=[("OverRateAsync(", "FindDeliveryByTokenAsync("), ("FindDeliveryByTokenAsync(", "SignatureImageValidator.Validate("),
+                 ("doc.DeliverySignedAt != null", "SignatureImageValidator.Validate(")],
+         why=_R239_WHY + "เซ็นรับสินค้าใช้ตัวตรวจลายเซ็นเดียวกัน · เก็บไบต์ที่ตรวจแล้ว ไม่ใช่ข้อความดิบจากคำขอ"),
+    dict(file="Controllers/DocumentController.cs", method="GetQuotationAcceptanceSignature",
+         must=["GetDocumentForUserAsync(", "QuotationAcceptance.IsOwnSignatureLocation(", "SignatureImageValidator.LooksLikeStoredPng(",
+               "storage.Locator.AttachmentsRoot"],
+         before=[("GetDocumentForUserAsync(", "ReadAllBytesAsync(")],
+         why=_R239_WHY + "ผู้ขายดูลายเซ็นลูกค้าผ่านด่านอ่านเอกสารเดียวกับหน้าเอกสาร (ฝั่ง + ชั้นความลับ) ก่อนอ่านไฟล์"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="ResolveSignersAsync",
+         must=["QuotationAcceptance.IsOwnSignatureLocation(", "SignatureImageValidator.LooksLikeStoredPng(", "QuotationAcceptanceSigner(",
+               "PlaceQuotationAcceptance("],
+         why=_R239_WHY + "(ฝ่ายค้าน S3/N) เนื้อหาเปลี่ยน ⇒ ไม่พิมพ์รูป · ไม่ทับรูปลายเซ็นลูกค้าเดิมด้วยค่าว่าง · ช่องลูกค้าอนุมัติบนกระดาษ (ใช้ร่วม HTML + QuestPDF) พิมพ์เฉพาะไฟล์ของบริษัท/เอกสารนี้ที่ผ่านตัวตรวจ"),
+    dict(file="Services/Implementations/PdfGenerationService.cs", method="QuotationAcceptanceSigner",
+         must=["QuotationAcceptance.ContentMatches("],
+         why=_R239_WHY + "ฝ่ายค้าน S3 ตัวตัดสินเนื้อหาตรงเดียวกับหน้าเอกสาร (DocumentResponse.QuotationAcceptContentMatches)"),
+    dict(file="Services/Implementations/Pdpa/PdpaService.cs", method="ApplyErasureAsync",
+         must=["QuotationAcceptance.UnderLegalHold(", "QuotationAcceptance.ErasePii("],
+         why=_R239_WHY + "ฝ่ายค้าน N (PDPA ม.33) ลบลายเซ็น/ชื่อผู้ยอมรับเฉพาะใบที่พ้นอายุเก็บ (legal hold ตัวเดียว)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="UpdateDocumentAsync",
+         must=["QuotationAcceptance.ClearOn("],
+         why=_R239_WHY + "ออก Rev ใหม่ล้างหลักฐานการยอมรับทั้งชุดที่ตัวตั้งเดียว (ลายเซ็น Rev เดิมห้ามค้างบนกระดาษ Rev ใหม่)"),
+]
+REVIEWER_CASES += [
+    # เขียน audit นอก chain ⇒ ต้องฟ้อง
+    ("R239a", "Accept", "_db.AddChainedAuditLog(new Models.Entities.AuditLog", "_db.AuditLogs.Add(new Models.Entities.AuditLog", True),
+    # PDF สาธารณะรับเอกสารจากคำขอ (ไม่ใช่แถวของ token) ⇒ ต้องฟ้อง
+    ("R239b", "Pdf", "new Models.DTOs.DocumentTemplate.GeneratePdfRequest(doc.Id, null, null, null, null)",
+     "new Models.DTOs.DocumentTemplate.GeneratePdfRequest(Guid.Parse(Request.Query[\"id\"]!), null, null, null, null)", True),
+    # ถอดการตรวจวันหมดอายุของ token ⇒ ต้องฟ้อง
+    ("R239c", "FindByTokenAsync", "if (doc.QuotationAcceptTokenExpiresAt is { } exp && exp < DateTime.UtcNow) return null;", "", True),
+    # เซ็นรับสินค้าเก็บข้อความดิบจากคำขอ ⇒ ต้องฟ้อง
+    ("R239d", "SignDelivery", "doc.DeliverySignatureBase64 = sig.DataUri;", "doc.DeliverySignatureBase64 = request.SignatureBase64.Trim();", True),
+    # เขียนข้อความดิบลงที่เก็บแทนไบต์ที่ตรวจแล้ว ⇒ ต้องฟ้อง
+    ("R239e", "Accept", "await SignatureStore.WriteAsync(sigPath, png, \"image/png\");",
+     "await SignatureStore.WriteAsync(sigPath, Convert.FromBase64String(request.SignatureBase64!), \"image/png\");", True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อนเรียกตัวตัดสิน ⇒ ต้องไม่ฟ้อง
+    ("R239f", "Accept", "var decision = QuotationAcceptance.DecideAccept(", "var decision =\n            QuotationAcceptance.DecideAccept(", False),
+    # ฝ่ายค้าน S3: พิมพ์รูปแม้เนื้อหาเปลี่ยน (ถอดตัวตัดสิน) ⇒ ต้องฟ้อง
+    ("R239g", "QuotationAcceptanceSigner", "var changed = Accounting.Helpers.QuotationAcceptance.ContentMatches(doc, lines) == false;",
+     "var changed = false;", True),
+    # ฝ่ายค้าน S2: ตรวจรูปก่อนหาใบจาก token ⇒ ต้องฟ้อง
+    ("R239h", "SignDelivery", "if (await OverRateAsync(\"delivery\", 10, 60)) return TooMany();",
+     "var sig0 = SignatureImageValidator.Validate(request.SignatureBase64);\n        if (await OverRateAsync(\"delivery\", 10, 60)) return TooMany();", True),
+]
+
+
+def cascade_writer_errors(files) -> list:
+    """รอบ 238 (236-3 ข้อ 2): ไม่มีผู้เขียนการเปลี่ยนสถานะแถวบริษัทแบบ CascadeExpiredFromLicense ใหม่ที่ใดในเรพ (migration อ่านได้อย่างเดียว)"""
+    errs = []
+    rx = re.compile(r'Action\s*=\s*"CascadeExpiredFromLicense"')
+    for rel, text in files:
+        for m in rx.finditer(text):
+            errs.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1} เขียนประวัติ CascadeExpiredFromLicense — {_R238_WHY}"
+                        "ข้อ 2 แถวบริษัทที่ License คุมห้ามเดินสถานะตาม License (ถอดออกแล้วแพ็กเกจที่จ่ายไว้ต้องกลับมา)")
+    return errs
+
+
+def cascade_writer_files():
+    out = []
+    for p in SRC.rglob("*.cs"):
+        rel = str(p.relative_to(SRC))
+        if rel.startswith(("bin", "obj")):
+            continue
+        out.append((rel, p.read_text(encoding="utf-8", errors="replace")))
+    return out
+
+
+def cascade_writer_self_test() -> list:
+    bad = [("X.cs", 'db.SubscriptionHistories.Add(new SubscriptionHistory { Action = "CascadeExpiredFromLicense", ToStatus = SubscriptionStatus.Expired });')]
+    ok = [("Y.cs", "AND l.\"Action\" = 'CascadeExpiredFromLicense'")]
+    fails = []
+    if not cascade_writer_errors(bad):
+        fails.append("self-test R238: ผู้เขียน CascadeExpiredFromLicense ใหม่แล้วไม่ฟ้อง")
+    if cascade_writer_errors(ok):
+        fails.append("self-test R238: migration ที่อ่านประวัติ CascadeExpiredFromLicense ถูกฟ้องผิด")
+    return fails
+
 def main() -> int:
     errs = []
     # 2026-10-08: กติกาที่สะกดคีย์ผิด (เช่น forbid_re) เคยถูกข้ามเงียบ = ด่านที่ไม่มีอยู่จริง — คีย์ที่ไม่รู้จักต้องฟ้อง
@@ -14077,8 +14284,10 @@ def main() -> int:
     errs += notes_marker_errors(marker_files)
     errs += line_config_errors(marker_files)
     errs += line_push_errors(marker_files)
+    errs += cascade_writer_errors(cascade_writer_files())   # รอบ 238 (236-3 ข้อ 2)
     st = (self_test() + folder_forbid_self_test(ocr_files) + settlement_folder_self_test(settle_files)
-          + notes_marker_self_test(marker_files) + line_config_self_test(marker_files) + line_push_self_test(marker_files))
+          + notes_marker_self_test(marker_files) + line_config_self_test(marker_files) + line_push_self_test(marker_files)
+          + cascade_writer_self_test())
     for e in errs + st:
         print("❌ " + e)
     if errs or st:

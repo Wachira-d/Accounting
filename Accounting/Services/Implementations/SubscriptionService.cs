@@ -896,7 +896,7 @@ public class SubscriptionService : ISubscriptionService
     /// <summary>ผลของ overlay แพ็กเกจ (บริษัท ↔ User License) + mask ที่เจ้าของบริษัทปิดเอง — ตัวเดียวของ
     /// <see cref="GetSubscriptionAsync"/> และ <see cref="GetGateStateAsync"/></summary>
     private sealed record GateOverlay(SubscriptionPlan Plan, string? PlanName, SubscriptionStatus Status,
-        FeatureFlags Features, AccountSubscription? Account);
+        FeatureFlags Features, AccountSubscription? Account, SubscriptionStatus GateStatus, bool InactiveReadOnly);
 
     private async Task<GateOverlay> ResolveGateOverlayAsync(Subscription sub, Guid companyId)
     {
@@ -922,6 +922,9 @@ public class SubscriptionService : ISubscriptionService
         plan = identity.Plan;
         planName = identity.PlanName;
         status = identity.Status;
+        // รอบ 238 (คำตัดสิน 236-3 ข้อ 3): License ระงับ/ยกเลิก ⇒ ด่านเห็นเป็น "หมดอายุ" (อ่าน/ส่งออก/ยื่นแบบได้ · เขียน 402) แทน 403 ทุกคำขอ —
+        // เฉพาะสถานะที่ส่งให้ gate (GetGateStateAsync) · หน้าแพ็กเกจ (GetSubscriptionAsync) ยังแสดงสถานะจริงของ License · ไม่เขียนลงฐาน
+        var gateStatus = Accounting.Helpers.PlanIdentityResolver.GateStatus(identity);
 
         // รอบ 200 ข้อ 14: ลูกค้าช่วงทดลอง/แพ็กเกจฟรีที่สำเนาฟีเจอร์ว่าง (คอลัมน์ DEFAULT 0 · แอดมินบันทึกรายการว่าง) ⇒ ใช้ฟีเจอร์ตามข้อมูล
         // แพ็กเกจ แทนการถูกบล็อกทุกเส้นทางเมื่อเปิดบังคับ · แพ็กเกจก็ว่าง = คงว่าง (รายงานแอดมินแสดง — ไม่แต่งชุดฟีเจอร์เอง) ·
@@ -943,7 +946,8 @@ public class SubscriptionService : ISubscriptionService
         if (ownerDisabled != FeatureFlags.None)
             features = features & ~ownerDisabled;
 
-        return new GateOverlay(plan, planName, status, features, acct);
+        return new GateOverlay(plan, planName, status, features, acct, gateStatus,
+            Accounting.Helpers.PlanIdentityResolver.LicenseInactiveReadOnly(identity));   // รอบ 238 ฝ่ายค้าน S1
     }
 
     /// <summary>
@@ -986,14 +990,15 @@ public class SubscriptionService : ISubscriptionService
         // รอบ 231 (231-10): ผู้อ่านของ TrialConfig.BlockAccessOnExpiry / AllowDataExportAfterExpiry — เฉพาะทดลองใช้ที่หมดอายุแล้ว (ไม่เสีย query กับบริษัทอื่น) ·
         // Free Edition/จ่ายเงิน ไม่มีนโยบายนี้ (กันแถวเก่า Kind=Unknown ด้วย LastPaymentDate)
         bool blockReads = false, allowExport = true;
-        if (sub.Status == SubscriptionStatus.Expired && !sub.IsPermanentFree
+        // รอบ 238 (236-3): บริษัทที่ License คุม ⇒ นโยบายทดลองใช้ของแถวบริษัท (ซึ่งไม่มีผล) ห้ามบล็อกการอ่าน — License หมดอายุ = อ่านอย่างเดียวเสมอ
+        if (ov.Account == null && sub.Status == SubscriptionStatus.Expired && !sub.IsPermanentFree
             && (sub.Kind == SubscriptionKind.Trial || (sub.Kind == SubscriptionKind.Unknown && sub.LastPaymentDate == null)))
         {
             var tc = await _db.TrialConfigs.AsNoTracking().Where(t => t.SubscriptionId == sub.Id)
                 .Select(t => new { t.BlockAccessOnExpiry, t.AllowDataExportAfterExpiry }).FirstOrDefaultAsync();
             if (tc != null) { blockReads = tc.BlockAccessOnExpiry; allowExport = tc.AllowDataExportAfterExpiry; }
         }
-        return new SubscriptionGateState(ov.Plan, ov.Status, ov.Features, blockReads, allowExport);
+        return new SubscriptionGateState(ov.Plan, ov.GateStatus, ov.Features, blockReads, allowExport, ov.InactiveReadOnly);
     }
 
     /// <summary>
@@ -1696,8 +1701,10 @@ public class SubscriptionService : ISubscriptionService
         }
 
         var now = DateTime.UtcNow;
-        var inGrace = acct.Status == SubscriptionStatus.Expired
-                      && now <= acct.EndDate.AddDays(acct.GracePeriodDays);
+        // รอบ 238 (236-3 ข้อ 1): ระยะผ่อนผันของ License = PastDue หลังวันหมดอายุ (LicenseStatusAfter) — Expired ที่ค้างจากก่อนรอบนี้ยังนับด้วย
+        var inGrace = acct.Status is SubscriptionStatus.Expired or SubscriptionStatus.PastDue
+                      && now > acct.EndDate
+                      && now <= Accounting.Helpers.PlanIdentityResolver.LicenseGraceEndsAt(acct.EndDate, acct.GracePeriodDays);
         // รอบ 236: สูตร "License ยังใช้งานได้" ตัวเดียว (PlanIdentityResolver.LicenseActive — ด่านซื้อ/ป้ายแพ็กเกจใช้ตัวเดียวกัน)
         var active = Accounting.Helpers.PlanIdentityResolver.LicenseActive(acct.Status, acct.EndDate, acct.GracePeriodDays, now);
         return new EffectivePlan(

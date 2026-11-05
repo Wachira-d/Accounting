@@ -271,6 +271,10 @@
 
       async attach(companyId, name) {
         try {
+          // รอบ 238 (236-9): บริษัทที่จ่ายแพ็กเกจเองไว้ — เซิร์ฟเวอร์คิดคำเตือน "เวลาที่จ่ายไว้ X วันยังเดินอยู่ ไม่คืนเงิน" ให้ยืนยันก่อนผูก
+          const pv = await API.get(`/api/account-subscription/attach-preview/${encodeURIComponent(companyId)}`).catch(() => null);
+          const warn = pv?.success ? pv.data?.paidTimeWarning : null;
+          if (warn && !confirm(`ผูก "${name}" เข้า Account Plan?\n\n⚠️ ${warn}`)) return;
           const r = await fetch('/api/account-subscription/attach', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + API.token, 'Content-Type': 'application/json' },
@@ -278,13 +282,20 @@
           });
           const j = await r.json();
           if (!j.success) throw new Error(j.message);
-          Layout.toast(`✓ ผูก "${name}" เข้า Plan แล้ว`);
+          Layout.toast(j.data ? j.message : `✓ ผูก "${name}" เข้า Plan แล้ว`);
           await this.load();
         } catch(e) { Layout.toast(e.message, 'error'); }
       },
 
       async detach(companyId, name) {
-        if (!confirm(`ถอด "${name}" ออกจาก Account Plan?\n\nบริษัทจะกลับไปใช้ subscription ของตัวเอง (อาจเป็น FreeTrial เดิม)`)) return;
+        // รอบ 238 (236-3 ข้อ 6): กล่องยืนยันบอกว่าหลังถอดบริษัทจะใช้แพ็กเกจอะไร — ข้อความจากเซิร์ฟเวอร์ (detach-preview) ไม่เดาเอง
+        let after = '';
+        try {
+          const pv = await API.get(`/api/account-subscription/detach-preview/${encodeURIComponent(companyId)}`);
+          if (pv?.success && pv.data?.text) after = pv.data.text;
+          else if (pv && !pv.success) { Layout.toast(pv.message || 'ถอดไม่ได้', 'error'); return; }
+        } catch { /* พรีวิวล้ม = ยังยืนยันได้ด้วยข้อความทั่วไป */ }
+        if (!confirm(`ถอด "${name}" ออกจาก Account Plan?\n\n${after || 'บริษัทจะกลับไปใช้แพ็กเกจของตัวเอง'}`)) return;
         try {
           const r = await fetch('/api/account-subscription/detach', {
             method: 'POST',
@@ -293,7 +304,7 @@
           });
           const j = await r.json();
           if (!j.success) throw new Error(j.message);
-          Layout.toast(`✓ ถอด "${name}" ออกแล้ว`);
+          Layout.toast(j.message || `✓ ถอด "${name}" ออกแล้ว`);
           await this.load();
         } catch(e) { Layout.toast(e.message, 'error'); }
       },

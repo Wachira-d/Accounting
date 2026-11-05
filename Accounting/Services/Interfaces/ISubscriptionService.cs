@@ -7,7 +7,10 @@ namespace Accounting.Services.Interfaces;
 /// <param name="BlockReadsWhenExpired">รอบ 231 (231-10): ผู้อ่านของ <c>TrialConfig.BlockAccessOnExpiry</c> (เฉพาะ <c>Subscription.Kind = Trial</c>) — middleware ส่งเข้า <c>SubscriptionGatePolicy.Decide</c></param>
 /// <param name="AllowExportWhenExpired">ผู้อ่านของ <c>TrialConfig.AllowDataExportAfterExpiry</c></param>
 public sealed record SubscriptionGateState(SubscriptionPlan Plan, SubscriptionStatus Status, FeatureFlags EnabledFeatures,
-    bool BlockReadsWhenExpired = false, bool AllowExportWhenExpired = true);
+    bool BlockReadsWhenExpired = false, bool AllowExportWhenExpired = true,
+    /// <summary>รอบ 238 ฝ่ายค้าน S1: License ระงับ/ยกเลิก (สถานะที่ด่านเห็นถูกแปลงเป็นหมดอายุโดย <c>PlanIdentityResolver.GateStatus</c>) ⇒ เขียนไม่ได้<b>ทุกโหมด</b>
+    /// (เดิม 403 SubscriptionInactive ไม่ขึ้นกับโหมดด่านเขียน — ห้ามหลวมลงสำหรับ partner ที่ HeaderWriteGateMode = LogOnly · ไม่ต้องพึ่ง GetEffectivePlanAsync)</summary>
+    bool InactiveReadOnly = false);
 
 public interface ISubscriptionService
 {

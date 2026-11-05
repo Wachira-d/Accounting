@@ -10,56 +10,115 @@
     body { font-family: 'Noto Sans Thai', sans-serif; background: #f1f5f9; color: #0f172a;
            min-height: 100vh; display: flex; justify-content: center; padding: 24px 12px; }
     .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 24px rgba(15,23,42,.08);
-            max-width: 640px; width: 100%; padding: 28px; height: fit-content; }
+            max-width: 640px; width: 100%; padding: 24px; height: fit-content; }
     h1 { font-size: 20px; margin-bottom: 4px; }
-    .sub { color: #64748b; font-size: 13px; margin-bottom: 18px; }
+    .sub { color: #64748b; font-size: 13px; margin-bottom: 14px; }
+    .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
     th { text-align: left; color: #64748b; font-weight: 500; font-size: 12px;
          border-bottom: 1px solid #e2e8f0; padding: 6px 4px; }
     td { padding: 8px 4px; border-bottom: 1px solid #f1f5f9; }
-    .num { text-align: right; }
+    .num { text-align: right; white-space: nowrap; }
     .totals { margin-top: 8px; font-size: 14px; }
     .totals div { display: flex; justify-content: space-between; padding: 3px 4px; }
     .grand { font-weight: 700; font-size: 17px; border-top: 2px solid #0f172a; padding-top: 8px !important; }
+    .pdf-btn { display: inline-flex; align-items: center; gap: 6px; background: #eff6ff; color: #1d4ed8;
+               border: 1px solid #bfdbfe; border-radius: 8px; padding: 8px 14px; font-size: 14px;
+               font-weight: 600; text-decoration: none; margin: 4px 0 10px; }
     .accept-box { margin-top: 22px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 16px; }
+    .accepted-box { margin-top: 18px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 10px; padding: 16px; }
+    .accepted-box img { display: block; max-width: 100%; max-height: 120px; background: #fff;
+                        border: 1px solid #e2e8f0; border-radius: 6px; margin: 8px 0; }
+    label.lbl { display: block; font-size: 13px; font-weight: 600; margin-top: 10px; }
+    .opt { font-weight: 400; color: #64748b; }
     input { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 8px;
-            font-family: inherit; font-size: 14px; margin: 6px 0 12px; }
-    button { width: 100%; background: #16a34a; color: #fff; border: 0; border-radius: 10px;
+            font-family: inherit; font-size: 14px; margin: 6px 0 4px; }
+    .pad-wrap { border: 2px dashed #94a3b8; border-radius: 10px; background: #fff;
+                position: relative; margin: 6px 0 2px; }
+    .pad-wrap canvas { display: block; width: 100%; height: 170px; border-radius: 8px; }
+    .pad-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+                color: #cbd5e1; font-size: 15px; pointer-events: none; }
+    .clear-btn { background: none; border: 0; color: #64748b; font-size: 13px; cursor: pointer;
+                 font-family: inherit; text-decoration: underline; padding: 4px; width: auto; }
+    .consent { font-size: 12px; color: #475569; line-height: 1.6; margin: 12px 0; background: #fff;
+               border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; }
+    button.primary { width: 100%; background: #16a34a; color: #fff; border: 0; border-radius: 10px;
              padding: 13px; font-size: 16px; font-weight: 600; font-family: inherit; cursor: pointer; }
-    button:disabled { background: #94a3b8; cursor: default; }
-    .done { text-align: center; padding: 26px 10px; }
-    .done .big { font-size: 44px; }
+    button.primary:disabled { background: #94a3b8; cursor: default; }
     .err { text-align: center; color: #b91c1c; padding: 40px 10px; }
+    .msg-err { color: #b91c1c; font-size: 13px; margin-top: 8px; }
     .badge { display: inline-block; background: #dcfce7; color: #166534; border-radius: 999px;
              padding: 3px 12px; font-size: 12px; font-weight: 600; }
+    @media (max-width: 480px) { .card { padding: 16px; } h1 { font-size: 18px; } }
   </style>
 </head>
 <body>
   <div class="card" id="card">
     <div class="err" id="loading">กำลังโหลด...</div>
   </div>
+  <script src="/js/signature-pad.js"></script>
   <script>
+    // รอบ 239: ดู + ดาวน์โหลด PDF + ยอมรับพร้อมลายเซ็น (ไม่บังคับ เว้นผู้ขายตั้งให้บังคับ) — กติกา/ข้อความยินยอมมาจากเซิร์ฟเวอร์
+    // (Helpers/QuotationAcceptance) · ลายเซ็นตรวจซ้ำที่เซิร์ฟเวอร์ (Helpers/SignatureImageValidator) · ทุกค่าที่แสดง escape ก่อนต่อ HTML
     const token = new URLSearchParams(location.search).get('token');
     const card = document.getElementById('card');
+    const api = (suffix) => `/api/public/quotation/${encodeURIComponent(token || '')}${suffix || ''}`;
     const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    // th-TH ใช้ปฏิทินพุทธศักราชเป็นค่าตั้งต้น ⇒ วันที่บนหน้านี้เป็น พ.ศ. เวลาไทย
+    const thaiDateTime = (d) => new Date(d).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok', dateStyle: 'medium', timeStyle: 'short' });
+    const thaiDate = (d) => new Date(d).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' });
+    let pad = null;
+    let requireSignature = false;
+
+    function acceptedHtml(q) {
+      return `<div class="accepted-box">
+          <div class="badge">✓ ยอมรับใบเสนอราคาแล้ว</div>
+          <div style="margin-top:8px;font-size:14px">ผู้ยอมรับ: <strong>${esc(q.acceptedBy)}</strong></div>
+          <div style="font-size:13px;color:#475569">เมื่อ ${esc(thaiDateTime(q.acceptedAt))} น.</div>
+          ${q.hasSignature ? `<img src="${esc(api('/signature'))}" alt="ลายเซ็นผู้ยอมรับ">` : ''}
+          ${q.acceptedNote ? `<div style="font-size:13px;margin-top:4px">หมายเหตุ: ${esc(q.acceptedNote)}</div>` : ''}
+          <div style="font-size:12px;color:#64748b;margin-top:8px">ต้องการแก้ไขเงื่อนไข — กรุณาติดต่อผู้ขายเพื่อออกใบเสนอราคาฉบับปรับปรุงและลิงก์ใหม่</div>
+        </div>`;
+    }
+
+    function acceptFormHtml(q) {
+      return `<div class="accept-box">
+          <strong>ยอมรับใบเสนอราคานี้</strong>
+          <label class="lbl" for="accName">ชื่อ-นามสกุลผู้ยอมรับ *</label>
+          <input id="accName" maxlength="200" autocomplete="name">
+          <label class="lbl">ลายเซ็น ${q.requireSignature ? '*' : '<span class="opt">(ไม่บังคับ)</span>'}</label>
+          <div class="pad-wrap">
+            <canvas id="pad" aria-label="ช่องวาดลายเซ็น"></canvas>
+            <div class="pad-hint" id="padHint">✍️ เซ็นชื่อตรงนี้ (นิ้ว / เมาส์ / ปากกา)</div>
+          </div>
+          <div style="text-align:right"><button type="button" class="clear-btn" id="padClear">ล้างลายเซ็น</button></div>
+          <label class="lbl" for="accNote">หมายเหตุถึงผู้ขาย <span class="opt">(ถ้ามี)</span></label>
+          <input id="accNote" maxlength="500">
+          <div class="consent">${esc(q.consentText || '')}</div>
+          <button type="button" class="primary" id="accBtn">✓ ยอมรับใบเสนอราคา</button>
+          <div class="msg-err" id="accErr" role="alert"></div>
+        </div>`;
+    }
 
     async function load() {
       if (!token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
       let r;
-      try { r = await fetch(`/api/public/quotation/${encodeURIComponent(token)}`); }
+      try { r = await fetch(api()); }
       catch { card.innerHTML = '<div class="err">เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง</div>'; return; }
       if (!r.ok) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว<br>กรุณาติดต่อผู้ขายเพื่อขอลิงก์ใหม่</div>'; return; }
       const j = await r.json();
       const q = j.data;
       const accepted = !!q.acceptedAt;
+      requireSignature = !!q.requireSignature;
+      const rev = q.revisionNumber > 0 ? ` (Rev.${Number(q.revisionNumber)})` : '';
       card.innerHTML = `
-        <h1>ใบเสนอราคา ${esc(q.documentNumber)}</h1>
+        <h1>ใบเสนอราคา ${esc(q.documentNumber)}${rev}</h1>
         <div class="sub">จาก <strong>${esc(q.companyName || '')}</strong>
           · ถึง ${esc(q.contactName || '-')}
-          · วันที่ ${new Date(q.documentDate).toLocaleDateString('th-TH')}</div>
-        ${accepted ? `<div class="badge">✓ ยอมรับแล้วโดย ${esc(q.acceptedBy)} เมื่อ ${new Date(q.acceptedAt).toLocaleString('th-TH')}</div>` : ''}
-        <table>
+          · วันที่ ${esc(thaiDate(q.documentDate))}</div>
+        ${q.pdfAvailable ? `<a class="pdf-btn" href="${esc(api('/pdf'))}" rel="noopener">⬇️ ดาวน์โหลด PDF</a>` : ''}
+        <div class="table-wrap"><table>
           <thead><tr><th>รายการ</th><th class="num">จำนวน</th><th class="num">ราคา/หน่วย</th><th class="num">รวม</th></tr></thead>
           <tbody>
             ${(q.lines || []).map(l => `<tr>
@@ -69,40 +128,51 @@
               <td class="num">${money(l.amount)}</td>
             </tr>`).join('')}
           </tbody>
-        </table>
+        </table></div>
         <div class="totals">
           <div><span>รวมก่อนภาษี</span><span>${money(q.subTotal)}</span></div>
           <div><span>ภาษีมูลค่าเพิ่ม</span><span>${money(q.vatAmount)}</span></div>
           <div class="grand"><span>ยอดรวมทั้งสิ้น</span><span>${money(q.totalAmount)} ${esc(q.currency !== 'THB' ? q.currency : 'บาท')}</span></div>
         </div>
-        ${accepted ? '' : `
-        <div class="accept-box">
-          <strong>ยอมรับใบเสนอราคานี้</strong>
-          <input id="accName" placeholder="ชื่อ-นามสกุลผู้ยอมรับ *" maxlength="200">
-          <input id="accNote" placeholder="หมายเหตุถึงผู้ขาย (ถ้ามี)" maxlength="500">
-          <button id="accBtn" onclick="accept()">✓ ยอมรับใบเสนอราคา</button>
-        </div>`}
+        ${accepted ? acceptedHtml(q) : acceptFormHtml(q)}
       `;
+      if (!accepted) bindForm();
+    }
+
+    function bindForm() {
+      const hint = document.getElementById('padHint');
+      pad = SignaturePad.create(document.getElementById('pad'), {
+        onChange: (hasInk) => { hint.style.display = hasInk ? 'none' : 'flex'; },
+      });
+      document.getElementById('padClear').addEventListener('click', () => pad.clear());
+      document.getElementById('accBtn').addEventListener('click', accept);
     }
 
     async function accept() {
+      const errBox = document.getElementById('accErr');
+      errBox.textContent = '';
       const name = (document.getElementById('accName').value || '').trim();
-      if (!name) { alert('กรุณาระบุชื่อผู้ยอมรับ'); return; }
+      if (!name) { errBox.textContent = 'กรุณาระบุชื่อผู้ยอมรับ'; return; }
+      const signature = pad ? pad.toPngDataUrl() : null;
+      if (requireSignature && !signature) { errBox.textContent = 'ผู้ขายกำหนดให้ต้องเซ็นลายมือชื่อ — กรุณาวาดลายเซ็นในช่อง'; return; }
       const btn = document.getElementById('accBtn');
       btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
       try {
-        const r = await fetch(`/api/public/quotation/${encodeURIComponent(token)}/accept`, {
+        const r = await fetch(api('/accept'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ acceptedBy: name, note: (document.getElementById('accNote').value || '').trim() || null }),
+          body: JSON.stringify({
+            acceptedBy: name,
+            note: (document.getElementById('accNote').value || '').trim() || null,
+            signatureBase64: signature,
+          }),
         });
-        const j = await r.json();
-        if (!r.ok || !j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
-        card.innerHTML = `<div class="done"><div class="big">🎉</div>
-          <h1>ยอมรับใบเสนอราคาเรียบร้อย</h1>
-          <div class="sub" style="margin-top:8px">ขอบคุณครับ — ผู้ขายได้รับการแจ้งเตือนแล้ว และจะติดต่อกลับเพื่อดำเนินการต่อ</div></div>`;
+        let j = {};
+        try { j = await r.json(); } catch { /* คำตอบไม่ใช่ JSON (เช่น 429 จาก proxy) */ }
+        if (!r.ok || !j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ — กรุณาลองใหม่');
+        await load();   // แสดงสถานะ "ยอมรับแล้ว" จากเซิร์ฟเวอร์ (ชื่อ · เวลา · ลายเซ็น)
       } catch (e) {
-        alert(e.message);
+        errBox.textContent = e.message;
         btn.disabled = false; btn.textContent = '✓ ยอมรับใบเสนอราคา';
       }
     }

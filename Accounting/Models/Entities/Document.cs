@@ -185,6 +185,22 @@ public class Document : TenantEntity
     /// <summary>ชื่อผู้กดยอมรับ (ลูกค้าพิมพ์เอง — บันทึกเป็นหลักฐาน).</summary>
     public string? QuotationAcceptedBy { get; set; }
 
+    // ── รอบ 239: หลักฐานการยอมรับใบเสนอราคาออนไลน์ (พ.ร.บ.ธุรกรรมทางอิเล็กทรอนิกส์ ม.9) — ผู้เขียนเดียว PublicQuotationController.Accept ·
+    //    ล้างพร้อมกันด้วย Helpers/QuotationAcceptance.ClearOn ตอนออก Rev ใหม่ (ค่าเดิมเก็บใน DocumentRevision.SnapshotJson) ──
+    /// <summary>ตำแหน่งไฟล์ลายเซ็น (PNG) บนที่เก็บกลาง <c>IFileStorage</c> — <b>ไม่ใช่ URL สาธารณะ</b> (โฟลเดอร์ไม่อยู่ใน allow-list ของ /uploads) ·
+    /// อ่านได้เฉพาะผ่าน endpoint ที่ตรวจ token (ลูกค้า) หรือสิทธิ์อ่านเอกสาร (ผู้ขาย) · null = ยอมรับโดยไม่เซ็น</summary>
+    public string? QuotationAcceptSignaturePath { get; set; }
+    /// <summary>หมายเหตุที่ลูกค้าพิมพ์ตอนยอมรับ (≤ 500 ตัวอักษร) — เดิมต่อท้าย Notes ของใบ (เปลี่ยนเนื้อหาเอกสารหลังลูกค้ายอมรับ) · ตอนนี้แยกช่อง</summary>
+    public string? QuotationAcceptNote { get; set; }
+    /// <summary>hash เนื้อหาที่ลูกค้ายอมรับ (<c>DocumentSignedContent.Hash</c> — สูตรเดียวกับลายเซ็นลูกค้าทุกเส้น)</summary>
+    public string? QuotationAcceptContentHash { get; set; }
+    /// <summary>IP ของผู้ยอมรับ (หลักฐาน ม.9 · ข้อมูลส่วนบุคคล — เก็บตามอายุเอกสาร)</summary>
+    public string? QuotationAcceptIp { get; set; }
+    /// <summary>SHA-256 ของ User-Agent (ไม่เก็บข้อความดิบ — PDPA เก็บเท่าที่จำเป็น)</summary>
+    public string? QuotationAcceptUserAgentHash { get; set; }
+    /// <summary>SHA-256 ของ token ที่ใช้ยอมรับ (ระบุว่าลิงก์ฉบับไหน — ไม่เก็บ token ตัวจริงซ้ำ)</summary>
+    public string? QuotationAcceptTokenHash { get; set; }
+
     /// <summary>ครั้งที่แก้ไข (Rev.) — 0 = ฉบับแรก. เพิ่มทีละ 1 ทุกครั้งที่แก้
     /// **เอกสาร operational** ที่ "อนุมัติ/ส่งแล้ว" โดยคงเลขที่เดิม (ธรรมเนียม
     /// การค้า: QT-xxx Rev.2 = ใบเดิมที่ต่อรองแล้ว ไม่ใช่ใบใหม่). สภาพก่อนแก้

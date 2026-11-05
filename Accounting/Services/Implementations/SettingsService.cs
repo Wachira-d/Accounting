@@ -303,6 +303,9 @@ public class SettingsService : ISettingsService
         // 2026-11-02 PETTY_CASH_AUDIT ส่วน C — ผู้อ่าน: PettyCashService.IsTopUpEvidenceRequiredAsync (ด่านของการเติมเงินสดย่อยทุกทางเข้า)
         if (request.PettyCashTopUpEvidenceRequired.HasValue)
             settings.PettyCashTopUpEvidenceRequired = request.PettyCashTopUpEvidenceRequired.Value;
+        // รอบ 239 — ผู้อ่าน: PublicQuotationController.Accept (ด่าน QuotationAcceptance.DecideAccept) + View (บอกหน้าลูกค้าว่าต้องเซ็น)
+        if (request.RequireSignatureForQuotationAccept.HasValue)
+            settings.RequireSignatureForQuotationAccept = request.RequireSignatureForQuotationAccept.Value;
         // คำตัดสินเจ้าของข้อ 162 (Q2) — ผู้อ่าน: DocumentFx.WhtRateFor (CreatePaymentJournalAsync + 50 ทวิ รายงวด) · DocumentFx.PickBotRate (ResolveExchangeRateAsync + OCR)
         if (request.WhtFxRateBasis.HasValue)
             settings.WhtFxRateBasis = request.WhtFxRateBasis.Value;
@@ -803,6 +806,7 @@ public class SettingsService : ISettingsService
         PenaltyExpenseAccountCode = s.PenaltyExpenseAccountCode,
         PenaltyExpenseAccountCodeEffective = Accounting.Helpers.PenaltyExpenseAccount.EffectiveCode(s.PenaltyExpenseAccountCode),
         PettyCashTopUpEvidenceRequired = s.PettyCashTopUpEvidenceRequired,
+        RequireSignatureForQuotationAccept = s.RequireSignatureForQuotationAccept,
     };
 
     private static NumberSeriesResponse MapSeriesToResponse(NumberSeries n) => new(

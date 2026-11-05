@@ -459,6 +459,16 @@
             </span>
           </label>
         </div>
+        <!-- รอบ 239: ลูกค้าต้องเซ็นลายมือชื่อก่อนยอมรับใบเสนอราคาออนไลน์ (CompanySettings.RequireSignatureForQuotationAccept · ปิด = ชื่ออย่างเดียวพอ) -->
+        <div class="form-group" style="grid-column:1/3">
+          <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+            <input type="checkbox" id="sRequireQuotationSignature" style="margin-top:3px">
+            <span>
+              <span style="font-weight:600">ต้องเซ็นเพื่อยอมรับใบเสนอราคา</span>
+              <span style="display:block;font-size:11px;color:#94a3b8;margin-top:2px;line-height:1.5">ลูกค้าที่เปิด "ลิงก์ยอมรับใบเสนอราคา" ต้องวาดลายเซ็นก่อนกดยอมรับ (ชื่อผู้ยอมรับบังคับเสมอ) — ลายเซ็นประทับลงช่อง "ลูกค้าอนุมัติ" บนใบเสนอราคา · ปิดไว้ = ลูกค้าเลือกเซ็นหรือไม่ก็ได้</span>
+            </span>
+          </label>
+        </div>
         <div class="form-group advanced-only" style="grid-column:1/3">
           <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
             <input type="checkbox" id="sShowProjectOnDocuments" style="margin-top:3px">
@@ -2745,6 +2755,8 @@
         if (eff) eff.textContent = s?.moneyAccountCodePrefixesEffective || '-';
         const pev = document.getElementById('sPettyTopUpEvidenceRequired');
         if (pev) { pev.checked = !!s?.pettyCashTopUpEvidenceRequired; this._pettyEvidenceLoaded = !!s; }
+        const rqs = document.getElementById('sRequireQuotationSignature');
+        if (rqs) { rqs.checked = !!s?.requireSignatureForQuotationAccept; this._quotationSignatureLoaded = !!s; }
       },
       /** canEdit มาจาก server (สิทธิ์ CompanySettings.Edit / คำขอจากคีย์) · undefined/null = ไม่ได้ตรวจ ⇒ ไม่ล็อก
        *  (ไม่เดาแทน server) · false = บอกเหตุผล+ทางไปต่อ และปิดปุ่มบันทึกของฟอร์มหลัก */
@@ -3219,6 +3231,8 @@
             ...(this._moneyPrefixesLoaded ? { moneyAccountCodePrefixes: (document.getElementById('sMoneyAccountPrefixes')?.value || '').trim() } : {}),
             // โหลดค่าเดิมไม่ได้ ⇒ ไม่ส่ง (ไม่บันทึก false ทับค่าที่ตั้งไว้)
             ...(this._pettyEvidenceLoaded ? { pettyCashTopUpEvidenceRequired: !!document.getElementById('sPettyTopUpEvidenceRequired')?.checked } : {}),
+            // รอบ 239: โหลดค่าเดิมไม่ได้ ⇒ ไม่ส่ง (ไม่บันทึก false ทับ)
+            ...(this._quotationSignatureLoaded ? { requireSignatureForQuotationAccept: !!document.getElementById('sRequireQuotationSignature')?.checked } : {}),
             // กองทุนเงินทดแทน (กท.20ก)
             workersCompensationEnabled: document.getElementById('sWorkersCompEnabled')?.checked || false,
             workersCompensationRatePercent: parseFloat(document.getElementById('sWorkersCompRate')?.value || '0.2'),
