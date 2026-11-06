@@ -6561,4 +6561,4 @@ _รอบ 250 WP-01 (AUDIT_249 · 2026-11-06): job `dotnet test` รันท�
 **(c) สภาพแวดล้อม** — xUnit แปลง int→double? ไม่ได้ (8 เคส) · Assert.Contains แบบ CurrentCulture กับ U+0001 · JSON หนีอักษรไทย · tuple ที่มี byte[] · ligature "ti" ใน PDF.
 ไม่มีเทสต์ใดถูก skip · checker: `doc_commit_sha_check` รู้จัก clone ตื้น (unshallow ก่อน · ไม่ได้ = เชื่อผล CI) + กติกาอายุ placeholder ≤ 1 คอมมิต (ของเก่า 98 แถวใน baseline ratchet — WP-05 เติม) +
 ไม่นับ ✅ เลขผู้เสียภาษี 13 หลัก (checksum) + `--self-test` · `advisory_lock_key_check` ฟ้อง `pg_advisory_*lock(hashtext(` (+ self-test · baseline PaymentQrMigration 1 จุด — WP-04) ·
-`namespace_shadow_check` ตัด bin/obj/node_modules/.claude ก่อนเดิน · baseline write_permission_gate −4 · dead_helper −4 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+`namespace_shadow_check` ตัด bin/obj/node_modules/.claude ก่อนเดิน · baseline write_permission_gate −4 · dead_helper −4 · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 407e342a_
