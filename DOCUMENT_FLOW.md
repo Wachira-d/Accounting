@@ -3271,6 +3271,30 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   สถานะการเชื่อม · 50 ทวิ ส่ง/ไม่ส่ง/ล้ม · ลิงก์วิเศษ) · `tools/required_call_site_check.py` (R255 ข้อ 6–8) · `settings_reader_check` ENTITIES (`WorkflowAutomationConfig` · `TradingPartnership` · `PlanTemplate`)
 - ล็อก: `Accounting.Tests/AutopilotRound255Tests.cs` (pure ทุกตัวตัดสิน + ทิศตรงข้าม) · `Db/AutopilotRound255DbTests.cs` (สลิป = รอยืนยัน · บริษัทอื่นใช้รหัสใบไม่ได้) ·
   `Db/RecurringTransactionDbTests.R255_*` · `tools/required_call_site_check.py` (R255) · Last verified `commit 67407644`
+- **แก้ผลฝ่ายค้าน WP-12B (รอบ 255 · DECISIONS 255-WP12B-13…20):**
+  - **พอร์ทัล = scheme แยก "Portal"** (`Filters/PortalAuthenticationHandler` ⇒ `IPortalService.AuthenticateAccessAsync` · กติกา `Helpers/PortalTokenPolicy`):
+    เส้น `api/portal/{cid}/…` ประกาศ `[Authorize(AuthenticationSchemes = "Portal")]` — โทเคนพนักงาน (JWT) ใช้กับพอร์ทัลไม่ได้ · โทเคนพอร์ทัล (HMAC ไม่ใช่ JWT) ใช้กับเส้นพนักงานไม่ได้ ·
+    โทเคนมีชนิด access/refresh (ช่องที่ 5) — API รับเฉพาะ access · `/refresh` รับเฉพาะ refresh · ทุกคำขอตรวจ `PortalAccess.IsActive` + บริษัทในเส้นทาง = บริษัทในโทเคน ·
+    โทเคนรูปเก่า 4 ช่อง = ปฏิเสธ (ไม่เคยถอดได้อยู่แล้ว — 255-WP12B-12) · `PORTAL_SIGNING_KEY` ว่าง/placeholder/สั้น ⇒ production ไม่ start
+  - **หลักฐานภาษีซื้อของใบจากคู่ค้า: ระบบไม่ตั้งค่าที่ปลดด่านเอง** — ร่างได้ `AwaitingTimestamp` (e-Tax ลงลายมือชื่อ + ส่งไฟล์ถึงแล้ว) หรือ `PaperRequired` เท่านั้น ·
+    `EtaxVerified`/`PaperConfirmed` มาจาก "ได้รับต้นฉบับแล้ว" ของผู้รับ (`POST …/partner-purchase-drafts/{id}/confirm-original {kind: Paper|StampedEtax}`) ·
+    ยืนยัน + ย้าย VAT 11640→11610 (`CompleteSupplierTaxInvoiceAsync`) ในธุรกรรมเดียว
+  - **การขายครั้งเดียวกันไม่ได้ใบซื้อที่สอง** — ใบที่ผู้ขายแปลง (`RelatedDocumentId`) / ออกแทน (`ReplacesDocumentId`) จากใบที่เคยเป็นใบซื้อของผู้รับ (ไล่ ≤ 6 ชั้น) ⇒
+    แนบไฟล์ XML + หลักฐาน (อัปเกรดเฉพาะใบที่ติดด่าน) เข้าใบซื้อเดิม · ร่าง ⇒ เลข/วันที่ใบกำกับของผู้ขายตามใบใหม่ · อนุมัติแล้ว ⇒ ผู้รับปิดด้วย "ได้รับต้นฉบับแล้ว"
+    (เลข/วันที่ใบกำกับล่าสุดในสายเข้าเส้นเติมใบกำกับ) · แจ้งผู้รับ (`autopilot.partner_exchange`) · ใบที่ไม่เกี่ยวกัน ⇒ ร่างใหม่ตามเดิม · สร้างร่าง + ไฟล์ + หลักฐาน + แถวกล่องเข้าในธุรกรรมเดียว
+  - **ผู้รับแก้ยอด/VAT/บรรทัดของใบจากคู่ค้า** ⇒ หลักฐานกลับ `PaperRequired` + หมายเหตุภายใน + audit (`PartnerInputVatEvidence.AfterEdit`) · `DocumentResponse.PartnerInputVatEvidence(+Label)` echo กลับ ·
+    ออกใบแทน (Reissue) สืบทอดหลักฐานได้เพราะเส้นออกแทนห้ามเปลี่ยนยอดอยู่แล้ว (`ForbiddenChanges`)
+  - **ผู้ขายยกเลิกต้นทาง** ⇒ `VoidDocumentAsync` เรียก `OnSourceVoidedAsync` หลัง commit: ใบซื้อของผู้รับ `SourceVoided` (ห้ามลงภาษีซื้อ · ยืนยันไม่ได้) + แถวกล่องเข้า `Withdrawn` + แจ้งผู้รับ ·
+    ไม่ยกเลิก/กลับรายการใบของผู้รับเอง (ผู้รับตัดสิน) · ด่านอนุมัติ + ด่านยืนยันตรวจต้นทางสดอีกชั้น (ใบถูกยกเลิก หรือ e-Tax ของใบนั้นถูกยกเลิกหมด ⇒ `SourceVoided` + ข้อความไทย)
+  - **คู่ค้า**: ยอมรับได้จาก `Pending` เท่านั้น (ถูกปฏิเสธ/ระงับ ⇒ เชิญใหม่ — เส้นเชิญเปิดแถวที่ถูกระงับให้ด้วย) · ตรวจเพดาน + ยอมรับใต้ `pg_advisory_xact_lock` ของทั้งสองบริษัท ·
+    ป้าย Pending แยก "รอคู่ค้ายอมรับ" / "รอเรายอมรับ" · 50 ทวิ ผ่านคู่ค้าลงวันที่ = วันจ่ายเงิน (บรรทัดล่าสุด) ไม่ใช่วันออกใบ
+  - **ลิงก์วิเศษ**: เข้าคิว `EmailQueue` (`EntityType = PortalMagicLink` · ผู้ส่งในนามบริษัท + โควตาเดิม) — โทเคนออกตอนส่ง (`{PortalMagicLink}` ⇒ `PortalService.IssueMagicLinkUrlAsync`) ·
+    ตอนส่งตรวจสิทธิ์ซ้ำ/คำขอค้างเกิน 30 นาที ⇒ ข้ามพร้อมเหตุ · เพดานขอต่อ IP + ต่ออีเมล · แลกต่อ IP + ต่อโทเคน (ไม่มีถังรวมของบริษัทที่คนนอกทำให้ลูกค้าทุกคนถูกกั้น) · เวลาตอบขั้นต่ำ 800ms คงเดิม
+  - **สลิป**: ตรวจซ้ำ + ยอดรอตรวจรวม (≤ ยอดค้าง · ทั้งพอร์ทัลและหน้าชำระ) + สร้างรายการ ใต้ล็อกต่อบริษัท (`AdvisoryLockKey.SlipEvidence`) · ชนิด/นามสกุลจากไบต์จริงทุกช่องทาง (ไม่รับ SVG) ·
+    สลิปจากหน้าชำระเก็บ `uploads/document-slips/` (**ไม่เสิร์ฟตรง** — พนักงานเปิดผ่าน `attachments/{id}/download`) · คำอธิบายรายการบอกช่องทาง "หน้าชำระ"
+  - อื่น ๆ: ป้ายความถี่รายการประจำจากเซิร์ฟเวอร์ (`RecurringSchedule.FrequencyLabel` · "ทุก N เดือน" ชนะความถี่) + แจ้งล่วงหน้าใช้รอบจริง · `ApiScopePolicy` "write ครอบ read" เฉพาะหมวด documents
+  - ล็อก: `PartnerExchangeRound255Tests` (H2/H3 Merge/M1/M4/M6/M7/LOW) · `Db/PortalAuthRound255DbTests` (handler ตรง: 200 ×2 · JWT พนักงาน/refresh/ปิดสิทธิ์/ผิดบริษัท/แก้ไบต์ = ไม่ผ่าน) ·
+    `Db/PartnerExchangeRound255DbTests` (H3 สายเอกสาร = ใบเดียว · ใบไม่เกี่ยว = ใบใหม่ · M2 ต้นทางยกเลิก · M6 คิวลิงก์วิเศษ) · `tools/required_call_site_check.py` (R255 ฝ่ายค้าน) · Last verified `commit <เติมในคอมมิตตามหลัง>`
 
 ### 2.12i QR ชำระเงินบนเอกสาร — QR ของบัญชีรับเงิน (อัปโหลด/พร้อมเพย์) + QR หน้าชำระออนไลน์ (รอบ 246 QR · คำตัดสิน 246-QR-1…246-QR-8)
 
@@ -8217,4 +8241,5 @@ _Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 1–
 _Last verified against codebase: 2026-11-06 (รอบ 252 WP-09 ฝ่ายค้านรอบสอง — §2.12j ทะเบียน ↔ กล่องรับ: H-A/H-B ล็อกแถวที่ได้ใบบางส่วน · M-A/M-D กันซ้ำสองทางปีเดียวกันใต้ล็อกเดียว · M-B/M-C หมดสิทธิ์/ต้นทางลดหลังตัดสูญ · เศษ ≤ ฿1 · สรุป · ปุ่มตัดสูญ · L4 · ความมั่นใจ 1.0 · L7 งานล้าง feedback · แก้ CI H2_ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 82577044)_
 _Last verified against codebase: 2026-11-06 (รอบ 255 ETR-ACK — §รายงานตรวจ e-Tax ข้อ 44: ปุ่ม "ตรวจแล้ว" ต่อแถว e-Tax สองกลุ่ม (`POST document/etax-reissue-review/etax-rows/{id}/acknowledge` · audit `etax-review-acknowledged` อย่างเดียว · แถวที่บันทึกแล้วออกจากรายงาน) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 8f190401)_
 _Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 6–8 — §2.12l: เพดานคู่ค้าต่อแพ็กเกจ (null = ไม่จำกัด) · สถานะการเชื่อมไม่รั่ว · `documents:read` · ใบขายถึงคู่ค้า = ใบซื้อร่างของผู้รับ + `PartnerInputVatEvidence` ผ่านตัวตรวจ §86/4 ตัวเดียว · 50 ทวิ กลับผ่านประตูเดียวของผู้ขาย · พอร์ทัลลิงก์วิเศษ · Excel ทั่วไปให้นักบัญชี — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 145ba355)_
+_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B แก้ผลฝ่ายค้าน — §2.12l: scheme พอร์ทัลแยก + ชนิดโทเคน · หลักฐานภาษีซื้อจากคู่ค้าปลดด้วยคนเท่านั้น · การขายเดิมไม่ได้ใบซื้อที่สอง · แก้ยอด/ต้นทางยกเลิก ⇒ ด่านกลับ · ยอมรับคู่จาก Pending ใต้ล็อก · ลิงก์วิเศษเข้าคิว + เพดานต่อ IP · สลิปใต้ล็อก/ไบต์จริง/โฟลเดอร์ไม่เสิร์ฟตรง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 — §2.12m 50 ทวิ ขาเข้า: ลิงก์อัปโหลดสาธารณะ (hash token · rate limit ต่อ IP/token · ไบต์ตัดสิน · ประตูเดียว) · ทวงอัตโนมัติ 7/21/45 + รายเดือน ≤ 6 (JobLock · watermark · ตัวหาผู้รับเดียว · ค่าตั้งต้นปิด) · "ไม่หัก" บนหน้าชำระ (คำเตือน + บันทึกการยอมรับ · ยอด Gross จาก AmountsFor · ตัวบันทึกรับชำระล้มดังเมื่อเกินยอดค้าง) · e-WHT แนบเป็นใบ 50 ทวิ ธรรมดา + เลขอ้างอิง — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 1f5a7f6c)_

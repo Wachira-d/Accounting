@@ -21,10 +21,11 @@ public class PartnerExchangeController : ControllerBase
     private readonly CrossTenantWorkflowService _service;
     private readonly IPermissionService _perms;
     private readonly IDocumentService _docs;
+    private readonly AccountingDbContext _db;
 
-    public PartnerExchangeController(CrossTenantWorkflowService service, IPermissionService perms, IDocumentService docs)
+    public PartnerExchangeController(CrossTenantWorkflowService service, IPermissionService perms, IDocumentService docs, AccountingDbContext db)
     {
-        _service = service; _perms = perms; _docs = docs;
+        _service = service; _perms = perms; _docs = docs; _db = db;
     }
 
     private ObjectResult Denied(string key)
@@ -66,24 +67,41 @@ public class PartnerExchangeController : ControllerBase
         return Ok(new ApiResponse<List<object>>(true, await _service.IncomingPurchaseDraftsAsync(companyId, ct)));
     }
 
-    /// <summary>ยืนยัน "ได้ต้นฉบับใบกำกับแล้ว" (N3) — สิทธิ์อนุมัติเอกสารซื้อ · ใบอนุมัติแล้วที่ VAT พัก 11640 ⇒ ย้ายเข้า 11610 ผ่านเส้นเติมใบกำกับเดิม (ตัวตรวจ §86/4 ตัวเดียว)</summary>
+    /// <summary>ชนิดต้นฉบับที่ผู้รับยืนยัน — <c>Paper</c> (ตั้งต้น) = ใบกำกับกระดาษ ⇒ PaperConfirmed · <c>StampedEtax</c> = ไฟล์ e-Tax ที่ประทับเวลา ETDA ⇒ EtaxVerified</summary>
+    public record ConfirmOriginalRequest(string? Kind);
+
+    /// <summary>ยืนยัน "ได้ต้นฉบับใบกำกับแล้ว" (N3 · ฝ่ายค้าน H2: ค่าที่ปลดด่านภาษีซื้อมาจากทางนี้ทางเดียว) — สิทธิ์อนุมัติเอกสารซื้อ ·
+    /// ใบอนุมัติแล้วที่ VAT พัก 11640 ⇒ ย้ายเข้า 11610 ผ่านเส้นเติมใบกำกับเดิม (ตัวตรวจ §86/4 ตัวเดียว) ·
+    /// ฝ่ายค้าน M3: ยืนยัน + ย้าย VAT ในธุรกรรมเดียว — ล้มทางใดไม่มีอะไรเปลี่ยน (ไม่มี "ยืนยันแล้วแต่ VAT ยังพัก")</summary>
     [HttpPost("partner-purchase-drafts/{documentId:guid}/confirm-original")]
     [Accounting.Filters.RequirePermission(PermissionKeys.DocumentPurchaseApprove)]
     [Accounting.Filters.RejectApiKey("ยืนยันต้นฉบับใบกำกับจากคู่ค้า")]
-    public async Task<ActionResult<ApiResponse<object>>> ConfirmOriginal(Guid companyId, Guid documentId)
+    public async Task<ActionResult<ApiResponse<object>>> ConfirmOriginal(Guid companyId, Guid documentId, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] ConfirmOriginalRequest? request)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
+        var stampedEtax = string.Equals(request?.Kind, "StampedEtax", StringComparison.OrdinalIgnoreCase);
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
         try
         {
-            var approved = await _service.ConfirmPartnerOriginalAsync(companyId, documentId, userId);
-            if (approved)
+            var outcome = await _service.ConfirmPartnerOriginalAsync(companyId, documentId, userId, stampedEtax);
+            if (outcome.Approved)
+                // ใบกำกับที่มาทีหลังของการขายเดิม (H3) ⇒ เลข/วันที่ใบกำกับจริงเข้าทางเติมใบกำกับเดิม · ไม่มี = คำขอว่าง (ตรวจ §86/4 ใหม่ด้วยข้อมูลบนใบ)
                 await _docs.CompleteSupplierTaxInvoiceAsync(companyId, documentId,
-                    new Accounting.Models.DTOs.Document.CompleteSupplierTaxInvoiceRequest(), userId.ToString());
-            return Ok(new ApiResponse<object>(true, new { inputVatEvidence = PartnerInputVatEvidence.PaperConfirmed },
-                approved ? "บันทึกแล้ว — ระบบย้ายภาษีซื้อเข้างวดที่เคลมได้ (ถ้าใบครบ §86/4 และอยู่ในกรอบ 6 เดือน)" : "บันทึกแล้ว — ภาษีซื้อจะลงตามปกติเมื่ออนุมัติใบนี้"));
+                    new Accounting.Models.DTOs.Document.CompleteSupplierTaxInvoiceRequest(
+                        SupplierInvoiceNumber: outcome.SupplierInvoiceNumber, SupplierTaxInvoiceDate: outcome.SupplierTaxInvoiceDate),
+                    userId.ToString());
+            if (ownTx != null) await ownTx.CommitAsync();
+            return Ok(new ApiResponse<object>(true, new { inputVatEvidence = outcome.Evidence, inputVatEvidenceLabel = PartnerInputVatEvidence.Label(outcome.Evidence) },
+                outcome.Approved ? "บันทึกแล้ว — ระบบย้ายภาษีซื้อเข้างวดที่เคลมได้ (ถ้าใบครบ §86/4 และอยู่ในกรอบ 6 เดือน)" : "บันทึกแล้ว — ภาษีซื้อจะลงตามปกติเมื่ออนุมัติใบนี้"));
         }
-        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
-        catch (BusinessRuleException ex) { return StatusCode(ex.StatusCode, new ApiResponse<object>(false, null, ex.Message)); }
-        catch (InvalidOperationException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (KeyNotFoundException ex) { if (ownTx != null) await ownTx.RollbackAsync(); return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (BusinessRuleException ex)
+        {
+            if (ownTx != null) await ownTx.RollbackAsync();
+            // ต้นทางถูกยกเลิก: ธงบนใบของผู้รับต้องอยู่รอดการย้อนธุรกรรม (ไม่งั้นรายการยังโชว์ "รอต้นฉบับ")
+            if (ex.Message == PartnerInputVatEvidence.SourceVoidedMessage) await _service.MarkSourceVoidedAsync(companyId, documentId);
+            return StatusCode(ex.StatusCode, new ApiResponse<object>(false, null, ex.Message)); }
+        catch (InvalidOperationException ex) { if (ownTx != null) await ownTx.RollbackAsync(); return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+        finally { if (ownTx != null) await ownTx.DisposeAsync(); }
     }
 }

@@ -1109,7 +1109,12 @@ public record DocumentResponse(
     string? WhtCertLabel = null,
     /// <summary>โทนของชิป: none · muted · info · warning · danger · success (หน้าเว็บ map เป็นสีเท่านั้น)</summary>
     string? WhtCertTone = null,
-    int? WhtCertDaysWaiting = null);
+    int? WhtCertDaysWaiting = null,
+    /// <summary>รอบ 255 ฝ่ายค้าน M1 (กฎ #4 A "เก็บแล้วต้อง echo กลับ"): หลักฐานภาษีซื้อของใบซื้อจากคู่ค้า NextAcc — ค่าคงที่ใน <c>Helpers/PartnerInputVatEvidence</c> ·
+    /// null = ไม่ใช่ใบจากคู่ค้า</summary>
+    string? PartnerInputVatEvidence = null,
+    /// <summary>ป้ายไทยของ <see cref="PartnerInputVatEvidence"/> (server computes)</summary>
+    string? PartnerInputVatEvidenceLabel = null);
 
 /// <summary>ทีม F — แถวสรุปหัก ณ ที่จ่ายต่อ (ประเภทเงินได้, อัตรา) เป็นบาท (จาก <c>Helpers/PerLineWht.GroupsOf</c>)</summary>
 public record WhtIncomeGroupDto(string IncomeTypeCode, decimal RatePercent, decimal IncomeThb, decimal WhtThb, int LineCount);

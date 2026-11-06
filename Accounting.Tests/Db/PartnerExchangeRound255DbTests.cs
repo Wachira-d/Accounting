@@ -135,6 +135,87 @@ public class PartnerExchangeRound255DbTests
         Assert.Contains("เกินเพดาน", l.Comment);
     }
 
+    private static async Task<Document> SellerDocAsync(AccountingDbContext db, Pair s, DocumentType type, Guid? relatedTo = null, Guid? replaces = null)
+    {
+        var d = new Document
+        {
+            CompanyId = s.Seller.Id, ContactId = s.BuyerAtSeller.Id, DocumentType = type, DocumentNumber = "S255-" + Guid.NewGuid().ToString("N")[..8],
+            Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date, SubTotal = 1_000m, VatAmount = 70m, TotalAmount = 1_070m, BalanceDue = 1_070m,
+            Currency = "THB", RelatedDocumentId = relatedTo, ReplacesDocumentId = replaces,
+        };
+        d.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการวางระบบ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m, VatRate = 7m, VatAmount = 70m });
+        db.Documents.Add(d);
+        await db.SaveChangesAsync();
+        return d;
+    }
+
+    [Fact]
+    public async Task R255_ฝ่ายค้าน_H3_ใบกำกับที่แปลง_ออกแทน_จากใบเดิม_ผูกใบซื้อเดิม_ไม่สร้างใบที่สอง()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, buyerDrafts: true);
+        var l1 = await Svc(db).OnDocumentSentAsync(s.Invoice);
+        // ใบที่แปลงจากใบเดิม (RelatedDocumentId) + ใบที่ออกแทนใบนั้นอีกชั้น (ReplacesDocumentId) = การขายครั้งเดียวกัน
+        var converted = await SellerDocAsync(db, s, DocumentType.TaxInvoice, relatedTo: s.Invoice.Id);
+        var l2 = await Svc(db).OnDocumentSentAsync(converted);
+        var replacement = await SellerDocAsync(db, s, DocumentType.TaxInvoice, replaces: converted.Id);
+        var l3 = await Svc(db).OnDocumentSentAsync(replacement);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var drafts = await check.Documents.AsNoTracking().Where(d => d.CompanyId == s.Buyer.Id && d.PartnerSourceLinkId != null).ToListAsync();
+        var only = Assert.Single(drafts);
+        Assert.Equal(only.PartnerSourceLinkId, (Guid?)l1!.Id);
+        Assert.Equal(replacement.DocumentNumber, only.SupplierInvoiceNumber);   // ร่างยังแก้ได้ ⇒ เลขใบกำกับจริงของผู้ขาย
+        foreach (var l in new[] { l2!, l3! })
+            Assert.Equal((Guid?)only.Id, (await check.CrossTenantDocumentLinks.AsNoTracking().SingleAsync(x => x.Id == l.Id)).TargetDocumentId);
+        Assert.True(PartnerInputVatEvidence.BlocksClaim(only.PartnerInputVatEvidence));   // ไม่ปลดด่านเอง (H2)
+    }
+
+    [Fact]
+    public async Task R255_ฝ่ายค้าน_H3_ทิศตรงข้าม_ใบกำกับใหม่ที่ไม่เกี่ยวกัน_ได้ใบซื้อใหม่()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, buyerDrafts: true);
+        await Svc(db).OnDocumentSentAsync(s.Invoice);
+        var unrelated = await SellerDocAsync(db, s, DocumentType.TaxInvoice);
+        await Svc(db).OnDocumentSentAsync(unrelated);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(2, await check.Documents.CountAsync(d => d.CompanyId == s.Buyer.Id && d.PartnerSourceLinkId != null));
+    }
+
+    [Fact]
+    public async Task R255_ฝ่ายค้าน_M2_ผู้ขายยกเลิกต้นทาง_ใบซื้อติดธง_ยืนยันไม่ได้_ทิศตรงข้ามต้นทางมีผลยืนยันได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, buyerDrafts: true);
+        var link = await Svc(db).OnDocumentSentAsync(s.Invoice);
+        var other = await SeedAsync(db, buyerDrafts: true);
+        var otherLink = await Svc(db).OnDocumentSentAsync(other.Invoice);
+
+        // ยกเลิกโดยไม่ผ่านเส้นแจ้ง ⇒ ด่านยืนยันตรวจต้นทางสดเอง
+        await db.Documents.Where(d => d.Id == s.Invoice.Id).ExecuteUpdateAsync(x => x.SetProperty(d => d.Status, DocumentStatus.Voided));
+        using var c1 = DbTestDatabase.TryCreateContext()!;
+        var draftId = await c1.Documents.Where(d => d.PartnerSourceLinkId == link!.Id).Select(d => d.Id).SingleAsync();
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(c1).ConfirmPartnerOriginalAsync(s.Buyer.Id, draftId, Guid.NewGuid()));
+        Assert.Equal(PartnerInputVatEvidence.SourceVoidedMessage, ex.Message);
+        // เส้นแจ้งหลังยกเลิก ⇒ ธง + แถวกล่องเข้า Withdrawn
+        using var c2 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(1, await Svc(c2).OnSourceVoidedAsync(s.Seller.Id, s.Invoice.Id));
+        using var c3 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(PartnerInputVatEvidence.SourceVoided, await c3.Documents.Where(d => d.Id == draftId).Select(d => d.PartnerInputVatEvidence).SingleAsync());
+        Assert.Equal(CrossTenantLinkStatus.Withdrawn, (await c3.CrossTenantDocumentLinks.AsNoTracking().SingleAsync(l => l.Id == link!.Id)).Status);
+        // ทิศตรงข้าม: บริษัทอื่น/ใบอื่นไม่ถูกแตะ · ต้นทางยังมีผล ⇒ ยืนยันได้
+        var otherDraft = await c3.Documents.Where(d => d.PartnerSourceLinkId == otherLink!.Id).Select(d => d.Id).SingleAsync();
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, await c3.Documents.Where(d => d.Id == otherDraft).Select(d => d.PartnerInputVatEvidence).SingleAsync());
+        Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, (await Svc(c3).ConfirmPartnerOriginalAsync(other.Buyer.Id, otherDraft, Guid.NewGuid())).Evidence);
+        // ผู้ขายแจ้งยกเลิกใบของบริษัทอื่นไม่ได้ (tenant) — ใบที่ไม่ใช่ของตน = 0
+        using var c4 = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(0, await Svc(c4).OnSourceVoidedAsync(s.Seller.Id, other.Invoice.Id));
+    }
+
     [Fact]
     public async Task R255_ยืนยันต้นฉบับ_ปลดด่าน_ครั้งเดียว()
     {
@@ -144,8 +225,9 @@ public class PartnerExchangeRound255DbTests
         var link = await Svc(db).OnDocumentSentAsync(s.Invoice);
         using var c1 = DbTestDatabase.TryCreateContext()!;
         var draftId = await c1.Documents.Where(d => d.CompanyId == s.Buyer.Id && d.PartnerSourceLinkId == link!.Id).Select(d => d.Id).SingleAsync();
-        var approved = await Svc(c1).ConfirmPartnerOriginalAsync(s.Buyer.Id, draftId, Guid.NewGuid());
-        Assert.False(approved);   // ยังเป็นร่าง ⇒ ภาษีซื้อลงตามปกติเมื่ออนุมัติ
+        var outcome = await Svc(c1).ConfirmPartnerOriginalAsync(s.Buyer.Id, draftId, Guid.NewGuid());
+        Assert.False(outcome.Approved);   // ยังเป็นร่าง ⇒ ภาษีซื้อลงตามปกติเมื่ออนุมัติ
+        Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, outcome.Evidence);
         using var c2 = DbTestDatabase.TryCreateContext()!;
         Assert.Equal(PartnerInputVatEvidence.PaperConfirmed,
             await c2.Documents.Where(d => d.Id == draftId).Select(d => d.PartnerInputVatEvidence).SingleAsync());
@@ -307,11 +389,22 @@ public class PartnerExchangeRound255DbTests
 
         Assert.False(await Portal(db, mail).RequestMagicLinkAsync(shop.Id, "nobody@" + Guid.NewGuid().ToString("N") + ".test"));   // ไม่มีสิทธิ์ ⇒ ไม่ส่ง
         Assert.False(await Portal(db, mail).RequestMagicLinkAsync(other.Id, email));   // อีเมลนี้ไม่มีสิทธิ์ในบริษัทอื่น
-        Assert.Empty(mail.Sent);
+        Assert.False(await db.EmailQueues.AnyAsync(q => q.CompanyId == other.Id && q.EntityType == PortalMagicLinkPolicy.QueueEntityType));
         Assert.True(await Portal(db, mail).RequestMagicLinkAsync(shop.Id, email.ToUpperInvariant()));
-        var sent = Assert.Single(mail.Sent);
-        Assert.Equal(email, sent.To);
-        var token = System.Text.RegularExpressions.Regex.Match(sent.Html, "magic=([A-Za-z0-9_-]{43})").Groups[1].Value;
+        // ฝ่ายค้าน M6: ไม่ส่งตรง — เข้าคิว EmailQueue ของบริษัท (ผู้ส่งในนามบริษัท + โควตาเดิม) · คิวเก็บที่หมาย ไม่เก็บ token
+        Assert.Empty(mail.Sent);
+        var queued = await db.EmailQueues.AsNoTracking()
+            .SingleAsync(q => q.CompanyId == shop.Id && q.EntityType == PortalMagicLinkPolicy.QueueEntityType);
+        Assert.Equal(email, queued.ToEmail);
+        Assert.False(queued.AttachPdf);
+        Assert.Contains(PortalMagicLinkPolicy.LinkPlaceholder, queued.Body);
+        Assert.DoesNotContain("magic=", queued.Body);
+        Assert.Null(await PortalService.MagicLinkSkipReasonAsync(db, queued, default));
+        // ตอนส่ง: โทเคนออกที่นี่ (ตัวเดียวกับที่ EmailScheduleService.ComposeQueueMessageAsync เรียก)
+        var issued = await PortalService.IssueMagicLinkUrlAsync(db, new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            { ["App:BaseUrl"] = "https://acc.r255.test" }).Build(), shop.Id, queued.EntityId, default);
+        Assert.NotNull(issued.Url);
+        var token = System.Text.RegularExpressions.Regex.Match(issued.Url!, "magic=([A-Za-z0-9_-]{43})").Groups[1].Value;
         Assert.True(PortalMagicLinkPolicy.LooksValid(token));
         using (var check = DbTestDatabase.TryCreateContext()!)
             Assert.False(await check.PortalMagicLinks.AnyAsync(m => m.TokenHash == token));   // ฐานเก็บแค่ hash
@@ -325,5 +418,8 @@ public class PartnerExchangeRound255DbTests
         await Assert.ThrowsAsync<BusinessRuleException>(() => Portal(c2, mail).RedeemMagicLinkAsync(shop.Id, token));   // ใช้ครั้งเดียว
         // ทิศตรงข้ามของ "ไม่มีรหัสผ่าน": ล็อกอินด้วยรหัสผ่านว่างไม่ได้
         await Assert.ThrowsAsync<InvalidOperationException>(() => Portal(c2, mail).LoginAsync(new Accounting.Models.DTOs.Portal.PortalLoginRequest(email, "", shop.Id)));
+        // ฝ่ายค้าน M6 ทิศตรงข้าม: สิทธิ์ถูกปิดหลังเข้าคิว ⇒ ตอนส่งข้ามพร้อมเหตุ
+        await c2.PortalAccesses.IgnoreQueryFilters().Where(a => a.Id == queued.EntityId).ExecuteUpdateAsync(x => x.SetProperty(a => a.IsActive, false));
+        Assert.NotNull(await PortalService.MagicLinkSkipReasonAsync(c2, queued, default));
     }
 }

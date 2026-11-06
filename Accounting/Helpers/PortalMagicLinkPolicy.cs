@@ -17,9 +17,31 @@ public static class PortalMagicLinkPolicy
     /// <summary>เพดานต่อ (บริษัท + อีเมล): ต่อนาที / ต่อวัน</summary>
     public const int PerEmailPerMinute = 1;
     public const int PerEmailPerDay = 5;
-    /// <summary>เพดานต่อบริษัท (กันไล่อีเมลจำนวนมาก): ต่อนาที / ต่อวัน</summary>
-    public const int PerCompanyPerMinute = 10;
-    public const int PerCompanyPerDay = 200;
+    /// <summary>รอบ 255 ฝ่ายค้าน M7: เพดานต่อ IP (กันไล่อีเมลจำนวนมาก) — แทนถังต่อบริษัทเดิม (fail-closed ทั้งบริษัท ⇒ คนนอกยิง 10 ครั้ง/นาที
+    /// ก็ทำให้ลูกค้าจริงทุกคนของผู้ขายขอลิงก์ไม่ได้ = DoS ต่อผู้ขาย)</summary>
+    public const int PerIpPerMinute = 5;
+    public const int PerIpPerDay = 60;
+    /// <summary>เพดานแลกลิงก์: ต่อ IP / ต่อโทเคน (ต่อนาที · ต่อวัน)</summary>
+    public const int RedeemPerIpPerMinute = 10;
+    public const int RedeemPerIpPerDay = 200;
+    public const int RedeemPerTokenPerMinute = 3;
+    public const int RedeemPerTokenPerDay = 10;
+
+    /// <summary>รอบ 255 ฝ่ายค้าน M6: อีเมลลิงก์วิเศษเข้าคิว <c>EmailQueue</c> (ผู้ส่งในนามบริษัท + โควตาเดิม) — โทเคนออกตอนส่ง (คิว/บันทึกไม่เก็บ token)</summary>
+    public const string QueueEntityType = "PortalMagicLink";
+    public const string LinkPlaceholder = "{PortalMagicLink}";
+    /// <summary>คำขอที่ค้างในคิวนานกว่านี้ ⇒ ข้าม (ผู้ขอเลิกรอแล้ว · ขอใหม่ได้)</summary>
+    public static readonly TimeSpan QueueStaleAfter = TimeSpan.FromMinutes(30);
+
+    /// <summary>คีย์ตัวนับ (ค่าที่ถูก hash — ไม่เก็บอีเมล/โทเคน/IP ดิบในตารางตัวนับ)</summary>
+    public static string EmailBucket(Guid companyId, string? normalizedEmail) => $"portal-magic:{companyId:N}:{Hash(normalizedEmail ?? "")[..16]}";
+    public static string IpBucket(string scope, string? ip) => $"portal-magic-{scope}-ip:{Hash(ip ?? "unknown")[..16]}";
+    public static string TokenBucket(string? token) => $"portal-magic-redeem-tk:{Hash(token ?? "")[..16]}";
+
+    /// <summary>ข้ามแถวคิวตอนส่งไหม · null = ส่ง</summary>
+    public static string? QueueSkipReason(bool accessActive, DateTime queuedAtUtc, DateTime nowUtc)
+        => !accessActive ? "สิทธิ์พอร์ทัลถูกปิดแล้ว — ไม่ส่งลิงก์"
+            : nowUtc - queuedAtUtc > QueueStaleAfter ? "คำขอลิงก์ค้างในคิวนานเกิน — ไม่ส่ง (ผู้ขอขอใหม่ได้)" : null;
 
     public const string AckMessage = "ถ้าอีเมลนี้มีสิทธิ์เข้าพอร์ทัลลูกค้าของบริษัทนี้ ระบบส่งลิงก์เข้าสู่ระบบให้แล้ว — ลิงก์ใช้ได้ 15 นาทีและครั้งเดียว · ไม่ได้รับ ให้ติดต่อผู้ขาย";
     public const string InvalidMessage = "ลิงก์เข้าสู่ระบบไม่ถูกต้อง หมดอายุ หรือถูกใช้ไปแล้ว — ขอลิงก์ใหม่ที่หน้าเข้าสู่ระบบ";

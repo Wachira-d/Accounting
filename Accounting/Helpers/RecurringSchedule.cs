@@ -25,6 +25,26 @@ public static class RecurringSchedule
             ? $"ทุกกี่เดือน ต้องอยู่ระหว่าง 1–{MaxIntervalMonths} (ได้ {n}) — เว้นว่างถ้าใช้ความถี่ปกติ"
             : null;
 
+    /// <summary>รอบ 255 ฝ่ายค้าน LOW: "ทุก N เดือน" มีผลไหม (ช่วงเดียวกับ <see cref="Next(RecurringFrequency, DateTime, int?, DateTime, int?)"/>)</summary>
+    public static bool UsesInterval(int? intervalMonths) => intervalMonths is int n && n >= 1 && n <= MaxIntervalMonths;
+
+    /// <summary>รอบ 255 ฝ่ายค้าน LOW (server computes): ป้ายความถี่ภาษาไทยของรายการ — "ทุก N เดือน" ชนะความถี่ · ตัวเดียวของหน้ารายการ/รายละเอียด</summary>
+    public static string FrequencyLabel(RecurringFrequency frequency, int? intervalMonths)
+    {
+        if (UsesInterval(intervalMonths)) return intervalMonths == 1 ? "รายเดือน" : $"ทุก {intervalMonths} เดือน";
+        return frequency switch
+        {
+            RecurringFrequency.Daily => "รายวัน",
+            RecurringFrequency.Weekly => "รายสัปดาห์",
+            RecurringFrequency.BiWeekly => "ราย 2 สัปดาห์",
+            RecurringFrequency.Monthly => "รายเดือน",
+            RecurringFrequency.Quarterly => "รายไตรมาส",
+            RecurringFrequency.SemiAnnual => "ราย 6 เดือน",
+            RecurringFrequency.Annual => "รายปี",
+            _ => frequency.ToString(),
+        };
+    }
+
     /// <summary>ความยาวขั้นต่ำของหนึ่งงวด (วัน) — ใช้ตัดสินว่าสร้างล่วงหน้าได้กี่วัน</summary>
     private static int MinPeriodDays(RecurringFrequency frequency, int? intervalMonths) => intervalMonths is >= 1 ? 28 : frequency switch
     {
@@ -48,8 +68,8 @@ public static class RecurringSchedule
     public static DateTime CreateAt(DateTime periodDate, int leadDays) => periodDate.AddDays(-Math.Clamp(leadDays, 0, MaxLeadDays));
 
     public static DateTime Next(RecurringFrequency frequency, DateTime current, int? preferredDay, DateTime startDate, int? intervalMonths)
-        => intervalMonths is int n && n >= 1 && n <= MaxIntervalMonths
-            ? AdvanceMonths(current, n, preferredDay ?? startDate.Day)
+        => UsesInterval(intervalMonths)
+            ? AdvanceMonths(current, intervalMonths!.Value, preferredDay ?? startDate.Day)
             : Next(frequency, current, preferredDay, startDate);
 
     public static DateTime Next(RecurringFrequency frequency, DateTime current, int? preferredDay, DateTime startDate) => frequency switch

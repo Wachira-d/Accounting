@@ -128,8 +128,9 @@ const Page = {
         <td>${Layout.esc(d.statusLabel || d.status)}</td>
         <td><span class="pt-badge ${d.needsOriginal ? 'pt-warn' : 'pt-ok'}">${Layout.esc(d.inputVatEvidenceLabel || '')}</span></td>
         <td><a class="btn btn-secondary btn-sm" href="/pages/documents.html?openDoc=${encodeURIComponent(d.id)}">เปิด</a>
-          ${d.needsOriginal ? `<button class="btn btn-primary btn-sm" data-orig="${Layout.esc(d.id)}">ได้รับต้นฉบับแล้ว</button>` : ''}</td></tr>`).join('');
-      dBody.querySelectorAll('[data-orig]').forEach(b => b.addEventListener('click', () => this.confirmOriginal(b.dataset.orig)));
+          ${d.needsOriginal ? `<button class="btn btn-primary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="Paper">ได้รับต้นฉบับกระดาษแล้ว</button>` : ''}
+          ${d.needsOriginal && d.inputVatEvidence === 'AwaitingTimestamp' ? `<button class="btn btn-secondary btn-sm" data-orig="${Layout.esc(d.id)}" data-kind="StampedEtax">ได้ e-Tax ที่ประทับเวลาแล้ว</button>` : ''}</td></tr>`).join('');
+      dBody.querySelectorAll('[data-orig]').forEach(b => b.addEventListener('click', () => this.confirmOriginal(b.dataset.orig, b.dataset.kind)));
     }
 
     const c = this.cfg || {};
@@ -175,13 +176,15 @@ const Page = {
     } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
   },
 
-  async confirmOriginal(id) {
+  async confirmOriginal(id, kind) {
     const api = Layout.api(); if (!api) return;
     const ok = await Layout.confirm({ title: 'ยืนยันว่าได้รับต้นฉบับใบกำกับแล้ว',
-      message: 'ยืนยันเมื่อมีใบกำกับภาษีตัวจริง (กระดาษ) หรือไฟล์ e-Tax ที่ลงลายมือชื่อของผู้ขายอยู่ในมือแล้วเท่านั้น — ระบบจะปลดให้ลงภาษีซื้อได้' });
+      message: kind === 'StampedEtax'
+        ? 'ยืนยันเมื่อตรวจแล้วว่าไฟล์ e-Tax ของผู้ขายลงลายมือชื่อและประทับเวลา ETDA ถูกต้อง — ระบบจะปลดให้ลงภาษีซื้อได้ (ระบบไม่ได้ตรวจกับ ETDA ให้)'
+        : 'ยืนยันเมื่อมีใบกำกับภาษีตัวจริง (กระดาษ) อยู่ในมือแล้วเท่านั้น — ระบบจะปลดให้ลงภาษีซื้อได้' });
     if (!ok) return;
     try {
-      const r = await api.confirmPartnerOriginal(id);
+      const r = await api.confirmPartnerOriginal(id, kind || 'Paper');
       Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
       await this.load();
     } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }

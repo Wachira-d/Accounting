@@ -191,10 +191,13 @@ public class PortalService : IPortalService
     public async Task<PortalLoginResponse> RefreshTokenAsync(string refreshToken)
     {
         // Decode the refresh token to extract claims
-        var (portalAccessId, contactId, companyId) = DecodeJwtToken(refreshToken);
+        var (portalAccessId, contactId, companyId, tokenType) = DecodeJwtToken(refreshToken);
+        // รอบ 255 ฝ่ายค้าน M9: /refresh รับเฉพาะโทเคน refresh · สิทธิ์ต้องเป็นของบริษัท/ผู้ติดต่อในโทเคน
+        if (tokenType != PortalTokenPolicy.TypeRefresh)
+            throw new InvalidOperationException("Invalid token type.");
 
         var access = await _db.Set<PortalAccess>()
-            .FirstOrDefaultAsync(p => p.Id == portalAccessId && p.IsActive)
+            .FirstOrDefaultAsync(p => p.Id == portalAccessId && p.IsActive && p.CompanyId == companyId && p.ContactId == contactId)
             ?? throw new InvalidOperationException("Portal access not found or inactive.");
 
         // ไม่ Include Contact (INNER JOIN ตัดแถวที่ contact ถูกลบ) — reattach เอง
@@ -394,6 +397,11 @@ public class PortalService : IPortalService
     // ===== JWT Token Helpers =====
 
     private string GenerateJwtToken(Guid portalAccessId, Guid contactId, Guid companyId, TimeSpan expiry)
+        => GenerateJwtToken(portalAccessId, contactId, companyId, expiry,
+            expiry > PortalTokenPolicy.AccessLifetime ? PortalTokenPolicy.TypeRefresh : PortalTokenPolicy.TypeAccess);
+
+    /// <summary>รอบ 255 ฝ่ายค้าน M9: ช่องที่ 5 = ชนิดโทเคน (access/refresh — <see cref="PortalTokenPolicy"/>)</summary>
+    private string GenerateJwtToken(Guid portalAccessId, Guid contactId, Guid companyId, TimeSpan expiry, string tokenType)
     {
         // Build a simple base64-encoded JWT-like token containing the claims and expiry
         // In production, use Microsoft.IdentityModel.Tokens with proper signing keys
@@ -405,6 +413,8 @@ public class PortalService : IPortalService
         payload.Append(companyId.ToString());
         payload.Append('|');
         payload.Append(DateTime.UtcNow.Add(expiry).ToString("O"));
+        payload.Append('|');
+        payload.Append(tokenType);
 
         var payloadBytes = Encoding.UTF8.GetBytes(payload.ToString());
 
@@ -424,8 +434,8 @@ public class PortalService : IPortalService
     {
         try
         {
-            var (_, contactId, _) = DecodeJwtToken(token);
-            return contactId;
+            var (_, contactId, _, type) = DecodeJwtToken(token);
+            return type == PortalTokenPolicy.TypeAccess ? contactId : null;   // รอบ 255 M9: refresh ใช้แทน access ไม่ได้
         }
         catch
         {
@@ -433,7 +443,23 @@ public class PortalService : IPortalService
         }
     }
 
-    private (Guid portalAccessId, Guid contactId, Guid companyId) DecodeJwtToken(string token)
+    /// <summary>รอบ 255 ฝ่ายค้าน H1/M9: ตัวตรวจของ scheme "Portal" — โทเคน access ที่ลายเซ็นถูก ยังไม่หมดอายุ · สิทธิ์พอร์ทัลยังเปิด (ตรวจทุกคำขอ) ·
+    /// บริษัทของสิทธิ์ = บริษัทในโทเคน = บริษัทในเส้นทาง (ถ้ามี) · ไม่ผ่าน = null</summary>
+    public async Task<PortalTokenPrincipal?> AuthenticateAccessAsync(string token, Guid? routeCompanyId, CancellationToken ct = default)
+    {
+        (Guid accessId, Guid contactId, Guid companyId, string type) t;
+        try { t = DecodeJwtToken(token); }
+        catch (InvalidOperationException) { return null; }
+        var row = await _db.Set<PortalAccess>().AsNoTracking().IgnoreQueryFilters()
+            .Where(p => p.Id == t.accessId && !p.IsDeleted)
+            .Select(p => new { p.IsActive, p.CompanyId, p.ContactId })
+            .FirstOrDefaultAsync(ct);
+        if (row == null || row.ContactId != t.contactId) return null;
+        if (PortalTokenPolicy.AccessProblem(t.type, t.companyId, routeCompanyId, row.IsActive, row.CompanyId) != null) return null;
+        return new PortalTokenPrincipal(t.accessId, t.contactId, t.companyId);
+    }
+
+    private (Guid portalAccessId, Guid contactId, Guid companyId, string tokenType) DecodeJwtToken(string token)
     {
         try
         {
@@ -449,17 +475,7 @@ public class PortalService : IPortalService
             var payloadBytes = new byte[dotIndex];
             Buffer.BlockCopy(tokenBytes, 0, payloadBytes, 0, dotIndex);
 
-            var payload = Encoding.UTF8.GetString(payloadBytes);
-            var parts = payload.Split('|');
-
-            if (parts.Length != 4)
-                throw new InvalidOperationException("Invalid token payload.");
-
-            var expiry = DateTime.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime();
-            if (expiry < DateTime.UtcNow)
-                throw new InvalidOperationException("Token has expired.");
-
-            // Verify signature
+            // รอบ 255 ฝ่ายค้าน M9: ตรวจลายเซ็นก่อนเชื่อเนื้อหา · รูปเก่า 4 ช่อง (ไม่มีชนิด) = ปฏิเสธ (DECISIONS 255-WP12B-13)
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(_portalSigningKey));
             var expectedSignature = hmac.ComputeHash(payloadBytes);
 
@@ -469,7 +485,17 @@ public class PortalService : IPortalService
             if (!CryptographicOperations.FixedTimeEquals(expectedSignature, actualSignature))
                 throw new InvalidOperationException("Invalid token signature.");
 
-            return (Guid.Parse(parts[0]), Guid.Parse(parts[1]), Guid.Parse(parts[2]));
+            var payload = Encoding.UTF8.GetString(payloadBytes);
+            var parts = payload.Split('|');
+
+            if (parts.Length != 5 || (parts[4] != PortalTokenPolicy.TypeAccess && parts[4] != PortalTokenPolicy.TypeRefresh))
+                throw new InvalidOperationException("Invalid token payload.");
+
+            var expiry = DateTime.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime();
+            if (expiry < DateTime.UtcNow)
+                throw new InvalidOperationException("Token has expired.");
+
+            return (Guid.Parse(parts[0]), Guid.Parse(parts[1]), Guid.Parse(parts[2]), parts[4]);
         }
         catch (FormatException)
         {
@@ -626,32 +652,49 @@ public class PortalService : IPortalService
             .Select(p => new { p.Id, p.Email, p.DisplayName })
             .FirstOrDefaultAsync(ct);
         if (access == null) return false;
-        if (_email == null)
-        {
-            System.Diagnostics.Trace.TraceError("Portal magic link: ไม่มีบริการอีเมลใน DI — ส่งลิงก์ไม่ได้ (บริษัท {0})", companyId);
-            return false;
-        }
-        var baseUrl = await SystemBaseUrl.ResolveAsync(_db, _config, ct);
-        var token = PortalMagicLinkPolicy.NewToken();
-        var link = PortalMagicLinkPolicy.Link(baseUrl, companyId, token);
-        if (link == null)
-        {
-            System.Diagnostics.Trace.TraceError("Portal magic link: ยังไม่ได้ตั้ง URL ของระบบ — ส่งลิงก์ไม่ได้ (บริษัท {0})", companyId);
-            return false;
-        }
+        // รอบ 255 ฝ่ายค้าน M6: เข้าคิว EmailQueue (ผู้ส่งในนามบริษัท + โควตา/เพดานอีเมลของแพลตฟอร์มเดิม · ตรวจซ้ำตอนส่ง) — ไม่ส่งตรงจากคำขอนิรนาม ·
+        // โทเคนออกตอนส่ง (PortalMagicLinkPolicy.LinkPlaceholder ⇒ IssueMagicLinkUrlAsync) — คิว/บันทึกอีเมลไม่เก็บ token
         var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
-        _db.PortalMagicLinks.Add(new PortalMagicLink
-        {
-            CompanyId = companyId, PortalAccessId = access.Id, TokenHash = PortalMagicLinkPolicy.Hash(token),
-            ExpiresAt = DateTime.UtcNow.Add(PortalMagicLinkPolicy.Ttl), CreatedBy = "portal-magic-link",
-        });
-        await _db.SaveChangesAsync(ct);
         Func<string?, string?> enc = System.Net.WebUtility.HtmlEncode;
         var html = $"<p>เรียน {enc(access.DisplayName ?? access.Email)}</p>"
             + $"<p>กดลิงก์ด้านล่างเพื่อเข้าพอร์ทัลลูกค้าของ {enc(companyName)} (ใช้ได้ 15 นาที ครั้งเดียว — ไม่ต้องใช้รหัสผ่าน)</p>"
-            + $"<p><a href=\"{enc(link)}\">เข้าสู่พอร์ทัลลูกค้า</a></p>"
+            + $"<p><a href=\"{PortalMagicLinkPolicy.LinkPlaceholder}\">เข้าสู่พอร์ทัลลูกค้า</a></p>"
             + "<p style=\"color:#64748b;font-size:12px\">ถ้าท่านไม่ได้ขอลิงก์นี้ ไม่ต้องทำอะไร — ลิงก์จะหมดอายุเอง</p>";
-        return await _email.TrySendAsync(access.Email, $"ลิงก์เข้าสู่พอร์ทัลลูกค้า — {companyName}", html);
+        var now = DateTime.UtcNow;
+        _db.EmailQueues.Add(new EmailQueue
+        {
+            CompanyId = companyId, EntityType = PortalMagicLinkPolicy.QueueEntityType, EntityId = access.Id,
+            ToEmail = access.Email, Subject = $"ลิงก์เข้าสู่พอร์ทัลลูกค้า — {companyName}", Body = html,
+            AttachPdf = false, ScheduledFor = now, Status = "Pending",
+            IdempotencyKey = $"portal-magic:{access.Id:N}:{Guid.NewGuid():N}", CreatedBy = "portal-magic-link",
+        });
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    /// <summary>รอบ 255 ฝ่ายค้าน M6: ตรวจแถวคิวลิงก์วิเศษตอนส่ง — สิทธิ์ยังเปิด · คำขอไม่ค้างนานเกิน · null = ส่ง</summary>
+    internal static async Task<string?> MagicLinkSkipReasonAsync(AccountingDbContext db, EmailQueue item, CancellationToken ct)
+    {
+        var active = await db.Set<PortalAccess>().AsNoTracking().IgnoreQueryFilters()
+            .Where(p => p.Id == item.EntityId && p.CompanyId == item.CompanyId && !p.IsDeleted)
+            .Select(p => (bool?)p.IsActive).FirstOrDefaultAsync(ct);
+        return PortalMagicLinkPolicy.QueueSkipReason(active == true, item.CreatedAt, DateTime.UtcNow);
+    }
+
+    /// <summary>รอบ 255 ฝ่ายค้าน M6: ออกโทเคนลิงก์วิเศษตอนส่งอีเมลจากคิว (แถว PortalMagicLink ใหม่ · อายุนับจากตอนส่ง) · ไม่มี URL ของระบบ ⇒ (null, เหตุ) — ไม่ส่งลิงก์เสีย</summary>
+    internal static async Task<(string? Url, string? Problem)> IssueMagicLinkUrlAsync(AccountingDbContext db, IConfiguration? config, Guid companyId, Guid portalAccessId, CancellationToken ct)
+    {
+        var baseUrl = await SystemBaseUrl.ResolveAsync(db, config, ct);
+        var token = PortalMagicLinkPolicy.NewToken();
+        var link = PortalMagicLinkPolicy.Link(baseUrl, companyId, token);
+        if (link == null) return (null, "ยังไม่ได้ตั้ง URL ของระบบ — ส่งลิงก์เข้าพอร์ทัลไม่ได้");
+        db.PortalMagicLinks.Add(new PortalMagicLink
+        {
+            CompanyId = companyId, PortalAccessId = portalAccessId, TokenHash = PortalMagicLinkPolicy.Hash(token),
+            ExpiresAt = DateTime.UtcNow.Add(PortalMagicLinkPolicy.Ttl), CreatedBy = "portal-magic-link",
+        });
+        await db.SaveChangesAsync(ct);
+        return (link, null);
     }
 
     /// <summary>แลกลิงก์วิเศษเป็นเซสชันพอร์ทัล — compare-and-set <c>UsedAt</c> (สองแท็บพร้อมกัน = ครั้งเดียว) · ข้อความเดียวทุกเหตุที่แลกไม่ได้ ·

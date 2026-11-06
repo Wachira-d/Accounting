@@ -117,6 +117,11 @@ if (string.IsNullOrEmpty(jwtSecret) || jwtIsPlaceholder)
     jwtSecret = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(64));
     Console.WriteLine("⚠ WARNING: Using auto-generated JWT secret. Set JWT_SECRET env var for persistent sessions.");
 }
+// รอบ 255 WP-12B ฝ่ายค้าน LOW: กุญแจลงนามโทเคนพอร์ทัล — production ปฏิเสธค่าว่าง/placeholder (กฎ #4 C · fail-fast แบบ JWT_SECRET)
+if (builder.Environment.IsProduction()
+    && Accounting.Helpers.PortalTokenPolicy.SigningKeyProblem(Environment.GetEnvironmentVariable("PORTAL_SIGNING_KEY")
+        ?? builder.Configuration["Portal:SigningKey"]) is string portalKeyProblem)
+    throw new InvalidOperationException(portalKeyProblem);
 // Write back to configuration so JwtHelper.GenerateToken() uses the same key
 builder.Configuration["Jwt:Secret"] = jwtSecret;
 
@@ -256,7 +261,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 }));
             },
         };
-    });
+    })
+    // รอบ 255 WP-12B ฝ่ายค้าน H1: scheme แยกของพอร์ทัลลูกค้า (โทเคน HMAC ของพอร์ทัล ไม่ใช่ JWT) — เส้นพอร์ทัลประกาศ AuthenticationSchemes = "Portal" เท่านั้น
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, Accounting.Filters.PortalAuthenticationHandler>(
+        Accounting.Helpers.PortalTokenPolicy.Scheme, _ => { });
 
 builder.Services.AddAuthorization();
 builder.Services.AddMemoryCache();
@@ -1160,6 +1168,8 @@ var publicUploadPrefixes = new[]
     // ⚠️ "/uploads/slips" (สลิปโอนค่าบริการ NextAcc + ค่าส่วนเสริม) **ถูกถอดออกแล้ว** (ฝ่ายค้านรอบ 219 เฟส 2 S9) — สลิปมีชื่อผู้โอน/เลขบัญชี/ยอด
     // = ข้อมูลส่วนบุคคล · ลิงก์ชำระสาธารณะทำให้คนนอกอัปโหลดได้ด้วย ⇒ เสิร์ฟผ่าน endpoint ที่ตรวจสิทธิ์เท่านั้น
     // (ผู้เช่า: billing-center/payments/{id}/slip · แอดมิน: platform-billing/subscription-payments/{id}/slip · metering/addon-payments/.../slip)
+    // ⚠️ "/uploads/document-slips" (สลิปแจ้งโอนจากหน้าชำระของเอกสาร — คนนอกระบบอัปโหลด) **ตั้งใจไม่อยู่ในลิสต์นี้** (รอบ 255 ฝ่ายค้าน M8):
+    // พนักงานเปิดผ่าน api/companies/{cid}/attachments/{id}/download (ด่านสิทธิ์ + บริษัท) · ผลลัพธ์ของหน้าชำระไม่คืน URL ไฟล์
     // ⚠️ "/uploads/lodging-slips" **ถูกถอดออกจากลิสต์นี้แล้ว** (LDG-P2-06) —
     // สลิปโอนเงินมีชื่อผู้โอน + เลขบัญชี + ยอด = ข้อมูลส่วนบุคคลของแขก ไม่ใช่ของ
     // สาธารณะ · ชื่อไฟล์เป็น GUID ก็จริง แต่ URL ถูกส่งกลับใน API response ของหน้า

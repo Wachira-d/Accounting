@@ -82,7 +82,10 @@ ENTITIES = {
     # ต่อสายแล้ว · AudienceFilter เลิกใช้ (ไม่มีหน้า/API/ผู้อ่าน · คอลัมน์คงไว้เพราะ schema) — แถวเดียวที่เหลือใน baseline พร้อมหมายเหตุ deprecated
     # ฝ่ายค้าน WP-04 ต่อยอด ข้อ 5: "ทุก property ยกเว้นรายการระบบ" (None + SYSTEM_PROPS) — ช่องค่าตั้งใหม่ของ 4 entity นี้ถูกตรวจเองโดยไม่ต้องจำมาเพิ่มชื่อ
     'RecurringTransaction': ('Accounting/Models/Entities/RecurringTransaction.cs', None, ['Accounting/wwwroot/pages/recurring.html']),
-    'Contact': ('Accounting/Models/Entities/Document.cs', None, ['Accounting/wwwroot/pages/contacts.html']),
+    # รอบ 250 WP-08 (คำตัดสิน 250-29) + รอบ 255 ฝ่ายค้าน LOW: เดิมมี key 'Contact' สองแถว (dict literal ⇒ แถวหลังทับแถวแรกเงียบ ๆ — ตรวจแค่ AutoSendDisabled) ·
+    # รวมเป็นแถวเดียว: ทุก property (None + SYSTEM_PROPS) · หน้าแก้ทั้งสอง (contacts.html + recurring.html ที่ตั้ง "ไม่ส่งอัตโนมัติ")
+    'Contact': ('Accounting/Models/Entities/Document.cs', None,
+                ['Accounting/wwwroot/pages/contacts.html', 'Accounting/wwwroot/pages/recurring.html']),
     'EmailScheduleRule': ('Accounting/Models/Entities/EmailSchedule.cs', None, ['Accounting/wwwroot/pages/email-schedule.html']),
     'BankAccount': ('Accounting/Models/Entities/BankAccount.cs', None, ['Accounting/wwwroot/pages/bank.html']),
     'StaffDailySummaryConfig': ('Accounting/Models/Entities/StaffDailySummary.cs',
@@ -92,10 +95,8 @@ ENTITIES = {
     # ShowAmounts ยังไม่อยู่ในขอบเขต (มีผลเมื่อ LINE เปิดส่ง เฟส L2/L3)
     'ContactNotifyEndpoint': ('Accounting/Models/Entities/ContactNotifyEndpoint.cs', {'TopicsJson'},
                               ['Accounting/wwwroot/pages/contacts.html']),
-    # รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" — ผู้อ่าน = EmailScheduleService/PostPaymentAutomationService/SignRequestService
-    # ผ่าน AutopilotSettingsResolver (class Contact อยู่ใน Document.cs)
-    'Contact': ('Accounting/Models/Entities/Document.cs', {'AutoSendDisabled'},
-                ['Accounting/wwwroot/pages/contacts.html', 'Accounting/wwwroot/pages/recurring.html']),
+    # (ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" AutoSendDisabled — ผู้อ่าน EmailScheduleService/PostPaymentAutomationService/SignRequestService ผ่าน
+    #  AutopilotSettingsResolver — อยู่ในแถว 'Contact' ด้านบนแล้ว)
     # รอบ 255 WP-12B ข้อ 6–8: ค่าตั้งคู่ค้า NextAcc — ผู้อ่าน = CrossTenantWorkflowService.TryCreatePurchaseDraftAsync (ใบซื้อร่าง · เพดานต่อคู่ผ่าน
     # PartnerExchangeRules.ReceiverLimit) · PartnerWhtCertExchangeService.RunOnceAsync (50 ทวิ) · CrossTenantWorkflowService.TradingPartnerCapAsync (เพดานคู่ Y5)
     'WorkflowAutomationConfig': ('Accounting/Models/Entities/CrossTenantWorkflow.cs', {'CreatePurchaseDraftsFromPartners', 'SendWhtCertsToPartners'},

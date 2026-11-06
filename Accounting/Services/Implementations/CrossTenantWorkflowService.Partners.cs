@@ -114,10 +114,16 @@ public partial class CrossTenantWorkflowService
 
     // ═══════════ ใบขายของคู่ค้า ⇒ ใบซื้อร่างของผู้รับ (N3) ═══════════
 
+    /// <summary>ความลึกสูงสุดของสายเอกสารต้นทาง (แปลงจาก/ออกแทน) ที่ไล่หา "ใบซื้อเดิมของการขายครั้งเดียวกัน" (ฝ่ายค้าน H3)</summary>
+    private const int MaxAncestorDepth = 6;
+
     /// <summary>
     /// เรียกต่อจาก <see cref="OnDocumentSentAsync"/> (แถวกล่องเข้า InvoiceFlow ถูกสร้างแล้ว) — ผู้รับเปิด <c>CreatePurchaseDraftsFromPartners</c> + ยอดไม่เกินเพดานต่อคู่ ⇒
     /// สร้าง <c>Document(PurchaseInvoice, Draft)</c> ในบริษัทผู้รับ ผูก <c>link.TargetDocumentId</c> · ไม่ผ่าน ⇒ เหตุบน <c>link.Comment</c> (กล่องเข้าเห็น — ไม่เงียบ) ·
     /// ส่งซ้ำ = no-op (มีใบร่างแล้ว) · <b>ไม่อนุมัติเอง · ไม่ลงภาษีซื้อเอง</b>
+    /// <para>ฝ่ายค้าน H3: ใบที่ผู้ขายแปลงจาก/ออกแทนใบที่เคยเป็นใบซื้อของผู้รับแล้ว (สาย <c>RelatedDocumentId</c>/<c>ReplacesDocumentId</c>) = การขายครั้งเดียวกัน ⇒
+    /// <b>ไม่สร้างใบที่สอง</b> แนบหลักฐาน (ไฟล์ XML + เลข/วันที่ใบกำกับ) เข้าใบซื้อเดิม + แจ้งผู้รับ · ใบเดิมอนุมัติแล้ว ⇒ แนบไฟล์ ผู้รับปิดด้วย "ได้รับต้นฉบับแล้ว"</para>
+    /// <para>ฝ่ายค้าน LOW: สร้างใบร่าง + ไฟล์ + หลักฐาน + แถวกล่องเข้า ในธุรกรรมเดียว (ไม่มีใบร่างกำพร้า)</para>
     /// </summary>
     internal async Task TryCreatePurchaseDraftAsync(CrossTenantDocumentLink link)
     {
@@ -142,10 +148,62 @@ public partial class CrossTenantWorkflowService
             return;
         }
 
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
         try
         {
             var seller = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == link.SourceCompanyId);
-            if (seller == null) return;
+            if (seller == null) { if (ownTx != null) await ownTx.RollbackAsync(); return; }
+
+            // หลักฐานภาษีซื้อ (N3 · ฝ่ายค้าน H2): ระบบ<b>ไม่เคยตั้ง EtaxVerified เอง</b> (ไม่มีการตรวจกับ ETDA) — e-Tax ลงลายมือชื่อที่ไฟล์ถึงผู้รับแล้ว = AwaitingTimestamp ·
+            // อื่น ๆ = PaperRequired · ผู้รับยืนยันเองว่าได้ไฟล์ที่ประทับเวลา/ต้นฉบับกระดาษ ⇒ EtaxVerified/PaperConfirmed
+            var isTaxInvoice = src.DocumentType == DocumentType.TaxInvoice;
+            var etax = isTaxInvoice
+                ? await _db.EtaxInvoices.AsNoTracking()
+                    .Where(e => e.DocumentId == src.Id && e.CompanyId == src.CompanyId && e.VoidedAt == null)
+                    .OrderByDescending(e => e.CreatedAt)
+                    .Select(e => new { e.XmlContent, e.DigitalSignature, e.CertificateSerialNumber, e.SignedAt, e.EtaxRefNumber })
+                    .FirstOrDefaultAsync()
+                : null;
+            var signed = etax != null && !string.IsNullOrWhiteSpace(etax.DigitalSignature) && !string.IsNullOrWhiteSpace(etax.CertificateSerialNumber)
+                && etax.SignedAt != null && !string.IsNullOrWhiteSpace(etax.XmlContent);
+
+            // ── ฝ่ายค้าน H3: การขายครั้งเดียวกันที่ผู้รับมีใบซื้ออยู่แล้ว ⇒ แนบหลักฐานเข้าใบเดิม ──
+            var existingId = await ExistingPurchaseForChainAsync(src, link.TargetCompanyId);
+            if (existingId is Guid d1Id)
+            {
+                var d1 = await _db.Documents.FirstAsync(d => d.Id == d1Id && d.CompanyId == link.TargetCompanyId);
+                var delivered1 = signed && await DeliverSignedXmlAsync(link.TargetCompanyId, d1.Id, etax!.EtaxRefNumber, etax.XmlContent);
+                var offered = PartnerInputVatEvidence.Of(isTaxInvoice, signed, delivered1);
+                d1.PartnerInputVatEvidence = PartnerInputVatEvidence.Merge(d1.PartnerInputVatEvidence, offered);
+                if (d1.Status == DocumentStatus.Draft && isTaxInvoice)
+                {
+                    // ร่างยังแก้ได้ ⇒ เลข/วันที่ใบกำกับของผู้ขายตามใบกำกับจริง · อนุมัติแล้ว ⇒ ปิดด้วย "ได้รับต้นฉบับแล้ว" (ส่งเลข/วันที่ผ่านเส้นเติมใบกำกับเดิม)
+                    d1.SupplierInvoiceNumber = src.DocumentNumber;
+                    d1.SupplierTaxInvoiceDate = src.DocumentDate;
+                    d1.HasTaxInvoiceReference = true;
+                }
+                d1.UpdatedAt = DateTime.UtcNow;
+                link.TargetDocumentId = d1.Id;
+                link.Comment = $"ผูกกับใบซื้อเดิมของการขายครั้งเดียวกัน (ไม่สร้างใบที่สอง) — {PartnerInputVatEvidence.Label(d1.PartnerInputVatEvidence)}";
+                link.UpdatedAt = DateTime.UtcNow;
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = link.TargetCompanyId, Action = AuditAction.Update, EntityType = "Document", EntityId = d1.Id.ToString(),
+                    NewValues = JsonSerializer.Serialize(new
+                    {
+                        @event = "PartnerEvidenceAttachedToExisting", linkId = link.Id, supplierDocumentNumber = src.DocumentNumber,
+                        inputVatEvidence = d1.PartnerInputVatEvidence, ruleCode = PartnerExchangeRules.RuleCode,
+                    }),
+                    Timestamp = DateTime.UtcNow,
+                });
+                await _db.SaveChangesAsync();
+                if (ownTx != null) await ownTx.CommitAsync();
+                await NotifyReceiverAsync(link.TargetCompanyId, d1.Id,
+                    $"คู่ค้าส่งใบ {src.DocumentNumber} ของการขายเดิม — แนบเข้าใบซื้อเดิมแล้ว",
+                    "ไม่ได้สร้างใบซื้อใหม่ (การขายครั้งเดียวกัน) · ตรวจหลักฐานภาษีซื้อแล้วกด \"ได้รับต้นฉบับแล้ว\" เมื่อมีต้นฉบับ");
+                return;
+            }
+
             var supplierContact = await FindPartnerContactAsync(link.TargetCompanyId, seller, asSupplier: true);
             if (supplierContact == null)
             {
@@ -153,19 +211,6 @@ public partial class CrossTenantWorkflowService
                 _db.Contacts.Add(supplierContact);
                 await _db.SaveChangesAsync();
             }
-
-            // หลักฐานภาษีซื้อ (N3): e-Tax ที่ลงลายมือชื่อของต้นทาง (ไม่ถูกยกเลิก) · ส่งไฟล์ XML ถึงผู้รับเป็นไฟล์แนบของใบร่าง (ผู้รับถือต้นฉบับ)
-            var isTaxInvoice = src.DocumentType == DocumentType.TaxInvoice;
-            var etax = isTaxInvoice
-                ? await _db.EtaxInvoices.AsNoTracking()
-                    .Where(e => e.DocumentId == src.Id && e.CompanyId == src.CompanyId && e.VoidedAt == null)
-                    .OrderByDescending(e => e.CreatedAt)
-                    .Select(e => new { e.XmlContent, e.DigitalSignature, e.CertificateSerialNumber, e.SignedAt, e.EtdaStampedAt, e.EtdaStampedFileAttachmentId, e.EtaxRefNumber })
-                    .FirstOrDefaultAsync()
-                : null;
-            var signed = etax != null && !string.IsNullOrWhiteSpace(etax.DigitalSignature) && !string.IsNullOrWhiteSpace(etax.CertificateSerialNumber)
-                && etax.SignedAt != null && !string.IsNullOrWhiteSpace(etax.XmlContent);
-            var stamped = etax?.EtdaStampedAt != null && etax.EtdaStampedFileAttachmentId != null;
 
             var draft = new Document
             {
@@ -189,6 +234,7 @@ public partial class CrossTenantWorkflowService
                 Reference = $"คู่ค้า NextAcc {src.DocumentNumber}",
                 Notes = $"สร้างเป็นร่างจากเอกสารที่คู่ค้าส่งผ่าน NextAcc ({src.DocumentNumber}) — ตรวจผังบัญชี/ภาษีหัก ณ ที่จ่ายแล้วอนุมัติ",
                 PartnerSourceLinkId = link.Id,
+                PartnerInputVatEvidence = PartnerInputVatEvidence.PaperRequired,
                 CreatedBy = "partner-exchange",
             };
             var order = 1;
@@ -209,9 +255,8 @@ public partial class CrossTenantWorkflowService
             await _db.SaveChangesAsync();
 
             var delivered = signed && await DeliverSignedXmlAsync(link.TargetCompanyId, draft.Id, etax!.EtaxRefNumber, etax.XmlContent);
-            var evidence = PartnerInputVatEvidence.Of(isTaxInvoice, signed, stamped, delivered);
-            await _db.Documents.Where(d => d.Id == draft.Id && d.CompanyId == link.TargetCompanyId)
-                .ExecuteUpdateAsync(s => s.SetProperty(d => d.PartnerInputVatEvidence, evidence));
+            var evidence = PartnerInputVatEvidence.Of(isTaxInvoice, signed, delivered);
+            draft.PartnerInputVatEvidence = evidence;
 
             link.TargetDocumentId = draft.Id;
             link.Comment = "สร้างใบซื้อร่างแล้ว — " + PartnerInputVatEvidence.Label(evidence);
@@ -233,10 +278,12 @@ public partial class CrossTenantWorkflowService
                 Timestamp = DateTime.UtcNow,
             });
             await _db.SaveChangesAsync();
+            if (ownTx != null) await ownTx.CommitAsync();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // ล้มดัง: ทิ้งแถวครึ่งทางของผู้รับ (ไม่เขียนสมุดของบริษัทอื่นครึ่ง ๆ) + เหตุบนแถวกล่องเข้า + LogError · การส่งของผู้ขายไม่ล้มตาม
+            // ล้มดัง: ย้อนธุรกรรม + ทิ้งแถวครึ่งทางของผู้รับ (ไม่เขียนสมุดของบริษัทอื่นครึ่ง ๆ) + เหตุบนแถวกล่องเข้า + LogError · การส่งของผู้ขายไม่ล้มตาม
+            if (ownTx != null) { try { await ownTx.RollbackAsync(); } catch (Exception rex) when (rex is not OperationCanceledException) { _ = rex; } }
             DetachPendingCrossTenantWrites();
             _logger.LogError(ex, "สร้างใบซื้อร่างจาก link {Link} ไม่สำเร็จ", link.Id);
             try
@@ -249,9 +296,58 @@ public partial class CrossTenantWorkflowService
                 _logger.LogError(stampEx, "บันทึกเหตุบน link {Link} ไม่สำเร็จ", link.Id);
             }
         }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
     }
 
-    /// <summary>ส่งไฟล์ XML ที่ลงลายมือชื่อของต้นทางเป็นไฟล์แนบของใบร่าง (ของบริษัทผู้รับ · ผ่านที่เก็บกลาง) · ไม่มีที่เก็บ/ล้ม = false (หลักฐานไม่ถึง EtaxVerified — ไม่แต่ง)</summary>
+    /// <summary>ฝ่ายค้าน H3: ใบซื้อของผู้รับที่มาจากใบ<b>ต้นสาย</b>ของ <paramref name="src"/> (ใบที่ใบนี้แปลงมา · ใบที่ใบนี้ออกแทน — ไล่ขึ้น ≤ 6 ชั้นในบริษัทผู้ขาย) ·
+    /// null = ไม่มี (ใบใหม่ที่ไม่เกี่ยวกัน ⇒ ร่างใหม่) · ใบซื้อเดิมที่ถูกยกเลิก/ลบ ไม่นับ</summary>
+    private async Task<Guid?> ExistingPurchaseForChainAsync(Document src, Guid targetCompanyId)
+    {
+        var ancestors = new List<Guid>();
+        var frontier = new List<Guid>();
+        if (src.RelatedDocumentId is Guid r0) frontier.Add(r0);
+        if (src.ReplacesDocumentId is Guid p0) frontier.Add(p0);
+        for (var depth = 0; depth < MaxAncestorDepth && frontier.Count > 0; depth++)
+        {
+            var batch = frontier.Where(id => !ancestors.Contains(id)).ToList();
+            ancestors.AddRange(batch);
+            var parents = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .Where(d => batch.Contains(d.Id) && d.CompanyId == src.CompanyId)
+                .Select(d => new { d.RelatedDocumentId, d.ReplacesDocumentId })
+                .ToListAsync();
+            frontier = parents.SelectMany(x => new[] { x.RelatedDocumentId, x.ReplacesDocumentId })
+                .Where(x => x != null).Select(x => x!.Value).Distinct().ToList();
+        }
+        if (ancestors.Count == 0) return null;
+        var targets = await _db.CrossTenantDocumentLinks.AsNoTracking()
+            .Where(l => l.SourceCompanyId == src.CompanyId && l.TargetCompanyId == targetCompanyId && ancestors.Contains(l.SourceDocumentId)
+                && l.TargetDocumentId != null)
+            .Select(l => l.TargetDocumentId!.Value)
+            .ToListAsync();
+        if (targets.Count == 0) return null;
+        return await _db.Documents.AsNoTracking()
+            .Where(d => targets.Contains(d.Id) && d.CompanyId == targetCompanyId && !d.IsDeleted && d.Status != DocumentStatus.Voided
+                && d.PartnerSourceLinkId != null)
+            .OrderByDescending(d => d.CreatedAt)
+            .Select(d => (Guid?)d.Id)
+            .FirstOrDefaultAsync();
+    }
+
+    /// <summary>แจ้งผู้รับ (บริษัทคู่ค้า) — คีย์ autopilot.partner_exchange · ไม่มีเครื่องแจ้งเตือน (สร้างนอก DI) = ข้าม</summary>
+    private async Task NotifyReceiverAsync(Guid companyId, Guid documentId, string title, string message)
+    {
+        if (_notify == null) return;
+        await _notify.DispatchAsync(companyId, Accounting.Models.Constants.NotificationEvents.AutopilotPartnerExchange, new Accounting.Services.Interfaces.NotificationContext
+        {
+            Title = title, Message = message, ActionUrl = "/pages/partners.html", EntityType = "Document", EntityId = documentId,
+        });
+    }
+
+    /// <summary>ส่งไฟล์ XML ที่ลงลายมือชื่อของต้นทางเป็นไฟล์แนบของใบร่าง (ของบริษัทผู้รับ · ผ่านที่เก็บกลาง) · ไม่มีที่เก็บ/ล้ม = false (หลักฐานคง PaperRequired — ไม่แต่ง) ·
+    /// แถวไฟล์แนบเข้า ChangeTracker — ผู้เรียกบันทึกในธุรกรรมเดียวกับใบ</summary>
     private async Task<bool> DeliverSignedXmlAsync(Guid targetCompanyId, Guid draftId, string? refNumber, string xml)
     {
         if (_storage == null || string.IsNullOrWhiteSpace(xml)) return false;
@@ -268,15 +364,93 @@ public partial class CrossTenantWorkflowService
                 ContentType = "application/xml", StoragePath = abs, EntityType = "Document", EntityId = draftId,
                 UploadedByUserId = null, CreatedBy = "partner-exchange",
             });
-            await _db.SaveChangesAsync();
             return true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogError(ex, "ส่งไฟล์ e-Tax ของคู่ค้าเข้าใบร่าง {Draft} ไม่สำเร็จ — หลักฐานเป็น PaperRequired", draftId);
-            DetachPendingCrossTenantWrites();
             return false;
         }
+    }
+
+    /// <summary>ฝ่ายค้าน M2: ผู้ขายยกเลิกเอกสารต้นทาง ⇒ ใบซื้อของผู้รับที่มาจากใบนั้นติด <see cref="PartnerInputVatEvidence.SourceVoided"/>
+    /// (ตัวตรวจ §86/4 ห้ามลงภาษีซื้อ · ยืนยันต้นฉบับไม่ได้) + แถวกล่องเข้า Withdrawn + แจ้งผู้รับ · ไม่ย้อน/ยกเลิกใบของผู้รับเอง (ผู้รับตัดสิน) ·
+    /// เรียกจาก <c>DocumentService.VoidDocumentAsync</c> หลัง commit · ล้ม = LogError (ไม่ย้อนการยกเลิกของผู้ขาย)</summary>
+    public async Task<int> OnSourceVoidedAsync(Guid sourceCompanyId, Guid sourceDocumentId)
+    {
+        try
+        {
+            var links = await _db.CrossTenantDocumentLinks
+                .Where(l => l.SourceCompanyId == sourceCompanyId && l.SourceDocumentId == sourceDocumentId && l.TargetDocumentId != null)
+                .ToListAsync();
+            var n = 0;
+            foreach (var l in links)
+            {
+                var updated = await _db.Documents
+                    .Where(d => d.Id == l.TargetDocumentId && d.CompanyId == l.TargetCompanyId && d.PartnerSourceLinkId != null)
+                    .ExecuteUpdateAsync(s => s.SetProperty(d => d.PartnerInputVatEvidence, PartnerInputVatEvidence.SourceVoided));
+                l.Status = CrossTenantLinkStatus.Withdrawn;
+                l.Comment = "ผู้ขายยกเลิกเอกสารต้นทางแล้ว — ห้ามลงภาษีซื้อจากใบนี้";
+                l.UpdatedAt = DateTime.UtcNow;
+                if (updated > 0)
+                {
+                    n++;
+                    await NotifyReceiverAsync(l.TargetCompanyId, l.TargetDocumentId!.Value, "คู่ค้ายกเลิกเอกสารที่ส่งเข้ามา",
+                        "ใบซื้อที่มาจากเอกสารนี้ถูกตั้งเป็น \"ต้นทางถูกยกเลิก\" — ลงภาษีซื้อไม่ได้ · ตรวจแล้วยกเลิก/กลับรายการใบซื้อของท่าน");
+                }
+            }
+            await _db.SaveChangesAsync();
+            return n;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "แจ้งคู่ค้าเรื่องเอกสารต้นทาง {Doc} ถูกยกเลิกไม่สำเร็จ", sourceDocumentId);
+            return 0;
+        }
+    }
+
+    public sealed record PartnerSourceStatus(bool Voided, string? LatestTaxInvoiceNumber, DateTime? LatestTaxInvoiceDate);
+
+    /// <summary>ฝ่ายค้าน M2: ตรวจต้นทางสดของใบซื้อจากคู่ค้า (ทุกแถวกล่องเข้าที่ผูกใบนี้) — ใบของผู้ขายถูกลบ/ยกเลิก หรือ e-Tax ของใบนั้นถูกยกเลิกหมด ⇒ Voided ·
+    /// คืนเลข/วันที่ใบกำกับล่าสุดในสาย (ใบกำกับที่มาทีหลังของการขายเดิม · H3) · tenant: แถวกล่องเข้าของผู้รับ + เอกสารของบริษัทผู้ขายตามแถว</summary>
+    public async Task<PartnerSourceStatus> PartnerSourceCheckAsync(Guid targetCompanyId, Guid documentId)
+    {
+        var links = await _db.CrossTenantDocumentLinks.AsNoTracking()
+            .Where(l => l.TargetCompanyId == targetCompanyId && l.TargetDocumentId == documentId)
+            .Select(l => new { l.SourceCompanyId, l.SourceDocumentId, l.CreatedAt })
+            .ToListAsync();
+        string? latestTaxNo = null; DateTime? latestTaxDate = null;
+        foreach (var l in links.OrderBy(x => x.CreatedAt))
+        {
+            var s = await _db.Documents.AsNoTracking().IgnoreQueryFilters()
+                .Where(d => d.Id == l.SourceDocumentId && d.CompanyId == l.SourceCompanyId)
+                .Select(d => new { d.Status, d.IsDeleted, d.DocumentType, d.DocumentNumber, d.DocumentDate })
+                .FirstOrDefaultAsync();
+            var etaxRows = await _db.EtaxInvoices.AsNoTracking()
+                .Where(e => e.DocumentId == l.SourceDocumentId && e.CompanyId == l.SourceCompanyId)
+                .Select(e => e.VoidedAt).ToListAsync();
+            var etaxVoided = etaxRows.Count > 0 && etaxRows.All(v => v != null);
+            if (s == null || s.IsDeleted || s.Status == DocumentStatus.Voided || etaxVoided)
+                return new PartnerSourceStatus(true, null, null);
+            if (s.DocumentType == DocumentType.TaxInvoice) { latestTaxNo = s.DocumentNumber; latestTaxDate = s.DocumentDate; }
+        }
+        return new PartnerSourceStatus(false, latestTaxNo, latestTaxDate);
+    }
+
+    /// <summary>ตั้ง SourceVoided บนใบซื้อจากคู่ค้าของผู้รับ (ใบที่ไม่ได้มาจากคู่ค้า ไม่แตะ) — ใช้หลังธุรกรรมยืนยันถูกย้อน</summary>
+    public Task<int> MarkSourceVoidedAsync(Guid companyId, Guid documentId)
+        => _db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId && d.PartnerSourceLinkId != null)
+            .ExecuteUpdateAsync(x => x.SetProperty(d => d.PartnerInputVatEvidence, PartnerInputVatEvidence.SourceVoided));
+
+    /// <summary>ฝ่ายค้าน M2 (ด่านอนุมัติ): ใบซื้อจากคู่ค้าที่ต้นทางถูกยกเลิกแล้ว ⇒ ตั้ง SourceVoided บนตัวใบ (tracked · ผู้เรียกบันทึก) ก่อนตัวตรวจ §86/4 ⇒ ภาษีซื้อพัก + ข้อความไทย ·
+    /// ใบซื้อทั่วไป (ไม่มี PartnerSourceLinkId) ไม่แตะ · คืน true เมื่อถูกตั้ง</summary>
+    public async Task<bool> MarkIfPartnerSourceVoidedAsync(Guid companyId, Document doc)
+    {
+        if (doc.PartnerSourceLinkId == null || doc.CompanyId != companyId || doc.PartnerInputVatEvidence == PartnerInputVatEvidence.SourceVoided) return false;
+        var status = await PartnerSourceCheckAsync(companyId, doc.Id);
+        if (!status.Voided) return false;
+        doc.PartnerInputVatEvidence = PartnerInputVatEvidence.SourceVoided;
+        return true;
     }
 
     /// <summary>ใบซื้อร่าง/ใบซื้อที่มาจากคู่ค้า NextAcc ของบริษัทนี้ (สำเนาของผู้รับเท่านั้น — ไม่มีข้อมูลของผู้ส่งนอกจากที่อยู่บนใบ)</summary>
@@ -300,34 +474,52 @@ public partial class CrossTenantWorkflowService
             SupplierName = names.GetValueOrDefault(r.ContactId),
             InputVatEvidence = r.PartnerInputVatEvidence,
             InputVatEvidenceLabel = PartnerInputVatEvidence.Label(r.PartnerInputVatEvidence),
-            NeedsOriginal = PartnerInputVatEvidence.BlocksClaim(r.PartnerInputVatEvidence),
+            NeedsOriginal = PartnerInputVatEvidence.ConfirmProblem(r.PartnerInputVatEvidence) == null,
+            SourceVoided = r.PartnerInputVatEvidence == PartnerInputVatEvidence.SourceVoided,
         }).ToList();
     }
 
-    /// <summary>ผู้รับยืนยัน "ได้ต้นฉบับใบกำกับแล้ว" — ปลดด่านภาษีซื้อ (ตัวตรวจ §86/4 ตัวเดียวอ่านค่านี้) · audit · คืนว่าใบอนุมัติแล้วไหม
-    /// (อนุมัติแล้ว ⇒ ผู้เรียกต้องสั่งย้าย VAT 11640 → 11610 ผ่าน <c>CompleteSupplierTaxInvoiceAsync</c> ตัวเดิม)</summary>
-    public async Task<bool> ConfirmPartnerOriginalAsync(Guid companyId, Guid documentId, Guid userId)
+    /// <summary>ผลของการยืนยันต้นฉบับ — ใบอนุมัติแล้วไหม + เลข/วันที่ใบกำกับของผู้ขายที่ควรส่งเข้าเส้นเติมใบกำกับ (ใบกำกับที่มาทีหลังของการขายเดิม · H3)</summary>
+    public sealed record ConfirmOriginalOutcome(bool Approved, string Evidence, string? SupplierInvoiceNumber, DateTime? SupplierTaxInvoiceDate);
+
+    /// <summary>ผู้รับยืนยัน "ได้ต้นฉบับใบกำกับแล้ว" (กระดาษ ⇒ PaperConfirmed · ไฟล์ e-Tax ที่ประทับเวลา ⇒ EtaxVerified — ฝ่ายค้าน H2: ค่านี้มาจากคนเท่านั้น) ·
+    /// ฝ่ายค้าน M2: ตรวจต้นทางสดก่อน (ผู้ขายยกเลิกใบ/ยกเลิก e-Tax ⇒ ปฏิเสธพร้อมเหตุ + ติด SourceVoided) · audit · ผู้เรียกห่อธุรกรรมเดียวกับ
+    /// <c>CompleteSupplierTaxInvoiceAsync</c> (ฝ่ายค้าน M3 — ล้มทางใดไม่มีอะไรเปลี่ยน)</summary>
+    public async Task<ConfirmOriginalOutcome> ConfirmPartnerOriginalAsync(Guid companyId, Guid documentId, Guid userId, bool stampedEtax = false)
     {
         var doc = await _db.Documents.AsNoTracking()
             .Where(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted && d.PartnerSourceLinkId != null)
-            .Select(d => new { d.PartnerInputVatEvidence, d.Status })
+            .Select(d => new { d.PartnerInputVatEvidence, d.Status, d.PartnerSourceLinkId })
             .FirstOrDefaultAsync()
             ?? throw new KeyNotFoundException("ไม่พบใบซื้อจากคู่ค้า");
         if (PartnerInputVatEvidence.ConfirmProblem(doc.PartnerInputVatEvidence) is string problem)
             throw new BusinessRuleException(problem, PartnerExchangeRules.RuleCode, 409);
+
+        // ฝ่ายค้าน M2: ต้นทางยังมีผลไหม (ใบของผู้ขาย + e-Tax ของใบนั้น) — ตรวจสดทุกใบในสายเดียวกัน
+        var source = await PartnerSourceCheckAsync(companyId, documentId);
+        if (source.Voided)
+        {
+            await _db.Documents.Where(d => d.Id == documentId && d.CompanyId == companyId)
+                .ExecuteUpdateAsync(x => x.SetProperty(d => d.PartnerInputVatEvidence, PartnerInputVatEvidence.SourceVoided));
+            throw new BusinessRuleException(PartnerInputVatEvidence.SourceVoidedMessage, PartnerExchangeRules.RuleCode, 409);
+        }
+        var latestTaxNo = source.LatestTaxInvoiceNumber; var latestTaxDate = source.LatestTaxInvoiceDate;
+
+        var target = PartnerInputVatEvidence.Confirmed(stampedEtax);
         var n = await _db.Documents
             .Where(d => d.Id == documentId && d.CompanyId == companyId && d.PartnerInputVatEvidence == doc.PartnerInputVatEvidence)
-            .ExecuteUpdateAsync(s => s.SetProperty(d => d.PartnerInputVatEvidence, PartnerInputVatEvidence.PaperConfirmed));
+            .ExecuteUpdateAsync(s => s.SetProperty(d => d.PartnerInputVatEvidence, target));
         if (n == 0) throw new BusinessRuleException("สถานะหลักฐานเปลี่ยนระหว่างกด — รีเฟรชแล้วลองใหม่", PartnerExchangeRules.RuleCode, 409);
         _db.AddChainedAuditLog(new AuditLog
         {
             CompanyId = companyId, UserId = userId, Action = AuditAction.Update, EntityType = "Document", EntityId = documentId.ToString(),
             OldValues = JsonSerializer.Serialize(new { inputVatEvidence = doc.PartnerInputVatEvidence }),
-            NewValues = JsonSerializer.Serialize(new { inputVatEvidence = PartnerInputVatEvidence.PaperConfirmed, ruleCode = PartnerExchangeRules.RuleCode,
+            NewValues = JsonSerializer.Serialize(new { inputVatEvidence = target, ruleCode = PartnerExchangeRules.RuleCode,
                 legalReference = PartnerExchangeRules.LegalReference }),
             Timestamp = DateTime.UtcNow,
         });
         await _db.SaveChangesAsync();
-        return doc.Status is not (DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Rejected or DocumentStatus.Voided);
+        var approved = doc.Status is not (DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Rejected or DocumentStatus.Voided);
+        return new ConfirmOriginalOutcome(approved, target, latestTaxNo, latestTaxDate);
     }
 }

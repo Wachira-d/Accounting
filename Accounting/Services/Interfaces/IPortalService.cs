@@ -18,6 +18,8 @@ public interface IPortalService
     Task<PortalLoginResponse> RefreshTokenAsync(string refreshToken);
 
     Guid? ExtractContactIdFromToken(string token);
+    /// <summary>รอบ 255 WP-12B ฝ่ายค้าน H1/M9: ตัวตรวจของ scheme "Portal" (access เท่านั้น · สิทธิ์ยังเปิด · บริษัทตรงเส้นทาง) · ไม่ผ่าน = null</summary>
+    Task<PortalTokenPrincipal?> AuthenticateAccessAsync(string token, Guid? routeCompanyId, CancellationToken ct = default);
 
     // Portal data (by customer/supplier)
     Task<List<PortalDocumentResponse>> GetMyDocumentsAsync(Guid companyId, Guid contactId, string? documentType = null);
@@ -45,3 +47,6 @@ public interface IPortalService
     Task<PortalSlipUploadResponse> UploadDocumentSlipAsync(
         Guid companyId, Guid contactId, Guid documentId, IFormFile file, decimal? amount, string? bankRef = null);
 }
+
+/// <summary>รอบ 255 WP-12B: ตัวตนจากโทเคนพอร์ทัลที่ผ่านการตรวจ</summary>
+public sealed record PortalTokenPrincipal(Guid PortalAccessId, Guid ContactId, Guid CompanyId);

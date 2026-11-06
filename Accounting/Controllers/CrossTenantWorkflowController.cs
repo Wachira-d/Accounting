@@ -75,7 +75,10 @@ public class CrossTenantWorkflowController : ControllerBase
                 PurchaseDraftLimit = p.CompanyAId == companyId ? p.PurchaseDraftLimitA : p.PurchaseDraftLimitB,
                 StatusLabel = p.Status == TradingPartnershipStatus.Accepted ? "เชื่อมแล้ว"
                     : p.Status == TradingPartnershipStatus.Suspended ? "ระงับชั่วคราว"
-                    : p.Status == TradingPartnershipStatus.Pending ? "รอเรายอมรับ" : "ปฏิเสธแล้ว",
+                    : p.Status == TradingPartnershipStatus.Pending
+                        // รอบ 255 ฝ่ายค้าน LOW: แยกฝั่ง — คำเชิญที่เราส่ง = รอคู่ค้า · ที่เราได้รับ = รอเรา
+                        ? (p.InvitedByCompanyId == companyId ? "รอคู่ค้ายอมรับ" : "รอเรายอมรับ")
+                        : "ปฏิเสธแล้ว",
                 p.CreatedAt,
             })
             .ToListAsync();

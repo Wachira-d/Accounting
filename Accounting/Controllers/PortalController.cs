@@ -49,7 +49,7 @@ public class PortalPublicController : ControllerBase
     private static readonly TimeSpan MagicMinimumDuration = TimeSpan.FromMilliseconds(800);
 
     /// <summary>รอบ 255 WP-12B ข้อ 8 — ขอลิงก์เข้าสู่ระบบทางอีเมล (ไม่ต้องใช้รหัสผ่าน) · <b>คำตอบเดียวทุกกรณี</b> 202 ·
-    /// เพดานต่ออีเมล + ต่อบริษัท (fail-closed) · ส่งเฉพาะอีเมลที่ผู้ขายเปิดสิทธิ์พอร์ทัลไว้</summary>
+    /// เพดานต่ออีเมล + ต่อ IP (fail-closed · ฝ่ายค้าน M7) · ส่งเฉพาะอีเมลที่ผู้ขายเปิดสิทธิ์พอร์ทัลไว้ · อีเมลเข้าคิว (M6) · เวลาตอบขั้นต่ำคงเดิม</summary>
     [HttpPost("magic-link")]
     [RequestSizeLimit(4 * 1024)]
     public async Task<ActionResult<ApiResponse<object>>> RequestMagicLink([FromBody] MagicLinkRequest req, CancellationToken ct)
@@ -58,11 +58,12 @@ public class PortalPublicController : ControllerBase
         var email = Accounting.Helpers.PortalMagicLinkPolicy.NormalizeEmail(req?.Email);
         if (req == null || req.CompanyId == Guid.Empty || _limiter == null)
             return BadRequest(new ApiResponse<object>(false, null, "คำขอไม่ถูกต้อง"));
-        var emailKey = Accounting.Helpers.PortalMagicLinkPolicy.Hash(email ?? "")[..16];
-        if (!await _limiter.TryConsumeAsync($"portal-magic:{req.CompanyId:N}:{emailKey}",
-                Accounting.Helpers.PortalMagicLinkPolicy.PerEmailPerMinute, Accounting.Helpers.PortalMagicLinkPolicy.PerEmailPerDay, ct, failClosed: true)
-            || !await _limiter.TryConsumeAsync($"portal-magic-co:{req.CompanyId:N}",
-                Accounting.Helpers.PortalMagicLinkPolicy.PerCompanyPerMinute, Accounting.Helpers.PortalMagicLinkPolicy.PerCompanyPerDay, ct, failClosed: true))
+        // รอบ 255 ฝ่ายค้าน M7: ต่อ IP + ต่ออีเมล (ไม่มีถังรวมของบริษัท — คนนอกทำให้ลูกค้าทุกคนของผู้ขายขอลิงก์ไม่ได้)
+        var ip = HttpContext?.Connection?.RemoteIpAddress?.ToString();
+        if (!await _limiter.TryConsumeAsync(Accounting.Helpers.PortalMagicLinkPolicy.IpBucket("req", ip),
+                Accounting.Helpers.PortalMagicLinkPolicy.PerIpPerMinute, Accounting.Helpers.PortalMagicLinkPolicy.PerIpPerDay, ct, failClosed: true)
+            || !await _limiter.TryConsumeAsync(Accounting.Helpers.PortalMagicLinkPolicy.EmailBucket(req.CompanyId, email),
+                Accounting.Helpers.PortalMagicLinkPolicy.PerEmailPerMinute, Accounting.Helpers.PortalMagicLinkPolicy.PerEmailPerDay, ct, failClosed: true))
             return StatusCode(429, new ApiResponse<object>(false, null, Accounting.Helpers.PortalMagicLinkPolicy.RateMessage));
         try { await _service.RequestMagicLinkAsync(req.CompanyId, email, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -82,7 +83,12 @@ public class PortalPublicController : ControllerBase
     {
         if (req == null || req.CompanyId == Guid.Empty || _limiter == null)
             return BadRequest(new ApiResponse<PortalLoginResponse>(false, null, Accounting.Helpers.PortalMagicLinkPolicy.InvalidMessage));
-        if (!await _limiter.TryConsumeAsync($"portal-magic-redeem:{req.CompanyId:N}", 30, 1000, ct, failClosed: true))
+        // รอบ 255 ฝ่ายค้าน M7: ต่อ IP + ต่อโทเคน (เดิมถังเดียวต่อบริษัท — คนนอกยิงขยะ 30 ครั้ง/นาทีแล้วลูกค้าจริงแลกลิงก์ไม่ได้)
+        var ip = HttpContext?.Connection?.RemoteIpAddress?.ToString();
+        if (!await _limiter.TryConsumeAsync(Accounting.Helpers.PortalMagicLinkPolicy.IpBucket("redeem", ip),
+                Accounting.Helpers.PortalMagicLinkPolicy.RedeemPerIpPerMinute, Accounting.Helpers.PortalMagicLinkPolicy.RedeemPerIpPerDay, ct, failClosed: true)
+            || !await _limiter.TryConsumeAsync(Accounting.Helpers.PortalMagicLinkPolicy.TokenBucket(req.Token),
+                Accounting.Helpers.PortalMagicLinkPolicy.RedeemPerTokenPerMinute, Accounting.Helpers.PortalMagicLinkPolicy.RedeemPerTokenPerDay, ct, failClosed: true))
             return StatusCode(429, new ApiResponse<PortalLoginResponse>(false, null, Accounting.Helpers.PortalMagicLinkPolicy.RateMessage));
         try
         {
@@ -96,7 +102,7 @@ public class PortalPublicController : ControllerBase
 
     /// <summary>รอบ 255 WP-12B ข้อ 8 — ส่งออก Excel (รูปแบบทั่วไป) ให้นักบัญชีของลูกค้า — ต้องมีโทเคนพอร์ทัล · เอกสารของผู้ติดต่อในโทเคนเท่านั้น</summary>
     [HttpGet("{companyId:guid}/export/accountant")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
     public async Task<ActionResult> ExportAccountant(Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate, CancellationToken ct)
     {
         var contactId = GetContactIdFromToken();
@@ -120,7 +126,7 @@ public class PortalPublicController : ControllerBase
         => Ok(new ApiResponse<PortalLoginResponse>(true, await _service.RefreshTokenAsync(request.RefreshToken)));
 
     [HttpGet("{companyId:guid}/payments")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
     public async Task<ActionResult<ApiResponse<List<PortalPaymentResponse>>>> GetPayments(Guid companyId)
     {
         var contactId = GetContactIdFromToken();
@@ -129,7 +135,7 @@ public class PortalPublicController : ControllerBase
     }
 
     [HttpGet("{companyId:guid}/documents")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
     public async Task<ActionResult<ApiResponse<List<PortalDocumentResponse>>>> GetDocuments(Guid companyId, [FromQuery] string? type)
     {
         var contactId = GetContactIdFromToken();
@@ -138,7 +144,7 @@ public class PortalPublicController : ControllerBase
     }
 
     [HttpGet("{companyId:guid}/documents/{documentId:guid}")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
     public async Task<ActionResult<ApiResponse<PortalDocumentResponse>>> GetDocument(Guid companyId, Guid documentId)
     {
         var contactId = GetContactIdFromToken();
@@ -147,7 +153,7 @@ public class PortalPublicController : ControllerBase
     }
 
     [HttpGet("{companyId:guid}/documents/{documentId:guid}/pdf")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
     public async Task<ActionResult> DownloadPdf(Guid companyId, Guid documentId)
     {
         var contactId = GetContactIdFromToken();
@@ -157,7 +163,7 @@ public class PortalPublicController : ControllerBase
     }
 
     [HttpGet("{companyId:guid}/statement")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
     public async Task<ActionResult<ApiResponse<PortalStatementResponse>>> GetStatement(Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate)
     {
         var contactId = GetContactIdFromToken();
@@ -177,7 +183,7 @@ public class PortalPublicController : ControllerBase
     /// <summary>รอบ 250 WP-03 (A G-01 · D §9.1): ตัวเลือกชำระของใบนี้ + QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (data URI · ฝังยอดค้างของใบจากฐาน)
     /// — ต้องมีโทเค็นพอร์ทัล และใบต้องเป็นของผู้ติดต่อในโทเค็น (ยอดค้างเป็นข้อมูลของลูกค้ารายนั้น)</summary>
     [HttpGet("{companyId:guid}/documents/{documentId:guid}/payment-options")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
     public async Task<ActionResult<ApiResponse<Models.DTOs.Cms.StorefrontPaymentOptions>>> GetDocumentPaymentOptions(
         Guid companyId, Guid documentId, CancellationToken ct)
     {
@@ -196,7 +202,7 @@ public class PortalPublicController : ControllerBase
     /// the document's ContactId must match the JWT's contact id, so
     /// one customer can't upload to another customer's document.</summary>
     [HttpPost("{companyId:guid}/documents/{documentId:guid}/upload-slip")]
-    [Authorize]
+    [Authorize(AuthenticationSchemes = Accounting.Helpers.PortalTokenPolicy.Scheme)]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<ActionResult<ApiResponse<PortalSlipUploadResponse>>> UploadDocumentSlip(
         Guid companyId, Guid documentId, IFormFile? file, [FromForm] decimal? amount, [FromForm] string? bankRef = null)
@@ -216,11 +222,7 @@ public class PortalPublicController : ControllerBase
         catch (Accounting.Helpers.BusinessRuleException ex) { return StatusCode(ex.StatusCode, new ApiResponse<PortalSlipUploadResponse>(false, null!, ex.Message)); }
     }
 
+    /// <summary>รอบ 255 WP-12B ฝ่ายค้าน H1: ตัวตนจาก scheme "Portal" (PortalAuthenticationHandler ตรวจโทเคน access · สิทธิ์ยังเปิด · บริษัทในเส้นทางตรงโทเคนแล้ว)</summary>
     private Guid? GetContactIdFromToken()
-    {
-        var authHeader = Request.Headers.Authorization.FirstOrDefault();
-        if (string.IsNullOrEmpty(authHeader) || !authHeader.StartsWith("Bearer "))
-            return null;
-        return _service.ExtractContactIdFromToken(authHeader["Bearer ".Length..]);
-    }
+        => Guid.TryParse(User.FindFirst(Accounting.Helpers.PortalTokenPolicy.ClaimContactId)?.Value, out var id) ? id : null;
 }

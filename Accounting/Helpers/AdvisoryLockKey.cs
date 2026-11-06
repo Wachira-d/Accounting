@@ -175,6 +175,10 @@ public static class AdvisoryLockKey
     /// <c>CreateDocumentAsync</c>/<c>ApproveDocumentAsync</c> เปิดธุรกรรมของตัวเอง — เดิมห่อด้วยธุรกรรม + <c>FOR UPDATE</c> ⇒ EF โยน
     /// "connection is already in a transaction" ทุกรอบ (รายการประจำชนิดเอกสารไม่เคยออกใบได้ทั้งทาง cron และ "สร้างทันที")</summary>
     public const string RecurringRun = "recurring-run";
+    /// <summary>รอบ 255 WP-12B (ฝ่ายค้าน LOW): รับสลิปแจ้งโอน (ตรวจซ้ำ + ยอดสลิปรอตรวจ + สร้างรายการ เป็นหนึ่งเดียว) — part = "submit" ต่อบริษัท</summary>
+    public const string SlipEvidence = "slip-evidence";
+    /// <summary>รอบ 255 WP-12B (ฝ่ายค้าน M5): ยอมรับคู่ค้า/ตรวจเพดานจำนวนคู่ — part = "accept" ต่อบริษัท (ล็อกทั้งสองบริษัทเรียงตาม Guid)</summary>
+    public const string TradingPartnerAccept = "partner-accept";
 
     /// <summary>คีย์ล็อก "ยอดคงค้างของใบมัดจำ" ตัวเดียวของทุกทางเข้าที่อ่าน-แล้ว-เขียนยอดรับรู้/ตัดชำระ (รอบ 194 R2 · P-a):
     /// ปุ่มรับรู้/ริบ · ที่พัก · CMS (<c>RealizeDepositAsync</c> — session lock ผ่าน <c>JobLock</c> เพราะเส้นริบเปิดธุรกรรมของตัวเองหลายขั้น) ·

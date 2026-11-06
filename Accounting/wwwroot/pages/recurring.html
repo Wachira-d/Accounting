@@ -740,7 +740,7 @@ const Page = {
       tbody.innerHTML = items.map(r => `<tr>
         <td><span class="font-medium">${Layout.esc(r.name || '-')}</span></td>
         <td>${Layout.esc(Layout.docTypeLabel(r.documentType || '-'))}</td>
-        <td>${Layout.esc(freqMap[r.frequency] || r.frequency || '-')}</td>
+        <td>${Layout.esc(r.frequencyLabel || freqMap[r.frequency] || r.frequency || '-')}</td>
         <td>${Layout.esc(r.contactName || '-')}</td>
         <td class="text-right">${Layout.money(r.amount)}</td>
         <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
@@ -1383,7 +1383,7 @@ const Page = {
       document.getElementById('detailContent').innerHTML = `
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div><span class="text-gray-500 text-sm">ประเภทเอกสาร:</span><br><strong>${Layout.esc(tdCombined ? 'ใบแจ้งหนี้/ใบกำกับภาษี (ใบเดียว หัวรวม)' : Layout.docTypeLabel(r.documentType||r.type))}</strong></div>
-          <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${Layout.esc(freqMap[r.frequency]||r.frequency)}</strong></div>
+          <div><span class="text-gray-500 text-sm">ความถี่:</span><br><strong>${Layout.esc(r.frequencyLabel||freqMap[r.frequency]||r.frequency)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันเริ่มต้น:</span><br><strong>${Layout.date(r.startDate)}</strong></div>
           <div><span class="text-gray-500 text-sm">วันสิ้นสุด:</span><br><strong>${r.endDate ? Layout.date(r.endDate) : 'ไม่กำหนด'}</strong></div>
           <div><span class="text-gray-500 text-sm">ผู้ติดต่อ:</span><br><strong>${Layout.esc(r.contactName||'-')}</strong></div>

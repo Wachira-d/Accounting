@@ -52,6 +52,9 @@ public class PartnerExchangeRound255Tests
         Assert.False(ApiScopePolicy.Satisfies("contacts:write", ApiScopePolicy.DocumentsRead));
         Assert.False(ApiScopePolicy.Satisfies("", ApiScopePolicy.DocumentsRead));
         Assert.False(ApiScopePolicy.Satisfies("bank:write", "bank:write2"));
+        // ฝ่ายค้าน LOW: write ครอบ read เฉพาะหมวด documents — หมวดอื่นต้อง :read ตรงตัว
+        Assert.False(ApiScopePolicy.Satisfies("contacts:write", "contacts:read"));
+        Assert.True(ApiScopePolicy.Satisfies("contacts:read", "contacts:read"));
     }
 
     // ═══════════ ข้อ 7: ใบซื้อร่างจากคู่ค้า (N3) ═══════════
@@ -74,20 +77,85 @@ public class PartnerExchangeRound255Tests
     [Fact]
     public void R255_หลักฐานภาษีซื้อ_N3_ต้องมีต้นฉบับถึงผู้รับ_ทิศตรงข้ามใบทั่วไปไม่ถูกกระทบ()
     {
-        Assert.Equal(PartnerInputVatEvidence.EtaxVerified, PartnerInputVatEvidence.Of(true, signed: true, stamped: true, signedFileDelivered: true));
-        Assert.Equal(PartnerInputVatEvidence.AwaitingTimestamp, PartnerInputVatEvidence.Of(true, true, false, true));
-        // ไฟล์ที่ลงลายมือชื่อไม่ถึงผู้รับ = ผู้รับไม่มีต้นฉบับ ⇒ ต้องใช้กระดาษ (ไม่แต่ง EtaxVerified)
-        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(true, true, true, signedFileDelivered: false));
-        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(true, false, false, false));
-        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(sourceIsTaxInvoice: false, true, true, true));
+        // ฝ่ายค้าน H2: ระบบตั้งได้แค่ AwaitingTimestamp/PaperRequired — ไม่มีอินพุตใดได้ค่าที่ปลดด่าน
+        Assert.Equal(PartnerInputVatEvidence.AwaitingTimestamp, PartnerInputVatEvidence.Of(true, signed: true, signedFileDelivered: true));
+        // ไฟล์ที่ลงลายมือชื่อไม่ถึงผู้รับ = ผู้รับไม่มีต้นฉบับ ⇒ ต้องใช้กระดาษ
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(true, true, signedFileDelivered: false));
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(true, false, false));
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.Of(sourceIsTaxInvoice: false, true, true));
+        foreach (var a in new[] { true, false }) foreach (var b in new[] { true, false }) foreach (var c in new[] { true, false })
+            Assert.True(PartnerInputVatEvidence.BlocksClaim(PartnerInputVatEvidence.Of(a, b, c)));
+        // ค่าที่ปลดด่านมาจากผู้รับยืนยันเท่านั้น
+        Assert.Equal(PartnerInputVatEvidence.EtaxVerified, PartnerInputVatEvidence.Confirmed(stampedEtax: true));
+        Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, PartnerInputVatEvidence.Confirmed(stampedEtax: false));
         Assert.True(PartnerInputVatEvidence.BlocksClaim(PartnerInputVatEvidence.PaperRequired));
         Assert.True(PartnerInputVatEvidence.BlocksClaim(PartnerInputVatEvidence.AwaitingTimestamp));
+        Assert.True(PartnerInputVatEvidence.BlocksClaim(PartnerInputVatEvidence.SourceVoided));
         Assert.False(PartnerInputVatEvidence.BlocksClaim(PartnerInputVatEvidence.EtaxVerified));
         Assert.False(PartnerInputVatEvidence.BlocksClaim(PartnerInputVatEvidence.PaperConfirmed));
         Assert.False(PartnerInputVatEvidence.BlocksClaim(null));   // ใบซื้อทั่วไป
         Assert.Null(PartnerInputVatEvidence.ConfirmProblem(PartnerInputVatEvidence.PaperRequired));
+        Assert.Null(PartnerInputVatEvidence.ConfirmProblem(PartnerInputVatEvidence.AwaitingTimestamp));
+        Assert.Equal(PartnerInputVatEvidence.SourceVoidedMessage, PartnerInputVatEvidence.ConfirmProblem(PartnerInputVatEvidence.SourceVoided));
         Assert.NotNull(PartnerInputVatEvidence.ConfirmProblem(PartnerInputVatEvidence.PaperConfirmed));
         Assert.NotNull(PartnerInputVatEvidence.ConfirmProblem(null));
+    }
+
+    [Fact]
+    public void R255_ฝ่ายค้าน_H3_Merge_อัปเกรดเฉพาะใบที่ติดด่าน_ทิศตรงข้ามค่าที่ยืนยันแล้วคงเดิม()
+    {
+        Assert.Equal(PartnerInputVatEvidence.AwaitingTimestamp,
+            PartnerInputVatEvidence.Merge(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.AwaitingTimestamp));
+        Assert.Equal(PartnerInputVatEvidence.AwaitingTimestamp,
+            PartnerInputVatEvidence.Merge(PartnerInputVatEvidence.AwaitingTimestamp, PartnerInputVatEvidence.PaperRequired));
+        foreach (var keep in new[] { PartnerInputVatEvidence.PaperConfirmed, PartnerInputVatEvidence.EtaxVerified, PartnerInputVatEvidence.SourceVoided })
+            Assert.Equal(keep, PartnerInputVatEvidence.Merge(keep, PartnerInputVatEvidence.AwaitingTimestamp));
+    }
+
+    [Fact]
+    public void R255_ฝ่ายค้าน_M1_แก้ยอดใบจากคู่ค้า_กลับเป็นต้องได้ต้นฉบับ_ทิศตรงข้ามไม่แก้ยอด_ใบทั่วไป_ไม่แตะ()
+    {
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.AfterEdit(PartnerInputVatEvidence.PaperConfirmed, amountsChanged: true));
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.AfterEdit(PartnerInputVatEvidence.EtaxVerified, true));
+        Assert.Equal(PartnerInputVatEvidence.PaperRequired, PartnerInputVatEvidence.AfterEdit(PartnerInputVatEvidence.AwaitingTimestamp, true));
+        Assert.Equal(PartnerInputVatEvidence.SourceVoided, PartnerInputVatEvidence.AfterEdit(PartnerInputVatEvidence.SourceVoided, true));
+        Assert.Equal(PartnerInputVatEvidence.PaperConfirmed, PartnerInputVatEvidence.AfterEdit(PartnerInputVatEvidence.PaperConfirmed, amountsChanged: false));
+        Assert.Null(PartnerInputVatEvidence.AfterEdit(null, true));
+        var lines = new[] { (2m, 50m, 100m, 7m) };
+        var f1 = PartnerInputVatEvidence.AmountFingerprint(100m, 7m, 107m, lines);
+        Assert.Equal(f1, PartnerInputVatEvidence.AmountFingerprint(100.00m, 7.0m, 107m, lines));
+        Assert.NotEqual(f1, PartnerInputVatEvidence.AmountFingerprint(100m, 7m, 107m, new[] { (3m, 50m, 100m, 7m) }));
+        Assert.NotEqual(f1, PartnerInputVatEvidence.AmountFingerprint(100m, 0m, 100m, lines));
+    }
+
+    [Fact]
+    public void R255_ฝ่ายค้าน_LOW_วันที่50ทวิ_เท่าวันจ่าย_ทิศตรงข้ามไม่มีบรรทัด_ใช้วันออกใบ()
+    {
+        var issued = new DateTime(2026, 11, 20);
+        Assert.Equal(new DateTime(2026, 11, 5), PartnerExchangeRules.WhtCertificateDate(new[] { new DateTime(2026, 11, 1), new DateTime(2026, 11, 5) }, issued));
+        Assert.Equal(issued, PartnerExchangeRules.WhtCertificateDate(Array.Empty<DateTime>(), issued));
+        Assert.Equal(issued, PartnerExchangeRules.WhtCertificateDate(new[] { default(DateTime) }, issued));
+    }
+
+    [Fact]
+    public void R255_ฝ่ายค้าน_M4_ยอมรับได้เฉพาะรอยอมรับ_ทิศตรงข้ามปฏิเสธ_ระงับ_ต้องเชิญใหม่()
+    {
+        Assert.Null(PartnerExchangeRules.AcceptProblem(TradingPartnershipStatus.Pending));
+        Assert.Contains("เชิญใหม่", PartnerExchangeRules.AcceptProblem(TradingPartnershipStatus.Rejected));
+        Assert.Contains("เชิญใหม่", PartnerExchangeRules.AcceptProblem(TradingPartnershipStatus.Suspended));
+    }
+
+    [Fact]
+    public void R255_ฝ่ายค้าน_LOW_ป้ายความถี่จากเซิร์ฟเวอร์_ทุกNเดือนชนะ_แจ้งล่วงหน้าใช้รอบจริง()
+    {
+        Assert.Equal("ทุก 2 เดือน", RecurringSchedule.FrequencyLabel(RecurringFrequency.Monthly, 2));
+        Assert.Equal("ทุก 4 เดือน", RecurringSchedule.FrequencyLabel(RecurringFrequency.Daily, 4));
+        Assert.Equal("รายไตรมาส", RecurringSchedule.FrequencyLabel(RecurringFrequency.Quarterly, null));   // ทิศตรงข้าม: ไม่ตั้ง = ความถี่เดิม
+        Assert.Equal("รายไตรมาส", RecurringSchedule.FrequencyLabel(RecurringFrequency.Quarterly, 0));      // ค่านอกช่วง ไม่มีผล (ตรงกับ Next)
+        var today = new DateTime(2026, 11, 1);
+        // Daily + ทุก 2 เดือน = รอบจริงสองเดือน ⇒ แจ้งได้ · Daily เฉย ๆ ⇒ ไม่แจ้ง
+        Assert.True(RecurringUpcomingNotice.ShouldNotify(true, 3, true, RecurringFrequency.Daily, today.AddDays(2), null, 0, null, today, null, intervalMonths: 2));
+        Assert.False(RecurringUpcomingNotice.ShouldNotify(true, 3, true, RecurringFrequency.Daily, today.AddDays(2), null, 0, null, today, null));
     }
 
     private static (Document Doc, Contact Supplier) CompletePurchase(string? evidence)
@@ -110,6 +178,10 @@ public class PartnerExchangeRound255Tests
         Assert.Contains(r1.MissingFields, f => f.Contains("ต้นฉบับใบกำกับ"));
         var (stampWait, s2) = CompletePurchase(PartnerInputVatEvidence.AwaitingTimestamp);
         Assert.False(TaxInvoiceCompletenessChecker.Evaluate(stampWait, s2).IsClaimable);
+        var (voided, s3) = CompletePurchase(PartnerInputVatEvidence.SourceVoided);
+        var r3 = TaxInvoiceCompletenessChecker.Evaluate(voided, s3);
+        Assert.False(r3.IsClaimable);
+        Assert.Contains(r3.MissingFields, f => f.Contains("ผู้ขายยกเลิก"));
         // ทิศตรงข้าม: ยืนยันแล้ว/e-Tax ครบ/ใบซื้อทั่วไป (null) ⇒ ครบเหมือนเดิม
         foreach (var ok in new[] { PartnerInputVatEvidence.PaperConfirmed, PartnerInputVatEvidence.EtaxVerified, null })
         {
@@ -154,6 +226,22 @@ public class PartnerExchangeRound255Tests
         Assert.StartsWith("https://acc.example.co.th/portal.html?company=", PortalMagicLinkPolicy.Link("https://acc.example.co.th/", Guid.NewGuid(), t));
         Assert.Equal("ap@shop.co.th", PortalMagicLinkPolicy.NormalizeEmail("  AP@Shop.co.th "));
         Assert.Null(PortalMagicLinkPolicy.NormalizeEmail("not-an-email"));
+    }
+
+    [Fact]
+    public void R255_ฝ่ายค้าน_M6_M7_คิวลิงก์วิเศษ_ข้ามเมื่อปิดสิทธิ์_ค้างนาน_ถังตัวนับไม่รวมทั้งบริษัท()
+    {
+        var now = new DateTime(2026, 11, 6, 3, 0, 0, DateTimeKind.Utc);
+        Assert.Null(PortalMagicLinkPolicy.QueueSkipReason(true, now.AddMinutes(-2), now));
+        Assert.NotNull(PortalMagicLinkPolicy.QueueSkipReason(false, now, now));
+        Assert.NotNull(PortalMagicLinkPolicy.QueueSkipReason(true, now - PortalMagicLinkPolicy.QueueStaleAfter - TimeSpan.FromMinutes(1), now));
+        // ถังต่ออีเมล/IP/โทเคนแยกกัน · ไม่มีค่าดิบในคีย์ · IP ต่างกัน = คนละถัง (คนนอกไม่ทำให้ลูกค้าคนอื่นถูกกั้น)
+        var co = Guid.NewGuid();
+        Assert.DoesNotContain("ap@shop", PortalMagicLinkPolicy.EmailBucket(co, "ap@shop.co.th"));
+        Assert.NotEqual(PortalMagicLinkPolicy.IpBucket("req", "1.1.1.1"), PortalMagicLinkPolicy.IpBucket("req", "2.2.2.2"));
+        Assert.NotEqual(PortalMagicLinkPolicy.IpBucket("req", "1.1.1.1"), PortalMagicLinkPolicy.IpBucket("redeem", "1.1.1.1"));
+        Assert.DoesNotContain(co.ToString("N"), PortalMagicLinkPolicy.IpBucket("req", "1.1.1.1"));
+        Assert.NotEqual(PortalMagicLinkPolicy.TokenBucket("a"), PortalMagicLinkPolicy.TokenBucket("b"));
     }
 
     [Fact]

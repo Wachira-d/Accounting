@@ -2885,6 +2885,12 @@ public partial class DocumentService : IDocumentService
         return srcType is DocumentType.Invoice or DocumentType.BillingNote;
     }
 
+    /// <summary>รอบ 255 ฝ่ายค้าน M1: ลายนิ้วมือยอดของใบ (บรรทัดที่ยังอยู่ ตามลำดับ) — สูตรเดียว PartnerInputVatEvidence.AmountFingerprint</summary>
+    private string PartnerFingerprint(Document doc)
+        => Accounting.Helpers.PartnerInputVatEvidence.AmountFingerprint(doc.SubTotal, doc.VatAmount, doc.TotalAmount,
+            doc.Lines.Where(l => _db.Entry(l).State != EntityState.Deleted).OrderBy(l => l.LineOrder)
+                .Select(l => (l.Quantity, l.UnitPrice, l.Amount, l.VatAmount)));
+
     public async Task<DocumentResponse> UpdateDocumentAsync(Guid companyId, Guid documentId, UpdateDocumentRequest request)
     {
         var doc = await _db.Documents
@@ -2914,6 +2920,8 @@ public partial class DocumentService : IDocumentService
         var updPayeesBefore = Accounting.Helpers.WhtPayeeSplit.Portions(doc.ContactId, doc.WhtPayeeContactId,
             Accounting.Helpers.WhtPayeeSplit.LinesOf(doc), doc.WithholdingTaxAmount);
         var updWasDraftOrRejected = doc.Status is DocumentStatus.Draft or DocumentStatus.Rejected;
+        // รอบ 255 ฝ่ายค้าน M1: ลายนิ้วมือยอดก่อนแก้ของใบซื้อจากคู่ค้า (ยอด · VAT · บรรทัด) — เทียบตอนท้าย
+        var partnerFingerprintBefore = doc.PartnerSourceLinkId != null ? PartnerFingerprint(doc) : null;
 
         // ── รอบ 194 — ประเภทเงินมัดจำ (ด่านเดียวกับตอนสร้าง) ──
         // null = คงประเภทเดิม (ใบที่มีประเภท ⇒ บรรทัดที่ส่งมาถูกจัดรูปตามประเภทเดิมอีกครั้ง — ฟอร์ม/API ส่ง VAT 7 มากับประเภท
@@ -3725,6 +3733,29 @@ public partial class DocumentService : IDocumentService
                         LegalReference = "ท.ป.4/2528 (50 ทวิ ออกในนามผู้มีเงินได้)",
                         DocumentNumber = doc.DocumentNumber,
                     }),
+                    Timestamp = DateTime.UtcNow,
+                });
+            }
+        }
+
+        // รอบ 255 ฝ่ายค้าน M1: ผู้รับแก้ยอด/VAT/บรรทัดของใบจากคู่ค้า ⇒ ใบไม่ตรงต้นฉบับของผู้ขายแล้ว — หลักฐานกลับเป็น "ต้องได้ต้นฉบับ" + หมายเหตุ + audit
+        // (ตัวตัดสินเดียว PartnerInputVatEvidence.AfterEdit · ใบซื้อทั่วไป/ไม่แก้ยอด ไม่แตะ)
+        if (partnerFingerprintBefore != null)
+        {
+            var evidenceBefore = doc.PartnerInputVatEvidence;
+            var evidenceAfter = Accounting.Helpers.PartnerInputVatEvidence.AfterEdit(evidenceBefore, PartnerFingerprint(doc) != partnerFingerprintBefore);
+            if (evidenceAfter != evidenceBefore)
+            {
+                doc.PartnerInputVatEvidence = evidenceAfter;
+                doc.InternalNotes = string.IsNullOrWhiteSpace(doc.InternalNotes)
+                    ? Accounting.Helpers.PartnerInputVatEvidence.EditedNote
+                    : doc.InternalNotes + "\n" + Accounting.Helpers.PartnerInputVatEvidence.EditedNote;
+                _db.AddChainedAuditLog(new AuditLog
+                {
+                    CompanyId = companyId, Action = AuditAction.Update, EntityType = "Document", EntityId = doc.Id.ToString(),
+                    OldValues = System.Text.Json.JsonSerializer.Serialize(new { inputVatEvidence = evidenceBefore }),
+                    NewValues = System.Text.Json.JsonSerializer.Serialize(new { inputVatEvidence = evidenceAfter, reason = "PartnerDraftAmountsEdited",
+                        ruleCode = Accounting.Helpers.PartnerExchangeRules.RuleCode, legalReference = Accounting.Helpers.PartnerExchangeRules.LegalReference }),
                     Timestamp = DateTime.UtcNow,
                 });
             }
@@ -6749,6 +6780,9 @@ public partial class DocumentService : IDocumentService
 
         if (doc.Status != DocumentStatus.Draft && doc.Status != DocumentStatus.WaitingApproval)
             throw new InvalidOperationException("อนุมัติได้เฉพาะเอกสาร Draft หรือ WaitingApproval เท่านั้น");
+
+        // รอบ 255 ฝ่ายค้าน M2: ใบซื้อจากคู่ค้า NextAcc — ตรวจต้นทางสดก่อนตัวตรวจ §86/4 (ผู้ขายยกเลิกใบ/e-Tax ⇒ SourceVoided ⇒ ภาษีซื้อพัก + ข้อความไทยในรายการที่ขาด)
+        if (_crossTenantWorkflow != null) await _crossTenantWorkflow.MarkIfPartnerSourceVoidedAsync(companyId, doc);
 
         // รอบ 205 ทีม W1 (R-04): ใบที่เลื่อนนับโควตามาจากตอนสร้าง (ใบร่างจากการจอง/คำสั่งซื้อหน้าเว็บ) — ตรวจ "บล็อกได้ไหม" ที่นี่ก่อนออกเลข
         // (ใบเสนอราคาเกินโควตา ⇒ ปฏิเสธพร้อมทางไปต่อ เหมือนตอนสร้างของใบปกติ · ใบที่กฎหมายบังคับไม่มีวันถูกบล็อก) · ตัวนับเพิ่มในธุรกรรมด้านล่าง
@@ -10630,6 +10664,10 @@ public partial class DocumentService : IDocumentService
             }
             catch (Exception ex) { _logger.LogWarning(ex, "DocumentVoided notification failed for {DocId}", documentId); }
         }
+
+        // รอบ 255 ฝ่ายค้าน M2: ใบที่ส่งถึงคู่ค้า NextAcc ถูกยกเลิก ⇒ ใบซื้อของผู้รับติด "ต้นทางถูกยกเลิก" (ห้ามลงภาษีซื้อ) + แจ้งผู้รับ ·
+        // หลัง commit · ล้ม = LogError ภายใน (ไม่ย้อนการยกเลิกของผู้ขาย)
+        if (_crossTenantWorkflow != null) await _crossTenantWorkflow.OnSourceVoidedAsync(companyId, doc.Id);
 
         // Webhook — DocumentVoided fires last so partners observe a
         // fully-settled state (linked payments already reversed, JE
@@ -21444,7 +21482,10 @@ public partial class DocumentService : IDocumentService
             : null,
         // รอบ 250 WP-03 (D §3.4 · F2 ข้อ 5): หน้าเว็บวาดแผงสินทรัพย์ตามค่านี้ (เดิมเขียนกติกาชนิด/prefix 12·118 เองใน JS)
         HasAssetCandidateLines: FixedAssetService.HasAssetCandidateLines(d.DocumentType,
-            d.Lines.Where(l => !l.IsDeleted).Select(l => l.Account != null ? l.Account.AccountCode : null)));
+            d.Lines.Where(l => !l.IsDeleted).Select(l => l.Account != null ? l.Account.AccountCode : null)),
+        // รอบ 255 ฝ่ายค้าน M1: echo หลักฐานภาษีซื้อของใบจากคู่ค้า + ป้ายไทยตัวเดียว
+        PartnerInputVatEvidence: d.PartnerInputVatEvidence,
+        PartnerInputVatEvidenceLabel: d.PartnerInputVatEvidence == null ? null : Accounting.Helpers.PartnerInputVatEvidence.Label(d.PartnerInputVatEvidence));
     }
 
     /// <summary>งวดที่ภาษีซื้อของใบนี้จะถูกเคลมจริง เป็นสตริง "yyyy-MM" (ค.ศ.)

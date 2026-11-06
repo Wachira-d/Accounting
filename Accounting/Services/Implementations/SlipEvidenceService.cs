@@ -51,91 +51,112 @@ public class SlipEvidenceService
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
         if (_intents == null)
             throw new BusinessRuleException("ระบบรับสลิปยังไม่พร้อม — กรุณาติดต่อผู้ขาย", DocumentSlipIntents.RuleCode, 503);
+        // รอบ 255 ฝ่ายค้าน LOW: ชนิดไฟล์จากไบต์จริงทุกช่องทาง (ไม่รับ SVG/HTML ที่ตั้ง Content-Type เป็นรูป) · นามสกุลที่เก็บจากชนิดนั้น
+        var sniffed = SlipEvidenceRule.DetectPublicType(file.Bytes);
+        var ext = SlipEvidenceRule.ExtensionFor(sniffed)
+            ?? throw new ArgumentException("รองรับเฉพาะรูปภาพ (JPEG/PNG/WEBP) หรือ PDF ของสลิป");
+        var fromPayLink = channel == ChannelPayLink;
 
-        // รอบ 250 ฝ่ายค้าน H2/L4: ตัดสินที่ยอดค้างของเอกสาร (สลิปงวด 2 รับได้ · ใบชำระครบ/ยอดเกินยอดค้าง = ปฏิเสธ) — ตัวตัดสินเดียว DocumentSlipIntents
-        var pay = amount ?? doc.BalanceDue;
-        if (DocumentSlipIntents.UploadProblem(doc.Status, doc.BalanceDue, pay) is string uploadProblem)
-            throw new BusinessRuleException(uploadProblem, DocumentSlipIntents.RuleCode, 400);
-
-        // รอบ 252 WP-12A (G-T5): กันซ้ำด้วยแฮชไฟล์ต้นฉบับ (ก่อนย่อรูป) + เลขอ้างอิงโอน — ทั้งบริษัท (สลิปเดียวจ่ายสองใบไม่ได้) · ก่อนเขียนไฟล์/สร้างรายการ
-        var slipSha = SlipEvidenceRule.Sha256Hex(file.Bytes);
-        var slipRef = SlipEvidenceRule.NormalizeRef(bankRef);
-        var sameFile = await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipFileSha256 == slipSha, ct);
-        var sameRef = slipRef != null && await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipBankRef == slipRef, ct);
-        if (SlipEvidenceRule.DuplicateProblem(sameFile, sameRef) is string dupProblem)
-            throw new BusinessRuleException(dupProblem, SlipEvidenceRule.RuleDuplicate, 409);
-
-        // เก็บผ่านที่เก็บกลาง (Local/S3 — ทีม FS 2026-11-02 ห้ามแตะดิสก์ตรง) · รูปผ่าน ImageProcessingService (Slip profile) · PDF เก็บตามเดิม
-        var storage = _storage ?? _images?.Storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
-        var relDir = $"uploads/portal-slips/{DateTime.UtcNow:yyyy-MM}";
-        var absDir = System.IO.Path.Combine(storage.Locator.RelativeBase, "wwwroot", relDir);
-        string storedName; string absPath; string relUrl;
-        if (_images != null && _images.IsProcessableImage(file.ContentType))
+        SlipEvidenceResult? result = null;
+        // รอบ 255 ฝ่ายค้าน LOW: ตรวจซ้ำ + ยอดสลิปรอตรวจ + สร้างรายการ ภายใต้ล็อกต่อบริษัท — สองคำขอพร้อมกันไม่ผ่านด่านทั้งคู่
+        var ran = await JobLock.RunExclusiveAsync(_db, AdvisoryLockKey.SlipEvidence, "submit", async () =>
         {
-            using var s = new System.IO.MemoryStream(file.Bytes, writable: false);
-            var processed = await _images.ProcessAndSaveAsync(s, file.ContentType, file.FileName, absDir, "/" + relDir, ImageProfile.Slip);
-            absPath = processed.AbsolutePath;
-            storedName = System.IO.Path.GetFileName(absPath);
-            relUrl = processed.RelativeUrl;
-        }
-        else
-        {
-            var ext = System.IO.Path.GetExtension(file.FileName);
-            if (string.IsNullOrWhiteSpace(ext)) ext = file.ContentType == "application/pdf" ? ".pdf" : ".bin";
-            storedName = $"{Guid.NewGuid():N}{ext}";
-            absPath = System.IO.Path.Combine(absDir, storedName);
-            using (var fs = new System.IO.MemoryStream(file.Bytes, writable: false)) await storage.WriteAsync(absPath, fs, file.ContentType);
-            relUrl = "/" + relDir + "/" + storedName;
-        }
+            await _db.Entry(doc).ReloadAsync(ct);
+            // รอบ 250 ฝ่ายค้าน H2/L4: ตัดสินที่ยอดค้างของเอกสาร (สลิปงวด 2 รับได้ · ใบชำระครบ/ยอดเกินยอดค้าง = ปฏิเสธ) — ตัวตัดสินเดียว DocumentSlipIntents
+            var pay = amount ?? doc.BalanceDue;
+            if (DocumentSlipIntents.UploadProblem(doc.Status, doc.BalanceDue, pay) is string uploadProblem)
+                throw new BusinessRuleException(uploadProblem, DocumentSlipIntents.RuleCode, 400);
+            // สลิปรอตรวจของใบนี้รวมสลิปใหม่ต้องไม่เกินยอดค้าง (ทั้งพอร์ทัลและหน้าชำระ)
+            var openStatuses = await _db.PaymentIntents.AsNoTracking()
+                .Where(i => i.CompanyId == companyId && i.SourceKind == PaymentSourceKind.Document && i.SourceId == doc.Id
+                    && i.MethodKind == PaymentMethodKind.ManualSlip)
+                .Select(i => new { i.Status, i.Amount }).ToListAsync(ct);
+            var pendingSum = openStatuses.Where(i => PaymentIntentPolicy.IsOpen(i.Status)).Sum(i => i.Amount);
+            if (SlipEvidenceRule.PendingProblem(pendingSum, pay, doc.BalanceDue) is string pendingProblem)
+                throw new BusinessRuleException(pendingProblem, DocumentSlipIntents.RuleCode, 409);
 
-        // ความจริงเรื่องเงิน = PaymentIntent (manual-slip) รอยืนยัน — สลิปแต่ละใบเป็นรายการของตัวเอง (ฝ่ายค้าน H2) ·
-        // ล้ม ⇒ ลบไฟล์ที่เพิ่งเขียน (ฝ่ายค้าน L4 — ไม่เก็บข้อมูลผู้โอนกำพร้า) แล้วโยนต่อ
-        PaymentIntent intent;
-        try
-        {
-            intent = await _intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
-                PaymentSourceKind.Document, doc.Id, pay, PaymentMethodKind.ManualSlip,
-                Description: PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl),
-                ContactId: doc.ContactId),
-                providerCode: Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code, ct: ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            try { await storage.DeleteAsync(absPath); } catch (Exception delEx) when (delEx is not OperationCanceledException) { _ = delEx; }
-            if (ex is BusinessRuleException) throw;
-            // ข้อความไทยของ StartAsync (InvalidOperationException) ส่งต่อตรง · อื่น ๆ = ข้อความกลาง (ไม่รั่วข้อความภายใน)
-            throw new BusinessRuleException(ex is InvalidOperationException ? ex.Message : "บันทึกสลิปไม่สำเร็จ — กรุณาแนบอีกครั้ง หรือติดต่อผู้ขาย",
-                ex, DocumentSlipIntents.RuleCode, 409);
-        }
+            // รอบ 252 WP-12A (G-T5): กันซ้ำด้วยแฮชไฟล์ต้นฉบับ (ก่อนย่อรูป) + เลขอ้างอิงโอน — ทั้งบริษัท (สลิปเดียวจ่ายสองใบไม่ได้) · ก่อนเขียนไฟล์/สร้างรายการ
+            var slipSha = SlipEvidenceRule.Sha256Hex(file.Bytes);
+            var slipRef = SlipEvidenceRule.NormalizeRef(bankRef);
+            var sameFile = await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipFileSha256 == slipSha, ct);
+            var sameRef = slipRef != null && await _db.PaymentIntents.AsNoTracking().AnyAsync(i => i.CompanyId == companyId && i.SlipBankRef == slipRef, ct);
+            if (SlipEvidenceRule.DuplicateProblem(sameFile, sameRef) is string dupProblem)
+                throw new BusinessRuleException(dupProblem, SlipEvidenceRule.RuleDuplicate, 409);
 
-        // หลักฐานกันซ้ำบนรายการเดียวกับที่คนยืนยัน (ไม่ใช่ตารางที่สอง) · เลขอ้างอิงเป็นตัวระบุตัวให้ BankReceiptAutoSettle เมื่อรายการเดินบัญชีจริงมาถึง
-        await _db.PaymentIntents.Where(i => i.Id == intent.Id && i.CompanyId == companyId)
-            .ExecuteUpdateAsync(u => u.SetProperty(i => i.SlipFileSha256, slipSha).SetProperty(i => i.SlipBankRef, slipRef), ct);
+            // เก็บผ่านที่เก็บกลาง (Local/S3) · รอบ 255 ฝ่ายค้าน M8: สลิปจากหน้าชำระ (คนนอกระบบอัปโหลด) อยู่โฟลเดอร์ที่<b>ไม่เสิร์ฟตรง</b> —
+            // พนักงานเปิดผ่าน attachments/{id}/download (ด่านสิทธิ์ + บริษัท) แบบ /uploads/slips · พอร์ทัลคงโฟลเดอร์เดิม
+            var storage = _storage ?? _images?.Storage ?? Accounting.Services.Storage.FileStorageDefaults.Local;
+            var relDir = fromPayLink ? $"uploads/document-slips/{DateTime.UtcNow:yyyy-MM}" : $"uploads/portal-slips/{DateTime.UtcNow:yyyy-MM}";
+            var absDir = System.IO.Path.Combine(storage.Locator.RelativeBase, "wwwroot", relDir);
+            string storedName; string absPath; string relUrl;
+            if (_images != null && _images.IsProcessableImage(sniffed!))
+            {
+                using var s = new System.IO.MemoryStream(file.Bytes, writable: false);
+                var processed = await _images.ProcessAndSaveAsync(s, sniffed!, "slip" + ext, absDir, "/" + relDir, ImageProfile.Slip);
+                absPath = processed.AbsolutePath;
+                storedName = System.IO.Path.GetFileName(absPath);
+                relUrl = processed.RelativeUrl;
+            }
+            else
+            {
+                storedName = $"{Guid.NewGuid():N}{ext}";
+                absPath = System.IO.Path.Combine(absDir, storedName);
+                await storage.WriteAsync(absPath, file.Bytes, sniffed);
+                relUrl = "/" + relDir + "/" + storedName;
+            }
 
-        _db.Set<FileAttachment>().Add(new FileAttachment
-        {
-            CompanyId = companyId,
-            FileName = storedName,
-            OriginalFileName = string.IsNullOrWhiteSpace(file.FileName) ? storedName : file.FileName,
-            ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
-            StoragePath = absPath,
-            EntityType = "Document",
-            EntityId = doc.Id,
-            UploadedByUserId = null,
-            CreatedBy = channel,
-        });
-        await _db.SaveChangesAsync(ct);
+            // ความจริงเรื่องเงิน = PaymentIntent (manual-slip) รอยืนยัน — สลิปแต่ละใบเป็นรายการของตัวเอง (ฝ่ายค้าน H2) ·
+            // ล้ม ⇒ ลบไฟล์ที่เพิ่งเขียน (ฝ่ายค้าน L4 — ไม่เก็บข้อมูลผู้โอนกำพร้า) แล้วโยนต่อ
+            PaymentIntent intent;
+            try
+            {
+                intent = await _intents.StartAsync(companyId, new Accounting.Services.Payments.StartPaymentRequest(
+                    PaymentSourceKind.Document, doc.Id, pay, PaymentMethodKind.ManualSlip,
+                    Description: PortalSlipPending.IntentDescription(doc.DocumentNumber, relUrl, fromPayLink),
+                    ContactId: doc.ContactId),
+                    providerCode: Accounting.Services.Payments.Providers.ManualSlipPaymentProvider.Code, ct: ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                try { await storage.DeleteAsync(absPath); } catch (Exception delEx) when (delEx is not OperationCanceledException) { _ = delEx; }
+                if (ex is BusinessRuleException) throw;
+                // ข้อความไทยของ StartAsync (InvalidOperationException) ส่งต่อตรง · อื่น ๆ = ข้อความกลาง (ไม่รั่วข้อความภายใน)
+                throw new BusinessRuleException(ex is InvalidOperationException ? ex.Message : "บันทึกสลิปไม่สำเร็จ — กรุณาแนบอีกครั้ง หรือติดต่อผู้ขาย",
+                    ex, DocumentSlipIntents.RuleCode, 409);
+            }
+
+            // หลักฐานกันซ้ำบนรายการเดียวกับที่คนยืนยัน (ไม่ใช่ตารางที่สอง) · เลขอ้างอิงเป็นตัวระบุตัวให้ BankReceiptAutoSettle เมื่อรายการเดินบัญชีจริงมาถึง
+            await _db.PaymentIntents.Where(i => i.Id == intent.Id && i.CompanyId == companyId)
+                .ExecuteUpdateAsync(u => u.SetProperty(i => i.SlipFileSha256, slipSha).SetProperty(i => i.SlipBankRef, slipRef), ct);
+
+            _db.Set<FileAttachment>().Add(new FileAttachment
+            {
+                CompanyId = companyId,
+                FileName = storedName,
+                OriginalFileName = "slip" + ext,
+                ContentType = sniffed!,
+                StoragePath = absPath,
+                EntityType = "Document",
+                EntityId = doc.Id,
+                UploadedByUserId = null,
+                CreatedBy = channel,
+            });
+            await _db.SaveChangesAsync(ct);
+            result = new SlipEvidenceResult(intent, fromPayLink ? "" : relUrl, slipRef);
+        }, null, companyId, ct);
+        if (!ran || result == null)
+            throw new BusinessRuleException("กำลังรับสลิปอีกรายการของผู้ขายรายนี้อยู่ — รอสักครู่แล้วแนบอีกครั้ง", DocumentSlipIntents.RuleCode, 409);
 
         // E-06: แจ้งทีมทันที (ลูกค้าแจ้งโอน — รอตรวจ) · เครื่องแจ้งเตือนกลางไม่โยนกลับ (ล้มไม่ย้อนการแนบสลิป)
         if (_notify != null)
         {
-            var (title, message) = AutopilotNotice.SlipSubmitted(doc.DocumentNumber, intent.Amount, slipRef);
+            var (title, message) = AutopilotNotice.SlipSubmitted(doc.DocumentNumber, result.Intent.Amount, result.SlipRef);
             await _notify.DispatchAsync(companyId, Accounting.Models.Constants.NotificationEvents.AutopilotSlipSubmitted, new NotificationContext
             {
                 Title = title, Message = message, ActionUrl = "/pages/documents.html?openDoc=" + doc.Id, EntityType = "Document", EntityId = doc.Id,
             });
         }
-        return new SlipEvidenceResult(intent, relUrl, slipRef);
+        return result;
     }
 
     /// <summary>หน้าชำระของเอกสาร: มีสลิปที่ยังรอผู้ขายตรวจไหม + จำนวนที่แจ้งใน 1 ชม. (ด่านสแปมของทางเข้าที่ไม่ล็อกอิน — นับในฐาน หลายเครื่องใช้ตัวนับเดียว)</summary>

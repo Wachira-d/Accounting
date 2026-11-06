@@ -457,7 +457,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             .Where(r => r.Status == RecurringStatus.Active && r.NotifyBeforeRun && r.NotifyDaysBefore > 0
                 && r.NextRunDate > today && r.NextRunDate < horizon.AddDays(RecurringSchedule.MaxLeadDays))
             .Select(r => new { r.Id, r.CompanyId, r.Name, r.CreatedBy, r.NextRunDate, r.NotifyDaysBefore, r.UpcomingRunNotifiedFor,
-                r.Frequency, r.EndDate, r.TotalRuns, r.MaxRuns, r.LeadDays })
+                r.Frequency, r.EndDate, r.TotalRuns, r.MaxRuns, r.LeadDays, r.IntervalMonths })
             .ToListAsync();
         var sent = 0;
         foreach (var r in candidates)
@@ -466,7 +466,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             // รอบ 255: แจ้งล่วงหน้านับจาก "วันที่ระบบสร้าง" (วันงวด − สร้างล่วงหน้า) · ประทับยังผูกกับวันงวด (compare-and-set เดิม)
             var createAt = RecurringSchedule.CreateAt(r.NextRunDate, r.LeadDays);
             if (!RecurringUpcomingNotice.ShouldNotify(true, r.NotifyDaysBefore, true, r.Frequency, createAt, r.EndDate, r.TotalRuns, r.MaxRuns,
-                    today, r.UpcomingRunNotifiedFor?.Date == r.NextRunDate.Date ? createAt : r.UpcomingRunNotifiedFor)) continue;
+                    today, r.UpcomingRunNotifiedFor?.Date == r.NextRunDate.Date ? createAt : r.UpcomingRunNotifiedFor, r.IntervalMonths)) continue;
             var runDate = r.NextRunDate;
             var claimed = await _db.RecurringTransactions
                 .Where(x => x.Id == r.Id && x.CompanyId == r.CompanyId && x.NextRunDate == runDate
@@ -1189,6 +1189,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             PostPayIncludePartial: AutopilotSettingsResolver.TriStateName(r.PostPayIncludePartial),
             IntervalMonths: r.IntervalMonths,
             LeadDays: r.LeadDays,
+            FrequencyLabel: RecurringSchedule.FrequencyLabel(r.Frequency, r.IntervalMonths),
             AutoSendEmailWarning: emailWarning,
             AutoSendEmailFixUrl: emailWarning != null && r.ContactId is { } fixId ? RecurringEmailReadiness.ContactUrl(fixId) : null);
 

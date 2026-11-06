@@ -49,7 +49,13 @@ public static class PortalSlipPending
 
     /// <summary>คำอธิบายบนรายการรอยืนยัน (หน้ารายการรับชำระของพนักงาน) — เลขเอกสาร + ที่อยู่ไฟล์สลิป</summary>
     public static string IntentDescription(string documentNumber, string slipUrl)
-        => $"สลิปจากพอร์ทัลลูกค้า (รอตรวจ) — {documentNumber} · ไฟล์: {slipUrl}";
+        => IntentDescription(documentNumber, slipUrl, fromPayLink: false);
+
+    /// <summary>รอบ 255 WP-12B (ฝ่ายค้าน LOW): ป้ายช่องทางตามที่มาจริง — หน้าชำระของเอกสาร ≠ พอร์ทัล · สลิปจากหน้าชำระไม่ได้เสิร์ฟตรง ⇒ บอกให้เปิดจากไฟล์แนบของเอกสาร</summary>
+    public static string IntentDescription(string documentNumber, string slipUrl, bool fromPayLink)
+        => fromPayLink
+            ? $"สลิปจากหน้าชำระของเอกสาร (รอตรวจ) — {documentNumber} · ไฟล์: แท็บไฟล์แนบของเอกสาร"
+            : $"สลิปจากพอร์ทัลลูกค้า (รอตรวจ) — {documentNumber} · ไฟล์: {slipUrl}";
 }
 
 /// <summary>

@@ -102,7 +102,9 @@ public record RecurringTransactionResponse(
     string PostPayIncludePartial = "Inherit",
     // รอบ 255 WP-12B ข้อ 2: echo ทุก N เดือน + สร้างล่วงหน้า (hydrate ฟอร์ม)
     int? IntervalMonths = null,
-    int LeadDays = 0);
+    int LeadDays = 0,
+    // รอบ 255 ฝ่ายค้าน LOW: ป้ายความถี่จากเซิร์ฟเวอร์ (รวม "ทุก N เดือน") — หน้าเว็บไม่ map enum เอง
+    string? FrequencyLabel = null);
 
 /// <summary>รอบ 248: นโยบายอนุมัติข้ามคำเตือนที่หน้าแสดง — รหัสที่ปล่อย · ผู้ตั้ง/เมื่อไร · ระดับ (Recurring/Contact)</summary>
 public record AutoApprovePolicyView(IReadOnlyList<string> PassCodes, string? SetBy, DateTime? SetAt, string? Scope, bool InheritContact = false);

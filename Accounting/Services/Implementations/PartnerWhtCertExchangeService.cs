@@ -66,7 +66,7 @@ public class PartnerWhtCertExchangeService
             {
                 w.Id, w.CertificateNumber, w.IssuedDate, w.Status, w.TaxFormType, w.TotalIncomeAmount, w.TotalTaxAmount, w.DocumentId,
                 w.PartnerDeliveredAt, w.PartnerDeliveryAttempts, w.PayeeContactId,
-                Lines = w.Lines.Select(l => new { l.IncomeTypeCode, l.TaxRate }).ToList(),
+                Lines = w.Lines.Select(l => new { l.IncomeTypeCode, l.TaxRate, l.PaymentDate }).ToList(),
             })
             .ToListAsync(ct);
         if (certs.Count == 0) return 0;
@@ -111,7 +111,9 @@ public class PartnerWhtCertExchangeService
                 Channel: WhtCertIntakeChannel.NextAccLink,
                 EvidenceKind: WhtEvidenceKind.ElectronicCertificate,
                 CertificateNumber: cert.CertificateNumber,
-                CertificateDate: cert.IssuedDate,
+                // รอบ 255 ฝ่ายค้าน LOW: วันที่บน 50 ทวิ = วันที่จ่ายเงิน (ท.ป.4/2528 — ออกในวันจ่าย) ไม่ใช่วันที่กดออกใบ ·
+                // หลายบรรทัด ⇒ วันจ่ายล่าสุด · ไม่มีบรรทัด/ไม่ได้ตั้ง ⇒ วันที่ออกใบ (ไม่แต่ง)
+                CertificateDate: Accounting.Helpers.PartnerExchangeRules.WhtCertificateDate(cert.Lines.Select(l => l.PaymentDate), cert.IssuedDate),
                 PayerName: payer.Name,
                 PayerTaxId: payer.TaxId,
                 PayerBranchCode: payer.BranchCode,

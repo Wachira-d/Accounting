@@ -92,13 +92,30 @@ public static class PartnerExchangeRules
         if (distinct.Count == 1) return distinct[0];
         return income > 0m ? Math.Round(tax / income * 100m, 2, MidpointRounding.AwayFromZero) : 0m;
     }
+
+    /// <summary>รอบ 255 ฝ่ายค้าน LOW: วันที่ของ 50 ทวิ ที่ส่งผ่านคู่ค้า = วันจ่ายเงินล่าสุดของบรรทัด (default(DateTime) = ไม่ได้ตั้ง ⇒ ข้าม) · ไม่มี ⇒ วันที่ออกใบ</summary>
+    public static DateTime? WhtCertificateDate(IEnumerable<DateTime> linePaymentDates, DateTime? issuedDate)
+    {
+        var set = linePaymentDates.Where(d => d != default).ToList();
+        return set.Count > 0 ? set.Max() : issuedDate;
+    }
+
+    /// <summary>รอบ 255 ฝ่ายค้าน M4: ยอมรับคำขอเชื่อมได้เฉพาะสถานะรอยอมรับ · null = ได้ · ถูกปฏิเสธ/ระงับ ⇒ ต้องเชิญใหม่ (ทางไปต่อ)</summary>
+    public static string? AcceptProblem(TradingPartnershipStatus status) => status switch
+    {
+        TradingPartnershipStatus.Pending => null,
+        TradingPartnershipStatus.Rejected => "คำขอนี้ถูกปฏิเสธแล้ว — ให้คู่ค้าส่งคำเชิญใหม่ (หรือเชิญเขาจากหน้าคู่ค้า)",
+        TradingPartnershipStatus.Suspended => "การเชื่อมนี้ถูกระงับ — ให้คู่ค้าส่งคำเชิญใหม่ (หรือเชิญเขาจากหน้าคู่ค้า)",
+        _ => "สถานะนี้ยอมรับไม่ได้ — ให้คู่ค้าส่งคำเชิญใหม่",
+    };
 }
 
 /// <summary>
 /// **หลักฐานภาษีซื้อของใบซื้อที่มาจากคู่ค้า NextAcc** (คำตัดสินเจ้าของ §3.3 N3 · ป.รัษฎากร ม.82/5(1) + ม.86/4 · ขมธอ.3-2560) · pure
-/// <para>ใบที่ส่งผ่านแพลตฟอร์มเข้าเป็นใบซื้อ <b>ร่าง</b> เสมอ · ไฟล์ e-Tax ที่ลงลายมือชื่อ + มีหลักฐานประทับเวลา ETDA <b>และส่งถึงผู้รับแล้ว</b> = ต้นฉบับ ⇒ <see cref="EtaxVerified"/> ·
-/// e-Tax ที่ยังไม่ประทับเวลา ⇒ <see cref="AwaitingTimestamp"/> · อื่น ๆ (PDF ที่แพลตฟอร์มเรนเดอร์ไม่ใช่ต้นฉบับ) ⇒ <see cref="PaperRequired"/> ·
-/// ผู้รับยืนยันว่าได้ต้นฉบับแล้ว ⇒ <see cref="PaperConfirmed"/></para>
+/// <para>ใบที่ส่งผ่านแพลตฟอร์มเข้าเป็นใบซื้อ <b>ร่าง</b> เสมอ · ระบบตั้งได้แค่สองค่า: e-Tax ที่ลงลายมือชื่อ<b>และส่งไฟล์ถึงผู้รับแล้ว</b> ⇒ <see cref="AwaitingTimestamp"/> ·
+/// อื่น ๆ (PDF ที่แพลตฟอร์มเรนเดอร์ไม่ใช่ต้นฉบับ) ⇒ <see cref="PaperRequired"/> ·
+/// <b>ฝ่ายค้าน H2 (รอบ 255):</b> ระบบ<b>ไม่เคยตั้ง</b> <see cref="EtaxVerified"/>/<see cref="PaperConfirmed"/> เอง — เวลาประทับบนแถว e-Tax ของผู้ขายเป็นค่าที่ผู้ขายบันทึก ไม่ใช่การตรวจกับ ETDA ·
+/// สองค่านั้นมาจาก "ได้รับต้นฉบับแล้ว" ของผู้รับเท่านั้น (<see cref="Confirmed"/>) · ผู้ขายยกเลิกต้นทาง ⇒ <see cref="SourceVoided"/> (ห้ามลงภาษีซื้อ · ยืนยันไม่ได้)</para>
 /// <para><b>ไม่ลงภาษีซื้อเอง</b>: <see cref="BlocksClaim"/> = true ⇒ ตัวตรวจ §86/4 ตัวเดียว (<c>TaxInvoiceCompletenessChecker.Evaluate</c>) นับว่าใบยังไม่ครบ ⇒
 /// อนุมัติแล้ว VAT พัก 11640 จนผู้ใช้ยืนยัน (ทางเดียวกับใบกำกับที่ไม่ครบอื่น ๆ)</para>
 /// </summary>
@@ -108,35 +125,72 @@ public static class PartnerInputVatEvidence
     public const string AwaitingTimestamp = "AwaitingTimestamp";
     public const string PaperRequired = "PaperRequired";
     public const string PaperConfirmed = "PaperConfirmed";
+    public const string SourceVoided = "SourceVoided";
+
+    public const string SourceVoidedMessage =
+        "ผู้ขายยกเลิกเอกสารต้นทาง (หรือยกเลิก e-Tax ของใบนั้น) แล้ว — ลงภาษีซื้อจากใบนี้ไม่ได้ (ม.82/5(1)) · ขอใบใหม่จากผู้ขาย แล้วยกเลิก/กลับรายการใบซื้อนี้";
+
+    public const string EditedNote = "แก้ยอด/VAT/บรรทัดของใบที่มาจากคู่ค้า — หลักฐานภาษีซื้อกลับเป็น \"ต้องได้ต้นฉบับ\" (ใบไม่ตรงต้นฉบับของผู้ขายแล้ว)";
 
     /// <param name="sourceIsTaxInvoice">ต้นทางเป็นใบกำกับภาษี (ใบแจ้งหนี้ที่ไม่ใช่ใบกำกับ ⇒ ไม่มีต้นฉบับใบกำกับให้ลงภาษีซื้อ)</param>
     /// <param name="signed">e-Tax ของต้นทางลงลายมือชื่อแล้ว (มีลายเซ็น + เลขใบรับรอง + เวลาลงนาม)</param>
-    /// <param name="stamped">มีหลักฐานประทับเวลา ETDA (เวลา + ไฟล์หลักฐาน)</param>
-    /// <param name="signedFileDelivered">ไฟล์ XML ที่ลงลายมือชื่อถูกส่งถึงผู้รับแล้ว (ผู้รับถือต้นฉบับ) — ไม่ส่ง = ผู้รับไม่มีต้นฉบับ</param>
-    public static string Of(bool sourceIsTaxInvoice, bool signed, bool stamped, bool signedFileDelivered)
+    /// <param name="signedFileDelivered">ไฟล์ XML ที่ลงลายมือชื่อถูกส่งถึงผู้รับแล้ว — ไม่ส่ง = ผู้รับไม่มีต้นฉบับ</param>
+    /// <returns>AwaitingTimestamp หรือ PaperRequired เท่านั้น — ไม่มีทางได้ค่าที่ปลดด่าน (H2)</returns>
+    public static string Of(bool sourceIsTaxInvoice, bool signed, bool signedFileDelivered)
+        => sourceIsTaxInvoice && signed && signedFileDelivered ? AwaitingTimestamp : PaperRequired;
+
+    /// <summary>ค่าที่ผู้รับยืนยัน: ได้ไฟล์ e-Tax ที่ประทับเวลาแล้ว ⇒ EtaxVerified · ได้ต้นฉบับกระดาษ ⇒ PaperConfirmed</summary>
+    public static string Confirmed(bool stampedEtax) => stampedEtax ? EtaxVerified : PaperConfirmed;
+
+    /// <summary>ฝ่ายค้าน H3: หลักฐานใหม่ของการขายเดิมมาถึงใบซื้อที่มีอยู่ — อัปเกรดเฉพาะใบที่ยังติดด่าน (PaperRequired ⇒ AwaitingTimestamp) ·
+    /// ค่าที่ผู้รับยืนยันแล้ว/ต้นทางถูกยกเลิก คงเดิม</summary>
+    public static string Merge(string? current, string offered)
     {
-        if (!sourceIsTaxInvoice || !signed || !signedFileDelivered) return PaperRequired;
-        return stamped ? EtaxVerified : AwaitingTimestamp;
+        if (current is EtaxVerified or PaperConfirmed or SourceVoided) return current!;
+        if (current == AwaitingTimestamp) return AwaitingTimestamp;
+        return offered;
     }
 
+    /// <summary>ฝ่ายค้าน M1: ผู้รับแก้ยอด/VAT/บรรทัดของใบจากคู่ค้า ⇒ ใบไม่ตรงต้นฉบับแล้ว — กลับเป็น PaperRequired (ยกเว้นต้นทางถูกยกเลิก — คงไว้) ·
+    /// null (ใบซื้อทั่วไป) / ยอดไม่เปลี่ยน ⇒ คงเดิม</summary>
+    public static string? AfterEdit(string? current, bool amountsChanged)
+    {
+        if (current == null || !amountsChanged || current == SourceVoided) return current;
+        return PaperRequired;
+    }
+
+    /// <summary>ลายนิ้วมือยอดของใบ (ยอดก่อน VAT · VAT · ยอดรวม · บรรทัด) — เทียบก่อน/หลังแก้ไข (M1)</summary>
+    public static string AmountFingerprint(decimal subTotal, decimal vat, decimal total, IEnumerable<(decimal qty, decimal price, decimal amount, decimal vatAmount)> lines)
+        => string.Join("|", new[] { subTotal, vat, total }.Select(x => x.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)))
+           + "#" + string.Join(";", lines.Select(l => string.Join(",", new[] { l.qty, l.price, l.amount, l.vatAmount }
+               .Select(x => x.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)))));
+
     /// <summary>ห้ามลงภาษีซื้อ (นับเป็น §86/4 ไม่ครบ) — null/ค่าอื่น = ไม่ใช่ใบจากคู่ค้า ⇒ ไม่แตะ (ทิศตรงข้าม: ใบซื้อทั่วไปไม่ถูกกระทบ)</summary>
-    public static bool BlocksClaim(string? evidence) => evidence is AwaitingTimestamp or PaperRequired;
+    public static bool BlocksClaim(string? evidence) => evidence is AwaitingTimestamp or PaperRequired or SourceVoided;
 
     /// <summary>ข้อความในรายการช่องที่ขาด (ตัวตรวจ §86/4) — บอกทางไปต่อ</summary>
-    public static string MissingLabel(string? evidence) => evidence == AwaitingTimestamp
-        ? "ต้นฉบับใบกำกับ (e-Tax ของคู่ค้ายังไม่ประทับเวลา ETDA — รอคู่ค้าส่งรุ่นที่ประทับแล้ว หรือกด \"ได้รับต้นฉบับแล้ว\")"
-        : "ต้นฉบับใบกำกับ (ใบจากคู่ค้า NextAcc — กด \"ได้รับต้นฉบับแล้ว\" เมื่อได้ใบกำกับตัวจริง/ไฟล์ e-Tax)";
+    public static string MissingLabel(string? evidence) => evidence switch
+    {
+        SourceVoided => "ต้นทางถูกผู้ขายยกเลิก — ขอใบกำกับใบใหม่จากผู้ขาย (ใบนี้ลงภาษีซื้อไม่ได้)",
+        AwaitingTimestamp => "ต้นฉบับใบกำกับ (ได้ไฟล์ e-Tax ที่ลงลายมือชื่อของคู่ค้าแล้ว — ตรวจการประทับเวลา ETDA แล้วกด \"ได้รับต้นฉบับแล้ว\")",
+        _ => "ต้นฉบับใบกำกับ (ใบจากคู่ค้า NextAcc — กด \"ได้รับต้นฉบับแล้ว\" เมื่อได้ใบกำกับตัวจริง/ไฟล์ e-Tax)",
+    };
 
     public static string Label(string? evidence) => evidence switch
     {
-        EtaxVerified => "e-Tax ลงลายมือชื่อ + ประทับเวลาแล้ว (ลงภาษีซื้อได้เมื่ออนุมัติ)",
-        AwaitingTimestamp => "e-Tax ยังไม่ประทับเวลา ETDA (ยังลงภาษีซื้อไม่ได้)",
+        EtaxVerified => "ผู้รับยืนยันว่าได้ไฟล์ e-Tax ที่ประทับเวลาแล้ว (ลงภาษีซื้อได้เมื่ออนุมัติ)",
+        AwaitingTimestamp => "ได้ไฟล์ e-Tax ของคู่ค้าแล้ว — รอผู้รับตรวจการประทับเวลา (ยังลงภาษีซื้อไม่ได้)",
         PaperRequired => "ต้องได้ต้นฉบับใบกำกับก่อน (ยังลงภาษีซื้อไม่ได้)",
         PaperConfirmed => "ผู้ใช้ยืนยันว่าได้ต้นฉบับแล้ว",
+        SourceVoided => "ผู้ขายยกเลิกต้นทางแล้ว (ลงภาษีซื้อไม่ได้)",
         _ => "",
     };
 
-    /// <summary>ยืนยัน "ได้ต้นฉบับแล้ว" ได้ไหม — เฉพาะใบที่ยังติดด่าน · null = ได้</summary>
-    public static string? ConfirmProblem(string? evidence)
-        => BlocksClaim(evidence) ? null : "เอกสารนี้ไม่ได้รอต้นฉบับใบกำกับจากคู่ค้า";
+    /// <summary>ยืนยัน "ได้ต้นฉบับแล้ว" ได้ไหม — เฉพาะใบที่ยังรอต้นฉบับ (ต้นทางถูกยกเลิก = ยืนยันไม่ได้) · null = ได้</summary>
+    public static string? ConfirmProblem(string? evidence) => evidence switch
+    {
+        AwaitingTimestamp or PaperRequired => null,
+        SourceVoided => SourceVoidedMessage,
+        _ => "เอกสารนี้ไม่ได้รอต้นฉบับใบกำกับจากคู่ค้า",
+    };
 }

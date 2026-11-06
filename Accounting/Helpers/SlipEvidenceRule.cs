@@ -60,6 +60,19 @@ public static class SlipEvidenceRule
         return null;
     }
 
+    /// <summary>นามสกุลไฟล์ที่เก็บ — จากชนิดที่ตรวจจากไบต์ (ไม่ใช้ชื่อไฟล์ของ client) · ไม่รู้จัก = null</summary>
+    public static string? ExtensionFor(string? sniffedType) => sniffedType switch
+    {
+        "image/jpeg" => ".jpg", "image/png" => ".png", "image/webp" => ".webp", "application/pdf" => ".pdf", _ => null,
+    };
+
+    /// <summary>ยอดสลิปรอตรวจของใบนี้รวมสลิปใหม่เกินยอดค้างไหม (ตรวจภายใต้ล็อก — สองคำขอพร้อมกันไม่ผ่านทั้งคู่) · null = รับได้ ·
+    /// งวดย่อยรวมกันไม่เกินยอดค้างยังรับได้ (สลิปงวด 2 · ฝ่ายค้าน 250 H2)</summary>
+    public static string? PendingProblem(decimal pendingSum, decimal amount, decimal balanceDue)
+        => pendingSum + amount > balanceDue + 0.01m
+            ? $"มีสลิปของเอกสารนี้รอผู้ขายตรวจ {pendingSum:#,##0.00} บาทแล้ว — รวมสลิปนี้เกินยอดค้าง ({balanceDue:#,##0.00} บาท) · รอผู้ขายตรวจ หรือติดต่อผู้ขาย"
+            : null;
+
     /// <summary>หน้าชำระแสดงฟอร์มแจ้งโอนไหม — มีกล่องโอน (ใบรับโอนได้ + มีบัญชีรับโอน) และยอดสุทธิ &gt; 0</summary>
     public static bool PayLinkSlipAllowed(bool hasTransferBox, decimal net) => hasTransferBox && net > 0.005m;
 

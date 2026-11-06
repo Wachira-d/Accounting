@@ -647,11 +647,11 @@ public class AutopilotRound252DbTests
         Assert.Equal(SlipEvidenceRule.RuleDuplicate, dup.RuleCode);
         var dupRef = await Assert.ThrowsAsync<BusinessRuleException>(() =>
             PortalWith(db2, notify).UploadDocumentSlipAsync(s.CompanyId, s.ContactId, s.InvoiceId,
-                File(System.Text.Encoding.UTF8.GetBytes("other " + Guid.NewGuid())), 500m, "REF ABC 123456"));
+                File(System.Text.Encoding.UTF8.GetBytes("%PDF-1.4 other " + Guid.NewGuid())), 500m, "REF ABC 123456"));
         Assert.Equal(SlipEvidenceRule.RuleDuplicate, dupRef.RuleCode);
         // ทิศตรงข้าม: สลิปใบใหม่ เลขใหม่ ⇒ รับ
         var ok = await PortalWith(db2, notify).UploadDocumentSlipAsync(s.CompanyId, s.ContactId, s.InvoiceId,
-            File(System.Text.Encoding.UTF8.GetBytes("third " + Guid.NewGuid())), 500m, "XYZ9876543");
+            File(System.Text.Encoding.UTF8.GetBytes("%PDF-1.4 third " + Guid.NewGuid())), 500m, "XYZ9876543");
         Assert.NotEqual(first.PaymentIntentId, ok.PaymentIntentId);
         Assert.Equal(2, notify.Calls.Count);
     }

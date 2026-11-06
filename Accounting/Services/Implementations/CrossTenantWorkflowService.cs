@@ -29,13 +29,16 @@ public partial class CrossTenantWorkflowService
     private readonly ILogger<CrossTenantWorkflowService> _logger;
     /// <summary>รอบ 255 WP-12B ข้อ 7: ส่งไฟล์ e-Tax (XML ที่ลงลายมือชื่อ) ของผู้ขายเป็นไฟล์แนบของใบซื้อร่างฝั่งผู้รับ · null (สร้างนอก DI) = ไม่ส่ง ⇒ หลักฐานไม่ถึง EtaxVerified</summary>
     private readonly Accounting.Services.Storage.IFileStorage? _storage;
+    /// <summary>รอบ 255 ฝ่ายค้าน H3/M2: แจ้งผู้รับเมื่อหลักฐานของการขายเดิมเข้าใบซื้อเดิม / ผู้ขายยกเลิกต้นทาง · null (สร้างนอก DI) = ไม่แจ้ง</summary>
+    private readonly Accounting.Services.Interfaces.INotificationEngine? _notify;
 
     public CrossTenantWorkflowService(AccountingDbContext db, ILogger<CrossTenantWorkflowService> logger,
-        Accounting.Services.Storage.IFileStorage? storage = null)
+        Accounting.Services.Storage.IFileStorage? storage = null, Accounting.Services.Interfaces.INotificationEngine? notify = null)
     {
         _db = db;
         _logger = logger;
         _storage = storage;
+        _notify = notify;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -99,10 +102,12 @@ public partial class CrossTenantWorkflowService
                 });
                 outcome = "Created";
             }
-            else if (existing.Status == TradingPartnershipStatus.Rejected
-                     && (existing.RejectedAt == null || existing.RejectedAt <= now.AddDays(-RejectedReinviteCooldownDays)))
+            else if ((existing.Status == TradingPartnershipStatus.Rejected
+                      && (existing.RejectedAt == null || existing.RejectedAt <= now.AddDays(-RejectedReinviteCooldownDays)))
+                     || existing.Status == TradingPartnershipStatus.Suspended)
             {
-                // เชิญซ้ำหลังถูกปฏิเสธ (พ้นช่วงพัก) — เปิดใหม่ให้ปลายทางเห็นคำเชิญสด
+                // เชิญซ้ำหลังถูกปฏิเสธ (พ้นช่วงพัก) / ถูกระงับ — เปิดใหม่ให้ปลายทางเห็นคำเชิญสด
+                // (รอบ 255 ฝ่ายค้าน M4: ยอมรับได้จาก Pending เท่านั้น ⇒ ทางกลับของแถวที่ถูกระงับคือเชิญใหม่ทางนี้)
                 existing.Status = TradingPartnershipStatus.Pending;
                 existing.InvitedByCompanyId = invitingCompanyId;
                 existing.InvitedByUserId = invitedByUserId;
@@ -158,15 +163,37 @@ public partial class CrossTenantWorkflowService
         if (p.InvitedByCompanyId == acceptingCompanyId)
             throw new InvalidOperationException("ผู้เชิญไม่สามารถยอมรับเอง — รอผู้รับเชิญตอบกลับ");
         if (p.Status == TradingPartnershipStatus.Accepted) return p;
-        // รอบ 255 WP-12B ข้อ 6 (Y5): เพดานจำนวนคู่ต่อแพ็กเกจ — ตั้งต้นไม่จำกัด · ตั้งแล้วตรวจทั้งสองบริษัทก่อนยอมรับ
-        await EnsureTradingPartnerCapAsync(p);
+        // รอบ 255 ฝ่ายค้าน M4: ยอมรับได้จากสถานะ "รอยอมรับ" เท่านั้น — ถูกปฏิเสธ/ระงับแล้วต้องเชิญใหม่ (เส้นเชิญเปิดคำเชิญสดให้)
+        if (Accounting.Helpers.PartnerExchangeRules.AcceptProblem(p.Status) is string acceptProblem)
+            throw new Accounting.Helpers.BusinessRuleException(acceptProblem, Accounting.Helpers.PartnerExchangeRules.RuleCode, 409);
 
-        p.Status = TradingPartnershipStatus.Accepted;
-        p.AcceptedAt = DateTime.UtcNow;
-        p.AcceptedByUserId = acceptedByUserId;
-        p.UpdatedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync();
-        return p;
+        // รอบ 255 ฝ่ายค้าน M5: ตรวจเพดาน + ยอมรับ ใต้ pg_advisory_xact_lock ของทั้งสองบริษัท (เรียงตาม Guid กัน deadlock) —
+        // สองคำยอมรับพร้อมกันไม่ผ่านเพดานทั้งคู่
+        var ownTx = _db.Database.CurrentTransaction == null ? await _db.Database.BeginTransactionAsync() : null;
+        try
+        {
+            foreach (var cid in new[] { p.CompanyAId, p.CompanyBId }.OrderBy(x => x))
+                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                    Accounting.Helpers.AdvisoryLockKey.For(cid, Accounting.Helpers.AdvisoryLockKey.TradingPartnerAccept, "accept"));
+            await _db.Entry(p).ReloadAsync();
+            if (p.Status == TradingPartnershipStatus.Accepted) { if (ownTx != null) await ownTx.CommitAsync(); return p; }
+            if (Accounting.Helpers.PartnerExchangeRules.AcceptProblem(p.Status) is string raced)
+                throw new Accounting.Helpers.BusinessRuleException(raced, Accounting.Helpers.PartnerExchangeRules.RuleCode, 409);
+            // รอบ 255 WP-12B ข้อ 6 (Y5): เพดานจำนวนคู่ต่อแพ็กเกจ — ตั้งต้นไม่จำกัด · ตั้งแล้วตรวจทั้งสองบริษัทก่อนยอมรับ
+            await EnsureTradingPartnerCapAsync(p);
+
+            p.Status = TradingPartnershipStatus.Accepted;
+            p.AcceptedAt = DateTime.UtcNow;
+            p.AcceptedByUserId = acceptedByUserId;
+            p.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            if (ownTx != null) await ownTx.CommitAsync();
+            return p;
+        }
+        finally
+        {
+            if (ownTx != null) await ownTx.DisposeAsync();
+        }
     }
 
     public async Task<TradingPartnership> RejectPartnershipAsync(
