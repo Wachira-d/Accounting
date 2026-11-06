@@ -71,6 +71,22 @@
           <tbody id="queueBody"><tr><td colspan="5" class="empty-state">กำลังโหลด...</td></tr></tbody>
         </table>
       </div>
+      <!-- รอบ 254 WP-11 L2: คิว LINE ถึงผู้ติดต่อ (ป้าย/ชนิด/ปุ่มที่กดได้มาจากเซิร์ฟเวอร์ · ไม่มี LINE id) -->
+      <div style="font-weight:600;margin:16px 0 8px">💬 คิว LINE ถึงผู้ติดต่อ</div>
+      <div class="card" style="padding:0;overflow:auto">
+        <table class="table-responsive" style="width:100%">
+          <thead>
+            <tr style="background:#f8fafc;font-size:12px;color:#64748b">
+              <th style="text-align:left;padding:10px">สถานะ</th>
+              <th style="text-align:left;padding:10px">ปลายทาง</th>
+              <th style="text-align:left;padding:10px">เอกสาร</th>
+              <th style="text-align:left;padding:10px">นัดส่ง</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="lineQueueBody"><tr><td colspan="5" class="empty-state">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
     </div>
 
     <!-- Rule modal -->
@@ -149,6 +165,15 @@
             <label for="rBody" class="form-label">เนื้อหาอีเมล (เทมเพลต · ใช้แท็ก HTML ได้)</label>
             <textarea class="form-input" id="rBody" rows="6" placeholder="เรียน คุณ{ContactName}..."></textarea>
             <p class="form-help">เว้นว่าง = ใช้เทมเพลตเริ่มต้นของระบบ</p>
+          </div>
+          <!-- รอบ 254 WP-11 L2: ช่องทางต่อกฎ (คำตอบเจ้าของ Q7 — ติ๊กได้หลายช่อง · ถอยไปอีเมลค่าตั้งต้นเปิด) · เซิร์ฟเวอร์ตรวจตอนบันทึก (trigger ที่ส่ง LINE ได้ · LINE OA ของบริษัทพร้อม) -->
+          <div class="form-group" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px">
+            <div style="font-weight:600;font-size:13px;margin-bottom:6px">ช่องทาง</div>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChEmail" checked> อีเมล</label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineUser"> LINE ผู้ใช้ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px"><input type="checkbox" id="rChLineGroup"> กลุ่ม LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท)</label>
+            <label style="display:flex;gap:6px;align-items:center;font-size:13px;margin-top:4px"><input type="checkbox" id="rLineFallback" checked> ถ้า LINE ส่งไม่ได้ ให้ส่งอีเมลแทน (มีผลเมื่อไม่ได้ติ๊กอีเมล)</label>
+            <p class="form-help">การ์ด LINE มีชื่อเอกสาร เลขที่ ยอด วันครบกำหนด และลิงก์ชำระ (ไม่แนบไฟล์ · ไม่ใช่การส่งใบกำกับภาษีอิเล็กทรอนิกส์) · ผูก LINE ของผู้รับที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน</p>
           </div>
           <!-- รอบ 241: ส่งเอกสารอัตโนมัติต่อตาราง — "ตามค่าบริษัท" = ค่าที่ ตั้งค่า → ส่งเอกสารอัตโนมัติ · ช่องทาง/เหตุที่เปิดไม่ได้มาจากเซิร์ฟเวอร์ -->
           <div class="form-group" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc">
@@ -244,6 +269,7 @@
                 ${r.offsetDays === 0 ? 'ทันที' : (r.offsetDays > 0 ? `+${Number(r.offsetDays)} วัน` : `${Number(r.offsetDays)} วัน`)}
                 · เวลา ${Number(r.sendAtHour)}:00
                 ${r.repeatEveryDays > 0 ? ` · ซ้ำทุก ${Number(r.repeatEveryDays)} วัน` : ''}
+                · ${[r.channelEmail !== false ? 'อีเมล' : '', r.channelLineUser ? 'LINE ผู้ใช้' : '', r.channelLineGroup ? 'กลุ่ม LINE' : ''].filter(Boolean).map(x => Layout.esc(x)).join(' + ')}
               </div>
               ${r.subjectTemplate ? `<div style="font-size:12px;color:#475569;margin-top:4px">หัวเรื่อง: ${Layout.esc(r.subjectTemplate)}</div>` : ''}
             </div>
@@ -275,6 +301,11 @@
         let ruleChannels = [];
         try { ruleChannels = r?.payLinkChannelsJson ? JSON.parse(r.payLinkChannelsJson) : []; } catch (_) { ruleChannels = []; }
         this._renderChannels(ruleChannels);
+        // รอบ 254 WP-11 L2: ช่องทางต่อกฎ — ค่าจากเซิร์ฟเวอร์ (ฟอร์มใหม่ = อีเมลอย่างเดียว + ถอยไปอีเมลเปิด · ห้ามค้างค่ากฎก่อน)
+        document.getElementById('rChEmail').checked = r ? r.channelEmail !== false : true;
+        document.getElementById('rChLineUser').checked = !!(r && r.channelLineUser);
+        document.getElementById('rChLineGroup').checked = !!(r && r.channelLineGroup);
+        document.getElementById('rLineFallback').checked = r ? r.lineFallbackToEmail !== false : true;
         document.getElementById('ruleTitle').textContent = id ? 'แก้ไขกฎ' : 'เพิ่มกฎใหม่';
         this._toggleTriggerFields();
         Layout.openModal('ruleModal');
@@ -356,6 +387,10 @@
           payLinkChannels: Array.from(document.querySelectorAll('#rChannels input[data-rule-channel]')).filter(cb => cb.checked).map(cb => cb.dataset.ruleChannel),
           postPayEmailReceipt: ({ 'true': true, 'false': false })[document.getElementById('rPostPayReceipt').value] ?? null,
           postPayIncludePartial: ({ 'true': true, 'false': false })[document.getElementById('rPostPayPartial').value] ?? null,
+          channelEmail: document.getElementById('rChEmail').checked,
+          channelLineUser: document.getElementById('rChLineUser').checked,
+          channelLineGroup: document.getElementById('rChLineGroup').checked,
+          lineFallbackToEmail: document.getElementById('rLineFallback').checked,
         };
         try {
           const j = await API.put(`/api/companies/${cid}/email-schedule/rules`, body);
@@ -405,6 +440,51 @@
               <td>${actions /* html — ปุ่มที่ประกอบด้วย jsArg ข้างบน */}</td>
             </tr>`;
           }).join('');
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        this.loadLineQueue();
+      },
+
+      // รอบ 254 WP-11 L2: คิว LINE — สถานะ/ป้าย/ปุ่มที่กดได้จากเซิร์ฟเวอร์ (canRetry/canCancel)
+      async loadLineQueue() {
+        const cid = Layout.getCompanyId(); if (!cid) return;
+        const tb = document.getElementById('lineQueueBody');
+        try {
+          const j = await API.get(`/api/companies/${cid}/email-schedule/line-queue?take=100`);
+          if (j && j.success === false) throw new Error(j.message || 'โหลดคิว LINE ไม่สำเร็จ');
+          const items = (j && j.data) || [];
+          if (!items.length) { tb.innerHTML = '<tr><td colspan="5" class="empty-state">ยังไม่มีคิว LINE</td></tr>'; return; }
+          tb.innerHTML = items.map(q => {
+            const pill = q.status === 'Sent' ? 'pill-success' : q.status === 'Failed' ? 'pill-danger'
+              : q.status === 'Pending' ? 'pill-info' : 'pill-gray';
+            const actions = q.canRetry
+              ? `<button class="btn btn-sm btn-outline" onclick="Page.retryLine('${Layout.jsArg(q.id)}')">↻ ส่งอีกครั้ง</button>`
+              : q.canCancel
+              ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.cancelLine('${Layout.jsArg(q.id)}')">ยกเลิก</button>` : '';
+            return `<tr>
+              <td data-label="สถานะ"><span class="pill ${pill /* text — ชื่อคลาสคงที่ของหน้า */}">${Layout.esc(q.statusLabel || q.status)}</span></td>
+              <td data-label="ปลายทาง" style="font-size:12px">${Layout.esc(q.endpointKindLabel)}</td>
+              <td data-label="เอกสาร">${Layout.esc(q.documentNumber || '-')}${q.errorMessage ? `<div style="font-size:11px;color:#b45309;margin-top:4px">⚠ ${Layout.esc(q.errorMessage)}</div>` : ''}</td>
+              <td data-label="นัดส่ง" style="font-size:12px">${Layout.esc(new Date(q.scheduledFor).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }))}</td>
+              <td>${actions /* html — ปุ่มที่ประกอบด้วย jsArg ข้างบน */}</td>
+            </tr>`;
+          }).join('');
+        } catch (e) { tb.innerHTML = `<tr><td colspan="5" class="empty-state">${Layout.esc(e.message)}</td></tr>`; }
+      },
+      async retryLine(id) {
+        const cid = Layout.getCompanyId();
+        try {
+          const j = await API.post(`/api/companies/${cid}/email-schedule/line-queue/${encodeURIComponent(id)}/retry`, {});
+          if (!j || !j.success) throw new Error((j && j.message) || 'ส่งอีกครั้งไม่สำเร็จ');
+          Layout.toast(j.message || 'พักในคิว LINE รอบใหม่แล้ว'); this.loadLineQueue();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      async cancelLine(id) {
+        if (!confirm('ยกเลิกคิว LINE นี้?')) return;
+        const cid = Layout.getCompanyId();
+        try {
+          const j = await API.post(`/api/companies/${cid}/email-schedule/line-queue/${encodeURIComponent(id)}/cancel`, {});
+          if (!j || !j.success) throw new Error((j && j.message) || 'ยกเลิกไม่สำเร็จ');
+          Layout.toast(j.message || 'ยกเลิกแล้ว'); this.loadLineQueue();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
 

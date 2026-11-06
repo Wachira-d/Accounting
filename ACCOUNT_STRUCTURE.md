@@ -461,6 +461,14 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
   **ฝ่ายค้านรอบ 213**: หน่วย ณ ตอนซื้อเก็บบน `UsageEvent.UnitLabelSnapshot` — `UsageInvoicingJob` แยกบรรทัดตามหน่วยนั้น (`AddOnBilling.InvoiceUnit` · แถวเก่า/ฟีเจอร์อื่น = ป้ายของฟีเจอร์) ·
   ซื้อแพ็กส่งขนาด/ราคาที่เห็น เทียบใต้ล็อกก่อนคิดเงิน ไม่ตรง ⇒ 409 (ไม่คิดเงิน) · แอดมินคืนค่าแพ็กตั้งต้นได้
 
+  **รอบ 254 WP-11 L2 (LINE ถึงผู้ติดต่อ) — ไม่แตะตัวนับ/ราคา**: การ์ดเอกสารทาง LINE ส่งผ่าน **LINE OA ของบริษัทเท่านั้น** (คำตัดสิน N8) ⇒ **ไม่นับ**โควตาช่องกลาง
+  (`NotifyQuotaPolicy.IsMetered` เดิม — OA ของร้านเองไม่นับ · LINE คิดเงินบริษัทเองตามแผน OA) · ข้อความ OA บริษัทหมด (429 monthly limit) ⇒ แถวคิว LINE ล้มพร้อมเหตุ +
+  ถอยไปอีเมลถ้ากฎตั้งไว้ (Q7 — อีเมลผ่าน SMTP ของ NextAcc ยังอยู่ใต้เพดานรายวัน `PlatformEmailQuota` เดิม) · ความพร้อม "OA ของบริษัท" = เปิด LINE + token + secret ถอดได้
+  (`Helpers/CompanyLineReadiness` — ไม่มี secret ⇒ webhook ตรวจลายเซ็นไม่ได้ ⇒ ผูก/หยุดรับไม่ได้ ⇒ ไม่พร้อม) · ส่งผ่าน OA กลางถึงผู้ติดต่อ = **ปิด** (`ContactRecipientResolver.NextAccTenantDeliveryOpen`)
+  **ยังไม่ทำ (L4 · บอกตรง ๆ)**: `NotifyUsageCounter.Channel` · `PlanTemplate.MaxSharedLineMessagesPerMonth/MaxSharedEmailsPerMonth` · `notify.topup.line` ฿290/1,000 · `notify.topup.email` ฿190/5,000
+  (N7 — ค่าตั้งต้นในหน้าแอดมิน แก้ได้โดยไม่ deploy) · อีเมลผ่าน SMTP NextAcc ตัดโควตารายเดือน (Q4 · ไม่ตั้งเพดานรวม `MaxSharedEmailsPerMonth` ระดับแพลตฟอร์ม — N9) ·
+  สวิตช์แอดมิน `CentralOaGroupDeliveryEnabled` (ค่าตั้งต้นปิด · N8) · ตัวนับ reply/เดือนใน `NextAccOaQuotaWatch` · ปิดขาย `notify.topup` ก้อนรวม (โบนัสเดิมใช้ได้ทั้งสองช่อง)
+
 ### 5.1 โควตาของเว็บ CMS (หน้า · สินค้า · พื้นที่) ✅ *(บังคับจริงตั้งแต่รอบ 159)*
 
 เพดานของ **เว็บ** อยู่บน `Site` เอง (`MaxPages` · `MaxProducts` · `MaxStorageBytes`)

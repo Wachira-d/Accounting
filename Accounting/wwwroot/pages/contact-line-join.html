@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex">
+  <title>ผูก LINE รับการแจ้งเอกสาร</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans Thai', sans-serif; background: #f1f5f9; color: #0f172a;
+           min-height: 100vh; display: flex; justify-content: center; padding: 20px 12px; }
+    .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 24px rgba(15,23,42,.08);
+            max-width: 480px; width: 100%; padding: 22px; height: fit-content; }
+    h1 { font-size: 18px; margin-bottom: 4px; }
+    .sub { color: #64748b; font-size: 13px; margin-bottom: 14px; }
+    .consent { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; font-size: 13px; line-height: 1.7; margin: 10px 0; }
+    .btn { display: block; width: 100%; background: #06c755; color: #fff; border: 0; border-radius: 10px; text-align: center; text-decoration: none;
+           padding: 13px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; margin-top: 10px; }
+    .btn.secondary { background: #e2e8f0; color: #0f172a; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .code { font-family: monospace; font-size: 20px; text-align: center; letter-spacing: 1px; background: #f1f5f9; border-radius: 8px; padding: 10px; margin: 10px 0; }
+    .err { text-align: center; color: #b91c1c; padding: 30px 10px; }
+    .muted { color: #64748b; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="card" id="card"><div class="err">กำลังโหลด...</div></div>
+  <script>
+    // รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q6 ทางลัด · LINE_MULTICHANNEL_DESIGN §7.5 จ.) — ผู้รับฝั่งผู้ติดต่อผูก LINE กับ LINE OA ของบริษัทผู้ส่งเอกสาร
+    // ขั้น: อ่านข้อความยินยอม → กดยินยอม (เซิร์ฟเวอร์บันทึกหลักฐาน PDPA) → เพิ่มเพื่อน + ส่งรหัสในแชต (webhook ของบริษัทผูกให้)
+    // ข้อความ/ชื่อบริษัท/เหตุที่ใช้ไม่ได้ มาจากเซิร์ฟเวอร์ทั้งหมด · token ส่งใน body (ไม่อยู่ใน URL ของ API)
+    const qs = new URLSearchParams(location.search);
+    const companyId = qs.get('c') || '';
+    const token = qs.get('t') || '';
+    const card = document.getElementById('card');
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const safeUrl = (u) => (typeof u === 'string' && u.startsWith('https://')) ? u : '';
+    const base = () => `/api/public/contact-line-join/${encodeURIComponent(companyId)}`;
+
+    async function post(path) {
+      const r = await fetch(base() + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+      let j = null;
+      try { j = await r.json(); } catch (_) { j = null; }
+      if (!r.ok || !j || j.success === false) throw new Error((j && j.message) || 'ลิงก์นี้ใช้ไม่ได้');
+      return j.data;
+    }
+
+    function showError(msg) {
+      card.innerHTML = `<div class="err">${esc(msg)}</div>`;
+    }
+
+    async function load() {
+      if (!companyId || !token) { showError('ลิงก์ไม่ครบ — ขอลิงก์ใหม่จากผู้ส่งเอกสาร'); return; }
+      try {
+        const v = await post('/view');
+        card.innerHTML = `
+          <h1>รับการแจ้งเอกสารทาง LINE</h1>
+          <div class="sub">จาก ${esc(v.companyName)} · สำหรับ ${esc(v.contactName)}</div>
+          <div class="consent">${esc(v.consentText)}</div>
+          <label style="display:flex;gap:8px;align-items:flex-start;font-size:14px">
+            <input type="checkbox" id="agree" style="margin-top:4px"> ข้าพเจ้าอ่านและยินยอมตามข้อความข้างบน
+          </label>
+          <button class="btn" id="consentBtn" disabled>ยินยอมและรับรหัสผูก LINE</button>
+          <div class="muted">ฉบับข้อความ ${esc(v.consentVersion)}</div>
+          <div id="next"></div>`;
+        const agree = document.getElementById('agree');
+        const btn = document.getElementById('consentBtn');
+        agree.addEventListener('change', () => { btn.disabled = !agree.checked; });
+        btn.addEventListener('click', consent);
+      } catch (e) { showError(e.message); }
+    }
+
+    async function consent() {
+      const btn = document.getElementById('consentBtn');
+      const next = document.getElementById('next');
+      btn.disabled = true;
+      try {
+        const d = await post('/consent');
+        const add = safeUrl(d.addFriendUrl);
+        const send = safeUrl(d.sendCodeUrl);
+        next.innerHTML = `
+          <div class="consent" style="margin-top:14px">
+            <b>ขั้นต่อไป</b><br>
+            1) เพิ่มเพื่อน LINE ของบริษัท<br>
+            2) ส่งข้อความด้านล่างในแชตนั้น (ภายใน 30 นาที) — ระบบจะตอบว่าผูกสำเร็จ
+          </div>
+          <div class="code">${esc(d.messageText)}</div>
+          ${add ? `<a class="btn secondary" href="${esc(add)}">1) เพิ่มเพื่อน LINE ของบริษัท</a>` : ''}
+          ${send ? `<a class="btn" href="${esc(send)}">2) เปิด LINE แล้วส่งรหัส</a>` : '<div class="muted">บริษัทยังไม่ได้ใส่ LINE ID ของ OA — ค้นหา LINE ของบริษัทแล้วพิมพ์ข้อความข้างบนเอง</div>'}
+          <div class="muted">ขอรหัสใหม่ได้โดยกดปุ่มยินยอมอีกครั้ง (รหัสเดิมจะใช้ไม่ได้)</div>`;
+        btn.disabled = false;
+        btn.textContent = 'รับรหัสใหม่';
+      } catch (e) {
+        next.innerHTML = `<div class="err" style="padding:12px 0">${esc(e.message)}</div>`;
+        btn.disabled = false;
+      }
+    }
+
+    load();
+  </script>
+</body>
+</html>

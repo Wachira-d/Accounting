@@ -15,6 +15,8 @@ public class AccountingDbContext : DbContext
     public DbSet<EmployeeLineBindCode> EmployeeLineBindCodes => Set<EmployeeLineBindCode>();
     public DbSet<CustomerLineLink> CustomerLineLinks => Set<CustomerLineLink>();   // รอบ 211
     public DbSet<CustomerLineLinkCode> CustomerLineLinkCodes => Set<CustomerLineLinkCode>();   // รอบ 211
+    public DbSet<LineQueue> LineQueues => Set<LineQueue>();   // รอบ 254 WP-11 L2 — คิวส่ง LINE ถึงผู้ติดต่อ (Helpers/ContactLineDeliveryMigration)
+    public DbSet<ContactLineInvite> ContactLineInvites => Set<ContactLineInvite>();   // รอบ 254 WP-11 L2 — ลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน OA บริษัท)
     public DbSet<ContactNotifyEndpoint> ContactNotifyEndpoints => Set<ContactNotifyEndpoint>();   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (Helpers/ContactNotifyEndpointMigration)
     public DbSet<StaffDailySummaryConfig> StaffDailySummaryConfigs => Set<StaffDailySummaryConfig>();   // รอบ 212 C
     public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
@@ -3668,6 +3670,36 @@ public class AccountingDbContext : DbContext
             e.Property(x => x.UnlinkReason).HasMaxLength(32);
             e.HasIndex(x => new { x.CompanyId, x.TargetKind, x.TargetId }).HasDatabaseName("IX_CustomerLineLinks_Company_Target");
             e.HasIndex(x => x.LineUserId).HasDatabaseName("IX_CustomerLineLinks_LineUser");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 254 WP-11 L2 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactLineDeliveryMigration
+        modelBuilder.Entity<LineQueue>(e =>
+        {
+            e.Property(x => x.EntityType).HasMaxLength(40);
+            e.Property(x => x.EndpointKind).HasMaxLength(16);
+            e.Property(x => x.Topic).HasMaxLength(16);
+            e.Property(x => x.Trigger).HasMaxLength(40);
+            e.Property(x => x.Status).HasMaxLength(16);
+            e.Property(x => x.OaScope).HasMaxLength(16);
+            e.Property(x => x.LineRequestId).HasMaxLength(100);
+            e.Property(x => x.ErrorMessage).HasMaxLength(2000);
+            e.Property(x => x.RuleCode).HasMaxLength(64);
+            e.Property(x => x.IdempotencyKey).HasMaxLength(300);
+            e.Property(x => x.BaseKey).HasMaxLength(250);
+            e.HasIndex(x => new { x.CompanyId, x.IdempotencyKey }).IsUnique().HasDatabaseName("IX_LineQueues_Company_Idempotency")
+                .HasFilter("NOT \"IsDeleted\"");
+            e.HasIndex(x => new { x.Status, x.ScheduledFor }).HasDatabaseName("IX_LineQueues_Status_Scheduled");
+            e.HasIndex(x => new { x.CompanyId, x.BaseKey }).HasDatabaseName("IX_LineQueues_Company_BaseKey");
+            e.HasIndex(x => new { x.CompanyId, x.EntityId }).HasDatabaseName("IX_LineQueues_Company_Entity");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<ContactLineInvite>(e =>
+        {
+            e.Property(x => x.TokenHash).HasMaxLength(64);
+            e.Property(x => x.OaDestination).HasMaxLength(64);
+            e.Property(x => x.CodeHash).HasMaxLength(64);
+            e.HasIndex(x => x.TokenHash).IsUnique().HasDatabaseName("IX_ContactLineInvites_TokenHash");
+            e.HasIndex(x => new { x.CompanyId, x.CodeHash }).HasDatabaseName("IX_ContactLineInvites_Company_CodeHash");
             e.HasQueryFilter(x => !x.IsDeleted);
         });
         // รอบ 245 L1 — ชื่อ index/คอลัมน์ต้องตรงกับ Helpers/ContactNotifyEndpointMigration (ไม่มี unique โดยตั้งใจ — ดูเหตุในไฟล์นั้น)

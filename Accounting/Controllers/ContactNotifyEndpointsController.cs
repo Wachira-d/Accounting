@@ -21,10 +21,12 @@ public class ContactNotifyEndpointsController : ControllerBase
     private readonly IContactRecipientResolver _resolver;
     private readonly IContactNotifyEndpointService _endpoints;
     private readonly IPermissionService _permissions;
+    private readonly IContactLineBindingService? _lineBinding;
 
-    public ContactNotifyEndpointsController(IContactRecipientResolver resolver, IContactNotifyEndpointService endpoints, IPermissionService permissions)
+    public ContactNotifyEndpointsController(IContactRecipientResolver resolver, IContactNotifyEndpointService endpoints, IPermissionService permissions,
+        IContactLineBindingService? lineBinding = null)
     {
-        _resolver = resolver; _endpoints = endpoints; _permissions = permissions;
+        _resolver = resolver; _endpoints = endpoints; _permissions = permissions; _lineBinding = lineBinding;
     }
 
     [HttpGet]
@@ -88,6 +90,20 @@ public class ContactNotifyEndpointsController : ControllerBase
         if (await DenyKeyAsync(companyId, "ยกเลิกช่องทางแจ้งเตือนของผู้ติดต่อ") is { } deny) return Forbid403(deny);
         var r = await _endpoints.UnlinkAsync(companyId, contactId, endpointId, Actor(), ct);
         return Ok(new ApiResponse<ContactNotifyOverviewResponse>(true, r, "ยกเลิกปลายทางแล้ว"));
+    }
+
+    /// <summary>รอบ 254 WP-11 L2 (คำตอบเจ้าของ Q6 ทางลัด): สร้างลิงก์/QR ผูก LINE ของผู้ติดต่อ (ผ่าน LINE OA ของบริษัท · ผู้รับยินยอมบนมือถือ) — ด่าน Contact.Edit</summary>
+    [HttpPost("line-invite")]
+    [RejectApiKey("สร้างลิงก์ผูก LINE ของผู้ติดต่อ")]
+    public async Task<ActionResult<ApiResponse<ContactLineInviteResponse>>> CreateLineInvite(Guid companyId, Guid contactId, CancellationToken ct)
+    {
+        if (await DenyKeyAsync(companyId, "สร้างลิงก์ผูก LINE ของผู้ติดต่อ") is { } deny)
+            return StatusCode(403, new ApiResponse<ContactLineInviteResponse>(false, null, deny));
+        if (_lineBinding == null)
+            return StatusCode(503, new ApiResponse<ContactLineInviteResponse>(false, null, "บริการผูก LINE ของผู้ติดต่อยังไม่พร้อม"));
+        var actor = Actor();
+        var r = await _lineBinding.CreateInviteAsync(companyId, contactId, actor.UserId, actor.Email, ct);
+        return StatusCode(201, new ApiResponse<ContactLineInviteResponse>(true, r, "สร้างลิงก์ผูก LINE แล้ว"));
     }
 
     private async Task<string?> DenyKeyAsync(Guid companyId, string verb)

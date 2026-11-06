@@ -14911,16 +14911,17 @@ _R245_MIG = "Helpers/ContactNotifyEndpointMigration.cs"
 RULES += [
     dict(file=_R245_RULE, method="Resolve",
          must=["contact.CompanyId != companyId", "e.CompanyId == companyId && e.ContactId == contact.Id",
-               "Status(e, platformGroupIds, lineDeliveryOpen)", "SignEmailThrottle.ParseRecipients(", "WithTopic(", "PickPrimary("],
+               "Status(e, platformGroupIds, line)", "SignEmailThrottle.ParseRecipients(", "WithTopic(", "PickPrimary("],
          forbid=["OrderBy(e => e.Id)"],
          why=_R245_WHY + "ตัวตัดสินเดียว: tenant (ผู้ติดต่อ/แถวของบริษัทอื่นไม่ถูกนับ) · อีเมลหลักจาก Contact.Email ด้วยตัวแยกเดียวกับฝั่งส่ง · สถานะ+เรื่องของทุกแถว · "
              "ฝ่ายค้าน S4 แถวหลักเลือกด้วย PickPrimary (ไม่ใช่ตาม Guid)"),
     dict(file=_R245_RULE, method="Status",
          must=["GroupProblem(e.LineGroupIdPlain, e.MemberCount, platformGroupIds)", "e.ConsentRecordId == null", "e.ConsentWithdrawnAt != null",
                "NotifyEndpointKind.ScopeNextAcc", "e.BlockedAt != null"],
-         must_re=[r"if\s*\(\s*!\s*lineDeliveryOpen\s*\)"],
-         before=[("GroupProblem(", "e.ConsentRecordId == null")],
-         why=_R245_WHY + "Q1(b) กลุ่มกลางของระบบ + Q2 เพดาน 200 คน ก่อนทุกอย่าง · PDPA ความยินยอมบังคับ/ถอนแล้วใช้ไม่ได้ · OA ไม่รู้ = ไม่ส่ง · L1 LINE ยังไม่เปิด"),
+         must_re=[r"if\s*\(\s*LineGate\s*\(\s*e\s*,\s*line\s*\)\s*is\s*\{\s*\}\s*gate\s*\)\s*return\s+gate\s*;"],
+         before=[("GroupProblem(", "e.ConsentRecordId == null"), ("e.ConsentWithdrawnAt != null", "LineGate(e, line)")],
+         why=_R245_WHY + "Q1(b) กลุ่มกลางของระบบ + Q2 เพดาน 200 คน ก่อนทุกอย่าง · PDPA ความยินยอมบังคับ/ถอนแล้วใช้ไม่ได้ · OA ไม่รู้ = ไม่ส่ง · "
+             "รอบ 254: ช่อง LINE ต่อขอบเขต OA (LineGate) หลังด่านความยินยอม"),
     dict(file=_R245_RULE, method="GroupProblem",
          must=["string.IsNullOrWhiteSpace(groupId)", "IsPlatformCentralGroup(groupId, platformGroupIds)", "MaxGroupMembers"],
          before=[("string.IsNullOrWhiteSpace(groupId)", "IsPlatformCentralGroup(")],
@@ -14931,10 +14932,10 @@ RULES += [
          why=_R245_WHY + "ฝ่ายค้าน S2: กลุ่มกลางจากหน้าแอดมิน + config แยกกัน (Merge เลือกแหล่งเดียว ⇒ อีกแหล่งหลุดด่าน)"),
     dict(file=_R245_RES, method="ResolveAsync",
          must=["LoadFactsAsync(", "ContactRecipientRule.Resolve("],
-         call_args=[("ContactRecipientRule.Resolve(", "PlatformGroupIds"), ("ContactRecipientRule.Resolve(", "LineDeliveryOpen")],
+         call_args=[("ContactRecipientRule.Resolve(", "PlatformGroupIds"), ("ContactRecipientRule.Resolve(", "Line")],
          why=_R245_WHY + "ผู้อ่านเดียว ส่งกลุ่มกลางของระบบ (ทุกแหล่ง) ให้ตัวตัดสินทุกครั้ง"),
     dict(file=_R245_RES, method="GetOverviewAsync",
-         must=["LoadFactsAsync(", "ContactRecipientRule.Status(e, facts.PlatformGroupIds, LineDeliveryOpen)", "ContactRecipientRule.ConsentLabel(",
+         must=["LoadFactsAsync(", "ContactRecipientRule.Status(e, facts.PlatformGroupIds, facts.Line)", "ContactRecipientRule.ConsentLabel(",
                "ContactRecipientRule.PickPrimary(", "e.UnlinkedAt == null && canEdit", "CanEditTopics: canEdit"],
          forbid=["OrderBy(e => e.Id)"],
          why=_R245_WHY + "สถานะบนหน้า = ตัวตัดสินเดียวกับชุดผู้รับ (server computes · page displays) · ฝ่ายค้าน N3 ปุ่มตามสิทธิ์จริง"),
@@ -15003,7 +15004,7 @@ REVIEWER_CASES += [
     # Q1(b): ไม่เทียบกลุ่มกลางของระบบ ⇒ ต้องฟ้อง
     ("R245b", "Status", "GroupProblem(e.LineGroupIdPlain, e.MemberCount, platformGroupIds)", "GroupProblem(e.LineGroupIdPlain, e.MemberCount, Array.Empty<string>())", True),
     # ผู้อ่านส่งชุดว่างแทนกลุ่มกลาง ⇒ ต้องฟ้อง
-    ("R245c", "ResolveAsync", "topic, facts.PlatformGroupIds, LineDeliveryOpen)", "topic, Array.Empty<string>(), LineDeliveryOpen)", True),
+    ("R245c", "ResolveAsync", "topic, facts.PlatformGroupIds, facts.Line)", "topic, Array.Empty<string>(), facts.Line)", True),
     # ถอด CompanyId ออกจาก query ปลายทาง ⇒ ต้องฟ้อง
     ("R245d", "LoadFactsAsync", ".Where(e => e.CompanyId == companyId && e.ContactId == contactId)", ".Where(e => e.ContactId == contactId)", True),
     # audit นอก chain ⇒ ต้องฟ้อง
@@ -15027,6 +15028,143 @@ REVIEWER_CASES += [
     ("R245h", "ToFacts", "Guid? consentId = r.ConsentRecordId is Guid id && consents.ContainsKey(id) ? id : null;", "Guid? consentId = r.ConsentRecordId;", True),
     # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .Resolve( ⇒ ต้องไม่ฟ้อง
     ("R245i", "ResolveAsync", "return ContactRecipientRule.Resolve(", "return ContactRecipientRule\n            .Resolve(", False),
+]
+
+
+# ── รอบ 254 WP-11 L2: LINE ถึงผู้ติดต่อผ่าน OA ของบริษัท (erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md §WP-11 · LINE_MULTICHANNEL_DESIGN §3.d–§3.f ·
+#    คำตอบเจ้าของ §10 Q1(b)/Q6/Q7 · คำตัดสิน N8) — ด่านใน service ต้องถูกเรียกจริง (เทสต์ pure ล็อกแค่ helper) ──
+_R254_WHY = "รอบ 254 WP-11 L2 (LINE ถึงผู้ติดต่อ · Q1(b)/Q7/N8): "
+_R254_LINE = "Services/Implementations/LineNotifyService.cs"
+_R254_QUEUE = "Services/Implementations/ContactLineQueueService.cs"
+_R254_BIND = "Services/Implementations/ContactLineBindingService.cs"
+_R254_ESS = "Services/Implementations/EmailScheduleService.cs"
+RULES += [
+    dict(file=_R254_LINE, method="PushCoreAsync",
+         must=["req.Headers.TryAddWithoutValidation(LineRetryKeyHeader", "retryKey ?? Guid.NewGuid()", "TransportError: true"],
+         forbid=["client.PostAsync(", "DefaultRequestHeaders"],
+         why=_R254_WHY + "ทุก push ส่ง X-Line-Retry-Key (ลองใหม่ด้วย key เดิม = LINE ไม่ส่งซ้ำ · NOTIFY §5 ข้อ 8) + คืนสถานะให้ตัวจำแนกผลเดียว"),
+    dict(file=_R254_LINE, method="TryPushContactAsync",
+         must=["ContactRecipientRule.IsPlatformCentralGroup(to, await _nextAcc.PlatformGroupIdsAsync())", "ResolveCompanyOaAsync(",
+               "NotificationAudiencePolicy.LineRoute(", "ContactRecipientRule.RuleCodeNextAccNotOpen"],
+         call_args=[("PushCoreAsync(", "retryKey")],
+         before=[("IsPlatformCentralGroup(", "PushCoreAsync("), ("NotificationAudiencePolicy.LineRoute(", "PushCoreAsync(")],
+         forbid=["NextAccTokenAsync(", "_nextAcc.GetAsync("],
+         why=_R254_WHY + "กลุ่มกลางของแอดมิน (ทุกแหล่ง) ห้ามเป็นปลายทางของผู้ติดต่อไม่ว่าผ่าน OA ใด (Q1(b)) · L2 ผ่าน OA ของบริษัทเท่านั้น — ไม่มี token กลางในเส้นนี้ (N8)"),
+    dict(file=_R254_QUEUE, method="ProcessPendingAsync",
+         must=["catch (Exception saveEx)", "StaleSending", "SendOneAsync("], must_lit=["FOR UPDATE SKIP LOCKED"],
+         why=_R254_WHY + "จองแถวด้วย SKIP LOCKED (หลายเครื่องไม่ส่งซ้ำ) · แถวค้างกลับมาลองใหม่ด้วย key เดิม · บันทึกแถวหนึ่งล้มไม่ลากทั้งแบตช์"),
+    dict(file=_R254_QUEUE, method="SendOneAsync",
+         must=["ScheduledEmailSendCheck.SkipReason(", "_recipients.ResolveAsync(", "_line.TryPushContactAsync(", "LinePushOutcome.Classify(",
+               "BuildCardAsync(", "FallbackAsync("],
+         call_args=[("_line.TryPushContactAsync(", "item.RetryKey")],
+         before=[("ScheduledEmailSendCheck.SkipReason(", "_recipients.ResolveAsync("), ("_recipients.ResolveAsync(", "_line.TryPushContactAsync("),
+                 ("_line.TryPushContactAsync(", "LinePushOutcome.Classify(")],
+         forbid=["PushCoreAsync(", "TryPushViaNextAccAsync(", "TryPushFlexViaNextAccAsync(", "_httpClientFactory"],
+         why=_R254_WHY + "ลำดับ: ใบซ้ำตอนส่ง → ปลายทางยังใช้ได้ (ตัวหาผู้รับเดียว: consent/กลุ่มกลาง/OA) → push ด้วย retry key ของแถว → จำแนกผลตัวเดียว · ห้ามยิง LINE เอง"),
+    dict(file=_R254_QUEUE, method="BuildCardAsync",
+         must=["PdfGenerationService.ResolveDocumentHeadingAsync(", "LineDocumentCard.Build(", "PayUrlAsync("],
+         forbid=["TaxId", "Address"],
+         why=_R254_WHY + "การ์ดภาษา/หัวเดียวกับ PDF · ส่งให้น้อยที่สุด (ไม่มีเลขผู้เสียภาษี/ที่อยู่ — PDPA ม.22)"),
+    dict(file=_R254_QUEUE, method="PayUrlAsync",
+         must=["_payLinks.ForScheduledEmailAsync(", "_payLinks.CurrentUrlAsync(", "r.CompanyId == item.CompanyId"],
+         why=_R254_WHY + "ปุ่มชำระมาจากตัวตัดสินลิงก์ชำระเดียวกับอีเมลตามตาราง (ไม่ประกอบ URL เอง)"),
+    dict(file=_R254_QUEUE, method="FallbackAsync",
+         must=["ContactLineChannel.FallbackNeeded(", "_emailSchedule.EnqueueLineFallbackEmailAsync(", "q.CompanyId == item.CompanyId && q.BaseKey == item.BaseKey"],
+         before=[("ContactLineChannel.FallbackNeeded(", "_emailSchedule.EnqueueLineFallbackEmailAsync(")],
+         why=_R254_WHY + "Q7 ถอยไปอีเมลครั้งเดียวต่อเหตุการณ์ผ่านเส้นเข้าคิวอีเมลเดิม (ผู้รับตามเรื่อง/e-Tax/เพดาน) · ไม่ถอยเมื่อปลายทาง LINE อื่นส่งแล้ว"),
+    dict(file=_R254_QUEUE, method="GetRecentAsync", must=["q.CompanyId == companyId", "d.CompanyId == companyId"], forbid=["LineUserId", "LineGroupId"],
+         why=_R254_WHY + "หน้าคิว: tenant · ไม่มี LINE id"),
+    dict(file=_R254_ESS, method="EnqueueLineAsync",
+         must=["ContactLineChannel.SupportsLine(rule.Trigger)", "_recipients.ResolveAsync(", "AutopilotSettingsResolver.AutoSendBlock(", "ContactLineChannel.Plan(",
+               "ContactLineChannel.QueueKey(", "ContactLineChannel.RetryKey(", "q.CompanyId == doc.CompanyId && q.BaseKey == baseKey"],
+         before=[("_recipients.ResolveAsync(", "ContactLineChannel.Plan("), ("ContactLineChannel.Plan(", "_db.LineQueues.Add(")],
+         forbid=["LineUserId", "LineGroupId", "Contact.Email", "Contact?.Email"],
+         why=_R254_WHY + "เข้าคิว LINE จากตัวหาผู้รับเดียว (ปลายทางที่ผูก OA บริษัท + consent · กลุ่มกลางไม่มีวันอยู่ในชุด) · ผู้ติดต่อไม่ส่งอัตโนมัติชนะ · ไม่เก็บ LINE id ในคิว"),
+    dict(file=_R254_ESS, method="EnqueueDocumentAsync",
+         must=["EnqueueLineAsync(", "ContactLineChannel.EmailWanted("],
+         before=[("EnqueueLineAsync(", "_db.EmailQueues.AnyAsync("), ("ContactLineChannel.EmailWanted(", "_db.EmailQueues.AnyAsync(")],
+         why=_R254_WHY + "ติ๊กช่องทางต่อกฎ: LINE เข้าคิวก่อน แล้วอีเมลส่งเมื่อติ๊กอีเมล หรือถอยมาจาก LINE (Q7) — กฎเดิม (อีเมลอย่างเดียว) ไม่เปลี่ยน"),
+    dict(file=_R254_ESS, method="EnqueueLineFallbackEmailAsync",
+         must=["ContactLineChannel.FallbackSuffix(", "forceEmail: true", "d.Id == documentId && d.CompanyId == companyId", "r.Id == rid && r.CompanyId == companyId"],
+         why=_R254_WHY + "ถอยไปอีเมลผ่านเส้นเดิมทั้งชุด · กุญแจต่อจากเหตุการณ์เดิม (ถอยซ้ำไม่ได้) · tenant"),
+    dict(file=_R254_ESS, method="UpsertRuleAsync",
+         must=["ContactLineChannel.RuleProblem(", "_recipients.LineChannelAsync(", "existing.ChannelEmail = rule.ChannelEmail",
+               "existing.ChannelLineUser = rule.ChannelLineUser", "existing.ChannelLineGroup = rule.ChannelLineGroup",
+               "existing.LineFallbackToEmail = rule.LineFallbackToEmail"],
+         before=[("ContactLineChannel.RuleProblem(", "_db.SaveChangesAsync(")],
+         why=_R254_WHY + "ด่านบันทึกกฎ (ช่องทางอย่างน้อย 1 · trigger ที่ส่ง LINE ได้ · สลิปห้ามเข้า LINE ผู้ติดต่อ · ไม่มี OA บริษัท ⇒ ปฏิเสธ) + เก็บครบ (ห้าม silent no-op)"),
+    dict(file="Services/Implementations/ContactRecipientResolver.cs", method="LoadLineAsync",
+         must=["CompanyLineReadiness.Evaluate(", "_secrets.IsUsable(s.LineChannelAccessToken)", "_secrets.IsUsable(s.LineChannelSecret)",
+               "x.CompanyId == companyId", "NextAccTenantDeliveryOpen", "s?.LineOaDestination"],
+         why=_R254_WHY + "ความพร้อมของช่อง LINE ตัวเดียว (OA บริษัท: เปิด + token/secret ถอดได้ · บอทที่จำไว้) · OA กลางปิดจน L4 (N8)"),
+    dict(file="Helpers/ContactRecipientRule.cs", method="LineGate",
+         must=["e.OaScope == NotifyEndpointKind.ScopeNextAcc", "line.NextAccOpen", "line.CompanyOaReady", "OaChanged(e.OaDestination, line.CompanyOaDestination)"],
+         why=_R254_WHY + "ช่องต่อขอบเขต OA: OA กลางยังไม่เปิด · OA บริษัทไม่พร้อม/เปลี่ยน OA ⇒ ไม่ส่ง (userId ใช้ได้เฉพาะ OA ที่ผูก)"),
+    dict(file="Helpers/NotificationAudiencePolicy.cs", method="LineRoute",
+         must=["centralOaGroupDeliveryEnabled", "RuleCentralOaGroupOff"],
+         before=[("LineTargetKind.PlatformGroup", "LineTargetKind.ContactGroup")],
+         why=_R254_WHY + "N8: กลุ่มของผู้ติดต่อผ่าน OA กลางเฉพาะเมื่อแอดมินเปิดสวิตช์ (ค่าตั้งต้นปิด) · กลุ่มของแพลตฟอร์มถูกกันก่อนเสมอ"),
+    dict(file="Controllers/CustomerLineWebhookController.cs", method="Receive",
+         must=["_contactLine.TryRedeemAsync(companyId, destination, userId", "_contactLine.TryStopAsync(companyId, destination, userId",
+               "_contactLine.SetBlockedAsync(companyId, destination, userId, blocked: true"],
+         before=[("if (!destinationAccepted) return Ok();", "_contactLine.TryRedeemAsync("), ("_contactLine.TryRedeemAsync(", "_links.TryRedeemAsync(")],
+         why=_R254_WHY + "webhook OA บริษัท (ลายเซ็นผ่าน · บอทตรง): รหัสผูกผู้ติดต่อ/หยุด/บล็อก ก่อนเส้นลูกค้าเว็บ"),
+    dict(file=_R254_BIND, method="CreateInviteAsync",
+         must=["_recipients.LineChannelAsync(", "line.CompanyOaReady", "ContactLineBindRule.TokenHash(token)", "_db.AddChainedAuditLog(",
+               "c.Id == contactId && c.CompanyId == companyId"],
+         before=[("line.CompanyOaReady", "_db.ContactLineInvites.Add(")],
+         forbid=["TokenHash = token,", "AuditLogs.Add("],
+         why=_R254_WHY + "ลิงก์ผูกผ่าน OA บริษัทที่พร้อมเท่านั้น · เก็บ hash ของ token (ไม่เก็บค่าดิบ) · audit chain · tenant"),
+    dict(file=_R254_BIND, method="ConsentAsync",
+         must=["_limiter.TryConsumeAsync(", "PdpaConsentEvidence.ComputeHash(", "PdpaConsentEvidence.NormalizeTimestamp(", "ContactRecipientRule.OaChanged(",
+               "CustomerLineLinkRule.Hash(code)"],
+         before=[("_limiter.TryConsumeAsync(", "LoadInviteAsync("), ("PdpaConsentEvidence.ComputeHash(", "CustomerLineLinkRule.NewCode(")],
+         why=_R254_WHY + "PDPA ม.19: ความยินยอมของผู้รับมีหลักฐาน hash ก่อนออกรหัส · จำกัดความถี่ (DB) · OA เปลี่ยนระหว่างทาง ⇒ ไม่ออกรหัส"),
+    dict(file=_R254_BIND, method="TryRedeemAsync",
+         must=["i.CompanyId == companyId && i.CodeHash == hash", "ContactRecipientRule.OaChanged(invite.OaDestination, destination)",
+               "invite.ConsentRecordId == null", "r.WithdrawnAt == null", "AdvisoryLockKey.ContactNotifyEndpoint", "i.UsedAt == null",
+               "_secrets.Protect(uid)", "NotifyEndpointKind.ScopeCompany", "_db.AddChainedAuditLog(", "CommitAsync("],
+         before=[("ExecuteSqlRawAsync(", "_db.ContactNotifyEndpoints.Add("), ("i.UsedAt == null", "_db.ContactNotifyEndpoints.Add(")],
+         forbid=["LineUserId = uid", "LineUserId = lineUserId"],
+         why=_R254_WHY + "ผูกเฉพาะรหัสของบริษัทนี้ · ต้องมีความยินยอมที่ยังไม่ถอน · บอทเดียวกับตอนออกลิงก์ · ใช้ครั้งเดียวใต้ล็อกต่อผู้ติดต่อ · userId เข้ารหัส"),
+    dict(file=_R254_BIND, method="TryStopAsync",
+         must=["ContactLineBindRule.IsStop(text)", "e.CompanyId == companyId", "r.LineUserId = null", "c.WithdrawnAt", "_db.AddChainedAuditLog("],
+         why=_R254_WHY + "ช่องทางยกเลิก (C5): \"หยุด\" ปลดเฉพาะบริษัทนั้น + ถอนความยินยอม + ล้าง id (PDPA ม.22)"),
+    dict(file="Controllers/ContactNotifyEndpointsController.cs", method="CreateLineInvite",
+         must=["DenyKeyAsync("], before=[("DenyKeyAsync(", "_lineBinding.CreateInviteAsync(")],
+         why=_R254_WHY + "สร้างลิงก์ผูก LINE = เขียนช่องทางของผู้ติดต่อ ⇒ ด่าน Contact.Edit ก่อนเรียก service"),
+    dict(file="Helpers/DocumentDeliveryEvidence.cs", method="DeliveredAsync",
+         must=["db.LineQueues", "ContactLineChannel.StatusSent", "q.CompanyId == companyId"],
+         why=_R254_WHY + "G8: การ์ด LINE ที่ LINE ตอบรับจริง = หลักฐานการส่ง (ด่านยกเลิกใบเห็นการส่งทาง LINE)"),
+    dict(file="Services/Background/EmailScheduleWorker.cs", method="ExecuteAsync",
+         must=["GetRequiredService<IContactLineQueueService>()"],
+         why=_R254_WHY + "คิว LINE มีผู้ประมวลผลจริง (มี ≠ ถูกเรียก)"),
+    dict(file="Services/Implementations/Cms/BookingNotifier.cs", method="DeliverAsync",
+         must=["LineOnBehalfText.ForNextAcc("],
+         why=_R254_WHY + "WP-11 ข้อ 1 (LINE_OA C2/C5): ข้อความผ่าน OA กลางมีป้าย \"ในนาม {ร้าน} · ผ่าน NextAcc\" + ช่องทางยกเลิก"),
+]
+REVIEWER_CASES += [
+    # Q1(b): ถอดด่านกลุ่มกลางของแอดมินที่ตัวส่ง ⇒ ต้องฟ้อง
+    ("R254a", "TryPushContactAsync", "if (ContactRecipientRule.IsPlatformCentralGroup(to, await _nextAcc.PlatformGroupIdsAsync()))",
+     "if (false)", True),
+    # ลองใหม่ด้วย key ใหม่ทุกครั้ง (ส่งซ้ำสองข้อความ) ⇒ ต้องฟ้อง
+    ("R254b", "SendOneAsync", "card.AltText, card.Contents, item.RetryKey);", "card.AltText, card.Contents, Guid.NewGuid());", True),
+    # ข้ามแผนเดียว (ส่งทุกปลายทางที่เห็น) ⇒ ต้องฟ้อง
+    ("R254c", "EnqueueLineAsync", "var plan = ContactLineChannel.Plan(", "var plan = PlanEverything(", True),
+    # ถอดด่านช่อง LINE ต่อขอบเขต OA ⇒ ต้องฟ้อง
+    ("R254d", "Status", "if (LineGate(e, line) is { } gate) return gate;", "", True),
+    # webhook ไม่ผูกผู้ติดต่อ ⇒ ต้องฟ้อง
+    ("R254e", "Receive", "reply = await _contactLine.TryRedeemAsync(companyId, destination, userId, text, ct)", "reply = await NoRedeemAsync(text, ct)", True),
+    # ผูกโดยไม่ตรวจบอท ⇒ ต้องฟ้อง
+    ("R254f", "TryRedeemAsync", "if (ContactRecipientRule.OaChanged(invite.OaDestination, destination))", "if (false)", True),
+    # เปิด OA กลางให้ผู้ติดต่อเงียบ ๆ ⇒ ต้องฟ้อง
+    ("R254g", "LoadLineAsync", "ready.Problem, NextAccTenantDeliveryOpen);", "ready.Problem, true);", True),
+    # เก็บ userId ดิบ ⇒ ต้องฟ้อง
+    ("R254h", "TryRedeemAsync", "LineUserId = _secrets.Protect(uid),", "LineUserId = uid,", True),
+    # ถอดด่านบันทึกกฎ ⇒ ต้องฟ้อง
+    ("R254i", "UpsertRuleAsync", "if (ContactLineChannel.RuleProblem(", "if (NoRuleProblem(", True),
+    # ทิศตรงข้าม: ขึ้นบรรทัดใหม่ก่อน .TryPushContactAsync( ⇒ ต้องไม่ฟ้อง
+    ("R254j", "SendOneAsync", "var result = await _line.TryPushContactAsync(", "var result = await _line\n            .TryPushContactAsync(", False),
 ]
 
 

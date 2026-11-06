@@ -144,6 +144,14 @@ public sealed class DocumentLabels
     public string PayQrPromptPay => this["payqr_promptpay"];
     public string PayQrNoAmount => this["payqr_no_amount"];
     public string PayQrLinkTitle => this["payqr_link_title"];
+    /// <summary>รอบ 254 WP-11 L2 — การ์ด LINE ของเอกสาร (<c>Helpers/LineDocumentCard</c>)</summary>
+    public string LineCardAmountDue => this["line_card_amount_due"];
+    public string LineCardTo => this["line_card_to"];
+    public string LineCardPay => this["line_card_pay"];
+    public string LineCardStopUser => this["line_card_stop_user"];
+    public string LineCardStopGroup => this["line_card_stop_group"];
+    public string LineCardFrom(string company) => string.Format(this["line_card_from"], company);
+    public string LineCardOnBehalf(string company) => string.Format(this["line_card_on_behalf"], company);
     public string PayQrAmount(decimal amount)
         => string.Format(this["payqr_amount"], amount.ToString("N2", System.Globalization.CultureInfo.InvariantCulture));
     /// <summary>"ใช้ได้ถึง 5/1/2570" (ไทย = พ.ศ. · เวลาไทย) / "Valid until 05 Jan 2027" — รับเวลา UTC</summary>
@@ -326,6 +334,14 @@ public sealed class DocumentLabels
         ["payqr_account_name"] = "ชื่อบัญชี {0}",
         ["payqr_account_no"] = "เลขที่บัญชี {0}",
         ["payqr_amount_asof"] = "ยอด ณ วันที่พิมพ์ {0}",
+        // รอบ 254 WP-11 L2: การ์ด LINE ของเอกสาร (Helpers/LineDocumentCard — ภาษาเดียวกับ PDF)
+        ["line_card_amount_due"] = "ยอดชำระ",
+        ["line_card_to"] = "ถึง",
+        ["line_card_from"] = "จาก {0}",
+        ["line_card_on_behalf"] = "ในนาม {0} · ผ่าน NextAcc",
+        ["line_card_pay"] = "ชำระเงินออนไลน์",
+        ["line_card_stop_user"] = "ไม่ต้องการรับทาง LINE? พิมพ์ \"หยุด\" ในแชตนี้",
+        ["line_card_stop_group"] = "ไม่ต้องการรับในกลุ่มนี้? แจ้งผู้ส่งเพื่อยกเลิกการผูกกลุ่ม",
         ["terms"] = "เงื่อนไข",
         ["notes"] = "หมายเหตุ",
         ["gl_posting"] = "การบันทึกบัญชี",
@@ -443,6 +459,13 @@ public sealed class DocumentLabels
         ["payqr_account_name"] = "Account name {0}",
         ["payqr_account_no"] = "Account no. {0}",
         ["payqr_amount_asof"] = "Amount as of print date {0}",
+        ["line_card_amount_due"] = "Amount due",
+        ["line_card_to"] = "To",
+        ["line_card_from"] = "From {0}",
+        ["line_card_on_behalf"] = "On behalf of {0} · via NextAcc",
+        ["line_card_pay"] = "Pay online",
+        ["line_card_stop_user"] = "Don't want these on LINE? Reply STOP in this chat",
+        ["line_card_stop_group"] = "Don't want these in this group? Ask the sender to unlink it",
         ["terms"] = "Terms",
         ["notes"] = "Notes",
         ["gl_posting"] = "Journal entry",

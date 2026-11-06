@@ -594,6 +594,12 @@ ABC จำกัด — ช่องทางแจ้งเตือน
 
 ### L2 — คิว LINE + Flex + ลิงก์ดูเอกสาร + ติ๊กช่องทาง (1:1 ผ่าน OA ของบริษัทก่อน)
 
+> ✅ **รอบ 254 WP-11 L2 (บางส่วน — ดูรายการยังไม่ทำ)**: `LineQueue` · `ContactLineChannel` (แทน `ChannelSenderPolicy`/`ChannelReadinessPolicy` — ความพร้อมต่อปลายทางอยู่ที่
+> `ContactRecipientRule.LineGate` + `CompanyLineReadiness`) · `LinePushOutcome` · `LineDocumentCard` · ฟิลด์กฎ §3.d (`LineFallbackToEmail` ค่าตั้งต้น **true** ตาม Q7) ·
+> `TryPushContactAsync(…, retryKey)` · หลักฐานการส่งนับ LINE (ใช้ `LineQueues` Sent แทนตาราง `DocumentDeliveryLog` ใหม่) · ลิงก์/QR ผูก LINE ผ่าน OA บริษัท (Q6 ทางลัด — ดึงจาก L5) ·
+> **ยังไม่ทำ**: `DocumentViewLink` (การ์ดมีปุ่มชำระเมื่อมีลิงก์ชำระเท่านั้น) · ชั่วโมงเงียบ · `DocumentLineDeliveryService` ยังไม่ต่อสาย (ผู้ส่งใหม่คือ `ContactLineQueueService`) ·
+> หน้า readiness ต่อกฎ (`channel-readiness`) · กระดิ่งเมื่อล้มซ้ำ · ทาง OA กลาง (L4) · DECISIONS 254-WP11-1…6
+
 - `LineQueue` · `ChannelSenderPolicy` · `ChannelReadinessPolicy` · `LinePushOutcome` · `LineDocumentCard` · `DocumentViewLink` · ฟิลด์กฎ §3.d · `LineNotifyService.TryPushFlexAsync(oa, …, retryKey)` · `DocumentDeliveryLog` + `DocumentDeliveryEvidence` นับ LINE · ต่อสาย `DocumentLineDeliveryService` (หรือลบแล้วใช้ dispatcher — เลือกต่อสายตามคำตัดสินข้อ 101)
 - **เทสต์:** การ์ดไม่มีเลขผู้เสียภาษี · altText ≤ 400 · ภาษา en/th ตรงกับ PDF · `LinePushOutcomeTests` ครบทุกแถวของตาราง §3.e · retry ใช้ key เดิม (ส่งซ้ำไม่เกิดสองข้อความ) · **ทิศตรงข้าม:** กฎเดิม (`ChannelEmail` อย่างเดียว) ไม่สร้างแถว LineQueue · ใบยกเลิกหลังเข้าคิว ⇒ Skipped · ชั่วโมงเงียบเลื่อนเวลา ไม่ใช่ Failed · `PayrollPaid` + กลุ่ม ⇒ บันทึกกฎไม่ได้
 - **required_call_site_check:** `ProcessLineQueueAsync` ต้องเรียกตามลำดับ Recheck → `ChannelSenderPolicy` → `NotificationAudiencePolicy.LineRoute` → (ถ้า NextAcc) `TryReserveAsync` → push · ห้ามเรียก `PushCoreAsync`/HTTP ตรง · ปุ่มในการ์ดต้องมาจาก `DocumentPayLinkPolicy` / `DocumentViewLink` / ลิงก์เซ็น เท่านั้น
@@ -663,3 +669,19 @@ ABC จำกัด — ช่องทางแจ้งเตือน
 | Q8 | ปลดการผูกครบ ⇒ บอทออกจากกลุ่มเอง |
 | Q9 | ตั้งทีมวิเคราะห์ราคาแพ็ก LINE/อีเมล (ต้นทุนจริง) — ผลที่ `erp-review/2026-11-06/NOTIFY_PRICING_ANALYSIS.md` |
 | Q10 | ตั้งทีมตรวจข้อตกลง LINE OA อย่างละเอียด — ผลที่ `erp-review/2026-11-06/LINE_OA_TERMS_CHECK.md` |
+
+## 11. เงื่อนไข C1–C10 (LINE_OA_TERMS_CHECK §5) → จุดในโค้ด (รอบ 254 WP-11 ข้อ 1)
+
+| เงื่อนไข | จุดในโค้ด ณ รอบ 254 | สถานะ |
+| --- | --- | --- |
+| C1 NextAcc คุม OA กลางผู้เดียว | token/secret OA กลางอยู่ที่ `INextAccLineConfig` เท่านั้น · ผู้เช่าไม่มีทางเข้า · เส้นผู้ติดต่อ (`TryPushContactAsync`) ไม่อ่าน token กลางเลย (R254 forbid) | ✅ |
+| C2 เนื้อหาเป็นแม่แบบที่ระบบประกอบ | `Helpers/LineDocumentCard` (ป้าย `DocumentLabels` · ไม่มีข้อความอิสระของผู้เช่า) · `Helpers/LineOnBehalfText` สำหรับข้อความ text ผ่าน OA กลาง | ✅ การ์ดเอกสาร · ⏳ ชนิดอื่น (L6) |
+| C3 ป้ายผู้ส่งชัด | การ์ด: "จาก {บริษัท}" (OA บริษัท) / "ในนาม {บริษัท} · ผ่าน NextAcc" (OA กลาง) ทั้งการ์ดและ altText · `BookingNotifier` ผ่าน OA กลาง = `LineOnBehalfText.ForNextAcc` | ✅ |
+| C4 ผู้รับเลือกรับเอง | ลิงก์/QR ผูก: กดยินยอม (`PdpaConsentRecord` hash) ก่อนได้รหัส → ผู้รับส่งรหัสเอง (`ContactLineBindingService`) · ปลายทางไม่มีความยินยอม = ไม่ส่ง (`ContactRecipientRule.Status`) | ✅ 1:1 · ⏳ กลุ่ม (L3) |
+| C5 ยกเลิกง่าย | การ์ดทุกใบมีบรรทัดยกเลิก · "หยุด"/stop ปลด + ถอนยินยอม (`TryStopAsync`) · unfollow ⇒ บล็อก · "หยุดทั้งหมด"/`#ByeNextAcc`/ปุ่มพอร์ทัล = L3/L5 | ✅ บางส่วน |
+| C6 ไม่เปิดเผย LINE id แก่ผู้เช่า | คิว/หน้าคิว/ภาพรวมไม่มี LINE id (R254 forbid ใน `GetRecentAsync`/`EnqueueLineAsync`) · id เข้ารหัส · log ปิดบัง | ✅ |
+| C7 จำกัดความถี่ข้ามบริษัทบน OA กลาง | ยังไม่มีเส้นผู้ติดต่อผ่าน OA กลาง (N8) | ⏳ L4 |
+| C8 คัดกรองผู้เช่าก่อนใช้ OA กลาง | ไม่มีเส้นผ่าน OA กลาง | ⏳ L4 |
+| C9 ข้อตกลงกับผู้เช่า | เงื่อนไขบริการ (Y6 · เจ้าของกดเผยแพร่) | ⏳ เจ้าของ |
+| C10 กลุ่ม ≤ 200 · ไม่มีสลิปในกลุ่ม · ซ่อนยอด | `ContactRecipientRule.MaxGroupMembers` · สลิป ⇒ `ContactLineChannel.RuleProblem` ปฏิเสธ · `ShowAmounts` ⇒ การ์ดซ่อนยอด · กลุ่มกลางของแอดมินกันสองชั้น | ✅ ตัวตัดสิน · ⏳ ผูกกลุ่ม (L3) |
+

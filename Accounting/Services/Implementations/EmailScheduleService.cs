@@ -929,20 +929,34 @@ public class EmailScheduleService : IEmailScheduleService
     /// <summary>รอบ 250 WP-08: ผลเข้าคิวของใบหนึ่งตามกฎหนึ่ง — <see cref="NotSent"/> = ผู้ติดต่อไม่รับเรื่องนี้ (เขียนแถว "ข้าม" พร้อมเหตุแล้ว)</summary>
     internal sealed record DocQueueResult(bool Queued, bool Duplicate, string? NotSent);
 
-    private async Task<DocQueueResult> EnqueueDocumentAsync(EmailScheduleRule rule, Document doc,
-        int daysOffset, string suffix, CancellationToken ct, DateTime? overrideSendUtc = null, bool recordNotSent = true)
+    /// <summary>รอบ 254 WP-11 L2: ผลเข้าคิว LINE ของใบหนึ่ง — <paramref name="FallbackToEmail"/> = ไม่มีปลายทาง LINE ⇒ ส่งอีเมลแทน (Q7)</summary>
+    internal sealed record LineEnqueueResult(int Queued, bool Duplicate, bool FallbackToEmail, string? NotSent)
     {
-        // ฝ่ายค้าน LOW: กันซ้ำก่อน (สแกนรายวันไม่ต้องหาผู้รับของใบที่เข้าคิวแล้ว)
+        public static LineEnqueueResult None { get; } = new(0, false, false, null);
+    }
+
+    private async Task<DocQueueResult> EnqueueDocumentAsync(EmailScheduleRule rule, Document doc,
+        int daysOffset, string suffix, CancellationToken ct, DateTime? overrideSendUtc = null, bool recordNotSent = true, bool forceEmail = false)
+    {
         var idem = DocumentQueueKey(doc.Id, rule.Trigger, suffix);
+        // รอบ 254 WP-11 L2 (DESIGN §3.d/§3.e · Q7): ช่องทางต่อกฎ — เข้าคิว LINE ก่อน (ปลายทางจากตัวหาผู้รับเดียว) แล้วตัดสินว่าอีเมลยังต้องส่งไหม
+        // (ติ๊กอีเมล · หรือถอยมาจาก LINE เพราะไม่มีปลายทาง) · forceEmail = เส้นถอยไปอีเมลตอนส่ง (ไม่เข้าคิว LINE ซ้ำ)
+        var line = forceEmail ? LineEnqueueResult.None
+            : await EnqueueLineAsync(rule, doc, idem, overrideSendUtc ?? ScheduledUtc(BangkokNow().Date.AddDays(daysOffset), rule.SendAtHour), recordNotSent, ct);
+        DocQueueResult Merge(DocQueueResult r) => line.Queued > 0 ? r with { Queued = true, NotSent = null } : r;
+        if (!ContactLineChannel.EmailWanted(rule.ChannelEmail, line.FallbackToEmail, forceEmail))
+            return new DocQueueResult(line.Queued > 0, line.Duplicate, line.Queued > 0 ? null : line.NotSent);
+
+        // ฝ่ายค้าน LOW: กันซ้ำก่อน (สแกนรายวันไม่ต้องหาผู้รับของใบที่เข้าคิวแล้ว)
         if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == doc.CompanyId
-            && q.IdempotencyKey == idem && !q.IsDeleted, ct)) return new DocQueueResult(false, true, null);
+            && q.IdempotencyKey == idem && !q.IsDeleted, ct)) return Merge(new DocQueueResult(false, true, null));
 
         // รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.e): ผู้รับจากตัวหาผู้รับเดียว — ปลายทางของผู้ติดต่อที่รับเรื่องของ trigger นี้ (ไม่ตั้ง = Contact.Email เดิมทุกเรื่อง) ·
         // ไม่มีอีเมลเลย ⇒ ไม่เข้าคิว (เดิม) · มีอีเมลแต่ไม่รับเรื่องนี้/ผู้ติดต่อถูกลบ ⇒ แถว "ข้าม" พร้อมเหตุ
         var delivery = await EmailForAsync(doc.CompanyId, doc.ContactId, NotifyTopics.ForTrigger(rule.Trigger), ct);
         // คำตัดสิน 250-29: ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ชนะกฎบริษัททุก trigger ของตารางส่ง (ตัวตัดสินเดียว AutopilotSettingsResolver.AutoSendBlock)
         var notSentReason = AutopilotSettingsResolver.AutoSendBlock(await ContactAutoSendOffAsync(doc.CompanyId, doc.ContactId, ct)) ?? delivery.OptOutReason;
-        if (!delivery.Deliverable && notSentReason == null) return new DocQueueResult(false, false, null);
+        if (!delivery.Deliverable && notSentReason == null) return Merge(new DocQueueResult(false, false, null));
         // ฝ่ายค้าน HIGH-1: ใบที่ต้องไปทาง e-Tax by Email ⇒ ถึงอีเมลหลักเท่านั้น (ไม่มีสำเนา) · อีเมลเพิ่มเติมบันทึกว่าไม่ได้ส่ง (ตัวตัดสิน ForChannel)
         ContactRecipientRule.ChannelRecipients? channel = null;
         if (notSentReason == null)
@@ -961,13 +975,13 @@ public class EmailScheduleService : IEmailScheduleService
         var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
         var isEn = heading.IsEnglish;
         var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
-        if (notSentReason != null && !recordNotSent) return new DocQueueResult(false, false, null);   // ครั้งซ้ำ: ไม่สะสมแถว "ข้าม"
+        if (notSentReason != null && !recordNotSent) return Merge(new DocQueueResult(false, false, null));   // ครั้งซ้ำ: ไม่สะสมแถว "ข้าม"
         if (notSentReason != null)
         {
             ctx["PayLink"] = "";
             AddNotSentRow(doc.CompanyId, rule.Id, "Document", doc.Id,
                 Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, isEn), ctx), sendUtc, idem, notSentReason);
-            return new DocQueueResult(false, false, notSentReason);
+            return Merge(new DocQueueResult(false, false, notSentReason));
         }
         // รอบ 241: ลิงก์ชำระเงิน (ช่องทางตามตาราง ∩ ที่บริษัทเปิด) — หนึ่งลิงก์ต่อใบ · {PayLink} ในเทมเพลต หรือบล็อกท้ายเนื้อ
         var payLink = await PayLinkFor(rule, doc, ct);
@@ -998,6 +1012,77 @@ public class EmailScheduleService : IEmailScheduleService
             ErrorMessage = JoinNotes(channel.Note, recipients.Note, PayLinkSkipNote(payLink)),
         });
         return new DocQueueResult(true, false, null);
+    }
+
+    /// <summary>
+    /// รอบ 254 WP-11 L2 — เข้าคิว LINE ของใบหนึ่งตามช่องทางที่กฎติ๊ก (DESIGN §3.e): ปลายทางจากตัวหาผู้รับเดียว (<see cref="IContactRecipientResolver.ResolveAsync"/> ·
+    /// LINE เปิดเฉพาะปลายทางที่ผูกกับ OA ของบริษัทที่พร้อม — คำตัดสิน N8 · กลุ่มกลางของแอดมินไม่มีวันอยู่ในชุด — Q1(b)) · แผนจาก <see cref="ContactLineChannel.Plan"/> ตัวเดียว ·
+    /// หนึ่งแถวต่อปลายทาง (กุญแจ <see cref="ContactLineChannel.QueueKey"/> · retry key คงที่ต่อแถว) · ไม่มีปลายทาง ⇒ แถว "ข้าม" พร้อมเหตุ (ล้มดัง) + ถอยไปอีเมลถ้ากฎตั้งไว้ ·
+    /// ไม่เก็บ LINE id ในคิว (อ้าง EndpointId · ถอดรหัสตอนส่ง)
+    /// </summary>
+    private async Task<LineEnqueueResult> EnqueueLineAsync(EmailScheduleRule rule, Document doc, string baseKey, DateTime sendUtc,
+        bool recordNotSent, CancellationToken ct)
+    {
+        if (!ContactLineChannel.WantsLine(rule.ChannelLineUser, rule.ChannelLineGroup) || !ContactLineChannel.SupportsLine(rule.Trigger))
+            return LineEnqueueResult.None;
+        if (await _db.LineQueues.AnyAsync(q => q.CompanyId == doc.CompanyId && q.BaseKey == baseKey && !q.IsDeleted, ct))
+            return new LineEnqueueResult(0, true, false, null);
+
+        var topic = NotifyTopics.ForTrigger(rule.Trigger);
+        var set = await _recipients.ResolveAsync(doc.CompanyId, doc.ContactId, topic, ct);
+        var block = AutopilotSettingsResolver.AutoSendBlock(await ContactAutoSendOffAsync(doc.CompanyId, doc.ContactId, ct));
+        var plan = ContactLineChannel.Plan(rule.ChannelEmail, rule.ChannelLineUser, rule.ChannelLineGroup, rule.LineFallbackToEmail, set.Options, block);
+        var ruleId = rule.Id == Guid.Empty ? (Guid?)null : rule.Id;
+        if (plan.Endpoints.Count == 0)
+        {
+            if (recordNotSent && plan.NotSent != null)
+            {
+                var noneKey = ContactLineChannel.QueueKey(baseKey, null);
+                _db.LineQueues.Add(new LineQueue
+                {
+                    CompanyId = doc.CompanyId, RuleId = ruleId, EntityType = "Document", EntityId = doc.Id, ContactId = doc.ContactId,
+                    EndpointId = null, EndpointKind = "", Topic = topic.ToString(), Trigger = rule.Trigger, ScheduledFor = sendUtc,
+                    Status = ContactLineChannel.StatusSkipped, RetryKey = ContactLineChannel.RetryKey(doc.CompanyId, noneKey),
+                    IdempotencyKey = noneKey, BaseKey = baseKey, ErrorMessage = plan.NotSent.Length > 2000 ? plan.NotSent[..2000] : plan.NotSent,
+                });
+            }
+            return new LineEnqueueResult(0, false, plan.FallbackNow, plan.NotSent);
+        }
+        // ถอยไปอีเมลตอนส่ง (ล้มถาวร) — เฉพาะกฎที่ไม่ได้ติ๊กอีเมล (ติ๊กอีเมล = อีเมลออกอยู่แล้ว)
+        var fallbackAtSend = rule.LineFallbackToEmail && !rule.ChannelEmail;
+        foreach (var ep in plan.Endpoints)
+        {
+            var key = ContactLineChannel.QueueKey(baseKey, ep.EndpointId);
+            _db.LineQueues.Add(new LineQueue
+            {
+                CompanyId = doc.CompanyId, RuleId = ruleId, EntityType = "Document", EntityId = doc.Id, ContactId = doc.ContactId,
+                EndpointId = ep.EndpointId, EndpointKind = ep.Kind, Topic = topic.ToString(), Trigger = rule.Trigger, ScheduledFor = sendUtc,
+                Status = ContactLineChannel.StatusPending, RetryKey = ContactLineChannel.RetryKey(doc.CompanyId, key),
+                IdempotencyKey = key, BaseKey = baseKey, FallbackToEmail = fallbackAtSend,
+            });
+        }
+        return new LineEnqueueResult(plan.Endpoints.Count, false, false, null);
+    }
+
+    public async Task<string?> EnqueueLineFallbackEmailAsync(Guid companyId, Guid? ruleId, Guid documentId, string baseKey, string trigger,
+        CancellationToken ct = default)
+    {
+        var doc = await _db.Documents.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && !d.IsDeleted, ct);
+        if (doc == null) return "ไม่พบเอกสาร — ไม่ถอยไปอีเมล";
+        await _db.HydrateContactAsync(companyId, doc);
+        var rule = ruleId is Guid rid
+            ? await _db.EmailScheduleRules.AsNoTracking().FirstOrDefaultAsync(r => r.Id == rid && r.CompanyId == companyId && !r.IsDeleted, ct)
+            : null;
+        // กฎถูกลบหลังเข้าคิว/กฎเสมือนของรายการประจำ ⇒ กฎเสมือน (หัวเรื่อง/เนื้อค่าตั้งต้น · RuleId = null)
+        rule ??= new EmailScheduleRule { Id = Guid.Empty, CompanyId = companyId, Trigger = trigger, SendAtHour = 9 };
+        var suffix = ContactLineChannel.FallbackSuffix(baseKey, doc.Id, rule.Trigger);
+        if (suffix == null) return "กุญแจคิว LINE ไม่ตรงกับเอกสาร — ไม่ถอยไปอีเมล";
+        if (ScheduledEmailSendCheck.RecurringIdFromIdempotencyKey(baseKey) is { } recurringId)
+            rule = WithRecurringPayLayer(rule, await RecurringPayLayerAsync(companyId, recurringId, ct));
+        var r = await EnqueueDocumentAsync(rule, doc, daysOffset: 0, suffix: suffix, ct, overrideSendUtc: DateTime.UtcNow, recordNotSent: true, forceEmail: true);
+        await _db.SaveChangesAsync(ct);
+        return r.Queued || r.Duplicate ? null : (r.NotSent ?? "ผู้ติดต่อไม่มีอีเมลที่รับเรื่องนี้ — ถอยไปอีเมลไม่ได้");
     }
 
     // แคชของรอบนี้ (service เป็น scoped — หนึ่งคำขอ/หนึ่งรอบของ worker) · คีย์บริษัท/เอกสาร ไม่ข้าม tenant
@@ -1168,6 +1253,14 @@ public class EmailScheduleService : IEmailScheduleService
         // ฝ่ายค้าน M2: ส่งซ้ำเฉพาะกฎเกินกำหนด (ทางเข้าอื่นนอก controller ก็ไม่เก็บค่าที่ไม่มีผล)
         if (OverdueReminderSchedule.RepeatProblem(rule.Trigger, rule.RepeatEveryDays) is string repeatErr)
             throw new BusinessRuleException(repeatErr, "EMAIL-SCHEDULE-RANGE");
+        // รอบ 254 WP-11 L2 (DESIGN §3.d ด่านตอนบันทึก): ติ๊กช่องทางอย่างน้อย 1 · LINE เฉพาะ trigger ที่รองรับ · สลิปห้ามเข้า LINE ผู้ติดต่อ ·
+        // ไม่มีช่อง LINE ของบริษัท ⇒ ปฏิเสธพร้อมทางไปต่อ (ห้ามเก็บติ๊กที่ไม่มีผลเงียบ ๆ)
+        var lineChannel = ContactLineChannel.WantsLine(rule.ChannelLineUser, rule.ChannelLineGroup)
+            ? await _recipients.LineChannelAsync(companyId)
+            : ContactRecipientRule.LineOpenness.Closed;
+        if (ContactLineChannel.RuleProblem(rule.Trigger, rule.ChannelEmail, rule.ChannelLineUser, rule.ChannelLineGroup,
+                lineChannel.Open && lineChannel.CompanyOaReady, lineChannel.CompanyOaProblem) is string channelErr)
+            throw new BusinessRuleException(channelErr, ContactLineChannel.RuleCode);
         if (rule.Id == Guid.Empty)
         {
             rule.CompanyId = companyId;
@@ -1198,6 +1291,11 @@ public class EmailScheduleService : IEmailScheduleService
             existing.PayLinkChannelsJson = rule.PayLinkChannelsJson;
             existing.PostPayEmailReceipt = rule.PostPayEmailReceipt;
             existing.PostPayIncludePartial = rule.PostPayIncludePartial;
+            // รอบ 254 WP-11 L2: ช่องทางต่อกฎ (ผ่านด่านข้างบนแล้ว · echo กลับผ่าน entity ที่ GetRulesAsync คืน)
+            existing.ChannelEmail = rule.ChannelEmail;
+            existing.ChannelLineUser = rule.ChannelLineUser;
+            existing.ChannelLineGroup = rule.ChannelLineGroup;
+            existing.LineFallbackToEmail = rule.LineFallbackToEmail;
             existing.UpdatedAt = DateTime.UtcNow;
         }
         await _db.SaveChangesAsync();

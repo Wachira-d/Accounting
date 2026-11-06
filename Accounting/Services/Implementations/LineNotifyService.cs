@@ -64,8 +64,11 @@ public class LineNotifyService : ILineNotifyService
     private async Task<bool> PushRawAsync(string? token, object payload, string context)
         => (await PushCoreAsync(token, payload, context)).Ok;
 
-    /// <summary>ตัวยิง push จริงตัวเดียว — คืนผล + <b>เหตุ</b> (รอบ 212 C: ผู้เรียกที่ต้องประทับเหตุบนแถว เช่น สรุปประจำวัน) · log ปิดบัง userId</summary>
-    private async Task<LinePushResult> PushCoreAsync(string? token, object payload, string context)
+    /// <summary>ตัวยิง push จริงตัวเดียว — คืนผล + <b>เหตุ</b> (รอบ 212 C: ผู้เรียกที่ต้องประทับเหตุบนแถว เช่น สรุปประจำวัน) · log ปิดบัง userId ·
+    /// รอบ 254 WP-11 (NOTIFY §5 ข้อ 8 · LINE_OA §7 ข้อ 3): <b>ทุก push</b> ส่ง <c>X-Line-Retry-Key</c> — ผู้เรียกที่มีเหตุการณ์ (คิว LINE) ส่ง key คงที่ต่อ
+    /// (เหตุการณ์ + ผู้รับ) ⇒ ลองใหม่หลัง timeout ไม่เกิดสองข้อความ (LINE ตอบ 409 = รับไปแล้ว) · ผู้เรียกอื่นได้ UUID ใหม่ต่อการเรียก (ข้อความเดิมซ้ำโดยตั้งใจยังส่งได้) ·
+    /// คืนสถานะ HTTP + <c>x-line-request-id</c> ให้ตัวจำแนก <see cref="LinePushOutcome"/></summary>
+    private async Task<LinePushResult> PushCoreAsync(string? token, object payload, string context, Guid? retryKey = null)
     {
         if (string.IsNullOrWhiteSpace(token))
         {
@@ -75,25 +78,33 @@ public class LineNotifyService : ILineNotifyService
         try
         {
             var client = _httpClientFactory.CreateClient();
-            client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-            var content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-            var resp = await client.PostAsync("https://api.line.me/v2/bot/message/push", content);
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://api.line.me/v2/bot/message/push")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+            req.Headers.TryAddWithoutValidation(LineRetryKeyHeader, (retryKey ?? Guid.NewGuid()).ToString("D"));
+            using var resp = await client.SendAsync(req);
+            var requestId = resp.Headers.TryGetValues("x-line-request-id", out var ids) ? ids.FirstOrDefault() : null;
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync();
                 var redacted = CustomerLineLinkRule.RedactForLog(body);
                 _logger.LogError("LINE push failed ({Ctx}): {Status} {Body}", context, resp.StatusCode, redacted);   // รอบ 211 ฝ่ายค้าน: ห้าม log userId เต็ม
-                return LinePushResult.Fail($"LINE ตอบ {(int)resp.StatusCode}: {LineMessageLimits.Truncate(redacted, 200)}");
+                return new LinePushResult(false, $"LINE ตอบ {(int)resp.StatusCode}: {LineMessageLimits.Truncate(redacted, 200)}",
+                    HttpStatus: (int)resp.StatusCode, LineRequestId: requestId);
             }
-            return LinePushResult.Success;
+            return new LinePushResult(true, null, HttpStatus: (int)resp.StatusCode, LineRequestId: requestId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "LINE push threw ({Ctx})", context);
-            return LinePushResult.Fail($"เรียก LINE ไม่สำเร็จ ({ex.GetType().Name})");
+            return new LinePushResult(false, $"เรียก LINE ไม่สำเร็จ ({ex.GetType().Name})", TransportError: true);
         }
     }
+
+    /// <summary>ชื่อ header กันส่งซ้ำของ LINE Messaging API (UUID · ⚠ DESIGN §7.4 ยืนยันกับเอกสารทางการ)</summary>
+    internal const string LineRetryKeyHeader = "X-Line-Retry-Key";
 
     private static object TextPayload(string to, string text)
         => new { to, messages = new[] { new { type = "text", text } } };
@@ -141,6 +152,28 @@ public class LineNotifyService : ILineNotifyService
         var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, LineTargetKind.TenantMember, oa.Configured);
         if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
         return await PushCoreAsync(oa.Token, FlexPayload(lineUserId, altText, flexContents), $"flex user {CustomerLineLinkRule.Mask(lineUserId)}");
+    }
+
+    public async Task<LinePushResult> TryPushContactAsync(Guid companyId, string oaScope, LineTargetKind target, string to,
+        string altText, object flexContents, Guid retryKey)
+    {
+        if (string.IsNullOrWhiteSpace(to)) return LinePushResult.Fail("ปลายทาง LINE ไม่มีค่า (ถอดรหัสไม่ได้หรือถูกล้างแล้ว)");
+        if (target is not (LineTargetKind.TenantMember or LineTargetKind.ContactGroup))
+            return LinePushResult.Denied(NotificationAudiencePolicy.RuleTenantNotPlatform, NotificationAudiencePolicy.TenantNotPlatformMessage);
+        // คำตอบเจ้าของ Q1(b): groupId กลางของแอดมิน (ทุกแหล่ง — หน้าแอดมิน + config) ห้ามเป็นปลายทางของผู้ติดต่อ <b>ไม่ว่าผ่าน OA ใด</b> — ด่านชั้นที่สอง
+        // (ชั้นแรกคือ ContactRecipientRule.GroupProblem ตอนหาผู้รับ) · กันค่าที่หลุดมาทางอื่น (แถวที่ถูกแก้ในฐาน/ผูกก่อนแอดมินตั้งกลุ่มกลาง)
+        if (ContactRecipientRule.IsPlatformCentralGroup(to, await _nextAcc.PlatformGroupIdsAsync()))
+            return LinePushResult.Denied(ContactRecipientRule.RuleCodePlatformGroup,
+                "ปลายทางนี้คือกลุ่ม LINE กลางของระบบ NextAcc (รับเฉพาะเรื่องของระบบ) — ไม่ส่งเรื่องของบริษัท/ผู้ติดต่อเข้ากลุ่มนี้ (คำตัดสินเจ้าของ Q1(b))");
+        if (oaScope != NotifyEndpointKind.ScopeCompany)
+            return oaScope == NotifyEndpointKind.ScopeNextAcc
+                ? LinePushResult.Denied(ContactRecipientRule.RuleCodeNextAccNotOpen, ContactRecipientRule.NextAccNotOpenReason)
+                : LinePushResult.Fail("ไม่รู้ว่าปลายทางนี้ผูกกับ LINE OA ใด — ไม่ส่ง (ให้ผู้รับผูกใหม่)");
+        var oa = await ResolveCompanyOaAsync(companyId);
+        var route = NotificationAudiencePolicy.LineRoute(NotificationAudience.TenantBusiness, LineOaKind.CompanyOa, target, oa.Configured);
+        if (!route.Allowed) return LinePushResult.Denied(route.RuleCode, route.Reason!);
+        return await PushCoreAsync(oa.Token, FlexPayload(to.Trim(), altText, flexContents),
+            $"contact {(target == LineTargetKind.ContactGroup ? "group" : "user")} {CustomerLineLinkRule.Mask(to)}", retryKey);
     }
 
     public async Task<(bool ok, string message)> TestConfigAsync(Guid companyId, string toLineId)

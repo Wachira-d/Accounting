@@ -262,6 +262,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Round250ScheduleSettingsStatements());   // รอบ 250 WP-04 ต่อยอด — แจ้งก่อนรอบรายการประจำ · วันเปิดส่งซ้ำของกฎทวง · ปิดแจ้งก่อนรอบของแถวเดิม (ครั้งเดียว)
         list.AddRange(Accounting.Helpers.LicenseLapseMigration.Statements());   // รอบ 238 (236-3) — คืนสถานะแถวบริษัทที่ถูก cascade ตาม License · License ในระยะผ่อนผัน Expired → PastDue (idempotent)
         list.AddRange(Accounting.Helpers.ContactNotifyEndpointMigration.Statements());   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (ย้าย Contact.LineUserId ทำในโค้ดตอนบูต — ต้องเข้ารหัส)
+        list.AddRange(Accounting.Helpers.ContactLineDeliveryMigration.Statements());   // รอบ 254 WP-11 L2 — ช่องทางต่อกฎตารางส่ง + คิว LINE + คำเชิญผูก LINE ของผู้ติดต่อ
         list.AddRange(Accounting.Helpers.PaymentQrMigration.Statements());   // รอบ 246 QR — QR ชำระเงินของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์) + ธงแสดง QR ของเทมเพลต
         return list;
     }
