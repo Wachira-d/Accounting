@@ -608,6 +608,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunError" text NULL;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunErrorAt" timestamptz NULL;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunNotice" text NULL;""",
+            // รอบ 247 (UX รายการประจำ): เรื่องที่ต้องทำต่อแบบโครงสร้าง (JSON) — หัวเรื่อง/ขั้นตอน/ปุ่มประกอบที่เซิร์ฟเวอร์
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunOutcome" text NULL;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastDocumentId" uuid NULL;""",
 
             // ===== ใบวางบิลรวมใบแจ้งหนี้: บรรทัด "แทนทั้งใบ" ชี้เอกสารต้นทาง =====

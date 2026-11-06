@@ -13,5 +13,7 @@ public interface IRecurringTransactionService
     Task<RecurringTransactionResponse> PauseAsync(Guid companyId, Guid id);
     Task<RecurringTransactionResponse> ResumeAsync(Guid companyId, Guid id);
     Task<RecurringTransactionResponse> RunNowAsync(Guid companyId, Guid id, string performedBy);
+    /// <summary>รอบ 247: ผู้ติดต่อรับอีเมลเอกสารได้ไหม (ฟอร์มรายการประจำ ปิดช่อง "ส่งอีเมล" พร้อมเหตุผล)</summary>
+    Task<RecurringEmailReadinessResponse> GetEmailReadinessAsync(Guid companyId, Guid contactId);
     Task ProcessDueRecurringTransactionsAsync(); // Background job
 }

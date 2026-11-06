@@ -8498,7 +8498,7 @@ RULES += [
          forbid=["BeginTransactionAsync(", "r.EndDate >= now", "NextRunDate <= now", "NextRunDate > now"], forbid_lit=["FOR UPDATE"],
          why=_RECUR_1014 + "cron: ล็อกต่อรายการแบบ session · ล้ม = เหตุผลบนแถว · วันสิ้นสุดนับรวมวันนั้น (เดิม EndDate >= now ตัดงวดสุดท้าย)"),
     dict(file=RECURRING, method="CreateDocumentFromTemplateAsync",
-         must=["MarkRunAsync(recurring, consumesPeriod, result.Id)", "SetRunNoticeAsync(recurring, notices)",
+         must=["MarkRunAsync(recurring, consumesPeriod, result.Id)", "SetRunNoticeAsync(recurring, notices, facts)",   # รอบ 247: ข้อเท็จจริงแบบโครงสร้างคู่ข้อความ (RecurringRunOutcome)
                "RecurringTemplate.ReadGuid(root,", "RecurringTemplate.Number(line,"],
          forbid=["Guid.Parse(aid.GetString()", "up.GetDecimal()"],
          before=[("CreateDocumentAsync(recurring.CompanyId", "MarkRunAsync("), ("MarkRunAsync(", "ApproveDocumentAsync(")],

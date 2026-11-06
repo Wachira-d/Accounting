@@ -1535,6 +1535,8 @@ const API = {
       pauseRecurring: (id) => API.post(`${base}/recurring/${id}/pause`),
       resumeRecurring: (id) => API.post(`${base}/recurring/${id}/resume`),
       runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
+      // รอบ 247: ผู้ติดต่อรับอีเมลเอกสารได้ไหม (ฟอร์มรายการประจำ)
+      getRecurringEmailReadiness: (contactId) => API.get(`${base}/recurring/email-readiness?contactId=${encodeURIComponent(contactId)}`),
       // Import/Export
       importData: (d) => API.post(`${base}/import-export/import`, d),
       validateImport: (d) => API.post(`${base}/import-export/validate`, d),

@@ -279,6 +279,15 @@ public class RecurringTransactionDbTests
         Assert.Equal(1, row.TotalRuns);
         Assert.Contains("ข้าม", row.LastRunNotice ?? "");
         Assert.Contains("สร้างทันที", row.LastRunNotice ?? "");
+        // รอบ 247: ข้อเท็จจริงแบบโครงสร้าง ⇒ หน้าได้ปุ่ม "สร้างงวดที่ข้าม" จากเซิร์ฟเวอร์ (ไม่ต้องแกะข้อความ)
+        var facts = System.Text.Json.JsonSerializer.Deserialize<Accounting.Helpers.RecurringRunFacts>(row.LastRunOutcome ?? "{}")!;
+        Assert.True(facts.SkippedPeriods > 0);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+        {
+            var view = (await Svc(req).GetByIdAsync(s.CompanyId, id)).LastRunOutcome;
+            Assert.NotNull(view);
+            Assert.Contains(view!.Actions, a => a.Kind == "runNow");
+        }
 
         // ทิศตรงข้าม: ทางไปต่อของผู้ใช้ — กด "สร้างทันที" ออกเพิ่มได้ทีละใบ (รอบพิเศษ ไม่กินงวด)
         using (var req = DbTestDatabase.TryCreateContext()!)
@@ -341,6 +350,30 @@ public class RecurringTransactionDbTests
         var ok = await svc.CreateAsync(s.CompanyId,
             Req(s, DocumentType.Invoice, """{"lines":[{"description":"x","quantity":"1","unitPrice":"1,200"}]}"""), "tester");
         Assert.Equal(1200m, ok.Amount);
+    }
+
+    [Fact]
+    public async Task ติ๊กส่งอีเมล_ผู้ติดต่อไม่มีอีเมล_บันทึกได้พร้อมคำเตือน_มีอีเมลแล้วไม่เตือน()
+    {
+        // รอบ 247 (คำร้องเจ้าของ 2026-11-06 "ผู้ติดต่อยังไม่ได้ตั้งค่าอีเมลเลย ทำไมติ๊กส่งเมลได้") — บันทึกได้เสมอ (อาจเพิ่มอีเมลทีหลัง) แต่ห้ามเงียบ
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db);   // ผู้ติดต่อใน seed ไม่มีอีเมล
+        var svc = Svc(db);
+        var noEmail = await svc.CreateAsync(s.CompanyId, Req(s, DocumentType.Invoice, Template()) with { AutoSendEmail = true }, "tester");
+        Assert.Contains(noEmail.SaveWarnings ?? Array.Empty<string>(), w => w.Contains("ยังไม่มีอีเมล"));
+        Assert.Equal("/pages/contacts.html?id=" + s.ContactId.ToString("D"), noEmail.AutoSendEmailFixUrl);
+        Assert.False((await svc.GetEmailReadinessAsync(s.CompanyId, s.ContactId)).ContactHasEmail);
+
+        // ทิศตรงข้าม: เพิ่มอีเมลให้ผู้ติดต่อ ⇒ ไม่มีคำเตือน · หน้ารายละเอียดไม่ขึ้นป้าย
+        await db.Contacts.Where(c => c.Id == s.ContactId && c.CompanyId == s.CompanyId)
+            .ExecuteUpdateAsync(u => u.SetProperty(c => c.Email, "billing@example.co.th"));
+        using var fresh = DbTestDatabase.TryCreateContext()!;
+        var svc2 = Svc(fresh);
+        Assert.True((await svc2.GetEmailReadinessAsync(s.CompanyId, s.ContactId)).ContactHasEmail);
+        Assert.Null((await svc2.GetByIdAsync(s.CompanyId, noEmail.Id)).AutoSendEmailWarning);
+        var withEmail = await svc2.CreateAsync(s.CompanyId, Req(s, DocumentType.Invoice, Template()) with { AutoSendEmail = true }, "tester");
+        Assert.Null(withEmail.SaveWarnings);
     }
 
     [Fact]

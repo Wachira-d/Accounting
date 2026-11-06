@@ -2026,7 +2026,10 @@
         // "เปิดดูเอกสาร" หลังขายเสร็จแล้วได้ **ลิสต์เอกสารหน้า 1** ไม่ใช่ใบที่เพิ่งออก
         // รับ alias ไว้ที่นี่ด้วย เพราะลิงก์ที่ส่งออกไปแล้ว/บุ๊กมาร์กแก้ย้อนหลังไม่ได้
         // (กติกาเดียวกับ "ต้องทิ้งหน้า redirect ไว้ที่ URL เดิม")
-        const openDocId = params.get('openDoc') || params.get('id') || params.get('view');
+        // รอบ 247: ลิงก์ `#doc=<id>` (หน้ารายการประจำ/ค่าใช้จ่าย/เบิกล่วงหน้า + ActionUrl ของการแจ้งเตือนที่บันทึกไว้แล้ว) เดิมหน้านี้ไม่เคยอ่าน
+        // ⇒ ได้ลิสต์เปล่า · ลิงก์ใหม่ใช้ ?openDoc= แล้ว แต่การแจ้งเตือนเก่าแก้ย้อนหลังไม่ได้ จึงรับ hash ไว้ด้วย
+        const hashDoc = (window.location.hash.match(/^#doc=([0-9a-fA-F-]{36})$/) || [])[1];
+        const openDocId = params.get('openDoc') || params.get('id') || params.get('view') || hashDoc;
         if (openDocId) {
           try { await this.detail(openDocId); }
           catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }

@@ -58,6 +58,9 @@ public class RecurringTransaction : TenantEntity
     /// <summary>สร้างเอกสารสำเร็จแต่มีเรื่องต้องทำต่อ (อนุมัติอัตโนมัติไม่สำเร็จ · ส่งอีเมลไม่ได้เพราะผู้ติดต่อไม่มีอีเมล ·
     /// post สมุดรายวันไม่สำเร็จ · ผู้ถูกหักถูกตัดทิ้ง) — null = ไม่มี</summary>
     public string? LastRunNotice { get; set; }
+    /// <summary>รอบ 247: ข้อเท็จจริงของเรื่องที่ต้องทำต่อแบบโครงสร้าง (JSON ของ <see cref="Accounting.Helpers.RecurringRunFacts"/>) —
+    /// หน้ารายการประจำประกอบ "หัวเรื่อง + สิ่งที่ต้องทำ + ปุ่ม" จากตัวนี้ (Helpers/RecurringRunOutcome) · null = ไม่มี/แถวเก่า (ใช้ LastRunNotice)</summary>
+    public string? LastRunOutcome { get; set; }
     /// <summary>เอกสารที่รอบล่าสุดสร้าง (ลิงก์ "เปิดเอกสารล่าสุด" ในหน้ารายการประจำ) — null = ยังไม่เคยสร้าง/เป็นสมุดรายวัน</summary>
     public Guid? LastDocumentId { get; set; }
 

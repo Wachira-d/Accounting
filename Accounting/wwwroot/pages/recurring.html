@@ -120,7 +120,9 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label"><input type="checkbox" id="fAutoApprove" onchange="Page.onAutoFlagChange()"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
+              <label class="form-label" id="fAutoApproveLabel"><input type="checkbox" id="fAutoApprove" onchange="Page.onAutoFlagChange()"> อนุมัติอัตโนมัติ (สร้างเป็น Approved ทันที)</label>
+              <!-- รอบ 247: อธิบายช่องที่ถูกล็อก + ขอบเขตของการอนุมัติอัตโนมัติ (เจ้าของถามว่า "ต้องไปติ๊กที่ไหนถึงจะอนุมัติได้") -->
+              <div id="autoApproveHint" style="margin-top:4px;font-size:11px;line-height:1.6;color:#64748b"></div>
             </div>
             <div class="form-group">
               <label class="form-label"><input type="checkbox" id="fAutoWht" checked> สร้างหนังสือรับรองหัก ณ ที่จ่ายอัตโนมัติ (เมื่อมี WHT)</label>
@@ -270,7 +272,8 @@ const Page = {
         <td>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</td>
         <td>${Layout.statusBadge(r.status || 'Active')}${r.lastRunError
           ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunError)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${r.id}')">⚠️ สร้างเอกสารไม่สำเร็จ</span></div>`
-          : (r.lastRunNotice ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunNotice)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;cursor:pointer" onclick="Page.view('${r.id}')">ℹ️ มีเรื่องต้องทำต่อ</span></div>` : '')}</td>
+          : (r.lastRunOutcome ? `<div style="margin-top:4px"><span title="${Layout.esc(r.lastRunOutcome.headline)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fffbeb;color:#92400e;border:1px solid #fde68a;cursor:pointer" onclick="Page.view('${r.id}')">ℹ️ มีเรื่องต้องทำต่อ</span></div>` : '')}${r.autoSendEmailWarning
+          ? `<div style="margin-top:4px"><span title="${Layout.esc(r.autoSendEmailWarning)}" style="display:inline-block;font-size:11px;padding:1px 6px;border-radius:6px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;cursor:pointer" onclick="Page.view('${r.id}')">📧 ผู้ติดต่อไม่มีอีเมล</span></div>` : ''}</td>
         <td>
           <button class="btn btn-sm btn-secondary" onclick="Page.view('${r.id}')" data-i18n="common.view">ดู</button>
           ${r.status === 'Active' ? `<button class="btn btn-sm btn-warning" onclick="Page.pause('${r.id}')">หยุด</button>` : ''}
@@ -335,6 +338,33 @@ const Page = {
     if (!send || !appr) return;
     if (send.checked) { appr.checked = true; appr.disabled = true; }
     else appr.disabled = false;
+    const hint = document.getElementById('autoApproveHint');
+    const label = document.getElementById('fAutoApproveLabel');
+    const lockText = 'ล็อกไว้เพราะติ๊ก "ส่งอีเมลเอกสาร" ไว้ — ต้องอนุมัติก่อนจึงส่งได้ (ใบร่างยังไม่มีเลขที่จริงตาม §86/4) · เอาติ๊กส่งอีเมลออกถ้าต้องการปิดอนุมัติอัตโนมัติ';
+    if (label) label.title = send.checked ? lockText : '';
+    if (hint) hint.innerHTML = (send.checked ? '🔒 ' + Layout.esc(lockText) + '<br>' : '')
+      + 'ถ้าตอนอนุมัติมีคำเตือนที่ต้องให้คนกดรับทราบ (เช่น ลูกค้ายังค้างชำระ/เกินวงเงินเครดิต) ระบบจะ<strong>ไม่</strong>อนุมัติให้เอง — '
+      + 'ใบจะค้างเป็นร่าง แล้วหน้านี้จะบอกปุ่ม "เปิดใบร่างเพื่ออนุมัติ" ให้คุณกดอนุมัติเอง';
+    this.renderAutoEmailHint();
+  },
+
+  // รอบ 247: ผู้ติดต่อที่เลือกรับอีเมลเอกสารได้ไหม — เซิร์ฟเวอร์ตัดสิน (ตัวเดียวกับผู้ส่งจริง RecurringEmailReadiness) หน้าแสดงอย่างเดียว ·
+  // undefined = ยังไม่ได้ตรวจ · null = ไม่ได้เลือกผู้ติดต่อ/ตรวจไม่ได้
+  async checkContactEmail() {
+    const cid = document.getElementById('fContactId')?.value || '';
+    this._contactEmailFor = cid;
+    if (!cid) { this._contactEmail = null; this.renderAutoEmailHint(); return; }
+    this._contactEmail = undefined;
+    this.renderAutoEmailHint();
+    const api = Layout.api(); if (!api) return;
+    try {
+      const res = await api.getRecurringEmailReadiness(cid);
+      if (this._contactEmailFor !== cid) return;   // ผู้ใช้เปลี่ยนผู้ติดต่อระหว่างรอ — คำตอบเก่าห้ามทับ
+      this._contactEmail = res.data || null;
+    } catch (e) {
+      if (this._contactEmailFor !== cid) return;
+      this._contactEmail = { error: e.message || 'ตรวจไม่สำเร็จ' };
+    }
     this.renderAutoEmailHint();
   },
 
@@ -359,10 +389,26 @@ const Page = {
     // ผู้ขายทุกเดือนมักไม่ใช่สิ่งที่ตั้งใจ (ใบสั่งซื้อส่งได้ปกติ จึงไม่เตือน)
     const inboundTypes = ['Expense', 'PurchaseInvoice', 'PaymentVoucher'];
     const isInbound = inboundTypes.includes(document.getElementById('fDocType')?.value);
-    box.innerHTML = status + (on
+    // ผู้รับ: ผู้ติดต่อไม่มีอีเมล ⇒ ปิดช่องติ๊ก (ถ้ายังไม่ได้ติ๊ก) + เหตุผล + ลิงก์หน้าผู้ติดต่อ · ติ๊กไว้แล้ว (รายการเดิม) ⇒ คงให้เอาติ๊กออกได้ + คำเตือนแดง
+    const sendEl = document.getElementById('fAutoSendEmail');
+    const ce = this._contactEmail;
+    let recipient = '';
+    if (ce && ce.error) recipient = '<br>⚠️ ตรวจอีเมลของผู้ติดต่อไม่สำเร็จ: ' + Layout.esc(ce.error);
+    else if (ce && ce.contactHasEmail === false) {
+      const fix = ce.contactUrl ? ' <a href="' + Layout.esc(ce.contactUrl) + '" target="_blank" style="color:#2563eb;text-decoration:underline">เปิดหน้าผู้ติดต่อเพื่อเพิ่มอีเมล</a>' : '';
+      recipient = on
+        ? '<br><span style="color:#b91c1c">⛔ ' + Layout.esc(ce.reason || '') + ' — ตอนนี้ติ๊กไว้ก็<strong>ไม่ได้ส่ง</strong> (ระบบจะบอกในผลรอบทุกครั้ง)</span>' + fix
+        : '<br>⛔ ' + Layout.esc(ce.reason || '') + fix;
+    } else if (ce && ce.contactHasEmail) recipient = '<br>✅ ผู้ติดต่อมีอีเมลสำหรับรับเอกสาร';
+    if (sendEl) {
+      const block = !!(ce && ce.contactHasEmail === false && !sendEl.checked);
+      sendEl.disabled = block;
+      if (sendEl.parentElement) sendEl.parentElement.title = block ? (ce.reason || '') : '';
+    }
+    box.innerHTML = status + recipient + (on
       ? (isInbound ? '<br>• ⚠️ ชนิดเอกสารนี้เป็น<strong>ฝั่งซื้อ</strong> — ระบบจะส่งเอกสารนี้ไปหา<strong>ผู้ขาย</strong>ทุกงวด ตรวจให้แน่ใจว่าตั้งใจแบบนั้น' : '')
       + '<br>• เปิดข้อนี้แล้วระบบจะ <strong>อนุมัติเอกสารอัตโนมัติ</strong> ให้ด้วย (ใบร่างยังไม่มีเลขที่จริงตาม §86/4 จึงส่งออกไม่ได้)'
-      + '<br>• ส่งไปที่อีเมลของผู้ติดต่อที่เลือกไว้ พร้อมแนบ PDF — ถ้าผู้ติดต่อไม่มีอีเมล ระบบจะข้ามการส่ง'
+      + '<br>• ส่งไปที่อีเมลของผู้ติดต่อที่เลือกไว้ พร้อมแนบ PDF — ถ้าผู้ติดต่อไม่มีอีเมล ระบบจะไม่ส่ง และบอกในผลรอบที่หน้านี้'
       + '<br>• ติดตามผลส่งได้ที่หน้า <a href="/pages/email-schedule.html" target="_blank" style="color:#2563eb;text-decoration:underline">ตารางส่งอีเมล</a> (ถ้ามีกฎ RecurringInvoiceCreated อยู่แล้ว ระบบจะใช้กฎนั้นแทน ไม่ส่งซ้ำ)'
       : '');
     box.style.background = on ? '#f0f9ff' : '#f8fafc';
@@ -392,6 +438,7 @@ const Page = {
     this.loadEmailStatus();
     await this.loadFormData();
     if (this._contactAC) this._contactAC.clear();
+    this.checkContactEmail();
     this.onDocTypeChange();
     Layout.openModal('formModal');
     const vp = document.getElementById('varPanel'); if (vp) vp.style.display = 'none';
@@ -485,7 +532,8 @@ const Page = {
   async loadFormData() {
     const api = Layout.api(); if (!api) return;
     if (!this._contactAC) {
-      this._contactAC = Layout.contactPicker('fContact', 'fContactId');
+      this._contactAC = Layout.contactPicker('fContact', 'fContactId',
+        { onSelect: () => this.checkContactEmail(), onClear: () => this.checkContactEmail() });
     }
     // ทีมตรวจรายการประจำ 2026-10-14: เดิม .catch(() => ({data:[]})) ⇒ โหลดไม่สำเร็จแล้วดรอปดาวน์เหลือแค่ "เงินสด" เงียบ ๆ
     // ผู้ใช้กดบันทึก = ช่องทางรับ/จ่ายกลายเป็นเงินสดโดยไม่รู้ตัว ⇒ ล้มดัง (toast + ข้อความใต้ช่อง) แทน
@@ -703,26 +751,15 @@ const Page = {
       notifyDaysBefore: 1
     };
 
-    // ผู้ติดต่อไม่มีอีเมล = ติ๊ก "ส่งอีเมล" ไว้ก็ไม่มีอะไรออก (backend ข้าม +
-    // log warning) → บอกตั้งแต่ตอนบันทึก ไม่ใช่ปล่อยให้รอถึงงวดหน้าแล้วงง
-    let contactHasEmail = true;
-    if (data.autoSendEmail && data.contactId) {
-      try {
-        const cr = await api.getContact(data.contactId);
-        contactHasEmail = !!(cr && cr.data && cr.data.email);
-      } catch (e) { /* ตรวจไม่ได้ = ไม่ขวางการบันทึก */ }
-    }
-
     try {
-      if (id) await api.updateRecurring(id, data);
-      else await api.createRecurring(data);
+      // ผู้ติดต่อไม่มีอีเมล = ติ๊ก "ส่งอีเมล" ไว้ก็ไม่มีอะไรออก ⇒ เซิร์ฟเวอร์บันทึกได้ (อาจเพิ่มอีเมลทีหลัง) แต่คืนคำเตือน (saveWarnings) — หน้าแสดงตามนั้น
+      const saved = id ? await api.updateRecurring(id, data) : await api.createRecurring(data);
       Layout.toast(id ? 'แก้ไขสำเร็จ' : 'สร้างสำเร็จ');
       // เตือนตรง ๆ ถ้าเปิดส่งอีเมลแต่บริษัทยังไม่มีอีเมลที่ทดสอบผ่าน — จะได้
       // ไม่เข้าใจผิดว่าลูกค้าได้รับเมลจากชื่อบริษัทตัวเองทุกงวด
       if (data.autoSendEmail && !(this._emailCfg && this._emailCfg.configured))
         Layout.toast('บันทึกแล้ว — แต่ยังไม่ได้ตั้งค่า/ทดสอบอีเมลบริษัท ระบบจะส่งจากอีเมลกลางแทน', 'info');
-      if (data.autoSendEmail && !contactHasEmail)
-        Layout.toast('ผู้ติดต่อนี้ยังไม่มีอีเมล — ระบบจะข้ามการส่งจนกว่าจะเพิ่มอีเมลให้ผู้ติดต่อ', 'info');
+      ((saved && saved.data && saved.data.saveWarnings) || []).forEach(w => Layout.toast(w, 'warning', 9000));
       Layout.closeModal('formModal');
       this.load();
     } catch (err) { Layout.toast(err.message, 'error'); }
@@ -764,7 +801,7 @@ const Page = {
           <div><span class="text-gray-500 text-sm">หมวดหมู่ค่าใช้จ่าย:</span><br><strong>${Layout.esc(tdExpenseName)}</strong></div>
           <div><span class="text-gray-500 text-sm">สถานะ:</span><br>${Layout.statusBadge(r.status)}</div>
           <div><span class="text-gray-500 text-sm">ครั้งถัดไป:</span><br><strong>${r.nextRunDate ? Layout.date(r.nextRunDate) : '-'}</strong></div>
-          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.totalRuns || 0} ครั้ง${r.maxRuns ? ' จาก ' + r.maxRuns : ''}</strong>${r.lastRunDate ? `<div style="font-size:11px;color:#64748b">ล่าสุด ${Layout.date(r.lastRunDate)}${r.lastDocumentId ? ` · <a href="/pages/documents.html#doc=${encodeURIComponent(r.lastDocumentId)}" style="color:#2563eb">เปิดเอกสารล่าสุด</a>` : ''}</div>` : ''}</div>
+          <div><span class="text-gray-500 text-sm">สร้างแล้ว:</span><br><strong>${r.totalRuns || 0} ครั้ง${r.maxRuns ? ' จาก ' + r.maxRuns : ''}</strong>${r.lastRunDate ? `<div style="font-size:11px;color:#64748b">ล่าสุด ${Layout.date(r.lastRunDate)}${r.lastDocumentId ? ` · <a href="/pages/documents.html?openDoc=${encodeURIComponent(r.lastDocumentId)}" style="color:#2563eb">เปิดเอกสารล่าสุด</a>` : ''}</div>` : ''}</div>
           <div><span class="text-gray-500 text-sm">อนุมัติอัตโนมัติ:</span><br><strong>${r.autoApprove ? 'ใช่' : 'ไม่'}</strong></div>
           <div><span class="text-gray-500 text-sm">ส่งอีเมลอัตโนมัติ:</span><br><strong>${r.autoSendEmail ? '📧 ส่งให้ผู้ติดต่อทันที (แนบ PDF)' : 'ไม่'}</strong></div>
         </div>
@@ -772,14 +809,35 @@ const Page = {
         ${r.lastRunError ? `<div style="margin-top:16px;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px">
           <strong>⚠️ รอบล่าสุดสร้างเอกสารไม่สำเร็จ</strong>${r.lastRunErrorAt ? ` (${Layout.date(r.lastRunErrorAt)})` : ''}<br>${Layout.esc(r.lastRunError)}
           <div style="margin-top:6px;font-size:12px;color:#7f1d1d">แก้ตามข้อความข้างบน (ปุ่ม "แก้ไข") แล้วกด "สร้างทันที" ในตาราง — หรือรอรอบอัตโนมัติถัดไป ระบบลองใหม่ให้เองทุกรอบ</div></div>` : ''}
-        ${r.lastRunNotice ? `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:13px">
-          <strong>ℹ️ รอบล่าสุดสร้างเอกสารแล้ว แต่มีเรื่องต้องทำต่อ</strong><br>${Layout.esc(r.lastRunNotice)}</div>` : ''}`;
+        ${r.autoSendEmailWarning ? `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-size:13px">
+          📧 ${Layout.esc(r.autoSendEmailWarning)}${r.autoSendEmailFixUrl ? ` <a href="${Layout.esc(r.autoSendEmailFixUrl)}" target="_blank" style="color:#2563eb;text-decoration:underline">เปิดหน้าผู้ติดต่อเพื่อเพิ่มอีเมล</a>` : ''}</div>` : ''}
+        ${this._renderOutcome(r)}`;
       document.getElementById('detailFooter').innerHTML = `
         <button class="btn btn-secondary" onclick="Layout.closeModal('detailModal')" data-i18n="common.close">ปิด</button>
         <button class="btn btn-danger" onclick="Page.del('${r.id}')" data-i18n="common.delete">ลบ</button>
         <button class="btn btn-primary" onclick="Page.editFromDetail('${r.id}')" data-i18n="common.edit">แก้ไข</button>`;
       Layout.openModal('detailModal');
     } catch (err) { Layout.toast(err.message, 'error'); }
+  },
+
+  // รอบ 247: ผลรอบล่าสุด — เซิร์ฟเวอร์ประกอบหัวเรื่อง/สิ่งที่ต้องทำ/ปุ่ม (Helpers/RecurringRunOutcome) หน้านี้แสดงอย่างเดียว · ทุกช่องผ่าน Layout.esc
+  _renderOutcome(r) {
+    const o = r.lastRunOutcome;
+    if (!o) return '';
+    const steps = (o.steps || []).map(t => `<li style="margin:4px 0">${Layout.esc(t)}</li>`).join('');
+    const btn = a => a.kind === 'runNow'
+      ? `<button class="btn btn-sm btn-secondary" onclick="Page.runNow('${Layout.esc(r.id)}')">${Layout.esc(a.label)}</button>`
+      : `<a class="btn btn-sm ${a.kind === 'openDocument' ? 'btn-primary' : 'btn-secondary'}" href="${Layout.esc(a.url || '#')}"${a.kind === 'openContact' ? ' target="_blank"' : ''}>${Layout.esc(a.label)}</a>`;
+    const actions = (o.actions || []).map(btn).join(' ');
+    return `<div style="margin-top:12px;padding:12px 14px;border-radius:8px;background:#fffbeb;border:1px solid #fde68a;color:#78350f;font-size:13px;line-height:1.6">
+      <div style="font-weight:600;font-size:14px">ℹ️ ${Layout.esc(o.headline)}</div>
+      ${steps ? `<div style="margin-top:8px;font-weight:600">สิ่งที่ต้องทำ</div><ol style="margin:2px 0 0 20px;padding:0;list-style:decimal">${steps}</ol>` : ''}
+      ${actions ? `<div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:6px">${actions}</div>` : ''}
+      ${o.autoApproveNote ? `<div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:#fff;border:1px dashed #fcd34d;font-size:12px">✅ ${Layout.esc(o.autoApproveNote)}</div>` : ''}
+      ${(o.legalNote || o.rawNotice) ? `<details style="margin-top:8px;font-size:12px;color:#92400e"><summary style="cursor:pointer">รายละเอียดเพิ่มเติม</summary>
+        ${o.legalNote ? `<div style="margin-top:4px">${Layout.esc(o.legalNote)}</div>` : ''}
+        ${o.rawNotice ? `<div style="margin-top:4px;color:#a16207">ข้อความจากระบบ: ${Layout.esc(o.rawNotice)}</div>` : ''}</details>` : ''}
+    </div>`;
   },
 
   async editFromDetail(id) {
@@ -837,6 +895,7 @@ const Page = {
 
       await this.loadFormData();
       if (r.contactId && this._contactAC) this._contactAC.setValue(r.contactId, r.contactName || '');
+      this.checkContactEmail();
       this._setSavedRefWarning('fPaymentChannelHint', (this._formDataErrors || []).length ? '⚠️ โหลดรายการบัญชีไม่สำเร็จ — รีเฟรชหน้าก่อนบันทึก' : '');
       this._setSavedRefWarning('fExpenseCatWarn', '');
       if (savedPaymentChannelVal) {
@@ -873,7 +932,11 @@ const Page = {
   async runNow(id) {
     if (!confirm('สร้างเอกสารจากรายการนี้ทันที?')) return;
     const api = Layout.api(); if (!api) return;
-    try { await api.runRecurringNow(id); Layout.toast('สร้างเอกสารสำเร็จ'); this.load(); } catch (err) { Layout.toast(err.message, 'error'); }
+    try {
+      await api.runRecurringNow(id); Layout.toast('สร้างเอกสารสำเร็จ'); this.load();
+      // กดจากกล่องผลรอบ (ปุ่ม "สร้างงวดที่ข้าม") ⇒ แสดงผลรอบใหม่ทันที
+      if (document.getElementById('detailModal')?.classList.contains('active')) this.view(id);
+    } catch (err) { Layout.toast(err.message, 'error'); }
   },
 
   async del(id) {

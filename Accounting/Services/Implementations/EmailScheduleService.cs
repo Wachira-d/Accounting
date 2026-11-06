@@ -727,7 +727,8 @@ public class EmailScheduleService : IEmailScheduleService
         int daysOffset, string suffix, CancellationToken ct, DateTime? overrideSendUtc = null)
     {
         var email = doc.Contact?.Email;
-        if (string.IsNullOrWhiteSpace(email)) return false;
+        // ตัวตัดสินเดียวกับฟอร์ม/หน้ารายการประจำ (RecurringEmailReadiness) — ผู้ติดต่อไม่มีอีเมล ⇒ ไม่เข้าคิว
+        if (!RecurringEmailReadiness.HasDeliverableEmail(email)) return false;
 
         var idem = $"doc:{doc.Id}:{rule.Trigger}:{suffix}";
         if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == doc.CompanyId
