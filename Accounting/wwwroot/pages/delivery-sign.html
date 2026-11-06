@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>เซ็นรับสินค้า</title>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -33,6 +33,9 @@
     .done { text-align: center; padding: 26px 10px; }
     .done .big { font-size: 44px; }
     .err { text-align: center; color: #b91c1c; padding: 40px 10px; }
+    .msg { margin: 6px 0; padding: 8px 10px; border-radius: 8px; font-size: 13px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .msg:empty { display: none; }
+    label.f { display: block; font-size: 13px; color: #334155; margin-top: 4px; }
     .badge { display: inline-block; background: #dcfce7; color: #166534; border-radius: 999px;
              padding: 3px 12px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
   </style>
@@ -46,6 +49,11 @@
     const card = document.getElementById('card');
     const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     let pad = null;
+    // เวลาไทยเสมอ (WP-13 · D §7 — เทียบ quotation-accept) · เครื่องลูกค้าอยู่ต่างโซนก็ยังเห็นเวลาเดียวกับเอกสาร
+    const thDateTime = d => new Date(d).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' });
+    const thDate = d => new Date(d).toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' });
+    /** ข้อความผิดพลาดในกล่องบนหน้า (role=alert) แทน alert() — in-app browser บางตัวปิด alert เงียบ ๆ */
+    function say(msg) { const el = document.getElementById('signMsg'); if (el) el.textContent = msg || ''; }
 
     async function load() {
       if (!token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
@@ -58,14 +66,14 @@
       if (q.signedAt) {
         card.innerHTML = `<div class="done"><div class="big">✅</div>
           <h1>ใบส่งของ ${esc(q.documentNumber)}</h1>
-          <div class="badge">เซ็นรับแล้วโดย ${esc(q.signedBy)} เมื่อ ${new Date(q.signedAt).toLocaleString('th-TH')}</div></div>`;
+          <div class="badge">เซ็นรับแล้วโดย ${esc(q.signedBy)} เมื่อ ${esc(thDateTime(q.signedAt))}</div></div>`;
         return;
       }
       card.innerHTML = `
         <h1>เซ็นรับสินค้า — ${esc(q.documentNumber)}</h1>
         <div class="sub">จาก <strong>${esc(q.companyName || '')}</strong>
           · ถึง ${esc(q.contactName || '-')}
-          · วันที่ ${new Date(q.documentDate).toLocaleDateString('th-TH')}</div>
+          · วันที่ ${esc(thDate(q.documentDate))}</div>
         <table>
           <thead><tr><th>รายการ</th><th class="num">จำนวน</th></tr></thead>
           <tbody>${(q.lines || []).map(l => `<tr>
@@ -79,8 +87,11 @@
           <div class="pad-hint" id="padHint">✍️ เซ็นชื่อตรงนี้</div>
         </div>
         <div style="text-align:right"><button type="button" class="clear-btn" id="padClear">ล้างลายเซ็น</button></div>
-        <input id="signName" placeholder="ชื่อ-นามสกุลผู้รับสินค้า *" maxlength="200">
-        <input id="signNote" placeholder="หมายเหตุ เช่น ของครบ/กล่องบุบ (ถ้ามี)" maxlength="500">
+        <label class="f" for="signName">ชื่อ-นามสกุลผู้รับสินค้า <span style="color:#dc2626">*</span></label>
+        <input id="signName" placeholder="ชื่อ-นามสกุล" maxlength="200" autocomplete="name" required>
+        <label class="f" for="signNote">หมายเหตุ (ถ้ามี)</label>
+        <input id="signNote" placeholder="เช่น ของครบ / กล่องบุบ" maxlength="500">
+        <div class="msg" id="signMsg" role="alert" aria-live="assertive"></div>
         <button class="primary" id="signBtn">✓ ยืนยันรับสินค้า</button>`;
       initPad();
     }
@@ -96,9 +107,10 @@
 
     async function submitSign() {
       const name = (document.getElementById('signName').value || '').trim();
-      if (!name) { alert('กรุณาระบุชื่อผู้รับสินค้า'); return; }
+      if (!name) { say('กรุณาระบุชื่อผู้รับสินค้า'); document.getElementById('signName').focus(); return; }
       const signature = pad ? pad.toPngDataUrl() : null;
-      if (!signature) { alert('กรุณาวาดลายเซ็นก่อน'); return; }
+      if (!signature) { say('กรุณาวาดลายเซ็นก่อน'); return; }
+      say('');
       const btn = document.getElementById('signBtn');
       btn.disabled = true; btn.textContent = 'กำลังบันทึก...';
       try {
@@ -111,13 +123,13 @@
             note: (document.getElementById('signNote').value || '').trim() || null,
           }),
         });
-        const j = await r.json();
-        if (!r.ok || !j.success) throw new Error(j.message || 'บันทึกไม่สำเร็จ');
+        const j = await r.json().catch(() => null);
+        if (!r.ok || !j || !j.success) throw new Error((j && j.message) || (r.status === 429 ? 'ส่งถี่เกินไป — รอสักครู่แล้วลองใหม่' : 'บันทึกไม่สำเร็จ'));
         card.innerHTML = `<div class="done"><div class="big">🎉</div>
           <h1>เซ็นรับสินค้าเรียบร้อย</h1>
           <div class="sub" style="margin-top:8px">ลายเซ็นถูกประทับลงใบส่งของแล้ว — ขอบคุณครับ</div></div>`;
       } catch (e) {
-        alert(e.message);
+        say(e && e.message && e.message !== 'Failed to fetch' ? e.message : 'เชื่อมต่อไม่ได้ — ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่');
         btn.disabled = false; btn.textContent = '✓ ยืนยันรับสินค้า';
       }
     }
