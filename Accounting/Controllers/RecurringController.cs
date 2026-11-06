@@ -28,6 +28,14 @@ public class RecurringController : ControllerBase
         return Ok(new ApiResponse<PagedResponse<RecurringTransactionResponse>>(true, result));
     }
 
+    /// <summary>รอบ 247: ฟอร์มรายการประจำถามตอนเลือกผู้ติดต่อ — ไม่มีอีเมล ⇒ ปิดช่อง "ส่งอีเมล" พร้อมเหตุผล + ลิงก์หน้าผู้ติดต่อ</summary>
+    [HttpGet("email-readiness")]
+    public async Task<ActionResult<ApiResponse<RecurringEmailReadinessResponse>>> EmailReadiness(Guid companyId, [FromQuery] Guid contactId)
+    {
+        var result = await _recurringService.GetEmailReadinessAsync(companyId, contactId);
+        return Ok(new ApiResponse<RecurringEmailReadinessResponse>(true, result));
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ApiResponse<RecurringTransactionResponse>>> GetById(Guid companyId, Guid id)
     {

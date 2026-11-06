@@ -246,4 +246,12 @@ public static class AdvisoryLockKey
 
     /// <summary>รอบ 234 (คำตัดสิน 234-W4): ผูกรายการชำระค่าบริการที่มีภาษีหักกับทะเบียนภาษีถูกหัก (backfill ครั้งเดียว) — part = "all" · ผ่าน <c>JobLock.RunExclusiveAsync</c></summary>
     public const string PlatformWhtCreditBackfill = "platform-wht-credit-backfill";
+
+    /// <summary>รอบ 245 L1: เขียนปลายทางแจ้งเตือนของผู้ติดต่อ (เพิ่ม/แก้/ยกเลิก) — part = contactId · ผูก companyId ·
+    /// xact lock (กันอีเมลซ้ำ/แถวอีเมลหลักสองแถวจากสองคำขอพร้อมกัน)</summary>
+    public const string ContactNotifyEndpoint = "contact-notify-ep";
+
+    /// <summary>รอบ 245 L1: งานย้ายข้อมูลครั้งเดียวที่ต้องเข้ารหัสในโค้ด (ทำใน SQL ไม่ได้) — part = คีย์ marker ของ <c>OneShotDataFixes</c> ·
+    /// xact lock ทั้งระบบ (หลายเครื่องบูตพร้อมกัน ⇒ ทำครั้งเดียว)</summary>
+    public const string OneShotDataFix = "one-shot-data-fix";
 }

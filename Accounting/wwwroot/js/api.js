@@ -781,8 +781,19 @@ const API = {
       listAdjustingLines: (id) => API.get(`${base}/document/${id}/adjusting-lines`),
       saveAdjustingLines: (id, body) => API.put(`${base}/document/${id}/adjusting-lines`, body),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
-      purgeDocument: (id, force = false, reason = null) =>
-        API.del(`${base}/document/${id}/purge${force ? `?force=true&reason=${encodeURIComponent(reason || '')}` : ''}`),
+      // รอบ 242: cascade=true = ลบเอกสารที่เกี่ยวข้อง (ลูกหลาน) ด้วย — เซิร์ฟเวอร์ตัดสิน (DocumentCascadePurgePolicy) · ไม่ผ่าน = 409 + รายชื่อ
+      // planToken = ลายนิ้วมือของแผนที่ผู้ใช้เห็น — แผนเปลี่ยนระหว่างยืนยัน ⇒ 409 (ฝ่ายค้านรอบ 242 S1)
+      purgeDocument: (id, force = false, reason = null, cascade = false, planToken = null) => {
+        const q = new URLSearchParams();
+        if (force) { q.set('force', 'true'); q.set('reason', reason || ''); }
+        if (cascade) q.set('cascade', 'true');
+        if (planToken) q.set('planToken', planToken);
+        const qs = q.toString();
+        return API.del(`${base}/document/${id}/purge${qs ? `?${qs}` : ''}`);
+      },
+      // รอบ 242: แผนการลบถาวรที่เซิร์ฟเวอร์คำนวณ (ไม่ลบอะไร) — แสดงก่อนยืนยัน
+      purgePreview: (id, cascade = false) =>
+        API.get(`${base}/document/${id}/purge-preview${cascade ? '?cascade=true' : ''}`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       // ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (แถวที่มี JE แต่ไม่มีเอกสารคู่)
       issueReceiptForPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/receipt`),
@@ -912,6 +923,13 @@ const API = {
       getBankAccounts: (opts) => API.get(`${base}/bank/accounts${opts && opts.activeOnly ? '?activeOnly=true' : ''}`),
       createBankAccount: (d) => API.post(`${base}/bank/accounts`, d),
       updateBankAccount: (id, d) => API.put(`${base}/bank/accounts/${id}`, d),
+      // รอบ 246 QR — QR ชำระเงินของบัญชี (สิทธิ์ CompanySettings.Edit) · preview = เซิร์ฟเวอร์คำนวณ (data URI)
+      updateBankPaymentQr: (id, d) => API.put(`${base}/bank/accounts/${id}/payment-qr`, d),
+      uploadBankPaymentQrImage: (id, formData) => API.upload(`${base}/bank/accounts/${id}/payment-qr/image`, formData),
+      removeBankPaymentQrImage: (id) => API.del(`${base}/bank/accounts/${id}/payment-qr/image`),
+      getDocumentPaymentQr: (docId) => API.get(`${base}/bank/payment-qr/documents/${docId}`),
+      checkTemplatePaymentQr: (d) => API.post(`${base}/document-templates/payment-qr-check`, d),
+      previewBankPaymentQr: (id, q) => API.get(`${base}/bank/accounts/${id}/payment-qr/preview${q ? '?' + new URLSearchParams(q).toString() : ''}`),
       getTransactions: (id, q = '') => API.get(`${base}/bank/accounts/${id}/transactions${q}`),
       createTransaction: (d) => API.post(`${base}/bank/transactions`, d),
       reconcile: (d) => API.post(`${base}/bank/reconcile`, d),
@@ -1517,6 +1535,8 @@ const API = {
       pauseRecurring: (id) => API.post(`${base}/recurring/${id}/pause`),
       resumeRecurring: (id) => API.post(`${base}/recurring/${id}/resume`),
       runRecurringNow: (id) => API.post(`${base}/recurring/${id}/run-now`),
+      // รอบ 247: ผู้ติดต่อรับอีเมลเอกสารได้ไหม (ฟอร์มรายการประจำ)
+      getRecurringEmailReadiness: (contactId) => API.get(`${base}/recurring/email-readiness?contactId=${encodeURIComponent(contactId)}`),
       // Import/Export
       importData: (d) => API.post(`${base}/import-export/import`, d),
       validateImport: (d) => API.post(`${base}/import-export/validate`, d),
@@ -1798,6 +1818,10 @@ const API = {
       updateEtaxConfig: (d) => API.put(`${base}/etax/config`, d),
       sendEtaxByEmail: (etaxId, d) => API.post(`${base}/etax/${etaxId}/send-email`, d),
       getEtaxEmailLogs: (etaxId) => API.get(`${base}/etax/${etaxId}/email-logs`),
+      // รอบ 244: ตัวอย่างอีเมล e-Tax ตามที่เซิร์ฟเวอร์จะส่ง + บันทึกใบที่ ETDA ประทับเวลาส่งกลับ
+      getEtaxEmailPreview: (etaxId) => API.get(`${base}/etax/${etaxId}/email-preview`),
+      recordEtdaStamp: (etaxId, d) => API.post(`${base}/etax/${etaxId}/etda-stamp`, d),
+      getDocumentEmailRoute: (documentId) => API.get(`${base}/document/${documentId}/email-route`),
       // Document email
       sendDocumentEmail: (documentId, d) => API.post(`${base}/document/${documentId}/send-email`, d),
       getDocumentEmailLogs: (documentId) => API.get(`${base}/document/${documentId}/email-logs`),

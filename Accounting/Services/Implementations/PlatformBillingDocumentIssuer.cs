@@ -704,12 +704,13 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
     }
 
     /// <summary>รอบ 235 (ฝ่ายค้าน S-4): ทะเบียนภาษีถูกหัก (แถวของใบเดิม · ทะเบียนเดียว <see cref="WhtCreditService"/>) หลังคืนเงินรายการที่หัก ณ ที่จ่าย —
-    /// ตัวตัดสิน <see cref="Accounting.Helpers.PlatformRefundCreditNote.RegistryActionFor"/>: Pending ⇒ ลดยอด (คืนบางส่วน) / ตัดสิทธิ์ผ่าน <c>WhtCreditService.ExpireAsync</c> + เหตุผล (คืนครบ) ·
+    /// ตัวตัดสิน <see cref="Accounting.Helpers.PlatformRefundCreditNote.RegistryActionFor"/>: Pending ⇒ ลดยอด (คืนบางส่วน) / ตัดสิทธิ์ผ่าน <c>WhtCreditService.CancelAfterRefundAsync</c> + เหตุผล (คืนครบ · ไม่ลง JE — ใบลดหนี้ล้าง 11910 แล้ว) ·
     /// Received/Claimed ⇒ ไม่แตะ — เรื่องค้าง <c>PLATFORM-WHT-REFUND</c> บนรายการชำระ/รายการโควตาเสริม (แอดมินขอ 50 ทวิ ฉบับใหม่/ยกเลิกกับลูกค้า) · audit chain ทุกกรณี</summary>
     private async Task AdjustWhtCreditAfterRefundAsync(Guid tenantId, Guid originalId, decimal remainingAfter, decimal share, string creditNoteNumber, PaymentIntent intent)
     {
         var row = await _db.WhtCreditsReceived.FirstOrDefaultAsync(w => w.CompanyId == tenantId && !w.IsDeleted && w.DocumentId == originalId);
-        var action = Accounting.Helpers.PlatformRefundCreditNote.RegistryActionFor(row?.Status, share, remainingAfter);
+        var action = Accounting.Helpers.PlatformRefundCreditNote.RegistryActionFor(row?.Status, share, remainingAfter,
+            row != null && Accounting.Helpers.WhtCreditWriteOff.NeedsReversal(row.Status, row.WriteOffJournalEntryId, row.WriteOffReversalJournalEntryId));
         var why = $"คืนเงินอ้างใบลดหนี้ {creditNoteNumber} — ภาษีหัก ณ ที่จ่ายส่วนที่คืน {share:N2} บาท";
         switch (action)
         {
@@ -720,7 +721,13 @@ public class PlatformBillingDocumentIssuer : IPlatformBillingDocumentIssuer
                 break;
             case Accounting.Helpers.PlatformRefundCreditNote.RegistryAction.Expire:
                 await new WhtCreditService(_db, Microsoft.Extensions.Logging.Abstractions.NullLogger<WhtCreditService>.Instance)
-                    .ExpireAsync(tenantId, row!.Id, $"{why} — คืนเงินเต็มจำนวน หมดสิทธิ์เครดิต");
+                    .CancelAfterRefundAsync(tenantId, row!.Id, $"{why} — คืนเงินเต็มจำนวน หมดสิทธิ์เครดิต");   // รอบ 243a: ใบลดหนี้ล้าง 11910 แล้ว — ไม่ใช่การตัดสูญ (ไม่ลง JE ซ้ำ)
+                break;
+            case Accounting.Helpers.PlatformRefundCreditNote.RegistryAction.UndoWriteOff:
+                // รอบ 243a (ฝ่ายค้าน S4): ตัดสูญพร้อม JE แล้ว ⇒ กลับ JE ตัดสูญ (เส้นเดียว) · ยอดที่เหลือหลังคืน > 0 ⇒ กลับไปรอใบ
+                await new WhtCreditService(_db, Microsoft.Extensions.Logging.Abstractions.NullLogger<WhtCreditService>.Instance)
+                    .UndoWriteOffAsync(tenantId, row!.Id, $"{why} — คืนเงินหลังตัดสูญ",
+                        Math.Max(0m, decimal.Round(row.WhtAmount - share, 2, MidpointRounding.AwayFromZero)), removeRow: false, Actor);
                 break;
             case Accounting.Helpers.PlatformRefundCreditNote.RegistryAction.AttentionConfirmed:
                 var msg = $"{why} แต่ทะเบียน 50 ทวิ ยืนยัน/ใช้เครดิตแล้ว ({row!.CertificateNumber}) — ขอให้ลูกค้าออกหนังสือรับรองฉบับใหม่/ยกเลิก แล้วแก้ทะเบียนที่ wht-credit.html";

@@ -72,4 +72,14 @@ public class WhtCreditReceived : TenantEntity
     public int? CarriedFromTaxYear { get; set; }
 
     public string? Notes { get; set; }
+
+    // ── รอบ 243a: ตัดสูญพร้อมรายการบัญชี (Helpers/WhtCreditWriteOff) ──
+
+    /// <summary>JE ตัดสูญ (Dr 58010 / Cr 11910) — มีค่า = ตัดสูญผ่านเส้นที่ลงบัญชี · null บนแถว Expired = ตัดออกโดยไม่มี JE (ก่อนรอบ 243a / คืนเงินอ้างใบลดหนี้)</summary>
+    public Guid? WriteOffJournalEntryId { get; set; }
+    public DateTime? WrittenOffAt { get; set; }
+    /// <summary>เหตุผลที่ผู้ทำบัญชีระบุ (≥ 10 ตัวอักษร) — หลักฐานว่าลูกค้าไม่ออก 50 ทวิ</summary>
+    public string? WriteOffReason { get; set; }
+    /// <summary>JE กลับรายการตัดสูญ (ได้รับใบภายหลัง) — ร่องรอยของการคืนเครดิต · JE ตัดสูญเดิมคง Status=Reversed</summary>
+    public Guid? WriteOffReversalJournalEntryId { get; set; }
 }

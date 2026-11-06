@@ -100,6 +100,39 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
     }
 
     /// <summary>
+    /// **ขอบเขต e-Tax ของใบนี้ (โหลดข้อเท็จจริง + <see cref="EtaxAutoIssueScope.Judge"/>) — ตัวโหลดตัวเดียว** ของ hook ออก e-Tax อัตโนมัติ (ด้านล่าง) และ
+    /// ทางเลือกช่องทางส่งอีเมล (<c>DocumentEmailService.RouteAsync</c> → <see cref="EtaxDeliveryRouter"/> · รอบ 244) — ย้ายออกจากเมธอดเดียวให้สองเส้นเรียกตัวเดียว (F2 ข้อ 4) ·
+    /// tenant (ใบต้นทาง/ผู้ติดต่อกรอง <c>CompanyId</c>)
+    /// </summary>
+    public static async Task<EtaxAutoSkip> JudgeEtaxScopeAsync(AccountingDbContext db, Guid companyId, Document doc, CancellationToken ct = default)
+    {
+        DocumentType? relatedType = null;
+        if (EtaxAutoIssueScope.NeedsRelatedType(doc.DocumentType, doc.RelatedDocumentId))
+            relatedType = await db.Documents.AsNoTracking()
+                .Where(d => d.Id == doc.RelatedDocumentId!.Value && d.CompanyId == companyId)
+                .Select(d => (DocumentType?)d.DocumentType)
+                .FirstOrDefaultAsync(ct);
+
+        // "ไม่ใช่ใบกำกับเต็มรูปโดยเจตนา" (walk-in · ไม่ประสงค์รับ · บุคคลธรรมดาข้อมูลไม่ครบ) — TaxService.NotFullTaxInvoiceByDesign
+        // ผู้ซื้อนิติบุคคลข้อมูล §86/4 ไม่ครบ ⇒ ไม่ข้าม ปล่อยให้ GenerateAsync ล้มแล้วประทับป้าย (เส้นเว็บบล็อกกรณีนี้ · R2-C6)
+        // ตัวเดียวกับหัว PDF/GenerateAsync · ต้องใช้ผู้ติดต่อ: เส้น API/POS อาจไม่มี navigation ⇒ อ่านแยก
+        // (IgnoreQueryFilters — ผู้ติดต่อที่ถูกลบภายหลังยังเป็นผู้ซื้อของใบนี้ · กรอง CompanyId เอง) · ฝ่ายค้าน C-1
+        var notFull = false;
+        if (EtaxAutoIssueScope.IsTitleDecidedType(doc.DocumentType) && doc.VatAmount > 0.005m)
+        {
+            var buyer = doc.Contact ?? await db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                .FirstOrDefaultAsync(c => c.Id == doc.ContactId && c.CompanyId == companyId, ct);
+            notFull = TaxService.NotFullTaxInvoiceByDesign(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, buyer)
+                // รอบ 203 — บริษัท/ผู้ใช้เลือกรูปแบบ "อย่างย่อ" ไว้ (Document.ReceiptForm ตรึงตอนอนุมัติ) = ไม่ใช่เต็มรูปโดยเจตนาเช่นกัน
+                || doc.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated;
+        }
+
+        return EtaxAutoIssueScope.Judge(doc.DocumentType, doc.Status,
+            doc.IsDeposit, doc.DepositOutputVatDeferred, doc.DepositOutputVatRecognizedAt, relatedType,
+            doc.IsTaxInvoiceByLaw, notFull);
+    }
+
+    /// <summary>
     /// ออก e-Tax อัตโนมัติเมื่อบริษัทเปิด e-Tax — ขอบเขตรายใบจาก <see cref="EtaxAutoIssueScope.Judge"/>
     /// (ข้ามโดยเจตนา = เงียบ · ควรมีแต่ออกไม่ได้ = ดัง 3 ที่: ป้ายบนเอกสาร · log · ผลลัพธ์ให้ผู้เรียก)
     /// </summary>
@@ -116,30 +149,7 @@ public class IssuedDocumentHooks : IIssuedDocumentHooks
                 .FirstOrDefaultAsync(ct);
             if (settings?.EtaxEnabled != true) return IssuedDocumentHookResult.Nothing;
 
-            DocumentType? relatedType = null;
-            if (EtaxAutoIssueScope.NeedsRelatedType(doc.DocumentType, doc.RelatedDocumentId))
-                relatedType = await _db.Documents.AsNoTracking()
-                    .Where(d => d.Id == doc.RelatedDocumentId!.Value && d.CompanyId == companyId)
-                    .Select(d => (DocumentType?)d.DocumentType)
-                    .FirstOrDefaultAsync(ct);
-
-            // "ไม่ใช่ใบกำกับเต็มรูปโดยเจตนา" (walk-in · ไม่ประสงค์รับ · บุคคลธรรมดาข้อมูลไม่ครบ) — TaxService.NotFullTaxInvoiceByDesign
-            // ผู้ซื้อนิติบุคคลข้อมูล §86/4 ไม่ครบ ⇒ ไม่ข้าม ปล่อยให้ GenerateAsync ล้มแล้วประทับป้าย (เส้นเว็บบล็อกกรณีนี้ · R2-C6)
-            // ตัวเดียวกับหัว PDF/GenerateAsync · ต้องใช้ผู้ติดต่อ: เส้น API/POS อาจไม่มี navigation ⇒ อ่านแยก
-            // (IgnoreQueryFilters — ผู้ติดต่อที่ถูกลบภายหลังยังเป็นผู้ซื้อของใบนี้ · กรอง CompanyId เอง) · ฝ่ายค้าน C-1
-            var notFull = false;
-            if (EtaxAutoIssueScope.IsTitleDecidedType(doc.DocumentType) && doc.VatAmount > 0.005m)
-            {
-                var buyer = doc.Contact ?? await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
-                    .FirstOrDefaultAsync(c => c.Id == doc.ContactId && c.CompanyId == companyId, ct);
-                notFull = TaxService.NotFullTaxInvoiceByDesign(doc.VatAmount, doc.BuyerDeclinedTaxInvoice, buyer)
-                    // รอบ 203 — บริษัท/ผู้ใช้เลือกรูปแบบ "อย่างย่อ" ไว้ (Document.ReceiptForm ตรึงตอนอนุมัติ) = ไม่ใช่เต็มรูปโดยเจตนาเช่นกัน
-                    || doc.ReceiptForm == ReceiptForm.ReceiptTaxInvoiceAbbreviated;
-            }
-
-            var skip = EtaxAutoIssueScope.Judge(doc.DocumentType, doc.Status,
-                doc.IsDeposit, doc.DepositOutputVatDeferred, doc.DepositOutputVatRecognizedAt, relatedType,
-                doc.IsTaxInvoiceByLaw, notFull);
+            var skip = await JudgeEtaxScopeAsync(_db, companyId, doc, ct);
             if (skip != EtaxAutoSkip.None)
             {
                 _logger.LogInformation("Auto e-Tax skipped for {DocNumber}: {Reason}", doc.DocumentNumber, skip);

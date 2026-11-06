@@ -741,6 +741,8 @@ builder.Services.AddHostedService<Accounting.Services.Background.SignRequestAuto
 // Error logging service
 builder.Services.AddScoped<IErrorLogService, ErrorLogService>();
 builder.Services.AddScoped<IPosService, PosService>();
+builder.Services.AddScoped<IContactRecipientResolver, ContactRecipientResolver>();   // รอบ 245 L1 — ผู้อ่านเดียวของปลายทางแจ้งเตือนของผู้ติดต่อ
+builder.Services.AddScoped<IContactNotifyEndpointService, ContactNotifyEndpointService>();   // รอบ 245 L1 — ผู้เขียนเดียว (แท็บช่องทางแจ้งเตือน)
 builder.Services.AddScoped<INextAccLineConfig, NextAccLineConfig>();   // รอบ 212 D — ค่าตั้ง LINE OA กลาง: หน้าแอดมินก่อน · config Line:* fallback (ผู้อ่านตัวเดียว)
 builder.Services.AddScoped<ILineNotifyService, LineNotifyService>();
 // รอบ 212 C: สรุปประจำวันทาง LINE ถึงพนักงาน (push ผ่าน OA กลาง) · มิเตอร์ช่องกลาง = no-op จนกว่าโควตาแพ็ก A เข้า (ผู้ประสานงานต่อสายตอน merge)
@@ -793,6 +795,8 @@ builder.Services.AddScoped<IThaiGovIntegrationService, ThaiGovIntegrationService
 builder.Services.AddScoped<IShippingTrackingService, ShippingTrackingService>();
 builder.Services.AddScoped<IRolePermissionService, RolePermissionService>();
 builder.Services.AddSingleton<IPromptPayService, PromptPayService>();
+// รอบ 246 QR — QR ชำระเงินของบัญชีธนาคาร + QR บนเอกสาร (ผู้สร้างเดียวของ PaymentQrBlock ที่ตัวเรนเดอร์ทั้งสองวาด)
+builder.Services.AddScoped<IPaymentQrService, PaymentQrService>();
 
 // SignalR for real-time notifications
 builder.Services.AddSignalR();
@@ -856,6 +860,9 @@ builder.Services.AddScoped<Accounting.Services.Implementations.IDocumentLineDeli
     Accounting.Services.Implementations.DocumentLineDeliveryService>();
 builder.Services.AddScoped<IPayslipLineDeliveryService, PayslipLineDeliveryService>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
+// รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินต่อเอกสาร (ไม่พึ่ง IDocumentService — EmailScheduleService ใช้ได้) + งานหลังรับชำระ (ออก/ส่งใบเสร็จ)
+builder.Services.AddScoped<IDocumentPayLinkService, DocumentPayLinkService>();
+builder.Services.AddScoped<IPostPaymentAutomationService, PostPaymentAutomationService>();
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();
 
@@ -2110,6 +2117,34 @@ try
     // CRITICAL: Always run ApplyMissingColumns even if the above migration fails.
     // This ensures new columns (like IndustryType) are added to existing tables.
     DatabaseMigrationHelper.ApplyMissingColumns(db, app.Services.GetRequiredService<ILogger<Program>>());
+
+    // รอบ 245 L1: ย้าย Contact.LineUserId → ปลายทาง legacy ที่เข้ารหัส (ครั้งเดียว · marker OneShotDataFixes · ต้องเข้ารหัสในโค้ด จึงไม่อยู่ใน SQL ของ ApplyMissingColumns) ·
+    // ล้ม = ธุรกรรมย้อน + ไม่มี marker ⇒ บูตถัดไปทำใหม่ · log ระดับ Error (ไม่ล้มทั้งแอป — คอลัมน์เดิมยังไม่ถูกใช้ส่ง)
+    try
+    {
+        var moved = await Accounting.Helpers.ContactNotifyEndpointMigration.MigrateLegacyLineUserIdsAsync(
+            db, scope.ServiceProvider.GetRequiredService<Accounting.Helpers.ISecretProtector>());
+        if (moved.Created > 0) app.Logger.LogInformation("รอบ 245: ย้าย LINE เดิมของผู้ติดต่อเป็นปลายทาง legacy {Count} แถว", moved.Created);
+        if (moved.Skipped > 0)
+            app.Logger.LogWarning("รอบ 245: ข้าม LINE เดิมของผู้ติดต่อ {Count} แถวที่เข้ารหัสไม่ได้ (ค่าขึ้นต้น enc1:) — คงค่าไว้ในคอลัมน์เดิม ดูแถว audit {Entity}",
+                moved.Skipped, Accounting.Helpers.ContactNotifyEndpointMigration.AuditEntityType);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 245: ย้าย Contact.LineUserId เป็นปลายทาง legacy ไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
+    }
+
+    // รอบ 246 QR (ฝ่ายค้าน N3): ย้ายเลขพร้อมเพย์เดิมของเทมเพลต → บัญชีธนาคาร ครั้งเดียว (เฉพาะบริษัทที่ชัดเจน · audit ทุกบริษัท) · ล้ม = ย้อน + บูตถัดไปทำใหม่
+    try
+    {
+        var r246 = await Accounting.Helpers.PaymentQrMigration.MoveLegacyTemplatePromptPayAsync(db);
+        if (r246.Moved + r246.Skipped > 0)
+            app.Logger.LogInformation("รอบ 246: ย้ายพร้อมเพย์ของเทมเพลตไปบัญชีธนาคาร {Moved} บริษัท · ไม่ย้าย {Skipped} บริษัท (เหตุใน audit)", r246.Moved, r246.Skipped);
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "รอบ 246: ย้ายพร้อมเพย์ของเทมเพลตไปบัญชีธนาคารไม่สำเร็จ — จะลองใหม่ตอนบูตถัดไป");
+    }
 
     // PostgreSQL full-text search: pg_trgm GIN indexes for fast LIKE/ILIKE searches
     DatabaseMigrationHelper.ApplyFullTextSearchIndexes(db, app.Services.GetRequiredService<ILogger<Program>>());

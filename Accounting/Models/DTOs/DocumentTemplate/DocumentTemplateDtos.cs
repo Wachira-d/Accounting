@@ -116,17 +116,18 @@ public record CreateDocumentTemplateRequest(
     string? EtaxServiceProvider,
     bool? AutoGenerateEtaxXml,
 
-    // QR Code
-    bool? ShowQrCode,
-    string? QrCodeType,
-    string? PromptPayId,
-    string? QrCodeCustomData,
+    // QR Code เดิม (ShowQrCode/QrCodeType/PromptPayId/QrCodeCustomData) — ถอดรอบ 246 QR (ฝ่ายค้าน N3): ไม่มีตัวเรนเดอร์อ่าน ·
+    // QR ชำระเงินตั้งที่บัญชีธนาคาร + ShowPaymentQr ด้านล่าง
 
     // Copy
     int? DefaultCopies,
     string? CopyLabels,
     // ตำแหน่งป้าย ต้นฉบับ/สำเนา: Watermark (ลายน้ำกลางหน้า) / TopRight / TopLeft
-    string? CopyLabelPosition = null);
+    string? CopyLabelPosition = null,
+    // รอบ 246 QR — แสดง QR ชำระเงิน (บัญชี) · แสดง QR หน้าชำระออนไลน์ · บัญชีที่ใช้ QR (Guid.Empty = ล้าง · null = ตามลำดับอัตโนมัติ)
+    bool? ShowPaymentQr = null,
+    bool? ShowPayLinkQr = null,
+    Guid? PaymentQrBankAccountId = null);
 
 public record UpdateDocumentTemplateRequest(
     string? Name,
@@ -230,14 +231,13 @@ public record UpdateDocumentTemplateRequest(
     string? EtaxServiceProvider,
     bool? AutoGenerateEtaxXml,
 
-    bool? ShowQrCode,
-    string? QrCodeType,
-    string? PromptPayId,
-    string? QrCodeCustomData,
-
     int? DefaultCopies,
     string? CopyLabels,
-    string? CopyLabelPosition = null);
+    string? CopyLabelPosition = null,
+    // รอบ 246 QR — null = ไม่เปลี่ยน · PaymentQrBankAccountId: Guid.Empty = ล้าง (ตามลำดับอัตโนมัติ)
+    bool? ShowPaymentQr = null,
+    bool? ShowPayLinkQr = null,
+    Guid? PaymentQrBankAccountId = null);
 
 public record DocumentTemplateResponse(
     Guid Id,
@@ -273,9 +273,6 @@ public record DocumentTemplateResponse(
     int? DefaultCreditDays,
     bool ShowSignature,
     int SignatureCount,
-    bool ShowQrCode,
-    string? QrCodeType,
-    string? PromptPayId,
     string LayoutStyle,
     string FontFamily,
     string Language,
@@ -344,7 +341,11 @@ public record DocumentTemplateResponse(
     bool ShowReference = true,
     /// <summary>ค่าช่อง "แหล่งเงิน" ของฟอร์มเอกสารที่ได้จาก <c>DefaultPaymentAccountId</c> (<c>bank:&lt;id&gt;</c> / <c>account:&lt;id&gt;</c> / null) —
     /// เซิร์ฟเวอร์แปลงด้วย <c>Helpers/DocumentMoneyChannel.ChannelValueForGlAsync</c> (PC#14: เดิมหน้าเว็บเทียบรหัสผังดิบกับค่า bank:/account: ⇒ ไม่เคยเติม)</summary>
-    string? DefaultPaymentChannel = null);
+    string? DefaultPaymentChannel = null,
+    // รอบ 246 QR — echo ให้หน้าเทมเพลต hydrate (เก็บแล้วต้องส่งกลับ)
+    bool ShowPaymentQr = true,
+    bool ShowPayLinkQr = true,
+    Guid? PaymentQrBankAccountId = null);
 
 public record DocumentTemplateListResponse(
     Guid Id,
@@ -412,7 +413,13 @@ public record EtaxInvoiceResponse(
     DateTime CreatedAt,
     DateTime? VoidedAt,
     string? VoidReason,
-    string? VoidedNote);
+    string? VoidedNote,
+    // รอบ 244: e-Tax by Email — ส่งแล้ว (รอประทับเวลา) แยกจาก ประทับเวลาแล้ว (EtaxByEmailFormat.Stage · ชื่อ enum + ป้ายจากเซิร์ฟเวอร์)
+    DateTime? ByEmailSentAt = null,
+    DateTime? EtdaStampedAt = null,
+    string? EtdaTimestampToken = null,
+    string ByEmailStage = "NotSent",
+    string? ByEmailStageLabel = null);
 
 /// <summary>คำขอยกเลิกแถว e-Tax ในระบบนี้ (รอบ 200 ทีม V1H · คำตัดสินข้อ 51) — แถวที่ส่งถึงกรมสรรพากรแล้ว (Submitted) ต้องมีเหตุผล + ไฟล์หลักฐาน
 /// การยกเลิกจากกรมสรรพากร/ผู้ให้บริการที่แนบเข้าเอกสารของแถวนี้ · เลขอ้างอิงไม่บังคับ (เก็บลง audit)</summary>

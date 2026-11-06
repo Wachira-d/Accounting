@@ -343,10 +343,23 @@ public partial class PdpaService : IPdpaService
             }
             : new Dictionary<string, object?>();
 
+        // รอบ 245 L1: ปลายทางแจ้งเตือนของผู้ติดต่อ (ม.30/31) — ไม่ส่ง LINE id ออกในไฟล์ (บอกว่ามี + OA ที่ผูก)
+        var notifyEndpoints = contactId.HasValue
+            ? await _db.ContactNotifyEndpoints.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && e.ContactId == contactId.Value)
+                .Select(e => new { e.Id, e.Kind, e.Label, e.Email, e.OaScope, e.TopicsJson, e.LinkedAt, e.UnlinkedAt, e.UnlinkReason,
+                    HasLineId = e.LineUserId != null || e.LineGroupId != null, e.ConsentRecordId })
+                .ToListAsync(ct)
+            : null;
         var contactRows = contacts.Select(c => new Dictionary<string, object?> {
             ["id"] = c.Id, ["name"] = c.Name, ["email"] = c.Email, ["phone"] = c.Phone,
             ["taxId"] = c.TaxId, ["branchCode"] = c.BranchCode,
             ["address"] = c.Address, ["createdAt"] = c.CreatedAt,
+            ["notifyEndpoints"] = notifyEndpoints?.Select(e => new Dictionary<string, object?> {
+                ["id"] = e.Id, ["kind"] = e.Kind, ["label"] = e.Label, ["email"] = e.Email, ["oaScope"] = e.OaScope,
+                ["topics"] = e.TopicsJson, ["linkedAt"] = e.LinkedAt, ["unlinkedAt"] = e.UnlinkedAt, ["unlinkReason"] = e.UnlinkReason,
+                ["hasLineId"] = e.HasLineId, ["consentRecordId"] = e.ConsentRecordId,
+            }).ToList(),
         }).ToList();
 
         var docs = contactId.HasValue
@@ -869,6 +882,28 @@ public partial class PdpaService : IPdpaService
                 c.Address = hasRetained ? "[ANON-RETAINED-FOR-RD-5Y]" : null;
                 c.LineUserId = null;
                 c.IsDeleted = !hasRetained;   // ลบจริงเฉพาะที่หมด retention
+                changed++;
+            }
+
+            // รอบ 245 L1: ปลายทางแจ้งเตือนของผู้ติดต่อ — ปลดทุกแถว + ล้างอีเมล/ป้าย/LINE id/ชื่อกลุ่ม (DESIGN §6.3 DSR · ไม่ใช่หลักฐานบัญชีที่ต้องคง)
+            var endpoints = await _db.ContactNotifyEndpoints.IgnoreQueryFilters()
+                .Where(e => e.CompanyId == companyId && e.ContactId == contactId.Value)
+                .ToListAsync(ct);
+            foreach (var e in endpoints)
+            {
+                e.Email = null;
+                e.Label = null;
+                e.LineUserId = null;
+                e.LineGroupId = null;
+                e.LineIdHash = null;
+                e.GroupNameSnapshot = null;
+                e.LastFailure = null;
+                if (e.UnlinkedAt == null)
+                {
+                    e.UnlinkedAt = DateTime.UtcNow;
+                    e.UnlinkReason = Accounting.Helpers.NotifyEndpointKind.UnlinkErase;
+                }
+                e.UpdatedBy = actor;
                 changed++;
             }
 

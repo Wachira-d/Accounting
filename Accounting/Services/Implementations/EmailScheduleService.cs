@@ -13,14 +13,36 @@ public class EmailScheduleService : IEmailScheduleService
     private readonly IEmailSenderFactory _senderFactory;
     private readonly IPdfGenerationService _pdf;
     private readonly ILogger<EmailScheduleService> _logger;
+    /// <summary>รอบ 241: ลิงก์ชำระเงินในอีเมลตามตาราง (null = สร้างนอก DI — ไม่แนบลิงก์)</summary>
+    private readonly IDocumentPayLinkService? _payLinks;
+    /// <summary>รอบ 241 ฝ่ายค้าน B2: เพดานอีเมลของแพลตฟอร์ม + URL ของระบบ (null = ค่าตั้งต้น)</summary>
+    private readonly IConfiguration? _config;
+    /// <summary>รอบ 244: ทาง e-Tax by Email ของใบกำกับในคิว (<c>SendDocumentRoutedAsync</c>) · null (สร้างนอก DI) ⇒ ใบที่ต้องไปทาง e-Tax ล้มดังบนคิว (ไม่ส่งเป็นอีเมลธรรมดา)</summary>
+    private readonly IDocumentEmailService? _docEmail;
 
     public EmailScheduleService(AccountingDbContext db, IEmailSenderFactory senderFactory,
-        IPdfGenerationService pdf, ILogger<EmailScheduleService> logger)
+        IPdfGenerationService pdf, ILogger<EmailScheduleService> logger, IDocumentPayLinkService? payLinks = null,
+        IConfiguration? config = null, IDocumentEmailService? docEmail = null)
     {
         _db = db;
         _senderFactory = senderFactory;
         _pdf = pdf;
         _logger = logger;
+        _payLinks = payLinks;
+        _config = config;
+        _docEmail = docEmail;
+    }
+
+    /// <summary>รอบ 241: ลิงก์ชำระเงินของใบนี้ตามตาราง (ค่าตาราง ?? ค่าบริษัท · ช่องทางตาราง ∩ ที่บริษัทเปิด — ตัวตัดสิน <c>DocumentPayLinkPolicy</c>) ·
+    /// null = ไม่แนบ · แนบแล้ว: <c>{PayLink}</c> ในเทมเพลต = URL · เทมเพลตไม่มี placeholder = ต่อบล็อกท้ายเนื้อ</summary>
+    internal async Task<PayLinkResult?> PayLinkFor(EmailScheduleRule rule, Document doc, CancellationToken ct)
+        => _payLinks == null ? null : await _payLinks.ForScheduledEmailAsync(rule, doc, ct);
+
+    internal static string WithPayLink(string body, string? template, PayLinkResult? link, bool isEn)
+    {
+        if (link?.Url == null || link.Amounts == null || DocumentPayLinkPolicy.HasPlaceholder(template)) return body;
+        // คิวเก็บที่หมาย {PayLink} ไม่ใช่ URL (ไม่มี token ตรงใน EmailQueues · ฝ่ายค้าน S1) — URL ประกอบตอนส่งใน ComposeQueueMessageAsync
+        return body + DocumentPayLinkPolicy.EmailBlock(DocumentPayLinkPolicy.QueuePlaceholder, link.Amounts, isEn);
     }
 
     // ── เวลาท้องถิ่นไทย — เก็บใน DB เป็น UTC, แต่ ScheduledFor คำนวณจาก
@@ -459,17 +481,28 @@ public class EmailScheduleService : IEmailScheduleService
                     continue;
                 }
 
-                var sender = await _senderFactory.GetSenderAsync(item.CompanyId, ct);
-                var msg = new EmailMessage
+                // รอบ 244: ใบกำกับของบริษัทโหมด e-Tax by Email ⇒ ทาง e-Tax เท่านั้น (EtaxDeliveryRouter ตัวเดียว) — ด่านปฏิเสธ = คิว Failed พร้อมเหตุ ·
+                // ห้ามตกไปเส้นอีเมลธรรมดาข้างล่าง (ลูกค้าจะได้ PDF/A-3 ที่ไม่มีวันถูกประทับเวลา)
+                if (item.EntityType == "Document" && await SendViaEtaxIfRequiredAsync(item, ct) is bool etaxSent)
                 {
-                    To = { item.ToEmail },
-                    Subject = item.Subject,
-                    HtmlBody = item.Body,
-                };
-                if (!string.IsNullOrWhiteSpace(item.CcEmail)) msg.Cc.Add(item.CcEmail);
-                if (!string.IsNullOrWhiteSpace(item.BccEmail))
-                    foreach (var b in item.BccEmail.Split(',', StringSplitOptions.RemoveEmptyEntries))
-                        msg.Bcc.Add(b.Trim());
+                    if (etaxSent) sent++;
+                    await _db.SaveChangesAsync(ct);
+                    continue;
+                }
+
+                // รอบ 241 ฝ่ายค้าน B2 (คลาสเดียวกับ 240 B1): ผู้ส่งจากตัวตัดสินเดียว — บริษัทตั้ง+ทดสอบผ่าน ⇒ SMTP บริษัท (พฤติกรรมเดิม) ·
+                // ไม่งั้น ⇒ SMTP ของ NextAcc ในนามบริษัท = เพดาน (บริษัท/วัน · ผู้รับ · To+Cc+Bcc ≤ 5) + เทมเพลตคงที่ (ข้อความผู้ใช้เป็นข้อความล้วน)
+                var compose = await ComposeQueueMessageAsync(item, ct);
+                if (compose.Refusal != null)
+                {
+                    // เกินเพดาน/ผู้รับไม่ถูกต้อง ⇒ ไม่เรียกผู้ให้บริการ · ล้มพร้อมเหตุผลบนคิว + บันทึกการส่ง (กด "ลองใหม่" ได้)
+                    item.Status = "Failed";
+                    item.ErrorMessage = compose.Refusal;
+                    item.UpdatedAt = DateTime.UtcNow;
+                    await _db.SaveChangesAsync(ct);
+                    continue;
+                }
+                var (msg, sender, log) = (compose.Message!, compose.Sender!, compose.Log);
 
                 if (item.AttachPdf)
                 {
@@ -487,6 +520,15 @@ public class EmailScheduleService : IEmailScheduleService
                 }
 
                 var result = await sender.SendAsync(msg, ct);
+                if (log != null)
+                {
+                    // เส้นแพลตฟอร์ม: ทุกฉบับลงบันทึก (ฐานนับเพดานรายวัน PlatformEmailQuota) · เนื้อในบันทึกคง {PayLink} (ไม่มี token ตรง — ฝ่ายค้าน S1)
+                    log.Status = result.Success ? EmailLogStatus.Sent : EmailLogStatus.Failed;
+                    log.SentAt = result.Success ? DateTime.UtcNow : null;
+                    log.ErrorMessage = result.ErrorMessage;
+                    log.ProviderMessageId = result.MessageId;
+                    _db.DocumentEmailLogs.Add(log);
+                }
                 if (result.Success)
                 {
                     item.Status = "Sent";
@@ -507,6 +549,154 @@ public class EmailScheduleService : IEmailScheduleService
             await _db.SaveChangesAsync(ct);
         }
         return sent;
+    }
+
+    /// <summary>
+    /// รอบ 244 — ใบในคิวที่ต้องส่งแบบ e-Tax by Email (<see cref="DocumentEmailService.RouteForAsync"/> → <c>EtaxDeliveryRouter</c>) ส่งผ่าน
+    /// <c>IDocumentEmailService.SendDocumentRoutedAsync</c> (ด่านผู้ส่ง/รูปแบบ/สถานะ + หัวเรื่องตามกรมสรรพากร + CC ETDA) ·
+    /// คืน null = ใบนี้ไม่ใช่ทาง e-Tax (ผู้เรียกเดินเส้นเดิม) · true = ส่งแล้ว · false = ไม่ส่ง (คิว Failed พร้อมเหตุ / ผู้ให้บริการล้ม ⇒ ลองใหม่)
+    /// <para>ด่านปฏิเสธ (ค่าตั้งผู้ส่ง · CC/BCC ของตาราง · ไม่แนบ PDF · ใบยกเลิก ฯลฯ) ลองใหม่ไม่ช่วย ⇒ Failed ทันที (กด "ลองใหม่" หลังแก้ได้) ·
+    /// ข้อความในคิว: <c>{PayLink}</c> แทนด้วย URL ตอนส่ง (ไม่เก็บ token) · หัวเรื่องของตารางไม่ถูกใช้ (หัวเรื่องตามกรมสรรพากร)</para>
+    /// </summary>
+    internal async Task<bool?> SendViaEtaxIfRequiredAsync(EmailQueue item, CancellationToken ct)
+    {
+        var route = await DocumentEmailService.RouteForAsync(_db, item.CompanyId, item.EntityId, ct);
+        if (route.Channel != EtaxEmailChannel.EtaxByEmail) return null;
+        if (_docEmail == null)
+        {
+            item.Status = "Failed";
+            item.ErrorMessage = "ใบนี้ต้องส่งแบบ e-Tax by Email แต่บริการส่ง e-Tax ไม่พร้อม — ยังไม่ส่ง (ไม่ส่งเป็นอีเมลธรรมดาแทน)";
+            item.UpdatedAt = DateTime.UtcNow;
+            return false;
+        }
+        string? payUrl = null;
+        if (_payLinks != null && DocumentPayLinkPolicy.HasPlaceholder(item.Body))
+            payUrl = await _payLinks.CurrentUrlAsync(item.CompanyId, item.EntityId, ct);
+        var body = DocumentPayLinkPolicy.ResolvePlaceholder(item.Body, payUrl, html: true);
+        try
+        {
+            var log = await _docEmail.SendDocumentRoutedAsync(item.CompanyId, item.EntityId,
+                new Models.DTOs.Email.SendDocumentEmailRequest(item.ToEmail, item.CcEmail, item.BccEmail, null, body, AttachPdf: item.AttachPdf),
+                "email-schedule");
+            if (log.Status == EmailLogStatus.Sent)
+            {
+                item.Status = "Sent";
+                item.SentAt = DateTime.UtcNow;
+                item.ErrorMessage = null;
+                item.UpdatedAt = DateTime.UtcNow;
+                return true;
+            }
+            DeferOrFail(item, log.ErrorMessage);
+            return false;
+        }
+        catch (BusinessRuleException ex) when (ex.RuleCode is { } rc && rc.StartsWith("ETAX-", StringComparison.Ordinal))
+        {
+            // แถว e-Tax ที่ถูก Add ค้างจากการออกที่ล้ม ห้ามค้างใน context ของรอบคิวนี้
+            foreach (var e in _db.ChangeTracker.Entries<EtaxInvoice>().Where(e => e.State == EntityState.Added).ToList())
+                e.State = EntityState.Detached;
+            item.Status = "Failed";
+            var reason = "ส่ง e-Tax by Email ไม่ได้ (ยังไม่ส่ง): " + ex.Message;
+            item.ErrorMessage = reason.Length > 2000 ? reason[..2000] : reason;
+            item.UpdatedAt = DateTime.UtcNow;
+            return false;
+        }
+    }
+
+    internal sealed record QueueCompose(EmailMessage? Message, IEmailSender? Sender, DocumentEmailLog? Log, string? Refusal);
+
+    /// <summary>
+    /// รอบ 241 ฝ่ายค้าน B2 — ประกอบอีเมลของคิวตามผู้ส่งจริง (ตัวตัดสินเดียว <see cref="DocumentEmailService.ResolveOnBehalfSenderAsync"/>):
+    /// <list type="bullet">
+    /// <item>SMTP ของบริษัท (ตั้ง+ทดสอบผ่าน) ⇒ เนื้อเดิมของคิว (พฤติกรรมเดิม) · ไม่ลงบันทึกเพิ่ม</item>
+    /// <item>SMTP ของ NextAcc ในนามบริษัท ⇒ ผู้รับรวม To+Cc+Bcc ≤ 5 · เพดานบริษัท/วัน + ต่อผู้รับ (<see cref="PlatformEmailQuota"/>) ก่อนเรียกผู้ให้บริการ ·
+    ///   เนื้อ = เทมเพลตคงที่ (<see cref="SignRequestEmailText.WrapPlatformDocumentEmail"/>) — เทมเพลตที่ผู้ใช้เขียนเอง = ข้อความล้วน (HTML ถูกหนี) ·
+    ///   ค่าตั้งต้นของเซิร์ฟเวอร์ + บล็อกลิงก์ชำระคงเป็น HTML · From = แพลตฟอร์ม · Reply-To = บริษัท · คืนบันทึก (ผู้เรียกเติมผลแล้วเก็บ)</item>
+    /// </list>
+    /// ลิงก์ชำระ: คิวเก็บ <c>{PayLink}</c> · URL ประกอบตอนนี้จาก token ฉบับเข้ารหัส (ฝ่ายค้าน S1) ใส่เฉพาะข้อความที่ส่ง ไม่ถูกเก็บลงคิว/บันทึก
+    /// </summary>
+    internal async Task<QueueCompose> ComposeQueueMessageAsync(EmailQueue item, CancellationToken ct)
+    {
+        var settings = await _db.CompanySettings.AsNoTracking().FirstOrDefaultAsync(s => s.CompanyId == item.CompanyId, ct);
+        var (plan, sender) = await DocumentEmailService.ResolveOnBehalfSenderAsync(_db, _senderFactory, item.CompanyId, settings, ct);
+
+        string? payUrl = null;
+        if (item.EntityType == "Document" && _payLinks != null
+            && (DocumentPayLinkPolicy.HasPlaceholder(item.Body) || DocumentPayLinkPolicy.HasPlaceholder(item.Subject)))
+            payUrl = await _payLinks.CurrentUrlAsync(item.CompanyId, item.EntityId, ct);
+
+        var subject = item.Subject;
+        var body = item.Body;
+        var msg = new EmailMessage { To = { item.ToEmail } };
+        if (!string.IsNullOrWhiteSpace(item.CcEmail)) msg.Cc.Add(item.CcEmail);
+        if (!string.IsNullOrWhiteSpace(item.BccEmail))
+            foreach (var b in item.BccEmail.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                msg.Bcc.Add(b.Trim());
+
+        DocumentEmailLog? log = null;
+        if (plan.OnBehalf)
+        {
+            var (valid, invalid) = SignEmailThrottle.ParseRecipients(new[] { item.ToEmail, item.CcEmail, item.BccEmail });
+            var refusal = invalid.Count > 0
+                ? $"อีเมลผู้รับไม่ถูกต้อง: {string.Join(", ", invalid.Take(3))}"
+                : SignEmailThrottle.RecipientCountRefusal(valid.Count);   // BCC นับรวม (ฝ่ายค้าน B2)
+            if (refusal == null)
+            {
+                var quota = await PlatformEmailQuota.ForCompanyAsync(_db, _config, item.CompanyId, DateTime.UtcNow, ct);
+                foreach (var r in valid)
+                {
+                    var (sameDoc, any) = await PlatformEmailQuota.RecipientCountsAsync(_db, item.CompanyId, item.EntityId, r, quota.DayStartUtc, ct);
+                    refusal = SignEmailThrottle.Refusal(true, quota.SentToday, quota.Cap, sameDoc, any);
+                    if (refusal != null) break;
+                }
+            }
+            log = new DocumentEmailLog
+            {
+                CompanyId = item.CompanyId,
+                DocumentId = item.EntityType == "Document" ? item.EntityId : null,
+                ToEmail = item.ToEmail, CcEmail = item.CcEmail, BccEmail = item.BccEmail,
+                AttachedPdf = item.AttachPdf, Provider = sender.Provider, SenderMode = plan.Mode,
+                Purpose = "scheduled", CreatedBy = "email-schedule",
+            };
+            if (refusal != null)
+            {
+                log.Subject = SignRequestEmailText.SafeSubject(subject);
+                log.Body = "";
+                log.Status = EmailLogStatus.Failed;
+                log.ErrorMessage = refusal;
+                _db.DocumentEmailLogs.Add(log);
+                return new QueueCompose(null, null, null, refusal);
+            }
+
+            // เทมเพลตของผู้ใช้ = ข้อความล้วน (ค่าที่แทนถูกหนีตอนเข้าคิวแล้ว ⇒ ถอดก่อน แล้วหนีทั้งก้อนครั้งเดียว) · บล็อกลิงก์ชำระของเซิร์ฟเวอร์แยกออกมาคงเป็น HTML
+            var userAuthored = item.RuleId is Guid rid && await _db.EmailScheduleRules.AsNoTracking()
+                .AnyAsync(r => r.Id == rid && r.CompanyId == item.CompanyId && r.BodyTemplate != null && r.BodyTemplate != "", ct);
+            var (rest, block) = DocumentPayLinkPolicy.SplitBlock(body);
+            var inner = (userAuthored ? SignRequestEmailText.PlainTextToHtml(System.Net.WebUtility.HtmlDecode(rest)) : rest) + (block ?? "");
+            var isEn = false;
+            var title = subject;
+            string? number = null;
+            if (item.EntityType == "Document")
+            {
+                var heading = await HeadingForAsync(item.CompanyId, item.EntityId);
+                isEn = heading.IsEnglish;
+                title = heading.Title;
+                number = await _db.Documents.AsNoTracking().Where(d => d.Id == item.EntityId && d.CompanyId == item.CompanyId)
+                    .Select(d => d.DocumentNumber).FirstOrDefaultAsync(ct);
+            }
+            var co = await _db.Companies.AsNoTracking().Where(c => c.Id == item.CompanyId).Select(c => new { c.Name, c.TaxId }).FirstOrDefaultAsync(ct);
+            var origin = await SystemBaseUrl.ResolveAsync(_db, _config, ct);
+            body = SignRequestEmailText.WrapPlatformDocumentEmail(isEn, co?.Name, co?.TaxId, plan.ReplyTo, title, number, inner,
+                origin == null ? null : $"{origin}/contact.html?topic=email-abuse");
+            subject = SignRequestEmailText.SafeSubject(subject);
+            msg.FromAddress = plan.FromAddress;
+            msg.FromName = plan.FromName;
+            msg.ReplyTo = plan.ReplyTo;
+            log.Subject = subject;
+            log.Body = body;   // ยังเป็น {PayLink} — ไม่เก็บ token
+        }
+        msg.Subject = DocumentPayLinkPolicy.ResolvePlaceholder(subject, payUrl, html: false);
+        msg.HtmlBody = DocumentPayLinkPolicy.ResolvePlaceholder(body, payUrl, html: true);
+        return new QueueCompose(msg, sender, log, null);
     }
 
     /// <summary>ไฟล์แนบของคิว — <b>โยน</b>เมื่อสร้างไม่สำเร็จ (ผู้เรียกเลื่อนไปลองใหม่ ไม่ส่งอีเมลเปล่า · ID#12) ·
@@ -537,7 +727,8 @@ public class EmailScheduleService : IEmailScheduleService
         int daysOffset, string suffix, CancellationToken ct, DateTime? overrideSendUtc = null)
     {
         var email = doc.Contact?.Email;
-        if (string.IsNullOrWhiteSpace(email)) return false;
+        // ตัวตัดสินเดียวกับฟอร์ม/หน้ารายการประจำ (RecurringEmailReadiness) — ผู้ติดต่อไม่มีอีเมล ⇒ ไม่เข้าคิว
+        if (!RecurringEmailReadiness.HasDeliverableEmail(email)) return false;
 
         var idem = $"doc:{doc.Id}:{rule.Trigger}:{suffix}";
         if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == doc.CompanyId
@@ -552,6 +743,13 @@ public class EmailScheduleService : IEmailScheduleService
         var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
         var isEn = heading.IsEnglish;
         var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
+        // รอบ 241: ลิงก์ชำระเงิน (ช่องทางตามตาราง ∩ ที่บริษัทเปิด) — หนึ่งลิงก์ต่อใบ · {PayLink} ในเทมเพลต หรือบล็อกท้ายเนื้อ
+        var payLink = await PayLinkFor(rule, doc, ct);
+        ctx["PayLink"] = payLink?.Url != null ? DocumentPayLinkPolicy.QueuePlaceholder : "";   // ฝ่ายค้าน S1: ที่หมาย ไม่ใช่ URL
+        // ตารางแรกที่ส่งใบนี้ = ค่าทับของงานหลังรับชำระ (ผู้อ่าน: PostPaymentAutomationService.SettingsForAsync)
+        if (rule.Id != Guid.Empty && doc.AutoSendRuleId == null)
+            await _db.Documents.Where(d => d.Id == doc.Id && d.CompanyId == doc.CompanyId && d.AutoSendRuleId == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(d => d.AutoSendRuleId, (Guid?)rule.Id), ct);
 
         _db.EmailQueues.Add(new EmailQueue
         {
@@ -564,7 +762,7 @@ public class EmailScheduleService : IEmailScheduleService
             ToEmail = email!,
             BccEmail = rule.BccEmails,
             Subject = Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, isEn), ctx),
-            Body = Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, isEn), ctx, htmlEncodeValues: true),
+            Body = WithPayLink(Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, isEn), ctx, htmlEncodeValues: true), rule.BodyTemplate, payLink, isEn),
             AttachPdf = true,
             ScheduledFor = sendUtc,
             IdempotencyKey = idem,
@@ -626,8 +824,12 @@ public class EmailScheduleService : IEmailScheduleService
             await _db.HydrateContactAsync(item.CompanyId, doc);
             var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
             var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
+            // รอบ 241: ลิงก์ ณ เวลาส่ง (ยอดสุทธิปัจจุบัน · ใบชำระครบ/ยกเลิกแล้ว = ไม่แนบ)
+            var payLink = await PayLinkFor(rule, doc, ct);
+            ctx["PayLink"] = payLink?.Url != null ? DocumentPayLinkPolicy.QueuePlaceholder : "";   // ฝ่ายค้าน S1: คิวเก็บที่หมาย
             item.Subject = Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, heading.IsEnglish), ctx);
-            item.Body = Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, heading.IsEnglish), ctx, htmlEncodeValues: true);
+            item.Body = WithPayLink(Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, heading.IsEnglish), ctx, htmlEncodeValues: true),
+                rule.BodyTemplate, payLink, heading.IsEnglish);
         }
         return null;
     }
@@ -717,6 +919,16 @@ public class EmailScheduleService : IEmailScheduleService
 
     public async Task<EmailScheduleRule> UpsertRuleAsync(Guid companyId, EmailScheduleRule rule, string actor)
     {
+        // รอบ 241: เปิดแนบลิงก์/เลือกช่องทางได้เฉพาะที่บริษัทเปิดจริง (เซิร์ฟเวอร์ตัดสิน — ไม่เก็บค่าที่ใช้ไม่ได้เงียบ ๆ)
+        if (_payLinks != null && (rule.AttachPayLink == true || rule.PayLinkChannelsJson != null))
+        {
+            var facts = await _payLinks.CompanyFactsAsync(companyId);
+            if (rule.AttachPayLink == true && DocumentPayLinkPolicy.UnavailableReason(facts) is { } why)
+                throw new BusinessRuleException(why, DocumentPayLinkPolicy.RuleCode);
+            var bad = DocumentPayLinkPolicy.Unknown(DocumentPayLinkPolicy.CompanyAvailable(facts), DocumentPayLinkPolicy.ParseChannels(rule.PayLinkChannelsJson));
+            if (bad.Count > 0)
+                throw new BusinessRuleException("ช่องทางที่บริษัทยังไม่ได้เปิด: " + string.Join(", ", bad), DocumentPayLinkPolicy.RuleCode);
+        }
         if (rule.Id == Guid.Empty)
         {
             rule.CompanyId = companyId;
@@ -739,6 +951,11 @@ public class EmailScheduleService : IEmailScheduleService
             existing.BccEmails = rule.BccEmails;
             existing.DayOfMonth = rule.DayOfMonth;
             existing.AudienceFilter = rule.AudienceFilter;
+            // รอบ 241: ค่าทับต่อตาราง (null = ตามบริษัท) — ไม่ลอกไม่ได้ (ห้าม silent no-op)
+            existing.AttachPayLink = rule.AttachPayLink;
+            existing.PayLinkChannelsJson = rule.PayLinkChannelsJson;
+            existing.PostPayEmailReceipt = rule.PostPayEmailReceipt;
+            existing.PostPayIncludePartial = rule.PostPayIncludePartial;
             existing.UpdatedAt = DateTime.UtcNow;
         }
         await _db.SaveChangesAsync();

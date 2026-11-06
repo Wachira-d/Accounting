@@ -54,6 +54,9 @@ public static class ForeignKeyViolation
         ["DocumentLines"] = "รายการในเอกสาร",
         ["Payments"] = "การรับ/จ่ายชำระ",
         ["BankTransactions"] = "รายการเดินบัญชีธนาคาร",
+        // รอบ 242 — ลูกของเอกสารที่ลบถาวรเคยชน (23001)
+        ["DocumentApprovals"] = "ขั้นอนุมัติเอกสาร",
+        ["DocumentSignatures"] = "ลายเซ็นบนเอกสาร",
     };
 
     /// <summary>ชื่อไทยของตารางปลายทางจากชื่อ constraint ของ EF (<c>FK_{ตารางลูก}_{ตารางแม่}_{คอลัมน์}</c>) · ไม่รู้จัก = null</summary>
@@ -67,7 +70,9 @@ public static class ForeignKeyViolation
     {
         if (string.IsNullOrWhiteSpace(constraintName)) return null;
         var parts = constraintName.Split('_');
-        if (parts.Length < 4 || !parts[0].Equals("FK", StringComparison.OrdinalIgnoreCase)) return null;
+        // รอบ 242: constraint ที่สร้างด้วย SQL ตอนบูต (Program.cs) ตั้งชื่อ 3 ส่วน (FK_{ลูก}_{แม่ย่อ}) เช่น "FK_DocumentSignatures_Approvals"
+        // — เดิมบังคับ ≥ 4 ส่วน (แบบ EF) ⇒ บอกไม่ได้ว่าใครอ้าง
+        if (parts.Length < 3 || index >= parts.Length || !parts[0].Equals("FK", StringComparison.OrdinalIgnoreCase)) return null;
         return TableLabels.TryGetValue(parts[index], out var label) ? label : null;
     }
 

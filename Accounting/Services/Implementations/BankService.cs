@@ -23,16 +23,27 @@ public partial class BankService : IBankService
     /// <summary>เก็บไฟล์ statement ต้นทาง (รอบ 205 ทีม C · <c>ImportParsedStatementRowsAsync</c>) · null = ทางเข้าที่ไม่มี DI (เทสต์) ⇒ คำเตือน</summary>
     private readonly IFileAttachmentService? _files;
 
+    /// <summary>รอบ 246 QR (ฝ่ายค้าน S1) — ด่านสิทธิ์ของการแก้ "ข้อความใต้ QR" (ธนาคาร/เลข/ชื่อบัญชี) ของบัญชีที่ตั้ง QR แล้ว · null = ปิดด่าน (fail-closed เฉพาะกรณีนั้น)</summary>
+    private readonly IPermissionService? _permissions;
+    /// <summary>รอบ 246 QR (ฝ่ายค้าน N2) — รากของที่เก็บกลาง: ป้าย "QR ที่พิมพ์จริง" ใช้ตัวตรวจไฟล์เดียวกับตัวพิมพ์ (<c>PaymentQrService.IsOwnLocation</c>)</summary>
+    private readonly Accounting.Services.Storage.IFileStorage? _storage;
+
     public BankService(AccountingDbContext db,
         ILogger<BankService>? logger = null,
         IHttpContextAccessor? httpContext = null,
-        IFileAttachmentService? files = null)
+        IFileAttachmentService? files = null,
+        IPermissionService? permissions = null,
+        Accounting.Services.Storage.IFileStorage? storage = null)
     {
         _db = db;
         _logger = logger;
         _httpContext = httpContext;
         _files = files;
+        _permissions = permissions;
+        _storage = storage;
     }
+
+    private string AttachmentsRoot => (_storage ?? Accounting.Services.Storage.FileStorageDefaults.Local).Locator.AttachmentsRoot;
 
     /// <summary>Resolve the current request's authenticated user id from the
     /// JWT claims. Returns Guid.Empty when no HTTP context (background job)
@@ -209,6 +220,7 @@ public partial class BankService : IBankService
                 a.Id, a.AccountName, a.BankName, a.AccountNumber, a.BranchName, a.AccountType, a.Currency,
                 a.CurrentBalance, a.LinkedAccountId, a.IsActive,
                 a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt,
+                a.PromptPayId, a.PaymentQrSource, a.PaymentQrImagePath, a.PaymentQrUploadedAt,   // รอบ 246 QR — echo ให้ฟอร์มแก้ไข
                 LinkedCode = a.LinkedAccount != null && a.LinkedAccount.CompanyId == companyId ? a.LinkedAccount.AccountCode : null,
                 LinkedName = a.LinkedAccount != null && a.LinkedAccount.CompanyId == companyId ? a.LinkedAccount.AccountName : null,
             })
@@ -250,7 +262,13 @@ public partial class BankService : IBankService
                 a.IsActive,
                 a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt,
                 bookBalance,
-                a.StatementBalance.HasValue ? a.StatementBalance.Value - bookBalance : null);
+                a.StatementBalance.HasValue ? a.StatementBalance.Value - bookBalance : null,
+                PromptPayId: a.PromptPayId,
+                PaymentQrSource: Accounting.Helpers.PaymentQrPolicy.NormalizeSource(a.PaymentQrSource),
+                HasPaymentQrImage: a.PaymentQrImagePath != null,
+                PaymentQrUploadedAt: a.PaymentQrUploadedAt,
+                PaymentQrEffective: EffectiveQr(a.PaymentQrSource, a.PromptPayId,
+                    PaymentQrService.IsOwnLocation(a.PaymentQrImagePath, AttachmentsRoot, companyId)));
         }).ToList();
     }
 
@@ -260,6 +278,26 @@ public partial class BankService : IBankService
             .Include(a => a.LinkedAccount)
             .FirstOrDefaultAsync(a => a.Id == accountId && a.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบบัญชีธนาคาร");
+
+        // รอบ 246 QR (ฝ่ายค้าน S1): บัญชีที่ตั้ง QR แล้ว — ธนาคาร/ชื่อ/เลขบัญชี = ข้อความใต้ QR บนทุกใบ ⇒ แก้ได้ด้วยสิทธิ์เดียวกับเส้น QR
+        // (CompanySettings.Edit) + audit chain · บัญชีที่ไม่มี QR = สิทธิ์เดิม (ทิศตรงข้าม)
+        var before = new { account.BankName, account.AccountName, account.AccountNumber };
+        var hasQr = EffectiveQr(account.PaymentQrSource, account.PromptPayId,
+            PaymentQrService.IsOwnLocation(account.PaymentQrImagePath, AttachmentsRoot, companyId)) != null;
+        var captionChanged = Accounting.Helpers.PaymentQrPolicy.CaptionChanged(
+            before.BankName, before.AccountName, before.AccountNumber,
+            string.IsNullOrWhiteSpace(request.BankName) ? before.BankName : request.BankName,
+            request.AccountName ?? before.AccountName,
+            string.IsNullOrWhiteSpace(request.AccountNumber) ? before.AccountNumber : request.AccountNumber);
+        if (hasQr && captionChanged)
+        {
+            var uid = await ResolveCurrentUserIdAsync(companyId);
+            if (_permissions == null || !await _permissions.HasPermissionAsync(companyId, uid, Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit))
+                throw new Accounting.Helpers.BusinessRuleException(
+                    "บัญชีนี้ตั้ง QR ชำระเงินไว้แล้ว — การแก้ธนาคาร/ชื่อบัญชี/เลขบัญชี (ข้อความใต้ QR บนเอกสาร) ต้องมีสิทธิ์ตั้งค่าบริษัท · "
+                    + Accounting.Models.Constants.PermissionKeys.DeniedMessage(Accounting.Models.Constants.PermissionKeys.CompanySettingsEdit),
+                    Accounting.Helpers.PaymentQrPolicy.RuleCode, 403);
+        }
 
         if (request.AccountName != null) account.AccountName = request.AccountName;
         if (request.BranchName != null) account.BranchName = request.BranchName;
@@ -301,6 +339,19 @@ public partial class BankService : IBankService
         // (ย้ายกลุ่ม 11121/11122/11123 เมื่อเปลี่ยนประเภท + ชื่อธนาคาร/เลขบัญชีใหม่)
         // JE อ้าง AccountId ไม่ใช่รหัสบัญชี — เปลี่ยนรหัส/parent ไม่กระทบรายการที่ลงแล้ว
         await SyncLinkedAccountAsync(companyId, account, typeChanged);
+
+        if (hasQr && captionChanged)
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId, Action = AuditAction.Update, EntityType = nameof(BankAccount), EntityId = account.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(before),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    @event = "PaymentQrCaptionChanged", account.BankName, account.AccountName, account.AccountNumber,
+                    ruleCode = Accounting.Helpers.PaymentQrPolicy.RuleCode,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
 
         await _db.SaveChangesAsync();
         return MapToResponse(account);
@@ -969,12 +1020,30 @@ public partial class BankService : IBankService
         return result.ToResponse();
     }
 
-    private static BankAccountResponse MapToResponse(BankAccount a) => new(
+    /// <summary>แถว → DTO (รอบ 246 QR: echo ช่อง QR ด้วย — ผู้เรียก PaymentQrService ใช้ตัวเดียวกัน)</summary>
+    private BankAccountResponse MapToResponse(BankAccount a) => MapToResponse(a, AttachmentsRoot);
+
+    internal static BankAccountResponse MapToResponse(BankAccount a, string attachmentsRoot) => new(
         a.Id, a.AccountName, a.BankName, a.AccountNumber,
         a.BranchName, a.AccountType, a.Currency, a.CurrentBalance,
         a.LinkedAccountId, a.LinkedAccount?.AccountCode, a.LinkedAccount?.AccountName,
         a.IsActive,
-        a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt);
+        a.StatementBalance, a.StatementBalanceDate, a.StatementImportedAt,
+        PromptPayId: a.PromptPayId,
+        PaymentQrSource: Accounting.Helpers.PaymentQrPolicy.NormalizeSource(a.PaymentQrSource),
+        HasPaymentQrImage: a.PaymentQrImagePath != null,
+        PaymentQrUploadedAt: a.PaymentQrUploadedAt,
+        PaymentQrEffective: EffectiveQr(a.PaymentQrSource, a.PromptPayId,
+            PaymentQrService.IsOwnLocation(a.PaymentQrImagePath, attachmentsRoot, a.CompanyId)));
+
+    /// <summary>ป้าย QR ที่พิมพ์จริง — ตัวตัดสินเดียว PaymentQrPolicy.Pick · <paramref name="hasOwnUpload"/> = ตัวตรวจไฟล์เดียวกับตัวพิมพ์ (IsOwnLocation · ฝ่ายค้าน N2)</summary>
+    internal static string? EffectiveQr(string? source, string? promptPayId, bool hasOwnUpload)
+        => Accounting.Helpers.PaymentQrPolicy.Pick(source, Accounting.Helpers.PaymentQrPolicy.PromptPayUsable(promptPayId), hasOwnUpload) switch
+        {
+            Accounting.Helpers.PaymentQrPolicy.Kind.PromptPay => Accounting.Helpers.PaymentQrPolicy.SourcePromptPay,
+            Accounting.Helpers.PaymentQrPolicy.Kind.Upload => Accounting.Helpers.PaymentQrPolicy.SourceUpload,
+            _ => null,
+        };
 
     /// <summary>
     /// แปลงแถวเป็น DTO. <paramref name="personName"/> = ชื่อผู้ใช้ที่ผู้เรียก

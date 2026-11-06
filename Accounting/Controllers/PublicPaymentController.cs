@@ -47,11 +47,15 @@ public class PublicPaymentController : ControllerBase
     private readonly ILogger<PublicPaymentController> _logger;
     private readonly Accounting.Services.Interfaces.ILodgingService _lodging;
 
+    /// <summary>รอบ 241: ลิงก์ชำระเงินของเอกสาร (null = สร้างนอก DI — เส้นเอกสารตอบ 404)</summary>
+    private readonly Accounting.Services.Interfaces.IDocumentPayLinkService? _docLinks;
+
     public PublicPaymentController(IPaymentIntentService intents, IPublicPaymentResolver resolver,
         IEnumerable<IPaymentProvider> providers,
         AccountingDbContext db, ILogger<PublicPaymentController> logger,
-        Accounting.Services.Interfaces.ILodgingService lodging)
-    { _intents = intents; _resolver = resolver; _providers = providers; _db = db; _logger = logger; _lodging = lodging; }
+        Accounting.Services.Interfaces.ILodgingService lodging,
+        Accounting.Services.Interfaces.IDocumentPayLinkService? docLinks = null)
+    { _intents = intents; _resolver = resolver; _providers = providers; _db = db; _logger = logger; _lodging = lodging; _docLinks = docLinks; }
 
     /// <summary>เพดานการสร้าง intent ต่อ source ต่อชั่วโมง — กันคนกดรัวจนตาราง
     /// intent บวมและกัน provider โดนยิงแทนเรา (StartAsync ใช้ intent เดิมซ้ำอยู่แล้ว
@@ -160,6 +164,33 @@ public class PublicPaymentController : ControllerBase
         Guid companyId, Guid siteId, string token, Guid intentId, CancellationToken ct)
         => StatusAsync(companyId, intentId, () => _resolver.ResolveBookingAsync(companyId, siteId, token, ct), ct);
 
+    // ═══════════════ ลิงก์ชำระเงินของเอกสาร (ใบแจ้งหนี้/ใบกำกับ) — พิสูจน์สิทธิ์ด้วย PayLinkToken (รอบ 241) ═══════════════
+    // ยอด = ยอดค้าง − ภาษีหัก ณ ที่จ่ายที่ลูกค้าจะหัก · ช่องทาง = ที่ใบนี้อนุญาต ∩ ที่บริษัทเปิดจริง · ใบยกเลิก/ชำระครบ/ลิงก์ถูกเพิกถอน ตัดสินสดทุกครั้ง
+    // (ตัวตัดสินเดียว DocumentPayLinkPolicy ผ่าน IDocumentPayLinkService.PublicViewAsync)
+
+    private async Task<PublicPayTarget?> ResolveDocumentAsync(Guid companyId, string token, CancellationToken ct)
+        => _docLinks == null ? null : (await _docLinks.PublicViewAsync(companyId, token, ct))?.Target;
+
+    [HttpGet("documents/{token}")]
+    public async Task<ActionResult<ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>>> ViewDocument(
+        Guid companyId, string token, CancellationToken ct)
+    {
+        var view = _docLinks == null ? null : await _docLinks.PublicViewAsync(companyId, token, ct);
+        if (view == null)
+            return NotFound(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(false, null, "ลิงก์ไม่ถูกต้อง — กรุณาติดต่อผู้ขาย"));
+        return Ok(new ApiResponse<Accounting.Services.Interfaces.PublicDocumentPayView>(true, view));
+    }
+
+    [HttpPost("documents/{token}/intents")]
+    public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StartDocument(
+        Guid companyId, string token, [FromBody] StartRequest req, CancellationToken ct)
+        => StartAsync(companyId, () => ResolveDocumentAsync(companyId, token, ct), req, ct);
+
+    [HttpGet("documents/{token}/intents/{intentId:guid}")]
+    public Task<ActionResult<ApiResponse<PublicIntentResponse>>> StatusDocument(
+        Guid companyId, string token, Guid intentId, CancellationToken ct)
+        => StatusAsync(companyId, intentId, () => ResolveDocumentAsync(companyId, token, ct), ct);
+
     // ═══════════════ แกนกลาง — ทางเข้าทุกเส้นเดินผ่านสองเมธอดนี้ ═══════════════
 
     /// <param name="holdForPayment">ต้นทางที่ต้อง "กันของไว้ระหว่างจ่าย" (การจองที่พัก) — เรียกก่อนสร้างรายการ (วันหมดอายุ null) และหลังสร้าง
@@ -178,6 +209,11 @@ public class PublicPaymentController : ControllerBase
         if (!target.CanPayNow)
             return BadRequest(new ApiResponse<PublicIntentResponse>(false, null,
                 target.BlockedNote ?? "รายการนี้ไม่มียอดค้างชำระแล้ว"));   // รอบ 205 W2: เหตุผลจริง (สลิปรอตรวจ · ไซต์ไม่เปิด) ไม่ใช่ "ไม่มียอด"
+        // รอบ 241: เป้าหมายที่กำหนดช่องทางเอง (ลิงก์ชำระของเอกสาร) — วิธีที่ไม่อยู่ในชุด = ปฏิเสธ (ห้ามรับเงินทางที่ผู้ขายไม่ได้เปิดให้ใบนี้)
+        if (target.AllowedMethods != null
+            && !target.AllowedMethods.Contains(req.Method.ToString(), StringComparer.OrdinalIgnoreCase))
+            return BadRequest(new ApiResponse<PublicIntentResponse>(false, null,
+                "ช่องทางชำระเงินนี้ไม่ได้เปิดสำหรับเอกสารนี้ — เลือกช่องทางที่แสดงบนหน้าชำระเงิน"));
 
         var since = DateTime.UtcNow.AddHours(-1);
         var attempts = await _db.PaymentIntents.AsNoTracking().CountAsync(
@@ -200,7 +236,7 @@ public class PublicPaymentController : ControllerBase
                 Description: target.Description,
                 CustomerEmail: target.CustomerEmail, CustomerPhone: target.CustomerPhone,
                 ReturnUrl: req.ReturnUrl, CardToken: req.CardToken,
-                SiteId: target.SiteId, ContactId: null), ct: ct);
+                SiteId: target.SiteId == Guid.Empty ? null : target.SiteId, ContactId: target.ContactId), ct: ct);
             if (holdForPayment != null) await holdForPayment(target, intent.QrExpiresAt);
 
             return Ok(new ApiResponse<PublicIntentResponse>(true,

@@ -94,7 +94,7 @@ public class RecurringTransactionService : IRecurringTransactionService
 
         _db.RecurringTransactions.Add(recurring);
         await _db.SaveChangesAsync();
-        return MapToResponse(recurring);
+        return await WithSaveWarningsAsync(recurring);
     }
 
     public async Task<RecurringTransactionResponse> GetByIdAsync(Guid companyId, Guid id)
@@ -103,7 +103,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             .Include(r => r.Contact)
             .FirstOrDefaultAsync(r => r.Id == id && r.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบรายการที่เกิดซ้ำ");
-        return MapToResponse(recurring);
+        return (await MapWithOutcomeAsync(companyId, new[] { recurring }))[0];
     }
 
     public async Task<PagedResponse<RecurringTransactionResponse>> GetAllAsync(Guid companyId, PagedRequest request, string? status = null)
@@ -124,7 +124,7 @@ public class RecurringTransactionService : IRecurringTransactionService
             .ToListAsync();
 
         return new PagedResponse<RecurringTransactionResponse>(
-            items.Select(MapToResponse).ToList(),
+            await MapWithOutcomeAsync(companyId, items),
             total, request.Page, request.PageSize,
             (int)Math.Ceiling(total / (double)request.PageSize));
     }
@@ -209,7 +209,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         }
 
         await _db.SaveChangesAsync();
-        return MapToResponse(recurring);
+        return await WithSaveWarningsAsync(recurring);
     }
 
     public async Task DeleteAsync(Guid companyId, Guid id)
@@ -294,7 +294,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         var fresh = await _db.RecurringTransactions.AsNoTracking()
             .Include(r => r.Contact)
             .FirstAsync(r => r.Id == id && r.CompanyId == companyId);
-        return MapToResponse(fresh);
+        return (await MapWithOutcomeAsync(companyId, new[] { fresh }))[0];
     }
 
     /// <summary>ด่าน "กดสร้างทันทีได้ไหม" — ตัวเดียวทั้งก่อนและหลังได้ล็อก (สถานะอาจเปลี่ยนระหว่างรอ)</summary>
@@ -371,7 +371,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// พอแก้ให้รันได้ รอบอัตโนมัติจะไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที (เลขจริง · ลงวันที่วันนี้ · ส่งอีเมลลูกค้า) ซ้ำกับที่ผู้ใช้ออกมือไปแล้ว ⇒
     /// เลื่อนไปงวดล่าสุดที่ถึงกำหนด ออกงวดเดียว + บอกบนแถวว่าข้ามกี่งวด (ผู้ใช้ตัดสินเองว่าจะกด "สร้างทันที" เพิ่มไหม — คำตัดสินข้อ 150) ·
     /// สมุดรายวันไม่แตะ (ไม่เคยค้าง — CreateJournalEntryAsync ใช้ธุรกรรมเดิม · พฤติกรรมเดิมเป๊ะ) · คืนข้อความแจ้ง หรือ null เมื่อไม่ค้าง</summary>
-    private async Task<string?> SkipOverduePeriodsAsync(RecurringTransaction recurring, DateTime nowUtc)
+    private async Task<SkippedPeriods?> SkipOverduePeriodsAsync(RecurringTransaction recurring, DateTime nowUtc)
     {
         if (IsJournalTemplate(recurring.TemplateType) || !RecurringSchedule.IsDue(recurring.NextRunDate, nowUtc)) return null;
         var (latest, skipped) = RecurringSchedule.CatchUp(recurring.Frequency, recurring.NextRunDate, recurring.PreferredDay,
@@ -382,18 +382,26 @@ public class RecurringTransactionService : IRecurringTransactionService
         await _db.SaveChangesAsync();
         var note = $"ข้าม {skipped} งวดที่ค้าง (ตั้งแต่งวด {from:dd/MM}/{from.Year + 543}) ระหว่างที่ระบบสร้างเอกสารไม่ได้ — ออกเฉพาะงวดล่าสุด · "
                    + "ถ้างวดที่ข้ามยังไม่ได้ออกเอง กด \"สร้างทันที\" เพื่อออกเพิ่มทีละใบ";
-        await AppendRunNoticeAsync(recurring, note);
-        return note;
+        var skip = new SkippedPeriods(note, skipped, from);
+        await AppendRunNoticeAsync(recurring, skip);
+        return skip;
     }
 
-    /// <summary>ต่อท้ายข้อความแจ้งบนแถว (ไม่ทับข้อความของรอบ) — เขียนตรงแบบ SetRunNoticeAsync</summary>
-    private async Task AppendRunNoticeAsync(RecurringTransaction recurring, string note)
+    /// <summary>งวดที่ระบบข้าม — ข้อความเดิม (LastRunNotice) + ข้อเท็จจริงแบบโครงสร้าง (รอบ 247)</summary>
+    private sealed record SkippedPeriods(string Note, int Count, DateTime From);
+
+    /// <summary>ต่อท้ายข้อความแจ้งบนแถว (ไม่ทับข้อความของรอบ) — เขียนตรงแบบ SetRunNoticeAsync · ข้อเท็จจริงเดิมของรอบคงไว้ + เติมงวดที่ข้าม</summary>
+    private async Task AppendRunNoticeAsync(RecurringTransaction recurring, SkippedPeriods skip)
     {
         var current = await _db.RecurringTransactions.AsNoTracking()
             .Where(r => r.Id == recurring.Id && r.CompanyId == recurring.CompanyId)
-            .Select(r => r.LastRunNotice).FirstOrDefaultAsync();
-        if (current != null && current.Contains(note)) return;
-        await SetRunNoticeAsync(recurring, new List<string> { string.IsNullOrEmpty(current) ? note : current + " · " + note });
+            .Select(r => new { r.LastRunNotice, r.LastRunOutcome }).FirstOrDefaultAsync();
+        var note = skip.Note;
+        var facts = (ReadFacts(recurring.Id, current?.LastRunOutcome) ?? new RecurringRunFacts())
+            with { SkippedPeriods = skip.Count, SkippedFrom = skip.From };
+        var text = current?.LastRunNotice;
+        var merged = string.IsNullOrEmpty(text) ? note : text.Contains(note) ? text : text + " · " + note;
+        await SetRunNoticeAsync(recurring, new List<string> { merged }, facts);
     }
 
     /// <summary>หนึ่งรอบของรายการประจำ: ตรวจเทมเพลตด้วยตัวตรวจเดียวกับตอนบันทึก → สร้างเอกสาร/สมุดรายวัน → ประทับรอบ (ทันทีหลังสร้าง)
@@ -423,6 +431,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         recurring.LastRunError = null;
         recurring.LastRunErrorAt = null;
         recurring.LastRunNotice = null;
+        recurring.LastRunOutcome = null;
         if (documentId.HasValue) recurring.LastDocumentId = documentId;
         if (RecurringSchedule.IsFinished(recurring.NextRunDate, recurring.EndDate, recurring.TotalRuns, recurring.MaxRuns))
             recurring.Status = RecurringStatus.Completed;
@@ -431,14 +440,88 @@ public class RecurringTransactionService : IRecurringTransactionService
 
     /// <summary>เรื่องที่ต้องทำต่อของรอบที่สร้างเอกสารสำเร็จ (อนุมัติอัตโนมัติไม่สำเร็จ · ส่งอีเมลไม่ได้ ฯลฯ) — เขียนตรงที่แถว
     /// (ไม่ผ่าน SaveChanges: การอนุมัติ/post ที่ล้มอาจทิ้งค่าค้างใน context ซึ่งห้ามถูกบันทึกตาม)</summary>
-    private async Task SetRunNoticeAsync(RecurringTransaction recurring, List<string> notices)
+    private async Task SetRunNoticeAsync(RecurringTransaction recurring, List<string> notices, RecurringRunFacts? facts = null)
     {
         if (notices.Count == 0) return;
         var text = string.Join(" · ", notices);
         if (text.Length > 2000) text = text[..2000] + "…";
+        // รอบ 247: ข้อเท็จจริงแบบโครงสร้างคู่กับข้อความเดิม — หน้ารายการประจำประกอบหัวเรื่อง/ขั้นตอน/ปุ่มจากตัวนี้ (RecurringRunOutcome.Build)
+        var json = facts == null || facts.IsEmpty ? null : JsonSerializer.Serialize(facts);
         await _db.RecurringTransactions
             .Where(r => r.Id == recurring.Id && r.CompanyId == recurring.CompanyId)
-            .ExecuteUpdateAsync(u => u.SetProperty(r => r.LastRunNotice, text));
+            .ExecuteUpdateAsync(u => u.SetProperty(r => r.LastRunNotice, text).SetProperty(r => r.LastRunOutcome, json));
+    }
+
+    private RecurringRunFacts? ReadFacts(Guid recurringId, string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return JsonSerializer.Deserialize<RecurringRunFacts>(json); }
+        catch (JsonException ex)
+        {
+            // อ่านไม่ได้ ⇒ หน้าแสดงข้อความเดิม (LastRunNotice) แทน — ไม่ทำให้หน้าล้ม
+            _logger.LogWarning(ex, "Recurring {Id}: LastRunOutcome อ่านไม่ได้ — แสดงข้อความเดิมแทน", recurringId);
+            return null;
+        }
+    }
+
+    /// <summary>รอบ 247: คำตอบของหน้ารายการประจำ + ผลรอบล่าสุดแบบโครงสร้าง (สถานะเอกสาร "ตอนนี้" · อีเมลผู้ติดต่อ "ตอนนี้" ·
+    /// กฎส่งอีเมลเมื่ออนุมัติ) — query ละครั้งต่อหน้า (ไม่ N+1) · ทุก query กรองบริษัท</summary>
+    private async Task<List<RecurringTransactionResponse>> MapWithOutcomeAsync(Guid companyId, IReadOnlyList<RecurringTransaction> rows)
+    {
+        var docIds = rows.Where(r => r.LastDocumentId.HasValue).Select(r => r.LastDocumentId!.Value).Distinct().ToList();
+        var docs = docIds.Count == 0 ? new Dictionary<Guid, RecurringRunDoc>()
+            : (await _db.Documents.AsNoTracking()
+                .Where(d => d.CompanyId == companyId && docIds.Contains(d.Id))
+                .Select(d => new { d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate })
+                .ToListAsync())
+                .ToDictionary(d => d.Id, d => new RecurringRunDoc(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate));
+        var contactIds = rows.Where(r => r.ContactId.HasValue).Select(r => r.ContactId!.Value).Distinct().ToList();
+        var emails = contactIds.Count == 0 ? new Dictionary<Guid, string?>()
+            : (await _db.Contacts.AsNoTracking()
+                .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
+                .Select(c => new { c.Id, c.Email })
+                .ToListAsync())
+                .ToDictionary(c => c.Id, c => c.Email);
+        // กฎ "เมื่ออนุมัติเอกสาร" — ผู้ส่งจริงคือ EmailScheduleService.OnDocumentApprovedAsync (เงื่อนไขเดียวกัน: เปิดใช้ · ไม่ถูกลบ · ชนิดตรงหรือว่าง)
+        var approvedRuleTypes = await _db.EmailScheduleRules.AsNoTracking()
+            .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == "DocumentApproved")
+            .Select(x => x.DocumentType)
+            .ToListAsync();
+
+        var list = new List<RecurringTransactionResponse>(rows.Count);
+        foreach (var r in rows)
+        {
+            var doc = r.LastDocumentId is { } did && docs.TryGetValue(did, out var dd) ? dd : null;
+            var email = r.ContactId is { } cid && emails.TryGetValue(cid, out var em) ? em : null;
+            var ruleApplies = doc != null && approvedRuleTypes.Any(t => t == null || t == doc.Type.ToString());
+            var outcome = r.LastRunNotice == null && r.LastRunOutcome == null ? null
+                : RecurringRunOutcome.Build(ReadFacts(r.Id, r.LastRunOutcome), r.LastRunNotice, doc, r.ContactId, email, ruleApplies,
+                    canRunNow: r.Status == RecurringStatus.Active);
+            var emailWarning = RecurringEmailReadiness.SettingWarning(r.AutoSendEmail, !IsJournalTemplate(r.TemplateType), r.ContactId, email);
+            list.Add(MapToResponse(r, outcome, emailWarning));
+        }
+        return list;
+    }
+
+    /// <summary>หลังบันทึก (สร้าง/แก้ไข): บันทึกได้เสมอ แต่ติ๊กส่งอีเมลกับผู้ติดต่อที่ไม่มีอีเมล ⇒ คำเตือนกลับในคำตอบ (ผู้ใช้อาจเพิ่มอีเมลทีหลัง)</summary>
+    private async Task<RecurringTransactionResponse> WithSaveWarningsAsync(RecurringTransaction recurring)
+    {
+        var mapped = (await MapWithOutcomeAsync(recurring.CompanyId, new[] { recurring }))[0];
+        return mapped.AutoSendEmailWarning == null ? mapped
+            : mapped with { SaveWarnings = new[] { mapped.AutoSendEmailWarning } };
+    }
+
+    /// <summary>รอบ 247: ฟอร์มรายการประจำถาม "ผู้ติดต่อนี้รับอีเมลได้ไหม" ตอนเลือกผู้ติดต่อ — ตัวตัดสินเดียวกับผู้ส่งจริง (RecurringEmailReadiness)</summary>
+    public async Task<RecurringEmailReadinessResponse> GetEmailReadinessAsync(Guid companyId, Guid contactId)
+    {
+        var contact = await _db.Contacts.AsNoTracking()
+            .Where(c => c.Id == contactId && c.CompanyId == companyId)
+            .Select(c => new { c.Email })
+            .FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        var ready = RecurringEmailReadiness.HasDeliverableEmail(contact.Email);
+        return new RecurringEmailReadinessResponse(ready, ready ? null : RecurringEmailReadiness.NoEmailReason,
+            RecurringEmailReadiness.ContactUrl(contactId));
     }
 
     /// <summary>รอบล้ม ⇒ เหตุผล (ไทย · บอกช่อง + ทางแก้) ลงแถว + ErrorLog/แจ้งผู้ตั้งรายการ <b>เฉพาะครั้งแรก/เมื่อสาเหตุเปลี่ยน</b>
@@ -708,6 +791,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             await MarkRunAsync(recurring, consumesPeriod, result.Id);
             // เรื่องที่ต้องทำต่อของรอบนี้ ⇒ LastRunNotice บนแถว (หน้ารายการประจำ) — นอกเหนือจากหมายเหตุบนตัวเอกสาร
             var notices = new List<string>();
+            // รอบ 247: ข้อเท็จจริงคู่กับข้อความ — หน้าแสดง "หัวเรื่อง + สิ่งที่ต้องทำ + ปุ่ม" (RecurringRunOutcome.Build) แทนสตริงยาวบรรทัดเดียว
+            var facts = new RecurringRunFacts();
             var approved = false;
             // ฝ่ายค้านรอบ 1 P2 (3b): หลัง MarkRunAsync เอกสารถูกสร้าง + งวดถูกนับแล้ว — ขั้นตามหลังที่ล้ม (บันทึกหมายเหตุบนใบ · บันทึกผลอนุมัติล้ม ·
             // ErrorLog · คิวอีเมล) ต้องเป็น "เรื่องที่ต้องทำต่อ" บนแถวเท่านั้น · เดิมโยนต่อ ⇒ แถวขึ้น "ล้ม" ทั้งที่ออกใบแล้ว ผู้ใช้กด "สร้างทันที" = ใบซ้ำ
@@ -730,7 +815,9 @@ public class RecurringTransactionService : IRecurringTransactionService
                         await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)",
                             new Accounting.Helpers.BusinessRuleException(Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees),
                                 Accounting.Helpers.WhtPayeeSplit.RuleCode));
-                    notices.Add(Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees));
+                    var droppedReason = Accounting.Helpers.WhtPayeeSplit.DroppedPayeeAutoApproveSkipReason(droppedPayees);
+                    notices.Add(droppedReason);
+                    facts = recurring.AutoApprove ? facts with { ApproveBlockedReason = droppedReason } : facts with { FollowUpError = droppedReason };
                 }
 
                 // Auto-approve if configured (ผู้ถูกหักถูกตัดทิ้ง = ไม่อนุมัติอัตโนมัติ — ข้างบน)
@@ -755,7 +842,7 @@ public class RecurringTransactionService : IRecurringTransactionService
                                 {
                                     Title = $"รายการประจำอนุมัติ {approvedDoc.DocumentNumber} พร้อมข้อสังเกต",   // เลขจริงหลังอนุมัติ (ไม่ใช่ DRAFT-…)
                                     Message = notice,
-                                    ActionUrl = "/pages/documents.html#doc=" + result.Id,
+                                    ActionUrl = RecurringRunOutcome.DocumentUrl(result.Id),
                                     EntityType = "Document",
                                     EntityId = result.Id,
                                     RecipientUserId = Guid.TryParse(recurring.CreatedBy, out var ownerId) ? ownerId : null,
@@ -775,6 +862,15 @@ public class RecurringTransactionService : IRecurringTransactionService
                         var outcome = await _documentService.RecordAutoApproveFailureAsync(recurring.CompanyId, result.Id, "รายการประจำ (อนุมัติอัตโนมัติ)", ex);
                         approved = outcome.Committed;
                         notices.Add(outcome.Message);
+                        // ยังเป็นร่าง ⇒ ขั้น "อนุมัติเอง" · คำเตือนที่ต้องให้คนกดรับทราบ (วงเงิน/ค้างชำระ ฯลฯ) แยกไว้ให้หน้าอธิบายว่าเป็นการหยุดโดยตั้งใจ ·
+                        // อนุมัติแล้วแต่ขั้นหลังล้ม ⇒ เรื่องต้องทำต่อทั่วไป (ข้อความกลางของ AutoApproveFailure)
+                        facts = outcome.Committed
+                            ? facts with { FollowUpError = outcome.Message }
+                            : facts with
+                            {
+                                ApproveBlockedReason = DocumentApprovalWarningsException.DescribeForUser(ex),
+                                ApproveWarnings = ex is DocumentApprovalWarningsException aw ? aw.Warnings.ToList() : null,
+                            };
                         await _errorLogService.LogErrorAsync(ex, $"RecurringTransaction.AutoApprove/{result.Id}");
                     }
                 }
@@ -799,18 +895,28 @@ public class RecurringTransactionService : IRecurringTransactionService
                     {
                         _logger.LogWarning(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id);
                         if (recurring.AutoSendEmail)
+                        {
                             notices.Add($"เข้าคิวส่งอีเมลเอกสาร {result.DocumentNumber} ไม่สำเร็จ — ส่งเองจากหน้าเอกสาร");
+                            facts = facts with { EmailEnqueueFailed = true };
+                        }
                     }
                 }
                 // ส่งอีเมลอัตโนมัติที่ "ไม่มีอะไรออก" ต้องบอกผู้ใช้ที่หน้ารายการประจำ (เดิม log warning อย่างเดียว · RCE-07)
                 if (recurring.AutoSendEmail && result != null)
                 {
                     if (!approved)
+                    {
                         notices.Add("ยังไม่ได้ส่งอีเมล — เอกสารไม่ได้ถูกอนุมัติ (ใบร่างยังไม่มีเลขที่จริงตาม §86/4) อนุมัติที่หน้าเอกสารแล้วส่งจากที่นั่น");
-                    else if (string.IsNullOrWhiteSpace(await _db.Contacts.AsNoTracking()
+                        facts = facts with { EmailHeldForDraft = true };
+                    }
+                    // ตัวตัดสินเดียวกับผู้ส่งจริง (EnqueueDocumentAsync ส่งไปที่ Contact.Email) — ห้ามข้ามเงียบ
+                    else if (!RecurringEmailReadiness.HasDeliverableEmail(await _db.Contacts.AsNoTracking()
                                  .Where(c => c.Id == contactId && c.CompanyId == recurring.CompanyId)
                                  .Select(c => c.Email).FirstOrDefaultAsync()))
-                        notices.Add("ไม่ได้ส่งอีเมล — ผู้ติดต่อไม่มีอีเมล: เพิ่มอีเมลที่หน้าผู้ติดต่อ แล้วส่งเอกสารนี้จากหน้าเอกสาร");
+                    {
+                        notices.Add(RecurringEmailReadiness.NotSentNoEmail + " — เพิ่มอีเมลที่หน้าผู้ติดต่อ แล้วส่งเอกสารนี้จากหน้าเอกสาร");
+                        facts = facts with { EmailSkippedNoContactEmail = true };
+                    }
                 }
             }
             catch (Exception postEx) when (postEx is not OperationCanceledException)
@@ -818,11 +924,13 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // ค่าค้างใน context จากขั้นที่ล้ม (เช่นหมายเหตุบนใบที่บันทึกไม่ผ่าน) ห้ามถูกบันทึกตามไปกับคำสั่งถัดไป
                 _db.ChangeTracker.Clear();
                 _logger.LogError(postEx, "Recurring {Id}: document {Doc} created but a follow-up step failed", recurring.Id, result.Id);
-                notices.Add(RecurringRunFailure.AfterCreateNotice(result.DocumentNumber, postEx));
+                var afterNotice = RecurringRunFailure.AfterCreateNotice(result.DocumentNumber, postEx);
+                notices.Add(afterNotice);
+                facts = facts with { FollowUpError = afterNotice };
             }
             try
             {
-                await SetRunNoticeAsync(recurring, notices);
+                await SetRunNoticeAsync(recurring, notices, facts);
             }
             catch (Exception noticeEx) when (noticeEx is not OperationCanceledException)
             {
@@ -912,14 +1020,19 @@ public class RecurringTransactionService : IRecurringTransactionService
         }
     }
 
-    private static RecurringTransactionResponse MapToResponse(RecurringTransaction r) =>
+    private static RecurringTransactionResponse MapToResponse(RecurringTransaction r) => MapToResponse(r, null, null);
+
+    private static RecurringTransactionResponse MapToResponse(RecurringTransaction r, RecurringRunOutcomeView? outcome, string? emailWarning) =>
         new(r.Id, r.Name, r.Description, r.Frequency, r.Status,
             r.StartDate, r.EndDate, r.NextRunDate, r.LastRunDate,
             r.TotalRuns, r.MaxRuns, r.TemplateType, r.DocumentType,
             r.ContactId, r.Contact?.Name,
             r.TemplateData, ExtractAmount(r.TemplateData), r.NotifyBeforeRun,
             r.NotifyDaysBefore, r.AutoApprove, r.CreatedAt, r.AutoSendEmail,
-            r.LastRunError, r.LastRunErrorAt, r.LastRunNotice, r.LastDocumentId);
+            r.LastRunError, r.LastRunErrorAt, r.LastRunNotice, r.LastDocumentId,
+            LastRunOutcome: outcome,
+            AutoSendEmailWarning: emailWarning,
+            AutoSendEmailFixUrl: emailWarning != null && r.ContactId is { } fixId ? RecurringEmailReadiness.ContactUrl(fixId) : null);
 
     /// <summary>ตัวตรวจเทมเพลต <b>ตัวเดียว</b> — ตอนบันทึก (Create/Update · <paramref name="atSave"/>=true) และ <b>ตอนถึงรอบทุกครั้ง</b>
     /// (<c>ExecuteRecurringAsync</c> · false) · รหัสทุกตัวค้นใน "ตารางที่ถูก" ของมัน + บริษัทนี้ + ไม่ถูกลบ (<see cref="RecurringTemplate.Read"/>

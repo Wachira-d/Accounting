@@ -1353,7 +1353,7 @@ public enum EtaxMode
     None = 0,        // ไม่ใช้ e-Tax
     ByEmail = 1,     // e-Tax Invoice & Receipt by Email (รายได้ < 30 ล้าน, ส่งทางอีเมลพร้อม CC csemail@etax.teda.th)
     Direct = 2,      // e-Tax Invoice & Receipt (Full) ยิง XML เข้าระบบสรรพากรโดยตรง ต้องมี CA cert
-    Both = 3         // เปิดทั้งสอง โหมด ให้ user เลือกตอนสร้างเอกสาร
+    Both = 3         // ค่าเดิมก่อนรอบ 244 — กรมสรรพากรให้ใช้ได้ระบบเดียว (คำตัดสิน 244-1): เลือกใหม่ไม่ได้ · ค่าที่เก็บไว้ส่งทางอีเมลได้พร้อมคำเตือน (EtaxByEmailFormat.ModeWarning)
 }
 
 // e-Tax delivery channel for a single send action (logged per send)

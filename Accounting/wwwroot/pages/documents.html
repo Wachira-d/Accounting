@@ -1237,17 +1237,15 @@
                 <div class="form-group"><label class="form-label">CC</label><input type="email" class="form-input" id="fEmailCc"></div>
               </div>
               <div class="form-group">
-                <label class="form-label">หัวข้อ <span id="fEmailSubjLockBadge" style="display:none;background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;margin-left:4px">RD บังคับ</span></label>
+                <label class="form-label">หัวข้อ</label>
                 <input type="text" class="form-input" id="fEmailSubject">
-                <div id="fEmailSubjLockHint" style="display:none;font-size:11px;color:#dc2626;margin-top:4px;line-height:1.5">
-                  ⚠️ ในโหมด e-Tax by Email หัวข้อจะถูกแทนที่อัตโนมัติด้วย <code>{เลขผู้เสียภาษี}.{เลขที่เอกสาร}</code> ตามที่สรรพากรกำหนด — ค่าที่กรอกไว้จะถูก<u>ละเลย</u>
-                </div>
               </div>
               <div class="form-group"><label class="form-label">เนื้อความ (HTML)</label><textarea class="form-textarea" id="fEmailBody" rows="4"></textarea></div>
-              <label style="display:none;align-items:center;gap:8px;font-size:13px;color:#475569" id="etaxByEmailHint">
-                <input type="checkbox" id="fEmailAsEtax" onchange="Page.toggleEtaxByEmail()">
-                <span>ส่งในรูปแบบ <strong>e-Tax by Email</strong> (CC สรรพากร + แนบ XML, หัวข้อตามรูปแบบ RD)</span>
-              </label>
+              <!-- รอบ 244: ไม่มีช่องติ๊ก "ส่งแบบ e-Tax" แล้ว — เซิร์ฟเวอร์เลือกช่องทางเอง (EtaxDeliveryRouter) · ใบกำกับของบริษัทโหมด by Email ไปทาง e-Tax เสมอ -->
+              <div style="display:none;font-size:12px;color:#0369a1;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;padding:8px 10px;line-height:1.6" id="etaxByEmailHint">
+                🧾 บริษัทใช้ <strong>e-Tax by Email</strong> — ถ้าใบนี้เป็นใบกำกับภาษี/ใบเพิ่มหนี้/ใบลดหนี้ ระบบส่งแบบ e-Tax by Email ให้เอง
+                (หัวเรื่องตามกรมสรรพากร · ผู้ซื้อ 1 อีเมล · สำเนาถึง ETDA · แนบ PDF/A-3 1 ไฟล์) — ช่องหัวข้อและ CC ด้านบนจะไม่ถูกใช้ (ใส่ CC ไว้ = ระบบไม่ส่ง)
+              </div>
             </div>
           </div>
         </div>
@@ -2028,7 +2026,10 @@
         // "เปิดดูเอกสาร" หลังขายเสร็จแล้วได้ **ลิสต์เอกสารหน้า 1** ไม่ใช่ใบที่เพิ่งออก
         // รับ alias ไว้ที่นี่ด้วย เพราะลิงก์ที่ส่งออกไปแล้ว/บุ๊กมาร์กแก้ย้อนหลังไม่ได้
         // (กติกาเดียวกับ "ต้องทิ้งหน้า redirect ไว้ที่ URL เดิม")
-        const openDocId = params.get('openDoc') || params.get('id') || params.get('view');
+        // รอบ 247: ลิงก์ `#doc=<id>` (หน้ารายการประจำ/ค่าใช้จ่าย/เบิกล่วงหน้า + ActionUrl ของการแจ้งเตือนที่บันทึกไว้แล้ว) เดิมหน้านี้ไม่เคยอ่าน
+        // ⇒ ได้ลิสต์เปล่า · ลิงก์ใหม่ใช้ ?openDoc= แล้ว แต่การแจ้งเตือนเก่าแก้ย้อนหลังไม่ได้ จึงรับ hash ไว้ด้วย
+        const hashDoc = (window.location.hash.match(/^#doc=([0-9a-fA-F-]{36})$/) || [])[1];
+        const openDocId = params.get('openDoc') || params.get('id') || params.get('view') || hashDoc;
         if (openDocId) {
           try { await this.detail(openDocId); }
           catch (e) { Layout.toast('เปิดเอกสารไม่สำเร็จ: ' + e.message, 'error'); }
@@ -3291,22 +3292,6 @@
         // Auto-populate template on first activation so the user sees a sensible
         // preview without manually selecting the contact again.
         if (on) this.refreshEmailTemplate();
-      },
-      toggleEtaxByEmail() {
-        // When e-Tax mode is on, the subject is dictated by RD (TaxId.RefNumber).
-        // Show the lock indicator and dim the subject field so users know it'll be overridden.
-        const on = document.getElementById('fEmailAsEtax')?.checked;
-        const subj = document.getElementById('fEmailSubject');
-        const badge = document.getElementById('fEmailSubjLockBadge');
-        const hint = document.getElementById('fEmailSubjLockHint');
-        if (subj) {
-          subj.readOnly = !!on;
-          subj.style.background = on ? '#f1f5f9' : '';
-          subj.style.cursor = on ? 'not-allowed' : '';
-          subj.placeholder = on ? '(สรรพากรกำหนดอัตโนมัติเมื่อบันทึก)' : 'เว้นว่าง = ระบบตั้งหัวข้อตามหัวเอกสารบน PDF (ภาษาเดียวกับ PDF)';
-        }
-        if (badge) badge.style.display = on ? 'inline-block' : 'none';
-        if (hint) hint.style.display = on ? 'block' : 'none';
       },
       /**
        * Triggered when the user picks a contact in the create-document form.
@@ -7769,21 +7754,15 @@
       },
 
       /**
-       * Show/hide the e-Tax-by-email checkbox based on company config + doc type.
-       * Per RD spec, only TaxInvoice/Receipt/CreditNote/DebitNote qualify for
-       * e-Tax by Email; the company must also have ByEmail or Both mode and be
-       * RD-registered.
+       * รอบ 244: หมายเหตุ "บริษัทใช้ e-Tax by Email" บนกล่องส่งอีเมลของฟอร์มสร้าง — แสดงตามค่าตั้งของบริษัทอย่างเดียว ·
+       * ใบไหนไปทาง e-Tax เซิร์ฟเวอร์ตัดสินตอนส่ง (EtaxDeliveryRouter) — หน้าไม่มีสำเนาชุดชนิดเอกสาร/กติกา (F2 ข้อ 5)
        */
       _refreshEtaxByEmailVisibility() {
-        const docType = document.getElementById('fDocType')?.value;
-        const eligibleTypes = ['TaxInvoice', 'Receipt', 'CreditNote', 'DebitNote'];
         const mode = this._etaxConfig?.mode;
         const modeStr = (typeof mode === 'number') ? ['None','ByEmail','Direct','Both'][mode] : mode;
-        const showEtax = (modeStr === 'ByEmail' || modeStr === 'Both')
-                      && this._etaxConfig?.byEmailRdRegistered
-                      && eligibleTypes.includes(docType);
+        const show = !!this._etaxConfig?.enabled && (modeStr === 'ByEmail' || modeStr === 'Both');
         const hint = document.getElementById('etaxByEmailHint');
-        if (hint) hint.style.display = showEtax ? 'flex' : 'none';
+        if (hint) hint.style.display = show ? 'block' : 'none';
       },
       /** ผู้ใช้มีสิทธิ์อนุมัติเอกสารประเภทนี้ไหม (ใช้ perm keys ที่ my-permissions
        * คืนมาใน allowedMenuIds). ไม่มีข้อมูลสิทธิ์ → true (backend บังคับอยู่แล้ว). */
@@ -7824,8 +7803,7 @@
         if (bodyEl && this._lastAutoBody && bodyEl.value === this._lastAutoBody) bodyEl.value = '';
         this._lastAutoSubject = '';
         this._lastAutoBody = '';
-        const asEtax = document.getElementById('fEmailAsEtax')?.checked;
-        if (subjEl && !asEtax) subjEl.placeholder = 'เว้นว่าง = ระบบตั้งหัวข้อตามหัวเอกสารบน PDF (ภาษาเดียวกับ PDF)';
+        if (subjEl) subjEl.placeholder = 'เว้นว่าง = ระบบตั้งหัวข้อตามหัวเอกสารบน PDF (ภาษาเดียวกับ PDF)';
         if (bodyEl) bodyEl.placeholder = 'เว้นว่าง = ระบบเติมข้อความตามภาษาของเอกสาร';
       },
       /** เมนูส่งออก — ไฟล์มาจากเซิร์ฟเวอร์ (query เดียวกับรายการ · วนทุกหน้า · ไม่ตัดที่ 200 แถว) ทั้งระดับใบและระดับบรรทัด ·
@@ -10331,30 +10309,19 @@
                 // ข้ามการส่ง — เอกสารยังเป็น Draft ห้ามส่ง
               } else
               try {
-                const asEtax = document.getElementById('fEmailAsEtax')?.checked;
+                // รอบ 244: ทางเดียว — เซิร์ฟเวอร์เลือกช่องทาง (ใบกำกับของบริษัทโหมด e-Tax by Email ไปทาง e-Tax เอง · ด่านปฏิเสธ = ข้อความเหตุ) ·
+                // ไม่แนบ XML แยก (PDF/A-3 ฝัง XML แล้ว) · ต้องตรวจ success (HTTP 200 + success:false = ผู้ให้บริการอีเมลไม่รับ)
                 const emailReq = {
                   to,
                   cc: document.getElementById('fEmailCc').value || null,
                   subject: document.getElementById('fEmailSubject').value || null,
                   body: document.getElementById('fEmailBody').value || null,
                   attachPdf: true,
-                  attachXml: !!asEtax
+                  attachXml: false
                 };
-                if (asEtax) {
-                  // Need to generate eTax first then send via /etax/{id}/send-email
-                  const etax = await API.post(`/api/companies/${Layout.getCompanyId()}/etax/generate`,
-                    { documentId: savedDocId, signDigitally: true });
-                  if (etax?.data?.id) {
-                    await api.sendEtaxByEmail(etax.data.id, {
-                      to, cc: emailReq.cc, subject: emailReq.subject, body: emailReq.body,
-                      includePdf: true, includeXml: true, includeRdTimestamp: true
-                    });
-                    Layout.toast('ส่ง e-Tax by Email สำเร็จ (CC สรรพากรแล้ว)');
-                  }
-                } else {
-                  await api.sendDocumentEmail(savedDocId, emailReq);
-                  Layout.toast('ส่งอีเมลสำเร็จ');
-                }
+                const res = await api.sendDocumentEmail(savedDocId, emailReq);
+                if (res && res.success === false) throw new Error(res.message || 'ผู้ให้บริการอีเมลไม่รับข้อความ');
+                Layout.toast(res?.message || 'ส่งอีเมลสำเร็จ', 'success', 7000);
               } catch (e) {
                 Layout.toast('เอกสารบันทึกแล้ว แต่ส่งอีเมลไม่สำเร็จ: ' + e.message, 'error');
               }
@@ -10708,7 +10675,7 @@
             const _canDun = ['Invoice','TaxInvoice','BillingNote','DebitNote'].includes(d.documentType);
             banners += `<div style="background:${bg};border:1px solid ${color}40;color:${color};padding:8px 14px;border-radius:8px;margin-bottom:8px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
               <span>⏳ เกินกำหนดชำระมาแล้ว <strong>${d.agingDays} วัน</strong></span>
-              ${_canDun ? `<button class="btn btn-sm" style="background:${color};color:#fff;padding:3px 10px;font-size:12px" onclick="Page.openSendEmailModal('${d.id}', false, false)">📧 ส่งทวง/แจ้งเตือนลูกค้า</button>` : ''}
+              ${_canDun ? `<button class="btn btn-sm" style="background:${color};color:#fff;padding:3px 10px;font-size:12px" onclick="Page.openSendEmailModal('${d.id}')">📧 ส่งทวง/แจ้งเตือนลูกค้า</button>` : ''}
             </div>`;
           }
           // "Next step" banner — explains where this document sits in the
@@ -11209,10 +11176,16 @@
             <!-- Adjusting JE Lines — 3 Dr/1 Cr, 1 Dr/3 Cr, ฯลฯ (Option 1) -->
             <div id="docAdjustingLines_${d.id}" style="margin-top:20px"></div>
             <!-- Attachments section — file upload/list/delete for this document -->
-            <div id="docAttachments_${d.id}" style="margin-top:20px"></div>`;
+            <div id="docAttachments_${d.id}" style="margin-top:20px"></div>
+            <!-- รอบ 241: ลิงก์ชำระเงิน + งานส่งเอกสารหลังรับชำระ (สถานะ/เหตุผลจากเซิร์ฟเวอร์) -->
+            <div id="docAutoSend_${d.id}" style="margin-top:20px"></div>
+            <!-- รอบ 246 QR (ฝ่ายค้าน S4): เหตุที่ใบนี้ไม่พิมพ์ QR ชำระเงิน + คำเตือน (เซิร์ฟเวอร์ตัดสิน) -->
+            <div id="docPayQr_${d.id}" style="margin-top:12px"></div>`;
 
           // Load attachments asynchronously (doesn't block other sections)
           this.renderAttachmentSection(d.id);
+          this.renderAutoSendSection(d.id);
+          this.renderPayQrNotice(d.id);
           this.renderAdjustingLinesSection(d.id, d.status);
           // Partial-fulfilment status (delivery / billing progress per line)
           this.renderFulfillmentSection(d.id);
@@ -11374,8 +11347,8 @@
           salesEmailTypes.push('PurchaseOrder');
           const _approvedForEmail = _postedStates.includes(d.status);
           if (salesEmailTypes.includes(d.documentType) && _approvedForEmail) {
-            const _etaxOk = etaxEligibleTypes.includes(d.documentType);
-            actions += ` <button data-g="primary" class="btn btn-secondary" onclick="Page.openSendEmailModal('${d.id}', ${_etaxOk}, false)" title="ส่งเอกสารให้ลูกค้าทางอีเมล — กรอกข้อมูล + เลือกส่งแบบ e-Tax ได้">📧 ส่งอีเมล</button>`;
+            // รอบ 244: ช่องทาง (อีเมลธรรมดา / e-Tax by Email) เซิร์ฟเวอร์ตัดสินในหน้าต่าง (email-route) — ไม่มีช่องติ๊กเลือกเอง
+            actions += ` <button data-g="primary" class="btn btn-secondary" onclick="Page.openSendEmailModal('${d.id}')" title="ส่งเอกสารให้ลูกค้าทางอีเมล — ใบกำกับของบริษัทที่ใช้ e-Tax by Email ส่งแบบ e-Tax ให้เอง">📧 ส่งอีเมล</button>`;
           }
           // PDF/A-3 (ฝัง XML สรรพากร) เป็น default download ของทุก
           // เอกสาร e-Tax อยู่แล้ว — กดปุ่ม "PDF" ในตาราง action
@@ -11807,20 +11780,16 @@
        * Useful when company-level auto-generation is off, or when the auto-run
        * failed (e.g. cert misconfigured) and the user fixed the issue.
        */
-      /** 1 คลิก: สร้าง e-Tax (XML ฝัง PDF/A-3) → ส่งอีเมลลูกค้า + CC สรรพากร */
-      // wrapper เดิม — เปิด modal ส่งอีเมล (e-Tax pre-check)
-      async sendEtaxEmailOneClick(id) { this.openSendEmailModal(id, true, true); },
-      async sendDocEmailPrompt(id, _defaultTo) { this.openSendEmailModal(id, false, false); },
+      // รอบ 244: ลบ sendEtaxEmailOneClick (ไม่มีผู้เรียก — dead_helper) · ช่องทางมาจากเซิร์ฟเวอร์ (email-route) ไม่ใช่ช่องติ๊ก
+      async sendDocEmailPrompt(id, _defaultTo) { this.openSendEmailModal(id); },
       /**
-       * หน้าต่างส่งอีเมลแบบเต็ม — กรอก ผู้รับ/สำเนา(CC)/หัวข้อ/ข้อความ + ติ๊ก
-       * "ส่งแบบ e-Tax" ได้ (แนบ PDF/A-3 + XML + สำเนาสรรพากร). แทน prompt เดิม
-       * ที่ถามแค่อีเมล. etaxEligible = ชนิดเอกสารออก e-Tax ได้ (§86) + อนุมัติแล้ว.
+       * หน้าต่างส่งอีเมลแบบเต็ม — กรอก ผู้รับ/สำเนา(CC)/หัวข้อ/ข้อความ.
+       * รอบ 244: ช่องทาง (อีเมลธรรมดา / e-Tax by Email / สำเนาหลังส่ง e-Tax แล้ว) + หัวเรื่องตามกรมสรรพากร + ผู้รับ/สำเนา + เหตุที่ส่งไม่ได้
+       * มาจากเซิร์ฟเวอร์ (GET document/{id}/email-route) — หน้าแสดงอย่างเดียว ไม่มีสำเนากติกา
        */
-      openSendEmailModal(id, etaxEligible, preferEtax) {
+      openSendEmailModal(id) {
         const d = this._currentDoc;
         const defTo = (d?.contact?.email || d?.contactEmail || d?.emailTo || '');
-        const docNum = d?.documentNumber || '';
-        const hasEtaxId = !!d?.etaxInvoiceId && d.etaxInvoiceId !== '00000000-0000-0000-0000-000000000000';
         // หัว/เนื้อเริ่มต้นมาจาก server (W-C4) — เติมหลังเปิดหน้าต่าง · ไม่มีสำเนาข้อความในหน้า
         let wrap = document.getElementById('sendEmailModal');
         if (!wrap) {
@@ -11843,10 +11812,8 @@
                 <div class="form-group" style="margin:0"><label class="form-label">ข้อความ <span style="color:var(--gray-500);font-weight:normal;font-size:11px">(รูปแบบ HTML — แก้ได้เฉพาะข้อความระหว่างแท็ก &lt;…&gt; · ไม่แก้ = ระบบส่งข้อความตามภาษาของ PDF)</span></label>
                   <textarea id="seBody" class="form-input" rows="5" style="resize:vertical"></textarea></div>
                 <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="seAttachPdf" checked> แนบไฟล์ PDF</label>
-                <div id="seEtaxRow" style="background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px">
-                  <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600"><input type="checkbox" id="seEtax"> 🧾 ส่งแบบ e-Tax Invoice</label>
-                  <div style="font-size:11px;color:#0369a1;margin-top:4px">แนบ PDF/A-3 ฝัง XML (ETDA) + ส่งสำเนาให้สรรพากร (csemail@etax.teda.th) ตามข้อกำหนด e-Tax by Email</div>
-                </div>
+                <div id="seEtaxRow" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.6"></div>
+                <label id="seResendRow" style="display:none;align-items:center;gap:8px;font-size:13px"><input type="checkbox" id="seEtaxResend"> ส่ง e-Tax by Email ซ้ำ (ETDA จะประทับเวลาเลขเดิมอีกครั้ง)</label>
                 <div id="seError" style="display:none;color:#dc2626;font-size:12px"></div>
               </div>
               <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
@@ -11863,23 +11830,66 @@
         wrap.querySelector('#seBody').value = '';
         this._seAuto = { subject: '', body: '' };
         wrap.querySelector('#seAttachPdf').checked = true;
-        wrap.querySelector('#seEtaxRow').style.display = etaxEligible ? 'block' : 'none';
-        // ตั้ง checkbox ก่อนโหลดหัว/เนื้อ (W2-C7 · ฝ่ายค้านรอบสอง): เดิมโหลดก่อนตั้ง ⇒ ใบที่เปิดมาเป็น e-Tax ได้หัวที่ไม่มี "[e-Tax]"
-        wrap.querySelector('#seEtax').checked = !!(etaxEligible && preferEtax);
-        wrap.querySelector('#seEtax').onchange = () => this._loadSendEmailTemplate(id);
-        this._loadSendEmailTemplate(id);
+        wrap.querySelector('#seAttachPdf').disabled = false;
+        wrap.querySelector('#seCc').disabled = false;
+        wrap.querySelector('#seSubject').readOnly = false;
+        wrap.querySelector('#seEtaxRow').style.display = 'none';
+        wrap.querySelector('#seResendRow').style.display = 'none';
+        wrap.querySelector('#seEtaxResend').checked = false;
+        this._seRoute = null;
         wrap.querySelector('#seError').style.display = 'none';
-        wrap.querySelector('#seSendBtn').onclick = () => this._submitSendEmail(id, hasEtaxId);
+        wrap.querySelector('#seSendBtn').disabled = false;
+        wrap.querySelector('#seSendBtn').onclick = () => this._submitSendEmail(id);
+        // ช่องทางก่อน แล้วค่อยหัว/เนื้อ (หัว/เนื้อของทาง e-Tax ต่างจากอีเมลธรรมดา — W2-C7)
+        this._loadSendEmailRoute(id).then(() => this._loadSendEmailTemplate(id));
         wrap.classList.add('active');
         setTimeout(() => wrap.querySelector('#seTo').focus(), 50);
+      },
+      /** รอบ 244: ช่องทาง + ตัวอย่างอีเมล e-Tax จากเซิร์ฟเวอร์ — แสดงอย่างเดียว (หัวเรื่อง/ผู้รับ/สำเนา/ผู้ส่ง/เหตุที่ส่งไม่ได้/คำเตือน) ·
+       *  ทาง e-Tax: ล็อกหัวเรื่อง (ค่าจากเซิร์ฟเวอร์) · ปิด CC · บังคับแนบ PDF · มีเหตุที่ส่งไม่ได้ = ปิดปุ่มส่ง (ไม่ส่งเป็นอีเมลธรรมดาแทน) ·
+       *  โหลดไม่ได้ = ปล่อยให้เซิร์ฟเวอร์ตัดสินตอนส่ง (ยังเดินด่านเดียวกัน) */
+      async _loadSendEmailRoute(id) {
+        const wrap = document.getElementById('sendEmailModal'); if (!wrap) return;
+        const api = Layout.api(); if (!api) return;
+        const seq = (this._seRouteSeq = (this._seRouteSeq || 0) + 1);
+        let r = null;
+        try { r = (await api.getDocumentEmailRoute(id))?.data || null; } catch (e) { r = null; }
+        if (seq !== this._seRouteSeq) return;
+        this._seRoute = r;
+        const box = wrap.querySelector('#seEtaxRow');
+        if (!r || r.channel === 'PlainEmail') { box.style.display = 'none'; return; }
+        const esc = (s) => { const x = document.createElement('div'); x.textContent = s == null ? '' : String(s); return x.innerHTML; };
+        const list = (arr, color) => (arr || []).map(t => `<div style="color:${color}">• ${esc(t)}</div>`).join('');
+        if (r.channel === 'EtaxByEmail') {
+          box.innerHTML = `<div style="font-weight:600;color:#0369a1">🧾 ส่งแบบ e-Tax by Email</div>`
+            + `<div style="color:#334155">${esc(r.reason)}</div>`
+            + `<div>หัวเรื่อง (กรมสรรพากรกำหนด): <code>${esc(r.subject || '— ประกอบไม่ได้ —')}</code></div>`
+            + `<div>ถึง: ผู้ซื้อ 1 อีเมล · สำเนา (CC): <code>${esc(r.timestampAddress)}</code> · จาก: <code>${esc(r.fromAddress || '— ยังไม่ตั้ง —')}</code></div>`
+            + `<div>ไฟล์แนบ: PDF/A-3 ที่ฝัง XML 1 ไฟล์ (ไม่เกิน 3 MB) · ${esc(r.stageLabel)}</div>`
+            + list(r.problems, '#dc2626') + list(r.warnings, '#92400e');
+          const subjEl = wrap.querySelector('#seSubject');
+          subjEl.value = r.subject || '';
+          subjEl.readOnly = true;
+          this._seAuto = Object.assign({}, this._seAuto || {}, { subject: subjEl.value });
+          wrap.querySelector('#seCc').value = '';
+          wrap.querySelector('#seCc').disabled = true;
+          wrap.querySelector('#seAttachPdf').checked = true;
+          wrap.querySelector('#seAttachPdf').disabled = true;
+          if (!wrap.querySelector('#seTo').value && r.defaultTo) wrap.querySelector('#seTo').value = r.defaultTo;
+          wrap.querySelector('#seSendBtn').disabled = (r.problems || []).length > 0;
+        } else {
+          box.innerHTML = `<div style="color:#334155">${esc(r.reason)}</div><div>${esc(r.stageLabel)}</div>` + list(r.warnings, '#92400e');
+          wrap.querySelector('#seResendRow').style.display = 'flex';
+        }
+        box.style.display = 'block';
       },
       /** เติมหัว/เนื้อจาก server (ภาษา+หัวเดียวกับ PDF) · แทนเฉพาะช่องที่ยังเป็นค่าอัตโนมัติเดิม (ผู้ใช้แก้แล้ว = ไม่แตะ) ·
        *  โหลดไม่ได้ = ปล่อยว่าง (server เติมเองตอนส่ง) */
       async _loadSendEmailTemplate(id) {
         const wrap = document.getElementById('sendEmailModal'); if (!wrap) return;
         const api = Layout.api(); if (!api) return;
-        const asEtax = !!wrap.querySelector('#seEtax')?.checked;
-        // กัน "ใครมาก่อนชนะ" (กฎ #4 A): สลับ checkbox เร็ว ๆ แล้วคำตอบเก่ามาถึงทีหลัง ⇒ ทิ้งคำตอบที่ไม่ใช่คำขอล่าสุด
+        const asEtax = this._seRoute?.channel === 'EtaxByEmail';
+        // กัน "ใครมาก่อนชนะ" (กฎ #4 A): คำตอบเก่ามาถึงทีหลัง ⇒ ทิ้งคำตอบที่ไม่ใช่คำขอล่าสุด
         const seq = (this._seSeq = (this._seSeq || 0) + 1);
         let tpl = null;
         try { tpl = (await api.getDocumentEmailTemplate(id, asEtax))?.data || null; } catch (e) { tpl = null; }
@@ -11909,7 +11919,7 @@
         if (bodyEl.value === prev.body) bodyEl.value = tpl.htmlBody || '';
         this._seAuto = { subject: tpl.subject || '', body: tpl.htmlBody || '' };
       },
-      async _submitSendEmail(id, hasEtaxId) {
+      async _submitSendEmail(id) {
         const wrap = document.getElementById('sendEmailModal');
         const err = wrap.querySelector('#seError');
         const to = wrap.querySelector('#seTo').value.trim();
@@ -11922,26 +11932,35 @@
         const subject = (rawSubject === auto.subject ? '' : rawSubject).trim() || null;
         const body = (rawBody === auto.body ? '' : rawBody).trim() || null;
         const attachPdf = wrap.querySelector('#seAttachPdf').checked;
-        const asEtax = wrap.querySelector('#seEtax').checked;
         const api = Layout.api(); if (!api) return;
         const btn = wrap.querySelector('#seSendBtn'); btn.disabled = true;
+        // รอบ 244: ทางเดียว (send-email) — เซิร์ฟเวอร์เลือกช่องทาง · ทาง e-Tax ไม่ส่งหัวเรื่อง/CC (เซิร์ฟเวอร์กำหนดเอง) · ไม่แนบ XML แยก
+        const etaxRoute = this._seRoute?.channel === 'EtaxByEmail';
+        // ฝ่ายค้าน B1: เปิดทดสอบ e-Tax by Email (สำเนาไป UAT) ⇒ ถามยืนยัน — ใบจะไม่ถูกประทับเวลาจริง
+        if (etaxRoute && this._seRoute?.usesUat
+            && !confirm('บริษัทเปิด "ทดสอบ e-Tax by Email" — สำเนาจะไปที่ UAT ของ ETDA (' + (this._seRoute.timestampAddress || '') + ') ใบนี้จะไม่ถูกประทับเวลาจริง\n\nยืนยันส่งแบบทดสอบ?')) {
+          btn.disabled = false; return;
+        }
+        const req = { to, cc: etaxRoute ? null : cc, subject: etaxRoute ? null : subject, body, attachPdf: etaxRoute ? true : attachPdf,
+          attachXml: false, confirmEtaxResend: !!wrap.querySelector('#seEtaxResend')?.checked };
+        const send = async (r) => {
+          const res = await api.sendDocumentEmail(id, r);
+          // HTTP 200 + success:false = ผู้ให้บริการอีเมลไม่รับ (E9 — เดิมขึ้น "สำเร็จ" ทั้งที่ส่งไม่ผ่าน)
+          if (res && res.success === false) throw new Error(res.message || 'ผู้ให้บริการอีเมลไม่รับข้อความ');
+          return res;
+        };
         try {
-          if (asEtax) {
-            Layout.toast('กำลังสร้าง e-Tax + ส่งอีเมล ...', 'info');
-            const companyId = Layout.getCompanyId();
-            let etaxId = this._currentDoc?.etaxInvoiceId;
-            if (!hasEtaxId) {
-              const gen = await API.post(`/api/companies/${companyId}/etax/generate`, { documentId: id, signDigitally: false });
-              etaxId = gen?.data?.id;
-              if (!etaxId) throw new Error(gen?.message || 'สร้าง e-Tax ไม่สำเร็จ');
-            }
-            await api.sendEtaxByEmail(etaxId, { to, cc, subject, body, includePdf: true, includeXml: true, includeRdTimestamp: true });
-            Layout.toast('ส่ง e-Tax ทางอีเมลสำเร็จ (แนบ PDF/A-3 + XML · สำเนาสรรพากร)', 'success', 7000);
-          } else {
-            Layout.toast('กำลังส่งอีเมล ...', 'info');
-            await api.sendDocumentEmail(id, { to, cc, subject, body, attachPdf, attachXml: false });
-            Layout.toast('ส่งอีเมลสำเร็จ', 'success');
+          Layout.toast(etaxRoute ? 'กำลังส่งแบบ e-Tax by Email ...' : 'กำลังส่งอีเมล ...', 'info');
+          let res;
+          try { res = await send(req); }
+          catch (e) {
+            // ส่ง e-Tax ซ้ำต้องยืนยัน (409 ETAX-EMAIL-RESEND) — ถามแล้วส่งใหม่พร้อมยืนยัน
+            if (e && e.status === 409 && e.body?.data?.ruleCode === 'ETAX-EMAIL-RESEND'
+                && confirm((e.message || 'ใบนี้ส่ง e-Tax แล้ว') + '\n\nยืนยันส่งซ้ำ?')) {
+              res = await send(Object.assign({}, req, { confirmEtaxResend: true }));
+            } else throw e;
           }
+          Layout.toast(res?.message || 'ส่งอีเมลสำเร็จ', 'success', 7000);
           wrap.classList.remove('active');
           await this.detail(id);
           await this.load();
@@ -12319,59 +12338,59 @@
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
       },
+      /** รอบ 242 (คำตัดสินข้อ 242-A): ลบถาวร — ถามแผนจากเซิร์ฟเวอร์ก่อน (ใบไหนถูกลบ/คงไว้/กันไว้ + เหตุ) แล้วค่อยยืนยัน ·
+       * ใบที่มีเอกสารที่เกี่ยวข้อง ⇒ เลือก "ลบพร้อมเอกสารที่เกี่ยวข้อง" หรือ "ลบเฉพาะใบนี้" · กติกาทั้งหมดอยู่ที่เซิร์ฟเวอร์ — หน้านี้แสดงอย่างเดียว */
       async purgeDoc(id, docNumber) {
         const api = Layout.api(); if (!api) return;
+        const isBlocked = (p) => (p.nodes || []).some(n => n.action === 'Block');
+        let single, related = null;
+        try {
+          single = (await api.purgePreview(id, false))?.data;
+          if (single && single.hasRelated) related = (await api.purgePreview(id, true))?.data;
+        } catch (e) { Layout.toast(e.message || 'ตรวจแผนการลบไม่สำเร็จ', 'error'); return; }
+        if (!single) { Layout.toast('ตรวจแผนการลบไม่สำเร็จ', 'error'); return; }
+
+        let cascade = false;
+        if (related) {
+          const n = related.nodes.filter(x => x.depth > 0).length;
+          if (!isBlocked(related)) {
+            cascade = confirm(`ใบนี้มีเอกสารที่เกี่ยวข้อง ${n} ใบ\n\n` +
+              'ตกลง = ลบพร้อมเอกสารที่เกี่ยวข้องทั้งหมด\nยกเลิก = ลบเฉพาะใบนี้ (คงเอกสารที่เกี่ยวข้องไว้ ตัดการอ้างอิงถึงใบนี้)');
+          } else if (!isBlocked(single)) {
+            if (!confirm(`${related.message}\n\nต้องการ "ลบเฉพาะใบนี้" แทนไหม? (คงเอกสารที่เกี่ยวข้องไว้ ตัดการอ้างอิงถึงใบนี้)`)) return;
+          }
+        }
+        const plan = cascade ? related : single;
+        if (isBlocked(plan)) { Layout.toast(plan.message, 'error', 12000); return; }
+
+        const icon = { Delete: '🗑️', Unlink: '🔗', Block: '⛔' };
+        const rows = (plan.nodes || []).map(x =>
+          `<li>${icon[x.action] || ''} ${Layout.esc(x.typeName)} ${Layout.esc(x.documentNumber || '')} — ${Layout.esc(x.reason)}</li>`).join('');
+        const legal = plan.needsReason
+          ? '<br><strong style="color:#dc2626">⚖️ มีเอกสารในช่วงเก็บรักษาตามกฎหมาย (§87/3 · พ.ร.บ.บัญชี ม.10 — 5 ปี)</strong> ' +
+            'แนะนำให้ใช้ <b>"ยกเลิกเอกสาร (Void)"</b> ซึ่งคงหลักฐานไว้ · ถ้ายืนยันลบ (เช่น ข้อมูลทดสอบ/สร้างผิดซ้ำ) ต้องระบุเหตุผล — บันทึก audit ว่าคุณเป็นผู้ลบ'
+          : '';
         if (!(await Layout.confirmDanger({
-          title: 'ลบเอกสารและข้อมูลทั้งหมด (Owner เท่านั้น)',
-          message: 'ระบบจะลบเอกสาร รายการบัญชี(JE) การชำระเงิน ใบหัก ณ ที่จ่าย e-Tax และข้อมูลเกี่ยวข้องทั้งหมด<br>' +
-                   '<strong style="color:#dc2626">⚠️ ผิดหลักบัญชี — ข้อมูลจะถูกลบถาวร ไม่สามารถกู้คืนได้</strong><br>' +
-                   '<span style="font-size:12px;color:#666">การดำเนินการนี้จะถูกบันทึกใน Audit Log</span>',
+          title: cascade ? 'ลบเอกสารพร้อมเอกสารที่เกี่ยวข้อง (Owner เท่านั้น)' : 'ลบเอกสารและข้อมูลทั้งหมด (Owner เท่านั้น)',
+          message: 'ระบบจะลบเอกสาร รายการบัญชี(JE) การชำระเงิน ใบหัก ณ ที่จ่าย e-Tax และข้อมูลเกี่ยวข้องของทุกใบที่มี 🗑️<br>' +
+                   `<ul style="margin:6px 0 6px 16px;font-size:13px">${rows}</ul>` +
+                   '<strong style="color:#dc2626">⚠️ ข้อมูลจะถูกลบถาวร ไม่สามารถกู้คืนได้</strong>' + legal + '<br>' +
+                   '<span style="font-size:12px;color:#666">การดำเนินการนี้จะถูกบันทึกใน Audit Log ทุกใบ</span>',
           mode: 'doubleCheck',
           confirmText: docNumber || 'DELETE'
         }))) return;
-        try {
-          await api.purgeDocument(id);
-          Layout.closeModal('detailModal');
-          Layout.toast('ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ');
-          await this.load();
-        } catch (e) {
-          const msg = e.message || 'ลบไม่สำเร็จ';
-          // §87/3 legal hold — เสนอ override (Owner) ด้วยเหตุผล + audit
-          if (msg.includes('§87/3') || msg.includes('เก็บรักษาตามกฎหมาย')) {
-            await this._purgeWithRetentionOverride(id, docNumber, msg);
-            return;
-          }
-          Layout.toast(msg, 'error');
+        let reason = null;
+        if (plan.needsReason) {
+          reason = prompt('ระบุเหตุผลที่ต้องลบถาวร (บังคับ — จะถูกบันทึกใน audit):\nเช่น "ข้อมูลทดสอบ", "สร้างซ้ำจาก integration ผิด"');
+          if (!reason || !reason.trim()) { Layout.toast('ต้องระบุเหตุผลจึงจะลบถาวรได้', 'warning'); return; }
+          reason = reason.trim();
         }
-      },
-
-      /** เอกสารติด legal hold §87/3 (เก็บรักษา 5 ปี) — ปกติต้อง Void.
-       * แต่ Owner ลบถาวรได้ถ้ามีเหตุผล (ข้อมูลทดสอบ/สร้างผิดซ้ำ) → re-call
-       * ด้วย force=true + reason. ระบบ log audit ว่าใคร/ทำไม. */
-      async _purgeWithRetentionOverride(id, docNumber, blockMsg) {
-        const proceed = await Layout.confirmDanger({
-          title: '⚖️ เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3)',
-          message: `${Layout.esc(blockMsg)}<br><br>` +
-            '<strong style="color:#dc2626">การลบถาวรอาจทำให้ผิด พ.ร.บ.บัญชี ม.10 / ประมวลรัษฎากร §87/3</strong> ' +
-            '(ต้องเก็บเอกสารบัญชี 5 ปี). แนะนำให้ใช้ <b>"ยกเลิกเอกสาร (Void)"</b> ซึ่งคงหลักฐานไว้.<br><br>' +
-            '<span style="font-size:12px;color:#666">ถ้ายืนยันลบถาวร (เช่น เป็นข้อมูลทดสอบ/สร้างผิดซ้ำที่ไม่มีผลทางภาษีจริง) ' +
-            'ระบบจะบันทึก audit ว่าคุณเป็นผู้ลบ + เหตุผล — ความรับผิดชอบทางกฎหมายเป็นของผู้ลบ</span>',
-          mode: 'doubleCheck',
-          confirmText: docNumber || 'DELETE'
-        });
-        if (!proceed) return;
-        const reason = prompt('ระบุเหตุผลที่ต้องลบถาวร (บังคับ — จะถูกบันทึกใน audit):\nเช่น "ข้อมูลทดสอบ", "สร้างซ้ำจาก integration ผิด"');
-        if (!reason || !reason.trim()) {
-          Layout.toast('ต้องระบุเหตุผลจึงจะลบถาวรได้', 'warning');
-          return;
-        }
-        const api = Layout.api(); if (!api) return;
         try {
-          await api.purgeDocument(id, true, reason.trim());
+          const r = await api.purgeDocument(id, plan.needsReason, reason, cascade, plan.planToken);
           Layout.closeModal('detailModal');
-          Layout.toast('ลบเอกสารถาวรแล้ว (override การเก็บรักษา — บันทึก audit แล้ว)', 'success');
+          Layout.toast(r?.message || 'ลบเอกสารถาวรสำเร็จ', 'success', 8000);
           await this.load();
-        } catch (e2) { Layout.toast(e2.message || 'ลบไม่สำเร็จ', 'error'); }
+        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error', 12000); }
       },
       // สร้างลิงก์ลูกค้าเซ็นรับสินค้าออนไลน์ (POD) → คัดลอกเข้า clipboard
       async deliverySignLink(docId) {
@@ -13140,6 +13159,69 @@
           if (docId) await this.detail(docId);
           await this.load();
         } catch (e) { Layout.toast(e.message || 'ออกใบเสร็จไม่สำเร็จ', 'error', 8000); }
+      },
+
+      // รอบ 246 QR (ฝ่ายค้าน S4/S2/N5): เหตุ/คำเตือนของ QR ชำระเงินบนกระดาษ — ข้อความทั้งหมดจากเซิร์ฟเวอร์ (PaymentQrService) · ไม่มีอะไร = ว่าง
+      async renderPayQrNotice(docId) {
+        const host = document.getElementById(`docPayQr_${docId}`);
+        const api = Layout.api();
+        if (!host || !api) return;
+        let s;
+        try { const r = await api.getDocumentPaymentQr(docId); s = r && r.data; } catch (_) { return; }
+        if (!s) return;
+        const esc = Layout.esc;
+        const lines = [];
+        if (s.accountLabel) lines.push(`<div class="text-sm">QR ชำระเงินบนเอกสาร: ${esc(s.accountLabel)}</div>`);
+        if (s.problem) lines.push(`<div class="text-sm" style="color:#b45309">⚠️ ${esc(s.problem)}</div>`);
+        (s.warnings || []).forEach(w => lines.push(`<div class="text-sm" style="color:#b45309">⚠️ ${esc(w)}</div>`));
+        host.innerHTML = lines.join('');
+      },
+
+      // รอบ 241: ลิงก์ชำระเงิน + งานส่งเอกสารหลังรับชำระ — ทุกค่า/ป้าย/เหตุผลจากเซิร์ฟเวอร์ (DocumentAutoSendController) · ไม่มีสิทธิ์/ไม่เกี่ยว = ไม่แสดง
+      async renderAutoSendSection(docId) {
+        const host = document.getElementById(`docAutoSend_${docId}`);
+        const api = Layout.api(); const cid = Layout.getCompanyId();
+        if (!host || !api || !cid) return;
+        let s;
+        try { const r = await api.get(`/api/companies/${cid}/document-auto-send/documents/${docId}`); s = r && r.data; }
+        catch (_) { return; }
+        if (!s || (!s.url && !(s.runs || []).length && s.refusal)) { host.textContent = ''; return; }
+        const esc = Layout.esc;
+        const runs = (s.runs || []).map(r => `<tr><td>${Layout.date(r.createdAt)}</td><td>${esc(r.statusLabel)}</td><td>${esc(r.message || '')}</td>
+          <td>${(r.status === 'Blocked' || r.status === 'Failed') ? `<button class="btn btn-sm btn-secondary" data-autosend-retry="${esc(r.id)}">ลองใหม่</button>` : ''}</td></tr>`).join('');
+        host.innerHTML = `<h4 style="font-size:14px;margin-bottom:8px">ลิงก์ชำระเงิน &amp; ส่งเอกสารอัตโนมัติ</h4>
+          ${s.refusal ? `<div class="text-sm text-gray-500">${esc(s.refusal)}</div>` : `
+          <div class="text-sm">ยอดค้าง ${Layout.money(s.gross)}${Number(s.wht) > 0.005 ? ` · หัก ณ ที่จ่ายที่ลูกค้าจะหัก ${Layout.money(s.wht)} · ลูกค้าโอน ${Layout.money(s.net)}` : ''}
+            · ช่องทาง: ${(s.channels || []).map(c => esc(c.label)).join(', ') || '-'}</div>
+          ${s.whtNote ? `<div class="text-sm" style="color:#b45309;margin-top:4px">⚠️ ${esc(s.whtNote)}</div>` : ''}
+          ${s.url ? `<div class="text-sm" style="margin-top:4px;word-break:break-all"><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.url)}</a> (หมดอายุ ${Layout.date(s.expiresAt)})</div>` : ''}
+          <div style="margin-top:6px;display:flex;gap:6px">
+            <button class="btn btn-sm btn-secondary" data-autosend-issue="1">${s.url ? 'คัดลอก/ใช้ลิงก์เดิม' : 'สร้างลิงก์ชำระเงิน'}</button>
+            ${s.url ? '<button class="btn btn-sm btn-danger-outline" data-autosend-revoke="1">ยกเลิกลิงก์</button>' : ''}
+          </div>`}
+          ${runs ? `<table class="table" style="font-size:12px;margin-top:8px"><thead><tr><th>วันที่</th><th>สถานะ</th><th>รายละเอียด</th><th></th></tr></thead><tbody>${runs}</tbody></table>` : ''}`;
+        const issue = host.querySelector('[data-autosend-issue]');
+        if (issue) issue.addEventListener('click', async () => {
+          try {
+            const r = await api.post(`/api/companies/${cid}/document-auto-send/documents/${docId}/pay-link`, {});
+            const url = r && r.data && r.data.url;
+            if (url) { try { await navigator.clipboard.writeText(url); } catch (_) { /* ไม่มีสิทธิ์ clipboard */ } }
+            Layout.toast(url ? 'คัดลอกลิงก์ชำระเงินแล้ว' : ((r && r.message) || 'สร้างลิงก์แล้ว'), 'success');
+            await this.renderAutoSendSection(docId);
+          } catch (e) { Layout.toast(e.message, 'error', 8000); }
+        });
+        const revoke = host.querySelector('[data-autosend-revoke]');
+        if (revoke) revoke.addEventListener('click', async () => {
+          if (!confirm('ยกเลิกลิงก์ชำระเงินของเอกสารนี้? ลิงก์ที่ส่งไปแล้วจะใช้จ่ายไม่ได้ทันที')) return;
+          try { const r = await api.post(`/api/companies/${cid}/document-auto-send/documents/${docId}/pay-link/revoke`, {});
+            Layout.toast((r && r.message) || 'ยกเลิกลิงก์แล้ว', 'success'); await this.renderAutoSendSection(docId); }
+          catch (e) { Layout.toast(e.message, 'error', 8000); }
+        });
+        host.querySelectorAll('[data-autosend-retry]').forEach(b => b.addEventListener('click', async () => {
+          try { const r = await api.post(`/api/companies/${cid}/document-auto-send/post-payment-runs/${b.dataset.autosendRetry}/retry`, {});
+            Layout.toast((r && r.message) || 'ตั้งให้ลองใหม่แล้ว', 'success'); await this.renderAutoSendSection(docId); }
+          catch (e) { Layout.toast(e.message, 'error', 8000); }
+        }));
       },
 
       // รอบ 200 ทีม V1 (คำตัดสินข้อ 9) — ยกเลิกและออกใบแทน: หน้านี้ส่งเฉพาะสิ่งที่ผู้ใช้แก้ได้ (ผู้ซื้อ · หมายเหตุ · คำบรรยาย · เหตุผล)

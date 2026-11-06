@@ -377,7 +377,7 @@ public partial class CourseCreditService
             if (!CourseCreditMath.ExpiryReminderDue(c.ExpiresOn!.Value, today, pkgDays[c.PackageId], c.ExpiryNotifiedAt, c.ExpiryNotifyAttemptedAt, now)) continue;
             due++;
             var contact = await _db.Contacts.AsNoTracking().Where(x => x.Id == c.ContactId && x.CompanyId == companyId)
-                .Select(x => new { x.Name, x.Email, x.LineUserId }).FirstOrDefaultAsync(ct);
+                .Select(x => new { x.Name, x.Email }).FirstOrDefaultAsync(ct);
             var remaining = CourseCreditMath.IsUnlimited(c.Kind)
                 ? "ไม่จำกัดครั้งถึงวันหมดอายุ"
                 : $"{CourseCreditMath.Available(c.CreditsTotal, c.CreditsUsed, c.CreditsReserved):0.##} {UnitTh(c.Unit)}";
@@ -391,7 +391,9 @@ public partial class CourseCreditService
                     // รอบ 212: ค่าตั้งช่องทาง/โควตา/กันซ้ำที่ BookingNotifier (บัตรไม่ผูกเว็บ ⇒ ค่าตั้งระดับบริษัท) · เปิด/ปิด+จำนวนวันยังเป็นของ ExpiryReminderDays
                     result = await _notifier.SendAsync(new CustomerNotifyRequest(companyId, null, CustomerNotifyEvents.CreditExpiring,
                         CustomerNotifyKeys.Credit(c.Id, DateOnly.FromDateTime(c.ExpiresOn.Value)),
-                        new BookingContact(contact?.Email, contact?.LineUserId) { LineTarget = CustomerLineTarget.ForContact(c.ContactId) },
+                        // รอบ 245 L1 ฝ่ายค้าน S1: ไม่ใช้ Contact.LineUserId เป็นทางสำรองแล้ว (ไม่รู้ว่าผูกกับ OA ใด ⇒ เสี่ยงส่งผิดคน · ย้ายเป็นปลายทาง legacy ที่ไม่ใช้ส่ง) —
+                        // LINE ไปได้เฉพาะที่ลูกค้าผูกเองผ่าน CustomerLineLink (LineTarget ⇒ BookingNotifier หา OA ที่ผูกจริง) · ไม่มีการผูก ⇒ อีเมลอย่างเดียว
+                        new BookingContact(contact?.Email, null) { LineTarget = CustomerLineTarget.ForContact(c.ContactId) },
                         $"บัตร {c.PassNumber} ใกล้หมดอายุ", text) { TargetKind = "credit-pass", TargetId = c.Id }, ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException) { result = BookingSendResult.Fail(ex.Message); }

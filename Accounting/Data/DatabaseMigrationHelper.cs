@@ -257,7 +257,10 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PlatformPriceOverrideMigration.Statements());   // รอบ 231 — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ · Subscriptions.Kind + backfill · ย้าย override เพดานไป CompanyQuotaOverrides (หลังรอบ 229/230)
         list.AddRange(Accounting.Helpers.PlatformUpgradeModeMigration.Statements());   // รอบ 237 — อัปเกรดกลางรอบ 2 แบบ: ค่าตั้งแพลตฟอร์ม + แบบที่ลูกค้าเลือกบนรายการชำระ
         list.AddRange(Accounting.Helpers.SignRequestMigration.Statements());   // รอบ 240 — ลิงก์ให้ลูกค้าเซ็น: webhook ต่อเอกสาร · อีเมลขอเซ็น/เตือน · outbox เหตุการณ์ลูกค้าเซ็น
+        list.AddRange(Accounting.Helpers.DocumentAutoSendMigration.Statements());   // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · งานหลังรับชำระ (ใบเสร็จ/ขอ 50 ทวิ)
         list.AddRange(Accounting.Helpers.LicenseLapseMigration.Statements());   // รอบ 238 (236-3) — คืนสถานะแถวบริษัทที่ถูก cascade ตาม License · License ในระยะผ่อนผัน Expired → PastDue (idempotent)
+        list.AddRange(Accounting.Helpers.ContactNotifyEndpointMigration.Statements());   // รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (ย้าย Contact.LineUserId ทำในโค้ดตอนบูต — ต้องเข้ารหัส)
+        list.AddRange(Accounting.Helpers.PaymentQrMigration.Statements());   // รอบ 246 QR — QR ชำระเงินของบัญชีธนาคาร (อัปโหลด/พร้อมเพย์) + ธงแสดง QR ของเทมเพลต
         return list;
     }
 
@@ -605,6 +608,8 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunError" text NULL;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunErrorAt" timestamptz NULL;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunNotice" text NULL;""",
+            // รอบ 247 (UX รายการประจำ): เรื่องที่ต้องทำต่อแบบโครงสร้าง (JSON) — หัวเรื่อง/ขั้นตอน/ปุ่มประกอบที่เซิร์ฟเวอร์
+            """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastRunOutcome" text NULL;""",
             """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "LastDocumentId" uuid NULL;""",
 
             // ===== ใบวางบิลรวมใบแจ้งหนี้: บรรทัด "แทนทั้งใบ" ชี้เอกสารต้นทาง =====
@@ -6175,6 +6180,32 @@ public static class DatabaseMigrationHelper
                AND w."CompanyId" = f."CompanyId"
                AND f."EntityType" = 'WhtCredit'
                AND f."EntityId" = '00000000-0000-0000-0000-000000000000';
+            """,
+            // รอบ 243a: ตัดสูญเครดิต 11910 พร้อม JE (Helpers/WhtCreditWriteOff) — ตัวชี้ JE ตัดสูญ/กลับรายการ + เหตุผล · แถวเดิมเป็น NULL (ไม่มี JE)
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "WriteOffJournalEntryId" uuid NULL;""",
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "WrittenOffAt" timestamptz NULL;""",
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "WriteOffReason" text NULL;""",
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "WriteOffReversalJournalEntryId" uuid NULL;""",
+            // รอบ 244: e-Tax by Email — ป้าย "ส่งแล้ว (รอประทับเวลา)" แยกจาก "ประทับเวลาแล้ว" (ผู้ใช้บันทึกใบที่ ETDA ส่งกลับ) · ใช้แสดงผล/ทางเลือกช่องทางเท่านั้น
+            // (ด่านยกเลิกอ่าน DocumentEmailLogs เหมือนเดิม — ส่งพร้อม CC production = Accepted · คำตัดสิน 244-6) · ค่าเดิมของแถวเก่าเติมด้วย UPDATE ด้านล่าง
+            // ฝ่ายค้าน B1: ธงทดสอบ e-Tax by Email แยกจาก EtaxTestMode · false = production (บริษัทเดิมทั้งหมดส่งเหมือนก่อนรอบนี้ — ไม่ต้องเติมค่า)
+            """ALTER TABLE "CompanySettings" ADD COLUMN IF NOT EXISTS "EtaxByEmailUseUat" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "ByEmailSentAt" timestamptz NULL;""",
+            """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "ByEmailLastSentAt" timestamptz NULL;""",
+            """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampedAt" timestamptz NULL;""",
+            """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaTimestampToken" varchar(500) NULL;""",
+            """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampedFileAttachmentId" uuid NULL;""",
+            """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedBy" varchar(200) NULL;""",
+            """ALTER TABLE "EtaxInvoices" ADD COLUMN IF NOT EXISTS "EtdaStampRecordedAt" timestamptz NULL;""",
+            // แถว e-Tax ที่ส่งพร้อม CC ETDA (production) ก่อนรอบ 244 — เติม "ส่งแล้ว" จากบันทึกอีเมลที่ส่งสำเร็จ (ข้อเท็จจริงที่มีอยู่แล้ว ไม่ใช่สถานะที่แต่งขึ้น) ·
+            // "ประทับเวลาแล้ว" ไม่เติม (ไม่มีหลักฐาน) · เรียกซ้ำได้ผลเดิม (เฉพาะแถวที่ยังว่าง) · ไม่ปลดล็อกการยกเลิกของแถวเก่า (ด่านไม่อ่านคอลัมน์นี้)
+            """
+            UPDATE "EtaxInvoices" e SET "ByEmailSentAt" = s."FirstSent", "ByEmailLastSentAt" = s."LastSent"
+            FROM (SELECT l."EtaxInvoiceId", l."CompanyId", MIN(COALESCE(l."SentAt", l."CreatedAt")) AS "FirstSent", MAX(COALESCE(l."SentAt", l."CreatedAt")) AS "LastSent"
+                  FROM "DocumentEmailLogs" l
+                  WHERE NOT l."IsDeleted" AND l."IsEtaxByEmail" AND l."IncludedRdTimestamp" AND l."Status" = 1 AND l."EtaxInvoiceId" IS NOT NULL
+                  GROUP BY l."EtaxInvoiceId", l."CompanyId") s
+            WHERE e."Id" = s."EtaxInvoiceId" AND e."CompanyId" = s."CompanyId" AND e."ByEmailSentAt" IS NULL;
             """,
             """
             CREATE TABLE IF NOT EXISTS "DocumentRevisions" (

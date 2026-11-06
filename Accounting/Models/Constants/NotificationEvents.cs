@@ -47,6 +47,9 @@ public static class NotificationEvents
     /// <summary>รอบ 240: ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์ — ผู้ส่งเดียว <c>SignEventDispatcher</c> (outbox) ·
     /// ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) ผ่าน <c>NotificationAudiencePolicy.MigratedBroadcastKeys</c></summary>
     public const string DocumentCustomerSigned  = "document.customer_signed";
+    /// <summary>รอบ 241: งานส่งเอกสารอัตโนมัติหลังรับชำระหยุด/ล้ม (ลูกค้าไม่มีอีเมล · ข้อมูลผู้ซื้อไม่ครบสำหรับใบกำกับ · ใบเสร็จเป็นร่าง · ส่งไม่สำเร็จครบรอบ) —
+    /// ผู้ส่งเดียว <c>PostPaymentAutomationService</c> · ค่าตั้งต้น = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้)</summary>
+    public const string PostPaymentAutomationBlocked = "document.post_payment_blocked";
     // ===== รอบ 232 (232-Notify): ย้ายจาก LineNotifyService.Notify*Async (ประกาศกลุ่ม LINE โดยไม่มีค่าตั้ง + ถอยไปกลุ่มกลางของแพลตฟอร์ม) =====
     // ค่าตั้งต้นเมื่อบริษัทยังไม่ตั้ง = กระดิ่งถึงเจ้าของ (+ กลุ่ม LINE ของบริษัทถ้าผูกไว้) — Helpers/NotificationAudiencePolicy.DefaultMatrix
     /// <summary>บันทึกรับชำระของเอกสารขาย (ตัดชำระ/ใบเสร็จ) — เดิม "💵 รับชำระเงินแล้ว" เข้ากลุ่ม LINE</summary>
@@ -148,6 +151,7 @@ public static class NotificationEvents
         ("Accounting", DocumentApproved, "อนุมัติเอกสาร"),
         ("Accounting", DocumentVoided, "ยกเลิกเอกสาร"),
         ("Accounting", DocumentCustomerSigned, "ลูกค้ายอมรับใบเสนอราคา/เซ็นรับสินค้าผ่านลิงก์ออนไลน์"),
+        ("Accounting", PostPaymentAutomationBlocked, "ส่งเอกสารอัตโนมัติหลังรับชำระหยุด/ไม่สำเร็จ (ต้องให้คนดำเนินการ)"),
         ("Accounting", PaymentReceived, "บันทึกรับชำระเงินของเอกสาร"),
         ("Accounting", InvoiceOverdue, "ใบแจ้งหนี้เพิ่งเกินกำหนดชำระ (แจ้งภายใน)"),
         ("Accounting", BankSyncCompleted, "ซิงก์ธนาคารได้รายการใหม่"),

@@ -36,6 +36,7 @@
       <div class="kpi"><div class="lbl">เครดิตที่ใช้ได้ (มีใบแล้ว)</div><div class="val" id="kReceived" style="color:#15803d">-</div></div>
       <div class="kpi"><div class="lbl">รอหนังสือรับรอง</div><div class="val" id="kPending" style="color:#b45309">-</div></div>
       <div class="kpi"><div class="lbl">ใช้ไปแล้วในแบบยื่น</div><div class="val" id="kClaimed" style="color:#0369a1">-</div></div>
+      <div class="kpi"><div class="lbl" id="kWrittenOffLbl">ตัดสูญแล้ว</div><div class="val" id="kWrittenOff" style="color:#991b1b">-</div></div>
       <div class="kpi"><div class="lbl">ยอดบัญชี 11910</div><div class="val" id="kGl">-</div></div>
       <div class="kpi"><div class="lbl">ผลต่าง ทะเบียน − บัญชี</div><div class="val" id="kDiff">-</div></div>
     </div>
@@ -118,6 +119,50 @@
       <div class="modal-footer">
         <button class="btn btn-secondary" onclick="Layout.closeModal('editModal')">ยกเลิก</button>
         <button class="btn btn-primary" id="mSave" onclick="Page.save()">บันทึก</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- รอบ 243a: ยืนยันตัดสูญ — ตัวเลข/ผัง/ผลทางภาษีมาจากเซิร์ฟเวอร์ (write-off-preview) หน้าแค่แสดง -->
+  <div class="modal-overlay" id="woModal">
+    <div class="modal" style="max-width:560px">
+      <div class="modal-header">
+        <h3 class="modal-title">ตัดสูญภาษีถูกหัก ณ ที่จ่าย</h3>
+        <button class="modal-close" onclick="Layout.closeModal('woModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="woInfo" style="font-size:13px;line-height:1.7"></div>
+        <div class="form-group" style="margin-top:10px">
+          <label class="form-label">วันที่ตัดสูญ (ต้องอยู่ในงวดที่เปิด)</label>
+          <input type="date" class="form-input" id="woDate">
+        </div>
+        <div class="form-group">
+          <label class="form-label">เหตุผล (อย่างน้อย <span id="woMin">10</span> ตัวอักษร — เก็บเป็นหลักฐาน)</label>
+          <textarea class="form-input" id="woReason" rows="2" placeholder="เช่น ทวงแล้ว 3 ครั้ง ลูกค้าปิดกิจการ ไม่ออกหนังสือรับรอง"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('woModal')">ยกเลิก</button>
+        <button class="btn btn-danger" id="woSave" onclick="Page.confirmWriteOff()">ยืนยันตัดสูญและลงบัญชี</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- รอบ 243a: ได้รับหนังสือรับรองภายหลังบนแถวที่ตัดสูญแล้ว — เซิร์ฟเวอร์กลับรายการบัญชีตัดสูญและคืนเครดิต -->
+  <div class="modal-overlay" id="lateModal">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <h3 class="modal-title">ได้รับหนังสือรับรองภายหลัง</h3>
+        <button class="modal-close" onclick="Layout.closeModal('lateModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="lateInfo" style="font-size:12.5px;color:#334155;margin-bottom:8px"></div>
+        <div class="form-group"><label class="form-label">เลขที่หนังสือรับรอง</label><input class="form-input" id="lateNo"></div>
+        <div class="form-group"><label class="form-label">วันที่บนหนังสือรับรอง</label><input type="date" class="form-input" id="lateDate"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="Layout.closeModal('lateModal')">ยกเลิก</button>
+        <button class="btn btn-primary" id="lateSave" onclick="Page.confirmLate()">บันทึกและคืนเครดิต</button>
       </div>
     </div>
   </div>
@@ -208,14 +253,20 @@
         const year = this._year();
         const st = document.getElementById('fStatus').value;
         try {
-          const [listRes, sumRes, strandedRes] = await Promise.all([
+          const [listRes, sumRes, strandedRes, candRes, warnRes] = await Promise.all([
             API.get(`/api/companies/${cid}/wht-credits?taxYear=${year}${st ? '&status=' + st : ''}`),
             API.get(`/api/companies/${cid}/wht-credits/summary?taxYear=${year}`),
             // ใบที่ปิดยอดแล้วแต่ WHT บันทึกไม่ครบ — ลูกหนี้ค้างใน GL + เครดิตหาย
             API.get(`/api/companies/${cid}/wht-credits/stranded-ar`).catch(() => ({ data: [] })),
+            // รอบ 243a: รายการที่รอบบัญชีสิ้นสุดแล้วแต่ยังไม่ได้ใบ — เสนอให้ตัดสินใจ (ไม่ตัดอัตโนมัติ)
+            API.get(`/api/companies/${cid}/wht-credits/write-off-candidates`).catch(() => ({ data: null })),
+            // รอบ 243a N1/N2: ผัง 58000–58099 นอกกลุ่ม 580 · ใบปิดปีรุ่นเก่าที่ตัดสูญลงผังหักได้ (ข้อความจากเซิร์ฟเวอร์)
+            API.get(`/api/companies/${cid}/wht-credits/account-warnings`).catch(() => ({ data: null })),
           ]);
+          this._warnings = warnRes?.data;
           this.rows = listRes.data || [];
           this._stranded = strandedRes?.data || [];
+          this._candidates = candRes?.data;
           this.renderSummary(sumRes.data || {});
           this.renderRows();
         } catch (e) { Layout.toast('โหลดข้อมูลไม่สำเร็จ: ' + e.message, 'error'); }
@@ -226,6 +277,8 @@
         document.getElementById('kReceived').textContent = m(s.receivedAmount);
         document.getElementById('kPending').textContent = m(s.pendingAmount);
         document.getElementById('kClaimed').textContent = m(s.claimedAmount);
+        document.getElementById('kWrittenOff').textContent = m(s.writtenOffAmount);
+        document.getElementById('kWrittenOffLbl').textContent = s.writeOffAccountCode ? `ตัดสูญแล้ว (ลงบัญชี ${s.writeOffAccountCode})` : 'ตัดสูญแล้ว';
         document.getElementById('kGl').textContent = m(s.glBalance);
         const diff = Number(s.difference || 0);
         const dEl = document.getElementById('kDiff');
@@ -267,10 +320,42 @@
               (ใบที่ออกหลังจากนี้ระบบเติมให้ถูกและมี guard กันไว้แล้ว)
             </div></div>`;
         }
+        // รอบ 243a: สิ้นรอบ — รายการที่ยังรอใบในรอบบัญชีที่ปิดแล้ว (ตามต่อ: ขอคืนได้ภายใน 3 ปี · หรือตัดสูญ)
+        const cands = this._candidates;
+        if (cands === null) {
+          html += `<div style="background:#f8fafc;border:1px solid #cbd5e1;color:#475569;padding:7px 14px;border-radius:8px;margin-bottom:8px;font-size:12px">
+            โหลดรายการที่ควรพิจารณาตัดสูญไม่สำเร็จ — รีเฟรชหน้าอีกครั้ง</div>`;
+        } else if (cands && cands.length) {
+          const total = cands.reduce((a, r) => a + Number(r.whtAmount || 0), 0);
+          html += `<div style="background:#fff7ed;border:1px solid #fdba74;color:#9a3412;padding:9px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+            📅 <b>${cands.length} รายการ</b> รวม <b>${m(total)}</b> รอบบัญชีสิ้นสุดแล้วแต่ยังไม่ได้หนังสือรับรอง
+            <ul style="margin:6px 0 0 18px;padding:0">${cands.slice(0, 10).map(r =>
+              `<li style="margin-bottom:2px">ปีภาษี ${Number(r.taxYear) + 543} · ${Layout.esc(r.payerName || '—')}${r.documentNumber ? ' · ' + Layout.esc(r.documentNumber) : ''}
+                 · <b>${m(r.whtAmount)}</b> · พ้นสิ้นรอบ ${Number(r.daysSinceYearEnd)} วัน</li>`).join('')}
+              ${cands.length > 10 ? `<li>… และอีก ${cands.length - 10} รายการ</li>` : ''}</ul>
+            <div style="margin-top:5px;color:#334155;background:rgba(255,255,255,.7);border-radius:5px;padding:4px 7px;font-size:11.5px">
+              👉 <b>ต้องเลือก:</b> ทวงต่อ (ได้ใบแล้วยื่นเพิ่มเติม/ขอคืนได้ภายใน 3 ปี) หรือกด <b>ตัดสูญ</b> ที่แถวนั้น (เลือกปีภาษีของรายการ) —
+              ระบบไม่ตัดให้อัตโนมัติ
+            </div></div>`;
+        }
+        const warns = this._warnings;
+        if (warns === null) {
+          html += `<div style="background:#f8fafc;border:1px solid #cbd5e1;color:#475569;padding:7px 14px;border-radius:8px;margin-bottom:8px;font-size:12px">
+            ตรวจผังภาษีเงินได้ไม่สำเร็จ — รีเฟรชหน้าอีกครั้ง</div>`;
+        } else if (warns && warns.length) {
+          for (const w of warns) {
+            html += `<div style="background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;padding:9px 14px;border-radius:8px;margin-bottom:8px;font-size:12.5px">
+              ⚠️ ${Layout.esc(w.message)}
+              <ul style="margin:6px 0 0 18px;padding:0">${(w.items || []).slice(0, 10).map(i => `<li>${Layout.esc(i)}</li>`).join('')}
+                ${(w.items || []).length > 10 ? `<li>… และอีก ${(w.items || []).length - 10} รายการ</li>` : ''}</ul></div>`;
+          }
+        }
         document.getElementById('alertBox').innerHTML = html;
       },
 
-      _badge(st) {
+      _badge(st, r) {
+        if (r && r.writtenOffWithJournal)
+          return `<span class="st" style="background:#fee2e2;color:#991b1b" title="${Layout.esc('ลงบัญชี ' + (r.writeOffJournalNumber || '') + ' · ' + (r.writeOffReason || ''))}">ตัดสูญ · ลงบัญชีแล้ว</span>`;
         const map = {
           Pending:  ['รอใบรับรอง', '#fef3c7', '#92400e'],
           Received: ['ใช้เครดิตได้', '#dcfce7', '#15803d'],
@@ -289,7 +374,7 @@
         }
         tb.innerHTML = this.rows.map(r => `
           <tr>
-            <td>${this._badge(r.status)}</td>
+            <td>${this._badge(r.status, r)}</td>
             <td>${Layout.esc(r.certificateNumber || '—')}</td>
             <td>${r.certificateDate ? Layout.date(r.certificateDate) : '—'}</td>
             <td>${Layout.esc(r.payerName || '—')}<div style="font-size:11px;color:#64748b">${Layout.esc(r.payerTaxId || '')} · ${Layout.esc(r.payerFormType)}</div></td>
@@ -300,8 +385,12 @@
             <td>${r.documentNumber ? Layout.esc(r.documentNumber) : '—'}</td>
             <td style="white-space:nowrap">
               ${r.attachmentId ? `<button class="btn btn-sm btn-secondary" style="margin-right:4px" title="หนังสือรับรอง 50 ทวิ ที่แนบ" onclick="Page.openFile('${String(r.attachmentId).replace(/[^0-9a-fA-F-]/g, '')}')">📎 ดูไฟล์</button>` : ''}
-              ${r.status === 'Claimed' ? '' : `<button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${r.id}')">แก้ไข</button>`}
-              ${r.status === 'Pending' ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
+              ${r.status === 'Claimed' ? ''
+                : r.writtenOffWithJournal
+                  ? `<button class="btn btn-sm btn-secondary" disabled title="ตัดสูญพร้อมรายการบัญชีแล้ว — แก้ไข/ลบไม่ได้ · ได้ใบภายหลังให้กด &quot;ได้รับใบแล้ว&quot;">แก้ไข 🔒</button>
+                     <button class="btn btn-sm btn-primary" style="margin-left:4px" onclick="Page.openLate('${r.id}')">ได้รับใบแล้ว</button>`
+                  : `<button class="btn btn-sm btn-secondary" onclick="Page.openEdit('${r.id}')">แก้ไข</button>`}
+              ${(r.status === 'Pending' || r.status === 'Received') ? `<button class="btn btn-sm btn-danger" style="margin-left:4px" onclick="Page.expire('${r.id}')">ตัดสูญ</button>` : ''}
             </td>
           </tr>`).join('');
       },
@@ -409,14 +498,73 @@
         finally { btn.disabled = false; btn.textContent = 'บันทึก'; }
       },
 
-      async expire(id) {
-        const reason = prompt('เหตุผลที่ตัดรายการนี้ออกจากเครดิต (เช่น ไม่ได้รับใบจนพ้นกำหนด):');
-        if (reason === null) return;
+      /** รอบ 243a: เปิดหน้ายืนยันตัดสูญ — ยอด/ผัง/ผลทางภาษี/เหตุที่ทำไม่ได้ มาจากเซิร์ฟเวอร์ทั้งหมด */
+      async expire(id, date) {
+        const cid = Layout.getCompanyId();
+        this._woId = id;
         try {
-          await API.post(`/api/companies/${Layout.getCompanyId()}/wht-credits/${id}/expire`, { reason: reason.trim() || null });
-          Layout.toast('ตัดรายการแล้ว', 'success');
+          const res = await API.get(`/api/companies/${cid}/wht-credits/${id}/write-off-preview${date ? '?date=' + encodeURIComponent(date) : ''}`);
+          const p = res.data || {};
+          const m = v => Layout.money(v || 0);
+          document.getElementById('woInfo').innerHTML = `
+            <div>ยอดที่ตัดสูญ: <b>${m(p.amount)}</b> บาท (ทั้งรายการ)</div>
+            <div>เดบิต <b>${Layout.esc(p.debitAccountCode)}</b> ${Layout.esc(p.debitAccountName || '')}</div>
+            <div>เครดิต <b>${Layout.esc(p.creditAccountCode)}</b> ${Layout.esc(p.creditAccountName || '')}</div>
+            <div style="margin-top:6px;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 9px;color:#7f1d1d">
+              ผลทางภาษี: ${Layout.esc(p.taxEffect || '')}<br><span style="font-size:11.5px">ยอดที่ไม่ใช่รายจ่ายหักได้ ${m(p.nonDeductibleAmount)} · ${Layout.esc(p.legalReference || '')}</span>
+            </div>
+            ${p.blockedReason ? `<div style="margin-top:6px;background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:6px 9px;color:#92400e">⛔ ${Layout.esc(p.blockedReason)}</div>` : ''}`;
+          document.getElementById('woMin').textContent = String(p.minReasonLength || 10);
+          const d = document.getElementById('woDate');
+          d.value = p.defaultDate ? Layout.dateInput(p.defaultDate) : '';
+          d.onchange = () => this.expire(id, d.value);
+          if (!date) document.getElementById('woReason').value = '';
+          const btn = document.getElementById('woSave');
+          btn.disabled = !!p.blockedReason;
+          btn.title = p.blockedReason || '';
+          Layout.openModal('woModal');
+        } catch (e) { Layout.toast(e.message || 'โหลดข้อมูลตัดสูญไม่สำเร็จ', 'error'); }
+      },
+
+      async confirmWriteOff() {
+        const btn = document.getElementById('woSave');
+        btn.disabled = true;
+        try {
+          const res = await API.post(`/api/companies/${Layout.getCompanyId()}/wht-credits/${this._woId}/expire`, {
+            reason: document.getElementById('woReason').value.trim() || null,
+            writeOffDate: document.getElementById('woDate').value || null,
+          });
+          Layout.closeModal('woModal');
+          Layout.toast(res?.message || 'ตัดสูญแล้ว', 'success');
           await this.load();
         } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
+      },
+
+      openLate(id) {
+        const r = this.rows.find(x => x.id === id); if (!r) return;
+        this._lateId = id;
+        document.getElementById('lateInfo').textContent =
+          `รายการนี้ตัดสูญไว้แล้ว (${r.writeOffJournalNumber || '—'}) — บันทึกใบแล้วระบบจะกลับรายการบัญชีตัดสูญ (ลงวันนี้) และคืนเป็น "ใช้เครดิตได้" · ต้องมีสิทธิ์จัดการใบสำคัญ`;
+        document.getElementById('lateNo').value = '';
+        document.getElementById('lateDate').value = '';
+        Layout.openModal('lateModal');
+      },
+
+      async confirmLate() {
+        const no = document.getElementById('lateNo').value.trim();
+        if (!no) { Layout.toast('กรุณากรอกเลขที่หนังสือรับรอง', 'error'); return; }
+        const btn = document.getElementById('lateSave');
+        btn.disabled = true;
+        try {
+          await API.post(`/api/companies/${Layout.getCompanyId()}/wht-credits/${this._lateId}/mark-received`, {
+            certificateNumber: no, certificateDate: document.getElementById('lateDate').value || null, attachmentId: null,
+          });
+          Layout.closeModal('lateModal');
+          Layout.toast('บันทึกหนังสือรับรองแล้ว — กลับรายการตัดสูญและคืนเครดิตแล้ว', 'success');
+          await this.load();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+        finally { btn.disabled = false; }
       },
     };
     Page.init();

@@ -61,6 +61,12 @@
         <div class="modal-header"><h3 class="modal-title" id="formTitle">เพิ่มผู้ติดต่อ</h3><button class="modal-close" onclick="Layout.closeModal('formModal')">&times;</button></div>
         <div class="modal-body">
           <input type="hidden" id="editId">
+          <!-- รอบ 245 L1: แท็บ — "ช่องทางแจ้งเตือน" เปิดได้เฉพาะผู้ติดต่อที่บันทึกแล้ว (ปลายทางผูกกับ id ของผู้ติดต่อ) -->
+          <div id="contactTabs" style="display:none;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:12px">
+            <button type="button" class="btn btn-sm btn-ghost" id="contactTabGeneral" onclick="Page.showContactTab('general')" style="border-bottom:2px solid #2563eb;border-radius:0">ข้อมูลทั่วไป</button>
+            <button type="button" class="btn btn-sm btn-ghost" id="contactTabNotify" onclick="Page.showContactTab('notify')" style="border-bottom:2px solid transparent;border-radius:0">ช่องทางแจ้งเตือน</button>
+          </div>
+          <div id="contactGeneralPanel">
           <!-- ประเภทผู้ติดต่อ -->
           <div class="form-group">
             <label class="form-label">ประเภทผู้ติดต่อ *</label>
@@ -325,11 +331,15 @@
               <div class="hint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 212305 — ค่าใช้จ่ายค้างจ่ายอื่น (Invoice/Goods Received-Not-Invoiced clearing)</div>
             </div>
           </div>
+          </div><!-- /contactGeneralPanel -->
+          <!-- รอบ 245 L1: แท็บ "ช่องทางแจ้งเตือน" — ทุกสถานะ/ป้าย/ปุ่มที่กดได้มาจากเซิร์ฟเวอร์ (ContactNotifyEndpointsController) · หน้าแสดงอย่างเดียว ·
+               การเปลี่ยนแปลงบันทึกทันทีต่อปุ่ม (ไม่ผูกกับปุ่ม "บันทึก" ของข้อมูลทั่วไป ⇒ ซ่อนปุ่มนั้นในแท็บนี้) -->
+          <div id="contactNotifyPanel" style="display:none"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
           <button class="btn btn-secondary" id="contactHistoryBtn" onclick="Page.showHistory()" style="display:none" title="ดูประวัติการแก้ไขผู้ติดต่อรายนี้">📜 ประวัติ</button>
-          <button class="btn btn-primary" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
+          <button class="btn btn-primary" id="contactSaveBtn" onclick="Page.save()" data-i18n="common.save">บันทึก</button>
         </div>
       </div>
     </div>
@@ -817,6 +827,11 @@
       openCreate() {
         document.getElementById('formTitle').textContent = 'เพิ่มผู้ติดต่อ';
         document.getElementById('editId').value = '';
+        // รอบ 245 L1: ผู้ติดต่อใหม่ยังไม่มี id ⇒ ซ่อนแท็บช่องทางแจ้งเตือน + ล้างของรายก่อน (ห้ามค้างค่า)
+        this._notify = null;
+        document.getElementById('contactNotifyPanel').innerHTML = '';
+        document.getElementById('contactTabs').style.display = 'none';
+        this.showContactTab('general');
         this._allFieldIds.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
         const cl = document.getElementById('fCreditLimit'); if (cl) cl.value = '';
         const ch = document.getElementById('creditLimitHint'); if (ch) ch.textContent = '';
@@ -906,6 +921,11 @@
         const c = this._cache[id]; if (!c) return;
         document.getElementById('formTitle').textContent = 'แก้ไขผู้ติดต่อ';
         document.getElementById('editId').value = c.id;
+        // รอบ 245 L1: แท็บช่องทางแจ้งเตือน — เปิดที่ข้อมูลทั่วไปเสมอ · ล้างผลของรายก่อน (โหลดใหม่เมื่อกดแท็บ)
+        this._notify = null;
+        document.getElementById('contactNotifyPanel').innerHTML = '';
+        document.getElementById('contactTabs').style.display = 'flex';
+        this.showContactTab('general');
         const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = '';
         // ห้ามเทียบตรง ๆ: API ส่ง "JuristicPerson" แต่ <option value="2">
         // ⇒ เดิม select ว่างทุกครั้งที่เปิดแก้ไข (ผู้ใช้เห็นเป็นช่องเปล่า)
@@ -1155,6 +1175,135 @@
             } catch (_) { /* opener gone — leave tab open */ }
           }
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      // ═══ รอบ 245 L1: แท็บ "ช่องทางแจ้งเตือน" — เซิร์ฟเวอร์คำนวณสถานะ/ป้าย/ปุ่มที่กดได้ · หน้าแสดง + ส่งคำสั่ง แล้ววาดจากคำตอบ ═══
+      _notify: null,
+      _notifyUrl(suffix) {
+        const cid = Layout.getCompanyId();
+        const id = document.getElementById('editId').value;
+        return `/api/companies/${encodeURIComponent(cid)}/contacts/${encodeURIComponent(id)}/notify-endpoints${suffix || ''}`;
+      },
+      showContactTab(tab) {
+        const notify = tab === 'notify' && !!document.getElementById('editId').value;
+        document.getElementById('contactGeneralPanel').style.display = notify ? 'none' : '';
+        document.getElementById('contactNotifyPanel').style.display = notify ? '' : 'none';
+        document.getElementById('contactTabGeneral').style.borderBottomColor = notify ? 'transparent' : '#2563eb';
+        document.getElementById('contactTabNotify').style.borderBottomColor = notify ? '#2563eb' : 'transparent';
+        const save = document.getElementById('contactSaveBtn'); if (save) save.style.display = notify ? 'none' : '';
+        if (notify) this.loadNotify();
+      },
+      async loadNotify() {
+        const panel = document.getElementById('contactNotifyPanel');
+        panel.innerHTML = '<div style="color:#64748b;font-size:13px">กำลังโหลด…</div>';
+        try {
+          const res = await API.get(this._notifyUrl());
+          if (!res || !res.success) { panel.innerHTML = `<div class="text-red" style="font-size:13px">${Layout.esc(res?.message || 'โหลดช่องทางแจ้งเตือนไม่สำเร็จ')}</div>`; return; }
+          this._renderNotify(res.data);
+        } catch (e) { panel.innerHTML = `<div class="text-red" style="font-size:13px">${Layout.esc(e.message)}</div>`; }
+      },
+      _renderNotify(o) {
+        this._notify = o;
+        const esc = Layout.esc;
+        const panel = document.getElementById('contactNotifyPanel');
+        const color = (ep) => ep.usable ? '#16a34a' : (ep.statusCode === 'unlinked' ? '#94a3b8' : '#dc2626');
+        const row = (ep) => {
+          const key = ep.id || 'primary';
+          const topicBoxes = (o.topics || []).map(t => `<label style="display:inline-flex;align-items:center;gap:3px;margin-right:10px;font-size:12px">
+              <input type="checkbox" data-ep="${esc(key)}" data-topic="${esc(t.key)}" ${(ep.topics || []).includes(t.key) ? 'checked' : ''} ${ep.canEditTopics ? '' : 'disabled'}
+                onchange="Page.onNotifyTopic(this)"> ${esc(t.label)}</label>`).join('');
+          const amounts = ep.showAmountsApplies
+            ? `<label style="font-size:12px;margin-left:6px"><input type="checkbox" data-ep="${esc(key)}" ${ep.showAmounts ? 'checked' : ''} ${ep.canEditTopics ? '' : 'disabled'} onchange="Page.onNotifyShowAmounts(this)"> แสดงยอดเงินในกลุ่ม</label>` : '';
+          const actions = [
+            ep.canEditLabel ? `<button type="button" class="btn btn-sm btn-ghost" data-ep="${esc(key)}" onclick="Page.editNotifyLabel(this)">ตั้งป้าย</button>` : '',
+            ep.canUnlink ? `<button type="button" class="btn btn-sm btn-ghost text-red" data-ep="${esc(key)}" onclick="Page.unlinkNotify(this)">ยกเลิก</button>` : '',
+          ].join(' ');
+          return `<div style="border:1px solid #e2e8f0;border-radius:6px;padding:8px 10px;margin-bottom:8px;${ep.statusCode === 'unlinked' ? 'opacity:.6' : ''}">
+            <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">
+              <div><span style="color:${color(ep)}">●</span> <b>${esc(ep.display)}</b>
+                ${ep.isPrimary ? '<span style="font-size:11px;color:#2563eb">★ อีเมลหลัก</span>' : (ep.label ? `<span style="font-size:12px;color:#64748b">"${esc(ep.label)}"</span>` : '')}
+                <span style="font-size:11px;color:#64748b">· ${esc(ep.kindLabel)} · ${esc(ep.statusLabel)}${ep.oaLabel ? ' · ' + esc(ep.oaLabel) : ''}</span></div>
+              <div>${actions}</div>
+            </div>
+            ${ep.statusReason ? `<div style="font-size:12px;color:#b45309;margin-top:2px">${esc(ep.statusReason)}</div>` : ''}
+            <div style="margin-top:4px">${topicBoxes}${amounts}</div>
+            <div style="font-size:11px;color:#64748b;margin-top:2px">ฐาน/ความยินยอม: ${esc(ep.consentLabel)} · ที่มา: ${esc(ep.sourceLabel)}${ep.unlinkedAt ? ' · ยกเลิกเมื่อ ' + esc(new Date(ep.unlinkedAt).toLocaleDateString('th-TH')) : ''}</div>
+          </div>`;
+        };
+        const byKind = (k) => (o.endpoints || []).filter(e => e.kind === k);
+        const emails = byKind('Email');
+        const lines = (o.endpoints || []).filter(e => e.kind !== 'Email');
+        const soon = (o.comingSoon || []).map(s => `<div style="margin-bottom:6px"><button type="button" class="btn btn-sm btn-secondary" disabled title="${esc(s.reason)}">${esc(s.label)} — เร็ว ๆ นี้</button>
+            <div style="font-size:11px;color:#64748b;margin-top:2px">${esc(s.reason)}</div></div>`).join('');
+        const topicOpts = (o.topics || []).map(t => `<option value="${esc(t.key)}">${esc(t.label)}</option>`).join('');
+        panel.innerHTML = `
+          <div style="background:#fef3c7;border-left:4px solid #f59e0b;padding:8px 10px;font-size:12px;margin-bottom:10px">${esc(o.note)}</div>
+          <div style="font-weight:600;margin:6px 0">อีเมล</div>
+          ${emails.map(row).join('')}
+          ${o.canEdit ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+            <input type="email" class="form-input" id="notifyNewEmail" placeholder="อีเมลเพิ่มเติม เช่น ap@customer.co.th" style="flex:2;min-width:200px">
+            <input type="text" class="form-input" id="notifyNewLabel" placeholder="ป้าย (ไม่บังคับ) เช่น ฝ่ายบัญชี" maxlength="100" style="flex:1;min-width:140px">
+            <button type="button" class="btn btn-sm btn-primary" onclick="Page.addNotifyEmail()">+ เพิ่มอีเมล</button>
+          </div>` : `<div style="font-size:12px;color:#64748b;margin-bottom:12px">🔒 ${esc(o.readOnlyReason || 'ดูได้อย่างเดียว')}</div>`}
+          <div style="font-weight:600;margin:6px 0">LINE</div>
+          ${lines.length ? lines.map(row).join('') : '<div style="font-size:12px;color:#64748b;margin-bottom:6px">ยังไม่มีปลายทาง LINE</div>'}
+          ${soon}
+          <div style="font-weight:600;margin:12px 0 6px">ดูว่าใครจะได้รับ (เมื่อเส้นส่งต่อสาย L2)</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <select class="form-input" id="notifyPreviewTopic" style="max-width:220px">${topicOpts}</select>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="Page.previewNotifyRecipients()">ตรวจ</button>
+          </div>
+          <div id="notifyPreviewOut" style="font-size:12px;margin-top:6px"></div>`;
+      },
+      _notifyEndpoint(key) {
+        return (this._notify?.endpoints || []).find(e => (e.id || 'primary') === key);
+      },
+      async _notifySend(method, suffix, body, okMsg) {
+        try {
+          const res = method === 'POST' ? await API.post(this._notifyUrl(suffix), body)
+            : method === 'PUT' ? await API.put(this._notifyUrl(suffix), body)
+            : await API.del(this._notifyUrl(suffix));
+          if (!res || !res.success) { Layout.toast(res?.message || 'บันทึกไม่สำเร็จ', 'error'); await this.loadNotify(); return; }
+          this._renderNotify(res.data);
+          if (okMsg) Layout.toast(res.message || okMsg);
+        } catch (e) { Layout.toast(e.message, 'error'); await this.loadNotify(); }
+      },
+      async addNotifyEmail() {
+        const email = (document.getElementById('notifyNewEmail').value || '').trim();
+        const label = (document.getElementById('notifyNewLabel').value || '').trim();
+        if (!email) { Layout.toast('กรอกอีเมลก่อน', 'error'); return; }
+        await this._notifySend('POST', '/email', { email, label: label || null, topics: null }, 'เพิ่มอีเมลแล้ว');
+      },
+      async onNotifyTopic(el) {
+        const key = el.dataset.ep;
+        const boxes = document.querySelectorAll(`#contactNotifyPanel input[data-topic][data-ep="${CSS.escape(key)}"]`);
+        const topics = Array.from(boxes).filter(b => b.checked).map(b => b.dataset.topic);
+        if (key === 'primary') await this._notifySend('PUT', '/primary', { topics }, 'บันทึกแล้ว');
+        else await this._notifySend('PUT', '/' + encodeURIComponent(key), { label: null, topics, showAmounts: null }, 'บันทึกแล้ว');
+      },
+      async onNotifyShowAmounts(el) {
+        await this._notifySend('PUT', '/' + encodeURIComponent(el.dataset.ep), { label: null, topics: null, showAmounts: !!el.checked }, 'บันทึกแล้ว');
+      },
+      async editNotifyLabel(el) {
+        const ep = this._notifyEndpoint(el.dataset.ep); if (!ep) return;
+        const v = prompt('ป้ายของปลายทาง (เว้นว่าง = ล้างป้าย)', ep.label || '');
+        if (v === null) return;
+        await this._notifySend('PUT', '/' + encodeURIComponent(el.dataset.ep), { label: v.trim(), topics: null, showAmounts: null }, 'บันทึกแล้ว');
+      },
+      async unlinkNotify(el) {
+        const ep = this._notifyEndpoint(el.dataset.ep); if (!ep) return;
+        if (!confirm(`ยกเลิกปลายทาง "${ep.display}"? (ยกเลิกแล้วแก้กลับไม่ได้ — เพิ่มใหม่ได้)`)) return;
+        await this._notifySend('DELETE', '/' + encodeURIComponent(el.dataset.ep), null, 'ยกเลิกแล้ว');
+      },
+      async previewNotifyRecipients() {
+        const topic = document.getElementById('notifyPreviewTopic').value;
+        const out = document.getElementById('notifyPreviewOut');
+        try {
+          const res = await API.get(this._notifyUrl('/recipients?topic=' + encodeURIComponent(topic)));
+          if (!res || !res.success) { out.innerHTML = `<span class="text-red">${Layout.esc(res?.message || 'ตรวจไม่สำเร็จ')}</span>`; return; }
+          const d = res.data;
+          out.innerHTML = `<div><b>${Layout.esc(d.topicLabel)}</b> — เมื่อเส้นส่งต่อสาย (L2) จะส่งถึง: ${d.emails.length ? d.emails.map(x => Layout.esc(x)).join(', ') : '<span class="text-red">ไม่มีผู้รับ</span>'}</div>`
+            + d.options.filter(x => !x.available).map(x => `<div style="color:#64748b">✕ ${Layout.esc(x.display)} (${Layout.esc(x.kindLabel)}) — ${Layout.esc(x.reason || '')}</div>`).join('');
+        } catch (e) { out.innerHTML = `<span class="text-red">${Layout.esc(e.message)}</span>`; }
       },
       async deleteContact(id) {
         if (!confirm('ต้องการลบผู้ติดต่อนี้? (หากมีเอกสารอ้างอิง จะปิดการใช้งานแทน)')) return;

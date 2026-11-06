@@ -60,7 +60,8 @@ public partial class PdfGenerationService
         IReadOnlyList<DocumentSigner>? signers = null, GlPostingSummary? gl = null,
         bool showFreeTierCredit = false,
         bool pdfA = false, string? pdfTitle = null, string? pdfAuthor = null,
-        bool requirePhoR06 = true)
+        bool requirePhoR06 = true,
+        Accounting.Helpers.PaymentQrBlock? paymentQr = null)
     {
         // สิทธิ์ §86/6 ของผู้ออก — ตัวตัดสินตัวเดียวกับ HTML renderer (ห้าม drift) · ใบที่ออกเลขแล้ว ⇒ หัวตามบทบาทที่ตรึงไว้
         // (ฝ่ายค้าน C-2 รอบ 199 — พิมพ์ซ้ำใบ REC เก่าต้องไม่กลายเป็น "ใบกำกับภาษีอย่างย่อ")
@@ -208,7 +209,7 @@ public partial class PdfGenerationService
                         // รายการสินค้า + ยอดรวม/VAT/สุทธิ = รายการบังคับ §86/4 (D5) — ไม่ห่อ Safe: ล้มแล้วต้องไม่ได้เอกสารที่ไม่มีตาราง/ไม่มียอด
                         ComposeItemsTable(col, doc, template, headerBg, headerText, stripe, L, layout, accent);
                         ComposeSummary(col, doc, template, accent, layout, L);
-                        Safe(() => ComposeFooter(col, doc, template, accent, L, issuer));
+                        Safe(() => ComposeFooter(col, doc, template, accent, L, issuer, paymentQr));
                         Safe(() => ComposeSignatures(col, template, b, signers, lang));
                         Safe(() => ComposeQuotationAcceptanceBlock(col, template, signers, lang));   // รอบ 239 — คู่กับ HTML QuotationAcceptanceBlockHtml
                         Safe(() => ComposeGlPosting(col, gl, lang, L));
@@ -300,7 +301,7 @@ public partial class PdfGenerationService
                 // เส้นสำรองสุดท้ายก็ต้องพิมพ์เครดิตด้วย ไม่งั้นบัญชีฟรีจะหลุด
                 // เครดิตไปเงียบ ๆ เฉพาะตอน composition พัง
                 var html = BuildDocumentHtml(doc, company, settings, template, watermarkOverride, langOverride,
-                    showFreeTierCredit: showFreeTierCredit, requirePhoR06: requirePhoR06);
+                    showFreeTierCredit: showFreeTierCredit, requirePhoR06: requirePhoR06, paymentQr: paymentQr);
                 return ConvertHtmlToPdf(html, template, b);
             }
         }
@@ -997,7 +998,7 @@ public partial class PdfGenerationService
     }
 
     private static void ComposeFooter(ColumnDescriptor col, EntDoc doc, EntTemplate t, string accent, Accounting.Services.Implementations.Pdf.DocumentLabels L,
-        Accounting.Helpers.IssuerIdentity? issuer = null)
+        Accounting.Helpers.IssuerIdentity? issuer = null, Accounting.Helpers.PaymentQrBlock? paymentQr = null)
     {
         // CertificateInLieu — เอกสารใบรับรองการจ่ายเงินแทนใบเสร็จ
         // (กรณีจ่ายให้คนไม่จด VAT / ไม่ออกใบเสร็จ) มี metadata block
@@ -1052,6 +1053,8 @@ public partial class PdfGenerationService
                 tt.Span(L.PaymentInfo + ": ").Bold().FontSize(10);
                 tt.Span(bankTxt!).FontSize(10);
             });
+        // รอบ 246 QR: QR ชำระเงินถัดจากข้อมูลบัญชี — คู่กับ HTML BuildDocumentHtml → PaymentQrHtml (ข้อความ/ลำดับเดียวกัน)
+        ComposePaymentQr(col, paymentQr, L);
 
         // เงื่อนไขการชำระเงินของใบนี้ — mirror ของ HTML renderer (เดิม
         // ShowPaymentTerms ไม่ถูก render ที่ไหนเลยทั้งสองตัว) เพื่อให้ draft

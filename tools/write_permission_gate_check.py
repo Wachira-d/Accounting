@@ -140,6 +140,11 @@ WATCHED = [
     # รอบ 218 — ค่าตั้งการชำระล่วงหน้าของการจอง + ยืนยัน/ปฏิเสธสลิป (ยืนยัน = เงินเข้า + ใบรับมัดจำ) · ใส่ตอนเขียวตั้งแต่ไฟล์เกิด ·
     # ฝั่งลูกค้า (AllowAnonymous · สิทธิ์ = โทเคน) แยกไฟล์ CmsBookingPaymentPublicController.cs แบบ LodgingPublicController (ไม่อยู่ในลิสต์นี้)
     "Accounting/Controllers/CmsBookingPaymentController.cs",
+    # รอบ 241 — ค่าตั้งส่งเอกสารอัตโนมัติ (ส่งอีเมลในนามบริษัท · เปิดช่องรับเงิน) + ลิงก์ชำระต่อเอกสาร + ลองงานหลังรับชำระใหม่
+    "Accounting/Controllers/DocumentAutoSendController.cs",
+    # รอบ 245 L1 — ปลายทางแจ้งเตือนของผู้ติดต่อ (อีเมล/LINE ที่เอกสาร·ทวงชำระ·ใบเสร็จจะไปถึง = ข้อมูลส่วนบุคคล + ช่องทางส่งข้อมูลธุรกิจ) ·
+    # ด่าน Contact.Edit ทุก write (DenyKeyAsync → HasPermissionAsync) · ใส่ตอนเขียวตั้งแต่ไฟล์เกิด (ratchet)
+    "Accounting/Controllers/ContactNotifyEndpointsController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว
@@ -240,6 +245,8 @@ READ_ONLY_POSTS_IN_FILE = {
     ("DocumentTemplateController.cs", "PreviewHtmlDraft"),
     ("DocumentTemplateController.cs", "GenerateWhtPdf"),
     ("DocumentTemplateController.cs", "GenerateReceiptPdf"),
+    # รอบ 246 QR: ตรวจบัญชี QR ของเทมเพลตจากฟอร์มที่ยังไม่บันทึก — BuildTransient + PaymentQrService.DiagnoseTemplateAsync ไม่มี SaveChanges (ตรวจด้วยตาตอนเพิ่ม)
+    ("DocumentTemplateController.cs", "PaymentQrCheck"),
     # รอบ 204: พรีวิวผู้จ่ายออกภาษีแทน — pure (WhtGrossUp) ไม่แตะ _db/_whtService (ตรวจด้วยตาตอนเพิ่ม)
     ("WithholdingTaxCertController.cs", "GrossUpPreview"),
     # รอบ 210: แขกค้นการจอง/คำสั่งซื้อด้วยเลขที่ + เบอร์/อีเมล — อ่านอย่างเดียว (StorefrontCustomerService.Lookup.cs ไม่มี SaveChanges ·

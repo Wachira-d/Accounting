@@ -299,8 +299,42 @@ public class EtaxController : ControllerBase
         var log = await _docEmailService.SendEtaxByEmailAsync(companyId, etaxId, request, actor);
         var dto = MapLog(log);
         return log.Status == EmailLogStatus.Sent
-            ? Ok(new ApiResponse<DocumentEmailLogResponse>(true, dto, "ส่งอีเมลสำเร็จ"))
+            ? Ok(new ApiResponse<DocumentEmailLogResponse>(true, dto, log.IncludedRdTimestamp
+                ? "ส่ง e-Tax by Email แล้ว (รอประทับเวลา) — เมื่อได้อีเมลที่ ETDA ประทับเวลาส่งกลับ ให้กด “บันทึกการประทับเวลา”"
+                : "ส่งเข้าสภาพแวดล้อมทดสอบของ ETDA แล้ว (โหมดทดสอบ — ไม่ถูกประทับเวลาจริง)"))
             : Ok(new ApiResponse<DocumentEmailLogResponse>(false, dto, log.ErrorMessage ?? "ส่งอีเมลไม่สำเร็จ"));
+    }
+
+    /// <summary>รอบ 244: ตัวอย่างอีเมล e-Tax by Email ของแถวนี้ตามที่เซิร์ฟเวอร์จะส่ง (หัวเรื่องตามกรมสรรพากร · To/CC · ผู้ส่ง · เหตุที่ส่งไม่ได้ · คำเตือน · ขั้น)</summary>
+    [HttpGet("{etaxId:guid}/email-preview")]
+    public async Task<ActionResult<ApiResponse<EtaxEmailPreviewResponse>>> EmailPreview(Guid companyId, Guid etaxId)
+    {
+        var documentId = await _db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.Id == etaxId && e.CompanyId == companyId)
+            .Select(e => (Guid?)e.DocumentId).FirstOrDefaultAsync();
+        if (documentId is not Guid docId) return NotFound(new ApiResponse<EtaxEmailPreviewResponse>(false, null, "ไม่พบ e-Tax Invoice"));
+        return Ok(new ApiResponse<EtaxEmailPreviewResponse>(true, await _docEmailService.PreviewEtaxEmailAsync(companyId, docId)));
+    }
+
+    /// <summary>รอบ 244 (E7): บันทึกใบ/อีเมลที่ ETDA ประทับเวลาแล้วส่งกลับ — ไฟล์เดินด่านไฟล์แนบตัวเดียว (อ่านไฟล์ของเอกสารของแถวนี้) ก่อนถึง service ·
+    /// ผู้ใช้ยืนยัน (ระบบไม่ได้ตรวจกับ ETDA เอง) · แยก "ส่งแล้ว (รอประทับเวลา)" ออกจาก "ประทับเวลาแล้ว"</summary>
+    [HttpPost("{etaxId:guid}/etda-stamp")]
+    public async Task<ActionResult<ApiResponse<EtaxInvoiceResponse>>> RecordEtdaStamp(Guid companyId, Guid etaxId,
+        [FromBody] RecordEtdaStampRequest request, [FromServices] IAttachmentAccessGate gate)
+    {
+        if (await RequireEtaxAsync(companyId, PermissionKeys.EtaxSubmit, "บันทึกการประทับเวลา e-Tax") is { } d) return d;
+        var documentId = await _db.EtaxInvoices.AsNoTracking()
+            .Where(e => e.Id == etaxId && e.CompanyId == companyId)
+            .Select(e => (Guid?)e.DocumentId).FirstOrDefaultAsync();
+        if (documentId is not Guid docId) return NotFound(new ApiResponse<EtaxInvoiceResponse>(false, null, "ไม่พบ e-Tax Invoice"));
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        var deny = await gate.DenyAttachmentAsync(companyId, userId, "Document", docId, AttachmentAccess.Read,
+            "ใช้ไฟล์แนบเป็นหลักฐานการประทับเวลา e-Tax", request.EvidenceAttachmentId);
+        if (deny != null) return StatusCode(deny.Status, new ApiResponse<EtaxInvoiceResponse>(false, null, deny.Message));
+        var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
+        await _docEmailService.RecordEtdaStampAsync(companyId, etaxId, request, userId, actor);
+        return Ok(new ApiResponse<EtaxInvoiceResponse>(true, await _etaxService.GetByIdAsync(companyId, etaxId),
+            "บันทึกการประทับเวลาแล้ว (ผู้ใช้ยืนยันจากใบที่ ETDA ส่งกลับ — ระบบไม่ได้ตรวจกับ ETDA เอง)"));
     }
 
     /// <summary>ประวัติการส่งอีเมลของ e-Tax</summary>
@@ -329,6 +363,12 @@ public class EtaxController : ControllerBase
     {
         if (await RequireEtaxAsync(companyId, PermissionKeys.CompanySettingsEdit, "แก้ไขการตั้งค่า e-Tax") is { } d) return d;
         var s = await GetOrCreateSettings(companyId);
+        // รอบ 244 (คำตัดสิน 244-1 · R2 กรมสรรพากรให้ใช้ได้ระบบเดียว): ห้ามเลือก "ทั้งสองระบบ" ใหม่ · ค่าเดิมที่เก็บไว้คงได้ (ระบบไม่รู้ว่าบริษัทได้รับอนุมัติระบบไหน)
+        // แต่หน้าตั้งค่า/ตัวอย่างอีเมลเตือนทุกครั้ง (EtaxByEmailFormat.ModeWarning)
+        if (req.Mode == EtaxMode.Both && s.EtaxMode != EtaxMode.Both)
+            throw new BusinessRuleException(
+                "กรมสรรพากรให้ใช้ e-Tax ได้ระบบเดียว — เลือก “e-Tax by Email” (รายได้ไม่เกิน 30 ล้านบาท/ปี) หรือ “e-Tax Invoice & e-Receipt” แบบเต็มให้ตรงกับที่ได้รับอนุมัติ",
+                "ETAX-MODE-ONE-SYSTEM");
         if (req.Mode.HasValue) s.EtaxMode = req.Mode.Value;
         if (req.Enabled.HasValue) s.EtaxEnabled = req.Enabled.Value;
         if (req.TestMode.HasValue) s.EtaxTestMode = req.TestMode.Value;
@@ -338,10 +378,10 @@ public class EtaxController : ControllerBase
         if (req.ByEmailRegistrationDate.HasValue) s.EtaxByEmailRegistrationDate = req.ByEmailRegistrationDate;
         if (req.ByEmailRegistrationNumber != null) s.EtaxByEmailRegistrationNumber = req.ByEmailRegistrationNumber;
         if (req.ByEmailSenderEmail != null) s.EtaxByEmailSenderEmail = req.ByEmailSenderEmail;
-        // RD timestamp address is fixed by ETDA — never allow user override
-        if (req.ByEmailEmbedXml.HasValue) s.EtaxByEmailEmbedXml = req.ByEmailEmbedXml.Value;
-        if (req.ByEmailAutoSendOnApprove.HasValue) s.EtaxByEmailAutoSendOnApprove = req.ByEmailAutoSendOnApprove.Value;
+        // ที่อยู่ประทับเวลาเป็นของ ETDA (คำนวณจากโหมดทดสอบ) — ผู้ใช้ตั้งเองไม่ได้ · ค่าฝัง XML/ส่งอัตโนมัติตอนอนุมัติถูกลบ (คำตัดสิน 244-4)
         if (req.ServiceProvider != null) s.EtaxServiceProvider = req.ServiceProvider;
+        // ฝ่ายค้าน B1: ทดสอบ e-Tax by Email แยกจาก TestMode ของระบบเต็ม (ผู้อ่าน: DocumentEmailService.SendEtaxByEmailAsync/PreviewEtaxEmailAsync)
+        if (req.ByEmailUseUat.HasValue) s.EtaxByEmailUseUat = req.ByEmailUseUat.Value;
         s.UpdatedAt = DateTime.UtcNow;
 
         await _db.SaveChangesAsync();
@@ -369,12 +409,18 @@ public class EtaxController : ControllerBase
         ByEmailRegistrationDate: s.EtaxByEmailRegistrationDate,
         ByEmailRegistrationNumber: s.EtaxByEmailRegistrationNumber,
         ByEmailSenderEmail: s.EtaxByEmailSenderEmail,
-        ByEmailRdTimestampAddress: s.EtaxByEmailRdTimestampAddress,
-        ByEmailEmbedXml: s.EtaxByEmailEmbedXml,
-        ByEmailAutoSendOnApprove: s.EtaxByEmailAutoSendOnApprove,
+        ByEmailRdTimestampAddress: EtaxByEmailFormat.TimestampAddress(s.EtaxByEmailUseUat),
         DirectCertificateInstalled: !string.IsNullOrEmpty(s.EtaxCertificatePath) && System.IO.File.Exists(s.EtaxCertificatePath),
         DirectApiCredentialsSet: !string.IsNullOrEmpty(s.EtaxRdApiKey) && !string.IsNullOrEmpty(s.EtaxRdApiSecret),
-        ServiceProvider: s.EtaxServiceProvider);
+        ServiceProvider: s.EtaxServiceProvider,
+        Warnings: new[] { EtaxByEmailFormat.ModeWarning(s.EtaxMode),
+                (s.EtaxMode is EtaxMode.ByEmail or EtaxMode.Both) ? EtaxByEmailFormat.UatWarning(s.EtaxByEmailUseUat) : null,
+                // ด่านผู้ส่งตัวเดียวกับตอนส่ง (ไม่ใช่สำเนาใน JS) — บอกล่วงหน้าว่าส่งได้หรือยัง
+                (s.EtaxMode is EtaxMode.ByEmail or EtaxMode.Both)
+                    ? EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(s, Accounting.Services.Implementations.Email.EmailSenderFactory.HasTenantSender(s)))
+                    : null }
+            .Where(w => w != null).Select(w => w!).ToList(),
+        ByEmailUseUat: s.EtaxByEmailUseUat);
 
     private static DocumentEmailLogResponse MapLog(Models.Entities.DocumentEmailLog l) => new(
         Id: l.Id,

@@ -282,6 +282,29 @@ public class OcrReplayLineGoldenTests
         Assert.Equal("false", Val("makro-p1p2-no-row-codes-synthetic", "PricesIncludeVat"));
     }
 
+    [Fact]
+    public void รอบ242_ซูเปอร์มาร์เก็ต_รายการขาด16แถว_ตารางภพอัตรานำหน้าชนะ_ยกเว้น1502_25_มีVAT428_97_VAT30_03_รวม1961_25()
+    {
+        // เจ้าของ 2026-11-06: ก่อนแก้ 5 บรรทัด 7% (Σ 301.45) + [Σ-GAP] "Σ บรรทัด 301.45 น้อยกว่ายอดก่อน VAT 1,961.25" — ตาราง ภ.พ. "0.00% … / 7.00% …" ไม่มีรหัส
+        // ⇒ ReadGroups ไม่เห็น ⇒ ไม่มีตารางให้ชนะ · หลังแก้: ตารางอัตรานำหน้าอ่านได้ (Σ 1,502.25 + 428.97 + 30.03 = 1,961.25 = ยอดรวมที่ยึด) ⇒ บรรทัดสรุปต่ออัตรา ·
+        // แถว 0% ไม่มีป้ายบอกยกเว้น/อัตราศูนย์ ⇒ ค่าตั้งต้น "ยกเว้น" (−1 · OcrVatCodeMeaning ความมั่นใจ 0.50 — ชุดกระดาษไม่มีคำตอบ AI) · VAT ของแถว = 0 ทั้งสองแบบ
+        // ⚠️ ตัวเลขคิดมือจากกระดาษ (ไม่มี SDK ในเครื่อง 2026-11-06) — แถวที่ล้มใน CI ต้องอธิบาย ไม่ใช่แก้เลข
+        const string P = "supermarket-rate-table-items-missing";
+        Assert.Equal("VatGroupsInsteadOfItems", Val("supermarket-rate-table-items-missing", "LineMode"));
+        Assert.Null(Val(P, "ReconCase"));
+        Assert.Equal("false", Val(P, "PricesIncludeVat"));
+        Assert.Equal("1502.25|-1|0.00|1502.25|0|0.00|0.00;428.97|7|30.03|428.97|0|0.00|0.00", Val(P, "Lines"));
+        Assert.Equal("ok", Val(P, "IntegrityGaps"));
+        Assert.Equal("0.00", Val(P, "RoundingAdjustment"));
+        // ยอดรวมทั้งสิ้นยืนยันสามชั้นอิสระบนสามบรรทัดต่างกัน (ป้าย "รวมทั้งสิ้น" · แถวชำระ "บัตรเครดิต" · ตาราง ภ.พ. VatSummaryTotal) = Strong และ engine อ่านยอดเดียวกัน ·
+        // ไม่มีผู้สมัคร Strong ตัวอื่น (1,502.25/1,931.22 ไม่มีป้าย/แถวชำระ) ⇒ OcrTotalAnchor.Find สาขา "engine อ่านถูกอยู่แล้ว" = Confirmed (ไล่โค้ด ไม่ใช่เดา) ·
+        // ช่องยอดก่อน VAT ของหัวสแกน (1,961.25 = ยอดรวม) ⇒ ยอดรวม − VAT ที่พิมพ์ = 1,931.22 (Rule 0.80 — ตารางไม่มีแถว "รวม" พิมพ์ฐาน · ฝ่ายค้าน S2)
+        Assert.Equal("Confirmed", Val(P, "AnchorVerdict"));
+        Assert.Equal("1961.25", Val(P, "AnchorTotal"));
+        Assert.Equal("1931.22", Val(P, "NetSubTotal"));
+        Assert.Equal("1931.22", Val(P, "PlannedHeaderSubTotal"));
+    }
+
     [Theory]
     [InlineData("makro-page2-discount-rows-only", "52120|-")]
     [InlineData("makro-page2-discount-rows-mixed-accounts", "52120|-|mixed")]
@@ -592,7 +615,10 @@ public class OcrReplayLineGoldenTests
             // ทีม OCR 10 (สองใบจริงข้างบนด้วยข้อความ PDF ตามพิกัด)
             "pea-electricity-bill-0869-positional", "pramie-re111-positional",
             // 2026-10-19 บิล กปภ. (รอบบิลล้วนบนบิลสาธารณูปโภค = มิเตอร์)
-            "pwa-water-bill-we1105-positional" };
+            "pwa-water-bill-we1105-positional",
+            // รอบ 242: สินค้าชั่งน้ำหนัก 1.112 × 129.00 = 143.448 แต่กระดาษพิมพ์ 143.50 (น้ำหนักจริงมีทศนิยมมากกว่าที่พิมพ์) — การกระทำของตัวกันยังไม่ล็อก
+            // (ไม่มี SDK ในเครื่อง) · ไม่กระทบคำตอบของใบนี้: ตาราง ภ.พ. ชนะแทนรายการทั้งชุด (เทสต์ รอบ242_… ล็อกบรรทัดสรุป)
+            "supermarket-rate-table-items-missing" };
         var all = OcrReplayHarness.Run();
         foreach (var a in all.Where(a => a.Field == "LineQtyGuard" && !added.Contains(a.Paper)))
             foreach (var row in a.Value!.Split(';'))

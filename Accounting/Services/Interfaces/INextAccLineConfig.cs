@@ -9,4 +9,8 @@ namespace Accounting.Services.Interfaces;
 public interface INextAccLineConfig
 {
     Task<NextAccLineSettings> GetAsync(CancellationToken ct = default);
+
+    /// <summary>รอบ 245 L1 (ฝ่ายค้าน S2 · Q1(b)): groupId กลางของระบบจาก<b>ทั้งสองแหล่ง</b> (หน้าแอดมิน + config) — ใช้กันไม่ให้เป็นปลายทางของผู้ติดต่อ
+    /// (<see cref="NextAccLineConfigRule.PlatformGroupIds"/>)</summary>
+    Task<IReadOnlyList<string>> PlatformGroupIdsAsync(CancellationToken ct = default);
 }

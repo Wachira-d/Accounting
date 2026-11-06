@@ -99,6 +99,15 @@ public class VoidReissueR200ITests
 
     // ═════════════ V1H-O2: แถว Signed ที่ส่ง e-Tax by Email ประทับเวลาแล้ว = ถึงกรมสรรพากร ═════════════
 
+    // รอบ 244 (ฝ่ายค้าน B2 · คำตัดสิน 244-6): ส่งพร้อม CC production สำเร็จ = ตอบรับ (เหมือนเดิม) ไม่ว่าจะบันทึกการประทับหรือยัง — ป้าย "รอประทับเวลา" แสดงผลเท่านั้น
+    [Fact]
+    public void R244_ส่งอีเมลพร้อมCCแต่ยังไม่บันทึกการประทับ_ยังถือเท่าตอบรับ_ยกเลิกในระบบไม่ได้แม้มีไฟล์()
+    {
+        var status = EtaxVoidPolicy.StatusForVoid(EtaxStatus.Signed, documentSentByEmailWithRdTimestamp: true, etdaStamped: false);
+        Assert.Equal(EtaxStatus.Accepted, status);
+        Assert.False(EtaxVoidPolicy.Decide(status, "ลูกค้าขอยกเลิก", evidenceFileAttached: true).Allowed);
+    }
+
     [Fact]
     public void R200_V1I_O2_แถวลงนามแล้วแต่ส่งอีเมลประทับเวลาแล้ว_ยกเลิกในระบบไม่ได้_ไม่เขียนว่าก่อนส่งถึงกรมสรรพากร()
     {

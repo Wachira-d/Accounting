@@ -41,7 +41,21 @@ public record BankAccountResponse(
     DateTime? StatementBalanceDate = null, // ยอด ณ วันที่
     DateTime? StatementImportedAt = null,  // นำเข้าเมื่อ
     decimal? BookBalance = null,           // ยอดตามบัญชี (GL จาก JE ที่ post แล้ว)
-    decimal? StatementDiff = null);        // StatementBalance − BookBalance (null = ยังไม่เคยนำเข้า)
+    decimal? StatementDiff = null,         // StatementBalance − BookBalance (null = ยังไม่เคยนำเข้า)
+    // ── รอบ 246 QR: QR ชำระเงินของบัญชี (เก็บแล้ว echo กลับ — ฟอร์มแก้ไข hydrate จากที่นี่) ──
+    string? PromptPayId = null,
+    string? PaymentQrSource = null,
+    bool HasPaymentQrImage = false,
+    DateTime? PaymentQrUploadedAt = null,
+    /// <summary>QR ที่จะพิมพ์จริงบนเอกสาร: "promptpay" · "upload" · null = ยังไม่มี (ผลของ PaymentQrPolicy.Pick — หน้าเว็บแสดงตามนี้ ไม่ตัดสินเอง)</summary>
+    string? PaymentQrEffective = null);
+
+/// <summary>รอบ 246 QR — ตั้งเลขพร้อมเพย์/แหล่ง QR ของบัญชี (เส้นแยกจากการแก้บัญชี — เปลี่ยนปลายทางรับเงิน = สิทธิ์ CompanySettings.Edit + audit) ·
+/// <paramref name="PromptPayId"/>: null = ไม่เปลี่ยน · "" = ล้าง · <paramref name="PaymentQrSource"/>: null = ไม่เปลี่ยน</summary>
+public record UpdateBankPaymentQrRequest(string? PromptPayId, string? PaymentQrSource);
+
+/// <summary>ตัวอย่าง QR ที่เซิร์ฟเวอร์คำนวณ (หน้าแก้บัญชี) — <paramref name="DataUri"/> = PNG ที่เซิร์ฟเวอร์สร้าง/เข้ารหัสใหม่ · null + <paramref name="Note"/> = เหตุที่ยังไม่มี</summary>
+public record BankPaymentQrPreviewResponse(string? Kind, string? DataUri, decimal? Amount, string? PromptPayDisplay, string? Note);
 
 public record CreateBankTransactionRequest(
     Guid BankAccountId,

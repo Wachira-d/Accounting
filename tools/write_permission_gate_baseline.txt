@@ -415,6 +415,8 @@ Accounting/Controllers/PublicChatController.cs	Rate	1
 Accounting/Controllers/PublicChatController.cs	RequestAgent	1
 Accounting/Controllers/PublicChatController.cs	Vote	1
 Accounting/Controllers/PublicPaymentController.cs	StartBooking	1
+# รอบ 241: ลิงก์ชำระเงินของเอกสาร — ทางเข้าสาธารณะโดยตั้งใจ (สิทธิ์ = token 256 บิต · ฐานเก็บ hash · ยอด/ช่องทางจากเซิร์ฟเวอร์ · เพดานสร้างรายการ 20/ชม./ใบเดิมของ StartAsync)
+Accounting/Controllers/PublicPaymentController.cs	StartDocument	1
 Accounting/Controllers/PublicPaymentController.cs	StartLodging	1
 Accounting/Controllers/PublicPaymentController.cs	StartOrder	1
 Accounting/Controllers/PublicQuotationController.cs	Accept	1
@@ -521,9 +523,6 @@ Accounting/Controllers/WarehouseController.cs	Update	1
 Accounting/Controllers/WarehouseController.cs	VoidTransfer	1
 Accounting/Controllers/WhtCreditController.cs	Create	1
 Accounting/Controllers/WhtCreditController.cs	Delete	1
-Accounting/Controllers/WhtCreditController.cs	Expire	1
-Accounting/Controllers/WhtCreditController.cs	MarkReceived	1
-Accounting/Controllers/WhtCreditController.cs	SettleYearEnd	1
 Accounting/Controllers/WhtCreditController.cs	Update	1
 Accounting/Controllers/WithholdingTaxCertController.cs	AutoGenerate	1
 Accounting/Controllers/WithholdingTaxCertController.cs	BulkGenerate	1

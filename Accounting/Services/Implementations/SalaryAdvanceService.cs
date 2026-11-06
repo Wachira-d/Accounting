@@ -368,7 +368,7 @@ public class SalaryAdvanceService : ISalaryAdvanceService
             title: $"จ่ายเงินทดรอง {advance.AdvanceNumber} เรียบร้อย",
             message: $"จำนวน {advance.Amount:N2} บาท — ใบสำคัญจ่าย {doc.DocumentNumber}",
             entityId: advance.Id, entityType: "SalaryAdvance",
-            actionUrl: "/pages/documents.html#doc=" + doc.Id);
+            actionUrl: "/pages/documents.html?openDoc=" + doc.Id);
 
         return await GetByIdAsync(companyId, advance.Id);
     }

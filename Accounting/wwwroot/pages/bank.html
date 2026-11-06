@@ -363,6 +363,31 @@
             <select class="form-select" id="fLinkedAccount"><option value="">— ระบบสร้างให้อัตโนมัติ —</option></select>
             <div class="text-xs text-gray-400">ต้องผูกก่อนจึงจะกระทบยอดกับ<b>สมุดรายวัน</b>ได้ (จับคู่กับรายการชำระเงินไม่ต้องใช้)</div>
           </div>
+          <!-- รอบ 246 QR — QR ชำระเงินของบัญชี: พิมพ์บนเอกสารขายข้างข้อมูลบัญชี (ตั้งที่เทมเพลต "แสดง QR ชำระเงิน") ·
+               ตัวอย่าง/ข้อผิดพลาดมาจากเซิร์ฟเวอร์ (Helpers/PaymentQrPolicy) — หน้านี้แสดงอย่างเดียว -->
+          <div class="form-group" id="fQrSection" style="border-top:1px solid #e5e7eb;padding-top:10px;margin-top:6px">
+            <label class="form-label">QR ชำระเงิน (พิมพ์บนเอกสารขาย)</label>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label">เลขพร้อมเพย์</label>
+                <input type="text" class="form-input" id="fPromptPay" inputmode="numeric" maxlength="17" placeholder="เบอร์มือถือ 10 หลัก หรือเลขผู้เสียภาษี 13 หลัก" oninput="Page.qrPreviewSoon()">
+                <div class="text-xs text-gray-400">ระบบสร้าง QR พร้อมเพย์ที่ใส่ยอดของใบให้เอง (ลูกค้าไม่ต้องพิมพ์ยอด)</div>
+              </div>
+              <div class="form-group"><label class="form-label">QR ที่ใช้ก่อน</label>
+                <select class="form-select" id="fQrSource" onchange="Page.qrPreviewSoon()">
+                  <option value="auto">อัตโนมัติ (พร้อมเพย์ก่อน ถ้าไม่มีใช้รูปที่อัปโหลด)</option>
+                  <option value="promptpay">พร้อมเพย์ก่อน</option>
+                  <option value="upload">รูปที่อัปโหลดก่อน</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">รูป QR จากแอปธนาคาร (PNG/JPEG ไม่เกิน 1 MB)</label>
+              <input type="file" accept="image/png,image/jpeg" id="fQrFile" onchange="Page.uploadQr(this)">
+              <button type="button" class="btn btn-secondary btn-sm hidden" id="fQrRemove" onclick="Page.removeQr()">ลบรูป QR</button>
+              <div class="text-xs text-gray-400" id="fQrUploadHint"></div>
+            </div>
+            <div id="fQrPreview" style="display:flex;gap:12px;align-items:center;min-height:40px"></div>
+          </div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="Layout.closeModal('formModal')" data-i18n="common.cancel">ยกเลิก</button>
@@ -2695,7 +2720,94 @@
         op.value = '0'; op.disabled = false;
         document.getElementById('fOpeningHint').classList.add('hidden');
         this._populateLinkedAccountSelect(null);
+        this._hydrateQr(null);   // รอบ 246 QR — ฟอร์มใหม่ห้ามค้างค่าบัญชีก่อน
         Layout.openModal('formModal');
+      },
+
+      // ─── รอบ 246 QR: QR ชำระเงินของบัญชี ───
+      // ค่าเดิมที่ hydrate ไว้ (เทียบตอนบันทึก — ส่งเส้น payment-qr เฉพาะเมื่อเปลี่ยน · เส้นนั้นต้องสิทธิ์ตั้งค่าบริษัท)
+      _qrSaved: null,
+      _hydrateQr(a) {
+        this._qrSaved = a ? { promptPayId: a.promptPayId || '', source: a.paymentQrSource || 'auto' } : null;
+        document.getElementById('fPromptPay').value = a?.promptPayId || '';
+        document.getElementById('fQrSource').value = a?.paymentQrSource || 'auto';
+        document.getElementById('fQrFile').value = '';
+        document.getElementById('fQrFile').disabled = !a;
+        document.getElementById('fQrRemove').classList.toggle('hidden', !(a && a.hasPaymentQrImage));
+        document.getElementById('fQrUploadHint').textContent = a
+          ? (a.hasPaymentQrImage ? 'มีรูป QR แล้ว — เลือกไฟล์ใหม่เพื่อแทนที่' : '')
+          : 'บันทึกบัญชีก่อน จึงอัปโหลดรูป QR ได้';
+        this._renderQrPreview(null);
+        if (a) this.refreshQrPreview();
+      },
+      qrPreviewSoon() {
+        clearTimeout(this._qrTimer);
+        this._qrTimer = setTimeout(() => this.refreshQrPreview(), 400);
+      },
+      async refreshQrPreview() {
+        const id = document.getElementById('fId').value;
+        if (!id) { this._renderQrPreview({ note: 'บันทึกบัญชีก่อน แล้วเปิดแก้ไขเพื่อดูตัวอย่าง QR' }); return; }
+        const api = Layout.api(); if (!api) return;
+        try {
+          const r = await api.previewBankPaymentQr(id, {
+            promptPayId: document.getElementById('fPromptPay').value.trim(),
+            source: document.getElementById('fQrSource').value,
+          });
+          this._renderQrPreview(r.data || r);
+        } catch (e) { this._renderQrPreview({ note: e.message || 'โหลดตัวอย่าง QR ไม่สำเร็จ' }); }
+      },
+      _renderQrPreview(p) {
+        const box = document.getElementById('fQrPreview');
+        if (!p) { box.innerHTML = ''; return; }
+        // dataUri มาจากเซิร์ฟเวอร์ (PNG ที่สร้าง/เข้ารหัสใหม่) — ยอมเฉพาะ data:image/png;base64 · ข้อความทุกช่อง esc
+        const img = (p.dataUri && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(p.dataUri))
+          ? `<img src="${p.dataUri}" alt="QR" style="width:110px;height:110px;object-fit:contain;border:1px solid #e5e7eb;border-radius:6px">` : '';
+        const label = p.kind === 'promptpay' ? `พร้อมเพย์ ${this.esc(p.promptPayDisplay || '')}` : (p.kind === 'upload' ? 'รูปที่อัปโหลด' : '');
+        box.innerHTML = `${img}<div class="text-xs">${label ? '<b>' + label + '</b><br>' : ''}${this.esc(p.note || '')}</div>`;
+      },
+      async uploadQr(input) {
+        const id = document.getElementById('fId').value;
+        const file = input.files && input.files[0];
+        if (!id || !file) return;
+        const api = Layout.api(); if (!api) return;
+        const fd = new FormData(); fd.append('file', file);
+        try {
+          const r = await api.uploadBankPaymentQrImage(id, fd);
+          const a = r.data || r;
+          document.getElementById('fQrRemove').classList.toggle('hidden', !a.hasPaymentQrImage);
+          document.getElementById('fQrUploadHint').textContent = 'อัปโหลดรูป QR แล้ว';
+          Layout.toast('อัปโหลดรูป QR แล้ว');
+          await this.refreshQrPreview();
+          await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message || 'อัปโหลดไม่สำเร็จ', 'error'); }
+        finally { input.value = ''; }
+      },
+      async removeQr() {
+        const id = document.getElementById('fId').value;
+        if (!id || !confirm('ลบรูป QR ของบัญชีนี้?')) return;
+        const api = Layout.api(); if (!api) return;
+        try {
+          await api.removeBankPaymentQrImage(id);
+          document.getElementById('fQrRemove').classList.add('hidden');
+          document.getElementById('fQrUploadHint').textContent = 'ลบรูป QR แล้ว';
+          Layout.toast('ลบรูป QR แล้ว');
+          await this.refreshQrPreview();
+          await this.loadAccounts();
+        } catch (e) { Layout.toast(e.message || 'ลบไม่สำเร็จ', 'error'); }
+      },
+      /** บันทึกเลขพร้อมเพย์/แหล่ง QR เฉพาะเมื่อเปลี่ยน — ล้มแล้วบอกตรง ๆ (บัญชีบันทึกแล้วแต่ QR ยังไม่เปลี่ยน · ห้ามเงียบ) */
+      async _saveQrIfChanged(api, id) {
+        const now = { promptPayId: document.getElementById('fPromptPay').value.trim(), source: document.getElementById('fQrSource').value };
+        const before = this._qrSaved || { promptPayId: '', source: 'auto' };
+        if (now.promptPayId === before.promptPayId && now.source === before.source) return true;
+        try {
+          // "" = ล้างเลขพร้อมเพย์ (null = ไม่เปลี่ยน)
+          await api.updateBankPaymentQr(id, { promptPayId: now.promptPayId, paymentQrSource: now.source });
+          return true;
+        } catch (e) {
+          Layout.toast('บันทึกบัญชีแล้ว แต่ QR ชำระเงินยังไม่ถูกบันทึก: ' + (e.message || ''), 'error');
+          return false;
+        }
       },
 
       // ผังบัญชีที่เชื่อมโยงของบัญชีธนาคาร — ไม่มีช่องนี้บนฟอร์มมาก่อน
@@ -2738,6 +2850,7 @@
         op.value = a.currentBalance ?? 0; op.disabled = true;
         document.getElementById('fOpeningHint').classList.remove('hidden');
         this._populateLinkedAccountSelect(a.linkedAccountId || null);
+        this._hydrateQr(a);   // รอบ 246 QR — echo จาก BankAccountResponse
         Layout.openModal('formModal');
       },
       async save() {
@@ -2757,11 +2870,15 @@
         };
         if (!data.accountName || !data.accountNumber) { Layout.toast('กรุณากรอกข้อมูลที่จำเป็น', 'error'); return; }
         try {
+          let savedId = id;
           if (id) { await api.updateBankAccount(id, data); }
-          else { await api.createBankAccount(data); }
-          Layout.closeModal('formModal');
+          else { const r = await api.createBankAccount(data); savedId = (r.data || r).id; }
+          // รอบ 246 QR — เลขพร้อมเพย์/แหล่ง QR ผ่านเส้นของมันเอง (สิทธิ์ตั้งค่าบริษัท · audit) · ล้ม = ฟอร์มยังเปิดให้แก้
+          const qrOk = savedId ? await this._saveQrIfChanged(api, savedId) : true;
+          if (qrOk) Layout.closeModal('formModal');
           Layout.toast(id ? 'แก้ไขบัญชีสำเร็จ' : 'เพิ่มบัญชีธนาคารสำเร็จ');
           await this.loadAccounts();
+          if (!id && savedId && !qrOk) { document.getElementById('fId').value = savedId; this._qrSaved = { promptPayId: '', source: 'auto' }; }
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       // === ADD TRANSACTION ===

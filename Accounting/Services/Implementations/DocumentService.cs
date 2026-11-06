@@ -141,6 +141,7 @@ public partial class DocumentService : IDocumentService
     /// <para>ไม่ throw — ทะเบียนภาษีล้มเหลวต้องไม่ทำให้อนุมัติเอกสารพัง</para></summary>
     private async Task SyncWhtCreditReceivedAsync(Guid companyId, Document doc)
     {
+        var undoingWriteOff = false;   // รอบ 243a S4: กลับ JE ตัดสูญล้มต้องดัง (ไม่ให้ catch ด้านล่างกลืน — เส้น JE)
         try
         {
             // ฝั่งซื้อ = เราหักเขา (หนี้ที่ต้องนำส่ง) — คนละเรื่องกับเครดิตของเรา
@@ -183,6 +184,14 @@ public partial class DocumentService : IDocumentService
 
             if (amount <= 0.005m)
             {
+                // รอบ 243a (ฝ่ายค้าน S4): แถวตัดสูญพร้อม JE แล้วใบต้นทางถูกยกเลิก ⇒ กลับ JE ตัดสูญ (ไม่งั้น 11910 ติดลบ) + ถอดแถว — เส้นเดียวใน WhtCreditService
+                if (existing != null && WhtCreditWriteOff.NeedsReversal(existing.Status, existing.WriteOffJournalEntryId, existing.WriteOffReversalJournalEntryId))
+                {
+                    undoingWriteOff = true;
+                    await new WhtCreditService(_db, Microsoft.Extensions.Logging.Abstractions.NullLogger<WhtCreditService>.Instance)
+                        .UndoWriteOffAsync(companyId, existing.Id, $"ใบต้นทาง {doc.DocumentNumber} ถูกยกเลิก — ภาษีถูกหักถูกกลับรายการ", 0m, removeRow: true, "system");
+                    return;
+                }
                 // WHT ถูกกลับ/แก้เป็นศูนย์ → ลบแถวที่ยังไม่ได้ใช้เครดิตทิ้ง
                 if (existing != null && existing.Status is WhtCreditStatus.Pending or WhtCreditStatus.Received)
                 {
@@ -233,7 +242,7 @@ public partial class DocumentService : IDocumentService
             }
             await _db.SaveChangesAsync();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!undoingWriteOff)
         {
             _logger.LogWarning(ex, "SyncWhtCreditReceived ล้มเหลวสำหรับเอกสาร {Doc}", doc.Id);
         }
@@ -2350,9 +2359,19 @@ public partial class DocumentService : IDocumentService
             .Select(c => new
             {
                 c.Id, c.RelatedDocumentId, c.DocumentNumber, c.DocumentType, c.Status,
-                c.DocumentDate, c.TotalAmount, c.CreatedAt,
+                c.DocumentDate, c.TotalAmount, c.CreatedAt, c.IsDeposit,
             })
             .ToListAsync();
+        // (3) ข้อ 242-B: ยอดฐานก่อน VAT ของใบลูกที่ผูกหัวใบ (ฐานเดียวกับ sourceTotals.Amount = Σ DocumentLine.Amount) — ข้อเท็จจริงของ
+        //     กติกา "ใบลูกใบเดียว ยอดเท่ากันทั้งใบ ⇒ ครบ" (ตัวตัดสินเดียว DocumentConversionProgress.SoleChildMatchesTotal) · query เดียวทั้งชุด
+        var headerChildIds = children.Where(c => c.RelatedDocumentId.HasValue).Select(c => c.Id).ToList();
+        var headerChildAmounts = headerChildIds.Count == 0
+            ? new Dictionary<Guid, decimal>()
+            : await _db.DocumentLines.AsNoTracking()
+                .Where(l => headerChildIds.Contains(l.DocumentId) && l.Document.CompanyId == companyId)
+                .GroupBy(l => l.DocumentId)
+                .Select(g => new { g.Key, Amount = g.Sum(l => l.Amount) })
+                .ToDictionaryAsync(g => g.Key, g => g.Amount);
 
         var childById = children.ToDictionary(c => c.Id);
         var consumedBySource = consumed.ToLookup(c => c.SourceDocId);
@@ -2369,8 +2388,12 @@ public partial class DocumentService : IDocumentService
             var linkedIds = linkedBySource[srcId].Select(c => c.Id).ToList();
             // ข้อ 138: วัดด้วยยอดเงินเมื่อใบต้นทางมีราคา (ตัวตัดสินเดียว EvaluateByValue)
             var byValue = !srcTypes.TryGetValue(srcId, out var srcType) || DocumentConversionProgress.MeasuresByValue(srcType);
+            var headerLinked = linkedBySource[srcId]
+                .Select(c => new DocumentConversionProgress.HeaderLinkedChild(c.DocumentType,
+                    headerChildAmounts.GetValueOrDefault(c.Id), c.IsDeposit))
+                .ToList();
             var progress = DocumentConversionProgress.EvaluateByValue(total.Qty, byValue ? total.Amount : 0m,
-                rows.Select(r => (r.DocumentType, r.Quantity, r.Amount)), linkedIds.Count > 0);
+                rows.Select(r => (r.DocumentType, r.Quantity, r.Amount)), linkedIds.Count > 0, headerLinked);
             var mine = linkedIds.Concat(rows.Select(r => r.ChildId)).Distinct()
                 .Where(id => childById.ContainsKey(id))
                 .Select(id => childById[id])
@@ -2386,6 +2409,24 @@ public partial class DocumentService : IDocumentService
             result[srcId] = new ConversionSummary(progress, latest, mine.Count);
         }
         return result;
+    }
+
+    /// <summary>รหัสกฎของการแปลงทั้งใบที่ถูกหยุดเพราะใบต้นทาง "ครบตามยอดรวมทั้งใบ" (ฝ่ายค้านรอบ 242 N6)</summary>
+    internal const string HeaderTotalConvertRule = "CONVERT-HEADER-TOTAL-FULL";
+
+    /// <summary>ฝ่ายค้านรอบ 242 N6 — คำเตือนก่อนแปลงใบต้นทางที่ป้ายขึ้น "ครบตามยอดรวมทั้งใบ" (ตัวโหลดเดียวกับป้าย <see cref="LoadConversionSummariesAsync"/> ·
+    /// ตัวตัดสินเดียว <c>DocumentConversionProgress.HeaderTotalConvertWarning</c>) · null = ไม่ต้องถาม</summary>
+    private async Task<string?> HeaderTotalConvertWarningAsync(Guid companyId, Document source, DocumentType targetType)
+    {
+        if (!DocumentConversionProgress.IsConversionBearing(source.DocumentType)) return null;
+        var lines = source.Lines.Where(l => !l.IsDeleted).ToList();
+        var summary = (await LoadConversionSummariesAsync(companyId, new Dictionary<Guid, (decimal Qty, decimal Amount)>
+        {
+            [source.Id] = (lines.Sum(l => l.Quantity), lines.Sum(l => l.Amount)),
+        })).GetValueOrDefault(source.Id);
+        if (summary == null) return null;
+        return DocumentConversionProgress.HeaderTotalConvertWarning(summary.Progress, source.DocumentNumber,
+            summary.Latest?.DocumentNumber, summary.Latest?.DocumentType, targetType);
     }
 
     /// <summary>
@@ -10803,13 +10844,265 @@ public partial class DocumentService : IDocumentService
         await PurgeDocumentAsync(companyId, documentId, userId, forceOverrideRetention: false, overrideReason: null);
     }
 
-    /// <summary>ลบเอกสารถาวร. ปกติ block เอกสารที่อยู่ในช่วงเก็บรักษา §87/3
-    /// (5 ปี) — ต้องใช้ Void แทน. แต่ Owner/SystemAdmin override ได้ด้วย
-    /// forceOverrideRetention=true + เหตุผล (เช่น ข้อมูลทดสอบ / สร้างผิดซ้ำ)
-    /// → ระบบ log การ override ลง ErrorLog (audit) ว่าใคร/เมื่อไหร่/ทำไม
-    /// เพื่อความรับผิดชอบ. ความเสี่ยงทางกฎหมายเป็นของผู้ override.</summary>
+    /// <summary>ลบเอกสารถาวร <b>เฉพาะใบนี้</b> (เอกสารที่เกี่ยวข้องคงไว้ ตัดการอ้างอิง — พฤติกรรมเดิม) · ช่วงเก็บรักษา §87/3 ต้อง force + เหตุผล ·
+    /// ตัวตัดสินเดียวกับแบบลบพร้อมเอกสารที่เกี่ยวข้อง (<c>Helpers/DocumentCascadePurgePolicy</c> · รอบ 242)</summary>
     public async Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
         bool forceOverrideRetention, string? overrideReason)
+    {
+        await PurgeDocumentAsync(companyId, documentId, userId, forceOverrideRetention, overrideReason, cascadeDescendants: false);
+    }
+
+    /// <summary>รอบ 242 — แผนการลบถาวร (ไม่ลบอะไร) · หน้าเว็บแสดงก่อนยืนยัน (server computes · page displays)</summary>
+    public async Task<Accounting.Helpers.DocumentPurgeVerdict> PreviewPurgeAsync(Guid companyId, Guid documentId,
+        bool cascadeDescendants, bool forceOverrideRetention, string? overrideReason)
+    {
+        var plan = await BuildPurgePlanAsync(companyId, documentId);
+        return Accounting.Helpers.DocumentCascadePurgePolicy.Decide(plan, cascadeDescendants, forceOverrideRetention, overrideReason, DateTime.UtcNow);
+    }
+
+    /// <summary>
+    /// ลบเอกสารถาวร (รอบ 242 · คำตัดสินข้อ 242-A) — <paramref name="cascadeDescendants"/> = ลบเอกสารที่เกี่ยวข้อง (ลูกหลานผ่าน <c>RelatedDocumentId</c>)
+    /// ด้วย<b>ในธุรกรรมเดียว</b> · ตัวตัดสินเดียว <see cref="Accounting.Helpers.DocumentCascadePurgePolicy.Decide"/>: ลูกหลานที่ยังมีผล (ออกแล้ว ไม่ถูกยกเลิก) ·
+    /// e-Tax ถึงกรมสรรพากร · อยู่ในรายงานภาษีที่ยื่นแล้ว ⇒ ปฏิเสธทั้งคำขอ (409 + รายชื่อ + ทางไปต่อ) · ช่วงเก็บรักษา ⇒ force + เหตุผล (เดิม) ·
+    /// ลบลูกหลานก่อน รากท้ายสุด · แถว audit (hash chain) ต่อใบที่ลบ พร้อมเหตุผล
+    /// </summary>
+    public async Task<Accounting.Helpers.DocumentPurgeVerdict> PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
+        bool forceOverrideRetention, string? overrideReason, bool cascadeDescendants, string? expectedPlanToken = null)
+    {
+        // Legal hold §87/3 + พ.ร.บ.บัญชี ม.10 (รอบ 200 B-06: วันเก็บที่มีผลคำนวณใน BuildPurgePlanAsync — DocumentRetention.EffectiveUntil) ·
+        // ด่านทั้งหมดอยู่ในตัวตัดสินเดียว — ไม่ผ่าน = ไม่แตะอะไรเลย
+        var plan = await BuildPurgePlanAsync(companyId, documentId);
+        var verdict = Accounting.Helpers.DocumentCascadePurgePolicy.Decide(
+            plan, cascadeDescendants, forceOverrideRetention, overrideReason, DateTime.UtcNow);
+        if (!verdict.Allowed)
+            throw new BusinessRuleException(verdict.Message, verdict.RuleCode, 409);
+
+        // Override path — ใคร force-delete เอกสารในช่วงเก็บรักษา ทำไม (forensic log + แถว audit ต่อใบด้านล่าง)
+        foreach (var n in verdict.Nodes.Where(v => v.Action == Accounting.Helpers.PurgeNodeAction.Delete && v.InRetention))
+            _logger.LogWarning(
+                "RETENTION-OVERRIDE: user {UserId} force-deleted {DocNum} ({DocType}, retain until {Until:yyyy-MM-dd}). Reason: {Reason}",
+                userId, n.Node.DocumentNumber, n.Node.Type, n.Node.RetentionUntil, overrideReason);
+
+        // เก็บ id ไว้ unwind ReconciliationGroup หลัง commit (rows ถูกลบไปแล้ว
+        // แต่ GroupItems ยังอ้าง id ค้าง — unwind ตามหลังได้)
+        var purgedPaymentIds = new List<Guid>();
+        var purgedJournalIds = new List<Guid>();
+        var nodeReasons = verdict.Nodes.ToDictionary(v => v.Node.Id, v => v.Reason);
+
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+        try
+        {
+            // ฝ่ายค้านรอบ 242 S1 (TOCTOU): ล็อกแถวเอกสารทุกใบในแผน แล้วสร้างแผน + ตัดสินซ้ำใต้ล็อก — แผนเปลี่ยน (ใบลูกเพิ่ม · ถูกอนุมัติ/ยกเลิก ·
+            // ต่างจากแผนที่ผู้ใช้เห็น) ⇒ 409 ไม่ลบอะไร
+            var planIds = verdict.Nodes.Select(v => v.Node.Id).OrderBy(id => id).ToArray();
+            await _db.Database.ExecuteSqlRawAsync(
+                @"SELECT 1 FROM ""Documents"" WHERE ""CompanyId"" = {0} AND ""Id"" = ANY({1}) ORDER BY ""Id"" FOR UPDATE",
+                companyId, planIds);
+            var lockedPlan = await BuildPurgePlanAsync(companyId, documentId);
+            var lockedVerdict = Accounting.Helpers.DocumentCascadePurgePolicy.Decide(
+                lockedPlan, cascadeDescendants, forceOverrideRetention, overrideReason, DateTime.UtcNow);
+            if (!lockedVerdict.Allowed)
+                throw new BusinessRuleException(lockedVerdict.Message, lockedVerdict.RuleCode, 409);
+            if (lockedVerdict.PlanToken != verdict.PlanToken
+                || (!string.IsNullOrWhiteSpace(expectedPlanToken) && expectedPlanToken != lockedVerdict.PlanToken))
+                throw new BusinessRuleException(Accounting.Helpers.DocumentCascadePurgePolicy.PlanChangedMessage,
+                    Accounting.Helpers.DocumentCascadePurgePolicy.RulePlanChanged, 409);
+
+            // ลูกหลานก่อน (ลึกสุดก่อน) รากท้ายสุด — ทุกใบในธุรกรรมเดียว (ใบหนึ่งล้ม = ไม่มีใบไหนถูกลบ)
+            foreach (var id in verdict.DeleteOrder)
+                await PurgeOneDocumentCoreAsync(companyId, id, userId, overrideReason, documentId,
+                    nodeReasons.GetValueOrDefault(id), purgedPaymentIds, purgedJournalIds);
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+        finally
+        {
+            _db.ChangeTracker.Clear();
+        }
+
+        // ปลด ReconciliationGroup ที่อ้าง document/payment/JE ที่เพิ่งถูกลบ —
+        // GroupItems เก็บ id ไว้แม้แถวจริงตายแล้ว → group ค้างอ้างผี + bank txn
+        // ในกลุ่มติดสถานะ Matched ถาวร. ทำหลัง commit แบบ best-effort
+        // (mirror VoidPaymentAsync/VoidDocumentAsync)
+        if (_bankService != null)
+        {
+            try
+            {
+                foreach (var did in verdict.DeleteOrder)
+                    await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Document, did);
+                foreach (var pid in purgedPaymentIds)
+                    await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Payment, pid);
+                foreach (var jid in purgedJournalIds)
+                    await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.JournalEntry, jid);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Purge {DocId}: unwind reconciliation groups ไม่สำเร็จ (non-fatal)", documentId);
+            }
+        }
+        return verdict;
+    }
+
+    /// <summary>รอบ 242 — ข้อเท็จจริงของแผนลบถาวร: ใบที่สั่งลบ (ราก) + ลูกหลานผ่าน <c>RelatedDocumentId</c> (ไม่นับใบเสร็จหลักฐานการชำระ —
+    /// ลบไปพร้อมใบแม่ในขั้น 6c) + ใบลดหนี้/เพิ่มหนี้ที่ยังมีผลซึ่งอ้าง "เลขที่" (ตัวโหลดเดียว <c>DocumentVoidPreconditions.ChildFactsAsync</c>) ·
+    /// วันเก็บ (<c>DocumentRetention.EffectiveUntil</c>) · e-Tax (<c>EffectiveEtaxAsync</c>) · รายงานภาษีที่ยื่น (<c>IsDocumentFilingLockedAsync</c>) · tenant ทุกคิวรี</summary>
+    private async Task<List<Accounting.Helpers.PurgeNodeFacts>> BuildPurgePlanAsync(Guid companyId, Guid rootId)
+    {
+        var fyStartMonth = await _db.Companies.AsNoTracking()
+            .Where(c => c.Id == companyId)
+            .Select(c => (int?)c.FiscalYearStartMonth).FirstOrDefaultAsync() ?? 1;
+        var root = await _db.Documents.IgnoreQueryFilters().AsNoTracking()
+            .Where(d => d.Id == rootId && d.CompanyId == companyId)
+            .Select(d => new { d.Id, d.DocumentNumber, d.DocumentType, d.Status, d.RetentionUntil, d.DocumentDate })
+            .FirstOrDefaultAsync()
+            ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
+
+        var raw = new List<(Guid Id, Guid? Parent, int Depth, string? Number, DocumentType Type, DocumentStatus Status,
+            DateTime? StoredUntil, DateTime Date, bool ByText)>
+        {
+            (root.Id, null, 0, root.DocumentNumber, root.DocumentType, root.Status, root.RetentionUntil, root.DocumentDate, false),
+        };
+        var seen = new HashSet<Guid> { root.Id };
+        var receiptIds = new HashSet<Guid>();
+        var frontier = new List<Guid> { root.Id };
+        var depth = 0;
+        while (frontier.Count > 0)
+        {
+            depth++;
+            if (depth > Accounting.Helpers.DocumentCascadePurgePolicy.MaxDepth)
+                throw new BusinessRuleException(
+                    $"สายเอกสารที่เกี่ยวข้องลึกเกิน {Accounting.Helpers.DocumentCascadePurgePolicy.MaxDepth} ชั้น (ข้อมูลอ้างอิงอาจวนกัน) — ระบบไม่ลบเพราะไล่ได้ไม่ครบ · "
+                    + "แจ้งผู้ดูแลระบบให้ตรวจการอ้างอิงของเอกสารนี้", "PURGE-GRAPH-TOO-DEEP", 409);
+            // ฝ่ายค้านรอบ 242 B1/N5: ใบเสร็จหลักฐานการชำระเป็น node ด้วย (ชั้น = ใบแม่ + 1 · ถูกลบพร้อมใบแม่ ⇒ ผ่านด่านเดียวกัน) และลูกของมัน
+            // (เช่น ใบลดหนี้อ้างใบเสร็จ) อยู่ในกราฟ
+            var kids = await _db.Documents.IgnoreQueryFilters().AsNoTracking()
+                .Where(d => d.CompanyId == companyId && d.RelatedDocumentId != null
+                    && frontier.Contains(d.RelatedDocumentId.Value))
+                .Select(d => new { d.Id, d.RelatedDocumentId, d.DocumentNumber, d.DocumentType, d.Status, d.RetentionUntil, d.DocumentDate, d.IsSettlementReceipt })
+                .ToListAsync();
+            var next = new List<Guid>();
+            foreach (var k in kids.Where(x => seen.Add(x.Id)))
+            {
+                raw.Add((k.Id, k.RelatedDocumentId, depth, k.DocumentNumber, k.DocumentType, k.Status, k.RetentionUntil, k.DocumentDate, false));
+                if (k.IsSettlementReceipt) receiptIds.Add(k.Id);
+                next.Add(k.Id);
+            }
+            // ใบลดหนี้/เพิ่มหนี้รุ่นเก่าที่อ้าง "เลขที่" (ไม่ผูก id) และยังมีผล — ระบบลบตามไม่ได้ ⇒ เป็นข้อเท็จจริงที่กัน
+            var textRefs = (await DocumentVoidPreconditions.ChildFactsAsync(_db, companyId, frontier))
+                .Where(f => f.ByTextReference && f.ChildId is Guid cid && !seen.Contains(cid)).ToList();
+            foreach (var t in textRefs)
+            {
+                seen.Add(t.ChildId!.Value);
+                raw.Add((t.ChildId.Value, t.ParentId, depth, t.ChildNumber, t.ChildType, DocumentStatus.Approved, null, DateTime.UtcNow, true));
+            }
+            frontier = next;
+        }
+
+        var ids = raw.Select(r => r.Id).ToList();
+        var etax = await DocumentVoidPreconditions.EffectiveEtaxAsync(_db, companyId, ids);
+
+        // ── ข้อเท็จจริงเพิ่ม (ฝ่ายค้านรอบ 242 S2/S3/S4/N1/N3) — query ชุดเดียวต่อชนิด ทุก query กรองบริษัท ──
+        // JE ของใบ (+ JE กลับรายการของมัน) — มีผลทางบัญชี (N1) · งวด/ปีที่ปิด (S2)
+        var jes = await _db.JournalEntries.IgnoreQueryFilters().AsNoTracking()
+            .Where(j => j.CompanyId == companyId && j.SourceDocumentId != null && ids.Contains(j.SourceDocumentId.Value) && !j.IsDeleted)
+            .Select(j => new { j.Id, Doc = j.SourceDocumentId!.Value, j.EntryDate })
+            .ToListAsync();
+        var jeIds = jes.Select(j => j.Id).ToList();
+        var reversals = await _db.JournalEntries.IgnoreQueryFilters().AsNoTracking()
+            .Where(j => j.CompanyId == companyId && !j.IsDeleted && j.OriginalEntryId != null && jeIds.Contains(j.OriginalEntryId.Value))
+            .Select(j => new { Original = j.OriginalEntryId!.Value, j.EntryDate })
+            .ToListAsync();
+        var periods = await _db.FiscalPeriods.AsNoTracking()
+            .Where(f => f.CompanyId == companyId)
+            .Select(f => new { f.StartDate, f.EndDate, f.Status })
+            .ToListAsync();
+        var closedRanges = Accounting.Helpers.ClosedPeriodRanges.Build(periods.Select(p => (p.StartDate, p.EndDate, p.Status)));
+        var closedYears = (await _db.YearEndClosings.AsNoTracking()
+                .Where(y => y.CompanyId == companyId && !y.IsDeleted && y.ReopenedAt == null)
+                .Select(y => y.FiscalYear).ToListAsync()).ToHashSet();
+        bool DateClosed(DateTime d) =>
+            closedRanges.Any(r => d.Date >= r.Start && d.Date < r.EndExclusive)
+            || closedYears.Contains(Accounting.Helpers.FiscalYear.FiscalYearOf(d.Date, fyStartMonth));
+        var docJeDates = jes.Select(j => (Doc: j.Doc, Date: j.EntryDate))
+            .Concat(reversals.Join(jes, r => r.Original, j => j.Id, (r, j) => (Doc: j.Doc, Date: r.EntryDate)))
+            .ToList();
+        var stockDocs = (await _db.StockMovements.IgnoreQueryFilters().AsNoTracking()
+                .Where(m => m.CompanyId == companyId && m.DocumentId != null && ids.Contains(m.DocumentId.Value))
+                .Select(m => m.DocumentId!.Value).Distinct().ToListAsync()).ToHashSet();
+        var livePayments = await _db.Payments.IgnoreQueryFilters().AsNoTracking()
+            .Where(p => p.CompanyId == companyId && ids.Contains(p.DocumentId) && !p.IsDeleted)
+            .Select(p => new { p.Id, p.DocumentId }).ToListAsync();
+        // N3: บิล POS อ้างใบนี้ หรืออ้าง JE ของใบนี้ (PosOrders.JournalEntryId = RESTRICT)
+        var posDocs = (await _db.PosOrders.IgnoreQueryFilters().AsNoTracking()
+                .Where(o => o.CompanyId == companyId && ((o.DocumentId != null && ids.Contains(o.DocumentId.Value))
+                    || (o.JournalEntryId != null && jeIds.Contains(o.JournalEntryId.Value))))
+                .Select(o => new { o.DocumentId, o.JournalEntryId }).ToListAsync())
+            .SelectMany(o => new[] { o.DocumentId, jes.FirstOrDefault(j => j.Id == o.JournalEntryId)?.Doc })
+            .Where(x => x.HasValue).Select(x => x!.Value).ToHashSet();
+        // N3: เครดิตภาษีถูกหัก ณ ที่จ่ายที่ได้รับหนังสือรับรอง/ใช้แล้ว (Pending ลบไปพร้อมใบ — DocumentPurgeOrder)
+        var whtUsedDocs = (await _db.WhtCreditsReceived.IgnoreQueryFilters().AsNoTracking()
+                .Where(w => w.CompanyId == companyId && w.DocumentId != null && ids.Contains(w.DocumentId.Value)
+                    && !w.IsDeleted && w.Status != WhtCreditStatus.Pending)
+                .Select(w => w.DocumentId!.Value).Distinct().ToListAsync()).ToHashSet();
+        // S3: ใบแทน — ใบนี้แทนใบที่ยังมีผล · ใบอื่นชี้มาว่าใบนี้เป็นใบแทน
+        var replaceRows = await _db.Documents.IgnoreQueryFilters().AsNoTracking()
+            .Where(d => d.CompanyId == companyId && ids.Contains(d.Id) && d.ReplacesDocumentId != null)
+            .Select(d => new { d.Id, Target = d.ReplacesDocumentId!.Value }).ToListAsync();
+        var replaceTargets = replaceRows.Select(r => r.Target).Distinct().ToList();
+        var liveTargets = (await _db.Documents.IgnoreQueryFilters().AsNoTracking()
+                .Where(d => d.CompanyId == companyId && replaceTargets.Contains(d.Id) && !d.IsDeleted
+                    && !DocumentStatusRules.NotIssued.Contains(d.Status) && d.Status != DocumentStatus.Voided)
+                .Select(d => d.Id).ToListAsync()).ToHashSet();
+        var replacedBy = await _db.Documents.IgnoreQueryFilters().AsNoTracking()
+            .Where(d => d.CompanyId == companyId && d.ReplacedByDocumentId != null && ids.Contains(d.ReplacedByDocumentId.Value))
+            .Select(d => new { d.Id, Target = d.ReplacedByDocumentId!.Value }).ToListAsync();
+        // S4: การปันส่วนชำระที่ยังมีผล — อีกฝั่งคือเอกสารเจ้าของการชำระ หรือเอกสารที่การชำระของใบนี้ปันไป
+        var nodePaymentIds = livePayments.Select(p => p.Id).ToList();
+        var allocations = await (
+                from a in _db.PaymentAllocations.IgnoreQueryFilters().AsNoTracking()
+                join p in _db.Payments.IgnoreQueryFilters().AsNoTracking() on a.PaymentId equals p.Id
+                where a.CompanyId == companyId && p.CompanyId == companyId && !a.IsDeleted && !p.IsDeleted
+                      && (ids.Contains(a.DocumentId) || nodePaymentIds.Contains(a.PaymentId))
+                select new { a.DocumentId, PaymentDoc = p.DocumentId })
+            .ToListAsync();
+
+        var result = new List<Accounting.Helpers.PurgeNodeFacts>(raw.Count);
+        foreach (var r in raw)
+        {
+            var until = Accounting.Helpers.DocumentRetention.EffectiveUntil(r.Status, r.Number, r.StoredUntil, r.Date, fyStartMonth);
+            var filingLocked = _taxService != null && await _taxService.IsDocumentFilingLockedAsync(companyId, r.Id);
+            var counterparts = allocations
+                .Where(a => a.DocumentId == r.Id || a.PaymentDoc == r.Id)
+                .SelectMany(a => new[] { a.DocumentId, a.PaymentDoc })
+                .Where(x => x != r.Id).Distinct().ToList();
+            var replaces = replaceRows.FirstOrDefault(x => x.Id == r.Id);
+            result.Add(new Accounting.Helpers.PurgeNodeFacts(r.Id, r.Parent, r.Depth, r.Number, r.Type, r.Status, until,
+                DocumentVoidPreconditions.EtaxReachedRd(etax.GetValueOrDefault(r.Id)), filingLocked, r.ByText)
+            {
+                IsSettlementReceipt = receiptIds.Contains(r.Id),
+                PeriodClosed = docJeDates.Any(x => x.Doc == r.Id && DateClosed(x.Date)),
+                HasJournal = jes.Any(j => j.Doc == r.Id),
+                HasStockMovement = stockDocs.Contains(r.Id),
+                HasLivePayment = livePayments.Any(p => p.DocumentId == r.Id),
+                PosLinked = posDocs.Contains(r.Id),
+                WhtCreditUsed = whtUsedDocs.Contains(r.Id),
+                ReplacesLiveDocumentId = replaces != null && liveTargets.Contains(replaces.Target) ? replaces.Target : null,
+                ReplacedByPointers = replacedBy.Where(x => x.Target == r.Id).Select(x => x.Id).ToList(),
+                AllocationCounterparts = counterparts,
+            });
+        }
+        return result;
+    }
+
+    /// <summary>ลบเอกสาร 1 ใบพร้อมข้อมูลของมัน (JE · การชำระ · 50 ทวิ · e-Tax · แถวลูกตาม <c>DocumentPurgeOrder</c> · บรรทัด) —
+    /// <b>ต้องเรียกภายในธุรกรรมของ <c>PurgeDocumentAsync</c> (ตัวที่รับ cascadeDescendants) เท่านั้น</b> (ผ่านตัวตัดสินแล้ว) ·
+    /// เขียนแถว audit (hash chain) ของใบนี้พร้อมเหตุผล</summary>
+    private async Task PurgeOneDocumentCoreAsync(Guid companyId, Guid documentId, Guid? userId, string? overrideReason,
+        Guid requestedRootId, string? planReason, List<Guid> purgedPaymentIds, List<Guid> purgedJournalIds)
     {
         var doc = await _db.Documents
             .IgnoreQueryFilters()
@@ -10817,49 +11110,12 @@ public partial class DocumentService : IDocumentService
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
 
-        // Legal hold §87/3 + พ.ร.บ.บัญชี ม.10 — ห้ามลบจริงก่อนครบอายุเก็บ 5 ปี
-        // รอบ 200 (B-06): เดิมอ่านแค่ RetentionUntil ที่ Approve เขียน ⇒ ใบกำกับจาก POS/API/นำเข้า/ข้ามบริษัท
-        // (เกิดเป็น Approved ตรง ๆ · ค่า null) ลบได้เงียบ ๆ · ตอนนี้ "ออกแล้ว + ไม่มีค่า" = คำนวณจากวันที่เอกสาร
-        var fyStartMonth = await _db.Companies.AsNoTracking()
-            .Where(c => c.Id == companyId)
-            .Select(c => (int?)c.FiscalYearStartMonth).FirstOrDefaultAsync() ?? 1;
-        var retainUntil = Accounting.Helpers.DocumentRetention.EffectiveUntil(
-            doc.Status, doc.DocumentNumber, doc.RetentionUntil, doc.DocumentDate, fyStartMonth);
-        var inRetention = Accounting.Helpers.DocumentRetention.InRetention(retainUntil, DateTime.UtcNow);
-        if (inRetention && !forceOverrideRetention)
-            throw new InvalidOperationException(
-                $"ห้ามลบถาวร — เอกสารอยู่ในช่วงเก็บรักษาตามกฎหมาย (§87/3 · พ.ร.บ.การบัญชี ม.10) ถึง {retainUntil:dd/MM/yyyy}. " +
-                "ใช้ 'ยกเลิกเอกสาร' (Void) แทนเพื่อคงหลักฐานการตรวจสอบ");
-
-        // Override path — บันทึก audit ว่าใคร force-delete เอกสารในช่วง retention
-        // ทำไม. ทำให้สรรพากร/ผู้ตรวจเห็น trail ว่าการลบเป็นการตัดสินใจที่ระบุ
-        // ตัวตน + เหตุผล ไม่ใช่ลบลับ ๆ. ถ้าไม่ระบุเหตุผล → block (กันลบมั่ว).
-        if (inRetention && forceOverrideRetention)
-        {
-            if (string.IsNullOrWhiteSpace(overrideReason))
-                throw new InvalidOperationException(
-                    "การลบเอกสารในช่วงเก็บรักษาตามกฎหมายต้องระบุเหตุผล (เช่น ข้อมูลทดสอบ / สร้างผิดซ้ำ)");
-            // audit ผ่าน logger (forensic) — บันทึกว่าใคร force-delete เอกสารใน
-            // ช่วง retention ทำไม. AuditLog hash-chain ก็จับ Delete นี้อีกชั้น
-            // ผ่าน ChangeTracker (append-only).
-            _logger.LogWarning(
-                "RETENTION-OVERRIDE: user {UserId} force-deleted {DocNum} ({DocType}, retain until {Until:yyyy-MM-dd}). Reason: {Reason}",
-                userId, doc.DocumentNumber, doc.DocumentType, retainUntil, overrideReason);
-        }
-
         var auditSnapshot = System.Text.Json.JsonSerializer.Serialize(new
         {
             doc.DocumentNumber, doc.DocumentType, doc.Status,
             doc.TotalAmount, doc.ContactId, doc.DocumentDate
         });
 
-        // เก็บ id ไว้ unwind ReconciliationGroup หลัง commit (rows ถูกลบไปแล้ว
-        // แต่ GroupItems ยังอ้าง id ค้าง — unwind ตามหลังได้)
-        var purgedPaymentIds = new List<Guid>();
-        var purgedJournalIds = new List<Guid>();
-
-        await using var transaction = await _db.Database.BeginTransactionAsync();
-        try
         {
             // รอบ 194 R3-2 — ใบมัดจำที่การลบนี้จะคืนยอด (ตัวรวบรวมเดียวกับ void) ถือคีย์ล็อกยอดตัวเดียวกับปุ่มรับรู้/ริบ + ล็อกแถว + ค่าล่าสุด
             await LockDepositBalancesAsync(companyId, await DepositIdsTouchedByAsync(companyId, doc));
@@ -11058,20 +11314,23 @@ public partial class DocumentService : IDocumentService
             // 2. Delete Payments — ปลด bank match ที่ชี้ payment พวกนี้ก่อน
             //    (เดิมลบ raw ทิ้ง MatchedPaymentId ค้างชี้ payment ผี + สถานะ
             //    Matched ค้าง → กระทบยอดธนาคารจับคู่ใหม่ไม่ได้)
-            purgedPaymentIds = await _db.Payments.IgnoreQueryFilters()
+            var docPaymentIds = await _db.Payments.IgnoreQueryFilters()
                 .Where(p => p.DocumentId == documentId && p.CompanyId == companyId)
                 .Select(p => p.Id)
                 .ToListAsync();
-            if (purgedPaymentIds.Count > 0)
+            purgedPaymentIds.AddRange(docPaymentIds);
+            if (docPaymentIds.Count > 0)
             {
                 await _db.BankTransactions
                     .Where(t => t.CompanyId == companyId
                         && t.MatchedPaymentId.HasValue
-                        && purgedPaymentIds.Contains(t.MatchedPaymentId.Value))
+                        && docPaymentIds.Contains(t.MatchedPaymentId.Value))
                     .ExecuteUpdateAsync(s => s
                         .SetProperty(t => t.MatchedPaymentId, (Guid?)null)
                         .SetProperty(t => t.ReconciliationStatus, ReconciliationStatus.Unmatched)
                         .SetProperty(t => t.ReconciledAt, (DateTime?)null));
+                // รอบ 242: แถวที่อ้างการชำระด้วย FK (การปันส่วนชำระ · เช็ค) ก่อนลบ Payments — ลำดับจากตัวตั้งเดียว DocumentPurgeOrder
+                await Accounting.Helpers.DocumentPurgeOrder.DeletePaymentChildrenAsync(_db, docPaymentIds);
             }
             await _db.Database.ExecuteSqlRawAsync(
                 @"DELETE FROM ""Payments"" WHERE ""DocumentId"" = {0} AND ""CompanyId"" = {1}",
@@ -11099,18 +11358,10 @@ public partial class DocumentService : IDocumentService
                 @"DELETE FROM ""EtaxInvoices"" WHERE ""DocumentId"" = {0} AND ""CompanyId"" = {1}",
                 documentId, companyId);
 
-            // 5. Null out DocumentEmailLogs (FK is SetNull but we force-clean)
-            await _db.Database.ExecuteSqlRawAsync(
-                @"UPDATE ""DocumentEmailLogs"" SET ""DocumentId"" = NULL WHERE ""DocumentId"" = {0}",
-                documentId);
-
-            // 6. Delete DocumentApprovals & DocumentSignatures
-            await _db.Database.ExecuteSqlRawAsync(
-                @"DELETE FROM ""DocumentApprovals"" WHERE ""DocumentId"" = {0}",
-                documentId);
-            await _db.Database.ExecuteSqlRawAsync(
-                @"DELETE FROM ""DocumentSignatures"" WHERE ""DocumentId"" = {0}",
-                documentId);
+            // 5-6. แถวลูกของเอกสาร (ลายเซ็น → ขั้นอนุมัติ → ใบทวงหนี้ · การเตือนชำระ · ภาษีเลื่อนงวด · ลิงก์ข้ามบริษัท · เช็คล่วงหน้า ·
+            //      การปันส่วนชำระ · outbox ลูกค้าเซ็น · อีเมล) — รอบ 242: เดิมลบขั้นอนุมัติก่อนลายเซ็น ⇒ 23001 (FK_DocumentSignatures_Approvals
+            //      เป็น RESTRICT ในฐาน production) = ลบถาวรใบที่เคยผ่านขั้นอนุมัติไม่ได้เลย · ลำดับ/รายการอยู่ที่ตัวตั้งเดียว Helpers/DocumentPurgeOrder
+            await Accounting.Helpers.DocumentPurgeOrder.DeleteDocumentChildrenAsync(_db, new[] { documentId });
 
             // 6c. ลบ "ใบเสร็จหลักฐานรับเงิน" (settlement receipt) ที่ผูกกับเอกสารนี้
             //     ทิ้งพร้อมกัน — ใบพวกนี้เป็น artifact ของการชำระ (payment ถูกลบใน
@@ -11123,6 +11374,8 @@ public partial class DocumentService : IDocumentService
                     && d.IsSettlementReceipt)
                 .Select(d => d.Id)
                 .ToListAsync();
+            // รอบ 242: แถวลูกของใบเสร็จหลักฐาน (ลายเซ็น/ขั้นอนุมัติ/อีเมล …) ก่อนลบตัวใบ — ตัวตั้งเดียวกับใบหลัก
+            await Accounting.Helpers.DocumentPurgeOrder.DeleteDocumentChildrenAsync(_db, settlementChildIds);
             foreach (var recId in settlementChildIds)
             {
                 await _db.Database.ExecuteSqlRawAsync(
@@ -11156,52 +11409,29 @@ public partial class DocumentService : IDocumentService
                 @"DELETE FROM ""Documents"" WHERE ""Id"" = {0} AND ""CompanyId"" = {1}",
                 documentId, companyId);
 
-            if (userId.HasValue)
+            // แถว audit (hash chain) ต่อใบที่ลบ — รอบ 242: ทุกใบ (เดิมเฉพาะเมื่อมี userId) พร้อมเหตุผล/ใบที่สั่งลบ/ผลจากตัวตัดสิน
+            _db.AddChainedAuditLog(new AuditLog
             {
-                _db.AddChainedAuditLog(new AuditLog
+                CompanyId = companyId,
+                UserId = userId,
+                Action = AuditAction.Delete,
+                EntityType = "Document",
+                EntityId = documentId.ToString(),
+                OldValues = auditSnapshot,
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
                 {
-                    CompanyId = companyId,
-                    UserId = userId,
-                    Action = AuditAction.Delete,
-                    EntityType = "Document",
-                    EntityId = documentId.ToString(),
-                    OldValues = auditSnapshot,
-                    Timestamp = DateTime.UtcNow
-                });
-                await _db.SaveChangesAsync();
-            }
-
-            await transaction.CommitAsync();
+                    action = "Purge",
+                    reason = string.IsNullOrWhiteSpace(overrideReason) ? null : overrideReason.Trim(),
+                    requestedDocumentId = requestedRootId,
+                    cascade = requestedRootId != documentId,
+                    plan = planReason,
+                }),
+                Timestamp = DateTime.UtcNow
+            });
+            await _db.SaveChangesAsync();
         }
-        catch
-        {
-            await transaction.RollbackAsync();
-            throw;
-        }
-        finally
-        {
-            _db.ChangeTracker.Clear();
-        }
-
-        // ปลด ReconciliationGroup ที่อ้าง document/payment/JE ที่เพิ่งถูกลบ —
-        // GroupItems เก็บ id ไว้แม้แถวจริงตายแล้ว → group ค้างอ้างผี + bank txn
-        // ในกลุ่มติดสถานะ Matched ถาวร. ทำหลัง commit แบบ best-effort
-        // (mirror VoidPaymentAsync/VoidDocumentAsync)
-        if (_bankService != null)
-        {
-            try
-            {
-                await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Document, documentId);
-                foreach (var pid in purgedPaymentIds)
-                    await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.Payment, pid);
-                foreach (var jid in purgedJournalIds)
-                    await _bankService.UnwindGroupsContainingItemAsync(companyId, ReconciliationItemType.JournalEntry, jid);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Purge {DocId}: unwind reconciliation groups ไม่สำเร็จ (non-fatal)", documentId);
-            }
-        }
+        // ใบถัดไปในแผนเริ่มจาก context สะอาด (แถวของใบนี้ถูกลบด้วย SQL ดิบแล้ว — ห้ามค้างใน tracker)
+        _db.ChangeTracker.Clear();
     }
 
     /// <summary>
@@ -13149,6 +13379,10 @@ public partial class DocumentService : IDocumentService
         }
         else
         {
+            // ฝ่ายค้านรอบ 242 N6: ใบต้นทาง "ครบตามยอดรวมทั้งใบ" — แปลงทั้งใบไม่มีขั้นยืนยัน ⇒ หยุดพร้อมทางไปต่อ (แปลงบางส่วน = ถามรับทราบแล้วแปลงต่อได้)
+            if (await HeaderTotalConvertWarningAsync(companyId, source, targetType) is string headerTotalWarn)
+                throw new BusinessRuleException(headerTotalWarn + " · ถ้าตั้งใจออกเพิ่ม ใช้ \"แปลงบางส่วน\" แล้วกดยืนยัน",
+                    HeaderTotalConvertRule, 409);
             // Quantity-tracked target — carry forward only what is still
             // un-converted on this axis, so a second convert never duplicates.
             var consumption = await ComputeConsumptionAsync(companyId, orderedLines.Select(l => l.Id).ToList());
@@ -13376,6 +13610,9 @@ public partial class DocumentService : IDocumentService
                     roundingLines: lg.LineCount + spec.Count))
                 overMsgs.Add(RootRevenueLedger.OverMessage(lg.RootNumber, lg.Billed, convertingNow, lg.RootBase));
         }
+        // ฝ่ายค้านรอบ 242 N6: ใบต้นทางที่ป้ายขึ้น "ครบตามยอดรวมทั้งใบ" (ข้อ 242-B) — คงเหลือรายบรรทัดมองไม่เห็นยอดที่ออกไปแล้ว ⇒ ถามยืนยันด้วยด่านเดียวกับยอดเกิน
+        if (await HeaderTotalConvertWarningAsync(companyId, source, targetType) is string headerTotalWarn)
+            overMsgs.Add(headerTotalWarn);
         if (overMsgs.Count > 0)
         {
             if (!request.ConfirmOverSourceAmount)
@@ -13822,6 +14059,14 @@ public partial class DocumentService : IDocumentService
         await strategy.ExecuteAsync(async () =>
         {
             await using var tx = await _db.Database.BeginTransactionAsync();
+            // รอบ 245 L1 ฝ่ายค้าน S4: ปลายทางแจ้งเตือนของผู้ติดต่อ — ล็อกเดียวกับผู้เขียน (ContactNotifyEndpointService) ทุกรายที่เกี่ยว (เรียง id กัน deadlock) ·
+            // จำแถวของผู้ถูกรวมไว้ก่อนย้าย (ย้ายแล้ว ContactId เหมือนกันหมด)
+            foreach (var lockId in mergeIds.Append(keepId).Distinct().OrderBy(x => x))
+                await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",
+                    new object[] { Accounting.Helpers.AdvisoryLockKey.For(companyId, Accounting.Helpers.AdvisoryLockKey.ContactNotifyEndpoint, lockId.ToString()) });
+            var loserEndpointIds = (await _db.ContactNotifyEndpoints.AsNoTracking()
+                .Where(e => e.CompanyId == companyId && mergeIds.Contains(e.ContactId))
+                .Select(e => e.Id).ToListAsync()).ToHashSet();
             foreach (var loser in losers)
             {
                 foreach (var col in fkCols)
@@ -13836,6 +14081,20 @@ public partial class DocumentService : IDocumentService
                 loser.IsActive = false;
                 loser.UpdatedAt = DateTime.UtcNow;
                 loser.UpdatedBy = performedBy;
+            }
+            // รอบ 245 L1 ฝ่ายค้าน S4: หลังย้าย — ยกเลิกแถวอีเมลหลักของผู้ถูกรวม + อีเมลรอง/LINE ที่ซ้ำ (ตัวตัดสินเดียว ContactRecipientRule.MergeUnlinks · เหตุ merge)
+            var endpointRows = await _db.ContactNotifyEndpoints
+                .Where(e => e.CompanyId == companyId && e.ContactId == keepId && e.UnlinkedAt == null)
+                .ToListAsync();
+            var endpointUnlinks = Accounting.Helpers.ContactRecipientRule.MergeUnlinks(
+                endpointRows.Select(e => new Accounting.Helpers.ContactRecipientRule.MergeRow(e.Id, e.Kind, e.IsPrimary, e.Email, e.LineIdHash,
+                    loserEndpointIds.Contains(e.Id), e.LinkedAt)), keep.Email).ToHashSet();
+            foreach (var ep in endpointRows.Where(r => endpointUnlinks.Contains(r.Id)))
+            {
+                ep.UnlinkedAt = DateTime.UtcNow;
+                ep.UnlinkReason = Accounting.Helpers.NotifyEndpointKind.UnlinkMerge;
+                ep.UpdatedAt = DateTime.UtcNow;
+                ep.UpdatedBy = performedBy;
             }
             keep.UpdatedAt = DateTime.UtcNow;
             keep.UpdatedBy = performedBy;
@@ -13858,6 +14117,7 @@ public partial class DocumentService : IDocumentService
                     keepId, keepName = keep.Name, keepTaxId = keep.TaxId,
                     merged = mergeIds, rowsRepointed = repointed,
                     documentsMoved = affectedDocs.Count,
+                    notifyEndpointsUnlinked = endpointUnlinks,   // รอบ 245 L1 S4
                 }),
                 Timestamp = DateTime.UtcNow
             });
@@ -15054,22 +15314,10 @@ public partial class DocumentService : IDocumentService
     /// กติกาเดิมของ <see cref="CreatePaymentAsync"/> ย้ายมาเป็นตัวเดียวให้ endpoint แนะนำยอด/คำเตือนก่อนอนุมัติใช้ร่วม (ผสมสองทางแล้วต้องไม่เกินเพดาน)
     /// </summary>
     /// <param name="excludeDocumentId">ใบที่ไม่นับ (ใบสำคัญจ่ายที่กำลังตรวจก่อนอนุมัติ)</param>
-    private async Task<decimal> WhtAlreadyWithheldAsync(Guid companyId, Guid documentId, Guid? excludeDocumentId = null)
+    private Task<decimal> WhtAlreadyWithheldAsync(Guid companyId, Guid documentId, Guid? excludeDocumentId = null)
     {
-        var withheldViaPayments = await _db.Payments.AsNoTracking()
-            .Where(p => p.CompanyId == companyId && p.DocumentId == documentId && !p.IsDeleted)
-            .SumAsync(p => (decimal?)p.WithholdingTaxAmount) ?? 0m;
-        var settlementTypes = new[] { DocumentType.Receipt, DocumentType.ReceiptVoucher, DocumentType.PaymentVoucher };
-        var withheldViaReceipts = await _db.Documents.AsNoTracking()
-            .Where(r => r.CompanyId == companyId && r.RelatedDocumentId == documentId
-                && (excludeDocumentId == null || r.Id != excludeDocumentId)
-                && settlementTypes.Contains(r.DocumentType)
-                && r.Status != DocumentStatus.Voided
-                && r.Status != DocumentStatus.Draft
-                && r.Status != DocumentStatus.Rejected
-                && !r.IsDeleted)
-            .SumAsync(r => (decimal?)r.WithholdingTaxAmount) ?? 0m;
-        return withheldViaPayments + withheldViaReceipts;
+        // รอบ 241 ฝ่ายค้าน B1: ย้ายเป็นตัวนับกลาง — ลิงก์ชำระ/handler gateway ใช้ตัวเดียวกัน (สูตรเดิมทุกตัวอักษร)
+        return Accounting.Helpers.WhtWithheldCounter.AlreadyAsync(_db, companyId, documentId, excludeDocumentId);
     }
 
     /// <summary>
@@ -15078,7 +15326,24 @@ public partial class DocumentService : IDocumentService
     /// ใบที่ไม่ใช่ฝั่งผู้จ่าย (<see cref="Accounting.Helpers.WhtCertIssuePlan.AppliesTo"/>) = ว่าง (ฝั่งขายยังเป็นพฤติกรรมเดิม) ·
     /// ใบเพิ่มหนี้ไม่นับ — ตั้งหนี้แยกและหักภาษีตอนจ่ายใบของมันเอง (ดู <see cref="Accounting.Helpers.WhtPaymentSuggestion"/>)
     /// </summary>
-    private async Task<(List<decimal> Whts, List<decimal> Payees)> PurchaseCreditNoteWhtAsync(Guid companyId, Document doc)
+    private Task<(List<decimal> Whts, List<decimal> Payees)> PurchaseCreditNoteWhtAsync(Guid companyId, Document doc)
+    {
+        return PurchaseCreditNoteWhtCoreAsync(_db, companyId, doc);
+    }
+
+    /// <summary>รอบ 244 (ฝ่ายค้าน S2): ยอดภาษีหักของการรับชำระตามตัวคิดเดียวกับ <see cref="CreatePaymentAsync"/> (ใบลดหนี้ที่มีผล · ที่หักไปแล้ว ·
+    /// <see cref="Accounting.Helpers.WhtPaymentSuggestion.Compute"/>) — ให้ลิงก์ชำระ (<c>DocumentPayLinkService</c>) และ handler gateway เรียกตัวเดียว
+    /// (เดิมลิงก์คิดจาก <c>Document.WithholdingTaxAmount</c> ตรง ๆ ⇒ ใบที่มีใบลดหนี้ได้ยอดคนละตัวกับตัวบันทึก) · static (ไม่ต้องสร้าง DocumentService) · tenant</summary>
+    internal static async Task<Accounting.Helpers.WhtPaymentSuggestionResult> PaymentWhtFiguresAsync(AccountingDbContext db, Guid companyId,
+        Document doc, decimal amount, CancellationToken ct = default)
+    {
+        var (cnWhts, cnPayees) = await PurchaseCreditNoteWhtCoreAsync(db, companyId, doc);
+        var already = await Accounting.Helpers.WhtWithheldCounter.AlreadyAsync(db, companyId, doc.Id, ct: ct);
+        return Accounting.Helpers.WhtPaymentSuggestion.Compute(doc.WithholdingTaxAmount, cnWhts, already,
+            ForeignServiceVat.PayeeAmount(doc), cnPayees, amount, 0m, isFinal: amount + 0.01m >= doc.BalanceDue);
+    }
+
+    private static async Task<(List<decimal> Whts, List<decimal> Payees)> PurchaseCreditNoteWhtCoreAsync(AccountingDbContext _db, Guid companyId, Document doc)
     {
         if (!Accounting.Helpers.WhtCertIssuePlan.AppliesTo(doc.DocumentType)) return (new List<decimal>(), new List<decimal>());
         var notIssued = DocumentStatusRules.NotIssued;
@@ -20977,8 +21242,9 @@ public partial class DocumentService : IDocumentService
         }
 
         // ใบวางบิลที่แปลงต่อครบแล้ว (ใบแจ้งหนี้/ใบกำกับ/ใบเสร็จรับช่วงไป) = จบหน้าที่ แม้ยอดคงค้างบนใบวางบิลยังไม่ถูกตัด (ข้อ 9)
+        // ฝ่ายค้านรอบ 242 N6: "ครบตามยอดรวมทั้งใบ" (ไม่มีรายการจับคู่) ไม่พอให้ใบวางบิลที่ยังมียอดค้างจบ — ต้องแปลงจริงรายบรรทัดหรือรับชำระ
         if (DocumentConversionProgress.ClosesByConversionOrPayment(d.DocumentType) && d.BalanceDue > 0.01m
-            && conversion?.Progress.State == ConversionProgressState.Full)
+            && conversion?.Progress.State == ConversionProgressState.Full && !conversion.Progress.ByHeaderTotal)
         {
             DocumentConversionProgress.ChildRef? bnLatest = conversion.Latest == null
                 ? (DocumentConversionProgress.ChildRef?)null

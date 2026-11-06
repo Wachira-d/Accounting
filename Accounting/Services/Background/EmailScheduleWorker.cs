@@ -39,6 +39,15 @@ public class EmailScheduleWorker : BackgroundService
                 if (sent > 0)
                     _logger.LogInformation("EmailScheduleWorker: ส่ง {Count} ฉบับสำเร็จ", sent);
 
+                // รอบ 241: งานหลังรับชำระ (ออก/ส่งใบเสร็จ) — scope ของตัวเอง (แถวหนึ่งพังไม่ลากคิวอีเมล) · จองแถวด้วย SKIP LOCKED (หลายเครื่องไม่ทำซ้ำ)
+                using (var postPayScope = _services.CreateScope())
+                {
+                    var postPay = postPayScope.ServiceProvider.GetRequiredService<IPostPaymentAutomationService>();
+                    var runs = await postPay.ProcessDueAsync(stoppingToken);
+                    if (runs > 0)
+                        _logger.LogInformation("EmailScheduleWorker: ประมวลผลงานหลังรับชำระ {Count} รายการ", runs);
+                }
+
                 if (DateTime.UtcNow - lastScan > ScanInterval)
                 {
                     var enq = await svc.ScanDueSoonAndOverdueAsync(stoppingToken);

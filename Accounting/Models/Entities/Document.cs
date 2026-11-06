@@ -240,6 +240,21 @@ public class Document : TenantEntity
     /// <summary>ส่งอีเมลเตือนอัตโนมัติแล้วเมื่อ (หนึ่งครั้งต่อลิงก์)</summary>
     public DateTime? SignReminderSentAt { get; set; }
 
+    // ── รอบ 241: ลิงก์ชำระเงินของเอกสารขาย (หนึ่งลิงก์ต่อใบ · ตัวตัดสิน Helpers/DocumentPayLinkPolicy · ผู้เขียนเดียว DocumentPayLinkService) ──
+    /// <summary>SHA-256 ของ token ลิงก์ชำระเงินสาธารณะ (/pages/pay-document.html) — ฐานไม่เก็บ token ตรง (คำตัดสิน 241-10 · แบบ
+    /// <c>PlatformPaymentLinks.TokenHash</c>) · unique · ค้น + ยืนยันแบบเวลาคงที่ (<c>DocumentPayLinkPolicy.TokenMatches</c>) · null = ยังไม่เคยออก</summary>
+    public string? PayLinkTokenHash { get; set; }
+    /// <summary>token ฉบับเข้ารหัส (<c>ISecretProtector</c>) — ใช้ประกอบ URL เดิมในอีเมลรอบถัดไป (หนึ่งลิงก์ต่อใบ) · ถอดไม่ได้ (เปลี่ยนกุญแจ) ⇒ ออก token ใหม่</summary>
+    public string? PayLinkTokenProtected { get; set; }
+    public DateTime? PayLinkIssuedAt { get; set; }
+    public DateTime? PayLinkExpiresAt { get; set; }
+    /// <summary>เพิกถอนเมื่อ (ผู้ใช้กดยกเลิกลิงก์) — ใบที่ยกเลิก/ชำระครบถูกตัดสินสดทุกครั้งที่เปิดลิงก์ (ไม่ต้องประทับ)</summary>
+    public DateTime? PayLinkRevokedAt { get; set; }
+    /// <summary>ช่องทางที่ใบนี้อนุญาต (JSON ชื่อ enum — ตัดกับที่บริษัทเปิดจริงทุกครั้งที่อ่าน) · null = ทุกช่องทางที่บริษัทเปิด</summary>
+    public string? PayLinkChannelsJson { get; set; }
+    /// <summary>ตารางส่งเอกสาร (EmailScheduleRule) ตัวแรกที่ส่งใบนี้ถึงลูกค้า — ค่าทับของงานหลังรับชำระอ่านจากตารางนี้ · null = ค่าบริษัท</summary>
+    public Guid? AutoSendRuleId { get; set; }
+
     /// <summary>User override ผังบัญชีปลายทางของ VAT ส่วนนี้. Null = default
     /// (11610/11640 ตาม completeness); ค่าอื่น เช่น "51000" (ต้นทุนขาย) =
     /// treat as cost ตาม §82/5(1) — block claim VAT ใน ภ.พ.30, ลง expense

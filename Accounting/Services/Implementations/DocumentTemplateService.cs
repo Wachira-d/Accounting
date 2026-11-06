@@ -32,6 +32,7 @@ public class DocumentTemplateService : IDocumentTemplateService
 
         ApplyRequestToTemplate(template, request);
         template.DefaultPaymentAccountId = await ValidateDefaultPaymentAccountAsync(companyId, template.DefaultPaymentAccountId);
+        await ValidatePaymentQrBankAccountAsync(companyId, template.PaymentQrBankAccountId);
 
         // If set as default, unset other defaults for this document type
         if (request.IsDefault)
@@ -96,11 +97,16 @@ public class DocumentTemplateService : IDocumentTemplateService
         }
 
         var previousDefaultPaymentAccountId = template.DefaultPaymentAccountId;
+        var previousPaymentQrBankAccountId = template.PaymentQrBankAccountId;
         ApplyUpdateToTemplate(template, request);
         // ฝ่ายค้านรอบ 1 P2 (4c): ตรวจเฉพาะเมื่อ "เปลี่ยน" — หน้าเว็บส่งค่าเดิมกลับมาทุกครั้งที่บันทึก ⇒ ผังที่ถูกปิดใช้ทีหลังเคยทำให้แก้ช่องอื่น
         // ของเทมเพลต (โลโก้/สี/หมายเหตุ) ไม่ได้เลย · ค่าเดิมที่ใช้ไม่ได้แล้ว: ฟอร์มเอกสารไม่เติมให้อยู่แล้ว (ChannelValueForGlAsync คืน null)
         if (request.DefaultPaymentAccountId.HasValue && template.DefaultPaymentAccountId != previousDefaultPaymentAccountId)
             template.DefaultPaymentAccountId = await ValidateDefaultPaymentAccountAsync(companyId, template.DefaultPaymentAccountId);
+        // ตรวจเฉพาะเมื่อ "เปลี่ยน" (แบบเดียวกับบัญชีตั้งต้นด้านบน) — บัญชีที่ถูกลบทีหลังต้องไม่ทำให้แก้ช่องอื่นของเทมเพลตไม่ได้
+        // (ค่าเดิมที่ใช้ไม่ได้แล้ว: PaymentQrPolicy.PickAccount ไม่พบในชุดที่ตั้ง QR ⇒ ไม่พิมพ์ — ไม่สลับบัญชีเอง)
+        if (request.PaymentQrBankAccountId.HasValue && template.PaymentQrBankAccountId != previousPaymentQrBankAccountId)
+            await ValidatePaymentQrBankAccountAsync(companyId, template.PaymentQrBankAccountId);
 
         await _db.SaveChangesAsync();
         return MapToResponse(template);
@@ -259,12 +265,12 @@ public class DocumentTemplateService : IDocumentTemplateService
             IsEtaxTemplate = source.IsEtaxTemplate,
             EtaxServiceProvider = source.EtaxServiceProvider,
             AutoGenerateEtaxXml = source.AutoGenerateEtaxXml,
-            ShowQrCode = source.ShowQrCode,
-            QrCodeType = source.QrCodeType,
-            PromptPayId = source.PromptPayId,
-            QrCodeCustomData = source.QrCodeCustomData,
             DefaultCopies = source.DefaultCopies,
-            CopyLabels = source.CopyLabels
+            CopyLabels = source.CopyLabels,
+            // รอบ 246 QR — คัดลอกเทมเพลตต้องได้ธง QR + บัญชีที่เลือกตามต้นฉบับ
+            ShowPaymentQr = source.ShowPaymentQr,
+            ShowPayLinkQr = source.ShowPayLinkQr,
+            PaymentQrBankAccountId = source.PaymentQrBankAccountId,
         };
 
         _db.DocumentTemplates.Add(clone);
@@ -400,12 +406,13 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.IsEtaxTemplate.HasValue) t.IsEtaxTemplate = r.IsEtaxTemplate.Value;
         if (r.EtaxServiceProvider != null) t.EtaxServiceProvider = r.EtaxServiceProvider;
         if (r.AutoGenerateEtaxXml.HasValue) t.AutoGenerateEtaxXml = r.AutoGenerateEtaxXml.Value;
-        if (r.ShowQrCode.HasValue) t.ShowQrCode = r.ShowQrCode.Value;
-        if (r.QrCodeType != null) t.QrCodeType = r.QrCodeType;
-        if (r.PromptPayId != null) t.PromptPayId = r.PromptPayId;
-        if (r.QrCodeCustomData != null) t.QrCodeCustomData = r.QrCodeCustomData;
+        // ShowQrCode/QrCodeType/PromptPayId/QrCodeCustomData เดิม — ไม่รับแล้ว (รอบ 246 QR ฝ่ายค้าน N3 · ไม่มีตัวเรนเดอร์อ่าน)
         if (r.DefaultCopies.HasValue) t.DefaultCopies = r.DefaultCopies.Value;
         if (r.CopyLabels != null) t.CopyLabels = r.CopyLabels;
+        // รอบ 246 QR — Guid.Empty = ล้างบัญชีที่เลือก (null = ไม่ได้ส่งมา) · บัญชีของบริษัทนี้ตรวจที่ ValidatePaymentQrBankAccountAsync
+        if (r.ShowPaymentQr.HasValue) t.ShowPaymentQr = r.ShowPaymentQr.Value;
+        if (r.ShowPayLinkQr.HasValue) t.ShowPayLinkQr = r.ShowPayLinkQr.Value;
+        if (r.PaymentQrBankAccountId.HasValue) t.PaymentQrBankAccountId = r.PaymentQrBankAccountId.Value == Guid.Empty ? null : r.PaymentQrBankAccountId.Value;
     }
 
     private static void ApplyUpdateToTemplate(DocumentTemplate t, UpdateDocumentTemplateRequest r)
@@ -495,12 +502,13 @@ public class DocumentTemplateService : IDocumentTemplateService
         if (r.IsEtaxTemplate.HasValue) t.IsEtaxTemplate = r.IsEtaxTemplate.Value;
         if (r.EtaxServiceProvider != null) t.EtaxServiceProvider = r.EtaxServiceProvider;
         if (r.AutoGenerateEtaxXml.HasValue) t.AutoGenerateEtaxXml = r.AutoGenerateEtaxXml.Value;
-        if (r.ShowQrCode.HasValue) t.ShowQrCode = r.ShowQrCode.Value;
-        if (r.QrCodeType != null) t.QrCodeType = r.QrCodeType;
-        if (r.PromptPayId != null) t.PromptPayId = r.PromptPayId;
-        if (r.QrCodeCustomData != null) t.QrCodeCustomData = r.QrCodeCustomData;
+        // ShowQrCode/QrCodeType/PromptPayId/QrCodeCustomData เดิม — ไม่รับแล้ว (รอบ 246 QR ฝ่ายค้าน N3)
         if (r.DefaultCopies.HasValue) t.DefaultCopies = r.DefaultCopies.Value;
         if (r.CopyLabels != null) t.CopyLabels = r.CopyLabels;
+        // รอบ 246 QR — Guid.Empty = ล้างบัญชีที่เลือก (null = ไม่ได้ส่งมา) · บัญชีของบริษัทนี้ตรวจที่ ValidatePaymentQrBankAccountAsync
+        if (r.ShowPaymentQr.HasValue) t.ShowPaymentQr = r.ShowPaymentQr.Value;
+        if (r.ShowPayLinkQr.HasValue) t.ShowPayLinkQr = r.ShowPayLinkQr.Value;
+        if (r.PaymentQrBankAccountId.HasValue) t.PaymentQrBankAccountId = r.PaymentQrBankAccountId.Value == Guid.Empty ? null : r.PaymentQrBankAccountId.Value;
     }
 
     /// <summary>บัญชีรับ/จ่ายเงินตั้งต้นของเทมเพลต (PC#14 · ID#4) — ผังของบริษัทนี้ · เปิดใช้ · ลงรายการได้ · ไม่ใช่รหัสบัญชีธนาคาร ·
@@ -516,6 +524,16 @@ public class DocumentTemplateService : IDocumentTemplateService
         return g;
     }
 
+    /// <summary>รอบ 246 QR — บัญชีที่เทมเพลตใช้ QR ต้องเป็นบัญชีธนาคารของบริษัทนี้ (กัน id ข้ามบริษัท · กฎ M) · null = ตามลำดับอัตโนมัติ</summary>
+    private async Task ValidatePaymentQrBankAccountAsync(Guid companyId, Guid? bankAccountId)
+    {
+        if (bankAccountId is not Guid id) return;
+        if (!await _db.Set<BankAccount>().AnyAsync(a => a.Id == id && a.CompanyId == companyId && !a.IsDeleted))
+            throw new Accounting.Helpers.BusinessRuleException(
+                "บัญชีธนาคารที่เลือกให้ QR ชำระเงินไม่ใช่บัญชีของบริษัทนี้ (หรือถูกลบแล้ว) — เลือกใหม่ที่ช่อง “บัญชีที่ใช้ QR ชำระเงิน”",
+                Accounting.Helpers.PaymentQrPolicy.RuleCode);
+    }
+
     private static DocumentTemplateResponse MapToResponse(DocumentTemplate t) => new(
         t.Id, t.Name, t.Description, t.DocumentType, t.IsDefault, t.IsActive,
         t.PaperSize, t.Orientation, t.ShowLogo, t.LogoPosition,
@@ -525,7 +543,7 @@ public class DocumentTemplateService : IDocumentTemplateService
         t.TableHeaderColor, t.TableBorderStyle, t.ShowAmountInWords,
         t.FooterNotes, t.ShowPaymentTerms, t.ShowBankDetails,
         t.DefaultPaymentAccountId, t.DefaultPaymentTerms, t.DefaultCreditDays,
-        t.ShowSignature, t.SignatureCount, t.ShowQrCode, t.QrCodeType, t.PromptPayId,
+        t.ShowSignature, t.SignatureCount,
         t.LayoutStyle, t.FontFamily, t.Language, t.ShowBilingual,
         t.IsEtaxTemplate, t.AutoGenerateEtaxXml, t.DefaultCopies, t.CreatedAt,
         t.ShowWatermark, t.WatermarkText, t.WatermarkOpacity, t.CopyLabelPosition,
@@ -546,7 +564,8 @@ public class DocumentTemplateService : IDocumentTemplateService
         t.LogoWidth, t.LogoHeight,
         t.MarginTop, t.MarginBottom, t.MarginLeft, t.MarginRight,
         t.HeaderTextColor,
-        t.ShowDocumentNumber, t.ShowDocumentDate, t.ShowDueDate, t.ShowReference);
+        t.ShowDocumentNumber, t.ShowDocumentDate, t.ShowDueDate, t.ShowReference,
+        ShowPaymentQr: t.ShowPaymentQr, ShowPayLinkQr: t.ShowPayLinkQr, PaymentQrBankAccountId: t.PaymentQrBankAccountId);
 
     /// <summary>รอบ 202: ค่าตำแหน่งป้าย ต้นฉบับ/สำเนา ต้องเป็นค่าที่ renderer รู้จัก (Helpers/CopyLabelPlacement) — เดิมรับสตริงอะไรก็ได้
     /// แล้ว renderer ตกเป็นค่าเดิมเงียบ ๆ (เลือกแล้วไม่มีผล) · ว่าง = ค่าเดิม</summary>

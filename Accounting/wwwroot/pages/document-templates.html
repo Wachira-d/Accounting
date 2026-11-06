@@ -405,6 +405,18 @@
             <div class="editor-row single">
               <label>ข้อความบัญชีธนาคาร</label><textarea id="bankDetailsText" rows="3" onchange="Page.markDirty()"></textarea>
             </div>
+            <!-- รอบ 246 QR — QR ชำระเงิน (ตั้ง QR/พร้อมเพย์ของบัญชีที่หน้า "บัญชีธนาคาร") · เซิร์ฟเวอร์ตัดสินว่าใบไหนพิมพ์ (Helpers/PaymentQrPolicy) -->
+            <label class="check-row"><input type="checkbox" id="showPaymentQr" onchange="Page.markDirty()"> แสดง QR ชำระเงิน (พร้อมเพย์/รูป QR ของบัญชี)</label>
+            <div class="editor-row single">
+              <label>บัญชีที่ใช้ QR ชำระเงิน</label>
+              <select id="paymentQrBankAccountId" onchange="Page.markDirty()"><option value="">— อัตโนมัติ (บัญชีของใบ หรือบัญชีเดียวที่ตั้ง QR) —</option></select>
+            </div>
+            <div id="payQrCheck" style="font-size:11.5px;margin:2px 0 6px"></div>
+            <label class="check-row"><input type="checkbox" id="showPayLinkQr" onchange="Page.markDirty()"> แสดง QR หน้าชำระออนไลน์ (เมื่อใบมีลิงก์ชำระเงินที่ยังใช้ได้)</label>
+            <div style="font-size:11px;color:#64748b;margin:2px 0 6px">
+              QR พร้อมเพย์ใส่ยอดค้างหลังหัก ณ ที่จ่ายให้เอง (ใบแจ้งหนี้/ใบกำกับที่อนุมัติแล้ว) · ใบเสนอราคา/ร่าง = QR ไม่ระบุยอด · ใบเสร็จ/เอกสารฝั่งซื้อไม่พิมพ์ QR ·
+              ไฟล์ e-Tax ไม่มี QR หน้าชำระ
+            </div>
 
             <!-- ค่าเริ่มต้นของฟอร์มสร้างเอกสารชนิดนี้ — ไม่ใช่เรื่องหน้ากระดาษ
                  แต่วางไว้ที่นี่เพราะ template คือ "ที่ตั้งค่าต่อชนิดเอกสาร"
@@ -549,6 +561,10 @@
                 `<option value="${Layout.esc(b.linkedAccountId)}">${Layout.esc(b.accountName)} (${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber)})</option>`).join('') + '</optgroup>' : '')
             + (others.length ? '<optgroup label="เงินสด / อื่นๆ">' + others.map(a =>
                 `<option value="${Layout.esc(a.id)}">${Layout.esc(a.accountCode)} - ${Layout.esc(a.accountName)}</option>`).join('') + '</optgroup>' : '');
+          // รอบ 246 QR — บัญชีที่ใช้ QR (ค่า = รหัสบัญชีธนาคาร · ป้าย "ยังไม่ตั้ง QR" มาจาก paymentQrEffective ของเซิร์ฟเวอร์)
+          const qrSel = document.getElementById('paymentQrBankAccountId');
+          if (qrSel) qrSel.innerHTML = '<option value="">— อัตโนมัติ (บัญชีของใบ หรือบัญชีเดียวที่ตั้ง QR) —</option>'
+            + (bankRes?.data || []).map(b => `<option value="${Layout.esc(b.id)}">${Layout.esc(b.accountName)} (${Layout.esc(b.bankName)} ${Layout.esc(b.accountNumber)})${b.paymentQrEffective ? '' : ' — ยังไม่ตั้ง QR'}</option>`).join('');
           this._payOptionsLoaded = true;
         } catch (e) {
           this._payOptionsLoaded = false;
@@ -1003,6 +1019,7 @@
          'customTitle','customTitleEn',
          'footerNotes','footerNotesEn','bankDetailsText',
          'defaultPaymentAccountId','defaultPaymentTerms','defaultCreditDays',
+         'paymentQrBankAccountId',
          'paperSize','orientation','marginTop','marginBottom','marginLeft','marginRight',
         ].forEach(spec => {
           const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
@@ -1017,11 +1034,21 @@
          'showSubTotal','showDiscountTotal','showVatSummary','showWithholdingTaxSummary','showAmountInWords',
          'showSignature','showCompanyStamp',
          'showWatermark','showPaymentTerms','showBankDetails','repeatHeaderEveryPage',
+         'showPaymentQr','showPayLinkQr',
         ].forEach(spec => {
           const [id, prop] = spec.includes(':') ? spec.split(':') : [spec, spec];
           set(id, t[prop]);
         });
         this._ensureSavedPaymentOption(t.defaultPaymentAccountId);
+        // รอบ 246 QR — บัญชี QR ที่บันทึกไว้แต่ไม่อยู่ในรายการ (ถูกปิด/ลบ) ⇒ คงค่าพร้อมป้าย ห้ามสลับเป็น "อัตโนมัติ" เงียบ ๆ
+        const qrSel = document.getElementById('paymentQrBankAccountId');
+        if (qrSel && t.paymentQrBankAccountId && ![...qrSel.options].some(o => o.value === t.paymentQrBankAccountId)) {
+          const o = document.createElement('option');
+          o.value = t.paymentQrBankAccountId;
+          o.textContent = '⚠ บัญชีที่บันทึกไว้ (ไม่อยู่ในรายการ — อาจถูกปิดใช้งาน · ไม่พิมพ์ QR) · เลือกใหม่หรือเลือก “อัตโนมัติ”';
+          qrSel.appendChild(o);
+          qrSel.value = t.paymentQrBankAccountId;
+        }
         this._renderStampPreview(t.stampImagePath);
       },
 
@@ -1153,6 +1180,10 @@
           showPaymentTerms: getCheck('showPaymentTerms'),
           showBankDetails: getCheck('showBankDetails'),
           bankDetailsText: get('bankDetailsText') || null,
+          // รอบ 246 QR — ว่าง = ล้าง (Guid.Empty) · null = ไม่เปลี่ยน
+          showPaymentQr: getCheck('showPaymentQr'),
+          showPayLinkQr: getCheck('showPayLinkQr'),
+          paymentQrBankAccountId: get('paymentQrBankAccountId') || '00000000-0000-0000-0000-000000000000',
           // ว่าง = ล้างค่า (Guid.Empty) — null แปลว่า "ไม่ได้ส่งมา คงค่าเดิม" ⇒ เดิมเลือก "ไม่กำหนด" แล้วค่าเก่ายังอยู่ (silent no-op)
           defaultPaymentAccountId: get('defaultPaymentAccountId') || '00000000-0000-0000-0000-000000000000',
           // ส่ง "" / 0 (ไม่ใช่ null) ตอนช่องว่าง — server ใช้ convention
@@ -1168,6 +1199,23 @@
           marginRight: getNum('marginRight'),
           repeatHeaderEveryPage: getCheck('repeatHeaderEveryPage'),
         };
+      },
+
+      // รอบ 246 QR (ฝ่ายค้าน S2(ก)/S4): บัญชีที่ QR จะใช้ + เหตุที่ไม่พิมพ์ + คำเตือนข้อความบัญชีไม่ตรง — เซิร์ฟเวอร์ตัดสิน (PaymentQrService.DiagnoseTemplateAsync)
+      async _refreshPayQrCheck(body) {
+        const box = document.getElementById('payQrCheck');
+        if (!box) return;
+        try {
+          const r = await API.c(Layout.getCompanyId()).checkTemplatePaymentQr(body);
+          const s = r && r.data;
+          if (!s) { box.innerHTML = ''; return; }
+          const esc = Layout.esc;
+          const parts = [];
+          if (s.accountLabel) parts.push(`<div style="color:#166534">QR จะใช้บัญชี: ${esc(s.accountLabel)}</div>`);
+          if (s.problem) parts.push(`<div style="color:#b45309">⚠️ ${esc(s.problem)}</div>`);
+          (s.warnings || []).forEach(w => parts.push(`<div style="color:#b45309">⚠️ ${esc(w)}</div>`));
+          box.innerHTML = parts.join('');
+        } catch (e) { box.textContent = ''; }
       },
 
       markDirty() {
@@ -1193,6 +1241,7 @@
         document.getElementById('status').textContent = '⏳ กำลังเรนเดอร์ตัวอย่าง...';
         try {
           const body = this._collectForm();
+          this._refreshPayQrCheck(body);   // รอบ 246 QR — ไม่รอ (พรีวิวไม่ช้าลง)
           const res = await fetch(`/api/companies/${cid}/document-templates/preview-html-draft`, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },

@@ -47,6 +47,14 @@ public class NextAccLineConfig : INextAccLineConfig
         return _loaded;
     }
 
+    public async Task<IReadOnlyList<string>> PlatformGroupIdsAsync(CancellationToken ct = default)
+    {
+        string? admin = null;
+        if (_db != null)
+            admin = await _db.SiteSettings.AsNoTracking().Select(s => s.LineMessagingGroupId).FirstOrDefaultAsync(ct);
+        return NextAccLineConfigRule.PlatformGroupIds(admin, FromConfig(_config).GroupId);
+    }
+
     /// <summary>ค่าใน config <c>Line:*</c> (appsettings / env <c>Line__ChannelAccessToken</c> ฯลฯ) — ที่เดียวของระบบ</summary>
     public static NextAccLineValues FromConfig(IConfiguration config) => new(
         config["Line:ChannelAccessToken"], config["Line:ChannelSecret"], config["Line:BasicId"], config["Line:BotUserId"], config["Line:GroupId"]);

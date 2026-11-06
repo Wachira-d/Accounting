@@ -65,4 +65,14 @@ public record RecurringTransactionResponse(
     string? LastRunError = null,
     DateTime? LastRunErrorAt = null,
     string? LastRunNotice = null,
-    Guid? LastDocumentId = null);
+    Guid? LastDocumentId = null,
+    // รอบ 247 (UX รายการประจำ): ผลรอบล่าสุดที่เซิร์ฟเวอร์ประกอบแล้ว — หัวเรื่อง · สิ่งที่ต้องทำ · ปุ่ม (Helpers/RecurringRunOutcome) · null = ไม่มีเรื่องต้องทำ
+    global::Accounting.Helpers.RecurringRunOutcomeView? LastRunOutcome = null,
+    // ติ๊กส่งอีเมลไว้แต่ผู้ติดต่อไม่มีอีเมล (ตัวตัดสินเดียว RecurringEmailReadiness) + ลิงก์หน้าผู้ติดต่อ
+    string? AutoSendEmailWarning = null,
+    string? AutoSendEmailFixUrl = null,
+    // คำเตือนหลังบันทึก (สร้าง/แก้ไข) — บันทึกสำเร็จแล้ว แต่มีเรื่องควรรู้
+    IReadOnlyList<string>? SaveWarnings = null);
+
+/// <summary>รอบ 247: ฟอร์มรายการประจำ — ผู้ติดต่อที่เลือกรับอีเมลเอกสารได้ไหม (กติกาเดียวกับผู้ส่งจริง · Helpers/RecurringEmailReadiness)</summary>
+public record RecurringEmailReadinessResponse(bool ContactHasEmail, string? Reason, string ContactUrl);

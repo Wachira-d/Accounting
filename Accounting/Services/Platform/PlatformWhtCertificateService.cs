@@ -226,7 +226,6 @@ public class PlatformWhtCertificateService
             ?? throw new BusinessRuleException(
                 "ยังไม่มีแถวในทะเบียนภาษีถูกหักของบริษัทผู้ให้บริการ (ใบเสร็จยังไม่ออก หรือใบไม่มีขา Dr 11910) — ออกใบเสร็จ/ตัดชำระให้สำเร็จก่อน แล้วยืนยันอีกครั้ง",
                 PlatformWhtCertificateStatus.RuleCode, 409);
-        await _db.SaveChangesAsync(ct);
         // ฝ่ายค้าน 234 N1: ยอดภาษีบนใบ (แอดมินกรอกจากหนังสือรับรอง) ต้องตรงยอดที่ผู้เช่าหักจากรายการนี้ · แถวทะเบียน (ยอดจาก GL) ต้องตรงยอดหักของรายการ
         // (แถวรวมหลายงวดของใบเดียว ⇒ ยืนยันแทนกันไม่ได้) — ไม่ตรง = ปฏิเสธพร้อมตัวเลข
         if (PlatformWhtCertificateStatus.AmountMismatch(p.WithholdingTaxAmount, certificateWhtAmount) is string amountWhy)
@@ -235,6 +234,15 @@ public class PlatformWhtCertificateService
         if (PlatformWhtCertificateStatus.AmountMismatch(p.WithholdingTaxAmount, regAmount) is string regWhy)
             throw new BusinessRuleException($"แถวทะเบียนภาษีถูกหัก (ยอดจากบัญชี) ไม่ตรงรายการนี้ — {regWhy} · ตรวจที่ทะเบียนภาษีถูกหักของบริษัทผู้ให้บริการ",
                 PlatformWhtCertificateStatus.RuleCode, 409);
+        // รอบ 243a (ฝ่ายค้าน N4): แถวที่ผู้ทำบัญชีของผู้ให้บริการตัดสูญพร้อม JE แล้ว — การยืนยันต้องกลับ JE (สิทธิ์ Journal.Manage ของบริษัทผู้ให้บริการ)
+        // ⇒ ปฏิเสธพร้อมทางไปต่อก่อนบันทึกอะไร (เดิม SaveChanges ผูกแถวก่อนแล้วค่อยล้มที่ MarkReceived)
+        var reg = await _db.WhtCreditsReceived.AsNoTracking().Where(w => w.Id == creditId && w.CompanyId == pid)
+            .Select(w => new { w.Status, w.WriteOffJournalEntryId, w.WriteOffReversalJournalEntryId }).FirstAsync(ct);
+        if (WhtCreditWriteOff.NeedsReversal(reg.Status, reg.WriteOffJournalEntryId, reg.WriteOffReversalJournalEntryId))
+            throw new BusinessRuleException("แถวทะเบียนของรายการนี้ถูกตัดสูญพร้อมรายการบัญชีในบริษัทผู้ให้บริการแล้ว — "
+                + Accounting.Services.Implementations.WhtCreditService.WrittenOffNeedsJournalManageMessage
+                + $" ด้วยเลขที่ {certificateNumber!.Trim()} (ล็อกอินบริษัทผู้ให้บริการ — ไฟล์ที่ผู้เช่าส่งยังอยู่ในรายการนี้) แล้วกลับมาตรวจสถานะที่นี่ · ยังไม่มีอะไรถูกบันทึก", WhtCreditWriteOff.ReversalRuleCode, 409);
+        await _db.SaveChangesAsync(ct);
         // รอบ 235 (234-W3 ปิด): แนบไฟล์ที่ผู้เช่าส่งเข้าแถวทะเบียน (อ้างไฟล์เดิม) — ก่อน MarkReceived ที่ผูก AttachmentId (ไฟล์ของแถวนี้อยู่แล้ว ⇒ ไม่ย้าย)
         var attachmentId = _env == null ? null
             : await CertificateAttachmentAsync(_db, pid, creditId, p, Accounting.Services.Implementations.SubscriptionSlipUpload.OpenStored(_env, p.WhtCertificateFileName), ct);

@@ -79,7 +79,30 @@ public static class DocumentConversionProgress
         _ => Axis.Other,
     };
 
-    public readonly record struct Progress(decimal? Percent, ConversionProgressState State);
+    /// <param name="ByHeaderTotal">true = "ครบ" ตัดสินจากยอดรวมทั้งใบของใบลูกใบเดียว (คำตัดสินข้อ 242-B) ไม่ใช่จากรายการที่จับคู่ — ป้ายต้องบอกที่มา</param>
+    public readonly record struct Progress(decimal? Percent, ConversionProgressState State, bool ByHeaderTotal = false);
+
+    /// <summary>ใบลูกที่ผูกใบต้นทางด้วยหัวใบ (<c>RelatedDocumentId</c>) และยังมีผล — ข้อเท็จจริงสำหรับกติกา "ยอดเท่ากันทั้งใบ" (ข้อ 242-B)</summary>
+    /// <param name="LineAmountTotal">Σ <c>DocumentLine.Amount</c> ของใบลูก (ฐานก่อน VAT — ฐานเดียวกับยอดใบต้นทางที่ส่งเข้า <see cref="EvaluateByValue"/>)</param>
+    /// <param name="IsDeposit">ใบมัดจำ — ไม่ใช่การเติมเต็มรายการ ห้ามนับเป็น "ครบ"</param>
+    public readonly record struct HeaderLinkedChild(DocumentType ChildType, decimal LineAmountTotal, bool IsDeposit);
+
+    /// <summary>
+    /// คำตัดสินข้อ 242-B (เจ้าของ 2026-11-06 · PO-20260930-0002 → PI-20261001-0005 ยอด 3,584.50 เท่ากันแต่ป้าย "ไม่ทราบสัดส่วน"):
+    /// <b>ไม่มีบรรทัดใดของใบลูกชี้บรรทัดของใบนี้เลย</b> (จับคู่รายการไม่ได้ — มักเป็นใบจากสแกน/ฟอร์มที่คำอธิบายไม่ตรงใบต้นทาง) แต่มีใบลูกที่ยังมีผล
+    /// ผูกหัวใบ<b>ใบเดียว</b> (ไม่ใช่ใบมัดจำ · แกนส่งมอบ/วางบิล) และยอดฐานก่อน VAT ของใบลูก = ยอดฐานของใบนี้ภายในครึ่งสตางค์ ⇒ ถือว่าออกครบ 100%
+    /// (ข้อเท็จจริงเชิงกำหนด: ยอดเงินทั้งใบเท่ากัน · ใบเดียว ⇒ ไม่มีใบอื่นแบ่งยอด) · ใบลูกหลายใบ/ยอดไม่เท่า/วัดด้วยจำนวน (ใบขอซื้อ) ⇒ ยัง "ไม่ทราบสัดส่วน"
+    /// (ซื่อสัตย์กว่าสัดส่วนที่แต่งขึ้น) · มีแถวจับคู่รายบรรทัดอยู่แล้ว ⇒ ใช้แถวจับคู่ (หลักฐานละเอียดกว่าชนะ) · pure
+    /// </summary>
+    internal static bool SoleChildMatchesTotal(decimal totalSourceAmount, int consumedRowCount,
+        IReadOnlyCollection<HeaderLinkedChild>? headerLinkedChildren)
+    {
+        if (consumedRowCount > 0 || totalSourceAmount <= AmountEpsilon) return false;
+        if (headerLinkedChildren == null || headerLinkedChildren.Count != 1) return false;
+        var c = headerLinkedChildren.First();
+        if (c.IsDeposit || AxisOf(c.ChildType) == Axis.Other) return false;
+        return Math.Abs(c.LineAmountTotal - totalSourceAmount) <= AmountEpsilon;
+    }
 
     /// <summary>
     /// ตัดสินความคืบหน้า — <paramref name="totalSourceQty"/> = Σ จำนวนบรรทัดของใบต้นทาง ·
@@ -126,10 +149,15 @@ public static class DocumentConversionProgress
     /// = 50% ไม่ใช่ 100% (สูตรจำนวนเดิมขึ้น "ครบ" ตั้งแต่ใบแรก) และจำนวนต่างหน่วยไม่ถูกบวกปนกัน ·
     /// ใบต้นทางที่ไม่มีราคา (เช่น ใบขอซื้อที่ไม่ใส่ราคา) ⇒ ใช้จำนวนแทน (สูตรเดิม) ไม่แต่ง %
     /// </summary>
+    /// <param name="headerLinkedChildren">ใบลูกที่ยังมีผลซึ่งผูกหัวใบมาที่ใบนี้ (null = ผู้เรียกไม่ได้โหลด ⇒ ไม่ใช้กติกาข้อ 242-B) —
+    /// ใช้กับ <see cref="SoleChildMatchesTotal"/> เท่านั้น</param>
     public static Progress EvaluateByValue(decimal totalSourceQty, decimal totalSourceAmount,
-        IEnumerable<(DocumentType ChildType, decimal Quantity, decimal Amount)> consumed, bool hasActiveLinkedChild)
+        IEnumerable<(DocumentType ChildType, decimal Quantity, decimal Amount)> consumed, bool hasActiveLinkedChild,
+        IReadOnlyCollection<HeaderLinkedChild>? headerLinkedChildren = null)
     {
         var rows = consumed.ToList();
+        if (SoleChildMatchesTotal(totalSourceAmount, rows.Count, headerLinkedChildren))
+            return new Progress(100m, ConversionProgressState.Full, ByHeaderTotal: true);
         return totalSourceAmount > AmountEpsilon
             ? Evaluate(totalSourceAmount, rows.Select(r => (r.ChildType, r.Amount)), hasActiveLinkedChild, AmountEpsilon)
             : Evaluate(totalSourceQty, rows.Select(r => (r.ChildType, r.Quantity)), hasActiveLinkedChild);
@@ -158,9 +186,11 @@ public static class DocumentConversionProgress
         switch (progress.State)
         {
             case ConversionProgressState.Full:
+                // ข้อ 242-B: ครบตามยอดรวมทั้งใบ (รายการไม่ได้จับคู่) ⇒ บอกที่มาให้ตามต่อได้ ไม่ใช่ทำเหมือนจับคู่ครบทุกบรรทัด
+                var basis = progress.ByHeaderTotal ? " · " + HeaderTotalText : "";
                 return ("Done", latest.HasValue
-                    ? $"✓ {Did(latest.Value)}{more}"
-                    : "✓ ออกเอกสารต่อครบแล้ว");
+                    ? $"✓ {Did(latest.Value)}{more}{basis}"
+                    : "✓ ออกเอกสารต่อครบแล้ว" + basis);
             case ConversionProgressState.Partial:
                 var share = PercentText(progress.Percent);
                 return ("PartiallyDone", latest.HasValue
@@ -182,6 +212,23 @@ public static class DocumentConversionProgress
 
     /// <summary>ข้อความ "ไม่ทราบสัดส่วน" ตัวเดียว (ป้าย · เทสต์ · doc อ้างตัวนี้)</summary>
     public const string UnknownShareText = "ไม่ทราบสัดส่วน (รายการของใบลูกไม่ได้จับคู่กับรายการใบนี้)";
+
+    /// <summary>
+    /// ฝ่ายค้านรอบ 242 N6: ใบต้นทางที่ป้ายขึ้น "ครบตามยอดรวมทั้งใบ" (<see cref="Progress.ByHeaderTotal"/>) — ด่านกันแปลงเกินอ่านรายบรรทัดจึงไม่เห็นยอดที่ออกไปแล้ว ⇒
+    /// การแปลงไปแกนเดียวกับใบลูกใบนั้นต้องหยุดถาม (ต้องกดรับทราบ) · คืนข้อความเตือน หรือ null = ไม่ต้องถาม · ตัวตัดสินเดียวกับป้าย (ห้ามสำเนาเงื่อนไข) · pure
+    /// </summary>
+    /// <param name="latestChildType">ชนิดใบลูกที่ป้ายเอ่ยถึง (ใบเดียวที่ผูกหัวใบ)</param>
+    public static string? HeaderTotalConvertWarning(Progress progress, string? sourceNumber, string? childNumber,
+        DocumentType? latestChildType, DocumentType targetType)
+    {
+        if (!progress.ByHeaderTotal || latestChildType is not DocumentType child) return null;
+        if (AxisOf(child) != AxisOf(targetType)) return null;
+        return $"{sourceNumber} ออก{DocumentTypeNames.Title(child, "th")} {childNumber} ครบตามยอดรวมทั้งใบแล้ว (รายการไม่ได้จับคู่รายบรรทัด — ระบบนับคงเหลือรายบรรทัดไม่ได้) "
+             + "· การแปลงอีกครั้งอาจออกซ้ำ — ตรวจยอดก่อนยืนยัน";
+    }
+
+    /// <summary>ข้อความ "ครบตามยอดรวมทั้งใบ" ตัวเดียว (ข้อ 242-B · ป้าย · เทสต์ · doc อ้างตัวนี้)</summary>
+    public const string HeaderTotalText = "ครบตามยอดรวมทั้งใบ (รายการไม่ได้จับคู่รายบรรทัด)";
 
     private static string PercentText(decimal? pct)
     {

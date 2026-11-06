@@ -54,6 +54,9 @@ public static class AuditRedaction
         ["PlatformErasureRequest"] = new HashSet<string> { "RequesterEmail", "RequesterIp", "Reason" },
         // ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: ผลสแกน OCR — รายชื่อเดียวกับตัวลบ (OcrScanPii.PersonalDataFields) ห้ามสำเนา
         ["OcrScanResult"] = new HashSet<string>(OcrScanPii.PersonalDataFields),
+        // รอบ 245 L1: ปลายทาง LINE ของผู้ติดต่อ — ค่าเข้ารหัส/แฮชของตัวระบุบุคคล ห้ามลง audit (append-only)
+        // ฝ่ายค้าน S3: อีเมล/ป้าย (มักเป็นชื่อคน)/ชื่อกลุ่ม ก็เป็นข้อมูลส่วนบุคคล — ค่าอยู่ในแถวปลายทาง (ลบตามคำขอได้) ไม่ใช่ใน audit
+        ["ContactNotifyEndpoint"] = new HashSet<string> { "LineUserId", "LineGroupId", "LineIdHash", "OaDestination", "Email", "Label", "GroupNameSnapshot" },
     };
 
     /// <summary>ฝ่ายค้านรอบ 214 (ฑ-2) B1-a: ค่าในการบันทึกที่อยู่ใต้ "ขอบเขตการลบตามคำขอ" (<c>AccountingDbContext.AuditErasureScope</c>) —

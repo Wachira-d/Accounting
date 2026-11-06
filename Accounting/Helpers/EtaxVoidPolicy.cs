@@ -58,9 +58,10 @@ public static class EtaxVoidPolicy
     /// “ก่อนส่งถึงกรมสรรพากร” (เท็จ) · ใช้สถานะของ<b>แถว</b> ไม่ใช่สถานะแรงสุดของทั้งเอกสาร (แถว Error ที่ค้างคู่แถวที่ตอบรับแล้วยังยกเลิกได้) ·
     /// แถวที่ยกเลิกแล้วคงเป็น Voided · G6: pure
     /// </summary>
-    public static EtaxStatus StatusForVoid(EtaxStatus rowStatus, bool documentSentByEmailWithRdTimestamp)
+    /// <param name="etdaStamped">รอบ 244: แถวนี้มีบันทึกใบที่ ETDA ประทับเวลาแล้ว (<c>EtaxInvoice.EtdaStampedAt</c>)</param>
+    public static EtaxStatus StatusForVoid(EtaxStatus rowStatus, bool documentSentByEmailWithRdTimestamp, bool etdaStamped = false)
         => rowStatus == EtaxStatus.Voided ? EtaxStatus.Voided
-            : DocumentVoidPreconditions.EffectiveEtax(rowStatus, documentSentByEmailWithRdTimestamp) ?? rowStatus;
+            : DocumentVoidPreconditions.EffectiveEtax(rowStatus, documentSentByEmailWithRdTimestamp, etdaStamped) ?? rowStatus;
 
     /// <summary>
     /// **ไฟล์หลักฐานการยกเลิกต้องแนบหลังเวลานี้** (รอบ 200 ทีม V1I · ฝ่ายค้าน V1H-O5) — หลักฐานการยกเลิกเกิดได้หลังส่ง e-Tax เท่านั้น ⇒ ไฟล์ของเอกสาร

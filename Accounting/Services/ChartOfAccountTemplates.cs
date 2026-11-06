@@ -330,6 +330,10 @@ public static class ChartOfAccountTemplates
             new("58", "ภาษีเงินได้", "Income Tax Expense", AccountType.Expense, 2),
             new("580", "ภาษีเงินได้", "Income Tax Expense", AccountType.Expense, 3),
             new("58000", "ภาษีเงินได้นิติบุคคล", "Corporate Income Tax", AccountType.Expense, 4),
+            // รอบ 243a (คำตัดสิน 243-1): ตัดสูญเครดิต 11910 ที่ไม่ได้ 50 ทวิ — ภาษีเงินได้ของบริษัทเอง ⇒ อยู่กลุ่ม 580 ให้ ภ.ง.ด.50/51 ตัดออกจากรายจ่าย
+            // (ม.65 ตรี (6 ทวิ)) ด้วยกลไกเดียว CitCalculation.ExceptCitExpense · ⚠️ รหัสเดียวกับ Helpers/WhtCreditWriteOff.ExpenseAccountCode ·
+            // บริษัทเดิมได้ตอนใช้ครั้งแรก (SettlementChartSeed.EnsureStandardAccountAsync)
+            new("58010", "ภาษีเงินได้ถูกหัก ณ ที่จ่ายที่ขอเครดิตไม่ได้", "Non-creditable Withholding Tax", AccountType.Expense, 4),
         };
     }
 

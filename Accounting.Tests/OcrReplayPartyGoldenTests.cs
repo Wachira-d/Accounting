@@ -24,7 +24,9 @@ public class OcrReplayPartyGoldenTests
     /// push บน <c>claude/**</c> ไม่รัน job นี้) → อ่าน StdOut ของเทสต์ <see cref="รอCIเติม_ใบที่ยังไม่มีgoldenคู่สัญญา_พิมพ์แถวให้วาง_และต้องไม่อยู่ในGolden"/> →
     /// วางแถวลง Golden → ลบชื่อออกจากรายการนี้ (เทสต์ด้านล่างบังคับว่าใบในรายการต้องไม่มีแถวใน Golden — มีสองที่ไม่ได้) · ติดตามใน
     /// <c>docs/BACKLOG_REGISTER_2026-10-26.md</c> R-34</summary>
-    internal static readonly string[] PendingCiFill = { "rapbizz-spin00933-prevat-discount-on-incl" };
+    internal static readonly string[] PendingCiFill = { "rapbizz-spin00933-prevat-discount-on-incl",
+        // รอบ 242 (ไม่มี SDK ในเครื่อง — ช่องคู่สัญญาต้องมาจากการรัน dotnet)
+        "supermarket-rate-table-items-missing" };
 
     private readonly ITestOutputHelper _out;
     public OcrReplayPartyGoldenTests(ITestOutputHelper output) => _out = output;

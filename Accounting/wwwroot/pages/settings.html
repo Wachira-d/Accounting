@@ -490,6 +490,29 @@
             <button type="button" class="btn btn-sm btn-primary" onclick="Page.saveSignRequestSettings()">บันทึกส่วนนี้</button>
           </div>
         </div>
+        <!-- รอบ 241: ส่งเอกสารอัตโนมัติ — ลิงก์ชำระเงินในอีเมลตามตาราง + ส่งใบเสร็จหลังลูกค้าชำระ (API: /document-auto-send/settings · เจ้าของบริษัทบันทึกได้ ·
+             ช่องทาง/เหตุที่เปิดไม่ได้มาจากเซิร์ฟเวอร์ทั้งหมด — ตารางส่งเอกสารแต่ละตัวทับค่าเหล่านี้ได้ที่หน้า "ตารางส่งอีเมล") -->
+        <div class="form-group" id="autoSendCard" style="grid-column:1/3;padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="font-weight:600;margin-bottom:6px">ส่งเอกสารอัตโนมัติ (ค่าเริ่มต้นของบริษัท)</div>
+          <div id="asSenderInfo" style="font-size:12px;color:#475569;margin-bottom:8px"></div>
+          <label class="form-checkbox" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:6px">
+            <input type="checkbox" id="asPayLink" style="margin-top:3px">
+            <span>แนบลิงก์ชำระเงินในอีเมลเอกสารตามตาราง (ใบแจ้งหนี้ · ใบกำกับภาษี · ใบเพิ่มหนี้ ที่ยังมียอดค้าง)
+              <span id="asPayLinkNote" style="display:block;font-size:11px;color:#94a3b8">ยอดในลิงก์ = ยอดค้าง − ภาษีหัก ณ ที่จ่ายที่ลูกค้าจะหัก (แสดงทั้งสองยอดให้ลูกค้า) · หนึ่งลิงก์ต่อใบ · ใบที่ยกเลิก/ชำระครบ ลิงก์ใช้ไม่ได้ทันที</span></span>
+          </label>
+          <div style="font-size:13px;margin:4px 0">ช่องทางที่เปิดให้ลูกค้า (ไม่เลือก = ทุกช่องทางที่บริษัทเปิด)</div>
+          <div id="asChannels" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px"></div>
+          <label class="form-checkbox" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:6px">
+            <input type="checkbox" id="asEmailReceipt" style="margin-top:3px">
+            <span>หลังลูกค้าชำระ: ออกใบเสร็จรับเงิน (หรือใบเสร็จรับเงิน/ใบกำกับภาษี ตามจุดความรับผิด §78/1) แล้วส่งอีเมลพร้อม PDF ให้ลูกค้าอัตโนมัติ
+              <span style="display:block;font-size:11px;color:#94a3b8">ใช้เส้นออกใบเดิม (เลขเอกสารต่อเนื่อง) · ลูกค้าไม่มีอีเมล / ข้อมูลผู้ซื้อไม่ครบสำหรับใบกำกับ / ใบเสร็จเป็นร่าง ⇒ ไม่ส่ง และแจ้งเตือนให้คนดำเนินการ</span></span>
+          </label>
+          <label class="form-checkbox" style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:8px">
+            <input type="checkbox" id="asIncludePartial" style="margin-top:3px">
+            <span>ส่งทุกงวดที่รับเงิน (ไม่เลือก = ส่งเมื่อชำระครบเท่านั้น)</span>
+          </label>
+          <button type="button" class="btn btn-sm btn-primary" onclick="Page.saveAutoSendSettings()">บันทึกส่วนนี้</button>
+        </div>
         <div class="form-group advanced-only" style="grid-column:1/3">
           <label class="form-checkbox" style="padding:12px;background:#f8fafc;border-radius:8px;border:1px solid #e2e8f0;display:flex;align-items:flex-start;gap:8px;cursor:pointer">
             <input type="checkbox" id="sShowProjectOnDocuments" style="margin-top:3px">
@@ -898,10 +921,12 @@
               </div>
             </label>
           </div>
-          <label style="display:flex;align-items:center;margin-top:8px;padding:8px;cursor:pointer">
+          <!-- รอบ 244 (คำตัดสิน 244-1): กรมสรรพากรให้ใช้ได้ระบบเดียว — "ทั้งสอง" เลือกใหม่ไม่ได้ (เซิร์ฟเวอร์ปฏิเสธ) · แสดงเฉพาะบริษัทที่เก็บค่านี้ไว้ก่อน -->
+          <label style="display:none;align-items:center;margin-top:8px;padding:8px;cursor:pointer" id="modeBothLabel">
             <input type="radio" name="etaxMode" value="Both" id="modeBoth" style="margin-right:8px">
-            <span style="font-size:13px;color:#475569">ใช้ทั้ง 2 รูปแบบ (เลือกได้ตอนสร้างเอกสาร)</span>
+            <span style="font-size:13px;color:#92400e">ทั้ง 2 รูปแบบ (ค่าเดิม — กรมสรรพากรให้ใช้ได้ระบบเดียว · เลือก by Email หรือ Direct ให้ตรงกับที่ได้รับอนุมัติ)</span>
           </label>
+          <div id="etaxConfigWarnings" style="display:none;margin-top:8px;padding:10px;background:#fef3c7;border-radius:6px;font-size:12px;color:#78350f;line-height:1.6"></div>
         </div>
 
         <!-- ByEmail config -->
@@ -920,14 +945,17 @@
             <div class="form-group">
               <label class="form-label">CC สรรพากร (Time Stamp) <span style="background:#dc2626;color:#fff;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700">ETDA กำหนด</span></label>
               <input type="email" class="form-input" id="sEtaxByEmailRdCc" value="csemail@etax.teda.th" readonly style="background:#f1f5f9;cursor:not-allowed;font-family:monospace">
-              <div style="font-size:11px;color:#64748b;margin-top:2px">ETDA กำหนดที่อยู่นี้สำหรับลงเวลาประทับ — ห้ามเปลี่ยน</div>
+              <div style="font-size:11px;color:#64748b;margin-top:2px">ETDA กำหนด (ติ๊กทดสอบด้านล่าง = ที่อยู่ UAT ของ ETDA) — ห้ามเปลี่ยน</div>
             </div>
           </div>
-          <div id="etaxSenderMismatchWarning" style="display:none;padding:10px;background:#fee2e2;border-radius:6px;font-size:12px;color:#991b1b;margin-top:8px"></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
-            <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailEmbedXml" checked><label for="sEtaxByEmailEmbedXml">ฝัง XML ใน PDF/A-3 (สรรพากรกำหนด)</label></div>
-            <!-- W-C6 (รอบ 193): ยังไม่มีงานส่ง e-Tax by Email อัตโนมัติตอนอนุมัติ (ส่งได้เฉพาะกดส่งเองจากเอกสาร) ⇒ ล็อก + ป้าย · ไม่ส่งค่าตอนบันทึก -->
-            <div class="form-group form-checkbox" style="padding:8px;background:#fff;border-radius:6px"><input type="checkbox" id="sEtaxByEmailAutoSend" disabled><label for="sEtaxByEmailAutoSend" style="color:#94a3b8">ส่งอัตโนมัติเมื่อ approve เอกสาร</label><span style="display:inline-block;background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;margin-left:6px">ยังไม่รองรับ — ค่านี้ยังไม่มีผลกับระบบ</span><div style="font-size:11px;color:#64748b;margin-top:2px">ตอนนี้ส่ง e-Tax by Email ได้จากปุ่ม "ส่งอีเมล" ของเอกสารแต่ละใบ</div></div>
+          <!-- ฝ่ายค้านรอบ 244 B1: ธงทดสอบของ by Email แยกจาก "โหมดทดสอบ" ของระบบเต็ม (ค่าเริ่มต้นปิด = production) -->
+          <div class="form-group form-checkbox" style="margin-top:8px">
+            <input type="checkbox" id="sEtaxByEmailUseUat"><label for="sEtaxByEmailUseUat">ทดสอบ e-Tax by Email (ส่งไป UAT — <code>csemail@uat.etax.teda.th</code> · ใบที่ส่งจะไม่ถูกประทับเวลาจริง)</label>
+          </div>
+          <!-- รอบ 244 (คำตัดสิน 244-4): ลบช่อง "ฝัง XML" (PDF/A-3 ฝัง XML เสมอ) และ "ส่งอัตโนมัติเมื่ออนุมัติ" (ใช้ตารางส่งอีเมล ทริกเกอร์อนุมัติ — เดินทาง e-Tax ให้เอง) -->
+          <div style="font-size:12px;color:#166534;margin-top:8px;line-height:1.6">
+            ระบบส่งใบกำกับภาษี/ใบเพิ่มหนี้/ใบลดหนี้แบบ e-Tax by Email ให้เองทุกช่องทาง (ปุ่มส่งอีเมล · ตารางส่งอีเมล · ส่งหลังรับชำระ) —
+            ต้องตั้ง <b>อีเมลของบริษัทเอง</b> (ตั้งค่า &gt; อีเมล) ให้ส่งออกจากอีเมลที่ลงทะเบียนข้างบนและทดสอบผ่าน · ส่งอัตโนมัติตอนอนุมัติ = ตั้งที่ “ตารางส่งอีเมล”
           </div>
         </div>
 
@@ -1378,6 +1406,48 @@
           await this.loadSignRequestSettings();
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
+      // รอบ 241: ส่งเอกสารอัตโนมัติ — ช่องทาง/ป้าย/เหตุที่เปิดไม่ได้มาจากเซิร์ฟเวอร์ (หน้าเว็บไม่มีตารางช่องทางเอง) · บันทึกได้เฉพาะเจ้าของ (403 บอกเหตุ)
+      async loadAutoSendSettings() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        try {
+          const r = await api.get(`/api/companies/${cid}/document-auto-send/settings`);
+          const s = r && r.data; if (!s) return;
+          const pay = document.getElementById('asPayLink');
+          pay.checked = !!s.payLinkDefaultEnabled;
+          pay.disabled = !s.payLinkAvailable && !s.payLinkDefaultEnabled;
+          if (!s.payLinkAvailable) document.getElementById('asPayLinkNote').textContent = s.payLinkUnavailableReason || '';
+          const chosen = new Set((s.payLinkDefaultChannels || []).map(c => String(c).toLowerCase()));
+          const box = document.getElementById('asChannels');
+          box.textContent = '';
+          (s.companyChannels || []).forEach(c => {
+            const lab = document.createElement('label');
+            lab.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:13px';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox'; cb.dataset.asChannel = c.code; cb.checked = chosen.has(String(c.code).toLowerCase());
+            lab.appendChild(cb); lab.appendChild(document.createTextNode(c.label));
+            box.appendChild(lab);
+          });
+          if (!(s.companyChannels || []).length) box.textContent = 'ยังไม่มีช่องทางที่เปิด';
+          document.getElementById('asEmailReceipt').checked = !!s.postPayEmailReceipt;
+          document.getElementById('asIncludePartial').checked = !!s.postPayIncludePartial;
+          document.getElementById('asSenderInfo').textContent = s.senderNote || '';
+        } catch (e) { /* ไม่มีสิทธิ์อ่าน/ล้ม — ส่วนนี้ว่างไว้ ไม่ขวางหน้าตั้งค่า */ }
+      },
+      async saveAutoSendSettings() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        try {
+          const channels = Array.from(document.querySelectorAll('#asChannels input[data-as-channel]'))
+            .filter(cb => cb.checked).map(cb => cb.dataset.asChannel);
+          const r = await api.put(`/api/companies/${cid}/document-auto-send/settings`, {
+            payLinkDefaultEnabled: !!document.getElementById('asPayLink').checked,
+            payLinkDefaultChannels: channels,
+            postPayEmailReceipt: !!document.getElementById('asEmailReceipt').checked,
+            postPayIncludePartial: !!document.getElementById('asIncludePartial').checked,
+          });
+          Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
+          await this.loadAutoSendSettings();
+        } catch (e) { Layout.toast(e.message, 'error'); }
+      },
       async rotateSignSecret() {
         const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
         if (!confirm('ออกรหัสลับใหม่? รหัสเดิมจะใช้ตรวจลายเซ็น webhook ไม่ได้ทันที — ระบบปลายทางต้องเปลี่ยนตาม')) return;
@@ -1397,6 +1467,7 @@
         Layout.setTitle('ตั้งค่า');
         await this.load();
         this.loadSignRequestSettings();
+        this.loadAutoSendSettings();
         // deep link ?tab=email → เปิดแท็บนั้นให้เลย. ลิงก์จากหน้าอื่น (เช่น
         // "ตั้งค่าอีเมลบริษัท" ในฟอร์มรายการประจำ) เดิมมาถึงแล้วตกที่แท็บ
         // "ข้อมูลบริษัท" ผู้ใช้ต้องไล่หาเอง = ลิงก์ที่ไม่พาไปถึงปลายทางจริง
@@ -2365,31 +2436,22 @@
           if (mode === 'ByEmail') document.getElementById('modeByEmail').checked = true;
           else if (mode === 'Direct') document.getElementById('modeDirect').checked = true;
           else if (mode === 'Both') document.getElementById('modeBoth').checked = true;
+          document.getElementById('modeBothLabel').style.display = mode === 'Both' ? 'flex' : 'none';
+          // รอบ 244: คำเตือนจากเซิร์ฟเวอร์ (โหมดทั้งสองระบบ · โหมดทดสอบ = UAT · ผู้ส่งยังไม่พร้อม) — แสดงอย่างเดียว
+          const cw = document.getElementById('etaxConfigWarnings');
+          const warnList = Array.isArray(c.warnings) ? c.warnings : [];
+          cw.textContent = '';
+          warnList.forEach(t => { const dv = document.createElement('div'); dv.textContent = '⚠ ' + t; cw.appendChild(dv); });
+          cw.style.display = warnList.length ? 'block' : 'none';
           this.toggleEtaxMode();
           // ByEmail fields
           document.getElementById('sEtaxByEmailRdRegistered').checked = !!c.byEmailRdRegistered;
           if (c.byEmailRegistrationDate) document.getElementById('sEtaxByEmailRegDate').value = c.byEmailRegistrationDate.substr(0,10);
           document.getElementById('sEtaxByEmailRegNumber').value = c.byEmailRegistrationNumber || '';
           document.getElementById('sEtaxByEmailSender').value = c.byEmailSenderEmail || '';
-          document.getElementById('sEtaxByEmailRdCc').value = c.byEmailRdTimestampAddress || 'csemail@etax.teda.th';
-          document.getElementById('sEtaxByEmailEmbedXml').checked = c.byEmailEmbedXml !== false;
-          document.getElementById('sEtaxByEmailAutoSend').checked = !!c.byEmailAutoSendOnApprove;
-
-          // Cross-validate: e-Tax sender email vs email provider From address
-          if (c.byEmailSenderEmail && (mode === 'ByEmail' || mode === 'Both')) {
-            try {
-              const emailRes = await api.getEmailConfig();
-              const ec = emailRes.data || {};
-              const providerFrom = ec.fromAddress || '';
-              const warn = document.getElementById('etaxSenderMismatchWarning');
-              if (providerFrom && c.byEmailSenderEmail.toLowerCase() !== providerFrom.toLowerCase()) {
-                warn.style.display = 'block';
-                warn.innerHTML = `⚠️ อีเมลผู้ส่งที่ลงทะเบียนกับสรรพากร (<strong>${c.byEmailSenderEmail}</strong>) ไม่ตรงกับ From Address ในตั้งค่าอีเมล (<strong>${providerFrom}</strong>) — สรรพากรจะตรวจสอบว่าอีเมลต้นทางตรงกับที่ลงทะเบียนไว้`;
-              } else {
-                warn.style.display = 'none';
-              }
-            } catch (_) {}
-          }
+          document.getElementById('sEtaxByEmailRdCc').value = c.byEmailRdTimestampAddress || '';
+          document.getElementById('sEtaxByEmailUseUat').checked = c.byEmailUseUat === true;
+          // รอบ 244: ตรวจ "อีเมลที่ลงทะเบียน = กล่องที่ส่งออกจริง + ทดสอบผ่าน" ที่เซิร์ฟเวอร์ (EtaxByEmailSenderGate) — ผลมากับ c.warnings ข้างบน
         } catch (e) { /* graceful */ }
         // Hook radio buttons to toggler
         document.querySelectorAll('input[name="etaxMode"]').forEach(r =>
@@ -2409,12 +2471,12 @@
           byEmailRegistrationDate: document.getElementById('sEtaxByEmailRegDate').value || null,
           byEmailRegistrationNumber: document.getElementById('sEtaxByEmailRegNumber').value || null,
           byEmailSenderEmail: document.getElementById('sEtaxByEmailSender').value || null,
-          byEmailRdTimestampAddress: document.getElementById('sEtaxByEmailRdCc').value || null,
-          byEmailEmbedXml: document.getElementById('sEtaxByEmailEmbedXml').checked,
-          // byEmailAutoSendOnApprove ไม่ส่ง — ช่องถูกล็อกเพราะยังไม่มีผล (W-C6) · server: HasValue = ไม่ส่งคือคงเดิม
-          serviceProvider: document.getElementById('sEtaxProvider').value
+          serviceProvider: document.getElementById('sEtaxProvider').value,
+          byEmailUseUat: document.getElementById('sEtaxByEmailUseUat').checked
         };
-        try { await api.updateEtaxConfig(data); } catch (e) { /* fallback to legacy */ }
+        // รอบ 244: ปฏิเสธ (เช่น เลือก "ทั้งสองระบบ" ใหม่) ต้องเห็น — เดิมกลืน error เงียบ
+        try { await api.updateEtaxConfig(data); }
+        catch (e) { Layout.toast('บันทึกการตั้งค่า e-Tax ไม่สำเร็จ: ' + (e.message || ''), 'error', 9000); }
       },
       /** ผู้ใช้แตะช่องจด VAT (แท็บใดก็ได้ — สองช่องสะท้อนกัน) = ตอบคำถาม VAT แล้ว (R2-C8) */
       markVatTouched() { this._vatTouched = true; },

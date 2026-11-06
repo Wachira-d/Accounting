@@ -111,12 +111,13 @@ public static class CitCalculation
     /// <summary>
     /// ฝ่ายค้าน S7 — ผังค่าใช้จ่ายภาษีเงินได้ (§65 ตรี(6 ทวิ) ห้ามหักกำไร) = ผังค่าใช้จ่าย <b>หัวหมวด "580"</b> · ผัง 5 หลัก <b>58000–58099</b> · หรือผังลูกของหัวหมวด 580 ·
     /// รหัสอื่นที่ขึ้นต้น 580 (เช่นผังที่ลูกค้าตั้งเอง "5800"/"580500") ไม่ถูกตัด — ยังหักได้ (ทิศที่ไม่ทำให้ตัดค่าใช้จ่ายจริงทิ้ง)
-    /// <para>กติกาเดียวกับตัวกรอง SQL <see cref="ExceptCitExpense"/> (เทสต์ล็อกสองตัวด้วยชุดกรณีเดียวกัน) · ผู้เรียก: ตัวหาผังสำรองใน <c>PostCITAsync</c></para>
+    /// <para>กติกาเดียวกับตัวกรอง SQL <see cref="ExceptCitExpense"/> (เทสต์ล็อกสองตัวด้วยชุดกรณีเดียวกัน) · ผู้เรียก: ตัวหาผังสำรองใน <c>PostCITAsync</c> · ผังตัดสูญ 11910 (<c>WhtCreditWriteOff</c>)</para>
+    /// <para>รอบ 243a: เดิมเทียบ <c>StartsWith("5800")</c> ⇒ จับได้แค่ 58000–58009 ขัดกับที่เขียนไว้ "58000–58099" และเทสต์ <c>58010 ⇒ true</c> — ผัง 58010 ที่ไม่ผูกแม่ 580 หลุดไปเป็นรายจ่ายหักได้</para>
     /// </summary>
     public static bool IsCitExpenseAccount(string? accountCode, AccountType accountType, string? parentAccountCode)
         => accountType == AccountType.Expense && accountCode != null
         && (accountCode == CitExpensePrefix
-            || (accountCode.Length == 5 && accountCode.StartsWith(CitExpensePrefix + "0", StringComparison.Ordinal))
+            || (accountCode.Length == 5 && accountCode.StartsWith(CitExpensePrefix, StringComparison.Ordinal))
             || parentAccountCode == CitExpensePrefix);
 
     /// <summary>ตัวกรองบรรทัด GL — ตัดบรรทัดค่าใช้จ่ายภาษีเงินได้ออก (กติกา <see cref="IsCitExpenseAccount"/> · EF แปลเป็น SQL) ·
@@ -124,7 +125,7 @@ public static class CitCalculation
     public static IQueryable<JournalEntryLine> ExceptCitExpense(this IQueryable<JournalEntryLine> lines)
         => lines.Where(l => !(l.Account!.AccountType == AccountType.Expense
             && (l.Account.AccountCode == CitExpensePrefix
-                || (l.Account.AccountCode.Length == 5 && l.Account.AccountCode.StartsWith(CitExpensePrefix + "0"))
+                || (l.Account.AccountCode.Length == 5 && l.Account.AccountCode.StartsWith(CitExpensePrefix))
                 || (l.Account.ParentAccount != null && l.Account.ParentAccount.AccountCode == CitExpensePrefix))));
 
     /// <summary>ผังค่ารับรองมาตรฐาน (ผังมาตรฐาน 54460 "ค่ารับรอง / เลี้ยงรับรอง")</summary>

@@ -113,11 +113,31 @@ public class DocumentController : ControllerBase
         if (await DenySensitiveAsync(companyId, documentId, "ส่งอีเมล") is { } hidden)
             return Forbid403<DocumentEmailLogResponse>(hidden);
         var actor = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value;
-        var log = await _docEmailService.SendDocumentEmailAsync(companyId, documentId, request, actor);
+        // รอบ 244: ทางเลือกช่องทางตัวเดียว — ใบกำกับของบริษัทโหมด e-Tax by Email ไปทาง e-Tax (ด่านปฏิเสธ = 409 พร้อมเหตุ · ไม่ส่งเป็นอีเมลธรรมดาแทน)
+        var log = await _docEmailService.SendDocumentRoutedAsync(companyId, documentId, request, actor);
         var dto = MapEmailLog(log);
         return log.Status == EmailLogStatus.Sent
-            ? Ok(new ApiResponse<DocumentEmailLogResponse>(true, dto, "ส่งอีเมลสำเร็จ"))
+            ? Ok(new ApiResponse<DocumentEmailLogResponse>(true, dto, log.IsEtaxByEmail
+                ? (log.IncludedRdTimestamp
+                    ? "ส่ง e-Tax by Email แล้ว (รอประทับเวลา) — เมื่อได้อีเมลที่ ETDA ประทับเวลาส่งกลับ ให้บันทึกที่หน้า e-Tax"
+                    : "ส่ง e-Tax by Email เข้าสภาพแวดล้อมทดสอบของ ETDA แล้ว (โหมดทดสอบ — ไม่ถูกประทับเวลาจริง)")
+                : "ส่งอีเมลสำเร็จ"))
             : Ok(new ApiResponse<DocumentEmailLogResponse>(false, dto, log.ErrorMessage ?? "ส่งอีเมลไม่สำเร็จ"));
+    }
+
+    /// <summary>รอบ 244: ช่องทางส่งอีเมลของใบนี้ + ตัวอย่างอีเมล e-Tax (หัวเรื่อง/ผู้รับ/สำเนา/ผู้ส่ง/เหตุที่ส่งไม่ได้/คำเตือน) ตามที่เซิร์ฟเวอร์จะส่ง —
+    /// หน้าต่างส่งอีเมลแสดงอย่างเดียว (ไม่มีสำเนากติกาในหน้า)</summary>
+    [HttpGet("{documentId:guid}/email-route")]
+    public async Task<ActionResult<ApiResponse<EtaxEmailPreviewResponse>>> GetEmailRoute(Guid companyId, Guid documentId)
+    {
+        var docType = await GetDocumentTypeAsync(companyId, documentId);
+        if (docType == null) return NotFound(new ApiResponse<EtaxEmailPreviewResponse>(false, null, "ไม่พบเอกสาร"));
+        var deny = await DenyDocAsync(companyId, JwtHelper.GetUserIdFromClaims(User),
+            docType.Value, DocPerm.Create, "ส่งอีเมล");
+        if (deny != null) return Forbid403<EtaxEmailPreviewResponse>(deny);
+        if (await DenySensitiveAsync(companyId, documentId, "ส่งอีเมล") is { } hidden)
+            return Forbid403<EtaxEmailPreviewResponse>(hidden);
+        return Ok(new ApiResponse<EtaxEmailPreviewResponse>(true, await _docEmailService.PreviewEtaxEmailAsync(companyId, documentId)));
     }
 
     /// <summary>หัว/เนื้ออีเมลเริ่มต้น "ตามที่ server จะส่ง" (ภาษา+หัวเอกสารเดียวกับ PDF ที่แนบ · ค่าที่ผู้ใช้คุมได้ถูกหนีแล้ว) —
@@ -1137,24 +1157,49 @@ public class DocumentController : ControllerBase
     [HttpDelete("{documentId:guid}/purge")]
     [Accounting.Filters.RejectApiKey("ลบเอกสารถาวร")]
     public async Task<ActionResult<ApiResponse<string>>> PurgeDocument(Guid companyId, Guid documentId,
-        [FromQuery] bool force = false, [FromQuery] string? reason = null)
+        [FromQuery] bool force = false, [FromQuery] string? reason = null, [FromQuery] bool cascade = false,
+        [FromQuery] string? planToken = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        var isSystemAdmin = User.IsInRole("SystemAdmin");
-        if (!isSystemAdmin)
-        {
-            var role = await _db.CompanyUsers
-                .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
-                .Select(cu => cu.Role)
-                .FirstOrDefaultAsync();
-            if (role != UserRole.Owner)
-                return StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
-        }
+        if (await PurgeOwnerDenyAsync(companyId, userId) is { } deny) return deny;
 
-        await _documentService.PurgeDocumentAsync(companyId, documentId, userId, force, reason);
+        // รอบ 242 (คำตัดสินข้อ 242-A): cascade=true = ลบเอกสารที่เกี่ยวข้อง (ลูกหลาน) ด้วยในธุรกรรมเดียว — ตัวตัดสินเดียว DocumentCascadePurgePolicy
+        // (ไม่ผ่าน = 409 พร้อมรายชื่อใบที่ลบไม่ได้และทางไปต่อ · ระบบไม่ลบอะไร) · planToken = ลายนิ้วมือของแผนที่ผู้ใช้เห็น (S1 — แผนเปลี่ยน ⇒ 409)
+        var verdict = await _documentService.PurgeDocumentAsync(companyId, documentId, userId, force, reason, cascade, planToken);
         return Ok(new ApiResponse<string>(true, null,
-            force ? "ลบเอกสารถาวรสำเร็จ (override การเก็บรักษาตามกฎหมาย — บันทึก audit แล้ว)"
-                  : "ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ"));
+            verdict.Message + (verdict.NeedsReason ? " (override การเก็บรักษาตามกฎหมาย — บันทึก audit แล้ว)" : "") + " สำเร็จ"));
+    }
+
+    /// <summary>รอบ 242 — แผนการลบถาวรที่เซิร์ฟเวอร์คำนวณ (ใบไหนถูกลบ/คงไว้/กันไว้ + เหตุ + ต้องระบุเหตุผลไหม) ให้หน้าเว็บแสดงก่อนยืนยัน ·
+    /// ไม่ลบอะไร · สิทธิ์เดียวกับการลบถาวร (Owner/SystemAdmin)</summary>
+    [HttpGet("{documentId:guid}/purge-preview")]
+    [Accounting.Filters.RejectApiKey("ดูแผนการลบเอกสารถาวร")]
+    public async Task<ActionResult<ApiResponse<PurgePreviewResponse>>> PreviewPurge(Guid companyId, Guid documentId,
+        [FromQuery] bool cascade = false, [FromQuery] bool force = false, [FromQuery] string? reason = null)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await PurgeOwnerDenyAsync(companyId, userId) is { } deny)
+            return StatusCode(403, new ApiResponse<PurgePreviewResponse>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
+        var v = await _documentService.PreviewPurgeAsync(companyId, documentId, cascade, force, reason);
+        var nodes = v.Nodes.Select(n => new PurgePreviewNode(
+            n.Node.Id, n.Node.DocumentNumber, n.Node.Type, Accounting.Helpers.DocumentTypeNames.Title(n.Node.Type, "th"),
+            n.Node.Status, n.Node.Depth, n.Action, n.InRetention, n.Reason)).ToList();
+        return Ok(new ApiResponse<PurgePreviewResponse>(true,
+            new PurgePreviewResponse(v.Allowed, v.Cascade, v.NeedsReason, v.Message, v.RuleCode,
+                v.Nodes.Any(n => !n.Node.IsRoot && !n.Node.IsSettlementReceipt), nodes, v.PlanToken), null));
+    }
+
+    /// <summary>ด่าน Owner/SystemAdmin ของการลบถาวร (ตัวเดียวของ purge + preview) · null = ผ่าน</summary>
+    private async Task<ActionResult?> PurgeOwnerDenyAsync(Guid companyId, Guid userId)
+    {
+        if (User.IsInRole("SystemAdmin")) return null;
+        var role = await _db.CompanyUsers
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => cu.Role)
+            .FirstOrDefaultAsync();
+        return role == UserRole.Owner
+            ? null
+            : StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
     }
 
     /// <summary>ใบค้างชำระของลูกค้าที่นำมารวมเป็นใบวางบิลได้ — ใบแจ้งหนี้/
@@ -1669,6 +1714,11 @@ public class DocumentController : ControllerBase
         var result = (request.Allocations != null && request.Allocations.Count > 0)
             ? await _documentService.CreateMultiDocPaymentAsync(companyId, request, userId)
             : await _documentService.CreatePaymentAsync(companyId, request, userId);
+        // รอบ 241: งานส่งเอกสารหลังรับชำระ (ออก/ส่งใบเสร็จตามค่าตั้ง "ส่งเอกสารอัตโนมัติ") — เส้น 1:1 เท่านั้น (กระจายหลายใบ ⇒ ไม่ออกใบเสร็จอัตโนมัติ ·
+        // SettlementReceiptPolicy) · หลัง commit · ไม่โยน (การชำระสำเร็จแล้ว) · ปิดค่าตั้ง = ไม่สร้างงาน
+        if (request.Allocations is not { Count: > 0 }
+            && HttpContext?.RequestServices?.GetService(typeof(IPostPaymentAutomationService)) is IPostPaymentAutomationService postPay)
+            await postPay.EnqueueAsync(companyId, result.Id, "manual", userId);
         var msg = (request.Allocations != null && request.Allocations.Count > 0)
             ? $"บันทึกการชำระสำเร็จ — กระจายเป็น {request.Allocations.Count} เอกสาร"
             : "บันทึกการชำระเงินสำเร็จ";

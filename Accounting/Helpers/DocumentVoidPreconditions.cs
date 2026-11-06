@@ -104,12 +104,14 @@ public static class DocumentVoidPreconditions
     }
 
     /// <summary>
-    /// **สถานะ e-Tax ที่ใช้ตัดสินการยกเลิก** (รอบ 200 ทีม V1F · ฝ่ายค้าน V1-P1) — e-Tax by Email (SME: ส่งอีเมลพร้อม CC ที่อยู่ประทับเวลาของ
-    /// กรมสรรพากร) ไม่เปลี่ยน <c>EtaxInvoice.Status</c> แต่ใบถึงผู้ประทับเวลาแล้วจริง ⇒ มีบันทึกการส่งสำเร็จ = ถือเท่า "ตอบรับแล้ว"
-    /// (ยกเลิกจากระบบนี้ไม่ได้ — ต้องยกเลิก/ลดหนี้ทางกรมสรรพากร) · ไม่มีบันทึก = สถานะแถว e-Tax ตามเดิม · G6: pure
+    /// **สถานะ e-Tax ที่ใช้ตัดสินการยกเลิก** (รอบ 200 ทีม V1F · ฝ่ายค้าน V1-P1 · แก้รอบ 244 คำตัดสิน 244-6) — e-Tax by Email ไม่เปลี่ยน <c>EtaxInvoice.Status</c>
+    /// <para>ส่งอีเมลพร้อม CC ที่อยู่ประทับเวลา (production) สำเร็จ = ถือเท่า "ตอบรับแล้ว" (ยกเลิกจากระบบนี้ไม่ได้ — ทางออก = ใบลดหนี้ หรือยกเลิกตามขั้นตอน
+    /// [CIV] เมื่อรองรับ) · รอบ 244 (ฝ่ายค้าน B2 · คำตัดสิน 244-6): ป้าย "ส่งแล้ว (รอประทับเวลา)" / "ประทับเวลาแล้ว" (<c>EtaxByEmailFormat.Stage</c>) ใช้แสดงผลเท่านั้น
+    /// <b>ห้ามหลวมด่านนี้</b> — <paramref name="etdaStamped"/> ทำให้เข้มขึ้นได้อย่างเดียว (บันทึกการประทับแล้ว = ตอบรับ) · ส่งเข้า UAT ไม่ถูกนับ (บันทึก
+    /// <c>IncludedRdTimestamp=false</c>) · ไม่มีบันทึก = สถานะแถว e-Tax ตามเดิม · G6: pure</para>
     /// </summary>
-    internal static EtaxStatus? EffectiveEtax(EtaxStatus? strongest, bool sentByEmailWithRdTimestamp)
-        => sentByEmailWithRdTimestamp ? EtaxStatus.Accepted : strongest;
+    internal static EtaxStatus? EffectiveEtax(EtaxStatus? strongest, bool sentByEmailWithRdTimestamp, bool etdaStamped = false)
+        => sentByEmailWithRdTimestamp || etdaStamped ? EtaxStatus.Accepted : strongest;
 
     /// <summary>ตัวโหลดเดียวของสถานะ e-Tax ที่ใช้ตัดสินการยกเลิก — แถว e-Tax (ไปไกลที่สุด ไม่นับ Voided) + บันทึก e-Tax by Email ที่ส่งสำเร็จ
     /// พร้อม CC ประทับเวลา (<see cref="EffectiveEtax"/>) · ทุก id ที่ถามอยู่ในผล (ไม่มี e-Tax = null) · tenant แล้ว</summary>
@@ -121,11 +123,13 @@ public static class DocumentVoidPreconditions
         var ids = documentIds.Distinct().ToList();
         var rows = await db.EtaxInvoices.AsNoTracking()
             .Where(e => e.CompanyId == companyId && ids.Contains(e.DocumentId))
-            .Select(e => new { e.DocumentId, e.Status })
+            .Select(e => new { e.DocumentId, e.Status, Stamped = e.EtdaStampedAt != null })
             .ToListAsync(ct);
         var emailed = await EtaxEmailedWithRdTimestampAsync(db, companyId, ids, ct);
         foreach (var id in ids)
-            result[id] = EffectiveEtax(StrongestEtax(rows.Where(r => r.DocumentId == id).Select(r => r.Status)), emailed.Contains(id));
+            result[id] = EffectiveEtax(StrongestEtax(rows.Where(r => r.DocumentId == id).Select(r => r.Status)), emailed.Contains(id),
+                // รอบ 244: ประทับเวลาแล้ว = มีบันทึกใบที่ ETDA ส่งกลับบนแถวที่ยังไม่ถูกยกเลิก
+                rows.Any(r => r.DocumentId == id && r.Stamped && r.Status != EtaxStatus.Voided));
         return result;
     }
 
@@ -169,7 +173,9 @@ public static class DocumentVoidPreconditions
                 .ToListAsync(ct))
             .Select(l => (l.SentAt, l.CreatedAt)).ToList();
 
-    /// <summary>บันทึก e-Tax by Email ที่ส่งสำเร็จพร้อม CC ประทับเวลาของกรมสรรพากร — เงื่อนไขตัวเดียวของเกณฑ์อีเมล (ห้ามสำเนาคิวรี) · tenant</summary>
+    /// <summary>บันทึก e-Tax by Email ที่ส่งสำเร็จพร้อม CC ที่อยู่ประทับเวลาของ ETDA (production) — เงื่อนไขตัวเดียวของเกณฑ์อีเมล (ห้ามสำเนาคิวรี) · tenant ·
+    /// รอบ 244: เกณฑ์ของ<b>ด่าน</b> (ถือเท่าตอบรับ — ฝ่ายค้าน B2) · ป้ายแสดงผล "ส่งแล้ว (รอประทับเวลา)"/"ประทับเวลาแล้ว" อยู่ที่ <c>EtaxByEmailFormat.Stage</c> ·
+    /// ส่งเข้า UAT (ทดสอบ by Email) ถูกบันทึก <c>IncludedRdTimestamp=false</c> ⇒ ไม่นับ</summary>
     private static IQueryable<Accounting.Models.Entities.DocumentEmailLog> RdTimestampEmailLogs(AccountingDbContext db, Guid companyId)
         => db.DocumentEmailLogs.AsNoTracking()
             .Where(l => l.CompanyId == companyId && !l.IsDeleted && l.IsEtaxByEmail && l.IncludedRdTimestamp && l.Status == EmailLogStatus.Sent);

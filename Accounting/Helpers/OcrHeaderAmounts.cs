@@ -67,6 +67,26 @@ public static class OcrHeaderAmounts
         return ties ? subTotal!.Value : fromTotal;
     }
 
+    /// <summary>
+    /// **"ยอดก่อน VAT" ที่ถืออยู่คือยอดรวมทั้งสิ้น** (รอบ 242 · ใบเสร็จซูเปอร์มาร์เก็ต 2026-11-06: engine อ่าน SubTotal = Total = 1,961.25 คู่ VAT 30.03 ⇒
+    /// ตัวกระทบยอดฟ้อง "น้อยกว่ายอดก่อน VAT 1,961.25" ทั้งที่ฐานจริง 1,931.22) — ยอดก่อน VAT เท่ากับยอดรวมพอดีขณะที่ VAT &gt; 0 เป็นไปไม่ได้ทางเลขคณิต ·
+    /// ต่างจาก <see cref="IsSwapped"/> (สองป้ายสลับกัน) — ที่นี่ engine ใช้ตัวเลขเดียวกันสองช่อง · เทียบตรงถึงสตางค์ (ไม่ใช้ค่าเผื่อ 1 บาท — ใบเล็กที่ VAT &lt; 1 บาท
+    /// เช่น 10.00 + 0.70 = 10.70 ต้องไม่เข้าเงื่อนไข) · ผู้ใช้: ฐานกระทบยอดของ <see cref="OcrVatCodeLines.Decide"/> · ขั้นเขียนหัวสแกน <see cref="OcrTotalAnchor.Plan"/>
+    /// </summary>
+    public static bool SubTotalIsGrandTotal(decimal? subTotal, decimal? vat, decimal? total)
+        => subTotal is > 0m && vat is > 0.01m && total is > 0m && Math.Abs(subTotal.Value - total.Value) < 0.01m;
+
+    /// <summary>
+    /// **ฐานก่อน VAT ที่ใช้กระทบยอดกับ Σ บรรทัด** — ตัวตัดสินเดียวของตัวสร้างบรรทัด (<see cref="OcrVatCodeLines.Decide"/>) และด่านความมั่นใจตอนสแกน
+    /// (<c>OcrConfidenceGateway.Validate</c>) · ยอดก่อน VAT = ยอดรวม (<see cref="SubTotalIsGrandTotal"/>) <b>และ</b>ยอดรวมนั้นคือยอดที่กระดาษพิสูจน์แล้ว
+    /// (<paramref name="paperTotal"/> จาก <see cref="OcrTotalAnchor.Find"/> Proven/Confirmed) ⇒ ยอดรวม − VAT · อย่างอื่น ⇒ <paramref name="subTotal"/> เดิมทุกตัวอักษร
+    /// (ฝ่ายค้านรอบ 242 S3: sub = total = 1,000 · VAT 70 · ยอดจริง 1,070 ที่ไม่ได้พิสูจน์ — "ยอดรวม" ต่างหากที่ผิด ห้ามถอด VAT ออกจากมัน)
+    /// </summary>
+    public static decimal ReconSubTotal(decimal subTotal, decimal? vat, decimal? total, decimal? paperTotal)
+        => SubTotalIsGrandTotal(subTotal, vat, total) && paperTotal is decimal pt && Math.Abs(pt - total!.Value) < 0.01m
+            ? total.Value - vat!.Value
+            : subTotal;
+
     /// <summary>ข้อความเดียวที่ทุกจุดใช้บันทึกใน trace/ProcessingNotes เมื่อสลับกลับ
     /// (สองที่แต่งข้อความเองจะ drift)</summary>
     public static string SwapNote(decimal subBefore, decimal totalBefore)
