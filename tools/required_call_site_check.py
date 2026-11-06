@@ -15224,33 +15224,54 @@ REVIEWER_CASES += [
 _R251AP_WHY = "รอบ 251 WP-07 (Autopilot ค้าง 248): "
 RULES += [
     dict(file=_R248_AP, method="BuildAsync",
-         must=["EtaxDeliveryRouter.Decide(", "EtaxAutoIssueScope.Judge(", "TaxService.NotFullTaxInvoiceByDesign(",
+         must=["var etaxRoute = EtaxDeliveryRouter.Decide(", "EtaxAutoIssueScope.Judge(", "TaxService.NotFullTaxInvoiceByDesign(",
                "EtaxByEmailSenderGate.Refusal(EtaxByEmailSenderGate.From(", "EtaxByEmailFormat.Recipients(",
-               "PaymentQrService.PickDocumentAccountAsync(", "PaymentQrPolicy.IsBankQrDocument(", "PlatformEmailQuota.ForCompanyAsync(",
-               "ClosedPeriodRanges.Build(", "ClosedPeriodRanges.Covers(", "PostPaymentAutomationPolicy.EffectiveLayers(",
+               "PaymentQrService.PickDocumentAccountAsync(", "PlatformEmailQuota.ForCompanyAsync(",
+               "ClosedPeriodRanges.Covers(", "PostPaymentAutomationPolicy.EffectiveLayers(", "cf.ClosedRanges",
                "EtaxSenderRefusal = etaxSenderRefusal", "EtaxRecipientProblem = etaxRecipientProblem", "NextPeriodClosed = isDocument ? nextPeriodClosed",
                "PostPayEmailReceipt = isDocument && saleSide ? postPay.EmailReceipt", "PlatformDailyCap = platformQuota?.Cap",
-               "BankQrAccount = bankQrAccount", "fp.CompanyId == companyId"],
+               "BankQrAccount = bankQrAccount",
+               # ฝ่ายค้านข้อ 3–5, 8–9
+               "EtaxAutoIssueScope.PredictForUnissued(docType, vatTotal)", "predictedByLaw, notFullTaxInvoice", "EtaxScopeUncertain = etaxUncertain",
+               "EtaxAutoIssueScope.Judge(DocumentType.Receipt, DocumentStatus.Approved, false, false, null, docType",
+               "PostPayReceiptEtaxRefusal = ", "AutopilotReadiness.WillEmail(facts)", "var sendTrigger = hasApprovedRule ?",
+               "PaymentQrPolicy.ShowBankQr(template.ShowPaymentQr, docType"],
          forbid=["AskAsync(", "IAiOrchestrator", "TryReserveAsync(", "GenerateAsync(", "EnsureEtaxForEmailAsync("],
          why=_R251AP_WHY + "ข้อ 2–3: e-Tax/QR/เพดาน/งวด/หลังรับเงิน ผ่านตัวตัดสินเดิม (ห้ามสูตรของตัวเอง) · ทดลองรันไม่ถาม AI ไม่ออก e-Tax ไม่จองโควตา"),
+    dict(file=_R248_AP, method="LoadSharedFactsAsync",
+         must=["ClosedPeriodRanges.Build(", "fp.CompanyId == companyId", "s.CompanyId == companyId", "SystemBaseUrl.IsConfigured("],
+         forbid=["SaveChangesAsync(", "AddChainedAuditLog(", "AskAsync("],
+         why=_R251AP_WHY + "ฝ่ายค้านข้อ 6: ข้อเท็จจริงระดับบริษัท (ค่าตั้ง · URL · งวดปิด) โหลดครั้งเดียวต่อคำขอ · tenant · อ่านอย่างเดียว"),
     dict(file=_R248_AP, method="FromDraftAsync",
          must=["AutopilotSettingsResolver.ValidateTriState(d.PostPayEmailReceipt)", "d.PostPayEmailReceipt == null ? storedPostPayEmail"],
          why=_R251AP_WHY + "ร่างในฟอร์ม: ค่าหลังรับชำระผ่านตัวตรวจเดียว · null (หน้าโหลดตัวเลือกไม่สำเร็จ) = คงค่าที่บันทึก (WP-03)"),
     dict(file=_R248_AP, method="LevelsAsync",
-         must=["r.CompanyId == companyId", "BuildAsync(companyId, r, ct)", "Take(MaxLevelRows)"],
+         must=["r.CompanyId == companyId", "BuildAsync(companyId, r, ct, shared)", "Take(MaxLevelRows)", "await canRead(type)",
+               "shared ??= await LoadSharedFactsAsync("],
+         before=[("await canRead(type)", "BuildAsync(companyId, r, ct, shared)")],
          forbid=["SaveChangesAsync(", "AddChainedAuditLog("],
          why=_R251AP_WHY + "ข้อ 1: ระดับในตาราง = ตัวตัดสินเดียวกับแผงความพร้อม (ไม่คำนวณใน JS) · tenant · อ่านอย่างเดียว · มีเพดานแถว"),
     dict(file=_R248_AP, method="SendTestAsync",
          must=["u.Id == userId", "OnBehalfEmailSender.IsPlausibleEmail(to)", "DocumentEmailService.ResolveOnBehalfSenderAsync(",
-               "RecurringTestEmail.Compose(", "RecurringTestEmail.LimitRefusal(", "msg.To.Add(to!)", "AddChainedAuditLog("],
+               "RecurringTestEmail.Compose(", "RecurringTestEmail.LimitRefusal(", "msg.To.Add(to!)", "AddChainedAuditLog(",
+               # ฝ่ายค้านข้อ 2a–2d
+               "RecurringTestEmail.UnverifiedRefusal(user!.EmailVerified)", "SignRequestEmailText.WrapPlatformDocumentEmail(",
+               "PlatformEmailQuota.ForCompanyAsync(", "SignEmailThrottle.Refusal(true, quota.SentToday, quota.Cap",
+               "_db.Database.ExecuteSqlRawAsync(", "AdvisoryLockKey.RecurringSendTest", "a.Action == AuditAction.SendEmail",
+               "Action = AuditAction.SendEmail", "tx.CommitAsync("],
          forbid=["DocumentEmailLogs.Add(", "_db.DocumentEmailLogs", "EnqueueAsync(", "TryReserveAsync(", "msg.Cc.Add(", "msg.Bcc.Add(",
-                 "contact.Email", "Contact.Email", "SendDocumentRoutedAsync(", "EnsureLinkAsync("],
-         before=[("RecurringTestEmail.LimitRefusal(", "sender.SendAsync(")],
+                 "contact.Email", "Contact.Email", "SendDocumentRoutedAsync(", "EnsureLinkAsync(", "AuditAction.Export", "a.EntityId == "],
+         before=[("RecurringTestEmail.UnverifiedRefusal(", "sender.SendAsync("), ("_db.Database.ExecuteSqlRawAsync(", "RecurringTestEmail.LimitRefusal("),
+                 ("RecurringTestEmail.LimitRefusal(", "sender.SendAsync("), ("SignEmailThrottle.Refusal(", "sender.SendAsync("),
+                 ("sender.SendAsync(", "AddChainedAuditLog(")],
          why=_R251AP_WHY + "ข้อ 4: ส่งทดสอบถึงผู้ใช้ที่กดเท่านั้น (ห้ามผู้ติดต่อ/สำเนา) · ผู้ส่งจากตัวตัดสินเดียว · ไม่ใช่การส่งเอกสาร (ไม่มีบันทึกการส่ง/คิว/โควตา/ลิงก์ชำระ) · เพดานต่อวัน + audit"),
     dict(file=_R248_CTRL, method="SendTest",
          must=["DocumentPermissionHelper.CanCreateAsync(", "JwtHelper.GetUserIdFromClaims(User)"],
          before=[("DocumentPermissionHelper.CanCreateAsync(", "_autopilot.SendTestAsync(")],
          why=_R251AP_WHY + "ข้อ 4: ต้องมีสิทธิ์สร้างเอกสารชนิดนั้น · ผู้รับมาจากตัวตนของผู้เรียก (ไม่รับที่อยู่จากคำขอ)"),
+    dict(file="Services/Implementations/DocumentService.cs", method="CreateDocumentAsync",
+         must=["var createDate = Accounting.Helpers.ThaiDate.CalendarDateUtc(request.DocumentDate);", "f.StartDate <= createDate && f.EndDate >= createDate"],
+         why=_R251AP_WHY + "ฝ่ายค้านข้อ 7: ด่านงวดปิดตอนสร้างเทียบวันตามปฏิทินไทยตัวเดียวกับที่ใบถูกเก็บ (ไม่ใช่เวลาดิบ)"),
     dict(file=_R248_CTRL, method="AutopilotLevels", must=["DenyAutopilotReadAsync("],
          why=_R251AP_WHY + "ข้อ 1: ระดับเปิดเผยยอด/คำเตือนค้างชำระ ⇒ ด่านเดียวกับความพร้อม (LOW-6)"),
     dict(file="Services/Implementations/ContactRecipientResolver.cs", method="GetOverviewAsync",
@@ -15275,6 +15296,24 @@ REVIEWER_CASES += [
     ("R251f", "LevelsAsync", ".Where(r => r.CompanyId == companyId && ids.Contains(r.Id)", ".Where(r => ids.Contains(r.Id)", True),
     # คอมเมนต์ที่เอ่ยถึง AskAsync( ในทดลองรัน = โค้ดถูก ⇒ ต้องไม่ฟ้อง
     ("R251g", "BuildAsync", "        var notes = new List<string>();", "        var notes = new List<string>(); // ห้าม AskAsync( ในทดลองรัน", False),
+    # ฝ่ายค้านข้อ 2a: ถอดด่านอีเมลยืนยันแล้ว ⇒ ต้องฟ้อง
+    ("R251h", "SendTestAsync", "if (RecurringTestEmail.UnverifiedRefusal(user!.EmailVerified) is { } unverified)", "if (false)", True),
+    # ฝ่ายค้านข้อ 2b: ข้ามเพดานของแพลตฟอร์ม ⇒ ต้องฟ้อง
+    ("R251i", "SendTestAsync", "if (SignEmailThrottle.Refusal(true, quota.SentToday, quota.Cap, 0, anyToday) is { } capRefusal)", "if (false)", True),
+    # ฝ่ายค้านข้อ 2c: เพดานกลับไปต่อรายการ ⇒ ต้องฟ้อง
+    ("R251j", "SendTestAsync", "&& a.EntityType == RecurringTestEmail.AuditEntityType && a.Timestamp >= dayStart",
+     "&& a.EntityType == RecurringTestEmail.AuditEntityType && a.EntityId == r.Id.ToString() && a.Timestamp >= dayStart", True),
+    # ฝ่ายค้านข้อ 2d: ตัดล็อก ⇒ ต้องฟ้อง
+    ("R251k", "SendTestAsync", 'await _db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})",', "await Task.CompletedTask; _ = (", True),
+    # ฝ่ายค้านข้อ 5: ทดลองรันเลิกทำนายรูปแบบใบเสร็จ ⇒ ต้องฟ้อง
+    ("R251l", "BuildAsync", "null, null, predictedByLaw, notFullTaxInvoice", "null, null, null, notFullTaxInvoice", True),
+    # ฝ่ายค้านข้อ 6: รวบรวมก่อนถามสิทธิ์ ⇒ ต้องฟ้อง
+    ("R251m", "LevelsAsync", "if (!allowed.TryGetValue(type, out var ok)) allowed[type] = ok = await canRead(type);", "", True),
+    # ฝ่ายค้านข้อ 8: QR กลับไปเช็กแค่ชนิด ⇒ ต้องฟ้อง
+    ("R251n", "BuildAsync", "bankQrApplies = PaymentQrPolicy.ShowBankQr(template.ShowPaymentQr, docType, null, null, false, DocumentStatus.Approved, total, currency);",
+     "bankQrApplies = template.ShowPaymentQr && PaymentQrPolicy.IsBankQrDocument(docType, null, null, false);", True),
+    # ฝ่ายค้านข้อ 7: ด่านงวดตอนสร้างกลับไปเทียบเวลาดิบ ⇒ ต้องฟ้อง
+    ("R251o", "CreateDocumentAsync", "f.StartDate <= createDate && f.EndDate >= createDate", "f.StartDate <= request.DocumentDate && f.EndDate >= request.DocumentDate", True),
 ]
 
 # ── รอบ 249 สินทรัพย์หลายใบ (erp-review/2026-11-06/ASSET_MULTI_DOCUMENT_DESIGN.md): สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ ──
@@ -15716,7 +15755,7 @@ RULES += [
          forbid=["LogWarning(ex"],
          why=_R250_WHY + "§2.4 ข้อ 1/3 คืนผล (ไม่กลืนเป็น LogWarning) · กฎ 'เมื่ออนุมัติเอกสาร' ครอบแล้ว ⇒ ข้ามก่อนเข้าคิวซ้ำ"),
     dict(file="Services/Implementations/RecurringAutopilotService.cs", method="BuildAsync",
-         must=["SystemBaseUrl.IsConfigured(", "SystemBaseUrlConfigured = baseUrlConfigured", "ApprovedEmailRuleCovers = hasApprovedRule",
+         must=["baseUrlConfigured = cf.BaseUrlConfigured", "SystemBaseUrlConfigured = baseUrlConfigured", "ApprovedEmailRuleCovers = hasApprovedRule",
                "RecurringEmailRuleExists = hasRecurringRule"],
          why=_R250_WHY + "§2.4 ข้อ 2/3 แผงความพร้อมรู้ว่า URL ของระบบยังไม่ตั้ง (Y7) และมีกฎส่งสองแบบ"),
     dict(file="Services/Implementations/EmailScheduleService.cs", method="EnqueueDocumentAsync",

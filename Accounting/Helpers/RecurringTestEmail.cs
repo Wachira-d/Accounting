@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using Accounting.Models.DTOs.Recurring;
 
 namespace Accounting.Helpers;
@@ -15,10 +16,23 @@ public static class RecurringTestEmail
 {
     public const string RuleCode = "RECURRING-SEND-TEST";
     public const string SubjectPrefix = "[ทดสอบ] ";
-    /// <summary>เพดานต่อผู้ใช้ต่อบริษัทต่อวัน (เวลาไทย) — อีเมลทดสอบไม่นับเพดานอีเมลเอกสาร จึงต้องมีเพดานของตัวเอง (กันใช้ปุ่มนี้ยิงอีเมลถี่)</summary>
+    /// <summary>เพดานต่อผู้ใช้ต่อบริษัทต่อวัน (เวลาไทย · ทุกรายการรวมกัน — ฝ่ายค้านข้อ 2c: เดิมต่อรายการ ⇒ N รายการ × 10) — อีเมลทดสอบไม่นับเพดานอีเมลเอกสาร
+    /// จึงต้องมีเพดานของตัวเอง · นับจากแถว audit (<see cref="AuditEntityType"/> + <c>AuditAction.SendEmail</c>) ใต้ xact lock ของผู้ใช้</summary>
     public const int MaxPerUserPerDay = 10;
-    /// <summary>ป้ายใน audit (NewValues.action) — ตัวนับเพดานอ่านป้ายนี้</summary>
+    /// <summary>ป้ายใน audit (NewValues.action)</summary>
     public const string AuditActionName = "SendRecurringTestEmail";
+    /// <summary>EntityType ของแถว audit — ตัวนับเพดานอ่านคู่กับ <c>AuditAction.SendEmail</c></summary>
+    public const string AuditEntityType = "RecurringTestEmail";
+
+    /// <summary>ฝ่ายค้านข้อ 2a: ส่งได้เฉพาะอีเมลที่ยืนยันแล้ว (สมัครด้วยอีเมลของคนอื่น ⇒ ปุ่มนี้กลายเป็นช่องส่งอีเมลในนามบริษัทถึงเขา) · null = ผ่าน</summary>
+    public static string? UnverifiedRefusal(bool emailVerified)
+        => emailVerified ? null
+            : "อีเมลของบัญชีคุณยังไม่ได้ยืนยัน — ยืนยันอีเมลที่โปรไฟล์ก่อนใช้ \"ส่งทดสอบ\" (หรือใช้ปุ่ม \"ทดลองรัน\" ซึ่งไม่ส่งอีเมล)";
+
+    private static readonly Regex EmailRx = new(@"[A-Za-z0-9._%+\-]+@([A-Za-z0-9.\-]+\.[A-Za-z]{2,})", RegexOptions.Compiled);
+
+    /// <summary>ฝ่ายค้านข้อ 2: อีเมลทดสอบไปกล่องของพนักงาน (อาจเป็นกล่องส่วนตัว) — ปิดบังอีเมลผู้รับจริงทุกจุดในข้อความ ("•••@โดเมน")</summary>
+    private static string MaskEmails(string? text) => EmailRx.Replace(text ?? "", m => "•••@" + m.Groups[1].Value);
 
     public const string NotCountedNote = "อีเมลทดสอบไม่นับเพดานอีเมลเอกสารของบริษัท และไม่ถูกบันทึกเป็นการส่งเอกสาร (บันทึกตรวจสอบว่าใครกดส่งทดสอบ)";
 
@@ -31,8 +45,9 @@ public static class RecurringTestEmail
 
     public static Message Compose(string recurringName, string? companyName, RecurringDryRunResponse d)
     {
-        var subject = SignRequestEmailText.SafeSubject(SubjectPrefix + $"{d.DocumentTypeLabel} รอบถัดไป — {recurringName}");
-        static string E(string? s) => WebUtility.HtmlEncode(s ?? "");
+        var subject = SignRequestEmailText.SafeSubject(SubjectPrefix + $"{d.DocumentTypeLabel} รอบถัดไป — {MaskEmails(recurringName)}");
+        // ทุกข้อความผ่านตัวปิดบังอีเมลก่อนหนี HTML (แผน/ความพร้อมมีอีเมลลูกค้า เช่น "ส่งถึง ap@…")
+        static string E(string? s) => WebUtility.HtmlEncode(MaskEmails(s));
         static string M(decimal v) => v.ToString("N2", CultureInfo.InvariantCulture);
         var next = d.NextRunDates.Count > 0 ? ThaiDate.ToThaiDisplayString(d.NextRunDates[0]) : "-";
 
@@ -69,6 +84,6 @@ public static class RecurringTestEmail
         if (!string.IsNullOrWhiteSpace(d.EtaxPlan)) text.AppendLine("e-Tax: " + d.EtaxPlan);
         text.AppendLine("ลิงก์ชำระ: " + d.PayLinkPlan);
         text.AppendLine("ความพร้อม: " + d.Readiness.LevelLabel);
-        return new Message(subject, html.ToString(), text.ToString());
+        return new Message(subject, html.ToString(), MaskEmails(text.ToString()));
     }
 }

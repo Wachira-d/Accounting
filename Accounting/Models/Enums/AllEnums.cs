@@ -611,7 +611,9 @@ public enum AuditAction
     View = 8,
     Approve = 9,
     Reject = 10,
-    ApiAccess = 12
+    ApiAccess = 12,
+    /// <summary>รอบ 251 (WP-07 ฝ่ายค้านข้อ 2): ส่งอีเมลที่ไม่ใช่การส่งเอกสาร (อีเมลทดสอบของรายการประจำ) — แยกจาก Export</summary>
+    SendEmail = 13
 }
 
 // ==================== Product/Service ====================

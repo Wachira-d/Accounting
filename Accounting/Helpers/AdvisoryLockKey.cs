@@ -264,4 +264,8 @@ public static class AdvisoryLockKey
     /// xact lock (เดิมเป็น literal "wht-credit-writeoff" ใน <c>WhtCreditService.LockCreditAsync</c> — ค่าเดิมทุกตัวอักษร ⇒ คีย์ไม่เปลี่ยน) ·
     /// ปิดปีวนแถวเรียง Id (ลำดับล็อกคงที่ข้ามคำขอ — กัน deadlock)</summary>
     public const string WhtCreditWriteOff = "wht-credit-writeoff";
+
+    /// <summary>รอบ 251 (WP-07 ฝ่ายค้านข้อ 2d): ส่งอีเมลทดสอบของรายการประจำ — part = userId · ผูก companyId · xact lock ครอบ นับเพดาน → ส่ง → audit
+    /// (สองคำขอพร้อมกันของผู้ใช้เดียวกันเกินเพดานไม่ได้)</summary>
+    public const string RecurringSendTest = "recurring-send-test";
 }

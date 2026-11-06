@@ -85,6 +85,49 @@ public class AutopilotRound251Wp07Tests
         Assert.Equal(AutopilotReadiness.Ok, One(f, "SMTP").Verdict);   // เส้นเดิม
     }
 
+    // ═══ ฝ่ายค้านข้อ 3: ส่งตามกฎในตารางส่งก็ต้องตรวจ e-Tax ═══
+
+    [Fact]
+    public void R251_ETAX_ไม่ติ๊กส่งแต่มีกฎเมื่ออนุมัติ_ยังตรวจ_ทิศตรงข้ามไม่มีกฎไม่ออกข้อ()
+    {
+        var byRule = Ready() with
+        {
+            AutoApprove = false, AutoSendEmail = false, ApprovedEmailRuleCovers = true,
+            EtaxChannel = EtaxEmailChannel.EtaxByEmail, EtaxSenderRefusal = "ยังไม่ทดสอบ",
+        };
+        Assert.True(AutopilotReadiness.WillEmail(byRule));
+        Assert.Equal(AutopilotReadiness.Fail, One(byRule, "ETAX-SENDER").Verdict);
+        var recurringRule = byRule with { ApprovedEmailRuleCovers = false, AutoApprove = true, RecurringEmailRuleExists = true };
+        Assert.Equal(AutopilotReadiness.Fail, One(recurringRule, "ETAX-SENDER").Verdict);
+        var none = byRule with { ApprovedEmailRuleCovers = false };
+        Assert.False(AutopilotReadiness.WillEmail(none));
+        None(none, "ETAX-SENDER");
+        // กฎ "เมื่อรายการประจำสร้างเอกสาร" ไม่ส่งใบร่าง ⇒ ไม่อนุมัติอัตโนมัติ = ไม่ส่ง
+        Assert.False(AutopilotReadiness.WillEmail(none with { RecurringEmailRuleExists = true, AutoApprove = false }));
+    }
+
+    // ═══ ฝ่ายค้านข้อ 5: รูปแบบใบเสร็จตัดสินตอนอนุมัติ ⇒ ไม่ฟ้องแดงหลอก ═══
+
+    [Fact]
+    public void R251_ETAX_ใบเสร็จทำนายไม่ได้_ตรวจตอนอนุมัติเป็นInfo_ทิศตรงข้ามใบกำกับแน่นอนFail()
+    {
+        var f = Ready() with { DocumentType = DocumentType.Receipt, EtaxChannel = EtaxEmailChannel.EtaxByEmail, EtaxSenderRefusal = "x", EtaxScopeUncertain = true };
+        Assert.Equal(AutopilotReadiness.Info, One(f, "ETAX-SENDER").Verdict);
+        Assert.Equal(AutopilotReadiness.Info, One(f, "ETAX").Verdict);
+        Assert.Contains("ตรวจตอนอนุมัติ", One(f, "ETAX").Title);
+        Assert.Equal(AutopilotReadiness.Fail, One(f with { EtaxScopeUncertain = false }, "ETAX-SENDER").Verdict);
+    }
+
+    [Fact]
+    public void R251_ทำนายใบกำกับของใบที่ยังไม่สร้าง_ใบกำกับมีVATแน่นอน_ใบเสร็จไม่แน่นอน_ชนิดอื่นไม่เกี่ยว()
+    {
+        Assert.Equal(((bool?)true, false), EtaxAutoIssueScope.PredictForUnissued(DocumentType.TaxInvoice, 70m));
+        Assert.Equal(((bool?)null, true), EtaxAutoIssueScope.PredictForUnissued(DocumentType.Receipt, 70m));
+        Assert.Equal(((bool?)null, true), EtaxAutoIssueScope.PredictForUnissued(DocumentType.TaxInvoice, 0m));
+        Assert.Equal(((bool?)null, true), EtaxAutoIssueScope.PredictForUnissued(DocumentType.TaxInvoice, 70m, paysOnIssue: true));
+        Assert.Equal(((bool?)null, false), EtaxAutoIssueScope.PredictForUnissued(DocumentType.Invoice, 70m));
+    }
+
     // ═══ ETAX-RECIPIENT ═══
 
     [Fact]
@@ -235,6 +278,62 @@ public class AutopilotRound251Wp07Tests
         None(Ready() with { SaleSide = false, PostPayEmailReceipt = false }, "POSTPAY");
     }
 
+    // ═══ ฝ่ายค้านข้อ 4: ใบเสร็จหลังรับชำระไปทาง e-Tax by Email ═══
+
+    [Fact]
+    public void R251_POSTPAY_ใบเสร็จต้องไปeTaxแต่ด่านผู้ส่งไม่ผ่าน_Warn_ทิศตรงข้ามผ่านOk()
+    {
+        var f = Ready() with { PostPayEmailReceipt = true, PostPayReceiptEtaxRefusal = "ยังไม่ได้ตั้งค่าการส่งอีเมลของบริษัท" };
+        var item = One(f, "POSTPAY");
+        Assert.Equal(AutopilotReadiness.Warn, item.Verdict);
+        Assert.Equal(AutopilotReadiness.EtaxSettingsUrl, item.FixUrl);
+        Assert.Equal(AutopilotReadiness.Ok, One(f with { PostPayReceiptEtaxRefusal = null }, "POSTPAY").Verdict);
+        Assert.Equal(AutopilotReadiness.Info, One(f with { PostPayEmailReceipt = false }, "POSTPAY").Verdict);   // ปิดอยู่ = ไม่ส่ง ไม่มีด่านให้ล้ม
+    }
+
+    [Fact]
+    public void R251_ขอบเขตใบเสร็จหลังรับชำระ_อ้างใบแจ้งหนี้ไปeTax_อ้างใบกำกับไม่ไป()
+    {
+        var ofInvoice = EtaxAutoIssueScope.Judge(DocumentType.Receipt, DocumentStatus.Approved, false, false, null, DocumentType.Invoice, null, false);
+        Assert.Equal(EtaxEmailChannel.EtaxByEmail, EtaxDeliveryRouter.Decide(true, EtaxMode.ByEmail, ofInvoice, false).Channel);
+        var ofTaxInvoice = EtaxAutoIssueScope.Judge(DocumentType.Receipt, DocumentStatus.Approved, false, false, null, DocumentType.TaxInvoice, null, false);
+        Assert.Equal(EtaxAutoSkip.ReceiptSettlesTaxInvoice, ofTaxInvoice);
+    }
+
+    // ═══ ฝ่ายค้านข้อ 8: PAY-QR ตัวตัดสินเดียวกับกระดาษ ═══
+
+    [Fact]
+    public void R251_ShowBankQr_ใบอนุมัติมียอด_พิมพ์_ทิศตรงข้ามยอดศูนย์หรือสกุลอื่นไม่พิมพ์()
+    {
+        Assert.True(PaymentQrPolicy.ShowBankQr(true, DocumentType.Invoice, null, null, false, DocumentStatus.Approved, 1070m, "THB"));
+        Assert.False(PaymentQrPolicy.ShowBankQr(true, DocumentType.Invoice, null, null, false, DocumentStatus.Approved, 0m, "THB"));
+        Assert.False(PaymentQrPolicy.ShowBankQr(true, DocumentType.Invoice, null, null, false, DocumentStatus.Approved, 1070m, "USD"));
+        Assert.False(PaymentQrPolicy.ShowBankQr(false, DocumentType.Invoice, null, null, false, DocumentStatus.Approved, 1070m, "THB"));
+    }
+
+    // ═══ ฝ่ายค้านข้อ 7: ด่านงวดตอนสร้างเทียบวันตามปฏิทินไทย ═══
+
+    [Fact]
+    public void R251_วันตามปฏิทินไทย_บ่ายวันสุดท้ายยังเป็นวันสุดท้าย_ดึกเป็นวันถัดไป()
+    {
+        var ranges = ClosedPeriodRanges.Build(new[] { (new DateTime(2026, 10, 1), new DateTime(2026, 10, 31), FiscalPeriodStatus.Closed) });
+        var afternoon = ThaiDate.CalendarDateUtc(new DateTime(2026, 10, 31, 8, 0, 0, DateTimeKind.Utc));   // 15:00 ไทย
+        Assert.Equal(new DateTime(2026, 10, 31), afternoon.Date);
+        Assert.True(ClosedPeriodRanges.Covers(ranges, afternoon));          // เดิมเทียบเวลาดิบ > EndDate เที่ยงคืน ⇒ หลุดด่าน
+        var lateNight = ThaiDate.CalendarDateUtc(new DateTime(2026, 10, 31, 18, 0, 0, DateTimeKind.Utc));  // 01:00 ไทยของ 1 พ.ย.
+        Assert.Equal(new DateTime(2026, 11, 1), lateNight.Date);
+        Assert.False(ClosedPeriodRanges.Covers(ranges, lateNight));         // ทิศตรงข้าม: วันถัดไป (งวดเปิด) ไม่ถูกกัน
+    }
+
+    // ═══ ฝ่ายค้านข้อ 2: ส่งทดสอบ ═══
+
+    [Fact]
+    public void R251_ส่งทดสอบ_อีเมลยังไม่ยืนยันปฏิเสธ_ยืนยันแล้วผ่าน_ปิดบังอีเมลผู้รับจริง()
+    {
+        Assert.NotNull(RecurringTestEmail.UnverifiedRefusal(false));
+        Assert.Null(RecurringTestEmail.UnverifiedRefusal(true));
+    }
+
     [Fact]
     public void R251_ชั้นหลังรับชำระ_รายการชนะผู้ติดต่อ_ว่างตามบริษัท()
     {
@@ -272,6 +371,9 @@ public class AutopilotRound251Wp07Tests
         Assert.Contains("บริษัท &amp; ลูก", m.Html);
         Assert.DoesNotContain("pay-document", m.Html);
         Assert.Contains("ไม่มีลิงก์ชำระ", m.Html);
+        Assert.DoesNotContain("ap@customer.co.th", m.Html);   // ฝ่ายค้านข้อ 2: ปิดบังอีเมลลูกค้า
+        Assert.DoesNotContain("ap@customer.co.th", m.Text);
+        Assert.Contains("•••@customer.co.th", m.Html);
     }
 
     // ═══ server computes · page displays ═══
