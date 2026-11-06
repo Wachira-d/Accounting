@@ -6752,4 +6752,4 @@ _รอบ 252 WP-12A (2026-11-06 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.m
 (4) **เงินโอนปิดหนี้** — `BankTransaction.EntrySource` ที่จุดสร้างแถว 3 จุด · `Helpers/BankReceiptAutoSettle` (pure · ไม่มี AI) · `BankReceiptSettleService` (ค่าตั้งต้นปิด · source ใหม่ `PaymentEntrySource.BankAutoSettle` ·
 คิวยืนยัน/ปฏิเสธ · ผลจำลอง) · ยอดที่ต้องโอนจาก `Services/Payments/PayLinkTransferWht` (ชิ้นเดียวกับลิงก์ชำระ). (5) **สลิปพอร์ทัลกันซ้ำ** แฮชไฟล์ + เลขอ้างอิง (`SlipEvidenceRule` · `SLIP-DUP`).
 งานเบื้องหลังเดียว `AutopilotJob` (JobLock ต่อขั้น) · migration `Helpers/AutopilotMigration` (ADD COLUMN IF NOT EXISTS · ค่าตั้งต้น = พฤติกรรมเดิม) · เทสต์ `AutopilotRound252Tests` · `Db/AutopilotRound252DbTests` ·
-`PartnerSecurityRound250DbTests` แนบสลิปคนละไฟล์ · checker R252 + WATCHED/FILES — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+`PartnerSecurityRound250DbTests` แนบสลิปคนละไฟล์ · checker R252 + WATCHED/FILES — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 81641769_
