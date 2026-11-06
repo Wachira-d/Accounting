@@ -493,6 +493,11 @@ public class ContactRecipientWiringRound250DbTests
     {
         await db.Documents.Where(d => d.Id == s.InvoiceId).ExecuteUpdateAsync(x => x
             .SetProperty(d => d.Status, DocumentStatus.Paid).SetProperty(d => d.BalanceDue, 0m).SetProperty(d => d.PaidAmount, 1_070m));
+        // ใบเสร็จที่เป็นใบกำกับภาษี (ไปทาง e-Tax) ต้องรับชำระ "ใบแจ้งหนี้" — ใบเสร็จของใบกำกับภาษีไม่ใช่ใบกำกับซ้ำ
+        // (EtaxAutoIssueScope.Judge ⇒ ReceiptSettlesTaxInvoice ⇒ อีเมลธรรมดาถึงทุกผู้รับ = ถูกตามกฎ · CI 42232967230)
+        if (etaxRow)
+            await db.Documents.Where(d => d.Id == s.InvoiceId).ExecuteUpdateAsync(x => x
+                .SetProperty(d => d.DocumentType, DocumentType.Invoice).SetProperty(d => d.IsTaxInvoiceByLaw, (bool?)false));
         db.ChangeTracker.Clear();
         var pay = new Payment
         {

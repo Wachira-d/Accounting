@@ -429,9 +429,20 @@ public class SignRequestService : ISignRequestService
     }
 
     /// <summary>ส่งหนึ่งใบจากงานอัตโนมัติ — ล้ม ⇒ บันทึกการส่งของเอกสารเป็น Failed (ไม่ลองซ้ำอัตโนมัติ · ผู้ใช้เห็นบนหน้าเอกสารแล้วส่งเองได้) · ไม่โยน</summary>
-    /// <summary>ฝ่ายค้าน MED-1: ผู้รับของเส้นอัตโนมัติ = ผู้รับตั้งต้น (ครั้งก่อน/อีเมลเตือน) ∩ ผู้ที่ยังรับเรื่องลิงก์เซ็น · ไม่มีผู้รับตั้งต้น ⇒ ตามช่องทางของผู้ติดต่อทั้งหมด</summary>
+    /// <summary>ฝ่ายค้าน MED-1: ผู้รับของเส้นอัตโนมัติ = ผู้รับตั้งต้น (ครั้งก่อน/อีเมลเตือน) <b>ตัดผู้ที่ช่องทางของผู้ติดต่อปฏิเสธเรื่องลิงก์เซ็น</b>
+    /// (<see cref="ContactRecipientRule.EmailDelivery.DeclinedEmails"/>) · ไม่มีผู้รับตั้งต้น ⇒ ตามช่องทางของผู้ติดต่อทั้งหมด · ผู้ติดต่อถูกลบ ⇒ ไม่มีใคร ·
+    /// ผู้รับที่ผู้ใช้พิมพ์เองตอนส่งครั้งก่อนและไม่ใช่อีเมลใดของผู้ติดต่อ ⇒ <b>คงไว้</b> (ไม่มีค่าตั้งของผู้ติดต่อที่บอกว่าเขาไม่รับ — เดิมตัดทิ้งแล้วบันทึก
+    /// "ไม่ได้เลือกรับเรื่องลิงก์เซ็น" ซึ่งไม่จริง และอีเมลเตือนของรอบ 240 ไม่ถึงผู้รับลิงก์เดิม · CI 42232967230 SignRequestRound240DbTests)</summary>
     internal static IReadOnlyList<string> SignAutomationRecipients(IReadOnlyList<string> candidates, ContactRecipientRule.EmailDelivery signDelivery)
-        => candidates.Count == 0 ? signDelivery.Emails : candidates.Where(c => signDelivery.Emails.Contains(c)).ToList();
+    {
+        if (candidates.Count == 0) return signDelivery.Emails;
+        if (signDelivery.ContactDeleted) return Array.Empty<string>();
+        return candidates.Where(c =>
+        {
+            var k = c.Trim().ToLowerInvariant();
+            return signDelivery.Emails.Contains(k) || !signDelivery.DeclinedEmails.Contains(k);
+        }).ToList();
+    }
 
     private async Task<bool> TryAutomationSendAsync(Guid companyId, Guid documentId, string? to, string purpose, string origin, CancellationToken ct)
     {
