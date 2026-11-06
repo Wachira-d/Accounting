@@ -217,13 +217,7 @@ public class ContactLineBindingService : IContactLineBindingService
         var previous = await _db.ContactNotifyEndpoints
             .Where(e => e.CompanyId == companyId && e.ContactId == invite.ContactId && e.LineIdHash == idHash && e.UnlinkedAt == null)
             .ToListAsync(ct);
-        foreach (var p in previous)
-        {
-            p.UnlinkedAt = now;
-            p.UnlinkReason = "relinked";
-            p.LineUserId = null;
-            p.UpdatedAt = now;
-        }
+        foreach (var p in previous) NotifyEndpointKind.MarkUnlinked(p, "relinked", now);   // ฝ่ายค้าน fix2 M3: ตัวยกเลิกเดียว (ล้างป้ายจาก LINE ด้วย)
         var endpoint = new ContactNotifyEndpoint
         {
             CompanyId = companyId, ContactId = invite.ContactId, Kind = NotifyEndpointKind.LineUser,
@@ -264,13 +258,7 @@ public class ContactLineBindingService : IContactLineBindingService
         if (rows.Count == 0) return null;   // ไม่ได้ผูกกับผู้ติดต่อใด ⇒ ไม่ตอบ (แชตของร้าน)
         var now = DateTime.UtcNow;
         var consentIds = rows.Where(r => r.ConsentRecordId != null).Select(r => r.ConsentRecordId!.Value).Distinct().ToList();
-        foreach (var r in rows)
-        {
-            r.UnlinkedAt = now;
-            r.UnlinkReason = ContactLineBindRule.UnlinkUser;
-            r.LineUserId = null;   // PDPA ม.22: ยกเลิกแล้วไม่ใช้ id อีก (คงแฮชเป็นร่องรอย)
-            r.UpdatedAt = now;
-        }
+        foreach (var r in rows) NotifyEndpointKind.MarkUnlinked(r, ContactLineBindRule.UnlinkUser, now);   // PDPA ม.22 · ฝ่ายค้าน fix2 M3: ตัวยกเลิกเดียว
         if (consentIds.Count > 0)
             await _db.PdpaConsentRecords.Where(c => c.CompanyId == companyId && consentIds.Contains(c.Id) && c.WithdrawnAt == null)
                 .ExecuteUpdateAsync(s => s.SetProperty(c => c.WithdrawnAt, (DateTime?)now).SetProperty(c => c.WithdrawnReason, "line-stop"), ct);

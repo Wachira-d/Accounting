@@ -450,7 +450,7 @@ public class RecurringTransactionDbTests
         var start = Today.AddDays(40);
         var created = await Svc(db).CreateAsync(s.CompanyId,
             Req(s, DocumentType.Invoice, Template(bankAccountId: s.BankId), start) with { IntervalMonths = 2, LeadDays = 5 }, "tester");
-        Assert.Equal(2, created.IntervalMonths);
+        Assert.Equal((int?)2, created.IntervalMonths);
         Assert.Equal(5, created.LeadDays);
 
         // ทิศตรงข้าม: สร้างล่วงหน้าเกินหนึ่งงวด/ทุก 0 เดือน ⇒ ปฏิเสธพร้อมเหตุ (ไม่ clamp เงียบ) · ไม่มีแถวใหม่

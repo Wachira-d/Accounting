@@ -335,6 +335,10 @@ Accounting/Controllers/PortalController.cs	CreateAccess	1
 Accounting/Controllers/PortalController.cs	Deactivate	1
 Accounting/Controllers/PortalController.cs	Login	1
 Accounting/Controllers/PortalController.cs	Refresh	1
+# รอบ 255 WP-12B ข้อ 8: ลิงก์วิเศษพอร์ทัล — ทางเข้าสาธารณะโดยตั้งใจ (คู่กับ Login): ขอ = คำตอบเดียวทุกกรณี + เพดานต่ออีเมล/บริษัท fail-closed + เวลาตอบขั้นต่ำ ·
+# แลก = โทเคน 256 บิต (hash) 15 นาที ใช้ครั้งเดียว + เพดานต่อบริษัท · ส่งเฉพาะอีเมลที่ผู้ขายเปิด PortalAccess — ล็อก R255
+Accounting/Controllers/PortalController.cs	RedeemMagicLink	1
+Accounting/Controllers/PortalController.cs	RequestMagicLink	1
 Accounting/Controllers/PortalController.cs	UpdateAccess	1
 Accounting/Controllers/PortalController.cs	UploadDocumentSlip	1
 Accounting/Controllers/PosFloorPlanController.cs	BulkSave	1

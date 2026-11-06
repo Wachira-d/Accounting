@@ -38,7 +38,78 @@ public class PortalAdminController : ControllerBase
 public class PortalPublicController : ControllerBase
 {
     private readonly IPortalService _service;
-    public PortalPublicController(IPortalService service) => _service = service;
+    /// <summary>รอบ 255 WP-12B ข้อ 8: เพดานการขอ/แลกลิงก์วิเศษ (ตัวนับในฐาน — หลายเครื่องใช้ตัวเดียว) · null (สร้างนอก DI) = ปฏิเสธเส้นลิงก์วิเศษ</summary>
+    private readonly IChatRateLimiter? _limiter;
+    public PortalPublicController(IPortalService service, IChatRateLimiter? limiter = null) { _service = service; _limiter = limiter; }
+
+    public record MagicLinkRequest(Guid CompanyId, string? Email);
+    public record MagicRedeemRequest(Guid CompanyId, string? Token);
+
+    /// <summary>เวลาตอบขั้นต่ำของการขอลิงก์ (กันวัดเวลาแยก "อีเมลมีสิทธิ์/ไม่มี")</summary>
+    private static readonly TimeSpan MagicMinimumDuration = TimeSpan.FromMilliseconds(800);
+
+    /// <summary>รอบ 255 WP-12B ข้อ 8 — ขอลิงก์เข้าสู่ระบบทางอีเมล (ไม่ต้องใช้รหัสผ่าน) · <b>คำตอบเดียวทุกกรณี</b> 202 ·
+    /// เพดานต่ออีเมล + ต่อบริษัท (fail-closed) · ส่งเฉพาะอีเมลที่ผู้ขายเปิดสิทธิ์พอร์ทัลไว้</summary>
+    [HttpPost("magic-link")]
+    [RequestSizeLimit(4 * 1024)]
+    public async Task<ActionResult<ApiResponse<object>>> RequestMagicLink([FromBody] MagicLinkRequest req, CancellationToken ct)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var email = Accounting.Helpers.PortalMagicLinkPolicy.NormalizeEmail(req?.Email);
+        if (req == null || req.CompanyId == Guid.Empty || _limiter == null)
+            return BadRequest(new ApiResponse<object>(false, null, "คำขอไม่ถูกต้อง"));
+        var emailKey = Accounting.Helpers.PortalMagicLinkPolicy.Hash(email ?? "")[..16];
+        if (!await _limiter.TryConsumeAsync($"portal-magic:{req.CompanyId:N}:{emailKey}",
+                Accounting.Helpers.PortalMagicLinkPolicy.PerEmailPerMinute, Accounting.Helpers.PortalMagicLinkPolicy.PerEmailPerDay, ct, failClosed: true)
+            || !await _limiter.TryConsumeAsync($"portal-magic-co:{req.CompanyId:N}",
+                Accounting.Helpers.PortalMagicLinkPolicy.PerCompanyPerMinute, Accounting.Helpers.PortalMagicLinkPolicy.PerCompanyPerDay, ct, failClosed: true))
+            return StatusCode(429, new ApiResponse<object>(false, null, Accounting.Helpers.PortalMagicLinkPolicy.RateMessage));
+        try { await _service.RequestMagicLinkAsync(req.CompanyId, email, ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // ล้ม (ฐาน/อีเมล) ⇒ บันทึกฝั่งเซิร์ฟเวอร์ · คำตอบถึงผู้ขอยังเหมือนเดิม (ไม่รั่วว่าอีเมลมีสิทธิ์)
+            System.Diagnostics.Trace.TraceError("Portal magic link request failed: {0}", ex);
+        }
+        var rest = MagicMinimumDuration - sw.Elapsed;
+        if (rest > TimeSpan.Zero) await Task.Delay(rest, ct);
+        return StatusCode(202, new ApiResponse<object>(true, null, Accounting.Helpers.PortalMagicLinkPolicy.AckMessage));
+    }
+
+    /// <summary>รอบ 255 WP-12B ข้อ 8 — แลกลิงก์วิเศษเป็นเซสชันพอร์ทัล (ใช้ครั้งเดียว · อายุ 15 นาที) · ข้อความเดียวทุกเหตุที่แลกไม่ได้</summary>
+    [HttpPost("magic-link/redeem")]
+    [RequestSizeLimit(4 * 1024)]
+    public async Task<ActionResult<ApiResponse<PortalLoginResponse>>> RedeemMagicLink([FromBody] MagicRedeemRequest req, CancellationToken ct)
+    {
+        if (req == null || req.CompanyId == Guid.Empty || _limiter == null)
+            return BadRequest(new ApiResponse<PortalLoginResponse>(false, null, Accounting.Helpers.PortalMagicLinkPolicy.InvalidMessage));
+        if (!await _limiter.TryConsumeAsync($"portal-magic-redeem:{req.CompanyId:N}", 30, 1000, ct, failClosed: true))
+            return StatusCode(429, new ApiResponse<PortalLoginResponse>(false, null, Accounting.Helpers.PortalMagicLinkPolicy.RateMessage));
+        try
+        {
+            return Ok(new ApiResponse<PortalLoginResponse>(true, await _service.RedeemMagicLinkAsync(req.CompanyId, req.Token, ct)));
+        }
+        catch (Accounting.Helpers.BusinessRuleException ex)
+        {
+            return BadRequest(new ApiResponse<PortalLoginResponse>(false, null, ex.Message));
+        }
+    }
+
+    /// <summary>รอบ 255 WP-12B ข้อ 8 — ส่งออก Excel (รูปแบบทั่วไป) ให้นักบัญชีของลูกค้า — ต้องมีโทเคนพอร์ทัล · เอกสารของผู้ติดต่อในโทเคนเท่านั้น</summary>
+    [HttpGet("{companyId:guid}/export/accountant")]
+    [Authorize]
+    public async Task<ActionResult> ExportAccountant(Guid companyId, [FromQuery] DateTime fromDate, [FromQuery] DateTime toDate, CancellationToken ct)
+    {
+        var contactId = GetContactIdFromToken();
+        if (contactId == null) return Unauthorized();
+        try
+        {
+            var bytes = await _service.ExportAccountantLedgerAsync(companyId, contactId.Value, fromDate, toDate, ct);
+            return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                $"documents-{fromDate:yyyyMMdd}-{toDate:yyyyMMdd}.xlsx");
+        }
+        catch (ArgumentException ex) { return BadRequest(new ApiResponse<object>(false, null, ex.Message)); }
+        catch (KeyNotFoundException ex) { return NotFound(new ApiResponse<object>(false, null, ex.Message)); }
+    }
 
     [HttpPost("login")]
     public async Task<ActionResult<ApiResponse<PortalLoginResponse>>> Login([FromBody] PortalLoginRequest request)

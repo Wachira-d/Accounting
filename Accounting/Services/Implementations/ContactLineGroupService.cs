@@ -39,6 +39,18 @@ public class ContactLineGroupService : IContactLineGroupService
         return n == 1;
     }
 
+    /// <summary>ฝ่ายค้าน fix2 L1: ประมวลเหตุการณ์ล้ม ⇒ ถอนการประทับ (LINE ส่งซ้ำแล้วประมวลได้อีก) · ล้มเองแค่ log (คำตอบ 500 ยังไปถึง LINE)</summary>
+    public async Task UnmarkEventSeenAsync(string? webhookEventId, CancellationToken ct = default)
+    {
+        var id = (webhookEventId ?? "").Trim();
+        if (id.Length == 0 || id.Length > 100) return;
+        try { await _db.LineWebhookEventsSeen.Where(r => r.WebhookEventId == id).ExecuteDeleteAsync(ct); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "ถอนการประทับ webhook {EventId} ไม่สำเร็จ — LINE ส่งซ้ำจะถูกข้าม", id);
+        }
+    }
+
     public async Task<LineGroupEventOutcome> HandleCompanyGroupEventAsync(Guid companyId, string? destination, JsonElement ev, CancellationToken ct = default)
     {
         var type = ev.TryGetProperty("type", out var t) ? t.GetString() : null;
@@ -114,13 +126,7 @@ public class ContactLineGroupService : IContactLineGroupService
             .ToListAsync(ct);
         if (rows.Count == 0) return 0;
         var now = DateTime.UtcNow;
-        foreach (var r in rows)
-        {
-            r.UnlinkedAt = now;
-            r.UnlinkReason = reason;
-            r.LineGroupId = null;   // PDPA ม.22: เลิกใช้แล้วไม่เก็บ id (คงแฮชเป็นร่องรอย)
-            r.UpdatedAt = now;
-        }
+        foreach (var r in rows) NotifyEndpointKind.MarkUnlinked(r, reason, now);   // PDPA ม.22 · ฝ่ายค้าน fix2 M3: ล้าง id + ชื่อกลุ่ม (ตัวยกเลิกเดียว)
         var ids = rows.Select(r => (Guid?)r.Id).ToList();
         var why = "ไม่ส่ง — " + NotifyEndpointKind.UnlinkReasonLabel(reason);
         await _db.LineQueues.Where(q => q.CompanyId == companyId && ids.Contains(q.EndpointId) && q.Status == ContactLineChannel.StatusPending)
@@ -248,7 +254,7 @@ public class ContactLineGroupService : IContactLineGroupService
                 .Where(e => e.CompanyId == companyId && e.ContactId == contactId && e.Kind == NotifyEndpointKind.LineGroup
                     && e.LineIdHash == row.GroupIdHash && e.UnlinkedAt == null)
                 .ToListAsync(ct);
-            foreach (var p in previous) { p.UnlinkedAt = now; p.UnlinkReason = "relinked"; p.LineGroupId = null; p.UpdatedAt = now; }
+            foreach (var p in previous) NotifyEndpointKind.MarkUnlinked(p, "relinked", now);   // ฝ่ายค้าน fix2 M3: ตัวยกเลิกเดียว
 
             // PDPA ม.23 (DESIGN §6.3): ผู้ดูแลบริษัทรับรองสิทธิ์ของสมาชิก — หลักฐาน hash ผ่านตัวเดียวของระบบ · ประกาศในกลุ่มคือการแจ้งสมาชิก
             var attest = LineGroupBindRule.AttestText(c.ContactName, row.GroupName);

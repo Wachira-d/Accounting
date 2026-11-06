@@ -375,12 +375,15 @@ public class MeteringController : ControllerBase
         if (block != null) return block;
         if (_notifyQuota == null) return StatusCode(503, new ApiResponse<NotifyQuotaStatus>(false, null, "บริการโควตาข้อความไม่พร้อม"));
 
+        // ฝ่ายค้าน fix2 L5: ช่องที่ไม่รู้จัก ⇒ 400 (ไม่เดาเป็นแพ็กรวม)
+        if (!Accounting.Helpers.NotifyQuotaPolicy.TryParseChannel(req.Channel, out var topUpChannel))
+            return BadRequest(new ApiResponse<NotifyQuotaStatus>(false, null, Accounting.Helpers.NotifyQuotaPolicy.UnknownChannelMessage));
         var actor = User.Identity?.Name ?? "unknown";
         NotifyQuotaStatus status;
         try
         {
             status = await _notifyQuota.PurchaseTopUpAsync(companyId, req.Packs, actor, ct, IdempotencyKeyHeader(),
-                req.ExpectedPackSize, req.ExpectedPackPrice, req.Channel);
+                req.ExpectedPackSize, req.ExpectedPackPrice, topUpChannel);
         }
         catch (NotifyTopUpOfferChangedException ex)
         {

@@ -58,6 +58,11 @@ public static class TaxInvoiceCompletenessChecker
         if (!doc.SupplierTaxInvoiceDate.HasValue)
             missing.Add("วันที่ใบกำกับภาษีจากผู้ขาย");
 
+        // รอบ 255 WP-12B ข้อ 7 (คำตัดสินเจ้าของ N3 · §82/5(1)): ใบซื้อที่มาจากคู่ค้า NextAcc ที่ผู้รับยังไม่มีต้นฉบับ (e-Tax ยังไม่ประทับเวลา / PDF ที่แพลตฟอร์มเรนเดอร์)
+        // = ใบยังไม่ครบ ⇒ ลงภาษีซื้อไม่ได้จนผู้ใช้ยืนยันว่าได้ต้นฉบับ · ใบซื้อทั่วไป (null) ไม่ถูกแตะ
+        if (Accounting.Helpers.PartnerInputVatEvidence.BlocksClaim(doc.PartnerInputVatEvidence))
+            missing.Add(Accounting.Helpers.PartnerInputVatEvidence.MissingLabel(doc.PartnerInputVatEvidence));
+
         return new Result(missing.Count == 0, missing) { MissingContactFields = missingAtContact };
     }
 

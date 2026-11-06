@@ -277,6 +277,10 @@ public class PlanTemplate : BaseEntity
     /// ตัวตัดสิน <c>Helpers/NotifyQuotaPolicy.PlanLimit</c></summary>
     public int? MaxSharedMessagesPerMonth { get; set; }
 
+    /// <summary>รอบ 255 WP-12B ข้อ 6 (คำตัดสินเจ้าของ §3.3 Y5): เพดานจำนวนคู่ค้า NextAcc ที่เชื่อมแล้วต่อบริษัท · <b>null/-1 = ไม่จำกัด (ค่าตั้งต้น — ทุกแพ็กเกจไม่มีเพดาน)</b> ·
+    /// แอดมินตั้งที่ /admin/plans.html ได้โดยไม่ deploy · ผู้อ่าน: <c>CrossTenantWorkflowService.TradingPartnerCapAsync</c> (ตอนยอมรับคู่)</summary>
+    public int? MaxTradingPartners { get; set; }
+
     // ─── Per-engine OCR quotas (split Azure DI vs local) ───
     // When set, override the single MaxOcrPagesPerMonth and let admins
     // sell premium-OCR tiers without paying Azure costs for free users:

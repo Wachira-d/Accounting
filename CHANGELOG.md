@@ -6832,6 +6832,10 @@ _รอบ 254 WP-11 L4 ส่วน OA กลาง (N8 · DECISIONS 254-WP11-1
 (`NextAccOaUsageCounters` · นับที่ `CustomerLineLinkService.ReplyAsync`) ⇒ เตือนกลุ่มผู้ดูแลที่ 90% ครั้งเดียวต่องวด · ไม่ตัดโควตาผู้เช่า · สวิตช์ `CentralOaGroupDeliveryEnabled`
 เลื่อนไปทำพร้อมเส้นกลุ่มผ่าน OA กลาง (สวิตช์ที่ไม่มีผู้อ่าน = ค่าตั้งไม่มีผล). ยังไม่ได้คอมไพล์ในเครื่องนี้_
 
+_รอบ 254 WP-11 ฝ่ายค้าน fix2 (DECISIONS 254-WP11-12): แพ็กของช่องขายเฉพาะช่องที่แยกเพดาน (409 ก่อนคิดเงิน · ไม่มีปุ่ม) · อีเมลแพลตฟอร์มไม่ใช้แพ็กรวม/ส่วนเกิน ·
+ตัวยกเลิกปลายทางเดียว `NotifyEndpointKind.MarkUnlinked` (ล้างป้ายจาก LINE + ชื่อกลุ่ม) · webhook ล้มถอนการประทับ + 500 · ยกเลิกคิวแบบมีเงื่อนไข · Sent ไม่ถูกลดสถานะ ·
+ช่องที่ไม่รู้จัก 400 · Idempotency-Key ต่อการกด · สรุปรายวันนับช่อง LINE · หักโบนัสคำสั่งเดียว + คืนหน่วยเมื่อยกเลิก · เพดานต่อช่องรวมแพ็กรวม. ยังไม่ได้คอมไพล์ในเครื่องนี้_
+
 
 _รอบ 255 WP-12B ข้อ 1–2 (AUDIT_249 §WP-12 · DECISIONS 255-WP12B-1/2/9): **แจ้งโอนจากหน้าชำระของเอกสาร** — `POST public-pay/documents/{token}/slip` (โทเคนลิงก์ชำระ ·
 ชนิดไฟล์จากไบต์จริง · ≤ 10 MB · สลิปรอตรวจ = 409 · ≤ 5/ใบ/ชม. = 429 · ยอดจากเซิร์ฟเวอร์) + ปุ่มคัดลอกเลขบัญชีบน `pay-document.html` · ประตูเดียว `SlipEvidenceService.SubmitAsync`
@@ -6840,6 +6844,14 @@ _รอบ 255 WP-12B ข้อ 1–2 (AUDIT_249 §WP-12 · DECISIONS 255-WP12B-
 migration `Helpers/AutopilotPartnerMigration` · DOCUMENT_FLOW §2.12l · TEST_PLAN AP255-1…7 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _รอบ 255 WP-12B ข้อ 1–2 เติม sha: commit 67407644 (DOCUMENT_FLOW §2.12l + Last verified · DECISIONS 255-WP12B-1/2) — doc-only คอมมิตตามหลัง ไม่ amend_
 _รอบ 252 WP-09 ฝ่ายค้านรอบสอง: ทะเบียนเครดิต ↔ กล่องรับ 50 ทวิ — H-A แก้แถวที่ได้ใบบางส่วนไม่ประกาศครบ (ลบ MarkFullyCertified) · H-B ได้รับใบแล้ว/แก้เลขที่ใบแรกบนแถวนั้น = 409 วันที่ข้ามรอบไม่ได้ (CrossesCreditPeriod ตัวเดียวกับ H2) · M-A/M-D กันซ้ำสองทางตัวเดียว EnsureCertificateNotRecordedAsync (ทะเบียน + ใบที่ยืนยันแล้ว · ปีเดียวกัน · ใต้ล็อกเลขที่ใบ + ผู้จ่าย ที่ทุกทางถือร่วม) · M-B หมดสิทธิ์ไม่ใช่ตัดสูญ ⇒ ReceivedAmount 0 · M-C ต้นทางลดหลังตัดสูญส่วนขาด ⇒ กลับ JE (AfterSourceGlDrop) · เศษ ≤ ฿1 เห็นเป็นรอใบ (DECISIONS 252-WP09-10) · สรุปไม่นับ Expired ซ้ำ · ปุ่มตัดสูญ CanWriteOff · UndoWriteOff ตัดสินสถานะใหม่ · AlreadyWrittenOff ยอด JE จริง · L4 สร้าง/ได้รับใบแล้วต้องมีวันที่ · ความมั่นใจ 1.0 = 100% · races ล็อก + ตรวจรอบซ้ำใน AutoConfirm · L7 งานล้าง feedback เก่าครั้งเดียว (DECISIONS 252-WP09-11) · แก้ CI Db H2_: ยืนยัน "รายการใหม่" ที่ไม่ส่ง Allocations ไหลไปใช้ข้อเสนอของระบบแล้วชนด่าน H2 (บั๊กโค้ด ไม่ใช่เทสต์) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 82577044_
+
+_รอบ 255 WP-12B ข้อ 6–8 (AUDIT_249 §WP-12 · คำตัดสินเจ้าของ Y5/N3 · DECISIONS 255-WP12B-3…8/10/11): **คู่ค้า NextAcc ต่อยอด `TradingPartnership`** —
+`PlanTemplate.MaxTradingPartners` (null = ไม่จำกัด · ตรวจตอนยอมรับทั้งสองบริษัท) · `GET contacts/{id}/partner-status` (ไม่รั่วผลคำเชิญ) · `ApiScopePolicy` + `documents:read` ·
+หน้า `/pages/partners.html` · **ใบขายถึงคู่ค้า = ใบซื้อร่างของผู้รับ** (`TryCreatePurchaseDraftAsync` · ค่าตั้งต้นปิด · เพดานต่อคู่ · สำเนาเป็นแถวของผู้รับ ·
+`PartnerInputVatEvidence` ⇒ ตัวตรวจ §86/4 ตัวเดียว · ยืนยันต้นฉบับ ⇒ `CompleteSupplierTaxInvoiceAsync`) · **50 ทวิ กลับผ่านคู่ค้า** (`PartnerWhtCertExchangeService` ขั้นใหม่ของ
+`AutopilotJob` ⇒ `WhtCertIntakeService.SubmitAsync` ของผู้ขาย · ประทับหลังผลจริง · ยกเลิกหลังส่ง ⇒ แจ้ง E-11) · **พอร์ทัลลิงก์วิเศษ** (`PortalMagicLinks` · hash · 15 นาที · ครั้งเดียว ·
+คำตอบเดียว · เพดาน) · **Excel ทั่วไปให้นักบัญชี** (MiniExcel) · DOCUMENT_FLOW §2.12l · ACCOUNT_STRUCTURE (เพดานคู่ค้า) · TEST_PLAN AP255-8…19 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_รอบ 255 WP-12B ข้อ 6–8 เติม sha: commit 145ba355 (DOCUMENT_FLOW Last verified · ACCOUNT_STRUCTURE · DECISIONS 255-WP12B-3…8/10/11) — doc-only คอมมิตตามหลัง ไม่ amend_
 _Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 — 50 ทวิ ขาเข้า ต่อจาก WP-09 (DOCUMENT_FLOW §2.12m): ลิงก์อัปโหลดสาธารณะ
 `/wht-upload.html` + `WhtCertPublicController` (token hash · เทียบเวลาคงที่ · rate limit ต่อ IP/token แบบ DB failClosed · ไบต์ตัดสิน PDF/JPG/PNG ≤ 10 MB ·
 PDF มีสคริปต์/ไฟล์ฝัง = ปฏิเสธ · ไฟล์ซ้ำไม่เก็บ/ไม่สแกน · เข้าประตูเดียว Channel UploadLink · OCR ล้ม = เข้ากล่องรับแบบรอตรวจ) · ลิงก์ในอีเมลใบเสร็จ

@@ -50,6 +50,13 @@ public class TradingPartnership : BaseEntity
     /// approval. Defaults to the partner's company billing email when
     /// not specified here.</summary>
     public string? NotifyEmail { get; set; }
+
+    // ── รอบ 255 WP-12B ข้อ 7 (N3): เพดานยอดใบซื้อร่างที่ "ฝั่งผู้รับ" ตั้งต่อคู่ (แถวเดียวต่อคู่ เรียง A < B) · null = ไม่จำกัด ·
+    // ผู้อ่าน: PartnerExchangeRules.ReceiverLimit ← CrossTenantWorkflowService.TryCreatePurchaseDraftAsync · ผู้ตั้ง: PUT …/trading-partners/{id}/purchase-draft-limit (audit)
+    /// <summary>เพดานเมื่อ <see cref="CompanyAId"/> เป็นผู้รับ</summary>
+    public decimal? PurchaseDraftLimitA { get; set; }
+    /// <summary>เพดานเมื่อ <see cref="CompanyBId"/> เป็นผู้รับ</summary>
+    public decimal? PurchaseDraftLimitB { get; set; }
 }
 
 /// <summary>
@@ -123,4 +130,12 @@ public class WorkflowAutomationConfig : BaseEntity
     // ─── Notifications ───
     public bool NotifyOnIncomingDocument { get; set; } = true;
     public string? NotifyEmail { get; set; }
+
+    // ─── รอบ 255 WP-12B (AUDIT_249 §WP-12 ข้อ 7–8) — ค่าตั้งต้นปิดทั้งคู่ ───
+    /// <summary>ใบแจ้งหนี้/ใบกำกับที่คู่ค้าส่งถึงเรา ⇒ สร้างใบซื้อ<b>ร่าง</b> (N3 · ไม่อนุมัติ/ไม่ลงภาษีซื้อเอง) · ผู้อ่าน: <c>CrossTenantWorkflowService.TryCreatePurchaseDraftAsync</c></summary>
+    public bool CreatePurchaseDraftsFromPartners { get; set; } = false;
+    /// <summary>ส่ง 50 ทวิ ที่เราออกให้คู่ค้า NextAcc เข้ากล่องรับของเขาอัตโนมัติ · ผู้อ่าน: <c>PartnerWhtCertExchangeService.RunOnceAsync</c></summary>
+    public bool SendWhtCertsToPartners { get; set; } = false;
+    /// <summary>ระบบประทับตอนเปิด <see cref="SendWhtCertsToPartners"/> — ส่งเฉพาะใบที่ออกหลังจากนี้ (ไม่ส่งย้อนหลัง) · ปิดแล้วเปิดใหม่ = ประทับใหม่</summary>
+    public DateTime? SendWhtCertsToPartnersSince { get; set; }
 }

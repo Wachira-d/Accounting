@@ -29,11 +29,17 @@ public class PortalService : IPortalService
     private readonly Accounting.Services.Payments.IPaymentIntentService? _intents;
     /// <summary>รอบ 252 WP-12A: แจ้งทีม "ลูกค้าแจ้งโอน" (E-06) · null ในเทสต์ที่สร้างตรง</summary>
     private readonly INotificationEngine? _notify;
+    /// <summary>รอบ 255 WP-12B ข้อ 8: อีเมลลิงก์วิเศษ (SMTP ของระบบ) · null = ส่งไม่ได้ (ไม่สร้างแถว)</summary>
+    private readonly IEmailService? _email;
+    /// <summary>รอบ 255: URL ของระบบสำหรับลิงก์วิเศษ (SystemBaseUrl)</summary>
+    private readonly IConfiguration _config;
 
     public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null, IImageProcessingService? images = null,
         Accounting.Services.Storage.IFileStorage? storage = null, Accounting.Services.Payments.IPaymentIntentService? intents = null,
-        IDocumentPayLinkService? payLinks = null, INotificationEngine? notify = null)
+        IDocumentPayLinkService? payLinks = null, INotificationEngine? notify = null, IEmailService? email = null)
     {
+        _email = email;
+        _config = configuration;
         _payLinks = payLinks;
         _notify = notify;
         _storage = storage;
@@ -65,7 +71,8 @@ public class PortalService : IPortalService
             CompanyId = companyId,
             ContactId = request.ContactId,
             Email = request.Email,
-            PasswordHash = HashPassword(request.Password),
+            // รอบ 255 WP-12B ข้อ 8: ไม่ตั้งรหัสผ่าน = เข้าด้วยลิงก์วิเศษเท่านั้น (รหัสว่างล็อกอินด้วยรหัสไม่ได้ — VerifyPassword คืน false)
+            PasswordHash = string.IsNullOrEmpty(request.Password) ? "" : HashPassword(request.Password!),
             DisplayName = request.DisplayName,
             CanViewInvoices = request.CanViewInvoices,
             CanViewStatements = request.CanViewStatements,
@@ -597,5 +604,109 @@ public class PortalService : IPortalService
         var r = await slips.SubmitAsync(companyId, documentId, contactId, new SlipFile(slipBytes, file.ContentType, file.FileName ?? ""),
             amount, bankRef, SlipEvidenceService.ChannelPortal);
         return new PortalSlipUploadResponse(r.Intent.Id, documentId, r.FileUrl, r.Intent.Amount, DateTime.UtcNow, AwaitingReview: true);
+    }
+
+    // ====================================================================
+    // รอบ 255 WP-12B ข้อ 8 — ลิงก์วิเศษ (ไม่ต้องจำรหัสผ่าน) + ส่งออก Excel ให้นักบัญชีของลูกค้า
+    // ====================================================================
+
+    /// <summary>ขอลิงก์เข้าสู่ระบบทางอีเมล — <b>ไม่บอกผล</b> (ผู้เรียกตอบ <see cref="PortalMagicLinkPolicy.AckMessage"/> เสมอ · กันไล่อีเมล) ·
+    /// ส่งเฉพาะอีเมลที่ผู้ขายเปิดสิทธิ์พอร์ทัลไว้ (<c>PortalAccess</c> ใช้งานอยู่) · โทเคนเก็บเป็น hash · อายุ 15 นาที · ใช้ครั้งเดียว ·
+    /// ไม่มี URL ของระบบ/SMTP ⇒ ไม่สร้างแถว + log (ลูกค้าได้คำตอบเดิม — ห้ามบอกว่าส่งแล้วกับผู้ดูแล: log ระดับ error) · คืน true เมื่อส่งจริง (เทสต์/ผู้ดูแล)</summary>
+    public async Task<bool> RequestMagicLinkAsync(Guid companyId, string? email, CancellationToken ct = default)
+    {
+        var e = PortalMagicLinkPolicy.NormalizeEmail(email);
+        if (e == null) return false;
+        var access = await _db.Set<PortalAccess>().AsNoTracking().IgnoreQueryFilters()
+            .Where(p => p.CompanyId == companyId && p.IsActive && !p.IsDeleted && p.Email.ToLower() == e)
+            .Select(p => new { p.Id, p.Email, p.DisplayName })
+            .FirstOrDefaultAsync(ct);
+        if (access == null) return false;
+        if (_email == null)
+        {
+            System.Diagnostics.Trace.TraceError("Portal magic link: ไม่มีบริการอีเมลใน DI — ส่งลิงก์ไม่ได้ (บริษัท {0})", companyId);
+            return false;
+        }
+        var baseUrl = await SystemBaseUrl.ResolveAsync(_db, _config, ct);
+        var token = PortalMagicLinkPolicy.NewToken();
+        var link = PortalMagicLinkPolicy.Link(baseUrl, companyId, token);
+        if (link == null)
+        {
+            System.Diagnostics.Trace.TraceError("Portal magic link: ยังไม่ได้ตั้ง URL ของระบบ — ส่งลิงก์ไม่ได้ (บริษัท {0})", companyId);
+            return false;
+        }
+        var companyName = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct) ?? "";
+        _db.PortalMagicLinks.Add(new PortalMagicLink
+        {
+            CompanyId = companyId, PortalAccessId = access.Id, TokenHash = PortalMagicLinkPolicy.Hash(token),
+            ExpiresAt = DateTime.UtcNow.Add(PortalMagicLinkPolicy.Ttl), CreatedBy = "portal-magic-link",
+        });
+        await _db.SaveChangesAsync(ct);
+        var enc = System.Net.WebUtility.HtmlEncode;
+        var html = $"<p>เรียน {enc(access.DisplayName ?? access.Email)}</p>"
+            + $"<p>กดลิงก์ด้านล่างเพื่อเข้าพอร์ทัลลูกค้าของ {enc(companyName)} (ใช้ได้ 15 นาที ครั้งเดียว — ไม่ต้องใช้รหัสผ่าน)</p>"
+            + $"<p><a href=\"{enc(link)}\">เข้าสู่พอร์ทัลลูกค้า</a></p>"
+            + "<p style=\"color:#64748b;font-size:12px\">ถ้าท่านไม่ได้ขอลิงก์นี้ ไม่ต้องทำอะไร — ลิงก์จะหมดอายุเอง</p>";
+        return await _email.TrySendAsync(access.Email, $"ลิงก์เข้าสู่พอร์ทัลลูกค้า — {companyName}", html);
+    }
+
+    /// <summary>แลกลิงก์วิเศษเป็นเซสชันพอร์ทัล — compare-and-set <c>UsedAt</c> (สองแท็บพร้อมกัน = ครั้งเดียว) · ข้อความเดียวทุกเหตุที่แลกไม่ได้ ·
+    /// โทเคนพอร์ทัลแบบเดียวกับล็อกอินด้วยรหัสผ่าน (ลงนามด้วยกุญแจพอร์ทัลเดิม) · บันทึกกิจกรรม "MagicLogin"</summary>
+    public async Task<PortalLoginResponse> RedeemMagicLinkAsync(Guid companyId, string? token, CancellationToken ct = default)
+    {
+        if (!PortalMagicLinkPolicy.LooksValid(token))
+            throw new BusinessRuleException(PortalMagicLinkPolicy.InvalidMessage, PortalMagicLinkPolicy.RuleCode, 400);
+        var hash = PortalMagicLinkPolicy.Hash(token!);
+        var row = await _db.PortalMagicLinks.AsNoTracking()
+            .Where(m => m.CompanyId == companyId && m.TokenHash == hash && !m.IsDeleted)
+            .Select(m => new { m.Id, m.PortalAccessId, m.ExpiresAt, m.UsedAt })
+            .FirstOrDefaultAsync(ct);
+        var access = row == null ? null : await _db.Set<PortalAccess>().IgnoreQueryFilters()
+            .FirstOrDefaultAsync(p => p.Id == row.PortalAccessId && p.CompanyId == companyId && !p.IsDeleted, ct);
+        var now = DateTime.UtcNow;
+        if (row == null || access == null || PortalMagicLinkPolicy.RedeemProblem(row.ExpiresAt, row.UsedAt, access.IsActive, now) is string)
+            throw new BusinessRuleException(PortalMagicLinkPolicy.InvalidMessage, PortalMagicLinkPolicy.RuleCode, 400);
+        var claimed = await _db.PortalMagicLinks
+            .Where(m => m.Id == row.Id && m.CompanyId == companyId && m.UsedAt == null && m.ExpiresAt > now)
+            .ExecuteUpdateAsync(s => s.SetProperty(m => m.UsedAt, (DateTime?)now), ct);
+        if (claimed == 0)
+            throw new BusinessRuleException(PortalMagicLinkPolicy.InvalidMessage, PortalMagicLinkPolicy.RuleCode, 400);
+
+        var company = await _db.Companies.AsNoTracking().FirstOrDefaultAsync(c => c.Id == companyId, ct)
+            ?? throw new BusinessRuleException(PortalMagicLinkPolicy.InvalidMessage, PortalMagicLinkPolicy.RuleCode, 400);
+        var contactName = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.Id == access.ContactId && c.CompanyId == companyId).Select(c => c.Name).FirstOrDefaultAsync(ct);
+        access.LastLoginAt = now;
+        _db.Set<PortalActivity>().Add(new PortalActivity
+        {
+            CompanyId = companyId, PortalAccessId = access.Id, ActivityType = "MagicLogin", ActivityAt = now,
+        });
+        await _db.SaveChangesAsync(ct);
+        var accessToken = GenerateJwtToken(access.Id, access.ContactId, companyId, TimeSpan.FromHours(2));
+        var refreshToken = GenerateJwtToken(access.Id, access.ContactId, companyId, TimeSpan.FromDays(30));
+        return new PortalLoginResponse(accessToken, refreshToken, access.ContactId,
+            contactName ?? access.DisplayName ?? access.Email, company.Id, company.Name);
+    }
+
+    /// <summary>ส่งออก Excel "รายการเอกสารจากผู้ขาย" ให้นักบัญชีของลูกค้า (รูปแบบ<b>ทั่วไป</b> · MiniExcel — PEAK/FlowAccount/Express รอไฟล์ตัวอย่างจริง Q9) ·
+    /// เฉพาะเอกสารที่ออกแล้วของผู้ติดต่อในโทเคน (ด่านเดียว <c>PortalDocuments</c>) · ช่วงวันที่ ≤ 366 วัน · ยอดปัด 2 ตำแหน่ง (AwayFromZero)</summary>
+    public async Task<byte[]> ExportAccountantLedgerAsync(Guid companyId, Guid contactId, DateTime fromDate, DateTime toDate, CancellationToken ct = default)
+    {
+        if (toDate < fromDate) throw new ArgumentException("วันที่สิ้นสุดต้องไม่ก่อนวันเริ่ม");
+        if ((toDate - fromDate).TotalDays > 366) throw new ArgumentException("ส่งออกได้ครั้งละไม่เกิน 1 ปี — แบ่งช่วงแล้วส่งออกใหม่");
+        var seller = await _db.Companies.AsNoTracking().Where(c => c.Id == companyId)
+            .Select(c => new { c.Name, c.TaxId, c.BranchCode }).FirstOrDefaultAsync(ct)
+            ?? throw new KeyNotFoundException("ไม่พบบริษัท");
+        var to = toDate.Date.AddDays(1);
+        var docs = await PortalDocuments(companyId, contactId).AsNoTracking()
+            .Where(d => d.DocumentDate >= fromDate.Date && d.DocumentDate < to && PortalAccountantExport.Types.Contains(d.DocumentType))
+            .OrderBy(d => d.DocumentDate).ThenBy(d => d.DocumentNumber)
+            .Select(d => new PortalAccountantExport.Row(d.DocumentDate, d.DocumentNumber, d.DocumentType, d.SubTotal, d.VatAmount, d.TotalAmount,
+                d.WithholdingTaxAmount, d.Status == DocumentStatus.Voided))
+            .ToListAsync(ct);
+        var rows = PortalAccountantExport.Build(docs, seller.Name, seller.TaxId, seller.BranchCode);
+        using var ms = new System.IO.MemoryStream();
+        MiniExcelLibs.MiniExcel.SaveAs(ms, rows, sheetName: "เอกสารจากผู้ขาย");
+        return ms.ToArray();
     }
 }

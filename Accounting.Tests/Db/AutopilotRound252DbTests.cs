@@ -62,6 +62,7 @@ public class AutopilotRound252DbTests
             {
                 CompanyId = companyId, PaymentNumber = "PAY252-" + Random.Shared.Next(100000, 999999), DocumentId = req.DocumentId,
                 PaymentDate = req.PaymentDate, Amount = req.Amount, PaymentMethod = req.PaymentMethod, Reference = req.Reference,
+                OverrideBankAccountId = req.OverrideBankAccountId,   // เหมือนตัวจริง (DocumentService.CreatePaymentAsync เก็บช่องนี้)
             };
             other.Payments.Add(pay);
             other.SaveChanges();
@@ -303,6 +304,7 @@ public class AutopilotRound252DbTests
             CompanyId = s.CompanyId, PaymentNumber = "PAY252R-" + Random.Shared.Next(100000, 999999), DocumentId = s.InvoiceId,
             PaymentDate = DateTime.UtcNow.Date, Amount = 1_040m, PaymentMethod = PaymentMethod.BankTransfer,
             Reference = BankReceiptSettleService.PaymentReference(line.Id),
+            OverrideBankAccountId = line.BankAccountId,   // ฝ่ายค้านรอบสอง: กู้ได้เฉพาะการชำระที่ยอด+บัญชีตรงบรรทัด
         };
         db.Payments.Add(pay);
         await db.SaveChangesAsync();

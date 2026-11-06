@@ -2272,6 +2272,8 @@ public class SubscriptionService : ISubscriptionService
         if (request.TrialMaxSharedLineMessagesPerMonth is int trialLine) template.TrialMaxSharedLineMessagesPerMonth = trialLine < 0 ? null : trialLine;
         if (request.MaxSharedEmailsPerMonth is int email) template.MaxSharedEmailsPerMonth = email < 0 ? null : email;
         if (request.TrialMaxSharedEmailsPerMonth is int trialEmail) template.TrialMaxSharedEmailsPerMonth = trialEmail < 0 ? null : trialEmail;
+        // รอบ 255 WP-12B ข้อ 6 (Y5): เพดานคู่ค้า NextAcc — ติดลบ = ไม่จำกัด (null) · null = ไม่แตะ
+        if (request.MaxTradingPartners is int maxPartners) template.MaxTradingPartners = maxPartners < 0 ? null : maxPartners;
         if (request.MaxOcrPagesPerMonth.HasValue) template.MaxOcrPagesPerMonth = request.MaxOcrPagesPerMonth.Value;
         if (request.AzureOcrPagesPerMonth.HasValue) template.AzureOcrPagesPerMonth = request.AzureOcrPagesPerMonth.Value;
         if (request.LocalOcrPagesPerMonth.HasValue) template.LocalOcrPagesPerMonth = request.LocalOcrPagesPerMonth.Value;
@@ -4536,7 +4538,8 @@ public class SubscriptionService : ISubscriptionService
                 Accounting.Helpers.NotifyQuotaPolicy.SuggestedChannelLimit(t.Plan, Accounting.Helpers.NotifyQuotaPolicy.ChannelLine),
                 Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialChannelLimit(Accounting.Helpers.NotifyQuotaPolicy.ChannelLine),
                 Accounting.Helpers.NotifyQuotaPolicy.SuggestedChannelLimit(t.Plan, Accounting.Helpers.NotifyQuotaPolicy.ChannelEmail),
-                Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialChannelLimit(Accounting.Helpers.NotifyQuotaPolicy.ChannelEmail)));
+                Accounting.Helpers.NotifyQuotaPolicy.SuggestedTrialChannelLimit(Accounting.Helpers.NotifyQuotaPolicy.ChannelEmail)),
+            MaxTradingPartners: t.MaxTradingPartners);
     }
 }
 

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คู่ค้าที่ใช้ NextAcc - Next Acc</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .pt-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:14px; }
+    .pt-card h3 { font-size:15px; font-weight:700; margin:0 0 8px; }
+    .pt-muted { color:#64748b; font-size:13px; }
+    .pt-grid2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+    .pt-badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:999px; background:#f1f5f9; color:#334155; }
+    .pt-warn { background:#fef3c7; color:#92400e; }
+    .pt-ok { background:#dcfce7; color:#166534; }
+  </style>
+</head>
+<body>
+  <div id="pageContent" class="page-content fade-in">
+    <div class="page-header">
+      <div><h2 class="page-title">คู่ค้าที่ใช้ NextAcc</h2>
+        <p class="page-subtitle">เชื่อมระบบกับคู่ค้าที่ใช้ NextAcc — เอกสารขายของเขาเข้ามาเป็นใบซื้อ<strong>ร่าง</strong>ของเรา (ค่าตั้งต้นปิด) · ส่ง 50 ทวิ กลับอัตโนมัติ (ค่าตั้งต้นปิด) · ไม่มีการลงภาษีซื้อเองโดยไม่มีต้นฉบับ</p></div>
+      <div><button class="btn btn-secondary" onclick="Page.load()">รีเฟรช</button></div>
+    </div>
+
+    <div class="pt-card">
+      <h3>🤝 ส่งคำขอเชื่อม</h3>
+      <p class="pt-muted">ระบบตอบ "ส่งคำขอแล้ว" ทุกกรณี (ไม่บอกว่าเลขภาษีนี้ใช้ NextAcc หรือไม่) — คู่ค้าจะเห็นคำขอเมื่อเขาเปิดให้คู่ค้าค้นเจอ</p>
+      <div class="pt-grid2">
+        <div><label for="ptTax" class="form-label">เลขประจำตัวผู้เสียภาษีของคู่ค้า (13 หลัก)</label><input id="ptTax" class="form-input" maxlength="17" autocomplete="off"></div>
+        <div><label for="ptBranch" class="form-label">รหัสสาขา (5 หลัก · ว่าง = ไม่ระบุ)</label><input id="ptBranch" class="form-input" maxlength="5" autocomplete="off"></div>
+      </div>
+      <label for="ptMsg" class="form-label">ข้อความถึงคู่ค้า (ไม่บังคับ · ≤ 500 ตัวอักษร)</label>
+      <input id="ptMsg" class="form-input" maxlength="500">
+      <div style="margin-top:8px"><button class="btn btn-primary" id="ptInviteBtn" onclick="Page.invite()">ส่งคำขอเชื่อม</button></div>
+    </div>
+
+    <div class="pt-card">
+      <h3>📋 คู่ค้าที่เชื่อม / คำขอที่รอเรายอมรับ</h3>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>คู่ค้า</th><th>สถานะ</th><th>เพดานยอดใบซื้อร่าง (ของเรา)</th><th>จัดการ</th></tr></thead>
+          <tbody id="ptBody"><tr><td colspan="4" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pt-card">
+      <h3>🧾 ใบซื้อร่างจากคู่ค้า</h3>
+      <p class="pt-muted">สร้างเป็นร่างเสมอ — ตรวจผังบัญชี/ภาษีหัก ณ ที่จ่ายแล้วอนุมัติตามขั้นตอนเดิม · "ต้องได้ต้นฉบับ" = อนุมัติแล้วภาษีซื้อพักไว้จนกด "ได้รับต้นฉบับแล้ว"</p>
+      <div class="table-container">
+        <table class="table">
+          <thead><tr><th>วันที่</th><th>ผู้ขาย</th><th>เลขที่ใบของผู้ขาย</th><th class="text-right">ยอด</th><th>สถานะ</th><th>หลักฐานภาษีซื้อ</th><th>จัดการ</th></tr></thead>
+          <tbody id="ptDraftBody"><tr><td colspan="7" class="text-center text-gray-400">กำลังโหลด...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="pt-card">
+      <h3>⚙️ ค่าตั้งของเรา</h3>
+      <div class="pt-grid2">
+        <label for="ptDiscoverable"><input type="checkbox" id="ptDiscoverable"> ให้คู่ค้าที่ใช้ NextAcc ค้นเจอและส่งคำขอเชื่อมถึงเราได้ (ค่าตั้งต้นปิด)</label>
+        <label for="ptDrafts"><input type="checkbox" id="ptDrafts"> สร้างใบซื้อร่างจากใบแจ้งหนี้/ใบกำกับที่คู่ค้าส่งมา (ค่าตั้งต้นปิด · ไม่อนุมัติ/ไม่ลงภาษีซื้อเอง)</label>
+        <label for="ptWht"><input type="checkbox" id="ptWht"> ส่งหนังสือรับรอง 50 ทวิ ที่เราออกให้คู่ค้าเข้าระบบของเขาอัตโนมัติ (เฉพาะใบที่ออกหลังเปิด · ค่าตั้งต้นปิด)</label>
+      </div>
+      <div style="margin-top:10px"><button class="btn btn-primary" id="ptSaveBtn" onclick="Page.saveSettings()">บันทึกค่าตั้ง</button></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/translations.js"></script>
+  <script src="/js/i18n.js"></script>
+  <script src="/js/layout.js"></script>
+  <script>
+// รอบ 255 WP-12B ข้อ 6–7 — หน้า "คู่ค้าที่ใช้ NextAcc" (AUTOPILOT §6.8) · ป้าย/สถานะ/หลักฐานทุกตัวมาจากเซิร์ฟเวอร์ · ทุกค่าที่แสดงผ่าน Layout.esc
+const Page = {
+  partners: [], drafts: [], cfg: null,
+
+  async init() {
+    if (!Layout.init('partners')) return;
+    Layout.setTitle('คู่ค้าที่ใช้ NextAcc');
+    await this.load();
+  },
+
+  async load() {
+    const api = Layout.api(); if (!api) return;
+    try {
+      const [p, d, c] = await Promise.all([
+        api.getTradingPartners(),
+        api.getPartnerPurchaseDrafts().catch(e => ({ data: null, _err: e })),
+        api.getWorkflowAutomation().catch(e => ({ data: null, _err: e })),
+      ]);
+      this.partners = (p && p.data) || [];
+      this.drafts = d && d.data ? d.data : null;
+      this.cfg = (c && c.data) || null;
+    } catch (e) {
+      document.getElementById('ptBody').innerHTML = `<tr><td colspan="4" class="text-center">${Layout.esc('โหลดไม่สำเร็จ: ' + (e.message || ''))}</td></tr>`;
+      return;
+    }
+    this.render();
+  },
+
+  render() {
+    const rows = this.partners.map(p => {
+      const pending = p.status === 'Pending' && !p.isInviter;
+      const limit = p.purchaseDraftLimit == null ? 'ไม่จำกัด' : Layout.money(p.purchaseDraftLimit);
+      return `<tr><td>${Layout.esc(p.partner ? p.partner.name : '-')}<div class="pt-muted">${Layout.esc(p.partner ? p.partner.taxId : '')}</div></td>
+        <td><span class="pt-badge">${Layout.esc(p.statusLabel || p.status)}</span></td>
+        <td>${Layout.esc(limit)}</td>
+        <td>${pending ? `<button class="btn btn-primary btn-sm" data-act="accept" data-id="${Layout.esc(p.id)}">ยอมรับ</button>
+           <button class="btn btn-secondary btn-sm" data-act="reject" data-id="${Layout.esc(p.id)}">ปฏิเสธ</button>` : ''}
+          ${p.status === 'Accepted' ? `<button class="btn btn-secondary btn-sm" data-act="limit" data-id="${Layout.esc(p.id)}">ตั้งเพดาน</button>` : ''}</td></tr>`;
+    });
+    document.getElementById('ptBody').innerHTML = rows.length ? rows.join('')
+      : '<tr><td colspan="4" class="text-center text-gray-400">ยังไม่มีคู่ค้าที่เชื่อม</td></tr>';
+    document.querySelectorAll('#ptBody [data-act]').forEach(b => b.addEventListener('click', () => this.partnerAction(b.dataset.act, b.dataset.id)));
+
+    const dBody = document.getElementById('ptDraftBody');
+    if (this.drafts == null) dBody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ไม่มีสิทธิ์ดูเอกสารฝั่งซื้อ หรือโหลดไม่สำเร็จ</td></tr>';
+    else if (this.drafts.length === 0) dBody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">ยังไม่มีใบซื้อจากคู่ค้า</td></tr>';
+    else {
+      dBody.innerHTML = this.drafts.map(d => `<tr>
+        <td>${Layout.esc(Layout.date ? Layout.date(d.documentDate) : (d.documentDate || '').slice(0, 10))}</td>
+        <td>${Layout.esc(d.supplierName || '-')}</td>
+        <td>${Layout.esc(d.supplierInvoiceNumber || '-')}</td>
+        <td class="text-right">${Layout.esc(Layout.money(d.totalAmount))}</td>
+        <td>${Layout.esc(d.statusLabel || d.status)}</td>
+        <td><span class="pt-badge ${d.needsOriginal ? 'pt-warn' : 'pt-ok'}">${Layout.esc(d.inputVatEvidenceLabel || '')}</span></td>
+        <td><a class="btn btn-secondary btn-sm" href="/pages/documents.html?openDoc=${encodeURIComponent(d.id)}">เปิด</a>
+          ${d.needsOriginal ? `<button class="btn btn-primary btn-sm" data-orig="${Layout.esc(d.id)}">ได้รับต้นฉบับแล้ว</button>` : ''}</td></tr>`).join('');
+      dBody.querySelectorAll('[data-orig]').forEach(b => b.addEventListener('click', () => this.confirmOriginal(b.dataset.orig)));
+    }
+
+    const c = this.cfg || {};
+    document.getElementById('ptDiscoverable').checked = !!c.partnerDiscoverable;
+    document.getElementById('ptDrafts').checked = !!c.createPurchaseDraftsFromPartners;
+    document.getElementById('ptWht').checked = !!c.sendWhtCertsToPartners;
+    document.getElementById('ptSaveBtn').disabled = !this.cfg;   // โหลดค่าตั้งไม่ได้ ⇒ ห้ามบันทึกทับ (ไม่ silent no-op)
+  },
+
+  async invite() {
+    const api = Layout.api(); if (!api) return;
+    const btn = document.getElementById('ptInviteBtn');
+    btn.disabled = true;
+    try {
+      const r = await api.invitePartner({
+        partnerTaxId: document.getElementById('ptTax').value.trim(),
+        partnerBranchCode: document.getElementById('ptBranch').value.trim() || null,
+        message: document.getElementById('ptMsg').value.trim() || null,
+      });
+      Layout.toast((r && r.message) || 'ส่งคำขอแล้ว', 'success');
+      document.getElementById('ptTax').value = ''; document.getElementById('ptMsg').value = '';
+    } catch (e) { Layout.toast(e.message || 'ส่งคำขอไม่สำเร็จ', 'error'); }
+    finally { btn.disabled = false; }
+  },
+
+  async partnerAction(act, id) {
+    const api = Layout.api(); if (!api) return;
+    try {
+      if (act === 'accept') await api.acceptPartner(id);
+      else if (act === 'reject') {
+        const reason = await Layout.promptText({ title: 'ปฏิเสธคำขอเชื่อม', label: 'เหตุผล (ไม่บังคับ)' });
+        if (reason === null) return;
+        await api.rejectPartner(id, reason);
+      } else if (act === 'limit') {
+        const v = await Layout.promptText({ title: 'เพดานยอดใบซื้อร่างจากคู่ค้ารายนี้', label: 'ยอดสูงสุดต่อใบ (บาท · ว่าง = ไม่จำกัด)' });
+        if (v === null) return;
+        const n = String(v).trim() === '' ? null : Number(String(v).replace(/,/g, ''));
+        if (n !== null && !Number.isFinite(n)) { Layout.toast('กรอกเป็นตัวเลข หรือเว้นว่าง', 'error'); return; }
+        await api.setPartnerDraftLimit(id, n);
+      }
+      Layout.toast('บันทึกแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
+  },
+
+  async confirmOriginal(id) {
+    const api = Layout.api(); if (!api) return;
+    const ok = await Layout.confirm({ title: 'ยืนยันว่าได้รับต้นฉบับใบกำกับแล้ว',
+      message: 'ยืนยันเมื่อมีใบกำกับภาษีตัวจริง (กระดาษ) หรือไฟล์ e-Tax ที่ลงลายมือชื่อของผู้ขายอยู่ในมือแล้วเท่านั้น — ระบบจะปลดให้ลงภาษีซื้อได้' });
+    if (!ok) return;
+    try {
+      const r = await api.confirmPartnerOriginal(id);
+      Layout.toast((r && r.message) || 'บันทึกแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); }
+  },
+
+  async saveSettings() {
+    const api = Layout.api(); if (!api || !this.cfg) return;
+    const btn = document.getElementById('ptSaveBtn');
+    btn.disabled = true;
+    try {
+      await api.updateWorkflowAutomation({
+        partnerDiscoverable: document.getElementById('ptDiscoverable').checked,
+        createPurchaseDraftsFromPartners: document.getElementById('ptDrafts').checked,
+        sendWhtCertsToPartners: document.getElementById('ptWht').checked,
+      });
+      Layout.toast('บันทึกค่าตั้งแล้ว', 'success');
+      await this.load();
+    } catch (e) { Layout.toast(e.message || 'บันทึกไม่สำเร็จ', 'error'); btn.disabled = false; }
+  },
+};
+document.addEventListener('DOMContentLoaded', () => Page.init());
+  </script>
+</body>
+</html>

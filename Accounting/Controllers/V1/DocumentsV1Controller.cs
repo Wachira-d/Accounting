@@ -416,7 +416,8 @@ public class DocumentsV1Controller : PublicApiControllerBase
     [HttpGet("{documentId:guid}/sign-status")]
     public async Task<IActionResult> SignStatus(Guid documentId, CancellationToken ct)
     {
-        var (ctx, error) = await ResolveCallerAsync("documents:write", Feature, ct);
+        // รอบ 255 WP-12B ข้อ 6 (A H-06): อ่านอย่างเดียว ⇒ scope อ่าน (documents:write ครอบ read — คีย์เดิมไม่พัง)
+        var (ctx, error) = await ResolveCallerAsync(Accounting.Helpers.ApiScopePolicy.DocumentsRead, Feature, ct);
         if (error != null) return error;
         var doc = await Db.Documents.AsNoTracking()
             .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == ctx!.CompanyId && !d.IsDeleted, ct);
@@ -449,7 +450,8 @@ public class DocumentsV1Controller : PublicApiControllerBase
     [HttpGet("{documentId:guid}/pdf")]
     public async Task<IActionResult> Pdf(Guid documentId, CancellationToken ct)
     {
-        var (ctx, error) = await ResolveCallerAsync("documents:write", Feature, ct);
+        // รอบ 255 WP-12B ข้อ 6 (A H-06): อ่านอย่างเดียว ⇒ scope อ่าน
+        var (ctx, error) = await ResolveCallerAsync(Accounting.Helpers.ApiScopePolicy.DocumentsRead, Feature, ct);
         if (error != null) return error;
         if (_pdf == null) return StatusCode(503, new ApiResponse<string>(false, null, "ระบบสร้าง PDF ไม่พร้อม"));
         var type = await Db.Documents.AsNoTracking()

@@ -1504,6 +1504,8 @@ const Layout = {
       description: 'ตั้ง invoice/ค่าใช้จ่ายรายเดือน · อนุมัติ + ส่งอีเมลอัตโนมัติ · ตัวแปร <<month>> <<year>>' },
     { id: 'autopilot', label: 'Autopilot (ติดตามอัตโนมัติ)', icon: '🛫', href: '/pages/autopilot.html', feature: 'DocumentEngine',
       description: 'ใบนี้อยู่ขั้นไหน · เรื่องที่ระบบทำต่อไม่ได้ + ปุ่มแก้ · ใบเสนอราคาแปลงอัตโนมัติ · เงินโอนเข้าที่รอยืนยัน · สรุปประจำวัน' },
+    { id: 'partners', label: 'คู่ค้าที่ใช้ NextAcc', icon: '🤝', href: '/pages/partners.html', feature: 'DocumentEngine',
+      description: 'เชื่อมระบบกับคู่ค้า · ใบซื้อร่างจากเอกสารของคู่ค้า · ส่ง 50 ทวิ กลับอัตโนมัติ (ค่าตั้งต้นปิดทั้งหมด)' },
     { id: 'deposits', label: 'เงินมัดจำ/รับล่วงหน้า', icon: '🤝', href: '/pages/deposit-center.html', feature: 'DocumentEngine',
       description: 'มัดจำ/รับล่วงหน้าคงค้าง — ภาษีขายถึงกำหนดทันที (§78) รายได้รอรับรู้ (217xx) จนส่งมอบ · รับรู้รายได้บางส่วนได้' },
     { id: 'mobile-receipt', label: 'รับเงินสดด่วน (มือถือ)', icon: '📱', href: '/pages/mobile-receipt.html', feature: 'AdvancedReporting',

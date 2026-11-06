@@ -482,6 +482,10 @@ public class ApiClient : TenantEntity      // CompanyId = บริษัทท�
     `PlatformEmailQuota` ด้วย · เต็ม ⇒ ไม่ส่ง + เหตุ + ทางไปต่อ (DOCUMENT_FLOW §อีเมลเอกสาร) · ข้อความแจ้งลูกค้า (`BookingNotifier`) บอกช่องของขั้นส่ง ⇒ ช่องที่แยกนับแถวของช่อง
   - สถานะ `GET …/metering/notify-quota` มี `channels[]` (เซิร์ฟเวอร์คำนวณ) · แอดมินบริษัทเห็นสรุปต่อช่อง + ตั้งเพดานต่อช่อง (`PUT …/notify-quota` `{channel}` · ประวัติ + audit)
   - ประวัติการใช้งาน (`UsageSnapshotService`) รวมทุกช่องต่องวด
+  - **ฝ่ายค้าน fix2 (DECISIONS 254-WP11-12)**: แพ็กของช่อง**ขายได้เฉพาะช่องที่แยกเพดาน** (`NotifyQuotaPolicy.ChannelPackSellable` — ไม่แยก ⇒ ซื้อ 409 ก่อนคิดเงิน + บอกให้ซื้อแพ็กรวม ·
+    สถานะไม่ส่งราคา ⇒ หน้าเว็บไม่แสดงปุ่ม) · อีเมลแพลตฟอร์มใช้**เฉพาะแพ็กอีเมล** (ไม่ใช้แพ็กรวม · ไม่มีส่วนเกิน — เต็ม = ไม่ส่ง) · ข้อความแจ้งลูกค้ายังใช้แพ็กรวม/ส่วนเกินตามเดิม ·
+    สรุปรายวันของพนักงานนับช่อง LINE · ช่องที่ไม่รู้จักในคำขอ (ซื้อแพ็ก/ตั้งเพดานบริษัท) ⇒ 400 · หักโบนัส+นับเป็นคำสั่งเดียว · ปุ่มซื้อส่ง Idempotency-Key ต่อการกด ·
+    เพดานที่ใช้ได้ต่อช่องรวมแพ็กรวมที่ยังใช้ได้ · **ความหมาย -1**: ค่าเฉพาะบริษัท -1 = แยกช่องแบบไม่จำกัด · ค่าของแพ็กเกจ ≤ -1 ถูกเก็บเป็นว่าง = ไม่แยก (คงสัญญาเดิมของหน้า plans)
   - **เฝ้าต้นทุน OA กลาง (N8)**: งาน `Services/Background/NextAccOaQuotaWatch` (ทุกชั่วโมง · `JobLock`) — อ่านยอด push/โควตาของ OA กลางจาก LINE
     (`ILineNotifyService.TryReadNextAccQuotaAsync`) + **ตัวนับ reply ต่อเดือน** (นับที่ `CustomerLineLinkService.ReplyAsync` เมื่อเป็น OA กลาง · ตาราง `NextAccOaUsageCounters`
     ระดับแพลตฟอร์ม) · ถึง 90% (push เทียบโควตาของ LINE · reply เทียบ 25,000 ฟรีตามประกาศที่ยังไม่ยืนยัน) ⇒ เตือนกลุ่มผู้ดูแลแพลตฟอร์มครั้งเดียวต่องวด ·
@@ -558,6 +562,11 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
 
 ---
 
+
+  **รอบ 255 WP-12B ข้อ 6 — เพดานคู่ค้า NextAcc ต่อแพ็กเกจ (คำตัดสินเจ้าของ §3.3 Y5 · DECISIONS 255-WP12B-4)** 🔨 *(ยังไม่ได้คอมไพล์)*:
+  `PlanTemplate.MaxTradingPartners` (null/-1 = **ไม่จำกัด** — ค่าตั้งต้นทุกแพ็กเกจ · migration ไม่ตั้งตัวเลข) · แอดมินตั้งที่ /admin/plans.html (`UpdatePlanTemplateRequest.MaxTradingPartners` · -1 = ล้าง) ·
+  ตัวอ่าน `CrossTenantWorkflowService.TradingPartnerCapAsync` (กลุ่มบัญชี ⇒ แม่แบบของกลุ่ม · ไม่งั้นแม่แบบตามระดับแพ็กเกจ — ลำดับเดียวกับเพดานข้อความ) · ตรวจตอน**ยอมรับ**คู่ ทั้งสองบริษัท
+  (`PartnerExchangeRules.CapProblem` · 409 พร้อมทางไปต่อ) · คำเชิญไม่ถูกบล็อก (คำตอบเชิญเท่ากันทุกกรณี — P-1) · ไม่มีราคา/แพ็กเสริม
 ## 6. Billing
 
 ### 6.1 สองโหมด (ตั้งที่ Account)
@@ -1515,3 +1524,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
   แถวค่าแทน (ExpiryNeedsReview) ดาวน์เกรด ⇒ มีผลทันที ไม่ตั้งเวลา
 
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i หน้าซื้อแพ็กเกจสาธารณะ · `SiteSettings.PublicCheckoutEnabled` · `Helpers/PublicCheckoutPolicy` · `Services/Platform/PublicCheckoutService` · เทสต์ `PublicCheckoutRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_
+_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 6 — `PlanTemplate.MaxTradingPartners` เพดานคู่ค้า NextAcc (null = ไม่จำกัด · Y5) ตรวจตอนยอมรับคู่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 145ba355)_

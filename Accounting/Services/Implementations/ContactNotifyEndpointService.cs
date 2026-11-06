@@ -128,12 +128,7 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
             var primaries = await ActiveRows(companyId, contactId).Where(e => e.IsPrimary && e.Kind == NotifyEndpointKind.Email).ToListAsync(ct);
             var row = ContactRecipientRule.PickPrimary(primaries, e => e.LinkedAt, e => e.CreatedAt);
             foreach (var extra in primaries.Where(p => !ReferenceEquals(p, row)))
-            {
-                extra.UnlinkedAt = now;
-                extra.UnlinkReason = NotifyEndpointKind.UnlinkMerge;
-                extra.UpdatedAt = now;
-                extra.UpdatedBy = actor.Email;
-            }
+                NotifyEndpointKind.MarkUnlinked(extra, NotifyEndpointKind.UnlinkMerge, now, actor.Email);   // ฝ่ายค้าน fix2 M3: ตัวยกเลิกเดียว
             var before = row?.TopicsJson;
             if (row == null)
             {
@@ -183,13 +178,8 @@ public class ContactNotifyEndpointService : IContactNotifyEndpointService
                 throw new BusinessRuleException("ปลายทางนี้ยกเลิกไปแล้ว", "NOTIFY-CONTACT-UNLINKED", 409);
             var now = DateTime.UtcNow;
             if (row.Kind == NotifyEndpointKind.LineGroup) { groupProtected = row.LineGroupId; groupHash = row.LineIdHash; }
-            row.UnlinkedAt = now;
-            row.UnlinkReason = NotifyEndpointKind.UnlinkCompany;
-            // ส่งให้น้อยที่สุด (PDPA ม.22): ยกเลิกแล้วไม่ใช้ id อีก ⇒ ล้างค่าที่เข้ารหัส (คงแฮชไว้เป็นร่องรอยว่าเคยผูก)
-            row.LineUserId = null;
-            row.LineGroupId = null;
-            row.UpdatedAt = now;
-            row.UpdatedBy = actor.Email;
+            // ส่งให้น้อยที่สุด (PDPA ม.22): ยกเลิกแล้วไม่ใช้ id อีก ⇒ ล้างค่าที่เข้ารหัส + ป้ายจาก LINE + ชื่อกลุ่ม (คงแฮชไว้เป็นร่องรอยว่าเคยผูก) — ตัวยกเลิกเดียว
+            NotifyEndpointKind.MarkUnlinked(row, NotifyEndpointKind.UnlinkCompany, now, actor.Email);
             Audit(companyId, contactId, actor, AuditAction.Delete, "unlink", null,
                 new { endpointId = row.Id, kind = row.Kind, reason = row.UnlinkReason });
             await _db.SaveChangesAsync(ct);
