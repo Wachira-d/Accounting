@@ -8320,6 +8320,9 @@ public partial class DocumentService : IDocumentService
             throw new InvalidOperationException(
                 $"ห้ามย้ายเข้าบัญชีคุม {newAccount.AccountCode} {newAccount.AccountName} — " +
                 "บัญชีภาษี/ลูกหนี้/เจ้าหนี้/มัดจำ ระบบลงให้เองตามเอกสาร");
+        // รอบ 249: บรรทัดที่ผูกเป็นต้นทุนของสินทรัพย์หลายใบ — แถวผูกอ้างผังนี้ (ขา Cr ของ JE โอน) ⇒ ปลดก่อนแล้วจึงแก้ผัง
+        if (await FixedAssetService.CostSourceLineChangeBlockAsync(_db, companyId, line.Id) is string assetLinkBlock)
+            throw new BusinessRuleException(assetLinkBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
 
         // ย้ายออกจากผังสินทรัพย์ (12xxx → ค่าใช้จ่าย) = "ของชิ้นนี้ไม่ใช่สินทรัพย์" ⇒ ทะเบียนที่ขึ้นจากบรรทัดนี้
         // ต้องออกไปพร้อมกันในธุรกรรมเดียว (Helpers/AssetRemovalGlCheck) — เดิมย้ายผังแล้วทะเบียนค้าง
@@ -9874,6 +9877,11 @@ public partial class DocumentService : IDocumentService
                 .TryGetValue(documentId, out var childBlock))
             throw new InvalidOperationException(childBlock);
 
+        // รอบ 249 (ASSET_MULTI_DOCUMENT_DESIGN §2 ข้อ 7): ใบนี้เป็นต้นทุนของสินทรัพย์หลายใบที่ "โอนเป็นสินทรัพย์พร้อมใช้" แล้ว ⇒ 409 + ทางไปต่อ (ใบลดหนี้) ·
+        // แถวที่ยังระหว่างจัดหาปลดในธุรกรรมของการยกเลิกด้านล่าง (ReleaseCostSourcesForVoidAsync)
+        if (await FixedAssetService.CostSourceVoidBlockAsync(_db, companyId, documentId, doc.DocumentNumber) is string assetCostBlock)
+            throw new BusinessRuleException(assetCostBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
+
         // ── วันที่ลงรายการกลับบัญชี ──
         // default = **วันที่ของเอกสารเอง** ไม่ใช่วันที่กดยกเลิก: ยกเลิกใบของเดือน
         // ก่อนแล้วรายการกลับไปโผล่เดือนปัจจุบัน ทำให้ผิด **สองเดือนพร้อมกัน**
@@ -10275,6 +10283,9 @@ public partial class DocumentService : IDocumentService
                             doc.DocumentNumber, replacedSrc.DocumentNumber);
                     }
                 }
+
+                // 7-asset0) รอบ 249: ปลดใบนี้ออกจากสินทรัพย์หลายใบที่ยังระหว่างจัดหา + คิดต้นทุนสะสมใหม่ (แถวยังอยู่เป็นประวัติ · audit chain)
+                await FixedAssetService.ReleaseCostSourcesForVoidAsync(_db, companyId, documentId, doc.DocumentNumber);
 
                 // 7-asset) Cascade FixedAsset ที่ AutoRegister มาจาก doc นี้:
                 //   • ยังไม่ยืนยัน (NeedsReview=true) + ไม่มี posted dep → ลบ
@@ -17292,7 +17303,8 @@ public partial class DocumentService : IDocumentService
         if (await GetReceivedViaGrnAccrualAccountAsync(companyId, doc) != null)
             return line.IsVatClaimable ? 0m : ToGlAmount(doc, line.VatAmount);
 
-        return ToGlAmount(doc, line.IsVatClaimable ? line.Amount : line.Amount + line.VatAmount);
+        // ตัวตั้งเดียวกับต้นทุนสินทรัพย์หลายใบ (รอบ 249 · Helpers/PurchaseLineGlAmount)
+        return ToGlAmount(doc, Accounting.Helpers.PurchaseLineGlAmount.Standalone(line.Amount, line.VatAmount, line.IsVatClaimable));
     }
 
     /// <summary>JE ย้ายภาษีขายถึงกำหนด (§78/1 · Dr 21913) ของใบนี้ที่ยังมีผล — อ่านจาก GL จริง (ห้ามเดาจากข้อความ) · คืนวันที่ของแต่ละ JE

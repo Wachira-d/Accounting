@@ -1281,6 +1281,13 @@ const API = {
       getAssetRegisterReport: () => API.get(`${base}/fixedasset/report/register`),
       getDepreciationSchedule: (id) => API.get(`${base}/fixedasset/${id}/report/depreciation-schedule`),
       importAssets: (d) => API.post(`${base}/fixedasset/import`, d),
+      // รอบ 249 — สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ (มัดจำ · งวด · ใบสุดท้าย · ใบลดหนี้)
+      getLinkableAssetCostLines: (search, documentId) => API.get(`${base}/fixedasset/linkable-lines?search=${encodeURIComponent(search || '')}${documentId ? `&documentId=${encodeURIComponent(documentId)}` : ''}`),
+      createAssetFromSources: (d) => API.post(`${base}/fixedasset/from-sources`, d),
+      getAssetCostSources: (id) => API.get(`${base}/fixedasset/${id}/cost-sources`),
+      attachAssetCostSources: (id, d) => API.post(`${base}/fixedasset/${id}/cost-sources`, d),
+      releaseAssetCostSource: (id, sourceId, d) => API.post(`${base}/fixedasset/${id}/cost-sources/${sourceId}/release`, d),
+      placeAssetInService: (id, d) => API.post(`${base}/fixedasset/${id}/place-in-service`, d),
       // Budget
       getBudgets: (q = '') => API.get(`${base}/budget${q}`),
       getBudget: (id) => API.get(`${base}/budget/${id}`),

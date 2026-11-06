@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Accounting.Services.Implementations;
 
-public class FixedAssetService : IFixedAssetService
+public partial class FixedAssetService : IFixedAssetService
 {
     private readonly AccountingDbContext _db;
     private readonly ILogger<FixedAssetService>? _logger;
@@ -314,6 +314,21 @@ public class FixedAssetService : IFixedAssetService
             }
         }
 
+        // รอบ 249: สินทรัพย์หลายใบ — ยังผูกเอกสารต้นทุนอยู่ ⇒ ปลดออกก่อน (ทีละใบ พร้อมเหตุ · audit) แล้วจึงลบ ·
+        // ลบตรง ๆ จะทิ้งยอดของใบเหล่านั้นไว้โดยไม่มีใครเห็นว่าเคยผูกอะไร · แถวที่ปลดแล้วลบตามสินทรัพย์ (FK Restrict)
+        var costRows = await _db.FixedAssetCostSources
+            .Where(s => s.CompanyId == companyId && s.FixedAssetId == assetId)
+            .ToListAsync();
+        var activeCost = costRows.Where(s => s.ReleasedAt == null).ToList();
+        if (activeCost.Count > 0)
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ลบไม่ได้ — สินทรัพย์นี้ยังผูกเอกสารต้นทุน {activeCost.Count} รายการ ({string.Join(", ", activeCost.Select(s => s.DocumentNumber).Distinct())}). "
+                + (activeCost.Any(s => s.CapitalizedAt != null)
+                    ? "บางรายการโอนเป็นสินทรัพย์แล้ว — ใช้ 'ตัดจำหน่าย' แทนการลบ"
+                    : "ที่ 'เอกสารต้นทุน' ปลดแต่ละใบออกก่อน (ระบุเหตุผล) แล้วลบอีกครั้ง"),
+                Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
+        _db.FixedAssetCostSources.RemoveRange(costRows);
+
         // ลบ projected depreciation rows (unposted) แล้วลบ asset
         var projectedDeps = await _db.AssetDepreciations
             .Where(d => d.FixedAssetId == assetId && d.CompanyId == companyId)
@@ -333,20 +348,8 @@ public class FixedAssetService : IFixedAssetService
     internal static async Task<decimal> UnbackedAssetAmountForDocumentAsync(
         AccountingDbContext db, Guid companyId, Guid documentId, IReadOnlyCollection<Guid> excludeAssetIds)
     {
-        var byAccount = await db.JournalEntryLines.AsNoTracking()
-            .Where(l => l.JournalEntry.CompanyId == companyId
-                && l.JournalEntry.SourceDocumentId == documentId
-                && (l.JournalEntry.Status == JournalEntryStatus.Posted || l.JournalEntry.Status == JournalEntryStatus.Reversed)
-                && !l.JournalEntry.IsDeleted)
-            .GroupBy(l => l.Account.AccountCode)
-            .Select(g => new { Code = g.Key, Net = g.Sum(x => x.DebitAmount - x.CreditAmount) })
-            .ToListAsync();
-        var glOnAssetAccounts = byAccount
-            .Where(r => Accounting.Services.Implementations.Tax.FixedAssetAccountClassifier.Resolve(r.Code) != null)
-            .Sum(r => r.Net);
-        var registeredCost = await db.FixedAssets.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId && !excludeAssetIds.Contains(a.Id))
-            .SumAsync(a => (decimal?)a.PurchaseCost) ?? 0m;
+        // รอบ 249 (ASSET_MULTI_DOCUMENT_DESIGN G9): ตัวนับเดียวกับด่าน "ผูกแล้วเกินไหม" — ทะเบียนใบเดียว + แถวผูกของสินทรัพย์หลายใบบนผังสินทรัพย์
+        var (glOnAssetAccounts, registeredCost) = await AssetGlBackingAsync(db, companyId, documentId, excludeAssetIds);
         return Accounting.Helpers.AssetRemovalGlCheck.OrphanedIfRemoved(glOnAssetAccounts, registeredCost);
     }
 
@@ -386,6 +389,8 @@ public class FixedAssetService : IFixedAssetService
         var newSalvage = request.SalvageValue ?? asset.SalvageValue;
         if (newMethod != asset.DepreciationMethod || newLife != asset.UsefulLifeMonths || newSalvage != asset.SalvageValue)
         {
+            // รอบ 249: ระหว่างจัดหาห้ามตั้งวิธี/อายุ — ไม่งั้นงานค่าเสื่อมเริ่มตัดก่อนพร้อมใช้ (อายุ/วิธี/ซากตั้งตอน 'โอนเป็นสินทรัพย์พร้อมใช้')
+            EnsureNotUnderAcquisition(asset, "ตั้งวิธีคิดค่าเสื่อม/อายุ/มูลค่าซาก");
             var hasPosted = await _db.AssetDepreciations
                 .AnyAsync(d => d.CompanyId == companyId && d.FixedAssetId == asset.Id && d.IsPosted);
             var acctCode = asset.AssetAccountId == null ? null
@@ -453,6 +458,7 @@ public class FixedAssetService : IFixedAssetService
 
         if (asset.Status != AssetStatus.Active && asset.Status != AssetStatus.FullyDepreciated)
             throw new InvalidOperationException("สินทรัพย์นี้ไม่สามารถจำหน่ายได้");
+        EnsureNotUnderAcquisition(asset, "จำหน่าย");
 
         // สินทรัพย์ที่ไม่มี GL mapping: เดิมข้ามการสร้าง JE ทั้งก้อนแบบเงียบ ๆ แต่ยัง
         // เขียนทะเบียนเป็น "ตัดครบแล้ว" ⇒ ทะเบียนกับ GL แยกทางกันถาวรโดย API ตอบว่า
@@ -599,6 +605,7 @@ public class FixedAssetService : IFixedAssetService
 
         if (asset.Status != AssetStatus.Active && asset.Status != AssetStatus.FullyDepreciated)
             throw new InvalidOperationException("สินทรัพย์นี้ไม่สามารถตัดจำหน่ายได้");
+        EnsureNotUnderAcquisition(asset, "ตัดจำหน่าย");
 
         // fail loud เหมือนเส้นจำหน่าย — ห้ามล้างทะเบียนทั้งที่ไม่มี JE ใด ๆ เกิดขึ้น
         if (!asset.AssetAccountId.HasValue || !asset.AccumulatedDepreciationAccountId.HasValue)
@@ -708,6 +715,7 @@ public class FixedAssetService : IFixedAssetService
 
         if (asset.Status != AssetStatus.Active)
             throw new InvalidOperationException("สามารถปรับอายุการใช้งานได้เฉพาะสินทรัพย์ที่ Active เท่านั้น");
+        EnsureNotUnderAcquisition(asset, "ปรับอายุการใช้งาน");
 
         // รอบ 201 ทีม IN (A-IN3 · คำตัดสินข้อ 38): เปลี่ยนประมาณการไปข้างหน้า — อายุ · ซาก · **วิธีคิด** ผ่านตัวตัดสินเดียว
         // Helpers/DepreciationEstimateChange · ไม่มีค่าใดเปลี่ยน = บันทึกว่าทบทวนแล้ว (C-6) โดยไม่สร้างฐานใหม่
@@ -1147,6 +1155,7 @@ public class FixedAssetService : IFixedAssetService
 
         if (asset.Status != AssetStatus.Active)
             throw new InvalidOperationException("สามารถตีราคาใหม่ได้เฉพาะสินทรัพย์ที่ Active เท่านั้น");
+        EnsureNotUnderAcquisition(asset, "ตีราคาใหม่");
 
         if (request.NewFairValue <= 0)
             throw new ArgumentException("มูลค่ายุติธรรมต้องมากกว่า 0");
@@ -1439,15 +1448,37 @@ public class FixedAssetService : IFixedAssetService
             .GroupBy(a => a.SourceDocumentLineId!.Value)
             .ToDictionary(g => g.Key, g => g.First());
 
+        // รอบ 249: ต้นทุนของสินทรัพย์หลายใบ — ข้อเท็จจริงต่อบรรทัดจากตัวตัดสินเดียว (AssetCostSourceRules) + การผูกที่มีอยู่
+        var costFacts = (await LoadCostLineFactsAsync(companyId, null, documentId))
+            .ToDictionary(f => f.Line.Id);
+        var linkRows = await _db.FixedAssetCostSources.AsNoTracking()
+            .Where(s => s.CompanyId == companyId && s.DocumentId == documentId && s.ReleasedAt == null)
+            .Select(s => new { s.DocumentLineId, s.FixedAssetId, s.FixedAsset.AssetCode, s.FixedAsset.Name, s.Amount,
+                Capitalized = s.CapitalizedAt != null, s.FixedAsset.IsUnderAcquisition })
+            .ToListAsync();
+
         var lines = doc.Lines.OrderBy(l => l.LineOrder).Select(l =>
         {
             var code = l.Account?.AccountCode;
             var isAsset = Accounting.Services.Implementations.Tax.FixedAssetAccountClassifier.Resolve(code) != null && l.Amount > 0;
             byLine.TryGetValue(l.Id, out var asset);
+            costFacts.TryGetValue(l.Id, out var cf);
+            var links = linkRows.Where(x => x.DocumentLineId == l.Id)
+                .Select(x => new AssetCostLinkRef(x.FixedAssetId, x.AssetCode, x.Name, x.Amount, x.Capitalized, x.IsUnderAcquisition))
+                .ToList();
+            var relevant = cf != null && cf.Sign != null
+                && cf.Role != Accounting.Helpers.AssetCostSourceRules.AccountRole.NotEligible;
+            var remaining = relevant ? Accounting.Helpers.AssetCostSourceRules.Remaining(cf!.CostAbs, cf.LinkedAbs) : 0m;
             return new DocumentAssetLineStatus(
                 l.Id, l.LineOrder, l.Description, l.Amount, code, isAsset,
                 asset?.Id, asset?.AssetCode, asset?.NeedsReview,
-                IsAuxiliary: isAsset && Accounting.Helpers.AssetRegistrationPlanner.IsAuxiliary(l.Description));
+                IsAuxiliary: isAsset && Accounting.Helpers.AssetRegistrationPlanner.IsAuxiliary(l.Description),
+                IsCostSourceEligible: relevant && cf!.Problem == null && remaining > 0m,
+                CostSourceProblem: relevant ? cf!.Problem : null,
+                CostAmount: relevant ? cf!.Cost.Amount : 0m,
+                LinkedAmount: relevant ? cf!.LinkedAbs : 0m,
+                RemainingToLink: remaining,
+                Links: links);
         }).ToList();
 
         return new DocumentAssetLinesResponse(
@@ -1546,10 +1577,28 @@ public class FixedAssetService : IFixedAssetService
             && l.Amount > 0).ToList();
         if (ppeLines.Count == 0) { notes.Add("ไม่มีบรรทัดที่ลงผังสินทรัพย์ถาวร (PPE)"); return Done(); }
 
+        // รอบ 249: บรรทัดที่ผูกเป็นต้นทุนของสินทรัพย์หลายใบแล้ว ไม่ขึ้นทะเบียนเดี่ยวซ้ำ (ยอดเดียวกันเป็นต้นทุนสองครั้ง) —
+        // ตัดออกก่อนวางแผน: ค่าประกอบที่เหลือในกลุ่มที่บรรทัดหลักผูกไปแล้วไม่ถูกเดาเป็นสินทรัพย์ตัวใหม่ (บอกให้ผูกเข้าตัวเดียวกัน)
+        var linkedLineIds = await LinkedLineIdsAsync(_db, companyId, doc.Id);
         var groups = ppeLines.GroupBy(l => l.AccountId!.Value);
-        foreach (var grp in groups)
+        foreach (var grpAll in groups)
         {
-            var code = accMap[grp.Key];
+            var grp = grpAll.Where(l => !linkedLineIds.Contains(l.Id)).ToList();
+            var linkedInGroup = grpAll.Count() - grp.Count;
+            if (linkedInGroup > 0)
+            {
+                skipped += linkedInGroup;
+                notes.Add($"{linkedInGroup} บรรทัดผูกเป็นต้นทุนของสินทรัพย์หลายใบแล้ว — ไม่ขึ้นทะเบียนเดี่ยวซ้ำ");
+                if (grp.Count > 0 && grp.All(l => Accounting.Helpers.AssetRegistrationPlanner.IsAuxiliary(l.Description)))
+                {
+                    skipped += grp.Count;
+                    notes.Add("ค่าขนส่ง/ติดตั้งที่เหลือในกลุ่มเดียวกัน — ผูกเข้าสินทรัพย์ตัวเดียวกับบรรทัดหลัก (ไม่สร้างเป็นสินทรัพย์ใหม่)");
+                    continue;
+                }
+            }
+            if (grp.Count == 0) continue;
+            var grpKey = grpAll.Key;
+            var code = accMap[grpKey];
             var cls = Accounting.Services.Implementations.Tax.FixedAssetAccountClassifier.Resolve(code)!;
             // แผนของกลุ่มนี้: บรรทัดจริง = 1 สินทรัพย์/บรรทัด · ค่าใช้จ่ายประกอบ
             // เฉลี่ยตามสัดส่วนราคาเข้าทุกตัว (ทุกบรรทัดเป็น auxiliary = ใบค่าติดตั้ง
@@ -1638,5 +1687,6 @@ public class FixedAssetService : IFixedAssetService
             a.AssetAccountId, a.DepreciationExpenseAccountId,
             a.AccumulatedDepreciationAccountId,
             a.AssetType, a.LeaseTermMonths, a.LessorName, a.MonthlyLeasePayment,
-            a.ProjectId, a.NeedsReview, a.SourceDocumentId, sourceDocumentNumber, a.SourceDocumentLineId);
+            a.ProjectId, a.NeedsReview, a.SourceDocumentId, sourceDocumentNumber, a.SourceDocumentLineId,
+            IsUnderAcquisition: a.IsUnderAcquisition, AvailableForUseDate: a.AvailableForUseDate);
 }

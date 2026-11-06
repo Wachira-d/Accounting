@@ -113,7 +113,60 @@ public class FixedAsset : TenantEntity
     /// "⚠️ ตรวจสอบทะเบียนสินทรัพย์".</summary>
     public bool NeedsReview { get; set; }
 
+    // ───── รอบ 249 — สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ (erp-review/2026-11-06/ASSET_MULTI_DOCUMENT_DESIGN.md) ─────
+    /// <summary><c>true</c> = <b>ระหว่างจัดหา/ติดตั้ง</b> — ต้นทุนสะสมจากใบที่ผูก (<see cref="CostSources"/>) ยังอยู่ผังเดิมของแต่ละใบ
+    /// (มัดจำ 118xx · งานระหว่างก่อสร้าง 12280) · <c>DepreciationMethod = None</c> จนกว่าจะ "โอนเป็นสินทรัพย์พร้อมใช้"
+    /// (<c>FixedAssetService.PlaceInServiceAsync</c> ตัวเดียวที่ปลดค่านี้) · จำหน่าย/ตีราคา/ปรับอายุไม่ได้ระหว่างนี้</summary>
+    public bool IsUnderAcquisition { get; set; }
+
+    /// <summary>วันที่พร้อมใช้งาน (TFRS for NPAEs บทที่ 10 — จุดเริ่มคิดค่าเสื่อม) · ตั้งตอนโอน และ <see cref="PurchaseDate"/> = ค่านี้ ·
+    /// null = สินทรัพย์เดิม (ใบเดียว) ที่ยังเริ่มค่าเสื่อมจากวันที่เอกสาร</summary>
+    public DateTime? AvailableForUseDate { get; set; }
+
+    public ICollection<FixedAssetCostSource> CostSources { get; set; } = new List<FixedAssetCostSource>();
+
     public ICollection<AssetDepreciation> Depreciations { get; set; } = new List<AssetDepreciation>();
+}
+
+/// <summary>
+/// **บรรทัดเอกสารซื้อ 1 บรรทัด (หรือบางส่วน) ที่เป็นต้นทุนของสินทรัพย์** — รอบ 249 · ASSET_MULTI_DOCUMENT_DESIGN §3
+///
+/// <para>กติกาทั้งหมด (ผูกได้ไหม · ยอด · กันซ้ำ · JE โอน) อยู่ที่ <c>Helpers/AssetCostSourceRules</c> · ผู้เขียนแถวมีที่เดียว
+/// (<c>FixedAssetService</c>) · ไม่มี FK ไป <c>Documents</c> โดยเจตนา (ลบถาวรใบที่ยกเลิกแล้วต้องไม่ติด) — แถวเก็บสำเนาเลข/ชนิด/วันที่ไว้แสดง</para>
+/// <para>ไม่ลบแถว: ปลดออก = ประทับ <see cref="ReleasedAt"/> + เหตุ (ร่องรอยว่าเคยผูก) · แถวที่ <see cref="CapitalizedAt"/> แล้วปลดไม่ได้</para>
+/// </summary>
+public class FixedAssetCostSource : TenantEntity
+{
+    public Guid FixedAssetId { get; set; }
+    public FixedAsset FixedAsset { get; set; } = null!;
+
+    public Guid DocumentId { get; set; }
+    public Guid DocumentLineId { get; set; }
+    public string DocumentNumber { get; set; } = "";
+    public DocumentType DocumentType { get; set; }
+    public DateTime DocumentDate { get; set; }
+
+    public AssetCostSourceKind Kind { get; set; }
+
+    /// <summary>ต้นทุนที่ผูก (บาท) — ใบลดหนี้ติดลบ · ไม่รวม VAT ที่เคลมได้ · รวม VAT ต้องห้าม (<see cref="NonClaimableVatIncluded"/>)</summary>
+    public decimal Amount { get; set; }
+    /// <summary>ส่วน VAT ต้องห้าม §82/5 ที่รวมอยู่ใน <see cref="Amount"/> (บาท · เครื่องหมายเดียวกัน)</summary>
+    public decimal NonClaimableVatIncluded { get; set; }
+
+    /// <summary>ผังที่ยอดนี้อยู่ใน GL (ตอนผูก · อัปเดตตอนโอน) — ขา Cr ของ JE โอน</summary>
+    public Guid SourceAccountId { get; set; }
+    public string? SourceAccountCode { get; set; }
+
+    /// <summary>โอนเข้าผังสินทรัพย์แล้วเมื่อไร (null = ยังถือไว้ระหว่างจัดหา)</summary>
+    public DateTime? CapitalizedAt { get; set; }
+    /// <summary>JE โอน (null เมื่อยอดอยู่บนผังสินทรัพย์ปลายทางอยู่แล้ว ไม่ต้องลง)</summary>
+    public Guid? CapitalizationJournalEntryId { get; set; }
+
+    public DateTime? ReleasedAt { get; set; }
+    public string? ReleasedReason { get; set; }
+    public string? ReleasedBy { get; set; }
+
+    public string? Note { get; set; }
 }
 
 public class AssetDepreciation : TenantEntity

@@ -98,6 +98,69 @@ public class FixedAssetController : ControllerBase
         return Ok(new ApiResponse<RegisterFromDocumentResult>(true, result, msg));
     }
 
+    // ═══ รอบ 249 — สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ (erp-review/2026-11-06/ASSET_MULTI_DOCUMENT_DESIGN.md §5) ═══
+
+    /// <summary>บรรทัดเอกสารซื้อที่ผูกเป็นต้นทุนสินทรัพย์ได้ (มัดจำ 118xx · งานระหว่างก่อสร้าง · ผังสินทรัพย์) — อ่านอย่างเดียว</summary>
+    [HttpGet("linkable-lines")]
+    public async Task<ActionResult<ApiResponse<List<LinkableCostLine>>>> GetLinkableLines(
+        Guid companyId, [FromQuery] string? search = null, [FromQuery] Guid? documentId = null)
+        => Ok(new ApiResponse<List<LinkableCostLine>>(true,
+            await _assetService.GetLinkableCostLinesAsync(companyId, search, documentId)));
+
+    /// <summary>สร้างสินทรัพย์ระหว่างจัดหาจากหลายบรรทัด (มัดจำ + งวด + ใบสุดท้าย) — ยังไม่คิดค่าเสื่อม ไม่ลง JE</summary>
+    [HttpPost("from-sources")]
+    public async Task<ActionResult<ApiResponse<AttachCostSourcesResult>>> CreateFromSources(
+        Guid companyId, [FromBody] CreateAssetFromSourcesRequest request)
+    {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ขึ้นทะเบียนสินทรัพย์") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.CreateFromSourcesAsync(companyId, request, userId);
+        return StatusCode(201, new ApiResponse<AttachCostSourcesResult>(true, result,
+            $"สร้างสินทรัพย์ระหว่างจัดหาแล้ว — ผูกเอกสาร {result.Linked} รายการ"
+            + (result.AbsorbedDraftAssetCodes.Count > 0 ? $" (รวมทะเบียนร่าง {string.Join(", ", result.AbsorbedDraftAssetCodes)} เข้ามาแล้ว)" : "")));
+    }
+
+    /// <summary>เอกสารที่เป็นต้นทุนของสินทรัพย์นี้ + สถานะ + ปัญหาที่ตรวจพบ</summary>
+    [HttpGet("{assetId:guid}/cost-sources")]
+    public async Task<ActionResult<ApiResponse<AssetCostSourcesResponse>>> GetCostSources(Guid companyId, Guid assetId)
+        => Ok(new ApiResponse<AssetCostSourcesResponse>(true, await _assetService.GetCostSourcesAsync(companyId, assetId)));
+
+    /// <summary>ผูกบรรทัดเอกสารเพิ่ม — ระหว่างจัดหา: สะสมต้นทุน · โอนแล้ว: ลง JE ย้ายผัง + ปรับต้นทุนไปข้างหน้า</summary>
+    [HttpPost("{assetId:guid}/cost-sources")]
+    public async Task<ActionResult<ApiResponse<AttachCostSourcesResult>>> AttachCostSources(
+        Guid companyId, Guid assetId, [FromBody] AttachCostSourcesRequest request)
+    {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ผูกเอกสารต้นทุนสินทรัพย์") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.AttachCostSourcesAsync(companyId, assetId, request, userId);
+        return Ok(new ApiResponse<AttachCostSourcesResult>(true, result,
+            $"ผูกเอกสาร {result.Linked} รายการ"
+            + (result.JournalEntryId.HasValue ? " และลงรายการโอนต้นทุนแล้ว" : "")
+            + (result.AbsorbedDraftAssetCodes.Count > 0 ? $" (รวมทะเบียนร่าง {string.Join(", ", result.AbsorbedDraftAssetCodes)} เข้ามาแล้ว)" : "")));
+    }
+
+    /// <summary>ปลดเอกสารที่ยังไม่โอนออกจากสินทรัพย์ (ต้องมีเหตุผล · แถวยังอยู่เป็นประวัติ)</summary>
+    [HttpPost("{assetId:guid}/cost-sources/{sourceId:guid}/release")]
+    public async Task<ActionResult<ApiResponse<AssetCostSourcesResponse>>> ReleaseCostSource(
+        Guid companyId, Guid assetId, Guid sourceId, [FromBody] ReleaseCostSourceRequest request)
+    {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ปลดเอกสารต้นทุนสินทรัพย์") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.ReleaseCostSourceAsync(companyId, assetId, sourceId, request, userId);
+        return Ok(new ApiResponse<AssetCostSourcesResponse>(true, result, "ปลดเอกสารออกจากสินทรัพย์แล้ว"));
+    }
+
+    /// <summary>โอนเป็นสินทรัพย์พร้อมใช้ — JE Dr ผังสินทรัพย์ / Cr ผังมัดจำ·งานระหว่างก่อสร้าง · ค่าเสื่อมเริ่มจากวันพร้อมใช้</summary>
+    [HttpPost("{assetId:guid}/place-in-service")]
+    public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> PlaceInService(
+        Guid companyId, Guid assetId, [FromBody] PlaceInServiceRequest request)
+    {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "โอนเป็นสินทรัพย์พร้อมใช้") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.PlaceInServiceAsync(companyId, assetId, request, userId);
+        return Ok(new ApiResponse<FixedAssetResponse>(true, result, $"โอน {result.AssetCode} เป็นสินทรัพย์พร้อมใช้แล้ว — ค่าเสื่อมเริ่มเดือนถัดจากวันพร้อมใช้"));
+    }
+
     [HttpPost]
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Create(
         Guid companyId, [FromBody] CreateFixedAssetRequest request)

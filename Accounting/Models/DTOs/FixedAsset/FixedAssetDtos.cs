@@ -88,7 +88,11 @@ public record FixedAssetResponse(
     /// (ลบสินทรัพย์ทิ้งขณะใบต้นทางยังลง Dr 12210 = งบดุลกับทะเบียนไม่ตรงถาวร)</summary>
     string? SourceDocumentNumber = null,
     /// <summary>บรรทัดต้นทาง — แผงสินทรัพย์บนหน้าเอกสารใช้จับคู่ “บรรทัดไหนมีทะเบียนแล้ว”</summary>
-    Guid? SourceDocumentLineId = null);
+    Guid? SourceDocumentLineId = null,
+    /// <summary>รอบ 249: ระหว่างจัดหา/ติดตั้ง (ต้นทุนสะสมจากหลายใบ · ยังไม่คิดค่าเสื่อม) — หน้าทะเบียนแสดงป้าย + ปุ่มโอน</summary>
+    bool IsUnderAcquisition = false,
+    /// <summary>รอบ 249: วันที่พร้อมใช้งาน (จุดเริ่มค่าเสื่อม) · null = สินทรัพย์ใบเดียวแบบเดิม</summary>
+    DateTime? AvailableForUseDate = null);
 
 public record DepreciationResponse(
     Guid Id,
@@ -209,10 +213,78 @@ public record ImportFixedAssetsResult(
 public record DocumentAssetLineStatus(
     Guid LineId, int LineOrder, string Description, decimal Amount, string? AccountCode,
     bool IsAssetAccount, Guid? AssetId, string? AssetCode, bool? AssetNeedsReview,
-    bool IsAuxiliary = false);
+    bool IsAuxiliary = false,
+    // ── รอบ 249 (ASSET_MULTI_DOCUMENT_DESIGN): บรรทัดนี้เป็นต้นทุนของสินทรัพย์หลายใบได้ไหม — เซิร์ฟเวอร์ตัดสิน (Helpers/AssetCostSourceRules) ──
+    /// <summary>ผูกเป็นต้นทุนสินทรัพย์ได้ (มัดจำ 118xx · งานระหว่างก่อสร้าง · ผังสินทรัพย์) และยังเหลือยอด</summary>
+    bool IsCostSourceEligible = false,
+    /// <summary>เหตุที่ผูกไม่ได้ (null = ผูกได้/ไม่เกี่ยว)</summary>
+    string? CostSourceProblem = null,
+    /// <summary>ต้นทุนของบรรทัด (บาท · ยอดที่ลง GL จริง · ลดหนี้ติดลบ)</summary>
+    decimal CostAmount = 0m,
+    /// <summary>Σ ยอดที่ผูกกับสินทรัพย์ไว้แล้ว (ค่าบวก)</summary>
+    decimal LinkedAmount = 0m,
+    /// <summary>ยอดที่ยังผูกได้ (ค่าบวก)</summary>
+    decimal RemainingToLink = 0m,
+    /// <summary>สินทรัพย์ที่บรรทัดนี้ผูกอยู่ (แถวที่ยังไม่ปลด)</summary>
+    List<AssetCostLinkRef>? Links = null);
+
+/// <summary>การผูก 1 รายการของบรรทัด (แสดงบนหน้าเอกสาร)</summary>
+public record AssetCostLinkRef(Guid AssetId, string AssetCode, string AssetName, decimal Amount, bool IsCapitalized, bool AssetIsUnderAcquisition);
 
 public record DocumentAssetLinesResponse(
     Guid DocumentId, string DocumentNumber, string Status, bool IsIssued, bool TypeSupportsAutoRegister,
     List<DocumentAssetLineStatus> Lines, List<FixedAssetResponse> Assets);
 
 public record RegisterFromDocumentResult(int Created, int Skipped, List<FixedAssetResponse> Assets, List<string> Notes);
+
+// ═══════════════ รอบ 249 — สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ (erp-review/2026-11-06/ASSET_MULTI_DOCUMENT_DESIGN.md §5) ═══════════════
+
+/// <summary>บรรทัดที่จะผูก · <paramref name="Amount"/> null = ยอดที่ยังเหลือผูกได้ทั้งหมด (ค่าบวกเสมอ — ใบลดหนี้ระบบใส่เครื่องหมายเอง)</summary>
+public record AttachCostSourceItem(Guid DocumentLineId, decimal? Amount = null);
+
+public record AttachCostSourcesRequest(List<AttachCostSourceItem> Items, string? Note = null);
+
+/// <summary>สร้างสินทรัพย์ระหว่างจัดหาจากหลายบรรทัด — ยังไม่คิดค่าเสื่อมจนกว่าจะโอน (อายุ/วิธี/ซากตั้งตอนโอน)</summary>
+public record CreateAssetFromSourcesRequest(
+    string Name,
+    List<AttachCostSourceItem> Items,
+    string? Category = null,
+    Guid? AssetAccountId = null,
+    string? Location = null,
+    string? SerialNumber = null,
+    Guid? ProjectId = null,
+    string? Note = null);
+
+/// <summary>โอนเป็นสินทรัพย์พร้อมใช้ — JE Dr ผังสินทรัพย์ / Cr ผังต้นทาง · ค่าเสื่อมเริ่มจาก <paramref name="AvailableForUseDate"/></summary>
+public record PlaceInServiceRequest(
+    DateTime AvailableForUseDate,
+    Guid AssetAccountId,
+    int UsefulLifeMonths,
+    DepreciationMethod DepreciationMethod = DepreciationMethod.StraightLine,
+    decimal SalvageValue = 0m,
+    Guid? DepreciationExpenseAccountId = null,
+    Guid? AccumulatedDepreciationAccountId = null);
+
+public record ReleaseCostSourceRequest(string Reason);
+
+/// <summary>แถวผูก 1 แถว — <paramref name="Status"/> = "Held" | "Capitalized" | "Released"</summary>
+public record AssetCostSourceResponse(
+    Guid Id, Guid DocumentId, string DocumentNumber, string DocumentType, DateTime DocumentDate,
+    Guid DocumentLineId, string? LineDescription, string Kind, decimal Amount, decimal NonClaimableVatIncluded,
+    string? SourceAccountCode, string Status, DateTime? CapitalizedAt, Guid? CapitalizationJournalEntryId,
+    bool SourceDocumentVoided, DateTime? ReleasedAt, string? ReleasedReason, string? Note);
+
+/// <summary>ต้นทุนของสินทรัพย์แยกตามใบ + ปัญหาที่เซิร์ฟเวอร์ตรวจ (หน้าแสดงอย่างเดียว)</summary>
+public record AssetCostSourcesResponse(
+    Guid AssetId, bool IsUnderAcquisition, DateTime? AvailableForUseDate,
+    decimal HeldCost, decimal CapitalizedCost, decimal RegisterCost,
+    List<AssetCostSourceResponse> Sources, List<string> Problems);
+
+/// <summary>บรรทัดที่ผูกได้ (หน้าค้นหาใบเพื่อผูก) — <paramref name="Problem"/> ไม่ว่าง = แสดงแต่ผูกไม่ได้</summary>
+public record LinkableCostLine(
+    Guid DocumentId, string DocumentNumber, string DocumentType, DateTime DocumentDate, string? ContactName,
+    Guid DocumentLineId, string? Description, string? AccountCode, string Kind,
+    decimal CostAmount, decimal LinkedAmount, decimal RemainingToLink,
+    string? RegisteredAssetCode, bool RegisteredAssetAbsorbable, string? Problem);
+
+public record AttachCostSourcesResult(FixedAssetResponse Asset, int Linked, List<string> AbsorbedDraftAssetCodes, Guid? JournalEntryId);

@@ -3127,6 +3127,9 @@ public static class DatabaseMigrationHelper
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LessorName" varchar(200) NULL;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "MonthlyLeasePayment" numeric(18,2) NULL;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "LeaseLiabilityAccountId" uuid NULL;""",
+            // รอบ 249 (ASSET_MULTI_DOCUMENT_DESIGN §3): สินทรัพย์ระหว่างจัดหา + วันพร้อมใช้ · แถวเดิม = false/NULL = พฤติกรรมเดิม (ไม่มีค่าเก่าต้องซ่อม)
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "IsUnderAcquisition" boolean NOT NULL DEFAULT false;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "AvailableForUseDate" timestamp NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_FixedAssets_AssetType" ON "FixedAssets" ("CompanyId", "AssetType") WHERE "IsDeleted" = false;""",
 
             // POS: tip + coupon columns
@@ -8297,6 +8300,39 @@ public static class DatabaseMigrationHelper
         );
         """,
         """CREATE INDEX IF NOT EXISTS "IX_LineOaSwitchEvents_Pending" ON "LineOaSwitchEvents" ("CompanyId", "ProcessedAt");""",
+
+        // ── รอบ 249 — สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ (ASSET_MULTI_DOCUMENT_DESIGN §3) · ไม่มี FK ไป Documents โดยเจตนา ──
+        """
+        CREATE TABLE IF NOT EXISTS "FixedAssetCostSources" (
+            "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+            "CompanyId" uuid NOT NULL,
+            "FixedAssetId" uuid NOT NULL REFERENCES "FixedAssets" ("Id") ON DELETE RESTRICT,
+            "DocumentId" uuid NOT NULL,
+            "DocumentLineId" uuid NOT NULL,
+            "DocumentNumber" varchar(50) NOT NULL DEFAULT '',
+            "DocumentType" integer NOT NULL,
+            "DocumentDate" timestamp NOT NULL,
+            "Kind" integer NOT NULL,
+            "Amount" numeric(18,2) NOT NULL,
+            "NonClaimableVatIncluded" numeric(18,2) NOT NULL DEFAULT 0,
+            "SourceAccountId" uuid NOT NULL,
+            "SourceAccountCode" varchar(20) NULL,
+            "CapitalizedAt" timestamp with time zone NULL,
+            "CapitalizationJournalEntryId" uuid NULL,
+            "ReleasedAt" timestamp with time zone NULL,
+            "ReleasedReason" text NULL,
+            "ReleasedBy" text NULL,
+            "Note" text NULL,
+            "CreatedAt" timestamp with time zone NOT NULL DEFAULT now(),
+            "CreatedBy" text NULL,
+            "UpdatedAt" timestamp with time zone NULL,
+            "UpdatedBy" text NULL,
+            "IsDeleted" boolean NOT NULL DEFAULT false
+        );
+        """,
+        """CREATE INDEX IF NOT EXISTS "IX_FixedAssetCostSources_Asset" ON "FixedAssetCostSources" ("CompanyId", "FixedAssetId");""",
+        """CREATE INDEX IF NOT EXISTS "IX_FixedAssetCostSources_Line" ON "FixedAssetCostSources" ("CompanyId", "DocumentLineId") WHERE "ReleasedAt" IS NULL AND "IsDeleted" = false;""",
+        """CREATE INDEX IF NOT EXISTS "IX_FixedAssetCostSources_Document" ON "FixedAssetCostSources" ("CompanyId", "DocumentId");""",
 
         // ── แพ็ก C (สรุปประจำวันถึงพนักงาน) — ตารางล่วงหน้า (design §2.5) ──
     };

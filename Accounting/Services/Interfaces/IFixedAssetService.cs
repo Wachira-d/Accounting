@@ -43,4 +43,18 @@ public interface IFixedAssetService
     Task<AssetRegisterReport> GetAssetRegisterReportAsync(Guid companyId);
     Task<DepreciationScheduleReport> GetDepreciationScheduleAsync(Guid companyId, Guid assetId);
     Task<ImportFixedAssetsResult> ImportAsync(Guid companyId, List<ImportFixedAssetRow> rows, string createdBy);
+
+    // ═══ รอบ 249 — สินทรัพย์ 1 ชิ้น ↔ เอกสารซื้อหลายใบ (erp-review/2026-11-06/ASSET_MULTI_DOCUMENT_DESIGN.md) ═══
+    /// <summary>บรรทัดเอกสารซื้อที่ผูกเป็นต้นทุนได้ (มัดจำ/งานระหว่างก่อสร้าง/ผังสินทรัพย์ · ยังเหลือยอด) — ค้นด้วยเลขเอกสาร/ผู้ขาย/รายการ หรือเฉพาะใบ</summary>
+    Task<List<LinkableCostLine>> GetLinkableCostLinesAsync(Guid companyId, string? search, Guid? documentId);
+    /// <summary>สร้างสินทรัพย์ระหว่างจัดหาจากหลายบรรทัด (ยังไม่คิดค่าเสื่อม · ไม่ลง JE)</summary>
+    Task<AttachCostSourcesResult> CreateFromSourcesAsync(Guid companyId, CreateAssetFromSourcesRequest request, string actor);
+    /// <summary>ใบที่เป็นต้นทุนของสินทรัพย์นี้ + สถานะ + ปัญหาที่ตรวจพบ</summary>
+    Task<AssetCostSourcesResponse> GetCostSourcesAsync(Guid companyId, Guid assetId);
+    /// <summary>ผูกบรรทัดเพิ่ม — ระหว่างจัดหา: สะสมต้นทุน · โอนแล้ว: ลง JE ย้ายผัง + ปรับต้นทุนไปข้างหน้า</summary>
+    Task<AttachCostSourcesResult> AttachCostSourcesAsync(Guid companyId, Guid assetId, AttachCostSourcesRequest request, string actor);
+    /// <summary>ปลดแถวที่ยังไม่โอน (ต้องมีเหตุผล · แถวยังอยู่เป็นประวัติ)</summary>
+    Task<AssetCostSourcesResponse> ReleaseCostSourceAsync(Guid companyId, Guid assetId, Guid sourceId, ReleaseCostSourceRequest request, string actor);
+    /// <summary>โอนเป็นสินทรัพย์พร้อมใช้: JE Dr ผังสินทรัพย์ / Cr ผังต้นทาง · ค่าเสื่อมเริ่มจากวันพร้อมใช้</summary>
+    Task<FixedAssetResponse> PlaceInServiceAsync(Guid companyId, Guid assetId, PlaceInServiceRequest request, string actor);
 }
