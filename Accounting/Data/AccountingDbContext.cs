@@ -19,6 +19,7 @@ public class AccountingDbContext : DbContext
     public DbSet<StaffDailySummaryDelivery> StaffDailySummaryDeliveries => Set<StaffDailySummaryDelivery>();   // รอบ 212 C
     public DbSet<CustomerNotifyRule> CustomerNotifyRules => Set<CustomerNotifyRule>();   // รอบ 212 แพ็ก A
     public DbSet<CustomerNotifyLog> CustomerNotifyLogs => Set<CustomerNotifyLog>();   // รอบ 212 แพ็ก A
+    public DbSet<PostPaymentAutomationRun> PostPaymentAutomationRuns => Set<PostPaymentAutomationRun>();   // รอบ 241 — งานหลังรับชำระ (Helpers/DocumentAutoSendMigration)
     public DbSet<SignEventOutboxEntry> SignEventOutbox => Set<SignEventOutboxEntry>();   // รอบ 240 — outbox เหตุการณ์ลูกค้าเซ็น (ตาราง/index ตรงกับ Helpers/SignRequestMigration)
     public DbSet<DeferredNotification> DeferredNotifications => Set<DeferredNotification>();   // รอบ 217 — แจ้งเตือนตามหลัง (Helpers/DeferredNotifyPolicy)
     public DbSet<NotifyUsageCounter> NotifyUsageCounters => Set<NotifyUsageCounter>();   // รอบ 212 แพ็ก A
@@ -3712,6 +3713,25 @@ public class AccountingDbContext : DbContext
             e.HasIndex(x => new { x.Status, x.NextAttemptAt }).HasDatabaseName("IX_SignEventOutbox_Status_Next");
             e.HasIndex(x => new { x.CompanyId, x.DocumentId }).HasDatabaseName("IX_SignEventOutbox_Company_Doc");
             e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        // รอบ 241 — งานหลังรับชำระ + ลิงก์ชำระเงินต่อเอกสาร (ตรงกับ Helpers/DocumentAutoSendMigration)
+        modelBuilder.Entity<PostPaymentAutomationRun>(e =>
+        {
+            e.ToTable("PostPaymentAutomationRuns");
+            e.Property(x => x.Source).HasMaxLength(30);
+            e.Property(x => x.Status).HasMaxLength(20);
+            e.Property(x => x.StepsDone).HasMaxLength(200);
+            e.Property(x => x.Message).HasMaxLength(2000);
+            e.HasIndex(x => new { x.CompanyId, x.PaymentId }).IsUnique().HasDatabaseName("UX_PostPaymentAutomationRuns_Company_Payment");
+            e.HasIndex(x => new { x.Status, x.NextAttemptAt }).HasDatabaseName("IX_PostPaymentAutomationRuns_Status_Next");
+            e.HasIndex(x => new { x.CompanyId, x.DocumentId }).HasDatabaseName("IX_PostPaymentAutomationRuns_Company_Doc");
+            e.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<Document>(e =>
+        {
+            e.Property(x => x.PayLinkTokenHash).HasMaxLength(64);
+            e.Property(x => x.PayLinkChannelsJson).HasMaxLength(500);
+            e.HasIndex(x => x.PayLinkTokenHash).IsUnique().HasFilter("\"PayLinkTokenHash\" IS NOT NULL").HasDatabaseName("UX_Documents_PayLinkTokenHash");
         });
         modelBuilder.Entity<DeferredNotification>(e =>
         {

@@ -58,13 +58,17 @@ public static class PlatformRefundCreditNote
     /// <summary>เรื่องค้าง: คืนเงินรายการที่หักภาษีแต่แถวทะเบียน 50 ทวิ ยืนยัน/ใช้เครดิตแล้ว</summary>
     public const string WhtRefundRuleCode = "PLATFORM-WHT-REFUND";
 
-    public enum RegistryAction { None, Reduce, Expire, AttentionConfirmed }
+    /// <summary>รอบ 243a (ฝ่ายค้าน S4): <c>UndoWriteOff</c> = แถวตัดสูญพร้อม JE ⇒ กลับ JE ตัดสูญผ่าน <c>WhtCreditService.UndoWriteOffAsync</c> (ใบลดหนี้ Cr 11910 แล้ว · ไม่กลับ = 11910 ติดลบ)</summary>
+    public enum RegistryAction { None, Reduce, Expire, AttentionConfirmed, UndoWriteOff }
 
     /// <summary>ทะเบียนภาษีถูกหักของใบเดิมหลังคืนเงิน — ยัง Pending: เหลือ 0 ⇒ ตัดสิทธิ์ (หมดสิทธิ์เครดิต + เหตุผล) · เหลือ &gt; 0 ⇒ ลดยอดตามสัดส่วน ·
-    /// Received/Claimed ⇒ <b>ไม่แตะเอง</b> (ใบจริงของลูกค้าอ้างยอดเดิม) ขึ้นเรื่องค้างให้แอดมินขอ 50 ทวิ ใหม่/ยกเลิก · ไม่มีแถว/หมดอายุแล้ว ⇒ ไม่ทำ</summary>
-    public static RegistryAction RegistryActionFor(global::Accounting.Models.Enums.WhtCreditStatus? status, decimal share, decimal remainingAfter)
+    /// Received/Claimed ⇒ <b>ไม่แตะเอง</b> (ใบจริงของลูกค้าอ้างยอดเดิม) ขึ้นเรื่องค้างให้แอดมินขอ 50 ทวิ ใหม่/ยกเลิก · ไม่มีแถว/หมดอายุแล้ว ⇒ ไม่ทำ ·
+    /// ตัดสูญพร้อม JE ที่ยังมีผล (<paramref name="writtenOffWithJournal"/> = <c>WhtCreditWriteOff.NeedsReversal</c>) ⇒ <see cref="RegistryAction.UndoWriteOff"/></summary>
+    public static RegistryAction RegistryActionFor(global::Accounting.Models.Enums.WhtCreditStatus? status, decimal share, decimal remainingAfter,
+        bool writtenOffWithJournal = false)
     {
         if (share <= 0m || status is null) return RegistryAction.None;
+        if (writtenOffWithJournal) return RegistryAction.UndoWriteOff;
         return status switch
         {
             global::Accounting.Models.Enums.WhtCreditStatus.Pending => remainingAfter <= Tolerance ? RegistryAction.Expire : RegistryAction.Reduce,

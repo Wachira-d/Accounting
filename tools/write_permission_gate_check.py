@@ -140,6 +140,8 @@ WATCHED = [
     # รอบ 218 — ค่าตั้งการชำระล่วงหน้าของการจอง + ยืนยัน/ปฏิเสธสลิป (ยืนยัน = เงินเข้า + ใบรับมัดจำ) · ใส่ตอนเขียวตั้งแต่ไฟล์เกิด ·
     # ฝั่งลูกค้า (AllowAnonymous · สิทธิ์ = โทเคน) แยกไฟล์ CmsBookingPaymentPublicController.cs แบบ LodgingPublicController (ไม่อยู่ในลิสต์นี้)
     "Accounting/Controllers/CmsBookingPaymentController.cs",
+    # รอบ 241 — ค่าตั้งส่งเอกสารอัตโนมัติ (ส่งอีเมลในนามบริษัท · เปิดช่องรับเงิน) + ลิงก์ชำระต่อเอกสาร + ลองงานหลังรับชำระใหม่
+    "Accounting/Controllers/DocumentAutoSendController.cs",
 ]
 
 # ตัวบ่งชี้ว่า action นี้ผ่านด่านสิทธิ์บางอย่างแล้ว

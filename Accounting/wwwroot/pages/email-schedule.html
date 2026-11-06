@@ -148,6 +148,25 @@
             <textarea class="form-input" id="rBody" rows="6" placeholder="เรียน คุณ{ContactName}..."></textarea>
             <p class="form-help">เว้นว่าง = ใช้เทมเพลตเริ่มต้นของระบบ</p>
           </div>
+          <!-- รอบ 241: ส่งเอกสารอัตโนมัติต่อตาราง — "ตามค่าบริษัท" = ค่าที่ ตั้งค่า → ส่งเอกสารอัตโนมัติ · ช่องทาง/เหตุที่เปิดไม่ได้มาจากเซิร์ฟเวอร์ -->
+          <div class="form-group" style="padding:10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc">
+            <div style="font-weight:600;font-size:13px;margin-bottom:6px">ลิงก์ชำระเงิน &amp; หลังลูกค้าชำระ</div>
+            <div id="rPayLinkNote" style="font-size:11px;color:#94a3b8;margin-bottom:6px"></div>
+            <label class="form-label" for="rAttachPayLink">แนบลิงก์ชำระเงินในอีเมล (ใช้คำ {PayLink} ในเทมเพลตเพื่อวางลิงก์เอง)</label>
+            <select class="form-select" id="rAttachPayLink">
+              <option value="">ตามค่าบริษัท</option><option value="true">แนบ</option><option value="false">ไม่แนบ</option>
+            </select>
+            <div style="font-size:12px;margin:6px 0 2px">ช่องทางที่เปิดให้ลูกค้า (ไม่เลือก = ตามค่าบริษัท)</div>
+            <div id="rChannels" style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px"></div>
+            <label class="form-label" for="rPostPayReceipt">หลังลูกค้าชำระ: ออก + ส่งใบเสร็จ / ใบเสร็จรับเงิน-ใบกำกับภาษี ทางอีเมล</label>
+            <select class="form-select" id="rPostPayReceipt">
+              <option value="">ตามค่าบริษัท</option><option value="true">ส่ง</option><option value="false">ไม่ส่ง</option>
+            </select>
+            <label class="form-label" for="rPostPayPartial" style="margin-top:6px">ส่งทุกงวดที่รับเงิน</label>
+            <select class="form-select" id="rPostPayPartial">
+              <option value="">ตามค่าบริษัท</option><option value="true">ทุกงวด</option><option value="false">เฉพาะชำระครบ</option>
+            </select>
+          </div>
           <label style="display:flex;gap:6px;align-items:center;font-size:13px">
             <input type="checkbox" id="rActive" checked> เปิดใช้กฎ
           </label>
@@ -172,7 +191,7 @@
         // เพราะ getCompanyId เป็น null. ทุกหน้าอื่นเรียก Layout.init เหมือนกัน.
         if (!Layout.init('email-schedule')) return;
         Layout.setTitle('ส่งอีเมลอัตโนมัติ');
-        await this.loadRules();
+        await Promise.all([this.loadRules(), this._loadAutoSend()]);
       },
 
       switchTab(t) {
@@ -245,9 +264,41 @@
         document.getElementById('rSubject').value = r?.subjectTemplate ?? '';
         document.getElementById('rBody').value = r?.bodyTemplate ?? '';
         document.getElementById('rActive').checked = r?.isActive ?? true;
+        // รอบ 241: ค่าทับต่อตาราง (null = ตามบริษัท) — ฟอร์มใหม่ล้างกลับเป็น "ตามค่าบริษัท" (ห้ามค้างค่ากฎก่อน)
+        const tri = (v) => v === true ? 'true' : v === false ? 'false' : '';
+        document.getElementById('rAttachPayLink').value = tri(r?.attachPayLink);
+        document.getElementById('rPostPayReceipt').value = tri(r?.postPayEmailReceipt);
+        document.getElementById('rPostPayPartial').value = tri(r?.postPayIncludePartial);
+        let ruleChannels = [];
+        try { ruleChannels = r?.payLinkChannelsJson ? JSON.parse(r.payLinkChannelsJson) : []; } catch (_) { ruleChannels = []; }
+        this._renderChannels(ruleChannels);
         document.getElementById('ruleTitle').textContent = id ? 'แก้ไขกฎ' : 'เพิ่มกฎใหม่';
         this._toggleTriggerFields();
         Layout.openModal('ruleModal');
+      },
+
+      // รอบ 241: ช่องทางที่บริษัทเปิดจริง + เหตุที่แนบลิงก์ไม่ได้ — จากเซิร์ฟเวอร์ (หน้าไม่มีรายการช่องทางเอง)
+      _autoSend: null,
+      async _loadAutoSend() {
+        const cid = Layout.getCompanyId(); const api = Layout.api(); if (!cid || !api) return;
+        try { const r = await api.get(`/api/companies/${cid}/document-auto-send/settings`); this._autoSend = r && r.data; }
+        catch (_) { this._autoSend = null; }
+      },
+      _renderChannels(selected) {
+        const s = this._autoSend;
+        const box = document.getElementById('rChannels');
+        const note = document.getElementById('rPayLinkNote');
+        box.textContent = '';
+        note.textContent = s ? (s.payLinkAvailable ? '' : (s.payLinkUnavailableReason || '')) : 'โหลดค่าตั้งส่งเอกสารอัตโนมัติไม่ได้';
+        const chosen = new Set((selected || []).map(c => String(c).toLowerCase()));
+        ((s && s.companyChannels) || []).forEach(c => {
+          const lab = document.createElement('label');
+          lab.style.cssText = 'display:flex;gap:4px;align-items:center;font-size:12px';
+          const cb = document.createElement('input');
+          cb.type = 'checkbox'; cb.dataset.ruleChannel = c.code; cb.checked = chosen.has(String(c.code).toLowerCase());
+          lab.appendChild(cb); lab.appendChild(document.createTextNode(c.label));
+          box.appendChild(lab);
+        });
       },
 
       _toggleTriggerFields() {
@@ -269,6 +320,11 @@
           bodyTemplate: document.getElementById('rBody').value || null,
           bccEmails: document.getElementById('rBcc').value || null,
           isActive: document.getElementById('rActive').checked,
+          // รอบ 241: "" = ตามค่าบริษัท (null) · ช่องทางว่าง = ตามค่าบริษัท
+          attachPayLink: ({ 'true': true, 'false': false })[document.getElementById('rAttachPayLink').value] ?? null,
+          payLinkChannels: Array.from(document.querySelectorAll('#rChannels input[data-rule-channel]')).filter(cb => cb.checked).map(cb => cb.dataset.ruleChannel),
+          postPayEmailReceipt: ({ 'true': true, 'false': false })[document.getElementById('rPostPayReceipt').value] ?? null,
+          postPayIncludePartial: ({ 'true': true, 'false': false })[document.getElementById('rPostPayPartial').value] ?? null,
         };
         try {
           const r = await fetch(`/api/companies/${cid}/email-schedule/rules`, {

@@ -69,6 +69,17 @@ public class EmailScheduleRule : TenantEntity
 
     /// <summary>ผู้ใช้ที่สร้างกฎ (audit).</summary>
     public string? CreatedByName { get; set; }
+
+    // ── รอบ 241: ส่งเอกสารอัตโนมัติ — ค่าทับต่อตาราง (null = ตามค่าบริษัท CompanySettings.PayLink*/PostPay*) ──
+    /// <summary>แนบลิงก์ชำระเงินในอีเมลของตารางนี้ (เฉพาะใบแจ้งหนี้/ใบกำกับ/ใบเพิ่มหนี้ฝั่งขายที่มียอดค้าง · บริษัทต้องตั้งรับชำระออนไลน์แล้ว) ·
+    /// ผู้อ่าน: <c>EmailScheduleService.PayLinkFor</c></summary>
+    public bool? AttachPayLink { get; set; }
+    /// <summary>ช่องทางที่เปิดให้ลูกค้า (JSON ชื่อ enum) — ตัดกับที่บริษัทเปิดจริง (<c>DocumentPayLinkPolicy.Allowed</c>) · null = ค่าบริษัท</summary>
+    public string? PayLinkChannelsJson { get; set; }
+    /// <summary>หลังลูกค้าชำระ: ส่งใบเสร็จ/ใบเสร็จ-ใบกำกับภาษีถึงลูกค้า · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c></summary>
+    public bool? PostPayEmailReceipt { get; set; }
+    /// <summary>ส่งทุกงวดที่รับ (ไม่ใช่เฉพาะชำระครบ)</summary>
+    public bool? PostPayIncludePartial { get; set; }
 }
 
 /// <summary>

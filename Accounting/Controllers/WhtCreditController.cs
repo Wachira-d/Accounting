@@ -1,3 +1,4 @@
+using Accounting.Filters;
 using Accounting.Helpers;
 using Accounting.Models.Constants;
 using Accounting.Models.DTOs;
@@ -38,7 +39,12 @@ public class WhtCreditController : ControllerBase
         Guid? DocumentId, Guid? AttachmentId, string? Notes);
 
     public record MarkReceivedBody(string CertificateNumber, DateTime? CertificateDate, Guid? AttachmentId);
-    public record ExpireBody(string? Reason);
+    /// <summary>รอบ 243a: ตัดสูญ = ลงบัญชี (Dr 58010 / Cr 11910) — เหตุผล ≥ 10 ตัวอักษร · วันที่ (ว่าง = วันนี้) ต้องอยู่ในงวดที่เปิด</summary>
+    public record ExpireBody(string? Reason, DateTime? WriteOffDate = null);
+
+    /// <summary>ผู้ลงบัญชี — ชื่อ/อีเมลจาก JWT (CreatedBy ของ JE + audit)</summary>
+    private WhtCreditService.WriteOffActor JournalActor()
+        => new(JwtHelper.GetUserIdFromClaims(User), User?.Identity?.Name ?? "user");
 
     [HttpGet]
     public async Task<ActionResult<ApiResponse<List<WhtCreditService.WhtCreditRow>>>> List(
@@ -80,17 +86,39 @@ public class WhtCreditController : ControllerBase
     public async Task<ActionResult<ApiResponse<bool>>> MarkReceived(
         Guid companyId, Guid id, [FromBody] MarkReceivedBody b)
     {
+        // รอบ 243a: แถวที่ตัดสูญพร้อม JE ⇒ service กลับรายการ JE ให้ — ส่งผู้ลงบัญชีเฉพาะผู้ถือ Journal.Manage (ไม่ถือ = service ปฏิเสธ 403 พร้อมเหตุ)
+        var uid = JwtHelper.GetUserIdFromClaims(User);
+        var journalActor = await _permissions.HasPermissionAsync(companyId, uid, PermissionKeys.JournalManage) ? JournalActor() : null;
         await _service.MarkReceivedAsync(companyId, id, b.CertificateNumber, b.CertificateDate, b.AttachmentId,
-            await ActorAsync(companyId));
+            await ActorAsync(companyId), journalActor);
         return Ok(new ApiResponse<bool>(true, true, "บันทึกหนังสือรับรองแล้ว — ใช้เป็นเครดิตได้"));
     }
 
+    /// <summary>ตัดสูญ (รอบ 243a · DESIGN G-9) — ลง JE Dr 58010 / Cr 11910 ทั้งยอดของแถว · สิทธิ์ลงใบสำคัญ (Journal.Manage) · กดซ้ำ = ผลเดิม</summary>
     [HttpPost("{id:guid}/expire")]
-    public async Task<ActionResult<ApiResponse<bool>>> Expire(Guid companyId, Guid id, [FromBody] ExpireBody b)
+    [RequirePermission(PermissionKeys.JournalManage)]
+    public async Task<ActionResult<ApiResponse<WhtCreditService.WriteOffResult>>> Expire(Guid companyId, Guid id, [FromBody] ExpireBody b)
     {
-        await _service.ExpireAsync(companyId, id, b.Reason);
-        return Ok(new ApiResponse<bool>(true, true, "ตัดรายการออกจากเครดิตแล้ว"));
+        var r = await _service.ExpireAsync(companyId, id, b.Reason, b.WriteOffDate, JournalActor());
+        return Ok(new ApiResponse<WhtCreditService.WriteOffResult>(true, r,
+            r.AlreadyWrittenOff ? $"รายการนี้ตัดสูญไว้แล้ว ({r.EntryNumber})" : $"ตัดสูญแล้ว — ลงบัญชี {r.EntryNumber} ยอด {r.Amount:N2}"));
     }
+
+    /// <summary>ข้อมูลหน้ายืนยันตัดสูญ: ยอด · ผัง Dr/Cr · ผลทางภาษี · เหตุที่ทำไม่ได้ (อ่านอย่างเดียว)</summary>
+    [HttpGet("{id:guid}/write-off-preview")]
+    public async Task<ActionResult<ApiResponse<WhtCreditService.WriteOffPreview>>> WriteOffPreview(
+        Guid companyId, Guid id, [FromQuery] DateTime? date = null)
+        => Ok(new ApiResponse<WhtCreditService.WriteOffPreview>(true, await _service.WriteOffPreviewAsync(companyId, id, date)));
+
+    /// <summary>คำเตือนผัง/JE ที่กระทบ ภ.ง.ด.50 (อ่านอย่างเดียว · รอบ 243a N1/N2): ผัง 58000–58099 นอกกลุ่ม 580 · ใบปิดปีรุ่นเก่าที่ตัดสูญลงผังหักได้</summary>
+    [HttpGet("account-warnings")]
+    public async Task<ActionResult<ApiResponse<List<WhtCreditService.AccountWarning>>>> AccountWarnings(Guid companyId)
+        => Ok(new ApiResponse<List<WhtCreditService.AccountWarning>>(true, await _service.AccountWarningsAsync(companyId)));
+
+    /// <summary>สิ้นรอบ: รายการที่ยังรอใบในรอบบัญชีที่สิ้นสุดแล้ว — ให้ผู้ทำบัญชีเลือกตามต่อหรือตัดสูญ (ไม่ตัดอัตโนมัติ)</summary>
+    [HttpGet("write-off-candidates")]
+    public async Task<ActionResult<ApiResponse<List<WhtCreditService.WriteOffCandidate>>>> WriteOffCandidates(Guid companyId)
+        => Ok(new ApiResponse<List<WhtCreditService.WriteOffCandidate>>(true, await _service.WriteOffCandidatesAsync(companyId)));
 
     [HttpDelete("{id:guid}")]
     public async Task<ActionResult<ApiResponse<bool>>> Delete(Guid companyId, Guid id)
@@ -99,19 +127,21 @@ public class WhtCreditController : ControllerBase
         return Ok(new ApiResponse<bool>(true, true, "ลบแล้ว"));
     }
 
+    /// <summary>รอบ 243a (ฝ่ายค้าน S1): ช่องตัดสูญต้องระบุรายการ (<c>WriteOffCreditIds</c>) — แต่ละรายการเดินเส้นตัดสูญรายแถว</summary>
     public record SettleBody(int TaxYear, decimal UsedAgainstCit, decimal RefundRequested,
-        decimal WriteOff, string? Reason);
+        decimal WriteOff, string? Reason, List<Guid>? WriteOffCreditIds = null);
 
     /// <summary>ปิดปีภาษี — ลง JE ล้างยอดเครดิตออกจากบัญชี 11910 ตามที่ใช้จริง
     /// (ใช้หักภาษี / ขอคืน / ตัดสูญ) · ยกไปปีหน้าไม่ต้องเรียก (คงยอดไว้เฉย ๆ)</summary>
     [HttpPost("settle-year-end")]
+    [RequirePermission(PermissionKeys.JournalManage)]   // รอบ 243a (ฝ่ายค้าน S2): ลง JE ล้าง 11910 = สิทธิ์ลงใบสำคัญ
     public async Task<ActionResult<ApiResponse<string>>> SettleYearEnd(
         Guid companyId, [FromBody] SettleBody b)
     {
-        var actor = User?.Identity?.Name ?? "system";
+        var who = JournalActor();
         var je = await _service.SettleYearEndAsync(companyId,
             new WhtCreditService.SettleRequest(b.TaxYear, b.UsedAgainstCit, b.RefundRequested,
-                b.WriteOff, b.Reason), actor);
+                b.WriteOff, b.Reason, b.WriteOffCreditIds), who.Name, who.UserId);
         return Ok(new ApiResponse<string>(true, je, $"ลง JE ปิดปีแล้ว ({je})"));
     }
 

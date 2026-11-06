@@ -162,6 +162,9 @@ public static class SecretReprotectPass
             Col<SitePaymentGateway>(r => r.ApiKeyEncrypted),
             Col<SitePaymentGateway>(r => r.SecretKeyEncrypted),
             Col<SitePaymentGateway>(r => r.WebhookSecret));
+        // รอบ 241 (241-10): token ลิงก์ชำระเงินของเอกสารฉบับเข้ารหัส — กรองเฉพาะใบที่มีลิงก์ (ไม่สแกนเอกสารทั้งตาราง)
+        await Pass(Scope(db.Documents.IgnoreQueryFilters().Where(d => d.PayLinkTokenProtected != null)), "Documents", r => r.CompanyId,
+            Col<Document>(r => r.PayLinkTokenProtected));
 
         return new Result(scanned, per.Values.Sum(), per, skipped, pendingWrap, wrappedAmbiguous);
     }

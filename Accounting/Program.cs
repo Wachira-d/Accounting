@@ -856,6 +856,9 @@ builder.Services.AddScoped<Accounting.Services.Implementations.IDocumentLineDeli
     Accounting.Services.Implementations.DocumentLineDeliveryService>();
 builder.Services.AddScoped<IPayslipLineDeliveryService, PayslipLineDeliveryService>();
 builder.Services.AddScoped<IEmailScheduleService, EmailScheduleService>();
+// รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินต่อเอกสาร (ไม่พึ่ง IDocumentService — EmailScheduleService ใช้ได้) + งานหลังรับชำระ (ออก/ส่งใบเสร็จ)
+builder.Services.AddScoped<IDocumentPayLinkService, DocumentPayLinkService>();
+builder.Services.AddScoped<IPostPaymentAutomationService, PostPaymentAutomationService>();
 builder.Services.AddHostedService<Accounting.Services.Background.EmailScheduleWorker>();
 builder.Services.AddHostedService<Accounting.Services.Implementations.ScheduledReportDispatcher>();
 

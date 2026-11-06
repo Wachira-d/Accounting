@@ -3,6 +3,7 @@ using Accounting.Models.Enums;
 // รอบ 200 ทีม V1G: alias ระดับ global — ใต้ namespace นี้ `Accounting.` ผูกไป Accounting.Models.DTOs.Accounting ก่อน (namespace_shadow_check)
 using ReissueRequestView = Accounting.Helpers.ReissueRequestView;
 using EtaxCancellationPath = Accounting.Helpers.EtaxCancellationPath;
+using PurgeNodeAction = Accounting.Helpers.PurgeNodeAction;   // รอบ 242 — แผนการลบถาวร
 using Accounting.Models.DTOs.Tax;   // รอบ 204 — WithholdingTaxCertType (ผู้จ่ายออกภาษีแทน) · ชื่อเดียวที่ใช้จาก namespace นี้ (ตรวจแล้วไม่ชนชื่อใน DTOs.Document)
 
 namespace Accounting.Models.DTOs.Document;
@@ -1830,3 +1831,12 @@ public record IssuedReceiptResult(
 
 public record WriteOffBadDebtRequest(string? Reason);
 public record BatchConvertRequest(List<Guid> DocumentIds);
+
+/// <summary>รอบ 242 — ใบหนึ่งในแผนการลบถาวร (เซิร์ฟเวอร์ตัดสินแล้ว · หน้าเว็บแสดงอย่างเดียว) · enum ออกเป็นชื่อ</summary>
+public record PurgePreviewNode(Guid Id, string? DocumentNumber, DocumentType DocumentType, string TypeName,
+    DocumentStatus Status, int Depth, PurgeNodeAction Action, bool InRetention, string Reason);
+
+/// <summary>รอบ 242 — แผนการลบถาวร: <paramref name="Allowed"/> ลบได้ตามที่ขอ · <paramref name="NeedsReason"/> ต้อง force + เหตุผล ·
+/// <paramref name="HasRelated"/> มีเอกสารที่เกี่ยวข้อง (ให้หน้าเว็บเสนอสองทาง: ลบเฉพาะใบนี้ / ลบพร้อมเอกสารที่เกี่ยวข้อง)</summary>
+public record PurgePreviewResponse(bool Allowed, bool Cascade, bool NeedsReason, string Message, string? RuleCode,
+    bool HasRelated, List<PurgePreviewNode> Nodes, string PlanToken);

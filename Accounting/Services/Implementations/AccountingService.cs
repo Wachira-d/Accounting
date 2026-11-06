@@ -888,6 +888,7 @@ public partial class AccountingService : IAccountingService
 
         // ฝ่ายค้านรอบส่งออก รอบ 5 P1: ใบปิดบัญชีสิ้นปียกเลิกไม่ได้ (ข้อความ + ทางไปต่อจากด่านตัวเดียว · ก่อนตรวจงวด — บอกเหตุที่แท้จริง)
         await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { entry.Id }, "ยกเลิก");
+        await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, new[] { entry.Id }, "ยกเลิก");   // รอบ 243a S3 — ทางเดียวคือ "ได้รับใบแล้ว" ที่ wht-credit
 
         // Mirror the user-direct guards on Reverse — otherwise users could
         // bypass them via Void→Reverse cascade (Void hands systemTriggered=true
@@ -945,6 +946,7 @@ public partial class AccountingService : IAccountingService
 
         // รอบ 5 P1: ลบใบปิดบัญชีสิ้นปี = กำไรไม่ถูกโอนแต่ปียัง "ปิดแล้ว" (YearEndClosing ชี้ใบที่ถูกลบ) — ด่านตัวเดียว
         await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { entry.Id }, "ลบ");
+        await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, new[] { entry.Id }, "ลบ");   // รอบ 243a S3 — ทางเดียวคือ "ได้รับใบแล้ว" ที่ wht-credit
 
         await ValidateFiscalPeriodOpenAsync(entry.FiscalPeriodId);
         // ยึดวันที่ด้วย (เหมือนยกเลิก) — ใบที่ FiscalPeriodId ว่าง (ลงก่อนตั้งงวด / เงินสดย่อยรุ่นเก่า) เดิมลบได้แม้งวดของวันนั้นปิดแล้ว
@@ -1030,6 +1032,9 @@ public partial class AccountingService : IAccountingService
 
         // รอบ 5 P1: ใบปิดบัญชีสิ้นปีกลับรายการไม่ได้ทุกทาง (รวม systemTriggered — ยกเลิก/ยกเลิกหลายใบ/แก้ไขด้วยการกลับรายการ) · ด่านตัวเดียว
         await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { original.Id }, "กลับรายการ");
+        // รอบ 243a S3: JE ตัดสูญภาษีถูกหัก — ผู้ใช้กลับจากสมุดรายวันไม่ได้ · เส้นระบบ (ได้รับใบแล้ว/ยกเลิกต้นทาง) กลับแบบ systemTriggered พร้อมเปลี่ยนสถานะทะเบียน
+        if (!systemTriggered)
+            await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, new[] { original.Id }, "กลับรายการ");
 
         if (original.Status != JournalEntryStatus.Posted)
             throw new InvalidOperationException("สามารถกลับรายการได้เฉพาะใบสำคัญที่มีสถานะ Posted เท่านั้น");
@@ -1252,6 +1257,7 @@ public partial class AccountingService : IAccountingService
             ?? throw new KeyNotFoundException("ไม่พบใบสำคัญ");
         await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, original);
         await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { original.Id }, "แก้ไขด้วยการกลับรายการ");
+        await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, new[] { original.Id }, "แก้ไขด้วยการกลับรายการ");   // รอบ 243a S3 — ทางเดียวคือ "ได้รับใบแล้ว" ที่ wht-credit
 
         if (original.Status != JournalEntryStatus.Posted)
             throw new InvalidOperationException("สามารถแก้ไขด้วยการกลับรายการได้เฉพาะใบที่ Posted แล้วเท่านั้น");
@@ -1339,6 +1345,7 @@ public partial class AccountingService : IAccountingService
                 (docSourced.Count > 5 ? $" และอีก {docSourced.Count - 5} รายการ" : ""));
         // รอบ 5 P1: ตรวจทั้งชุดก่อนเริ่ม — ใบปิดบัญชีในชุด ⇒ ไม่ยกเลิกใบไหนเลย (เดิมจะกลับใบก่อนหน้าไปแล้วค่อยล้มที่ใบปิด)
         await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, allRequested.Select(j => j.Id).ToList(), "ยกเลิก");
+        await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, allRequested.Select(j => j.Id).ToList(), "ยกเลิก");   // รอบ 243a S3 — ทางเดียวคือ "ได้รับใบแล้ว" ที่ wht-credit
 
         var entries = await _db.JournalEntries
             .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id) && j.Status != JournalEntryStatus.Voided)
@@ -1369,6 +1376,7 @@ public partial class AccountingService : IAccountingService
         // Mirrors DeleteJournalEntryAsync: any status, but not document-sourced.
         // รอบ 5 P1: ใบปิดบัญชีสิ้นปีลบไม่ได้ (เดิมทางหลายใบไม่ตรวจงวดเลย ⇒ ลบใบปิดปีทิ้งได้) — ตรวจทั้งชุดก่อนเริ่ม
         await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, entryIds, "ลบ");
+        await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, entryIds, "ลบ");   // รอบ 243a S3 — ทางเดียวคือ "ได้รับใบแล้ว" ที่ wht-credit
         var entries = await _db.JournalEntries
             .Include(j => j.Lines)
             .Where(j => j.CompanyId == companyId && entryIds.Contains(j.Id)

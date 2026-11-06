@@ -65,14 +65,25 @@ public class ExceptionMiddleware
             when dbe.InnerException is Npgsql.PostgresException { SqlState: "23505" } => 409,
         // ทีมตรวจงานค้าง 2026-10-08 (D6): ยังถูกอ้างอิงอยู่ (เช่น ลบผู้ติดต่อที่มีเอกสาร) และคำเตือนก่อนอนุมัติจากทางที่ไม่มีหน้าต่างรับทราบ
         // (integration/สร้างอัตโนมัติ) — เดิมตกไป 500 "ข้อผิดพลาดภายในระบบ" ทั้งที่ผู้ใช้แก้เองได้ · DbUpdateConcurrencyException คง 500 (บั๊กจริง)
-        Microsoft.EntityFrameworkCore.DbUpdateException dbe
-            when dbe.InnerException is Npgsql.PostgresException { SqlState: "23503" } => 409,
+        // รอบ 242 (เจ้าของ 2026-11-05 · ลบถาวรได้ 500 "23001 … violates RESTRICT setting of foreign key constraint"): ชน FK ทั้ง 23503 และ 23001
+        // (RESTRICT) — ทั้งที่ห่อใน DbUpdateException (SaveChanges) และ PostgresException ดิบ (ExecuteSqlRaw) ⇒ 409 ข้อความไทย (ตัวแยกเดียว FkViolationOf)
+        _ when FkViolationOf(exception) != null => 409,
         // รอบ 235 (ผู้ใช้รายงาน REF:42DAB82F): ข้อความยาวเกินคอลัมน์ — ผู้ใช้แก้เองได้ (ย่อข้อความ) ⇒ 400 ไม่ใช่ 500
         Microsoft.EntityFrameworkCore.DbUpdateException dbe
             when dbe.InnerException is Npgsql.PostgresException { SqlState: "22001" } => 400,
         Accounting.Services.Implementations.DocumentApprovalWarningsException => 409,
         _ => 500
     };
+
+    /// <summary>รอบ 242 — การชน foreign key ของ PostgreSQL (23503 อ้างถึง/ยังถูกอ้างอิง · 23001 RESTRICT) ไม่ว่าจะห่อใน
+    /// <c>DbUpdateException</c> (SaveChanges) หรือเป็น <c>PostgresException</c> ดิบ (ExecuteSqlRaw) · ไม่ใช่ = null · ตัวแยกเดียวของ
+    /// <see cref="StatusFor"/> และข้อความถึงผู้ใช้</summary>
+    public static Npgsql.PostgresException? FkViolationOf(Exception exception)
+    {
+        var pg = exception as Npgsql.PostgresException
+            ?? (exception as Microsoft.EntityFrameworkCore.DbUpdateException)?.InnerException as Npgsql.PostgresException;
+        return pg is { SqlState: "23503" or "23001" } ? pg : null;
+    }
 
     private static async Task SaveErrorLogAsync(HttpContext context, Exception exception, string refCode)
     {
@@ -161,8 +172,8 @@ public class ExceptionMiddleware
                     $"ข้อมูลนี้ซ้ำกับรายการที่มีอยู่แล้ว — รหัส ชื่อ หรือ URL ที่กรอกถูกใช้ไปแล้ว กรุณาเปลี่ยนแล้วลองใหม่ (รหัสอ้างอิง {refCode})"),
             // 2026-10-14 (ID#17): แยกทิศ — INSERT/UPDATE ที่อ้างถึงสิ่งที่ไม่มี (id ค้าง/ผิดตาราง) ≠ ลบสิ่งที่ยังถูกอ้างอิง ·
             // เดิมตอบ "ยังถูกอ้างอิง… ปิดการใช้งานแทน" ทุกกรณี ⇒ พาผู้ใช้ไปผิดทาง (ตัวตัดสิน Helpers/ForeignKeyViolation)
-            Microsoft.EntityFrameworkCore.DbUpdateException dbe
-                when dbe.InnerException is Npgsql.PostgresException { SqlState: "23503" } fk
+            // รอบ 242: 23001 (RESTRICT) ใช้ข้อความเดียวกับ 23503 · PostgresException ดิบจาก ExecuteSqlRaw ก็เข้าทางนี้ (เดิมตกไป 500)
+            _ when FkViolationOf(exception) is { } fk
                 => (HttpStatusCode.Conflict,
                     Accounting.Helpers.ForeignKeyViolation.Message(
                         Accounting.Helpers.ForeignKeyViolation.Classify(fk.MessageText, context.Request.Method),

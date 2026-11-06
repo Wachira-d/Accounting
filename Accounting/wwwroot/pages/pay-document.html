@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ชำระเงินตามเอกสาร</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans Thai', sans-serif; background: #f1f5f9; color: #0f172a;
+           min-height: 100vh; display: flex; justify-content: center; padding: 20px 12px; }
+    .card { background: #fff; border-radius: 14px; box-shadow: 0 4px 24px rgba(15,23,42,.08);
+            max-width: 520px; width: 100%; padding: 24px; height: fit-content; }
+    h1 { font-size: 19px; margin-bottom: 4px; }
+    .sub { color: #64748b; font-size: 13px; margin-bottom: 14px; }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 14px; }
+    td { padding: 7px 4px; border-bottom: 1px solid #f1f5f9; }
+    .num { text-align: right; white-space: nowrap; }
+    .total td { font-weight: 700; font-size: 16px; border-bottom: 0; }
+    .note { background: #fef3c7; color: #92400e; border-radius: 8px; padding: 10px 12px; font-size: 13px; margin: 8px 0; }
+    .test { background: #fee2e2; color: #991b1b; border-radius: 8px; padding: 8px 12px; font-size: 12px; margin-bottom: 10px; }
+    .btn { display: block; width: 100%; background: #4f46e5; color: #fff; border: 0; border-radius: 10px;
+           padding: 13px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; margin-top: 8px; }
+    .transfer { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-top: 14px; font-size: 14px; line-height: 1.7; }
+    .err { text-align: center; color: #b91c1c; padding: 40px 10px; }
+    .done { text-align: center; padding: 26px 10px; }
+  </style>
+</head>
+<body>
+  <div class="card" id="card"><div class="err">กำลังโหลด...</div></div>
+  <script src="/js/pay-widget.js"></script>
+  <script>
+    // รอบ 241 — หน้าชำระเงินตามเอกสาร (ลิงก์จากอีเมลตามตาราง) · ยอด/ช่องทาง/เหตุที่จ่ายไม่ได้มาจากเซิร์ฟเวอร์ทั้งหมด (DocumentPayLinkPolicy)
+    // หน้านี้ไม่ส่งยอดเงินและไม่ส่งรหัสเอกสาร — ตัวตนอยู่ใน token ของ URL (PayWidget โหมดลูกค้าปลายทาง)
+    const qs = new URLSearchParams(location.search);
+    const companyId = qs.get('c');
+    const token = qs.get('t');
+    const card = document.getElementById('card');
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const money = (n) => Number(n || 0).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const dateTh = (d) => d ? new Date(d).toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' }) : '-';
+    const base = () => `/api/companies/${encodeURIComponent(companyId)}/public-pay/documents/${encodeURIComponent(token)}`;
+    let view = null;
+
+    async function load(flash) {
+      if (!companyId || !token) { card.innerHTML = '<div class="err">ลิงก์ไม่ถูกต้อง</div>'; return; }
+      let r;
+      try { r = await fetch(base()); }
+      catch { card.innerHTML = '<div class="err">เชื่อมต่อไม่ได้ — ลองใหม่อีกครั้ง</div>'; return; }
+      const j = await r.json().catch(() => null);
+      if (!r.ok || !j || !j.data) { card.innerHTML = `<div class="err">${esc((j && j.message) || 'ลิงก์ไม่ถูกต้อง หรือหมดอายุแล้ว — กรุณาติดต่อผู้ขาย')}</div>`; return; }
+      view = j.data;
+      render(flash);
+    }
+
+    function render(flash) {
+      const v = view;
+      // ลิงก์ใช้ไม่ได้ — เซิร์ฟเวอร์ไม่ส่งข้อมูลของใบมาเลย (เลข/ยอด/ลูกค้า) · แสดงข้อความอย่างเดียว
+      if (!v.documentNumber) { card.innerHTML = `<div class="err">${esc(v.blockedNote || 'ลิงก์ใช้ไม่ได้')}</div>`; return; }
+      const wht = Number(v.wht || 0) > 0.005;
+      const rows = [`<tr><td>ยอดค้างชำระตามเอกสาร</td><td class="num">${money(v.gross)} บาท</td></tr>`];
+      if (wht) rows.push(`<tr><td>หัก ภาษีหัก ณ ที่จ่าย (ท่านเป็นผู้หักและออกหนังสือรับรอง 50 ทวิ)</td><td class="num">− ${money(v.wht)} บาท</td></tr>`);
+      rows.push(`<tr class="total"><td>ยอดที่ต้องชำระ</td><td class="num">${money(v.net)} บาท</td></tr>`);
+      const methods = (v.onlineMethods || []);
+      const t = v.transfer;
+      card.innerHTML = `
+        ${v.isTestMode ? '<div class="test">โหมดทดสอบ — ไม่มีการเก็บเงินจริง</div>' : ''}
+        ${flash ? `<div class="note" style="background:#dcfce7;color:#166534">${esc(flash)}</div>` : ''}
+        <h1>${esc(v.documentTitle)} ${esc(v.documentNumber)}</h1>
+        <div class="sub">${esc(v.companyName)}${v.customerName ? ' · ถึง ' + esc(v.customerName) : ''}<br>
+          ลงวันที่ ${esc(dateTh(v.documentDate))}${v.dueDate ? ' · ครบกำหนด ' + esc(dateTh(v.dueDate)) : ''}</div>
+        <table>${rows.join('')}</table>
+        ${v.blockedNote ? `<div class="note">${esc(v.blockedNote)}</div>` : ''}
+        ${v.canPayOnline ? methods.map((m, i) => `<button class="btn" data-pay-index="${i}">ชำระด้วย ${esc(m.label)}</button>`).join('') : ''}
+        ${t ? `<div class="transfer"><b>หรือโอนเข้าบัญชี</b><br>
+          ${t.bankName ? esc(t.bankName) + '<br>' : ''}${t.accountNumber ? 'เลขที่บัญชี ' + esc(t.accountNumber) + '<br>' : ''}
+          ${t.accountName ? 'ชื่อบัญชี ' + esc(t.accountName) + '<br>' : ''}${t.promptPayId ? 'พร้อมเพย์ ' + esc(t.promptPayId) + '<br>' : ''}
+          <span style="font-size:12px;color:#64748b">โอนแล้วกรุณาส่งหลักฐานการโอนถึงผู้ขาย (ตอบกลับอีเมลที่ได้รับ) — ระบบยืนยันยอดโอนให้อัตโนมัติไม่ได้</span></div>` : ''}`;
+      card.querySelectorAll('[data-pay-index]').forEach(b => b.addEventListener('click', () => pay(methods[Number(b.dataset.payIndex)].code)));
+    }
+
+    function pay(method) {
+      PayWidget.open({
+        companyId,
+        publicBase: base(),
+        method,
+        card: view && view.card ? view.card : undefined,
+        onPaid: () => { setTimeout(() => load('ชำระเงินสำเร็จ — ขอบคุณ'), 800); },
+      });
+    }
+
+    load();
+  </script>
+</body>
+</html>

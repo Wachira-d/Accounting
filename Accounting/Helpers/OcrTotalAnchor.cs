@@ -296,7 +296,8 @@ public static class OcrTotalAnchor
             if (table.Found && Math.Abs(table.Gross - x) <= Tol)
             {
                 ev.Add(new OcrTotalEvidence(OcrTotalEvidenceKind.VatSummaryTotal, table.Evidence, table.TotalLineNo));
-                closures[k] = (table.Net, table.Vat);
+                // รอบ 242 ฝ่ายค้าน S2: ฐานรวมที่ระบบบวกจากแถวเอง (ตารางอัตรานำหน้าไม่มีแถว "รวม") ไม่ใช่ฐานที่พิมพ์ (ฝ่ายค้าน C4) · VAT ยังพิมพ์จริง
+                closures[k] = (table.NetPrinted ? table.Net : null, table.Vat);
             }
             foreach (var v in vats)
             {
@@ -460,6 +461,18 @@ public static class OcrTotalAnchor
             && OcrPaperAmounts.IsPrintedAsVatInclusive(rawText, cs))
             return new OcrTotalWritePlan(null, cb, OcrFieldSource.PaperLabel, ProvenConfidence, cv, null, Note(r),
                 $"{trace} · ยอดก่อน VAT ที่อ่านได้ {cs:N2} คือยอดที่กระดาษพิมพ์ว่ารวม VAT แล้ว (ไม่ใช่ฐาน) ⇒ ใช้ฐานที่พิมพ์ {cb:N2} + VAT {cv:N2} = {ct:N2}");
+        // รอบ 242 (ใบเสร็จซูเปอร์มาร์เก็ต 2026-11-06 · หน้ารีวิว "ยอดก่อน VAT 1,961.25"): engine ใส่ยอดรวมทั้งสิ้นที่ยืนยันแล้วในช่องยอดก่อน VAT ด้วย (เลขเดียวกันสองช่อง ·
+        // VAT > 0 — เป็นไปไม่ได้ทางเลขคณิต) · ตัวตัดสินเดียว OcrHeaderAmounts.SubTotalIsGrandTotal · ฝ่ายค้าน S2: ฐานที่พิมพ์ปิดยอด ⇒ PaperLabel 0.95 ·
+        // ไม่มีฐานพิมพ์ (ตารางอัตราที่ไม่มีแถว "รวม" — ระบบบวกเอง) ⇒ ยอดรวม − VAT ที่พิมพ์ = Rule 0.80 (เหลือง · ห้ามประทับว่าอ่านจากกระดาษ) · ข้อความแยกจากกรณีป้ายรวม VAT
+        if (r.Verdict == OcrTotalVerdict.Confirmed && r.Total is decimal gt && currentSub is decimal gs
+            && r.PrintedVat is decimal gv && gv > 0m && OcrHeaderAmounts.SubTotalIsGrandTotal(gs, currentVat, gt))
+        {
+            if (r.PrintedBase is decimal gb && Math.Abs(gb + gv - gt) <= Tol)
+                return new OcrTotalWritePlan(null, gb, OcrFieldSource.PaperLabel, ProvenConfidence, gv, null, Note(r),
+                    $"{trace} · ยอดก่อน VAT ที่อ่านได้ {gs:N2} เท่ากับยอดรวมทั้งสิ้น (ช่องเดียวกันซ้ำ ขณะมี VAT) ⇒ ใช้ฐานที่พิมพ์ {gb:N2} + VAT {gv:N2} = {gt:N2}");
+            return new OcrTotalWritePlan(null, gt - gv, OcrFieldSource.Rule, DerivedConfidence, gv, null, Note(r),
+                $"{trace} · ยอดก่อน VAT ที่อ่านได้ {gs:N2} เท่ากับยอดรวมทั้งสิ้น (ช่องเดียวกันซ้ำ ขณะมี VAT) ⇒ คำนวณ: ยอดรวม {gt:N2} − VAT ที่พิมพ์ {gv:N2} = {gt - gv:N2} (ไม่มีฐานพิมพ์บนกระดาษ)");
+        }
         if (r.Verdict != OcrTotalVerdict.Proven || r.Total is not decimal t)
             return new OcrTotalWritePlan(null, null, OcrFieldSource.Unknown, 0d, null, null, Note(r), trace);
 

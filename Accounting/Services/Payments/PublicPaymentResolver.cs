@@ -17,7 +17,11 @@ public sealed record PublicPayTarget(
     string? CustomerPhone,
     string Reference,
     // รอบ 205 W2 (R-06/R-08): เหตุที่จ่ายออนไลน์ไม่ได้ตอนนี้ (null = จ่ายได้/ไม่มียอด) — ข้อความถึงลูกค้าตรง ๆ ไม่ silent
-    string? BlockedNote = null)
+    string? BlockedNote = null,
+    // รอบ 241: ช่องทางที่เป้าหมายนี้เปิด (ชื่อ enum) — null = ทุกวิธีของบริษัท (ทางเข้าเดิม) · ลิงก์ชำระของเอกสารกำหนดต่อใบ (DocumentPayLinkPolicy.Allowed)
+    IReadOnlyList<string>? AllowedMethods = null,
+    // รอบ 241: ผู้ติดต่อของเอกสาร (ลิงก์ชำระของเอกสาร) — ทางเข้าเดิมไม่มี
+    Guid? ContactId = null)
 {
     /// <summary>จ่ายเพิ่มได้ตอนนี้ไหม — <c>false</c> เมื่อจ่ายครบ/ยกเลิก/เช็คเอาต์แล้ว
     ///

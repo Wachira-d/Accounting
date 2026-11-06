@@ -1137,24 +1137,49 @@ public class DocumentController : ControllerBase
     [HttpDelete("{documentId:guid}/purge")]
     [Accounting.Filters.RejectApiKey("ลบเอกสารถาวร")]
     public async Task<ActionResult<ApiResponse<string>>> PurgeDocument(Guid companyId, Guid documentId,
-        [FromQuery] bool force = false, [FromQuery] string? reason = null)
+        [FromQuery] bool force = false, [FromQuery] string? reason = null, [FromQuery] bool cascade = false,
+        [FromQuery] string? planToken = null)
     {
         var userId = JwtHelper.GetUserIdFromClaims(User);
-        var isSystemAdmin = User.IsInRole("SystemAdmin");
-        if (!isSystemAdmin)
-        {
-            var role = await _db.CompanyUsers
-                .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
-                .Select(cu => cu.Role)
-                .FirstOrDefaultAsync();
-            if (role != UserRole.Owner)
-                return StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
-        }
+        if (await PurgeOwnerDenyAsync(companyId, userId) is { } deny) return deny;
 
-        await _documentService.PurgeDocumentAsync(companyId, documentId, userId, force, reason);
+        // รอบ 242 (คำตัดสินข้อ 242-A): cascade=true = ลบเอกสารที่เกี่ยวข้อง (ลูกหลาน) ด้วยในธุรกรรมเดียว — ตัวตัดสินเดียว DocumentCascadePurgePolicy
+        // (ไม่ผ่าน = 409 พร้อมรายชื่อใบที่ลบไม่ได้และทางไปต่อ · ระบบไม่ลบอะไร) · planToken = ลายนิ้วมือของแผนที่ผู้ใช้เห็น (S1 — แผนเปลี่ยน ⇒ 409)
+        var verdict = await _documentService.PurgeDocumentAsync(companyId, documentId, userId, force, reason, cascade, planToken);
         return Ok(new ApiResponse<string>(true, null,
-            force ? "ลบเอกสารถาวรสำเร็จ (override การเก็บรักษาตามกฎหมาย — บันทึก audit แล้ว)"
-                  : "ลบเอกสารและข้อมูลเกี่ยวข้องทั้งหมดสำเร็จ"));
+            verdict.Message + (verdict.NeedsReason ? " (override การเก็บรักษาตามกฎหมาย — บันทึก audit แล้ว)" : "") + " สำเร็จ"));
+    }
+
+    /// <summary>รอบ 242 — แผนการลบถาวรที่เซิร์ฟเวอร์คำนวณ (ใบไหนถูกลบ/คงไว้/กันไว้ + เหตุ + ต้องระบุเหตุผลไหม) ให้หน้าเว็บแสดงก่อนยืนยัน ·
+    /// ไม่ลบอะไร · สิทธิ์เดียวกับการลบถาวร (Owner/SystemAdmin)</summary>
+    [HttpGet("{documentId:guid}/purge-preview")]
+    [Accounting.Filters.RejectApiKey("ดูแผนการลบเอกสารถาวร")]
+    public async Task<ActionResult<ApiResponse<PurgePreviewResponse>>> PreviewPurge(Guid companyId, Guid documentId,
+        [FromQuery] bool cascade = false, [FromQuery] bool force = false, [FromQuery] string? reason = null)
+    {
+        var userId = JwtHelper.GetUserIdFromClaims(User);
+        if (await PurgeOwnerDenyAsync(companyId, userId) is { } deny)
+            return StatusCode(403, new ApiResponse<PurgePreviewResponse>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
+        var v = await _documentService.PreviewPurgeAsync(companyId, documentId, cascade, force, reason);
+        var nodes = v.Nodes.Select(n => new PurgePreviewNode(
+            n.Node.Id, n.Node.DocumentNumber, n.Node.Type, Accounting.Helpers.DocumentTypeNames.Title(n.Node.Type, "th"),
+            n.Node.Status, n.Node.Depth, n.Action, n.InRetention, n.Reason)).ToList();
+        return Ok(new ApiResponse<PurgePreviewResponse>(true,
+            new PurgePreviewResponse(v.Allowed, v.Cascade, v.NeedsReason, v.Message, v.RuleCode,
+                v.Nodes.Any(n => !n.Node.IsRoot && !n.Node.IsSettlementReceipt), nodes, v.PlanToken), null));
+    }
+
+    /// <summary>ด่าน Owner/SystemAdmin ของการลบถาวร (ตัวเดียวของ purge + preview) · null = ผ่าน</summary>
+    private async Task<ActionResult?> PurgeOwnerDenyAsync(Guid companyId, Guid userId)
+    {
+        if (User.IsInRole("SystemAdmin")) return null;
+        var role = await _db.CompanyUsers
+            .Where(cu => cu.CompanyId == companyId && cu.UserId == userId)
+            .Select(cu => cu.Role)
+            .FirstOrDefaultAsync();
+        return role == UserRole.Owner
+            ? null
+            : StatusCode(403, new ApiResponse<string>(false, null, "เฉพาะเจ้าของบริษัท (Owner) เท่านั้นที่สามารถลบเอกสารถาวรได้"));
     }
 
     /// <summary>ใบค้างชำระของลูกค้าที่นำมารวมเป็นใบวางบิลได้ — ใบแจ้งหนี้/
@@ -1669,6 +1694,11 @@ public class DocumentController : ControllerBase
         var result = (request.Allocations != null && request.Allocations.Count > 0)
             ? await _documentService.CreateMultiDocPaymentAsync(companyId, request, userId)
             : await _documentService.CreatePaymentAsync(companyId, request, userId);
+        // รอบ 241: งานส่งเอกสารหลังรับชำระ (ออก/ส่งใบเสร็จตามค่าตั้ง "ส่งเอกสารอัตโนมัติ") — เส้น 1:1 เท่านั้น (กระจายหลายใบ ⇒ ไม่ออกใบเสร็จอัตโนมัติ ·
+        // SettlementReceiptPolicy) · หลัง commit · ไม่โยน (การชำระสำเร็จแล้ว) · ปิดค่าตั้ง = ไม่สร้างงาน
+        if (request.Allocations is not { Count: > 0 }
+            && HttpContext?.RequestServices?.GetService(typeof(IPostPaymentAutomationService)) is IPostPaymentAutomationService postPay)
+            await postPay.EnqueueAsync(companyId, result.Id, "manual", userId);
         var msg = (request.Allocations != null && request.Allocations.Count > 0)
             ? $"บันทึกการชำระสำเร็จ — กระจายเป็น {request.Allocations.Count} เอกสาร"
             : "บันทึกการชำระเงินสำเร็จ";

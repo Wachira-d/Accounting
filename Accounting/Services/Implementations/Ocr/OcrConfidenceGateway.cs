@@ -51,7 +51,8 @@ public static class OcrConfidenceGateway
         decimal? whtRatePercent = null,
         string? documentNumber = null,
         string? vendorName = null,
-        decimal? documentDiscount = null)
+        decimal? documentDiscount = null,
+        decimal? paperTotal = null)
     {
         config ??= GatewayConfig.Default;
         var warnings = new List<string>();
@@ -244,8 +245,11 @@ public static class OcrConfidenceGateway
             if (withAmounts.Count > 0)
             {
                 var lineSum = withAmounts.Sum(i => i.Amount!.Value);
+                // รอบ 242 ฝ่ายค้าน S4: ฐานกระทบยอดผ่านตัวตัดสินเดียวกับตัวสร้างบรรทัด (OcrHeaderAmounts.ReconSubTotal — ยอดก่อน VAT ที่เป็นยอดรวมที่กระดาษพิสูจน์
+                // ⇒ ยอดรวม − VAT) · ไม่มี paperTotal = ฐานเดิมทุกตัวอักษร
                 var recon = Accounting.Helpers.OcrLineReconciler.Classify(
-                    lineSum, effSub.Value, vatAmount ?? 0m, total ?? 0m, documentDiscount ?? 0m);
+                    lineSum, Accounting.Helpers.OcrHeaderAmounts.ReconSubTotal(effSub.Value, vatAmount, total, paperTotal),
+                    vatAmount ?? 0m, total ?? 0m, documentDiscount ?? 0m);
                 switch (recon.Case)
                 {
                     case Accounting.Helpers.OcrLineReconcileCase.PricesIncludeVat:

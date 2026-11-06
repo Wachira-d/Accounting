@@ -171,8 +171,8 @@ public static class OcrAmountIntegrity
                     var groups = vatCodeTable!.Groups;
                     msg += " — ตารางรหัส ภ.พ. บนกระดาษ: "
                          + string.Join(" · ", groups.Select(g => g.Kind == OcrVatGroupKind.Standard7
-                             ? $"รหัส {g.PaperCode} มี VAT ฐาน {g.Net:N2} VAT {g.Vat:N2}"
-                             : $"รหัส {g.PaperCode} {(g.Kind == OcrVatGroupKind.ZeroRated ? "อัตรา 0%" : g.Kind == OcrVatGroupKind.Exempt ? "ยกเว้น VAT" : "ไม่มี VAT")} {g.Net:N2}"))
+                             ? $"{OcrLineVatMarks.GroupRef(g.PaperCode)} มี VAT ฐาน {g.Net:N2} VAT {g.Vat:N2}"
+                             : $"{OcrLineVatMarks.GroupRef(g.PaperCode)} {(g.Kind == OcrVatGroupKind.ZeroRated ? "อัตรา 0%" : g.Kind == OcrVatGroupKind.Exempt ? "ยกเว้น VAT" : "ไม่มี VAT")} {g.Net:N2}"))
                          + " ⇒ แยกบรรทัดตามตารางนี้";
                 }
                 else if (paperVat > 0m && gap > 0m)

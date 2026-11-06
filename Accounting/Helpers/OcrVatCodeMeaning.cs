@@ -169,7 +169,7 @@ public static class OcrVatCodeMeaning
         }
         var resolved = table with { Groups = groups };
         var note = entries.Count == 0 ? null
-            : "ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก: " + string.Join(" · ", entries.Select(e => $"รหัส {e.Code} = {KindText(e.Kind)} ({SourceText(e)})"));
+            : "ความหมายรหัส ภ.พ. ที่กระดาษไม่บอก: " + string.Join(" · ", entries.Select(e => $"{OcrLineVatMarks.GroupRef(e.Code)} = {KindText(e.Kind)} ({SourceText(e)})"));
         return new(resolved, entries, note);
     }
 
@@ -199,7 +199,10 @@ public static class OcrVatCodeMeaning
     public static bool ZeroRatedOnPaper(string? normalizedRawText)
     {
         if (string.IsNullOrWhiteSpace(normalizedRawText)) return false;
-        if (ZeroRatedPhrase.IsMatch(normalizedRawText)) return true;
+        // ฝ่ายค้านรอบ 242 S1: แถวของตาราง ภ.พ. แบบอัตรานำหน้า ("VAT 0.00% 1,502.25 0.00") คือแถวที่กำลังถูกตัดสินความหมาย — ไม่ใช่หลักฐานของตัวเอง ⇒ ตัดออกก่อน ·
+        // ป้าย ศูนย์/zero/ส่งออก/export บนแถวนั้นตัดสินที่ตัวอ่านตาราง (OcrLineVatMarks.RateFirstTable) แล้ว
+        if (normalizedRawText.Replace("\r", "").Split('\n').Where(l => !OcrLineVatMarks.IsRateTableRow(l)).Any(l => ZeroRatedPhrase.IsMatch(l)))
+            return true;
         return LegendText(normalizedRawText).Split('\n').Any(l => ZeroPercent.IsMatch(l));
     }
 
@@ -241,7 +244,7 @@ public static class OcrVatCodeMeaning
     public static string? ReviewNote(IReadOnlyList<OcrVatCodeMeaningEntry> entries)
         => entries.Count == 0 ? null
             : "ประเภท VAT ตามรหัส ภ.พ. ที่กระดาษไม่บอกความหมาย: "
-              + string.Join(" · ", entries.Select(e => $"รหัส {e.Code} = {KindText(e.Kind)} — {SourceText(e)}"));
+              + string.Join(" · ", entries.Select(e => $"{OcrLineVatMarks.GroupRef(e.Code)} = {KindText(e.Kind)} — {SourceText(e)}"));
 
     /// <summary>
     /// **ตอนอนุมัติ รหัสนี้สอนนักเรียนได้ไหม** (ฝ่ายค้าน f7c29c2c P2-4) — ผู้ใช้<b>แก้</b>ชนิด (≠ ที่ระบบเติม) ⇒ สอน · คง<b>คำตอบ AI</b> ⇒ สอน ·

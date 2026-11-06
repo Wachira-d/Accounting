@@ -263,6 +263,13 @@ public interface IDocumentService
     /// + เหตุผล) — เฉพาะ Owner/SystemAdmin. log audit ว่าใคร/ทำไม.</summary>
     Task PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
         bool forceOverrideRetention, string? overrideReason);
+    /// <summary>รอบ 242 (คำตัดสินข้อ 242-A): ลบถาวร — <paramref name="cascadeDescendants"/> = ลบเอกสารที่เกี่ยวข้อง (ลูกหลาน) ด้วยในธุรกรรมเดียว ·
+    /// ตัวตัดสินเดียว <c>Helpers/DocumentCascadePurgePolicy</c> · ไม่ผ่าน = <c>BusinessRuleException</c> 409 พร้อมรายชื่อใบที่ลบไม่ได้และทางไปต่อ</summary>
+    Task<Accounting.Helpers.DocumentPurgeVerdict> PurgeDocumentAsync(Guid companyId, Guid documentId, Guid? userId,
+        bool forceOverrideRetention, string? overrideReason, bool cascadeDescendants, string? expectedPlanToken = null);
+    /// <summary>รอบ 242: แผนการลบถาวร (ใบไหนจะถูกลบ/คงไว้/กันไว้ + เหตุ) — คำนวณที่เซิร์ฟเวอร์ ไม่ลบอะไร · หน้าเว็บแสดงก่อนให้ยืนยัน</summary>
+    Task<Accounting.Helpers.DocumentPurgeVerdict> PreviewPurgeAsync(Guid companyId, Guid documentId, bool cascadeDescendants,
+        bool forceOverrideRetention, string? overrideReason);
     Task<DocumentResponse> ConvertDocumentAsync(Guid companyId, Guid documentId, DocumentType targetType, string createdBy);
 
     /// <summary>ออก <b>ใบกำกับภาษีเต็มรูป "แทน"</b> ใบเสร็จ/ใบกำกับภาษีอย่างย่อ

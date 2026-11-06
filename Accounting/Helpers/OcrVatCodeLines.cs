@@ -197,6 +197,21 @@ public static class OcrVatCodeLines
         return list.Select(x => (x.Amount, x.Code)).ToList();
     }
 
+    /// <summary>Σ บรรทัด − ส่วนลด ลงตารางไหม — true = ลงแถว "รวม" (ราคารวม VAT) · false = ลงฐาน (ราคาก่อน VAT) · null = ไม่ลง ·
+    /// ตัวเดียวของขั้น 2 ใน <see cref="Plan"/> และด่าน "ตารางชนะ" ของตารางอัตรานำหน้าใน <see cref="Decide"/> (ฝ่ายค้านรอบ 242 B1)</summary>
+    private static bool? TableTie(IReadOnlyList<OcrVatCodeLineInput> lines, decimal discount, OcrVatGroupTable table)
+    {
+        var sum = lines.Sum(l => l.PrintedAmount);
+        var sumTol = Math.Max(0.02m, 0.01m * lines.Count(l => l.PrintedAmount != 0m));
+        if (table.Vat > 0m && Math.Abs(sum - discount - table.Gross) <= sumTol) return true;
+        if (Math.Abs(sum - discount - table.Net) <= sumTol) return false;
+        return null;
+    }
+
+    /// <summary>ตารางแบบอัตรานำหน้า ไม่มีรหัสบนแถวสินค้า (<see cref="OcrLineVatMarks.ReadGroups"/> รอบ 242 — รหัส "0%"/"7%")</summary>
+    private static bool IsRateFirst(OcrVatGroupTable table)
+        => table.Found && table.Groups.All(g => g.PaperCode.EndsWith('%'));
+
     /// <summary>ตัดสินอัตรา VAT รายบรรทัด (และส่วนลดต่อรหัส) จากรหัส ภ.พ. + ตารางรหัส ภ.พ. ของกระดาษ (pure)</summary>
     /// <param name="lines">บรรทัดตามลำดับเดิม</param>
     /// <param name="rawText">ข้อความทั้งใบ (อ่านรหัสบนแถวสินค้า)</param>
@@ -268,11 +283,7 @@ public static class OcrVatCodeLines
 
         // ── 2) ราคารวม/ก่อน VAT: Σ บรรทัด − ส่วนลด = แถว "รวม" หรือ ฐาน ของตาราง ──
         var sum = lines.Sum(l => l.PrintedAmount);
-        var sumTol = Math.Max(0.02m, 0.01m * lines.Count(l => l.PrintedAmount != 0m));
-        bool inclusive;
-        if (table.Vat > 0m && Math.Abs(sum - headerDiscount - table.Gross) <= sumTol) inclusive = true;
-        else if (Math.Abs(sum - headerDiscount - table.Net) <= sumTol) inclusive = false;
-        else
+        if (TableTie(lines, headerDiscount, table) is not bool inclusive)
             return No($"Σ บรรทัด {sum:N2}{(headerDiscount > 0m ? $" − ส่วนลด {headerDiscount:N2}" : "")} ไม่เท่าตาราง (ฐาน {table.Net:N2} · รวม {table.Gross:N2}) "
                 + "— อ่านบรรทัดขาด/เกิน หรือส่วนลดอยู่ในบรรทัด");
         if (table.Vat > 0m && inclusive != reconPricesIncludeVat)
@@ -484,7 +495,7 @@ public static class OcrVatCodeLines
         decimal? paperTotal = null, decimal? paperVat = null)
     {
         var all = Enumerable.Range(0, lines.Count).ToList();
-        var first = Analyze(lines, all, rawText, table, headerSub, headerVat, headerTotal, headerDiscount, pricesIncludeVatPreset, null);
+        var first = Analyze(lines, all, rawText, table, headerSub, headerVat, headerTotal, headerDiscount, pricesIncludeVatPreset, null, paperTotal);
         if (first.Plan.Verdict != OcrVatCodeVerdict.Unreconciled) return first;
 
         // ── ข้อ 1 (ต่อ): แถวส่วนลดที่ engine คืนเป็นสินค้ายอดบวก ⇒ ส่วนลดเอกสาร — รายการที่เหลือต้องลงตารางพอดี ไม่งั้นทิ้งการแปลง ──
@@ -493,7 +504,7 @@ public static class OcrVatCodeLines
         {
             var keep = all.Where(i => !conv.Indexes.Contains(i)).ToList();
             var named = conv.Named.Select(nd => (Line: keep.IndexOf(nd.Line), nd.Amount)).Where(nd => nd.Line >= 0).ToList();
-            var alt = Analyze(lines, keep, rawText, table, headerSub, headerVat, headerTotal, conv.Discount, pricesIncludeVatPreset, named);
+            var alt = Analyze(lines, keep, rawText, table, headerSub, headerVat, headerTotal, conv.Discount, pricesIncludeVatPreset, named, paperTotal);
             if (alt.Plan.Applied)
             {
                 var rowsSum = conv.Indexes.Sum(i => lines[i].PrintedAmount);
@@ -512,7 +523,11 @@ public static class OcrVatCodeLines
         }
 
         // ── ข้อ 2: รายการไม่ลงยอด แต่ตารางลงยอด ⇒ ตารางชนะ (ไม่ดูเลขหน้า · ไม่บล็อกเพราะผัง/โครงการต่างกัน) ──
-        if (tableLinesAllowed
+        // ฝ่ายค้านรอบ 242 B1: ตารางอัตรานำหน้าไม่มีรหัสบนแถวสินค้า ⇒ ทุกบรรทัดต้องแบ่งด้วยผลรวม — เกิน MaxFreeLines/แบ่งได้หลายทาง ก็ได้ Unreconciled ·
+        // แต่ Σ รายการ<b>ลงตาราง</b>แล้ว = รายการครบ ⇒ คงรายการ (อัตรารายบรรทัดไปชั้นพิสูจน์ทั้งใบ/PaperExemptAmount เดิม — ไม่แต่งอัตราเอง) ·
+        // ตารางรหัส (Makro) คงคำตัดสินเจ้าของ 2026-10-16 ภาคต่อทุกตัวอักษร
+        var itemsTieRateTable = IsRateFirst(table) && TableTie(lines, headerDiscount, table) is not null;
+        if (tableLinesAllowed && !itemsTieRateTable
             && SummaryInsteadOfItems(first.Plan, table, headerVat, headerTotal, paperTotal, paperVat) is { Count: > 0 } groups)
         {
             var used = lines.Where(l => l.PrintedAmount != 0m).ToList();
@@ -536,7 +551,7 @@ public static class OcrVatCodeLines
                 DiscountOnly = discountOnly,
                 MixedDimensionsNote = mixed,
                 Note = $"{why} — ระบบใช้บรรทัดสรุปตามตาราง {groups.Count} บรรทัด (ยอดและ VAT ตรงกระดาษ: "
-                    + string.Join(" · ", groups.Select(g => $"รหัส {g.PaperCode} {KindText(g.Kind)} ฐาน {g.Net:N2} VAT {g.Vat:N2}"))
+                    + string.Join(" · ", groups.Select(g => $"{OcrLineVatMarks.GroupRef(g.PaperCode)} {KindText(g.Kind)} ฐาน {g.Net:N2} VAT {g.Vat:N2}"))
                     + $" · รวม {table.Gross:N2})"
                     + (discountOnly ? ""
                         : $" · สิ่งที่ถูกแทน: รายการสินค้า {lines.Count} แถวที่อ่านได้ไม่ถูกลงเป็นบรรทัด ⇒ ไม่มีรายการย่อยสำหรับตัดสต็อก "
@@ -586,7 +601,7 @@ public static class OcrVatCodeLines
     private static OcrVatCodeDecision Analyze(
         IReadOnlyList<OcrVatCodeLineInput> lines, IReadOnlyList<int> keep, string? rawText, OcrVatGroupTable table,
         decimal headerSub, decimal headerVat, decimal headerTotal, decimal discount, bool pricesIncludeVatPreset,
-        IReadOnlyList<(int Line, decimal Amount)>? named)
+        IReadOnlyList<(int Line, decimal Amount)>? named, decimal? paperTotal)
     {
         // ฐานก่อน VAT หลังส่วนลดที่ใช้กระทบยอด — สูตรเดียวกับตัวสร้างบรรทัด (เดิมอยู่ใน OcrService.BuildScanLinesAsync)
         var netSub = headerSub;
@@ -594,6 +609,10 @@ public static class OcrVatCodeLines
             netSub = OcrHeaderAmounts.NetSubTotal(headerSub, headerVat, headerTotal, discount);
         else if (headerSub <= 0m && headerTotal > 0m)
             netSub = Math.Max(0m, headerTotal - headerVat);
+        // รอบ 242: engine ใช้ยอดรวมทั้งสิ้นเป็น "ยอดก่อน VAT" (1,961.25 คู่ VAT 30.03) และกระดาษพิสูจน์ยอดรวมนั้น ⇒ ฐาน = ยอดรวม − VAT ·
+        // ยอดรวมไม่ได้พิสูจน์ ⇒ ฐานเดิม (ฝ่ายค้าน S3) — ตัวตัดสินเดียวกับด่านความมั่นใจตอนสแกน OcrHeaderAmounts.ReconSubTotal
+        else
+            netSub = OcrHeaderAmounts.ReconSubTotal(headerSub, headerVat, headerTotal, paperTotal);
         var kept = keep.Select(i => lines[i]).ToList();
         var recon = OcrLineReconciler.Classify(kept.Sum(l => l.PrintedAmount), netSub, headerVat, headerTotal, discount);
         var incl = pricesIncludeVatPreset || recon.PricesIncludeVat;

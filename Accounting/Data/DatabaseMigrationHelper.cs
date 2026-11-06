@@ -257,6 +257,7 @@ public static class DatabaseMigrationHelper
         list.AddRange(Accounting.Helpers.PlatformPriceOverrideMigration.Statements());   // รอบ 231 — ราคาพิเศษรายบริษัท · เปลี่ยนรอบบิลกลางรอบ · Subscriptions.Kind + backfill · ย้าย override เพดานไป CompanyQuotaOverrides (หลังรอบ 229/230)
         list.AddRange(Accounting.Helpers.PlatformUpgradeModeMigration.Statements());   // รอบ 237 — อัปเกรดกลางรอบ 2 แบบ: ค่าตั้งแพลตฟอร์ม + แบบที่ลูกค้าเลือกบนรายการชำระ
         list.AddRange(Accounting.Helpers.SignRequestMigration.Statements());   // รอบ 240 — ลิงก์ให้ลูกค้าเซ็น: webhook ต่อเอกสาร · อีเมลขอเซ็น/เตือน · outbox เหตุการณ์ลูกค้าเซ็น
+        list.AddRange(Accounting.Helpers.DocumentAutoSendMigration.Statements());   // รอบ 241 — ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง · ช่องทางต่อเอกสาร · งานหลังรับชำระ (ใบเสร็จ/ขอ 50 ทวิ)
         list.AddRange(Accounting.Helpers.LicenseLapseMigration.Statements());   // รอบ 238 (236-3) — คืนสถานะแถวบริษัทที่ถูก cascade ตาม License · License ในระยะผ่อนผัน Expired → PastDue (idempotent)
         return list;
     }
@@ -6176,6 +6177,11 @@ public static class DatabaseMigrationHelper
                AND f."EntityType" = 'WhtCredit'
                AND f."EntityId" = '00000000-0000-0000-0000-000000000000';
             """,
+            // รอบ 243a: ตัดสูญเครดิต 11910 พร้อม JE (Helpers/WhtCreditWriteOff) — ตัวชี้ JE ตัดสูญ/กลับรายการ + เหตุผล · แถวเดิมเป็น NULL (ไม่มี JE)
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "WriteOffJournalEntryId" uuid NULL;""",
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "WrittenOffAt" timestamptz NULL;""",
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "WriteOffReason" text NULL;""",
+            """ALTER TABLE "WhtCreditsReceived" ADD COLUMN IF NOT EXISTS "WriteOffReversalJournalEntryId" uuid NULL;""",
             """
             CREATE TABLE IF NOT EXISTS "DocumentRevisions" (
                 "Id" uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),

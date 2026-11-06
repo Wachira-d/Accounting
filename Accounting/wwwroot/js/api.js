@@ -781,8 +781,19 @@ const API = {
       listAdjustingLines: (id) => API.get(`${base}/document/${id}/adjusting-lines`),
       saveAdjustingLines: (id, body) => API.put(`${base}/document/${id}/adjusting-lines`, body),
       deleteDocument: (id) => API.del(`${base}/document/${id}`),
-      purgeDocument: (id, force = false, reason = null) =>
-        API.del(`${base}/document/${id}/purge${force ? `?force=true&reason=${encodeURIComponent(reason || '')}` : ''}`),
+      // รอบ 242: cascade=true = ลบเอกสารที่เกี่ยวข้อง (ลูกหลาน) ด้วย — เซิร์ฟเวอร์ตัดสิน (DocumentCascadePurgePolicy) · ไม่ผ่าน = 409 + รายชื่อ
+      // planToken = ลายนิ้วมือของแผนที่ผู้ใช้เห็น — แผนเปลี่ยนระหว่างยืนยัน ⇒ 409 (ฝ่ายค้านรอบ 242 S1)
+      purgeDocument: (id, force = false, reason = null, cascade = false, planToken = null) => {
+        const q = new URLSearchParams();
+        if (force) { q.set('force', 'true'); q.set('reason', reason || ''); }
+        if (cascade) q.set('cascade', 'true');
+        if (planToken) q.set('planToken', planToken);
+        const qs = q.toString();
+        return API.del(`${base}/document/${id}/purge${qs ? `?${qs}` : ''}`);
+      },
+      // รอบ 242: แผนการลบถาวรที่เซิร์ฟเวอร์คำนวณ (ไม่ลบอะไร) — แสดงก่อนยืนยัน
+      purgePreview: (id, cascade = false) =>
+        API.get(`${base}/document/${id}/purge-preview${cascade ? '?cascade=true' : ''}`),
       voidPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/void`),
       // ออกใบเสร็จรับเงินให้การรับชำระที่บันทึกไปแล้ว (แถวที่มี JE แต่ไม่มีเอกสารคู่)
       issueReceiptForPayment: (paymentId) => API.post(`${base}/document/payments/${paymentId}/receipt`),

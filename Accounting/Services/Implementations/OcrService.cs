@@ -657,7 +657,7 @@ public class OcrService : IOcrService
             // ── Total-first (รอบ 192): ยึด "ยอดรวมทั้งสิ้น" ก่อนด่านคณิต แล้วแตกยอดให้ตัวเลขอื่นอธิบายได้ ──
             // ตัวตัดสินอยู่ที่ Helpers/OcrTotalAnchor + Helpers/OcrTotalDecomposer (pure + เทสต์ด้วยกระดาษจริง)
             // ที่นี่แค่ต่อสาย · ข้าม e-Tax XML (ลงนามแล้ว = ความจริงตามกฎหมาย)
-            var totalShape = ApplyTotalFirst(scanResult, extractedData, extractedText, ocrEngineUsed,
+            var totalShape = ApplyTotalFirst(scanResult, extractedData, extractedText, ocrEngineUsed, out var provenPaperTotal,
                 etaxVisibleText: ocrEngineUsed == "EtaxXml" ? pdfTextLayer : null);
 
             // Math/confidence gateway — uses pre-loaded SiteSettings (no extra DB hit)
@@ -723,7 +723,9 @@ public class OcrService : IOcrService
                     ? null
                     : extractedData.DiscountAmount
                     ?? Accounting.Helpers.OcrBillDiscount.Read(
-                        Ocr.ThaiTextNormalizer.Normalize(extractedText), extractedData.TotalAmount).Amount);
+                        Ocr.ThaiTextNormalizer.Normalize(extractedText), extractedData.TotalAmount).Amount,
+                // รอบ 242 ฝ่ายค้าน S4: ยอดรวมที่กระดาษพิสูจน์ ⇒ ฐานกระทบยอดตัวเดียวกับตัวสร้างบรรทัด (OcrHeaderAmounts.ReconSubTotal)
+                paperTotal: provenPaperTotal);
 
             extractedData.Confidence = gatewayResult.AdjustedConfidence;
             // ── ผลของด่านคณิตศาสตร์ต้องมี "ผู้บริโภค" ไม่ใช่แค่หักคะแนน (D3-3) ──
@@ -8339,7 +8341,7 @@ public class OcrService : IOcrService
                 {
                     LineOrder = order,
                     Description = $"{FallbackLineDescription(result.ExtractedDocumentNumber, result.ExtractedVendorName)} — "
-                        + $"{kindText} (รหัส {grp.PaperCode} บนกระดาษ{itemCountText})",
+                        + $"{kindText} ({Accounting.Helpers.OcrLineVatMarks.GroupRef(grp.PaperCode)} บนกระดาษ{itemCountText})",
                     Quantity = 1,
                     UnitPrice = grp.Net,
                     Amount = grp.Net,
@@ -8372,7 +8374,7 @@ public class OcrService : IOcrService
             {
                 result.ProcessingNotes = (result.ProcessingNotes ?? "")
                     + "\n[Σ] ไม่มีรายการสินค้าในไฟล์ — สร้างบรรทัดสรุปตามกลุ่มภาษีที่กระดาษพิมพ์ไว้: "
-                    + string.Join(" · ", paperGroups.Select(g => $"รหัส {g.PaperCode} ฐาน {g.Net:N2} VAT {g.Vat:N2}"));
+                    + string.Join(" · ", paperGroups.Select(g => $"{Accounting.Helpers.OcrLineVatMarks.GroupRef(g.PaperCode)} ฐาน {g.Net:N2} VAT {g.Vat:N2}"));
                 // รอบ 193 (เจ้าของข้อ 5): ยอมรับบรรทัดสรุปต่อกลุ่ม + คำเตือนเรื่องตัดสต็อก (ไม่บล็อก) · ไม่ซ้ำเมื่อสร้าง/พรีวิวซ้ำ
                 if (!(result.ProcessingNotes ?? "").Contains(Accounting.Helpers.OcrTotalDecomposer.NoItemsTag, StringComparison.Ordinal))
                     result.ProcessingNotes += "\n" + Accounting.Helpers.OcrTotalDecomposer.NoItemsNote(paperGroups);
@@ -8478,7 +8480,7 @@ public class OcrService : IOcrService
                 hasModelAnswer: ai?.HasModelAnswer == true, usedAi: ai?.UsedAi == true, feedbackId: ai?.FeedbackId,
                 zeroRatedOnPaper: zeroRatedOnPaper);
             entries.Add(entry);
-            extractedData.ReasoningTrace.Add($"[VatCode] รหัส {row.PaperCode} (ฐาน {row.Net:N2} · VAT 0.00) = "
+            extractedData.ReasoningTrace.Add($"[VatCode] {Accounting.Helpers.OcrLineVatMarks.GroupRef(row.PaperCode)} (ฐาน {row.Net:N2} · VAT 0.00) = "
                 + $"{Accounting.Helpers.OcrVatCodeMeaning.AnswerOf(entry.Kind)} — {Accounting.Helpers.OcrVatCodeMeaning.SourceText(entry)}"
                 + (ai?.Reasoning is string why && entry.Source == Accounting.Helpers.OcrVatCodeMeaningSource.ColdStartDefault ? $" · {why}" : ""));
         }
@@ -8794,8 +8796,10 @@ public class OcrService : IOcrService
     /// </summary>
     private static Accounting.Helpers.OcrTotalDecomposition? ApplyTotalFirst(
         OcrScanResult scanResult, OcrExtractedData data, string? rawText, string? engine,
-        string? etaxVisibleText = null)
+        out decimal? provenPaperTotal, string? etaxVisibleText = null)
     {
+        // รอบ 242 ฝ่ายค้าน S4: ยอดรวมทั้งสิ้นที่กระดาษพิสูจน์ (Proven/Confirmed) — ด่านความมั่นใจใช้ตัดสินฐานกระทบยอดด้วยตัวเดียวกับตัวสร้างบรรทัด · e-Tax/ไม่มีข้อความ = null
+        provenPaperTotal = null;
         // รอบ 193 (เจ้าของข้อ 10): e-Tax XML ที่ฝังใน PDF = หลักฐานอันดับหนึ่ง — ยอดใบกำกับ/ฐาน/VAT มาจาก XML (ไม่ยึดยอดใหม่
         // ไม่แตะค่า) แต่ "การชำระ" (ส่วนลดพิเศษ/คูปอง/ยอดชำระ) อยู่บนหน้า PDF เท่านั้น ⇒ แตกยอดด้วยข้อความหน้า PDF โดยใช้ยอดจาก XML
         if (engine == "EtaxXml")
@@ -8804,6 +8808,8 @@ public class OcrService : IOcrService
         if (string.IsNullOrWhiteSpace(rawText)) return null;
         var text = Ocr.ThaiTextNormalizer.Normalize(rawText);
         var anchor = Accounting.Helpers.OcrTotalAnchor.Find(text, data.TotalAmount, data.EngineAmountDue);
+        if (anchor.Verdict is Accounting.Helpers.OcrTotalVerdict.Proven or Accounting.Helpers.OcrTotalVerdict.Confirmed)
+            provenPaperTotal = anchor.Total;
         // สิ่งที่ต้องเขียนตัดสินใน helper (OcrTotalAnchor.Plan — เทสต์ได้) · ที่นี่เขียนตามอย่างเดียว
         var plan = Accounting.Helpers.OcrTotalAnchor.Plan(anchor, data.SubTotal, data.VatAmount, text);
         var totalKey = Accounting.Helpers.OcrFieldKeys.TotalAmount;

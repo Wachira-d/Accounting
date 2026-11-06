@@ -19,7 +19,10 @@ public class EmailScheduleController : ControllerBase
         Guid Id, string Trigger, bool IsActive, string? DocumentType,
         int OffsetDays, int SendAtHour, int RepeatEveryDays,
         string? SubjectTemplate, string? BodyTemplate, string? BccEmails,
-        int DayOfMonth = 5);
+        int DayOfMonth = 5,
+        // รอบ 241: ส่งเอกสารอัตโนมัติ — null = ตามค่าบริษัท · ช่องทาง null/ว่าง = ตามค่าบริษัท
+        bool? AttachPayLink = null, List<string>? PayLinkChannels = null,
+        bool? PostPayEmailReceipt = null, bool? PostPayIncludePartial = null);
 
     [HttpGet("rules")]
     public async Task<ActionResult<ApiResponse<List<EmailScheduleRule>>>> GetRules(Guid companyId)
@@ -43,6 +46,10 @@ public class EmailScheduleController : ControllerBase
             BodyTemplate = req.BodyTemplate,
             BccEmails = req.BccEmails,
             DayOfMonth = Math.Clamp(req.DayOfMonth, 1, 28),
+            AttachPayLink = req.AttachPayLink,
+            PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(req.PayLinkChannels),
+            PostPayEmailReceipt = req.PostPayEmailReceipt,
+            PostPayIncludePartial = req.PostPayIncludePartial,
         };
         var saved = await _svc.UpsertRuleAsync(companyId, rule,
             User.Identity?.Name ?? JwtHelper.GetUserIdFromClaims(User).ToString());

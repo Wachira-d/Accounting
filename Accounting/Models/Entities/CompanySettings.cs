@@ -328,6 +328,16 @@ public class CompanySettings : TenantEntity
     /// <summary>โฮสต์ที่อนุญาตให้รับ webhook ต่อเอกสาร (คั่นด้วย , · รองรับ *.example.com) · ว่าง = โฮสต์สาธารณะใดก็ได้ · ผู้อ่าน: <c>SignCallbackUrlRule.Problem</c></summary>
     public string? SignCallbackAllowedHosts { get; set; }
 
+    // ── รอบ 241: ส่งเอกสารอัตโนมัติ (หน้า: ตั้งค่า → ส่งเอกสารอัตโนมัติ · API: DocumentAutoSendController) — ตารางส่งเอกสารทับได้ทีละช่อง ──
+    /// <summary>ค่าเริ่มต้น "แนบลิงก์ชำระเงิน" ในอีเมลตามตาราง · ผู้อ่าน: <c>EmailScheduleService.PayLinkFor</c> (ผ่าน <c>DocumentPayLinkService.CompanyDefaultsAsync</c>)</summary>
+    public bool PayLinkDefaultEnabled { get; set; } = false;
+    /// <summary>ช่องทางเริ่มต้นที่เปิดให้ลูกค้า (JSON ชื่อ enum) · null = ทุกช่องทางที่บริษัทเปิด · ผู้อ่าน: <c>DocumentPayLinkService.EnsureLinkAsync</c></summary>
+    public string? PayLinkDefaultChannelsJson { get; set; }
+    /// <summary>หลังลูกค้าชำระ: ออก (ถ้ายังไม่มี) + ส่งใบเสร็จ/ใบเสร็จ-ใบกำกับภาษีทางอีเมล · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c></summary>
+    public bool PostPayEmailReceipt { get; set; } = false;
+    /// <summary>ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) · ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c></summary>
+    public bool PostPayIncludePartial { get; set; } = false;
+
     // ── พ.ร.บ.การบัญชี ม.7 — ผู้ทำบัญชี (Bookkeeper / CPD) ──
     // กฎหมาย: งบการเงินที่นำส่ง DBD ต้องระบุชื่อ + เลขทะเบียนผู้ทำบัญชี (CPD)
     // ที่ขึ้นทะเบียนกับสภาวิชาชีพบัญชี. ไม่มี = ยื่นไม่ได้ (ผู้บริหารรับผิด

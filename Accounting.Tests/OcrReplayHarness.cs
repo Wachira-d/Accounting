@@ -467,6 +467,20 @@ public static class OcrReplayHarness
                 new("ค่าขนส่งสินค้า", 1m, 170.00m, 170.00m),
             },
             VendorTaxId: "0105559170207"),
+        // ── รอบ 242 (เจ้าของ 2026-11-06) — ใบเสร็จซูเปอร์มาร์เก็ตที่ engine อ่านรายการได้ 5 จาก 21 แถว + ใส่ยอดรวมทั้งสิ้นในช่องยอดก่อน VAT ──
+        // ตาราง ภ.พ. ซ้ายล่างแบบอัตรานำหน้า (OcrLineVatMarks.ReadGroups → RateFirstTable): 0% ฐาน 1,502.25 · 7% ฐาน 428.97 VAT 30.03 · รวม 1,961.25 ⇒ ตารางชนะ
+        // (OcrVatCodeLines.Decide ข้อ 2) — หัวใบตามที่ engine ส่ง (SubTotal = Total = 1,961.25 · VAT 30.03) · บรรทัดตามที่ engine คืน (จำนวน/ราคาตามกระดาษ)
+        new ReplayPaper("supermarket-rate-table-items-missing", OcrPaperSamples.SupermarketRateTableReceipt,
+            EngineSubTotal: 1961.25m, EngineVat: 30.03m, EngineTotal: 1961.25m,
+            Lines: new ReplayLine[]
+            {
+                new("เห็ดหูหนู", 1m, 29.00m, 29.00m),
+                new("พริกขี้หนูแดง", 1m, 35.00m, 35.00m),
+                new("สันนอกหมูตัดชิ้น", 1.112m, 129.00m, 143.50m),
+                new("เตนิช ไก่หยอง", 1m, 79.00m, 79.00m),
+                new("ถั่วงอก", 1m, 15.00m, 15.00m),
+            },
+            VendorTaxId: "0105599999997"),
     };
 
     /// <summary>รันกระดาษทุกใบผ่านตัวตัดสิน pure ทุกตัว — คืน "คำตอบต่อช่อง" ที่เทียบกันได้
