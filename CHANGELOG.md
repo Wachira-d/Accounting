@@ -6852,6 +6852,8 @@ _รอบ 255 WP-12B ข้อ 6–8 (AUDIT_249 §WP-12 · คำตัดส�
 `AutopilotJob` ⇒ `WhtCertIntakeService.SubmitAsync` ของผู้ขาย · ประทับหลังผลจริง · ยกเลิกหลังส่ง ⇒ แจ้ง E-11) · **พอร์ทัลลิงก์วิเศษ** (`PortalMagicLinks` · hash · 15 นาที · ครั้งเดียว ·
 คำตอบเดียว · เพดาน) · **Excel ทั่วไปให้นักบัญชี** (MiniExcel) · DOCUMENT_FLOW §2.12l · ACCOUNT_STRUCTURE (เพดานคู่ค้า) · TEST_PLAN AP255-8…19 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
 _รอบ 255 WP-12B ข้อ 6–8 เติม sha: commit 145ba355 (DOCUMENT_FLOW Last verified · ACCOUNT_STRUCTURE · DECISIONS 255-WP12B-3…8/10/11) — doc-only คอมมิตตามหลัง ไม่ amend_
+
+_รอบ 255 WP-12B แก้ผล CI: (1) โทเคนพอร์ทัลถอดไม่ได้ทุกใบ (`DecodeJwtToken` ตัดที่จุดทศนิยมของวันหมดอายุ — บั๊กเดิม · DECISIONS 255-WP12B-12) (2) `SettlementPaidReissue.DocumentCarriedFields` เพิ่ม `PartnerInputVatEvidence`/`PartnerSourceLinkId` (ใบแทนต้องคงด่านภาษีซื้อ — เทสต์ partition R7/RV1F11) (3) CS8917 HtmlEncode_
 _Last verified against codebase: 2026-11-06 (รอบ 253 WP-10 — 50 ทวิ ขาเข้า ต่อจาก WP-09 (DOCUMENT_FLOW §2.12m): ลิงก์อัปโหลดสาธารณะ
 `/wht-upload.html` + `WhtCertPublicController` (token hash · เทียบเวลาคงที่ · rate limit ต่อ IP/token แบบ DB failClosed · ไบต์ตัดสิน PDF/JPG/PNG ≤ 10 MB ·
 PDF มีสคริปต์/ไฟล์ฝัง = ปฏิเสธ · ไฟล์ซ้ำไม่เก็บ/ไม่สแกน · เข้าประตูเดียว Channel UploadLink · OCR ล้ม = เข้ากล่องรับแบบรอตรวจ) · ลิงก์ในอีเมลใบเสร็จ

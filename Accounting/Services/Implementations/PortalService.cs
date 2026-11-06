@@ -438,8 +438,12 @@ public class PortalService : IPortalService
         try
         {
             var tokenBytes = Convert.FromBase64String(token);
-            var dotIndex = Array.IndexOf(tokenBytes, (byte)'.');
-            if (dotIndex < 0)
+            // รอบ 255 WP-12B (พบจากเทสต์ลิงก์วิเศษ): เดิมหาตัวคั่นด้วย IndexOf('.') ตัวแรก — แต่วันหมดอายุรูป "O" มีจุดทศนิยมวินาที
+            // ⇒ ตัดผิดตำแหน่ง ⇒ โทเคนพอร์ทัลทุกใบถอดไม่ได้ (ทุกเส้น [Authorize] ของพอร์ทัลตอบ 401) · ลายเซ็น HMAC-SHA256 ยาวคงที่ 32 ไบต์
+            // ⇒ ตัวคั่นอยู่ตำแหน่ง len − 33 เสมอ (ตรวจว่าเป็น '.' จริง)
+            const int SigLen = 32;
+            var dotIndex = tokenBytes.Length - SigLen - 1;
+            if (dotIndex <= 0 || tokenBytes[dotIndex] != (byte)'.')
                 throw new InvalidOperationException("Invalid token format.");
 
             var payloadBytes = new byte[dotIndex];
@@ -451,7 +455,7 @@ public class PortalService : IPortalService
             if (parts.Length != 4)
                 throw new InvalidOperationException("Invalid token payload.");
 
-            var expiry = DateTime.Parse(parts[3]);
+            var expiry = DateTime.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind).ToUniversalTime();
             if (expiry < DateTime.UtcNow)
                 throw new InvalidOperationException("Token has expired.");
 
@@ -642,7 +646,7 @@ public class PortalService : IPortalService
             ExpiresAt = DateTime.UtcNow.Add(PortalMagicLinkPolicy.Ttl), CreatedBy = "portal-magic-link",
         });
         await _db.SaveChangesAsync(ct);
-        var enc = System.Net.WebUtility.HtmlEncode;
+        Func<string?, string?> enc = System.Net.WebUtility.HtmlEncode;
         var html = $"<p>เรียน {enc(access.DisplayName ?? access.Email)}</p>"
             + $"<p>กดลิงก์ด้านล่างเพื่อเข้าพอร์ทัลลูกค้าของ {enc(companyName)} (ใช้ได้ 15 นาที ครั้งเดียว — ไม่ต้องใช้รหัสผ่าน)</p>"
             + $"<p><a href=\"{enc(link)}\">เข้าสู่พอร์ทัลลูกค้า</a></p>"

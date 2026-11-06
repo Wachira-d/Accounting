@@ -346,6 +346,8 @@ public static class SettlementPaidReissue
     {
         nameof(Document.CompanyId), nameof(Document.DocumentType), nameof(Document.DocumentDate), nameof(Document.DueDate),
         nameof(Document.SupplierInvoiceNumber), nameof(Document.SupplierTaxInvoiceDate), nameof(Document.HasTaxInvoiceReference),
+        // รอบ 255 WP-12B ข้อ 7 (N3): หลักฐานภาษีซื้อของใบจากคู่ค้าตามไป (ไม่ตาม = ใบแทนปลดด่านภาษีซื้อเงียบ ๆ) + แถวกล่องเข้าต้นทาง (ปุ่ม "ได้รับต้นฉบับแล้ว" ยังกดได้)
+        nameof(Document.PartnerInputVatEvidence), nameof(Document.PartnerSourceLinkId),
         nameof(Document.SupplierBranchCode), nameof(Document.InputVatPostedAsUndue), nameof(Document.InputVatBecameClaimableAt),
         nameof(Document.OutputVatDueAt), nameof(Document.InputVatExpiredAt), nameof(Document.CombinedInvoiceTaxInvoice),
         nameof(Document.BuyerDeclinedTaxInvoice), nameof(Document.ServedAsReceipt), nameof(Document.DocumentLanguage),
