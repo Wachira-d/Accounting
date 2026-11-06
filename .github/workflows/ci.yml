@@ -78,9 +78,8 @@ jobs:
   test:
     name: dotnet test
     needs: build
-    # เทสต์เต็มเฉพาะ PR เข้า main · push main/master · สั่งเอง — push บน claude/** ได้แค่ build (เร็ว)
-    # เทสต์ใน job นี้เป็น pure-function (เทสต์ที่ต้องมี PostgreSQL ติด trait Category=Db แล้วไปรันใน job db-test) — ลบ if ได้โดยไม่ต้องมีฐาน
-    if: github.event_name != 'push' || startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/master')
+    # รอบ 250 (AUDIT_249 WP-01 · E H-1): เดิมมี if: รันเฉพาะ PR เข้า main/push main ⇒ PR ทุกใบของเราเข้า base อื่น ⇒ เทสต์ pure
+    # ~235 ตัวของรอบ 241–249 ไม่เคยรัน · ตอนนี้รันทุก push (เทสต์ pure ไม่ต้องมีฐาน · Category=Db ไปรันใน job db-test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,7 +94,7 @@ jobs:
       - run: dotnet restore Accounting.sln
       - run: dotnet build Accounting.sln --configuration Release --no-restore
       # เทสต์ DB (trait Category=Db) รันใน job db-test ที่มี PostgreSQL — job นี้กรองออก (ไม่ช้าลง · ไม่แดงเพราะไม่มีฐาน)
-      - run: dotnet test Accounting.sln --configuration Release --no-build --filter "Category!=Db" --logger "trx;LogFileName=results.trx" --results-directory TestResults
+      - run: dotnet test Accounting.sln --configuration Release --no-build --filter "Category!=Db" --logger "trx;LogFileName=results.trx" --logger "console;verbosity=minimal" --results-directory TestResults
       - uses: actions/upload-artifact@v4
         if: always()
         with:
