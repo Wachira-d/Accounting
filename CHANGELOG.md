@@ -6847,3 +6847,4 @@ _รอบ 255 WP-12B ข้อ 6–8 (AUDIT_249 §WP-12 · คำตัดส�
 `PartnerInputVatEvidence` ⇒ ตัวตรวจ §86/4 ตัวเดียว · ยืนยันต้นฉบับ ⇒ `CompleteSupplierTaxInvoiceAsync`) · **50 ทวิ กลับผ่านคู่ค้า** (`PartnerWhtCertExchangeService` ขั้นใหม่ของ
 `AutopilotJob` ⇒ `WhtCertIntakeService.SubmitAsync` ของผู้ขาย · ประทับหลังผลจริง · ยกเลิกหลังส่ง ⇒ แจ้ง E-11) · **พอร์ทัลลิงก์วิเศษ** (`PortalMagicLinks` · hash · 15 นาที · ครั้งเดียว ·
 คำตอบเดียว · เพดาน) · **Excel ทั่วไปให้นักบัญชี** (MiniExcel) · DOCUMENT_FLOW §2.12l · ACCOUNT_STRUCTURE (เพดานคู่ค้า) · TEST_PLAN AP255-8…19 · ยังไม่ได้คอมไพล์ในเครื่องนี้_
+_รอบ 255 WP-12B ข้อ 6–8 เติม sha: commit 145ba355 (DOCUMENT_FLOW Last verified · ACCOUNT_STRUCTURE · DECISIONS 255-WP12B-3…8/10/11) — doc-only คอมมิตตามหลัง ไม่ amend_

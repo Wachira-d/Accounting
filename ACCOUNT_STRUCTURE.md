@@ -1520,4 +1520,4 @@ _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Notify — 
   แถวค่าแทน (ExpiryNeedsReview) ดาวน์เกรด ⇒ มีผลทันที ไม่ตั้งเวลา
 
 _Last verified against codebase: 2026-11-03 (รอบ 232 ทีม Public checkout — §6.2i หน้าซื้อแพ็กเกจสาธารณะ · `SiteSettings.PublicCheckoutEnabled` · `Helpers/PublicCheckoutPolicy` · `Services/Platform/PublicCheckoutService` · เทสต์ `PublicCheckoutRound232Tests` — ยังไม่ได้คอมไพล์ในเครื่องนี้ — `commit b4780a33`)_
-_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 6 — `PlanTemplate.MaxTradingPartners` เพดานคู่ค้า NextAcc (null = ไม่จำกัด · Y5) ตรวจตอนยอมรับคู่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 255 WP-12B ข้อ 6 — `PlanTemplate.MaxTradingPartners` เพดานคู่ค้า NextAcc (null = ไม่จำกัด · Y5) ตรวจตอนยอมรับคู่ — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 145ba355)_
