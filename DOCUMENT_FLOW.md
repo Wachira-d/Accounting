@@ -3384,7 +3384,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
        ลบสินทรัพย์ที่มีแถวปลดแล้ว = soft (คงประวัติ) · JE โอนกลับ/แก้จากสมุดรายวันไม่ได้ · `FiscalPeriodId` ใน JE โอน · งวดปิดตัดสินด้วย `ClosedPeriodRanges` ·
        รายงานกระทบยอดสินทรัพย์/รายการตรวจก่อนปิดงวดไม่นับสินทรัพย์ระหว่างจัดหา · GET ค้นบรรทัด/เอกสารต้นทุนต้องมีสิทธิ์ `Asset.Manage` · ราคาตามสัญญา (ไม่บังคับ) ⇒ เตือนเมื่อเกิน ·
        **CI 7cb6bd08**: ด่านทะเบียนต่อใบนับเฉพาะส่วนเกิน/ขาด (`OverRegistrationIncrease`/`OrphanIncrease`) — รุ่นแรกฟ้องใบที่ยังไม่มีทะเบียนแล้วผูกครบพอดี ·
-       ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified `commit <เติมในคอมมิตตามหลัง>`
+       ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified `commit c314266c`
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
