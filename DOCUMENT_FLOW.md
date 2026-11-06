@@ -3033,7 +3033,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   echo กลับ + hydrate ใน `contacts.html` แท็บช่องทางแจ้งเตือน และ `recurring.html` ขั้นช่องทางรับเงิน (โหลดค่าผู้ติดต่อไม่ได้ ⇒ ส่ง null = คงเดิม) · migration
   `DocumentAutoSendMigration` (`NOT NULL DEFAULT false` = พฤติกรรมเดิมทุกแถว)
 - เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests` · ล็อก R250L1 (+ เคส R250L1-1…5) · `settings_reader_check` (`ContactNotifyEndpoint.TopicsJson` ·
-  `Contact.AutoSendDisabled`) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit <เติมในคอมมิตตามหลัง>
+  `Contact.AutoSendDisabled`) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 31479320
 - **ทางเข้า HTTP** `ContactNotifyEndpointsController` (`api/companies/{cid}/contacts/{id}/notify-endpoints`): `GET` (สมาชิกบริษัท) · `GET recipients?topic=` (ดูว่าใครจะได้รับ — ตัวหาผู้รับตัวเดียวกัน) ·
   `POST email` · `PUT primary` · `PUT {eid}` (ป้าย · เรื่อง · แสดงยอด = กลุ่มเท่านั้น ชนิดอื่นปฏิเสธ 400) · `DELETE {eid}` (ยกเลิก · ล้าง LINE id · อีเมลหลักยกเลิกไม่ได้) —
   เขียนทุกตัว `Contact.Edit` + ปฏิเสธคีย์ API · ผู้เขียนเดียว `ContactNotifyEndpointService`: ล็อก `AdvisoryLockKey.ContactNotifyEndpoint` ต่อผู้ติดต่อ · tenant 404 · อีเมลผ่าน
@@ -3522,7 +3522,7 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
         (ไม่ใช่กดแล้วถูกปฏิเสธ) · `confirmPlaceInService`: อายุใช้งาน ≤ 0 กับวิธีที่คิดค่าเสื่อม ⇒ บอกก่อนยิง · วันตั้งต้น `Layout.toDateInput(new Date())` ·
         **ตั้งใจ (ไม่ทำรอบนี้)**: ค่าเสื่อมงวดแรก = เดือนถัดจากพร้อมใช้ (250-24 · ธรรมเนียมทั้งระบบ) · ดอกเบี้ยระหว่างก่อสร้างไม่รวมเป็นต้นทุน (250-25/N6 — ผูกบรรทัด JE ในผัง 12280
         ด้วยมือได้) · ริบมัดจำ/ใบซื้ออ้าง GRN/ปลดแถวที่โอนแล้ว/กู้คืนไม่ผูกกลับ/แผงไม่แสดงบน CN ซื้อ (250-28 · P3 ทำเมื่อผู้ใช้ขอ) · เทสต์ `Round250Wp08Tests` ·
-        Db `AssetEditsRound250DbTests` · ล็อก R250FA (+ R250FA-1…3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit <เติมในคอมมิตตามหลัง>
+        Db `AssetEditsRound250DbTests` · ล็อก R250FA (+ R250FA-1…3) — ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified commit 31479320
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด

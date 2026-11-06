@@ -384,7 +384,7 @@
 
 ### WP-08 · ต่อสาย L1 + สินทรัพย์ P2 (A E-01 · C-01 · C-05 · D-03) · effort 2 วัน · **ฝ่ายค้าน 1 รอบ** (แตะผู้รับจริง/PDPA)
 
-> **สถานะ (2026-11-06):** ✅ ลงมือแล้ว ข้อ 1–5 (commit <เติมในคอมมิตตามหลัง>) — Db `ContactRecipientWiringRound250DbTests` · `AssetEditsRound250DbTests` · R250L1/R250FA ·
+> **สถานะ (2026-11-06):** ✅ ลงมือแล้ว ข้อ 1–5 (commit 31479320) — Db `ContactRecipientWiringRound250DbTests` · `AssetEditsRound250DbTests` · R250L1/R250FA ·
 > ขยาย 250-29 ให้ "ไม่ส่งอัตโนมัติ" ครอบทุกเส้นอัตโนมัติ (DECISIONS 250-WP08-2) · ทางเข้าที่ไม่ต่อสาย (ส่งเองจากหน้าเอกสาร · BookingNotifier) จดเป็น backlog ใน DOCUMENT_FLOW §2.12h · ยังไม่ได้คอมไพล์ในเครื่องนี้ · รอฝ่ายค้านจากผู้ประสานงาน
 
 > **หมายเหตุลำดับ:** 246-QR-10 (block pay link เมื่อมีใบกำกับแล้ว) ถูก**ดึงขึ้นไป WP-02 §2.3** เพราะเป็นเงิน P1 (รับชำระซ้ำ) — ไม่ทำซ้ำที่นี่
@@ -555,7 +555,7 @@
 | 35 | กันกดซ้ำปุ่มเขียน · Escape ปิด modal | มีกลางแล้ว (`api.js:58–130 ApiBusy` · `layout.js:2756–2777`) — ยกเว้นหน้าที่ใช้ `fetch` ดิบ (รูปแบบ H) | D §12 ท้าย |
 | 36 | `IsCashInflowDocAsync` คืน "ออก" ให้ CreditNote ฝั่งซื้อ | วันนี้ไปไม่ถึง (`PayableDocumentTypes :14588-14592` ไม่มี CN · คืนเงิน gateway เดินคนละเส้น) — ปิดกับดักอนาคตใน WP-02 ข้อ 5 | C §4.1 |
 | 37 | `ReleaseCostSourcesForVoidAsync` / `ApplyPostCapitalizationCostAsync` ลำดับล็อก | ทุกเส้นเขียน: advisory key → Documents FOR UPDATE (เรียง Id) → FixedAssets — ยกเว้นช่อง TOCTOU ที่ WP-02 ข้อ 8 ปิด | C §1.7 |
-| 38 | `ContactNotifyEndpoints.*` ไม่มีผู้อ่านเชิงธุรกิจ | ✅ ปิดแล้ว WP-08 (commit <เติมในคอมมิตตามหลัง>) — ผู้อ่าน = ตัวหาผู้รับของทุกเส้นส่ง · `settings_reader_check` ล็อก `TopicsJson` · คำเตือนบน UI ถูกลบ | B ขั้น 6 |
+| 38 | `ContactNotifyEndpoints.*` ไม่มีผู้อ่านเชิงธุรกิจ | ✅ ปิดแล้ว WP-08 (commit 31479320) — ผู้อ่าน = ตัวหาผู้รับของทุกเส้นส่ง · `settings_reader_check` ล็อก `TopicsJson` · คำเตือนบน UI ถูกลบ | B ขั้น 6 |
 | 39 | `tools/dead_helper_check.py` รันในเครื่องไม่จบใน 120 วินาที | CI static job ของ fe9036f7 ผ่าน (12m54s) ⇒ dead helper/test_inventory/checker 57 ตัวเขียว | A K-03 |
 | 40 | ข้อความคอมมิต `369bc403` ผิดหัวเรื่อง · `ecc6710f`/`369bc403` ซ้ำ | ไม่ amend — git notes (WP-05 ข้อ 6) | A K-01 · E M-2 |
 

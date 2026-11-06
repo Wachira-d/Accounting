@@ -6665,4 +6665,4 @@ _รอบ 250 WP-08 (AUDIT_249 §4 WP-08 · คำตัดสิน 250-24…2
 `AutopilotSettingsResolver.AutoSendBlock`/`ContactPostPayEmailReceipt` — ไม่สร้าง resolver ตัวที่สอง) ชนะกฎบริษัททุกเส้นอัตโนมัติ · echo/hydrate ใน contacts.html + recurring.html.
 **สินทรัพย์ P2**: `PATCH …/contract-price` + `PATCH …/available-date` (Asset.Manage · audit chain) · จุดตั้งต้นค่าเสื่อมตัวเดียว `DepreciationSchedule.StartDate` (แผน/GL/ไล่ตาม/ทบทวนอายุ) ·
 ฟอร์มล็อกช่องพร้อมเหตุจาก `AvailableDateLockReason` · confirmPlaceInService ตรวจอายุ > 0 + วันตั้งต้นตามปฏิทินผู้ใช้. เทสต์ `Round250Wp08Tests` · Db `ContactRecipientWiringRound250DbTests`
-(7) · `AssetEditsRound250DbTests` (4) · R250L1/R250FA (+9 เคสฝ่ายค้าน) · settings_reader เพิ่ม ContactNotifyEndpoint.TopicsJson/Contact.AutoSendDisabled · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>_
+(7) · `AssetEditsRound250DbTests` (4) · R250L1/R250FA (+9 เคสฝ่ายค้าน) · settings_reader เพิ่ม ContactNotifyEndpoint.TopicsJson/Contact.AutoSendDisabled · ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit 31479320_
