@@ -602,7 +602,7 @@
 | รายการ | สถานะ |
 | --- | --- |
 | โปรเจกต์เทสต์ | `Accounting.Tests` (xUnit, net8.0) — **มีอยู่แล้ว** |
-| เทสต์ที่มี | **809 ไฟล์ · 8,555 `[Fact]` + 1,281 `[Theory]` (5,992 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
+| เทสต์ที่มี | **809 ไฟล์ · 8,570 `[Fact]` + 1,281 `[Theory]` (5,992 `InlineData`)** ณ 2026-11-06 — pure-logic ทั้งหมด (0 ไฟล์แตะ `DbContext`) |
 
 
 
@@ -7932,4 +7932,8 @@ engine `Services/Import/ImportPipelineService*.cs` · worker `ImportBatchWorker`
 | (Db) อนุมัติ/ขึ้นทะเบียนจากใบ ข้ามบรรทัดที่ผูกแล้ว + บอกเหตุ | `…Approval_auto_register_skips_lines_already_linked` |
 | (Db) ระหว่างจัดหา: งานค่าเสื่อมข้าม · จำหน่ายไม่ได้ · ลบไม่ได้จนกว่าปลด (ปลดแล้วลบได้) | `…Under_acquisition_asset_is_not_depreciated_and_cannot_be_deleted_while_linked` |
 | (Db) บรรทัดของบริษัทอื่น ⇒ ไม่พบ · ค้นหาไม่เห็น | `…Other_company_line_is_not_found` |
+| (ฝ่ายค้าน · CI 7cb6bd08) ด่านทะเบียนต่อใบนับเฉพาะส่วนเกิน: ใบที่ยังไม่มีทะเบียนผูกครบ ⇒ ไม่ใช่การเกิน · ค่าประกอบที่เฉลี่ยแล้วผูกซ้ำ/ข้ามจากขาดไปเกิน ⇒ ยังจับ · ใบลดหนี้ · รวมร่างทิ้งค่าประกอบ | `AssetCostSourceRulesTests.ใบที่ยังไม่มีทะเบียน_ผูกครบพอดี_ไม่ใช่การเกิน` · `…ค่าประกอบที่เฉลี่ยเข้าทะเบียนเดี่ยวแล้ว_ผูกซ้ำ_ยังถูกจับ_ทิศตรงข้าม` · `…รวมร่างโดยทิ้งค่าประกอบ_ยอดค้างเพิ่ม_ถูกจับ` |
+| (ฝ่ายค้าน) เส้นลงบัญชี (ตัดชำระ PV/ใบรับรองแทน · อ้าง GRN · PV จาก PO ลงเอง) · ใบรับรองแทนรวม VAT · ภาษีที่ผู้จ่ายออกแทน · ยอดคงเหลือผังต้นทาง · วันพร้อมใช้ก่อนใบล่าสุด · ราคาตามสัญญา | `…เส้นลงบัญชี_ใบจ่ายตัดชำระ_อ้างใบรับสินค้า_และใบปกติ` · `…ยอดลงบัญชีของบรรทัด_ใบรับรองแทนรวมVATเสมอ_และภาษีที่ผู้จ่ายออกแทน` · `…มัดจำถูกเคลียร์ไปแล้ว_ยอดคงเหลือไม่พอ_โอนไม่ได้_ทิศตรงข้ามผ่าน` · `…วันพร้อมใช้ก่อนใบต้นทุนล่าสุด_ไม่ได้_วันเดียวกันได้` · `…ต้นทุนเกินราคาตามสัญญา_เตือน_ไม่ระบุไม่เตือน` |
+| (Db · ทิศตรงข้าม) บรรทัดที่ไม่ผูกในใบเดียวกันยังขึ้นทะเบียน · ยกเลิก/resync ใบที่ไม่ผูกไม่ถูกแตะ · โอนเข้า 12220 จากมัดจำ USD · VAT ต้องห้ามรถยนต์นั่งเป็นต้นทุน · ใบลดหนี้บน 12280 หลังโอนลง JE Dr 12280/Cr 12260 | `AssetMultiDocumentDbTests.Approval_still_registers_the_unlinked_line_of_the_same_document` · `…Unlinked_document_void_gate_is_silent` · `…Foreign_currency_deposit_placed_into_computer_account` · `…Passenger_car_non_claimable_vat_is_part_of_cost` · `…Credit_note_on_cip_after_placement_posts_transfer_je` |
+| (Db) มัดจำที่ใบอื่นเคลียร์ไปแล้ว ⇒ โอนไม่ได้ (ยอดคงเหลือ) · วันพร้อมใช้ก่อนใบงวด ⇒ ปฏิเสธ | `…Deposit_already_cleared_elsewhere_cannot_be_transferred_again` · `…Available_date_before_latest_source_document_is_refused` |
 | จุดเรียกด่าน (R249FA · `tools/required_call_site_check.py`): ล็อกเอกสารก่อนอ่าน · กันซ้ำ/ตาข่าย GL/ทะเบียนต่อใบ · ด่านโอนก่อน JE · ตารางจากวันพร้อมใช้ · ปลด/ยกเลิก/แก้ผัง · ตัวนับ GL ค้าง · การอนุมัติข้ามบรรทัดที่ผูก · ระหว่างจัดหาห้ามจำหน่าย/ตีราคา/ปรับอายุ · `ResolveLinePostedGlAmountAsync` ใช้ `PurchaseLineGlAmount` | negative test ในตัว R249FA-1..7 + R249FA-3fp |

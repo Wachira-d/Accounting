@@ -24,7 +24,7 @@ public class AssetMultiDocumentDbTests
     private sealed class Seed
     {
         public Guid CompanyId;
-        public Guid Cash, Deposit, Cip, Machine, Accum, DepExp, Expense, Ap;
+        public Guid Cash, Deposit, Cip, Machine, Accum, DepExp, Expense, Ap, Computer, Office, Vehicle;
         public Guid DepositDoc, DepositLine, ProgressDoc, ProgressLine, FinalDoc, FinalLine, InstallLine, DraftAssetId, ExpenseDoc, ExpenseLine;
         public Guid ContactId;
     }
@@ -50,22 +50,27 @@ public class AssetMultiDocumentDbTests
         s.DepExp = Acc("56160", "ค่าเสื่อม-เครื่องจักร", AccountType.Expense);
         s.Expense = Acc("51800", "วัสดุสิ้นเปลือง", AccountType.Expense);
         s.Ap = Acc("21210", "เจ้าหนี้การค้า", AccountType.Liability);
+        s.Computer = Acc("12220", "คอมพิวเตอร์", AccountType.Asset);
+        Acc("18320", "ค่าเสื่อมสะสม-คอมพิวเตอร์", AccountType.Asset);
+        Acc("56120", "ค่าเสื่อม-คอมพิวเตอร์", AccountType.Expense);
+        s.Office = Acc("12210", "อุปกรณ์สำนักงาน", AccountType.Asset);
+        s.Vehicle = Acc("12240", "ยานพาหนะ", AccountType.Asset);
         var contact = new Contact { CompanyId = company.Id, Name = "บริษัทเครื่องจักรไทย", IsSupplier = true };
         db.Contacts.Add(contact);
         s.ContactId = contact.Id;
 
-        (s.DepositDoc, s.DepositLine) = AddDoc(db, s, "PV-MD-0001", DocumentType.PaymentVoucher, new DateTime(2026, 1, 10),
+        (s.DepositDoc, s.DepositLine) = AddDoc(db, s, "PV-MD-0001", DocumentType.PaymentVoucher, Y(1, 10),
             ("มัดจำเครื่องจักร 30%", 300_000m, 21_000m, s.Deposit, true));
         PostJe(db, s.CompanyId, s.DepositDoc, s.Deposit, s.Cash, 300_000m);
-        (s.ProgressDoc, s.ProgressLine) = AddDoc(db, s, "PI-MD-0002", DocumentType.PurchaseInvoice, new DateTime(2026, 2, 10),
+        (s.ProgressDoc, s.ProgressLine) = AddDoc(db, s, "PI-MD-0002", DocumentType.PurchaseInvoice, Y(2, 10),
             ("งวดที่ 2 ผลิตเครื่องจักร", 400_000m, 28_000m, s.Cip, true));
         PostJe(db, s.CompanyId, s.ProgressDoc, s.Cip, s.Ap, 400_000m);
-        var final = AddDocMulti(db, s, "PI-MD-0003", DocumentType.PurchaseInvoice, new DateTime(2026, 3, 1),
+        var final = AddDocMulti(db, s, "PI-MD-0003", DocumentType.PurchaseInvoice, Y(3, 1),
             ("เครื่องจักร CNC งวดสุดท้าย", 300_000m, 21_000m, s.Machine, true),
             ("ค่าติดตั้ง", 20_000m, 1_400m, s.Machine, true));
         s.FinalDoc = final.DocId; s.FinalLine = final.LineIds[0]; s.InstallLine = final.LineIds[1];
         PostJe(db, s.CompanyId, s.FinalDoc, s.Machine, s.Ap, 320_000m);
-        (s.ExpenseDoc, s.ExpenseLine) = AddDoc(db, s, "PV-MD-0004", DocumentType.PaymentVoucher, new DateTime(2026, 3, 2),
+        (s.ExpenseDoc, s.ExpenseLine) = AddDoc(db, s, "PV-MD-0004", DocumentType.PaymentVoucher, Y(3, 2),
             ("ค่าขนส่งเครื่องจักร (ลงค่าใช้จ่าย)", 5_000m, 350m, s.Expense, true));
         PostJe(db, s.CompanyId, s.ExpenseDoc, s.Expense, s.Cash, 5_000m);
         await db.SaveChangesAsync();
@@ -74,7 +79,7 @@ public class AssetMultiDocumentDbTests
         var draft = new FixedAsset
         {
             CompanyId = company.Id, AssetCode = "DRAFT-" + Guid.NewGuid().ToString("N")[..8], Name = "เครื่องจักร CNC งวดสุดท้าย",
-            PurchaseDate = new DateTime(2026, 3, 1), PurchaseCost = 320_000m, NetBookValue = 320_000m, UsefulLifeMonths = 120,
+            PurchaseDate = Y(3, 1), PurchaseCost = 320_000m, NetBookValue = 320_000m, UsefulLifeMonths = 120,
             Status = AssetStatus.Active, AssetAccountId = s.Machine, SourceDocumentId = s.FinalDoc, SourceDocumentLineId = s.FinalLine,
             NeedsReview = true,
         };
@@ -93,12 +98,16 @@ public class AssetMultiDocumentDbTests
 
     private static (Guid DocId, List<Guid> LineIds) AddDocMulti(AccountingDbContext db, Seed s, string no, DocumentType t, DateTime date,
         params (string Desc, decimal Amount, decimal Vat, Guid Account, bool Claimable)[] lines)
+        => AddDocFx(db, s, no, t, date, "THB", 1m, lines);
+
+    private static (Guid DocId, List<Guid> LineIds) AddDocFx(AccountingDbContext db, Seed s, string no, DocumentType t, DateTime date,
+        string currency, decimal rate, params (string Desc, decimal Amount, decimal Vat, Guid Account, bool Claimable)[] lines)
     {
         var doc = new Document
         {
             CompanyId = s.CompanyId, DocumentNumber = no + "-" + Guid.NewGuid().ToString("N")[..4], DocumentType = t,
             Status = DocumentStatus.Approved, DocumentDate = DateTime.SpecifyKind(date, DateTimeKind.Utc),
-            ContactId = s.ContactId, Currency = "THB", ExchangeRate = 1m,
+            ContactId = s.ContactId, Currency = currency, ExchangeRate = rate,
             SubTotal = lines.Sum(l => l.Amount), VatAmount = lines.Sum(l => l.Vat), TotalAmount = lines.Sum(l => l.Amount + l.Vat),
         };
         var order = 1;
@@ -112,11 +121,16 @@ public class AssetMultiDocumentDbTests
         return (doc.Id, doc.Lines.OrderBy(x => x.LineOrder).Select(x => x.Id).ToList());
     }
 
+    /// <summary>วันที่ในปีก่อน (ทุกวันอยู่ในอดีตเสมอ — วันพร้อมใช้ต้อง ≤ วันนี้ และ ≥ วันของใบต้นทาง)</summary>
+    private static DateTime Y(int month, int day) => new(DateTime.UtcNow.Year - 1, month, day);
+
+    /// <summary>JE ลงวันเดียวกับเอกสาร (ด่านยอดคงเหลือผังต้นทาง ณ วันลงรายการโอนนับจากวันที่ JE)</summary>
     private static void PostJe(AccountingDbContext db, Guid companyId, Guid? docId, Guid dr, Guid cr, decimal amt)
     {
+        var docDate = docId.HasValue ? db.Documents.Local.FirstOrDefault(d => d.Id == docId.Value)?.DocumentDate : null;
         var je = new JournalEntry
         {
-            CompanyId = companyId, EntryNumber = "JV-SEED-" + Guid.NewGuid().ToString("N")[..8], EntryDate = DateTime.UtcNow,
+            CompanyId = companyId, EntryNumber = "JV-SEED-" + Guid.NewGuid().ToString("N")[..8], EntryDate = docDate ?? DateTime.UtcNow,
             Status = JournalEntryStatus.Posted, SourceDocumentId = docId, TotalDebit = amt, TotalCredit = amt, Description = "seed",
         };
         je.Lines.Add(new JournalEntryLine { AccountId = dr, DebitAmount = amt, LineOrder = 1 });
@@ -234,7 +248,7 @@ public class AssetMultiDocumentDbTests
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
         var s = await SeedAsync(db);
-        var (noGlDoc, noGlLine) = AddDoc(db, s, "PV-MD-NOGL", DocumentType.PaymentVoucher, new DateTime(2026, 1, 20),
+        var (noGlDoc, noGlLine) = AddDoc(db, s, "PV-MD-NOGL", DocumentType.PaymentVoucher, Y(1, 20),
             ("มัดจำที่ไม่มีรายการบัญชี", 10_000m, 700m, s.Deposit, true));
         await db.SaveChangesAsync();
         var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => new FixedAssetService(db).CreateFromSourcesAsync(s.CompanyId,
@@ -287,7 +301,7 @@ public class AssetMultiDocumentDbTests
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
         var (s, assetId) = await BuildPlacedAsync(db);
-        var (cnDoc, cnLine) = AddDoc(db, s, "CN-MD-0005", DocumentType.CreditNote, new DateTime(2026, 6, 1),
+        var (cnDoc, cnLine) = AddDoc(db, s, "CN-MD-0005", DocumentType.CreditNote, Y(6, 1),
             ("ส่วนลดเครื่องจักร", 20_400m, 1_428m, s.Machine, true));
         await db.SaveChangesAsync();
         var cn = await db.Documents.SingleAsync(d => d.Id == cnDoc);
@@ -320,7 +334,7 @@ public class AssetMultiDocumentDbTests
         Assert.Contains("ใบลดหนี้", block);
 
         // ใบที่ผูกกับสินทรัพย์ที่ยังระหว่างจัดหา: ปลด + คิดต้นทุนใหม่ (ทิศตรงข้าม)
-        var (otherDoc, otherLine) = AddDoc(db, s, "PV-MD-0006", DocumentType.PaymentVoucher, new DateTime(2026, 4, 1),
+        var (otherDoc, otherLine) = AddDoc(db, s, "PV-MD-0006", DocumentType.PaymentVoucher, Y(4, 1),
             ("มัดจำเครื่องที่สอง", 50_000m, 3_500m, s.Deposit, true));
         PostJe(db, s.CompanyId, otherDoc, s.Deposit, s.Cash, 50_000m);
         await db.SaveChangesAsync();
@@ -372,6 +386,139 @@ public class AssetMultiDocumentDbTests
         await svc.DeleteAsync(s.CompanyId, created.Asset.Id);         // ปลดแล้วลบได้ (ทิศตรงข้าม)
         using var check = DbTestDatabase.TryCreateContext()!;
         Assert.False(await check.FixedAssets.AnyAsync(a => a.Id == created.Asset.Id));
+    }
+
+    // ═══ ฝ่ายค้าน 369bc403 — ทิศตรงข้าม + ด่านใหม่ ═══
+
+    [Fact]
+    public async Task Approval_still_registers_the_unlinked_line_of_the_same_document()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var two = AddDocMulti(db, s, "PI-MD-TWO", DocumentType.PurchaseInvoice, Y(2, 20),
+            ("ตู้เอกสารชุดที่ 1 (งวด)", 40_000m, 2_800m, s.Office, true),
+            ("ตู้เอกสารชุดที่ 2", 30_000m, 2_100m, s.Office, true));
+        PostJe(db, s.CompanyId, two.DocId, s.Office, s.Ap, 70_000m);
+        await db.SaveChangesAsync();
+        var svc = new FixedAssetService(db);
+        await svc.CreateFromSourcesAsync(s.CompanyId, new CreateAssetFromSourcesRequest(
+            "ตู้ชุดที่ 1", new List<AttachCostSourceItem> { new(two.LineIds[0]) }), Actor);
+        var r = await svc.RegisterFromDocumentAsync(s.CompanyId, two.DocId, null, Actor);
+        Assert.Equal(1, r.Created);                                    // บรรทัดที่ไม่ได้ผูกยังขึ้นทะเบียนตามเดิม
+        Assert.Equal(two.LineIds[1], r.Assets.Single().SourceDocumentLineId);
+        Assert.Equal(30_000m, r.Assets.Single().PurchaseCost);
+    }
+
+    [Fact]
+    public async Task Unlinked_document_void_gate_is_silent()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        Assert.Null(await FixedAssetService.CostSourceVoidBlockAsync(db, s.CompanyId, s.ExpenseDoc, "PV-MD-0004"));
+        Assert.Equal(0, await FixedAssetService.ReleaseCostSourcesForVoidAsync(db, s.CompanyId, s.ExpenseDoc, "PV-MD-0004"));
+        Assert.Null(await FixedAssetService.CostSourceDocumentChangeBlockAsync(db, s.CompanyId, s.ExpenseDoc, "PV-MD-0004", "resync "));
+        Assert.Empty(await FixedAssetService.CapitalizedSourceDocumentIdsAsync(db, s.CompanyId, new[] { s.ExpenseDoc }));
+    }
+
+    [Fact]
+    public async Task Foreign_currency_deposit_placed_into_computer_account()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var usd = AddDocFx(db, s, "PV-MD-USD", DocumentType.PaymentVoucher, Y(2, 1), "USD", 35m,
+            ("มัดจำเซิร์ฟเวอร์ (USD)", 1_000m, 0m, s.Deposit, true));
+        PostJe(db, s.CompanyId, usd.DocId, s.Deposit, s.Cash, 35_000m);
+        await db.SaveChangesAsync();
+        var svc = new FixedAssetService(db);
+        var created = await svc.CreateFromSourcesAsync(s.CompanyId, new CreateAssetFromSourcesRequest(
+            "เซิร์ฟเวอร์", new List<AttachCostSourceItem> { new(usd.LineIds[0]) }, AssetAccountId: s.Computer), Actor);
+        Assert.Equal(35_000m, created.Asset.PurchaseCost);             // แปลงบาทตามอัตราของใบ
+        await svc.PlaceInServiceAsync(s.CompanyId, created.Asset.Id, new PlaceInServiceRequest(Y(3, 1), s.Computer, 36), Actor);
+
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var asset = await check.FixedAssets.SingleAsync(a => a.Id == created.Asset.Id);
+        var je = await check.JournalEntries.Include(j => j.Lines).SingleAsync(j => j.CompanyId == s.CompanyId && j.Reference == asset.AssetCode);
+        Assert.Equal(35_000m, je.Lines.Single(l => l.AccountId == s.Computer).DebitAmount);
+        Assert.Equal(35_000m, je.Lines.Single(l => l.AccountId == s.Deposit).CreditAmount);
+        Assert.NotNull(asset.AccumulatedDepreciationAccountId);       // 18320 ตามประเภท 12220
+    }
+
+    [Fact]
+    public async Task Passenger_car_non_claimable_vat_is_part_of_cost()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var car = AddDocMulti(db, s, "PI-MD-CAR", DocumentType.PurchaseInvoice, Y(2, 15),
+            ("รถยนต์นั่ง 5 ที่นั่ง (§82/5(6))", 900_000m, 63_000m, s.Vehicle, false));
+        PostJe(db, s.CompanyId, car.DocId, s.Vehicle, s.Ap, 963_000m);   // AutoPost: Dr 12240 = ฐาน + VAT ต้องห้าม
+        await db.SaveChangesAsync();
+        var res = await new FixedAssetService(db).CreateFromSourcesAsync(s.CompanyId, new CreateAssetFromSourcesRequest(
+            "รถผู้บริหาร", new List<AttachCostSourceItem> { new(car.LineIds[0]) }, AssetAccountId: s.Vehicle), Actor);
+        Assert.Equal(963_000m, res.Asset.PurchaseCost);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        Assert.Equal(63_000m, (await check.FixedAssetCostSources.SingleAsync(x => x.DocumentLineId == car.LineIds[0])).NonClaimableVatIncluded);
+    }
+
+    [Fact]
+    public async Task Credit_note_on_cip_after_placement_posts_transfer_je()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var (s, assetId) = await BuildPlacedAsync(db);
+        var (cnDoc, cnLine) = AddDoc(db, s, "CN-MD-CIP", DocumentType.CreditNote, Y(6, 10),
+            ("ส่วนลดงวดที่ 2", 10_000m, 700m, s.Cip, true));
+        await db.SaveChangesAsync();
+        (await db.Documents.SingleAsync(d => d.Id == cnDoc)).RelatedDocumentId = s.ProgressDoc;
+        PostJe(db, s.CompanyId, cnDoc, s.Ap, s.Cip, 10_000m);
+        await db.SaveChangesAsync();
+
+        var res = await new FixedAssetService(db).AttachCostSourcesAsync(s.CompanyId, assetId,
+            new AttachCostSourcesRequest(new List<AttachCostSourceItem> { new(cnLine) }), Actor);
+        Assert.NotNull(res.JournalEntryId);                            // ใบลดหนี้ Cr 12280 แต่ทุนอยู่ 12260 ⇒ Dr 12280 / Cr 12260
+        Assert.Equal(1_010_000m, res.Asset.PurchaseCost);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var je = await check.JournalEntries.Include(j => j.Lines).SingleAsync(j => j.Id == res.JournalEntryId);
+        Assert.Equal(10_000m, je.Lines.Single(l => l.AccountId == s.Cip).DebitAmount);
+        Assert.Equal(10_000m, je.Lines.Single(l => l.AccountId == s.Machine).CreditAmount);
+        Assert.Equal(Y(6, 10), je.EntryDate);
+        Assert.NotNull(je.Lines);
+    }
+
+    [Fact]
+    public async Task Deposit_already_cleared_elsewhere_cannot_be_transferred_again()
+    {
+        // ฝ่ายค้าน H3: ใบสุดท้ายเต็มราคาที่หักมัดจำเอง (Cr 11810) แล้วยังผูกมัดจำ ⇒ ต้นทุนซ้ำ + 11810 ติดลบ
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var (clrDoc, _) = AddDoc(db, s, "PI-MD-CLR", DocumentType.PurchaseInvoice, Y(2, 1),
+            ("หักมัดจำ (ใบสุดท้ายเต็มราคา)", 1m, 0m, s.Machine, true));
+        PostJe(db, s.CompanyId, clrDoc, s.Machine, s.Deposit, 300_000m);
+        await db.SaveChangesAsync();
+        var svc = new FixedAssetService(db);
+        var created = await svc.CreateFromSourcesAsync(s.CompanyId, new CreateAssetFromSourcesRequest(
+            "เครื่องจักร", new List<AttachCostSourceItem> { new(s.DepositLine) }, AssetAccountId: s.Machine), Actor);
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.PlaceInServiceAsync(s.CompanyId, created.Asset.Id,
+            new PlaceInServiceRequest(Y(3, 1), s.Machine, 120), Actor));
+        Assert.Contains("คงเหลือ", ex.Message);
+    }
+
+    [Fact]
+    public async Task Available_date_before_latest_source_document_is_refused()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน PostgreSQL — ข้าม · หลักฐานอยู่ที่ job db-test"); return; }
+        var s = await SeedAsync(db);
+        var svc = new FixedAssetService(db);
+        var created = await svc.CreateFromSourcesAsync(s.CompanyId, new CreateAssetFromSourcesRequest(
+            "เครื่องจักร", new List<AttachCostSourceItem> { new(s.DepositLine), new(s.ProgressLine) }, AssetAccountId: s.Machine), Actor);
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => svc.PlaceInServiceAsync(s.CompanyId, created.Asset.Id,
+            new PlaceInServiceRequest(Y(2, 1), s.Machine, 120), Actor));   // ใบงวดลง 10 ก.พ.
+        Assert.Contains("ก่อนวันที่ของเอกสารต้นทุนล่าสุด", ex.Message);
     }
 
     [Fact]

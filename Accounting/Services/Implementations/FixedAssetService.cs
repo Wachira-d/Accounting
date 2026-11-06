@@ -327,14 +327,34 @@ public partial class FixedAssetService : IFixedAssetService
                     ? "บางรายการโอนเป็นสินทรัพย์แล้ว — ใช้ 'ตัดจำหน่าย' แทนการลบ"
                     : "ที่ 'เอกสารต้นทุน' ปลดแต่ละใบออกก่อน (ระบุเหตุผล) แล้วลบอีกครั้ง"),
                 Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
-        _db.FixedAssetCostSources.RemoveRange(costRows);
-
         // ลบ projected depreciation rows (unposted) แล้วลบ asset
         var projectedDeps = await _db.AssetDepreciations
             .Where(d => d.FixedAssetId == assetId && d.CompanyId == companyId)
             .ToListAsync();
         _db.AssetDepreciations.RemoveRange(projectedDeps);
-        _db.FixedAssets.Remove(asset);
+        if (costRows.Count > 0)
+        {
+            // ฝ่ายค้าน L7: แถวที่ปลดแล้วเป็นประวัติ (ใครผูก/ปลดอะไร เพราะอะไร) — ห้ามลบ ⇒ ลบสินทรัพย์แบบ soft (FK Restrict ยังชี้แถวนี้)
+            asset.IsDeleted = true;
+            asset.UpdatedAt = DateTime.UtcNow;
+            _db.AddChainedAuditLog(new AuditLog
+            {
+                CompanyId = companyId,
+                Action = AuditAction.Delete,
+                EntityType = nameof(FixedAsset),
+                EntityId = asset.Id.ToString(),
+                OldValues = System.Text.Json.JsonSerializer.Serialize(new { asset.AssetCode, asset.Name, asset.PurchaseCost }),
+                NewValues = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    action = "soft-deleted-keeps-released-cost-sources",
+                    releasedRows = costRows.Count,
+                    ruleCode = Accounting.Helpers.AssetCostSourceRules.RuleCode,
+                }),
+                Timestamp = DateTime.UtcNow,
+            });
+        }
+        else
+            _db.FixedAssets.Remove(asset);
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
     }
@@ -1688,5 +1708,5 @@ public partial class FixedAssetService : IFixedAssetService
             a.AccumulatedDepreciationAccountId,
             a.AssetType, a.LeaseTermMonths, a.LessorName, a.MonthlyLeasePayment,
             a.ProjectId, a.NeedsReview, a.SourceDocumentId, sourceDocumentNumber, a.SourceDocumentLineId,
-            IsUnderAcquisition: a.IsUnderAcquisition, AvailableForUseDate: a.AvailableForUseDate);
+            IsUnderAcquisition: a.IsUnderAcquisition, AvailableForUseDate: a.AvailableForUseDate, ContractPrice: a.ContractPrice);
 }

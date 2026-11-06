@@ -74,13 +74,35 @@ public static class AssetCostSourceRules
         return role == AccountRole.ConstructionInProgress ? AssetCostSourceKind.Progress : AssetCostSourceKind.Final;
     }
 
-    /// <summary>ต้นทุนของบรรทัด (บาท · มีเครื่องหมาย) = ยอดที่บรรทัดลง GL จริง (<see cref="PurchaseLineGlAmount"/>) × เครื่องหมาย ·
-    /// ส่วน VAT ต้องห้ามที่รวมอยู่แยกออกมาเพื่อแสดง/ตรวจ</summary>
-    public static LineCost CostOf(decimal amount, decimal vatAmount, bool isVatClaimable, decimal exchangeRate, int sign)
+    /// <summary>ต้นทุนของบรรทัด (บาท · มีเครื่องหมาย) = ยอดที่บรรทัดลง GL จริง (<see cref="PurchaseLineGlAmount.Posted"/>) × เครื่องหมาย ·
+    /// ส่วน VAT ต้องห้ามที่รวมอยู่แยกออกมาเพื่อแสดง/ตรวจ · <paramref name="payerBorneShare"/> = ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทนส่วนของบรรทัด (สกุลเอกสาร)</summary>
+    public static LineCost CostOf(decimal amount, decimal vatAmount, bool isVatClaimable, decimal exchangeRate, int sign,
+        bool isCertificateInLieu = false, decimal payerBorneShare = 0m)
     {
-        var gl = DocumentFx.ToBaht(PurchaseLineGlAmount.Standalone(amount, vatAmount, isVatClaimable), exchangeRate);
-        var nc = DocumentFx.ToBaht(PurchaseLineGlAmount.NonClaimableVat(vatAmount, isVatClaimable), exchangeRate);
+        var gl = DocumentFx.ToBaht(PurchaseLineGlAmount.Posted(isCertificateInLieu, amount, vatAmount, isVatClaimable, payerBorneShare), exchangeRate);
+        var nc = DocumentFx.ToBaht(PurchaseLineGlAmount.PostedNonClaimableVat(isCertificateInLieu, vatAmount, isVatClaimable), exchangeRate);
         return new LineCost(sign * gl, sign * nc);
+    }
+
+    /// <summary>บรรทัดของใบนี้ลง GL ทางไหน (ฝ่ายค้าน 369bc403 L5 — ตัวตัดสินเดียวของ "ใบตัดชำระ/อ้างใบรับสินค้า")</summary>
+    public enum PostingRoute
+    {
+        /// <summary>ลงบรรทัดบนผังของตัวเอง (ใบซื้อ/ค่าใช้จ่าย/ใบสำคัญจ่าย/ใบรับรองแทนที่ไม่ได้ตัดใบตั้งหนี้)</summary>
+        OwnLines = 0,
+        /// <summary>ใบสำคัญจ่าย/ใบรับรองแทนที่ตัดชำระใบตั้งหนี้ (PI/ค่าใช้จ่าย) — Dr เจ้าหนี้ ไม่ใช่ผังของบรรทัด</summary>
+        Settlement = 1,
+        /// <summary>ใบซื้ออ้างใบรับสินค้า — ฐานไปตัดบัญชีพักรับของ ผังสินทรัพย์ลงที่ใบรับสินค้า</summary>
+        ViaGoodsReceipt = 2,
+    }
+
+    /// <summary>เส้นลง GL ของบรรทัด จากชนิดใบ + ชนิดใบที่อ้าง</summary>
+    public static PostingRoute RouteOf(DocumentType type, DocumentType? relatedType)
+    {
+        if (relatedType == DocumentType.GoodsReceiptNote) return PostingRoute.ViaGoodsReceipt;
+        if (type is DocumentType.PaymentVoucher or DocumentType.CertificateInLieu
+            && relatedType is DocumentType.PurchaseInvoice or DocumentType.Expense)
+            return PostingRoute.Settlement;
+        return PostingRoute.OwnLines;
     }
 
     /// <summary>ต้นทุนของบรรทัด — <see cref="Amount"/> มีเครื่องหมาย (ลดหนี้ติดลบ)</summary>
@@ -89,15 +111,17 @@ public static class AssetCostSourceRules
     /// <summary>ด่านว่าบรรทัดนี้เป็นต้นทุนสินทรัพย์ได้ไหม — null = ได้ · ข้อความ = เหตุ + ทางไปต่อ</summary>
     public static string? LineProblem(
         string documentNumber, DocumentType type, int? sign, bool documentEffective,
-        bool isPaymentSettlement, bool viaGoodsReceipt, AccountRole role, string? accountCode, decimal lineCostAbs)
+        PostingRoute route, AccountRole role, string? accountCode, decimal lineCostAbs)
     {
+        var isPaymentSettlement = route == PostingRoute.Settlement;
+        var viaGoodsReceipt = route == PostingRoute.ViaGoodsReceipt;
         var label = $"เอกสาร {documentNumber}";
         if (sign == null)
             return $"{label} ({type}) ไม่ใช่เอกสารฝั่งซื้อที่เป็นต้นทุนสินทรัพย์ได้ — ผูกได้เฉพาะใบซื้อ/ค่าใช้จ่าย/ใบสำคัญจ่าย/ใบรับรองแทนใบเสร็จ และใบลดหนี้/เพิ่มหนี้ฝั่งซื้อ";
         if (!documentEffective)
             return $"{label} ยังไม่ได้อนุมัติหรือถูกยกเลิกแล้ว — ยังไม่มีรายการบัญชีให้โอนเป็นต้นทุน (อนุมัติใบก่อน)";
         if (isPaymentSettlement)
-            return $"{label} เป็นใบสำคัญจ่ายที่ตัดชำระใบตั้งหนี้ — บรรทัดไม่ได้ลงผังของตัวเอง · ผูกที่ใบตั้งหนี้ต้นทางแทน";
+            return $"{label} เป็นใบจ่ายที่ตัดชำระใบตั้งหนี้ — บรรทัดไม่ได้ลงผังของตัวเอง · ผูกที่ใบตั้งหนี้ต้นทางแทน";
         if (viaGoodsReceipt)
             return $"{label} อ้างใบรับสินค้า (GRN) — ฐานไปตัดบัญชีพักรับของแล้ว ผังสินทรัพย์ลงที่ใบรับสินค้า · รอบนี้ยังไม่รองรับการผูกเส้นนี้ (ผูกด้วยการปรับปรุงมือ)";
         if (role == AccountRole.NotEligible)
@@ -149,6 +173,26 @@ public static class AssetCostSourceRules
         return excess;
     }
 
+    /// <summary>ทะเบียนต่อใบ "เกิน" GL ผังสินทรัพย์เพิ่มขึ้นเท่าไรจากการผูก (ค่าบวก · 0 = ไม่แย่ลง) — นับเฉพาะ<b>ส่วนที่เกิน</b>
+    /// (<c>max(0, เครื่องหมาย × (ทะเบียน − GL))</c>) ก่อน/หลัง
+    /// <para>ที่มา (CI 7cb6bd08 · Db test 4 ตัว): รุ่นแรกเทียบผลต่างมีเครื่องหมายตรง ๆ ⇒ ใบงวดที่ <b>ยังไม่มีทะเบียน</b> (ทะเบียน − GL = −400,000)
+    /// ผูกครบพอดี (= 0) ถูกนับเป็น "เกินเพิ่ม 400,000" ⇒ ฟ้องเคสถูกทุกเคส · ทิศ "ขาด" ตรวจที่ <see cref="OrphanIncrease"/></para></summary>
+    public static decimal OverRegistrationIncrease(decimal registeredMinusGlBefore, decimal registeredMinusGlAfter, int sign)
+    {
+        var before = Math.Max(0m, sign * registeredMinusGlBefore);
+        var after = Math.Max(0m, sign * registeredMinusGlAfter);
+        return Math.Round(Math.Max(0m, after - before), 2, MidpointRounding.AwayFromZero);
+    }
+
+    /// <summary>ยอด GL ผังสินทรัพย์ของใบที่ "ไม่มีทะเบียนรองรับ" เพิ่มขึ้นเท่าไร (ค่าบวก · 0 = ไม่แย่ลง) — ใช้ตอนรวมร่างเข้า
+    /// (ร่างนั้นรวมค่าประกอบจากบรรทัดอื่นที่ไม่ได้ผูกมาด้วย)</summary>
+    public static decimal OrphanIncrease(decimal registeredMinusGlBefore, decimal registeredMinusGlAfter, int sign)
+    {
+        var before = Math.Max(0m, -sign * registeredMinusGlBefore);
+        var after = Math.Max(0m, -sign * registeredMinusGlAfter);
+        return Math.Round(Math.Max(0m, after - before), 2, MidpointRounding.AwayFromZero);
+    }
+
     /// <summary>ร่างทะเบียนเดี่ยวที่การอนุมัติสร้างจากบรรทัดนี้ "รวมเข้า" สินทรัพย์หลายใบได้ไหม (ลบร่างในธุรกรรมเดียวกับการผูก) —
     /// เฉพาะร่างที่ยังไม่ยืนยัน · ไม่มีค่าเสื่อม · ไม่ได้เป็นสินทรัพย์หลายใบเอง</summary>
     public static bool CanAbsorbLegacyDraft(bool needsReview, AssetStatus status, decimal accumulatedDepreciation,
@@ -189,7 +233,8 @@ public static class AssetCostSourceRules
     public static string? PlaceInServiceProblem(
         bool isUnderAcquisition, int activeSources, int voidedSourceDocuments, int ineligibleSources,
         decimal cost, decimal salvage, AccountRole targetRole, bool targetDepreciable,
-        DepreciationMethod method, int usefulLifeMonths, DateTime availableForUseDate, DateTime todayBangkok)
+        DepreciationMethod method, int usefulLifeMonths, DateTime availableForUseDate, DateTime todayBangkok,
+        DateTime? latestSourceDocumentDate = null)
     {
         if (!isUnderAcquisition)
             return "สินทรัพย์นี้โอนเป็นสินทรัพย์พร้อมใช้ไปแล้ว — ใบที่มาทีหลังให้กด 'ผูกเอกสาร' (ระบบปรับต้นทุนไปข้างหน้าให้)";
@@ -213,7 +258,36 @@ public static class AssetCostSourceRules
             return $"มูลค่าซาก {salvage:N2} ต้องน้อยกว่าต้นทุน {cost:N2}";
         if (availableForUseDate.Date > todayBangkok.Date)
             return "วันที่พร้อมใช้งานอยู่ในอนาคตไม่ได้ — โอนเมื่อของพร้อมใช้จริง (ค่าเสื่อมเริ่มจากวันนั้น)";
+        // ฝ่ายค้าน 369bc403 M1: JE โอนลงวันพร้อมใช้ — ก่อนวันของใบต้นทางล่าสุด = เครดิตผังมัดจำ/งานระหว่างก่อสร้างก่อนเงินเข้าผังนั้น
+        if (latestSourceDocumentDate is DateTime latest && availableForUseDate.Date < latest.Date)
+            return $"วันที่พร้อมใช้งาน {availableForUseDate:dd/MM/yyyy} อยู่ก่อนวันที่ของเอกสารต้นทุนล่าสุด ({latest:dd/MM/yyyy}) — "
+                + "รายการโอนจะเครดิตผังของใบนั้นก่อนที่ยอดจะเข้าผัง · ถ้าใช้งานจริงก่อนใบสุดท้ายมา ให้โอนด้วยใบที่มีอยู่ แล้วผูกใบที่มาทีหลังภายหลัง (ระบบปรับต้นทุนไปข้างหน้า)";
         return null;
+    }
+
+    /// <summary>ยอดคงเหลือของผังต้นทาง ณ วันลงรายการ เทียบยอดที่ JE โอนจะเครดิต</summary>
+    public sealed record SourceBalance(string? AccountCode, decimal Balance, decimal Credit);
+
+    /// <summary>ฝ่ายค้าน 369bc403 H3: ผังต้นทาง (มัดจำ/งานระหว่างก่อสร้าง) ต้องมียอดคงเหลือทั้งบริษัท ณ วันลงรายการ ≥ ยอดที่จะเครดิต —
+    /// มัดจำที่ถูกเคลียร์ด้วยเอกสารอื่นไปแล้ว (เช่นใบซื้อเต็มราคาที่หักมัดจำเอง) แล้วยังผูกอีก ⇒ ต้นทุนซ้ำ + ผังติดลบ ⇒ ล้มดังพร้อมทางไปต่อ · null = ผ่าน</summary>
+    public static string? SourceBalanceProblem(IEnumerable<SourceBalance> rows)
+    {
+        var short_ = rows.Where(r => r.Credit > 0m
+                && Math.Round(r.Balance - r.Credit, 2, MidpointRounding.AwayFromZero) < -AssetRemovalGlCheck.Tolerance)
+            .ToList();
+        if (short_.Count == 0) return null;
+        return "ยอดคงเหลือของผังต้นทางไม่พอให้โอน: "
+            + string.Join(" · ", short_.Select(r => $"ผัง {r.AccountCode} คงเหลือ {r.Balance:N2} แต่จะเครดิต {r.Credit:N2}"))
+            + " — ยอดนี้อาจถูกเคลียร์ด้วยเอกสารอื่นไปแล้ว (เช่น ใบซื้อเต็มราคาที่หักมัดจำเอง ⇒ ต้นทุนจะซ้ำ) · ปลดใบที่ซ้ำออก หรือแก้รายการที่เคลียร์ผังนั้นก่อน";
+    }
+
+    /// <summary>ต้นทุนรวมเกินราคาตามสัญญา (คำถามเจ้าของ §6 ข้อ 1 · ข้อเสนอ) — เตือน ไม่บล็อก · null = ไม่เกิน/ไม่ได้ระบุ</summary>
+    public static string? ContractPriceWarning(decimal? contractPrice, decimal cost)
+    {
+        if (contractPrice is not decimal cp || cp <= 0m) return null;
+        if (cost <= cp + AssetRemovalGlCheck.Tolerance) return null;
+        return $"ต้นทุนรวม {cost:N2} บาท เกินราคาตามสัญญา {cp:N2} บาท ({cost - cp:N2}) — ตรวจว่าใบสุดท้ายลงเต็มราคาทั้งที่ผูกมัดจำไว้แล้วหรือไม่ "
+            + "(ถ้าเกินจริงจากค่าขนส่ง/ติดตั้ง ไม่ต้องทำอะไร)";
     }
 
     /// <summary>ผลการปรับต้นทุนหลังโอนแล้ว (ใบมาทีหลัง/ใบลดหนี้) — <see cref="DepreciableBase"/> null = ยังไม่มีงวดลงบัญชี ⇒ สร้างตารางใหม่จากต้นทุนใหม่ทั้งก้อน</summary>
@@ -248,18 +322,18 @@ public static class AssetCostSourceRules
     {
         if (alreadyReleased) return "แถวนี้ถูกปลดไปแล้ว";
         if (capitalized)
-            return "ใบนี้โอนเป็นต้นทุนสินทรัพย์แล้ว (มีรายการบัญชีโอนแล้ว) — ปลดไม่ได้ · ถ้าผู้ขายลดราคา/คืนเงิน ให้ออกใบลดหนี้แล้วผูกใบลดหนี้เข้ากับสินทรัพย์";
+            return "ใบนี้โอนเป็นต้นทุนสินทรัพย์แล้ว (มีรายการบัญชีโอนแล้ว) — ปลดไม่ได้ · ถ้าผู้ขายลดราคา/คืนเงิน ให้บันทึกใบลดหนี้ (ราคาเพิ่ม = ใบเพิ่มหนี้) แล้วผูกเข้ากับสินทรัพย์";
         if (string.IsNullOrWhiteSpace(reason)) return "ระบุเหตุผลที่ปลดใบนี้ออกจากสินทรัพย์ (เก็บลง audit)";
         return null;
     }
 
     /// <summary>ยกเลิกใบต้นทาง: แถวที่โอนแล้ว ⇒ ห้าม (ข้อความ) · null = ยกเลิกได้ (แถวที่ยังไม่โอนผู้เรียกปลดในธุรกรรมเดียวกัน)</summary>
-    public static string? VoidBlock(string documentNumber, IReadOnlyCollection<string> capitalizedAssetCodes)
+    public static string? VoidBlock(string documentNumber, IReadOnlyCollection<string> capitalizedAssetCodes, string verb = "ยกเลิก")
     {
         if (capitalizedAssetCodes.Count == 0) return null;
-        return $"ยกเลิกเอกสาร {documentNumber} ไม่ได้ — ใบนี้เป็นต้นทุนของสินทรัพย์ {string.Join(", ", capitalizedAssetCodes)} ที่โอนเป็นสินทรัพย์พร้อมใช้แล้ว "
-            + "(รายการบัญชีโอนเครดิตผังของใบนี้ไปแล้ว — ยกเลิกใบจะทำให้ผังมัดจำ/งานระหว่างก่อสร้างติดลบ และต้นทุนในทะเบียนเกินจริง). "
-            + "ทางแก้: ถ้าผู้ขายลดราคา/คืนเงิน ให้ออกใบลดหนี้แล้วผูกใบลดหนี้เข้ากับสินทรัพย์";
+        return $"{verb}เอกสาร {documentNumber} ไม่ได้ — ใบนี้เป็นต้นทุนของสินทรัพย์ {string.Join(", ", capitalizedAssetCodes)} ที่โอนเป็นสินทรัพย์พร้อมใช้แล้ว "
+            + $"(รายการบัญชีโอนเครดิตผังของใบนี้ไปแล้ว — {verb}ใบจะทำให้ผังมัดจำ/งานระหว่างก่อสร้างติดลบ และต้นทุนในทะเบียนเกินจริง). "
+            + "ทางแก้: ถ้าผู้ขายลดราคา/คืนเงิน ให้บันทึกใบลดหนี้ (ถ้าราคาเพิ่ม = ใบเพิ่มหนี้) แล้วผูกเข้ากับสินทรัพย์";
     }
 
     /// <summary>แก้ผังบัญชีของบรรทัดที่ผูกเป็นต้นทุนสินทรัพย์อยู่ ⇒ ห้าม (ข้อความ) · null = ไม่มีการผูก</summary>

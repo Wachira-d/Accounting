@@ -1035,6 +1035,8 @@ public partial class AccountingService : IAccountingService
         // รอบ 243a S3: JE ตัดสูญภาษีถูกหัก — ผู้ใช้กลับจากสมุดรายวันไม่ได้ · เส้นระบบ (ได้รับใบแล้ว/ยกเลิกต้นทาง) กลับแบบ systemTriggered พร้อมเปลี่ยนสถานะทะเบียน
         if (!systemTriggered)
             await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, new[] { original.Id }, "กลับรายการ");
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน L3): JE โอนต้นทุนสินทรัพย์ — ทะเบียนอ้างรายการนี้ (ทุกทาง รวม systemTriggered)
+        await FixedAssetService.EnsureNotAssetCostTransferAsync(_db, companyId, original.Id, "กลับ");
 
         if (original.Status != JournalEntryStatus.Posted)
             throw new InvalidOperationException("สามารถกลับรายการได้เฉพาะใบสำคัญที่มีสถานะ Posted เท่านั้น");
@@ -1258,6 +1260,7 @@ public partial class AccountingService : IAccountingService
         await Accounting.Helpers.JournalLineAccounts.HydrateAsync(_db, companyId, original);
         await Accounting.Helpers.ClosingEntryLock.EnsureNotClosingEntriesAsync(_db, companyId, new[] { original.Id }, "แก้ไขด้วยการกลับรายการ");
         await Accounting.Helpers.WhtWriteOffJournalLock.EnsureNotWriteOffEntriesAsync(_db, companyId, new[] { original.Id }, "แก้ไขด้วยการกลับรายการ");   // รอบ 243a S3 — ทางเดียวคือ "ได้รับใบแล้ว" ที่ wht-credit
+        await FixedAssetService.EnsureNotAssetCostTransferAsync(_db, companyId, original.Id, "แก้ไขด้วยการกลับ");   // รอบ 249 สินทรัพย์หลายใบ (L3)
 
         if (original.Status != JournalEntryStatus.Posted)
             throw new InvalidOperationException("สามารถแก้ไขด้วยการกลับรายการได้เฉพาะใบที่ Posted แล้วเท่านั้น");

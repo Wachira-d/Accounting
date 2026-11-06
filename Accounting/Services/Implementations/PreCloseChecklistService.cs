@@ -106,7 +106,8 @@ public class PreCloseChecklistService
                 && a.AccountName.Contains("ค่าเสื่อม")
             select j.Id).Distinct().CountAsync();
         var hasFa = await _db.FixedAssets.AsNoTracking()
-            .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted && a.Status == AssetStatus.Active);
+            .AnyAsync(a => a.CompanyId == companyId && !a.IsDeleted && a.Status == AssetStatus.Active
+                && !a.IsUnderAcquisition);   // รอบ 249 (L8): ระหว่างจัดหายังไม่คิดค่าเสื่อม — ไม่ใช่เหตุให้เตือน "ยังไม่ได้รันค่าเสื่อม"
         var depPassed = !hasFa || depJeCount > 0;
         items.Add(new("DEPRECIATION_RUN", "รันค่าเสื่อมสินทรัพย์ถาวร", depPassed,
             depPassed ? "Info" : "Warning",

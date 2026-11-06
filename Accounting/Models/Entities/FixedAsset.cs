@@ -123,6 +123,10 @@ public class FixedAsset : TenantEntity
     /// null = สินทรัพย์เดิม (ใบเดียว) ที่ยังเริ่มค่าเสื่อมจากวันที่เอกสาร</summary>
     public DateTime? AvailableForUseDate { get; set; }
 
+    /// <summary>ราคาตามสัญญา (บาท · ไม่รวม VAT) ที่ผู้ใช้ระบุตอนสร้างสินทรัพย์หลายใบ — ใช้เตือนเมื่อ Σ ต้นทุนเกิน
+    /// (ใบสุดท้ายลงเต็มราคาทั้งที่ผูกมัดจำแล้ว · คำถามเจ้าของ §6 ข้อ 1) · null = ไม่ได้ระบุ · เตือนอย่างเดียว ไม่บล็อก</summary>
+    public decimal? ContractPrice { get; set; }
+
     public ICollection<FixedAssetCostSource> CostSources { get; set; } = new List<FixedAssetCostSource>();
 
     public ICollection<AssetDepreciation> Depreciations { get; set; } = new List<AssetDepreciation>();

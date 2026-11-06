@@ -21,4 +21,19 @@ public static class PurchaseLineGlAmount
     /// <summary>ส่วนของ <see cref="Standalone"/> ที่เป็น VAT ต้องห้าม (สกุลเอกสาร) — 0 เมื่อเคลมได้</summary>
     public static decimal NonClaimableVat(decimal vatAmount, bool isVatClaimable)
         => isVatClaimable ? 0m : vatAmount;
+
+    /// <summary>ยอด Dr ที่ AutoPost ลงบนผังของบรรทัด <b>ครบทุกกรณีของใบซื้อที่ลงบรรทัดเอง</b> (สกุลเอกสาร) — ฝ่ายค้าน 369bc403 M3:
+    /// <see cref="Standalone"/> ขาดสองกรณีที่ AutoPost ลงจริง
+    /// <list type="bullet">
+    /// <item>ใบรับรองแทนใบเสร็จ (<c>CertificateInLieu</c>) — §82/4 เคลมไม่ได้เสมอ ⇒ Dr = ฐาน + VAT ไม่ว่าธงบรรทัดจะเป็นอะไร</item>
+    /// <item>ภาษีหัก ณ ที่จ่ายที่ผู้จ่ายออกแทน (<c>AddPayerBorneWhtExpense</c>) — ลงเพิ่มบนผังของบรรทัดตามส่วนของบรรทัด
+    /// (<c>WhtGrossUp.ForLines(...).PayerBorne</c>) ⇒ เป็นต้นทุนของบรรทัดนั้นด้วย</item>
+    /// </list>
+    /// เศษ VAT หัวใบของใบรับรองแทนที่บรรทัดไม่มี (ใบเก่า) ไม่รวม — ตาข่าย GL ของผู้เรียก (<c>AssetCostSourceRules.ExcessOverGl</c>) ยังกันผูกเกิน</summary>
+    public static decimal Posted(bool isCertificateInLieu, decimal amount, decimal vatAmount, bool isVatClaimable, decimal payerBorneShare)
+        => (isCertificateInLieu ? amount + vatAmount : Standalone(amount, vatAmount, isVatClaimable)) + payerBorneShare;
+
+    /// <summary>ส่วน VAT ต้องห้ามใน <see cref="Posted"/></summary>
+    public static decimal PostedNonClaimableVat(bool isCertificateInLieu, decimal vatAmount, bool isVatClaimable)
+        => isCertificateInLieu ? vatAmount : NonClaimableVat(vatAmount, isVatClaimable);
 }

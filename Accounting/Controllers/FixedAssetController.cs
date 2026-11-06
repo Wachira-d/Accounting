@@ -104,8 +104,12 @@ public class FixedAssetController : ControllerBase
     [HttpGet("linkable-lines")]
     public async Task<ActionResult<ApiResponse<List<LinkableCostLine>>>> GetLinkableLines(
         Guid companyId, [FromQuery] string? search = null, [FromQuery] Guid? documentId = null)
-        => Ok(new ApiResponse<List<LinkableCostLine>>(true,
+    {
+        // ฝ่ายค้าน L10: ค้นบรรทัดเอกสารซื้อทั้งบริษัท (ยอด · ผู้ขาย) = ใช้ตอนผูก ⇒ สิทธิ์เดียวกับการผูก
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ค้นเอกสารต้นทุนสินทรัพย์") is { } deny) return deny;
+        return Ok(new ApiResponse<List<LinkableCostLine>>(true,
             await _assetService.GetLinkableCostLinesAsync(companyId, search, documentId)));
+    }
 
     /// <summary>สร้างสินทรัพย์ระหว่างจัดหาจากหลายบรรทัด (มัดจำ + งวด + ใบสุดท้าย) — ยังไม่คิดค่าเสื่อม ไม่ลง JE</summary>
     [HttpPost("from-sources")]
@@ -123,7 +127,10 @@ public class FixedAssetController : ControllerBase
     /// <summary>เอกสารที่เป็นต้นทุนของสินทรัพย์นี้ + สถานะ + ปัญหาที่ตรวจพบ</summary>
     [HttpGet("{assetId:guid}/cost-sources")]
     public async Task<ActionResult<ApiResponse<AssetCostSourcesResponse>>> GetCostSources(Guid companyId, Guid assetId)
-        => Ok(new ApiResponse<AssetCostSourcesResponse>(true, await _assetService.GetCostSourcesAsync(companyId, assetId)));
+    {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "ดูเอกสารต้นทุนสินทรัพย์") is { } deny) return deny;   // L10
+        return Ok(new ApiResponse<AssetCostSourcesResponse>(true, await _assetService.GetCostSourcesAsync(companyId, assetId)));
+    }
 
     /// <summary>ผูกบรรทัดเอกสารเพิ่ม — ระหว่างจัดหา: สะสมต้นทุน · โอนแล้ว: ลง JE ย้ายผัง + ปรับต้นทุนไปข้างหน้า</summary>
     [HttpPost("{assetId:guid}/cost-sources")]

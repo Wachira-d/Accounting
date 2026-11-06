@@ -3130,6 +3130,7 @@ public static class DatabaseMigrationHelper
             // รอบ 249 (ASSET_MULTI_DOCUMENT_DESIGN §3): สินทรัพย์ระหว่างจัดหา + วันพร้อมใช้ · แถวเดิม = false/NULL = พฤติกรรมเดิม (ไม่มีค่าเก่าต้องซ่อม)
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "IsUnderAcquisition" boolean NOT NULL DEFAULT false;""",
             """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "AvailableForUseDate" timestamp NULL;""",
+            """ALTER TABLE "FixedAssets" ADD COLUMN IF NOT EXISTS "ContractPrice" numeric(18,2) NULL;""",
             """CREATE INDEX IF NOT EXISTS "IX_FixedAssets_AssetType" ON "FixedAssets" ("CompanyId", "AssetType") WHERE "IsDeleted" = false;""",
 
             // POS: tip + coupon columns

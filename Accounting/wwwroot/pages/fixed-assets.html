@@ -226,6 +226,16 @@
               <div class="form-group"><label class="form-label" data-help="ผังที่จะโอนเข้าเมื่อพร้อมใช้ (เช่น 12260 เครื่องจักร) — ระหว่างจัดหายอดยังอยู่ผังเดิมของแต่ละใบ">ผังสินทรัพย์ที่ตั้งใจ</label>
                 <select class="form-select" id="srcAssetAcct"><option value="">-- เลือกบัญชี --</option></select></div>
             </div>
+            <div class="form-row">
+              <div class="form-group"><label class="form-label" data-help="ราคาเครื่อง/งานตามสัญญา (ไม่รวม VAT) — ระบบเตือนเมื่อต้นทุนรวมจากใบที่ผูกเกินราคานี้ (เช่นใบสุดท้ายลงเต็มราคาทั้งที่ผูกมัดจำแล้ว) · ไม่บังคับ">ราคาตามสัญญา (ไม่บังคับ)</label>
+                <input type="number" step="0.01" class="form-input" id="srcContractPrice" placeholder="เช่น 1000000"></div>
+              <div class="form-group"></div>
+            </div>
+          </div>
+          <div id="srcEntryDateRow" style="display:none" class="form-row">
+            <div class="form-group"><label class="form-label" data-help="ใช้เมื่อผูกเข้าสินทรัพย์ที่โอนแล้ว: วันลงรายการโอน/ปรับต้นทุน · ว่าง = วันที่ของใบล่าสุด (ไม่ก่อนวันพร้อมใช้) · ถ้าวันนั้นอยู่ในงวดที่ปิดแล้ว ให้ระบุวันในงวดที่เปิด">วันลงรายการ (ถ้าสินทรัพย์โอนแล้ว)</label>
+              <input type="date" class="form-input" id="srcEntryDate"></div>
+            <div class="form-group"></div>
           </div>
           <div id="srcTargetInfo" style="display:none;font-size:13px;margin-bottom:8px"></div>
           <div style="display:flex;gap:8px;margin:8px 0">
@@ -873,7 +883,9 @@
         info.innerHTML = mode === 'attach' && a
           ? `ผูกเข้ากับ <b>${Layout.esc(a.assetCode)}</b> ${Layout.esc(a.name || '')}${a.isUnderAcquisition ? ' (🚧 ระหว่างจัดหา — สะสมต้นทุน ยังไม่ลงบัญชี)' : ' (โอนแล้ว — ระบบลงรายการโอนและปรับฐานค่าเสื่อมงวดถัดไปให้)'}`
           : '';
-        if (mode === 'create') { document.getElementById('srcName').value = ''; document.getElementById('srcAssetAcct').value = ''; }
+        if (mode === 'create') { document.getElementById('srcName').value = ''; document.getElementById('srcAssetAcct').value = ''; document.getElementById('srcContractPrice').value = ''; }
+        document.getElementById('srcEntryDate').value = '';
+        document.getElementById('srcEntryDateRow').style.display = mode === 'attach' && a && !a.isUnderAcquisition ? '' : 'none';
       },
       openSourcesCreate() { this._srcReset('create', null); Layout.openModal('sourcesModal'); },
       openSourcesAttach(assetId) { this._srcReset('attach', assetId); Layout.closeModal('detailModal'); Layout.openModal('sourcesModal'); },
@@ -903,6 +915,8 @@
         this._src.mode = assetId ? 'attach' : 'create';
         this._src.assetId = assetId || null;
         document.getElementById('srcNewFields').style.display = assetId ? 'none' : '';
+        const picked = (this.allAssets || []).find(x => x.id === assetId);
+        document.getElementById('srcEntryDateRow').style.display = picked && !picked.isUnderAcquisition ? '' : 'none';
         document.getElementById('srcSubmit').textContent = assetId ? 'ผูกเข้ากับสินทรัพย์นี้' : 'สร้างสินทรัพย์ระหว่างจัดหา';
       },
       async searchSourceLines(documentId) {
@@ -956,11 +970,13 @@
         try {
           let res;
           if (this._src.mode === 'attach' && this._src.assetId) {
-            res = await api.attachAssetCostSources(this._src.assetId, { items });
+            res = await api.attachAssetCostSources(this._src.assetId, { items, entryDate: document.getElementById('srcEntryDate').value || null });
           } else {
             const name = document.getElementById('srcName').value.trim();
             if (!name) { Layout.toast('ระบุชื่อสินทรัพย์', 'warning'); return; }
-            res = await api.createAssetFromSources({ name, items, assetAccountId: document.getElementById('srcAssetAcct').value || null });
+            const cpRaw = document.getElementById('srcContractPrice').value;
+            res = await api.createAssetFromSources({ name, items, assetAccountId: document.getElementById('srcAssetAcct').value || null,
+              contractPrice: cpRaw === '' ? null : Number(cpRaw) });
           }
           Layout.closeModal('sourcesModal');
           Layout.toast(res?.message || 'บันทึกแล้ว', 'success', 8000);
@@ -1009,8 +1025,10 @@
         const a = this._currentAsset && this._currentAsset.id === assetId ? this._currentAsset : (this.allAssets || []).find(x => x.id === assetId);
         if (!a) return;
         this._placeAssetId = assetId;
-        document.getElementById('placeSummary').innerHTML = `<b>${Layout.esc(a.assetCode)}</b> ${Layout.esc(a.name || '')} · ต้นทุนสะสม <b>${Layout.money(a.purchaseCost)}</b> บาท`;
-        document.getElementById('placeDate').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('placeSummary').innerHTML = `<b>${Layout.esc(a.assetCode)}</b> ${Layout.esc(a.name || '')} · ต้นทุนสะสม <b>${Layout.money(a.purchaseCost)}</b> บาท`
+          + (a.contractPrice ? ` · ราคาตามสัญญา ${Layout.money(a.contractPrice)} บาท` : '');
+        // L9: วันที่ตั้งต้น = วันนี้ตามเวลาไทย (toISOString เป็น UTC — ก่อน 07:00 จะได้เมื่อวาน)
+        document.getElementById('placeDate').value = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
         document.getElementById('placeAssetAcct').value = a.assetAccountId || '';
         document.getElementById('placeDepExp').value = '';
         document.getElementById('placeAccum').value = '';

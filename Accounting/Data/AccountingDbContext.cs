@@ -1403,6 +1403,7 @@ public class AccountingDbContext : DbContext
             e.Property(a => a.AccumulatedDepreciation).HasPrecision(18, 2);
             e.Property(a => a.NetBookValue).HasPrecision(18, 2);
             e.Property(a => a.DisposalAmount).HasPrecision(18, 2);
+            e.Property(a => a.ContractPrice).HasPrecision(18, 2);
             e.HasQueryFilter(a => !a.IsDeleted);
         });
 

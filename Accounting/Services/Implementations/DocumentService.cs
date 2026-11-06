@@ -8886,6 +8886,9 @@ public partial class DocumentService : IDocumentService
         if (doc.IsForeignService == toForeignService)
             throw new InvalidOperationException(
                 $"เอกสารนี้{(toForeignService ? "เป็นบริการต่างประเทศ" : "ไม่ได้เป็นบริการต่างประเทศ")}อยู่แล้ว");
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H2): สลับบริการต่างประเทศ = กลับ/ลง JE ใหม่ ⇒ ยอดที่ผูกเป็นต้นทุนสินทรัพย์ไม่ตรง GL
+        if (await FixedAssetService.CostSourceDocumentChangeBlockAsync(_db, companyId, documentId, doc.DocumentNumber, "สลับบริการต่างประเทศของ") is string fsAssetBlock)
+            throw new BusinessRuleException(fsAssetBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
 
         // รอบ 203 ทีม F3 (คำตัดสินข้อ 134): ปลดธงใบที่นำส่ง ภ.พ.36/รับรู้ภาษีซื้อแล้ว = กลับ 21912 ที่จ่ายสรรพากรไปแล้ว ⇒ บล็อกพร้อมทางไปต่อ
         if (!toForeignService
@@ -9144,6 +9147,9 @@ public partial class DocumentService : IDocumentService
 
         if (doc.DocumentType is not (DocumentType.CreditNote or DocumentType.DebitNote))
             throw new InvalidOperationException("ย้ายฝั่งได้เฉพาะใบลดหนี้/ใบเพิ่มหนี้");
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H2): ย้ายฝั่ง = ลง JE ของใบใหม่ ⇒ ยอดที่ผูกเป็นต้นทุนสินทรัพย์ไม่ตรง GL
+        if (await FixedAssetService.CostSourceDocumentChangeBlockAsync(_db, companyId, documentId, doc.DocumentNumber, "ย้ายฝั่ง") is string cnDnAssetBlock)
+            throw new BusinessRuleException(cnDnAssetBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
 
         if (doc.Status is DocumentStatus.Draft or DocumentStatus.Voided
                        or DocumentStatus.Rejected or DocumentStatus.WaitingApproval)
@@ -9902,6 +9908,8 @@ public partial class DocumentService : IDocumentService
             await using var transaction = await _db.Database.BeginTransactionAsync();
             try
             {
+                // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน M2): ใบที่ผูกเป็นต้นทุนสินทรัพย์ ⇒ ถือคีย์ผู้เขียนต้นทุนก่อนล็อกแถวเอกสาร (ลำดับเดียวกับผูก/โอน/ปลด)
+                await FixedAssetService.LockCostSourcesIfLinkedAsync(_db, companyId, new[] { documentId });
                 // Row lock + re-read สถานะใต้ล็อก — กัน double-void race (2 คลิกพร้อมกัน
                 // → reverse JE ซ้ำ). ถ้าอีก request ยกเลิกไปแล้ว → no-op (idempotent).
                 await _db.Database.ExecuteSqlRawAsync(
@@ -10299,8 +10307,15 @@ public partial class DocumentService : IDocumentService
                 var ourAssets = await _db.FixedAssets
                     .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId)
                     .ToListAsync();
+                // ฝ่ายค้าน H1: ร่างที่ถูกผูกเอกสารต้นทุนอื่นเข้าไปแล้ว ลบไม่ได้ (FK Restrict + ประวัติการผูก) — คงไว้ ผู้ใช้จัดการที่หน้าทะเบียน
+                var voidAssetsWithSources = await FixedAssetService.AssetIdsWithCostSourcesAsync(_db, companyId, ourAssets.Select(a => a.Id).ToList());
                 foreach (var asset in ourAssets)
                 {
+                    if (voidAssetsWithSources.Contains(asset.Id))
+                    {
+                        _logger.LogWarning("Doc {Doc} void: asset {Code} มีเอกสารต้นทุนผูกอยู่ — ไม่ลบ", documentId, asset.AssetCode);
+                        continue;
+                    }
                     if (!asset.NeedsReview)
                     {
                         _logger.LogWarning(
@@ -10945,6 +10960,8 @@ public partial class DocumentService : IDocumentService
             // ฝ่ายค้านรอบ 242 S1 (TOCTOU): ล็อกแถวเอกสารทุกใบในแผน แล้วสร้างแผน + ตัดสินซ้ำใต้ล็อก — แผนเปลี่ยน (ใบลูกเพิ่ม · ถูกอนุมัติ/ยกเลิก ·
             // ต่างจากแผนที่ผู้ใช้เห็น) ⇒ 409 ไม่ลบอะไร
             var planIds = verdict.Nodes.Select(v => v.Node.Id).OrderBy(id => id).ToArray();
+            // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน M2): คีย์ผู้เขียนต้นทุนสินทรัพย์ก่อนล็อกแถวเอกสาร
+            await FixedAssetService.LockCostSourcesIfLinkedAsync(_db, companyId, planIds);
             await _db.Database.ExecuteSqlRawAsync(
                 @"SELECT 1 FROM ""Documents"" WHERE ""CompanyId"" = {0} AND ""Id"" = ANY({1}) ORDER BY ""Id"" FOR UPDATE",
                 companyId, planIds);
@@ -11120,6 +11137,8 @@ public partial class DocumentService : IDocumentService
                 select new { a.DocumentId, PaymentDoc = p.DocumentId })
             .ToListAsync();
 
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H1): ใบที่โอนเป็นต้นทุนสินทรัพย์แล้ว — ลบแล้ว JE ต้นทางหาย แต่ JE โอนยังเครดิตผังของใบนี้ ⇒ ผังติดลบ
+        var assetCapitalizedDocs = await FixedAssetService.CapitalizedSourceDocumentIdsAsync(_db, companyId, raw.Select(x => x.Id).ToList());
         var result = new List<Accounting.Helpers.PurgeNodeFacts>(raw.Count);
         foreach (var r in raw)
         {
@@ -11140,6 +11159,7 @@ public partial class DocumentService : IDocumentService
                 HasLivePayment = livePayments.Any(p => p.DocumentId == r.Id),
                 PosLinked = posDocs.Contains(r.Id),
                 WhtCreditUsed = whtUsedDocs.Contains(r.Id),
+                AssetCostCapitalized = assetCapitalizedDocs.Contains(r.Id),
                 ReplacesLiveDocumentId = replaces != null && liveTargets.Contains(replaces.Target) ? replaces.Target : null,
                 ReplacedByPointers = replacedBy.Where(x => x.Target == r.Id).Select(x => x.Id).ToList(),
                 AllocationCounterparts = counterparts,
@@ -11165,6 +11185,13 @@ public partial class DocumentService : IDocumentService
             doc.DocumentNumber, doc.DocumentType, doc.Status,
             doc.TotalAmount, doc.ContactId, doc.DocumentDate
         });
+
+        // รอบ 249 สินทรัพย์หลายใบ (ฝ่ายค้าน H1): ใบที่โอนเป็นต้นทุนสินทรัพย์แล้ว ลบถาวรไม่ได้ (ตัวตัดสินลบถาวรบล็อกแล้ว — กันซ้ำที่นี่) ·
+        // แถวที่ยังถือไว้ ⇒ ปลดในธุรกรรมเดียวกัน (คิดต้นทุนสะสมใหม่ · แถวยังอยู่เป็นประวัติ)
+        if (await FixedAssetService.CostSourceVoidBlockAsync(_db, companyId, documentId, doc.DocumentNumber, "ลบถาวร") is string purgeAssetBlock)
+            throw new BusinessRuleException(purgeAssetBlock, Accounting.Helpers.AssetCostSourceRules.RuleCode, 409);
+        if (await FixedAssetService.ReleaseCostSourcesForVoidAsync(_db, companyId, documentId, doc.DocumentNumber) > 0)
+            await _db.SaveChangesAsync();
 
         {
             // รอบ 194 R3-2 — ใบมัดจำที่การลบนี้จะคืนยอด (ตัวรวบรวมเดียวกับ void) ถือคีย์ล็อกยอดตัวเดียวกับปุ่มรับรู้/ริบ + ล็อกแถว + ค่าล่าสุด
@@ -11282,11 +11309,13 @@ public partial class DocumentService : IDocumentService
             var purgeAssets = await _db.FixedAssets
                 .Where(a => a.CompanyId == companyId && a.SourceDocumentId == documentId)
                 .ToListAsync();
+            var purgeAssetsWithSources = await FixedAssetService.AssetIdsWithCostSourcesAsync(_db, companyId, purgeAssets.Select(a => a.Id).ToList());
             foreach (var asset in purgeAssets)
             {
                 var hasPostedDep = await _db.AssetDepreciations
                     .AnyAsync(d => d.FixedAssetId == asset.Id && d.IsPosted && !d.IsDeleted);
-                if (asset.NeedsReview && !hasPostedDep)
+                // ฝ่ายค้าน H1: ร่างที่มีแถวต้นทุนผูกอยู่ ลบไม่ได้ (FK Restrict ⇒ 500) — ไปทางคงไว้ + ตัด link
+                if (asset.NeedsReview && !hasPostedDep && !purgeAssetsWithSources.Contains(asset.Id))
                 {
                     var deps = await _db.AssetDepreciations
                         .Where(d => d.FixedAssetId == asset.Id).ToListAsync();

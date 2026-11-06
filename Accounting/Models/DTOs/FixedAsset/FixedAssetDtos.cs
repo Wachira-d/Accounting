@@ -92,7 +92,9 @@ public record FixedAssetResponse(
     /// <summary>รอบ 249: ระหว่างจัดหา/ติดตั้ง (ต้นทุนสะสมจากหลายใบ · ยังไม่คิดค่าเสื่อม) — หน้าทะเบียนแสดงป้าย + ปุ่มโอน</summary>
     bool IsUnderAcquisition = false,
     /// <summary>รอบ 249: วันที่พร้อมใช้งาน (จุดเริ่มค่าเสื่อม) · null = สินทรัพย์ใบเดียวแบบเดิม</summary>
-    DateTime? AvailableForUseDate = null);
+    DateTime? AvailableForUseDate = null,
+    /// <summary>รอบ 249 (ฝ่ายค้าน H3): ราคาตามสัญญาที่ระบุตอนสร้าง — ใช้เตือนเมื่อต้นทุนรวมเกิน</summary>
+    decimal? ContractPrice = null);
 
 public record DepreciationResponse(
     Guid Id,
@@ -242,7 +244,9 @@ public record RegisterFromDocumentResult(int Created, int Skipped, List<FixedAss
 /// <summary>บรรทัดที่จะผูก · <paramref name="Amount"/> null = ยอดที่ยังเหลือผูกได้ทั้งหมด (ค่าบวกเสมอ — ใบลดหนี้ระบบใส่เครื่องหมายเอง)</summary>
 public record AttachCostSourceItem(Guid DocumentLineId, decimal? Amount = null);
 
-public record AttachCostSourcesRequest(List<AttachCostSourceItem> Items, string? Note = null);
+/// <param name="EntryDate">วันลงรายการโอน/ปรับต้นทุน เมื่อผูกหลังโอนแล้ว (ฝ่ายค้าน M5) — null = วันที่ของใบล่าสุด (ไม่ก่อนวันพร้อมใช้) ·
+/// ต้องไม่ก่อนวันนั้น และต้องอยู่ในงวดที่เปิด (ใบมาทีหลังของงวดที่ปิดแล้ว ⇒ ระบุวันในงวดที่เปิด)</param>
+public record AttachCostSourcesRequest(List<AttachCostSourceItem> Items, string? Note = null, DateTime? EntryDate = null);
 
 /// <summary>สร้างสินทรัพย์ระหว่างจัดหาจากหลายบรรทัด — ยังไม่คิดค่าเสื่อมจนกว่าจะโอน (อายุ/วิธี/ซากตั้งตอนโอน)</summary>
 public record CreateAssetFromSourcesRequest(
@@ -253,7 +257,9 @@ public record CreateAssetFromSourcesRequest(
     string? Location = null,
     string? SerialNumber = null,
     Guid? ProjectId = null,
-    string? Note = null);
+    string? Note = null,
+    /// <summary>ราคาตามสัญญา (ไม่รวม VAT) — ระบบเตือนเมื่อต้นทุนรวมเกิน (ไม่บล็อก)</summary>
+    decimal? ContractPrice = null);
 
 /// <summary>โอนเป็นสินทรัพย์พร้อมใช้ — JE Dr ผังสินทรัพย์ / Cr ผังต้นทาง · ค่าเสื่อมเริ่มจาก <paramref name="AvailableForUseDate"/></summary>
 public record PlaceInServiceRequest(

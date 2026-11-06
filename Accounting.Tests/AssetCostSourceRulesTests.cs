@@ -119,7 +119,7 @@ public class AssetCostSourceRulesTests
     [Fact]
     public void บรรทัดผังค่าใช้จ่ายถูกกัน_พร้อมทางไปต่อ()
     {
-        var p = AssetCostSourceRules.LineProblem("PV-1", DocumentType.PaymentVoucher, 1, true, false, false,
+        var p = AssetCostSourceRules.LineProblem("PV-1", DocumentType.PaymentVoucher, 1, true, AssetCostSourceRules.PostingRoute.OwnLines,
             AssetCostSourceRules.AccountRole.NotEligible, "51800", 1_000m);
         Assert.NotNull(p);
         Assert.Contains("แก้ผังบัญชี", p);
@@ -130,12 +130,12 @@ public class AssetCostSourceRulesTests
     public void ใบยังไม่อนุมัติ_ใบตัดชำระ_ใบอ้างใบรับสินค้า_ถูกกัน()
     {
         var dep = AssetCostSourceRules.AccountRole.Deposit;
-        Assert.NotNull(AssetCostSourceRules.LineProblem("PV-1", DocumentType.PaymentVoucher, 1, false, false, false, dep, "11810", 1m));
-        Assert.NotNull(AssetCostSourceRules.LineProblem("PV-1", DocumentType.PaymentVoucher, 1, true, true, false, dep, "11810", 1m));
-        Assert.NotNull(AssetCostSourceRules.LineProblem("PI-1", DocumentType.PurchaseInvoice, 1, true, false, true, dep, "11810", 1m));
-        Assert.NotNull(AssetCostSourceRules.LineProblem("INV-1", DocumentType.Invoice, null, true, false, false, dep, "11810", 1m));
+        Assert.NotNull(AssetCostSourceRules.LineProblem("PV-1", DocumentType.PaymentVoucher, 1, false, AssetCostSourceRules.PostingRoute.OwnLines, dep, "11810", 1m));
+        Assert.NotNull(AssetCostSourceRules.LineProblem("PV-1", DocumentType.PaymentVoucher, 1, true, AssetCostSourceRules.PostingRoute.Settlement, dep, "11810", 1m));
+        Assert.NotNull(AssetCostSourceRules.LineProblem("PI-1", DocumentType.PurchaseInvoice, 1, true, AssetCostSourceRules.PostingRoute.ViaGoodsReceipt, dep, "11810", 1m));
+        Assert.NotNull(AssetCostSourceRules.LineProblem("INV-1", DocumentType.Invoice, null, true, AssetCostSourceRules.PostingRoute.OwnLines, dep, "11810", 1m));
         // ทิศตรงข้าม: ใบมัดจำที่อนุมัติแล้วผ่าน
-        Assert.Null(AssetCostSourceRules.LineProblem("PV-1", DocumentType.PaymentVoucher, 1, true, false, false, dep, "11810", 1m));
+        Assert.Null(AssetCostSourceRules.LineProblem("PV-1", DocumentType.PaymentVoucher, 1, true, AssetCostSourceRules.PostingRoute.OwnLines, dep, "11810", 1m));
     }
 
     [Fact]
@@ -171,6 +171,85 @@ public class AssetCostSourceRulesTests
         Assert.Equal(0m, AssetCostSourceRules.ExcessOverGl(gl, new[] { new AssetCostSourceRules.AccountAmount(mach, -20_400m) }, -1));
         Assert.Equal(0m, AssetCostSourceRules.ExcessOverGl(gl, new[] { new AssetCostSourceRules.AccountAmount(mach, -10_000m) }, -1));   // ผูกบางส่วนได้
         Assert.Equal(100m, AssetCostSourceRules.ExcessOverGl(gl, new[] { new AssetCostSourceRules.AccountAmount(mach, -20_500m) }, -1));
+    }
+
+    // ───── เส้นลง GL ของบรรทัด (ตัวตัดสินเดียว · L5) ─────
+
+    [Fact]
+    public void เส้นลงบัญชี_ใบจ่ายตัดชำระ_อ้างใบรับสินค้า_และใบปกติ()
+    {
+        Assert.Equal(AssetCostSourceRules.PostingRoute.Settlement, AssetCostSourceRules.RouteOf(DocumentType.PaymentVoucher, DocumentType.PurchaseInvoice));
+        Assert.Equal(AssetCostSourceRules.PostingRoute.Settlement, AssetCostSourceRules.RouteOf(DocumentType.CertificateInLieu, DocumentType.Expense));
+        Assert.Equal(AssetCostSourceRules.PostingRoute.ViaGoodsReceipt, AssetCostSourceRules.RouteOf(DocumentType.PurchaseInvoice, DocumentType.GoodsReceiptNote));
+        // ทิศตรงข้าม: ใบสำคัญจ่ายจากใบสั่งซื้อ (มัดจำ) ลงบรรทัดเอง · ใบไม่อ้างอะไร
+        Assert.Equal(AssetCostSourceRules.PostingRoute.OwnLines, AssetCostSourceRules.RouteOf(DocumentType.PaymentVoucher, DocumentType.PurchaseOrder));
+        Assert.Equal(AssetCostSourceRules.PostingRoute.OwnLines, AssetCostSourceRules.RouteOf(DocumentType.PurchaseInvoice, null));
+    }
+
+    [Fact]
+    public void ยอดลงบัญชีของบรรทัด_ใบรับรองแทนรวมVATเสมอ_และภาษีที่ผู้จ่ายออกแทน()
+    {
+        // ฝ่ายค้าน M3: AutoPost ใบรับรองแทนใบเสร็จลง Dr = ฐาน + VAT (§82/4) ไม่ว่าธงบรรทัด · ภาษีที่ออกแทนลงเพิ่มบนผังบรรทัด
+        Assert.Equal(1_070m, PurchaseLineGlAmount.Posted(true, 1_000m, 70m, isVatClaimable: true, payerBorneShare: 0m));
+        Assert.Equal(1_030.93m, PurchaseLineGlAmount.Posted(false, 1_000m, 70m, isVatClaimable: true, payerBorneShare: 30.93m));
+        Assert.Equal(1_000m, PurchaseLineGlAmount.Posted(false, 1_000m, 70m, isVatClaimable: true, payerBorneShare: 0m));   // ทิศเดิม
+        var c = AssetCostSourceRules.CostOf(1_000m, 70m, true, 1m, 1, isCertificateInLieu: true);
+        Assert.Equal(1_070m, c.Amount);
+        Assert.Equal(70m, c.NonClaimableVat);
+    }
+
+    // ───── ด่านทะเบียนต่อใบ (CI 7cb6bd08: เคสถูกถูกฟ้อง 4 Db test) ─────
+
+    [Fact]
+    public void ใบที่ยังไม่มีทะเบียน_ผูกครบพอดี_ไม่ใช่การเกิน()
+    {
+        // ใบงวด 400,000 บน 12280 ยังไม่มีทะเบียน (−400,000) ⇒ ผูกครบ (0) — รุ่นแรกนับเป็น "เกินเพิ่ม 400,000"
+        Assert.Equal(0m, AssetCostSourceRules.OverRegistrationIncrease(-400_000m, 0m, 1));
+        Assert.Equal(0m, AssetCostSourceRules.OverRegistrationIncrease(-400_000m, -100_000m, 1));   // ผูกบางส่วน
+    }
+
+    [Fact]
+    public void ค่าประกอบที่เฉลี่ยเข้าทะเบียนเดี่ยวแล้ว_ผูกซ้ำ_ยังถูกจับ_ทิศตรงข้าม()
+    {
+        Assert.Equal(20_000m, AssetCostSourceRules.OverRegistrationIncrease(0m, 20_000m, 1));
+        Assert.Equal(20_000m, AssetCostSourceRules.OverRegistrationIncrease(-400_000m, 20_000m, 1));   // ข้ามจากขาดไปเกิน = นับเฉพาะส่วนเกิน
+        Assert.Equal(0m, AssetCostSourceRules.OverRegistrationIncrease(5_000m, 5_000m, 1));            // เกินอยู่ก่อนแล้ว ไม่แย่ลง
+        // ใบลดหนี้: ทะเบียน/GL ติดลบ ⇒ คูณเครื่องหมายใบ
+        Assert.Equal(0m, AssetCostSourceRules.OverRegistrationIncrease(20_400m, 0m, -1));
+        Assert.Equal(100m, AssetCostSourceRules.OverRegistrationIncrease(0m, -100m, -1));
+    }
+
+    [Fact]
+    public void รวมร่างโดยทิ้งค่าประกอบ_ยอดค้างเพิ่ม_ถูกจับ()
+    {
+        Assert.Equal(20_000m, AssetCostSourceRules.OrphanIncrease(0m, -20_000m, 1));
+        Assert.Equal(0m, AssetCostSourceRules.OrphanIncrease(0m, 0m, 1));
+        Assert.Equal(0m, AssetCostSourceRules.OrphanIncrease(-400_000m, 0m, 1));   // ดีขึ้น ไม่ใช่แย่ลง
+    }
+
+    // ───── ยอดคงเหลือผังต้นทาง · วันพร้อมใช้ · ราคาตามสัญญา (ฝ่ายค้าน H3/M1) ─────
+
+    [Fact]
+    public void มัดจำถูกเคลียร์ไปแล้ว_ยอดคงเหลือไม่พอ_โอนไม่ได้_ทิศตรงข้ามผ่าน()
+    {
+        Assert.NotNull(AssetCostSourceRules.SourceBalanceProblem(new[] { new AssetCostSourceRules.SourceBalance("11810", 0m, 300_000m) }));
+        Assert.Null(AssetCostSourceRules.SourceBalanceProblem(new[] { new AssetCostSourceRules.SourceBalance("11810", 300_000m, 300_000m) }));
+        Assert.Null(AssetCostSourceRules.SourceBalanceProblem(new[] { new AssetCostSourceRules.SourceBalance("11810", 450_000m, 150_000m) }));
+    }
+
+    [Fact]
+    public void วันพร้อมใช้ก่อนใบต้นทุนล่าสุด_ไม่ได้_วันเดียวกันได้()
+    {
+        Assert.NotNull(Place(date: Today.AddDays(-10), latest: Today.AddDays(-5)));
+        Assert.Null(Place(date: Today.AddDays(-5), latest: Today.AddDays(-5)));
+    }
+
+    [Fact]
+    public void ต้นทุนเกินราคาตามสัญญา_เตือน_ไม่ระบุไม่เตือน()
+    {
+        Assert.NotNull(AssetCostSourceRules.ContractPriceWarning(1_000_000m, 1_300_000m));
+        Assert.Null(AssetCostSourceRules.ContractPriceWarning(1_000_000m, 1_000_000m));
+        Assert.Null(AssetCostSourceRules.ContractPriceWarning(null, 1_300_000m));
     }
 
     // ───── JE โอน ─────
@@ -225,8 +304,8 @@ public class AssetCostSourceRulesTests
 
     private static string? Place(bool under = true, int active = 3, int voided = 0, int inelig = 0, decimal cost = 1_020_000m,
         decimal salvage = 0m, AssetCostSourceRules.AccountRole role = AssetCostSourceRules.AccountRole.Asset, bool depreciable = true,
-        DepreciationMethod m = DepreciationMethod.StraightLine, int life = 120, DateTime? date = null)
-        => AssetCostSourceRules.PlaceInServiceProblem(under, active, voided, inelig, cost, salvage, role, depreciable, m, life, date ?? Today, Today);
+        DepreciationMethod m = DepreciationMethod.StraightLine, int life = 120, DateTime? date = null, DateTime? latest = null)
+        => AssetCostSourceRules.PlaceInServiceProblem(under, active, voided, inelig, cost, salvage, role, depreciable, m, life, date ?? Today, Today, latest);
 
     [Fact]
     public void โอนได้เมื่อครบเงื่อนไข() => Assert.Null(Place());
