@@ -230,6 +230,9 @@ public class PortalService : IPortalService
             {
                 d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.DueDate, d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Status, d.Currency,
                 RelatedType = _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault(),
+                // รอบ 250 (WP-02 ฝ่ายค้าน ข้อ 3): ฝั่งของใบเพิ่มหนี้ตัดสินด้วยตัวตัดสินเดียวกับ JE รับชำระ — ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อเป็นผู้ขายอย่างเดียว
+                d.CnDnPurchaseSideOverride,
+                ContactSupplierOnly = _db.Contacts.IgnoreQueryFilters().Where(c => c.Id == d.ContactId && c.CompanyId == companyId).Select(c => c.IsSupplier && !c.IsCustomer).FirstOrDefault(),
             })
             .ToListAsync();
         var pending = await SlipPendingByDocumentAsync(companyId, rows.Select(r => r.Id).ToList());   // รอบ 250 ฝ่ายค้าน L4 (WP-02b)
@@ -241,7 +244,7 @@ public class PortalService : IPortalService
                 d.BalanceDue, d.Status.ToString(),
                 SlipPendingAmount: pending.GetValueOrDefault(d.Id),
                 CanPay: DocumentPayLinkPolicy.IssueRefusal(d.DocumentType, d.Status, d.BalanceDue,
-                    DocumentPayLinkPolicy.IsSaleSide(d.DocumentType, d.RelatedType), d.Currency, null) == null))
+                    DocumentPayLinkPolicy.IsSaleSide(d.DocumentType, d.RelatedType, d.CnDnPurchaseSideOverride, d.ContactSupplierOnly), d.Currency, null) == null))
             .ToList();
     }
 
