@@ -198,9 +198,30 @@ public static class NotifyQuotaPolicy
     public static string CounterChannel(string channel, int? channelLimit, bool combinedFallback)
         => channel == ChannelAll ? ChannelAll : channelLimit != null || !combinedFallback ? channel : ChannelAll;
 
-    /// <summary>ลำดับโบนัสที่ใช้เมื่อเกินเพดาน: แถวของช่อง ⇒ แพ็กของช่องก่อน แล้วแพ็กรวมเดิม (โบนัสเดิมใช้ได้ทั้งสองช่องจนหมด — NOTIFY §5 ข้อ 6) · ก้อนรวม ⇒ แพ็กรวม</summary>
-    public static IReadOnlyList<string> BonusOrder(string counterChannel)
-        => counterChannel == ChannelAll ? new[] { ChannelAll } : new[] { counterChannel, ChannelAll };
+    /// <summary>ลำดับโบนัสที่ใช้เมื่อเกินเพดาน: แถวของช่อง ⇒ แพ็กของช่องก่อน แล้วแพ็กรวมเดิม (โบนัสเดิมใช้ได้ทั้งสองช่องจนหมด — NOTIFY §5 ข้อ 6) · ก้อนรวม ⇒ แพ็กรวม ·
+    /// ฝ่ายค้าน fix2 M1: เส้นที่ห้ามกินก้อนรวม (<paramref name="combinedFallback"/> = false — อีเมลเอกสารผ่าน SMTP ของ NextAcc) ⇒ แพ็กของช่องเท่านั้น</summary>
+    public static IReadOnlyList<string> BonusOrder(string counterChannel, bool combinedFallback = true)
+        => counterChannel == ChannelAll ? new[] { ChannelAll }
+            : combinedFallback ? new[] { counterChannel, ChannelAll } : new[] { counterChannel };
+
+    /// <summary>ฝ่ายค้าน fix2 M2: ส่วนเกิน (คิดเงินต่อข้อความ) ใช้ได้เฉพาะข้อความแจ้งลูกค้า — เส้นอีเมลแพลตฟอร์มเต็ม = ไม่ส่ง (ไม่คิดเงินแทนการหยุด)</summary>
+    public static bool OverageAllowed(bool combinedFallback) => combinedFallback;
+
+    /// <summary>ฝ่ายค้าน fix2 H1: แพ็กของช่องขายได้ไหม — เฉพาะช่องที่มีเพดานแยก (<see cref="ChannelPlanLimit"/> ไม่ใช่ null) · ไม่แยก ⇒ ข้อความนับก้อนรวม แพ็กของช่องไม่มีผล</summary>
+    public static bool ChannelPackSellable(int? channelPlanLimit) => channelPlanLimit != null;
+
+    public static string ChannelPackNotSellableMessage(string channel)
+        => $"ช่อง{ChannelLabel(channel)}ของบริษัทนี้ยังไม่แยกเพดาน — ข้อความยังนับรวมกับโควตาก้อนรวม ⇒ ซื้อ \"แพ็กข้อความแจ้งเตือน\" (ก้อนรวม) แทน (ยังไม่ได้คิดเงิน)";
+
+    /// <summary>ฝ่ายค้าน fix2 L5: อ่านชื่อช่องจากคำขอ — ว่าง/all/line/email เท่านั้น · ค่าอื่น ⇒ false (ผู้เรียกตอบ 400 ไม่เดาเป็นก้อนรวม)</summary>
+    public static bool TryParseChannel(string? input, out string channel)
+    {
+        var v = input?.Trim().ToLowerInvariant();
+        channel = v switch { null or "" or ChannelAll => ChannelAll, ChannelLine => ChannelLine, ChannelEmail => ChannelEmail, _ => "" };
+        return channel != "";
+    }
+
+    public const string UnknownChannelMessage = "ช่องไม่ถูกต้อง — ใช้ line, email หรือเว้นว่าง (ก้อนรวม)";
 
     /// <summary>ตัวเลขแนะนำต่อช่อง (NOTIFY §3.1/§5 ข้อ 2–3) — คำใบ้ในหน้าแอดมินเท่านั้น ไม่ถูกตั้งให้อัตโนมัติ · อีเมล Enterprise = ไม่แนะนำเพดาน (-1 · เพดานรายวันคุม) ·
     /// อีเมลเป็น "ค่าก่อนวัด" — ตั้งจริงหลังรัน SQL §4 (N9)</summary>

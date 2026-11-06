@@ -22,6 +22,9 @@ public interface IContactLineGroupService
     /// <summary>กันประมวล webhook ซ้ำ — true = ครั้งแรก (ประมวลได้) · ไม่มี id = true</summary>
     Task<bool> MarkEventSeenAsync(string? webhookEventId, CancellationToken ct = default);
 
+    /// <summary>ฝ่ายค้าน fix2 L1: ถอนการประทับเมื่อประมวลผลล้ม (LINE ส่งซ้ำแล้วประมวลได้อีก)</summary>
+    Task UnmarkEventSeenAsync(string? webhookEventId, CancellationToken ct = default);
+
     /// <summary>ผู้ดูแลบริษัทตรวจรหัสก่อนผูก (ผู้เรียกตรวจ Contact.Edit แล้ว)</summary>
     Task<ContactLineGroupPreview> PreviewAsync(Guid companyId, Guid contactId, string? code, Guid? actorUserId, CancellationToken ct = default);
 

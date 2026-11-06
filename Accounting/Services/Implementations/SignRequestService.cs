@@ -214,6 +214,12 @@ public class SignRequestService : ISignRequestService
             msg.To.Add(to);
             EmailSendResult r;
             try { r = await sender.SendAsync(msg, ct); }
+            catch (OperationCanceledException) when (monthly != null)
+            {
+                // ฝ่ายค้าน fix2 L8: ยกเลิกกลางทาง ⇒ คืนหน่วยโควตาอีเมล (token ที่ยังไม่ถูกยกเลิก) แล้วโยนต่อ
+                await _notifyQuota!.ReleaseAsync(companyId, monthly, CancellationToken.None);
+                throw;
+            }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "ส่งอีเมลขอเซ็นล้ม doc={DocId} company={CompanyId}", doc.Id, companyId);

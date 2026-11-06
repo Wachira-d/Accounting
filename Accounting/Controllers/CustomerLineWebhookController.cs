@@ -73,12 +73,16 @@ public class CustomerLineWebhookController : ControllerBase
             // userId ของ OA นั้นส่งด้วย token ปัจจุบันไม่ได้ ⇒ ไม่ประมวลผล (หน้า LINE ตั้งค่าแสดงปัญหาให้ร้านแก้ secret แล้ว)
             if (!destinationAccepted) return Ok();
             if (!doc.RootElement.TryGetProperty("events", out var events)) return Ok();
+            var anyFailed = false;
             foreach (var ev in events.EnumerateArray())
             {
                 var type = ev.TryGetProperty("type", out var t) ? t.GetString() : null;
                 // รอบ 254 WP-11 L3 (G10): LINE ส่ง webhook ซ้ำได้ ⇒ event ที่เห็นแล้วข้าม (ผูก/ตอบไม่ซ้ำ · ตารางกลางหลายเครื่อง)
                 var eventId = ev.TryGetProperty("webhookEventId", out var we) ? we.GetString() : null;
                 if (_groups != null && !await _groups.MarkEventSeenAsync(eventId, ct)) continue;
+                // ฝ่ายค้าน fix2 L1: ประทับ "เห็นแล้ว" ค้างไว้เฉพาะเมื่อประมวลผลสำเร็จ — ล้ม ⇒ ถอนการประทับ + ตอบ 500 ให้ LINE ส่งซ้ำ (เหตุการณ์ที่สำเร็จในชุดเดียวกันถูกข้าม)
+                try
+                {
                 if (!ev.TryGetProperty("source", out var src) || !src.TryGetProperty("type", out var st)) continue;
                 var sourceType = st.GetString();
                 if (sourceType is "group" or "room")
@@ -122,7 +126,15 @@ public class CustomerLineWebhookController : ControllerBase
                 }
                 if (!string.IsNullOrEmpty(reply) && !string.IsNullOrEmpty(replyToken))
                     await _links.ReplyAsync(CustomerNotifyChannel.ScopeCompany, companyId, replyToken, reply, ct);
+                }
+                catch (Exception evEx) when (evEx is not OperationCanceledException)
+                {
+                    anyFailed = true;
+                    _logger.LogError(evEx, "LINE webhook ของบริษัท {CompanyId}: ประมวลเหตุการณ์ {EventId} ล้ม — ถอนการประทับให้ส่งซ้ำได้", companyId, eventId);
+                    if (_groups != null) await _groups.UnmarkEventSeenAsync(eventId, CancellationToken.None);
+                }
             }
+            if (anyFailed) return StatusCode(500);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

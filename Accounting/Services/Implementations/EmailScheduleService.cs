@@ -732,7 +732,8 @@ public class EmailScheduleService : IEmailScheduleService
                 try { result = await sender.SendAsync(msg, ct); }
                 catch (Exception) when (monthly != null)
                 {
-                    await _notifyQuota!.ReleaseAsync(item.CompanyId, monthly, ct);
+                    // ฝ่ายค้าน fix2 L8: รวมการยกเลิก (OperationCanceledException) — คืนหน่วยด้วย token ที่ยังไม่ถูกยกเลิก
+                    await _notifyQuota!.ReleaseAsync(item.CompanyId, monthly, CancellationToken.None);
                     throw;
                 }
                 if (monthly != null)
@@ -1209,6 +1210,12 @@ public class EmailScheduleService : IEmailScheduleService
     /// <summary>ส่งไม่สำเร็จ ⇒ ลองใหม่ใน 15 นาที (ครบ 3 ครั้ง = Failed) พร้อมเหตุผลที่ผู้ใช้เห็นบนคิว</summary>
     private static void DeferOrFail(EmailQueue item, string? reason)
     {
+        // ฝ่ายค้าน fix2 L4: ผู้ให้บริการรับไปแล้ว (Sent) ⇒ ข้อผิดพลาดหลังจากนั้นห้ามลดสถานะ (ลองใหม่ = ลูกค้าได้สองฉบับ) — จดเหตุไว้เท่านั้น
+        if (item.Status == "Sent")
+        {
+            item.ErrorMessage = SaveFailureOutcome.SentButNotSavedPrefix + reason;
+            return;
+        }
         item.Status = item.RetryCount >= 3 ? "Failed" : "Pending";
         item.RetryCount++;
         item.ErrorMessage = reason;
@@ -1390,10 +1397,10 @@ public class EmailScheduleService : IEmailScheduleService
 
     public async Task CancelPendingAsync(Guid companyId, Guid queueId)
     {
-        var q = await _db.EmailQueues
-            .FirstOrDefaultAsync(x => x.Id == queueId && x.CompanyId == companyId && x.Status == "Pending")
-            ?? throw new KeyNotFoundException("ไม่พบคิวที่ยกเลิกได้");
-        q.Status = "Cancelled";
-        await _db.SaveChangesAsync();
+        // ฝ่ายค้าน fix2 L3: คำสั่งเดียวแบบมีเงื่อนไข — แถวที่ตัวส่งจองไปแล้ว (Sending) ไม่ถูกทับเป็นยกเลิก
+        var n = await _db.EmailQueues
+            .Where(x => x.Id == queueId && x.CompanyId == companyId && x.Status == "Pending")
+            .ExecuteUpdateAsync(s => s.SetProperty(x => x.Status, "Cancelled").SetProperty(x => x.UpdatedAt, (DateTime?)DateTime.UtcNow));
+        if (n != 1) throw new KeyNotFoundException("ไม่พบคิวที่ยกเลิกได้ (อาจกำลังส่งหรือส่งไปแล้ว)");
     }
 }

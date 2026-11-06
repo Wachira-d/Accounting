@@ -154,4 +154,74 @@ public class NotifyChannelQuotaDbTests
         Assert.True((await Svc(db).TryReserveAsync(cid, false, default, NotifyQuotaPolicy.ChannelLine)).Ok);   // เพดาน LINE 0 ⇒ ใช้แพ็กที่ซื้อ
         Assert.False((await Svc(db).TryReserveAsync(cid, false, default, NotifyQuotaPolicy.ChannelEmail)).Ok); // อีเมลแจ้งลูกค้าไม่ได้แพ็ก LINE
     }
+
+    // ───────── ฝ่ายค้าน fix2 ─────────
+
+    private static IUsageMeteringService PricedMeter(List<UsageRecordRequest> recorded)
+        => F4Proxy<IUsageMeteringService>.Create((m, a) => m switch
+        {
+            nameof(IUsageMeteringService.RecordAsync) => Record(recorded, (UsageRecordRequest)a[0]!),
+            nameof(IUsageMeteringService.ResolveEffectivePlanAsync) => new ApiPricingPlan { UnitPrice = 290m },
+            _ => null,
+        });
+
+    private static object Record(List<UsageRecordRequest> recorded, UsageRecordRequest r)
+    {
+        recorded.Add(r);
+        return new UsageRecordResult(true, Guid.NewGuid(), 290m, false, false);
+    }
+
+    [Fact]
+    public async Task H1_แพ็ก_LINE_ของบริษัทที่ไม่แยกเพดาน_ปฏิเสธ409ก่อนคิดเงิน_และไม่มีราคาในสถานะ_ทิศตรงข้ามแยกแล้วขายได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var notSplit = await SeedAsync(db, combined: 10, line: null, email: null);
+        var recorded = new List<UsageRecordRequest>();
+        var ex = await Assert.ThrowsAsync<BusinessRuleException>(() =>
+            Svc(db, PricedMeter(recorded)).PurchaseTopUpAsync(notSplit, 1, "tester", channel: NotifyQuotaPolicy.ChannelLine));
+        Assert.Equal(409, ex.StatusCode);
+        Assert.Empty(recorded);                                                       // ไม่คิดเงิน
+        var st = await Svc(db, PricedMeter(recorded)).GetStatusAsync(notSplit);
+        var line = Assert.Single(st.Channels, c => c.Channel == NotifyQuotaPolicy.ChannelLine);
+        Assert.False(line.OwnLimit);
+        Assert.Null(line.PackPrice);                                                 // หน้าเว็บไม่แสดงปุ่ม
+
+        var split = await SeedAsync(db, combined: 10, line: 5, email: null);
+        var st2 = await Svc(db, PricedMeter(recorded)).GetStatusAsync(split);
+        Assert.Equal(290m, Assert.Single(st2.Channels, c => c.Channel == NotifyQuotaPolicy.ChannelLine).PackPrice);
+        await Svc(db, PricedMeter(recorded)).PurchaseTopUpAsync(split, 1, "tester", channel: NotifyQuotaPolicy.ChannelLine);
+        Assert.Equal(AddOnCodes.NotifyTopUpLine, Assert.Single(recorded).FeatureCode);
+    }
+
+    [Fact]
+    public async Task M1_อีเมลแพลตฟอร์มเต็ม_ไม่หักแพ็กรวม_แต่อีเมลแจ้งลูกค้ายังใช้แพ็กรวมได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var cid = await SeedAsync(db, combined: 0, line: null, email: 0, combinedBonus: 1);
+        var svc = Svc(db);
+        Assert.False((await svc.ReservePlatformEmailAsync(cid)).Ok);
+        Assert.Equal(1, await db.Subscriptions.AsNoTracking().Where(s => s.CompanyId == cid).Select(s => s.NotifyBonusQuota).SingleAsync());
+        var notify = await svc.TryReserveAsync(cid, false, default, NotifyQuotaPolicy.ChannelEmail);   // ข้อความแจ้งลูกค้า (BookingNotifier)
+        Assert.Equal(NotifyQuotaService.KindBonus, notify.Kind);
+    }
+
+    [Fact]
+    public async Task M2_อีเมลแพลตฟอร์มเต็ม_ไม่ใช้ส่วนเกิน_ข้อความแจ้งลูกค้ายังใช้ส่วนเกินได้()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var cid = await SeedAsync(db, combined: 0, line: null, email: 0);
+        var overage = F4Proxy<IOverageService>.Create((m, a) => m switch
+        {
+            nameof(IOverageService.DecideAsync) => new OverageDecision(true, (string)a[1]!, 1, 1m, 1m, null, null),
+            nameof(IOverageService.RecordAsync) => new UsageRecordResult(true, Guid.NewGuid(), 1m, false, false),
+            _ => null,
+        });
+        var svc = new NotifyQuotaService(db, NullLogger<NotifyQuotaService>.Instance, null, null, null, null, overage);
+        var email = await svc.ReservePlatformEmailAsync(cid);
+        Assert.False(email.Ok);                                                      // เต็ม = ไม่ส่ง (429/Failed)
+        Assert.Equal(NotifyQuotaService.KindOverage, (await svc.TryReserveAsync(cid, false)).Kind);   // ทิศตรงข้าม: แจ้งลูกค้าใช้ส่วนเกินตามนโยบายเดิม
+    }
 }

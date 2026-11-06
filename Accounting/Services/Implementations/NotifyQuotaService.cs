@@ -197,11 +197,11 @@ public class NotifyQuotaService : INotifyQuotaService
             _ => (BonusRemaining, BonusExpiresAt),
         };
 
-        /// <summary>โบนัสที่ยังใช้ได้กับแถวตัวนับนี้ (ตามลำดับ <see cref="NotifyQuotaPolicy.BonusOrder"/>)</summary>
-        public int AliveBonusFor(string counterChannel, DateTime now)
+        /// <summary>โบนัสที่ยังใช้ได้ตามลำดับถังที่ใช้จริง (<see cref="NotifyQuotaPolicy.BonusOrder"/>)</summary>
+        public int AliveBonusFor(IReadOnlyList<string> order, DateTime now)
         {
             var sum = 0;
-            foreach (var b in NotifyQuotaPolicy.BonusOrder(counterChannel))
+            foreach (var b in order)
             {
                 var (q, e) = BonusFor(b);
                 if (NotifyQuotaPolicy.BonusAlive(q, e, now)) sum += q;
@@ -316,7 +316,11 @@ public class NotifyQuotaService : INotifyQuotaService
                 // รอบ 254 WP-11 L4: แถวตัวนับ = ช่องที่มีเพดานแยก · ไม่มี ⇒ ก้อนรวมเดิม (หรือแถวของช่องแบบไม่จำกัด เมื่อผู้เรียกห้ามกินก้อนรวม)
                 counter = NotifyQuotaPolicy.CounterChannel(ch, ch == NotifyQuotaPolicy.ChannelAll ? limits.PlanLimit : channelLimit, combinedFallback);
                 var planLimit = counter == NotifyQuotaPolicy.ChannelAll ? limits.PlanLimit : channelLimit ?? NotifyQuotaPolicy.Unlimited;
-                var bonusAlive = limits.AliveBonusFor(counter, now);
+                // ฝ่ายค้าน fix2 M1: เส้นอีเมลแพลตฟอร์ม (combinedFallback=false) ไม่ใช้แพ็กรวม — ลำดับโบนัสตัวเดียว BonusOrder(counter, combinedFallback)
+                var bonusOrder = NotifyQuotaPolicy.BonusOrder(counter, combinedFallback);
+                var bonusAlive = limits.AliveBonusFor(bonusOrder, now);
+                // ฝ่ายค้าน fix2 L8: คำสั่งที่เปลี่ยนตัวนับ/โบนัสไม่รับการยกเลิกกลางทาง (ยกเลิกหลังเขียนแล้ว = หน่วยค้าง) — อ่านอย่างเดียวยังใช้ ct
+                var write = CancellationToken.None;
                 await EnsureCounterAsync(db, companyId, period, counter, ct);
 
                 // 1) เพดานแพ็กเกจ (ไม่จำกัด = ไม่มีเงื่อนไข) — atomic: สองคำขอที่ Used = limit-1 ผ่านได้คำขอเดียว
@@ -325,30 +329,31 @@ public class NotifyQuotaService : INotifyQuotaService
                     after = await ScalarIntAsync(db, """
                         UPDATE "NotifyUsageCounters" SET "Used" = "Used" + 1 WHERE "CompanyId" = @c AND "Period" = @p AND "Channel" = @ch
                         RETURNING "Used" + "BonusUsed";
-                        """, ct, CounterKey(companyId, period, counter));
+                        """, write, CounterKey(companyId, period, counter));
                 else
                     after = await ScalarIntAsync(db, """
                         UPDATE "NotifyUsageCounters" SET "Used" = "Used" + 1 WHERE "CompanyId" = @c AND "Period" = @p AND "Channel" = @ch AND "Used" < @limit
                         RETURNING "Used" + "BonusUsed";
-                        """, ct, CounterKey(companyId, period, counter, P("limit", planLimit, NpgsqlDbType.Integer)));
+                        """, write, CounterKey(companyId, period, counter, P("limit", planLimit, NpgsqlDbType.Integer)));
                 if (after is int planAfter)
                     return Reserved(KindPlan, period, planLimit, planAfter, bonusAlive, now) with { Channel = counter };
 
                 // 2) เกินเพดานแพ็กเกจ ⇒ โบนัสที่ซื้อ (มีเหลือ + ยังไม่หมดอายุ) — แพ็กของช่องก่อน แล้วแพ็กรวมเดิม · atomic เช่นกัน
-                foreach (var bonusChannel in NotifyQuotaPolicy.BonusOrder(counter))
+                foreach (var bonusChannel in bonusOrder)
                 {
                     var (q, e) = BonusColumns(bonusChannel);
-                    var bonusAfter = await ScalarIntAsync(db, $"""
-                        UPDATE "Subscriptions" SET "{q}" = "{q}" - 1
-                        WHERE "CompanyId" = @c AND "IsDeleted" = false AND "{q}" > 0
-                          AND ("{e}" IS NULL OR "{e}" > now())
-                        RETURNING "{q}";
-                        """, ct, P("c", companyId, NpgsqlDbType.Uuid));
-                    if (bonusAfter is not int) continue;
-                    var used = await ScalarIntAsync(db, """
-                        UPDATE "NotifyUsageCounters" SET "BonusUsed" = "BonusUsed" + 1 WHERE "CompanyId" = @c AND "Period" = @p AND "Channel" = @ch
+                    // ฝ่ายค้าน fix2 L8: หักโบนัส + นับ BonusUsed ในคำสั่งเดียว (data-modifying CTE — สำเร็จหรือไม่เกิดทั้งคู่)
+                    var bonusUsedAfter = await ScalarIntAsync(db, $"""
+                        WITH b AS (
+                            UPDATE "Subscriptions" SET "{q}" = "{q}" - 1
+                            WHERE "CompanyId" = @c AND "IsDeleted" = false AND "{q}" > 0
+                              AND ("{e}" IS NULL OR "{e}" > now())
+                            RETURNING 1)
+                        UPDATE "NotifyUsageCounters" SET "BonusUsed" = "BonusUsed" + 1
+                        WHERE "CompanyId" = @c AND "Period" = @p AND "Channel" = @ch AND EXISTS (SELECT 1 FROM b)
                         RETURNING "Used" + "BonusUsed";
-                        """, ct, CounterKey(companyId, period, counter)) ?? 0;
+                        """, write, CounterKey(companyId, period, counter));
+                    if (bonusUsedAfter is not int used) continue;
                     var kind = bonusChannel == NotifyQuotaPolicy.ChannelAll ? KindBonus : KindChannelBonus;
                     return Reserved(kind, period, planLimit, used, Math.Max(0, bonusAlive - 1), now) with { Channel = counter };
                 }
@@ -359,13 +364,17 @@ public class NotifyQuotaService : INotifyQuotaService
                     var used = await ScalarIntAsync(db, """
                         UPDATE "NotifyUsageCounters" SET "Used" = "Used" + 1 WHERE "CompanyId" = @c AND "Period" = @p AND "Channel" = @ch
                         RETURNING "Used" + "BonusUsed";
-                        """, ct, CounterKey(companyId, period, counter)) ?? 0;
+                        """, write, CounterKey(companyId, period, counter)) ?? 0;
                     return new NotifyReservation(true, KindEssential, period, planLimit, 0, used) { Channel = counter };
                 }
 
                 // 4) รอบ 231 (§B.4 · คำตัดสินข้อ 231-2): เต็ม + ผู้เช่าเปิดส่วนเกิน (มีราคา · ไม่ถึงเพดาน · ไม่ถูกล็อก) ⇒ ส่งทางช่องกลางต่อ คิดต่อข้อความ
-                var overage = await TryReserveOverageAsync(db, companyId, period, counter, ct);
-                if (overage != null) return overage with { Limit = planLimit, CrossedLevel = 0 };
+                //    ฝ่ายค้าน fix2 M2: เส้นอีเมลแพลตฟอร์ม (combinedFallback=false) ไม่มีส่วนเกิน — เต็ม = ไม่ส่ง (429/Failed ตามที่สัญญาไว้)
+                if (NotifyQuotaPolicy.OverageAllowed(combinedFallback))
+                {
+                    var overage = await TryReserveOverageAsync(db, companyId, period, counter, ct);
+                    if (overage != null) return overage with { Limit = planLimit, CrossedLevel = 0 };
+                }
 
                 // 5) เต็ม — แจ้งเจ้าของระดับ 100% (ครั้งเดียวต่องวดต่อช่อง · AlertIfCrossedAsync ประทับกันซ้ำ)
                 return new NotifyReservation(false, KindFull, period, planLimit, 2, planLimit) { Channel = counter };
@@ -529,8 +538,12 @@ public class NotifyQuotaService : INotifyQuotaService
             var chPlan = limits.LimitFor(ch);
             var (chBonus, chExp) = limits.BonusFor(ch);
             var chAlive = NotifyQuotaPolicy.BonusAlive(chBonus, chExp, now);
-            var chLimit = chPlan is int cp ? NotifyQuotaPolicy.EffectiveLimit(cp, row?.BonusUsed ?? 0, chBonus, chExp, now) : NotifyQuotaPolicy.Unlimited;
+            // ฝ่ายค้าน fix2 L9: เพดานที่ใช้ได้รวมแพ็กรวมเดิมที่ยังใช้ได้ด้วย (ข้อความแจ้งลูกค้าใช้ได้ — อีเมลเอกสารไม่ใช้ · DECISIONS 254-WP11-12)
+            var sharedAlive = NotifyQuotaPolicy.BonusAlive(bonusRemaining, bonusExp, now) ? bonusRemaining : 0;
+            var chLimit = chPlan is int cp ? NotifyQuotaPolicy.EffectiveLimit(cp, row?.BonusUsed ?? 0, (chAlive ? chBonus : 0) + sharedAlive, null, now) : NotifyQuotaPolicy.Unlimited;
             var chPack = await LoadPackAsync(_db, ch, ct);
+            // ฝ่ายค้าน fix2 H1: แพ็กของช่องขายได้เฉพาะช่องที่มีเพดานแยก (ตัวตัดสินเดียว NotifyQuotaPolicy.ChannelPackSellable) — ไม่แยก ⇒ ไม่มีราคา ⇒ หน้าเว็บไม่แสดงปุ่ม
+            var chSellable = NotifyQuotaPolicy.ChannelPackSellable(chPlan);
             channels.Add(new NotifyChannelQuotaStatus(
                 Channel: ch, Label: NotifyQuotaPolicy.ChannelLabel(ch), OwnLimit: chPlan != null, Used: chUsed,
                 PlanLimit: chPlan ?? NotifyQuotaPolicy.Unlimited,
@@ -538,7 +551,7 @@ public class NotifyQuotaService : INotifyQuotaService
                 EffectiveLimit: chLimit, Remaining: chLimit < 0 ? int.MaxValue : Math.Max(0, chLimit - chUsed),
                 WarnLevel: NotifyQuotaPolicy.WarnLevel(chUsed, chLimit),
                 Message: chLimit < 0 ? null : NotifyQuotaPolicy.StatusMessage(chUsed, chLimit),
-                TopUpCode: NotifyQuotaPolicy.TopUpCodeFor(ch), PackSize: chPack.Size, PackPrice: await PackPriceAsync(companyId, ch, ct),
+                TopUpCode: NotifyQuotaPolicy.TopUpCodeFor(ch), PackSize: chPack.Size, PackPrice: chSellable ? await PackPriceAsync(companyId, ch, ct) : null,
                 PackValidDays: chPack.ValidDays));
         }
 
@@ -595,6 +608,10 @@ public class NotifyQuotaService : INotifyQuotaService
         // รอบ 254 WP-11 L4: ช่องของแพ็ก ⇒ รหัสมิเตอร์ + ถังโบนัส (ตัวตัดสินเดียว NotifyQuotaPolicy.TopUpCodeFor / BonusColumns)
         var ch = NotifyQuotaPolicy.NormalizeChannel(channel);
         var code = NotifyQuotaPolicy.TopUpCodeFor(ch);
+        // ฝ่ายค้าน fix2 H1: แพ็กของช่องที่ยังไม่แยกเพดาน = จ่ายแล้วไม่มีผล (ข้อความยังนับก้อนรวม) ⇒ ปฏิเสธ 409 ก่อนคิดเงิน · บอกให้ซื้อแพ็กรวมแทน
+        if (ch != NotifyQuotaPolicy.ChannelAll
+            && !NotifyQuotaPolicy.ChannelPackSellable((await LoadLimitsAsync(_db, companyId, ct)).LimitFor(ch)))
+            throw new BusinessRuleException(NotifyQuotaPolicy.ChannelPackNotSellableMessage(ch), "NOTIFY-TOPUP-CHANNEL-NOT-SPLIT", 409);
 
         // ล็อกต่อบริษัท (ตัวเรียกเดียวกับ QuotaService.PurchaseTopUpAsync) **ก่อน**อ่านอะไรทั้งนั้น — ลำดับการซื้อในงวดเป็นส่วนของคีย์กันซ้ำ ·
         // pg_advisory_xact_lock ต้องอยู่ในธุรกรรม ไม่งั้นหลุดทันที · ทุกช่องใช้ล็อกเดียวกัน (ถังโบนัสอยู่แถว Subscription เดียวกัน)

@@ -138,4 +138,79 @@ public class NotifyChannelQuotaRound254Tests
         Assert.Contains("ไม่ตัดโควตาผู้เช่า", reply);
         Assert.Contains("ยังไม่ยืนยันกับ LINE", reply);
     }
+
+    // ───────── ฝ่ายค้าน fix2 ─────────
+
+    [Fact]
+    public void M1_อีเมลแพลตฟอร์ม_ไม่ใช้แพ็กรวม_ข้อความแจ้งลูกค้ายังใช้ได้()
+    {
+        Assert.Equal(new[] { "email" }, NotifyQuotaPolicy.BonusOrder("email", combinedFallback: false));
+        Assert.Equal(new[] { "email", "all" }, NotifyQuotaPolicy.BonusOrder("email", combinedFallback: true));   // ทิศตรงข้าม
+        Assert.Equal(new[] { "all" }, NotifyQuotaPolicy.BonusOrder("all", combinedFallback: false));
+    }
+
+    [Fact]
+    public void M2_ส่วนเกิน_ไม่ใช้กับอีเมลแพลตฟอร์ม()
+    {
+        Assert.False(NotifyQuotaPolicy.OverageAllowed(combinedFallback: false));
+        Assert.True(NotifyQuotaPolicy.OverageAllowed(combinedFallback: true));
+    }
+
+    [Fact]
+    public void H1_แพ็กของช่อง_ขายได้เฉพาะช่องที่แยกเพดาน()
+    {
+        Assert.False(NotifyQuotaPolicy.ChannelPackSellable(null));
+        Assert.True(NotifyQuotaPolicy.ChannelPackSellable(300));
+        Assert.True(NotifyQuotaPolicy.ChannelPackSellable(NotifyQuotaPolicy.Unlimited));
+        var msg = NotifyQuotaPolicy.ChannelPackNotSellableMessage("line");
+        Assert.Contains("ก้อนรวม", msg);
+        Assert.Contains("ยังไม่ได้คิดเงิน", msg);
+    }
+
+    [Theory]
+    [InlineData(null, true, "all")]
+    [InlineData("", true, "all")]
+    [InlineData("LINE", true, "line")]
+    [InlineData(" email ", true, "email")]
+    [InlineData("all", true, "all")]
+    [InlineData("sms", false, "")]
+    [InlineData("lne", false, "")]
+    public void L5_ช่องที่ไม่รู้จัก_ไม่เดาเป็นก้อนรวม(string? input, bool ok, string expected)
+    {
+        Assert.Equal(ok, NotifyQuotaPolicy.TryParseChannel(input, out var ch));
+        Assert.Equal(expected, ch);
+    }
+
+    [Fact]
+    public void M3_ยกเลิกปลายทาง_ล้างป้ายจาก_LINE_และชื่อกลุ่ม_แต่ไม่แตะป้ายที่ผู้ดูแลพิมพ์()
+    {
+        var now = new DateTime(2026, 11, 6, 3, 0, 0, DateTimeKind.Utc);
+        var invite = new Accounting.Models.Entities.ContactNotifyEndpoint
+        {
+            Kind = NotifyEndpointKind.LineUser, Source = ContactLineBindRule.SourceLineInvite, Label = "LINE: สมชาย", LineUserId = "enc", LineIdHash = "h",
+        };
+        NotifyEndpointKind.MarkUnlinked(invite, ContactLineBindRule.UnlinkUser, now);
+        Assert.Null(invite.Label);
+        Assert.Null(invite.LineUserId);
+        Assert.Equal("h", invite.LineIdHash);                 // คงแฮชเป็นร่องรอย
+        Assert.Equal(now, invite.UnlinkedAt);
+
+        var group = new Accounting.Models.Entities.ContactNotifyEndpoint
+        {
+            Kind = NotifyEndpointKind.LineGroup, Source = LineGroupBindRule.SourceGroupCode, GroupNameSnapshot = "ABC × ร้านเรา", LineGroupId = "enc",
+        };
+        NotifyEndpointKind.MarkUnlinked(group, LineGroupBindRule.UnlinkBotRemoved, now);
+        Assert.Null(group.GroupNameSnapshot);
+        Assert.Null(group.LineGroupId);
+
+        var manual = new Accounting.Models.Entities.ContactNotifyEndpoint
+        {
+            Kind = NotifyEndpointKind.Email, Source = NotifyEndpointKind.SourceManual, Label = "ฝ่ายบัญชี", Email = "ap@x.co",
+            UnlinkedAt = now.AddDays(-1), UnlinkReason = NotifyEndpointKind.UnlinkCompany,
+        };
+        NotifyEndpointKind.MarkUnlinked(manual, NotifyEndpointKind.UnlinkMerge, now);
+        Assert.Equal("ฝ่ายบัญชี", manual.Label);              // ทิศตรงข้าม: ป้ายที่ผู้ดูแลพิมพ์เองไม่ถูกแตะ
+        Assert.Equal(now.AddDays(-1), manual.UnlinkedAt);     // ประทับครั้งแรกคงไว้
+        Assert.Equal(NotifyEndpointKind.UnlinkCompany, manual.UnlinkReason);
+    }
 }
