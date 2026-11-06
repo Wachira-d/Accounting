@@ -95,6 +95,11 @@ public static class ContactRecipientRule
     {
         /// <summary>อีเมลหลัก (<c>Contact.Email</c>) ที่รับเรื่องนี้ — ว่าง = อีเมลหลักไม่รับ/ไม่มี · ผู้รับใบกำกับ e-Tax by Email (<see cref="ForChannel"/>)</summary>
         public IReadOnlyList<string> PrimaryEmails { get; init; } = Array.Empty<string>();
+        /// <summary>อีเมลของผู้ติดต่อ (หลัก/เพิ่มเติม) ที่ค่าตั้ง<b>ปฏิเสธ</b>เรื่องนี้ (ไม่ได้เลือกรับ · ค่าตั้งเสียหาย · ถูกบล็อก/ถอด) — ตัวเล็ก ·
+        /// ใช้แยก "ผู้รับที่ช่องทางของผู้ติดต่อบอกว่าไม่รับ" ออกจาก "ผู้รับที่ผู้ใช้พิมพ์เองซึ่งไม่อยู่ในช่องทางใดของผู้ติดต่อ" (<c>SignRequestService.SignAutomationRecipients</c>)</summary>
+        public IReadOnlyList<string> DeclinedEmails { get; init; } = Array.Empty<string>();
+        /// <summary>ผู้ติดต่อของบริษัทนี้ถูกลบ (<see cref="RecipientSet.ContactDeleted"/>) — งานอัตโนมัติไม่ส่งถึงใครเลย</summary>
+        public bool ContactDeleted { get; init; }
         public bool Deliverable => Emails.Count > 0;
         /// <summary>ผู้รับทั้งหมดคั่นด้วย ", " (ตัวแยกเดียวกับ <c>SignEmailThrottle.ParseRecipients</c>) · null = ไม่มี</summary>
         public string? To => Emails.Count == 0 ? null : string.Join(", ", Emails);
@@ -108,13 +113,18 @@ public static class ContactRecipientRule
             .Where(o => o.Available && o.IsPrimary && o.Kind == NotifyEndpointKind.Email && o.Email != null)
             .Select(o => o.Email!.ToLowerInvariant()).Distinct().ToList();
         var emails = primary.Concat(set.Emails.Where(e => !primary.Contains(e))).ToList();
-        if (emails.Count > 0) return new EmailDelivery(emails, null) { PrimaryEmails = primary };
-        if (set.ContactDeleted) return new EmailDelivery(emails, ContactDeletedReason);
+        var declined = set.Options
+            .Where(o => o.Kind == NotifyEndpointKind.Email && !o.Available)
+            .Select(o => (o.Email ?? o.Display ?? "").Trim().ToLowerInvariant())
+            .Where(e => e.Contains('@') && !emails.Contains(e)).Distinct().ToList();
+        if (emails.Count > 0) return new EmailDelivery(emails, null) { PrimaryEmails = primary, DeclinedEmails = declined };
+        if (set.ContactDeleted) return new EmailDelivery(emails, ContactDeletedReason) { ContactDeleted = true };
         var blocked = set.Options
             .Where(o => o.Kind == NotifyEndpointKind.Email && !o.Available && !string.IsNullOrWhiteSpace(o.Reason))
             .Select(o => $"{o.Display}: {o.Reason}").Distinct().ToList();
         return new EmailDelivery(emails, blocked.Count == 0 ? null
-            : $"ไม่ส่งอีเมลเรื่อง \"{NotifyTopics.Label(set.Topic)}\" ตามช่องทางแจ้งเตือนของผู้ติดต่อ — {string.Join(" · ", blocked)} (แก้ที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน)");
+            : $"ไม่ส่งอีเมลเรื่อง \"{NotifyTopics.Label(set.Topic)}\" ตามช่องทางแจ้งเตือนของผู้ติดต่อ — {string.Join(" · ", blocked)} (แก้ที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน)")
+            { DeclinedEmails = declined };
     }
 
     /// <summary>รอบ 250 WP-08 ฝ่ายค้าน HIGH-1: ผู้รับตามเส้นการส่งจริง — <paramref name="To"/> null = ไม่ส่ง (<paramref name="Problem"/> = เหตุ) ·

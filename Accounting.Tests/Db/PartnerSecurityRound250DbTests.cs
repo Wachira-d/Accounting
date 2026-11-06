@@ -47,6 +47,10 @@ public class PartnerSecurityRound250DbTests
         db.Users.Add(u);
         db.CompanyUsers.Add(new CompanyUser { UserId = u.Id, CompanyId = companyId, Role = UserRole.Owner });
         await db.SaveChangesAsync();
+        // ตาราง ChatRateBuckets สร้างด้วย SQL ตอนบูต (ไม่อยู่ในโมเดล ⇒ EnsureCreated ไม่สร้าง) — ด่านเชิญเป็น fail-closed ⇒ ไม่มีตาราง = 429 ทุกครั้ง ·
+        // สร้างจากตัวตั้งเดียวเหมือน AuthRateLimitSharedDbTests (เดิมผ่าน/ล้มตามลำดับเทสต์ — CI 42232967230)
+        foreach (var sql in DatabaseMigrationHelper.ChatRateBucketStatements())
+            await db.Database.ExecuteSqlRawAsync(sql);
         return u.Id;
     }
 

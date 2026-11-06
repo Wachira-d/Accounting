@@ -323,6 +323,22 @@ public class Round250Wp08Tests
     }
 
     [Fact]
+    public void ลิงก์เซ็นอัตโนมัติ_ผู้รับที่พิมพ์เองไม่อยู่ในช่องทางผู้ติดต่อ_คงไว้_ผู้ที่ปฏิเสธตัดออก_ผู้ติดต่อถูกลบไม่ส่ง()
+    {
+        // CI 42232967230: อีเมลเตือนรอบ 240 ส่งถึงผู้รับลิงก์เดิมที่ผู้ใช้พิมพ์เอง — ไม่มีค่าตั้งของผู้ติดต่อที่บอกว่าเขาไม่รับ ⇒ ไม่ตัด
+        var sign = ContactRecipientRule.ForEmail(new ContactRecipientRule.RecipientSet(NotifyTopic.Sign,
+            new[] { Opt("main@b.co.th", true, available: false), Opt("buy@b.co.th", false) }));
+        Assert.Equal(new[] { "dn@other.co.th" },
+            Accounting.Services.Implementations.SignRequestService.SignAutomationRecipients(new[] { "dn@other.co.th" }, sign));
+        Assert.Equal(new[] { "dn@other.co.th", "buy@b.co.th" },
+            Accounting.Services.Implementations.SignRequestService.SignAutomationRecipients(new[] { "dn@other.co.th", "MAIN@b.co.th", "buy@b.co.th" }, sign));
+        // ทิศตรงข้าม: ผู้ติดต่อถูกลบ ⇒ ไม่ส่งถึงใคร แม้ผู้รับเดิมพิมพ์เอง
+        var deleted = ContactRecipientRule.ForEmail(new ContactRecipientRule.RecipientSet(NotifyTopic.Sign,
+            Array.Empty<ContactRecipientRule.RecipientOption>()) { ContactDeleted = true });
+        Assert.Empty(Accounting.Services.Implementations.SignRequestService.SignAutomationRecipients(new[] { "dn@other.co.th" }, deleted));
+    }
+
+    [Fact]
     public void วันพร้อมใช้_ล็อกเมื่อไม่ใช่สถานะใช้งาน_มียอดยกมา_หรือทบทวนอายุแล้ว()
     {
         var bought = new DateTime(2026, 1, 15);

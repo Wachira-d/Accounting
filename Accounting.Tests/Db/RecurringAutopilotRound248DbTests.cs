@@ -590,6 +590,16 @@ public class RecurringAutopilotRound248DbTests
         rec.DocumentType = DocumentType.TaxInvoice;
         rec.AutoSendEmail = true;
         await db.SaveChangesAsync();
+
+        // ผู้ติดต่อมีใบค้างชำระ ⇒ [AR-OVERDUE] ค้างรับทราบ ⇒ ใบจะหยุดเป็นร่าง ⇒ ยังไม่ส่งอะไร (ก่อนถึงด่านผู้ส่ง) — ทำนายตามจริง (CI 42232967230:
+        // เทสต์เดิมไม่ได้ตั้งนโยบาย จึงได้ "ใบยังเป็นร่าง" ซึ่งถูกต้อง) · ทิศตรงข้าม: ปล่อย AR-OVERDUE ตามนโยบาย ⇒ ใบอนุมัติ ⇒ ไปถึงด่านผู้ส่ง e-Tax
+        RecurringDryRunResponse draftDry;
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            draftDry = await Autopilot(req).DryRunAsync(s.CompanyId, s.RecurringId);
+        Assert.Contains("ใบยังเป็นร่าง", draftDry.EmailPlan);
+        using (var req = DbTestDatabase.TryCreateContext()!)
+            await Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId,
+                new SetAutoApprovePolicyRequest(new List<string> { ArOverdueApprovalWarning.Code }), s.SetterId);
         var before = await CountsAsync(db, s.CompanyId);
 
         RecurringDryRunResponse dry;
