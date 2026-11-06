@@ -2266,7 +2266,7 @@ public partial class TaxService : ITaxService
         var whtUndated = await _db.WhtCreditsReceived.AsNoTracking().CreditableUndated(companyId, year).CountAsync();
         var whtPendingRows = await _db.WhtCreditsReceived.AsNoTracking()
             .Where(w => w.CompanyId == companyId && w.TaxYear == year
-                && w.Status == WhtCreditStatus.Pending)
+                && (w.Status == WhtCreditStatus.Pending || w.Status == WhtCreditStatus.Received))   // ฝ่ายค้าน WP-09 รอบสอง: เศษที่ใบต่ำกว่า (≤ ฿1) ก็ยังขาดใบ
             .Select(w => new { w.Status, w.WhtAmount, w.ReceivedAmount }).ToListAsync();
         // ยอดที่ยังขาดใบ (ถูกหักแล้ว − ได้ใบแล้ว) — ตัวคำนวณเดียวกับรายงาน "50 ทวิ ที่ยังขาด"
         var whtPending = whtPendingRows.Sum(w => WhtCreditableAmount.Missing(w.Status, w.WhtAmount, w.ReceivedAmount));

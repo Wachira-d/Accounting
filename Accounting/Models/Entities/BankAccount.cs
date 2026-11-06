@@ -110,8 +110,10 @@ public class BankTransaction : TenantEntity
     public string? MatchedEntryIdsJson { get; set; }
 
     // ── รอบ 252 WP-12A (AUTOPILOT §5.4 · รอบ 250 ของแผน): เงินโอนเข้า ⇒ ปิดหนี้ใบค้าง (ตัวตัดสิน Helpers/BankReceiptAutoSettle) ──
-    /// <summary>แหล่งของบรรทัด: <c>Statement</c> (ไฟล์ statement ที่นำเข้า) · <c>Feed</c> (ดึงจากธนาคาร) · <c>Manual</c> (พิมพ์มือ) · null = แถวก่อนรอบ 252 (ไม่รู้) —
-    /// ปิดหนี้อัตโนมัติได้เฉพาะ Statement/Feed (<c>BankReceiptAutoSettle.IsBankSourced</c>) · ผู้เขียน: จุดสร้างแถว 3 จุด (BankService · BankFeedService · StatementImport)</summary>
+    /// <summary>แหล่งของบรรทัด (ค่าใน <c>BankReceiptAutoSettle.Source*</c>): <c>Statement</c> (ไฟล์หน้าบัญชีธนาคาร + ผู้อัปโหลด) · <c>UserFile</c> (ไฟล์ศูนย์นำเข้า/
+    /// นำเข้า-ส่งออก/Open Banking — ค่าตั้งต้นของตัวเขียน statement) · <c>Api</c> (API v1) · <c>Feed</c> (ดึงผ่านการเชื่อมต่อ) · <c>Manual</c> (พิมพ์มือ) · null = แถวก่อนรอบ 252 ·
+    /// ปิดหนี้อัตโนมัติได้<b>เฉพาะ Statement ที่ผู้อัปโหลดมีสิทธิ์อนุมัติ</b> (DECISIONS 252-WP12A-5/6 · ตัวตัดสิน <c>BankReceiptAutoSettle.Decide</c>) — อื่น ๆ เสนอเท่านั้น ·
+    /// ผู้เขียน: BankService (พิมพ์มือ) · BankFeedService · ตัวเขียน statement (รวมเขียนทับ — ตั้งตามคำขอที่เขียนทับ)</summary>
     public string? EntrySource { get; set; }
     /// <summary>ฝ่ายค้าน WP-12A H1: ผู้ใช้ที่นำเข้า/สั่งดึงบรรทัดนี้ (ไฟล์หน้าบัญชีธนาคาร · สั่ง sync feed) — ระบบปิดหนี้เองจากแหล่ง Statement/FeedCustom
     /// ได้เฉพาะเมื่อผู้ใช้นี้มีสิทธิ์อนุมัติใบชนิดนั้น ณ ตอนลงมือ · null = ไม่ทราบ (เสนอเท่านั้น) · บันทึกในแถว audit ของการปิดหนี้</summary>
@@ -124,6 +126,8 @@ public class BankTransaction : TenantEntity
     public Guid? AutoSettleDocumentId { get; set; }
     /// <summary>ประเมินล่าสุดเมื่อ (งานเบื้องหลังประเมินซ้ำแถวที่ยังไม่จับคู่ทุก 6 ชั่วโมงในกรอบ 14 วัน)</summary>
     public DateTime? AutoSettleEvaluatedAt { get; set; }
+    /// <summary>ฝ่ายค้านรอบสอง M7: ประเมินล้มติดกันกี่ครั้ง — ครบ <c>BankReceiptAutoSettle.PoisonFailures</c> ⇒ พักเป็น Held · ประเมินสำเร็จ = ล้างเป็น 0</summary>
+    public int AutoSettleFailCount { get; set; }
 }
 
 /// <summary>

@@ -88,4 +88,57 @@ public class WhtCreditableAmountTests
     [Fact]
     public void ปัดเศษ_AwayFromZero()
         => Assert.Equal(100.01m, WhtCreditableAmount.Of(WhtCreditStatus.Pending, 300m, 100.005m));
+
+    // ═══════════ ฝ่ายค้าน WP-09 รอบสอง ═══════════
+
+    [Fact]
+    public void L2เศษ_Receivedใบต่ำกว่าไม่เกิน1บาท_เศษยังเห็นเป็นขาดใบ_ทะเบียนเท่ายอดถูกหัก_ทิศตรงข้ามแถวรุ่นเก่าและแถวครบไม่มีขาด()
+    {
+        Assert.Equal(0.50m, WhtCreditableAmount.Missing(WhtCreditStatus.Received, 300.50m, 300m));
+        Assert.Equal(300.50m, WhtCreditableAmount.Of(WhtCreditStatus.Received, 300.50m, 300m) + WhtCreditableAmount.Missing(WhtCreditStatus.Received, 300.50m, 300m));
+        Assert.Equal(0m, WhtCreditableAmount.Missing(WhtCreditStatus.Received, 300m, 0m));     // รุ่นเก่า
+        Assert.Equal(0m, WhtCreditableAmount.Missing(WhtCreditStatus.Received, 300m, 300m));   // ได้ใบครบ
+        Assert.Equal(0m, WhtCreditableAmount.Missing(WhtCreditStatus.Claimed, 300.50m, 300m));
+        // ตัดสูญเศษได้ (ปุ่มแสดง) · แถวครบไม่มีอะไรให้ตัด (ปุ่มซ่อน)
+        Assert.Equal(0.50m, WhtCreditWriteOff.AmountOf(WhtCreditStatus.Received, 300.50m, 300m));
+        Assert.Equal(0m, WhtCreditWriteOff.AmountOf(WhtCreditStatus.Received, 300m, 300m));
+    }
+
+    [Fact]
+    public void MC_ตัดสูญพร้อมJEแล้วGLต้นทางลด_กลับJEตัดสูญ_คงส่วนที่ได้ใบ_ทิศตรงข้ามGLเท่าเดิมหรือไม่มีJE_ไม่ทำอะไร()
+    {
+        // แถว 300 ได้ใบ 100 ตัดสูญ 200 แล้วใบต้นทางถูกยกเลิก (GL 0) ⇒ กลับ JE · เหลือ 100 (ใบจริง) · ไม่ถอดแถว
+        var voided = WhtCreditableAmount.AfterSourceGlDrop(true, 300m, 100m, 0m);
+        Assert.True(voided.UndoWriteOff);
+        Assert.Equal(100m, voided.Remaining);
+        Assert.False(voided.RemoveRow);
+        // GL ลดเหลือ 250 ⇒ เหลือ 250 (มากกว่าส่วนที่ได้ใบ)
+        Assert.Equal(250m, WhtCreditableAmount.AfterSourceGlDrop(true, 300m, 100m, 250m).Remaining);
+        // ไม่มีใบเลย (รุ่นเก่า) + ต้นทางหาย ⇒ ถอดแถว
+        Assert.True(WhtCreditableAmount.AfterSourceGlDrop(true, 300m, 0m, 0m).RemoveRow);
+        // ทิศตรงข้าม
+        Assert.False(WhtCreditableAmount.AfterSourceGlDrop(true, 300m, 100m, 300m).UndoWriteOff);   // GL เท่าเดิม
+        Assert.False(WhtCreditableAmount.AfterSourceGlDrop(false, 300m, 100m, 0m).UndoWriteOff);    // ไม่มี JE ตัดสูญที่มีผล
+    }
+
+    [Fact]
+    public void HB_ใบใหม่คนละรอบบัญชีกับใบแรก_ข้าม_ทิศตรงข้ามรอบเดียวกันหรือแถวยังไม่มีใบไม่ข้าม()
+    {
+        var first = new DateTime(2026, 3, 15, 0, 0, 0, DateTimeKind.Utc);
+        Assert.True(WhtCertIntakeVerdict.CrossesCreditPeriod(first, new DateTime(2025, 12, 20, 0, 0, 0, DateTimeKind.Utc), 1));
+        Assert.False(WhtCertIntakeVerdict.CrossesCreditPeriod(first, new DateTime(2026, 11, 1, 0, 0, 0, DateTimeKind.Utc), 1));
+        Assert.False(WhtCertIntakeVerdict.CrossesCreditPeriod(null, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc), 1));
+        // รอบบัญชีเริ่มเม.ย.: มี.ค. 2026 อยู่รอบ 2025 เดียวกับ ธ.ค. 2025
+        Assert.False(WhtCertIntakeVerdict.CrossesCreditPeriod(first, new DateTime(2025, 12, 20, 0, 0, 0, DateTimeKind.Utc), 4));
+    }
+
+    [Fact]
+    public void MD_กันซ้ำเฉพาะปีเดียวกัน_ปีถัดไปเลขเดียวกันไม่ซ้ำ_ไม่รู้ปีถือว่าซ้ำ()
+    {
+        var y2026 = WhtCertIntakeVerdict.CertYear(new DateTime(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc), null, 1);
+        var y2027 = WhtCertIntakeVerdict.CertYear(new DateTime(2027, 5, 1, 0, 0, 0, DateTimeKind.Utc), null, 1);
+        Assert.False(WhtCertIntakeVerdict.SameCertYear(y2026, y2027));
+        Assert.True(WhtCertIntakeVerdict.SameCertYear(y2026, WhtCertIntakeVerdict.CertYear(null, 2026, 1)));   // ไม่มีวันที่ ⇒ ปีภาษีของแถว
+        Assert.True(WhtCertIntakeVerdict.SameCertYear(y2026, WhtCertIntakeVerdict.CertYear(null, null, 1)));   // ไม่รู้ ⇒ ซ้ำ (ปลอดภัย)
+    }
 }

@@ -103,6 +103,63 @@ public static class EtaxReissueReview
         bool hasEvidenceVoidAudit = false)
         => rowStatus == EtaxStatus.Voided && documentEmailedWithRdTimestamp && !documentCancellationRecorded && !hasEvidenceVoidAudit;
 
+    // ── รอบ 255 (ETR-ACK) (ทางไปต่อของสองกลุ่มแถว e-Tax · F2 ข้อ 8): นักบัญชีบันทึก "ตรวจที่กรมสรรพากรแล้ว" รายแถว ⇒ แถวออกจากรายงาน ──
+    // เดิมข้อความบอกให้ตรวจที่กรมสรรพากร "ถ้าถูกปฏิเสธไม่ต้องทำอะไร" แต่ไม่มีทางบันทึกว่าตรวจแล้ว ⇒ แถบเตือนค้างตลอดไป ·
+    // การบันทึกนี้ "ไม่ประทับสถานะของกรมสรรพากรเอง" (DECISION_AUDIT R1 · F2 ข้อ 3) — เป็นคำยืนยันของผู้ใช้ที่ลงชื่อใน audit (append-only) · แถว e-Tax ไม่ถูกแตะ ·
+    // กรณี "กรมสรรพากรยังถือใบนี้อยู่" ไม่มีตัวเลือกให้กด — ต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากรแล้วบันทึกผ่านเส้น "ยกเลิกทาง e-Tax" ที่มีอยู่
+
+    /// <summary>ค่า <c>action</c> ของ audit "ตรวจแล้ว" (EntityType = EtaxInvoice) — ฝั่งเขียน (<c>AcknowledgeEtaxReviewRowAsync</c>) และฝั่งอ่าน
+    /// (<see cref="HiddenByAcknowledgement"/>) ใช้ค่าคงที่ตัวนี้ตัวเดียว</summary>
+    public const string AcknowledgedAction = "etax-review-acknowledged";
+    /// <summary>รหัสกฎของ audit "ตรวจแล้ว"</summary>
+    public const string AcknowledgedRuleCode = "RD-ETAX-REVIEW-ACK";
+    /// <summary>ฐานอ้างอิงของ audit "ตรวจแล้ว"</summary>
+    public const string AcknowledgedLegalReference =
+        "ป.รัษฎากร §86/4 · ประกาศอธิบดีฯ (e-Tax Invoice) · คำตัดสินรอบ 201 ข้อ 62/66 · DECISION_AUDIT R1 (ระบบไม่ประทับสถานะของกรมสรรพากรเอง — บันทึกคำยืนยันของผู้ตรวจ)";
+    /// <summary>ผลตรวจ: กรมสรรพากร/ผู้ให้บริการปฏิเสธ หรือไม่เคยได้รับใบนี้</summary>
+    public const string OutcomeRejectedOrNotReceived = "RejectedOrNotReceived";
+    /// <summary>ผลตรวจ: ใบนี้ถูกยกเลิกที่กรมสรรพากรแล้ว (ต้องมีเลขอ้างอิง)</summary>
+    public const string OutcomeCancelledAtRd = "CancelledAtRd";
+    /// <summary>ความยาวขั้นต่ำของบันทึกผลตรวจ (ตัดช่องว่างหัวท้ายแล้ว)</summary>
+    public const int AcknowledgementNoteMinLength = 5;
+
+    /// <summary>ป้ายภาษาไทยของผลตรวจ (ใช้ในข้อความตอบกลับ/audit) · ค่าที่ไม่รู้จัก = null</summary>
+    public static string? AcknowledgementOutcomeLabel(string? outcome) => outcome switch
+    {
+        OutcomeRejectedOrNotReceived => "กรมสรรพากร/ผู้ให้บริการปฏิเสธ หรือไม่เคยได้รับใบนี้",
+        OutcomeCancelledAtRd => "ยกเลิกที่กรมสรรพากรแล้ว",
+        _ => null,
+    };
+
+    /// <summary>ตรวจคำขอ "ตรวจแล้ว" — คืนข้อความไทยของข้อผิดพลาดแรก หรือ null = ผ่าน · ผลตรวจต้องเป็น 1 ใน 2 ค่าเท่านั้น (ไม่มี "ยังมีผลที่กรมสรรพากร" —
+    /// กรณีนั้นต้องยกเลิก/ออกใบลดหนี้ทางกรมสรรพากรผ่านเส้นเดิม) · <see cref="OutcomeCancelledAtRd"/> ต้องมีเลขอ้างอิง · บันทึก ≥ 5 ตัวอักษร · pure</summary>
+    public static string? ValidateAcknowledgement(string? outcome, string? rdReference, string? note)
+    {
+        if (AcknowledgementOutcomeLabel(outcome) == null)
+            return "เลือกผลการตรวจ: “ถูกปฏิเสธ/ไม่เคยได้รับ” หรือ “ยกเลิกที่กรมสรรพากรแล้ว” — ถ้ากรมสรรพากรยังถือใบนี้อยู่ ให้ยกเลิก/ออกใบลดหนี้ทางกรมสรรพากรแล้วบันทึกผ่านเส้น “ยกเลิกทาง e-Tax”";
+        if (outcome == OutcomeCancelledAtRd && string.IsNullOrWhiteSpace(rdReference))
+            return "ผล “ยกเลิกที่กรมสรรพากรแล้ว” ต้องระบุเลขอ้างอิงการยกเลิกจากกรมสรรพากร/ผู้ให้บริการ e-Tax";
+        if ((note?.Trim().Length ?? 0) < AcknowledgementNoteMinLength)
+            return $"กรุณาบันทึกสิ่งที่ตรวจ (อย่างน้อย {AcknowledgementNoteMinLength} ตัวอักษร) — เช่น ตรวจที่ระบบ e-Tax ของกรมสรรพากรวันที่เท่าไร พบสถานะอะไร";
+        return null;
+    }
+
+    /// <summary>audit แถวนี้เป็น audit "ตรวจแล้ว" ไหม (JSON ที่ <c>System.Text.Json</c> เขียน: <c>"action":"etax-review-acknowledged"</c>) · pure</summary>
+    internal static bool IsAcknowledgementAudit(string? newValuesJson)
+        => !string.IsNullOrEmpty(newValuesJson)
+           && newValuesJson.Contains("\"action\":\"" + AcknowledgedAction + "\"", StringComparison.Ordinal);
+
+    /// <summary>แถว e-Tax นี้ถูกบันทึก "ตรวจแล้ว" ⇒ ซ่อนจากสองกลุ่มแถว e-Tax ของรายงาน · นับเฉพาะ audit ที่ EntityId ตรงแถวนี้<b>และ</b>เป็น audit "ตรวจแล้ว"
+    /// (audit ของแถวอื่น/audit การยกเลิกแถวเดียวกันไม่ซ่อน) · ผู้เรียกกรองบริษัทมาแล้ว · pure</summary>
+    public static bool HiddenByAcknowledgement(Guid etaxId, IEnumerable<(string EntityId, string? NewValues)> etaxAudits)
+    {
+        var id = etaxId.ToString();
+        foreach (var (entityId, newValues) in etaxAudits)
+            if (string.Equals(entityId, id, StringComparison.OrdinalIgnoreCase) && IsAcknowledgementAudit(newValues))
+                return true;
+        return false;
+    }
+
     /// <summary>audit ของการยกเลิกแถว e-Tax (<c>etax-voided-in-system</c>) บันทึกว่ามีหลักฐานไหม — ruleCode <c>RD-ETAX-VOID-SUBMITTED-EVIDENCE</c> หรือมี
     /// <c>evidenceAttachmentId</c> ที่ไม่ว่าง (รูป JSON ที่ <c>EtaxInvoiceService.VoidAsync</c> เขียน) · audit รุ่น V1H ที่บันทึกว่า "ยังไม่ถึง" โดยไม่มีไฟล์ = ไม่ใช่หลักฐาน ·
     /// pure (รอบ 201 ฝ่ายค้าน DV-O2)</summary>

@@ -824,6 +824,8 @@ const API = {
       // รอบ 200 ทีม V1G — ใบลดหนี้ที่เลือกปิดธงทาง (ข) ได้ · รายงานอ่านอย่างเดียวของข้อ 44
       getEtaxCancellationCreditNotes: (id) => API.get(`${base}/document/${id}/etax-cancellation/credit-notes`),
       getEtaxReissueReview: () => API.get(`${base}/document/etax-reissue-review`),
+      // รอบ 255 (ETR-ACK) — บันทึก "ตรวจแล้ว" ของแถว e-Tax ในรายงานข้อ 44 (ทางไปต่อของแถบเตือน)
+      acknowledgeEtaxReviewRow: (etaxId, payload) => API.post(`${base}/document/etax-reissue-review/etax-rows/${etaxId}/acknowledge`, payload),
       // Contacts
       getContacts: (q = '') => API.get(`${base}/document/contacts${q}`),
       createContact: (d) => API.post(`${base}/document/contacts`, d),

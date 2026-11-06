@@ -784,7 +784,9 @@ public partial class BankService : IBankService
             var unmatched = await _db.Set<BankTransaction>()
                 .Where(t => t.CompanyId == companyId
                     && t.BankAccountId == bankAccountId
-                    && t.ReconciliationStatus == ReconciliationStatus.Unmatched)
+                    && t.ReconciliationStatus == ReconciliationStatus.Unmatched
+                    // ฝ่ายค้านรอบสอง M-D: บรรทัดที่ระบบกำลังบันทึกรับชำระจากเงินโอน (Applying) ห้ามจับคู่ซ้อน
+                    && (t.AutoSettleVerdict == null || t.AutoSettleVerdict != Accounting.Helpers.BankReceiptAutoSettle.Stamps.Applying))
                 .ToListAsync();
 
             // ⚠ เดิมกรอง `p.PaymentMethod == PaymentMethod.BankTransfer` ตรงนี้
