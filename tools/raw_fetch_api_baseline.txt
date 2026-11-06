@@ -10,7 +10,7 @@ bank.html 2
 cash-forecast.html 1
 cash-management.html 14
 cleanup.html 3
-contacts.html 2
+contacts.html 0
 delivery-sign.html 2
 document-templates.html 4
 documents.html 22
@@ -36,7 +36,7 @@ products.html 5
 quotation-accept.html 0
 recurring.html 0
 sensitivity.html 2
-settings.html 6
+settings.html 0
 sme-config.html 19
 subscription.html 1
 tax.html 2

@@ -66,10 +66,11 @@
             <button type="button" class="btn btn-sm btn-ghost" id="contactTabGeneral" onclick="Page.showContactTab('general')" style="border-bottom:2px solid #2563eb;border-radius:0">ข้อมูลทั่วไป</button>
             <button type="button" class="btn btn-sm btn-ghost" id="contactTabNotify" onclick="Page.showContactTab('notify')" style="border-bottom:2px solid transparent;border-radius:0">ช่องทางแจ้งเตือน</button>
           </div>
+          <div id="contactNotifyLaterHint" style="display:none;font-size:12px;color:#64748b;margin-bottom:10px">💡 ช่องทางแจ้งเตือน (LINE/อีเมล) ของผู้ติดต่อตั้งได้หลังบันทึกผู้ติดต่อนี้แล้ว — เปิดแก้ไขอีกครั้งเพื่อตั้ง</div>
           <div id="contactGeneralPanel">
           <!-- ประเภทผู้ติดต่อ -->
           <div class="form-group">
-            <label class="form-label">ประเภทผู้ติดต่อ *</label>
+            <label for="fContactType" class="form-label">ประเภทผู้ติดต่อ *</label>
             <select class="form-input" id="fContactType" onchange="Page.onContactTypeChange()">
               <!-- ตัวเลือก "ยังไม่ระบุ" ต้อง**มีอยู่จริง** ไม่ใช่แค่ตั้ง value=''
                    ถ้าไม่มี option ที่ตรง เบราว์เซอร์จะโชว์ตัวแรก (นิติบุคคล) ทั้งที่
@@ -85,12 +86,12 @@
                ของตัวเอง — ถ้าให้พิมพ์รวมในชื่อ ระบบต้องเดา ซึ่งตัดชื่อกิจการ
                อย่าง "นายช่างการไฟฟ้า" ผิดได้ -->
           <div class="form-group" id="titleThGroup" style="display:none">
-            <label class="form-label">คำนำหน้าชื่อ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้ในไฟล์ยื่น ภ.ง.ด.3 และหนังสือรับรอง 50 ทวิ)</span></label>
+            <label for="fTitleTh" class="form-label">คำนำหน้าชื่อ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้ในไฟล์ยื่น ภ.ง.ด.3 และหนังสือรับรอง 50 ทวิ)</span></label>
             <select class="form-input" id="fTitleTh">
               <option value="">— ไม่ระบุ —</option>
             </select>
           </div>
-          <div class="form-group"><label class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px" id="fNameHint">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
+          <div class="form-group"><label for="fName" class="form-label">ชื่อ * <span style="font-weight:normal;color:#64748b;font-size:12px" id="fNameHint">(พิมพ์เพื่อค้นหาจาก DBD)</span></label><input type="text" class="form-input" id="fName" autocomplete="off" placeholder="พิมพ์ชื่อบริษัทเพื่อค้นหา..."></div>
           <!-- AI fuzzy-match suggestion: เด้งเตือนเมื่อชื่อ/TaxId คล้ายกับ
                contact ที่มีอยู่แล้ว — ป้องกัน duplicate (data hygiene #1) -->
           <div id="fuzzyMatchBox" style="display:none;margin:-8px 0 12px;padding:10px 12px;background:#fef3c7;border-left:4px solid #f59e0b;border-radius:4px;font-size:13px">
@@ -102,19 +103,19 @@
                เลขเดียวกันคนละสาขา = คนละผู้ติดต่อ · เดิมช่องสาขาซ่อนอยู่ท้ายกล่องที่อยู่ จึงถูกปล่อยว่าง/
                00000 ทั้งที่คู่ค้าเป็นสาขา · กรอกสาขาก่อนกด "ดึงข้อมูล DBD" = ได้ชื่อ/ที่อยู่ของสาขานั้น -->
           <div class="form-row" id="taxIdRow" style="flex-wrap:wrap">
-            <div class="form-group" style="flex:2;min-width:240px"><label class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล DBD</button></div></div>
-            <div class="form-group" id="branchCodeGroup" style="flex:1;min-width:130px"><label class="form-label">รหัสสาขา <span style="font-weight:normal;color:#64748b;font-size:11px">(00000 = สำนักงานใหญ่)</span></label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
-            <div class="form-group" style="flex:1;min-width:150px"><label class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
+            <div class="form-group" style="flex:2;min-width:240px"><label for="fTaxId" class="form-label" id="taxIdLabel">เลขผู้เสียภาษี (13 หลัก)</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input type="text" class="form-input" id="fTaxId" maxlength="13" style="flex:1"><button class="btn btn-secondary btn-sm" id="fDbdBtn" style="white-space:nowrap">ดึงข้อมูล DBD</button></div></div>
+            <div class="form-group" id="branchCodeGroup" style="flex:1;min-width:130px"><label for="fBranch" class="form-label">รหัสสาขา <span style="font-weight:normal;color:#64748b;font-size:11px">(00000 = สำนักงานใหญ่)</span></label><input type="text" class="form-input" id="fBranch" placeholder="00000" maxlength="5" inputmode="numeric"></div>
+            <div class="form-group" style="flex:1;min-width:150px"><label for="fBranchName" class="form-label">ชื่อสาขา</label><input type="text" class="form-input" id="fBranchName" placeholder="สำนักงานใหญ่"></div>
           </div>
           <!-- ฟิลด์เฉพาะนิติบุคคล -->
           <div id="juristicFields" style="margin-bottom:12px">
             <div class="form-row">
-              <div class="form-group"><label class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fJuristicId" maxlength="13" placeholder="เลข 13 หลักจาก DBD"></div>
-              <div class="form-group"><label class="form-label">ประเภทนิติบุคคล</label><input type="text" class="form-input" id="fJuristicType" placeholder="เช่น บริษัทจำกัด" readonly style="background:#f8fafc"></div>
+              <div class="form-group"><label for="fJuristicId" class="form-label">เลขทะเบียนนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fJuristicId" maxlength="13" placeholder="เลข 13 หลักจาก DBD"></div>
+              <div class="form-group"><label for="fJuristicType" class="form-label">ประเภทนิติบุคคล</label><input type="text" class="form-input" id="fJuristicType" placeholder="เช่น บริษัทจำกัด" readonly style="background:#f8fafc"></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">ทุนจดทะเบียน</label><input type="text" class="form-input" id="fRegisteredCapital" readonly style="background:#f8fafc"></div>
-              <div class="form-group"><label class="form-label">สถานะนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fDbdStatus" readonly style="background:#f8fafc"></div>
+              <div class="form-group"><label for="fRegisteredCapital" class="form-label">ทุนจดทะเบียน</label><input type="text" class="form-input" id="fRegisteredCapital" readonly style="background:#f8fafc"></div>
+              <div class="form-group"><label for="fDbdStatus" class="form-label">สถานะนิติบุคคล (DBD)</label><input type="text" class="form-input" id="fDbdStatus" readonly style="background:#f8fafc"></div>
             </div>
           </div>
           <div class="form-row">
@@ -123,7 +124,7 @@
           </div>
           <div class="form-row" id="creditLimitRow">
             <div class="form-group" style="flex:1">
-              <label class="form-label">วงเงินเครดิต (THB)
+              <label for="fCreditLimit" class="form-label">วงเงินเครดิต (THB)
                 <button type="button" class="btn btn-sm btn-ghost" style="margin-left:8px;padding:2px 8px;font-size:11px" onclick="Page.suggestCreditLimit()" aria-label="แนะนำวงเงินเครดิต">⚙️ แนะนำวงเงิน</button>
                 <span style="color:#64748b;font-size:11px;font-weight:normal">— ว่าง = ไม่จำกัด</span>
               </label>
@@ -131,14 +132,14 @@
               <div id="creditLimitHint" style="font-size:11px;color:#64748b;margin-top:4px"></div>
             </div>
             <div class="form-group" style="flex:1">
-              <label class="form-label">เครดิตเทอม (วัน)
+              <label for="fPaymentDueDays" class="form-label">เครดิตเทอม (วัน)
                 <span style="color:#64748b;font-size:11px;font-weight:normal">— ว่าง = ใช้ค่าบริษัท</span>
               </label>
               <input type="number" class="form-input" id="fPaymentDueDays" step="1" min="0" placeholder="เช่น 30 (Net 30)">
               <div style="font-size:11px;color:#64748b;margin-top:4px">ตอนสร้างเอกสารขาย ระบบจะเติม "วันครบกำหนด" = วันที่เอกสาร + จำนวนวันนี้ ให้อัตโนมัติ</div>
             </div>
             <div class="form-group" style="flex:1">
-              <label class="form-label">ภาษาเอกสารของผู้ติดต่อรายนี้
+              <label for="fDocLang" class="form-label">ภาษาเอกสารของผู้ติดต่อรายนี้
                 <span style="color:#64748b;font-size:11px;font-weight:normal">— ว่าง = ใช้ค่าบริษัท</span>
               </label>
               <select class="form-input" id="fDocLang">
@@ -162,7 +163,7 @@
             </summary>
             <div style="margin-top:10px">
               <div class="form-group">
-                <label class="form-label">ชื่อภาษาอังกฤษ</label>
+                <label for="fNameEn" class="form-label">ชื่อภาษาอังกฤษ</label>
                 <input type="text" class="form-input" id="fNameEn" maxlength="300"
                        placeholder="เช่น ABC Service Engineering Co., Ltd.">
                 <div style="font-size:11px;color:#64748b;margin-top:4px">
@@ -171,7 +172,7 @@
                 </div>
               </div>
               <div class="form-group" style="margin-bottom:0">
-                <label class="form-label">ที่อยู่ภาษาอังกฤษ</label>
+                <label for="fAddressEn" class="form-label">ที่อยู่ภาษาอังกฤษ</label>
                 <textarea class="form-input" id="fAddressEn" rows="2" maxlength="500"
                           placeholder="เช่น 44 Moo 9, Nong Hiang, Phanat Nikhom, Chon Buri 20140"></textarea>
                 <div style="font-size:11px;color:#64748b;margin-top:4px">
@@ -197,7 +198,7 @@
           <!-- กล่องที่อยู่ต่างประเทศ (ซ่อนไว้ default) -->
           <div id="addrForeignBox" style="display:none;margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
             <div class="form-group">
-              <label class="form-label">ประเทศ *</label>
+              <label for="fCountryCode" class="form-label">ประเทศ *</label>
               <select class="form-input" id="fCountryCode">
                 <option value="">— เลือกประเทศ —</option>
                 <option value="NL">Netherlands (NL)</option>
@@ -219,11 +220,11 @@
               </select>
             </div>
             <div class="form-group" id="fCountryOtherWrap" style="display:none">
-              <label class="form-label">รหัสประเทศ ISO (2 ตัว) *</label>
+              <label for="fCountryOther" class="form-label">รหัสประเทศ ISO (2 ตัว) *</label>
               <input type="text" class="form-input" id="fCountryOther" maxlength="2" placeholder="เช่น IT, ES, VN" style="text-transform:uppercase">
             </div>
             <div class="form-group">
-              <label class="form-label">ที่อยู่เต็ม (Full address) *</label>
+              <label for="fForeignAddress" class="form-label">ที่อยู่เต็ม (Full address) *</label>
               <textarea class="form-input" id="fForeignAddress" rows="3" placeholder="เช่น Oosterdoksstraat 114, 1011 DK Amsterdam, Netherlands"></textarea>
               <div style="font-size:11px;color:#64748b;margin-top:4px">พิมพ์ที่อยู่เต็มตามรูปแบบของประเทศนั้น — ใช้ในเอกสาร/e-Tax XML (LineOne)</div>
             </div>
@@ -233,7 +234,7 @@
 
           <!-- วางที่อยู่เต็มเพื่อแยกอัตโนมัติ -->
           <div class="form-group">
-            <label class="form-label">วางที่อยู่เพื่อแยกอัตโนมัติ <span style="font-weight:normal;color:#64748b;font-size:12px">(ไม่จำเป็น — กรอกช่องด้านล่างได้เลย)</span></label>
+            <label for="fAddressPaste" class="form-label">วางที่อยู่เพื่อแยกอัตโนมัติ <span style="font-weight:normal;color:#64748b;font-size:12px">(ไม่จำเป็น — กรอกช่องด้านล่างได้เลย)</span></label>
             <div style="display:flex;gap:8px">
               <input type="text" class="form-input" id="fAddressPaste" placeholder="วางที่อยู่เต็มแล้วกดแยก..." style="flex:1">
               <button type="button" class="btn btn-secondary btn-sm" style="white-space:nowrap" onclick="Page.parseFromPaste()">แยกที่อยู่</button>
@@ -248,29 +249,29 @@
           <div style="margin-bottom:12px;border:1px solid #e2e8f0;border-radius:6px;padding:12px">
             <div style="font-weight:600;margin-bottom:8px">ที่อยู่ <span style="font-weight:normal;color:#64748b;font-size:12px">(ใช้สำหรับเอกสาร, e-Tax XML)</span></div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#0369a1;font-size:11px">⤴ กรอกก่อน → เติมที่อยู่อัตโนมัติ</span></label><input type="text" class="form-input" id="fPostalCode" maxlength="5" inputmode="numeric" placeholder="10110"></div>
-              <div class="form-group"><label class="form-label">จังหวัด *</label><input type="text" class="form-input" id="fProvince"></div>
+              <div class="form-group"><label for="fPostalCode" class="form-label">รหัสไปรษณีย์ * <span style="font-weight:normal;color:#0369a1;font-size:11px">⤴ กรอกก่อน → เติมที่อยู่อัตโนมัติ</span></label><input type="text" class="form-input" id="fPostalCode" maxlength="5" inputmode="numeric" placeholder="10110"></div>
+              <div class="form-group"><label for="fProvince" class="form-label">จังหวัด *</label><input type="text" class="form-input" id="fProvince"></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">อำเภอ/เขต *</label><input type="text" class="form-input" id="fDistrict"></div>
-              <div class="form-group"><label class="form-label">ตำบล/แขวง *</label><input type="text" class="form-input" id="fSubDistrict"></div>
+              <div class="form-group"><label for="fDistrict" class="form-label">อำเภอ/เขต *</label><input type="text" class="form-input" id="fDistrict"></div>
+              <div class="form-group"><label for="fSubDistrict" class="form-label">ตำบล/แขวง *</label><input type="text" class="form-input" id="fSubDistrict"></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="fBuildingNumber" placeholder="123/45"></div>
-              <div class="form-group"><label class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="fBuildingName"></div>
+              <div class="form-group"><label for="fBuildingNumber" class="form-label">บ้านเลขที่ *</label><input type="text" class="form-input" id="fBuildingNumber" placeholder="123/45"></div>
+              <div class="form-group"><label for="fBuildingName" class="form-label">ชื่ออาคาร</label><input type="text" class="form-input" id="fBuildingName"></div>
             </div>
             <div class="form-row">
-              <div class="form-group"><label class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="fMoo" placeholder="3" maxlength="5"></div>
-              <div class="form-group"><label class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
+              <div class="form-group"><label for="fMoo" class="form-label">หมู่ที่ <span style="font-weight:normal;color:#64748b;font-size:11px">(ถ้ามี)</span></label><input type="text" class="form-input" id="fMoo" placeholder="3" maxlength="5"></div>
+              <div class="form-group"><label for="fStreetName" class="form-label">ถนน/ซอย</label><input type="text" class="form-input" id="fStreetName" placeholder="สุขุมวิท"></div>
             </div>
           </div>
           </div><!-- /addrThaiBox -->
 
           <div class="form-row">
-            <div class="form-group"><label class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
-            <div class="form-group"><label class="form-label" data-i18n="common.email">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
+            <div class="form-group"><label for="fPhone" class="form-label" data-i18n="common.phone">โทรศัพท์</label><input type="text" class="form-input" id="fPhone"></div>
+            <div class="form-group"><label for="fEmail" class="form-label" data-i18n="common.email">อีเมล</label><input type="email" class="form-input" id="fEmail"></div>
           </div>
-          <div class="form-group"><label class="form-label">ผู้ติดต่อ</label><input type="text" class="form-input" id="fContactPerson"></div>
+          <div class="form-group"><label for="fContactPerson" class="form-label">ผู้ติดต่อ</label><input type="text" class="form-input" id="fContactPerson"></div>
 
           <!-- ───── ตั้งค่าการบันทึกบัญชี ─────
                Per-contact GL overrides. Defaults pull from the system
@@ -302,7 +303,7 @@
             </label>
             <div class="form-row">
               <div class="form-group">
-                <label class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี
+                <label for="fDefaultArAccount" class="form-label">ถ้าเป็นลูกหนี้ จะบันทึกบัญชี
                   <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAR','fDefaultArAccount','arHint')" aria-label="แนะนำผังบัญชี" title="แนะนำจากประวัติของบริษัท">⚙️</button>
                 </label>
                 <select class="form-input" id="fDefaultArAccount">
@@ -311,7 +312,7 @@
                 <div class="hint" id="arHint" style="font-size:11px;color:#64748b;margin-top:4px">ดีฟอลต์ 113xxx — ลูกหนี้การค้า</div>
               </div>
               <div class="form-group">
-                <label class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี
+                <label for="fDefaultApAccount" class="form-label">ถ้าเป็นเจ้าหนี้ จะบันทึกบัญชี
                   <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactAP','fDefaultApAccount','apHint')" aria-label="แนะนำผังบัญชี" title="แนะนำจากประวัติของบริษัท">⚙️</button>
                 </label>
                 <select class="form-input" id="fDefaultApAccount">
@@ -321,7 +322,7 @@
               </div>
             </div>
             <div class="form-group">
-              <label class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)
+              <label for="fDefaultIrGrAccount" class="form-label">บันทึกบัญชีกระทบเอกสาร (IR/GR)
                 <button type="button" class="btn btn-sm btn-ghost" style="padding:1px 6px;font-size:11px" onclick="Page.suggestGlSlot('ContactIrGr','fDefaultIrGrAccount','grHint')" aria-label="แนะนำผังบัญชี" title="แนะนำจากประวัติของบริษัท">⚙️</button>
               </label>
               <select class="form-input" id="fDefaultIrGrAccount">
@@ -416,7 +417,7 @@
         const keepId = document.querySelector(`input[name="dupKeep${gi}"]:checked`)?.value;
         if (!keepId) { Layout.toast('เลือกรายการที่จะเก็บก่อน', 'error'); return; }
         const mergeIds = g.contacts.map(c => c.id).filter(id => id !== keepId);
-        if (!confirm(`รวม ${mergeIds.length} รายการเข้ากับรายการที่เลือก?\nเอกสาร/ประวัติทั้งหมดจะย้ายตาม และรายการซ้ำจะถูกปิดใช้งานถาวร`)) return;
+        if (!(await Layout.confirm(`รวม ${mergeIds.length} รายการเข้ากับรายการที่เลือก?\nเอกสาร/ประวัติทั้งหมดจะย้ายตาม และรายการซ้ำจะถูกปิดใช้งานถาวร`))) return;
         btn.disabled = true; btn.textContent = 'กำลังรวม...';
         try {
           const api = Layout.api();
@@ -594,13 +595,8 @@
         if (name.length < 2 && taxId.length < 10) { box.style.display = 'none'; return; }
         try {
           const cid = Layout.getCompanyId();
-          const token = localStorage.getItem('token');
-          const r = await fetch(`/api/companies/${cid}/ai/contact/fuzzy-match`, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, taxId, limit: 5 })
-          });
-          const j = await r.json();
+          // API.* (WP-13 H) · เรียกระหว่างพิมพ์ ⇒ quietly (ไม่ขึ้นตัวแสดงกำลังบันทึก/ไม่ผูกปุ่ม)
+          const j = await API.quietly(() => API.post(`/api/companies/${cid}/ai/contact/fuzzy-match`, { name, taxId, limit: 5 }));
           const matches = j?.data?.matches || [];
           if (matches.length === 0) { box.style.display = 'none'; return; }
           list.innerHTML = matches.map(m => `
@@ -795,6 +791,7 @@
         this._notify = null;
         document.getElementById('contactNotifyPanel').innerHTML = '';
         document.getElementById('contactTabs').style.display = 'none';
+        document.getElementById('contactNotifyLaterHint').style.display = '';   // WP-13: บอกเหตุที่ไม่มีแท็บตอนสร้างใหม่
         this.showContactTab('general');
         this._allFieldIds.forEach(id => { const el = document.getElementById(id); if(el) el.value = ''; });
         const cl = document.getElementById('fCreditLimit'); if (cl) cl.value = '';
@@ -889,6 +886,7 @@
         this._notify = null;
         document.getElementById('contactNotifyPanel').innerHTML = '';
         document.getElementById('contactTabs').style.display = 'flex';
+        document.getElementById('contactNotifyLaterHint').style.display = 'none';
         this.showContactTab('general');
         const hb = document.getElementById('contactHistoryBtn'); if (hb) hb.style.display = '';
         // ห้ามเทียบตรง ๆ: API ส่ง "JuristicPerson" แต่ <option value="2">
@@ -1328,13 +1326,14 @@
       },
       async editNotifyLabel(el) {
         const ep = this._notifyEndpoint(el.dataset.ep); if (!ep) return;
-        const v = prompt('ป้ายของปลายทาง (เว้นว่าง = ล้างป้าย)', ep.label || '');
+        const v = await Layout.promptText({ title: 'ป้ายของปลายทาง', label: 'ป้าย (เว้นว่าง = ล้างป้าย)', value: ep.label || '',
+          placeholder: 'เช่น ฝ่ายบัญชีลูกค้า', okText: 'บันทึกป้าย' });
         if (v === null) return;
         await this._notifySend('PUT', '/' + encodeURIComponent(el.dataset.ep), { label: v.trim(), topics: null, showAmounts: null }, 'บันทึกแล้ว');
       },
       async unlinkNotify(el) {
         const ep = this._notifyEndpoint(el.dataset.ep); if (!ep) return;
-        if (!confirm(`ยกเลิกปลายทาง "${ep.display}"? (ยกเลิกแล้วแก้กลับไม่ได้ — เพิ่มใหม่ได้)`)) return;
+        if (!(await Layout.confirm(`ยกเลิกปลายทาง "${ep.display}"? (ยกเลิกแล้วแก้กลับไม่ได้ — เพิ่มใหม่ได้)`))) return;
         await this._notifySend('DELETE', '/' + encodeURIComponent(el.dataset.ep), null, 'ยกเลิกแล้ว');
       },
       async previewNotifyRecipients() {
@@ -1349,7 +1348,7 @@
         } catch (e) { out.innerHTML = `<span class="text-red">${Layout.esc(e.message)}</span>`; }
       },
       async deleteContact(id) {
-        if (!confirm('ต้องการลบผู้ติดต่อนี้? (หากมีเอกสารอ้างอิง จะปิดการใช้งานแทน)')) return;
+        if (!(await Layout.confirm('ต้องการลบผู้ติดต่อนี้? (หากมีเอกสารอ้างอิง จะปิดการใช้งานแทน)'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           const res = await api.deleteContact(id);
@@ -1388,14 +1387,10 @@
       async downloadTemplate() {
         Import._closeMenus();
         try {
-          const token = localStorage.getItem('token');
-          const resp = await fetch(`/api/companies/${Layout.getCompanyId()}/import-export/templates/${Import.entityType}/download?format=csv`, { headers: { 'Authorization': `Bearer ${token}` } });
-          if (!resp.ok) throw new Error('Download failed');
-          const blob = await resp.blob();
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a'); a.href = url; a.download = `${Import.entityType}-template.csv`; a.click();
-          URL.revokeObjectURL(url);
-        } catch (e) { Layout.toast('ดาวน์โหลด Template ไม่สำเร็จ', 'error'); }
+          // ตัวดึงไฟล์กลาง (WP-13 H) — 401/403 ข้อความเซิร์ฟเวอร์ถึงผู้ใช้
+          await API.download(`/api/companies/${Layout.getCompanyId()}/import-export/templates/${encodeURIComponent(Import.entityType)}/download?format=csv`,
+            `${Import.entityType}-template.csv`);
+        } catch (e) { Layout.toast('ดาวน์โหลดไฟล์ตัวอย่างไม่สำเร็จ: ' + ((e && e.message) || ''), 'error'); }
       },
     };
 

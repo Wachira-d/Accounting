@@ -23,12 +23,12 @@
     <div class="page-header">
       <div>
         <h2 class="page-title">การแจ้งเตือน</h2>
-        <p class="page-subtitle">Notification Engine — ตั้งค่าใครได้รับแจ้งเตือนผ่าน System / Email / LINE สำหรับเหตุการณ์ใด</p>
+        <p class="page-subtitle">ตั้งว่าเหตุการณ์ไหน แจ้งใคร ทางกระดิ่งในระบบ / อีเมล / LINE</p>
       </div>
     </div>
 
     <div class="tabs" style="display:flex;gap:4px;border-bottom:1px solid #e2e8f0;margin-bottom:16px">
-      <button class="tab tab-active" id="tabMatrix" onclick="Page.switchTab('matrix')">⚙️ ตั้งค่าทั้งบริษัท (Admin)</button>
+      <button class="tab tab-active" id="tabMatrix" onclick="Page.switchTab('matrix')">⚙️ ตั้งค่าทั้งบริษัท (ผู้ดูแล)</button>
       <button class="tab" id="tabPrefs" onclick="Page.switchTab('prefs')">👤 ของฉัน (ปิดแจ้งเตือนบางช่อง)</button>
       <button class="tab" id="tabLine" onclick="Page.switchTab('line')">📱 เชื่อมต่อ LINE</button>
     </div>
@@ -36,11 +36,10 @@
     <!-- ===== Admin Matrix ===== -->
     <div id="paneMatrix" class="tab-pane">
       <div style="background:#fef3c7;border:1px solid #fcd34d;padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;color:#78350f">
-        <strong>Default-deny:</strong> ทุกช่องเริ่มจาก "ปิด" — ติ๊กเฉพาะ event × ผู้รับ × ช่องทาง ที่ต้องการให้แจ้งจริง ๆ ·
+        <strong>เริ่มจากปิดทุกช่อง:</strong> ติ๊กเฉพาะ เหตุการณ์ × ผู้รับ × ช่องทาง ที่ต้องการให้แจ้งจริง ๆ ·
         <strong>ยกเว้น</strong>แถวที่ติดป้าย "ค่าตั้งต้นของระบบ" (เช่น รับชำระ/จ่ายชำระเงิน · อนุมัติเอกสาร) ซึ่ง<strong>เปิดอยู่แล้ว</strong>จนกว่าคุณจะบันทึกเอง:
         กระดิ่งถึงเจ้าของ + กลุ่ม LINE ของบริษัท (เมื่อผูกกลุ่มไว้) — ไม่ต้องการ ให้เอาติ๊กออกแล้วกดบันทึก ·
-        ช่อง <strong>กลุ่ม LINE ของบริษัท</strong> ส่งเข้า "LINE กลุ่มของทีม" ผ่าน LINE OA ของร้านเอง (ตั้งที่ ตั้งค่า → แจ้งเตือนทาง LINE) — ไม่มี OA ของร้าน = ไม่ส่ง (ไม่ผ่าน OA กลางของ NextAcc) ·
-        แถวที่ติดป้าย "ค่าตั้งต้นของระบบ" คือค่าที่ระบบใช้อยู่จนกว่าคุณจะบันทึกเอง
+        ช่อง <strong>กลุ่ม LINE ของบริษัท</strong> ส่งเข้า "LINE กลุ่มของทีม" ผ่าน LINE OA ของร้านเอง (ตั้งที่ ตั้งค่า → แจ้งเตือนทาง LINE) — ไม่มี OA ของร้าน = ไม่ส่ง (ไม่ผ่าน OA กลางของ NextAcc)
       </div>
       <div id="matrixContainer" style="overflow-x:auto;background:#fff;border-radius:6px"></div>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px">
@@ -52,7 +51,7 @@
     <!-- ===== Personal Preferences ===== -->
     <div id="panePrefs" class="tab-pane hidden">
       <div style="background:#eff6ff;border:1px solid #bae6fd;padding:10px 12px;border-radius:6px;margin-bottom:12px;font-size:13px;color:#0c4a6e">
-        ที่นี่คุณ <strong>ปิด</strong> ช่องทางแจ้งเตือนของตัวเองได้ (เช่น "ไม่อยากรับ Email สำหรับเหตุการณ์ลา ใช้ LINE อย่างเดียวพอ"). ไม่สามารถ <em>เปิด</em> ช่องที่บริษัทยังไม่ได้เปิดให้ — ติดต่อ Admin
+        ที่นี่คุณ <strong>ปิด</strong> ช่องทางแจ้งเตือนของตัวเองได้ (เช่น "ไม่อยากรับอีเมลสำหรับเหตุการณ์ลา ใช้ LINE อย่างเดียวพอ"). ไม่สามารถ <em>เปิด</em> ช่องที่บริษัทยังไม่ได้เปิดให้ — ติดต่อผู้ดูแลบริษัท
       </div>
       <div id="prefsContainer"></div>
       <div style="display:flex;justify-content:flex-end;align-items:center;gap:10px;margin-top:12px">
@@ -65,13 +64,13 @@
     <div id="paneLine" class="tab-pane hidden">
       <div style="max-width:560px">
         <div style="background:#f0fdf4;border:1px solid #86efac;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:13px;color:#14532d">
-          ผูก LINE User ID ของคุณ → ระบบจะ push แจ้งเตือนเข้า LINE ส่วนตัว (ไม่ใช่ group). ถ้ายังไม่ผูก ระบบจะ fallback ไป System / Email อัตโนมัติ
+          ผูกรหัสผู้ใช้ LINE ของคุณ → ระบบจะส่งแจ้งเตือนเข้า LINE ส่วนตัว (ไม่ใช่กลุ่ม) · ถ้ายังไม่ผูก ระบบจะแจ้งทางกระดิ่งในระบบ / อีเมลแทนโดยอัตโนมัติ
         </div>
         <div class="form-group">
-          <label class="form-label">LINE User ID</label>
+          <label class="form-label" for="lineUid">รหัสผู้ใช้ LINE (User ID)</label>
           <input type="text" class="form-input" id="lineUid" placeholder="U1234abcd..." maxlength="64">
           <div style="font-size:11px;color:#94a3b8;margin-top:4px">
-            หา ID ได้จาก: เพิ่มบอทเป็นเพื่อน → ทักไปบอท → admin webhook จะ log ID ให้ (หรือใช้ <a href="https://developers.line.biz/console/" target="_blank" style="color:#0ea5e9">LINE Developers Console</a>)
+            หารหัสได้จาก: เพิ่ม LINE OA ของบริษัทเป็นเพื่อน → ทักไปหนึ่งข้อความ → ผู้ดูแลระบบเห็นรหัสในบันทึกของ OA (หรือใช้ <a href="https://developers.line.biz/console/" target="_blank" style="color:#0ea5e9">LINE Developers Console</a>)
           </div>
         </div>
         <div style="display:flex;gap:8px">
@@ -90,7 +89,7 @@
   <script>
     const roleLabels = {
       Requester: 'ผู้ขอ', DirectManager: 'หัวหน้าตรง', DepartmentHead: 'หัวหน้าแผนก',
-      HR_Admin: 'HR Admin', Accounting: 'ฝ่ายบัญชี', Owner: 'เจ้าของบริษัท'
+      HR_Admin: 'ฝ่ายบุคคล', Accounting: 'ฝ่ายบัญชี', Owner: 'เจ้าของบริษัท'
     };
 
     const Page = {
@@ -158,21 +157,21 @@
         let html = '<table class="matrix-table"><thead><tr><th class="event">เหตุการณ์</th>';
         roles.forEach(r => { html += `<th class="role" colspan="3">${Layout.esc(roleLabels[r] || r)}</th>`; });
         html += '<th class="role">กลุ่ม LINE<br>ของบริษัท</th></tr><tr><th></th>';
-        roles.forEach(() => { html += '<th class="role" style="font-size:10px;font-weight:400">Sys / Email / LINE</th>'; });
+        roles.forEach(() => { html += '<th class="role" style="font-size:10px;font-weight:400">กระดิ่ง / อีเมล / LINE</th>'; });
         html += '<th class="role" style="font-size:10px;font-weight:400">OA ของร้าน</th></tr></thead><tbody>';
         Object.keys(groups).forEach(domain => {
           html += `<tr><th class="domain" colspan="${2 + roles.length}">${Layout.esc(domain)}</th></tr>`;
           groups[domain].forEach(ev => {
             const anyDefault = roles.some(role => (this._matrix[ev.key + '|' + role] || {}).isDefault);
             const anyGroup = roles.some(role => (this._matrix[ev.key + '|' + role] || {}).enableLineGroup);
-            html += `<tr><td class="event"><div style="font-weight:600">${Layout.esc(ev.label)}</div><div style="font-size:10px;color:#94a3b8">${Layout.esc(ev.key)}${anyDefault ? ' · <span style="color:#d97706">ค่าตั้งต้นของระบบ (ยังไม่ได้บันทึกเอง)</span>' : ''}</div></td>`;
+            html += `<tr><td class="event"><div style="font-weight:600">${Layout.esc(ev.label)}</div>${anyDefault ? '<div style="font-size:10px"><span style="color:#d97706">ค่าตั้งต้นของระบบ (ยังไม่ได้บันทึกเอง)</span></div>' : ''}</td>`;
             roles.forEach(role => {
               const key = ev.key + '|' + role;
               const s = this._matrix[key] || { enableSystem: false, enableEmail: false, enableLine: false };
               html += `<td><div class="channel-cell">
-                <label><input type="checkbox" data-k="${Layout.esc(key)}" data-c="sys" ${s.enableSystem ? 'checked' : ''}>Sys</label>
-                <label><input type="checkbox" data-k="${Layout.esc(key)}" data-c="email" ${s.enableEmail ? 'checked' : ''}>Mail</label>
-                <label><input type="checkbox" data-k="${Layout.esc(key)}" data-c="line" ${s.enableLine ? 'checked' : ''}>LINE</label>
+                <label title="กระดิ่งในระบบ"><input type="checkbox" data-k="${Layout.esc(key)}" data-c="sys" ${s.enableSystem ? 'checked' : ''}>🔔</label>
+                <label title="อีเมล"><input type="checkbox" data-k="${Layout.esc(key)}" data-c="email" ${s.enableEmail ? 'checked' : ''}>✉️</label>
+                <label title="LINE ส่วนตัว"><input type="checkbox" data-k="${Layout.esc(key)}" data-c="line" ${s.enableLine ? 'checked' : ''}>LINE</label>
               </div></td>`;
             });
             html += `<td><div class="channel-cell"><label><input type="checkbox" data-g="${Layout.esc(ev.key)}" ${anyGroup ? 'checked' : ''}>กลุ่ม</label></div></td>`;
@@ -232,12 +231,12 @@
       renderPrefs() {
         const groups = {};
         this._catalog.events.forEach(e => { (groups[e.domain] ||= []).push(e); });
-        let html = '<table class="matrix-table"><thead><tr><th class="event">เหตุการณ์</th><th class="role">ปิด System</th><th class="role">ปิด Email</th><th class="role">ปิด LINE</th></tr></thead><tbody>';
+        let html = '<table class="matrix-table"><thead><tr><th class="event">เหตุการณ์</th><th class="role">ปิดกระดิ่ง</th><th class="role">ปิดอีเมล</th><th class="role">ปิด LINE</th></tr></thead><tbody>';
         Object.keys(groups).forEach(domain => {
           html += `<tr><th class="domain" colspan="4">${Layout.esc(domain)}</th></tr>`;
           groups[domain].forEach(ev => {
             const p = this._prefs[ev.key] || { suppressSystem: false, suppressEmail: false, suppressLine: false };
-            html += `<tr><td class="event">${Layout.esc(ev.label)}<div style="font-size:10px;color:#94a3b8">${Layout.esc(ev.key)}</div></td>
+            html += `<tr><td class="event">${Layout.esc(ev.label)}</td>
               <td><input type="checkbox" data-pe="${Layout.esc(ev.key)}" data-pc="sys" ${p.suppressSystem ? 'checked' : ''}></td>
               <td><input type="checkbox" data-pe="${Layout.esc(ev.key)}" data-pc="email" ${p.suppressEmail ? 'checked' : ''}></td>
               <td><input type="checkbox" data-pe="${Layout.esc(ev.key)}" data-pc="line" ${p.suppressLine ? 'checked' : ''}></td>
@@ -292,7 +291,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async clearLine() {
-        if (!confirm('ยืนยันยกเลิกการเชื่อมต่อ LINE?')) return;
+        if (!(await Layout.confirm('ยืนยันยกเลิกการเชื่อมต่อ LINE?'))) return;
         const api = Layout.api(); if (!api) return;
         try {
           await api.clearMyLineBinding();

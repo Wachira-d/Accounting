@@ -31,15 +31,15 @@
         <div id="rulesList"><div class="empty-state">กำลังโหลด...</div></div>
       </div>
       <div class="card" style="padding:16px;margin-top:14px;background:#f8fafc">
-        <strong>📌 Trigger ที่ใช้ได้:</strong>
+        <strong>📌 เหตุการณ์ที่ใช้ส่งได้:</strong>
         <ul style="font-size:13px;color:#475569;margin:8px 0 0 18px">
-          <li><b>DocumentApproved</b> — อนุมัติเอกสาร (Invoice/TaxInvoice/Quotation) → ส่งทันที</li>
-          <li><b>DocumentDueSoon</b> — ครบกำหนดอีก N วัน (ใส่ OffsetDays ติดลบ เช่น -3)</li>
-          <li><b>DocumentOverdue</b> — เกินกำหนด N วัน (OffsetDays บวก, RepeatEveryDays = ส่งซ้ำ)</li>
-          <li><b>RecurringInvoiceCreated</b> — ใช้คู่กับหน้า "รายการที่เกิดซ้ำ" — เมื่อ recurring สร้าง invoice ใหม่ → ส่งให้ลูกค้าอัตโนมัติ <b>(ต้องตั้ง recurring ให้ "อนุมัติอัตโนมัติ" ด้วย</b> — ระบบไม่ส่งเอกสารฉบับร่างเพื่อให้ได้เลขที่จริงตาม §86/4)</li>
-          <li><b>MonthlyStatement</b> — ส่งสรุปรายการของเดือนที่แล้วให้ลูกค้าทุกคนที่มี email + รายการเดือนนั้น (ตั้ง DayOfMonth)</li>
-          <li><b>PayrollPaid</b> — จ่ายเงินเดือนเสร็จ → ส่งสลิปแต่ละคน</li>
-          <li><b>WhtCertIssued</b> — ออกใบ 50 ทวิ → ส่งให้ผู้รับเงิน</li>
+          <li><b>อนุมัติเอกสาร</b> — อนุมัติใบแจ้งหนี้/ใบกำกับภาษี/ใบเสนอราคา → ส่งทันที</li>
+          <li><b>ใกล้ครบกำหนดชำระ</b> — ครบกำหนดอีก N วัน (ใส่ "เลื่อนวันส่ง" ติดลบ เช่น -3)</li>
+          <li><b>เกินกำหนดชำระ</b> — เกินกำหนด N วัน ("เลื่อนวันส่ง" เป็นบวก · ตั้ง "ส่งซ้ำทุก N วัน" ได้)</li>
+          <li><b>รายการประจำสร้างเอกสาร</b> — ใช้คู่กับหน้า "รายการประจำ" — เมื่อรายการประจำสร้างใบแจ้งหนี้ใหม่ → ส่งให้ลูกค้าอัตโนมัติ <b>(ต้องตั้งรายการประจำให้ "อนุมัติอัตโนมัติ" ด้วย</b> — ระบบไม่ส่งเอกสารฉบับร่างเพื่อให้ได้เลขที่จริงตาม §86/4)</li>
+          <li><b>สรุปรายการลูกค้ารายเดือน</b> — ส่งสรุปรายการของเดือนที่แล้วให้ลูกค้าทุกคนที่มีอีเมล + มีรายการเดือนนั้น (ตั้ง "วันที่กี่ของเดือน")</li>
+          <li><b>จ่ายเงินเดือน</b> — จ่ายเงินเดือนเสร็จ → ส่งสลิปแต่ละคน</li>
+          <li><b>ออกใบ 50 ทวิ</b> — ออกหนังสือรับรองหัก ณ ที่จ่าย → ส่งให้ผู้รับเงิน</li>
         </ul>
         <p style="font-size:12px;color:#64748b;margin-top:8px">
           ตัวแปรในเทมเพลต: <code>{DocNumber}</code> <code>{DocTitle}</code> (หัวเอกสารตาม PDF ที่แนบ) <code>{ContactName}</code> <code>{DueDate}</code>
@@ -84,19 +84,19 @@
           <input type="hidden" id="rId">
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">Trigger *</label>
+              <label for="rTrigger" class="form-label">ส่งเมื่อ (เหตุการณ์) *</label>
               <select class="form-select" id="rTrigger" onchange="Page._toggleTriggerFields()">
                 <option value="DocumentApproved">อนุมัติเอกสาร → ส่งทันที</option>
                 <option value="DocumentDueSoon">ใกล้ครบกำหนดชำระ</option>
                 <option value="DocumentOverdue">เกินกำหนดชำระ</option>
-                <option value="RecurringInvoiceCreated">รายการที่เกิดซ้ำ (Recurring) สร้าง doc</option>
+                <option value="RecurringInvoiceCreated">รายการประจำสร้างเอกสาร</option>
                 <option value="MonthlyStatement">สรุปรายการลูกค้ารายเดือน</option>
                 <option value="PayrollPaid">จ่ายเงินเดือน → ส่งสลิป</option>
                 <option value="WhtCertIssued">ออกใบ 50 ทวิ</option>
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">ประเภทเอกสาร (เฉพาะ Document*)</label>
+              <label for="rDocType" class="form-label">ประเภทเอกสาร (เฉพาะเหตุการณ์ของเอกสาร)</label>
               <select class="form-select" id="rDocType">
                 <option value="">— ทุกประเภท —</option>
                 <option value="Invoice">ใบแจ้งหนี้ขาย</option>
@@ -115,12 +115,12 @@
           </div>
           <div class="form-row">
             <div class="form-group">
-              <label class="form-label">วันชดเชย (OffsetDays)</label>
+              <label for="rOffset" class="form-label">เลื่อนวันส่ง (วัน)</label>
               <input type="number" class="form-input" id="rOffset" value="0" step="1">
-              <p class="form-help">DueSoon: ติดลบ (เช่น -3 = ก่อน 3 วัน) · Overdue: บวก · อื่น ๆ: 0 = ทันที</p>
+              <p class="form-help">ใกล้ครบกำหนด: ติดลบ (เช่น -3 = ก่อน 3 วัน) · เกินกำหนด: บวก · อื่น ๆ: 0 = ทันที</p>
             </div>
             <div class="form-group">
-              <label class="form-label">เวลาส่ง (ชั่วโมง 0-23)</label>
+              <label for="rHour" class="form-label">เวลาส่ง (ชั่วโมง 0-23)</label>
               <input type="number" class="form-input" id="rHour" value="9" min="0" max="23">
             </div>
           </div>
@@ -132,21 +132,21 @@
               <input type="number" class="form-input" id="rRepeat" value="0" min="0">
             </div>
             <div class="form-group" id="rDayOfMonthGroup" style="display:none">
-              <label class="form-label">วันที่กี่ของเดือน (1-28) สำหรับ Statement</label>
+              <label for="rDayOfMonth" class="form-label">วันที่กี่ของเดือน (1-28) สำหรับสรุปรายเดือน</label>
               <input type="number" class="form-input" id="rDayOfMonth" value="5" min="1" max="28">
               <p class="form-help">เช่น 5 = ส่งวันที่ 5 ของเดือน รวมยอดเดือนก่อน</p>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label">BCC archive (คั่นด้วย comma)</label>
+            <label for="rBcc" class="form-label">ส่งสำเนาลับ (BCC) เก็บไว้ที่ (คั่นด้วยจุลภาค ,)</label>
             <input type="text" class="form-input" id="rBcc" placeholder="archive@bank.co,owner@example.com">
           </div>
           <div class="form-group">
-            <label class="form-label">หัวเรื่อง (เทมเพลต)</label>
+            <label for="rSubject" class="form-label">หัวเรื่อง (เทมเพลต)</label>
             <input type="text" class="form-input" id="rSubject" placeholder="ครบกำหนดชำระเร็ว ๆ นี้: {DocNumber}">
           </div>
           <div class="form-group">
-            <label class="form-label">เนื้อหา HTML (เทมเพลต)</label>
+            <label for="rBody" class="form-label">เนื้อหาอีเมล (เทมเพลต · ใช้แท็ก HTML ได้)</label>
             <textarea class="form-input" id="rBody" rows="6" placeholder="เรียน คุณ{ContactName}..."></textarea>
             <p class="form-help">เว้นว่าง = ใช้เทมเพลตเริ่มต้นของระบบ</p>
           </div>
@@ -231,7 +231,7 @@
         const labelTrigger = (t) => ({
           DocumentApproved: '✅ อนุมัติเอกสาร', DocumentDueSoon: '⏰ ใกล้ครบกำหนด',
           DocumentOverdue: '⚠️ เกินกำหนด',
-          RecurringInvoiceCreated: '🔁 Recurring สร้าง doc',
+          RecurringInvoiceCreated: '🔁 รายการประจำสร้างเอกสาร',
           MonthlyStatement: '📅 สรุปรายเดือนให้ลูกค้า',
           PayrollPaid: '💰 จ่ายเงินเดือน → สลิป',
           WhtCertIssued: '📜 ออกใบ 50 ทวิ',
@@ -239,7 +239,7 @@
         box.innerHTML = this._rules.map(r => `
           <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px;margin-bottom:8px;${r.isActive ? '' : 'opacity:.55'}">
             <div style="flex:1">
-              <div style="font-weight:600">${Layout.esc(labelTrigger(r.trigger))} ${r.documentType ? ` · ${Layout.esc(r.documentType)}` : ''}</div>
+              <div style="font-weight:600">${Layout.esc(labelTrigger(r.trigger))} ${r.documentType ? ` · ${Layout.esc(this._docTypeText(r.documentType))}` : ''}</div>
               <div style="font-size:12px;color:#64748b;margin-top:2px">
                 ${r.offsetDays === 0 ? 'ทันที' : (r.offsetDays > 0 ? `+${Number(r.offsetDays)} วัน` : `${Number(r.offsetDays)} วัน`)}
                 · เวลา ${Number(r.sendAtHour)}:00
@@ -304,6 +304,11 @@
         });
       },
 
+      /** ชื่อไทยของประเภทเอกสารจากตัวเลือกในฟอร์มเดียวกัน (WP-13 J — เดิมแสดงชื่อ enum ดิบ "TaxInvoice") · ไม่มีในรายการ = ชื่อเดิม */
+      _docTypeText(v) {
+        const o = [...document.querySelectorAll('#rDocType option')].find(x => x.value === v);
+        return o ? o.textContent : v;
+      },
       _toggleTriggerFields() {
         const t = document.getElementById('rTrigger').value;
         document.getElementById('rDayOfMonthGroup').style.display = t === 'MonthlyStatement' ? '' : 'none';
@@ -362,7 +367,7 @@
       },
 
       async deleteRule(id) {
-        if (!confirm('ลบกฎนี้?')) return;
+        if (!(await Layout.confirm('ลบกฎนี้?'))) return;
         const cid = Layout.getCompanyId(); if (!cid) return;
         try {
           const j = await API.del(`/api/companies/${cid}/email-schedule/rules/${encodeURIComponent(id)}`);
@@ -413,7 +418,7 @@
         } catch (e) { Layout.toast(e.message, 'error'); }
       },
       async cancel(id) {
-        if (!confirm('ยกเลิกคิวนี้?')) return;
+        if (!(await Layout.confirm('ยกเลิกคิวนี้?'))) return;
         const cid = Layout.getCompanyId();
         try {
           const j = await API.post(`/api/companies/${cid}/email-schedule/queue/${encodeURIComponent(id)}/cancel`, {});
