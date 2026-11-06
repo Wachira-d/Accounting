@@ -347,7 +347,7 @@ public class ImportAccountingTargetsDbTests
 
     // รอบ 250 (WP-02 §2.1 · B F-3): รับชำระที่นำเข้าจากไฟล์เดินงานหลังรับชำระในแกน CreatePaymentAsync (source: Import) — เดิมไม่มีแถวงานเลย
     [Fact]
-    public async Task นำเข้ารับชำระCSV_ใบขาย_มีแถวงานหลังรับชำระ_แหล่งImport()
+    public async Task นำเข้ารับชำระCSV_เลือกส่งใบเสร็จ_มีแถวงาน_ไม่เลือก_Skipped()
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
@@ -368,7 +368,8 @@ public class ImportAccountingTargetsDbTests
         await db.SaveChangesAsync();
 
         var target = new PaymentImportTarget(db, DocService(db));
-        var ctx = Ctx(s, PaymentImportTarget.Key);
+        // ฝ่ายค้าน WP-02 ข้อ 4: ผู้นำเข้าเลือก "ส่งใบเสร็จ" ⇒ เดินเต็ม (ไม่เลือก ⇒ Skipped — ทิศตรงข้ามด้านล่าง)
+        var ctx = Ctx(s, PaymentImportTarget.Key, options: new Dictionary<string, string?> { [PaymentImportTarget.SendReceiptsOptionKey] = "true" });
         var row = Row(1, ("DocumentNumber", "OLD-INV-250"),
             ("PaymentDate", DateTime.UtcNow.AddHours(7).Date.AddDays(-1).ToString("yyyy-MM-dd")), ("Amount", "5000.00"), ("PaymentMethod", "โอน"));
         var res = await target.CommitGroupAsync(ctx, new[] { row }, CancellationToken.None);
@@ -376,8 +377,28 @@ public class ImportAccountingTargetsDbTests
         Assert.True(ok.Success, ok.Error);
         using var check = DbTestDatabase.TryCreateContext()!;
         var run = await check.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == s.CompanyId && r.PaymentId == ok.EntityId);
-        Assert.Equal(nameof(PaymentEntrySource.Import), run.Source);
+        Assert.Equal(nameof(PaymentEntrySource.ImportSendReceipt), run.Source);
         Assert.Equal(PostPaymentAutomationPolicy.StatusPending, run.Status);
+
+        // ทิศตรงข้าม: ไม่เลือกส่ง (ค่าตั้งต้น) ⇒ แถว Skipped พร้อมเหตุ — ไม่ส่งใบเสร็จย้อนหลัง
+        var inv2 = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = customer.Id, DocumentType = DocumentType.Invoice, DocumentNumber = "INV2-" + s.CompanyId.ToString("N")[..6],
+            Reference = "OLD-INV-251", Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date.AddDays(-10),
+            SubTotal = 1_000m, TotalAmount = 1_000m, BalanceDue = 1_000m, Currency = "THB",
+        };
+        inv2.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 1_000m, Amount = 1_000m });
+        db.Documents.Add(inv2);
+        await db.SaveChangesAsync();
+        var res2 = await target.CommitGroupAsync(Ctx(s, PaymentImportTarget.Key), new[] { Row(2, ("DocumentNumber", "OLD-INV-251"),
+            ("PaymentDate", DateTime.UtcNow.AddHours(7).Date.AddDays(-1).ToString("yyyy-MM-dd")), ("Amount", "1000.00"), ("PaymentMethod", "โอน")) },
+            CancellationToken.None);
+        var ok2 = Assert.Single(res2);
+        Assert.True(ok2.Success, ok2.Error);
+        using var check2 = DbTestDatabase.TryCreateContext()!;
+        var run2 = await check2.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == s.CompanyId && r.PaymentId == ok2.EntityId);
+        Assert.Equal(PostPaymentAutomationPolicy.StatusSkipped, run2.Status);
+        Assert.Equal(PostPaymentAutomationPolicy.ImportNoSendReason, run2.Message);
     }
 
     // ───────────────────────── สินทรัพย์ ─────────────────────────

@@ -22,6 +22,12 @@ namespace Accounting.Services.Import.Targets;
 public class PaymentImportTarget : IImportTarget
 {
     public const string Key = "payments";
+
+    /// <summary>ตัวเลือกของชุดนำเข้า: ส่งใบเสร็จถึงลูกค้าหลังบันทึกรับชำระ (ตามค่าตั้ง "ส่งเอกสารอัตโนมัติ") — ค่าตั้งต้นปิด (ฝ่ายค้าน WP-02 ข้อ 4)</summary>
+    public const string SendReceiptsOptionKey = "sendReceipts";
+
+    internal static bool SendReceipts(ImportTargetContext ctx)
+        => string.Equals(ImportTargetValues.Option(ctx, SendReceiptsOptionKey), "true", StringComparison.OrdinalIgnoreCase);
     public const string CommittedEntity = "Payment";
 
     private readonly AccountingDbContext _db;
@@ -181,7 +187,9 @@ public class PaymentImportTarget : IImportTarget
                 FeeAmount: Amount(r, "FeeAmount"));
             try
             {
-                var p = await _documents.CreatePaymentAsync(ctx.CompanyId, req, CreatedBy(ctx), source: Accounting.Helpers.PaymentEntrySource.Import);
+                // ฝ่ายค้าน WP-02 ข้อ 4: ค่าตั้งต้นไม่ส่งใบเสร็จย้อนหลัง · ผู้นำเข้าเลือก "ส่งใบเสร็จ" เอง (ตัวเลือกของชุด sendReceipts=true) ⇒ เดินเต็ม
+                var p = await _documents.CreatePaymentAsync(ctx.CompanyId, req, CreatedBy(ctx), source: SendReceipts(ctx)
+                    ? Accounting.Helpers.PaymentEntrySource.ImportSendReceipt : Accounting.Helpers.PaymentEntrySource.Import);
                 results.Add(new ImportRowCommitResult(r.RowId, true, CommittedEntity, p.Id));
             }
             catch (Exception ex) when (ex is BusinessRuleException or InvalidOperationException or KeyNotFoundException)

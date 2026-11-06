@@ -1602,7 +1602,7 @@ public class AccountingDbContext : DbContext
             e.Property(ei => ei.SellerTaxId).HasMaxLength(13);
             e.Property(ei => ei.BuyerName).HasMaxLength(500);
             e.Property(ei => ei.BuyerTaxId).HasMaxLength(13);
-            e.Property(ei => ei.EtdaTimestampToken).HasMaxLength(500);    // รอบ 244
+            e.Property(ei => ei.EtdaTimestampToken).HasColumnType("text");    // รอบ 244 · ฝ่ายค้าน WP-02 ข้อ 8: text (เดิม varchar(500) ⇒ ตัด/ปฏิเสธหลักฐาน ETDA)
             e.Property(ei => ei.EtdaStampRecordedBy).HasMaxLength(200);
             e.HasOne(ei => ei.Document).WithMany().HasForeignKey(ei => ei.DocumentId).OnDelete(DeleteBehavior.Restrict);
             e.HasQueryFilter(ei => !ei.IsDeleted);

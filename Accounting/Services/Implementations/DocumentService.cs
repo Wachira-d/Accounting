@@ -212,8 +212,21 @@ public partial class DocumentService : IDocumentService
             var baseAmount = doc.SubTotal > 0 ? doc.SubTotal : amount;
             var rate = baseAmount > 0 ? Math.Round(amount / baseAmount * 100m, 2) : 0m;
 
+            // ฝ่ายค้าน WP-02 ข้อ 9: ทางเข้ารับชำระ (CreatePaymentAsync โหลดใบด้วย FOR UPDATE · AfterPaymentRecordedAsync) ส่งใบที่ไม่ได้ Include Contact ⇒
+            // ชื่อ/เลขผู้จ่าย (ผู้หักภาษีเรา) ว่าง — โหลดเองเมื่อยังไม่มี (รวมผู้ติดต่อที่ถูกลบ: ชื่อบนทะเบียนเครดิตต้องเป็นของคนที่หักจริง)
+            var payer = doc.Contact is { } loaded
+                ? new { loaded.Name, loaded.TaxId }
+                : await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+                    .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
+                    .Select(c => new { c.Name, c.TaxId }).FirstOrDefaultAsync();
+
             if (existing != null)
             {
+                if (string.IsNullOrWhiteSpace(existing.PayerName) && payer != null)
+                {
+                    existing.PayerName = payer.Name ?? "";
+                    existing.PayerTaxId ??= payer.TaxId;
+                }
                 // ใช้เครดิตไปแล้ว = ห้ามแก้ยอดเงียบ ๆ (แบบยื่นอ้างตัวเลขนี้ไปแล้ว)
                 if (existing.Status is WhtCreditStatus.Claimed or WhtCreditStatus.Expired) return;
                 existing.WhtAmount = amount;
@@ -229,8 +242,8 @@ public partial class DocumentService : IDocumentService
                     CompanyId = companyId,
                     TaxYear = taxYear,
                     PayerContactId = doc.ContactId,
-                    PayerName = doc.Contact?.Name ?? "",
-                    PayerTaxId = doc.Contact?.TaxId,
+                    PayerName = payer?.Name ?? "",
+                    PayerTaxId = payer?.TaxId,
                     PayerFormType = WhtPayerFormType.Pnd53,
                     IncomeAmount = baseAmount,
                     WhtRate = rate,
@@ -716,11 +729,8 @@ public partial class DocumentService : IDocumentService
         IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount,
         decimal billDiscountPercent = 0m, decimal depositBaseDeducted = 0m)
     {
-        var (alloc, _, _) = AllocateBillDeductions(lines, pricesIncludeVat, billDiscountPercent, billDiscountAmount, depositBaseDeducted);
-        var amts = new LineAmounts[lines.Count];
-        for (int i = 0; i < lines.Count; i++)
-            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
-        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+        var (alloc, trade, depositBase) = AllocateBillDeductions(lines, pricesIncludeVat, billDiscountPercent, billDiscountAmount, depositBaseDeducted);
+        var amts = ComputeReconciledLineAmounts(lines, pricesIncludeVat, alloc, trade, depositBase);
         return amts.Select(a => (a.NetAmount, a.VatAmount)).ToList();
     }
 
@@ -733,10 +743,7 @@ public partial class DocumentService : IDocumentService
         IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat, decimal billDiscountAmount, decimal depositBaseDeducted = 0m)
     {
         var (alloc, trade, depositBase) = AllocateBillDeductions(lines, pricesIncludeVat, 0m, billDiscountAmount, depositBaseDeducted);
-        var amts = new LineAmounts[lines.Count];
-        for (int i = 0; i < lines.Count; i++)
-            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
-        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+        var amts = ComputeReconciledLineAmounts(lines, pricesIncludeVat, alloc, trade, depositBase);
         var net = amts.Sum(a => a.NetAmount);
         var vat = amts.Sum(a => a.VatAmount);
         var wht = amts.Sum(a => a.WhtAmount);
@@ -829,6 +836,62 @@ public partial class DocumentService : IDocumentService
         return alloc;
     }
 
+    /// <summary>ยอดรายบรรทัด (ก่อน VAT · ส่วนลด · VAT · หัก ณ ที่จ่าย) หลังกระทบยอดเศษ — <b>ตัวเดียว</b>ของสร้าง/แก้/พรีวิว/วางแผน
+    /// (CreateDocumentAsync · UpdateDocumentAsync · <see cref="PreviewTotals"/> · <see cref="PlanLineAmounts"/>)
+    /// <para>รอบ 250 (ฝ่ายค้าน WP-02 ข้อ 5 · บั๊ก 0.02): โหมดราคารวม VAT + หักฐานใบกำกับมัดจำ (<paramref name="depositBase"/> &gt; 0) — เดิมหักฐานมัดจำปนกับส่วนลดท้ายบิล
+    /// แล้วกระทบยอดแบบ "คง gross" ⇒ ใบส่วนที่เหลือย้ายเศษจาก VAT กลับไปฐาน (690.55 → 690.56) ⇒ สองใบรวมเกินยอดเต็ม 0.02 · วิธีแคบ:
+    /// (1) คิดบรรทัด <b>โดยยังไม่หักมัดจำ</b> แล้วกระทบยอดแบบคง gross (= ใบเต็ม) (2) ปันฐานมัดจำตามฐานที่กระทบแล้ว ฐาน −= ส่วนปัน · VAT = round(ฐาน × อัตรา)
+    /// (3) กระทบยอด VAT อย่างเดียว ไม่ขยับฐาน ⇒ ฐานสองใบ = ฐานใบเต็มพอดี · ใบที่ไม่มีมัดจำ/ราคาไม่รวม VAT = เส้นเดิมทุกตัวอักษร ·
+    /// ส่วนลดท้ายบิลทั่วไป (ไม่มีมัดจำ) ยังไม่แตะ — backlog (กระทบ golden ของ OCR)</para></summary>
+    private static LineAmounts[] ComputeReconciledLineAmounts(IReadOnlyList<DocumentLineRequest> lines, bool pricesIncludeVat,
+        decimal[] alloc, decimal tradeDiscount, decimal depositBase)
+    {
+        const MidpointRounding R = MidpointRounding.AwayFromZero;
+        var amts = new LineAmounts[lines.Count];
+        if (!(pricesIncludeVat && depositBase > 0m))
+        {
+            for (int i = 0; i < lines.Count; i++)
+                amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, alloc[i]);
+            ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+            return amts;
+        }
+        // (1) ส่วนลดการค้าท้ายบิลเท่านั้น (ไม่รวมฐานมัดจำ) → กระทบยอดแบบคง gross
+        var tradeAlloc = AllocateBillDiscount(lines, pricesIncludeVat, 0m, tradeDiscount);
+        for (int i = 0; i < lines.Count; i++)
+            amts[i] = ComputeLineAmounts(lines[i], pricesIncludeVat, tradeAlloc[i]);
+        ReconcileTaxRounding(lines, amts, pricesIncludeVat);
+        // (2) ปันฐานมัดจำตามฐานที่กระทบแล้ว (เศษปัดลงบรรทัดสุดท้ายที่มียอด) · คิด VAT/WHT ใหม่บนฐานที่ลด
+        var totalNet = amts.Where(a => a.NetAmount > 0m).Sum(a => a.NetAmount);
+        if (totalNet <= 0m) return amts;
+        var depositAlloc = new decimal[lines.Count];
+        decimal running = 0m;
+        var lastIdx = -1;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (amts[i].NetAmount <= 0m) continue;
+            depositAlloc[i] = Math.Round(depositBase * amts[i].NetAmount / totalNet, 2, R);
+            running += depositAlloc[i];
+            lastIdx = i;
+        }
+        if (lastIdx >= 0) depositAlloc[lastIdx] += depositBase - running;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            if (depositAlloc[i] == 0m) continue;
+            var net = amts[i].NetAmount - Math.Min(depositAlloc[i], amts[i].NetAmount);
+            var vat = lines[i].VatAmountOverride.HasValue ? amts[i].VatAmount
+                : lines[i].VatRate > 0 ? Math.Round(net * lines[i].VatRate / 100m, 2, R) : 0m;
+            amts[i] = amts[i] with
+            {
+                NetAmount = net,
+                VatAmount = vat,
+                WhtAmount = Math.Round(net * lines[i].WithholdingTaxRate / 100m, 2, R),
+            };
+        }
+        // (3) VAT อย่างเดียว — ไม่ขยับฐาน
+        ReconcileTaxRounding(lines, amts, pricesIncludeVat, keepNet: true);
+        return amts;
+    }
+
     /// <summary>ปรับเศษสตางค์ VAT/WHT รายบรรทัดให้ผลรวม "ต่อกลุ่มอัตรา" เท่ากับการ
     /// คิดตรงจากฐานรวมของกลุ่ม (round(Σ net × rate/100)) — วิธีเดียวกับที่ผู้ใช้/
     /// สรรพากรดีดเครื่องคิดเลขตรวจ. การปัดรายบรรทัดแล้วค่อยรวม (เช่นหลังเฉลี่ยส่วนลด
@@ -838,7 +901,7 @@ public partial class DocumentService : IDocumentService
     /// บรรทัดที่ integration ส่ง VatAmountOverride มาไม่แตะ (external คิดเองแล้ว).
     /// โหมดราคารวม VAT: ขยับ net สวนทาง VAT เท่ากัน เพื่อคงยอด gross ที่ผู้ใช้กรอก.</summary>
     private static void ReconcileTaxRounding(
-        IReadOnlyList<DocumentLineRequest> lines, LineAmounts[] amts, bool pricesIncludeVat)
+        IReadOnlyList<DocumentLineRequest> lines, LineAmounts[] amts, bool pricesIncludeVat, bool keepNet = false)
     {
         const MidpointRounding R = MidpointRounding.AwayFromZero;
         // --- VAT: กลุ่มตาม VatRate (รองรับ mixed-rate — คนละอัตรากระทบยอดแยกกัน) ---
@@ -857,7 +920,8 @@ public partial class DocumentService : IDocumentService
             {
                 VatAmount = amts[j].VatAmount + diff,
                 // ราคารวม VAT: gross ต่อบรรทัด (net+VAT) คือค่าที่ผู้ใช้กรอก — คงไว้
-                NetAmount = pricesIncludeVat ? amts[j].NetAmount - diff : amts[j].NetAmount,
+                // keepNet (ใบที่หักฐานมัดจำแล้ว · รอบ 250 ฝ่ายค้าน WP-02 ข้อ 5): ฐานหลังหักเป็นค่าที่ "ตกลงแล้ว" (ฐานเต็ม − ฐานใบมัดจำ) — ปรับ VAT อย่างเดียว
+                NetAmount = pricesIncludeVat && !keepNet ? amts[j].NetAmount - diff : amts[j].NetAmount,
             };
         }
         // --- WHT: ฐาน ex-VAT เสมอ — ทำหลัง VAT เพราะโหมดราคารวม VAT อาจขยับ net ---
@@ -1744,10 +1808,7 @@ public partial class DocumentService : IDocumentService
                 request.BillDiscountPercent ?? 0m, request.BillDiscountAmount ?? 0m, request.DepositBaseDeducted ?? 0m);
             // คิดยอดครบทุกบรรทัดก่อน แล้วกระทบยอดเศษสตางค์ต่อกลุ่มอัตรา — ให้
             // ΣVAT/WHT ตรงกับการคิดจากฐานรวม (เครื่องคิดเลข) ก่อนค่อยเขียนบรรทัด
-            var createAmts = new LineAmounts[createLines.Count];
-            for (int i = 0; i < createLines.Count; i++)
-                createAmts[i] = ComputeLineAmounts(createLines[i], request.PricesIncludeVat, billAlloc[i]);
-            ReconcileTaxRounding(createLines, createAmts, request.PricesIncludeVat);
+            var createAmts = ComputeReconciledLineAmounts(createLines, request.PricesIncludeVat, billAlloc, createTradeDiscount, createDepositBase);
             var createWhtBorne = ApplyWhtGrossUp(createLines, createAmts, doc.WhtCertType);
             // รอบ 204 (คำสั่งเจ้าของ 2026-10-13): บริการต่างประเทศ + ออกแทน ⇒ VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน (คำตัดสินข้อ 40) ก่อนรวมยอด
             // ฝ่ายค้านรอบ 204 M1: ใบลด/เพิ่มหนี้ของใบเจ้าของ ภ.พ.36 (ติ๊กธงไม่ได้ แต่สืบทอด "ออกแทน") ⇒ สูตรเดียวกัน — ไม่งั้นลดหนี้เต็มใบแล้ว 21912/11640 ค้าง
@@ -3327,10 +3388,7 @@ public partial class DocumentService : IDocumentService
             var (updBillAlloc, updTradeDiscount, updDepositBase) = AllocateBillDeductions(request.Lines, doc.PricesIncludeVat,
                 updBillPct, updBillAmt, request.DepositBaseDeducted ?? doc.DepositBaseDeducted);
             // กระทบยอดเศษสตางค์ต่อกลุ่มอัตรา — เหมือน create path (แก้แล้วต้องไม่เพี้ยนกลับ)
-            var updAmts = new LineAmounts[request.Lines.Count];
-            for (int i = 0; i < request.Lines.Count; i++)
-                updAmts[i] = ComputeLineAmounts(request.Lines[i], doc.PricesIncludeVat, updBillAlloc[i]);
-            ReconcileTaxRounding(request.Lines, updAmts, doc.PricesIncludeVat);
+            var updAmts = ComputeReconciledLineAmounts(request.Lines, doc.PricesIncludeVat, updBillAlloc, updTradeDiscount, updDepositBase);
             var updWhtBorne = ApplyWhtGrossUp(request.Lines, updAmts, doc.WhtCertType);
             // รอบ 204 (คำสั่งเจ้าของ 2026-10-13): สูตรเดียวกับตอนสร้าง — VAT ภ.พ.36 บนฐานรวมภาษีที่ออกแทน
             // ฝ่ายค้านรอบ 204 M1: + ใบลด/เพิ่มหนี้ที่อ้างใบเจ้าของ ภ.พ.36 (ตัวตัดสินเดียวกับตอนสร้าง)
@@ -9353,7 +9411,7 @@ public partial class DocumentService : IDocumentService
         var amount = doc.ExchangeRate == 1m
             ? doc.PaidAmount
             : Math.Round(doc.PaidAmount * doc.ExchangeRate, 2, MidpointRounding.AwayFromZero);
-        var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(doc.DocumentType, await CashFlowRelatedTypeAsync(companyId, doc), doc.CnDnPurchaseSideOverride);
+        var isInflow = await CashInflowAsync(companyId, doc);
 
         // ยังไม่ได้จ่าย/รับจริง (ไม่กระทบ GL แหล่งเงิน) → แค่อัปเดต field (ไม่ต้องหาผังเดิม)
         if (amount <= 0.005m)
@@ -11911,7 +11969,7 @@ public partial class DocumentService : IDocumentService
         // before adjusting. Mirrors the conversion in CreatePaymentJournalAsync.
         if (payment.BankAccountId.HasValue)
         {
-            var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(doc.DocumentType, await CashFlowRelatedTypeAsync(companyId, doc), doc.CnDnPurchaseSideOverride);
+            var isInflow = await CashInflowAsync(companyId, doc);
             // ใช้ rate เดียวกับตอนบันทึกรับ/จ่าย (settlement rate ถ้ามี) —
             // มิฉะนั้นยอดธนาคารกลับไม่เท่าที่บวกไว้
             var reverseFx = payment.ExchangeRate ?? doc.ExchangeRate;
@@ -12187,7 +12245,7 @@ public partial class DocumentService : IDocumentService
                     : Math.Round(unapplied * upFx, 2, MidpointRounding.AwayFromZero);
             }
 
-            var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(docs[0].DocumentType, await CashFlowRelatedTypeAsync(companyId, docs[0]), docs[0].CnDnPurchaseSideOverride);
+            var isInflow = await CashInflowAsync(companyId, docs[0]);
             var delta = isInflow ? -thbMoved : thbMoved;
             await _db.BankAccounts
                 .Where(b => b.Id == payment.BankAccountId.Value && b.CompanyId == companyId)
@@ -14623,7 +14681,7 @@ public partial class DocumentService : IDocumentService
     /// เรียกหลัง commit: อ่านชื่อ/บรรทัดไม่สำเร็จ ⇒ ข้อความยังส่งได้โดยไม่มีบรรทัดคู่ค้า/รายการ (การชำระบันทึกแล้ว — ไม่โยนกลับผู้ใช้) และ log Warning</summary>
     private async Task<Accounting.Helpers.PaymentNotificationFacts> LoadPaymentNotificationFactsAsync(Guid companyId, Document doc, Payment payment)
     {
-        var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(doc.DocumentType, await CashFlowRelatedTypeAsync(companyId, doc), doc.CnDnPurchaseSideOverride);
+        var isInflow = await CashInflowAsync(companyId, doc);
         string? contactName = null;
         List<string?> lines = new();
         try
@@ -14654,14 +14712,35 @@ public partial class DocumentService : IDocumentService
             BalanceDue: doc.BalanceDue);
     }
 
-    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 5): ชนิดใบต้นทางสำหรับตัดสินทิศเงิน (<see cref="Accounting.Helpers.CashFlowDirection.IsInflow"/>) — โหลดเฉพาะใบลดหนี้/ใบเพิ่มหนี้ที่อ้างใบเดิม · tenant</summary>
-    private async Task<DocumentType?> CashFlowRelatedTypeAsync(Guid companyId, Document doc)
+    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 5 · ฝ่ายค้าน ข้อ 2): ทิศเงินของการรับ/จ่ายชำระเอกสารนี้ — ตัวตัดสินเดียว <see cref="Accounting.Helpers.CashFlowDirection.Of"/>
+    /// (ลำดับเดียวกับ JE: ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ขายอย่างเดียว) · ผู้เรียก: JE รับ/จ่ายชำระ · ยอดธนาคาร · กลับรายการ · แจ้งเตือน ·
+    /// ใบลดหนี้/ใบเพิ่มหนี้ที่ไม่รู้ฝั่ง ⇒ โยนพร้อมทางไปต่อ (ห้ามเดาทิศ) · tenant</summary>
+    private async Task<bool> CashInflowAsync(Guid companyId, Document doc)
     {
-        if (!Accounting.Helpers.CashFlowDirection.NeedsRelatedType(doc.DocumentType, doc.RelatedDocumentId)) return null;
-        return await _db.Documents.AsNoTracking()
-            .Where(d => d.Id == doc.RelatedDocumentId!.Value && d.CompanyId == companyId)
-            .Select(d => (DocumentType?)d.DocumentType)
-            .FirstOrDefaultAsync();
+        DocumentType? sourceType = null;
+        var supplierOnly = false;
+        if (Accounting.Helpers.CashFlowDirection.NeedsSideFacts(doc.DocumentType))
+        {
+            if (doc.RelatedDocumentId.HasValue)
+                sourceType = await _db.Documents.AsNoTracking()
+                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
+                    .Select(d => (DocumentType?)d.DocumentType)
+                    .FirstOrDefaultAsync();
+            // ชั้นคู่ค้า (ผู้ขายอย่างเดียว) — ResolvePostedSide ใช้เฉพาะตอนไม่มีทั้งคำสั่งผู้ใช้และใบต้นทาง
+            if (doc.Contact is { } loaded)
+                supplierOnly = loaded is { IsSupplier: true, IsCustomer: false };
+            else if (doc.ContactId != Guid.Empty)
+                supplierOnly = await _db.Contacts.AsNoTracking()
+                    .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
+                    .Select(c => c.IsSupplier && !c.IsCustomer)
+                    .FirstOrDefaultAsync();
+        }
+        var r = Accounting.Helpers.CashFlowDirection.Of(doc.DocumentType, doc.CnDnPurchaseSideOverride, sourceType, supplierOnly);
+        // "ไม่รู้" ห้ามตกเป็นค่า default เงียบ ๆ — ทิศเงินผิดมองไม่เห็นจนกระทบยอดธนาคารไม่ลง ส่วนการบล็อกเห็นทันทีและมีทางไปต่อ (G5)
+        if (r.SideUnknown)
+            throw new Accounting.Helpers.BusinessRuleException(
+                Accounting.Helpers.CashFlowDirection.UnknownSideMessage(doc.DocumentType, doc.DocumentNumber));
+        return r.IsInflow;
     }
 
     /// <summary>ออก "ใบเสร็จรับเงิน" (Document) เป็นหลักฐานคู่กับ Payment ที่เพิ่ง
@@ -15326,7 +15405,7 @@ public partial class DocumentService : IDocumentService
             // always THB in this iteration). Same conversion as the GL posting.
             if (payment.BankAccountId.HasValue)
             {
-                var isInflow = Accounting.Helpers.CashFlowDirection.IsInflow(doc.DocumentType, await CashFlowRelatedTypeAsync(companyId, doc), doc.CnDnPurchaseSideOverride);
+                var isInflow = await CashInflowAsync(companyId, doc);
                 var bankFx = payment.ExchangeRate ?? doc.ExchangeRate;
                 var thbAmount = bankFx == 1m
                     ? payment.Amount
@@ -15811,7 +15890,7 @@ public partial class DocumentService : IDocumentService
                 // ถ้าไม่ book ส่วนต่าง GL เงินสดจะน้อยกว่ายอดธนาคารถาวร:
                 //   ฝั่งรับ → Dr เงินสด/ธนาคาร  Cr เงินรับล่วงหน้าจากลูกค้า (217xx)
                 //   ฝั่งจ่าย → Dr เงินจ่ายล่วงหน้า (114xx)  Cr เงินสด/ธนาคาร
-                var isInflowDoc = Accounting.Helpers.CashFlowDirection.IsInflow(firstDoc.DocumentType, await CashFlowRelatedTypeAsync(companyId, firstDoc), firstDoc.CnDnPurchaseSideOverride);
+                var isInflowDoc = await CashInflowAsync(companyId, firstDoc);
                 var unapplied = request.Amount - allocSum;
                 if (unapplied > 0.005m)
                 {
@@ -20682,66 +20761,11 @@ public partial class DocumentService : IDocumentService
     private async Task CreatePaymentJournalAsync(Guid companyId, Document doc, Payment payment, string createdBy,
         IReadOnlyList<(Guid AccountId, decimal Amount, string? Reason)>? settlementAdjustments = null)
     {
-        var revenueTypes = new[] { DocumentType.Invoice, DocumentType.TaxInvoice, DocumentType.Receipt,
-            DocumentType.DebitNote, DocumentType.BillingNote, DocumentType.ReceiptVoucher };
-        var isRevenue = revenueTypes.Contains(doc.DocumentType);
-
-        // ══ ใบลดหนี้/ใบเพิ่มหนี้มีสองฝั่ง — ทิศของเงินต้องตาม "ฝั่งของใบ" ไม่ใช่ชนิดเอกสาร ══
-        // บั๊กจริง (ทีมตรวจรอบ 189 B-01 · main agent เปิดไฟล์ยืนยันแล้ว): เมธอดนี้เป็น
-        // **จุดเดียวใน 31 จุดทั้งเรพ** ที่ตัดสินฝั่ง CN/DN เองโดยไม่ผ่าน
-        // `Helpers/AdjustmentNoteAccount` และ **ไม่อ่าน `CnDnPurchaseSideOverride`** เลย
-        // ทั้งที่ทุกเส้นอื่นอ่าน (`:13890` · `:13124` · `TaxService:362,731` ·
-        // `AgingReportService:91`) และฟอร์มส่งค่านี้มาทุกใบ
-        // ⇒ ใบเพิ่มหนี้ฝั่งซื้อที่**ไม่มีใบต้นทางในระบบ** (เคสที่ UI แนะนำเอง) ตอนจ่ายเงิน
-        //   ลง Dr เงินสด / Cr ลูกหนี้ แทน Dr เจ้าหนี้ / Cr เงินสด ⇒ เงินสดเกินจริง
-        //   สองเท่าของยอด และเจ้าหนี้ไม่ถูกตัด — เงียบจนถึงวันกระทบยอดธนาคาร
-        // (นี่คือ "แก้ที่หนึ่ง เหลือที่เหลือ" ของรอบ 185 ที่ grep ไม่ครบ — F2 ข้อ 1)
-        //
-        // คู่สมมาตรที่รอบ 185 ก็ไม่ได้ดู: **ใบลดหนี้ก็มีสองฝั่งเหมือนกัน** — ฝั่งซื้อ
-        // คือผู้ขายคืนเงินให้เรา (เงิน**เข้า**) ไม่ใช่เงินออกแบบฝั่งขาย
-        if (doc.DocumentType is DocumentType.DebitNote or DocumentType.CreditNote)
-        {
-            DocumentType? adjSrcType = null;
-            if (doc.RelatedDocumentId.HasValue)
-                adjSrcType = await _db.Documents.AsNoTracking()
-                    .Where(d => d.Id == doc.RelatedDocumentId.Value && d.CompanyId == companyId)
-                    .Select(d => (DocumentType?)d.DocumentType)
-                    .FirstOrDefaultAsync();
-
-            // ชั้นคู่ค้า (ผู้ขายอย่างเดียว) ใช้เฉพาะตอนไม่มีทั้งคำสั่งผู้ใช้และใบต้นทาง
-            var supplierOnly = false;
-            if (doc.Contact is { } loaded)
-                supplierOnly = loaded is { IsSupplier: true, IsCustomer: false };
-            else if (doc.ContactId != Guid.Empty)
-                supplierOnly = await _db.Contacts.AsNoTracking()
-                    .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
-                    .Select(c => c.IsSupplier && !c.IsCustomer)
-                    .FirstOrDefaultAsync();
-
-            // ใบนี้ลงบัญชีไปแล้ว ⇒ ถามแบบ "ฝั่งของใบที่ลงแล้ว" (ผู้ใช้สั่งย้ายฝั่งชนะทุกชั้น)
-            var adjSide = Accounting.Helpers.AdjustmentNoteAccount.ResolvePostedSide(
-                userOverride: doc.CnDnPurchaseSideOverride,
-                sourceType: adjSrcType,
-                glTouchedInputVat: null,
-                contactIsSupplierOnly: supplierOnly);
-
-            // "ไม่รู้" ห้ามตกเป็นค่า default เงียบ ๆ — ทิศเงินผิดมองไม่เห็นจนกระทบยอด
-            // ธนาคารไม่ลง ส่วนการบล็อกเห็นทันทีและมีทางไปต่อ (G5 "ทิศที่ความเสียหาย
-            // มองเห็นและแก้ทัน")
-            if (adjSide.Unknown)
-                throw new Accounting.Helpers.BusinessRuleException(
-                    $"เอกสาร {doc.DocumentNumber} เป็น"
-                    + $"{(doc.DocumentType == DocumentType.CreditNote ? "ใบลดหนี้" : "ใบเพิ่มหนี้")}"
-                    + " ที่ระบบยังไม่รู้ว่าเป็นฝั่งซื้อหรือฝั่งขาย จึงลงบัญชีการรับ/จ่ายเงินให้ไม่ได้ "
-                    + "(ลงผิดทิศ = เงินสดกับเจ้าหนี้/ลูกหนี้เพี้ยนโดยไม่มีอะไรฟ้อง) — "
-                    + "กรุณาเปิดเอกสารแล้วเลือกฝั่งให้ถูก หรือผูกใบต้นทาง แล้วลองรับ/จ่ายเงินใหม่");
-
-            // ฝั่งซื้อ: ใบเพิ่มหนี้ = เราจ่ายเพิ่ม (เงินออก) · ใบลดหนี้ = ผู้ขายคืนเงิน (เงินเข้า)
-            // ฝั่งขาย: ใบเพิ่มหนี้ = ลูกค้าจ่ายเพิ่ม (เงินเข้า) · ใบลดหนี้ = เราคืนลูกค้า (เงินออก)
-            isRevenue = adjSide.IsPurchase
-                ? doc.DocumentType == DocumentType.CreditNote
-                : doc.DocumentType == DocumentType.DebitNote;
-        }
+        // ══ ทิศเงิน (เข้า/ออก) — ตัวตัดสินเดียวกับยอดธนาคาร/กลับรายการ/แจ้งเตือน/ลิงก์ชำระ (รอบ 250 ฝ่ายค้าน WP-02 ข้อ 2) ══
+        // ประวัติ (ทีมตรวจรอบ 189 B-01): เดิมเมธอดนี้ตัดสินฝั่ง CN/DN เองโดยไม่อ่าน CnDnPurchaseSideOverride ⇒ ใบเพิ่มหนี้ฝั่งซื้อไม่มีต้นทางลง
+        // Dr เงินสด/Cr ลูกหนี้ (เงินสดเกิน 2 เท่า) · รอบ 189 แก้ที่นี่ด้วย ResolvePostedSide แต่ตัวปรับยอดธนาคารใช้อีกลำดับ ⇒ รอบ 250 รวมเป็น
+        // CashInflowAsync ตัวเดียว (ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ขายอย่างเดียว · ไม่รู้ ⇒ โยน)
+        var isRevenue = await CashInflowAsync(companyId, doc);
         var journalType = isRevenue ? JournalType.CashReceipts : JournalType.CashPayments;
 
         // Resolve the CASH/BANK side of the entry. Priority:
@@ -22575,14 +22599,15 @@ public partial class DocumentService : IDocumentService
 
         // ── รอบ 250 (WP-02 §2.4 ข้อ 6 · คำตัดสิน §2 #13 · C F5): ใบขายตั้งภาษีหัก ณ ที่จ่ายให้ผู้ซื้อที่ไม่มีหน้าที่หัก (บุคคลธรรมดา) — ต้นเหตุอยู่ตอนสร้างใบ ⇒
         // เตือนก่อนอนุมัติ (ชุด [WHT-PAYEE] — ทางเข้าไม่มีคนผ่านตาม ApprovalAcknowledgement เดิม · ไม่บล็อก) · ตัวตัดสินเดียวกับลิงก์ชำระ
-        // (DocumentPayLinkPolicy.BuyerWithholds + WhtMismatchNote) — ลิงก์ยังเตือนเหมือนเดิม
+        // (DocumentPayLinkPolicy.BuyerWithholds · ข้อความ BuyerWhtApprovalNote — เงื่อนไขเดียวกับ WhtMismatchNote) — ลิงก์ยังเตือนเหมือนเดิม
         if (doc.WithholdingTaxAmount > 0.005m
             && doc.DocumentType is DocumentType.Invoice or DocumentType.TaxInvoice)   // ใบเพิ่มหนี้ไม่รวม — ฝั่งขึ้นกับใบต้นทาง (ฝั่งซื้อ = เราเป็นผู้หัก)
         {
             var saleBuyer = await _db.Contacts.AsNoTracking().IgnoreQueryFilters()
                 .Where(c => c.Id == doc.ContactId && c.CompanyId == companyId)
                 .Select(c => new { c.ContactType, c.TaxId }).FirstOrDefaultAsync();
-            if (Accounting.Helpers.DocumentPayLinkPolicy.WhtMismatchNote(doc.WithholdingTaxAmount,
+            // ฝ่ายค้าน WP-02 ข้อ 7: ข้อความก่อนอนุมัติไม่ฟันธง "ไม่มีหน้าที่หัก" (ขึ้นกับประเภทเงินได้) — BuyerWhtApprovalNote
+            if (Accounting.Helpers.DocumentPayLinkPolicy.BuyerWhtApprovalNote(doc.WithholdingTaxAmount,
                     Accounting.Helpers.DocumentPayLinkPolicy.BuyerWithholds(saleBuyer?.ContactType, saleBuyer?.TaxId)) is string buyerWhtNote)
                 warnings.Add(Accounting.Helpers.WhtCertIssuePlan.ApprovalWarningPrefix + " " + buyerWhtNote);
         }

@@ -24,7 +24,7 @@ public class Round250Wp02Tests
     [InlineData(PaymentEntrySource.Manual)]
     [InlineData(PaymentEntrySource.Gateway)]
     [InlineData(PaymentEntrySource.Settlement)]
-    [InlineData(PaymentEntrySource.Import)]
+    [InlineData(PaymentEntrySource.ImportSendReceipt)]
     [InlineData(PaymentEntrySource.Integration)]
     public void ทางเข้าที่เดินเต็ม_เข้าคิวแถวรอประมวลผล(PaymentEntrySource source)
     {
@@ -48,6 +48,17 @@ public class Round250Wp02Tests
         Assert.Contains("มีเส้นออกใบเสร็จของตัวเอง", p.Skipped);
     }
 
+    // ฝ่ายค้าน WP-02 ข้อ 4: นำเข้าการชำระย้อนหลังไม่ส่งใบเสร็จเป็นชุด — ค่าตั้งต้น Skipped พร้อมเหตุ · ผู้นำเข้าเลือกส่งเอง ⇒ เดินเต็ม (ทิศตรงข้าม)
+    [Fact]
+    public void นำเข้าไฟล์_ค่าตั้งต้นไม่ส่งใบเสร็จย้อนหลัง_เลือกส่งเองเดินเต็ม()
+    {
+        var d = PostPaymentAutomationPolicy.ForEnqueue(On, PaymentEntrySource.Import);
+        Assert.Equal(PostPaymentAutomationPolicy.EnqueueKind.Skipped, d.Kind);
+        Assert.Equal(PostPaymentAutomationPolicy.ImportNoSendReason, d.Reason);
+        Assert.Equal(PostPaymentAutomationPolicy.EnqueueKind.Pending, PostPaymentAutomationPolicy.ForEnqueue(On, PaymentEntrySource.ImportSendReceipt).Kind);
+        Assert.Equal(PostPaymentAutomationPolicy.EnqueueKind.None, PostPaymentAutomationPolicy.ForEnqueue(Off, PaymentEntrySource.ImportSendReceipt).Kind);
+    }
+
     [Fact]
     public void MultiDoc_ไม่สร้างแถว_และปิดค่าตั้ง_ไม่สร้างแถว()
     {
@@ -64,6 +75,7 @@ public class Round250Wp02Tests
         Assert.Equal(PaymentEntrySource.Manual, PostPaymentAutomationPolicy.ParseSource("manual"));
         Assert.Equal(PaymentEntrySource.Gateway, PostPaymentAutomationPolicy.ParseSource("gateway"));
         Assert.Equal(PaymentEntrySource.Import, PostPaymentAutomationPolicy.ParseSource("Import"));
+        Assert.Equal(PaymentEntrySource.ImportSendReceipt, PostPaymentAutomationPolicy.ParseSource("ImportSendReceipt"));
         Assert.Equal(PaymentEntrySource.Manual, PostPaymentAutomationPolicy.ParseSource("???"));
         Assert.Equal(PaymentEntrySource.Manual, PostPaymentAutomationPolicy.ParseSource(null));
     }
@@ -220,9 +232,31 @@ public class Round250Wp02Tests
     [Fact]
     public void ทั้งสองกฎ_ข้ามฝั่งรายการประจำ_กฎเดียว_เดิม()
     {
-        Assert.True(EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCoversType: true, documentApproved: true));
-        Assert.False(EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCoversType: false, documentApproved: true));
-        Assert.False(EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCoversType: true, documentApproved: false));
+        Assert.True(EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCoversType: true, documentApproved: true, approvedRowQueued: true));
+        Assert.False(EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCoversType: false, documentApproved: true, approvedRowQueued: false));
+        Assert.False(EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCoversType: true, documentApproved: false, approvedRowQueued: true));
+    }
+
+    // ฝ่ายค้าน WP-02 ข้อ 7: คำเตือนก่อนอนุมัติไม่ฟันธงว่าบุคคลธรรมดาไม่มีหน้าที่หัก · เงื่อนไขเดียวกับข้อความของลิงก์ (ทิศตรงข้าม: นิติบุคคล/ไม่รู้ ⇒ ไม่เตือน)
+    [Fact]
+    public void คำเตือนWHTผู้ซื้อบุคคลธรรมดา_ไม่ฟันธง_เงื่อนไขเดียวกับลิงก์()
+    {
+        var note = DocumentPayLinkPolicy.BuyerWhtApprovalNote(30m, buyerWithholds: false);
+        Assert.NotNull(note);
+        Assert.Contains("ส่วนใหญ่ไม่มีหน้าที่หัก", note);
+        Assert.Contains("ตรวจประเภทเงินได้", note);
+        Assert.DoesNotContain("(ไม่มีหน้าที่หัก)", note);
+        foreach (var (wht, w) in new (decimal, bool?)[] { (30m, true), (30m, null), (0m, false), (30m, false) })
+            Assert.Equal(DocumentPayLinkPolicy.WhtMismatchNote(wht, w) is null, DocumentPayLinkPolicy.BuyerWhtApprovalNote(wht, w) is null);
+    }
+
+    // ฝ่ายค้าน WP-02 ข้อ 6: มีกฎ "เมื่ออนุมัติ" แต่ตัวเข้าคิวฝั่งนั้นล้มเงียบ (ไม่มีแถวคิว) ⇒ ห้ามข้าม — เส้นรายการประจำเดินต่อ (ลูกค้าได้ 1 ฉบับ ไม่ใช่ 0)
+    [Fact]
+    public void กฎเมื่ออนุมัติมีแต่ไม่มีแถวคิวจริง_ไม่ข้ามเส้นรายการประจำ()
+    {
+        Assert.False(EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCoversType: true, documentApproved: true, approvedRowQueued: false));
+        var id = Guid.NewGuid();
+        Assert.Equal($"doc:{id}:DocumentApproved:approved", Accounting.Services.Implementations.EmailScheduleService.DocumentQueueKey(id, "DocumentApproved", "approved"));
     }
 
     // ═══ §2.4 ข้อ 2/3 ความพร้อม Autopilot ═══
@@ -286,39 +320,68 @@ public class Round250Wp02Tests
         foreach (var t in Enum.GetValues<DocumentType>())
         {
             if (t is DocumentType.CreditNote or DocumentType.DebitNote) continue;
-            Assert.Equal(inflow.Contains(t), CashFlowDirection.IsInflow(t, null, null));
-            // ชนิดอื่นไม่ดูฝั่ง/ใบต้นทาง
-            Assert.Equal(inflow.Contains(t), CashFlowDirection.IsInflow(t, DocumentType.PurchaseInvoice, true));
+            Assert.Equal(new CashFlowDirection.Result(inflow.Contains(t), false), CashFlowDirection.Of(t, null, null, false));
+            // ชนิดอื่นไม่ดูฝั่ง/ใบต้นทาง/ผู้ติดต่อ
+            Assert.Equal(inflow.Contains(t), CashFlowDirection.Of(t, true, DocumentType.PurchaseInvoice, true).IsInflow);
         }
-        // ใบเพิ่มหนี้: ขาย = เข้า · ซื้อ (ต้นทาง/ผู้ใช้เลือก) = ออก · ไม่รู้ = เข้า (เดิม)
-        Assert.True(CashFlowDirection.IsInflow(DocumentType.DebitNote, DocumentType.Invoice, null));
-        Assert.False(CashFlowDirection.IsInflow(DocumentType.DebitNote, DocumentType.PurchaseInvoice, null));
-        Assert.False(CashFlowDirection.IsInflow(DocumentType.DebitNote, DocumentType.CertificateInLieu, false));   // ต้นทางชนะที่ผู้ใช้เลือก
-        Assert.False(CashFlowDirection.IsInflow(DocumentType.DebitNote, null, true));
-        Assert.True(CashFlowDirection.IsInflow(DocumentType.DebitNote, null, null));
-        // ใบลดหนี้: ขาย = ออก (คืนลูกค้า) · ซื้อ = เข้า (ผู้ขายคืนเรา — เดิมตอบ "ออก" ทุกใบ) · ไม่รู้ = ออก (เดิม)
-        Assert.False(CashFlowDirection.IsInflow(DocumentType.CreditNote, DocumentType.TaxInvoice, null));
-        Assert.True(CashFlowDirection.IsInflow(DocumentType.CreditNote, DocumentType.Expense, null));
-        Assert.True(CashFlowDirection.IsInflow(DocumentType.CreditNote, null, true));
-        Assert.False(CashFlowDirection.IsInflow(DocumentType.CreditNote, null, null));
+        // ใบเพิ่มหนี้: ขาย = เข้า · ซื้อ = ออก
+        Assert.True(CashFlowDirection.Of(DocumentType.DebitNote, null, DocumentType.Invoice, false).IsInflow);
+        Assert.False(CashFlowDirection.Of(DocumentType.DebitNote, null, DocumentType.PurchaseInvoice, false).IsInflow);
+        Assert.False(CashFlowDirection.Of(DocumentType.DebitNote, true, null, false).IsInflow);
+        // ใบลดหนี้: ขาย = ออก (คืนลูกค้า) · ซื้อ = เข้า (ผู้ขายคืนเรา — เดิมตอบ "ออก" ทุกใบ)
+        Assert.False(CashFlowDirection.Of(DocumentType.CreditNote, null, DocumentType.TaxInvoice, false).IsInflow);
+        Assert.True(CashFlowDirection.Of(DocumentType.CreditNote, null, DocumentType.Expense, false).IsInflow);
+        Assert.True(CashFlowDirection.Of(DocumentType.CreditNote, true, null, false).IsInflow);
+    }
+
+    // ฝ่ายค้าน WP-02 ข้อ 2: ลำดับเดียวกับ JE รับชำระ (ResolvePostedSide) — ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ขายอย่างเดียว · ไม่รู้ = ไม่รู้
+    [Fact]
+    public void ทิศเงิน_ใบเพิ่มหนี้ไม่มีต้นทางและผู้ติดต่อเป็นผู้ขายอย่างเดียว_เงินออกเหมือนJE()
+    {
+        var r = CashFlowDirection.Of(DocumentType.DebitNote, null, null, contactIsSupplierOnly: true);
+        Assert.False(r.SideUnknown);
+        Assert.False(r.IsInflow);   // เดิมตัวปรับยอดธนาคารตอบ "เข้า" ขณะ JE ลง "ออก" ⇒ ยอดธนาคารเพี้ยน 2 เท่า
+        // ทิศตรงข้าม: ผู้ติดต่อเป็นลูกค้าด้วย ⇒ ยังไม่รู้ ⇒ ผู้เรียกต้องหยุด (ไม่เดาเป็นฝั่งขาย)
+        Assert.True(CashFlowDirection.Of(DocumentType.DebitNote, null, null, contactIsSupplierOnly: false).SideUnknown);
+        Assert.True(CashFlowDirection.Of(DocumentType.CreditNote, null, null, contactIsSupplierOnly: false).SideUnknown);
     }
 
     [Fact]
-    public void ทิศเงิน_โหลดใบต้นทางเฉพาะใบลดเพิ่มหนี้ที่อ้างใบเดิม()
+    public void ทิศเงิน_ใบที่ผู้ใช้สั่งย้ายฝั่ง_ชนะใบต้นทาง_เหมือนJE()
     {
-        Assert.True(CashFlowDirection.NeedsRelatedType(DocumentType.CreditNote, Guid.NewGuid()));
-        Assert.False(CashFlowDirection.NeedsRelatedType(DocumentType.CreditNote, null));
-        Assert.False(CashFlowDirection.NeedsRelatedType(DocumentType.Invoice, Guid.NewGuid()));
+        // ใบลดหนี้อ้างใบกำกับขาย แต่ผู้ใช้ย้ายเป็นฝั่งซื้อ (ReclassifyCnDnSideAsync) ⇒ เงินเข้า (JE ลงฝั่งซื้อแล้ว)
+        Assert.True(CashFlowDirection.Of(DocumentType.CreditNote, true, DocumentType.TaxInvoice, false).IsInflow);
+        // ทิศตรงข้าม: ย้ายกลับเป็นฝั่งขาย ⇒ เงินออก
+        Assert.False(CashFlowDirection.Of(DocumentType.CreditNote, false, DocumentType.PurchaseInvoice, true).IsInflow);
+        Assert.True(CashFlowDirection.Of(DocumentType.DebitNote, false, DocumentType.CertificateInLieu, true).IsInflow);
+    }
+
+    [Fact]
+    public void ทิศเงิน_โหลดข้อเท็จจริงฝั่งเฉพาะใบลดเพิ่มหนี้()
+    {
+        Assert.True(CashFlowDirection.NeedsSideFacts(DocumentType.CreditNote));
+        Assert.True(CashFlowDirection.NeedsSideFacts(DocumentType.DebitNote));
+        Assert.False(CashFlowDirection.NeedsSideFacts(DocumentType.Invoice));
+        Assert.Contains("ใบเพิ่มหนี้", CashFlowDirection.UnknownSideMessage(DocumentType.DebitNote, "DN-1"));
     }
 
     // ═══ §2.4 ข้อ 7 รหัสประทับเวลา ETDA ═══
 
+    // ฝ่ายค้าน WP-02 ข้อ 8: ไม่ปฏิเสธ/ไม่ตัด — คอลัมน์เป็น text · เทสต์ round-trip ค่ายาว 700+ ตัวอยู่ที่ EtaxByEmailRound244DbTests
+    // (บันทึกการประทับเวลา_ต้องส่งก่อน_ไฟล์หลังส่ง_แล้วถือเป็นตอบรับ) · ที่นี่ล็อกว่าคอลัมน์ไม่มีเพดาน 500 ในโมเดล
     [Fact]
-    public void รหัสประทับเวลายาวเกิน_ปฏิเสธพร้อมเหตุ_ไม่ตัดเงียบ()
+    public void รหัสประทับเวลา_คอลัมน์text_ไม่มีเพดาน500()
     {
-        Assert.NotNull(EtaxByEmailFormat.TimestampTokenRefusal(new string('A', EtaxByEmailFormat.TimestampTokenMaxLength + 1)));
-        Assert.Null(EtaxByEmailFormat.TimestampTokenRefusal(new string('A', EtaxByEmailFormat.TimestampTokenMaxLength)));
-        Assert.Null(EtaxByEmailFormat.TimestampTokenRefusal(null));
+        var src = System.IO.File.ReadAllText(System.IO.Path.Combine(RepoRoot(), "Accounting", "Data", "AccountingDbContext.cs"));
+        Assert.Contains("e.Property(ei => ei.EtdaTimestampToken).HasColumnType(\"text\")", src);
+        Assert.DoesNotContain("EtdaTimestampToken).HasMaxLength(", src);
+    }
+
+    private static string RepoRoot()
+    {
+        var d = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "Accounting", "Data", "AccountingDbContext.cs"))) d = d.Parent;
+        return d?.FullName ?? throw new InvalidOperationException("ไม่พบรากเรพ");
     }
 
     // ═══ §2.4 ข้อ 8/10 สินทรัพย์ ═══

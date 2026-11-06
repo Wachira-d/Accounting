@@ -182,18 +182,27 @@ public class SiteOrderDepositInvoicingTests
         Assert.Empty(plan.Excess);
         Assert.Equal("RE-001", plan.DeductionRef);
         Assert.Equal(dep.SubTotal, plan.BaseDeducted);                       // หักฐานเท่าใบกำกับมัดจำพอดี (ไม่ซ้ำ ไม่ขาด)
-        // รอบ 250 WP-01 (เทสต์นี้เพิ่งรันครั้งแรก · คิดมือซ้ำทุกขั้นได้ตรง CI): ฐานสองใบ = 295.95 + 690.56 = 986.51 ≠ ใบเต็ม 986.49 —
-        // ใบเต็ม: ขั้นปัด VAT แบบราคารวม VAT ย้าย 0.01 จากฐานไป VAT (986.50 → 986.49 · VAT 69.06) · ใบส่วนที่เหลือ: หักฐานมัดจำแล้วคิด VAT ใหม่บนฐานที่ลด
-        // (48.35) แล้วขั้นปัดเดียวกันย้าย 0.01 จาก VAT กลับไปฐาน (690.55 → 690.56 · VAT 48.34) ⇒ VAT รวมตรง แต่ฐาน/ยอดรวมเกิน 0.02
-        // (ลูกค้าถูกเรียก 1,055.57 แทน 1,055.55) — เดิมเทสต์อ้าง "ฐานไม่เพี้ยน" และหมายเหตุบนออเดอร์อ้าง "ส่วนต่างอยู่ที่ VAT" ซึ่งไม่จริงในเคสนี้
-        // ⇒ แก้หมายเหตุให้ไม่อ้างที่อยู่ของส่วนต่าง · การแก้สูตร (ReconcileTaxRounding ไม่ขยับฐานบนบรรทัดที่ถูกหักท้ายบิล) แตะทุกใบราคารวม VAT ที่มีส่วนลดท้ายบิล
-        // จึงส่งเป็นงานเงิน (AUDIT_249 WP-02) พร้อมฝ่ายค้าน — ที่นี่ล็อกตัวเลขจริง + ตัวบอกส่วนต่างที่ระบบประทับเป็นหมายเหตุต้องเท่าส่วนต่างจริงเสมอ
+        // รอบ 250 WP-01 พบ: ฐานสองใบ 295.95 + 690.56 = 986.51 ≠ ใบเต็ม 986.49 (ลูกค้าถูกเรียก 1,055.57) — ขั้นปัด VAT แบบคง gross ย้ายเศษจาก VAT กลับไปฐานบนใบส่วนที่เหลือ
+        // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 5 (แก้สูตรแบบแคบ — DocumentService.ComputeReconciledLineAmounts): คิดบรรทัดก่อนหักมัดจำ → กระทบยอดแบบคง gross (= ใบเต็ม) →
+        // หักฐานมัดจำ · VAT = round(ฐาน × 7%) → กระทบยอด VAT อย่างเดียว ⇒ ใบส่วนที่เหลือ 690.54 / 48.34 / 738.88 · สองใบรวม 1,055.55 พอดี (drift 0)
         Assert.Equal(986.49m, full.Net);
-        Assert.Equal(986.51m, dep.SubTotal + final.Net);
+        Assert.Equal((690.54m, 48.34m, 738.88m), (final.Net, final.Vat, final.Total));
+        Assert.Equal(full.Net, dep.SubTotal + final.Net);                    // ฐานสองใบ = ฐานใบเต็มพอดี
         Assert.Equal(0m, dep.VatAmount + final.Vat - full.Vat);               // VAT รวมสองใบตรงใบเต็มพอดี
-        Assert.Equal(0.02m, dep.TotalAmount + final.Total - o.TotalAmount);
+        Assert.Equal(0m, dep.TotalAmount + final.Total - o.TotalAmount);
         Assert.Equal(LodgingDepositSettlement.RoundingDelta(full.Total, plan.GrossDeducted, final.Total),
             dep.TotalAmount + final.Total - o.TotalAmount);
+    }
+
+    // รอบ 250 ฝ่ายค้าน WP-02 ข้อ 5 ทิศตรงข้าม: ใบที่ไม่หักมัดจำ (ฐานมัดจำ 0) ⇒ เส้นเดิมทุกตัวอักษร — ใบเต็มของเคสเดียวกันยังเป็น 986.49 / 69.06 / 1,055.55
+    [Fact]
+    public void ใบไม่มีมัดจำ_ผลเหมือนเดิม_ใบเต็มไม่ถูกแตะ()
+    {
+        var o = Order(50m, 30m, 7m, (2m, 450m), (1m, 135.55m));
+        PlanFinal(o, Array.Empty<LodgingDepositSnapshot>(), out var lines);
+        var full = DocumentService.PreviewTotals(lines, true, 0m);
+        Assert.Equal((986.49m, 69.06m, 1_055.55m), (full.Net, full.Vat, full.Total));
+        Assert.Equal(full, DocumentService.PreviewTotals(lines, true, 0m, 0m));
     }
 
     [Fact]

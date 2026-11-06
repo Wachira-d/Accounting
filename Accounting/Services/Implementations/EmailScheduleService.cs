@@ -223,7 +223,12 @@ public class EmailScheduleService : IEmailScheduleService
                 .AnyAsync(r => r.CompanyId == companyId && r.IsActive && !r.IsDeleted
                     && r.Trigger == "DocumentApproved"
                     && (r.DocumentType == null || r.DocumentType == doc.DocumentType.ToString()), ct);
-            if (EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCovers, documentApproved: true))
+            // ฝ่ายค้าน WP-02 ข้อ 6: OnDocumentApprovedAsync กลืนความผิดพลาด (LogWarning) ⇒ "มีกฎ" ≠ "เข้าคิวแล้ว" — ข้ามเฉพาะเมื่อมีแถวคิวของกฎนั้นจริง
+            // (กุญแจเดียวกับฝั่งเขียน) · ไม่มีแถว ⇒ เดินเส้นรายการประจำต่อ (ลูกค้าต้องได้อีเมลหนึ่งฉบับ ไม่ใช่ศูนย์)
+            var approvedKey = DocumentQueueKey(doc.Id, "DocumentApproved", "approved");
+            var approvedQueued = approvedRuleCovers && await _db.EmailQueues.AsNoTracking()
+                .AnyAsync(q => q.CompanyId == companyId && q.IdempotencyKey == approvedKey && !q.IsDeleted, ct);
+            if (EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCovers, documentApproved: true, approvedQueued))
                 return EmailEnqueueOutcome.Skipped(EmailEnqueueOutcome.CoveredByApprovedRule);
 
             var rules = await _db.EmailScheduleRules.AsNoTracking()
@@ -777,6 +782,9 @@ public class EmailScheduleService : IEmailScheduleService
         return null;
     }
 
+    /// <summary>กุญแจกันซ้ำของคิวอีเมลเอกสาร — ตัวเดียวของฝั่งเขียน (EnqueueDocumentAsync) และฝั่งตรวจ "กฎเมื่ออนุมัติเข้าคิวจริงแล้วไหม" (ฝ่ายค้าน WP-02 ข้อ 6)</summary>
+    internal static string DocumentQueueKey(Guid documentId, string trigger, string suffix) => $"doc:{documentId}:{trigger}:{suffix}";
+
     private async Task<bool> EnqueueDocumentAsync(EmailScheduleRule rule, Document doc,
         int daysOffset, string suffix, CancellationToken ct, DateTime? overrideSendUtc = null)
     {
@@ -784,7 +792,7 @@ public class EmailScheduleService : IEmailScheduleService
         // ตัวตัดสินเดียวกับฟอร์ม/หน้ารายการประจำ (RecurringEmailReadiness) — ผู้ติดต่อไม่มีอีเมล ⇒ ไม่เข้าคิว
         if (!RecurringEmailReadiness.HasDeliverableEmail(email)) return false;
 
-        var idem = $"doc:{doc.Id}:{rule.Trigger}:{suffix}";
+        var idem = DocumentQueueKey(doc.Id, rule.Trigger, suffix);
         if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == doc.CompanyId
             && q.IdempotencyKey == idem && !q.IsDeleted, ct)) return false;
 

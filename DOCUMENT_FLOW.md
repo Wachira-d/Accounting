@@ -1606,6 +1606,8 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
   · **รอบ 250 WP-01** (เทสต์ R7/RV1F11 เพิ่งรันครั้งแรก — 11 ช่องไม่ได้จัดกลุ่ม): **ตามไป** `PostVatDeductionAmount` · `PostVatDeductionAccountId` ·
   `PaymentSourceSplitJson` (เนื้อเงินของการขายเดียวกัน — เดิมตัวคัดลอกทิ้งเงียบ ⇒ ใบแทนไม่มี "หักหลัง VAT" ทั้งที่ยอดจ่ายจริงตามไป) ·
   **ไม่ตามไป** `PayLink*` 6 ช่อง (ลิงก์ชำระของใบเดิม · hash unique) · `AutoSendRuleId` · `QuotaCountDeferred` — ยังไม่ได้คอมไพล์ในเครื่องนี้ · commit 407e342a
+  · **รอบ 250 WP-02 (ฝ่ายค้าน ข้อ 1)**: **ตามไป** `RecurringTransactionId` (ใบแทน = การขายเดียวกัน — ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ §2.12g) ·
+    `AutoSendRuleId` **ไม่ตามไป** (เดิม) ⇒ บนใบแทน ชั้น "ตารางส่ง" ของงานหลังรับชำระหายไป — ใช้ชั้นรายการประจำ › ผู้ติดต่อ › บริษัท แทน (ตั้งใจ: ตารางแรกที่ส่งใบแทนจะประทับใหม่)
 - **เกี่ยวเมื่อ**: ใบขาย (Invoice/TaxInvoice/Receipt) ที่ออกแล้วยังไม่ยกเลิก · ไม่ใช่ใบเสร็จอัตโนมัติ · ไม่ใช่ชิ้นของรอบโอนเอง · ยังไม่ถูกแทน ·
   **มีการรับชำระจากรอบโอนที่ลงบัญชีแล้ว** (ไม่มี = ใช้ "ยกเลิกเอกสาร" ปกติ)
 - **ด่านเดิมของ "ยกเลิกเอกสาร" ครบทุกตัว** (บล็อกพร้อมทางไปต่อ · ไม่แตะอะไร): e-Tax ของใบ**ถึงกรมสรรพากรแล้ว** (Accepted = `REISSUE-ETAX-ACCEPTED` ·
@@ -2966,7 +2968,8 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   | Manual | `DocumentController.CreatePayment` (1:1) | แถว Pending (เดินเต็ม) |
   | Gateway | `DocumentPaymentHandler` | แถว Pending |
   | Settlement | `SettlementPostingService.EnsureReceiptAsync` | แถว Pending |
-  | Import | `PaymentImportTarget` (นำเข้าไฟล์) | แถว Pending |
+  | Import | `PaymentImportTarget` (นำเข้าไฟล์ · ค่าตั้งต้น) | แถว **Skipped** "ไม่ส่งใบเสร็จย้อนหลังเป็นชุด" (`ImportNoSendReason` · ฝ่ายค้าน WP-02 ข้อ 4) |
+  | ImportSendReceipt | `PaymentImportTarget` เมื่อผู้นำเข้าติ๊ก "ส่งใบเสร็จถึงลูกค้า" (ตัวเลือกชุด `sendReceipts=true` · หน้า `import-hub.html`) | แถว Pending |
   | Integration | `IntegrationService.ProcessPaymentAsync` (บันทึกเอง ⇒ `IDocumentService.AfterPaymentRecordedAsync` = Sync 50 ทวิ + เข้าคิว · ล้ม ⇒ ข้อความใน sync log + คำตอบ) | แถว Pending |
   | Cms · Lodging · PlatformBilling | หน้าร้าน/การจอง · ที่พัก · ค่าบริการแพลตฟอร์ม | แถว **Skipped** พร้อมเหตุ "มีเส้นออกใบเสร็จของตัวเอง" (เห็นบนหน้าเอกสาร · ไม่ออก/ไม่ส่งซ้ำ) |
   | MultiDoc | `CreateMultiDocPaymentAsync` | ไม่สร้างแถว (`SettlementReceiptPolicy` — ตั้งใจ) |
@@ -2978,8 +2981,20 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
   ไม่เปิดเผยยอด/ชื่อ) · ใบกำกับถูกยกเลิก ⇒ ใช้ได้อีก (ทิศตรงข้าม) · งานหลังรับชำระของใบแจ้งหนี้นั้น ⇒ Blocked "ออกใบเสร็จจากใบกำกับ" (กันใบเสร็จซ้อน)
 - **ไม่ได้ตั้ง URL ของระบบ (Y7)**: แผงความพร้อม Autopilot `GATEWAY` = Warn + ปุ่มไป `/admin/site-settings.html` · ทดลองรันบอกตามจริง · ตารางส่งอีเมลที่ตั้งแนบลิงก์แต่ออกไม่ได้ ⇒
   ส่งได้ + `EmailQueue.ErrorMessage` "ส่งได้แต่ไม่แนบลิงก์ชำระ: <เหตุ>" (คงไว้หลังส่ง) · การ์ด go-live บนแดชบอร์ดแอดมิน (ข้อ BASEURL) — ไม่เดาโดเมน
-- **ใบขายตั้ง WHT ให้ผู้ซื้อบุคคลธรรมดา** (C F5): คำเตือนก่อนอนุมัติ `[WHT-PAYEE]` (ตัวตัดสินเดียวกับลิงก์ `BuyerWithholds` + `WhtMismatchNote`) — ทางเข้าไม่มีคนผ่านตามเดิม · ลิงก์ยังเตือน
-- เทสต์ `Round250Wp02Tests` · Db `DocumentAutoSendRound241DbTests` (รอบ 250) · `ImportAccountingTargetsDbTests.นำเข้ารับชำระCSV_ใบขาย_มีแถวงานหลังรับชำระ_แหล่งImport` ·
+- **ใบขายตั้ง WHT ให้ผู้ซื้อบุคคลธรรมดา** (C F5): คำเตือนก่อนอนุมัติ `[WHT-PAYEE]` (ตัวตัดสินเดียวกับลิงก์ `BuyerWithholds` · ข้อความ `BuyerWhtApprovalNote` —
+  ไม่ฟันธง "ไม่มีหน้าที่หัก" ให้ตรวจประเภทเงินได้ · ฝ่ายค้านข้อ 7) — ทางเข้าไม่มีคนผ่านตามเดิม · ลิงก์ยังเตือน (`WhtMismatchNote`)
+- **ฝ่ายค้าน WP-02 (สถานะปัจจุบัน)**:
+  - **ทิศเงินตัวเดียวกับ JE** (ข้อ 2/3): `Helpers/CashFlowDirection.Of(type, override, sourceType, supplierOnly)` = ลำดับ `AdjustmentNoteAccount.ResolvePostedSide`
+    (ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อเป็นผู้ขายอย่างเดียว › ไม่รู้ ⇒ โยน `UnknownSideMessage`) · `DocumentService.CashInflowAsync` ตัวเดียวของ JE รับ/จ่ายชำระ
+    (`CreatePaymentJournalAsync`) · ยอดธนาคาร/กลับรายการ/ชำระหลายใบ/แจ้งเตือน · `DocumentPayLinkPolicy.IsSaleSide` (ลิงก์ชำระ · งานหลังรับชำระไม่ส่งใบเสร็จให้ผู้ขาย)
+  - **อีเมลรายการประจำ** (ข้อ 6): ข้ามเพราะกฎ "เมื่ออนุมัติเอกสาร" เฉพาะเมื่อมีแถวคิวของกฎนั้นจริง (`EmailScheduleService.DocumentQueueKey` กุญแจเดียวกับฝั่งเขียน) —
+    ตัวเข้าคิวฝั่งอนุมัติกลืนความผิดพลาด ⇒ ไม่มีแถว = เดินเส้นรายการประจำต่อ
+  - **รหัสประทับเวลา ETDA** (ข้อ 8): คอลัมน์ `EtdaTimestampToken` เป็น `text` (migration ALTER TYPE) — เก็บครบ (ตัดช่องว่างหัวท้าย) ไม่ปฏิเสธ/ไม่ตัด
+  - **ทะเบียนเครดิตภาษีถูกหัก** (ข้อ 9): `SyncWhtCreditReceivedAsync` โหลดผู้จ่ายเองเมื่อใบไม่มี Contact (ทางเข้ารับชำระ) · migration เติมชื่อ/เลขแถวเก่าที่ว่าง
+  - **ใบมัดจำ + ใบส่วนที่เหลือ ราคารวม VAT** (ข้อ 5): `DocumentService.ComputeReconciledLineAmounts` — คิดบรรทัดก่อนหักมัดจำ กระทบยอดคง gross → หักฐานมัดจำ
+    VAT = round(ฐาน × อัตรา) → กระทบยอด VAT อย่างเดียว ⇒ ฐานสองใบ = ฐานใบเต็มพอดี (ตัวอย่าง 690.54 / 48.34 / 738.88 · รวม 1,055.55) · ใบไม่มีมัดจำ/ราคาไม่รวม VAT = เส้นเดิม ·
+    **backlog**: ส่วนลดท้ายบิลทั่วไป (ไม่มีมัดจำ) ยังใช้ขั้นปัดแบบคง gross ที่ขยับฐานได้ — แก้แล้วกระทบ golden ของ OCR จึงแยกงาน
+- เทสต์ `Round250Wp02Tests` · Db `DocumentAutoSendRound241DbTests` (รอบ 250) · `ImportAccountingTargetsDbTests.นำเข้ารับชำระCSV_เลือกส่งใบเสร็จ_มีแถวงาน_ไม่เลือก_Skipped` ·
   กติกา R250 ใน `tools/required_call_site_check.py` · Last verified `commit a40c91e5` — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
 ### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)

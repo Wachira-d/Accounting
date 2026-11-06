@@ -391,10 +391,14 @@ public class EtaxByEmailRound244DbTests
         };
         db.FileAttachments.Add(file);
         await db.SaveChangesAsync();
+        // ฝ่ายค้าน WP-02 ข้อ 8: รหัสยาวเกิน 500 (คอลัมน์ text) ⇒ เก็บครบ ตัดช่องว่างหัวท้ายเท่านั้น (เดิมตัด/ปฏิเสธ)
+        var longToken = "TS-244-001-" + new string('A', 700);
         var row = await svc.RecordEtdaStampAsync(s.CompanyId, s.EtaxRow!.Id,
-            new RecordEtdaStampRequest(DateTime.UtcNow, file.Id, "TS-244-001"), null, "owner@seller244.co.th");
+            new RecordEtdaStampRequest(DateTime.UtcNow, file.Id, "  " + longToken + " "), null, "owner@seller244.co.th");
         Assert.NotNull(row.EtdaStampedAt);
-        Assert.Equal("TS-244-001", row.EtdaTimestampToken);
+        Assert.Equal(longToken, row.EtdaTimestampToken);
+        using (var check = DbTestDatabase.TryCreateContext()!)
+            Assert.Equal(longToken, (await check.EtaxInvoices.AsNoTracking().SingleAsync(e => e.Id == s.EtaxRow!.Id)).EtdaTimestampToken);
         db.ChangeTracker.Clear();
         var eff = await DocumentVoidPreconditions.EffectiveEtaxAsync(db, s.CompanyId, new[] { s.Doc.Id });
         Assert.Equal(EtaxStatus.Accepted, eff[s.Doc.Id]);

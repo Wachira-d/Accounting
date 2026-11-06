@@ -120,11 +120,16 @@ public static class DocumentPayLinkPolicy
         return null;
     }
 
-    /// <summary>เอกสารนี้เป็น "ลูกค้าจ่ายเรา" ไหม — ใบเพิ่มหนี้ดูฝั่งจากใบต้นทาง (ต้นทางฝั่งซื้อ = เราจ่ายผู้ขาย) · ตรงกับ <c>CashFlowDirection.IsInflow</c> (รอบ 250)</summary>
-    public static bool IsSaleSide(DocumentType type, DocumentType? relatedType)
-        => type is DocumentType.Invoice or DocumentType.TaxInvoice
-           || (type == DocumentType.DebitNote
-               && relatedType is not (DocumentType.PurchaseInvoice or DocumentType.Expense or DocumentType.CertificateInLieu));
+    /// <summary>เอกสารนี้เป็น "ลูกค้าจ่ายเรา" ไหม — ใบแจ้งหนี้/ใบกำกับ = ใช่ · ใบเพิ่มหนี้ = ฝั่งขายตามตัวตัดสินทิศเงินเดียวกับ JE รับชำระ
+    /// (<see cref="CashFlowDirection.Of"/>: ผู้ใช้สั่งย้ายฝั่ง › ใบต้นทาง › ผู้ติดต่อเป็นผู้ขายอย่างเดียว) · <b>ไม่รู้ฝั่ง = ไม่ใช่</b> (JE จะปฏิเสธการรับชำระอยู่แล้ว ⇒
+    /// ห้ามออกลิงก์/ส่งใบเสร็จให้คนที่อาจเป็นผู้ขาย) · รอบ 250 ฝ่ายค้าน WP-02 ข้อ 3 — เดิมดูแค่ใบต้นทาง ⇒ ใบเพิ่มหนี้ฝั่งซื้อไม่มีต้นทางออกลิงก์ได้</summary>
+    public static bool IsSaleSide(DocumentType type, DocumentType? relatedType, bool? cnDnPurchaseSideOverride, bool contactIsSupplierOnly)
+    {
+        if (type is DocumentType.Invoice or DocumentType.TaxInvoice) return true;
+        if (type != DocumentType.DebitNote) return false;
+        var r = CashFlowDirection.Of(type, cnDnPurchaseSideOverride, relatedType, contactIsSupplierOnly);
+        return !r.SideUnknown && r.IsInflow;
+    }
 
     /// <summary>ผู้ซื้อมีหน้าที่หักภาษี ณ ที่จ่ายไหม (ฝ่ายค้าน S3) — นิติบุคคล/หน่วยงานรัฐ = มี (ท.ป.4/2528) · บุคคลธรรมดา = ไม่มี ·
     /// ชนิดไม่รู้ ⇒ ใช้รูปเลขผู้เสียภาษี (<see cref="ContactTypeResolver.FromTaxId"/> ตัวเดิม) · ยังไม่รู้ ⇒ <c>null</c> (ผู้เรียกเชื่อยอดที่ผู้ใช้ตั้งบนใบ)</summary>
@@ -147,6 +152,15 @@ public static class DocumentPayLinkPolicy
     public static string? WhtMismatchNote(decimal documentWht, bool? buyerWithholds)
         => documentWht > 0.005m && buyerWithholds == false
             ? $"ใบนี้ตั้งภาษีหัก ณ ที่จ่าย {documentWht:N2} บาท แต่ผู้ซื้อเป็นบุคคลธรรมดา (ไม่มีหน้าที่หัก) — ลิงก์ชำระเรียกยอดค้างตามใบซึ่งหัก WHT ไว้แล้ว (ไม่มีหน้าที่หัก · ยอดอาจขาดเท่า WHT) · ตรวจยอด WHT บนใบหรือชนิดผู้ติดต่อ"
+            : null;
+
+    /// <summary>คำเตือนก่อนอนุมัติ (<c>[WHT-PAYEE]</c>): ใบขายตั้งภาษีหัก ณ ที่จ่ายไว้ แต่ผู้ซื้อเป็นบุคคลธรรมดา — <b>ไม่ฟันธง</b> (ฝ่ายค้าน WP-02 ข้อ 7):
+    /// หน้าที่หักของบุคคลธรรมดาขึ้นกับประเภทเงินได้ (ท.ป.4/2528 ใช้กับนิติบุคคลเป็นหลัก แต่บางประเภทเงินได้บุคคลธรรมดาก็มีหน้าที่หัก) ⇒ บอกให้ตรวจ
+    /// ไม่บอกว่า "ไม่มีหน้าที่" · เงื่อนไขเดียวกับ <see cref="WhtMismatchNote"/> (null = ไม่มีอะไรต้องเตือน)</summary>
+    public static string? BuyerWhtApprovalNote(decimal documentWht, bool? buyerWithholds)
+        => documentWht > 0.005m && buyerWithholds == false
+            ? $"ใบนี้ตั้งภาษีหัก ณ ที่จ่าย {documentWht:N2} บาท แต่ผู้ซื้อเป็นบุคคลธรรมดา — ส่วนใหญ่ไม่มีหน้าที่หักภาษี ณ ที่จ่ายค่าบริการ "
+              + "(ท.ป.4/2528 ใช้กับนิติบุคคล) ตรวจประเภทเงินได้ก่อน · ถ้าผู้ซื้อไม่หัก ให้ลบยอด WHT บนใบ หรือแก้ชนิดผู้ติดต่อ"
             : null;
 
     /// <summary>ยอดบนหน้าชำระ — <paramref name="Gross"/> = ยอดก่อนหัก ณ ที่จ่าย (ยอดค้าง + WHT ที่ยังไม่ถูกหัก) · <paramref name="Wht"/> = ภาษีหัก ณ ที่จ่ายที่ลูกค้าจะหักไว้

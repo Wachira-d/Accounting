@@ -138,7 +138,8 @@ public static class PaymentQrPolicy
     /// ใบเสร็จ/ใบลดหนี้/เอกสารฝั่งซื้อ = ไม่พิมพ์ (QR บัญชีเราบนใบสั่งซื้อที่ส่งผู้ขาย = เชิญคนผิดฝั่งโอนเงิน)</summary>
     public static bool IsBankQrDocument(DocumentType type, DocumentType? relatedType)
         => type is DocumentType.Quotation or DocumentType.Invoice or DocumentType.TaxInvoice or DocumentType.BillingNote
-           || (type == DocumentType.DebitNote && DocumentPayLinkPolicy.IsSaleSide(type, relatedType));
+           // ไม่มีข้อเท็จจริงผู้ใช้สั่งย้ายฝั่ง/ผู้ขายอย่างเดียวที่นี่ ⇒ ตัดสินจากใบต้นทาง · ใบเพิ่มหนี้ไม่รู้ฝั่ง ⇒ ไม่พิมพ์ QR (รับชำระไม่ได้จนกว่าจะเลือกฝั่ง)
+           || (type == DocumentType.DebitNote && DocumentPayLinkPolicy.IsSaleSide(type, relatedType, null, false));
 
     /// <summary>พิมพ์ QR บัญชีบนใบนี้ไหม — ปิดในเทมเพลต · ชนิดไม่เข้า · ยกเลิก · ไม่ใช่เงินบาท (พร้อมเพย์รับแต่บาท) · ใบตั้งหนี้ที่ชำระครบแล้ว ⇒ ไม่พิมพ์ ·
     /// ใบเสนอราคา/ใบวางบิล/ร่าง ยังไม่มียอดค้างที่เชื่อได้ ⇒ พิมพ์ได้ (QR ไม่ฝังยอด — <see cref="EmbedAmount"/>)</summary>
