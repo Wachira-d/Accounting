@@ -1,0 +1,25 @@
+# ratchet ของ tools/ai_label_literal_check.py (รอบ 250 WP-03 ฝ่ายค้าน M3) — ป้าย 🤖 ตายตัวต่อไฟล์ (นอกคอมเมนต์) · ลดลงเท่านั้น
+# ป้ายคำแนะนำใหม่ต้องใช้ Layout.suggestLabel(resp) (usedAi จากเซิร์ฟเวอร์) — ห้ามเพิ่มแถว/ตัวเลขเพื่อให้เขียว
+admin/admin-layout.js 1
+admin/ai-config.html 1
+admin/chats.html 2
+index.html 2
+js/public-chat-widget.js 2
+pages/admin-ai-usage.html 1
+pages/admin-company-usage.html 1
+pages/ai-tools.html 2
+pages/approval.html 3
+pages/assistant.html 2
+pages/bank.html 3
+pages/billing.html 1
+pages/cash-forecast.html 1
+pages/document-scan.html 14
+pages/documents.html 7
+pages/fiscal.html 1
+pages/import-export.html 1
+pages/import-hub.html 2
+pages/journals.html 1
+pages/pos.html 1
+pages/products.html 4
+pages/settlements.html 1
+pages/tax.html 1

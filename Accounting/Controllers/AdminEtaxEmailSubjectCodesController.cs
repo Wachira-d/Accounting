@@ -37,28 +37,31 @@ public class AdminEtaxEmailSubjectCodesController : ControllerBase
         return Ok(new ApiResponse<object>(true, Shape(json)));
     }
 
-    /// <summary>ค่าต่อช่อง (<c>Invoice</c>/<c>Receipt</c>/<c>DebitNote</c>/<c>CreditNote</c>) · ว่าง = กลับไปค่าตั้งต้น</summary>
+    /// <summary>ค่าต่อช่อง (<c>Invoice</c>/<c>Receipt</c>/<c>DebitNote</c>/<c>CreditNote</c>) · ส่งมาแต่ว่าง = ช่องนั้นกลับค่าตั้งต้น ·
+    /// <b>ไม่ส่งคีย์ = คงค่าเดิม</b> (ฝ่ายค้าน L1 — เดิม PUT บางส่วนล้างช่องอื่นเงียบ ๆ) · ล้างทั้งชุดใช้ <c>DELETE</c></summary>
     public sealed record SetRequest(Dictionary<string, string?>? Codes);
 
     [HttpPut]
     [Accounting.Filters.RejectApiKey("ตั้งรหัสหัวเรื่อง e-Tax by Email")]
     public async Task<ActionResult<ApiResponse<object>>> Set([FromBody] SetRequest req, CancellationToken ct)
     {
-        var codes = new Dictionary<string, string>(StringComparer.Ordinal);
+        var s = await _db.SiteSettings.OrderBy(x => x.CreatedAt).FirstOrDefaultAsync(ct);
+        if (s == null) return BadRequest(new ApiResponse<object>(false, null, "ยังไม่มีค่าตั้งเว็บไซต์"));
+        var codes = new Dictionary<string, string>(EtaxByEmailFormat.ParseSubjectCodes(s.EtaxByEmailSubjectCodesJson), StringComparer.Ordinal);
         var errors = new List<string>();
         foreach (var (key, raw) in req.Codes ?? new Dictionary<string, string?>())
         {
-            if (!EtaxByEmailFormat.SubjectCodeSlots.Any(s => s.Key == key)) { errors.Add($"ไม่รู้จักช่อง “{key}”"); continue; }
+            if (!EtaxByEmailFormat.SubjectCodeSlots.Any(x => x.Key == key)) { errors.Add($"ไม่รู้จักช่อง “{key}”"); continue; }
             var code = raw?.Trim().ToUpperInvariant();
-            if (string.IsNullOrEmpty(code)) continue;   // ว่าง = ค่าตั้งต้น
+            if (string.IsNullOrEmpty(code)) { codes.Remove(key); continue; }   // ส่งมาว่าง = ช่องนี้กลับค่าตั้งต้น
             if (!EtaxByEmailFormat.IsValidSubjectCode(code)) { errors.Add($"รหัสของ “{key}” ต้องเป็นตัวอักษรอังกฤษ 3 ตัว (เช่น INV · CDN · CRN) — ได้ “{raw}”"); continue; }
             codes[key] = code;
         }
+        // ฝ่ายค้าน L1: รหัสที่มีผลต้องไม่ซ้ำข้ามชนิดเอกสาร (เช่น ใบลดหนี้ = INV ⇒ ETDA แยกชนิดไม่ได้) — ตัวตรวจเดียว EtaxByEmailFormat.DuplicateSubjectCode
+        if (EtaxByEmailFormat.DuplicateSubjectCode(codes) is { } dup) errors.Add(dup);
         // ห้ามบันทึกบางส่วนเงียบ ๆ — ช่องใดผิด ปฏิเสธทั้งคำขอพร้อมเหตุ
         if (errors.Count > 0) return BadRequest(new ApiResponse<object>(false, null, string.Join(" · ", errors)));
 
-        var s = await _db.SiteSettings.OrderBy(x => x.CreatedAt).FirstOrDefaultAsync(ct);
-        if (s == null) return BadRequest(new ApiResponse<object>(false, null, "ยังไม่มีค่าตั้งเว็บไซต์"));
         var before = s.EtaxByEmailSubjectCodesJson;
         var after = EtaxByEmailFormat.SerializeSubjectCodes(codes);
         s.EtaxByEmailSubjectCodesJson = after;
@@ -73,5 +76,26 @@ public class AdminEtaxEmailSubjectCodesController : ControllerBase
         await _db.SaveChangesAsync(ct);
         return Ok(new ApiResponse<object>(true, Shape(after),
             after == null ? "บันทึกแล้ว — ใช้รหัสตั้งต้นทั้งชุด" : "บันทึกแล้ว — มีผลกับอีเมล e-Tax ฉบับถัดไปทันที"));
+    }
+
+    /// <summary>คืนรหัสตั้งต้นทั้งชุด (ฝ่ายค้าน L1 — ทางล้างแยกจาก PUT บางส่วน) · audit chain</summary>
+    [HttpDelete]
+    [Accounting.Filters.RejectApiKey("คืนรหัสหัวเรื่อง e-Tax by Email ตั้งต้น")]
+    public async Task<ActionResult<ApiResponse<object>>> Reset(CancellationToken ct)
+    {
+        var s = await _db.SiteSettings.OrderBy(x => x.CreatedAt).FirstOrDefaultAsync(ct);
+        if (s == null) return BadRequest(new ApiResponse<object>(false, null, "ยังไม่มีค่าตั้งเว็บไซต์"));
+        var before = s.EtaxByEmailSubjectCodesJson;
+        s.EtaxByEmailSubjectCodesJson = null;
+        _db.AddChainedAuditLog(new AuditLog
+        {
+            CompanyId = PdpaPolicy.PlatformScopeCompanyId, EntityType = nameof(SiteSettings), EntityId = s.Id.ToString(), Action = AuditAction.Update,
+            UserEmail = User?.Identity?.Name,
+            NewValues = System.Text.Json.JsonSerializer.Serialize(new { action = "etax-email-subject-codes-reset", from = before, to = (string?)null,
+                ruleCode = EtaxByEmailFormat.RuleCode }),
+            IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(), Timestamp = DateTime.UtcNow,
+        });
+        await _db.SaveChangesAsync(ct);
+        return Ok(new ApiResponse<object>(true, Shape(null), "คืนรหัสตั้งต้นทั้งชุดแล้ว"));
     }
 }

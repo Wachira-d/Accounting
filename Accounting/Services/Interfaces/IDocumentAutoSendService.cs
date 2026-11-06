@@ -36,6 +36,8 @@ public interface IDocumentPayLinkService
 
     /// <summary>หน้าชำระสาธารณะ — null = ไม่พบ token ของบริษัทนี้ · <see cref="PublicDocumentPayView.Target"/> = เป้าหมายของการสร้างรายการชำระ (ยอด/ช่องทางจากเซิร์ฟเวอร์)</summary>
     Task<PublicDocumentPayView?> PublicViewAsync(Guid companyId, string token, CancellationToken ct = default);
+    /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน H1): ตัวเลือกโอน/QR ของใบสำหรับพอร์ทัล — กติกาเดียวกับหน้าชำระ (IssueRefusal · ยอดสุทธิหลัง WHT · บัญชีของใบ) · null = ไม่พบใบ</summary>
+    Task<DocumentTransferView?> TransferForDocumentAsync(Guid companyId, Guid documentId, CancellationToken ct = default);
 }
 
 /// <summary>รอบ 241 — งานอัตโนมัติหลังรับชำระ (ออก/ส่งใบเสร็จ หรือใบเสร็จ-ใบกำกับภาษี · ตรวจแถวรอ 50 ทวิ) · ตัวตัดสิน <see cref="PostPaymentAutomationPolicy"/></summary>
@@ -106,6 +108,9 @@ public sealed record DocumentPayLinkStatusDto(
     List<PostPaymentRunDto> Runs);
 
 /// <summary><paramref name="PromptPayQrDataUri"/> — รอบ 246 QR: QR พร้อมเพย์ที่เซิร์ฟเวอร์สร้าง (ฝังยอดสุทธิของลิงก์) · null = ไม่มีเลขพร้อมเพย์ที่ใช้ได้</summary>
+/// <summary>รอบ 250 WP-03 — ผลของ <c>TransferForDocumentAsync</c>: <paramref name="Refusal"/> ไม่ว่าง = ใบนี้รับชำระทางนี้ไม่ได้ (ข้อความไทย) · ยอดค้าง/WHT/สุทธิ · กล่องโอน (null = ไม่มีบัญชีรับโอน)</summary>
+public sealed record DocumentTransferView(string? Refusal, decimal Gross, decimal Wht, decimal Net, PublicTransferInfo? Transfer);
+
 public sealed record PublicTransferInfo(string? BankName, string? AccountNumber, string? AccountName, string? PromptPayId, string? PromptPayQrDataUri = null);
 
 public sealed record PublicDocumentPayView(

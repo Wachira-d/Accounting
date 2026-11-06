@@ -416,6 +416,7 @@
         <div id="etaxSubjectRows" style="display:flex;flex-direction:column;gap:8px;font-size:14px">กำลังโหลด...</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;align-items:center">
           <button class="admin-btn admin-btn-primary admin-btn-sm" type="button" id="etaxSubjectSave" disabled>บันทึก</button>
+          <button class="admin-btn admin-btn-outline admin-btn-sm" type="button" id="etaxSubjectReset">คืนค่าตั้งต้นทั้งชุด</button>
           <span class="help-text">ว่าง = รหัสตั้งต้น · มีผลกับอีเมล e-Tax ฉบับถัดไปทันที (ไม่ต้อง deploy)</span>
         </div>
       </div>
@@ -728,6 +729,14 @@
         AdminLayout.toast(res.message || 'บันทึกแล้ว');
         if (res.data) renderEtaxSubjectCodes(res.data);
       } catch (e) { AdminLayout.toast('บันทึกไม่สำเร็จ: ' + e.message, 'error'); }
+    });
+    document.getElementById('etaxSubjectReset').addEventListener('click', async () => {
+      if (!confirm('คืนรหัสหัวเรื่อง e-Tax by Email เป็นค่าตั้งต้นทั้งชุด?')) return;
+      try {
+        const res = await AdminAPI.del('/etax-email-subject-codes');
+        AdminLayout.toast(res.message || 'คืนค่าแล้ว');
+        if (res.data) renderEtaxSubjectCodes(res.data);
+      } catch (e) { AdminLayout.toast('คืนค่าไม่สำเร็จ: ' + e.message, 'error'); }
     });
     loadEtaxSubjectCodes();
     // รอบ 232: ลิงก์ตรง ?tab=<แท็บ>#<การ์ด> (เช่น ทางลัดจากหน้าช่องทางรับชำระ) ⇒ เปิดแท็บนั้นแล้วเลื่อนไปการ์ด — เดิมสวิตช์หน้าซื้อแพ็กเกจอยู่ท้ายแท็บ "แพ็กเกจบริการ" หาไม่เจอ

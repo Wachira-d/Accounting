@@ -239,15 +239,15 @@
             <div style="flex:1">
               <div style="font-weight:600">${Layout.esc(labelTrigger(r.trigger))} ${r.documentType ? ` · ${Layout.esc(r.documentType)}` : ''}</div>
               <div style="font-size:12px;color:#64748b;margin-top:2px">
-                ${r.offsetDays === 0 ? 'ทันที' : (r.offsetDays > 0 ? `+${r.offsetDays} วัน` : `${r.offsetDays} วัน`)}
-                · เวลา ${r.sendAtHour}:00
-                ${r.repeatEveryDays > 0 ? ` · ซ้ำทุก ${r.repeatEveryDays} วัน` : ''}
+                ${r.offsetDays === 0 ? 'ทันที' : (r.offsetDays > 0 ? `+${Number(r.offsetDays)} วัน` : `${Number(r.offsetDays)} วัน`)}
+                · เวลา ${Number(r.sendAtHour)}:00
+                ${r.repeatEveryDays > 0 ? ` · ซ้ำทุก ${Number(r.repeatEveryDays)} วัน` : ''}
               </div>
               ${r.subjectTemplate ? `<div style="font-size:12px;color:#475569;margin-top:4px">หัวเรื่อง: ${Layout.esc(r.subjectTemplate)}</div>` : ''}
             </div>
             <div style="display:flex;gap:6px">
-              <button class="btn btn-sm btn-outline" onclick="Page.openRule('${r.id}')">แก้ไข</button>
-              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${r.id}')">ลบ</button>
+              <button class="btn btn-sm btn-outline" onclick="Page.openRule('${Layout.jsArg(r.id)}')">แก้ไข</button>
+              <button class="btn btn-sm btn-danger-outline" onclick="Page.deleteRule('${Layout.jsArg(r.id)}')">ลบ</button>
             </div>
           </div>`).join('');
       },
@@ -389,11 +389,11 @@
               : q.status === 'Pending'
               ? `<button class="btn btn-sm btn-danger-outline" onclick="Page.cancel('${Layout.jsArg(q.id)}')">ยกเลิก</button>` : '';
             return `<tr>
-              <td data-label="สถานะ"><span class="pill ${pill}">${Layout.esc(q.statusLabel || q.status)}</span></td>
+              <td data-label="สถานะ"><span class="pill ${pill /* text — ชื่อคลาสคงที่ของหน้า */}">${Layout.esc(q.statusLabel || q.status)}</span></td>
               <td data-label="ผู้รับ" style="font-family:monospace;font-size:12px">${Layout.esc(q.toEmail)}</td>
               <td data-label="เรื่อง">${Layout.esc(q.subject)}${q.errorMessage ? `<div style="font-size:11px;color:#ef4444;margin-top:4px">⚠ ${Layout.esc(q.errorMessage)}</div>` : ''}</td>
-              <td data-label="นัดส่ง" style="font-size:12px">${new Date(q.scheduledFor).toLocaleString('th-TH')}</td>
-              <td>${actions}</td>
+              <td data-label="นัดส่ง" style="font-size:12px">${Layout.esc(new Date(q.scheduledFor).toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }))}</td>
+              <td>${actions /* html — ปุ่มที่ประกอบด้วย jsArg ข้างบน */}</td>
             </tr>`;
           }).join('');
         } catch (e) { Layout.toast(e.message, 'error'); }

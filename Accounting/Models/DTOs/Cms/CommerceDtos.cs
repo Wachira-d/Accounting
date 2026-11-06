@@ -430,6 +430,12 @@ public class StorefrontPaymentOptions
     /// <c>data:image/png;base64,…</c> — เดิมพอร์ทัลส่งเลขพร้อมเพย์+ยอดไปให้ <c>api.qrserver.com</c> (บุคคลที่สาม · PDPA) · null = ไม่มีเลขที่ใช้ได้ /
     /// ทางเข้าที่ไม่คำนวณ (payment-options แบบไม่ระบุใบ)</summary>
     public string? PromptPayQrDataUri { get; set; }
+    /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน H1 · พอร์ทัลต่อใบเท่านั้น): เหตุที่ใบนี้รับชำระไม่ได้ (<c>DocumentPayLinkPolicy.IssueRefusal</c>) · null = ชำระได้</summary>
+    public string? PayRefusal { get; set; }
+    /// <summary>รอบ 250 WP-03 (พอร์ทัลต่อใบ): ยอดค้าง · WHT ที่ผู้ซื้อจะหัก · ยอดโอนสุทธิ (เซิร์ฟเวอร์คำนวณ — ตัวเดียวกับหน้าชำระ) · null = ทางเข้าอื่น</summary>
+    public decimal? AmountGross { get; set; }
+    public decimal? AmountWht { get; set; }
+    public decimal? AmountNet { get; set; }
     // ── รอบ 209 P2 — สวิตช์ร้าน (เซิร์ฟเวอร์ตัดสิน · หน้าเว็บแสดงตาม) ──
     /// <summary>false = ร้านไม่รับโอน/แนบสลิป (ไม่ส่งเลขบัญชี · ซ่อนกล่องโอน — ไม่ใช่ "ยังไม่ตั้งบัญชี")</summary>
     public bool BankTransferEnabled { get; set; } = true;

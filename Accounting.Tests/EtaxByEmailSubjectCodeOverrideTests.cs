@@ -60,4 +60,12 @@ public class EtaxByEmailSubjectCodeOverrideTests
     [InlineData("I1V", false)]
     [InlineData(null, false)]
     public void รหัสต้องเป็นอักษรใหญ่สามตัว(string? code, bool ok) => Assert.Equal(ok, EtaxByEmailFormat.IsValidSubjectCode(code));
+
+    [Fact]
+    public void รหัสซ้ำข้ามชนิดเอกสาร_ถูกปฏิเสธ_ไม่ซ้ำผ่าน()
+    {
+        Assert.NotNull(EtaxByEmailFormat.DuplicateSubjectCode(new Dictionary<string, string> { ["CreditNote"] = "INV" }));
+        Assert.Null(EtaxByEmailFormat.DuplicateSubjectCode(new Dictionary<string, string> { ["CreditNote"] = "CRN" }));
+        Assert.Null(EtaxByEmailFormat.DuplicateSubjectCode(new Dictionary<string, string>()));   // ค่าตั้งต้นทั้งชุดไม่ซ้ำ
+    }
 }

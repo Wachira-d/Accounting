@@ -10,7 +10,7 @@ bank.html 2
 cash-forecast.html 1
 cash-management.html 14
 cleanup.html 3
-contacts.html 4
+contacts.html 2
 delivery-sign.html 2
 document-templates.html 4
 documents.html 22
@@ -25,9 +25,9 @@ journals.html 3
 migrate-competitor.html 2
 migration-wizard.html 0
 mobile-receipt.html 3
-organization.html 2
+organization.html 0
 payroll.html 9
-petty-cash.html 2
+petty-cash.html 0
 pos-floorplan.html 6
 pos-reservations.html 5
 pos.html 5

@@ -294,7 +294,7 @@
         <div class="kpi-grid">
           <div class="kpi"><div class="kpi-label">เอกสารทั้งหมด</div><div class="kpi-value">${docs.length}</div></div>
           <div class="kpi"><div class="kpi-label">ยอดค้างชำระ</div><div class="kpi-value" style="color:var(--warning)">฿${money(outstanding)}</div></div>
-          <div class="kpi"><div class="kpi-label">เกินกำหนด</div><div class="kpi-value" style="color:var(--danger)">${overdue}</div></div>
+          <div class="kpi"><div class="kpi-label">เกินกำหนด</div><div class="kpi-value" style="color:var(--danger)">${Number(overdue)}</div></div>
         </div>
         <div class="toolbar">
           <select id="docFilter" onchange="Portal.loadDocuments()">
@@ -317,21 +317,22 @@
               <tbody>${docs.map(d => {
                 // สถานะจากเซิร์ฟเวอร์เป็นตัวตั้ง — ใบยกเลิกห้ามขึ้น "ชำระแล้ว"/ปุ่มจ่าย (A-02)
                 const voided = d.status === 'Voided';
-                const payable = !voided && d.balanceDue > 0;
+                // รอบ 250 WP-03 (ฝ่ายค้าน H1): เซิร์ฟเวอร์ตัดสินว่าใบนี้ชำระที่นี่ได้ไหม (ฝั่งขาย · THB · ยอดค้าง > 0) — หน้าเว็บไม่ตัดสินชนิดเอง
+                const payable = !voided && d.canPay === true;
                 const overdue = payable && d.dueDate && new Date(d.dueDate) < new Date();
                 const cls = voided ? 'pill-void' : (d.balanceDue <= 0 ? 'pill-paid' : (overdue ? 'pill-overdue' : 'pill-due'));
                 const lbl = voided ? 'ยกเลิก' : (d.balanceDue <= 0 ? 'ชำระแล้ว' : (overdue ? 'เกินกำหนด' : 'รอชำระ'));
                 return `<tr>
                   <td><strong>${esc(d.documentNumber)}</strong></td>
-                  <td>${docTypeLabel(d.documentType)}</td>
+                  <td>${esc(docTypeLabel(d.documentType))}</td>
                   <td>${dateThai(d.documentDate)}</td>
                   <td>${d.dueDate ? dateThai(d.dueDate) : '-'}</td>
                   <td class="right">฿${money(d.totalAmount)}</td>
                   <td class="right" style="font-weight:600">${d.balanceDue > 0 ? `฿${money(d.balanceDue)}` : '-'}</td>
-                  <td><span class="pill ${cls}">${lbl}</span>${Number(d.slipPendingAmount || 0) > 0 ? `<div style="font-size:11.5px;color:#92400E;margin-top:2px" title="ผู้ขายจะตรวจสลิปแล้วยืนยัน — ยอดค้างลดเมื่อยืนยันแล้ว">⏳ สลิปรอตรวจ ฿${money(d.slipPendingAmount)}</div>` : ''}</td>
+                  <td><span class="pill ${cls /* text — ชื่อคลาสคงที่ */}">${esc(lbl)}</span>${Number(d.slipPendingAmount || 0) > 0 ? `<div style="font-size:11.5px;color:#92400E;margin-top:2px" title="ผู้ขายจะตรวจสลิปแล้วยืนยัน — ยอดค้างลดเมื่อยืนยันแล้ว">⏳ สลิปรอตรวจ ฿${money(d.slipPendingAmount)}</div>` : ''}</td>
                   <td>
-                    <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${d.id}')">ดู</button>
-                    <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${d.id}','${jsArg(d.documentNumber)}')">PDF</button>
+                    <button class="btn btn-ghost btn-sm" onclick="Portal.viewDocument('${jsArg(d.id)}')">ดู</button>
+                    <button class="btn btn-ghost btn-sm" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">PDF</button>
                     ${payable ? `<button class="btn btn-sm" style="background:#059669;color:#fff" onclick="Portal.openPay('${jsArg(d.id)}', ${Number(d.balanceDue) || 0}, '${jsArg(d.documentNumber)}')">💳 ชำระ</button>` : ''}
                   </td>
                 </tr>`;
@@ -349,7 +350,7 @@
         const overdue = d.balanceDue > 0 && d.dueDate && new Date(d.dueDate) < new Date();
         document.getElementById('modalBody').innerHTML = `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px;margin-bottom:14px">
-            <div><div style="font-size:11px;color:var(--gray-500)">ประเภท</div><div>${docTypeLabel(d.documentType)}</div></div>
+            <div><div style="font-size:11px;color:var(--gray-500)">ประเภท</div><div>${esc(docTypeLabel(d.documentType))}</div></div>
             <div><div style="font-size:11px;color:var(--gray-500)">สถานะ</div><div>${esc(d.status)}</div></div>
             <div><div style="font-size:11px;color:var(--gray-500)">วันที่เอกสาร</div><div>${dateThai(d.documentDate)}</div></div>
             <div><div style="font-size:11px;color:var(--gray-500)">วันครบกำหนด</div><div>${d.dueDate ? dateThai(d.dueDate) : '-'}</div></div>
@@ -359,12 +360,12 @@
             <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span>ชำระแล้ว</span><span style="color:var(--success)">฿${money(d.paidAmount)}</span></div>
             <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;border-top:1px solid var(--gray-300);margin-top:6px;padding-top:6px">
               <span>ค้างชำระ</span>
-              <span style="color:${overdue?'var(--danger)':d.balanceDue>0?'var(--warning)':'var(--success)'}">฿${money(d.balanceDue)}</span>
+              <span style="color:${overdue?'var(--danger)':(d.balanceDue>0?'var(--warning)':'var(--success)')}">฿${money(d.balanceDue)}</span>
             </div>
           </div>`;
         document.getElementById('modalFooter').innerHTML = `
           <button class="btn btn-ghost" onclick="Portal.closeModal()">ปิด</button>
-          <button class="btn btn-primary" onclick="Portal.downloadPdf('${d.id}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>
+          <button class="btn btn-primary" onclick="Portal.downloadPdf('${jsArg(d.id)}','${jsArg(d.documentNumber)}')">📥 ดาวน์โหลด PDF</button>
         `;
         document.getElementById('modalBg').classList.add('open');
       } catch (e) { toast(e.message, 'err'); }
@@ -424,9 +425,9 @@
       document.getElementById('tabContent').innerHTML = `
         <div class="toolbar">
           <label style="font-size:13px;color:var(--gray-600)">ตั้งแต่</label>
-          <input type="date" id="stFrom" value="${from}" class="search">
+          <input type="date" id="stFrom" value="${esc(from)}" class="search">
           <label style="font-size:13px;color:var(--gray-600)">ถึง</label>
-          <input type="date" id="stTo" value="${to}" class="search">
+          <input type="date" id="stTo" value="${esc(to)}" class="search">
           <button class="btn btn-primary btn-sm" onclick="Portal.loadStatement()">โหลด</button>
         </div>
         <div id="stmtBody"><div class="empty">กำลังโหลด...</div></div>`;
@@ -500,12 +501,21 @@
       const ppId = pay?.promptPayId;
       // รับเฉพาะรูปที่เซิร์ฟเวอร์สร้าง (data:image/png;base64,) แบบ pay-document · ถ้าไม่มี = รูปที่ร้านอัปโหลด (เซิร์ฟเวอร์กรอง URL แล้ว)
       const dataQr = typeof pay?.promptPayQrDataUri === 'string' && pay.promptPayQrDataUri.startsWith('data:image/png;base64,') ? pay.promptPayQrDataUri : null;
-      const ppQr = dataQr || (pay?.promptPayQrUrl || null);
+      const ppQr = dataQr;   // ฝ่ายค้าน H1: กล่องโอนมาจากตัวเดียวกับหน้าชำระ (บัญชีของใบ/รูปที่อัปโหลด เป็น data URI แล้ว)
       const hasPay = pay?.hasPaymentMethod;
+      if (pay?.payRefusal) {
+        bodyEl.innerHTML = `<div class="empty" style="background:#FEF2F2;color:#991b1b;border-radius:8px">${esc(pay.payRefusal)}</div>`;
+        return;
+      }
+      // ยอดจากเซิร์ฟเวอร์ (ตัวเดียวกับหน้าชำระ): ยอดค้าง − ภาษีหัก ณ ที่จ่ายที่ผู้ซื้อจะหัก = ยอดโอน
+      const gross = pay?.amountGross ?? balanceDue;
+      const wht = Number(pay?.amountWht || 0);
+      const net = pay?.amountNet ?? balanceDue;
 
       bodyEl.innerHTML = `
         <div style="background:#FEF3C7;border-left:3px solid #D97706;padding:10px 14px;border-radius:6px;font-size:13px;margin-bottom:14px">
-          ยอดค้างชำระ: <strong>฿${money(balanceDue)}</strong> · เอกสาร <strong>${esc(docNumber)}</strong>
+          ยอดค้างชำระ: <strong>฿${money(gross)}</strong> · เอกสาร <strong>${esc(docNumber)}</strong>
+          ${wht > 0.005 ? `<div style="margin-top:4px">หัก ณ ที่จ่าย ฿${money(wht)} · <strong>ยอดโอน ฿${money(net)}</strong></div>` : ''}
         </div>
         ${!hasPay ? `<div class="empty" style="background:#FEF2F2;color:#991b1b;border-radius:8px">ทางร้านยังไม่ได้ตั้งค่าวิธีรับเงิน — กรุณาติดต่อร้านโดยตรง</div>` : `
         ${ppQr ? `
@@ -524,7 +534,7 @@
         <form id="paySlipForm" onsubmit="Portal.uploadSlip(event, '${jsArg(documentId)}', '${jsArg(docNumber)}')" style="display:grid;gap:10px">
           <div class="field" style="margin-bottom:0">
             <label>จำนวนที่โอน (บาท)</label>
-            <input type="number" step="0.01" min="0.01" name="amount" value="${Number(balanceDue||0).toFixed(2)}" required>
+            <input type="number" step="0.01" min="0.01" name="amount" value="${Number(net||0).toFixed(2)}" required>
           </div>
           <div class="field" style="margin-bottom:0">
             <label>แนบสลิป (รูปภาพ/PDF)</label>

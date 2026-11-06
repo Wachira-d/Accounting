@@ -2712,6 +2712,43 @@ const Layout = {
     return resp && resp.usedAi === true ? '🤖 AI แนะนำ' : '⚙️ ระบบแนะนำ';
   },
 
+  /** แนะนำผังบัญชีต่อช่อง (`ai/gl-account/suggest`) — **ตัวเดียวของทุกหน้า** (รอบ 250 WP-03 ฝ่ายค้าน M3: เดิมสำเนา 4 ชุดใน contacts/organization/petty-cash/recurring
+   *  ใช้ fetch ดิบ + ติดป้าย 🤖 ตายตัว) · ป้ายตาม `usedAi` ของเซิร์ฟเวอร์ (`suggestLabel`) · ปิด loop เมื่อผู้ใช้เปลี่ยน (Explicit) · ล้มดังในช่องคำใบ้
+   *  @param opts {slot, selectId, hintId?, contactId?, assetCategory?} · คืน data ของคำแนะนำ (หรือ null) */
+  async suggestGlAccount(opts) {
+    const hint = opts.hintId ? document.getElementById(opts.hintId) : null;
+    try {
+      const cid = this.getCompanyId();
+      const q = `slot=${encodeURIComponent(opts.slot)}`
+        + (opts.contactId ? `&contactId=${encodeURIComponent(opts.contactId)}` : '')
+        + (opts.assetCategory ? `&assetCategory=${encodeURIComponent(opts.assetCategory)}` : '');
+      const j = await API.get(`/api/companies/${cid}/ai/gl-account/suggest?${q}`);
+      const d = j && j.data;
+      const label = this.suggestLabel(d);
+      const sel = document.getElementById(opts.selectId);
+      if (!d || !d.accountId) { if (hint) hint.textContent = `${label}: ${(d && d.reasoning) || 'ยังไม่มีข้อมูลพอจะแนะนำ'}`; return null; }
+      if (sel && !Array.from(sel.options).some(o => o.value === d.accountId)) {
+        const opt = document.createElement('option');
+        opt.value = d.accountId; opt.textContent = `${d.accountCode} - ${d.accountName}`;
+        sel.appendChild(opt);
+      }
+      if (sel) sel.value = d.accountId;
+      if (hint) hint.textContent = `${label}: ${d.reasoning} (${Math.round((d.confidence || 0) * 100)}%)`;
+      if (sel && d.feedbackId) {
+        sel.addEventListener('change', () => {
+          // event change ของดรอปดาวน์บัญชี = ผู้ใช้เลือกเอง ⇒ Explicit (รอบ 181 D7-3) · ปิด loop เบื้องหลัง
+          API.post(`/api/companies/${cid}/ai-feedback/record`,
+            { feedbackId: d.feedbackId, chosenAnswer: sel.value, acceptedAi: sel.value === d.accountId, source: 'Explicit' })
+            .catch(e => console.warn('บันทึกคำตอบผู้ใช้ไม่สำเร็จ', e));
+        }, { once: true });
+      }
+      return d;
+    } catch (e) {
+      if (hint) hint.textContent = '⚠️ โหลดคำแนะนำไม่สำเร็จ — เลือกบัญชีเองได้ (' + ((e && e.message) || 'ข้อผิดพลาด') + ')';
+      return null;
+    }
+  },
+
   /** แผง "โหลดไม่สำเร็จ — ลองใหม่" ในกล่องที่โหลดล้ม (ล้มดัง F2 ข้อ 7 — แทน `catch {}`/`console.warn` ที่ทิ้งกล่องว่างเงียบ ๆ)
    *
    *  สร้างด้วย DOM (textContent) ไม่ต่อ HTML ⇒ ข้อความ error จากเซิร์ฟเวอร์ปลอดภัยเสมอ · `onRetry` เป็นฟังก์ชัน (ไม่ใช่สตริง onclick)

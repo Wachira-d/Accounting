@@ -62,7 +62,7 @@ def self_test():
     portal = os.path.join(WWWROOT, "portal.html")
     if os.path.exists(portal):
         t = open(portal, encoding="utf-8").read()
-        injected = t.replace("const ppQr = dataQr ||", "const ppQr = 'https://api.qrserver.com/v1/create-qr-code/?data=' + ppId ||", 1)
+        injected = t.replace("const ppQr = dataQr;", "const ppQr = 'https://api.qrserver.com/v1/create-qr-code/?data=' + ppId;", 1)
         if injected == t:
             fails.append("หาจุดฉีดใน portal.html ไม่เจอ (โค้ดเปลี่ยน — แก้ self-test)")
         elif not scan_text(injected):

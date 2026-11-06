@@ -1,5 +1,6 @@
 using Accounting.Helpers;
 using Accounting.Models.DTOs.Bank;
+using Accounting.Models.DTOs.Cms;
 using Accounting.Models.DTOs.DocumentTemplate;
 using Accounting.Models.Entities;
 using Accounting.Models.Enums;
@@ -345,9 +346,9 @@ public class PaymentQrRound246DbTests
         Assert.Equal("1234567890", view.Transfer!.AccountNumber);          // บัญชีของใบ ไม่ใช่บัญชีของเว็บ
         Assert.StartsWith("data:image/png;base64,", view.Transfer.PromptPayQrDataUri);
     }
-    // ═════════════ รอบ 250 WP-03 (A G-01 · D §9.1): QR พอร์ทัลลูกค้าสร้างที่เซิร์ฟเวอร์ — ไม่ส่งเลขพร้อมเพย์/ยอดไปบริการภายนอก ═════════════
+    // ═════════════ รอบ 250 WP-03 (A G-01 · D §9.1 · ฝ่ายค้าน H1): QR พอร์ทัลลูกค้า = กติกา/ยอด/บัญชีเดียวกับหน้าชำระ ═════════════
 
-    private static async Task<(Guid SiteId, PortalService Portal)> PortalWithGatewayAsync(Accounting.Data.AccountingDbContext db, Seed s, string? promptPayId, string? qrUrl)
+    private static async Task<PortalService> PortalWithGatewayAsync(Accounting.Data.AccountingDbContext db, Seed s, string? promptPayId, string? qrUrl)
     {
         var tag = "p250-" + Guid.NewGuid().ToString("N")[..8];
         var site = new Site { CompanyId = s.CompanyId, Name = "เว็บ 250", Slug = tag, Subdomain = tag, Status = SiteStatus.Published };
@@ -360,7 +361,15 @@ public class PaymentQrRound246DbTests
         });
         await db.SaveChangesAsync();
         var cfg = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Portal:SigningKey"] = "portal-250-test-signing-key-0123456789" }).Build();
-        return (site.Id, new PortalService(db, cfg));
+        return new PortalService(db, cfg, payLinks: s.Links);
+    }
+
+    private static async Task MutateInvoiceAsync(Accounting.Data.AccountingDbContext db, Seed s, Action<Document> change)
+    {
+        var doc = await db.Documents.SingleAsync(x => x.Id == s.Invoice.Id && x.CompanyId == s.CompanyId);
+        change(doc);
+        await db.SaveChangesAsync();
+        db.ChangeTracker.Clear();
     }
 
     [Fact]
@@ -369,13 +378,66 @@ public class PaymentQrRound246DbTests
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
         var s = await SeedAsync(db, "portal " + Guid.NewGuid().ToString("N")[..6]);
-        var (_, portal) = await PortalWithGatewayAsync(db, s, "0812345678", "javascript:alert(1)");
+        var portal = await PortalWithGatewayAsync(db, s, "0812345678", "javascript:alert(1)");
         var o = await portal.GetDocumentPaymentOptionsAsync(s.CompanyId, s.Invoice.ContactId, s.Invoice.Id);
+        Assert.Null(o.PayRefusal);
         Assert.StartsWith("data:image/png;base64,", o.PromptPayQrDataUri);
-        Assert.Null(o.PromptPayQrUrl);   // รูปที่ไม่ใช่ URL ภายใน/https ไม่ถูกส่งต่อ
+        Assert.Null(o.PromptPayQrUrl);                    // รูป/URL ของร้านไม่ถูกส่งต่อ — กล่องโอนมาจากตัวเดียวกับหน้าชำระ
+        Assert.Equal("1234567890", o.BankAccountNumber);  // บัญชีของใบ (ตัวเลือกเดียวกับกระดาษ) ไม่ใช่บัญชีของเว็บ
         Assert.DoesNotContain("qrserver", o.PromptPayQrDataUri!, StringComparison.OrdinalIgnoreCase);
         // ใบของลูกค้าคนอื่น (ผู้ติดต่อในโทเค็นไม่ตรง) ⇒ ไม่พบ — ยอดค้างเป็นข้อมูลของลูกค้ารายนั้น
         await Assert.ThrowsAsync<KeyNotFoundException>(() => portal.GetDocumentPaymentOptionsAsync(s.CompanyId, Guid.NewGuid(), s.Invoice.Id));
+    }
+
+    [Fact]
+    public async Task พอร์ทัล_paymentoptions_ยอดโอนหลังหักณที่จ่าย_ตัวเดียวกับหน้าชำระ()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "portal-wht " + Guid.NewGuid().ToString("N")[..6]);
+        var portal = await PortalWithGatewayAsync(db, s, "0812345678", null);
+        var o = await portal.GetDocumentPaymentOptionsAsync(s.CompanyId, s.Invoice.ContactId, s.Invoice.Id);
+        var link = await s.Links.EnsureLinkAsync(s.CompanyId, s.Invoice.Id, new[] { "PromptPay", DocumentPayLinkPolicy.BankTransferCode });
+        var token = System.Web.HttpUtility.ParseQueryString(new Uri(link.Url!).Query)["t"]!;
+        var view = (await s.Links.PublicViewAsync(s.CompanyId, token))!;
+        // ยอดโอน/WHT เท่าหน้าชำระ (ตัวคิดเดียว AmountsAsync) — เดิมพอร์ทัลฝังยอดค้างเต็มโดยไม่หัก ณ ที่จ่าย
+        Assert.Equal(view.Net, o.AmountNet);
+        Assert.Equal(view.Wht, o.AmountWht);
+        Assert.Equal(view.Gross, o.AmountGross);
+        Assert.Equal(o.AmountGross - o.AmountWht, o.AmountNet);
+    }
+
+    [Theory]
+    [InlineData("USD")]
+    [InlineData("PurchaseInvoice")]
+    [InlineData("Voided")]
+    [InlineData("Paid")]
+    public async Task พอร์ทัล_paymentoptions_ใบที่ชำระทางนี้ไม่ได้_ปฏิเสธ_ไม่มีQR(string variant)
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine(Skip); return; }
+        var s = await SeedAsync(db, "portal-no " + variant + Guid.NewGuid().ToString("N")[..6]);
+        var portal = await PortalWithGatewayAsync(db, s, "0812345678", null);
+        await MutateInvoiceAsync(db, s, d =>
+        {
+            switch (variant)
+            {
+                case "USD": d.Currency = "USD"; break;
+                case "PurchaseInvoice": d.DocumentType = DocumentType.PurchaseInvoice; break;
+                case "Voided": d.Status = DocumentStatus.Voided; break;
+                case "Paid": d.BalanceDue = 0m; d.Status = DocumentStatus.Paid; break;
+            }
+        });
+        StorefrontPaymentOptions? o = null;
+        try { o = await portal.GetDocumentPaymentOptionsAsync(s.CompanyId, s.Invoice.ContactId, s.Invoice.Id); }
+        catch (KeyNotFoundException) { return; }   // ใบที่พอร์ทัลไม่แสดง = ไม่พบ (ก็ไม่มี QR เช่นกัน)
+        Assert.NotNull(o.PayRefusal);
+        Assert.Null(o.PromptPayQrDataUri);
+        Assert.Null(o.BankAccountNumber);
+        Assert.False(o.HasPaymentMethod);
+        // รายการเอกสารของพอร์ทัล — ไม่มีปุ่มชำระ
+        var list = await portal.GetMyDocumentsAsync(s.CompanyId, s.Invoice.ContactId);
+        Assert.All(list.Where(x => x.Id == s.Invoice.Id), x => Assert.False(x.CanPay));
     }
 
     [Fact]
@@ -383,11 +445,13 @@ public class PaymentQrRound246DbTests
     {
         using var db = DbTestDatabase.TryCreateContext();
         if (db == null) { _out.WriteLine(Skip); return; }
-        var s = await SeedAsync(db, "portal-none " + Guid.NewGuid().ToString("N")[..6]);
-        var (_, portal) = await PortalWithGatewayAsync(db, s, null, null);
+        var s = await SeedAsync(db, "portal-none " + Guid.NewGuid().ToString("N")[..6], promptPay: null);
+        var portal = await PortalWithGatewayAsync(db, s, null, null);
         var o = await portal.GetDocumentPaymentOptionsAsync(s.CompanyId, s.Invoice.ContactId, s.Invoice.Id);
+        Assert.Null(o.PayRefusal);
         Assert.Null(o.PromptPayQrDataUri);
         Assert.Null(o.PromptPayQrUrl);
-        Assert.True(o.HasPaymentMethod);   // ยังโอนเข้าบัญชีได้ (เลขบัญชีของเว็บ)
+        Assert.True(o.HasPaymentMethod);   // ยังโอนเข้าบัญชีของใบได้
+        Assert.True((await portal.GetMyDocumentsAsync(s.CompanyId, s.Invoice.ContactId)).Single(x => x.Id == s.Invoice.Id).CanPay);
     }
 }

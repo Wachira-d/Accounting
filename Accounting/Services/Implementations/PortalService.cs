@@ -16,6 +16,8 @@ namespace Accounting.Services.Implementations;
 public class PortalService : IPortalService
 {
     private readonly AccountingDbContext _db;
+    /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน H1): กล่องโอน/QR ของใบจากตัวเดียวกับหน้าชำระ (<c>DocumentPayLinkService.TransferForDocumentAsync</c>)</summary>
+    private readonly IDocumentPayLinkService? _payLinks;
     private readonly IPdfGenerationService? _pdfService;
     private readonly IImageProcessingService? _images;
     private readonly string _portalSigningKey;
@@ -27,8 +29,10 @@ public class PortalService : IPortalService
     private readonly Accounting.Services.Payments.IPaymentIntentService? _intents;
 
     public PortalService(AccountingDbContext db, IConfiguration configuration, IPdfGenerationService? pdfService = null, IImageProcessingService? images = null,
-        Accounting.Services.Storage.IFileStorage? storage = null, Accounting.Services.Payments.IPaymentIntentService? intents = null)
+        Accounting.Services.Storage.IFileStorage? storage = null, Accounting.Services.Payments.IPaymentIntentService? intents = null,
+        IDocumentPayLinkService? payLinks = null)
     {
+        _payLinks = payLinks;
         _storage = storage;
         _intents = intents;
         _db = db;
@@ -222,13 +226,23 @@ public class PortalService : IPortalService
 
         var rows = await query
             .OrderByDescending(d => d.DocumentDate)
-            .Select(d => new PortalDocumentResponse(
+            .Select(d => new
+            {
+                d.Id, d.DocumentNumber, d.DocumentType, d.DocumentDate, d.DueDate, d.TotalAmount, d.PaidAmount, d.BalanceDue, d.Status, d.Currency,
+                RelatedType = _db.Documents.Where(r => r.Id == d.RelatedDocumentId && r.CompanyId == companyId).Select(r => (DocumentType?)r.DocumentType).FirstOrDefault(),
+            })
+            .ToListAsync();
+        var pending = await SlipPendingByDocumentAsync(companyId, rows.Select(r => r.Id).ToList());   // รอบ 250 ฝ่ายค้าน L4 (WP-02b)
+        // รอบ 250 WP-03 (ฝ่ายค้าน H1): ปุ่ม "ชำระ" ตามกติกาเดียวกับลิงก์ชำระ (DocumentPayLinkPolicy.IssueRefusal — ฝั่งขาย · THB · ยอดค้าง > 0 · ออกแล้ว)
+        // · ใบกำกับที่อ้างใบแจ้งหนี้ตรวจตอนเปิดหน้าต่างชำระ (TransferForDocumentAsync) — หน้าเว็บไม่ตัดสินชนิดเอง
+        return rows.Select(d => new PortalDocumentResponse(
                 d.Id, d.DocumentNumber, d.DocumentType.ToString(),
                 d.DocumentDate, d.DueDate, d.TotalAmount, d.PaidAmount,
-                d.BalanceDue, d.Status.ToString(), 0m))
-            .ToListAsync();
-        var pending = await SlipPendingByDocumentAsync(companyId, rows.Select(r => r.Id).ToList());
-        return rows.Select(r => pending.TryGetValue(r.Id, out var amt) ? r with { SlipPendingAmount = amt } : r).ToList();
+                d.BalanceDue, d.Status.ToString(),
+                SlipPendingAmount: pending.GetValueOrDefault(d.Id),
+                CanPay: DocumentPayLinkPolicy.IssueRefusal(d.DocumentType, d.Status, d.BalanceDue,
+                    DocumentPayLinkPolicy.IsSaleSide(d.DocumentType, d.RelatedType), d.Currency, null) == null))
+            .ToList();
     }
 
     /// <summary>รอบ 250 ฝ่ายค้าน L4: ยอดสลิปรอตรวจต่อเอกสาร (รายการ manual-slip ของเอกสารที่ยังเปิด) — ลูกค้าเห็นว่าแนบแล้ว แต่ยอดค้างไม่ลดจนผู้ขายยืนยัน</summary>
@@ -526,19 +540,27 @@ public class PortalService : IPortalService
     /// (ไม่รับยอดจากหน้าเว็บ) · ใบแจ้งหนี้ที่มีใบกำกับภาษีอ้างแล้ว = ไม่ฝังยอด (<c>PaymentQrPolicy.EmbedAmount</c>) · เลขพร้อมเพย์ใช้ไม่ได้ = ไม่มี QR</para></summary>
     public async Task<StorefrontPaymentOptions> GetDocumentPaymentOptionsAsync(Guid companyId, Guid contactId, Guid documentId, CancellationToken ct = default)
     {
-        var doc = await _db.Documents.AsNoTracking()
-            .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId && d.ContactId == contactId && !d.IsDeleted, ct)
+        // ฝ่ายค้าน M2: ความเป็นเจ้าของ + "ออกแล้ว" ผ่านด่านเดียวของพอร์ทัล (PortalDocuments) — ไม่เขียน query เอง
+        var exists = await PortalDocuments(companyId, contactId).AsNoTracking().AnyAsync(d => d.Id == documentId, ct);
+        if (!exists) throw new KeyNotFoundException("ไม่พบเอกสาร");
+        // ฝ่ายค้าน H1: กติกา/ยอด/บัญชีเดียวกับหน้าชำระ (pay-document) — ฝั่งขาย · THB · ยอดค้าง > 0 · ใบกำกับอ้างแล้ว ⇒ ปฏิเสธพร้อมเหตุ ·
+        // QR ฝังยอดสุทธิหลัง WHT · บัญชีของใบก่อน (ตัวเลือกเดียวกับกระดาษ) แล้วจึงบัญชีรับโอนของเว็บ
+        if (_payLinks == null) throw new InvalidOperationException("ระบบลิงก์ชำระยังไม่พร้อม — ติดต่อผู้ดูแลระบบ");
+        var view = await _payLinks.TransferForDocumentAsync(companyId, documentId, ct)
             ?? throw new KeyNotFoundException("ไม่พบเอกสาร");
-        var opts = await GetCompanyPaymentOptionsAsync(companyId);
-        // รูป QR ที่ร้านอัปโหลดเอง — รับเฉพาะ URL ภายในระบบ/https (ตัวตรวจเดียวกับหน้าร้าน) · อย่างอื่นไม่ส่ง
-        if (!BookingPaymentChannels.QrImageUrlAcceptable(opts.PromptPayQrUrl)) opts.PromptPayQrUrl = null;
-        var ppId = PaymentQrPolicy.NormalizePromptPayId(opts.PromptPayId).Id;
-        if (ppId != null)
+        var opts = new StorefrontPaymentOptions
         {
-            var superseded = await PaymentQrService.SupersededByTaxInvoiceAsync(_db, companyId, doc, ct);
-            var amount = PaymentQrPolicy.EmbedAmount(null, doc.BalanceDue, superseded) ?? 0m;   // 0 = QR ไม่ฝังยอด (ลูกค้ากรอกยอดเอง)
-            opts.PromptPayQrDataUri = "data:image/png;base64,"
-                + Convert.ToBase64String(new PromptPayService().GenerateQrImage(ppId, amount, size: 330));
+            PayRefusal = view.Refusal,
+            AmountGross = view.Gross, AmountWht = view.Wht, AmountNet = view.Net,
+            HasPaymentMethod = view.Refusal == null && view.Transfer != null,
+        };
+        if (view.Refusal == null && view.Transfer is { } t)
+        {
+            opts.BankName = t.BankName;
+            opts.BankAccountNumber = t.AccountNumber;
+            opts.BankAccountName = t.AccountName;
+            opts.PromptPayId = t.PromptPayId;
+            opts.PromptPayQrDataUri = t.PromptPayQrDataUri;
         }
         return opts;
     }

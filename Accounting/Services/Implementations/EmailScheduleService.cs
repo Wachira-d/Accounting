@@ -1057,6 +1057,11 @@ public class EmailScheduleService : IEmailScheduleService
         var q = await _db.EmailQueues
             .FirstOrDefaultAsync(x => x.Id == queueId && x.CompanyId == companyId)
             ?? throw new KeyNotFoundException("ไม่พบคิว");
+        // รอบ 250 WP-03 (ฝ่ายค้าน L7): ลองใหม่ได้เฉพาะแถวที่ล้ม — เดิมรีเซ็ตทุกสถานะ ⇒ แถวที่ส่งแล้ว (Sent) กลับเป็น Pending = ลูกค้าได้อีเมลซ้ำ ·
+        // แถวที่ยกเลิก/กำลังรอ ไม่ต้องลองใหม่ (ยกเลิกแล้ว = ตั้งกฎ/ส่งใหม่ที่เอกสาร)
+        if (!string.Equals(q.Status, "Failed", StringComparison.Ordinal))
+            throw new Accounting.Helpers.BusinessRuleException(
+                $"ลองส่งใหม่ได้เฉพาะคิวที่ล้ม (สถานะตอนนี้: {q.Status}) — คิวที่ส่งแล้วจะไม่ถูกส่งซ้ำ", "EMAIL-QUEUE-RETRY-FAILED-ONLY", 409);
         q.Status = "Pending";
         q.RetryCount = 0;
         q.ScheduledFor = DateTime.UtcNow;

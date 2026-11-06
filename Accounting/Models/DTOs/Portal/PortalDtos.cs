@@ -9,7 +9,8 @@ public record PortalLoginResponse(string AccessToken, string RefreshToken, Guid 
 public record PortalRefreshRequest(string RefreshToken);
 
 /// <param name="SlipPendingAmount">รอบ 250 ฝ่ายค้าน L4: ยอดสลิปที่ลูกค้าแนบแล้วรอผู้ขายตรวจ (เซิร์ฟเวอร์รวมจากรายการรอยืนยัน) · 0 = ไม่มี — ไม่ลดยอดค้างจนผู้ขายยืนยัน</param>
-public record PortalDocumentResponse(Guid Id, string DocumentNumber, string DocumentType, DateTime DocumentDate, DateTime? DueDate, decimal TotalAmount, decimal PaidAmount, decimal BalanceDue, string Status, decimal SlipPendingAmount = 0m);
+/// <summary><c>CanPay</c> — รอบ 250 WP-03: พอร์ทัลแสดงปุ่มชำระตามค่านี้ (เซิร์ฟเวอร์ตัดสินด้วย <c>DocumentPayLinkPolicy.IssueRefusal</c>)</summary>
+public record PortalDocumentResponse(Guid Id, string DocumentNumber, string DocumentType, DateTime DocumentDate, DateTime? DueDate, decimal TotalAmount, decimal PaidAmount, decimal BalanceDue, string Status, decimal SlipPendingAmount = 0m, bool CanPay = false);
 public record PortalStatementResponse(DateTime FromDate, DateTime ToDate, decimal OpeningBalance, decimal TotalCharged, decimal TotalPaid, decimal ClosingBalance, List<PortalStatementLine> Lines);
 public record PortalStatementLine(DateTime Date, string DocumentNumber, string Description, decimal Amount, decimal Balance);
 public record PortalPaymentResponse(Guid Id, DateTime PaymentDate, decimal Amount, string PaymentMethod, string? Reference, string DocumentNumber);

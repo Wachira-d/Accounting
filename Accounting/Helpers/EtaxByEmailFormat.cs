@@ -119,6 +119,15 @@ public static class EtaxByEmailFormat
         return diff.Count == 0 ? null : System.Text.Json.JsonSerializer.Serialize(diff);
     }
 
+    /// <summary>รอบ 250 WP-03 (ฝ่ายค้าน L1): รหัสที่มีผล (ค่าทับ › ค่าตั้งต้น) ซ้ำกันข้ามชนิดเอกสารไหม — ซ้ำ ⇒ ข้อความไทย · ไม่ซ้ำ ⇒ null</summary>
+    public static string? DuplicateSubjectCode(IReadOnlyDictionary<string, string> codes)
+    {
+        var effective = SubjectCodeSlots.Select(s => (s.Key, Code: codes.TryGetValue(s.Key, out var c) && IsValidSubjectCode(c) ? c : s.Default)).ToList();
+        var dup = effective.GroupBy(x => x.Code).FirstOrDefault(g => g.Count() > 1);
+        return dup == null ? null
+            : $"รหัส “{dup.Key}” ซ้ำกันหลายชนิดเอกสาร ({string.Join(", ", dup.Select(x => x.Key))}) — ETDA ต้องแยกชนิดจากรหัสหัวเรื่อง";
+    }
+
     /// <summary>รหัสที่มีผลจริงต่อช่อง (ค่าทับ › ค่าตั้งต้น) — ตัวเดียวที่หน้าแอดมินแสดง</summary>
     public static IReadOnlyList<(string Key, string Label, string Code, string Default)> EffectiveSubjectCodes(string? json)
     {
