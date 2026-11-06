@@ -19,8 +19,10 @@ public interface IEmailScheduleService
 
     /// <summary>Recurring สร้าง document ใหม่ — รวมทั้งแบบ auto-approve
     /// และไม่ approve. ใช้ trigger RecurringInvoiceCreated เพื่อแยกจาก
-    /// DocumentApproved (กฎเดียวกันส่งซ้ำได้เพราะ idempotency key ต่างกัน).</summary>
-    Task OnRecurringDocumentCreatedAsync(Guid companyId, Guid documentId, Guid recurringId, CancellationToken ct = default);
+    /// DocumentApproved.
+    /// <para>รอบ 250 (WP-02 §2.4 ข้อ 1/3): คืนผล Enqueued/Skipped(เหตุ)/Failed(เหตุ) — ไม่โยน · ผู้เรียกตั้งธง <c>EmailEnqueueFailed</c> จากผล ·
+    /// มีกฎ "เมื่ออนุมัติเอกสาร" ครอบชนิดนี้และใบอนุมัติแล้ว ⇒ Skipped (กฎนั้นเข้าคิวไปแล้วตอนอนุมัติ — กันอีเมลซ้ำ)</para></summary>
+    Task<Accounting.Helpers.EmailEnqueueOutcome> OnRecurringDocumentCreatedAsync(Guid companyId, Guid documentId, Guid recurringId, CancellationToken ct = default);
 
     /// <summary>ใช้โดย background service ทุกชั่วโมง — สแกนเอกสารที่
     /// ครบกำหนดใน N วัน / เกินกำหนด N วัน แล้ว enqueue.</summary>

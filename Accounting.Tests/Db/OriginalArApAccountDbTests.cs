@@ -120,7 +120,7 @@ public class OriginalArApAccountDbTests
         await SetActiveAsync(db, s, s.PinnedArId, active: false);
 
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(inv.Id), "tester");
+            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(inv.Id), "tester", PaymentEntrySource.Manual);
 
         using var check = DbTestDatabase.TryCreateContext()!;
         var credited = await SettleSideAccountsAsync(check, s, inv.Id, credit: true);
@@ -159,7 +159,7 @@ public class OriginalArApAccountDbTests
         await SetActiveAsync(db, s, s.PinnedApId, active: false);
 
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester");
+            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(pi.Id), "tester", PaymentEntrySource.Manual);
 
         using var check = DbTestDatabase.TryCreateContext()!;
         var debited = await SettleSideAccountsAsync(check, s, pi.Id, credit: false);
@@ -177,7 +177,7 @@ public class OriginalArApAccountDbTests
         // (1) ไม่มี JE + ผังที่ปักใช้ได้ ⇒ ตัดผังที่ปัก (เดิม)
         var ok = await IssuedAsync(db, s, DocumentType.Invoice, s.CustomerId, withJe: false, s.PinnedArId, s.RevenueId);
         using (var req = DbTestDatabase.TryCreateContext()!)
-            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(ok.Id), "tester");
+            await Svc(req).CreatePaymentAsync(s.CompanyId, Pay(ok.Id), "tester", PaymentEntrySource.Manual);
         using (var check = DbTestDatabase.TryCreateContext()!)
             Assert.Contains(s.PinnedArId, await SettleSideAccountsAsync(check, s, ok.Id, credit: true));
 
@@ -186,7 +186,7 @@ public class OriginalArApAccountDbTests
         await SetActiveAsync(db, s, s.PinnedArId, active: false);
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
-            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).CreatePaymentAsync(s.CompanyId, Pay(blocked.Id), "tester"));
+            var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Svc(req).CreatePaymentAsync(s.CompanyId, Pay(blocked.Id), "tester", PaymentEntrySource.Manual));
             Assert.Contains("ถูกปิดใช้งาน", ex.Message);
             Assert.Contains("เปิดใช้บัญชีเดิม", ex.Message);
         }

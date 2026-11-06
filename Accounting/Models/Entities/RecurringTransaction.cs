@@ -92,4 +92,9 @@ public class RecurringTransaction : TenantEntity
     /// <summary>นโยบายอนุมัติข้ามคำเตือนของรายการนี้ (JSON ของ <see cref="Accounting.Helpers.AutoApprovePolicy"/>) — null = ตามผู้ติดต่อ ·
     /// ตั้งผ่าน <c>PUT …/recurring/{id}/approve-policy</c> เท่านั้น (ต้องมีสิทธิ์อนุมัติเอกสารชนิดนั้น) · ผู้อ่าน: <c>RecurringTransactionService</c> ตอนอนุมัติอัตโนมัติ</summary>
     public string? AutoApprovePolicyJson { get; set; }
+    /// <summary>รอบ 250 (WP-02 B-13): หลังลูกค้าชำระใบของรายการนี้ ส่งใบเสร็จอัตโนมัติไหม — null = ตามผู้ติดต่อ › บริษัท ·
+    /// ผู้อ่าน: <c>PostPaymentAutomationService.SettingsForAsync</c> (ผ่าน <c>Document.RecurringTransactionId</c>)</summary>
+    public bool? PostPayEmailReceipt { get; set; }
+    /// <summary>รอบ 250 (WP-02 B-13): ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) — null = ตามผู้ติดต่อ › บริษัท</summary>
+    public bool? PostPayIncludePartial { get; set; }
 }

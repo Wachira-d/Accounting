@@ -348,7 +348,7 @@ public class EtaxByEmailRound244DbTests
             var notify = F4Proxy<INotificationEngine>.Create((m, a) => { if (m == nameof(INotificationEngine.DispatchAsync)) notified.Add((string)a[1]!); return null; });
             var svc = new PostPaymentAutomationService(db, F4Proxy<IDocumentService>.Create((_, _) => null), Svc(db, senders), senders.Factory(),
                 NullLogger<PostPaymentAutomationService>.Instance, notify);
-            Assert.True(await svc.EnqueueAsync(cid, pay.Id, "manual", null));
+            Assert.True(await svc.EnqueueAsync(cid, pay.Id, PaymentEntrySource.Manual, null));
             var runId = (await db.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == cid && r.PaymentId == pay.Id)).Id;
             await svc.ProcessRunAsync(runId, default);
             db.ChangeTracker.Clear();

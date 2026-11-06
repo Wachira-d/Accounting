@@ -116,8 +116,10 @@ public partial class FixedAssetService
             var all = await _db.DocumentLines.AsNoTracking()
                 .Where(x => x.DocumentId == bd.Id && x.Document.CompanyId == companyId)
                 .OrderBy(x => x.LineOrder).ToListAsync();
-            var parts = Accounting.Helpers.WhtGrossUp.ForLines(all.Select(x => (x.Amount, x.WithholdingTaxRate)).ToList(), bd.WhtCertType);
-            for (var i = 0; i < all.Count && i < parts.Count; i++) payerBorne[all[i].Id] = parts[i].PayerBorne;
+            // รอบ 250 (WP-02 §2.2): ตัวเดียวกับตัวย้ายผังบัญชี (DocumentService.ResolveLinePostedGlAmountAsync) — WhtGrossUp.PayerBorneShareByLine
+            foreach (var kv in Accounting.Helpers.WhtGrossUp.PayerBorneShareByLine(
+                         all.Select(x => (LineId: x.Id, Base: x.Amount, RatePercent: x.WithholdingTaxRate)).ToList(), bd.WhtCertType))
+                payerBorne[kv.Key] = kv.Value;
         }
 
         var result = new List<CostLineFacts>(lines.Count);
@@ -194,13 +196,13 @@ public partial class FixedAssetService
         await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0})", lockKey);
     }
 
-    /// <summary>เส้นนอก (ยกเลิกใบ · ลบถาวร) ถือคีย์เดียวกันเมื่อใบใดในชุดผูกเป็นต้นทุนสินทรัพย์ — เรียกต้นธุรกรรม ก่อนล็อกแถวเอกสาร</summary>
-    public static async Task LockCostSourcesIfLinkedAsync(AccountingDbContext db, Guid companyId, IReadOnlyCollection<Guid> documentIds)
+    /// <summary>เส้นนอก (ยกเลิกใบ · ลบถาวร) ถือคีย์เดียวกัน — รอบ 250 (WP-02 §2.4 ข้อ 8 · คำตัดสิน §2 #7): ตัดสินจาก<b>ชนิดเอกสาร</b>
+    /// (<see cref="Accounting.Helpers.AssetCostSourceRules.MayBeCostSource"/>) ไม่ใช่ <c>AnyAsync</c> นอกล็อก (เดิม: ตรวจว่าไม่ผูก ⇒ ไม่ถือคีย์ ⇒ อีกคำขอผูกเข้ามา
+    /// ระหว่างนั้นแล้วยกเลิกเดินต่อโดยไม่ปลดแถวผูก) · เรียกต้นธุรกรรม <b>ก่อน</b> FOR UPDATE แถวเอกสาร · ต้นทุน = advisory lock 1 ครั้งต่อการยกเลิกใบซื้อ</summary>
+    public static async Task LockCostSourcesForTypesAsync(AccountingDbContext db, Guid companyId, IEnumerable<DocumentType> documentTypes)
     {
-        if (documentIds.Count == 0) return;
-        var linked = await db.FixedAssetCostSources.AsNoTracking()
-            .AnyAsync(s => s.CompanyId == companyId && documentIds.Contains(s.DocumentId));
-        if (linked) await LockCostSourceWritersAsync(db, companyId);
+        if (documentTypes.Any(Accounting.Helpers.AssetCostSourceRules.MayBeCostSource))
+            await LockCostSourceWritersAsync(db, companyId);
     }
 
     /// <summary>ใบที่ผูกเป็นต้นทุนสินทรัพย์ที่ "โอนแล้ว" (แถวที่ยังไม่ปลด) — ข้อเท็จจริงของตัวตัดสินลบถาวร (ฝ่ายค้าน H1)</summary>
@@ -346,7 +348,7 @@ public partial class FixedAssetService
     public static async Task<int> ReleaseCostSourcesForVoidAsync(AccountingDbContext db, Guid companyId, Guid documentId, string documentNumber)
     {
         // ล็อกแถวเอกสาร (ธุรกรรมของการยกเลิก) — "โอนเป็นสินทรัพย์พร้อมใช้" ล็อกแถวเดียวกันก่อนอ่านแถวผูก ⇒ สองเส้นไม่สอดกัน ·
-        // M2: คีย์ผู้เขียนก่อน (ผู้เรียกควรถือไว้ตั้งแต่ต้นธุรกรรมด้วย LockCostSourcesIfLinkedAsync — ถือซ้ำในธุรกรรมเดียวกันได้)
+        // M2: คีย์ผู้เขียนก่อน (ผู้เรียกควรถือไว้ตั้งแต่ต้นธุรกรรมด้วย LockCostSourcesForTypesAsync — ถือซ้ำในธุรกรรมเดียวกันได้)
         await LockCostSourceWritersAsync(db, companyId);
         await db.Database.ExecuteSqlRawAsync(
             "SELECT 1 FROM \"Documents\" WHERE \"Id\" = {0} AND \"CompanyId\" = {1} FOR UPDATE", documentId, companyId);
@@ -858,6 +860,15 @@ public partial class FixedAssetService
         // คำถามเจ้าของ §6 ข้อ 1 (ข้อเสนอ · ฝ่ายค้าน H3): ต้นทุนรวมเกินราคาตามสัญญา ⇒ เตือน (ใบสุดท้ายเต็มราคาทั้งที่ผูกมัดจำแล้ว?)
         if (Accounting.Helpers.AssetCostSourceRules.ContractPriceWarning(asset.ContractPrice, held + capitalized) is string overContract)
             problems.Add(overContract);
+        // รอบ 250 (WP-02 §2.4 ข้อ 10 · C F6 เคส #4): ใบที่ถืออยู่ซึ่งทะเบียนรองรับเกิน GL ผังสินทรัพย์อยู่ก่อน (ด่านตอนผูกปล่อยเพราะ "ไม่แย่ลง") ⇒ บอก
+        foreach (var heldDoc in active.Select(r => new { r.DocumentId, r.DocumentNumber, r.DocumentType }).Distinct())
+        {
+            if (!docStatus.TryGetValue(heldDoc.DocumentId, out var hst) || !Accounting.Helpers.DocumentStatusRules.IsEffective(hst)) continue;
+            var (heldGl, heldReg) = await AssetGlBackingAsync(_db, companyId, heldDoc.DocumentId, Array.Empty<Guid>());
+            if (Accounting.Helpers.AssetCostSourceRules.PreExistingOverRegistration(heldDoc.DocumentNumber, heldReg - heldGl,
+                    Accounting.Helpers.AssetCostSourceRules.SignFor(heldDoc.DocumentType, true) ?? 1) is string overReg)
+                problems.Add(overReg);
+        }
         // ฝ่ายค้าน M6: ใบที่ปลดออกแล้วยังลงผังสินทรัพย์ไว้โดยไม่มีทะเบียนรองรับ ⇒ บอกทางไปต่อ (ขึ้นทะเบียนจากบรรทัดนั้นที่หน้าเอกสาร)
         foreach (var relDoc in rows.Where(r => r.ReleasedAt != null).Select(r => new { r.DocumentId, r.DocumentNumber }).Distinct())
         {
@@ -868,7 +879,8 @@ public partial class FixedAssetService
                     + "เปิดเอกสารแล้วกด 'ขึ้นทะเบียนจากบรรทัดนี้' หรือผูกเข้ากับสินทรัพย์ที่ถูกต้อง");
         }
         return new AssetCostSourcesResponse(asset.Id, asset.IsUnderAcquisition, asset.AvailableForUseDate,
-            held, capitalized, asset.PurchaseCost, list, problems);
+            held, capitalized, asset.PurchaseCost, list, problems,
+            Accounting.Helpers.AssetCostSourceRules.PurchaseDateNote(active.Count > 0));
     }
 
     public async Task<AssetCostSourcesResponse> ReleaseCostSourceAsync(Guid companyId, Guid assetId, Guid sourceId, ReleaseCostSourceRequest request, string actor)

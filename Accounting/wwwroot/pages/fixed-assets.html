@@ -998,6 +998,7 @@
         host.innerHTML = `
           <h4 style="font-size:14px;margin-bottom:6px">🧩 เอกสารต้นทุน ${r.isUnderAcquisition ? '<span style="font-size:11px;color:#075985">(ระหว่างจัดหา — ยังไม่คิดค่าเสื่อม)</span>' : (r.availableForUseDate ? `<span style="font-size:11px;color:#166534">พร้อมใช้ ${Layout.date(r.availableForUseDate)}</span>` : '')}</h4>
           ${(r.problems || []).map(p => `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:6px 10px;font-size:12px;color:#991b1b;margin-bottom:6px">${Layout.esc(p)}</div>`).join('')}
+          ${r.purchaseDateNote ? `<div style="font-size:11px;color:#475569;margin-bottom:6px">ℹ️ ${Layout.esc(r.purchaseDateNote)}</div>` : ''}
           <table class="table" style="font-size:12px"><thead><tr><th>เอกสาร</th><th>รายการ</th><th>ชนิด</th><th>ผัง</th><th class="text-right">ต้นทุน</th><th>สถานะ</th><th></th></tr></thead><tbody>
           ${(r.sources || []).map(x => `<tr${x.status === 'Released' ? ' style="opacity:.55"' : ''}>
             <td><a href="/pages/documents.html?openDoc=${Layout.esc(x.documentId)}" style="color:var(--primary)">${Layout.esc(x.documentNumber)}</a><div style="font-size:10px;color:#64748b">${Layout.date(x.documentDate)}${x.sourceDocumentVoided ? ' · <b style="color:#dc2626">ใบถูกยกเลิก</b>' : ''}</div></td>

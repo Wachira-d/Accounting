@@ -5,7 +5,7 @@ using Accounting.Models.Enums;
 namespace Accounting.Helpers;
 
 /// <summary>ข้อเท็จจริงของการชำระหนึ่งครั้งที่ข้อความแจ้งเตือนต้องใช้ — ผู้เรียกโหลดจากฐาน (กรอง CompanyId) แล้วส่งมา · helper ไม่แตะฐาน</summary>
-/// <param name="IsInflow">เงินเข้า (ลูกค้าจ่ายเรา) — ผลของ <c>DocumentService.IsCashInflowDocAsync</c> ตัวเดียวกับที่ใช้ปรับยอดธนาคาร (ใบเพิ่มหนี้ฝั่งซื้อ = เงินออก)</param>
+/// <param name="IsInflow">เงินเข้า (ลูกค้าจ่ายเรา) — ผลของ <c>Helpers/CashFlowDirection.IsInflow</c> (รอบ 250) ตัวเดียวกับที่ใช้ปรับยอดธนาคาร (ใบเพิ่มหนี้ฝั่งซื้อ = เงินออก)</param>
 /// <param name="LineDescriptions">คำอธิบายบรรทัดตามลำดับ (บรรทัดที่ไม่ถูกลบ) — ว่าง = ไม่มีบรรทัดรายการในข้อความ</param>
 /// <param name="Currency">สกุลเงินของเอกสาร (ยอดชำระอยู่ในสกุลนี้) — null/THB = "บาท"</param>
 public sealed record PaymentNotificationFacts(

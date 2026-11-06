@@ -52,6 +52,13 @@ public class RecurringTransactionService : IRecurringTransactionService
         return (AutopilotSettingsResolver.Normalize(mode), DocumentPayLinkPolicy.SerializeChannels(channels));
     }
 
+    /// <summary>รอบ 250 (WP-02 B-13): ค่าตั้งงานหลังรับชำระต่อรายการ — ชื่อที่ไม่รู้จัก = ปฏิเสธพร้อมค่าที่เลือกได้ (ห้ามเก็บเงียบ)</summary>
+    private static void CheckPostPaySettings(string? emailReceipt, string? includePartial)
+    {
+        if ((AutopilotSettingsResolver.ValidateTriState(emailReceipt) ?? AutopilotSettingsResolver.ValidateTriState(includePartial)) is { } bad)
+            throw new BusinessRuleException(bad, AutopilotSettingsResolver.RuleCode);
+    }
+
     /// <summary>ตัวตัดสินกลางว่า template เป็น "สมุดรายวัน" หรือ "เอกสาร" —
     /// ห้ามคำนวณเองซ้ำที่อื่น (ExecuteRecurringAsync/ValidateTemplateAsync/
     /// invariant ส่งอีเมล ใช้ตัวเดียวกันทั้งหมด). "journal" ไม่สนตัวพิมพ์ =
@@ -70,6 +77,7 @@ public class RecurringTransactionService : IRecurringTransactionService
     {
         await ValidateTemplateAsync(companyId, request.TemplateType, request.TemplateData, request.ContactId, atSave: true);
         var (payMode, payChannels) = PaymentSettingsFrom(request.PaymentMode, request.PayLinkChannels);
+        CheckPostPaySettings(request.PostPayEmailReceipt, request.PostPayIncludePartial);
         // วันสิ้นสุดก่อนวันเริ่ม = รายการที่ไม่มีวันรันเลย (เดิมบันทึกได้แล้วค้าง "ใช้งาน" เงียบ ๆ ตลอดไป)
         if (request.EndDate.HasValue && !RecurringSchedule.WithinEnd(request.StartDate, request.EndDate))
             throw new BusinessRuleException("วันสิ้นสุดอยู่ก่อนวันเริ่มต้น — แก้วันสิ้นสุด (หรือเว้นว่างถ้าไม่มีกำหนด) แล้วบันทึกอีกครั้ง",
@@ -106,6 +114,9 @@ public class RecurringTransactionService : IRecurringTransactionService
             // รอบ 248: ช่องทางรับเงินต่อรายการ (สมุดรายวันไม่มีลิงก์ชำระ ⇒ ไม่เก็บ) · นโยบายอนุมัติตั้งผ่าน endpoint แยก (ต้องมีสิทธิ์อนุมัติ)
             PaymentMode = IsJournalTemplate(request.TemplateType) ? null : payMode,
             PayLinkChannelsJson = IsJournalTemplate(request.TemplateType) ? null : payChannels,
+            // รอบ 250 (WP-02 B-13): ชั้นรายการประจำของงานหลังรับชำระ (สมุดรายวันไม่มีการรับชำระ ⇒ ไม่เก็บ)
+            PostPayEmailReceipt = IsJournalTemplate(request.TemplateType) ? null : AutopilotSettingsResolver.ParseTriState(request.PostPayEmailReceipt),
+            PostPayIncludePartial = IsJournalTemplate(request.TemplateType) ? null : AutopilotSettingsResolver.ParseTriState(request.PostPayIncludePartial),
             CreatedBy = createdBy
         };
 
@@ -208,7 +219,15 @@ public class RecurringTransactionService : IRecurringTransactionService
             if (request.PaymentMode != null) recurring.PaymentMode = pm;
             if (request.PayLinkChannels != null) recurring.PayLinkChannelsJson = pc;
         }
-        if (IsJournalTemplate(recurring.TemplateType)) { recurring.PaymentMode = null; recurring.PayLinkChannelsJson = null; }
+        // รอบ 250 (WP-02 B-13): null = ไม่แก้ · Inherit/"" = ล้าง (ตามผู้ติดต่อ › บริษัท)
+        CheckPostPaySettings(request.PostPayEmailReceipt, request.PostPayIncludePartial);
+        if (request.PostPayEmailReceipt != null) recurring.PostPayEmailReceipt = AutopilotSettingsResolver.ParseTriState(request.PostPayEmailReceipt);
+        if (request.PostPayIncludePartial != null) recurring.PostPayIncludePartial = AutopilotSettingsResolver.ParseTriState(request.PostPayIncludePartial);
+        if (IsJournalTemplate(recurring.TemplateType))
+        {
+            recurring.PaymentMode = null; recurring.PayLinkChannelsJson = null;
+            recurring.PostPayEmailReceipt = null; recurring.PostPayIncludePartial = null;
+        }
         // template สมุดรายวันไม่มีคู่ค้า/PDF ให้ส่ง → ปัดธงทิ้ง **เสมอ** ไม่ใช่
         // เฉพาะตอน request ส่ง field มา — แถวเก่า/ที่แก้ตรง DB ที่ค้างธงไว้ จะได้
         // ไม่ไปบังคับ AutoApprove (ฝั่ง journal = post JE อัตโนมัติ คนละเรื่อง)
@@ -823,6 +842,11 @@ public class RecurringTransactionService : IRecurringTransactionService
             // ErrorLog · คิวอีเมล) ต้องเป็น "เรื่องที่ต้องทำต่อ" บนแถวเท่านั้น · เดิมโยนต่อ ⇒ แถวขึ้น "ล้ม" ทั้งที่ออกใบแล้ว ผู้ใช้กด "สร้างทันที" = ใบซ้ำ
             try
             {
+                // รอบ 250 (WP-02 B-13): ใบ → รายการประจำที่สร้าง — ชั้น "รายการประจำ" ของค่าตั้งงานหลังรับชำระ (PostPaymentAutomationService.SettingsForAsync) ·
+                // ประทับตรง (ไม่ผ่านฟอร์ม/ไม่สืบทอดไปใบลูก) · ล้ม = เรื่องที่ต้องทำต่อของรอบนี้ (catch ข้างล่าง) ไม่ทำให้รอบถัดไปออกใบซ้ำ
+                if (result != null)
+                    await _db.Documents.Where(d => d.Id == result.Id && d.CompanyId == recurring.CompanyId)
+                        .ExecuteUpdateAsync(s => s.SetProperty(d => d.RecurringTransactionId, (Guid?)recurring.Id));
 
                 // ฝ่ายค้าน P3-6: ผู้ถูกหักถูกตัดทิ้ง ⇒ ป้าย "50 ทวิ ต้องตรวจ" บนใบ (ตัวเดียวกับแปลง/คัดลอก — Decide/คำเตือนอนุมัติอ่าน) + ไม่อนุมัติอัตโนมัติ
                 // (50 ทวิ จะออกผิดคน) · ฝ่ายค้านรอบ 204 (หลัง 0f428969): การไม่อนุมัติอัตโนมัติเดินเส้นรายงานเดียวกับการอนุมัติอัตโนมัติล้ม
@@ -926,16 +950,17 @@ public class RecurringTransactionService : IRecurringTransactionService
                 // ส่งเฉพาะใบที่อนุมัติแล้ว — Draft ยังไม่มีเลขจริง §86/4. fail-safe.
                 if (result != null && _emailSchedule != null)
                 {
-                    try { await _emailSchedule.OnRecurringDocumentCreatedAsync(recurring.CompanyId, result.Id, recurring.Id); }
+                    // รอบ 250 (WP-02 §2.4 ข้อ 1 · คำตัดสิน §2 #8): ตัวเข้าคิวคืนผล (ไม่กลืนเงียบ) ⇒ ธง EmailEnqueueFailed ตั้งจากผลด้วยตัวตัดสินเดียว
+                    Accounting.Helpers.EmailEnqueueOutcome enqueueOutcome;
+                    try { enqueueOutcome = await _emailSchedule.OnRecurringDocumentCreatedAsync(recurring.CompanyId, result.Id, recurring.Id); }
                     catch (Exception ex2) when (ex2 is not OperationCanceledException)
                     {
-                        _logger.LogWarning(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id);
-                        if (recurring.AutoSendEmail)
-                        {
-                            notices.Add($"เข้าคิวส่งอีเมลเอกสาร {result.DocumentNumber} ไม่สำเร็จ — ส่งเองจากหน้าเอกสาร");
-                            facts = facts with { EmailEnqueueFailed = true };
-                        }
+                        _logger.LogError(ex2, "Email schedule (recurring) enqueue failed Doc={Doc}", result.Id);
+                        enqueueOutcome = Accounting.Helpers.EmailEnqueueOutcome.Failed(ex2.Message);
                     }
+                    var (factsAfterEmail, enqueueNotice) = Accounting.Helpers.EmailEnqueueOutcome.Apply(facts, enqueueOutcome, result.DocumentNumber);
+                    facts = factsAfterEmail;
+                    if (enqueueNotice != null) notices.Add(enqueueNotice);
                 }
                 // ส่งอีเมลอัตโนมัติที่ "ไม่มีอะไรออก" ต้องบอกผู้ใช้ที่หน้ารายการประจำ (เดิม log warning อย่างเดียว · RCE-07)
                 if (recurring.AutoSendEmail && result != null)
@@ -1070,6 +1095,8 @@ public class RecurringTransactionService : IRecurringTransactionService
             PaymentMode: r.PaymentMode,
             PayLinkChannels: DocumentPayLinkPolicy.ParseChannels(r.PayLinkChannelsJson),
             AutoApprovePolicy: RecurringApprovePolicyLoader.View(AutoApprovePolicy.Parse(r.AutoApprovePolicyJson, AutoApprovePolicy.ScopeRecurring)),
+            PostPayEmailReceipt: AutopilotSettingsResolver.TriStateName(r.PostPayEmailReceipt),
+            PostPayIncludePartial: AutopilotSettingsResolver.TriStateName(r.PostPayIncludePartial),
             AutoSendEmailWarning: emailWarning,
             AutoSendEmailFixUrl: emailWarning != null && r.ContactId is { } fixId ? RecurringEmailReadiness.ContactUrl(fixId) : null);
 

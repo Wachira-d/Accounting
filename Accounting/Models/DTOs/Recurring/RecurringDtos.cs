@@ -20,7 +20,10 @@ public record CreateRecurringTransactionRequest(
     bool AutoSendEmail = false,
     // รอบ 248: โหมดรับเงินต่อรายการ (ชื่อใน AutopilotSettingsResolver.Modes · null/Inherit = ตามผู้ติดต่อ › บริษัท) + ช่องทางย่อย (ชื่อ enum)
     string? PaymentMode = null,
-    List<string>? PayLinkChannels = null);
+    List<string>? PayLinkChannels = null,
+    // รอบ 250 (WP-02 B-13): หลังลูกค้าชำระ ส่งใบเสร็จอัตโนมัติ / ส่งทุกงวด — ชื่อ Inherit|On|Off (null/Inherit = ตามผู้ติดต่อ › บริษัท)
+    string? PostPayEmailReceipt = null,
+    string? PostPayIncludePartial = null);
 
 public record UpdateRecurringTransactionRequest(
     string? Name,
@@ -42,7 +45,10 @@ public record UpdateRecurringTransactionRequest(
     /// <summary>รอบ 248: null = ไม่แก้ · "" หรือ "Inherit" = ล้าง (ตามผู้ติดต่อ › บริษัท)</summary>
     string? PaymentMode = null,
     /// <summary>รอบ 248: null = ไม่แก้ · [] = ล้าง (ทุกช่องตามโหมด)</summary>
-    List<string>? PayLinkChannels = null);
+    List<string>? PayLinkChannels = null,
+    /// <summary>รอบ 250 (WP-02 B-13): null = ไม่แก้ · "Inherit"/"" = ล้าง (ตามผู้ติดต่อ › บริษัท) · On/Off</summary>
+    string? PostPayEmailReceipt = null,
+    string? PostPayIncludePartial = null);
 
 public record RecurringTransactionResponse(
     Guid Id,
@@ -83,7 +89,10 @@ public record RecurringTransactionResponse(
     // รอบ 248: echo กลับให้ฟอร์ม hydrate (โหมดรับเงิน · ช่องทาง · นโยบายอนุมัติของรายการนี้ — null = ไม่ได้ตั้ง/ตามผู้ติดต่อ)
     string? PaymentMode = null,
     IReadOnlyList<string>? PayLinkChannels = null,
-    AutoApprovePolicyView? AutoApprovePolicy = null);
+    AutoApprovePolicyView? AutoApprovePolicy = null,
+    // รอบ 250 (WP-02 B-13): echo ค่าตั้งงานหลังรับชำระของรายการ (ชื่อ Inherit|On|Off — hydrate ฟอร์ม)
+    string PostPayEmailReceipt = "Inherit",
+    string PostPayIncludePartial = "Inherit");
 
 /// <summary>รอบ 248: นโยบายอนุมัติข้ามคำเตือนที่หน้าแสดง — รหัสที่ปล่อย · ผู้ตั้ง/เมื่อไร · ระดับ (Recurring/Contact)</summary>
 public record AutoApprovePolicyView(IReadOnlyList<string> PassCodes, string? SetBy, DateTime? SetAt, string? Scope, bool InheritContact = false);
@@ -95,10 +104,15 @@ public record SetAutoApprovePolicyRequest(List<string>? PassCodes, bool Inherit 
 
 /// <summary>รอบ 248: ค่าตั้ง Autopilot ระดับผู้ติดต่อ (ช่องทางรับเงิน + นโยบาย) — echo กลับทุกช่อง</summary>
 public record ContactAutopilotSettingsResponse(Guid ContactId, string ContactName, string? PaymentMode, IReadOnlyList<string>? PayLinkChannels,
-    AutoApprovePolicyView? AutoApprovePolicy);
+    AutoApprovePolicyView? AutoApprovePolicy,
+    // รอบ 250 (WP-02 B-13): ค่าตั้งงานหลังรับชำระของผู้ติดต่อ (ชื่อ Inherit|On|Off)
+    string PostPayEmailReceipt = "Inherit",
+    string PostPayIncludePartial = "Inherit");
 
 /// <summary>รอบ 248: แก้ช่องทางรับเงินของผู้ติดต่อ — PaymentMode null = ไม่แก้ · "" / "Inherit" = ล้าง · PayLinkChannels null = ไม่แก้ · [] = ล้าง</summary>
-public record UpdateContactAutopilotRequest(string? PaymentMode, List<string>? PayLinkChannels);
+public record UpdateContactAutopilotRequest(string? PaymentMode, List<string>? PayLinkChannels,
+    // รอบ 250 (WP-02 B-13): null = ไม่แก้ · "Inherit"/"" = ล้าง · On/Off
+    string? PostPayEmailReceipt = null, string? PostPayIncludePartial = null);
 
 /// <summary>รอบ 248: รายการตัวเลือกที่หน้าแสดง (เซิร์ฟเวอร์คำนวณ) — โหมดรับเงิน · ช่องทางที่บริษัทเปิด · คำเตือนที่ปล่อยได้/ไม่ได้</summary>
 public record AutopilotOptionsResponse(
@@ -106,7 +120,10 @@ public record AutopilotOptionsResponse(
     IReadOnlyList<AutopilotOption> PayLinkChannels,
     IReadOnlyList<AutopilotOption> ReleasableWarnings,
     IReadOnlyList<AutopilotOption> NeverReleasable,
-    string? PayLinkUnavailableReason);
+    string? PayLinkUnavailableReason,
+    // รอบ 250 (WP-02 B-13): ตัวเลือกค่าตั้งงานหลังรับชำระ (ส่งใบเสร็จ · ส่งทุกงวด) — ป้ายจากเซิร์ฟเวอร์
+    IReadOnlyList<AutopilotOption>? PostPayEmailOptions = null,
+    IReadOnlyList<AutopilotOption>? PostPayPartialOptions = null);
 
 public record AutopilotOption(string Code, string Label, string? Why = null);
 

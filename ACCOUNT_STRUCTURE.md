@@ -786,6 +786,13 @@ FreeTrial ใช้ฟีเจอร์ตามข้อมูลแพ็ก�
   · ฝ่ายค้านรอบ 230 (§7.4): คอลัมน์เพิ่ม `PaymentIntents.SavedCardRef` · `PdpaConsentRecords.UserAgent` · `PlatformSavedCards.WhtAcknowledgedAt` ·
   `PlatformAutoChargeMandates.WhtAcknowledgedAt/LastProcessedAt` (ADD COLUMN IF NOT EXISTS ใน `PlatformCardBillingMigration`) — คำสั่งตัดเปิดเมื่อบัตรยืนยันแล้วเท่านั้น
 
+**รอบ 250 (WP-02 · คำตัดสิน §3.3 Y7/Y8/N11) — การ์ด "รายการตรวจ go-live" บนแดชบอร์ดแอดมิน (`/admin/index.html` · `GET api/admin/go-live`):**
+ตัวตัดสินเดียว `Helpers/PlatformGoLiveChecklist` · ทุกข้อตรวจจากข้อมูลจริง (OMISE_READINESS §3 10 ข้อ): URL ของระบบ (`SystemBaseUrl.IsConfigured` — ค่าที่มากับซอร์ส ≠ ตั้งแล้ว · ไม่เดาโดเมน) ·
+ช่องทาง Omise + ทดสอบคีย์ test · สวิตช์หน้าซื้อสาธารณะ · แพ็กเกจที่ขายได้ · นโยบาย 3 ฉบับเผยแพร่ + EN (การกดเผยแพร่เป็นของเจ้าของ) · ข้อมูลติดต่อ · อีเมลระบบ · ทดลองจ่ายครบลูป ·
+ส่ง URL ให้ Omise (ทำเอง — ระบบไม่ประทับ ✅) · เปิดรับเงินจริง (`PlatformLiveConfirmedAt`) + ข้อเสริม **การเชื่อมต่อขาออก** (Y8): ปุ่ม `POST api/admin/go-live/outbound-check` ยิง HEAD
+`https://api.omise.co` ผ่าน `OutboundUrlGuard` (ด่าน DNS/IP สาธารณะ + client ขาออกตัวเดียว ไม่ผ่าน proxy) → ผลเก็บ `SiteSettings.OutboundCheckAt/Ok/Message` (การ์ดแดงจนทดสอบผ่าน · audit chain) ·
+ธนาคาร/feed ไม่รู้ ⇒ ค่าตั้งต้นเส้นโอน = นำเข้า statement + ระบบเสนอจับคู่ (ไม่ปิดหนี้เอง) · ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified `commit <เติมในคอมมิตตามหลัง>`
+
 ### 6.2e ส่วนต่างอัปเกรดกลางรอบ · คูปอง · แอดมินแก้ยอด · hub 4 แท็บ (รอบ 230 · คำตัดสินข้อ 230-Q1..Q4 · `erp-review/2026-11-02/QUOTA_ADDON_SUBSCRIPTION_AUDIT.md` §E รอบ 230)
 
 | เรื่อง | ตัวเดียวของระบบ | กติกา |

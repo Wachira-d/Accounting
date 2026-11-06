@@ -76,7 +76,10 @@ public class OpeningBalanceReconciliation : IOpeningBalanceReconciliation
 
         // ── สินทรัพย์: ราคาทุน + ค่าเสื่อมสะสม ──
         var assets = await _db.FixedAssets.AsNoTracking()
-            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.Status != AssetStatus.Disposed && a.Status != AssetStatus.WrittenOff)
+            // รอบ 250 (WP-02 §2.4 ข้อ 10 · C F6): สินทรัพย์ระหว่างจัดหา (หลายใบ) — ต้นทุนยังอยู่ผังมัดจำ/งานระหว่างก่อสร้างของแต่ละใบ ไม่ใช่ผัง 122xx/123xx
+            // ⇒ ไม่นับในทะเบียนฝั่งนี้ (ตัวเดียวกับ SubLedgerReconciliationService/PreCloseChecklistService รอบ 249 L8)
+            .Where(a => a.CompanyId == companyId && !a.IsDeleted && a.Status != AssetStatus.Disposed && a.Status != AssetStatus.WrittenOff
+                && !a.IsUnderAcquisition)
             .Select(a => new { a.PurchaseCost, a.AccumulatedDepreciation })
             .ToListAsync(ct);
         var costAccounts = chart.Where(a => FixedAssetAccountClassifier.IsRegisterable(a.AccountCode)).ToList();

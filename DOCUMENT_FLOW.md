@@ -2208,6 +2208,10 @@ Draft → WaitingApproval → Approved → Sent → PartiallyPaid → Paid
 ### 2.7 Recurring
 
 - **งวดค้างหลายงวด (ฝ่ายค้าน 2026-10-14 P0)** — เอกสารชนิดรายการประจำล้มทุกรอบตั้งแต่ 2026-09-03 (ธุรกรรมซ้อน · แก้ใน f696f418) ⇒ `NextRunDate` ค้างงวดแรก · รอบอัตโนมัติ/ปุ่มสร้างทันทีเรียก `SkipOverduePeriodsAsync` → `RecurringSchedule.CatchUp` เลื่อนไปงวดล่าสุดที่ถึงกำหนดแล้วออก **งวดเดียว** + `LastRunNotice` "ข้าม N งวด … กด สร้างทันที" (ไม่ไล่ออกใบกำกับภาษีย้อนหลังทีละงวดทุก 15 นาที) · สมุดรายวันไม่แตะ (ไม่เคยค้าง)
+- **รอบ 250 (WP-02 §2.4 ข้อ 1/3 · คำตัดสิน §2 #8/#10)**: `OnRecurringDocumentCreatedAsync` คืน `EmailEnqueueOutcome` (Enqueued/Skipped(เหตุ)/Failed(เหตุ)) — ไม่กลืนเป็น
+  `LogWarning` ⇒ ธง `EmailEnqueueFailed` + เรื่องที่ต้องทำต่อตั้งจากผล (`EmailEnqueueOutcome.Apply`) · มีกฎ "เมื่ออนุมัติเอกสาร" ครอบชนิดนี้และใบอนุมัติแล้ว ⇒ **ข้าม**กฎ "เมื่อรายการประจำสร้างเอกสาร"/กฎเสมือน
+  (การอนุมัติอัตโนมัติเข้าคิวตามกฎนั้นไปแล้ว — ลูกค้าได้ฉบับเดียว · ทิศเดียว ไม่แตะฝั่ง DocumentApproved) · แผงความพร้อมเตือน `EMAIL-RULES` · ใบที่สร้างประทับ
+  `Document.RecurringTransactionId` (ชั้นค่าตั้งงานหลังรับชำระ §2.12g) · Last verified `commit <เติมในคอมมิตตามหลัง>`
 - **Service**: `RecurringTransactionService.cs:41`
 - ความถี่: `Daily / Weekly / BiWeekly / Monthly / Quarterly / SemiAnnual / Annual`
 - template เก็บใน `RecurringTransaction.TemplateData` (JSON)
@@ -2909,6 +2913,34 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
 - ยังไม่เข้า: กระทบธนาคาร/settlement · สลิปพอร์ทัล · นำเข้า · CMS/ที่พัก · กระจายหลายใบ (241-5)
 - เทสต์ `DocumentAutoSendRound241Tests` · Db `DocumentAutoSendRound241DbTests` · ล็อก `tools/required_call_site_check.py` R241 — ยังไม่ได้คอมไพล์ในเครื่องนี้
 
+**รอบ 250 (WP-02 · `erp-review/2026-11-06/AUDIT_249_FOR_OPUS.md` §4 · คำตัดสิน §2 #4–#16 · §3.3 Y7/Y8/N11) — สถานะปัจจุบัน (ทับข้อ 5 และ "ยังไม่เข้า" ข้างบน):**
+
+- **งานหลังรับชำระ "ทุกทางเข้า"** — เข้าคิวในแกน `DocumentService.CreatePaymentAsync(…, PaymentEntrySource source)` เอง หลัง commit · หลัง `SyncWhtCreditReceivedAsync`
+  (แถวรอ 50 ทวิ มีก่อนงานตรวจ) ด้วย `PostPaymentAutomationService.EnqueueCoreAsync` · `source` บังคับ (ไม่มีค่าเริ่มต้น) · controller/handler ไม่เรียกเองแล้ว ·
+  ตัวตัดสินทางเข้า `PostPaymentAutomationPolicy.ForEnqueue`:
+
+  | ทางเข้า (`PaymentEntrySource`) | ผู้เรียก | ผล (ค่าตั้งเปิด) |
+  | --- | --- | --- |
+  | Manual | `DocumentController.CreatePayment` (1:1) | แถว Pending (เดินเต็ม) |
+  | Gateway | `DocumentPaymentHandler` | แถว Pending |
+  | Settlement | `SettlementPostingService.EnsureReceiptAsync` | แถว Pending |
+  | Import | `PaymentImportTarget` (นำเข้าไฟล์) | แถว Pending |
+  | Integration | `IntegrationService.ProcessPaymentAsync` (บันทึกเอง ⇒ `IDocumentService.AfterPaymentRecordedAsync` = Sync 50 ทวิ + เข้าคิว · ล้ม ⇒ ข้อความใน sync log + คำตอบ) | แถว Pending |
+  | Cms · Lodging · PlatformBilling | หน้าร้าน/การจอง · ที่พัก · ค่าบริการแพลตฟอร์ม | แถว **Skipped** พร้อมเหตุ "มีเส้นออกใบเสร็จของตัวเอง" (เห็นบนหน้าเอกสาร · ไม่ออก/ไม่ส่งซ้ำ) |
+  | MultiDoc | `CreateMultiDocPaymentAsync` | ไม่สร้างแถว (`SettlementReceiptPolicy` — ตั้งใจ) |
+
+  ค่าตั้งปิด ⇒ ไม่สร้างแถว (เดิม) · ยังไม่เข้า: สลิปพอร์ทัล (`PortalService` — ทีมอื่นรับ) · แถวเก่าเก็บ "manual"/"gateway" ตัวเล็ก ⇒ `ParseSource` อ่านได้
+- **ชั้นค่าตั้งงานหลังรับชำระ (B-13)**: ตารางส่งที่ส่งใบนี้ › **รายการประจำที่สร้างใบ** (`Document.RecurringTransactionId` — ประทับตอนรายการประจำสร้างใบ · ใบเก่าเติมได้เฉพาะ `LastDocumentId`) ›
+  **ผู้ติดต่อ** (`Contact.PostPayEmailReceipt/PostPayIncludePartial`) › บริษัท — ตัวต่อชั้นเดียว `PostPaymentAutomationPolicy.EffectiveLayers` · ตั้งที่หน้ารายการประจำ (ขั้นรับเงิน · ชื่อ Inherit/On/Off)
+- **ใบแจ้งหนี้ที่ออกใบกำกับภาษีแล้ว** (A G-02/G-03 · คำตัดสิน §2 #16): fact `PaymentQrService.SupersedingTaxInvoiceNumberAsync` (ใบกำกับที่อ้างใบนี้ · ออกเลขแล้ว · ไม่ยกเลิก/ปฏิเสธ) ⇒
+  `DocumentPayLinkPolicy.IssueRefusal` ปฏิเสธ "ชำระที่ใบกำกับ {เลข}" [`PAYLINK-241-TAXINV`] · `LinkUsable` (ตัดสินสด) ⇒ ลิงก์เดิมใช้ไม่ได้ทันที (หน้าสาธารณะบอกให้ชำระที่ใบกำกับ ·
+  ไม่เปิดเผยยอด/ชื่อ) · ใบกำกับถูกยกเลิก ⇒ ใช้ได้อีก (ทิศตรงข้าม) · งานหลังรับชำระของใบแจ้งหนี้นั้น ⇒ Blocked "ออกใบเสร็จจากใบกำกับ" (กันใบเสร็จซ้อน)
+- **ไม่ได้ตั้ง URL ของระบบ (Y7)**: แผงความพร้อม Autopilot `GATEWAY` = Warn + ปุ่มไป `/admin/site-settings.html` · ทดลองรันบอกตามจริง · ตารางส่งอีเมลที่ตั้งแนบลิงก์แต่ออกไม่ได้ ⇒
+  ส่งได้ + `EmailQueue.ErrorMessage` "ส่งได้แต่ไม่แนบลิงก์ชำระ: <เหตุ>" (คงไว้หลังส่ง) · การ์ด go-live บนแดชบอร์ดแอดมิน (ข้อ BASEURL) — ไม่เดาโดเมน
+- **ใบขายตั้ง WHT ให้ผู้ซื้อบุคคลธรรมดา** (C F5): คำเตือนก่อนอนุมัติ `[WHT-PAYEE]` (ตัวตัดสินเดียวกับลิงก์ `BuyerWithholds` + `WhtMismatchNote`) — ทางเข้าไม่มีคนผ่านตามเดิม · ลิงก์ยังเตือน
+- เทสต์ `Round250Wp02Tests` · Db `DocumentAutoSendRound241DbTests` (รอบ 250) · `ImportAccountingTargetsDbTests.นำเข้ารับชำระCSV_ใบขาย_มีแถวงานหลังรับชำระ_แหล่งImport` ·
+  กติกา R250 ใน `tools/required_call_site_check.py` · Last verified `commit <เติมในคอมมิตตามหลัง>` — ยังไม่ได้คอมไพล์ในเครื่องนี้
+
 ### 2.12h ช่องทางแจ้งเตือนของผู้ติดต่อ — ผู้ติดต่อเป็นเจ้าของปลายทาง (รอบ 245 เฟส L1 · `erp-review/2026-11-06/LINE_MULTICHANNEL_DESIGN.md` · คำตัดสิน 245-L1-1…245-L1-7)
 
 **สถานะปัจจุบัน (L1 — ตัวหาผู้รับ + ปลายทางอีเมล · ยังไม่ต่อสายเส้นส่ง):**
@@ -3385,6 +3417,12 @@ WHT: ตรวจแถวรอ 50 ทวิ จากเส้นเดิม 
        รายงานกระทบยอดสินทรัพย์/รายการตรวจก่อนปิดงวดไม่นับสินทรัพย์ระหว่างจัดหา · GET ค้นบรรทัด/เอกสารต้นทุนต้องมีสิทธิ์ `Asset.Manage` · ราคาตามสัญญา (ไม่บังคับ) ⇒ เตือนเมื่อเกิน ·
        **CI 7cb6bd08**: ด่านทะเบียนต่อใบนับเฉพาะส่วนเกิน/ขาด (`OverRegistrationIncrease`/`OrphanIncrease`) — รุ่นแรกฟ้องใบที่ยังไม่มีทะเบียนแล้วผูกครบพอดี ·
        ยังไม่ได้คอมไพล์ในเครื่องนี้ · Last verified `commit c314266c`
+      • **รอบ 250 (WP-02 · C F1/F2/F6 · คำตัดสิน §2 #5–#7)**: ตัวย้ายผังบัญชี (`ResolveLinePostedGlAmountAsync`) ใช้ `PurchaseLineGlAmount.Posted` (ใบรับรองแทนรวม VAT เสมอ ·
+        ภาษีออกแทนต่อบรรทัด) — ส่วนออกแทนต่อบรรทัดจาก `WhtGrossUp.PayerBorneShareByLine` ตัวเดียวกับต้นทุนสินทรัพย์ · ใบรับรองแทนที่แปลงจากใบซื้อ/ค่าใช้จ่าย (จ่ายชำระ) คืน 0 เหมือน PV ·
+        AutoPost CN/DN/PI/PV บรรทัดซื้อใช้ `PurchaseLineGlAmount.Standalone` (ห้ามประกอบ `Amount + VatAmount` เอง) · **ลำดับล็อก**: ยกเลิก/ลบถาวรถือคีย์
+        `AssetCostSource` **เสมอ**เมื่อชนิดใบอาจเป็นต้นทุน (`AssetCostSourceRules.MayBeCostSource` — ไม่ตรวจ "ผูกอยู่ไหม" นอกล็อก) ก่อน `FOR UPDATE` แถวเอกสาร ·
+        ทะเบียนเกิน GL อยู่ก่อน ⇒ problem row ในแท็บเอกสารต้นทุน · สินทรัพย์ระหว่างจัดหาไม่นับในกระทบยอดยกมา · ไฟล์ส่งออกติดป้าย "ระหว่างจัดหา"/"วันที่ซื้อ = วันพร้อมใช้" ·
+        Last verified `commit <เติมในคอมมิตตามหลัง>` — ยังไม่ได้คอมไพล์ในเครื่องนี้
    - **UX force-review** (ครบใน commit หลัง audit): หลัง approve
      `documents.html` เรียก `_maybePromptFixedAssetReview` → fetch
      `/fixedasset/needs-review` → ถ้ามีรายการ → toast เด่นพร้อมปุ่มลัด
@@ -7769,3 +7807,4 @@ _Last verified against codebase: 2026-11-06 (รอบ 246 QR — §2.12i QR ช
 _Last verified against codebase: 2026-11-06 (รอบ 241 — §2.12g ส่งเอกสารอัตโนมัติ: ลิงก์ชำระเงินในอีเมลตามตาราง `DocumentPayLinkService`/`DocumentPayLinkPolicy` (ช่องทาง = บริษัทเปิดจริง ∩ ตาราง · ยอดสุทธิหลังหัก ณ ที่จ่าย · hash ของ token + เวลาคงที่ · ตัดสินสดทุกครั้ง) · `public-pay/documents/{token}` + `pay-document.html` · `DocumentPaymentHandler` บันทึก WHT ที่เหลือเมื่อเงินเข้ายอดสุทธิ · งานหลังรับชำระ `PostPaymentAutomationService` (1 แถวต่อการชำระ · ออกใบเสร็จด้วย `IssueReceiptForPaymentAsync` · ส่งด้วย `SendDocumentEmailAsync` · หยุดเมื่อข้อมูลไม่ครบ + แจ้งเตือน · ตรวจแถวรอ 50 ทวิ ไม่สร้างเอง) — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 248 — §2.7 รายการประจำ Autopilot: wizard หลายบรรทัด · ช่องทางรับเงินเป็นชั้น `AutopilotSettingsResolver` (ตารางส่ง › รายการ › ผู้ติดต่อ › บริษัท) · นโยบายอนุมัติข้ามคำเตือน `AutoApprovePolicy` + `ApprovalAckSource.UnattendedWithPolicy` (ปล่อยเฉพาะ `[AR-OVERDUE]` · §86/4/[Σ-GAP]/VAT ไม่อยู่บนกระดาษ หยุดเสมอ · audit `APPROVE-UNATTENDED-POLICY`) · ความพร้อม `AutopilotReadiness` · ทดลองรันไม่เขียนอะไร — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_
 _Last verified against codebase: 2026-11-06 (รอบ 249 — แจ้งเตือนรับ/จ่ายชำระ: คีย์ตามฝั่งเงิน `PaymentNotificationText` · `document.payment_made` · ลิงก์เต็ม `NotificationLink` · ค่าตั้งต้นเฉพาะไม่มีแถว — commit <เติมในคอมมิตตามหลัง>)_
+_Last verified against codebase: 2026-11-06 (รอบ 250 WP-02 — §2.12g งานหลังรับชำระทุกทางเข้า (`CreatePaymentAsync(…, source)` · `PaymentEntrySource` · integration `AfterPaymentRecordedAsync`) · ชั้นค่าตั้ง รายการประจำ/ผู้ติดต่อ · ลิงก์ชำระของใบแจ้งหนี้ที่มีใบกำกับ · §2.7 `EmailEnqueueOutcome` + ข้ามกฎซ้ำ · §6 GL สูตรเดียว/ลำดับล็อกสินทรัพย์ · แจ้งเตือนที่ระบุผู้รับเคารพแถวปิด · ทิศเงิน `CashFlowDirection` · การ์ด go-live แอดมิน — ยังไม่ได้คอมไพล์ในเครื่องนี้ — commit <เติมในคอมมิตตามหลัง>)_

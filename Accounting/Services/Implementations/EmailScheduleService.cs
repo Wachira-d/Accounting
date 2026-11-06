@@ -38,6 +38,18 @@ public class EmailScheduleService : IEmailScheduleService
     internal async Task<PayLinkResult?> PayLinkFor(EmailScheduleRule rule, Document doc, CancellationToken ct)
         => _payLinks == null ? null : await _payLinks.ForScheduledEmailAsync(rule, doc, ct);
 
+    /// <summary>รอบ 250 (WP-02 §2.4 ข้อ 2): ข้อความบนแถวคิวเมื่อตั้งให้แนบลิงก์ชำระแต่ออกไม่ได้ — null = แนบได้/ไม่ได้ตั้งแนบ</summary>
+    internal static string? PayLinkSkipNote(PayLinkResult? link)
+        => link is { Ok: false } && !string.IsNullOrWhiteSpace(link.Refusal)
+            ? PayLinkSkipPrefix + link.Refusal
+            : null;
+
+    internal const string PayLinkSkipPrefix = "ส่งได้แต่ไม่แนบลิงก์ชำระ: ";
+
+    /// <summary>ส่งสำเร็จ ⇒ ล้างข้อความผิดพลาดเดิม แต่คงหมายเหตุ "ไม่แนบลิงก์เพราะ…" ไว้ให้เห็นหลังส่ง (รอบ 250)</summary>
+    internal static string? AfterSentNote(string? current)
+        => current != null && current.StartsWith(PayLinkSkipPrefix, StringComparison.Ordinal) ? current : null;
+
     internal static string WithPayLink(string body, string? template, PayLinkResult? link, bool isEn)
     {
         if (link?.Url == null || link.Amounts == null || DocumentPayLinkPolicy.HasPlaceholder(template)) return body;
@@ -183,13 +195,13 @@ public class EmailScheduleService : IEmailScheduleService
         catch (Exception ex) { _logger.LogWarning(ex, "OnWhtCertIssued enqueue failed Cert={Cert}", certId); }
     }
 
-    public async Task OnRecurringDocumentCreatedAsync(Guid companyId, Guid documentId, Guid recurringId, CancellationToken ct = default)
+    public async Task<EmailEnqueueOutcome> OnRecurringDocumentCreatedAsync(Guid companyId, Guid documentId, Guid recurringId, CancellationToken ct = default)
     {
         try
         {
             var doc = await _db.Documents.AsNoTracking()
                 .FirstOrDefaultAsync(d => d.Id == documentId && d.CompanyId == companyId, ct);
-            if (doc == null) return;
+            if (doc == null) return EmailEnqueueOutcome.Skipped("ไม่พบเอกสาร");
             await _db.HydrateContactAsync(companyId, doc);  // กัน INNER JOIN ตัดใบที่ contact ถูกลบ
 
             // ห้ามส่งอีเมลเอกสาร Draft/รออนุมัติ — เลขจริง §86/4 ออกตอน Approve
@@ -202,8 +214,17 @@ public class EmailScheduleService : IEmailScheduleService
                 _logger.LogInformation(
                     "Recurring doc {Doc} ยังไม่อนุมัติ ({Status}) — ข้ามการส่งอีเมลอัตโนมัติ (กัน DRAFT ถึงลูกค้า)",
                     documentId, doc.Status);
-                return;
+                return EmailEnqueueOutcome.Skipped("ใบยังไม่ได้อนุมัติ (ใบร่างยังไม่มีเลขที่จริง §86/4)");
             }
+
+            // รอบ 250 (WP-02 §2.4 ข้อ 3 · คำตัดสิน §2 #10 · B F-4): การอนุมัติอัตโนมัติของรายการประจำเดิน ApproveDocumentAsync → OnDocumentApprovedAsync ⇒
+            // กฎ "เมื่ออนุมัติเอกสาร" ที่ครอบชนิดนี้เข้าคิวไปแล้ว ⇒ ข้ามกฎ "เมื่อรายการประจำสร้างเอกสาร"/กฎเสมือน (ทิศเดียว — ไม่แตะฝั่ง DocumentApproved)
+            var approvedRuleCovers = await _db.EmailScheduleRules.AsNoTracking()
+                .AnyAsync(r => r.CompanyId == companyId && r.IsActive && !r.IsDeleted
+                    && r.Trigger == "DocumentApproved"
+                    && (r.DocumentType == null || r.DocumentType == doc.DocumentType.ToString()), ct);
+            if (EmailEnqueueOutcome.SkipForApprovedRule(approvedRuleCovers, documentApproved: true))
+                return EmailEnqueueOutcome.Skipped(EmailEnqueueOutcome.CoveredByApprovedRule);
 
             var rules = await _db.EmailScheduleRules.AsNoTracking()
                 .Where(r => r.CompanyId == companyId && r.IsActive && !r.IsDeleted
@@ -220,7 +241,7 @@ public class EmailScheduleService : IEmailScheduleService
                     await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays,
                         suffix: $"recurring-{recurringId}", ct);
                 await _db.SaveChangesAsync(ct);
-                return;
+                return EmailEnqueueOutcome.Enqueued();
             }
 
             // ── ไม่มีกฎในหน้า "ตารางส่งอีเมล" → ใช้ธง AutoSendEmail บนตัว
@@ -230,14 +251,12 @@ public class EmailScheduleService : IEmailScheduleService
             var autoSend = await _db.RecurringTransactions.AsNoTracking()
                 .Where(r => r.Id == recurringId && r.CompanyId == companyId)
                 .Select(r => (bool?)r.AutoSendEmail).FirstOrDefaultAsync(ct);
-            if (autoSend != true) return;
+            if (autoSend != true) return EmailEnqueueOutcome.Skipped("รายการนี้ไม่ได้ตั้งส่งอีเมลอัตโนมัติ และไม่มีกฎส่งในหน้าตารางส่งอีเมล");
 
             if (string.IsNullOrWhiteSpace(doc.Contact?.Email))
             {
-                _logger.LogWarning(
-                    "Recurring {Rec} เปิดส่งอีเมลอัตโนมัติ แต่ผู้ติดต่อของเอกสาร {Doc} ไม่มีอีเมล — ข้าม",
-                    recurringId, documentId);
-                return;
+                // ผู้เรียก (RecurringTransactionService) แจ้งเรื่องนี้ด้วยตัวตัดสินเดียว RecurringEmailReadiness (EmailSkippedNoContactEmail) — ที่นี่คืนเหตุ
+                return EmailEnqueueOutcome.Skipped(RecurringEmailReadiness.NotSentNoEmail);
             }
 
             // rule เสมือน (ไม่บันทึกลง DB) — EmailQueue.RuleId เป็น null ได้
@@ -258,8 +277,14 @@ public class EmailScheduleService : IEmailScheduleService
             await EnqueueDocumentAsync(inlineRule, doc, daysOffset: 0,
                 suffix: $"autosend-{recurringId}", ct, overrideSendUtc: DateTime.UtcNow);
             await _db.SaveChangesAsync(ct);
+            return EmailEnqueueOutcome.Enqueued();
         }
-        catch (Exception ex) { _logger.LogWarning(ex, "OnRecurringDocumentCreated enqueue failed Doc={Doc}", documentId); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // รอบ 250 (WP-02 §2.4 ข้อ 1): ล้มดัง — คืน Failed ให้ผู้เรียกตั้งธง EmailEnqueueFailed + เรื่องที่ต้องทำต่อบนแถวรายการประจำ (ไม่ใช่ LogWarning อย่างเดียว)
+            _logger.LogError(ex, "OnRecurringDocumentCreated enqueue failed Doc={Doc}", documentId);
+            return EmailEnqueueOutcome.Failed(ex.Message);
+        }
     }
 
     /// <summary>รอบ 248: ชั้นช่องทางรับเงินของรายการประจำ (null = ไม่ได้ตั้ง) — ตัวต่อชั้นเดียว <see cref="AutopilotSettingsResolver.FromMode"/></summary>
@@ -562,7 +587,7 @@ public class EmailScheduleService : IEmailScheduleService
                 {
                     item.Status = "Sent";
                     item.SentAt = DateTime.UtcNow;
-                    item.ErrorMessage = null;
+                    item.ErrorMessage = AfterSentNote(item.ErrorMessage);
                     sent++;
                 }
                 else
@@ -611,7 +636,7 @@ public class EmailScheduleService : IEmailScheduleService
             {
                 item.Status = "Sent";
                 item.SentAt = DateTime.UtcNow;
-                item.ErrorMessage = null;
+                item.ErrorMessage = AfterSentNote(item.ErrorMessage);
                 item.UpdatedAt = DateTime.UtcNow;
                 return true;
             }
@@ -795,6 +820,8 @@ public class EmailScheduleService : IEmailScheduleService
             AttachPdf = true,
             ScheduledFor = sendUtc,
             IdempotencyKey = idem,
+            // รอบ 250 (WP-02 §2.4 ข้อ 2): ตั้งให้แนบลิงก์แต่ออกไม่ได้ (เช่น ยังไม่ได้ตั้ง URL ของระบบ) ⇒ ฉบับนี้ส่งได้ แต่หน้าคิวบอกเหตุที่ไม่มีลิงก์ (ไม่เงียบ)
+            ErrorMessage = PayLinkSkipNote(payLink),
         });
         return true;
     }
@@ -862,6 +889,8 @@ public class EmailScheduleService : IEmailScheduleService
             item.Subject = Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, heading.IsEnglish), ctx);
             item.Body = WithPayLink(Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, heading.IsEnglish), ctx, htmlEncodeValues: true),
                 rule.BodyTemplate, payLink, heading.IsEnglish);
+            // รอบ 250 (WP-02 §2.4 ข้อ 2): เหตุที่ไม่แนบลิงก์ ณ เวลาส่ง (ตั้ง URL แล้วหลังเข้าคิว ⇒ หมายเหตุหาย)
+            item.ErrorMessage = PayLinkSkipNote(payLink);
         }
         return null;
     }

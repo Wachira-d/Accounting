@@ -23,13 +23,11 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
     private readonly IDocumentService _docs;
     private readonly IGatewayAccountResolver _accounts;
     private readonly ILogger<DocumentPaymentHandler> _logger;
-    /// <summary>รอบ 241: งานส่งเอกสารหลังรับชำระ (null = สร้างนอก DI)</summary>
-    private readonly IPostPaymentAutomationService? _postPay;
+    // รอบ 250 (WP-02 §2.1): งานส่งเอกสารหลังรับชำระย้ายเข้าแกน DocumentService.CreatePaymentAsync (source: Gateway) — handler ไม่เรียกเองแล้ว
 
     public DocumentPaymentHandler(AccountingDbContext db, IDocumentService docs,
-        IGatewayAccountResolver accounts, ILogger<DocumentPaymentHandler> logger,
-        IPostPaymentAutomationService? postPay = null)
-    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; _postPay = postPay; }
+        IGatewayAccountResolver accounts, ILogger<DocumentPaymentHandler> logger)
+    { _db = db; _docs = docs; _accounts = accounts; _logger = logger; }
 
     public PaymentSourceKind SourceKind => PaymentSourceKind.Document;
 
@@ -94,7 +92,7 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
             : Accounting.Helpers.DocumentPayLinkPolicy.WhtForPayment(intent.Amount, doc.BalanceDue,
                 Accounting.Helpers.DocumentPayLinkPolicy.AmountsFor(doc.BalanceDue, expectedWht, 0m).Wht);
 
-        var recorded = await _docs.CreatePaymentAsync(intent.CompanyId, new Models.DTOs.Document.CreatePaymentRequest(
+        await _docs.CreatePaymentAsync(intent.CompanyId, new Models.DTOs.Document.CreatePaymentRequest(
             DocumentId: doc.Id,
             PaymentDate: intent.ConfirmedAt ?? DateTime.UtcNow,
             Amount: intent.Amount,
@@ -104,10 +102,7 @@ public class DocumentPaymentHandler : IPaymentCompletionHandler
             Notes: $"ชำระออนไลน์ผ่านระบบรับชำระเงิน — {doc.DocumentNumber}",
             OverridePaymentAccountId: moneyIn,
             WithholdingTaxAmount: paymentWht
-        ), intent.ConfirmedBy ?? "payment-gateway");
-
-        // รอบ 241: งานส่งเอกสารหลังรับชำระ (ออก/ส่งใบเสร็จ) — หลัง commit · ไม่โยน (เงินบันทึกแล้ว) · แถวเดียวต่อการชำระ (webhook ซ้ำไม่เพิ่ม)
-        if (_postPay != null)
-            await _postPay.EnqueueAsync(intent.CompanyId, recorded.Id, "gateway", intent.ConfirmedBy ?? "payment-gateway", ct);
+        ), intent.ConfirmedBy ?? "payment-gateway", source: Accounting.Helpers.PaymentEntrySource.Gateway);
+        // รอบ 250 (WP-02 §2.1): งานส่งเอกสารหลังรับชำระเข้าคิวในแกน CreatePaymentAsync (หลัง commit · แถวเดียวต่อการชำระ — webhook ซ้ำไม่เพิ่ม)
     }
 }

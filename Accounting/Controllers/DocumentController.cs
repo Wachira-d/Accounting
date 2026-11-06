@@ -1523,14 +1523,16 @@ public class DocumentController : ControllerBase
         var userIdGuid = JwtHelper.GetUserIdFromClaims(User);
         var deny = await DenyDocAsync(companyId, userIdGuid, targetType, DocPerm.Create, "แปลงเป็น");
         if (deny != null) return Forbid403<List<DocumentResponse>>(deny);
-        foreach (var srcId in (request.DocumentIds ?? new List<Guid>()).Distinct())
+        // รอบ 250 (WP-02 §2.4 ข้อ 11 · E L-5 · CS8604): รายการว่าง/ไม่ส่ง = ชุดว่างชุดเดียว ใช้ทั้งด่านสิทธิ์ · ตัวแปลง · ตัวนับ (ไม่อ่าน request.DocumentIds ซ้ำ)
+        var sourceIds = (request.DocumentIds ?? new List<Guid>()).Distinct().ToList();
+        foreach (var srcId in sourceIds)
             if (await DenySensitiveAsync(companyId, srcId, "แปลง") is { } hidden)
                 return Forbid403<List<DocumentResponse>>(hidden);
         var userId = userIdGuid.ToString();
-        var (converted, failed) = await _documentService.BatchConvertDocumentsAsync(companyId, request.DocumentIds, targetType, userId);
+        var (converted, failed) = await _documentService.BatchConvertDocumentsAsync(companyId, sourceIds, targetType, userId);
         // ใบที่แปลงไม่ได้ส่งกลับใน Errors (เลขเอกสาร + เหตุผล) — หน้าเว็บแสดงเป็นคำเตือน ไม่ใช่ "สำเร็จ" เงียบ ๆ
         return Ok(new ApiResponse<List<DocumentResponse>>(true, converted,
-            $"แปลงสำเร็จ {converted.Count}/{request.DocumentIds.Distinct().Count()} ฉบับ", failed.Count > 0 ? failed : null));
+            $"แปลงสำเร็จ {converted.Count}/{sourceIds.Count} ฉบับ", failed.Count > 0 ? failed : null));
     }
 
     [HttpPost("from-obligation/{performanceObligationId:guid}")]
@@ -1711,14 +1713,11 @@ public class DocumentController : ControllerBase
         var userId = userIdGuid.ToString();
         // Single endpoint, two paths: when Allocations is non-empty the
         // multi-doc settler runs; otherwise legacy 1:1 settler.
+        // รอบ 250 (WP-02 §2.1): งานหลังรับชำระเข้าคิวในแกน CreatePaymentAsync เอง (ทุกทางเข้า · source = ทางเข้า) — ไม่เรียกซ้ำที่นี่ ·
+        // กระจายหลายใบ ⇒ ไม่ออกใบเสร็จอัตโนมัติ (SettlementReceiptPolicy · PostPaymentAutomationPolicy.MultiDocReason)
         var result = (request.Allocations != null && request.Allocations.Count > 0)
             ? await _documentService.CreateMultiDocPaymentAsync(companyId, request, userId)
-            : await _documentService.CreatePaymentAsync(companyId, request, userId);
-        // รอบ 241: งานส่งเอกสารหลังรับชำระ (ออก/ส่งใบเสร็จตามค่าตั้ง "ส่งเอกสารอัตโนมัติ") — เส้น 1:1 เท่านั้น (กระจายหลายใบ ⇒ ไม่ออกใบเสร็จอัตโนมัติ ·
-        // SettlementReceiptPolicy) · หลัง commit · ไม่โยน (การชำระสำเร็จแล้ว) · ปิดค่าตั้ง = ไม่สร้างงาน
-        if (request.Allocations is not { Count: > 0 }
-            && HttpContext?.RequestServices?.GetService(typeof(IPostPaymentAutomationService)) is IPostPaymentAutomationService postPay)
-            await postPay.EnqueueAsync(companyId, result.Id, "manual", userId);
+            : await _documentService.CreatePaymentAsync(companyId, request, userId, source: Accounting.Helpers.PaymentEntrySource.Manual);
         var msg = (request.Allocations != null && request.Allocations.Count > 0)
             ? $"บันทึกการชำระสำเร็จ — กระจายเป็น {request.Allocations.Count} เอกสาร"
             : "บันทึกการชำระเงินสำเร็จ";

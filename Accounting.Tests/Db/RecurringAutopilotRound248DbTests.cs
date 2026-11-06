@@ -362,7 +362,7 @@ public class RecurringAutopilotRound248DbTests
         using (var req = DbTestDatabase.TryCreateContext()!)
         {
             var ex = await Assert.ThrowsAsync<BusinessRuleException>(() => Autopilot(req).SetRecurringPolicyAsync(s.CompanyId, s.RecurringId,
-                new SetAutoApprovePolicyRequest(new List<string> { "BUYER-86/4" }), s.SetterId));
+                new SetAutoApprovePolicyRequest(new List<string> { AutoApprovePolicy.NeverBuyerTaxCode }), s.SetterId));
             Assert.Contains("86/4", ex.Message);
         }
         using var check = DbTestDatabase.TryCreateContext()!;

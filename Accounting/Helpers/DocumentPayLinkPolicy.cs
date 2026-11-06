@@ -101,10 +101,14 @@ public static class DocumentPayLinkPolicy
 
     /// <summary>เหตุที่ออกลิงก์ชำระเงินให้ใบนี้ไม่ได้ — null = ได้ · เฉพาะเอกสารตั้งหนี้ฝั่งขายที่ออกเลขจริงแล้ว (§86/4 — ร่างยังเป็นเลข DRAFT)
     /// และยังมียอดค้าง · ตรงกับชนิดที่ <c>DocumentPaymentHandler</c> → <c>CreatePaymentAsync</c> บันทึกรับชำระได้</summary>
-    public static string? IssueRefusal(DocumentType type, DocumentStatus status, decimal balanceDue, bool saleSide, string? currency)
+    /// <param name="supersedingTaxInvoiceNumber">รอบ 250 (WP-02 §2.3 · คำตัดสิน §2 #16): เลขใบกำกับภาษีที่อ้างใบแจ้งหนี้นี้และยังมีผล (ตัวโหลดเดียว
+    /// <c>PaymentQrService.SupersedingTaxInvoiceNumberAsync</c>) — มี ⇒ ปฏิเสธ (ลูกหนี้ย้ายไปใบกำกับแล้ว · รับชำระซ้ำ/ใบเสร็จซ้อน §86/4) · null = ไม่มี/ใบกำกับถูกยกเลิก</param>
+    public static string? IssueRefusal(DocumentType type, DocumentStatus status, decimal balanceDue, bool saleSide, string? currency,
+        string? supersedingTaxInvoiceNumber)
     {
         if (!(type is DocumentType.Invoice or DocumentType.TaxInvoice || (type == DocumentType.DebitNote && saleSide)))
             return "ลิงก์ชำระเงินใช้ได้กับใบแจ้งหนี้ · ใบกำกับภาษี · ใบเพิ่มหนี้ฝั่งขายเท่านั้น";
+        if (TaxInvoiceRefusal(type, supersedingTaxInvoiceNumber) is string taxInv) return taxInv;
         if (!string.IsNullOrWhiteSpace(currency) && !string.Equals(currency.Trim(), "THB", StringComparison.OrdinalIgnoreCase))
             return "ลิงก์ชำระเงินออนไลน์รองรับเฉพาะเอกสารสกุลเงินบาท (THB)";
         if (status is DocumentStatus.Draft or DocumentStatus.WaitingApproval or DocumentStatus.Rejected)
@@ -116,7 +120,7 @@ public static class DocumentPayLinkPolicy
         return null;
     }
 
-    /// <summary>เอกสารนี้เป็น "ลูกค้าจ่ายเรา" ไหม — ใบเพิ่มหนี้ดูฝั่งจากใบต้นทาง (ต้นทางฝั่งซื้อ = เราจ่ายผู้ขาย) · ตรงกับ <c>DocumentService.IsCashInflowDocAsync</c></summary>
+    /// <summary>เอกสารนี้เป็น "ลูกค้าจ่ายเรา" ไหม — ใบเพิ่มหนี้ดูฝั่งจากใบต้นทาง (ต้นทางฝั่งซื้อ = เราจ่ายผู้ขาย) · ตรงกับ <c>CashFlowDirection.IsInflow</c> (รอบ 250)</summary>
     public static bool IsSaleSide(DocumentType type, DocumentType? relatedType)
         => type is DocumentType.Invoice or DocumentType.TaxInvoice
            || (type == DocumentType.DebitNote
@@ -191,9 +195,25 @@ public static class DocumentPayLinkPolicy
             System.Text.Encoding.ASCII.GetBytes(TokenHash(token)), System.Text.Encoding.ASCII.GetBytes(storedHash));
     }
 
-    /// <summary>ลิงก์ใช้ได้ไหม — มี token (hash) · ไม่ถูกเพิกถอน · ยังไม่หมดอายุ</summary>
-    public static bool LinkUsable(string? tokenHash, DateTime? expiresAt, DateTime? revokedAt, DateTime nowUtc)
-        => !string.IsNullOrWhiteSpace(tokenHash) && revokedAt == null && (expiresAt == null || expiresAt > nowUtc);
+    /// <summary>รหัสกติกา "ใบแจ้งหนี้ที่ออกใบกำกับแล้ว" (รอบ 250 · 246-QR-10 N6)</summary>
+    public const string TaxInvoiceRuleCode = "PAYLINK-241-TAXINV";
+
+    /// <summary>รอบ 250 (WP-02 §2.3): ใบแจ้งหนี้ที่มีใบกำกับภาษีอ้างและยังมีผล ⇒ ข้อความปฏิเสธที่บอกเลขใบกำกับ · ใบชนิดอื่น/ไม่มีใบกำกับ ⇒ null</summary>
+    private static string? TaxInvoiceRefusal(DocumentType type, string? supersedingTaxInvoiceNumber)
+        => type == DocumentType.Invoice && !string.IsNullOrWhiteSpace(supersedingTaxInvoiceNumber)
+            ? $"ใบแจ้งหนี้นี้ออกใบกำกับภาษี {supersedingTaxInvoiceNumber!.Trim()} แล้ว — ชำระที่ใบกำกับ {supersedingTaxInvoiceNumber.Trim()} [{TaxInvoiceRuleCode}]"
+            : null;
+
+    /// <summary>ลิงก์ใช้ได้ไหม (ตัดสินสดทุกครั้ง) — มี token (hash) · ไม่ถูกเพิกถอน · ยังไม่หมดอายุ · รอบ 250: ใบแจ้งหนี้ยังไม่ถูกแทนด้วยใบกำกับภาษีที่มีผล
+    /// (<paramref name="supersedingTaxInvoiceNumber"/> มีค่า ⇒ ลิงก์เดิมใช้ไม่ได้ทันที · ใบกำกับถูกยกเลิก ⇒ null ⇒ ใช้ได้อีก)</summary>
+    public static bool LinkUsable(string? tokenHash, DateTime? expiresAt, DateTime? revokedAt, DateTime nowUtc, string? supersedingTaxInvoiceNumber)
+        => !string.IsNullOrWhiteSpace(tokenHash) && revokedAt == null && (expiresAt == null || expiresAt > nowUtc)
+           && string.IsNullOrWhiteSpace(supersedingTaxInvoiceNumber);
+
+    /// <summary>ข้อความของลิงก์ที่ใช้ไม่ได้บนหน้าชำระสาธารณะ — ถูกแทนด้วยใบกำกับ ⇒ บอกให้ชำระที่ใบกำกับ (ไม่เปิดเผยยอด/ชื่อลูกค้า) · อื่น ๆ = ข้อความเดิม</summary>
+    public static string UnusableNote(string? supersedingTaxInvoiceNumber, string defaultNote)
+        => string.IsNullOrWhiteSpace(supersedingTaxInvoiceNumber) ? defaultNote
+            : $"เอกสารนี้ออกใบกำกับภาษี {supersedingTaxInvoiceNumber.Trim()} แล้ว — กรุณาชำระตามใบกำกับภาษีนั้น (ติดต่อผู้ขายเพื่อขอลิงก์ของใบกำกับ)";
 
     /// <summary>URL สาธารณะ — origin จาก <c>SystemBaseUrl</c> (ไม่ประกอบโดเมนเอง) · companyId อยู่ใน URL เพราะเส้น API สาธารณะผูกบริษัท</summary>
     public static string Url(string origin, Guid companyId, string token)

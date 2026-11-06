@@ -345,6 +345,41 @@ public class ImportAccountingTargetsDbTests
         Assert.Contains(v2[0].Issues, i => i.Code == "payment-exceeds-balance");
     }
 
+    // รอบ 250 (WP-02 §2.1 · B F-3): รับชำระที่นำเข้าจากไฟล์เดินงานหลังรับชำระในแกน CreatePaymentAsync (source: Import) — เดิมไม่มีแถวงานเลย
+    [Fact]
+    public async Task นำเข้ารับชำระCSV_ใบขาย_มีแถวงานหลังรับชำระ_แหล่งImport()
+    {
+        using var db = DbTestDatabase.TryCreateContext();
+        if (db == null) { _out.WriteLine("ไม่มีฐาน — ข้าม"); return; }
+        var s = await SeedAsync(db, "PPAY-" + Guid.NewGuid().ToString("N")[..6], withPeriod: false);
+        db.CompanySettings.Add(new CompanySettings { CompanyId = s.CompanyId, PostPayEmailReceipt = true });
+        var customer = new Contact { CompanyId = s.CompanyId, Name = "บริษัท ลูกค้า จำกัด", TaxId = "0107537000017", ContactType = ContactType.JuristicPerson,
+            IsCustomer = true, Email = "ap@customer250.co.th", Address = "1 ถนนสีลม กรุงเทพฯ" };
+        db.Contacts.Add(customer);
+        await db.SaveChangesAsync();
+        var inv = new Document
+        {
+            CompanyId = s.CompanyId, ContactId = customer.Id, DocumentType = DocumentType.Invoice, DocumentNumber = "INV-" + s.CompanyId.ToString("N")[..6],
+            Reference = "OLD-INV-250", Status = DocumentStatus.Approved, DocumentDate = DateTime.UtcNow.Date.AddDays(-10),
+            SubTotal = 5_000m, TotalAmount = 5_000m, BalanceDue = 5_000m, Currency = "THB",
+        };
+        inv.Lines.Add(new DocumentLine { LineOrder = 1, Description = "ค่าบริการ", Quantity = 1, UnitPrice = 5_000m, Amount = 5_000m });
+        db.Documents.Add(inv);
+        await db.SaveChangesAsync();
+
+        var target = new PaymentImportTarget(db, DocService(db));
+        var ctx = Ctx(s, PaymentImportTarget.Key);
+        var row = Row(1, ("DocumentNumber", "OLD-INV-250"),
+            ("PaymentDate", DateTime.UtcNow.AddHours(7).Date.AddDays(-1).ToString("yyyy-MM-dd")), ("Amount", "5000.00"), ("PaymentMethod", "โอน"));
+        var res = await target.CommitGroupAsync(ctx, new[] { row }, CancellationToken.None);
+        var ok = Assert.Single(res);
+        Assert.True(ok.Success, ok.Error);
+        using var check = DbTestDatabase.TryCreateContext()!;
+        var run = await check.PostPaymentAutomationRuns.AsNoTracking().SingleAsync(r => r.CompanyId == s.CompanyId && r.PaymentId == ok.EntityId);
+        Assert.Equal(nameof(PaymentEntrySource.Import), run.Source);
+        Assert.Equal(PostPaymentAutomationPolicy.StatusPending, run.Status);
+    }
+
     // ───────────────────────── สินทรัพย์ ─────────────────────────
 
     [Fact]
