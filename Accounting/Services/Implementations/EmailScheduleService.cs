@@ -19,10 +19,13 @@ public class EmailScheduleService : IEmailScheduleService
     private readonly IConfiguration? _config;
     /// <summary>รอบ 244: ทาง e-Tax by Email ของใบกำกับในคิว (<c>SendDocumentRoutedAsync</c>) · null (สร้างนอก DI) ⇒ ใบที่ต้องไปทาง e-Tax ล้มดังบนคิว (ไม่ส่งเป็นอีเมลธรรมดา)</summary>
     private readonly IDocumentEmailService? _docEmail;
+    /// <summary>รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.e/§3.g): ผู้รับของทุกเส้นในไฟล์นี้มาจากตัวหาผู้รับเดียว (ปลายทางของผู้ติดต่อ + เรื่องที่รับ) —
+    /// ห้ามอ่าน <c>Contact.Email</c> เป็นผู้รับเอง (required_call_site_check R250L1) · null (สร้างนอก DI) ⇒ ตัวเดียวกันแบบไม่ถอด LINE</summary>
+    private readonly IContactRecipientResolver _recipients;
 
     public EmailScheduleService(AccountingDbContext db, IEmailSenderFactory senderFactory,
         IPdfGenerationService pdf, ILogger<EmailScheduleService> logger, IDocumentPayLinkService? payLinks = null,
-        IConfiguration? config = null, IDocumentEmailService? docEmail = null)
+        IConfiguration? config = null, IDocumentEmailService? docEmail = null, IContactRecipientResolver? recipients = null)
     {
         _db = db;
         _senderFactory = senderFactory;
@@ -31,7 +34,40 @@ public class EmailScheduleService : IEmailScheduleService
         _payLinks = payLinks;
         _config = config;
         _docEmail = docEmail;
+        _recipients = recipients ?? ContactRecipientResolver.EmailOnly(db);
     }
+
+    /// <summary>รอบ 250 WP-08: อีเมลของผู้ติดต่อสำหรับเรื่องนี้ (ตัวตัดสินเดียว <see cref="ContactRecipientRule.ForEmail"/>)</summary>
+    private async Task<ContactRecipientRule.EmailDelivery> EmailForAsync(Guid companyId, Guid contactId, NotifyTopic topic, CancellationToken ct)
+    {
+        var set = await _recipients.ResolveAsync(companyId, contactId, topic, ct);
+        return ContactRecipientRule.ForEmail(set);
+    }
+
+    /// <summary>รอบ 250 WP-08 (คำตัดสิน 250-29): ค่าตั้ง "ไม่ส่งอัตโนมัติ" ของผู้ติดต่อ (ผู้ติดต่อที่ถูกลบยังอ่านได้ — ใบเก่าอ้างอยู่)</summary>
+    private Task<bool> ContactAutoSendOffAsync(Guid companyId, Guid contactId, CancellationToken ct)
+        => _db.Contacts.AsNoTracking().IgnoreQueryFilters()
+            .Where(c => c.Id == contactId && c.CompanyId == companyId)
+            .Select(c => c.AutoSendDisabled).FirstOrDefaultAsync(ct);
+
+    /// <summary>รอบ 250 WP-08: ผู้ติดต่อมีอีเมลแต่ไม่รับเรื่องนี้ ⇒ แถวคิว "ข้าม" พร้อมเหตุ (ล้มดัง — หน้าคิวเห็นว่าทำไมไม่ส่ง) ·
+    /// กุญแจกันซ้ำเดิม ⇒ สแกนรอบถัดไปไม่เขียนซ้ำ · ไม่มีผู้รับ/ไม่มีไฟล์แนบ (ผู้ส่งคิวไม่หยิบแถวสถานะนี้)</summary>
+    private void AddNotSentRow(Guid companyId, Guid? ruleId, string entityType, Guid entityId, string subject, DateTime sendUtc, string idem, string reason)
+        => _db.EmailQueues.Add(new EmailQueue
+        {
+            CompanyId = companyId,
+            RuleId = ruleId == Guid.Empty ? null : ruleId,
+            EntityType = entityType,
+            EntityId = entityId,
+            ToEmail = "",
+            Subject = subject,
+            Body = "",
+            AttachPdf = false,
+            ScheduledFor = sendUtc,
+            IdempotencyKey = idem,
+            Status = ScheduledEmailSendCheck.SkippedStatus,
+            ErrorMessage = reason.Length > 2000 ? reason[..2000] : reason,
+        });
 
     /// <summary>รอบ 241: ลิงก์ชำระเงินของใบนี้ตามตาราง (ค่าตาราง ?? ค่าบริษัท · ช่องทางตาราง ∩ ที่บริษัทเปิด — ตัวตัดสิน <c>DocumentPayLinkPolicy</c>) ·
     /// null = ไม่แนบ · แนบแล้ว: <c>{PayLink}</c> ในเทมเพลต = URL · เทมเพลตไม่มี placeholder = ต่อบล็อกท้ายเนื้อ</summary>
@@ -159,8 +195,10 @@ public class EmailScheduleService : IEmailScheduleService
             await _db.HydratePayeeContactAsync(companyId, cert);
             if (cert?.PayeeContact == null) return;
 
-            var email = cert.PayeeContact.Email;
-            if (string.IsNullOrWhiteSpace(email)) return;
+            // รอบ 250 WP-08: ผู้รับเรื่อง "50 ทวิ" ตามช่องทางแจ้งเตือนของผู้ติดต่อ (ไม่ตั้ง = อีเมลหลักเหมือนเดิม)
+            var delivery = await EmailForAsync(companyId, cert.PayeeContact.Id, NotifyTopics.ForTrigger("WhtCertIssued"), ct);
+            var whtNotSent = AutopilotSettingsResolver.AutoSendBlock(cert.PayeeContact.AutoSendDisabled) ?? delivery.OptOutReason;
+            if (!delivery.Deliverable && whtNotSent == null) return;
 
             foreach (var rule in rules)
             {
@@ -175,13 +213,19 @@ public class EmailScheduleService : IEmailScheduleService
                     ["ContactName"] = cert.PayeeContact.Name,
                     ["Amount"] = cert.TotalTaxAmount.ToString("N2"),
                 };
+                if (whtNotSent != null)
+                {
+                    AddNotSentRow(companyId, rule.Id, "WithholdingTaxCert", certId,
+                        Render(rule.SubjectTemplate ?? "หนังสือรับรองหัก ณ ที่จ่าย {DocNumber}", ctx), sendUtc, idem, whtNotSent);
+                    continue;
+                }
                 _db.EmailQueues.Add(new EmailQueue
                 {
                     CompanyId = companyId,
                     RuleId = rule.Id,
                     EntityType = "WithholdingTaxCert",
                     EntityId = certId,
-                    ToEmail = email,
+                    ToEmail = delivery.To!,
                     BccEmail = rule.BccEmails,
                     Subject = Render(rule.SubjectTemplate ?? "หนังสือรับรองหัก ณ ที่จ่าย {DocNumber}", ctx),
                     Body = Render(rule.BodyTemplate ?? DefaultWhtBody(), ctx, htmlEncodeValues: true),
@@ -217,6 +261,11 @@ public class EmailScheduleService : IEmailScheduleService
                 return EmailEnqueueOutcome.Skipped("ใบยังไม่ได้อนุมัติ (ใบร่างยังไม่มีเลขที่จริง §86/4)");
             }
 
+            // รอบ 250 WP-08 (คำตัดสิน 250-29 · AUTO_SEND §9 เฟส 243 ข้อ 7): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ชนะกฎบริษัท/รายการประจำ (ตัวตัดสินเดียว
+            // AutopilotSettingsResolver) — ตรวจก่อนด่าน "กฎเมื่ออนุมัติครอบแล้ว" (แถว "ข้าม" ของกฎนั้นไม่ใช่การส่ง ⇒ เหตุที่ผู้ใช้เห็นต้องเป็นค่าตั้งนี้)
+            if (AutopilotSettingsResolver.AutoSendBlock(await ContactAutoSendOffAsync(companyId, doc.ContactId, ct)) is { } autoSendOff)
+                return EmailEnqueueOutcome.NotSent(autoSendOff);
+
             // รอบ 250 (WP-02 §2.4 ข้อ 3 · คำตัดสิน §2 #10 · B F-4): การอนุมัติอัตโนมัติของรายการประจำเดิน ApproveDocumentAsync → OnDocumentApprovedAsync ⇒
             // กฎ "เมื่ออนุมัติเอกสาร" ที่ครอบชนิดนี้เข้าคิวไปแล้ว ⇒ ข้ามกฎ "เมื่อรายการประจำสร้างเอกสาร"/กฎเสมือน (ทิศเดียว — ไม่แตะฝั่ง DocumentApproved)
             var approvedRuleCovers = await _db.EmailScheduleRules.AsNoTracking()
@@ -242,11 +291,17 @@ public class EmailScheduleService : IEmailScheduleService
             if (rules.Count > 0)
             {
                 // recurringId เข้า suffix → idempotency: ทุก recurring run ไม่ทับกัน
+                string? notSent = null;
+                var anyQueued = false;
                 foreach (var rule in rules.Select(r => WithRecurringPayLayer(r, recurringLayer)))
-                    await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays,
+                {
+                    var one = await EnqueueDocumentAsync(rule, doc, daysOffset: rule.OffsetDays,
                         suffix: $"recurring-{recurringId}", ct);
+                    anyQueued |= one.Queued || one.Duplicate;
+                    notSent ??= one.NotSent;
+                }
                 await _db.SaveChangesAsync(ct);
-                return EmailEnqueueOutcome.Enqueued();
+                return !anyQueued && notSent != null ? EmailEnqueueOutcome.NotSent(notSent) : EmailEnqueueOutcome.Enqueued();
             }
 
             // ── ไม่มีกฎในหน้า "ตารางส่งอีเมล" → ใช้ธง AutoSendEmail บนตัว
@@ -258,11 +313,11 @@ public class EmailScheduleService : IEmailScheduleService
                 .Select(r => (bool?)r.AutoSendEmail).FirstOrDefaultAsync(ct);
             if (autoSend != true) return EmailEnqueueOutcome.Skipped("รายการนี้ไม่ได้ตั้งส่งอีเมลอัตโนมัติ และไม่มีกฎส่งในหน้าตารางส่งอีเมล");
 
-            if (string.IsNullOrWhiteSpace(doc.Contact?.Email))
-            {
-                // ผู้เรียก (RecurringTransactionService) แจ้งเรื่องนี้ด้วยตัวตัดสินเดียว RecurringEmailReadiness (EmailSkippedNoContactEmail) — ที่นี่คืนเหตุ
+            // รอบ 250 WP-08: ผู้รับจากตัวหาผู้รับเดียว (ไม่อ่าน Contact.Email ตรง) — ไม่มีอีเมลเลย ⇒ ผู้เรียกแจ้งด้วย RecurringEmailReadiness (EmailSkippedNoContactEmail) ·
+            // มีอีเมลแต่ไม่รับเรื่อง "เอกสาร" ⇒ แถวคิว "ข้าม" (เขียนใน EnqueueDocumentAsync) + คืนเหตุให้ผู้เรียกแสดง (EmailNotSentReason)
+            var inlineDelivery = await EmailForAsync(companyId, doc.ContactId, NotifyTopics.ForTrigger("RecurringInvoiceCreated"), ct);
+            if (!inlineDelivery.Deliverable && inlineDelivery.OptOutReason == null)
                 return EmailEnqueueOutcome.Skipped(RecurringEmailReadiness.NotSentNoEmail);
-            }
 
             // rule เสมือน (ไม่บันทึกลง DB) — EmailQueue.RuleId เป็น null ได้
             // Id = Guid.Empty เพื่อให้ EnqueueDocumentAsync ใส่ RuleId = null
@@ -279,10 +334,10 @@ public class EmailScheduleService : IEmailScheduleService
                 PayLinkChannelsJson = DocumentPayLinkPolicy.SerializeChannels(recurringLayer?.Channels),
             };
             // ส่งทันที ไม่รอ 09:00 ของวัน — เจตนาคือ "ออกเอกสารแล้วส่งเลย"
-            await EnqueueDocumentAsync(inlineRule, doc, daysOffset: 0,
+            var inlineResult = await EnqueueDocumentAsync(inlineRule, doc, daysOffset: 0,
                 suffix: $"autosend-{recurringId}", ct, overrideSendUtc: DateTime.UtcNow);
             await _db.SaveChangesAsync(ct);
-            return EmailEnqueueOutcome.Enqueued();
+            return inlineResult.NotSent != null ? EmailEnqueueOutcome.NotSent(inlineResult.NotSent) : EmailEnqueueOutcome.Enqueued();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -327,7 +382,7 @@ public class EmailScheduleService : IEmailScheduleService
             .ToListAsync(ct);
         if (rules.Count == 0) return 0;
 
-        int enqueued = 0;
+        int enqueued = 0, notSentRows = 0;
         foreach (var rule in rules)
         {
             // ส่งเฉพาะวันที่ DayOfMonth ของเดือนปัจจุบัน
@@ -366,10 +421,22 @@ public class EmailScheduleService : IEmailScheduleService
 
             foreach (var contact in contacts)
             {
-                if (string.IsNullOrWhiteSpace(contact.Email)) continue;
+                // รอบ 250 WP-08: ใบแจ้งยอด = เรื่อง "ทวงชำระ/ใบแจ้งยอด" ตามช่องทางแจ้งเตือนของผู้ติดต่อ (ตัวหาผู้รับเดียว)
+                var delivery = await EmailForAsync(rule.CompanyId, contact.Id, NotifyTopics.ForTrigger(rule.Trigger), ct);
+                var stmtNotSent = AutopilotSettingsResolver.AutoSendBlock(contact.AutoSendDisabled) ?? delivery.OptOutReason;
+                if (!delivery.Deliverable && stmtNotSent == null) continue;
                 var idem = $"statement:{contact.Id}:{period}:{rule.Id}";
                 if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == rule.CompanyId
                     && q.IdempotencyKey == idem && !q.IsDeleted, ct)) continue;
+                if (stmtNotSent != null)
+                {
+                    AddNotSentRow(rule.CompanyId, rule.Id, "MonthlyStatement", contact.Id,
+                        Render(rule.SubjectTemplate ?? "สรุปรายการเดือน {Period} — {CompanyName}",
+                            new Dictionary<string, string?> { ["Period"] = period, ["CompanyName"] = companyName, ["ContactName"] = contact.Name }),
+                        sendUtc, idem, stmtNotSent);
+                    notSentRows++;
+                    continue;
+                }
 
                 // รวมยอดของ contact นี้ในเดือน
                 var monthDocs = await _db.Documents.AsNoTracking()
@@ -427,7 +494,7 @@ public class EmailScheduleService : IEmailScheduleService
                     RuleId = rule.Id,
                     EntityType = "MonthlyStatement",
                     EntityId = contact.Id,
-                    ToEmail = contact.Email,
+                    ToEmail = delivery.To!,
                     BccEmail = rule.BccEmails,
                     Subject = subject,
                     Body = body,
@@ -438,7 +505,7 @@ public class EmailScheduleService : IEmailScheduleService
                 enqueued++;
             }
         }
-        if (enqueued > 0) await _db.SaveChangesAsync(ct);
+        if (enqueued > 0 || notSentRows > 0) await _db.SaveChangesAsync(ct);
         return enqueued;
     }
 
@@ -451,7 +518,7 @@ public class EmailScheduleService : IEmailScheduleService
             .ToListAsync(ct);
         if (rules.Count == 0) return 0;
 
-        int enqueued = 0;
+        int enqueued = 0, notSentRows = 0;
         foreach (var rule in rules)
         {
             // DueSoon: OffsetDays ติดลบ — เช่น -3 = ส่งล่วงหน้า 3 วัน
@@ -477,13 +544,15 @@ public class EmailScheduleService : IEmailScheduleService
             var sendUtc = ScheduledUtc(today, rule.SendAtHour);
             foreach (var doc in docs)
             {
-                if (await EnqueueDocumentAsync(rule, doc, daysOffset: 0,
+                var queued = await EnqueueDocumentAsync(rule, doc, daysOffset: 0,
                     suffix: rule.Trigger == "DocumentDueSoon" ? $"due-{rule.OffsetDays}" : $"overdue-{rule.OffsetDays}",
-                    ct, overrideSendUtc: sendUtc))
-                    enqueued++;
+                    ct, overrideSendUtc: sendUtc);
+                if (queued.Queued) enqueued++;
+                else if (queued.NotSent != null) notSentRows++;
             }
         }
-        if (enqueued > 0) await _db.SaveChangesAsync(ct);
+        // แถว "ข้าม" (ยกเลิกรับเรื่องทวงชำระ) ต้องถูกบันทึกด้วย — ไม่งั้นเหตุหาย
+        if (enqueued > 0 || notSentRows > 0) await _db.SaveChangesAsync(ct);
         return enqueued;
     }
 
@@ -685,7 +754,10 @@ public class EmailScheduleService : IEmailScheduleService
 
         var subject = item.Subject;
         var body = item.Body;
-        var msg = new EmailMessage { To = { item.ToEmail } };
+        // รอบ 250 WP-08: ToEmail อาจมีหลายผู้รับ (ปลายทางของผู้ติดต่อ · คั่น ",") — แยกเป็นรายตัว (Graph/Gmail ไม่รับสตริงรวม)
+        var msg = new EmailMessage();
+        msg.To.AddRange(SignEmailThrottle.ParseRecipients(new[] { item.ToEmail }).Valid);
+        if (msg.To.Count == 0) msg.To.Add(item.ToEmail);
         if (!string.IsNullOrWhiteSpace(item.CcEmail)) msg.Cc.Add(item.CcEmail);
         if (!string.IsNullOrWhiteSpace(item.BccEmail))
             foreach (var b in item.BccEmail.Split(',', StringSplitOptions.RemoveEmptyEntries))
@@ -785,16 +857,22 @@ public class EmailScheduleService : IEmailScheduleService
     /// <summary>กุญแจกันซ้ำของคิวอีเมลเอกสาร — ตัวเดียวของฝั่งเขียน (EnqueueDocumentAsync) และฝั่งตรวจ "กฎเมื่ออนุมัติเข้าคิวจริงแล้วไหม" (ฝ่ายค้าน WP-02 ข้อ 6)</summary>
     internal static string DocumentQueueKey(Guid documentId, string trigger, string suffix) => $"doc:{documentId}:{trigger}:{suffix}";
 
-    private async Task<bool> EnqueueDocumentAsync(EmailScheduleRule rule, Document doc,
+    /// <summary>รอบ 250 WP-08: ผลเข้าคิวของใบหนึ่งตามกฎหนึ่ง — <see cref="NotSent"/> = ผู้ติดต่อไม่รับเรื่องนี้ (เขียนแถว "ข้าม" พร้อมเหตุแล้ว)</summary>
+    internal sealed record DocQueueResult(bool Queued, bool Duplicate, string? NotSent);
+
+    private async Task<DocQueueResult> EnqueueDocumentAsync(EmailScheduleRule rule, Document doc,
         int daysOffset, string suffix, CancellationToken ct, DateTime? overrideSendUtc = null)
     {
-        var email = doc.Contact?.Email;
-        // ตัวตัดสินเดียวกับฟอร์ม/หน้ารายการประจำ (RecurringEmailReadiness) — ผู้ติดต่อไม่มีอีเมล ⇒ ไม่เข้าคิว
-        if (!RecurringEmailReadiness.HasDeliverableEmail(email)) return false;
+        // รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.e): ผู้รับจากตัวหาผู้รับเดียว — ปลายทางของผู้ติดต่อที่รับเรื่องของ trigger นี้ (ไม่ตั้ง = Contact.Email เดิมทุกเรื่อง) ·
+        // ไม่มีอีเมลเลย ⇒ ไม่เข้าคิว (เดิม) · มีอีเมลแต่ไม่รับเรื่องนี้ ⇒ แถว "ข้าม" พร้อมเหตุ
+        var delivery = await EmailForAsync(doc.CompanyId, doc.ContactId, NotifyTopics.ForTrigger(rule.Trigger), ct);
+        // คำตัดสิน 250-29: ผู้ติดต่อ "ไม่ส่งอัตโนมัติ" ชนะกฎบริษัททุก trigger ของตารางส่ง (ตัวตัดสินเดียว AutopilotSettingsResolver.AutoSendBlock)
+        var notSentReason = AutopilotSettingsResolver.AutoSendBlock(await ContactAutoSendOffAsync(doc.CompanyId, doc.ContactId, ct)) ?? delivery.OptOutReason;
+        if (!delivery.Deliverable && notSentReason == null) return new DocQueueResult(false, false, null);
 
         var idem = DocumentQueueKey(doc.Id, rule.Trigger, suffix);
         if (await _db.EmailQueues.AnyAsync(q => q.CompanyId == doc.CompanyId
-            && q.IdempotencyKey == idem && !q.IsDeleted, ct)) return false;
+            && q.IdempotencyKey == idem && !q.IsDeleted, ct)) return new DocQueueResult(false, true, null);
 
         var sendUtc = overrideSendUtc ?? ScheduledUtc(BangkokNow().Date.AddDays(daysOffset), rule.SendAtHour);
         // ภาษา + หัวเอกสารของเนื้ออีเมล default = ตัวกลางตัวเดียวกับ PDF ที่แนบ (S-12 รอบ 193) — เดิมคำนวณ
@@ -805,6 +883,13 @@ public class EmailScheduleService : IEmailScheduleService
         var heading = await HeadingForAsync(doc.CompanyId, doc.Id);
         var isEn = heading.IsEnglish;
         var ctx = DocumentEmailContext(doc, heading, _headingCompanies[doc.CompanyId].Company);
+        if (notSentReason != null)
+        {
+            ctx["PayLink"] = "";
+            AddNotSentRow(doc.CompanyId, rule.Id, "Document", doc.Id,
+                Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, isEn), ctx), sendUtc, idem, notSentReason);
+            return new DocQueueResult(false, false, notSentReason);
+        }
         // รอบ 241: ลิงก์ชำระเงิน (ช่องทางตามตาราง ∩ ที่บริษัทเปิด) — หนึ่งลิงก์ต่อใบ · {PayLink} ในเทมเพลต หรือบล็อกท้ายเนื้อ
         var payLink = await PayLinkFor(rule, doc, ct);
         ctx["PayLink"] = payLink?.Url != null ? DocumentPayLinkPolicy.QueuePlaceholder : "";   // ฝ่ายค้าน S1: ที่หมาย ไม่ใช่ URL
@@ -821,7 +906,7 @@ public class EmailScheduleService : IEmailScheduleService
             RuleId = rule.Id == Guid.Empty ? null : rule.Id,
             EntityType = "Document",
             EntityId = doc.Id,
-            ToEmail = email!,
+            ToEmail = delivery.To!,
             BccEmail = rule.BccEmails,
             Subject = Render(rule.SubjectTemplate ?? DefaultDocSubject(rule.Trigger, isEn), ctx),
             Body = WithPayLink(Render(rule.BodyTemplate ?? DefaultDocBody(rule.Trigger, isEn), ctx, htmlEncodeValues: true), rule.BodyTemplate, payLink, isEn),
@@ -831,7 +916,7 @@ public class EmailScheduleService : IEmailScheduleService
             // รอบ 250 (WP-02 §2.4 ข้อ 2): ตั้งให้แนบลิงก์แต่ออกไม่ได้ (เช่น ยังไม่ได้ตั้ง URL ของระบบ) ⇒ ฉบับนี้ส่งได้ แต่หน้าคิวบอกเหตุที่ไม่มีลิงก์ (ไม่เงียบ)
             ErrorMessage = PayLinkSkipNote(payLink),
         });
-        return true;
+        return new DocQueueResult(true, false, null);
     }
 
     // แคชของรอบนี้ (service เป็น scoped — หนึ่งคำขอ/หนึ่งรอบของ worker) · คีย์บริษัท/เอกสาร ไม่ข้าม tenant

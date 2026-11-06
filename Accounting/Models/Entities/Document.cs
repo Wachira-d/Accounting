@@ -1112,6 +1112,10 @@ public class Contact : TenantEntity
     public bool? PostPayEmailReceipt { get; set; }
     /// <summary>รอบ 250 (WP-02 B-13): ส่งทุกงวดที่รับ (false = เฉพาะงวดที่ชำระครบ) ชั้นผู้ติดต่อ — null = ตามบริษัท</summary>
     public bool? PostPayIncludePartial { get; set; }
+    /// <summary>รอบ 250 WP-08 (คำตัดสิน 250-29): <c>true</c> = ไม่ส่งอีเมลอัตโนมัติถึงผู้ติดต่อรายนี้ (ตารางส่ง · รายการประจำ · ใบแจ้งยอด · 50 ทวิ ·
+    /// ใบเสร็จหลังรับชำระ · ลิงก์เซ็นอัตโนมัติ) — ชั้นผู้ติดต่อใน <c>AutopilotSettingsResolver.AutoSendBlock</c> · ค่าตั้งต้น false (พฤติกรรมเดิม) ·
+    /// ตั้งที่ <c>PUT …/recurring/contacts/{id}/autopilot</c> (Contact.Edit · audit)</summary>
+    public bool AutoSendDisabled { get; set; }
 
     /// <summary>ภาษาเอกสารเริ่มต้นของผู้ติดต่อรายนี้ ("th"/"en") — null = ตามค่า
     /// บริษัท. semantic = "ค่าตั้งต้นตอนสร้างใบ": ประทับลง Document.DocumentLanguage

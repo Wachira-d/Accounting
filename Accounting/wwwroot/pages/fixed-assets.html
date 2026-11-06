@@ -115,6 +115,14 @@
             <div class="form-group"><label class="form-label" data-help="ราคาทุน + ค่าใช้จ่ายที่ทำให้พร้อมใช้ (ค่าขนส่ง/ติดตั้ง/อบรม) ตาม TFRS บทที่ 10 ย่อหน้า 17">ราคาทุน *</label><input type="number" class="form-input" id="fCost" step="0.01"></div>
           </div>
           <div id="fLockHint" style="display:none;margin:-4px 0 10px;padding:8px 10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;color:#92400e"></div>
+          <!-- รอบ 250 WP-08 (คำตัดสิน 250-26/27): ช่องที่แก้ได้เฉพาะตอนแก้ไข — บันทึกผ่าน PATCH แยก (สิทธิ์ Asset.Manage · audit) · ล็อก + บอกเหตุเมื่อเซิร์ฟเวอร์ไม่รับ -->
+          <div class="form-row" id="fEditOnlyRow" style="display:none">
+            <div class="form-group"><label class="form-label" for="fAvailableDate" data-help="TFRS for NPAEs บทที่ 10 / พ.ร.บ.ฎ.145 — ค่าเสื่อมเริ่มเมื่อพร้อมใช้งาน (งวดแรก = เดือนถัดไป) · ว่าง = ใช้วันที่ซื้อ · แก้ได้จนกว่ามีค่าเสื่อมลงบัญชี">วันที่พร้อมใช้งาน</label>
+              <input type="date" class="form-input" id="fAvailableDate">
+              <div id="fAvailableDateHint" style="font-size:11px;color:#64748b;margin-top:2px"></div></div>
+            <div class="form-group"><label class="form-label" for="fContractPrice" data-help="ราคาตามสัญญา (ไม่รวม VAT) — ระบบเตือนเมื่อต้นทุนรวมจากเอกสารที่ผูกเกินราคานี้ · ไม่บังคับ · ว่าง = ไม่เตือน">ราคาตามสัญญา</label>
+              <input type="number" step="0.01" class="form-input" id="fContractPrice" placeholder="ไม่บังคับ"></div>
+          </div>
           <div class="form-row">
             <div class="form-group"><label class="form-label" data-help="มูลค่าซาก (residual) = ราคาคาดว่าจะขายได้ตอนสิ้นอายุใช้งาน — 0 = คิดค่าเสื่อมเต็มมูลค่า">มูลค่าซาก</label><input type="number" class="form-input" id="fSalvage" step="0.01" value="0"></div>
             <div class="form-group"><label class="form-label" data-help="อายุการใช้งานที่คาดการณ์ในหน่วย 'เดือน' — ตัวอย่าง 5 ปี = 60 เดือน • สรรพากรกำหนดอย่างน้อย: เครื่องจักร 5 ปี, รถ 5 ปี, คอม 3 ปี (สามารถยาวกว่านี้ได้ ตามอายุจริง)">อายุใช้งาน (เดือน) *</label><input type="number" class="form-input" id="fLife" value="60"></div>
@@ -672,6 +680,7 @@
         document.getElementById('fLeasePmt').value = '';
         document.getElementById('fCode').value = ''; document.getElementById('fCode').disabled = false;
         this._lockValuationFields(false);
+        this._hydrateEditOnly(null);
         document.getElementById('fName').value = '';
         document.getElementById('fCategory').value = '';
         document.getElementById('fLocation').value = '';
@@ -738,6 +747,7 @@
           document.getElementById('fLeasePmt').value = a.monthlyLeasePayment || '';
           document.getElementById('fCode').value = a.assetCode; document.getElementById('fCode').disabled = true;
           this._lockValuationFields(true);
+          this._hydrateEditOnly(a);
           document.getElementById('fName').value = a.name;
           document.getElementById('fCategory').value = a.category || '';
           document.getElementById('fLocation').value = a.location || '';
@@ -761,6 +771,38 @@
           this.toggleAcqRow();
           Layout.openModal('formModal');
         } catch (e) { Layout.toast(e.message, 'error'); }
+      },
+      /** รอบ 250 WP-08: ช่องเฉพาะตอนแก้ไข — ค่าจากเซิร์ฟเวอร์ (echo) · ล็อกพร้อมเหตุจาก availableDateLockReason (ตัวตัดสินเดียวกับ PATCH) · a=null = ฟอร์มใหม่ (ซ่อน+ล้าง) */
+      _hydrateEditOnly(a) {
+        const row = document.getElementById('fEditOnlyRow');
+        const ad = document.getElementById('fAvailableDate');
+        const cp = document.getElementById('fContractPrice');
+        const hint = document.getElementById('fAvailableDateHint');
+        if (!row || !ad || !cp) return;
+        row.style.display = a ? '' : 'none';
+        ad.value = a && a.availableForUseDate ? Layout.dateInput(a.availableForUseDate) : '';
+        ad.disabled = !a || !!a.availableDateLockReason;
+        cp.value = a && a.contractPrice != null ? a.contractPrice : '';
+        this._editOnlyLoaded = a ? { availableForUseDate: ad.value, contractPrice: cp.value } : null;
+        if (hint) hint.textContent = !a ? '' : a.availableDateLockReason
+          ? '🔒 ' + a.availableDateLockReason
+          : (a.depreciationStartDate ? 'ค่าเสื่อมเริ่มเดือนถัดจาก ' + Layout.dateInput(a.depreciationStartDate) + ' · ว่าง = วันที่ซื้อ' : 'ว่าง = วันที่ซื้อ');
+      },
+      /** บันทึกช่องเฉพาะตอนแก้ไขที่เปลี่ยนจากค่าที่โหลด (PATCH แยก) — คืน true เมื่อสำเร็จทั้งหมด · ล้ม ⇒ toast เหตุ (ไม่กลืน) */
+      async _saveEditOnly(api, id) {
+        const loaded = this._editOnlyLoaded; if (!loaded) return true;
+        const ad = document.getElementById('fAvailableDate');
+        const cp = document.getElementById('fContractPrice');
+        try {
+          if (!ad.disabled && ad.value !== loaded.availableForUseDate)
+            await api.patchAssetAvailableDate(id, { availableForUseDate: ad.value || null });
+          if (cp.value !== String(loaded.contractPrice)) {
+            const v = cp.value.trim() === '' ? null : Number(cp.value);
+            if (v != null && (!isFinite(v) || v < 0)) { Layout.toast('ราคาตามสัญญาต้องเป็นตัวเลขไม่ติดลบ — เว้นว่างถ้าไม่ต้องการ', 'error'); return false; }
+            await api.patchAssetContractPrice(id, { contractPrice: v });
+          }
+          return true;
+        } catch (e) { Layout.toast(e.message, 'error'); return false; }
       },
       /** ตั้งค่าที่บันทึกไว้ให้ select — ไม่อยู่ในรายการ ⇒ เพิ่มตัวเลือก "⚠️ ค่าที่บันทึกไว้" (ส่งค่าเดิมกลับ = เซิร์ฟเวอร์ไม่แตะ) · ไม่ใช่ปล่อยเป็น '' แล้วกลายเป็นการล้าง */
       _setSavedSelect(selId, id, label) {
@@ -838,6 +880,7 @@
           };
           try {
             await api.updateAsset(id, upd);
+            if (!await this._saveEditOnly(api, id)) { await this.load(); return; }
             Layout.closeModal('formModal');
             Layout.toast('แก้ไขสำเร็จ');
             await this.load();
@@ -1137,7 +1180,8 @@
         document.getElementById('placeSummary').innerHTML = `<b>${Layout.esc(a.assetCode)}</b> ${Layout.esc(a.name || '')} · ต้นทุนสะสม <b>${Layout.money(a.purchaseCost)}</b> บาท`
           + (a.contractPrice ? ` · ราคาตามสัญญา ${Layout.money(a.contractPrice)} บาท` : '');
         // L9: วันที่ตั้งต้น = วันนี้ตามเวลาไทย (toISOString เป็น UTC — ก่อน 07:00 จะได้เมื่อวาน)
-        document.getElementById('placeDate').value = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+        // รอบ 250 WP-08 (D §2.12): วันที่ตามปฏิทินเครื่องผู้ใช้ (ตัวกลาง Layout.toDateInput) — เดิม Date.now()+7h แล้ว toISOString ⇒ ผู้ใช้นอก +07 ได้วันพรุ่งนี้
+        document.getElementById('placeDate').value = Layout.toDateInput(new Date());
         document.getElementById('placeAssetAcct').value = a.assetAccountId || '';
         document.getElementById('placeDepExp').value = '';
         document.getElementById('placeAccum').value = '';
@@ -1157,6 +1201,10 @@
           accumulatedDepreciationAccountId: document.getElementById('placeAccum').value || null,
         };
         if (!body.availableForUseDate || !body.assetAccountId) { Layout.toast('ระบุวันที่พร้อมใช้งานและผังสินทรัพย์', 'warning'); return; }
+        // รอบ 250 WP-08 (D §2.12): อายุใช้งานว่าง/0 กับวิธีที่คิดค่าเสื่อม ⇒ บอกก่อนยิง (เซิร์ฟเวอร์ปฏิเสธซ้ำอยู่แล้ว — ที่นี่แค่ข้อความชัด)
+        if (body.depreciationMethod !== 'None' && !(body.usefulLifeMonths > 0)) {
+          Layout.toast('ระบุอายุใช้งาน (เดือน) มากกว่า 0 — หรือเลือก “ไม่คิดค่าเสื่อม (ที่ดิน)”', 'warning'); return;
+        }
         try {
           const res = await api.placeAssetInService(this._placeAssetId, body);
           Layout.closeModal('placeModal');

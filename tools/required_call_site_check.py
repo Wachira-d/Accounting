@@ -14954,7 +14954,7 @@ RULES += [
                  ("ExecuteSqlRawAsync(sql, keepId, loser.Id)", "ContactRecipientRule.MergeUnlinks(")],
          why=_R245_WHY + "ฝ่ายค้าน S4: รวมผู้ติดต่อใต้ล็อกเดียวกับผู้เขียนปลายทาง แล้วยกเลิกแถวหลักของผู้ถูกรวม/แถวซ้ำด้วยตัวตัดสินเดียว"),
     dict(file=_R245_RES, method="ToFacts",
-         must=["consents.ContainsKey(id)", "_secrets.Unprotect(r.LineGroupId)"],
+         must=["consents.ContainsKey(id)", "_secrets?.Unprotect(r.LineGroupId)"],   # รอบ 250 WP-08: EmailOnly (นอก DI) ไม่มีตัวถอด ⇒ null = อ่านไม่ได้ = ใช้ไม่ได้
          why=_R245_WHY + "ความยินยอมต้องเป็นแถวของบริษัทนี้ (อ้าง id ที่ไม่พบ = ไม่มี) · groupId ถอดรหัสเพื่อเทียบกลุ่มกลาง"),
     dict(file=_R245_SVC, method="AddEmailAsync",
          must=["LockContactAsync(", "ContactRecipientRule.ValidateNewEmail(", "ContactRecipientRule.NormalizeLabel(", "NotifyTopics.FromRequest(",
@@ -15789,6 +15789,114 @@ REVIEWER_CASES += [
     ("R250-8", "SettingsForAsync",
      "return PostPaymentAutomationPolicy.EffectiveLayers(s, schedule, recurring, contact);",
      "return PostPaymentAutomationPolicy.Effective(s, schedule);", True),
+]
+
+# ── รอบ 250 WP-08: L1 ต่อสาย (LINE_MULTICHANNEL_DESIGN §3.e/§3.g/§8 L1) · ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" (250-29) · สินทรัพย์ P2 (250-26/27) ──
+_R250L1_WHY = "รอบ 250 WP-08 (L1 ต่อสาย · DESIGN §3.g): ผู้รับของทุกเส้นส่งถึงผู้ติดต่อมาจาก IContactRecipientResolver ตัวเดียว (ปลายทาง + เรื่องที่รับ) — "
+_R250L1_ESS = "Services/Implementations/EmailScheduleService.cs"
+_R250L1_PPA = "Services/Implementations/PostPaymentAutomationService.cs"
+_R250L1_SIGN = "Services/Implementations/SignRequestService.cs"
+_R250L1_REC = "Services/Implementations/RecurringTransactionService.cs"
+_R250L1_AP = "Services/Implementations/RecurringAutopilotService.cs"
+_R250FA_EDIT = "Services/Implementations/FixedAssetService.AssetEdits.cs"
+_R250FA_CTL = "Controllers/FixedAssetController.cs"
+RULES += [
+    dict(file=_R250L1_ESS, method="EmailForAsync", must=["_recipients.ResolveAsync(", "ContactRecipientRule.ForEmail("],
+         why=_R250L1_WHY + "ตัวอ่านเดียวของไฟล์ — ผลผ่านตัวตัดสิน ForEmail (อีเมลที่ส่งได้ + เหตุไม่ส่ง)"),
+    dict(file=_R250L1_ESS, method="EnqueueDocumentAsync",
+         must=["EmailForAsync(", "NotifyTopics.ForTrigger(rule.Trigger)", "AutopilotSettingsResolver.AutoSendBlock(", "AddNotSentRow(", "ToEmail = delivery.To"],
+         before=[("EmailForAsync(", "_db.EmailQueues.Add(")],
+         forbid=["Contact?.Email", "Contact!.Email", "Contact.Email", "HasDeliverableEmail("],
+         why=_R250L1_WHY + "ตารางส่ง/ทวงชำระ/รายการประจำ: ผู้รับตามเรื่องของ trigger · ยกเลิกรับ/ไม่ส่งอัตโนมัติ ⇒ แถว \"ข้าม\" พร้อมเหตุ (ล้มดัง)"),
+    dict(file=_R250L1_ESS, method="ScanMonthlyStatementsAsync", must=["EmailForAsync(", "AutopilotSettingsResolver.AutoSendBlock(", "AddNotSentRow("],
+         forbid=["contact.Email", "ToEmail = contact"], why=_R250L1_WHY + "ใบแจ้งยอด = เรื่องทวงชำระ"),
+    dict(file=_R250L1_ESS, method="OnWhtCertIssuedAsync", must=["EmailForAsync(", "AutopilotSettingsResolver.AutoSendBlock(", "AddNotSentRow("],
+         forbid=["PayeeContact.Email"], why=_R250L1_WHY + "ส่ง 50 ทวิ = เรื่อง Wht (AUTO_SEND §4.3 ห้ามมีตัวหาผู้รับของตัวเอง)"),
+    dict(file=_R250L1_ESS, method="OnRecurringDocumentCreatedAsync",
+         must=["EmailForAsync(", "AutopilotSettingsResolver.AutoSendBlock(", "EmailEnqueueOutcome.NotSent("],
+         before=[("AutopilotSettingsResolver.AutoSendBlock(", "EmailEnqueueOutcome.SkipForApprovedRule(")],
+         forbid=["Contact?.Email", "Contact.Email"],
+         why=_R250L1_WHY + "รายการประจำ: ไม่ส่งอัตโนมัติชนะกฎ (250-29) ตรวจก่อนด่าน \"กฎเมื่ออนุมัติครอบแล้ว\" · ยกเลิกรับ ⇒ บอกเหตุที่หน้ารายการ"),
+    dict(file=_R250L1_ESS, method="ComposeQueueMessageAsync", must=["SignEmailThrottle.ParseRecipients(new[] { item.ToEmail })"],
+         forbid=["To = { item.ToEmail }"], why=_R250L1_WHY + "ToEmail หลายผู้รับต้องแยกรายตัว (Graph/Gmail ไม่รับสตริงรวม)"),
+    dict(file=_R250L1_PPA, method="ExecuteAsync",
+         must=["_recipients.ResolveAsync(", "NotifyTopic.Receipt", "ContactRecipientRule.ForEmail(", "EmailOptOutReason:"],
+         forbid=["contact?.Email", "contact!.Email", "contact.Email"],
+         why=_R250L1_WHY + "ใบเสร็จหลังรับชำระ = เรื่อง Receipt · ยกเลิกรับ ⇒ งานหยุดพร้อมเหตุ (ไม่ใช่ \"ไม่มีอีเมล\")"),
+    dict(file=_R250L1_PPA, method="SettingsForAsync", must=["AutopilotSettingsResolver.ContactPostPayEmailReceipt("],
+         why=_R250L1_WHY + "250-29 ชั้นผู้ติดต่อ \"ไม่ส่งอัตโนมัติ\" ปิดใบเสร็จอัตโนมัติ (ตาราง/รายการประจำที่ตั้งเองยังชนะ)"),
+    dict(file=_R250L1_SIGN, method="SuggestRecipientsAsync", must=["_recipients.ResolveAsync(", "NotifyTopic.Sign", "SignLinkLastRecipients"],
+         before=[("SignLinkLastRecipients", "_recipients.ResolveAsync(")],
+         forbid=["Contact?.Email", "Contact.Email"],
+         why=_R250L1_WHY + "ลิงก์เซ็น = เรื่อง Sign · ผู้รับที่ผู้ใช้กรอกครั้งก่อนยังชนะ (ทับ)"),
+    dict(file=_R250L1_SIGN, method="SendEmailAsync", must=["SuggestRecipientsAsync("], forbid=["Contact?.Email"],
+         why=_R250L1_WHY + "ส่งลิงก์เซ็นใช้ตัวเสนอผู้รับเดียว"),
+    dict(file=_R250L1_SIGN, method="TryAutomationSendAsync", must=["AutopilotSettingsResolver.AutoSendBlock("],
+         before=[("AutopilotSettingsResolver.AutoSendBlock(", "SendEmailAsync(")],
+         why=_R250L1_WHY + "250-29 ลิงก์เซ็นอัตโนมัติไม่ส่งถึงผู้ติดต่อที่ปิดส่งอัตโนมัติ"),
+    dict(file=_R250L1_REC, method="DocumentEmailToAsync", must=["_recipients.ResolveAsync(", "NotifyTopic.Document"],
+         why=_R250L1_WHY + "RecurringEmailReadiness อ่านผลของตัวหาผู้รับ (ไม่ใช่ Contact.Email)"),
+    dict(file=_R250L1_REC, method="GetEmailReadinessAsync", must=["_recipients.ResolveAsync("], forbid=["c.Email", "contact.Email"],
+         why=_R250L1_WHY + "ฟอร์มรายการประจำถามตัวเดียวกับผู้ส่งจริง"),
+    dict(file=_R250L1_REC, method="MapWithOutcomeAsync", must=["DocumentEmailToAsync("], forbid=["c.Email"],
+         why=_R250L1_WHY + "หน้ารายการ/คำเตือนตอนบันทึกถามตัวเดียวกับผู้ส่งจริง"),
+    dict(file=_R250L1_AP, method="BuildAsync", must=["_recipients.ResolveAsync(", "AutopilotSettingsResolver.AutoSendBlock("],
+         forbid=["contact?.Email", "contact!.Email"],
+         why=_R250L1_WHY + "ทดลองรัน/แผงความพร้อมบอกผู้รับและเหตุตามตัวเดียวกับผู้ส่งจริง"),
+    # ── สินทรัพย์ P2 ──
+    dict(file=_R250FA_EDIT, method="SetContractPriceAsync",
+         must=["AssetCostSourceRules.NormalizeContractPrice(", "_db.AddChainedAuditLog(", "a.CompanyId == companyId"], forbid=["AuditLogs.Add("],
+         why="รอบ 250 WP-08 (250-27): ราคาตามสัญญาแก้ได้ — ค่าผ่านตัวตรวจเดียว · audit เข้า hash chain · tenant"),
+    dict(file=_R250FA_EDIT, method="SetAvailableForUseDateAsync",
+         must=["LockAssetAsync(", "FixedAssetValuationEdit.AvailableDateProblem(", "RebuildPlannedScheduleAsync(", "_db.AddChainedAuditLog(", "d.IsPosted"],
+         before=[("LockAssetAsync(", "FixedAssetValuationEdit.AvailableDateProblem("), ("FixedAssetValuationEdit.AvailableDateProblem(", "RebuildPlannedScheduleAsync(")],
+         forbid=["asset.PurchaseDate ="],
+         why="รอบ 250 WP-08 (250-26): วันพร้อมใช้ของสินทรัพย์ใบเดียว — ล็อกแถวก่อนตรวจ \"ลงค่าเสื่อมแล้วไหม\" · ด่านเดียว · แผนใหม่ · audit · วันที่ซื้อไม่ถูกแตะ"),
+    dict(file=_R250FA_EDIT, method="WithEditLocksAsync", must=["FixedAssetValuationEdit.AvailableDateProblem(", "DepreciationSchedule.StartDate("],
+         why="รอบ 250 WP-08: ฟอร์มล็อกช่องด้วยตัวตัดสินเดียวกับ PATCH (ห้าม silent no-op)"),
+    dict(file=_R250FA_CTL, method="PatchContractPrice", must=["PermissionKeys.AssetManage"],
+         before=[("RequireAssetAsync(", "_assetService.")], why="รอบ 250 WP-08: สิทธิ์ Asset.Manage ก่อนแก้ราคาตามสัญญา"),
+    dict(file=_R250FA_CTL, method="PatchAvailableDate", must=["PermissionKeys.AssetManage"],
+         before=[("RequireAssetAsync(", "_assetService.")], why="รอบ 250 WP-08: สิทธิ์ Asset.Manage ก่อนแก้วันพร้อมใช้"),
+    dict(file=_R249FA_SVC, method="BuildScheduleRows", must=["DepreciationSchedule.StartDate("], forbid=["asset.PurchaseDate.AddMonths("],
+         why="รอบ 250 WP-08 (250-26): จุดตั้งต้นค่าเสื่อมตัวเดียว (วันพร้อมใช้ ?? วันที่ซื้อ) — แผนที่ผู้ใช้เห็น"),
+    dict(file=_R249FA_SVC, method="CalculateDepreciationAsync", must=["DepreciationSchedule.StartDate("],
+         forbid=["asset.PurchaseDate > periodStart"],
+         why="รอบ 250 WP-08 (250-26): ยอดที่ลง GL เริ่มจากจุดเดียวกับแผน"),
+    dict(file=_R249FA_SVC, method="PostCatchUpDepreciationAsync", must=["DepreciationSchedule.StartDate("], forbid=["asset.PurchaseDate.AddMonths("],
+         why="รอบ 250 WP-08 (250-26): ค่าเสื่อมไล่ตามตอนจำหน่ายเริ่มจากจุดเดียวกับแผน"),
+]
+
+REVIEWER_CASES += [
+    # ตารางส่งกลับไปอ่าน Contact.Email ตรง ⇒ ต้องฟ้อง
+    ("R250L1-1", "EnqueueDocumentAsync", "EntityId = doc.Id,\n            ToEmail = delivery.To!,", "EntityId = doc.Id,\n            ToEmail = doc.Contact!.Email!,", True),
+    # ถอดชั้น "ไม่ส่งอัตโนมัติ" ⇒ ต้องฟ้อง
+    ("R250L1-2", "EnqueueDocumentAsync",
+     "var notSentReason = AutopilotSettingsResolver.AutoSendBlock(await ContactAutoSendOffAsync(doc.CompanyId, doc.ContactId, ct)) ?? delivery.OptOutReason;",
+     "var notSentReason = delivery.OptOutReason;", True),
+    # ใบเสร็จหลังรับชำระกลับไปใช้อีเมลหลัก ⇒ ต้องฟ้อง
+    ("R250L1-3", "ExecuteAsync", "var to = receiptDelivery.To;", "var to = contact?.Email?.Trim();", True),
+    # ลิงก์เซ็นข้ามผู้รับที่ผู้ใช้กรอกครั้งก่อน (ตัวหาผู้รับมาก่อน) ⇒ ต้องฟ้อง (ลำดับ)
+    ("R250L1-4", "SuggestRecipientsAsync",
+     "var (fromLast, _) = SignEmailThrottle.ParseRecipients(new[] { doc.Contact?.SignLinkLastRecipients });\n        if (fromLast.Count > 0) return (fromLast, null);\n",
+     "", True),
+    # รายการประจำย้ายด่านไม่ส่งอัตโนมัติไปหลังด่านกฎเมื่ออนุมัติ ⇒ ต้องฟ้อง (แทนด้วยการลบ — ตรวจ must/before)
+    ("R250L1-5", "OnRecurringDocumentCreatedAsync",
+     "if (AutopilotSettingsResolver.AutoSendBlock(await ContactAutoSendOffAsync(companyId, doc.ContactId, ct)) is { } autoSendOff)\n                return EmailEnqueueOutcome.NotSent(autoSendOff);",
+     "", True),
+    # วันพร้อมใช้: ตัดการล็อกแถว ⇒ ต้องฟ้อง
+    ("R250FA-1", "SetAvailableForUseDateAsync", "await LockAssetAsync(companyId, assetId);", "", True),
+    # แผนค่าเสื่อมกลับไปใช้วันที่ซื้อ ⇒ ต้องฟ้อง
+    ("R250FA-2", "BuildScheduleRows",
+     "Accounting.Helpers.DepreciationSchedule.StartDate(asset.PurchaseDate, asset.AvailableForUseDate).AddMonths(shift)",
+     "asset.PurchaseDate.AddMonths(shift)", True),
+    # PATCH ราคาสัญญาไม่ตรวจสิทธิ์ ⇒ ต้องฟ้อง
+    ("R250FA-3", "PatchContractPrice",
+     "if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, \"แก้ราคาตามสัญญาของสินทรัพย์\") is { } deny) return deny;", "", True),
+    # ทิศตรงข้าม: จัดบรรทัดใหม่ในตัวตรวจราคาสัญญา ⇒ ต้องไม่ฟ้อง
+    ("R250FA-3fp", "SetContractPriceAsync",
+     "var (value, problem) = AssetCostSourceRules.NormalizeContractPrice(contractPrice);",
+     "var (value, problem) =\n            AssetCostSourceRules.NormalizeContractPrice(contractPrice);", False),
 ]
 
 

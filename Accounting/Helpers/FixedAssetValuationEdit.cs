@@ -22,6 +22,28 @@ public static class FixedAssetValuationEdit
         "ราคาทุน · วันที่ซื้อ · ประเภทสินทรัพย์ · ข้อมูลสัญญาเช่า ผูกกับรายการบัญชีตอนซื้อ — แก้ที่เอกสารต้นทาง "
         + "หรือจำหน่าย/ลบรายการที่ลงทะเบียนผิดแล้วลงทะเบียนใหม่";
 
+    /// <summary>
+    /// รอบ 250 WP-08 (คำตัดสิน 250-26 · ASSET §6 Q5): ตั้ง/ล้าง "วันที่พร้อมใช้งาน" ของสินทรัพย์<b>ใบเดียว</b> — null = ทำได้ · ข้อความ = ปฏิเสธพร้อมทางไปต่อ ·
+    /// <paramref name="newDate"/> null = ล้าง (กลับไปเริ่มค่าเสื่อมที่วันที่เอกสาร) · แก้ได้จนกว่ามีค่าเสื่อมลงบัญชี (งวดที่ลงแล้วคิดจากวันเดิม — แก้ย้อนหลังไม่ได้)
+    /// </summary>
+    public static string? AvailableDateProblem(bool isUnderAcquisition, bool hasCostSources, bool hasPostedDepreciation,
+        DateTime purchaseDate, DateTime? newDate, DateTime todayBangkok)
+    {
+        if (isUnderAcquisition)
+            return "สินทรัพย์ระหว่างจัดหา — ตั้งวันที่พร้อมใช้งานตอนกด “โอนเป็นสินทรัพย์พร้อมใช้” (ค่าเสื่อมเริ่มจากวันนั้น)";
+        if (hasCostSources)
+            return "สินทรัพย์ที่สร้างจากเอกสารหลายใบตั้งวันที่พร้อมใช้งานตอนโอนแล้ว (วันที่ซื้อ = วันพร้อมใช้) — ช่องนี้ใช้กับสินทรัพย์ใบเดียว";
+        if (hasPostedDepreciation)
+            return "สินทรัพย์นี้มีค่าเสื่อมราคาที่ลงบัญชีแล้ว — เปลี่ยนวันที่พร้อมใช้งานย้อนหลังไม่ได้ (งวดที่ลงแล้วคิดจากวันเดิม) · "
+                + "ถ้าวันผิดจริง ให้กลับรายการค่าเสื่อมที่ลงแล้วก่อน หรือแจ้งนักบัญชีบันทึกปรับปรุง";
+        if (newDate is not DateTime d) return null;
+        if (d.Date < purchaseDate.Date)
+            return $"วันที่พร้อมใช้งานต้องไม่ก่อนวันที่ซื้อ ({purchaseDate:dd/MM/yyyy}) — ซื้อมาแล้วจึงพร้อมใช้";
+        if (d.Date > todayBangkok.Date.AddYears(1))
+            return "วันที่พร้อมใช้งานไกลเกิน 1 ปีจากวันนี้ — ตรวจปี (ค.ศ./พ.ศ.) อีกครั้ง";
+        return null;
+    }
+
     /// <summary>null = แก้ได้ · ข้อความ = ปฏิเสธ (ไทย พร้อมทางไปต่อ)</summary>
     public static string? Problem(bool hasPostedDepreciation, DepreciationMethod newMethod, int newLifeMonths,
         decimal newSalvage, decimal purchaseCost, bool accountNonDepreciable)

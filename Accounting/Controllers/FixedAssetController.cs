@@ -186,6 +186,30 @@ public class FixedAssetController : ControllerBase
         return Ok(new ApiResponse<FixedAssetResponse>(true, result, $"โอน {result.AssetCode} เป็นสินทรัพย์พร้อมใช้แล้ว — ค่าเสื่อมเริ่มเดือนถัดจากวันพร้อมใช้"));
     }
 
+    /// <summary>รอบ 250 WP-08 (คำตัดสิน 250-27): แก้ราคาตามสัญญาหลังสร้าง — ใช้เตือนเมื่อต้นทุนรวมเกิน (ไม่บล็อก) · null/0 = ล้าง · audit chain</summary>
+    [HttpPatch("{assetId:guid}/contract-price")]
+    public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> PatchContractPrice(
+        Guid companyId, Guid assetId, [FromBody] PatchContractPriceRequest request)
+    {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "แก้ราคาตามสัญญาของสินทรัพย์") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.SetContractPriceAsync(companyId, assetId, request.ContractPrice, userId);
+        return Ok(new ApiResponse<FixedAssetResponse>(true, result,
+            result.ContractPrice is decimal cp ? $"บันทึกราคาตามสัญญา {cp:N2} บาทแล้ว" : "ล้างราคาตามสัญญาแล้ว (ระบบจะไม่เตือนต้นทุนเกินสัญญา)"));
+    }
+
+    /// <summary>รอบ 250 WP-08 (คำตัดสิน 250-26): วันที่พร้อมใช้งานของสินทรัพย์ใบเดียว — แก้ได้จนกว่ามีค่าเสื่อมลงบัญชี · null = วันที่เอกสาร · audit chain</summary>
+    [HttpPatch("{assetId:guid}/available-date")]
+    public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> PatchAvailableDate(
+        Guid companyId, Guid assetId, [FromBody] PatchAvailableDateRequest request)
+    {
+        if (await RequireAssetAsync(companyId, PermissionKeys.AssetManage, "แก้วันที่พร้อมใช้งานของสินทรัพย์") is { } deny) return deny;
+        var userId = JwtHelper.GetUserIdFromClaims(User).ToString();
+        var result = await _assetService.SetAvailableForUseDateAsync(companyId, assetId, request.AvailableForUseDate, userId);
+        return Ok(new ApiResponse<FixedAssetResponse>(true, result,
+            $"บันทึกแล้ว — ค่าเสื่อมเริ่มเดือนถัดจาก {result.DepreciationStartDate:dd/MM/yyyy}"));
+    }
+
     [HttpPost]
     public async Task<ActionResult<ApiResponse<FixedAssetResponse>>> Create(
         Guid companyId, [FromBody] CreateFixedAssetRequest request)

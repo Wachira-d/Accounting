@@ -77,6 +77,29 @@ public static class ContactRecipientRule
         public IReadOnlyList<RecipientOption> LineGroups => Options.Where(o => o.Available && o.Kind == NotifyEndpointKind.LineGroup).ToList();
     }
 
+    /// <summary>รอบ 250 WP-08 (L1 ต่อสาย): ผล "ส่งอีเมลเรื่องนี้ถึงใคร" ของทุกเส้นส่ง (ตารางส่ง · ทวงชำระ · ใบแจ้งยอด · 50 ทวิ · ใบเสร็จหลังรับชำระ · ลิงก์เซ็น ·
+    /// ความพร้อมของรายการประจำ) — <see cref="Emails"/> ว่าง + <see cref="OptOutReason"/> มีค่า = ผู้ติดต่อมีอีเมลแต่ไม่รับเรื่องนี้ (ยกเลิกรับ/ค่าตั้งเสียหาย/รูปแบบผิด)
+    /// ⇒ ผู้ส่ง<b>ไม่ส่ง</b>และบันทึกเหตุ (ล้มดัง) · ว่างทั้งคู่ = ผู้ติดต่อไม่มีอีเมลเลย (พฤติกรรมเดิม: ไม่เข้าคิว)</summary>
+    public sealed record EmailDelivery(IReadOnlyList<string> Emails, string? OptOutReason)
+    {
+        public bool Deliverable => Emails.Count > 0;
+        /// <summary>ผู้รับทั้งหมดคั่นด้วย ", " (ตัวแยกเดียวกับ <c>SignEmailThrottle.ParseRecipients</c>) · null = ไม่มี</summary>
+        public string? To => Emails.Count == 0 ? null : string.Join(", ", Emails);
+        public string? First => Emails.Count == 0 ? null : Emails[0];
+    }
+
+    /// <summary>อีเมลที่ส่งได้ของชุดผู้รับ + เหตุเมื่อมีปลายทางอีเมลแต่ไม่มีตัวที่รับเรื่องนี้ · LINE ไม่ถูกนับ (L1: ยังไม่เปิดส่ง · ไม่ใช่เหตุให้ไม่ส่งอีเมล)</summary>
+    public static EmailDelivery ForEmail(RecipientSet set)
+    {
+        var emails = set.Emails;
+        if (emails.Count > 0) return new EmailDelivery(emails, null);
+        var blocked = set.Options
+            .Where(o => o.Kind == NotifyEndpointKind.Email && !o.Available && !string.IsNullOrWhiteSpace(o.Reason))
+            .Select(o => $"{o.Display}: {o.Reason}").Distinct().ToList();
+        return new EmailDelivery(emails, blocked.Count == 0 ? null
+            : $"ไม่ส่งอีเมลเรื่อง \"{NotifyTopics.Label(set.Topic)}\" ตามช่องทางแจ้งเตือนของผู้ติดต่อ — {string.Join(" · ", blocked)} (แก้ที่หน้าผู้ติดต่อ แท็บช่องทางแจ้งเตือน)");
+    }
+
     /// <summary>groupId นี้เป็นกลุ่มกลางของระบบ (แหล่งใดแหล่งหนึ่ง) ไหม — เทียบตรงตัวหลังตัดช่องว่าง</summary>
     internal static bool IsPlatformCentralGroup(string? groupId, IEnumerable<string?> platformGroupIds)
     {

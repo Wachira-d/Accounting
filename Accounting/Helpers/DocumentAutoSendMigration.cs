@@ -58,6 +58,8 @@ public static class DocumentAutoSendMigration
         """ALTER TABLE "RecurringTransactions" ADD COLUMN IF NOT EXISTS "PostPayIncludePartial" boolean NULL;""",
         """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PostPayEmailReceipt" boolean NULL;""",
         """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "PostPayIncludePartial" boolean NULL;""",
+        // รอบ 250 WP-08 (คำตัดสิน 250-29): ชั้นผู้ติดต่อ "ไม่ส่งอัตโนมัติ" — DEFAULT false = พฤติกรรมเดิมทุกผู้ติดต่อ (ไม่มีแถวเก่าต้องแก้)
+        """ALTER TABLE "Contacts" ADD COLUMN IF NOT EXISTS "AutoSendDisabled" boolean NOT NULL DEFAULT false;""",
         """ALTER TABLE "Documents" ADD COLUMN IF NOT EXISTS "RecurringTransactionId" uuid NULL;""",
         // ใบเก่า: เติมได้เฉพาะใบล่าสุดของแต่ละรายการ (LastDocumentId) — ใบก่อนหน้านั้นไม่มีร่องรอยในฐาน ⇒ คง NULL (ตามผู้ติดต่อ › บริษัท = พฤติกรรมเดิม) · idempotent
         """UPDATE "Documents" d SET "RecurringTransactionId" = r."Id" FROM "RecurringTransactions" r WHERE r."LastDocumentId" = d."Id" AND r."CompanyId" = d."CompanyId" AND d."RecurringTransactionId" IS NULL;""",

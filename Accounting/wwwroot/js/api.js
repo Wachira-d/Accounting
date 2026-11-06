@@ -1290,6 +1290,9 @@ const API = {
       attachAssetCostSources: (id, d) => API.post(`${base}/fixedasset/${id}/cost-sources`, d),
       releaseAssetCostSource: (id, sourceId, d) => API.post(`${base}/fixedasset/${id}/cost-sources/${sourceId}/release`, d),
       placeAssetInService: (id, d) => API.post(`${base}/fixedasset/${id}/place-in-service`, d),
+      // รอบ 250 WP-08: ราคาตามสัญญา (คำตัดสิน 250-27) · วันที่พร้อมใช้งานของสินทรัพย์ใบเดียว (250-26)
+      patchAssetContractPrice: (id, d) => API.request('PATCH', `${base}/fixedasset/${encodeURIComponent(id)}/contract-price`, d),
+      patchAssetAvailableDate: (id, d) => API.request('PATCH', `${base}/fixedasset/${encodeURIComponent(id)}/available-date`, d),
       // Budget
       getBudgets: (q = '') => API.get(`${base}/budget${q}`),
       getBudget: (id) => API.get(`${base}/budget/${id}`),

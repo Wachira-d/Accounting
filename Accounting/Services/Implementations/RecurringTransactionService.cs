@@ -21,6 +21,8 @@ public class RecurringTransactionService : IRecurringTransactionService
     private readonly IEmailScheduleService? _emailSchedule;
     private readonly INotificationEngine? _notify;
     private readonly IPermissionService? _permissions;
+    /// <summary>รอบ 250 WP-08: "ผู้ติดต่อรับอีเมลเอกสารได้ไหม" = ตัวหาผู้รับเดียวกับผู้ส่งจริง (เรื่อง "เอกสาร") — ไม่อ่าน Contact.Email ตรง</summary>
+    private readonly IContactRecipientResolver _recipients;
 
     public RecurringTransactionService(
         AccountingDbContext db,
@@ -30,7 +32,8 @@ public class RecurringTransactionService : IRecurringTransactionService
         IErrorLogService errorLogService,
         IEmailScheduleService? emailSchedule = null,
         INotificationEngine? notify = null,
-        IPermissionService? permissions = null)
+        IPermissionService? permissions = null,
+        IContactRecipientResolver? recipients = null)
     {
         _db = db;
         _documentService = documentService;
@@ -39,6 +42,7 @@ public class RecurringTransactionService : IRecurringTransactionService
         _errorLogService = errorLogService;
         _emailSchedule = emailSchedule;
         _notify = notify;
+        _recipients = recipients ?? ContactRecipientResolver.EmailOnly(db);
         _permissions = permissions;   // รอบ 248: ผู้ตั้งนโยบายอนุมัติยังมีสิทธิ์อนุมัติไหม (null ในเทสต์ = ตรวจแค่สมาชิกภาพ)
     }
 
@@ -520,12 +524,10 @@ public class RecurringTransactionService : IRecurringTransactionService
                 .ToListAsync())
                 .ToDictionary(d => d.Id, d => new RecurringRunDoc(d.Id, d.DocumentNumber, d.Status, d.DocumentType, d.DocumentDate));
         var contactIds = rows.Where(r => r.ContactId.HasValue).Select(r => r.ContactId!.Value).Distinct().ToList();
-        var emails = contactIds.Count == 0 ? new Dictionary<Guid, string?>()
-            : (await _db.Contacts.AsNoTracking()
-                .Where(c => c.CompanyId == companyId && contactIds.Contains(c.Id))
-                .Select(c => new { c.Id, c.Email })
-                .ToListAsync())
-                .ToDictionary(c => c.Id, c => c.Email);
+        // รอบ 250 WP-08: อีเมลที่ส่งได้ของเรื่อง "เอกสาร" (ตัวหาผู้รับเดียวกับผู้ส่งจริง) — ต่อผู้ติดต่อที่ไม่ซ้ำในหน้านี้
+        var emails = new Dictionary<Guid, string?>();
+        foreach (var cid in contactIds)
+            emails[cid] = await DocumentEmailToAsync(companyId, cid);
         // กฎ "เมื่ออนุมัติเอกสาร" — ผู้ส่งจริงคือ EmailScheduleService.OnDocumentApprovedAsync (เงื่อนไขเดียวกัน: เปิดใช้ · ไม่ถูกลบ · ชนิดตรงหรือว่าง)
         var approvedRuleTypes = await _db.EmailScheduleRules.AsNoTracking()
             .Where(x => x.CompanyId == companyId && x.IsActive && !x.IsDeleted && x.Trigger == "DocumentApproved")
@@ -558,14 +560,20 @@ public class RecurringTransactionService : IRecurringTransactionService
     /// <summary>รอบ 247: ฟอร์มรายการประจำถาม "ผู้ติดต่อนี้รับอีเมลได้ไหม" ตอนเลือกผู้ติดต่อ — ตัวตัดสินเดียวกับผู้ส่งจริง (RecurringEmailReadiness)</summary>
     public async Task<RecurringEmailReadinessResponse> GetEmailReadinessAsync(Guid companyId, Guid contactId)
     {
-        var contact = await _db.Contacts.AsNoTracking()
-            .Where(c => c.Id == contactId && c.CompanyId == companyId)
-            .Select(c => new { c.Email })
-            .FirstOrDefaultAsync()
-            ?? throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
-        var ready = RecurringEmailReadiness.HasDeliverableEmail(contact.Email);
-        return new RecurringEmailReadinessResponse(ready, ready ? null : RecurringEmailReadiness.NoEmailReason,
+        if (!await _db.Contacts.AsNoTracking().AnyAsync(c => c.Id == contactId && c.CompanyId == companyId))
+            throw new KeyNotFoundException("ไม่พบผู้ติดต่อ");
+        // รอบ 250 WP-08: ตัวหาผู้รับเดียวกับผู้ส่งจริง — ยกเลิกรับเรื่อง "เอกสาร" ทุกปลายทาง ⇒ ไม่พร้อม พร้อมเหตุจากตัวตัดสิน (ไม่ใช่ "ไม่มีอีเมล")
+        var delivery = ContactRecipientRule.ForEmail(await _recipients.ResolveAsync(companyId, contactId, NotifyTopic.Document));
+        var ready = RecurringEmailReadiness.HasDeliverableEmail(delivery.To);
+        return new RecurringEmailReadinessResponse(ready, ready ? null : delivery.OptOutReason ?? RecurringEmailReadiness.NoEmailReason,
             RecurringEmailReadiness.ContactUrl(contactId));
+    }
+
+    /// <summary>รอบ 250 WP-08: ผู้รับเรื่อง "เอกสาร" ของผู้ติดต่อ (คั่น ", ") — ตัวเดียวของไฟล์นี้ · null = ส่งไม่ได้</summary>
+    private async Task<string?> DocumentEmailToAsync(Guid companyId, Guid contactId)
+    {
+        var set = await _recipients.ResolveAsync(companyId, contactId, NotifyTopic.Document);
+        return ContactRecipientRule.ForEmail(set).To;
     }
 
     /// <summary>รอบล้ม ⇒ เหตุผล (ไทย · บอกช่อง + ทางแก้) ลงแถว + ErrorLog/แจ้งผู้ตั้งรายการ <b>เฉพาะครั้งแรก/เมื่อสาเหตุเปลี่ยน</b>
@@ -971,9 +979,8 @@ public class RecurringTransactionService : IRecurringTransactionService
                         facts = facts with { EmailHeldForDraft = true };
                     }
                     // ตัวตัดสินเดียวกับผู้ส่งจริง (EnqueueDocumentAsync ส่งไปที่ Contact.Email) — ห้ามข้ามเงียบ
-                    else if (!RecurringEmailReadiness.HasDeliverableEmail(await _db.Contacts.AsNoTracking()
-                                 .Where(c => c.Id == contactId && c.CompanyId == recurring.CompanyId)
-                                 .Select(c => c.Email).FirstOrDefaultAsync()))
+                    else if (facts.EmailNotSentReason == null
+                             && !RecurringEmailReadiness.HasDeliverableEmail(await DocumentEmailToAsync(recurring.CompanyId, contactId)))
                     {
                         notices.Add(RecurringEmailReadiness.NotSentNoEmail + " — เพิ่มอีเมลที่หน้าผู้ติดต่อ แล้วส่งเอกสารนี้จากหน้าเอกสาร");
                         facts = facts with { EmailSkippedNoContactEmail = true };

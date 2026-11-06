@@ -20,6 +20,13 @@ public sealed record EmailEnqueueOutcome(EmailEnqueueKind Kind, string? Reason)
     public static EmailEnqueueOutcome Skipped(string reason) => new(EmailEnqueueKind.Skipped, reason);
     public static EmailEnqueueOutcome Failed(string reason) => new(EmailEnqueueKind.Failed, reason);
 
+    /// <summary>รอบ 250 WP-08: ไม่ส่งเพราะค่าตั้งของผู้ติดต่อ (ยกเลิกรับเรื่อง "เอกสาร" ทุกปลายทาง · "ไม่ส่งอัตโนมัติ") — ตั้งใจ แต่ผู้ใช้ต้องเห็นเหตุ
+    /// (<see cref="TellUser"/> ⇒ <see cref="Apply"/> ตั้ง <c>RecurringRunFacts.EmailNotSentReason</c>) · ต่างจาก Skipped ทั่วไปที่ไม่แจ้ง</summary>
+    public static EmailEnqueueOutcome NotSent(string reason) => new(EmailEnqueueKind.Skipped, reason) { TellUser = true };
+
+    /// <summary>ผลนี้ต้องบอกผู้ใช้ที่หน้ารายการประจำ (เฉพาะ <see cref="NotSent"/>)</summary>
+    public bool TellUser { get; init; }
+
     /// <summary>เหตุ "ข้าม" เมื่อมีกฎ <c>DocumentApproved</c> ครอบชนิดเอกสารนี้ (คำตัดสิน §2 #10 · B F-4): การอนุมัติอัตโนมัติของรายการประจำเดินเส้น
     /// <c>ApproveDocumentAsync → OnDocumentApprovedAsync</c> ซึ่งเข้าคิวตามกฎนั้นไปแล้ว ⇒ กฎ "เมื่อรายการประจำสร้างเอกสาร"/ส่งอัตโนมัติของรายการไม่เข้าคิวซ้ำ (ทิศเดียว ·
     /// ไม่แตะฝั่งกฎ DocumentApproved ที่ใบคีย์มือพึ่งอยู่)</summary>
@@ -36,6 +43,8 @@ public sealed record EmailEnqueueOutcome(EmailEnqueueKind Kind, string? Reason)
     /// หรือมีกฎส่ง — ผลมาจากการพยายามส่งจริง) · Skipped/Enqueued ⇒ ไม่ตั้งธง (ทิศตรงข้าม)</summary>
     public static (RecurringRunFacts Facts, string? Notice) Apply(RecurringRunFacts facts, EmailEnqueueOutcome outcome, string? documentNumber)
     {
+        if (outcome.Kind == EmailEnqueueKind.Skipped && outcome.TellUser && !string.IsNullOrWhiteSpace(outcome.Reason))
+            return (facts with { EmailNotSentReason = outcome.Reason }, $"ไม่ได้ส่งอีเมลเอกสาร {documentNumber}: {outcome.Reason}");
         if (outcome.Kind != EmailEnqueueKind.Failed) return (facts, null);
         var notice = $"เข้าคิวส่งอีเมลเอกสาร {documentNumber} ไม่สำเร็จ"
                      + (string.IsNullOrWhiteSpace(outcome.Reason) ? "" : $" ({outcome.Reason})") + " — ส่งเองจากหน้าเอกสาร";

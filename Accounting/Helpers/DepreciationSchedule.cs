@@ -43,6 +43,14 @@ public static class DepreciationSchedule
         => (year - purchaseDate.Year) * 12 + (month - purchaseDate.Month) - 1;
 
     /// <summary>
+    /// รอบ 250 WP-08 (คำตัดสิน 250-26 · พ.ร.ฎ.145 / TFRS for NPAEs บทที่ 10): <b>จุดตั้งต้นค่าเสื่อมตัวเดียว</b> = วันที่พร้อมใช้งาน ?? วันที่ซื้อ (วันที่เอกสาร) ·
+    /// ทุกจุดที่เคยส่ง <c>asset.PurchaseDate</c> เข้า <see cref="MonthIndexFor"/>/<see cref="Build"/> ต้องผ่านตัวนี้ (ห้าม inline <c>??</c> เอง) ·
+    /// สินทรัพย์หลายใบที่โอนแล้ว: สองค่าเท่ากัน (โอนตั้ง <c>PurchaseDate = AvailableForUseDate</c>) ⇒ ผลเดิม · สินทรัพย์ใบเดียวที่ไม่ตั้ง ⇒ ผลเดิม (ไม่ถดถอย)
+    /// </summary>
+    public static DateTime StartDate(DateTime purchaseDate, DateTime? availableForUseDate)
+        => availableForUseDate?.Date ?? purchaseDate;
+
+    /// <summary>
     /// ยอดค่าเสื่อมของ **หนึ่งงวด** — คืน 0 เมื่อไม่ควรคิด (หมดอายุใช้งานแล้ว ·
     /// NBV ถึงมูลค่าซากแล้ว · ที่ดิน/งานระหว่างก่อสร้าง · ยังไม่ถึงงวดแรก)
     /// </summary>
